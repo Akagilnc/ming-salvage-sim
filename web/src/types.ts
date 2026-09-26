@@ -465,8 +465,12 @@ export type GameState = {
    */
   settlement_recovery?: {
     ready_replay: boolean;
+    /** #1846：核账期失败可点「重试」；legacy ready 重放亦为 true */
+    retryable?: boolean;
     error_pack_path: string;
     message: string;
+    /** #1846：月链停住步骤（world_text / world_translate / …） */
+    stage?: string;
   } | null;
   last_decree: string;
   last_report: string;
@@ -476,7 +480,7 @@ export type GameState = {
 
 export type EndingTimelineItem = {
   turn: number; year: number; period: number;
-  decree_brief: string; effect_brief: string; chapter: string;
+  decree_brief: string; effect_brief: string; gazette: string;
 };
 
 export type EndingPayload = {

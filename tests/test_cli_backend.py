@@ -1463,24 +1463,18 @@ def test_run_runner_empty_output_is_retryable_typed(monkeypatch):
     "prompt,expect_tag",
     [
         ("你扮演被皇帝召见的大臣，回话……", "minister"),
-        ('起居注……本朝章节……"body" tags 整理', "chapter_memory"),
         ("本月结算抽取，输出 delta……", "extractor"),
         ("simulator_payload: 当前盘面 TSV……", "simulator"),
         ("请拟一道诏书，颁行天下", "decree"),
         ("只输出合法 JSON，无多余字", "sanitizer"),
         ("今日天气如何", "other"),
-        # 优先级：minister 先于 decree；chapter_memory 先于 extractor（须同框 extractor 标识）
+        # 优先级：minister 先于 decree。
         ("你扮演被皇帝召见的大臣，臣请拟诏书一道……", "minister"),
-        (
-            '【起居注】崇祯二年……本卷章节……"body": "…" tags: […]'
-            " 本月结算抽取 module_allowed_fields score_extractor",
-            "chapter_memory",
-        ),
     ],
     ids=[
-        "minister", "chapter_memory", "extractor", "simulator",
+        "minister", "extractor", "simulator",
         "decree", "sanitizer", "other",
-        "minister_over_decree", "chapter_memory_before_extractor",
+        "minister_over_decree",
     ],
 )
 def test_run_backend_infers_trace_tag_from_prompt(monkeypatch, prompt, expect_tag):

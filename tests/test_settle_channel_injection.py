@@ -1,7 +1,7 @@
 """通道 enrichment 经 settle_with_delta 的注入闭包回归（ADR-0004 一致）。
 
 base 的 ADR-0004 把月末结算抽成「不依赖 llm_config 的确定性核 settle_with_delta
-+ 注入闭包（chapter_recorder / ending_summarizer）」。通道分支的 issue enrichment /
++ 注入闭包（结局总评）。通道分支的 issue enrichment /
 office 推断靠 llm_config 选 channel，藏在 apply_score_extraction 里。两者相撞后，
 真实流若不把 llm_config 经注入闭包送进结算核，通道 enrichment 会被静默关掉。
 

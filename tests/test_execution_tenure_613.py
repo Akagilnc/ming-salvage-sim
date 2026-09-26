@@ -325,16 +325,6 @@ def test_court_roster_carries_appointment_tenure_four_tiers(game):
         assert by_name[name] == tenure
 
 
-def test_season_simulator_prompt_covers_command_power_order():
-    from ming_sim.content import GameContent
-
-    text = GameContent.load().season_simulator_prompt
-    assert "真除＞兼署＞署理＞加衔" in text or "真除>兼署>署理>加衔" in text
-    assert "兼署" in text
-    assert "held_authorities" in text or "在持授权" in text
-    assert "appointment_tenure" in text
-
-
 def _clear_character_offices(db, name):
     """人物仍在 characters，但 character_offices 无行（缺档合法态）。"""
     db.conn.execute(

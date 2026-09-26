@@ -59,6 +59,22 @@ def _categories(db):
     ]
 
 
+def _prepare_player_month(db, state, content, monkeypatch, *, world=None, translate=None):
+    """换掉世界段与转译的模型缝，返回尚未过月的 session。不含在飞屏障。"""
+    _forbid_extractor(monkeypatch)
+    monkeypatch.setattr(
+        month_chain, "run_world_segment_text",
+        world if world is not None else (lambda *_a, **_k: ""),
+    )
+    monkeypatch.setattr(
+        month_translate, "translate_month_segment",
+        translate if translate is not None else (lambda *_a, **_k: {"effects": {}}),
+    )
+    session = make_light_session(db, state, content)
+    session._write_gate = threading.Lock()
+    return session
+
+
 def test_player_month_entry_settles_prepushed_edicts_then_world_once(game, monkeypatch):
     db, state, content = game
     minister = next(iter(content.characters.values())).name
@@ -96,11 +112,9 @@ def test_player_month_entry_settles_prepushed_edicts_then_world_once(game, monke
         translate_calls.append(1)
         return {"effects": {}}
 
-    _forbid_extractor(monkeypatch)
-    monkeypatch.setattr(month_chain, "run_world_segment_text", world)
-    monkeypatch.setattr(month_translate, "translate_month_segment", translate)
-    session = make_light_session(db, state, content)
-    session._write_gate = threading.Lock()
+    session = _prepare_player_month(
+        db, state, content, monkeypatch, world=world, translate=translate,
+    )
     queue = get_session_write_queue(session)
     ticket = queue.claim_if_absent([("mechanical-tail", closed_turn)])[0]
     joined = {}
@@ -110,9 +124,11 @@ def test_player_month_entry_settles_prepushed_edicts_then_world_once(game, monke
         queue.complete(ticket)
 
     threading.Thread(target=finish_prior).start()
-    result = session.resolve_turn(allow_empty_decree=True, on_event=lambda kind, data: events.append((kind, data)))
-
+    result = session.resolve_turn(
+        allow_empty_decree=True, on_event=lambda kind, data: events.append((kind, data)),
+    )
     assert joined.get("done") is True
+
     assert world_calls and world_calls[0]["edicts"][:2] == ["宁远补饷", "陕西赈灾"]
     ledger = list(db.conn.execute(
         "SELECT category, delta FROM economy_ledger WHERE category IN ('宁远补饷','陕西赈灾','大凌河') ORDER BY id",
@@ -141,6 +157,8 @@ def test_player_month_entry_settles_prepushed_edicts_then_world_once(game, monke
 
 
 def test_unforecast_edict_is_caught_up_once_and_crash_does_not_double_charge(game, monkeypatch):
+    from ming_sim.exceptions import SettlementAbort
+
     db, state, content = game
     minister = next(iter(content.characters.values())).name
     affair = db.affairs.open(
@@ -191,8 +209,9 @@ def test_unforecast_edict_is_caught_up_once_and_crash_does_not_double_charge(gam
     session._write_gate = threading.Lock()
     try:
         session.resolve_turn(allow_empty_decree=True)
-    except RuntimeError as exc:
-        assert "过月中断" in str(exc)
+    except SettlementAbort as exc:
+        assert isinstance(exc.__cause__, RuntimeError)
+        assert "过月中断" in str(exc.__cause__)
     assert db.staged_declarations.is_settled(first_ref)
     assert not db.staged_declarations.is_settled(second_ref)
     first_rows = db.conn.execute(
@@ -219,36 +238,53 @@ def test_questions_hold_rescript_and_gazette_is_required_before_advance(game, mo
     pending_id, ref = _stage_edict(db, state, minister, "陕西赈灾", "陕西赈灾", -1, affair.id)
     db.conn.execute(
         "UPDATE staged_declarations SET questions_json=? WHERE decree_ref=?",
-        ('[{"title":"是否加赈"}]', ref),
+        ('[{"title":"是否加赈","context":"c","options":[{"label":"加","hint":"h1"},{"label":"否","hint":"h2"}]}]', ref),
     )
     db.conn.commit()
     closed_turn = int(state.turn)
     _forbid_extractor(monkeypatch)
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
     session = make_light_session(db, state, content)
+    session.llm_config = object()
     session._write_gate = threading.Lock()
+    monkeypatch.setattr(
+        month_chain, "_run_decree_continuation_text", lambda *a, **k: "",
+    )
     held = session.resolve_turn(allow_empty_decree=True)
     assert held.stage == "rescript"
+    assert held.awaiting is True
     assert held.advanced is False
     assert int(state.turn) == closed_turn
+    assert any(row["title"] == "是否加赈" for row in held.decisions)
 
     # 历史留中回流的同一请旨仍未答，不能因案卷创建于前月越过批红。
     from ming_sim.decree_forecast import decree_ref_for_dossier
+    from ming_sim.models import TurnPhase
     dossier = next(d for d in db.list_decree_dossiers() if decree_ref_for_dossier(db, d) == ref)
     db.conn.execute(
         "UPDATE decree_dossiers SET created_turn=? WHERE id=?",
         (closed_turn - 1, int(dossier["id"])),
     )
     db.conn.commit()
+    # 仍停在待裁；幂等回读案头，不二跑世界段。
     held_again = session.resolve_turn(allow_empty_decree=True)
-    assert held_again.stage == "rescript"
+    assert held_again.awaiting is True
+    assert any(row["title"] == "是否加赈" for row in held_again.decisions)
     assert int(state.turn) == closed_turn
 
-    db.conn.execute(
-        "UPDATE staged_declarations SET questions_json=NULL WHERE decree_ref=?",
-        (ref,),
+    # 亲裁答复后清请旨，主链才能进邸报交接。
+    desk_row = session.pending_decisions()[0]
+    opt = desk_row["options"][0]
+    session.submit_hitl_choices(
+        [{
+            "decision_key": desk_row["decision_key"],
+            "label": opt["label"],
+            "hint": opt.get("hint") or "",
+        }],
+        write_gate=session._write_gate,
     )
-    db.conn.commit()
+    assert not db.staged_declarations.questions_for(ref)
+    assert session.state.turn_phase == TurnPhase.SETTLING.value
     waiting_gazette = session.resolve_turn(allow_empty_decree=True)
     assert waiting_gazette.stage == "gazette"
     assert int(state.turn) == closed_turn
@@ -367,14 +403,19 @@ def test_player_entry_recovers_ending_after_interrupted_segment(game, monkeypatc
     session = make_light_session(db, state, content)
     session._write_gate = threading.Lock()
 
-    with pytest.raises(RuntimeError, match="interrupted after decree settlement"):
+    from ming_sim.exceptions import SettlementAbort
+
+    with pytest.raises(SettlementAbort) as caught:
         session.resolve_turn(allow_empty_decree=True)
+    assert "interrupted after decree settlement" in str(caught.value.__cause__)
     assert db.staged_declarations.is_settled(ref)
+    assert caught.value.error_pack_path
 
     waiting = session.resolve_turn(allow_empty_decree=True)
     assert waiting.stage == "gazette"
     payload = db.get_resolve_context(turn)["simulator_payload"]
     assert payload["month_chain"]["declaration_outcome"]["status"] == "emperor_abdicate"
+    assert "call_failure" not in payload["month_chain"]
 
     db.conn.execute(
         "INSERT INTO turn_reports (turn, year, period, report) VALUES (?, ?, ?, ?)",
@@ -511,6 +552,7 @@ def test_held_dossier_settlement_failure_retry_and_reentry_isolation(game, monke
         db=db, state=state, llm_config=None, agno_db=None, content=content,
     )
 
+    chain = {}
     # 首次结算失败：暂存保持未落账，旧打回暂存不被破坏
     import ming_sim.declaration_dispatch as dd
     real_settle = dd.settle_staged_declarations_in_decree_order
@@ -526,19 +568,19 @@ def test_held_dossier_settlement_failure_retry_and_reentry_isolation(game, monke
     monkeypatch.setattr(dd, "settle_staged_declarations_in_decree_order", fail_first)
 
     with pytest.raises(RuntimeError, match="transient settlement crash"):
-        _settle_edicts(sess, registry=None)
+        _settle_edicts(sess, registry=None, chain=chain)
 
     assert not db.staged_declarations.is_settled(held_ref)
     assert not db.staged_declarations.is_settled(stale_ref)
 
     # 结算失败重试：以 held_ref 身份续跑并成功落账
-    _settle_edicts(sess, registry=None)
+    _settle_edicts(sess, registry=None, chain=chain)
     assert db.staged_declarations.is_settled(held_ref)
     assert not db.staged_declarations.is_settled(stale_ref)
     assert db.get_decree_dossier(dossier_id)["promulgation_decision"] == "promulgated"
 
     # 再次进入月链结算：保持 held_ref 案卷身份，旧 pending-action 不被冒名结算
-    _settle_edicts(sess, registry=None)
+    _settle_edicts(sess, registry=None, chain=chain)
     assert db.staged_declarations.is_settled(held_ref)
     assert not db.staged_declarations.is_settled(stale_ref)
     dossier = db.get_decree_dossier(dossier_id)
@@ -587,15 +629,16 @@ def test_advance_reloads_memory_after_transaction_rollback(game, monkeypatch):
 
 
 def test_missing_world_model_stops_before_world_commit(game, monkeypatch):
-    from ming_sim.exceptions import LLMUnavailable
+    from ming_sim.exceptions import SettlementAbort
 
     db, state, content = game
     turn = int(state.turn)
     _forbid_extractor(monkeypatch)
     session = make_light_session(db, state, content)
-    with pytest.raises(LLMUnavailable):
+    with pytest.raises(SettlementAbort) as caught:
         session.resolve_turn(allow_empty_decree=True)
     assert int(state.turn) == turn
+    assert caught.value.stage == "world_text"
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
     assert session.resolve_turn(allow_empty_decree=True).stage == "gazette"
     assert int(state.turn) == turn

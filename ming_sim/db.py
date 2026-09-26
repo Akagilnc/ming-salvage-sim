@@ -2635,6 +2635,10 @@ class GameDB:
         self.ensure_column(
             "turn_reports", "attendant_message", "TEXT NOT NULL DEFAULT ''",
         )
+        # #1862：当期邸报作者自写的标题，随正文入档，供历月索引取用。
+        self.ensure_column(
+            "turn_reports", "title", "TEXT NOT NULL DEFAULT ''",
+        )
         # 后宫调教记录
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS consort_traits (
@@ -6801,7 +6805,11 @@ class GameDB:
             "transit_loss": int(values.get("hub_京运损耗", 0)),
         }
 
-    def treasury_report(self, state: GameState, limit: int | None = 6) -> str:
+    def treasury_report(
+        self, state: GameState, limit: int | None = 6, *,
+        exclude_origin_prefix: str = "",
+        exclude_dossier_ids: Optional[Iterable[int]] = None,
+    ) -> str:
         account_rows = self.conn.execute(
             "SELECT account, balance FROM economy_accounts ORDER BY account DESC"
         ).fetchall()
@@ -6810,17 +6818,33 @@ class GameDB:
         else:
             account_text = "，".join(f"{row['account']}{format_money(int(row['balance']))}" for row in account_rows)
 
+        origin_clause = ""
+        origin_params: Tuple[object, ...] = ()
+        prefix = str(exclude_origin_prefix or "")
+        dossier_ids = tuple(
+            int(item) for item in (exclude_dossier_ids or ()) if int(item) > 0
+        )
+        dossier_clause = ""
+        if dossier_ids:
+            marks = ",".join("?" * len(dossier_ids))
+            dossier_clause = (
+                " AND NOT (origin_ref LIKE 'dossier:%' AND "
+                f"CAST(substr(origin_ref, 9) AS INTEGER) IN ({marks}))"
+            )
+        if prefix:
+            origin_clause = " AND origin_ref NOT LIKE ?"
+            origin_params = (prefix + "%",)
         period_rows = self.conn.execute(
-            """
+            f"""
             SELECT account,
                    SUM(CASE WHEN delta > 0 THEN delta ELSE 0 END) AS income,
                    SUM(CASE WHEN delta < 0 THEN -delta ELSE 0 END) AS expense
             FROM economy_ledger
-            WHERE turn = ?
+            WHERE turn = ?{origin_clause}{dossier_clause}
             GROUP BY account
             ORDER BY account DESC
             """,
-            (state.turn,),
+            (state.turn, *origin_params, *dossier_ids),
         ).fetchall()
         period_text = "；".join(
             f"{row['account']}入{format_money(int(row['income'] or 0))}出{format_money(int(row['expense'] or 0))}"
@@ -6831,11 +6855,23 @@ class GameDB:
 
         # limit=None：不截断（#1834 推演者盘面全量——与 region_rows/army_rows
         # 同一「None = 无 LIMIT 子句」约定，不是另造一套语义）。
-        ledger_sql = "SELECT year, period, account, delta, category, reason, actor FROM economy_ledger ORDER BY id DESC"
-        ledger_params: Tuple[object, ...] = ()
+        ledger_sql = (
+            "SELECT year, period, account, delta, category, reason, actor FROM economy_ledger"
+        )
+        ledger_params_list: list[object] = []
+        if prefix or dossier_ids:
+            ledger_sql += " WHERE 1=1"
+        if prefix:
+            ledger_sql += " AND origin_ref NOT LIKE ?"
+            ledger_params_list.append(prefix + "%")
+        if dossier_ids:
+            ledger_sql += dossier_clause
+            ledger_params_list.extend(dossier_ids)
+        ledger_sql += " ORDER BY id DESC"
         if limit is not None:
             ledger_sql += " LIMIT ?"
-            ledger_params = (limit,)
+            ledger_params_list.append(limit)
+        ledger_params = tuple(ledger_params_list)
         ledger_rows = self.conn.execute(ledger_sql, ledger_params).fetchall()
         recent = []
         for row in reversed(ledger_rows):
@@ -11222,6 +11258,7 @@ class GameDB:
         public_body: Optional[str] = None,
         *,
         attendant_message: str = "",
+        title: str = "",
         commit: bool = True,
     ) -> None:
         """每回合月末奏报单独存档（turn_reports），与 turn_logs 解耦。
@@ -11263,18 +11300,23 @@ class GameDB:
         # (public LLMs never preload secrets; private briefs are not knowledge_items).
         self.conn.execute(
             """
-            INSERT INTO turn_reports (turn, year, period, report, attendant_message)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO turn_reports (turn, year, period, report, attendant_message, title)
+            VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT(turn) DO UPDATE SET
                 year = excluded.year,
                 period = excluded.period,
                 report = excluded.report,
-                attendant_message = excluded.attendant_message
+                attendant_message = excluded.attendant_message,
+                title = CASE
+                    WHEN excluded.title = '' THEN turn_reports.title
+                    ELSE excluded.title
+                END
             """,
             (
                 state.turn, state.year, state.period,
                 sanitize_sqlite_text(public_report),
                 sanitize_sqlite_text(str(attendant_message or "")),
+                sanitize_sqlite_text(str(title or "")),
             ),
         )
         # Aggregate prose cannot authorize an audience read: removing known
@@ -11292,7 +11334,7 @@ class GameDB:
     def get_turn_report_archive(self, turn: int) -> Optional[Dict[str, object]]:
         """#671：一次读 turn_reports 行（year/period/report/attendant）；无行→None。"""
         row = self.conn.execute(
-            "SELECT year, period, report, attendant_message FROM turn_reports WHERE turn = ?",
+            "SELECT year, period, report, attendant_message, title FROM turn_reports WHERE turn = ?",
             (int(turn),),
         ).fetchone()
         if row is None:
@@ -11302,6 +11344,7 @@ class GameDB:
             "period": int(row["period"] or 0),
             "report": str(row["report"] or ""),
             "attendant_message": str(row["attendant_message"] or ""),
+            "title": str(row["title"] or ""),
         }
 
     def get_turn_report(self, turn: int) -> str:
@@ -11325,85 +11368,14 @@ class GameDB:
     def list_turn_reports(self) -> List[Dict[str, object]]:
         """Return the durable gazette archive in chronological order."""
         rows = self.conn.execute(
-            "SELECT turn, year, period, report FROM turn_reports ORDER BY turn, rowid"
+            "SELECT turn, year, period, report, title FROM turn_reports ORDER BY turn, rowid"
         ).fetchall()
         return [
             {"turn": int(row["turn"]), "year": int(row["year"]),
-             "period": int(row["period"]), "report": row["report"] or ""}
+             "period": int(row["period"]), "report": row["report"] or "",
+             "title": str(row["title"] or "")}
             for row in rows
         ]
-
-    # ── 章节记忆（event_memories 的 chapter_summary 类，每回合一条，importance=5 永久）──
-
-    def save_chapter_memory(
-        self, state: GameState, title: str, body: str, tags: Optional[List[str]] = None,
-        knowledge_items: Optional[Iterable[Mapping[str, object]]] = None,
-        public_body: Optional[str] = None,
-        *,
-        commit: bool = True,
-    ) -> int:
-        """落本回合章节记忆。subject 固定 court/chapter，event_type=chapter_summary，
-        source_id=turn 保证每回合唯一。body 存整段叙事章节（不受 outcome 80 字限）。
-
-        tags：除固定的 `章节`/`turnN` 外，并入 LLM 抽出的人物/地点/派系/事件召回标签，
-        供 recall_memories 按人名/派系命中本章。"""
-        base_tags = ["章节", f"turn{state.turn}"]
-        for t in tags or []:
-            t = str(t).strip()
-            if t and t not in base_tags:
-                base_tags.append(t)
-        self.persist_knowledge_items_for_turn(
-            state, knowledge_items, default_title=title, commit=commit
-        )
-        items = [item for item in self.knowledge_items_for_turn(state.turn)
-                 if not str(item.get("source_id") or "").startswith(("turn_report:", "chapter_source:"))]
-        # #883/#976: same write-seam rule as turn reports — shared exclusions
-        # force source-scoped aggregation; active briefs alone do not blank
-        # pure public prose (F3). No text-filter strip.
-        has_restricted_source = self._has_restricted_source_gate(
-            any(item.get("excluded_names") for item in items)
-        )
-        source_snapshot_supplied = knowledge_items is not None
-        if public_body is None:
-            public_chapter = (
-                "\n".join(str(item.get("body") or item.get("title") or "")
-                          for item in items if not item.get("excluded_names"))
-                if source_snapshot_supplied or has_restricted_source else str(body or "")
-            )
-        else:
-            public_chapter = str(public_body or "")
-        # #976: no text-filter strip — same structural rule as turn reports.
-        memory_id = self.upsert_event_memory(
-            state,
-            subject_type="court",
-            subject_id="chapter",
-            event_type="chapter_summary",
-            title=str(title or reign_period_label(state.year, state.period))[:40],
-            outcome=str(title or "")[:80],
-            sentiment="neutral",
-            importance=5,
-            tags=base_tags,
-            source_kind="turn_report",
-            source_id=str(state.turn),
-            expires_turn=None,
-            commit=commit,
-        )
-        if memory_id:
-            self.conn.execute(
-                "UPDATE event_memories SET body = ? WHERE id = ?",
-                (public_chapter, memory_id),
-            )
-        # The public chapter counterpart is a separate, source-preserving
-        # authorization record.  Never derive it by deleting secret strings
-        # from an LLM aggregate: a paraphrase would evade that redaction.
-        if public_chapter:
-            self.record_public_knowledge_event(
-                state, str(title or "朝局旧闻"), public_chapter,
-                source_id=f"chapter_source:{state.turn}", commit=False,
-            )
-        if commit:
-            self.conn.commit()
-        return memory_id
 
     def persist_knowledge_items_for_turn(
         self,
@@ -11532,35 +11504,6 @@ class GameDB:
                 "source_id": row["source_id"], "excluded_names": excluded_names,
             })
         return list(by_source.values())
-
-    def list_chapter_memories(
-        self, upto_turn: Optional[int] = None, recent: Optional[int] = None
-    ) -> List[Dict[str, object]]:
-        """取章节记忆，按 turn 升序。upto_turn 限上界；recent 只取最近 N 回合（喂大臣/推演用）。"""
-        clauses = ["event_type = 'chapter_summary'"]
-        params: list = []
-        if upto_turn is not None:
-            clauses.append("turn <= ?")
-            params.append(int(upto_turn))
-        if recent is not None and upto_turn is not None:
-            clauses.append("turn >= ?")
-            params.append(max(1, int(upto_turn) - int(recent) + 1))
-        where = " AND ".join(clauses)
-        rows = self.conn.execute(
-            f"SELECT turn, year, period, title, body FROM event_memories "
-            f"WHERE {where} ORDER BY turn ASC",
-            params,
-        ).fetchall()
-        return [
-            {
-                "turn": int(r["turn"]),
-                "year": int(r["year"]),
-                "period": int(r["period"]),
-                "title": r["title"] or "",
-                "body": r["body"] or "",
-            }
-            for r in rows
-        ]
 
     # ── 结局总结 ──
 

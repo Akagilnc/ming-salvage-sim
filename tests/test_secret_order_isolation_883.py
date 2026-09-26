@@ -61,7 +61,6 @@ def test_883_two_turn_probe_secret_never_enters_shared_archives(game):
         narrative="本月朝局平缓，无非常之事。",
     )
     db.save_turn_report(state, "邸报：本月朝局平缓。")
-    db.save_chapter_memory(state, "朝局", "章节：本月朝局平缓。")
 
     brief = db.conn.execute(
         "SELECT body, minister_name FROM secret_order_briefs WHERE order_id=?", (oid,)
@@ -69,7 +68,6 @@ def test_883_two_turn_probe_secret_never_enters_shared_archives(game):
     source_count = db.conn.execute(
         "SELECT COUNT(*) FROM character_knowledge_sources WHERE source_id LIKE 'secret_order:%'"
     ).fetchone()[0]
-    chapter_text = " ".join(item["body"] for item in db.list_chapter_memories())
     report_text = " ".join(item["report"] for item in db.list_turn_reports())
     other_view = db.get_character_knowledge(state, other.name)
     other_text = " ".join(
@@ -83,7 +81,6 @@ def test_883_two_turn_probe_secret_never_enters_shared_archives(game):
     assert brief["minister_name"] == assignee.name
     assert marker in (brief["body"] or "")
     assert source_count == 0
-    assert marker not in chapter_text
     assert marker not in report_text
     assert marker not in other_text
     assert marker in assignee_text
@@ -358,14 +355,10 @@ def test_883_pure_public_archive_lands_while_secret_brief_active(game):
     create_test_secret_order(db, state, assignee.name, "密查某事", secret_marker, [])
 
     db.save_turn_report(state, public)
-    db.save_chapter_memory(state, "朝局公开", public)
     report_blob = " ".join(item["report"] for item in db.list_turn_reports())
-    chapter_blob = " ".join(item["body"] for item in db.list_chapter_memories())
     assert public in report_blob
-    assert public in chapter_blob
     # Brief content does not auto-flow into archives.
     assert secret_marker not in report_blob
-    assert secret_marker not in chapter_blob
 
     from ming_sim.decree import _record_settlement_narrative_sources
     _record_settlement_narrative_sources(db, state, public, commit=True)
@@ -696,13 +689,9 @@ def test_883_shared_archive_bypass_positive_and_negative(game):
     # 负向结构：密令只在 brief；纯公开入档；brief 正文不自动流入共享档。
     create_test_secret_order(db, state, assignee.name, "旁路密查", secret_marker, [])
     db.save_turn_report(state, "公开句；本月漕运如常。")
-    db.save_chapter_memory(state, "朝局", "公开句；本月漕运如常。")
     report_blob = " ".join(item["report"] for item in db.list_turn_reports())
-    chapter_blob = " ".join(item["body"] for item in db.list_chapter_memories())
     assert secret_marker not in report_blob
-    assert secret_marker not in chapter_blob
     assert "公开句" in report_blob
-    assert "公开句" in chapter_blob
     assert all(secret_marker not in body for body in _shared_bodies(db))
 
     # 正向：无未公开密令简报时，纯公开正文可落共享档。
@@ -710,11 +699,8 @@ def test_883_shared_archive_bypass_positive_and_negative(game):
     db.conn.execute("DELETE FROM secret_orders")
     db.conn.commit()
     db.save_turn_report(state, public_marker)
-    db.save_chapter_memory(state, "朝局公开", public_marker)
     report_blob = " ".join(item["report"] for item in db.list_turn_reports())
-    chapter_blob = " ".join(item["body"] for item in db.list_chapter_memories())
     assert public_marker in report_blob
-    assert public_marker in chapter_blob
 
 
 def test_976_held_user_chat_released_when_never_classified_as_secret(game):

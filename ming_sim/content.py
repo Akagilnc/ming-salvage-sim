@@ -769,7 +769,6 @@ class GameContent:
 
     decree_writer_prompt: str = ""
     season_simulator_prompt: str = ""
-    chapter_memory_prompt: str = ""
     ending_summary_prompt: str = ""
     rescript_draft_prompt: str = ""
     relation_brew_prompt: str = ""
@@ -831,7 +830,6 @@ class GameContent:
             consort_agent_prompt=load_text_asset("prompts/consort_agent.md"),
             decree_writer_prompt=load_text_asset("prompts/decree_writer.md"),
             season_simulator_prompt=load_text_asset("prompts/season_simulator.md"),
-            chapter_memory_prompt=load_text_asset("prompts/chapter_memory.md"),
             ending_summary_prompt=load_text_asset("prompts/ending_summary.md"),
             rescript_draft_prompt=load_text_asset("prompts/rescript_draft.md"),
             relation_brew_prompt=load_text_asset("prompts/relation_brew.md"),

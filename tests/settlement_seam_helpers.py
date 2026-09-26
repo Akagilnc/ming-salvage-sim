@@ -9,12 +9,14 @@ from __future__ import annotations
 from typing import Dict, List, Optional
 
 import ming_sim.decree as decree_mod
-import ming_sim.memories as memories
 from ming_sim.session import GameSession
 
 
 def make_light_session(db, state, content):
     """Minimal GameSession shell for advance_without_decree tracers."""
+    from ming_sim.decree_forecast import bind_forecast_owner
+    from ming_sim.session_write_queue import get_session_write_queue
+
     session = GameSession.__new__(GameSession)
     session.db = db
     session.state = state
@@ -30,6 +32,10 @@ def make_light_session(db, state, content):
     session._beat_generator = None
     session._write_gate = None
     session.auto_save = lambda *a, **k: None
+    bind_forecast_owner(session)
+    from tests.conftest import note_queue_until_game_teardown
+
+    note_queue_until_game_teardown(db, get_session_write_queue(session))
     return session
 
 
@@ -87,19 +93,17 @@ def canned_full_settlement(
 
     monkeypatch.setattr("ming_sim.month_chain.run_world_segment_text", _world)
     monkeypatch.setattr(
+        "ming_sim.month_chain.run_gazette_text",
+        lambda *_a, **_k: ("邸报", narrative),
+    )
+    monkeypatch.setattr(
         "ming_sim.month_translate.translate_month_segment",
         lambda *_a, **_k: {"effects": {}},
     )
-    monkeypatch.setattr(decree_mod, "create_chapter_memory_agent", lambda *a, **k: None)
-    monkeypatch.setattr(decree_mod, "record_chapter_memory", lambda *a, **k: None)
     monkeypatch.setattr(decree_mod, "create_ending_summary_agent", lambda *a, **k: None)
     # #1745：复用单一 agent 边界夹具（不整换 run_settlement_attendant_message）。
     from tests.section_rejection_helpers import install_settlement_attendant_agent_stub
     install_settlement_attendant_agent_stub(monkeypatch, decree_mod)
-    monkeypatch.setattr(
-        memories, "run_agent_text", lambda *a, **k: '{"body":"月记","tags":[]}',
-    )
-
     if skip_fixed_flows:
         monkeypatch.setattr(decree_mod, "apply_fixed_period_flows", lambda *_a, **_k: None)
 

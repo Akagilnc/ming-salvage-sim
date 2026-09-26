@@ -117,10 +117,13 @@ def test_settle_clears_resolve_context_on_completion(game):
 
 
 def test_resolve_context_survives_mid_settle_crash(game, monkeypatch, tmp_path):
-    """settle 中途（clear 之前）崩 → resolve_context 仍在（可重试）。
-    用注入异常模拟：on_stage 在落库后的「记起居注」阶段抛错，此时尚未走到 clear。
-    S7：settle 整段包 atomic，代码异常上抛后被包成 SettlementAbort(stage="settle")，
-    DB 整体回滚——而 resolve_context 在 settle 之外单独 commit，回滚不动它，故仍在可重试。"""
+    """settle 在 clear 之前的真实步骤崩 → resolve_context 仍在（可重试）。
+
+    注入点是结算正文里落库之后、clear_resolve_context 之前必经的
+    clear_gated_legacies。S7：整段包 atomic，代码异常上抛后被包成
+    SettlementAbort(stage="settle")；resolve_context 在 settle 之外单独
+    commit，回滚不动它。"""
+    import ming_sim.decree as decree_mod
     from ming_sim.exceptions import SettlementAbort
     db, state, content = game
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
@@ -135,16 +138,14 @@ def test_resolve_context_survives_mid_settle_crash(game, monkeypatch, tmp_path):
     class _Boom(RuntimeError):
         pass
 
-    def _explode(payload):
-        # stage 现为 typed payload dict；content 仍是显示标签。
-        label = payload.get("content") if isinstance(payload, dict) else payload
-        if label == "记起居注":   # 落库之后、clear 之前的阶段
-            raise _Boom("中途崩")
+    def _explode(*_args, **_kwargs):
+        raise _Boom("中途崩")
+
+    monkeypatch.setattr(decree_mod, "clear_gated_legacies", _explode)
 
     with pytest.raises(SettlementAbort) as ei:
         settle_with_delta(
             state, db, extracted, before_turn=turn, content=content,
-            on_stage=_explode,
         )
     assert ei.value.stage == "settle"
     assert isinstance(ei.value.__cause__, _Boom)

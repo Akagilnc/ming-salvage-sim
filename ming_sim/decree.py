@@ -19,7 +19,6 @@ from openai import APIConnectionError, APIStatusError, APITimeoutError
 from ming_sim.agents import (
     _dump_llm_messages,
     create_arrival_attendant_agent,
-    create_chapter_memory_agent,
     create_decree_writer_agent,
     create_promulgation_judge_agent,
     create_ending_summary_agent,
@@ -83,7 +82,6 @@ from ming_sim.decree_vocabulary import (
     qualitative_dossier_outcome,
     qualitative_promulgation_slot,
 )
-from ming_sim.memories import build_timeline, record_chapter_memory
 from ming_sim.relation_brew import MonthEndRelationBrewLeg
 from ming_sim.simulation import (
     build_simulator_payload,
@@ -99,18 +97,18 @@ from ming_sim.token_stats import tlog
 # 满 240 回合（即第 240 个回合结算完，1647.09）仍未分胜负则强制 timeout 收尾。
 TIMEOUT_TURN = 240
 
-# #1725：月末结算 SSE stage 唯一权威。六名冻结；emit 只经 settlement_stage_payload，
+# #1725：月末结算 SSE stage 唯一权威。emit 只经 settlement_stage_payload，
 # 携带独立于显示措辞的 typed 进度事实（current/total），前端不得文案反查。
+# #1845：章节记忆退役后，表内不再留无对应工作的「记起居注」。
 SETTLEMENT_STAGE_LABELS = (
     "固定月度财政入账",
     "回顾近来朝局",
     "推演月末邸报",
     "数值推演结算",
     "落库与事项推进",
-    "记起居注",
 )
-# #1740：结局回合第七段——不并入六名表（普通回合永不发）。
-# emit 只经 settlement_ending_stage_payload，current/total=7；普通六阶 total 仍为 6。
+# #1740：结局回合在普通阶段之外另发一段，不并入上表。
+# emit 只经 settlement_ending_stage_payload；total = 普通阶段数 + 1。
 SETTLEMENT_ENDING_STAGE_LABEL = "国史编纂结局总评"
 
 
@@ -124,7 +122,7 @@ def settlement_stage_payload(index: int) -> Dict[str, Any]:
 
 
 def settlement_ending_stage_payload() -> Dict[str, Any]:
-    """Ending-round seventh stage; total becomes 7 only on this emit."""
+    """Ending-round extra stage; total is the ordinary count plus one."""
     total = len(SETTLEMENT_STAGE_LABELS) + 1
     return {
         "content": SETTLEMENT_ENDING_STAGE_LABEL,
@@ -157,8 +155,9 @@ from ming_sim.settlement_payload import (  # noqa: E402
 class ResolveResult:
     """过月入口的返回。advanced 才表示回合已推进。
 
-    awaiting 只留给仍走旧亲裁暂停的路径。ADR 0157 的批红/邸报交接用
-    stage，不把未完成的主链标成已推进。
+    awaiting=True：批红案头待裁（#1847 请旨/打回三选，沿既有 HITL）。
+    awaiting=False 且 stage=gazette：邸报尚未归档，主链未推进。
+    有模型配置时作者会先写再推进；没有配置时仍停在这一相位。
     """
     awaiting: bool
     report: str = ""
@@ -1813,7 +1812,6 @@ def settle_with_delta(
     trace_narrative=None,
     extractor_input: str = "",
     extractor_output: str = "",
-    chapter_recorder=None,
     ending_summarizer=None,
     delta_applier=None,
     on_stage=None,
@@ -1824,14 +1822,13 @@ def settle_with_delta(
     attendant_message: str = "",
     settlement_attendant_runner=None,
 ) -> str:
-    """确定性结算「后括号」：apply→turn_logs→inertia→留痕→章节记忆→clear→结局判定→next_period。
+    """确定性结算「后括号」：apply→turn_logs→inertia→留痕→clear→结局判定→next_period。
 
     收一份**已规范化**的 extracted（英文 canonical key，见 simulation._canonicalize_extraction）。
-    不依赖 llm_config —— 章节记忆 / 结局总评 / 落库 enrichment / 拒收递话 全经注入闭包：
-    章节记忆=chapter_recorder、结局总评=ending_summarizer、落库（含 issue/office 的
-    通道感知 enrichment）=delta_applier、玩家来源拒收呈现=settlement_attendant_runner。
-    真实流程传捕获 llm_config 的闭包；探针 driver 对 chapter_recorder/ending_summarizer
-    传 None，对 settlement_attendant_runner 由调用方注入（缺则玩家拒收诚实失败，P7），对
+    不依赖 llm_config ——结局总评 / 落库 enrichment / 拒收递话经注入闭包：
+    结局总评=ending_summarizer、落库（含 issue/office 的通道感知 enrichment）=delta_applier、
+    玩家来源拒收呈现=settlement_attendant_runner。真实流程传捕获 llm_config 的闭包；探针 driver
+    对 ending_summarizer 传 None，对 settlement_attendant_runner 由调用方注入（缺则玩家拒收诚实失败，P7），对
     delta_applier 传 channel=api 确定性闭包——结算核本体都不见 llm_config（ADR 0004）。
 
     delta_applier(db, state, extracted, content, registry) -> applied dict；None 时回退到
@@ -1855,11 +1852,11 @@ def settle_with_delta(
         if on_stage is not None:
             on_stage(payload)
 
-    # ADR 0008 S7（决定 2）：整个后半段写序列包进单事务——apply→turn_logs→inertia→留痕→章节记忆
+    # ADR 0008 S7（决定 2）：整个后半段写序列包进单事务——apply→turn_logs→inertia→留痕
     # →clear→结局→next_period 全有或全无。崩在中途（含 save_state 之后、clear 之前那个
     # 「已提交但 context 残留」的崩溃窗口，S2+S3 codex R2 defer 至此）则整体回滚，turn 不推进、
     # resolve_context 仍在可重试。回滚后内存从 DB 重载（决定 3），再于 atomic 外写错误包并抛
-    # SettlementAbort（决定 6）。事务内 LLM 回调（章节记忆/结局总评）失败沿用降级、内部已自吞
+    # SettlementAbort（决定 6）。事务内 LLM 回调（结局总评）失败沿用降级、内部已自吞
     # 不触发回滚（决定 4）——故从 settle 冒出的 Exception 即代码异常，一律走错误包。
     # 拒收收集器与结算事务同生命周期（ADR 决定 5，PR2-S0）：apply 的拒收项在事务内
     # flush 进 rejection_reports（行随回滚消失），commit 成功后才镜像 jsonl（文件 append
@@ -1947,7 +1944,7 @@ def settle_with_delta(
                 decree_text=decree_text, narrative=narrative,
                 trace_narrative=trace_narrative,
                 extractor_input=extractor_input, extractor_output=extractor_output,
-                chapter_recorder=chapter_recorder, ending_summarizer=ending_summarizer,
+                ending_summarizer=ending_summarizer,
                 delta_applier=delta_applier, _stage=_stage,
                 collector=collector, source=source,
                 start_relation_brew=(
@@ -2137,7 +2134,6 @@ def _settle_after_extract_body(
     trace_narrative,
     extractor_input: str,
     extractor_output: str,
-    chapter_recorder,
     ending_summarizer,
     delta_applier,
     _stage: Callable[[Dict[str, Any]], None],
@@ -2341,7 +2337,7 @@ def _settle_after_extract_body(
     # （裸 UPDATE 改 office_type、power_id 翻走的易主/降臣、放归赦还+任命被拒回滚 等）。在此处
     # （delta 全部落库 + inertia/ongoing 推进之后）扫一遍全部白名单派系重算成公式末值，保无论本回合经
     # 哪条路径改了成员/官职/易主，末态都正确、无残留漂移。
-    # #9 线上 R6（codex P2）：必须排在【任何读 faction leverage 的下游】之前——章节记忆、
+    # #9 线上 R6（codex P2）：必须排在【任何读 faction leverage 的下游】之前——
     # clear_gated_legacies（legacy gate 如「阉党专权」读 faction.阉党.leverage<30）、结局判定。
     # 原置于 clear_gated_legacies 之后 → 同回合经兜底 reconcile 才跌破阈值的派系，会被先跑的 gate
     # 读到陈旧值、使该帝国修正多挂一回合。故前移到此（仍在 settle_with_delta 的 atomic_and_reload 体内、
@@ -2351,19 +2347,11 @@ def _settle_after_extract_body(
     # #636 S5（ID-10/P5）：本月边事件集至此已全部定型——delta 落库与 breach plea 等
     # 确定性补写全毕，此后到提交再无边事件写口。此刻触发酿制腿 start 钩子：
     # prepare() 在本事务内选中＋认领（与边事件同生共死，庭裁 r2/r3 F1），brew()
-    # 进受管 Future 与下方无依赖的章节记忆/结局总评重叠。start/join/drain 归
+    # 进受管 Future 与下方无依赖的结局总评重叠。start/join/drain 归
     # settle_with_delta 单点所有，此处只触发。prepare 的 DB/程序错误响亮上抛、
     # 随本 atomic 整体回滚走错误包路（ADR 0005/0008）。
     if start_relation_brew is not None:
         start_relation_brew()
-
-    # 章节记忆：注入回调（真实流程= LLM 浓缩落 event_memories；driver= None 跳过）。失败不抛断。
-    _stage(settlement_stage_payload(5))
-    if chapter_recorder is not None:
-        try:
-            chapter_recorder(db, state, decree_text, narrative, applied)
-        except Exception as exc:
-            tlog(f"[chapter-memory] 跳过：{exc}")
 
     # 开局负面帝国修正：本月若达成消除条件即清除（程序判定，不靠 LLM/时长）
     cleared = clear_gated_legacies(db, state)
@@ -2390,7 +2378,7 @@ def _settle_after_extract_body(
         ended = isinstance(outcome, dict) and outcome.get("status") != ENDING_ONGOING
         if ended:
             db.record_log(state, f"结局判定：{outcome.get('summary', '')}")
-            # 章节记忆（含本回合）已落库，国史编纂官读全程生成结局总评（注入；driver 跳过）。
+            # 国史编纂官读全程生成结局总评（注入；driver 跳过）。
             if ending_summarizer is not None:
                 ending_text = ending_summarizer(db, state, outcome)
             state.ended = True
@@ -2469,51 +2457,3 @@ def resolve_decisions_phase2(
         cheat_directive=cheat_directive,
     )
     return result.report
-
-
-def _generate_ending_summary(
-    db: GameDB,
-    state: GameState,
-    llm_config: LLMConfig,
-    agno_db: SqliteDb,
-    outcome: Dict[str, object],
-    _emit: Callable[[str, Any], None],
-) -> str:
-    """国史编纂官读全部章节记忆生成结局总评，落库 ending_summary（含逐回合时间线）。
-    LLM 失败时用章节拼保底总评。返回总评正文（也已落库）。"""
-    chapters = db.list_chapter_memories(upto_turn=state.turn)
-    timeline = build_timeline(db, upto_turn=state.turn)
-    summary_text = ""
-    try:
-        _emit("stage", settlement_ending_stage_payload())
-        ending_agent = create_ending_summary_agent(llm_config, agno_db)
-        payload = {
-            "ending": {"status": outcome.get("status"), "summary": outcome.get("summary")},
-            "chapters": chapters,
-            "final_state": {
-                "year": state.year, "period": state.period, "turn": state.turn,
-                "metrics": dict(state.metrics),
-            },
-        }
-        payload_json = json.dumps(payload, ensure_ascii=False, sort_keys=False)
-        tlog(f"[ending-summary/INPUT] chapters={len(chapters)} ({len(payload_json)}字)")
-        summary_text = run_agent_text(ending_agent, payload_json, tag="ending-summary").strip()
-        tlog(f"[ending-summary/OUTPUT] ({len(summary_text)}字)")
-    except Exception as exc:
-        tlog(f"[ending-summary] LLM 失败，走保底：{exc}")
-
-    if not summary_text:
-        bits = [str(outcome.get("summary") or "")]
-        for c in chapters[-6:]:
-            body = (c.get("body") or "").strip()
-            if body:
-                bits.append(f"{c['year']}年{c['period']}月：{body}")
-        summary_text = "\n".join(b for b in bits if b)
-
-    try:
-        db.save_ending_summary(
-            state, str(outcome.get("status") or ""), summary_text, timeline,
-        )
-    except Exception as exc:
-        tlog(f"[ending-summary] 落库失败：{exc}")
-    return summary_text

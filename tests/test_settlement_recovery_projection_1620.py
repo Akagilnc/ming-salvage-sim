@@ -192,31 +192,26 @@ def test_ready_recovery_issue_stream_waits_for_gazette_then_advances(
     assert isinstance(recovery, dict) and recovery["ready_replay"] is True
 
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
+    monkeypatch.setattr(
+        month_chain, "run_gazette_text",
+        lambda *a, **k: ("邸报", "恢复后的实况。"),
+    )
 
-    async def _issue():
+    async def _issue(expected: int):
         transport = httpx.ASGITransport(app=web_app.app)
         async with httpx.AsyncClient(transport=transport, base_url="http://t") as client:
             return await client.post(
                 "/api/decree/issue/stream",
-                json={"expected_turn": turn},
+                json={"expected_turn": expected},
             )
 
-    resp = asyncio.run(_issue())
+    resp = asyncio.run(_issue(turn))
     assert resp.status_code == 200, resp.text
     event, _data = _terminal_sse(resp)
     assert event == "done", resp.text
-    assert int(game.state.turn) == turn
     assert db.get_resolve_context(turn)["extracted"] is None
-    db.conn.execute(
-        "INSERT INTO turn_reports (turn, year, period, report) VALUES (?, ?, ?, ?)",
-        (turn, state.year, state.period, "邸报已成"),
-    )
-    db.conn.commit()
-    resp = asyncio.run(_issue())
-    assert resp.status_code == 200, resp.text
-    event, _data = _terminal_sse(resp)
-    assert event == "done", resp.text
-
+    archive = db.get_turn_report_archive(turn)
+    assert archive is not None and str(archive.get("report") or "").strip()
     assert int(game.state.turn) == turn + 1
     assert int(game.state.year) == expected_year
     assert int(game.state.period) == expected_period
