@@ -1854,3 +1854,45 @@ def test_step_4a_supply_feed_includes_army_and_fiscal_origin_effects(game):
         and str(row.get("key") or "") == "边饷_test_probe"
         for row in (durable + fiscal)
     )
+
+
+def test_step_4a_supply_feed_board_reuses_world_board_text(game):
+    """步骤 4a 盘面须复用 materials._world_board_text，不另造第二套快照。"""
+    from ming_sim.materials import _world_board_text
+
+    db, state, _content = game
+    feed = month_chain.build_secret_orders_supply_feed(db, state, {})
+    assert feed.get("board") == _world_board_text(db, state)
+    assert not hasattr(month_chain, "_supply_board_snapshot")
+
+
+def test_step_4a_supply_feed_omits_unfiltered_office_effects(game):
+    """office_change_records 无 turn 列：整月供料不得塞入未过滤的跨月任免记录。"""
+    db, state, _content = game
+    turn = int(state.turn)
+    minister = db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' AND power_id='ming' LIMIT 1"
+    ).fetchone()[0]
+    order_id = create_test_secret_order(
+        db, state, minister, "考选边材", "考选边材以备擢用", [],
+        deadline_months=2,
+    )
+    db.conn.execute(
+        "UPDATE secret_orders SET turn_issued=? WHERE id=?",
+        (turn - 1, order_id),
+    )
+    dossier_id = int(db.get_dossier_for_secret_order(order_id)["id"])
+    db.conn.execute(
+        """
+        INSERT INTO office_change_records
+            (character_name, office_title, office_type, source, dossier_id, appointment_tenure)
+        VALUES (?, '兵部职方司主事', '中央', 'probe', ?, '真除')
+        """,
+        (minister, dossier_id),
+    )
+    db.conn.commit()
+    assert db.list_office_effects_for_dossier(dossier_id)
+
+    feed = month_chain.build_secret_orders_supply_feed(db, state, {})
+    origin_effects = feed.get("origin_effects") or {}
+    assert "office_effects" not in origin_effects

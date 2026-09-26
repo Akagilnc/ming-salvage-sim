@@ -952,20 +952,6 @@ def _apply_deferred_disclosures(
         _save_chain(db, turn, chain, decree_text=decree_text, source=source)
 
 
-def _supply_board_snapshot(db: Any, state: Any) -> str:
-    """必要盘面：复用账本报告读口（与 materials 推演者盘面同源），不另造第二套目录。"""
-    sections = (
-        ("国库", db.treasury_report(state, limit=None) if hasattr(db, "treasury_report") else ""),
-        ("军务", db.army_report(limit=None) if hasattr(db, "army_report") else ""),
-        ("地方", db.region_report(limit=None) if hasattr(db, "region_report") else ""),
-        ("营建", db.buildings_report(qualitative=True) if hasattr(db, "buildings_report") else ""),
-        ("边防", db.power_report(exclude_self=True) if hasattr(db, "power_report") else ""),
-        ("阶级", db.class_report(audience=True) if hasattr(db, "class_report") else ""),
-    )
-    parts = [f"{title}：\n{body}" for title, body in sections if str(body or "").strip()]
-    return "\n\n".join(parts)
-
-
 def _enrich_eligible_dossiers_for_supply(
     db: Any, candidates: List[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
@@ -997,7 +983,6 @@ def _collect_this_turn_origin_effects(
     durable_effects: List[Dict[str, Any]] = []
     economy_moves: List[Dict[str, Any]] = []
     fiscal_effects: List[Dict[str, Any]] = []
-    office_effects: List[Dict[str, Any]] = []
     skill_grants: List[Dict[str, Any]] = []
     person_logs: List[Dict[str, Any]] = []
     region_logs: List[Dict[str, Any]] = []
@@ -1020,8 +1005,7 @@ def _collect_this_turn_origin_effects(
                     fiscal_effects.append(row)
                 else:
                     economy_moves.append(row)
-        if hasattr(db, "list_office_effects_for_dossier"):
-            office_effects.extend(dict(item) for item in db.list_office_effects_for_dossier(did))
+        # office_change_records 无 turn 列，不可本回合过滤；不扩 schema、也不塞未过滤全史。
         if hasattr(db, "list_skill_grants_for_dossier"):
             for item in db.list_skill_grants_for_dossier(did):
                 if int(item.get("source_turn") or 0) == current:
@@ -1068,7 +1052,6 @@ def _collect_this_turn_origin_effects(
         "durable_effects": durable_effects,
         "economy_moves": economy_moves,
         "fiscal_effects": fiscal_effects,
-        "office_effects": office_effects,
         "skill_grants": skill_grants,
         "person_logs": person_logs,
         "region_logs": region_logs,
@@ -1108,13 +1091,14 @@ def build_secret_orders_supply_feed(
             seen.add(did)
             dossier_ids.append(did)
     origin_effects = _collect_this_turn_origin_effects(db, turn, dossier_ids)
+    from ming_sim.materials import _world_board_text
     return {
         "instruction": "为本月所有在办密令产出密奏和执行态声明。",
         "turn": turn,
         "eligible_dossiers": eligible,
         "active_secret_orders": active_orders,
         "origin_effects": origin_effects,
-        "board": _supply_board_snapshot(db, state),
+        "board": _world_board_text(db, state),
     }
 
 
