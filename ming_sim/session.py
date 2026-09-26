@@ -3959,9 +3959,18 @@ class GameSession:
                 self.db, current_turn=int(self.state.turn),
             )
             if pending_tails:
-                raise RuntimeError(
+                exc = RuntimeError(
                     f"机械尾未终结，不能过月：{[turn for turn, _ in pending_tails]}"
                 )
+                pack_path = write_error_pack(
+                    self.db, self.state, exc=exc, extracted=None, resolve_ctx=None,
+                )
+                raise SettlementAbort(
+                    settlement_abort_message(pack_path),
+                    turn=int(self.state.turn),
+                    stage="mechanical_tail_pending",
+                    error_pack_path=pack_path,
+                ) from exc
             catch_gate = None if write_gate_already_held else self._write_gate
             catch_up_pending_translations(
                 self.db, self.state,

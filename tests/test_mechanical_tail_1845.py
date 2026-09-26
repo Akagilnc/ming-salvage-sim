@@ -269,8 +269,13 @@ def test_non_exhausted_tail_failure_stays_pending_and_retries(game, monkeypatch)
 
     # 再过月须等尾终结。worker 虽已异常完成票，持久 pending 不可放行。
     db.save_turn_report(state, "下月邸报")
-    with pytest.raises(RuntimeError, match="机械尾未终结"):
+    from ming_sim.exceptions import SettlementAbort
+    from pathlib import Path
+    with pytest.raises(SettlementAbort) as caught:
         session.resolve_turn(allow_empty_decree=True)
+    assert caught.value.stage == "mechanical_tail_pending"
+    assert caught.value.error_pack_path
+    assert Path(caught.value.error_pack_path).is_dir()
     assert int(state.turn) == closed_turn + 1
     assert month_chain._load_chain(db, closed_turn)["mechanical_tail"]["status"] == "pending"
 
@@ -281,7 +286,7 @@ def test_non_exhausted_tail_failure_stays_pending_and_retries(game, monkeypatch)
 
 
 @pytest.mark.parametrize("model_text,tail_status,visible", [
-    ("史评", "done", "史评"),
+    ("\n 史评 \n", "done", "\n 史评 \n"),
     ("  ", "degraded", ""),
 ])
 def test_ending_summary_runs_in_mechanical_tail_after_advance(

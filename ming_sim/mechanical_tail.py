@@ -123,8 +123,8 @@ def generate_ending_summary_for_tail(
         ending_agent,
         json.dumps(payload, ensure_ascii=False, sort_keys=False),
         tag="ending-summary",
-    ).strip()
-    if not summary_text:
+    )
+    if not summary_text.strip():
         return ""
     save = save_fn or db.save_ending_summary
 
