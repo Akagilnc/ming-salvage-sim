@@ -633,7 +633,8 @@ def _consume_call_failure_for_retry(
         _discard_segment_for_escape(chain, failure)
         chain["translate_exhaust_stops"] = 0
     if step == "secret_orders_supply":
-        if chain.get("secret_orders_supply_invalid") or not chain.get("secret_orders_reports_done"):
+        # 仅废弃 0058 校验未通过的产物；其它中断保留产物，重开接续未完成相。
+        if chain.get("secret_orders_supply_invalid"):
             chain.pop("secret_orders_supply_product", None)
             chain.pop("secret_orders_supply_invalid", None)
     chain.pop("call_failure", None)
@@ -831,6 +832,8 @@ def _settle_edicts(
         current = db.get_decree_dossier(int(dossier["id"])) or dossier
         if str(current.get("promulgation_decision") or "") == "promulgated":
             def persist_result(_ref: str, result: Any) -> None:
+                # 披露暂缓与旨意落账同事务：alongside 在 settle 的 atomic 内，
+                # 须把 pending_disclosures 一并写入月链，崩溃后才能由 4a 接续发布。
                 nonlocal outcome
                 candidate = _ending_from_dispatch_result(result)
                 if candidate is not None:
@@ -838,6 +841,9 @@ def _settle_edicts(
                     if on_outcome is not None:
                         on_outcome(candidate)
                 _collect_disclosures_from_result(chain, result)
+                _save_chain(
+                    db, int(state.turn), chain, source=Provenance.player_decree,
+                )
 
             settle_staged_declarations_in_decree_order(
                 db, state, [ref], source=Provenance.player_decree,
@@ -1059,16 +1065,23 @@ def _step_4a_secret_order_supply(
     # Phase 1: 0058 report completeness validation and persistence
     if not chain.get("secret_orders_reports_done"):
         reports = product.get("dossier_progress_reports") or []
+        validation_failed = False
         try:
             with atomic(db):
                 db.record_monthly_supervision_presence(turn, commit=False)
-                db.record_monthly_dossier_progress(turn, reports)
+                try:
+                    db.record_monthly_dossier_progress(turn, reports)
+                except ValueError:
+                    # 仅 0058 完整性校验失败标 invalid；其它异常保留产物供重试接续。
+                    validation_failed = True
+                    raise
                 chain["secret_orders_reports_done"] = True
                 _save_chain(db, turn, chain, decree_text=decree_text, source=source)
         except Exception as exc:
-            # 无效标记须先落盘：_abort_month_call 只叠 call_failure 到已提交链。
-            chain["secret_orders_supply_invalid"] = True
-            _save_chain(db, turn, chain, decree_text=decree_text, source=source)
+            if validation_failed:
+                # 无效标记须先落盘：_abort_month_call 只叠 call_failure 到已提交链。
+                chain["secret_orders_supply_invalid"] = True
+                _save_chain(db, turn, chain, decree_text=decree_text, source=source)
             _abort_month_call(
                 db, state, chain,
                 decree_text=decree_text, source=source,

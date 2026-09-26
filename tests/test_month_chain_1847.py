@@ -1498,14 +1498,189 @@ def test_step_4a_missing_covert_fidelity_records_inline_rejection(game, monkeypa
     result = session.resolve_turn(allow_empty_decree=True)
     assert result.stage == "gazette"
 
-    # Inline rejection recorded for covert_exec_selections
+    # Inline rejection：断言机读 category，不读人读 prose（ADR 0142 / 0073）
     rejections = db.conn.execute(
         "SELECT section, category, reason FROM rejection_reports "
         "WHERE turn=? AND section='covert_exec_selections'",
         (turn,),
     ).fetchall()
     assert len(rejections) == 1
-    assert "缺少有效执行态" in str(rejections[0]["reason"])
+    assert rejections[0]["category"] == "invalid_enum"
+
+
+def test_settle_edicts_persists_pending_disclosures_in_same_transaction(game, monkeypatch):
+    """_settle_edicts.persist_result：disclosed 暂缓项须与旨意结算同事务写入月链。"""
+    from types import SimpleNamespace
+
+    from ming_sim.decree_forecast import pending_action_decree_ref, stage_declaration
+    from ming_sim.month_chain import _load_chain, _settle_edicts
+
+    db, state, content = game
+    turn = int(state.turn)
+    minister = db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' AND power_id='ming' LIMIT 1"
+    ).fetchone()[0]
+    order_id = create_test_secret_order(
+        db, state, minister, "披露暂缓密令", "差务", [], deadline_months=2,
+    )
+    db.conn.execute("UPDATE secret_orders SET turn_issued=? WHERE id=?", (turn - 1, order_id))
+    pending_id = db.stage_pending_action(
+        state.turn, kind="directive", action="拟旨", minister_name=minister,
+        payload={
+            "dossier_action_type": "policy", "target_kind": "issue",
+            "target_id": "disclosure-pending", "actor": minister, "mode": "ordinary",
+            "text": "查抄并明发",
+        },
+    )
+    dossier_id = db.create_decree_dossier(
+        state, action_type="policy", decree_text="查抄并明发",
+        target_kind="issue", target_id="disclosure-pending",
+        pending_action_id=pending_id,
+        payload={"text": "查抄并明发"},
+    )
+    db.conn.execute(
+        "UPDATE decree_dossiers SET status='promulgated', promulgation_decision='promulgated' "
+        "WHERE id=?",
+        (dossier_id,),
+    )
+    ref = pending_action_decree_ref(pending_id, 1)
+    stage_declaration(
+        db, decree_ref=ref, turn=turn,
+        declaration={"effects": {"secret_order_updates": [{
+            "order_id": order_id,
+            "sim_note": "私仓已查封，案情明发",
+            "disclosed": True,
+        }]}},
+        verdict={"decision": "promulgated"},
+        visible_refs={"secret_orders": [order_id], "issues": [], "affairs": []},
+    )
+    db.conn.commit()
+
+    sess = SimpleNamespace(
+        db=db, state=state, llm_config=None, agno_db=None, content=content,
+    )
+    chain: dict = {}
+    _settle_edicts(sess, registry=None, chain=chain)
+
+    assert db.staged_declarations.is_settled(ref)
+    reloaded = _load_chain(db, turn)
+    pending = reloaded.get("pending_disclosures") or []
+    assert any(
+        int(item.get("order_id") or 0) == order_id
+        and "私仓已查封" in str(item.get("sim_note") or "")
+        for item in pending
+    ), f"pending_disclosures missing after settle: {pending!r}"
+
+    # 同事务：alongside 内 _save_chain 失败须回滚结算标记
+    order_2 = create_test_secret_order(
+        db, state, minister, "原子回滚密令", "差务二", [], deadline_months=2,
+    )
+    db.conn.execute("UPDATE secret_orders SET turn_issued=? WHERE id=?", (turn - 1, order_2))
+    pending_2 = db.stage_pending_action(
+        state.turn, kind="directive", action="拟旨", minister_name=minister,
+        payload={
+            "dossier_action_type": "policy", "target_kind": "issue",
+            "target_id": "disclosure-atomic", "actor": minister, "mode": "ordinary",
+            "text": "第二道披露旨",
+        },
+    )
+    dossier_2 = db.create_decree_dossier(
+        state, action_type="policy", decree_text="第二道披露旨",
+        target_kind="issue", target_id="disclosure-atomic",
+        pending_action_id=pending_2,
+        payload={"text": "第二道披露旨"},
+    )
+    db.conn.execute(
+        "UPDATE decree_dossiers SET status='promulgated', promulgation_decision='promulgated' "
+        "WHERE id=?",
+        (dossier_2,),
+    )
+    ref_2 = pending_action_decree_ref(pending_2, 1)
+    stage_declaration(
+        db, decree_ref=ref_2, turn=turn,
+        declaration={"effects": {"secret_order_updates": [{
+            "order_id": order_2,
+            "sim_note": "第二道应暂缓",
+            "disclosed": True,
+        }]}},
+        verdict={"decision": "promulgated"},
+        visible_refs={"secret_orders": [order_2], "issues": [], "affairs": []},
+    )
+    db.conn.commit()
+
+    real_save = month_chain._save_chain
+
+    def boom_save(db_, turn_, chain_, **kwargs):
+        pending_now = chain_.get("pending_disclosures") or []
+        if any(int(item.get("order_id") or 0) == order_2 for item in pending_now):
+            raise RuntimeError("injected chain save failure")
+        return real_save(db_, turn_, chain_, **kwargs)
+
+    monkeypatch.setattr(month_chain, "_save_chain", boom_save)
+    with pytest.raises(RuntimeError, match="injected chain save failure"):
+        _settle_edicts(sess, registry=None, chain=chain)
+    assert not db.staged_declarations.is_settled(ref_2)
+
+
+def test_step_4a_non_validation_failure_keeps_product_on_retry(game, monkeypatch):
+    """步骤 4a：非 0058 校验失败不得标 invalid；重试保留产物、不重跑 supply。"""
+    from ming_sim.exceptions import SettlementAbort
+
+    db, state, content = game
+    turn = int(state.turn)
+    minister = db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' AND power_id='ming' LIMIT 1"
+    ).fetchone()[0]
+    order_id = create_test_secret_order(db, state, minister, "密令", "差务", [], deadline_months=2)
+    db.conn.execute("UPDATE secret_orders SET turn_issued=? WHERE id=?", (turn - 1, order_id))
+    dossier_id = int(db.get_dossier_for_secret_order(order_id)["id"])
+    db.conn.commit()
+
+    call_count = 0
+
+    def supply_run(*_a, **_k):
+        nonlocal call_count
+        call_count += 1
+        return {
+            "dossier_progress_reports": [{
+                "dossier_id": dossier_id,
+                "progress_band": "持平",
+                "memorial_text": "完整密奏",
+            }],
+            "covert_exec_selections": [{"order_id": order_id, "fidelity": "忠实"}],
+        }
+
+    real_presence = db.record_monthly_supervision_presence
+    fail_once = True
+
+    def flaky_presence(turn_, **kwargs):
+        nonlocal fail_once
+        if fail_once:
+            fail_once = False
+            raise RuntimeError("injected supervision presence failure")
+        return real_presence(turn_, **kwargs)
+
+    _forbid_extractor(monkeypatch)
+    monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "边事暂宁。")
+    monkeypatch.setattr(month_translate, "translate_month_segment", lambda *a, **k: {"effects": {}})
+    monkeypatch.setattr(month_chain, "run_secret_orders_supply", supply_run)
+    monkeypatch.setattr(db, "record_monthly_supervision_presence", flaky_presence)
+
+    session = make_light_session(db, state, content)
+    session._write_gate = threading.Lock()
+
+    with pytest.raises(SettlementAbort) as caught:
+        session.resolve_turn(allow_empty_decree=True)
+    assert caught.value.stage == "secret_orders_supply"
+    chain = month_chain._load_chain(db, turn)
+    assert chain.get("secret_orders_supply_invalid") is not True
+    assert chain.get("secret_orders_supply_product") is not None
+    assert call_count == 1
+
+    result = session.resolve_turn(allow_empty_decree=True)
+    assert result.stage == "gazette"
+    assert call_count == 1  # 保留产物，不重跑 supply
+    assert len(db.list_dossier_progress(dossier_id)) == 1
 
 
 def test_step_4a_settles_due_secret_order(game, monkeypatch):
