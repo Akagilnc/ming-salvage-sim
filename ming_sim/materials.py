@@ -1461,8 +1461,10 @@ def _world_opening_text(
     affair_lines: list[tuple[str, str, str, str]],
     dossier_facts: list[dict[str, object]],
 ) -> str:
+    from ming_sim.models import reign_period_label
+
     parts = [
-        f"日期：{int(state.year)}年{int(state.period)}月",
+        f"日期：{reign_period_label(int(state.year), int(state.period))}",
         "盘面：",
         board_text,
         "开着的事务：" if affair_lines else "开着的事务：（无）",

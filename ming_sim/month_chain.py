@@ -216,8 +216,19 @@ def _gazette_feed(db: Any, state: Any, chain: Dict[str, Any]) -> Dict[str, Any]:
     snapshot = None
     if hasattr(db, "get_month_open_snapshot"):
         snapshot = db.get_month_open_snapshot(turn)
+    from ming_sim.audience_night import list_waiting_audience_summons
+    from ming_sim.models import reign_period_label
+    from ming_sim.settlement_payload import augment_secret_orders_with_due_commitments
+
+    grouped = augment_secret_orders_with_due_commitments({}, db, state)
+    due_commitments = [
+        item for group in grouped.values()
+        for item in group
+        if isinstance(item, dict) and item.get("entry_kind") == "due_commitment"
+    ] if isinstance(grouped, dict) else []
     return {
         "instruction": "据已落定的实况写本期邸报。title 由你写，report 是全文。",
+        "reign_period_label": reign_period_label(int(state.year), int(state.period)),
         "nominal": nominal,
         "landed": landed,
         "rejections": rejections,
@@ -225,6 +236,8 @@ def _gazette_feed(db: Any, state: Any, chain: Dict[str, Any]) -> Dict[str, Any]:
         "world_segment": str(chain.get("world_text") or ""),
         "rescript_answers": answers,
         "month_open": snapshot,
+        "due_commitments": due_commitments,
+        "waiting_audience": list_waiting_audience_summons(db),
     }
 
 

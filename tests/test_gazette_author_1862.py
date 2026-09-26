@@ -17,7 +17,8 @@ from ming_sim.materials import (
     prepare_world_materials,
     release_material_tree,
 )
-from ming_sim.models import LLMConfig
+from ming_sim.audience_night import record_summon_in_transit
+from ming_sim.models import LLMConfig, reign_period_label
 from tests.conftest import append_night_chat, open_audience_night
 from tests.dossier_test_helpers import create_test_secret_order
 from tests.settlement_seam_helpers import make_light_session
@@ -184,6 +185,21 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
         body=_PRIVATE_KEEP, tags=["scroll_role:minister"],
         source_chat_turn_id=plain_turn, origin_chat_turn_id=plain_turn,
     )
+    waiter = db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' ORDER BY name LIMIT 1"
+    ).fetchone()["name"]
+    db.conn.execute(
+        "UPDATE characters SET location='beizhili', transit_to='' WHERE name=?",
+        (waiter,),
+    )
+    record_summon_in_transit(
+        db, night_id, waiter, origin_id="gazette-wait-1862",
+    )
+    db.conn.execute(
+        "INSERT INTO issues (kind, title, origin_turn, commitment_kind, end_turn, stage_text) "
+        "VALUES ('commitment', ?, ?, 'once', ?, ?)",
+        ("到期公开承诺1862", turn, turn, "公开到期正文1862"),
+    )
     db.conn.execute(
         "UPDATE audience_nights SET status='closed' WHERE id=?", (night_id,),
     )
@@ -259,6 +275,17 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
     assert _SECRET_REJ not in json.dumps(payload["rejections"], ensure_ascii=False)
     assert payload["world_segment"] == "WORLD_PUBLIC_SEGMENT"
     assert "朱批可见" in json.dumps(payload["rescript_answers"], ensure_ascii=False)
+    label = reign_period_label(year, period)
+    assert payload["reign_period_label"] == label
+    assert label in seen["instructions"]
+    assert any(
+        item.get("entry_kind") == "due_commitment" and item.get("title") == "到期公开承诺1862"
+        for item in payload["due_commitments"]
+    )
+    assert any(
+        item.get("person_name") == waiter and item.get("origin_id") == "gazette-wait-1862"
+        for item in payload["waiting_audience"]
+    ), payload["waiting_audience"]
     assert set(payload["month_open"]) == {"国库", "内库", "民心", "皇威"}
     assert _PUBLIC_FACT in seen["files"]
     assert _SECRET_FACT not in seen["files"]
