@@ -217,6 +217,7 @@ def _gazette_feed(db: Any, state: Any, chain: Dict[str, Any]) -> Dict[str, Any]:
     if hasattr(db, "get_month_open_snapshot"):
         snapshot = db.get_month_open_snapshot(turn)
     from ming_sim.audience_night import list_waiting_audience_summons
+    from ming_sim.decree import collect_new_arrival_waiting_audience
     from ming_sim.models import reign_period_label
     from ming_sim.settlement_payload import augment_secret_orders_with_due_commitments
 
@@ -238,8 +239,20 @@ def _gazette_feed(db: Any, state: Any, chain: Dict[str, Any]) -> Dict[str, Any]:
         "rescript_answers": answers,
         "month_open": snapshot,
         "due_commitments": due_commitments,
-        "waiting_audience": list_waiting_audience_summons(db),
+        "waiting_audience": collect_new_arrival_waiting_audience(
+            _persisted_transit_arrivals(db, turn),
+            list_waiting_audience_summons(db),
+        ),
     }
+
+
+def _persisted_transit_arrivals(db: Any, turn: int) -> list:
+    """过月前半段已写入 resolve context 的本月抵达。缺键与非列表按该读口视为无抵达。"""
+    ctx = db.get_resolve_context(int(turn)) or {}
+    payload = ctx.get("simulator_payload") if isinstance(ctx, dict) else None
+    if isinstance(payload, dict) and isinstance(payload.get("transit_arrivals"), list):
+        return list(payload["transit_arrivals"])
+    return []
 
 
 def run_gazette_text(

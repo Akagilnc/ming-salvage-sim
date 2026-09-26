@@ -185,15 +185,30 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
         body=_PRIVATE_KEEP, tags=["scroll_role:minister"],
         source_chat_turn_id=plain_turn, origin_chat_turn_id=plain_turn,
     )
-    waiter = db.conn.execute(
-        "SELECT name FROM characters WHERE status='active' ORDER BY name LIMIT 1"
-    ).fetchone()["name"]
+    names = [
+        row["name"] for row in db.conn.execute(
+            "SELECT name FROM characters WHERE status='active' ORDER BY name LIMIT 2"
+        ).fetchall()
+    ]
+    old_waiter, arriver = names
     db.conn.execute(
         "UPDATE characters SET location='beizhili', transit_to='' WHERE name=?",
-        (waiter,),
+        (old_waiter,),
     )
     record_summon_in_transit(
-        db, night_id, waiter, origin_id="gazette-wait-1862",
+        db, night_id, old_waiter, origin_id="gazette-old-wait-1862",
+    )
+    db.set_character_transit(
+        arriver,
+        location="liaodong",
+        transit_to="beizhili",
+        distance_remaining=0.5,
+        speed_factor=1.0,
+        start_turn=int(turn) - 1,
+        content=content,
+    )
+    record_summon_in_transit(
+        db, night_id, arriver, origin_id="gazette-arrive-1862",
     )
     db.conn.execute(
         "INSERT INTO issues (kind, title, origin_turn, commitment_kind, end_turn, stage_text) "
@@ -283,7 +298,11 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
         for item in payload["due_commitments"]
     )
     assert any(
-        item.get("person_name") == waiter and item.get("origin_id") == "gazette-wait-1862"
+        item.get("person_name") == arriver and item.get("origin_id") == "gazette-arrive-1862"
+        for item in payload["waiting_audience"]
+    ), payload["waiting_audience"]
+    assert all(
+        item.get("person_name") != old_waiter
         for item in payload["waiting_audience"]
     ), payload["waiting_audience"]
     assert set(payload["month_open"]) == {"国库", "内库", "民心", "皇威"}
