@@ -6915,13 +6915,25 @@ class GameDB:
         values = {str(row["key"]): float(row["value"] or 0) for row in containers}
         if len(values) != 3:
             return None
+        arrived = int(values.get("hub_京运实拨", 0) + values.get("hub_中央军饷实拨", 0))
+        transit_loss = int(values.get("hub_京运损耗", 0))
+        if expr:
+            from ming_sim.flows import public_jingyun_transit_loss
+            projected = public_jingyun_transit_loss(
+                self,
+                arrived + transit_loss,
+                self.excluded_fiscal_config_changes(
+                    exclude_origin_prefix=exclude_origin_prefix,
+                    exclude_dossier_ids=exclude_dossier_ids,
+                ),
+            )
+            if projected is not None:
+                transit_loss = projected
         return {
             "settled_turn": settled_turn,
             "treasury_disbursed": int(hub_debit["amount"] or 0),
-            "actual_arrived": int(
-                values.get("hub_京运实拨", 0) + values.get("hub_中央军饷实拨", 0)
-            ),
-            "transit_loss": int(values.get("hub_京运损耗", 0)),
+            "actual_arrived": arrived,
+            "transit_loss": transit_loss,
         }
 
     def treasury_report(

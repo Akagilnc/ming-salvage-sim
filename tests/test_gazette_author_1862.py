@@ -442,7 +442,7 @@ def _budget_amount(lines, name: str) -> int:
 
 def test_gazette_report_cannot_reconstruct_secret_source_amounts(game, content, monkeypatch):
     """作者入口的结构化钱粮不含密源余额、边饷、固定密项与动态科目真值。"""
-    from ming_sim.flows import compute_budget_lines
+    from ming_sim.flows import _central_loss_split, compute_budget_lines
     from ming_sim.issues import apply_score_extraction
 
     db, state, content = game
@@ -493,7 +493,34 @@ def test_gazette_report_cannot_reconstruct_secret_source_amounts(game, content, 
     db.sync_economy_accounts(state)
     state.turn_phase = "settling"
     db._mark_substrate_hub_fiscal_engine_enabled()
-    for key, value in (("hub_京运实拨", 11), ("hub_中央军饷实拨", 13), ("hub_京运损耗", 2)):
+    live_cfg = db.get_fiscal_config()
+    public_jingyun_human = int(live_cfg["central_jingyun_human_loss_rate"])
+    public_jingyun_sink = int(live_cfg["central_jingyun_sink_loss_rate"])
+    secret_jingyun_human = public_jingyun_human + 16
+    hub_gross = 1000
+
+    def _jingyun_loss(human_rate: int, sink_rate: int) -> int:
+        human, sink = _central_loss_split(
+            db, hub_gross,
+            "central_jingyun_human_loss_rate",
+            "central_jingyun_sink_loss_rate",
+            {
+                "central_jingyun_human_loss_rate": human_rate,
+                "central_jingyun_sink_loss_rate": sink_rate,
+            },
+        )
+        return human + sink
+
+    secret_transit = _jingyun_loss(secret_jingyun_human, public_jingyun_sink)
+    public_transit = _jingyun_loss(public_jingyun_human, public_jingyun_sink)
+    assert secret_transit != public_transit
+    arrived_jingyun = 400
+    arrived_central = hub_gross - secret_transit - arrived_jingyun
+    for key, value in (
+        ("hub_京运实拨", arrived_jingyun),
+        ("hub_中央军饷实拨", arrived_central),
+        ("hub_京运损耗", secret_transit),
+    ):
         db.conn.execute(
             """
             INSERT INTO fiscal_containers (key, value, note)
@@ -516,6 +543,10 @@ def test_gazette_report_cannot_reconstruct_secret_source_amounts(game, content, 
         {"fiscal_changes": [
             {"key": "皇庄_base", "delta": 30, "reason": "密加皇庄", "origin_ref": origin},
             {"key": "盐税_base", "delta": 23, "reason": "密加盐税", "origin_ref": origin},
+            {
+                "key": "central_jingyun_human_loss_rate", "delta": 16,
+                "reason": "密加京运克扣", "origin_ref": origin,
+            },
         ]},
         content=content,
     )
@@ -581,6 +612,10 @@ def test_gazette_report_cannot_reconstruct_secret_source_amounts(game, content, 
     assert treasury["balances"]["内库"] != raw_nk
     assert treasury["hub"]["treasury_disbursed"] == filtered_hub
     assert treasury["hub"]["treasury_disbursed"] != raw_hub
+    assert treasury["hub"]["transit_loss"] == public_transit
+    assert treasury["hub"]["transit_loss"] != secret_transit
+    assert treasury["hub"]["actual_arrived"] == arrived_jingyun + arrived_central
+    assert db.treasury_hub_result(state)["transit_loss"] == secret_transit
     assert _budget_amount(treasury["budget"], "皇庄") == public_huang
     assert _budget_amount(treasury["budget"], "盐税") == public_salt
     assert _budget_amount(treasury["budget"], "皇庄") != true_huang

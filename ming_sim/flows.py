@@ -607,9 +607,11 @@ def compute_budget_lines(
     return budget
 
 
-_LOSS_RATE_KEYS = (
+_TAICANG_LOSS_RATE_KEYS = (
     _CENTRAL_TAICANG_HUMAN_LOSS_RATE,
     _CENTRAL_TAICANG_SINK_LOSS_RATE,
+)
+_JINGYUN_LOSS_RATE_KEYS = (
     _CENTRAL_JINGYUN_HUMAN_LOSS_RATE,
     _CENTRAL_JINGYUN_SINK_LOSS_RATE,
 )
@@ -625,6 +627,17 @@ def _unscale_rounded(current: int, old_cfg: int, new_cfg: int) -> Optional[int]:
     if old_cfg <= 0 or new_cfg <= 0:
         return None
     return max(0, int(round(current * old_cfg / new_cfg)))
+
+
+def public_jingyun_transit_loss(db: GameDB, gross: int, changes) -> Optional[int]:
+    """已执行 hub 毛额按公开京运损耗率重算途中损耗。两率未被密源改过则返回 None。"""
+    if not any(str(row["key"]) in _JINGYUN_LOSS_RATE_KEYS for row in changes):
+        return None
+    human, sink = _central_loss_split(
+        db, gross, _JINGYUN_LOSS_RATE_KEYS[0], _JINGYUN_LOSS_RATE_KEYS[1],
+        _public_fiscal_cfg(db, changes),
+    )
+    return human + sink
 
 
 def _public_fiscal_cfg(db: GameDB, changes) -> Dict[str, Any]:
@@ -660,7 +673,7 @@ def _tainted_budget_names(db: GameDB, changes) -> set[str]:
         if stem in _STEM_BUDGET_NAMES:
             names.update(_STEM_BUDGET_NAMES[stem])
             income_tainted = True
-        if key in _LOSS_RATE_KEYS:
+        if key in _TAICANG_LOSS_RATE_KEYS:
             names.add("太仓亏空")
     if income_tainted:
         names.add("太仓亏空")
