@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import threading
 
 import pytest
@@ -432,3 +433,135 @@ def test_gazette_failure_retries_report_only(game, monkeypatch):
     archive = db.get_turn_report_archive(turn)
     assert archive["title"] == _TITLE
     assert archive["report"] == _REPORT
+
+
+def _amount_token(text: str, amount: int) -> bool:
+    return re.search(rf"(?<!\d){int(amount)}(?!\d)", text) is not None
+
+
+def test_gazette_report_cannot_reconstruct_secret_source_amounts(game, content, monkeypatch):
+    """余额、预算、边饷与月初快照同一密源口径，差额推不出密支。"""
+    db, state, content = game
+    minister = next(iter(content.characters.values())).name
+    order_id = create_test_secret_order(
+        db, state, minister, "密支不入报告", "密令原件", ["查办"],
+    )
+    secret_did = int(db.get_dossier_for_secret_order(order_id)["id"])
+    hist_gk, hist_nk = -392173, -618407
+    secret_hub, public_hub = -481621, -190007
+    secret_budget = 273419
+    public_open_gk, public_open_nk = 51000019, 52000023
+    raw_gk, raw_nk = 53000029, 54000031
+    turn = int(state.turn)
+
+    def ledger(at_turn, account, delta, category, origin, reason):
+        db.conn.execute(
+            """
+            INSERT INTO economy_ledger (
+                turn, year, period, account, delta, balance_after,
+                category, reason, origin_ref
+            ) VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)
+            """,
+            (at_turn, state.year, state.period, account, delta, category, reason, origin),
+        )
+
+    ledger(turn - 1, "国库", hist_gk, "密支", f"dossier:{secret_did}", "月初前密支")
+    ledger(turn - 1, "内库", hist_nk, "密支", f"dossier:{secret_did}", "月初前内密")
+    state.metrics["国库"] = public_open_gk + hist_gk
+    state.metrics["内库"] = public_open_nk + hist_nk
+    db.sync_economy_accounts(state)
+    assert db.capture_month_open_snapshot(state) is True
+
+    ledger(turn, "国库", secret_hub, "边饷hub", f"secret_order:{order_id}", "密源边饷")
+    ledger(turn, "国库", public_hub, "边饷hub", "", "公开边饷")
+    state.metrics["国库"] = raw_gk
+    state.metrics["内库"] = raw_nk
+    db.sync_economy_accounts(state)
+    state.turn_phase = "settling"
+    db._mark_substrate_hub_fiscal_engine_enabled()
+    for key, value in (("hub_京运实拨", 11), ("hub_中央军饷实拨", 13), ("hub_京运损耗", 2)):
+        db.conn.execute(
+            """
+            INSERT INTO fiscal_containers (key, value, note)
+            VALUES (?, ?, '')
+            ON CONFLICT(key) DO UPDATE SET value=excluded.value
+            """,
+            (key, value),
+        )
+    db.create_fiscal_item(
+        "密支月拨1862", "国库", "expense", "密支月拨", secret_budget,
+        origin_ref=f"dossier:{secret_did}", turn=turn,
+    )
+    db.create_fiscal_item(
+        "公开月拨1862", "国库", "expense", "公开月拨", 150113,
+        origin_ref="player_decree:1862", turn=turn,
+    )
+    db.conn.commit()
+
+    from ming_sim.flows import compute_budget_lines
+    budget = compute_budget_lines(db, state)
+    raw_out = sum(int(item["amount"]) for item in budget["国库"]["expense"])
+    secret_line = sum(
+        int(item["amount"]) for item in budget["国库"]["expense"]
+        if str(item.get("origin_ref") or "") == f"dossier:{secret_did}"
+    )
+    assert secret_line == secret_budget
+    filtered_out = raw_out - secret_line
+    raw_hub = int(db.conn.execute(
+        """
+        SELECT COALESCE(SUM(-delta), 0) AS amount FROM economy_ledger
+        WHERE turn = ? AND account = '国库' AND category = '边饷hub'
+        """,
+        (turn,),
+    ).fetchone()["amount"])
+    filtered_hub = raw_hub - (-secret_hub)
+    expected_gk = raw_gk - hist_gk - secret_hub
+    expected_nk = raw_nk - hist_nk
+    exclusions = {
+        "exclude_origin_prefix": "secret_order:",
+        "exclude_dossier_ids": {secret_did},
+    }
+    filtered = db.treasury_report(state, limit=None, **exclusions)
+    raw_report = db.treasury_report(state, limit=None)
+    for present, absent in (
+        (expected_gk, raw_gk), (expected_nk, raw_nk),
+        (filtered_out, raw_out), (filtered_hub, raw_hub),
+    ):
+        assert present != absent
+        assert str(present) not in str(absent) and str(absent) not in str(present)
+        assert _amount_token(filtered, present)
+        assert not _amount_token(filtered, absent)
+        assert _amount_token(raw_report, absent)
+    for secret_amount in (abs(hist_gk), abs(hist_nk), abs(secret_hub), secret_budget):
+        assert not _amount_token(filtered, secret_amount)
+
+    seen = {}
+
+    def run_agent(agent, prompt, tag, **_kwargs):
+        seen["prompt"] = prompt
+        seen["instructions"] = "\n".join(getattr(agent, "instructions", None) or [])
+        return json.dumps({"title": "题", "report": "正文"}, ensure_ascii=False)
+
+    monkeypatch.setattr("ming_sim.agents.run_agent_text", run_agent)
+    title, report = month_chain.run_gazette_text(
+        db, state, _llm(), {"world_segment": "世界段"},
+    )
+    assert title == "题" and report == "正文"
+    assert filtered in seen["instructions"]
+    assert raw_report not in seen["instructions"]
+    payload = json.loads(seen["prompt"])
+    assert payload["month_open"]["国库"] == public_open_gk
+    assert payload["month_open"]["内库"] == public_open_nk
+    stored = db.get_month_open_snapshot(turn)
+    assert stored["国库"] == public_open_gk + hist_gk
+    assert stored["内库"] == public_open_nk + hist_nk
+    assert payload["month_open"]["民心"] == stored["民心"]
+    assert payload["month_open"]["皇威"] == stored["皇威"]
+
+    world = prepare_world_materials(db, state)
+    try:
+        world_board = (world.root / "盘面" / "全局.txt").read_text(encoding="utf-8")
+    finally:
+        release_material_tree(world.root)
+    assert _amount_token(world_board, raw_gk)
+    assert _amount_token(world_board, abs(secret_hub))

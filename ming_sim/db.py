@@ -6705,11 +6705,88 @@ class GameDB:
         self.sync_economy_accounts(state)
         self.conn.commit()
 
-    def treasury_budget_summary(self, state: "GameState | None" = None) -> str:
+    def _ledger_exclusion_expr(
+        self,
+        exclude_origin_prefix: str = "",
+        exclude_dossier_ids: Optional[Iterable[int]] = None,
+    ) -> tuple[str, Tuple[object, ...]]:
+        """SQL boolean true for secret-source rows. Empty when no exclusion."""
+        prefix = str(exclude_origin_prefix or "")
+        dossier_ids = tuple(
+            int(item) for item in (exclude_dossier_ids or ()) if int(item) > 0
+        )
+        parts: List[str] = []
+        params: List[object] = []
+        if prefix:
+            parts.append("origin_ref LIKE ?")
+            params.append(prefix + "%")
+        if dossier_ids:
+            marks = ",".join("?" * len(dossier_ids))
+            parts.append(
+                "(origin_ref LIKE 'dossier:%' AND "
+                f"CAST(substr(origin_ref, 9) AS INTEGER) IN ({marks}))"
+            )
+            params.extend(dossier_ids)
+        if not parts:
+            return "", ()
+        return "(" + " OR ".join(parts) + ")", tuple(params)
+
+    def excluded_account_deltas(
+        self,
+        *,
+        exclude_origin_prefix: str = "",
+        exclude_dossier_ids: Optional[Iterable[int]] = None,
+        turn_before: Optional[int] = None,
+    ) -> Dict[str, int]:
+        """Sum of ledger deltas the gazette must not treat as public."""
+        expr, params = self._ledger_exclusion_expr(
+            exclude_origin_prefix, exclude_dossier_ids,
+        )
+        if not expr:
+            return {}
+        turn_sql = ""
+        turn_params: Tuple[object, ...] = ()
+        if turn_before is not None:
+            turn_sql = " AND turn < ?"
+            turn_params = (int(turn_before),)
+        rows = self.conn.execute(
+            f"""
+            SELECT account, COALESCE(SUM(delta), 0) AS hidden
+            FROM economy_ledger
+            WHERE {expr}{turn_sql}
+            GROUP BY account
+            """,
+            (*params, *turn_params),
+        ).fetchall()
+        return {str(row["account"]): int(row["hidden"] or 0) for row in rows}
+
+    def treasury_budget_summary(
+        self, state: "GameState | None" = None, *,
+        exclude_origin_prefix: str = "",
+        exclude_dossier_ids: Optional[Iterable[int]] = None,
+    ) -> str:
         # 三套口径统一：直接调 flows.compute_budget_lines（唯一定额源），此处只负责拼文本。
         from ming_sim.flows import compute_budget_lines  # 局部 import 避免与 flows 顶层循环依赖
         st = state if state is not None else self.load_state("")
         budget = compute_budget_lines(self, st)
+        expr, params = self._ledger_exclusion_expr(
+            exclude_origin_prefix, exclude_dossier_ids,
+        )
+        if expr:
+            excluded_origins = {
+                str(row["origin_ref"] or "")
+                for row in self.conn.execute(
+                    f"SELECT origin_ref FROM fiscal_config WHERE {expr}",
+                    params,
+                ).fetchall()
+            }
+            if excluded_origins:
+                for account in budget.values():
+                    for direction in ("income", "expense"):
+                        account[direction] = [
+                            item for item in account[direction]
+                            if str(item.get("origin_ref") or "") not in excluded_origins
+                        ]
 
         def _sum(acc: str, direction: str) -> int:
             return sum(int(it["amount"]) for it in budget[acc][direction])
@@ -6768,7 +6845,11 @@ class GameDB:
             f"净{format_money_delta(nk_in - nk_out)}。"
         )
 
-    def treasury_hub_result(self, state: GameState) -> Optional[Dict[str, int]]:
+    def treasury_hub_result(
+        self, state: GameState, *,
+        exclude_origin_prefix: str = "",
+        exclude_dossier_ids: Optional[Iterable[int]] = None,
+    ) -> Optional[Dict[str, int]]:
         """已执行边饷 hub 三项结果；只读 ledger/container，不重算结算。"""
         if not self.is_substrate_hub_fiscal_engine_enabled():
             return None
@@ -6779,13 +6860,17 @@ class GameDB:
         # 会把上一次结算的旧 turn 流水与本次刚覆盖的新 turn 容器拼在一起。
         front_half_done = str(getattr(state, "turn_phase", "") or "") in FRONT_HALF_DONE_PHASES
         settled_turn = max(0, int(state.turn) - (0 if front_half_done else 1))
+        expr, expr_params = self._ledger_exclusion_expr(
+            exclude_origin_prefix, exclude_dossier_ids,
+        )
+        visible_sql = f" AND NOT {expr}" if expr else ""
         hub_debit = self.conn.execute(
-            """
+            f"""
             SELECT COALESCE(SUM(-delta), 0) AS amount
             FROM economy_ledger
-            WHERE turn = ? AND account = '国库' AND category = '边饷hub'
+            WHERE turn = ? AND account = '国库' AND category = '边饷hub'{visible_sql}
             """,
-            (settled_turn,),
+            (settled_turn, *expr_params),
         ).fetchone()
         containers = self.conn.execute(
             """
@@ -6810,41 +6895,43 @@ class GameDB:
         exclude_origin_prefix: str = "",
         exclude_dossier_ids: Optional[Iterable[int]] = None,
     ) -> str:
+        expr, expr_params = self._ledger_exclusion_expr(
+            exclude_origin_prefix, exclude_dossier_ids,
+        )
+        hidden = self.excluded_account_deltas(
+            exclude_origin_prefix=exclude_origin_prefix,
+            exclude_dossier_ids=exclude_dossier_ids,
+        ) if expr else {}
+
+        def _shown(account: str, raw: int) -> int:
+            return int(raw) - int(hidden.get(account, 0))
+
         account_rows = self.conn.execute(
             "SELECT account, balance FROM economy_accounts ORDER BY account DESC"
         ).fetchall()
         if not account_rows:
-            account_text = f"国库{format_money(state.metrics['国库'])}，内库{format_money(state.metrics['内库'])}"
-        else:
-            account_text = "，".join(f"{row['account']}{format_money(int(row['balance']))}" for row in account_rows)
-
-        origin_clause = ""
-        origin_params: Tuple[object, ...] = ()
-        prefix = str(exclude_origin_prefix or "")
-        dossier_ids = tuple(
-            int(item) for item in (exclude_dossier_ids or ()) if int(item) > 0
-        )
-        dossier_clause = ""
-        if dossier_ids:
-            marks = ",".join("?" * len(dossier_ids))
-            dossier_clause = (
-                " AND NOT (origin_ref LIKE 'dossier:%' AND "
-                f"CAST(substr(origin_ref, 9) AS INTEGER) IN ({marks}))"
+            account_text = (
+                f"国库{format_money(_shown('国库', int(state.metrics['国库'])))}，"
+                f"内库{format_money(_shown('内库', int(state.metrics['内库'])))}"
             )
-        if prefix:
-            origin_clause = " AND origin_ref NOT LIKE ?"
-            origin_params = (prefix + "%",)
+        else:
+            account_text = "，".join(
+                f"{row['account']}{format_money(_shown(str(row['account']), int(row['balance'])))}"
+                for row in account_rows
+            )
+
+        visible_sql = f" AND NOT {expr}" if expr else ""
         period_rows = self.conn.execute(
             f"""
             SELECT account,
                    SUM(CASE WHEN delta > 0 THEN delta ELSE 0 END) AS income,
                    SUM(CASE WHEN delta < 0 THEN -delta ELSE 0 END) AS expense
             FROM economy_ledger
-            WHERE turn = ?{origin_clause}{dossier_clause}
+            WHERE turn = ?{visible_sql}
             GROUP BY account
             ORDER BY account DESC
             """,
-            (state.turn, *origin_params, *dossier_ids),
+            (state.turn, *expr_params),
         ).fetchall()
         period_text = "；".join(
             f"{row['account']}入{format_money(int(row['income'] or 0))}出{format_money(int(row['expense'] or 0))}"
@@ -6859,14 +6946,9 @@ class GameDB:
             "SELECT year, period, account, delta, category, reason, actor FROM economy_ledger"
         )
         ledger_params_list: list[object] = []
-        if prefix or dossier_ids:
-            ledger_sql += " WHERE 1=1"
-        if prefix:
-            ledger_sql += " AND origin_ref NOT LIKE ?"
-            ledger_params_list.append(prefix + "%")
-        if dossier_ids:
-            ledger_sql += dossier_clause
-            ledger_params_list.extend(dossier_ids)
+        if visible_sql:
+            ledger_sql += " WHERE 1=1" + visible_sql
+            ledger_params_list.extend(expr_params)
         ledger_sql += " ORDER BY id DESC"
         if limit is not None:
             ledger_sql += " LIMIT ?"
@@ -6882,14 +6964,22 @@ class GameDB:
             )
         recent_text = "；".join(recent) if recent else "未见流水"
         hub_result_text = ""
-        hub_result = self.treasury_hub_result(state)
+        hub_result = self.treasury_hub_result(
+            state,
+            exclude_origin_prefix=exclude_origin_prefix,
+            exclude_dossier_ids=exclude_dossier_ids,
+        )
         if hub_result is not None:
             hub_result_text = (
                 f"边饷结算：国库实拨{format_money(hub_result['treasury_disbursed'])}，"
                 f"实际到达{format_money(hub_result['actual_arrived'])}，"
                 f"途中损耗{format_money(hub_result['transit_loss'])}。"
             )
-        budget = self.treasury_budget_summary(state)
+        budget = self.treasury_budget_summary(
+            state,
+            exclude_origin_prefix=exclude_origin_prefix,
+            exclude_dossier_ids=exclude_dossier_ids,
+        )
         return (
             f"{budget}账面：{account_text}。本{TURN_UNIT}收支：{period_text}。"
             f"{hub_result_text}近账：{recent_text}。"

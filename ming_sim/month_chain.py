@@ -21,6 +21,7 @@ _CHAIN_KEY = "month_chain"
 _TRANSLATE_ESCAPE_STEPS = frozenset({"world_translate"})
 _WORLD_QUESTION_PREFIX = "world-question:"
 _DECREE_QUESTION_PREFIX = "decree-question:"
+_GAZETTE_SECRET_LEDGER_PREFIX = "secret_order:"
 
 
 def _session_owner(db: Any, state: Any, llm_config: Any, agno_db: Any, content: Any):
@@ -234,6 +235,17 @@ def _gazette_feed(db: Any, state: Any, chain: Dict[str, Any]) -> Dict[str, Any]:
     snapshot = None
     if hasattr(db, "get_month_open_snapshot"):
         snapshot = db.get_month_open_snapshot(turn)
+    if snapshot and hasattr(db, "excluded_account_deltas"):
+        hidden_before = db.excluded_account_deltas(
+            exclude_origin_prefix=_GAZETTE_SECRET_LEDGER_PREFIX,
+            exclude_dossier_ids=secret_dossiers,
+            turn_before=turn,
+        )
+        if hidden_before:
+            snapshot = {
+                key: int(value) - int(hidden_before.get(str(key), 0))
+                for key, value in snapshot.items()
+            }
     from ming_sim.audience_night import list_waiting_audience_summons
     from ming_sim.decree import collect_new_arrival_waiting_audience
     from ming_sim.models import reign_period_label
@@ -300,7 +312,7 @@ def run_gazette_text(
         db, state,
         include_fact=include_fact,
         include_event=include_event,
-        ledger_origin_prefix_excluded="secret_order:",
+        ledger_origin_prefix_excluded=_GAZETTE_SECRET_LEDGER_PREFIX,
         exclude_secret_order_audience=True,
         exclude_secret_order_dossiers=True,
     )
