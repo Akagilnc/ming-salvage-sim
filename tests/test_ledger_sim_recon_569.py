@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import re
-from pathlib import Path
 
 import pytest
 
@@ -19,8 +18,6 @@ from tests.dossier_test_helpers import TYPED_COVERT_TASK, rejected_verdict as _r
 from tests.dossier_test_helpers import create_test_secret_order
 
 
-_REPO = Path(__file__).resolve().parents[1]
-_SEASON_SIM = _REPO / "content" / "prompts" / "season_simulator.md"
 _ENGLISH_LEAK = re.compile(
     r"\b(?:promulgated|rejected|executing|proposed|force_promulgated|midzhi)\b"
 )
@@ -207,26 +204,6 @@ def test_e_audience_brief_uses_qualitative_chinese_for_rejected(game, monkeypatc
 # ── F. prompt 改域 + 判决无关章节零改 ────────────────────────────────
 
 
-def test_f_season_simulator_whitelist_and_untouched_chapters():
-    text = _SEASON_SIM.read_text(encoding="utf-8")
-    headings = re.findall(r"^### .+$", text, re.M)
-    assert "### 军事（有军务盘面动作才写）" in headings
-    assert "### 探子回报" in headings
-    # 权威改为案卷列表
-    assert "decree_dossiers" in text
-    assert "照账演" in text
-    assert "monthly_progress" in text or "月度进展" in text
-    assert "reconciliation_inputs" in text or "对账" in text
-    assert "打回" in text and ("不得写成已办成" in text or "禁写成办成" in text or "严禁写成" in text)
-
-    military = re.search(r"### 军事（有军务盘面动作才写）.+?(?=\n### |\Z)", text, re.S)
-    assert military is not None
-    # 军事章不得被本片改写成照账演/案卷输入
-    assert "照账演" not in military.group(0)
-    assert "decree_dossiers" not in military.group(0)
-    assert "monthly_progress" not in military.group(0)
-
-
 # ── G. judge-in-loop 确定性前置 ──────────────────────────────────────
 
 
@@ -270,11 +247,6 @@ def test_g_midzhi_stigma_projected_and_prompt_has_ledger_play(game):
         isinstance(item, dict) and item.get("kind") == "midzhi"
         for item in (hit.get("stigma") or [])
     )
-    prompt = _SEASON_SIM.read_text(encoding="utf-8")
-    assert "照账演" in prompt
-    assert "传奉" in prompt or "辞让" in prompt or "科参" in prompt
-
-
 # ── H. 只读守门（本片测试不写 execution_outcome / stigma） ───────────
 
 

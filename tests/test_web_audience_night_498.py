@@ -110,6 +110,10 @@ def _fake_settlement_llm(monkeypatch, *, narrative="本月邸报：边饷已清�
         "ming_sim.month_chain.run_world_segment_text", lambda *a, **k: narrative,
     )
     monkeypatch.setattr(
+        "ming_sim.month_chain.run_gazette_text",
+        lambda *a, **k: ("邸报", narrative),
+    )
+    monkeypatch.setattr(
         "ming_sim.month_translate.translate_month_segment",
         lambda *a, **k: {"effects": {}},
     )
@@ -687,8 +691,8 @@ def test_asgi_inflight_reply_lands_then_issue_closes_and_advances(web_game, monk
     # 颁诏成功（done）+ 真实结算核：收夜封夜 + 推进回合 + 持久化
     assert issue_events[-1]["event"] == "done"
     assert an.get_night(game.db, night["id"])["status"] == "closed"
-    assert int(game.state.turn) == turn_before
-    assert int(game.db.load_state().turn) == turn_before
+    assert int(game.state.turn) == turn_before + 1
+    assert int(game.db.load_state().turn) == turn_before + 1
 
 
 def test_night_approved_directive_closes_into_month_end_without_second_review(web_game, monkeypatch):
@@ -716,7 +720,7 @@ def test_night_approved_directive_closes_into_month_end_without_second_review(we
     assert events[-1]["event"] == "done"
     assert not ({"confirm", "reject", "pending_review"} & {event["event"] for event in events})
     assert an.get_night(game.db, int(night["id"]))["status"] == "closed"
-    assert int(game.state.turn) == turn_before
+    assert int(game.state.turn) == turn_before + 1
     assert not game.db.list_night_approved_pending(int(night["id"]), kind="directive")
     rows = game.db.conn.execute(
         "SELECT status, text FROM turn_directives WHERE turn=?",
@@ -1072,7 +1076,7 @@ def test_legacy_pending_only_advances_to_durable_dossier_without_review_api(web_
     assert len(closes) == 1
     dossier = game.db.get_dossier_for_directive(directive_id)
     assert dossier is not None
-    assert int(game.db.load_state().turn) == turn_before
+    assert int(game.db.load_state().turn) == turn_before + 1
 
 
 def test_asgi_hanging_chat_issue_waits_for_worker_terminal(web_game, monkeypatch):
@@ -1142,8 +1146,8 @@ def test_asgi_hanging_chat_issue_waits_for_worker_terminal(web_game, monkeypatch
     # 非伪造 in-flight：等待期间 issue 未完成（scenario 内）；工人终态后续跑成功。
     assert issue_events[-1]["event"] == "done", issue_events
     assert an.get_night(game.db, night["id"])["status"] == "closed"
-    assert int(game.state.turn) == turn_before
-    assert int(game.db.load_state().turn) == turn_before
+    assert int(game.state.turn) == turn_before + 1
+    assert int(game.db.load_state().turn) == turn_before + 1
 
 
 def test_sync_advance_endpoint_does_not_stall_event_loop(web_game, monkeypatch):

@@ -4,8 +4,8 @@
 状态 + 本链 call_failure；玩家重试只续未完成步，转译逃生口由同一颗重试触发。
 
 #1847：步骤 4 请旨/打回三选统一收口既有 HITL 案头；答复后从问处续推再交步骤 5。
-批红文书页呈现归 #1826；邸报作者归 #1862。不另造平行机制。不另建无旨快路，
-也不再走五模块 extractor。
+批红文书页呈现归 #1826。#1862：批红与全部效果落定后，邸报作者一次写出标题和正文，
+入档后交回本链推进。不另造平行机制。不另建无旨快路，也不再走五模块 extractor。
 """
 
 from __future__ import annotations
@@ -46,6 +46,263 @@ def run_world_segment_text(
         )
     finally:
         release_material_tree(prepared.root)
+
+
+def _gazette_public_fact(fact: Any, secret_dossier_ids: Optional[set[int]] = None) -> bool:
+    origin = str(getattr(fact, "origin_ref", "") or "")
+    if origin.startswith("secret_order:"):
+        return False
+    from ming_sim.materials import dossier_id_in_origin
+
+    dossier_id = dossier_id_in_origin(origin)
+    return dossier_id is None or dossier_id not in (secret_dossier_ids or set())
+
+
+def _gazette_public_event(event: Any) -> bool:
+    """作者经历投影：密令简报仍留在大臣自己的知识里，不写入作者可读经历。"""
+    if not isinstance(event, dict):
+        return True
+    kind = str(event.get("kind") or "")
+    source = str(event.get("source_id") or "")
+    if kind in {"secret_order", "secret_order_brief"}:
+        return False
+    return not source.startswith("secret_order")
+
+
+def _secret_sourced(value: object) -> bool:
+    if isinstance(value, dict):
+        if str(value.get("kind") or "") == "secret_order":
+            return True
+        if value.get("secret_order_id"):
+            return True
+        origin = str(value.get("origin_ref") or value.get("source_id") or "")
+        if origin.startswith("secret_order:"):
+            return True
+        orders = value.get("secret_orders")
+        if isinstance(orders, list) and orders:
+            return True
+        return any(_secret_sourced(item) for item in value.values())
+    if isinstance(value, list):
+        return any(_secret_sourced(item) for item in value)
+    return False
+
+
+def _secret_dossier_ids(db: Any) -> set[int]:
+    from ming_sim.materials import secret_order_dossier_ids
+
+    return secret_order_dossier_ids(db)
+
+
+def _origin_is_secret_dossier(origin: object, secret_dossiers: set[int]) -> bool:
+    from ming_sim.materials import dossier_id_in_origin
+
+    dossier_id = dossier_id_in_origin(origin)
+    return dossier_id is not None and dossier_id in secret_dossiers
+
+
+def _item_is_secret_dossier(item: object, secret_dossiers: set[int]) -> bool:
+    if not isinstance(item, dict):
+        return False
+    origin = item.get("origin_ref") or item.get("source_id") or ""
+    return _origin_is_secret_dossier(origin, secret_dossiers)
+
+
+def _decree_ref_is_secret(db: Any, decree_ref: str) -> bool:
+    if str(decree_ref).startswith("secret_order:"):
+        return True
+    prefix = "pending-action:"
+    if not str(decree_ref).startswith(prefix):
+        return False
+    raw = str(decree_ref)[len(prefix):].split(":", 1)[0]
+    if not raw.isdigit() or not hasattr(db, "conn"):
+        return False
+    row = db.conn.execute(
+        "SELECT kind FROM pending_actions WHERE id=?", (int(raw),),
+    ).fetchone()
+    return row is not None and str(row["kind"] or "") == "secret_order"
+
+
+def _gazette_feed(db: Any, state: Any, chain: Dict[str, Any]) -> Dict[str, Any]:
+    """作者供料：名义、实入、实况、拒收、预推文、世界段、请旨答复、月初快照。
+
+    密令来源的声明、实况与拒收不进这份供料。盘面在推演者目录里，不在这里再抄一份。
+    """
+    import json
+
+    turn = int(state.turn)
+    secret_dossiers = _secret_dossier_ids(db)
+    nominal: List[Dict[str, Any]] = []
+    forecasts: List[str] = []
+    if hasattr(db, "conn"):
+        rows = db.conn.execute(
+            "SELECT decree_ref, declaration_json, forecast_text, visible_refs_json "
+            "FROM staged_declarations WHERE created_turn=? AND status='settled' ORDER BY id",
+            (turn,),
+        ).fetchall()
+        for row in rows:
+            decree_ref = str(row["decree_ref"] or "")
+            try:
+                declaration = json.loads(row["declaration_json"] or "{}")
+            except json.JSONDecodeError:
+                declaration = {}
+            try:
+                visible = json.loads(row["visible_refs_json"] or "{}")
+            except json.JSONDecodeError:
+                visible = {}
+            if (
+                _decree_ref_is_secret(db, decree_ref)
+                or _secret_sourced(declaration)
+                or _secret_sourced(visible)
+            ):
+                continue
+            nominal.append({"decree_ref": decree_ref, "declaration": declaration})
+            forecast = row["forecast_text"]
+            if isinstance(forecast, str) and forecast.strip():
+                forecasts.append(forecast)
+    landed: List[Dict[str, Any]] = []
+    if hasattr(db, "conn"):
+        for row in db.conn.execute(
+            "SELECT account, delta, category, reason, origin_ref FROM economy_ledger "
+            "WHERE turn=? ORDER BY id",
+            (turn,),
+        ):
+            origin = str(row["origin_ref"] or "")
+            if origin.startswith("secret_order:") or _origin_is_secret_dossier(origin, secret_dossiers):
+                continue
+            landed.append({
+                "account": row["account"],
+                "delta": int(row["delta"]),
+                "category": row["category"],
+                "reason": row["reason"],
+                "origin_ref": origin,
+            })
+    rejections: List[Dict[str, Any]] = []
+    if hasattr(db, "conn"):
+        exists = db.conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='rejection_reports'",
+        ).fetchone()
+        if exists is not None:
+            for row in db.conn.execute(
+                "SELECT section, item_json, reason, category, source FROM rejection_reports "
+                "WHERE turn=? AND COALESCE(resimulation_invalidated, 0)=0 ORDER BY id",
+                (turn,),
+            ):
+                if str(row["source"] or "") == "secret_order":
+                    continue
+                try:
+                    item = json.loads(row["item_json"] or "{}")
+                except json.JSONDecodeError:
+                    item = {}
+                if _secret_sourced(item) or _item_is_secret_dossier(item, secret_dossiers):
+                    continue
+                rejections.append({
+                    "section": row["section"],
+                    "item": item,
+                    "reason": row["reason"],
+                    "category": row["category"],
+                })
+    answers: List[Dict[str, Any]] = []
+    if hasattr(db, "list_pending_decisions"):
+        for row in db.list_pending_decisions(turn):
+            if str(row.get("status") or "") != "decided":
+                continue
+            choice = row.get("choice") if isinstance(row.get("choice"), dict) else {}
+            answers.append({
+                "title": row.get("title") or "",
+                "label": choice.get("label") or "",
+                "note": choice.get("note") or "",
+                "event_id": row.get("event_id") or "",
+            })
+    snapshot = None
+    if hasattr(db, "get_month_open_snapshot"):
+        snapshot = db.get_month_open_snapshot(turn)
+    from ming_sim.audience_night import list_waiting_audience_summons
+    from ming_sim.decree import collect_new_arrival_waiting_audience
+    from ming_sim.models import reign_period_label
+    from ming_sim.settlement_payload import augment_secret_orders_with_due_commitments
+
+    grouped = augment_secret_orders_with_due_commitments({}, db, state)
+    # Trust augment's Dict[str, list] contract — shape errors must fail loud.
+    due_commitments = [
+        item for group in grouped.values()
+        for item in group
+        if item.get("entry_kind") == "due_commitment"
+    ]
+    return {
+        "instruction": "据已落定的实况写本期邸报。title 由你写，report 是全文。",
+        "reign_period_label": reign_period_label(int(state.year), int(state.period)),
+        "nominal": nominal,
+        "landed": landed,
+        "rejections": rejections,
+        "forecasts": forecasts,
+        "world_segment": str(chain.get("world_text") or ""),
+        "rescript_answers": answers,
+        "month_open": snapshot,
+        "due_commitments": due_commitments,
+        "waiting_audience": collect_new_arrival_waiting_audience(
+            _persisted_transit_arrivals(db, turn),
+            list_waiting_audience_summons(db),
+        ),
+    }
+
+
+def _persisted_transit_arrivals(db: Any, turn: int) -> list:
+    """过月前半段已写入 resolve context 的本月抵达。缺键与非列表按该读口视为无抵达。"""
+    ctx = db.get_resolve_context(int(turn)) or {}
+    payload = ctx.get("simulator_payload") if isinstance(ctx, dict) else None
+    if isinstance(payload, dict) and isinstance(payload.get("transit_arrivals"), list):
+        return list(payload["transit_arrivals"])
+    return []
+
+
+def run_gazette_text(
+    db: Any, state: Any, llm_config: Any, chain: Dict[str, Any],
+) -> tuple[str, str]:
+    """批红与全部效果落定后的一次邸报写作。返回作者自写的 (title, report)。"""
+    import json
+
+    from ming_sim.agents import create_gazette_author_agent, parse_agent_json, run_agent_text
+    from ming_sim.exceptions import LLMUnavailable
+    from ming_sim.llm_transport import audience_transport_policy
+    from ming_sim.materials import prepare_world_materials, release_material_tree
+
+    if llm_config is None:
+        raise LLMUnavailable("邸报缺少模型配置", stage="gazette")
+    secret_dossiers = _secret_dossier_ids(db)
+
+    def include_fact(fact: Any) -> bool:
+        return _gazette_public_fact(fact, secret_dossiers)
+
+    def include_event(event: Any) -> bool:
+        if not _gazette_public_event(event):
+            return False
+        return not _item_is_secret_dossier(event, secret_dossiers)
+
+    prepared = prepare_world_materials(
+        db, state,
+        include_fact=include_fact,
+        include_event=include_event,
+        ledger_origin_prefix_excluded="secret_order:",
+        exclude_secret_order_audience=True,
+        exclude_secret_order_dossiers=True,
+    )
+    message = json.dumps(_gazette_feed(db, state, chain), ensure_ascii=False)
+    try:
+        agent = create_gazette_author_agent(llm_config, prepared)
+        raw = run_agent_text(
+            agent, message, tag="gazette",
+            transport_policy=audience_transport_policy(),
+        )
+    finally:
+        release_material_tree(prepared.root)
+    data = parse_agent_json(raw, "gazette")
+    title = data.get("title")
+    report = data.get("report")
+    if not isinstance(title, str) or not title.strip():
+        raise LLMUnavailable("邸报缺少作者标题", stage="gazette")
+    if not isinstance(report, str) or not report.strip():
+        raise LLMUnavailable("邸报缺少正文", stage="gazette")
+    return title, report
 
 
 def month_chain_call_failure(db: Any, turn: int) -> Optional[Dict[str, Any]]:
@@ -275,7 +532,23 @@ def _run_loaded_month_chain(
         )
     archive = db.get_turn_report_archive(turn)
     if archive is None or not str(archive.get("report") or "").strip():
-        return _pause(db, turn, chain, decree_text, source, "gazette")
+        from ming_sim.models import LLMConfig
+
+        if not isinstance(llm_config, LLMConfig):
+            return _pause(db, turn, chain, decree_text, source, "gazette")
+
+        def _write_gazette() -> tuple[str, str]:
+            title, report = run_gazette_text(db, state, llm_config, chain)
+            db.save_turn_report(state, report, title=title, public_body=report)
+            return title, report
+
+        _guard_month_call(
+            db, state, chain, decree_text=decree_text, source=source,
+            step="gazette", operation=_write_gazette,
+        )
+        archive = db.get_turn_report_archive(turn)
+        if archive is None or not str(archive.get("report") or "").strip():
+            return _pause(db, turn, chain, decree_text, source, "gazette")
     advanced = _advance_after_gazette(
         db, state, chain, turn, decree_text, source, content=content,
         declaration_outcome=declaration_outcome,
