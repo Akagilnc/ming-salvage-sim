@@ -175,6 +175,10 @@ def test_exhausted_mechanical_tail_degrades_and_unblocks_next_month(game, monkey
     assert session.resolve_turn(allow_empty_decree=True).stage in {
         "gazette", "advanced", "rescript",
     }
+    # 再次推进可能再接纳机械尾。deferred 执行器不自己跑；关库前写票必须完成。
+    if not executor.future.done():
+        _run_deferred(executor)
+        assert get_session_write_queue(session).wait_idle(timeout_s=5)
 
 
 def test_web_barrier_resumes_pending_tail_before_join(game, monkeypatch):
