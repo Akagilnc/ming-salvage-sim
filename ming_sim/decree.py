@@ -97,18 +97,18 @@ from ming_sim.token_stats import tlog
 # 满 240 回合（即第 240 个回合结算完，1647.09）仍未分胜负则强制 timeout 收尾。
 TIMEOUT_TURN = 240
 
-# #1725：月末结算 SSE stage 唯一权威。六名冻结；emit 只经 settlement_stage_payload，
+# #1725：月末结算 SSE stage 唯一权威。emit 只经 settlement_stage_payload，
 # 携带独立于显示措辞的 typed 进度事实（current/total），前端不得文案反查。
+# #1845：章节记忆退役后，表内不再留无对应工作的「记起居注」。
 SETTLEMENT_STAGE_LABELS = (
     "固定月度财政入账",
     "回顾近来朝局",
     "推演月末邸报",
     "数值推演结算",
     "落库与事项推进",
-    "记起居注",
 )
-# #1740：结局回合第七段——不并入六名表（普通回合永不发）。
-# emit 只经 settlement_ending_stage_payload，current/total=7；普通六阶 total 仍为 6。
+# #1740：结局回合在普通阶段之外另发一段，不并入上表。
+# emit 只经 settlement_ending_stage_payload；total = 普通阶段数 + 1。
 SETTLEMENT_ENDING_STAGE_LABEL = "国史编纂结局总评"
 
 
@@ -122,7 +122,7 @@ def settlement_stage_payload(index: int) -> Dict[str, Any]:
 
 
 def settlement_ending_stage_payload() -> Dict[str, Any]:
-    """Ending-round seventh stage; total becomes 7 only on this emit."""
+    """Ending-round extra stage; total is the ordinary count plus one."""
     total = len(SETTLEMENT_STAGE_LABELS) + 1
     return {
         "content": SETTLEMENT_ENDING_STAGE_LABEL,
@@ -2352,9 +2352,6 @@ def _settle_after_extract_body(
     # 随本 atomic 整体回滚走错误包路（ADR 0005/0008）。
     if start_relation_brew is not None:
         start_relation_brew()
-
-    # #1725 六段末段。章节写手已退役；本段仍在 clear 之前发出。
-    _stage(settlement_stage_payload(5))
 
     # 开局负面帝国修正：本月若达成消除条件即清除（程序判定，不靠 LLM/时长）
     cleared = clear_gated_legacies(db, state)

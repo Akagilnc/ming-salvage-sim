@@ -24,6 +24,7 @@ from ming_sim.audience_night import (
 from ming_sim.materials import (
     MaterialsRoot,
     _handled_affair_lines,
+    _safe_segment,
     _visible_affair_lines,
     index_entry_path,
     list_materials,
@@ -400,6 +401,13 @@ def test_read_material_stays_inside_directory(game, tmp_path):
         pass
     tools = {tool.__name__: tool for tool in material_tools(prepared.root)}
     assert tools["list_materials"]("../outside") == tools["read_material"]("../outside")
+    spaced_rel = f"人物/{_safe_segment('John Doe')}/经历.txt"
+    spaced_path = prepared.root / spaced_rel
+    spaced_path.parent.mkdir(parents=True, exist_ok=True)
+    spaced_path.write_text("经历正文\n", encoding="utf-8")
+    listing = tools["list_materials"]("")
+    assert spaced_rel in listing.splitlines()
+    assert tools["read_material"](spaced_rel) == "经历正文\n"
 
 
 def test_audience_agent_exposes_directory_tools_and_min_instructions(game, tmp_path):

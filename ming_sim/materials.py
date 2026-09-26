@@ -252,10 +252,18 @@ def list_materials(root: Path, path: str = "") -> List[str]:
     return out
 
 
+_GAZETTE_INDEX_LINE = re.compile(
+    r"^(?P<path>(?:公开说法/)?邸报/\S+\.txt)(?:\s+\S.*)?$"
+)
+
+
 def index_entry_path(line: str) -> str:
-    """INDEX 一行的第一段是相对路径。邸报行在路径后附年月与已入档标题。"""
+    """邸报索引行在路径后附年月与标题；其余行整段就是路径，空格属于路径。"""
     text = str(line or "").strip()
-    return text.split()[0] if text else ""
+    if not text:
+        return ""
+    match = _GAZETTE_INDEX_LINE.match(text)
+    return match.group("path") if match else text
 
 
 def read_material(root: Path, path: str) -> str:
