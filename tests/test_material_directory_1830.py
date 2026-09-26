@@ -25,6 +25,7 @@ from ming_sim.materials import (
     MaterialsRoot,
     _handled_affair_lines,
     _visible_affair_lines,
+    index_entry_path,
     list_materials,
     material_tools,
     prepare_character_materials,
@@ -79,7 +80,7 @@ def test_prepare_writes_typed_tree_and_index(game, tmp_path):
     assert any(line.startswith("事实/") for line in index.splitlines())
     for line in index.splitlines():
         if line.strip():
-            assert line.strip() in names
+            assert index_entry_path(line) in names
             assert read_material(prepared.root, line.strip())
     roster = read_material(prepared.root, "人物/朝臣名册.txt")
     status, _reason = db.get_character_status(character.name)
@@ -579,7 +580,7 @@ def test_character_materials_exclude_legacy_raw_turn_report_and_keep_public_gaze
     )
     db.conn.commit()
 
-    from ming_sim.models import GameState
+    from ming_sim.models import GameState, reign_period_label
 
     for month in range(1, 8):
         past = GameState(
@@ -594,6 +595,10 @@ def test_character_materials_exclude_legacy_raw_turn_report_and_keep_public_gaze
             "VALUES (?, ?, ?, ?, '')",
             (month, 1627, month, body),
         )
+    db.conn.execute(
+        "UPDATE turn_reports SET title=? WHERE turn=?",
+        ("辽东标题", 1),
+    )
     db.conn.commit()
 
     prepared = prepare_character_materials(
@@ -608,6 +613,15 @@ def test_character_materials_exclude_legacy_raw_turn_report_and_keep_public_gaze
     for month in range(1, 8):
         assert any(f"1627年{month}月.txt" in p for p in gazette_paths)
         assert f"PUBLIC_GAZETTE_MONTH_{month}" in blob
+    index_lines = read_material(prepared.root, "INDEX.txt").splitlines()
+    titled = next(
+        line for line in index_lines
+        if index_entry_path(line).endswith("1627年1月.txt")
+    )
+    assert index_entry_path(titled).startswith("公开说法/邸报/")
+    assert reign_period_label(1627, 1) in titled.split()
+    assert "辽东标题" in titled.split()
+    assert "PUBLIC_GAZETTE_MONTH_1" not in titled
 
 
 def test_secret_order_materials_keep_full_content_and_fail_loud_on_db_error(

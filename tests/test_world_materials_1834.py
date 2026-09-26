@@ -15,7 +15,8 @@ from pathlib import Path
 
 from ming_sim.db import GameDB
 from ming_sim.materials import (
-    list_materials, prepare_world_materials, read_material, world_materials_root,
+    index_entry_path, list_materials, prepare_world_materials, read_material,
+    world_materials_root,
 )
 
 
@@ -32,7 +33,7 @@ def test_prepare_writes_typed_tree_with_board_affairs_and_gazette_index(game, tm
     past_year, past_period, past_turn = state.year, max(1, state.period - 1), max(0, state.turn - 1)
     from ming_sim.models import GameState
     past_state = GameState(turn=past_turn, year=past_year, period=past_period, metrics=dict(state.metrics))
-    db.save_turn_report(past_state, "历月邸报正文")
+    db.save_turn_report(past_state, "历月邸报正文", title="辽东告急")
 
     dest = tmp_path / "world-materials"
     prepared = prepare_world_materials(db, state, dest_root=dest)
@@ -48,7 +49,16 @@ def test_prepare_writes_typed_tree_with_board_affairs_and_gazette_index(game, tm
     index = read_material(prepared.root, "INDEX.txt")
     for line in index.splitlines():
         if line.strip():
-            assert line.strip() in names
+            assert index_entry_path(line) in names
+            assert read_material(prepared.root, line)
+    from ming_sim.models import reign_period_label
+    gazette_rel = f"邸报/{past_year}年{past_period}月.txt"
+    gazette_line = next(
+        line for line in index.splitlines() if index_entry_path(line) == gazette_rel
+    )
+    assert reign_period_label(past_year, past_period) in gazette_line.split()
+    assert "辽东告急" in gazette_line.split()
+    assert "历月邸报正文" not in gazette_line
 
     # 无裸副本：不得直接倒出世界库/JSON。
     assert not any(n.lower().endswith((".db", ".sqlite", ".sqlite3", ".json")) for n in names)

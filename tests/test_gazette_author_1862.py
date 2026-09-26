@@ -13,6 +13,7 @@ from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
 from ming_sim.audience_night import AUDIBILITY_PRIVATE, append_ledger_entry
 from ming_sim.exceptions import LLMUnavailable, SettlementAbort
 from ming_sim.materials import (
+    index_entry_path,
     prepare_character_materials,
     prepare_world_materials,
     release_material_tree,
@@ -328,8 +329,10 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
     prepared = prepare_character_materials(db, state, character)
     try:
         gazette = next(path for path in prepared.index_lines if path.startswith("公开说法/邸报/"))
-        text = (prepared.root / gazette).read_text(encoding="utf-8")
+        text = (prepared.root / index_entry_path(gazette)).read_text(encoding="utf-8")
         assert text.strip() == _REPORT
+        assert _TITLE in gazette.split()
+        assert _REPORT not in gazette
         experience = next(path for path in prepared.index_lines if path.endswith("/经历.txt"))
         experience_text = (prepared.root / experience).read_text(encoding="utf-8")
         assert _SECRET_BRIEF in experience_text
