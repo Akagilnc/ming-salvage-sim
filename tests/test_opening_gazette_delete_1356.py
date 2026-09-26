@@ -14,7 +14,6 @@ from pathlib import Path
 import pytest
 
 import ming_sim.decree as decree_mod
-import ming_sim.memories as memories
 from ming_sim.session import GameSession
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -38,7 +37,6 @@ def _canned_settle(monkeypatch, narrative: str) -> None:
         "simulate_season_with_payload",
         lambda *a, **k: (narrative, k.get("simulator_payload") or {}),
     )
-    monkeypatch.setattr(memories, "run_agent_text", lambda *a, **k: '{"body":"月记","tags":[]}')
 
 
 def _session(db, state, content) -> GameSession:

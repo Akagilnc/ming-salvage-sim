@@ -2353,6 +2353,9 @@ def _settle_after_extract_body(
     if start_relation_brew is not None:
         start_relation_brew()
 
+    # #1725 六段末段。章节写手已退役；本段仍在 clear 之前发出。
+    _stage(settlement_stage_payload(5))
+
     # 开局负面帝国修正：本月若达成消除条件即清除（程序判定，不靠 LLM/时长）
     cleared = clear_gated_legacies(db, state)
     for name in cleared:
