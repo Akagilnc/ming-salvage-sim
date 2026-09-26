@@ -59,6 +59,8 @@ def _set_tail_status(
     if not tail:
         return
     tail["status"] = status
+    if status != _TAIL_STATUS_FAILED:
+        tail.pop("error", None)
     if error_pack_path is not None:
         tail["error_pack_path"] = error_pack_path
     else:

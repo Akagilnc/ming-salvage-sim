@@ -21,6 +21,7 @@ import { CheatConsole, useCheatHotkey } from "./components/cheatConsole";
 import { ClosedIssuesModal } from "./components/closedIssues";
 import { EdictModal } from "./components/edictModal";
 import { EndingModal } from "./components/endingModal";
+import { MechanicalTailFailure } from "./components/mechanicalTailFailure";
 import { HistoryModal } from "./components/historyModal";
 import { ReportModal } from "./components/reportModal";
 import { SecretOrdersModal } from "./components/secretOrders";
@@ -809,11 +810,7 @@ export function App() {
         />
       ) : null}
 
-      {state.mechanical_tail_failure && activeModal !== "ending" ? (
-        <div role="alert">机械尾执行失败：{state.mechanical_tail_failure.error}。错误包：{state.mechanical_tail_failure.error_pack_path}，请把它发给作者。
-          <button type="button" onClick={retryMechanicalTail}>重试</button>
-        </div>
-      ) : null}
+      {activeModal !== "ending" && <MechanicalTailFailure failure={state.mechanical_tail_failure} onRetry={retryMechanicalTail} />}
       {activeModal === "ending" && state.ending ? (
         <EndingModal ending={state.ending} failure={state.mechanical_tail_failure} onClose={() => { setEndingDismissed(true); setActiveModal("none"); }} onRetry={retryMechanicalTail} />
       ) : null}
