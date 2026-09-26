@@ -32,6 +32,12 @@ _PUBLIC_REJ = "PUBLIC_REJ_1862"
 _SECRET_BRIEF = "SECRET_BRIEF_BODY_1862"
 _SECRET_AUDIENCE = "AUD_SECRET_SRC_1862"
 _PRIVATE_KEEP = "AUD_PRIVATE_KEEP_1862"
+_SECRET_DOSSIER_TEXT = "SECRET_DOSSIER_OPEN_1862"
+_PLAIN_DOSSIER_TEXT = "PLAIN_DOSSIER_OPEN_1862"
+_SECRET_DOSSIER_LEDGER = "SECRET_DOSSIER_LEDGER_1862"
+_PLAIN_DOSSIER_LEDGER = "PLAIN_DOSSIER_LEDGER_1862"
+_SECRET_DOSSIER_FACT = "SECRET_DOSSIER_FACT_1862"
+_PLAIN_DOSSIER_FACT = "PLAIN_DOSSIER_FACT_1862"
 _TITLE = "关山烽火"
 _REPORT = "本月实况正文"
 
@@ -130,6 +136,34 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
     order_id = create_test_secret_order(
         db, state, minister, "密题不入邸报", "密令原件", ["查办"],
     )
+    secret_did = int(db.get_dossier_for_secret_order(order_id)["id"])
+    db.conn.execute(
+        "UPDATE decree_dossiers SET status='executing', decree_text=? WHERE id=?",
+        (_SECRET_DOSSIER_TEXT, secret_did),
+    )
+    plain_did = db.create_decree_dossier(
+        state, action_type="policy", decree_text=_PLAIN_DOSSIER_TEXT,
+        target_kind="issue", target_id="plain-dossier-1862",
+    )
+    db.apply_dossier_promulgation(state, plain_did, "promulgated")
+    for category, reason, origin in (
+        (_SECRET_DOSSIER_LEDGER, "密令案卷账", f"dossier:{secret_did}"),
+        (_PLAIN_DOSSIER_LEDGER, "普通案卷账", f"dossier:{plain_did}"),
+    ):
+        db.conn.execute(
+            "INSERT INTO economy_ledger "
+            "(turn, year, period, account, delta, balance_after, category, reason, origin_ref) "
+            "VALUES (?, ?, ?, '国库', -2, 1, ?, ?, ?)",
+            (turn, year, period, category, reason, origin),
+        )
+    db.textual_facts.append(
+        subject_kind="character", subject_id=minister, body=_SECRET_DOSSIER_FACT,
+        year=year, period=period, turn=turn, origin_ref=f"dossier:{secret_did}",
+    )
+    db.textual_facts.append(
+        subject_kind="character", subject_id=minister, body=_PLAIN_DOSSIER_FACT,
+        year=year, period=period, turn=turn, origin_ref=f"dossier:{plain_did}",
+    )
     db.upsert_secret_order_brief(
         state, order_id, minister, "密报题", _SECRET_BRIEF,
     )
@@ -169,6 +203,9 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
     def run_agent(agent, prompt, tag, **_k):
         seen["tag"] = tag
         seen["prompt"] = prompt
+        seen["instructions"] = "\n".join(
+            str(part) for part in (getattr(agent, "instructions", None) or [])
+        )
         listing = ""
         for tool in getattr(agent, "tools", []) or []:
             entry = getattr(tool, "entrypoint", tool)
@@ -190,6 +227,15 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
 
     monkeypatch.setattr(month_chain, "run_world_segment_text", world)
     monkeypatch.setattr("ming_sim.agents.run_agent_text", run_agent)
+    before = prepare_world_materials(db, state)
+    try:
+        before_board = next(rel for rel in before.index_lines if rel.endswith("全局.txt"))
+        before_board_text = (before.root / before_board).read_text(encoding="utf-8")
+        assert _SECRET_DOSSIER_LEDGER in before_board_text
+        assert _PLAIN_DOSSIER_LEDGER in before_board_text
+        assert _PLAIN_DOSSIER_TEXT in before.opening
+    finally:
+        release_material_tree(before.root)
     session = _session(db, state, content, monkeypatch)
     result = session.resolve_turn(allow_empty_decree=True)
 
@@ -204,6 +250,8 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
     payload = json.loads(seen["prompt"])
     assert any(row.get("category") == "宁远补饷" for row in payload["landed"])
     assert all(str(row.get("origin_ref") or "") != "secret_order:9" for row in payload["landed"])
+    assert all(str(row.get("origin_ref") or "") != f"dossier:{secret_did}" for row in payload["landed"])
+    assert any(str(row.get("origin_ref") or "") == f"dossier:{plain_did}" for row in payload["landed"])
     assert "预推不可见:宁远补饷" in payload["forecasts"]
     assert _SECRET_FORECAST not in payload["forecasts"]
     assert _SECRET_DECL not in json.dumps(payload["nominal"], ensure_ascii=False)
@@ -217,6 +265,12 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
     assert _SECRET_BRIEF not in seen["files"]
     assert _SECRET_AUDIENCE not in seen["files"]
     assert _PRIVATE_KEEP in seen["files"]
+    assert _SECRET_DOSSIER_LEDGER not in seen["files"]
+    assert _PLAIN_DOSSIER_LEDGER in seen["files"]
+    assert _SECRET_DOSSIER_FACT not in seen["files"]
+    assert _PLAIN_DOSSIER_FACT in seen["files"]
+    assert _SECRET_DOSSIER_TEXT not in seen["instructions"]
+    assert _PLAIN_DOSSIER_TEXT in seen["instructions"]
     assert "SECRET_LEDGER" not in seen["files"]
     assert "密令账" not in seen["files"]
     knowledge = db.get_character_knowledge(state, minister)
@@ -247,8 +301,32 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
         assert _SECRET_BRIEF in world_experience
         assert _SECRET_AUDIENCE in world_experience
         assert _PRIVATE_KEEP in world_experience
+        board = next(rel for rel in world.index_lines if rel.endswith("全局.txt"))
+        board_text = (world.root / board).read_text(encoding="utf-8")
+        assert _SECRET_DOSSIER_LEDGER in board_text
+        assert _PLAIN_DOSSIER_LEDGER in board_text
     finally:
         release_material_tree(world.root)
+
+
+def test_world_segment_input_asks_for_settled_results(monkeypatch):
+    """世界推演输入正向要求写结果。不读、不改模型写出的文字。"""
+    from types import SimpleNamespace
+
+    import ming_sim.agents as agents_mod
+
+    monkeypatch.setattr(agents_mod, "_ctx", lambda: SimpleNamespace(game_world_prompt="gw"))
+    monkeypatch.setattr(agents_mod, "create_chat_model", lambda *_a, **_k: object())
+    monkeypatch.setattr(agents_mod, "Agent", lambda **kwargs: kwargs)
+    monkeypatch.setattr(agents_mod, "tlog", lambda *_a, **_k: None)
+    monkeypatch.setattr(agents_mod, "describe_effective_model", lambda _cfg: "m")
+    monkeypatch.setattr(agents_mod, "is_minimax_base_url", lambda _url: False)
+    monkeypatch.setattr(agents_mod, "_llm_for_role", lambda cfg, _role: cfg)
+    agent = agents_mod.create_world_segment_agent(
+        _llm(), SimpleNamespace(root="", opening="盘面"),
+    )
+    text = "\n".join(str(part) for part in agent["instructions"])
+    assert "本段写已经落定的结果。" in text
 
 
 def test_author_unknown_route_raises_before_writing(game, monkeypatch):

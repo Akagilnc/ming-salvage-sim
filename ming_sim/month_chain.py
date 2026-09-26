@@ -48,8 +48,14 @@ def run_world_segment_text(
         release_material_tree(prepared.root)
 
 
-def _gazette_public_fact(fact: Any) -> bool:
-    return not str(getattr(fact, "origin_ref", "") or "").startswith("secret_order:")
+def _gazette_public_fact(fact: Any, secret_dossier_ids: Optional[set[int]] = None) -> bool:
+    origin = str(getattr(fact, "origin_ref", "") or "")
+    if origin.startswith("secret_order:"):
+        return False
+    from ming_sim.materials import dossier_id_in_origin
+
+    dossier_id = dossier_id_in_origin(origin)
+    return dossier_id is None or dossier_id not in (secret_dossier_ids or set())
 
 
 def _gazette_public_event(event: Any) -> bool:
@@ -81,6 +87,26 @@ def _secret_sourced(value: object) -> bool:
     return False
 
 
+def _secret_dossier_ids(db: Any) -> set[int]:
+    from ming_sim.materials import secret_order_dossier_ids
+
+    return secret_order_dossier_ids(db)
+
+
+def _origin_is_secret_dossier(origin: object, secret_dossiers: set[int]) -> bool:
+    from ming_sim.materials import dossier_id_in_origin
+
+    dossier_id = dossier_id_in_origin(origin)
+    return dossier_id is not None and dossier_id in secret_dossiers
+
+
+def _item_is_secret_dossier(item: object, secret_dossiers: set[int]) -> bool:
+    if not isinstance(item, dict):
+        return False
+    origin = item.get("origin_ref") or item.get("source_id") or ""
+    return _origin_is_secret_dossier(origin, secret_dossiers)
+
+
 def _decree_ref_is_secret(db: Any, decree_ref: str) -> bool:
     if str(decree_ref).startswith("secret_order:"):
         return True
@@ -104,6 +130,7 @@ def _gazette_feed(db: Any, state: Any, chain: Dict[str, Any]) -> Dict[str, Any]:
     import json
 
     turn = int(state.turn)
+    secret_dossiers = _secret_dossier_ids(db)
     nominal: List[Dict[str, Any]] = []
     forecasts: List[str] = []
     if hasattr(db, "conn"):
@@ -140,7 +167,7 @@ def _gazette_feed(db: Any, state: Any, chain: Dict[str, Any]) -> Dict[str, Any]:
             (turn,),
         ):
             origin = str(row["origin_ref"] or "")
-            if origin.startswith("secret_order:"):
+            if origin.startswith("secret_order:") or _origin_is_secret_dossier(origin, secret_dossiers):
                 continue
             landed.append({
                 "account": row["account"],
@@ -166,7 +193,7 @@ def _gazette_feed(db: Any, state: Any, chain: Dict[str, Any]) -> Dict[str, Any]:
                     item = json.loads(row["item_json"] or "{}")
                 except json.JSONDecodeError:
                     item = {}
-                if _secret_sourced(item):
+                if _secret_sourced(item) or _item_is_secret_dossier(item, secret_dossiers):
                     continue
                 rejections.append({
                     "section": row["section"],
@@ -214,12 +241,23 @@ def run_gazette_text(
 
     if llm_config is None:
         raise LLMUnavailable("邸报缺少模型配置", stage="gazette")
+    secret_dossiers = _secret_dossier_ids(db)
+
+    def include_fact(fact: Any) -> bool:
+        return _gazette_public_fact(fact, secret_dossiers)
+
+    def include_event(event: Any) -> bool:
+        if not _gazette_public_event(event):
+            return False
+        return not _item_is_secret_dossier(event, secret_dossiers)
+
     prepared = prepare_world_materials(
         db, state,
-        include_fact=_gazette_public_fact,
-        include_event=_gazette_public_event,
+        include_fact=include_fact,
+        include_event=include_event,
         ledger_origin_prefix_excluded="secret_order:",
         exclude_secret_order_audience=True,
+        exclude_secret_order_dossiers=True,
     )
     message = json.dumps(_gazette_feed(db, state, chain), ensure_ascii=False)
     try:

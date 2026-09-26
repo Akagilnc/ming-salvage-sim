@@ -1194,8 +1194,29 @@ def world_materials_root(db: Any, state: Any) -> Path:
     return _materials_campaign_dir(db) / key / "世界推演"
 
 
+def secret_order_dossier_ids(db: Any) -> set[int]:
+    """案卷关联：secret_order_id 有值的案卷。沿 list_decree_dossiers，不另查一套。"""
+    return {
+        int(row["id"])
+        for row in db.list_decree_dossiers()
+        if row.get("secret_order_id")
+    }
+
+
+def dossier_id_in_origin(origin: object) -> Optional[int]:
+    text = str(origin or "")
+    if not text.startswith("dossier:"):
+        return None
+    raw = text[len("dossier:"):].split(":", 1)[0]
+    if not raw.isdigit():
+        return None
+    return int(raw)
+
+
 def _world_board_text(
-    db: Any, state: Any, *, ledger_origin_prefix_excluded: str = "",
+    db: Any, state: Any, *,
+    ledger_origin_prefix_excluded: str = "",
+    exclude_dossier_ids: Optional[set[int]] = None,
 ) -> str:
     """盘面全量：未按职位裁切的实况账本（0034 后出注记：仅人物按职位读衙门底账，
     推演者不受此限）。各段落直取账本读方法，不经任何奏报/邸报文本中转——满足
@@ -1205,6 +1226,7 @@ def _world_board_text(
     sections = (
         ("国库", db.treasury_report(
             state, limit=None, exclude_origin_prefix=ledger_origin_prefix_excluded,
+            exclude_dossier_ids=exclude_dossier_ids,
         )),
         ("军务", db.army_report(limit=None)),
         ("地方", db.region_report(limit=None)),
@@ -1827,6 +1849,7 @@ def prepare_world_materials(
     include_event: Any = None,
     ledger_origin_prefix_excluded: str = "",
     exclude_secret_order_audience: bool = False,
+    exclude_secret_order_dossiers: bool = False,
 ) -> PreparedMaterials:
     """过月推演者材料目录：盘面全量 + 开着的事务清单进开场最小集；人物经历、
     公开说法、历月邸报按需自读（#1834）。写入（拒收/实况回目录、下月材料）不
@@ -1842,8 +1865,15 @@ def prepare_world_materials(
     dossier_facts = continuing_dossier_facts(db, int(state.turn))
     # #1834 大理寺 bounce 3：与人物经历同一纪律——本次 prepare 只算一次盘面全量
     # 投影，目录写入与 opening 共用同一份冻结结果，不重复查两遍账本。
+    secret_dossiers = secret_order_dossier_ids(db) if exclude_secret_order_dossiers else set()
+    if secret_dossiers:
+        dossier_facts = [
+            fact for fact in dossier_facts
+            if int(fact["id"]) not in secret_dossiers
+        ]
     board_text = _world_board_text(
         db, state, ledger_origin_prefix_excluded=ledger_origin_prefix_excluded,
+        exclude_dossier_ids=secret_dossiers or None,
     )
 
     dest, index = _publish_material_tree(

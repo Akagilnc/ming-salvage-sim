@@ -6808,6 +6808,7 @@ class GameDB:
     def treasury_report(
         self, state: GameState, limit: int | None = 6, *,
         exclude_origin_prefix: str = "",
+        exclude_dossier_ids: Optional[Iterable[int]] = None,
     ) -> str:
         account_rows = self.conn.execute(
             "SELECT account, balance FROM economy_accounts ORDER BY account DESC"
@@ -6820,6 +6821,16 @@ class GameDB:
         origin_clause = ""
         origin_params: Tuple[object, ...] = ()
         prefix = str(exclude_origin_prefix or "")
+        dossier_ids = tuple(
+            int(item) for item in (exclude_dossier_ids or ()) if int(item) > 0
+        )
+        dossier_clause = ""
+        if dossier_ids:
+            marks = ",".join("?" * len(dossier_ids))
+            dossier_clause = (
+                " AND NOT (origin_ref LIKE 'dossier:%' AND "
+                f"CAST(substr(origin_ref, 9) AS INTEGER) IN ({marks}))"
+            )
         if prefix:
             origin_clause = " AND origin_ref NOT LIKE ?"
             origin_params = (prefix + "%",)
@@ -6829,11 +6840,11 @@ class GameDB:
                    SUM(CASE WHEN delta > 0 THEN delta ELSE 0 END) AS income,
                    SUM(CASE WHEN delta < 0 THEN -delta ELSE 0 END) AS expense
             FROM economy_ledger
-            WHERE turn = ?{origin_clause}
+            WHERE turn = ?{origin_clause}{dossier_clause}
             GROUP BY account
             ORDER BY account DESC
             """,
-            (state.turn, *origin_params),
+            (state.turn, *origin_params, *dossier_ids),
         ).fetchall()
         period_text = "；".join(
             f"{row['account']}入{format_money(int(row['income'] or 0))}出{format_money(int(row['expense'] or 0))}"
@@ -6848,9 +6859,14 @@ class GameDB:
             "SELECT year, period, account, delta, category, reason, actor FROM economy_ledger"
         )
         ledger_params_list: list[object] = []
+        if prefix or dossier_ids:
+            ledger_sql += " WHERE 1=1"
         if prefix:
-            ledger_sql += " WHERE origin_ref NOT LIKE ?"
+            ledger_sql += " AND origin_ref NOT LIKE ?"
             ledger_params_list.append(prefix + "%")
+        if dossier_ids:
+            ledger_sql += dossier_clause
+            ledger_params_list.extend(dossier_ids)
         ledger_sql += " ORDER BY id DESC"
         if limit is not None:
             ledger_sql += " LIMIT ?"
