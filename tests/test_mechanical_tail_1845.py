@@ -261,13 +261,20 @@ def test_non_exhausted_tail_failure_stays_pending_and_retries(game, monkeypatch)
 
     monkeypatch.setattr("ming_sim.mechanical_tail._run_relation_brew", fail)
     assert session.resolve_turn(allow_empty_decree=True).advanced is True
-    assert month_chain._load_chain(db, closed_turn)["mechanical_tail"]["status"] == "pending"
-    from ming_sim.mechanical_tail import ensure_mechanical_tails
+    assert month_chain._load_chain(db, closed_turn)["mechanical_tail"]["status"] == "failed"
+    from ming_sim.mechanical_tail import ensure_mechanical_tails, retry_failed_mechanical_tail, failed_mechanical_tail
     ensure_mechanical_tails(session)
-    assert calls == [closed_turn, closed_turn]
-    assert month_chain._load_chain(db, closed_turn)["mechanical_tail"]["status"] == "pending"
+    assert calls == [closed_turn]
+    assert failed_mechanical_tail(db, state)[0] == closed_turn
+    from web_app import WebGame
+    from types import SimpleNamespace
+    state.ended = True
+    payload = WebGame.ending_payload(SimpleNamespace(db=db, state=state))
+    assert payload["tail_failure"]["error_pack_path"]
+    assert payload["summary_pending"] is False
+    state.ended = False
 
-    # 再过月须等尾终结。worker 虽已异常完成票，持久 pending 不可放行。
+    # 即使终局没有下一次过月，失败也由持久状态即时呈现。
     db.save_turn_report(state, "下月邸报")
     from ming_sim.exceptions import SettlementAbort
     from pathlib import Path
@@ -283,10 +290,11 @@ def test_non_exhausted_tail_failure_stays_pending_and_retries(game, monkeypatch)
     assert manifest["turn"] == closed_turn + 1
     assert int(state.turn) == closed_turn + 1
     tail = month_chain._load_chain(db, closed_turn)["mechanical_tail"]
-    assert tail["status"] == "pending"
+    assert tail["status"] == "failed"
     assert tail["error_pack_path"] == caught.value.error_pack_path
 
     monkeypatch.setattr("ming_sim.mechanical_tail._run_relation_brew", lambda *_a, **_k: None)
+    assert retry_failed_mechanical_tail(session)
     assert session.resolve_turn(allow_empty_decree=True).advanced is True
     assert int(state.turn) == closed_turn + 2
     assert month_chain._load_chain(db, closed_turn)["mechanical_tail"]["status"] == "done"
@@ -294,7 +302,7 @@ def test_non_exhausted_tail_failure_stays_pending_and_retries(game, monkeypatch)
 
 @pytest.mark.parametrize("model_text,tail_status,visible", [
     ("\n 史评 \n", "done", "\n 史评 \n"),
-    ("  ", "degraded", ""),
+    ("  ", "done", "  "),
 ])
 def test_ending_summary_runs_in_mechanical_tail_after_advance(
     game, monkeypatch, model_text, tail_status, visible,

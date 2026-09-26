@@ -3955,17 +3955,18 @@ class GameSession:
             # 票的完成只表示本次 worker 已终止，不代表机械尾已终结。
             # 屏障等完票后复查持久状态；非耗尽异常留下 pending 时不能过月。
             from ming_sim.mechanical_tail import _pending_mechanical_tails
+            from ming_sim.mechanical_tail import failed_mechanical_tail
+            failure = failed_mechanical_tail(self.db, self.state)
             pending_tails = _pending_mechanical_tails(
                 self.db, current_turn=int(self.state.turn),
             )
-            if pending_tails:
+            if failure or pending_tails:
                 exc = RuntimeError(
                     f"机械尾未终结，不能过月：{[turn for turn, _ in pending_tails]}"
                 )
-                pack_path = next(
-                    (str(tail["error_pack_path"]) for _, tail in pending_tails
-                     if tail.get("error_pack_path")),
-                    None,
+                pack_path = (
+                    str(failure[1]["error_pack_path"])
+                    if failure and failure[1].get("error_pack_path") else None
                 )
                 if pack_path is None:
                     try:

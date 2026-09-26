@@ -1765,6 +1765,12 @@ class WebGame:
         )
         return budget
 
+    def mechanical_tail_failure(self) -> Optional[Dict[str, Any]]:
+        from ming_sim.mechanical_tail import failed_mechanical_tail
+
+        failure = failed_mechanical_tail(self.db, self.state)
+        return {"error_pack_path": failure[1].get("error_pack_path")} if failure else None
+
     def ending_payload(self) -> Optional[Dict[str, Any]]:
         """结局已触发时返回 {status,label,summary,timeline,summary_pending}，否则 None。
 
@@ -1774,7 +1780,9 @@ class WebGame:
         if not self.state.ended:
             return None
         from ming_sim.context import ENDING_LABELS
-        from ming_sim.mechanical_tail import ending_summary_pending
+        from ming_sim.mechanical_tail import ending_summary_pending, failed_mechanical_tail
+        failed = failed_mechanical_tail(self.db, self.state)
+        failure = {"error_pack_path": failed[1].get("error_pack_path")} if failed else None
         row = self.db.get_ending_summary() or {}
         summary = row.get("summary", "") or ""
         return {
@@ -1782,10 +1790,9 @@ class WebGame:
             "label": ENDING_LABELS.get(self.state.ending_status, "结局"),
             "summary": summary,
             "timeline": row.get("timeline", []),
-            "summary_pending": (
-                ending_summary_pending(self.db, self.state)
-                if not str(summary).strip()
-                else False
+            "summary_pending": ending_summary_pending(self.db, self.state) if not summary else False,
+            "tail_failure": (
+                failure if failure else None
             ),
         }
 
@@ -1884,6 +1891,7 @@ class WebGame:
             "powers": self.db.power_payload(),
             "victory_status": self.session.victory(),
             "ending": self.ending_payload(),
+            "mechanical_tail_failure": self.mechanical_tail_failure(),
             "events": [],
             "regions": self.db.region_payload(),
             "armies": self.db.army_payload(),
@@ -6320,6 +6328,17 @@ app.add_middleware(
 @app.get("/api/game/state")
 async def api_state() -> Dict[str, Any]:
     return get_game().state_payload()
+
+
+@app.post("/api/game/mechanical_tail/retry")
+async def api_retry_mechanical_tail() -> Dict[str, Any]:
+    from ming_sim.mechanical_tail import retry_failed_mechanical_tail
+
+    game = get_game()
+    with _serialized_web_write(game):
+        if not retry_failed_mechanical_tail(game.session):
+            raise HTTPException(status_code=409, detail="没有可重试的机械尾失败")
+    return game.state_payload()
 
 
 @app.post("/api/memorials/read")

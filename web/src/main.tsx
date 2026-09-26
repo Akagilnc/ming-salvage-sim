@@ -801,8 +801,26 @@ export function App() {
         />
       ) : null}
 
+      {state.mechanical_tail_failure && !state.ending ? (
+        <div role="alert">机械尾执行失败。错误包：{state.mechanical_tail_failure.error_pack_path}，请把它发给作者。
+          <button type="button" onClick={() => {
+            void fetch("/api/game/mechanical_tail/retry", { method: "POST" })
+              .then(async (response) => {
+                if (!response.ok) throw new Error(JSON.stringify(await response.json()));
+                await loadState();
+              }).catch((error) => setError(String(error)));
+          }}>重试</button>
+        </div>
+      ) : null}
       {activeModal === "ending" && state.ending ? (
-        <EndingModal ending={state.ending} onClose={() => { setEndingDismissed(true); setActiveModal("none"); }} />
+        <EndingModal ending={state.ending} onClose={() => { setEndingDismissed(true); setActiveModal("none"); }} onRetry={() => {
+          void fetch("/api/game/mechanical_tail/retry", { method: "POST" })
+            .then(async (response) => {
+              if (!response.ok) throw new Error(JSON.stringify(await response.json()));
+              await loadState();
+            })
+            .catch((error) => setError(String(error)));
+        }} />
       ) : null}
 
       {historyOpen ? (
