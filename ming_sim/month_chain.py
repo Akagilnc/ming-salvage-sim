@@ -1081,7 +1081,7 @@ def _question_as_decision(question: Dict[str, object], *, event_id: str) -> Dict
 
 
 def _persist_verdict_affected_parties(db: Any, dossier_id: int, verdict: Dict[str, Any]) -> None:
-    """与 apply_dossier_verdicts 同一笔：普通打回的 typed 反应须落在判决行上，强颁才读得到。"""
+    """与 apply_dossier_verdicts 同一笔：typed 反应与中旨亦不可颁标记同落判决行。"""
     from ming_sim.applier import safe_json_dumps
 
     current = db.get_decree_dossier(int(dossier_id)) or {}
@@ -1092,9 +1092,13 @@ def _persist_verdict_affected_parties(db: Any, dossier_id: int, verdict: Dict[st
     )
     db.conn.execute(
         """UPDATE decree_dossier_decisions
-           SET affected_parties_json=?
+           SET affected_parties_json=?, midzhi_unpromulgatable=?
            WHERE id=(SELECT MAX(id) FROM decree_dossier_decisions WHERE dossier_id=?)""",
-        (parties_json, int(dossier_id)),
+        (
+            parties_json,
+            1 if verdict.get("midzhi_unpromulgatable") is True else 0,
+            int(dossier_id),
+        ),
     )
     if not getattr(db.conn, "in_transaction", False):
         db.conn.commit()

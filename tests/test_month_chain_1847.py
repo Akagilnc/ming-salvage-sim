@@ -11,6 +11,7 @@ import threading
 
 import ming_sim.month_chain as month_chain
 import ming_sim.month_translate as month_translate
+from ming_sim.declaration_dispatch import pending_action_decree_ref
 from ming_sim.exceptions import LLMUnavailable
 from ming_sim.models import TurnPhase
 from tests.settlement_seam_helpers import make_light_session
@@ -916,6 +917,46 @@ def _choice(row, *, decision=""):
         payload["dossier_id"] = option["dossier_id"]
         payload["dossier_decision"] = decision
     return payload
+
+
+def test_fatal_midzhi_rejection_hides_force_option(game, monkeypatch):
+    """命门中旨打回的亦不可颁标记落判决行，批红台不得再给强颁。"""
+    db, state, content = game
+    minister = next(iter(content.characters.values())).name
+    pending_id = db.stage_pending_action(
+        state.turn, kind="directive", action="拟旨", minister_name=minister,
+        payload={
+            "dossier_action_type": "policy", "target_kind": "issue",
+            "target_id": "month-chain", "actor": minister, "mode": "midzhi",
+            "text": "命门中旨",
+        },
+    )
+    ref = pending_action_decree_ref(pending_id, 1)
+    verdict = _rejected_verdict(db)
+    verdict.pop("affected_parties", None)
+    verdict["midzhi_unpromulgatable"] = True
+    db.staged_declarations.stage(
+        decree_ref=ref,
+        declaration={"effects": {}},
+        turn=int(state.turn),
+        verdict=verdict,
+        forecast_text="预推不可见:命门中旨",
+        visible_refs={"affairs": [], "issues": [], "secret_orders": []},
+    )
+    _forbid_extractor(monkeypatch)
+    monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
+    monkeypatch.setattr(month_translate, "translate_month_segment", lambda *a, **k: {"effects": {}})
+    session = make_light_session(db, state, content)
+    session._write_gate = threading.Lock()
+
+    session.resolve_turn(allow_empty_decree=True)
+
+    triad = next(
+        row for row in session.pending_decisions() if str(row["event_id"]).startswith("dossier:")
+    )
+    assert all(opt.get("dossier_decision") != "force_promulgated" for opt in triad["options"])
+    dossier_id = int(str(triad["event_id"]).split(":", 1)[1])
+    assert db.list_decree_dossier_decisions(dossier_id)[-1]["midzhi_unpromulgatable"] is True
 
 
 def test_force_promulgation_settles_staged_prequestion_effects(game, monkeypatch):
