@@ -1239,15 +1239,24 @@ def test_step_4a_rescript_continuation_feeds_supply_run_input(game, monkeypatch)
     result = session.resolve_turn(allow_empty_decree=True)
     assert result.stage == "gazette"
 
-    # Verify Step 4a saw continuation origin effects
+    # Verify Step 4a saw continuation origin effects (structured, not generated prose)
     assert captured_feed.get("turn") == turn
     origin_effects = captured_feed.get("origin_effects") or {}
     eco_moves = origin_effects.get("economy_moves") or []
     assert any(m.get("origin_ref") == f"dossier:{dossier_id}" for m in eco_moves)
+    eligible = captured_feed.get("eligible_dossiers") or []
+    assert any(
+        int(item.get("dossier_id") or 0) == dossier_id
+        and str(item.get("decree_text") or "").strip()
+        and isinstance(item.get("payload"), dict)
+        and item.get("covert_task_contract") is not None
+        for item in eligible
+    )
+    assert str(captured_feed.get("board") or "").strip()
 
-    # Verify 0058 report and actual units
+    # Verify 0058 structured落库与实况单位（禁盯密奏正文）
     reports = db.list_dossier_progress(dossier_id)
-    assert any(r["memorial_text"] == "关外饷银如数盘点，实支有据。" for r in reports)
+    assert any(str(r.get("progress_band") or "") == "顺利" for r in reports)
     actual_units = db.sum_dossier_actual_progress_units(dossier_id)
     assert actual_units == 5.0
 
@@ -1301,16 +1310,18 @@ def test_step_4a_deferred_disclosure_sees_fresh_0058_progress(game, monkeypatch)
     result = session.resolve_turn(allow_empty_decree=True)
     assert result.stage == "gazette"
 
-    # Disclosure event should exist and contain this month's 0058 progress text
+    # Disclosure event exists after 0058；只验结构化落库与事件存在，不盯生成正文
     rows = db.conn.execute(
         "SELECT title, body, source_id FROM character_knowledge_events "
         "WHERE character_name='' AND source_id LIKE ?",
         (f"secret_order_disclosure:{order_id}:%",),
     ).fetchall()
     assert len(rows) == 1
-    body = str(rows[0]["body"])
-    assert "私仓已被锦衣卫查封" in body
-    assert "已查得私仓粮石十万石，罪证确凿。" in body
+    assert str(rows[0]["source_id"]).startswith(f"secret_order_disclosure:{order_id}:")
+    reports = db.list_dossier_progress(dossier_id)
+    assert any(str(r.get("progress_band") or "") == "顺利" for r in reports)
+    chain = month_chain._load_chain(db, turn)
+    assert chain.get("secret_orders_disclosures_done") is True
 
 
 def test_step_4a_incomplete_0058_report_fails_loud_and_retry_restarts(game, monkeypatch):
@@ -1749,3 +1760,97 @@ def test_step_4a_settles_due_secret_order(game, monkeypatch):
     assert chain.get("due_secret_orders_settled") is True
     assert chain.get("secret_orders_supply_done") is True
 
+
+def test_step_4a_supply_feed_includes_full_dossier_and_board(game):
+    """整月供料读口须含合资格案卷正文／payload 契约与必要盘面（#1843／ADR 0157 4a）。"""
+    db, state, content = game
+    turn = int(state.turn)
+    minister = db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' AND power_id='ming' LIMIT 1"
+    ).fetchone()[0]
+    order_id = db.create_secret_order(
+        state, minister, "关外核饷", "核清关宁月饷底册", [],
+        deadline_months=2,
+        covert_task={
+            "kind": "差务", "axes": ["实务事功"], "direction": 1,
+            "delivery": {
+                "unit": "万两", "target_units": 3.0, "effect_sign": -1,
+                "purpose": "其它", "category": "密令差务", "account": "内库",
+            },
+        },
+    )
+    db.conn.execute(
+        "UPDATE secret_orders SET turn_issued=? WHERE id=?",
+        (turn - 1, order_id),
+    )
+    dossier = db.get_dossier_for_secret_order(order_id)
+    dossier_id = int(dossier["id"])
+    marker = "【供料案卷契约探针】核清关宁月饷底册不得遗漏"
+    db.conn.execute(
+        "UPDATE decree_dossiers SET decree_text=? WHERE id=?",
+        (marker, dossier_id),
+    )
+    db.conn.commit()
+
+    feed = month_chain.build_secret_orders_supply_feed(db, state, {})
+    eligible = feed.get("eligible_dossiers") or []
+    hit = next(item for item in eligible if int(item["dossier_id"]) == dossier_id)
+    assert hit["decree_text"] == marker
+    assert isinstance(hit.get("payload"), dict)
+    contract = hit.get("covert_task_contract")
+    assert isinstance(contract, dict)
+    delivery = contract.get("delivery") if isinstance(contract.get("delivery"), dict) else {}
+    assert delivery.get("unit") == "万两"
+    assert float(delivery.get("target_units") or 0) == 3.0
+    assert str(feed.get("board") or "").strip()
+
+
+def test_step_4a_supply_feed_includes_army_and_fiscal_origin_effects(game):
+    """本回合 dossier origin 的军队与财政效果须经权威读口进入供料，而非三表白名单。"""
+    db, state, content = game
+    turn = int(state.turn)
+    minister = db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' AND power_id='ming' LIMIT 1"
+    ).fetchone()[0]
+    order_id = create_test_secret_order(
+        db, state, minister, "边军整饬", "整饬边军营伍", [],
+        deadline_months=2,
+    )
+    db.conn.execute(
+        "UPDATE secret_orders SET turn_issued=? WHERE id=?",
+        (turn - 1, order_id),
+    )
+    dossier_id = int(db.get_dossier_for_secret_order(order_id)["id"])
+    origin = f"dossier:{dossier_id}"
+    army_id = db.conn.execute(
+        "SELECT id FROM armies WHERE owner_power='ming' ORDER BY id LIMIT 1"
+    ).fetchone()["id"]
+    db.conn.execute(
+        """
+        INSERT INTO army_logs
+        (turn, year, period, army_id, field, old_value, new_value, delta, reason, origin_ref)
+        VALUES (?, ?, ?, ?, 'manpower', '1000', '1200', 200, '密令扩伍', ?)
+        """,
+        (turn, state.year, state.period, army_id, origin),
+    )
+    db.record_fiscal_config_change(
+        turn=turn, key="边饷_test_probe", old_value=10, new_value=15,
+        origin_ref=origin, reason="密令改边饷",
+    )
+    db.conn.commit()
+
+    feed = month_chain.build_secret_orders_supply_feed(db, state, {})
+    origin_effects = feed.get("origin_effects") or {}
+    army_rows = origin_effects.get("army_logs") or []
+    assert any(
+        str(row.get("origin_ref") or "") == origin
+        and str(row.get("army_id") or "") == str(army_id)
+        for row in army_rows
+    )
+    durable = origin_effects.get("durable_effects") or []
+    fiscal = origin_effects.get("fiscal_effects") or []
+    assert any(
+        str(row.get("origin_ref") or "") == origin
+        and str(row.get("key") or "") == "边饷_test_probe"
+        for row in (durable + fiscal)
+    )

@@ -13,7 +13,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 from ming_sim.applier import Provenance, atomic
 
@@ -952,24 +952,129 @@ def _apply_deferred_disclosures(
         _save_chain(db, turn, chain, decree_text=decree_text, source=source)
 
 
-def _collect_this_turn_origin_effects(db: Any, turn: int) -> Dict[str, Any]:
+def _supply_board_snapshot(db: Any, state: Any) -> str:
+    """必要盘面：复用账本报告读口（与 materials 推演者盘面同源），不另造第二套目录。"""
+    sections = (
+        ("国库", db.treasury_report(state, limit=None) if hasattr(db, "treasury_report") else ""),
+        ("军务", db.army_report(limit=None) if hasattr(db, "army_report") else ""),
+        ("地方", db.region_report(limit=None) if hasattr(db, "region_report") else ""),
+        ("营建", db.buildings_report(qualitative=True) if hasattr(db, "buildings_report") else ""),
+        ("边防", db.power_report(exclude_self=True) if hasattr(db, "power_report") else ""),
+        ("阶级", db.class_report(audience=True) if hasattr(db, "class_report") else ""),
+    )
+    parts = [f"{title}：\n{body}" for title, body in sections if str(body or "").strip()]
+    return "\n\n".join(parts)
+
+
+def _enrich_eligible_dossiers_for_supply(
+    db: Any, candidates: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """合资格案卷供料：复用 get_decree_dossier／typed contract 读口补齐正文与执行契约。"""
+    from ming_sim.covert_progress import read_covert_task_contract
+
+    out: List[Dict[str, Any]] = []
+    for item in candidates:
+        row = dict(item)
+        dossier_id = int(item.get("dossier_id") or 0)
+        dossier = db.get_decree_dossier(dossier_id) if dossier_id and hasattr(db, "get_decree_dossier") else None
+        if dossier is not None:
+            row["decree_text"] = str(dossier.get("decree_text") or "")
+            payload = dossier.get("payload")
+            row["payload"] = payload if isinstance(payload, dict) else {}
+            row["status"] = str(dossier.get("status") or "")
+            contract = read_covert_task_contract(dossier)
+            if contract is not None:
+                row["covert_task_contract"] = contract
+        out.append(row)
+    return out
+
+
+def _collect_this_turn_origin_effects(
+    db: Any, turn: int, dossier_ids: Sequence[int],
+) -> Dict[str, Any]:
+    """本回合已提交的 dossier origin 效果：按案卷权威 durable／日志读口装配，不扩三表白名单。"""
     current = int(turn)
-    eco = db.conn.execute(
-        "SELECT purpose, category, account, delta, reason, origin_ref "
-        "FROM economy_ledger WHERE turn=?", (current,)
-    ).fetchall()
-    person = db.conn.execute(
-        "SELECT person_name, action, payload_summary, origin_ref "
-        "FROM person_logs WHERE turn=?", (current,)
-    ).fetchall()
-    region = db.conn.execute(
-        "SELECT region_id, field, old_value, new_value, delta, reason, origin_ref "
-        "FROM region_logs WHERE turn=?", (current,)
-    ).fetchall()
+    durable_effects: List[Dict[str, Any]] = []
+    economy_moves: List[Dict[str, Any]] = []
+    fiscal_effects: List[Dict[str, Any]] = []
+    office_effects: List[Dict[str, Any]] = []
+    skill_grants: List[Dict[str, Any]] = []
+    person_logs: List[Dict[str, Any]] = []
+    region_logs: List[Dict[str, Any]] = []
+    army_logs: List[Dict[str, Any]] = []
+    building_logs: List[Dict[str, Any]] = []
+    power_logs: List[Dict[str, Any]] = []
+
+    for raw_id in dossier_ids:
+        did = int(raw_id)
+        if did <= 0:
+            continue
+        origin = f"dossier:{did}"
+        if hasattr(db, "list_dossier_durable_effects"):
+            for item in db.list_dossier_durable_effects(did):
+                if int(item.get("turn") or 0) != current:
+                    continue
+                row = dict(item)
+                durable_effects.append(row)
+                if row.get("effect_kind"):
+                    fiscal_effects.append(row)
+                else:
+                    economy_moves.append(row)
+        if hasattr(db, "list_office_effects_for_dossier"):
+            office_effects.extend(dict(item) for item in db.list_office_effects_for_dossier(did))
+        if hasattr(db, "list_skill_grants_for_dossier"):
+            for item in db.list_skill_grants_for_dossier(did):
+                if int(item.get("source_turn") or 0) == current:
+                    skill_grants.append(dict(item))
+        if not hasattr(db, "conn"):
+            continue
+        person_logs.extend(
+            dict(r) for r in db.conn.execute(
+                "SELECT person_name, action, payload_summary, origin_ref "
+                "FROM person_logs WHERE origin_ref=? AND turn=?",
+                (origin, current),
+            ).fetchall()
+        )
+        region_logs.extend(
+            dict(r) for r in db.conn.execute(
+                "SELECT region_id, field, old_value, new_value, delta, reason, origin_ref "
+                "FROM region_logs WHERE origin_ref=? AND turn=?",
+                (origin, current),
+            ).fetchall()
+        )
+        army_logs.extend(
+            dict(r) for r in db.conn.execute(
+                "SELECT army_id, field, old_value, new_value, delta, reason, origin_ref "
+                "FROM army_logs WHERE origin_ref=? AND turn=?",
+                (origin, current),
+            ).fetchall()
+        )
+        building_logs.extend(
+            dict(r) for r in db.conn.execute(
+                "SELECT building_id, field, old_value, new_value, delta, reason, origin_ref "
+                "FROM building_logs WHERE origin_ref=? AND turn=?",
+                (origin, current),
+            ).fetchall()
+        )
+        power_logs.extend(
+            dict(r) for r in db.conn.execute(
+                "SELECT power_id, field, old_value, new_value, delta, reason, origin_ref "
+                "FROM power_logs WHERE origin_ref=? AND turn=?",
+                (origin, current),
+            ).fetchall()
+        )
+
     return {
-        "economy_moves": [dict(r) for r in eco if str(r["origin_ref"] or "").startswith("dossier:")],
-        "person_logs": [dict(r) for r in person if str(r["origin_ref"] or "").startswith("dossier:")],
-        "region_logs": [dict(r) for r in region if str(r["origin_ref"] or "").startswith("dossier:")],
+        "durable_effects": durable_effects,
+        "economy_moves": economy_moves,
+        "fiscal_effects": fiscal_effects,
+        "office_effects": office_effects,
+        "skill_grants": skill_grants,
+        "person_logs": person_logs,
+        "region_logs": region_logs,
+        "army_logs": army_logs,
+        "building_logs": building_logs,
+        "power_logs": power_logs,
     }
 
 
@@ -979,17 +1084,37 @@ def build_secret_orders_supply_feed(
     from ming_sim.covert_progress import _is_issuance_turn
     turn = int(state.turn)
     candidates = db.list_monthly_dossier_progress_nudges(turn)
+    eligible = _enrich_eligible_dossiers_for_supply(db, candidates)
     active_orders = [
         dict(o) for o in db.list_secret_orders(status="active")
         if not _is_issuance_turn(o, turn)
     ]
-    origin_effects = _collect_this_turn_origin_effects(db, turn)
+    dossier_ids: List[int] = []
+    seen: set[int] = set()
+    for item in eligible:
+        did = int(item.get("dossier_id") or 0)
+        if did > 0 and did not in seen:
+            seen.add(did)
+            dossier_ids.append(did)
+    for order in active_orders:
+        dossier = (
+            db.get_dossier_for_secret_order(int(order["id"]))
+            if hasattr(db, "get_dossier_for_secret_order") else None
+        )
+        if dossier is None:
+            continue
+        did = int(dossier.get("id") or 0)
+        if did > 0 and did not in seen:
+            seen.add(did)
+            dossier_ids.append(did)
+    origin_effects = _collect_this_turn_origin_effects(db, turn, dossier_ids)
     return {
         "instruction": "为本月所有在办密令产出密奏和执行态声明。",
         "turn": turn,
-        "eligible_dossiers": candidates,
+        "eligible_dossiers": eligible,
         "active_secret_orders": active_orders,
         "origin_effects": origin_effects,
+        "board": _supply_board_snapshot(db, state),
     }
 
 
