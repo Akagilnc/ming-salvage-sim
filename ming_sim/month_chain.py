@@ -1001,8 +1001,37 @@ def _aggregate_origin_from_segment_results(
             issue_summary = report.get("issue_summary")
             if isinstance(issue_summary, dict):
                 for item in issue_summary.get("new_issues") or []:
-                    if isinstance(item, dict) and not item.get("rejected"):
-                        effects["issues"].append(dict(item))
+                    if not isinstance(item, dict):
+                        continue
+                    if item.get("rejected"):
+                        # 与 13 列表键同形：拒收入 origin_rejections，供 4a 据实判读。
+                        _append_rejection(
+                            section="issues",
+                            item=(
+                                item.get("item")
+                                if isinstance(item.get("item"), dict)
+                                else item
+                            ),
+                            reason=str(item.get("reason") or ""),
+                            category=str(item.get("category") or ""),
+                            source="inline",
+                        )
+                        continue
+                    effects["issues"].append(dict(item))
+                for item in issue_summary.get("entity_rejections") or []:
+                    if not isinstance(item, dict):
+                        continue
+                    _append_rejection(
+                        section="entity_rejections",
+                        item=(
+                            item.get("item")
+                            if isinstance(item.get("item"), dict)
+                            else item
+                        ),
+                        reason=str(item.get("reason") or ""),
+                        category=str(item.get("category") or ""),
+                        source="inline",
+                    )
             for key, value in report.items():
                 if not str(key).endswith("_rejections") or not isinstance(value, list):
                     continue
