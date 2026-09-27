@@ -1069,6 +1069,7 @@ def _657_db_path_of(game_or_path) -> str:
 def _657_install_real_phase2_llm_boundary(monkeypatch_or_module):
     """只中和 phase2 LLM 边界；保留 resolve_decisions_phase2 真结算/推月。"""
     import ming_sim.decree as dm
+    import ming_sim.mechanical_tail as mechanical_tail
 
     def _set(name, value):
         if hasattr(monkeypatch_or_module, "setattr"):
@@ -1078,8 +1079,16 @@ def _657_install_real_phase2_llm_boundary(monkeypatch_or_module):
 
     _set("create_season_simulator_agent", lambda *a, **k: None)
     _set("create_ending_summary_agent", lambda *a, **k: None)
-    # 章节/关系酿制：禁 sk-test 打真网；record 空操作
+    # 章节/关系酿制：禁 sk-test 打真网；record 空操作。
+    # 旧 settle 注入缝 + #1845 机械尾真源缝（brew 已迁出 decree runner）。
     _set("_make_relation_brew_runner", lambda *a, **k: None)
+    _noop_brew = lambda *a, **k: None
+    if hasattr(monkeypatch_or_module, "setattr"):
+        monkeypatch_or_module.setattr(
+            mechanical_tail, "_run_relation_brew", _noop_brew,
+        )
+    else:
+        mechanical_tail._run_relation_brew = _noop_brew
     # #1745：结算拒收递话同属外层 LLM 缝（复用单一 agent 边界夹具）。
     from tests.section_rejection_helpers import install_settlement_attendant_agent_stub
     if hasattr(monkeypatch_or_module, "setattr"):
@@ -1144,6 +1153,8 @@ def _657_subprocess_resolve(
         dm.create_season_simulator_agent = lambda *a, **k: None
         dm.create_ending_summary_agent = lambda *a, **k: None
         dm._make_relation_brew_runner = lambda *a, **k: None
+        import ming_sim.mechanical_tail as mechanical_tail
+        mechanical_tail._run_relation_brew = lambda *a, **k: None
         import ming_sim.decree_forecast as decree_forecast
         import ming_sim.month_chain as month_chain
         month_chain.run_world_segment_text = lambda *a, **k: ""
