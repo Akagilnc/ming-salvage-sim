@@ -140,15 +140,19 @@ def _decree_ref_is_secret(db: Any, decree_ref: str) -> bool:
     return row is not None and str(row["kind"] or "") == "secret_order"
 
 
-def _gazette_feed(db: Any, state: Any, chain: Dict[str, Any]) -> Dict[str, Any]:
-    """作者供料：名义、实入、实况、拒收、预推文、世界段、请旨答复、月初快照。
+def _month_fact_materials(
+    db: Any, state: Any, chain: Dict[str, Any], *, include_secret_sources: bool,
+) -> Dict[str, Any]:
+    """本月事实材料：名义/预推文、实入、拒收、世界段、请旨答复、月初快照。
 
-    密令来源的声明、实况与拒收不进这份供料。盘面在推演者目录里，不在这里再抄一份。
+    材料是事实与原话，不由代码归纳、拼装或投影为「已生效效果」清单。
+    include_secret_sources=False：邸报作者，滤密令来源。
+    include_secret_sources=True：整月密报 run，可读密令来源。
     """
     import json
 
     turn = int(state.turn)
-    secret_dossiers = _secret_dossier_ids(db)
+    secret_dossiers = _secret_dossier_ids(db) if not include_secret_sources else set()
     nominal: List[Dict[str, Any]] = []
     forecasts: List[str] = []
     if hasattr(db, "conn"):
@@ -167,7 +171,7 @@ def _gazette_feed(db: Any, state: Any, chain: Dict[str, Any]) -> Dict[str, Any]:
                 visible = json.loads(row["visible_refs_json"] or "{}")
             except json.JSONDecodeError:
                 visible = {}
-            if (
+            if not include_secret_sources and (
                 _decree_ref_is_secret(db, decree_ref)
                 or _secret_sourced(declaration)
                 or _secret_sourced(visible)
@@ -185,7 +189,10 @@ def _gazette_feed(db: Any, state: Any, chain: Dict[str, Any]) -> Dict[str, Any]:
             (turn,),
         ):
             origin = str(row["origin_ref"] or "")
-            if origin.startswith("secret_order:") or _origin_is_secret_dossier(origin, secret_dossiers):
+            if not include_secret_sources and (
+                origin.startswith("secret_order:")
+                or _origin_is_secret_dossier(origin, secret_dossiers)
+            ):
                 continue
             landed.append({
                 "account": row["account"],
@@ -205,13 +212,15 @@ def _gazette_feed(db: Any, state: Any, chain: Dict[str, Any]) -> Dict[str, Any]:
                 "WHERE turn=? AND COALESCE(resimulation_invalidated, 0)=0 ORDER BY id",
                 (turn,),
             ):
-                if str(row["source"] or "") == "secret_order":
+                if not include_secret_sources and str(row["source"] or "") == "secret_order":
                     continue
                 try:
                     item = json.loads(row["item_json"] or "{}")
                 except json.JSONDecodeError:
                     item = {}
-                if _secret_sourced(item) or _item_is_secret_dossier(item, secret_dossiers):
+                if not include_secret_sources and (
+                    _secret_sourced(item) or _item_is_secret_dossier(item, secret_dossiers)
+                ):
                     continue
                 rejections.append({
                     "section": row["section"],
@@ -234,11 +243,29 @@ def _gazette_feed(db: Any, state: Any, chain: Dict[str, Any]) -> Dict[str, Any]:
     snapshot = None
     if hasattr(db, "get_month_open_snapshot"):
         snapshot = db.get_month_open_snapshot(turn)
+    return {
+        "nominal": nominal,
+        "landed": landed,
+        "rejections": rejections,
+        "forecasts": forecasts,
+        "world_segment": str(chain.get("world_text") or ""),
+        "rescript_answers": answers,
+        "month_open": snapshot,
+    }
+
+
+def _gazette_feed(db: Any, state: Any, chain: Dict[str, Any]) -> Dict[str, Any]:
+    """作者供料：名义、实入、实况、拒收、预推文、世界段、请旨答复、月初快照。
+
+    密令来源的声明、实况与拒收不进这份供料。盘面在推演者目录里，不在这里再抄一份。
+    """
     from ming_sim.audience_night import list_waiting_audience_summons
     from ming_sim.decree import collect_new_arrival_waiting_audience
     from ming_sim.models import reign_period_label
     from ming_sim.settlement_payload import augment_secret_orders_with_due_commitments
 
+    turn = int(state.turn)
+    materials = _month_fact_materials(db, state, chain, include_secret_sources=False)
     grouped = augment_secret_orders_with_due_commitments({}, db, state)
     # Trust augment's Dict[str, list] contract — shape errors must fail loud.
     due_commitments = [
@@ -249,13 +276,7 @@ def _gazette_feed(db: Any, state: Any, chain: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "instruction": "据已落定的实况写本期邸报。title 由你写，report 是全文。",
         "reign_period_label": reign_period_label(int(state.year), int(state.period)),
-        "nominal": nominal,
-        "landed": landed,
-        "rejections": rejections,
-        "forecasts": forecasts,
-        "world_segment": str(chain.get("world_text") or ""),
-        "rescript_answers": answers,
-        "month_open": snapshot,
+        **materials,
         "due_commitments": due_commitments,
         "waiting_audience": collect_new_arrival_waiting_audience(
             _persisted_transit_arrivals(db, turn),
@@ -359,7 +380,6 @@ def continue_world_after_answers(
             chain["declaration_outcome"] = candidate
             outcome = candidate
         _collect_disclosures_from_result(chain, result)
-        _record_segment_applied_result(chain, kind="world_post", result=result)
         chain["world_questions"] = []
         chain["world_continued"] = True
         _save_chain(db, turn, chain, source=source)
@@ -415,9 +435,6 @@ def continue_decree_after_answers(
         if candidate is not None and chain is not None:
             chain["declaration_outcome"] = candidate
         _collect_disclosures_from_result(chain, result)
-        _record_segment_applied_result(
-            chain, kind="decree_post", result=result, decree_ref=decree_ref,
-        )
         if chain is not None:
             _save_chain(db, int(state.turn), chain, source=source)
         db.staged_declarations.clear_questions(decree_ref)
@@ -834,9 +851,9 @@ def _settle_edicts(
                         db._record_dossier_verdict_metadata(state, int(dossier["id"]), verdict)
         current = db.get_decree_dossier(int(dossier["id"])) or dossier
         if str(current.get("promulgation_decision") or "") == "promulgated":
-            def persist_result(_ref: str, result: Any) -> None:
-                # 披露暂缓、段结果与旨意落账同事务：alongside 在 settle 的 atomic 内，
-                # 须把 pending_disclosures / segment_applied_results 一并写入月链。
+            def persist_result(_decree_ref: str, result: Any) -> None:
+                # 披露暂缓与旨意落账同事务：alongside 在 settle 的 atomic 内，
+                # 须把 pending_disclosures 一并写入月链。
                 nonlocal outcome
                 candidate = _ending_from_dispatch_result(result)
                 if candidate is not None:
@@ -844,9 +861,6 @@ def _settle_edicts(
                     if on_outcome is not None:
                         on_outcome(candidate)
                 _collect_disclosures_from_result(chain, result)
-                _record_segment_applied_result(
-                    chain, kind="decree_pre", result=result, decree_ref=_ref,
-                )
                 _save_chain(
                     db, int(state.turn), chain, source=Provenance.player_decree,
                 )
@@ -866,258 +880,6 @@ def _ending_from_dispatch_result(result: Any) -> Optional[Dict[str, object]]:
         if isinstance(candidate, dict) and candidate.get("status") != "ongoing":
             return candidate
     return None
-
-
-def _json_safe(value: Any) -> Any:
-    if value is None or isinstance(value, (bool, int, float, str)):
-        return value
-    if isinstance(value, Provenance):
-        return value.value
-    if isinstance(value, dict):
-        return {str(k): _json_safe(v) for k, v in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_json_safe(v) for v in value]
-    if hasattr(value, "value") and isinstance(getattr(value, "value"), str):
-        return value.value
-    return str(value)
-
-
-def _serialize_dispatch_result(result: Any) -> Dict[str, Any]:
-    """DeclarationDispatchResult → 可落盘的 applied 报告与拒收（ADR 0157 步骤 4／4a）。
-
-    遍历全部 section：``SectionResult.applied`` 与 ``rejected`` 一并留存。
-    ``effects.applied`` 已是按效果键组织的 report 列表；其余 section 以
-    section 名为键包一层，供 4a 按实际结果契约投影。``ProtagonistResult``
-    无 ``applied``（validated 非落库结果），只收拒收。
-    """
-    if result is None:
-        return {"applied": [], "rejections": []}
-    applied: List[Any] = []
-    rejections: List[Dict[str, Any]] = []
-    from ming_sim.declaration_dispatch import _SECTION_FIELDS
-    for section_name in _SECTION_FIELDS:
-        section = getattr(result, section_name, None)
-        if section is None:
-            continue
-        section_applied = getattr(section, "applied", None) or []
-        if section_applied:
-            if section_name == "effects":
-                for report in section_applied:
-                    if isinstance(report, dict):
-                        applied.append(_json_safe(report))
-            else:
-                applied.append({
-                    section_name: [_json_safe(item) for item in section_applied],
-                })
-        for rejected_item in getattr(section, "rejected", None) or []:
-            item = getattr(rejected_item, "item", None)
-            source = getattr(rejected_item, "source", None)
-            rejections.append({
-                "section": str(section_name),
-                "item": _json_safe(item if item is not None else {}),
-                "reason": str(getattr(rejected_item, "reason", "") or ""),
-                "category": str(getattr(rejected_item, "category", "") or ""),
-                "source": (
-                    source.value if isinstance(source, Provenance)
-                    else str(source or "")
-                ),
-            })
-    return {"applied": applied, "rejections": rejections}
-
-
-def _record_segment_applied_result(
-    chain: Optional[Dict[str, Any]],
-    *,
-    kind: str,
-    result: Any,
-    decree_ref: Optional[str] = None,
-) -> None:
-    """把本段实际应用结果与拒收写入月链（与效果同提交边界）。"""
-    if chain is None or result is None:
-        return
-    pending = chain.setdefault("segment_applied_results", [])
-    key_ref = str(decree_ref or "")
-    for existing in pending:
-        if (
-            str(existing.get("kind") or "") == kind
-            and str(existing.get("decree_ref") or "") == key_ref
-        ):
-            return
-    payload = _serialize_dispatch_result(result)
-    pending.append({
-        "kind": kind,
-        "decree_ref": key_ref or None,
-        "applied": payload["applied"],
-        "rejections": payload["rejections"],
-    })
-
-
-def _rejection_payload(
-    *, section: str, item: Any, reason: str = "", category: str = "", source: str = "",
-) -> Dict[str, Any]:
-    return {
-        "section": section,
-        "item": _json_safe(item if item is not None else {}),
-        "reason": str(reason or ""),
-        "category": str(category or ""),
-        "source": str(source or ""),
-    }
-
-
-def _project_dict_items_as_effects_or_rejections(
-    *,
-    section: str,
-    items: Any,
-    effects_bucket: List[Dict[str, Any]],
-    rejections: List[Dict[str, Any]],
-) -> None:
-    """按实际结果项语义投影：rejected 入拒收栏，其余入已落效果。"""
-    if not isinstance(items, list):
-        return
-    for item in items:
-        if not isinstance(item, dict):
-            continue
-        if item.get("rejected"):
-            rejections.append(_rejection_payload(
-                section=section,
-                item=item.get("item") if isinstance(item.get("item"), dict) else item,
-                reason=str(item.get("reason") or ""),
-                category=str(item.get("category") or ""),
-                source="inline",
-            ))
-            continue
-        effects_bucket.append(dict(item))
-
-
-def _project_rejection_list(
-    *,
-    section_key: str,
-    items: Any,
-    rejections: List[Dict[str, Any]],
-    keep_full_key: bool = False,
-) -> None:
-    """`*_rejections` 列表整栏入拒收。
-
-    顶层 `economy_moves_rejections` 等与效果键成对 → 剥后缀；
-    `issue_summary.entity_rejections` 等专用桶 → 保留全名。
-    """
-    if not isinstance(items, list):
-        return
-    key = str(section_key)
-    if keep_full_key or not key.endswith("_rejections"):
-        section = key
-    else:
-        section = key[: -len("_rejections")] or key
-    for item in items:
-        if not isinstance(item, dict):
-            continue
-        rejections.append(_rejection_payload(
-            section=section,
-            item=item.get("item") if isinstance(item.get("item"), dict) else item,
-            reason=str(item.get("reason") or ""),
-            category=str(item.get("category") or ""),
-            source="inline",
-        ))
-
-
-def _merge_issue_summary_projection(
-    target: Dict[str, Any], nested: Dict[str, Any],
-) -> None:
-    for key, value in nested.items():
-        if isinstance(value, list):
-            bucket = target.setdefault(key, [])
-            if isinstance(bucket, list):
-                bucket.extend(value)
-        elif value not in (None, {}, []):
-            target[key] = _json_safe(value)
-
-
-def _aggregate_origin_from_segment_results(
-    segments: List[Dict[str, Any]],
-) -> tuple[Dict[str, Any], List[Dict[str, Any]]]:
-    """从持久化段结果按实际结果契约投影 4a 供料：已落与拒收分栏，无字段白名单。"""
-    effects: Dict[str, Any] = {}
-    rejections: List[Dict[str, Any]] = []
-
-    for seg in segments:
-        if not isinstance(seg, dict):
-            continue
-        for report in seg.get("applied") or []:
-            if not isinstance(report, dict):
-                continue
-            for key, value in report.items():
-                section = str(key)
-                if section.endswith("_rejections"):
-                    _project_rejection_list(
-                        section_key=section, items=value, rejections=rejections,
-                    )
-                    continue
-                if section == "issue_summary" and isinstance(value, dict):
-                    nested: Dict[str, Any] = {}
-                    for nested_key, nested_value in value.items():
-                        nested_section = str(nested_key)
-                        if nested_section.endswith("_rejections"):
-                            _project_rejection_list(
-                                section_key=nested_section,
-                                items=nested_value,
-                                rejections=rejections,
-                                keep_full_key=True,
-                            )
-                            continue
-                        if isinstance(nested_value, list):
-                            # 只投影 list[dict] 事实；touched_ids 等标量列表不进供料。
-                            if not any(isinstance(x, dict) for x in nested_value):
-                                continue
-                            bucket: List[Dict[str, Any]] = []
-                            _project_dict_items_as_effects_or_rejections(
-                                section=nested_section,
-                                items=nested_value,
-                                effects_bucket=bucket,
-                                rejections=rejections,
-                            )
-                            if bucket:
-                                nested[nested_section] = bucket
-                            continue
-                        if isinstance(nested_value, dict) and nested_value:
-                            nested[nested_section] = _json_safe(nested_value)
-                    if nested:
-                        summary_bucket = effects.setdefault("issue_summary", {})
-                        if not isinstance(summary_bucket, dict):
-                            summary_bucket = {}
-                            effects["issue_summary"] = summary_bucket
-                        _merge_issue_summary_projection(summary_bucket, nested)
-                    continue
-                if isinstance(value, list):
-                    if not any(isinstance(x, dict) for x in value):
-                        continue
-                    bucket = effects.setdefault(section, [])
-                    if not isinstance(bucket, list):
-                        bucket = []
-                        effects[section] = bucket
-                    _project_dict_items_as_effects_or_rejections(
-                        section=section,
-                        items=value,
-                        effects_bucket=bucket,
-                        rejections=rejections,
-                    )
-                    continue
-                if isinstance(value, dict) and value:
-                    existing = effects.get(section)
-                    if isinstance(existing, dict):
-                        merged = dict(existing)
-                        merged.update(_json_safe(value))
-                        effects[section] = merged
-                    else:
-                        effects[section] = _json_safe(value)
-        for rejected in seg.get("rejections") or []:
-            if isinstance(rejected, dict):
-                rejections.append(dict(rejected))
-
-    origin_effects = {
-        key: rows for key, rows in effects.items()
-        if rows not in (None, {}, [])
-    }
-    return origin_effects, rejections
 
 
 def _collect_disclosures_from_result(chain: Optional[Dict[str, Any]], result: Any) -> None:
@@ -1171,7 +933,6 @@ def _run_world_segment(
         if outcome is not None:
             persisted["declaration_outcome"] = outcome
         _collect_disclosures_from_result(persisted, result)
-        _record_segment_applied_result(persisted, kind="world", result=result)
         persisted["world_committed"] = True
         persisted.pop("translate_exhaust_stops", None)
         _save_chain(db, turn, persisted, source=source)
@@ -1237,7 +998,13 @@ def _enrich_eligible_dossiers_for_supply(
 def build_secret_orders_supply_feed(
     db: Any, state: Any, chain: Dict[str, Any],
 ) -> Dict[str, Any]:
+    """整月密报供料：沿邸报作者本月材料读口，但不滤密令来源；另附密令对象与盘面。
+
+    不拼装「已生效效果」清单，也不另造逐段实际结果账本。
+    """
     from ming_sim.covert_progress import _is_issuance_turn
+    from ming_sim.materials import _world_board_text
+
     turn = int(state.turn)
     candidates = db.list_monthly_dossier_progress_nudges(turn)
     eligible = _enrich_eligible_dossiers_for_supply(db, candidates)
@@ -1245,20 +1012,13 @@ def build_secret_orders_supply_feed(
         dict(o) for o in db.list_secret_orders(status="active")
         if not _is_issuance_turn(o, turn)
     ]
-    # 4a 供料真源 = 步骤 2–4 各段持久化的实际应用结果及拒收；不逐业务表猜补。
-    segments = [
-        dict(seg) for seg in (chain.get("segment_applied_results") or [])
-        if isinstance(seg, dict)
-    ]
-    origin_effects, origin_rejections = _aggregate_origin_from_segment_results(segments)
-    from ming_sim.materials import _world_board_text
+    materials = _month_fact_materials(db, state, chain, include_secret_sources=True)
     return {
-        "instruction": "为本月所有在办密令产出密奏和执行态声明。",
+        "instruction": "为本月所有在办密令产出密奏和执行态声明。据实况自行判断办理与拒收。",
         "turn": turn,
         "eligible_dossiers": eligible,
         "active_secret_orders": active_orders,
-        "origin_effects": origin_effects,
-        "origin_rejections": origin_rejections,
+        **materials,
         "board": _world_board_text(db, state),
     }
 
@@ -1271,6 +1031,7 @@ def run_secret_orders_supply(
     from ming_sim.agents import create_secret_order_supply_agent, parse_agent_json, run_agent_text
     from ming_sim.exceptions import LLMUnavailable
     from ming_sim.llm_transport import audience_transport_policy
+    from ming_sim.materials import prepare_world_materials, release_material_tree
     from ming_sim.models import LLMConfig
 
     if not isinstance(llm_config, LLMConfig):
@@ -1278,11 +1039,16 @@ def run_secret_orders_supply(
 
     feed = build_secret_orders_supply_feed(db, state, chain)
     message = json.dumps(feed, ensure_ascii=False)
-    agent = create_secret_order_supply_agent(llm_config)
-    raw = run_agent_text(
-        agent, message, tag="secret_orders_supply",
-        transport_policy=audience_transport_policy(),
-    )
+    # 与邸报作者同目录读口；密报侧不滤密令来源（默认 prepare 全量可读）。
+    prepared = prepare_world_materials(db, state)
+    try:
+        agent = create_secret_order_supply_agent(llm_config, prepared)
+        raw = run_agent_text(
+            agent, message, tag="secret_orders_supply",
+            transport_policy=audience_transport_policy(),
+        )
+    finally:
+        release_material_tree(prepared.root)
     data = parse_agent_json(raw, "secret_orders_supply")
     if not isinstance(data, dict):
         raise LLMUnavailable("整月供料产物非有效 JSON 对象", stage="secret_orders_supply")

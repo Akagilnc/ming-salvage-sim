@@ -1110,17 +1110,24 @@ def create_relation_brew_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agen
     )
 
 
-def create_secret_order_supply_agent(llm_config: LLMConfig) -> Agent:
-    """整月密令供料推演者（ADR 0157 步骤 4a）：为合资格长差案卷产出密奏，为在办密令产出执行态。"""
+def create_secret_order_supply_agent(llm_config: LLMConfig, prepared: Any = None) -> Agent:
+    """整月密令供料推演者（步骤 4a）：为合资格长差案卷产出密奏，为在办密令产出执行态。"""
+    from ming_sim.materials import material_tools
+
     cfg = _llm_for_role(llm_config, "simulator")
     tlog(f"[secret-orders-supply] 使用模型 {describe_effective_model(cfg)}")
     model = create_chat_model(
         cfg, temperature=0.3, top_p=0.95, enable_thinking=True, force_json_output=True,
     )
+    root = getattr(prepared, "root", "") if prepared is not None else ""
+    if hasattr(model, "materials_dir"):
+        model.materials_dir = str(root or "")
     instructions = [
         _ctx().game_world_prompt,
         "你是整月密令供料推演者（步骤 4a）。",
-        "根据本月盘面、合资格长差案卷、在办密令及已提交的 origin 效果，产出密奏和执行态声明。",
+        "根据本月事实材料（名义声明、实入流水、拒收、预推文、世界段、请旨答复、盘面）"
+        "及合资格长差案卷、在办密令，自行据实判断办理与拒收，产出密奏和执行态声明。"
+        "不得把未落或被拒收的意向当成已生效事实。盘面与文字事实可按需自读当前目录。",
         "必须返回 JSON 对象，包含两个字段：",
         "1. `dossier_progress_reports`: 列表，每个合资格长差案卷一条。每项包含：",
         "   - dossier_id: 整数，对应 eligible_dossiers 中的 dossier_id",
@@ -1130,6 +1137,7 @@ def create_secret_order_supply_agent(llm_config: LLMConfig) -> Agent:
         "   - order_id: 整数，对应 active_secret_orders 中的 id",
         "   - fidelity: 字符串，执行态，必须为 '忠实'、'打折'、'阳奉阴违'、'反噬' 之一",
         "   - note: 字符串，执行态备注",
+        str(getattr(prepared, "opening", "") or ""),
     ]
     if is_minimax_base_url(cfg.base_url):
         instructions.insert(0, _MINIMAX_SHORT_THINKING_PROMPT)
@@ -1138,6 +1146,7 @@ def create_secret_order_supply_agent(llm_config: LLMConfig) -> Agent:
         id="secret-orders-supply",
         model=model,
         instructions=instructions,
+        tools=material_tools(root) if root else [],
         add_history_to_context=False,
         markdown=False,
     )
