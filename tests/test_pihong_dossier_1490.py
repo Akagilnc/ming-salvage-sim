@@ -2404,23 +2404,27 @@ def test_657_s10_http_five_actions_and_1490_no_regress(web_game, monkeypatch):
         # phase2/refresh 可能换 state 对象——每轮从 session 重取真源
         state = web_game.session.state
         db = web_game.db
-        db.conn.execute("DELETE FROM pending_decisions")
-        db.conn.commit()
-        case_opt = liaodong_opt if name == "follow_draft" else opt
-        db.save_rescript_drafts(int(state.turn), [{
-            "title": f"急务-{name}", "context": "c",
-            "options": [case_opt, {"label": "备", "hint": "h", "draft_capability": "x"}],
-            "actor_name": "杨嗣昌", "actor_office": "兵部尚书", "actor_faction": "东林",
-        }])
-        db.conn.commit()
-        db.save_resolve_context(
-            int(state.turn), "诏", "邸报", {"candidate_events": [], "transit_semantics": []},
-            secret_orders=[], relevant_memories=[],
-        )
-        state.turn_phase = TurnPhase.AWAITING_DECISION.value
-        db.save_state(state)
-        desk = db.list_rescript_desk(int(state.turn))
-        key = desk[0]["decision_key"]
+        from ming_sim.session_write_queue import get_session_write_queue
+
+        def plant_case():
+            db.conn.execute("DELETE FROM pending_decisions")
+            db.conn.commit()
+            case_opt = liaodong_opt if name == "follow_draft" else opt
+            db.save_rescript_drafts(int(state.turn), [{
+                "title": f"急务-{name}", "context": "c",
+                "options": [case_opt, {"label": "备", "hint": "h", "draft_capability": "x"}],
+                "actor_name": "杨嗣昌", "actor_office": "兵部尚书", "actor_faction": "东林",
+            }])
+            db.conn.commit()
+            db.save_resolve_context(
+                int(state.turn), "诏", "邸报", {"candidate_events": [], "transit_semantics": []},
+                secret_orders=[], relevant_memories=[],
+            )
+            state.turn_phase = TurnPhase.AWAITING_DECISION.value
+            db.save_state(state)
+            return db.list_rescript_desk(int(state.turn))[0]["decision_key"]
+
+        key = get_session_write_queue(web_game.session).run_exclusive(plant_case)
         choice = {**choice_body, "decision_key": key}
 
         if name == "deliberate":

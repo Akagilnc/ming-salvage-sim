@@ -265,7 +265,4 @@ def test_http_audience_one_matter_grant_with_deadline_1783(
         assert after_due["execution_outcome"] == "fulfilled", after_due
         assert after_due["status"] == "closed"
     finally:
-        try:
-            game.db.close()
-        except Exception:
-            pass
+        game.session.close()

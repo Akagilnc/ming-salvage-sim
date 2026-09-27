@@ -7,6 +7,9 @@ export function EndingModal({ ending, failure, onClose, onRetry }: { ending: End
   const lastTimeline = ending.timeline?.[ending.timeline.length - 1];
   const endingDate = lastTimeline ? `${lastTimeline.year}年${lastTimeline.period}月` : "终局";
   const timelineCount = ending.timeline?.length ?? 0;
+  // #1845：机械尾失败时空总评不得用「（无总评）」冒充已完成；pending / 失败均留空，仅真无总评时才显示占位。
+  const summaryText = ending.summary
+    || (ending.summary_pending || failure ? "" : "（无总评）");
 
   return (
     <FullscreenModal
@@ -36,7 +39,7 @@ export function EndingModal({ ending, failure, onClose, onRetry }: { ending: End
           <pre
             className="ending-summary-text"
             aria-busy={ending.summary_pending ? true : undefined}
-          >{ending.summary || (ending.summary_pending ? "" : "（无总评）")}</pre>
+          >{summaryText}</pre>
         </section>
 
         {ending.timeline && ending.timeline.length > 0 && (

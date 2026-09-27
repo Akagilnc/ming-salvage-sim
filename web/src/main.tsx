@@ -614,10 +614,13 @@ export function App() {
   const retryMechanicalTail = () => {
     void fetch("/api/game/mechanical_tail/retry", { method: "POST" })
       .then(async (response) => {
-        if (!response.ok) throw new Error(JSON.stringify(await response.json()));
+        if (!response.ok) {
+          const body = await response.json().catch(() => null);
+          throw new Error(typeof body?.detail === "string" ? body.detail : response.statusText);
+        }
         await loadState();
       })
-      .catch((error) => setError(String(error)));
+      .catch((error) => setError(error instanceof Error ? error.message : String(error)));
   };
 
   return (
