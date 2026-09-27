@@ -51,10 +51,8 @@ describe("EndingModal — #1845 终局失败空总评呈现", () => {
     const alert = host.querySelector('[role="alert"]');
     expect(alert).not.toBeNull();
     expect(alert?.textContent).toContain(inputError);
-    const retryButton = Array.from(host.querySelectorAll("button")).find(
-      (node) => node.textContent === "重试",
-    );
-    expect(retryButton).toBeTruthy();
+    const retryButton = alert?.querySelector("button");
+    expect(retryButton).not.toBeNull();
     act(() => retryButton?.click());
     expect(onRetry).toHaveBeenCalledTimes(1);
     cleanup();
