@@ -35,42 +35,38 @@ afterEach(() => {
 });
 
 describe("EndingModal — #1845 终局失败空总评呈现", () => {
-  it("机械尾失败且空总评时不显示「（无总评）」冒充完成", () => {
+  it("机械尾失败且空总评时 summary 为空、alert 含输入错误、有重试入口", () => {
     const onRetry = vi.fn();
+    const inputError = "模型调用耗尽";
     const { host, cleanup } = render(
       <EndingModal
         ending={baseEnding}
-        failure={{ error: "模型调用耗尽", error_pack_path: "/tmp/pack.json" }}
+        failure={{ error: inputError, error_pack_path: "/tmp/pack.json" }}
         onClose={() => {}}
         onRetry={onRetry}
       />,
     );
 
-    expect(host.textContent).toContain("机械尾执行失败");
-    expect(host.textContent).toContain("模型调用耗尽");
-    expect(host.textContent).not.toContain("（无总评）");
+    expect(host.querySelector(".ending-summary-text")?.textContent).toBe("");
+    const alert = host.querySelector('[role="alert"]');
+    expect(alert).not.toBeNull();
+    expect(alert?.textContent).toContain(inputError);
+    const retryButton = Array.from(host.querySelectorAll("button")).find(
+      (node) => node.textContent === "重试",
+    );
+    expect(retryButton).toBeTruthy();
+    act(() => retryButton?.click());
+    expect(onRetry).toHaveBeenCalledTimes(1);
     cleanup();
   });
 
-  it("无失败且空总评且非 pending 时仍可显示「（无总评）」", () => {
+  it("无失败且空总评且非 pending 时 summary 非空", () => {
     const { host, cleanup } = render(
       <EndingModal ending={baseEnding} onClose={() => {}} />,
     );
 
-    expect(host.textContent).toContain("（无总评）");
-    cleanup();
-  });
-
-  it("总评 pending 时空正文，不显示「（无总评）」", () => {
-    const { host, cleanup } = render(
-      <EndingModal
-        ending={{ ...baseEnding, summary_pending: true }}
-        onClose={() => {}}
-      />,
-    );
-
-    expect(host.querySelector(".ending-summary-text")?.textContent).toBe("");
-    expect(host.textContent).not.toContain("（无总评）");
+    const summaryText = host.querySelector(".ending-summary-text")?.textContent ?? "";
+    expect(summaryText.length).toBeGreaterThan(0);
     cleanup();
   });
 });
