@@ -77,6 +77,7 @@ type HookApi = ReturnType<typeof useSettlementFlow>;
 function mountHarness(opts: {
   loadState: () => Promise<GameState | null>;
   initial?: GameState;
+  onRetry?: () => void;
 }) {
   const hookRef = { current: null as HookApi | null };
   const stateRef = { current: opts.initial ?? preClickState };
@@ -120,7 +121,7 @@ function mountHarness(opts: {
         <div data-testid="pending-count">{String(hookRef.current.pendingDecisions.length)}</div>
         <div data-testid="phase">{turn?.phase || ""}</div>
         <div data-testid="settlement-display">{String(Boolean(turn?.settlement_display))}</div>
-        {state?.ending ? <EndingModal ending={state.ending} failure={state.mechanical_tail_failure} onClose={() => {}} onRetry={() => {}} /> : null}
+        {state?.ending ? <EndingModal ending={state.ending} failure={state.mechanical_tail_failure} onClose={() => {}} onRetry={opts.onRetry ?? (() => {})} /> : null}
       </div>
     );
   }
@@ -259,12 +260,14 @@ describe("#1845 background tail failure observation", () => {
       ending: { status: "collapse", label: "社稷倾覆", summary: "", timeline: [], summary_pending: false },
       mechanical_tail_failure: { error: "模型调用耗尽", error_pack_path: "/tmp/pack.json" },
     } as GameState;
-    const { host, cleanup } = mountHarness({ initial: failed, loadState: async () => failed });
+    const onRetry = vi.fn();
+    const { host, cleanup } = mountHarness({ initial: failed, loadState: async () => failed, onRetry });
 
     expect(host.querySelector(".ending-summary-text")?.textContent).toBe("");
     const alert = host.querySelector('[role="alert"]');
     expect(alert?.textContent).toContain("模型调用耗尽");
-    expect(alert?.querySelector("button")).not.toBeNull();
+    act(() => { alert?.querySelector("button")?.click(); });
+    expect(onRetry).toHaveBeenCalledTimes(1);
     cleanup();
   });
 
