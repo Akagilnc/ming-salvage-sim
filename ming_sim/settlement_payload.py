@@ -451,7 +451,6 @@ def _player_visible_extractor_output(applied: object) -> object:
     if not isinstance(applied, dict):
         return applied
     visible = dict(applied)
-    visible.pop("person_changes", None)
     # 拒收项是内部可观测信号（含 rejected/reason/category），不进皇帝可见呈现（P4）。
     visible.pop("faction_delta_rejections", None)
     visible.pop("class_delta_rejections", None)

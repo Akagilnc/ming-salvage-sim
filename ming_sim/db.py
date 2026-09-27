@@ -2459,6 +2459,14 @@ class GameDB:
         self.ensure_column(
             "office_change_records", "appointment_tenure", "TEXT NOT NULL DEFAULT '真除'"
         )
+        # #1847：4a 改读段结果后 turn 列无消费者；幂等 DROP（SQLite 3.35+）。
+        office_change_cols = {
+            r["name"]
+            for r in self.conn.execute("PRAGMA table_info(office_change_records)").fetchall()
+        }
+        if "turn" in office_change_cols:
+            self.conn.execute("ALTER TABLE office_change_records DROP COLUMN turn")
+            self.conn.commit()
         self.ensure_column("skill_grants", "dossier_id", "INTEGER")
         self.ensure_column(
             "decree_dossiers", "execution_outcome", "TEXT NOT NULL DEFAULT ''")
@@ -13328,6 +13336,14 @@ class GameDB:
                     ordered, proposed, escorted=escorted,
                 )
             else:
+                # 分段过月会多次调本写入。本次没有提案的路已有本回合行，不得用中位覆盖先前段落下的实抵。
+                existing = self.conn.execute(
+                    "SELECT 1 FROM decree_dossier_reconciliations "
+                    "WHERE dossier_id=? AND turn=?",
+                    (int(dossier_id), int(turn)),
+                ).fetchone()
+                if existing is not None:
+                    continue
                 lo, hi = grant_arrival_bounds(ordered, escorted=escorted)
                 arrived = (lo + hi) // 2
                 note = ""
@@ -17999,6 +18015,30 @@ class GameDB:
         # 终局由 dispatcher 尾部通用 terminal 分支统一写（fulfilled 颁布即终局），
         # 与 punishment/pacification 同款：效果 applier 不自带 close。
 
+    def _record_dossier_verdict_metadata(
+        self, state: GameState, dossier_id: int, verdict: Dict[str, object],
+    ) -> None:
+        """同判决事务落 typed 反应/禁强颁标记，顺颁中旨并记皇威。"""
+        dossier = self.get_decree_dossier(dossier_id)
+        # #657 §C.8：中旨不持久化猜派 affected_parties；打回仅 stigma。
+        parties_json = (
+            "[]" if dossier and dossier.get("mode") == "midzhi"
+            else safe_json_dumps(verdict.get("affected_parties") or [], ensure_ascii=False)
+        )
+        self.conn.execute(
+            """UPDATE decree_dossier_decisions
+               SET affected_parties_json=?, midzhi_unpromulgatable=?
+               WHERE id=(SELECT MAX(id) FROM decree_dossier_decisions WHERE dossier_id=?)""",
+            (parties_json, 1 if verdict.get("midzhi_unpromulgatable") is True else 0,
+             dossier_id),
+        )
+        if (dossier and dossier.get("mode") == "midzhi"
+                and verdict.get("decision") == "promulgated"):
+            self._apply_override_costs(
+                state, dossier_id, include_authority=True, include_parties=False,
+                stigma_reason="预先中旨直发", commit=False,
+            )
+
     def apply_dossier_verdicts(
         self, state: GameState, verdicts: Iterable[Dict[str, object]], *,
         content=None, registry=None,
@@ -18070,33 +18110,9 @@ class GameDB:
                         criteria_snapshot=snapshot if isinstance(snapshot, dict) else None,
                         content=content, registry=None,
                     ) or set())
-                    dossier_id = strict_int(verdict.get("dossier_id"))
-                    dossier = self.get_decree_dossier(dossier_id)
-                    # #657 §C.8 later-wins：midzhi 不持久化猜派 affected_parties（正式离心归 M12）；
-                    # ordinary 仍落库 typed 反应。顺颁中旨可记皇威；打回仅 stigma。
-                    parties_json = (
-                        "[]"
-                        if dossier and dossier.get("mode") == "midzhi"
-                        else safe_json_dumps(
-                            verdict.get("affected_parties") or [], ensure_ascii=False,
-                        )
+                    self._record_dossier_verdict_metadata(
+                        state, strict_int(verdict.get("dossier_id")), verdict,
                     )
-                    self.conn.execute(
-                        """UPDATE decree_dossier_decisions
-                           SET affected_parties_json=?, midzhi_unpromulgatable=?
-                           WHERE id=(SELECT MAX(id) FROM decree_dossier_decisions WHERE dossier_id=?)""",
-                        (parties_json,
-                         1 if verdict.get("midzhi_unpromulgatable") is True else 0,
-                         dossier_id),
-                    )
-                    if dossier and dossier.get("mode") == "midzhi" and decision == "promulgated":
-                        self._apply_override_costs(
-                            state, dossier_id,
-                            include_authority=True,
-                            include_parties=False,
-                            stigma_reason="预先中旨直发",
-                            commit=False,
-                        )
                 summon_nights = set(getattr(self.conn, "_deferred_office_summon_nights", set()) or set())
                 if summon_nights:
                     from ming_sim.audience_night import commit_fresh_summons_for_night
