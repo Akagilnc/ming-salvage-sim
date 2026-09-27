@@ -100,6 +100,23 @@ def _install_settlement_llm_stubs(monkeypatch) -> None:
     from tests.test_month_loop_tracer_1468 import _stub_outer_llm_seams
 
     _stub_outer_llm_seams(monkeypatch)
+    from ming_sim import month_chain
+
+    def supply(db, state, _llm_config, chain):
+        feed = month_chain.build_secret_orders_supply_feed(db, state, chain)
+        return {
+            "dossier_progress_reports": [
+                {"dossier_id": row["dossier_id"], "progress_band": "持平",
+                 "memorial_text": "本月密奏。"}
+                for row in feed["eligible_dossiers"]
+            ],
+            "covert_exec_selections": [
+                {"order_id": row["id"], "fidelity": "忠实"}
+                for row in feed["active_secret_orders"]
+            ],
+        }
+
+    monkeypatch.setattr(month_chain, "run_secret_orders_supply", supply)
     monkeypatch.setattr(
         cli_backend,
         "capture_manual_directive_payload",
