@@ -883,20 +883,32 @@ def _json_safe(value: Any) -> Any:
 
 
 def _serialize_dispatch_result(result: Any) -> Dict[str, Any]:
-    """DeclarationDispatchResult → 可落盘的 applied 报告与拒收（ADR 0157 步骤 4／4a）。"""
+    """DeclarationDispatchResult → 可落盘的 applied 报告与拒收（ADR 0157 步骤 4／4a）。
+
+    遍历全部 section：``SectionResult.applied`` 与 ``rejected`` 一并留存。
+    ``effects.applied`` 已是按效果键组织的 report 列表；其余 section 以
+    section 名为键包一层，供 4a 按实际结果契约投影。``ProtagonistResult``
+    无 ``applied``（validated 非落库结果），只收拒收。
+    """
     if result is None:
         return {"applied": [], "rejections": []}
     applied: List[Any] = []
     rejections: List[Dict[str, Any]] = []
-    effects = getattr(result, "effects", None)
-    for report in getattr(effects, "applied", None) or []:
-        if isinstance(report, dict):
-            applied.append(_json_safe(report))
     from ming_sim.declaration_dispatch import _SECTION_FIELDS
     for section_name in _SECTION_FIELDS:
         section = getattr(result, section_name, None)
         if section is None:
             continue
+        section_applied = getattr(section, "applied", None) or []
+        if section_applied:
+            if section_name == "effects":
+                for report in section_applied:
+                    if isinstance(report, dict):
+                        applied.append(_json_safe(report))
+            else:
+                applied.append({
+                    section_name: [_json_safe(item) for item in section_applied],
+                })
         for rejected_item in getattr(section, "rejected", None) or []:
             item = getattr(rejected_item, "item", None)
             source = getattr(rejected_item, "source", None)

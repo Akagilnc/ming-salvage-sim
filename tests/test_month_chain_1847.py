@@ -1900,98 +1900,57 @@ def test_step_4a_rescript_supply_includes_issue_and_office_origin_effects(
     assert any(str(row.get("title") or "") == issue_title for row in commitments)
 
 
-def test_step_4a_feed_excludes_uncommitted_input_and_aux(game, monkeypatch):
-    """实际结果契约不含未落输入／辅助读数：world_advance、ongoing victory 不得进 origin_effects。"""
-    db, state, content = game
-    turn = int(state.turn)
-    minister = db.conn.execute(
-        "SELECT name FROM characters WHERE status='active' AND power_id='ming' LIMIT 1"
-    ).fetchone()[0]
-    order_id = db.create_secret_order(
-        state, minister, "边情刺探", "刺探边情", [],
-        deadline_months=2,
-        covert_task={
-            "kind": "差务", "axes": ["实务事功"], "direction": 1,
-            "delivery": {
-                "unit": "万两", "target_units": 1.0, "effect_sign": -1,
-                "purpose": "其它", "category": "密令差务", "account": "内库",
-            },
-        },
+def test_serialize_dispatch_result_keeps_all_section_applied():
+    """DeclarationDispatchResult 各 SectionResult.applied 须完整进段结果供料（ADR 0157 4a）。
+
+    对照序列化边界：不只 effects，textual_facts / public_sayings 等已落 section 亦须留存。
+    """
+    from ming_sim.applier import SectionResult
+    from ming_sim.declaration_dispatch import DeclarationDispatchResult, ProtagonistResult
+
+    empty = SectionResult(applied=[], rejected=[])
+    result = DeclarationDispatchResult(
+        commissions=empty,
+        promises=empty,
+        textual_facts=SectionResult(
+            applied=[{"id": 11, "subject_kind": "character", "subject_id": "甲"}],
+            rejected=[],
+        ),
+        public_sayings=SectionResult(applied=[{"id": 22}], rejected=[]),
+        on_scene_facts=empty,
+        presence=empty,
+        scene_facts=empty,
+        edge_events=empty,
+        protagonist=ProtagonistResult(validated=None, rejected=[]),
+        registrations=empty,
+        effects=SectionResult(
+            applied=[{"economy_moves": [{"delta": -3, "account": "内库"}]}],
+            rejected=[],
+        ),
     )
-    db.conn.execute(
-        "UPDATE secret_orders SET turn_issued=? WHERE id=?",
-        (turn - 1, order_id),
-    )
-    dossier_id = int(db.get_dossier_for_secret_order(order_id)["id"])
-    db.conn.commit()
-
-    captured_feed = {}
-
-    def supply_run(db_, state_, llm_config, chain):
-        feed = month_chain.build_secret_orders_supply_feed(db_, state_, chain)
-        captured_feed.update(feed)
-        return {
-            "dossier_progress_reports": [{
-                "dossier_id": dossier_id,
-                "progress_band": "顺利",
-                "memorial_text": "边情已报。",
-            }],
-            "covert_exec_selections": [{
-                "order_id": order_id, "fidelity": "忠实", "note": "实办",
-            }],
-        }
-
-    def translate(*_a, **kwargs):
-        if "问后刺探" not in str(kwargs.get("segment") or ""):
-            return {"effects": {}}
-        return {"effects": {
-            "economy_moves": [{
-                "account": "内库", "delta": -1, "category": "密令差务",
-                "purpose": "其它", "reason": "问后刺探支银",
-                "origin_ref": f"dossier:{dossier_id}",
-            }],
-            # 抽取输入：仓内无落账写口，不得冒充已提交世界事实。
-            "world_advance": {"后金": "已议和"},
-        }}
-
-    _forbid_extractor(monkeypatch)
-    monkeypatch.setattr(
-        month_chain, "run_world_segment_text", lambda *a, **k: _WORLD_WITH_QUESTION,
-    )
-    monkeypatch.setattr(
-        month_chain, "_run_world_continuation_text",
-        lambda *a, **k: "问后刺探。",
-    )
-    monkeypatch.setattr(month_translate, "translate_month_segment", translate)
-    monkeypatch.setattr(month_chain, "run_secret_orders_supply", supply_run)
-
-    session = make_light_session(db, state, content)
-    session.llm_config = object()
-    session._write_gate = threading.Lock()
-
-    paused = session.resolve_turn(allow_empty_decree=True)
-    assert paused.awaiting is True
-    session.submit_hitl_choices(
-        [_choice(session.pending_decisions()[0])], write_gate=session._write_gate,
-    )
-    result = session.resolve_turn(allow_empty_decree=True)
-    assert result.stage == "gazette"
-
-    origin_effects = captured_feed.get("origin_effects") or {}
-    assert "world_advance" not in origin_effects, origin_effects
-    assert "已议和" not in str(origin_effects)
-    assert "victory_status" not in origin_effects, origin_effects
-    assert "pairing_warnings" not in origin_effects, origin_effects
-    assert "person_changes" not in origin_effects, origin_effects
-    eco_moves = origin_effects.get("economy_moves") or []
+    payload = month_chain._serialize_dispatch_result(result)
+    origin_effects, _rejections = month_chain._aggregate_origin_from_segment_results([{
+        "kind": "world",
+        "applied": payload["applied"],
+        "rejections": payload["rejections"],
+    }])
     assert any(
-        m.get("origin_ref") == f"dossier:{dossier_id}" and int(m.get("delta") or 0) == -1
-        for m in eco_moves
+        int(m.get("delta") or 0) == -3
+        for m in (origin_effects.get("economy_moves") or [])
+    ), origin_effects
+    assert any(
+        int(row.get("id") or 0) == 11 and row.get("subject_id") == "甲"
+        for row in (origin_effects.get("textual_facts") or [])
+    ), origin_effects
+    assert any(
+        int(row.get("id") or 0) == 22
+        for row in (origin_effects.get("public_sayings") or [])
     ), origin_effects
 
 
 def test_step_4a_feed_projects_full_applied_result_contract(game, monkeypatch):
-    """4a 按实际结果契约投影：撤办、人物状态、密令更新入 origin_effects；不靠固定键白名单。"""
+    """4a 按实际结果契约投影：撤办、人物状态、密令更新、文字事实入 origin_effects；
+    未落输入（world_advance）与辅助读数不得冒充已落。不靠固定键白名单。"""
     from tests.conftest import active_ming_character
 
     db, state, content = game
@@ -2032,6 +1991,7 @@ def test_step_4a_feed_projects_full_applied_result_contract(game, monkeypatch):
     db.conn.commit()
 
     sim_note = "边材风声渐起，勿泄。"
+    fact_body = "问后密访确认边材已动。"
     captured_feed = {}
 
     def supply_run(db_, state_, llm_config, chain):
@@ -2051,24 +2011,33 @@ def test_step_4a_feed_projects_full_applied_result_contract(game, monkeypatch):
     def translate(*_a, **kwargs):
         if "问后全量供料" not in str(kwargs.get("segment") or ""):
             return {"effects": {}}
-        return {"effects": {
-            "economy_moves": [{
-                "account": "内库", "delta": -1, "category": "密令差务",
-                "purpose": "其它", "reason": "问后密访支银",
-                "origin_ref": f"dossier:{dossier_id}",
+        return {
+            "effects": {
+                "economy_moves": [{
+                    "account": "内库", "delta": -1, "category": "密令差务",
+                    "purpose": "其它", "reason": "问后密访支银",
+                    "origin_ref": f"dossier:{dossier_id}",
+                }],
+                "cancels": [{
+                    "issue_id": cancel_id, "narrative": "边局可罢，着即撤办。",
+                }],
+                "人物变更": [{
+                    "origin_ref": f"dossier:{dossier_id}",
+                    "name": status_target, "动作": "处置", "status": "imprisoned",
+                    "reason": "问后勘问边材",
+                }],
+                "secret_order_updates": [{
+                    "order_id": order_id, "sim_note": sim_note, "disclosed": False,
+                }],
+                # 抽取输入回声：仓内无落账写口，不得冒充已提交世界事实。
+                "world_advance": {"后金": "议和探针"},
+            },
+            "textual_facts": [{
+                "subject_kind": "character",
+                "subject_id": minister,
+                "body": fact_body,
             }],
-            "cancels": [{
-                "issue_id": cancel_id, "narrative": "边局可罢，着即撤办。",
-            }],
-            "人物变更": [{
-                "origin_ref": f"dossier:{dossier_id}",
-                "name": status_target, "动作": "处置", "status": "imprisoned",
-                "reason": "问后勘问边材",
-            }],
-            "secret_order_updates": [{
-                "order_id": order_id, "sim_note": sim_note, "disclosed": False,
-            }],
-        }}
+        }
 
     _forbid_extractor(monkeypatch)
     monkeypatch.setattr(
@@ -2119,6 +2088,22 @@ def test_step_4a_feed_projects_full_applied_result_contract(game, monkeypatch):
     assert db.conn.execute(
         "SELECT status FROM issues WHERE id=?", (cancel_id,),
     ).fetchone()["status"] != "active"
+    # 非 effects section 已落结果须经段结果进 4a；未落输入不得冒充已落。
+    textual = origin_effects.get("textual_facts") or []
+    assert any(
+        int(row.get("id") or 0) > 0 and row.get("subject_id") == minister
+        for row in textual
+    ), origin_effects
+    assert any(
+        f.body == fact_body
+        for f in db.textual_facts.readable_materials(
+            subject_kind="character", subject_id=minister,
+        )
+    )
+    assert "world_advance" not in origin_effects, origin_effects
+    assert "victory_status" not in origin_effects, origin_effects
+    assert "pairing_warnings" not in origin_effects, origin_effects
+    assert "person_changes" not in origin_effects, origin_effects
 
 
 def test_step_4a_feed_keeps_rejections_out_of_origin_effects(game, monkeypatch):
