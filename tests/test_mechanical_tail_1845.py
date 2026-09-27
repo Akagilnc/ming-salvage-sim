@@ -474,5 +474,3 @@ def test_chapter_memory_retired_from_three_readers(game):
         assert not any("章节" in n or "chapter" in n.lower() for n in names)
     finally:
         release_material_tree(prepared.root)
-
-
