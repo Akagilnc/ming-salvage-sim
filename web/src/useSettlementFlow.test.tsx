@@ -120,7 +120,7 @@ function mountHarness(opts: {
         <div data-testid="pending-count">{String(hookRef.current.pendingDecisions.length)}</div>
         <div data-testid="phase">{turn?.phase || ""}</div>
         <div data-testid="settlement-display">{String(Boolean(turn?.settlement_display))}</div>
-        {state?.ending ? <EndingModal ending={state.ending} onClose={() => {}} /> : null}
+        {state?.ending ? <EndingModal ending={state.ending} failure={state.mechanical_tail_failure} onClose={() => {}} onRetry={() => {}} /> : null}
       </div>
     );
   }
@@ -253,6 +253,21 @@ describe("#1845 ending summary stays background and becomes visible", () => {
 });
 
 describe("#1845 background tail failure observation", () => {
+  it("shows a failed ending without a fabricated summary and retains retry", () => {
+    const failed = {
+      ...preClickState,
+      ending: { status: "collapse", label: "社稷倾覆", summary: "", timeline: [], summary_pending: false },
+      mechanical_tail_failure: { error: "模型调用耗尽", error_pack_path: "/tmp/pack.json" },
+    } as GameState;
+    const { host, cleanup } = mountHarness({ initial: failed, loadState: async () => failed });
+
+    expect(host.querySelector(".ending-summary-text")?.textContent).toBe("");
+    const alert = host.querySelector('[role="alert"]');
+    expect(alert?.textContent).toContain("模型调用耗尽");
+    expect(alert?.querySelector("button")).not.toBeNull();
+    cleanup();
+  });
+
   it("refreshes a non-ending month while the tail runs, then stops on persisted failure", async () => {
     vi.useFakeTimers();
     const running = { ...preClickState, mechanical_tail_pending: true } as GameState;
