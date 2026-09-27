@@ -843,7 +843,7 @@ def test_question_note_only_is_kept_and_other_decisions_still_require_label(
         rejected = exc
     assert rejected is not None and "选项不在当前 options" in str(rejected)
     assert db.staged_declarations.questions_for(ref)
-    assert desk_row["status"] == "pending"
+    assert session.pending_decisions()[0]["status"] == "pending"
 
     session.submit_hitl_choices(
         [{
