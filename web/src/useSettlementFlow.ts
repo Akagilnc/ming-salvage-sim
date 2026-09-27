@@ -29,6 +29,8 @@ export function useSettlementFlow({
   setCheatDirective,
   loadState,
   state,
+  resetLocalEdictState,
+  onMonthAdvanced,
 }: {
   setBusy: (busy: string) => void;
   setError: (error: string) => void;
@@ -36,6 +38,13 @@ export function useSettlementFlow({
   setCheatDirective: (text: string) => void;
   loadState: () => Promise<GameState | null>;
   state: GameState | null;
+  /** #1852：写成即推进后清旧月本地拟诏会话态（compose / failed 卡）。 */
+  resetLocalEdictState?: () => void;
+  /**
+   * #1852：写成即推进成功回调（清 activeModal 等）。
+   * 勿在 busy 起时清——#1796 失败清 busy 后拟诏台须能带回 error。
+   */
+  onMonthAdvanced?: () => void;
 }) {
   // HITL 决策点：颁诏推演若出重大抉择，暂停弹窗逐个亲裁，裁完续跑结算。
   const [pendingDecisions, setPendingDecisions] = React.useState<PendingDecision[]>([]);
@@ -45,6 +54,8 @@ export function useSettlementFlow({
   const [settlementHudError, setSettlementHudError] = React.useState("");
   const [settlementGazetteReading, setSettlementGazetteReading] =
     React.useState<SettlementGazetteReading | null>(null);
+  // #1852：写成即推进期间挡住 closed/密令/结局自动弹层，避免盖住本面邸报；无正文可呈时随即放下。
+  const [postAdvanceOverlayHold, setPostAdvanceOverlayHold] = React.useState(false);
 
   // 刷新恢复：若回合停在 awaiting_decision 且有未裁决策点，自动重弹决策弹窗。
   // #657：typed resume_phase2 时空 pending 不报 PAUSED，接到 phase2 空 POST 续跑。
@@ -141,12 +152,21 @@ export function useSettlementFlow({
 
   const dismissSettlementGazette = React.useCallback(() => {
     setSettlementGazetteReading(null);
+    setPostAdvanceOverlayHold(false);
   }, []);
 
   /** #1852：月份已推进 → 刷账本 + 本面开阅读态（不 reload）。 */
   const openGazetteAfterAdvance = async (payload: Record<string, unknown> | null | undefined) => {
     const data = payload || {};
     await forwardSteamEvents(data);
+    // 新月盘面：立刻离开同会话核账面，避免 busy 残留把拟诏等关掉。
+    setBusy("");
+    // 先挡住过月自动弹层，再 loadState 翻 turn——否则 closed/密令/结局会抢在本面邸报之前。
+    setPostAdvanceOverlayHold(true);
+    // 过月成功：旧月本地拟诏会话态不得带入新月。
+    resetLocalEdictState?.();
+    // 盖玺时 activeModal 可能仍挂 edict（busy 仅藏台、未清槽）；成功过月须卸掉，免弹回盖住本面邸报。
+    onMonthAdvanced?.();
     const next = await loadState();
     const embedded = data.state as GameState | undefined;
     const fromPayload = typeof data.report === "string" ? data.report : "";
@@ -168,6 +188,7 @@ export function useSettlementFlow({
       });
     } else {
       setSettlementGazetteReading(null);
+      setPostAdvanceOverlayHold(false);
     }
   };
 
@@ -416,6 +437,8 @@ export function useSettlementFlow({
   return {
     settlementGazetteReading,
     dismissSettlementGazette,
+    /** #1852：本面邸报阅读中或过月刚翻月尚未落阅读态时，挡住自动弹层。 */
+    suppressPostAdvanceOverlays: Boolean(settlementGazetteReading) || postAdvanceOverlayHold,
     pendingDecisions,
     decisionFailures,
     pausedDecisionError,

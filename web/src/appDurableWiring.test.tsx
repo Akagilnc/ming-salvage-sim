@@ -1184,6 +1184,223 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     });
   });
 
+  it("#1852 写成即推进：成功过月清旧月本地拟诏态（compose / failed 卡不残留）", async () => {
+    let streamController!: ReadableStreamDefaultController<Uint8Array>;
+    const encoder = new TextEncoder();
+    let releaseCreate!: (value: Response) => void;
+    const createGate = new Promise<Response>((resolve) => { releaseCreate = resolve; });
+    let liveState: Record<string, unknown> = {
+      ...settlementBaseState("player"),
+      turn: { year: 1627, period: 10, turn: 5, phase: "player", settlement_display: false },
+      previous_summary: "",
+      pending_decisions: [],
+      // 耐久草案保证盖玺可点；另起本地 create 失败卡 + compose 残留验清零。
+      directives: [{ id: 1, text: "拨辽饷", status: "draft" }],
+      cased_directives: [],
+      pending_directive_count: 0,
+    };
+    const advancedState = {
+      ...settlementBaseState("player"),
+      turn: { year: 1627, period: 11, turn: 6, phase: "player", settlement_display: false },
+      previous_summary: "十月邸报·清拟诏",
+      previous_reign_period_label: "天启七年十月",
+      last_attendant_message: "奴婢呈上。",
+      pending_decisions: [],
+      directives: [],
+      cased_directives: [],
+      pending_directive_count: 0,
+      closed_this_turn: [],
+    };
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      const u = new URL(String(url), "http://t.local");
+      if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
+      if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
+      if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
+      if (u.pathname.endsWith("/api/game/state")) return jsonResp(liveState);
+      if (u.pathname.endsWith("/api/history/turns")) return jsonResp({ turns: [] });
+      if (u.pathname.endsWith("/api/court_layout")) return jsonResp({ layout: "{}" });
+      if (u.pathname.endsWith("/api/directives") && init?.method === "POST") return createGate;
+      if (u.pathname.endsWith("/api/decree/issue/stream") && init?.method === "POST") {
+        return new Response(new ReadableStream<Uint8Array>({
+          start(controller) { streamController = controller; },
+        }), { status: 200, headers: { "Content-Type": "text/event-stream" } });
+      }
+      return jsonResp({});
+    }));
+
+    const host = await mountApp();
+    await click(edictCommand(host));
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="诏书草案"]')).not.toBeNull());
+    });
+    const ta = host.querySelector<HTMLTextAreaElement>(".desk-compose textarea");
+    expect(ta).not.toBeNull();
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
+      setter.call(ta!, "旧月未落库草案");
+      ta!.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await click(findButton(host, "新增草案"));
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[data-directive-phase="inflight"]')).not.toBeNull());
+    });
+    await act(async () => {
+      releaseCreate({
+        ok: false,
+        status: 400,
+        statusText: "Bad Request",
+        json: async () => ({ detail: { message: "old-month-local-fail" } }),
+      } as unknown as Response);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[data-directive-phase="failed"]')).not.toBeNull());
+    });
+    expect(host.querySelector('[data-role="local-error"]')?.textContent).toBe("old-month-local-fail");
+    expect(host.querySelector<HTMLTextAreaElement>(".desk-compose textarea")?.value).toBe("旧月未落库草案");
+
+    await click(findButton(host, "盖玺颁诏过月"));
+    await act(async () => {
+      await vi.waitFor(() => expect(streamController).toBeTruthy());
+    });
+    liveState = advancedState;
+    await act(async () => {
+      streamController.enqueue(encoder.encode(
+        `event: done\ndata: ${JSON.stringify({ advanced: true, report: "十月邸报·清拟诏" })}\n\n`,
+      ));
+      streamController.close();
+    });
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector("[data-testid=settlement-gazette-panel]")).not.toBeNull());
+    });
+    const dismiss = Array.from(host.querySelectorAll("button")).find((b) =>
+      (b.textContent || "").includes("朕知道了"),
+    );
+    expect(dismiss).toBeTruthy();
+    await click(dismiss);
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector("[data-testid=settlement-gazette-panel]")).toBeNull());
+    });
+    // 新月盘面：同会话核账面已卸，拟诏可开。
+    expect(host.querySelector("[data-testid=wang-settlement-slip]")).toBeNull();
+    const reopen = edictCommand(host);
+    expect(reopen).toBeTruthy();
+    await click(reopen);
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="诏书草案"]')).not.toBeNull());
+    });
+    expect(host.querySelector('[data-directive-phase="failed"]')).toBeNull();
+    expect(host.querySelector('[data-role="local-error"]')).toBeNull();
+    expect(host.querySelector<HTMLTextAreaElement>(".desk-compose textarea")?.value).toBe("");
+    expect(host.textContent).not.toContain("old-month-local-fail");
+    expect(host.textContent).not.toContain("旧月未落库草案");
+  });
+
+  it("#1852 写成即推进：本面邸报阅读中不弹 closed/密令/结局；朕知道了后仍按既有规则弹", async () => {
+    vi.useFakeTimers();
+    try {
+      let streamController!: ReadableStreamDefaultController<Uint8Array>;
+      const encoder = new TextEncoder();
+      const autoOpenOrder = {
+        id: 1, title: "密", content: "", status: "active", minister_name: "",
+        year_issued: 1627, period_issued: 10,
+        dossier_progress: [{ turn: 5 }],
+      };
+      const ending = {
+        status: "defeat",
+        label: "煤山自缢",
+        summary: "终章。",
+        timeline: [{ turn: 6, year: 1627, period: 11, decree_brief: "", effect_brief: "", gazette: "十月邸报" }],
+      };
+      let liveState: Record<string, unknown> = {
+        ...settlementBaseState("player"),
+        turn: { year: 1627, period: 10, turn: 5, phase: "player", settlement_display: false },
+        previous_summary: "",
+        pending_decisions: [],
+        directives: [{ id: 1, text: "拨辽饷", status: "draft" }],
+        closed_this_turn: [],
+        ending: null,
+      };
+      const advancedState = {
+        ...settlementBaseState("player"),
+        turn: { year: 1627, period: 11, turn: 6, phase: "player", settlement_display: false },
+        previous_summary: "十月邸报·压弹窗",
+        previous_reign_period_label: "天启七年十月",
+        last_attendant_message: "奴婢呈上。",
+        pending_decisions: [],
+        directives: [],
+        closed_this_turn: [{
+          id: 2, kind: "situation", title: "已结边饷·过月", status: "resolved",
+          bar_value: 0, bar_good_meaning: "妥", bar_bad_meaning: "",
+          closed_turn: 5, stage_text: "", effect: {},
+        }],
+        ending,
+      };
+      const closedAuto = await import("./settlementPresentation");
+      const closedSpy = vi.spyOn(closedAuto, "shouldAutoOpenClosedIssuesAfterSettlement").mockReturnValue(true);
+
+      vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+        const u = new URL(String(url), "http://t.local");
+        if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
+        if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [autoOpenOrder] });
+        if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
+        if (u.pathname.endsWith("/api/game/state")) return jsonResp(liveState);
+        if (u.pathname.endsWith("/api/history/turns")) return jsonResp({ turns: [] });
+        if (u.pathname.endsWith("/api/court_layout")) return jsonResp({ layout: "{}" });
+        if (u.pathname.endsWith("/api/decree/issue/stream") && init?.method === "POST") {
+          return new Response(new ReadableStream<Uint8Array>({
+            start(controller) { streamController = controller; },
+          }), { status: 200, headers: { "Content-Type": "text/event-stream" } });
+        }
+        return jsonResp({});
+      }));
+
+      const host = await mountApp();
+      await click(edictCommand(host));
+      await act(async () => {
+        await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="诏书草案"]')).not.toBeNull());
+      });
+      await click(findButton(host, "盖玺颁诏过月"));
+      await act(async () => {
+        await vi.waitFor(() => expect(streamController).toBeTruthy());
+      });
+
+      liveState = advancedState;
+      await act(async () => {
+        streamController.enqueue(encoder.encode(
+          `event: done\ndata: ${JSON.stringify({ advanced: true, report: "十月邸报·压弹窗" })}\n\n`,
+        ));
+        streamController.close();
+      });
+      await act(async () => {
+        await vi.waitFor(() => expect(host.querySelector("[data-testid=settlement-gazette-panel]")).not.toBeNull());
+      });
+
+      // 阅读态期间：closed / 密令 / 结局均不得盖住本面邸报
+      await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+      expect(host.querySelector("[data-testid=settlement-gazette-panel]")).not.toBeNull();
+      expect(host.querySelector('[role="dialog"][aria-label="局势了结"]')).toBeNull();
+      expect(host.querySelector('[role="dialog"][aria-label="密令进度"]')).toBeNull();
+      expect(host.querySelector(".modal-bg-ending")).toBeNull();
+
+      const dismiss = Array.from(host.querySelectorAll("button")).find((b) =>
+        (b.textContent || "").includes("朕知道了"),
+      );
+      await click(dismiss);
+      expect(host.querySelector("[data-testid=settlement-gazette-panel]")).toBeNull();
+
+      // 朕知道了后：既有自动弹出规则仍生效（结局立即；密令 400ms；closed 当谓词放行）
+      expect(host.querySelector(".modal-bg-ending")).not.toBeNull();
+      expect(host.querySelector('[role="dialog"][aria-label="局势了结"]')).not.toBeNull();
+      await act(async () => { await vi.advanceTimersByTimeAsync(400); });
+      expect(host.querySelector('[role="dialog"][aria-label="密令进度"]')).not.toBeNull();
+      closedSpy.mockRestore();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("#1852 SSE 推演事件不驱动等待面：无进度条 / 无推敲 / 无 SettlementLock", async () => {
     let streamController!: ReadableStreamDefaultController<Uint8Array>;
     const encoder = new TextEncoder();

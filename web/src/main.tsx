@@ -208,6 +208,7 @@ export function App() {
   const {
     settlementGazetteReading,
     dismissSettlementGazette,
+    suppressPostAdvanceOverlays,
     pendingDecisions,
     decisionFailures,
     pausedDecisionError,
@@ -225,6 +226,8 @@ export function App() {
     setCheatDirective,
     loadState,
     state,
+    resetLocalEdictState,
+    onMonthAdvanced: () => setActiveModal("none"),
   });
 
 
@@ -290,6 +293,8 @@ export function App() {
 
   React.useEffect(() => {
     if (!state) return;
+    // #1852：本面邸报阅读中不自动弹已结；朕知道了后再按既有规则。
+    if (suppressPostAdvanceOverlays) return;
     const closed = state.closed_this_turn || [];
     const currentTurn = state.turn.turn;
     // #1236：上月已结属只读组——自动弹窗亦吃 isFaceReachable（与 FACE_GROUP 同口径）。
@@ -303,15 +308,17 @@ export function App() {
       setClosedShown(currentTurn);
       sessionStorage.setItem("closedShownTurn", String(currentTurn));
     }
-  }, [state, closedShown]);
+  }, [state, closedShown, suppressPostAdvanceOverlays]);
 
   // 新回合进入时拉取全部密令，有 active 密令则弹密令进度弹窗（邸报关闭后显示）。
   // #499：密令重取经唯一 latest-wins 协调器 refresh，与 done/撤回共享代次——旧回合的密令
   // 响应迟到不覆盖新结果。shown 标记只在**接受成功后**（onSecretOrders 内）落，取失败可重试；
   // 延迟弹窗在触发时按 isLatest 门控，撤回等推进代次后陈旧定时器 no-op（不会弹已作废的窗）。
   // #1236：密令属关闭组——核账展示态下不自动弹出（角标亦在 HUD 清零）。
+  // #1852：本面邸报阅读中整段延后（含 shown 标记），朕知道了后 effect 重跑再弹。
   React.useEffect(() => {
     if (!state) return;
+    if (suppressPostAdvanceOverlays) return;
     const currentTurn = state.turn.turn;
     if (currentTurn === secretOrderShown) return;
     const settlementDisplay = isSettlementDisplay(state.turn);
@@ -327,15 +334,17 @@ export function App() {
         open: () => setActiveModal("secret_orders"),
       },
     });
-  }, [state?.turn.turn, state?.turn.settlement_display]);
+  }, [state?.turn.turn, state?.turn.settlement_display, suppressPostAdvanceOverlays]);
 
   // 结局已触发：每次进页面/刷新都自动弹结局结算页。玩家点关闭后（endingDismissed）
   // 本次加载让位给盘面/邸报，可继续看局；刷新即复位重弹。
+  // #1852：本面邸报阅读中让位；朕知道了后按既有规则重弹。
   React.useEffect(() => {
     if (!state || !state.ending) return;
     if (endingDismissed) return;
+    if (suppressPostAdvanceOverlays) return;
     setActiveModal("ending");
-  }, [state, endingDismissed]);
+  }, [state, endingDismissed, suppressPostAdvanceOverlays]);
 
   // #1852：退役自动弹出全屏邸报窗。写成即推进的当次阅读由 settlementGazetteReading 本面落位；
   // 刷新 / 重开落新月份盘面；旧月邸报只经木牌 / 史册自取。
@@ -560,7 +569,10 @@ export function App() {
 
   // 关闭/只读模态：若 activeModal 被外路径设到不可达面，不渲染（逐 key 吃 isFaceReachable）。
   // #1796：关闭组吃 settlementFace（同会话 busy 亦收）；只读组仍只认持久 settlement_display。
-  const secretOrdersOpen = activeModal === "secret_orders" && isFaceReachable("secret_orders", settlementFace);
+  // #1852：本面邸报阅读中不渲染 closed/密令/结局自动弹层（朕知道了后恢复既有规则）。
+  const secretOrdersOpen = activeModal === "secret_orders"
+    && isFaceReachable("secret_orders", settlementFace)
+    && !suppressPostAdvanceOverlays;
   // #1796：点盖玺/退朝 → 拟诏台立即收起，不再原地锁钮盖小卡。
   const edictOpen = activeModal === "edict" && isFaceReachable("edict", settlementFace);
   const chatOpen = activeModal === "chat" && isFaceReachable("chat_entry", settlementFace);
@@ -573,7 +585,9 @@ export function App() {
   const historyOpen = activeModal === "history" && isFaceReachable("history", settlementDisplay);
   // C：起居注入口单闸 = isFaceReachable(audience_archive)；不再经 gameHud.gatedModal 死枝。
   const audienceArchiveOpen = activeModal === "audience_archive" && isFaceReachable("audience_archive", settlementDisplay);
-  const closedIssuesOpen = closedModal.length > 0 && isFaceReachable("closed_issues", settlementDisplay);
+  const closedIssuesOpen = closedModal.length > 0
+    && isFaceReachable("closed_issues", settlementDisplay)
+    && !suppressPostAdvanceOverlays;
   const mapIntelVisible = mapIntelOpen && selectedNode && isFaceReachable("node_intel", settlementFace);
   const regionOpen = regionDrawerOpen && isFaceReachable("region", settlementFace);
   const armyOpen = armyDrawerOpen && isFaceReachable("army", settlementFace);
@@ -788,7 +802,7 @@ export function App() {
       ) : null}
 
       {activeModal !== "ending" && <MechanicalTailFailure failure={state.mechanical_tail_failure} onRetry={retryMechanicalTail} />}
-      {activeModal === "ending" && state.ending ? (
+      {activeModal === "ending" && state.ending && !suppressPostAdvanceOverlays ? (
         <EndingModal ending={state.ending} failure={state.mechanical_tail_failure} onClose={() => { setEndingDismissed(true); setActiveModal("none"); }} onRetry={retryMechanicalTail} />
       ) : null}
 
