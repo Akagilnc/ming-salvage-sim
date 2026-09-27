@@ -10,4 +10,4 @@ Status: proposed（2026-09-09 owner 已拍方向；W1A #1831 已于 2026-09-11 �
 了结的一致性约束（2026-09-11，[#1818](https://github.com/Akagilnc/ming-salvage-sim/issues/1818#issuecomment-5627839310) 补充决定 4，decision key `affair-close-requires-no-active-linked-issues`）：了结＝其下已无仍需推进、等待、执行或追踪的未完事项；只要还有 active linked issue，事务就未了结——`closed affair + active linked issue` 不是合法状态。这仍是由 LLM 声明触发的一致性约束，不是代码按剧情条件自动了结：代码只在声明与该约束矛盾时拒绝这条不成立的声明，affair 保持 open；不自动关闭 issue、不自动重开 affair、不做剧情条件推断、不设 trigger、启动扫描或旧档修复。落地顺序与校验 seam 不在本决定内。
 
 银两流水与各类日志照旧以 origin_ref 指案卷、案卷指事务，无案卷的后果直接指事务；局势（issue）保留为事务下的机械载体（承诺按月后果、惯性、到期待办仍由它跑）并指向事务。未选：放大案卷取代拆旨粒度、事务只以关联槽串链、以 issue 充当事务、代码按来源划边界。表布局与引用字段形状不在此定。
-过月的场、落账边界、收尾与恢复统一见 [0157](0157-v2-month-waits-for-exhausted-model-call-recovery.md)，本 ADR 不另定义流程。
+过月的分段决策缘由见 [0157](0157-v2-month-waits-for-exhausted-model-call-recovery.md)；落账边界与主链见 #1843，收尾见 #1845，恢复见 #1846，本 ADR 不另定义流程。

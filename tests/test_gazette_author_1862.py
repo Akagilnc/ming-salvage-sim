@@ -234,6 +234,24 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
         return "WORLD_PUBLIC_SEGMENT"
 
     def run_agent(agent, prompt, tag, **_k):
+        # 过月主链先走 4a 整月供料再写邸报；假模型须按调用角色供合法产物，
+        # 不得用邸报 JSON 冒充密奏（否则 0058 缺报校验响亮中止，用例到不了归档断言）。
+        if tag == "secret_orders_supply":
+            return json.dumps(
+                {
+                    "dossier_progress_reports": [{
+                        "dossier_id": secret_did,
+                        "progress_band": "持平",
+                        "memorial_text": "本月密奏供料正文。",
+                    }],
+                    "covert_exec_selections": [{
+                        "order_id": order_id,
+                        "fidelity": "忠实",
+                    }],
+                },
+                ensure_ascii=False,
+            )
+        assert tag == "gazette", f"unexpected agent tag: {tag!r}"
         seen["tag"] = tag
         seen["prompt"] = prompt
         seen["instructions"] = "\n".join(
