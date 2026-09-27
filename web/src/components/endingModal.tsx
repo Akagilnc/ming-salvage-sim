@@ -1,11 +1,15 @@
 import { Crown, Landmark, ScrollText } from "lucide-react";
 import { FullscreenModal } from "./hud";
+import { MechanicalTailFailure } from "./mechanicalTailFailure";
 import type { EndingPayload } from "../types";
 
-export function EndingModal({ ending, onClose }: { ending: EndingPayload; onClose: () => void }) {
+export function EndingModal({ ending, failure, onClose, onRetry }: { ending: EndingPayload; failure?: { error?: string; error_pack_path?: string } | null; onClose: () => void; onRetry?: () => void }) {
   const lastTimeline = ending.timeline?.[ending.timeline.length - 1];
   const endingDate = lastTimeline ? `${lastTimeline.year}年${lastTimeline.period}月` : "终局";
   const timelineCount = ending.timeline?.length ?? 0;
+  // #1845：机械尾失败时空总评不得用「（无总评）」冒充已完成；pending / 失败均留空，仅真无总评时才显示占位。
+  const summaryText = ending.summary
+    || (ending.summary_pending || failure ? "" : "（无总评）");
 
   return (
     <FullscreenModal
@@ -31,7 +35,11 @@ export function EndingModal({ ending, onClose }: { ending: EndingPayload; onClos
             <ScrollText size={17} />
             <span>国史编纂官总评</span>
           </div>
-          <pre className="ending-summary-text">{ending.summary || "（无总评）"}</pre>
+          {onRetry && <MechanicalTailFailure failure={failure} onRetry={onRetry} />}
+          <pre
+            className="ending-summary-text"
+            aria-busy={ending.summary_pending ? true : undefined}
+          >{summaryText}</pre>
         </section>
 
         {ending.timeline && ending.timeline.length > 0 && (
@@ -48,8 +56,8 @@ export function EndingModal({ ending, onClose }: { ending: EndingPayload; onClos
                     <span>{it.period}月</span>
                   </div>
                   <div className="ending-timeline-body">
-                    {it.chapter ? (
-                      <p className="ending-timeline-chapter">{it.chapter}</p>
+                    {it.gazette ? (
+                      <p className="ending-timeline-chapter">{it.gazette}</p>
                     ) : null}
                     {it.decree_brief ? (
                       <p className="ending-timeline-decree">诏：{it.decree_brief}</p>

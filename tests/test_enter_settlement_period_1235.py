@@ -24,7 +24,6 @@ import pytest
 import web_app
 import ming_sim.agents as agents_mod
 import ming_sim.decree as decree_mod
-import ming_sim.memories as memories_mod
 import ming_sim.session as session_mod
 from ming_sim import audience_night as an
 from ming_sim.models import TurnPhase
@@ -69,10 +68,6 @@ def _fake_settlement_llm(monkeypatch, *, narrative="本月邸报：边饷已清�
     )
     monkeypatch.setattr(session_mod, "write_decree_with_agno", lambda *a, **k: "奉天承运，诏曰……")
     monkeypatch.setattr(
-        memories_mod, "run_agent_text",
-        lambda *a, **k: '{"body": "本月边饷已清，暗流暗涌。", "tags": ["边饷"]}',
-    )
-    monkeypatch.setattr(
         "ming_sim.month_chain.run_world_segment_text",
         lambda *a, **k: "",
     )
@@ -81,6 +76,8 @@ def _fake_settlement_llm(monkeypatch, *, narrative="本月邸报：边饷已清�
     def _run_month_chain_text(agent, prompt, tag, **kwargs):
         if tag == "decree-forecast":
             return ""
+        if tag == "gazette":
+            return '{"title":"邸报","report":"本月边饷已清。"}'
         return real_run_agent_text(agent, prompt, tag, **kwargs)
 
     monkeypatch.setattr(

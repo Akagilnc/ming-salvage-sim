@@ -14,7 +14,6 @@ import pytest
 
 import ming_sim.decree as decree
 from ming_sim.decree import pre_settle, settle_with_delta
-from ming_sim.memories import effect_brief
 from ming_sim.models import Event
 from ming_sim import issues
 from tests.conftest import active_ming_character, covering_monthly_extract, with_monthly_reports
@@ -39,8 +38,8 @@ def test_settle_with_delta_applies_region_and_advances_turn(game):
     assert new_unrest == old_unrest + 5
 
 
-def test_settle_with_delta_invokes_injected_callbacks(game):
-    """注入的 chapter_recorder / on_stage 确实被调用（真实流程用它们跑 LLM 步；此处用 spy 验接缝）。"""
+def test_settle_with_delta_emits_stage_callbacks(game):
+    """结算过程的阶段事件仍由公共回调发出。"""
     db, state, content = game
     calls: list = []
 
@@ -50,22 +49,18 @@ def test_settle_with_delta_invokes_injected_callbacks(game):
         {},
         before_turn=state.turn,
         content=content,
-        chapter_recorder=lambda *a: calls.append("chapter"),
         on_stage=lambda label: calls.append(("stage", label)),
     )
 
-    assert "chapter" in calls
     assert any(isinstance(c, tuple) and c[0] == "stage" for c in calls)
 
 
-def test_settle_with_delta_includes_inertia_person_changes_in_chapter_brief(game):
+def test_settle_with_delta_persists_inertia_person_changes(game):
     db, state, content = game
     name = active_ming_character(db, content)
     before_turn = state.turn
     old_status = content.characters[name].status
     old_office = content.characters[name].office
-    seen: dict = {}
-
     try:
         db.insert_issue(
             state,
@@ -86,12 +81,8 @@ def test_settle_with_delta_includes_inertia_person_changes_in_chapter_brief(game
             {},
             before_turn=state.turn,
             content=content,
-            chapter_recorder=lambda _db, _state, _decree, _narrative, applied: seen.update(applied),
         )
 
-        assert seen["issue_summary"]["applied_person_changes"] == [
-            {"name": name, "动作": "处置", "status": "dismissed", "reason": "自然失败问责"}
-        ]
         persisted = db.get_turn_extraction(before_turn)["extractor_output"]
         assert persisted["issue_summary"]["applied_person_changes"] == [
             {"name": name, "动作": "处置", "status": "dismissed", "reason": "自然失败问责"}
@@ -99,7 +90,6 @@ def test_settle_with_delta_includes_inertia_person_changes_in_chapter_brief(game
         assert persisted["applied_person_changes"] == [
             {"name": name, "动作": "处置", "status": "dismissed", "reason": "自然失败问责"}
         ]
-        assert f"处分：{name}" in effect_brief(seen)
     finally:
         content.characters[name].status = old_status
         content.characters[name].office = old_office

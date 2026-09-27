@@ -117,7 +117,6 @@ def test_public_saying_survives_same_turn_archive_projection(game):
     claim = "袁崇焕已死于宁远"
     record_public_saying(db, state, claim, involved_characters=["袁崇焕"])
     db.save_turn_report(state, f"本月邸报亦录：{claim}", public_body=f"本月邸报亦录：{claim}")
-    db.save_chapter_memory(state, "朝局", f"章节旧闻复述：{claim}")
 
     view = db.get_character_knowledge(state, reader.name)
     saying = next(

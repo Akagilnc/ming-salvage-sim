@@ -1015,10 +1015,12 @@ def apply_monthly_covert_actual_progress(
     *,
     selections: object = None,
     commit: bool = False,
+    only_supplied: bool = False,
 ) -> List[Dict[str, object]]:
     """当月实况轨落笔：推演者执行态 + 当月 origin 真实效果 → dossier_actual_progress。
 
     不发明人物/钱粮/地区固定套餐；奏报永不入 apply。
+    ``only_supplied``：过月分段只落本段交代的执行态，不把其余未提及的在办密令误判为缺执行态。
     """
     orders = list(db.list_secret_orders(status="active"))
     by_sel = _selection_map(selections)
@@ -1027,6 +1029,8 @@ def apply_monthly_covert_actual_progress(
     for order in orders:
         oid = int(order["id"])
         if _is_issuance_turn(order, turn):
+            continue
+        if only_supplied and oid not in by_sel:
             continue
         minister = str(order.get("minister_name") or "")
         if not minister_eligible_for_monthly_covert(db, minister):

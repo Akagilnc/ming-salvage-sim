@@ -18,7 +18,6 @@ import pytest
 from fastapi import HTTPException
 
 import ming_sim.decree as decree_mod
-import ming_sim.memories as memories
 from ming_sim.db import GameDB
 import web_app
 from ming_sim.session import GameSession
@@ -30,8 +29,6 @@ def _canned(monkeypatch, narrative="本月退朝未下正式圣旨，边事自�
         decree_mod, "simulate_season_with_payload",
         lambda *a, **k: (narrative, k.get("simulator_payload") or {}),
     )
-    monkeypatch.setattr(decree_mod, "create_chapter_memory_agent", lambda *a, **k: None)
-    monkeypatch.setattr(memories, "run_agent_text", lambda *a, **k: '{"body":"月记","tags":[]}')
 
 
 def _session(db, state, content):

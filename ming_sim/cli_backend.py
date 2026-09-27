@@ -335,15 +335,12 @@ def _log(msg: str) -> None:
 def _infer_tag(prompt: str) -> str:
     """从 prompt（含 system 段）猜是哪个 agent 在调用，方便复盘。
 
-    判定顺序要紧：simulator/extractor/chapter_memory 的输入都含上月邸报全文，
-    （含『月末奏章』等词），故必须用各自唯一标识、且把易被邸报词污染的项前置。
+    simulator/extractor 的输入都含上月邸报全文（含『月末奏章』等词），
+    故须用各自唯一标识并把易被邸报词污染的项前置。
     """
     p = prompt
     if "扮演被皇帝召见" in p or "大臣扮演" in p:
         return "minister"
-    # 章节记忆输入也含邸报全文，必须在 simulator 之前、用 起居注+章节+body/tags 认。
-    if "起居注" in p and "章节" in p and ('"body"' in p or "tags" in p):
-        return "chapter_memory"
     if "module_allowed_fields" in p or "score_extractor" in p or "本月结算抽取" in p:
         return "extractor"
     if "simulator_payload" in p:  # 仅真 simulator 的 user payload 才有

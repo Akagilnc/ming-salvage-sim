@@ -279,14 +279,10 @@ def produce_forecast_product(session: Any, snapshot: Dict[str, Any]) -> Dict[str
             tag="decree-forecast",
             transport_policy=audience_transport_policy(),
         )
-        prefix = str(narrative or "")
-        questions = []
-        for match in decree._DECISION_RE.finditer(prefix):
-            parsed = decree.parse_decision_blocks(match.group(0))[1]
-            if parsed:
-                questions = parsed
-                prefix = prefix[:match.start()]
-                break
+        from ming_sim.month_chain import _split_at_question
+
+        # 与世界段同一解析：问前段文只转译一次，同段合法请旨全部暂存。
+        prefix, questions = _split_at_question(str(narrative or ""))
         forecast_text = prefix
         if prefix.strip():
             declaration = translate_month_segment(

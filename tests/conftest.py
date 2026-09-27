@@ -68,7 +68,52 @@ def own_session_until_game_teardown(db, owner) -> None:
     if owners is None:
         owners = []
         db._test_session_owners = owners
+    queue = getattr(owner, "_write_queue", None)
+    for existing in owners:
+        if existing is owner:
+            return
+        if queue is not None and getattr(existing, "_write_queue", None) is queue:
+            return
     owners.append(owner)
+
+
+def note_queue_until_game_teardown(db, queue) -> None:
+    """登记写队列本身。drain 不得因此关掉夹具拥有的连接。"""
+    from types import SimpleNamespace
+
+    own_session_until_game_teardown(db, SimpleNamespace(_write_queue=queue))
+
+
+def _install_tail_owner_note(mp: pytest.MonkeyPatch) -> None:
+    """机械尾的 owner 可能是未 bind 的临时对象，轻壳登记覆盖不到。
+
+    在既有 ``_submit_tail`` 入口把该写队列送进排空名单。不改生产调度。
+    """
+    import ming_sim.mechanical_tail as tail_mod
+    from ming_sim.session_write_queue import get_session_write_queue
+
+    real_submit = tail_mod._submit_tail
+
+    def _submit_and_note(session, **kwargs):
+        note_queue_until_game_teardown(
+            session.db, get_session_write_queue(session),
+        )
+        return real_submit(session, **kwargs)
+
+    mp.setattr(tail_mod, "_submit_tail", _submit_and_note)
+
+
+def _drain_registered_sessions_before_close(db) -> None:
+    """排空已登记队列上未完成的写票，再由夹具自己关库。
+
+    关库顺序只看写票是否完成，不看执行器类型。委托真实线程池的替身
+    仍有在飞任务时，barrier 等到票完成才返回。
+    """
+    from ming_sim.session_write_queue import drain_and_close_session
+
+    owners = list(getattr(db, "_test_session_owners", ()) or ())
+    for owner in reversed(owners):
+        drain_and_close_session(owner)
 
 
 @pytest.fixture(scope="session")
@@ -165,21 +210,24 @@ def game(content, _game_template_path, monkeypatch):
     fd, path = tempfile.mkstemp(suffix=".db")
     os.close(fd)
     db = None
+    # 独立 MonkeyPatch：测试内 monkeypatch.undo() 不撤掉尾票登记。
+    tail_note = pytest.MonkeyPatch()
     try:
         shutil.copyfile(_game_template_path, path)
         db = GameDB(path, content)
         state = db.load_state()
+        _install_tail_owner_note(tail_note)
         yield db, state, content
     finally:
-        if db is not None:
-            from ming_sim.session_write_queue import drain_and_close_session
-
-            for owner in reversed(getattr(db, "_test_session_owners", ())):
-                drain_and_close_session(owner)
-            db.close()
-        for p in (path, f"{path}_agno.db"):
-            if os.path.exists(p):
-                os.remove(p)
+        try:
+            if db is not None:
+                _drain_registered_sessions_before_close(db)
+                db.close()
+            for p in (path, f"{path}_agno.db"):
+                if os.path.exists(p):
+                    os.remove(p)
+        finally:
+            tail_note.undo()
 
 
 @pytest.fixture

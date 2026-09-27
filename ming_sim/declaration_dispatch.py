@@ -213,6 +213,7 @@ def _dispatch_declaration_sections(
     chat_turn_id: int = 0,
     source_chat_turn_id: int = 0,
     visible_refs: Optional[Mapping[str, object]] = None,
+    defer_disclosure: bool = False,
 ) -> DeclarationDispatchResult:
     """真正跑已知 section 的分派副作用 + 把本次拒收（含未知顶层键）记进调用方
     给定的收集器；只记不落库——落库时机与事务边界由调用方决定（J1 判词打回：
@@ -247,6 +248,7 @@ def _dispatch_declaration_sections(
             db, state, declaration.get("effects"), night_id=night_id,
             collector=collector,
             turn=turn, source=source, visible_refs=visible_refs,
+            defer_disclosure=defer_disclosure,
         ),
         promises=_dispatch_promises(
             db, state, declaration.get("promises"), night_id=night_id,
@@ -288,6 +290,80 @@ def _dispatch_declaration_sections(
     return result
 
 
+def _effect_extraction_from_clean(
+    clean: Mapping[str, object],
+    event_id: str,
+    *,
+    empty_extraction: Mapping[str, object],
+) -> tuple[dict[str, object], dict[str, list[tuple[str, object]]], dict[str, list[str]]]:
+    """Build one apply_score_extraction payload from a single effect envelope."""
+    extraction = copy.deepcopy(dict(empty_extraction))
+    ordered_deltas = {field: [] for field in (
+        "metric_delta", "faction_delta", "class_delta",
+        "region_delta", "army_delta", "power_updates",
+    )}
+    ordered_effect_event_ids = {field: [] for field in empty_extraction}
+    for field, value in clean.items():
+        if field not in empty_extraction:
+            continue
+        if isinstance(value, list):
+            extraction[field].extend(value)
+            ordered_effect_event_ids[field].extend([event_id] * len(value))
+        elif isinstance(value, dict):
+            extraction[field].update(value)
+            if field in ordered_deltas:
+                ordered_deltas[field].extend(value.items())
+                ordered_effect_event_ids[field].extend([event_id] * len(value))
+        elif value is not None:
+            extraction[field] = value
+    return extraction, ordered_deltas, ordered_effect_event_ids
+
+
+def _persist_specialized_extraction(
+    db: Any,
+    state: Any,
+    extraction: Mapping[str, object],
+    *,
+    collector: RejectionCollector,
+    turn: int,
+    source: Provenance,
+    defer_monthly_secret_supply: bool = False,
+) -> None:
+    """转译契约仍收的专属案卷字段，交既有写入口，不在通用 applier 里再写一份。
+
+    密奏须先有本回合稽核在场扫描，origin 才带得上同派标记。对账只落本段提案，
+    未提案目标的中位默认留到月末一次补，避免后段中位覆盖前段实抵。
+
+    过月主链（ADR 0157 步骤 4a）整月密奏与执行态由独立供料 run 落账；
+    ``defer_monthly_secret_supply`` 时不把逐段字段拼成整月义务。
+    """
+    if not defer_monthly_secret_supply:
+        reports = extraction.get("dossier_progress_reports") or []
+        if isinstance(reports, list) and reports:
+            db.record_monthly_supervision_presence(int(turn), commit=False)
+            db.record_monthly_dossier_progress(int(turn), reports)
+    denunciations = extraction.get("faction_denunciations") or []
+    if isinstance(denunciations, list) and denunciations:
+        db.accept_faction_denunciations(state, denunciations, commit=False)
+    proposals = extraction.get("dossier_reconciliations") or []
+    if isinstance(proposals, list) and proposals:
+        db.record_monthly_grant_reconciliations(
+            int(turn), proposals, rejection_collector=collector, source=source,
+        )
+    if not defer_monthly_secret_supply:
+        selections = extraction.get("covert_exec_selections") or []
+        if isinstance(selections, list) and selections:
+            from ming_sim.covert_progress import apply_monthly_covert_actual_progress
+            from ming_sim.decree import _collect_inline_rejections
+
+            rows = apply_monthly_covert_actual_progress(
+                db, state, selections=selections, only_supplied=True, commit=False,
+            )
+            _collect_inline_rejections(
+                collector, {"covert_exec_selections": rows}, int(turn), source,
+            )
+
+
 def _dispatch_effects(
     db: Any,
     state: Any,
@@ -298,11 +374,16 @@ def _dispatch_effects(
     turn: int,
     source: Provenance,
     visible_refs: Optional[Mapping[str, object]] = None,
+    defer_disclosure: bool = False,
 ) -> SectionResult:
     """把过月 C0 效果 envelope 交既有月末效果核算口，不复制领域适配器。
 
     召对夜里的 effects 表示旨意办理结果，仍只是预推候选；当场实况由各自
     section 承接，不能借 effects 绕过 ADR 0157 的过月落账边界。
+
+    #1844：effects 数组按交代先后逐笔落账——后来的效果读到先前实际落账后的
+    存量；不按实体段固定类别顺序重排跨类因果。一次 apply 内按旨序交错字段，
+    批次性副作用（回流等）仍只核算一次。
     """
     if raw is None or raw == {}:
         return SectionResult(applied=[], rejected=[])
@@ -322,13 +403,7 @@ def _dispatch_effects(
     from ming_sim.decree import _collect_inline_rejections
     from ming_sim.person_delta_adapter import normalize_person_changes
 
-    extraction = copy.deepcopy(EMPTY_EXTRACTION)
     shape_rejections = []
-    ordered_deltas = {field: [] for field in (
-        "metric_delta", "faction_delta", "class_delta",
-        "region_delta", "army_delta", "power_updates",
-    )}
-    ordered_effect_event_ids = {field: [] for field in EMPTY_EXTRACTION}
     rejected = []
     has_effect = False
     clean_items = []
@@ -350,11 +425,21 @@ def _dispatch_effects(
             for field in ("appointments", "character_status_changes", "character_power_changes", "office_changes"):
                 clean[field] = []
         clean_items.append((item, event_id, clean))
+    if not has_effect:
+        return SectionResult(applied=[], rejected=rejected)
+
     refs = visible_refs or {}
     rejected_events = preflight_declared_event_effects(
         db, state, [(event_id, clean) for _, event_id, clean in clean_items],
         open_affair_ids=set(refs.get("affairs", ())),
     )
+    extraction = copy.deepcopy(EMPTY_EXTRACTION)
+    ordered_deltas = {field: [] for field in (
+        "metric_delta", "faction_delta", "class_delta",
+        "region_delta", "army_delta", "power_updates",
+    )}
+    ordered_effect_event_ids = {field: [] for field in EMPTY_EXTRACTION}
+    effect_sequence: list[tuple[dict[str, object], dict[str, list[tuple[str, object]]], dict[str, list[str]]]] = []
     accepted_effect = False
     for item, event_id, clean in clean_items:
         if event_id in rejected_events:
@@ -364,20 +449,23 @@ def _dispatch_effects(
             ))
             continue
         accepted_effect = True
-        for field, value in clean.items():
-            if field not in EMPTY_EXTRACTION:
-                continue
-            if isinstance(value, list):
-                extraction[field].extend(value)
-                ordered_effect_event_ids[field].extend([event_id] * len(value))
-            elif isinstance(value, dict):
-                extraction[field].update(value)
-                if field in ordered_deltas:
-                    ordered_deltas[field].extend(value.items())
-                    ordered_effect_event_ids[field].extend([event_id] * len(value))
-            elif value is not None:
+        step_extraction, step_ordered, step_event_ids = _effect_extraction_from_clean(
+            clean, event_id, empty_extraction=EMPTY_EXTRACTION,
+        )
+        effect_sequence.append((step_extraction, step_ordered, step_event_ids))
+        for field, value in step_extraction.items():
+            current = extraction[field]
+            if isinstance(value, list) and isinstance(current, list):
+                current.extend(value)
+            elif isinstance(value, dict) and isinstance(current, dict):
+                current.update(value)
+            elif value is not None and not isinstance(value, (list, dict)):
                 extraction[field] = value
-    if not has_effect or not accepted_effect:
+        for field, pairs in step_ordered.items():
+            ordered_deltas[field].extend(pairs)
+        for field, event_ids in step_event_ids.items():
+            ordered_effect_event_ids[field].extend(event_ids)
+    if not accepted_effect:
         return SectionResult(applied=[], rejected=rejected)
     report = apply_score_extraction(
         db, state, extraction, content=db.content,
@@ -387,8 +475,14 @@ def _dispatch_effects(
         ordered_deltas=ordered_deltas,
         ordered_effect_event_ids=ordered_effect_event_ids,
         prior_shape_rejections=shape_rejections,
+        effect_sequence=effect_sequence if isinstance(raw, list) else None,
+        defer_disclosure=defer_disclosure,
     )
     _collect_inline_rejections(collector, report, turn, source)
+    _persist_specialized_extraction(
+        db, state, extraction, collector=collector, turn=turn, source=source,
+        defer_monthly_secret_supply=defer_disclosure,
+    )
     return SectionResult(applied=[report], rejected=rejected)
 
 
@@ -404,6 +498,7 @@ def dispatch_declaration(
     source_chat_turn_id: int = 0,
     visible_refs: Optional[Mapping[str, object]] = None,
     alongside: Optional[Callable[[DeclarationDispatchResult], None]] = None,
+    defer_disclosure: bool = False,
 ) -> DeclarationDispatchResult:
     """把一份转译声明分派到既有暂存（交办 / 应允）与新记录。这是召对/过月场中
     承接（ADR 0155）直接分派单条声明时用的公开入口，唯一契约：始终原子、始终
@@ -451,6 +546,7 @@ def dispatch_declaration(
             collector=collector,
             chat_turn_id=origin_ctid,
             visible_refs=visible_refs,
+            defer_disclosure=defer_disclosure,
         )
         collector.flush_to_db(db)
         # 前像与 section/拒收同权威事务提交前写入（0036 R3 / 0038）；
@@ -553,6 +649,7 @@ def settle_staged_declarations_in_decree_order(
                             minister_name=minister_name, night_id=night_id, source=source,
                             collector=collector,
                             visible_refs=item.visible_refs,
+                            defer_disclosure=True,
                         ))
                     db.staged_declarations.mark_settled(decree_ref)
                     collector.flush_to_db(db)

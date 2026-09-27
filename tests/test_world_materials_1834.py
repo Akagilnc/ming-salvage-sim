@@ -15,7 +15,8 @@ from pathlib import Path
 
 from ming_sim.db import GameDB
 from ming_sim.materials import (
-    list_materials, prepare_world_materials, read_material, world_materials_root,
+    list_materials, prepare_world_materials, read_material,
+    world_materials_root,
 )
 
 
@@ -32,7 +33,7 @@ def test_prepare_writes_typed_tree_with_board_affairs_and_gazette_index(game, tm
     past_year, past_period, past_turn = state.year, max(1, state.period - 1), max(0, state.turn - 1)
     from ming_sim.models import GameState
     past_state = GameState(turn=past_turn, year=past_year, period=past_period, metrics=dict(state.metrics))
-    db.save_turn_report(past_state, "历月邸报正文")
+    db.save_turn_report(past_state, "历月邸报正文", title="辽东告急")
 
     dest = tmp_path / "world-materials"
     prepared = prepare_world_materials(db, state, dest_root=dest)
@@ -46,9 +47,26 @@ def test_prepare_writes_typed_tree_with_board_affairs_and_gazette_index(game, tm
     assert any(p.startswith("邸报/") for p in names)
 
     index = read_material(prepared.root, "INDEX.txt")
+    listed = set(names)
     for line in index.splitlines():
-        if line.strip():
-            assert line.strip() in names
+        stripped = line.strip()
+        if not stripped:
+            continue
+        assert stripped in listed or any(
+            stripped.startswith(rel + " ") for rel in listed
+        )
+    for rel in listed:
+        if rel != "INDEX.txt":
+            assert read_material(prepared.root, rel)
+    from ming_sim.models import reign_period_label
+    gazette_rel = f"邸报/{past_year}年{past_period}月.txt"
+    gazette_line = next(
+        line for line in index.splitlines()
+        if line.strip() == gazette_rel or line.strip().startswith(gazette_rel + " ")
+    )
+    assert reign_period_label(past_year, past_period) in gazette_line.split()
+    assert "辽东告急" in gazette_line.split()
+    assert "历月邸报正文" not in gazette_line
 
     # 无裸副本：不得直接倒出世界库/JSON。
     assert not any(n.lower().endswith((".db", ".sqlite", ".sqlite3", ".json")) for n in names)

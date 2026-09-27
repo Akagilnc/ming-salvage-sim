@@ -86,6 +86,29 @@ export function useSettlementFlow({
     if (route.error !== null) setPausedDecisionError(route.error);
   }, [state, loadState]);
 
+  // 后台机械尾未终结时观察状态：总评落位或代码异常均在原页面呈现。
+  React.useEffect(() => {
+    if (!state?.mechanical_tail_pending && !state?.ending?.summary_pending) return;
+    let cancelled = false;
+    let refreshTimer = 0;
+    const refresh = () => {
+      refreshTimer = window.setTimeout(() => {
+        void loadState()
+          .catch((err) => {
+            console.warn("[ending] summary refresh failed", err);
+          })
+          .finally(() => {
+            if (!cancelled) refresh();
+          });
+      }, 1000);
+    };
+    refresh();
+    return () => {
+      cancelled = true;
+      window.clearTimeout(refreshTimer);
+    };
+  }, [state?.mechanical_tail_pending, state?.ending?.summary_pending, loadState]);
+
   const applyStage = (update: SettlementStageUpdate) => {
     setSettleStage(update.content);
     // Progress only from typed facts on the SSE payload — never reverse-lookup labels.

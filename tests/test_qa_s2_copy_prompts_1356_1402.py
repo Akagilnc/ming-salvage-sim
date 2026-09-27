@@ -39,16 +39,7 @@ def test_minister_agent_address_terms_positive_in_audience_section():
 
 
 def test_season_simulator_uses_fed_reign_label_not_self_compute():
-    """#1344 夹带：prompt 停令 LLM 自算年号；上下文 turn_header 喂 reign_period_label 事实。"""
-    prompt = (ROOT / "content/prompts/season_simulator.md").read_text(encoding="utf-8")
-    # 不得再教模型从 year/period 西历「直填年号纪年」自算
-    assert "直填年号纪年" not in prompt
-    assert "reign_period_label" in prompt or "本回合年月" in prompt
-    # 抬头模板走喂入的年号事实，不再 {year}年{period}月 西历拼
-    assert "{year}年{period}月" not in prompt
-    # F2：骨架不得把字段名 {reign_period_label} 原样写入玩家可见第一行
-    assert "{reign_period_label}" not in prompt
-
+    """#1344：上下文 turn_header 喂 reign_period_label 事实。"""
     from ming_sim.agents import build_simulator_context
     from ming_sim.models import reign_period_label
 

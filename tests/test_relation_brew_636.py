@@ -506,56 +506,6 @@ def test_historical_events_alone_do_not_select_in_later_month(game):
 
 # -------------------------------- 结算接缝：事务内定型即启酿、与 chapter/ending 重叠（判词类②）
 
-def test_settle_brew_overlaps_chapter_and_joins_before_persist(game):
-    """ID-10/P5：本月边事件集在结算事务内定型后即启酿——酿制 LLM 等待与无依赖的
-    章节记忆重叠；摘要持久化前 join；串行实现（等整个 atomic 完成才同步调）在此破裂。"""
-    db, state, content = game
-    _add_edge(db, state, source="徐光启", target=EMPEROR_NODE, kind="协作",
-              context="徐光启与皇上当场协作。", origin="audience:turn-1")
-
-    started = threading.Barrier(3)  # 两个酿制 worker ＋ chapter
-    release = threading.Event()
-    brew_turns: list = []
-
-    def brew_fn(payload_json: str) -> str:
-        payload = json.loads(payload_json)
-        brew_turns.append(int(state.turn))  # 事务内启酿：state 尚未被 next_period 推进
-        started.wait()
-        release.wait()  # 串行实现则永久等；CI job 终线承接
-        if payload.get("view") == VIEW_FACTION_STANCE:
-            return json.dumps({STANCE_KEY: "西学态势在案。"}, ensure_ascii=False)
-        return json.dumps(_script(recent="协作在案。"), ensure_ascii=False)
-
-    def runner(settle_state, settle_db, *, settled_turn, settled_year, settled_period):
-        return MonthEndRelationBrewLeg(
-            settle_db, settle_state, brew_fn,
-            settled_turn=settled_turn,
-            settled_year=settled_year,
-            settled_period=settled_period,
-        )
-
-    def chapter(db_, s, decree_text, narrative, applied):
-        started.wait()  # 两个工作项均已在 next_period 前读取 state.turn
-        release.set()
-
-    before_turn = state.turn
-    settled_year, settled_period = int(state.year), int(state.period)
-    settle_with_delta(
-        state, db, {}, before_turn=before_turn, content=content,
-        chapter_recorder=chapter, relation_brew_runner=runner,
-    )
-
-    assert state.turn == before_turn + 1
-    # 重叠证明：brew 在事务内（next_period 前）启酿、且与 chapter 互等通过。
-    # 同批新事实：徐光启党籍投影西学 → 关系对＋西学两条工作项同批同缝启酿。
-    assert set(brew_turns) == {before_turn}
-    summary = db.get_relation_summary("徐光启", EMPEROR_NODE)
-    assert summary["recent_segment"] == "协作在案。"
-    assert (summary["last_brewed_year"], summary["last_brewed_period"]) == (
-        settled_year, settled_period,
-    )
-
-
 def test_settle_brew_leg_records_settled_month_not_advanced_month(game):
     """next_period 已把 state 推进到下一个月后，酿制输入/摘要落款仍须是本结算月
     快照（decree 传递），不得把下一个月写进输入/last_brewed（错月修复）。"""

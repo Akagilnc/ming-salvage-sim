@@ -21,6 +21,7 @@ import { CheatConsole, useCheatHotkey } from "./components/cheatConsole";
 import { ClosedIssuesModal } from "./components/closedIssues";
 import { EdictModal } from "./components/edictModal";
 import { EndingModal } from "./components/endingModal";
+import { MechanicalTailFailure } from "./components/mechanicalTailFailure";
 import { HistoryModal } from "./components/historyModal";
 import { ReportModal } from "./components/reportModal";
 import { SecretOrdersModal } from "./components/secretOrders";
@@ -610,6 +611,17 @@ export function App() {
     state.resume_phase2,
   );
   const settleResumeMounted = state.turn.phase === "settling" || phase2Resume;
+  const retryMechanicalTail = () => {
+    void fetch("/api/game/mechanical_tail/retry", { method: "POST" })
+      .then(async (response) => {
+        if (!response.ok) {
+          const body = await response.json().catch(() => null);
+          throw new Error(typeof body?.detail === "string" ? body.detail : response.statusText);
+        }
+        await loadState();
+      })
+      .catch((error) => setError(error instanceof Error ? error.message : String(error)));
+  };
 
   return (
     <main className="game-shell" data-settlement-display={settlementDisplay ? "1" : "0"}>
@@ -801,8 +813,9 @@ export function App() {
         />
       ) : null}
 
+      {activeModal !== "ending" && <MechanicalTailFailure failure={state.mechanical_tail_failure} onRetry={retryMechanicalTail} />}
       {activeModal === "ending" && state.ending ? (
-        <EndingModal ending={state.ending} onClose={() => { setEndingDismissed(true); setActiveModal("none"); }} />
+        <EndingModal ending={state.ending} failure={state.mechanical_tail_failure} onClose={() => { setEndingDismissed(true); setActiveModal("none"); }} onRetry={retryMechanicalTail} />
       ) : null}
 
       {historyOpen ? (

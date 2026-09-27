@@ -24,7 +24,6 @@ from fastapi.testclient import TestClient
 import ming_sim.agents as agents_mod
 import ming_sim.cli_backend as cli_backend
 import ming_sim.decree as decree_mod
-import ming_sim.memories as memories_mod
 import ming_sim.session as session_mod
 import web_app
 from ming_sim import audience_night as an
@@ -106,13 +105,12 @@ def _stub_outer_llm_seams(monkeypatch) -> None:
         lambda *a, **k: "奉天承运，诏曰：着户部清核辽饷。",
     )
     monkeypatch.setattr(
-        memories_mod,
-        "run_agent_text",
-        lambda *a, **k: '{"body": "本月边饷已清，暗流暗涌。", "tags": ["边饷"]}',
-    )
-    monkeypatch.setattr(
         "ming_sim.month_chain.run_world_segment_text",
         lambda *a, **k: "本月邸报：边饷已清，流寇未息。",
+    )
+    monkeypatch.setattr(
+        "ming_sim.month_chain.run_gazette_text",
+        lambda *a, **k: ("边饷已清", "本月邸报：边饷已清，流寇未息。"),
     )
     monkeypatch.setattr(
         "ming_sim.month_translate.translate_month_segment",

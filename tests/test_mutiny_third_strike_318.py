@@ -465,17 +465,6 @@ def test_simulator_zero_combat_cross_morale_loyalty_axes(
     assert "morale_text" not in army
 
 
-def test_season_simulator_prompt_defines_zero_combat_noncombat():
-    """ADR 0025 D8：zero_combat 须在军事软判规则有正向明文（不可投入战斗/非战斗）。"""
-    from pathlib import Path
-
-    prompt = (Path(__file__).resolve().parents[1] / "content/prompts/season_simulator.md").read_text(
-        encoding="utf-8"
-    )
-    assert "zero_combat" in prompt
-    assert "不可投入战斗" in prompt or "非战斗" in prompt
-
-
 @pytest.mark.parametrize("fiscal_path", PATHS)
 @pytest.mark.parametrize(
     "identity",

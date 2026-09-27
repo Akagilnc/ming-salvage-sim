@@ -22,17 +22,6 @@ def test_role_roster_only_lists_current_active_ming_people(game):
     roster = db.get_character_knowledge(state, reader.name)["world"]["role"]
     assert all(name not in roster for name in names)
 
-def test_chapter_aggregate_never_projects_paraphrased_restricted_source(game):
-    db, state, content = game
-    knower, excluded = list(content.characters.values())[:2]
-    db.register_character_knowledge_source(
-        state, [{"character_id": knower.name}], "private_matter", "密查", "原始密事",
-        source_id="test:chapter-secret", excluded_names=[excluded.name],
-    )
-    db.save_chapter_memory(state, "朝局", "宫中有人暗中安排了不应知晓的事务。")
-    text = " ".join(item.get("body", "") for item in db.get_character_knowledge(state, excluded.name)["public_events"])
-    assert "宫中有人暗中安排" not in text
-
 def test_secret_alias_exclusion_is_canonicalized_before_projection(game):
     db, state, _content = game
     order = create_test_secret_order(db, state, "毕自严", "密查", "查账", [], excluded_names=["九千岁"])
@@ -862,7 +851,6 @@ def test_knowledge_projects_gazette_and_chapter_sources_per_character(game):
         state, "公开事项", public_marker, source_id="test:mixed-public",
     )
     db.save_turn_report(state, f"{public_marker}；{secret_marker}")
-    db.save_chapter_memory(state, "朝局", f"{public_marker}；{secret_marker}")
 
     excluded_knowledge = db.get_character_knowledge(state, excluded.name)
     knower_knowledge = db.get_character_knowledge(state, knower.name)
@@ -902,7 +890,6 @@ def test_knowledge_projects_mixed_archive_from_durable_source_scope(game):
         state, "公开事项", public_marker, source_id="test:durable-public",
     )
     db.save_turn_report(state, f"{public_marker}；{secret_marker}")
-    db.save_chapter_memory(state, "朝局", f"{public_marker}；{secret_marker}")
 
     excluded_text = " ".join(
         item.get("body", "")
@@ -936,14 +923,12 @@ def test_rewritten_archive_cannot_reintroduce_restricted_source(game):
         excluded_names=[excluded.name],
     )
     db.save_turn_report(state, "聚合邸报改写：有人暗中安排了不应知晓的事务。")
-    db.save_chapter_memory(state, "朝局", "章节改写：宫中另有暗流，未明言其由来。")
 
     excluded_text = " ".join(
         item.get("body", "")
         for item in db.get_character_knowledge(state, excluded.name)["public_events"]
     )
     assert "有人暗中安排了不应知晓的事务" not in excluded_text
-    assert "宫中另有暗流" not in excluded_text
 
 def test_archive_write_materializes_unmirrored_source_scope(game):
     """结算保存聚合档案时，不能丢掉先写入的受限事项来源边界。"""
@@ -977,57 +962,6 @@ def test_archive_write_materializes_unmirrored_source_scope(game):
     assert rows[0]["body"] == secret_marker
     assert excluded.name in rows[0]["excluded_names"]
 
-def test_chapter_public_counterpart_keeps_only_independent_public_sources(game):
-    """公开章节对应体来自公开 source，不从聚合章节删改密事。"""
-    from ming_sim.memories import _public_chapter_counterpart
-
-    db, state, content = game
-    knower, excluded = [
-        character for character in content.characters.values()
-        if character.office_type not in ("后宫", "宗藩")
-        and db.get_character_status(character.name)[0] == "active"
-    ][:2]
-    db.record_public_knowledge_event(
-        state, "公开事项", "公开来源标记", source_id="test:chapter-public",
-    )
-    db.register_character_knowledge_source(
-        state,
-        [{"character_id": knower.name, "tier": "主办"}],
-        "private_matter", "密查", "受限来源标记",
-        source_id="test:chapter-restricted", excluded_names=[excluded.name],
-    )
-
-    counterpart = _public_chapter_counterpart(db.knowledge_items_for_turn(state.turn))
-
-    assert "公开来源标记" in counterpart
-    assert "受限来源标记" not in counterpart
-
-def test_chapter_counterpart_never_uses_aggregate_when_sources_exist(game):
-    """已有来源边界时，章节聚合正文不能自行成为公开来源。"""
-    db, state, content = game
-    reader = next(
-        character for character in content.characters.values()
-        if character.office_type not in ("后宫", "宗藩")
-        and db.get_character_status(character.name)[0] == "active"
-    )
-    public_marker = "已立来源的公开事项"
-    unscoped_marker = "无来源的章节改写"
-    db.record_public_knowledge_event(
-        state, "公开事项", public_marker, source_id="test:source-bound-public",
-    )
-
-    db.save_chapter_memory(
-        state, "朝局", f"{public_marker}；{unscoped_marker}",
-        knowledge_items=db.knowledge_items_for_turn(state.turn),
-    )
-
-    projected = " ".join(
-        item.get("body", "")
-        for item in db.get_character_knowledge(state, reader.name)["public_events"]
-    )
-    assert public_marker in projected
-    assert unscoped_marker not in projected
-
 def test_turn_report_counterpart_never_uses_aggregate_when_sources_exist(game):
     """已有来源边界时，邸报聚合正文不能自行成为公开来源。"""
     db, state, content = game
@@ -1054,40 +988,6 @@ def test_turn_report_counterpart_never_uses_aggregate_when_sources_exist(game):
     assert public_marker in projected
     assert unscoped_marker not in projected
 
-def test_chapter_counterpart_does_not_repeat_derived_turn_report_source(game):
-    """The normal report→chapter sequence projects monthly prose only once."""
-    from ming_sim.memories import _public_chapter_counterpart
-
-    db, state, _content = game
-    marker = "本月独立公开来源"
-    db.record_public_knowledge_event(state, "公开事项", marker, source_id="test:monthly-source")
-    db.save_turn_report(state, "月结改写", knowledge_items=db.knowledge_items_for_turn(state.turn))
-
-    counterpart = _public_chapter_counterpart(db.knowledge_items_for_turn(state.turn))
-
-    assert marker in (counterpart or "")
-    assert "月结改写" not in (counterpart or "")
-
-def test_character_projection_shows_monthly_public_source_once_after_chapter_write(game):
-    """A chapter counterpart must not re-aggregate its turn-report counterpart."""
-    from ming_sim.memories import _public_chapter_counterpart
-
-    db, state, content = game
-    reader = next(c for c in content.characters.values() if c.office_type == "礼部")
-    marker = "正常月结公开正文"
-    db.record_public_knowledge_event(state, "公开事项", marker, source_id="test:monthly-once")
-    db.save_turn_report(state, marker, knowledge_items=db.knowledge_items_for_turn(state.turn))
-    db.save_chapter_memory(
-        state, "朝局", "章节改写", knowledge_items=db.knowledge_items_for_turn(state.turn),
-        public_body=_public_chapter_counterpart(db.knowledge_items_for_turn(state.turn)),
-    )
-
-    projected = "\n".join(
-        str(item.get("body") or "")
-        for item in db.get_character_knowledge(state, reader.name)["public_events"]
-    )
-    assert projected.count(marker) == 1
-
 def test_shared_archive_storage_never_writes_restricted_aggregate(game):
     db, state, content = game
     participant = next(iter(content.characters))
@@ -1100,13 +1000,8 @@ def test_shared_archive_storage_never_writes_restricted_aggregate(game):
     db.record_public_knowledge_event(state, "公开事项", public, source_id="public:test-write-boundary")
 
     db.save_turn_report(state, f"{public}；{secret}", knowledge_items=db.knowledge_items_for_turn(state.turn))
-    db.save_chapter_memory(
-        state, "本月", f"章节转述：{secret}", knowledge_items=db.knowledge_items_for_turn(state.turn),
-        public_body=public,
-    )
 
     assert secret not in db.get_turn_report(state.turn)
-    assert secret not in db.list_chapter_memories(upto_turn=state.turn)[-1]["body"]
 
 def test_character_added_after_archive_cannot_read_old_participant_source(game):
     """The durable participant roster, not an archival deny-list snapshot, grants access."""
@@ -1140,63 +1035,6 @@ def test_character_added_after_archive_cannot_read_old_participant_source(game):
         for item in [*projected["public_events"], *projected["events"]]
     )
     assert secret not in rendered
-
-def test_chapter_with_only_derived_report_does_not_publish_its_body_again(game):
-    """The report projection alone is not an independently public chapter source."""
-    from ming_sim.memories import _public_chapter_counterpart
-
-    db, state, content = game
-    reader = next(c for c in content.characters.values() if c.office_type == "礼部")
-    report_marker = "已经派生的月结正文"
-    chapter_marker = "章节改写不得借派生邸报重发"
-    db.record_public_knowledge_event(
-        state, "邸报", report_marker, source_id=f"turn_report:{state.turn}:public",
-    )
-
-    counterpart = _public_chapter_counterpart(db.knowledge_items_for_turn(state.turn))
-    db.save_chapter_memory(
-        state, "朝局", chapter_marker, knowledge_items=db.knowledge_items_for_turn(state.turn),
-        public_body=counterpart,
-    )
-
-    projected = "\n".join(
-        str(item.get("body") or "")
-        for item in db.get_character_knowledge(state, reader.name)["public_events"]
-    )
-    assert chapter_marker not in projected
-
-def test_chapter_counterpart_filters_derived_report_before_reaggregating_sources(game):
-    """A chapter counterpart receives only independent source rows, never its report projection."""
-    from ming_sim.memories import _public_chapter_counterpart
-
-    db, state, _content = game
-    source_marker = "本月独立源"
-    report_marker = "已经派生的邸报正文"
-    db.record_public_knowledge_event(state, "公开事项", source_marker, source_id="test:independent")
-    db.record_public_knowledge_event(
-        state, "邸报", report_marker, source_id=f"turn_report:{state.turn}:public",
-    )
-
-    counterpart = _public_chapter_counterpart(db.knowledge_items_for_turn(state.turn))
-
-    assert source_marker in (counterpart or "")
-    assert report_marker not in (counterpart or "")
-
-def test_chapter_counterpart_filters_settlement_narrative_derived_with_report(game):
-    """同月结算叙事和邸报是派生行，章节不得再次合并它们。"""
-    from ming_sim.memories import _public_chapter_counterpart
-
-    db, state, _content = game
-    db.record_public_knowledge_event(
-        state, "结算叙事", "正常月结正文", source_id=f"settlement:narrative:{state.turn}",
-    )
-    db.record_public_knowledge_event(
-        state, "邸报", "正常月结正文", source_id=f"turn_report:{state.turn}:public",
-    )
-
-    assert "正常月结正文" not in _public_chapter_counterpart(
-        db.knowledge_items_for_turn(state.turn)
-    )
 
 def test_883_legacy_aggregate_without_source_rows_does_not_authorize_knowledge(game):
     db, state, content = game

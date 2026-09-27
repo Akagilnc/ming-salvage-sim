@@ -1765,17 +1765,35 @@ class WebGame:
         )
         return budget
 
+    def mechanical_tail_pending(self) -> bool:
+        from ming_sim.mechanical_tail import _pending_mechanical_tails
+
+        return bool(_pending_mechanical_tails(self.db, current_turn=int(self.state.turn)))
+
+    def mechanical_tail_failure(self) -> Optional[Dict[str, Any]]:
+        from ming_sim.mechanical_tail import failed_mechanical_tail
+
+        failure = failed_mechanical_tail(self.db, self.state)
+        return {"error_pack_path": failure[1].get("error_pack_path"), "error": failure[1].get("error")} if failure else None
+
     def ending_payload(self) -> Optional[Dict[str, Any]]:
-        """结局已触发时返回 {status,label,summary,timeline}，否则 None。"""
+        """结局已触发时返回 {status,label,summary,timeline,summary_pending}，否则 None。
+
+        总评在机械尾后台写完。空总评且尾仍 pending 时 summary_pending 为真，
+        前台先开页，完成后重取才能看见；不把尚未写完说成没有总评。
+        """
         if not self.state.ended:
             return None
         from ming_sim.context import ENDING_LABELS
+        from ming_sim.mechanical_tail import ending_summary_pending
         row = self.db.get_ending_summary() or {}
+        summary = row.get("summary", "") or ""
         return {
             "status": self.state.ending_status,
             "label": ENDING_LABELS.get(self.state.ending_status, "结局"),
-            "summary": row.get("summary", ""),
+            "summary": summary,
             "timeline": row.get("timeline", []),
+            "summary_pending": ending_summary_pending(self.db, self.state) if not summary else False,
         }
 
     def state_payload(self) -> Dict[str, Any]:
@@ -1810,26 +1828,40 @@ class WebGame:
             )
             # #1620 / ADR 0008 决定 6/7：settling 恢复面投影既有 abort message + ready 判别。
             # ready_replay=True → 续跑结算（重放 apply）；False → 重新推演（fallthrough）。
+            # #1846 / ADR 0157：月链 call_failure 优先——不再假装 legacy ready 重放。
             settlement_recovery = None
             if turn_phase == TurnPhase.SETTLING.value:
                 from ming_sim.error_pack import (
                     latest_error_pack_for_turn,
                     settlement_abort_message,
                 )
+                from ming_sim.month_chain import month_chain_call_failure
                 ctx = self.db.get_resolve_context(self.state.turn)
-                ready_replay = ctx is not None and ctx.get("extracted") is not None
-                pack_path = latest_error_pack_for_turn(
-                    self.db.path, int(self.state.turn),
-                )
-                settlement_recovery = {
-                    "ready_replay": bool(ready_replay),
-                    "error_pack_path": pack_path or "",
-                    "message": (
-                        settlement_abort_message(pack_path)
-                        if pack_path
-                        else "上月结算未完成（进度已保存）。"
-                    ),
-                }
+                month_failure = month_chain_call_failure(self.db, int(self.state.turn))
+                if month_failure is not None:
+                    # 本次失败记录是诊断包真源；没有本次包就空着，不借同月旧包。
+                    settlement_recovery = {
+                        "ready_replay": False,
+                        "retryable": True,
+                        "error_pack_path": str(month_failure.get("error_pack_path") or ""),
+                        "message": str(month_failure.get("message") or ""),
+                        "stage": str(month_failure.get("step") or ""),
+                    }
+                else:
+                    pack_path = latest_error_pack_for_turn(
+                        self.db.path, int(self.state.turn),
+                    )
+                    ready_replay = ctx is not None and ctx.get("extracted") is not None
+                    settlement_recovery = {
+                        "ready_replay": bool(ready_replay),
+                        "retryable": True,
+                        "error_pack_path": pack_path or "",
+                        "message": (
+                            settlement_abort_message(pack_path)
+                            if pack_path
+                            else "上月结算未完成（进度已保存）。"
+                        ),
+                    }
         # #1726：奏疏收件箱与未读数同份 list，禁每请求双跑 list_player_memorials。
         memorials = self.memorial_payloads()
         return {
@@ -1859,6 +1891,8 @@ class WebGame:
             "powers": self.db.power_payload(),
             "victory_status": self.session.victory(),
             "ending": self.ending_payload(),
+            "mechanical_tail_failure": self.mechanical_tail_failure(),
+            "mechanical_tail_pending": self.mechanical_tail_pending(),
             "events": [],
             "regions": self.db.region_payload(),
             "armies": self.db.army_payload(),
@@ -6295,6 +6329,17 @@ app.add_middleware(
 @app.get("/api/game/state")
 async def api_state() -> Dict[str, Any]:
     return get_game().state_payload()
+
+
+@app.post("/api/game/mechanical_tail/retry")
+async def api_retry_mechanical_tail() -> Dict[str, Any]:
+    from ming_sim.mechanical_tail import retry_failed_mechanical_tail
+
+    game = get_game()
+    with _serialized_web_write(game):
+        if not retry_failed_mechanical_tail(game.session):
+            raise HTTPException(status_code=409, detail="没有可重试的机械尾失败")
+    return game.state_payload()
 
 
 @app.post("/api/memorials/read")

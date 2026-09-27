@@ -507,36 +507,119 @@ def _assert_two_axis_projection(payload, *, expect_disaster: bool = False):
         assert shaanxi.get("disaster_rows"), "有灾 fixture 时须含灾情占用字段"
 
 
+def _force_in_transit_recovery_grant(db, state, *, amount=40, region_id="shaanxi", tag="赈"):
+    """真实强颁：打回后强颁。在途赈灾付银后停在 executing，不留 promulgated。"""
+    from tests.dossier_test_helpers import rejected_verdict
+
+    state.metrics["内库"] = max(int(state.metrics.get("内库") or 0), amount + 50)
+    dossier_id = db.create_decree_dossier(
+        state,
+        action_type="grant_allocation",
+        decree_text=f"赈灾{region_id}-{tag}",
+        target_kind="region",
+        target_id=region_id,
+        region_id=region_id,
+        payload={
+            "grant_action": "赈灾",
+            "account": "内库",
+            "amount": amount,
+            "execution_surface": "in_transit",
+            "cadence": "一次性",
+        },
+    )
+    db.apply_dossier_verdicts(state, [rejected_verdict(dossier_id)])
+    db.apply_dossier_promulgation(state, dossier_id, "force_promulgated")
+    row = db.get_decree_dossier(dossier_id)
+    assert row["status"] == "executing"
+    assert str(row["execution_outcome"] or "") == ""
+    assert any(int(move.get("delta") or 0) < 0 for move in db.list_economy_moves_for_dossier(dossier_id))
+    return dossier_id
+
+
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_in_transit_relief_stays_executing_before_gazette(game, monkeypatch):
-    """邸报前在途赈灾不按 canned 成色回收。成色接续归 #1848。"""
+    """次月无旨：真实强颁留下的在途赈灾，经世界段与转译落账，读档后仍在。
+
+    模型替身只接外部调用，不读开场或段文。引擎不代选成败。
+    """
+    import ming_sim.month_chain as month_chain
+    import ming_sim.month_translate as month_translate
+    from ming_sim.materials import continuing_dossier_facts
+    from ming_sim.models import LLMConfig
+
+    real_world = month_chain.run_world_segment_text
+    real_translate = month_translate.translate_month_segment
+
     db, state, content = game
     amount = 40
     _reset_shaanxi_pool(db)
-    dossier_id = _in_transit_recovery_grant(db, state, amount=amount, tag="fulfilled")
+    state.metrics["内库"] = max(int(state.metrics.get("内库") or 0), amount * 2 + 50)
+    shaanxi_id = _force_in_transit_recovery_grant(db, state, amount=amount, tag="west")
+    henan_id = _in_transit_recovery_grant(
+        db, state, amount=amount, region_id="henan", tag="east",
+    )
+    state.next_period()
+    db.save_state(state)
 
     sim_calls: list = []
     _canned_judge(
-        monkeypatch, outcome="fulfilled", dossier_id=dossier_id,
+        monkeypatch, outcome="fulfilled", dossier_id=shaanxi_id,
         sim_calls=sim_calls,
+    )
+    monkeypatch.setattr(month_chain, "run_world_segment_text", real_world)
+    monkeypatch.setattr(month_translate, "translate_month_segment", real_translate)
+
+    def _world_model(_agent, _message, tag, **_kwargs):
+        if tag == "gazette":
+            return '{"title":"邸报","report":"本月赈灾实况。"}'
+        assert tag == "world-segment"
+        return "handled"
+
+    def _translate_model(_prompt, _llm_config, *, tag, policy=None):
+        del _prompt, policy
+        assert tag == "month_segment_translate"
+        return {"effects": {"dossier_executions": [{
+            "dossier_id": shaanxi_id,
+            "outcome": "fulfilled",
+            "note": "declared",
+        }]}}
+
+    monkeypatch.setattr("ming_sim.agents.run_agent_text", _world_model)
+    monkeypatch.setattr(
+        month_translate, "run_declaration_translate_prompt", _translate_model,
     )
 
     displaced_before = _pop(db, "流民", "shaanxi")
     farmer_before = _pop(db, "农民", "shaanxi")
     closed_turn = int(state.turn)
-
-    result = make_light_session(db, state, content).advance_without_decree()
+    session = make_light_session(db, state, content)
+    session.llm_config = LLMConfig(
+        api_key="test", base_url="http://127.0.0.1:9", model="test", channel="api",
+    )
+    result = session.advance_without_decree()
     assert result is not None and result.awaiting is False
+    assert result.advanced is True
+    assert int(state.turn) == closed_turn + 1
 
-    assert result.advanced is False
-    assert int(state.turn) == closed_turn
-
-    row = db.get_decree_dossier(dossier_id)
-    # 成色回收不再走五模块 extractor；邸报前在途案卷保持 executing，人口不动。
-    assert row["status"] == "executing"
-    assert str(row["execution_outcome"] or "") == ""
-    assert _pop(db, "流民", "shaanxi") == displaced_before
-    assert _pop(db, "农民", "shaanxi") == farmer_before
+    expected = int(round(
+        amount * RECOVERY_PERSONS_PER_WAN * RECOVERY_OUTCOME_FACTORS["fulfilled"]
+    ))
+    loaded = GameDB(_database_path(db), content)
+    try:
+        loaded_state = loaded.load_state()
+        landed = loaded.get_decree_dossier(shaanxi_id)
+        assert landed["status"] == "closed"
+        assert landed["execution_outcome"] == "fulfilled"
+        assert int(landed["closed_turn"] or 0) == closed_turn
+        other = loaded.get_decree_dossier(henan_id)
+        assert other["status"] == "executing"
+        assert str(other["execution_outcome"] or "") == ""
+        still = {int(row["id"]) for row in continuing_dossier_facts(loaded, loaded_state.turn)}
+        assert henan_id in still and shaanxi_id not in still
+        assert _pop(loaded, "流民", "shaanxi") == displaced_before - expected
+        assert _pop(loaded, "农民", "shaanxi") == farmer_before + expected
+    finally:
+        loaded.close()
 
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")

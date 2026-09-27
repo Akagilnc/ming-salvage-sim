@@ -691,24 +691,10 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
                 "turn": int(report["turn"]), "year": int(report["year"]),
                 "period": int(report["period"]), "kind": "public",
                 "title": "邸报", "body": body,
-                "source_id": f"projection:turn_report:{report['turn']}",
-                "excluded_names": "[]",
-            })
-    if hasattr(db, "list_chapter_memories"):
-        for chapter in db.list_chapter_memories(upto_turn=state.turn):
-            chapter_turn = int(chapter["turn"])
-            body = source_projection(
-                chapter_turn, chapter.get("body"),
-                public_counterpart=f"chapter_source:{chapter_turn}",
-            )
-            if body:
-                public_events.append({
-                    "turn": int(chapter["turn"]), "year": int(chapter["year"]),
-                    "period": int(chapter["period"]), "kind": "chapter_summary",
-                    "title": chapter.get("title") or "朝局旧闻", "body": body,
-                    "source_id": f"projection:chapter:{chapter['turn']}",
+                    "source_id": f"projection:turn_report:{report['turn']}",
                     "excluded_names": "[]",
                 })
+    # #1845：章节记忆退役——大臣知识面不再灌 chapter_summary；历月邸报自 turn_report 读。
 
     visible_events = [
         {

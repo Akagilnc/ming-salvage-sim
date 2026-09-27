@@ -6611,7 +6611,8 @@ def _restore_person_write_state(
             (
                 row["id"], row["character_name"], row["office_title"],
                 row["office_type"], row["source"], row.get("dossier_id"),
-                row["appointment_tenure"], row["created_at"],
+                row["appointment_tenure"],
+                row["created_at"],
             )
             for row in office_change_rows
         ],
@@ -8558,6 +8559,58 @@ def apply_person_changes_only(
     return {"applied_person_changes": results}
 
 
+def record_secret_order_disclosure(
+    db: Any,
+    state: Any,
+    order_id: int,
+    sim_note: str,
+    *,
+    commit: bool = True,
+) -> bool:
+    """Record public knowledge event for secret order disclosure if not already disclosed (#883, ADR 0157).
+
+    Returns True if a new public knowledge event was recorded, False otherwise.
+    """
+    order = db.get_secret_order(order_id)
+    if order is None:
+        return False
+    # Disclosure is the only promotion from the assignee-only
+    # brief into a public knowledge event (#883).
+    # Cross-turn dedupe: disclosed is a state (prompt) not a monthly
+    # event — re-true each month must not mint another public row.
+    disclosure_prefix = f"secret_order_disclosure:{order_id}:"
+    # LIKE treats `_`/`%` as wildcards; escape the literal prefix
+    # (same ESCAPE idiom as db.py iter_budget_items / get_fiscal_config).
+    like_prefix = (
+        disclosure_prefix
+        .replace("\\", "\\\\")
+        .replace("%", "\\%")
+        .replace("_", "\\_")
+    )
+    already_disclosed = db.conn.execute(
+        "SELECT 1 FROM character_knowledge_events "
+        "WHERE character_name='' AND source_id LIKE ? ESCAPE '\\' LIMIT 1",
+        (f"{like_prefix}%",),
+    ).fetchone()
+    if already_disclosed is not None:
+        return False
+    dossier = db.get_dossier_for_secret_order(order_id)
+    progress = (
+        db.list_dossier_progress(int(dossier["id"]))
+        if dossier is not None else []
+    )
+    progress_text = format_public_progress_disclosure(progress)
+    public_body = sim_note
+    if progress_text:
+        public_body = f"{sim_note}\n{progress_text}"
+    db.record_public_knowledge_event(
+        state, str(order["title"]), public_body,
+        source_id=f"{disclosure_prefix}{state.turn}",
+        commit=commit,
+    )
+    return True
+
+
 def apply_score_extraction(
     db: GameDB,
     state: GameState,
@@ -8573,11 +8626,21 @@ def apply_score_extraction(
     ordered_deltas: Optional[Dict[str, list[tuple[str, object]]]] = None,
     ordered_effect_event_ids: dict[str, list[str]] | None = None,
     prior_shape_rejections: Optional[list[tuple[str, dict, str]]] = None,
+    effect_sequence: Optional[list[tuple[
+        Dict[str, object],
+        Dict[str, list[tuple[str, object]]],
+        dict[str, list[str]],
+    ]]] = None,
+    defer_disclosure: bool = False,
 ) -> Dict[str, object]:
     """落地结算 agent 输出的 JSON 到 state 与 db。
 
     content/registry：若传入则处理 `appointments`——把诏书任命的新人建档入朝。
-    缺省则跳过（向后兼容老调用）。"""
+    缺省则跳过（向后兼容老调用）。
+
+    ``effect_sequence``：C0 effects 数组的逐笔 payload；提供时按交代先后交错
+    落各笔的普通字段，批次副作用仍只跑一次（#1844）。
+    """
     caller_transaction = db.conn.in_transaction
     commit_now = not caller_transaction
     if caller_transaction:
@@ -8621,6 +8684,8 @@ def apply_score_extraction(
             validate_rejections=validate_rejections,
             ordered_deltas=ordered_deltas,
             ordered_effect_event_ids=ordered_effect_event_ids,
+            effect_sequence=effect_sequence,
+            defer_disclosure=defer_disclosure,
         )
     finally:
         db._batch_authorized_open_affair_ids = _prev_batch_authorized
@@ -8726,6 +8791,12 @@ def _apply_score_extraction_body(
     validate_rejections: list,
     ordered_deltas: Optional[Dict[str, list[tuple[str, object]]]],
     ordered_effect_event_ids: dict[str, list[str]] | None,
+    effect_sequence: Optional[list[tuple[
+        Dict[str, object],
+        Dict[str, list[tuple[str, object]]],
+        dict[str, list[str]],
+    ]]] = None,
+    defer_disclosure: bool = False,
 ) -> Dict[str, object]:
     """Bound apply body; batch affair authority is armed by caller."""
     from uuid import uuid4
@@ -8779,10 +8850,18 @@ def _apply_score_extraction_body(
         }
         return {**item, "affair_declaration": stamped}, None
 
-    for field in (
+    stamp_fields = (
         "economy_moves", "new_issues", "人物变更",
         "office_changes", "character_status_changes", "appointments",
-    ):
+    )
+    # Steps share these objects with the merged lists, except 人物变更
+    # clones made above to attach _effect_event_id. Stamp the merged object
+    # once and project that result back. A second stamp repeats the rejection
+    # and can mint another birth_key. Unmatched step objects are not judged
+    # again; apply reads the stamped merged 人物变更, not the step copy.
+    stamped_by_origin: dict[int, object] = {}
+    rejected_origin_ids: set[int] = set()
+    for field in stamp_fields:
         raw_items = extracted.get(field)
         if isinstance(raw_items, list):
             kept: List[object] = []
@@ -8790,9 +8869,26 @@ def _apply_score_extraction_body(
                 stamped, conflict_reason = _stamp_batch_new_declaration(raw_item)
                 if conflict_reason is not None:
                     validate_rejections.append((field, raw_item, conflict_reason))
+                    rejected_origin_ids.add(id(raw_item))
                     continue
+                stamped_by_origin[id(raw_item)] = stamped
                 kept.append(stamped)
             extracted[field] = kept
+
+    if effect_sequence is not None:
+        stamped_sequence = []
+        for step_extracted, step_ordered, step_event_ids in effect_sequence:
+            stamped_step = dict(step_extracted)
+            for field in stamp_fields:
+                raw_items = stamped_step.get(field)
+                if isinstance(raw_items, list):
+                    stamped_step[field] = [
+                        stamped_by_origin.get(id(raw_item), raw_item)
+                        for raw_item in raw_items
+                        if id(raw_item) not in rejected_origin_ids
+                    ]
+            stamped_sequence.append((stamped_step, step_ordered, step_event_ids))
+        effect_sequence = stamped_sequence
 
     def _origin_ref_from_result_item(item: Mapping[str, object] | None) -> str:
         return db.affairs.origin_ref_from_result_item(
@@ -9142,57 +9238,124 @@ def _apply_score_extraction_body(
                 db.conn.execute(f"RELEASE {savepoint}")
                 raise
 
-    # 1) metric_delta
-    metric_items = (ordered_deltas or {}).get("metric_delta") if ordered_deltas is not None else None
+    # 1) metric_delta / economy_moves / ordinary entity deltas
+    # #1844：C0 effects 数组按交代先后逐笔交错落账（每笔先实体后钱），
+    # 不按固定全局段序把后交代的欠饷加在先交代的拨款之后。
     applied_metric: Dict[str, int] = {}
-    for key, value in metric_items if metric_items is not None else (extracted.get("metric_delta") or {}).items():
-        for metric, delta in _apply_metric_dict(state, {key: value}, db=db).items():
-            applied_metric[metric] = applied_metric.get(metric, 0) + delta
-    # 2) economy_moves
-    # 拒收项拆到独立 economy_moves_rejections 段（不污染玩家可见 economy_moves list；
-    # 同 faction_delta_rejections 治理，#14 cmr r1 codex/P4）。
     applied_economy: List[Dict[str, object]] = []
     economy_rejections: List[Dict[str, object]] = []
-    for index, raw_move in enumerate(extracted.get("economy_moves") or []):
-        savepoint = f"economy_affair_{index}"
-        db.conn.execute(f"SAVEPOINT {savepoint}")
-        try:
-            move = raw_move
-            if isinstance(move, dict):
-                origin_ref = _origin_ref_from_result_item(move)
-                if origin_ref and not str(move.get("origin_ref") or move.get("来源引用") or "").strip():
-                    move = {**move, "origin_ref": origin_ref}
-                # Structured grant dossiers already materialized their fiscal effect.
-                if origin_ref.startswith("dossier:"):
-                    dossier = _payload_owned_dossier_for_origin(db, origin_ref)
-                    if dossier is not None and str(dossier.get("action_type") or "") == "grant_allocation":
-                        db.conn.execute(f"RELEASE {savepoint}")
-                        continue
-            results = _apply_economy_list(
-                db, state, [move], commit=False, require_origin=True,
-            )
-            rejected = [row for row in results if row.get("rejected")]
-            if rejected:
+    region_changes: List[Dict[str, object]] = []
+    army_changes: List[Dict[str, object]] = []
+    created_armies: List[Dict[str, object]] = []
+    pseudo_event = Event(
+        id="season",
+        title="月末整体推演",
+        kind="月末",
+        summary="",
+        urgency=0,
+        severity=0,
+        credibility=100,
+        interests=[],
+        audiences=[],
+    )
+
+    def _apply_economy_moves_list(moves: list, *, index_base: int) -> None:
+        for offset, raw_move in enumerate(moves):
+            savepoint = f"economy_affair_{index_base + offset}"
+            db.conn.execute(f"SAVEPOINT {savepoint}")
+            try:
+                move = raw_move
+                if isinstance(move, dict):
+                    origin_ref = _origin_ref_from_result_item(move)
+                    if origin_ref and not str(move.get("origin_ref") or move.get("来源引用") or "").strip():
+                        move = {**move, "origin_ref": origin_ref}
+                    if origin_ref.startswith("dossier:"):
+                        dossier = _payload_owned_dossier_for_origin(db, origin_ref)
+                        if dossier is not None and str(dossier.get("action_type") or "") == "grant_allocation":
+                            db.conn.execute(f"RELEASE {savepoint}")
+                            continue
+                results = _apply_economy_list(
+                    db, state, [move], commit=False, require_origin=True,
+                )
+                rejected = [row for row in results if row.get("rejected")]
+                if rejected:
+                    db.conn.execute(f"ROLLBACK TO {savepoint}")
+                    economy_rejections.extend(rejected)
+                else:
+                    applied_economy.extend(results)
+                db.conn.execute(f"RELEASE {savepoint}")
+            except UnauthorizedAffairOriginRef as exc:
                 db.conn.execute(f"ROLLBACK TO {savepoint}")
-                economy_rejections.extend(rejected)
-            else:
-                applied_economy.extend(results)
-            db.conn.execute(f"RELEASE {savepoint}")
-        except UnauthorizedAffairOriginRef as exc:
-            # Narrow LLM origin authorization failure only — not TypeError/
-            # ValueError/KeyError, which stay fail-loud with writer/DB faults.
-            db.conn.execute(f"ROLLBACK TO {savepoint}")
-            db.conn.execute(f"RELEASE {savepoint}")
-            economy_rejections.append({
-                "rejected": True, "category": "invalid_enum",
-                "reason": str(exc), "item": raw_move,
-            })
-        except Exception:
-            # Input rejection belongs to _apply_economy_list.  DB/writer and
-            # other execution failures must not be relabelled as invalid_enum.
-            db.conn.execute(f"ROLLBACK TO {savepoint}")
-            db.conn.execute(f"RELEASE {savepoint}")
-            raise
+                db.conn.execute(f"RELEASE {savepoint}")
+                economy_rejections.append({
+                    "rejected": True, "category": "invalid_enum",
+                    "reason": str(exc), "item": raw_move,
+                })
+            except Exception:
+                db.conn.execute(f"ROLLBACK TO {savepoint}")
+                db.conn.execute(f"RELEASE {savepoint}")
+                raise
+
+    def _apply_ordinary_entity_step(
+        step_extracted: Dict[str, object],
+        step_ordered: Dict[str, list[tuple[str, object]]],
+        step_event_ids: dict[str, list[str]],
+    ) -> None:
+        step_new_armies = step_extracted.get("new_armies") or []
+        declared = step_event_ids.get("new_armies") or []
+        for idx, army_item in enumerate(step_new_armies):
+            if not isinstance(army_item, dict):
+                continue
+            event_for_item = declared[idx] if idx < len(declared) else ""
+            if event_for_item in strategic_event_referenced_ids:
+                continue
+            origin_ref = str(army_item.get("origin_ref") or "").strip()
+            created_armies.extend(db.create_armies_from_extraction(
+                state, [army_item], actor="档房", commit=commit_now,
+                origin_ref=origin_ref, require_origin=True,
+            ))
+        for index, (region_id, raw_changes) in enumerate(step_ordered.get("region_delta") or []):
+            if _effect_event_ids(
+                "region_delta", index, str(region_id), raw_changes, "regions",
+                strategic_event_referenced_ids, step_ordered, step_event_ids,
+            ):
+                continue
+            origin_ref = str(raw_changes.get("origin_ref") or "").strip()
+            payload = {k: v for k, v in raw_changes.items() if k != "origin_ref"}
+            region_changes.extend(db.apply_region_deltas(
+                state, pseudo_event, None, "档房", {region_id: payload},
+                commit=commit_now, origin_ref=origin_ref, require_origin=True,
+            ))
+        for index, (army_id, raw_changes) in enumerate(step_ordered.get("army_delta") or []):
+            if _effect_event_ids(
+                "army_delta", index, str(army_id), raw_changes, "armies",
+                strategic_event_referenced_ids, step_ordered, step_event_ids,
+            ):
+                continue
+            army_changes.extend(_apply_extracted_army_delta(
+                db, state, pseudo_event, army_id, raw_changes, commit_now=commit_now,
+            ))
+
+    if effect_sequence is not None:
+        economy_index_base = 0
+        for step_extracted, step_ordered, step_event_ids in effect_sequence:
+            for key, value in step_ordered.get("metric_delta") or []:
+                for metric, delta in _apply_metric_dict(state, {key: value}, db=db).items():
+                    applied_metric[metric] = applied_metric.get(metric, 0) + delta
+            # 先实体后钱：同笔内欠饷加额须先于补饷拨款可见。
+            _apply_ordinary_entity_step(step_extracted, step_ordered, step_event_ids)
+            step_moves = list(step_extracted.get("economy_moves") or [])
+            _apply_economy_moves_list(step_moves, index_base=economy_index_base)
+            economy_index_base += len(step_moves)
+    else:
+        metric_items = (ordered_deltas or {}).get("metric_delta") if ordered_deltas is not None else None
+        for key, value in metric_items if metric_items is not None else (extracted.get("metric_delta") or {}).items():
+            for metric, delta in _apply_metric_dict(state, {key: value}, db=db).items():
+                applied_metric[metric] = applied_metric.get(metric, 0) + delta
+        # 2) economy_moves
+        # 拒收项拆到独立 economy_moves_rejections 段（不污染玩家可见 economy_moves list；
+        # 同 faction_delta_rejections 治理，#14 cmr r1 codex/P4）。
+        _apply_economy_moves_list(list(extracted.get("economy_moves") or []), index_base=0)
     # 3) faction_delta + class_delta（朝堂派系 + 社会阶级；联动靠 LLM，不在代码做）
     # 返回 (已落 delta dict, 拒收项列表)：dict 供 web 面板（形状不变），拒收列表置于
     # 独立 *_rejections 段供桥接收集器（ADR 0008 决定 1，#14/#63）——不复用 *_delta key
@@ -9297,61 +9460,48 @@ def _apply_score_extraction_body(
             if declared_new_army_event_by_item.get(id(item), "") not in strategic_event_referenced_ids
         ]
 
-    pseudo_event = Event(
-        id="season",
-        title="月末整体推演",
-        kind="月末",
-        summary="",
-        urgency=0,
-        severity=0,
-        credibility=100,
-        interests=[],
-        audiences=[],
-    )
-    region_changes: List[Dict[str, object]] = []
-    army_changes: List[Dict[str, object]] = []
-    created_armies: List[Dict[str, object]] = []
-    # 先建军：避免同回合 army_delta 引用新军被跳过。
-    # ADR 0008 决定 1（PR2-S2）：LLM 脏数据（查无此地/此军、字段非法、值不可解析）在
-    # 三个 db 方法内逐项拒收留痕（返回列表含 {"rejected": True, ...}，桥接自动收进
-    # rejection_reports），好项照落、坏一项不带走整批；代码异常（bug 类）仍上抛到 settle
-    # 层回滚整批，绝不吞。clamp 语义（城防炮 city_level×8、随军炮 cap12、火器 0-100）不变。
-    for army_item in ordinary_new_armies_raw:
-        origin_ref = str(army_item.get("origin_ref") or "").strip()
-        created_armies.extend(db.create_armies_from_extraction(
-            state, [army_item], actor="档房", commit=commit_now, origin_ref=origin_ref, require_origin=True,
-        ))
-    region_items = (ordered_deltas or {}).get("region_delta") if ordered_deltas is not None else None
-    if region_items is None:
-        region_items = ordinary_region_deltas_raw.items()
-    else:
-        region_items = (
-            (region_id, changes) for index, (region_id, changes) in enumerate(region_items)
-            if not _effect_event_ids(
-                "region_delta", index, str(region_id), changes, "regions",
-                strategic_event_referenced_ids, ordered_deltas, ordered_effect_event_ids,
+    if effect_sequence is None:
+        # 先建军：避免同回合 army_delta 引用新军被跳过。
+        # ADR 0008 决定 1（PR2-S2）：LLM 脏数据（查无此地/此军、字段非法、值不可解析）在
+        # 三个 db 方法内逐项拒收留痕（返回列表含 {"rejected": True, ...}，桥接自动收进
+        # rejection_reports），好项照落、坏一项不带走整批；代码异常（bug 类）仍上抛到 settle
+        # 层回滚整批，绝不吞。clamp 语义（城防炮 city_level×8、随军炮 cap12、火器 0-100）不变。
+        for army_item in ordinary_new_armies_raw:
+            origin_ref = str(army_item.get("origin_ref") or "").strip()
+            created_armies.extend(db.create_armies_from_extraction(
+                state, [army_item], actor="档房", commit=commit_now, origin_ref=origin_ref, require_origin=True,
+            ))
+        region_items = (ordered_deltas or {}).get("region_delta") if ordered_deltas is not None else None
+        if region_items is None:
+            region_items = ordinary_region_deltas_raw.items()
+        else:
+            region_items = (
+                (region_id, changes) for index, (region_id, changes) in enumerate(region_items)
+                if not _effect_event_ids(
+                    "region_delta", index, str(region_id), changes, "regions",
+                    strategic_event_referenced_ids, ordered_deltas, ordered_effect_event_ids,
+                )
             )
-        )
-    for region_id, raw_changes in region_items:
-        origin_ref = str(raw_changes.get("origin_ref") or "").strip()
-        payload = {k: v for k, v in raw_changes.items() if k != "origin_ref"}
-        region_changes.extend(db.apply_region_deltas(
-            state, pseudo_event, None, "档房", {region_id: payload}, commit=commit_now, origin_ref=origin_ref, require_origin=True,
-        ))
-    army_items = ordinary_army_deltas_raw.items()
-    if ordered_deltas is not None:
-        army_items = (
-            (army_id, changes)
-            for index, (army_id, changes) in enumerate(ordered_deltas["army_delta"])
-            if not _effect_event_ids(
-                "army_delta", index, str(army_id), changes, "armies",
-                strategic_event_referenced_ids, ordered_deltas, ordered_effect_event_ids,
+        for region_id, raw_changes in region_items:
+            origin_ref = str(raw_changes.get("origin_ref") or "").strip()
+            payload = {k: v for k, v in raw_changes.items() if k != "origin_ref"}
+            region_changes.extend(db.apply_region_deltas(
+                state, pseudo_event, None, "档房", {region_id: payload}, commit=commit_now, origin_ref=origin_ref, require_origin=True,
+            ))
+        army_items = ordinary_army_deltas_raw.items()
+        if ordered_deltas is not None:
+            army_items = (
+                (army_id, changes)
+                for index, (army_id, changes) in enumerate(ordered_deltas["army_delta"])
+                if not _effect_event_ids(
+                    "army_delta", index, str(army_id), changes, "armies",
+                    strategic_event_referenced_ids, ordered_deltas, ordered_effect_event_ids,
+                )
             )
-        )
-    for army_id, raw_changes in army_items:
-        army_changes.extend(_apply_extracted_army_delta(
-            db, state, pseudo_event, army_id, raw_changes, commit_now=commit_now,
-        ))
+        for army_id, raw_changes in army_items:
+            army_changes.extend(_apply_extracted_army_delta(
+                db, state, pseudo_event, army_id, raw_changes, commit_now=commit_now,
+            ))
     # 注：建筑的新建/变更/废止不走顶层字段，全由 issue 的 effect_on_resolve /
     #     effect_on_fail 里的 `buildings` 段在局势结案时落地（见 _apply_issue_buildings）。
 
@@ -10121,40 +10271,10 @@ def _apply_score_extraction_body(
                 period=state.period,
                 commit=commit_now,
             )
-            if disclosed:
-                # Disclosure is the only promotion from the assignee-only
-                # brief into a public knowledge event (#883).
-                # Cross-turn dedupe: disclosed is a state (prompt) not a monthly
-                # event — re-true each month must not mint another public row.
-                disclosure_prefix = f"secret_order_disclosure:{real_id}:"
-                # LIKE treats `_`/`%` as wildcards; escape the literal prefix
-                # (same ESCAPE idiom as db.py iter_budget_items / get_fiscal_config).
-                like_prefix = (
-                    disclosure_prefix
-                    .replace("\\", "\\\\")
-                    .replace("%", "\\%")
-                    .replace("_", "\\_")
+            if disclosed and not defer_disclosure:
+                record_secret_order_disclosure(
+                    db, state, real_id, sim_note, commit=commit_now,
                 )
-                already_disclosed = db.conn.execute(
-                    "SELECT 1 FROM character_knowledge_events "
-                    "WHERE character_name='' AND source_id LIKE ? ESCAPE '\\' LIMIT 1",
-                    (f"{like_prefix}%",),
-                ).fetchone()
-                if already_disclosed is None:
-                    dossier = db.get_dossier_for_secret_order(real_id)
-                    progress = (
-                        db.list_dossier_progress(int(dossier["id"]))
-                        if dossier is not None else []
-                    )
-                    progress_text = format_public_progress_disclosure(progress)
-                    public_body = sim_note
-                    if progress_text:
-                        public_body = f"{sim_note}\n{progress_text}"
-                    db.record_public_knowledge_event(
-                        state, str(order["title"]), public_body,
-                        source_id=f"{disclosure_prefix}{state.turn}",
-                        commit=commit_now,
-                    )
             print(f"[secret_order] 推演副作用 id={real_id} note={sim_note[:60]!r}")
             applied_secret_orders.append({
                 "order_id": real_id, "sim_note": sim_note, "disclosed": disclosed,
@@ -10257,7 +10377,10 @@ def _apply_score_extraction_body(
     )
 
     state.clamp()
-    return {
+    # 实际应用结果契约（ADR 0157 步骤 4／4a）：只报已落账事实与拒收段。
+    # 抽取输入回声（world_advance / person_changes）与 warn-only 辅助
+    # （pairing_warnings）不入此契约；ongoing 结局读数亦非本段已提交效果。
+    report: Dict[str, object] = {
         "metric_delta": applied_metric,
         "validate_shape_rejections": validate_rejection_items,
         "module_misroute_rejections": module_rejections,
@@ -10287,20 +10410,20 @@ def _apply_score_extraction_body(
         "credit_event_resolutions": credit_event_resolutions,
         "relation_edge_event_resolutions": relation_edge_event_resolutions,
         "authority_changes": authority_change_results,
-        "world_advance": extracted.get("world_advance") or {},
         "fiscal_changes": applied_fiscal,
         "fiscal_creates": applied_fiscal_creates,
         "fiscal_removes": applied_fiscal_removes,
         "appointments": applied_appointments,
-        "person_changes": person_changes,
         "applied_person_changes": applied_person_changes,
         "character_status_changes": applied_status_changes,
         "character_power_changes": applied_power_changes,
         "office_changes": applied_office_changes,
         "secret_order_updates": applied_secret_orders,
-        "pairing_warnings": (issue_summary or {}).get("pairing_warnings") or [],
-        "victory_status": _resolve_victory(db, state, extracted),
     }
+    victory = _resolve_victory(db, state, extracted)
+    if str(victory.get("status") or "") != "ongoing":
+        report["victory_status"] = victory
+    return report
 
 
 def _resolve_victory(db: GameDB, state: GameState, extracted: Dict[str, object]) -> Dict[str, object]:

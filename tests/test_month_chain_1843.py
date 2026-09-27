@@ -59,6 +59,24 @@ def _categories(db):
     ]
 
 
+def _prepare_player_month(db, state, content, monkeypatch, *, world=None, translate=None, secret_orders_supply=None):
+    """换掉世界段与转译的模型缝，返回尚未过月的 session。不含在飞屏障。"""
+    _forbid_extractor(monkeypatch)
+    monkeypatch.setattr(
+        month_chain, "run_world_segment_text",
+        world if world is not None else (lambda *_a, **_k: ""),
+    )
+    monkeypatch.setattr(
+        month_translate, "translate_month_segment",
+        translate if translate is not None else (lambda *_a, **_k: {"effects": {}}),
+    )
+    if secret_orders_supply is not None:
+        monkeypatch.setattr(month_chain, "run_secret_orders_supply", secret_orders_supply)
+    session = make_light_session(db, state, content)
+    session._write_gate = threading.Lock()
+    return session
+
+
 def test_player_month_entry_settles_prepushed_edicts_then_world_once(game, monkeypatch):
     db, state, content = game
     minister = next(iter(content.characters.values())).name
@@ -96,11 +114,9 @@ def test_player_month_entry_settles_prepushed_edicts_then_world_once(game, monke
         translate_calls.append(1)
         return {"effects": {}}
 
-    _forbid_extractor(monkeypatch)
-    monkeypatch.setattr(month_chain, "run_world_segment_text", world)
-    monkeypatch.setattr(month_translate, "translate_month_segment", translate)
-    session = make_light_session(db, state, content)
-    session._write_gate = threading.Lock()
+    session = _prepare_player_month(
+        db, state, content, monkeypatch, world=world, translate=translate,
+    )
     queue = get_session_write_queue(session)
     ticket = queue.claim_if_absent([("mechanical-tail", closed_turn)])[0]
     joined = {}
@@ -110,9 +126,11 @@ def test_player_month_entry_settles_prepushed_edicts_then_world_once(game, monke
         queue.complete(ticket)
 
     threading.Thread(target=finish_prior).start()
-    result = session.resolve_turn(allow_empty_decree=True, on_event=lambda kind, data: events.append((kind, data)))
-
+    result = session.resolve_turn(
+        allow_empty_decree=True, on_event=lambda kind, data: events.append((kind, data)),
+    )
     assert joined.get("done") is True
+
     assert world_calls and world_calls[0]["edicts"][:2] == ["宁远补饷", "陕西赈灾"]
     ledger = list(db.conn.execute(
         "SELECT category, delta FROM economy_ledger WHERE category IN ('宁远补饷','陕西赈灾','大凌河') ORDER BY id",
@@ -141,6 +159,8 @@ def test_player_month_entry_settles_prepushed_edicts_then_world_once(game, monke
 
 
 def test_unforecast_edict_is_caught_up_once_and_crash_does_not_double_charge(game, monkeypatch):
+    from ming_sim.exceptions import SettlementAbort
+
     db, state, content = game
     minister = next(iter(content.characters.values())).name
     affair = db.affairs.open(
@@ -189,10 +209,10 @@ def test_unforecast_edict_is_caught_up_once_and_crash_does_not_double_charge(gam
     session = make_light_session(db, state, content)
     session.llm_config = object()
     session._write_gate = threading.Lock()
-    try:
+    with pytest.raises(SettlementAbort) as exc_info:
         session.resolve_turn(allow_empty_decree=True)
-    except RuntimeError as exc:
-        assert "过月中断" in str(exc)
+    assert isinstance(exc_info.value.__cause__, RuntimeError)
+    assert "过月中断" in str(exc_info.value.__cause__)
     assert db.staged_declarations.is_settled(first_ref)
     assert not db.staged_declarations.is_settled(second_ref)
     first_rows = db.conn.execute(
@@ -219,36 +239,53 @@ def test_questions_hold_rescript_and_gazette_is_required_before_advance(game, mo
     pending_id, ref = _stage_edict(db, state, minister, "陕西赈灾", "陕西赈灾", -1, affair.id)
     db.conn.execute(
         "UPDATE staged_declarations SET questions_json=? WHERE decree_ref=?",
-        ('[{"title":"是否加赈"}]', ref),
+        ('[{"title":"是否加赈","context":"c","options":[{"label":"加","hint":"h1"},{"label":"否","hint":"h2"}]}]', ref),
     )
     db.conn.commit()
     closed_turn = int(state.turn)
     _forbid_extractor(monkeypatch)
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
     session = make_light_session(db, state, content)
+    session.llm_config = object()
     session._write_gate = threading.Lock()
+    monkeypatch.setattr(
+        month_chain, "_run_decree_continuation_text", lambda *a, **k: "",
+    )
     held = session.resolve_turn(allow_empty_decree=True)
     assert held.stage == "rescript"
+    assert held.awaiting is True
     assert held.advanced is False
     assert int(state.turn) == closed_turn
+    assert any(row["title"] == "是否加赈" for row in held.decisions)
 
     # 历史留中回流的同一请旨仍未答，不能因案卷创建于前月越过批红。
     from ming_sim.decree_forecast import decree_ref_for_dossier
+    from ming_sim.models import TurnPhase
     dossier = next(d for d in db.list_decree_dossiers() if decree_ref_for_dossier(db, d) == ref)
     db.conn.execute(
         "UPDATE decree_dossiers SET created_turn=? WHERE id=?",
         (closed_turn - 1, int(dossier["id"])),
     )
     db.conn.commit()
+    # 仍停在待裁；幂等回读案头，不二跑世界段。
     held_again = session.resolve_turn(allow_empty_decree=True)
-    assert held_again.stage == "rescript"
+    assert held_again.awaiting is True
+    assert any(row["title"] == "是否加赈" for row in held_again.decisions)
     assert int(state.turn) == closed_turn
 
-    db.conn.execute(
-        "UPDATE staged_declarations SET questions_json=NULL WHERE decree_ref=?",
-        (ref,),
+    # 亲裁答复后清请旨，主链才能进邸报交接。
+    desk_row = session.pending_decisions()[0]
+    opt = desk_row["options"][0]
+    session.submit_hitl_choices(
+        [{
+            "decision_key": desk_row["decision_key"],
+            "label": opt["label"],
+            "hint": opt.get("hint") or "",
+        }],
+        write_gate=session._write_gate,
     )
-    db.conn.commit()
+    assert not db.staged_declarations.questions_for(ref)
+    assert session.state.turn_phase == TurnPhase.SETTLING.value
     waiting_gazette = session.resolve_turn(allow_empty_decree=True)
     assert waiting_gazette.stage == "gazette"
     assert int(state.turn) == closed_turn
@@ -367,14 +404,19 @@ def test_player_entry_recovers_ending_after_interrupted_segment(game, monkeypatc
     session = make_light_session(db, state, content)
     session._write_gate = threading.Lock()
 
-    with pytest.raises(RuntimeError, match="interrupted after decree settlement"):
+    from ming_sim.exceptions import SettlementAbort
+
+    with pytest.raises(SettlementAbort) as caught:
         session.resolve_turn(allow_empty_decree=True)
+    assert "interrupted after decree settlement" in str(caught.value.__cause__)
     assert db.staged_declarations.is_settled(ref)
+    assert caught.value.error_pack_path
 
     waiting = session.resolve_turn(allow_empty_decree=True)
     assert waiting.stage == "gazette"
     payload = db.get_resolve_context(turn)["simulator_payload"]
     assert payload["month_chain"]["declaration_outcome"]["status"] == "emperor_abdicate"
+    assert "call_failure" not in payload["month_chain"]
 
     db.conn.execute(
         "INSERT INTO turn_reports (turn, year, period, report) VALUES (?, ?, ?, ?)",
@@ -511,6 +553,7 @@ def test_held_dossier_settlement_failure_retry_and_reentry_isolation(game, monke
         db=db, state=state, llm_config=None, agno_db=None, content=content,
     )
 
+    chain = {}
     # 首次结算失败：暂存保持未落账，旧打回暂存不被破坏
     import ming_sim.declaration_dispatch as dd
     real_settle = dd.settle_staged_declarations_in_decree_order
@@ -526,19 +569,19 @@ def test_held_dossier_settlement_failure_retry_and_reentry_isolation(game, monke
     monkeypatch.setattr(dd, "settle_staged_declarations_in_decree_order", fail_first)
 
     with pytest.raises(RuntimeError, match="transient settlement crash"):
-        _settle_edicts(sess, registry=None)
+        _settle_edicts(sess, registry=None, chain=chain)
 
     assert not db.staged_declarations.is_settled(held_ref)
     assert not db.staged_declarations.is_settled(stale_ref)
 
     # 结算失败重试：以 held_ref 身份续跑并成功落账
-    _settle_edicts(sess, registry=None)
+    _settle_edicts(sess, registry=None, chain=chain)
     assert db.staged_declarations.is_settled(held_ref)
     assert not db.staged_declarations.is_settled(stale_ref)
     assert db.get_decree_dossier(dossier_id)["promulgation_decision"] == "promulgated"
 
     # 再次进入月链结算：保持 held_ref 案卷身份，旧 pending-action 不被冒名结算
-    _settle_edicts(sess, registry=None)
+    _settle_edicts(sess, registry=None, chain=chain)
     assert db.staged_declarations.is_settled(held_ref)
     assert not db.staged_declarations.is_settled(stale_ref)
     dossier = db.get_decree_dossier(dossier_id)
@@ -587,15 +630,16 @@ def test_advance_reloads_memory_after_transaction_rollback(game, monkeypatch):
 
 
 def test_missing_world_model_stops_before_world_commit(game, monkeypatch):
-    from ming_sim.exceptions import LLMUnavailable
+    from ming_sim.exceptions import SettlementAbort
 
     db, state, content = game
     turn = int(state.turn)
     _forbid_extractor(monkeypatch)
     session = make_light_session(db, state, content)
-    with pytest.raises(LLMUnavailable):
+    with pytest.raises(SettlementAbort) as caught:
         session.resolve_turn(allow_empty_decree=True)
     assert int(state.turn) == turn
+    assert caught.value.stage == "world_text"
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
     assert session.resolve_turn(allow_empty_decree=True).stage == "gazette"
     assert int(state.turn) == turn
@@ -625,6 +669,17 @@ def test_month_drift_settles_due_secret_and_records_inertia_rejection(game, monk
     db.conn.commit()
     _forbid_extractor(monkeypatch)
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
+    monkeypatch.setattr(
+        month_chain, "run_secret_orders_supply",
+        lambda *a, **k: {
+            "dossier_progress_reports": [{
+                "dossier_id": int(db.get_dossier_for_secret_order(order_id)["id"]),
+                "progress_band": "持平",
+                "memorial_text": "核验田亩中",
+            }],
+            "covert_exec_selections": [{"order_id": order_id, "fidelity": "忠实"}],
+        },
+    )
     session = make_light_session(db, state, content)
     assert session.resolve_turn(allow_empty_decree=True).stage == "gazette"
     assert db.get_secret_order(order_id)["status"] == "failed"
@@ -690,3 +745,106 @@ def test_world_segment_reads_material_directory(game, monkeypatch):
     assert seen[1]["has_dir"] is True
     assert seen[1]["dir_has_index"] is True
     assert seen[1]["index"].strip()
+
+
+def test_month_chain_lands_specialized_facts_before_due_and_gazette(game, monkeypatch):
+    """转译专属案卷写入、密令实况与公开召对见闻在到期结算和邸报前落库。"""
+    db, state, content = game
+    minister = db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' AND power_id='ming' "
+        "AND office_type NOT IN ('后宫','宗藩','未仕') ORDER BY name LIMIT 1",
+    ).fetchone()["name"]
+    accuser = db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' AND name!=? ORDER BY name LIMIT 1",
+        (minister,),
+    ).fetchone()["name"]
+    order_id = db.create_secret_order(
+        state, minister, "辽饷实况", "核发", [],
+        deadline_months=1,
+        covert_task={
+            "kind": "差务", "axes": ["实务事功"], "direction": 1,
+            "delivery": {
+                "unit": "万两", "target_units": 1.0, "effect_sign": -1,
+                "purpose": "其它", "category": "密令差务", "account": "内库",
+            },
+        },
+    )
+    db.conn.execute(
+        "UPDATE secret_orders SET turn_issued=?, due_turn=? WHERE id=?",
+        (int(state.turn) - 1, int(state.turn), order_id),
+    )
+    dossier_id = int(db.get_dossier_for_secret_order(order_id)["id"])
+    grant_id = db.create_decree_dossier(
+        state, action_type="grant_allocation", decree_text="赈粮在途",
+        target_kind="region", target_id="henan",
+        payload={"amount": 100, "grant_action": "赈灾", "account": "国库"},
+    )
+    db.transition_decree_dossier(grant_id, "promulgated")
+    db.transition_decree_dossier(grant_id, "executing")
+    db.conn.execute(
+        "INSERT INTO chat_messages (minister_name, turn, role, content, knowledge_status) "
+        "VALUES (?, ?, 'user', '公开奏对', 'held')",
+        (minister, int(state.turn)),
+    )
+    message_id = int(db.conn.execute("SELECT last_insert_rowid()").fetchone()[0])
+    db.conn.commit()
+    reports = [
+        {
+            "dossier_id": int(item["dossier_id"]),
+            "progress_band": "持平",
+            "memorial_text": "本月密奏已达",
+        }
+        for item in db.list_monthly_dossier_progress_nudges(state.turn)
+    ]
+
+    def translate(*_a, **_k):
+        return {"effects": {
+            "economy_moves": [{
+                "account": "内库", "delta": -1, "category": "密令差务",
+                "purpose": "其它", "reason": "差务实办开支",
+                "origin_ref": f"dossier:{dossier_id}",
+            }],
+            "covert_exec_selections": [{"order_id": order_id, "fidelity": "忠实"}],
+            "dossier_progress_reports": reports,
+            "dossier_reconciliations": [{
+                "dossier_id": grant_id, "arrived_amount": 100, "note": "实抵已到",
+            }],
+            "faction_denunciations": [{
+                "accuser_name": accuser,
+                "target_dossier_id": dossier_id,
+                "subject_name": minister,
+                "memorial_text": "其侵冒有据",
+            }],
+        }}
+
+    session = _prepare_player_month(
+        db, state, content, monkeypatch,
+        world=lambda *_a, **_k: "秋高气爽，边事暂宁。",
+        translate=translate,
+        secret_orders_supply=lambda *a, **k: {
+            "dossier_progress_reports": reports,
+            "covert_exec_selections": [{"order_id": order_id, "fidelity": "忠实"}],
+        },
+    )
+    result = session.resolve_turn(allow_empty_decree=True)
+
+    assert result.stage == "gazette"
+    assert db.get_secret_order(order_id)["status"] == "done"
+    assert db.conn.execute(
+        "SELECT fidelity_state FROM dossier_actual_progress WHERE dossier_id=? AND turn=?",
+        (dossier_id, int(state.turn)),
+    ).fetchone()["fidelity_state"] == "忠实"
+    assert any(
+        item["memorial_text"] == "本月密奏已达"
+        for item in db.list_dossier_progress(dossier_id)
+    )
+    recon = db.list_dossier_reconciliations(grant_id)[-1]
+    assert recon["note"] == "实抵已到"
+    assert recon["turn"] == int(state.turn)
+    denunciations = db.list_faction_denunciations(
+        turn=int(state.turn), target_dossier_id=dossier_id,
+    )
+    assert [row["memorial_text"] for row in denunciations] == ["其侵冒有据"]
+    assert db.conn.execute(
+        "SELECT knowledge_status FROM chat_messages WHERE id=?", (message_id,),
+    ).fetchone()["knowledge_status"] == "released"

@@ -3938,6 +3938,8 @@ class GameSession:
         调用方已持闸时须显式声明；其余路径始终传递真实 gate，
         不得把“他线程正持有”误判为本线程可无锁访问 SQLite。
         """
+        from ming_sim.mechanical_tail import ensure_mechanical_tails
+        ensure_mechanical_tails(self)
         from ming_sim.audience_translation import (
             catch_up_pending_translations,
             list_pending_translations,
@@ -3950,6 +3952,36 @@ class GameSession:
         # 既受理转译、欠账补跑和调用方收夜，不留重新准入窗口。
         write_queue = get_session_write_queue(self)
         def _drain_catch_up_and_continue() -> None:
+            # 票的完成只表示本次 worker 已终止，不代表机械尾已终结。
+            # 屏障等完票后复查持久状态；非耗尽异常留下 pending 时不能过月。
+            from ming_sim.mechanical_tail import _pending_mechanical_tails
+            from ming_sim.mechanical_tail import failed_mechanical_tail
+            failure = failed_mechanical_tail(self.db, self.state)
+            pending_tails = _pending_mechanical_tails(
+                self.db, current_turn=int(self.state.turn),
+            )
+            if failure or pending_tails:
+                exc = RuntimeError(
+                    f"机械尾未终结，不能过月：{[turn for turn, _ in pending_tails]}"
+                )
+                pack_path = (
+                    str(failure[1]["error_pack_path"])
+                    if failure and failure[1].get("error_pack_path") else None
+                )
+                if pack_path is None:
+                    try:
+                        raise exc
+                    except RuntimeError as pending_exc:
+                        pack_path = write_error_pack(
+                            self.db, self.state, exc=pending_exc,
+                            extracted=None, resolve_ctx=None,
+                        )
+                raise SettlementAbort(
+                    settlement_abort_message(pack_path),
+                    turn=int(self.state.turn),
+                    stage="mechanical_tail_pending",
+                    error_pack_path=pack_path,
+                ) from exc
             catch_gate = None if write_gate_already_held else self._write_gate
             catch_up_pending_translations(
                 self.db, self.state,
@@ -4001,6 +4033,7 @@ class GameSession:
         尚未归档时 awaiting=False、advanced=False，仍停 settling；归档后才置 issued。
         """
         # #1842：过月前转译 join/catch-up/耗尽判定（闸外契约，见 await_translations_before_month）。
+        # #1845：未完机械尾由 await_translations_before_month 续接后再进 barrier，不在此重复认领。
         if not write_gate_already_held:
             self.await_translations_before_month()
         if self.state.turn_phase in FRONT_HALF_DONE_PHASES and (
@@ -4017,7 +4050,7 @@ class GameSession:
             # #657：返回合并 desk（急务 backlog ∪ 本月 decision），与 pending_decisions 同缝。
             return ResolveResult(
                 awaiting=True,
-                decisions=self.db.list_rescript_desk(int(self.state.turn)),
+                decisions=self.pending_decisions(),
                 advanced=False,
             )
         # settling 仅证明前半段已提交；旧档 ready extractor delta 不是 ADR 0157 的
@@ -4182,15 +4215,27 @@ class GameSession:
             self.state.turn_phase = TurnPhase.AWAITING_DECISION.value
         else:
             self.state.turn_phase = TurnPhase.SETTLING.value
-        self.db.save_state(self.state)
+        # 机械尾已在推进后占用同一条连接。这次落相位走写队列那把闸
+        # （与尾部读写票同一对象）；调用方已持闸时不再重入。
+        if write_gate_already_held:
+            self.db.save_state(self.state)
+        else:
+            from ming_sim.session_write_queue import get_session_write_queue
+            with get_session_write_queue(self).write_gate:
+                self.db.save_state(self.state)
         return result
 
     def pending_decisions(self) -> List[Dict[str, object]]:
-        """本回合待裁/已裁决策点（awaiting_decision 态下供前端弹窗/刷新恢复）。
+        """玩家案头：急务 ∪ 本月 decision。已应用改票锚不是新待裁。
 
-        #657：批红案头合并读——急务 rescript_draft ∪ 本月 decision（list_rescript_desk）。
+        原始行仍在 list_rescript_desk，供同 body 重交核对。
         """
-        return self.db.list_rescript_desk(int(self.state.turn))
+        from ming_sim.rescript_actions import row_is_applied_return_revise
+
+        return [
+            row for row in self.db.list_rescript_desk(int(self.state.turn))
+            if not row_is_applied_return_revise(row)
+        ]
 
     def _assert_awaiting_decision_submit(self) -> None:
         if self.current_phase() != TurnPhase.AWAITING_DECISION:
@@ -4703,7 +4748,12 @@ class GameSession:
         """
         if write_gate is None:
             raise ValueError("submit_hitl_choices 须注入既有 write_gate")
-        desk = self.db.list_rescript_desk(int(self.state.turn))
+        from ming_sim.rescript_actions import row_is_applied_return_revise
+
+        desk = [
+            row for row in self.db.list_rescript_desk(int(self.state.turn))
+            if not row_is_applied_return_revise(row)
+        ]
         if desk or choices:
             return self.resolve_rescript_decisions(
                 choices,

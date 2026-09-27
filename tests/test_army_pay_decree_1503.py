@@ -877,7 +877,7 @@ def test_manual_directive_admission_real_http_tracer_1591(
         assert draft_payload.get("target_id") == "guanning"
         _post_issue_stream(client, expected_turn=turn1, step="1591①太仓 issue/stream")
         after = _get_state(client)
-        assert _turn_of(after) == turn1, after.get("turn")
+        assert _turn_of(after) == turn1 + 1, after.get("turn")
         dossier = next(
             d for d in game.db.list_decree_dossiers()
             if d["action_type"] == "grant_allocation"
@@ -987,7 +987,7 @@ def test_manual_directive_admission_real_http_tracer_1591(
 
         _post_issue_stream(client, expected_turn=turn2, step="1769 replace-1591 month")
         after = _get_state(client)
-        assert _turn_of(after) == turn2, after.get("turn")
+        assert _turn_of(after) == turn2 + 1, after.get("turn")
         assert game.db.conn.execute(
             "SELECT status FROM turn_directives WHERE id=?", (directive_id,),
         ).fetchone()["status"] == "draft"
@@ -1907,7 +1907,7 @@ def test_http_chat_issue_stream_pay_decree_keeps_month_unadvanced(
         wait_pending_writes(game)
 
         after = _get_state(client)
-        assert _turn_of(after) == turn_before, after.get("turn")
+        assert _turn_of(after) == turn_before + 1, after.get("turn")
         assert not body.get("awaiting_decision")
 
         dossiers = [

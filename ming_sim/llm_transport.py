@@ -58,7 +58,8 @@ class TransportPolicy:
     """统一 transport 预算；调用方可在 runtime 预算上收紧特定入口的重试。"""
 
     max_attempts: int = TRANSPORT_DEFAULT_MAX_ATTEMPTS
-    # #1853 召对调用独有例外；其它调用保留 #1465 的 429 自愈。
+    # #1853 召对 / #1846 过月共用：429 一次终止；其它瞬断最多三次。
+    # 非此名单的调用仍可走 default_transport_policy（#1465 429 自愈）。
     retry_429: bool = True
     # SDK/httpx read 阻塞预算（bind_transport_sdk_budget → model.timeout）。
     attempt_timeout_seconds: float = TRANSPORT_DEFAULT_ATTEMPT_TIMEOUT_SECONDS
@@ -154,7 +155,10 @@ def resolve_transport_policy(source: object = None) -> TransportPolicy:
 
 
 def audience_transport_policy(source: object = None) -> TransportPolicy:
-    """召对回话与转译：429 一次终止，其它瞬断最多尝试三次。"""
+    """ADR 0157 统一调用预算：429 一次终止，其它瞬断最多三次、间隔五秒。
+
+    召对回话/转译、夜里预推、世界段、过月转译、邸报作者共用此策略（#1846）。
+    """
     policy = resolve_transport_policy(source)
     return replace(
         policy,
