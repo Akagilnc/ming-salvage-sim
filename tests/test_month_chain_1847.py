@@ -88,9 +88,6 @@ def test_world_question_opens_rescript_desk_and_awaits(game, monkeypatch):
     assert desk[0]["title"] == "是否增援宁远"
     assert {opt["label"] for opt in desk[0]["options"]} == {"准调关宁", "暂缓"}
     assert desk[0]["status"] == "pending"
-    # 世界段问前提交入口须持久化 kind=world 段结果（ADR 0157 步骤 4／4a）。
-    segments = month_chain._load_chain(db, closed_turn).get("segment_applied_results") or []
-    assert any(seg.get("kind") == "world" for seg in segments)
 
 
 def test_world_segment_multiple_questions_share_one_desk(game, monkeypatch):
@@ -723,16 +720,8 @@ def test_decree_continuation_keeps_forecast_and_lands_affair_effect(game, monkey
         "SELECT COUNT(*) FROM economy_ledger WHERE category='陕西赈灾'",
     ).fetchone()[0] == pre_rows
     assert not db.staged_declarations.questions_for(ref)
-    # 批红问后旨意续推入口须持久化 kind=decree_post 段结果并可供 4a 读入。
+    # 批红问后已落经济效果须进入 4a 供料（ADR 0157 步骤 4／4a）。
     turn = int(state.turn)
-    segments = month_chain._load_chain(db, turn).get("segment_applied_results") or []
-    decree_post = [s for s in segments if s.get("kind") == "decree_post"]
-    assert len(decree_post) == 1
-    assert any(
-        any(int(m.get("delta") or 0) == -10 for m in (rep.get("economy_moves") or []))
-        for rep in (decree_post[0].get("applied") or [])
-        if isinstance(rep, dict)
-    )
     feed = month_chain.build_secret_orders_supply_feed(
         db, state, month_chain._load_chain(db, turn),
     )
@@ -1909,13 +1898,96 @@ def test_step_4a_rescript_supply_includes_issue_and_office_origin_effects(
     ).fetchone()["office"] == new_office
     commitments = db.list_commitments_for_dossier(dossier_id)
     assert any(str(row.get("title") or "") == issue_title for row in commitments)
-    segments = (month_chain._load_chain(db, turn).get("segment_applied_results") or [])
-    assert any(seg.get("kind") == "world_post" for seg in segments)
-    office_cols = {
-        r["name"]
-        for r in db.conn.execute("PRAGMA table_info(office_change_records)").fetchall()
-    }
-    assert "turn" not in office_cols
+
+
+def test_step_4a_feed_excludes_uncommitted_input_and_aux(game, monkeypatch):
+    """实际结果契约不含未落输入／辅助读数：world_advance、ongoing victory 不得进 origin_effects。"""
+    db, state, content = game
+    turn = int(state.turn)
+    minister = db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' AND power_id='ming' LIMIT 1"
+    ).fetchone()[0]
+    order_id = db.create_secret_order(
+        state, minister, "边情刺探", "刺探边情", [],
+        deadline_months=2,
+        covert_task={
+            "kind": "差务", "axes": ["实务事功"], "direction": 1,
+            "delivery": {
+                "unit": "万两", "target_units": 1.0, "effect_sign": -1,
+                "purpose": "其它", "category": "密令差务", "account": "内库",
+            },
+        },
+    )
+    db.conn.execute(
+        "UPDATE secret_orders SET turn_issued=? WHERE id=?",
+        (turn - 1, order_id),
+    )
+    dossier_id = int(db.get_dossier_for_secret_order(order_id)["id"])
+    db.conn.commit()
+
+    captured_feed = {}
+
+    def supply_run(db_, state_, llm_config, chain):
+        feed = month_chain.build_secret_orders_supply_feed(db_, state_, chain)
+        captured_feed.update(feed)
+        return {
+            "dossier_progress_reports": [{
+                "dossier_id": dossier_id,
+                "progress_band": "顺利",
+                "memorial_text": "边情已报。",
+            }],
+            "covert_exec_selections": [{
+                "order_id": order_id, "fidelity": "忠实", "note": "实办",
+            }],
+        }
+
+    def translate(*_a, **kwargs):
+        if "问后刺探" not in str(kwargs.get("segment") or ""):
+            return {"effects": {}}
+        return {"effects": {
+            "economy_moves": [{
+                "account": "内库", "delta": -1, "category": "密令差务",
+                "purpose": "其它", "reason": "问后刺探支银",
+                "origin_ref": f"dossier:{dossier_id}",
+            }],
+            # 抽取输入：仓内无落账写口，不得冒充已提交世界事实。
+            "world_advance": {"后金": "已议和"},
+        }}
+
+    _forbid_extractor(monkeypatch)
+    monkeypatch.setattr(
+        month_chain, "run_world_segment_text", lambda *a, **k: _WORLD_WITH_QUESTION,
+    )
+    monkeypatch.setattr(
+        month_chain, "_run_world_continuation_text",
+        lambda *a, **k: "问后刺探。",
+    )
+    monkeypatch.setattr(month_translate, "translate_month_segment", translate)
+    monkeypatch.setattr(month_chain, "run_secret_orders_supply", supply_run)
+
+    session = make_light_session(db, state, content)
+    session.llm_config = object()
+    session._write_gate = threading.Lock()
+
+    paused = session.resolve_turn(allow_empty_decree=True)
+    assert paused.awaiting is True
+    session.submit_hitl_choices(
+        [_choice(session.pending_decisions()[0])], write_gate=session._write_gate,
+    )
+    result = session.resolve_turn(allow_empty_decree=True)
+    assert result.stage == "gazette"
+
+    origin_effects = captured_feed.get("origin_effects") or {}
+    assert "world_advance" not in origin_effects, origin_effects
+    assert "已议和" not in str(origin_effects)
+    assert "victory_status" not in origin_effects, origin_effects
+    assert "pairing_warnings" not in origin_effects, origin_effects
+    assert "person_changes" not in origin_effects, origin_effects
+    eco_moves = origin_effects.get("economy_moves") or []
+    assert any(
+        m.get("origin_ref") == f"dossier:{dossier_id}" and int(m.get("delta") or 0) == -1
+        for m in eco_moves
+    ), origin_effects
 
 
 def test_step_4a_feed_projects_full_applied_result_contract(game, monkeypatch):
@@ -2036,11 +2108,7 @@ def test_step_4a_feed_projects_full_applied_result_contract(game, monkeypatch):
         and not row.get("rejected")
         for row in secret_updates
     ), origin_effects
-    person_rows = (
-        list(origin_effects.get("applied_person_changes") or [])
-        + list(origin_effects.get("person_changes") or [])
-        + list(origin_effects.get("character_status_changes") or [])
-    )
+    person_rows = list(origin_effects.get("applied_person_changes") or [])
     assert any(
         str(row.get("name") or "") == status_target
         and not row.get("rejected")
@@ -2266,8 +2334,8 @@ def test_segment_applied_results_share_commit_boundary_with_effects(game, monkey
     real_save = month_chain._save_chain
 
     def boom_save(db_, turn_, chain_, **kwargs):
-        segments = chain_.get("segment_applied_results") or []
-        if any(seg.get("kind") == "decree_pre" for seg in segments):
+        # 段结果已写入待持久链时注入失败，验证效果与段结果同提交边界回滚。
+        if chain_.get("segment_applied_results"):
             raise RuntimeError("injected segment result save failure")
         return real_save(db_, turn_, chain_, **kwargs)
 
@@ -2284,11 +2352,10 @@ def test_segment_applied_results_share_commit_boundary_with_effects(game, monkey
     _settle_edicts(sess, registry=None, chain={})
     assert db.staged_declarations.is_settled(ref)
     assert int(state.metrics["国库"]) == treasury_before - 17
-    segments = month_chain._load_chain(db, turn).get("segment_applied_results") or []
-    decree_pre = [s for s in segments if s.get("kind") == "decree_pre"]
-    assert len(decree_pre) == 1
-    applied = decree_pre[0].get("applied") or []
+    feed = month_chain.build_secret_orders_supply_feed(
+        db, state, month_chain._load_chain(db, turn),
+    )
     assert any(
-        any(int(m.get("delta") or 0) == -17 for m in (rep.get("economy_moves") or []))
-        for rep in applied if isinstance(rep, dict)
+        int(m.get("delta") or 0) == -17
+        for m in (feed.get("origin_effects") or {}).get("economy_moves") or []
     )

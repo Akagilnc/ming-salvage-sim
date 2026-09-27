@@ -10377,7 +10377,10 @@ def _apply_score_extraction_body(
     )
 
     state.clamp()
-    return {
+    # 实际应用结果契约（ADR 0157 步骤 4／4a）：只报已落账事实与拒收段。
+    # 抽取输入回声（world_advance / person_changes）与 warn-only 辅助
+    # （pairing_warnings）不入此契约；ongoing 结局读数亦非本段已提交效果。
+    report: Dict[str, object] = {
         "metric_delta": applied_metric,
         "validate_shape_rejections": validate_rejection_items,
         "module_misroute_rejections": module_rejections,
@@ -10407,20 +10410,20 @@ def _apply_score_extraction_body(
         "credit_event_resolutions": credit_event_resolutions,
         "relation_edge_event_resolutions": relation_edge_event_resolutions,
         "authority_changes": authority_change_results,
-        "world_advance": extracted.get("world_advance") or {},
         "fiscal_changes": applied_fiscal,
         "fiscal_creates": applied_fiscal_creates,
         "fiscal_removes": applied_fiscal_removes,
         "appointments": applied_appointments,
-        "person_changes": person_changes,
         "applied_person_changes": applied_person_changes,
         "character_status_changes": applied_status_changes,
         "character_power_changes": applied_power_changes,
         "office_changes": applied_office_changes,
         "secret_order_updates": applied_secret_orders,
-        "pairing_warnings": (issue_summary or {}).get("pairing_warnings") or [],
-        "victory_status": _resolve_victory(db, state, extracted),
     }
+    victory = _resolve_victory(db, state, extracted)
+    if str(victory.get("status") or "") != "ongoing":
+        report["victory_status"] = victory
+    return report
 
 
 def _resolve_victory(db: GameDB, state: GameState, extracted: Dict[str, object]) -> Dict[str, object]:

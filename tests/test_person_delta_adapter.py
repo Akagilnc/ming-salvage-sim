@@ -142,31 +142,33 @@ def test_normalize_person_changes_ignores_non_item_shapes():
     ) == [{"name": "孙传庭", "动作": "任命", "office": "陕西总督"}]
 
 
-def test_apply_score_extraction_exposes_normalized_person_changes(game):
+def test_apply_score_extraction_does_not_echo_normalized_person_changes(game):
+    """实际结果契约只报 applied_person_changes；规范化输入回声不入返回。"""
     db, state, _ = game
-
-    applied = issues.apply_score_extraction(
-        db,
-        state,
-        {
-            "appointments": [
-                {"name": "某氏", "office": "贵人", "office_type": "后宫"},
-                {"name": "孙传庭", "office": "陕西总督"},
-            ],
-            "character_power_changes": [
-                {"name": "孔有德", "new_power": "houjin"}
-            ],
-        },
-        content=None,
-    )
-
-    assert [item["name"] for item in applied["person_changes"]] == [
+    extracted = {
+        "appointments": [
+            {"name": "某氏", "office": "贵人", "office_type": "后宫"},
+            {"name": "孙传庭", "office": "陕西总督"},
+        ],
+        "character_power_changes": [
+            {"name": "孔有德", "new_power": "houjin"}
+        ],
+    }
+    normalized = normalize_person_changes(extracted)
+    assert [item["name"] for item in normalized] == [
         "某氏",
         "孔有德",
         "孙传庭",
     ]
-    assert applied["person_changes"][1]["legacy_partial"] is True
-    assert applied["person_changes"][-1]["legacy_spillover"] == "appointments（朝臣 spillover）"
+    assert normalized[1]["legacy_partial"] is True
+    assert normalized[-1]["legacy_spillover"] == "appointments（朝臣 spillover）"
+
+    applied = issues.apply_score_extraction(
+        db, state, extracted, content=None,
+    )
+    assert "person_changes" not in applied
+    assert "world_advance" not in applied
+    assert "pairing_warnings" not in applied
 
 
 def test_apply_score_extraction_applies_person_change_power_move(game):
@@ -1721,7 +1723,7 @@ def test_apply_score_extraction_applies_person_change_disposition(game):
         assert db.get_character_status(name)[0] == "dismissed"
         assert content.characters[name].status == "dismissed"
         assert content.characters[name].office == ""
-        assert applied["person_changes"][0]["动作"] == "处置"
+        assert "person_changes" not in applied
         assert applied["applied_person_changes"] == [
             {"name": name, "origin_ref": "盘面自发", "动作": "处置", "status": "dismissed", "reason": "削职听勘"}
         ]
