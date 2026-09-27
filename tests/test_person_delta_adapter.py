@@ -171,6 +171,46 @@ def test_apply_score_extraction_does_not_echo_normalized_person_changes(game):
     assert "pairing_warnings" not in applied
 
 
+def test_player_visible_extractor_strips_rejection_buckets_not_person_changes_echo():
+    """#1847: applied-result 契约不再回声 person_changes；可见投影只剥拒收桶（P4）。"""
+    import inspect
+
+    from ming_sim.settlement_payload import _player_visible_extractor_output
+
+    src = inspect.getsource(_player_visible_extractor_output)
+    assert 'pop("person_changes"' not in src and "pop('person_changes'" not in src, src
+
+    applied = {
+        "applied_person_changes": [{"name": "甲", "动作": "调任"}],
+        "economy_moves_rejections": [{"reason": "坏账户"}],
+        "faction_delta_rejections": [{"reason": "坏派系"}],
+        "class_delta_rejections": [],
+        "population_transfers_rejections": [],
+        "surcharge_decrees_rejections": [],
+        "validate_shape_rejections": [],
+        "module_misroute_rejections": [],
+        "issue_summary": {
+            "applied_person_changes": [{"name": "乙", "动作": "处置"}],
+        },
+    }
+    visible = _player_visible_extractor_output(applied)
+    assert "person_changes" not in visible
+    assert visible["applied_person_changes"] == [
+        {"name": "甲", "动作": "调任"},
+        {"name": "乙", "动作": "处置"},
+    ]
+    for key in (
+        "economy_moves_rejections",
+        "faction_delta_rejections",
+        "class_delta_rejections",
+        "population_transfers_rejections",
+        "surcharge_decrees_rejections",
+        "validate_shape_rejections",
+        "module_misroute_rejections",
+    ):
+        assert key not in visible
+
+
 def test_apply_score_extraction_applies_person_change_power_move(game):
     db, state, content = game
     name = active_ming_character(db, content)
