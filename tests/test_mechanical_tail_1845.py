@@ -3,7 +3,7 @@
 Seams:
 - month_chain / resolve_turn 推进后启动机械尾（关系酿制 + 结局总评）
 - SessionWriteQueue 票键 (\"mechanical-tail\", closed_turn)：不挡新月前台；下次过月 barrier join
-- 未完尾按 month_chain 持久状态重开续接；耗尽降级后终结，不永久卡住
+- 未完尾按 month_chain 持久状态重开续接；失败由玩家重试，不静默降级
 - 章节记忆三读者（大臣知识面 / 结局时间线 / 材料目录）不再读 chapter_summary
 - 召对高亮不在本票机械尾（沿 ADR 0045）
 """
@@ -143,8 +143,8 @@ def test_reopen_resumes_incomplete_mechanical_tail(game, monkeypatch):
     assert month_chain._load_chain(db, closed_turn)["mechanical_tail"]["status"] == "done"
 
 
-def test_exhausted_mechanical_tail_degrades_and_unblocks_next_month(game, monkeypatch):
-    """模型耗尽按既有降级留痕终结，下次过月不永久卡住。"""
+def test_exhausted_mechanical_tail_fails_and_blocks_next_month(game, monkeypatch):
+    """模型耗尽须留下失败凭据并阻断下次过月。"""
     from ming_sim.exceptions import LLMUnavailable
 
     db, state, content = game
@@ -165,20 +165,56 @@ def test_exhausted_mechanical_tail_degrades_and_unblocks_next_month(game, monkey
     executor = _install_deferred(monkeypatch)
 
     assert session.resolve_turn(allow_empty_decree=True).advanced is True
-    _run_deferred(executor)
+    with pytest.raises(LLMUnavailable):
+        _run_deferred(executor)
     assert get_session_write_queue(session).wait_idle(timeout_s=5)
     status = month_chain._load_chain(db, closed_turn)["mechanical_tail"]["status"]
-    assert status == "degraded"
+    assert status == "failed"
 
     db.save_turn_report(state, "下月邸报")
-    # 不得因上月尾永久阻塞
-    assert session.resolve_turn(allow_empty_decree=True).stage in {
-        "gazette", "advanced", "rescript",
-    }
-    # 再次推进可能再接纳机械尾。deferred 执行器不自己跑；关库前写票必须完成。
-    if not executor.future.done():
+    from ming_sim.exceptions import SettlementAbort
+    with pytest.raises(SettlementAbort):
+        session.resolve_turn(allow_empty_decree=True)
+
+
+def test_real_brew_failure_reaches_tail_failure_and_retry(game, monkeypatch):
+    """过月真实酿制腿不能把模型耗尽藏在单条 degraded 报告中。"""
+    from ming_sim.exceptions import LLMUnavailable
+    from tests.test_relation_brew_636 import _add_edge
+    from web_app import WebGame
+    from types import SimpleNamespace
+
+    db, state, content = game
+    closed_turn = int(state.turn)
+    _add_edge(db, state, source="温体仁", target="周延儒", kind="结怨",
+              context="当殿讦奏", origin="audience:turn-1")
+    _forbid_extractor(monkeypatch)
+    _archive_and_stub_world(db, state, monkeypatch)
+    monkeypatch.setattr("ming_sim.agents.create_relation_brew_agent", lambda *a: object())
+    monkeypatch.setattr("ming_sim.agents.create_faction_brew_agent", lambda *a: object())
+    def exhausted(*_a, **_k):
+        raise LLMUnavailable("酿制耗尽", stage="relation-brew")
+    monkeypatch.setattr("ming_sim.agents.run_agent_text", exhausted)
+    session = make_light_session(db, state, content)
+    session._write_gate = threading.Lock()
+    session.llm_config = object()
+    session.agno_db = object()
+    executor = _install_deferred(monkeypatch)
+    assert session.resolve_turn(allow_empty_decree=True).advanced is True
+    with pytest.raises(LLMUnavailable):
         _run_deferred(executor)
-        assert get_session_write_queue(session).wait_idle(timeout_s=5)
+    failure = WebGame.mechanical_tail_failure(SimpleNamespace(db=db, state=state))
+    assert failure["error"] == "酿制耗尽"
+    assert failure["error_pack_path"]
+    assert month_chain._load_chain(db, closed_turn)["mechanical_tail"]["status"] == "failed"
+    from ming_sim.mechanical_tail import retry_failed_mechanical_tail
+    from tests.test_relation_brew_636 import _brew_fn_factory
+    monkeypatch.setattr("ming_sim.agents.run_agent_text", lambda _agent, prompt, **_kw: _brew_fn_factory([])(prompt))
+    retry_executor = _install_deferred(monkeypatch)
+    assert retry_failed_mechanical_tail(session)
+    _run_deferred(retry_executor)
+    assert month_chain._load_chain(db, closed_turn)["mechanical_tail"]["status"] == "done"
+    assert WebGame.mechanical_tail_failure(SimpleNamespace(db=db, state=state)) is None
 
 
 def test_web_barrier_resumes_pending_tail_before_join(game, monkeypatch):
@@ -259,27 +295,59 @@ def test_non_exhausted_tail_failure_stays_pending_and_retries(game, monkeypatch)
 
     monkeypatch.setattr(audience_translation, "_executor", InlineExecutor())
 
-    def fail(*_a, **_k):
-        calls.append(1)
-        raise RuntimeError("internal failure")
+    def fail(*_a, **kwargs):
+        calls.append(kwargs.get("closed_turn"))
+        raise ValueError("internal failure")
 
     monkeypatch.setattr("ming_sim.mechanical_tail._run_relation_brew", fail)
     assert session.resolve_turn(allow_empty_decree=True).advanced is True
-    assert month_chain._load_chain(db, closed_turn)["mechanical_tail"]["status"] == "pending"
-    from ming_sim.mechanical_tail import ensure_mechanical_tails
+    assert month_chain._load_chain(db, closed_turn)["mechanical_tail"]["status"] == "failed"
+    from ming_sim.mechanical_tail import ensure_mechanical_tails, retry_failed_mechanical_tail, failed_mechanical_tail
     ensure_mechanical_tails(session)
-    assert len(calls) == 2
-    assert month_chain._load_chain(db, closed_turn)["mechanical_tail"]["status"] == "pending"
+    assert calls == [closed_turn]
+    assert failed_mechanical_tail(db, state)[0] == closed_turn
+    from web_app import WebGame
+    from types import SimpleNamespace
+    state.ended = True
+    payload = WebGame.ending_payload(SimpleNamespace(db=db, state=state))
+    assert WebGame.mechanical_tail_failure(SimpleNamespace(db=db, state=state))["error"] == "internal failure"
+    assert payload["summary_pending"] is False
+    state.ended = False
+
+    # 即使终局没有下一次过月，失败也由持久状态即时呈现。
+    db.save_turn_report(state, "下月邸报")
+    from ming_sim.exceptions import SettlementAbort
+    from pathlib import Path
+    with pytest.raises(SettlementAbort) as caught:
+        session.resolve_turn(allow_empty_decree=True)
+    assert caught.value.stage == "mechanical_tail_pending"
+    assert caught.value.error_pack_path
+    pack = Path(caught.value.error_pack_path)
+    assert pack.is_dir()
+    import json
+    manifest = json.loads((pack / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["exception_type"] == "ValueError"
+    assert manifest["turn"] == closed_turn + 1
+    assert int(state.turn) == closed_turn + 1
+    tail = month_chain._load_chain(db, closed_turn)["mechanical_tail"]
+    assert tail["status"] == "failed"
+    assert tail["error_pack_path"] == caught.value.error_pack_path
+
+    monkeypatch.setattr("ming_sim.mechanical_tail._run_relation_brew", lambda *_a, **_k: None)
+    assert retry_failed_mechanical_tail(session)
+    assert session.resolve_turn(allow_empty_decree=True).advanced is True
+    assert int(state.turn) == closed_turn + 2
+    assert month_chain._load_chain(db, closed_turn)["mechanical_tail"]["status"] == "done"
 
 
 @pytest.mark.parametrize("model_text,tail_status,visible", [
-    ("史评", "done", "史评"),
-    ("  ", "degraded", ""),
+    ("\n 史评 \n", "done", "\n 史评 \n"),
+    ("  ", "done", "  "),
 ])
 def test_ending_summary_runs_in_mechanical_tail_after_advance(
     game, monkeypatch, model_text, tail_status, visible,
 ):
-    """过月入口：模型原文落总评；空输出不落库，尾状态降级留痕。"""
+    """过月入口：模型原文落总评。"""
     from ming_sim.cli.terminal import _printed_ending_summary
 
     db, state, content = game
@@ -332,6 +400,12 @@ def test_ending_summary_runs_in_mechanical_tail_after_advance(
     assert state.ended is True
     assert month_chain._load_chain(db, closed_turn)["mechanical_tail"]["status"] == "pending"
     assert db.get_ending_summary() is None
+    from types import SimpleNamespace
+    from web_app import WebGame
+    pending_payload = WebGame.ending_payload(SimpleNamespace(db=db, state=state))
+    assert pending_payload is not None
+    assert pending_payload["summary_pending"] is True
+    assert pending_payload["summary"] == ""
     assert main_saves_under_gate[-1] is True
     in_tail = True
     _run_deferred(executor)
@@ -343,11 +417,16 @@ def test_ending_summary_runs_in_mechanical_tail_after_advance(
     tail = month_chain._load_chain(db, closed_turn)["mechanical_tail"]
     assert tail["status"] == tail_status
     ending = db.get_ending_summary()
+    landed = WebGame.ending_payload(SimpleNamespace(db=db, state=state))
+    assert landed is not None
+    assert landed["summary_pending"] is False
     if visible:
         assert ending is not None
         assert ending["summary"] == visible
+        assert landed["summary"] == visible
     else:
         assert ending is None
+        assert landed["summary"] == ""
     assert _printed_ending_summary(session) == visible
 
 

@@ -14,13 +14,12 @@ from typing import Any, Dict, Optional
 from ming_sim.applier import Provenance
 from ming_sim.relation_brew import MonthEndRelationBrewLeg
 from ming_sim.session_write_queue import get_session_write_queue
-from ming_sim.decree_forecast import _call_exhausted
 
 logger = logging.getLogger(__name__)
 
 _TAIL_STATUS_PENDING = "pending"
 _TAIL_STATUS_DONE = "done"
-_TAIL_STATUS_DEGRADED = "degraded"
+_TAIL_STATUS_FAILED = "failed"
 
 
 def mechanical_tail_key(closed_turn: int) -> tuple:
@@ -51,6 +50,7 @@ def mark_mechanical_tail_pending(
 
 def _set_tail_status(
     db: Any, closed_turn: int, status: str, *, source: Provenance,
+    error_pack_path: Optional[str] = None,
 ) -> None:
     from ming_sim import month_chain
 
@@ -59,6 +59,12 @@ def _set_tail_status(
     if not tail:
         return
     tail["status"] = status
+    if status != _TAIL_STATUS_FAILED:
+        tail.pop("error", None)
+    if error_pack_path is not None:
+        tail["error_pack_path"] = error_pack_path
+    else:
+        tail.pop("error_pack_path", None)
     chain["mechanical_tail"] = tail
     month_chain._save_chain(db, int(closed_turn), chain, source=source)
 
@@ -123,7 +129,7 @@ def generate_ending_summary_for_tail(
         ending_agent,
         json.dumps(payload, ensure_ascii=False, sort_keys=False),
         tag="ending-summary",
-    ).strip()
+    )
     if not summary_text:
         return ""
     save = save_fn or db.save_ending_summary
@@ -190,6 +196,14 @@ def _run_relation_brew(
     if queue.run(ticket, leg.prepare):
         leg.brew()
         queue.run(ticket, leg.persist)
+        # Persist the successful items first; their cleared pending claims prevent
+        # retry from applying them again. The remaining failures belong to the
+        # tail's existing failure/retry path, not a discarded degraded report.
+        for _job, parsed, error in leg.outcomes:
+            if error is not None:
+                raise error
+            if parsed is None:
+                raise RuntimeError("关系／派系酿制无结果")
 
 
 def _run_tail_body(
@@ -221,12 +235,8 @@ def _run_tail_body(
             agno_db=getattr(session, "agno_db", None),
             gate_run=lambda fn: queue.run(ticket, fn),
         )
-        if not str(summary or "").strip():
-            logger.info(
-                "[mechanical-tail] turn=%s 结局总评无正文，降级留痕",
-                closed_turn,
-            )
-            return _TAIL_STATUS_DEGRADED
+        if not summary:
+            raise RuntimeError("结局总评无正文")
     return _TAIL_STATUS_DONE
 
 
@@ -247,9 +257,22 @@ def _submit_tail(
         return False
 
     def run() -> None:
-        status = _TAIL_STATUS_DONE
+        from ming_sim import month_chain
+
+        def still_pending() -> bool:
+            chain = month_chain._load_chain(session.db, int(closed_turn))
+            tail = chain.get("mechanical_tail")
+            return (
+                isinstance(tail, dict)
+                and tail.get("status") == _TAIL_STATUS_PENDING
+            )
+
         try:
-            status = _run_tail_body(
+            # 扫描见到 pending 之后，上一张票可能已经终结。写闸内再读，
+            # 避免把已完成的尾再跑一遍。
+            if not queue.run(ticket, still_pending):
+                return
+            _run_tail_body(
                 session,
                 closed_turn=closed_turn,
                 settled_year=settled_year,
@@ -259,22 +282,28 @@ def _submit_tail(
                 ticket=ticket,
             )
             queue.run(ticket, lambda: _set_tail_status(
-                session.db, closed_turn, status, source=source,
+                session.db, closed_turn, _TAIL_STATUS_DONE, source=source,
             ))
         except Exception as exc:
-            if not _call_exhausted(exc):
-                logger.exception(
-                    "[mechanical-tail] turn=%s 后台执行失败，保留 pending 供续接",
-                    closed_turn,
+            logger.exception("[mechanical-tail] turn=%s 后台执行失败，等待玩家重试", closed_turn)
+            from ming_sim.error_pack import write_error_pack
+
+            def record_failure() -> None:
+                pack_path = write_error_pack(
+                    session.db, session.state, exc=exc,
+                    extracted=None, resolve_ctx=None,
                 )
-                raise
-            status = _TAIL_STATUS_DEGRADED
-            logger.info(
-                "[mechanical-tail] turn=%s 耗尽降级留痕：%s", closed_turn, exc,
-            )
-            queue.run(ticket, lambda: _set_tail_status(
-                session.db, closed_turn, status, source=source,
-            ))
+                from ming_sim import month_chain
+                chain = month_chain._load_chain(session.db, closed_turn)
+                chain["mechanical_tail"]["error"] = str(exc)
+                month_chain._save_chain(session.db, closed_turn, chain, source=source)
+                _set_tail_status(
+                    session.db, closed_turn, _TAIL_STATUS_FAILED,
+                    source=source, error_pack_path=pack_path,
+                )
+
+            queue.run(ticket, record_failure)
+            raise
         finally:
             queue.complete(ticket)
 
@@ -324,23 +353,80 @@ def schedule_mechanical_tail_after_advance(
     )
 
 
-def ensure_mechanical_tails(session: Any) -> None:
-    """重开或下次过月前：按 DB pending 续接未完尾（claim_if_absent 防重复执行）。"""
+def _resolve_context_turns(db: Any, current_turn: int) -> list[int]:
+    """有月链记录的回合。无连接的替身才退回 0..current。"""
+    conn = getattr(db, "conn", None)
+    if conn is None:
+        return list(range(0, int(current_turn) + 1))
+    rows = conn.execute(
+        "SELECT turn FROM pending_resolve_context ORDER BY turn"
+    ).fetchall()
+    return [int(row["turn"]) for row in rows]
+
+
+def _pending_mechanical_tails(
+    db: Any, *, current_turn: int,
+) -> list[tuple[int, Dict[str, Any]]]:
+    """Still-running tails; code failures require an explicit retry."""
     from ming_sim import month_chain
 
+    pending: list[tuple[int, Dict[str, Any]]] = []
+    for turn in _resolve_context_turns(db, current_turn):
+        chain = month_chain._load_chain(db, turn)
+        tail = chain.get("mechanical_tail")
+        if isinstance(tail, dict) and tail.get("status") == _TAIL_STATUS_PENDING:
+            pending.append((turn, tail))
+    return pending
+
+
+def failed_mechanical_tail(db: Any, state: Any) -> Optional[tuple[int, Dict[str, Any]]]:
+    """Persisted failure, visible even when no next month exists."""
+    from ming_sim import month_chain
+
+    for turn in _resolve_context_turns(db, int(getattr(state, "turn", 0) or 0)):
+        tail = month_chain._load_chain(db, turn).get("mechanical_tail")
+        if isinstance(tail, dict) and tail.get("status") == _TAIL_STATUS_FAILED:
+            return turn, tail
+    return None
+
+
+def retry_failed_mechanical_tail(session: Any) -> bool:
+    failure = failed_mechanical_tail(session.db, session.state)
+    if failure is None:
+        return False
+    turn, tail = failure
+    _set_tail_status(session.db, turn, _TAIL_STATUS_PENDING,
+                     source=Provenance.system_simulation)
+    return _submit_tail(
+        session, closed_turn=turn,
+        settled_year=int(tail.get("settled_year") or 0),
+        settled_period=int(tail.get("settled_period") or 0),
+        ending_outcome=tail.get("ending_outcome") if isinstance(tail.get("ending_outcome"), dict) else None,
+        source=Provenance.system_simulation,
+    )
+
+
+def ending_summary_pending(db: Any, state: Any) -> bool:
+    """结局总评尾尚未终结。前台不等；完成前呈现层据此重取。"""
+    if not bool(getattr(state, "ended", False)):
+        return False
+    current = int(getattr(state, "turn", 0) or 0)
+    for _turn, tail in _pending_mechanical_tails(db, current_turn=current):
+        outcome = tail.get("ending_outcome")
+        if isinstance(outcome, dict) and outcome.get("status"):
+            return True
+    return False
+
+
+def ensure_mechanical_tails(session: Any) -> None:
+    """重开或下次过月前：按 DB pending 续接未完尾（claim_if_absent 防重复执行）。"""
     db = session.db
     try:
         get_session_write_queue(session)
     except Exception:
         return
-    pending_turns: list[tuple[int, Dict[str, Any]]] = []
     current = int(getattr(session.state, "turn", 0) or 0)
-    # 下月 barrier 保证最多只有紧邻的已结束月份可以遗留 pending。
-    for turn in range(max(0, current - 1), current + 1):
-        chain = month_chain._load_chain(db, turn)
-        tail = chain.get("mechanical_tail")
-        if isinstance(tail, dict) and tail.get("status") == _TAIL_STATUS_PENDING:
-            pending_turns.append((turn, tail))
+    pending_turns = _pending_mechanical_tails(db, current_turn=current)
 
     source = Provenance.system_simulation
     for turn, tail in pending_turns:

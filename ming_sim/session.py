@@ -3952,6 +3952,36 @@ class GameSession:
         # 既受理转译、欠账补跑和调用方收夜，不留重新准入窗口。
         write_queue = get_session_write_queue(self)
         def _drain_catch_up_and_continue() -> None:
+            # 票的完成只表示本次 worker 已终止，不代表机械尾已终结。
+            # 屏障等完票后复查持久状态；非耗尽异常留下 pending 时不能过月。
+            from ming_sim.mechanical_tail import _pending_mechanical_tails
+            from ming_sim.mechanical_tail import failed_mechanical_tail
+            failure = failed_mechanical_tail(self.db, self.state)
+            pending_tails = _pending_mechanical_tails(
+                self.db, current_turn=int(self.state.turn),
+            )
+            if failure or pending_tails:
+                exc = RuntimeError(
+                    f"机械尾未终结，不能过月：{[turn for turn, _ in pending_tails]}"
+                )
+                pack_path = (
+                    str(failure[1]["error_pack_path"])
+                    if failure and failure[1].get("error_pack_path") else None
+                )
+                if pack_path is None:
+                    try:
+                        raise exc
+                    except RuntimeError as pending_exc:
+                        pack_path = write_error_pack(
+                            self.db, self.state, exc=pending_exc,
+                            extracted=None, resolve_ctx=None,
+                        )
+                raise SettlementAbort(
+                    settlement_abort_message(pack_path),
+                    turn=int(self.state.turn),
+                    stage="mechanical_tail_pending",
+                    error_pack_path=pack_path,
+                ) from exc
             catch_gate = None if write_gate_already_held else self._write_gate
             catch_up_pending_translations(
                 self.db, self.state,
@@ -4003,10 +4033,8 @@ class GameSession:
         尚未归档时 awaiting=False、advanced=False，仍停 settling；归档后才置 issued。
         """
         # #1842：过月前转译 join/catch-up/耗尽判定（闸外契约，见 await_translations_before_month）。
-        # #1845：先按 DB 续接未完机械尾，再进 barrier——与上月尾同闸等待。
+        # #1845：未完机械尾由 await_translations_before_month 续接后再进 barrier，不在此重复认领。
         if not write_gate_already_held:
-            from ming_sim.mechanical_tail import ensure_mechanical_tails
-            ensure_mechanical_tails(self)
             self.await_translations_before_month()
         if self.state.turn_phase in FRONT_HALF_DONE_PHASES and (
             self.db.list_directives(self.state, statuses=("pending",))
