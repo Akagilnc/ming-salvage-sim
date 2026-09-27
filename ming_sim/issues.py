@@ -6502,7 +6502,7 @@ def _snapshot_person_write_state(db: GameDB, content: Optional[GameContent]):
         dict(row)
         for row in db.conn.execute(
             "SELECT id, character_name, office_title, office_type, source, dossier_id, "
-            "appointment_tenure, turn, created_at FROM office_change_records"
+            "appointment_tenure, created_at FROM office_change_records"
         ).fetchall()
     ]
     # #9：起复路（apply_office_appointment）中途经 set_character_status/set_character_office 会
@@ -6606,12 +6606,12 @@ def _restore_person_write_state(
     db.conn.executemany(
         "INSERT INTO office_change_records "
         "(id, character_name, office_title, office_type, source, dossier_id, "
-        "appointment_tenure, turn, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "appointment_tenure, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         [
             (
                 row["id"], row["character_name"], row["office_title"],
                 row["office_type"], row["source"], row.get("dossier_id"),
-                row["appointment_tenure"], int(row.get("turn") or 0),
+                row["appointment_tenure"],
                 row["created_at"],
             )
             for row in office_change_rows

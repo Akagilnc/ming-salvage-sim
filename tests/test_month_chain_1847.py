@@ -1815,10 +1815,10 @@ def test_step_4a_rescript_supply_includes_issue_and_office_origin_effects(
         """
         INSERT INTO office_change_records
             (character_name, office_title, office_type, source, dossier_id,
-             appointment_tenure, turn)
-        VALUES (?, '旧职方司主事', '中央', 'prior-month', ?, '真除', ?)
+             appointment_tenure)
+        VALUES (?, '旧职方司主事', '中央', 'prior-month', ?, '真除')
         """,
-        (minister, dossier_id, turn - 1),
+        (minister, dossier_id),
     )
     db.conn.commit()
 
@@ -1887,10 +1887,14 @@ def test_step_4a_rescript_supply_includes_issue_and_office_origin_effects(
     assert result.stage == "gazette"
 
     origin_effects = captured_feed.get("origin_effects") or {}
-    issues = origin_effects.get("issues") or []
+    new_issues = (
+        (origin_effects.get("issue_summary") or {}).get("new_issues")
+        or origin_effects.get("issues")
+        or []
+    )
     assert any(
         str(row.get("title") or "") == issue_title and not row.get("rejected")
-        for row in issues
+        for row in new_issues
     )
     person_rows = origin_effects.get("applied_person_changes") or []
     assert any(
@@ -1905,21 +1909,170 @@ def test_step_4a_rescript_supply_includes_issue_and_office_origin_effects(
     ).fetchone()["office"] == new_office
     commitments = db.list_commitments_for_dossier(dossier_id)
     assert any(str(row.get("title") or "") == issue_title for row in commitments)
-    assert not hasattr(db, "list_this_turn_origin_effects")
     segments = (month_chain._load_chain(db, turn).get("segment_applied_results") or [])
     assert any(seg.get("kind") == "world_post" for seg in segments)
+    office_cols = {
+        r["name"]
+        for r in db.conn.execute("PRAGMA table_info(office_change_records)").fetchall()
+    }
+    assert "turn" not in office_cols
+
+
+def test_step_4a_feed_projects_full_applied_result_contract(game, monkeypatch):
+    """4a 按实际结果契约投影：撤办、人物状态、密令更新入 origin_effects；不靠固定键白名单。"""
+    from tests.conftest import active_ming_character
+
+    db, state, content = game
+    turn = int(state.turn)
+    minister = active_ming_character(db, content)
+    status_target = db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' AND power_id='ming' "
+        "AND name!=? LIMIT 1",
+        (minister,),
+    ).fetchone()[0]
+    cancel_title = "问后可撤边局"
+    cancel_id = db.insert_issue(
+        state,
+        kind="situation",
+        title=cancel_title,
+        origin_kind="decree",
+        cancellable="decree",
+        cancel_cost={},
+        bar_value=40,
+        stage_text="待撤",
+    )
+    order_id = db.create_secret_order(
+        state, minister, "边情密访", "密访边材动向", [],
+        deadline_months=2,
+        covert_task={
+            "kind": "差务", "axes": ["实务事功"], "direction": 1,
+            "delivery": {
+                "unit": "万两", "target_units": 1.0, "effect_sign": -1,
+                "purpose": "其它", "category": "密令差务", "account": "内库",
+            },
+        },
+    )
+    db.conn.execute(
+        "UPDATE secret_orders SET turn_issued=? WHERE id=?",
+        (turn - 1, order_id),
+    )
+    dossier_id = int(db.get_dossier_for_secret_order(order_id)["id"])
+    db.conn.commit()
+
+    sim_note = "边材风声渐起，勿泄。"
+    captured_feed = {}
+
+    def supply_run(db_, state_, llm_config, chain):
+        feed = month_chain.build_secret_orders_supply_feed(db_, state_, chain)
+        captured_feed.update(feed)
+        return {
+            "dossier_progress_reports": [{
+                "dossier_id": dossier_id,
+                "progress_band": "顺利",
+                "memorial_text": "密访有着落。",
+            }],
+            "covert_exec_selections": [{
+                "order_id": order_id, "fidelity": "忠实", "note": "实办",
+            }],
+        }
+
+    def translate(*_a, **kwargs):
+        if "问后全量供料" not in str(kwargs.get("segment") or ""):
+            return {"effects": {}}
+        return {"effects": {
+            "economy_moves": [{
+                "account": "内库", "delta": -1, "category": "密令差务",
+                "purpose": "其它", "reason": "问后密访支银",
+                "origin_ref": f"dossier:{dossier_id}",
+            }],
+            "cancels": [{
+                "issue_id": cancel_id, "narrative": "边局可罢，着即撤办。",
+            }],
+            "人物变更": [{
+                "origin_ref": f"dossier:{dossier_id}",
+                "name": status_target, "动作": "处置", "status": "imprisoned",
+                "reason": "问后勘问边材",
+            }],
+            "secret_order_updates": [{
+                "order_id": order_id, "sim_note": sim_note, "disclosed": False,
+            }],
+        }}
+
+    _forbid_extractor(monkeypatch)
+    monkeypatch.setattr(
+        month_chain, "run_world_segment_text", lambda *a, **k: _WORLD_WITH_QUESTION,
+    )
+    monkeypatch.setattr(
+        month_chain, "_run_world_continuation_text",
+        lambda *a, **k: "问后全量供料。",
+    )
+    monkeypatch.setattr(month_translate, "translate_month_segment", translate)
+    monkeypatch.setattr(month_chain, "run_secret_orders_supply", supply_run)
+
+    session = make_light_session(db, state, content)
+    session.llm_config = object()
+    session._write_gate = threading.Lock()
+
+    paused = session.resolve_turn(allow_empty_decree=True)
+    assert paused.awaiting is True
+    session.submit_hitl_choices(
+        [_choice(session.pending_decisions()[0])], write_gate=session._write_gate,
+    )
+    result = session.resolve_turn(allow_empty_decree=True)
+    assert result.stage == "gazette"
+
+    origin_effects = captured_feed.get("origin_effects") or {}
+    cancels = (origin_effects.get("issue_summary") or {}).get("cancels") or []
+    assert any(
+        int(row.get("issue_id") or 0) == cancel_id
+        and not row.get("rejected")
+        and cancel_title in str(row.get("title") or "")
+        for row in cancels
+    ), origin_effects
+    secret_updates = origin_effects.get("secret_order_updates") or []
+    assert any(
+        int(row.get("order_id") or 0) == order_id
+        and sim_note in str(row.get("sim_note") or "")
+        and not row.get("rejected")
+        for row in secret_updates
+    ), origin_effects
+    person_rows = (
+        list(origin_effects.get("applied_person_changes") or [])
+        + list(origin_effects.get("person_changes") or [])
+        + list(origin_effects.get("character_status_changes") or [])
+    )
+    assert any(
+        str(row.get("name") or "") == status_target
+        and not row.get("rejected")
+        and "imprisoned" in str(row.get("new_status") or row.get("status") or row)
+        for row in person_rows
+    ), (person_rows, origin_effects)
+    assert db.get_character_status(status_target)[0] == "imprisoned"
+    assert db.conn.execute(
+        "SELECT status FROM issues WHERE id=?", (cancel_id,),
+    ).fetchone()["status"] != "active"
 
 
 def test_step_4a_feed_keeps_rejections_out_of_origin_effects(game, monkeypatch):
     """问后续推：已落效果入 origin_effects；拒收另入 origin_rejections，不得冒充已落。
 
-    覆盖 *_rejections 键、inline rejected 标记、以及 issue_summary 拒收同形入供料。
+    覆盖 *_rejections 键、inline rejected、issue_summary 拒收与撤办实体拒收。
     """
     db, state, content = game
     turn = int(state.turn)
     minister = db.conn.execute(
         "SELECT name FROM characters WHERE status='active' AND power_id='ming' LIMIT 1"
     ).fetchone()[0]
+    cancel_id = db.insert_issue(
+        state,
+        kind="situation",
+        title="撤办坏账探针",
+        origin_kind="decree",
+        cancellable="decree",
+        cancel_cost={},
+        bar_value=40,
+        stage_text="待撤",
+    )
     order_id = db.create_secret_order(
         state, minister, "辽饷清核", "查清兵部饷银", [],
         deadline_months=2,
@@ -1976,6 +2129,16 @@ def test_step_4a_feed_keeps_rejections_out_of_origin_effects(game, monkeypatch):
             "new_issues": [{
                 "origin_kind": "event_pool", "id": "no-such-event-1847-reject",
             }],
+            # 撤办成功但 applied_cost 坏账户 → entity_rejections 入拒收栏。
+            "cancels": [{
+                "issue_id": cancel_id,
+                "narrative": "撤办并试图扣非法账户。",
+                "applied_cost": {
+                    "economy": [{
+                        "account": "金库", "delta": -4, "reason": "非法账户",
+                    }],
+                },
+            }],
         }}
 
     _forbid_extractor(monkeypatch)
@@ -2011,10 +2174,20 @@ def test_step_4a_feed_keeps_rejections_out_of_origin_effects(game, monkeypatch):
     assert not any(
         "查无此人1847-inline" in str(row) for row in (origin_effects.get("applied_person_changes") or [])
     )
-    assert "issues" not in origin_effects or not any(
+    summary_new = (origin_effects.get("issue_summary") or {}).get("new_issues") or []
+    assert not any(
+        row.get("rejected") or "no-such-event-1847-reject" in str(row)
+        for row in summary_new
+    )
+    assert not any(
         row.get("rejected") or "no-such-event-1847-reject" in str(row)
         for row in (origin_effects.get("issues") or [])
     )
+    cancels = (origin_effects.get("issue_summary") or {}).get("cancels") or []
+    assert any(
+        int(row.get("issue_id") or 0) == cancel_id and not row.get("rejected")
+        for row in cancels
+    ), origin_effects
     rejections = captured_feed.get("origin_rejections") or []
     assert any(
         "no-such-army-1847-feed" in str(row.get("item") or row)
@@ -2027,28 +2200,16 @@ def test_step_4a_feed_keeps_rejections_out_of_origin_effects(game, monkeypatch):
     assert any(
         "no-such-event-1847-reject" in str(row.get("item") or row)
         or (
-            str(row.get("section") or "") == "issues"
+            str(row.get("section") or "") in ("issues", "new_issues", "issue_summary.new_issues")
             and "非预设" in str(row.get("reason") or "")
         )
         for row in rejections
     ), rejections
-    # entity_rejections 与 13 键同形入 origin_rejections（不静默丢）。
-    _fx, entity_rejs = month_chain._aggregate_origin_from_segment_results([{
-        "kind": "world_post",
-        "applied": [{"issue_summary": {
-            "entity_rejections": [{
-                "item": {"account": "国库", "delta": -1},
-                "reason": "坏目标",
-                "category": "missing_ref",
-            }],
-        }}],
-        "rejections": [],
-    }])
     assert any(
         str(row.get("section") or "") == "entity_rejections"
-        and "国库" in str(row.get("item") or row)
-        for row in entity_rejs
-    )
+        and ("金库" in str(row.get("item") or row) or "非法" in str(row))
+        for row in rejections
+    ), rejections
     assert db.sum_dossier_actual_progress_units(dossier_id) == 5.0
 
 

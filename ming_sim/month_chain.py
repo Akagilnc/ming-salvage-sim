@@ -868,23 +868,6 @@ def _ending_from_dispatch_result(result: Any) -> Optional[Dict[str, object]]:
     return None
 
 
-_SEGMENT_APPLIED_LIST_KEYS = (
-    "economy_moves",
-    "fiscal_changes",
-    "fiscal_creates",
-    "fiscal_removes",
-    "authority_changes",
-    "applied_person_changes",
-    "appointments",
-    "region_changes",
-    "army_changes",
-    "created_armies",
-    "power_changes",
-    "person_changes",
-    "dossier_executions",
-)
-
-
 def _json_safe(value: Any) -> Any:
     if value is None or isinstance(value, (bool, int, float, str)):
         return value
@@ -957,26 +940,92 @@ def _record_segment_applied_result(
     })
 
 
+def _rejection_payload(
+    *, section: str, item: Any, reason: str = "", category: str = "", source: str = "",
+) -> Dict[str, Any]:
+    return {
+        "section": section,
+        "item": _json_safe(item if item is not None else {}),
+        "reason": str(reason or ""),
+        "category": str(category or ""),
+        "source": str(source or ""),
+    }
+
+
+def _project_dict_items_as_effects_or_rejections(
+    *,
+    section: str,
+    items: Any,
+    effects_bucket: List[Dict[str, Any]],
+    rejections: List[Dict[str, Any]],
+) -> None:
+    """按实际结果项语义投影：rejected 入拒收栏，其余入已落效果。"""
+    if not isinstance(items, list):
+        return
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        if item.get("rejected"):
+            rejections.append(_rejection_payload(
+                section=section,
+                item=item.get("item") if isinstance(item.get("item"), dict) else item,
+                reason=str(item.get("reason") or ""),
+                category=str(item.get("category") or ""),
+                source="inline",
+            ))
+            continue
+        effects_bucket.append(dict(item))
+
+
+def _project_rejection_list(
+    *,
+    section_key: str,
+    items: Any,
+    rejections: List[Dict[str, Any]],
+    keep_full_key: bool = False,
+) -> None:
+    """`*_rejections` 列表整栏入拒收。
+
+    顶层 `economy_moves_rejections` 等与效果键成对 → 剥后缀；
+    `issue_summary.entity_rejections` 等专用桶 → 保留全名。
+    """
+    if not isinstance(items, list):
+        return
+    key = str(section_key)
+    if keep_full_key or not key.endswith("_rejections"):
+        section = key
+    else:
+        section = key[: -len("_rejections")] or key
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        rejections.append(_rejection_payload(
+            section=section,
+            item=item.get("item") if isinstance(item.get("item"), dict) else item,
+            reason=str(item.get("reason") or ""),
+            category=str(item.get("category") or ""),
+            source="inline",
+        ))
+
+
+def _merge_issue_summary_projection(
+    target: Dict[str, Any], nested: Dict[str, Any],
+) -> None:
+    for key, value in nested.items():
+        if isinstance(value, list):
+            bucket = target.setdefault(key, [])
+            if isinstance(bucket, list):
+                bucket.extend(value)
+        elif value not in (None, {}, []):
+            target[key] = _json_safe(value)
+
+
 def _aggregate_origin_from_segment_results(
     segments: List[Dict[str, Any]],
 ) -> tuple[Dict[str, Any], List[Dict[str, Any]]]:
-    """从持久化段结果聚合 4a 供料：已落效果与拒收分栏，拒收不冒充已落。"""
-    effects: Dict[str, List[Dict[str, Any]]] = {
-        key: [] for key in _SEGMENT_APPLIED_LIST_KEYS
-    }
-    effects["issues"] = []
+    """从持久化段结果按实际结果契约投影 4a 供料：已落与拒收分栏，无字段白名单。"""
+    effects: Dict[str, Any] = {}
     rejections: List[Dict[str, Any]] = []
-
-    def _append_rejection(
-        *, section: str, item: Any, reason: str = "", category: str = "", source: str = "",
-    ) -> None:
-        rejections.append({
-            "section": section,
-            "item": _json_safe(item if item is not None else {}),
-            "reason": str(reason or ""),
-            "category": str(category or ""),
-            "source": str(source or ""),
-        })
 
     for seg in segments:
         if not isinstance(seg, dict):
@@ -984,72 +1033,78 @@ def _aggregate_origin_from_segment_results(
         for report in seg.get("applied") or []:
             if not isinstance(report, dict):
                 continue
-            for key in _SEGMENT_APPLIED_LIST_KEYS:
-                for item in report.get(key) or []:
-                    if not isinstance(item, dict):
-                        continue
-                    if item.get("rejected"):
-                        _append_rejection(
-                            section=key,
-                            item=item.get("item") if isinstance(item.get("item"), dict) else item,
-                            reason=str(item.get("reason") or ""),
-                            category=str(item.get("category") or ""),
-                            source="inline",
-                        )
-                        continue
-                    effects[key].append(dict(item))
-            issue_summary = report.get("issue_summary")
-            if isinstance(issue_summary, dict):
-                for item in issue_summary.get("new_issues") or []:
-                    if not isinstance(item, dict):
-                        continue
-                    if item.get("rejected"):
-                        # 与 13 列表键同形：拒收入 origin_rejections，供 4a 据实判读。
-                        _append_rejection(
-                            section="issues",
-                            item=(
-                                item.get("item")
-                                if isinstance(item.get("item"), dict)
-                                else item
-                            ),
-                            reason=str(item.get("reason") or ""),
-                            category=str(item.get("category") or ""),
-                            source="inline",
-                        )
-                        continue
-                    effects["issues"].append(dict(item))
-                for item in issue_summary.get("entity_rejections") or []:
-                    if not isinstance(item, dict):
-                        continue
-                    _append_rejection(
-                        section="entity_rejections",
-                        item=(
-                            item.get("item")
-                            if isinstance(item.get("item"), dict)
-                            else item
-                        ),
-                        reason=str(item.get("reason") or ""),
-                        category=str(item.get("category") or ""),
-                        source="inline",
-                    )
             for key, value in report.items():
-                if not str(key).endswith("_rejections") or not isinstance(value, list):
-                    continue
-                section = str(key)[: -len("_rejections")]
-                for item in value:
-                    if not isinstance(item, dict):
-                        continue
-                    _append_rejection(
-                        section=section,
-                        item=item.get("item") if isinstance(item.get("item"), dict) else item,
-                        reason=str(item.get("reason") or ""),
-                        category=str(item.get("category") or ""),
-                        source="inline",
+                section = str(key)
+                if section.endswith("_rejections"):
+                    _project_rejection_list(
+                        section_key=section, items=value, rejections=rejections,
                     )
+                    continue
+                if section == "issue_summary" and isinstance(value, dict):
+                    nested: Dict[str, Any] = {}
+                    for nested_key, nested_value in value.items():
+                        nested_section = str(nested_key)
+                        if nested_section.endswith("_rejections"):
+                            _project_rejection_list(
+                                section_key=nested_section,
+                                items=nested_value,
+                                rejections=rejections,
+                                keep_full_key=True,
+                            )
+                            continue
+                        if isinstance(nested_value, list):
+                            # 只投影 list[dict] 事实；touched_ids 等标量列表不进供料。
+                            if not any(isinstance(x, dict) for x in nested_value):
+                                continue
+                            bucket: List[Dict[str, Any]] = []
+                            _project_dict_items_as_effects_or_rejections(
+                                section=nested_section,
+                                items=nested_value,
+                                effects_bucket=bucket,
+                                rejections=rejections,
+                            )
+                            if bucket:
+                                nested[nested_section] = bucket
+                            continue
+                        if isinstance(nested_value, dict) and nested_value:
+                            nested[nested_section] = _json_safe(nested_value)
+                    if nested:
+                        summary_bucket = effects.setdefault("issue_summary", {})
+                        if not isinstance(summary_bucket, dict):
+                            summary_bucket = {}
+                            effects["issue_summary"] = summary_bucket
+                        _merge_issue_summary_projection(summary_bucket, nested)
+                    continue
+                if isinstance(value, list):
+                    if not any(isinstance(x, dict) for x in value):
+                        continue
+                    bucket = effects.setdefault(section, [])
+                    if not isinstance(bucket, list):
+                        bucket = []
+                        effects[section] = bucket
+                    _project_dict_items_as_effects_or_rejections(
+                        section=section,
+                        items=value,
+                        effects_bucket=bucket,
+                        rejections=rejections,
+                    )
+                    continue
+                if isinstance(value, dict) and value:
+                    existing = effects.get(section)
+                    if isinstance(existing, dict):
+                        merged = dict(existing)
+                        merged.update(_json_safe(value))
+                        effects[section] = merged
+                    else:
+                        effects[section] = _json_safe(value)
         for rejected in seg.get("rejections") or []:
             if isinstance(rejected, dict):
                 rejections.append(dict(rejected))
-    origin_effects = {key: rows for key, rows in effects.items() if rows}
+
+    origin_effects = {
+        key: rows for key, rows in effects.items()
+        if rows not in (None, {}, [])
+    }
     return origin_effects, rejections
 
 

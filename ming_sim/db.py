@@ -990,7 +990,6 @@ class GameDB:
                 source TEXT NOT NULL,
                 dossier_id INTEGER,
                 appointment_tenure TEXT NOT NULL DEFAULT '真除',
-                turn INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(dossier_id) REFERENCES decree_dossiers(id)
             );
@@ -2460,9 +2459,14 @@ class GameDB:
         self.ensure_column(
             "office_change_records", "appointment_tenure", "TEXT NOT NULL DEFAULT '真除'"
         )
-        self.ensure_column(
-            "office_change_records", "turn", "INTEGER NOT NULL DEFAULT 0"
-        )
+        # #1847：4a 改读段结果后 turn 列无消费者；幂等 DROP（SQLite 3.35+）。
+        office_change_cols = {
+            r["name"]
+            for r in self.conn.execute("PRAGMA table_info(office_change_records)").fetchall()
+        }
+        if "turn" in office_change_cols:
+            self.conn.execute("ALTER TABLE office_change_records DROP COLUMN turn")
+            self.conn.commit()
         self.ensure_column("skill_grants", "dossier_id", "INTEGER")
         self.ensure_column(
             "decree_dossiers", "execution_outcome", "TEXT NOT NULL DEFAULT ''")
@@ -3799,21 +3803,16 @@ class GameDB:
             getattr(self.conn, "_materializing_dossier_id", 0) or 0
         )
         if dossier_id > 0:
-            turn_row = self.conn.execute(
-                "SELECT turn FROM game_state WHERE id=1"
-            ).fetchone()
-            effect_turn = int(turn_row["turn"] if turn_row is not None else 0)
             self.conn.execute(
                 """
                 INSERT INTO office_change_records
                     (character_name,office_title,office_type,source,dossier_id,
-                     appointment_tenure,turn)
-                VALUES (?,?,?,?,?,?,?)
+                     appointment_tenure)
+                VALUES (?,?,?,?,?,?)
                 """,
                 (
                     name, office, office_type, source, dossier_id,
                     str(getattr(self.conn, "_appointment_tenure", "真除") or "真除"),
-                    effect_turn,
                 ),
             )
 
