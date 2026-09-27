@@ -25,7 +25,7 @@ import { MechanicalTailFailure } from "./components/mechanicalTailFailure";
 import { HistoryModal } from "./components/historyModal";
 import { ReportModal } from "./components/reportModal";
 import { SecretOrdersModal } from "./components/secretOrders";
-import { SettlementLock } from "./components/settlementLock";
+import { SettlementGazettePanel } from "./components/settlementGazettePanel";
 import { StateModal } from "./components/stateModal";
 import { filterConsorts, filterMinisters } from "./components/ministerFilters";
 import { DecisionModal } from "./components/decisionModal";
@@ -76,7 +76,6 @@ export function App() {
   const [activeModal, setActiveModal] = React.useState<ModalName>("none");
   const [decree, setDecree] = React.useState("");
   const [report, setReport] = React.useState("");
-  const [gazetteReport, setGazetteReport] = React.useState("");
   const [busy, setBusy] = React.useState("");
   const [error, setError] = React.useState("");
   const [closedShown, setClosedShown] = React.useState<number>(() => {
@@ -84,8 +83,7 @@ export function App() {
     return raw ? Number(raw) : -1;
   });
   const [closedModal, setClosedModal] = React.useState<ClosedIssue[]>([]);
-  const [gazetteShown, setGazetteShown] = React.useState<number>(-1);
-  // 结局页本次加载是否已被玩家关掉（关掉后让位邸报，刷新复位重弹）。
+  // 结局页本次加载是否已被玩家关掉（关掉后让位结局，刷新复位重弹）。
   const [endingDismissed, setEndingDismissed] = React.useState(false);
   const [secretOrders, setSecretOrders] = React.useState<SecretOrder[]>([]);
   const [secretOrderShown, setSecretOrderShown] = React.useState<number>(-1);
@@ -96,7 +94,6 @@ export function App() {
   // Tracks the current selected minister across async boundaries.
   // State closures capture stale values; this ref always reflects the latest.
   const selectedMinisterRef = React.useRef<string>("");
-  const suppressNextReportRef = React.useRef(false);
   const [undoneChatIdentity, setUndoneChatIdentity] = React.useState<ChatIdentity | null>(null);
   const [audienceScrollGeneration, setAudienceScrollGeneration] = React.useState(0);
   const audienceScrollPositionsRef = React.useRef(new Map<string, number>());
@@ -209,10 +206,8 @@ export function App() {
   // 颁诏结算流（useSettlementFlow.ts）：盖玺颁诏/failed-only 退朝/HITL 决策点续裁/失败重拉。
   // hook 必须在 menu/loading 早退之前调用。
   const {
-    settleStage,
-    settleProgress,
-    settleThinking,
-    settleNarrative,
+    settlementGazetteReading,
+    dismissSettlementGazette,
     pendingDecisions,
     decisionFailures,
     pausedDecisionError,
@@ -342,29 +337,8 @@ export function App() {
     setActiveModal("ending");
   }, [state, endingDismissed]);
 
-  // 每次进入页面/换回合都弹上回合邸报。不持久化记录——刷新即重新弹。
-  // 同一加载周期内同一回合不重复弹（gazetteShown 用 React state，刷新后回到 -1）。
-  // #1236：邸报(gazette) 属只读组——自动弹出与渲染同吃 isFaceReachable（无第二真源）。
-  React.useEffect(() => {
-    if (!state) return;
-    // 结局页未关掉时让位给它；玩家关掉后（endingDismissed）邸报照常。
-    if (state.ending && !endingDismissed) return;
-    const currentTurn = state.turn.turn;
-    // #1356/#671：t0 双空不自动弹；有邸报或独立递话任一即弹。空壳仍可由木牌打开。
-    // trim 只做空壳门；写入 state 的是未 trim 原文（P6）
-    const hasReport = Boolean((state.previous_summary || "").trim());
-    const hasAttendant = Boolean((state.last_attendant_message || "").trim());
-    if (!hasReport && !hasAttendant) return;
-    if (currentTurn === gazetteShown) return;
-    if (!isFaceReachable("gazette", isSettlementDisplay(state.turn))) return;
-    if (suppressNextReportRef.current) {
-      suppressNextReportRef.current = false;
-      return;
-    }
-    setGazetteReport(state.previous_summary || "");
-    setActiveModal("report");
-    setGazetteShown(currentTurn);
-  }, [state, gazetteShown, endingDismissed, activeModal]);
+  // #1852：退役自动弹出全屏邸报窗。写成即推进的当次阅读由 settlementGazetteReading 本面落位；
+  // 刷新 / 重开落新月份盘面；旧月邸报只经木牌 / 史册自取。
 
   React.useEffect(() => {
     if (!state || appView !== "game" || audienceResumeCheckedRef.current) return;
@@ -530,7 +504,7 @@ export function App() {
   };
 
   // #1236：核账门控唯一谓词 = 状态口 settlement_display（刷新/持久）。
-  // #1796：busy==="月末结算" = 同会话装饰——SettlementLock + 立即收拟诏/切核账期面；
+  // #1796：busy==="月末结算" = 同会话切核账期面（立即收拟诏）；#1852 退役进度/推敲等待卡。
   // 绝不升格为刷新真源、不挡必达三面。settlementFace 仅同会话 OR。
   // 召对写入口属关闭组；名册抽屉仍只读可达。
   const chatEntryEnabled = isFaceReachable("chat_entry", settlementFace);
@@ -803,10 +777,10 @@ export function App() {
         </FullscreenModal>
       ) : null}
 
-      {/* #1356：空 previous_summary 亦可开卷轴壳（木牌）；无固定空注 */}
+      {/* #1356：空 previous_summary 亦可开卷轴壳（木牌）；无固定空注。#1852：仅木牌/史册自取，不自动弹。 */}
       {gazetteOpen ? (
         <ReportModal
-          report={gazetteReport || state.previous_summary || report || ""}
+          report={state.previous_summary || report || ""}
           attendantMessage={state.last_attendant_message || undefined}
           periodLabel={state.previous_reign_period_label || undefined}
           onClose={() => setActiveModal("none")}
@@ -864,13 +838,13 @@ export function App() {
         />
       ) : null}
 
-      {/* 同会话非权威装饰：不挡必达三面；刷新路径零依赖 */}
-      {sessionSettlingBusy ? (
-        <SettlementLock
-          stage={settleStage}
-          progress={settleProgress}
-          thinking={settleThinking}
-          narrative={settleNarrative}
+      {/* #1852：写成即推进后的本面邸报阅读态；朕知道了只关阅读，不控月份。 */}
+      {settlementGazetteReading ? (
+        <SettlementGazettePanel
+          report={settlementGazetteReading.report}
+          attendantMessage={settlementGazetteReading.attendantMessage}
+          periodLabel={settlementGazetteReading.periodLabel}
+          onDismiss={dismissSettlementGazette}
         />
       ) : null}
 
@@ -918,7 +892,7 @@ export function App() {
         </div>
       ) : null}
 
-      {/* 必达：批红恢复——不得被 busy/SettlementLock 误关 */}
+      {/* 必达：批红恢复——不得被 busy / 本面邸报阅读态误关 */}
       {pausedDecisionError ? (
         <div data-testid="decision-recovery">
           <DecisionRecoveryPanel

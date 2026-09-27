@@ -13,8 +13,15 @@ import type {
   DecisionChoice, GameState, PendingActionFailure, PendingDecision,
 } from "./types";
 
-// 颁诏结算流：盖玺颁诏 / failed-only 退朝 / HITL 决策点续裁 / 失败重拉，共用 SSE 推演进度区。
-// 结算完成一律整页刷新，草案/对话/局势/closed 弹窗全部按新 state 重新初始化。
+/** #1852：当次核账完成后的本面邸报阅读态（刷新不恢复；朕知道了只关此态）。 */
+export type SettlementGazetteReading = {
+  report: string;
+  attendantMessage?: string;
+  periodLabel?: string;
+};
+
+// 颁诏结算流：盖玺颁诏 / failed-only 退朝 / HITL 决策点续裁 / 失败重拉。
+// #1852：核账等待面不呈现推演段文/推敲/进度；写成即推进后本面开邸报阅读态，不整页 reload。
 export function useSettlementFlow({
   setBusy,
   setError,
@@ -30,16 +37,14 @@ export function useSettlementFlow({
   loadState: () => Promise<GameState | null>;
   state: GameState | null;
 }) {
-  const [settleStage, setSettleStage] = React.useState("");
-  const [settleProgress, setSettleProgress] = React.useState<{ current: number; total: number } | null>(null);
-  const [settleThinking, setSettleThinking] = React.useState("");
-  const [settleNarrative, setSettleNarrative] = React.useState("");
   // HITL 决策点：颁诏推演若出重大抉择，暂停弹窗逐个亲裁，裁完续跑结算。
   const [pendingDecisions, setPendingDecisions] = React.useState<PendingDecision[]>([]);
   const [decisionFailures, setDecisionFailures] = React.useState<PendingActionFailure[]>([]);
   const [pausedDecisionError, setPausedDecisionError] = React.useState("");
   // #1808：phase-1 fail-closed 的 HUD 专用位——与共享 error 分轨，避免召对等通道泄漏到普通 HUD。
   const [settlementHudError, setSettlementHudError] = React.useState("");
+  const [settlementGazetteReading, setSettlementGazetteReading] =
+    React.useState<SettlementGazetteReading | null>(null);
 
   // 刷新恢复：若回合停在 awaiting_decision 且有未裁决策点，自动重弹决策弹窗。
   // #657：typed resume_phase2 时空 pending 不报 PAUSED，接到 phase2 空 POST 续跑。
@@ -109,36 +114,17 @@ export function useSettlementFlow({
     };
   }, [state?.mechanical_tail_pending, state?.ending?.summary_pending, loadState]);
 
-  const applyStage = (update: SettlementStageUpdate) => {
-    setSettleStage(update.content);
-    // Progress only from typed facts on the SSE payload — never reverse-lookup labels.
-    if (
-      typeof update.current === "number"
-      && typeof update.total === "number"
-      && update.total > 0
-      && update.current > 0
-    ) {
-      setSettleProgress({ current: update.current, total: update.total });
-    } else {
-      setSettleProgress(null);
-    }
-  };
-
-  // 颁诏/续裁共用：消费 SSE 推演流（settleStream.ts），stage/thinking/text 实时更新进度区。
+  // #1852：SSE stage/thinking/text 仍消费（流不可断），但不驱动任何等待面呈现。
   const consumeSettle = (response: Response) => consumeSettleStream(response, {
-    onStage: applyStage,
-    onThinking: (chunk) => setSettleThinking((prev) => prev + chunk),
-    onNarrative: (chunk) => setSettleNarrative((prev) => prev + chunk),
+    onStage: (_update: SettlementStageUpdate) => {},
+    onThinking: () => {},
+    onNarrative: () => {},
   });
 
-  // #1796：盖玺/退朝共用开场——busy 挂同会话装饰；stage/progress/thinking/narrative 清零。
+  // #1796：盖玺/退朝共用开场——busy 挂同会话切面；清 HUD 失败位。
   // 真源仍是 settlement_display；submitDecisions 另有 HITL 续推文案，不经此路。
   const beginSettlementWait = () => {
     setBusy("月末结算");
-    setSettleStage("");
-    setSettleProgress(null);
-    setSettleThinking("");
-    setSettleNarrative("");
     setSettlementHudError("");
   };
 
@@ -152,6 +138,38 @@ export function useSettlementFlow({
   const clearSettlementHudError = React.useCallback(() => {
     setSettlementHudError("");
   }, []);
+
+  const dismissSettlementGazette = React.useCallback(() => {
+    setSettlementGazetteReading(null);
+  }, []);
+
+  /** #1852：月份已推进 → 刷账本 + 本面开阅读态（不 reload）。 */
+  const openGazetteAfterAdvance = async (payload: Record<string, unknown> | null | undefined) => {
+    const data = payload || {};
+    await forwardSteamEvents(data);
+    const next = await loadState();
+    const embedded = data.state as GameState | undefined;
+    const fromPayload = typeof data.report === "string" ? data.report : "";
+    const fromState = next?.previous_summary
+      || (typeof embedded?.previous_summary === "string" ? embedded.previous_summary : "")
+      || "";
+    const report = fromPayload.trim() ? fromPayload : fromState;
+    const attendantMessage = next?.last_attendant_message
+      || embedded?.last_attendant_message
+      || "";
+    const periodLabel = next?.previous_reign_period_label
+      || embedded?.previous_reign_period_label
+      || "";
+    if (report.trim() || String(attendantMessage || "").trim()) {
+      setSettlementGazetteReading({
+        report,
+        attendantMessage: attendantMessage || undefined,
+        periodLabel: periodLabel || undefined,
+      });
+    } else {
+      setSettlementGazetteReading(null);
+    }
+  };
 
   const issueDecree = async () => {
     beginSettlementWait();
@@ -221,9 +239,9 @@ export function useSettlementFlow({
         setBusy("");
         return;
       }
-      await forwardSteamEvents(outcome.data);
-      // 结算完成：强制整页刷新，草案/对话/局势/closed 弹窗全部按新 state 重新初始化
-      window.location.reload();
+      // #1852：写成即推进——loadState + 本面阅读态；不整页 reload。
+      await openGazetteAfterAdvance(outcome.data || {});
+      setBusy("");
       return;
     } catch (err) {
       // #1808 B 同类：先响亮；#1700 loadState 刷新权威相位为 best-effort。
@@ -244,11 +262,6 @@ export function useSettlementFlow({
   // #1620：成功前不清 pendingDecisions——失败时 DecisionModal 不卸载，已选批语自然保留。
   const submitDecisions = async (choices: DecisionChoice[]) => {
     setBusy("月末结算");
-    // HITL resume chrome only — no typed wait-progress on this client-side label.
-    setSettleStage("圣意亲裁，续推时局");
-    setSettleProgress(null);
-    setSettleThinking("");
-    setSettleNarrative("");
     setError("");
     setPausedDecisionError("");
     try {
@@ -268,7 +281,7 @@ export function useSettlementFlow({
         setBusy("");
         return;
       }
-      // 成功：清空案头态再 reload（整页刷新仍是月完成权威入口）。
+      // 成功：清空案头态；写成即推进则本面开邸报。
       setPendingDecisions([]);
       setDecisionFailures([]);
       setPausedDecisionError("");
@@ -277,8 +290,8 @@ export function useSettlementFlow({
         setBusy("");
         return;
       }
-      await forwardSteamEvents(outcome.data);
-      window.location.reload();
+      await openGazetteAfterAdvance(outcome.data || {});
+      setBusy("");
       return;
     } catch (err) {
       await loadState();
@@ -294,7 +307,7 @@ export function useSettlementFlow({
 
   // #1560：failed-only 拟诏台确认后退朝；复用既有 /api/decree/advance_without_edict 接缝。
   // 真空仍禁用；draft/pending 走 issueDecree，不经此路。
-  // #1796：与盖玺同 busy 标——同会话立即收拟诏台 + 居中等待卡 + 切核账期面。
+  // #1796：与盖玺同 busy 标——同会话立即收拟诏台 + 切核账期面。
   const advanceWithoutEdict = async () => {
     beginSettlementWait();
     setError("");
@@ -333,7 +346,11 @@ export function useSettlementFlow({
         await loadState();
         return;
       }
-      window.location.reload();
+      // #1852：退朝写成即推进——本面阅读态，不 reload。
+      await openGazetteAfterAdvance({
+        ...data,
+        report: data.state?.previous_summary,
+      });
     } catch (err: any) {
       const detail = err instanceof ApiRequestError
         ? err.detail
@@ -397,10 +414,8 @@ export function useSettlementFlow({
   };
 
   return {
-    settleStage,
-    settleProgress,
-    settleThinking,
-    settleNarrative,
+    settlementGazetteReading,
+    dismissSettlementGazette,
     pendingDecisions,
     decisionFailures,
     pausedDecisionError,

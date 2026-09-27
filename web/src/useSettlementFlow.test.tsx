@@ -43,6 +43,19 @@ const settlingState = {
   pending_decisions: [],
 } as GameState;
 
+const advancedMonthState = {
+  turn: { year: 1627, period: 11, turn: 6, phase: "player", settlement_display: false },
+  metrics: { 国库: 1700, 内库: 300, 民心: 54, 皇威: 41 },
+  budget: {
+    国库: { balance: 1700 },
+    内库: { balance: 300 },
+  },
+  previous_summary: "十月邸报·已归档",
+  previous_reign_period_label: "天启七年十月",
+  last_attendant_message: "奴婢呈上月邸报。",
+  pending_decisions: [],
+} as unknown as GameState;
+
 function sseUnadvancedResponse(): Response {
   const body = `event: done\ndata: ${JSON.stringify({ advanced: false, report: "" })}\n\n`;
   return new Response(body, { headers: { "Content-Type": "text/event-stream" } });
@@ -292,7 +305,11 @@ describe("#1351/#1560 useSettlementFlow — advanceWithoutEdict 令牌与 409 �
   it("POST 携 state.turn 为 expected_turn", async () => {
     const fetchMock = vi.fn(async () => ({
       ok: true,
-      json: async () => ({ state: preClickState, pending_action_failures: [] }),
+      json: async () => ({
+        state: advancedMonthState,
+        advanced: true,
+        pending_action_failures: [],
+      }),
     }));
     vi.stubGlobal("fetch", fetchMock);
     const reload = vi.fn();
@@ -300,9 +317,10 @@ describe("#1351/#1560 useSettlementFlow — advanceWithoutEdict 令牌与 409 �
       configurable: true,
       value: { ...window.location, reload },
     });
+    const loadState = vi.fn(async () => advancedMonthState);
 
     const { hookRef, cleanup } = mountHarness({
-      loadState: async () => preClickState,
+      loadState,
       initial: preClickState,
     });
 
@@ -315,7 +333,9 @@ describe("#1351/#1560 useSettlementFlow — advanceWithoutEdict 令牌与 409 �
     expect(String(url)).toContain("/api/decree/advance_without_edict");
     expect(init.method).toBe("POST");
     expect(JSON.parse(String(init.body))).toEqual({ expected_turn: 5 });
-    expect(reload).toHaveBeenCalledTimes(1);
+    // #1852：写成即推进走 loadState + 本面阅读，不整页 reload
+    expect(reload).not.toHaveBeenCalled();
+    expect(loadState).toHaveBeenCalled();
     cleanup();
   });
 
@@ -603,6 +623,79 @@ describe("#1843 未推进的过月终包", () => {
     expect(reload).not.toHaveBeenCalled();
     expect(host.querySelector('[data-testid="phase"]')?.textContent).toBe("settling");
     expect(host.querySelector('[data-testid="busy"]')?.textContent).toBe("");
+    cleanup();
+  });
+});
+
+function sseAdvancedResponse(report = "十月邸报·流终"): Response {
+  const body = `event: done\ndata: ${JSON.stringify({ advanced: true, report })}\n\n`;
+  return new Response(body, { headers: { "Content-Type": "text/event-stream" } });
+}
+
+describe("#1852 写成即推进：本面邸报阅读态，不整页 reload", () => {
+  it.each([
+    ["issueDecree", "/api/decree/issue/stream"],
+    ["submitDecisions", "/api/decree/resolve_decisions/stream"],
+  ] as const)("%s advanced 终包：loadState + 阅读态，朕知道了只关阅读", async (action, path) => {
+    const reload = vi.fn();
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: { ...window.location, reload },
+    });
+    const loadState = vi.fn(async () => advancedMonthState);
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (url !== path) throw new Error(`unexpected fetch: ${url}`);
+      return sseAdvancedResponse("十月邸报·流终");
+    }));
+    const { host, hookRef, cleanup } = mountHarness({
+      loadState,
+      initial: action === "submitDecisions" ? awaitingState : preClickState,
+    });
+
+    await act(async () => {
+      if (action === "submitDecisions") await hookRef.current!.submitDecisions([]);
+      else await hookRef.current!.issueDecree();
+    });
+
+    expect(loadState).toHaveBeenCalledTimes(1);
+    expect(reload).not.toHaveBeenCalled();
+    expect(host.querySelector('[data-testid="busy"]')?.textContent).toBe("");
+    expect(hookRef.current!.settlementGazetteReading?.report).toBe("十月邸报·流终");
+    expect(hookRef.current!.settlementGazetteReading?.periodLabel).toBe("天启七年十月");
+    expect(hookRef.current!.settlementGazetteReading?.attendantMessage).toBe("奴婢呈上月邸报。");
+
+    act(() => {
+      hookRef.current!.dismissSettlementGazette();
+    });
+    expect(hookRef.current!.settlementGazetteReading).toBeNull();
+    expect(host.querySelector('[data-testid="phase"]')?.textContent).toBe("player");
+    expect(reload).not.toHaveBeenCalled();
+    cleanup();
+  });
+
+  it("advanceWithoutEdict advanced：从 state 投影开阅读态，不 reload", async () => {
+    const reload = vi.fn();
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: { ...window.location, reload },
+    });
+    const loadState = vi.fn(async () => advancedMonthState);
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (url !== "/api/decree/advance_without_edict") throw new Error(`unexpected fetch: ${url}`);
+      return new Response(JSON.stringify({
+        advanced: true,
+        state: advancedMonthState,
+      }));
+    }));
+    const { hookRef, cleanup } = mountHarness({ loadState, initial: preClickState });
+
+    await act(async () => {
+      await hookRef.current!.advanceWithoutEdict();
+    });
+
+    expect(reload).not.toHaveBeenCalled();
+    expect(loadState).toHaveBeenCalled();
+    expect(hookRef.current!.settlementGazetteReading?.report).toBe("十月邸报·已归档");
     cleanup();
   });
 });
