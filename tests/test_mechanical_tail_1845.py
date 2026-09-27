@@ -123,8 +123,11 @@ def test_reopen_resumes_incomplete_mechanical_tail(game, monkeypatch):
         "ming_sim.mechanical_tail._run_relation_brew", recording_brew,
     )
     executor = _install_deferred(monkeypatch)
-    assert session.resolve_turn(allow_empty_decree=True).advanced is True
-    _run_deferred(executor)
+    try:
+        assert session.resolve_turn(allow_empty_decree=True).advanced is True
+    finally:
+        if hasattr(executor, "fn"):
+            _run_deferred(executor)
     get_session_write_queue(session).wait_idle(timeout_s=5)
     assert calls == [closed_turn]
 
@@ -138,8 +141,11 @@ def test_reopen_resumes_incomplete_mechanical_tail(game, monkeypatch):
     }
     month_chain._save_chain(db, closed_turn, chain, source=Provenance.system_simulation)
     calls.clear()
-    ensure_mechanical_tails(session)
-    _run_deferred(executor)
+    try:
+        ensure_mechanical_tails(session)
+    finally:
+        if not executor.future.done():
+            _run_deferred(executor)
     get_session_write_queue(session).wait_idle(timeout_s=5)
     assert calls == [closed_turn]
     assert month_chain._load_chain(db, closed_turn)["mechanical_tail"]["status"] == "done"
@@ -166,9 +172,12 @@ def test_exhausted_mechanical_tail_fails_and_blocks_next_month(game, monkeypatch
     session.agno_db = object()
     executor = _install_deferred(monkeypatch)
 
-    assert session.resolve_turn(allow_empty_decree=True).advanced is True
-    with pytest.raises(LLMUnavailable):
-        _run_deferred(executor)
+    try:
+        assert session.resolve_turn(allow_empty_decree=True).advanced is True
+    finally:
+        if hasattr(executor, "fn"):
+            with pytest.raises(LLMUnavailable):
+                _run_deferred(executor)
     assert get_session_write_queue(session).wait_idle(timeout_s=5)
     status = month_chain._load_chain(db, closed_turn)["mechanical_tail"]["status"]
     assert status == "failed"
@@ -202,9 +211,12 @@ def test_real_brew_failure_reaches_tail_failure_and_retry(game, monkeypatch):
     session.llm_config = object()
     session.agno_db = object()
     executor = _install_deferred(monkeypatch)
-    assert session.resolve_turn(allow_empty_decree=True).advanced is True
-    with pytest.raises(LLMUnavailable):
-        _run_deferred(executor)
+    try:
+        assert session.resolve_turn(allow_empty_decree=True).advanced is True
+    finally:
+        if hasattr(executor, "fn"):
+            with pytest.raises(LLMUnavailable):
+                _run_deferred(executor)
     failure = WebGame.mechanical_tail_failure(SimpleNamespace(db=db, state=state))
     assert failure["error"] == "酿制耗尽"
     assert failure["error_pack_path"]
@@ -213,8 +225,11 @@ def test_real_brew_failure_reaches_tail_failure_and_retry(game, monkeypatch):
     from tests.test_relation_brew_636 import _brew_fn_factory
     monkeypatch.setattr("ming_sim.agents.run_agent_text", lambda _agent, prompt, **_kw: _brew_fn_factory([])(prompt))
     retry_executor = _install_deferred(monkeypatch)
-    assert retry_failed_mechanical_tail(session)
-    _run_deferred(retry_executor)
+    try:
+        assert retry_failed_mechanical_tail(session)
+    finally:
+        if hasattr(retry_executor, "fn"):
+            _run_deferred(retry_executor)
     assert month_chain._load_chain(db, closed_turn)["mechanical_tail"]["status"] == "done"
     assert WebGame.mechanical_tail_failure(SimpleNamespace(db=db, state=state)) is None
 
@@ -398,20 +413,25 @@ def test_ending_summary_runs_in_mechanical_tail_after_advance(
     monkeypatch.setattr(db, "list_turn_reports", _reports)
     monkeypatch.setattr(db, "save_state", _save_state)
 
-    assert session.resolve_turn(allow_empty_decree=True).advanced is True
-    assert state.ended is True
-    assert month_chain._load_chain(db, closed_turn)["mechanical_tail"]["status"] == "pending"
-    assert db.get_ending_summary() is None
-    from types import SimpleNamespace
-    from web_app import WebGame
-    pending_payload = WebGame.ending_payload(SimpleNamespace(db=db, state=state))
-    assert pending_payload is not None
-    assert pending_payload["summary_pending"] is True
-    assert pending_payload["summary"] == ""
-    assert main_saves_under_gate[-1] is True
-    in_tail = True
-    _run_deferred(executor)
-    in_tail = False
+    try:
+        assert session.resolve_turn(allow_empty_decree=True).advanced is True
+        assert state.ended is True
+        assert month_chain._load_chain(db, closed_turn)["mechanical_tail"]["status"] == "pending"
+        assert db.get_ending_summary() is None
+        from types import SimpleNamespace
+        from web_app import WebGame
+        pending_payload = WebGame.ending_payload(SimpleNamespace(db=db, state=state))
+        assert pending_payload is not None
+        assert pending_payload["summary_pending"] is True
+        assert pending_payload["summary"] == ""
+        assert main_saves_under_gate[-1] is True
+    finally:
+        if hasattr(executor, "fn"):
+            in_tail = True
+            try:
+                _run_deferred(executor)
+            finally:
+                in_tail = False
     assert get_session_write_queue(session).wait_idle(timeout_s=5)
     assert seen_thread == [threading.main_thread()]
     assert tail_reads_under_gate
