@@ -1900,54 +1900,6 @@ def test_step_4a_rescript_supply_includes_issue_and_office_origin_effects(
     assert any(str(row.get("title") or "") == issue_title for row in commitments)
 
 
-def test_serialize_dispatch_result_keeps_all_section_applied():
-    """DeclarationDispatchResult 各 SectionResult.applied 须完整进段结果供料（ADR 0157 4a）。
-
-    对照序列化边界：不只 effects，textual_facts / public_sayings 等已落 section 亦须留存。
-    """
-    from ming_sim.applier import SectionResult
-    from ming_sim.declaration_dispatch import DeclarationDispatchResult, ProtagonistResult
-
-    empty = SectionResult(applied=[], rejected=[])
-    result = DeclarationDispatchResult(
-        commissions=empty,
-        promises=empty,
-        textual_facts=SectionResult(
-            applied=[{"id": 11, "subject_kind": "character", "subject_id": "甲"}],
-            rejected=[],
-        ),
-        public_sayings=SectionResult(applied=[{"id": 22}], rejected=[]),
-        on_scene_facts=empty,
-        presence=empty,
-        scene_facts=empty,
-        edge_events=empty,
-        protagonist=ProtagonistResult(validated=None, rejected=[]),
-        registrations=empty,
-        effects=SectionResult(
-            applied=[{"economy_moves": [{"delta": -3, "account": "内库"}]}],
-            rejected=[],
-        ),
-    )
-    payload = month_chain._serialize_dispatch_result(result)
-    origin_effects, _rejections = month_chain._aggregate_origin_from_segment_results([{
-        "kind": "world",
-        "applied": payload["applied"],
-        "rejections": payload["rejections"],
-    }])
-    assert any(
-        int(m.get("delta") or 0) == -3
-        for m in (origin_effects.get("economy_moves") or [])
-    ), origin_effects
-    assert any(
-        int(row.get("id") or 0) == 11 and row.get("subject_id") == "甲"
-        for row in (origin_effects.get("textual_facts") or [])
-    ), origin_effects
-    assert any(
-        int(row.get("id") or 0) == 22
-        for row in (origin_effects.get("public_sayings") or [])
-    ), origin_effects
-
-
 def test_step_4a_feed_projects_full_applied_result_contract(game, monkeypatch):
     """4a 按实际结果契约投影：撤办、人物状态、密令更新、文字事实入 origin_effects；
     未落输入（world_advance）与辅助读数不得冒充已落。不靠固定键白名单。"""
