@@ -698,4 +698,31 @@ describe("#1852 写成即推进：本面邸报阅读态，不整页 reload", () 
     expect(hookRef.current!.settlementGazetteReading?.report).toBe("十月邸报·已归档");
     cleanup();
   });
+
+  it("issueDecree advanced 后 loadState 失败：释放 overlay hold，响亮告警且走既有恢复", async () => {
+    const FAIL_MSG = "账本刷新失败（替身）";
+    const loadState = vi
+      .fn<() => Promise<GameState | null>>()
+      .mockRejectedValueOnce(new Error(FAIL_MSG))
+      .mockResolvedValueOnce(advancedMonthState);
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (url !== "/api/decree/issue/stream") throw new Error(`unexpected fetch: ${url}`);
+      return sseAdvancedResponse("十月邸报·流终");
+    }));
+    const { host, hookRef, cleanup } = mountHarness({ loadState, initial: preClickState });
+
+    await act(async () => {
+      await hookRef.current!.issueDecree();
+    });
+
+    // hold 若卡死，恢复后仍会压住 closed/密令/结局自动弹层
+    expect(hookRef.current!.suppressPostAdvanceOverlays).toBe(false);
+    expect(hookRef.current!.settlementGazetteReading).toBeNull();
+    expect(host.querySelector('[data-testid="error"]')?.textContent).toBe(FAIL_MSG);
+    expect(hookRef.current!.settlementHudError).toBe(FAIL_MSG);
+    expect(host.querySelector('[data-testid="busy"]')?.textContent).toBe("");
+    // openGazette 一次失败 + issueDecree catch 既有 best-effort 恢复
+    expect(loadState).toHaveBeenCalledTimes(2);
+    cleanup();
+  });
 });

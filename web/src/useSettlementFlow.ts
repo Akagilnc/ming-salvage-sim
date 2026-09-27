@@ -167,7 +167,14 @@ export function useSettlementFlow({
     resetLocalEdictState?.();
     // 盖玺时 activeModal 可能仍挂 edict（busy 仅藏台、未清槽）；成功过月须卸掉，免弹回盖住本面邸报。
     onMonthAdvanced?.();
-    const next = await loadState();
+    let next: GameState | null;
+    try {
+      next = await loadState();
+    } catch (err) {
+      // loadState 失败则 hold 不得卡死：调用方响亮告警 + 既有恢复后仍须能弹 closed/密令/结局。
+      setPostAdvanceOverlayHold(false);
+      throw err;
+    }
     const embedded = data.state as GameState | undefined;
     const fromPayload = typeof data.report === "string" ? data.report : "";
     const fromState = next?.previous_summary
