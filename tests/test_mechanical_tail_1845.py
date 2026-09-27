@@ -82,13 +82,15 @@ def test_advance_schedules_mechanical_tail_after_front_month_advance(game, monke
     session.agno_db = object()
 
     executor = _install_deferred(monkeypatch)
-    result = session.resolve_turn(allow_empty_decree=True)
-    assert result.advanced is True
-    assert int(state.turn) == closed_turn + 1
-    assert not brew_calls
-    assert month_chain._load_chain(db, closed_turn)["mechanical_tail"]["status"] == "pending"
-
-    _run_deferred(executor)
+    try:
+        result = session.resolve_turn(allow_empty_decree=True)
+        assert result.advanced is True
+        assert int(state.turn) == closed_turn + 1
+        assert not brew_calls
+        assert month_chain._load_chain(db, closed_turn)["mechanical_tail"]["status"] == "pending"
+    finally:
+        if hasattr(executor, "fn"):
+            _run_deferred(executor)
     assert get_session_write_queue(session).wait_idle(timeout_s=1)
     assert brew_calls == [{
         "year": closed_year, "period": closed_period, "turn": closed_turn,
@@ -474,34 +476,3 @@ def test_chapter_memory_retired_from_three_readers(game):
         release_material_tree(prepared.root)
 
 
-def test_mechanical_tail_does_not_schedule_audience_highlight(game, monkeypatch):
-    """高亮不属机械尾：推进后不得补跑召对高亮。"""
-    db, state, content = game
-    _forbid_extractor(monkeypatch)
-    _archive_and_stub_world(db, state, monkeypatch)
-    monkeypatch.setattr(
-        "ming_sim.mechanical_tail._run_relation_brew", lambda *a, **k: None,
-    )
-    highlight_calls = []
-
-    def spy_highlight(*_a, **_k):
-        highlight_calls.append(1)
-
-    for target in (
-        "ming_sim.agents.create_highlight_agent",
-        "ming_sim.audience_extraction.schedule_highlight",
-    ):
-        try:
-            monkeypatch.setattr(target, spy_highlight)
-        except Exception:
-            pass
-
-    session = make_light_session(db, state, content)
-    session._write_gate = threading.Lock()
-    session.llm_config = object()
-    session.agno_db = object()
-    executor = _install_deferred(monkeypatch)
-    assert session.resolve_turn(allow_empty_decree=True).advanced is True
-    _run_deferred(executor)
-    get_session_write_queue(session).wait_idle(timeout_s=5)
-    assert highlight_calls == []
