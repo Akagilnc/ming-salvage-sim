@@ -1764,12 +1764,16 @@ def test_step_4a_settles_due_secret_order(game, monkeypatch):
 def test_step_4a_rescript_supply_includes_issue_and_office_origin_effects(
     game, monkeypatch,
 ):
-    """批红问后落地的 issue／本回合任免经权威读口进入 4a 供料；上月任免不混入。"""
+    """批红问后落地的 issue／任免经真实声明写入，从段结果供料；拒收与上月表行不混入。"""
+    from tests.conftest import active_ming_character
+
     db, state, content = game
     turn = int(state.turn)
-    minister = db.conn.execute(
-        "SELECT name FROM characters WHERE status='active' AND power_id='ming' LIMIT 1"
-    ).fetchone()[0]
+    minister = active_ming_character(db, content)
+    old_office = db.conn.execute(
+        "SELECT office FROM characters WHERE name=?", (minister,),
+    ).fetchone()["office"]
+    new_office = "陕西总督" if old_office != "陕西总督" else "陕西巡抚"
     order_id = db.create_secret_order(
         state, minister, "边材考选", "考选边材并立核饷局", [],
         deadline_months=2,
@@ -1786,6 +1790,7 @@ def test_step_4a_rescript_supply_includes_issue_and_office_origin_effects(
         (turn - 1, order_id),
     )
     dossier_id = int(db.get_dossier_for_secret_order(order_id)["id"])
+    # 上月任免表行：逐表猜补时代会混入；段结果真源不得读到它。
     db.conn.execute(
         """
         INSERT INTO office_change_records
@@ -1794,15 +1799,6 @@ def test_step_4a_rescript_supply_includes_issue_and_office_origin_effects(
         VALUES (?, '旧职方司主事', '中央', 'prior-month', ?, '真除', ?)
         """,
         (minister, dossier_id, turn - 1),
-    )
-    db.conn.execute(
-        """
-        INSERT INTO office_change_records
-            (character_name, office_title, office_type, source, dossier_id,
-             appointment_tenure, turn)
-        VALUES (?, '兵部职方司主事', '中央', 'this-turn', ?, '真除', ?)
-        """,
-        (minister, dossier_id, turn),
     )
     db.conn.commit()
 
@@ -1840,6 +1836,12 @@ def test_step_4a_rescript_supply_includes_issue_and_office_origin_effects(
                 "title": issue_title,
                 "kind": "situation",
             }],
+            "人物变更": [{
+                "origin_ref": f"dossier:{dossier_id}",
+                "name": minister, "动作": "任命",
+                "office": new_office, "office_type": "地方",
+                "region_id": "shaanxi", "reason": "问后考选任免",
+            }],
         }}
 
     _forbid_extractor(monkeypatch)
@@ -1867,14 +1869,197 @@ def test_step_4a_rescript_supply_includes_issue_and_office_origin_effects(
     origin_effects = captured_feed.get("origin_effects") or {}
     issues = origin_effects.get("issues") or []
     assert any(
-        str(row.get("title") or "") == issue_title
-        and str(row.get("origin_ref") or "") == f"dossier:{dossier_id}"
-        and int(row.get("origin_turn") or 0) == turn
+        str(row.get("title") or "") == issue_title and not row.get("rejected")
         for row in issues
     )
-    office_rows = origin_effects.get("office_effects") or []
-    titles = {str(row.get("office_title") or "") for row in office_rows}
-    assert "兵部职方司主事" in titles
-    assert "旧职方司主事" not in titles
+    person_rows = origin_effects.get("applied_person_changes") or []
+    assert any(
+        str(row.get("name") or "") == minister
+        and str(row.get("new_office") or "") == new_office
+        and not row.get("rejected")
+        for row in person_rows
+    )
+    assert not any("旧职方司主事" in str(row) for row in person_rows)
+    assert db.conn.execute(
+        "SELECT office FROM characters WHERE name=?", (minister,),
+    ).fetchone()["office"] == new_office
     commitments = db.list_commitments_for_dossier(dossier_id)
     assert any(str(row.get("title") or "") == issue_title for row in commitments)
+    assert not hasattr(db, "list_this_turn_origin_effects")
+    segments = (month_chain._load_chain(db, turn).get("segment_applied_results") or [])
+    assert any(seg.get("kind") == "world_post" for seg in segments)
+
+
+def test_step_4a_feed_keeps_rejections_out_of_origin_effects(game, monkeypatch):
+    """问后续推：已落效果入 origin_effects；拒收另入 origin_rejections，不得冒充已落。"""
+    db, state, content = game
+    turn = int(state.turn)
+    minister = db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' AND power_id='ming' LIMIT 1"
+    ).fetchone()[0]
+    order_id = db.create_secret_order(
+        state, minister, "辽饷清核", "查清兵部饷银", [],
+        deadline_months=2,
+        covert_task={
+            "kind": "差务", "axes": ["实务事功"], "direction": 1,
+            "delivery": {
+                "unit": "万两", "target_units": 5.0, "effect_sign": -1,
+                "purpose": "其它", "category": "密令差务", "account": "内库",
+            },
+        },
+    )
+    db.conn.execute(
+        "UPDATE secret_orders SET turn_issued=? WHERE id=?",
+        (turn - 1, order_id),
+    )
+    dossier_id = int(db.get_dossier_for_secret_order(order_id)["id"])
+    db.conn.commit()
+
+    captured_feed = {}
+
+    def supply_run(db_, state_, llm_config, chain):
+        feed = month_chain.build_secret_orders_supply_feed(db_, state_, chain)
+        captured_feed.update(feed)
+        return {
+            "dossier_progress_reports": [{
+                "dossier_id": dossier_id,
+                "progress_band": "顺利",
+                "memorial_text": "关外饷银如数盘点。",
+            }],
+            "covert_exec_selections": [{
+                "order_id": order_id, "fidelity": "忠实", "note": "实办",
+            }],
+        }
+
+    def translate(*_a, **kwargs):
+        if "问后核银" not in str(kwargs.get("segment") or ""):
+            return {"effects": {}}
+        return {"effects": {
+            "economy_moves": [{
+                "account": "内库", "delta": -5, "category": "密令差务",
+                "purpose": "其它", "reason": "问后实办内库出银",
+                "origin_ref": f"dossier:{dossier_id}",
+            }, {
+                "account": "内库", "delta": -1, "category": "补饷坏目标",
+                "purpose": "补饷", "reason": "查无此军",
+                "target_kind": "army", "target_id": "no-such-army-1847-feed",
+                "origin_ref": f"dossier:{dossier_id}",
+            }],
+        }}
+
+    _forbid_extractor(monkeypatch)
+    monkeypatch.setattr(
+        month_chain, "run_world_segment_text", lambda *a, **k: _WORLD_WITH_QUESTION,
+    )
+    monkeypatch.setattr(
+        month_chain, "_run_world_continuation_text", lambda *a, **k: "问后核银。",
+    )
+    monkeypatch.setattr(month_translate, "translate_month_segment", translate)
+    monkeypatch.setattr(month_chain, "run_secret_orders_supply", supply_run)
+
+    session = make_light_session(db, state, content)
+    session.llm_config = object()
+    session._write_gate = threading.Lock()
+
+    paused = session.resolve_turn(allow_empty_decree=True)
+    assert paused.awaiting is True
+    session.submit_hitl_choices(
+        [_choice(session.pending_decisions()[0])], write_gate=session._write_gate,
+    )
+    result = session.resolve_turn(allow_empty_decree=True)
+    assert result.stage == "gazette"
+
+    origin_effects = captured_feed.get("origin_effects") or {}
+    eco_moves = origin_effects.get("economy_moves") or []
+    assert any(
+        m.get("origin_ref") == f"dossier:{dossier_id}" and int(m.get("delta") or 0) == -5
+        for m in eco_moves
+    )
+    assert not any("no-such-army-1847-feed" in str(m) for m in eco_moves)
+    rejections = captured_feed.get("origin_rejections") or []
+    assert any(
+        "no-such-army-1847-feed" in str(row.get("item") or row)
+        for row in rejections
+    )
+    assert db.sum_dossier_actual_progress_units(dossier_id) == 5.0
+
+
+def test_segment_applied_results_share_commit_boundary_with_effects(game, monkeypatch):
+    """效果应用与 segment_applied_results 同提交边界：alongside 失败则效果与段结果皆不半落。"""
+    from types import SimpleNamespace
+
+    from ming_sim.declaration_dispatch import stage_declaration
+    from ming_sim.decree_forecast import pending_action_decree_ref
+    from ming_sim.month_chain import _settle_edicts
+
+    db, state, content = game
+    turn = int(state.turn)
+    minister = db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' AND power_id='ming' LIMIT 1"
+    ).fetchone()[0]
+    treasury_before = int(state.metrics["国库"])
+    pending_id = db.stage_pending_action(
+        state.turn, kind="directive", action="拟旨", minister_name=minister,
+        payload={
+            "dossier_action_type": "policy", "target_kind": "issue",
+            "target_id": "segment-result-atomic", "actor": minister, "mode": "ordinary",
+            "text": "段结果原子探针",
+        },
+    )
+    dossier_id = db.create_decree_dossier(
+        state, action_type="policy", decree_text="段结果原子探针",
+        target_kind="issue", target_id="segment-result-atomic",
+        pending_action_id=pending_id,
+        payload={"text": "段结果原子探针"},
+    )
+    db.conn.execute(
+        "UPDATE decree_dossiers SET status='promulgated', promulgation_decision='promulgated' "
+        "WHERE id=?",
+        (dossier_id,),
+    )
+    ref = pending_action_decree_ref(pending_id, 1)
+    stage_declaration(
+        db, decree_ref=ref, turn=turn,
+        declaration={"effects": {"economy_moves": [{
+            "origin_ref": f"dossier:{dossier_id}",
+            "account": "国库", "delta": -17, "category": "段结果探针",
+            "reason": "atomic segment result probe",
+        }]}},
+        verdict={"decision": "promulgated"},
+        visible_refs={"issues": [], "affairs": [], "dossiers": [dossier_id]},
+    )
+    db.conn.commit()
+
+    sess = SimpleNamespace(
+        db=db, state=state, llm_config=None, agno_db=None, content=content,
+    )
+    chain: dict = {}
+    real_save = month_chain._save_chain
+
+    def boom_save(db_, turn_, chain_, **kwargs):
+        segments = chain_.get("segment_applied_results") or []
+        if any(seg.get("kind") == "decree_pre" for seg in segments):
+            raise RuntimeError("injected segment result save failure")
+        return real_save(db_, turn_, chain_, **kwargs)
+
+    monkeypatch.setattr(month_chain, "_save_chain", boom_save)
+    with pytest.raises(RuntimeError, match="injected segment result save failure"):
+        _settle_edicts(sess, registry=None, chain=chain)
+
+    assert not db.staged_declarations.is_settled(ref)
+    assert int(state.metrics["国库"]) == treasury_before
+    reloaded = month_chain._load_chain(db, turn)
+    assert not (reloaded.get("segment_applied_results") or [])
+
+    monkeypatch.setattr(month_chain, "_save_chain", real_save)
+    _settle_edicts(sess, registry=None, chain={})
+    assert db.staged_declarations.is_settled(ref)
+    assert int(state.metrics["国库"]) == treasury_before - 17
+    segments = month_chain._load_chain(db, turn).get("segment_applied_results") or []
+    decree_pre = [s for s in segments if s.get("kind") == "decree_pre"]
+    assert len(decree_pre) == 1
+    applied = decree_pre[0].get("applied") or []
+    assert any(
+        any(int(m.get("delta") or 0) == -17 for m in (rep.get("economy_moves") or []))
+        for rep in applied if isinstance(rep, dict)
+    )

@@ -359,6 +359,7 @@ def continue_world_after_answers(
             chain["declaration_outcome"] = candidate
             outcome = candidate
         _collect_disclosures_from_result(chain, result)
+        _record_segment_applied_result(chain, kind="world_post", result=result)
         chain["world_questions"] = []
         chain["world_continued"] = True
         _save_chain(db, turn, chain, source=source)
@@ -413,8 +414,10 @@ def continue_decree_after_answers(
         candidate = _ending_from_dispatch_result(result)
         if candidate is not None and chain is not None:
             chain["declaration_outcome"] = candidate
-            _save_chain(db, int(state.turn), chain, source=source)
         _collect_disclosures_from_result(chain, result)
+        _record_segment_applied_result(
+            chain, kind="decree_post", result=result, decree_ref=decree_ref,
+        )
         if chain is not None:
             _save_chain(db, int(state.turn), chain, source=source)
         db.staged_declarations.clear_questions(decree_ref)
@@ -832,8 +835,8 @@ def _settle_edicts(
         current = db.get_decree_dossier(int(dossier["id"])) or dossier
         if str(current.get("promulgation_decision") or "") == "promulgated":
             def persist_result(_ref: str, result: Any) -> None:
-                # 披露暂缓与旨意落账同事务：alongside 在 settle 的 atomic 内，
-                # 须把 pending_disclosures 一并写入月链，崩溃后才能由 4a 接续发布。
+                # 披露暂缓、段结果与旨意落账同事务：alongside 在 settle 的 atomic 内，
+                # 须把 pending_disclosures / segment_applied_results 一并写入月链。
                 nonlocal outcome
                 candidate = _ending_from_dispatch_result(result)
                 if candidate is not None:
@@ -841,6 +844,9 @@ def _settle_edicts(
                     if on_outcome is not None:
                         on_outcome(candidate)
                 _collect_disclosures_from_result(chain, result)
+                _record_segment_applied_result(
+                    chain, kind="decree_pre", result=result, decree_ref=_ref,
+                )
                 _save_chain(
                     db, int(state.turn), chain, source=Provenance.player_decree,
                 )
@@ -860,6 +866,162 @@ def _ending_from_dispatch_result(result: Any) -> Optional[Dict[str, object]]:
         if isinstance(candidate, dict) and candidate.get("status") != "ongoing":
             return candidate
     return None
+
+
+_SEGMENT_APPLIED_LIST_KEYS = (
+    "economy_moves",
+    "fiscal_changes",
+    "fiscal_creates",
+    "fiscal_removes",
+    "authority_changes",
+    "applied_person_changes",
+    "appointments",
+    "region_changes",
+    "army_changes",
+    "created_armies",
+    "power_changes",
+    "person_changes",
+    "dossier_executions",
+)
+
+
+def _json_safe(value: Any) -> Any:
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    if isinstance(value, Provenance):
+        return value.value
+    if isinstance(value, dict):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(v) for v in value]
+    if hasattr(value, "value") and isinstance(getattr(value, "value"), str):
+        return value.value
+    return str(value)
+
+
+def _serialize_dispatch_result(result: Any) -> Dict[str, Any]:
+    """DeclarationDispatchResult → 可落盘的 applied 报告与拒收（ADR 0157 步骤 4／4a）。"""
+    if result is None:
+        return {"applied": [], "rejections": []}
+    applied: List[Any] = []
+    rejections: List[Dict[str, Any]] = []
+    effects = getattr(result, "effects", None)
+    for report in getattr(effects, "applied", None) or []:
+        if isinstance(report, dict):
+            applied.append(_json_safe(report))
+    from ming_sim.declaration_dispatch import _SECTION_FIELDS
+    for section_name in _SECTION_FIELDS:
+        section = getattr(result, section_name, None)
+        if section is None:
+            continue
+        for rejected_item in getattr(section, "rejected", None) or []:
+            item = getattr(rejected_item, "item", None)
+            source = getattr(rejected_item, "source", None)
+            rejections.append({
+                "section": str(section_name),
+                "item": _json_safe(item if item is not None else {}),
+                "reason": str(getattr(rejected_item, "reason", "") or ""),
+                "category": str(getattr(rejected_item, "category", "") or ""),
+                "source": (
+                    source.value if isinstance(source, Provenance)
+                    else str(source or "")
+                ),
+            })
+    return {"applied": applied, "rejections": rejections}
+
+
+def _record_segment_applied_result(
+    chain: Optional[Dict[str, Any]],
+    *,
+    kind: str,
+    result: Any,
+    decree_ref: Optional[str] = None,
+) -> None:
+    """把本段实际应用结果与拒收写入月链（与效果同提交边界）。"""
+    if chain is None or result is None:
+        return
+    pending = chain.setdefault("segment_applied_results", [])
+    key_ref = str(decree_ref or "")
+    for existing in pending:
+        if (
+            str(existing.get("kind") or "") == kind
+            and str(existing.get("decree_ref") or "") == key_ref
+        ):
+            return
+    payload = _serialize_dispatch_result(result)
+    pending.append({
+        "kind": kind,
+        "decree_ref": key_ref or None,
+        "applied": payload["applied"],
+        "rejections": payload["rejections"],
+    })
+
+
+def _aggregate_origin_from_segment_results(
+    segments: List[Dict[str, Any]],
+) -> tuple[Dict[str, Any], List[Dict[str, Any]]]:
+    """从持久化段结果聚合 4a 供料：已落效果与拒收分栏，拒收不冒充已落。"""
+    effects: Dict[str, List[Dict[str, Any]]] = {
+        key: [] for key in _SEGMENT_APPLIED_LIST_KEYS
+    }
+    effects["issues"] = []
+    rejections: List[Dict[str, Any]] = []
+
+    def _append_rejection(
+        *, section: str, item: Any, reason: str = "", category: str = "", source: str = "",
+    ) -> None:
+        rejections.append({
+            "section": section,
+            "item": _json_safe(item if item is not None else {}),
+            "reason": str(reason or ""),
+            "category": str(category or ""),
+            "source": str(source or ""),
+        })
+
+    for seg in segments:
+        if not isinstance(seg, dict):
+            continue
+        for report in seg.get("applied") or []:
+            if not isinstance(report, dict):
+                continue
+            for key in _SEGMENT_APPLIED_LIST_KEYS:
+                for item in report.get(key) or []:
+                    if not isinstance(item, dict):
+                        continue
+                    if item.get("rejected"):
+                        _append_rejection(
+                            section=key,
+                            item=item.get("item") if isinstance(item.get("item"), dict) else item,
+                            reason=str(item.get("reason") or ""),
+                            category=str(item.get("category") or ""),
+                            source="inline",
+                        )
+                        continue
+                    effects[key].append(dict(item))
+            issue_summary = report.get("issue_summary")
+            if isinstance(issue_summary, dict):
+                for item in issue_summary.get("new_issues") or []:
+                    if isinstance(item, dict) and not item.get("rejected"):
+                        effects["issues"].append(dict(item))
+            for key, value in report.items():
+                if not str(key).endswith("_rejections") or not isinstance(value, list):
+                    continue
+                section = str(key)[: -len("_rejections")]
+                for item in value:
+                    if not isinstance(item, dict):
+                        continue
+                    _append_rejection(
+                        section=section,
+                        item=item.get("item") if isinstance(item.get("item"), dict) else item,
+                        reason=str(item.get("reason") or ""),
+                        category=str(item.get("category") or ""),
+                        source="inline",
+                    )
+        for rejected in seg.get("rejections") or []:
+            if isinstance(rejected, dict):
+                rejections.append(dict(rejected))
+    origin_effects = {key: rows for key, rows in effects.items() if rows}
+    return origin_effects, rejections
 
 
 def _collect_disclosures_from_result(chain: Optional[Dict[str, Any]], result: Any) -> None:
@@ -913,6 +1075,7 @@ def _run_world_segment(
         if outcome is not None:
             persisted["declaration_outcome"] = outcome
         _collect_disclosures_from_result(persisted, result)
+        _record_segment_applied_result(persisted, kind="world", result=result)
         persisted["world_committed"] = True
         persisted.pop("translate_exhaust_stops", None)
         _save_chain(db, turn, persisted, source=source)
@@ -986,25 +1149,12 @@ def build_secret_orders_supply_feed(
         dict(o) for o in db.list_secret_orders(status="active")
         if not _is_issuance_turn(o, turn)
     ]
-    dossier_ids: List[int] = []
-    seen: set[int] = set()
-    for item in eligible:
-        did = int(item.get("dossier_id") or 0)
-        if did > 0 and did not in seen:
-            seen.add(did)
-            dossier_ids.append(did)
-    for order in active_orders:
-        dossier = (
-            db.get_dossier_for_secret_order(int(order["id"]))
-            if hasattr(db, "get_dossier_for_secret_order") else None
-        )
-        if dossier is None:
-            continue
-        did = int(dossier.get("id") or 0)
-        if did > 0 and did not in seen:
-            seen.add(did)
-            dossier_ids.append(did)
-    origin_effects = db.list_this_turn_origin_effects(turn, dossier_ids)
+    # 4a 供料真源 = 步骤 2–4 各段持久化的实际应用结果及拒收；不逐业务表猜补。
+    segments = [
+        dict(seg) for seg in (chain.get("segment_applied_results") or [])
+        if isinstance(seg, dict)
+    ]
+    origin_effects, origin_rejections = _aggregate_origin_from_segment_results(segments)
     from ming_sim.materials import _world_board_text
     return {
         "instruction": "为本月所有在办密令产出密奏和执行态声明。",
@@ -1012,6 +1162,7 @@ def build_secret_orders_supply_feed(
         "eligible_dossiers": eligible,
         "active_secret_orders": active_orders,
         "origin_effects": origin_effects,
+        "origin_rejections": origin_rejections,
         "board": _world_board_text(db, state),
     }
 
