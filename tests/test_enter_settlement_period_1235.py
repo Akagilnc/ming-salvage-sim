@@ -496,6 +496,8 @@ def test_concurrent_advance_noncreator_must_not_clear_owner_snapshot(web_game, m
         # B 幂等 no-op 后 409：non-blocking exit 撞锁 skip，不得代清 A 的快照
         assert game.db.get_month_open_snapshot(turn) == before
         assert game.state_payload()["turn"]["settlement_display"] is True
+        # #1855：点即入核账期 → 真 WebGame 状态口投影 settlement
+        assert game.state_payload()["reopen_landing"] == "settlement"
         # accept 幂等：B 再调仍 False（非创建）
         assert web_app._accept_settlement_period(game) is False
     finally:
@@ -755,6 +757,8 @@ def test_noncreator_exit_must_not_clear_owner_during_gatefree(web_game, monkeypa
     assert b_result.get("status") == 409, b_result
     assert game.db.get_month_open_snapshot(turn) is None
     assert game.state_payload()["turn"]["settlement_display"] is False
+    # #1855：核账脸退出后落本月盘面
+    assert game.state_payload()["reopen_landing"] == "month"
     assert web_app._settlement_entry_inflight(game) == 0
     assert game.state.turn_phase not in (
         TurnPhase.SETTLING.value, TurnPhase.AWAITING_DECISION.value,

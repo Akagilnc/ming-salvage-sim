@@ -217,3 +217,5 @@ def test_ready_recovery_issue_stream_waits_for_gazette_then_advances(
     assert int(game.state.period) == expected_period
     assert game.state.turn_phase != TurnPhase.SETTLING.value
     assert game.state_payload().get("settlement_recovery") is None
+    # #1855：邸报写成并经真 HTTP 推进后落 month（复用本案，不另造 INSERT/伪全链）
+    assert game.state_payload()["reopen_landing"] == "month"
