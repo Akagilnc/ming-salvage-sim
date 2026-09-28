@@ -279,7 +279,6 @@ def _retry_runtime(db, state, minister, *, session=None):
     # WebGame.db/state 均为只读 property（读 session.db / session.state）——经 session 供给。
     rt.session = session if session is not None else _RetrySession(db, state, minister)
     rt.chat_history = {minister: []}
-    rt._write_gate = __import__("threading").Lock()
     rt._runtime_write_gate = lambda: rt._write_gate
     rt.directive_rows = lambda: []
     rt.directive_payload = lambda row: row

@@ -644,7 +644,9 @@ def test_nonstream_web_chat_surfaces_ambiguous():
     rt = object.__new__(web_app.WebGame)
     rt.session = _Sess()
     rt.chat_history = {name: []}
-    rt._runtime_write_gate = lambda: threading.Lock()
+    from ming_sim.session_write_queue import get_session_write_queue
+    rt._write_gate = get_session_write_queue(rt).write_gate
+    rt._runtime_write_gate = lambda: rt._write_gate
     rt._audience_turn_in_flight = lambda n: False
     rt.chat_projection = lambda n: []
     rt.suggestions_for = lambda c: []
@@ -710,7 +712,9 @@ def test_nonstream_web_chat_no_ambiguous_key_is_none():
     rt = object.__new__(web_app.WebGame)
     rt.session = _Sess()
     rt.chat_history = {name: []}
-    rt._runtime_write_gate = lambda: threading.Lock()
+    from ming_sim.session_write_queue import get_session_write_queue
+    rt._write_gate = get_session_write_queue(rt).write_gate
+    rt._runtime_write_gate = lambda: rt._write_gate
     rt._audience_turn_in_flight = lambda n: False
     rt.chat_projection = lambda n: []
     rt.suggestions_for = lambda c: []
