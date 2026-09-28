@@ -298,7 +298,23 @@ def test_llm_free_回流_rejected(game):
     assert _pop(db, "流民", "shaanxi") == DISPLACED_SHAANXI
 
 
-def test_non_recovery_grant_no_回流(game):
+def _advance_canned_month(db, state, content, monkeypatch):
+    """Only external LLM calls are canned; settlement and advancement remain real."""
+    canned_full_settlement(monkeypatch, skip_fixed_flows=True)
+    session = make_light_session(db, state, content)
+    waiting = session.advance_without_decree()
+    assert waiting.stage == "gazette"
+    turn = state.turn
+    db.conn.execute(
+        "INSERT INTO turn_reports (turn, year, period, report) VALUES (?, ?, ?, ?)",
+        (turn, state.year, state.period, "邸报已成"),
+    )
+    db.conn.commit()
+    assert session.advance_without_decree().advanced is True
+
+
+@pytest.mark.usefixtures("_offline_scene_beat_generator")
+def test_non_recovery_grant_no_回流(game, monkeypatch):
     db, state, content = game
     state.metrics["内库"] = max(int(state.metrics.get("内库") or 0), 80)
     dossier_id = db.create_decree_dossier(
@@ -313,11 +329,12 @@ def test_non_recovery_grant_no_回流(game):
     assert db.get_decree_dossier(dossier_id)["execution_outcome"] == "fulfilled"
     assert db.list_economy_moves_for_dossier(dossier_id)
     before = _pop(db, "流民", "shaanxi")
-    assert not _reflux(apply_score_extraction(db, state, {}, content, None)["population_transfers"])
+    _advance_canned_month(db, state, content, monkeypatch)
     assert _pop(db, "流民", "shaanxi") == before
 
 
-def test_recovery_without_paid_evidence_produces_nothing(game):
+@pytest.mark.usefixtures("_offline_scene_beat_generator")
+def test_recovery_without_paid_evidence_produces_nothing(game, monkeypatch):
     db, state, content = game
     dossier_id = _recovery_grant(db, state, amount=30)
     assert db.list_economy_moves_for_dossier(dossier_id)
@@ -329,7 +346,7 @@ def test_recovery_without_paid_evidence_produces_nothing(game):
     db.conn.commit()
     assert db.list_economy_moves_for_dossier(dossier_id) == []
     before = _pop(db, "流民", "shaanxi")
-    assert not _reflux(apply_score_extraction(db, state, {}, content, None)["population_transfers"])
+    _advance_canned_month(db, state, content, monkeypatch)
     assert _pop(db, "流民", "shaanxi") == before
 
 
@@ -645,7 +662,8 @@ def test_month_settle_carries_disaster_rows_to_judge(game, monkeypatch):
 
 
 
-def test_legacy_population_unit_skips_absorption_and_recovery(game):
+@pytest.mark.usefixtures("_offline_scene_beat_generator")
+def test_legacy_population_unit_skips_absorption_and_recovery(game, monkeypatch):
     db, state, content = game
     db.conn.execute("DELETE FROM save_meta WHERE key='population_unit'")
     db.conn.commit()
@@ -661,6 +679,8 @@ def test_legacy_population_unit_skips_absorption_and_recovery(game):
     assert applied["bandit_absorptions"] == [] and applied["bandit_absorptions_rejections"]
 
     assert db.get_decree_dossier(_recovery_grant(db, state, amount=10))["execution_outcome"] == "fulfilled"
-    assert not _reflux(apply_score_extraction(db, state, {}, content, None)["population_transfers"])
+    before = _pop(db, "流民", "shaanxi")
+    _advance_canned_month(db, state, content, monkeypatch)
+    assert _pop(db, "流民", "shaanxi") == before
 
 
