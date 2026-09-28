@@ -52,7 +52,7 @@ def prepare_then_settle(db, state, content, raw_delta, **kwargs):
     from tests.conftest import with_monthly_reports
     from tests.settlement_seam_helpers import settle_effects
 
-    pre_settle(state, db, content, registry=kwargs.get("registry"))
+    pre_settle(state, db, content=content, registry=kwargs.get("registry"))
     return settle_effects(
         state, db, with_monthly_reports(db, raw_delta),
         before_turn=int(state.turn), content=content, **kwargs,
