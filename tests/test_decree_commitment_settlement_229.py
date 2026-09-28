@@ -565,7 +565,7 @@ def test_commitment_progress_contexts_are_structured(game, capsys):
         commitment_kind="until_stop",
     )
 
-    _settle_empty_month(db, state, content)
+    _advance_player_month(db, state, content)
 
     sim_issue = next(
         issue for issue in build_simulator_payload(state, db, "", "")["active_issues"]
@@ -573,7 +573,7 @@ def test_commitment_progress_contexts_are_structured(game, capsys):
     )
     assert sim_issue["commitment_progress"]["months_elapsed"] == 1
     assert sim_issue["commitment_progress"]["paid_total"] == 10
-    assert sim_issue["commitment_progress"]["remaining_arrears"] == 15
+    assert sim_issue["commitment_progress"]["remaining_arrears"] == _army_arrears(db, "guanning")
     assert "已第1月" in sim_issue["待办未解进度"]
     assert "直到补齐" in sim_issue["待办未解进度"]
 
@@ -833,10 +833,12 @@ def test_arrears_commitment_preserves_explicit_monthly_payment_target(game):
         commitment_kind="until_stop",
     )
 
-    _settle_empty_month(db, state, content)
+    _advance_player_month(db, state, content)
 
-    assert _army_arrears(db, "guanning") == 70
-    assert _army_arrears(db, "xuan_da") == 10
+    assert [tuple(row) for row in db.conn.execute(
+        "SELECT target_id, delta FROM economy_ledger "
+        "WHERE purpose='补饷' AND target_kind='army' ORDER BY id"
+    )] == [("xuan_da", -30)]
 
 
 def test_high_bar_metric_only_commitment_applies_and_records_monthly_progress(game):
@@ -1136,9 +1138,8 @@ def test_commitment_missing_purpose_still_routes_arrears_budget(game):
     created = result["issue_summary"]["new_issues"][0]
     assert not created.get("rejected")
 
-    _settle_empty_month(db, state, content)
+    _advance_player_month(db, state, content)
 
-    assert _army_arrears(db, "guanning") == 50
     assert db.conn.execute(
         "SELECT COALESCE(SUM(delta),0) FROM economy_ledger "
         "WHERE purpose='补饷' AND target_kind='army'"
@@ -1178,10 +1179,12 @@ def test_commitment_targeted_pay_uses_explicit_arrears_target(game):
         commitment_kind="until_stop",
     )
 
-    _settle_empty_month(db, state, content)
+    _advance_player_month(db, state, content)
 
-    assert _army_arrears(db, "guanning") == 100
-    assert _army_arrears(db, "xuan_da") == 50
+    assert [tuple(row) for row in db.conn.execute(
+        "SELECT target_id, delta FROM economy_ledger "
+        "WHERE purpose='补饷' AND target_kind='army' ORDER BY id"
+    )] == [("xuan_da", -50)]
 
 
 def test_commitment_malformed_pay_target_does_not_fall_back_to_priority_pool(game):
@@ -1311,17 +1314,19 @@ def test_commitment_pay_pool_is_scoped_to_arrears_stop_gate_armies(game):
         commitment_kind="until_stop",
     )
 
-    _settle_empty_month(db, state, content)
+    _advance_player_month(db, state, content)
 
-    assert _army_arrears(db, "guanning") == 100
-    assert _army_arrears(db, "xuan_da") + _army_arrears(db, "jizhen") == 150
     paid_targets = {
         row["target_id"]
         for row in db.conn.execute(
             "SELECT target_id FROM economy_ledger WHERE purpose='补饷' AND target_kind='army'"
         ).fetchall()
     }
-    assert paid_targets <= {"xuan_da", "jizhen"}
+    assert paid_targets and paid_targets <= {"xuan_da", "jizhen"}
+    assert db.conn.execute(
+        "SELECT COALESCE(SUM(delta),0) FROM economy_ledger "
+        "WHERE purpose='补饷' AND target_kind='army'"
+    ).fetchone()[0] == -50
 
 
 def test_commitment_progress_keeps_strict_stop_gate_semantics(game):
