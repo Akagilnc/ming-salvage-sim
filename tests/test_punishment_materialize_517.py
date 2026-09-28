@@ -27,7 +27,6 @@ from ming_sim.action_materialize import MaterializeCtx, run_materialize_pipeline
 from ming_sim.decree import reload_state_from_db
 from ming_sim.models import CourtContext
 from ming_sim.session import GameSession
-from ming_sim.tools import build_minister_tools
 from tests.dossier_test_helpers import rejected_verdict as _rejected_verdict
 
 
@@ -957,18 +956,6 @@ def test_api_tool_args_deliver_punishment_fields_through_chat(game):
     assert payload["target_id"] == target.name
     assert int(payload["amount"]) == 120
     assert payload["mode"] == "midzhi"
-
-
-def test_propose_directive_exposes_optional_transaction_category(game):
-    db, state, content = game
-    character = _active_ming(db, content)
-    context = CourtContext(state=state, db=db, previous_summary="")
-    tool = next(
-        item for item in build_minister_tools(character, context)
-        if item.__name__ == "propose_directive"
-    )
-    parameter = inspect.signature(tool).parameters["transaction_category"]
-    assert parameter.default == ""
 
 
 def test_api_tool_invalid_punishment_category_fails_without_side_effects(game):

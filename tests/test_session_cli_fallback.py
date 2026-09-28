@@ -1449,103 +1449,6 @@ def test_tool_staged_action_is_not_confirmed_in_same_chat_turn(game):
     assert len(db.list_pending_actions(state.turn)) == 1
 
 
-def test_non_streaming_appointment_tool_stages_pending_action(game):
-    """session.chat 的 propose_appointment 工具路也只暂存任免候选，不绕过确认闸门直写人物表。"""
-    db, state, content = game
-    minister = "毕自严"
-    appointee = "工具候选乙"
-    payload = json.dumps({
-        "name": appointee,
-        "office": "户部尚书",
-        "action": "任命",
-        "faction": "阉党",
-        "reason": "吏部举荐",
-        "mode": "midzhi",
-    }, ensure_ascii=False)
-
-    class Agent:
-        def run(self, _message):
-            return SimpleNamespace(
-                content="臣遵旨，请陛下定夺。",
-                tools=[SimpleNamespace(tool_name="propose_appointment", result=f"__pending_appointment__{payload}")],
-            )
-
-    class Registry:
-        def get(self, _character, **_kw):
-            return Agent()
-
-
-        def register(self, _character):
-            return None
-
-        def refresh(self, _character):
-            return None
-
-    sess = GameSession.__new__(GameSession)
-    sess.db = db
-    sess.state = state
-    sess.content = content
-    sess.registry = Registry()
-    sess.llm_config = SimpleNamespace(channel="api")
-    sess.temporary_characters = set()
-    sess._audience_prompt_for_message = lambda message, *_a, **_kw: message
-    sess._start_cli_action_intent = lambda *_args, **_kwargs: None
-    sess._finish_cli_action_intent = lambda *_args, **_kwargs: None
-
-    def forbidden_direct_apply(*_args, **_kwargs):
-        raise AssertionError("appointment tool results must not apply before confirmation")
-
-    sess._apply_appointment = forbidden_direct_apply
-
-    result = GameSession.chat(sess, minister, "中旨直发，拟以工具候选乙为户部尚书。")
-
-    assert result.pending_action_id
-    pending = db.list_pending_actions(state.turn)
-    assert len(pending) == 1
-    assert pending[0]["kind"] == "office"
-    assert pending[0]["action"] == "任命"
-    pending_payload = json.loads(pending[0]["payload_json"])
-    assert pending_payload["name"] == appointee
-    assert pending_payload["faction"] == "阉党"
-    assert pending_payload["reason"] == "吏部举荐"
-    assert pending_payload["mode"] == "midzhi"
-    assert db.conn.execute(
-        "SELECT name FROM characters WHERE name=?", (appointee,)
-    ).fetchone() is None
-
-    db.commit_pending_actions(state, content=content, registry=sess.registry)
-    appointment_dossiers = [
-        row for row in db.list_decree_dossiers(status="proposed")
-        if row["action_type"] == "appointment"
-    ]
-    assert len(appointment_dossiers) == 1
-    assert appointment_dossiers[0]["mode"] == "midzhi"
-    promulgate_proposed_appointments(db, state, content)
-
-    assert content.characters[appointee].faction == "阉党"
-
-
-def _propose_appointment_tool(character, db, state):
-    """取出 propose_appointment 真工具（吏部才挂；测试临时切换 office_type）。"""
-    from ming_sim.models import CourtContext
-    from ming_sim.tools import build_minister_tools
-
-    original = character.office_type
-    character.office_type = "吏部"
-    try:
-        tools = {
-            fn.__name__: fn
-            for fn in build_minister_tools(character, CourtContext(state=state, db=db))
-        }
-        return tools["propose_appointment"]
-    finally:
-        character.office_type = original
-
-
-@pytest.mark.parametrize(
-    ("tool_mode", "expected"),
-    [("midzhi", "midzhi"), (None, "ordinary"), ("ordinary", "ordinary")],
-)
 def test_propose_appointment_tool_mode_contract(game, tool_mode, expected):
     """#1731 类B：propose_appointment 省略 mode=沉默→ordinary；显式 midzhi 保留。"""
     db, state, content = game
@@ -2815,8 +2718,6 @@ def test_begin_turn_syncs_offices_with_runtime_llm_config(monkeypatch):
     fake._adopt_registry = types.MethodType(GameSession._adopt_registry, fake)
     monkeypatch.setattr(session_mod, "_sync_offices_from_db_impl",
                         lambda content, db, llm_config=None: seen.append(llm_config))
-    monkeypatch.setattr(session_mod, "MinisterRegistry",
-                        lambda llm_config, agno_db, context: SimpleNamespace())
 
     GameSession.begin_turn(fake)
 
@@ -2842,8 +2743,6 @@ def test_chat_rollback_refresh_syncs_offices_with_runtime_llm_config(monkeypatch
     fake._adopt_registry = types.MethodType(GameSession._adopt_registry, fake)
     monkeypatch.setattr(session_mod, "_sync_offices_from_db_impl",
                         lambda content, db, llm_config=None: seen.append(llm_config))
-    monkeypatch.setattr(session_mod, "MinisterRegistry",
-                        lambda llm_config, agno_db, context: SimpleNamespace())
 
     GameSession.refresh_runtime_after_chat_rollback(fake)
 

@@ -13,7 +13,7 @@ from pathlib import Path
 
 from ming_sim.materials import list_materials, read_material
 from ming_sim.models import CourtContext, LLMConfig
-from ming_sim.registry import MinisterRegistry, bind_content as _bind_registry
+from ming_sim.registry import create_scene_agent
 from ming_sim.skills import bind_content as _bind_skills
 from ming_sim.llm_model import create_agno_db
 from tests.conftest import active_ming_character
@@ -29,7 +29,6 @@ def _registry(game, monkeypatch):
     os.close(fd)
     agno_db = create_agno_db(apath)
     ctx = CourtContext(state=state, db=db, previous_summary="")
-    reg = MinisterRegistry(LLMConfig(api_key="cli", base_url="", model="x"), agno_db, ctx)
     return reg, apath
 
 

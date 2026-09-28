@@ -31,7 +31,7 @@ import ming_sim.cli_backend as cb
 import ming_sim.issues as issues
 from ming_sim.db import GameDB
 from ming_sim.decree import pre_settle, reload_state_from_db, settle_with_delta
-from ming_sim.registry import MinisterRegistry
+from ming_sim.registry import create_scene_agent
 from ming_sim.session import GameSession, TurnPhase
 from tests.dossier_test_helpers import LIAO_PAY_COVERT_TASK, create_test_secret_order, promulgate_proposed_appointments
 from tests.conftest import covering_monthly_extract
@@ -2383,7 +2383,6 @@ def test_new_consort_registers_after_outer_commit(game, monkeypatch):
             def refresh(self, person_name):
                 self.refreshed.append(person_name)
 
-            project_outcome = MinisterRegistry.project_outcome
 
         reg = _Reg()
 

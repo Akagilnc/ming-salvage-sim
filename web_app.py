@@ -1971,10 +1971,17 @@ class WebGame:
         ]
 
     def _minister_agno_session_id(self, minister_name: str) -> str:
-        registry = self.session.registry
-        if registry is None:
-            return f"minister-{minister_name}-turn-{self.state.turn}"
-        return registry.session_ids.get(minister_name, f"minister-{minister_name}-turn-{self.state.turn}")
+        # #1837 reopen / N3：殿上轮对准场景 agent 的 session_id（scene-night-{night_id}），
+        # 撤回/失败/重试才能截到场景历史；旧按大臣命名的 session 随 MinisterRegistry 退役。
+        from ming_sim.audience_night import SCENE_CHAT_SPEAKER, get_open_night
+        if minister_name == SCENE_CHAT_SPEAKER and hasattr(self.db, "conn"):
+            night = get_open_night(self.db)
+            if night is not None:
+                return f"scene-night-{int(night['id'])}"
+            # 建轮前夜尚未开时，仍用确定性前缀；_start_chat_turn 开夜后以实际 night 为准
+            # （create_chat_turn 写入的 id 在 attach 路径里会再取一次）。
+            return f"scene-night-pending-turn-{int(self.state.turn)}"
+        return f"minister-{minister_name}-turn-{self.state.turn}"
 
     def can_undo_last_chat(self, minister_name: str) -> bool:
         if not self._persistent_chat_minister(minister_name):
@@ -2029,20 +2036,23 @@ class WebGame:
         self, minister_name: str, *, attach_to_hall: bool = True, route: str = "",
         message: str = "",
     ) -> tuple[int, Dict[str, Any]]:
-        agno_session_id = self._minister_agno_session_id(minister_name)
-        runs_before = self.db.agno_runs_length(agno_session_id)
         snapshot = self.db.capture_chat_rollback_snapshot()
         # #498：进入召对即开夜；对话轮挂 night_id，status=generating 至回话入档。
         # 测试替身无 conn/夜表时回退 create_chat_turn（lifecycle 双接口仍可测）。
         # #1566：场外密疏只挂当前夜，不入殿、不启殿上 scene；route 落 chat_turns。
+        # #1837 reopen：先开夜再取 scene-night-{id}，与场景 agent session_id 对齐。
         if hasattr(self.db, "conn"):
             from ming_sim.audience_night import (
                 attach_chat_turn_to_night,
                 ensure_open_night_for_audience,
                 get_open_night,
             )
+            night_was_open = get_open_night(self.db) is not None
+            if not night_was_open:
+                ensure_open_night_for_audience(self.db, self.state)
+            agno_session_id = self._minister_agno_session_id(minister_name)
+            runs_before = self.db.agno_runs_length(agno_session_id)
             if attach_to_hall:
-                night_was_open = get_open_night(self.db) is not None
                 _night_id, chat_turn_id = attach_chat_turn_to_night(
                     self.db,
                     self.state,
@@ -2059,10 +2069,8 @@ class WebGame:
                 if chat_turn_id and not recognize_xuan_command(message):
                     self.session.start_chat_turn_scene(minister_name, chat_turn_id)
             else:
-                night_was_open = get_open_night(self.db) is not None
-                night = get_open_night(self.db) or ensure_open_night_for_audience(
-                    self.db, self.state,
-                )
+                night = get_open_night(self.db)
+                assert night is not None  # 上面已 ensure
                 if not night_was_open:
                     from ming_sim.decree_forecast import schedule_held_decree_forecasts
                     schedule_held_decree_forecasts(self.session)
@@ -2076,6 +2084,8 @@ class WebGame:
                     route=route,
                 )
         else:
+            agno_session_id = self._minister_agno_session_id(minister_name)
+            runs_before = self.db.agno_runs_length(agno_session_id)
             chat_turn_id = self.db.create_chat_turn(
                 self.state,
                 minister_name,
@@ -2514,10 +2524,11 @@ class WebGame:
                     # 闸只管殿上召对——书信/密疏只受基础资格（_require_active_minister/can_summon）。
                     # #1566：正式密令前缀须先入密令管线，不得被 location admission 抢先截获。
                     # #1716：已开夜收夜口令跳过场外记召（与 stream 同缝）。
-                    explicit_secret_order = intent == "secret_order" or self._message_is_formal_secret_order(text)
+                    # #1837 reopen：密令不再走旧 agent；前缀原文进转译。
+                    explicit_secret_order = False
                     court_break_open_night = self._open_night_court_break(text)
                     secret_order_bypass = (
-                        gate_already_held or explicit_secret_order or court_break_open_night
+                        gate_already_held or court_break_open_night
                     )
                     offsite_turn = False
                     if not secret_order_bypass:
@@ -2596,19 +2607,11 @@ class WebGame:
                         return self._summon_admission_success_payload(
                             summon_name, summon_result,
                         )
-                # #1842：殿上真实召对入口切 scene_chat；密令仍走旧 session.chat。
-                # 退役：旧分类器 / 故事抽取 / 边事件判官 / 代码触发读心（转译承接）。
-                if explicit_secret_order:
-                    result = self.session.chat(
-                        minister_name, text,
-                        chat_turn_id=chat_turn_id,
-                        explicit_secret_order=True,
-                    )
-                else:
-                    result = self.session.scene_chat(
-                        text, chat_turn_id=chat_turn_id,
-                        minister_name=minister_name,
-                    )
+                # #1837 reopen：密令旧 agent 退役；一律 scene_chat，前缀原文进转译。
+                result = self.session.scene_chat(
+                    text, chat_turn_id=chat_turn_id,
+                    minister_name=minister_name,
+                )
                 proposed = None
                 if result.proposed_directive is not None:
                     d = result.proposed_directive
@@ -2848,19 +2851,12 @@ class WebGame:
                     from ming_sim.audience_night import recognize_xuan_command
                     if retry_route["start_hall_scene"] and not recognize_xuan_command(question):
                         self.session.start_chat_turn_scene(minister_name, chat_turn_id)
-                # #1842：重试入口同切 scene_chat（密令 route 仍走 session.chat）。
-                if retry_route["explicit_secret_order"]:
-                    result = self.session.chat(
-                        minister_name, question,
-                        chat_turn_id=chat_turn_id,
-                        explicit_secret_order=True,
-                    )
-                else:
-                    result = self.session.scene_chat(
-                        question, chat_turn_id=chat_turn_id,
-                        minister_name=minister_name,
-                        stream_emit=lambda _delta, **_kwargs: None,
-                    )
+                # #1837 reopen：密令重试退役；一律 scene_chat。
+                result = self.session.scene_chat(
+                    question, chat_turn_id=chat_turn_id,
+                    minister_name=minister_name,
+                    stream_emit=lambda _delta, **_kwargs: None,
+                )
                 proposed = None
                 if result.proposed_directive is not None:
                     d = result.proposed_directive
@@ -3072,7 +3068,11 @@ class WebGame:
         if getattr(self.session, "_audience_prompt_for_message", None) is not None:
             from ming_sim.materials import prepare_character_materials
             prepared = prepare_character_materials(self.session.db, self.session.state, character)
-        agent = self.session.registry.get(character, prepared=prepared)
+        raise RuntimeError(
+            "旧大臣 agent 流式入口已退役（#1837 reopen）；请走 scene_chat。"
+        )
+        agent = None  # unreachable; keep name for any later refs in dead branch
+        del character, prepared
         # 动作意图分类只读皇帝消息，是唯一可与回话重叠的独立调用：由 worker 先于回话
         # 发出（跨越回话流式在飞），此处消费一次；不再在本轮内二次发起。
         # The session audience seam is per-character: passing only the message
@@ -3927,7 +3927,8 @@ class WebGame:
             # #1566：正式密令前缀先入密令管线；场外记召成功后在 gate 外物化 scene。
             # #1716：已开夜收夜口令跳过场外记召，否则散夜被 SUMMON_* 短路、夜永不关。
             offsite_secret_order = False
-            explicit_secret_order = (not scene_chat) and (intent == "secret_order" or self._message_is_formal_secret_order(text))
+            # #1837 reopen：密令前缀/按钮不再走旧 agent；原文随皇帝话进转译。
+            explicit_secret_order = False  # #1837 reopen：密令不再走旧 agent
             court_break_open_night = self._open_night_court_break(text)
             if scene_chat:
                 offsite_secret_order = False
@@ -4109,16 +4110,7 @@ class WebGame:
                     # #1842：殿上真实流式入口切 scene_chat（transport 同核）；密令仍走旧流式 payload。
                     # 退役：旧分类器 / 故事抽取 / 边事件判官 / 代码触发读心。
                     # SSE 契约保持 accepted/delta/done/end。
-                    if explicit_secret_order:
-                        payload = self._chat_stream_payload(
-                            minister_name, text, chat_turn_id, before_snapshot,
-                            accepted_turn, emit_delta,
-                            write_gate=write_gate,
-                            action_intent_future=None,
-                            explicit_secret_order=True,
-                        )
-                    else:
-                        payload = self._scene_chat_stream_payload(
+                    payload = self._scene_chat_stream_payload(
                             minister_name, text, chat_turn_id, before_snapshot,
                             accepted_turn, emit_delta,
                             write_gate=write_gate,
@@ -4304,7 +4296,7 @@ class WebGame:
         """
         return [
             {"label": "拟旨", "text": "拟旨如下：", "prefix": True},
-            {"label": "下密令", "text": "密令如下：", "prefix": True, "intent": "secret_order"},
+            # #1837 reopen：密令前缀钮退役；原文随皇帝话进转译。
         ]
 
 
@@ -7460,39 +7452,15 @@ class LLMConfigRequest(BaseModel):
 
 
 @app.get("/api/consorts/candidates")
-async def api_consort_candidates() -> Dict[str, Any]:
-    """返回 status=candidate 的待选秀女，供选妃事件展示。"""
-    candidates = [
-        get_game().public_character(c)
-        for c in get_game().content.characters.values()
-        if c.office_type == "后宫" and c.status == "candidate" and get_game().character_power_id(c) == "ming"
-    ]
-    return {"candidates": candidates}
+async def api_consort_candidates_retired() -> Dict[str, Any]:
+    """#1837 reopen：选妃工具退役。"""
+    raise HTTPException(status_code=410, detail="选妃已退役（#1837 reopen）")
 
 
 @app.post("/api/consorts/{name}/select")
-async def api_select_consort(name: str) -> Dict[str, Any]:
-    """皇帝选中某秀女，转 active 并赋予初始位份。"""
-    game = get_game()
-    consort = game.content.characters.get(name)
-    if consort is None or consort.office_type != "后宫":
-        raise HTTPException(status_code=404, detail=f"未找到候选秀女：{name}")
-    if consort.status != "candidate":
-        raise HTTPException(status_code=409, detail=f"{name} 当前状态为 {consort.status}，不可再选。")
-    # 整段逻辑写（DB + in-memory state/content/registry）都在门内，避免提前释放锁后留下
-    # DB 已改、内存未改的窗口被结算/召对观察到（cmr Gate2 Finding2 DB/内存撕裂）。
-    with _serialized_web_write(game):
-        game.db.set_character_office(name, "嫔", "后宫", source="皇帝选妃")
-        game.db.set_character_status(game.state, name, "active", "皇帝选中入宫")
-        consort.office = "嫔"
-        consort.office_type = "后宫"
-        consort.status = "active"
-        # 同步进 registry（新增 agent）
-        game.session.registry.register(consort)
-        # #1749：public_character 读 DB；须在 gate 内快照，禁门后撞退休关闭。
-        selected = game.public_character(consort)
-    game.chat_history.setdefault(name, [])
-    return {"selected": selected}
+async def api_select_consort_retired(name: str) -> Dict[str, Any]:
+    """#1837 reopen：选妃工具退役。"""
+    raise HTTPException(status_code=410, detail="选妃已退役（#1837 reopen）")
 
 
 @app.get("/api/saves")

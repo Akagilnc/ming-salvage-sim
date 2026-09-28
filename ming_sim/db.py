@@ -6507,26 +6507,8 @@ class GameDB:
         return {"extra_skills": skills, "extra_traits": traits}
 
     def cultivate_consort(self, name: str, turn: int, skill: str = "", trait: str = "") -> dict:
-        """追加技能或性格词，去重后持久化。返回最新值。"""
-        current = self.get_consort_traits(name)
-        skills = current["extra_skills"]
-        traits = current["extra_traits"]
-        if skill and skill not in skills:
-            skills.append(skill)
-        if trait and trait not in traits:
-            traits.append(trait)
-        self.conn.execute(
-            """INSERT INTO consort_traits(name, extra_skills, extra_traits, updated_turn)
-               VALUES(?,?,?,?)
-               ON CONFLICT(name) DO UPDATE SET
-                 extra_skills=excluded.extra_skills,
-                 extra_traits=excluded.extra_traits,
-                 updated_turn=excluded.updated_turn,
-                 updated_at=CURRENT_TIMESTAMP""",
-            (name, "，".join(skills), "，".join(traits), turn),
-        )
-        self.conn.commit()
-        return {"extra_skills": skills, "extra_traits": traits}
+        """#1837 reopen：后宫培养已退役。"""
+        raise RuntimeError("后宫培养已退役（#1837 reopen）")
 
     def next_pool_portrait_id(self, prefix: str = "minister_pool_") -> str:
         """分配下一个预设头像 ID（顺序递增，不循环）。
@@ -19286,18 +19268,9 @@ class GameDB:
                 ),
             )
             return True
-        if pa["kind"] == "consort" and pa["action"] == "调教":
-            skill = str(payload.get("skill") or "")
-            trait = str(payload.get("trait") or "")
-            if not (skill or trait):
-                return False
-            name = str(payload.get("name") or pa["minister_name"])
-            self.cultivate_consort(name, int(state.turn), skill, trait)
-            # 对话确认是【回合中】落库,刷 Agent 让本回合后续对话即用上新技能/性格(线上 gemini);
-            # 颁诏路在回合末、次回合本就重建,刷一下无害。
-            if registry is not None:
-                registry.refresh(name)
-            return True
+        if pa["kind"] == "consort":
+            # #1837 reopen：后宫调教退役。
+            return False
         if pa["kind"] == "directive" and pa["action"] == "拟旨":
             payload = dict(payload)
             if payload.pop("_canonical_pending_directive", False) is not True:

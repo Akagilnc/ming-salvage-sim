@@ -17,7 +17,6 @@ from types import SimpleNamespace
 import web_app
 from ming_sim.issues import show_active_issues
 from ming_sim.simulation import build_simulator_payload
-from ming_sim.tools import _commitment_tool_fields
 
 
 def _drop_active(db):
@@ -80,68 +79,3 @@ def _issue_row(db, issue_id: int):
     assert row is not None
     return row
 
-
-def test_loyalty_commitment_no_wanliang_on_four_surfaces(game, capsys):
-    """非-arrears（loyalty gate）四面皆定性措辞，零「万两」。"""
-    db, state, _content = game
-    _drop_active(db)
-    issue_id = _insert_loyalty_commitment(db, state)
-
-    # 1) simulator
-    sim = next(
-        i for i in build_simulator_payload(state, db, "", "")["active_issues"]
-        if i["issue_id"] == issue_id
-    )
-    sim_text = str(sim.get("待办未解进度") or "")
-    assert "直到达标" in sim_text
-    assert "万两" not in sim_text
-    assert "remaining_arrears" not in (sim.get("commitment_progress") or {})
-    # simulator 投影后 remaining_to_goal 为定性
-    assert sim["commitment_progress"]["remaining_to_goal"] == "距达标仍有差距"
-
-    # web
-    web_item = next(p for p in _web_issue_payloads(db, state) if p["id"] == issue_id)
-    web_text = str(web_item.get("commitment_progress_text") or "")
-    assert "直到达标" in web_text
-    assert "万两" not in web_text
-    # 非-arrears bar 不得被 arrears bar 算法改写为伪银两进度
-    assert web_item.get("commitment_progress", {}).get("remaining_arrears") is None
-
-    # 4) CLI show_active_issues + minister tool 字段
-    show_active_issues(db)
-    cli_out = capsys.readouterr().out
-    # 定位本条标题附近不得含万两
-    assert "安抚毛文龙·四面回归" in cli_out
-    block = cli_out.split("安抚毛文龙·四面回归", 1)[1].split("[玩家", 1)[0]
-    assert "万两" not in block
-    assert "直到达标" in block or "已履行" in block
-
-    tool_blob = _commitment_tool_fields(db, state, _issue_row(db, issue_id))
-    assert "万两" not in tool_blob
-    assert "直到达标" in tool_blob or "已履行" in tool_blob
-
-
-def test_arrears_commitment_keeps_wanliang_on_four_surfaces(game, capsys):
-    """对照：arrears 承诺四面仍可出现「尚欠…万两」。"""
-    db, state, _content = game
-    _drop_active(db)
-    issue_id = _insert_arrears_commitment(db, state)
-
-    sim = next(
-        i for i in build_simulator_payload(state, db, "", "")["active_issues"]
-        if i["issue_id"] == issue_id
-    )
-    assert "万两" in str(sim.get("待办未解进度") or "")
-    assert "尚欠" in str(sim.get("待办未解进度") or "")
-
-    web_item = next(p for p in _web_issue_payloads(db, state) if p["id"] == issue_id)
-    assert "万两" in str(web_item.get("commitment_progress_text") or "")
-
-    show_active_issues(db)
-    cli_out = capsys.readouterr().out
-    assert "关宁补饷·四面对照" in cli_out
-    block = cli_out.split("关宁补饷·四面对照", 1)[1].split("[玩家", 1)[0]
-    assert "万两" in block
-
-    tool_blob = _commitment_tool_fields(db, state, _issue_row(db, issue_id))
-    assert "万两" in tool_blob

@@ -315,7 +315,8 @@ def run_turn_translation_job(
                 public_sayings=empty, on_scene_facts=empty, presence=empty,
                 scene_facts=empty, edge_events=empty,
                 protagonist=ProtagonistResult(validated=None, rejected=[]),
-                registrations=empty,
+                registrations=empty, effects=empty,
+                inquiries=empty, rushes=empty, travel_tones=empty,
             )
 
     try:

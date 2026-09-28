@@ -761,11 +761,9 @@ class GameContent:
     office_definitions: Dict[str, Dict[str, object]] = field(default_factory=dict)
     skill_tool_templates: Dict[str, str] = field(default_factory=dict)
 
-    # 提示词
+    # 提示词（#1837 reopen：minister/consort agent prompt 随旧 agent 退役）
     game_world_prompt: str = ""
-    minister_agent_prompt: str = ""
     scene_agent_prompt: str = ""
-    consort_agent_prompt: str = ""
 
     decree_writer_prompt: str = ""
     season_simulator_prompt: str = ""
@@ -825,9 +823,7 @@ class GameContent:
             fiscal_items=load_fiscal_config(),
             skill_tool_templates=dict_of_strings(load_json_asset("skill_tools.json"), "skill_tools.json"),
             game_world_prompt=load_text_asset("prompts/game_world.md"),
-            minister_agent_prompt=load_text_asset("prompts/minister_agent.md"),
             scene_agent_prompt=load_text_asset("prompts/scene_agent.md"),
-            consort_agent_prompt=load_text_asset("prompts/consort_agent.md"),
             decree_writer_prompt=load_text_asset("prompts/decree_writer.md"),
             season_simulator_prompt=load_text_asset("prompts/season_simulator.md"),
             ending_summary_prompt=load_text_asset("prompts/ending_summary.md"),

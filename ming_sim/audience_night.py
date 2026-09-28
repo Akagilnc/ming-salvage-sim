@@ -2059,6 +2059,54 @@ def record_summon_fresh(
     )
 
 
+def update_summon_travel_tone(
+    db: Any,
+    *,
+    night_id: int,
+    person_name: str,
+    travel_tone: str,
+) -> int:
+    """更新本夜该人未结传召账的行程语气（#1837 reopen / ADR 0096）。
+
+    只改 tags 上的语气前缀，不另起行；无未结传召 → KeyError。
+    """
+    name = str(person_name or "").strip()
+    if not name:
+        raise ValueError("传召人名不能为空")
+    from ming_sim.issues import normalize_travel_tone
+    tone = normalize_travel_tone(travel_tone)
+    target = None
+    for item in list_unsettled_summons(db):
+        if int(item.get("night_id") or 0) != int(night_id):
+            continue
+        if item.get("person_name") != name:
+            continue
+        target = item
+        break
+    if target is None:
+        raise KeyError(f"本夜无此人未结传召：{name}")
+    entry_id = int(target["entry_id"])
+    row = db.conn.execute(
+        "SELECT tags FROM story_ledger_entries WHERE id=?",
+        (entry_id,),
+    ).fetchone()
+    if row is None:
+        raise KeyError(f"传召账不存在：{entry_id}")
+    tags = [str(t) for t in json.loads(row["tags"] or "[]")]
+    tags = [t for t in tags if not str(t).startswith(_SUMMON_TRAVEL_TONE_PREFIX)]
+    tags.append(_travel_tone_tag(tone))
+    db.conn.execute(
+        "UPDATE story_ledger_entries SET tags=? WHERE id=?",
+        (json.dumps(tags, ensure_ascii=False), entry_id),
+    )
+    if (
+        not bool(getattr(db.conn, "_commit_suspended", False))
+        and int(getattr(db.conn, "_atomic_depth", 0) or 0) == 0
+    ):
+        db.conn.commit()
+    return entry_id
+
+
 def ensure_inactive_office_summon(
     db: Any, pending_id: int, person_name: str, *, night_id: int,
     origin_chat_turn_id: int = 0,

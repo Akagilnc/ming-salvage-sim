@@ -157,12 +157,6 @@
       "kind": "个人",
       "character": "魏忠贤",
       "tools": true
-    },
-    "cultivate_consort": {
-      "name": "调教妃嫔",
-      "kind": "官职",
-      "office": "后宫",
-      "tools": true
     }
   },
   "skill_descriptions": {
@@ -191,8 +185,7 @@
     "audit_tax_arrears": "毕自严专长：清查积欠、实收实支、追缴亏空。",
     "front_line_plan": "袁崇焕专长：宁锦守势、军心、前线部署。",
     "strategic_review": "孙承宗专长：辽东大局复核、名分和将领评估。",
-    "factory_network_probe": "魏忠贤专长：厂卫旧线、把柄、威慑与截留风险。",
-    "cultivate_consort": "皇帝调教妃嫔：为其新增技能或改变性格，效果永久生效。"
+    "factory_network_probe": "魏忠贤专长：厂卫旧线、把柄、威慑与截留风险。"
   },
   "office_skills": {
     "内阁": [
@@ -290,9 +283,7 @@
       "check_military",
       "mobilize_troops"
     ],
-    "后宫": [
-      "cultivate_consort"
-    ],
+    "后宫": [],
     "外臣": []
   },
   "personal_skill_ids": {

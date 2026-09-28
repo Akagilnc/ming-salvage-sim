@@ -345,7 +345,7 @@ def _handle_court_command(
         ]
         if revoked:
             print(f"已收回{target.name}：{'、'.join(revoked)}。\n")
-            session.registry.refresh(target.name)
+            pass  # #1837 reopen: registry retired
         else:
             print(f"{target.name}没有可收回的相关授权，或未识别要收回的 skill。\n")
         return "handled"
@@ -395,7 +395,7 @@ def _handle_court_command(
         ]
         if granted:
             print(f"已授权{target.name}：{'、'.join(granted)}。\n")
-            session.registry.refresh(target.name)
+            pass  # #1837 reopen: registry retired
         else:
             print(f"{target.name}已有相关授权，或未识别要授权的 skill。\n")
         return "handled"
@@ -461,18 +461,11 @@ def _retry_interrupted_reply_cli(session: GameSession, minister_name: str) -> Op
     try:
         if retry_route["start_hall_scene"] and not recognize_xuan_command(question):
             session.start_chat_turn_scene(minister_name, chat_turn_id)
-        # #1842：殿上重试走 scene_chat；显式密令仍走 session.chat（与 Web 同核）。
-        if retry_route["explicit_secret_order"]:
-            result = session.chat(
-                minister_name, question,
-                chat_turn_id=chat_turn_id,
-                explicit_secret_order=True,
-            )
-        else:
-            result = session.scene_chat(
-                question, chat_turn_id=chat_turn_id,
-                minister_name=minister_name,
-            )
+        # #1837 reopen：密令前缀路由退役；重试一律 scene_chat。
+        result = session.scene_chat(
+            question, chat_turn_id=chat_turn_id,
+            minister_name=minister_name,
+        )
         answer = str(getattr(result, "answer", "") or "")
         if hasattr(db, "persist_minister_reply"):
             scene_generated = session.join_chat_turn_scene(chat_turn_id)
@@ -615,7 +608,7 @@ def minister_chat(session: GameSession, character: Character) -> str:
         try:
             # #1566：CLI 前缀密令落 route=secret_order，供中断重试权威解码。
             from ming_sim.cli_backend import _SECRET_PREFIXES
-            cli_explicit_secret = question.startswith(_SECRET_PREFIXES)
+            cli_explicit_secret = False  # #1837 reopen: 密令前缀走转译，不另路由
             from ming_sim.audience_night import encode_chat_turn_route
             cli_route = encode_chat_turn_route(explicit_secret_order=cli_explicit_secret)
             if persistent_chat:
@@ -648,19 +641,11 @@ def minister_chat(session: GameSession, character: Character) -> str:
                     session.db.update_chat_turn_messages(
                         chat_turn_id, user_message_id=user_message_id,
                     )
-            # #1842：殿上走 scene_chat；显式密令仍走 session.chat（与 Web 同核）。
-            # 殿上不派旧判官/尾随抽取——转译一次承接。
-            if cli_explicit_secret:
-                result = session.chat(
-                    character.name, question,
-                    chat_turn_id=chat_turn_id,
-                    explicit_secret_order=True,
-                )
-            else:
-                result = session.scene_chat(
-                    question, chat_turn_id=chat_turn_id,
-                    minister_name=character.name,
-                )
+            # #1837 reopen：密令前缀路由退役；一律 scene_chat，前缀原文进转译。
+            result = session.scene_chat(
+                question, chat_turn_id=chat_turn_id,
+                minister_name=character.name,
+            )
             if persistent_chat:
                 if (chat_turn_id and hasattr(session.db, "persist_minister_reply")
                         and hasattr(session, "join_chat_turn_scene")):

@@ -35,6 +35,10 @@ _DECLARATION_KEYS: tuple[str, ...] = (
     "protagonist",
     "registrations",
     "effects",
+    # #1837 reopen：旧 agent 工具退役后的转译承接节。
+    "inquiries",
+    "rushes",
+    "travel_tones",
 )
 _ARRAY_SECTIONS = frozenset(
     k for k in _DECLARATION_KEYS if k not in {"protagonist", "effects"}
@@ -239,10 +243,20 @@ def build_c0_declaration_shape() -> str:
         '        "purpose": "补饷（仅协饷）",\n'
         f'        "target_kind": "{target_kind_hint}",\n'
         '        "target_id": "目标 id", "cadence": "一次性|每月"\n'
-        "      }\n"
+        "      },\n"
+        '      "recommendation": {\n'
+        '        "recommender": "荐者人名", "reason": "荐词原句（非空，逐字）"\n'
+        "      },\n"
+        '      "dossier_action_type": "prohibit_covert_levy（禁摊派时填；案卷由场面事实绑定）"\n'
         "    }\n"
         "  ],\n"
         '  "promises": [{"action_id": 正整数, "decision": "应允|拒绝"}],\n'
+        '  "inquiries": [{"attendant": "受命近侍", "query": "所查之事"}],\n'
+        '  "rushes": [{\n'
+        '    "target_kind": "commitment|secret_order", "target_id": 正整数,\n'
+        '    "stage_idx": 0, "deadline_months": 1, "reason": "催办缘由"\n'
+        "  }],\n"
+        '  "travel_tones": [{"person_name": "人名", "tone": "常行|加急|星夜兼程"}],\n'
         '  "on_scene_facts": [\n'
         "    {\n"
         '      "name": "人名",\n'
@@ -320,6 +334,9 @@ def build_audience_translate_prompt(
         "保持不知情；无排除则给空数组。\n"
         "- 无对应事实的 section 输出空数组（protagonist 无则省略或 null），不要编造。\n"
         "- 承接不了的交办仍写入 commissions（由代码拒收），不要改写皇帝原话去猜。\n"
+        "- 暗渠揭破场面呈上后皇帝禁摊派 → commissions 一项 dossier_action_type=prohibit_covert_levy（案卷由代码按场面绑定）。\n"
+        "- 大臣具名举荐某人任某差并附荐词 → commissions 任命 + recommendation（荐者/荐词原句）。\n"
+        "- 皇帝交代近侍查某事 → inquiries；催某件分段事或密令 → rushes；传召说明缓急 → travel_tones。\n"
         f"{grounding_block}"
         f"【本场已说的话】\n{said_block}\n"
         f"【本夜暂存清单】{pending_block}\n"
