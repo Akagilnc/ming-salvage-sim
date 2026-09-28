@@ -7451,18 +7451,6 @@ class LLMConfigRequest(BaseModel):
     default_headers: Optional[Dict[str, str]] = None
 
 
-@app.get("/api/consorts/candidates")
-async def api_consort_candidates_retired() -> Dict[str, Any]:
-    """#1837 reopen：选妃工具退役。"""
-    raise HTTPException(status_code=410, detail="选妃已退役（#1837 reopen）")
-
-
-@app.post("/api/consorts/{name}/select")
-async def api_select_consort_retired(name: str) -> Dict[str, Any]:
-    """#1837 reopen：选妃工具退役。"""
-    raise HTTPException(status_code=410, detail="选妃已退役（#1837 reopen）")
-
-
 @app.get("/api/saves")
 async def api_list_saves() -> Dict[str, Any]:
     return {"saves": get_game().list_saves()}
