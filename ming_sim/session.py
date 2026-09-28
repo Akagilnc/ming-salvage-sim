@@ -1321,53 +1321,6 @@ class GameSession:
 
         return normalize_audience_command_verdict(recognize_audience_command(message))
 
-    def _apply_audience_command_verdict(
-        self,
-        result: "ChatTurnResult",
-        character: Character,
-        message: str,
-        *,
-        verdict: str,
-        chat_turn_id: int = 0,
-    ) -> None:
-        """#526：按结构化判词落收夜/留侍/含糊确认。引擎不重解析 message 散文。"""
-        from ming_sim.audience_night import (
-            CMD_AMBIGUOUS_CLOSE,
-            CMD_CLOSE_NIGHT,
-            CMD_STAY_ATTEND,
-            close_night,
-            stay_attend_in_audience,
-        )
-
-        if verdict == CMD_STAY_ATTEND:
-            stay_attend_in_audience(
-                self.db, character.name,
-                origin_chat_turn_id=int(chat_turn_id or 0),
-            )
-            result.court_action = "stay_attend"
-            return
-        if verdict == CMD_AMBIGUOUS_CLOSE:
-            result.answer = GameSession._ensure_close_night_confirm_cue(result.answer or "")
-            return
-        if verdict != CMD_CLOSE_NIGHT:
-            return
-        # 本轮仍 generating 时由调用方（Web epilogue）在回话落库后收夜，避免自锁 in-flight。
-        # chat_turn_id==0（无生命周期/单测）路径当场收夜=封窗=提交；失败响亮上抛，不假成功。
-        if int(chat_turn_id or 0) != 0:
-            result.court_action = "court_break"
-            return
-        close_night(
-            self.db, self.state,
-            content=getattr(self, "content", None),
-            registry=getattr(self, "registry", None),
-            wait_timeout_s=0.0,
-            beat_generator=getattr(self, "_beat_generator", None),
-            llm_config=getattr(self, "llm_config", None),
-            write_gate=getattr(self, "_write_gate", None),
-            write_queue=self._write_queue,
-            scene_registry=getattr(self, "_scene_registry", None),
-        )
-        result.court_action = "court_break"
 
     @staticmethod
     def _ensure_close_night_confirm_cue(answer: str) -> str:
