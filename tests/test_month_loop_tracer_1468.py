@@ -327,7 +327,7 @@ def _play_one_month(
     assert game is not None
 
     chat = client.post(
-        f"/api/ministers/{minister}/chat",
+        "/api/audience/chat",
         json={"message": f"边饷如何？本月{month_label}召对。"},
     )
     _assert_not_bare_500(chat, step=f"{month_label} chat")
@@ -553,7 +553,7 @@ def test_issue_1716_offsite_court_break_via_stream(tracer_client, kind, monkeypa
     stub_scene_agent(monkeypatch, agent)
 
     stream = client.post(
-        f"/api/ministers/{remote}/chat/stream",
+        "/api/audience/chat/stream",
         json={"message": "退朝"},
     )
     _assert_not_bare_500(stream, step=f"#1716 chat/stream {kind} 退朝")
@@ -566,16 +566,15 @@ def test_issue_1716_offsite_court_break_via_stream(tracer_client, kind, monkeypa
     done = json.loads(done_raw) if isinstance(done_raw, str) else done_raw
     assert isinstance(done, dict), done
     _assert_court_break_closed(game, done, night_id, remote=remote)
-    if kind == "offsite":
-        # 正式场外：该人本夜回话轮 route 须编码 offsite（非殿上）。
-        turn = game.db.conn.execute(
-            "SELECT route FROM chat_turns "
-            "WHERE night_id=? AND minister_name=? AND status='active' "
-            "ORDER BY id DESC LIMIT 1",
-            (night_id, remote),
-        ).fetchone()
-        assert turn is not None
-        assert str(turn["route"] or "") == "offsite", dict(turn)
+    # 退朝轮仍由殿上入口持久记录。
+    turn = game.db.conn.execute(
+        "SELECT minister_name FROM chat_turns "
+        "WHERE night_id=? AND status='active' "
+        "ORDER BY id DESC LIMIT 1",
+        (night_id,),
+    ).fetchone()
+    assert turn is not None
+    assert str(turn["minister_name"] or "") == "殿上"
 
 
 def test_issue_1716_offsite_court_break_via_nonstream(tracer_client, monkeypatch):
@@ -595,7 +594,7 @@ def test_issue_1716_offsite_court_break_via_nonstream(tracer_client, monkeypatch
     game.session.registry.get = lambda _ch, **_kw: sync
     stub_scene_agent(monkeypatch, sync)
     resp = client.post(
-        f"/api/ministers/{remote}/chat", json={"message": "退朝"},
+        "/api/audience/chat", json={"message": "退朝"},
     )
     _assert_not_bare_500(resp, step="#1716 chat 场外退朝")
     assert resp.status_code == 200, resp.text

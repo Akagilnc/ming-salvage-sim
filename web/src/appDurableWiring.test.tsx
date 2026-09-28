@@ -437,7 +437,8 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
       setter?.call(textarea, "拟旨如下：着户部从国库拨银一万两赈济陕西饥民。");
       textarea.dispatchEvent(new Event("input", { bubbles: true }));
     });
-    await click(host.querySelector(".primary-action"));
+    // 发送钮：勿用 bare .primary-action（朝堂抽屉/HUD 同 class 会先命中）。
+    await click(findButton(host, "发送"));
     // onDone 触发 refresh → stateCall>=2；不盯 busy 呈现措辞。
     await act(async () => {
       await vi.waitFor(() => expect(stateCall).toBeGreaterThanOrEqual(2));
@@ -1002,35 +1003,28 @@ const byAria = (host: HTMLElement, label: string) =>
 
 describe("#1236 App must-face wiring（settlement_display 真链）", () => {
 
-  it("#1849 后宫妃嫔从真实入口读取既有 legacy 会话", async () => {
+  it("#1849 reopen 后宫卡片不再打开任何召对面板", async () => {
     const paths: string[] = [];
     const liveState = settlementBaseState("player", {
       turn: { year: 1627, period: 10, turn: 5, phase: "player", settlement_display: false },
     });
     stubSettlementFetch(liveState, [], undefined, (url) => {
       paths.push(url.pathname);
-      if (url.pathname === `/api/ministers/${encodeURIComponent(SNAP_CONSORT)}/chat`) {
-        return jsonResp({
-          minister: liveState.consorts[0], history: [], suggestions: [],
-          campaign_id: "c1", night_id: 0, can_undo_last_chat: false,
-        });
-      }
     });
 
     const host = await mountApp();
     await click(byAria(host, "后宫"));
-    const consort = Array.from(host.querySelectorAll(".harem-drawer.open button.minister-card")).find(
-      (button) => (button.textContent || "").includes(SNAP_CONSORT),
+    const consort = Array.from(host.querySelectorAll(".harem-drawer.open .minister-card")).find(
+      (el) => (el.textContent || "").includes(SNAP_CONSORT),
     );
     expect(consort).toBeTruthy();
-    await click(consort);
-
-    await act(async () => {
-      await vi.waitFor(() => expect(paths).toContain(
-        `/api/ministers/${encodeURIComponent(SNAP_CONSORT)}/chat`,
-      ));
-    });
+    // 与朝臣同形：只读名单，不可点开面板。
+    expect(consort!.tagName.toLowerCase()).not.toBe("button");
+    if (consort instanceof HTMLElement) await click(consort);
+    await tick();
+    expect(paths.some((p) => p.includes("/api/ministers/"))).toBe(false);
     expect(paths).not.toContain("/api/audience/chat");
+    expect(host.querySelector("textarea")).toBeNull();
   });
 
   it("phase===settling：续跑入口可点；刷新重挂后仍在", async () => {
@@ -2346,10 +2340,12 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     const haremOpen = host.querySelector(".harem-drawer.open");
     expect(haremOpen).not.toBeNull();
     expect(haremOpen!.textContent).toContain(SNAP_CONSORT);
-    const haremCard = Array.from(haremOpen!.querySelectorAll("button.minister-card")).find((b) =>
-      (b.textContent || "").includes(SNAP_CONSORT),
-    ) as HTMLButtonElement | undefined;
-    expect(haremCard?.disabled).toBe(true);
+    // #1849 reopen：后宫卡与朝臣同形只读，不再是可点开面板的 button。
+    const haremCard = Array.from(haremOpen!.querySelectorAll(".minister-card")).find((el) =>
+      (el.textContent || "").includes(SNAP_CONSORT),
+    );
+    expect(haremCard).toBeTruthy();
+    expect(haremCard!.tagName.toLowerCase()).not.toBe("button");
     await closeOpenOverlay(host);
 
     // memorials：只读可达；与局势脱钩——核账期仍可读收件箱，不得泄漏半程议题（#1726）

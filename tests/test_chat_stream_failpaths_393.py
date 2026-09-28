@@ -155,7 +155,7 @@ def _base_runtime(db):
 def test_prologue_failure_fails_orphan_turn_and_releases_gate():
     db = _FailingPrologueDB()
     runtime, minister = _base_runtime(db)
-    gen = runtime.chat_stream(minister, "辽东军情如何？")
+    gen = runtime.chat_stream("殿上", "辽东军情如何？")
     with pytest.raises(RuntimeError):
         next(gen)  # prologue 在 append_chat_message 崩 → 重新抛出
     # 孤儿轮被失败掉（不留 active 无回复轮挡住该大臣）
@@ -196,7 +196,7 @@ def test_prologue_finally_does_not_release_foreign_gate_holder():
 
     runtime._complete_pending_write = complete_then_hand_path_to_other
 
-    gen = runtime.chat_stream(minister, "辽东军情如何？")
+    gen = runtime.chat_stream("殿上", "辽东军情如何？")
     with pytest.raises(RuntimeError):
         next(gen)
 
@@ -255,7 +255,7 @@ def test_prologue_cleanup_failure_still_releases_gate_and_counter():
     db = _DoubleFailDB()
     runtime, minister = _base_runtime(db)
 
-    gen = runtime.chat_stream(minister, "辽东军情如何？")
+    gen = runtime.chat_stream("殿上", "辽东军情如何？")
     with pytest.raises(RuntimeError):
         next(gen)
 
@@ -271,7 +271,7 @@ class _StreamCrashAgent:
 
 
 class _WorkerPathDB:
-    """Prologue succeeds (append_chat_message OK) but worker _chat_stream_payload crashes
+    """Prologue succeeds (append_chat_message OK) but worker scene payload crashes
     AND fail_chat_turn also crashes → worker double-failure path."""
 
     def create_chat_turn(self, *a, **k):
@@ -303,7 +303,7 @@ class _WorkerPathDB:
 
 
 def test_worker_cleanup_failure_still_emits_error_and_releases_gate():
-    """R3 self-check: worker 内 _chat_stream_payload 崩 → _fail_chat_turn_and_reload 自身也崩 →
+    """R3 self-check: worker 内 scene payload 崩 → _fail_chat_turn_and_reload 自身也崩 →
     仍须推 error 事件给消费者（否则 generator 永久挂死）、释放写路径 + pending ownership。"""
     db = _WorkerPathDB()
     runtime, minister = _base_runtime(db)
@@ -311,7 +311,7 @@ def test_worker_cleanup_failure_still_emits_error_and_releases_gate():
     runtime.session.registry = SimpleNamespace(get=lambda _c, **_kw: agent)
     runtime.session._character = lambda name: minister_double(minister)
 
-    gen = runtime.chat_stream(minister, "辽东军情如何？")
+    gen = runtime.chat_stream("殿上", "辽东军情如何？")
     events = list(gen)  # consumer drives generator to completion
 
     # #1353 r11：error+end 双终态（消费者没挂死，且以 end 收束）
@@ -348,7 +348,7 @@ def test_worker_cleanup_double_failure_emits_original_error_end_and_logs(caplog)
 
     def consume() -> None:
         try:
-            for item in runtime.chat_stream(minister, "辽东军情如何？"):
+            for item in runtime.chat_stream("殿上", "辽东军情如何？"):
                 events.append(item)
                 if item.get("type") == "end":
                     break
@@ -418,7 +418,7 @@ def test_worker_postprocess_exception_emits_error_end():
 
     def consume() -> None:
         try:
-            for item in runtime.chat_stream(minister, "边饷如何？"):
+            for item in runtime.chat_stream("殿上", "边饷如何？"):
                 events.append(item)
                 if item.get("type") == "end":
                     break
@@ -539,34 +539,8 @@ def _runtime_for_nonstream_chat(*, start_scene=None, append_error=None, abandon_
     return runtime, character.name, abandoned, failed, restored
 
 
-def test_nonstream_chat_prologue_failure_fails_turn_and_abandons_scene():
-    """#542 r6e: 非流 chat 在 _start_chat_turn 之后 prologue 写失败，须 abandon + fail，
-    且写路径释放（经 _assert_write_path_free 公开探针）。"""
-    boom = RuntimeError("DB 写盘失败（模拟非流 prologue 崩溃）")
-    runtime, minister, abandoned, failed, _restored = _runtime_for_nonstream_chat(
-        append_error=boom,
-    )
-    with pytest.raises(RuntimeError, match="非流 prologue"):
-        runtime.chat(minister, "辽东军情如何？")
-    assert abandoned == [7]
-    assert failed == [7]
-    _assert_write_path_free(runtime)
 
 
-def test_nonstream_chat_abandon_secondary_failure_still_fails_turn():
-    """#1408 r2: abandon 二次异常不得跳过 fail 终态写，且原错不叠二次。"""
-    boom = RuntimeError("DB 写盘失败（模拟非流 prologue 崩溃）")
-    abandon_boom = RuntimeError("abandon 二次崩溃")
-    runtime, minister, abandoned, failed, _restored = _runtime_for_nonstream_chat(
-        append_error=boom,
-        abandon_error=abandon_boom,
-    )
-    with pytest.raises(RuntimeError, match="非流 prologue") as excinfo:
-        runtime.chat(minister, "辽东军情如何？")
-    assert excinfo.value is boom
-    assert abandoned == [7]
-    assert failed == [7]
-    _assert_write_path_free(runtime)
 
 
 def test_retry_start_scene_failure_restores_interrupted_and_abandons():
@@ -639,28 +613,6 @@ def _assert_structured_llm_http(response) -> dict:
     return detail
 
 
-def test_nonstream_api_chat_llm_unavailable_is_structured_not_500(monkeypatch):
-    """#1452 A：POST /api/ministers/{name}/chat 底层 LLMUnavailable → 非 500 结构化。"""
-    provider = "Unknown model error: top_p not supported"
-
-    class _BoomChat:
-        def chat(self, minister_name: str, message: str, intent=None, *, explicit_secret_order=False):
-            raise LLMUnavailable(
-                CLI_RUNNER_PLAYER_MESSAGE,
-                code="llm_cli_error",
-                provider_message=provider,
-            )
-
-    monkeypatch.setattr(web_app, "_require_active_minister", lambda _n: None)
-    monkeypatch.setattr(web_app, "get_game", lambda: _BoomChat())
-
-    response = TestClient(web_app.app).post(
-        "/api/ministers/测试大臣/chat", json={"message": "边饷如何？"},
-    )
-    detail = _assert_structured_llm_http(response)
-    assert detail["code"] == "llm_cli_error"
-    assert detail["message"] == CLI_RUNNER_PLAYER_MESSAGE
-    assert detail["provider_message"] == provider
 
 
 def test_nonstream_api_issue_decree_llm_unavailable_is_structured_not_500(
@@ -808,7 +760,7 @@ def _post_chat_stream(monkeypatch, web_game, minister: str, message: str = "边�
     monkeypatch.setattr(web_app, "_require_active_minister", lambda _n: None)
     monkeypatch.setattr(web_app, "get_game", lambda: web_game)
     return TestClient(web_app.app).post(
-        f"/api/ministers/{minister}/chat/stream", json={"message": message},
+        "/api/audience/chat/stream", json={"message": message},
     )
 
 
@@ -931,7 +883,8 @@ def test_chat_stream_two_transient_then_success_three_attempts(monkeypatch, game
 
     agent.run = _timed_run  # type: ignore[method-assign]
     web_game, minister = _transport_web_game(game, agent, monkeypatch)
-    web_game.session.registry.session_ids[minister] = session_id
+    # #1849 reopen：殿上入口；agno 会话键挂「殿上」
+    web_game.session.registry.session_ids["殿上"] = session_id
 
     # 游戏账基线（截史不得动问话/回话账）
     user_msgs_before = int(
@@ -1060,7 +1013,7 @@ def test_chat_stream_three_transient_exhausted_system_fail_then_resend(monkeypat
     ).fetchone()
     assert fail_row is not None
     assert str(fail_row["status"]) == "interrupted"
-    assert web_game.interrupted_reply_retries(minister)[-1]["chat_turn_id"] == failed_turn
+    assert web_game.interrupted_reply_retries("殿上")[-1]["chat_turn_id"] == failed_turn
 
     # 实际重发：换可成功 agent（#1842：经 create_scene_agent 工厂缝）
     ok_agent = _CountingFailAgent(fail_times=0, error_factory=_conn_err)

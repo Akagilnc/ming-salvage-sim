@@ -56,7 +56,7 @@ export function ScrollMessages({
       ? `record-${message.record_id}`
       : `${message.role}-${index}`;
     const pending = "pending" in message && message.pending;
-    const speaker = "speaker" in message ? message.speaker : message.role === "user" ? "朕" : message.role === "attendant" ? "近臣" : ministerName;
+    const speaker = "speaker" in message ? message.speaker : message.role === "user" ? "朕" : ministerName;
     const beat = "beat" in message ? message.beat : "dialogue";
     if (message.role === "scene") {
       return <div className={`chat-message scene beat-${beat}`} key={persistedId}>

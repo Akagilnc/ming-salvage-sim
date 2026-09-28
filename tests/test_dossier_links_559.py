@@ -206,6 +206,51 @@ def test_reference_candidates_obey_canonical_disclosure_blacklist(game):
     }
 
 
+@pytest.mark.parametrize("confirmed_ids, expected", [
+    ("target", True), ([], False), ([{"target_dossier_id": True, "relation_type": "护卫"}], False), ([{"id": 1}], False),
+])
+def test_real_api_session_tool_path_commits_only_semantically_confirmed_link(
+    game, monkeypatch, confirmed_ids, expected,
+):
+    db, state, content = game
+    target = _make_dossier(db, state, "辽东补饷")
+    db.record_dossier_decision(target, "promulgated")
+    minister = "毕自严"
+    payload = json.dumps({
+        "title": "护行辽饷", "content": "护送辽饷", "assignee": minister,
+        "covert_task": TYPED_COVERT_TASK,
+        "dossier_links": [{"target_dossier_id": target, "relation_type": "护卫", "note": "护送"}],
+    }, ensure_ascii=False)
+    verdict_ids = [target] if confirmed_ids == "target" else confirmed_ids
+    monkeypatch.setattr(
+        cli_backend, "_run_json_extractor_for_config",
+        lambda *args, **kwargs: (json.dumps({"confirmed_links": ([{"target_dossier_id": target, "relation_type": "护卫"}] if verdict_ids == [target] else verdict_ids)}), 1),
+    )
+
+    class Agent:
+        def run(self, _message):
+            answer = "臣明确确认护卫辽东补饷。" if expected else "臣不能确认护卫辽东补饷。"
+            return SimpleNamespace(
+                content=answer,
+                tools=[SimpleNamespace(tool_name="secret_order", result=f"__secret_order__{payload}")],
+            )
+
+    sess = GameSession.__new__(GameSession)
+    sess.db, sess.state, sess.content = db, state, content
+    sess.registry = SimpleNamespace(get=lambda _character, **_kw: Agent())
+    sess.llm_config = SimpleNamespace(channel="api")
+    sess.temporary_characters = set()
+    sess._audience_prompt_for_message = lambda message, *_args, **_kwargs: message
+    sess._start_cli_action_intent = lambda *_args, **_kwargs: None
+    sess._finish_cli_action_intent = lambda *_args, **_kwargs: None
+
+    result = GameSession.chat(sess, minister, "下密令护行辽饷。")
+    db.commit_pending_actions(state, action_ids=[result.pending_action_id])
+    order = db.list_secret_orders(minister_name=minister)[0]
+    source = db.get_dossier_for_secret_order(order["id"])
+    assert bool(db.list_dossier_links(source["id"])) is expected
+
+
 def test_confirmed_secret_order_materializes_links_through_pending_commit(game):
     db, state, _ = game
     targets = [_make_dossier(db, state, name) for name in ("辽东补饷", "宣大补饷", "东江补饷")]

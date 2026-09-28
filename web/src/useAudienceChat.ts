@@ -1,7 +1,7 @@
 import React from "react";
 import { ApiRequestError, api, streamChat } from "./api";
 import { chatReducer } from "./mindreading";
-import type { ChatIdentity, ChatMessage, ChatResponse, Minister, ReplyRetry, ServerChatMessage, Suggestion, TranslationRetry } from "./types";
+import type { ChatIdentity, ChatMessage, ChatResponse, PendingActionFailure, Minister, ReplyRetry, ServerChatMessage, TranslationRetry } from "./types";
 import { audienceHistoryPath } from "./audienceScene";
 
 /**
@@ -22,7 +22,6 @@ import { audienceHistoryPath } from "./audienceScene";
 export type AudienceHistoryData = {
   minister: Minister;
   history: ServerChatMessage[];
-  suggestions: Suggestion[];
   can_undo_last_chat: boolean;
   campaign_id: string;
   /** Persisted current open-night identity; 0 means no open audience night. */
@@ -110,7 +109,7 @@ export function useAudienceChat(
     // App 据 null 早退，杜绝陈旧快照的建议/可撤回/失败/临时大臣元数据回覆（#499）。
     async (minister: string): Promise<AudienceHistoryData | null> => {
       const gen = ++chatGenRef.current;
-      const data = await api<AudienceHistoryData>(audienceHistoryPath(minister));
+      const data = await api<AudienceHistoryData>(audienceHistoryPath());
       // generation + 面板守卫：更新的 load/send/reset 已发生或已切人 → 陈旧快照，拒收返 null。
       if (chatGenRef.current !== gen || selectedMinisterRef.current !== minister) return null;
       dispatchChat({ type: "history", history: data.history });
@@ -122,7 +121,7 @@ export function useAudienceChat(
   );
 
   const sendChat = React.useCallback(
-    async (minister: string, message: string, cb: SendChatCallbacks, intent?: "secret_order"): Promise<void> => {
+    async (minister: string, message: string, cb: SendChatCallbacks): Promise<void> => {
       const token = ++requestTokenRef.current;
       const gen = ++chatGenRef.current;  // 作废在飞的历史加载，防陈旧快照迟到回覆本轮
       const initiatingPanelName = selectedMinisterRef.current;
@@ -148,7 +147,6 @@ export function useAudienceChat(
           },
           {
             signal: abort.signal,
-            intent,
             onStreamReset: () => {
               // #1465 半流：重试开始替换未完成临时回话，不叠旧半句
               if (ownsEphemeral() && panelMatches()) setStreamingMinisterMessage("");

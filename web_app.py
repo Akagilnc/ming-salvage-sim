@@ -666,19 +666,11 @@ def _api_reasoning_supported_for_effective_model(
 
 class ChatRequest(BaseModel):
     message: str
-    intent: Optional[Literal["secret_order"]] = None
 
 
 class DirectiveRequest(BaseModel):
     text: str
     notes: str = ""
-
-
-class SecretOrderRequest(BaseModel):
-    title: str
-    content: str
-    tags: List[str] = []
-    deadline_months: int = 0
 
 
 class DirectivePatch(BaseModel):
@@ -753,37 +745,6 @@ def in_talent_pool(character: Character, db, current_year: int, current_period: 
     return _character_power_id(character, db) == "ming"
 
 
-def _audience_prompt_for_web_chat(
-    session: Any,
-    text: str,
-    character: Character,
-    chat_turn_id: int,
-    *,
-    prepared: Any = None,
-) -> str:
-    """Build a minister prompt without mistaking production failures for legacy APIs.
-
-    Lightweight test doubles may still expose the old one-argument builder.
-    Choose that compatibility path by binding its signature *before* invoking
-    it, so a TypeError raised inside the real per-character builder propagates
-    to the normal chat-turn rollback path instead of causing an unscoped retry.
-
-    #1812/#1830：本消息只备一次材料，供 Agent 与组装提示共用——与 CLI
-    `GameSession.chat` 同一份权威 prepare 契约，本函数就是 web 这一侧的唯一
-    真实 chat 入口，失败按 ADR 0005 响亮抛出，不吞异常伪装降级回奏。`prepared`
-    由调用方（`_chat_stream_payload`）唯一一次备好并传入，本函数不得自备
-    第二份（那会与 registry.get 首建 agent 时吃到的那份材料互相脱节）。
-    """
-    prompt_builder = getattr(session, "_audience_prompt_for_message", None)
-    if prompt_builder is None:
-        return text
-    signature = inspect.signature(prompt_builder)
-    try:
-        signature.bind(text, character, chat_turn_id=chat_turn_id, prepared=prepared)
-    except TypeError:
-        signature.bind(text)
-        return prompt_builder(text)
-    return prompt_builder(text, character, chat_turn_id=chat_turn_id, prepared=prepared)
 
 
 class WebGame:
@@ -1952,12 +1913,8 @@ class WebGame:
             night = get_open_night(self.db)
             from ming_sim.audience_night import SCENE_CHAT_SPEAKER
             if minister_name == SCENE_CHAT_SPEAKER and night:
-                turns = self.db.list_hall_chat_turns(int(night["id"]))
-                ids = {int(row["id"]) for row in turns}
-                history = [message for speaker in dict.fromkeys(row["minister_name"] for row in turns)
-                           for message in self.db.build_chat_projection(speaker, int(night["id"]))
-                           if int(message.get("chat_turn_id") or 0) in ids]
-                return sorted(history, key=lambda message: int(message.get("chat_turn_id") or 0))
+                # #1849 reopen：殿上轮只按「殿上」一个名字取，不再拼按朝臣旧存储。
+                return self.db.build_chat_projection(SCENE_CHAT_SPEAKER, int(night["id"]))
             return self.db.build_chat_projection(minister_name, int(night["id"]) if night else 0)
         return [
             {"role": m["role"], "content": m["content"], "chat_turn_id": 0}
@@ -2003,7 +1960,7 @@ class WebGame:
         return existing is not None and not existing.get("minister_message_id")
 
     def _start_chat_turn(
-        self, minister_name: str, *, attach_to_hall: bool = True, route: str = "",
+        self, minister_name: str, *, attach_to_hall: bool = True,
         message: str = "",
     ) -> tuple[int, Dict[str, Any]]:
         agno_session_id = self._minister_agno_session_id(minister_name)
@@ -2011,7 +1968,6 @@ class WebGame:
         snapshot = self.db.capture_chat_rollback_snapshot()
         # #498：进入召对即开夜；对话轮挂 night_id，status=generating 至回话入档。
         # 测试替身无 conn/夜表时回退 create_chat_turn（lifecycle 双接口仍可测）。
-        # #1566：场外密疏只挂当前夜，不入殿、不启殿上 scene；route 落 chat_turns。
         if hasattr(self.db, "conn"):
             from ming_sim.audience_night import (
                 attach_chat_turn_to_night,
@@ -2027,7 +1983,6 @@ class WebGame:
                     agno_session_id=agno_session_id,
                     agno_runs_before=runs_before,
                     beat_generator=None,
-                    route=route,
                 )
                 if not night_was_open:
                     from ming_sim.decree_forecast import schedule_held_decree_forecasts
@@ -2050,7 +2005,6 @@ class WebGame:
                     runs_before,
                     night_id=int(night["id"]),
                     status="generating",
-                    route=route,
                 )
         else:
             chat_turn_id = self.db.create_chat_turn(
@@ -2058,7 +2012,6 @@ class WebGame:
                 minister_name,
                 agno_session_id,
                 runs_before,
-                route=route,
             )
             from ming_sim.audience_night import recognize_xuan_command
             if attach_to_hall and chat_turn_id and not recognize_xuan_command(message):
@@ -2220,7 +2173,6 @@ class WebGame:
             "pending_count": self.session.pending_count(),
             "pending_directive_count": self.pending_directive_count(),
             "secret_orders": self.db.list_secret_orders(),
-            "suggestions": self.suggestions_for(character) if character is not None else [],
             "can_undo_last_chat": self.can_undo_last_chat(minister_name),
         }
 
@@ -2267,7 +2219,7 @@ class WebGame:
                 minister_message_id = int(
                     self.db.append_chat_message(minister_name, turn, "minister", answer)
                 )
-        self.chat_history[minister_name].append({"role": "minister", "content": answer})
+        self.chat_history.setdefault(minister_name, []).append({"role": "minister", "content": answer})
         open_night = None
         if hasattr(self.db, "conn"):
             from ming_sim.audience_night import get_open_night
@@ -2302,7 +2254,6 @@ class WebGame:
             "pending_count": self.session.pending_count(),
             # #1716：done 载荷同步 pending_directive_count——onDone 直接落 UI，不单靠 refresh 竞态。
             "pending_directive_count": self.pending_directive_count(),
-            "suggestions": self.suggestions_for(character) if character is not None else [],
             "can_undo_last_chat": self.can_undo_last_chat(minister_name),
         }
 
@@ -2313,14 +2264,6 @@ class WebGame:
         if getattr(self.state, "turn_phase", None) in FRONT_HALF_DONE_PHASES:
             raise HTTPException(status_code=409, detail="月末结算/亲裁进行中，暂不能召对。")
 
-    @staticmethod
-    def _message_is_formal_secret_order(message: str) -> bool:
-        """#1566：正式密令前缀入口（复用既有 _SECRET_PREFIXES，不另造分类器）。
-
-        ADR 0096：密疏不受 location 分流；公开 chat/stream 须在 admission 前识别。
-        """
-        from ming_sim.cli_backend import _SECRET_PREFIXES
-        return (message or "").strip().startswith(_SECRET_PREFIXES)
 
     def _open_night_court_break(self, message: str) -> bool:
         """#1716：已开夜的收夜口令不得被场外记召短路。
@@ -2338,358 +2281,10 @@ class WebGame:
             return False
         return get_open_night(self.db) is not None
 
-    def _finish_offsite_summon_scene(
-        self, *, origin_id: str, minister_name: str, gate_cm: Any,
-    ) -> None:
-        """#1566：gate 内组装 DB 输入、gate 外生成、gate 内短写。无专用 Future。"""
-        from ming_sim.beat_orchestration import (
-            assemble_offsite_summon_inputs,
-            persist_chat_turn_scene,
-            run_beat_generator,
-        )
 
-        with gate_cm:
-            assembled = assemble_offsite_summon_inputs(
-                self.db, self.state, origin_id=origin_id, person_name=minister_name,
-            )
-        if assembled is None:
-            return
-        entry_id, inputs = assembled
-        body = run_beat_generator(
-            getattr(self.session, "_beat_generator", None), inputs,
-        )
-        with gate_cm:
-            with atomic(self.db):
-                persist_chat_turn_scene(self.db, [(entry_id, body)])
 
-    def _summon_admission_success_payload(
-        self, minister_name: str, admission_result: str,
-    ) -> Dict[str, Any]:
-        """#670：成功记召静默载荷——不建轮、不落消息、不调回话/LLM。
 
-        admission 为机面控制码，客户端不得写入玩家错误区。
-        #1566：canonical scroll 承接可见 scene；本载荷仍空 answer。
-        """
-        character = self.session._character(minister_name)
-        open_night = None
-        if hasattr(self.db, "conn"):
-            from ming_sim.audience_night import get_open_night
-            open_night = get_open_night(self.db)
-        return {
-            "minister": minister_name,
-            "answer": "",
-            "campaign_id": (
-                str(self.db.kv_get("campaign_id") or "")
-                if hasattr(self.db, "kv_get") else ""
-            ),
-            "night_id": int(open_night["id"]) if open_night else 0,
-            "history": self.chat_projection(minister_name),
-            "chat_turn_id": 0,
-            "minister_message_id": 0,
-            "court_action": "",
-            "next_minister": "",
-            "proposed_directive": None,
-            "appointed_minister": "",
-            "registered_minister": "",
-            "displaced_minister": "",
-            "secret_order_id": 0,
-            "pending_action_id": 0,
-            "directive_confirmation_ambiguous": None,
-            "directives": [self.directive_payload(row) for row in self.directive_rows()],
-            "pending_count": self.session.pending_count(),
-            "suggestions": self.suggestions_for(character),
-            "can_undo_last_chat": self.can_undo_last_chat(minister_name),
-            # 机面字段：不渲染；前端 refresh 故事账/卷轴即可。
-            "admission": str(admission_result or ""),
-        }
 
-    def chat(self, minister_name: str, message: str, intent: Optional[str] = None) -> Dict[str, Any]:
-        # #498 AC10：LLM 生成不持 write_gate，使颁诏入口可观测 in-flight 并有界超时；
-        # 仅 prologue/epilogue 写库持锁。
-        # #670 / ADR 0096：殿上入口——自持闸 prologue 内消费 admission（与 chat_stream 同口径）。
-        return self._chat_core(minister_name, message, gate_already_held=False, intent=intent)
-
-    def _chat_with_write_gate_held(self, minister_name: str, message: str) -> Dict[str, Any]:
-        """#1357：兼容密令按钮端点已由 `_serialized_web_write` 持 write_gate。
-
-        与 `chat()` 同语义，但不得再 acquire 非可重入 Lock（会死锁）。
-        此兼容路径在外层闸内跑完整轮（含 LLM）；公开 chat/chat_stream 仍按 AC10
-        在生成期放闸。
-        #670：密疏只受 _require_active_minister/can_summon，不走殿上 admission。
-        """
-        return self._chat_core(minister_name, message, gate_already_held=True)
-
-    def _chat_core(
-        self,
-        minister_name: str,
-        message: str,
-        *,
-        gate_already_held: bool,
-        intent: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        if minister_name not in self.content.characters and minister_name not in self.session.temporary_characters:
-            raise HTTPException(status_code=404, detail=f"未找到大臣：{minister_name}")
-        text = message.strip()
-        if not text:
-            raise HTTPException(status_code=400, detail="问话不能为空。")
-        # #498：结算/亲裁相位不得召对——否则开的夜会随 submit_decisions 跨月推进而不收（夜不跨月）。
-        # 锁前查仅为快速失败；权威判定须在持 gate 后、建任何 chat turn/开夜/写库之前复查——
-        # 否则 SUMMONING 通过后等 gate 时被结算 worker 改成 AWAITING_DECISION/SETTLING，仍会开夜（TOCTOU）。
-        self._reject_if_settlement_phase()
-        # 整轮（含 LLM 无锁窗 + epilogue）共用一次队列票据——对齐 chat_stream。
-        # #1291 卸到 threadpool 后事件循环可与回菜单/新局重叠；不领票则 barrier/drain
-        # 当空闲关连接，epilogue 落库打到已关连接。公开 chat 与持闸密令路共用 claim→finally complete。
-        pending_ticket = self._mark_pending_write()
-        if pending_ticket is None:
-            raise HTTPException(
-                status_code=503,
-                detail="当前会话正在关闭，请回菜单重新进入。",
-            )
-        # #1353 r10：删简优先——屏障已受理则拒后序聊天（与 seal 合流），禁排队等屏障后
-        # 再写旧 night；公开路径 DB 缝另经 ticketed gate。持闸兼容路外层已持裸锁。
-        # 失败清理在票可能已 complete 后走裸 runtime gate（ticketed 见 _done 会 TicketCancelled）。
-        if (
-            not gate_already_held
-            and self._runtime_write_queue().has_open_barrier()
-        ):
-            self._complete_pending_write(pending_ticket)
-            raise HTTPException(
-                status_code=409,
-                detail="本夜收夜中，暂不能召对。",
-            )
-        if gate_already_held:
-            gate_cm: Any = contextlib.nullcontext()
-            cleanup_gate: Any = contextlib.nullcontext()
-        else:
-            gate_cm = self._ticketed_write_gate(pending_ticket)
-            cleanup_gate = self._runtime_write_gate()
-        chat_turn_id = 0
-        before_snapshot: Dict[str, Any] = {}
-        accepted_turn = 0
-        result = None
-        translation_scheduled = False
-        # #1566：场外记召成功后在 gate 外物化 scene；（minister, admission_result, origin_id）
-        offsite_summon: Optional[tuple[str, str, str]] = None
-        # #542 r6e：prologue（_start_chat_turn / append）纳入既有 try/except；
-        # 与流式 L2414-2428 同缝——drain 在 write_gate 外，再 abandon + fail。
-        try:
-            try:
-                with gate_cm:
-                    self._reject_if_settlement_phase()
-                    # #612：CLOSING 冻结新对话——与 stream 共用唯一玩家输入准入真源，无平行 status 判断。
-                    if hasattr(self.db, "conn"):
-                        from ming_sim.audience_night import assert_night_accepts_player_input
-                        assert_night_accepts_player_input(self.db, what="召对")
-                    if self._audience_turn_in_flight(minister_name):
-                        raise HTTPException(status_code=409, detail=f"{minister_name}上一轮回奏仍在进行，请稍候再问。")
-                    accepted_turn = int(self.state.turn)
-                    # #670：殿上 chat 自持闸时消费 admission；密疏兼容路（gate_already_held）不消费。
-                    # 闸只管殿上召对——书信/密疏只受基础资格（_require_active_minister/can_summon）。
-                    # #1566：正式密令前缀须先入密令管线，不得被 location admission 抢先截获。
-                    # #1716：已开夜收夜口令跳过场外记召（与 stream 同缝）。
-                    explicit_secret_order = intent == "secret_order" or self._message_is_formal_secret_order(text)
-                    court_break_open_night = self._open_night_court_break(text)
-                    secret_order_bypass = (
-                        gate_already_held or explicit_secret_order or court_break_open_night
-                    )
-                    offsite_turn = False
-                    if not secret_order_bypass:
-                        origin_id = f"web:chat:{accepted_turn}:{minister_name}"
-                        admission = self.session.consume_audience_admission(
-                            self.session._character(minister_name),
-                            origin_id=origin_id,
-                        )
-                        if not admission.allowed:
-                            # 资格失败：非空 reason → 409 错误通道。
-                            # 成功记召（SUMMON_* + 空 reason）：静默 200，退出玩家错误通道。
-                            if admission.reason:
-                                raise HTTPException(
-                                    status_code=409, detail=admission.reason,
-                                )
-                            if admission.result in (
-                                AudienceAdmission.SUMMON_FRESH,
-                                AudienceAdmission.SUMMON_IN_TRANSIT,
-                            ):
-                                # 记召已落账；scene 在 gate 外生成（见 with 后）。
-                                offsite_summon = (
-                                    minister_name,
-                                    admission.result.value,
-                                    origin_id,
-                                )
-                            else:
-                                raise HTTPException(
-                                    status_code=409,
-                                    detail=(
-                                        admission.result.value
-                                        if admission.result is not None else ""
-                                    ),
-                                )
-                    elif not gate_already_held and (
-                        explicit_secret_order or court_break_open_night
-                    ):
-                        # #1716：收夜/密令 bypass 后仍取非消费地点分流；收夜不因 reason 拦截。
-                        decision = self.session.admit_audience(
-                            self.session._character(minister_name),
-                        )
-                        if decision.reason and not court_break_open_night:
-                            raise HTTPException(
-                                status_code=409, detail=decision.reason,
-                            )
-                        offsite_turn = decision.result in (
-                            AudienceAdmission.SUMMON_FRESH,
-                            AudienceAdmission.SUMMON_IN_TRANSIT,
-                        )
-                    if offsite_summon is None:
-                        if self._persistent_chat_minister(minister_name):
-                            from ming_sim.audience_night import encode_chat_turn_route
-                            chat_turn_id, before_snapshot = self._start_chat_turn(
-                                minister_name,
-                                message=text,
-                                attach_to_hall=not offsite_turn,
-                                route=encode_chat_turn_route(
-                                    explicit_secret_order=explicit_secret_order,
-                                    offsite=offsite_turn,
-                                ),
-                            )
-                        self.chat_history.setdefault(minister_name, []).append({"role": "user", "content": text})
-                        if minister_name not in self.session.temporary_characters:
-                            message_id = self.db.append_chat_message(minister_name, accepted_turn, "user", text)
-                            if chat_turn_id:
-                                self.db.update_chat_turn_messages(chat_turn_id, user_message_id=message_id)
-                if offsite_summon is not None:
-                    summon_name, summon_result, summon_origin = offsite_summon
-                    self._finish_offsite_summon_scene(
-                        origin_id=summon_origin, minister_name=summon_name,
-                        gate_cm=gate_cm,
-                    )
-                    # #1566：成功载荷的同连接 DB 投影读须纳入 ticketed gate 短临界段，
-                    # 与并发同源请求的读/写在同一 sqlite connection 上互斥；LLM 早已在
-                    # write_back 内结清，此处只剩纯读。
-                    with gate_cm:
-                        return self._summon_admission_success_payload(
-                            summon_name, summon_result,
-                        )
-                # #1842：殿上真实召对入口切 scene_chat；密令仍走旧 session.chat。
-                # 退役：旧分类器 / 故事抽取 / 边事件判官 / 代码触发读心（转译承接）。
-                if explicit_secret_order:
-                    result = self.session.chat(
-                        minister_name, text,
-                        chat_turn_id=chat_turn_id,
-                        explicit_secret_order=True,
-                    )
-                else:
-                    result = self.session.scene_chat(
-                        text, chat_turn_id=chat_turn_id,
-                        minister_name=minister_name,
-                    )
-                proposed = None
-                if result.proposed_directive is not None:
-                    d = result.proposed_directive
-                    proposed = {"id": d.id, "text": d.text, "status": d.status, "notes": d.notes}
-                scene_generated = self.session.join_chat_turn_scene(chat_turn_id)
-                with gate_cm:
-                    # 慢 scene 等待在 gate 外；短事务内与回话全有或全无。
-                    with atomic(self.db):
-                        self.session.persist_chat_turn_scene(scene_generated)
-                        payload = self._chat_payload(
-                        minister_name, result.answer,
-                        court_action=result.court_action, next_minister=result.next_minister,
-                        proposed_directive=proposed, appointed_minister=result.appointed_minister,
-                        registered_minister=result.registered_minister,
-                        displaced_minister=result.displaced_minister,
-                        secret_order_id=result.secret_order_id,
-                        pending_action_id=getattr(result, "pending_action_id", 0),
-                        chat_turn_id=chat_turn_id,
-                        accepted_turn=accepted_turn,
-                        # #502 R1：非流式路径同 surface 结构化含糊态（与 stream 同真源，禁双路径漂移）。
-                        directive_confirmation_ambiguous=getattr(
-                            result, "directive_confirmation_ambiguous", None),
-                        decree_validation_failure=getattr(
-                            result, "decree_validation_failure", None),
-                        secret_order_landing_recovery=getattr(
-                            result, "secret_order_landing_recovery", None),
-                    )
-                    self._record_chat_rollback_items(chat_turn_id, before_snapshot)
-                # #1842：回话落定后起后台转译（ADR 0155 / 0036）。
-                result._admitted_write_ticket = pending_ticket
-                self.session.schedule_pending_scene_translation(result)
-                translation_scheduled = True
-                answer_text = str(getattr(result, "answer", "") or "")
-                message_id = int(payload.get("minister_message_id") or 0)
-                # #1842：转译后台承接记录；旧读心/抽取/判官尾随退役。高亮仍可跑（呈现腿）。
-                if chat_turn_id and answer_text and not gate_already_held:
-                    self._complete_pending_write(pending_ticket)
-                    pending_ticket = None
-                if message_id and answer_text:
-                    held_ticket = pending_ticket if gate_already_held else None
-                    self._trail_highlight_judge_after_reply(
-                        answer_text,
-                        message_id=message_id,
-                        chat_turn_id=chat_turn_id,
-                        gate_already_held=gate_already_held,
-                        pending_ticket=held_ticket,
-                    )
-                    if held_ticket is not None:
-                        # 持闸兼容：整轮票覆盖高亮写；trail 不二次 acquire，由调用方收口。
-                        self._complete_pending_write(held_ticket)
-                        pending_ticket = None
-                    payload["history"] = self.chat_projection(minister_name)
-            except Exception as error:
-                # drain 在 write_gate 外（与 stream / retry 同序），再短写 fail。
-                # 内层守护对齐流式：二次失败记日志不吞原错；abandon / 终态写分 try，
-                # 终态写尽力而为——abandon 崩不得跳过 fail，否则 turn 卡 generating。
-                try:
-                    self.session.abandon_chat_turn_scene(chat_turn_id)
-                except Exception:
-                    logger.exception(
-                        "nonstream chat cleanup: abandon_chat_turn_scene failed chat_turn_id=%s",
-                        chat_turn_id,
-                    )
-                try:
-                    with cleanup_gate:
-                        if chat_turn_id:
-                            if not self._record_persisted_reply_failure(
-                                chat_turn_id, error,
-                                translation_unstarted=not translation_scheduled,
-                                court_action=getattr(result, "court_action", ""),
-                            ):
-                                self._record_chat_rollback_items(chat_turn_id, before_snapshot)
-                                restored_ids = self.db.fail_chat_turn(chat_turn_id)
-                                from ming_sim.decree_forecast import schedule_restored_decree_forecasts
-                                schedule_restored_decree_forecasts(self.session, restored_ids)
-                                self.chat_history = {name: [] for name in self.session.content.characters}
-                                for name, msgs in self.db.load_all_chat_history().items():
-                                    self.chat_history.setdefault(name, []).extend(msgs)
-                except Exception:
-                    logger.exception(
-                        "nonstream chat cleanup: fail_chat_turn/reload failed chat_turn_id=%s",
-                        chat_turn_id,
-                    )
-                raise
-            # #1353：若无尾随（无 turn/answer）仍须放行整轮票后再收夜。
-            if pending_ticket is not None:
-                self._complete_pending_write(pending_ticket)
-                pending_ticket = None
-            # #526/#1842：回话已落库后收夜。非流式前台先返回；队列随后 FIFO 转译 join→封夜。
-            # #1353：close 经队列屏障；穿既有 runtime write_gate（禁第二锁）。
-            court_action = getattr(result, "court_action", "") or ""
-            schedule = getattr(
-                self.session, "schedule_close_night_after_chat_if_needed", None,
-            )
-            if schedule is not None:
-                schedule(court_action, write_gate=self._runtime_write_gate())
-            else:
-                close_after = getattr(
-                    self.session, "close_night_after_chat_if_needed", None,
-                )
-                if close_after is not None:
-                    close_after(
-                        court_action,
-                        write_gate=self._runtime_write_gate(),
-                    )
-            return payload
-        finally:
-            self._complete_pending_write(pending_ticket)
 
     def interrupted_reply_retries(self, minister_name: str) -> List[Dict[str, Any]]:
         """#505：某大臣重开后待重试的中断回话轮（问话已落、回话未落）——恢复提示取数。
@@ -2744,8 +2339,21 @@ class WebGame:
             "directives": [self.directive_payload(row) for row in self.directive_rows()],
             "pending_count": self.session.pending_count(),
             "pending_directive_count": self.pending_directive_count(),
-            "suggestions": [], "can_undo_last_chat": self.can_undo_last_chat(minister_name),
+            "can_undo_last_chat": self.can_undo_last_chat(minister_name),
+            "pending_action_failures": self.pending_action_failures_for(minister_name),
         }
+
+    def pending_action_failures_for(self, minister_name: str) -> List[Dict[str, Any]]:
+        return [
+            _pending_action_failure_payload(action)
+            for action in self.db.list_failed_secret_order_actions(minister_name)
+        ]
+
+    def pending_action_failures(self) -> List[Dict[str, Any]]:
+        return [
+            _pending_action_failure_payload(action)
+            for action in self.db.list_failed_secret_order_actions()
+        ]
 
     def retry_interrupted_reply(self, minister_name: str, target_chat_turn_id: Optional[int] = None) -> Dict[str, Any]:
         """恢复指定中断轮，或续接已落回话的尾随阶段；旧调用默认最新中断轮。
@@ -2791,9 +2399,7 @@ class WebGame:
         before_snapshot: Dict[str, Any] = {}
         result = None
         translation_scheduled = False
-        # #1566：route 权威解码——场外密令不启殿上 scene；密令重试保 explicit_secret_order。
-        from ming_sim.audience_night import decode_chat_turn_route
-        retry_route = decode_chat_turn_route(target.get("route"))
+        # #1849 reopen：重试只走殿上 scene_chat，不再按 route 分密令/场外。
         # #542 r6e：reopen + start_chat_turn_scene 纳入既有 try/except；
         # 失败复用 abandon + restore interrupted；drain 在 write_gate 外。
         try:
@@ -2812,26 +2418,16 @@ class WebGame:
                     if not self.db.reopen_interrupted_chat_turn_for_retry(chat_turn_id):
                         raise HTTPException(
                             status_code=409, detail=f"{minister_name}上一轮回奏仍在进行，请稍候再问。")
-                    # #505 finding1：与 chat 同 snapshot→record rollback 缝——session.chat 在返回前
-                    # 即可 durable 落副作用（dismiss 账/拟旨/任免候选等，session.py tool 环）。捕于
-                    # reopen 后、session.chat 前，成功后记 diff 供撤回、失败时回滚，杜绝双 stage/粘滞。
+                    # #505 finding1：与 chat 同 snapshot→record rollback 缝。
                     before_snapshot = self.db.capture_chat_rollback_snapshot()
                     from ming_sim.audience_night import recognize_xuan_command
-                    if retry_route["start_hall_scene"] and not recognize_xuan_command(question):
+                    if not recognize_xuan_command(question):
                         self.session.start_chat_turn_scene(minister_name, chat_turn_id)
-                # #1842：重试入口同切 scene_chat（密令 route 仍走 session.chat）。
-                if retry_route["explicit_secret_order"]:
-                    result = self.session.chat(
-                        minister_name, question,
-                        chat_turn_id=chat_turn_id,
-                        explicit_secret_order=True,
-                    )
-                else:
-                    result = self.session.scene_chat(
-                        question, chat_turn_id=chat_turn_id,
-                        minister_name=minister_name,
-                        stream_emit=lambda _delta, **_kwargs: None,
-                    )
+                result = self.session.scene_chat(
+                    question, chat_turn_id=chat_turn_id,
+                    minister_name=minister_name,
+                    stream_emit=lambda _delta, **_kwargs: None,
+                )
                 proposed = None
                 if result.proposed_directive is not None:
                     d = result.proposed_directive
@@ -3015,487 +2611,7 @@ class WebGame:
             payload["transport_attempts"] = attempts
         return payload
 
-    def _chat_stream_payload(
-        self,
-        minister_name: str,
-        text: str,
-        chat_turn_id: int,
-        before_snapshot: Dict[str, Any],
-        accepted_turn: int,
-        emit_delta,
-        write_gate: Optional[threading.Lock] = None,
-        explicit_secret_order: bool = False,
-    ) -> Dict[str, Any]:
-        character = self.session._character(minister_name)
-        # #1812/#1830：本消息只备一次材料，供 registry.get 首建 agent 与组装提示
-        # 共用——与 CLI `GameSession.chat` 同一份权威 prepare 契约；不得各自再
-        # 各建一份（重复全树重写+开场重复入 prompt）。真实 session 恒有
-        # `_audience_prompt_for_message`；轻量 test double 若没有，
-        # `_audience_prompt_for_web_chat` 本就直接回退返回原文本，不进真实 chat
-        # 入口——同一 gate 用在这里，不强令它背真实建材依赖（与
-        # `_audience_prompt_for_web_chat` 自己的 legacy-double 兼容契约一致）。
-        prepared = None
-        if getattr(self.session, "_audience_prompt_for_message", None) is not None:
-            from ming_sim.materials import prepare_character_materials
-            prepared = prepare_character_materials(self.session.db, self.session.state, character)
-        agent = self.session.registry.get(character, prepared=prepared)
-        # The session audience seam is per-character: passing only the message
-        # makes a web-streamed question bypass that perspective.
-        agent_prompt = _audience_prompt_for_web_chat(
-            self.session, text, character, chat_turn_id, prepared=prepared,
-        )
-        # #542：dismiss tool 事件一出现就 start_exit，与尚未结束的回话流重叠。
-        # #1566：密令 route 跳过流中 early-exit（与 interpret/session.chat 同门）。
-        from ming_sim.cli_backend import _SECRET_PREFIXES as _STREAM_SECRET_PREFIXES
-        stream_secret_route = bool(explicit_secret_order) or (text or "").strip().startswith(
-            _STREAM_SECRET_PREFIXES
-        )
-        # #1465 切片③：API / CLI 同一 transport（次数、空转、分类、终失败同一权威）。
-        # 槽位仍平级（ADR 0001）：transport 是调用策略，不是第三通道。
-        llm_cfg = getattr(self.session, "llm_config", None)
-        policy = audience_transport_policy(llm_cfg)
-        chunks: List[str] = []
-        run_output_box: List[Any] = []
-        exit_started_during_stream = {"v": False}
 
-        def _on_event(event: Any) -> None:
-            content = getattr(event, "content", None)
-            event_name = getattr(event, "event", "")
-            if event_name == "RunContent" and content:
-                delta = str(content)
-                chunks.append(delta)
-                emit_delta(delta)
-            if not exit_started_during_stream["v"] and not stream_secret_route:
-                start_exit = getattr(
-                    self.session, "start_exit_scene_from_dismiss_tools", None,
-                )
-                tool = getattr(event, "tool", None)
-                tools_now: List[Any] = [tool] if tool is not None else []
-                if not tools_now and type(event).__name__ in ("RunOutput", "RunCompletedEvent"):
-                    tools_now = list(getattr(event, "tools", None) or [])
-                if (
-                    tools_now
-                    and start_exit is not None
-                    and start_exit(character.name, int(chat_turn_id or 0), tools_now)
-                ):
-                    exit_started_during_stream["v"] = True
-            if type(event).__name__ in ("RunOutput", "RunCompletedEvent"):
-                run_output_box.clear()
-                run_output_box.append(event)
-
-        def _after_stream():
-            run_output = run_output_box[0] if run_output_box else None
-            _dump_llm_messages(run_output, f"大臣对话/{minister_name}", agent=agent)
-            # P6 / #671：流式拼装不得 strip；玩家可见原文（含首尾空白）原样保留。
-            answer = "".join(chunks)
-            if run_output is not None:
-                extracted = extract_agent_text(run_output)
-                if not answer:
-                    answer = extracted
-            else:
-                fail_if_llm_error(answer, "LLM 调用")
-            if not answer:
-                raise transport_failure_unavailable(
-                    empty_output_failure(), attempts=1, exhausted=False,
-                )
-            return answer, run_output
-
-        stream_attempt_n = {"n": 0}
-
-        def _start_stream():
-            # 每 attempt 清空半局部呈现态（chunks/run_output）；
-            # 不重置 exit_started：流中已落账退场是史实（0036），重试须与之相容。
-            chunks.clear()
-            run_output_box.clear()
-            # #1465 半流呈现选项 1：重试开始时替换未完成的临时回话（仅呈现；不回滚落账）
-            if stream_attempt_n["n"] > 0:
-                emit_delta("", replace=True)
-                # fo2Og：失败 attempt 的 Agno runs 截回本轮起点，不调用 fail_chat_turn。
-                if chat_turn_id:
-                    self.db.truncate_chat_turn_agno_runs(int(chat_turn_id))
-            stream_attempt_n["n"] += 1
-            return agent.run(
-                agent_prompt, stream=True, stream_events=True, yield_run_output=True,
-            )
-
-        # SDK 阻塞超时 = bind_transport_sdk_budget(model.timeout←attempt_timeout)；
-        # 事件界只做 idle 空转，不能中止 SDK read 阻塞。
-        # CLI 通道同门：子进程静默由 runner 增量读判死（无总墙钟），
-        # typed 瞬断经 model 调用边界记忆还原分类。
-        with bind_transport_sdk_budget(getattr(agent, "model", None), policy):
-            (answer, run_output), transport_attempts_box = run_transport_stream(
-                _start_stream,
-                on_event=_on_event,
-                is_activity_event=is_stream_activity_event,
-                map_error_event=map_run_error_event,
-                after_stream=_after_stream,
-                policy=policy,
-            )
-
-        # #542：action/tool 解释（exit 若流中未启则幂等补登），write_gate 外统一 join，
-        # 短事务原子持久化 reply + 本轮全部 scene。join 不得早于 start_exit。
-        interpreted = self._chat_stream_interpret_tools(
-            minister_name, text, character, answer, run_output,
-            chat_turn_id, explicit_secret_order,
-        )
-        # 动作/结果相容：流中已启退场而终 attempt 工具账未带 dismiss 时，结构结果仍须对齐史实。
-        # 不延后 dismiss、不加次数例外（fo2Oe 处方驳回；按事实修）。
-        if exit_started_during_stream["v"] and not interpreted.get("court_action"):
-            interpreted["court_action"] = "dismiss"
-        scene_generated = self.session.join_chat_turn_scene(chat_turn_id)
-        cm = write_gate if write_gate is not None else contextlib.nullcontext()
-        with cm:
-            with atomic(self.db):
-                self.session.persist_chat_turn_scene(scene_generated or [])
-                payload = self._chat_payload(
-                    minister_name,
-                    interpreted["answer"],
-                    court_action=interpreted["court_action"],
-                    next_minister=interpreted["next_minister"],
-                    proposed_directive=interpreted["proposed"],
-                    appointed_minister=interpreted["appointed"],
-                    registered_minister=interpreted["registered"],
-                    displaced_minister=interpreted["displaced"],
-                    secret_order_id=interpreted["secret_order_id"],
-                    pending_action_id=interpreted["pending_action_id"],
-                    chat_turn_id=chat_turn_id,
-                    accepted_turn=accepted_turn,
-                    directive_confirmation_ambiguous=interpreted["directive_ambiguous"],
-                    decree_validation_failure=interpreted["decree_validation_failure"],
-                    secret_order_landing_recovery=interpreted.get(
-                        "secret_order_landing_recovery"),
-                )
-                self._record_chat_rollback_items(chat_turn_id, before_snapshot)
-        # #1465：attempts 账可回指（结构化；非 prose）
-        if transport_attempts_box:
-            payload["transport_attempts"] = transport_attempts_public(transport_attempts_box)
-        return payload
-
-    def _chat_stream_interpret_tools(
-        self,
-        minister_name: str,
-        text: str,
-        character: Any,
-        answer: str,
-        run_output: Any,
-        chat_turn_id: int,
-        explicit_secret_order: bool = False,
-    ) -> Dict[str, Any]:
-        # 截 propose_directive：入 pending_actions；截 propose_appointment：吏部铨选建档。
-        # #1871：意图分类器链已删；应允/交办由转译声明。本函数只截 tool 结果。
-        proposed = None
-        appointed = ""
-        registered = ""
-        court_action = ""
-        next_minister = ""
-        displaced = ""
-        secret_order_id = 0
-        pending_action_id = 0
-        tool_pending_action_id = 0
-        tool_stage_failures: List[Dict[str, Any]] = []
-        # #1566：密令 route 须在 command-verdict / exit / summon·dismiss 之前成立。
-        message_text = (text or "").strip()
-        from ming_sim.cli_backend import _DRAFT_PREFIXES, _SECRET_PREFIXES
-        explicit_draft_prefix = message_text.startswith(_DRAFT_PREFIXES)
-        explicit_secret_prefix = message_text.startswith(_SECRET_PREFIXES)
-        explicit_secret_route = explicit_secret_order or explicit_secret_prefix
-        # #526：口令判词与 session.chat 同缝（流式不经 session.chat；同步封闭集，无 Future）。
-        # #1566：密令 route 跳过 command-verdict。
-        apply_cmd = getattr(self.session, "_apply_audience_command_verdict", None)
-        recognize_cmd = getattr(self.session, "_recognize_audience_command_verdict", None)
-        if (
-            not explicit_secret_route
-            and apply_cmd is not None
-            and recognize_cmd is not None
-        ):
-            from ming_sim.session import ChatTurnResult
-            cmd_result = ChatTurnResult(answer=answer)
-            apply_cmd(
-                cmd_result, character, text,
-                verdict=recognize_cmd(text),
-                chat_turn_id=int(chat_turn_id or 0),
-            )
-            answer = cmd_result.answer
-            if cmd_result.court_action:
-                court_action = cmd_result.court_action
-        if run_output is not None:
-            for tool_exec in getattr(run_output, "tools", None) or []:
-                res = str(getattr(tool_exec, "result", "") or "")
-                tool_name = getattr(tool_exec, "tool_name", "")
-                if tool_name == "propose_directive" or res.startswith("__pending_directive__"):
-                    # confirmation / secret 前缀仍整枚跳过；孪生抑制在
-                    # _stage_directive_tool_candidate generic 尾路按 kind 分派。
-                    if explicit_secret_route:
-                        continue
-                    args = getattr(tool_exec, "arguments", {}) or getattr(tool_exec, "tool_args", {}) or {}
-                    if not isinstance(args, dict):
-                        args = {}
-                    draft_text = res.removeprefix("__pending_directive__").strip()
-                    if not draft_text:
-                        draft_text = (args.get("decree_text") or "").strip()
-                    if draft_text and GameSession._proposal_blocked(self.state):
-                        draft_text = ""  # 恢复窗婉拒（ship-pre r2 软死锁环源头，同 session 路）
-                    if draft_text:
-                        # #502 L2 / #522 / #517：与 session 非流式同真源；
-                        # 惩处结构化字段只从 tool arguments 交付。
-                        stage_failures: List[Dict[str, Any]] = []
-                        pending_action_id = coalesce_pending_action_id(
-                            pending_action_id,
-                            self.session._stage_directive_tool_candidate(
-                                draft_text, character.name, message_text,
-                                failures_out=stage_failures,
-                                punish_action=args.get("punish_action"),
-                                target_id=args.get("target_id"),
-                                name=args.get("name"),
-                                amount=args.get("amount"),
-                                transaction_category=args.get("transaction_category"),
-                                backing_dossier_id=args.get("backing_dossier_id"),
-                                issue_id=args.get("issue_id"),
-                                issue_disposition=args.get("issue_disposition"),
-                                mode=args.get("mode") or args.get("颁布方式"),
-                            ),
-                        )
-                        if stage_failures:
-                            tool_stage_failures.extend(stage_failures)
-                elif (
-                    tool_name == "propose_appointment"
-                    or res.startswith("__pending_appointment__")
-                    or res.startswith("__pending_recommendation__")
-                ):
-                    if explicit_draft_prefix or explicit_secret_route:
-                        continue
-                    payload_json = res.removeprefix("__pending_recommendation__")
-                    payload_json = payload_json.removeprefix("__pending_appointment__").strip()
-                    if not payload_json:
-                        args = getattr(tool_exec, "arguments", {}) or getattr(tool_exec, "tool_args", {}) or {}
-                        payload_json = json.dumps(args, ensure_ascii=False)
-                    pending_action_id = coalesce_pending_action_id(
-                        pending_action_id,
-                        self.session._stage_appointment_candidate(
-                            payload_json, character, source_text=text,
-                        ),
-                    )
-                elif tool_name == "register_unlisted_person" or res.startswith("__pending_unlisted_person__"):
-                    if explicit_draft_prefix or explicit_secret_route:
-                        continue
-                    payload_json = res.removeprefix("__pending_unlisted_person__").strip()
-                    if not payload_json:
-                        args = getattr(tool_exec, "arguments", {}) or getattr(tool_exec, "tool_args", {}) or {}
-                        payload_json = json.dumps(args, ensure_ascii=False)
-                    registered, summon_after = self.session._apply_unlisted_person_registration(payload_json)
-                    # #670 / ADR 0038+0096：补档已落 DB 后须走共享 admission；仅 allowed 换人。
-                    if registered and summon_after:
-                        target = self.session.content.characters.get(registered)
-                        if target is not None:
-                            decision = self.session.consume_audience_admission(
-                                target,
-                                origin_id=f"web:tool:{int(chat_turn_id or 0)}:{target.name}",
-                                origin_chat_turn_id=int(chat_turn_id or 0),
-                            )
-                            if decision.allowed:
-                                court_action = "summon"
-                                next_minister = target.name
-                elif tool_name == "summon_minister" or res.startswith("__summon__"):
-                    # #1566：密令 route 跳过 summon / 换人。
-                    if explicit_secret_route:
-                        continue
-                    args = getattr(tool_exec, "arguments", {}) or getattr(tool_exec, "tool_args", {}) or {}
-                    target_name = res.removeprefix("__summon__").strip() or args.get("name", "")
-                    if target_name:
-                        try:
-                            target, _is_temporary = self.session.summon_character(
-                                target_name, character, allow_temporary=False
-                            )
-                        except ValueError:
-                            target = None
-                        if target is not None:
-                            decision = self.session.consume_audience_admission(
-                                target,
-                                origin_id=f"web:tool:{int(chat_turn_id or 0)}:{target.name}",
-                                origin_chat_turn_id=int(chat_turn_id or 0),
-                                travel_tone=args.get("行程语气"),
-                            )
-                            if decision.allowed:
-                                court_action = "summon"
-                                next_minister = target.name
-                            # #670 P6'/P7：拒入殿只不设 court_action/next_minister；闸文不进 LLM answer。
-                elif tool_name == "dismiss_minister" or res == "__dismiss__":
-                    # #1566：密令 route 跳过 dismiss / exit。
-                    if explicit_secret_route:
-                        continue
-                    court_action = "dismiss"
-                    # AC1（#500）/#506 L1：令退同源落账绑本轮。#542：流中已 start_exit
-                    # 时此处幂等 no-op；未启则补登（仅 tools 终事件路径）。
-                    start_exit = getattr(
-                        self.session, "start_exit_scene_from_dismiss_tools", None,
-                    )
-                    if start_exit is not None:
-                        start_exit(
-                            character.name, int(chat_turn_id or 0), [tool_exec],
-                        )
-                    elif hasattr(self.db, "conn"):
-                        from ming_sim.audience_night import dismiss_from_audience
-                        entry_id = dismiss_from_audience(
-                            self.db, character.name,
-                            origin_chat_turn_id=chat_turn_id, state=self.state,
-                        )
-                        if entry_id and chat_turn_id and hasattr(
-                            self.session, "start_chat_turn_exit_scene",
-                        ):
-                            self.session.start_chat_turn_exit_scene(
-                                character.name, int(chat_turn_id), int(entry_id),
-                            )
-                elif res.startswith("__commitment_rush__"):
-                    if explicit_draft_prefix or explicit_secret_route:
-                        continue
-                    if GameSession._proposal_blocked(self.state):
-                        continue
-                    payload_json = res.removeprefix("__commitment_rush__").strip()
-                    try:
-                        payload = json.loads(payload_json) if payload_json else {}
-                    except (ValueError, TypeError):
-                        payload = {}
-                    if isinstance(payload, dict):
-                        try:
-                            issue_id = int(payload.get("issue_id") or 0)
-                        except (TypeError, ValueError):
-                            issue_id = 0
-                        if issue_id > 0:
-                            staged_id = self.db.stage_pending_action(
-                                self.state.turn,
-                                kind="commitment",
-                                action="催办",
-                                minister_name=character.name,
-                                target_id=issue_id,
-                                payload={
-                                    "stage_idx": int(payload.get("stage_idx") or 0),
-                                    "deadline_months": payload.get("deadline_months", 1),
-                                    "reason": str(payload.get("reason") or "")[:120],
-                                },
-                            )
-                            pending_action_id = coalesce_pending_action_id(
-                                pending_action_id, staged_id,
-                            )
-                            tool_pending_action_id = coalesce_pending_action_id(
-                                tool_pending_action_id, staged_id,
-                            )
-                elif (
-                    res.startswith("__secret_order_registered__")
-                    or res.startswith("__secret_order__")
-                    or res.startswith("__secret_action__")
-                ):
-                    if explicit_draft_prefix:
-                        continue
-                    if GameSession._proposal_blocked(self.state):
-                        continue
-                    if res.startswith("__secret_action__"):
-                        payload_json = res.removeprefix("__secret_action__").strip()
-                        try:
-                            data = json.loads(payload_json) if payload_json else {}
-                        except (ValueError, TypeError):
-                            data = {}
-                        if isinstance(data, dict):
-                            action = str(data.get("action") or "").strip()
-                            try:
-                                order_id = int(data.get("order_id") or 0)
-                            except (TypeError, ValueError):
-                                order_id = 0
-                            payload = data.get("payload") if isinstance(data.get("payload"), dict) else {}
-                            if action and order_id:
-                                if action == "更新":
-                                    payload = self.db.attach_secret_oral_pin(
-                                        character.name, int(self.state.turn), payload,
-                                    )
-                                staged_id = self.db.stage_pending_action(
-                                    self.state.turn, kind="secret_order", action=action,
-                                    minister_name=character.name, target_id=order_id,
-                                    payload=payload,
-                                )
-                                pending_action_id = coalesce_pending_action_id(
-                                    pending_action_id, staged_id,
-                                )
-                                tool_pending_action_id = coalesce_pending_action_id(
-                                    tool_pending_action_id, staged_id,
-                                )
-                    elif res.startswith("__secret_order_registered__"):
-                        try:
-                            registered_id = int(
-                                res.removeprefix("__secret_order_registered__").split("__", 1)[0]
-                            )
-                        except Exception:
-                            registered_id = 0
-                        if registered_id:
-                            staged_id = self.session._stage_legacy_registered_secret_order(
-                                registered_id, character.name)
-                            pending_action_id = coalesce_pending_action_id(
-                                pending_action_id, staged_id,
-                            )
-                            tool_pending_action_id = coalesce_pending_action_id(
-                                tool_pending_action_id, staged_id,
-                            )
-                    else:
-                        payload_json = res.removeprefix("__secret_order__").strip()
-                        if not payload_json:
-                            args = getattr(tool_exec, "arguments", {}) or getattr(tool_exec, "tool_args", {}) or {}
-                            payload_json = json.dumps(args, ensure_ascii=False)
-                        try:
-                            payload = json.loads(payload_json) if payload_json else {}
-                        except (ValueError, TypeError):
-                            payload = {}
-                        if isinstance(payload, dict):
-                            from ming_sim.cli_backend import confirm_dossier_links
-                            dossier_links = confirm_dossier_links(
-                                answer,
-                                self.db.list_referenceable_dossiers(
-                                    character.name, self.state.turn),
-                                payload.get("dossier_links"),
-                                llm_config=getattr(self.session, "llm_config", None),
-                            )
-                            staged_id = self.db.stage_pending_action(
-                                self.state.turn, kind="secret_order", action="新建",
-                                minister_name=character.name, target_id=None,
-                                payload={
-                                    "title": str(payload.get("title") or "").strip(),
-                                    "content": str(payload.get("content") or "").strip(),
-                                    "assignee": str(payload.get("assignee") or character.name).strip(),
-                                    "tags": payload.get("tags") if isinstance(payload.get("tags"), list) else [],
-                                    "deadline_months": payload.get("deadline_months") or 0,
-                                    "excluded_names": payload.get("excluded_names") if isinstance(payload.get("excluded_names"), list) else [],
-                                    "excluded_offices": payload.get("excluded_offices") if isinstance(payload.get("excluded_offices"), list) else [],
-                                    "dossier_links": dossier_links,
-                                    "covert_task": payload.get("covert_task") if isinstance(payload.get("covert_task"), dict) else None,
-                                },
-                            )
-                            pending_action_id = coalesce_pending_action_id(
-                                pending_action_id, staged_id,
-                            )
-                            tool_pending_action_id = coalesce_pending_action_id(
-                                tool_pending_action_id, staged_id,
-                            )
-                # 密令结案不再走大臣工具：月末 settle 按实进度对账派生 done/failed（#1504）
-        if pending_action_id and tool_pending_action_id:
-            self.session._merge_staged_new_secret_order_content(
-                tool_pending_action_id,
-                character.name,
-                text,
-            )
-        pending_action_failures = list(tool_stage_failures)
-        # 仅解释/登记；join + 短事务落账由 _chat_stream_payload 在 gate 外/内分阶完成。
-        return {
-            "answer": answer,
-            "court_action": court_action,
-            "next_minister": next_minister,
-            "proposed": proposed,
-            "appointed": appointed,
-            "registered": registered,
-            "displaced": displaced,
-            "secret_order_id": secret_order_id,
-            "pending_action_id": pending_action_id,
-            "pending_action_failures": pending_action_failures,
-            "directive_ambiguous": None,
-            "decree_validation_failure": None,
-            "secret_order_landing_recovery": None,
-        }
 
     def _trail_highlight_judge_after_reply(
         self,
@@ -3721,10 +2837,11 @@ class WebGame:
             "summary": summary,
         }
 
-    def chat_stream(self, minister_name: str, message: str, intent: Optional[str] = None) -> Iterator[Dict[str, Any]]:
-        scene_chat = minister_name == "殿上"
-        if not scene_chat and minister_name not in self.content.characters and minister_name not in self.session.temporary_characters:
-            yield {"type": "error", "message": f"未找到大臣：{minister_name}"}
+    def chat_stream(self, minister_name: str, message: str) -> Iterator[Dict[str, Any]]:
+        # #1849 reopen：召对只剩殿上一个入口；按大臣/密令/场外路由整条删除。
+        from ming_sim.audience_night import SCENE_CHAT_SPEAKER
+        if minister_name != SCENE_CHAT_SPEAKER:
+            yield {"type": "error", "message": "召对只从殿上入口进行。"}
             return
         text = message.strip()
         if not text:
@@ -3759,8 +2876,6 @@ class WebGame:
         # 颁诏入口可并发观测 generating 并有界超时 fail-closed，不被挂起回话永久挡死。
         # #542 r6g：Lock.locked() 不记 owner——本路径自记是否仍持 gate，只放自己的锁。
         gate_held = True
-        # #1566：场外记召成功后在 gate 外物化 scene；（minister, admission_result, origin_id）
-        offsite_summon: Optional[tuple[str, str, str]] = None
         try:
             write_gate.acquire()
         except TicketCancelled:
@@ -3796,79 +2911,15 @@ class WebGame:
                 yield {"type": "error", "message": f"{minister_name}上一轮回奏仍在进行，请稍候再问。"}
                 return
             accepted_turn = int(self.state.turn)
-            # #1566：正式密令前缀先入密令管线；场外记召成功后在 gate 外物化 scene。
-            # #1716：已开夜收夜口令跳过场外记召，否则散夜被 SUMMON_* 短路、夜永不关。
-            offsite_secret_order = False
-            explicit_secret_order = (not scene_chat) and (intent == "secret_order" or self._message_is_formal_secret_order(text))
-            court_break_open_night = self._open_night_court_break(text)
-            if scene_chat:
-                offsite_secret_order = False
-            elif not explicit_secret_order and not court_break_open_night:
-                stream_origin = f"web:stream:{accepted_turn}:{minister_name}"
-                admission = self.session.consume_audience_admission(
-                    self.session._character(minister_name),
-                    origin_id=stream_origin,
-                )
-                if not admission.allowed:
-                    # 资格失败：非空 reason → SSE error，当场结清 ticket。
-                    # 成功记召：ticket 须覆盖后续 scene LLM/持久化，禁止提前 complete。
-                    if admission.reason:
-                        self._complete_pending_write(pending_ticket)
-                        pending_ticket = None
-                        yield {"type": "error", "message": admission.reason}
-                        return
-                    if admission.result in (
-                        AudienceAdmission.SUMMON_FRESH,
-                        AudienceAdmission.SUMMON_IN_TRANSIT,
-                    ):
-                        offsite_summon = (
-                            minister_name,
-                            admission.result.value,
-                            stream_origin,
-                        )
-                    else:
-                        self._complete_pending_write(pending_ticket)
-                        pending_ticket = None
-                        yield {
-                            "type": "error",
-                            "message": (
-                                admission.result.value
-                                if admission.result is not None else ""
-                            ),
-                        }
-                        return
-            else:
-                decision = self.session.admit_audience(
-                    self.session._character(minister_name),
-                )
-                # #1716：与 nonstream 同缝——court_break_open_night 不因 temporary
-                # admission reason 阻断；仍保留正式场外人物的地点分类 / offsite route。
-                if decision.reason and not court_break_open_night:
-                    self._complete_pending_write(pending_ticket)
-                    pending_ticket = None
-                    yield {"type": "error", "message": decision.reason}
-                    return
-                offsite_secret_order = decision.result in (
-                    AudienceAdmission.SUMMON_FRESH,
-                    AudienceAdmission.SUMMON_IN_TRANSIT,
-                )
-            if offsite_summon is None:
-                if self._persistent_chat_minister(minister_name):
-                    from ming_sim.audience_night import encode_chat_turn_route
-                    chat_turn_id, before_snapshot = self._start_chat_turn(
-                        minister_name,
-                        message=text,
-                        attach_to_hall=not offsite_secret_order,
-                        route=encode_chat_turn_route(
-                            explicit_secret_order=explicit_secret_order,
-                            offsite=offsite_secret_order,
-                        ),
-                    )
-                self.chat_history.setdefault(minister_name, []).append({"role": "user", "content": text})
-                if minister_name not in self.session.temporary_characters:
-                    message_id = self.db.append_chat_message(minister_name, accepted_turn, "user", text)
-                    if chat_turn_id:
-                        self.db.update_chat_turn_messages(chat_turn_id, user_message_id=message_id)
+            chat_turn_id, before_snapshot = self._start_chat_turn(
+                minister_name,
+                message=text,
+                attach_to_hall=True,
+            )
+            self.chat_history.setdefault(minister_name, []).append({"role": "user", "content": text})
+            message_id = self.db.append_chat_message(minister_name, accepted_turn, "user", text)
+            if chat_turn_id:
+                self.db.update_chat_turn_messages(chat_turn_id, user_message_id=message_id)
         except Exception as error:
             # Release gate before scene drain — prologue may have already started futures.
             if gate_held:
@@ -3900,26 +2951,6 @@ class WebGame:
         finally:
             if gate_held:
                 write_gate.release()
-
-        if offsite_summon is not None:
-            try:
-                summon_name, summon_result, summon_origin = offsite_summon
-                self._finish_offsite_summon_scene(
-                    origin_id=summon_origin, minister_name=summon_name,
-                    gate_cm=write_gate,
-                )
-                # #1566：成功载荷的同连接 DB 投影读须纳入 ticketed gate 短临界段，
-                # 与并发同源请求的读/写在同一 sqlite connection 上互斥；LLM 早已在
-                # write_back 内结清，此处只剩纯读。
-                with write_gate:
-                    payload = self._summon_admission_success_payload(
-                        summon_name, summon_result,
-                    )
-                yield {"type": "done", "payload": payload}
-                yield {"type": "end"}
-            finally:
-                self._complete_pending_write(pending_ticket)
-            return
 
         ev_queue: "queue.Queue[Dict[str, Any]]" = queue.Queue()
         identity = {
@@ -3978,24 +3009,15 @@ class WebGame:
             reply_done_emitted = False
             try:
                 try:
-                    # #1842：殿上真实流式入口切 scene_chat（transport 同核）；密令仍走旧流式 payload。
-                    # 退役：旧分类器 / 故事抽取 / 边事件判官 / 代码触发读心。
+                    # #1849 reopen：殿上唯一入口 → scene_chat transport。
                     # SSE 契约保持 accepted/delta/done/end。
-                    if explicit_secret_order:
-                        payload = self._chat_stream_payload(
-                            minister_name, text, chat_turn_id, before_snapshot,
-                            accepted_turn, emit_delta,
-                            write_gate=write_gate,
-                            explicit_secret_order=True,
-                        )
-                    else:
-                        payload = self._scene_chat_stream_payload(
-                            minister_name, text, chat_turn_id, before_snapshot,
-                            accepted_turn, emit_delta,
-                            write_gate=write_gate,
-                            admitted_ticket=pending_ticket,
-                            on_protagonist_changed=lambda: ev_queue.put({"type": "protagonist_changed"}),
-                        )
+                    payload = self._scene_chat_stream_payload(
+                        minister_name, text, chat_turn_id, before_snapshot,
+                        accepted_turn, emit_delta,
+                        write_gate=write_gate,
+                        admitted_ticket=pending_ticket,
+                        on_protagonist_changed=lambda: ev_queue.put({"type": "protagonist_changed"}),
+                    )
 
                     answer = str((payload or {}).get("answer") or "")
                     message_id = int((payload or {}).get("minister_message_id") or 0)
@@ -4167,16 +3189,6 @@ class WebGame:
             if item.get("type") == "end":
                 break
 
-    def suggestions_for(self, character: Character) -> List[Dict[str, Any]]:
-        """召对快捷钮：仅保留意图声明前缀（拟旨/下密令）。
-
-        ADR 0042 / #527：旧询问 chips（问在办事项/问阻力/查钱粮/查驻军/密查）已砍；
-        问事走直接开口 + 角色见闻。character 保留在签名上以兼容三处 payload 调用点。
-        """
-        return [
-            {"label": "拟旨", "text": "拟旨如下：", "prefix": True},
-            {"label": "下密令", "text": "密令如下：", "prefix": True, "intent": "secret_order"},
-        ]
 
 
 def sse_event(event: str, data: Dict[str, Any]) -> str:
@@ -6454,16 +5466,55 @@ async def api_audience_chat_history() -> Dict[str, Any]:
         "campaign_id": str(game.db.kv_get("campaign_id") or ""),
         "night_id": int(open_night["id"]) if open_night else 0,
         "history": game.chat_projection(SCENE_CHAT_SPEAKER),
-        "suggestions": [],
         "can_undo_last_chat": game.can_undo_last_chat(SCENE_CHAT_SPEAKER),
         "reply_retries": game.reply_retries(SCENE_CHAT_SPEAKER),
         "generating_turn_ids": [int(r["id"]) for r in game.db.list_in_flight_chat_turns(
             night_id=int(open_night["id"]) if open_night else None,
-        ) if r.get("route", "") in ("", "secret_order")],
+            minister_name=SCENE_CHAT_SPEAKER,
+        )],
         "translation_retries": game.pending_translation_retries(
             night_id=int(open_night["id"]) if open_night else None,
         ),
     }
+
+
+
+@app.post("/api/audience/chat")
+async def api_audience_chat(request: ChatRequest) -> Dict[str, Any]:
+    """#1849 reopen：殿上唯一入口的非流式形态——drain stream，回 done 载荷。"""
+    from ming_sim.audience_night import SCENE_CHAT_SPEAKER, AudienceNightError
+
+    def _run() -> Dict[str, Any]:
+        done: Optional[Dict[str, Any]] = None
+        error_detail: Optional[Dict[str, Any]] = None
+        for item in get_game().chat_stream(SCENE_CHAT_SPEAKER, request.message):
+            kind = str(item.get("type") or "")
+            if kind == "done":
+                done = dict(item.get("payload") or {})
+            elif kind == "error":
+                if isinstance(item.get("detail"), dict):
+                    error_detail = dict(item["detail"])
+                else:
+                    error_detail = {
+                        "message": item.get("message") or "召对失败。",
+                    }
+                    if item.get("code"):
+                        error_detail["code"] = item.get("code")
+        if error_detail is not None:
+            message = str(error_detail.get("message") or "召对失败。")
+            code = str(error_detail.get("code") or "")
+            status = 409 if code == "night_closing" else 400
+            raise HTTPException(status_code=status, detail=error_detail if code else message)
+        if done is None:
+            raise HTTPException(status_code=500, detail="召对流未完成。")
+        return done
+
+    try:
+        return await run_in_threadpool(_run)
+    except AudienceNightError as exc:
+        raise _retryable_audience_close_http(exc) from None
+    except LLMUnavailable as exc:
+        raise HTTPException(status_code=400, detail=_llm_error_detail(exc)) from None
 
 
 @app.post("/api/audience/reply/retry")
@@ -6484,49 +5535,10 @@ async def api_undo_audience_chat() -> Dict[str, Any]:
         return game.undo_last_chat(SCENE_CHAT_SPEAKER, gate_held=True)
 
 
-@app.get("/api/ministers/{minister_name}/chat")
-async def api_chat_history(minister_name: str) -> Dict[str, Any]:
-    _require_active_minister(minister_name)
-    game = get_game()
-    character = game.session._character(minister_name)
-    from ming_sim.audience_night import get_open_night
-    open_night = get_open_night(game.db) if hasattr(game.db, "conn") else None
-    return {
-        "minister": game.public_character(character),
-        "campaign_id": str(game.db.kv_get("campaign_id") or ""),
-        "night_id": int(open_night["id"]) if open_night else 0,
-        # 历史角色投影已按轮归位于其中。
-        "history": game.chat_projection(minister_name),
-        "suggestions": game.suggestions_for(character),
-        "can_undo_last_chat": game.can_undo_last_chat(minister_name),
-        # #505/#1853：每个原轮各自投影待恢复状态。
-        "reply_retries": game.reply_retries(minister_name),
-        "generating_turn_ids": [int(r["id"]) for r in game.db.list_in_flight_chat_turns(
-            minister_name=minister_name,
-        )],
-        # #1842 / 0158 决定 6：转译待补 → 源轮结构化系统提示态（提示行 + 重试能力；页面归 #1826）。
-        "translation_retries": [
-            r for r in game.pending_translation_retries(
-                night_id=int(open_night["id"]) if open_night else None,
-            )
-            if not minister_name
-            or str(r.get("minister_name") or "") in {minister_name, "", "殿上"}
-        ],
-    }
-
-
-@app.post("/api/ministers/{minister_name}/reply/retry")
-async def api_retry_interrupted_reply(minister_name: str, chat_turn_id: int = Body(0, embed=True)) -> Dict[str, Any]:
-    """#505：重开后为中断轮重新生成回话（复用已持久问话，对话记录无重复句）。"""
-    _require_active_minister(minister_name)
-    from ming_sim.audience_night import AudienceNightError
-    try:
-        return await run_in_threadpool(get_game().retry_interrupted_reply, minister_name, chat_turn_id or None)
-    except AudienceNightError as e:
-        # CLOSING / night admission → 409 (retryable); reuse shared converter, no status fork.
-        raise _retryable_audience_close_http(e) from None
-
-
+@app.get("/api/audience/extraction/pending")
+async def api_pending_story_extractions() -> Dict[str, Any]:
+    """#501/#1353/#1842：本开夜转译待补只读投影（含 kind/retryable 系统提示态）。"""
+    return get_game().pending_story_extractions()
 
 
 class TranslationRetryRequest(BaseModel):
@@ -6544,69 +5556,9 @@ async def api_retry_pending_translation(
     )
 
 
-@app.post("/api/ministers/{minister_name}/secret_order")
-async def api_create_secret_order(minister_name: str, request: SecretOrderRequest) -> Dict[str, Any]:
-    """兼容旧按钮端点：转成召对前缀消息，走同一大臣回话/确认闸门。"""
-    game = get_game()
-    _require_active_minister(minister_name)
-    title = request.title.strip()
-    content = request.content.strip()
-    if not title or not content:
-        raise HTTPException(status_code=400, detail="title 和 content 不能为空")
-    lines = [f"密令如下：{title}", content]
-    tags_raw = request.tags if isinstance(request.tags, list) else []
-    tags = [str(tag).strip() for tag in tags_raw if str(tag).strip()]
-    if tags:
-        lines.append("标签：" + "、".join(tags))
-    provided_fields = (
-        getattr(request, "model_fields_set", None)
-        or getattr(request, "__fields_set__", set())
-    )
-    if "deadline_months" in provided_fields and request.deadline_months is not None:
-        lines.append(f"期限：{int(request.deadline_months)}月")
-
-    # #1727：端点侧补屏障拒——持闸兼容路 gate_already_held 会跳过 _chat_core 内检查。
-    _refuse_if_open_night_barrier(game)
-
-    def _create_with_gate() -> Dict[str, Any]:
-        with _serialized_web_write(game):
-            return game._chat_with_write_gate_held(minister_name, "\n".join(lines))
-
-    return await run_in_threadpool(_create_with_gate)
-
-
-@app.post("/api/ministers/{minister_name}/chat")
-async def api_chat(minister_name: str, request: ChatRequest) -> Dict[str, Any]:
-    _require_active_minister(minister_name)
-    from ming_sim.audience_night import AudienceNightError
-    try:
-        # #1291+#1322: 全同步 chat（→ session → cli subprocess.run）须卸出事件循环，
-        # 与 retry_interrupted_reply / secret_order 同构 run_in_threadpool；
-        # 流式路走 run_in_executor，directives 走 to_thread——禁在 async handler 内直调。
-        return await run_in_threadpool(get_game().chat, minister_name, request.message, request.intent)
-    except AudienceNightError as e:
-        # CLOSING / night admission → 409 (retryable); same family as stream path.
-        raise _retryable_audience_close_http(e) from None
-    except LLMUnavailable as e:
-        # #1452：非流式召对 LLM 死 → 结构化错误，禁裸 500。
-        raise HTTPException(status_code=400, detail=_llm_error_detail(e)) from None
-
-
-@app.post("/api/ministers/{minister_name}/chat/undo")
-async def api_undo_chat(minister_name: str) -> Dict[str, Any]:
-    # undo_last_chat 自带产品相位门（只许 SUMMONING/REVIEWING 撤回），但那是 phase-only、守不住
-    # pre_settle 原子窗口，且 undo_chat_turn 直写共享连接 → 与其它写端点一致走 _write_gate
-    # （cmr Gate2 r3 Finding1）。门内若相位门拒，HTTPException 经 finally 释放锁后正常上抛。
-    game = get_game()
-    # #1727：收夜屏障窗内拒撤回本轮——禁 cancel_key 抽空屏障 wait_prior 所等尾随票。
-    _refuse_if_open_night_barrier(game)
-    with _serialized_web_write(game):
-        return game.undo_last_chat(minister_name, gate_held=True)
-
-
 def _chat_stream_response(minister_name: str, request: ChatRequest) -> StreamingResponse:
     async def generate() -> AsyncIterator[str]:
-        iterator = iter(get_game().chat_stream(minister_name, request.message, request.intent))
+        iterator = iter(get_game().chat_stream(minister_name, request.message))
         loop = asyncio.get_running_loop()
         while True:
             item = await loop.run_in_executor(None, _next_or_none, iterator)
@@ -6650,12 +5602,6 @@ def _chat_stream_response(minister_name: str, request: ChatRequest) -> Streaming
                 break
 
     return StreamingResponse(generate(), media_type="text/event-stream")
-
-
-@app.post("/api/ministers/{minister_name}/chat/stream")
-async def api_chat_stream(minister_name: str, request: ChatRequest) -> StreamingResponse:
-    _require_active_minister(minister_name)
-    return _chat_stream_response(minister_name, request)
 
 
 @app.post("/api/audience/chat/stream")

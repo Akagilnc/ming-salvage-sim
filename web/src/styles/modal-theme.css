@@ -293,15 +293,7 @@
   border: 1px solid rgba(74, 45, 20, 0.18);
 }
 
-/* 通配平级化的补偿例外：以下组件规则（chat.css 米色钮 / secret-order.css 深底密令卡）
-   在通配 important 年代被压住，如今会透出——显式写回通配年代的观感（透明底、墨字）。 */
-.modal-bg-chat .hitl-bar button {
-  background: transparent;
-  color: #1a1410;
-}
-.modal-bg-chat .hitl-bar button:hover {
-  background: transparent;
-}
+/* 通配平级化的补偿例外：密令卡在通配 important 年代被压住，如今会透出。 */
 .modal-bg-chat .secret-order-item {
   background: transparent;
 }

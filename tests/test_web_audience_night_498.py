@@ -187,27 +187,6 @@ def test_persisted_reply_before_translation_admission_has_no_retry_button(web_ga
     assert retry.status_code == 404
 
 
-def test_old_named_hall_turn_is_visible_and_undoable_from_scene_window(web_game):
-    game = web_game
-    night = an.open_night(game.db, game.state, location="乾清宫", time_of_day="夜")
-    old_speaker = _active_minister(game)
-    turn_id = game.db.create_chat_turn(game.state, old_speaker, "sess", 0, night_id=int(night["id"]))
-    user_id = game.db.append_chat_message(old_speaker, int(game.state.turn), "user", "边务如何？")
-    game.db.update_chat_turn_messages(turn_id, user_message_id=user_id)
-    game.db.persist_minister_reply(old_speaker, int(game.state.turn), "臣领旨。", turn_id)
-
-    async def scenario():
-        async with _client() as client:
-            before = (await client.get("/api/audience/chat")).json()
-            undone = await client.post("/api/audience/chat/undo")
-            after = (await client.get("/api/audience/chat")).json()
-            return before, undone, after
-
-    before, undone, after = asyncio.run(scenario())
-    assert any(message["chat_turn_id"] == turn_id for message in before["history"])
-    assert before["can_undo_last_chat"] is True
-    assert undone.status_code == 200
-    assert all(message["chat_turn_id"] != turn_id for message in after["history"])
 
 
 @pytest.mark.parametrize("night_status", [an.NIGHT_STATUS_CLOSING, an.NIGHT_STATUS_CLOSED])
@@ -485,7 +464,7 @@ async def _start_hanging_chat(game, client, minister, monkeypatch):
     # #1842：殿上 scene_chat 双桩——与 registry 同注入 agent
     stub_scene_agent(monkeypatch, agent)
     task = asyncio.create_task(
-        client.post(f"/api/ministers/{minister}/chat/stream", json={"message": "边饷如何？"}))
+        client.post("/api/audience/chat/stream", json={"message": "边饷如何？"}))
     try:
         # 生成已开始，或 chat worker 已终态（失败须传播，不得只等 started）。
         await _await_event_or_task(started, task)
@@ -529,7 +508,7 @@ def test_asgi_phase_flip_while_waiting_gate_rejected(web_game, monkeypatch):
             game._write_gate.acquire()  # 扮演结算 worker 持真实 write gate
             try:
                 chat_task = asyncio.create_task(
-                    client.post(f"/api/ministers/{minister}/chat/stream", json={"message": "边饷如何？"}))
+                    client.post("/api/audience/chat/stream", json={"message": "边饷如何？"}))
                 # 等真实 pending-write 态（锁前查之后、抢 gate 之前）——不替换私有方法，只读真实态
                 await _wait_for(lambda: getattr(game, "_pending_writes_count", 0) > 0)
                 game.state.turn_phase = TurnPhase.AWAITING_DECISION.value  # 结算翻相位
@@ -652,10 +631,10 @@ def test_asgi_inflight_reply_lands_then_issue_closes_and_advances(web_game, monk
 
     # 回话 done 先于流结束；end 表示回话尾随写入已 join。
     assert chat_events[-1]["event"] == "end"
-    # 回话真实入档 + 对话轮升 active
+    # 回话真实入档 + 对话轮升 active（#1849 reopen：殿上唯一入口）
     assert game.db.conn.execute(
         "SELECT COUNT(*) AS c FROM chat_messages WHERE minister_name=? AND role='minister'",
-        (minister,)).fetchone()["c"] == 1
+        ("殿上",)).fetchone()["c"] == 1
     assert game.db.conn.execute(
         "SELECT status FROM chat_turns WHERE night_id=?", (night["id"],)).fetchone()["status"] == "active"
     # 颁诏成功（done）+ 真实结算核：收夜封夜 + 推进回合 + 持久化
@@ -697,6 +676,7 @@ def test_night_approved_directive_closes_into_month_end_without_second_review(we
         (turn_before,),
     ).fetchall()
     assert any(str(row["text"] or "") == text for row in rows), rows
+
 
 
 def test_legacy_pending_only_advances_to_durable_dossier_without_review_api(web_game, monkeypatch):

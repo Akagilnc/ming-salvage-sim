@@ -37,7 +37,7 @@ def test_real_player_sse_replaces_closed_same_turn_night_before_failed_reply(gam
     monkeypatch.setattr(web_app, "get_game", lambda: runtime)
 
     response = TestClient(web_app.app).post(
-        "/api/ministers/%E6%B8%A9%E4%BD%93%E4%BB%81/chat/stream",
+        "/api/audience/chat/stream",
         json={"message": "新场问话"},
     )
     events = [
@@ -69,7 +69,7 @@ def test_real_player_summon_sse_precedes_reply_and_scroll_shows_protagonist(game
     client = TestClient(web_app.app)
 
     response = client.post(
-        "/api/ministers/%E6%B8%A9%E4%BD%93%E4%BB%81/chat/stream",
+        "/api/audience/chat/stream",
         json={"message": "宣王绍徽"},
     )
     events = [

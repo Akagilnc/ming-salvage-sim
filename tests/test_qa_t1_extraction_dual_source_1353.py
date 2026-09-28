@@ -545,18 +545,18 @@ def test_stream_post_reply_exception_preserves_phase_and_recovers_original_turn(
     game.session.scene_chat = scene_chat
     game.session.close_night_after_chat_if_needed = lambda *_a, **_k: (_ for _ in ()).throw(
         RuntimeError("close failed"))
-    events = list(game.chat_stream(minister, "退朝"))
+    events = list(game.chat_stream("殿上", "退朝"))
     assert [ev["type"] for ev in events][-3:] == ["done", "error", "end"]
     chat_turn_id = int(next(ev for ev in events if ev["type"] == "accepted")["chat_turn_id"])
-    retries = game.reply_retries(minister)
+    retries = game.reply_retries("殿上")
     assert [(r["chat_turn_id"], r["recovery_phase"]) for r in retries] == [(chat_turn_id, "court_break")]
     assert retries[0]["error_pack_path"]
     game.session.close_night_after_chat_if_needed = lambda action, **_kw: calls.append(action)
-    game.retry_interrupted_reply(minister, chat_turn_id)
+    game.retry_interrupted_reply("殿上", chat_turn_id)
     assert calls == ["退朝", "court_break"]
-    assert game.reply_retries(minister) == []
+    assert game.reply_retries("殿上") == []
     assert [r["content"] for r in game.db.conn.execute(
-        "SELECT content FROM chat_messages WHERE role='minister' AND minister_name=?", (minister,)
+        "SELECT content FROM chat_messages WHERE role='minister' AND minister_name=?", ("殿上",)
     )] == ["臣遵旨。"]
 
 
@@ -575,23 +575,19 @@ def test_dispatch_exception_after_persist_retains_reply_recovery(web_game, monke
     game.session.schedule_pending_scene_translation = lambda *_a, **_k: (_ for _ in ()).throw(
         RuntimeError("translation dispatch failed"))
 
-    if entry == "stream":
-        events = list(game.chat_stream(minister, "边饷如何？"))
-        chat_turn_id = int(next(ev for ev in events if ev["type"] == "accepted")["chat_turn_id"])
-        assert [ev["type"] for ev in events][-2:] == ["error", "end"]
-    else:
-        with pytest.raises(RuntimeError, match="translation dispatch failed"):
-            game.chat(minister, "边饷如何？")
-        chat_turn_id = game.chat_projection(minister)[0]["chat_turn_id"]
+    # #1849 reopen：唯一入口 stream；nonstream 参数折叠为同路。
+    events = list(game.chat_stream("殿上", "边饷如何？"))
+    chat_turn_id = int(next(ev for ev in events if ev["type"] == "accepted")["chat_turn_id"])
+    assert [ev["type"] for ev in events][-2:] == ["error", "end"]
     retries = game.pending_translation_retries(chat_turn_id=chat_turn_id)
     assert [r["chat_turn_id"] for r in retries] == [chat_turn_id]
     assert retries[0]["error_pack_path"]
-    assert [(m["role"], m["content"], m["chat_turn_id"]) for m in game.chat_projection(minister)] == [
+    assert [(m["role"], m["content"], m["chat_turn_id"]) for m in game.chat_projection("殿上")] == [
         ("user", "边饷如何？", chat_turn_id), ("minister", "臣遵旨。", chat_turn_id)]
     stub_audience_translate(monkeypatch)
     game.retry_pending_translation(chat_turn_id)
     assert game.pending_translation_retries(chat_turn_id=chat_turn_id) == []
-    assert [(m["role"], m["content"]) for m in game.chat_projection(minister)] == [
+    assert [(m["role"], m["content"]) for m in game.chat_projection("殿上")] == [
         ("user", "边饷如何？"), ("minister", "臣遵旨。")]
 
 def test_seal_rejects_new_claim_after_lifecycle(web_game):

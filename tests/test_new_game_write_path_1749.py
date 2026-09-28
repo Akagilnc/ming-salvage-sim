@@ -172,7 +172,7 @@ def _chat_stream(client: TestClient, minister: str, msg: str) -> dict:
     生成 answer 正文只观察（带回），不作非空/相等契约。
     """
     r = client.post(
-        f"/api/ministers/{minister}/chat/stream", json={"message": msg},
+        "/api/audience/chat/stream", json={"message": msg},
     )
     _assert_not_bare_500(r, step="chat/stream")
     assert r.status_code == 200, r.text

@@ -1399,16 +1399,12 @@ def _write_world_tree(
     board_text: str,
     include_fact: Any = None,
     include_event: Any = None,
-    *,
-    exclude_secret_order_audience: bool = False,
+    secret_turn_ids: set[int] | None = None,
 ) -> list[str]:
     from ming_sim.knowledge import build_character_knowledge
 
     index: list[str] = []
     textual_facts = getattr(db, "textual_facts", None)
-    secret_turn_ids = (
-        _secret_order_chat_turn_ids(db) if exclude_secret_order_audience else set()
-    )
 
     board_rel = f"{_BOARD_DIR}/全局.txt"
     _write_text(tmp / board_rel, board_text)
@@ -1424,9 +1420,7 @@ def _write_world_tree(
         )
         person_dir = f"{_PERSON_DIR}/{_safe_segment(name)}"
         rel = f"{person_dir}/经历.txt"
-        audience = _person_audience_experience(db, name)
-        if exclude_secret_order_audience:
-            audience = _omit_secret_order_audience(audience, secret_turn_ids)
+        audience = _omit_secret_order_audience(_person_audience_experience(db, name), secret_turn_ids or set())
         _write_text(tmp / rel, _experience_text(
             _knowledge_for_experience(knowledge, include_event),
             audience,
@@ -1919,8 +1913,8 @@ def prepare_world_materials(
     include_fact: Any = None,
     include_event: Any = None,
     ledger_origin_prefix_excluded: str = "",
-    exclude_secret_order_audience: bool = False,
     exclude_secret_order_dossiers: bool = False,
+    exclude_secret_order_audience: bool = False,
 ) -> PreparedMaterials:
     """过月推演者材料目录：盘面全量 + 开着的事务清单进开场最小集；人物经历、
     公开说法、历月邸报按需自读（#1834）。写入（拒收/实况回目录、下月材料）不
@@ -1953,7 +1947,7 @@ def prepare_world_materials(
         lambda tmp: _write_world_tree(
             tmp, db, state, public_events, affair_lines, board_text,
             include_fact, include_event,
-            exclude_secret_order_audience=exclude_secret_order_audience,
+            _secret_order_chat_turn_ids(db) if exclude_secret_order_audience else None,
         ),
     )
 

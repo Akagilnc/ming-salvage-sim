@@ -1417,9 +1417,6 @@ class GameDB:
                 error_pack_path TEXT NOT NULL DEFAULT '',
                 post_reply_recovery TEXT NOT NULL DEFAULT '',
                 post_reply_error_pack_path TEXT NOT NULL DEFAULT '',
-                -- #1566/#1716：typed route（'' / offsite / secret_order / secret_order_offsite）；
-                -- 中断重试经 decode_chat_turn_route 恢复 explicit_secret_order / 殿上 scene。
-                route TEXT NOT NULL DEFAULT '',
                 -- #1838：本轮转译声明的御前主角（按源轮；空=本轮未声明）
                 protagonist_name TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -2456,8 +2453,6 @@ class GameDB:
         # #506 轮级撤销：undo_chat_turn 写 undone_at；旧档 chat_turns 建于该列进 CREATE 之前
         # 时缺列，undo 的 UPDATE 会 OperationalError（no such column: undone_at）→ 整撤回回滚。
         self.ensure_column("chat_turns", "undone_at", "TEXT")
-        # #1566：typed 密令 route 旧档补列（中断重试恢复 explicit_secret_order / 殿上 scene）。
-        self.ensure_column("chat_turns", "route", "TEXT NOT NULL DEFAULT ''")
         # #1838 C1b：本轮转译声明的御前主角（按源轮持久化；夜当前值在 audience_nights）。
         self.ensure_column("chat_turns", "protagonist_name", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column(
@@ -9306,11 +9301,11 @@ class GameDB:
         return projection
 
     def list_hall_chat_turns(self, night_id: int) -> List[Dict[str, Any]]:
-        """殿上轮的原始持久身份，含升级前按朝臣存储的轮。"""
+        """本夜殿上轮（#1849 reopen：只按「殿上」取，不再拼升级前按朝臣存储）。"""
         rows = self.conn.execute(
             "SELECT id, minister_name, status, user_message_id, minister_message_id FROM chat_turns "
-            "WHERE night_id=? AND route IN ('', 'secret_order') ORDER BY id",
-            (int(night_id),),
+            "WHERE night_id=? AND minister_name=? ORDER BY id",
+            (int(night_id), "殿上"),
         ).fetchall()
         return [dict(row) for row in rows]
 
@@ -9519,7 +9514,7 @@ class GameDB:
         where = " AND ".join(clauses)
         rows = self.conn.execute(
             f"""
-            SELECT t.id, t.minister_name, t.turn, t.route, t.error_pack_path, m.content AS question
+            SELECT t.id, t.minister_name, t.turn, t.error_pack_path, m.content AS question
             FROM chat_turns t
             JOIN chat_messages m ON m.id = t.user_message_id
             WHERE {where}
@@ -9533,7 +9528,6 @@ class GameDB:
                 "minister_name": str(r["minister_name"]),
                 "turn": int(r["turn"]),
                 "question": str(r["question"]),
-                "route": str(r["route"] or ""),
                 "error_pack_path": str(r["error_pack_path"] or ""),
             }
             for r in rows
@@ -9673,7 +9667,6 @@ class GameDB:
         night_id: int = 0,
         status: Optional[str] = None,
         night_seq: Optional[int] = None,
-        route: str = "",
     ) -> int:
         # #498：挂夜的对话轮以 generating 起笔，回话落库后 update_chat_turn_messages 升 active。
         # 未挂夜路径保持历史默认 active，避免旧调用方/测试面语义漂移。
@@ -9682,9 +9675,6 @@ class GameDB:
             initial_status = "generating" if int(night_id or 0) else "active"
         if initial_status not in {"active", "generating", "failed", "undone", "consumed"}:
             raise ValueError(f"unsupported chat_turn status: {initial_status!r}")
-        # #1566：route 闭集唯一真源 = audience_night.normalize_chat_turn_route（未知非空响亮失败）。
-        from ming_sim.audience_night import normalize_chat_turn_route
-        route_value = normalize_chat_turn_route(route)
         nid = int(night_id or 0)
         seq = int(night_seq) if night_seq is not None else (
             self.allocate_night_seq(nid) if nid > 0 else 0
@@ -9693,8 +9683,8 @@ class GameDB:
             """
             INSERT INTO chat_turns
                 (minister_name, turn, year, period, agno_session_id, agno_runs_before,
-                 night_id, night_seq, status, route)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 night_id, night_seq, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 minister_name,
@@ -9706,7 +9696,6 @@ class GameDB:
                 nid,
                 seq,
                 initial_status,
-                route_value,
             ),
         )
         if (

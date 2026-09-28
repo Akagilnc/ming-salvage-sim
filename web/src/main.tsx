@@ -144,7 +144,6 @@ export function App() {
 
   // 召对动作群（useChatActions.ts）：召对面板外围态 + 开召对/发问/撤回/重试。
   const {
-    suggestions,
     chatNotice,
     replyRetries,
     translationRetries,
@@ -153,7 +152,6 @@ export function App() {
     composerHint,
     setComposerHint,
     input,
-    setComposerIntent,
     setInput,
     activeMinister,
     openChat,
@@ -681,7 +679,6 @@ export function App() {
         open={haremDrawerOpen}
         onGroupChange={setHaremGroup}
         onClose={() => setHaremDrawerOpen(false)}
-        onOpenChat={openChat}
         onUploadPortrait={uploadPortrait}
         chatEntryEnabled={chatEntryEnabled}
         phase={state.turn.phase}
@@ -747,13 +744,11 @@ export function App() {
           <ChatModal
             minister={activeMinister}
             ministers={audienceRoster}
-            portraitPrefix={(state.consorts || []).some((c) => c.name === activeMinister.name) ? "consort_" : "minister_"}
-            scrollMode={(state.consorts || []).some((c) => c.name === activeMinister.name) ? "legacy" : "audience"}
+            portraitPrefix="minister_"
             currentCampaignId={currentCampaignId}
             currentNightId={currentNightId}
             undoneChatIdentity={undoneChatIdentity}
             chat={chat}
-            suggestions={suggestions}
             pendingUserMessage={pendingUserMessage}
             pendingIdentity={pendingIdentity}
             failedIdentity={failedIdentity}
@@ -765,18 +760,15 @@ export function App() {
             input={input}
             busy={busy}
             error={error}
-            secretOrders={secretOrders.filter((o) => o.status === "active")}
             replyRetries={replyRetries}
             translationRetries={translationRetries}
             retryReadFailure={retryReadFailure}
             onInput={setInput}
-            onIntent={setComposerIntent}
             onSend={sendChat}
             onRetryReply={retryInterruptedReply}
             onRetryTranslation={retryTranslation}
             onUndo={undoLastChat}
             onHint={setComposerHint}
-            onFavorite={toggleFavorite}
             scrollPosition={audienceScrollPositionsRef.current.get(`${currentCampaignId}:${currentNightId}`)}
             onScrollPositionChange={(position) => audienceScrollPositionsRef.current.set(`${currentCampaignId}:${currentNightId}`, position)}
             onClose={() => setActiveModal("none")}

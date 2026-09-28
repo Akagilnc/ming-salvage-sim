@@ -452,11 +452,10 @@ class _GapBSession(HallAdmissionSessionMixin):
         return 0
 
     def scene_chat(self, message, *, chat_turn_id=0, stream_emit=None, minister_name="", on_protagonist_changed=None):
-        # #1842：殿上流式入口走 scene_chat；轻壳驱动既有假 agent，不复活旧 chat 并行链。
+        # #1849 reopen：殿上入口不绑单人 character；轻壳取任一假 agent。
         from ming_sim.session import ChatTurnResult
 
-        name = str(minister_name or next(iter(self.content.characters)))
-        agent = self.registry.get(self._character(name))
+        agent = self.registry.get(next(iter(self.content.characters.values())))
         parts: list[str] = []
         for event in agent.run():
             content = getattr(event, "content", None)
@@ -491,6 +490,8 @@ class _GapBDB:
     def __init__(self):
         self.messages: list[dict] = []
         self._next_id = 1
+        self._inflight: list[dict] = []
+        # 故意不设 conn：生产路径 hasattr(db,"conn") 为假时走轻壳分支
 
     def agno_runs_length(self, _session_id):
         return 0
@@ -499,7 +500,10 @@ class _GapBDB:
         return {}
 
     def create_chat_turn(self, *_a, **_k):
-        return 7
+        tid = self._next_id
+        self._next_id += 1
+        self._inflight.append({"id": tid, "status": "generating", "minister_message_id": None})
+        return tid
 
     def append_chat_message(self, minister_name, turn, role, content):
         self.messages.append(
@@ -513,7 +517,12 @@ class _GapBDB:
 
     def persist_minister_reply(self, minister_name, turn, content, chat_turn_id, **_kw):
         # 同事务回话；stub 只记账 message id
-        return self.append_chat_message(minister_name, turn, "minister", content)
+        mid = self.append_chat_message(minister_name, turn, "minister", content)
+        for row in self._inflight:
+            if int(row["id"]) == int(chat_turn_id or 0):
+                row["status"] = "active"
+                row["minister_message_id"] = mid
+        return mid
 
     def record_chat_turn_rollback_diffs(self, *_a, **_k):
         return None
@@ -523,6 +532,25 @@ class _GapBDB:
 
     def fail_chat_turn(self, *_a, **_k):
         return None
+
+    def list_in_flight_chat_turns(self, **_k):
+        return [
+            row for row in self._inflight
+            if row.get("status") == "generating"
+            or not row.get("minister_message_id")
+        ]
+
+    def load_all_chat_history(self):
+        out = {}
+        for m in self.messages:
+            out.setdefault(m["minister"], []).append({"role": m["role"], "content": m["content"]})
+        return out
+
+    def kv_get(self, _k):
+        return ""
+
+    def list_secret_orders(self):
+        return []
 
     def build_chat_projection(self, minister_name: str):
         return [
@@ -565,7 +593,7 @@ def test_drain_waits_for_queued_chat_stream_not_just_gate_holder():
         {char_a.name: _GapBAgent(allow_finish_a), char_b.name: _GapBAgent(allow_finish_b)},
         state, db)
     runtime.session.close = lambda: closed.append(1)
-    runtime.chat_history = {char_a.name: [], char_b.name: []}
+    runtime.chat_history = {char_a.name: [], char_b.name: [], "殿上": []}
     from ming_sim.session_write_queue import SessionWriteQueue
     runtime._write_queue = SessionWriteQueue()
     runtime._write_gate = runtime._write_queue.write_gate
@@ -574,40 +602,24 @@ def test_drain_waits_for_queued_chat_stream_not_just_gate_holder():
     runtime._complete_pending_write = lambda ticket=None: runtime._write_queue.complete(ticket)  # type: ignore
     runtime.directive_rows = lambda: []
     runtime.directive_payload = lambda row: row
-    runtime.suggestions_for = lambda _c: []
     runtime.can_undo_last_chat = lambda _name: False
 
-    # A 持锁跑流式召对
-    stream_a = runtime.chat_stream(char_a.name, "请奏A")
+    # #1849 reopen：召对只剩殿上；同入口并发第二流被拒，drain 仍须等在飞 A 写完。
+    stream_a = runtime.chat_stream("殿上", "请奏A")
     first_a = next(stream_a)
-    # 结构化：首包为 delta；不锁生成正文
     assert first_a.get("type") == "delta"
     assert "content" in first_a
 
-    # B 排队等 gate（独立线程 next → 阻塞在 gate.acquire()）
-    b_events: list[dict] = []
+    b_events = list(runtime.chat_stream("殿上", "请奏B"))
+    assert b_events and b_events[-1].get("type") == "error"
+    assert "仍在进行" in str(b_events[-1].get("message") or "")
 
-    def run_b():
-        stream_b = runtime.chat_stream(char_b.name, "请奏B")
-        for item in stream_b:
-            b_events.append(item)
-            if item.get("type") in ("done", "error"):
-                break
-
-    thread_b = threading.Thread(target=run_b, daemon=True)
-    thread_b.start()
-
-    # B 已进入 chat_stream 体（mark 后 counter >= 2）
-    wait_until(lambda: runtime._pending_writes_count >= 2)
-
-    # drain 启动（须等 B 跑完才关）
     drain_done = threading.Event()
 
     def run_drain():
         web_app._drain_and_close_session(runtime)
         drain_done.set()
 
-    # Prove drain reached wait_prior (actual wait), not merely claimed a barrier ticket.
     wait_prior_entered = threading.Event()
     real_wait_prior = runtime._write_queue.wait_prior
 
@@ -620,24 +632,21 @@ def test_drain_waits_for_queued_chat_stream_not_just_gate_holder():
     thread_drain = threading.Thread(target=run_drain, daemon=True)
     thread_drain.start()
     wait_prior_entered.wait()
-    assert not drain_done.is_set(), "drain 在排队 B 跑完前就关了连接"
+    assert not drain_done.is_set(), "drain 在 A 在飞写完前就关了连接"
 
-    # A 完成 → 释放 gate → B 拿到锁开始跑
     allow_finish_a.set()
-    wait_until(lambda: any(e.get("type") == "delta" for e in b_events))
-
-    # B 仍持锁（agent 阻塞在 allow_finish_b）→ drain 仍未关
-    assert not drain_done.is_set(), "drain 在 B 仍持锁时关了连接"
-
-    allow_finish_b.set()
+    # 消费 A 剩余事件至 end，放行 ticket
+    for item in stream_a:
+        if item.get("type") in ("done", "error", "end"):
+            if item.get("type") == "end":
+                break
 
     drain_done.wait()
     assert closed == [1]
     assert not runtime._write_gate.locked()
 
-    # B 回奏已入档（关连接前写完）——只核结构化身份，不锁生成措辞
     assert any(
-        m["minister"] == char_b.name and m["role"] == "minister"
+        m["minister"] == "殿上" and m["role"] == "minister"
         for m in db.messages
     )
 

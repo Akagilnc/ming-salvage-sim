@@ -525,12 +525,7 @@ export type ServerChatMessage = {
   highlights?: string[];
 };
 
-export type Suggestion = {
-  label: string;
-  text: string;
-  prefix?: boolean;
-  intent?: "secret_order";
-};
+
 
 export type ModalName = "none" | "state" | "chat" | "edict" | "report" | "history" | "audience_archive" | "menu" | "secret_orders" | "ending";
 
@@ -675,7 +670,6 @@ export type ChatResponse = {
   night_id: number;
   chat_turn_id: number;
   history: ServerChatMessage[];
-  suggestions: Suggestion[];
   directives: Directive[];
   pending_count?: number;
   /** #1716：chat done 载荷同步对话式拟旨暂存数，拟诏台 settle 不单靠 refresh 竞态。 */
@@ -701,7 +695,6 @@ export type ChatUndoResponse = {
   night_id: number;
   undone_chat_turn_id: number;
   history: ServerChatMessage[];
-  suggestions: Suggestion[];
   directives: Directive[];
   pending_count: number;
   pending_directive_count?: number;
