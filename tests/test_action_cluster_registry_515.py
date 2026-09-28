@@ -584,17 +584,6 @@ _P5_POISON_UTTERANCE_IDS = (
 )
 
 
-def test_finish_poisoned_classifier_yields_empty_list_not_none(game):
-    db, state, content = game
-    sess = GameSession.__new__(GameSession)
-    sess.db = db
-    sess.state = state
-    sess.content = content
-    sess.llm_config = SimpleNamespace(channel="cli", cli_runner="codex")
-    fut: Future = Future()
-    fut.set_result({"kind": "not_registered"})
-    assert sess._finish_cli_action_intent(fut) == []
-    assert sess._finish_cli_action_intent(None) is None
 
 
 def test_cli_chat_materializes_each_top_level_candidate(game, monkeypatch):

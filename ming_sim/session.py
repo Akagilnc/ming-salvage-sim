@@ -1310,73 +1310,7 @@ class GameSession:
             schedule_held_decree_forecasts(self)
         return decision
 
-    def _start_cli_action_intent(self, character: Character, message: str) -> Optional[Future]:
-        """召对动作判断只读皇帝消息，可与大臣回话并发。
 
-        #1502：API 与 CLI 自然语言并行提交既有 classifier。
-        #1503 / ADR 0028：显式拟旨前缀亦提交一次 typed classifier（载荷式成案）；
-        密令前缀仍跳过（权威路由，不跑其它分类器）。无可用通道时不启动。
-        """
-        from ming_sim.cli_backend import (
-            _SECRET_PREFIXES, classify_cli_action_intent,
-            cli_backend_from_env,
-        )
-        channel = (getattr(getattr(self, "llm_config", None), "channel", "") or "").strip().lower()
-        # API/CLI 可跑预分类；其它通道仍需 CLI backend 在场
-        if channel not in {"cli", "api"} and cli_backend_from_env() is None:
-            return None
-        # CLI 动作分类器与大臣回话一律并发；不按 runner 退串行。
-        text = (message or "").strip()
-        # 密令前缀 = 权威类别声明，不跑动作分类器；拟旨前缀见 #1503。
-        if text.startswith(_SECRET_PREFIXES):
-            return None
-        minister_name = character.name
-        pend_for_minister = self.db.list_pending_actions(self.state.turn, minister_name=minister_name)
-        confirm_targets = _confirmation_targets_for_message(pend_for_minister, text)
-        if GameSession._proposal_blocked(self.state) and not confirm_targets:
-            return None
-        # 本夜已暂存（含 id）供跨轮指代/改草填 target_candidate；确认优先仍由 prompt 规则约束。
-        summaries = [
-            f"#{int(p['id'])} {_pending_action_brief(p)}"
-            for p in pend_for_minister
-        ]
-        is_consort = getattr(character, "office_type", "") == "后宫"
-        active_orders = [] if GameSession._proposal_blocked(self.state) else self.db.get_active_secret_orders_for_minister(minister_name)
-        has_pending_draft = any(p["kind"] == "directive" for p in pend_for_minister)
-        recent_context = _recent_audience_context_for_secret_order(
-            self.db, minister_name, int(self.state.turn), text,
-        )
-        backing_candidates = self.db.list_endorsed_dossier_candidates(
-            int(self.state.turn),
-        )
-        return _CLI_ACTION_INTENT_EXECUTOR.submit(
-            classify_cli_action_intent,
-            text,
-            active_orders,
-            is_consort,
-            has_pending_draft,
-            summaries,
-            getattr(self, "llm_config", None),
-            recent_context,
-            int(self.state.turn),
-            backing_candidates,
-        )
-
-    def _finish_cli_action_intent(self, future: Optional[Future]) -> Optional[List[Dict[str, Any]]]:
-        """Join concurrent classifier. None=did not run; list (possibly empty)=ran.
-
-        #515: classifier output contract is a candidate list. Failure → [] (zero writes).
-        """
-        if future is None:
-            return None
-        from ming_sim.action_clusters import normalize_intent_candidates
-        try:
-            result = future.result()
-        except Exception:
-            return []
-        # normalize_intent_candidates(None) is None; non-None raw → list (soft).
-        normalized = normalize_intent_candidates(result)
-        return [] if normalized is None else normalized
 
     def _recognize_audience_command_verdict(self, message: str) -> str:
         """#526：同步识别收夜/留侍/含糊口令。纯封闭集匹配，无 Future/宽降级。"""

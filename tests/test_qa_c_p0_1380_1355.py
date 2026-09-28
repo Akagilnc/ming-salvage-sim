@@ -477,49 +477,6 @@ def test_api_classifier_not_run_still_passthrough_early_return(game, monkeypatch
     )
 
 
-def test_api_start_cli_action_intent_runs_for_natural_language(game, monkeypatch):
-    """#1502：API 非前缀自然语言在回话前并行提交既有 classifier（不再 return None）。"""
-    db, state, content = game
-    ch = _minister_wang_shaohui(db, content)
-    captured = {}
-
-    def _fake_classify(message, *args, **kwargs):
-        captured["message"] = message
-        return [
-            {"kind": "draft"},
-            {
-                "kind": "appointment",
-                "appoint_action": "任命",
-                "name": "袁崇焕",
-                "office": "兵部右侍郎兼都察院右佥都御史督师蓟辽",
-            },
-        ]
-
-    monkeypatch.setattr(cb, "classify_cli_action_intent", _fake_classify)
-    sess = _fake_api_session(db, state, content)
-    # GameSession 方法体 import classify；需挂到真实 session 实例方法路径
-    fut = GameSession._start_cli_action_intent(
-        sess, ch, "着起复袁崇焕，以兵部右侍郎兼都察院右佥都御史督师蓟辽",
-    )
-    assert fut is not None, "API 非前缀须提交 classifier Future"
-    finished = GameSession._finish_cli_action_intent(sess, fut)
-    assert finished is not None
-    kinds = sorted(str(c.get("kind") or "") for c in finished)
-    assert "appointment" in kinds
-    assert "draft" in kinds
-    assert captured.get("message", "").startswith("着起复袁崇焕")
-
-    # #1503 Owner A：显式拟旨前缀在成案边界提交 typed classifier（不再 #344 跳过）
-    fut_prefix = GameSession._start_cli_action_intent(
-        sess, ch, "拟旨如下：着起复袁崇焕为辽东巡抚",
-    )
-    assert fut_prefix is not None
-    prefix_finished = GameSession._finish_cli_action_intent(sess, fut_prefix)
-    assert prefix_finished is not None
-    assert {str(c.get("kind") or "") for c in prefix_finished} == {
-        "appointment", "draft",
-    }
-    assert captured.get("message", "").startswith("拟旨如下：")
 
 
 def test_api_pure_appointment_does_not_force_directive(game, monkeypatch):
