@@ -507,21 +507,48 @@ def test_concurrent_advance_noncreator_must_not_clear_owner_snapshot(web_game, m
     assert game.db.get_month_open_snapshot(turn) == before
 
 
-def test_reopen_landing_settlement_beats_open_night(web_game):
-    """#1855 / ADR 0149+0158 决定 7：点即入核账后，夜未收并存窗重开仍落 settlement。
+def test_reopen_landing_settlement_beats_open_night(web_game, monkeypatch):
+    """退朝入口受理后、收夜前，另一连接的状态口须以核账为落点。"""
+    import threading
 
-    接缝：真 WebGame 状态口。核账快照已立时，开夜不得覆盖落点（禁 audience 优先）。
-    """
     game = web_game
     an.open_night(game.db, game.state, location="乾清宫", time_of_day="夜")
-    assert an.get_open_night(game.db) is not None
-    assert game.state_payload()["reopen_landing"] == "audience"
+    entered = threading.Event()
+    release = threading.Event()
 
-    assert web_app._accept_settlement_period(game) is True
-    payload = game.state_payload()
-    assert payload["turn"]["settlement_display"] is True
-    assert an.get_open_night(game.db) is not None
-    assert payload["reopen_landing"] == "settlement"
+    def _hold_close(_g, **_kw):
+        entered.set()
+        release.wait()
+        raise RuntimeError("stop after observation")
+
+    monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", _hold_close)
+
+    def _post():
+        async def go():
+            async with _client() as client:
+                return await client.post("/api/decree/advance_without_edict")
+        try:
+            asyncio.run(go())
+        except RuntimeError:
+            pass
+
+    worker = threading.Thread(target=_post)
+    worker.start()
+    try:
+        assert entered.wait(5)
+
+        async def read_state():
+            async with _client() as client:
+                return await client.get("/api/game/state")
+
+        resp = asyncio.run(read_state())
+        assert resp.status_code == 200, resp.text
+        assert an.get_open_night(game.db) is not None
+        assert resp.json()["turn"]["settlement_display"] is True
+        assert resp.json()["reopen_landing"] == "settlement"
+    finally:
+        release.set()
+        worker.join()
 
 
 def test_exit_settlement_display_acquires_write_gate(web_game):

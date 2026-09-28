@@ -1171,8 +1171,19 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     // 新月盘面可见半程局势（已非核账）
     expect(host.textContent).toContain(MIDCOURSE_ISSUE);
 
-    // 模拟刷新：重挂 App，落新月份盘面、不自动弹旧月邸报；史册仍可读本月档
-    // #1855：reopen_landing=month → 不进殿上、不回核账等待面
+    // 同一状态口在核账未完时重开：殿上夜卷虽仍在，玩家先落核账。
+    liveState = {
+      ...settlementBaseState("settling"),
+      reopen_landing: "settlement",
+      turn: { year: 1627, period: 10, turn: 5, phase: "settling", settlement_display: true },
+    };
+    unmountTrackedRoots();
+    const settlingHost = await mountApp();
+    expect(settlingHost.querySelector(".chat-composer")).toBeNull();
+    expect(settlingHost.querySelector("[data-testid=wang-settlement-slip]")).not.toBeNull();
+
+    // 月完后再重开：落新月份盘面、不自动弹旧月邸报；史册仍可读本月档。
+    liveState = advancedState;
     unmountTrackedRoots();
     const host2 = await mountApp();
     expect(host2.querySelector("[data-testid=settlement-gazette-panel]")).toBeNull();
@@ -3130,8 +3141,6 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     expect(host.querySelector('[data-local-key]')).toBeNull();
   });
 
-  // #1855 重开落点三种：证明归于后端真实入口状态口（test_enter_settlement_period_1235 /
-  // test_web_audience_night_498）；不在客户端手造 reopen_landing 另立平行考场。
 
   // #1764 成案 tracer 共享夹具：召对流 + 可切换的 state 权威投影（在线 end / 离面重入同形）。
   // 两个读取来源须隔离：在线 end 投影应用失败不得由稍后木牌重取补救；离面案只证木牌重入。
