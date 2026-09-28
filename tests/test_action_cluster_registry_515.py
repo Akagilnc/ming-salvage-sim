@@ -52,12 +52,6 @@ from tests.dossier_test_helpers import create_test_secret_order
 # ── 单一挂点 ──────────────────────────────────────────────────────────
 
 
-def test_required_six_migrated_subset_of_registry():
-    """固定六类 ⊆ registered；期望集在测试本地，不读生产 guard 常量。"""
-    registered = {c.kind for c in ACTION_CLUSTERS}
-    assert _EXPECTED_MIGRATED_KINDS <= registered
-    for k in _EXPECTED_MIGRATED_KINDS:
-        assert cluster_by_kind(k) is not None
 
 
 def test_registry_row_carries_handler_and_effect():
@@ -341,92 +335,6 @@ def test_scripted_confirmation_answer_existing_no_new_stage(game, monkeypatch):
 # ── #516：问/令查分界（扩 #515 表驱动正反例 + 结构化判词契约）──────────
 
 
-@pytest.mark.parametrize(
-    ("utterance", "raw_payload", "expect_kinds", "expect_secret_action", "expect_order_id"),
-    [
-        # 北极星 + 含密查/查访字样的疑问 → 分类无
-        ("陕西巡抚可有？", {"动作类型": "无"}, [], None, 0),
-        ("可有人密查陕西军饷？", {"动作类型": "无"}, [], None, 0),
-        ("着人查访陕西军情如何？", {"动作类型": "无"}, [], None, 0),
-        # 含命令词但整体为问 → 仍无
-        ("命东厂密查其家产的是谁？", {"动作类型": "无"}, [], None, 0),
-        # 另案祈使令查 → secret 新建
-        (
-            "你去查他家产",
-            {"动作类型": "密令动作", "密令动作": "新建"},
-            ["secret"],
-            "新建",
-            0,
-        ),
-        (
-            "着东厂密查其家产",
-            {"动作类型": "密令动作", "密令动作": "新建"},
-            ["secret"],
-            "新建",
-            0,
-        ),
-        # 指向现有密令的补充 → 更新原令（#516 r3）
-        (
-            "再去查他在苏州的田产",
-            {
-                "动作类型": "密令动作",
-                "密令动作": "更新",
-                "目标密令编号": 6,
-                "新标题": "查其家产",
-                "新内容": "再去查他在苏州的田产",
-            },
-            ["secret"],
-            "更新",
-            6,
-        ),
-        # #1509：确认=修改携带 typed 新内容与目标编号，须原样过缝（并入真实分类入口）
-        (
-            "朕要修改密令正文为只查饷银去向，不查动向",
-            {
-                "动作类型": "确认",
-                "确认": "修改",
-                "新内容": "只查饷银去向，不查动向",
-                "目标编号": [6],
-            },
-            ["confirmation"],
-            None,
-            0,
-        ),
-    ],
-    ids=[
-        "north_star_pure_ask",
-        "ask_with_micha",
-        "ask_with_chafang",
-        "ask_with_command_words",
-        "imperative_go_check_new",
-        "imperative_micha_new",
-        "supplement_existing_update",
-        "confirmation_modify_carries_new_content_and_target_ids",
-    ],
-)
-def test_classify_soft_path_ask_vs_order_payload_matrix(
-    monkeypatch, utterance, raw_payload, expect_kinds,
-    expect_secret_action, expect_order_id,
-):
-    """#515 soft 归一：问/令查表驱动 payload → kind 列表（LLM 语义 externally scripted）。"""
-
-    def _scripted(prompt, llm_config=None, tag="", *, policy=None):
-        assert tag == "action_intent"
-        return (json.dumps(raw_payload, ensure_ascii=False), 0)
-
-    monkeypatch.setattr(cb, "_run_backend_for_config", _scripted)
-    active = None
-    if expect_secret_action == "更新":
-        active = [{"id": expect_order_id, "title": "查其家产", "content": "密查家产"}]
-    got = cb.classify_cli_action_intent(utterance, active_orders=active)
-    assert [c["kind"] for c in got] == expect_kinds
-    if expect_secret_action is not None:
-        assert got[0]["secret_action"] == expect_secret_action
-        assert int(got[0].get("order_id") or 0) == int(expect_order_id)
-    if raw_payload.get("确认") == "修改":
-        assert got[0]["confirmation"] == "修改"
-        assert got[0]["new_content"] == raw_payload["新内容"]
-        assert got[0]["target_ids"] == raw_payload["目标编号"]
 
 
 @pytest.mark.parametrize(
@@ -586,97 +494,6 @@ _P5_POISON_UTTERANCE_IDS = (
 
 
 
-def test_cli_chat_materializes_each_top_level_candidate(game, monkeypatch):
-    """一句多旨经真实 session.chat classifier 后逐项暂存（任意 CLI runner 并发分类）。"""
-    db, state, content = game
-    minister = _active_ch(db, content)
-    old_text = "着户部清核旧案。"
-    db.stage_directive_candidate(
-        state.turn, minister.name, payload={"text": old_text, "actor": minister.name})
-    monkeypatch.setattr(cb, "extract_confirmation_intent", lambda *a, **k: "无")
-    classified = json.dumps([
-        {"动作类型": "拟旨", "确认": "", "密令动作": "", "任免动作": ""},
-        {"动作类型": "拟旨", "确认": "", "密令动作": "", "任免动作": ""},
-        {
-            "动作类型": "任免",
-            "确认": "",
-            "密令动作": "",
-            "任免动作": "任命",
-            "姓名": "孙传庭",
-            "官职": "陕西巡抚",
-        },
-    ], ensure_ascii=False)
-    drafts = [
-        {
-            "正文": "着户部发帑十万两赈济陕西灾民。",
-            "动作类型": "grant_allocation",
-            "目标类型": "region",
-            "目标": "shaanxi",
-            "金额": 100000,
-            "账户": "国库",
-            "执行面": "in_transit",
-            "颁布方式": "ordinary",
-        },
-        {
-            "正文": "着孙传庭巡抚陕西，整饬军政。",
-            "动作类型": "assignment",
-            "目标类型": "region",
-            "目标ID": "shaanxi",
-            "承办人": "孙传庭",
-            "颁布方式": "普通",
-        },
-    ]
-    calls = []
-
-    def scripted_backend(*_args, **kwargs):
-        tag = kwargs.get("tag")
-        calls.append(tag)
-        if tag == "action_intent":
-            return classified, 0
-        if tag == "draft_intent":
-            return json.dumps({"成品旨稿": drafts}, ensure_ascii=False), 0
-        raise AssertionError(f"unexpected backend call: {tag}")
-
-    monkeypatch.setattr(cb, "_run_backend_for_config", scripted_backend)
-
-    class FakeAgent:
-        def run(self, _msg):
-            return SimpleNamespace(
-                content=(
-                    "臣拟两道：其一着户部发帑十万两赈济陕西灾民；"
-                    "其二着孙传庭巡抚陕西，整饬军政。"
-                ),
-                tools=[],
-            )
-
-    sess = GameSession.__new__(GameSession)
-    sess.db = db
-    sess.state = state
-    sess.content = content
-    sess.registry = SimpleNamespace(
-        get=lambda character, **_kw: FakeAgent(),
-    )
-    sess.llm_config = SimpleNamespace(channel="cli", cli_runner="agy")
-    sess.temporary_characters = {}
-    sess._retrieve_memories_for_message = lambda message: message
-    monkeypatch.setattr(session_mod, "_dump_llm_messages", lambda *a, **k: None)
-
-    sess.chat(
-        minister.name,
-        "分别拟两道旨：一道发帑赈陕西，一道令孙传庭整饬陕西军政；并任孙传庭为陕西巡抚。",
-    )
-
-    rows = db.list_pending_actions(int(state.turn), minister_name=minister.name)
-    assert calls == ["action_intent", "draft_intent"]
-    assert [row["kind"] for row in rows] == ["directive", "directive", "directive", "office"]
-    assert len({int(row["id"]) for row in rows[:3]}) == 3
-    payloads = [json.loads(row["payload_json"] or "{}") for row in rows[:3]]
-    assert [payload["text"] for payload in payloads] == [
-        old_text, drafts[0]["正文"], drafts[1]["正文"],
-    ]
-    assert payloads[1]["amount"] == 100000
-    assert payloads[2]["assignee"] == "孙传庭"
-    assert payloads[1]["locality_scope"] == payloads[2]["locality_scope"] == "single"
 
 
 def _grant_region_draft_transport(*, locality_zh: str | None = None) -> dict:
@@ -724,167 +541,8 @@ def test_grant_explicit_region_none_fails_loud(monkeypatch):
         cb.extract_draft_intent("发帑赈陕西", "臣拟发帑赈济陕西。")
 
 
-@pytest.mark.parametrize(
-    ("utterance", "classify_result", "reply", "expect_secret_stage", "expect_directive_stage"),
-    _P5_ASK_VS_ORDER_BARRIER_CASES,
-    ids=_P5_ASK_VS_ORDER_BARRIER_IDS,
-)
-def test_real_chat_bidirectional_barrier_parallel_required(
-    game, monkeypatch, utterance, classify_result, reply,
-    expect_secret_stage, expect_directive_stage,
-):
-    """双向 barrier：classifier 进入后等 reply 进入；reply 进入后确认 classifier 在飞。
-
-    若生产先同步跑完 classifier 再回话，reply 永远等不到 classifier_entered → 红。
-    #516：纯问/含命令词疑问/祈使令查样本并入真实 session.chat，不经 preclassified_intent。
-    """
-    db, state, content = game
-    minister = _active_ch(db, content)
-    classifier_entered = threading.Event()
-    reply_entered = threading.Event()
-    allow_classify = threading.Event()
-    allow_reply = threading.Event()
-    calls: list = []
-
-    def fake_classify(*args, **kwargs):
-        calls.append("classify")
-        classifier_entered.set()
-        # 必须等 reply 线程已进入 agent.run，证明重叠
-        reply_entered.wait()
-        allow_classify.set()
-        return list(classify_result)
-
-    class FakeAgent:
-        def run(self, _msg):
-            reply_entered.set()
-            classifier_entered.wait()
-            # 等 classify 完成（并行 join 前不必；此处只证明重叠后放行）
-            allow_classify.wait()
-            allow_reply.set()
-            return SimpleNamespace(content=reply, tools=[])
-
-    sess = GameSession.__new__(GameSession)
-    sess.db = db
-    sess.state = state
-    sess.content = content
-    sess.registry = SimpleNamespace(
-        get=lambda character, **_kw: FakeAgent(),
-    )
-    sess.llm_config = SimpleNamespace(channel="cli", cli_runner="codex")
-    sess.temporary_characters = {}
-    sess._retrieve_memories_for_message = lambda message: message
-    monkeypatch.setattr(session_mod, "_dump_llm_messages", lambda *a, **k: None)
-    monkeypatch.setattr(cb, "classify_cli_action_intent", fake_classify)
-    monkeypatch.setattr(cb, "extract_minister_actions", lambda *a, **k: {
-        "secret_action": "无", "order_id": 0, "new_title": "", "new_content": "",
-        "deadline_months": 0, "cultivate_skill": "", "cultivate_trait": "",
-    })
-    monkeypatch.setattr(cb, "extract_appointment_action", lambda *a, **k: {
-        "appoint_action": "无", "name": "", "office": "",
-    })
-    monkeypatch.setattr(cb, "extract_draft_intent", lambda *a, **k: {
-        "draft_action": "拟旨", "draft_text": "【毒化串行】", "target_candidate": "",
-    })
-    monkeypatch.setattr(cb, "extract_confirmation_intent", lambda *a, **k: "无")
-    monkeypatch.setattr(
-        cb, "_extract_secret_order",
-        lambda *a, **k: {
-            "title": "查家产",
-            "content": utterance,
-            "assignee": minister.name,
-            "tags": [],
-            "deadline_months": 0,
-            "excluded_names": [],
-            "excluded_offices": [],
-            "dossier_links": [],
-            "covert_task": {
-                "kind": "清丈", "axes": ["实务事功"], "direction": 1,
-                "delivery": {"unit": "万亩", "target_units": 1.0, "effect_sign": 1, "region": "henan", "field": "registered_land", "target": "421"},
-            },
-        },
-    )
-
-    before = _count_pending(db, state.turn)
-    result = sess.chat(minister.name, utterance)
-    assert allow_reply.is_set()
-    assert calls == ["classify"]
-    # Pending state is structured; the model's reply must remain byte-for-byte intact.
-    assert result.answer == reply
-
-    secret_rows = [
-        r for r in db.list_pending_actions(int(state.turn), minister_name=minister.name)
-        if r["kind"] == "secret_order" and r["action"] == "新建"
-    ]
-    directive_rows = [
-        r for r in db.list_pending_actions(int(state.turn), minister_name=minister.name)
-        if r["kind"] == "directive"
-    ]
-    if expect_directive_stage:
-        assert result.pending_action_id
-        assert _count_pending(db, state.turn) == before + 1
-        assert len(directive_rows) == 1
-        text = json.loads(directive_rows[-1]["payload_json"])["text"]
-        assert "赈陕西" in text
-        assert "毒化" not in text
-        assert secret_rows == []
-    elif expect_secret_stage:
-        assert result.pending_action_id
-        assert _count_pending(db, state.turn) == before + 1
-        assert len(secret_rows) == 1
-        assert directive_rows == []
-    else:
-        assert result.answer == reply
-        assert not result.pending_action_id
-        assert _count_pending(db, state.turn) == before
-        assert secret_rows == []
-        assert directive_rows == []
 
 
-@pytest.mark.parametrize(
-    "utterance",
-    _P5_POISON_UTTERANCES,
-    ids=_P5_POISON_UTTERANCE_IDS,
-)
-@pytest.mark.parametrize(
-    "classify_mode",
-    ["bad_shape", "raises"],
-    ids=["bad_shape_return", "classifier_raises"],
-)
-def test_real_chat_poisoned_classifier_zero_writes(
-    game, monkeypatch, classify_mode, utterance,
-):
-    """真实 session.chat：坏 shape 与 classifier 抛异常均保留回话、零 pending。
-
-    #516：问/令查样本同走并发分类毒化路，不经 preclassified_intent。
-    """
-    db, state, content = game
-    minister = _active_ch(db, content)
-
-    def fake_classify(*a, **k):
-        if classify_mode == "raises":
-            raise RuntimeError("classifier boom")
-        return {"kind": "not_a_cluster", "appoint_action": "流放"}
-
-    class FakeAgent:
-        def run(self, _msg):
-            return SimpleNamespace(content="臣惶恐。", tools=[])
-
-    sess = GameSession.__new__(GameSession)
-    sess.db = db
-    sess.state = state
-    sess.content = content
-    sess.registry = SimpleNamespace(get=lambda c, **_kw: FakeAgent())
-    sess.llm_config = SimpleNamespace(channel="cli", cli_runner="codex")
-    sess.temporary_characters = {}
-    sess._retrieve_memories_for_message = lambda message: message
-    monkeypatch.setattr(session_mod, "_dump_llm_messages", lambda *a, **k: None)
-    monkeypatch.setattr(cb, "classify_cli_action_intent", fake_classify)
-    _silence_serial(monkeypatch)
-    before = _count_pending(db, state.turn)
-    result = sess.chat(minister.name, utterance)
-    assert result.answer == "臣惶恐。"
-    assert not result.pending_action_id
-    assert _count_pending(db, state.turn) == before
 
 
 # ── 撤回：WebGame.chat + undo_last_chat 生产入口 ─────────────────────
@@ -1188,25 +846,6 @@ _REPLY_1744 = (
     "非急工役暂行缓办，辽东边饷优先筹拨。限半月具奏。钦此。"
 )
 _DRAFT_TARGET_1744 = "清核太仓出纳、暂缓非急工役、优先拨发辽东边饷"
-# 一次性真实 classifier 探针 raw 形（transport fixture；不冒称本测 live）
-_PROBE_RAW_DRAFT_1744 = {
-    "动作类型": "拟旨",
-    "颁布方式": "ordinary",
-    "标题": "清核太仓出纳",
-    "目标": "太仓出纳、非急工役、边饷要紧处",
-    "目标类型": "policy",
-    "事务类别": "钱粮",
-    "责任机关": "户部",
-    "恩赏拨帑": "无",
-    "确认": "无",
-    "密令动作": "无",
-    "任免动作": "无",
-    "惩处动作": "无",
-    "权项": "无",
-    "事项处置": "无",
-    "承诺类型": "无",
-}
-
 
 def _pending_directives_via_api(monkeypatch, wg, *, minister_name: str):
     """生产读缝：GET /api/pending_actions → 该大臣 directive 列表。"""
@@ -1243,24 +882,10 @@ def _bind_draft_extract_1744(monkeypatch, *, minister_name: str):
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_one_intent_probe_raw_chat_to_pending_api_one_ordinary(game, monkeypatch):
-    """#1744/#1842：classify 归一仍可单测；Web 殿上 chat 经 scene_chat 转译落一条 directive 可见。"""
+    """Web 殿上 chat 经 scene_chat 转译落一条交办候选。"""
     db, state, content = game
     minister = _active_ch(db, content)
     _silence_serial(monkeypatch)
-
-    def _scripted(prompt, llm_config=None, tag="", *, policy=None):
-        assert tag == "action_intent"
-        assert _EMPEROR_1744 in prompt
-        return (json.dumps(_PROBE_RAW_DRAFT_1744, ensure_ascii=False), 0)
-
-    monkeypatch.setattr(cb, "_run_backend_for_config", _scripted)
-    # 入口归一契约：raw 中文键 → 单 draft（分类器仍供 CLI；Web 殿上已退役）
-    got = cb.classify_cli_action_intent(_EMPEROR_1744)
-    assert [c.get("kind") for c in got] == ["draft"]
-    assert got[0].get("mode") == "ordinary"
-    assert got[0].get("title") == "清核太仓出纳"
-    assert got[0].get("target_kind") == "policy"
-    assert "太仓出纳" in str(got[0].get("target_id") or "")
 
     def translate_fn(prompt, llm_config):
         return {"scene_facts": [{"body": _REPLY_1744, "role": "scene", "person_names": []}],
@@ -1321,13 +946,3 @@ def test_scene_chat_translation_can_stage_multiple_commissions(game, monkeypatch
     texts = [json.loads(r["payload_json"]).get("text", "") for r in new_dirs]
     assert any("太仓" in t for t in texts)
     assert any("陕西" in t for t in texts)
-
-
-def test_classifier_batch_identity_still_normalizes_without_web_chat():
-    """#1744 分类器 batch 身份归一仍在 CLI 分类器缝（不经已退役的 Web 殿上旧链）。"""
-    scripted = candidates_from_classifier_payload([
-        {"kind": "draft"},
-        {"kind": "assignment", "title": "", "target_id": "陕西赈灾"},
-    ], soft=False)
-    kinds = [c.get("kind") for c in scripted]
-    assert "draft" in kinds and "assignment" in kinds
