@@ -858,7 +858,6 @@ def test_tool_summon_does_not_splice_gate_reason_into_llm_answer(game, monkeypat
         get=lambda _character, **_kw: _Agent(),
     )
     sess.llm_config = SimpleNamespace(channel="api")
-    sess._retrieve_memories_for_message = lambda text: text
     sess._audience_prompt_for_message = lambda message, *a, **k: message
     sess._start_cli_action_intent = lambda *_a, **_k: None
     sess._finish_cli_action_intent = lambda *_a, **_k: None
@@ -966,7 +965,6 @@ def test_session_register_unlisted_summon_after_uses_admission(game, monkeypatch
             register=lambda _ch: None,
         )
         sess.llm_config = SimpleNamespace(channel="api")
-        sess._retrieve_memories_for_message = lambda text: text
         sess._audience_prompt_for_message = lambda message, *a, **k: message
         sess._start_cli_action_intent = lambda *_a, **_k: None
         sess._finish_cli_action_intent = lambda *_a, **_k: None
@@ -2630,7 +2628,6 @@ def test_tool_summon_binds_origin_chat_turn_id_and_undo_deletes(game, monkeypatc
         get=lambda _character, **_kw: _Agent(),
     )
     sess.llm_config = SimpleNamespace(channel="api")
-    sess._retrieve_memories_for_message = lambda text: text
     sess._audience_prompt_for_message = lambda message, *a, **k: message
     sess._start_cli_action_intent = lambda *_a, **_k: None
     sess._finish_cli_action_intent = lambda *_a, **_k: None
