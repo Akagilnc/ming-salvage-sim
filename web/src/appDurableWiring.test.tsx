@@ -176,6 +176,32 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     expect(calls).toContain("GET /api/audience/chat");
     expect(calls.some((call) => call.includes("/api/ministers/"))).toBe(false);
     expect(host.textContent).toContain("杨嗣昌御前低语");
+
+    // 关档后夜仍未收：重挂从状态口进入殿上，卷轴停在已存最后一轮。
+    unmountTrackedRoots();
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      const path = new URL(String(url), "http://t.local").pathname;
+      if (path.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
+      if (path.endsWith("/api/game/state")) return jsonResp({
+        ...makeState(1, [], [minister("杨嗣昌"), minister("洪承畴")]),
+        reopen_landing: "audience",
+      });
+      if (path.endsWith("/api/audience/chat")) return jsonResp({ campaign_id: "c", night_id: 23, history: [], suggestions: [], can_undo_last_chat: false });
+      if (path.endsWith("/api/audience/scroll")) return jsonResp({ night_id: 23, status: "open", messages: [
+        { role: "minister", speaker: "洪承畴", content: "先轮奏报", beat: "dialogue", chat_turn_id: 1 },
+        { role: "minister", speaker: "洪承畴", content: "末轮奏报", beat: "dialogue", chat_turn_id: 2 },
+      ] });
+      if (path.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
+      if (path.endsWith("/api/saves")) return jsonResp({ saves: [] });
+      return jsonResp({});
+    }));
+    const reopened = document.createElement("div"); document.body.appendChild(reopened);
+    await act(async () => { trackRoot(reopened).render(<App />); });
+    await act(async () => {
+      await vi.waitFor(() => expect(reopened.querySelector("textarea")).not.toBeNull());
+      await vi.waitFor(() => expect(reopened.querySelector('[data-audience-turn-id="2"]')).not.toBeNull());
+    });
+    expect(reopened.querySelector('[data-audience-turn-id="2"]')?.textContent).toContain("末轮奏报");
   });
 
   it("密令召见从真实入口在同一殿上卷宣人，不再打开按大臣实时会话 (#1849)", async () => {
