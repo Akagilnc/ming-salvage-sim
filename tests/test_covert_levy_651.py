@@ -154,6 +154,10 @@ def _exposed_todo(db, state, monkeypatch, did):
 
 
 def test_dispositions_consume_only_real_canonical_complete_legs(game, monkeypatch):
+    """#1843 reopen：查办经真实 dispatch 逐段入口落到待办 consumed（两腿齐备）。"""
+    from ming_sim.applier import Provenance
+    from ming_sim.declaration_dispatch import dispatch_declaration
+
     db, state, content = game
     did, _, army_id, executor = _bound_case(db, state)
     _exposed_todo(db, state, monkeypatch, did)
@@ -161,21 +165,43 @@ def test_dispositions_consume_only_real_canonical_complete_legs(game, monkeypatc
     other = db.conn.execute(
         "SELECT name FROM characters WHERE status='active' AND name<>? LIMIT 1", (executor,)
     ).fetchone()[0]
+    todo_id = int(db.list_next_audience_todos(status="pending")[0]["id"])
 
-    # 查办：关系代价单独成功仍不结算；人物腿也真实成功后才结算。
-    partial = apply_score_extraction(db, state, {"relation_edge_events": [{
-        "来源引用": origin, "施动者": executor, "受动者": [other],
-        "类目": "结怨", "语境": "查办暗渠触动同僚",
-    }]}, content, None, dossier_ids_at_input={did})
-    assert partial["relation_edge_event_resolutions"]
-    assert not partial["relation_edge_event_resolutions"][0].get("rejected")
-    assert settle_exposure_from_canonical_actions(db, state, partial) == 0
-    complete = apply_score_extraction(db, state, {"人物变更": [{
-        "origin_ref": origin, "name": executor, "动作": "处置", "status": "dismissed",
-    }]}, content, None, dossier_ids_at_input={did})
-    complete["relation_edge_event_resolutions"] = partial["relation_edge_event_resolutions"]
-    assert complete["applied_person_changes"]
-    assert settle_exposure_from_canonical_actions(db, state, complete) == 1
+    # 查办：关系代价单独成功仍不结算。
+    dispatch_declaration(
+        db, state,
+        {"effects": {"relation_edge_events": [{
+            "来源引用": origin, "施动者": executor, "受动者": [other],
+            "类目": "结怨", "语境": "查办暗渠触动同僚",
+        }]}},
+        source=Provenance.player_decree,
+        visible_refs={"dossiers": {did}},
+    )
+    assert any(int(t["id"]) == todo_id for t in db.list_next_audience_todos(status="pending"))
+
+    # 两腿同段齐备 → 经 dispatch 后待办 consumed。
+    dispatch_declaration(
+        db, state,
+        {"effects": {
+            "relation_edge_events": [{
+                "来源引用": origin, "施动者": executor, "受动者": [other],
+                "类目": "结怨", "语境": "查办暗渠触动同僚",
+            }],
+            "人物变更": [{
+                "origin_ref": origin, "name": executor, "动作": "处置", "status": "dismissed",
+            }],
+        }},
+        source=Provenance.player_decree,
+        visible_refs={"dossiers": {did}},
+    )
+    pending_ids = {int(t["id"]) for t in db.list_next_audience_todos(status="pending")}
+    assert todo_id not in pending_ids
+    consumed = db.conn.execute(
+        "SELECT status, payload_json FROM next_audience_todos WHERE id=?", (todo_id,),
+    ).fetchone()
+    assert consumed["status"] == "consumed"
+    payload = json.loads(consumed["payload_json"] or "{}")
+    assert payload.get("decision") == "查办"
 
 
 def _promulgated_prohibition(db, state, exposed_id):
@@ -224,12 +250,17 @@ def test_tacit_and_prohibition_use_real_canonical_identity_and_are_idempotent(ga
     }.isdisjoint(reminder)
     assert ENTRY_KIND not in beat.audience_scenes[0]
 
-    # Reuse the same fixture for tacit permission: both canonical legs are required.
+    # 默许：两腿齐备经真实 dispatch 入口 → 待办 consumed（#1843 reopen）。
     did2, _, _, _ = _bound_case(db, state)
     _exposed_todo(db, state, monkeypatch, did2)
     origin2 = f"dossier:{did2}"
+    todo2 = int(db.list_next_audience_todos(status="pending")[-1]["id"])
+    from ming_sim.applier import Provenance
+    from ming_sim.declaration_dispatch import dispatch_declaration
+
+    # 农民池为 0：转移实额为 0 → 默许腿不齐，待办仍 pending。
     db.conn.execute("UPDATE classes SET population=0 WHERE name='农民' AND region_id='shaanxi'")
-    tacit_declaration = {
+    tacit_effects = {
         "population_transfers": [{
             "source": "农民@shaanxi", "target": "流民@shaanxi", "amount": 1,
             "reason": "摊派", "origin_ref": origin2,
@@ -238,14 +269,26 @@ def test_tacit_and_prohibition_use_real_canonical_identity_and_are_idempotent(ga
             "key": key, "delta": 1, "origin_ref": origin2, "beyond_intent": True,
         }],
     }
-    tacit = apply_score_extraction(db, state, tacit_declaration, content, None, dossier_ids_at_input={did2})
-    assert tacit["population_transfers"] and tacit["fiscal_changes"], tacit["fiscal_changes"]
-    assert tacit["population_transfers"][0]["amount"] == 0
-    assert tacit["fiscal_changes"][0]["applied"] is True, tacit["fiscal_changes"]
-    assert settle_exposure_from_canonical_actions(db, state, tacit) == 0
+    dispatch_declaration(
+        db, state, {"effects": tacit_effects},
+        source=Provenance.player_decree,
+        visible_refs={"dossiers": {did2}},
+    )
+    assert any(int(t["id"]) == todo2 for t in db.list_next_audience_todos(status="pending"))
+
     db.conn.execute("UPDATE classes SET population=1 WHERE name='农民' AND region_id='shaanxi'")
-    tacit = apply_score_extraction(db, state, tacit_declaration, content, None, dossier_ids_at_input={did2})
-    assert settle_exposure_from_canonical_actions(db, state, tacit) == 1
+    dispatch_declaration(
+        db, state, {"effects": tacit_effects},
+        source=Provenance.player_decree,
+        visible_refs={"dossiers": {did2}},
+    )
+    pending_ids = {int(t["id"]) for t in db.list_next_audience_todos(status="pending")}
+    assert todo2 not in pending_ids
+    row = db.conn.execute(
+        "SELECT status, payload_json FROM next_audience_todos WHERE id=?", (todo2,),
+    ).fetchone()
+    assert row["status"] == "consumed"
+    assert json.loads(row["payload_json"] or "{}").get("decision") == "默许"
 
 
 def test_prohibition_consumes_immediately_when_arrears_are_already_zero(game, monkeypatch):
