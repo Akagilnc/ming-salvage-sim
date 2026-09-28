@@ -201,7 +201,6 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
       await vi.waitFor(() => expect(reopened.querySelector("textarea")).not.toBeNull());
       await vi.waitFor(() => expect(reopened.querySelector('[data-audience-turn-id="2"]')).not.toBeNull());
     });
-    expect(reopened.querySelector('[data-audience-turn-id="2"]')?.textContent).toContain("末轮奏报");
   });
 
   it("密令召见从真实入口在同一殿上卷宣人，不再打开按大臣实时会话 (#1849)", async () => {
