@@ -103,7 +103,7 @@
      幂等守门：相位已在 FRONT_HALF_DONE_PHASES（settling/awaiting_decision/…）时直接
      return，不二次落财政；崩在内部 = 全回滚 = 相位未变 = 重进干净重跑。
 
-  3. db.save_resolve_context(decree_text, ready=0) # 诏书原文占位真源：跨进程恢复不丢玩家手改稿
+  3. db.save_resolve_context(decree_text, …) # 本月诏书/payload 占位：跨进程恢复不丢玩家手改稿（无 extracted）
      与 2 同一外层 atomic 提交：settling 相位与 context 行同生共死（回滚时一并 reload 刷内存）。
      `prepare_resolve_front_half` 写入本月 context 占位（含 transit_arrivals）。
 
@@ -138,16 +138,9 @@
      - 产物 shape 畸形（非 dict / 损坏 JSON / 未知顶层字段）→ write_error_pack 落五件套
        诊断包 + 抛 SettlementAbort 响亮中止（不再静默吞）；重试 = 重跑 simulator/extractor
 
-  8.5 persist_resolve_context(db, before_turn, extracted, ...)
-     - 先过 validate_delta_shape（毒 payload 不得钉进重试真源），再存 ready=1
-     - 跨进程恢复的重跑真源：崩溃后直接重放落库，不再花一次 LLM 重推演
-     - （已删）driver 两阶段路：
-       1) `run_prepare` → 共享 `prepare_resolve_front_half`（pre_settle + ready=0 + transit_arrivals）
-       2) 外部产 narrative+delta（可读已提交盘面与 arrivals handoff）
-       3) `run_settle` 只消费同 turn settling+ready=0：合并案卷键∪既有 transit_arrivals → ready=1 → settle_with_delta
-       未 prepare 的 settle 响亮失败且零写；settling+ready=1 崩溃重入只读 context，不二次 tick
+  （8.5 已删：persist_resolve_context / ready=1 重放；#1846）
 
-  ── 后半段 settle_with_delta：整段单一 atomic 事务，9–16 全有或全无 ──
+  ── 后半段 settle_with_delta（旧核；#1843 待删）：整段单一 atomic 事务，9–16 全有或全无 ──
   9. db.commit_pending_actions(..., registry=None)  # 正常路通常为 no-op；覆盖恢复/重抽路的新暂存动作
      affected_people += db.apply_dossier_verdicts(..., registry=None)
      affected_people += db.apply_dossier_promulgation(..., registry=None)
@@ -248,7 +241,7 @@ session.advance_without_decree / POST /api/decree/advance_without_edict:
 
 - `awaiting_decision` → 幂等返回已存决策点等亲裁，不推进月份。
 - （已删）driver ready=1 重放路径。
-- 玩家 `settling` → 若有旧 ready delta，先降级；新月链从已暂存／已落账状态接续。`pre_settle` 被 settling 守门跳过，财政不二落。
+- 玩家 `settling` → 新月链从已暂存／已落账状态接续。`pre_settle` 被 settling 守门跳过，财政不二落。
 - settling 恢复窗口内**冻结改盘操作**：
   - 下旨草案/撤回/跳过等 7 个入口（`session._refuse_if_settling`；web 对应端点 409，CLI 打印恢复指引并留在本回合交互循环不重印回合头）。
   - 全部聊天侧新写入一并冻（`_proposal_blocked` 总闸）：任免候选暂存、编外人物登记、密令房 tool、CLI 前缀密令 upsert；恢复期不得把新动作插入已冻结的旧回合。
