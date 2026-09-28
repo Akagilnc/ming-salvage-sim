@@ -663,13 +663,8 @@ def test_tool_summon_does_not_splice_gate_reason_into_llm_answer(game, monkeypat
     )
     sess.llm_config = SimpleNamespace(channel="api")
     sess._audience_prompt_for_message = lambda message, *a, **k: message
-    sess._start_cli_action_intent = lambda *_a, **_k: None
-    sess._finish_cli_action_intent = lambda *_a, **_k: None
     sess._recognize_audience_command_verdict = lambda *_a, **_k: None
     sess._apply_audience_command_verdict = lambda *a, **k: None
-    sess._confirmation_intent_for_preexisting_pending = (
-        lambda *a, **k: None
-    )
     sess._scene_registry = SimpleNamespace(
         start_open_enter=lambda *a, **k: None,
         start_exit=lambda *a, **k: None,
@@ -770,11 +765,8 @@ def test_session_register_unlisted_summon_after_uses_admission(game, monkeypatch
         )
         sess.llm_config = SimpleNamespace(channel="api")
         sess._audience_prompt_for_message = lambda message, *a, **k: message
-        sess._start_cli_action_intent = lambda *_a, **_k: None
-        sess._finish_cli_action_intent = lambda *_a, **_k: None
         sess._recognize_audience_command_verdict = lambda *_a, **_k: None
         sess._apply_audience_command_verdict = lambda *a, **k: None
-        sess._confirmation_intent_for_preexisting_pending = lambda *a, **k: None
         sess._scene_registry = SimpleNamespace(
             start_open_enter=lambda *a, **k: None,
             start_exit=lambda *a, **k: None,
@@ -1448,15 +1440,10 @@ def _install_secret_order_agent(runtime, *, stream: bool = False) -> None:
     s._audience_prompt_for_message = (
         lambda msg, character=None, chat_turn_id=0, **_kw: msg
     )
-    s._start_cli_action_intent = lambda *_a, **_k: None
-    s._finish_cli_action_intent = lambda *_a, **_k: None
     s.start_exit_scene_from_dismiss_tools = lambda *_a, **_k: False
-    # 密令落库唯一真源：apply_cli_conversation_actions 及其 chat 入口。
+    # 旧分类器链已删；密令/交办由 scene_chat + 转译。此处只绑仍在的口令/合并缝。
     for name in (
         "chat",
-        "_cli_backend_fallback_actions",
-        "apply_cli_conversation_actions",
-        "_confirmation_intent_for_preexisting_pending",
         "_apply_audience_command_verdict",
         "_recognize_audience_command_verdict",
         "_merge_staged_new_secret_order_content",
@@ -1579,150 +1566,6 @@ def _http_typed_secret_order_payload(client, minister_name, message, *, stream):
     done = [data for name, data in events if name == "done"]
     assert done, f"expected done SSE, got {events!r}"
     return done[0]
-
-
-@pytest.mark.parametrize("stream", [False, True], ids=["sync", "stream"])
-def test_web_chat_formal_secret_order_hangs_night_without_enter(game, stream, monkeypatch):
-    """#1566：场外正式密令挂当前夜轮，不 consume 传召、不入殿；
-
-    summon+dismiss tool 与 typed 退朝均不得派 court_action / 换人 / exit / 留侍 / 收夜。
-    """
-    db, state, content = game
-    remote = _set_place(game, "洪承畴", location="shaanxi")
-    before_summons = list(an.list_unsettled_summons(db))
-    before_n = sum(
-        1 for p in db.list_pending_actions(state.turn) if p.get("kind") == "secret_order"
-    )
-
-    secret_title = "陕北赈抚探报"
-    _patch_secret_order_extract(monkeypatch, title=secret_title)
-    runtime = _secret_order_runtime(db, state, content, stream=stream)
-    old_pending_id = int(db.stage_pending_action(
-        state.turn,
-        "directive",
-        "新建",
-        remote.name,
-        {"decree_text": "既存候选", "mode": "special_decree"},
-    ))
-    old_pending = next(
-        p for p in db.list_pending_actions(state.turn)
-        if int(p["id"]) == old_pending_id
-    )
-    edict = "陕北赈抚探报\n速报陕西军情。"
-    payload = _formal_secret_order_payload(
-        runtime, remote.name, edict,
-        stream=stream,
-    )
-    assert not payload.get("admission"), (
-        f"正式密令不得被 SUMMON_* admission 截获，got admission={payload.get('admission')!r}"
-    )
-    # #1566：密令 route 吞 court actions（agent 带 summon+dismiss）。
-    assert not payload.get("court_action"), (
-        f"密令不得派 court_action，got {payload.get('court_action')!r}"
-    )
-    assert not payload.get("next_minister"), (
-        f"密令不得换人，got next_minister={payload.get('next_minister')!r}"
-    )
-    pid = int(payload.get("pending_action_id") or 0)
-    _assert_secret_order_pending(
-        db, state, minister_name=remote.name, pid=pid, edict=edict, title=secret_title,
-    )
-    assert an.list_unsettled_summons(db) == before_summons
-    assert sum(
-        1 for p in db.list_pending_actions(state.turn) if p.get("kind") == "secret_order"
-    ) == before_n + 1
-    after_pending = db.list_pending_actions(state.turn)
-    assert next(
-        p for p in after_pending if int(p["id"]) == old_pending_id
-    ) == old_pending
-    assert sum(p.get("kind") == "directive" for p in after_pending) == 1
-    assert sum(p.get("kind") == "commitment" for p in after_pending) == 0
-    chat_turn_id = int(payload.get("chat_turn_id") or 0)
-    assert chat_turn_id > 0
-    turn = db.conn.execute(
-        "SELECT night_id, night_seq, minister_message_id, status, route FROM chat_turns WHERE id=?",
-        (chat_turn_id,),
-    ).fetchone()
-    assert turn is not None
-    assert int(turn["night_id"] or 0) > 0
-    # 场外密令 route 须 durable 落 secret_order_offsite。
-    assert str(turn["route"] or "") == "secret_order_offsite"
-    scroll = an.read_night_scroll(db, int(turn["night_id"]))
-    assert not any(
-        m.get("beat") == "entrance" and m.get("speaker") == remote.name
-        for m in scroll
-    )
-    owned = [m for m in scroll if int(m.get("chat_turn_id") or 0) == chat_turn_id]
-    roles = {m.get("role") for m in owned}
-    assert "user" in roles
-    # 转译尚未落水位时回话保持中性，不能从原始 minister 消息抢定说话人。
-    assert "scene" in roles
-    assert "minister" not in roles
-    reply = db.conn.execute(
-        "SELECT content FROM chat_messages WHERE id=?", (turn["minister_message_id"],),
-    ).fetchone()["content"]
-    from ming_sim.audience_translation import apply_audience_round_translation
-    apply_audience_round_translation(
-        db, state,
-        {"scene_facts": [{
-            "body": reply, "role": "minister", "person_names": [remote.name],
-            "audibility": "殿上公开", "tags": ["scroll_role:minister"],
-        }]},
-        night_id=int(turn["night_id"]), chat_turn_id=chat_turn_id,
-        minister_name=remote.name,
-    )
-    settled = [m for m in an.read_night_scroll(db, int(turn["night_id"]))
-               if int(m.get("chat_turn_id") or 0) == chat_turn_id]
-    assert {m["role"] for m in settled} >= {"user", "minister"}
-
-    # #1566：typed 退朝在密令 intent 下不得收夜/留侍/court_break。
-    before_nights = db.conn.execute(
-        "SELECT COUNT(*) AS c FROM audience_nights"
-    ).fetchone()["c"]
-    break_payload = _formal_secret_order_payload(
-        runtime, remote.name, "退朝", stream=stream,
-    )
-    assert not break_payload.get("court_action"), (
-        f"typed 退朝+密令 intent 不得 court_action，got {break_payload.get('court_action')!r}"
-    )
-    after_nights = db.conn.execute(
-        "SELECT COUNT(*) AS c FROM audience_nights"
-    ).fetchone()["c"]
-    assert after_nights == before_nights
-    open_night = an.get_open_night(db)
-    assert open_night is not None
-    assert str(open_night.get("status") or "") == "open"
-
-
-@pytest.mark.parametrize("stream", [False, True], ids=["sync", "stream"])
-def test_http_typed_secret_order_intent_forwards_to_webgame(game, stream, monkeypatch):
-    """#1566：HTTP typed-intent 接缝——ChatRequest.intent 经真实 FastAPI 入口到 WebGame。
-
-    场外大臣 + 无密令前缀正文；删 api_chat / api_chat_stream 的 request.intent 转发须转红
-    （远人 SUMMON admission 截获，密令 pending 不落）。
-    """
-    import web_app
-
-    db, state, content = game
-    remote = _set_place(game, "洪承畴", location="shaanxi")
-    secret_title = "陕北赈抚探报"
-    _patch_secret_order_extract(monkeypatch, title=secret_title)
-    runtime = _secret_order_runtime(db, state, content, stream=stream)
-    monkeypatch.setattr(web_app, "get_game", lambda: runtime)
-    monkeypatch.setattr(web_app, "web_game", runtime)
-
-    # 无 _SECRET_PREFIXES 前缀：仅靠 JSON intent 入密令路（禁前缀自救掩盖转发洞）。
-    edict = "陕北赈抚探报\n速报陕西军情。"
-    payload = _http_typed_secret_order_payload(
-        TestClient(web_app.app), remote.name, edict, stream=stream,
-    )
-    assert not payload.get("admission"), (
-        f"typed intent 须走密令路，不得 SUMMON admission，got {payload!r}"
-    )
-    pid = int(payload.get("pending_action_id") or 0)
-    _assert_secret_order_pending(
-        db, state, minister_name=remote.name, pid=pid, edict=edict, title=secret_title,
-    )
 
 
 def test_web_chat_ledger_append_failure_has_no_side_effects(game, monkeypatch):
@@ -2218,11 +2061,8 @@ def test_tool_summon_binds_origin_chat_turn_id_and_undo_deletes(game, monkeypatc
     )
     sess.llm_config = SimpleNamespace(channel="api")
     sess._audience_prompt_for_message = lambda message, *a, **k: message
-    sess._start_cli_action_intent = lambda *_a, **_k: None
-    sess._finish_cli_action_intent = lambda *_a, **_k: None
     sess._recognize_audience_command_verdict = lambda *_a, **_k: None
     sess._apply_audience_command_verdict = lambda *a, **k: None
-    sess._confirmation_intent_for_preexisting_pending = lambda *a, **k: None
     sess._scene_registry = SimpleNamespace(
         start_open_enter=lambda *a, **k: None,
         start_exit=lambda *a, **k: None,

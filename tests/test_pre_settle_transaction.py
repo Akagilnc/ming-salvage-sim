@@ -391,7 +391,7 @@ def test_guarded_early_return_does_not_consume_pending(game):
     早退路事务外 commit 会造成跨事务半写。孤儿防线由终端路测试接管
     （test_advance_paths_atomic 的 settle 回滚/HITL 重抽/advance 各条）。"""
     from ming_sim.decree import pre_settle
-    from tests.test_pending_actions import _active_minister_name
+    from tests.legacy_staging_helpers import _active_minister_name
     db, state, content = game
     name = _active_minister_name(db, content)
 

@@ -62,24 +62,14 @@ def _session(db, state, content, *, reply="臣领旨。", tools=None):
     sess.llm_config = SimpleNamespace(channel="cli", cli_runner="codex")
     sess.temporary_characters = set()
     sess._audience_prompt_for_message = lambda message, character, chat_turn_id=0, **_kw: message
-    sess._start_cli_action_intent = lambda *a, **k: None
-    sess._finish_cli_action_intent = lambda *a, **k: []
     sess.start_exit_scene_from_dismiss_tools = lambda *a, **k: None
     return sess
 
 
 def _silence_action_extractors(monkeypatch):
-    monkeypatch.setattr(cb, "extract_minister_actions", lambda *a, **k: {
-        "secret_action": "无", "order_id": 0, "new_title": "", "new_content": "",
-        "deadline_months": 0, "cultivate_skill": "", "cultivate_trait": "",
-    })
-    monkeypatch.setattr(cb, "extract_appointment_action", lambda *a, **k: {
-        "appoint_action": "无", "name": "", "office": "",
-    })
     monkeypatch.setattr(cb, "extract_draft_intent", lambda *a, **k: {
         "draft_action": "无", "draft_text": "", "target_candidate": "",
     })
-    monkeypatch.setattr(cb, "extract_confirmation_intent", lambda *a, **k: "无")
     monkeypatch.setattr(session_mod, "_dump_llm_messages", lambda *a, **k: None)
 
 

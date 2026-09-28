@@ -140,7 +140,7 @@ def _open_night_with_unextracted_reply(game, minister, reply="臣愿肩起此事
     an.ensure_summon_enter(db, nid, minister)
     ctid = db.create_chat_turn(state, minister, "sess-1235", 0, night_id=nid)
     db.persist_minister_reply(minister, int(state.turn), reply, ctid)
-    assert db.count_pending_story_extractions(night_id=nid) >= 1
+    assert len(db.list_unextracted_replies(night_id=nid)) >= 1
     return nid, ctid
 
 
@@ -270,7 +270,7 @@ def test_true_failure_pending_translation_exits_display(web_game, monkeypatch, t
         assert payload["metrics"][k] == int(game.state.metrics[k])  # 活值，非冻快照
     # 夜保持开（0036 原意），可重按过月
     assert an.get_night(game.db, nid)["status"] == an.NIGHT_STATUS_OPEN
-    assert game.db.count_pending_story_extractions(night_id=nid) >= 1
+    assert len(game.db.list_unextracted_replies(night_id=nid)) >= 1
     assert game.db.get_story_extract_status(ctid) in ("", "pending")
 
 

@@ -16,6 +16,9 @@ from ming_sim.issues import apply_score_extraction
 from ming_sim.models import LLMConfig
 from ming_sim.simulation import canonicalize_extraction
 
+# game：conftest 已改为方案 (c) session 模板 + 每案文件拷贝（#1233）。
+# 本模块不再维护平行 module-cache 池；re-export 供既有
+# ``from tests.section_rejection_helpers import game`` 消费方零改 import。
 from tests.conftest import game as game  # noqa: F401
 
 _DETERMINISTIC_LLM = LLMConfig(api_key="", base_url="", model="", channel="api")
@@ -30,23 +33,8 @@ def default_settlement_attendant_runner(*, year, period, rejections):
 def install_settlement_attendant_agent_stub(
     monkeypatch, decree_mod, *, text="递话", capture=None,
 ):
-    class _Out:
-        content = text
-
-    class _Agent:
-        def run(self, prompt):
-            if capture is not None:
-                payload = json.loads(prompt)
-                capture.append(list(payload.get("rejections") or []))
-            return _Out()
-
-    factory = lambda *_a, **_k: _Agent()  # noqa: E731
-    if monkeypatch is None:
-        setattr(decree_mod, "create_settlement_attendant_agent", factory)
-    else:
-        monkeypatch.setattr(
-            decree_mod, "create_settlement_attendant_agent", factory,
-        )
+    """#1871：代码触发递话 agent 已删；旧调用点保留 no-op，runner 形参仍由 #1843 承接。"""
+    del monkeypatch, decree_mod, text, capture
 
 
 def prepare_then_settle(db, state, content, raw_delta, **kwargs):

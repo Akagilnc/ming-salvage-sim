@@ -207,12 +207,18 @@ def _get_state(client: TestClient) -> dict:
 
 
 def _pending_payload(client: TestClient) -> dict:
-    resp = client.get("/api/audience/extraction/pending")
-    _assert_not_bare_500(resp, step="GET /api/audience/extraction/pending")
+    """#1871：extraction/pending 已删；以 scroll 的转译待补投影观测。"""
+    resp = client.get("/api/audience/scroll")
+    _assert_not_bare_500(resp, step="GET /api/audience/scroll")
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert isinstance(body, dict)
-    return body
+    pending_ids = body.get("pending_translation_turn_ids") or []
+    return {
+        "count": len(pending_ids),
+        "pending": [{"chat_turn_id": int(i)} for i in pending_ids],
+        "translation_pending": bool(body.get("translation_pending")),
+    }
 
 
 def _parse_sse(text: str) -> list[dict]:
@@ -408,7 +414,7 @@ def _plant_extraction_debt(game, minister: str, *, sess_tag: str) -> int:
     an.ensure_summon_enter(game.db, nid, minister)
     ctid = game.db.create_chat_turn(game.state, minister, sess_tag, 0, night_id=nid)
     game.db.persist_minister_reply(minister, int(game.state.turn), "臣愿肩起此事。", ctid)
-    assert int(game.db.count_pending_story_extractions(night_id=nid) or 0) >= 1
+    assert int(len(game.db.list_unextracted_replies(night_id=nid)) or 0) >= 1
     return int(ctid)
 
 

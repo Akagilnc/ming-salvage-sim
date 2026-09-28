@@ -16,7 +16,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from tests.test_army_pay_decree_1503 import _set_guanning_arrears
+from tests.army_pay_helpers import _set_guanning_arrears
 from tests.conftest import offline_empty_audience_translate, stub_audience_translate, stub_scene_agent
 
 _EDICT = "着户部自国库拨银十五万两，专解关宁军前补发欠饷，不得加派于民。钦此。"

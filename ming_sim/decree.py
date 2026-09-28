@@ -18,13 +18,11 @@ from openai import APIConnectionError, APIStatusError, APITimeoutError
 
 from ming_sim.agents import (
     _dump_llm_messages,
-    create_arrival_attendant_agent,
     create_decree_writer_agent,
     create_promulgation_judge_agent,
     create_ending_summary_agent,
     create_relation_brew_agent,
     create_faction_brew_agent,
-    create_settlement_attendant_agent,
     parse_agent_json,
     run_agent_text,
 )
@@ -167,91 +165,6 @@ def collect_new_arrival_waiting_audience(
         })
     return result
 
-
-def run_arrival_attendant_message(
-    llm_config: LLMConfig,
-    *,
-    year: int,
-    period: int,
-    arrivals: Sequence[Mapping[str, object]],
-    agent=None,
-) -> str:
-    """#671：王承恩抵京报到 one-shot。集合非空而空文 → LLMContractError。"""
-    if not arrivals:
-        return ""
-    facts = {
-        "year": int(year),
-        "period": int(period),
-        "arrivals": [
-            {
-                "name": str(row.get("name") or row.get("person_name") or "").strip(),
-                "location": str(row.get("location") or "").strip(),
-                "status": str(row.get("status") or "候旨"),
-            }
-            for row in arrivals
-            if str(row.get("name") or row.get("person_name") or "").strip()
-        ],
-    }
-    if not facts["arrivals"]:
-        return ""
-    runner = agent if agent is not None else create_arrival_attendant_agent(llm_config)
-    try:
-        text = run_agent_text(
-            runner,
-            json.dumps(facts, ensure_ascii=False),
-            tag="arrival-attendant",
-        )
-    except (APITimeoutError, APIConnectionError, APIStatusError) as error:
-        # 生产 provider 调用适配缝：只捕已知超时/连接/HTTP 异常，译 LLMUnavailable
-        #（保留 cause）。LLMContractError（空文）与程序错不捕，照旧响亮上抛。
-        raise llm_unavailable_from_error(error, "王承恩抵京报到") from error
-    text = str(text or "")
-    if not text.strip():
-        raise LLMContractError("王承恩抵京报到返回空文")
-    return text  # 原文，含首尾空白（P6：零删改）
-
-
-def run_settlement_attendant_message(
-    llm_config: LLMConfig,
-    *,
-    year: int,
-    period: int,
-    rejections: Sequence[Mapping[str, object]],
-    agent=None,
-) -> str:
-    """#1745：王承恩结算拒收递话 one-shot。有玩家来源拒收而空文 → LLMContractError。
-
-    只吃结构化 section/category/reason；原文返回（P6 零删改）。
-    """
-    if not rejections:
-        return ""
-    facts = {
-        "year": int(year),
-        "period": int(period),
-        "rejections": [
-            {
-                "section": str(row.get("section") or ""),
-                "category": str(row.get("category") or ""),
-                "reason": str(row.get("reason") or ""),
-            }
-            for row in rejections
-        ],
-    }
-    if not facts["rejections"]:
-        return ""
-    runner = agent if agent is not None else create_settlement_attendant_agent(llm_config)
-    try:
-        text = run_agent_text(
-            runner,
-            json.dumps(facts, ensure_ascii=False),
-            tag="settlement-attendant",
-        )
-    except (APITimeoutError, APIConnectionError, APIStatusError) as error:
-        raise llm_unavailable_from_error(error, "王承恩结算拒收递话") from error
-    text = str(text or "")
-    if not text.strip():
-        raise LLMContractError("王承恩结算拒收递话返回空文")
-    return text  # 原文，含首尾空白（P6：零删改）
 
 
 # #1753 decision key promulgation-verdict-heal-by-resume-then-fail-closed：

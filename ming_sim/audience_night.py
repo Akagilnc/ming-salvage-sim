@@ -20,8 +20,8 @@ from datetime import datetime, timezone
 from collections.abc import Mapping
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
+from ming_sim.db import normalize_office
 from ming_sim.error_pack import error_packs_root
-from ming_sim.mindreading import is_inner_court_attendant
 from ming_sim.models import GameState
 from ming_sim.participant_roster import is_non_person_participant_name
 
@@ -35,6 +35,29 @@ TAG_STANDING_ROSTER = "常在员额"
 TAG_AUTO_CLOSE = "顺势收夜"
 TAG_MINGFA = "明发"  # 夜内定案的旨在公开层账上标已明发（#502 AC6，供 #459 扩散）
 _MINGFA_ID_PREFIX = "明发#"  # 明发账挂 directive_id 的结构化标（逐条幂等续跑，#502 L6）
+
+_INNER_COURT_ATTENDANT_OFFICES = frozenset({"信邸内官随驾", "御前近臣"})
+
+
+def _character_field(character: object, field: str) -> object:
+    if isinstance(character, Mapping) or hasattr(character, "keys"):
+        try:
+            return character[field]  # type: ignore[index]
+        except (KeyError, IndexError, TypeError):
+            return ""
+    return getattr(character, field, "")
+
+
+def is_inner_court_attendant(character: object) -> bool:
+    """按御前近臣的职位识别近侍，不把具体姓名写死。
+
+    开夜常在员额靠它；近臣资格由当前占据的槽位授予，而非职位描述中碰巧出现的词。
+    """
+    offices = normalize_office(str(_character_field(character, "office") or ""))
+    return any(
+        office in _INNER_COURT_ATTENDANT_OFFICES
+        for office in offices.split(",")
+    )
 
 
 def mingfa_publication_tag(directive_id: int | str) -> str:
@@ -628,19 +651,6 @@ def read_night_scroll(db: Any, night_id: int) -> List[Dict[str, Any]]:
                             content=content, beat="dialogue",
                             chat_turn_id=int(turn["id"])),
                 ))
-        # 历史递话记录是对话轮的持久消息，紧随该轮奏对归位；不并入故事账。
-        if hasattr(db, "list_mindreading_records"):
-            for record_index, record in enumerate(db.list_mindreading_records(int(turn["id"]))):
-                narration = str(record.get("narration") or "").strip()
-                if narration:
-                    events.append((
-                        float(int(turn.get("night_seq") or 0)), 30 + record_index,
-                        message(role="attendant", speaker=str(record.get("reader") or "近臣"),
-                                audibility=AUDIBILITY_PRIVATE, time=None,
-                                content=narration, beat="aside", chat_turn_id=int(turn["id"]),
-                                record_id=int(record.get("id") or 0)),
-                    ))
-
     for entry in ledgers:
         tags = set(entry.get("tags") or [])
         # #1293a：非口令/框架账（_is_command_entry 补集，含抽取派生与其它

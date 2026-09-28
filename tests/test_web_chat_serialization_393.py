@@ -70,19 +70,6 @@ class _FakeSession(HallAdmissionSessionMixin):
     def _character(self, minister_name: str):
         return self.content.characters[minister_name]
 
-    def _start_cli_action_intent(self, character, text):
-        return None
-
-    def _finish_cli_action_intent(self, future):
-        return None
-
-    def apply_cli_conversation_actions(self, *args, **kwargs):
-        return {
-            "directive": None,
-            "secret_order_id": 0,
-            "pending_action_id": 0,
-            "pending_action_failures": [],
-        }
 
     def _merge_staged_new_secret_order_content(self, *args, **kwargs):
         return None

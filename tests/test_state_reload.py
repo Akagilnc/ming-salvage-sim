@@ -242,7 +242,7 @@ def test_rollback_restores_existing_character_attributes(game, monkeypatch):
     """
     import ming_sim.decree as decree_mod
     from ming_sim.decree import pre_settle
-    from tests.test_pending_actions import _active_minister_name
+    from tests.legacy_staging_helpers import _active_minister_name
     db, state, content = game
     name = _active_minister_name(db, content)
     # 基准取 DB 行（不变式=reload 后 content 与 DB 同源；活存档 DB 值可能已偏离 content JSON 初值）。
