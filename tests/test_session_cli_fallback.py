@@ -1382,46 +1382,31 @@ def test_mixed_directive_and_secret_bare_doubuzhun_drops_both(game):
     assert db.list_directives(state, statuses=("pending", "draft")) == []
 
 
-def test_tool_staged_action_is_not_confirmed_in_same_chat_turn(game):
-    """本轮 tool 刚 stage 的 pending action 不能被同一句“准了”立即提交。"""
+def test_scene_new_secret_order_is_not_confirmed_in_same_turn(game):
+    """同轮新建密令不能被同轮应允声明直接落地。"""
+    from ming_sim.audience_translate import normalize_audience_declaration
+    from ming_sim.declaration_dispatch import dispatch_declaration
+
     db, state, content = game
     minister = "毕自严"
-    tool_payload = json.dumps({
-        "title": "暗查辽饷",
-        "content": "暗查辽饷侵冒。",
-        "assignee": minister,
-        "tags": [],
-        "deadline_months": 0,
-    }, ensure_ascii=False)
-
-    class Agent:
-        def run(self, _message):
-            return SimpleNamespace(
-                content="臣领旨，请陛下定夺。",
-                tools=[SimpleNamespace(tool_name="secret_order", result=f"__secret_order__{tool_payload}")],
-            )
-
-    class Registry:
-        def get(self, _character, **_kw):
-            return Agent()
-
-
-    sess = GameSession.__new__(GameSession)
-    sess.db = db
-    sess.state = state
-    sess.content = content
-    sess.registry = Registry()
-    sess.llm_config = SimpleNamespace(channel="api")
-    sess.temporary_characters = set()
-    sess._audience_prompt_for_message = lambda message, *_a, **_kw: message
-    sess._start_cli_action_intent = lambda *_args, **_kwargs: None
-    sess._finish_cli_action_intent = lambda *_args, **_kwargs: None
-
-    result = GameSession.chat(sess, minister, "准了，密查辽饷。")
-
-    assert result.pending_action_id
+    next_id = db.conn.execute(
+        "SELECT COALESCE(MAX(id), 0)+1 FROM pending_actions"
+    ).fetchone()[0]
+    declaration = normalize_audience_declaration({
+        "commissions": [{"text": "密查辽饷。", "secret_order": {
+            "title": "暗查辽饷", "content": "暗查辽饷侵冒。",
+            "assignee": minister, "tags": [], "deadline_months": 0,
+            "covert_task": TYPED_COVERT_TASK,
+        }}],
+        "promises": [{"action_id": next_id, "decision": "应允"}],
+    })
+    result = dispatch_declaration(db, state, declaration, minister_name=minister)
+    assert result.commissions.rejected == []
+    assert result.commissions.applied[0]["id"] == next_id
+    assert len(result.promises.rejected) == 1
     assert db.list_secret_orders() == []
-    assert len(db.list_pending_actions(state.turn)) == 1
+    pending = db.list_pending_actions(state.turn)
+    assert len(pending) == 1 and pending[0]["kind"] == "secret_order"
 
 
 @pytest.mark.parametrize("mode", [None, "ordinary", "midzhi"])

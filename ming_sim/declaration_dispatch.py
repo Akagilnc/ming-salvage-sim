@@ -244,6 +244,12 @@ def _dispatch_declaration_sections(
         db, state, declaration.get("registrations"), source=source,
         source_turn_error=source_turn_err,
     )
+    preexisting_pending_ids = {
+        int(row["id"]) for row in db.conn.execute(
+            "SELECT id FROM pending_actions WHERE turn=? AND status='pending'",
+            (int(state.turn),),
+        ).fetchall()
+    }
     commissions = _dispatch_commissions(
         db, state, declaration.get("commissions"),
         minister_name=minister_name, source=source,
@@ -261,6 +267,7 @@ def _dispatch_declaration_sections(
         promises=_dispatch_promises(
             db, state, declaration.get("promises"), night_id=night_id,
             chat_turn_id=origin_ctid, source=source,
+            preexisting_pending_ids=preexisting_pending_ids,
         ),
         # 第四类夜绑定 section 统一消费源轮校验（ADR 0038 / #1839 AC3）：
         # 缺源轮或不属本夜 → 逐项 missing_ref，零落账；过月 night_id<=0 不拦。
@@ -1053,6 +1060,29 @@ def _dispatch_commissions(
                 _reject(rejected, item, str(exc), "invalid_shape", source)
             continue
 
+        secret = item.get("secret_order")
+        if secret is not None:
+            if not isinstance(secret, Mapping) or any(
+                item.get(key) for key in
+                ("grant", "appointment", "punishment", "pacification", "assignment")
+            ):
+                _reject(rejected, item, "密令新建载荷须为独立对象", "invalid_shape", source)
+                continue
+            from ming_sim.cli_backend import secret_order_can_land
+            from ming_sim.action_materialize import land_or_recover_new_secret_order
+            if not secret_order_can_land(dict(secret)):
+                _reject(rejected, item, "密令缺标题、内容或冻结任务契约", "invalid_shape", source)
+                continue
+            actor = str(minister_name or "").strip() or _commission_fallback_actor(db)
+            out: Dict[str, Any] = {}
+            land_or_recover_new_secret_order(
+                db=db, turn=int(state.turn), minister_name=actor,
+                secret=dict(secret), player_message=str(item.get("text") or ""),
+                llm_config=None, out=out,
+            )
+            applied.append({"id": out["pending_action_id"], "kind": "secret_order"})
+            continue
+
         assignment = item.get("assignment")
         if assignment is not None:
             if not isinstance(assignment, Mapping) or any(
@@ -1618,6 +1648,7 @@ def _dispatch_travel_tones(
 def _dispatch_promises(
     db: Any, state: Any, raw: object, *, night_id: int,
     chat_turn_id: int, source: Provenance,
+    preexisting_pending_ids: set[int],
 ) -> SectionResult:
     from ming_sim.strict_types import strict_int
 
@@ -1647,7 +1678,10 @@ def _dispatch_promises(
             "WHERE id=? AND turn=? AND status='pending'",
             (action_id, int(state.turn)),
         ).fetchone()
-        if row is None or int(row["night_id"] or 0) != int(night_id):
+        if (
+            row is None or action_id not in preexisting_pending_ids
+            or int(row["night_id"] or 0) != int(night_id)
+        ):
             _reject(
                 rejected, item, f"暂存动作不属本夜暂存清单：{action_id}",
                 "missing_ref", source,
