@@ -179,26 +179,22 @@ def test_audit_passes_whitelisted_and_catches_unwhitelisted_night_write(game):
     assert "密令落地" in an.audit_night_direct_writes(db, legal_night)
     an.close_night(db, state, night_id=legal_night)
 
-    # 越权夜：夜内直写 consort_traits（真实盘面、非白名单——本应走待确认暂存）→ 审计咬住
-    # （factions 已随 #1839 第四类并入人物状态副作用，不再作越权哨兵。）
+    # 越权夜：不经结算直写案卷月度进展，仍须被审计咬住。
     def _rogue_direct_write(night_id: int, chat_id: int) -> None:
-        row = db.conn.execute("SELECT name FROM consort_traits LIMIT 1").fetchone()
-        if row is None:
-            db.conn.execute(
-                "INSERT INTO consort_traits (name, extra_skills, extra_traits, updated_turn) "
-                "VALUES ('审计越权探针妃', '越权', '', 0)"
-            )
-        else:
-            db.conn.execute(
-                "UPDATE consort_traits SET extra_skills = extra_skills || 'x' WHERE name = ?",
-                (str(row["name"]),),
-            )
+        dossier = db.conn.execute("SELECT id FROM decree_dossiers LIMIT 1").fetchone()
+        assert dossier is not None
+        db.conn.execute(
+            "INSERT INTO dossier_reported_progress "
+            "(dossier_id, turn, progress_band, memorial_text, origin) "
+            "VALUES (?, ?, '进行中', '越权记录', 'night')",
+            (int(dossier["id"]), int(state.turn)),
+        )
         db.conn.commit()
     rogue_night, _ = _run_round(db, state, m, writes=_rogue_direct_write)
     with pytest.raises(AudienceNightError) as ei:
         an.audit_night_direct_writes(db, rogue_night)
     assert ei.value.code == "unwhitelisted_night_write"
-    assert "consort_traits" in ei.value.detail.get("tables", [])
+    assert "dossier_reported_progress" in ei.value.detail.get("tables", [])
 
 
 # ── AC4：撤回删除该轮新入册人物——档案+入殿账一并消失，像没登场过 ────────────────

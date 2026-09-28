@@ -202,7 +202,7 @@ NIGHT_DIRECT_WRITE_WHITELIST: Dict[str, frozenset] = {
 # 却不在白名单授权的直写 = 越权夜内直写。暂存/候选层（pending_actions/turn_directives）是
 # 待确认层、收夜才提交，不算真实盘面直写，不在此集。
 _REAL_BOARD_TABLES = frozenset({
-    "characters", "character_offices", "consort_traits", "factions",
+    "characters", "character_offices", "dossier_reported_progress", "factions",
     "secret_orders", "secret_order_briefs", "relation_edge_events",
     "textual_facts", "public_sayings", "story_ledger_entries",
 })

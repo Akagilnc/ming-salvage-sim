@@ -1159,17 +1159,6 @@ def test_extract_minister_actions_none(monkeypatch):
     assert act["secret_action"] == "无"
 
 
-def test_extract_minister_actions_cultivate(monkeypatch):
-    canned = json.dumps(
-        {"密令动作": "无", "目标密令编号": 0, "调教技能": "书法精通", "调教性格": "更温婉"},
-        ensure_ascii=False,
-    )
-    monkeypatch.setattr(cb, "_run_backend", lambda p: (canned, 1))
-    act = cb.extract_minister_actions("教你书法，望你更温婉", "妾领旨", [], is_consort=True)
-    assert act["cultivate_skill"] == "书法精通"
-    assert act["cultivate_trait"] == "更温婉"
-
-
 def test_extract_minister_actions_backend_error_safe(monkeypatch):
     monkeypatch.setattr(cb, "_run_backend", lambda p: (_ for _ in ()).throw(RuntimeError("backend down")))
     act = cb.extract_minister_actions("随便", "臣以为", [{"id": 6, "title": "x", "content": "y"}])

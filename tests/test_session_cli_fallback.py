@@ -3025,7 +3025,7 @@ def test_preclassified_secret_update_uses_reply_aware_extractor(game, monkeypatc
     who = "并发更新承办官"
     oid = _create_secret_order(db, state, who, "原标题", "原内容", [], deadline_months=0)
 
-    def reply_aware_extract(player_message, reply, active, is_consort, llm_config=None):
+    def reply_aware_extract(player_message, reply, active, llm_config=None):
         assert "臣补充" in reply
         return {
             "secret_action": "更新",

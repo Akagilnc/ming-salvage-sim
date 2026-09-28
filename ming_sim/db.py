@@ -2647,16 +2647,6 @@ class GameDB:
         self.ensure_column(
             "turn_reports", "title", "TEXT NOT NULL DEFAULT ''",
         )
-        # 后宫调教记录
-        self.conn.execute("""
-            CREATE TABLE IF NOT EXISTS consort_traits (
-                name TEXT PRIMARY KEY,
-                extra_skills TEXT NOT NULL DEFAULT '',
-                extra_traits TEXT NOT NULL DEFAULT '',
-                updated_turn INTEGER NOT NULL DEFAULT 0,
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
         # 结局总结：每局结局触发时落一条（单 campaign 一库，turn 为主键，对齐 turn_reports）。
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS ending_summary (
@@ -5915,7 +5905,7 @@ class GameDB:
         content=None,
     ) -> None:
         """改人物状态：active/offstage/dismissed/imprisoned/exiled/retired/dead。
-        大臣走 characters 表；后宫（consorts）走内存对象 + consort_traits 备档。
+        人物状态以 characters 表为准。
         #9：状态变更后全重算所属朝堂派系 leverage（在朝成员官职权重和 + offset；党魁倒台势力跟跌）。"""
         valid = {"active", "offstage", "dismissed", "imprisoned", "exiled", "retired", "dead"}
         if status not in valid:
@@ -6492,23 +6482,6 @@ class GameDB:
                 if changed:
                     changes.append(changed)
         return changes
-
-    # ── 后宫调教 ──────────────────────────────────────────────────────────
-
-    def get_consort_traits(self, name: str) -> dict:
-        """返回 {extra_skills: [...], extra_traits: [...]}，不存在时返回空。"""
-        row = self.conn.execute(
-            "SELECT extra_skills, extra_traits FROM consort_traits WHERE name=?", (name,)
-        ).fetchone()
-        if not row:
-            return {"extra_skills": [], "extra_traits": []}
-        skills = [s.strip() for s in row["extra_skills"].split("，") if s.strip()]
-        traits = [t.strip() for t in row["extra_traits"].split("，") if t.strip()]
-        return {"extra_skills": skills, "extra_traits": traits}
-
-    def cultivate_consort(self, name: str, turn: int, skill: str = "", trait: str = "") -> dict:
-        """#1837 reopen：后宫培养已退役。"""
-        raise RuntimeError("后宫培养已退役（#1837 reopen）")
 
     def next_pool_portrait_id(self, prefix: str = "minister_pool_") -> str:
         """分配下一个预设头像 ID（顺序递增，不循环）。
@@ -9473,7 +9446,7 @@ class GameDB:
         "decree_dossier_decisions": "id",
         "characters": "name",
         "character_offices": "character_name",
-        "consort_traits": "name",
+        "dossier_reported_progress": "id",
         # 动作闸门(ADR 0006)：召对暂存的结构化写动作。撤回召对须删本轮暂存,
         # 否则颁诏仍会落库,破坏 undo 保证(CMR P1)。
         "pending_actions": "id",
@@ -17230,15 +17203,11 @@ class GameDB:
         """Formal people mutated directly by a committed pending action.
 
         Office rows only stage dossiers here—person impact arrives via
-        promulgation affected sets. Consort cultivation and secret-order
-        writes change agent context immediately and must join outer-commit
-        registry projection when settle passes registry=None.
+        promulgation affected sets. Secret-order writes change agent context
+        immediately and must join outer-commit projection.
         """
         kind = str(pa.get("kind") or "")
         action = str(pa.get("action") or "")
-        if kind == "consort" and action == "调教":
-            name = str(payload.get("name") or pa.get("minister_name") or "").strip()
-            return {name} if name else set()
         if kind != "secret_order":
             return set()
         if action == "新建":
@@ -19268,9 +19237,6 @@ class GameDB:
                 ),
             )
             return True
-        if pa["kind"] == "consort":
-            # #1837 reopen：后宫调教退役。
-            return False
         if pa["kind"] == "directive" and pa["action"] == "拟旨":
             payload = dict(payload)
             if payload.pop("_canonical_pending_directive", False) is not True:

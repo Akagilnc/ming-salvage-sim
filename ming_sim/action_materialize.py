@@ -855,22 +855,19 @@ def _secret_extract_bundle(
                 ),
             ),
         }
-    is_consort = getattr(ctx.character, "office_type", "") == "后宫"
     active = list(session.db.get_active_secret_orders_for_minister(minister_name) or [])
-    if not (active or is_consort):
+    if not active:
         return {
             "mode": "none",
             "act": None,
             "active": active,
-            "is_consort": is_consort,
         }
     return {
         "mode": "actions",
         "act": extract_minister_actions(
-            ctx.player_message, ctx.reply, active, is_consort, llm_config=ctx.llm_config,
+            ctx.player_message, ctx.reply, active, llm_config=ctx.llm_config,
         ),
         "active": active,
-        "is_consort": is_consort,
     }
 
 
@@ -1187,7 +1184,7 @@ def _materialize_secret_and_cultivate(ctx: MaterializeCtx) -> None:
         return
 
     # Kind gate BEFORE actions extract（F5：非批不得在 kind 拒绝前开 LLM）。
-    if intent is not None and intent_kind not in ("secret", "cultivate", "none"):
+    if intent is not None and intent_kind not in ("secret", "none"):
         return
     if intent is not None and intent_kind == "none":
         # 分类器已定 none：空 act 无消费者，免抽。
@@ -1199,18 +1196,13 @@ def _materialize_secret_and_cultivate(ctx: MaterializeCtx) -> None:
             return
     else:
         bundle = _secret_extract_bundle(ctx, prefer_new=False)
-    is_consort = bool(bundle.get("is_consort"))
     active = list(bundle.get("active") or [])
-    if not (active or is_consort):
+    if not active:
         return
 
-    if intent is not None and intent_kind in ("secret", "cultivate"):
+    if intent is not None and intent_kind == "secret":
         extracted = dict(bundle.get("act") or {})
-        act = extracted if (
-            extracted.get("secret_action") != "无"
-            or extracted.get("cultivate_skill")
-            or extracted.get("cultivate_trait")
-        ) else intent
+        act = extracted if extracted.get("secret_action") != "无" else intent
     else:
         # intent is None：分类器未跑，串行回落。
         act = dict(bundle.get("act") or {})
@@ -1265,17 +1257,6 @@ def _materialize_secret_and_cultivate(ctx: MaterializeCtx) -> None:
                 minister_name=minister_name, target_id=oid,
                 payload={"note": ctx.reply.strip()},
             )
-    if is_consort and (act["cultivate_skill"] or act["cultivate_trait"]):
-        ctx.conversation_intent_handled = True
-        ctx.out["pending_action_id"] = session.db.stage_pending_action(
-            session.state.turn, kind="consort", action="调教",
-            minister_name=ctx.character.name, target_id=None,
-            payload={
-                "name": ctx.character.name,
-                "skill": act["cultivate_skill"],
-                "trait": act["cultivate_trait"],
-            },
-        )
 
 
 def _materialize_draft(ctx: MaterializeCtx) -> None:
@@ -4657,14 +4638,6 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                 FieldSpec("deadline_months", "期限月数", None, 0, as_int=True, int_hi=36),
             ),
             materialize_fn=secret_fn,
-        ),
-        ActionCluster(
-            "调教", "cultivate", EFFECT_MATERIALIZE, priority=40,
-            fields=(
-                FieldSpec("cultivate_skill", "调教技能", None, "", max_len=30),
-                FieldSpec("cultivate_trait", "调教性格", None, "", max_len=30),
-            ),
-            materialize_fn=secret_fn,  # 同 extract 缝，一 fn 两 kind
         ),
         ActionCluster(
             "拟旨", "draft", EFFECT_MATERIALIZE, priority=50,

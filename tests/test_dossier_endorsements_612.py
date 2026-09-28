@@ -554,13 +554,6 @@ def test_endorsement_failure_keeps_open_drafts_and_retries_idempotently(game):
     """首批失败 → OPEN/draft 保留/无重 consent；重试成功复用 ids，依赖步骤才推进。"""
     db, state, content = game
     minister = _minister(db)
-    consort_row = db.conn.execute(
-        "SELECT name FROM characters WHERE office_type='后宫' AND status='active' "
-        "ORDER BY name LIMIT 1"
-    ).fetchone()
-    if consort_row is None:
-        pytest.skip("基底无 active 后宫角色")
-    consort = str(consort_row["name"])
     night_id, chat_turn_id, seq = _night_reply(db, state, minister, reply="臣愿作保。")
     emperor_text = "准此旨，朕亲书手敕作保。"
     user_message_id = db.append_chat_message(minister, int(state.turn), "user", emperor_text)
@@ -575,12 +568,6 @@ def test_endorsement_failure_keeps_open_drafts_and_retries_idempotently(game):
         db, state, minister, night_id,
         text="清核辽饷", target_id="retry-keep",
     )
-    consort_pa = db.stage_pending_action(
-        state.turn, kind="consort", action="调教", minister_name=consort,
-        payload={"name": consort, "skill": "理财", "trait": ""},
-    )
-    db.mark_pending_night_approved([consort_pa], night_id=night_id)
-    consort_before = db.get_consort_traits(consort)
     calls = []
 
     class _BoomThenOk:
@@ -614,10 +601,6 @@ def test_endorsement_failure_keeps_open_drafts_and_retries_idempotently(game):
     first_id = int(dossiers[0]["id"])
     first_directive = int(dossiers[0]["directive_id"])
     assert db.list_dossier_endorsements(first_id) == []
-    assert db.conn.execute(
-        "SELECT status FROM pending_actions WHERE id=?", (consort_pa,)
-    ).fetchone()["status"] == "pending"
-    assert db.get_consort_traits(consort) == consort_before
     assert db.list_night_promulgated_directives(night_id) == []
     assert db.list_promulgated_directives(turn_from=state.turn, turn_to=state.turn) == []
     assert an.engine_command_mingfa_publication_ids(an.list_ledger(db, night_id)) == set()
@@ -644,10 +627,6 @@ def test_endorsement_failure_keeps_open_drafts_and_retries_idempotently(game):
         "SELECT COUNT(*) FROM decree_dossier_endorsements WHERE dossier_id=?",
         (first_id,),
     ).fetchone()[0] == 1
-    assert db.conn.execute(
-        "SELECT status FROM pending_actions WHERE id=?", (consort_pa,)
-    ).fetchone()["status"] == "committed"
-    assert "理财" in (db.get_consort_traits(consort).get("extra_skills") or [])
     published = db.list_night_promulgated_directives(night_id)
     assert {str(p.get("text") or "") for p in published} == {"清核辽饷", "续核京饷"}
     # SQL-narrowed range reader agrees with night reader.
