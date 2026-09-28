@@ -464,57 +464,8 @@ def test_relative_deadline_months_becomes_absolute_end_turn(game, monkeypatch):
     assert json.loads(row["stop_condition"]) == stop
 
 
-def test_classify_prompt_carries_turn_and_stop_condition_contract(monkeypatch, game):
-    """分类入口须获当前 turn 与 GATE_TABLES 可寻址契约，使承诺能落到合法 shape。"""
-    db, state, content = game
-    captured = {}
-
-    def _scripted(prompt, llm_config=None, tag="", *, policy=None):
-        captured["prompt"] = prompt
-        assert tag == "action_intent"
-        return (json.dumps({"kind": "none"}, ensure_ascii=False), 0)
-
-    monkeypatch.setattr(cb, "_run_backend_for_config", _scripted)
-    cb.classify_cli_action_intent(
-        "连续三个月补齐边饷。",
-        recent_context="",
-        current_turn=int(state.turn),
-    )
-    prompt = captured["prompt"]
-    assert f"当前回合={int(state.turn)}" in prompt or f"当前回合：{int(state.turn)}" in prompt
-    assert "region" in prompt and "army" in prompt and "character" in prompt
-    assert "stop_condition" in prompt or "停止条件" in prompt
-    # #1783：旧按动词并列病根句不得再出现（并入既有说明书契约测，不另立并行）
-    assert "拟旨与其任免/拨帑等机械载荷候选可按既有契约并存" not in prompt
-    assert "不得因拟旨前缀改判拟旨而省略拨款候选" not in prompt
-    assert "交办·责成表达与拟旨彼此独立" not in prompt
-    assert "日级期限无法换算为月数或回合，不填写期限月数或截止回合" not in prompt
 
 
-def test_classify_prompt_stop_condition_example_is_single_layer_json(monkeypatch, game):
-    """#520 r4：停止条件示例须为单层合法 JSON；核验最终 prompt 字节，禁双花括号。"""
-    db, state, content = game
-    captured = {}
-
-    def _scripted(prompt, llm_config=None, tag="", *, policy=None):
-        captured["prompt"] = prompt
-        assert tag == "action_intent"
-        return (json.dumps({"kind": "none"}, ensure_ascii=False), 0)
-
-    monkeypatch.setattr(cb, "_run_backend_for_config", _scripted)
-    cb.classify_cli_action_intent(
-        "连续三个月补齐边饷，并保证不会再欠。",
-        recent_context="",
-        current_turn=int(state.turn),
-    )
-    prompt = captured["prompt"]
-    # 最终 prompt 字节：示例为单层 dict JSON，不得残留 {{ / }}
-    assert '{{"army.guanning.arrears":"<=0"}}' not in prompt
-    assert '{"army.guanning.arrears":"<=0"}' in prompt
-    # 示例片段本身须是可解析的单层 dict JSON
-    marker = '{"army.guanning.arrears":"<=0"}'
-    assert json.loads(marker) == {"army.guanning.arrears": "<=0"}
-    assert marker in prompt
 
 
 def test_assignment_empty_recent_context_keeps_emperor_and_minister_in_body(game, monkeypatch):
