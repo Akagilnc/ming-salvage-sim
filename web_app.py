@@ -3001,21 +3001,6 @@ class WebGame:
             payload["transport_attempts"] = attempts
         return payload
 
-    def _chat_stream_payload(
-        self,
-        minister_name: str,
-        text: str,
-        chat_turn_id: int,
-        before_snapshot: Dict[str, Any],
-        accepted_turn: int,
-        emit_delta,
-        write_gate: Optional[threading.Lock] = None,
-        action_intent_future: Optional[Future] = None,
-        explicit_secret_order: bool = False,
-    ) -> Dict[str, Any]:
-        raise RuntimeError(
-            "旧大臣 agent 流式入口已退役（#1837 reopen）；请走 scene_chat。"
-        )
 
     def _trail_highlight_judge_after_reply(
         self,

@@ -1338,7 +1338,7 @@ def test_657_s15_origin_unique_empty_nonempty_and_nontarget_integrity(game):
 
 def test_web_retry_offsite_secret_round_via_scene(game):
     """场外中断轮经 Web 重试恢复原轮及回话，不重落问话或启殿上入场。"""
-    from tests.test_audience_travel_gating_670 import _secret_order_runtime, _set_place
+    from tests.test_audience_travel_gating_670 import _set_place
 
     db, state, content = game
     remote = _set_place(game, "洪承畴", location="shaanxi")
@@ -1358,12 +1358,12 @@ def test_web_retry_offsite_secret_round_via_scene(game):
         "secret_order_offsite"
     )
 
-    secret_rt = _secret_order_runtime(db, state, content, stream=False)
+    session = _RetrySession(db, state, remote.name)
     # 场外 route 不得启殿上 scene。
-    secret_rt.session.start_chat_turn_scene = lambda *_a, **_k: (_ for _ in ()).throw(
+    session.start_chat_turn_scene = lambda *_a, **_k: (_ for _ in ()).throw(
         AssertionError("offsite secret retry must not start_chat_turn_scene")
     )
-    rt = _retry_runtime(db, state, remote.name, session=secret_rt.session)
+    rt = _retry_runtime(db, state, remote.name, session=session)
     rt.retry_interrupted_reply(remote.name)
 
     users = [

@@ -2163,18 +2163,6 @@ class GameSession:
             admitted_ticket=getattr(result, "_admitted_write_ticket", None),
         )
 
-    def chat(
-        self, minister_name: str, message: str, *, chat_turn_id: int = 0,
-        explicit_secret_order: bool = False,
-    ) -> ChatTurnResult:
-        """#1837 reopen：旧大臣 agent 对话入口已退役。
-
-        殿上召对走 :meth:`scene_chat`；密令前缀原文随皇帝原话进转译
-        （ADR 0028 后出注记），不再有独立密令 agent 路由。
-        """
-        raise RuntimeError(
-            "旧大臣 agent 对话入口已退役（#1837 reopen）；请走 scene_chat。"
-        )
 
     def _audience_prompt_for_message(
         self,
