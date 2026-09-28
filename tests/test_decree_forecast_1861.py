@@ -651,3 +651,50 @@ def test_forecast_snapshot_one_shape_and_independent_materials(game, monkeypatch
     finally:
         forecast_mod.release_forecast_materials(pending_snap)
     assert not root.exists()
+
+
+def test_this_decree_paid_reads_ledger_for_existing_dossier(game, monkeypatch):
+    """已有案卷本旨 paid 取账本实付；未成案拟旨为 0（与 opening 不矛盾）。"""
+    from ming_sim.materials import dossier_paid_amount
+
+    db, state, content = game
+    sess = _sess(db, state, content, monkeypatch, offline_empty_audience_translate)
+    dossier_id = db.create_decree_dossier(
+        state, action_type="policy", decree_text="发银续推",
+        target_kind="region", target_id="shaanxi",
+        payload={"mode": "ordinary", "grant_action": "发银", "amount": 50},
+    )
+    # 账本已有实付 30 两（负向 delta）。
+    db.conn.execute(
+        "INSERT INTO economy_ledger "
+        "(turn, year, period, account, delta, balance_after, category, reason, origin_ref) "
+        "VALUES (?, ?, ?, '国库', ?, 1, '预支', '案卷拨款', ?)",
+        (state.turn, state.year, state.period, -30, f"dossier:{dossier_id}"),
+    )
+    db.conn.commit()
+    assert dossier_paid_amount(db, dossier_id) == 30
+    dossier = db.get_decree_dossier(dossier_id)
+    snap = forecast_mod.snapshot_for_existing_dossier(sess, dossier)
+    try:
+        assert snap["this_decree"]["paid"] == 30
+        assert snap["this_decree"]["id"] == dossier_id
+    finally:
+        forecast_mod.release_forecast_materials(snap)
+
+    night = open_night(db, state)
+    minister = next(iter(content.characters.values()))
+    pending_id = db.stage_pending_action(
+        state.turn, kind="directive", action="拟旨", minister_name=minister.name,
+        payload={
+            "dossier_action_type": "policy", "target_kind": "issue",
+            "target_id": "unpaid-night", "actor": minister.name, "mode": "ordinary",
+            "text": "夜里新旨",
+        },
+    )
+    mark_actions_night_approved(db, [pending_id], night_id=int(night["id"]))
+    pending_snap = forecast_mod._pending_snapshot(sess, pending_id, int(night["id"]))
+    try:
+        assert pending_snap is not None
+        assert pending_snap["this_decree"]["paid"] == 0
+    finally:
+        forecast_mod.release_forecast_materials(pending_snap)

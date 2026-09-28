@@ -77,12 +77,19 @@ def _payload_dict(candidate: Dict[str, Any]) -> Dict[str, Any]:
     return loaded if isinstance(loaded, dict) else {}
 
 
-def _this_decree_fact(candidate: Dict[str, Any], *, decree_text: str) -> Dict[str, object]:
+def _this_decree_fact(
+    candidate: Dict[str, Any], *, decree_text: str, db: Any = None,
+) -> Dict[str, object]:
     """本旨事实：随调用消息携带，不进材料目录（ADR 0155）。
 
     字段形状沿 continuing_dossier_facts，另附 mode；status 固定按已颁看待。
+    已有案卷的 paid 从账本实付投影（materials.dossier_paid_amount）；
+    夜里尚未成案的拟旨 id 无动账，投影为 0。
     """
+    from ming_sim.materials import dossier_paid_amount
+
     payload = _payload_dict(candidate)
+    paid = dossier_paid_amount(db, candidate.get("id")) if db is not None else 0
     return {
         "id": candidate.get("id"),
         "status": "promulgated",
@@ -92,7 +99,7 @@ def _this_decree_fact(candidate: Dict[str, Any], *, decree_text: str) -> Dict[st
         "target_id": str(candidate.get("target_id") or ""),
         "grant_action": str(payload.get("grant_action") or ""),
         "mode": str(candidate.get("mode") or payload.get("mode") or "ordinary"),
-        "paid": 0,
+        "paid": paid,
     }
 
 
@@ -151,7 +158,7 @@ def forecast_snapshot(
         "promulgated_candidate": promulgated,
         "context": context,
         "prepared": prepared,
-        "this_decree": _this_decree_fact(promulgated, decree_text=text),
+        "this_decree": _this_decree_fact(promulgated, decree_text=text, db=db),
         "target_grounding": grounding,
         "visible_refs": refs,
         "decree_ref": decree_ref,

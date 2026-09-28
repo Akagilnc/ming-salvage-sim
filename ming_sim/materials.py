@@ -1460,6 +1460,23 @@ def _write_world_tree(
     return index
 
 
+def dossier_paid_amount(db: Any, dossier_id: object) -> int:
+    """案卷已从账本实付总额（economy moves 负向 delta 之和）。
+
+    世界段在途案卷与逐旨预推「本旨」事实共用；无案卷行或尚无动账时为 0。
+    """
+    try:
+        oid = int(dossier_id)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return 0
+    if oid <= 0:
+        return 0
+    return sum(
+        max(0, -int(move.get("delta") or 0))
+        for move in db.list_economy_moves_for_dossier(oid)
+    )
+
+
 def continuing_dossier_facts(db: Any, turn: int) -> list[dict[str, object]]:
     """本月世界段要接着办的案卷：模拟清单里仍在执行的。
 
@@ -1473,10 +1490,6 @@ def continuing_dossier_facts(db: Any, turn: int) -> list[dict[str, object]]:
         if status != "executing":
             continue
         dossier_id = int(row["id"])
-        paid = sum(
-            max(0, -int(move.get("delta") or 0))
-            for move in db.list_economy_moves_for_dossier(dossier_id)
-        )
         payload = row.get("payload") or {}
         if not isinstance(payload, dict):
             payload = {}
@@ -1488,7 +1501,7 @@ def continuing_dossier_facts(db: Any, turn: int) -> list[dict[str, object]]:
             "target_kind": str(row.get("target_kind") or ""),
             "target_id": str(row.get("target_id") or ""),
             "grant_action": str(payload.get("grant_action") or ""),
-            "paid": paid,
+            "paid": dossier_paid_amount(db, dossier_id),
         })
     return facts
 
