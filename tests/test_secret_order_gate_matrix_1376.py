@@ -3,10 +3,10 @@
 接缝（票面钉）：
 - E1=`POST /api/ministers/…/chat` 正文「密令如下：…」
 - E2=`POST /api/ministers/…/secret_order` 结构化载荷
-- E3=`POST .../chat` + `intent=secret_order`（#1842：殿上无前缀不再走 classifier）
+- E3=`POST .../chat` + `intent=secret_order`（同走现役场景转译）
 - S1 过月默认准 / S2 修改后准或过月 / S3 拒绝后过月不复活
 - settle=`POST /api/decree/issue/stream` 消费到终态
-- LLM 全 stub；创建走密令 session.chat；确认/修改/拒绝经 `_default_translate_runner` 缝
+- LLM 全 stub；新建/确认/修改/拒绝均由 `_default_translate_runner` 声明分派
 - 行定位：调用前后 order-id 集差、pending id、候选 payload→落地 payload 动态传递
 
 零写：复用 conftest 的 user-data 隔离，并将每例 HOME/DB 定向到 tmp_path。
@@ -24,7 +24,6 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 import pytest
 from fastapi.testclient import TestClient
 
-import ming_sim.cli_backend as cli_backend
 import web_app
 from ming_sim import audience_night as an
 from tests.test_session_write_queue_1353 import wait_pending_writes as _wait_pending_writes
@@ -39,11 +38,11 @@ E2_TITLE = "密察关宁欠饷"
 E2_CONTENT = "密察关宁欠饷"
 E3_MESSAGE = "你替朕悄悄查一查关宁欠饷实数"
 
-# 抽取 stub 默认 typed 载荷（用例可覆盖）；S2 修改 material=测试自送正文
+# 离线转译声明的 typed 载荷；S2 修改正文由测试显式提供
 RESTATED_CONTENT = "密察关宁欠饷，据实密奏，不得声张。"
 # 玩家修改输入是确定性材料（非 LLM 生成物）；S2 新正文唯取 typed new_content
-S2_MODIFY_BODY = "  " + ("只查饷银去向" * 90) + "  "
-# 自然语言修改表达（不含结构化「修改：」前缀），保证旧 prefix parser 无法直接产出
+S2_MODIFY_BODY = "  只查饷银去向，不查动向。  "
+# 原话不作为正文载荷；修改正文由 typed new_content 明确给出
 # S2_MODIFY_BODY——proof-of-red：生产须从 typed new_content 消费而非裁剪散文。
 S2_MODIFY_MESSAGE = "朕要修改密令正文为只查饷银去向，不查动向"
 S2_APPROVE_MESSAGE = "准"
@@ -117,16 +116,6 @@ def _install_settlement_llm_stubs(monkeypatch) -> None:
         }
 
     monkeypatch.setattr(month_chain, "run_secret_orders_supply", supply)
-    monkeypatch.setattr(
-        cli_backend,
-        "capture_manual_directive_payload",
-        lambda text, llm_config=None, **_k: {
-            "dossier_action_type": "policy",
-            "target_kind": "issue",
-            "target_id": "secret-order-gate-1376",
-            "mode": "ordinary",
-        },
-    )
 
 
 class _ConfirmStub:
@@ -135,13 +124,12 @@ class _ConfirmStub:
     #1376：修改判词携带 typed new_content 作为唯一权威正文。push 接收
     (confirmation, new_content="")；new_content 仅修改判词时填写。
 
-    #1842：殿上确认轮走 scene_chat，不再调 extract_confirmation_intent；
-    本 stub 仍保留给旧 CLI 缝 monkeypatch，确认语义由
-    `_wire_confirm_translate` 灌进 `_default_translate_runner`。
+    由 `_wire_confirm_translate` 把这组 typed 判词传入现役转译接缝。
     """
 
     def __init__(self) -> None:
         self.queue: List[tuple] = []
+        self.issue_once = False
 
     def push(self, confirmation: str, new_content: str = "") -> None:
         self.queue.append((confirmation, new_content))
@@ -151,47 +139,32 @@ class _ConfirmStub:
             return self.queue.pop(0)
         return "无", ""
 
-    def __call__(
-        self,
-        player_message: str,
-        minister_reply: str,
-        pending_summaries: List[str],
-        llm_config: Any = None,
-    ) -> Dict[str, Any]:
-        del player_message, minister_reply, pending_summaries, llm_config
-        confirmation, new_content = self.pop()
-        return {"confirmation": confirmation, "target_ids": [], "new_content": new_content}
 
 
 def _wire_confirm_translate(game, confirm: _ConfirmStub, monkeypatch) -> None:
     """#1842：把 ConfirmStub 队列桥到 scene_chat 离线转译。
 
-    应允/拒绝 → promises；修改 → 原地更新同一 pending 候选 content（typed
-    new_content 权威）后空声明。创建创建/抽取仍走旧 session.chat 密令缝。
+    新建 → commissions.secret_order；应允/拒绝/修改 → promises。
+    修改的 typed new_content 由真实分派器执行，不在 stub 内改库。
     """
 
     def translate_fn(prompt, llm_config):
         scene = offline_empty_audience_translate(prompt, llm_config)
+        if confirm.issue_once:
+            confirm.issue_once = False
+            return {**scene, "commissions": [{
+                "text": "本轮密令交办",
+                "secret_order": dict(DEFAULT_EXTRACT_PAYLOAD),
+            }]}
         confirmation, new_content = confirm.pop()
         pending = _db_pending_secret_new(game)
-        if confirmation == "修改":
-            for row in pending:
-                payload = _payload_of(row)
-                payload["content"] = new_content
-                game.db.conn.execute(
-                    "UPDATE pending_actions SET payload_json=? "
-                    "WHERE id=? AND status='pending'",
-                    (json.dumps(payload, ensure_ascii=False), int(row["id"])),
-                )
-            if pending:
-                game.db.conn.commit()
-            return scene
-        if confirmation in {"应允", "拒绝"} and pending:
+        if confirmation in {"应允", "拒绝", "修改"} and pending:
             return {
                 **scene,
                 "promises": [{
                     "action_id": int(pending[0]["id"]),
                     "decision": confirmation,
+                    "new_content": new_content if confirmation == "修改" else "",
                 }],
             }
         return scene
@@ -199,26 +172,6 @@ def _wire_confirm_translate(game, confirm: _ConfirmStub, monkeypatch) -> None:
     stub_audience_translate(monkeypatch, translate_fn)
 
 
-class _ExtractStub:
-    """密令抽取 stub：返回用例配置的 typed 载荷，不扫 player_command 关键词。"""
-
-    def __init__(self) -> None:
-        self.payload: Dict[str, Any] = dict(DEFAULT_EXTRACT_PAYLOAD)
-
-    def __call__(
-        self,
-        player_command: str,
-        minister_reply: str,
-        default_assignee: str,
-        llm_config: Any = None,
-        force_default_assignee: bool = False,
-        dossier_candidates: Optional[List[Dict[str, Any]]] = None,
-    ) -> Dict[str, Any]:
-        del player_command, minister_reply, llm_config, force_default_assignee, dossier_candidates
-        out = dict(self.payload)
-        if default_assignee and not out.get("assignee"):
-            out["assignee"] = default_assignee
-        return out
 
 
 
@@ -280,10 +233,7 @@ def matrix_env(tmp_path, monkeypatch, _offline_scene_beat_generator):
     _install_settlement_llm_stubs(monkeypatch)
 
     confirm = _ConfirmStub()
-    extract = _ExtractStub()
 
-    monkeypatch.setattr(cli_backend, "extract_confirmation_intent", confirm)
-    monkeypatch.setattr(cli_backend, "_extract_secret_order", extract)
 
     monkeypatch.setattr(web_app, "web_game", None)
     client = TestClient(web_app.app)
@@ -294,7 +244,6 @@ def matrix_env(tmp_path, monkeypatch, _offline_scene_beat_generator):
     assert game is not None
 
     agent = _CannedAgent()
-    game.session.registry.get = lambda _ch, **_kw: agent
     stub_scene_agent(monkeypatch, agent)
     _wire_confirm_translate(game, confirm, monkeypatch)
     cfg = game.session.llm_config
@@ -326,7 +275,6 @@ def matrix_env(tmp_path, monkeypatch, _offline_scene_beat_generator):
         "client": client,
         "game": game,
         "confirm": confirm,
-        "extract": extract,
         "home": home,
         "ud": ud,
         "monkeypatch": monkeypatch,
@@ -381,7 +329,7 @@ def _db_order_ids(game) -> Set[int]:
 
 
 def _db_pending_secret_new(game) -> list[dict]:
-    rows = game.db.list_pending_actions(game.state.turn, minister_name=MINISTER)
+    rows = game.db.list_pending_actions(game.state.turn)
     return [
         r for r in rows
         if r.get("kind") == "secret_order"
@@ -401,15 +349,16 @@ def _payload_of(row: dict) -> dict:
 def _issue_entry(env: dict, *, entry: str = "E1") -> dict:
     client: TestClient = env["client"]
     game = env["game"]
+    env["confirm"].issue_once = True
 
     if entry == "E1":
-        # E1：显式前缀路由，classifier 不得被调用
+        # E1：对话入口，场景转译声明新密令
         resp = client.post(
             f"/api/ministers/{MINISTER}/chat",
             json={"message": E1_MESSAGE},
         )
     elif entry == "E2":
-        # E2：结构化端点路由，classifier 不得被调用
+        # E2：兼容端点转到同一场景入口
         resp = client.post(
             f"/api/ministers/{MINISTER}/secret_order",
             json={
@@ -420,7 +369,7 @@ def _issue_entry(env: dict, *, entry: str = "E1") -> dict:
             },
         )
     elif entry == "E3":
-        # E3：#1842 殿上无前缀不再走 classifier；显式 intent 走密令 session.chat。
+        # E3：带 intent 的对话入口同走场景转译
         resp = client.post(
             f"/api/ministers/{MINISTER}/chat",
             json={"message": E3_MESSAGE, "intent": "secret_order"},
@@ -431,7 +380,6 @@ def _issue_entry(env: dict, *, entry: str = "E1") -> dict:
     assert resp.status_code == 200, f"{entry} inject → {resp.status_code}: {resp.text}"
     _wait_pending_writes(game)
     agent = _CannedAgent()
-    game.session.registry.get = lambda _ch, **_kw: agent
     monkeypatch = env["monkeypatch"]
     stub_scene_agent(monkeypatch, agent)
     _wire_confirm_translate(game, env["confirm"], monkeypatch)
@@ -442,7 +390,6 @@ def _chat(env: dict, message: str) -> dict:
     client: TestClient = env["client"]
     game = env["game"]
     agent = _CannedAgent()
-    game.session.registry.get = lambda _ch, **_kw: agent
     monkeypatch = env["monkeypatch"]
     stub_scene_agent(monkeypatch, agent)
     _wire_confirm_translate(game, env["confirm"], monkeypatch)
@@ -515,7 +462,6 @@ def _settle_month(env: dict) -> dict:
     open_n = an.get_open_night(game.db)
     assert open_n is None or str(open_n.get("status")) == an.NIGHT_STATUS_CLOSED, open_n
     agent = _CannedAgent()
-    game.session.registry.get = lambda _ch, **_kw: agent
     stub_scene_agent(env["monkeypatch"], agent)
     return data if isinstance(data, dict) else {}
 
@@ -537,7 +483,6 @@ def test_matrix_S1_default_commit_on_settle(matrix_env, cell, entry):
     env = matrix_env
     client = env["client"]
     game = env["game"]
-    extract: _ExtractStub = env["extract"]
 
     ids_before = _order_ids(client)
     db_ids_before = _db_order_ids(game)
@@ -551,10 +496,10 @@ def test_matrix_S1_default_commit_on_settle(matrix_env, cell, entry):
     cand_id = int(cand["id"])
     staged_payload = _payload_of(cand)
     staged_content = str(staged_payload.get("content") or "")
-    # 候选 content = 用例灌入的抽取 typed 字段（外部 pending 可见）
-    assert staged_content == str(extract.payload.get("content") or ""), (
-        f"{cell} 候选 content 须等于抽取 stub typed 载荷: "
-        f"staged={staged_content!r} stub={extract.payload!r}"
+    # 候选正文来自用例给定的 typed 声明
+    assert staged_content == str(DEFAULT_EXTRACT_PAYLOAD.get("content") or ""), (
+        f"{cell} 候选 content 须等于转译 typed 载荷: "
+        f"staged={staged_content!r} stub={DEFAULT_EXTRACT_PAYLOAD!r}"
     )
 
     assert _order_ids(client) == ids_before, (
@@ -605,8 +550,7 @@ def test_matrix_S2_modify_then_land(matrix_env, cell, entry, via_approve):
     assert _order_ids(client) == ids_before
 
     # 修改轮：确认判词 stub=修改 + typed new_content（不读玩家散文）
-    # S2_MODIFY_MESSAGE 不含结构化「修改：」前缀→旧 prefix parser 无法直接产出 S2_MODIFY_BODY，
-    # 证明生产须从 typed new_content 消费而非裁剪玩家散文。
+    # 本轮结构化 new_content 是唯一的修改正文来源，不裁剪玩家原话。
     confirm.push("修改", new_content=S2_MODIFY_BODY)
     _chat(env, S2_MODIFY_MESSAGE)
 

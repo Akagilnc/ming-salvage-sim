@@ -60,6 +60,9 @@ class _CannedMinisterAgent:
 
 def _stub_outer_llm_seams(monkeypatch) -> None:
     """只换最外层 LLM 工厂/调用；结算核、收夜、HTTP 路由全真跑。"""
+    # decree_forecast imports translate_month_segment by value; load it before
+    # temporarily replacing month_translate, or the test stub leaks across files.
+    import ming_sim.decree_forecast  # noqa: F401
     monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
     monkeypatch.setattr(
         agents_mod, "create_endorsement_extractor_agent",

@@ -6128,7 +6128,7 @@ async def api_retry_pending_translation(
 
 @app.post("/api/ministers/{minister_name}/secret_order")
 async def api_create_secret_order(minister_name: str, request: SecretOrderRequest) -> Dict[str, Any]:
-    """兼容旧按钮端点：转成召对前缀消息，走同一大臣回话/确认闸门。"""
+    """兼容旧按钮端点：转成场景输入，走同一回话／转译／确认闸门。"""
     game = get_game()
     _require_active_minister(minister_name)
     title = request.title.strip()
@@ -6150,11 +6150,7 @@ async def api_create_secret_order(minister_name: str, request: SecretOrderReques
     # #1727：端点侧补屏障拒——持闸兼容路 gate_already_held 会跳过 _chat_core 内检查。
     _refuse_if_open_night_barrier(game)
 
-    def _create_with_gate() -> Dict[str, Any]:
-        with _serialized_web_write(game):
-            return game._chat_with_write_gate_held(minister_name, "\n".join(lines))
-
-    return await run_in_threadpool(_create_with_gate)
+    return await run_in_threadpool(game.chat, minister_name, "\n".join(lines))
 
 
 @app.post("/api/ministers/{minister_name}/chat")

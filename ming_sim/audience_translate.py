@@ -260,7 +260,8 @@ def build_c0_declaration_shape() -> str:
         '      "target_id": "本场暗渠案卷事实中的 dossier_id（禁摊派时填）"\n'
         "    }\n"
         "  ],\n"
-        '  "promises": [{"action_id": 正整数, "decision": "应允|拒绝"}],\n'
+        '  "promises": [{"action_id": 正整数, "decision": "应允|拒绝|修改", '
+        '"new_content": "仅修改新建密令时填完整正文"}],\n'
         '  "inquiries": [{"attendant": "受命近侍", "query": "所查之事"}],\n'
         '  "rushes": [{\n'
         '    "target_kind": "commitment|secret_order", "target_id": 正整数,\n'
@@ -342,7 +343,8 @@ def build_audience_translate_prompt(
         "承办人与已确定的 covert_task 冻结任务契约；无契约不得编造。"
         "往期密令具名进展走 commission.secret_order_progress；不凭空记进展。\n"
         "- 皇帝对已暂存交办说「准」「照办」等应允语义 → promises 里 decision=应允；"
-        "「不准」「作罢」→ 拒绝。皇帝本轮未表态 → promises 为空（默认不应允）。\n"
+        "「不准」「作罢」→ 拒绝；修改已有新建密令 → 修改并给完整 typed new_content，"
+        "不从原话截断猜正文。皇帝本轮未表态 → promises 为空（默认不应允）。\n"
         "- 当场已发生（斩杀/拿下/伤臂/告退等）走 on_scene_facts / textual_facts / "
         "presence / public_sayings / edge_events，不要写成交办。\n"
         "- effects 是过月才核算的旨意办理效果；召对夜本轮留空，不得将尚未发生的效果写成当场实况。\n"

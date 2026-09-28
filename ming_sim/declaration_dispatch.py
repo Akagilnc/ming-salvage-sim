@@ -60,6 +60,7 @@ from __future__ import annotations
 
 import contextlib
 import copy
+import json
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, Iterator, List, Mapping, Optional, Sequence, Tuple
 
@@ -1682,7 +1683,7 @@ def _dispatch_promises(
 ) -> SectionResult:
     from ming_sim.strict_types import strict_int
 
-    items, rejected = _section_items(raw, label="应允/拒绝声明", source=source)
+    items, rejected = _section_items(raw, label="应允/拒绝/修改声明", source=source)
     applied: List[Any] = []
     for item in items:
         try:
@@ -1694,9 +1695,9 @@ def _dispatch_promises(
         except (TypeError, ValueError):
             action_id = 0
         decision = str(item.get("decision") or "").strip()
-        if action_id <= 0 or decision not in {"应允", "拒绝"}:
+        if action_id <= 0 or decision not in {"应允", "拒绝", "修改"}:
             _reject(
-                rejected, item, "应允/拒绝声明须含正 action_id 与 应允/拒绝",
+                rejected, item, "判词声明须含正 action_id 与 应允/拒绝/修改",
                 "invalid_shape", source,
             )
             continue
@@ -1704,7 +1705,7 @@ def _dispatch_promises(
         # 另一夜，声明也不得应允/拒绝它——同样按「不存在实体」拒收（不静默
         # 误批，也不当真拒收物理删除他夜暂存）。
         row = db.conn.execute(
-            "SELECT night_id, kind, action, night_approved FROM pending_actions "
+            "SELECT night_id, kind, action, night_approved, payload_json FROM pending_actions "
             "WHERE id=? AND turn=? AND status='pending'",
             (action_id, int(state.turn)),
         ).fetchone()
@@ -1722,7 +1723,23 @@ def _dispatch_promises(
         applied_row: Dict[str, Any] = {
             "action_id": action_id, "decision": decision, "kind": kind, "action": action,
         }
-        if decision == "应允":
+        if decision == "修改":
+            new_content = item.get("new_content")
+            if (
+                kind != "secret_order" or action != "新建"
+                or not isinstance(new_content, str) or not new_content.strip()
+            ):
+                _reject(rejected, item, "只有新建密令可用非空 typed new_content 修改", "invalid_shape", source)
+                continue
+            payload = json.loads(row["payload_json"] or "{}")
+            if not isinstance(payload, dict):
+                raise ValueError("密令候选载荷损坏")
+            payload["content"] = new_content
+            db.conn.execute(
+                "UPDATE pending_actions SET payload_json=?, night_approved=0 WHERE id=?",
+                (json.dumps(payload, ensure_ascii=False), action_id),
+            )
+        elif decision == "应允":
             # ADR 0038：密令应允即落地（夜内直写白名单）；任免/拟旨/后宫只标
             # night_approved，收夜才提交。与旧 session.chat 确认缝同口径。
             if kind == "secret_order":
