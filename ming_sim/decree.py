@@ -1404,7 +1404,7 @@ def atomic_and_reload(
 ) -> "Iterator[_AtomicOutcome]":
     """`with atomic(db)` + 「最外层异常回滚后从 DB 重载内存」的公共内核（ADR 0008 S4）。
 
-    抽自结算管线同款 try/atomic/except-reload-reraise（pre_settle / settle_with_delta /
+    沿用结算管线的 try/atomic/except-reload-reraise（pre_settle / month_chain /
     resolve_directives 前括号 + fallback + HITL 暂停三件 + driver.run_settle）。
 
     语义（逐处保真）：
@@ -1414,7 +1414,7 @@ def atomic_and_reload(
       跳过 reload（回滚尚未发生，load_state 会读未提交脏写）。reload 自身再炸不顶替原异常，
       链上抛 `raise exc from reload_exc`。最后原样 re-raise 原异常（fail-loud，ADR 0005）。
 
-    on_error 在 reload 之前触发（settle_with_delta 的 collector.reset 语义：DB 行随回滚消失，
+    on_error 在 reload 之前触发（DB 行随回滚消失，
     内存缓冲须同步清场）。settle 的中断透传 / 错误包 / SettlementAbort 包装等**特殊** except
     逻辑不属公共内核，仍由调用方在本助手之外的外层 try/except 处理。
     """
@@ -1594,7 +1594,7 @@ def pre_settle(
     #   已定，动作必须先于 simulator 提交；extractor 后炸时前半段保持已落是 ADR 决定 2
     #   明文设计（「pre_settle 的效果在中止/重试时保持已落，这是设计而非缺陷」），非半写。
     # ② 前半段已提交后（本守门内）新 stage 的动作=推进回合的终端写路
-    #   （settle_with_delta / fallback）各自在 atomic 内 commit；
+    #   各自在 atomic 内 commit；
     #   早退路在事务外 commit 会让重推演路上 extractor 再炸时动作已提交而回合未推进。
     if state.turn_phase in FRONT_HALF_DONE_PHASES:
         return []
