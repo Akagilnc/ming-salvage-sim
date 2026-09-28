@@ -3,13 +3,12 @@ from __future__ import annotations
 import pytest
 
 import asyncio
-import json
 import threading
 from types import SimpleNamespace
 
 import web_app
 from tests.web_audience_test_doubles import HallAdmissionSessionMixin
-from tests.dossier_test_helpers import TYPED_COVERT_TASK, create_test_secret_order
+from tests.dossier_test_helpers import TYPED_COVERT_TASK
 from tests.wait_utils import ObservingLock, wait_until
 
 
@@ -35,19 +34,6 @@ class _FakeAgent:
         yield RunCompletedEvent()
 
 
-class _SecretOrderAgent:
-    """A streamed tool result, matching the WebGame tool-result boundary."""
-
-    def __init__(self, result: str):
-        self.result = result
-
-    def run(self, *args, **kwargs):
-        yield _RunContent("臣已领密旨。")
-        completed = RunCompletedEvent()
-        completed.tools = [SimpleNamespace(tool_name="secret_order", result=self.result)]
-        yield completed
-
-
 class _FakeRegistry:
     session_ids = {}
 
@@ -69,23 +55,6 @@ class _FakeSession(HallAdmissionSessionMixin):
 
     def _character(self, minister_name: str):
         return self.content.characters[minister_name]
-
-    def _start_cli_action_intent(self, character, text):
-        return None
-
-    def _finish_cli_action_intent(self, future):
-        return None
-
-    def apply_cli_conversation_actions(self, *args, **kwargs):
-        return {
-            "directive": None,
-            "secret_order_id": 0,
-            "pending_action_id": 0,
-            "pending_action_failures": [],
-        }
-
-    def _merge_staged_new_secret_order_content(self, *args, **kwargs):
-        return None
 
     def pending_count(self):
         return 0
@@ -420,32 +389,21 @@ def test_nonstream_chat_rejects_when_session_draining():
     assert runtime._pending_writes_count == 0
 
 
-
-def test_streamed_secret_order_preserves_blacklist_through_commit_restore_transfer_and_disclosure(game):
-    """Web tool capture must keep explicit secrecy exclusions through the full durable path."""
+def test_declared_secret_order_preserves_blacklist_through_commit_restore_transfer_and_disclosure(game):
+    """转译密令的显式排除名单跨暂存、落档、读档与官职变动保持私密。"""
     db, state, content = game
     assignee = next(c for c in content.characters.values() if c.office_type == "兵部")
     excluded = next(c for c in content.characters.values() if c.office_type == "户部")
-    agent = _SecretOrderAgent(
-        "__secret_order__" + json.dumps({
+    from ming_sim.declaration_dispatch import dispatch_declaration
+    result = dispatch_declaration(db, state, {"commissions": [{
+        "text": "查户部旧账", "secret_order": {
             "title": "密查亏空", "content": "查户部旧账", "assignee": assignee.name,
             "excluded_names": [excluded.name], "excluded_offices": ["户部"],
             "covert_task": TYPED_COVERT_TASK,
-        }, ensure_ascii=False)
-    )
-    runtime = object.__new__(web_app.WebGame)
-    runtime.session = _FakeSession(assignee, agent, state, db)
-    runtime.chat_history = {assignee.name: []}
-    runtime.directive_rows = lambda: []
-    runtime.directive_payload = lambda row: row
-    runtime.suggestions_for = lambda character: []
-    runtime.can_undo_last_chat = lambda minister_name: False
-
-    payload = runtime._chat_stream_payload(
-        assignee.name, "密令如下：查户部旧账", 0, {}, state.turn, lambda _delta: None,
-    )
-
-    assert payload["pending_action_id"] > 0
+        },
+    }]}, minister_name=assignee.name)
+    assert len(result.commissions.applied) == 1
+    assert result.commissions.rejected == []
     pending = db.list_pending_actions(state.turn, minister_name=assignee.name)
     assert len(pending) == 1
     assert db.commit_pending_actions(state, minister_name=assignee.name)
@@ -478,87 +436,3 @@ def test_streamed_secret_order_preserves_blacklist_through_commit_restore_transf
         )
     finally:
         fresh_db.close()
-
-
-def test_streamed_secret_order_update_pins_held_oral_and_keeps_it_private(game):
-    """Web streamed 更新 must preserve message-level secret provenance end to end."""
-    db, state, content = game
-    active = [c for c in content.characters.values() if c.status == "active"]
-    assignee, other = active[:2]
-    order_id = create_test_secret_order(db,
-        state, assignee.name, "密查国丈", "初旨：暗访田宅。", [],
-    )
-    oral = "续密：扩查国丈典当与内库往来，不得走漏。"
-    message_id = db.append_chat_message(assignee.name, state.turn, "user", oral)
-    agent = _SecretOrderAgent(
-        '__secret_action__{"action":"更新","order_id":%d,'
-        '"payload":{"title":"密查国丈（扩）","content":"扩查典当与内库往来。"}}'
-        % order_id
-    )
-    runtime = object.__new__(web_app.WebGame)
-    runtime.session = _FakeSession(assignee, agent, state, db)
-    runtime.chat_history = {assignee.name: []}
-    runtime.directive_rows = lambda: []
-    runtime.directive_payload = lambda row: row
-    runtime.suggestions_for = lambda character: []
-    runtime.can_undo_last_chat = lambda minister_name: False
-
-    result = runtime._chat_stream_payload(
-        assignee.name, oral, 0, {}, state.turn, lambda _delta: None,
-    )
-
-    pending = db.conn.execute(
-        "SELECT payload_json FROM pending_actions WHERE id=?",
-        (result["pending_action_id"],),
-    ).fetchone()
-    assert json.loads(pending["payload_json"])["origin_chat_message_id"] == message_id
-    assert db.commit_pending_actions(
-        state, minister_name=assignee.name,
-        action_ids={result["pending_action_id"]}, content=content,
-    )
-    db.release_held_audience_knowledge()
-    assert db.conn.execute(
-        "SELECT knowledge_status FROM chat_messages WHERE id=?", (message_id,),
-    ).fetchone()["knowledge_status"] == "withheld"
-    assert db.conn.execute(
-        "SELECT COUNT(*) FROM character_knowledge_sources WHERE source_id=?",
-        (f"chat_message:{message_id}",),
-    ).fetchone()[0] == 0
-    other_view = db.get_character_knowledge(state, other.name)
-    assert oral not in " ".join(
-        item.get("body", "")
-        for item in other_view["events"] + other_view.get("public_events", [])
-    )
-
-
-def test_streamed_secret_order_progress_does_not_pin_public_held_message(game):
-    """Web streamed 催办/记进展 must not invent secret bloodline."""
-    db, state, content = game
-    assignee = next(c for c in content.characters.values() if c.status == "active")
-    order_id = create_test_secret_order(db,
-        state, assignee.name, "密查国丈", "初旨：暗访田宅。", [],
-    )
-
-    for action in ("催办", "记进展"):
-        public_text = f"京营操练如何？顺便{action}前令。"
-        db.append_chat_message(assignee.name, state.turn, "user", public_text)
-        agent = _SecretOrderAgent(
-            '__secret_action__{"action":"%s","order_id":%d,"payload":{"note":"照办"}}'
-            % (action, order_id)
-        )
-        runtime = object.__new__(web_app.WebGame)
-        runtime.session = _FakeSession(assignee, agent, state, db)
-        runtime.chat_history = {assignee.name: []}
-        runtime.directive_rows = lambda: []
-        runtime.directive_payload = lambda row: row
-        runtime.suggestions_for = lambda character: []
-        runtime.can_undo_last_chat = lambda minister_name: False
-
-        result = runtime._chat_stream_payload(
-            assignee.name, public_text, 0, {}, state.turn, lambda _delta: None,
-        )
-        pending = db.conn.execute(
-            "SELECT payload_json FROM pending_actions WHERE id=?",
-            (result["pending_action_id"],),
-        ).fetchone()
-        assert "origin_chat_message_id" not in json.loads(pending["payload_json"])
