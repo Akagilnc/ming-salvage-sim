@@ -3056,18 +3056,6 @@ class WebGame:
         action_intent_future: Optional[Future] = None,
         explicit_secret_order: bool = False,
     ) -> Dict[str, Any]:
-        character = self.session._character(minister_name)
-        # #1812/#1830：本消息只备一次材料，供 registry.get 首建 agent 与组装提示
-        # 共用——与 CLI `GameSession.chat` 同一份权威 prepare 契约；不得各自再
-        # 各建一份（重复全树重写+开场重复入 prompt）。真实 session 恒有
-        # `_audience_prompt_for_message`；轻量 test double 若没有，
-        # `_audience_prompt_for_web_chat` 本就直接回退返回原文本，不进真实 chat
-        # 入口——同一 gate 用在这里，不强令它背真实建材依赖（与
-        # `_audience_prompt_for_web_chat` 自己的 legacy-double 兼容契约一致）。
-        prepared = None
-        if getattr(self.session, "_audience_prompt_for_message", None) is not None:
-            from ming_sim.materials import prepare_character_materials
-            prepared = prepare_character_materials(self.session.db, self.session.state, character)
         raise RuntimeError(
             "旧大臣 agent 流式入口已退役（#1837 reopen）；请走 scene_chat。"
         )
