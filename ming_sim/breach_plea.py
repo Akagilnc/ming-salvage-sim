@@ -93,14 +93,14 @@ def encode_plea_meta(meta: Dict[str, object]) -> str:
 def decode_plea_meta(origin_context: object) -> Dict[str, object]:
     text = str(origin_context or "").strip()
     if not text.startswith(_META_PREFIX):
-        return {"display": text, "breach_kind": "", "reason": text}
+        return {}
     raw = text[len(_META_PREFIX):]
     try:
         data = json.loads(raw)
     except (TypeError, ValueError):
-        return {"display": text, "breach_kind": "", "reason": text}
+        return {}
     if not isinstance(data, dict):
-        return {"display": text, "breach_kind": "", "reason": text}
+        return {}
     return data
 
 
