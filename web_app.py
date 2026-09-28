@@ -666,7 +666,6 @@ def _api_reasoning_supported_for_effective_model(
 
 class ChatRequest(BaseModel):
     message: str
-    intent: Optional[Literal["secret_order"]] = None
 
 
 class DirectiveRequest(BaseModel):
@@ -1984,7 +1983,7 @@ class WebGame:
         return existing is not None and not existing.get("minister_message_id")
 
     def _start_chat_turn(
-        self, minister_name: str, *, attach_to_hall: bool = True, route: str = "",
+        self, minister_name: str, *, attach_to_hall: bool = True,
         message: str = "",
     ) -> tuple[int, Dict[str, Any]]:
         agno_session_id = self._minister_agno_session_id(minister_name)
@@ -1992,7 +1991,6 @@ class WebGame:
         snapshot = self.db.capture_chat_rollback_snapshot()
         # #498：进入召对即开夜；对话轮挂 night_id，status=generating 至回话入档。
         # 测试替身无 conn/夜表时回退 create_chat_turn（lifecycle 双接口仍可测）。
-        # #1566：场外密疏只挂当前夜，不入殿、不启殿上 scene；route 落 chat_turns。
         if hasattr(self.db, "conn"):
             from ming_sim.audience_night import (
                 attach_chat_turn_to_night,
@@ -2008,7 +2006,6 @@ class WebGame:
                     agno_session_id=agno_session_id,
                     agno_runs_before=runs_before,
                     beat_generator=None,
-                    route=route,
                 )
                 if not night_was_open:
                     from ming_sim.decree_forecast import schedule_held_decree_forecasts
@@ -2031,7 +2028,6 @@ class WebGame:
                     runs_before,
                     night_id=int(night["id"]),
                     status="generating",
-                    route=route,
                 )
         else:
             chat_turn_id = self.db.create_chat_turn(
@@ -2039,7 +2035,6 @@ class WebGame:
                 minister_name,
                 agno_session_id,
                 runs_before,
-                route=route,
             )
             from ming_sim.audience_night import recognize_xuan_command
             if attach_to_hall and chat_turn_id and not recognize_xuan_command(message):
@@ -2903,9 +2898,8 @@ class WebGame:
             "summary": summary,
         }
 
-    def chat_stream(self, minister_name: str, message: str, intent: Optional[str] = None) -> Iterator[Dict[str, Any]]:
+    def chat_stream(self, minister_name: str, message: str) -> Iterator[Dict[str, Any]]:
         # #1849 reopen：召对只剩殿上一个入口；按大臣/密令/场外路由整条删除。
-        _ = intent  # kept in signature for call-site compatibility; unused
         from ming_sim.audience_night import SCENE_CHAT_SPEAKER
         if minister_name != SCENE_CHAT_SPEAKER:
             yield {"type": "error", "message": "召对只从殿上入口进行。"}
@@ -2982,7 +2976,6 @@ class WebGame:
                 minister_name,
                 message=text,
                 attach_to_hall=True,
-                route="",
             )
             self.chat_history.setdefault(minister_name, []).append({"role": "user", "content": text})
             message_id = self.db.append_chat_message(minister_name, accepted_turn, "user", text)
@@ -5599,7 +5592,7 @@ async def api_audience_chat(request: ChatRequest) -> Dict[str, Any]:
     def _run() -> Dict[str, Any]:
         done: Optional[Dict[str, Any]] = None
         error_detail: Optional[Dict[str, Any]] = None
-        for item in get_game().chat_stream(SCENE_CHAT_SPEAKER, request.message, request.intent):
+        for item in get_game().chat_stream(SCENE_CHAT_SPEAKER, request.message):
             kind = str(item.get("type") or "")
             if kind == "done":
                 done = dict(item.get("payload") or {})
@@ -5670,7 +5663,7 @@ async def api_retry_pending_translation(
 
 def _chat_stream_response(minister_name: str, request: ChatRequest) -> StreamingResponse:
     async def generate() -> AsyncIterator[str]:
-        iterator = iter(get_game().chat_stream(minister_name, request.message, request.intent))
+        iterator = iter(get_game().chat_stream(minister_name, request.message))
         loop = asyncio.get_running_loop()
         while True:
             item = await loop.run_in_executor(None, _next_or_none, iterator)

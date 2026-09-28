@@ -144,7 +144,6 @@ export function App() {
 
   // 召对动作群（useChatActions.ts）：召对面板外围态 + 开召对/发问/撤回/重试。
   const {
-    suggestions,
     chatNotice,
     replyRetries,
     translationRetries,
@@ -153,7 +152,6 @@ export function App() {
     composerHint,
     setComposerHint,
     input,
-    setComposerIntent,
     setInput,
     activeMinister,
     openChat,
@@ -751,7 +749,6 @@ export function App() {
             currentNightId={currentNightId}
             undoneChatIdentity={undoneChatIdentity}
             chat={chat}
-            suggestions={suggestions}
             pendingUserMessage={pendingUserMessage}
             pendingIdentity={pendingIdentity}
             failedIdentity={failedIdentity}
@@ -767,7 +764,6 @@ export function App() {
             translationRetries={translationRetries}
             retryReadFailure={retryReadFailure}
             onInput={setInput}
-            onIntent={setComposerIntent}
             onSend={sendChat}
             onRetryReply={retryInterruptedReply}
             onRetryTranslation={retryTranslation}

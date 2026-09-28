@@ -144,7 +144,7 @@ class _RecordingDB:
     def capture_chat_rollback_snapshot(self):
         return {}
 
-    def create_chat_turn(self, state, minister_name, agno_session_id, agno_runs_before, route=""):
+    def create_chat_turn(self, state, minister_name, agno_session_id, agno_runs_before):
         return 7
 
     def append_chat_message(self, minister_name: str, turn: int, role: str, content: str) -> int:
@@ -322,7 +322,7 @@ def test_chat_stream_sse_waits_for_sync_generator_in_executor(monkeypatch):
     release = threading.Event()
 
     class _BlockingGame:
-        def chat_stream(self, minister_name: str, message: str, intent=None):
+        def chat_stream(self, minister_name: str, message: str):
             entered.set()
             release.wait()  # block until tick observed entry (no wall clock)
             events.append("stream")
@@ -363,7 +363,7 @@ def test_nonstream_api_chat_keeps_game_state_responsive_while_chat_blocks(monkey
     class _SlowLLMGame:
         """离线慢 LLM 替身：chat_stream 进入后保持阻塞，直至 state 探针完成。"""
 
-        def chat_stream(self, minister_name: str, message: str, intent=None):
+        def chat_stream(self, minister_name: str, message: str):
             chat_entered.set()
             allow_finish.wait()
             events.append("chat")

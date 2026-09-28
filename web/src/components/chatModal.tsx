@@ -9,7 +9,6 @@ import type {
   ChatDisplayMessage,
   ChatMessage,
   Minister,
-  Suggestion,
   RetryReadFailure,
   TranslationRetry,
 } from "../types";
@@ -24,7 +23,6 @@ export function ChatModal({
   currentNightId,
   undoneChatIdentity,
   chat,
-  suggestions,
   pendingUserMessage,
   pendingIdentity,
   failedIdentity,
@@ -40,7 +38,6 @@ export function ChatModal({
   translationRetries = [],
   retryReadFailure = null,
   onInput,
-  onIntent,
   onSend,
   onRetryReply,
   onRetryTranslation,
@@ -60,7 +57,6 @@ export function ChatModal({
   /** Complete persisted identity returned by the latest successful withdrawal. */
   undoneChatIdentity: { campaign_id: string; night_id: number; chat_turn_id: number } | null;
   chat: ChatMessage[];
-  suggestions: Suggestion[];
   pendingUserMessage: string;
   pendingIdentity: { campaign_id: string; night_id: number; chat_turn_id: number } | null;
   /** Provider-failed persisted turn whose generating snapshot must be retired. */
@@ -79,7 +75,6 @@ export function ChatModal({
   translationRetries?: TranslationRetry[];
   retryReadFailure?: RetryReadFailure | null;
   onInput: (value: string) => void;
-  onIntent?: (intent: "secret_order" | undefined) => void;
   onSend: (ministerName: string, text?: string) => void;
   onRetryReply?: (ministerName: string, chatTurnId: number) => void;
   onRetryTranslation?: (chatTurnId: number) => void;
@@ -388,15 +383,6 @@ export function ChatModal({
     dispatchSend(minister.name, input);
   };
 
-  const sendSuggestion = (suggestion: Suggestion) => {
-    if (suggestion.prefix) {
-      onIntent?.(suggestion.intent === "secret_order" ? suggestion.intent : undefined);
-      onInput(suggestion.text);
-      setTimeout(() => inputRef.current?.focus(), 0);
-    } else {
-      dispatchSend(minister.name, suggestion.text);
-    }
-  };
 
   return (
     <div className="chat-full-grid">
@@ -448,19 +434,6 @@ export function ChatModal({
           {error && <div className="chat-system-note danger" role="alert">{error}</div>}
         </div>
         <div className="chat-composer">
-          <div className="hitl-bar">
-            {suggestions.map((suggestion) => (
-              <button
-                key={`${suggestion.label}-${suggestion.text}`}
-                onClick={() => sendSuggestion(suggestion)}
-                disabled={!!busy}
-                title={suggestion.prefix ? `填入前缀：${suggestion.text}` : suggestion.text}
-                className={suggestion.prefix ? "hitl-prefix" : ""}
-              >
-                {suggestion.label}
-              </button>
-            ))}
-          </div>
           <label className="chat-input">
             <span>问话</span>
             <textarea

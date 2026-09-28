@@ -79,7 +79,6 @@ function renderModal(props: {
   failedIdentity?: { campaign_id: string; night_id: number; chat_turn_id: number } | null;
   suggestions?: Suggestion[];
   onSend?: (ministerName: string, text?: string) => void;
-  onIntent?: (intent: "secret_order" | undefined) => void;
   onUndo?: (ministerName: string) => void;
   canUndoLastChat?: boolean;
   onClose?: () => void;
@@ -136,7 +135,6 @@ function renderModal(props: {
         undoneChatIdentity={undoneChatTurnId == null ? null : { campaign_id: "test-campaign", night_id: currentNightId, chat_turn_id: undoneChatTurnId }}
         busy={props.busy ?? ""}
         chat={chat}
-        suggestions={props.suggestions ?? []}
         pendingUserMessage={props.pendingUserMessage ?? ""}
         pendingIdentity={pendingIdentity}
         failedIdentity={failedIdentity}
@@ -148,7 +146,6 @@ function renderModal(props: {
         error=""
         replyRetries={props.replyRetries}
         onInput={(value) => setInput(value)}
-        onIntent={props.onIntent}
         onSend={props.onSend ?? (() => {})}
         onRetryReply={props.onRetryReply}
         translationRetries={props.translationRetries}
@@ -489,47 +486,6 @@ describe("ChatModal — #545 final composer contract", () => {
   });
 });
 
-describe("ChatModal — #527 prefix chips only (拟旨/下密令)", () => {
-  /** Production suggestions_for payload after ADR 0042 / #527 cut. */
-  const PREFIX_SUGGESTIONS: Suggestion[] = [
-    { label: "拟旨", text: "拟旨如下：", prefix: true },
-    { label: "下密令", text: "密令如下：", prefix: true, intent: "secret_order" },
-  ];
-
-  it("switching from draft to typed secret-order replaces composer content and does not auto-send", () => {
-    const onSend = vi.fn();
-    const onIntent = vi.fn();
-    const host = renderModal({
-      minister: MINISTER_MOCK,
-      portraitPrefix: "minister_",
-      suggestions: PREFIX_SUGGESTIONS,
-      onSend,
-      onIntent,
-    });
-
-    const hitlButtons = Array.from(host.querySelectorAll(".hitl-bar button"));
-    expect(hitlButtons).toHaveLength(2);
-
-    const textarea = host.querySelector("textarea") as HTMLTextAreaElement;
-    expect(textarea).toBeTruthy();
-
-    const draftBtn = hitlButtons.find((b) => b.textContent?.trim() === "拟旨") as HTMLButtonElement;
-    act(() => {
-      draftBtn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    });
-    expect(textarea.value).toBe("拟旨如下：");
-    expect(onSend).not.toHaveBeenCalled();
-
-    const secretBtn = hitlButtons.find((b) => b.textContent?.trim() === "下密令") as HTMLButtonElement;
-    act(() => {
-      secretBtn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    });
-    expect(textarea.value).toBe("密令如下：");
-    expect(onIntent).toHaveBeenLastCalledWith("secret_order");
-    expect(onSend).not.toHaveBeenCalled();
-  });
-});
-
 describe("ChatModal — four diegetic roles and system boundary (#541)", () => {
   it("renders entrance and exit facts as scene beats, not system notes", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
@@ -690,7 +646,6 @@ describe("ChatModal — soft scenes and selected-minister lens (#543 / #1511)", 
       replyRetries: [{ chat_turn_id: 12, question: "辽饷何解？" }],
       onRetryReply: retryReply,
       onRetryTranslation: vi.fn(),
-      suggestions: [{ label: "追问", text: "细奏边情" }],
     });
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
 
@@ -701,12 +656,10 @@ describe("ChatModal — soft scenes and selected-minister lens (#543 / #1511)", 
     const ministerMessages = host.querySelectorAll(".chat-message.minister");
     expect(ministerMessages[ministerMessages.length - 1]?.textContent).toContain("杨嗣昌");
     const clickButton = (text: string) => act(() => Array.from(host.querySelectorAll("button")).find((button) => button.textContent?.includes(text))?.click());
-    clickButton("追问");
     // #1732 B：撤回就地确认
     clickButton("撤回本轮");
     clickButton("继续撤回");
     act(() => host.querySelector<HTMLButtonElement>('[data-testid="reply-retry-12"] button')?.click());
-    expect(send).toHaveBeenCalledWith("洪承畴", "细奏边情");
     expect(undo).toHaveBeenCalledWith("洪承畴");
     expect(retryReply).toHaveBeenCalledWith("殿上", 12);
     const replyFailure = host.querySelector('[data-testid="reply-retry-12"]');

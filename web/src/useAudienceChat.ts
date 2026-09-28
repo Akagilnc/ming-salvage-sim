@@ -123,7 +123,7 @@ export function useAudienceChat(
   );
 
   const sendChat = React.useCallback(
-    async (minister: string, message: string, cb: SendChatCallbacks, intent?: "secret_order"): Promise<void> => {
+    async (minister: string, message: string, cb: SendChatCallbacks): Promise<void> => {
       const token = ++requestTokenRef.current;
       const gen = ++chatGenRef.current;  // 作废在飞的历史加载，防陈旧快照迟到回覆本轮
       const initiatingPanelName = selectedMinisterRef.current;
@@ -149,7 +149,6 @@ export function useAudienceChat(
           },
           {
             signal: abort.signal,
-            intent,
             onStreamReset: () => {
               // #1465 半流：重试开始替换未完成临时回话，不叠旧半句
               if (ownsEphemeral() && panelMatches()) setStreamingMinisterMessage("");

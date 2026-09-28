@@ -429,16 +429,6 @@ def list_ledger(db: Any, night_id: int) -> List[Dict[str, Any]]:
     return out
 
 
-# #1849 reopen：对话轮不再区分密令/场外路由；route 恒为空串。
-
-
-def normalize_chat_turn_route(route: object) -> str:
-    """#1849 reopen：只接受空 route；未知非空响亮失败。"""
-    value = str(route or "").strip()
-    if value:
-        raise ValueError(f"unsupported chat_turn route: {value!r}")
-    return ""
-
 
 def list_chat_turns_for_night(db: Any, night_id: int) -> List[Dict[str, Any]]:
     # 撤回的轮（status='undone'）从「按夜取数」隐去——与「该轮未发生」等价（#506）。
@@ -3010,7 +3000,6 @@ def attach_chat_turn_to_night(
     summon_method: str = METHOD_XUANRU,
     beat_generator: Any = None,
     knowledge_provider: Any = None,
-    route: str = "",
 ) -> tuple[int, int]:
     """开夜（若需）+ 首次对话落宣入账 + 建 generating 对话轮挂 night_id/night_seq。
 
@@ -3096,7 +3085,6 @@ def attach_chat_turn_to_night(
             agno_session_id,
             agno_runs_before,
             night_id=night_id,
-            route=route,
         )
         if handoff_entry_id:
             db.conn.execute(

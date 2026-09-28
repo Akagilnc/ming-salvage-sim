@@ -621,7 +621,6 @@ def minister_chat(session: GameSession, character: Character) -> str:
                         agno_session_id=f"cli:{character.name}",
                         agno_runs_before=0,
                         beat_generator=None,
-                        route="",
                     )
                     if not night_was_open:
                         from ming_sim.decree_forecast import schedule_held_decree_forecasts

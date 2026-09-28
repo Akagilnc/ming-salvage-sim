@@ -764,7 +764,6 @@ def test_pacification_unqualified_name_does_not_create_false_ambiguity(game):
 def test_api_tool_pacification_failure_diagnostic_reaches_chat_and_web_stream(game):
     """显式诊断须到非流式 ChatTurnResult 与 web stream payload 两通道。"""
     from ming_sim.session import GameSession
-    import web_app
 
     db, state, content = game
     _activate_canonical_bandit(db, content)
@@ -804,34 +803,6 @@ def test_api_tool_pacification_failure_diagnostic_reaches_chat_and_web_stream(ga
     assert result.pending_action_failures
     assert any("招抚" in str(f.get("message") or "") for f in result.pending_action_failures)
 
-    # web stream 与 session 共用 _stage_directive_tool_candidate；经 interpret 缝透出 failures。
-    web_game = web_app.WebGame.__new__(web_app.WebGame)
-    web_game.session = sess
-    web_game.chat_history = {name: [] for name in content.characters}
-    web_game.suggestions_for = lambda _character: []
-    web_game.chat_projection = lambda name: list(web_game.chat_history.get(name) or [])
-    web_game.directive_rows = lambda: []
-    web_game.directive_payload = lambda row: row
-    web_game.can_undo_last_chat = lambda _name: False
-    web_game._record_chat_rollback_items = lambda *_a, **_k: None
-    character = content.characters[minister]
-    run_output = Agent().run("")
-    payload = web_app.WebGame._chat_stream_interpret_tools(
-        web_game,
-        minister,
-        "中旨直发，着即招抚。",
-        character,
-        "臣已拟招抚之旨。",
-        run_output,
-        None,
-        0,
-    )
-    assert payload.get("pending_action_id") in (0, None)
-    assert payload.get("pending_action_failures")
-    assert any(
-        "招抚" in str(f.get("message") or "")
-        for f in payload["pending_action_failures"]
-    )
 
 
 def test_special_decree_origin_cannot_authorize_pacification_allegiance(game):
@@ -892,7 +863,6 @@ def test_idle_session_pacification_mention_does_not_hijack_ordinary_draft(game):
 def test_same_turn_success_pending_id_survives_later_failed_stage_cli_and_web(game):
     """C2 r6：同轮先成功暂存、后失败 0 → 保留成功 pending_action_id；失败诊断仍透出。"""
     from ming_sim.session import GameSession, coalesce_pending_action_id
-    import web_app
 
     db, state, content = game
     _activate_canonical_bandit(db, content)
@@ -957,44 +927,6 @@ def test_same_turn_success_pending_id_survives_later_failed_stage_cli_and_web(ga
     ]
     assert cli_payload.get("dossier_action_type") == "special_decree"
 
-    # Fresh pending slate for the web consumer of the same aggregation rule.
-    for row_id, _ in _pending_directive_payloads(db, state.turn, minister):
-        db.conn.execute("DELETE FROM pending_actions WHERE id=?", (row_id,))
-    db.conn.commit()
-
-    web_sess = _bind(GameSession.__new__(GameSession))
-    web_game = web_app.WebGame.__new__(web_app.WebGame)
-    web_game.session = web_sess
-    web_game.chat_history = {name: [] for name in content.characters}
-    web_game.suggestions_for = lambda _character: []
-    web_game.chat_projection = lambda name: list(web_game.chat_history.get(name) or [])
-    web_game.directive_rows = lambda: []
-    web_game.directive_payload = lambda row: row
-    web_game.can_undo_last_chat = lambda _name: False
-    web_game._record_chat_rollback_items = lambda *_a, **_k: None
-    character = content.characters[minister]
-    payload = web_app.WebGame._chat_stream_interpret_tools(
-        web_game,
-        minister,
-        "拟旨如下：先筹饷，再议招抚流寇。",
-        character,
-        "臣已拟两道旨。",
-        Agent().run(""),
-        None,
-        0,
-    )
-    assert int(payload.get("pending_action_id") or 0) > 0
-    assert payload.get("pending_action_failures")
-    assert any(
-        "招抚" in str(f.get("message") or "")
-        for f in payload["pending_action_failures"]
-    )
-    web_staged = dict(_pending_directive_payloads(db, state.turn, minister))[
-        int(payload["pending_action_id"])
-    ]
-    assert web_staged.get("dossier_action_type") == "special_decree"
-    assert web_staged.get("mode") == "midzhi"
-    assert len(_pending_directive_payloads(db, state.turn, minister)) == 1
 
 
 def test_pacification_successful_promulgation_closes_dossier(game):

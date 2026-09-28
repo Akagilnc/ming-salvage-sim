@@ -573,16 +573,15 @@ def test_issue_1716_offsite_court_break_via_stream(tracer_client, kind, monkeypa
     done = json.loads(done_raw) if isinstance(done_raw, str) else done_raw
     assert isinstance(done, dict), done
     _assert_court_break_closed(game, done, night_id, remote=remote)
-    # #1849 reopen：殿上唯一入口，退朝轮 route 恒空（不再编码 offsite）。
+    # 退朝轮仍由殿上入口持久记录。
     turn = game.db.conn.execute(
-        "SELECT route, minister_name FROM chat_turns "
+        "SELECT minister_name FROM chat_turns "
         "WHERE night_id=? AND status='active' "
         "ORDER BY id DESC LIMIT 1",
         (night_id,),
     ).fetchone()
     assert turn is not None
     assert str(turn["minister_name"] or "") == "殿上"
-    assert str(turn["route"] or "") == ""
 
 
 def test_issue_1716_offsite_court_break_via_nonstream(tracer_client, monkeypatch):

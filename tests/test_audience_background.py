@@ -481,50 +481,6 @@ def _cli_web_game(db, state, content, agent, monkeypatch=None, **kwargs) -> WebG
     return game
 
 
-def test_background_audience_secret_order_persists_after_observer_departure(game, monkeypatch):
-    """密令结果：退出观看窗后，后台仍跑完 CLI 动作落地（apply_cli_conversation_actions）
-    并完成回话入档（#383 US5）。"""
-    db, state, content = game
-    minister_name = "毕自严"
-    agent = _FakeAgent()
-    web_game = _cli_web_game(
-        db, state, content, agent, monkeypatch, secret_order_id=4242,
-    )
-
-    stream = web_game.chat_stream("殿上", "密查盐政亏空。")
-    _assert_next_accepted(stream)
-    assert next(stream)["type"] == "delta"
-    stream.close()
-
-    assert agent.completed.wait(5), agent.calls
-    # 后台跑完：queue + 转译 ledger 终态后断言外部结构化结果（禁盲等 history）。
-    _wait_for_pending_writes_to_drain(web_game)
-    assert len(web_game.session.apply_calls) >= 1
-    assert len(web_game.chat_history["殿上"]) >= 2
-    assert db.can_undo_last_chat_turn("殿上", state.turn)
-
-
-def test_background_audience_pending_action_persists_after_observer_departure(game, monkeypatch):
-    """pending_action（如调教/任免暂存）：退出后后台仍跑完落地（#383 US6）。"""
-    db, state, content = game
-    minister_name = "毕自严"
-    agent = _FakeAgent()
-    web_game = _cli_web_game(
-        db, state, content, agent, monkeypatch, pending_action_id=77,
-    )
-
-    stream = web_game.chat_stream("殿上", "着王承恩调教自省。")
-    _assert_next_accepted(stream)
-    assert next(stream)["type"] == "delta"
-    stream.close()
-
-    assert agent.completed.wait(5), agent.calls
-    _wait_for_pending_writes_to_drain(web_game)
-    assert len(web_game.session.apply_calls) >= 1
-    assert len(web_game.chat_history["殿上"]) >= 2
-    assert db.can_undo_last_chat_turn("殿上", state.turn)
-
-
 def test_background_audience_recommendation_stages_candidate_snapshot(game, monkeypatch):
     """#1842：殿上荐人经转译交办任免进 pending；不经旧 tool envelope、不触真网。
 

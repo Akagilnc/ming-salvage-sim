@@ -533,8 +533,6 @@ export type ServerChatMessage = {
 export type Suggestion = {
   label: string;
   text: string;
-  prefix?: boolean;
-  intent?: "secret_order";
 };
 
 export type ModalName = "none" | "state" | "chat" | "edict" | "report" | "history" | "audience_archive" | "menu" | "secret_orders" | "ending";

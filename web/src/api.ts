@@ -72,7 +72,6 @@ export const parseSseMessage = (raw: string): { event: string; data: string } | 
 
 export type StreamChatOptions = {
   signal?: AbortSignal;
-  intent?: "secret_order";
   /** #544：流完补挂高亮清单（done 之后、end 之前） */
   onHighlights?: (payload: {
     highlights: string[];
@@ -105,7 +104,7 @@ export const streamChat = async (
   const response = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message, ...(options.intent ? { intent: options.intent } : {}) }),
+    body: JSON.stringify({ message }),
     signal: options.signal,
   });
   if (!response.ok) {

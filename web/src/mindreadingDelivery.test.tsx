@@ -76,7 +76,7 @@ function mount(refreshOnEnd = false) {
         failedIdentity={hook.failedIdentity}
         scrollGeneration={scrollGeneration}
         streamingMinisterMessage={hook.streamingMinisterMessage}
-        suggestions={[]} chatNotice="" canUndoLastChat={false}
+        chatNotice="" canUndoLastChat={false}
         composerHint="" input="" busy={busy} error=""
         onInput={() => {}} onSend={() => {}} onUndo={() => {}}
         onHint={() => {}} onClose={() => {}} onCancel={() => {}}
