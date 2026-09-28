@@ -572,4 +572,3 @@ def test_accept_wired_in_settle_not_pre_settle_emergence():
     pre_body = ast.get_source_segment(decree_src, pre) or ""
     assert "trigger_faction_denunciations" not in pre_body
     assert "accept_faction_denunciations" not in pre_body
-
