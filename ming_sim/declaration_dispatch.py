@@ -1060,6 +1060,36 @@ def _dispatch_commissions(
                 _reject(rejected, item, str(exc), "invalid_shape", source)
             continue
 
+        progress = item.get("secret_order_progress")
+        if progress is not None:
+            from ming_sim.strict_types import strict_int
+            if not isinstance(progress, Mapping) or any(
+                item.get(key) for key in
+                ("grant", "appointment", "punishment", "pacification", "assignment", "secret_order")
+            ):
+                _reject(rejected, item, "密令进展载荷须为独立对象", "invalid_shape", source)
+                continue
+            try:
+                order_id = strict_int(progress.get("order_id"), accept_numeric_strings=False)
+            except (TypeError, ValueError):
+                order_id = 0
+            note = progress.get("note")
+            actor = str(minister_name or "").strip() or _commission_fallback_actor(db)
+            active = db.get_active_secret_orders_for_minister(actor)
+            target = next((o for o in active if int(o["id"]) == order_id), None)
+            if (
+                target is None or order_id <= 0 or not isinstance(note, str) or not note.strip()
+                or int(target.get("turn_issued") or 0) == int(state.turn)
+            ):
+                _reject(rejected, item, "密令进展须指向承办人的往期有效密令且有进展正文", "invalid_state", source)
+                continue
+            row_id = db.stage_pending_action(
+                int(state.turn), kind="secret_order", action="记进展",
+                minister_name=actor, target_id=order_id, payload={"note": note},
+            )
+            applied.append({"id": row_id, "kind": "secret_order"})
+            continue
+
         secret = item.get("secret_order")
         if secret is not None:
             if not isinstance(secret, Mapping) or any(

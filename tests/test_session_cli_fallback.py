@@ -449,52 +449,30 @@ def test_tool_call_staged_new_secret_order_keeps_explicit_zero_deadline(game, mo
     assert payload["deadline_months"] == 0
 
 
-def test_secret_order_tool_progress_stages_pending_action_not_direct_write(game):
-    """function-call 密令进展工具也要过 pending 确认闸门，不得直接改真实表。"""
+def test_scene_secret_order_progress_stages_pending_not_direct_write(game):
+    """转译记录往期密令进展先走候选闸门，不直写真实密令。"""
+    from ming_sim.audience_translate import normalize_audience_declaration
+    from ming_sim.declaration_dispatch import dispatch_declaration
+
     db, state, content = game
     minister = "毕自严"
     oid = _create_secret_order(db, state, minister, "查辽饷", "查辽饷侵冒。", [], deadline_months=0)
     db.conn.execute("UPDATE secret_orders SET turn_issued=? WHERE id=?", (state.turn - 1, oid))
     db.conn.commit()
 
-    tool_payload = json.dumps({
-        "action": "记进展",
-        "order_id": oid,
-        "payload": {"note": "已封存兵部辽饷册。"},
-    }, ensure_ascii=False)
-
-    class Agent:
-        def run(self, _message):
-            return SimpleNamespace(
-                content="臣已记下进展，请陛下定夺。",
-                tools=[SimpleNamespace(tool_name="secret_order", result=f"__secret_action__{tool_payload}")],
-            )
-
-    class Registry:
-        def get(self, _character, **_kw):
-            return Agent()
-
-
-    sess = GameSession.__new__(GameSession)
-    sess.db = db
-    sess.state = state
-    sess.content = content
-    sess.registry = Registry()
-    sess.llm_config = SimpleNamespace(channel="api")
-    sess.temporary_characters = set()
-    sess._audience_prompt_for_message = lambda message, *_a, **_kw: message
-    sess._start_cli_action_intent = lambda *_args, **_kwargs: None
-    sess._finish_cli_action_intent = lambda *_args, **_kwargs: None
-
-    result = GameSession.chat(sess, minister, "奏报密令进展。")
-
-    assert result.pending_action_id
+    declaration = normalize_audience_declaration({"commissions": [{
+        "text": "奏报密令进展。",
+        "secret_order_progress": {"order_id": oid, "note": "已封存兵部辽饷册。"},
+    }]})
+    result = dispatch_declaration(db, state, declaration, minister_name=minister)
+    assert result.commissions.rejected == []
     assert "已封存兵部辽饷册" not in (
         db.conn.execute("SELECT result FROM secret_orders WHERE id=?", (oid,)).fetchone()["result"] or ""
     )
     pending = db.list_pending_actions(state.turn)
     assert len(pending) == 1
-    assert pending[0]["action"] == "记进展"
+    assert pending[0]["kind"] == "secret_order" and pending[0]["action"] == "记进展"
+    assert pending[0]["target_id"] == oid
 
 
 
@@ -1509,135 +1487,46 @@ def test_propose_appointment_continue_draft_same_direction(
         assert [r["mode"] for r in rows] == list(expected_modes)
 
 
-def test_confirmation_turn_ignores_same_turn_secret_order_tool_output(game, monkeypatch):
-    """确认旧 pending 的同一句，不能再消费 tool sentinel 重建一道新密令。"""
+def test_scene_confirmation_ignores_retired_tool_outputs(game, monkeypatch, _offline_scene_beat_generator):
+    """场景生成链不消费旧密令或拟旨工具；确认只处理夜内既有候选。"""
+    from ming_sim.audience_night import open_night
+    from tests.conftest import stub_scene_agent, stub_audience_translate, offline_empty_audience_translate
+    from tests.test_scene_llm_1836 import _sess
+
     db, state, content = game
     minister = "毕自严"
+    open_night(db, state)
     old_id = db.stage_pending_action(
-        state.turn, kind="secret_order", action="新建", minister_name=minister, target_id=None,
-        payload={
-            "covert_task": TYPED_COVERT_TASK,
-            "title": "旧候选",
-            "content": "旧候选内容",
-            "assignee": minister,
-            "tags": [],
-            "deadline_months": 0,
+        state.turn, kind="secret_order", action="新建", minister_name=minister,
+        target_id=None, payload={
+            "covert_task": TYPED_COVERT_TASK, "title": "旧候选",
+            "content": "旧候选内容", "assignee": minister,
+            "tags": [], "deadline_months": 0,
         },
     )
-    tool_payload = json.dumps({
-        "title": "同句新令",
-        "content": "同句新令内容",
-        "assignee": minister,
-        "tags": [],
-        "deadline_months": 0,
-    }, ensure_ascii=False)
-    calls = []
-    monkeypatch.setattr(
-        cb,
-        "_run_api_for_config",
-        lambda *a, **k: (calls.append((a, k)) or (json.dumps({"确认": "应允"}, ensure_ascii=False), 1)),
-    )
 
-    class Agent:
-        def run(self, _message):
-            return SimpleNamespace(
-                content="臣遵旨。",
-                tools=[SimpleNamespace(tool_name="secret_order", result=f"__secret_order__{tool_payload}")],
-            )
+    class SceneAgent:
+        tools = []
 
-    class Registry:
-        def get(self, _character, **_kw):
-            return Agent()
+        def run(self, message):
+            return SimpleNamespace(content="臣遵旨。", tools=[
+                SimpleNamespace(tool_name="secret_order", result="__secret_order__新令"),
+                SimpleNamespace(tool_name="propose_directive", result="__pending_directive__新旨"),
+            ])
 
+    stub_scene_agent(monkeypatch, SceneAgent())
+    stub_audience_translate(monkeypatch, lambda prompt, cfg: {
+        **offline_empty_audience_translate(prompt, cfg),
+        "promises": [{"action_id": old_id, "decision": "应允"}],
+    })
+    sess = _sess(db, state, content)
+    sess.scene_chat("准")
 
-        def refresh(self, _name):
-            return None
-
-    sess = GameSession.__new__(GameSession)
-    sess.db = db
-    sess.state = state
-    sess.content = content
-    sess.registry = Registry()
-    sess.llm_config = SimpleNamespace(channel="api")
-    sess.temporary_characters = set()
-    sess._audience_prompt_for_message = lambda message, *_a, **_kw: message
-    sess._start_cli_action_intent = lambda *_args, **_kwargs: None
-    sess._finish_cli_action_intent = lambda *_args, **_kwargs: None
-
-    result = GameSession.chat(sess, minister, "准了")
-
-    assert result.pending_action_id == 0
     orders = db.list_secret_orders()
-    assert len(orders) == 1
-    assert orders[0]["title"] == "旧候选"
+    assert len(orders) == 1 and orders[0]["title"] == "旧候选"
     assert db.list_pending_actions(state.turn) == []
-    assert not db.conn.execute(
-        "SELECT 1 FROM pending_actions WHERE id=? AND status='pending'", (old_id,)
-    ).fetchone()
 
 
-def test_secret_prefix_ignores_mismatched_directive_tool_output(game, monkeypatch):
-    """显式密令前缀是权威 intent；错家族 propose_directive tool 不得压掉密令 fallback。"""
-    db, state, content = game
-    minister = "毕自严"
-    extracted = {
-        "标题": "暗查辽饷",
-        "内容": "暗查辽饷侵冒。",
-        "承办人": minister,
-        "标签": ["辽饷"],
-        "期限月数": 0,
-        **TYPED_COVERT_EXTRACT,
-    }
-    monkeypatch.setattr(
-        cb, "_run_json_extractor_for_config",
-        lambda *a, **k: (json.dumps(extracted, ensure_ascii=False), 1),
-    )
-    monkeypatch.setattr(
-        cb, "_run_backend_for_config",
-        lambda *a, **k: (json.dumps({"密令": extracted}, ensure_ascii=False), 1),
-    )
-
-    class Agent:
-        def run(self, _message):
-            return SimpleNamespace(
-                content="臣领旨。",
-                tools=[SimpleNamespace(tool_name="propose_directive", result="__pending_directive__着户部清核辽饷。")],
-            )
-
-    class Registry:
-        def get(self, _character, **_kw):
-            return Agent()
-
-
-    sess = GameSession.__new__(GameSession)
-    sess.db = db
-    sess.state = state
-    sess.content = content
-    sess.registry = Registry()
-    sess.llm_config = SimpleNamespace(channel="api")
-    sess.temporary_characters = set()
-    sess._audience_prompt_for_message = lambda message, *_a, **_kw: message
-
-    def _forbid_cli_action_intent(*_args, **_kwargs):
-        raise AssertionError("explicit secret route must not start ordinary action classification")
-
-    def _forbid_confirmation_intent(*_args, **_kwargs):
-        raise AssertionError("explicit secret route must not run confirmation classification")
-
-    def _finish_cli_action_intent(future, *_args, **_kwargs):
-        assert future is None
-        return None
-
-    sess._start_cli_action_intent = _forbid_cli_action_intent
-    sess._confirmation_intent_for_preexisting_pending = _forbid_confirmation_intent
-    sess._finish_cli_action_intent = _finish_cli_action_intent
-
-    result = GameSession.chat(sess, minister, "密令如下：暗查辽饷侵冒。")
-
-    assert result.pending_action_id
-    pending = db.list_pending_actions(state.turn)
-    assert len(pending) == 1
-    assert pending[0]["kind"] == "secret_order"
 
 
 def test_confirmation_commit_only_visible_pending_ids(game, monkeypatch):

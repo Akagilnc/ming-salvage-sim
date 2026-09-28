@@ -248,6 +248,7 @@ def build_c0_declaration_shape() -> str:
         '      "secret_order": {"title": "密令标题", "content": "密令正文", '
         '"assignee": "承办人 id", "tags": [], "deadline_months": 0, '
         '"covert_task": {}},\n'
+        '      "secret_order_progress": {"order_id": "往期有效密令 id", "note": "本轮具名进展"},\n'
         '      "assignment": {"title": "独立事项名", "target_id": "事项 id", '        '"assignee": "承办人 id", "participant_roster": [], '
         '"target_candidate": "续办所指候选 id（新案留空）", '
         '"commitment_kind": "承诺类别（无承诺填无）", '
@@ -338,7 +339,8 @@ def build_audience_translate_prompt(
         "assignee/participant_roster 来自已明确的承办人；续办只在能指向既有候选时填 target_candidate。"
         "不从当场问答推造独立差事。\n"
         "- 具名秘密差事的新建走 commission.secret_order；必须含 title、content、"
-        "承办人与已确定的 covert_task 冻结任务契约；无契约不得编造。\n"
+        "承办人与已确定的 covert_task 冻结任务契约；无契约不得编造。"
+        "往期密令具名进展走 commission.secret_order_progress；不凭空记进展。\n"
         "- 皇帝对已暂存交办说「准」「照办」等应允语义 → promises 里 decision=应允；"
         "「不准」「作罢」→ 拒绝。皇帝本轮未表态 → promises 为空（默认不应允）。\n"
         "- 当场已发生（斩杀/拿下/伤臂/告退等）走 on_scene_facts / textual_facts / "
