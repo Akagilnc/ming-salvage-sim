@@ -1005,18 +1005,15 @@ def _attach_commission_staging_fields(
 
 
 def _attach_commission_affair(
-    db: Any, state: Any, item: Mapping[str, object], payload: Dict[str, Any],
+    db: Any, item: Mapping[str, object], payload: Dict[str, Any],
     *, rejected: List[RejectedItem], source: Provenance,
 ) -> bool:
-    """可选事务声明挂到载荷；失败时已写入 rejected，返回 False。"""
+    """校验声明并暂存；事务仅在收夜案卷接缝物化。"""
     raw_affair = declaration_from_payload(item, allowed=ATTACH_BIRTH)
     if raw_affair is None:
         return True
     try:
-        affair_id = db.affairs.resolve_declaration(
-            raw_affair, year=state.year, period=state.period,
-            turn=state.turn, allowed=ATTACH_BIRTH,
-        )
+        db.affairs.peek_declared_id(raw_affair, allowed=ATTACH_BIRTH)
     except KeyError as exc:
         _reject(rejected, item, str(exc), "hallucinated_id", source)
         return False
@@ -1396,7 +1393,7 @@ def _dispatch_commissions(
         )
 
         if not _attach_commission_affair(
-            db, state, item, payload, rejected=rejected, source=source,
+            db, item, payload, rejected=rejected, source=source,
         ):
             continue
 

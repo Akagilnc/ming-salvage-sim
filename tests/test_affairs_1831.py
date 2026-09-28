@@ -194,6 +194,32 @@ def test_ningyuan_close_night_one_affair_three_dossiers(game, monkeypatch):
         restored.close()
 
 
+def test_unkeyed_commission_opens_only_at_night_close(game, monkeypatch):
+    db, state, content = game
+    minister = _minister(db)
+    night = audience_night.open_night(db, state)
+    audience_night.summon_enter(db, int(night["id"]), minister)
+    from tests.test_audience_translate_1837_reopen import _scene_declaration
+    result = _scene_declaration(db, state, content, monkeypatch, ORIGIN, {
+        "commissions": [{"text": ORIGIN, "affair_declaration": _declaration()}],
+    }, minister_name=minister)
+    assert len(result.commissions.applied) == 1
+    assert not db.affairs.list_open()
+    approval = _scene_declaration(db, state, content, monkeypatch, "准", {
+        "promises": [{"action_id": result.commissions.applied[0]["id"], "decision": "应允"}],
+    })
+    assert len(approval.promises.applied) == 1
+    audience_night.close_night(
+        db, state, night_id=night["id"], content=content,
+        endorsement_extractor_agent=SimpleNamespace(
+            run=lambda _: SimpleNamespace(content='{"endorsements": []}'),
+        ),
+    )
+    affairs = db.affairs.list_open()
+    assert len(affairs) == 1
+    assert len(db.affairs.dossiers(affairs[0].id)) == 1
+
+
 def test_existing_open_affair_grounds_split_declaration(game, monkeypatch):
     db, state, content = game
     minister = _minister(db)

@@ -4296,7 +4296,7 @@ def test_invalid_pending_person_change_does_not_block_event_gate(game):
             state,
             {
                 "new_issues": [{"origin_kind": "event_pool", "id": "mao_wenlong"}],
-                "人物变更": [{"origin_ref": "盘面自发", "name": "袁崇焕", "动作": "处置", "status": "candidate", "reason": "非法候选"}],
+                "人物变更": [{"origin_ref": "盘面自发", "name": "袁崇焕", "动作": "处置", "status": "active", "reason": "处置不能恢复在职"}],
             },
             content=content,
         )
