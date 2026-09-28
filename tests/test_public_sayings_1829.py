@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import shutil
+import threading
 
-from ming_sim import audience_night as an
+import ming_sim.month_chain as month_chain
+from ming_sim.audience_night import open_night
+from ming_sim.audience_translation import apply_audience_round_translation
 from ming_sim.db import GameDB
-from ming_sim.declaration_dispatch import dispatch_declaration
-from ming_sim.decree import settle_with_delta
+from ming_sim.models import LLMConfig
 from ming_sim.public_sayings import list_public_sayings, record_public_saying
-from tests.conftest import with_monthly_reports
+from tests.test_month_chain_1843 import _prepare_player_month
 
 
 def _礼部大臣(content):
@@ -26,36 +28,6 @@ def _active_other(db, content, *, exclude: set[str]) -> str:
             continue
         return character.name
     raise AssertionError("no other active minister")
-
-
-def _dispatch_public_saying_round(db, state, minister: str, declaration: dict):
-    """真实召对入口：开夜建轮 → dispatch_declaration（与 #1839 同缝）。"""
-    if an.get_open_night(db) is None:
-        an.open_night(db, state, location="乾清宫", time_of_day="夜")
-    night_id, chat_id = an.attach_chat_turn_to_night(db, state, minister)
-    uid = db.conn.execute(
-        "INSERT INTO chat_messages (minister_name, turn, role, content) "
-        "VALUES (?, ?, 'emperor', ?)",
-        (minister, state.turn, "密令如下：对外只说此事，勿使某人得知。"),
-    ).lastrowid
-    mid = db.conn.execute(
-        "INSERT INTO chat_messages (minister_name, turn, role, content) "
-        "VALUES (?, ?, 'minister', ?)",
-        (minister, state.turn, "臣遵旨。"),
-    ).lastrowid
-    db.conn.commit()
-    db.update_chat_turn_messages(
-        int(chat_id), user_message_id=int(uid), minister_message_id=int(mid),
-    )
-    result = dispatch_declaration(
-        db, state, declaration,
-        minister_name=minister, night_id=int(night_id), chat_turn_id=int(chat_id),
-    )
-    db.conn.execute(
-        "UPDATE chat_turns SET extract_status = 'done' WHERE id = ?", (int(chat_id),),
-    )
-    db.conn.commit()
-    return result
 
 
 def test_yuan_public_death_rumor_does_not_change_actual_life(game, tmp_path):
@@ -127,30 +99,51 @@ def test_absent_minister_reads_saying_not_actual_status(game):
     )
 
 
-def test_public_saying_excluded_name_does_not_see_it_others_do(game):
-    """#1829 reopen：真实召对入口落带排除的公开说法；过月后被瞒者零条、其余恰一条。"""
+def test_public_saying_excluded_name_does_not_see_it_others_do(game, monkeypatch):
+    """#1829 reopen：召对转译落账 + 玩家过月主链后，被瞒者零条、其余恰一条。"""
     db, state, content = game
     excluded_name = _礼部大臣(content).name
-    speaker = _active_other(db, content, exclude={excluded_name, "袁崇焕"})
-    other_name = _active_other(
-        db, content, exclude={excluded_name, speaker, "袁崇焕"},
-    )
+    other_name = _active_other(db, content, exclude={excluded_name, "袁崇焕"})
     claim = "袁崇焕已死于宁远"
-    declaration = {
-        "public_sayings": [{
-            "body": claim,
-            "involved_characters": ["袁崇焕"],
-            "excluded_names": [excluded_name],
-            "excluded_offices": [],
-        }],
-    }
-    result = _dispatch_public_saying_round(db, state, speaker, declaration)
+
+    # 现役召对落账入口（转译后 apply → dispatch；#1838 同缝）。
+    # 回话须落定，否则收夜 wait_in_flight_clear 会把无 minister_message 的 active 轮当在飞。
+    night = open_night(db, state, location="乾清宫", time_of_day="戌时")
+    night_id = int(night["id"])
+    chat_turn_id = int(db.create_chat_turn(
+        state, "殿上", "s", 0, night_id=night_id, status="active",
+    ))
+    uid = db.conn.execute(
+        "INSERT INTO chat_messages (minister_name, turn, role, content) "
+        "VALUES (?, ?, 'emperor', ?)",
+        ("殿上", state.turn, "对外只说此事，勿使某人得知。"),
+    ).lastrowid
+    mid = db.conn.execute(
+        "INSERT INTO chat_messages (minister_name, turn, role, content) "
+        "VALUES (?, ?, 'minister', ?)",
+        ("殿上", state.turn, "臣遵旨。"),
+    ).lastrowid
+    db.conn.commit()
+    db.update_chat_turn_messages(
+        chat_turn_id, user_message_id=int(uid), minister_message_id=int(mid),
+    )
+    result = apply_audience_round_translation(
+        db, state,
+        {
+            "public_sayings": [{
+                "body": claim,
+                "involved_characters": ["袁崇焕"],
+                "excluded_names": [excluded_name],
+                "excluded_offices": [],
+            }],
+        },
+        night_id=night_id,
+        chat_turn_id=chat_turn_id,
+    )
     assert len(result.public_sayings.applied) == 1
     assert result.public_sayings.rejected == []
     saying_id = int(result.public_sayings.applied[0]["id"])
     source_id = f"public_saying:{saying_id}"
-
-    # 正文与排除名单只在公开说法表；不为挂排除另抄见闻来源。
     assert db.conn.execute(
         "SELECT 1 FROM character_knowledge_sources WHERE source_id=?", (source_id,),
     ).fetchone() is None
@@ -158,13 +151,23 @@ def test_public_saying_excluded_name_does_not_see_it_others_do(game):
     assert saying["body"] == claim
     assert excluded_name in saying["excluded_names"]
 
-    before_turn = state.turn
-    settle_with_delta(
-        state, db, with_monthly_reports(db, {}),
-        before_turn=before_turn, content=content,
-        narrative="本月朝局如常",
+    # 现役玩家过月主链（resolve_directives → run_player_month_chain）；只替 LLM 缝。
+    before_turn = int(state.turn)
+    monkeypatch.setattr(
+        month_chain, "run_gazette_text",
+        lambda *_a, **_k: ("邸报", "本月朝局如常"),
     )
-    assert state.turn == before_turn + 1
+    monkeypatch.setattr(
+        "ming_sim.mechanical_tail._run_tail_body", lambda *_a, **_k: "done",
+    )
+    session = _prepare_player_month(db, state, content, monkeypatch)
+    session.llm_config = LLMConfig(
+        api_key="sk-test", base_url="https://example.invalid", model="test",
+    )
+    session._write_gate = threading.Lock()
+    advanced = session.resolve_turn(allow_empty_decree=True)
+    assert advanced.advanced is True
+    assert int(state.turn) == before_turn + 1
 
     def _saying_hits(name: str):
         view = db.get_character_knowledge(state, name)
@@ -178,7 +181,6 @@ def test_public_saying_excluded_name_does_not_see_it_others_do(game):
     assert len(other_hits) == 1
     assert other_hits[0]["title"] == "有此说法"
     assert other_hits[0]["body"] == claim
-    # 月末不得把同一说法再物化成见闻事件（否则会多出一条无 title 的原文）。
     assert db.conn.execute(
         "SELECT 1 FROM character_knowledge_events "
         "WHERE character_name='' AND source_id=?", (source_id,),
