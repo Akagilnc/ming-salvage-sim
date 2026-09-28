@@ -1746,13 +1746,6 @@ def test_http_chat_issue_stream_pay_decree_keeps_month_unadvanced(
         def get_last_run_output(self):
             return None
 
-    scripted = _scripted_xiexang_candidates(amount=15, account="太仓", target_id="guanning")
-
-    def fake_classify(text, *_a, **_k):
-        if str(text or "").strip() == "准":
-            return []
-        return list(scripted)
-
     def fake_confirm(player_message, *_a, **_k):
         if str(player_message or "").strip() == "准":
             return "应允"
@@ -1776,7 +1769,6 @@ def test_http_chat_issue_stream_pay_decree_keeps_month_unadvanced(
         decree_mod, "simulate_season_with_payload",
         lambda *a, **k: (decision_report, k.get("simulator_payload") or {}),
     )
-    monkeypatch.setattr(cb, "classify_cli_action_intent", fake_classify)
     monkeypatch.setattr(cb, "extract_confirmation_intent", fake_confirm)
 
     game = web_app.WebGame(fresh=False)
@@ -1789,9 +1781,7 @@ def test_http_chat_issue_stream_pay_decree_keeps_month_unadvanced(
             and getattr(ch, "power_id", "ming") == "ming"
             and game.db.get_character_status(getattr(ch, "name", key))[0] == "active"
         )
-        canned = _TwoRoundHubuAgent()
-        game.session.registry.get = lambda _ch, **_kw: canned
-        stub_scene_agent(monkeypatch, canned)
+        stub_scene_agent(monkeypatch, _TwoRoundHubuAgent())
         if getattr(game.session, "llm_config", None) is not None:
             try:
                 game.session.llm_config.channel = "cli"
