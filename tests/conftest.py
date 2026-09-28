@@ -404,13 +404,6 @@ def attach_chat_turn_to_night(
     if night is None or str(night.get("status") or "") != NIGHT_STATUS_OPEN:
         night = ensure_open_night_for_audience(db, state)
     night_id = int(night["id"])
-    name = str(minister_name or "").strip()
-    if name and name != SCENE_CHAT_SPEAKER:
-        from ming_sim.audience_night import METHOD_XUANRU
-        ensure_summon_enter(
-            db, night_id, name,
-            method=summon_method or METHOD_XUANRU,
-        )
     ctid = db.create_chat_turn(
         state,
         minister_name,
@@ -420,6 +413,15 @@ def attach_chat_turn_to_night(
         status="generating",
         route=route,
     )
+    name = str(minister_name or "").strip()
+    if name and name != SCENE_CHAT_SPEAKER:
+        from ming_sim.audience_night import METHOD_XUANRU
+        # 与生产「宣 X」同：入殿账绑本轮 origin，供撤回联动
+        ensure_summon_enter(
+            db, night_id, name,
+            method=summon_method or METHOD_XUANRU,
+            origin_chat_turn_id=int(ctid),
+        )
     return night_id, int(ctid)
 
 
