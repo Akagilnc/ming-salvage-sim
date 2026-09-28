@@ -384,6 +384,8 @@ def test_scene_grant_stages_then_close_night(game):
     treasury_before = int(state.metrics["国库"])
     pending_id = _scene_grant(db, state, actor)
     assert pending_id
+    staged = next(p for p in db.list_pending_actions(state.turn) if int(p["id"]) == pending_id)
+    assert json.loads(staged["payload_json"])["locality_scope"] == "single"
     assert int(state.metrics["国库"]) == treasury_before
     dossier = _close_night_dossier(db, state, content, pending_id)
     assert dossier["action_type"] == "grant_allocation"

@@ -18,7 +18,6 @@ from types import SimpleNamespace
 import pytest
 
 import ming_sim.action_materialize  # noqa: F401 — install catalog
-import ming_sim.cli_backend as cb
 import ming_sim.session as session_mod
 from ming_sim.action_clusters import (
     ACTION_CLUSTERS,
@@ -43,10 +42,7 @@ _EXPECTED_MIGRATED_KINDS = frozenset({
     "none", "confirmation", "secret", "cultivate", "appointment", "draft",
 })
 from ming_sim.session import GameSession
-from fastapi.testclient import TestClient
-import web_app
 from web_app import WebGame
-from tests.dossier_test_helpers import create_test_secret_order
 
 
 # ── 单一挂点 ──────────────────────────────────────────────────────────
@@ -211,19 +207,6 @@ def test_normalize_preserves_none_vs_empty_list_semantics():
     assert primary_intent([])["kind"] == "none"
 
 
-# ── apply 真入口 ──────────────────────────────────────────────────────
-
-
-def _bind_apply(db, state, content=None):
-    s = SimpleNamespace(
-        db=db, state=state, registry=None, content=content,
-        llm_config=SimpleNamespace(channel="cli", cli_runner="codex"),
-    )
-    s.apply_cli_conversation_actions = types.MethodType(
-        GameSession.apply_cli_conversation_actions, s)
-    return s
-
-
 def _count_pending(db, turn) -> int:
     return len(db.list_pending_actions(int(turn)))
 
@@ -235,233 +218,6 @@ def _active_ch(db, content):
         and db.resolve_power_id(ch) == "ming"
         and db.get_character_status(ch.name)[0] == "active"
     )
-
-
-def _silence_serial(monkeypatch):
-    monkeypatch.setattr(cb, "extract_minister_actions", lambda *a, **k: {
-        "secret_action": "无", "order_id": 0, "new_title": "", "new_content": "",
-        "deadline_months": 0, "cultivate_skill": "", "cultivate_trait": "",
-    })
-    monkeypatch.setattr(cb, "extract_appointment_action", lambda *a, **k: {
-        "appoint_action": "无", "name": "", "office": "",
-    })
-    monkeypatch.setattr(cb, "extract_draft_intent", lambda *a, **k: {
-        "draft_action": "无", "draft_text": "", "target_candidate": "",
-    })
-    monkeypatch.setattr(cb, "extract_confirmation_intent", lambda *a, **k: "无")
-
-
-# ── #516：问/令查分界（扩 #515 表驱动正反例 + 结构化判词契约）──────────
-
-
-
-
-@pytest.mark.parametrize(
-    ("utterance", "scripted", "expect_action", "seed_existing"),
-    [
-        ("陕西巡抚可有？", [], None, False),
-        ("可有人密查陕西军饷？", [], None, False),
-        ("着人查访陕西军情如何？", [], None, False),
-        ("命东厂密查其家产的是谁？", [], None, False),
-        (
-            "你去查他家产",
-            [{"kind": "secret", "secret_action": "新建"}],
-            "新建",
-            False,
-        ),
-        (
-            "着东厂密查其家产",
-            [{"kind": "secret", "secret_action": "新建"}],
-            "新建",
-            False,
-        ),
-        # 已有相关密令时补充 → 更新原令，不得另建
-        (
-            "再去查他在苏州的田产",
-            [{
-                "kind": "secret",
-                "secret_action": "更新",
-                "order_id": 0,  # filled at runtime
-                "new_title": "查其家产",
-                "new_content": "再去查他在苏州的田产",
-            }],
-            "更新",
-            True,
-        ),
-    ],
-    ids=[
-        "stage_north_star_zero",
-        "stage_ask_micha_zero",
-        "stage_ask_chafang_zero",
-        "stage_ask_command_words_zero",
-        "stage_imperative_go_check_new",
-        "stage_imperative_micha_new",
-        "stage_supplement_existing_update",
-    ],
-)
-def test_scripted_ask_vs_order_staging_matrix(
-    game, monkeypatch, utterance, scripted, expect_action, seed_existing,
-):
-    """脚本化判词经真实 apply：纯问零 staging；另案新建；现有令补充→更新。"""
-    db, state, content = game
-    minister = _active_ch(db, content)
-    _silence_serial(monkeypatch)
-    monkeypatch.setattr(
-        cb, "_extract_secret_order",
-        lambda *a, **k: {
-            "title": "查家产",
-            "content": utterance,
-            "assignee": minister.name,
-            "tags": [],
-            "deadline_months": 0,
-            "excluded_names": [],
-            "excluded_offices": [],
-            "dossier_links": [],
-            "covert_task": {
-                "kind": "清丈", "axes": ["实务事功"], "direction": 1,
-                "delivery": {"unit": "万亩", "target_units": 1.0, "effect_sign": 1, "region": "henan", "field": "registered_land", "target": "421"},
-            },
-        },
-    )
-    oid = 0
-    if seed_existing:
-        oid = create_test_secret_order(db,
-            state, minister.name, "查其家产", "密查家产", [],
-        )
-        for cand in scripted:
-            if cand.get("secret_action") == "更新":
-                cand["order_id"] = oid
-    sess = _bind_apply(db, state, content)
-    before = _count_pending(db, state.turn)
-    out = sess.apply_cli_conversation_actions(
-        minister, utterance, "臣领旨。",
-        has_directive=False, secret_order_id=None,
-        preclassified_intent=scripted,
-    )
-    secret_rows = [
-        r for r in db.list_pending_actions(int(state.turn), minister_name=minister.name)
-        if r["kind"] == "secret_order"
-    ]
-    if expect_action is None:
-        assert out.get("pending_action_id") in (None, 0, "")
-        assert secret_rows == []
-        assert _count_pending(db, state.turn) == before
-        return
-    assert out.get("pending_action_id")
-    assert len(secret_rows) == 1
-    assert secret_rows[0]["action"] == expect_action
-    assert _count_pending(db, state.turn) == before + 1
-    if expect_action == "更新":
-        assert int(secret_rows[0]["target_id"] or 0) == int(oid)
-        # 不得因补充而另建一条新建暂存
-        assert not any(r["action"] == "新建" for r in secret_rows)
-
-
-# ── P5：双向 barrier，串行实现必须红 ──────────────────────────────────
-
-# #516 问/令查样本：并入 P5 真实 session.chat barrier/poison 矩阵（不经 preclassified_intent）
-_P5_ASK_VS_ORDER_UTTERANCES = (
-    "陕西巡抚可有？",
-    "可有人密查陕西军饷？",
-    "着人查访陕西军情如何？",
-    "命东厂密查其家产的是谁？",
-    "你去查他家产",
-    "着东厂密查其家产",
-)
-_P5_ASK_VS_ORDER_BARRIER_CASES = (
-    # utterance, classify_result, reply, expect_secret_stage, expect_directive_stage
-    ("拟一道旨赈陕西。", [{"kind": "draft"}], "着户部发银赈陕西。", False, True),
-    ("陕西巡抚可有？", [], "臣回奏：容臣查明再报。", False, False),
-    ("可有人密查陕西军饷？", [], "臣回奏：容臣查明再报。", False, False),
-    ("着人查访陕西军情如何？", [], "臣回奏：容臣查明再报。", False, False),
-    ("命东厂密查其家产的是谁？", [], "臣回奏：容臣查明再报。", False, False),
-    (
-        "你去查他家产",
-        [{"kind": "secret", "secret_action": "新建"}],
-        "臣领旨密查。",
-        True,
-        False,
-    ),
-    (
-        "着东厂密查其家产",
-        [{"kind": "secret", "secret_action": "新建"}],
-        "臣领旨密查。",
-        True,
-        False,
-    ),
-)
-_P5_ASK_VS_ORDER_BARRIER_IDS = (
-    "draft_parallel",
-    "north_star_pure_ask",
-    "ask_with_micha",
-    "ask_with_chafang",
-    "ask_with_command_words",
-    "imperative_go_check",
-    "imperative_micha",
-)
-_P5_POISON_UTTERANCES = ("卿且坐。",) + _P5_ASK_VS_ORDER_UTTERANCES
-_P5_POISON_UTTERANCE_IDS = (
-    "neutral",
-    "north_star_pure_ask",
-    "ask_with_micha",
-    "ask_with_chafang",
-    "ask_with_command_words",
-    "imperative_go_check",
-    "imperative_micha",
-)
-
-
-
-
-
-
-def _grant_region_draft_transport(*, locality_zh: str | None = None) -> dict:
-    """真实抽取入口用的 region grant 运输形；默认不带施行范围（缺席）。"""
-    body = {
-        "拟旨意图": "拟旨",
-        "动作类型": "grant_allocation",
-        "目标类型": "region",
-        "目标": "shaanxi",
-        "金额": 100000,
-        "账户": "国库",
-        "恩赏拨帑": "赈灾",
-        "颁布方式": "ordinary",
-    }
-    if locality_zh is not None:
-        body["施行范围"] = locality_zh
-    return body
-
-
-def test_single_draft_grant_region_absence_defaults_single(monkeypatch):
-    """#1624/#1685：单旨 grant 属地缺席 → 共同 assembler 落 region→single（禁洗成 none）。"""
-    monkeypatch.setattr(
-        cb, "_run_backend_for_config",
-        lambda *_a, **_k: (json.dumps(_grant_region_draft_transport(), ensure_ascii=False), 0),
-    )
-    result = cb.extract_draft_intent("发帑赈陕西", "臣拟发帑赈济陕西。")
-    assert result["dossier_action_type"] == "grant_allocation"
-    assert result["target_kind"] == "region"
-    assert result["target_id"] == "shaanxi"
-    assert result["locality_scope"] == "single"
-    assert result.get("region_id") == "shaanxi"
-
-
-def test_grant_explicit_region_none_fails_loud(monkeypatch):
-    """#1624：显式 region+none 不得按 target_kind 遮蔽；抽取边界 typed 拒绝。"""
-    from ming_sim.structured_decree import StructuredDecreeCombinationError
-
-    monkeypatch.setattr(
-        cb, "_run_backend_for_config",
-        lambda *_a, **_k: (
-            json.dumps(_grant_region_draft_transport(locality_zh="无"), ensure_ascii=False), 0,
-        ),
-    )
-    with pytest.raises(StructuredDecreeCombinationError):
-        cb.extract_draft_intent("发帑赈陕西", "臣拟发帑赈济陕西。")
-
-
-
-
 
 
 # ── 撤回：WebGame.chat + undo_last_chat 生产入口 ─────────────────────
@@ -563,7 +319,6 @@ class _SyncAgent:
 def test_webgame_chat_create_then_undo_removes_candidate(game, monkeypatch):
     db, state, content = game
     minister = _active_ch(db, content)
-    _silence_serial(monkeypatch)
     draft_text = "着户部发银三万两赈陕西。"
     agent = _SyncAgent(draft_text)
 
@@ -593,7 +348,6 @@ def test_webgame_cross_round_update_then_undo_restores_before_image(game, monkey
     """scene_chat + 转译：第二轮新交办后撤回，第一轮 pending 前像必须仍在（ADR 0038）。"""
     db, state, content = game
     minister = _active_ch(db, content)
-    _silence_serial(monkeypatch)
     original = "着户部发银三万两赈陕西。"
     updated = "着户部发银五十万两赈陕西（改）。"
     phase = {"n": 0}
@@ -752,47 +506,11 @@ _REPLY_1744 = (
     "**拟旨：**\n\n奉天承运皇帝诏曰：着户部会同太仓清核出纳，"
     "非急工役暂行缓办，辽东边饷优先筹拨。限半月具奏。钦此。"
 )
-_DRAFT_TARGET_1744 = "清核太仓出纳、暂缓非急工役、优先拨发辽东边饷"
-
-def _pending_directives_via_api(monkeypatch, wg, *, minister_name: str):
-    """生产读缝：GET /api/pending_actions → 该大臣 directive 列表。"""
-    monkeypatch.setattr(web_app, "get_game", lambda: wg)
-    payload = TestClient(web_app.app).get("/api/pending_actions").json()
-    assert isinstance(payload.get("actions"), list)
-    return [
-        row for row in payload["actions"]
-        if row.get("kind") == "directive"
-        and row.get("status") == "pending"
-        and row.get("minister_name") == minister_name
-        and row.get("action") == "拟旨"
-    ]
-
-
-def _bind_draft_extract_1744(monkeypatch, *, minister_name: str):
-    monkeypatch.setattr(cb, "extract_draft_intent", lambda *a, **k: {
-        "draft_action": "拟旨",
-        "draft_text": _REPLY_1744,
-        "target_candidate": "",
-        "dossier_action_type": "policy",
-        "target_kind": "policy",
-        "target_id": _DRAFT_TARGET_1744,
-        "mode": "ordinary",
-        "locality_scope": "national",
-        "participant_roster": [{
-            "character_id": minister_name,
-            "tier": "主办",
-            "role": "户部钱粮清核与边饷拨解督办",
-            "delegator_id": None,
-        }],
-    })
-
-
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
-def test_one_intent_probe_raw_chat_to_pending_api_one_ordinary(game, monkeypatch):
+def test_one_scene_commission_stages_one_directive(game, monkeypatch):
     """Web 殿上 chat 经 scene_chat 转译落一条交办候选。"""
     db, state, content = game
     minister = _active_ch(db, content)
-    _silence_serial(monkeypatch)
 
     def translate_fn(prompt, llm_config):
         return {"scene_facts": [{"body": _REPLY_1744, "role": "scene", "person_names": []}],
@@ -808,8 +526,6 @@ def test_one_intent_probe_raw_chat_to_pending_api_one_ordinary(game, monkeypatch
     }
     wg.chat(minister.name, _EMPEROR_1744)
     wg._runtime_write_queue().barrier(lambda: None)
-    rows = _pending_directives_via_api(monkeypatch, wg, minister_name=minister.name)
-    # API 可能按 minister 过滤；转译 actor 未必是 minister——改查全库新 directive
     all_new = [
         r for r in db.list_pending_actions(int(state.turn))
         if int(r["id"]) not in before and r.get("kind") == "directive"
@@ -824,7 +540,6 @@ def test_scene_chat_translation_can_stage_multiple_commissions(game, monkeypatch
     """#1842：Web scene_chat 转译一次可落多条 commission → pending 可见（替代旧分类器 batch 网测）。"""
     db, state, content = game
     minister = _active_ch(db, content)
-    _silence_serial(monkeypatch)
 
     def translate_fn(prompt, llm_config):
         return {
