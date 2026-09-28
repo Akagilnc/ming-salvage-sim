@@ -72,34 +72,8 @@ def _chat_turn_count(db):
     return int(db.conn.execute("SELECT COUNT(*) AS n FROM chat_turns").fetchone()["n"])
 
 
-def _run_offsite_chat(runtime, minister_name, message, *, stream):
-    """#1849 reopen：殿上唯一入口；stream 参数保留但两路都 drain chat_stream。"""
-    _ = (minister_name, stream)
-    events = list(runtime.chat_stream("殿上", message))
-    types = [ev.get("type") for ev in events]
-    assert "error" not in types, events
-    done = next(ev for ev in events if ev.get("type") == "done")
-    return done.get("payload") or {}
 
 
-def _web_hall_runtime(db, state, content, *, session_chat):
-    """#670：常规 Web.chat（gate_already_held=False）殿上入口壳；挂真 admission。
-
-    #1566：同壳挂场外 scene 物化，经 beat generator seam 注入测试替身。
-    WebGame 类方法经 __new__ 实例可直接解析，不再手绑类方法。
-    """
-    from tests.test_qa_c3_secret_order_path_1357_1376 import (
-        webgame_shell_for_secret_order,
-    )
-
-    runtime = webgame_shell_for_secret_order(
-        db, state, content, session_chat=session_chat,
-    )
-    s = runtime.session
-    s.admit_audience = MethodType(GameSession.admit_audience, s)
-    s.consume_audience_admission = MethodType(GameSession.consume_audience_admission, s)
-    s._beat_generator = lambda _inputs: "generated offsite summon scene"
-    return runtime
 
 
 def test_audience_admission_distinguishes_capital_fresh_and_existing_transit(game):
@@ -1052,61 +1026,10 @@ def _assert_secret_order_pending(
     assert isinstance(payload.get("covert_task"), dict)
 
 
-def _secret_order_runtime(db, state, content, *, stream: bool):
-    """hall 壳 + 密令 agent 一次装配（chat/stream 共用）。"""
-    import web_app
-    runtime = _web_hall_runtime(
-        db, state, content,
-        session_chat=lambda *_a, **_k: ChatTurnResult(answer="不应到达。"),
-    )
-    _install_secret_order_agent(runtime, stream=stream)
-    runtime._start_chat_turn = web_app.WebGame._start_chat_turn.__get__(runtime)
-    runtime._minister_agno_session_id = (
-        web_app.WebGame._minister_agno_session_id.__get__(runtime)
-    )
-    return runtime
 
 
-def _formal_secret_order_payload(runtime, minister_name, message, *, stream):
-    """#1849 reopen：密令前缀随殿上 stream 进转译；不再走 WebGame.chat。"""
-    _ = (minister_name, stream)
-    events = list(runtime.chat_stream("殿上", message))
-    types = [ev.get("type") for ev in events]
-    assert "error" not in types, f"stream secret order errored: {events!r}"
-    done_events = [ev for ev in events if ev.get("type") == "done"]
-    assert done_events, f"expected done, got types={types!r}"
-    return done_events[0].get("payload") or {}
 
 
-def _http_typed_secret_order_payload(client, minister_name, message, *, stream):
-    """#1566：经真实 FastAPI POST 读出机面 payload（sync JSON / stream SSE done）。"""
-    body = {"message": message, "intent": "secret_order"}
-    path = (
-        "/api/audience/chat/stream"
-        if stream
-        else "/api/audience/chat"
-    )
-    response = client.post(path, json=body)
-    assert response.status_code == 200, response.text
-    if not stream:
-        return response.json()
-    events: list[tuple[str, dict]] = []
-    for block in response.text.strip().split("\n\n"):
-        if not block.strip():
-            continue
-        ev_name = ""
-        data_raw = ""
-        for line in block.splitlines():
-            if line.startswith("event: "):
-                ev_name = line[7:].strip()
-            elif line.startswith("data: "):
-                data_raw += line[6:]
-        if ev_name and data_raw:
-            events.append((ev_name, json.loads(data_raw)))
-    assert not any(name == "error" for name, _ in events), f"stream errored: {events!r}"
-    done = [data for name, data in events if name == "done"]
-    assert done, f"expected done SSE, got {events!r}"
-    return done[0]
 
 
 

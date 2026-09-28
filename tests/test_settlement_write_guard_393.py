@@ -92,11 +92,6 @@ class _FakeGame:
             self.db.writes.append("chat")
         return {}
 
-    def _chat_with_write_gate_held(self, minister_name, message):
-        """Fake 侧真实缝：调用方已持闸时直接记写，不重入 _serialized_web_write。"""
-        self.db.writes.append("chat")
-        return {"answer": "臣领旨。", "minister": minister_name, "message": message}
-
     def character_power_id(self, character):
         return "ming"
 

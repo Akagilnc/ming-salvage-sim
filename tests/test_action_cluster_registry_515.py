@@ -2,7 +2,7 @@
 
 Seams:
 - ACTION_CLUSTERS 唯一登记（含 materialize_fn / FieldSpec）
-- run_materialize_pipeline / session.chat / WebGame.chat+undo_last_chat
+- run_materialize_pipeline / session.chat / WebGame.undo_last_chat
 
 不断言 LLM 语义；不另造 undo；不手抄 snapshot 生命周期。
 """
@@ -898,7 +898,7 @@ def test_real_chat_poisoned_classifier_zero_writes(
     assert _count_pending(db, state.turn) == before
 
 
-# ── 撤回：WebGame.chat + undo_last_chat 生产入口 ─────────────────────
+# ── 撤回：WebGame.undo_last_chat 生产入口 ─────────────────────
 
 
 def _wire_web_game(db, state, content, agent, monkeypatch, *, translate_fn=None) -> WebGame:
@@ -924,7 +924,7 @@ def _wire_web_game(db, state, content, agent, monkeypatch, *, translate_fn=None)
     sess._scene_registry = _OfflineSceneRegistry()
     sess._retrieve_memories_for_message = lambda message: message
     stub_audience_translate(monkeypatch, translate_fn)
-    # bind production methods used by WebGame.chat / undo_last_chat / scene_chat
+    # bind production methods used by undo_last_chat / scene_chat
     for name in (
         "chat", "scene_chat", "_apply_scene_turn_translation",
         "start_chat_turn_scene", "join_chat_turn_scene",
@@ -1201,7 +1201,7 @@ def test_undo_restored_approved_decree_restarts_forecast_for_new_version(game, m
 # ── #1744：分类粒度 / draft 共存边界 → chat → HTTP 可见 ──
 # 独有契约（本区）：
 # - one_intent_probe_raw_chat_to_pending_api：冻结 probe-shaped raw 经 classify 入口归一
-#   + WebGame.chat + GET /api/pending_actions 恰一 ordinary（运输契约，非 live LLM）
+#   + 殿上 chat_stream + GET /api/pending_actions 恰一 ordinary（运输契约，非 live LLM）
 # - draft_plus_independent_titleless_assignment：空 title ≠ 意图身份（删门反向）
 # - draft_plus_digit_target_candidate_updates：batch 含 draft 时 digit 续办仍原地更新，
 #   且 draft/assignment 两种候选顺序均成立（相对 520 beat8 的独有：draft 共存边界）

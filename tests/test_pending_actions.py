@@ -317,18 +317,6 @@ def test_silent_new_secret_order_lands_at_checkpoint_without_pending_visibility(
     assert db.list_secret_orders(status="pending") == []
 
 
-def _secret_order_endpoint_runtime(db, state, content, *, session_chat, monkeypatch):
-    """#1357：密令端点真缝壳——走 WebGame 生产 _chat_with_write_gate_held，
-    只在 session.chat 边界注入 canned（禁 mock 死符号掩 AttributeError）。"""
-    from tests.test_qa_c3_secret_order_path_1357_1376 import (
-        webgame_shell_for_secret_order,
-    )
-    runtime = webgame_shell_for_secret_order(
-        db, state, content, session_chat=session_chat,
-    )
-    monkeypatch.setattr(web_app, "web_game", runtime)
-    monkeypatch.setattr(web_app, "get_game", lambda: runtime)
-    return runtime
 
 
 

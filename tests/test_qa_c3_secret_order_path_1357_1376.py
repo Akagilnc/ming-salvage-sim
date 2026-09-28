@@ -1,10 +1,8 @@
-"""QA 包丙「密令路」：#1357 死链 + #1376 投影洞。
+"""QA 包丙「密令路」：#1376 投影洞（#1849 reopen 后入口只剩殿上）。
 
 接缝：
-1. POST /api/audience/chat（密令前缀）→ 殿上入口
-   （不得 mock 生产缺失符号 _chat_with_write_gate_held；测须能抓 AttributeError）
-2. state_payload.pending_secret_order_count / session.pending_count
-   须如实反映 staged secret_order 候选（确认闸门不动，只修可见性）
+- state_payload.pending_secret_order_count / session.pending_count
+  须如实反映 staged secret_order 候选（确认闸门不动，只修可见性）
 """
 
 from __future__ import annotations
@@ -33,75 +31,9 @@ def _active_minister_name(db, content) -> str:
     raise AssertionError("找不到 active 的大明大臣")
 
 
-def webgame_shell_for_secret_order(db, state, content, *, session_chat):
-    """轻壳 WebGame：走真实类方法（含 _chat_with_write_gate_held / chat），
-    只在 session.chat LLM 边界注入 canned 回奏。
-
-    db/state/content 是 WebGame @property → session.*，不得直接 setattr。
-    供本文件与 pending_actions / court_visibility 等密令端点真缝测试复用——
-    禁 mock 生产缺失符号（掩 AttributeError）。
-    """
-    runtime = object.__new__(web_app.WebGame)
-    runtime._write_gate = threading.Lock()
-    from ming_sim.session_write_queue import SessionWriteQueue
-    runtime._write_queue = SessionWriteQueue()
-    runtime._write_gate = runtime._write_queue.write_gate
-    runtime.chat_history = {name: [] for name in content.characters}
-    def _scene_chat_compat(message, *, chat_turn_id=0, stream_emit=None, minister_name=""):
-        """生产 scene_chat 签名 → 本壳既有 stub chat(minister, message)；禁 TypeError 探测。"""
-        del stream_emit
-        return session_chat(
-            minister_name, message, chat_turn_id=chat_turn_id,
-        )
-
-    runtime.session = SimpleNamespace(
-        db=db,
-        state=state,
-        content=content,
-        temporary_characters=set(),
-        registry=SimpleNamespace(),
-        chat=session_chat,
-        # #1842/#1812：生产殿上入口改走 scene_chat；壳须同挂并兼容旧 stub 签名。
-        scene_chat=_scene_chat_compat,
-        join_chat_turn_scene=lambda *_a, **_k: [],
-        persist_chat_turn_scene=lambda *_a, **_k: None,
-        abandon_chat_turn_scene=lambda *_a, **_k: None,
-        close_night_after_chat_if_needed=lambda *_a, **_k: None,
-        await_translations_before_month=lambda after_drain=None: after_drain() if after_drain else None,
-        # #1842：WebGame persist 尾必调；轻壳无 pending 时 no-op。
-        schedule_pending_scene_translation=lambda result: None,
-        _character=lambda name: content.characters[name],
-        pending_count=lambda: 0,
-    )
-    # #1402：web _require_active_minister 改调 session.can_summon——壳须挂真方法
-    runtime.session.can_summon = MethodType(GameSession.can_summon, runtime.session)
-    # Bind real WebGame helpers used by chat body.
-    runtime._runtime_write_gate = web_app.WebGame._runtime_write_gate.__get__(runtime)
-    runtime._reject_if_settlement_phase = web_app.WebGame._reject_if_settlement_phase.__get__(runtime)
-    runtime._persistent_chat_minister = web_app.WebGame._persistent_chat_minister.__get__(runtime)
-    runtime._audience_turn_in_flight = lambda _name: False
-    runtime._start_chat_turn = lambda _name, **_k: (0, {})
-    runtime._record_chat_rollback_items = lambda *_a, **_k: None
-    runtime._chat_payload = web_app.WebGame._chat_payload.__get__(runtime)
-    runtime.chat_projection = lambda _name: list(runtime.chat_history.get(_name, []))
-    runtime.directive_rows = lambda: []
-    runtime.directive_payload = lambda row: row
-    runtime.suggestions_for = lambda _ch: []
-    runtime.can_undo_last_chat = lambda _name: False
-    # 转译尾随不进本密令路测范围；高亮判官写库缝必须真走（禁 no-op stub 掩死锁）。
-    runtime._spawn_pending_write_thread = lambda *_a, **_k: None
-    runtime.character_power_id = lambda c: web_app._character_power_id(c, db)
-    # Production methods under test — NOT mocked.
-    runtime.chat_stream = web_app.WebGame.chat_stream.__get__(runtime)
-    runtime._scene_chat_stream_payload = web_app.WebGame._scene_chat_stream_payload.__get__(runtime)
-    runtime._chat_with_write_gate_held = (
-        web_app.WebGame._chat_with_write_gate_held.__get__(runtime)
-    )
-    return runtime
 
 
 # 兼容旧名
-_webgame_shell = webgame_shell_for_secret_order
 
 
 # ── #1357 死链 ──────────────────────────────────────────────────────────────
