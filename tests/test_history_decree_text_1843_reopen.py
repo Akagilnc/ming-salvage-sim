@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 
-def test_history_turn_reads_decree_text_from_resolve_context(game):
+def test_history_turn_reads_decree_text_from_resolve_context(game, monkeypatch):
     db, state, content = game
     turn = int(state.turn)
     db.save_resolve_context(
@@ -20,5 +20,12 @@ def test_history_turn_reads_decree_text_from_resolve_context(game):
     ).fetchone()
     assert row is None
 
-    ctx = db.get_resolve_context(turn) or {}
-    assert str(ctx.get("decree_text") or "") == "着宁远补饷三十万两"
+    from fastapi.testclient import TestClient
+    import web_app
+
+    monkeypatch.setattr(web_app, "get_game", lambda: type("Game", (), {"db": db})())
+    response = TestClient(web_app.app).get(f"/api/history/turn/{turn}")
+    assert response.status_code == 200
+    history = response.json()
+    assert history["exists"] is True
+    assert history["decree_text"] == "着宁远补饷三十万两"
