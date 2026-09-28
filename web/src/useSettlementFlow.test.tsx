@@ -719,6 +719,7 @@ describe("#1852 写成即推进：本面邸报阅读态，不整页 reload", () 
     const loadState = vi
       .fn<() => Promise<GameState | null>>()
       .mockRejectedValueOnce(new Error(FAIL_MSG))
+      .mockRejectedValueOnce(new Error(FAIL_MSG))
       .mockResolvedValueOnce(advancedMonthState);
     vi.stubGlobal("fetch", vi.fn(async (url: string) => {
       if (url !== "/api/decree/issue/stream") throw new Error(`unexpected fetch: ${url}`);
@@ -735,10 +736,14 @@ describe("#1852 写成即推进：本面邸报阅读态，不整页 reload", () 
     expect(host.querySelector('[data-testid="error"]')?.textContent).toBe(FAIL_MSG);
     expect(host.querySelector('[data-testid="busy"]')?.textContent).toBe("");
     await act(async () => { await hookRef.current!.dismissSettlementGazette(); });
-    expect(loadState).toHaveBeenCalledTimes(2);
-    expect(hookRef.current!.suppressPostAdvanceOverlays).toBe(false);
-    await act(async () => hookRef.current!.clearSettlementHudError());
+    expect(loadState).toHaveBeenCalledTimes(1);
     expect(hookRef.current!.settlementGazetteReading).toBeNull();
+    expect(hookRef.current!.advanceRefreshFailed).toBe(true);
+    await act(async () => { await hookRef.current!.retryAdvanceRefresh(); });
+    expect(hookRef.current!.advanceRefreshFailed).toBe(true);
+    await act(async () => { await hookRef.current!.retryAdvanceRefresh(); });
+    expect(loadState).toHaveBeenCalledTimes(3);
+    expect(hookRef.current!.suppressPostAdvanceOverlays).toBe(false);
     cleanup();
   });
 });

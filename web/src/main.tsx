@@ -207,6 +207,8 @@ export function App() {
   // hook 必须在 menu/loading 早退之前调用。
   const {
     settlementGazetteReading,
+    advanceRefreshFailed,
+    retryAdvanceRefresh,
     dismissSettlementGazette,
     suppressPostAdvanceOverlays,
     pendingDecisions,
@@ -610,6 +612,15 @@ export function App() {
       })
       .catch((error) => setError(error instanceof Error ? error.message : String(error)));
   };
+
+  if (advanceRefreshFailed && !settlementGazetteReading) {
+    return (
+      <main className="game-shell">
+        <div role="alert">新月盘面尚未载入。{error}</div>
+        <button onClick={() => void retryAdvanceRefresh()}>重试载入新月盘面</button>
+      </main>
+    );
+  }
 
   return (
     <main className="game-shell" data-settlement-display={settlementDisplay ? "1" : "0"}>

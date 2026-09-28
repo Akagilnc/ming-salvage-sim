@@ -156,22 +156,23 @@ export function useSettlementFlow({
     sessionGeneration.current += 1;
   }, []);
 
-  const dismissSettlementGazette = React.useCallback(async () => {
+  const retryAdvanceRefresh = React.useCallback(async () => {
     const generation = sessionGeneration.current;
-    if (advanceRefreshFailed) {
-      try {
-        const fresh = await loadState();
-        if (!fresh || generation !== sessionGeneration.current) return;
+    try {
+      const fresh = await loadState();
+      if (fresh && generation === sessionGeneration.current) {
         setAdvanceRefreshFailed(false);
-      } catch (err) {
-        if (generation === sessionGeneration.current) setError(err instanceof Error ? err.message : String(err));
-        return; // Keep the report readable until the new month's state can be loaded.
+        setPostAdvanceOverlayHold(false);
       }
+    } catch (err) {
+      if (generation === sessionGeneration.current) setError(err instanceof Error ? err.message : String(err));
     }
-    if (generation !== sessionGeneration.current) return;
+  }, [loadState, setError]);
+
+  const dismissSettlementGazette = React.useCallback(() => {
     setSettlementGazetteReading(null);
-    setPostAdvanceOverlayHold(false);
-  }, [advanceRefreshFailed, loadState, setError]);
+    if (!advanceRefreshFailed) setPostAdvanceOverlayHold(false);
+  }, [advanceRefreshFailed]);
 
   /** #1852：月份已推进 → 刷账本 + 本面开阅读态（不 reload）。 */
   const openGazetteAfterAdvance = async (payload: Record<string, unknown> | null | undefined) => {
@@ -466,6 +467,8 @@ export function useSettlementFlow({
 
   return {
     settlementGazetteReading,
+    advanceRefreshFailed,
+    retryAdvanceRefresh,
     dismissSettlementGazette,
     /** #1852：本面邸报阅读中或过月刚翻月尚未落阅读态时，挡住自动弹层。 */
     suppressPostAdvanceOverlays: Boolean(settlementGazetteReading) || postAdvanceOverlayHold,
