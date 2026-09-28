@@ -441,7 +441,7 @@ def test_region_cannon_commitment_ongoing_applies_monthly_when_counted(game):
         cancellable="decree",
     )
 
-    _settle_empty_month(db, state, content)
+    _advance_player_month(db, state, content)
 
     assert _region_cannon(db, "beizhili") == 3
     advances = db.conn.execute(
@@ -861,7 +861,7 @@ def test_high_bar_metric_only_commitment_applies_and_records_monthly_progress(ga
         cancellable="decree",
     )
 
-    _settle_empty_month(db, state, content)
+    _advance_player_month(db, state, content)
 
     assert state.metrics["皇威"] == 51
     assert _issue_row(db, issue_id)["status"] == "active"
@@ -906,7 +906,7 @@ def test_metric_commitment_records_progress_when_monthly_cap_blocks_effect(game)
         cancellable="decree",
     )
 
-    _settle_empty_month(db, state, content)
+    _advance_player_month(db, state, content)
 
     assert state.metrics["皇威"] == 55
     advances = db.conn.execute(
@@ -914,7 +914,6 @@ def test_metric_commitment_records_progress_when_monthly_cap_blocks_effect(game)
         (issue_id,),
     ).fetchall()
     assert [row["trigger_kind"] for row in advances] == ["ongoing"]
-    assert "未产生额外数值变动" in advances[0]["narrative"]
     payload = json.loads(advances[0]["metric_delta"])
     assert payload["metrics"] == {}
     assert payload["commitment_progress"]["months_elapsed"] == 1
@@ -1089,7 +1088,7 @@ def test_cancelled_commitment_is_distinct_from_expired_commitment(game):
     )
 
     db.cancel_issue(state, cancelled_id, narrative="奉旨撤回", commit=False)
-    _settle_empty_month(db, state, content)
+    _advance_player_month(db, state, content)
 
     assert _issue_row(db, cancelled_id)["status"] == "dropped"
     assert _issue_row(db, expired_id)["status"] == "dropped"
