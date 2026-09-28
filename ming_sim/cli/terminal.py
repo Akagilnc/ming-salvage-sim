@@ -458,7 +458,7 @@ def _cli_write_gate(session: GameSession):
 def minister_chat(session: GameSession, character: Character) -> str:
     """与一位大臣对话。返回 'dismiss' | 'court_break' | 'summon:<name>'。"""
     other = next((n for n in session.content.characters if n != character.name), character.name)
-    print(f"\n{character.name}入殿。可持续问话；done/退下 退下，“传{other}来”换人，quit 退朝审阅诏书，exit 退出游戏。")
+    print(f"\n当前选择：{character.name}。可持续问话；done/退下 退下，“传{other}来”换人，quit 退朝审阅诏书，exit 退出游戏。")
     print("提示：陛下示意采纳后（如“准奏”），大臣会拟旨呈陛下核定。\n")
     # #505：入殿时显眼提示回话中断恢复入口（与 web ChatModal 同语义）。
     # #1353：欠账抽取无玩家手动补写面——过月内部 drain 唯一处理路。
@@ -473,7 +473,6 @@ def minister_chat(session: GameSession, character: Character) -> str:
         if low_q in {"重试回话", "retry reply", "retry_reply"}:
             retry_action = _retry_interrupted_reply_cli(session, character.name)
             if retry_action == "court_break":
-                print(f"{character.name}退下。\n")
                 return "court_break"
             continue
         cmd = _handle_court_command(session, question, character)
@@ -481,7 +480,6 @@ def minister_chat(session: GameSession, character: Character) -> str:
             continue
         if cmd == "dismiss":
             _record_audience_exit(session, character.name)
-            print(f"{character.name}退下。\n")
             return "dismiss"
         if cmd == "court_break":
             # #526/#1842：高置信收夜口令 → 前台先返回；队列随后 FIFO 转译 join→封夜。
@@ -507,11 +505,10 @@ def minister_chat(session: GameSession, character: Character) -> str:
                     # #1353 fold-in r8：欠账耗尽/收夜失败留本回合，可重按退朝；CLI 不退出。
                     print(f"\n收夜未成：{err}\n")
                     continue
-            print(f"{character.name}退下。\n")
             return "court_break"
         if cmd and cmd.startswith("summon:"):
             target_name = cmd.split(":", 1)[1]
-            print(f"{character.name}退下。\n传{target_name}入殿。\n")
+
             return cmd
         # 非控制指令 → 与 agent 对话。CLI 也落 chat_messages，供 session.chat
         # 内部的密令短确认上下文读取（web 路已有同款持久化）。
@@ -629,11 +626,10 @@ def minister_chat(session: GameSession, character: Character) -> str:
             print(f"【腾缺去职】{result.displaced_minister}原任官缺由新任接掌，已罢黜出朝堂名册。\n")
         if result.court_action == "dismiss":
             # 告退账已由 session.chat（court_action=dismiss 单缝）落地，此处不重复写。
-            print(f"{character.name}退下。\n")
             return "dismiss"
         if result.court_action == "summon" and result.next_minister:
             is_temporary = result.next_minister in session.temporary_characters
-            print(f"{character.name}退下。\n{'临时传' if is_temporary else '传'}{result.next_minister}入殿。\n")
+
             return f"{'summon-temp' if is_temporary else 'summon'}:{result.next_minister}"
 
 
