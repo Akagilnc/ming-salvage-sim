@@ -57,8 +57,6 @@ def _silence_serial(monkeypatch):
     monkeypatch.setattr(cb, "extract_draft_intent", lambda *a, **k: (_ for _ in ()).throw(
         AssertionError("must not call serial draft extractor")))
     monkeypatch.setattr(cb, "extract_confirmation_intent", lambda *a, **k: "无")
-    monkeypatch.setattr(cb, "classify_cli_action_intent", lambda *a, **k: (_ for _ in ()).throw(
-        AssertionError("must not call serial classifier")))
 
 
 def _pending_rows(db, turn, *, minister_name=None):

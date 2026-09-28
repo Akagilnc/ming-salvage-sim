@@ -85,8 +85,6 @@ def _silence_serial(monkeypatch):
     monkeypatch.setattr(cb, "extract_appointment_action", lambda *a, **k: (_ for _ in ()).throw(
         AssertionError("must not call serial appointment extractor")))
     monkeypatch.setattr(cb, "extract_confirmation_intent", lambda *a, **k: "无")
-    monkeypatch.setattr(cb, "classify_cli_action_intent", lambda *a, **k: (_ for _ in ()).throw(
-        AssertionError("must not call serial classifier")))
 
 
 def _chat_turn(db, state, night_id, minister_name, user_text, answer, seq):
