@@ -105,7 +105,7 @@ def test_resolve_stream_uses_settlement_period_entry(game, monkeypatch):
     phase2_started = threading.Event()
     release_phase2 = threading.Event()
 
-    def _submit_hitl(choices, *, write_gate, on_event=None, cheat_directive=""):
+    def _submit_hitl(choices, *, write_gate, cheat_directive=""):
         # 生产协议：submit_hitl_choices；纯 decision 路径持 write_gate。
         runtime.actions.append("submit")
         with write_gate:
@@ -117,8 +117,6 @@ def test_resolve_stream_uses_settlement_period_entry(game, monkeypatch):
             db.conn.commit()
             phase2_started.set()
             release_phase2.wait()
-            if on_event:
-                on_event("stage", "数值推演结算")
             return "邸报：测。"
 
     runtime.session.submit_hitl_choices = _submit_hitl
@@ -220,11 +218,9 @@ def test_resolve_stream_clear_throw_emits_error_not_done(game, monkeypatch):
         "options": [{"label": "发", "hint": "发内帑"}],
     }])
 
-    def _submit_hitl(choices, *, write_gate, on_event=None, cheat_directive=""):
+    def _submit_hitl(choices, *, write_gate, cheat_directive=""):
         runtime.actions.append("submit")
         with write_gate:
-            if on_event:
-                on_event("stage", "数值推演结算")
             # 回 summoning 常态，使成功支 clear_orphan 真触发
             state.turn_phase = TurnPhase.SUMMONING.value
             db.save_state(state)

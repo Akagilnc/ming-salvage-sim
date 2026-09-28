@@ -146,13 +146,8 @@ def main() -> int:
     # ── 拟诏 + 推演结算（拟诏走 LLM；不传 decree=由 LLM 合并草案）──
     session.enter_review()
 
-    def on_event(kind, data):
-        if kind in ("simulator_chunk", "extractor_chunk"):
-            return
-        print(f"[evt] {kind}: {str(data)[:120]}")
-
     print("[resolve] 开始结算（拟诏 + simulator + extractor）...")
-    report = session.resolve_turn(on_event=on_event)
+    report = session.resolve_turn()
     print(f"[resolve] 完成。邸报 {len(report)} 字。")
     session.end_turn()
 

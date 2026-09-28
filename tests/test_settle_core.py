@@ -38,23 +38,6 @@ def test_settle_with_delta_applies_region_and_advances_turn(game):
     assert new_unrest == old_unrest + 5
 
 
-def test_settle_with_delta_emits_stage_callbacks(game):
-    """结算过程的阶段事件仍由公共回调发出。"""
-    db, state, content = game
-    calls: list = []
-
-    settle_with_delta(
-        state,
-        db,
-        {},
-        before_turn=state.turn,
-        content=content,
-        on_stage=lambda label: calls.append(("stage", label)),
-    )
-
-    assert any(isinstance(c, tuple) and c[0] == "stage" for c in calls)
-
-
 def test_settle_with_delta_persists_inertia_person_changes(game):
     db, state, content = game
     name = active_ming_character(db, content)

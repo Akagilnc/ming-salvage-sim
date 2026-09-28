@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { consumeSettleStream } from "./settleStream";
 
 function streamResponse(chunks: string[], ok = true): Response {
@@ -18,11 +18,7 @@ function streamResponse(chunks: string[], ok = true): Response {
   return { ok, status: ok ? 200 : 500, body } as unknown as Response;
 }
 
-const silent = {
-  onStage: vi.fn(),
-  onThinking: vi.fn(),
-  onNarrative: vi.fn(),
-};
+const silent = {};
 
 describe("consumeSettleStream residual flush", () => {
   it("parses a terminal done left in buffer without trailing blank line", async () => {
@@ -58,25 +54,7 @@ describe("consumeSettleStream residual flush", () => {
   });
 });
 
-describe("consumeSettleStream continue-style stages (#1195)", () => {
-  it("invokes onStage for each stage then returns done state", async () => {
-    const onStage = vi.fn();
-    const outcome = await consumeSettleStream(
-      streamResponse([
-        'event: stage\ndata: {"content":"检查模型后端..."}\n\n',
-        'event: stage\ndata: {"content":"载入上次进度..."}\n\n',
-        'event: done\ndata: {"state":{"turn":{"turn":2}}}\n\n',
-      ]),
-      { onStage, onThinking: vi.fn(), onNarrative: vi.fn() },
-      { httpErrorLabel: "继续失败" },
-    );
-    expect(onStage.mock.calls.map((c) => c[0])).toEqual([
-      { content: "检查模型后端...", current: undefined, total: undefined },
-      { content: "载入上次进度...", current: undefined, total: undefined },
-    ]);
-    expect(outcome).toEqual({ kind: "done", data: { state: { turn: { turn: 2 } } } });
-  });
-
+describe("consumeSettleStream HTTP errors", () => {
   it("uses custom httpErrorLabel on non-OK responses", async () => {
     await expect(
       consumeSettleStream(streamResponse([], false), silent, { httpErrorLabel: "继续失败" }),
@@ -96,7 +74,5 @@ describe("consumeSettleStream continue-style stages (#1195)", () => {
       consumeSettleStream(response, silent, { httpErrorLabel: "继续失败" }),
     ).rejects.toThrow("无上次进度可继续，请先新游戏或加载存档。");
   });
-});
 
-// #1725 3/6 & 7/7 typed progress happy-path owned by App entry wiring
-// (appDurableWiring). continue-style stages already cover missing current/total.
+});

@@ -493,14 +493,13 @@ def run_player_month_chain(
     *,
     decree_text: str = "",
     before_turn: int = 0,
-    on_event: Any = None,
     content: Any = None,
     registry: Any = None,
     source: Provenance = Provenance.system_simulation,
     cheat_directive: str = "",
 ) -> Any:
     """从现有过月入口继续。已落的旨不动，未落的按序接着落。"""
-    del on_event, before_turn
+    del before_turn
     from ming_sim.exceptions import LLMUnavailable, SettlementAbort
     from ming_sim.mechanical_tail import ensure_mechanical_tails
 

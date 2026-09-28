@@ -92,7 +92,6 @@ def test_player_month_entry_settles_prepushed_edicts_then_world_once(game, monke
     sources_before = {
         str(row[0]) for row in db.conn.execute("SELECT source_id FROM character_knowledge_sources")
     }
-    events = []
     world_calls = []
     translate_calls = []
 
@@ -126,9 +125,7 @@ def test_player_month_entry_settles_prepushed_edicts_then_world_once(game, monke
         queue.complete(ticket)
 
     threading.Thread(target=finish_prior).start()
-    result = session.resolve_turn(
-        allow_empty_decree=True, on_event=lambda kind, data: events.append((kind, data)),
-    )
+    result = session.resolve_turn(allow_empty_decree=True)
     assert joined.get("done") is True
 
     assert world_calls and world_calls[0]["edicts"][:2] == ["宁远补饷", "陕西赈灾"]
@@ -148,7 +145,6 @@ def test_player_month_entry_settles_prepushed_edicts_then_world_once(game, monke
     assert sources_before == {
         str(row[0]) for row in db.conn.execute("SELECT source_id FROM character_knowledge_sources")
     }
-    assert all("预推不可见" not in str(item) and "世界段只推演一次" not in str(item) for item in events)
 
     session.resolve_turn(allow_empty_decree=True)
     assert len(world_calls) == 1

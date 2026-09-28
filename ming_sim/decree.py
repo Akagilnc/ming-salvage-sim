@@ -97,39 +97,6 @@ from ming_sim.token_stats import tlog
 # 满 240 回合（即第 240 个回合结算完，1647.09）仍未分胜负则强制 timeout 收尾。
 TIMEOUT_TURN = 240
 
-# #1725：月末结算 SSE stage 唯一权威。emit 只经 settlement_stage_payload，
-# 携带独立于显示措辞的 typed 进度事实（current/total），前端不得文案反查。
-# #1845：章节记忆退役后，表内不再留无对应工作的「记起居注」。
-SETTLEMENT_STAGE_LABELS = (
-    "固定月度财政入账",
-    "回顾近来朝局",
-    "推演月末邸报",
-    "数值推演结算",
-    "落库与事项推进",
-)
-# #1740：结局回合在普通阶段之外另发一段，不并入上表。
-# emit 只经 settlement_ending_stage_payload；total = 普通阶段数 + 1。
-SETTLEMENT_ENDING_STAGE_LABEL = "国史编纂结局总评"
-
-
-def settlement_stage_payload(index: int) -> Dict[str, Any]:
-    """Ordinary wait-stage fact: display label + typed 1-based current/total."""
-    return {
-        "content": SETTLEMENT_STAGE_LABELS[index],
-        "current": index + 1,
-        "total": len(SETTLEMENT_STAGE_LABELS),
-    }
-
-
-def settlement_ending_stage_payload() -> Dict[str, Any]:
-    """Ending-round extra stage; total is the ordinary count plus one."""
-    total = len(SETTLEMENT_STAGE_LABELS) + 1
-    return {
-        "content": SETTLEMENT_ENDING_STAGE_LABEL,
-        "current": total,
-        "total": total,
-    }
-
 # 结算 payload 工具（注入文案常量 / 决策块解析 / 密令分组承载 / 已裁决策正文 / 玩家可见
 # 呈现脱敏）已抽到 ming_sim.settlement_payload（#91 coordinator 拆分第一刀，纯搬家、行为保持）。
 # 此处 re-import 保 `from ming_sim.decree import X` 公开表面 + decree 内部调用点不变。
@@ -1212,7 +1179,6 @@ def resolve_directives(
     decree_text: str,
     deaths_this_turn: Optional[List[Dict[str, str]]] = None,
     debuts_this_turn: Optional[List[Dict[str, str]]] = None,
-    on_event: Optional[Callable[[str, Any], None]] = None,
     content=None,
     registry=None,
     cheat_directive: str = "",
@@ -1226,19 +1192,11 @@ def resolve_directives(
     经 _provenance_from_stored 还原后传入，使 provenance 按构造保真（system_simulation 重跑仍
     记 system、对玩家静默），不依赖「非 ready SETTLING ctx 恒 player」这一脆弱不变式。
 
-    on_event(kind, data): 推演过程实时回调。
-    kind ∈ {stage, thinking, text}；stage 为 settlement_stage_payload 字典
-    （content + typed current/total），thinking/text 为增量字符串。
-
     cheat_directive: 作弊控制台（Ctrl+~）下的强制结算指令。非空时交给本月世界段，
     按字面当既成事实，不另开 extractor。
 
     返回 ResolveResult。advanced 为假时主链停在批红或邸报交接，回合不推进。
     """
-    def _emit(kind: str, data: Any) -> None:
-        if on_event:
-            on_event(kind, data)
-
     # #1274 / ADR 0157：无旨不再分流快路。有旨、无旨都走同一过月主链：
     # 前括号之后按旨序核算，再跑世界段。批红、邸报与推进是后续阶段的交接，
     # 不在本入口用 extractor 落账。
@@ -1255,7 +1213,6 @@ def resolve_directives(
         registry=registry,
         scene_registry=scene_registry,
         source=source,
-        on_stage=lambda payload: _emit("stage", payload),
     )
 
     from ming_sim.month_chain import run_player_month_chain
@@ -1263,7 +1220,6 @@ def resolve_directives(
         state, db, agno_db, llm_config,
         decree_text=decree_text,
         before_turn=before_turn,
-        on_event=on_event,
         content=content,
         registry=registry,
         source=source,
@@ -1550,7 +1506,6 @@ def prepare_resolve_front_half(
     registry=None,
     scene_registry=None,
     source: object = Provenance.player_decree,
-    on_stage: Optional[Callable[[Dict[str, Any]], None]] = None,
 ) -> List[Dict[str, object]]:
     """共享前半段 seam（ADR 0004 / #668）：pre_settle + ready=0 占位（含 transit_arrivals）。
 
@@ -1582,7 +1537,7 @@ def prepare_resolve_front_half(
         transit_arrivals_box: List[Dict[str, object]] = []
         with atomic_and_reload(db, state, content=content, registry=registry):
             pre_settle(
-                state, db, on_stage=on_stage,
+                state, db,
                 content=content, registry=registry,
                 scene_registry=scene_registry,
                 transit_arrivals_out=transit_arrivals_box,
@@ -1618,7 +1573,7 @@ def prepare_resolve_front_half(
 
 
 def pre_settle(
-    state: GameState, db: GameDB, *, on_stage=None, content=None, registry=None,
+    state: GameState, db: GameDB, *, content=None, registry=None,
     scene_registry=None,
     transit_arrivals_out: Optional[List[Dict[str, object]]] = None,
 ) -> List[Dict[str, object]]:
@@ -1694,8 +1649,6 @@ def pre_settle(
                     f"{[(t['id'], t.get('terminal_reason') or t['terminal_state']) for t in fiscal_levies]}"
                 )
             tlog("结算 1/4 固定月度财政 tick")
-            if on_stage is not None:
-                on_stage(settlement_stage_payload(0))
             # 落账副作用；明细不再进 simulator payload（欠饷哗变走前置事件/issue）
             apply_fixed_period_flows(db, state)
             # 0095/#668 在途倒数 tick：remaining -= 1.0*factor，≤0 引擎抵达。
@@ -1814,7 +1767,6 @@ def settle_with_delta(
     extractor_output: str = "",
     ending_summarizer=None,
     delta_applier=None,
-    on_stage=None,
     relation_brew_runner=None,
     source: Provenance = Provenance.unknown,
     dossier_verdicts: Optional[List[Dict[str, object]]] = None,
@@ -1847,10 +1799,6 @@ def settle_with_delta(
     settled_turn, settled_year, settled_period = (
         int(state.turn), int(state.year), int(state.period),
     )
-
-    def _stage(payload: Dict[str, Any]) -> None:
-        if on_stage is not None:
-            on_stage(payload)
 
     # ADR 0008 S7（决定 2）：整个后半段写序列包进单事务——apply→turn_logs→inertia→留痕
     # →clear→结局→next_period 全有或全无。崩在中途（含 save_state 之后、clear 之前那个
@@ -1945,7 +1893,7 @@ def settle_with_delta(
                 trace_narrative=trace_narrative,
                 extractor_input=extractor_input, extractor_output=extractor_output,
                 ending_summarizer=ending_summarizer,
-                delta_applier=delta_applier, _stage=_stage,
+                delta_applier=delta_applier,
                 collector=collector, source=source,
                 start_relation_brew=(
                     _start_relation_brew if relation_brew_runner is not None else None
@@ -2136,7 +2084,6 @@ def _settle_after_extract_body(
     extractor_output: str,
     ending_summarizer,
     delta_applier,
-    _stage: Callable[[Dict[str, Any]], None],
     collector: Optional[RejectionCollector] = None,
     source: Provenance = Provenance.unknown,
     start_relation_brew: Optional[Callable[[], None]] = None,
@@ -2148,7 +2095,6 @@ def _settle_after_extract_body(
     抽成独立函数只为让 settle_with_delta 的 try/atomic/except 块清爽；不单独对外。
     """
     tlog("结算 4/4 落库 + inertia/ongoing")
-    _stage(settlement_stage_payload(4))
     # Persist private monthly reports before applying disclosure updates from
     # the same extraction, so the one authorized promotion event can project
     # the complete canonical history.  The enclosing atomic transaction keeps
@@ -2427,17 +2373,12 @@ def resolve_decisions_phase2(
     db: GameDB,
     agno_db: SqliteDb,
     llm_config: LLMConfig,
-    on_event: Optional[Callable[[str, Any], None]] = None,
     content=None,
     registry=None,
     cheat_directive: str = "",
 ) -> str:
     """phase2：皇帝亲裁完，读回 phase1 暂存上下文 + 已存决策点选择，续跑结算。
     要求本回合处于 awaiting_decision（已有 resolve_context）。返回完整结算报告。"""
-    def _emit(kind: str, data: Any) -> None:
-        if on_event:
-            on_event(kind, data)
-
     ctx = db.get_resolve_context(state.turn)
     if ctx is None:
         raise LLMContractError("无待决推演上下文，无法续跑结算（phase1 未暂停或已结算）。")
