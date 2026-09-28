@@ -128,12 +128,11 @@ def _persist_night_chat(db, state, night_id: int, user_text: str, reply: str) ->
     return int(cur.lastrowid)
 
 
-@pytest.mark.parametrize("timing", ["before_close", "after_close"])
+@pytest.mark.parametrize("timing", ["before_close", "after_close", "undo"])
 def test_pending_round_approval_endorsed_before_close_or_after_month_join(
     game, monkeypatch, timing,
 ):
-    """#1842：应允+背书由转译声明；收夜成案继承，或迟到直写案卷。"""
-    from ming_sim.audience_translation import apply_audience_round_translation
+    """#1842：应允+背书由转译声明；撤回、收夜成案或迟到直写案卷。"""
     from ming_sim.session_write_queue import SessionWriteQueue
 
     db, state, content = game
@@ -144,8 +143,42 @@ def test_pending_round_approval_endorsed_before_close_or_after_month_join(
         minister_name="", night_id=nid,
     )
     aid = int(action.commissions.applied[0]["id"])
-    if timing == "before_close":
-        ctid = _persist_night_chat(db, state, nid, "准", "臣领旨。")
+    if timing != "after_close":
+        class FakeAgent:
+            def run(self, message):
+                return SimpleNamespace(content="臣愿为此旨会签。", tools=[])
+
+        monkeypatch.setattr(
+            "ming_sim.session.create_scene_agent", lambda *a, **k: FakeAgent(),
+        )
+
+        def declared_translation(prompt, llm_config):
+            return {
+                **offline_empty_audience_translate(prompt, llm_config),
+                "promises": [{"action_id": aid, "decision": "应允"}],
+                "endorsements": [{
+                    "action_id": aid, "form": "御笔手敕", "endorser_id": "",
+                }],
+            }
+
+        sess = _sess(db, state, content, monkeypatch, translate_fn=declared_translation)
+        _, ctid = _scene_turn(sess, db, state, "朕亲笔担此旨")
+        if timing == "undo":
+            payload = json.loads(db.conn.execute(
+                "SELECT payload_json FROM pending_actions WHERE id=?", (aid,),
+            ).fetchone()["payload_json"])
+            assert len(payload["endorsements"]) == 1
+            db.undo_chat_turn(ctid)
+            restored = db.conn.execute(
+                "SELECT payload_json, night_approved FROM pending_actions WHERE id=?", (aid,),
+            ).fetchone()
+            assert not json.loads(restored["payload_json"]).get("endorsements")
+            assert not restored["night_approved"]
+            close_night(db, state, content=content, registry=None)
+            assert db.conn.execute(
+                "SELECT COUNT(*) FROM decree_dossiers WHERE pending_action_id=?", (aid,),
+            ).fetchone()[0] == 0
+            return
     else:
         def failed_translation(prompt, llm_config):
             raise RuntimeError("translation unavailable")
@@ -166,25 +199,12 @@ def test_pending_round_approval_endorsed_before_close_or_after_month_join(
         with pytest.raises(RuntimeError, match="translation unavailable"):
             future.result(timeout=30)
 
-    def _declare_approve_and_endorse(*, with_promise: bool = True):
-        decl = {
-            "endorsements": [{
-                "action_id": aid, "form": "御笔手敕", "endorser_id": "",
-            }],
-        }
-        if with_promise:
-            decl["promises"] = [{"action_id": aid, "decision": "应允"}]
-        apply_audience_round_translation(
-            db, state, decl, night_id=nid, chat_turn_id=ctid,
-        )
-
     write_queue = SessionWriteQueue()
     close_kwargs = dict(
         content=content, registry=None, llm_config=object(),
         write_gate=write_queue.write_gate, write_queue=write_queue,
     )
     if timing == "before_close":
-        _declare_approve_and_endorse(with_promise=True)
         close_night(db, state, **close_kwargs)
     else:
         # 回话已持久化而转译失败；收夜补跑也失败，过月入口才补齐。
