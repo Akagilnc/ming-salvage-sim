@@ -577,13 +577,7 @@ def _wire_web_game(db, state, content, agent, monkeypatch, *, translate_fn=None)
         "start_chat_turn_scene", "join_chat_turn_scene",
         "persist_chat_turn_scene", "abandon_chat_turn_scene",
         "schedule_pending_scene_translation",
-        "_start_cli_action_intent", "_finish_cli_action_intent",
-        "_confirmation_intent_for_preexisting_pending",
-        "_cli_backend_fallback_actions", "apply_cli_conversation_actions",
         "_character", "pending_count", "note_chat_rollback",
-        "_audience_prompt_for_message",
-        "_stage_appointment_candidate",
-        "_merge_staged_new_secret_order_content",
         "admit_audience", "consume_audience_admission", "can_summon",
         "_recognize_audience_command_verdict",
         "close_night_after_chat_if_needed",
@@ -593,12 +587,6 @@ def _wire_web_game(db, state, content, agent, monkeypatch, *, translate_fn=None)
     # undo 后 registry 重建需要完整 Agno 环境；本 tracer 只验 pending 前像，跳过 registry 重建。
     sess.refresh_runtime_after_chat_rollback = lambda: None
     sess.note_chat_rollback = lambda **kw: None
-    # 本区只验转译交办水位；禁 CLI 拟旨前缀双 stage（与 translate_fn 抢 pending）。
-    sess._cli_backend_fallback_actions = lambda *a, **k: None
-    sess.apply_cli_conversation_actions = lambda *a, **k: {
-        "directive": None, "secret_order_id": None, "pending_action_id": 0,
-    }
-
     monkeypatch.setattr(session_mod, "_dump_llm_messages", lambda *a, **k: None)
     # scene_chat 用 create_scene_agent；挡真实 LLM，回放 agent 正文。
     class _SceneShim:

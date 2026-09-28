@@ -2,7 +2,7 @@
 
 Seams:
 - ACTION_CLUSTERS military_order 行 + materialize_fn
-- run_materialize_pipeline / apply_cli_conversation_actions
+- run_materialize_pipeline / 场景转译声明
 - commit_pending_actions（收夜落案卷，不成 station/office 效果）
 - apply_dossier_verdicts（0055 顺颁才落 army 写核 / 人物变更核 / due_turn）
 - reload_state_from_db（只读 DB 无损接续）
