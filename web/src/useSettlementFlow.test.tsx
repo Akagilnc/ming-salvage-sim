@@ -714,13 +714,11 @@ describe("#1852 写成即推进：本面邸报阅读态，不整页 reload", () 
     cleanup();
   });
 
-  it("issueDecree advanced 后 loadState 失败：仍可阅读已收到的邸报", async () => {
+  it("issueDecree advanced 后 loadState 失败：仍可阅读已收到的邸报；关闭不重试", async () => {
     const FAIL_MSG = "账本刷新失败（替身）";
     const loadState = vi
       .fn<() => Promise<GameState | null>>()
-      .mockRejectedValueOnce(new Error(FAIL_MSG))
-      .mockRejectedValueOnce(new Error(FAIL_MSG))
-      .mockResolvedValueOnce(advancedMonthState);
+      .mockRejectedValueOnce(new Error(FAIL_MSG));
     vi.stubGlobal("fetch", vi.fn(async (url: string) => {
       if (url !== "/api/decree/issue/stream") throw new Error(`unexpected fetch: ${url}`);
       return sseAdvancedResponse("十月邸报·流终");
@@ -735,15 +733,14 @@ describe("#1852 写成即推进：本面邸报阅读态，不整页 reload", () 
     expect(hookRef.current!.suppressPostAdvanceOverlays).toBe(true);
     expect(host.querySelector('[data-testid="error"]')?.textContent).toBe(FAIL_MSG);
     expect(host.querySelector('[data-testid="busy"]')?.textContent).toBe("");
+    expect(hookRef.current!.advanceRefreshFailed).toBe(true);
+    expect(hookRef.current!).not.toHaveProperty("retryAdvanceRefresh");
     await act(async () => { await hookRef.current!.dismissSettlementGazette(); });
     expect(loadState).toHaveBeenCalledTimes(1);
     expect(hookRef.current!.settlementGazetteReading).toBeNull();
     expect(hookRef.current!.advanceRefreshFailed).toBe(true);
-    await act(async () => { await hookRef.current!.retryAdvanceRefresh(); });
-    expect(hookRef.current!.advanceRefreshFailed).toBe(true);
-    await act(async () => { await hookRef.current!.retryAdvanceRefresh(); });
-    expect(loadState).toHaveBeenCalledTimes(3);
-    expect(hookRef.current!.suppressPostAdvanceOverlays).toBe(false);
+    // #1854 才接手重试；关闭阅读不得自行再刷账本。
+    expect(hookRef.current!.suppressPostAdvanceOverlays).toBe(true);
     cleanup();
   });
 });

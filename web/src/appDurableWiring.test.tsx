@@ -1297,6 +1297,99 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     expect(host.textContent).not.toContain("旧月未落库草案");
   });
 
+  it("#1852 真实页面：服务端已推进但载入新月失败时邸报可读可关、旧月入口不可提交", async () => {
+    let streamController!: ReadableStreamDefaultController<Uint8Array>;
+    const encoder = new TextEncoder();
+    let stateGets = 0;
+    let failPostAdvanceRefresh = false;
+    const liveState: Record<string, unknown> = {
+      ...settlementBaseState("player"),
+      turn: { year: 1627, period: 10, turn: 5, phase: "player", settlement_display: false },
+      previous_summary: "",
+      pending_decisions: [],
+      directives: [{ id: 1, text: "拨辽饷", status: "draft" }],
+    };
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      const u = new URL(String(url), "http://t.local");
+      if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
+      if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
+      if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
+      if (u.pathname.endsWith("/api/game/state")) {
+        stateGets += 1;
+        if (failPostAdvanceRefresh) {
+          return new Response(JSON.stringify({ detail: { message: "账本刷新失败（页面）" } }), {
+            status: 503,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        return jsonResp(liveState);
+      }
+      if (u.pathname.endsWith("/api/history/turns")) return jsonResp({ turns: [] });
+      if (u.pathname.endsWith("/api/court_layout")) return jsonResp({ layout: "{}" });
+      if (u.pathname.endsWith("/api/decree/issue/stream") && init?.method === "POST") {
+        return new Response(new ReadableStream<Uint8Array>({
+          start(controller) { streamController = controller; },
+        }), { status: 200, headers: { "Content-Type": "text/event-stream" } });
+      }
+      return jsonResp({});
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const host = await mountApp();
+    expect(host.querySelector(".hud2-stage")).not.toBeNull();
+    expect(edictCommand(host)).toBeTruthy();
+    await click(edictCommand(host));
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="诏书草案"]')).not.toBeNull());
+    });
+    await click(findButton(host, "盖玺颁诏过月"));
+    await act(async () => {
+      await vi.waitFor(() => expect(streamController).toBeTruthy());
+    });
+
+    failPostAdvanceRefresh = true;
+    const getsBeforeDone = stateGets;
+    await act(async () => {
+      streamController.enqueue(encoder.encode(
+        `event: done\ndata: ${JSON.stringify({ advanced: true, report: "十月邸报·刷新失败仍可读" })}\n\n`,
+      ));
+      streamController.close();
+    });
+
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector("[data-testid=settlement-gazette-panel]")).not.toBeNull());
+    });
+    expect(stateGets).toBeGreaterThan(getsBeforeDone);
+    expect(host.querySelector("[data-testid=settlement-gazette-panel]")!.textContent).toContain("十月邸报·刷新失败仍可读");
+    // 旧月可操作盘面不得投影；#1854 才接手统一提示/重试，本票不得留独立重试入口。
+    expect(host.querySelector(".hud2-stage")).toBeNull();
+    expect(edictCommand(host)).toBeNull();
+    expect(findButton(host, "盖玺颁诏过月")).toBeFalsy();
+    expect(findButton(host, "重试载入新月盘面")).toBeFalsy();
+    expect(host.textContent).not.toContain(MIDCOURSE_ISSUE);
+
+    const getsBeforeDismiss = stateGets;
+    const streamPosts = () => fetchMock.mock.calls.filter(([url, init]) => {
+      const path = new URL(String(url), "http://t.local").pathname;
+      return path.endsWith("/api/decree/issue/stream") && init?.method === "POST";
+    }).length;
+    const streamPostsBeforeDismiss = streamPosts();
+    const dismiss = Array.from(host.querySelectorAll("button")).find((b) =>
+      (b.textContent || "").includes("朕知道了"),
+    );
+    expect(dismiss).toBeTruthy();
+    await click(dismiss);
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector("[data-testid=settlement-gazette-panel]")).toBeNull());
+    });
+    // 关闭阅读不触发重试或推进；旧月入口仍不可提交。
+    expect(stateGets).toBe(getsBeforeDismiss);
+    expect(streamPosts()).toBe(streamPostsBeforeDismiss);
+    expect(host.querySelector(".hud2-stage")).toBeNull();
+    expect(edictCommand(host)).toBeNull();
+    expect(findButton(host, "重试载入新月盘面")).toBeFalsy();
+  });
+
   it("#1852 写成即推进：本面邸报阅读中不弹 closed/密令/结局；朕知道了后仍按既有规则弹", async () => {
     vi.useFakeTimers();
     try {
