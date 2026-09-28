@@ -247,6 +247,7 @@ def _dispatch_declaration_sections(
     commissions = _dispatch_commissions(
         db, state, declaration.get("commissions"),
         minister_name=minister_name, source=source,
+        source_chat_turn_id=origin_ctid,
     )
     turn = int(state.turn)
     result = DeclarationDispatchResult(
@@ -1017,6 +1018,7 @@ def _attach_commission_affair(
 
 def _dispatch_commissions(
     db: Any, state: Any, raw: object, *, minister_name: str, source: Provenance,
+    source_chat_turn_id: int = 0,
 ) -> SectionResult:
     """交办声明 → 既有 pending 暂存。
 
@@ -1041,6 +1043,46 @@ def _dispatch_commissions(
                 _reject(rejected, item, str(exc), "invalid_state", source)
             except (TypeError, ValueError) as exc:
                 _reject(rejected, item, str(exc), "invalid_shape", source)
+            continue
+
+        assignment = item.get("assignment")
+        if assignment is not None:
+            if not isinstance(assignment, Mapping) or any(
+                item.get(key) for key in ("grant", "appointment", "punishment", "pacification")
+            ):
+                _reject(rejected, item, "责成交办载荷须为独立对象", "invalid_shape", source)
+                continue
+            body = _declared_prose(item.get("text"))
+            if body is None:
+                _reject(rejected, item, "责成交办缺正文", "invalid_shape", source)
+                continue
+            from ming_sim.action_materialize import stage_assignment_candidate
+            actor = str(minister_name or "").strip() or _commission_fallback_actor(db)
+            try:
+                row_id = stage_assignment_candidate(
+                    db, int(state.turn), actor, text=body,
+                    title=assignment.get("title", ""),
+                    target_id=assignment.get("target_id", ""),
+                    assignee=assignment.get("assignee", ""),
+                    participant_roster=assignment.get("participant_roster"),
+                    extracted_mode=assignment.get("mode"),
+                    commitment_kind=assignment.get("commitment_kind"),
+                    stop_condition=assignment.get("stop_condition"),
+                    end_turn=assignment.get("end_turn", 0),
+                    deadline_months=assignment.get("deadline_months", 0),
+                    ongoing_effects=assignment.get("ongoing_effects"),
+                    stages=assignment.get("stages"),
+                    target_candidate=assignment.get("target_candidate"),
+                    transaction_category=assignment.get("transaction_category", ""),
+                    source_chat_turn_id=source_chat_turn_id,
+                )
+            except (DecreeMaterializationValidationError, TypeError, ValueError) as exc:
+                _reject(rejected, item, str(exc), "invalid_shape", source)
+                continue
+            if row_id:
+                applied.append({"id": row_id, "kind": "directive"})
+            else:
+                _reject(rejected, item, "责成交办未通过现有准入", "invalid_state", source)
             continue
 
         punishment = item.get("punishment")

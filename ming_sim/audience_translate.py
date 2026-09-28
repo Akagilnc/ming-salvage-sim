@@ -245,6 +245,11 @@ def build_c0_declaration_shape() -> str:
         '"issue_disposition": "办人|压下（弹劾事项有则填）", '
         '"transaction_category": "事务类别（有则填）", "amount": "罚俸金额（罚俸时填）"},\n'
         '      "pacification": {"target_id": "自新内乱首领的具名 id", "mode": "ordinary|midzhi"},\n'
+        '      "assignment": {"title": "独立事项名", "target_id": "事项 id", '
+        '"assignee": "承办人 id", "participant_roster": [], '
+        '"target_candidate": "续办所指候选 id（新案留空）", '
+        '"commitment_kind": "承诺类别（无承诺填无）", '
+        '"deadline_months": 0, "stop_condition": {}},\n'
         '      "recommendation": {\n'
         '        "recommender": "荐者人名", "reason": "荐词原句（非空，逐字）"\n'
         "      },\n"
@@ -327,6 +332,9 @@ def build_audience_translate_prompt(
         "- scene_facts 按原顺序完整分段覆盖本轮回话；各 body 直接拼接须与回话逐字相同（含空白、标点与 Markdown），不得概括、补字或漏字；role 是该段的说话人类别，大臣/近臣的 person_names 首位是说话人（user/scene 可为空）。\n"
         "- 一句话同时含拟旨 + 拨帑 + 任免时，只出一条 commission，载荷挂在同一条上；"
         "不要拆成拟旨 / 拨帑 / 交办三道。\n"
+        "- 离殿后独立责成的事项逐件给 commission.assignment；title/target_id 是事项锚，"
+        "assignee/participant_roster 来自已明确的承办人；续办只在能指向既有候选时填 target_candidate。"
+        "不从当场问答推造独立差事。\n"
         "- 皇帝对已暂存交办说「准」「照办」等应允语义 → promises 里 decision=应允；"
         "「不准」「作罢」→ 拒绝。皇帝本轮未表态 → promises 为空（默认不应允）。\n"
         "- 当场已发生（斩杀/拿下/伤臂/告退等）走 on_scene_facts / textual_facts / "
