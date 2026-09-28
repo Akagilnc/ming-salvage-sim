@@ -64,6 +64,9 @@ def test_scene_chat_approval_forecasts_each_decree_without_visible_effect(game, 
     )
     future_affair_id = visible_affair.id + 1
     treasury_before = int(state.metrics["国库"])
+    ledger_before = db.conn.execute(
+        "SELECT COUNT(*) FROM story_ledger_entries WHERE source_chat_turn_id IS NULL"
+    ).fetchone()[0]
     dossier_before = db.conn.execute("SELECT COUNT(*) FROM decree_dossiers").fetchone()[0]
     sources_before = {
         str(row[0]) for row in db.conn.execute(
@@ -161,6 +164,11 @@ def test_scene_chat_approval_forecasts_each_decree_without_visible_effect(game, 
     rejections = settled.effects.applied[0]["economy_moves_rejections"]
     assert len(rejections) == 1
     assert rejections[0]["item"]["origin_ref"] == f"affair:{hidden.id}"
+    # Background translation legitimately adds a conversation entry; forecast must not
+    # publish an extra ledger entry of its own.
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM story_ledger_entries WHERE source_chat_turn_id IS NULL"
+    ).fetchone()[0] == ledger_before
     assert db.conn.execute("SELECT COUNT(*) FROM decree_dossiers").fetchone()[0] == dossier_before
     assert db.conn.execute(
         "SELECT 1 FROM decree_dossiers WHERE pending_action_id IN (?,?)",

@@ -1,6 +1,8 @@
 """#1195: POST /api/menu/continue 分阶段 SSE 反馈（stage → done/error）。"""
 from __future__ import annotations
 
+from ming_sim.session_write_queue import ClassifiedWriteGate
+
 import json
 from types import SimpleNamespace
 
@@ -119,7 +121,7 @@ def test_stale_continue_worker_does_not_publish_after_exit(monkeypatch):
             started.set()
             release.wait()
             self._state = {"from": "stale-continue"}
-            self._write_gate = threading.Lock()
+            self._write_gate = ClassifiedWriteGate()
             self.session = SimpleNamespace(close=lambda: closed.append("stale"))
 
         def state_payload(self) -> dict:
@@ -171,7 +173,7 @@ def test_stale_continue_worker_does_not_publish_after_new_game(monkeypatch, tmp_
             started.set()
             release.wait()
             self._state = {"from": "stale-continue"}
-            self._write_gate = threading.Lock()
+            self._write_gate = ClassifiedWriteGate()
             self.session = SimpleNamespace(close=lambda: closed.append("stale"))
 
         def state_payload(self) -> dict:

@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+from ming_sim.session_write_queue import ClassifiedWriteGate
+
 import threading
 
 from ming_sim.db import GameDB
@@ -180,7 +182,7 @@ def test_state_payload_memorials_and_mark_read_api(game, monkeypatch):
     runtime.ending_payload = lambda: None
     runtime.public_character = lambda c: {"name": getattr(c, "name", "")}
     runtime.character_power_id = lambda c: "ming"
-    runtime._write_gate = threading.Lock()
+    runtime._write_gate = ClassifiedWriteGate()
     runtime._runtime_write_gate = lambda: runtime._write_gate
 
     monkeypatch.setattr(web_app, "get_game", lambda: runtime)

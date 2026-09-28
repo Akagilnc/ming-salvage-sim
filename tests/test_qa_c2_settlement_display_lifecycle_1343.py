@@ -10,6 +10,8 @@
 
 from __future__ import annotations
 
+from ming_sim.session_write_queue import ClassifiedWriteGate
+
 import threading
 from contextlib import contextmanager
 from types import SimpleNamespace
@@ -39,7 +41,7 @@ def _shell(db, state, content):
         victory=lambda: {"status": "ongoing", "summary": ""},
         await_translations_before_month=lambda after_drain=None: after_drain() if after_drain else None,
     )
-    runtime._write_gate = threading.Lock()
+    runtime._write_gate = ClassifiedWriteGate()
     runtime._settlement_entry_lock = threading.Lock()
     runtime._settlement_entry_inflight = 0
     runtime.directive_rows = lambda: []

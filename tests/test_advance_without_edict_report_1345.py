@@ -11,6 +11,8 @@ load_state 恢复、history/turn/{closed_turn} 三者同份已落库原文。
 
 from __future__ import annotations
 
+from ming_sim.session_write_queue import ClassifiedWriteGate
+
 import asyncio
 import contextlib
 import threading
@@ -65,7 +67,7 @@ def _web_runtime(db, state, content, *, monkeypatch, session=None):
     runtime.ending_payload = lambda: None
     runtime.public_character = lambda c: {"name": getattr(c, "name", "")}
     runtime.character_power_id = lambda c: "ming"
-    runtime._write_gate = threading.Lock()
+    runtime._write_gate = ClassifiedWriteGate()
     runtime.refresh_turn = lambda: None
 
     @contextlib.contextmanager

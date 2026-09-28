@@ -18,6 +18,7 @@ from fastapi import HTTPException
 import web_app
 from ming_sim.models import TurnPhase, FRONT_HALF_DONE_PHASES
 from ming_sim.session import GameSession
+from ming_sim.session_write_queue import get_session_write_queue
 
 
 class _RecordingDB:
@@ -69,7 +70,6 @@ class _FakeGame:
     def __init__(self, turn_phase: str):
         self.state = SimpleNamespace(turn=3, turn_phase=turn_phase, metrics={})
         self.db = _RecordingDB()
-        self._write_gate = threading.Lock()
         consort = SimpleNamespace(name="某秀女", office_type="后宫", status="candidate", office="")
         minister = SimpleNamespace(name="某大臣", office_type="文官")
         self.content = SimpleNamespace(characters={"某秀女": consort, "某大臣": minister})
@@ -79,6 +79,7 @@ class _FakeGame:
             registry=SimpleNamespace(refresh=lambda *a, **k: None, register=lambda *a, **k: None),
             await_translations_before_month=lambda after_drain=None: after_drain() if after_drain else None,
         )
+        self._write_gate = get_session_write_queue(self).write_gate
         # #1402：web _require_active_minister 改调 session.can_summon——假壳挂真方法，禁自造文案表
         self.session.can_summon = MethodType(GameSession.can_summon, self.session)
         self.favorites = set()
