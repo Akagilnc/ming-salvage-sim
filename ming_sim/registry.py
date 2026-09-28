@@ -17,20 +17,6 @@ from ming_sim.models import LLMConfig
 from ming_sim.llm_model import create_chat_model
 from ming_sim.materials import PreparedMaterials, material_tools
 
-_content: Optional[GameContent] = None
-
-
-def bind_content(content: GameContent) -> None:
-    global _content
-    _content = content
-
-
-def _ctx() -> GameContent:
-    if _content is None:
-        raise RuntimeError("registry.bind_content() 未调用：GameContent 未注入。")
-    return _content
-
-
 def _minister_game_world_prompt(prompt: str) -> str:
     """给场景的世界观说明只保留呈现口径，不把引擎量表喂给角色。"""
     lines = []
@@ -51,20 +37,19 @@ def create_scene_agent(
     *,
     model: Any = None,
     agno_db: Optional[SqliteDb] = None,
-    content: Optional[GameContent] = None,
+    content: GameContent,
     session_id: Optional[str] = None,
 ) -> Agent:
     """#1836 / ADR 0155：一个 LLM 演整场召对。
 
     生成链零动作 / 写入工具、零格式约束（ADR 0033）；读材料只用目录只读工具。
     """
-    c = content or _ctx()
     chat_model = model if model is not None else create_chat_model(
         llm_config, temperature=0.6, top_p=0.9,
     )
     if hasattr(chat_model, "materials_dir"):
         chat_model.materials_dir = str(prepared.root)
-    scene_prompt = str(getattr(c, "scene_agent_prompt", "") or "").strip()
+    scene_prompt = str(getattr(content, "scene_agent_prompt", "") or "").strip()
     if not scene_prompt:
         # 无 bundled prompt 时的最低特征化底（真源仍是 content/prompts/scene_agent.md）。
         scene_prompt = (
@@ -72,7 +57,7 @@ def create_scene_agent(
             "材料在当前目录，按需自读。"
         )
     instructions = [
-        _minister_game_world_prompt(c.game_world_prompt) if getattr(c, "game_world_prompt", "") else "",
+        _minister_game_world_prompt(content.game_world_prompt) if getattr(content, "game_world_prompt", "") else "",
         scene_prompt,
         prepared.opening,
     ]

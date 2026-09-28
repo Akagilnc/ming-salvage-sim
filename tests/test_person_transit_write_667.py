@@ -162,7 +162,7 @@ def test_status_exit_clears_complete_transit_ledger(game, exit_path):
 
     if exit_path == "appointment_replacement":
         appointed, displaced = apply_appointment(
-            db, state, content, None,
+            db, state, content,
             {"name": "新任测试官", "office": "兵部尚书", "replaces": name},
         )
         assert appointed == "新任测试官"

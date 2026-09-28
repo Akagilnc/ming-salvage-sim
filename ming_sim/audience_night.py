@@ -1271,7 +1271,7 @@ def publish_night_directives(db: Any, night_id: int) -> None:
 
 
 def commit_late_night_approved(
-    db: Any, state: GameState, *, content: Any, registry: Any,
+    db: Any, state: GameState, *, content: Any,
     llm_config: Any = None, write_gate: Any = None,
 ) -> None:
     """过月 join 后沿收夜提交、背书、明发入口补完迟到应允。"""
@@ -1294,7 +1294,7 @@ def commit_late_night_approved(
                 _CLOSE_COMMIT_KINDS_DIRECTIVE,
             ):
                 _commit_night_approved(
-                    db, state, nid, kinds=kinds, content=content, registry=registry,
+                    db, state, nid, kinds=kinds, content=content, registry=None,
                 )
             late_ids = [int(row["id"]) for row in db.conn.execute(
                 "SELECT id FROM pending_actions WHERE night_id=? AND status='committed' "
@@ -1382,7 +1382,7 @@ def close_night(
     2. 提交前先补跑待补转译（CLOSING restore 同路）；之后
        endorsement-only LLM 与 close scene 并行（无 DB transaction / 无 runtime write
        gate）；终局写入前 join close scene。
-    3. 重取 gate：原子落背书水位；consort/明发/收夜账/CLOSED。
+    3. 重取 gate：原子落背书水位；明发/收夜账/CLOSED。
 
     背书或 close scene 失败 → OPEN、cursor=0、draft identity 保留；scene 失败另走
     chat-turn abandon/fail。成功前不得判官/公开明发/终局效果/CLOSED。

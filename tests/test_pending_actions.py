@@ -1015,18 +1015,6 @@ def _two_active_ming(db, content):
     return actives[0], actives[1]
 
 
-class _FakeRegistry:
-    """记录 register/refresh 调用,证明 office commit 真把 content/registry 透传到落地核。"""
-    def __init__(self):
-        self.registered, self.refreshed = [], []
-
-    def register(self, character):
-        self.registered.append(getattr(character, "name", character))
-
-    def refresh(self, name):
-        self.refreshed.append(name)
-
-
 def test_displace_duplicate_offices_recomputes_office_type(game):
     """剔掉某官员一个独占分项后,其保留官职的 office_type 须随之重算同步(DB+内存)。
     (CMR R5:_displace_duplicate_offices 只更新 office、漏 office_type → 大臣 agent 用陈旧类型。)"""
@@ -1050,9 +1038,8 @@ def test_displace_duplicate_offices_recomputes_office_type(game):
     assert content.characters[x.name].office_type == "都察院"   # 内存同步
 
 
-def test_office_appointment_refreshes_displaced_holder(game):
-    """兼衔部分顶替经真实 settle_with_delta：事务内零 refresh；
-    outer commit 后新任者与部分被顶替者（仍留其余官职）均 refresh。(#672)"""
+def test_office_appointment_displaces_partial_holder(game):
+    """兼衔部分顶替经真实 settle_with_delta 更新 DB 与内存。"""
     db, state, content = game
     new_holder, partial = _two_active_ming(db, content)
     # 旧任兼两职；新任只占其一 → 部分顶替，不落到听用候铨。
@@ -1078,15 +1065,9 @@ def test_office_appointment_refreshes_displaced_holder(game):
         and int(row.get("pending_action_id") or 0) == int(pending_id)
     ]
     assert verdicts, "任命 pending 须落 proposed 案卷"
-    reg = _FakeRegistry()
-
-    def mid_txn_applier(_db, _state, _extracted, _content, _registry):
-        assert reg.refreshed == [], "事务内不得 refresh registry"
-        return {}
-
     settle_with_delta(
         state, db, {}, before_turn=int(state.turn), content=content,
-        registry=reg, dossier_verdicts=verdicts, delta_applier=mid_txn_applier,
+        dossier_verdicts=verdicts, delta_applier=lambda *_args: {},
     )
 
     row_partial = db.conn.execute(
@@ -1101,5 +1082,3 @@ def test_office_appointment_refreshes_displaced_holder(game):
         (new_holder.name,),
     ).fetchone()
     assert "兵部尚书" in str(row_new["office"] or "")
-    assert new_holder.name in reg.refreshed
-    assert partial.name in reg.refreshed

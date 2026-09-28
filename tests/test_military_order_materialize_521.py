@@ -14,7 +14,6 @@ from types import SimpleNamespace
 import ming_sim.action_materialize  # noqa: F401 -- installs package catalog
 from ming_sim.action_clusters import (
     ACTION_CLUSTERS,
-    candidates_from_classifier_payload,
     cluster_by_kind,
 )
 from ming_sim.decree import reload_state_from_db

@@ -21,7 +21,6 @@ import ming_sim.session as session_mod
 import web_app
 from ming_sim.action_clusters import (
     ACTION_CLUSTERS,
-    candidates_from_classifier_payload,
     cluster_by_kind,
 )
 from ming_sim.action_materialize import DecreeMaterializationValidationError, stage_assignment_candidate

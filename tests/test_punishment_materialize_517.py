@@ -18,7 +18,6 @@ import pytest
 import ming_sim.action_materialize  # noqa: F401 -- installs package catalog
 import ming_sim.action_materialize as am
 import web_app
-from ming_sim.action_clusters import candidates_from_classifier_payload
 from ming_sim.decree import reload_state_from_db
 from ming_sim.models import CourtContext
 from ming_sim.declaration_dispatch import dispatch_declaration

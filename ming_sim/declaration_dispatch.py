@@ -1886,8 +1886,8 @@ def _dispatch_promises(
                 (json.dumps(payload, ensure_ascii=False), action_id),
             )
         elif decision == "应允":
-            # ADR 0038：密令应允即落地（夜内直写白名单）；任免/拟旨/后宫只标
-            # night_approved，收夜才提交。与旧 session.chat 确认缝同口径。
+            # ADR 0038：密令应允即落地（夜内直写白名单）；任免/拟旨只标
+            # night_approved，收夜才提交。
             if kind == "secret_order":
                 from ming_sim.applier import (
                     RejectionCollector, mirror_rejections_after_commit,

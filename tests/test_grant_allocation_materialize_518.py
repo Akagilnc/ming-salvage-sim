@@ -17,7 +17,6 @@ import pytest
 import ming_sim.action_materialize  # noqa: F401 -- installs package catalog
 from ming_sim.action_clusters import (
     ACTION_CLUSTERS,
-    candidates_from_classifier_payload,
 )
 from ming_sim.action_materialize import stage_grant_allocation_candidate
 from ming_sim.decree import reload_state_from_db

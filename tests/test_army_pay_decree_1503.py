@@ -18,7 +18,7 @@ import pytest
 import ming_sim.action_materialize  # noqa: F401 -- installs package catalog
 from ming_sim.action_clusters import (
     ActionCandidateShapeError,
-    candidates_from_classifier_payload,
+    assert_action_candidate_shape,
 )
 from ming_sim.issues import apply_score_extraction
 from tests.dossier_test_helpers import rejected_verdict as _rejected_verdict
@@ -304,7 +304,7 @@ def test_army_target_non_pay_grant_does_not_clear_arrears(game):
 # ── ⑦ #1503 上游 carrier：显式拟旨前缀 → typed grant 单轨 ─────────────
 
 def _scripted_xiexang_candidates(*, amount=15, account="国库", target_id="guanning"):
-    return candidates_from_classifier_payload(
+    return [assert_action_candidate_shape(
         {
             "kind": "grant_allocation",
             "grant_action": "协饷",
@@ -314,8 +314,7 @@ def _scripted_xiexang_candidates(*, amount=15, account="国库", target_id="guan
             "target_kind": "army",
             "target_id": target_id,
         },
-        soft=False,
-    )
+    )]
 
 
 @pytest.mark.parametrize("amount", [True, 15.9, "15"])

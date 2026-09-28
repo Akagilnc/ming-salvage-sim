@@ -62,7 +62,6 @@ from ming_sim.mindreading import is_inner_court_attendant
 from ming_sim.llm_model import create_agno_db, extract_agent_text
 from ming_sim.models import Character, CourtContext, GameState, LLMConfig, is_vassal_prince, is_weishi
 from ming_sim.paths import user_data_path
-from ming_sim.registry import bind_content as _bind_registry
 from ming_sim.skills import bind_content as _bind_skills
 
 logger = logging.getLogger(__name__)
@@ -457,22 +456,11 @@ def apply_appointment(
     db: GameDB,
     state: GameState,
     content: GameContent,
-    registry: Any = None,
     data: Optional[Dict[str, object]] = None,
     llm_config: Optional[LLMConfig] = None,
     commit: bool = True,
 ) -> Tuple[str, str]:
-    """诏书任命共用落地：建档入库，本回合即可召见。
-
-    #1837 reopen：旧大臣 Agent registry 已退役；``registry`` 形参保留为兼容位
-    （调用方仍可按位置传 None），代码不再注册 / 刷新 agent。
-    """
-    # 位置兼容：历史调用 ``apply_appointment(db, state, content, registry, data)``
-    # 与关键字 ``data=`` 并存；若第 4 位实际是 data dict，认作 data。
-    if data is None and isinstance(registry, dict):
-        data = registry
-        registry = None
-    del registry  # 退役；显式丢弃，避免误用。
+    """诏书任命共用落地：建档入库，本回合即可召见。"""
     if not data:
         return ("", "")
     if "approved" in data and not bool(data.get("approved")):
@@ -562,7 +550,6 @@ def _pending_action_failure_payload(pa: Dict[str, Any]) -> Dict[str, Any]:
     noun = {
         "secret_order": "密令",
         "office": "任免",
-        "consort": "后宫安排",
         "directive": "拟旨",
     }.get(kind, "政务动作")
     # #1765 ②：坏 payload 重放入口已删——系统层只报「未落库」这一件事，
@@ -667,7 +654,6 @@ def _bind_all_content(content: GameContent) -> None:
     _bind_skills(content)
     _bind_context(content)
     _bind_agents(content)
-    _bind_registry(content)
     _bind_issues(content)
 
 
@@ -737,7 +723,6 @@ class GameSession:
             self.debuts_this_turn: List[Dict[str, str]] = []
             self.power_renames_this_turn: List[Dict[str, object]] = []
             self.previous_summary = ""
-            self.registry = None  # #1837 reopen：旧大臣 Agent 退役；占位避免属性缺失
             self.last_decree = ""
             # P1-1：last_decree 所覆盖的 draft 指纹（write_decree 时记，颁诏时校验是否已陈旧）。
             self._decree_draft_fingerprint: Tuple[Tuple[int, str], ...] = ()
@@ -786,7 +771,6 @@ class GameSession:
     def begin_turn(self) -> TurnSnapshot:
         """加载/刷新本回合：历史卒、上回合奏报。幂等。
 
-        #1837 reopen：旧大臣 Agent registry 已退役，不再重建。
         """
         # 接档/刷新阶段计时（#84）：begin_turn 是「继续」载入的慢段所在，
         # 原零日志=进度盲区；逐阶段 tlog 用时定位慢点。
@@ -1098,7 +1082,6 @@ class GameSession:
                 close_night(
                     self.db, self.state,
                     content=getattr(self, "content", None),
-                    registry=getattr(self, "registry", None),
                     wait_timeout_s=0.0,
                     beat_generator=getattr(self, "_beat_generator", None),
                     llm_config=getattr(self, "llm_config", None),
@@ -1307,7 +1290,6 @@ class GameSession:
                 close_night(
                     self.db, self.state,
                     content=getattr(self, "content", None),
-                    registry=getattr(self, "registry", None),
                     wait_timeout_s=0.0,
                     beat_generator=getattr(self, "_beat_generator", None),
                     llm_config=getattr(self, "llm_config", None),
@@ -1977,7 +1959,6 @@ class GameSession:
             commit_late_night_approved(
                 self.db, self.state,
                 content=getattr(self, "content", None),
-                registry=getattr(self, "registry", None),
                 llm_config=getattr(self, "llm_config", None),
                 write_gate=catch_gate,
             )
@@ -2058,7 +2039,6 @@ class GameSession:
                 auto_close_open_night(
                     self.db, self.state,
                     content=getattr(self, "content", None),
-                    registry=getattr(self, "registry", None),
                     wait_timeout_s=inflight_wait_s,
                     beat_generator=self._beat_generator,
                     llm_config=getattr(self, "llm_config", None),
@@ -2169,7 +2149,7 @@ class GameSession:
             self.state, self.db, self.agno_db, self.llm_config,
             directives, decree_text, deaths_this_turn=self.deaths_this_turn,
             debuts_this_turn=self.debuts_this_turn,
-            content=self.content, registry=self.registry,
+            content=self.content,
             cheat_directive=cheat_directive,
             scene_registry=self._scene_registry,
             **resolve_kwargs,
@@ -2603,7 +2583,7 @@ class GameSession:
         before_turn = int(self.state.turn)
         report = resolve_decisions_phase2(
             self.state, self.db, self.agno_db, self.llm_config,
-            content=self.content, registry=self.registry,
+            content=self.content,
             cheat_directive=cheat_directive,
         )
         # 批红续跑与 submit_decisions 同一规则：主链未推进不得标 ISSUED。
@@ -2759,7 +2739,7 @@ class GameSession:
         before_turn = int(self.state.turn)
         report = resolve_decisions_phase2(
             self.state, self.db, self.agno_db, self.llm_config,
-            content=self.content, registry=self.registry,
+            content=self.content,
             cheat_directive=cheat_directive,
         )
         self.state.turn_phase = (
@@ -2838,7 +2818,6 @@ class GameSession:
         db.close 失败/conn 仍可探测，也不得恢复为活局（registry 已失 agno）。
         """
         materials_error: BaseException | None = None
-        self.registry = None
         scene = getattr(self, "_scene_registry", None)
         if scene is not None:
             scene.abandon_all()

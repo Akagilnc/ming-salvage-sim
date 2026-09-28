@@ -3090,7 +3090,6 @@ def _register_runtime_rollback_snapshot(
     db: GameDB,
     state: GameState,
     content: Optional[GameContent],
-    registry: object = None,
 ) -> None:
     """Restore process memory if the caller rolls back the surrounding DB transaction."""
     conn = db.conn
@@ -3106,13 +3105,6 @@ def _register_runtime_rollback_snapshot(
             character_attrs[name] = dict(vars(character))
         except TypeError:
             character_attrs[name] = {}
-    registry_agents = getattr(registry, "agents", None)
-    registry_session_ids = getattr(registry, "session_ids", None)
-    registry_agents_snapshot = dict(registry_agents) if isinstance(registry_agents, dict) else None
-    registry_session_ids_snapshot = (
-        dict(registry_session_ids) if isinstance(registry_session_ids, dict) else None
-    )
-
     def restore_runtime() -> None:
         state.metrics.clear()
         state.metrics.update(metrics_snapshot)
@@ -3130,12 +3122,6 @@ def _register_runtime_rollback_snapshot(
                     pass
                 for attr, value in character_attrs.get(name, {}).items():
                     setattr(character, attr, value)
-        if registry_agents_snapshot is not None and isinstance(registry_agents, dict):
-            registry_agents.clear()
-            registry_agents.update(registry_agents_snapshot)
-        if registry_session_ids_snapshot is not None and isinstance(registry_session_ids, dict):
-            registry_session_ids.clear()
-            registry_session_ids.update(registry_session_ids_snapshot)
 
     callbacks.append(restore_runtime)
 
@@ -6323,7 +6309,7 @@ def apply_office_appointment(
     llm_config: Any = None,
     commit: bool = True,
 ) -> Dict[str, object]:
-    """朝臣任命/调任的【唯一落地核】：在册且未死 → 改 active + 授官 + 顶替去重 + 同步内存/registry；
+    """朝臣任命/调任的【唯一落地核】：在册且未死 → 改 active + 授官 + 顶替去重 + 同步内存；
     不在册 → apply_appointment 建新档。extractor 的 office_changes 与 CLI 自然语言任免 commit
     共用此核，杜绝两份会漂的 copy（CMR R2 reground）。后宫纳妃语义不同，不走此核（见 appointments）。
     返回结果 dict（rejected / kind=transfer|appoint / displaced 等）。"""
@@ -6412,11 +6398,6 @@ def apply_office_appointment(
             ch.office = new_office
             ch.office_type = new_office_type
             ch.office_region = seat
-            if registry is not None:
-                registry.refresh(name)
-                # 被顶替者 office/office_type 也变了,一并刷 Agent,免本回合后续用陈旧身份/工具(线上 gemini)。
-                for dp in displaced_parts:
-                    registry.refresh(dp.split(":")[0])
         except Exception as exc:
             _restore_person_write_state(db, content, snapshot, commit=commit)
             return _office_appointment_failure(name, new_office, exc)
@@ -6466,7 +6447,6 @@ def apply_office_appointment(
                 db,
                 state,
                 content,
-                registry,
                 appt,
                 llm_config=llm_config,
                 commit=commit,
@@ -6480,10 +6460,6 @@ def apply_office_appointment(
             displaced_parts = _displace_duplicate_offices(
                 db, content, appointed, new_office, region_id=seat, commit=commit,
             )
-            # 被顶替者一并刷 Agent(新任者 apply_appointment 内已注册)(线上 gemini)。
-            if registry is not None:
-                for dp in displaced_parts:
-                    registry.refresh(dp.split(":")[0])
             return {"name": appointed, "new_office": new_office, "kind": "appoint", "reason": reason,
                     **({"displaced": displaced_parts} if displaced_parts else {})}
     except Exception as exc:
@@ -8048,7 +8024,7 @@ def apply_person_changes_only(
     runtime_content = content if content is not None else _ctx()
     caller_transaction = db.conn.in_transaction
     if caller_transaction:
-        _register_runtime_rollback_snapshot(db, state, runtime_content, registry)
+        _register_runtime_rollback_snapshot(db, state, runtime_content)
     changes = _canonicalize_person_change_names(
         normalize_person_changes({"人物变更": list(person_changes or [])}),
         runtime_content,
@@ -8156,7 +8132,7 @@ def apply_score_extraction(
     caller_transaction = db.conn.in_transaction
     commit_now = not caller_transaction
     if caller_transaction:
-        _register_runtime_rollback_snapshot(db, state, content, registry)
+        _register_runtime_rollback_snapshot(db, state, content)
     # #633 T1 r5 owner 裁决（B 案）：结算口边事件端点资格＝批内瞬态 canonical
     # 名册并集。此处取 pre-roster 观察点（任何人物变更 apply 前）；post-roster
     # 在人物变更全部落定后、relations 解析前另取。不建持久 snapshot、不新增

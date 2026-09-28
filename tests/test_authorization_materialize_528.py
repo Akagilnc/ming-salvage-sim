@@ -16,7 +16,7 @@ from types import SimpleNamespace
 import ming_sim.action_materialize  # noqa: F401 -- installs package catalog
 from ming_sim.action_clusters import (
     ACTION_CLUSTERS,
-    candidates_from_classifier_payload,
+    assert_action_candidate_shape,
     cluster_by_kind,
 )
 import pytest
@@ -89,14 +89,13 @@ def test_authorization_kind_distinct_from_secret_and_appointment():
     assert auth.kind != "appointment"
     assert cluster_by_kind("secret") is not None
     assert cluster_by_kind("appointment") is not None
-    got = candidates_from_classifier_payload({
+    got = assert_action_candidate_shape({
         "kind": "authorization",
         "privilege": "便宜行事",
         "target_id": "钱粮稽查",
-    }, soft=False)
-    assert len(got) == 1
-    assert got[0]["kind"] == "authorization"
-    assert got[0]["privilege"] == "便宜行事"
+    })
+    assert got["kind"] == "authorization"
+    assert got["privilege"] == "便宜行事"
 
 
 # ── 锚例：beat 9/10 公开支 + 时序 + 打回零落 ──────────────────────────

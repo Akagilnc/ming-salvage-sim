@@ -1360,9 +1360,6 @@ def reload_state_from_db(db: GameDB, state: GameState, *, content=None, registry
     既清幽灵（任免 commit 先挂 content 再写 DB，回滚删行留幽灵——重试被误拒，cmr S5 r1
     codex trace），也刷掉存量人物的脏属性（罢免/调任/顶替改的 status/office/office_type
     随 DB 回滚必须同源还原，cmr S5 r2 双家共识）。
-    registry 重建依赖 GameSession 重型协作者，decree 层拿不全；被清条目对应的 registry
-    agent 若存在会成悬挂引用，本层无清理接口（限制：session 级重载后续接线时处理）。
-
     嵌套 atomic 内禁止 reload：depth>0 时 rollback 尚未发生（flat 语义，最外层才回滚），
     load_state 同连接会读到未提交脏写——把脏数据当真相刷进 state（cmr S5 r1 claude）。
     """
@@ -1580,7 +1577,7 @@ def pre_settle(
     """确定性结算「前括号」：固定月度财政 tick + auto_trigger 硬立 seed 情势，均在 LLM 推演前。
 
     返回本回合程序硬触发的清单。真实流程与探针 driver 共用此核（ADR 0004）。
-    content/registry 供 office(任免)暂存动作落库注册新臣；driver 路径无聊天暂存，传 None 即 no-op。
+    content 供 office(任免)暂存动作落库；driver 路径无聊天暂存。
 
     ADR 0008 S4：整段（暂存动作 commit + 固定财政 + auto_trigger + 到期密令呈递）包成
     **自己的单事务**——崩在内部=全回滚=相位未变=重进时干净重跑前半段。完成时**同事务内**
@@ -1835,7 +1832,6 @@ def settle_with_delta(
     _brew_pool = None
     _brew_future = None
     _brew_leg = None
-    affected_people: set[str] = set()
 
     def _start_relation_brew() -> None:
         nonlocal _brew_pool, _brew_future, _brew_leg
@@ -1859,33 +1855,25 @@ def settle_with_delta(
             # 已 commit=无操作）——恢复/phase2 重抽路在此获得覆盖，且与结算同生死：
             # 事务外 commit 的话重放炸时结算回滚而动作及其真表副作用留存=跨事务半写
             # （cmr S7 r4，claude+codex 两面同根）。
-            # registry=None：事务内零 registry 变更。pending 直写人物（调教/密令等）
-            # 的受影响名随 applied 回执并入 outer-commit 投影；office 仍经案卷判决。
-            for item in db.commit_pending_actions(
-                state, content=content, registry=None,
-                rejection_collector=collector,
-            ) or ():
-                for person in item.get("affected_people") or ():
-                    name = str(person or "").strip()
-                    if name:
-                        affected_people.add(name)
+            db.commit_pending_actions(
+                state, content=content, rejection_collector=collector,
+            )
             if dossier_verdicts:
-                affected_people.update(db.apply_dossier_verdicts(
-                    state, dossier_verdicts, content=content, registry=None,
-                ))
+                db.apply_dossier_verdicts(
+                    state, dossier_verdicts, content=content,
+                )
             # Player disposition rows are not Judge verdicts: no affected_parties,
             # no midzhi validator, no apply_dossier_verdicts. Route each chosen
             # rescript action through the existing promulgation seam under this
             # outer atomic batch (ADR 0056 force reads current-turn Judge evidence).
             if dossier_rescript_actions:
                 for action in dossier_rescript_actions:
-                    affected_people.update(db.apply_dossier_promulgation(
+                    db.apply_dossier_promulgation(
                         state,
                         int(action["dossier_id"]),
                         str(action["decision"]),
                         content=content,
-                        registry=None,
-                    ) or set())
+                    )
             full_report = _settle_after_extract_body(
                 state, db, extracted,
                 before_turn=before_turn, content=content, registry=registry,
@@ -1934,22 +1922,6 @@ def settle_with_delta(
             settlement_abort_message(pack_path),
             turn=before_turn, stage="settle", error_pack_path=pack_path,
         ) from exc
-    # Registry projection only after the real outermost commit; outer rollback discards.
-    # Existing roster → refresh; brand-new formal people (e.g. 纳妃) → register.
-    # Duck-type project_outcome so test fakes that only implement refresh still work.
-    if registry is not None and affected_people:
-        from ming_sim.applier import register_runtime_outcome_callbacks
-        names = sorted(affected_people)
-        project = getattr(registry, "project_outcome", None)
-
-        def _project_affected() -> None:
-            for person_name in names:
-                if project is not None:
-                    project(person_name)
-                else:
-                    registry.refresh(person_name)
-
-        register_runtime_outcome_callbacks(db, on_commit=_project_affected)
     # JSONL follows the real outer transaction outcome; DB remains truth.
     mirror_rejections_after_commit(db, collector, rejections_jsonl_path)
     # #636 S5 月末酿制腿收尾（判词类②）：结算事务已提交，摘要持久化前 join。

@@ -18,7 +18,7 @@ import ming_sim.cli_backend as cb
 from ming_sim.action_clusters import (
     ACTION_CLUSTERS,
     ActionCandidateShapeError,
-    candidates_from_classifier_payload,
+    assert_action_candidate_shape,
     cluster_by_kind,
 )
 from ming_sim.action_materialize import validate_tingtui_appointment_shape
@@ -84,17 +84,15 @@ def test_referral_and_assignment_kinds_are_mutually_exclusive():
     asn = cluster_by_kind("assignment")
     assert ref is not None and asn is not None
     assert ref.kind != asn.kind
-    got = candidates_from_classifier_payload({
+    got = assert_action_candidate_shape({
         "kind": "referral",
         "title": "边饷",
         "deadline_months": 3,
         "responsible_bodies": json.dumps(["户部"], ensure_ascii=False),
-    }, soft=False)
-    assert len(got) == 1
-    assert got[0]["kind"] == "referral"
-    assert got[0]["kind"] != "assignment"
-    # 塞交办 owner/assignee 不得改写 kind 或变成交办
-    assert "assignee" not in got[0] or not str(got[0].get("assignee") or "").strip()
+    })
+    assert got["kind"] == "referral"
+    assert got["kind"] != "assignment"
+    assert not str(got.get("assignee") or "").strip()
 
 
 # ── 锚例：交部议 ──────────────────────────────────────────────────────

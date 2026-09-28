@@ -3591,8 +3591,8 @@ def test_event_pool_pending_person_changes_are_simulated_sequentially(game):
     assert out["applied_person_changes"][1]["rejected"] is True
 
 
-def test_apply_score_extraction_registry_refresh_rolls_back_with_outer_transaction(game):
-    """post-merge CMR R11：外层事务回滚时，任命刷新过的 registry 也要回到旧身份。"""
+def test_apply_score_extraction_appointment_rolls_back_with_outer_transaction(game):
+    """外层事务回滚时，任命的 DB 与内存身份均回到旧值。"""
     import pytest
 
     from ming_sim.applier import atomic
@@ -3609,16 +3609,6 @@ def test_apply_score_extraction_registry_refresh_rolls_back_with_outer_transacti
     content.characters["韩爌"].office = "内阁首辅"
     content.characters["韩爌"].office_type = "内阁"
 
-    class _OfficeSnapshotRegistry:
-        def __init__(self):
-            self.agents = {"韩爌": "内阁首辅"}
-            self.session_ids = {"韩爌": "minister-韩爌-turn-test"}
-
-        def refresh(self, name):
-            self.agents[name] = content.characters[name].office
-
-    registry = _OfficeSnapshotRegistry()
-
     with pytest.raises(RuntimeError):
         with atomic(db):
             issues.apply_score_extraction(
@@ -3626,18 +3616,15 @@ def test_apply_score_extraction_registry_refresh_rolls_back_with_outer_transacti
                 state,
                 {"人物变更": [{"origin_ref": "盘面自发", "name": "韩爌", "动作": "任命", "office": "兵部尚书"}]},
                 content=content,
-                registry=registry,
             )
-            assert registry.agents["韩爌"] == "兵部尚书"
-            raise RuntimeError("rollback registry probe")
+            assert content.characters["韩爌"].office == "兵部尚书"
+            raise RuntimeError("rollback appointment probe")
 
     assert db.conn.execute(
         "SELECT office FROM characters WHERE name=?",
         ("韩爌",),
     ).fetchone()["office"] == "内阁首辅"
     assert content.characters["韩爌"].office == "内阁首辅"
-    assert registry.agents == {"韩爌": "内阁首辅"}
-    assert registry.session_ids == {"韩爌": "minister-韩爌-turn-test"}
 
 
 def test_event_pool_pending_alias_appointment_blocks_canonical_gate(game):

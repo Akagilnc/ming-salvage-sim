@@ -7,7 +7,6 @@ import pytest
 
 import ming_sim.action_materialize  # noqa: F401 -- installs package catalog
 from ming_sim import issues
-from ming_sim.action_clusters import candidates_from_classifier_payload
 from tests.dossier_test_helpers import rejected_verdict as _rejected_verdict
 
 

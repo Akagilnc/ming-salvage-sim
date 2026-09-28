@@ -18,7 +18,6 @@ import ming_sim.audience_night as an
 import ming_sim.cli_backend as cb
 import pytest
 from ming_sim.action_clusters import (
-    candidates_from_classifier_payload,
     cluster_by_kind,
 )
 

@@ -15,7 +15,6 @@ from types import SimpleNamespace
 
 import pytest
 
-from ming_sim.action_clusters import candidates_from_classifier_payload
 from ming_sim.decree import settle_with_delta
 from ming_sim.issues import apply_score_extraction
 from ming_sim.models import TurnPhase

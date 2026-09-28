@@ -15,7 +15,7 @@ from types import SimpleNamespace
 import ming_sim.action_materialize  # noqa: F401 -- installs package catalog
 from ming_sim.action_clusters import (
     ACTION_CLUSTERS,
-    candidates_from_classifier_payload,
+    assert_action_candidate_shape,
     cluster_by_kind,
 )
 from ming_sim.relations import EMPEROR_NODE
@@ -65,18 +65,17 @@ def test_three_way_mutual_exclusion_kinds_are_distinct():
     assert conf is not None
     assert conf.kind not in {"revoke_authority", "revoke_decree"}
     # 纯授权候选不得被归一成撤回成命
-    got = candidates_from_classifier_payload({
+    got = assert_action_candidate_shape({
         "kind": "revoke_authority",
         "name": "甲",
         "authority_id": 1,
-    }, soft=False)
-    assert len(got) == 1
-    assert got[0]["kind"] == "revoke_authority"
-    got2 = candidates_from_classifier_payload({
+    })
+    assert got["kind"] == "revoke_authority"
+    got2 = assert_action_candidate_shape({
         "kind": "revoke_decree",
         "target_id": "dossier:9",
-    }, soft=False)
-    assert got2[0]["kind"] == "revoke_decree"
+    })
+    assert got2["kind"] == "revoke_decree"
 
 
 # ── 收权·罢差 ────────────────────────────────────────────────────────

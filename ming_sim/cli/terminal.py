@@ -343,7 +343,6 @@ def _handle_court_command(
         ]
         if revoked:
             print(f"已收回{target.name}：{'、'.join(revoked)}。\n")
-            pass  # #1837 reopen: registry retired
         else:
             print(f"{target.name}没有可收回的相关授权，或未识别要收回的 skill。\n")
         return "handled"
@@ -391,7 +390,6 @@ def _handle_court_command(
         ]
         if granted:
             print(f"已授权{target.name}：{'、'.join(granted)}。\n")
-            pass  # #1837 reopen: registry retired
         else:
             print(f"{target.name}已有相关授权，或未识别要授权的 skill。\n")
         return "handled"

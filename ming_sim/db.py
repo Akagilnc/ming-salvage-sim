@@ -1346,13 +1346,13 @@ class GameDB:
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
-            -- 动作闸门(ADR 0006)：结构化聊天写动作(密令/任命/后宫)召对期进此暂存表，
+            -- 动作闸门(ADR 0006)：结构化聊天交办(密令/任命/拟旨)召对期进此暂存表，
             -- 不动真实表；颁诏时 commit_pending_actions 在结算最前批量落库(不拒绝即允许)。
             -- 撤回 = 删本表对应行(任意一条、免快照)。restore 仍可无损接续(P1)。
             CREATE TABLE IF NOT EXISTS pending_actions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 turn INTEGER NOT NULL,
-                kind TEXT NOT NULL,                       -- secret_order | office | consort
+                kind TEXT NOT NULL,                       -- secret_order | office | directive
                 action TEXT NOT NULL,                     -- 更新 | 催办 | 提交核议 | 记进展 | 创建 …
                 target_id INTEGER,                        -- 操作既有实体时其 id；新建为 NULL
                 minister_name TEXT NOT NULL DEFAULT '',
@@ -18794,8 +18794,7 @@ class GameDB:
         故幂等:已 committed/失败/held_over 不在 pending 清单、不重跑)。
         #525：held_over 留中档由同表 durable 保留、本终端只读 pending，故默认提交跳过留中。
         在 resolve_turn 最前、跑 LLM 结算管线之前调,使盘面时序与旧"召对期直写"一致。
-        content/registry 仅 office(任免)落库需要(注册新臣 Agent);密令/后宫不需,故可选——
-        探针 driver 路径无聊天暂存,传 None 即 no-op。
+        content 用于任免落库；探针 driver 路径无聊天暂存时为 no-op。
         minister_name 非空=对话确认当场 commit:只落该召对对象的暂存(应允即落,不波及他人);
         action_ids 非空=进一步只落指定 pending_actions.id（召对确认只可作用于本轮开始前可见项）;
         默认 None=颁诏批量落全回合。
@@ -18946,8 +18945,7 @@ class GameDB:
                                 merged_oid = find_active_investigation_order_id(self, inv_target)
                                 if merged_oid > 0:
                                     item["secret_order_id"] = int(merged_oid)
-                # Direct person mutations (调教/密令…) surface names for outer-commit
-                # registry projection when settle passes registry=None.
+                # Direct person mutations surface names for the settlement result.
                 affected = self._affected_people_from_pending_action(pa, payload)
                 if affected:
                     item["affected_people"] = sorted(affected)
@@ -19034,7 +19032,7 @@ class GameDB:
     ) -> bool:
         """把单条暂存动作落到真实表。未知 kind/action 或目标非 active 不落、返 False(由
         commit_pending_actions 标 failed,不静默丢——终态失败,不再重试)。
-        office(任免)落库需 content/registry(注册新臣);缺则返 False(标 failed,不静默)。"""
+        office(任免)落库需 content；缺则返 False(标 failed,不静默)。"""
         if pa["kind"] == "office":
             return self._materialize_office_appointment_dossier(
                 state, pa, payload, content=content,
@@ -19085,11 +19083,6 @@ class GameDB:
                     self.add_dossier_links(
                         int(dossier["id"]), links, commit=False,
                     )
-                if registry is not None:
-                    try:
-                        registry.refresh(assignee)
-                    except Exception as exc:
-                        tlog(f"[pending_actions] 密令已落库但刷新 Agent 失败 assignee={assignee}：{exc}")
                 return order_id is not None
             if oid is None:
                 return False
@@ -19450,10 +19443,8 @@ class GameDB:
             if infer_office_type_from_office(office, "", self.llm_config) == "后宫":
                 from ming_sim.session import apply_appointment
                 data = {"name": name, "office": office, "office_type": "后宫", "approved": True}
-                # registry 仍为 None（事务内零变更）；返回 canonical appointed
-                # 供 outer-commit project_outcome：新人 register、在册 refresh。
                 appointed, _displaced = apply_appointment(
-                    self, state, content, registry, data, llm_config=self.llm_config)
+                    self, state, content, data, llm_config=self.llm_config)
                 return {appointed} if appointed else set()
             # 朝臣任命/升迁/调任 → person-only adapter（不经 full settlement recovery）。
             reason = str(payload.get("reason") or "奉旨任免").strip() or "奉旨任免"
@@ -22679,8 +22670,6 @@ class GameDB:
                 self.update_decree_dossier_payload(int(dossier["id"]), payload, commit=False)
         tlog(f"[secret_order] update id={order_id} title={title[:20]}")
         self.update_secret_order_progress(int(order_id), f"奉旨更新密令要旨：{content}", state.year, state.period)
-        if registry is not None:
-            registry.refresh(str(row["minister_name"]))
         return True
 
     def list_secret_orders(

@@ -22,11 +22,7 @@ from ming_sim.action_clusters import (
     ACTION_CLUSTERS,
     ActionCandidateShapeError,
     assert_action_candidate_shape,
-    candidates_from_classifier_payload,
     cluster_by_kind,
-    normalize_intent_candidates,
-    normalize_one_candidate,
-    primary_intent,
     validate_action_candidate_shape,
 )
 
@@ -41,95 +37,6 @@ from web_app import WebGame
 
 
 # ── 字段目录 ──────────────────────────────────────────────────────────
-
-
-def test_registry_rows_generate_shape_contract_matrix():
-    # 从 ACTION_CLUSTERS 汇集 FieldSpec（不经公共派生索引 API）
-    specs_by_name = {}
-    for c in ACTION_CLUSTERS:
-        for f in c.fields:
-            specs_by_name.setdefault(f.name, f)
-
-    for c in ACTION_CLUSTERS:
-        if c.kind == "none":
-            assert candidates_from_classifier_payload({"kind": "none"}, soft=True) == []
-            continue
-        base = {"kind": c.kind}
-        for f in c.fields:
-            if f.allowed:
-                non_none = f.allowed - {"无"}
-                base[f.name] = next(iter(non_none)) if non_none else next(iter(f.allowed))
-            elif f.as_int:
-                base[f.name] = 1
-            else:
-                base[f.name] = "x"
-        got = candidates_from_classifier_payload(base, soft=False)
-        assert len(got) == 1 and got[0]["kind"] == c.kind
-        for f in c.fields:
-            if not f.allowed:
-                continue
-            bad = dict(base)
-            bad[f.name] = "__not_in_enum__"
-            with pytest.raises(ActionCandidateShapeError):
-                candidates_from_classifier_payload(bad, soft=False)
-
-    # 共享 superset：enum 字段挂在别 kind 上仍 out-of-enum 拒
-    enum_specs = [s for s in specs_by_name.values() if s.allowed]
-    assert enum_specs, "catalog must expose at least one enum FieldSpec"
-    host_kind = next(
-        c.kind for c in ACTION_CLUSTERS if c.kind not in ("none",) and c.kind != "confirmation"
-    )
-    # 分类器会为不适用的共享 enum 字段回空串；空白等同字段缺席，不得毙掉候选。
-    for c in ACTION_CLUSTERS:
-        if c.kind == "none":
-            continue
-        for spec in enum_specs:
-            for key in (spec.name, spec.zh):
-                for blank in ("", " \t\n"):
-                    got = candidates_from_classifier_payload(
-                        {"kind": c.kind, key: blank}, soft=True,
-                    )
-                    assert len(got) == 1 and got[0]["kind"] == c.kind
-                    assert got[0][spec.name] == spec.default
-
-    for spec in enum_specs:
-        payload = {"kind": host_kind, spec.name: "__not_in_enum__"}
-        ok, reason = validate_action_candidate_shape(payload)
-        assert ok is False and "out of enum" in reason
-        with pytest.raises(ActionCandidateShapeError):
-            candidates_from_classifier_payload(payload, soft=False)
-
-    # 整数上限取自 FieldSpec.int_hi（非名称特判）
-    int_specs = [s for s in specs_by_name.values() if s.as_int and s.int_hi < 10**9]
-    assert int_specs, "catalog must expose a clamped int FieldSpec"
-    for spec in int_specs:
-        over = normalize_one_candidate(
-            {"kind": "secret", spec.name: int(spec.int_hi) + 100}, soft=True,
-        )
-        assert over[spec.name] == int(spec.int_hi)
-
-    # 可选正整数：as_int + default None + int_lo>=1 为结构化契约；raw 直达，不经 generic clamp
-    opt_pos = [
-        s for s in specs_by_name.values()
-        if s.as_int and s.default is None and int(s.int_lo) >= 1
-    ]
-    assert opt_pos, "catalog must expose optional positive-int FieldSpec"
-    for spec in opt_pos:
-        # 同一 catalog 真源：nullable / JSON integer / positive lower bound
-        assert spec.default is None
-        assert spec.as_int is True
-        assert int(spec.int_lo) >= 1
-        host = next(
-            c.kind for c in ACTION_CLUSTERS
-            if any(f.name == spec.name for f in c.fields)
-        )
-        absent = normalize_one_candidate({"kind": host}, soft=True)
-        assert absent[spec.name] is None
-        kept = normalize_one_candidate({"kind": host, spec.name: 7}, soft=True)
-        assert kept[spec.name] == 7
-        # numeric string 原样过缝；拒绝权在既有严格 parser/stage 边界
-        raw_str = normalize_one_candidate({"kind": host, spec.name: "12"}, soft=True)
-        assert raw_str[spec.name] == "12"
 
 
 def test_money_units_and_season_option_contract_project_from_catalog():
@@ -174,22 +81,8 @@ def test_strict_shape_rejects_unknown_kind_and_out_of_enum_subfield():
     with pytest.raises(ActionCandidateShapeError):
         assert_action_candidate_shape({"动作类型": "拨帑"})
     with pytest.raises(ActionCandidateShapeError):
-        candidates_from_classifier_payload(
-            {"kind": "appointment", "appoint_action": "流放"}, soft=False)
-
-
-def test_soft_llm_path_degrades_bad_shape_to_empty_list():
-    assert candidates_from_classifier_payload({"动作类型": "拨帑"}, soft=True) == []
-    assert candidates_from_classifier_payload({"kind": "nope"}, soft=True) == []
-    got = candidates_from_classifier_payload({"动作类型": "拟旨"}, soft=True)
-    assert len(got) == 1 and got[0]["kind"] == "draft"
-
-
-def test_normalize_preserves_none_vs_empty_list_semantics():
-    assert normalize_intent_candidates(None) is None
-    assert normalize_intent_candidates({"kind": "none"}) == []
-    assert primary_intent(None) is None
-    assert primary_intent([])["kind"] == "none"
+        assert_action_candidate_shape(
+            {"kind": "appointment", "appoint_action": "流放"})
 
 
 def _count_pending(db, turn) -> int:

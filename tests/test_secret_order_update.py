@@ -73,21 +73,16 @@ def test_update_preserves_long_text(game):
     assert row["content"] == body
 
 
-def test_update_by_id_refreshes_assignee_only_brief_after_restore(game):
+def test_update_by_id_persists_assignee_brief_after_restore(game):
     db, state, _ = game
     oid = create_test_secret_order(db, state, "保签官", "旧标题", "旧内容", ["辽东"])
-    refreshed = []
 
-    assert db.update_secret_order_by_id(
-        state, oid, "新标题", "新内容",
-        registry=type("Registry", (), {"refresh": lambda _self, name: refreshed.append(name)})(),
-    )
+    assert db.update_secret_order_by_id(state, oid, "新标题", "新内容")
 
     source = db.conn.execute(
         "SELECT title, body FROM secret_order_briefs WHERE order_id=?", (oid,)
     ).fetchone()
     assert dict(source) == {"title": "新标题", "body": "新内容"}
-    assert refreshed == ["保签官"]
 
     # The durable brief, rather than a live registry cache, is the restore
     # boundary.  A reopened save must project the revised order to its assignee.
