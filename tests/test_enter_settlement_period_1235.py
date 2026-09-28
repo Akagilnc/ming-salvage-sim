@@ -507,6 +507,23 @@ def test_concurrent_advance_noncreator_must_not_clear_owner_snapshot(web_game, m
     assert game.db.get_month_open_snapshot(turn) == before
 
 
+def test_reopen_landing_settlement_beats_open_night(web_game):
+    """#1855 / ADR 0149+0158 决定 7：点即入核账后，夜未收并存窗重开仍落 settlement。
+
+    接缝：真 WebGame 状态口。核账快照已立时，开夜不得覆盖落点（禁 audience 优先）。
+    """
+    game = web_game
+    an.open_night(game.db, game.state, location="乾清宫", time_of_day="夜")
+    assert an.get_open_night(game.db) is not None
+    assert game.state_payload()["reopen_landing"] == "audience"
+
+    assert web_app._accept_settlement_period(game) is True
+    payload = game.state_payload()
+    assert payload["turn"]["settlement_display"] is True
+    assert an.get_open_night(game.db) is not None
+    assert payload["reopen_landing"] == "settlement"
+
+
 def test_exit_settlement_display_acquires_write_gate(web_game):
     """#1235 r2 p2 / r3：blocking=True（创建者）清快照须经 _write_gate 阻塞 acquire。"""
     import threading

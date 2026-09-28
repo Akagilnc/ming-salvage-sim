@@ -32,7 +32,6 @@ import { DecisionModal } from "./components/decisionModal";
 import { DecisionRecoveryPanel } from "./components/decisionRecovery";
 import { needsPhase2Resume } from "./decisionRouting";
 import { getMapIntelStyle, refreshLabelMaps } from "./format";
-import { opensAudienceOnResume } from "./reopenLanding";
 import {
   isFaceReachable,
   isSettlementDisplay,
@@ -352,7 +351,7 @@ export function App() {
   React.useEffect(() => {
     if (!state || appView !== "game" || audienceResumeCheckedRef.current) return;
     audienceResumeCheckedRef.current = true;
-    if (!opensAudienceOnResume(state.reopen_landing)) return;
+    if (state.reopen_landing !== "audience") return;
     setSelectedMinister(AUDIENCE_SCENE_SPEAKER);
     setActiveModal("chat");
   }, [state, appView]);

@@ -410,6 +410,9 @@ export type PendingDecision = {
   actor_faction?: string;
 };
 
+/** #1855：重开落点三值 —— 后端状态口真源；前端契约单定义。 */
+export type ReopenLanding = "audience" | "settlement" | "month";
+
 export type GameState = {
   /** settlement_display：服务端下发的核账展示态（#1234；快照在⇔true）。客户端哑渲染。 */
   turn: {
@@ -423,9 +426,9 @@ export type GameState = {
   };
   /**
    * #1855 / ADR 0158 决定 7：重开落点。audience=殿上；settlement=核账期同态；month=本月盘面。
-   * 前端只认此字段，不自判夜/核账。
+   * 前端只认此字段，不自判夜/核账。三值契约单真源在此。
    */
-  reopen_landing?: "audience" | "settlement" | "month";
+  reopen_landing?: ReopenLanding;
   metrics: Metrics;
   previous_summary: string;
   /** #1356：邸报报文自身年月标签（与 previous_summary 同源）；报头直显，禁用 turn.reign_period_label 混充 */
