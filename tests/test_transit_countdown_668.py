@@ -481,10 +481,17 @@ def _crash_resolve_before_simulator_and_recover(
             return payload
 
         monkeypatch.setattr(decree_mod, "build_simulator_payload", _capture_build)
-        monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
         monkeypatch.setattr(
-            decree_mod, "simulate_season_with_payload",
-            lambda *a, **k: ("本月邸报。", k.get("simulator_payload") or captured.get("payload") or {}),
+            "ming_sim.month_chain.run_world_segment_text",
+            lambda *_a, **_k: "本月邸报。",
+        )
+        monkeypatch.setattr(
+            "ming_sim.month_chain.run_gazette_text",
+            lambda *_a, **_k: ("邸报", "本月邸报。"),
+        )
+        monkeypatch.setattr(
+            "ming_sim.month_translate.translate_month_segment",
+            lambda *_a, **_k: {"effects": {}},
         )
 
         ticks_before_recovery = tick_calls["n"]

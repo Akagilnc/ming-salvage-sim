@@ -1050,7 +1050,6 @@ def _657_install_real_phase2_llm_boundary(monkeypatch_or_module):
         else:
             setattr(dm, name, value)
 
-    _set("create_season_simulator_agent", lambda *a, **k: None)
     _set("create_ending_summary_agent", lambda *a, **k: None)
     # 章节/关系酿制：禁 sk-test 打真网；record 空操作。
     # 旧 settle 注入缝 + #1845 机械尾真源缝（brew 已迁出 decree runner）。
@@ -1122,7 +1121,6 @@ def _657_subprocess_resolve(
         web_app.run_highlight_judge = lambda **_k: []
 
         # 真 phase2：只 stub LLM 边界
-        dm.create_season_simulator_agent = lambda *a, **k: None
         dm.create_ending_summary_agent = lambda *a, **k: None
         dm._make_relation_brew_runner = lambda *a, **k: None
         import ming_sim.mechanical_tail as mechanical_tail

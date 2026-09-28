@@ -91,7 +91,6 @@ class _FakeAgent:
 
 def _fake_settlement_llm(monkeypatch, *, narrative="本月邸报：边饷已清。", delta=None):
     """只 fake 月末推演的 simulator LLM 调用；resolve_directives 结算核真跑。"""
-    monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
     monkeypatch.setattr(
         decree_mod, "llm_promulgation_verdicts",
         lambda dossiers, _state, **_kwargs: [
@@ -99,8 +98,6 @@ def _fake_settlement_llm(monkeypatch, *, narrative="本月邸报：边饷已清�
             for row in dossiers
         ],
     )
-    monkeypatch.setattr(decree_mod, "simulate_season_with_payload",
-                        lambda *a, **k: (narrative, k.get("simulator_payload") or {}))
     # #1745：结算拒收递话同属外层 LLM 缝（与 1468 _stub_outer_llm_seams 同源）。
     from tests.section_rejection_helpers import install_settlement_attendant_agent_stub
     install_settlement_attendant_agent_stub(monkeypatch, decree_mod)

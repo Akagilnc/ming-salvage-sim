@@ -1238,6 +1238,20 @@ def secret_order_dossier_ids(db: Any) -> set[int]:
     }
 
 
+# 密令来源 origin / source_id 唯一前缀（#1862 reopen）。拼接与判定都走这里。
+SECRET_ORDER_ORIGIN_PREFIX = "secret_order:"
+
+
+def is_secret_order_origin(origin: object) -> bool:
+    """是否密令来源：origin/source_id 以 SECRET_ORDER_ORIGIN_PREFIX 开头。"""
+    return str(origin or "").startswith(SECRET_ORDER_ORIGIN_PREFIX)
+
+
+def secret_order_origin(order_id: object) -> str:
+    """密令来源字符串：前缀 + 密令 id。"""
+    return f"{SECRET_ORDER_ORIGIN_PREFIX}{int(order_id)}"
+
+
 def dossier_id_in_origin(origin: object) -> Optional[int]:
     text = str(origin or "")
     if not text.startswith("dossier:"):

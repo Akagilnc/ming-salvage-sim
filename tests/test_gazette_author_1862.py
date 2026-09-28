@@ -450,3 +450,4 @@ def test_gazette_failure_retries_report_only(game, monkeypatch):
     archive = db.get_turn_report_archive(turn)
     assert archive["title"] == _TITLE
     assert archive["report"] == _REPORT
+

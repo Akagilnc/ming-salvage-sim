@@ -484,7 +484,7 @@ class Event:
     trigger_end_year: int = 0   # 候选窗口结束年（0=不设上限）
     trigger_end_month: int = 0  # 候选窗口结束月（0=年内任意月）
     open_window: bool = False  # True=显式开放窗，永不过期
-    precondition: str = ""  # 触发前提+改写口子人话说明，喂 simulator 由 LLM 据盘面判断是否改写/跳过（见 season_simulator.md 候选情势触发判定）
+    precondition: str = ""  # 触发前提+改写口子人话说明，由 LLM 据盘面判断是否改写/跳过
     event_type: str = "situation"  # situation=转 bar issue；node=只播报不转 issue；ending=交结局判定
     trigger_class: str = ""  # strategic_foreign=战略/外敌类：点名将按席位顶替，不因将领死亡作废
     category: str = ""  # 事件机制分类；fiscal_levy 等特化确定性通道按此识别，不硬编 id

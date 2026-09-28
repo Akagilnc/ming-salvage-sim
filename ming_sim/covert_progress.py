@@ -17,6 +17,7 @@ import json
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from ming_sim.constants import ECONOMY_ACCOUNTS, REGION_FIELD_ALIASES
+from ming_sim.materials import secret_order_origin
 from ming_sim.person_archive_contract import PERSON_ACTIONS, PERSON_LEGAL_REASON_CODES
 from ming_sim.value_matrix import (
     normalize_axes,
@@ -1154,7 +1155,7 @@ def settle_due_secret_orders(
             "target_units": target,
             "criterion_text": str(order.get("title") or order.get("content") or "密令"),
             "has_reports": bool(reports),
-            "origin_context": f"secret_order:{oid}",
+            "origin_context": secret_order_origin(oid),
         })
         player_text = player_facing_secret_order_close_text(order, reports)
         db.close_secret_order(

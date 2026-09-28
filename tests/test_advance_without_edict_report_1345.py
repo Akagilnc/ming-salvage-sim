@@ -24,10 +24,17 @@ from ming_sim.session import GameSession
 
 
 def _canned(monkeypatch, narrative="本月退朝未下正式圣旨，边事自演。"):
-    monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
     monkeypatch.setattr(
-        decree_mod, "simulate_season_with_payload",
-        lambda *a, **k: (narrative, k.get("simulator_payload") or {}),
+        "ming_sim.month_chain.run_world_segment_text",
+        lambda *_a, **_k: narrative,
+    )
+    monkeypatch.setattr(
+        "ming_sim.month_chain.run_gazette_text",
+        lambda *_a, **_k: ("邸报", narrative),
+    )
+    monkeypatch.setattr(
+        "ming_sim.month_translate.translate_month_segment",
+        lambda *_a, **_k: {"effects": {}},
     )
 
 

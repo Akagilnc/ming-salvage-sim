@@ -15471,9 +15471,11 @@ class GameDB:
             if self.get_decree_dossier(dossier_id) is None:
                 raise ValueError("commitment origin_ref 指向不存在案卷")
             return supplied
-        if supplied.startswith("secret_order:"):
+        from ming_sim.materials import SECRET_ORDER_ORIGIN_PREFIX, is_secret_order_origin
+
+        if is_secret_order_origin(supplied):
             try:
-                secret_order_id = int(supplied.split(":", 1)[1])
+                secret_order_id = int(supplied[len(SECRET_ORDER_ORIGIN_PREFIX):])
             except (TypeError, ValueError):
                 raise ValueError("commitment origin_ref 密令 id 非法")
             dossier = self.get_dossier_for_secret_order(secret_order_id)
@@ -21836,9 +21838,11 @@ class GameDB:
         # enter the shared knowledge ledger.  Disclosure uses
         # ``secret_order_disclosure:`` (does not start with ``secret_order:``)
         # and remains the only publicization path.
+        from ming_sim.materials import is_secret_order_origin
+
         source_id = str(source_id or "")
         kind_text = str(kind or "")
-        if kind_text == "secret_order" or source_id.startswith("secret_order:"):
+        if kind_text == "secret_order" or is_secret_order_origin(source_id):
             raise ValueError(
                 "密令不得写入共享知识源；只允许本体表 + 接令者专用简报表（#883）"
             )
@@ -21921,10 +21925,12 @@ class GameDB:
             self.conn.commit()
 
     def record_character_participation(self, state: GameState, participants: Iterable[str], kind: str, title: str, body: str = "", source_id: str = "", excluded_names: Optional[Iterable[str]] = None, *, commit: bool = True) -> None:
+        from ming_sim.materials import is_secret_order_origin
+
         kind_text = str(kind or "")
         source_text = str(source_id or "")
         # #883: secret_order shape never becomes a participation event.
-        if kind_text == "secret_order" or source_text.startswith("secret_order:"):
+        if kind_text == "secret_order" or is_secret_order_origin(source_text):
             return
         source_id = source_id or f"{kind}:{state.turn}:{title}"
         excluded_json = json.dumps(

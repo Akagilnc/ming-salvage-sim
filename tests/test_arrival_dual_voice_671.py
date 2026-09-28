@@ -43,8 +43,6 @@ def _seed_waiting_arrivals(game, names):
     return arrivals, waiting
 
 def _stub_settlement_llms(decree_mod, monkeypatch, *, simulate, attendant=None):
-    monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
-    monkeypatch.setattr(decree_mod, "simulate_season_with_payload", simulate)
     if attendant is not None:
         monkeypatch.setattr(decree_mod, "run_arrival_attendant_message", attendant)
     # #1745：结算拒收递话同属外层 LLM 缝。

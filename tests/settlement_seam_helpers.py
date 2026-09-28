@@ -6,7 +6,7 @@ Only replaces outer LLM factories/calls; production spine stays real.
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional
+from typing import Optional
 
 import ming_sim.decree as decree_mod
 from ming_sim.session import GameSession
@@ -43,7 +43,6 @@ def canned_full_settlement(
     monkeypatch,
     *,
     narrative: str = "本月边情邸报：辽饷催征，流寇未息。",
-    decisions: Optional[List[Dict[str, object]]] = None,
     simulator_calls: Optional[list] = None,
     source_spy: Optional[list] = None,
     skip_fixed_flows: bool = False,
@@ -53,8 +52,6 @@ def canned_full_settlement(
 
     """
     simulator_calls = simulator_calls if simulator_calls is not None else []
-    decisions = list(decisions or [])
-    monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
 
     # #658：真实 ensure 成案后颁布判官亦为外部 LLM 缝——canned 默认全顺颁。
     # 替身换 llm_promulgation_verdicts 后生产不触 get_or_create，无需再 patch 工厂。
@@ -65,27 +62,6 @@ def canned_full_settlement(
         ]
 
     monkeypatch.setattr(decree_mod, "llm_promulgation_verdicts", _promulgate)
-
-    def _sim(*a, **k):
-        payload = k.get("simulator_payload") or (a[10] if len(a) > 10 else None) or {}
-        simulator_calls.append({
-            "decree_text": a[3] if len(a) > 3 else k.get("decree_text", ""),
-            "payload": payload,
-        })
-        text = narrative
-        if decisions:
-            blocks = []
-            for i, d in enumerate(decisions):
-                title = d.get("title") or f"决策{i}"
-                opts = d.get("options") or ["准", "不准"]
-                opt_lines = "\n".join(f"- {o}" for o in opts)
-                blocks.append(
-                    f"<<DECISION title=\"{title}\">>\n{opt_lines}\n<</DECISION>>"
-                )
-            text = text + "\n" + "\n".join(blocks)
-        return text, payload
-
-    monkeypatch.setattr(decree_mod, "simulate_season_with_payload", _sim)
 
     def _world(*_a, **_k):
         simulator_calls.append({"world": True, "narrative": narrative})

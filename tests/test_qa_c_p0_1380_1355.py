@@ -25,10 +25,17 @@ def _canned_no_edict_settlement(monkeypatch):
     """无旨全链只罐装外部 LLM 缝。"""
     import ming_sim.decree as decree_mod
 
-    monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
     monkeypatch.setattr(
-        decree_mod, "simulate_season_with_payload",
-        lambda *a, **k: ("本月退朝无旨邸报。", k.get("simulator_payload") or {}),
+        "ming_sim.month_chain.run_world_segment_text",
+        lambda *_a, **_k: "本月退朝无旨邸报。",
+    )
+    monkeypatch.setattr(
+        "ming_sim.month_chain.run_gazette_text",
+        lambda *_a, **_k: ("邸报", "本月退朝无旨邸报。"),
+    )
+    monkeypatch.setattr(
+        "ming_sim.month_translate.translate_month_segment",
+        lambda *_a, **_k: {"effects": {}},
     )
     # #1745：结算拒收递话同属外层 LLM 缝。
     from tests.section_rejection_helpers import install_settlement_attendant_agent_stub
