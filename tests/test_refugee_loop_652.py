@@ -495,6 +495,16 @@ def test_recovery_shared_pool_advances_once_after_empty_effect_month(game, monke
         (closed_turn, state.year, state.period, "邸报已成"),
     )
     db.conn.commit()
+    # 推进事务在回流之后崩溃：回滚池、重试只执行一次。
+    original_next_period = state.next_period
+    def fail_advance():
+        raise RuntimeError("advance interrupted")
+    monkeypatch.setattr(state, "next_period", fail_advance)
+    from ming_sim.exceptions import SettlementAbort
+    with pytest.raises(SettlementAbort):
+        session.advance_without_decree()
+    assert _pop(db, "流民", "shaanxi") == 100000
+    monkeypatch.setattr(state, "next_period", original_next_period)
     assert session.advance_without_decree().advanced is True
     assert _pop(db, "流民", "shaanxi") == 0
     assert _pop(db, "农民", "shaanxi") == before_farmers + 100000
@@ -513,18 +523,19 @@ def test_monthly_recovery_follows_each_month_actual_payment(game, monkeypatch):
     db, state, content = game
     _reset_shaanxi_pool(db)
     dossier_id = _recovery_grant(db, state, amount=10, cadence="每月")
-    canned_full_settlement(monkeypatch, skip_fixed_flows=True)
+    canned_full_settlement(monkeypatch)
     session = make_light_session(db, state, content)
     before = _pop(db, "流民", "shaanxi")
     for _ in range(2):
-        # 月度实付按既有账本入口写入；月链只负责在推进时消费本月到账。
-        db.record_issue_economy_move(
-            state, "内库", -10, "赈灾", "本月到账",
-            origin_ref=f"dossier:{dossier_id}",
-        )
         waiting = session.advance_without_decree()
         assert waiting.stage == "gazette"
         turn = state.turn
+        paid = db.conn.execute(
+            "SELECT COALESCE(SUM(-delta), 0) FROM economy_ledger "
+            "WHERE origin_ref=? AND turn=? AND delta<0",
+            (f"dossier:{dossier_id}", turn),
+        ).fetchone()[0]
+        assert paid > 0
         db.conn.execute(
             "INSERT INTO turn_reports (turn, year, period, report) VALUES (?, ?, ?, ?)",
             (turn, state.year, state.period, "邸报已成"),
@@ -532,7 +543,7 @@ def test_monthly_recovery_follows_each_month_actual_payment(game, monkeypatch):
         db.conn.commit()
         assert session.advance_without_decree().advanced is True
         after = _pop(db, "流民", "shaanxi")
-        assert before - after == 10 * RECOVERY_PERSONS_PER_WAN
+        assert before - after == paid * RECOVERY_PERSONS_PER_WAN
         before = after
 
 
