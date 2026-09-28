@@ -7,11 +7,18 @@ import threading
 
 import ming_sim.month_chain as month_chain
 from ming_sim.audience_night import open_night
-from ming_sim.audience_translation import run_turn_translation_job
+from types import SimpleNamespace
+
+from ming_sim.session import GameSession
 from ming_sim.db import GameDB
 from ming_sim.models import LLMConfig
 from ming_sim.public_sayings import list_public_sayings, record_public_saying
-from tests.conftest import offline_empty_audience_translate
+from tests.conftest import (
+    offline_empty_audience_translate,
+    persist_and_schedule_scene,
+    stub_audience_translate,
+    stub_scene_agent,
+)
 from tests.test_month_chain_1843 import _prepare_player_month
 
 
@@ -107,27 +114,7 @@ def test_public_saying_excluded_name_does_not_see_it_others_do(game, monkeypatch
     other_name = _active_other(db, content, exclude={excluded_name, "袁崇焕"})
     claim = "袁崇焕已死于宁远"
 
-    # 持久化召对源轮；只替换不可真跑的 LLM 转译接缝。
-    # 回话须落定，否则收夜 wait_in_flight_clear 会把无 minister_message 的 active 轮当在飞。
     night = open_night(db, state, location="乾清宫", time_of_day="戌时")
-    night_id = int(night["id"])
-    chat_turn_id = int(db.create_chat_turn(
-        state, "殿上", "s", 0, night_id=night_id, status="active",
-    ))
-    uid = db.conn.execute(
-        "INSERT INTO chat_messages (minister_name, turn, role, content) "
-        "VALUES (?, ?, 'emperor', ?)",
-        ("殿上", state.turn, "对外只说此事，勿使某人得知。"),
-    ).lastrowid
-    mid = db.conn.execute(
-        "INSERT INTO chat_messages (minister_name, turn, role, content) "
-        "VALUES (?, ?, 'minister', ?)",
-        ("殿上", state.turn, "臣遵旨。"),
-    ).lastrowid
-    db.conn.commit()
-    db.update_chat_turn_messages(
-        chat_turn_id, user_message_id=int(uid), minister_message_id=int(mid),
-    )
     def translate_fn(prompt, config):
         return {
             **offline_empty_audience_translate(prompt, config),
@@ -142,14 +129,33 @@ def test_public_saying_excluded_name_does_not_see_it_others_do(game, monkeypatch
             }],
         }
 
-    result = run_turn_translation_job(
-        db, state, emperor_message="对外只说此事，勿使某人得知。",
-        reply="臣遵旨。", night_id=night_id, chat_turn_id=chat_turn_id,
-        translate_fn=translate_fn, minister_name=other_name,
+    class Agent:
+        def run(self, message):
+            return SimpleNamespace(content="臣遵旨。", tools=[])
+
+    stub_scene_agent(monkeypatch, Agent())
+    stub_audience_translate(monkeypatch, translate_fn)
+    session = GameSession.__new__(GameSession)
+    session.db, session.state, session.content = db, state, content
+    session.registry = None
+    session.llm_config = LLMConfig(
+        api_key="sk-test", base_url="https://example.invalid", model="test",
     )
-    assert len(result.public_sayings.applied) == 1
-    assert result.public_sayings.rejected == []
-    saying_id = int(result.public_sayings.applied[0]["id"])
+    session.temporary_characters = {}
+    session.agno_db = None
+    session._beat_generator = None
+    session._scene_registry = None
+    session._write_gate = threading.Lock()
+    chat_turn_id = int(db.create_chat_turn(
+        state, "殿上", "s", 0, night_id=int(night["id"]), status="active",
+    ))
+    reply = session.scene_chat("对外只说此事，勿使某人得知。", chat_turn_id=chat_turn_id)
+    pending = persist_and_schedule_scene(session, db, reply)
+    assert pending is not None
+    pending.result()
+    sayings = list_public_sayings(db)
+    assert len(sayings) == 1
+    saying_id = int(sayings[0]["id"])
     source_id = f"public_saying:{saying_id}"
     assert db.conn.execute(
         "SELECT 1 FROM character_knowledge_sources WHERE source_id=?", (source_id,),
