@@ -980,11 +980,24 @@ def _person_audience_experience(db: Any, name: str) -> list[dict]:
 
 
 def _secret_order_chat_turn_ids(db: Any) -> set[int]:
-    """Use the secret dossier's issuance provenance, not the retired chat route."""
+    """Use durable oral pins, including later approvals and updates, not only issuance."""
+    message_ids = [mid for mid, durable in db._secret_origin_message_protection().items() if durable]
+    # Brief pins may be replaced on an update; earlier oral lines stay withheld.
+    message_ids.extend(
+        int(row["id"]) for row in db.conn.execute(
+            "SELECT id FROM chat_messages WHERE knowledge_status='withheld'"
+        )
+    )
+    if not message_ids:
+        return set()
+    placeholders = ",".join("?" for _ in message_ids)
     return {
-        int(row["source_chat_turn_id"])
-        for row in db.list_decree_dossiers()
-        if row.get("secret_order_id") and row.get("source_chat_turn_id")
+        int(row["id"])
+        for row in db.conn.execute(
+            f"SELECT id FROM chat_turns WHERE user_message_id IN ({placeholders}) "
+            f"OR minister_message_id IN ({placeholders})",
+            [*message_ids, *message_ids],
+        )
     }
 
 

@@ -173,15 +173,30 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
     night_id = open_audience_night(db, state)
     secret_turn, _mid = append_night_chat(db, state, night_id, minister, "问密", "答密", 1)
     plain_turn, _mid = append_night_chat(db, state, night_id, minister, "问私", "答私", 2)
-    db.conn.execute(
-        "UPDATE decree_dossiers SET source_chat_turn_id=? WHERE id=?",
-        (secret_turn, secret_did),
+    first_mid = db.conn.execute(
+        "SELECT user_message_id FROM chat_turns WHERE id=?", (secret_turn,)
+    ).fetchone()[0]
+    later_turn, _ = append_night_chat(db, state, night_id, minister, "再问密", "再答密", 3)
+    later_mid = db.conn.execute(
+        "SELECT user_message_id FROM chat_turns WHERE id=?", (later_turn,)
+    ).fetchone()[0]
+    db.upsert_secret_order_brief(
+        state, order_id, minister, "密报题", _SECRET_BRIEF,
+        origin_chat_message_ids=[first_mid],
     )
-    db.conn.commit()
+    db.upsert_secret_order_brief(
+        state, order_id, minister, "密报题", _SECRET_BRIEF,
+        origin_chat_message_ids=[later_mid],
+    )
     append_ledger_entry(
         db, night_id, person_names=[minister], audibility=AUDIBILITY_PRIVATE,
         body=_SECRET_AUDIENCE, tags=["scroll_role:minister"],
         source_chat_turn_id=secret_turn, origin_chat_turn_id=secret_turn,
+    )
+    append_ledger_entry(
+        db, night_id, person_names=[minister], audibility=AUDIBILITY_PRIVATE,
+        body="密令分轮应允经历1862", tags=["scroll_role:minister"],
+        source_chat_turn_id=later_turn, origin_chat_turn_id=later_turn,
     )
     append_ledger_entry(
         db, night_id, person_names=[minister], audibility=AUDIBILITY_PRIVATE,
@@ -331,6 +346,7 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
     assert _SECRET_FACT not in seen["files"]
     assert _SECRET_BRIEF not in seen["files"]
     assert _SECRET_AUDIENCE not in seen["files"]
+    assert "密令分轮应允经历1862" not in seen["files"]
     assert _PRIVATE_KEEP in seen["files"]
     assert _SECRET_DOSSIER_LEDGER not in seen["files"]
     assert _PLAIN_DOSSIER_LEDGER in seen["files"]
@@ -364,6 +380,7 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
         experience_text = (prepared.root / experience).read_text(encoding="utf-8")
         assert _SECRET_BRIEF in experience_text
         assert _SECRET_AUDIENCE in experience_text
+        assert "密令分轮应允经历1862" in experience_text
         assert _PRIVATE_KEEP in experience_text
     finally:
         release_material_tree(prepared.root)
@@ -376,6 +393,7 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
         )
         assert _SECRET_BRIEF in world_experience
         assert _SECRET_AUDIENCE in world_experience
+        assert "密令分轮应允经历1862" in world_experience
         assert _PRIVATE_KEEP in world_experience
         board = next(rel for rel in world.index_lines if rel.endswith("全局.txt"))
         board_text = (world.root / board).read_text(encoding="utf-8")
