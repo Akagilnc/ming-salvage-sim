@@ -1950,13 +1950,10 @@ class GameSession:
         # opening 已在 create_scene_agent instructions；run 输入只传本轮皇帝原话。
         agent_prompt = message_text
         transport_attempts_box: list = []
-        side_effects: dict = {"court_action": ""}
         if stream_emit is not None:
             answer, transport_attempts_box = self._run_scene_agent_transport(
                 agent, agent_prompt, stream_emit,
                 chat_turn_id=int(chat_turn_id or 0),
-                side_effects=side_effects,
-                minister_name=str(minister_name or ""),
             )
         else:
             from ming_sim.llm_transport import (
@@ -1981,8 +1978,6 @@ class GameSession:
             answer = extract_agent_text(run_output)
             transport_attempts_box = transport_attempts_public(attempts)
         result = ChatTurnResult(answer=answer)
-        if side_effects.get("court_action"):
-            result.court_action = str(side_effects["court_action"])
         if transport_attempts_box:
             # 结构化 attempts 账挂结果，供流式 payload 回指（非 prose）。
             result.transport_attempts = transport_attempts_box  # type: ignore[attr-defined]
@@ -2013,10 +2008,8 @@ class GameSession:
         stream_emit: Any,
         *,
         chat_turn_id: int = 0,
-        side_effects: Optional[dict] = None,
-        minister_name: str = "",
     ) -> tuple[str, list]:
-        """场景 agent 的 transport 流式核——与 web 大臣流同政策，不经旧分类器链。"""
+        """场景 agent 的 transport 流式核——零动作工具；材料只读工具不进 court_action。"""
         from ming_sim.llm_model import extract_agent_text, fail_if_llm_error
         from ming_sim.llm_transport import (
             bind_transport_sdk_budget,
@@ -2034,7 +2027,6 @@ class GameSession:
         chunks: list[str] = []
         run_output_box: list = []
         stream_attempt_n = {"n": 0}
-        effects = side_effects if side_effects is not None else {}
 
         def _on_event(event: Any) -> None:
             name = type(event).__name__
@@ -2043,30 +2035,9 @@ class GameSession:
                 if piece:
                     chunks.append(piece)
                     stream_emit(piece)
-            if name == "ToolCallCompletedEvent":
-                tool = getattr(event, "tool", None)
-                tname = str(getattr(tool, "tool_name", "") or "")
-                tres = str(getattr(tool, "result", "") or "")
-                if tname == "dismiss_minister" or tres.startswith("__dismiss__"):
-                    effects["court_action"] = "dismiss"
-                    # 流中退场登记（与旧 _chat_stream_payload 同缝；幂等不双落）
-                    start_exit = getattr(
-                        self, "start_exit_scene_from_dismiss_tools", None,
-                    )
-                    if callable(start_exit) and int(chat_turn_id or 0) > 0:
-                        start_exit(
-                            str(minister_name or ""),
-                            int(chat_turn_id),
-                            [tool],
-                        )
             if name in ("RunOutput", "RunCompletedEvent"):
                 run_output_box.clear()
                 run_output_box.append(event)
-                for tool in list(getattr(event, "tools", None) or []):
-                    tname = str(getattr(tool, "tool_name", "") or "")
-                    tres = str(getattr(tool, "result", "") or "")
-                    if tname == "dismiss_minister" or tres.startswith("__dismiss__"):
-                        effects["court_action"] = "dismiss"
 
         def _after_stream():
             run_output = run_output_box[0] if run_output_box else None
