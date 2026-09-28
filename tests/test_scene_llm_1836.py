@@ -124,6 +124,7 @@ def test_cli_selection_uses_scene_turn_as_admission_origin(game, monkeypatch):
     sess = _sess(db, state, content, llm_config=SimpleNamespace(channel=""))
     sess.schedule_pending_scene_translation = lambda result: None
     calls = []
+    readings = []
 
     class FakeAgent:
         tools = []
@@ -132,17 +133,27 @@ def test_cli_selection_uses_scene_turn_as_admission_origin(game, monkeypatch):
             calls.append(message)
             return SimpleNamespace(content="臣在。", tools=[])
 
-    monkeypatch.setattr("ming_sim.session.create_scene_agent", lambda *a, **k: FakeAgent())
-    answers = iter(["done"])
+    def scene_agent(_config, prepared, **_kwargs):
+        readings.append(prepared.opening)
+        return FakeAgent()
+
+    monkeypatch.setattr("ming_sim.session.create_scene_agent", scene_agent)
+    answers = iter(["边饷如何？", "done"])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
 
     assert minister_chat(sess, character, selected=True) == "dismiss"
-    assert calls == [f"宣{character.name}"]
+    assert calls == [f"宣{character.name}", "边饷如何？"]
     night = get_open_night(db)
     assert night is not None
     entries = [e for e in list_ledger(db, int(night["id"])) if TAG_ENTER in e["tags"] and character.name in e["person_names"]]
     assert len(entries) == 1
     assert entries[0]["origin_chat_turn_id"] > 0
+    # The next scene invocation receives the persisted first turn, not just the admission ledger.
+    first = list_chat_turns_for_night(db, int(night["id"]))[0]
+    reply = db.conn.execute(
+        "SELECT content FROM chat_messages WHERE id=?", (first["minister_message_id"],)
+    ).fetchone()["content"]
+    assert reply in readings[1]
 
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")

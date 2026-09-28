@@ -689,19 +689,7 @@ def project_urge_audience_scene(todo: Dict[str, object]) -> Dict[str, object]:
     kind = str(todo.get("entry_kind") or "").strip()
     criterion = _strip_urge_banned(str(todo.get("criterion_text") or "").strip())
     origin = _strip_urge_banned(str(todo.get("origin_context") or "").strip())
-    host_bit = f"缘「{origin}」" if origin else "承催"
-    if kind == ENTRY_KIND_RUSH_REMONSTRANCE:
-        body = criterion or "期限过急，恐难如期"
-        scene_text = _strip_urge_banned(
-            f"操之过急之谏：{host_bit}，臣工奏称{body}。请陛下宽之。"
-        )
-        label = "rush_remonstrance"
-    else:
-        body = criterion or "乞恩宽限"
-        scene_text = _strip_urge_banned(
-            f"求宽限：{host_bit}，承办人叩请{body}。同一话术，真伪待圣鉴。"
-        )
-        label = "grace_plea"
+    label = "rush_remonstrance" if kind == ENTRY_KIND_RUSH_REMONSTRANCE else "grace_plea"
     return {
         "kind": label,
         "entry_kind": kind,
@@ -711,7 +699,6 @@ def project_urge_audience_scene(todo: Dict[str, object]) -> Dict[str, object]:
         "due_turn": int(todo.get("due_turn") or 0),
         "origin_context": origin,
         "criterion_text": criterion,
-        "scene_text": scene_text,
         # 故意不暴露 payload_json / truth / grace_fake
     }
 

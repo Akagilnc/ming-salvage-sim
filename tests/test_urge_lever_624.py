@@ -771,9 +771,7 @@ def test_urge_audience_project_and_consume_path(game):
     kinds = {s["entry_kind"] for s in scenes}
     assert ENTRY_KIND_RUSH_REMONSTRANCE in kinds
     for s in scenes:
-        assert s.get("scene_text")
         assert "payload_json" not in s
-        assert "truth" not in s.get("scene_text", "")
         assert "grace_fake" not in json.dumps(s, ensure_ascii=False)
     # 不进 due-review、不占接管窗
     assert list_due_review_scenes(db, state) == []

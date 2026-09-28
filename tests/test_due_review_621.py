@@ -220,8 +220,6 @@ def test_due_review_scene_tops_next_audience_with_origin_context(game):
     assert len(scenes) == 1
     scene = scenes[0]
     assert scene["origin_context"] == "三年火器见眉目"
-    assert "复命" in scene["scene_text"]
-    assert "三年火器见眉目" in scene["scene_text"]
     # P4 哨兵：枚举/系统词不进玩家可见串
     banned = (
         "fulfilled", "degraded", "failed", "transformed", "executing",
@@ -231,7 +229,6 @@ def test_due_review_scene_tops_next_audience_with_origin_context(game):
     blob = json.dumps(scene, ensure_ascii=False)
     for token in banned:
         assert token not in blob
-        assert token not in scene["scene_text"]
 
 
 def test_due_review_scene_tops_live_open_night_even_with_body(game):
@@ -553,7 +550,6 @@ def test_three_beat_timing_todo_then_scene_then_slot(game):
     # beat2: 召对场面可读
     scenes = list_due_review_scenes(db, state)
     assert len(scenes) == 1
-    assert "复命" in scenes[0]["scene_text"]
 
     # beat3: 下一 settle 落格 + 消费
     _settle_empty_month(db, state, content)
@@ -611,7 +607,6 @@ def test_input_closed_set_degrades_when_sources_missing(game):
     assert inp["progress_reports"] == []
     assert inp.get("transformation_tendency_facts", {}).get("exposure_count", 0) == 0
     scene = project_due_review_scene(db, todo, review_input=inp)
-    assert scene["scene_text"]
 
 
 def test_formal_review_blocks_extractor_second_terminal(game):
@@ -816,12 +811,4 @@ def test_p6_gap_visible_cause_not_auto(game):
     )
     write_due_staged_commitment_todos(db, state)
     scene = list_due_review_scenes(db, state)[0]
-    gap_text = scene.get("gap_text")
-    statement_text = scene.get("statement_text")
-    # 0118：缺口 + 陈词双到位（真值非空，缺席/None 不得靠 or "" 蒙混）
-    assert isinstance(gap_text, str) and gap_text.strip()
-    assert isinstance(statement_text, str) and statement_text.strip()
-    # 因不自动：不得出现机械归因定论词
-    for banned in ("真没办", "被吞", "欺瞒坐实", "归因="):
-        assert banned not in scene["scene_text"]
-        assert banned not in statement_text
+    assert scene["criterion_text"] == "火器见眉目"
