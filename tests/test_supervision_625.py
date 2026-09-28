@@ -7,7 +7,7 @@ Seams:
 - simulator/extractor 执行格面观察槽
 - dossier_reported_progress origin 结构化私货/同派标记
 - auto_trigger 涌现缝反制 issue
-- AC5 禁词哨兵（scene_text/narrative/turn_report/knowledge_items/memorial_text）
+- AC5 禁词哨兵（narrative/turn_report/knowledge_items/memorial_text）
 """
 
 from __future__ import annotations
@@ -23,7 +23,6 @@ from ming_sim.decree import (
 )
 from ming_sim.due_review import (
     build_due_review_input,
-    project_due_review_scene,
 )
 from ming_sim.staged_commitment import (
     TODO_STATUS_PENDING,
@@ -589,14 +588,6 @@ def test_ac5_banned_tokens_absent_from_named_surfaces(game):
 
     _insert_staged(db, state, content, dossier_id=subject_id, due_turn=state.turn)
     write_due_staged_commitment_todos(db, state)
-    todo = db.list_next_audience_todos(status=TODO_STATUS_PENDING)[0]
-    scene = project_due_review_scene(db, todo)
-
-    # scene_text
-    assert_no_banned_tokens(scene["scene_text"], surface="scene_text")
-    assert_no_banned_tokens(scene.get("gap_text"), surface="scene_text.gap")
-    assert_no_banned_tokens(scene.get("statement_text"), surface="scene_text.statement")
-
     # memorial_text（奏报正文）
     for row in db.list_dossier_progress(subject_id):
         assert_no_banned_tokens(row.get("memorial_text"), surface="memorial_text")

@@ -471,8 +471,11 @@ def test_grace_plea_payload_truth_hidden_from_player_ac6(game):
         assert token not in ublob
     grace_scene = project_urge_audience_scene(grace[0])
     assert "payload_json" not in grace_scene
+    marked = dict(grace[0], origin_context="上奏 grace_fake 待议", criterion_text="求宽限 truth")
+    projected = project_urge_audience_scene(marked)
+    assert projected["origin_context"] == marked["origin_context"]
+    assert projected["criterion_text"] == marked["criterion_text"]
     for token in banned:
-        assert token not in grace_scene.get("scene_text", "")
         assert token not in json.dumps(grace_scene, ensure_ascii=False)
 
     # 最坏形态：带真伪底 payload 的 staged 条走真实 due-review 投影，断言零泄漏
@@ -503,7 +506,6 @@ def test_grace_plea_payload_truth_hidden_from_player_ac6(game):
     sblob = json.dumps(scene, ensure_ascii=False)
     for token in banned:
         assert token not in sblob
-        assert token not in scene.get("scene_text", "")
     # list_due_review_scenes 亦不得泄底
     scenes = list_due_review_scenes(db, state)
     blob = json.dumps(scenes, ensure_ascii=False)
