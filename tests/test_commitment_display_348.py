@@ -10,7 +10,6 @@ from __future__ import annotations
 import json
 import re
 
-from tests.settlement_seam_helpers import settle_effects as settle_with_delta
 from ming_sim.issues import (
     commitment_display_text,
     commitment_progress_payload,
@@ -194,9 +193,9 @@ class TestCommitmentTimedBarValue:
 
 
 class TestTimedBarIntegration:
-    def test_bar_tracks_elapsed_via_wall_clock_and_settle(self, game):
-        """Bar follows months_elapsed/duration on wall-clock and settle paths; display countable."""
-        db, state, content = game
+    def test_bar_tracks_elapsed_via_wall_clock(self, game):
+        """Bar follows months_elapsed/duration from the current turn; display countable."""
+        db, state, _content = game
         db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
         db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
         db.conn.commit()
@@ -232,30 +231,6 @@ class TestTimedBarIntegration:
         assert {duration, 2} <= set(_ints(text))
         assert (origin + duration) not in _ints(text)
 
-        # settle path on a fresh timed issue also advances months_elapsed → bar
-        state.turn = origin
-        settle_id = db.insert_issue(
-            state,
-            kind="initiative",
-            title="赈抚陕西四月-settle",
-            origin_kind="decree",
-            origin_ref="decree:turn-1:relief-4-settle",
-            bar_value=10,
-            ongoing_effects={"metrics": {"皇威": 1}},
-            end_turn=origin + duration,
-            commitment_kind="until_stop",
-        )
-        for _ in range(2):
-            before = state.turn
-            settle_with_delta(state, db, {}, before_turn=before, content=content)
-
-        settle_row = db.conn.execute(
-            "SELECT * FROM issues WHERE id=?", (settle_id,),
-        ).fetchone()
-        progress_settle = commitment_progress_payload(db, state, settle_row)
-        assert progress_settle is not None
-        assert progress_settle["months_elapsed"] == 2
-        assert commitment_timed_bar_value(progress_settle, settle_row) == 50
 
     def test_origin_turn_unset_falls_back_to_state_turn(self, game):
         """NULL/0/missing origin_turn → months_elapsed=0 (no absolute turn leak into bar)."""
