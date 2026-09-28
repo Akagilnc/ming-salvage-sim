@@ -46,6 +46,20 @@ def install_settlement_attendant_agent_stub(
         )
 
 
+def run_declaration(db, state, content, raw_delta):
+    """Enter the current fiscal bracket and atomically dispatch a month declaration."""
+    from ming_sim.applier import Provenance
+    from ming_sim.declaration_dispatch import dispatch_declaration
+    from ming_sim.decree import pre_settle
+    from tests.conftest import with_monthly_reports
+
+    pre_settle(state, db, content=content)
+    return dispatch_declaration(
+        db, state, {"effects": with_monthly_reports(db, raw_delta)},
+        source=Provenance.player_decree,
+    )
+
+
 def prepare_then_settle(db, state, content, raw_delta, **kwargs):
     """Test glue: pre_settle then production-aligned effects apply (#1843 reopen)."""
     from ming_sim.decree import pre_settle

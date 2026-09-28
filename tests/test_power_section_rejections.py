@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import pytest
 
-from tests.section_rejection_helpers import game, rejection_rows as _rejection_rows
+from tests.section_rejection_helpers import game, rejection_rows as _rejection_rows, run_declaration
 
 
 def run_settle(db, state, content, extracted, **kwargs):
@@ -20,16 +20,7 @@ def run_settle(db, state, content, extracted, **kwargs):
     for item in (extracted.get("power_updates") or {}).values():
         if isinstance(item, dict):
             item.setdefault("origin_ref", "盘面自发")
-    from ming_sim.applier import Provenance
-    from ming_sim.declaration_dispatch import dispatch_declaration
-    from ming_sim.decree import pre_settle
-    from tests.conftest import with_monthly_reports
-
-    pre_settle(state, db, content=content)
-    return dispatch_declaration(
-        db, state, {"effects": with_monthly_reports(db, extracted)},
-        source=Provenance.player_decree,
-    )
+    return run_declaration(db, state, content, extracted)
 
 
 def _valid_power_id(db):
