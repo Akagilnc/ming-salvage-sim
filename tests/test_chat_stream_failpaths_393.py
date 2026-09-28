@@ -914,9 +914,12 @@ def test_chat_stream_two_transient_then_success_three_attempts(monkeypatch, game
             provider_message="connection reset",
         )
 
-    db, _state, _content = game
+    from ming_sim.audience_night import ensure_open_night_for_audience
+
+    db, state, _content = game
     minister = "毕自严"
-    session_id = "minister-retry-hist"
+    night = ensure_open_night_for_audience(db, state)
+    session_id = f"scene-night-{int(night['id'])}"
     # 前轮 Agno 史：本轮起点 keep_count=1；失败 attempt 残迹须截掉、前轮须保留
     _seed_agno_v3_runs(db, session_id, run_count=1)
     prior_ids = [f"run-{session_id}-0"]
@@ -943,7 +946,6 @@ def test_chat_stream_two_transient_then_success_three_attempts(monkeypatch, game
 
     agent.run = _timed_run  # type: ignore[method-assign]
     web_game, minister = _transport_web_game(game, agent, monkeypatch)
-    web_game.session.registry.session_ids[minister] = session_id
 
     # 游戏账基线（截史不得动问话/回话账）
     user_msgs_before = int(
@@ -983,7 +985,7 @@ def test_chat_stream_two_transient_then_success_three_attempts(monkeypatch, game
     assert row is not None
     assert int(row["minister_message_id"] or 0) > 0
     assert str(row["status"]) != "failed"
-    assert str(row["agno_session_id"] or "") == session_id
+    assert row["agno_session_id"] == session_id
     assert int(row["agno_runs_before"] or 0) == 1
 
     # 重试实际读回：每 attempt 启动时只见前轮，不见失败 attempt 残迹
@@ -1317,8 +1319,7 @@ def test_chat_stream_halfstream_retry_replaces_temp_presentation(monkeypatch, ga
     事件序列：content delta → replace delta → content delta → done。
     按客户端规则重放后，临时正文 = done.answer（不叠旧半句）。不锁措辞。
 
-    同案动作/结果相容：首 attempt 流中 dismiss 落账后瞬断，终 attempt 无 dismiss 工具
-    → done.court_action 仍为 dismiss（不延后退场、不加次数例外）。
+    首 attempt 即使带旧工具事件也不得执行退场；重试只处理场景正文。
     """
 
     class _PartialDismissThenOk:
@@ -1340,7 +1341,7 @@ def test_chat_stream_halfstream_retry_replaces_temp_presentation(monkeypatch, ga
                     code="llm_connection_error",
                     provider_message="connection reset",
                 )
-            # 终 attempt 工具账无 dismiss——结构结果须仍对齐已落账退场
+            # 终 attempt 正常完成
             yield RunContent("新整段")
             yield RunCompletedEvent()
 
@@ -1355,7 +1356,7 @@ def test_chat_stream_halfstream_retry_replaces_temp_presentation(monkeypatch, ga
     assert agent.calls == 2
     attempts = done.get("transport_attempts") or []
     assert [a.get("outcome") for a in attempts] == ["retryable_fail", "ok"]
-    assert done.get("court_action") == "dismiss", done
+    assert done.get("court_action") != "dismiss", done
 
     # 呈现结构：delta 序列含 replace，且位于首段 content 与后续 content 之间
     delta_seq = [
@@ -1468,97 +1469,3 @@ def test_chat_stream_error_status_run_output_system_layer_not_diegetic(
     assert "workdir" not in str(detail.get("message") or "")
     assert "exit code" not in str(detail.get("message") or "").lower()
     assert detail.get("provider_message")
-
-
-def test_chat_stream_halfstream_dismiss_exhaust_no_double_side_effect_recovery(
-    monkeypatch, game,
-):
-    """#1465 ④ 半流相容：已执行退场后 transport 耗尽 → 退场不重复；终失败既有恢复。
-
-    首 attempt：delta + dismiss 落账后瞬断；后续 attempt 再瞬断至耗尽。
-    - start_exit 只新登记一次（0036 落账即史实；重试不重置 exit_started）
-    - 终失败 fail_chat_turn 恢复：轮 failed、告退账按 origin 回滚、夜开、可重发
-    不另造半流回滚机制。
-    """
-    from ming_sim import audience_night as an
-
-    def _conn_err(_n):
-        return LLMUnavailable(
-            "连接失败",
-            code="llm_connection_error",
-            provider_message="connection reset",
-        )
-
-    class _DismissThenAlwaysFail:
-        def __init__(self):
-            self.calls = 0
-
-        def run(self, *_a, **_k):
-            self.calls += 1
-            if self.calls == 1:
-                yield RunContent("旧半句")
-                tool = SimpleNamespace(
-                    tool_name="dismiss_minister",
-                    result="__dismiss__",
-                    tool_args={},
-                )
-                yield ToolCallCompletedEvent(tool)
-                raise _conn_err(self.calls)
-            # 后续 attempt 无 dismiss 工具——不得再落告退
-            yield RunContent("再半句")
-            raise _conn_err(self.calls)
-
-    agent = _DismissThenAlwaysFail()
-    web_game, minister = _transport_web_game(game, agent, monkeypatch)
-    db = web_game.db
-
-    exit_starts = {"n": 0}
-    real_start_exit = web_game.session.start_exit_scene_from_dismiss_tools
-
-    def _count_start_exit(*a, **k):
-        result = real_start_exit(*a, **k)
-        if result:
-            exit_starts["n"] += 1
-        return result
-
-    web_game.session.start_exit_scene_from_dismiss_tools = _count_start_exit  # type: ignore[method-assign]
-
-    response = _post_chat_stream(monkeypatch, web_game, minister)
-    assert response.status_code == 200, response.text
-    events = _parse_sse(response.text)
-    assert events[-1][0] == "error", events
-    detail = events[-1][1]
-    max_a = default_transport_policy().max_attempts
-    assert agent.calls == max_a
-    assert exit_starts["n"] == 1, exit_starts  # 退场副作用不重复
-    attempts = detail.get("transport_attempts") or []
-    assert len(attempts) == max_a
-    assert attempts[-1].get("outcome") == "terminal_fail"
-
-    failed_turn = int(detail.get("chat_turn_id") or 0)
-    assert failed_turn > 0
-    fail_row = db.conn.execute(
-        "SELECT status FROM chat_turns WHERE id=?", (failed_turn,),
-    ).fetchone()
-    assert fail_row is not None and str(fail_row["status"]) == "interrupted"
-
-    # 既有 fail_chat_turn 恢复：本轮 origin/source 绑定的进出账全清（含告退 scaffold）
-    open_night = an.get_open_night(db)
-    assert open_night is not None
-    turn_ledger = db.conn.execute(
-        "SELECT id FROM story_ledger_entries "
-        "WHERE origin_chat_turn_id=? OR source_chat_turn_id=?",
-        (failed_turn, failed_turn),
-    ).fetchall()
-    assert turn_ledger == [], turn_ledger
-    # 夜开 + 可重发（写路径已释放；重发会再走入殿）
-    ok_agent = _CountingFailAgent(fail_times=0, error_factory=_conn_err)
-    web_game.session.registry.agent = ok_agent
-    stub_scene_agent(monkeypatch, ok_agent)
-    response2 = _post_chat_stream(monkeypatch, web_game, minister, message="再问边饷。")
-    events2 = _parse_sse(response2.text)
-    assert "done" in [e[0] for e in events2], events2
-    done2 = next(e[1] for e in events2 if e[0] == "done")
-    assert int(done2.get("chat_turn_id") or 0) != failed_turn
-    assert int(done2.get("minister_message_id") or 0) > 0
-    assert an.get_open_night(db) is not None

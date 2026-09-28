@@ -1540,41 +1540,6 @@ class GameSession:
             beat_generator=self._beat_generator,
         )
 
-    def start_exit_scene_from_dismiss_tools(
-        self,
-        person_name: str,
-        chat_turn_id: int,
-        tools: Any,
-    ) -> bool:
-        """tools 契约已含 dismiss 时立刻落垫位；有 chat_turn_id 则登记本轮 exit（#542）。
-
-        在仍可与回话流 / action_intent / open-enter 重叠的最早可知点调用。
-        幂等：人已不在场时 dismiss_from_audience 返 None，不重复 start_exit。
-        chat_turn_id=0 仍落告退账（#500 名单即时去人），只是不进 scene registry。
-        返回是否新登记了 exit。
-        """
-        if not hasattr(self.db, "conn"):
-            return False
-        has_dismiss = False
-        for tool_exec in tools or []:
-            tool_name = getattr(tool_exec, "tool_name", "") or ""
-            tool_result = str(getattr(tool_exec, "result", "") or "")
-            if tool_name == "dismiss_minister" or tool_result == "__dismiss__":
-                has_dismiss = True
-                break
-        if not has_dismiss:
-            return False
-        from ming_sim.audience_night import dismiss_from_audience
-        entry_id = dismiss_from_audience(
-            self.db, person_name, origin_chat_turn_id=int(chat_turn_id or 0),
-            state=self.state,
-        )
-        if not entry_id or not chat_turn_id:
-            return False
-        self.start_chat_turn_exit_scene(
-            person_name, int(chat_turn_id), int(entry_id),
-        )
-        return True
 
     def join_chat_turn_scene(self, chat_turn_id: int) -> list[tuple[int, str]]:
         """委托编排层等待本轮 scene；调用方在短事务内 persist。"""
@@ -1765,13 +1730,10 @@ class GameSession:
         # opening 已在 create_scene_agent instructions；run 输入只传本轮皇帝原话。
         agent_prompt = message_text
         transport_attempts_box: list = []
-        side_effects: dict = {"court_action": ""}
         if stream_emit is not None:
             answer, transport_attempts_box = self._run_scene_agent_transport(
                 agent, agent_prompt, stream_emit,
                 chat_turn_id=int(chat_turn_id or 0),
-                side_effects=side_effects,
-                minister_name=str(minister_name or ""),
             )
         else:
             from ming_sim.llm_transport import (
@@ -1796,8 +1758,6 @@ class GameSession:
             answer = extract_agent_text(run_output)
             transport_attempts_box = transport_attempts_public(attempts)
         result = ChatTurnResult(answer=answer)
-        if side_effects.get("court_action"):
-            result.court_action = str(side_effects["court_action"])
         if transport_attempts_box:
             # 结构化 attempts 账挂结果，供流式 payload 回指（非 prose）。
             result.transport_attempts = transport_attempts_box  # type: ignore[attr-defined]
@@ -1828,10 +1788,8 @@ class GameSession:
         stream_emit: Any,
         *,
         chat_turn_id: int = 0,
-        side_effects: Optional[dict] = None,
-        minister_name: str = "",
     ) -> tuple[str, list]:
-        """场景 agent 的 transport 流式核——与 web 大臣流同政策，不经旧分类器链。"""
+        """场景 agent 的 transport 流式核；动作由回话后的场景转译处理。"""
         from ming_sim.llm_model import extract_agent_text, fail_if_llm_error
         from ming_sim.llm_transport import (
             bind_transport_sdk_budget,
@@ -1849,7 +1807,6 @@ class GameSession:
         chunks: list[str] = []
         run_output_box: list = []
         stream_attempt_n = {"n": 0}
-        effects = side_effects if side_effects is not None else {}
 
         def _on_event(event: Any) -> None:
             name = type(event).__name__
@@ -1858,30 +1815,9 @@ class GameSession:
                 if piece:
                     chunks.append(piece)
                     stream_emit(piece)
-            if name == "ToolCallCompletedEvent":
-                tool = getattr(event, "tool", None)
-                tname = str(getattr(tool, "tool_name", "") or "")
-                tres = str(getattr(tool, "result", "") or "")
-                if tname == "dismiss_minister" or tres.startswith("__dismiss__"):
-                    effects["court_action"] = "dismiss"
-                    # 流中退场登记（与旧 _chat_stream_payload 同缝；幂等不双落）
-                    start_exit = getattr(
-                        self, "start_exit_scene_from_dismiss_tools", None,
-                    )
-                    if callable(start_exit) and int(chat_turn_id or 0) > 0:
-                        start_exit(
-                            str(minister_name or ""),
-                            int(chat_turn_id),
-                            [tool],
-                        )
             if name in ("RunOutput", "RunCompletedEvent"):
                 run_output_box.clear()
                 run_output_box.append(event)
-                for tool in list(getattr(event, "tools", None) or []):
-                    tname = str(getattr(tool, "tool_name", "") or "")
-                    tres = str(getattr(tool, "result", "") or "")
-                    if tname == "dismiss_minister" or tres.startswith("__dismiss__"):
-                        effects["court_action"] = "dismiss"
 
         def _after_stream():
             run_output = run_output_box[0] if run_output_box else None

@@ -1937,17 +1937,12 @@ class WebGame:
         ]
 
     def _minister_agno_session_id(self, minister_name: str) -> str:
-        # #1837 reopen / N3：殿上轮对准场景 agent 的 session_id（scene-night-{night_id}），
-        # 撤回/失败/重试才能截到场景历史；旧按大臣命名的 session 随 MinisterRegistry 退役。
-        from ming_sim.audience_night import SCENE_CHAT_SPEAKER, get_open_night
-        if minister_name == SCENE_CHAT_SPEAKER and hasattr(self.db, "conn"):
-            night = get_open_night(self.db)
-            if night is not None:
-                return f"scene-night-{int(night['id'])}"
-            # 建轮前夜尚未开时，仍用确定性前缀；_start_chat_turn 开夜后以实际 night 为准
-            # （create_chat_turn 写入的 id 在 attach 路径里会再取一次）。
-            return f"scene-night-pending-turn-{int(self.state.turn)}"
-        return f"minister-{minister_name}-turn-{self.state.turn}"
+        # 所有 Web 召对都由场景 agent 生成；chat_turn 与 agent 必须绑同一 Agno session。
+        from ming_sim.audience_night import get_open_night
+        night = get_open_night(self.db) if hasattr(self.db, "conn") else None
+        if night is not None:
+            return f"scene-night-{int(night['id'])}"
+        return f"scene-night-pending-turn-{int(self.state.turn)}"
 
     def can_undo_last_chat(self, minister_name: str) -> bool:
         if not self._persistent_chat_minister(minister_name):

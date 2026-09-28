@@ -857,8 +857,11 @@ def test_start_chat_turn_second_turn_reads_agno_v3_runs(web_game):
     旧缝直查 agno_sessions.runs 列 → OperationalError。本 tracer 走真实入口，
     断言第二轮 create 成功且 agno_runs_before=既有 run 数。
     """
+    from ming_sim.audience_night import ensure_open_night_for_audience
+
     game = web_game
     minister = _active_minister(game.db, game.content)
+    ensure_open_night_for_audience(game.db, game.state)
     sid = game._minister_agno_session_id(minister)
     # 首轮完成后的 Agno 3 态：session + 1 COMPLETED run（无 sessions.runs 列）。
     _seed_agno_v3_runs(game.db, sid, run_count=1)
