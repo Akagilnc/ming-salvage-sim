@@ -192,18 +192,14 @@ def build_translation_target_grounding(db: Any) -> str:
         lines.append(
             f"character\t{row['name']}\t{str(row['office'] or row['name'])}"
         )
-    if hasattr(db, "list_active_issues"):
-        for row in db.list_active_issues():
-            lines.append(
-                f"issue\t{int(row['id'])}\t{str(row['title'] or '')}"
-            )
-    else:
-        for row in db.conn.execute(
-            "SELECT id, title FROM issues WHERE status='active' ORDER BY id"
-        ).fetchall():
-            lines.append(
-                f"issue\t{int(row['id'])}\t{str(row['title'] or '')}"
-            )
+    from ming_sim.staged_commitment import normalize_commitment_stages
+    for row in db.conn.execute(
+        "SELECT id, title, stages_json FROM issues WHERE status='active' ORDER BY id"
+    ).fetchall():
+        stages = normalize_commitment_stages(row['stages_json'])
+        lines.append(f"issue\t{int(row['id'])}\t{str(row['title'] or '')}")
+        for idx, stage in enumerate(stages):
+            lines.append(f"stage\t{int(row['id'])}\t{idx}\t{stage}")
     if not lines:
         return ""
     body = "\n".join(lines)
@@ -247,7 +243,8 @@ def build_c0_declaration_shape() -> str:
         '      "recommendation": {\n'
         '        "recommender": "荐者人名", "reason": "荐词原句（非空，逐字）"\n'
         "      },\n"
-        '      "dossier_action_type": "prohibit_covert_levy（禁摊派时填；案卷由场面事实绑定）"\n'
+        '      "dossier_action_type": "prohibit_covert_levy（禁摊派时填）",\n'
+        '      "target_id": "本场暗渠案卷事实中的 dossier_id（禁摊派时填）"\n'
         "    }\n"
         "  ],\n"
         '  "promises": [{"action_id": 正整数, "decision": "应允|拒绝"}],\n'

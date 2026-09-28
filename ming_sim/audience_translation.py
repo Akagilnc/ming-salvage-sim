@@ -335,6 +335,12 @@ def run_turn_translation_job(
             pending = build_pending_summaries(db, int(state.turn), night_id=nid)
             from ming_sim.audience_translate import build_translation_target_grounding
             target_grounding = build_translation_target_grounding(db)
+            from ming_sim.due_review import list_due_review_scenes
+            import json
+            exposed = [scene for scene in list_due_review_scenes(db, state)
+                       if scene.get("kind") == "covert_levy_exposure" and not scene.get("decision")]
+            if exposed:
+                target_grounding += "\n【本场暗渠案卷事实】\n" + json.dumps(exposed, ensure_ascii=False, default=str)
         declaration = translate_audience_turn(
             emperor_message=emperor_message,
             reply=reply,

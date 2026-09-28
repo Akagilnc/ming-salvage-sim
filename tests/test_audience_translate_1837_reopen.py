@@ -88,6 +88,7 @@ def test_prohibit_covert_levy_commission_binds_exposed_dossier(game, monkeypatch
         "commissions": [{
             "text": "此等借饷扰民之举，即刻禁绝。",
             "dossier_action_type": PROHIBITION_ACTION,
+            "target_id": did,
         }],
     })
     result = dispatch_declaration(
