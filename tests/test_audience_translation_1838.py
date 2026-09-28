@@ -194,9 +194,9 @@ def _scene_session(db, state, content, monkeypatch):
     sess.temporary_characters = {}
     sess.agno_db = None
     from ming_sim.beat_orchestration import ChatTurnSceneRegistry
-    from ming_sim.session import _CLI_ACTION_INTENT_EXECUTOR
+    from ming_sim.session import _SCENE_BEAT_EXECUTOR
     sess._beat_generator = deterministic_test_beat_generator
-    sess._scene_registry = ChatTurnSceneRegistry(_CLI_ACTION_INTENT_EXECUTOR)
+    sess._scene_registry = ChatTurnSceneRegistry(_SCENE_BEAT_EXECUTOR)
     sess._write_gate = None
     return sess
 
