@@ -1072,6 +1072,36 @@ def _dispatch_commissions(
                 _reject(rejected, item, "惩处交办未通过现有准入", "invalid_state", source)
             continue
 
+        pacification = item.get("pacification")
+        if pacification is not None:
+            if not isinstance(pacification, Mapping) or item.get("grant") or item.get("appointment"):
+                _reject(rejected, item, "招抚交办载荷须为独立对象", "invalid_shape", source)
+                continue
+            body = _declared_prose(item.get("text"))
+            if body is None:
+                _reject(rejected, item, "招抚交办缺正文", "invalid_shape", source)
+                continue
+            target = str(pacification.get("target_id") or "").strip()
+            canonical = db._find_pacification_target(db.content, target)
+            if canonical is None:
+                known = target in db.content.characters or any(
+                    target in (character.aliases or [])
+                    for character in db.content.characters.values()
+                )
+                _reject(
+                    rejected, item, "招抚目标不是合格内乱首领",
+                    "invalid_state" if known else "hallucinated_id", source,
+                )
+                continue
+            from ming_sim.action_materialize import stage_pacification_candidate
+            actor = str(minister_name or "").strip() or _commission_fallback_actor(db)
+            row_id = stage_pacification_candidate(
+                db, int(state.turn), actor, text=body,
+                target_id=canonical, extracted_mode=pacification.get("mode"),
+            )
+            applied.append({"id": row_id, "kind": "directive"})
+            continue
+
         grant_raw = item.get("grant") or {}
         if grant_raw and not isinstance(grant_raw, Mapping):
             _reject(rejected, item, "拨帑载荷须为对象", "invalid_shape", source)
