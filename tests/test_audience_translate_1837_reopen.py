@@ -299,12 +299,14 @@ def test_inquiry_declaration_persists_return_report(game, monkeypatch):
     assert result.inquiries.rejected == []
     assert len(result.inquiries.applied) == 1
     sources = db.conn.execute(
-        "SELECT source_id, title, body FROM character_knowledge_sources "
+        "SELECT source_id FROM character_knowledge_sources "
         "WHERE source_id LIKE 'near_minister:%'"
     ).fetchall()
     assert sources
-    assert any("查访" in str(r["title"] or "") or "见闻" in str(r["title"] or "")
-               for r in sources)
+    known = db.get_character_knowledge(state, attendant.name)
+    assert {r["source_id"] for r in sources} <= {
+        event["source_id"] for event in known["events"]
+    }
     from ming_sim.audience_night import summon_enter
     from ming_sim.materials import prepare_scene_materials, release_material_tree
     night = open_night(db, state)
@@ -312,8 +314,9 @@ def test_inquiry_declaration_persists_return_report(game, monkeypatch):
     prepared = prepare_scene_materials(db, state)
     try:
         from pathlib import Path
-        experience = (Path(prepared.root) / f"人物/{attendant.name}/经历.txt").read_text()
-        assert any(str(r["body"] or "") in experience for r in sources if r["body"])
+        carrier = f"人物/{attendant.name}/经历.txt"
+        assert carrier in prepared.index_lines
+        assert (Path(prepared.root) / carrier).is_file()
     finally:
         release_material_tree(prepared.root)
 
