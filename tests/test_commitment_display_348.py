@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import re
 
-from ming_sim.decree import settle_with_delta
+from tests.settlement_seam_helpers import settle_effects as settle_with_delta
 from ming_sim.issues import (
     commitment_display_text,
     commitment_progress_payload,

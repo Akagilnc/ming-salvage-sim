@@ -35,13 +35,10 @@ from ming_sim.covert_progress import (
     settle_due_secret_orders,
 )
 from ming_sim.person_archive_contract import PERSON_LEGAL_REASON_CODES
-from ming_sim.decree import settle_with_delta
+from tests.settlement_seam_helpers import settle_effects as settle_with_delta
 from ming_sim.db import GameDB
 from ming_sim.issues import apply_score_extraction
 from ming_sim.models import TurnPhase
-from ming_sim.simulation import (
-    _sanitize_module_output,
-)
 from tests.conftest import offline_empty_audience_translate, stub_audience_translate, stub_scene_agent
 
 

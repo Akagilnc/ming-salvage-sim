@@ -47,34 +47,26 @@ def install_settlement_attendant_agent_stub(
 
 
 def prepare_then_settle(db, state, content, raw_delta, **kwargs):
-    """Test glue: explicit driver prepare → settle (not a production one-shot rail)."""
-    from driver import run_prepare, run_settle as _drv_settle
-
-    prep_kw = {}
-    if "registry" in kwargs:
-        prep_kw["registry"] = kwargs["registry"]
-    if "source" in kwargs:
-        prep_kw["source"] = kwargs["source"]
-    run_prepare(db, state, content, **prep_kw)
+    """Test glue: pre_settle then production-aligned effects apply (#1843 reopen)."""
+    from ming_sim.decree import pre_settle
     from tests.conftest import with_monthly_reports
-    settle_kw = dict(kwargs)
-    settle_kw.setdefault(
-        "settlement_attendant_runner", default_settlement_attendant_runner,
-    )
-    return _drv_settle(
-        db, state, content, with_monthly_reports(db, raw_delta), **settle_kw,
+    from tests.settlement_seam_helpers import settle_effects
+
+    pre_settle(state, db, content, registry=kwargs.get("registry"))
+    return settle_effects(
+        state, db, with_monthly_reports(db, raw_delta),
+        before_turn=int(state.turn), content=content, **kwargs,
     )
 
 
 def run_settle(db, state, content, raw_delta, **kwargs):
-    """已 prepare 后的 driver settle；默认注入 attendant runner（#1745 测试入口）。"""
-    from driver import run_settle as _drv_settle
+    """已 pre_settle 后的 effects 落账 + 月末漂移（#1843 reopen）。"""
+    from tests.settlement_seam_helpers import settle_effects
 
-    settle_kw = dict(kwargs)
-    settle_kw.setdefault(
-        "settlement_attendant_runner", default_settlement_attendant_runner,
+    return settle_effects(
+        state, db, raw_delta,
+        before_turn=int(state.turn), content=content, **kwargs,
     )
-    return _drv_settle(db, state, content, raw_delta, **settle_kw)
 
 
 def rejection_rows(db, turn, section=None, *, columns="section, reason, category, source"):

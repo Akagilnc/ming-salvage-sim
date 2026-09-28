@@ -550,7 +550,7 @@ def test_driver_rescript_actions_settle_via_promulgation_path(
     Player disposition rows settle through apply_dossier_promulgation only.
     #614 零代价验的是批红三选不再追加强颁账。
     """
-    from ming_sim.decree import settle_with_delta
+    from tests.settlement_seam_helpers import settle_effects as settle_with_delta
 
     db, state, content = game
     dossier_id = _dossier(db, state, mode="midzhi")

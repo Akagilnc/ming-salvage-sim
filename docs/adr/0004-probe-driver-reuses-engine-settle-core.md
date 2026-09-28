@@ -1,6 +1,10 @@
 # 探针 driver 复用引擎结算核，不自行复刻结算脊柱
 
-Status: accepted
+Status: superseded
+
+> **#1843 reopen（2026-09-28）**：owner 裁定「连同旧核一起删」（源卷 uuid `1c439239-e748-417a-ac37-79603374583a`）。`driver.py` 与 `settle_with_delta` 旧结算后半段已删除；玩家过月只走 `month_chain.run_player_month_chain`。`pre_settle` / `prepare_resolve_front_half` 仍为玩家链前段，不再与 driver 共用。本 ADR 全文作废，仅作历史。
+
+Status was: accepted
 
 探针 step1 由对话里的 LLM（我）自产邸报叙事 + 稀疏 delta，需要**绕过引擎自带的 extractor** 跑确定性结算。`ming_sim/decree.py` 的结算脊柱夹着两个 LLM 步分两段：前括号（`resolve_directives` 头：固定财政 tick → `auto_trigger_seed_issues`）和后括号（`_settle_after_narrative` 尾：`apply_score_extraction` → turn_logs → 章节记忆 → inertia → `clear_gated_legacies` → 结局判定 → `next_period`）。
 

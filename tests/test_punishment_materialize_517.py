@@ -1073,7 +1073,7 @@ def test_web_stream_transports_punishment_category_to_real_stage(game, monkeypat
 
 def test_punishment_promulgation_refreshes_target_after_outer_commit(game):
     """#672：惩处人物处置经 outer-commit callback 刷新 registry。"""
-    from ming_sim.decree import settle_with_delta
+    from tests.settlement_seam_helpers import settle_effects as settle_with_delta
 
     db, state, content = game
     target = _active_ming(db, content)

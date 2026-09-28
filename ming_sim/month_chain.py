@@ -1205,6 +1205,9 @@ def _run_month_drift(
         )
         db.record_monthly_loophole_exposures_from_reconciliations(turn, commit=False)
         retire_unsettled_summons_for_inactive(db)
+        # #651：暗渠揭破结算接进月末漂移（只看待办与案卷事实；applied 可空）。
+        from ming_sim.covert_levy import settle_exposure_from_canonical_actions
+        settle_exposure_from_canonical_actions(db, state, {})
         rejections = apply_issue_inertia_and_ongoing(db, state)
         if rejections:
             _collect_inline_rejections(

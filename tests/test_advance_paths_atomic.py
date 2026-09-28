@@ -22,7 +22,8 @@ import pytest
 
 import ming_sim.decree as decree_mod
 import ming_sim.issues as I
-from ming_sim.decree import persist_resolve_context, settle_with_delta
+from ming_sim.decree import persist_resolve_context
+from tests.settlement_seam_helpers import settle_effects as settle_with_delta
 from tests.dossier_test_helpers import TYPED_COVERT_TASK
 
 
@@ -32,10 +33,6 @@ def _ledger_count(db, turn: int) -> int:
     ).fetchone()[0]
 
 
-def _log_count(db, turn: int) -> int:
-    return db.conn.execute(
-        "SELECT COUNT(*) FROM turn_logs WHERE turn=?", (turn,)
-    ).fetchone()[0]
 
 
 # ---------------------------------------------------------------------------

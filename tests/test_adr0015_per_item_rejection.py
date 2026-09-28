@@ -89,41 +89,12 @@ def test_driver_validate_rejection_mirrors_jsonl_after_outer_atomic(game, tmp_pa
     assert json.loads(mirrored[0]["item_json"]) == {"raw_value": None}
 
 
-def test_validate_and_module_rejections_do_not_leak_into_player_visible_extraction(game, tmp_path, monkeypatch):
-    """ADR 0015/P4：shape/module 拒收桶是内部信号，不写进玩家可见 extractor_output。"""
-    from tests.section_rejection_helpers import prepare_then_settle as run_settle
-
-    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
-    db, state, content = game
-    turn = state.turn
-
-    run_settle(
-        db,
-        state,
-        content,
-        {
-            "economy_moves": [None],
-            "_module_rejections": [
-                {
-                    "rejected": True,
-                    "item": {"field": "army_delta", "owner_module": "military_external", "value": {}},
-                    "reason": "misrouted",
-                    "category": "module_misroute",
-                }
-            ],
-        },
-        narrative="本月邸报。",
-        decree_text="诏",
-    )
-
-    visible = db.get_turn_extraction(turn)["extractor_output"]
-    assert "validate_shape_rejections" not in visible
-    assert "module_misroute_rejections" not in visible
 
 
 def test_player_visible_rejection_aggregates_durable_rows_across_attempts_and_resimulation(game, tmp_path, monkeypatch):
     from ming_sim.applier import Provenance
-    from ming_sim.decree import persist_resolve_context, settle_with_delta
+    from ming_sim.decree import persist_resolve_context
+    from tests.settlement_seam_helpers import settle_effects as settle_with_delta
     from ming_sim.error_pack import clear_for_resimulation
     from ming_sim.models import TurnPhase
 
@@ -201,51 +172,8 @@ def test_utf8_safe_serialization_preserves_chinese_and_escapes_lone_surrogate(ga
     assert "\\ud800" in row["item_json"]
 
 
-def test_misrouted_module_field_becomes_rejection_not_only_trace():
-    from ming_sim.simulation import _sanitize_module_output
-
-    cleaned = _sanitize_module_output("internal", {"army_delta": {"a": {"morale": 1}}})
-    rejections = cleaned.get("_module_rejections") or []
-    assert rejections
-    assert rejections[0]["rejected"] is True
-    assert rejections[0]["item"] == {"field": "army_delta", "owner_module": "military_external", "value": {"a": {"morale": 1}}}
 
 
-def test_sqlite_text_sanitization_covers_resolve_report_and_extraction_rows(game):
-    from ming_sim.applier import Provenance
-    from ming_sim.decree import persist_resolve_context
-
-    db, state, _ = game
-    bad_text = "中文\ud800"
-
-    persist_resolve_context(
-        db,
-        state.turn,
-        {},
-        decree_text=bad_text,
-        narrative=bad_text,
-        simulator_payload={"text": bad_text},
-        secret_orders={"在办": [{"text": bad_text}]},
-        relevant_memories=[{"text": bad_text}],
-        source=Provenance.player_decree,
-    )
-    ctx = db.get_resolve_context(state.turn)
-    assert "中文" in ctx["decree_text"]
-    assert "\\ud800" in ctx["decree_text"]
-    assert "\\ud800" in ctx["simulator_payload"]["text"]
-
-    db.save_turn_report(state, bad_text)
-    assert "\\ud800" in db.get_turn_report(state.turn)
-
-    db.save_turn_extraction(
-        state,
-        decree_text=bad_text,
-        narrative=bad_text,
-        extractor_input=bad_text,
-        extractor_output=bad_text,
-    )
-    row = db.conn.execute("SELECT decree_text, narrative, extractor_input, extractor_output FROM turn_extractions WHERE turn=?", (state.turn,)).fetchone()
-    assert all("中文" in row[col] and "\\ud800" in row[col] for col in row.keys())
 
 
 def test_sqlite_text_sanitization_covers_issue_rows_and_advances(game):

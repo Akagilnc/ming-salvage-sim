@@ -127,7 +127,7 @@ def test_break_rank_appointment_rescript_td4_tracer(
     game, monkeypatch, decision, expected_status, expect_force_costs,
 ):
     """P-2：越级任命打回三格 → 批红三选参数化 → TD-4 三要素 restore 同档。"""
-    from ming_sim.decree import settle_with_delta
+    from tests.settlement_seam_helpers import settle_effects as settle_with_delta
 
     db, state, content = game
     board = _board_with_td4_three(db, state, content)

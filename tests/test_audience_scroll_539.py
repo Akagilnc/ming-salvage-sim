@@ -558,20 +558,6 @@ def test_personal_projection_only_reads_the_current_open_night(game):
     assert {message["chat_turn_id"] for message in projection} == {current_turn}
 
 
-def test_ending_timeline_consumes_monthly_archive_once_not_scene_rows():
-    from ming_sim.memories import build_timeline
-
-    class FakeDB:
-        def list_monthly_archives(self):
-            return [{"turn": 7, "year": 1628, "period": 3}]
-        def list_archived_turns(self):
-            raise AssertionError("scene-combined archive must not drive ending timeline")
-        def get_turn_extraction(self, turn): return None
-
-    assert build_timeline(FakeDB()) == [{
-        "turn": 7, "year": 1628, "period": 3,
-        "decree_brief": "", "effect_brief": "", "gazette": "",
-    }]
 
 
 def test_history_projection_handlers_are_sync_for_sqlite_access():

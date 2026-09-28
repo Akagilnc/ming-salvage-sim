@@ -1,4 +1,7 @@
-# SETTLEMENT_FLOW.md — 玩家过月与 driver 结算边界
+# 结算流程（SETTLEMENT_FLOW）
+
+> **#1843 reopen（2026-09-28）**：`driver.py` 与 `settle_with_delta` 旧结算后半段已删除。玩家过月唯一路径 = `month_chain.run_player_month_chain`（经 `prepare_resolve_front_half` / `pre_settle`）。下文若仍写 driver / settle_with_delta / turn_extractions 为「现行」，以本注为准；详细步骤以 #1843 票面与 month_chain 源码为准。
+
 
 > 玩家入口已接入 ADR 0157。下方 S1/phase2 是旧核资料；`driver.py` 只复用其确定性结算部分，不运行旧 phase2。它不是 Web／GameSession 的现行过月顺序；规则以 [ADR 0157](adr/0157-v2-month-waits-for-exhausted-model-call-recovery.md) 为准。
 

@@ -587,7 +587,8 @@ def test_outer_atomic_rollback_discards_registry_refresh_callback(game):
     nested settle 返回后 registry 仍未刷新；外层故障回滚后人物 DB/content 与 registry
     均回前态；另一次真实 outer commit 只刷新一次。
     """
-    from ming_sim.decree import atomic_and_reload, settle_with_delta
+    from ming_sim.decree import atomic_and_reload
+    from tests.settlement_seam_helpers import settle_effects as settle_with_delta
     from tests.test_punishment_materialize_517 import (
         _close_night_dossier,
         _stage_punishment,

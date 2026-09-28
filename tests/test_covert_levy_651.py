@@ -8,7 +8,7 @@ from ming_sim.covert_levy import (
 from ming_sim.decree import project_dossiers_for_simulator
 from ming_sim.issues import apply_score_extraction
 from ming_sim.due_review import audience_todo_lane, build_due_review_input, list_due_review_scenes
-from ming_sim.simulation import EMPTY_EXTRACTION, MODULE_FIELDS
+from ming_sim.simulation import EMPTY_EXTRACTION
 from ming_sim.beat_orchestration import assemble_beat_inputs, BEAT_OPEN
 from ming_sim.action_clusters import candidates_from_classifier_payload
 from ming_sim.action_materialize import MaterializeCtx, run_materialize_pipeline
@@ -30,19 +30,6 @@ def _bound_case(db, state):
     return did, int(cur.lastrowid), str(army["id"]), str(executor)
 
 
-def test_pay_fact_uses_monthly_durable_counter_and_no_new_extractor_wrapper(game):
-    db, state, _ = game
-    did, _, army_id, _ = _bound_case(db, state)
-    db.conn.execute(
-        "UPDATE armies SET arrears=7, consecutive_pay_shortfall_months=2 WHERE id=?", (army_id,)
-    )
-    assert army_pay_fact_for_dossier(db, did) == {
-        "army_id": army_id, "arrears": 7.0, "consecutive_pay_shortfall_months": 2,
-    }
-    assert "covert_levy_verdicts" not in EMPTY_EXTRACTION
-    assert "covert_levy_decisions" not in EMPTY_EXTRACTION
-    assert all("covert_levy_verdicts" not in fields and "covert_levy_decisions" not in fields
-               for fields in MODULE_FIELDS.values())
 
 
 def test_exposure_uses_single_dispatcher_and_projects_exact_case(game, monkeypatch):

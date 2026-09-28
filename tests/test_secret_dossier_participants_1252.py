@@ -88,75 +88,6 @@ def test_s1_public_projection_filter_unchanged(game):
 # ── S2: 私字段 + 冻结授权 + apply ───────────────────────────
 
 
-def test_s2_secret_field_appends_via_real_settle_and_recovery_replays(game):
-    """① 真实 settle 入口落密令 roster；recovery 同冻结 ctx 重放一致。"""
-    import driver
-    import ming_sim.decree as decree
-    import ming_sim.issues as issue_engine
-
-    db, state, content = game
-    lead, worker = _people(db, 2)
-    # Non 护行/稽核 tags + short deadline: avoid #566 monthly-progress fail-loud.
-    order_id = create_test_secret_order(db,
-        state, lead, "密查仓胥", "暗访通州仓", ["密访"], deadline_months=1,
-        covert_task=TYPED_COVERT_TASK,
-    )
-    dossier_id = int(db.get_dossier_for_secret_order(order_id)["id"])
-    db.append_decree_dossier_participants(dossier_id, [{
-        "character_id": lead, "tier": "主办", "role": "密访",
-    }], state=state)
-
-    delta = {
-        "secret_dossier_participants": [{
-            "dossier_id": dossier_id,
-            "character_id": worker,
-            "tier": "协办",
-            "role": "随员核账",
-            "delegator_id": lead,
-        }],
-    }
-    from tests.section_rejection_helpers import run_settle as settle_after_prepare
-
-    driver.run_prepare(db, state, content)
-    settle_after_prepare(db, state, content, with_monthly_reports(db, delta))
-
-    roster = db.get_decree_dossier(dossier_id)["participant_roster"]
-    assert any(
-        row.get("character_id") == worker and row.get("tier") == "协办"
-        for row in roster
-    )
-
-    # Crash-style freeze: persist ready ctx then replay recovery.
-    before_turn = state.turn
-    # Reset roster to only lead so replay must re-append worker.
-    db.conn.execute(
-        "UPDATE decree_dossiers SET participant_roster=? WHERE id=?",
-        (
-            __import__("json").dumps(
-                [{"character_id": lead, "tier": "主办", "role": "密访"}],
-                ensure_ascii=False,
-            ),
-            dossier_id,
-        ),
-    )
-    db.conn.commit()
-    grouped = _grouped(db, state, [order_id])
-    from ming_sim.decree import secret_dossier_ids_from_secret_orders
-    assert dossier_id in secret_dossier_ids_from_secret_orders(db, grouped)
-
-    decree.pre_settle(state, db)
-    db.save_resolve_context(
-        state.turn, "", "",
-        {"decree_dossiers": []},
-        secret_orders=grouped,
-        extracted=with_monthly_reports(db, delta),
-    )
-    driver.run_settle(db, state, content, with_monthly_reports(db, delta))
-    roster2 = db.get_decree_dossier(dossier_id)["participant_roster"]
-    assert any(
-        row.get("character_id") == worker and row.get("tier") == "协办"
-        for row in roster2
-    )
 
 
 def test_s2_tracer_613_565_readers_see_appended_roster(game):
@@ -302,51 +233,8 @@ def test_s2_missing_secret_authority_never_rebuilds_from_live_db(game, authority
     assert len(db.get_decree_dossier(dossier_id)["participant_roster"]) == 1
 
 
-def test_s2_driver_persists_secret_orders_and_freezes_secret_authority(game, monkeypatch):
-    """driver 同口径 DB 查询并 persist secret_orders，替掉 secret_orders=[]。"""
-    import driver
-
-    db, state, content = game
-    lead, worker = _people(db, 2)
-    order_id = create_test_secret_order(db,
-        state, lead, "密查仓胥", "暗访通州仓", ["稽核"], deadline_months=3,
-    )
-    dossier_id = int(db.get_dossier_for_secret_order(order_id)["id"])
-    db.append_decree_dossier_participants(dossier_id, [{
-        "character_id": lead, "tier": "主办", "role": "密访",
-    }], state=state)
-
-    monkeypatch.setattr(
-        driver, "settle_with_delta",
-        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("crash after ready")),
-    )
-    with pytest.raises(RuntimeError, match="crash after ready"):
-        driver.run_prepare(db, state, content)
-        driver.run_settle(db, state, content, {
-            "secret_dossier_participants": [{
-                "dossier_id": dossier_id, "character_id": worker,
-                "tier": "协办", "delegator_id": lead,
-            }],
-        })
-    ctx = db.get_resolve_context(state.turn)
-    assert isinstance(ctx["secret_orders"], dict)
-    # Frozen secret_orders must carry the real order so recovery can re-derive.
-    from ming_sim.settlement_payload import iter_secret_order_ids
-    assert order_id in iter_secret_order_ids(ctx["secret_orders"])
 
 
 # ── S3: prompt 正向特征化 + DELTA_SCHEMA ─────────────────────
 
 
-def test_s3_runtime_contract_owns_secret_field():
-    """私字段归 personnel_secret：钉 MODULE_FIELDS/EMPTY_EXTRACTION/TOP_LEVEL_ALIASES。"""
-    from ming_sim.simulation import (
-        EMPTY_EXTRACTION,
-        MODULE_FIELDS,
-        TOP_LEVEL_ALIASES,
-    )
-
-    assert "secret_dossier_participants" in MODULE_FIELDS["personnel_secret"]
-    assert "secret_dossier_participants" not in MODULE_FIELDS["issues"]
-    assert "secret_dossier_participants" in EMPTY_EXTRACTION
-    assert TOP_LEVEL_ALIASES["密令案卷参与人"] == "secret_dossier_participants"

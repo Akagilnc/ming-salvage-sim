@@ -13,7 +13,7 @@ from __future__ import annotations
 import pytest
 
 from ming_sim import issues
-from ming_sim.decree import settle_with_delta
+from tests.settlement_seam_helpers import settle_effects as settle_with_delta
 from tests.conftest import with_monthly_reports
 from ming_sim.simulation import build_simulator_payload
 from tests.dossier_test_helpers import TYPED_COVERT_TASK, create_test_secret_order
@@ -346,29 +346,6 @@ def test_883_post_brief_public_audience_enters_shared_sources(game):
     assert any(paraphrase in body for body in _shared_bodies(db))
 
 
-def test_883_pure_public_archive_lands_while_secret_brief_active(game):
-    """F3：世上存在 active brief 时，纯公开月末叙事/邸报仍应入档（不整闸吞公开层）。"""
-    db, state, content = game
-    assignee = _active_ministers(db, content)[0]
-    public = "本月山东漕粮起运如常，无阻无欠。"
-    secret_marker = "不得入档的密令正文883"
-    create_test_secret_order(db, state, assignee.name, "密查某事", secret_marker, [])
-
-    db.save_turn_report(state, public)
-    report_blob = " ".join(item["report"] for item in db.list_turn_reports())
-    assert public in report_blob
-    # Brief content does not auto-flow into archives.
-    assert secret_marker not in report_blob
-
-    from ming_sim.decree import _record_settlement_narrative_sources
-    _record_settlement_narrative_sources(db, state, public, commit=True)
-    settlement = list(
-        db.conn.execute(
-            "SELECT body FROM character_knowledge_events WHERE source_id=?",
-            (f"settlement:narrative:{state.turn}",),
-        ).fetchall()
-    )
-    assert settlement and public in (settlement[0]["body"] or "")
 
 
 def test_883_cross_turn_chat_origin_withheld_on_late_secret_create(game):

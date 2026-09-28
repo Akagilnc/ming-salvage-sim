@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import pytest
 
-from ming_sim.decree import persist_resolve_context, settle_with_delta
+from ming_sim.decree import persist_resolve_context
+from tests.settlement_seam_helpers import settle_effects as settle_with_delta
 
 
 def test_persist_resolve_context_stores_extracted_delta(game):

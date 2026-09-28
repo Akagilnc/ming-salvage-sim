@@ -166,10 +166,11 @@ def effect_brief(applied: Dict[str, object]) -> str:
 
 
 def build_timeline(db: GameDB, upto_turn: Optional[int] = None) -> List[Dict[str, object]]:
-    """从已落库月档逐回合抽「干了啥 + 效果」，供结局时间线 / 总结 agent。
+    """从已落库月档逐回合抽邸报，供结局时间线 / 总结 agent。
 
-    decree_text 取诏书摘要；extractor_output 解析后走 effect_brief 拼效果。
     #1845：章节记忆退役后，叙事优先用历月邸报正文，不再读 chapter_summary。
+    #1843 reopen：旧 turn_extractions 已删；decree_brief/effect_brief 不再从该表拼装
+    （代码拼效果与 P7 相抵；本票只删对该表的读取，整函数退役由 #1845 承接）。
     """
     gazettes = {
         int(r["turn"]): r
@@ -180,36 +181,14 @@ def build_timeline(db: GameDB, upto_turn: Optional[int] = None) -> List[Dict[str
         turn = int(meta["turn"])
         if upto_turn is not None and turn > upto_turn:
             continue
-        ext = db.get_turn_extraction(turn)
-        decree_brief = ""
-        effect = ""
-        if ext:
-            decree_brief = _directive_summary(str(ext.get("decree_text") or ""))
-            raw_out = ext.get("extractor_output")
-            applied_like = _coerce_extractor_output(raw_out)
-            if applied_like:
-                effect = effect_brief(applied_like)
         gazette = gazettes.get(turn) or {}
         gazette_body = str(gazette.get("report") or gazette.get("body") or "")
         timeline.append({
             "turn": turn,
             "year": int(meta["year"]),
             "period": int(meta["period"]),
-            "decree_brief": decree_brief,
-            "effect_brief": effect,
+            "decree_brief": "",
+            "effect_brief": "",
             "gazette": gazette_body,
         })
     return timeline
-
-
-def _coerce_extractor_output(raw: object) -> Dict[str, object]:
-    """extractor_output 可能是 dict 或 JSON 字符串（get_turn_extraction 解析失败时回字符串）。"""
-    if isinstance(raw, dict):
-        return raw
-    if isinstance(raw, str) and raw.strip():
-        try:
-            data = json.loads(raw)
-            return data if isinstance(data, dict) else {}
-        except Exception:
-            return {}
-    return {}

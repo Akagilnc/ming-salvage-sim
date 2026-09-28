@@ -69,7 +69,7 @@ def _canned_monthly_settlement(monkeypatch, extractor_calls):
 
 
 def _settle(db, state, content, narrative="本月邸报", progress=None):
-    from ming_sim.decree import settle_with_delta
+    from tests.settlement_seam_helpers import settle_effects as settle_with_delta
 
     turn = state.turn
     extracted = {"dossier_progress_reports": [progress]} if progress else {}
@@ -145,7 +145,7 @@ def test_titles_do_not_classify_and_all_active_secret_orders_are_candidates(game
         }
         for did in ids
     ]
-    from ming_sim.decree import settle_with_delta
+    from tests.settlement_seam_helpers import settle_effects as settle_with_delta
     settle_with_delta(
         state, db, {"dossier_progress_reports": reports},
         before_turn=state.turn, content=content, narrative="本月邸报",
@@ -165,7 +165,7 @@ def test_only_an_existing_monthly_chain_gets_terminal_progress(game):
         {"dossier_id": eligible, "progress_band": "在途", "memorial_text": "已出京"},
         {"dossier_id": ordinary, "progress_band": "在办", "memorial_text": "河工并列密奏"},
     ]
-    from ming_sim.decree import settle_with_delta
+    from tests.settlement_seam_helpers import settle_effects as settle_with_delta
     settle_with_delta(
         state, db, {"dossier_progress_reports": reports},
         before_turn=state.turn, content=content, narrative="本月邸报",
@@ -199,7 +199,7 @@ def test_character_terminal_status_closes_secret_orders_through_canonical_progre
             "memorial_text": "库藏并列密奏",
         },
     ]
-    from ming_sim.decree import settle_with_delta
+    from tests.settlement_seam_helpers import settle_effects as settle_with_delta
     settle_with_delta(
         state, db, {"dossier_progress_reports": reports},
         before_turn=state.turn, content=content, narrative="本月邸报",
@@ -391,7 +391,7 @@ def test_real_no_edict_entries_roll_back_every_external_state_after_fiscal_write
 
 def test_no_eligible_dossier_unknown_report_aborts_atomically(game):
     """The production settlement seam delegates eligibility to the DB contract."""
-    from ming_sim.decree import settle_with_delta
+    from tests.settlement_seam_helpers import settle_effects as settle_with_delta
     from ming_sim.exceptions import SettlementAbort
     import pytest
 
@@ -426,7 +426,7 @@ def test_no_eligible_dossier_unknown_report_aborts_atomically(game):
 
 
 def test_no_eligible_dossier_bad_report_shape_aborts_but_empty_values_advance(game):
-    from ming_sim.decree import settle_with_delta
+    from tests.settlement_seam_helpers import settle_effects as settle_with_delta
     from ming_sim.exceptions import SettlementAbort
     import pytest
 
@@ -458,7 +458,7 @@ def test_eligible_missing_report_aborts_settlement_but_empty_month_succeeds(game
     before = state.turn
     _order(db, state)
     with pytest.raises(SettlementAbort):
-        from ming_sim.decree import settle_with_delta
+        from tests.settlement_seam_helpers import settle_effects as settle_with_delta
         settle_with_delta(
             state, db, {"dossier_progress_reports": []},
             before_turn=state.turn, content=content, narrative="本月邸报",

@@ -1,4 +1,7 @@
-# DELTA_SCHEMA.md — 我产 delta JSON 的格式契约
+# Delta Schema
+
+> **#1843 reopen（2026-09-28）**：五模块 extractor 与 `TOP_LEVEL_ALIASES` / `MODULE_FIELDS` / 清洗合并函数已删。现行契约 = `EMPTY_EXTRACTION`（C0 形状）、`ITEM_FIELD_ALIASES` / `_canonical_item_fields`、`read_beyond_intent_raw`。不再由 driver 喂 delta；过月转译经 declaration_dispatch 落账。
+
 
 **真相源**：`ming_sim/simulation.py`（`EMPTY_EXTRACTION` / `MODULE_FIELDS` / `_clean_*`）+ `ming_sim/issues.py`（落库守门）+ `ming_sim/constants.py`（白名单）。
 

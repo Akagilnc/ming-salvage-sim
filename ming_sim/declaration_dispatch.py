@@ -478,6 +478,12 @@ def _dispatch_effects(
         effect_sequence=effect_sequence if isinstance(raw, list) else None,
         defer_disclosure=defer_disclosure,
     )
+    # #670：续启赴京成功后结清 in_transit 传召，与本段落账同事务。
+    from ming_sim.audience_night import settle_applied_arrived_summons
+    settle_applied_arrived_summons(db, report)
+    # #651：揭破待办以本段已落结果为据（民变实况用本段 population_transfers）。
+    from ming_sim.covert_levy import write_exposure_todos
+    write_exposure_todos(db, state, report)
     _collect_inline_rejections(collector, report, turn, source)
     _persist_specialized_extraction(
         db, state, extraction, collector=collector, turn=turn, source=source,

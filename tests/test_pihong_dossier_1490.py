@@ -82,6 +82,237 @@ def web_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
         pass
 
 
+def _657_install_real_phase2_llm_boundary(monkeypatch_or_module):
+    """只中和 phase2 LLM 边界；保留 resolve_decisions_phase2 真结算/推月。"""
+    import ming_sim.decree as dm
+    import ming_sim.mechanical_tail as mechanical_tail
+
+    def _set(name, value):
+        if hasattr(monkeypatch_or_module, "setattr"):
+            monkeypatch_or_module.setattr(dm, name, value)
+        else:
+            setattr(dm, name, value)
+
+    _set("create_season_simulator_agent", lambda *a, **k: None)
+    _set("create_ending_summary_agent", lambda *a, **k: None)
+    # 章节/关系酿制：禁 sk-test 打真网；record 空操作。
+    # 旧 settle 注入缝 + #1845 机械尾真源缝（brew 已迁出 decree runner）。
+    # #1843 reopen：_make_relation_brew_runner 已随旧核删除
+    _noop_brew = lambda *a, **k: None
+    if hasattr(monkeypatch_or_module, "setattr"):
+        monkeypatch_or_module.setattr(
+            mechanical_tail, "_run_relation_brew", _noop_brew,
+        )
+    else:
+        mechanical_tail._run_relation_brew = _noop_brew
+    # #1745：结算拒收递话同属外层 LLM 缝（复用单一 agent 边界夹具）。
+    from tests.section_rejection_helpers import install_settlement_attendant_agent_stub
+    if hasattr(monkeypatch_or_module, "setattr"):
+        install_settlement_attendant_agent_stub(monkeypatch_or_module, dm)
+    else:
+        install_settlement_attendant_agent_stub(None, dm)
+
+def _657_subprocess_resolve(
+    db_path: str,
+    choices: list,
+    *,
+    crash: str = "",
+    prewrite_mode: str = "",
+    timeout: float = 180.0,
+) -> dict:
+    """同文件可复用：子进程真 HTTP POST resolve_decisions/stream。
+
+    crash:
+      - "" 正常跑完（真 phase2 + LLM 边界 stub）
+      - "phase2" 领域 ① 已 commit 后、进入 phase2 时 os._exit 真杀进程
+    prewrite_mode:
+      - "" 无 prewrite LLM
+      - "revise" stub 改票新 options
+      - "deliberate" stub 廷议意愿
+    stdout 只回传 @@SUMMARY@@ JSON；真杀进程无 summary 时父进程认 returncode。
+    """
+    import os
+    import subprocess
+    import sys
+    import textwrap
+
+    worker = textwrap.dedent(
+        r"""
+        import asyncio, json, os, sys
+        db_path = sys.argv[1]
+        choices = json.loads(sys.argv[2])
+        crash = sys.argv[3]
+        prewrite_mode = sys.argv[4]
+        os.environ["MING_SIM_DB"] = db_path
+        os.environ["OPENAI_API_KEY"] = "sk-test"
+        os.environ.pop("MING_SIM_LLM_BACKEND", None)
+
+        import httpx
+        import ming_sim.beat_orchestration as bo
+        import ming_sim.decree as dm
+        import ming_sim.rescript_actions as ra
+        import ming_sim.session as session_mod
+        import web_app
+        from ming_sim.models import TurnPhase
+
+        def _det_gen(_inputs):
+            name = str(getattr(_inputs, "person_name", "") or "") or "臣"
+            return f"{name}入殿请安。"
+
+        bo.create_llm_beat_generator = lambda _cfg: _det_gen
+        web_app.load_runtime_llm = lambda: {}
+        web_app.run_highlight_judge = lambda **_k: []
+
+        # 真 phase2：只 stub LLM 边界
+        dm.create_season_simulator_agent = lambda *a, **k: None
+        dm.create_ending_summary_agent = lambda *a, **k: None
+        # #1843 reopen：_make_relation_brew_runner 已随旧核删除
+        import ming_sim.mechanical_tail as mechanical_tail
+        mechanical_tail._run_relation_brew = lambda *a, **k: None
+        import ming_sim.decree_forecast as decree_forecast
+        import ming_sim.month_chain as month_chain
+        month_chain.run_world_segment_text = lambda *a, **k: ""
+        decree_forecast.produce_forecast_product = lambda *a, **k: {
+            "verdict": {"decision": "promulgated"},
+            "declaration": {"effects": {}},
+            "questions": None,
+            "forecast_text": "",
+            "visible_refs": {},
+        }
+        # Agent-text boundary only. parse_agent_json, archive, and advance stay real.
+        import ming_sim.agents as agents_mod
+        _real_run_agent_text = agents_mod.run_agent_text
+
+        def _run_agent_text(agent, prompt, tag, **kwargs):
+            if tag == "gazette":
+                return '{"title":"邸报","report":"本月实况。"}'
+            return _real_run_agent_text(agent, prompt, tag, **kwargs)
+
+        agents_mod.run_agent_text = _run_agent_text
+        # #1745：结算拒收递话同属外层 LLM 缝（复用单一 agent 边界夹具）。
+        from tests.section_rejection_helpers import install_settlement_attendant_agent_stub
+        install_settlement_attendant_agent_stub(None, dm)
+
+        if crash == "phase2":
+            def _kill_at_phase2(*a, **k):
+                # §E.2：领域 commit 后、写 extracted 前真杀进程（禁 SSE 捕获后正常 close）
+                os._exit(97)
+
+            session_mod.resolve_decisions_phase2 = _kill_at_phase2
+            dm.resolve_decisions_phase2 = _kill_at_phase2
+
+        if prewrite_mode == "revise":
+            def _fake_prewrite(batch, **kwargs):
+                out = {}
+                for it in batch.items:
+                    if getattr(it, "needs_revise_llm", False) or str(
+                        (it.choice or {}).get("action") or ""
+                    ) == "return_revise":
+                        # 完整合法 Layer-A raw（六必填+三 PRESENT）；禁伪造 draft_capability
+                        # #1624：assignment 组合契约须 transaction_category 或点将主办
+                        out[it.decision_key] = [
+                            {"label": "新拟甲", "hint": "h1",
+                             "action_type": "assignment", "target_kind": "region",
+                             "target_id": "shaanxi", "locality_scope": "single",
+                             "region_id": "shaanxi", "assignee_name": "",
+                             "transaction_category": "督赈", "deadline_months": 2,
+                             "participant_roster": [
+                                 {"character_id": "毕自严", "tier": "主办",
+                                  "role": "", "delegator_id": None},
+                             ]},
+                            {"label": "新拟乙", "hint": "h2",
+                             "action_type": "assignment", "target_kind": "region",
+                             "target_id": "shaanxi", "locality_scope": "single",
+                             "region_id": "shaanxi", "assignee_name": "杨嗣昌",
+                             "transaction_category": "",
+                             "participant_roster": [
+                                 {"character_id": "杨嗣昌", "tier": "主办",
+                                  "role": "", "delegator_id": None},
+                             ]},
+                        ]
+                return ra.PrewriteResults(revise_by_key=out)
+            ra.run_prewrite_llms = _fake_prewrite
+        elif prewrite_mode == "deliberate":
+            def _fake_prewrite(batch, **kwargs):
+                out = {}
+                for it in batch.items:
+                    out[it.decision_key] = {
+                        "title": "廷议", "body": "臣请集议。", "stance": "主赈",
+                        "supporter_ids": [],
+                    }
+                return ra.PrewriteResults(deliberate_by_key=out)
+            ra.run_prewrite_llms = _fake_prewrite
+
+        game = web_app.WebGame(fresh=False)
+        web_app.web_game = game
+        # 保持待裁
+        game.state.turn_phase = TurnPhase.AWAITING_DECISION.value
+        game.session.state.turn_phase = TurnPhase.AWAITING_DECISION.value
+        game.db.save_state(game.state)
+
+        summary = {"db_path": db_path, "body": choices}
+        try:
+            async def _post():
+                transport = httpx.ASGITransport(app=web_app.app)
+                async with httpx.AsyncClient(transport=transport, base_url="http://t") as client:
+                    return await client.post(
+                        "/api/decree/resolve_decisions/stream",
+                        json={"choices": choices},
+                    )
+            r = asyncio.run(_post())
+            summary.update({
+                "status_code": r.status_code,
+                "text_head": (r.text or "")[:2500],
+                "done": "event: done" in (r.text or ""),
+                "error": "event: error" in (r.text or ""),
+                "turn": int(game.state.turn),
+            })
+        except Exception as exc:
+            summary.update({"exc": type(exc).__name__, "msg": str(exc)[:500]})
+        finally:
+            try:
+                game.session.close()
+            except Exception:
+                pass
+        print("@@SUMMARY@@" + json.dumps(summary, ensure_ascii=False), flush=True)
+        """
+    )
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    body_json = json.dumps(choices, ensure_ascii=False, separators=(",", ":"))
+    proc = subprocess.run(
+        [sys.executable, "-c", worker, db_path, body_json, crash, prewrite_mode],
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        cwd=root,
+        env={**os.environ, "MING_SIM_DB": db_path, "OPENAI_API_KEY": "sk-test"},
+    )
+    out = (proc.stdout or "") + "\n" + (proc.stderr or "")
+    marker = "@@SUMMARY@@"
+    body_canon = body_json
+    if marker not in out:
+        # 真杀进程：无 finally/summary；returncode 97 即 §E.2 可观测终止
+        if crash == "phase2" and proc.returncode == 97:
+            return {
+                "db_path": db_path,
+                "_returncode": 97,
+                "_killed": True,
+                "_body_canonical": body_canon,
+                "error": True,
+                "done": False,
+            }
+        raise AssertionError(
+            f"subprocess missing summary exit={proc.returncode}\n"
+            f"stdout={proc.stdout!r}\nstderr={proc.stderr!r}"
+        )
+    payload = out.split(marker, 1)[1].strip().splitlines()[0]
+    data = json.loads(payload)
+    data["_returncode"] = proc.returncode
+    data["_body_canonical"] = body_canon
+    data["_killed"] = False
+    return data
+
+
 def _client() -> httpx.AsyncClient:
     return httpx.AsyncClient(
         transport=httpx.ASGITransport(app=web_app.app), base_url="http://t",
@@ -1066,237 +1297,9 @@ def _657_db_path_of(game_or_path) -> str:
     return str(getattr(db, "path", None) or getattr(db, "db_path", None) or "")
 
 
-def _657_install_real_phase2_llm_boundary(monkeypatch_or_module):
-    """只中和 phase2 LLM 边界；保留 resolve_decisions_phase2 真结算/推月。"""
-    import ming_sim.decree as dm
-    import ming_sim.mechanical_tail as mechanical_tail
-
-    def _set(name, value):
-        if hasattr(monkeypatch_or_module, "setattr"):
-            monkeypatch_or_module.setattr(dm, name, value)
-        else:
-            setattr(dm, name, value)
-
-    _set("create_season_simulator_agent", lambda *a, **k: None)
-    _set("create_ending_summary_agent", lambda *a, **k: None)
-    # 章节/关系酿制：禁 sk-test 打真网；record 空操作。
-    # 旧 settle 注入缝 + #1845 机械尾真源缝（brew 已迁出 decree runner）。
-    _set("_make_relation_brew_runner", lambda *a, **k: None)
-    _noop_brew = lambda *a, **k: None
-    if hasattr(monkeypatch_or_module, "setattr"):
-        monkeypatch_or_module.setattr(
-            mechanical_tail, "_run_relation_brew", _noop_brew,
-        )
-    else:
-        mechanical_tail._run_relation_brew = _noop_brew
-    # #1745：结算拒收递话同属外层 LLM 缝（复用单一 agent 边界夹具）。
-    from tests.section_rejection_helpers import install_settlement_attendant_agent_stub
-    if hasattr(monkeypatch_or_module, "setattr"):
-        install_settlement_attendant_agent_stub(monkeypatch_or_module, dm)
-    else:
-        install_settlement_attendant_agent_stub(None, dm)
     # subprocess worker 内无 monkeypatch 对象时同步写 dm
 
 
-def _657_subprocess_resolve(
-    db_path: str,
-    choices: list,
-    *,
-    crash: str = "",
-    prewrite_mode: str = "",
-    timeout: float = 180.0,
-) -> dict:
-    """同文件可复用：子进程真 HTTP POST resolve_decisions/stream。
-
-    crash:
-      - "" 正常跑完（真 phase2 + LLM 边界 stub）
-      - "phase2" 领域 ① 已 commit 后、进入 phase2 时 os._exit 真杀进程
-    prewrite_mode:
-      - "" 无 prewrite LLM
-      - "revise" stub 改票新 options
-      - "deliberate" stub 廷议意愿
-    stdout 只回传 @@SUMMARY@@ JSON；真杀进程无 summary 时父进程认 returncode。
-    """
-    import os
-    import subprocess
-    import sys
-    import textwrap
-
-    worker = textwrap.dedent(
-        r"""
-        import asyncio, json, os, sys
-        db_path = sys.argv[1]
-        choices = json.loads(sys.argv[2])
-        crash = sys.argv[3]
-        prewrite_mode = sys.argv[4]
-        os.environ["MING_SIM_DB"] = db_path
-        os.environ["OPENAI_API_KEY"] = "sk-test"
-        os.environ.pop("MING_SIM_LLM_BACKEND", None)
-
-        import httpx
-        import ming_sim.beat_orchestration as bo
-        import ming_sim.decree as dm
-        import ming_sim.rescript_actions as ra
-        import ming_sim.session as session_mod
-        import web_app
-        from ming_sim.models import TurnPhase
-
-        def _det_gen(_inputs):
-            name = str(getattr(_inputs, "person_name", "") or "") or "臣"
-            return f"{name}入殿请安。"
-
-        bo.create_llm_beat_generator = lambda _cfg: _det_gen
-        web_app.load_runtime_llm = lambda: {}
-        web_app.run_highlight_judge = lambda **_k: []
-
-        # 真 phase2：只 stub LLM 边界
-        dm.create_season_simulator_agent = lambda *a, **k: None
-        dm.create_ending_summary_agent = lambda *a, **k: None
-        dm._make_relation_brew_runner = lambda *a, **k: None
-        import ming_sim.mechanical_tail as mechanical_tail
-        mechanical_tail._run_relation_brew = lambda *a, **k: None
-        import ming_sim.decree_forecast as decree_forecast
-        import ming_sim.month_chain as month_chain
-        month_chain.run_world_segment_text = lambda *a, **k: ""
-        decree_forecast.produce_forecast_product = lambda *a, **k: {
-            "verdict": {"decision": "promulgated"},
-            "declaration": {"effects": {}},
-            "questions": None,
-            "forecast_text": "",
-            "visible_refs": {},
-        }
-        # Agent-text boundary only. parse_agent_json, archive, and advance stay real.
-        import ming_sim.agents as agents_mod
-        _real_run_agent_text = agents_mod.run_agent_text
-
-        def _run_agent_text(agent, prompt, tag, **kwargs):
-            if tag == "gazette":
-                return '{"title":"邸报","report":"本月实况。"}'
-            return _real_run_agent_text(agent, prompt, tag, **kwargs)
-
-        agents_mod.run_agent_text = _run_agent_text
-        # #1745：结算拒收递话同属外层 LLM 缝（复用单一 agent 边界夹具）。
-        from tests.section_rejection_helpers import install_settlement_attendant_agent_stub
-        install_settlement_attendant_agent_stub(None, dm)
-
-        if crash == "phase2":
-            def _kill_at_phase2(*a, **k):
-                # §E.2：领域 commit 后、写 extracted 前真杀进程（禁 SSE 捕获后正常 close）
-                os._exit(97)
-
-            session_mod.resolve_decisions_phase2 = _kill_at_phase2
-            dm.resolve_decisions_phase2 = _kill_at_phase2
-
-        if prewrite_mode == "revise":
-            def _fake_prewrite(batch, **kwargs):
-                out = {}
-                for it in batch.items:
-                    if getattr(it, "needs_revise_llm", False) or str(
-                        (it.choice or {}).get("action") or ""
-                    ) == "return_revise":
-                        # 完整合法 Layer-A raw（六必填+三 PRESENT）；禁伪造 draft_capability
-                        # #1624：assignment 组合契约须 transaction_category 或点将主办
-                        out[it.decision_key] = [
-                            {"label": "新拟甲", "hint": "h1",
-                             "action_type": "assignment", "target_kind": "region",
-                             "target_id": "shaanxi", "locality_scope": "single",
-                             "region_id": "shaanxi", "assignee_name": "",
-                             "transaction_category": "督赈", "deadline_months": 2,
-                             "participant_roster": [
-                                 {"character_id": "毕自严", "tier": "主办",
-                                  "role": "", "delegator_id": None},
-                             ]},
-                            {"label": "新拟乙", "hint": "h2",
-                             "action_type": "assignment", "target_kind": "region",
-                             "target_id": "shaanxi", "locality_scope": "single",
-                             "region_id": "shaanxi", "assignee_name": "杨嗣昌",
-                             "transaction_category": "",
-                             "participant_roster": [
-                                 {"character_id": "杨嗣昌", "tier": "主办",
-                                  "role": "", "delegator_id": None},
-                             ]},
-                        ]
-                return ra.PrewriteResults(revise_by_key=out)
-            ra.run_prewrite_llms = _fake_prewrite
-        elif prewrite_mode == "deliberate":
-            def _fake_prewrite(batch, **kwargs):
-                out = {}
-                for it in batch.items:
-                    out[it.decision_key] = {
-                        "title": "廷议", "body": "臣请集议。", "stance": "主赈",
-                        "supporter_ids": [],
-                    }
-                return ra.PrewriteResults(deliberate_by_key=out)
-            ra.run_prewrite_llms = _fake_prewrite
-
-        game = web_app.WebGame(fresh=False)
-        web_app.web_game = game
-        # 保持待裁
-        game.state.turn_phase = TurnPhase.AWAITING_DECISION.value
-        game.session.state.turn_phase = TurnPhase.AWAITING_DECISION.value
-        game.db.save_state(game.state)
-
-        summary = {"db_path": db_path, "body": choices}
-        try:
-            async def _post():
-                transport = httpx.ASGITransport(app=web_app.app)
-                async with httpx.AsyncClient(transport=transport, base_url="http://t") as client:
-                    return await client.post(
-                        "/api/decree/resolve_decisions/stream",
-                        json={"choices": choices},
-                    )
-            r = asyncio.run(_post())
-            summary.update({
-                "status_code": r.status_code,
-                "text_head": (r.text or "")[:2500],
-                "done": "event: done" in (r.text or ""),
-                "error": "event: error" in (r.text or ""),
-                "turn": int(game.state.turn),
-            })
-        except Exception as exc:
-            summary.update({"exc": type(exc).__name__, "msg": str(exc)[:500]})
-        finally:
-            try:
-                game.session.close()
-            except Exception:
-                pass
-        print("@@SUMMARY@@" + json.dumps(summary, ensure_ascii=False), flush=True)
-        """
-    )
-    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    body_json = json.dumps(choices, ensure_ascii=False, separators=(",", ":"))
-    proc = subprocess.run(
-        [sys.executable, "-c", worker, db_path, body_json, crash, prewrite_mode],
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-        cwd=root,
-        env={**os.environ, "MING_SIM_DB": db_path, "OPENAI_API_KEY": "sk-test"},
-    )
-    out = (proc.stdout or "") + "\n" + (proc.stderr or "")
-    marker = "@@SUMMARY@@"
-    body_canon = body_json
-    if marker not in out:
-        # 真杀进程：无 finally/summary；returncode 97 即 §E.2 可观测终止
-        if crash == "phase2" and proc.returncode == 97:
-            return {
-                "db_path": db_path,
-                "_returncode": 97,
-                "_killed": True,
-                "_body_canonical": body_canon,
-                "error": True,
-                "done": False,
-            }
-        raise AssertionError(
-            f"subprocess missing summary exit={proc.returncode}\n"
-            f"stdout={proc.stdout!r}\nstderr={proc.stderr!r}"
-        )
-    payload = out.split(marker, 1)[1].strip().splitlines()[0]
-    data = json.loads(payload)
-    data["_returncode"] = proc.returncode
-    data["_body_canonical"] = body_canon
-    data["_killed"] = False
-    return data
 
 
 def _657_plant_awaiting_web(web_game, *, drafts=None, decisions=None, title="陕西告饥"):

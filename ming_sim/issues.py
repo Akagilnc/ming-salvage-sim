@@ -3625,6 +3625,11 @@ _LEGACY_PCT_CAP = 5  # 单条帝国修正对某维度的百分比上限，防幅
 # applier 是唯一的枚举守门（cleaner 只做 direction 同义词映射等无损规范化,cmr S3 r2）。
 _FISCAL_ACCOUNTS = ("国库", "内库")
 _FISCAL_DIRECTIONS = ("income", "expense")
+# #1843 reopen：方向同义词归一表从旧 extractor 清洗迁到本唯一使用处。
+_DIRECTION_NORMALIZE = {
+    "income": "income", "收": "income", "收入": "income", "进账": "income",
+    "expense": "expense", "支": "expense", "支出": "expense", "出账": "expense",
+}
 
 
 def _clamp_pct(v: object) -> Optional[int]:
@@ -8308,17 +8313,9 @@ def _apply_recovery_driven_transfers(
     if db.population_unit != POPULATION_UNIT_PERSONS:
         return [], []
     turn = int(state.turn)
-    # 本回合已落回流 provenance（含本 settle 前半段 / 重放）。
+    # #1843 reopen：旧 turn_extractions 去重读已删；新链防重复靠暂存声明 settled
+    # 终态与 #1846 已落不动。本函数内 seen_keys 仅拦同一次调用内的双扣。
     seen_keys: set[tuple[int, int]] = set()
-    prior = db.get_turn_extraction(turn) or {}
-    prior_out = prior.get("extractor_output") if isinstance(prior, dict) else None
-    if isinstance(prior_out, dict):
-        for item in prior_out.get("population_transfers") or []:
-            if not isinstance(item, dict) or item.get("reason") != "回流":
-                continue
-            ref = str(item.get("origin_ref") or "")
-            if ref.startswith("dossier:") and ref[8:].isdigit():
-                seen_keys.add((int(ref[8:]), turn))
 
     records: List[Dict[str, object]] = []
     remaining_by_region: Dict[str, int] = {}
@@ -9971,7 +9968,6 @@ def _apply_score_extraction_body(
         # simulation._DIRECTION_NORMALIZE（懒 import 避循环）。先归一再去重：ADR0027
         # 承诺载体都是月度【支出】(delta<0)，dedup/残留观测只对【支出】fiscal_create 生效；
         # 同名的【收入】新科目(如新税)与承诺无关，绝不可被误去重或误报残留(codex correctness)。
-        from ming_sim.simulation import _DIRECTION_NORMALIZE
         direction_raw = str(create.get("direction") or "").strip()
         direction = _DIRECTION_NORMALIZE.get(direction_raw, direction_raw)
         key = str(create.get("key") or "").strip()

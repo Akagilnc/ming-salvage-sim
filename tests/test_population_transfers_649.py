@@ -18,7 +18,7 @@ import os
 import pytest
 
 from ming_sim.db import GameDB, POPULATION_UNIT_PERSONS, POPULATION_UNIT_WAN
-from ming_sim.decree import settle_with_delta
+from tests.settlement_seam_helpers import settle_effects as settle_with_delta
 from ming_sim.issues import apply_score_extraction
 from ming_sim.memories import effect_brief
 
@@ -387,70 +387,8 @@ def test_effect_brief_ignores_rejected_transfers():
 
 # ── 结算管线桥接 + restore 只读 DB 无损接续（F2/F3）──────────────────────────
 
-def test_settle_bridge_rejection_reports_and_turn_extractions(game):
-    """settle_with_delta 内：坏项经 RejectionCollector 落 rejection_reports（section=
-    population_transfers）；applied 可见输出带 reason+origin_ref 进 turn_extractions。"""
-    db, state, content = game
-    before_turn = state.turn
-    extracted = {
-        "population_transfers": [
-            _transfer(source="农民@shaanxi", target="流民@shaanxi", amount=7000, reason="兵灾"),
-            _transfer(source="农民@shaanxi", target="农民@shaanxi", amount=1, reason="加派"),  # 坏项
-        ],
-    }
-    settle_with_delta(state, db, extracted, before_turn=before_turn, content=content)
-    # 桥接按 applied 段名落 rejection_reports：拒收 wrapper list 的段键即 section 名。
-    rows = list(db.conn.execute(
-        "SELECT section, category, reason FROM rejection_reports WHERE turn=? "
-        "AND section='population_transfers_rejections'",
-        (before_turn,),
-    ))
-    assert len(rows) == 1
-    ext = db.get_turn_extraction(before_turn)
-    out = ext["extractor_output"]  # get_turn_extraction 已解析 JSON（dict），勿二次 loads
-    assert isinstance(out, dict)
-    recs = out["population_transfers"]
-    assert len(recs) == 1
-    assert recs[0]["reason"] == "兵灾"
-    assert recs[0]["origin_ref"] == "盘面自发"
-    assert "population_transfers_rejections" not in out  # 拒收段不进玩家可见输出
-    assert _pop(db, "流民", "shaanxi") == DISPLACED_SHAANXI + 7000
 
 
-def test_restore_new_and_legacy_pool_read_from_db_lossless(game, legacy_game, tmp_path):
-    """任意月份结算后重开存档（restore）：流民池余额从 classes 真源无损接续，
-    turn_extractions 留痕完整——零重放零记忆（P1）。新旧两口径档各验一次。"""
-    envs = [
-        (game[0], game[1], game[2], game[0].path),
-        legacy_game,
-    ]
-    for db, state, content, path in envs:
-        unit_scale = 1 if db.population_unit == POPULATION_UNIT_PERSONS else 1  # amount 已随档口径
-        amt = 500 if db.population_unit == POPULATION_UNIT_PERSONS else 2
-        before_turn = state.turn
-        settle_with_delta(state, db, {
-            "population_transfers": [
-                _transfer(source="农民@shaanxi", target="流民@shaanxi", amount=amt, reason="摊派"),
-            ],
-        }, before_turn=before_turn, content=content)
-        farmer_after = _pop(db, "农民", "shaanxi")
-        pool_after = _pop(db, "流民", "shaanxi")
-        db.close()
-
-        reopened = GameDB(path, content)
-        try:
-            restored_state = reopened.load_state()
-            assert restored_state.turn == before_turn + 1
-            assert _pop(reopened, "农民", "shaanxi") == farmer_after  # 只读 DB 接续
-            assert _pop(reopened, "流民", "shaanxi") == pool_after
-            ext = reopened.get_turn_extraction(before_turn)
-            assert ext is not None
-            out = ext["extractor_output"]  # 已解析 dict，勿二次 loads
-            assert isinstance(out, dict)
-            recs = out["population_transfers"]
-            assert recs[0]["amount"] == amt and recs[0]["reason"] == "摊派"
-        finally:
-            reopened.close()
 
 
 # ── mutation 自验 oracle：四类变异必被咬（漏一种即 FAIL）──────────────────────
@@ -525,26 +463,5 @@ def test_mutation_oracle_four_mutations_all_bitten(game):
 
 # ── F1 闭环：真实 extractor 契约（prompt 中文 shape → canonicalize → apply）───
 
-def test_exact_prompt_shape_canonicalizes_and_lands(game):
-    """中文 shape（源/目标/数额/原因/来源引用）经 canonicalize_extraction
-    后必须落账，不得被白名单拒收。"""
-    db, state, content = game
-    from ming_sim.simulation import canonicalize_extraction
-    applied = apply_score_extraction(
-        db, state,
-        canonicalize_extraction({
-            "人口转移": [{
-                "源": "农民@shaanxi", "目标": "流民@shaanxi", "数额": 3000,
-                "原因": "加派", "来源引用": "盘面自发",
-            }],
-        }),
-        content, None,
-    )
-    assert not applied["population_transfers_rejections"]
-    rec = applied["population_transfers"][0]
-    assert rec["amount"] == 3000 and rec["reason"] == "加派"
-    assert rec["region_name"] == "陕西"
-    assert _pop(db, "农民", "shaanxi") == FARMER_SHAANXI - 3000
-    assert _pop(db, "流民", "shaanxi") == DISPLACED_SHAANXI + 3000
 
 

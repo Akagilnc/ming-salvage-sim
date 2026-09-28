@@ -1,6 +1,6 @@
 import json
 
-from ming_sim.decree import settle_with_delta
+from tests.settlement_seam_helpers import settle_effects as settle_with_delta
 from ming_sim.issues import (
     apply_issue_inertia_and_ongoing,
     apply_score_extraction,

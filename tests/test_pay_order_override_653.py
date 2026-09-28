@@ -1119,13 +1119,6 @@ def test_fiscal_fact_brief_haircut_and_relief_facts(game):
 
 # ═══════════════ F3 LLM 综合归因边界 ═══════════════
 
-def test_class_delta_stays_on_internal_slot():
-    """class_delta 仍由 internal 槽独占；五模块 extractor 扇出已退役。"""
-    from ming_sim import simulation
-    from ming_sim.simulation import MODULE_FIELDS
-    assert not hasattr(simulation, "EXTRACTION_MODULES")
-    assert "class_delta" in MODULE_FIELDS["internal"]
-    assert sum("class_delta" in fields for fields in MODULE_FIELDS.values()) == 1
 
 
 def test_simulator_payload_contains_fiscal_fact_brief(game):
@@ -1677,7 +1670,8 @@ def test_lifecycle_e2e_capture_to_next_settlement_via_settle_with_delta(game, mo
     """顺颁全链 E2E：拟旨 capture→草案→成案 staging→settle_with_delta 判决→结算尾段
     atomic 物化（本月已按旧序完成＝不追溯）→下一次真实 pre_settle 结算读取新序。
     陕西/河南同盘面对照：旨域外省份逐字节照旧（回归不破）。"""
-    from ming_sim.decree import pre_settle, settle_with_delta
+    from ming_sim.decree import pre_settle
+    from tests.settlement_seam_helpers import settle_effects as settle_with_delta
 
     db, state, content = game
     _pin_shortfall_board(db, "shaanxi")
@@ -1750,7 +1744,8 @@ def test_lifecycle_e2e_rejected_then_force_via_settlement_pipeline(game, monkeyp
     同事务批红强颁（rescript action）→ 物化仍在本月结算之后 → 下一次结算才吃折发。"""
     from dossier_test_helpers import rejected_verdict
 
-    from ming_sim.decree import pre_settle, settle_with_delta
+    from ming_sim.decree import pre_settle
+    from tests.settlement_seam_helpers import settle_effects as settle_with_delta
 
     db, state, content = game
     _pin_shortfall_board(db, "shaanxi")

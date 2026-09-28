@@ -44,24 +44,11 @@ def iter_recent_population_transfers(
 ) -> Iterator[Tuple[int, Dict[str, Any]]]:
     """近窗实际发生的 population_transfers 共享读核。
 
-    唯一 latest_turn / 窗口 / transfers 扫描；brief 与回流原因投影共同消费。
+    #1843 reopen：旧 turn_extractions 已删；新链不另建逐段结果账。
+    本函数在新档恒为空迭代（整函数退役由 #1861 随 build_simulator_payload 删）。
     yield (turn, item)。
     """
-    latest_turn = int(db.conn.execute(
-        "SELECT COALESCE(MAX(turn), -1) FROM turn_extractions"
-    ).fetchone()[0])
-    if latest_turn < 0:
-        return
-    first_turn = max(0, latest_turn - max(1, int(recent_turns)) + 1)
-    for turn in range(first_turn, latest_turn + 1):
-        extraction = db.get_turn_extraction(turn) or {}
-        applied = extraction.get("extractor_output") or {}
-        if not isinstance(applied, dict):
-            continue
-        for item in applied.get("population_transfers") or []:
-            if not is_actual_population_transfer(item):
-                continue
-            yield turn, item
+    yield from ()
 
 
 def recent_reflux_cause_rows(

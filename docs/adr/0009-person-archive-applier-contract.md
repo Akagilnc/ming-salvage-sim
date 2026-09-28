@@ -158,3 +158,8 @@ status 枚举 = models.py 七值 + 实存的 `candidate`（registry.py:375 秀�
 ## 实现时机
 
 契约先行（本文档）；实现等 PR #90 合入 + M0 收口，作为 C2 契约的第一块旗舰 adapter 落地，顺带 C3 的 `_commit_office_action` 搬家。
+
+
+## 后出注记（#1843 reopen，2026-09-28）
+
+原以「ready=1 重试真源 + 历史 delta 文件」为别名表存在理由的条款：#1843 已删 `TOP_LEVEL_ALIASES` / 五模块 extractor 别名与 `turn_extractions`；条目字段规范化（`ITEM_FIELD_ALIASES` / `_canonical_item_fields`）与 C0 声明形状（`EMPTY_EXTRACTION`）保留。ready=1 整套归 #1846。

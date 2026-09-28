@@ -18,7 +18,7 @@ import pytest
 import ming_sim.issues as issue_engine
 from ming_sim.applier import Provenance, RejectionCollector
 from ming_sim.db import GameDB
-from ming_sim.decree import settle_with_delta
+from tests.settlement_seam_helpers import settle_effects as settle_with_delta
 from ming_sim.exceptions import SettlementAbort
 from ming_sim.models import TurnPhase
 from tests.dossier_test_helpers import create_test_secret_order

@@ -53,3 +53,8 @@ Status: accepted（实现分波次,见末节;#73 产出问题 1/4 的答案;r1 �
 - driver(ADR 0004)走同一结算核,自动获得事务+重跑语义;driver 无聊天/LLM 路径,provenance 由其 delta 信封灌注。
 
 〔2026-09-10 后出注记：#1820 拍的「拒收当事实回给同一场推演者、改口重交」随核算反馈驱动的同场续演循环取消——拒收项留痕、本月不重交，作为实况进入邸报作者供料与下月材料（密令来源的只走密报）；落账及拒收承接见 #1843，邸报供料见 #1862；决策缘由见 [0157](0157-v2-month-waits-for-exhausted-model-call-recovery.md) 与 [0153](0153-v2-world-record-and-two-way-mediation.md) 后出注记二。本条其余拒收留痕规则不变。〕
+
+
+## 后出注记（#1843 reopen，2026-09-28）
+
+`driver.py` 与 `settle_with_delta` 已删除（owner 裁定 uuid `1c439239-e748-417a-ac37-79603374583a`）。「driver(ADR 0004)走同一结算核」不再适用。`pre_settle` 自事务、settling 相位与内存态重载保留。ready=1 相关条款由 #1846 修订。

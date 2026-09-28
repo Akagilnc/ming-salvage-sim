@@ -28,13 +28,13 @@ from test_population_transfers_649 import (
 import pytest
 
 from ming_sim.db import GameDB
-from ming_sim.decree import settle_with_delta
+from tests.settlement_seam_helpers import settle_effects as settle_with_delta
 from ming_sim.issues import apply_score_extraction
 from ming_sim.memories import effect_brief
 from ming_sim.agents import build_simulator_context
 from ming_sim.materials import list_materials, prepare_character_materials, read_material
 from ming_sim.simulation import (
-    simulate_season_with_payload,
+    simulate_season_with_payload
 )
 
 @pytest.fixture
@@ -169,37 +169,6 @@ def test_mutation_oracle_bites_disaster_war_mutations(war_shaanxi):
 
 # ── AC5 拆一：restore 只读 DB 无损接续（灾害/兵灾落账后重开存档）─────────────
 
-def test_restore_after_disaster_war_settlement_lossless(game):
-    """任意月份结算后重开存档：灾害/兵灾转移后的流民池与农民/军户余额从 classes
-    真源无损接续，turn_extractions 留痕完整——零重放零记忆（P1）。"""
-    db, state, content = game
-    garrison_before = _pop(db, "军户", "shaanxi")
-    before_turn = state.turn
-    settle_with_delta(state, db, {
-        "population_transfers": [
-            _transfer(source="农民@shaanxi", target="流民@shaanxi",
-                      amount=20000, reason="灾害"),
-            _transfer(source="军户@shaanxi", target="流民@shaanxi",
-                      amount=10000, reason="兵灾"),
-        ],
-    }, before_turn=before_turn, content=content)
-    farmer_after = _pop(db, "农民", "shaanxi")
-    pool_after = _pop(db, "流民", "shaanxi")
-    db.close()
-
-    reopened = GameDB(db.path, content)
-    try:
-        restored = reopened.load_state()
-        assert restored.turn == before_turn + 1
-        # 只读 DB 接续（独立断言，判词五·非 blocking 备注）
-        assert _pop(reopened, "流民", "shaanxi") == pool_after
-        assert _pop(reopened, "农民", "shaanxi") == farmer_after
-        assert _pop(reopened, "军户", "shaanxi") == garrison_before - 10000
-        ext = reopened.get_turn_extraction(before_turn)
-        recs = ext["extractor_output"]["population_transfers"]
-        assert sorted(r["reason"] for r in recs) == ["兵灾", "灾害"]
-    finally:
-        reopened.close()
 
 
 # ── AC5 拆二：与加派/摊派入口合流同一本账（下游只认账不认来源）────────────────

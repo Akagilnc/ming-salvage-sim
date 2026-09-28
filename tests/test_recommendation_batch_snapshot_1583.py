@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from ming_sim.decree import settle_with_delta
+from tests.settlement_seam_helpers import settle_effects as settle_with_delta
 from tests.dossier_test_helpers import promulgate_proposed_appointments
 
 

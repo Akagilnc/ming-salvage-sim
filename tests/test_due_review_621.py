@@ -18,7 +18,7 @@ import pytest
 
 import ming_sim.issues as issue_engine
 from ming_sim.audience_night import list_ledger, open_night
-from ming_sim.decree import settle_with_delta
+from tests.settlement_seam_helpers import settle_effects as settle_with_delta
 from ming_sim.due_review import (
     apply_pending_due_reviews,
     build_due_review_input,

@@ -6471,10 +6471,7 @@ async def api_withdraw_pending_action(action_id: int) -> Dict[str, Any]:
 def api_history_turns() -> Dict[str, Any]:
     """场级归档列表；同步 handler 由 FastAPI 在线程池中执行 SQLite 投影。"""
     turns = get_game().db.list_archived_turns()
-    return {"turns": [
-        {k: v for k, v in item.items() if k != "has_extraction"}
-        for item in turns
-    ]}
+    return {"turns": turns}
 
 
 @app.get("/api/history/turn/{turn}")
@@ -6485,23 +6482,20 @@ async def api_history_turn(turn: int) -> Dict[str, Any]:
     archive = db.get_turn_report_archive(turn)
     report = str((archive or {}).get("report") or "")
     attendant_message = str((archive or {}).get("attendant_message") or "")
-    extraction = db.get_turn_extraction(turn)
+    # #1843 reopen：本月诏书改读月链常驻的 pending_resolve_context.decree_text
+    # （旧 turn_extractions 只由旧 settle 后半段写，新档恒空）。
+    resolve_ctx = db.get_resolve_context(turn) or {}
+    decree_text = str(resolve_ctx.get("decree_text") or "")
     directives = db.list_directives_by_turn(turn)
     # exists：report/递话纯空白与空串同属缺席（临时 strip）；payload 仍回原文
     if (
         not str(report or "").strip()
         and not str(attendant_message or "").strip()
-        and extraction is None
+        and not str(decree_text or "").strip()
         and not directives
     ):
         return {"turn": turn, "exists": False}
-    decree_text = ""
-    if extraction is not None:
-        decree_text = str(extraction.get("decree_text") or "")
-    if extraction is not None:
-        year = extraction["year"]
-        period = extraction["period"]
-    elif directives:
+    if directives:
         year = directives[0]["year"]
         period = directives[0]["period"]
     elif archive is not None:

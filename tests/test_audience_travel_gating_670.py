@@ -352,7 +352,7 @@ def test_multi_origin_same_person_dedupes_consumer_projections_not_ledger(game):
     }]
 
     # 续赴京成功 → 同人全部 in_transit origin 结清（含尚未手结的 origin_tool）。
-    from ming_sim.decree import settle_with_delta
+    from tests.settlement_seam_helpers import settle_effects as settle_with_delta
 
     settle_with_delta(
         state, db,
@@ -494,7 +494,7 @@ def test_arrived_summon_continuation_survives_failed_apply_across_months(game, m
     三段均禁止手推 turn、禁止手调 settle_applied_arrived_summons。
     """
     import ming_sim.decree as decree_mod
-    from ming_sim.decree import settle_with_delta
+    from tests.settlement_seam_helpers import settle_effects as settle_with_delta
 
     db, state, content = game
     person = _set_place(
@@ -521,7 +521,8 @@ def test_arrived_summon_continuation_survives_failed_apply_across_months(game, m
     assert _travel_row(db, person.name)["location"] == "henan"
     assert _travel_row(db, person.name)["transit_to"] == ""
 
-    real_apply = decree_mod.apply_score_extraction
+    import ming_sim.issues as issues_mod
+    real_apply = issues_mod.apply_score_extraction
     attempts = 0
     continuation = {"人物变更": [{
         "name": person.name, "动作": "行止", "transit_to": "beizhili",
@@ -535,7 +536,8 @@ def test_arrived_summon_continuation_survives_failed_apply_across_months(game, m
             raise RuntimeError("injected continuation applier failure")
         return real_apply(*args, **kwargs)
 
-    monkeypatch.setattr(decree_mod, "apply_score_extraction", fail_once)
+    # #1843 reopen：落账经 declaration_dispatch → issues.apply_score_extraction
+    monkeypatch.setattr(issues_mod, "apply_score_extraction", fail_once)
     failed_turn = int(state.turn)
     from ming_sim.exceptions import SettlementAbort
     with pytest.raises(SettlementAbort) as excinfo:
@@ -2142,7 +2144,7 @@ def test_continuation_arrival_settles_origin_without_waiting(game):
     fresh→抵京→候见→宣入 独立路径由 test_fresh_departure_arrival_and_capital_consume_lifecycle
     与 test_direct_capital_arrival_does_not_queue_continuation 另钉。
     """
-    from ming_sim.decree import settle_with_delta
+    from tests.settlement_seam_helpers import settle_effects as settle_with_delta
 
     db, state, content = game
     person = _set_place(
@@ -2190,7 +2192,7 @@ def test_continuation_arrival_settles_origin_without_waiting(game):
 
 def test_waiting_inactive_retires_on_month(game):
     """#670：候见中 dismiss → 月结 retire 结清。"""
-    from ming_sim.decree import settle_with_delta
+    from tests.settlement_seam_helpers import settle_effects as settle_with_delta
 
     db, state, content = game
     person = _set_place(game, "洪承畴", location="beizhili")
@@ -2212,7 +2214,7 @@ def test_waiting_inactive_retires_on_month(game):
 
 def test_waiting_active_departure_settles_and_does_not_revive(game):
     """#670：候见中 canonical 行止离京 → origin 结清；抵非京不再续赴京。"""
-    from ming_sim.decree import settle_with_delta
+    from tests.settlement_seam_helpers import settle_effects as settle_with_delta
     from ming_sim.issues import _apply_person_changes
 
     db, state, content = game
@@ -2579,7 +2581,7 @@ def test_shuntian_zhili_aliases_migrate_on_reopen(game):
 
 def test_inactive_person_skips_continuation_and_retires_on_month(game):
     """#670：非 active 不投续程；月结退役结清 origin。"""
-    from ming_sim.decree import settle_with_delta
+    from tests.settlement_seam_helpers import settle_effects as settle_with_delta
 
     db, state, content = game
     person = _set_place(

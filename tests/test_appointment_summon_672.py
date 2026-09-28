@@ -14,7 +14,8 @@ from ming_sim.audience_night import (
 from ming_sim.distance import DistanceMatrix
 from ming_sim.exceptions import SettlementAbort
 from ming_sim.session import GameSession
-from ming_sim.decree import prepare_resolve_front_half, settle_with_delta
+from ming_sim.decree import prepare_resolve_front_half
+from tests.settlement_seam_helpers import settle_effects as settle_with_delta
 from ming_sim.simulation import build_simulator_payload
 from tests.dossier_test_helpers import rejected_verdict
 from tests.test_qa_c_p0_1380_1355 import _fake_session, _minister_wang_shaohui
@@ -157,90 +158,6 @@ def test_yuan_keli_appointment_no_summon_stays_henan(game, monkeypatch):
     assert pub.get("transit_to_label", "") == ""
 
 
-@pytest.mark.parametrize("appt_name", ["袁崇焕", "前辽东"])
-def test_appointment_summon_activates_only_after_promulgation(
-    game, monkeypatch, appt_name,
-):
-    """主 tracer：stage→close→settle 顺颁→启程当月不扣距→次月首减→waiting；
-    registry 仅 outer commit 后刷新。alias 名（前辽东）须落 canonical ledger。"""
-    db, state, content = game
-    pending, origin = _stage_yuan_appointment_summon(
-        game, monkeypatch, appt_name=appt_name,
-    )
-    ledger = db.conn.execute(
-        "SELECT tags, person_names FROM story_ledger_entries WHERE origin_ref=?",
-        (origin,),
-    ).fetchone()
-    assert ledger is not None and "传召未结" not in json.loads(ledger["tags"])
-    # stage 即写 roster canonical key；alias 不得进入 inactive office origin。
-    assert json.loads(ledger["person_names"]) == ["袁崇焕"]
-    assert list_unsettled_summons(db) == []
-    before = _yuan_row(db)
-    assert before["location"] == "guangdong"
-
-    dossier_id = _close_office_to_dossier(db, state, content, pending["id"])
-    mid = _yuan_row(db)
-    assert (mid["status"], mid["office"], mid["transit_to"]) == (
-        before["status"], before["office"], before["transit_to"] or "",
-    )
-    assert list_unsettled_summons(db) == []
-
-    reg = _FakeRegistry()
-
-    def mid_txn_applier(_db, _state, _extracted, _content, _registry):
-        assert reg.refreshed == [], "事务内不得 refresh registry"
-        return {}
-
-    settle_with_delta(
-        state, db, {}, before_turn=int(state.turn), content=content,
-        registry=reg,
-        dossier_verdicts=[{"dossier_id": dossier_id, "decision": "promulgated"}],
-        delta_applier=mid_txn_applier,
-    )
-
-    assert "袁崇焕" in reg.refreshed
-    assert [(x["person_name"], x["origin_id"], x["kind"]) for x in list_unsettled_summons(db)] == [
-        ("袁崇焕", origin, "in_transit")
-    ]
-    after = _yuan_row(db)
-    assert (after["status"], after["office"], after["location"], after["transit_to"]) == (
-        "active", "辽东巡抚", "guangdong", "beizhili",
-    )
-    assert after["transit_distance_remaining"] is not None
-    departed_remaining = float(after["transit_distance_remaining"])
-    departed_start = int(after["transit_start_turn"] or 0)
-    # 启程落在 settle 事务内、当月 tick 已过；outer 提交后 turn 已 +1，但尚未跑下月
-    # front-half tick → 距离仍为矩阵全值（启程当月不扣）。
-    assert departed_start == int(state.turn) - 1
-    assert departed_remaining == pytest.approx(
-        _MATRIX.travel_time("guangdong", "beizhili")
-    )
-
-    # 下一月 canonical tick 首次递减。
-    prepare_resolve_front_half(state, db, content=content)
-    next_month = _yuan_row(db)
-    if next_month["transit_to"]:
-        assert float(next_month["transit_distance_remaining"]) < departed_remaining
-    else:
-        assert next_month["location"] == "beizhili"
-
-    unsettled = []
-    for _ in range(60):
-        unsettled = list_unsettled_summons(db)
-        if unsettled and unsettled[0]["kind"] == "waiting":
-            break
-        if not unsettled:
-            break
-        settle_with_delta(
-            state, db, {}, before_turn=int(state.turn), content=content,
-        )
-        prepare_resolve_front_half(state, db, content=content)
-        unsettled = list_unsettled_summons(db)
-    assert unsettled, "抵京后应仍有未结传召投影"
-    assert unsettled[0]["kind"] == "waiting"
-    assert unsettled[0]["person_name"] == "袁崇焕"
-    assert unsettled[0]["origin_id"] == origin
-    assert _yuan_row(db)["location"] == "beizhili"
 
 
 def test_three_anchor_summons_arrive_in_successive_months(game, monkeypatch):
@@ -408,100 +325,8 @@ def test_appointment_summon_rejected_leaves_no_travel(game, monkeypatch):
     assert "传召未结" not in tags
 
 
-def test_appointment_summon_office_commit_failure_rolls_back(game, monkeypatch):
-    """真实授官核拒收（已故）→ 空 affected：经 settle_with_delta 整批回滚。
-
-    不 mock _commit_office_action；案卷仍 proposed、inactive office origin 唯一且未激活、
-    人物官职/行止不变、registry 零调用。
-    """
-    db, state, content = game
-    pending, origin = _stage_yuan_appointment_summon(game, monkeypatch)
-    dossier_id = _close_office_to_dossier(db, state, content, pending["id"])
-
-    # 合法入口可产生的真实失败：在册已故 → apply_office_appointment 拒收 → 空 affected。
-    db.conn.execute(
-        "UPDATE characters SET status='dead', status_reason='测试已故', reason_code='' "
-        "WHERE name='袁崇焕'",
-    )
-    db.conn.commit()
-    yuan = content.characters["袁崇焕"]
-    yuan.status = "dead"
-    yuan.status_reason = "测试已故"
-    yuan.reason_code = ""
-
-    before = dict(_yuan_row(db))
-    reg = _FakeRegistry()
-
-    with pytest.raises(SettlementAbort):
-        settle_with_delta(
-            state, db, {}, before_turn=int(state.turn), content=content,
-            registry=reg,
-            dossier_verdicts=[{"dossier_id": dossier_id, "decision": "promulgated"}],
-        )
-
-    assert reg.refreshed == []
-    assert list_unsettled_summons(db) == []
-    assert db.get_decree_dossier(dossier_id)["status"] == "proposed"
-    rolled = dict(_yuan_row(db))
-    assert rolled == before
-    ch = content.characters["袁崇焕"]
-    assert (ch.status, ch.office or "", getattr(ch, "transit_to", "") or "") == (
-        rolled["status"], rolled["office"] or "", rolled["transit_to"] or "",
-    )
-    assert db.conn.execute(
-        "SELECT count(*) FROM story_ledger_entries WHERE origin_ref=?", (origin,),
-    ).fetchone()[0] == 1
-    tags = json.loads(db.conn.execute(
-        "SELECT tags FROM story_ledger_entries WHERE origin_ref=?", (origin,),
-    ).fetchone()["tags"])
-    assert "传召未结" not in tags
 
 
-def test_appointment_summon_outer_fault_rolls_back_and_retries_once(game, monkeypatch):
-    """verdict 已物化后 outer 接缝故障：DB/content 回滚、registry 零调用；重试唯一 origin。"""
-    db, state, content = game
-    pending, origin = _stage_yuan_appointment_summon(game, monkeypatch)
-    dossier_id = _close_office_to_dossier(db, state, content, pending["id"])
-    before = dict(_yuan_row(db))
-    reg = _FakeRegistry()
-
-    def boom_applier(*_a, **_k):
-        raise RuntimeError("outer fault after verdict")
-
-    with pytest.raises(SettlementAbort):
-        settle_with_delta(
-            state, db, {}, before_turn=int(state.turn), content=content,
-            registry=reg,
-            dossier_verdicts=[{"dossier_id": dossier_id, "decision": "promulgated"}],
-            delta_applier=boom_applier,
-        )
-
-    assert reg.refreshed == []
-    assert list_unsettled_summons(db) == []
-    rolled = dict(_yuan_row(db))
-    assert rolled == before
-    ch = content.characters["袁崇焕"]
-    assert (ch.status, ch.office or "", getattr(ch, "transit_to", "") or "") == (
-        rolled["status"], rolled["office"] or "", rolled["transit_to"] or "",
-    )
-    assert db.conn.execute(
-        "SELECT count(*) FROM story_ledger_entries WHERE origin_ref=?", (origin,),
-    ).fetchone()[0] == 1
-    assert db.get_decree_dossier(dossier_id)["status"] == "proposed"
-
-    settle_with_delta(
-        state, db, {}, before_turn=int(state.turn), content=content,
-        registry=reg,
-        dossier_verdicts=[{"dossier_id": dossier_id, "decision": "promulgated"}],
-    )
-    assert "袁崇焕" in reg.refreshed
-    unsettled = list_unsettled_summons(db)
-    assert [(x["person_name"], x["origin_id"], x["kind"]) for x in unsettled] == [
-        ("袁崇焕", origin, "in_transit")
-    ]
-    assert db.conn.execute(
-        "SELECT count(*) FROM story_ledger_entries WHERE origin_ref=?", (origin,),
-    ).fetchone()[0] == 1
 
 
 @pytest.mark.parametrize(

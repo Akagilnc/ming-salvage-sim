@@ -24,7 +24,8 @@ from openai import APIConnectionError, APITimeoutError
 import ming_sim.decree as decree_module
 from ming_sim.faction_brew import STANCE_KEY, VIEW_FACTION_STANCE
 from ming_sim.db import GameDB
-from ming_sim.decree import SettlementAbort, settle_with_delta
+from ming_sim.exceptions import SettlementAbort
+from tests.settlement_seam_helpers import settle_effects as settle_with_delta
 from ming_sim.exceptions import LLMUnavailable
 from ming_sim.relation_brew import (
     FOUNDINGS_KEY,
@@ -873,29 +874,6 @@ def test_batch_of_five_relations_all_enter_call_seam_concurrently(game):
 # ------------------- 庭裁 Z3：生产 provider 已知故障译 typed 单条降级
 
 
-def _brew_runner_leg(game, monkeypatch, provider_error):
-    """经生产注入工厂 _make_relation_brew_runner 构造真实闭包，把 provider 调用
-    替换为抛指定已知异常；返回已 prepare 的 Leg。"""
-    db, state, _ = game
-    _add_edge(db, state, source="温体仁", target="周延儒", kind="结怨",
-              context="温体仁当殿讦周延儒。", origin="audience:turn-1")
-
-    monkeypatch.setattr(decree_module, "create_relation_brew_agent", lambda cfg, adb: object())
-    monkeypatch.setattr(decree_module, "create_faction_brew_agent", lambda cfg, adb: object())
-
-    def failing_run(agent, prompt, tag):
-        raise provider_error
-
-    monkeypatch.setattr(decree_module, "run_agent_text", failing_run)
-    runner = decree_module._make_relation_brew_runner(None, None)
-    leg = runner(
-        state, db,
-        settled_turn=int(state.turn),
-        settled_year=int(state.year),
-        settled_period=int(state.period),
-    )
-    assert leg.prepare()
-    return db, leg
 
 
 @pytest.mark.parametrize("error_factory", [

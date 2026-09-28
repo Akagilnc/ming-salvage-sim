@@ -17,7 +17,7 @@ import pytest
 
 from ming_sim.action_clusters import candidates_from_classifier_payload
 from ming_sim.action_materialize import MaterializeCtx, run_materialize_pipeline
-from ming_sim.decree import settle_with_delta
+from tests.settlement_seam_helpers import settle_effects as settle_with_delta
 from ming_sim.issues import apply_score_extraction
 from ming_sim.models import TurnPhase
 from ming_sim.settlement_payload import augment_secret_orders_with_due_commitments

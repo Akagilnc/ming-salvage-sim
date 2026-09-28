@@ -650,39 +650,3 @@ def test_provenance_from_stored_recovers_all_forms():
 
 
 
-@pytest.mark.parametrize(
-    "runner",
-    [None, lambda **_k: "   \t\n"],
-    ids=["missing_runner", "empty_speech"],
-)
-def test_driver_player_rejection_runner_boundary_fails_loud(
-    game, tmp_path, monkeypatch, runner,
-):
-    """#1745 P7：真实 driver 入口——缺 runner / 空文同一最短失败主干；不假充已递话。
-
-    不另造 settle_with_delta 平行主干；零宽占位已删，本案只咬失败与槽位。
-    """
-    import driver as drv
-    from ming_sim.exceptions import SettlementAbort
-    from tests.conftest import with_monthly_reports
-
-    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
-    db, state, content = game
-    turn = state.turn
-    drv.run_prepare(db, state, content)
-    with pytest.raises(SettlementAbort):
-        drv.run_settle(
-            db, state, content,
-            with_monthly_reports(db, {
-                "character_status_changes": [
-                    {"origin_ref": "盘面自发", "name": "查无此人边界", "status": "dead", "reason": "测"},
-                ],
-            }),
-            narrative="runner-boundary",
-            settlement_attendant_runner=runner,
-        )
-    assert int(state.turn) == turn
-    archives = db.list_monthly_archives()
-    hit = next((a for a in archives if int(a["turn"]) == turn), None)
-    if hit is not None:
-        assert hit["has_attendant"] is False

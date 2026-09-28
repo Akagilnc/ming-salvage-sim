@@ -34,7 +34,7 @@ from ming_sim.breach_plea import (
     try_defer_revoke_to_breach_plea,
     write_breach_plea_todo,
 )
-from ming_sim.decree import settle_with_delta
+from tests.settlement_seam_helpers import settle_effects as settle_with_delta
 from ming_sim.due_review import (
     apply_pending_due_reviews,
     dossiers_with_pending_due_review,

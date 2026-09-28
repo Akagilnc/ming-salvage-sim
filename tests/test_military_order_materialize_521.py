@@ -876,7 +876,7 @@ def test_apply_military_order_verdict_effect_within_line_limit():
 
 def test_military_order_office_promulgation_refreshes_after_outer_commit(game):
     """#672：军令职守面成功后经 outer-commit callback 刷新 registry。"""
-    from ming_sim.decree import settle_with_delta
+    from tests.settlement_seam_helpers import settle_effects as settle_with_delta
 
     db, state, content = game
     army_id = "xuan_da"

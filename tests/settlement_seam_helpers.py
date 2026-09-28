@@ -107,24 +107,106 @@ def canned_full_settlement(
     if skip_fixed_flows:
         monkeypatch.setattr(decree_mod, "apply_fixed_period_flows", lambda *_a, **_k: None)
 
-    if skip_relation_brew:
-        class _SkipBrewLeg:
-            def prepare(self):
-                return False
-
-        monkeypatch.setattr(
-            decree_mod,
-            "_make_relation_brew_runner",
-            lambda *_a, **_k: (lambda *_a2, **_k2: _SkipBrewLeg()),
-        )
-
+    # #1843 reopen：旧 settle_with_delta / relation_brew_runner 已删；月链机械尾自带酿制。
     if source_spy is not None:
-        real_settle = decree_mod.settle_with_delta
-
-        def _spy_settle(*a, **k):
-            source_spy.append(k.get("source"))
-            return real_settle(*a, **k)
-
-        monkeypatch.setattr(decree_mod, "settle_with_delta", _spy_settle)
+        # 新月链不经 settle_with_delta；source 由 chain 入口写入 resolve_context。
+        pass
 
     return simulator_calls
+
+
+def settle_effects(
+    state,
+    db,
+    extracted,
+    *,
+    before_turn=None,
+    content=None,
+    registry=None,
+    source=None,
+    dossier_verdicts=None,
+    dossier_rescript_actions=None,
+    **_ignored,
+):
+    """Domain-test seam after settle_with_delta retirement (#1843 reopen).
+
+    Applies one effects envelope through declaration_dispatch (player month-chain
+    apply path, including #670/#651 post-apply hooks), then runs the month-drift
+    hooks the new chain owns and advances the turn. Full world/gazette/4a are not
+    run — use canned run_player_month_chain for those.
+    """
+    from ming_sim.applier import Provenance, atomic
+    from ming_sim.declaration_dispatch import dispatch_declaration
+    from ming_sim.exceptions import SettlementAbort
+    from ming_sim.models import TurnPhase
+
+    if before_turn is None:
+        before_turn = int(state.turn)
+    if source is None:
+        source = Provenance.player_decree
+    try:
+        with atomic(db):
+            if dossier_verdicts:
+                db.apply_dossier_verdicts(
+                    state, dossier_verdicts, content=content, registry=None,
+                )
+            if dossier_rescript_actions:
+                for action in dossier_rescript_actions:
+                    db.apply_dossier_promulgation(
+                        state,
+                        int(action["dossier_id"]),
+                        str(action["decision"]),
+                        content=content,
+                        registry=None,
+                    )
+        if extracted:
+            dispatch_declaration(
+                db, state, {"effects": extracted},
+                source=source,
+            )
+        else:
+            # 空 delta 旧核仍走 apply_score_extraction（含回流等 always-on 步）。
+            from ming_sim.issues import apply_score_extraction
+            with atomic(db):
+                apply_score_extraction(
+                    db, state, {}, content=content, registry=registry,
+                )
+                from ming_sim.covert_levy import (
+                    settle_exposure_from_canonical_actions,
+                    write_exposure_todos,
+                )
+                write_exposure_todos(db, state, {})
+                settle_exposure_from_canonical_actions(db, state, {})
+        from ming_sim.issues import apply_issue_inertia_and_ongoing, clear_gated_legacies
+        from ming_sim.audience_night import retire_unsettled_summons_for_inactive
+        from ming_sim.covert_levy import settle_exposure_from_canonical_actions
+        from ming_sim.due_review import apply_pending_due_reviews
+        from ming_sim.staged_commitment import write_due_staged_commitment_todos
+        from ming_sim.breach_plea import expire_breach_pleas_on_due, scan_and_write_breach_pleas
+        from ming_sim.covert_progress import settle_due_secret_orders
+        from ming_sim.urge_lever import consume_pending_urge_audience_todos
+
+        with atomic(db):
+            retire_unsettled_summons_for_inactive(db)
+            settle_exposure_from_canonical_actions(db, state, {})
+            apply_issue_inertia_and_ongoing(db, state)
+            db.recompute_all_faction_leverage()
+            clear_gated_legacies(db, state)
+            apply_pending_due_reviews(db, state, commit=False)
+            settle_due_secret_orders(db, state, commit=False)
+            db.release_held_audience_knowledge(commit=False)
+            expire_breach_pleas_on_due(db, state, commit=False)
+            consume_pending_urge_audience_todos(db, state, commit=False)
+            write_due_staged_commitment_todos(db, state, commit=False)
+            scan_and_write_breach_pleas(db, state, commit=False)
+            db.mark_directives_issued(state)
+            state.next_period()
+            state.turn_phase = TurnPhase.ISSUED.value
+            db.save_state(state)
+            db.clear_month_open_snapshot(before_turn)
+    except (KeyboardInterrupt, SystemExit):
+        raise
+    except Exception as exc:
+        # Match old settle_with_delta failure shape for domain tests that pin abort.
+        raise SettlementAbort(str(exc), turn=int(before_turn), stage="settle_effects") from exc
+    return ""

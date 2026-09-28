@@ -334,124 +334,10 @@ def test_month_end_participant_batch_rejects_each_malformed_item(game, bad_patch
     assert [item["character_id"] for item in roster] == [lead, good]
 
 
-def test_driver_settle_freezes_dossier_roster_authority_at_input(game, monkeypatch):
-    import driver
-
-    db, state, content = game
-    lead, worker = _active_people(db, 2)
-    visible_id = db.create_decree_dossier(
-        state, action_type="assignment", decree_text="命修历。",
-        target_kind="issue", target_id="calendar",
-        participants=[{"character_id": lead, "tier": "主办"}],
-    )
-    closed_id = db.create_decree_dossier(
-        state, action_type="assignment", decree_text="旧案已结。",
-        target_kind="issue", target_id="closed-calendar",
-        participants=[{"character_id": lead, "tier": "主办"}],
-    )
-    db.conn.execute("UPDATE decree_dossiers SET status='closed' WHERE id=?", (closed_id,))
-    secret_order_id = _create_secret_order(db,
-        state, lead, "密修历", "暗修历书。", [], deadline_months=0,
-    )
-    secret_id = next(
-        row["id"] for row in db.list_decree_dossiers()
-        if row["secret_order_id"] == secret_order_id
-    )
-    # prepare first; freeze happens at settle start (post-pre_settle, engine-aligned).
-    from tests.section_rejection_helpers import run_settle as settle_after_prepare
-
-    driver.run_prepare(db, state, content)
-    created = {}
-    real_persist = driver.persist_resolve_context
-
-    def persist_with_same_batch_item(db_arg, turn, extracted, **kwargs):
-        # Create after freeze: must not expand roster-write authority.
-        created["id"] = db_arg.create_decree_dossier(
-            state, action_type="assignment", decree_text="同批新案。",
-            target_kind="issue", target_id="same-batch",
-            participants=[{"character_id": lead, "tier": "主办"}],
-        )
-        extracted["dossier_participants"].append({
-            "dossier_id": created["id"], "character_id": worker,
-            "tier": "协办", "delegator_id": lead,
-        })
-        return real_persist(db_arg, turn, extracted, **kwargs)
-
-    monkeypatch.setattr(driver, "persist_resolve_context", persist_with_same_batch_item)
-    additions = [
-        {"dossier_id": dossier_id, "character_id": worker, "tier": "协办", "delegator_id": lead}
-        for dossier_id in (visible_id, closed_id, secret_id)
-    ]
-    settle_after_prepare(
-        db, state, content,
-        covering_monthly_extract(None, db, state)[0] | {"dossier_participants": additions},
-    )
-
-    assert len(db.get_decree_dossier(visible_id)["participant_roster"]) == 2
-    assert len(db.get_decree_dossier(closed_id)["participant_roster"]) == 1
-    assert len(db.get_decree_dossier(secret_id)["participant_roster"]) == 0
-    assert len(db.get_decree_dossier(created["id"])["participant_roster"]) == 1
 
 
-def test_settlement_replay_uses_only_persisted_dossier_authority(game):
-    import ming_sim.decree as decree
-
-    db, state, content = game
-    lead, worker = _active_people(db, 2)
-    allowed = db.create_decree_dossier(
-        state, action_type="assignment", decree_text="命修历。",
-        target_kind="issue", target_id="replay-allowed",
-        participants=[{"character_id": lead, "tier": "主办"}],
-    )
-    denied = db.create_decree_dossier(
-        state, action_type="assignment", decree_text="未入冻结输入。",
-        target_kind="issue", target_id="replay-denied",
-        participants=[{"character_id": lead, "tier": "主办"}],
-    )
-    extracted = {"dossier_participants": [
-        {"dossier_id": dossier_id, "character_id": worker, "tier": "协办", "delegator_id": lead}
-        for dossier_id in (allowed, denied)
-    ]}
-    decree.pre_settle(state, db)
-    db.save_resolve_context(
-        state.turn, "", "", {"decree_dossiers": [{"id": allowed}]},
-        extracted=extracted,
-    )
-    import driver
-    driver.run_settle(db, state, content, extracted)
-    assert len(db.get_decree_dossier(allowed)["participant_roster"]) == 2
-    assert len(db.get_decree_dossier(denied)["participant_roster"]) == 1
 
 
-def test_driver_crash_persists_frozen_dossier_authority_for_replay(game, monkeypatch):
-    import driver
-
-    db, state, content = game
-    lead, worker = _active_people(db, 2)
-    dossier_id = db.create_decree_dossier(
-        state, action_type="assignment", decree_text="命修历。",
-        target_kind="issue", target_id="calendar",
-        participants=[{"character_id": lead, "tier": "主办"}],
-    )
-    delta = {"dossier_participants": [{
-        "dossier_id": dossier_id, "character_id": worker,
-        "tier": "协办", "delegator_id": lead,
-    }]}
-    real_settle = driver.settle_with_delta
-    monkeypatch.setattr(
-        driver, "settle_with_delta",
-        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("crash after ready")),
-    )
-
-    with pytest.raises(RuntimeError, match="crash after ready"):
-        driver.run_prepare(db, state, content)
-        driver.run_settle(db, state, content, delta)
-
-    ctx = db.get_resolve_context(state.turn)
-    assert ctx["simulator_payload"]["decree_dossiers"] == [{"id": dossier_id}]
-    monkeypatch.setattr(driver, "settle_with_delta", real_settle)
-    driver.run_settle(db, state, content, delta)
-    assert len(db.get_decree_dossier(dossier_id)["participant_roster"]) == 2
 
 
 @pytest.mark.parametrize("authority", [None, set()])
@@ -1826,7 +1712,7 @@ def test_session_manual_directive_keeps_structured_action_at_submission(
 
 
 def test_probe_directive_shared_entry_creates_and_settles_structured_dossier(game):
-    from ming_sim.decree import settle_with_delta
+    from tests.settlement_seam_helpers import settle_effects as settle_with_delta
     from ming_sim.session import GameSession
     from scripts.probe_directive_contract import add_narrative_probe_directive
 

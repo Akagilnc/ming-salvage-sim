@@ -30,7 +30,8 @@ import web_app
 import ming_sim.cli_backend as cb
 import ming_sim.issues as issues
 from ming_sim.db import GameDB
-from ming_sim.decree import pre_settle, reload_state_from_db, settle_with_delta
+from ming_sim.decree import pre_settle, reload_state_from_db
+from tests.settlement_seam_helpers import settle_effects as settle_with_delta
 from ming_sim.registry import MinisterRegistry
 from ming_sim.session import GameSession, TurnPhase
 from tests.dossier_test_helpers import LIAO_PAY_COVERT_TASK, create_test_secret_order, promulgate_proposed_appointments

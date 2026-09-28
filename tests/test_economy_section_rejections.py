@@ -171,21 +171,6 @@ def test_issue_effect_cancel_economy_reaches_reports(game):
     assert len(rows) == 1, rows
 
 
-def test_economy_rejections_not_in_player_visible(game):
-    """拒收项不进玩家可见 extractor_output（P4，cmr r1 codex）：economy_moves 段无 rejected 项、
-    无 economy_moves_rejections 段。"""
-    db, state, content = game
-    turn = state.turn
-
-    run_settle(db, state, content, {
-        "economy_moves": [{"origin_ref": "盘面自发", "account": "金库", "delta": -5, "reason": "非法"},
-                          {"origin_ref": "盘面自发", "account": "国库", "delta": -3, "reason": "合法"}],
-    }, narrative="x", decree_text="y")
-
-    visible = db.get_turn_extraction(turn)["extractor_output"]
-    em = visible.get("economy_moves") or []
-    assert not any(isinstance(x, dict) and x.get("rejected") for x in em), em
-    assert "economy_moves_rejections" not in visible
 
 
 # ── cleaner（_sanitize_module_output 路）透传单测（cmr r1 claude：run_settle 不走 cleaner）──

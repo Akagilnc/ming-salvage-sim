@@ -1015,7 +1015,7 @@ def test_pacification_successful_promulgation_closes_dossier(game):
 
 def test_pacification_promulgation_refreshes_target_after_outer_commit(game):
     """#672：招抚易主成功后经 outer-commit callback 刷新 registry。"""
-    from ming_sim.decree import settle_with_delta
+    from tests.settlement_seam_helpers import settle_effects as settle_with_delta
 
     db, state, content = game
     _activate_canonical_bandit(db, content)
