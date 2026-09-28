@@ -21,7 +21,7 @@ from ming_sim.constants import (
 from ming_sim.db import GameDB, POPULATION_UNIT_PERSONS
 from ming_sim.issues import apply_score_extraction
 from ming_sim.simulation import build_simulator_payload
-from tests.settlement_seam_helpers import canned_full_settlement, make_light_session
+from tests.month_chain_helpers import canned_full_settlement, make_light_session
 
 FARMER_SHAANXI = 6000000
 DISPLACED_SHAANXI = 150000
@@ -423,7 +423,6 @@ def _canned_judge(monkeypatch, *, outcome, dossier_id, sim_calls):
         narrative=narrative,
         simulator_calls=sim_calls,
         skip_fixed_flows=True,
-        skip_relation_brew=True,
     )
 
 

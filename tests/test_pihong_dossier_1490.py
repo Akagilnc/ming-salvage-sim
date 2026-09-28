@@ -3693,7 +3693,7 @@ def test_1682_phase2_surfaces_ambiguous_stored_choice(game):
     from contextlib import nullcontext
 
     from ming_sim.models import TurnPhase
-    from tests.settlement_seam_helpers import make_light_session
+    from tests.month_chain_helpers import make_light_session
 
     db, state, content = game
     db.save_pending_decisions(int(state.turn), [{
@@ -5040,7 +5040,7 @@ def test_658_free_decree_capture_target_dossier_real_entry(game, monkeypatch):
     from ming_sim import rescript_actions as ra
     from ming_sim.db import GameDB
     from ming_sim.models import TurnPhase
-    from tests.settlement_seam_helpers import canned_full_settlement, make_light_session
+    from tests.month_chain_helpers import canned_full_settlement, make_light_session
 
     db, state, content = game
     stalled, _ = _658_plant_stalled_deliberation(db, state, content, title="南迁之议")
@@ -5329,7 +5329,7 @@ def test_658_typed_target_and_backing_reject_bad_shapes(game, monkeypatch):
 def test_658_routing_rejected_draft_retries_across_real_turn_boundaries(
     game, monkeypatch, tmp_path,
 ):
-    from tests.settlement_seam_helpers import canned_full_settlement, make_light_session
+    from tests.month_chain_helpers import canned_full_settlement, make_light_session
 
     db, state, content = game
     mirror = tmp_path / "routing-rejections.jsonl"

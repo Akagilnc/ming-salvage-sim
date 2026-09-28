@@ -14,7 +14,7 @@ import ming_sim.month_translate as month_translate
 import ming_sim.simulation as simulation
 from ming_sim.declaration_dispatch import pending_action_decree_ref
 from ming_sim.session_write_queue import get_session_write_queue
-from tests.settlement_seam_helpers import make_light_session
+from tests.month_chain_helpers import make_light_session
 from tests.dossier_test_helpers import create_test_secret_order
 
 

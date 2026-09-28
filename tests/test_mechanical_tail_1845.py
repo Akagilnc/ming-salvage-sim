@@ -19,7 +19,7 @@ import ming_sim.month_chain as month_chain
 import ming_sim.decree as decree_mod
 from ming_sim.applier import Provenance
 from ming_sim.session_write_queue import get_session_write_queue
-from tests.settlement_seam_helpers import make_light_session
+from tests.month_chain_helpers import make_light_session
 
 
 def _forbid_extractor(monkeypatch):

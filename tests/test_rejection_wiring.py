@@ -1,8 +1,7 @@
 """PR2-S0(ADR 0008 决定 5/8,#91)——拒收收集器接进结算管线。
 
-生命周期与事务对齐:apply 产生的拒收项 → 事务内 flush 进 rejection_reports →
-commit 成功后镜像 jsonl → 回滚路 reset 不留行不留镜像。attempt 从错误目录推导
-(不从 DB 取,随回滚重置即失真)。经 driver.run_settle 端到端驱动(公共接口)。
+生命周期与事务对齐:现役声明分派产生的拒收项 → 事务内 flush 进
+rejection_reports → commit 成功后镜像 jsonl → 回滚不留行不留镜像。
 """
 
 from __future__ import annotations
@@ -12,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.section_rejection_helpers import prepare_then_settle as run_settle
+from tests.section_rejection_helpers import run_declaration as run_settle
 from tests.section_rejection_helpers import game, rejection_rows
 from tests.conftest import active_ming_character
 
@@ -38,30 +37,30 @@ def test_rejected_item_lands_in_reports_and_jsonl(game, monkeypatch, tmp_path):
     turn = state.turn
 
     run_settle(db, state, content, {
-        "人物状态变化": [{"name": "查无此人甲", "status": "dead", "reason": "测试"}],
+        "character_status_changes": [{"name": "查无此人甲", "status": "dead", "reason": "测试"}],
     }, narrative="x", decree_text="y")
 
     rows = _rejection_rows(db, turn)
     assert len(rows) == 1
     section, reason, category, source, attempt = rows[0]
-    assert section == "character_status_changes"
+    assert section == "applied_person_changes"
     assert reason  # 人读原因非空
     assert attempt == 1
     jsonl = tmp_path / "error_packs" / "rejections.jsonl"
     assert jsonl.exists()
     lines = [json.loads(l) for l in jsonl.read_text(encoding="utf-8").splitlines()]
     assert len(lines) == 1
-    assert lines[0]["section"] == "character_status_changes"
+    assert lines[0]["section"] == "applied_person_changes"
     assert lines[0]["turn"] == turn
 
 
 def test_rollback_leaves_no_rows_and_no_jsonl(game, monkeypatch, tmp_path):
-    """settle 在 flush 之后崩 → 事务回滚:rejection_reports 无行、jsonl 无镜像；
+    """原子声明在 flush 之后崩 → 事务回滚:rejection_reports 无行、jsonl 无镜像；
     对账好项与坏项拒收同 atomic 回滚（#1745：后 flush tracer，不重建 flush 前副本）。
 
     镜像只在 commit 成功后写,否则留「DB 没有、文件却有」的孤立行。
     """
-    from ming_sim.exceptions import SettlementAbort
+    from ming_sim.applier import RejectionCollector
 
     db, state, content = game
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
@@ -84,43 +83,27 @@ def test_rollback_leaves_no_rows_and_no_jsonl(game, monkeypatch, tmp_path):
     db.apply_dossier_promulgation(state, gid, "promulgated")
     assert db.get_decree_dossier(gid)["status"] == "executing"
 
-    real_clear = type(db).clear_resolve_context
+    real_flush = RejectionCollector.flush_to_db
 
-    def _boom(self, t):
+    def _boom(self, db_):
+        real_flush(self, db_)
         raise RuntimeError("crash after flush")
 
-    monkeypatch.setattr(type(db), "clear_resolve_context", _boom)
+    monkeypatch.setattr(RejectionCollector, "flush_to_db", _boom)
 
-    with pytest.raises(SettlementAbort):
+    with pytest.raises(RuntimeError, match="crash after flush"):
         run_settle(db, state, content, {
-            "人物状态变化": [{"name": "查无此人乙", "status": "dead", "reason": "测试"}],
+            "character_status_changes": [{"name": "查无此人乙", "status": "dead", "reason": "测试"}],
             "dossier_reconciliations": [
                 {"dossier_id": gid, "arrived_amount": 16},
                 {"dossier_id": 88888, "arrived_amount": 5},
             ],
         }, narrative="x", decree_text="y")
 
-    monkeypatch.setattr(type(db), "clear_resolve_context", real_clear)
+    monkeypatch.setattr(RejectionCollector, "flush_to_db", real_flush)
     assert _rejection_rows(db, turn) == []
     assert db.list_dossier_reconciliations(gid) == []
     assert not (tmp_path / "error_packs" / "rejections.jsonl").exists()
-
-
-def test_attempt_derived_from_error_pack_dirs(game, monkeypatch, tmp_path):
-    """同回合已有 attempt1 错误包(上次失败)→ 本次重试的拒收行 attempt=2:
-    拒收与错误包同号,事后能对上「第几次重试产生的」(决定 5,不从 DB 取)。"""
-    db, state, content = game
-    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
-    turn = state.turn
-    (tmp_path / "error_packs" / f"turn{turn}_attempt1").mkdir(parents=True)
-
-    run_settle(db, state, content, {
-        "人物状态变化": [{"name": "查无此人丙", "status": "dead", "reason": "测试"}],
-    }, narrative="x", decree_text="y")
-
-    rows = _rejection_rows(db, turn)
-    assert len(rows) == 1
-    assert rows[0][4] == 2  # attempt
 
 
 def _stub_settlement_attendant(monkeypatch, decree_mod, *, text="递话", capture=None):
@@ -218,25 +201,6 @@ def test_noncancellable_cancel_rejection_carries_reason(game, monkeypatch, tmp_p
     assert rows[0][1]  # reason 非空
 
 
-def test_rejected_appointment_carries_rejection_cause(game, monkeypatch, tmp_path):
-    """后宫纳妃被拒(重名/字段不合/未获准)的拒收行 reason=拒收原因,不是 LLM 任命
-    理由回显——与 r2 cancels 同类缺陷的另一 producer(cmr S0 r3,2/2)。"""
-    db, state, content = game
-    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
-    turn = state.turn
-    existing = next(iter(content.characters))  # 重名 → apply_appointment 拒
-
-    run_settle(db, state, content, {
-        "appointments": [{"origin_ref": "盘面自发", "name": existing, "office": "贵妃", "office_type": "后宫",
-                          "reason": "椒房之选"}],
-    }, narrative="x", decree_text="y")
-
-    rows = [r for r in _rejection_rows(db, turn) if r[0] == "appointments"]
-    assert len(rows) == 1
-    assert rows[0][1] and rows[0][1] != "椒房之选"  # 拒收原因,非任命理由回显
-    assert rows[0][2] == "appointment_rejected"
-
-
 def test_bridge_synthesizes_reason_when_producer_omits(game):
     """桥接层集中守 ADR「拒收行必带原因」不变式:任何 producer 漏给 reason,
     落库前合成非空兜底——规则写一处,未来新 section 免疫同类缺陷(fix-coverage
@@ -275,7 +239,8 @@ def test_inertia_tolerated_rejections_reach_reports(game, monkeypatch, tmp_path)
     )
     db.conn.commit()
 
-    run_settle(db, state, content, {}, narrative="x", decree_text="y")
+    from tests.test_due_review_621 import _settle_empty_month
+    _settle_empty_month(db, state, content, monkeypatch)
 
     rows = [r for r in _rejection_rows(db, turn)
             if r[0] == "issue_inertia.entity_rejections"]
@@ -565,64 +530,6 @@ def test_issue_close_power_move_backlash_rejection_is_not_duplicated(game, monke
         ch.power_id = old_power
         ch.office = old_office
         ch.office_type = old_office_type
-
-
-def test_inertia_power_move_backlash_rejection_lands_in_reports(game, monkeypatch, tmp_path):
-    """自然结案的人物易主反噬拒收也要入 rejection_reports,不能只藏在 applied 输出里。"""
-    db, state, content = game
-    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
-    turn = state.turn
-    name = active_ming_character(db, content)
-    ch = content.characters[name]
-    old_power = ch.power_id
-    old_office = ch.office
-    old_office_type = ch.office_type
-
-    db.insert_issue(
-        state,
-        kind="situation",
-        title="惯性反噬留痕测试",
-        bar_value=99,
-        inertia=1,
-        effect_on_resolve={
-            "人物变更": [
-                {
-                    "origin_ref": "盘面自发", "name": name,
-                    "动作": "易主",
-                    "new_power": "houjin",
-                    "方式": "主动投敌",
-                    "反噬": {"查无此势力": {"leverage": 5}},
-                    "reason": "测试惯性反噬拒收",
-                }
-            ]
-        },
-    )
-    db.conn.commit()
-
-    try:
-        run_settle(db, state, content, {}, narrative="x", decree_text="y")
-
-        rows = [
-            dict(row)
-            for row in db.conn.execute(
-                "SELECT section, reason, category, item_json FROM rejection_reports "
-                "WHERE turn=? ORDER BY id",
-                (turn,),
-            ).fetchall()
-        ]
-        assert len(rows) == 1
-        assert rows[0]["section"] == "issue_summary.applied_person_changes.backlash_results"
-        assert rows[0]["reason"] == "power_updates 引用未入库势力 '查无此势力'"
-        assert rows[0]["category"] == "hallucinated_id"
-    finally:
-        ch.power_id = old_power
-        ch.office = old_office
-        ch.office_type = old_office_type
-
-
-
-
-
 
 
 

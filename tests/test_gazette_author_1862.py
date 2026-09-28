@@ -23,7 +23,7 @@ from ming_sim.audience_night import record_summon_in_transit
 from ming_sim.models import LLMConfig, reign_period_label
 from tests.conftest import append_night_chat, open_audience_night
 from tests.dossier_test_helpers import create_test_secret_order
-from tests.settlement_seam_helpers import make_light_session
+from tests.month_chain_helpers import make_light_session
 from tests.test_month_chain_1843 import _forbid_extractor, _stage_edict
 
 _SECRET_DECL = "SECRET_DECL_1862"

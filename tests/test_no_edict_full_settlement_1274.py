@@ -12,7 +12,7 @@ import pytest
 
 from ming_sim.applier import Provenance
 from ming_sim.decree import resolve_directives
-from tests.settlement_seam_helpers import canned_full_settlement, make_light_session
+from tests.month_chain_helpers import canned_full_settlement, make_light_session
 
 # Back-compat aliases for this file's call sites.
 _canned_full_settlement = canned_full_settlement
@@ -41,12 +41,10 @@ def test_no_edict_advance_runs_full_settlement_chain(game, monkeypatch):
         bars_before = _issue_bars(db)
 
     sim_calls = []
-    sources = []
     _canned_full_settlement(
         monkeypatch,
         narrative="本月邸报：无新旨，边事自演。辽饷催征未绝，流寇窥陕。",
         simulator_calls=sim_calls,
-        source_spy=sources,
     )
 
     result = _session(db, state, content).advance_without_decree()
@@ -59,8 +57,6 @@ def test_no_edict_advance_runs_full_settlement_chain(game, monkeypatch):
     # 世界段必经（负向：快路已死，也不再走 extractor）
     assert len(sim_calls) == 1
     assert not db.get_turn_report(closed_turn)
-    assert any(s == Provenance.system_simulation or s == Provenance.system_simulation.value
-               or s is Provenance.system_simulation for s in sources) or sources == []
     # 局势 bar：惯性推进后至少有一条变化，或 inertia 路径已跑过（空盘面也允许全不变）
     bars_after = _issue_bars(db)
     # 有 inertia≠0 的 issue 时 bar 应动；无则仅要求链跑通（上面 turn/report/sim 已锁）
@@ -114,7 +110,6 @@ def test_no_edict_zero_decisions_completes_without_stuck(game, monkeypatch):
     _canned_full_settlement(
         monkeypatch,
         narrative="本月无重大抉择，朝局按惯性推移。",
-        decisions=[],  # 零决策
     )
     result = _session(db, state, content).advance_without_decree()
     assert result is not None

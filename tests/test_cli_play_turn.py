@@ -728,7 +728,7 @@ def test_cli_write_gate_canonical_session_attr():
 @pytest.mark.parametrize("action", ["skip", "issue"])
 def test_play_turn_hitl_advancement_ends_turn(game, monkeypatch, action):
     """#1843/PR #1876: HITL 续跑实际推进月份后，play_turn 必须调用 end_turn 并结束本回合。"""
-    from tests.settlement_seam_helpers import make_light_session
+    from tests.month_chain_helpers import make_light_session
 
     db, state, content = game
     turn_before = int(state.turn)

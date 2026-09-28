@@ -61,29 +61,6 @@ def run_declaration(db, state, content, raw_delta, *, narrative="", decree_text=
     )
 
 
-def prepare_then_settle(db, state, content, raw_delta, **kwargs):
-    """Test glue: pre_settle then production-aligned effects apply (#1843 reopen)."""
-    from ming_sim.decree import pre_settle
-    from tests.conftest import with_monthly_reports
-    from tests.settlement_seam_helpers import settle_effects
-
-    pre_settle(state, db, content=content, registry=kwargs.get("registry"))
-    return settle_effects(
-        state, db, with_monthly_reports(db, raw_delta),
-        before_turn=int(state.turn), content=content, **kwargs,
-    )
-
-
-def run_settle(db, state, content, raw_delta, **kwargs):
-    """已 pre_settle 后的 effects 落账 + 月末漂移（#1843 reopen）。"""
-    from tests.settlement_seam_helpers import settle_effects
-
-    return settle_effects(
-        state, db, raw_delta,
-        before_turn=int(state.turn), content=content, **kwargs,
-    )
-
-
 def rejection_rows(db, turn, section=None, *, columns="section, reason, category, source"):
     query = (
         f"SELECT {columns} FROM rejection_reports"

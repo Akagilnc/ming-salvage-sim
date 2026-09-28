@@ -18,7 +18,7 @@ from ming_sim.llm_transport import (
     TRANSPORT_DEFAULT_RETRY_INTERVAL_SECONDS,
 )
 from ming_sim.models import TurnPhase
-from tests.settlement_seam_helpers import make_light_session
+from tests.month_chain_helpers import make_light_session
 
 
 def _forbid_extractor(monkeypatch):

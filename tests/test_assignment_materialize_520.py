@@ -36,7 +36,7 @@ from ming_sim.action_materialize import (
 from ming_sim.decree import reload_state_from_db
 from ming_sim.session import GameSession
 from tests.dossier_test_helpers import rejected_verdict as _rejected_verdict
-from tests.settlement_seam_helpers import canned_full_settlement
+from tests.month_chain_helpers import canned_full_settlement
 from tests.test_month_loop_tracer_1468 import (
     _get_state,
     _install_canned_minister,

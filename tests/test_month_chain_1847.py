@@ -17,7 +17,7 @@ import ming_sim.month_translate as month_translate
 from ming_sim.declaration_dispatch import pending_action_decree_ref
 from ming_sim.exceptions import LLMUnavailable
 from ming_sim.models import TurnPhase
-from tests.settlement_seam_helpers import make_light_session
+from tests.month_chain_helpers import make_light_session
 from tests.test_month_chain_1843 import _forbid_extractor, _stage_edict
 from tests.dossier_test_helpers import create_test_secret_order
 
