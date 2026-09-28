@@ -8,7 +8,7 @@ import { HistoryModal } from "./historyModal";
 import { FullscreenModal } from "./hud";
 import { ReportModal } from "./reportModal";
 import { ScrollMessages } from "./scrollMessages";
-import type { BudgetAccount, ChatMessage, GameState, Minister, Suggestion } from "../types";
+import type { BudgetAccount, ChatMessage, GameState, Minister } from "../types";
 import { chatReducer, type ChatAction } from "../mindreading";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -77,7 +77,6 @@ function renderModal(props: {
   pendingUserMessage?: string;
   pendingIdentity?: { campaign_id: string; night_id: number; chat_turn_id: number } | null;
   failedIdentity?: { campaign_id: string; night_id: number; chat_turn_id: number } | null;
-  suggestions?: Suggestion[];
   onSend?: (ministerName: string, text?: string) => void;
   onUndo?: (ministerName: string) => void;
   canUndoLastChat?: boolean;

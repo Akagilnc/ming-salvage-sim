@@ -2196,7 +2196,6 @@ class WebGame:
             "pending_count": self.session.pending_count(),
             "pending_directive_count": self.pending_directive_count(),
             "secret_orders": self.db.list_secret_orders(),
-            "suggestions": [],
             "can_undo_last_chat": self.can_undo_last_chat(minister_name),
             "pending_action_failures": self.pending_action_failures_for(minister_name),
         }
@@ -2281,7 +2280,6 @@ class WebGame:
             "pending_count": self.session.pending_count(),
             # #1716：done 载荷同步 pending_directive_count——onDone 直接落 UI，不单靠 refresh 竞态。
             "pending_directive_count": self.pending_directive_count(),
-            "suggestions": [],
             "can_undo_last_chat": self.can_undo_last_chat(minister_name),
         }
 
@@ -2367,7 +2365,7 @@ class WebGame:
             "directives": [self.directive_payload(row) for row in self.directive_rows()],
             "pending_count": self.session.pending_count(),
             "pending_directive_count": self.pending_directive_count(),
-            "suggestions": [], "can_undo_last_chat": self.can_undo_last_chat(minister_name),
+            "can_undo_last_chat": self.can_undo_last_chat(minister_name),
             "pending_action_failures": self.pending_action_failures_for(minister_name),
         }
 
@@ -5569,7 +5567,6 @@ async def api_audience_chat_history() -> Dict[str, Any]:
         "campaign_id": str(game.db.kv_get("campaign_id") or ""),
         "night_id": int(open_night["id"]) if open_night else 0,
         "history": game.chat_projection(SCENE_CHAT_SPEAKER),
-        "suggestions": [],
         "can_undo_last_chat": game.can_undo_last_chat(SCENE_CHAT_SPEAKER),
         "pending_action_failures": game.pending_action_failures_for(SCENE_CHAT_SPEAKER),
         "reply_retries": game.reply_retries(SCENE_CHAT_SPEAKER),

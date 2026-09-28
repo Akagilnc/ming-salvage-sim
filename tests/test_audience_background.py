@@ -192,7 +192,6 @@ def _web_game(db, state, content, agent: _FakeAgent, monkeypatch=None) -> WebGam
     game = WebGame.__new__(WebGame)
     game.session = _FakeSession(db, state, content, agent)
     game.chat_history = {name: [] for name in content.characters}
-    game.suggestions_for = lambda _character: []
     from ming_sim.session_write_queue import SessionWriteQueue
     game._write_queue = SessionWriteQueue()
     game._write_gate = game._write_queue.write_gate
@@ -466,7 +465,6 @@ def _cli_web_game(db, state, content, agent, monkeypatch=None, **kwargs) -> WebG
     game = WebGame.__new__(WebGame)
     game.session = _CliActionSession(db, state, content, agent, **kwargs)
     game.chat_history = {name: [] for name in content.characters}
-    game.suggestions_for = lambda _character: []
     from ming_sim.session_write_queue import SessionWriteQueue
     game._write_queue = SessionWriteQueue()
     game._write_gate = game._write_queue.write_gate
@@ -514,18 +512,20 @@ def test_background_audience_recommendation_stages_candidate_snapshot(game, monk
     web_game = _web_game(db, state, content, agent, monkeypatch)
     stub_audience_translate(monkeypatch, translate_fn)
 
-    events = list(web_game.chat_stream("殿上", "可荐何人巡盐？"))
+    stream = web_game.chat_stream("殿上", "可荐何人巡盐？")
+    _assert_next_accepted(stream)
+    assert next(stream)["type"] == "delta"
+    stream.close()  # 离开实时流；转译仍须完成并落持久账。
 
-    player_text = "".join(
-        event.get("content", "") for event in events if event.get("type") == "delta"
-    )
-    # 旧 tool envelope 不得泄漏到玩家可见流
-    assert "[[recommend_person:" not in player_text
-    assert "__pending_recommendation__" not in player_text
-    assert "done" in [e.get("type") for e in events], events
-
-    # 转译后台串行：join owner ledger 后再断言外部 pending 账（禁盲轮询条数）。
+    assert agent.completed.wait(5), agent.calls
     _wait_for_pending_writes_to_drain(web_game)
+    night = db.conn.execute("SELECT id FROM audience_nights ORDER BY id DESC LIMIT 1").fetchone()
+    assert night is not None
+    history = db.build_chat_projection("殿上", int(night["id"]))
+    assert any(row.get("content") == reply for row in history)
+    web_game.chat_history.clear()  # 刷新/重开不得依赖流式观察者的内存态。
+    assert web_game.chat_projection("殿上") == history
+    assert db.can_undo_last_chat_turn("殿上", state.turn)
     pending = db.list_pending_actions(state.turn)
     office_rows = [p for p in pending if p["kind"] == "office"]
     assert len(office_rows) >= 1, pending
@@ -583,7 +583,6 @@ def test_background_audience_failure_after_action_rolls_back_cleanly(game, monke
     web_game = WebGame.__new__(WebGame)
     web_game.session = _RaisingActionSession(db, state, content, agent)
     web_game.chat_history = {name: [] for name in content.characters}
-    web_game.suggestions_for = lambda _character: []
     from ming_sim.session_write_queue import SessionWriteQueue
     web_game._write_queue = SessionWriteQueue()
     web_game._write_gate = web_game._write_queue.write_gate

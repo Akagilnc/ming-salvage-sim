@@ -1,7 +1,7 @@
 import React from "react";
 import { ApiRequestError, api, streamChat } from "./api";
 import { chatReducer } from "./mindreading";
-import type { ChatIdentity, ChatMessage, ChatResponse, PendingActionFailure, Minister, ReplyRetry, ServerChatMessage, Suggestion, TranslationRetry } from "./types";
+import type { ChatIdentity, ChatMessage, ChatResponse, PendingActionFailure, Minister, ReplyRetry, ServerChatMessage, TranslationRetry } from "./types";
 import { audienceHistoryPath } from "./audienceScene";
 
 /**
@@ -22,7 +22,6 @@ import { audienceHistoryPath } from "./audienceScene";
 export type AudienceHistoryData = {
   minister: Minister;
   history: ServerChatMessage[];
-  suggestions: Suggestion[];
   can_undo_last_chat: boolean;
   pending_action_failures?: PendingActionFailure[];
   campaign_id: string;

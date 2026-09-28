@@ -283,7 +283,6 @@ def _retry_runtime(db, state, minister, *, session=None):
     rt._runtime_write_gate = lambda: rt._write_gate
     rt.directive_rows = lambda: []
     rt.directive_payload = lambda row: row
-    rt.suggestions_for = lambda character: []
     rt.can_undo_last_chat = lambda name: False
     rt.pending_action_failures_for = lambda name: []
     rt._audience_turn_in_flight = lambda name: False
