@@ -2361,16 +2361,6 @@ def test_657_s10_http_five_actions_and_1490_no_regress(web_game, monkeypatch):
     # 真 phase2（只 stub LLM 边界）；六动作各推月后按当前 turn 再种
     _657_install_real_phase2_llm_boundary(monkeypatch)
 
-    # summon generator 边界 stub（经 session 公共缝）
-    summon_gen_bodies = {}
-
-    def _det_gen(inputs):
-        name = str(getattr(inputs, "person_name", "") or "") or "臣"
-        text = f"{name}奉诏入殿。"
-        summon_gen_bodies[name] = text
-        return text
-
-
     cases = [
         ("hold", {"action": "hold", "label": "留中"}),
         ("follow_draft", {
@@ -2479,7 +2469,7 @@ def test_657_s10_http_five_actions_and_1490_no_regress(web_game, monkeypatch):
         elif name == "summon":
             assert hit["status"] == "decided"
             assert (hit["choice"] or {}).get("action") == "summon"
-            # S1：无需再 attach 即有全局 origin_ref+TAG_ENTER，body==generator 非空
+            # S1：无需再 attach 即有全局 origin_ref+TAG_ENTER 事实账。
             from ming_sim.audience_night import rescript_summon_origin_ref
             kind, turn_s, idx_s = key.split(":")
             origin = rescript_summon_origin_ref(int(turn_s), int(idx_s), 0)
@@ -2490,10 +2480,7 @@ def test_657_s10_http_five_actions_and_1490_no_regress(web_game, monkeypatch):
             assert row is not None
             tags = json.loads(row["tags"] or "[]")
             assert TAG_ENTER in tags
-            assert str(row["body"] or "").strip()
-            body_s = str(row["body"] or "").strip()
-            assert body_s
-            assert body_s == summon_gen_bodies.get("杨嗣昌") or body_s in summon_gen_bodies.values()
+            assert not row["body"]
         elif name == "return_revise":
             assert hit["status"] == "pending"
             assert int(hit["revision_round"] or 0) == 1
