@@ -1379,7 +1379,7 @@ def test_end_turn_without_ongoing_is_not_expired_by_settlement_tick(game):
     assert not created.get("rejected")
     issue_id = int(created["issue_id"])
 
-    _settle_empty_month(db, state, content)
+    _advance_player_month(db, state, content)
 
     row = _issue_row(db, issue_id)
     assert row["status"] == "active"
