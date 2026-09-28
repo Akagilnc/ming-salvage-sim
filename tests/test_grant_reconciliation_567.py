@@ -93,16 +93,11 @@ def _escort_order(db, state, grant_ids, *, tags=None):
     return order_id, escort_id
 
 
-def _settle(db, state, content, *, reconciliations=None, progress=None, narrative="本月邸报"):
-    extracted = {}
-    if reconciliations is not None:
-        extracted["dossier_reconciliations"] = reconciliations
+def _record_monthly(db, state, *, reconciliations, progress=None):
+    _record_recon(db, state.turn, reconciliations)
     if progress is not None:
-        extracted["dossier_progress_reports"] = progress
-    settle_with_delta(
-        state, db, extracted, before_turn=state.turn, content=content, narrative=narrative,
-        settlement_attendant_runner=default_settlement_attendant_runner,
-    )
+        db.record_monthly_dossier_progress(state.turn, progress)
+    db.conn.commit()
 
 
 def test_escorted_arrival_clamp_strictly_beats_bare(game):
@@ -126,7 +121,7 @@ def test_escorted_arrival_clamp_strictly_beats_bare(game):
     _order_id, escort_dossier_id = _escort_order(db, state, [g_escort])
 
     # 软判故意给越界值：无护行报满分、有护行报零——代码 clamp 后仍护行更优
-    _settle(db, state, content, reconciliations=[
+    _record_monthly(db, state, reconciliations=[
         {"dossier_id": g_bare_a, "arrived_amount": ORDERED},
         {"dossier_id": g_bare_b, "arrived_amount": ORDERED},
         {"dossier_id": g_escort, "arrived_amount": 0},
@@ -164,7 +159,7 @@ def test_clamp_mutation_keeps_every_value_inside_band(game):
 
     db, state, content = game
     gid = _in_transit_grant(db, state)
-    _settle(db, state, content, reconciliations=[
+    _record_monthly(db, state, reconciliations=[
         {"dossier_id": gid, "arrived_amount": -100},
     ])
     row = db.list_dossier_reconciliations(gid)[-1]
@@ -182,7 +177,7 @@ def test_per_route_storage_restore_and_escort_split(game):
     order_id, escort_dossier_id = _escort_order(db, state, [escorted_grant])
 
     turn = state.turn
-    _settle(db, state, content, reconciliations=[
+    _record_monthly(db, state, reconciliations=[
         {"dossier_id": bare, "arrived_amount": 16},
         {"dossier_id": escorted_grant, "arrived_amount": 24},
     ], progress=[{
@@ -229,7 +224,7 @@ def test_close_merges_recon_note_without_second_treasury_debit(game):
     assert after_grant_inner == before_inner - ORDERED
     moves_before = db.list_economy_moves_for_dossier(gid)
 
-    _settle(db, state, content, reconciliations=[
+    _record_monthly(db, state, reconciliations=[
         {"dossier_id": gid, "arrived_amount": 16},
     ])
     assert int(state.metrics["内库"]) == after_grant_inner
@@ -262,7 +257,7 @@ def test_missing_soft_judge_uses_band_midpoint(game):
 
     db, state, content = game
     bare = _in_transit_grant(db, state)
-    _settle(db, state, content, reconciliations=[])
+    _record_monthly(db, state, reconciliations=[])
     row = db.list_dossier_reconciliations(bare)[-1]
     lo, hi = grant_arrival_bounds(ORDERED, escorted=False)
     assert row["arrived_amount"] == (lo + hi) // 2
