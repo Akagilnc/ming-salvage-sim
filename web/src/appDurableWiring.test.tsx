@@ -1051,11 +1051,9 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     expect(resume2!.disabled).toBe(false);
   });
 
-  it("#1620 settling recovery：真实按钮 click → POST /api/decree/issue/stream", async () => {
-    // 契约：recovery banner 按钮进入生产 handler，发出恢复 POST。
-    // ready 分型由后端 settlement_recovery.ready_replay 承重；不锁 button/message 措辞。
+  it("#1620 settling recovery：重开后按持久恢复投影选入口", async () => {
     const paths: string[] = [];
-    const liveState = settlementBaseState("settling", {
+    let liveState = settlementBaseState("settling", {
       settlement_recovery: {
         ready_replay: true,
         error_pack_path: "/tmp/error_packs/turn5_attempt1",
@@ -1091,6 +1089,16 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
         expect(paths.some((path) => path === "POST /api/decree/issue/stream")).toBe(true),
       );
     });
+    unmountTrackedRoots();
+    paths.length = 0;
+    liveState = settlementBaseState("settling", {
+      settlement_recovery: { ready_replay: false, message: "stopped", error_pack_path: "" },
+      directives: [],
+    });
+    const reopened = await mountApp();
+    await click(reopened.querySelector('[data-testid="settle-resume"] button') as HTMLButtonElement);
+    expect(paths).toContain("POST /api/decree/advance_without_edict");
+    expect(paths).not.toContain("POST /api/decree/issue/stream");
   });
 
   it("#1852 写成即推进：本面邸报落位；朕知道了只关阅读；刷新不自动弹", async () => {
