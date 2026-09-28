@@ -2580,7 +2580,6 @@ def test_begin_turn_syncs_offices_with_runtime_llm_config(monkeypatch):
         previous_turn_summary=lambda state: "",
         save_state=lambda state: None,
     )
-    released = []
     fake = SimpleNamespace(
         state=state,
         db=fake_db,
@@ -2588,21 +2587,18 @@ def test_begin_turn_syncs_offices_with_runtime_llm_config(monkeypatch):
         llm_config=cfg,
         agno_db=SimpleNamespace(),
         previous_summary="",
-        registry=SimpleNamespace(close=lambda: released.append("old")),
         last_decree="",
         last_report="",
         _begun=False,
         auto_save=lambda label: None,
         turn_snapshot=lambda: SimpleNamespace(ok=True),
     )
-    fake._adopt_registry = types.MethodType(GameSession._adopt_registry, fake)
     monkeypatch.setattr(session_mod, "_sync_offices_from_db_impl",
                         lambda content, db, llm_config=None: seen.append(llm_config))
 
     GameSession.begin_turn(fake)
 
     assert seen == [cfg]
-    assert released == ["old"]
 
 
 def test_chat_rollback_refresh_syncs_offices_with_runtime_llm_config(monkeypatch):
@@ -2610,7 +2606,6 @@ def test_chat_rollback_refresh_syncs_offices_with_runtime_llm_config(monkeypatch
     cfg = SimpleNamespace(channel="api")
     state = SimpleNamespace(turn_phase="summoning")
     fake_db = SimpleNamespace(load_state=lambda: state)
-    released = []
     fake = SimpleNamespace(
         state=state,
         db=fake_db,
@@ -2618,16 +2613,13 @@ def test_chat_rollback_refresh_syncs_offices_with_runtime_llm_config(monkeypatch
         llm_config=cfg,
         agno_db=SimpleNamespace(),
         previous_summary="",
-        registry=SimpleNamespace(close=lambda: released.append("old")),
     )
-    fake._adopt_registry = types.MethodType(GameSession._adopt_registry, fake)
     monkeypatch.setattr(session_mod, "_sync_offices_from_db_impl",
                         lambda content, db, llm_config=None: seen.append(llm_config))
 
     GameSession.refresh_runtime_after_chat_rollback(fake)
 
     assert seen == [cfg]
-    assert released == ["old"]
 
 
 def test_no_backend_is_noop(read_game, monkeypatch):
