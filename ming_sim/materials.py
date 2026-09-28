@@ -1933,7 +1933,9 @@ def prepare_world_materials(
         db, state, ledger_origin_prefix_excluded=ledger_origin_prefix_excluded,
         exclude_dossier_ids=secret_dossiers or None,
     )
-    denunciation_facts = db.build_faction_denunciation_facts()
+    denunciation_facts = db.build_faction_denunciation_facts(
+        exclude_dossier_ids=secret_dossiers,
+    )
 
     dest, index = _publish_material_tree(
         dest_root,

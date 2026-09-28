@@ -13929,7 +13929,7 @@ class GameDB:
         """未读奏报数（进度 + 检举）。"""
         return sum(1 for row in self.list_player_memorials() if row.get("unread"))
 
-    def build_faction_denunciation_facts(self) -> Dict[str, object]:
+    def build_faction_denunciation_facts(self, *, exclude_dossier_ids: Optional[Set[int]] = None) -> Dict[str, object]:
         """#627 供事实：派系恩怨/分叉/处境/个性——注入既有叙事 LLM 步。
 
         输入不携真伪位、不设 quota、不报烈度。fork 物理事实经单源读端装配。
@@ -13962,6 +13962,8 @@ class GameDB:
         subject_factions: Set[str] = set()
         for row in rows:
             dossier_id = int(row["id"])
+            if exclude_dossier_ids and dossier_id in exclude_dossier_ids:
+                continue
             fork_state = self.read_dossier_fork_state(dossier_id)
             dossier = dict(row)
             subject_name = resolve_dossier_owner_name(dossier) or ""
