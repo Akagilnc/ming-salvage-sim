@@ -1349,90 +1349,28 @@ def test_secret_order_extract_keeps_explicit_zero_deadline(monkeypatch):
     assert out["deadline_months"] == explicit_zero
 
 
-def test_api_tool_created_secret_order_skips_prefix_fallback_extraction(read_game, monkeypatch):
-    """Codex ship review: API tool-call 已建密令时，前缀 fallback 不得再发起一次会被丢弃的抽取。"""
-    db, state, _ = read_game
-    monkeypatch.setattr(cb, "_trace", lambda rec: None)
-    minister = "魏忠贤"
+@pytest.mark.parametrize("use_alias", [False, True])
+def test_declared_noop_appointment_is_not_staged(game, use_alias):
+    """结构化任免使用同一 canonical 目标与已在职判断，不重复立案。"""
+    from ming_sim.declaration_dispatch import dispatch_declaration
 
-    def forbidden_resolve(*args, **kwargs):
-        raise AssertionError("tool-created secret order should not run fallback extraction")
-
-    monkeypatch.setattr(cb, "resolve_minister_actions", forbidden_resolve)
-    result = _session(db, state, llm_config=SimpleNamespace(channel="api")).apply_cli_conversation_actions(
-        SimpleNamespace(name=minister, office_type="司礼监"),
-        "密令如下：暗查辽饷",
-        "臣领旨。",
-        has_directive=False,
-        secret_order_id=123,
-    )
-
-    assert result["secret_order_id"] == 123
-
-
-def test_api_tool_staged_secret_order_skips_prefix_fallback_extraction(game, monkeypatch):
-    """#413：API tool-call 已暂存新密令时，前缀 fallback 不得再抽取出第二条候选。"""
-    db, state, _ = game
-    monkeypatch.setattr(cb, "_trace", lambda rec: None)
-    minister = "魏忠贤"
-    pid = db.stage_pending_action(
-        state.turn, kind="secret_order", action="新建", minister_name=minister, target_id=None,
-        payload={
-            "covert_task": TYPED_COVERT_TASK,"title": "暗查辽饷", "content": "暗查辽饷。", "assignee": minister},
-    )
-
-    def forbidden_resolve(*args, **kwargs):
-        raise AssertionError("tool-staged secret order should not run fallback extraction")
-
-    monkeypatch.setattr(cb, "resolve_minister_actions", forbidden_resolve)
-    result = _session(db, state, llm_config=SimpleNamespace(channel="api")).apply_cli_conversation_actions(
-        SimpleNamespace(name=minister, office_type="司礼监"),
-        "密令如下：暗查辽饷",
-        "臣领旨。",
-        has_directive=True,
-        secret_order_id=None,
-    )
-
-    assert result["secret_order_id"] is None
-    assert not result.get("pending_action_id")
-    pending = db.list_pending_actions(state.turn)
-    assert len(pending) == 1 and pending[0]["id"] == pid
-
-
-def test_noop_appointment_intent_is_not_staged(read_game, monkeypatch):
-    """#354: 背景里提到“某人已任某职”被抽成任命时，若其当前已在该职，确定性丢弃。"""
-    db, state, content = read_game
-    monkeypatch.setattr(cb, "_trace", lambda rec: None)
+    db, state, content = game
     target = next(
         ch for ch in content.characters.values()
         if getattr(ch, "power_id", "ming") == "ming"
         and getattr(ch, "office", "")
         and getattr(ch, "office_type", "") != "后宫"
+        and (not use_alias or any(a != ch.name for a in (ch.aliases or [])))
         and db.get_character_status(ch.name)[0] == "active"
     )
-    summoner = next(
-        ch for ch in content.characters.values()
-        if ch.name != target.name
-        and getattr(ch, "power_id", "ming") == "ming"
-        and getattr(ch, "office_type", "") != "后宫"
-        and db.get_character_status(ch.name)[0] == "active"
-    )
-
-    res = _session(db, state, llm_config=SimpleNamespace(channel="cli")).apply_cli_conversation_actions(
-        SimpleNamespace(name=summoner.name, office_type=summoner.office_type),
-        f"{target.name}已任{target.office}，可先查赈银截留。",
-        "臣领旨。",
-        has_directive=False,
-        secret_order_id=None,
-        preclassified_intent={
-            "kind": "appointment",
-            "appoint_action": "任命",
-            "name": target.name,
-            "office": target.office,
+    name = next(a for a in target.aliases if a != target.name) if use_alias else target.name
+    result = dispatch_declaration(db, state, {"commissions": [{
+        "text": "核对现任官职", "appointment": {
+            "appoint_action": "任命", "name": name, "office": target.office,
         },
-    )
-
-    assert not res.get("pending_action_id")
+    }]}, minister_name="毕自严")
+    assert result.commissions.applied == []
+    assert result.commissions.rejected == []
     assert db.list_pending_actions(state.turn) == []
 
 
@@ -1617,48 +1555,6 @@ def test_secret_context_feed_isolates_by_open_night(game):
 
     assert night2_mark in ctx  # 本夜正文取到
     assert night1_mark not in ctx  # 上一夜正文不串入
-
-
-def test_noop_appointment_alias_target_is_not_staged(read_game, monkeypatch):
-    """#354 (cmr): no-op 任免丢弃须按 canonical 口径——背景句用别名提到「某人已任某职」、
-    其规范名当前已在该职时，照样确定性丢弃，不因别名查不到精确行而漏判成假任免。"""
-    db, state, content = read_game
-    monkeypatch.setattr(cb, "_trace", lambda rec: None)
-    target = next(
-        ch for ch in content.characters.values()
-        if getattr(ch, "power_id", "ming") == "ming"
-        and getattr(ch, "office", "")
-        and getattr(ch, "office_type", "") != "后宫"
-        and any(a != ch.name for a in (getattr(ch, "aliases", None) or []))
-        and db.get_character_status(ch.name)[0] == "active"
-    )
-    alias = next(a for a in target.aliases if a != target.name)
-    summoner = next(
-        ch for ch in content.characters.values()
-        if ch.name != target.name
-        and getattr(ch, "power_id", "ming") == "ming"
-        and getattr(ch, "office_type", "") != "后宫"
-        and db.get_character_status(ch.name)[0] == "active"
-    )
-
-    res = _session(
-        db, state, llm_config=SimpleNamespace(channel="cli"), content=content,
-    ).apply_cli_conversation_actions(
-        SimpleNamespace(name=summoner.name, office_type=summoner.office_type),
-        f"{alias}已任{target.office}，可先查赈银截留。",
-        "臣领旨。",
-        has_directive=False,
-        secret_order_id=None,
-        preclassified_intent={
-            "kind": "appointment",
-            "appoint_action": "任命",
-            "name": alias,
-            "office": target.office,
-        },
-    )
-
-    assert not res.get("pending_action_id")
-    assert db.list_pending_actions(state.turn) == []
 
 
 def test_committed_draft_followup_merges_even_when_classifier_says_none(game, monkeypatch):

@@ -1223,6 +1223,11 @@ def _dispatch_commissions(
         if appt_rejected is not None:
             rejected.append(appt_rejected)
             continue
+        if appointment_fields:
+            from ming_sim.session import _canonical_minister_key
+            appointment_fields["name"] = _canonical_minister_key(
+                getattr(db, "content", None), appointment_fields["name"], db,
+            )
 
         mode = item.get("mode", "ordinary")
         if not isinstance(mode, str) or mode not in {"ordinary", "midzhi"}:
@@ -1324,6 +1329,13 @@ def _dispatch_commissions(
                     annotate=True,
                 )
                 return {"id": oid, "kind": "office"}
+            if appointment_fields["appoint_action"] == "任命":
+                from ming_sim.session import _appointment_intent_is_current_office_noop
+                if _appointment_intent_is_current_office_noop(
+                    db, appointment_fields["name"], appointment_fields["office"],
+                    content=getattr(db, "content", None),
+                ):
+                    return None
             # office 成案链只吃任免字段；禁把 grant 的 execution_surface 等带进
             # appointment 案卷（会撞「execution_surface 与案卷动作策略不符」）。
             office_payload = dict(appointment_fields or {})
