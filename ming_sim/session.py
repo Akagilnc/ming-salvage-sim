@@ -4387,7 +4387,7 @@ class GameSession:
             origin = rescript_summon_origin_ref(
                 item.source_turn, item.idx, int(item.row.get("revision_round") or 0),
             )
-            scaffold = prepare_rescript_summon_scaffold(
+            entry = prepare_rescript_summon_scaffold(
                 self.db, self.state,
                 person_name=target,
                 origin_ref=origin,
@@ -4396,7 +4396,7 @@ class GameSession:
                 "decision_key": key,
                 "origin_ref": origin,
                 "target": target,
-                **scaffold,
+                **entry,
             })
         return {
             "ready_replay": False,
@@ -4412,10 +4412,7 @@ class GameSession:
         """#1838 reopen：召见无旁白 Future 可等；原样透传 phase1 summons。"""
         if phase1_state.get("ready_replay"):
             return {"joined": [], "ready_replay": True}
-        joined: List[Dict[str, object]] = []
-        for sc in phase1_state.get("summons") or []:
-            joined.append({**sc, "generated": []})
-        return {"joined": joined, "ready_replay": False}
+        return {"joined": list(phase1_state.get("summons") or []), "ready_replay": False}
 
     def finish_rescript_phase2(
         self,
@@ -4426,7 +4423,7 @@ class GameSession:
     ) -> str:
         """#657 ③ 短写（调用方已持 write_gate）：召见消费门闩 + phase2。
 
-        #1838 reopen：已消费 ≔ origin_ref 入殿账存在；不再 persist 旁白 / release registry。
+        #1838 reopen：已消费 ≔ origin_ref + TAG_ENTER；不再读取旁白正文。
         """
         if not phase1_state.get("ready_replay"):
             from ming_sim.audience_night import rescript_summon_origin_consumed
@@ -4437,15 +4434,10 @@ class GameSession:
                 if origin:
                     seen_origins.add(origin)
                 row = self.db.conn.execute(
-                    "SELECT body, tags FROM story_ledger_entries WHERE origin_ref = ?",
+                    "SELECT tags FROM story_ledger_entries WHERE origin_ref = ?",
                     (origin,),
                 ).fetchone()
-                entry = None
-                if row is not None:
-                    entry = {
-                        "body": str(row["body"] or ""),
-                        "tags": str(row["tags"] or "[]"),
-                    }
+                entry = {"tags": str(row["tags"] or "[]")} if row is not None else None
                 if not rescript_summon_origin_consumed(entry):
                     unconsumed.append(
                         f"{item.get('decision_key')}:{item.get('target') or ''}:{origin}"
@@ -4529,15 +4521,10 @@ class GameSession:
             rev = int(draft.get("revision_round") or 0)
             origin = rescript_summon_origin_ref(source_turn, idx, rev)
             row = self.db.conn.execute(
-                "SELECT body, tags FROM story_ledger_entries WHERE origin_ref = ?",
+                "SELECT tags FROM story_ledger_entries WHERE origin_ref = ?",
                 (origin,),
             ).fetchone()
-            entry = None
-            if row is not None:
-                entry = {
-                    "body": str(row["body"] or ""),
-                    "tags": str(row["tags"] or "[]"),
-                }
+            entry = {"tags": str(row["tags"] or "[]")} if row is not None else None
             if rescript_summon_origin_consumed(entry):
                 continue
             recovered = dict(choice)
