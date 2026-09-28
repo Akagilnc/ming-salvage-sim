@@ -2647,43 +2647,12 @@ def test_658_mixed_ordinary_triad_and_target_rejected(game, monkeypatch):
     assert len(db.list_decree_dossiers()) == before_dossiers
     assert db.conn.execute('SELECT COUNT(*) AS c FROM turn_directives').fetchone()['c'] == before_dirs
 
-def test_658_endorsement_old_schema_migration_preserves_rows(tmp_path, content):
-    """#658：旧背书表（chat FK、无 decision_key）升级保行数/id/provenance，新 XOR 可写。"""
-    import sqlite3
-    from ming_sim.db import GameDB
-    path = str(tmp_path / 'old_endorsement.db')
-    db = GameDB(path, content)
-    db.seed_static_data()
-    state = db.load_state()
-    minister = str(db.conn.execute("SELECT name FROM characters WHERE status='active' ORDER BY name LIMIT 1").fetchone()['name'])
-    did = int(db.create_decree_dossier(state, action_type='policy', decree_text='旧表迁移试', target_kind='policy', target_id='mig-658'))
-    chat = int(db.create_chat_turn(state, minister, '658-mig', 0))
-    old_id = int(db.add_dossier_endorsement(did, form='会签', endorser_id=minister, source_chat_turn_id=chat))
-    db.conn.commit()
-    db.close()
-    raw = sqlite3.connect(path)
-    raw.execute('PRAGMA foreign_keys=OFF')
-    raw.executescript("\n        CREATE TABLE decree_dossier_endorsements_old (\n            id INTEGER PRIMARY KEY AUTOINCREMENT,\n            dossier_id INTEGER NOT NULL,\n            form TEXT NOT NULL CHECK(form IN ('会签','当面站台','御笔手敕')),\n            endorser_id TEXT NOT NULL DEFAULT '',\n            imperial INTEGER NOT NULL DEFAULT 0 CHECK(imperial IN (0,1)),\n            source_chat_turn_id INTEGER NOT NULL DEFAULT 0,\n            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n            UNIQUE(dossier_id, form, endorser_id, imperial, source_chat_turn_id),\n            FOREIGN KEY(dossier_id) REFERENCES decree_dossiers(id) ON DELETE CASCADE,\n            FOREIGN KEY(source_chat_turn_id) REFERENCES chat_turns(id) ON DELETE CASCADE\n        );\n        INSERT INTO decree_dossier_endorsements_old\n            (id, dossier_id, form, endorser_id, imperial, source_chat_turn_id, created_at)\n        SELECT id, dossier_id, form, endorser_id, imperial, source_chat_turn_id, created_at\n        FROM decree_dossier_endorsements;\n        DROP TABLE decree_dossier_endorsements;\n        ALTER TABLE decree_dossier_endorsements_old\n            RENAME TO decree_dossier_endorsements;\n        ")
-    raw.commit()
-    raw.close()
-    reopened = GameDB(path, content)
-    try:
-        cols = {str(r['name']) for r in reopened.conn.execute('PRAGMA table_info(decree_dossier_endorsements)').fetchall()}
-        assert 'decision_key' in cols
-        fks = [str(r['table']) for r in reopened.conn.execute('PRAGMA foreign_key_list(decree_dossier_endorsements)').fetchall()]
-        assert 'chat_turns' not in fks
-        rows = reopened.list_dossier_endorsements(did)
-        assert len(rows) == 1
-        assert int(rows[0]['id']) == old_id
-        assert int(rows[0]['source_chat_turn_id']) == chat
-        assert rows[0]['decision_key'] == ''
-        new_id = reopened.add_dossier_endorsement(did, form='当面站台', endorser_id=minister, decision_key='rescript_draft:mig:0')
-        after = {e['id']: e for e in reopened.list_dossier_endorsements(did)}
-        assert after[new_id]['decision_key'] == 'rescript_draft:mig:0'
-        assert int(after[new_id]['source_chat_turn_id'] or 0) == 0
-        assert int(after[old_id]['source_chat_turn_id']) == chat
-    finally:
-        reopened.close()
+
+
+# ---------------------------------------------------------------------------
+# #1778：参与名单由拟票大臣写进票拟；成案钉进案卷；代码不配人
+# ---------------------------------------------------------------------------
+
 
 def _1778_raw_options():
     """错误包 turn1 里被丢掉的两条（2:0/2:1）＋政令/非七类/单省，各带 0053 名单。"""

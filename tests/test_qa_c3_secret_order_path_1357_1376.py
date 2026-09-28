@@ -329,10 +329,6 @@ def test_confirm_secret_order_http_returns_id_and_list_visible(
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
     monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
     # 收夜 LLM 边界离线中和（禁 sk-test 打真网）；被测缝 scene_chat 不 stub。
-    monkeypatch.setattr(
-        agents_mod, "create_endorsement_extractor_agent",
-        lambda *a, **k: _CannedExtractor(),
-    )
     monkeypatch.setattr(web_app, "run_highlight_judge", lambda **_k: [])
 
     game = web_app.WebGame(fresh=False)

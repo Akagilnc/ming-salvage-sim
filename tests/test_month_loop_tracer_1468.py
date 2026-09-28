@@ -44,10 +44,6 @@ class _BoomExtractor:
         raise RuntimeError("抽取持续失败·#1468 负向钉")
 
 
-class _CannedEndorsementExtractor:
-    def run(self, _material):
-        return SimpleNamespace(content='{"endorsements":[]}')
-
 
 class _CannedMinisterAgent:
     """非流式 session.chat 读 agent.run().content（非 generator）。"""
@@ -61,10 +57,6 @@ class _CannedMinisterAgent:
 def _stub_outer_llm_seams(monkeypatch) -> None:
     """只换最外层 LLM 工厂/调用；结算核、收夜、HTTP 路由全真跑。"""
     monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
-    monkeypatch.setattr(
-        agents_mod, "create_endorsement_extractor_agent",
-        lambda *a, **k: _CannedEndorsementExtractor(),
-    )
     # #642：召对/收夜关系判官同属外层 LLM 缝——漏 stub 会在有 window 时真网挂起，
     # 票据不归还 → xdist 下 _wait_pending_writes 墙钟假红。
     # 高亮判官默认 8s 超时——必须零延迟 stub，否则两月链必破速度红线。
@@ -207,18 +199,15 @@ def _get_state(client: TestClient) -> dict:
 
 
 def _pending_payload(client: TestClient) -> dict:
-    """#1871：extraction/pending 已删；以 scroll 的转译待补投影观测。"""
-    resp = client.get("/api/audience/scroll")
-    _assert_not_bare_500(resp, step="GET /api/audience/scroll")
+
+    """#1842：待补投影唯一真源 = list_pending_translations → chat.translation_retries。"""
+    resp = client.get("/api/audience/chat")
+    _assert_not_bare_500(resp, step="GET /api/audience/chat")
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert isinstance(body, dict)
-    pending_ids = body.get("pending_translation_turn_ids") or []
-    return {
-        "count": len(pending_ids),
-        "pending": [{"chat_turn_id": int(i)} for i in pending_ids],
-        "translation_pending": bool(body.get("translation_pending")),
-    }
+    retries = list(body.get("translation_retries") or [])
+    return {"pending": retries, "count": len(retries)}
+
 
 
 def _parse_sse(text: str) -> list[dict]:
@@ -414,7 +403,9 @@ def _plant_extraction_debt(game, minister: str, *, sess_tag: str) -> int:
     an.ensure_summon_enter(game.db, nid, minister)
     ctid = game.db.create_chat_turn(game.state, minister, sess_tag, 0, night_id=nid)
     game.db.persist_minister_reply(minister, int(game.state.turn), "臣愿肩起此事。", ctid)
+
     assert int(len(game.db.list_unextracted_replies(night_id=nid)) or 0) >= 1
+
     return int(ctid)
 
 

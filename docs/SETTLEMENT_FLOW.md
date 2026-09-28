@@ -41,11 +41,10 @@
            在飞回话：工人落终态即续跑（K10a 不把健康腿伪造成失败）；真挂死由
            provider/worker 硬超时落失败终态后 vacate，屏障只等终态——禁 elapsed 伪判。
            欠账抽取并入过月 drain/catch_up（玩家无感；统一重试耗尽才走失败单源）；
-           背书：一夜一批 single-flight owner 去重（队列只管写序，不建第二套 dedup）；
-           已绑定→续跑；真失败 fail-closed 保持 OPEN（禁第二次 LLM / contended 409）。
-           见 `ming_sim/session_write_queue.py` + `audience_night.py` + `audience_extraction.py`。
+           背书随每轮转译声明挂暂存交办，成案时继承；迟到转译在过月前补齐。
+           见 `ming_sim/session_write_queue.py` + `audience_night.py`。
          ↳ #542 收夜 scene 生命周期（调用方 registry 所有）：
-           start_close_scene_on_registry（不立即 join）→ 与 endorsement 并行 →
+           start_close_scene_on_registry（不立即 join）→
            终局写入前 join_close_scene_on_registry（join-before-finalize）；
            失败 abandon/fail_chat_turn 后原样上抛，夜保持 OPEN、不进 settling。
            无 scene_registry/无 start_close 能力或无 beat_generator 时不提交 close Future。
@@ -276,7 +275,6 @@ session.advance_without_decree / POST /api/decree/advance_without_edict:
 | `ming_sim/relation_read.py` | `project_relation_ledger` 五字段读面；`load_relation_history_before` coda 历史读缝 |
 | `ming_sim/session_write_queue.py` | per-session 单写者有序票据队列（#1353 / ADR 0149）：尾随领票、写经 `TicketedWriteGate`/`run`、过月=`barrier`、失败空放行、撤回 `cancel_key`；屏障只等工人终态（K10a 无 elapsed 熔断） |
 | `ming_sim/audience_night.py` | `auto_close_open_night` / `close_night`：颁诏 / 退朝遇开夜时顺势自动收夜（#498）；在飞只依工人终态续跑（K10a）；欠账并入过月 drain；`scene_registry` 调用方所有，start→并行→终局前 join，失败 OPEN fail-closed |
-| `ming_sim/audience_extraction.py` | 收夜 endorsement 批：一夜一批 single-flight 去重；真失败 fail-closed 保持 OPEN，禁第二次 LLM；写序归队列票据 |
 | `ming_sim/beat_orchestration.py` | `ChatTurnSceneRegistry` + `start_close_scene_on_registry` / `join_close_scene_on_registry`：收夜 scene 进既有 registry，不自建第二 executor（#542） |
 | `ming_sim/applier.py` | `atomic` 事务边界（`_SuspendableConnection`：内层 commit 暂停、executescript 拒绝、嵌套深度计数）+ `RejectionCollector` 拒收留痕契约 |
 | `ming_sim/error_pack.py` | `write_error_pack` 五件套诊断包（#1846：无 clear_for_resimulation） |

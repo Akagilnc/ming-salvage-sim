@@ -30,12 +30,6 @@ class _CannedExtractor:
         return SimpleNamespace(content='{"facts":[]}')
 
 
-class _CannedEndorsementExtractor:
-    def run(self, _material):
-        return SimpleNamespace(content='{"endorsements":[]}')
-
-
-
 
 class _StreamFarewellAgent:
     def run(self, *_a, **_k):
@@ -52,10 +46,6 @@ def web_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
     monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
-    monkeypatch.setattr(
-        agents_mod, "create_endorsement_extractor_agent",
-        lambda *a, **k: _CannedEndorsementExtractor(),
-    )
     monkeypatch.setattr(web_app, "run_highlight_judge", lambda **_k: [])
     game = web_app.WebGame(fresh=False)
     monkeypatch.setattr(web_app, "web_game", game)
