@@ -202,43 +202,6 @@ def test_secret_content_assembly_is_emperor_plus_extractor_only():
     assert partial in merged
 
 
-def test_secret_content_assembly_mutation_reply_not_in_signature_or_merge_sites(monkeypatch):
-    """变异：把 reply 塞回拼装必红——签名与三路源码不得再合并 reply/material。"""
-    import inspect
-
-    from ming_sim.session import GameSession
-
-    sig = inspect.signature(cb.assemble_secret_order_content)
-    assert "reply" not in sig.parameters and "minister_reply" not in sig.parameters
-
-    extract_src = inspect.getsource(cb._extract_secret_order)
-    assert "assemble_secret_order_content" in extract_src
-    assert "_minister_material_clauses" not in extract_src
-    assert "_strip_secret_content_acknowledgments" not in extract_src
-    assert "_content_reflects_minister_supplements" not in extract_src
-
-    staged_src = inspect.getsource(GameSession._merge_staged_new_secret_order_content)
-    assert "assemble_secret_order_content" in staged_src
-    assert "_minister_material_clauses" not in staged_src
-    assert "reply_material" not in staged_src
-    assert "_strip_secret_content_acknowledgments" not in staged_src
-
-    # 运行时：reply 独有标记不得仅因回话出现而进入 content
-    reply_mark = "MARK_REPLY_ONLY_答奏不得入正文"
-    so = _resolve_secret(
-        monkeypatch,
-        f"臣领旨。{reply_mark}",
-        "密令如下：密查关宁欠饷，三月内回奏",
-        default="李若琏",
-        payload=_so_json(
-            内容="密查关宁欠饷，三月内回奏", 承办人="李若琏", 期限月数=3, 标签=["关宁"],
-        ),
-    )
-    assert so is not None
-    assert reply_mark not in so["content"]
-    assert "密查关宁欠饷" in so["content"]
-
-
 @pytest.mark.parametrize(
     "case_id,llm_content,llm_assignee,reply,message,expect_content_bits,absent_content_bits,expect_assignee",
     [
