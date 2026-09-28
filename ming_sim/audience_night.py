@@ -1750,7 +1750,6 @@ def record_summon_fresh(
     person_name: str,
     *,
     method: str = METHOD_CHUANZHAO,
-    body: str = "",
     origin_id: object = "",
     origin_chat_turn_id: int = 0,
     travel_tone: str = "常行",
@@ -1759,7 +1758,7 @@ def record_summon_fresh(
 
     不同 origin 各留独立 ledger 行及各自 origin_chat_turn_id，供逐轮撤回；
     收夜启程仍由 commit_fresh_summons_for_night 按人聚合一次。
-    默认 body 为空：机器事实只在 tags；玩家可见句由既有 LLM 特征路径生成（P7）。
+    机器事实只在 tags；戏文由场景 LLM 写。
     """
     name = str(person_name or "").strip()
     if not name:
@@ -1778,7 +1777,7 @@ def record_summon_fresh(
         db, night_id,
         person_names=[name],
         audibility=AUDIBILITY_PUBLIC,
-        body=str(body or ""),
+        body="",
         tags=tags,
         origin_chat_turn_id=int(origin_chat_turn_id or 0),
     )
@@ -1952,13 +1951,12 @@ def record_summon_in_transit(
     person_name: str,
     *,
     method: str = METHOD_CHUANZHAO,
-    body: str = "",
     origin_id: object = "",
     origin_chat_turn_id: int = 0,
 ) -> int:
     """落传召在途账；带 origin 时，同一人物同一未结 origin 幂等。
 
-    默认 body 为空：机器事实只在 tags（P7）。
+    机器事实只在 tags；戏文由场景 LLM 写。
     """
     name = str(person_name or "").strip()
     if not name:
@@ -1976,7 +1974,7 @@ def record_summon_in_transit(
         db, night_id,
         person_names=[name],
         audibility=AUDIBILITY_PUBLIC,
-        body=str(body or ""),
+        body="",
         tags=tags,
         origin_chat_turn_id=int(origin_chat_turn_id or 0),
     )
@@ -1987,7 +1985,6 @@ def dismiss_from_audience(
     person_name: str,
     *,
     night_id: Optional[int] = None,
-    body: str = "",
     origin_chat_turn_id: int = 0,
     allow_closing: bool = False,
 ) -> Optional[int]:
@@ -2014,7 +2011,7 @@ def dismiss_from_audience(
         db, int(nid),
         person_names=[name],
         audibility=AUDIBILITY_PUBLIC,
-        body=body,
+        body="",
         tags=[TAG_EXIT],
         check_dead=False,
         origin_chat_turn_id=origin_chat_turn_id,
@@ -2027,7 +2024,6 @@ def stay_attend_in_audience(
     person_name: str,
     *,
     night_id: Optional[int] = None,
-    body: str = "",
     origin_chat_turn_id: int = 0,
 ) -> Optional[int]:
     """「留下听着」口令：确定性落留侍叙事账，在场态不变（#526 / #500 口径）。
@@ -2050,7 +2046,7 @@ def stay_attend_in_audience(
         db, int(nid),
         person_names=[name],
         audibility=AUDIBILITY_PUBLIC,
-        body=body or f"帝令{name}留下听着，{name}殿侧侍立。",
+        body="",
         tags=[TAG_STAY_ATTEND],
         check_dead=False,
         origin_chat_turn_id=origin_chat_turn_id,

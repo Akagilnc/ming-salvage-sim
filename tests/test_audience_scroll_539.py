@@ -321,17 +321,16 @@ def test_scroll_contract_merges_both_stores_with_container_and_coda(game):
     assert not any(m.get("beat") == "coda" for m in scroll)  # #1838 reopen：无 coda
 
 
-def test_presence_commands_project_to_diegetic_scene_beats(game):
-    """#1838 reopen：入殿/告退只记事实账；空正文不进卷轴；有正文 exit 才投影。"""
+def test_presence_commands_only_record_facts(game):
+    """入殿/告退只记事实账，戏文由场景 LLM 写。"""
     db, state, _ = game
     night_id = open_audience_night(db, state)
     an.summon_enter(db, night_id, "杨嗣昌")
-    an.dismiss_from_audience(db, "杨嗣昌", night_id=night_id, body="杨嗣昌告退。")
+    an.dismiss_from_audience(db, "杨嗣昌", night_id=night_id)
 
     scroll = an.read_night_scroll(db, night_id)
     assert not any(m.get("beat") == "entrance" for m in scroll)
-    exits = [m for m in scroll if m.get("beat") == "exit"]
-    assert exits and exits[-1]["content"] == "杨嗣昌告退。"
+    assert not any(m.get("beat") == "exit" for m in scroll)
     # 事实账仍在
     tags_sets = [set(e.get("tags") or []) for e in an.list_ledger(db, night_id)]
     assert any(an.TAG_ENTER in ts and "杨嗣昌" in str(e.get("person_names"))
