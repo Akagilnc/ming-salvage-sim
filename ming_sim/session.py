@@ -761,40 +761,6 @@ def coalesce_pending_action_id(prior: int, staged: int) -> int:
     return int(prior or 0)
 
 
-def _pending_action_brief(pa: Dict[str, Any]) -> str:
-    """暂存动作的一句话摘要，供对话确认意图判定时告诉 LLM『有哪些待皇帝定夺』。"""
-    import json as _json
-    kind = pa.get("kind")
-    action = pa.get("action")
-    try:
-        payload = _json.loads(pa.get("payload_json") or "{}")
-    except (ValueError, TypeError):
-        payload = {}
-    if not isinstance(payload, dict):
-        payload = {}
-    if kind == "office":
-        who = payload.get("name") or ""
-        office = payload.get("office") or ""
-        return f"{action}「{who}」" + (f"为「{office}」" if office else "")
-    if kind == "consort":
-        return f"调教「{payload.get('name') or ''}」"
-    if kind == "directive":
-        dat = str(payload.get("dossier_action_type") or "").strip()
-        if dat == "assignment":
-            title = str(
-                payload.get("title") or payload.get("target_id") or ""
-            ).strip()
-            if title:
-                return f"交办「{title[:30]}」"
-        text = str(payload.get("text") or "")
-        return f"草拟圣旨：{text[:30]}"
-    # secret_order：带 title/content 线索，供 confirmation 列表区分多候选（#1509）
-    title = str(payload.get("title") or "").strip()
-    content = str(payload.get("content") or "").strip()
-    cue = title or content[:30]
-    return f"{action}密令" + (f"：{cue}" if cue else "")
-
-
 
 
 def _pending_action_failure_payload(pa: Dict[str, Any]) -> Dict[str, Any]:
@@ -2365,34 +2331,7 @@ class GameSession:
 
 
     @staticmethod
-    def _append_action_reports(answer: str, actions: Dict[str, Any]) -> str:
-        """Append LLM-produced reports without inspecting or rewriting their prose."""
-        parts = [answer] if answer else []
-        for key in (
-            "unknown_participant_escalate",
-            "decree_validation_failure",
-            "secret_order_landing_recovery",
-        ):
-            report = str((actions.get(key) or {}).get("report") or "")
-            if report:
-                parts.append(report)
-        return "\n".join(parts)
-
     @staticmethod
-    def _ensure_clarification_cue(answer: str, ambiguous: Dict[str, Any]) -> str:
-        """#502 AC5：多道并存、准驳指称含糊时，大臣当场追问是哪一道（确定性 post-pass 句，
-        不串 LLM）。列出候选摘要供皇帝指名，避免被静默当「不回」。"""
-        text = (answer or "").strip()
-        cands = (ambiguous or {}).get("candidates") or []
-        briefs = "；".join(
-            f"其一「{str(c.get('summary') or '')}」" if i == 0 else f"其{'二三四五六七八九十'[i-1] if i <= 9 else i}「{str(c.get('summary') or '')}」"
-            for i, c in enumerate(cands)
-        )
-        ask = f"陛下方才所指，是这几道中的哪一道？（{briefs}）请明示，臣好照办。" if briefs else "陛下方才所指是哪一道？请明示。"
-        if not text:
-            return ask
-        return text + "\n" + ask
-
     @staticmethod
     def _normalized_content_key(text: str) -> str:
         return "".join(ch for ch in (text or "") if ch.isalnum())

@@ -68,9 +68,8 @@ def install_action_catalog(clusters: Sequence[ActionCluster]) -> None:
     LABEL_TO_KIND = {c.label_zh: c.kind for c in ACTION_CLUSTERS}
     KNOWN_KINDS = frozenset(c.kind for c in ACTION_CLUSTERS)
     specs: Dict[str, FieldSpec] = {}
+    # #1871：分类器 materialize 链已删；catalog 只供 FieldSpec/枚举，materialize_fn 可空。
     for c in ACTION_CLUSTERS:
-        if c.effect == EFFECT_MATERIALIZE and c.materialize_fn is None:
-            raise RuntimeError(f"materialize cluster {c.kind!r} lacks materialize_fn")
         for f in c.fields:
             # 同名 FieldSpec 以先出现为准（catalog 内不得自相矛盾）
             specs.setdefault(f.name, f)
