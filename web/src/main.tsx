@@ -29,7 +29,6 @@ import { SettlementGazettePanel } from "./components/settlementGazettePanel";
 import { StateModal } from "./components/stateModal";
 import { filterConsorts, filterMinisters } from "./components/ministerFilters";
 import { DecisionModal } from "./components/decisionModal";
-import { DecisionRecoveryPanel } from "./components/decisionRecovery";
 import { needsPhase2Resume } from "./decisionRouting";
 import { getMapIntelStyle, refreshLabelMaps } from "./format";
 import {
@@ -207,12 +206,14 @@ export function App() {
   const {
     settlementGazetteReading,
     advanceRefreshFailed,
+    retryAdvanceRefresh,
     dismissSettlementGazette,
     suppressPostAdvanceOverlays,
     pendingDecisions,
     decisionFailures,
     pausedDecisionError,
     settlementHudError,
+    failedEntryWasRetreat,
     clearSettlementHudError,
     issueDecree,
     advanceWithoutEdict,
@@ -609,12 +610,23 @@ export function App() {
       onDismiss={dismissSettlementGazette}
     />
   ) : null;
-  if (advanceRefreshFailed) {
-    return <main className="game-shell">{currentGazette}</main>;
-  }
-
   return (
     <main className="game-shell" data-settlement-display={settlementDisplay ? "1" : "0"}>
+      {currentGazette}
+      {/* 必达：续跑入口仍挂既有 phase===settling（及 issueDecree 恢复分流）；展示态门控不误关。
+          ship-pre r4：崩溃/中止后重载时相位停在 settling——last_decree 已被 begin_turn 清空。
+          #1418 r2 / #657：all-decided 或 typed resume_phase2 → 同条续跑面，空 POST resolve_decisions/stream。
+          #1808 A：与 hud-error 同槽（.recovery-banner fixed top:64px）——恢复面挂载时 HUD 门控避让，
+          不得压盖唯一续跑 CTA；fail-closed 回 player 时本面不挂，HUD 核心验收仍成立。 */}
+      {(advanceRefreshFailed || pausedDecisionError || settlementHudError || (settleResumeMounted && (!state.settlement_entry_inflight || phase2Resume))) && !edictOpen && !chatOpen ? (
+        <div className="recovery-banner" role="alert" data-testid={advanceRefreshFailed ? "advance-refresh-recovery" : settleResumeMounted && phase2Resume ? "settle-resume" : pausedDecisionError ? "decision-recovery" : settleResumeMounted ? "settle-resume" : "hud-error"}>
+          <span className="recovery-banner-message">{advanceRefreshFailed ? `新月盘面载入失败：${error}` : pausedDecisionError || settlementHudError || state.settlement_recovery?.message || "上月结算未完成（进度已保存）。"}{!advanceRefreshFailed && state.settlement_recovery?.error_pack_path ? ` 错误包：${state.settlement_recovery.error_pack_path}；请把它发给作者。` : ""}</span>
+          <button className="seal-btn-issue" onClick={advanceRefreshFailed ? retryAdvanceRefresh : pausedDecisionError ? retryPendingDecisions : phase2Resume ? resumePhase2 : failedEntryWasRetreat || (settleResumeMounted && state.settlement_recovery?.ready_replay === false) ? advanceWithoutEdict : issueDecree} disabled={!!busy}>重试</button>
+        </div>
+      ) : null}
+
+      {/* Keep the main face mounted, but never expose or accept actions against the stale month. */}
+      <div inert={advanceRefreshFailed} aria-hidden={advanceRefreshFailed} style={{ display: "contents", visibility: advanceRefreshFailed ? "hidden" : undefined }}>
       <GameHud
         stageRef={hudStageCbRef}
         ready={ready}
@@ -632,9 +644,6 @@ export function App() {
         onCloseEdict={() => setActiveModal("none")}
         settlementFace={settlementFace}
       />
-
-      {/* 当次邸报占主面阅读区，不另开遮蔽全屏的窗。 */}
-      {currentGazette}
 
       <CourtDrawer
         state={state}
@@ -791,7 +800,7 @@ export function App() {
             onSaveDirective={saveDirective}
             onDeleteDirective={deleteDirective}
             onIssueDecree={issueDecree}
-            onAdvanceWithoutEdict={advanceWithoutEdict}
+            onAdvanceWithoutEdict={() => { setActiveModal("none"); void advanceWithoutEdict(); }}
           />
         </FullscreenModal>
       ) : null}
@@ -857,60 +866,7 @@ export function App() {
         />
       ) : null}
 
-      {/* 必达：续跑入口仍挂既有 phase===settling（及 issueDecree 恢复分流）；展示态门控不误关。
-          ship-pre r4：崩溃/中止后重载时相位停在 settling——last_decree 已被 begin_turn 清空。
-          #1418 r2 / #657：all-decided 或 typed resume_phase2 → 同条续跑面，空 POST resolve_decisions/stream。
-          #1808 A：与 hud-error 同槽（.recovery-banner fixed top:64px）——恢复面挂载时 HUD 门控避让，
-          不得压盖唯一续跑 CTA；fail-closed 回 player 时本面不挂，HUD 核心验收仍成立。 */}
-      {settleResumeMounted ? (
-        <div className="recovery-banner" data-testid="settle-resume">
-          <span className="recovery-banner-message">
-            {state.settlement_recovery?.message
-              || "上月结算未完成（进度已保存）。"}
-          </span>
-          {(() => {
-            // #1620：typed 恢复动作——phase2 / ready 重放 → resume；ready=0 → resimulate。
-            // 文案为人服务；契约只落真实 click→POST，不锁措辞、不挂测试专用属性。
-            const recoveryAction = phase2Resume || state.settlement_recovery?.ready_replay !== false
-              ? "resume"
-              : "resimulate";
-            return (
-              <button
-                className="seal-btn-issue"
-                onClick={phase2Resume ? resumePhase2 : issueDecree}
-                disabled={!!busy}
-              >
-                {recoveryAction === "resimulate" ? "重新推演" : "续跑结算"}
-              </button>
-            );
-          })()}
-        </div>
-      ) : null}
 
-      {/* #1808：phase-1 fail-closed 的 HUD 告知——只吃 settlementHudError，不投影共享 error。
-          相关 modal（拟诏/召对/未落库）正在消费同一失败时不双播；DecisionRecoveryPanel 另承 phase-2。
-          呈现文本走上游消息，不新造固定句式。settle-resume 挂载时避让（A）。 */}
-      {settlementHudError && !edictOpen && !chatOpen && !settleResumeMounted ? (
-        <div
-          className="recovery-banner decision-recovery-banner"
-          role="alert"
-          aria-live="assertive"
-          data-testid="hud-error"
-        >
-          <span className="recovery-banner-message">{settlementHudError}</span>
-        </div>
-      ) : null}
-
-      {/* 必达：批红恢复——不得被 busy / 本面邸报阅读态误关 */}
-      {pausedDecisionError ? (
-        <div data-testid="decision-recovery">
-          <DecisionRecoveryPanel
-            message={pausedDecisionError}
-            busy={sessionSettlingBusy ? "" : busy}
-            onRetry={retryPendingDecisions}
-          />
-        </div>
-      ) : null}
 
       {cheatOpen ? (
         <CheatConsole
@@ -927,6 +883,7 @@ export function App() {
           <DecisionModal decisions={pendingDecisions} failures={decisionFailures} onResolve={submitDecisions} busy={busy} />
         </div>
       ) : null}
+      </div>
     </main>
   );
 }

@@ -1065,7 +1065,6 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     const resume = host.querySelector('[data-testid="settle-resume"] button') as HTMLButtonElement | null;
     expect(resume).not.toBeNull();
     expect(resume!.disabled).toBe(false);
-    expect(resume!.textContent).toContain("续跑结算");
     // 核账递话条同屏（展示态真源），不挡续跑
     expect(host.querySelector("[data-testid=wang-settlement-slip]")).not.toBeNull();
 
@@ -1077,11 +1076,9 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     expect(resume2!.disabled).toBe(false);
   });
 
-  it("#1620 settling recovery：真实按钮 click → POST /api/decree/issue/stream", async () => {
-    // 契约：recovery banner 按钮进入生产 handler，发出恢复 POST。
-    // ready 分型由后端 settlement_recovery.ready_replay 承重；不锁 button/message 措辞。
+  it("#1620 settling recovery：重开后按持久恢复投影选入口", async () => {
     const paths: string[] = [];
-    const liveState = settlementBaseState("settling", {
+    let liveState = settlementBaseState("settling", {
       settlement_recovery: {
         ready_replay: true,
         error_pack_path: "/tmp/error_packs/turn5_attempt1",
@@ -1105,6 +1102,15 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
       if (u.pathname.endsWith("/api/decree/issue/stream")) {
         return sseResp("done", { ok: true });
       }
+      if (u.pathname.endsWith("/api/decree/advance_without_edict") && init?.method === "POST") {
+        liveState = settlementBaseState("player", {
+          turn: { year: 1627, period: 11, turn: 6, phase: "player", settlement_display: false },
+          settlement_recovery: undefined,
+          previous_summary: "new month report",
+          directives: [],
+        });
+        return jsonResp({ state: liveState, advanced: true });
+      }
       return jsonResp({});
     }));
     const host = await mountApp();
@@ -1117,6 +1123,21 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
         expect(paths.some((path) => path === "POST /api/decree/issue/stream")).toBe(true),
       );
     });
+    unmountTrackedRoots();
+    paths.length = 0;
+    liveState = settlementBaseState("settling", {
+      settlement_recovery: { ready_replay: false, message: "stopped", error_pack_path: "" },
+      directives: [],
+    });
+    const reopened = await mountApp();
+    await click(reopened.querySelector('[data-testid="settle-resume"] button') as HTMLButtonElement);
+    expect(paths).toContain("POST /api/decree/advance_without_edict");
+    expect(paths).not.toContain("POST /api/decree/issue/stream");
+    await act(async () => {
+      await vi.waitFor(() => expect(reopened.querySelector(".hud2-val")?.textContent).toContain("11"));
+    });
+    expect(reopened.querySelector('[data-testid="settle-resume"]')).toBeNull();
+    expect(reopened.querySelector('[data-testid="settlement-gazette-panel"]')?.textContent).toContain("new month report");
   });
 
   it("#1852 写成即推进：本面邸报落位；朕知道了只关阅读；刷新不自动弹", async () => {
@@ -1401,19 +1422,29 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     });
     expect(stateGets).toBeGreaterThan(getsBeforeDone);
     expect(host.querySelector("[data-testid=settlement-gazette-panel]")!.textContent).toContain("十月邸报·刷新失败仍可读");
-    // 旧月可操作盘面不得投影；#1854 才接手统一提示/重试，本票不得留独立重试入口。
-    expect(host.querySelector(".hud2-stage")).toBeNull();
-    expect(edictCommand(host)).toBeNull();
-    expect(findButton(host, "盖玺颁诏过月")).toBeFalsy();
-    expect(findButton(host, "重试载入新月盘面")).toBeFalsy();
-    expect(host.textContent).not.toContain(MIDCOURSE_ISSUE);
+    // 主界面仍挂着，但旧月内容不可见、不可交互；提示与阅读独立可达。
+    const staleFace = host.querySelector("main > div[inert]");
+    expect(staleFace?.getAttribute("aria-hidden")).toBe("true");
+    expect(staleFace?.getAttribute("style")).toContain("visibility: hidden");
+    expect(staleFace?.querySelector(".hud2-stage")).not.toBeNull();
+    const retry = findButton(host, "重试");
+    expect(retry).toBeTruthy();
 
-    const getsBeforeDismiss = stateGets;
     const streamPosts = () => fetchMock.mock.calls.filter(([url, init]) => {
       const path = new URL(String(url), "http://t.local").pathname;
       return path.endsWith("/api/decree/issue/stream") && init?.method === "POST";
     }).length;
     const streamPostsBeforeDismiss = streamPosts();
+    // 阅读中同一钮先试一次：载入仍失败，邸报保持可读且不重新过月。
+    const getsBeforeReadingRetry = stateGets;
+    await click(retry);
+    await act(async () => {
+      await vi.waitFor(() => expect(stateGets).toBeGreaterThan(getsBeforeReadingRetry));
+      await Promise.resolve();
+    });
+    expect(host.querySelector("[data-testid=settlement-gazette-panel]")?.textContent).toContain("十月邸报·刷新失败仍可读");
+    expect(streamPosts()).toBe(streamPostsBeforeDismiss);
+    const getsBeforeDismiss = stateGets;
     const dismiss = Array.from(host.querySelectorAll("button")).find((b) =>
       (b.textContent || "").includes("朕知道了"),
     );
@@ -1425,9 +1456,19 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     // 关闭阅读不触发重试或推进；旧月入口仍不可提交。
     expect(stateGets).toBe(getsBeforeDismiss);
     expect(streamPosts()).toBe(streamPostsBeforeDismiss);
-    expect(host.querySelector(".hud2-stage")).toBeNull();
-    expect(edictCommand(host)).toBeNull();
-    expect(findButton(host, "重试载入新月盘面")).toBeFalsy();
+    expect(host.querySelector("main > div[inert]")).not.toBeNull();
+    expect(findButton(host, "重试")).toBeTruthy();
+    failPostAdvanceRefresh = false;
+    liveState.turn = { year: 1627, period: 11, turn: 6, phase: "player", settlement_display: false };
+    const getsBeforeRetry = stateGets;
+    await click(findButton(host, "重试"));
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector("main > div[inert]")).toBeNull());
+    });
+    expect(stateGets).toBeGreaterThan(getsBeforeRetry);
+    expect(host.querySelector(".hud2-val")?.textContent).toContain("11");
+    expect(streamPosts()).toBe(streamPostsBeforeDismiss);
+    expect(host.querySelector("[data-testid=settlement-gazette-panel]")).toBeNull();
   });
 
   it("#1852 写成即推进：本面邸报阅读中不弹 closed/密令/结局；朕知道了后仍按既有规则弹", async () => {
@@ -1673,7 +1714,9 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     });
   });
 
-  it("#1796 无草案退朝结束本月：同样切核账期面（无进度卡）", async () => {
+  it("#1796 无草案退朝失败后从原入口重试，不误走颁诏", async () => {
+    let advancePosts = 0;
+    let issuePosts = 0;
     let releaseAdvance!: (value: Response) => void;
     const advanceGate = new Promise<Response>((resolve) => { releaseAdvance = resolve; });
     let liveState: Record<string, unknown> = {
@@ -1702,8 +1745,10 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
       });
       if (u.pathname.endsWith("/api/court_layout")) return jsonResp({ layout: "{}" });
       if (u.pathname.endsWith("/api/decree/advance_without_edict") && init?.method === "POST") {
-        return advanceGate;
+        advancePosts += 1;
+        return advancePosts === 1 ? advanceGate : jsonResp({ state: liveState, awaiting_decision: true, decisions: [validDecision] });
       }
+      if (u.pathname.endsWith("/api/decree/issue/stream") && init?.method === "POST") issuePosts += 1;
       return jsonResp({});
     }));
 
@@ -1733,24 +1778,20 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     });
     expect(host.querySelector("[data-testid=settlement-lock-decor]")).toBeNull();
 
-    // 放行 advance：awaiting 停窗，busy 清后批红必达
-    liveState = settlementBaseState("awaiting_decision", {
-      pending_decisions: [validDecision],
-      previous_summary: "",
-    });
     await act(async () => {
-      releaseAdvance(jsonResp({
-        state: liveState,
-        awaiting_decision: true,
-        decisions: [validDecision],
-        pending_action_failures: [],
-      }));
+      releaseAdvance(new Response(JSON.stringify({ detail: "退朝入口失败" }), { status: 503, headers: { "Content-Type": "application/json" } }));
       await Promise.resolve();
     });
     await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[role="alert"] button')).not.toBeNull());
+    });
+    liveState = settlementBaseState("awaiting_decision", { pending_decisions: [validDecision], previous_summary: "" });
+    await click(host.querySelector('[role="alert"] button') as HTMLButtonElement);
+    await act(async () => {
       await vi.waitFor(() => expect(host.querySelector('[data-testid="decision-modal"]')).not.toBeNull());
     });
-    expect(host.querySelector("[data-testid=settlement-lock-decor]")).toBeNull();
+    expect(advancePosts).toBe(2);
+    expect(issuePosts).toBe(0);
   });
 
   it("awaiting_decision + 合法 pending：DecisionModal 可点；刷新重挂后仍在", async () => {
@@ -1790,7 +1831,6 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     const retry = panel.querySelector("button") as HTMLButtonElement | null;
     expect(retry).not.toBeNull();
     expect(retry!.disabled).toBe(false);
-    expect(retry!.textContent).toContain("重新拉取");
 
     unmountTrackedRoots();
     const host2 = await mountApp();
@@ -1868,7 +1908,7 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     const alerts = host.querySelectorAll('[role="alert"]');
     expect(alerts.length).toBe(1);
     expect(
-      host.querySelector('[data-testid="decision-recovery"] [role="alert"]'),
+      host.querySelector('[data-testid="decision-recovery"][role="alert"]'),
     ).toBe(alerts[0]);
 
     // modal 不卸载；已选态仍在；可再落印
@@ -2165,7 +2205,6 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     const resume = host.querySelector('[data-testid="settle-resume"] button') as HTMLButtonElement | null;
     expect(resume).not.toBeNull();
     expect(resume!.disabled).toBe(false);
-    expect(resume!.textContent).toContain("续跑结算");
     // #1808 A：settle-resume 挂载时 hud-error 门控避让，不得压盖唯一续跑 CTA。
     expect(host.querySelector('[data-testid="hud-error"]')).toBeNull();
     // 陈旧常态写面不再当权威：settling 门控已投影续跑，busy 已清。
@@ -2186,7 +2225,6 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     expect(host.querySelector('[data-testid="decision-recovery"]')).toBeNull();
     const resume = host.querySelector('[data-testid="settle-resume"] button') as HTMLButtonElement;
     expect(resume.disabled).toBe(false);
-    expect(resume.textContent).toContain("续跑结算");
 
     // 刷新重挂仍在
     unmountTrackedRoots();
