@@ -2,7 +2,7 @@
 
 Seams:
 - ACTION_CLUSTERS assignment 行 + materialize_fn
-- run_materialize_pipeline / apply_cli_conversation_actions
+- run_materialize_pipeline / 场景转译声明
 - commit_pending_actions（收夜落案卷，不成 initiative）
 - apply_dossier_verdicts（0055 顺颁才落 initiative）
 - 既有 initiative 校验、ADR 0038 撤回前像
@@ -121,16 +121,6 @@ def _silence_serial(monkeypatch, *, lead: str = ""):
         lambda *a, **k: _extract_lead_result(lead),
     )
     monkeypatch.setattr(cb, "extract_confirmation_intent", lambda *a, **k: "无")
-
-
-def _bind_apply(db, state, content=None):
-    s = SimpleNamespace(
-        db=db, state=state, registry=None, content=content,
-        llm_config=SimpleNamespace(channel="cli", cli_runner="codex"),
-    )
-    s.apply_cli_conversation_actions = types.MethodType(
-        GameSession.apply_cli_conversation_actions, s)
-    return s
 
 
 def _stage_assignment(
@@ -1140,13 +1130,7 @@ def _wire_web_game(db, state, content, agent, monkeypatch, *, translate_fn=None)
         "chat", "scene_chat", "_apply_scene_turn_translation",
         "start_chat_turn_scene", "join_chat_turn_scene",
         "persist_chat_turn_scene", "abandon_chat_turn_scene",
-        "_start_cli_action_intent", "_finish_cli_action_intent",
-        "_confirmation_intent_for_preexisting_pending",
-        "_cli_backend_fallback_actions", "apply_cli_conversation_actions",
         "_character", "pending_count", "note_chat_rollback",
-        "_audience_prompt_for_message",
-        "_stage_appointment_candidate",
-        "_merge_staged_new_secret_order_content",
         "admit_audience", "consume_audience_admission", "can_summon",
         "_recognize_audience_command_verdict",
         "close_night_after_chat_if_needed",
@@ -1155,11 +1139,6 @@ def _wire_web_game(db, state, content, agent, monkeypatch, *, translate_fn=None)
             setattr(sess, name, types.MethodType(getattr(GameSession, name), sess))
     sess.refresh_runtime_after_chat_rollback = lambda: None
     sess.note_chat_rollback = lambda **kw: None
-    sess._cli_backend_fallback_actions = lambda *a, **k: None
-    sess.apply_cli_conversation_actions = lambda *a, **k: {
-        "directive": None, "secret_order_id": None, "pending_action_id": 0,
-    }
-
     monkeypatch.setattr(session_mod, "_dump_llm_messages", lambda *a, **k: None)
 
     class _SceneShim:

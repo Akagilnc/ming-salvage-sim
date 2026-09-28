@@ -98,8 +98,6 @@ class _FakeSession(HallAdmissionSessionMixin):
             "_apply_scene_turn_translation",
             "_run_scene_agent_transport",
             "_recognize_audience_command_verdict",
-            "_stage_directive_tool_candidate",
-            "_stage_appointment_candidate",
             "summon_character",
             "schedule_pending_scene_translation",
         ):
@@ -120,31 +118,6 @@ class _FakeSession(HallAdmissionSessionMixin):
 
     def _character(self, minister_name: str):
         return self.content.characters[minister_name]
-
-    def _start_cli_action_intent(self, _character, _message):
-        return None
-
-    def _finish_cli_action_intent(self, _future):
-        return None
-
-    def _confirmation_intent_for_preexisting_pending(self, *args, **kwargs):
-        return GameSession._confirmation_intent_for_preexisting_pending(self, *args, **kwargs)
-
-    def _stage_appointment_candidate(self, *args, **kwargs):
-        return GameSession._stage_appointment_candidate(self, *args, **kwargs)
-
-    def _stage_directive_tool_candidate(self, *args, **kwargs):
-        # #522：与 session/web 共用招抚 admission 与 fail-loud 诊断接缝。
-        return GameSession._stage_directive_tool_candidate(self, *args, **kwargs)
-
-    def _merge_staged_new_secret_order_content(self, *args, **kwargs):
-        return GameSession._merge_staged_new_secret_order_content(self, *args, **kwargs)
-
-    def _audience_prompt_for_message(self, message, *_a, **_kw):
-        return f"【增强上下文】{message}"
-
-    def apply_cli_conversation_actions(self, *_args, **_kwargs):
-        return {"directive": None, "secret_order_id": None, "pending_action_id": 0}
 
     def pending_count(self) -> int:
         return 0
