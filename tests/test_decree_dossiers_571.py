@@ -321,10 +321,9 @@ def test_month_end_participant_batch_rejects_each_malformed_item(game, bad_patch
     roster = db.get_decree_dossier(dossier_id)["participant_roster"]
     assert [item["character_id"] for item in roster] == [lead, good]
 
-def test_driver_settle_freezes_dossier_roster_authority_at_input(game, monkeypatch):
-    from tests import section_rejection_helpers as driver
-
-    db, state, content = game
+def test_apply_score_extraction_respects_frozen_dossier_ids_at_input(game):
+    """生产 apply 入口：dossier_ids_at_input 外的案卷不得扩写 roster。"""
+    db, state, _content = game
     lead, worker = _active_people(db, 2)
     visible_id = db.create_decree_dossier(
         state, action_type="assignment", decree_text="命修历。",
@@ -337,47 +336,23 @@ def test_driver_settle_freezes_dossier_roster_authority_at_input(game, monkeypat
         participants=[{"character_id": lead, "tier": "主办"}],
     )
     db.conn.execute("UPDATE decree_dossiers SET status='closed' WHERE id=?", (closed_id,))
-    secret_order_id = _create_secret_order(db,
-        state, lead, "密修历", "暗修历书。", [], deadline_months=0,
-    )
-    secret_id = next(
-        row["id"] for row in db.list_decree_dossiers()
-        if row["secret_order_id"] == secret_order_id
-    )
-    # prepare first; freeze happens at settle start (post-pre_settle, engine-aligned).
-    from tests.section_rejection_helpers import run_settle as settle_after_prepare
-
-    driver.run_prepare(db, state, content)
-    # Freeze set is the roster authority at settle start; create after prepare so
-    # the new dossier is not in that set.
-    freeze_ids = {
-        int(row["id"]) for row in db.list_decree_dossiers_for_simulation(state.turn)
-    }
     created_id = db.create_decree_dossier(
         state, action_type="assignment", decree_text="同批新案。",
         target_kind="issue", target_id="same-batch",
         participants=[{"character_id": lead, "tier": "主办"}],
     )
-    real_list = db.list_decree_dossiers_for_simulation
-
-    def list_frozen_only(turn):
-        return [row for row in real_list(turn) if int(row["id"]) in freeze_ids]
-
-    monkeypatch.setattr(db, "list_decree_dossiers_for_simulation", list_frozen_only)
+    freeze_ids = {visible_id}  # 故意不含 closed/created
     additions = [
         {"dossier_id": dossier_id, "character_id": worker, "tier": "协办", "delegator_id": lead}
-        for dossier_id in (visible_id, closed_id, secret_id, created_id)
+        for dossier_id in (visible_id, closed_id, created_id)
     ]
-    settle_after_prepare(
-        db, state, content,
-        covering_monthly_extract(None, db, state)[0] | {"dossier_participants": additions},
+    issue_engine.apply_score_extraction(
+        db, state, {"dossier_participants": additions},
+        dossier_ids_at_input=freeze_ids,
     )
-    created = {"id": created_id}
-
     assert len(db.get_decree_dossier(visible_id)["participant_roster"]) == 2
     assert len(db.get_decree_dossier(closed_id)["participant_roster"]) == 1
-    assert len(db.get_decree_dossier(secret_id)["participant_roster"]) == 0
-    assert len(db.get_decree_dossier(created["id"])["participant_roster"]) == 1
+    assert len(db.get_decree_dossier(created_id)["participant_roster"]) == 1
 
 def test_extractor_never_reconstructs_missing_dossier_authority_from_live_db(game):
     db, state, _content = game

@@ -2,7 +2,7 @@
 
 生命周期与事务对齐:apply 产生的拒收项 → 事务内 flush 进 rejection_reports →
 commit 成功后镜像 jsonl → 回滚路 reset 不留行不留镜像。attempt 从错误目录推导
-(不从 DB 取,随回滚重置即失真)。经 driver.run_settle 端到端驱动(公共接口)。
+(不从 DB 取,随回滚重置即失真)。经 srh.run_settle 端到端驱动(公共接口)。
 """
 
 from __future__ import annotations
