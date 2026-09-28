@@ -858,7 +858,7 @@ def _settle_edicts(
                     db.conn._recommendation_snapshots_prevalidated = previous or int(dossier["id"]) in prevalidated
                     try:
                         with atomic(db):
-                            db.apply_dossier_promulgation(
+                            affected = db.apply_dossier_promulgation(
                                 state, int(dossier["id"]), str(verdict["decision"]),
                                 blocked_layer=str(verdict.get("blocked_layer") or ""),
                                 reason=str(verdict.get("reason") or ""),
@@ -871,6 +871,9 @@ def _settle_edicts(
                             db._record_dossier_verdict_metadata(state, int(dossier["id"]), verdict)
                     finally:
                         db.conn._recommendation_snapshots_prevalidated = previous
+                    if registry is not None:
+                        for name in sorted(affected):
+                            registry.refresh(name)
         current = db.get_decree_dossier(int(dossier["id"])) or dossier
         if str(current.get("promulgation_decision") or "") == "promulgated":
             def persist_result(_decree_ref: str, result: Any) -> None:

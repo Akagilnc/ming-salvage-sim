@@ -1013,9 +1013,10 @@ def test_pacification_successful_promulgation_closes_dossier(game):
     ).fetchone()["power_id"] == "ming"
 
 
-def test_pacification_promulgation_refreshes_target_after_outer_commit(game):
-    """#672：招抚易主成功后经 outer-commit callback 刷新 registry。"""
-    from tests.settlement_seam_helpers import settle_effects as settle_with_delta
+def test_pacification_promulgation_refreshes_target_after_outer_commit(game, monkeypatch):
+    """#672：玩家月链招抚易主成功后刷新 registry。"""
+    from ming_sim.decree_forecast import decree_ref_for_dossier
+    from tests.test_month_chain_1843 import _prepare_player_month
 
     db, state, content = game
     _activate_canonical_bandit(db, content)
@@ -1035,11 +1036,14 @@ def test_pacification_promulgation_refreshes_target_after_outer_commit(game):
             self.refreshed.append(name)
 
     reg = _Reg()
-    settle_with_delta(
-        state, db, {}, before_turn=int(state.turn), content=content, registry=reg,
-        dossier_verdicts=[{"dossier_id": dossier["id"], "decision": "promulgated"}],
-        delta_applier=lambda *a, **k: {},
+    ref = decree_ref_for_dossier(db, dossier)
+    db.staged_declarations.stage(
+        decree_ref=ref, declaration={}, turn=int(state.turn),
+        verdict={"decision": "promulgated"}, forecast_text="",
     )
+    session = _prepare_player_month(db, state, content, monkeypatch)
+    session.registry = reg
+    session.resolve_turn(allow_empty_decree=True)
     assert target_name in reg.refreshed
     assert db.conn.execute(
         "SELECT power_id FROM characters WHERE name=?", (target_name,),

@@ -874,9 +874,10 @@ def test_apply_military_order_verdict_effect_within_line_limit():
     raise AssertionError("未找到 _apply_military_order_verdict_effect")
 
 
-def test_military_order_office_promulgation_refreshes_after_outer_commit(game):
-    """#672：军令职守面成功后经 outer-commit callback 刷新 registry。"""
-    from tests.settlement_seam_helpers import settle_effects as settle_with_delta
+def test_military_order_office_promulgation_refreshes_after_outer_commit(game, monkeypatch):
+    """#672：玩家月链军令职守生效后刷新 registry。"""
+    from ming_sim.decree_forecast import decree_ref_for_dossier
+    from tests.test_month_chain_1843 import _prepare_player_month
 
     db, state, content = game
     army_id = "xuan_da"
@@ -902,11 +903,13 @@ def test_military_order_office_promulgation_refreshes_after_outer_commit(game):
             self.refreshed.append(name)
 
     reg = _Reg()
-    settle_with_delta(
-        state, db, {}, before_turn=int(state.turn), content=content, registry=reg,
-        dossier_verdicts=[{"dossier_id": dossier["id"], "decision": "promulgated"}],
-        delta_applier=lambda *a, **k: {},
+    db.staged_declarations.stage(
+        decree_ref=decree_ref_for_dossier(db, dossier), declaration={},
+        turn=int(state.turn), verdict={"decision": "promulgated"}, forecast_text="",
     )
+    session = _prepare_player_month(db, state, content, monkeypatch)
+    session.registry = reg
+    session.resolve_turn(allow_empty_decree=True)
     assert actor.name in reg.refreshed
     assert db.conn.execute(
         "SELECT office FROM characters WHERE name=?", (actor.name,),
