@@ -35,7 +35,7 @@ def _stage_recommendation(db, state, recommender_name, row, office, reason):
 def _commit_and_promulgate(db, state, content, action_id):
     """真入口前半：暂存动作落成 proposed 任命案卷；返回后由调用方颁判。"""
     result = db.commit_pending_actions(
-        state, content=content, registry=None, action_ids=[action_id])
+        state, content=content, action_ids=[action_id])
     assert result and result[0]["id"] == action_id
     promulgate_proposed_appointments(db, state, content)
 

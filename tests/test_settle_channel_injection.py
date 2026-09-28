@@ -58,7 +58,7 @@ def test_driver_path_no_env_is_deterministic(game, monkeypatch):
                             "effect_on_resolve": {}, "ongoing_effects": {}, "effect_on_fail": {}})
     delta = {"new_issues": [{"origin_kind": "decree", "origin_ref": _decree_origin(db, state), "title": "driver国策", "kind": "initiative"}]}
 
-    settle_with_delta(state, db, delta, before_turn=state.turn, content=content, registry=None)
+    settle_with_delta(state, db, delta, before_turn=state.turn, content=content)
 
     row = db.conn.execute(
         "SELECT effect_on_resolve FROM issues WHERE title='driver国策'").fetchone()
@@ -79,7 +79,7 @@ def test_settle_none_branch_legacy_env_enriches(game, monkeypatch):
                         lambda *a, **k: {"effect_on_resolve": {}, "ongoing_effects": {}, "effect_on_fail": {}})
     delta = {"new_issues": [{"origin_kind": "decree", "origin_ref": _decree_origin(db, state), "title": "none分支国策", "kind": "initiative"}]}
 
-    settle_with_delta(state, db, delta, before_turn=state.turn, content=content, registry=None)
+    settle_with_delta(state, db, delta, before_turn=state.turn, content=content)
 
     row = db.conn.execute(
         "SELECT effect_on_resolve FROM issues WHERE title='none分支国策'").fetchone()

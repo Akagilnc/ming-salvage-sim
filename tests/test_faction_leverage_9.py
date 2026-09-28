@@ -146,14 +146,14 @@ def test_restore_uses_new_office_weight_not_old(game):
 
     # name_lo 起复到地方(低权)
     result_lo = apply_office_appointment(
-        db, state, content, None, name_lo, "某府知府",
+        db, state, content, name_lo, "某府知府",
         reason="起复地方", faction="阉党", region_id="henan",
     )
     after_low = db.faction_leverage("阉党")
 
     # name_hi 起复到内阁(高权)
     result_hi = apply_office_appointment(
-        db, state, content, None, name_hi, "内阁大学士", reason="起复内阁", faction="阉党"
+        db, state, content, name_hi, "内阁大学士", reason="起复内阁", faction="阉党"
     )
     after_high = db.faction_leverage("阉党")
 
@@ -222,7 +222,7 @@ def test_failed_appointment_rolls_back_faction_leverage(game):
     db.set_character_office = _boom  # type: ignore[assignment]
     try:
         result = apply_office_appointment(
-            db, state, content, None, name, "内阁大学士", reason="起复内阁", faction="阉党"
+            db, state, content, name, "内阁大学士", reason="起复内阁", faction="阉党"
         )
     finally:
         db.set_character_office = orig  # type: ignore[assignment]
@@ -259,7 +259,7 @@ def test_displaced_minister_faction_leverage_recomputed(game):
 
     before = db.faction_leverage("阉党")
     result = apply_office_appointment(
-        db, state, content, None, "孙承宗", "兵部尚书", reason="起复掌兵部", faction="东林"
+        db, state, content, "孙承宗", "兵部尚书", reason="起复掌兵部", faction="东林"
     )
     assert not result.get("rejected"), f"任命不应被拒：{result}"
     assert result.get("displaced"), f"应顶替崔呈秀的兵部尚书：{result}"
@@ -347,7 +347,7 @@ def test_add_character_appointment_lifts_faction_leverage(game):
     before = db.faction_leverage(faction)
     before_ws = db._faction_office_weight_sum(faction)
     result = apply_office_appointment(
-        db, state, content, None, new_name, "翰林院侍读学士", reason="新科入翰林", faction=faction
+        db, state, content, new_name, "翰林院侍读学士", reason="新科入翰林", faction=faction
     )
     assert not result.get("rejected"), f"新大臣任命不应被拒：{result}"
     assert result.get("kind") == "appoint", f"应走新建档(appoint)路：{result}"

@@ -252,7 +252,7 @@ def test_recommendation_appointment_preserves_kind_and_restores_both_types(game)
             payload=payload,
         )
         result = db.commit_pending_actions(
-            state, content=content, registry=None, action_ids=[action_id]
+            state, content=content, action_ids=[action_id]
         )
         assert result and result[0]["id"] == action_id
         promulgate_proposed_appointments(db, state, content)

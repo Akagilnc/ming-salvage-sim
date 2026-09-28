@@ -51,8 +51,6 @@ def prepare_then_settle(db, state, content, raw_delta, **kwargs):
     from driver import run_prepare, run_settle as _drv_settle
 
     prep_kw = {}
-    if "registry" in kwargs:
-        prep_kw["registry"] = kwargs["registry"]
     if "source" in kwargs:
         prep_kw["source"] = kwargs["source"]
     run_prepare(db, state, content, **prep_kw)

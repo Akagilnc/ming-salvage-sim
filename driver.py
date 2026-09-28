@@ -158,7 +158,7 @@ def _merge_settle_simulator_payload(ctx, *, dossier_ids_at_input) -> dict:
     return payload
 
 
-def run_prepare(db, state, content, *, registry=None, source: Provenance = Provenance.player_decree,
+def run_prepare(db, state, content, *, source: Provenance = Provenance.player_decree,
                 decree_text: str = "") -> dict:
     """前半段：共享 prepare seam → settling + ready=0 context。
 
@@ -169,14 +169,13 @@ def run_prepare(db, state, content, *, registry=None, source: Provenance = Prove
         state, db,
         decree_text=decree_text,
         content=content,
-        registry=registry,
         source=source,
     )
     ctx = db.get_resolve_context(int(state.turn)) or {}
     return dict(ctx.get("simulator_payload") or {})
 
 
-def run_settle(db, state, content, raw_delta, *, narrative="", decree_text="", registry=None,
+def run_settle(db, state, content, raw_delta, *, narrative="", decree_text="",
                source: Provenance = Provenance.player_decree,
                settlement_attendant_runner=None) -> str:
     """后半段：消费同 turn 已 prepare 的 settling+ready=0 context，升 ready=1 后 settle。
@@ -260,14 +259,13 @@ def run_settle(db, state, content, raw_delta, *, narrative="", decree_text="", r
         extracted,
         before_turn=before_turn,
         content=content,
-        registry=registry,
         narrative=narrative,
         decree_text=decree_text,
         extractor_output=json.dumps(extracted, ensure_ascii=False),
         source=source,  # 拒收来源（决定玩家面邸报提示，ADR 0008 决定 5）
         # 注入确定性 applier:落库不走 legacy env CLI enrichment,driver 纯确定性(#54)。
-        delta_applier=lambda d, s, ex, ct, rg: apply_score_extraction(
-            d, s, ex, content=ct, registry=rg, llm_config=_DETERMINISTIC_LLM,
+        delta_applier=lambda d, s, ex, ct: apply_score_extraction(
+            d, s, ex, content=ct, llm_config=_DETERMINISTIC_LLM,
             dossier_ids_at_input=dossier_ids_at_input,
             secret_dossier_ids_at_input=secret_dossier_ids_at_input,
             open_affair_ids_at_input=open_affair_ids_at_input,

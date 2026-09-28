@@ -2083,7 +2083,7 @@ def test_fresh_summon_rejects_different_destination_in_transit(game):
     an.record_summon_fresh(db, night_id, person.name, origin_id="office:diff-dest")
     with pytest.raises(an.AudienceNightError, match="已在途赴 henan") as ei:
         an.commit_fresh_summons_for_night(
-            db, state, night_id, content=content, registry=None,
+            db, state, night_id, content=content,
         )
     assert ei.value.code == "summon_departure_rejected"
     after = db.conn.execute(

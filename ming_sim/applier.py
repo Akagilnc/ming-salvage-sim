@@ -273,14 +273,12 @@ class SectionResult:
 class ApplyContext:
     """适配器入参，持结算所需的全部外部依赖。
 
-    registry 可为 None（向后兼容无 registry 路径）。
     source 由 driver/extractor 在调用前灌注。
     """
 
     db: Any          # GameDB（不在 applier 层导入 GameDB 避免循环）
     state: Any       # GameState
     content: Any     # GameContent
-    registry: Any    # 可为 None
     source: Provenance
 
 
@@ -412,7 +410,7 @@ def register_runtime_outcome_callbacks(
     """Run callbacks at the real outermost commit/rollback boundary.
 
     Nested owners register on the shared connection so side effects (JSONL mirror,
-    registry refresh) only fire after the outermost commit, and are discarded on
+    runtime-memory updates) only fire after the outermost commit, and are discarded on
     rollback. Depth 0 runs on_commit immediately.
     """
     if getattr(db.conn, "_atomic_depth", 0) == 0:

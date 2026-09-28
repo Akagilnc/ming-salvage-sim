@@ -559,7 +559,7 @@ def test_identity_resolves_weishi_and_vassal_aliases_no_duplicate_file(game):
         for r in db.conn.execute("SELECT name FROM characters").fetchall()
     }
     res = issues.apply_office_appointment(
-        db, state, content, None, "史宪之", "兵部职方司主事",
+        db, state, content, "史宪之", "兵部职方司主事",
         reason="#1317 r2 别名入仕", new_office_type="兵部",
     )
     assert not res.get("rejected"), res
@@ -588,7 +588,7 @@ def test_identity_resolves_weishi_and_vassal_aliases_no_duplicate_file(game):
         for r in db.conn.execute("SELECT name FROM characters").fetchall()
     }
     res_p = issues.apply_office_appointment(
-        db, state, content, None, "福王", "兵部尚书", reason="幻觉授宗藩",
+        db, state, content, "福王", "兵部尚书", reason="幻觉授宗藩",
     )
     assert res_p.get("rejected") is True
     assert "宗藩" in str(res_p.get("reason") or "")

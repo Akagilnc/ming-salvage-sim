@@ -393,7 +393,7 @@ def test_rush_commitment_stages_pending_催办(game, monkeypatch):
     assert int(payload["stage_idx"]) == 1
     assert int(payload["deadline_months"]) == 1
     assert payload["reason"] == reason
-    db.commit_pending_actions(state, content=content, registry=None)
+    db.commit_pending_actions(state, content=content)
     from ming_sim.staged_commitment import normalize_commitment_stages
     stages = normalize_commitment_stages(db.conn.execute(
         "SELECT stages_json FROM issues WHERE id=?", (issue_id,)

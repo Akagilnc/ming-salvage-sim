@@ -724,7 +724,7 @@ def test_office_phase1_draft_only_materializes_once_after_endorsement(game):
     ).fetchone()["office"] == office_before
 
     db.apply_dossier_promulgation(
-        state, draft_id, "promulgated", content=content, registry=None,
+        state, draft_id, "promulgated", content=content,
     )
     after = db.conn.execute(
         "SELECT office FROM characters WHERE name=?", (target_name,)
@@ -738,7 +738,7 @@ def test_office_phase1_draft_only_materializes_once_after_endorsement(game):
     ).fetchone()[0] == 1
     with pytest.raises(ValueError, match="只有 proposed 案卷可写颁布"):
         db.apply_dossier_promulgation(
-            state, draft_id, "promulgated", content=content, registry=None,
+            state, draft_id, "promulgated", content=content,
         )
     assert db.conn.execute(
         "SELECT office FROM characters WHERE name=?", (target_name,)

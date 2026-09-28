@@ -72,14 +72,13 @@ def test_reload_scrubs_next_period_advance(game):
     assert state.year == db_year and state.period == db_period
 
 
-def test_reload_passthrough_content_registry_no_crash(game):
-    """registry 非 None 时只透传不处理（session 级接线待后续）；content 非 None 时
-    重建 characters（幽灵/属性还原另有专测），本测只断不报错且 state 仍刷新。"""
+def test_reload_content_no_crash(game):
+    """content 非 None 时重建 characters，state 仍刷新。"""
     db, state, content = game
     db.conn.execute("UPDATE game_state SET turn_phase='reviewing' WHERE id=1")
     db.conn.commit()
 
-    returned = reload_state_from_db(db, state, content=content, registry=object())
+    returned = reload_state_from_db(db, state, content=content)
 
     assert returned is state
     assert state.turn_phase == "reviewing"
@@ -166,7 +165,7 @@ def test_rollback_purges_content_character_ghost(game, monkeypatch):
     monkeypatch.setattr(decree_mod, "auto_trigger_seed_issues", _boom)
 
     with pytest.raises(RuntimeError, match="post-commit step crash"):
-        pre_settle(state, db, content=content, registry=None)
+        pre_settle(state, db, content=content)
 
     assert new_name not in content.characters  # 幽灵已清
     assert db.conn.execute(
@@ -174,7 +173,7 @@ def test_rollback_purges_content_character_ghost(game, monkeypatch):
     # pending 行随回滚回到 pending(行本身也回滚了 status 变更)
     monkeypatch.undo()
 
-    pre_settle(state, db, content=content, registry=None)  # 正常重试
+    pre_settle(state, db, content=content)  # 正常重试
 
     row = db.conn.execute(
         "SELECT status FROM pending_actions WHERE turn=? AND kind='office'",
@@ -259,7 +258,7 @@ def test_rollback_restores_existing_character_attributes(game, monkeypatch):
     monkeypatch.setattr(decree_mod, "auto_trigger_seed_issues", _boom)
 
     with pytest.raises(RuntimeError, match="post-commit step crash"):
-        pre_settle(state, db, content=content, registry=None)
+        pre_settle(state, db, content=content)
 
     # DB 已回滚 → 内存 content 必须同源
     refreshed = content.characters[name]

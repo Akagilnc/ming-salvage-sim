@@ -494,7 +494,6 @@ def run_player_month_chain(
     decree_text: str = "",
     before_turn: int = 0,
     content: Any = None,
-    registry: Any = None,
     source: Provenance = Provenance.system_simulation,
     cheat_directive: str = "",
 ) -> Any:
@@ -535,7 +534,7 @@ def run_player_month_chain(
     try:
         return _run_loaded_month_chain(
             state, db, agno_db, llm_config, chain,
-            decree_text=decree_text, content=content, registry=registry,
+            decree_text=decree_text, content=content,
             source=source,
         )
     except Exception as exc:
@@ -552,7 +551,6 @@ def _run_loaded_month_chain(
     *,
     decree_text: str,
     content: Any,
-    registry: Any,
     source: Provenance,
 ) -> Any:
     """已装入的月链。代码异常由入口收成同一条 call_failure，不在这里另做恢复。"""
@@ -569,7 +567,7 @@ def _run_loaded_month_chain(
         _save_chain(db, turn, chain, decree_text=decree_text, source=source)
 
     declaration_outcome = _settle_edicts(
-        session, registry=registry, chain=chain, on_outcome=persist_declaration_outcome,
+        session, chain=chain, on_outcome=persist_declaration_outcome,
     )
     world_outcome = _run_world_segment(session, chain, source=source)
     declaration_outcome = world_outcome or declaration_outcome
@@ -779,7 +777,7 @@ def _guard_month_call(
 
 
 def _settle_edicts(
-    session: Any, *, registry: Any, chain: Dict[str, Any], on_outcome: Any = None,
+    session: Any, *, chain: Dict[str, Any], on_outcome: Any = None,
 ) -> Optional[Dict[str, object]]:
     from ming_sim.declaration_dispatch import settle_staged_declarations_in_decree_order
     from ming_sim.decree import _is_stalled_deliberation
@@ -850,7 +848,7 @@ def _settle_edicts(
                             primary_opponents=verdict.get("primary_opponents") or [],
                             gatekeeper_id=verdict.get("gatekeeper_id"),
                             criteria_snapshot=verdict.get("criteria_snapshot") or {},
-                            content=session.content, registry=registry,
+                            content=session.content,
                         )
                         db._record_dossier_verdict_metadata(state, int(dossier["id"]), verdict)
         current = db.get_decree_dossier(int(dossier["id"])) or dossier

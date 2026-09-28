@@ -43,7 +43,7 @@ def _stage_break_rank_acting(db, state, content, name):
         minister_name=minister, target_id=None,
         payload={"text": "测试任免原文", "name": name, "office": "陕西巡抚", "任别": "署理", "region_id": "shaanxi"},
     )
-    db.commit_pending_actions(state, content=content, registry=None)
+    db.commit_pending_actions(state, content=content)
     dossier = next(
         row for row in db.list_decree_dossiers()
         if row["pending_action_id"] == pending_id
@@ -167,7 +167,7 @@ def test_break_rank_appointment_rescript_td4_tracer(
         ],
     }
     restored.apply_dossier_verdicts(
-        restored_state, [verdict], content=content, registry=None,
+        restored_state, [verdict], content=content,
     )
     rejected = restored.get_decree_dossier(dossier_id)
     assert rejected["status"] == "proposed"

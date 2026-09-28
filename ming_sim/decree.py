@@ -1180,7 +1180,6 @@ def resolve_directives(
     deaths_this_turn: Optional[List[Dict[str, str]]] = None,
     debuts_this_turn: Optional[List[Dict[str, str]]] = None,
     content=None,
-    registry=None,
     cheat_directive: str = "",
     source: Provenance = Provenance.player_decree,
     scene_registry=None,
@@ -1210,7 +1209,6 @@ def resolve_directives(
         state, db,
         decree_text=decree_text,
         content=content,
-        registry=registry,
         scene_registry=scene_registry,
         source=source,
     )
@@ -1221,7 +1219,6 @@ def resolve_directives(
         decree_text=decree_text,
         before_turn=before_turn,
         content=content,
-        registry=registry,
         source=source,
         cheat_directive=cheat_directive,
     )
@@ -1345,7 +1342,7 @@ def persist_resolve_context(
 _RELOAD_SCALAR_FIELDS = ("year", "period", "turn", "turn_phase", "ended", "ending_status")
 
 
-def reload_state_from_db(db: GameDB, state: GameState, *, content=None, registry=None) -> GameState:
+def reload_state_from_db(db: GameDB, state: GameState, *, content=None) -> GameState:
     """回滚后把内存 state 从 DB 原地刷新（ADR 0008 决定 3 第三条）。
 
     DB 回滚只回 SQLite，Python 对象留脏（state.metrics 直加 flows.py:192、turn_phase、
@@ -1401,7 +1398,6 @@ def atomic_and_reload(
     state: GameState,
     *,
     content=None,
-    registry=None,
     on_error: Optional[Callable[[BaseException], None]] = None,
 ) -> "Iterator[_AtomicOutcome]":
     """`with atomic(db)` + 「最外层异常回滚后从 DB 重载内存」的公共内核（ADR 0008 S4）。
@@ -1429,7 +1425,7 @@ def atomic_and_reload(
             on_error(exc)
         if getattr(db.conn, "_atomic_depth", 0) == 0:
             try:
-                reload_state_from_db(db, state, content=content, registry=registry)
+                reload_state_from_db(db, state, content=content)
             except BaseException as reload_exc:
                 # reload 失败标记落在专用句柄上（不挂异常属性）：settle 的外层 except
                 # 凭 `as` 句柄裸传播原异常,不包 SettlementAbort 不写错误包（内存仍脏时
@@ -1500,7 +1496,6 @@ def prepare_resolve_front_half(
     *,
     decree_text: str = "",
     content=None,
-    registry=None,
     scene_registry=None,
     source: object = Provenance.player_decree,
 ) -> List[Dict[str, object]]:
@@ -1532,10 +1527,10 @@ def prepare_resolve_front_half(
     # ——要么两者都见，要么整段回滚重来。
     try:
         transit_arrivals_box: List[Dict[str, object]] = []
-        with atomic_and_reload(db, state, content=content, registry=registry):
+        with atomic_and_reload(db, state, content=content):
             pre_settle(
                 state, db,
-                content=content, registry=registry,
+                content=content,
                 scene_registry=scene_registry,
                 transit_arrivals_out=transit_arrivals_box,
             )
@@ -1570,7 +1565,7 @@ def prepare_resolve_front_half(
 
 
 def pre_settle(
-    state: GameState, db: GameDB, *, content=None, registry=None,
+    state: GameState, db: GameDB, *, content=None,
     scene_registry=None,
     transit_arrivals_out: Optional[List[Dict[str, object]]] = None,
 ) -> List[Dict[str, object]]:
@@ -1613,7 +1608,7 @@ def pre_settle(
         create_llm_beat_generator(effective_llm) if effective_llm is not None else None
     )
     # #542：调用方既有 ChatTurnSceneRegistry（session._scene_registry）；不在此新建。
-    auto_close_open_night(db, state, content=content, registry=registry,
+    auto_close_open_night(db, state, content=content,
                           beat_generator=beat_generator,
                           scene_registry=scene_registry)
     # atomic + 最外层回滚后从 DB 重载（ADR 0008 决定 3 第三条）：apply_fixed_period_flows 直改了
@@ -1622,7 +1617,7 @@ def pre_settle(
     collector = RejectionCollector()
     try:
         with atomic_and_reload(
-            db, state, content=content, registry=registry,
+            db, state, content=content,
             on_error=lambda _exc: collector.reset(),
         ):
             # 动作闸门(ADR 0006)：颁诏最前批量落库本回合暂存的结构化聊天写动作（密令更新/催办/任免/…），
@@ -1634,7 +1629,7 @@ def pre_settle(
             if discarded_failed:
                 tlog(f"[pending_actions] 过回合丢弃既有 failed 密令意图 {discarded_failed} 条")
             committed = db.commit_pending_actions(
-                state, content=content, registry=registry,
+                state, content=content,
                 rejection_collector=collector,
             )
             if committed:
@@ -1756,7 +1751,6 @@ def settle_with_delta(
     *,
     before_turn: int,
     content=None,
-    registry=None,
     decree_text: str = "",
     narrative: str = "",
     trace_narrative=None,
@@ -1780,7 +1774,7 @@ def settle_with_delta(
     对 ending_summarizer 传 None，对 settlement_attendant_runner 由调用方注入（缺则玩家拒收诚实失败，P7），对
     delta_applier 传 channel=api 确定性闭包——结算核本体都不见 llm_config（ADR 0004）。
 
-    delta_applier(db, state, extracted, content, registry) -> applied dict；None 时回退到
+    delta_applier(db, state, extracted, content) -> applied dict；None 时回退到
     `apply_score_extraction(llm_config=None)`——**不注入运行时通道**。注意裸 None 分支不等于
     「绝对无 LLM」：apply_score_extraction 对 llm_config=None 仍按旧 env 后端判定
     （`cli_backend_active(None)` 回落 `MING_SIM_LLM_BACKEND`），见
@@ -1848,7 +1842,7 @@ def settle_with_delta(
         _brew_future = _brew_pool.submit(leg.brew)
     try:
         with atomic_and_reload(
-            db, state, content=content, registry=registry,
+            db, state, content=content,
             on_error=lambda _exc: collector.reset(),
         ) as _atomic:
             # 暂存动作 commit 在结算事务内最前（幂等，只处理 pending 行；正常路 pre_settle
@@ -1876,7 +1870,7 @@ def settle_with_delta(
                     )
             full_report = _settle_after_extract_body(
                 state, db, extracted,
-                before_turn=before_turn, content=content, registry=registry,
+                before_turn=before_turn, content=content,
                 decree_text=decree_text, narrative=narrative,
                 trace_narrative=trace_narrative,
                 extractor_input=extractor_input, extractor_output=extractor_output,
@@ -2048,7 +2042,6 @@ def _settle_after_extract_body(
     *,
     before_turn: int,
     content,
-    registry,
     decree_text: str,
     narrative: str,
     trace_narrative,
@@ -2095,9 +2088,9 @@ def _settle_after_extract_body(
     # extraction 留痕同属本 phase2 atomic，跨进程恢复无需易失桥且可整体重放。
     levy_applied, levy_rejected = _apply_levy_driven_transfers(db, commit=False)
     if delta_applier is not None:
-        applied = delta_applier(db, state, extracted, content, registry)
+        applied = delta_applier(db, state, extracted, content)
     else:
-        applied = apply_score_extraction(db, state, extracted, content=content, registry=registry)
+        applied = apply_score_extraction(db, state, extracted, content=content)
     # #670：判官所产续程只有在 canonical applier 已成功后才按故事账 origin 结清；
     # 本函数外层 atomic 使行止与结清同成同败；另退役非 active 未结传召。
     from ming_sim.audience_night import (
@@ -2346,7 +2339,6 @@ def resolve_decisions_phase2(
     agno_db: SqliteDb,
     llm_config: LLMConfig,
     content=None,
-    registry=None,
     cheat_directive: str = "",
 ) -> str:
     """phase2：皇帝亲裁完，读回 phase1 暂存上下文 + 已存决策点选择，续跑结算。
@@ -2365,7 +2357,6 @@ def resolve_decisions_phase2(
         state, db, agno_db, llm_config,
         decree_text=str(ctx.get("decree_text") or ""),
         content=content,
-        registry=registry,
         source=_provenance_from_stored(ctx.get("source")),
         cheat_directive=cheat_directive,
     )

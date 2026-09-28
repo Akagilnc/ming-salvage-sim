@@ -1019,7 +1019,6 @@ def _apply_monthly_ongoing_entities(
     label: str,
     *,
     content=None,
-    registry=None,
     llm_config: Any = None,
     applied_person_changes: Optional[List[Dict[str, object]]] = None,
     origin_ref: str = "盘面自发",
@@ -1085,7 +1084,6 @@ def _apply_monthly_ongoing_entities(
             state,
             person_changes,
             content=effective_content,
-            registry=registry,
             llm_config=llm_config,
             source="system_simulation",
             derived_from=label,
@@ -3743,7 +3741,6 @@ def _apply_issue_entities(
     effect: Dict[str, object],
     label: str,
     content=None,
-    registry=None,
     llm_config: Any = None,
     applied_person_changes: Optional[List[Dict[str, object]]] = None,
     commit: bool = True,
@@ -3844,7 +3841,6 @@ def _apply_issue_entities(
             state,
             status_person_changes,
             content=effective_content(),
-            registry=registry,
             llm_config=llm_config,
             source="system_simulation",
             derived_from=label,
@@ -3861,7 +3857,6 @@ def _apply_issue_entities(
             state,
             person_changes,
             content=effective_content(),
-            registry=registry,
             llm_config=llm_config,
             source="system_simulation",
             derived_from=label,
@@ -4548,7 +4543,6 @@ def _strategic_event_result_preflight_error(
                 state,
                 person_changes,
                 content=content,
-                registry=None,
                 llm_config=llm_config,
                 allow_legacy_partial_power=False,
                 external_transaction=True,
@@ -6297,7 +6291,6 @@ def apply_office_appointment(
     db: GameDB,
     state: GameState,
     content,
-    registry,
     name: str,
     new_office: str,
     *,
@@ -6311,7 +6304,7 @@ def apply_office_appointment(
 ) -> Dict[str, object]:
     """朝臣任命/调任的【唯一落地核】：在册且未死 → 改 active + 授官 + 顶替去重 + 同步内存；
     不在册 → apply_appointment 建新档。extractor 的 office_changes 与 CLI 自然语言任免 commit
-    共用此核，杜绝两份会漂的 copy（CMR R2 reground）。后宫纳妃语义不同，不走此核（见 appointments）。
+    共用此核，杜绝两份会漂的 copy（CMR R2 reground）。
     返回结果 dict（rejected / kind=transfer|appoint / displaced 等）。"""
     name = str(name or "").strip()
     new_office = str(new_office or "").strip()
@@ -6354,6 +6347,8 @@ def apply_office_appointment(
                     llm_config=llm_config or db.llm_config,
                 )
             )
+            if new_office_type == "后宫":
+                raise ValueError("后宫任命已退役")
             # Resolved seat is the sole identity for write / displace / projection.
             # Local same-office omit-region reuses character_offices; central strips.
             seat = _resolve_appointment_seat(
@@ -6432,6 +6427,8 @@ def apply_office_appointment(
                 llm_config=llm_config or db.llm_config,
             )
         )
+        if new_office_type == "后宫":
+            raise ValueError("后宫任命已退役")
         seat = _resolve_appointment_seat(
             db,
             name=name,
@@ -6480,7 +6477,6 @@ def _apply_person_changes(
     state: GameState,
     changes: List[Dict[str, object]],
     content=None,
-    registry=None,
     llm_config: Any = None,
     source: str = "system_simulation",
     derived_from: str = "",
@@ -6865,7 +6861,6 @@ def _apply_person_changes(
                             db,
                             state,
                             content,
-                            registry,
                             name,
                             new_office,
                             reason=str(item.get("reason") or ""),
@@ -6945,7 +6940,6 @@ def _apply_person_changes(
                     db,
                     state,
                     content,
-                    registry,
                     name,
                     new_office,
                     reason=str(item.get("reason") or ""),
@@ -7235,7 +7229,7 @@ def _apply_person_changes(
                 own_tx = commit_person_change
                 if own_tx:
                     _register_runtime_rollback_snapshot(
-                        db, state, content, registry,
+                        db, state, content,
                     )
 
                 def _write_leave_waiting() -> None:
@@ -8011,7 +8005,6 @@ def apply_person_changes_only(
     person_changes: List[Dict[str, object]],
     *,
     content=None,
-    registry=None,
     llm_config: Any = None,
     origin_ref: str = "盘面自发",
     require_origin: bool = False,
@@ -8035,7 +8028,6 @@ def apply_person_changes_only(
         state,
         changes,
         content=runtime_content,
-        registry=registry,
         llm_config=llm_config,
         external_transaction=caller_transaction,
         origin_ref=origin_ref,
@@ -8101,7 +8093,6 @@ def apply_score_extraction(
     state: GameState,
     extracted: Dict[str, object],
     content=None,
-    registry=None,
     llm_config: Any = None,
     candidate_event_ids_at_input: Optional[set[str]] = None,
     impeachment_surge_candidates_at_input: Optional[List[Dict[str, object]]] = None,
@@ -8120,7 +8111,7 @@ def apply_score_extraction(
 ) -> Dict[str, object]:
     """落地结算声明到 state 与 db。
 
-    content/registry：若传入则处理 `appointments`——把诏书任命的新人建档入朝。
+    content：若传入则处理 `appointments`——把诏书任命的新人建档入朝。
     缺省则跳过。
 
     落账只认有序声明路径：``ordered_deltas`` 缺省时按 extracted 字段原序派生，
@@ -8163,7 +8154,6 @@ def apply_score_extraction(
             state,
             extracted,
             content=content,
-            registry=registry,
             llm_config=llm_config,
             candidate_event_ids_at_input=candidate_event_ids_at_input,
             impeachment_surge_candidates_at_input=impeachment_surge_candidates_at_input,
@@ -8270,7 +8260,6 @@ def _apply_score_extraction_body(
     extracted: Dict[str, object],
     *,
     content,
-    registry,
     llm_config: Any,
     candidate_event_ids_at_input: Optional[set[str]],
     impeachment_surge_candidates_at_input: Optional[List[Dict[str, object]]],
@@ -8672,7 +8661,6 @@ def _apply_score_extraction_body(
             state,
             changes,
             content=content,
-            registry=registry,
             llm_config=llm_config,
             allow_legacy_partial_power=legacy,
             external_transaction=db.conn.in_transaction,

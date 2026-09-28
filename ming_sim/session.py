@@ -435,12 +435,10 @@ def _target_active_officeholder(db: Any, name: str, content: Any = None) -> bool
 def canonical_new_appointment_person_fields(
     content: GameContent,
     faction: object,
-    *,
-    is_consort: bool = False,
 ) -> Dict[str, object]:
     """Return the single canonical identity defaults for a newly appointed person."""
-    normalized_faction = "后宫" if is_consort else str(faction or "中立").strip()
-    if not is_consort and normalized_faction not in content.factions:
+    normalized_faction = str(faction or "中立").strip()
+    if normalized_faction not in content.factions:
         normalized_faction = "中立"
     return {
         "faction": normalized_faction,
@@ -448,7 +446,7 @@ def canonical_new_appointment_person_fields(
         "ability": 55,
         "integrity": 60,
         "courage": 50,
-        "style": "新入宫闱" if is_consort else "新任未详",
+        "style": "新任未详",
     }
 
 
@@ -469,37 +467,31 @@ def apply_appointment(
     office = str(data.get("office") or "").strip()
     if not name or not office:
         return ("", "")
-    is_consort = str(data.get("office_type") or "").strip() == "后宫"
-    # 朝臣多职统一逗号分隔（后宫记称号，不动）；与 db 层 normalize_office 同源。
-    if not is_consort:
-        office = normalize_office(office)
+    office = normalize_office(office)
     # 显式名分（office_type ∈ PERSON_TITLE_KINDS）在此建 Character 前就得保住：add_character 的
     # 名分守卫看的是 character.office_type，若这里先被 infer 反推成官职（office='诸生'→'生员'），
     # 守卫永远见不到名分、误建 offices/character_offices（#1059 codex l6h）。
-    office_type = (
-        "后宫" if is_consort
-        else resolve_office_type_preserving_title(
-            office,
-            str(data.get("office_type") or "").strip(),
-            "待铨",
-            llm_config or db.llm_config,
-        )
+    office_type = resolve_office_type_preserving_title(
+        office,
+        str(data.get("office_type") or "").strip(),
+        "待铨",
+        llm_config or db.llm_config,
     )
+    if office_type == "后宫":
+        return ("", "")
 
     # ── 查重：精确名 + aliases 命中即拒，不重复建档 ──────────
     # 身份归一认识未仕/宗藩——在册者（含史可法诸生）由此拒新建，走 apply_office_appointment。
-    # 后宫现有人物保留；不从旧候选状态升格。
     if name in content.characters:
         return ("", "")
-    if not is_consort:
-        existing = _find_existing_minister(content, name, db)
-        if existing is not None:
-            return ("", "")
+    existing = _find_existing_minister(content, name, db)
+    if existing is not None:
+        return ("", "")
 
     # ── 职位替换：腾缺现任者 → dismissed ───────────────────────────
     displaced = ""
     replaces = str(data.get("replaces") or "").strip()
-    if not is_consort and replaces and replaces in content.characters:
+    if replaces and replaces in content.characters:
         old = content.characters[replaces]
         if old.status == "active":
             db.set_character_status(
@@ -511,7 +503,7 @@ def apply_appointment(
             displaced = replaces
 
     person_fields = canonical_new_appointment_person_fields(
-        content, data.get("faction"), is_consort=is_consort,
+        content, data.get("faction"),
     )
     character = Character(
         name=name,

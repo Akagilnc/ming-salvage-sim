@@ -124,11 +124,11 @@ def test_pending_directive_commit_failure_is_savepoint_isolated_marks_failed(gam
     original_apply = db._apply_pending_action
 
     def _boom_after_draft(
-        state_arg, pa, payload, *, content=None, registry=None,
+        state_arg, pa, payload, *, content=None,
         rejection_collector=None,
     ):
         assert original_apply(
-            state_arg, pa, payload, content=content, registry=registry,
+            state_arg, pa, payload, content=content,
             rejection_collector=rejection_collector,
         ) is True
         raise RuntimeError("directive commit boom")
@@ -645,7 +645,7 @@ def test_write_decree_rejects_before_committing_conversational_directive(game):
         state.turn, name, payload={**_POLICY_FIELDS, "text": "对话草案：着兵部整饬。", "actor": name})
 
     fake_sess = types.SimpleNamespace(
-        db=db, state=state, content=None, registry=None,
+        db=db, state=state, content=None,
         llm_config=types.SimpleNamespace(channel="cli"),
         agno_db=None, last_decree="")
     fake_sess._refuse_if_settling = lambda: None

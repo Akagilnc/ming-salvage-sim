@@ -998,12 +998,12 @@ def open_night(
     if existing is not None and existing["status"] == NIGHT_STATUS_OPEN:
         return existing
     if existing is not None and existing["status"] == NIGHT_STATUS_CLOSING:
-        # 上一夜收夜中断（closing）。不在此隐式续收：open_night 无 content/registry，
+        # 上一夜收夜中断（closing）。不在此隐式续收：open_night 无 content，
         # 隐式 close_night 会让缺依赖的已应允任免 terminal failed、夜仍被封=丢合法任免。
-        # 响亮停住——续收必须走携 content/registry 的显式 close/resume（resolve_turn/advance/
+        # 响亮停住——续收必须走携 content 的显式 close/resume（resolve_turn/advance/
         # auto_close_open_night），不准开新夜、不准封夜。
         raise AudienceNightError(
-            f"上一夜收夜未完（closing），须先携 content/registry 显式续收再开新夜：{int(existing['id'])}",
+            f"上一夜收夜未完（closing），须先携 content 显式续收再开新夜：{int(existing['id'])}",
             code="night_closing_incomplete",
             detail={"night_id": int(existing["id"])},
         )
@@ -1196,7 +1196,6 @@ def _commit_night_approved(
     *,
     kinds: frozenset,
     content: Any,
-    registry: Any,
     directive_status: str = "draft",
 ) -> List[Dict[str, object]]:
     """收夜提交本夜已应允白名单。沿用 commit_pending_actions 既有 terminal 语义：
@@ -1217,7 +1216,6 @@ def _commit_night_approved(
     applied = db.commit_pending_actions(
         state,
         content=content,
-        registry=registry,
         action_ids=action_ids,
         directive_status=directive_status,
         rejection_collector=collector,
@@ -1294,7 +1292,7 @@ def commit_late_night_approved(
                 _CLOSE_COMMIT_KINDS_DIRECTIVE,
             ):
                 _commit_night_approved(
-                    db, state, nid, kinds=kinds, content=content, registry=None,
+                    db, state, nid, kinds=kinds, content=content,
                 )
             late_ids = [int(row["id"]) for row in db.conn.execute(
                 "SELECT id FROM pending_actions WHERE night_id=? AND status='committed' "
@@ -1356,7 +1354,6 @@ def close_night(
     *,
     night_id: Optional[int] = None,
     content: Any = None,
-    registry: Any = None,
     auto: bool = False,
     body: str = "",
     wait_timeout_s: float | None = None,
@@ -1535,7 +1532,7 @@ def close_night(
             _commit_night_approved(
                 db, state, int(night_id),
                 kinds=_CLOSE_COMMIT_KINDS_OFFICE,
-                content=content, registry=registry,
+                content=content,
             )
             if cursor < CLOSE_STEP_COMMIT_OFFICE:
                 _advance(CLOSE_STEP_COMMIT_OFFICE)
@@ -1543,7 +1540,7 @@ def close_night(
             _commit_night_approved(
                 db, state, int(night_id),
                 kinds=_CLOSE_COMMIT_KINDS_DIRECTIVE,
-                content=content, registry=registry,
+                content=content,
                 directive_status="draft",
             )
             if cursor < CLOSE_STEP_TRANSFER_CANDIDATES:
@@ -1633,7 +1630,7 @@ def close_night(
             )
         if cursor < CLOSE_STEP_FINALIZE:
             commit_fresh_summons_for_night(
-                db, state, int(night_id), content=content, registry=registry,
+                db, state, int(night_id), content=content,
             )
             publish_night_directives(db, int(night_id))
             tags = [TAG_CLOSE_NIGHT]
@@ -1680,7 +1677,6 @@ def auto_close_open_night(
     state: GameState,
     *,
     content: Any = None,
-    registry: Any = None,
     wait_timeout_s: float | None = None,
     crash_after_step: Optional[int] = None,
     beat_generator: Any = None,
@@ -1710,7 +1706,6 @@ def auto_close_open_night(
         db, state,
         night_id=int(open_n["id"]),
         content=content,
-        registry=registry,
         auto=True,
         body=body,
         wait_timeout_s=wait_timeout_s,
@@ -2164,7 +2159,6 @@ def commit_fresh_summons_for_night(
     night_id: int,
     *,
     content: Any = None,
-    registry: Any = None,
 ) -> List[str]:
     """收夜按人一次 canonical 启程；成功后标在途，origin 保持未结候见关联。
 
@@ -2187,7 +2181,7 @@ def commit_fresh_summons_for_night(
     from ming_sim.matching import is_capital_location
 
     origins: List[str] = []
-    with atomic_and_reload(db, state, content=content, registry=registry):
+    with atomic_and_reload(db, state, content=content):
         for person_name, items in by_person.items():
             row = db.conn.execute(
                 "SELECT location, transit_to, status FROM characters WHERE name=?",
@@ -2235,7 +2229,6 @@ def commit_fresh_summons_for_night(
                     "origin_ref": "盘面自发",
                 }],
                 content=content,
-                registry=None,
             )
             results = list(applied.get("applied_person_changes") or [])
             if not results or any(result.get("rejected") for result in results):

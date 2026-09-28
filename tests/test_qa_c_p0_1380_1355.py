@@ -128,7 +128,7 @@ def test_failed_secret_order_count_lives_on_state_not_secret_orders_api(game, mo
         minister_name=name, target_id=None,
         payload={"title": "", "content": "", "assignee": name},  # 坏 payload → commit failed
     )
-    db.commit_pending_actions(state, content=content, registry=None)
+    db.commit_pending_actions(state, content=content)
     failed_n = sum(1 for _ in db.list_failed_secret_order_actions())
     assert failed_n >= 1
     assert db.list_secret_orders() == []

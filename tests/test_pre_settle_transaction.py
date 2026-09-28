@@ -267,7 +267,7 @@ def _drive_resolve_directives(db, state, content, monkeypatch, *, simulator_beha
 
     return decree_mod.resolve_directives(
         state, db, None, None, [1], "减赋诏",
-        content=content, registry=None,
+        content=content,
     )
 
 
@@ -449,7 +449,7 @@ def test_placeholder_save_crash_rolls_back_settling(game, monkeypatch):
 
     with pytest.raises(RuntimeError, match="placeholder save crash"):
         decree_mod.resolve_directives(state, db, None, None, [1], "减赋诏",
-                                      content=content, registry=None)
+                                      content=content)
 
     monkeypatch.undo()
     assert state.turn_phase == "summoning"            # 内存已重载刷净

@@ -2154,7 +2154,7 @@ def test_apply_office_appointment_rejects_vassal_prince(game):
     db, state, content = game
     name = _materialize_active_prince(db, state, content)
     db.set_character_status(state, name, "offstage", "测试：就藩在外")  # 即便被点名也不得授官
-    res = issues.apply_office_appointment(db, state, content, None, name, "兵部尚书", reason="幻觉任命")
+    res = issues.apply_office_appointment(db, state, content, name, "兵部尚书", reason="幻觉任命")
     assert res.get("rejected") is True, f"宗藩授官应被拒：{res}"
     row = db.conn.execute("SELECT office_type, status FROM characters WHERE name=?", (name,)).fetchone()
     assert row["office_type"] == "宗藩", "宗藩 office_type 被授官改写=反解隐藏"
@@ -2273,7 +2273,7 @@ def test_pending_dismiss_rejects_vassal_prince(read_game):
     """pending 罢免落库（_commit_office_action 罢免路）拒宗藩——宗室非朝臣，不可作朝臣罢免（cmr R6）。"""
     db, state, content = read_game
     name = _materialize_active_prince(db, state, content)
-    ok = db._commit_office_action(state, {"action": "罢免"}, {"name": name}, content, None)
+    ok = db._commit_office_action(state, {"action": "罢免"}, {"name": name}, content)
     assert ok == set()
     assert db.get_character_status(name)[0] == "active"  # 未被罢、状态不变
 
@@ -2787,7 +2787,7 @@ def test_new_appointment_falsy_return_restores_snapshot(game, monkeypatch):
     monkeypatch.setattr(_session, "apply_appointment", mutate_then_falsy)
 
     res = issues.apply_office_appointment(
-        db, state, content, None, "不在册新人甲", "陕西总督",
+        db, state, content, "不在册新人甲", "陕西总督",
         reason="新任", new_office_type="地方", region_id="shaanxi",
     )
     assert res.get("rejected"), f"falsy-return 应兜成 rejected：{res}"
@@ -3831,7 +3831,7 @@ def test_apply_office_appointment_new_person_person_title_no_dirty_office_row(ga
     assert name not in content.characters
     try:
         result = issues.apply_office_appointment(
-            db, state, content, None,
+            db, state, content,
             name, "听用候铨",
             reason="降金后授名分",
             new_office_type="身名分",
@@ -3909,7 +3909,7 @@ def test_apply_office_appointment_person_title_survives_stem_collision(game):
     assert newcomer not in content.characters
     try:
         result = issues.apply_office_appointment(
-            db, state, content, None,
+            db, state, content,
             newcomer, "诸生",
             reason="降金后授名分",
             new_office_type="身名分",
@@ -3935,7 +3935,7 @@ def test_apply_office_appointment_person_title_survives_stem_collision(game):
         db.add_character(state, _new_ming_character(incumbent, "监察御史", "都察院"))
         content.characters[incumbent] = _new_ming_character(incumbent, "监察御史", "都察院")
         result = issues.apply_office_appointment(
-            db, state, content, None,
+            db, state, content,
             incumbent, "诸生",
             reason="夺情不允，降为诸生",
             new_office_type="身名分",

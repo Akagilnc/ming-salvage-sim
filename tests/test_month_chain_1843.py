@@ -565,19 +565,19 @@ def test_held_dossier_settlement_failure_retry_and_reentry_isolation(game, monke
     monkeypatch.setattr(dd, "settle_staged_declarations_in_decree_order", fail_first)
 
     with pytest.raises(RuntimeError, match="transient settlement crash"):
-        _settle_edicts(sess, registry=None, chain=chain)
+        _settle_edicts(sess, chain=chain)
 
     assert not db.staged_declarations.is_settled(held_ref)
     assert not db.staged_declarations.is_settled(stale_ref)
 
     # 结算失败重试：以 held_ref 身份续跑并成功落账
-    _settle_edicts(sess, registry=None, chain=chain)
+    _settle_edicts(sess, chain=chain)
     assert db.staged_declarations.is_settled(held_ref)
     assert not db.staged_declarations.is_settled(stale_ref)
     assert db.get_decree_dossier(dossier_id)["promulgation_decision"] == "promulgated"
 
     # 再次进入月链结算：保持 held_ref 案卷身份，旧 pending-action 不被冒名结算
-    _settle_edicts(sess, registry=None, chain=chain)
+    _settle_edicts(sess, chain=chain)
     assert db.staged_declarations.is_settled(held_ref)
     assert not db.staged_declarations.is_settled(stale_ref)
     dossier = db.get_decree_dossier(dossier_id)

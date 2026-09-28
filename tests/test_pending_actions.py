@@ -225,7 +225,7 @@ def test_commit_rolls_back_secret_order_when_status_mark_fails(game, monkeypatch
         },
     )
 
-    def _create_then_crash(state_arg, pa, payload, *, content=None, registry=None):
+    def _create_then_crash(state_arg, pa, payload, *, content=None):
         create_test_secret_order(db,
             state_arg,
             str(payload["assignee"]),
@@ -441,7 +441,7 @@ def test_web_advance_without_edict_settlement_abort_returns_409(game, monkeypatc
         raise SettlementAbort("结算中止，可重试。", turn=state.turn, stage="settle")
 
     session = types.SimpleNamespace(
-        registry=None,
+
         advance_without_decree=abort_after_failed_action,
         await_translations_before_month=lambda after_drain=None: after_drain() if after_drain else None,
     )
@@ -488,7 +488,7 @@ def test_web_advance_without_edict_llm_unavailable_returns_412_detail(game, monk
         )
 
     session = types.SimpleNamespace(
-        registry=None,
+
         advance_without_decree=boom,
         await_translations_before_month=lambda after_drain=None: after_drain() if after_drain else None,
     )
@@ -525,7 +525,7 @@ def test_web_advance_without_edict_generic_exception_returns_readable_detail(gam
         raise RuntimeError("cli runner exploded mid-settlement")
 
     session = types.SimpleNamespace(
-        registry=None,
+
         advance_without_decree=boom,
         await_translations_before_month=lambda after_drain=None: after_drain() if after_drain else None,
     )
@@ -593,7 +593,7 @@ def test_web_advance_without_edict_default_approves_into_one_dossier(game, monke
         assert game_db.list_pending_actions(st.turn)[0]["status"] == "pending"
         assert game_db.list_directives(st, statuses=("draft",)) == []
         assert game_db.list_decree_dossiers() == []
-        game_db.commit_pending_actions(st, content=content, registry=None)
+        game_db.commit_pending_actions(st, content=content)
         st.next_period()
         game_db.save_state(st)
         return ResolveResult(awaiting=False, report="本月已结")
@@ -681,7 +681,7 @@ def test_resolve_turn_previews_only_canonical_default_eligible_directives(game, 
     def settle(st, game_db, _agno, _config, directives, decree_text, **_kwargs):
         seen["settle"] = list(directives)
         assert decree_text == "奉旨清核辽饷"
-        game_db.commit_pending_actions(st, content=content, registry=None)
+        game_db.commit_pending_actions(st, content=content)
         st.next_period()
         game_db.save_state(st)
         return ResolveResult(awaiting=False, report="本月已结")
@@ -733,7 +733,7 @@ def test_web_advance_without_edict_routes_existing_draft_to_settlement(game, mon
         return ResolveResult(awaiting=False, advanced=True)
 
     session = types.SimpleNamespace(
-        registry=None,
+
         last_decree="",          # 真 GameSession 初始/清月态
         advance_without_decree=_advance,
         end_turn=lambda: calls.append("end_turn"),
@@ -951,7 +951,7 @@ def test_commit_new_office_action_rolls_back_memory_registration(game, monkeypat
         db, "create_decree_dossier",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("成案失败")),
     )
-    assert db.commit_pending_actions(state, content=content, registry=None) == []
+    assert db.commit_pending_actions(state, content=content) == []
     assert new_name not in content.characters
     assert db.conn.execute(
         "SELECT 1 FROM characters WHERE name=?", (new_name,)
@@ -989,7 +989,7 @@ def test_commit_new_office_action_restores_when_post_create_helper_raises(game, 
     )
     db.conn.commit()
 
-    applied = db.commit_pending_actions(state, content=content, registry=None)
+    applied = db.commit_pending_actions(state, content=content)
     assert any(item["kind"] == "office" for item in applied)
     with pytest.raises(ValueError, match="任免案卷载荷物化失败"):
         promulgate_proposed_appointments(db, state, content)
@@ -1056,7 +1056,7 @@ def test_office_appointment_displaces_partial_holder(game):
         minister_name=new_holder.name, target_id=None,
         payload={"text": "测试任免原文", "name": new_holder.name, "office": "兵部尚书"},
     )
-    applied = db.commit_pending_actions(state, content=content, registry=None)
+    applied = db.commit_pending_actions(state, content=content)
     assert any(row["kind"] == "office" for row in applied)
     verdicts = [
         {"dossier_id": row["id"], "decision": "promulgated"}

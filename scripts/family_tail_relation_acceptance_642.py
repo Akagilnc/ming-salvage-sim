@@ -293,7 +293,6 @@ def _close_night_production_judge(
         night_id=night_id,
         body="退朝。",
         content=content,
-        registry=sess.registry,
         llm_config=cfg,
         write_gate=write_gate,
         scene_registry=getattr(sess, "_scene_registry", None),
@@ -318,7 +317,6 @@ def _settle_with_brew(sess: GameSession, content: GameContent, cfg: LLMConfig) -
         {},
         before_turn=before_turn,
         content=content,
-        registry=sess.registry,
         relation_brew_runner=_make_relation_brew_runner(cfg, sess.agno_db),
     )
     sess.begin_turn()

@@ -601,7 +601,7 @@ def test_office_action_waits_for_verdict_then_materializes_from_same_payload(gam
     before = db.conn.execute(
         "SELECT office FROM characters WHERE name=?", (minister,)
     ).fetchone()["office"]
-    db.commit_pending_actions(state, content=content, registry=None)
+    db.commit_pending_actions(state, content=content)
 
     dossier = next(
         row for row in db.list_decree_dossiers(target_kind="character", target_id=minister)
@@ -613,7 +613,7 @@ def test_office_action_waits_for_verdict_then_materializes_from_same_payload(gam
     ).fetchone()["office"] == before
 
     db.apply_dossier_promulgation(
-        state, dossier["id"], "promulgated", content=content, registry=None
+        state, dossier["id"], "promulgated", content=content
     )
     dossier = db.get_decree_dossier(dossier["id"])
     assert dossier["status"] == "executing"
@@ -1124,7 +1124,7 @@ def test_appointment_alias_uses_canonical_dossier_identity(game):
         minister_name=_active_minister(db), target_id=None,
         payload={"text": "测试任免原文", "name": alias, "office": "兵部主事"},
     )
-    db.commit_pending_actions(state, content=content, registry=None)
+    db.commit_pending_actions(state, content=content)
     dossier = next(
         row for row in db.list_decree_dossiers()
         if row["pending_action_id"] == pending_id
@@ -1132,7 +1132,7 @@ def test_appointment_alias_uses_canonical_dossier_identity(game):
     assert dossier["target_id"] == target.name
     assert dossier["executor_id"] == target.name
     db.apply_dossier_promulgation(
-        state, dossier["id"], "promulgated", content=content, registry=None,
+        state, dossier["id"], "promulgated", content=content,
     )
     assert [
         row["dossier_id"]
