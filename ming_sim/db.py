@@ -2572,12 +2572,6 @@ class GameDB:
         # 标记缺失就补校准（与 flag 取或）。标记写入与 offset/leverage 写入同事务提交(见 1041 行的
         # commit)——崩在校准中途则标记未落、下次开档重做，二者全有或全无(原子)。
         self._leverage_offsets_calibrated = self._has_meta_flag("__leverage_offsets_calibrated")
-        # #1845：章节记忆退役——旧表与只为旧存档保留的相关记忆列一并删除。
-        self.conn.execute("DROP TABLE IF EXISTS event_memory_sources")
-        self.conn.execute("DROP TABLE IF EXISTS event_memories")
-        _prc_cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(pending_resolve_context)").fetchall()}
-        if "relevant_memories_json" in _prc_cols:
-            self.conn.execute("ALTER TABLE pending_resolve_context DROP COLUMN relevant_memories_json")
         # extractor 产出的 canonical delta：resolve_context 无条件持久化的重跑真源（ADR 0008 S2）。
         # 老存档此列缺省 '{}'（HITL 暂停时 phase1 尚无 delta，亦填 '{}'）。
         self.ensure_column("pending_resolve_context", "extracted_delta_json", "TEXT NOT NULL DEFAULT '{}'")
@@ -10944,7 +10938,7 @@ class GameDB:
     ) -> None:
         """Materialize every turn source before any aggregate archive is read.
 
-        The gazette and chapter are derived prose, not authorization boundaries.
+        The gazette is derived prose, not an authorization boundary.
         Persisting the public projection of both unscoped and participant-scoped
         source rows first gives the read model an independent item boundary.  The
         operation is idempotent by ``(character_name, kind, source_id)`` and is

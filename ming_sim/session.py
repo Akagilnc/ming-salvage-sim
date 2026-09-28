@@ -1212,10 +1212,6 @@ class GameSession:
             return self.temporary_characters[name]
         return character_from_name(name)
 
-    def _retrieve_memories_for_message(self, message: str) -> str:
-        """Compatibility shim; character context owns all historical reads."""
-        return message
-
     def _temporary_character(self, name: str) -> Character:
         clean_name = str(name or "").strip()
         if not clean_name:
