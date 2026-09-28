@@ -67,12 +67,8 @@ class MaterializeCtx:
 
 
 def _draft_path_took_effect(ctx: MaterializeCtx) -> bool:
-    """#1380：拟旨通道是否已占本轮（含显式前缀 / 对话拟旨 / multi draft 候选）。"""
-    from ming_sim.cli_backend import _DRAFT_PREFIXES
-
+    """#1380：拟旨通道是否已占本轮（对话拟旨 / multi draft 候选）。"""
     if ctx.draft_staged or ctx.intent_kind == "draft":
-        return True
-    if (ctx.message_text or "").startswith(_DRAFT_PREFIXES):
         return True
     if ctx.intent_candidates and any(
         str(c.get("kind") or "") == "draft" for c in ctx.intent_candidates

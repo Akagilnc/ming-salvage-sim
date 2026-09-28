@@ -212,49 +212,6 @@ def _tool_registry(tools):
     return Registry()
 
 
-def test_session_chat_tool_dismiss_writes_exit_ledger(game):
-    from types import SimpleNamespace
-    from ming_sim.session import GameSession
-
-    db, state, content = game
-    minister = _active_minister(db, content)
-    an.attach_chat_turn_to_night(db, state, minister.name)  # 生产同：session.chat 前已开夜入殿
-    nid = int(an.get_open_night(db)["id"])
-    assert minister.name in an.present_names_at(db, nid)
-
-    registry = _tool_registry(
-        [SimpleNamespace(tool_name="dismiss_minister", result="__dismiss__")]
-    )
-    result = GameSession.chat(_session_double(db, state, content, registry), minister.name, "臣请退。")
-
-    assert result.court_action == "dismiss"
-    last = an.list_ledger(db, nid)[-1]
-    assert TAG_EXIT in last["tags"] and minister.name in last["person_names"]
-    assert minister.name not in an.present_names_at(db, nid)
-
-
-def test_session_chat_non_dismiss_leaves_present(game):
-    """负向：非令退 tool 轮不落告退账、当前对谈大臣仍在场。"""
-    from ming_sim.session import GameSession
-
-    db, state, content = game
-    minister = _active_minister(db, content)
-    an.attach_chat_turn_to_night(db, state, minister.name)
-    nid = int(an.get_open_night(db)["id"])
-
-    result = GameSession.chat(
-        _session_double(db, state, content, _tool_registry([])), minister.name, "边饷如何？",
-    )
-
-    assert result.court_action == ""
-    exits = [
-        e for e in an.list_ledger(db, nid)
-        if TAG_EXIT in e["tags"] and minister.name in e["person_names"]
-    ]
-    assert exits == []
-    assert minister.name in an.present_names_at(db, nid)
-
-
 # ── L2：告退后再宣入须重新落入殿账（present_names_at 单一在场真源）──────────
 
 

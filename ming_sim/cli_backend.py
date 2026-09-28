@@ -1252,20 +1252,7 @@ def _messages_to_prompt(
     return prompt
 
 
-# ── 拟旨 / 下密令入档（CLI 后端）────────────────────────────────────────
-# 原版（api key）靠 agno 工具 propose_directive/secret_order，模型 function-call 触发。
-# agy/codex/claude 不做 function-calling，唯一缺口在此。玩家用「拟旨/下密令」按钮 =
-# 消息带「拟旨如下：/密令如下：」前缀 = 已表态要下旨，据此分派：
-#   拟旨：大臣回话原文即这道圣旨草稿，整段入档（单一文本字段，够用；多轮聊出多道 →
-#         颁诏时玩家去重）。
-#   密令（#397/#413/#1274 K1）：交 _extract_secret_order 抽结构化字段；content=
-#         御旨+extractor「内容」（reply 不入拼装；大臣实质补充走 schema 字段）；候选先入
-#         pending_actions 确认闸门，皇帝应允或回合默认提交时才正式落库。
-_DRAFT_PREFIXES = ("拟旨如下：", "拟旨如下:", "拟旨：", "拟旨:")
-_SECRET_PREFIXES = ("密令如下：", "密令如下:", "密令：", "密令:")
-
-
-# 大臣会话动作抽取（CLI 后端无 function-calling）：
+# 大臣会话动作抽取（仅供退役的批量物化代码；当前召对使用转译）：
 # 不靠关键字白名单（脆、永远漏），交给 LLM 读对话判意图——皇帝本轮对该大臣【现有密令】
 # 要做什么（更新内容 / 提交核议 / 催办 / 记进展）。
 def extract_minister_actions(
@@ -1331,7 +1318,6 @@ _DIRECTIVE_MODE_PROMPT = (
 
 
 # 对话式拟旨意图抽取（ADR 0006 自然语言路径）：玩家口头「拟旨吧/帮我拟一道旨」时，
-# 无显式前缀（_DRAFT_PREFIXES）→ LLM 判出意图 → 进 pending_actions(kind=directive)暂存；
 # 大臣回话即草案文本，commit 时再建 turn_directives 条目。
 def _directive_mode(value: object) -> Optional[str]:
     """Normalize the extractor's typed mode value, never player prose."""
@@ -3806,14 +3792,6 @@ def extract_directive_confirmation(
     return {"decision": decision, "target_ids": target_ids}
 
 
-def _matched_prefix(message: str, prefixes) -> Optional[str]:
-    """消息命中某前缀则返回前缀后的正文（玩家那句意图），否则 None。"""
-    pm = (message or "").strip()
-    for pre in prefixes:
-        if pm.startswith(pre):
-            return pm[len(pre):].strip()
-    return None
-
 
 def _scan_outside_strings(text: str, handle) -> str:
     """逐字扫描 text，字符串内部（含转义）原样输出；字符串外的字符交给
@@ -4535,76 +4513,6 @@ def _extract_secret_order(
     if isinstance(raw, str) and raw:
         result["extract_raw"] = raw
     return result
-
-def resolve_minister_actions(
-    minister_reply: str, player_message: str = "", default_assignee: str = "", llm_config: Any = None,
-    secret_context: str = "",
-    dossier_candidates: Optional[List[Dict[str, Any]]] = None,
-) -> Dict[str, Any]:
-    """玩家上一句带拟旨/密令前缀时生成候选。
-    - 拟旨：大臣回话原文即圣旨草稿（单一文本字段，够用）。
-    - 密令（#397/#1274 K1）：经 _extract_secret_order 结构化装配 content=御旨+extractor
-      「内容」（reply 不入拼装）；产物缺口由上游 land_or_recover 处置；call 失败响亮上抛。
-    返回 {decree_text, secret_order}。"""
-    out: Dict[str, Any] = {"decree_text": None, "secret_order": None}
-    reply = (minister_reply or "").strip()
-
-    draft_intent = _matched_prefix(player_message, _DRAFT_PREFIXES)
-    if draft_intent is not None:
-        out["decree_text"] = reply or draft_intent or None
-
-    secret_intent = _matched_prefix(player_message, _SECRET_PREFIXES)
-    if secret_intent is not None and (reply or secret_intent):
-        secret_command = secret_intent
-        force_default_assignee = False
-        if _secret_prefix_needs_recent_context(secret_intent) and (secret_context or "").strip():
-            secret_command = (
-                (secret_context or "").strip()
-                + ("\n【本轮确认】" + secret_intent if secret_intent else "")
-            ).strip()
-            force_default_assignee = True
-        # #397/#1274 K1：显式『密令如下：<X>』的密令正文须留住御旨 X——交
-        # _extract_secret_order 结构化装配（御旨+extractor「内容」；reply 不入拼装）。
-        out["secret_order"] = _extract_secret_order(
-            secret_command, reply, default_assignee, llm_config,
-            force_default_assignee=force_default_assignee,
-            dossier_candidates=dossier_candidates,
-        )
-
-    return out
-
-
-# 纯确认短句的原子片段：密令按钮当轮若【整句】只由这些片段拼成（如「可，照办」=可+照办、
-# 「就按你意思办」=就按+你意思+办），说明本轮没有任务正文，须从前文召对取。锚定全匹配而非子串，
-# 避免「可疑之处彻查」这类含确认字的实质命令被误判成纯确认（cmr #354 correctness：旧 exact-set
-# 漏「可，照办」——issue US3 点名的确认句——而子串匹配又会误吞实质命令）。
-_SECRET_CONFIRM_ATOM_RE = re.compile(
-    r"^(?:"
-    r"可|准|好|是|善|行|同意|照办|照准|准奏|准卿所奏|卿所奏|所奏|如此|便如此|就这么办|这么办|"
-    r"就按|就照|按你意思|照你意思|你意思|依卿|依你|便依|就办|办|吧|奏"
-    r")+$"
-)
-
-
-def _secret_prefix_needs_recent_context(secret_intent: str) -> bool:
-    """显式密令按钮后只有确认短句/约束短句时，从前文召对取任务正文。"""
-    text = (secret_intent or "").strip()
-    if not text:
-        return True
-    compact = re.sub(r"[\s，,。.!！?？；;：:、]+", "", text)
-    if re.search(r"(照办|按你意思|照你意思|前议|方才所奏|卿所奏|就按|就照)", compact):
-        return True
-    has_primary_task = bool(re.search(r"(命|令|着|遣|派|督办|暗查|密查|查|护|封存|截留|赈|加操|操练)", compact))
-    has_only_constraint = bool(
-        _secret_context_constraint_like(compact)
-        or re.search(r"(月内|日内|回奏|结案|限期|期限)", compact)
-    ) and not has_primary_task
-    if has_only_constraint:
-        return True
-    if len(compact) > 12:
-        return False
-    return bool(_SECRET_CONFIRM_ATOM_RE.match(compact))
-
 
 def _fake_completion(text: str, model_id: str) -> ChatCompletion:
     """把纯文本包成 OpenAI ChatCompletion 交给 agno 解析。"""

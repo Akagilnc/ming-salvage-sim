@@ -314,18 +314,6 @@ def test_withdrawal_under_web_write_gate_returns_undone_turn(game):
     assert db.get_last_active_chat_turn(minister_name, state.turn) is None
 
 
-
-
-
-
-
-
-
-
-
-
-
-
 def test_current_unissued_draft_is_not_character_carryover(game):
     """本回合未明发草案不应绕过见闻投影，注入未参与大臣的召对提示。
 
@@ -344,8 +332,6 @@ def test_current_unissued_draft_is_not_character_carryover(game):
     assert _carryover_drafts(db, state) == []
 
 
-
-
 def test_audience_prompt_does_not_create_near_minister_report_for_ordinary_minister(game):
     db, state, content = game
     minister = next(
@@ -358,99 +344,6 @@ def test_audience_prompt_does_not_create_near_minister_report_for_ordinary_minis
         item.get("source_id", "").startswith("near_minister:")
         for item in db.get_character_knowledge(state, minister.name)["events"]
     )
-
-
-class _CliActionSession(_FakeSession):
-    """CLI 路召对：动作经 apply_cli_conversation_actions 落地（密令/pending_action）。"""
-
-    def __init__(self, db, state, content, agent, *, secret_order_id=0, pending_action_id=0):
-        super().__init__(db, state, content, agent)
-        self._secret_order_id = secret_order_id
-        self._pending_action_id = pending_action_id
-        self.apply_calls = []
-
-    def apply_cli_conversation_actions(self, *_args, **_kwargs):
-        self.apply_calls.append((_args, _kwargs))
-        return {
-            "directive": None,
-            "secret_order_id": self._secret_order_id,
-            "pending_action_id": self._pending_action_id,
-        }
-
-    def scene_chat(self, message, *, chat_turn_id=0, stream_emit=None, minister_name="", on_protagonist_changed=None):
-        # 生产 scene_chat 后接 CLI apply（密令/pending 落地夹具）
-        result = GameSession.scene_chat(
-            self, message, chat_turn_id=chat_turn_id, stream_emit=stream_emit,
-            minister_name=minister_name, on_protagonist_changed=on_protagonist_changed,
-        )
-        applied = self.apply_cli_conversation_actions(message, result.answer)
-        result.secret_order_id = int(applied.get("secret_order_id") or 0)
-        result.pending_action_id = int(applied.get("pending_action_id") or 0)
-        return result
-
-
-def _cli_web_game(db, state, content, agent, monkeypatch=None, **kwargs) -> WebGame:
-    bind_skills_content(content)
-    game = WebGame.__new__(WebGame)
-    game.session = _CliActionSession(db, state, content, agent, **kwargs)
-    game.chat_history = {name: [] for name in content.characters}
-    game.suggestions_for = lambda _character: []
-    from ming_sim.session_write_queue import SessionWriteQueue
-    game._write_queue = SessionWriteQueue()
-    game._write_gate = game._write_queue.write_gate
-    game.session._write_gate = game._write_gate
-    game.session._write_queue = game._write_queue
-    game._runtime_write_queue = lambda: game._write_queue  # type: ignore
-    game._mark_pending_write = lambda key=None: game._write_queue.claim(key=key or ("pending",))  # type: ignore
-    game._complete_pending_write = lambda ticket=None: game._write_queue.complete(ticket)  # type: ignore
-    if monkeypatch is not None:
-        stub_scene_agent(monkeypatch, agent)
-        stub_audience_translate(monkeypatch)
-    return game
-
-
-def test_background_audience_secret_order_persists_after_observer_departure(game, monkeypatch):
-    """密令结果：退出观看窗后，后台仍跑完 CLI 动作落地（apply_cli_conversation_actions）
-    并完成回话入档（#383 US5）。"""
-    db, state, content = game
-    minister_name = "毕自严"
-    agent = _FakeAgent()
-    web_game = _cli_web_game(
-        db, state, content, agent, monkeypatch, secret_order_id=4242,
-    )
-
-    stream = web_game.chat_stream(minister_name, "密查盐政亏空。")
-    _assert_next_accepted(stream)
-    assert next(stream)["type"] == "delta"
-    stream.close()
-
-    assert agent.completed.wait(5), agent.calls
-    # 后台跑完：queue + 转译 ledger 终态后断言外部结构化结果（禁盲等 history）。
-    _wait_for_pending_writes_to_drain(web_game)
-    assert len(web_game.session.apply_calls) >= 1
-    assert len(web_game.chat_history[minister_name]) >= 2
-    assert db.can_undo_last_chat_turn(minister_name, state.turn)
-
-
-def test_background_audience_pending_action_persists_after_observer_departure(game, monkeypatch):
-    """pending_action（如调教/任免暂存）：退出后后台仍跑完落地（#383 US6）。"""
-    db, state, content = game
-    minister_name = "毕自严"
-    agent = _FakeAgent()
-    web_game = _cli_web_game(
-        db, state, content, agent, monkeypatch, pending_action_id=77,
-    )
-
-    stream = web_game.chat_stream(minister_name, "着王承恩调教自省。")
-    _assert_next_accepted(stream)
-    assert next(stream)["type"] == "delta"
-    stream.close()
-
-    assert agent.completed.wait(5), agent.calls
-    _wait_for_pending_writes_to_drain(web_game)
-    assert len(web_game.session.apply_calls) >= 1
-    assert len(web_game.chat_history[minister_name]) >= 2
-    assert db.can_undo_last_chat_turn(minister_name, state.turn)
 
 
 def test_background_audience_recommendation_stages_candidate_snapshot(game, monkeypatch):
@@ -525,71 +418,6 @@ def test_llm_failure_does_not_leave_half_chat_in_history(game, monkeypatch):
     assert db.conn.execute("SELECT COUNT(*) FROM chat_messages").fetchone()[0] == 1
     row = db.conn.execute("SELECT status FROM chat_turns").fetchone()
     assert row["status"] == "interrupted"
-
-
-class _RaisingActionSession(_FakeSession):
-    """落地阶段（apply_cli_conversation_actions）在动作已写入后抛错。"""
-
-    def apply_cli_conversation_actions(self, *_args, **_kwargs):
-        raise RuntimeError("落地阶段失败")
-
-    def scene_chat(self, message, *, chat_turn_id=0, stream_emit=None, minister_name="", on_protagonist_changed=None):
-        result = GameSession.scene_chat(
-            self, message, chat_turn_id=chat_turn_id, stream_emit=stream_emit,
-            minister_name=minister_name, on_protagonist_changed=on_protagonist_changed,
-        )
-        # 回话后落地失败（拟旨若已由转译/tool 写入则回滚路径测）
-        self.apply_cli_conversation_actions(message, result.answer)
-        return result
-
-
-def test_background_audience_failure_after_action_rolls_back_cleanly(game, monkeypatch):
-    """#383 US8 + Testing Decisions「失败清理」：拟旨已写入后落地失败 → 失败路径须回滚
-    已写动作（不留不可撤回的半成品政务结果）、删半截聊天、标 turn failed。与「退出≠取消」
-    的后台完成路明确分开（真后端错误才走失败）。"""
-    db, state, content = game
-    minister_name = "毕自严"
-    draft_text = "着户部清核辽饷。"
-    agent = _FakeAgent([ToolExec("propose_directive", f"__pending_directive__{draft_text}")])
-    bind_skills_content(content)
-    web_game = WebGame.__new__(WebGame)
-    web_game.session = _RaisingActionSession(db, state, content, agent)
-    web_game.chat_history = {name: [] for name in content.characters}
-    web_game.suggestions_for = lambda _character: []
-    from ming_sim.session_write_queue import SessionWriteQueue
-    web_game._write_queue = SessionWriteQueue()
-    web_game._write_gate = web_game._write_queue.write_gate
-    web_game.session._write_gate = web_game._write_gate
-    web_game.session._write_queue = web_game._write_queue
-    web_game._runtime_write_queue = lambda: web_game._write_queue  # type: ignore
-    web_game._mark_pending_write = lambda key=None: web_game._write_queue.claim(key=key or ("pending",))  # type: ignore
-    web_game._complete_pending_write = lambda ticket=None: web_game._write_queue.complete(ticket)  # type: ignore
-    stub_scene_agent(monkeypatch, agent)
-    stub_audience_translate(monkeypatch)
-
-    events = list(web_game.chat_stream(minister_name, "拟一道清核辽饷的旨。"))
-
-    # #1353 r11：worker 失败双终态 error→end
-    types = [e.get("type") for e in events]
-    assert "error" in types, events
-    assert types[-1] == "end", events
-    assert types[types.index("error") + 1] == "end", types
-    assert agent.calls, events
-    assert any(e.get("type") == "error" and e.get("message") == "落地阶段失败" for e in events), events
-    # 已暂存的拟旨被回滚——不留不可撤回的半成品政务结果
-    assert not any(
-        row["kind"] == "directive"
-        and json.loads(row["payload_json"])["text"] == draft_text
-        for row in db.list_pending_actions(state.turn)
-    )
-    assert not any(
-        row["text"] == draft_text
-        for row in db.list_directives(state, statuses=("pending", "draft"))
-    )
-    # 回话未落时问话保留为可重试的 interrupted 轮，而非删掉玩家输入。
-    assert web_game.chat_history[minister_name] == [{"role": "user", "content": "拟一道清核辽饷的旨。"}]
-    assert db.conn.execute("SELECT COUNT(*) FROM chat_messages").fetchone()[0] == 1
-    assert db.conn.execute("SELECT status FROM chat_turns").fetchone()["status"] == "interrupted"
 
 
 def test_chat_stream_rejects_second_concurrent_turn_same_minister(game, monkeypatch):
