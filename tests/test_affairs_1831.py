@@ -412,11 +412,6 @@ def test_strategic_event_unauthorized_person_origin_reaches_final_projection(gam
         name=NINGYUAN, origin=ORIGIN,
         year=state.year, period=state.period, turn=state.turn,
     )
-    unauthorized = db.affairs.open(
-        name="另事", origin="另一件交办",
-        year=state.year, period=state.period, turn=state.turn,
-    )
-    db.affairs.declare_closed(unauthorized.id, turn=state.turn)
     db.conn.execute(
         "UPDATE regions SET military_pressure = ? WHERE id = ?", (20, "beizhili"),
     )
@@ -425,8 +420,13 @@ def test_strategic_event_unauthorized_person_origin_reaches_final_projection(gam
     )
     from ming_sim.month_translate import dispatch_month_segment
 
-    dispatch_month_segment(db, state, segment="戊寅虏变战果", translate_fn=lambda _request, _config: {
-        "effects": [{
+    def translate(_request, _config):
+        # Appears after the translation input's visible references are frozen.
+        unauthorized = db.affairs.open(
+            name="另事", origin="另一件交办",
+            year=state.year, period=state.period, turn=state.turn,
+        )
+        return {"effects": [{
             "event_id": "wuyin_lubian",
             "new_issues": [{"origin_kind": "event_pool", "id": "wuyin_lubian"}],
             "region_delta": {
@@ -443,8 +443,9 @@ def test_strategic_event_unauthorized_person_origin_reaches_final_projection(gam
                 "origin_ref": db.affairs.origin_ref(unauthorized.id),
                 "reason": "戊寅虏变软判主帅功过",
             }],
-        }],
-    })
+        }]}
+
+    dispatch_month_segment(db, state, segment="戊寅虏变战果", translate_fn=translate)
     assert db.has_event_triggered("wuyin_lubian")
     assert db.conn.execute(
         "SELECT military_pressure FROM regions WHERE id = ?", ("beizhili",),
@@ -454,7 +455,7 @@ def test_strategic_event_unauthorized_person_origin_reaches_final_projection(gam
     ).fetchone()["status"] == "active"
     assert db.conn.execute(
         "SELECT COUNT(*) FROM rejection_reports WHERE section='applied_person_changes' "
-        "AND category='invalid_enum'"
+        "AND category='unauthorized_affair_origin'"
     ).fetchone()[0] == 1
 
 

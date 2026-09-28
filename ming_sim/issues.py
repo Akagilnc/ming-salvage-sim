@@ -8792,7 +8792,7 @@ def _apply_score_extraction_body(
                 applied_person_changes.append({
                     "name": str(person_change.get("name") or "").strip(),
                     "动作": str(person_change.get("动作") or "").strip(),
-                    "rejected": True, "category": "invalid_enum",
+                    "rejected": True, "category": "unauthorized_affair_origin",
                     "reason": str(exc), "item": dict(person_change),
                 })
             except Exception:
@@ -9314,7 +9314,7 @@ def _apply_score_extraction_body(
                 event_person_results.append({
                     "name": str(item.get("name") or "").strip(),
                     "动作": str(item.get("动作") or "").strip(),
-                    "rejected": True, "category": "invalid_enum",
+                    "rejected": True, "category": "unauthorized_affair_origin",
                     "reason": str(exc), "item": dict(item),
                 })
                 continue
