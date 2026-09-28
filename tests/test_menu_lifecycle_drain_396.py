@@ -11,7 +11,8 @@ from types import SimpleNamespace
 
 import web_app
 from tests.web_audience_test_doubles import HallAdmissionSessionMixin, minister_double
-from tests.wait_utils import ObservingLock, reset_menu_path_leases, wait_until
+from tests.wait_utils import reset_menu_path_leases, wait_until
+from ming_sim.session_write_queue import SessionWriteQueue
 
 # 兼容旧调用名：真源在 wait_utils.reset_menu_path_leases。
 _reset_path_leases = reset_menu_path_leases
@@ -28,10 +29,11 @@ def _drain_then_archive(game, db_path: str) -> None:
 
 
 def test_drain_and_close_session_waits_for_gate_then_closes():
-    contending = threading.Event()
-    gate = ObservingLock(contending)
+    queue = SessionWriteQueue()
+    gate = queue.write_gate
     closed: list[int] = []
     game = SimpleNamespace(
+        _write_queue=queue,
         _write_gate=gate,
         session=SimpleNamespace(close=lambda: closed.append(1)),
     )
@@ -44,8 +46,7 @@ def test_drain_and_close_session_waits_for_gate_then_closes():
         daemon=True,
     )
     thread.start()
-    # Prove drain reached close gate.acquire while held — not has_open_barrier claim-only.
-    contending.wait()
+    # While the live queue gate is held, drain must not close the session.
     assert not done.is_set()
     assert closed == []
 
@@ -57,10 +58,12 @@ def test_drain_and_close_session_waits_for_gate_then_closes():
 
 
 def test_exit_to_menu_returns_before_delayed_close_drains(monkeypatch, tmp_path):
-    gate = threading.Lock()
+    queue = SessionWriteQueue()
+    gate = queue.write_gate
     closed: list[int] = []
     db_path = str(tmp_path / "exit-delay.db")
     fake_game = SimpleNamespace(
+        _write_queue=queue,
         _write_gate=gate,
         db_path=db_path,
         session=SimpleNamespace(close=lambda: closed.append(1)),
@@ -86,12 +89,14 @@ def test_exit_to_menu_returns_before_delayed_close_drains(monkeypatch, tmp_path)
 def test_new_game_returns_before_delayed_close_drains(monkeypatch, tmp_path):
     """#396: new_game 与 exit_to_menu 同构——界面立刻构建新局返回，
     旧 session 的后台队列在 daemon 线程排空 write_gate 后再关连接（detach）。"""
-    gate = threading.Lock()
+    queue = SessionWriteQueue()
+    gate = queue.write_gate
     closed: list[int] = []
     old_db = str(tmp_path / "old_delayed.db")
     Path = __import__("pathlib").Path
     Path(old_db).write_text("old", encoding="utf-8")
     fake_old_game = SimpleNamespace(
+        _write_queue=queue,
         _write_gate=gate,
         db_path=old_db,
         session=SimpleNamespace(close=lambda: closed.append(1)),
@@ -144,8 +149,10 @@ def test_new_game_failure_restores_old_game_and_main_db_path(monkeypatch, tmp_pa
     with open(web_app._active_db_path_file(), "w", encoding="utf-8") as f:
         f.write(old_db_path)
 
+    queue = SessionWriteQueue()
     old_game = SimpleNamespace(
-        _write_gate=threading.Lock(),
+        _write_queue=queue,
+        _write_gate=queue.write_gate,
         db_path=old_db_path,
         session=SimpleNamespace(close=lambda: None),
     )
@@ -190,9 +197,11 @@ def test_drain_archive_move_failure_keeps_wal_and_shm(monkeypatch, tmp_path):
         with open(path, "w", encoding="utf-8") as f:
             f.write(content)
 
-    gate = threading.Lock()
+    queue = SessionWriteQueue()
+    gate = queue.write_gate
     closed: list[int] = []
     game = SimpleNamespace(
+        _write_queue=queue,
         _write_gate=gate,
         db_path=db_path,
         session=SimpleNamespace(close=lambda: closed.append(1)),
@@ -219,8 +228,10 @@ def test_drain_archive_moves_wal_and_shm_with_main_db(monkeypatch, tmp_path):
             f.write(content)
 
     closed: list[int] = []
+    queue = SessionWriteQueue()
     game = SimpleNamespace(
-        _write_gate=threading.Lock(),
+        _write_queue=queue,
+        _write_gate=queue.write_gate,
         db_path=db_path,
         session=SimpleNamespace(close=lambda: closed.append(1)),
     )
@@ -253,8 +264,10 @@ def test_drain_archive_rolls_back_main_db_when_wal_move_fails(monkeypatch, tmp_p
             f.write(content)
 
     closed: list[int] = []
+    queue = SessionWriteQueue()
     game = SimpleNamespace(
-        _write_gate=threading.Lock(),
+        _write_queue=queue,
+        _write_gate=queue.write_gate,
         db_path=db_path,
         session=SimpleNamespace(close=lambda: closed.append(1)),
     )
@@ -284,8 +297,10 @@ def test_drain_archive_skips_move_when_session_close_fails(monkeypatch, tmp_path
         f.write("db")
 
     moves: list[tuple[str, str]] = []
+    queue = SessionWriteQueue()
     game = SimpleNamespace(
-        _write_gate=threading.Lock(),
+        _write_queue=queue,
+        _write_gate=queue.write_gate,
         db_path=db_path,
         session=SimpleNamespace(close=lambda: (_ for _ in ()).throw(RuntimeError("close failed"))),
     )
@@ -330,8 +345,10 @@ def test_restore_main_db_path_config_remove_failure_is_loud(monkeypatch, tmp_pat
 def test_new_game_active_write_failure_restores_env_and_old_game(monkeypatch, tmp_path):
     """#402 R2（CodeRabbit）：active_db.txt 写失败也必须回滚已改的 MING_SIM_DB。"""
     old_db_path = str(tmp_path / "old_main.db")
+    queue = SessionWriteQueue()
     old_game = SimpleNamespace(
-        _write_gate=threading.Lock(),
+        _write_queue=queue,
+        _write_gate=queue.write_gate,
         db_path=old_db_path,
         session=SimpleNamespace(close=lambda: None),
     )
@@ -352,11 +369,12 @@ def test_new_game_active_write_failure_restores_env_and_old_game(monkeypatch, tm
 
 
 def test_shutdown_waits_for_drain_before_returning_or_killing(monkeypatch):
-    contending = threading.Event()
-    gate = ObservingLock(contending)
+    queue = SessionWriteQueue()
+    gate = queue.write_gate
     closed: list[int] = []
     killed: list[object] = []
     fake_game = SimpleNamespace(
+        _write_queue=queue,
         _write_gate=gate,
         session=SimpleNamespace(close=lambda: closed.append(1)),
     )
@@ -374,7 +392,6 @@ def test_shutdown_waits_for_drain_before_returning_or_killing(monkeypatch):
 
     thread = threading.Thread(target=lambda: asyncio.run(run_shutdown()), daemon=True)
     thread.start()
-    contending.wait()  # drain close-under-gate acquire, not claim-only has_open_barrier
     assert not done.is_set()
     assert closed == []
     assert killed == []
@@ -574,7 +591,6 @@ def test_drain_waits_for_queued_chat_stream_not_just_gate_holder():
         state, db)
     runtime.session.close = lambda: closed.append(1)
     runtime.chat_history = {char_a.name: [], char_b.name: []}
-    from ming_sim.session_write_queue import SessionWriteQueue
     runtime._write_queue = SessionWriteQueue()
     runtime._write_gate = runtime._write_queue.write_gate
     runtime._runtime_write_queue = lambda: runtime._write_queue  # type: ignore
@@ -653,8 +669,6 @@ def test_drain_waits_for_queued_chat_stream_not_just_gate_holder():
 def test_drain_rejects_late_pending_write_before_gate_acquire():
     """#402 R3（Sourcery）：drain 开始后，迟到的旧 game 写入不得再登记进关闭队列。"""
     runtime = object.__new__(web_app.WebGame)
-    runtime._write_gate = threading.Lock()
-    from ming_sim.session_write_queue import SessionWriteQueue
     runtime._write_queue = SessionWriteQueue()
     runtime._write_gate = runtime._write_queue.write_gate
     runtime._runtime_write_queue = lambda: runtime._write_queue  # type: ignore
@@ -687,7 +701,6 @@ def test_spawn_pending_write_thread_start_failure_releases_ownership():
     `Thread.start()` 抛异常，须补偿 `_complete_pending_write` 再上抛——否则 pending 泄漏、
     drain 在 `_drain_cond` 永阻、关档/重置/加载挂死。断言异常上抛且计数归 0（无泄漏）。"""
     runtime = object.__new__(web_app.WebGame)
-    from ming_sim.session_write_queue import SessionWriteQueue
     runtime._write_queue = SessionWriteQueue()
     runtime._write_gate = runtime._write_queue.write_gate
     runtime._runtime_write_queue = lambda: runtime._write_queue  # type: ignore

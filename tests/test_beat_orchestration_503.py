@@ -162,7 +162,6 @@ def test_web_retry_failed_scene_drain_does_not_hold_write_gate(game):
     rt = object.__new__(web_app.WebGame)
     rt.session = _Session()
     rt.chat_history = {minister: []}
-    rt._write_gate = threading.Lock()
     rt._runtime_write_gate = lambda: rt._write_gate
     rt._audience_turn_in_flight = lambda _n: False
     # 整轮 pending 由 retry 本体持有；尾随不起后台线程。
@@ -2405,8 +2404,8 @@ def test_657_s2_s3_lock_boundary_and_parallel_summons(game, monkeypatch):
     sess.temporary_characters = {}
     executor = ThreadPoolExecutor(max_workers=4)
     sess._scene_registry = ChatTurnSceneRegistry(executor)
-    sess._write_gate = threading.Lock()
-    sess._write_queue = type("Q", (), {"write_gate": sess._write_gate})()
+    from ming_sim.session_write_queue import get_session_write_queue
+    sess._write_gate = get_session_write_queue(sess).write_gate
 
     # 诊断（#1723 r2）：2 target → discover 产出 open×1（首夜）+ enter×2。
     # Barrier 只会合两个带 person_name 的 enter（逐 target）；open 无 target 不入屏障。

@@ -10,6 +10,8 @@ _serialized_web_write), not private _write_gate.locked() / _pending_writes_count
 """
 from __future__ import annotations
 
+from ming_sim.session_write_queue import get_session_write_queue
+
 import json
 import threading
 from types import SimpleNamespace
@@ -93,7 +95,6 @@ def _base_runtime(db):
     character = minister_double("测试大臣")
     state = SimpleNamespace(turn=1, year=1628, period=1, turn_phase="summoning")
     runtime = object.__new__(web_app.WebGame)
-    runtime._write_gate = threading.Lock()
     from ming_sim.session_write_queue import SessionWriteQueue
     runtime._write_queue = SessionWriteQueue()
     runtime._write_gate = runtime._write_queue.write_gate
@@ -509,7 +510,6 @@ def _runtime_for_nonstream_chat(*, start_scene=None, append_error=None, abandon_
             raise abandon_error
 
     runtime = object.__new__(web_app.WebGame)
-    runtime._write_gate = threading.Lock()
     from ming_sim.session_write_queue import SessionWriteQueue
     runtime._write_queue = SessionWriteQueue()
     runtime._write_gate = runtime._write_queue.write_gate
@@ -695,7 +695,7 @@ def test_nonstream_api_issue_decree_llm_unavailable_is_structured_not_500(
         refresh_turn=lambda: None,
         directive_rows=lambda: [],
         state_payload=lambda: {"turn": {"turn": int(state.turn)}},
-        _write_gate=threading.Lock(),
+        _write_gate=get_session_write_queue(session).write_gate,
     )
     monkeypatch.setattr(web_app, "get_game", lambda: runtime)
     monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda *_a, **_k: None)

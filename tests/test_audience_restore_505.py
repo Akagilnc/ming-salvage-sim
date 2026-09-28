@@ -1112,8 +1112,8 @@ def test_657_s12_reconciles_s_u_q_and_finishes_summon(game, monkeypatch):
     sess.temporary_characters = {}
     executor = ThreadPoolExecutor(max_workers=2)
     sess._scene_registry = ChatTurnSceneRegistry(executor)
-    sess._write_gate = threading.Lock()
-    sess._write_queue = type("Q", (), {"write_gate": sess._write_gate})()
+    from ming_sim.session_write_queue import get_session_write_queue
+    sess._write_gate = get_session_write_queue(sess).write_gate
     started: list[int] = []
     real_start = sess._scene_registry.start_open_enter
 
