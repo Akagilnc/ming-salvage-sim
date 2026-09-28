@@ -6,8 +6,7 @@ canonical＝ADR 0087 + #662 票庭判词（run 01a02d40-244d-7e4c-8386-5af682d58
 - origin 分立＝reason 枚举「灾害」／「兵灾」（落库字段即 reason，无第二 origin 字段）；
 - 与加派/摊派入口合流同一本账：同一 classes 省级行池＋同一原语，下游只认账不认来源；
 - 邸报/召对定性回响走既有 effect_brief／classes_brief 特征面（P4 零数值）。
-主测缝＝S2 同缝：apply_score_extraction / settle_with_delta / effect_brief /
-prompt 契约文本 / GameDB 重开接续。mutation oracle 复用 #649 家族，不另立机制。
+主测缝＝apply_score_extraction / effect_brief / prompt 契约文本 / GameDB 重开接续。
 """
 
 from __future__ import annotations
@@ -28,7 +27,6 @@ from test_population_transfers_649 import (
 import pytest
 
 from ming_sim.db import GameDB
-from tests.settlement_seam_helpers import settle_effects as settle_with_delta
 from ming_sim.issues import apply_score_extraction
 from ming_sim.memories import effect_brief
 from ming_sim.agents import build_simulator_context

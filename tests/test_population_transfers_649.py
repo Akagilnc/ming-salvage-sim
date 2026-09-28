@@ -6,8 +6,7 @@ canonical＝ADR 0087/0088 + #649 冻结票面（含庭裁修正案 r1-r5）：
 - class_delta 写 population 由静默忽略升格逐项拒收；两轴分立（数据拒收不中止事务）；
 - 单位随存档 population_unit（新档人/sub-万精确，legacy 万口径、sub-万不可表达）；
 - restore 后流民池从 classes 只读 DB 无损接续；effect_brief 机器面事实摘要。
-主测缝（PRD Testing Decisions 预定）：apply_score_extraction / settle_with_delta /
-effect_brief 纯函数——只测外部行为，不打内部桩。
+主测缝：apply_score_extraction / effect_brief 纯函数——只测外部行为。
 """
 
 from __future__ import annotations
@@ -18,7 +17,6 @@ import os
 import pytest
 
 from ming_sim.db import GameDB, POPULATION_UNIT_PERSONS, POPULATION_UNIT_WAN
-from tests.settlement_seam_helpers import settle_effects as settle_with_delta
 from ming_sim.issues import apply_score_extraction
 from ming_sim.memories import effect_brief
 
@@ -94,7 +92,7 @@ def test_all_inflow_reasons_positive_cases_land(game):
     """入池五因（加派/摊派/灾害/兵灾/逃亡）各 ≥1 正例经 apply_score_extraction 落账。
 
     #652：`回流` 不再由 extractor 受理，出池落账由 test_refugee_loop_652 经
-    settle_with_delta 真缝证明，本测不平行私核直落。
+    #652 的回流出池由独立过月案验证，本测不平行私核直落。
     """
     db, state, content = game
     items = [
