@@ -188,7 +188,7 @@ def test_typed_affair_new_issues_share_provenance_and_close_final_state(game):
     assert db.affairs.get(existing.id).status == "open"
     assert any(
         row["report_section"] == "affair_declarations"
-        and "未了局势" in row["reason"]
+        and row["category"] == "invalid_shape"
         for row in result["validate_shape_rejections"]
     )
 
@@ -196,7 +196,7 @@ def test_typed_affair_new_issues_share_provenance_and_close_final_state(game):
 
 
 def test_strategic_event_unauthorized_person_origin_reaches_final_projection(game):
-    """战略人物越权来源拒收须进入最终 applied_person_changes；material sibling 仍触发。"""
+    """战略人物越权来源逐项拒收；已声明的合法同批战果仍落账。"""
     db, state, content = game
     issues_mod.bind_content(content)
     state.year = 1638
@@ -205,20 +205,22 @@ def test_strategic_event_unauthorized_person_origin_reaches_final_projection(gam
         name=NINGYUAN, origin=ORIGIN,
         year=state.year, period=state.period, turn=state.turn,
     )
-    unauthorized = db.affairs.open(
-        name="另事", origin="另一件交办",
-        year=state.year, period=state.period, turn=state.turn,
-    )
     db.conn.execute(
         "UPDATE regions SET military_pressure = ? WHERE id = ?", (20, "beizhili"),
     )
     db.conn.execute(
         "UPDATE characters SET status = ? WHERE name = ?", ("active", "卢象升"),
     )
-    out = apply_score_extraction(
-        db,
-        state,
-        {
+    from ming_sim.month_translate import dispatch_month_segment
+
+    def translate(_request, _config):
+        # Appears after the translation input's visible references are frozen.
+        unauthorized = db.affairs.open(
+            name="另事", origin="另一件交办",
+            year=state.year, period=state.period, turn=state.turn,
+        )
+        return {"effects": [{
+            "event_id": "wuyin_lubian",
             "new_issues": [{"origin_kind": "event_pool", "id": "wuyin_lubian"}],
             "region_delta": {
                 "beizhili": {
@@ -234,11 +236,9 @@ def test_strategic_event_unauthorized_person_origin_reaches_final_projection(gam
                 "origin_ref": db.affairs.origin_ref(unauthorized.id),
                 "reason": "戊寅虏变软判主帅功过",
             }],
-        },
-        content=content,
-        open_affair_ids_at_input={authorized.id},
-    )
-    assert out["issue_summary"]["new_issues"][0].get("rejected") is not True
+        }]}
+
+    dispatch_month_segment(db, state, segment="戊寅虏变战果", translate_fn=translate)
     assert db.has_event_triggered("wuyin_lubian")
     assert db.conn.execute(
         "SELECT military_pressure FROM regions WHERE id = ?", ("beizhili",),
@@ -246,12 +246,10 @@ def test_strategic_event_unauthorized_person_origin_reaches_final_projection(gam
     assert db.conn.execute(
         "SELECT status FROM characters WHERE name = ?", ("卢象升",),
     ).fetchone()["status"] == "active"
-    rejected_persons = [
-        row for row in out["applied_person_changes"]
-        if row.get("rejected") and row.get("name") == "卢象升"
-    ]
-    assert len(rejected_persons) == 1
-    assert "事务不在本批" in str(rejected_persons[0].get("reason") or "")
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM rejection_reports WHERE section='applied_person_changes' "
+        "AND category='unauthorized_affair_origin'"
+    ).fetchone()[0] == 1
 
 
 def test_new_issue_affair_attach_failure_leaves_no_partial_product(game, monkeypatch):
