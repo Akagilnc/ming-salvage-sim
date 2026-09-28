@@ -24,7 +24,6 @@ from ming_sim.agents import (
     create_ending_summary_agent,
     create_relation_brew_agent,
     create_faction_brew_agent,
-    create_season_simulator_agent,
     create_settlement_attendant_agent,
     parse_agent_json,
     run_agent_text,
@@ -85,7 +84,6 @@ from ming_sim.decree_vocabulary import (
 from ming_sim.relation_brew import MonthEndRelationBrewLeg
 from ming_sim.simulation import (
     build_simulator_payload,
-    simulate_season_with_payload,
 )
 from ming_sim.strict_types import (
     IMPERIAL_AUTHORITY_BANDS, validate_affected_parties, validate_rejection_verdict,
@@ -146,7 +144,6 @@ from ming_sim.settlement_payload import (  # noqa: E402
     bind_decision_options,
     bind_decisions_to_candidate_events,
     group_secret_orders_for_sim,
-    iter_secret_order_ids,
     parse_decision_blocks,
 )
 
@@ -880,22 +877,6 @@ def _open_affair_ids_from_payload(payload: object) -> set[int]:
         except (TypeError, ValueError):
             continue
     return ids
-
-
-def secret_dossier_ids_from_secret_orders(db: GameDB, secret_orders: object) -> set[int]:
-    """#1252: freeze secret-dossier roster-write authority from batch secret_orders.
-
-    Resolve each real secret-order id via get_dossier_for_secret_order. Missing
-    authority is an empty closed set — callers must never rebuild from live DB
-    beyond the frozen order-id batch.
-    """
-    out: set[int] = set()
-    for order_id in iter_secret_order_ids(secret_orders):
-        dossier = db.get_dossier_for_secret_order(int(order_id))
-        if dossier is None:
-            continue
-        out.add(int(dossier["id"]))
-    return out
 
 
 def _record_settlement_narrative_sources(

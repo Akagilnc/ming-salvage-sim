@@ -33,10 +33,6 @@ from ming_sim.issues import apply_score_extraction
 from ming_sim.memories import effect_brief
 from ming_sim.agents import build_simulator_context
 from ming_sim.materials import list_materials, prepare_character_materials, read_material
-from ming_sim.simulation import (
-    simulate_season_with_payload,
-)
-
 @pytest.fixture
 def disaster_shaanxi(game):
     """陕西挂显式灾情事实（真源＝regions.natural_disaster 字段）。"""

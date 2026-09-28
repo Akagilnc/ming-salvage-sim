@@ -25,10 +25,17 @@ from ming_sim.session import GameSession
 
 
 def _canned(monkeypatch):
-    monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
     monkeypatch.setattr(
-        decree_mod, "simulate_season_with_payload",
-        lambda *a, **k: ("令牌测无旨月邸报。", k.get("simulator_payload") or {}),
+        "ming_sim.month_chain.run_world_segment_text",
+        lambda *_a, **_k: "令牌测无旨月邸报。",
+    )
+    monkeypatch.setattr(
+        "ming_sim.month_chain.run_gazette_text",
+        lambda *_a, **_k: ("邸报", "令牌测无旨月邸报。"),
+    )
+    monkeypatch.setattr(
+        "ming_sim.month_translate.translate_month_segment",
+        lambda *_a, **_k: {"effects": {}},
     )
 
 

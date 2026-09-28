@@ -67,34 +67,38 @@ def run_world_segment_text(
 
 
 def _gazette_public_fact(fact: Any, secret_dossier_ids: Optional[set[int]] = None) -> bool:
-    origin = str(getattr(fact, "origin_ref", "") or "")
-    if origin.startswith("secret_order:"):
-        return False
-    from ming_sim.materials import dossier_id_in_origin
+    from ming_sim.materials import dossier_id_in_origin, is_secret_order_origin
 
+    origin = str(getattr(fact, "origin_ref", "") or "")
+    if is_secret_order_origin(origin):
+        return False
     dossier_id = dossier_id_in_origin(origin)
     return dossier_id is None or dossier_id not in (secret_dossier_ids or set())
 
 
 def _gazette_public_event(event: Any) -> bool:
     """作者经历投影：密令简报仍留在大臣自己的知识里，不写入作者可读经历。"""
+    from ming_sim.materials import is_secret_order_origin
+
     if not isinstance(event, dict):
         return True
     kind = str(event.get("kind") or "")
     source = str(event.get("source_id") or "")
     if kind in {"secret_order", "secret_order_brief"}:
         return False
-    return not source.startswith("secret_order")
+    return not is_secret_order_origin(source)
 
 
 def _secret_sourced(value: object) -> bool:
+    from ming_sim.materials import is_secret_order_origin
+
     if isinstance(value, dict):
         if str(value.get("kind") or "") == "secret_order":
             return True
         if value.get("secret_order_id"):
             return True
         origin = str(value.get("origin_ref") or value.get("source_id") or "")
-        if origin.startswith("secret_order:"):
+        if is_secret_order_origin(origin):
             return True
         orders = value.get("secret_orders")
         if isinstance(orders, list) and orders:
@@ -103,12 +107,6 @@ def _secret_sourced(value: object) -> bool:
     if isinstance(value, list):
         return any(_secret_sourced(item) for item in value)
     return False
-
-
-def _secret_dossier_ids(db: Any) -> set[int]:
-    from ming_sim.materials import secret_order_dossier_ids
-
-    return secret_order_dossier_ids(db)
 
 
 def _origin_is_secret_dossier(origin: object, secret_dossiers: set[int]) -> bool:
@@ -126,7 +124,9 @@ def _item_is_secret_dossier(item: object, secret_dossiers: set[int]) -> bool:
 
 
 def _decree_ref_is_secret(db: Any, decree_ref: str) -> bool:
-    if str(decree_ref).startswith("secret_order:"):
+    from ming_sim.materials import is_secret_order_origin
+
+    if is_secret_order_origin(decree_ref):
         return True
     prefix = "pending-action:"
     if not str(decree_ref).startswith(prefix):
@@ -151,8 +151,10 @@ def _month_fact_materials(
     """
     import json
 
+    from ming_sim.materials import is_secret_order_origin, secret_order_dossier_ids
+
     turn = int(state.turn)
-    secret_dossiers = _secret_dossier_ids(db) if not include_secret_sources else set()
+    secret_dossiers = secret_order_dossier_ids(db) if not include_secret_sources else set()
     nominal: List[Dict[str, Any]] = []
     forecasts: List[str] = []
     if hasattr(db, "conn"):
@@ -190,7 +192,7 @@ def _month_fact_materials(
         ):
             origin = str(row["origin_ref"] or "")
             if not include_secret_sources and (
-                origin.startswith("secret_order:")
+                is_secret_order_origin(origin)
                 or _origin_is_secret_dossier(origin, secret_dossiers)
             ):
                 continue
@@ -305,9 +307,11 @@ def run_gazette_text(
     from ming_sim.llm_transport import audience_transport_policy
     from ming_sim.materials import prepare_world_materials, release_material_tree
 
+    from ming_sim.materials import SECRET_ORDER_ORIGIN_PREFIX, secret_order_dossier_ids
+
     if llm_config is None:
         raise LLMUnavailable("邸报缺少模型配置", stage="gazette")
-    secret_dossiers = _secret_dossier_ids(db)
+    secret_dossiers = secret_order_dossier_ids(db)
 
     def include_fact(fact: Any) -> bool:
         return _gazette_public_fact(fact, secret_dossiers)
@@ -321,7 +325,7 @@ def run_gazette_text(
         db, state,
         include_fact=include_fact,
         include_event=include_event,
-        ledger_origin_prefix_excluded="secret_order:",
+        ledger_origin_prefix_excluded=SECRET_ORDER_ORIGIN_PREFIX,
         exclude_secret_order_audience=True,
         exclude_secret_order_dossiers=True,
     )

@@ -54,17 +54,12 @@ class _CannedEndorsementExtractor:
 
 
 def _fake_settlement_llm(monkeypatch, *, narrative="本月邸报：边饷已清。", delta=None):
-    monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
     monkeypatch.setattr(
         decree_mod, "llm_promulgation_verdicts",
         lambda dossiers, _state, **_kwargs: [
             {"dossier_id": row["id"], "decision": "promulgated"}
             for row in dossiers
         ],
-    )
-    monkeypatch.setattr(
-        decree_mod, "simulate_season_with_payload",
-        lambda *a, **k: (narrative, k.get("simulator_payload") or {}),
     )
     monkeypatch.setattr(session_mod, "write_decree_with_agno", lambda *a, **k: "奉天承运，诏曰……")
     monkeypatch.setattr(

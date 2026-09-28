@@ -141,8 +141,8 @@ def test_s2_secret_field_appends_via_real_settle_and_recovery_replays(game):
     )
     db.conn.commit()
     grouped = _grouped(db, state, [order_id])
-    from ming_sim.decree import secret_dossier_ids_from_secret_orders
-    assert dossier_id in secret_dossier_ids_from_secret_orders(db, grouped)
+    from ming_sim.materials import secret_order_dossier_ids
+    assert dossier_id in secret_order_dossier_ids(db)
 
     decree.pre_settle(state, db)
     db.save_resolve_context(

@@ -22,9 +22,9 @@ from ming_sim.decree import (
     _provenance_from_stored,
     persist_resolve_context,
     prepare_resolve_front_half,
-    secret_dossier_ids_from_secret_orders,
     settle_with_delta,
 )
+from ming_sim.materials import secret_order_dossier_ids
 from ming_sim.settlement_payload import (
     _recovered_grouped,
     _select_secret_orders_for_sim,
@@ -217,9 +217,7 @@ def run_settle(db, state, content, raw_delta, *, narrative="", decree_text="", r
         )
         secret_orders_for_sim = _recovered_grouped(ctx.get("secret_orders"))
         dossier_ids_at_input = _dossier_ids_from_simulator_payload(simulator_payload)
-        secret_dossier_ids_at_input = secret_dossier_ids_from_secret_orders(
-            db, secret_orders_for_sim,
-        )
+        secret_dossier_ids_at_input = secret_order_dossier_ids(db)
         open_affair_ids_at_input = _open_affair_ids_from_payload(simulator_payload)
     else:
         # ready=0 → 校验 delta、冻结 closed set、合并 arrivals、升 ready=1。
@@ -238,9 +236,7 @@ def run_settle(db, state, content, raw_delta, *, narrative="", decree_text="", r
         secret_orders_for_sim = augment_secret_orders_with_due_commitments(
             secret_orders_for_sim, db, state,
         )
-        secret_dossier_ids_at_input = secret_dossier_ids_from_secret_orders(
-            db, secret_orders_for_sim,
-        )
+        secret_dossier_ids_at_input = secret_order_dossier_ids(db)
         simulator_payload = _merge_settle_simulator_payload(
             ctx,
             dossier_ids_at_input=dossier_ids_at_input,

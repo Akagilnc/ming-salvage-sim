@@ -39,16 +39,11 @@ _REPO = Path(__file__).resolve().parents[1]
 
 def _stub_full_settlement(monkeypatch, *, narrative: str, payload_spy=None):
     """只替外部 LLM 缝；结算脊骨走生产码。"""
-    monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
-
     def _sim(*a, **k):
         payload = k.get("simulator_payload") or {}
         if payload_spy is not None:
             payload_spy.append(payload)
         return narrative, payload
-
-    monkeypatch.setattr(decree_mod, "simulate_season_with_payload", _sim)
-
 
 def test_hitl_quota_mechanism_fully_deleted():
     """机制缺席：配置读写/loader/API/payload 注入/UI 选择器全部不在。"""

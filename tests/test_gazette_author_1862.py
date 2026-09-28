@@ -450,3 +450,39 @@ def test_gazette_failure_retries_report_only(game, monkeypatch):
     archive = db.get_turn_report_archive(turn)
     assert archive["title"] == _TITLE
     assert archive["report"] == _REPORT
+
+
+def test_reopen_secret_origin_prefix_is_single_definition():
+    """#1862 reopen：密令来源前缀与案卷判法各只有一处。"""
+    import ming_sim.agents as agents_mod
+    import ming_sim.decree as decree_mod
+    import ming_sim.simulation as simulation_mod
+    from ming_sim.materials import (
+        SECRET_ORDER_ORIGIN_PREFIX,
+        is_secret_order_origin,
+        secret_order_origin,
+    )
+
+    assert SECRET_ORDER_ORIGIN_PREFIX == "secret_order:"
+    assert is_secret_order_origin("secret_order:9")
+    assert is_secret_order_origin(secret_order_origin(9))
+    assert not is_secret_order_origin("secret_order_disclosure:9")
+    assert not is_secret_order_origin("dossier:3")
+    assert not hasattr(decree_mod, "secret_dossier_ids_from_secret_orders")
+    assert not hasattr(agents_mod, "create_season_simulator_agent")
+    assert not hasattr(simulation_mod, "simulate_season_with_payload")
+    assert not hasattr(simulation_mod, "simulate_season_with_agno")
+
+
+def test_reopen_gazette_author_prompt_file_renamed():
+    """#1862 reopen：邸报提示按现职能命名。"""
+    from pathlib import Path
+
+    from ming_sim.content import GameContent
+
+    root = Path(__file__).resolve().parents[1]
+    assert (root / "content/prompts/gazette_author.md").is_file()
+    assert not (root / "content/prompts/season_simulator.md").exists()
+    content = GameContent.load()
+    assert content.gazette_author_prompt.strip()
+    assert not hasattr(content, "season_simulator_prompt")

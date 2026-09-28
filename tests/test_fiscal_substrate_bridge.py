@@ -4768,11 +4768,10 @@ def test_advance_without_edict_cutover_bad_state_uses_settlement_abort_error_pac
     before_turn = state.turn
     before_phase = state.turn_phase
 
-    # canned LLM；崩应在 pre_settle fiscal，到不了 simulator
-    monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
+    # canned LLM；崩应在 pre_settle fiscal，到不了世界段/邸报
     monkeypatch.setattr(
-        decree_mod, "simulate_season_with_payload",
-        lambda *a, **k: (_ for _ in ()).throw(AssertionError("不应到 simulator")),
+        "ming_sim.month_chain.run_world_segment_text",
+        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("不应到 world segment")),
     )
 
     sess = GameSession.__new__(GameSession)

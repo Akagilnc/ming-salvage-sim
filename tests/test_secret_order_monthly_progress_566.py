@@ -48,10 +48,17 @@ def _canned_monthly_settlement(monkeypatch, extractor_calls):
     """Keep the production settlement pipeline; replace only external LLM seams."""
     import ming_sim.decree as decree
 
-    monkeypatch.setattr(decree, "create_season_simulator_agent", lambda *a, **k: None)
     monkeypatch.setattr(
-        decree, "simulate_season_with_payload",
-        lambda *a, **k: ("本月公开邸报", k["simulator_payload"]),
+        "ming_sim.month_chain.run_world_segment_text",
+        lambda *_a, **_k: "本月公开邸报",
+    )
+    monkeypatch.setattr(
+        "ming_sim.month_chain.run_gazette_text",
+        lambda *_a, **_k: ("邸报", "本月公开邸报"),
+    )
+    monkeypatch.setattr(
+        "ming_sim.month_translate.translate_month_segment",
+        lambda *_a, **_k: {"effects": {}},
     )
 
     def extract(_agents, db, state, _narrative, *args, **kwargs):

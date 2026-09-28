@@ -808,41 +808,6 @@ def build_simulator_context(simulator_payload: Optional[Dict[str, object]]) -> s
     return "\n".join(parts)
 
 
-def create_season_simulator_agent(
-    llm_config: LLMConfig,
-    agno_db: SqliteDb,
-    state: Optional[GameState] = None,
-    db: Optional[object] = None,
-    simulator_payload: Optional[Dict[str, object]] = None,
-) -> Agent:
-    """月末推演日讲官。全量盘面走 user payload，无 tool。
-    走 advanced 角色派生：若 advanced_model 已配，用更强模型；否则 fallback 主 model。
-    一次性 agent：不传 db，免得 runs 累积撑爆 <db>.emperor.db。"""
-    del db, state, agno_db
-    cfg = _llm_for_role(llm_config, "simulator")
-    tlog(f"[simulator] 使用模型 {describe_effective_model(cfg)}")
-    # simulator_context 与 extractor 共用 build_simulator_context → 字节一致 → 暖好 extractor 前缀缓存。
-    simulator_context = build_simulator_context(simulator_payload)
-    from ming_sim.action_clusters import season_option_contract_prompt
-    instructions = [
-        _ctx().game_world_prompt,
-        simulator_context,
-        _ctx().season_simulator_prompt,
-        season_option_contract_prompt("grant_allocation"),
-    ]
-    if is_minimax_base_url(cfg.base_url):
-        instructions.insert(0, _MINIMAX_SHORT_THINKING_PROMPT)
-
-    return Agent(
-        name="月末推演日讲官",
-        id="season-simulator",
-        model=create_chat_model(cfg, temperature=0.9, top_p=0.95, enable_thinking=True),
-        instructions=instructions,
-        add_history_to_context=False,
-        markdown=False,
-    )
-
-
 def create_decree_forecast_agent(
     llm_config: LLMConfig,
     simulator_payload: Dict[str, object],
@@ -919,7 +884,7 @@ def create_gazette_author_agent(llm_config: LLMConfig, prepared: Any) -> Agent:
         model.materials_dir = str(root or "")
     instructions = [
         _ctx().game_world_prompt,
-        _ctx().season_simulator_prompt,
+        _ctx().gazette_author_prompt,
         "你写本期邸报。盘面与历月材料沿当前目录，按需自读。",
         "用 json 返回两个字段：title 是你为本期写的标题，report 是呈皇帝的全文。",
         str(getattr(prepared, "opening", "") or ""),

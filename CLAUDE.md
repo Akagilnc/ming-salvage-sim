@@ -43,7 +43,7 @@
 - **接口层（确定性↔LLM，别让 LLM 自己数数）**：`memories.effect_brief`（delta→「国库+30、了结局势X」）、`memories.build_timeline`、`agents.build_simulator_context`（盘面→TSV）。喂给我的盘面快照 / 效果摘要由它们生成。
 - **结算编排骨架**：玩家颁诏与退朝共用 `decree.resolve_directives → month_chain.run_player_month_chain`（ADR 0157）：收夜与 `pre_settle` 后，按旨序消费夜里暂存声明，推演／转译／提交世界段；未完成请旨先停批红，邸报归档后才判结局、推进月份。恢复从暂存声明及落账状态续跑，旧 extractor ready delta 不再由玩家入口重放；章节记忆已退役。`driver.py` 仍独立复用 `pre_settle + settle_with_delta` 这一确定性旧核及 ready 重放，不代表玩家主链。调用顺序与边界见 `docs/SETTLEMENT_FLOW.md`，规则真源见 ADR 0157。
 - **运行形态（web 第一，CLI 沉浸版后续）**：**目前 web 版本是第一个尝试方向**，走真实 LLM 后端（codex / agy / hermes，见下）。**「agent session 直接当后端」属后续的 CLI 文字沉浸版**——session 串行（一次一个 LLM 调用）使它在 web 月末并发轰多个 extractor 时会死锁，故那条路留给 CLI 沉浸版、不用在 web。⚠️ 别再凭「探针走 CLI」判 web 路 bug「够不着玩家」：web 是当前真实运行形态，web 路的问题就是真问题。
-- **6 文件三向处置**（agents/simulation/registry/decree/memories/llm_model）：🟢 保留契约/骨架 🟡 提炼成我的玩法说明书 🔴 扔纯 agno 管道（`llm_model.py` 整扔）。**领域金矿本体在 `content/prompts/*.md`（13 个，尤其 `season_simulator.md` 16K 字裁判规则 + 4 个 `score_extractor`）**。
+- **6 文件三向处置**（agents/simulation/registry/decree/memories/llm_model）：🟢 保留契约/骨架 🟡 提炼成我的玩法说明书 🔴 扔纯 agno 管道（`llm_model.py` 整扔）。**领域金矿本体在 `content/prompts/*.md`（含 `gazette_author.md` 邸报作者提示）**。
 
 ## LLM 后端（换模型时查，非每回合）
 hermes proxy 当 OpenAI 兼容后端：`hermes proxy start --provider nous|xai`，base_url `http://127.0.0.1:8645/v1`（`nous` 按量、`xai` SuperGrok 免费但中文叙事弱）。

@@ -854,7 +854,7 @@ def test_agent_factories_omit_max_tokens_on_param_surface(monkeypatch):
     fake_ctx = SimpleNamespace(
         game_world_prompt="gw",
         decree_writer_prompt="dw",
-        season_simulator_prompt="ss",
+        gazette_author_prompt="ga",
         ending_summary_prompt="es",
     )
     monkeypatch.setattr(agents_mod, "_ctx", lambda: fake_ctx)
@@ -882,7 +882,9 @@ def test_agent_factories_omit_max_tokens_on_param_surface(monkeypatch):
             cfg, SimpleNamespace(root="", opening="盘面"),
         )),
         ("create_decree_writer_agent", lambda: agents_mod.create_decree_writer_agent(cfg, object())),
-        ("create_season_simulator_agent", lambda: agents_mod.create_season_simulator_agent(cfg, object())),
+        ("create_gazette_author_agent", lambda: agents_mod.create_gazette_author_agent(
+            cfg, SimpleNamespace(root="", opening="盘面"),
+        )),
         ("create_promulgation_judge_agent", lambda: agents_mod.create_promulgation_judge_agent(
             cfg, object(),
             session_id="promulgation-judge-turn-test",
