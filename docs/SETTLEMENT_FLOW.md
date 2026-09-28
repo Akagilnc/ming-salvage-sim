@@ -1,4 +1,6 @@
-# SETTLEMENT_FLOW.md — 玩家过月与 driver 结算边界
+# SETTLEMENT_FLOW.md — 玩家过月结算边界
+
+> 〔#1846 2026-09-28：`driver.py` 与 ready=1 重放已删除。玩家入口唯一真源 = `month_chain.run_player_month_chain`；恢复见 #1846。下文凡写 driver / ready 重放均为历史资料。〕
 
 > 玩家入口已接入 ADR 0157。下方 S1/phase2 是旧核资料；`driver.py` 只复用其确定性结算部分，不运行旧 phase2。它不是 Web／GameSession 的现行过月顺序；规则以 [ADR 0157](adr/0157-v2-month-waits-for-exhausted-model-call-recovery.md) 为准。
 

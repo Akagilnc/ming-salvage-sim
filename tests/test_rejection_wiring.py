@@ -662,7 +662,7 @@ def test_driver_player_rejection_runner_boundary_fails_loud(
 
     不另造 settle_with_delta 平行主干；零宽占位已删，本案只咬失败与槽位。
     """
-    import driver as drv
+    from tests import section_rejection_helpers as drv
     from ming_sim.exceptions import SettlementAbort
     from tests.conftest import with_monthly_reports
 

@@ -13,13 +13,11 @@
 
 import ming_sim.db as db_mod
 
-
 def _capture_tlog(monkeypatch):
     """把 db 模块级 tlog 换成捕获器，返回收集到的消息 list。"""
     msgs: list[str] = []
     monkeypatch.setattr(db_mod, "tlog", lambda m: msgs.append(m))
     return msgs
-
 
 def test_pending_decisions_corrupt_options_json_falls_back_and_surfaces(game, monkeypatch):
     db, _state, _content = game
@@ -41,7 +39,6 @@ def test_pending_decisions_corrupt_options_json_falls_back_and_surfaces(game, mo
     # 可观测：tlog 留痕，且点名是 options_json 损坏
     assert any("options_json 损坏" in m for m in msgs), msgs
 
-
 def test_pending_decisions_corrupt_choice_json_returns_none_and_surfaces(game, monkeypatch):
     db, _state, _content = game
     # 损坏 choice_json（options 合法）——修复前 result 构建处 `json.loads(choice)` 无保护会崩。
@@ -60,7 +57,6 @@ def test_pending_decisions_corrupt_choice_json_returns_none_and_surfaces(game, m
     assert out[0]["choice"] is None  # 行为：损坏 choice 回退 None，不再崩
     assert any("choice_json 损坏" in m for m in msgs), msgs
 
-
 def test_resolve_context_corrupt_payload_falls_back_and_surfaces(game, monkeypatch):
     db, _state, _content = game
     db.save_resolve_context(
@@ -78,7 +74,6 @@ def test_resolve_context_corrupt_payload_falls_back_and_surfaces(game, monkeypat
     assert ctx is not None
     assert ctx["simulator_payload"] == {}  # 行为：损坏回退默认 {}，不抛
     assert any("simulator_payload JSON 损坏" in m for m in msgs), msgs
-
 
 def test_resolve_context_corrupt_secret_orders_falls_back_to_dict_and_surfaces(game, monkeypatch):
     db, _state, _content = game
@@ -100,26 +95,6 @@ def test_resolve_context_corrupt_secret_orders_falls_back_to_dict_and_surfaces(g
     assert ctx["secret_orders"] == {}
     assert any("secret_orders JSON 损坏" in m for m in msgs), msgs
 
-
-def test_resolve_context_corrupt_extracted_returns_none_and_surfaces(game, monkeypatch):
-    db, _state, _content = game
-    # 显式传 extracted（非 None）→ ready=1，get 时 extracted 可见路径。
-    db.save_resolve_context(
-        501, decree_text="旨", narrative="报",
-        simulator_payload={})
-    db.conn.execute(
-        "UPDATE pending_resolve_context SET extracted_delta_json = ? WHERE turn = ?",
-        ("{坏delta", 501),
-    )
-    db.conn.commit()
-
-    msgs = _capture_tlog(monkeypatch)
-    ctx = db.get_resolve_context(501)
-
-    assert ctx is not None
-    assert any("extracted_delta JSON 损坏" in m for m in msgs), msgs
-
-
 def _insert_corrupt_tags_memory(db, *, subject_type, subject_id, turn, tags_raw, suffix):
     """插一条 tags 列为损坏 JSON 的 event_memory（绕过正常写入的 json.dumps）。"""
     db.conn.execute(
@@ -130,7 +105,6 @@ def _insert_corrupt_tags_memory(db, *, subject_type, subject_id, turn, tags_raw,
         (subject_type, subject_id, turn, tags_raw, suffix),
     )
     db.conn.commit()
-
 
 def test_relevant_memories_corrupt_tags_no_crash_and_surfaces(game, monkeypatch):
     db, _state, _content = game
@@ -150,7 +124,6 @@ def test_relevant_memories_corrupt_tags_no_crash_and_surfaces(game, monkeypatch)
     assert out[0]["tags"] == []  # 行为：损坏 tags 回退空 list，不再崩
     assert any("tags JSON 损坏" in m for m in msgs), msgs
 
-
 def test_keyword_memories_corrupt_tags_no_crash_and_surfaces(game, monkeypatch):
     db, _state, _content = game
     db.conn.execute("DELETE FROM event_memories")
@@ -167,7 +140,6 @@ def test_keyword_memories_corrupt_tags_no_crash_and_surfaces(game, monkeypatch):
     assert len(out) == 1
     assert out[0]["tags"] == []  # 行为：损坏 tags 回退空 list，不再崩
     assert any("tags JSON 损坏" in m for m in msgs), msgs
-
 
 def test_legacy_modifiers_corrupt_json_skips_and_surfaces(game, monkeypatch):
     db, state, _content = game

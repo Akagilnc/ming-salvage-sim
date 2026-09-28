@@ -322,7 +322,7 @@ def test_month_end_participant_batch_rejects_each_malformed_item(game, bad_patch
     assert [item["character_id"] for item in roster] == [lead, good]
 
 def test_driver_settle_freezes_dossier_roster_authority_at_input(game, monkeypatch):
-    import driver
+    from tests import section_rejection_helpers as driver
 
     db, state, content = game
     lead, worker = _active_people(db, 2)
@@ -379,37 +379,7 @@ def test_driver_settle_freezes_dossier_roster_authority_at_input(game, monkeypat
     assert len(db.get_decree_dossier(secret_id)["participant_roster"]) == 0
     assert len(db.get_decree_dossier(created["id"])["participant_roster"]) == 1
 
-def test_settlement_replay_uses_only_persisted_dossier_authority(game):
-    import ming_sim.decree as decree
-
-    db, state, content = game
-    lead, worker = _active_people(db, 2)
-    allowed = db.create_decree_dossier(
-        state, action_type="assignment", decree_text="命修历。",
-        target_kind="issue", target_id="replay-allowed",
-        participants=[{"character_id": lead, "tier": "主办"}],
-    )
-    denied = db.create_decree_dossier(
-        state, action_type="assignment", decree_text="未入冻结输入。",
-        target_kind="issue", target_id="replay-denied",
-        participants=[{"character_id": lead, "tier": "主办"}],
-    )
-    extracted = {"dossier_participants": [
-        {"dossier_id": dossier_id, "character_id": worker, "tier": "协办", "delegator_id": lead}
-        for dossier_id in (allowed, denied)
-    ]}
-    decree.pre_settle(state, db)
-    db.save_resolve_context(
-        state.turn, "", "", {"decree_dossiers": [{"id": allowed}]},
-    )
-    import driver
-    driver.run_settle(db, state, content, extracted)
-    assert len(db.get_decree_dossier(allowed)["participant_roster"]) == 2
-    assert len(db.get_decree_dossier(denied)["participant_roster"]) == 1
-
-def test_extractor_never_reconstructs_missing_dossier_authority_from_live_db(
-    game, authority,
-):
+def test_extractor_never_reconstructs_missing_dossier_authority_from_live_db(game):
     db, state, _content = game
     lead, worker = _active_people(db, 2)
     dossier_id = db.create_decree_dossier(
@@ -418,12 +388,13 @@ def test_extractor_never_reconstructs_missing_dossier_authority_from_live_db(
         participants=[{"character_id": lead, "tier": "主办"}],
     )
 
+    # 输入权威集故意不含本 dossier：不得从 live DB 反推补权
     result = issue_engine.apply_score_extraction(db, state, {
         "dossier_participants": [{
             "dossier_id": dossier_id, "character_id": worker,
             "tier": "协办", "delegator_id": lead,
         }],
-    }, dossier_ids_at_input=authority)
+    }, dossier_ids_at_input=set())
 
     assert result["dossier_participants"][0]["rejected"] is True
     assert len(db.get_decree_dossier(dossier_id)["participant_roster"]) == 1

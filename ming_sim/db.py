@@ -1340,7 +1340,8 @@ class GameDB:
                 simulator_payload_json TEXT NOT NULL DEFAULT '{}',
                 secret_orders_json TEXT NOT NULL DEFAULT '[]',
                 relevant_memories_json TEXT NOT NULL DEFAULT '[]',
-                resolve_contract_version INTEGER NOT NULL DEFAULT 0,
+                source TEXT NOT NULL DEFAULT 'system_simulation',
+                attendant_message TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 

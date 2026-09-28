@@ -90,7 +90,7 @@ def test_s1_public_projection_filter_unchanged(game):
 
 def test_s2_secret_field_appends_via_real_settle_and_recovery_replays(game):
     """① 真实 settle 入口落密令 roster；recovery 同冻结 ctx 重放一致。"""
-    import driver
+    from tests import section_rejection_helpers as driver
     import ming_sim.decree as decree
     import ming_sim.issues as issue_engine
 
@@ -148,7 +148,8 @@ def test_s2_secret_field_appends_via_real_settle_and_recovery_replays(game):
     db.save_resolve_context(
         state.turn, "", "",
         {"decree_dossiers": []},
-        secret_orders=grouped, delta))
+        secret_orders=grouped,
+    )
     driver.run_settle(db, state, content, with_monthly_reports(db, delta))
     roster2 = db.get_decree_dossier(dossier_id)["participant_roster"]
     assert any(
@@ -302,7 +303,7 @@ def test_s2_missing_secret_authority_never_rebuilds_from_live_db(game, authority
 
 def test_s2_driver_persists_secret_orders_and_freezes_secret_authority(game, monkeypatch):
     """driver 同口径 DB 查询并 persist secret_orders，替掉 secret_orders=[]。"""
-    import driver
+    from tests import section_rejection_helpers as driver
 
     db, state, content = game
     lead, worker = _people(db, 2)
