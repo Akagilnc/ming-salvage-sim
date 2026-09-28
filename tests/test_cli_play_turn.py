@@ -648,7 +648,7 @@ def test_terminal_minister_chat_accepts_retry_reply_command(game, monkeypatch):
     ct = db.create_chat_turn(
         state, character.name, f"cli:{character.name}", 0,
         night_id=night_id, status="generating",
-        route="offsite",
+        route="",
     )
     mid = db.append_chat_message(character.name, state.turn, "user", question)
     db.update_chat_turn_messages(ct, user_message_id=mid)
@@ -697,7 +697,7 @@ def test_terminal_minister_chat_accepts_retry_reply_command(game, monkeypatch):
     ).fetchone()
     assert row["status"] == "active"
     assert row["minister_message_id"]
-    assert str(row["route"] or "") == "offsite"
+    assert str(row["route"] or "") == ""
 
     # #1842：回话返回后后台 schedule 封夜；等外部可见 CLOSED（禁假定同步）。
     from tests.wait_utils import wait_until

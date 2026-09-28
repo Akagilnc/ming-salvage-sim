@@ -681,7 +681,6 @@ export function App() {
         open={haremDrawerOpen}
         onGroupChange={setHaremGroup}
         onClose={() => setHaremDrawerOpen(false)}
-        onOpenChat={openChat}
         onUploadPortrait={uploadPortrait}
         chatEntryEnabled={chatEntryEnabled}
         phase={state.turn.phase}
@@ -747,8 +746,7 @@ export function App() {
           <ChatModal
             minister={activeMinister}
             ministers={audienceRoster}
-            portraitPrefix={(state.consorts || []).some((c) => c.name === activeMinister.name) ? "consort_" : "minister_"}
-            scrollMode={(state.consorts || []).some((c) => c.name === activeMinister.name) ? "legacy" : "audience"}
+            portraitPrefix="minister_"
             currentCampaignId={currentCampaignId}
             currentNightId={currentNightId}
             undoneChatIdentity={undoneChatIdentity}
@@ -765,7 +763,6 @@ export function App() {
             input={input}
             busy={busy}
             error={error}
-            secretOrders={secretOrders.filter((o) => o.status === "active")}
             replyRetries={replyRetries}
             translationRetries={translationRetries}
             retryReadFailure={retryReadFailure}
@@ -776,7 +773,6 @@ export function App() {
             onRetryTranslation={retryTranslation}
             onUndo={undoLastChat}
             onHint={setComposerHint}
-            onFavorite={toggleFavorite}
             scrollPosition={audienceScrollPositionsRef.current.get(`${currentCampaignId}:${currentNightId}`)}
             onScrollPositionChange={(position) => audienceScrollPositionsRef.current.set(`${currentCampaignId}:${currentNightId}`, position)}
             onClose={() => setActiveModal("none")}

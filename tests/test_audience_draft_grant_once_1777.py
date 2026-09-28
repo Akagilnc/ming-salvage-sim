@@ -131,7 +131,7 @@ def test_http_audience_one_matter_grant_with_deadline_1783(
 
         client = TestClient(web_app.app)
         petition = client.post(
-            f"/api/ministers/{name}/chat",
+            "/api/audience/chat",
             json={"message": _UTTERANCE},
         )
         assert petition.status_code == 200, petition.text
@@ -157,7 +157,7 @@ def test_http_audience_one_matter_grant_with_deadline_1783(
             for p in pending
         )
 
-        confirm = client.post(f"/api/ministers/{name}/chat", json={"message": "准"})
+        confirm = client.post("/api/audience/chat", json={"message": "准"})
         assert confirm.status_code == 200, confirm.text
         game._runtime_write_queue().barrier(lambda: None)
         wait_pending_writes(game)

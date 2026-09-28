@@ -218,8 +218,6 @@ def test_directive_capture_result_is_rejected_after_turn_changes(
 # 端点（无 file 参数的）→ 触发可调用。守门命中即 409、db.writes 为空。
 def _endpoint_cases():
     return [
-        ("secret_order", lambda: web_app.api_create_secret_order(
-            "某大臣", web_app.SecretOrderRequest(title="密", content="内容"))),
         ("withdraw_pending", lambda: web_app.api_withdraw_pending_action(5)),
         ("favorite_add", lambda: web_app.api_add_favorite("某大臣")),
         ("favorite_remove", lambda: web_app.api_remove_favorite("某大臣")),
@@ -236,7 +234,7 @@ def _endpoint_cases():
         # #1341：PATCH /api/decree 已删（零调用方）；不再列入写门面。
         # 撤回召对：undo_chat_turn 直写共享连接，自带的相位门是 phase-only（守不住 pre_settle 窗口），
         # 现一并走 _write_gate（cmr Gate2 r3 Finding1）。守门先于 undo_last_chat 触发。
-        ("undo_chat", lambda: web_app.api_undo_chat("某大臣")),
+        ("undo_chat", lambda: web_app.api_undo_audience_chat()),
         # 生命周期写（save 备份 commit / load 关连接热替换）：worker 持锁期间不得并发跑，
         # 否则撞 _commit_suspended（save→500）或关掉 worker 正写的连接（load 崩）。cmr Gate2 r5。
         # #1732：局内销毁式 /api/game/reset 已删，热替换写门面只剩 load_save。
@@ -425,86 +423,6 @@ def test_advance_short_hold_409_when_gate_taken_after_admit(monkeypatch):
         if game._write_gate.locked():
             game._write_gate.release()
         worker.join()
-
-
-def test_secret_order_endpoint_refused_by_phase_before_chat(monkeypatch):
-    """兼容密令按钮端点不得靠真实 WebGame.chat 的 blocking gate/phase-only 路径绕过守门。"""
-    game = _FakeGame(TurnPhase.SETTLING.value)
-    monkeypatch.setattr(web_app, "get_game", lambda: game)
-
-    def _unguarded_chat(*_args, **_kwargs):
-        with game._runtime_write_gate():
-            game.db.writes.append("chat")
-        return {}
-
-    game.chat = _unguarded_chat
-
-    with pytest.raises(HTTPException) as ei:
-        _invoke(web_app.api_create_secret_order(
-            "某大臣", web_app.SecretOrderRequest(title="密", content="内容")))
-
-    assert ei.value.status_code == 409
-    assert game.db.writes == []
-
-
-def test_secret_order_endpoint_refused_when_gate_held_before_chat(monkeypatch):
-    """锁被结算 worker 持有时，兼容密令按钮端点应 409，而不是阻塞在 WebGame.chat。"""
-    game = _FakeGame(TurnPhase.SUMMONING.value)
-    monkeypatch.setattr(web_app, "get_game", lambda: game)
-
-    def _unguarded_chat(*_args, **_kwargs):
-        with game._runtime_write_gate():
-            game.db.writes.append("chat")
-        return {}
-
-    game.chat = _unguarded_chat
-    game._write_gate.acquire()
-    result: dict[str, object] = {}
-
-    def _run_call():
-        try:
-            _invoke(web_app.api_create_secret_order(
-                "某大臣", web_app.SecretOrderRequest(title="密", content="内容")))
-        except BaseException as exc:
-            result["exc"] = exc
-        finally:
-            result["done"] = True
-
-    worker = threading.Thread(target=_run_call)
-    worker.start()
-    try:
-        worker.join()
-        assert result.get("done") is True, "secret_order endpoint blocked waiting for WebGame.chat"
-        exc = result.get("exc")
-        assert isinstance(exc, HTTPException)
-        assert exc.status_code == 409
-        assert game.db.writes == []
-    finally:
-        game._write_gate.release()
-        worker.join()
-
-
-def test_secret_order_endpoint_offloads_chat_work(monkeypatch):
-    """兼容密令按钮端点仍是 async 路由，但同步召对/写入必须离开事件循环线程。
-
-    #1357：不再 monkeypatch 死符号；走 FakeGame 上与生产同名的真方法。
-    """
-    game = _FakeGame(TurnPhase.SUMMONING.value)
-    monkeypatch.setattr(web_app, "get_game", lambda: game)
-    calls: list[str] = []
-
-    async def fake_run_in_threadpool(fn, *args, **kwargs):
-        calls.append("threadpool")
-        return fn(*args, **kwargs)
-
-    monkeypatch.setattr(web_app, "run_in_threadpool", fake_run_in_threadpool)
-
-    result = _invoke(web_app.api_create_secret_order(
-        "某大臣", web_app.SecretOrderRequest(title="密", content="内容")))
-
-    assert result["answer"] == "臣领旨。"
-    assert calls == ["threadpool"]
-    assert game.db.writes == ["chat"]
 
 
 def test_direct_db_write_succeeds_when_free(monkeypatch):

@@ -1711,7 +1711,7 @@ def _web_secret_landing_client(tmp_path, monkeypatch, backend_fn):
         if intent:
             body["intent"] = intent
         response = client.post(
-            f"/api/ministers/{name}/chat/stream",
+            "/api/audience/chat/stream",
             json=body,
         )
         assert response.status_code == 200, response.text
@@ -1833,7 +1833,7 @@ def test_http_chat_stream_secret_landing_recovery_player_readback(
         assert snap.get("extract_raw") == bad, "extract_raw 须完整原串"
         wait_pending_writes(game)
 
-        history_resp = client.get(f"/api/ministers/{name}/chat")
+        history_resp = client.get("/api/audience/chat")
         assert history_resp.status_code == 200, history_resp.text
         reload_payload = history_resp.json()
         reload_minister = [
@@ -2083,17 +2083,17 @@ def test_http_chat_stream_secret_landing_undo_round_leaves_nothing_to_resurrect(
         wait_pending_writes(game)
 
         report = (done.get("secret_order_landing_recovery") or {})["report"]
-        before = client.get(f"/api/ministers/{name}/chat").json()
+        before = client.get("/api/audience/chat").json()
         assert any(
             report in str(h.get("content") or "")
             for h in (before.get("history") or [])
         ), "撤回前这一轮回禀须真在记录里（否则下面的断言是空断言）"
 
-        undo = client.post(f"/api/ministers/{name}/chat/undo")
+        undo = client.post("/api/audience/chat/undo")
         assert undo.status_code == 200, undo.text
         wait_pending_writes(game)
 
-        after = client.get(f"/api/ministers/{name}/chat").json()
+        after = client.get("/api/audience/chat").json()
         assert not any(
             report in str(h.get("content") or "")
             for h in (after.get("history") or [])

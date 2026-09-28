@@ -334,7 +334,7 @@ def test_audience_grounded_army_pay_lands_through_close_night(
         turn_before = int(game.state.turn)
 
         draft = client.post(
-            f"/api/ministers/{name}/chat/stream", json={"message": AUDIENCE_MESSAGE},
+            "/api/audience/chat/stream", json={"message": AUDIENCE_MESSAGE},
         )
         assert draft.status_code == 200, draft.text
         game._runtime_write_queue().barrier(lambda: None)
@@ -346,7 +346,7 @@ def test_audience_grounded_army_pay_lands_through_close_night(
         ]
         assert [p.get("target_id") for p in pend] == ["guanning"]
 
-        approve = client.post(f"/api/ministers/{name}/chat", json={"message": "准"})
+        approve = client.post("/api/audience/chat", json={"message": "准"})
         assert approve.status_code == 200, approve.text
         game._runtime_write_queue().barrier(lambda: None)
         wait_pending_writes(game)

@@ -428,26 +428,22 @@ def _issue_entry(env: dict, *, entry: str = "E1") -> dict:
         # E1：显式前缀路由，classifier 不得被调用
         classifier.mode = "fail_if_called"
         resp = client.post(
-            f"/api/ministers/{MINISTER}/chat",
+            "/api/audience/chat",
             json={"message": E1_MESSAGE},
         )
     elif entry == "E2":
-        # E2：结构化端点路由，classifier 不得被调用
+        # #1849 reopen：结构化 secret_order 端点已删；同形前缀进殿上入口。
         classifier.mode = "fail_if_called"
+        lines = [f"密令如下：{E2_TITLE}", E2_CONTENT, "标签：关宁、欠饷", "期限：3月"]
         resp = client.post(
-            f"/api/ministers/{MINISTER}/secret_order",
-            json={
-                "title": E2_TITLE,
-                "content": E2_CONTENT,
-                "tags": ["关宁", "欠饷"],
-                "deadline_months": 3,
-            },
+            "/api/audience/chat",
+            json={"message": "\n".join(lines)},
         )
     elif entry == "E3":
         # E3：#1842 殿上无前缀不再走 classifier；显式 intent 走密令 session.chat。
         classifier.mode = "fail_if_called"
         resp = client.post(
-            f"/api/ministers/{MINISTER}/chat",
+            "/api/audience/chat",
             json={"message": E3_MESSAGE, "intent": "secret_order"},
         )
     else:
@@ -472,7 +468,7 @@ def _chat(env: dict, message: str) -> dict:
     stub_scene_agent(monkeypatch, agent)
     _wire_confirm_translate(game, env["confirm"], monkeypatch)
     resp = client.post(
-        f"/api/ministers/{MINISTER}/chat",
+        "/api/audience/chat",
         json={"message": message},
     )
     assert resp.status_code == 200, f"chat {message!r} → {resp.status_code}: {resp.text}"

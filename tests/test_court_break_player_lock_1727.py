@@ -137,14 +137,10 @@ def test_court_break_locks_player_writes_and_closes_night(web_game, monkeypatch)
                     async with _client() as client:
                         requests = {
                             "chat": client.post(
-                                f"/api/ministers/{minister}/chat",
+                                "/api/audience/chat",
                                 json={"message": "再问边饷？"},
                             ),
-                            "undo": client.post(f"/api/ministers/{minister}/chat/undo"),
-                            "secret_order": client.post(
-                                f"/api/ministers/{minister}/secret_order",
-                                json={"title": "边饷", "content": "速办边饷"},
-                            ),
+                            "undo": client.post("/api/audience/chat/undo"),
                             "withdraw": client.post("/api/pending_actions/1/withdraw"),
                         }
                         return {
@@ -160,7 +156,7 @@ def test_court_break_locks_player_writes_and_closes_night(web_game, monkeypatch)
     async def _run_stream() -> list[dict]:
         async with _client() as client:
             resp = await client.post(
-                f"/api/ministers/{minister}/chat/stream",
+                "/api/audience/chat/stream",
                 json={"message": "退朝"},
             )
             assert resp.status_code == 200, resp.text
@@ -180,7 +176,6 @@ def test_court_break_locks_player_writes_and_closes_night(web_game, monkeypatch)
     assert statuses == {
         "chat": 409,
         "undo": 409,
-        "secret_order": 409,
         "withdraw": 409,
     }
     # end 后终态：夜 closed + 收尾三拍 + 告退轮仍在（未被 undo 抽空）。

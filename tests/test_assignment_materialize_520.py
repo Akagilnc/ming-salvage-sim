@@ -761,7 +761,7 @@ def test_ordinary_assignment_without_commitment_lands(tracer_client, monkeypatch
 
     # ① HTTP chat → 转译 commissions → 外部 directive pending
     chat = client.post(
-        f"/api/ministers/{minister}/chat",
+        "/api/audience/chat",
         json={"message": assign_text},
     )
     assert chat.status_code == 200, chat.text
@@ -784,7 +784,7 @@ def test_ordinary_assignment_without_commitment_lands(tracer_client, monkeypatch
 
     # ② chat 应允：转译 promises → 生产 mark night_approved
     approve = client.post(
-        f"/api/ministers/{minister}/chat",
+        "/api/audience/chat",
         json={"message": "准。"},
     )
     assert approve.status_code == 200, approve.text
@@ -871,7 +871,7 @@ def test_pure_inquiry_stages_zero_mechanical_matters(tracer_client, monkeypatch)
 
     # ① 纯问事：HTTP chat + 空转译 → 零 pending
     out = client.post(
-        f"/api/ministers/{minister}/chat",
+        "/api/audience/chat",
         json={"message": q_msg},
     )
     assert out.status_code == 200, out.text
@@ -882,7 +882,7 @@ def test_pure_inquiry_stages_zero_mechanical_matters(tracer_client, monkeypatch)
 
     # ② 退朝退出（court_break → 生产 close_night）
     brk = client.post(
-        f"/api/ministers/{minister}/chat",
+        "/api/audience/chat",
         json={"message": "退朝"},
     )
     assert brk.status_code == 200, brk.text
@@ -901,7 +901,7 @@ def test_pure_inquiry_stages_zero_mechanical_matters(tracer_client, monkeypatch)
     box, translate_fn = _text_commission_translate(assign_msg)
     stub_audience_translate(monkeypatch, translate_fn)
     assign = client.post(
-        f"/api/ministers/{minister}/chat",
+        "/api/audience/chat",
         json={"message": assign_msg},
     )
     assert assign.status_code == 200, assign.text
@@ -914,7 +914,7 @@ def test_pure_inquiry_stages_zero_mechanical_matters(tracer_client, monkeypatch)
     assert pending.get("dossier_action_type") == "special_decree"
 
     approve = client.post(
-        f"/api/ministers/{minister}/chat",
+        "/api/audience/chat",
         json={"message": "准。"},
     )
     assert approve.status_code == 200, approve.text

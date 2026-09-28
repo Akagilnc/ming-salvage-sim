@@ -64,7 +64,6 @@ function renderModal(props: {
   minister: Minister;
   ministers?: Minister[];
   portraitPrefix: string;
-  scrollMode?: "audience" | "legacy";
   currentNightId?: number;
   undoneChatTurnId?: number | null;
   chat?: ChatMessage[];
@@ -79,12 +78,10 @@ function renderModal(props: {
   pendingIdentity?: { campaign_id: string; night_id: number; chat_turn_id: number } | null;
   failedIdentity?: { campaign_id: string; night_id: number; chat_turn_id: number } | null;
   suggestions?: Suggestion[];
-  secretOrders?: React.ComponentProps<typeof ChatModal>["secretOrders"];
   onSend?: (ministerName: string, text?: string) => void;
   onIntent?: (intent: "secret_order" | undefined) => void;
   onUndo?: (ministerName: string) => void;
   canUndoLastChat?: boolean;
-  onFavorite?: (minister: Minister) => void;
   onClose?: () => void;
   scrollPosition?: number;
   onScrollPositionChange?: (position: number) => void;
@@ -134,7 +131,6 @@ function renderModal(props: {
         minister={activeMinister}
         ministers={props.ministers ?? []}
         portraitPrefix={props.portraitPrefix}
-        scrollMode={props.scrollMode}
         currentCampaignId="test-campaign"
         currentNightId={currentNightId}
         undoneChatIdentity={undoneChatTurnId == null ? null : { campaign_id: "test-campaign", night_id: currentNightId, chat_turn_id: undoneChatTurnId }}
@@ -150,7 +146,6 @@ function renderModal(props: {
         composerHint=""
         input={input}
         error=""
-        secretOrders={props.secretOrders ?? []}
         replyRetries={props.replyRetries}
         onInput={(value) => setInput(value)}
         onIntent={props.onIntent}
@@ -160,7 +155,6 @@ function renderModal(props: {
         onRetryTranslation={props.onRetryTranslation}
         onUndo={props.onUndo ?? (() => {})}
         onHint={() => {}}
-        onFavorite={props.onFavorite ?? (() => {})}
         scrollPosition={props.scrollPosition}
         onScrollPositionChange={props.onScrollPositionChange}
         onClose={props.onClose ?? (() => {})}
@@ -459,7 +453,6 @@ describe("ChatModal — #1370 empty audience chrome", () => {
     const host = renderModal({
       minister: MINISTER_MOCK,
       portraitPrefix: "minister_",
-      scrollMode: "audience",
       currentNightId: 0,
     });
     await act(async () => { await Promise.resolve(); });
@@ -610,25 +603,6 @@ describe("ChatModal — placeholder switches on character type", () => {
 });
 
 describe("ChatModal — organic markdown display cleanup", () => {
-  it("strips markdown from minister replies while preserving the emperor's text", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({ night_id: 0, status: "", messages: [] }),
-    }));
-    renderModal({
-      minister: MINISTER_MOCK,
-      portraitPrefix: "minister_",
-      chat: [
-        { role: "user", content: "朕要看 **原文**。" },
-        { role: "minister", content: "**臣谨奏**：\n- 钱粮已足。" },
-      ],
-    });
-
-    await act(async () => { await Promise.resolve(); });
-    const messages = Array.from(document.querySelectorAll(".chat-message p"));
-    expect(messages[0]?.textContent).toBe("朕要看 **原文**。");
-    expect(messages[1]?.textContent).toBe("**臣谨奏**：\n- 钱粮已足。");
-  });
 
   it("#1280 scene/attendant 角色气泡同走 stripOrganicMarkdown", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
@@ -690,7 +664,6 @@ describe("ChatModal — four diegetic roles (#540)", () => {
 
 describe("ChatModal — soft scenes and selected-minister lens (#543 / #1511)", () => {
   it("keeps a side interjection in the selected minister segment without window bleed", async () => {
-    const favorite = vi.fn();
     const send = vi.fn();
     const undo = vi.fn();
     const retryReply = vi.fn();
@@ -711,7 +684,6 @@ describe("ChatModal — soft scenes and selected-minister lens (#543 / #1511)", 
       ministers: [yang, hong],
       portraitPrefix: "minister_",
       currentNightId: 23,
-      onFavorite: favorite,
       onSend: send,
       onUndo: undo,
       canUndoLastChat: true,
@@ -719,7 +691,6 @@ describe("ChatModal — soft scenes and selected-minister lens (#543 / #1511)", 
       onRetryReply: retryReply,
       onRetryTranslation: vi.fn(),
       suggestions: [{ label: "追问", text: "细奏边情" }],
-      secretOrders: [{ id: 9, minister_name: "洪承畴", title: "密察边饷", content: "暗访欠饷", status: "active", turn_issued: 1, due_turn: 2, year_issued: 1, period_issued: 11, tags: [], importance: 1, result: "", sim_note: "", turn_closed: null }],
     });
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
 
@@ -1037,20 +1008,6 @@ describe("ChatModal — single night-scroll authority (#539)", () => {
     expect(document.querySelector(".chat-message.thinking span")?.textContent).toBe("洪承畴");
   });
 
-  it("keeps ordinary no-night chat on the legacy projection", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({ night_id: 0, status: "", messages: [] }),
-    }));
-    renderModal({
-      minister: CONSORT_MOCK,
-      portraitPrefix: "consort_",
-      chat: [{ role: "minister", content: "宫中旧话照常" }],
-    });
-
-    await act(async () => { await Promise.resolve(); });
-    expect(document.body.textContent).toContain("宫中旧话照常");
-  });
 });
 
 describe("ChatModal — one-night audience scroll (#1849)", () => {
@@ -1780,12 +1737,6 @@ describe("ChatModal — thinking/loading text switches on character type (gemini
     expect(thinkingText()).toContain("大臣思索中");
   });
 
-  it("does NOT show 大臣 while a consort is thinking (neutral text)", () => {
-    renderModal({ minister: CONSORT_MOCK, portraitPrefix: "consort_", busy: "思考中" });
-    const text = thinkingText();
-    expect(text).not.toContain("大臣");
-    expect(text.length).toBeGreaterThan(0);
-  });
 });
 
 describe("ChatModal — cancel button during busy (issue #353)", () => {
@@ -1966,58 +1917,4 @@ describe("ReportModal — narrative settlement bulletin", () => {
   });
 });
 
-describe("ChatModal — explicit legacy authority", () => {
-  it("does not request or consume an open-night scroll for a consort", async () => {
-    const fetchMock = vi.fn();
-    vi.stubGlobal("fetch", fetchMock);
-    renderModal({
-      minister: CONSORT_MOCK,
-      portraitPrefix: "consort_",
-      scrollMode: "legacy",
-      chat: [{ role: "minister", content: "宫中旧话照常", chatTurnId: 99 }],
-    });
-    await act(async () => { await Promise.resolve(); });
-    expect(fetchMock).not.toHaveBeenCalled();
-    expect(document.body.textContent?.match(/宫中旧话照常/g)).toHaveLength(1);
-  });
-});
 
-describe("#1683 ChatModal place ⊥ office DOM", () => {
-  it("shows transit destination and keeps office when transit_to is set", () => {
-    renderModal({
-      minister: {
-        ...MINISTER_MOCK,
-        location: "henan",
-        location_label: "河南",
-        transit_to: "shandong",
-        transit_to_label: "山东",
-      },
-      portraitPrefix: "minister_",
-      scrollMode: "legacy",
-    });
-
-    const transit = document.querySelector(".minister-place.minister-transit");
-    expect(transit).not.toBeNull();
-    expect(transit!.textContent).toBe("山东");
-    expect(document.querySelectorAll(".minister-place")).toHaveLength(1);
-    expect(document.querySelector(".profile-office")?.textContent).toBe("内阁首辅");
-  });
-
-  it("shows location and keeps office when only location is set", () => {
-    renderModal({
-      minister: {
-        ...MINISTER_MOCK,
-        location: "henan",
-        location_label: "河南",
-      },
-      portraitPrefix: "minister_",
-      scrollMode: "legacy",
-    });
-
-    const place = document.querySelector(".minister-place");
-    expect(place).not.toBeNull();
-    expect(place!.classList.contains("minister-transit")).toBe(false);
-    expect(place!.textContent).toBe("河南");
-    expect(document.querySelector(".profile-office")?.textContent).toBe("内阁首辅");
-  });
-});

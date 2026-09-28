@@ -249,34 +249,31 @@ export function useChatActions({
   }, [selectedMinister]);
 
   const openChat = (minister: Minister) => {
-    if (minister.status && minister.status !== "active") {
-      setError(`${minister.name}已${minister.status_label}${minister.status_reason ? "（" + minister.status_reason + "）" : ""}，无法召见。`);
+    // #1849 reopen：召对只有殿上一个入口；非殿上名一律当「宣 X」加速器。
+    if (minister.name !== AUDIENCE_SCENE_SPEAKER) {
+      if (minister.status && minister.status !== "active") {
+        setError(`${minister.name}已${minister.status_label}${minister.status_reason ? "（" + minister.status_reason + "）" : ""}，无法召见。`);
+        return;
+      }
+      summonMinister(minister.name);
       return;
     }
-    const isConsort = (state?.consorts || []).some((consort) => consort.name === minister.name);
-    // 开夜中切大臣：写进夜卷轴「宣X」，不换面板归属。
-    if (activeModal === "chat" && currentNightId > 0 && !isConsort && activeMinister) {
-      void sendChat(activeMinister.name, `宣${minister.name}`);
-      return;
-    }
-    const switchingMinister = selectedMinister !== minister.name;
+    const switchingMinister = selectedMinister !== AUDIENCE_SCENE_SPEAKER;
     if (switchingMinister) {
       resetPanel();
       setSuggestions([]);
       setTemporaryActiveMinister(null);
       setCanUndoLastChat(false);
     }
-    setSelectedMinister(minister.name);
+    setSelectedMinister(AUDIENCE_SCENE_SPEAKER);
     setActiveModal("chat");
     setError("");
     setComposerHint("");
     setChatNotice("");
     setCanUndoLastChat(false);
     clearPendingText();
-    // 切换大臣时 selected-minister effect 会加载；只有重开同一大臣（effect 不触发）才显式加载，
-    // 免得一次切换发两条同大臣 GET（#499 陈旧快照回覆源头之一）。
     if (!switchingMinister) {
-      loadMinisterChat(minister.name).catch((err) => setError(err.message));
+      loadMinisterChat(AUDIENCE_SCENE_SPEAKER).catch((err) => setError(err.message));
     }
   };
 
@@ -298,7 +295,7 @@ export function useChatActions({
     setComposerHint("");
     clearPendingText();
     try {
-      const data = await api<ChatUndoResponse>(audienceUndoPath(targetMinisterName), {
+      const data = await api<ChatUndoResponse>(audienceUndoPath(), {
         method: "POST",
       });
       // Undo's GLOBAL effects (secret orders / directives / full state) apply
@@ -347,7 +344,7 @@ export function useChatActions({
     setChatNotice("");
     setRetryReadFailure(null);
     try {
-      const data = await api<ChatResponse>(audienceRetryPath(targetMinisterName), {
+      const data = await api<ChatResponse>(audienceRetryPath(), {
         method: "POST",
         body: JSON.stringify({ chat_turn_id: chatTurnId }),
       });

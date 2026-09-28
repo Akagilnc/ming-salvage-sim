@@ -1419,8 +1419,7 @@ class GameDB:
                 error_pack_path TEXT NOT NULL DEFAULT '',
                 post_reply_recovery TEXT NOT NULL DEFAULT '',
                 post_reply_error_pack_path TEXT NOT NULL DEFAULT '',
-                -- #1566/#1716：typed route（'' / offsite / secret_order / secret_order_offsite）；
-                -- 中断重试经 decode_chat_turn_route 恢复 explicit_secret_order / 殿上 scene。
+                -- #1849 reopen：route 恒空；密令/场外多值已删。
                 route TEXT NOT NULL DEFAULT '',
                 -- #1838：本轮转译声明的御前主角（按源轮；空=本轮未声明）
                 protagonist_name TEXT NOT NULL DEFAULT '',
@@ -9465,11 +9464,11 @@ class GameDB:
         return projection
 
     def list_hall_chat_turns(self, night_id: int) -> List[Dict[str, Any]]:
-        """殿上轮的原始持久身份，含升级前按朝臣存储的轮。"""
+        """本夜殿上轮（#1849 reopen：只按「殿上」取，不再拼升级前按朝臣存储）。"""
         rows = self.conn.execute(
             "SELECT id, minister_name, status, user_message_id, minister_message_id FROM chat_turns "
-            "WHERE night_id=? AND route IN ('', 'secret_order') ORDER BY id",
-            (int(night_id),),
+            "WHERE night_id=? AND minister_name=? ORDER BY id",
+            (int(night_id), "殿上"),
         ).fetchall()
         return [dict(row) for row in rows]
 

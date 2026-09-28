@@ -828,107 +828,6 @@ def test_cli_midflow_summon_rejects_unknown_unregistered_person(game, monkeypatc
     assert "未建档" in joined or "补档" in joined
 
 
-def test_tool_summon_does_not_splice_gate_reason_into_llm_answer(game, monkeypatch):
-    """#670 T4：session/web tool 拒入殿后 answer 保持模型原文，无闸文后缀。"""
-    import ming_sim.session as session_mod
-    from tests.test_audience_background import ToolExec, _FakeAgent, _web_game
-
-    db, state, content = game
-    capital = _set_place(game, "毕自严", location="beizhili")
-    remote = _set_place(game, "洪承畴", location="shaanxi")
-    model_answer = "臣请传洪承畴入对。"
-
-    class _Agent:
-        def run(self, _message):
-            return SimpleNamespace(
-                content=model_answer,
-                tools=[SimpleNamespace(
-                    tool_name="summon_minister",
-                    result=f"__summon__{remote.name}",
-                    arguments={"name": remote.name, "行程语气": "加急"},
-                )],
-            )
-
-    sess = GameSession.__new__(GameSession)
-    sess.db = db
-    sess.state = state
-    sess.content = content
-    sess.temporary_characters = {}
-    sess.registry = SimpleNamespace(
-        get=lambda _character, **_kw: _Agent(),
-    )
-    sess.llm_config = SimpleNamespace(channel="api")
-    sess._retrieve_memories_for_message = lambda text: text
-    sess._audience_prompt_for_message = lambda message, *a, **k: message
-    sess._start_cli_action_intent = lambda *_a, **_k: None
-    sess._finish_cli_action_intent = lambda *_a, **_k: None
-    sess._recognize_audience_command_verdict = lambda *_a, **_k: None
-    sess._apply_audience_command_verdict = lambda *a, **k: None
-    sess._confirmation_intent_for_preexisting_pending = (
-        lambda *a, **k: None
-    )
-    sess._scene_registry = SimpleNamespace(
-        start_open_enter=lambda *a, **k: None,
-        start_exit=lambda *a, **k: None,
-        join=lambda *_a, **_k: [],
-        abandon=lambda *_a, **_k: None,
-    )
-    monkeypatch.setattr(session_mod, "_dump_llm_messages", lambda *a, **k: None)
-
-    result = sess.chat(capital.name, "传洪承畴来")
-    assert result.answer == model_answer
-    assert "本回合不能入殿" not in result.answer
-    assert not result.court_action and not result.next_minister
-    assert any(
-        row["person_name"] == remote.name and row["kind"] == "fresh"
-        and row["travel_tone"] == "加急"
-        for row in an.list_unsettled_summons(db)
-    )
-
-    # web stream tool 路：复用既有 _chat_stream_payload 真入口夹具。
-    for row in list(an.list_unsettled_summons(db)):
-        an.settle_summon_origin(db, row["origin_id"])
-    tool_exec = ToolExec("summon_minister", f"__summon__{remote.name}")
-    tool_exec.arguments = {"name": remote.name, "行程语气": "星夜兼程"}
-    agent = _FakeAgent(tools=[tool_exec], chunks=[model_answer])
-    web_game = _web_game(db, state, content, agent)
-    web_game.session.summon_character = (
-        lambda name, current, allow_temporary=True: GameSession.summon_character(
-            web_game.session, name, current, allow_temporary=allow_temporary,
-        )
-    )
-    web_game.session.admit_audience = (
-        lambda character: GameSession.admit_audience(web_game.session, character)
-    )
-    web_game.session.can_summon = (
-        lambda character: GameSession.can_summon(web_game.session, character)
-    )
-    web_game.session.consume_audience_admission = (
-        lambda character, *, origin_id, state=None, origin_chat_turn_id=0, travel_tone="常行": (
-            GameSession.consume_audience_admission(
-                web_game.session, character, origin_id=origin_id,
-                state=state or web_game.session.state,
-                origin_chat_turn_id=origin_chat_turn_id,
-                travel_tone=travel_tone,
-            )
-        )
-    )
-    payload = web_game._chat_stream_payload(
-        capital.name,
-        "再请传洪承畴。",
-        chat_turn_id=0,
-        before_snapshot={},
-        accepted_turn=state.turn,
-        emit_delta=lambda _chunk, replace=False: None,
-    )
-    assert payload["answer"] == model_answer
-    assert "本回合不能入殿" not in payload["answer"]
-    assert not payload.get("court_action") and not payload.get("next_minister")
-    assert any(
-        row["person_name"] == remote.name and row["kind"] == "fresh"
-        and row["travel_tone"] == "星夜兼程"
-        for row in an.list_unsettled_summons(db)
-    )
 
 
 
@@ -1752,9 +1651,9 @@ def _http_typed_secret_order_payload(client, minister_name, message, *, stream):
     """#1566：经真实 FastAPI POST 读出机面 payload（sync JSON / stream SSE done）。"""
     body = {"message": message, "intent": "secret_order"}
     path = (
-        f"/api/ministers/{minister_name}/chat/stream"
+        "/api/audience/chat/stream"
         if stream
-        else f"/api/ministers/{minister_name}/chat"
+        else "/api/audience/chat"
     )
     response = client.post(path, json=body)
     assert response.status_code == 200, response.text
@@ -1779,117 +1678,6 @@ def _http_typed_secret_order_payload(client, minister_name, message, *, stream):
     return done[0]
 
 
-@pytest.mark.parametrize("stream", [False, True], ids=["sync", "stream"])
-def test_web_chat_formal_secret_order_hangs_night_without_enter(game, stream, monkeypatch):
-    """#1566：场外正式密令挂当前夜轮，不 consume 传召、不入殿；
-
-    summon+dismiss tool 与 typed 退朝均不得派 court_action / 换人 / exit / 留侍 / 收夜。
-    """
-    db, state, content = game
-    remote = _set_place(game, "洪承畴", location="shaanxi")
-    before_summons = list(an.list_unsettled_summons(db))
-    before_n = sum(
-        1 for p in db.list_pending_actions(state.turn) if p.get("kind") == "secret_order"
-    )
-
-    secret_title = "陕北赈抚探报"
-    _patch_secret_order_extract(monkeypatch, title=secret_title)
-    runtime = _secret_order_runtime(db, state, content, stream=stream)
-    old_pending_id = int(db.stage_pending_action(
-        state.turn,
-        "directive",
-        "新建",
-        remote.name,
-        {"decree_text": "既存候选", "mode": "special_decree"},
-    ))
-    old_pending = next(
-        p for p in db.list_pending_actions(state.turn)
-        if int(p["id"]) == old_pending_id
-    )
-    edict = "陕北赈抚探报\n速报陕西军情。"
-    payload = _formal_secret_order_payload(
-        runtime, remote.name, edict,
-        stream=stream,
-    )
-    assert not payload.get("admission"), (
-        f"正式密令不得被 SUMMON_* admission 截获，got admission={payload.get('admission')!r}"
-    )
-    # #1566：密令 route 吞 court actions（agent 带 summon+dismiss）。
-    assert not payload.get("court_action"), (
-        f"密令不得派 court_action，got {payload.get('court_action')!r}"
-    )
-    assert not payload.get("next_minister"), (
-        f"密令不得换人，got next_minister={payload.get('next_minister')!r}"
-    )
-    pid = int(payload.get("pending_action_id") or 0)
-    _assert_secret_order_pending(
-        db, state, minister_name=remote.name, pid=pid, edict=edict, title=secret_title,
-    )
-    assert an.list_unsettled_summons(db) == before_summons
-    assert sum(
-        1 for p in db.list_pending_actions(state.turn) if p.get("kind") == "secret_order"
-    ) == before_n + 1
-    after_pending = db.list_pending_actions(state.turn)
-    assert next(
-        p for p in after_pending if int(p["id"]) == old_pending_id
-    ) == old_pending
-    assert sum(p.get("kind") == "directive" for p in after_pending) == 1
-    assert sum(p.get("kind") == "commitment" for p in after_pending) == 0
-    chat_turn_id = int(payload.get("chat_turn_id") or 0)
-    assert chat_turn_id > 0
-    turn = db.conn.execute(
-        "SELECT night_id, night_seq, minister_message_id, status, route FROM chat_turns WHERE id=?",
-        (chat_turn_id,),
-    ).fetchone()
-    assert turn is not None
-    assert int(turn["night_id"] or 0) > 0
-    # 场外密令 route 须 durable 落 secret_order_offsite。
-    assert str(turn["route"] or "") == "secret_order_offsite"
-    scroll = an.read_night_scroll(db, int(turn["night_id"]))
-    assert not any(
-        m.get("beat") == "entrance" and m.get("speaker") == remote.name
-        for m in scroll
-    )
-    owned = [m for m in scroll if int(m.get("chat_turn_id") or 0) == chat_turn_id]
-    roles = {m.get("role") for m in owned}
-    assert "user" in roles
-    # 转译尚未落水位时回话保持中性，不能从原始 minister 消息抢定说话人。
-    assert "scene" in roles
-    assert "minister" not in roles
-    reply = db.conn.execute(
-        "SELECT content FROM chat_messages WHERE id=?", (turn["minister_message_id"],),
-    ).fetchone()["content"]
-    from ming_sim.audience_translation import apply_audience_round_translation
-    apply_audience_round_translation(
-        db, state,
-        {"scene_facts": [{
-            "body": reply, "role": "minister", "person_names": [remote.name],
-            "audibility": "殿上公开", "tags": ["scroll_role:minister"],
-        }]},
-        night_id=int(turn["night_id"]), chat_turn_id=chat_turn_id,
-        minister_name=remote.name,
-    )
-    settled = [m for m in an.read_night_scroll(db, int(turn["night_id"]))
-               if int(m.get("chat_turn_id") or 0) == chat_turn_id]
-    assert {m["role"] for m in settled} >= {"user", "minister"}
-
-    # #1566：typed 退朝在密令 intent 下不得收夜/留侍/court_break。
-    before_nights = db.conn.execute(
-        "SELECT COUNT(*) AS c FROM audience_nights"
-    ).fetchone()["c"]
-    break_payload = _formal_secret_order_payload(
-        runtime, remote.name, "退朝", stream=stream,
-    )
-    assert not break_payload.get("court_action"), (
-        f"typed 退朝+密令 intent 不得 court_action，got {break_payload.get('court_action')!r}"
-    )
-    after_nights = db.conn.execute(
-        "SELECT COUNT(*) AS c FROM audience_nights"
-    ).fetchone()["c"]
-    assert after_nights == before_nights
-    open_night = an.get_open_night(db)
-    assert open_night is not None
-    assert str(open_night.get("status") or "") == "open"
 
 
 @pytest.mark.parametrize("stream", [False, True], ids=["sync", "stream"])

@@ -322,7 +322,6 @@ def run_gazette_text(
         include_fact=include_fact,
         include_event=include_event,
         ledger_origin_prefix_excluded="secret_order:",
-        exclude_secret_order_audience=True,
         exclude_secret_order_dossiers=True,
     )
     message = json.dumps(_gazette_feed(db, state, chain), ensure_ascii=False)

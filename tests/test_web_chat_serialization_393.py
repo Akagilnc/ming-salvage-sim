@@ -91,11 +91,10 @@ class _FakeSession(HallAdmissionSessionMixin):
         return 0
 
     def scene_chat(self, message, *, chat_turn_id=0, stream_emit=None, minister_name="", on_protagonist_changed=None):
-        # #1842：殿上流式入口走 scene_chat；轻壳驱动既有假 agent，不复活旧 chat 并行链。
+        # #1849 reopen：殿上入口不绑单人 character；轻壳直接驱动假 agent。
         from ming_sim.session import ChatTurnResult
 
-        name = str(minister_name or next(iter(self.content.characters)))
-        agent = self.registry.get(self._character(name))
+        agent = self.registry.get(next(iter(self.content.characters.values())))
         parts: list[str] = []
         for event in agent.run():
             content = getattr(event, "content", None)
@@ -202,6 +201,18 @@ class _RecordingDB:
         # #1716：_chat_payload 经 pending_directive_count 读此口；轻壳无拟旨暂存
         return []
 
+    def load_all_chat_history(self):
+        out: dict[str, list] = {}
+        for m in self.messages:
+            out.setdefault(m["minister"], []).append({"role": m["role"], "content": m["content"]})
+        return out
+
+    def kv_get(self, _key):
+        return ""
+
+    def list_secret_orders(self):
+        return []
+
 
 def _runtime_for_stream_race():
     allow_finish = threading.Event()
@@ -216,12 +227,12 @@ def _runtime_for_stream_race():
 
     runtime = object.__new__(web_app.WebGame)
     runtime.session = _FakeSession(character, agent, state, db)
-    runtime.chat_history = {character.name: []}
+    runtime.chat_history = {character.name: [], "殿上": []}
     runtime._write_gate = ObservingLock(epilogue_contending)
     runtime.directive_rows = lambda: []
     runtime.directive_payload = lambda row: row
-    runtime.suggestions_for = lambda character: []
     runtime.can_undo_last_chat = lambda minister_name: False
+    runtime.pending_directive_count = lambda: 0
 
     def settlement():
         settlement_attempting.set()
@@ -241,7 +252,7 @@ def _runtime_for_stream_race():
 def test_background_stream_completion_waits_for_settlement_gate_and_keeps_acceptance_turn():
     runtime, minister_name, allow_finish, settlement_attempting, settlement = _runtime_for_stream_race()
 
-    stream = runtime.chat_stream(minister_name, "请奏")
+    stream = runtime.chat_stream("殿上", "请奏")
     first = next(stream)
     assert first == {"type": "delta", "content": "臣已知悉。"}
 
@@ -283,7 +294,7 @@ def test_identity_setup_failure_preserves_question_and_releases_pending_owner():
     runtime._fail_chat_turn_and_reload = lambda turn_id, snapshot, error: failed.append((turn_id, snapshot, error))
     runtime._complete_pending_write = lambda ticket=None: completed.append(True)
 
-    events = list(runtime.chat_stream(minister_name, "请奏"))
+    events = list(runtime.chat_stream("殿上", "请奏"))
 
     assert events == [{
         "type": "error", "message": "identity read failed",
@@ -299,7 +310,7 @@ def test_identity_setup_failure_preserves_question_and_releases_pending_owner():
 @pytest.mark.usefixtures("_atomic_connless_test_shell_compat")
 def test_lightweight_stream_seam_reaches_done_without_durable_identity_or_night_signature():
     runtime, minister_name, allow_finish, _settlement_attempting, _settlement = _runtime_for_stream_race()
-    stream = runtime.chat_stream(minister_name, "请奏")
+    stream = runtime.chat_stream("殿上", "请奏")
     assert next(stream)["type"] == "delta"
     allow_finish.set()
     assert next(stream)["type"] == "done"
@@ -321,7 +332,7 @@ def test_chat_stream_sse_waits_for_sync_generator_in_executor(monkeypatch):
     monkeypatch.setattr(web_app, "get_game", lambda: _BlockingGame())
 
     async def drive_first_event():
-        response = await web_app.api_chat_stream("测试大臣", web_app.ChatRequest(message="请奏"))
+        response = await web_app.api_audience_chat_stream( web_app.ChatRequest(message="请奏"))
         iterator = response.body_iterator
 
         async def tick():
@@ -341,7 +352,7 @@ def test_chat_stream_sse_waits_for_sync_generator_in_executor(monkeypatch):
 def test_nonstream_api_chat_keeps_game_state_responsive_while_chat_blocks(monkeypatch):
     """#1291+#1322: 非流式 chat 同步慢 LLM 在飞时，并发 GET /api/game/state 须在阈内响应。
 
-    根因：async api_chat 在事件循环上直调全同步 get_game().chat()（→ subprocess.run），
+    根因：async api_audience_chat 在事件循环上直调全同步 get_game().chat()（→ subprocess.run），
     整站 loop 卡死。对照流式端点 run_in_executor / directives to_thread——本测咬死卸载后
     的可观测序：state 探针先于阻塞 chat 完成。
     """
@@ -350,19 +361,18 @@ def test_nonstream_api_chat_keeps_game_state_responsive_while_chat_blocks(monkey
     allow_finish = threading.Event()
 
     class _SlowLLMGame:
-        """离线慢 LLM 替身：chat 进入后保持阻塞，直至 state 探针完成。"""
+        """离线慢 LLM 替身：chat_stream 进入后保持阻塞，直至 state 探针完成。"""
 
-        def chat(self, minister_name: str, message: str, intent=None, *, explicit_secret_order=False):
+        def chat_stream(self, minister_name: str, message: str, intent=None):
             chat_entered.set()
             allow_finish.wait()
             events.append("chat")
-            return {"answer": "臣已知悉。"}
+            yield {"type": "done", "payload": {"answer": "臣已知悉。"}}
 
         def state_payload(self):
             events.append("state")
             return {"ok": True, "turn": 1}
 
-    monkeypatch.setattr(web_app, "_require_active_minister", lambda minister_name: None)
     monkeypatch.setattr(web_app, "get_game", lambda: _SlowLLMGame())
 
     async def drive_concurrent_state_probe():
@@ -379,7 +389,7 @@ def test_nonstream_api_chat_keeps_game_state_responsive_while_chat_blocks(monkey
             return payload
 
         chat_result, state_payload = await asyncio.gather(
-            web_app.api_chat("测试大臣", web_app.ChatRequest(message="边饷如何？")),
+            web_app.api_audience_chat(web_app.ChatRequest(message="边饷如何？")),
             state_probe(),
         )
         return chat_result, state_payload
@@ -413,152 +423,14 @@ def test_nonstream_chat_rejects_when_session_draining():
     runtime._mark_pending_write = lambda key=None: runtime._write_queue.claim(key=key or ("pending",))  # type: ignore
     runtime._complete_pending_write = lambda ticket=None: runtime._write_queue.complete(ticket)  # type: ignore
 
-    with pytest.raises(HTTPException) as ei:
-        runtime.chat(character.name, "边饷如何？")
-    assert ei.value.status_code == 503
-    assert "正在关闭" in str(ei.value.detail)
+    events = list(runtime.chat_stream("殿上", "边饷如何？"))
+    assert events and events[0].get("type") == "error"
+    assert "正在关闭" in str(events[0].get("message") or "")
     assert runtime._pending_writes_count == 0
 
 
 
-def test_streamed_secret_order_preserves_blacklist_through_commit_restore_transfer_and_disclosure(game):
-    """Web tool capture must keep explicit secrecy exclusions through the full durable path."""
-    db, state, content = game
-    assignee = next(c for c in content.characters.values() if c.office_type == "兵部")
-    excluded = next(c for c in content.characters.values() if c.office_type == "户部")
-    agent = _SecretOrderAgent(
-        "__secret_order__" + json.dumps({
-            "title": "密查亏空", "content": "查户部旧账", "assignee": assignee.name,
-            "excluded_names": [excluded.name], "excluded_offices": ["户部"],
-            "covert_task": TYPED_COVERT_TASK,
-        }, ensure_ascii=False)
-    )
-    runtime = object.__new__(web_app.WebGame)
-    runtime.session = _FakeSession(assignee, agent, state, db)
-    runtime.chat_history = {assignee.name: []}
-    runtime.directive_rows = lambda: []
-    runtime.directive_payload = lambda row: row
-    runtime.suggestions_for = lambda character: []
-    runtime.can_undo_last_chat = lambda minister_name: False
-
-    payload = runtime._chat_stream_payload(
-        assignee.name, "密令如下：查户部旧账", 0, {}, state.turn, lambda _delta: None,
-    )
-
-    assert payload["pending_action_id"] > 0
-    pending = db.list_pending_actions(state.turn, minister_name=assignee.name)
-    assert len(pending) == 1
-    assert db.commit_pending_actions(state, minister_name=assignee.name)
-
-    order = db.list_secret_orders()[0]
-    assert order["excluded_targets"] == {
-        "people": [excluded.name], "offices": ["户部"],
-    }
-    path = db.path
-    db.close()
-
-    from ming_sim.db import GameDB
-
-    fresh_db = GameDB(path, content)
-    try:
-        restored = fresh_db.load_state()
-        fresh_db.set_character_office(excluded.name, "礼部尚书", office_type="礼部")
-        fresh_db.record_public_knowledge_event(
-            restored, "密查公开", "密查户部旧账已奉明发",
-            source_id=f"secret_order:{order['id']}",
-        )
-        knowledge = fresh_db.get_character_knowledge(restored, excluded.name)
-        assert not any(
-            item["source_id"] == f"secret_order:{order['id']}"
-            for item in knowledge["events"]
-        )
-        assert not any(
-            item["source_id"] == f"secret_order:{order['id']}"
-            for item in knowledge["public_events"]
-        )
-    finally:
-        fresh_db.close()
 
 
-def test_streamed_secret_order_update_pins_held_oral_and_keeps_it_private(game):
-    """Web streamed 更新 must preserve message-level secret provenance end to end."""
-    db, state, content = game
-    active = [c for c in content.characters.values() if c.status == "active"]
-    assignee, other = active[:2]
-    order_id = create_test_secret_order(db,
-        state, assignee.name, "密查国丈", "初旨：暗访田宅。", [],
-    )
-    oral = "续密：扩查国丈典当与内库往来，不得走漏。"
-    message_id = db.append_chat_message(assignee.name, state.turn, "user", oral)
-    agent = _SecretOrderAgent(
-        '__secret_action__{"action":"更新","order_id":%d,'
-        '"payload":{"title":"密查国丈（扩）","content":"扩查典当与内库往来。"}}'
-        % order_id
-    )
-    runtime = object.__new__(web_app.WebGame)
-    runtime.session = _FakeSession(assignee, agent, state, db)
-    runtime.chat_history = {assignee.name: []}
-    runtime.directive_rows = lambda: []
-    runtime.directive_payload = lambda row: row
-    runtime.suggestions_for = lambda character: []
-    runtime.can_undo_last_chat = lambda minister_name: False
-
-    result = runtime._chat_stream_payload(
-        assignee.name, oral, 0, {}, state.turn, lambda _delta: None,
-    )
-
-    pending = db.conn.execute(
-        "SELECT payload_json FROM pending_actions WHERE id=?",
-        (result["pending_action_id"],),
-    ).fetchone()
-    assert json.loads(pending["payload_json"])["origin_chat_message_id"] == message_id
-    assert db.commit_pending_actions(
-        state, minister_name=assignee.name,
-        action_ids={result["pending_action_id"]}, content=content,
-    )
-    db.release_held_audience_knowledge()
-    assert db.conn.execute(
-        "SELECT knowledge_status FROM chat_messages WHERE id=?", (message_id,),
-    ).fetchone()["knowledge_status"] == "withheld"
-    assert db.conn.execute(
-        "SELECT COUNT(*) FROM character_knowledge_sources WHERE source_id=?",
-        (f"chat_message:{message_id}",),
-    ).fetchone()[0] == 0
-    other_view = db.get_character_knowledge(state, other.name)
-    assert oral not in " ".join(
-        item.get("body", "")
-        for item in other_view["events"] + other_view.get("public_events", [])
-    )
 
 
-def test_streamed_secret_order_progress_does_not_pin_public_held_message(game):
-    """Web streamed 催办/记进展 must not invent secret bloodline."""
-    db, state, content = game
-    assignee = next(c for c in content.characters.values() if c.status == "active")
-    order_id = create_test_secret_order(db,
-        state, assignee.name, "密查国丈", "初旨：暗访田宅。", [],
-    )
-
-    for action in ("催办", "记进展"):
-        public_text = f"京营操练如何？顺便{action}前令。"
-        db.append_chat_message(assignee.name, state.turn, "user", public_text)
-        agent = _SecretOrderAgent(
-            '__secret_action__{"action":"%s","order_id":%d,"payload":{"note":"照办"}}'
-            % (action, order_id)
-        )
-        runtime = object.__new__(web_app.WebGame)
-        runtime.session = _FakeSession(assignee, agent, state, db)
-        runtime.chat_history = {assignee.name: []}
-        runtime.directive_rows = lambda: []
-        runtime.directive_payload = lambda row: row
-        runtime.suggestions_for = lambda character: []
-        runtime.can_undo_last_chat = lambda minister_name: False
-
-        result = runtime._chat_stream_payload(
-            assignee.name, public_text, 0, {}, state.turn, lambda _delta: None,
-        )
-        pending = db.conn.execute(
-            "SELECT payload_json FROM pending_actions WHERE id=?",
-            (result["pending_action_id"],),
-        ).fetchone()
-        assert "origin_chat_message_id" not in json.loads(pending["payload_json"])

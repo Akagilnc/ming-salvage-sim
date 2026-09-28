@@ -658,7 +658,7 @@ def test_nonstream_api_chat_llm_unavailable_is_structured_not_500(monkeypatch):
     monkeypatch.setattr(web_app, "get_game", lambda: _BoomChat())
 
     response = TestClient(web_app.app).post(
-        "/api/ministers/测试大臣/chat", json={"message": "边饷如何？"},
+        "/api/audience/chat", json={"message": "边饷如何？"},
     )
     detail = _assert_structured_llm_http(response)
     assert detail["code"] == "llm_cli_error"
@@ -820,7 +820,7 @@ def _post_chat_stream(monkeypatch, web_game, minister: str, message: str = "边�
     monkeypatch.setattr(web_app, "_require_active_minister", lambda _n: None)
     monkeypatch.setattr(web_app, "get_game", lambda: web_game)
     return TestClient(web_app.app).post(
-        f"/api/ministers/{minister}/chat/stream", json={"message": message},
+        "/api/audience/chat/stream", json={"message": message},
     )
 
 

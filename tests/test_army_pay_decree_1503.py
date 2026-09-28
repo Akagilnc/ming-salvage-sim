@@ -1653,7 +1653,7 @@ def test_http_chat_stream_exposes_typed_decree_validation_recovery(
         )
 
         response = TestClient(web_app.app).post(
-            f"/api/ministers/{name}/chat/stream",
+            "/api/audience/chat/stream",
             json={"message": message},
         )
         assert response.status_code == 200
@@ -1838,7 +1838,7 @@ def test_http_chat_issue_stream_pay_decree_keeps_month_unadvanced(
 
         client = TestClient(web_app.app)
         petition = client.post(
-            f"/api/ministers/{name}/chat",
+            "/api/audience/chat",
             json={"message": "拨关宁军饷十五万两。"},
         )
         assert petition.status_code == 200, petition.text
@@ -1864,7 +1864,7 @@ def test_http_chat_issue_stream_pay_decree_keeps_month_unadvanced(
         assert pending_id not in approved_ids
 
         confirm = client.post(
-            f"/api/ministers/{name}/chat",
+            "/api/audience/chat",
             json={"message": "准"},
         )
         assert confirm.status_code == 200, confirm.text

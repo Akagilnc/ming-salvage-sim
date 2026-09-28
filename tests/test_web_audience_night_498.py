@@ -212,27 +212,6 @@ def test_persisted_reply_before_translation_admission_has_no_retry_button(web_ga
     assert retry.status_code == 404
 
 
-def test_old_named_hall_turn_is_visible_and_undoable_from_scene_window(web_game):
-    game = web_game
-    night = an.open_night(game.db, game.state, location="乾清宫", time_of_day="夜")
-    old_speaker = _active_minister(game)
-    turn_id = game.db.create_chat_turn(game.state, old_speaker, "sess", 0, night_id=int(night["id"]))
-    user_id = game.db.append_chat_message(old_speaker, int(game.state.turn), "user", "边务如何？")
-    game.db.update_chat_turn_messages(turn_id, user_message_id=user_id)
-    game.db.persist_minister_reply(old_speaker, int(game.state.turn), "臣领旨。", turn_id)
-
-    async def scenario():
-        async with _client() as client:
-            before = (await client.get("/api/audience/chat")).json()
-            undone = await client.post("/api/audience/chat/undo")
-            after = (await client.get("/api/audience/chat")).json()
-            return before, undone, after
-
-    before, undone, after = asyncio.run(scenario())
-    assert any(message["chat_turn_id"] == turn_id for message in before["history"])
-    assert before["can_undo_last_chat"] is True
-    assert undone.status_code == 200
-    assert all(message["chat_turn_id"] != turn_id for message in after["history"])
 
 
 @pytest.mark.parametrize("night_status", [an.NIGHT_STATUS_CLOSING, an.NIGHT_STATUS_CLOSED])
@@ -510,7 +489,7 @@ async def _start_hanging_chat(game, client, minister, monkeypatch):
     # #1842：殿上 scene_chat 双桩——与 registry 同注入 agent
     stub_scene_agent(monkeypatch, agent)
     task = asyncio.create_task(
-        client.post(f"/api/ministers/{minister}/chat/stream", json={"message": "边饷如何？"}))
+        client.post("/api/audience/chat/stream", json={"message": "边饷如何？"}))
     try:
         # 生成已开始，或 chat worker 已终态（失败须传播，不得只等 started）。
         await _await_event_or_task(started, task)
@@ -554,7 +533,7 @@ def test_asgi_phase_flip_while_waiting_gate_rejected(web_game, monkeypatch):
             game._write_gate.acquire()  # 扮演结算 worker 持真实 write gate
             try:
                 chat_task = asyncio.create_task(
-                    client.post(f"/api/ministers/{minister}/chat/stream", json={"message": "边饷如何？"}))
+                    client.post("/api/audience/chat/stream", json={"message": "边饷如何？"}))
                 # 等真实 pending-write 态（锁前查之后、抢 gate 之前）——不替换私有方法，只读真实态
                 await _wait_for(lambda: getattr(game, "_pending_writes_count", 0) > 0)
                 game.state.turn_phase = TurnPhase.AWAITING_DECISION.value  # 结算翻相位
@@ -677,10 +656,10 @@ def test_asgi_inflight_reply_lands_then_issue_closes_and_advances(web_game, monk
 
     # 回话 done 先于流结束；end 表示回话尾随写入已 join。
     assert chat_events[-1]["event"] == "end"
-    # 回话真实入档 + 对话轮升 active
+    # 回话真实入档 + 对话轮升 active（#1849 reopen：殿上唯一入口）
     assert game.db.conn.execute(
         "SELECT COUNT(*) AS c FROM chat_messages WHERE minister_name=? AND role='minister'",
-        (minister,)).fetchone()["c"] == 1
+        ("殿上",)).fetchone()["c"] == 1
     assert game.db.conn.execute(
         "SELECT status FROM chat_turns WHERE night_id=?", (night["id"],)).fetchone()["status"] == "active"
     # 颁诏成功（done）+ 真实结算核：收夜封夜 + 推进回合 + 持久化
@@ -746,10 +725,10 @@ def test_web_issue_close_binds_endorsements_gate_free_after_same_night_dossier(w
     )
     # Interrupted reply ready for CLOSING reject / OPEN restore of /reply/retry.
     interrupted_ct = game.db.create_chat_turn(
-        game.state, minister, "retry-sess", 0, night_id=night_id,
+        game.state, "殿上", "retry-sess", 0, night_id=night_id,
     )
     interrupted_uid = game.db.append_chat_message(
-        minister, int(game.state.turn), "user", "中断待重试？",
+        "殿上", int(game.state.turn), "user", "中断待重试？",
     )
     game.db.update_chat_turn_messages(interrupted_ct, user_message_id=interrupted_uid)
     game.db.conn.execute(
@@ -825,7 +804,7 @@ def test_web_issue_close_binds_endorsements_gate_free_after_same_night_dossier(w
                 # chat (stream + non-stream) / reply-retry / story / stage / approve /
                 # draft-update — all refuse under CLOSING via the one admission seam.
                 chat_resp = await chat_client.post(
-                    f"/api/ministers/{minister}/chat/stream",
+                    "/api/audience/chat/stream",
                     json={"message": "另议边饷？"},
                 )
                 chat_events = _parse_sse(chat_resp.text)
@@ -833,12 +812,12 @@ def test_web_issue_close_binds_endorsements_gate_free_after_same_night_dossier(w
                 # wire 上 code 未进 SSE data（api_chat_stream 只映 message）；不改生产协议。
                 assert any(ev.get("event") == "error" for ev in chat_events), chat_events
                 nonstream = await chat_client.post(
-                    f"/api/ministers/{minister}/chat",
+                    "/api/audience/chat",
                     json={"message": "另议边饷？"},
                 )
                 assert nonstream.status_code == 409, nonstream.text
                 retry_resp = await chat_client.post(
-                    f"/api/ministers/{minister}/reply/retry",
+                    "/api/audience/reply/retry",
                 )
                 assert retry_resp.status_code == 409, retry_resp.text
                 assert game.db.conn.execute(
@@ -921,7 +900,7 @@ def test_web_issue_close_binds_endorsements_gate_free_after_same_night_dossier(w
     # OPEN restores interrupted-reply retry past the unique admission seam (canned chat,
     # no LLM); CAS reopen + persist succeed only after OPEN. Suppress trail workers so
     # dual-fail close does not race the shared SQLite conn.
-    assert game.db.get_interrupted_reply_retries(minister)
+    assert game.db.get_interrupted_reply_retries("殿上")
     real_scene = game.session.scene_chat
     real_spawn = game._spawn_pending_write_thread
     canned_retry_answer = "臣重奏：边饷当清。"
@@ -933,13 +912,13 @@ def test_web_issue_close_binds_endorsements_gate_free_after_same_night_dossier(w
     )
     game._spawn_pending_write_thread = lambda *a, **k: False
     try:
-        retry_payload = game.retry_interrupted_reply(minister)
+        retry_payload = game.retry_interrupted_reply("殿上")
     finally:
         game.session.scene_chat = real_scene
         game._spawn_pending_write_thread = real_spawn
     # canned 无损透传（等值，非文案分类）；队列清空证 OPEN 恢复。
     assert retry_payload.get("answer") == canned_retry_answer
-    assert game.db.get_interrupted_reply_retries(minister) == []
+    assert game.db.get_interrupted_reply_retries("殿上") == []
     game.db.conn.execute(
         "UPDATE chat_turns SET extract_status='done' WHERE id=?", (int(interrupted_ct),),
     )
