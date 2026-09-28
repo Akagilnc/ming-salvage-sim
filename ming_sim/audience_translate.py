@@ -198,8 +198,8 @@ def build_translation_target_grounding(db: Any) -> str:
     ).fetchall():
         stages = normalize_commitment_stages(row['stages_json'])
         lines.append(f"issue\t{int(row['id'])}\t{str(row['title'] or '')}")
-        for idx, stage in enumerate(stages):
-            lines.append(f"stage\t{int(row['id'])}\t{idx}\t{stage}")
+        for stage in stages:
+            lines.append(f"stage\t{int(row['id'])}\t{stage['stage_idx']}\t{stage}")
     if not lines:
         return ""
     body = "\n".join(lines)
