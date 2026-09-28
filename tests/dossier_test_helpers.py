@@ -96,7 +96,7 @@ def promulgate_proposed_appointments(db, state, content):
     """测试经公共判决入口顺颁当前全部 proposed 任命案卷。
 
     物化只走 DB/content（registry=None）；需要 commit 后 agent refresh 的
-    证明改经真实 settle_with_delta 外层入口，不保留平行旧路径。
+    外层月链验证由玩家过月测试承担，不在此另写平行路径。
     """
     # #657 §C.8：midzhi 亦不附 affected_parties（不猜派）。
     verdicts = [
