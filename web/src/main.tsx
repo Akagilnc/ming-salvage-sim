@@ -208,6 +208,7 @@ export function App() {
   const {
     settlementGazetteReading,
     advanceRefreshFailed,
+    retryAdvanceRefresh,
     dismissSettlementGazette,
     suppressPostAdvanceOverlays,
     pendingDecisions,
@@ -623,7 +624,10 @@ export function App() {
     />
   ) : null;
   if (advanceRefreshFailed) {
-    return <main className="game-shell">{currentGazette}</main>;
+    return <main className="game-shell">
+      <div className="recovery-banner" role="alert"><span className="recovery-banner-message">新月盘面载入失败：{error}</span><button type="button" onClick={() => void retryAdvanceRefresh()}>重试</button></div>
+      {currentGazette}
+    </main>;
   }
 
   return (
@@ -875,44 +879,17 @@ export function App() {
           #1418 r2 / #657：all-decided 或 typed resume_phase2 → 同条续跑面，空 POST resolve_decisions/stream。
           #1808 A：与 hud-error 同槽（.recovery-banner fixed top:64px）——恢复面挂载时 HUD 门控避让，
           不得压盖唯一续跑 CTA；fail-closed 回 player 时本面不挂，HUD 核心验收仍成立。 */}
-      {settleResumeMounted ? (
-        <div className="recovery-banner" data-testid="settle-resume">
-          <span className="recovery-banner-message">
-            {state.settlement_recovery?.message
-              || "上月结算未完成（进度已保存）。"}
-          </span>
-          {(() => {
-            // #1620：typed 恢复动作——phase2 / ready 重放 → resume；ready=0 → resimulate。
-            // 文案为人服务；契约只落真实 click→POST，不锁措辞、不挂测试专用属性。
-            const recoveryAction = phase2Resume || state.settlement_recovery?.ready_replay !== false
-              ? "resume"
-              : "resimulate";
-            return (
-              <button
-                className="seal-btn-issue"
-                onClick={phase2Resume ? resumePhase2 : issueDecree}
-                disabled={!!busy}
-              >
-                {recoveryAction === "resimulate" ? "重新推演" : "续跑结算"}
-              </button>
-            );
-          })()}
+      {settleResumeMounted || settlementHudError ? (
+        <div className="recovery-banner" role="alert">
+          <span className="recovery-banner-message">{state.settlement_recovery?.message || settlementHudError || "上月结算未完成（进度已保存）。"}</span>
+          <button className="seal-btn-issue" onClick={phase2Resume ? resumePhase2 : issueDecree} disabled={!!busy}>重试</button>
         </div>
       ) : null}
 
       {/* #1808：phase-1 fail-closed 的 HUD 告知——只吃 settlementHudError，不投影共享 error。
           相关 modal（拟诏/召对/未落库）正在消费同一失败时不双播；DecisionRecoveryPanel 另承 phase-2。
           呈现文本走上游消息，不新造固定句式。settle-resume 挂载时避让（A）。 */}
-      {settlementHudError && !edictOpen && !chatOpen && !settleResumeMounted ? (
-        <div
-          className="recovery-banner decision-recovery-banner"
-          role="alert"
-          aria-live="assertive"
-          data-testid="hud-error"
-        >
-          <span className="recovery-banner-message">{settlementHudError}</span>
-        </div>
-      ) : null}
+
 
       {/* 必达：批红恢复——不得被 busy / 本面邸报阅读态误关 */}
       {pausedDecisionError ? (

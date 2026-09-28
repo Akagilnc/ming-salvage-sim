@@ -156,7 +156,18 @@ export function useSettlementFlow({
     sessionGeneration.current += 1;
   }, []);
 
-  // 刷新失败后的统一提示与重试交 #1854；本 hook 只保留失败态门闩，不提供独立重试面。
+  const retryAdvanceRefresh = async () => {
+    try {
+      await loadState();
+      setAdvanceRefreshFailed(false);
+      setError("");
+      if (!settlementGazetteReading) setPostAdvanceOverlayHold(false);
+    } catch (err) {
+      console.warn("[settlement] post-advance refresh retry failed", err);
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
   const dismissSettlementGazette = React.useCallback(() => {
     setSettlementGazetteReading(null);
     if (!advanceRefreshFailed) setPostAdvanceOverlayHold(false);
@@ -456,6 +467,7 @@ export function useSettlementFlow({
   return {
     settlementGazetteReading,
     advanceRefreshFailed,
+    retryAdvanceRefresh,
     dismissSettlementGazette,
     /** #1852：本面邸报阅读中或过月刚翻月尚未落阅读态时，挡住自动弹层。 */
     suppressPostAdvanceOverlays: Boolean(settlementGazetteReading) || postAdvanceOverlayHold,
