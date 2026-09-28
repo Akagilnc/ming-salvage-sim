@@ -4420,8 +4420,8 @@ def _auto_close_open_night_gate_free(
     """Close the open audience night outside any outer runtime write gate.
 
     close_night holds the real runtime lock only for short prepare/finalize writes;
-    the night-level endorsement-only LLM runs with the gate released. Web issue /
-    stream / no-edict share this single orchestration (no duplicated close flow).
+    pending turn translations run with the gate released. Web issue / stream /
+    no-edict share this single orchestration (no duplicated close flow).
 
     #1353：过月屏障票据排在已领票之后——调用方经 queue.barrier 入此函数时，
     前序尾随已空放行/落库；close 内 wait_in_flight 只消费工人终态（K10a）。

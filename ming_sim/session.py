@@ -3970,7 +3970,7 @@ class GameSession:
         )
         accept_settlement_period(self.db, self.state)
         # #503/#542：收夜与开夜、入殿、退侍共用真实 scene LLM adapter。
-        # Close-night owns short write sections + gate-free endorsement LLM.
+        # Close-night owns short write sections + gate-free pending translations.
         # Web 入口先在闸外 free-close（issue/stream/no-edict），再持闸跑 resolve；
         # 此处幂等兜底 CLI/直调。
         # 调用方显式声明已持同一把非重入锁时不得再传入，避免 close 短写自锁；

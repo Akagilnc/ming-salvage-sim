@@ -1645,9 +1645,6 @@ class GameDB:
             );
             CREATE INDEX IF NOT EXISTS idx_dossier_endorsements_dossier
                 ON decree_dossier_endorsements(dossier_id, id);
-            -- ADR 0070 permits references only to existing dossiers. Remove the
-            -- superseded intermediate ledger from both fresh and restored saves.
-            DROP TABLE IF EXISTS pending_dossier_endorsements;
             CREATE TABLE IF NOT EXISTS decree_dossier_link_rejections (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 source_dossier_id INTEGER NOT NULL,
@@ -17909,7 +17906,7 @@ class GameDB:
             if origin_mid is not None:
                 payload_data["origin_chat_message_id"] = int(origin_mid)
         # #498：开夜期间 stage 的暂存挂 night_id；收夜只交本夜已应允 id
-        # #612：CLOSING 冻结新 stage（endorsement LLM 窗口输入冻结）
+        # CLOSING freezes new staged actions.
         from ming_sim.audience_night import assert_night_accepts_player_input
         open_n = assert_night_accepts_player_input(self, what="暂存")
         night_id = int(open_n["id"]) if open_n is not None else 0
