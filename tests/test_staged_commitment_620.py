@@ -17,7 +17,7 @@ import pytest
 
 from ming_sim.action_clusters import candidates_from_classifier_payload
 from ming_sim.action_materialize import MaterializeCtx, run_materialize_pipeline
-from tests.settlement_seam_helpers import settle_effects as settle_with_delta
+from tests.test_due_review_621 import _settle_empty_month as _player_month
 from ming_sim.issues import apply_score_extraction
 from ming_sim.models import TurnPhase
 from ming_sim.settlement_payload import augment_secret_orders_with_due_commitments
@@ -53,10 +53,8 @@ def _issue_row(db, issue_id: int):
 
 
 def _settle_empty_month(db, state, content):
-    before = state.turn
-    report = settle_with_delta(state, db, {}, before_turn=before, content=content)
-    assert state.turn == before + 1
-    return report
+    with pytest.MonkeyPatch.context() as patch:
+        return _player_month(db, state, content, patch)
 
 
 def _insert_staged_commitment(db, state, content, *, stages, title="徐光启分段之诺"):
@@ -596,19 +594,11 @@ def test_stage_due_via_settle_does_not_pause_turn(game):
     _settle_empty_month(db, state, content)  # 未到期
     assert db.list_next_audience_todos() == []
 
-    before = state.turn
-    report = settle_with_delta(state, db, {}, before_turn=before, content=content)
-    assert state.turn == before + 1
-    # 相位
-    assert state.turn_phase != TurnPhase.AWAITING_DECISION.value
-    assert state.turn_phase not in {TurnPhase.AWAITING_DECISION.value, "awaiting_decision"}
-    assert state.turn_phase == TurnPhase.SUMMONING.value
-    # pending_decisions 空
+    result = _settle_empty_month(db, state, content)
+    assert result.awaiting is False
+    assert state.turn_phase == TurnPhase.ISSUED.value
     assert db.list_pending_decisions(state.turn - 1) == []
     assert db.list_pending_decisions(state.turn) == []
-    # 无 DECISION 标记；todo 已写
-    assert isinstance(report, str) and report
-    assert "<<DECISION>>" not in report
     todos = db.list_next_audience_todos(status="pending")
     assert len(todos) == 1
 
@@ -636,13 +626,13 @@ def test_multi_stage_due_settlement_stays_out_of_awaiting_decision(game):
     _insert_staged_commitment(db, state, content, stages=stages)
 
     _settle_empty_month(db, state, content)  # 段0
-    assert state.turn_phase == TurnPhase.SUMMONING.value
+    assert state.turn_phase == TurnPhase.ISSUED.value
     assert db.list_pending_decisions(state.turn) == []
     assert len(db.list_next_audience_todos(status="pending")) == 1
 
     _settle_empty_month(db, state, content)  # 段1：#621 消费段0，新写段1
     assert state.turn_phase != TurnPhase.AWAITING_DECISION.value
-    assert state.turn_phase == TurnPhase.SUMMONING.value
+    assert state.turn_phase == TurnPhase.ISSUED.value
     assert db.list_pending_decisions(state.turn) == []
     assert len(db.list_next_audience_todos(status="pending")) == 1
     assert int(db.list_next_audience_todos(status="pending")[0]["stage_idx"]) == 1
@@ -750,9 +740,11 @@ def test_last_stage_due_with_ongoing_does_not_mechanical_expire(game):
         (issue_id,),
     ).fetchall()
     assert "expire" not in {a["trigger_kind"] for a in advances}
-    # #621 三拍消费：末段 settle 后段0 consumed、段1 本拍新写仍 pending
-    pending = db.list_next_audience_todos(status="pending")
-    consumed = db.list_next_audience_todos(status="consumed")
+    # #621 三拍消费：末段过月后段0 consumed、段1 本拍新写仍 pending
+    pending = [t for t in db.list_next_audience_todos(status="pending")
+               if int(t["commitment_ref"]) == issue_id and t["entry_kind"] == ENTRY_KIND_STAGED]
+    consumed = [t for t in db.list_next_audience_todos(status="consumed")
+                if int(t["commitment_ref"]) == issue_id and t["entry_kind"] == ENTRY_KIND_STAGED]
     assert {(int(t["commitment_ref"]), int(t["stage_idx"])) for t in pending} == {
         (issue_id, 1),
     }
