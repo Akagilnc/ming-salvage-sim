@@ -2413,8 +2413,6 @@ class GameDB:
                 "MAX(COALESCE(due_turn, 0)-COALESCE(turn_issued, 0), 0)"
             )
         self.ensure_column("secret_orders", "excluded_names", "TEXT NOT NULL DEFAULT '[]'")
-        self.ensure_column("public_sayings", "excluded_names", "TEXT NOT NULL DEFAULT '[]'")
-        self.ensure_column("public_sayings", "excluded_targets", "TEXT NOT NULL DEFAULT '{}'")
         # #566/#883: secret monthly reports stay private on the order itself.
         # #619 adds a separate physical general track (dossier_reported_progress);
         # the retired shared table name remains forbidden (no shared table+flag).

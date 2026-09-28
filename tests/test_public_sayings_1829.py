@@ -7,10 +7,11 @@ import threading
 
 import ming_sim.month_chain as month_chain
 from ming_sim.audience_night import open_night
-from ming_sim.audience_translation import apply_audience_round_translation
+from ming_sim.audience_translation import run_turn_translation_job
 from ming_sim.db import GameDB
 from ming_sim.models import LLMConfig
 from ming_sim.public_sayings import list_public_sayings, record_public_saying
+from tests.conftest import offline_empty_audience_translate
 from tests.test_month_chain_1843 import _prepare_player_month
 
 
@@ -106,7 +107,7 @@ def test_public_saying_excluded_name_does_not_see_it_others_do(game, monkeypatch
     other_name = _active_other(db, content, exclude={excluded_name, "袁崇焕"})
     claim = "袁崇焕已死于宁远"
 
-    # 现役召对落账入口（转译后 apply → dispatch；#1838 同缝）。
+    # 持久化召对源轮；只替换不可真跑的 LLM 转译接缝。
     # 回话须落定，否则收夜 wait_in_flight_clear 会把无 minister_message 的 active 轮当在飞。
     night = open_night(db, state, location="乾清宫", time_of_day="戌时")
     night_id = int(night["id"])
@@ -127,18 +128,24 @@ def test_public_saying_excluded_name_does_not_see_it_others_do(game, monkeypatch
     db.update_chat_turn_messages(
         chat_turn_id, user_message_id=int(uid), minister_message_id=int(mid),
     )
-    result = apply_audience_round_translation(
-        db, state,
-        {
+    def translate_fn(prompt, config):
+        return {
+            **offline_empty_audience_translate(prompt, config),
             "public_sayings": [{
                 "body": claim,
                 "involved_characters": ["袁崇焕"],
                 "excluded_names": [excluded_name],
                 "excluded_offices": [],
             }],
-        },
-        night_id=night_id,
-        chat_turn_id=chat_turn_id,
+            "scene_facts": [{
+                "body": "臣遵旨。", "role": "minister", "audibility": "殿上公开", "person_names": [other_name],
+            }],
+        }
+
+    result = run_turn_translation_job(
+        db, state, emperor_message="对外只说此事，勿使某人得知。",
+        reply="臣遵旨。", night_id=night_id, chat_turn_id=chat_turn_id,
+        translate_fn=translate_fn, minister_name=other_name,
     )
     assert len(result.public_sayings.applied) == 1
     assert result.public_sayings.rejected == []
