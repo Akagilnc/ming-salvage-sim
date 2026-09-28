@@ -18,7 +18,7 @@ from ming_sim.exceptions import LLMUnavailable
 from ming_sim.models import LLMConfig
 from ming_sim.session import GameSession
 from ming_sim.session_write_queue import get_session_write_queue
-from tests.conftest import offline_empty_audience_translate, stub_audience_translate, stub_scene_agent
+from tests.conftest import offline_empty_audience_translate, persist_and_schedule_scene, stub_audience_translate, stub_scene_agent
 
 
 def _sess(db, state, content, monkeypatch, translate_fn):
@@ -34,7 +34,7 @@ def _sess(db, state, content, monkeypatch, translate_fn):
     sess.agno_db = None
     sess._beat_generator = None
     sess._scene_registry = None
-    sess._write_gate = None
+    sess._write_gate = get_session_write_queue(sess).write_gate
     stub_audience_translate(monkeypatch, translate_fn)
     stub_scene_agent(monkeypatch, SimpleNamespace(
         run=lambda _message: SimpleNamespace(content="臣领旨。", tools=[]),
@@ -64,7 +64,9 @@ def test_scene_chat_approval_forecasts_each_decree_without_visible_effect(game, 
     )
     future_affair_id = visible_affair.id + 1
     treasury_before = int(state.metrics["国库"])
-    ledger_before = db.conn.execute("SELECT COUNT(*) FROM story_ledger_entries").fetchone()[0]
+    ledger_before = db.conn.execute(
+        "SELECT COUNT(*) FROM story_ledger_entries WHERE source_chat_turn_id IS NULL"
+    ).fetchone()[0]
     dossier_before = db.conn.execute("SELECT COUNT(*) FROM decree_dossiers").fetchone()[0]
     sources_before = {
         str(row[0]) for row in db.conn.execute(
@@ -123,7 +125,9 @@ def test_scene_chat_approval_forecasts_each_decree_without_visible_effect(game, 
 
     monkeypatch.setattr(month_translate, "run_declaration_translate_prompt", translate_segment)
     sess = _sess(db, state, content, monkeypatch, translate_fn)
-    sess.scene_chat("两道都准")
+    ctid = db.create_chat_turn(state, "殿上", "scene", 0, night_id=int(night["id"]))
+    result = sess.scene_chat("两道都准", chat_turn_id=ctid)
+    persist_and_schedule_scene(sess, db, result)
     assert get_session_write_queue(sess).wait_idle(timeout_s=5)
 
     assert db.conn.execute(
@@ -163,7 +167,11 @@ def test_scene_chat_approval_forecasts_each_decree_without_visible_effect(game, 
     rejections = settled.effects.applied[0]["economy_moves_rejections"]
     assert len(rejections) == 1
     assert rejections[0]["item"]["origin_ref"] == f"affair:{hidden.id}"
-    assert db.conn.execute("SELECT COUNT(*) FROM story_ledger_entries").fetchone()[0] == ledger_before
+    # Background translation legitimately adds a conversation entry; forecast must not
+    # publish an extra ledger entry of its own.
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM story_ledger_entries WHERE source_chat_turn_id IS NULL"
+    ).fetchone()[0] == ledger_before
     assert db.conn.execute("SELECT COUNT(*) FROM decree_dossiers").fetchone()[0] == dossier_before
     assert db.conn.execute(
         "SELECT 1 FROM decree_dossiers WHERE pending_action_id IN (?,?)",
@@ -183,7 +191,7 @@ def test_scene_chat_rejection_is_staged_for_later_rescript_not_shown_at_night(
     game, monkeypatch,
 ):
     db, state, content = game
-    open_night(db, state)
+    night = open_night(db, state)
     minister = next(iter(content.characters.values()))
     pending_id = db.stage_pending_action(
         state.turn, kind="directive", action="拟旨", minister_name=minister.name,
@@ -224,7 +232,9 @@ def test_scene_chat_rejection_is_staged_for_later_rescript_not_shown_at_night(
         lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("打回不得推演")),
     )
     sess = _sess(db, state, content, monkeypatch, translate_fn)
-    sess.scene_chat("准这道")
+    ctid = db.create_chat_turn(state, "殿上", "scene", 0, night_id=int(night["id"]))
+    result = sess.scene_chat("准这道", chat_turn_id=ctid)
+    persist_and_schedule_scene(sess, db, result)
     assert get_session_write_queue(sess).wait_idle(timeout_s=5)
 
     stored = db.staged_declarations.staged_for(pending_action_decree_ref(pending_id, 1))
@@ -248,7 +258,7 @@ def _policy_payload(actor: str, *, text: str, mode: str = "ordinary") -> dict:
 
 def test_repeat_scene_approval_does_not_rerun_exhausted_forecast(game, monkeypatch):
     db, state, content = game
-    open_night(db, state)
+    night = open_night(db, state)
     minister = next(iter(content.characters.values()))
     pending_id = db.stage_pending_action(
         state.turn, kind="directive", action="拟旨", minister_name=minister.name,
@@ -272,12 +282,13 @@ def test_repeat_scene_approval_does_not_rerun_exhausted_forecast(game, monkeypat
         lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("耗尽不得推演")),
     )
     sess = _sess(db, state, content, monkeypatch, translate_fn)
-    sess.scene_chat("准这道")
-    assert get_session_write_queue(sess).wait_idle(timeout_s=5)
-    assert calls == [1]
-    assert db.staged_declarations.staged_for(pending_action_decree_ref(pending_id, 1)) == ()
-    sess.scene_chat("再准这道")
-    assert get_session_write_queue(sess).wait_idle(timeout_s=5)
+    for message in ("准这道", "再准这道"):
+        ctid = db.create_chat_turn(state, "殿上", "scene", 0, night_id=int(night["id"]))
+        result = sess.scene_chat(message, chat_turn_id=ctid)
+        persist_and_schedule_scene(sess, db, result)
+        assert get_session_write_queue(sess).wait_idle(timeout_s=5)
+        assert calls == [1]
+        assert db.staged_declarations.staged_for(pending_action_decree_ref(pending_id, 1)) == ()
     assert calls == [1]
     assert int(db.conn.execute(
         "SELECT night_approved, version FROM pending_actions WHERE id=?", (pending_id,),

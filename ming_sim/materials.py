@@ -1397,6 +1397,7 @@ def _write_world_tree(
     public_events: list,
     affair_lines: list[tuple[str, str, str, str]],
     board_text: str,
+    denunciation_facts: dict[str, object],
     include_fact: Any = None,
     include_event: Any = None,
     secret_turn_ids: set[int] | None = None,
@@ -1409,6 +1410,10 @@ def _write_world_tree(
     board_rel = f"{_BOARD_DIR}/全局.txt"
     _write_text(tmp / board_rel, board_text)
     index.append(board_rel)
+
+    denunciation_rel = f"{_BOARD_DIR}/派系检举事实.txt"
+    _write_text(tmp / denunciation_rel, json.dumps(denunciation_facts, ensure_ascii=False))
+    index.append(denunciation_rel)
 
     _write_text(tmp / _COURT_ROSTER_REL, _world_roster_text(db, state))
     index.append(_COURT_ROSTER_REL)
@@ -1972,13 +1977,16 @@ def prepare_world_materials(
         db, state, ledger_origin_prefix_excluded=ledger_origin_prefix_excluded,
         exclude_dossier_ids=secret_dossiers or None,
     )
+    denunciation_facts = db.build_faction_denunciation_facts(
+        exclude_dossier_ids=secret_dossiers,
+    )
 
     dest, index = _publish_material_tree(
         dest_root,
         world_materials_root(db, state),
         lambda tmp: _write_world_tree(
             tmp, db, state, public_events, affair_lines, board_text,
-            include_fact, include_event,
+            denunciation_facts, include_fact, include_event,
             _secret_order_chat_turn_ids(db) if exclude_secret_order_audience else None,
         ),
     )

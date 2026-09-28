@@ -41,7 +41,7 @@ from ming_sim.models import TurnPhase
 from ming_sim.simulation import (
     _sanitize_module_output,
 )
-from tests.conftest import offline_empty_audience_translate, stub_audience_translate, stub_scene_agent
+from tests.conftest import stub_scene_agent
 
 
 def _task(*, kind, axes, unit, target, direction=1, investigation_target="", effect_sign=None):

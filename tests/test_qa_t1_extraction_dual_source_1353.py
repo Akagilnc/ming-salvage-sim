@@ -614,7 +614,9 @@ def test_resolve_turn_write_gate_held_by_caller_no_reenter(game, tmp_path, monke
     # 夜已关：auto_close 早退；本钉只证 held → write_gate 参数为 None
     state.turn_phase = TurnPhase.REVIEWING.value
 
-    gate = threading.Lock()
+    from ming_sim.session_write_queue import SessionWriteQueue
+    queue = SessionWriteQueue()
+    gate = queue.write_gate
     assert gate.acquire(blocking=False)
     seen: dict = {}
 
@@ -632,6 +634,7 @@ def test_resolve_turn_write_gate_held_by_caller_no_reenter(game, tmp_path, monke
     sess.llm_config = object()
     sess._scene_registry = None
     sess._beat_generator = None
+    sess._write_queue = queue
     sess._write_gate = gate
     sess.agno_db = None
     sess.last_decree = ""

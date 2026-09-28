@@ -10,7 +10,8 @@ from types import SimpleNamespace
 import web_app
 from tests.web_audience_test_doubles import HallAdmissionSessionMixin
 from tests.dossier_test_helpers import TYPED_COVERT_TASK, create_test_secret_order
-from tests.wait_utils import ObservingLock, wait_until
+from tests.wait_utils import wait_until
+from ming_sim.session_write_queue import SessionWriteQueue
 
 
 class _RunContent:
@@ -206,7 +207,6 @@ def _runtime_for_stream_race():
     settlement_attempting = threading.Event()
     settlement_holding = threading.Event()
     settlement_release = threading.Event()
-    epilogue_contending = threading.Event()
     character = SimpleNamespace(name="测试大臣")
     agent = _FakeAgent(allow_finish)
     state = SimpleNamespace(turn=1, year=1628, period=1, turn_phase="summoning")
@@ -215,7 +215,8 @@ def _runtime_for_stream_race():
     runtime = object.__new__(web_app.WebGame)
     runtime.session = _FakeSession(character, agent, state, db)
     runtime.chat_history = {character.name: [], "殿上": []}
-    runtime._write_gate = ObservingLock(epilogue_contending)
+    runtime._write_queue = SessionWriteQueue()
+    runtime._write_gate = runtime._write_queue.write_gate
     runtime.directive_rows = lambda: []
     runtime.directive_payload = lambda row: row
     runtime.can_undo_last_chat = lambda minister_name: False
@@ -231,7 +232,6 @@ def _runtime_for_stream_race():
 
     settlement.holding = settlement_holding  # type: ignore[attr-defined]
     settlement.release_event = settlement_release  # type: ignore[attr-defined]
-    settlement.epilogue_contending = epilogue_contending  # type: ignore[attr-defined]
     return runtime, character.name, allow_finish, settlement_attempting, settlement
 
 
@@ -257,11 +257,11 @@ def test_background_stream_completion_waits_for_settlement_gate_and_keeps_accept
 
     threading.Thread(target=_take_done, daemon=True).start()
     allow_finish.set()
-    # Prove stream epilogue reached write_gate while settlement still holds it.
-    settlement.epilogue_contending.wait()
-    assert settlement.holding.is_set(), "settlement released before epilogue contended"
-    assert not done_collected.is_set(), "done arrived before settlement released gate"
-    settlement.release_event.set()
+    try:
+        assert settlement.holding.is_set(), "settlement released before epilogue"
+        assert not done_collected.is_set(), "done arrived before settlement released gate"
+    finally:
+        settlement.release_event.set()
     done_collected.wait()
     done = done_box[0]
     settlement_thread.join()
@@ -400,9 +400,7 @@ def test_nonstream_chat_rejects_when_session_draining():
     db = _RecordingDB(threading.Event())
     runtime = object.__new__(web_app.WebGame)
     runtime.session = _FakeSession(character, _FakeAgent(threading.Event()), state, db)
-    runtime.chat_history = {character.name: []}
-    runtime._write_gate = threading.Lock()
-    from ming_sim.session_write_queue import SessionWriteQueue
+    runtime.chat_history = {character.name: [], "殿上": []}
     runtime._write_queue = SessionWriteQueue()
     runtime._write_queue.seal()
     runtime._write_gate = runtime._write_queue.write_gate

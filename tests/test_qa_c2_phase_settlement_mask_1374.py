@@ -8,6 +8,8 @@
 
 from __future__ import annotations
 
+from ming_sim.session_write_queue import ClassifiedWriteGate
+
 import asyncio
 import json
 import threading
@@ -56,7 +58,7 @@ def _runtime(db, state):
     runtime.actions = []
     runtime.session.end_turn = lambda: runtime.actions.append("end_turn")
     runtime.refresh_turn = lambda: runtime.actions.append("refresh")
-    runtime._write_gate = threading.Lock()
+    runtime._write_gate = ClassifiedWriteGate()
     runtime._settlement_entry_lock = threading.Lock()
     runtime._settlement_entry_inflight = 0
     return runtime

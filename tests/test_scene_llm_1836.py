@@ -224,9 +224,12 @@ def test_retire_via_scene_chat_closes_night_and_keeps_last_turn(game, monkeypatc
     turns_before = list_chat_turns_for_night(db, night_id)
     assert turns_before and int(turns_before[-1]["id"]) == ctid
 
-    # 真入口：chat_turn_id=0 → scene_chat 内 close_night。
+    # 场景只标退朝；持久化尾调度后台封夜。
     close_result = sess.scene_chat("退朝")
     assert close_result.court_action == "court_break"
+    close_worker = sess.schedule_close_night_after_chat_if_needed(close_result.court_action)
+    assert close_worker is not None
+    close_worker.join()
     assert get_open_night(db) is None
     closed = get_night(db, night_id)
     assert closed is not None and closed.get("status") == "closed"

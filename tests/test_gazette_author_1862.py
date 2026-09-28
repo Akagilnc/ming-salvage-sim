@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import threading
 
 import pytest
 
@@ -54,7 +53,7 @@ def _session(db, state, content, monkeypatch):
     monkeypatch.setattr(month_translate, "translate_month_segment", lambda *_a, **_k: {"effects": {}})
     session = make_light_session(db, state, content)
     session.llm_config = _llm()
-    session._write_gate = threading.Lock()
+    session._write_gate = session._write_queue.write_gate
     return session
 
 
@@ -459,4 +458,3 @@ def test_gazette_failure_retries_report_only(game, monkeypatch):
     archive = db.get_turn_report_archive(turn)
     assert archive["title"] == _TITLE
     assert archive["report"] == _REPORT
-

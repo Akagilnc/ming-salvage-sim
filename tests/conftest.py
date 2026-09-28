@@ -422,7 +422,7 @@ def _offline_audience_translation_provider():
 def stub_scene_agent(monkeypatch, agent):
     """#1842：经 create_scene_agent 工厂缝注入 scene agent（禁实例双桩属性）。
 
-    #1849 reopen：scene transport 迭代 RunContent 事件；若替身 run() 返回单对象，包成生成器。
+    Stream calls emit RunContent events; non-stream calls return the agent output directly.
     """
     class _RunContent:
         event = "RunContent"
@@ -441,16 +441,21 @@ def stub_scene_agent(monkeypatch, agent):
 
         def run(self, *a, **k):
             out = self._inner.run(*a, **k) if hasattr(self._inner, "run") else self._inner
+            if not k.get("stream"):
+                return out
             if hasattr(out, "__iter__") and not hasattr(out, "content"):
-                yield from out
-                return
-            text = str(getattr(out, "content", "") or "")
-            if text:
-                yield _RunContent(text)
-            done = _RunCompleted()
-            done.content = text
-            done.tools = list(getattr(out, "tools", None) or [])
-            yield done
+                return out
+
+            def events():
+                text = str(getattr(out, "content", "") or "")
+                if text:
+                    yield _RunContent(text)
+                done = _RunCompleted()
+                done.content = text
+                done.tools = list(getattr(out, "tools", None) or [])
+                yield done
+
+            return events()
 
     adapted = _SceneAgentAdapter(agent)
     monkeypatch.setattr(

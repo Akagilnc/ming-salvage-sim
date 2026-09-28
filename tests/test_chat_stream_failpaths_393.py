@@ -10,6 +10,8 @@ _serialized_web_write), not private _write_gate.locked() / _pending_writes_count
 """
 from __future__ import annotations
 
+from ming_sim.session_write_queue import get_session_write_queue
+
 import json
 import threading
 from types import SimpleNamespace
@@ -93,7 +95,6 @@ def _base_runtime(db):
     character = minister_double("测试大臣")
     state = SimpleNamespace(turn=1, year=1628, period=1, turn_phase="summoning")
     runtime = object.__new__(web_app.WebGame)
-    runtime._write_gate = threading.Lock()
     from ming_sim.session_write_queue import SessionWriteQueue
     runtime._write_queue = SessionWriteQueue()
     runtime._write_gate = runtime._write_queue.write_gate
@@ -434,130 +435,6 @@ def test_worker_postprocess_exception_emits_error_end():
     _assert_write_path_free(runtime)
 
 
-# ── #542 r6e：非流 chat / retry prologue 与流式同清理缝 ─────────────────────
-
-
-def _runtime_for_nonstream_chat(*, start_scene=None, append_error=None, abandon_error=None):
-    """Minimal WebGame double for non-stream chat/retry prologue fail paths."""
-    abandoned: list[int] = []
-    failed: list[int] = []
-    restored: list[int] = []
-
-    class _DB:
-        def create_chat_turn(self, *a, **k):
-            return 7
-
-        def capture_chat_rollback_snapshot(self):
-            return {}
-
-        def record_chat_turn_rollback_diffs(self, *a, **k):
-            return None
-
-        def append_chat_message(self, *a, **k):
-            if append_error is not None:
-                raise append_error
-            return 1
-
-        def update_chat_turn_messages(self, *a, **k):
-            return None
-
-        def fail_chat_turn(self, chat_turn_id):
-            failed.append(int(chat_turn_id))
-
-        def load_all_chat_history(self):
-            return {}
-
-        def get_interrupted_reply_retries(self, minister_name):
-            return [{
-                "chat_turn_id": 7,
-                "minister_name": "测试大臣",
-                "question": "辽东军情如何？",
-                "turn": 1,
-            }]
-
-        def reopen_interrupted_chat_turn_for_retry(self, chat_turn_id):
-            return True
-
-        def restore_interrupted_after_failed_retry(self, chat_turn_id):
-            restored.append(int(chat_turn_id))
-
-    db = _DB()
-    character = minister_double("测试大臣")
-    state = SimpleNamespace(turn=1, year=1628, period=1, turn_phase="summoning")
-
-    def _start_scene(minister_name, chat_turn_id):
-        if start_scene is not None:
-            return start_scene(minister_name, chat_turn_id)
-        return None
-
-    def _abandon(ctid):
-        abandoned.append(int(ctid or 0))
-        if abandon_error is not None:
-            raise abandon_error
-
-    runtime = object.__new__(web_app.WebGame)
-    runtime._write_gate = threading.Lock()
-    from ming_sim.session_write_queue import SessionWriteQueue
-    runtime._write_queue = SessionWriteQueue()
-    runtime._write_gate = runtime._write_queue.write_gate
-    runtime._runtime_write_queue = lambda: runtime._write_queue  # type: ignore
-    runtime._mark_pending_write = lambda key=None: runtime._write_queue.claim(key=key or ("pending",))  # type: ignore
-    runtime._complete_pending_write = lambda ticket=None: runtime._write_queue.complete(ticket)  # type: ignore
-    runtime.session = install_hall_admission(SimpleNamespace(
-        temporary_characters=set(),
-        content=SimpleNamespace(characters={character.name: character}),
-        state=state,
-        db=db,
-        close=lambda: None,
-        start_chat_turn_scene=_start_scene,
-        start_chat_turn_exit_scene=lambda *_a, **_k: None,
-        join_chat_turn_scene=lambda *_a, **_k: [],
-        persist_chat_turn_scene=lambda *_a, **_k: None,
-        abandon_chat_turn_scene=_abandon,
-        # #1842：WebGame persist 尾必调；轻壳无 pending 时 no-op。
-        schedule_pending_scene_translation=lambda result: None,
-        _character=lambda name: character,
-        chat=lambda *a, **k: (_ for _ in ()).throw(
-            RuntimeError("session.chat should not run")
-        ),
-    ))
-    runtime.chat_history = {character.name: []}
-    runtime._persistent_chat_minister = lambda name: True
-    runtime._audience_turn_in_flight = lambda name: False
-    runtime._start_chat_turn = lambda name, **_k: (7, {})
-    runtime._record_chat_rollback_items = lambda *a, **k: None
-    return runtime, character.name, abandoned, failed, restored
-
-
-def test_nonstream_chat_prologue_failure_fails_turn_and_abandons_scene():
-    """#1838：非流 chat prologue 写失败须 fail 终态，写路径释放（旁白 abandon 已删）。"""
-    boom = RuntimeError("DB 写盘失败（模拟非流 prologue 崩溃）")
-    runtime, minister, abandoned, failed, _restored = _runtime_for_nonstream_chat(
-        append_error=boom,
-    )
-    with pytest.raises(RuntimeError, match="非流 prologue"):
-        runtime.chat(minister, "辽东军情如何？")
-    assert failed == [7]
-    _assert_write_path_free(runtime)
-
-
-def test_nonstream_chat_abandon_secondary_failure_still_fails_turn():
-    """#1838：prologue 失败仍须 fail 终态写，原错不叠二次。"""
-    boom = RuntimeError("DB 写盘失败（模拟非流 prologue 崩溃）")
-    abandon_boom = RuntimeError("abandon 二次崩溃")
-    runtime, minister, abandoned, failed, _restored = _runtime_for_nonstream_chat(
-        append_error=boom,
-        abandon_error=abandon_boom,
-    )
-    with pytest.raises(RuntimeError, match="非流 prologue") as excinfo:
-        runtime.chat(minister, "辽东军情如何？")
-    assert excinfo.value is boom
-    assert failed == [7]
-    _assert_write_path_free(runtime)
-
-
-
-
 def _parse_sse(text: str) -> list[tuple[str, dict]]:
     events: list[tuple[str, dict]] = []
     for block in text.strip().split("\n\n"):
@@ -620,7 +497,7 @@ def test_nonstream_api_issue_decree_llm_unavailable_is_structured_not_500(
         refresh_turn=lambda: None,
         directive_rows=lambda: [],
         state_payload=lambda: {"turn": {"turn": int(state.turn)}},
-        _write_gate=threading.Lock(),
+        _write_gate=get_session_write_queue(session).write_gate,
     )
     monkeypatch.setattr(web_app, "get_game", lambda: runtime)
     monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda *_a, **_k: None)

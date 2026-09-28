@@ -14,6 +14,8 @@ TurnPhase.X.value——它们 pin 的是**落盘字符串值本身**，有意 en
 
 from __future__ import annotations
 
+from ming_sim.session_write_queue import get_session_write_queue
+
 import json
 import sqlite3
 import threading
@@ -77,7 +79,7 @@ def _recovery_session(db, state, content, monkeypatch):
     sess._beat_generator = None
     sess._scene_registry = None
     sess._decree_draft_fingerprint = ()
-    sess._write_gate = None
+    sess._write_gate = get_session_write_queue(sess).write_gate
     monkeypatch.setattr(GameSession, "auto_save", lambda self, tag: None)
     return sess
 
@@ -122,7 +124,7 @@ def test_submit_event_decision_persists_choice_after_pending_cleanup(game, monke
             "decision_key": d_key, "action": "follow_draft",
             "label": "留", "hint": "暂稳东江", "note": "姑留观后效",
         }],
-        write_gate=threading.Lock(),
+        write_gate=get_session_write_queue(sess).write_gate,
     )
 
     assert db.list_pending_decisions(turn) == []
@@ -192,7 +194,7 @@ def test_submit_event_decision_binds_from_candidate_snapshot_without_event_id(ga
     d_key = db.list_rescript_desk(turn)[0]["decision_key"]
     sess.submit_hitl_choices(
         [{"decision_key": d_key, "label": "留", "hint": "暂稳东江", "note": "姑留观后效"}],
-        write_gate=threading.Lock(),
+        write_gate=get_session_write_queue(sess).write_gate,
     )
 
     assert db.list_pending_decisions(turn) == []
@@ -210,6 +212,7 @@ def test_submit_event_decision_binds_from_candidate_snapshot_without_event_id(ga
         "hint": "暂稳东江",
         "note": "姑留观后效",
     }
+
 
 def test_submit_decisions_does_not_overwrite_already_decided_rows(game, monkeypatch):
     """#1418 r2 / #1589：phase2 失败后续跑——已 decided 行不得被空/异载荷覆写。
@@ -269,7 +272,7 @@ def test_submit_decisions_does_not_overwrite_already_decided_rows(game, monkeypa
     sess.registry = None
 
     # ① 空载荷续跑不得清空
-    assert sess.submit_hitl_choices([], write_gate=threading.Lock()) == "ok"
+    assert sess.submit_hitl_choices([], write_gate=get_session_write_queue(sess).write_gate) == "ok"
     assert db.list_pending_decisions(turn)[0]["choice"] == original
 
     # 复位 awaiting 再试异载荷（模拟 phase2 再次失败后的续跑）
@@ -278,7 +281,7 @@ def test_submit_decisions_does_not_overwrite_already_decided_rows(game, monkeypa
     # ② #1589：空 desk + 非空无键异载荷整批拒，不静默吞掉——phase2 不重入
     with pytest.raises(ValueError, match="decision_key"):
         sess.submit_hitl_choices(
-            [{"label": "留", "note": "改裁"}], write_gate=threading.Lock(),
+            [{"label": "留", "note": "改裁"}], write_gate=get_session_write_queue(sess).write_gate,
         )
     assert db.list_pending_decisions(turn)[0]["choice"] == original, \
         "已 decided 行不得被异载荷覆写"
@@ -321,7 +324,7 @@ def test_submit_dossier_rescript_does_not_create_event_trigger(game, monkeypatch
 
     d_key = db.list_rescript_desk(state.turn)[0]["decision_key"]
     assert sess.submit_hitl_choices(
-        [{**option, "decision_key": d_key}], write_gate=threading.Lock(),
+        [{**option, "decision_key": d_key}], write_gate=get_session_write_queue(sess).write_gate,
     ) == "ok"
     assert db.conn.execute(
         "SELECT 1 FROM event_triggers WHERE event_id=?",

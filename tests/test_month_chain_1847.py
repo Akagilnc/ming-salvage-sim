@@ -74,7 +74,6 @@ def test_world_question_opens_rescript_desk_and_awaits(game, monkeypatch):
         month_translate, "translate_month_segment", lambda *a, **k: {"effects": {}},
     )
     session = make_light_session(db, state, content)
-    session._write_gate = threading.Lock()
 
     result = session.resolve_turn(allow_empty_decree=True)
 
@@ -102,7 +101,6 @@ def test_world_segment_multiple_questions_share_one_desk(game, monkeypatch):
         month_translate, "translate_month_segment", lambda *a, **k: {"effects": {}},
     )
     session = make_light_session(db, state, content)
-    session._write_gate = threading.Lock()
 
     result = session.resolve_turn(allow_empty_decree=True)
 
@@ -139,7 +137,6 @@ def test_prior_month_answered_rescript_does_not_block_or_reappear(game, monkeypa
         month_translate, "translate_month_segment", lambda *a, **k: {"effects": {}},
     )
     session = make_light_session(db, state, content)
-    session._write_gate = threading.Lock()
     result = session.resolve_turn(allow_empty_decree=True)
 
     assert result.awaiting is False
@@ -158,7 +155,6 @@ def test_this_turn_rejection_opens_triad_on_same_desk(game, monkeypatch):
     _forbid_extractor(monkeypatch)
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
     session = make_light_session(db, state, content)
-    session._write_gate = threading.Lock()
 
     result = session.resolve_turn(allow_empty_decree=True)
 
@@ -189,7 +185,6 @@ def test_answering_triad_applies_and_releases_rescript_gate(game, monkeypatch):
         month_translate, "translate_month_segment", lambda *a, **k: {"effects": {}},
     )
     session = make_light_session(db, state, content)
-    session._write_gate = threading.Lock()
     session.resolve_turn(allow_empty_decree=True)
     desk_row = session.pending_decisions()[0]
     withdrawn = next(
@@ -251,7 +246,6 @@ def test_answering_world_question_resumes_suffix_then_gazette(game, monkeypatch)
 
     session = make_light_session(db, state, content)
     session.llm_config = object()
-    session._write_gate = threading.Lock()
     session.resolve_turn(allow_empty_decree=True)
     desk_row = session.pending_decisions()[0]
     choice = desk_row["options"][0]
@@ -328,7 +322,6 @@ def test_decree_question_continuation_idempotent_on_same_turn_reentry(game, monk
 
     session = make_light_session(db, state, content)
     session.llm_config = object()
-    session._write_gate = threading.Lock()
     session.resolve_turn(allow_empty_decree=True)
     desk_row = session.pending_decisions()[0]
     choice = desk_row["options"][0]
@@ -408,7 +401,6 @@ def test_decree_continuation_survives_llm_exhaustion_then_retries(game, monkeypa
 
     session = make_light_session(db, state, content)
     session.llm_config = object()
-    session._write_gate = threading.Lock()
     session.resolve_turn(allow_empty_decree=True)
     desk_row = session.pending_decisions()[0]
     choice = desk_row["options"][0]
@@ -468,7 +460,6 @@ def test_decree_question_and_world_question_share_one_desk(game, monkeypatch):
         month_translate, "translate_month_segment", lambda *a, **k: {"effects": {}},
     )
     session = make_light_session(db, state, content)
-    session._write_gate = threading.Lock()
 
     result = session.resolve_turn(allow_empty_decree=True)
 
@@ -516,7 +507,6 @@ def test_missing_model_keeps_decree_question_until_retry(game, monkeypatch):
     )
     session = make_light_session(db, state, content)
     session.llm_config = None
-    session._write_gate = threading.Lock()
     session.resolve_turn(allow_empty_decree=True)
     desk_row = session.pending_decisions()[0]
     payload = _hitl_payload(desk_row)
@@ -557,7 +547,6 @@ def test_missing_model_does_not_mark_world_continued(game, monkeypatch):
     )
     session = make_light_session(db, state, content)
     session.llm_config = None
-    session._write_gate = threading.Lock()
     session.resolve_turn(allow_empty_decree=True)
     desk_row = session.pending_decisions()[0]
     payload = _hitl_payload(desk_row)
@@ -611,7 +600,6 @@ def test_cross_month_pending_draft_opens_rescript_desk(game, monkeypatch):
         month_translate, "translate_month_segment", lambda *a, **k: {"effects": {}},
     )
     session = make_light_session(db, state, content)
-    session._write_gate = threading.Lock()
 
     result = session.resolve_turn(allow_empty_decree=True)
 
@@ -683,7 +671,6 @@ def test_decree_continuation_keeps_forecast_and_lands_affair_effect(game, monkey
     monkeypatch.setattr(month_translate, "translate_month_segment", translate)
     session = make_light_session(db, state, content)
     session.llm_config = object()
-    session._write_gate = threading.Lock()
     session.resolve_turn(allow_empty_decree=True)
     before = db.conn.execute(
         "SELECT COUNT(*) FROM economy_ledger WHERE category='问后加赈'",
@@ -773,7 +760,6 @@ def test_decree_forecast_keeps_every_question_and_translates_prefix_once(
     )
     session = make_light_session(db, state, content)
     session.llm_config = object()
-    session._write_gate = threading.Lock()
 
     result = session.resolve_turn(allow_empty_decree=True)
 
@@ -826,7 +812,6 @@ def test_question_note_only_is_kept_and_other_decisions_still_require_label(
     )
     session = make_light_session(db, state, content)
     session.llm_config = object()
-    session._write_gate = threading.Lock()
     session.resolve_turn(allow_empty_decree=True)
     desk_row = session.pending_decisions()[0]
     bad = [{
@@ -960,7 +945,6 @@ def test_fatal_midzhi_rejection_hides_force_option(game, monkeypatch):
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
     monkeypatch.setattr(month_translate, "translate_month_segment", lambda *a, **k: {"effects": {}})
     session = make_light_session(db, state, content)
-    session._write_gate = threading.Lock()
 
     session.resolve_turn(allow_empty_decree=True)
 
@@ -997,7 +981,6 @@ def test_midzhi_promulgation_records_authority_cost_once(game, monkeypatch):
     _forbid_extractor(monkeypatch)
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
     session = make_light_session(db, state, content)
-    session._write_gate = threading.Lock()
 
     session.resolve_turn(allow_empty_decree=True)
 
@@ -1031,7 +1014,6 @@ def test_midzhi_verdict_and_metadata_roll_back_together(game, monkeypatch):
     _forbid_extractor(monkeypatch)
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
     session = make_light_session(db, state, content)
-    session._write_gate = threading.Lock()
 
     with pytest.raises(SettlementAbort) as caught:
         session.resolve_turn(allow_empty_decree=True)
@@ -1083,7 +1065,6 @@ def test_decree_continuation_ending_ends_the_month(game, monkeypatch):
     session.llm_config = LLMConfig(
         api_key="sk-test", base_url="https://example.invalid", model="test",
     )
-    session._write_gate = threading.Lock()
     session.resolve_turn(allow_empty_decree=True)
     question = session.pending_decisions()[0]
     session.submit_hitl_choices([_choice(question)], write_gate=session._write_gate)
@@ -1124,7 +1105,6 @@ def test_drift_sees_effects_landed_after_answers(game, monkeypatch):
     monkeypatch.setattr(month_translate, "translate_month_segment", translate)
     session = make_light_session(db, state, content)
     session.llm_config = object()
-    session._write_gate = threading.Lock()
     paused = session.resolve_turn(allow_empty_decree=True)
     assert paused.awaiting is True
     assert db.conn.execute(
@@ -1158,7 +1138,6 @@ def test_step_4a_no_eligible_objects_skips_run_and_completes(game, monkeypatch):
 
     monkeypatch.setattr(month_chain, "run_secret_orders_supply", forbidden_supply)
     session = make_light_session(db, state, content)
-    session._write_gate = threading.Lock()
 
     result = session.resolve_turn(allow_empty_decree=True)
 
@@ -1233,7 +1212,6 @@ def test_step_4a_rescript_continuation_feeds_supply_run_input(game, monkeypatch)
 
     session = make_light_session(db, state, content)
     session.llm_config = object()
-    session._write_gate = threading.Lock()
 
     # Step 1: Pauses at rescript question
     paused = session.resolve_turn(allow_empty_decree=True)
@@ -1316,7 +1294,6 @@ def test_step_4a_deferred_disclosure_sees_fresh_0058_progress(game, monkeypatch)
     monkeypatch.setattr(month_chain, "run_secret_orders_supply", supply_run)
 
     session = make_light_session(db, state, content)
-    session._write_gate = threading.Lock()
 
     result = session.resolve_turn(allow_empty_decree=True)
     assert result.stage == "gazette"
@@ -1387,7 +1364,6 @@ def test_step_4a_incomplete_0058_report_fails_loud_and_retry_restarts(game, monk
     monkeypatch.setattr(month_chain, "run_secret_orders_supply", supply_run)
 
     session = make_light_session(db, state, content)
-    session._write_gate = threading.Lock()
 
     # First attempt: incomplete report fails loud
     with pytest.raises(SettlementAbort) as caught:
@@ -1458,7 +1434,6 @@ def test_step_4a_crash_recovery_resumes_without_re_running_supply(game, monkeypa
     monkeypatch.setattr(covert_progress, "apply_monthly_covert_actual_progress", buggy_apply)
 
     session = make_light_session(db, state, content)
-    session._write_gate = threading.Lock()
 
     # First pass: lands Phase 1 (reports), but crashes on Phase 3
     with pytest.raises(SettlementAbort):
@@ -1515,7 +1490,6 @@ def test_step_4a_missing_covert_fidelity_records_inline_rejection(game, monkeypa
     monkeypatch.setattr(month_chain, "run_secret_orders_supply", supply_run)
 
     session = make_light_session(db, state, content)
-    session._write_gate = threading.Lock()
 
     result = session.resolve_turn(allow_empty_decree=True)
     assert result.stage == "gazette"
@@ -1689,7 +1663,6 @@ def test_step_4a_non_validation_failure_keeps_product_on_retry(game, monkeypatch
     monkeypatch.setattr(db, "record_monthly_supervision_presence", flaky_presence)
 
     session = make_light_session(db, state, content)
-    session._write_gate = threading.Lock()
 
     with pytest.raises(SettlementAbort) as caught:
         session.resolve_turn(allow_empty_decree=True)
@@ -1760,7 +1733,6 @@ def test_step_4a_settles_due_secret_order(game, monkeypatch):
     monkeypatch.setattr(month_chain, "run_secret_orders_supply", supply_run)
 
     session = make_light_session(db, state, content)
-    session._write_gate = threading.Lock()
 
     result = session.resolve_turn(allow_empty_decree=True)
     assert result.stage == "gazette"
@@ -1992,7 +1964,6 @@ def test_step_4a_rescript_path_feeds_landed_not_assembled_effects(game, monkeypa
 
     session = make_light_session(db, state, content)
     session.llm_config = object()
-    session._write_gate = threading.Lock()
 
     paused = session.resolve_turn(allow_empty_decree=True)
     assert paused.awaiting is True

@@ -114,6 +114,29 @@ def _make_forked(db, state, dossier_id: int, *, token: str = "fork"):
     db.conn.commit()
 
 
+def test_world_materials_exclude_secret_fork_from_gazette(game, tmp_path):
+    import json
+    from ming_sim.materials import prepare_world_materials, read_material
+
+    db, state, content = game
+    owner = next(iter(_chars_by_faction(db).values()))[0]["name"]
+    public_id = _subject_dossier(db, state, owner=owner, token="public")
+    from tests.dossier_test_helpers import create_test_secret_order
+    order_id = create_test_secret_order(db, state, owner, "密查", "查账", [])
+    secret_id = int(db.get_dossier_for_secret_order(order_id)["id"])
+    db.conn.execute("UPDATE decree_dossiers SET status='executing' WHERE id=?", (secret_id,))
+    db.conn.commit()
+    _make_forked(db, state, public_id)
+    _make_forked(db, state, secret_id)
+
+    prepared = prepare_world_materials(
+        db, state, dest_root=tmp_path / "gazette",
+        exclude_secret_order_dossiers=True,
+    )
+    facts = json.loads(read_material(prepared.root, "盘面/派系检举事实.txt"))
+    assert {item["dossier_id"] for item in facts["forked_dossiers"]} == {public_id}
+
+
 def _make_transformed_no_fork(db, state, dossier_id: int):
     """变形但无奏报分叉（无私货/无旨外）——fork 读端为假。"""
     db.conn.execute(
@@ -567,7 +590,3 @@ def test_accept_wired_in_settle_not_pre_settle_emergence():
     pre_body = ast.get_source_segment(decree_src, pre) or ""
     assert "trigger_faction_denunciations" not in pre_body
     assert "accept_faction_denunciations" not in pre_body
-
-    sim_src = (_REPO / "ming_sim" / "simulation.py").read_text(encoding="utf-8")
-    assert "faction_denunciation_facts" in sim_src
-    assert "faction_denunciations" in sim_src  # extractor 字段
