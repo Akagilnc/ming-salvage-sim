@@ -3,7 +3,7 @@
 常绿验收（fix 后一直绿）：
 - done.payload.court_action == court_break
 - done 之后、end 之前，并发召对写入口不可再用（HTTP/SSE 外部可见拒）
-- end 之后夜 closed，且 exit/divider/closing 三拍均在
+- end 之后夜 closed（#1838：无 exit/divider/closing 收尾旁白三拍）
 - 复用 #1353 屏障票作玩家写入口外可见锁；不另造平行写队列
 
 D2/D3 是病因钉，修好后不要求常绿——本文件不收录。
@@ -183,7 +183,7 @@ def test_court_break_locks_player_writes_and_closes_night(web_game, monkeypatch)
         "secret_order": 409,
         "withdraw": 409,
     }
-    # end 后终态：夜 closed + 收尾三拍 + 告退轮仍在（未被 undo 抽空）。
+    # end 后终态：夜 closed；#1838 reopen 无 closing/exit/divider 收尾旁白三拍。
     row = game.db.conn.execute(
         "SELECT status FROM audience_nights WHERE id=?", (night_id,),
     ).fetchone()
@@ -192,7 +192,7 @@ def test_court_break_locks_player_writes_and_closes_night(web_game, monkeypatch)
     assert an.get_open_night(game.db) is None
     scroll = an.read_night_scroll(game.db, night_id)
     beats = _named_scene_beats(scroll)
-    assert "exit" in beats and "divider" in beats and "closing" in beats, beats
+    assert "closing" not in beats and "coda" not in beats, beats
     # 告退轮仍在：undo 被拒，玩家发话与中性戏文仍归同一轮。
     user_turn_ids = {
         int(m["chat_turn_id"]) for m in scroll
