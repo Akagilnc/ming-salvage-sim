@@ -60,7 +60,6 @@ def _session(db, state, content, *, reply):
     sess.registry = SimpleNamespace(get=lambda _c, **_kw: FakeAgent())
     sess.llm_config = SimpleNamespace(channel="cli", cli_runner="agy")
     sess.temporary_characters = {}
-    sess._retrieve_memories_for_message = lambda message: message
     return sess
 
 

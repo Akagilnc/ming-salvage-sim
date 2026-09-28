@@ -2731,7 +2731,6 @@ def test_chat_starts_cli_action_classification_before_reply_finishes(read_game, 
     # 任意 CLI runner 均并发启动分类器——不按模型退串行。
     sess.llm_config = SimpleNamespace(channel="cli", cli_runner="grok")
     sess.temporary_characters = {}
-    sess._retrieve_memories_for_message = lambda message: message
 
     monkeypatch.setattr(session_mod, "_dump_llm_messages", lambda *a, **k: None)
     monkeypatch.setattr(cb, "classify_cli_action_intent", fake_classify)
@@ -2770,7 +2769,6 @@ def test_api_chat_never_calls_cli_classifier(game, monkeypatch):
     )
     sess.llm_config = SimpleNamespace(channel="api")
     sess.temporary_characters = {}
-    sess._retrieve_memories_for_message = lambda text: text
     monkeypatch.setattr(session_mod, "_dump_llm_messages", lambda *a, **k: None)
     monkeypatch.setattr(
         cb,

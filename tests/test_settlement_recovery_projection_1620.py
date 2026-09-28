@@ -80,7 +80,7 @@ def test_state_payload_settlement_recovery_ready_and_resim(
     persist_resolve_context(
         db, turn, {"metric_delta": {"民心": -1}},
         decree_text="d", narrative="n",
-        simulator_payload={}, secret_orders={}, relevant_memories=[],
+        simulator_payload={}, secret_orders={},
     )
     write_error_pack(
         db, state, exc=RuntimeError("settlement-fail-1"),
@@ -180,7 +180,7 @@ def test_ready_recovery_issue_stream_waits_for_gazette_then_advances(
     persist_resolve_context(
         db, turn, {"metric_delta": {"民心": -1}},
         decree_text="恢复诏", narrative="恢复邸报",
-        simulator_payload={}, secret_orders={}, relevant_memories=[],
+        simulator_payload={}, secret_orders={},
     )
     ctx = db.get_resolve_context(turn)
     assert ctx is not None and ctx.get("extracted") is not None

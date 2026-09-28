@@ -61,7 +61,6 @@ def _session(db, state, content, *, reply="臣领旨。", tools=None):
     )
     sess.llm_config = SimpleNamespace(channel="cli", cli_runner="codex")
     sess.temporary_characters = set()
-    sess._retrieve_memories_for_message = lambda message: message
     sess._audience_prompt_for_message = lambda message, character, chat_turn_id=0, **_kw: message
     sess._start_cli_action_intent = lambda *a, **k: None
     sess._finish_cli_action_intent = lambda *a, **k: []

@@ -35,7 +35,7 @@ def test_persist_resolve_context_rejects_bad_items_and_saves_sanitized_delta(gam
         narrative="邸报",
         simulator_payload={},
         secret_orders={},
-        relevant_memories=[],
+        
         source=Provenance.player_decree,
     )
 
@@ -141,7 +141,7 @@ def test_player_visible_rejection_aggregates_durable_rows_across_attempts_and_re
         narrative="本月邸报。",
         simulator_payload={},
         secret_orders={},
-        relevant_memories=[],
+        
         source=Provenance.player_decree,
     )
     ctx = db.get_resolve_context(turn)
@@ -226,7 +226,7 @@ def test_sqlite_text_sanitization_covers_resolve_report_and_extraction_rows(game
         narrative=bad_text,
         simulator_payload={"text": bad_text},
         secret_orders={"在办": [{"text": bad_text}]},
-        relevant_memories=[{"text": bad_text}],
+        
         source=Provenance.player_decree,
     )
     ctx = db.get_resolve_context(state.turn)

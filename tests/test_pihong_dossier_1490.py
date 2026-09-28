@@ -149,7 +149,7 @@ def _plant_dossier_awaiting(db, state):
             "transit_semantics": [],
         },
         secret_orders=[],
-        relevant_memories=[],
+        
     )
     state.turn_phase = TurnPhase.AWAITING_DECISION.value
     db.save_state(state)
@@ -276,7 +276,7 @@ def _plant_due_commitment_shaped_awaiting(db, state, *, dossier_id: int = 12):
         "待续邸报",
         {"candidate_events": [{"id": "ev_border", "title": "边警"}]},
         secret_orders=[],
-        relevant_memories=[],
+        
     )
     state.turn_phase = TurnPhase.AWAITING_DECISION.value
     db.save_state(state)
@@ -436,7 +436,7 @@ def test_mixed_legal_illegal_options_illegal_choice_stays_pending(
         "待续邸报",
         {"candidate_events": [{"id": "ev_border", "title": "边警"}]},
         secret_orders=[],
-        relevant_memories=[],
+        
     )
     state.turn_phase = TurnPhase.AWAITING_DECISION.value
     db.save_state(state)
@@ -539,7 +539,7 @@ def test_ordinary_event_with_hallucinated_capability_submits(
         "待续邸报",
         {"candidate_events": [{"id": event_id, "title": "边警"}]},
         secret_orders=[],
-        relevant_memories=[],
+        
     )
     state.turn_phase = TurnPhase.AWAITING_DECISION.value
     db.save_state(state)
@@ -915,7 +915,7 @@ def test_657_http_default_hold_keyed_empty_action_and_betray(web_game, monkeypat
     db.save_resolve_context(
         int(state.turn), "诏", "邸报",
         {"candidate_events": [], "transit_semantics": []},
-        secret_orders=[], relevant_memories=[],
+        secret_orders=[],
     )
     state.turn_phase = TurnPhase.AWAITING_DECISION.value
     db.save_state(state)
@@ -1313,7 +1313,7 @@ def _657_plant_awaiting_web(web_game, *, drafts=None, decisions=None, title="陕
     db.save_resolve_context(
         int(state.turn), "诏", "邸报",
         {"candidate_events": [], "transit_semantics": []},
-        secret_orders=[], relevant_memories=[],
+        secret_orders=[],
     )
     # Phase 2 needs its gazette prerequisite before the real month chain can advance.
     db.save_turn_report(state, "邸报")
@@ -1501,7 +1501,7 @@ def test_657_return_revise_round_prior_and_clear_anchor(web_game, monkeypatch):
         probe.save_state(state)
         probe.save_resolve_context(
             int(state.turn), "诏", "邸报", {"candidate_events": [], "transit_semantics": []},
-            secret_orders=[], relevant_memories=[],
+            secret_orders=[],
         )
         probe.conn.commit()
         # 跟新拟甲：capability 由服务端派生，禁伪造 cap-new-a
@@ -2418,7 +2418,7 @@ def test_657_s10_http_five_actions_and_1490_no_regress(web_game, monkeypatch):
             db.conn.commit()
             db.save_resolve_context(
                 int(state.turn), "诏", "邸报", {"candidate_events": [], "transit_semantics": []},
-                secret_orders=[], relevant_memories=[],
+                secret_orders=[],
             )
             state.turn_phase = TurnPhase.AWAITING_DECISION.value
             db.save_state(state)
@@ -2558,7 +2558,7 @@ def test_1621_http_follow_draft_uses_catalog_army_id(web_game, monkeypatch):
     db.conn.commit()
     db.save_resolve_context(
         int(state.turn), "诏", "邸报", {"candidate_events": [], "transit_semantics": []},
-        secret_orders=[], relevant_memories=[],
+        secret_orders=[],
     )
     state.turn_phase = TurnPhase.AWAITING_DECISION.value
     db.save_state(state)
@@ -2813,7 +2813,7 @@ def test_1589_ready_replay_rejects_bad_keys(web_game, monkeypatch):
     # 手工把 context 升级为 ready（extracted 非空）：模拟「phase2 已抽取、settle 曾 abort」。
     db.save_resolve_context(
         turn, "诏", "邸报", {"candidate_events": []},
-        secret_orders=[], relevant_memories=[],
+        secret_orders=[],
         extracted={"metric_delta": {}},
     )
     ctx = db.get_resolve_context(turn)
@@ -3177,7 +3177,7 @@ def test_1620_http_follow_draft_office_token_routes_to_person(web_game, monkeypa
     db.save_resolve_context(
         int(state.turn), "诏", "邸报",
         {"candidate_events": [], "transit_semantics": []},
-        secret_orders=[], relevant_memories=[],
+        secret_orders=[],
     )
     db.save_turn_report(state, "邸报")
     state.turn_phase = TurnPhase.AWAITING_DECISION.value
@@ -3249,7 +3249,7 @@ def test_1620_http_follow_draft_grant_uses_stored_amount(web_game, monkeypatch):
     db.save_resolve_context(
         int(state.turn), "诏", "邸报",
         {"candidate_events": [], "transit_semantics": []},
-        secret_orders=[], relevant_memories=[],
+        secret_orders=[],
     )
     state.turn_phase = TurnPhase.AWAITING_DECISION.value
     db.save_state(state)
@@ -3957,7 +3957,7 @@ def test_657_revise_deliberate_strict_contracts_zero_write_on_bad_shape(game, mo
                 ],
             },
         },
-        secret_orders=[], relevant_memories=[],
+        secret_orders=[],
     )
     state.turn_phase = TurnPhase.AWAITING_DECISION.value
     db.save_state(state)
@@ -5796,7 +5796,7 @@ def _1778_plant_and_follow(web_game, monkeypatch, drafts, *, desk_action="follow
         db.save_resolve_context(
             int(state.turn), "诏", "邸报",
             {"candidate_events": [], "transit_semantics": []},
-            secret_orders=[], relevant_memories=[],
+            secret_orders=[],
         )
         state.turn_phase = TurnPhase.AWAITING_DECISION.value
         db.save_state(state)

@@ -162,7 +162,7 @@ def test_clear_for_resimulation_preserves_attendant_message(game):
     db.save_resolve_context(
         turn, "d", "n",
         {"k": "v", ARRIVAL_COMPANION_SIM_DONE_KEY: True},
-        secret_orders=[], relevant_memories=[],
+        secret_orders=[],
         extracted={"metric_delta": {"国库": 1}},
         source="player_decree",
         attendant_message=ATTENDANT_TEXT,

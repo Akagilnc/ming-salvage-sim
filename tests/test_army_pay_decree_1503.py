@@ -1166,7 +1166,6 @@ def _real_chat_session(db, state, content, monkeypatch, *, scripted, agent_tools
     )
     sess.llm_config = SimpleNamespace(channel="cli", cli_runner="codex")
     sess.temporary_characters = {}
-    sess._retrieve_memories_for_message = lambda message: message
     monkeypatch.setattr(session_mod, "_dump_llm_messages", lambda *a, **k: None)
     monkeypatch.setattr(cb, "classify_cli_action_intent", fake_classify)
     for name in (

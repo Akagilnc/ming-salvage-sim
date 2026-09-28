@@ -1276,7 +1276,6 @@ def persist_resolve_context(
     narrative: str,
     simulator_payload: Dict[str, object],
     secret_orders: Dict[str, object],
-    relevant_memories: List[Dict],
     source: Provenance = Provenance.system_simulation,
     rescript_drafts: Optional[List[Dict[str, object]]] = None,
     attendant_message: str = "",
@@ -1315,7 +1314,7 @@ def persist_resolve_context(
         collector.flush_to_db(db)
         db.save_resolve_context(
             turn, decree_text, narrative, simulator_payload,
-            secret_orders=secret_orders, relevant_memories=relevant_memories,
+            secret_orders=secret_orders,
             extracted=cleaned, source=Provenance(source).value,
             attendant_message=attendant_message,
         )
@@ -1557,7 +1556,7 @@ def prepare_resolve_front_half(
             )
             db.save_resolve_context(
                 state.turn, decree_text, "", placeholder_payload,
-                secret_orders={}, relevant_memories=[],  # #48：占位用分组承载的空 dict（旋即被真存覆盖）
+                secret_orders={},
                 source=Provenance(source).value,  # #146 A：归一 enum/合法值串
                 attendant_message=preserved_attendant,
             )

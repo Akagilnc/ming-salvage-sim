@@ -896,7 +896,7 @@ def test_ready_context_retry_does_not_recompute_substrate_hub_pre_settle(fresh_g
         narrative="测试邸报",
         simulator_payload={},
         secret_orders=[],
-        relevant_memories=[],
+        
     )
     assert db.get_resolve_context(turn)["extracted"] == {}
 

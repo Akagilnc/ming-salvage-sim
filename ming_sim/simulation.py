@@ -664,7 +664,6 @@ def build_simulator_payload(
     previous_narrative: str,
     deaths_this_turn: Optional[List[Dict[str, str]]] = None,
     debuts_this_turn: Optional[List[Dict[str, str]]] = None,
-    relevant_memories: Optional[List[Dict[str, object]]] = None,
     secret_orders: Optional[Dict[str, object]] = None,
     decree_dossiers: Optional[List[Dict[str, object]]] = None,
     transit_arrivals: Optional[List[Dict[str, object]]] = None,
@@ -845,7 +844,6 @@ def build_simulator_payload(
         "offstage_ministers": _auto_table(_talent_pool_rows(db, state)),
         "deaths_this_turn": deaths_this_turn or [],
         "debuts_this_turn": debuts_this_turn or [],
-        "relevant_memories": relevant_memories or [],
         "due_commitments": due_commitments,
         # #668/0095：本 tick 引擎刚抵达的事实集合（非仍在途者）；durable 真源在
         # pending_resolve_context.simulator_payload.transit_arrivals，由调用方注入。
@@ -891,7 +889,6 @@ def simulate_season_with_agno(
     debuts_this_turn: Optional[List[Dict[str, str]]] = None,
     on_thinking: Optional[Callable[[str], None]] = None,
     on_text: Optional[Callable[[str], None]] = None,
-    relevant_memories: Optional[List[Dict[str, object]]] = None,
     secret_orders: Optional[Dict[str, object]] = None,
 ) -> str:
     """推演 agent: 全量盘面塞 user payload，无 tool。"""
@@ -905,7 +902,6 @@ def simulate_season_with_agno(
         debuts_this_turn=debuts_this_turn,
         on_thinking=on_thinking,
         on_text=on_text,
-        relevant_memories=relevant_memories,
         secret_orders=secret_orders,
     )
     return narrative
@@ -921,7 +917,6 @@ def simulate_season_with_payload(
     debuts_this_turn: Optional[List[Dict[str, str]]] = None,
     on_thinking: Optional[Callable[[str], None]] = None,
     on_text: Optional[Callable[[str], None]] = None,
-    relevant_memories: Optional[List[Dict[str, object]]] = None,
     secret_orders: Optional[Dict[str, object]] = None,
     simulator_payload: Optional[Dict[str, object]] = None,
 ) -> tuple[str, Dict[str, object]]:
@@ -930,7 +925,6 @@ def simulate_season_with_payload(
         state, db, decree_text, previous_narrative,
         deaths_this_turn=deaths_this_turn,
         debuts_this_turn=debuts_this_turn,
-        relevant_memories=relevant_memories,
         secret_orders=secret_orders,
     )
     raw = run_agent_stream_text(

@@ -267,11 +267,9 @@ session.advance_without_decree / POST /api/decree/advance_without_edict:
 
 ## 已知接口层（确定性↔我，别让我自己数数）
 
-- `ming_sim.memories.effect_brief(applied)` — 把 delta 聚合成一句话「国库+200、了结局势X、人事调整：…」
-- `ming_sim.memories.build_timeline(db)` — 重建历史时间线
 - `ming_sim.agents.build_simulator_context(payload)` — 盘面→TSV 文本（喂给我读盘）
 
-这三个函数零 agno 依赖，driver 直接调用。
+结局总评只读机械尾已装载的历月邸报；`effect_brief`／`build_timeline` 已随 #1845 退役。
 
 ## 真相源对照
 

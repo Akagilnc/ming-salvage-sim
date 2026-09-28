@@ -355,8 +355,6 @@
 .modal-bg-ending .ending-timeline-date { color: #f0c98a; }
 .modal-bg-ending .ending-timeline-date span { color: #a98c69; }
 .modal-bg-ending .ending-timeline-chapter { color: #e0563f; }
-.modal-bg-ending .ending-timeline-decree { color: #c9a572; }
-.modal-bg-ending .ending-timeline-effect { color: #9ec7aa; }
 
 /* 终章弹窗：覆盖 .modal-bg-state * 的透明通配，恢复深色国史馆样式 */
 .modal-bg-ending .ending-document {

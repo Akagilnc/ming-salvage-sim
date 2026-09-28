@@ -669,7 +669,6 @@ def test_cli_chat_materializes_each_top_level_candidate(game, monkeypatch):
     )
     sess.llm_config = SimpleNamespace(channel="cli", cli_runner="agy")
     sess.temporary_characters = {}
-    sess._retrieve_memories_for_message = lambda message: message
     monkeypatch.setattr(session_mod, "_dump_llm_messages", lambda *a, **k: None)
 
     sess.chat(
@@ -783,7 +782,6 @@ def test_real_chat_bidirectional_barrier_parallel_required(
     )
     sess.llm_config = SimpleNamespace(channel="cli", cli_runner="codex")
     sess.temporary_characters = {}
-    sess._retrieve_memories_for_message = lambda message: message
     monkeypatch.setattr(session_mod, "_dump_llm_messages", lambda *a, **k: None)
     monkeypatch.setattr(cb, "classify_cli_action_intent", fake_classify)
     monkeypatch.setattr(cb, "extract_minister_actions", lambda *a, **k: {
@@ -887,7 +885,6 @@ def test_real_chat_poisoned_classifier_zero_writes(
     sess.registry = SimpleNamespace(get=lambda c, **_kw: FakeAgent())
     sess.llm_config = SimpleNamespace(channel="cli", cli_runner="codex")
     sess.temporary_characters = {}
-    sess._retrieve_memories_for_message = lambda message: message
     monkeypatch.setattr(session_mod, "_dump_llm_messages", lambda *a, **k: None)
     monkeypatch.setattr(cb, "classify_cli_action_intent", fake_classify)
     _silence_serial(monkeypatch)
@@ -922,7 +919,6 @@ def _wire_web_game(db, state, content, agent, monkeypatch, *, translate_fn=None)
     # 大臣级 Web 入口恢复 start_chat_turn_scene；离线 registry 禁 None 崩。
     from tests.conftest import _OfflineSceneRegistry
     sess._scene_registry = _OfflineSceneRegistry()
-    sess._retrieve_memories_for_message = lambda message: message
     stub_audience_translate(monkeypatch, translate_fn)
     # bind production methods used by WebGame.chat / undo_last_chat / scene_chat
     for name in (

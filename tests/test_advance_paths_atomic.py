@@ -63,7 +63,7 @@ def test_settle_crash_after_savestate_before_clear_rolls_back(game, monkeypatch,
     persist_resolve_context(
         db, turn, extracted,
         decree_text="d", narrative="n",
-        simulator_payload={}, secret_orders=[], relevant_memories=[],
+        simulator_payload={}, secret_orders=[],
     )
     assert db.get_resolve_context(turn) is not None
 
@@ -112,7 +112,7 @@ def test_settle_code_exception_writes_pack_and_aborts(game, monkeypatch, tmp_pat
     persist_resolve_context(
         db, turn, extracted,
         decree_text="减赋诏", narrative="本月邸报……",
-        simulator_payload={}, secret_orders=[], relevant_memories=[],
+        simulator_payload={}, secret_orders=[],
     )
 
     # apply_score_extraction 是 settle 第一笔写（delta_applier=None 回退到它）。
@@ -270,7 +270,7 @@ def test_submit_event_decision_binds_from_candidate_snapshot_without_event_id(ga
         "邸报正文未回显事件编号。",
         {"candidate_events": [{"id": event_id, "title": "毛文龙裁断"}]},
         secret_orders=[],
-        relevant_memories=[],
+        
     )
     db.save_pending_decisions(turn, [{
         "title": "毛文龙裁断",
@@ -343,7 +343,7 @@ def test_hitl_ready_replay_retry_keeps_original_event_choice(game, monkeypatch):
         db, turn, {"metric_delta": {"民心": -3}},
         decree_text="HITL诏", narrative="裁断后邸报",
         simulator_payload={"candidate_events": [{"id": event_id, "title": "毛文龙裁断"}]},
-        secret_orders=[], relevant_memories=[],
+        secret_orders=[],
     )
     assert db.get_resolve_context(turn).get("extracted") is not None
     db.save_pending_decisions(turn, [{
@@ -399,7 +399,7 @@ def test_submit_decisions_does_not_overwrite_already_decided_rows(game, monkeypa
     # phase1 HITL 暂停上下文（无 extracted）——与真实 awaiting 存档同形
     db.save_resolve_context(
         turn, "HITL诏", "待续邸报", {"candidate_events": []},
-        secret_orders=[], relevant_memories=[],
+        secret_orders=[],
     )
     ctx = db.get_resolve_context(turn)
     assert ctx is not None
@@ -640,7 +640,7 @@ def test_recovery_replay_blocked_by_pending_directives(game, monkeypatch):
     dm.persist_resolve_context(
         db, turn, {"metric_delta": {"民心": -1}},
         decree_text="d", narrative="n",
-        simulator_payload={}, secret_orders=[], relevant_memories=[],
+        simulator_payload={}, secret_orders=[],
     )
     # 恢复期大臣拟旨（pending 待准驳）
     db.add_directive(state, None, "请拨内帑", source="minister", status="pending")
@@ -711,7 +711,7 @@ def test_settle_reload_failure_propagates_raw_not_abort(game, monkeypatch, tmp_p
     persist_resolve_context(
         db, turn, extracted,
         decree_text="减赋诏", narrative="本月邸报……",
-        simulator_payload={}, secret_orders=[], relevant_memories=[],
+        simulator_payload={}, secret_orders=[],
     )
 
     def _boom(*a, **k):

@@ -742,7 +742,7 @@ def test_play_turn_hitl_advancement_ends_turn(game, monkeypatch, action):
     db.save_resolve_context(
         turn_before, "测试诏书", "月报",
         {"candidate_events": [], "transit_semantics": []},
-        secret_orders=[], relevant_memories=[],
+        secret_orders=[],
     )
     db.save_turn_report(state, "邸报已成")
 

@@ -65,7 +65,7 @@ def test_clear_for_resimulation_downgrades_context_keeps_settling(game):
 
     # 立一个 ready 的 resolve_context + settling 相位。
     db.save_resolve_context(turn, "d", "n", {"k": "v"},
-                            secret_orders=[], relevant_memories=[],
+                            secret_orders=[],
                             extracted={"metric_delta": {"国库": 1}})
     state.turn_phase = TurnPhase.SETTLING.value
     db.save_state(state)
@@ -99,7 +99,7 @@ def test_clear_for_resimulation_preserves_source(game):
     turn = state.turn
 
     db.save_resolve_context(turn, "d", "n", {"k": "v"},
-                            secret_orders=[], relevant_memories=[],
+                            secret_orders=[],
                             extracted={"metric_delta": {"国库": 1}},
                             source="player_decree")
     assert db.get_resolve_context(turn)["source"] == "player_decree"
@@ -285,7 +285,7 @@ def test_clear_for_resimulation_preserves_audience_decree_rows(game):
 
     db.save_resolve_context(
         turn, "d", "n", {"k": "v"},
-        secret_orders=[], relevant_memories=[],
+        secret_orders=[],
         extracted={"metric_delta": {"国库": 1}},
         source="player_decree",
     )
