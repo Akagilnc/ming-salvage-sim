@@ -1777,6 +1777,10 @@ def test_http_chat_issue_stream_pay_decree_keeps_month_unadvanced(
         lambda *_a, **_k: decision_report,
     )
     monkeypatch.setattr(
+        "ming_sim.month_chain._run_world_continuation_text",
+        lambda *_a, **_k: "续推后果。",
+    )
+    monkeypatch.setattr(
         "ming_sim.month_chain.run_gazette_text",
         lambda *_a, **_k: ("邸报", decision_report),
     )
@@ -1916,7 +1920,6 @@ def test_http_chat_issue_stream_pay_decree_keeps_month_unadvanced(
 
         after = _get_state(client)
         assert _turn_of(after) == turn_before + 1, after.get("turn")
-        assert not body.get("awaiting_decision")
 
         dossiers = [
             d for d in game.db.list_decree_dossiers()

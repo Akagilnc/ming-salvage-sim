@@ -25,25 +25,8 @@ import web_app
 from ming_sim.paths import user_data_path
 
 
-_DECISION_BLOCK = (
-    "本月邸报正文。\n"
-    "<<DECISION>>"
-    '{"title": "内帑先济何处", "context": "辽饷与秦赈两急，库银不足同济。", '
-    '"options": [{"label": "先济辽饷", "hint": "边防暂安"}, '
-    '{"label": "先赈陕西", "hint": "流寇稍缓"}]}'
-    "<<END>>"
-)
-
 _REPO = Path(__file__).resolve().parents[1]
 
-
-def _stub_full_settlement(monkeypatch, *, narrative: str, payload_spy=None):
-    """只替外部 LLM 缝；结算脊骨走生产码。"""
-    def _sim(*a, **k):
-        payload = k.get("simulator_payload") or {}
-        if payload_spy is not None:
-            payload_spy.append(payload)
-        return narrative, payload
 
 def test_hitl_quota_mechanism_fully_deleted():
     """机制缺席：配置读写/loader/API/payload 注入/UI 选择器全部不在。"""

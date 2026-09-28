@@ -6,7 +6,7 @@ Only replaces outer LLM factories/calls; production spine stays real.
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional
+from typing import Optional
 
 import ming_sim.decree as decree_mod
 from ming_sim.session import GameSession
@@ -43,7 +43,6 @@ def canned_full_settlement(
     monkeypatch,
     *,
     narrative: str = "本月边情邸报：辽饷催征，流寇未息。",
-    decisions: Optional[List[Dict[str, object]]] = None,
     simulator_calls: Optional[list] = None,
     source_spy: Optional[list] = None,
     skip_fixed_flows: bool = False,
@@ -53,7 +52,6 @@ def canned_full_settlement(
 
     """
     simulator_calls = simulator_calls if simulator_calls is not None else []
-    _ = decisions  # 旧 simulator DECISION 块注入已随入口删除；保留形参兼容调用方
 
     # #658：真实 ensure 成案后颁布判官亦为外部 LLM 缝——canned 默认全顺颁。
     # 替身换 llm_promulgation_verdicts 后生产不触 get_or_create，无需再 patch 工厂。

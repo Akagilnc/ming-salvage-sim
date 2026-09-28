@@ -15941,7 +15941,7 @@ class GameDB:
 
         if is_secret_order_origin(supplied):
             try:
-                secret_order_id = int(supplied[len(SECRET_ORDER_ORIGIN_PREFIX):].split(":", 1)[0])
+                secret_order_id = int(supplied[len(SECRET_ORDER_ORIGIN_PREFIX):])
             except (TypeError, ValueError):
                 raise ValueError("commitment origin_ref 密令 id 非法")
             dossier = self.get_dossier_for_secret_order(secret_order_id)
