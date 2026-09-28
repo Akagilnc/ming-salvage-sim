@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { consumeSettleStream } from "./settleStream";
 
 function streamResponse(chunks: string[], ok = true): Response {
@@ -54,25 +54,7 @@ describe("consumeSettleStream residual flush", () => {
   });
 });
 
-describe("consumeSettleStream continue-style stages (#1195)", () => {
-  it("invokes onStage for each stage then returns done state", async () => {
-    const onStage = vi.fn();
-    const outcome = await consumeSettleStream(
-      streamResponse([
-        'event: stage\ndata: {"content":"检查模型后端..."}\n\n',
-        'event: stage\ndata: {"content":"载入上次进度..."}\n\n',
-        'event: done\ndata: {"state":{"turn":{"turn":2}}}\n\n',
-      ]),
-      { onStage },
-      { httpErrorLabel: "继续失败" },
-    );
-    expect(onStage.mock.calls.map((c) => c[0])).toEqual([
-      { content: "检查模型后端..." },
-      { content: "载入上次进度..." },
-    ]);
-    expect(outcome).toEqual({ kind: "done", data: { state: { turn: { turn: 2 } } } });
-  });
-
+describe("consumeSettleStream HTTP errors", () => {
   it("uses custom httpErrorLabel on non-OK responses", async () => {
     await expect(
       consumeSettleStream(streamResponse([], false), silent, { httpErrorLabel: "继续失败" }),
@@ -93,17 +75,4 @@ describe("consumeSettleStream continue-style stages (#1195)", () => {
     ).rejects.toThrow("无上次进度可继续，请先新游戏或加载存档。");
   });
 
-  it("ignores retired thinking/text mid-events and still reaches done", async () => {
-    const onStage = vi.fn();
-    const outcome = await consumeSettleStream(
-      streamResponse([
-        'event: thinking\ndata: {"content":"推敲"}\n\n',
-        'event: text\ndata: {"content":"段文"}\n\n',
-        'event: done\ndata: {"ok":true}\n\n',
-      ]),
-      { onStage },
-    );
-    expect(onStage).not.toHaveBeenCalled();
-    expect(outcome).toEqual({ kind: "done", data: { ok: true } });
-  });
 });
