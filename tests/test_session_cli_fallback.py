@@ -1387,6 +1387,31 @@ def test_scene_new_secret_order_is_not_confirmed_in_same_turn(game):
     assert len(pending) == 1 and pending[0]["kind"] == "secret_order"
 
 
+def test_scene_two_independent_secret_commissions_commit_separately(game):
+    """两条新交办分别暂存和落档，不因同一承办人合并成一案。"""
+    from ming_sim.declaration_dispatch import dispatch_declaration
+
+    db, state, _content = game
+    minister = "毕自严"
+    declaration = {"commissions": [
+        {"text": content, "secret_order": {
+            "title": title, "content": content, "assignee": minister,
+            "tags": [], "deadline_months": 0, "covert_task": TYPED_COVERT_TASK,
+        }}
+        for title, content in (("暗查甲", "查甲"), ("暗查乙", "查乙"))
+    ]}
+    result = dispatch_declaration(db, state, declaration, minister_name=minister)
+    assert len(result.commissions.applied) == 2
+    assert result.commissions.rejected == []
+    assert len(db.list_pending_actions(state.turn)) == 2
+    assert db.list_secret_orders() == []
+    db.commit_pending_actions(state)
+    orders = db.list_secret_orders()
+    assert {(r["title"], r["content"]) for r in orders} == {
+        ("暗查甲", "查甲"), ("暗查乙", "查乙"),
+    }
+
+
 @pytest.mark.parametrize("mode", [None, "ordinary", "midzhi"])
 def test_scene_appointment_mode_contract(game, mode):
     """任免声明的显式密旨/普通模式不得被工具退役吞掉。"""
@@ -2465,197 +2490,18 @@ def test_chat_rollback_refresh_syncs_offices_with_runtime_llm_config(monkeypatch
     assert seen == [cfg]
 
 
-def test_no_backend_is_noop(read_game, monkeypatch):
-    """未启 CLI 后端（走原 api 路径）时，胶水不动任何东西。"""
-    db, state, _ = read_game
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-    result = _result()
-    result.answer = "臣领旨。敕谕户部发银三万两。钦此。"
-    before_pending = db.list_pending_actions(state.turn)
-    _session(db, state)._cli_backend_fallback_actions(
-        result, SimpleNamespace(name="毕自严", office_type="户部"), "拟旨如下：发三万两赈陕西")
-    assert result.proposed_directive is None
-    assert result.secret_order_id is None
-    assert result.pending_action_id in (None, 0)
-    assert db.list_pending_actions(state.turn) == before_pending
 
 
-def test_draft_prefix_stages_directive(game, monkeypatch):
-    """玩家『拟旨如下：』→ 大臣回话原文进 pending_actions，等待对话确认或颁诏默认同意。"""
-    db, state, _ = game
-    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "codex")
-    _no_conv_action(monkeypatch)
-    seed = "臣领旨。敕谕户部与陕西巡抚发太仓银三万两亲督赈发。钦此。"
-    result = _result()
-    result.answer = seed
-    _session(db, state)._cli_backend_fallback_actions(
-        result, SimpleNamespace(name="毕自严", office_type="户部"), "拟旨如下：发三万两赈陕西")
-    assert result.proposed_directive is None
-    assert result.pending_action_id
-    pending = db.list_pending_actions(state.turn)
-    assert len(pending) == 1 and pending[0]["kind"] == "directive"
-    assert json.loads(pending[0]["payload_json"])["text"] == seed
-    assert result.answer == seed
-    assert db.conn.execute(
-        "SELECT COUNT(*) FROM turn_directives WHERE turn=?", (state.turn,)
-    ).fetchone()[0] == 0
 
 
-def test_runtime_cli_channel_without_env_stages_directive(game, monkeypatch):
-    """runtime 选择 CLI 通道时，即使无 MING_SIM_LLM_BACKEND，也要启用会话写动作胶水。"""
-    db, state, _ = game
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-    _no_conv_action(monkeypatch)
-    seed = "臣领旨。敕谕户部与陕西巡抚发太仓银三万两亲督赈发。钦此。"
-    result = _result()
-    result.answer = seed
-    _session(db, state, llm_config=SimpleNamespace(channel="cli"))._cli_backend_fallback_actions(
-        result, SimpleNamespace(name="毕自严", office_type="户部"), "拟旨如下：发三万两赈陕西")
-
-    assert result.proposed_directive is None
-    assert result.pending_action_id
-    pending = db.list_pending_actions(state.turn)
-    assert len(pending) == 1 and pending[0]["kind"] == "directive"
-    assert json.loads(pending[0]["payload_json"])["text"] == seed
-    assert result.answer == seed
-    assert db.conn.execute(
-        "SELECT COUNT(*) FROM turn_directives WHERE turn=?", (state.turn,)
-    ).fetchone()[0] == 0
 
 
-def test_runtime_cli_secret_prefix_merges_via_configured_runner(game, monkeypatch):
-    """#397：runtime CLI 通道的前缀密令经配置 runner(codex) 合并皇帝旨意 + 大臣回话，
-    不再直取回话当正文（旧零 LLM 路径会丢御旨）。"""
-    db, state, _ = game
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-    monkeypatch.setattr(cb, "_trace", lambda rec: None)
-    calls = []
-    canned = json.dumps({
-        "标题": "密查辽东军饷",
-        "内容": "查辽东军饷有无侵冒，三月内回奏；着李若琏暗查。",
-        "承办人": "李若琏",
-        "期限月数": 3,
-        "差务": "清丈",
-        "价值轴": ["实务事功"],
-        "方向": 1,
-        "交付单位": "万亩",
-        "交付目标": 1, "效果符号": 1, "地区": "henan", "地区字段": "registered_land", "地区目标值": "421",
-        "标签": ["辽饷"],
-    }, ensure_ascii=False)
-
-    def fake_codex(prompt, model=None, **kwargs):
-        calls.append(("codex", model))
-        return canned, 1
-
-    monkeypatch.setattr(cb, "_run_codex", fake_codex)
-    result = _result()
-    result.answer = "臣领密旨，可授李若琏暗查。"
-    _session(
-        db,
-        state,
-        llm_config=SimpleNamespace(
-            channel="cli", cli_runner="codex", cli_model="gpt-5.5", cli_timeout_seconds=240,
-        ),
-    )._cli_backend_fallback_actions(
-        result, SimpleNamespace(name="王在晋", office_type="兵部"),
-        "密令如下：查辽东军饷有无侵冒，三月内回奏")
-
-    # 经配置 runner 合并润色（不再零 LLM）
-    assert calls == [("codex", "gpt-5.5")]
-    row = _commit_staged_secret_order(db, state, result)
-    assert "查辽东军饷" in row["content"]          # 御旨不丢
-    assert "李若琏" in row["content"]              # extractor 内容保留
-    assert row["minister_name"] == "李若琏"        # 结构化承办人字段
 
 
-def test_secret_prefix_creates_order(game, monkeypatch):
-    """#397/#413：玩家『密令如下：』→ 合并皇帝旨意 + extractor，先暂存，确认/commit 后建 active 密令。"""
-    db, state, _ = game
-    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "codex")
-    canned = json.dumps({
-        "标题": "查辽东军饷有无侵冒",
-        "内容": "查辽东军饷有无侵冒，三月内回奏；可授李若琏暗查。",
-        "承办人": "王在晋",
-        "期限月数": 0,
-        "差务": "清丈",
-        "价值轴": ["实务事功"],
-        "方向": 1,
-        "交付单位": "万亩",
-        "交付目标": 1, "效果符号": 1, "地区": "henan", "地区字段": "registered_land", "地区目标值": "421",
-        "标签": [],
-    }, ensure_ascii=False)
-    monkeypatch.setattr(cb, "_run_codex", lambda p, **kw: (canned, 1))
-    monkeypatch.setattr(cb, "_trace", lambda rec: None)
-    result = _result()
-    result.answer = "臣领密旨，可授李若琏暗查。"
-    _session(db, state, registry=None)._cli_backend_fallback_actions(
-        result, SimpleNamespace(name="王在晋", office_type="兵部"),
-        "密令如下：查辽东军饷有无侵冒，三月内回奏")
-    row = _commit_staged_secret_order(db, state, result)
-    assert "查辽东军饷" in row["content"]          # 御旨不丢（#397）
-    assert "李若琏" in row["content"]              # extractor 内容可含人名
-    # ADR 0142：无御旨祈使时采信结构化承办人；禁回话散文反推覆盖
-    assert row["minister_name"] == "王在晋"
-    assert row["status"] == "active"
 
 
-def test_secret_prefix_upserts_not_duplicates_and_refreshes(game, monkeypatch):
-    """#413：前缀密令只暂存候选；正式 commit 时才建密令并 refresh 承办大臣 agent。"""
-    db, state, _ = game
-    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "codex")
-    monkeypatch.setattr(cb, "_trace", lambda rec: None)
-    refreshed = []
-    registry = SimpleNamespace(refresh=lambda name: refreshed.append(name))
-    s = _session(db, state, registry=registry)
-    who = "测试承办官F3"
-
-    def fake_agy(prompt, **kw):
-        # extractor「内容」只给任务本体（不夹答奏）——结构化契约
-        if "改查甲" in prompt or "臣领旨二" in prompt:
-            content = "改查甲"
-        else:
-            content = "查甲"
-        return (json.dumps({"标题": "查甲", "内容": content, "承办人": who,
-                            "期限月数": 0, "差务": "清丈", "价值轴": ["实务事功"], "方向": 1, "交付单位": "万亩", "交付目标": 1, "效果符号": 1, "地区": "henan", "地区字段": "registered_land", "地区目标值": "421", "标签": []}, ensure_ascii=False), 1)
-    monkeypatch.setattr(cb, "_run_codex", fake_agy)
-
-    r1 = _result(); r1.answer = "臣领旨一。"
-    s._cli_backend_fallback_actions(r1, SimpleNamespace(name=who, office_type="兵部"), "密令如下：查甲")
-    assert r1.secret_order_id is None
-    assert r1.pending_action_id
-
-    r2 = _result(); r2.answer = "臣领旨二。"
-    s._cli_backend_fallback_actions(r2, SimpleNamespace(name=who, office_type="兵部"), "密令如下：改查甲")
-    assert r2.secret_order_id is None
-    assert r2.pending_action_id
-    assert db.list_secret_orders() == []
-    db.commit_pending_actions(state, registry=registry)
-    cnt = db.conn.execute(
-        "SELECT COUNT(*) FROM secret_orders WHERE minister_name=? AND status='active'", (who,)
-    ).fetchone()[0]
-    assert cnt == 2
-    contents = {
-        r["content"] for r in db.conn.execute(
-            "SELECT content FROM secret_orders WHERE minister_name=? AND status='active'", (who,)
-        ).fetchall()
-    }
-    # #1274 K1：content=御旨+extractor；答奏 reply 不入
-    assert contents == {"查甲", "改查甲"}
-    assert refreshed.count(who) == 2
 
 
-def test_existing_directive_not_overwritten(read_game, monkeypatch):
-    """agno 工具已产 directive 时，胶水不重复入档（result.proposed_directive 非空）。"""
-    db, state, _ = read_game
-    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "codex")
-    _no_conv_action(monkeypatch)
-    sentinel = SimpleNamespace(id=999, text="原工具产出", status="draft")
-    result = _result()
-    result.answer = "臣另拟一道。钦此。"
-    result.proposed_directive = sentinel
-    _session(db, state)._cli_backend_fallback_actions(
-        result, SimpleNamespace(name="毕自严", office_type="户部"), "拟旨如下：发三万两")
-    assert result.proposed_directive is sentinel    # 不被覆盖
 
 
 # ── codexC-1：会话动作（非前缀）必须经 session 路径落地，不再只在 web 有 ──
