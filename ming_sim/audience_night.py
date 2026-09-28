@@ -170,10 +170,8 @@ DEFAULT_IN_FLIGHT_POLL_S = 0.05
 
 # 收夜提交的 night-domain kinds（密令应允即落地，不进收夜提交）
 # Pre-endorsement: only draft-dossier prerequisites (endorsement targets). Final
-# gameplay effects such as consort cultivation run only after endorsement binding.
 _CLOSE_COMMIT_KINDS_OFFICE = frozenset({"office"})
 _CLOSE_COMMIT_KINDS_DIRECTIVE = frozenset({"directive"})
-_CLOSE_COMMIT_KINDS_FINAL = frozenset({"consort"})
 
 # ── 夜内真实盘面直写白名单（ADR 0038 防坑不变式；#506 AC3；#1839 第四类）────────
 # 撤回逆转干净的结构性前提：夜内对真实盘面的直写**只有**本表可枚举项，其余结构化
@@ -1023,21 +1021,6 @@ def open_night(
         # opening 成色只走既有 LLM 输入/materials seam（attach_chat_turn_to_night
         # → generate_open_beat_body），不再写「{location}·{time_of_day}，召对启。」。
         open_body = body or ""
-        # #621：次回合召对顶出复命场面（pending todo 投影；P4 定性、不停轮）。
-        # body 是开夜气氛层（含 LLM open-beat）；复命是召对顶出层——二者叠加，
-        # 不得因调用方已供 body 而跳过（生产 ensure_open_night_for_audience 常带 body）。
-        # #1561 N1：仅 opening 已有显式非空 body 时叠加；无 generator 的空垫位
-        # 不得被 pending due/urge scene_text 填成确定性正文（整段迁移属 #1571）。
-        from ming_sim.due_review import list_due_review_scenes
-        from ming_sim.urge_lever import list_urge_audience_scenes
-        scenes = list_due_review_scenes(db, state)
-        # #624 / ADR 0078：谏/宽限同款次回合召对顶出（不进 due-review 白名单、不占接管窗）
-        scenes = list(scenes) + list(list_urge_audience_scenes(db, state))
-        if scenes and str(open_body).strip():
-            scene_lines = [str(s.get("scene_text") or "").strip() for s in scenes]
-            scene_lines = [line for line in scene_lines if line]
-            if scene_lines:
-                open_body = open_body + "\n" + "\n".join(scene_lines)
 
     # 原子：实体 + 开夜账 + 员额入殿账，SAVEPOINT 全有或全无。
     # 不 BEGIN 顶层事务（避免嵌套/泄漏；外层 atomic 可组合）。
@@ -1309,7 +1292,6 @@ def commit_late_night_approved(
             for kinds in (
                 _CLOSE_COMMIT_KINDS_OFFICE,
                 _CLOSE_COMMIT_KINDS_DIRECTIVE,
-                _CLOSE_COMMIT_KINDS_FINAL,
             ):
                 _commit_night_approved(
                     db, state, nid, kinds=kinds, content=content, registry=registry,
@@ -1652,11 +1634,6 @@ def close_night(
         if cursor < CLOSE_STEP_FINALIZE:
             commit_fresh_summons_for_night(
                 db, state, int(night_id), content=content, registry=registry,
-            )
-            _commit_night_approved(
-                db, state, int(night_id),
-                kinds=_CLOSE_COMMIT_KINDS_FINAL,
-                content=content, registry=registry,
             )
             publish_night_directives(db, int(night_id))
             tags = [TAG_CLOSE_NIGHT]

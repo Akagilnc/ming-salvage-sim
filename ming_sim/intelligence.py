@@ -182,12 +182,6 @@ def persist_return_report(
     # An emperor's question opens the inquiry channel by default.  Firsthand
     # is allowed only when a durable witness/scout record for this domain
     # already exists; wording alone may not manufacture provenance.
-    domain = _query_domain(query)
-    if not domain:
-        return {
-            "source_kind": "unsupported", "source_ref": "unsupported",
-            "subject": "未成报", "statement": "近臣暂不能据现有册档查明所问。",
-        }
     firsthand_record = _matching_firsthand_record(db, state, character_name, query)
     requested_kind = source_kind_for_query(query)
     source_kind = (

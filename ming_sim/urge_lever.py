@@ -11,10 +11,8 @@
 from __future__ import annotations
 
 import json
-import re
 from typing import Any, Dict, List, Optional
 
-from ming_sim.decree_vocabulary import URGE_TRUTH_BANNED_PLAYER_TOKENS
 from ming_sim.staged_commitment import (
     ENTRY_KIND_GRACE_PLEA,
     ENTRY_KIND_RUSH_REMONSTRANCE,
@@ -24,14 +22,6 @@ from ming_sim.staged_commitment import (
     stages_to_json,
 )
 from ming_sim.token_stats import tlog
-
-# 谏/宽限玩家面禁词——#629 单源：共引 decree_vocabulary.URGE_TRUTH_BANNED_PLAYER_TOKENS
-# （叶模块；禁顶层 import due_review，消 urge_lever↔due_review 环边）
-_URGE_SCENE_BANNED = URGE_TRUTH_BANNED_PLAYER_TOKENS
-_URGE_SCENE_BANNED_RE = re.compile(
-    "|".join(re.escape(t) for t in _URGE_SCENE_BANNED),
-    re.IGNORECASE,
-)
 
 # pending_actions 史源 kind（committed 行；DELETE 仅清 pending）
 URGE_PENDING_KIND_COMMITMENT = "commitment"
@@ -669,11 +659,6 @@ def rush_staged_commitment_stage(
     }
 
 
-def _strip_urge_banned(text: str) -> str:
-    cleaned = _URGE_SCENE_BANNED_RE.sub("", str(text or ""))
-    return re.sub(r"\s{2,}", " ", cleaned).strip(" ，。；、")
-
-
 _URGE_AUDIENCE_KINDS = frozenset({
     ENTRY_KIND_RUSH_REMONSTRANCE,
     ENTRY_KIND_GRACE_PLEA,
@@ -687,21 +672,9 @@ def is_urge_audience_entry_kind(entry_kind: object) -> bool:
 def project_urge_audience_scene(todo: Dict[str, object]) -> Dict[str, object]:
     """谏/宽限召对顶出投影：P4 定性措辞；永不读 payload_json（真伪底禁泄）。"""
     kind = str(todo.get("entry_kind") or "").strip()
-    criterion = _strip_urge_banned(str(todo.get("criterion_text") or "").strip())
-    origin = _strip_urge_banned(str(todo.get("origin_context") or "").strip())
-    host_bit = f"缘「{origin}」" if origin else "承催"
-    if kind == ENTRY_KIND_RUSH_REMONSTRANCE:
-        body = criterion or "期限过急，恐难如期"
-        scene_text = _strip_urge_banned(
-            f"操之过急之谏：{host_bit}，臣工奏称{body}。请陛下宽之。"
-        )
-        label = "rush_remonstrance"
-    else:
-        body = criterion or "乞恩宽限"
-        scene_text = _strip_urge_banned(
-            f"求宽限：{host_bit}，承办人叩请{body}。同一话术，真伪待圣鉴。"
-        )
-        label = "grace_plea"
+    criterion = str(todo.get("criterion_text") or "")
+    origin = str(todo.get("origin_context") or "")
+    label = "rush_remonstrance" if kind == ENTRY_KIND_RUSH_REMONSTRANCE else "grace_plea"
     return {
         "kind": label,
         "entry_kind": kind,
@@ -711,7 +684,6 @@ def project_urge_audience_scene(todo: Dict[str, object]) -> Dict[str, object]:
         "due_turn": int(todo.get("due_turn") or 0),
         "origin_context": origin,
         "criterion_text": criterion,
-        "scene_text": scene_text,
         # 故意不暴露 payload_json / truth / grace_fake
     }
 

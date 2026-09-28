@@ -771,10 +771,13 @@ def test_urge_audience_project_and_consume_path(game):
     kinds = {s["entry_kind"] for s in scenes}
     assert ENTRY_KIND_RUSH_REMONSTRANCE in kinds
     for s in scenes:
-        assert s.get("scene_text")
+        assert s["todo_id"] > 0
+        assert "scene_text" not in s
         assert "payload_json" not in s
-        assert "truth" not in s.get("scene_text", "")
-        assert "grace_fake" not in json.dumps(s, ensure_ascii=False)
+        assert "grace_fake" not in s
+    from ming_sim.beat_orchestration import BEAT_OPEN, assemble_beat_inputs
+    inputs = assemble_beat_inputs(db, state, beat_kind=BEAT_OPEN)
+    assert any(json.loads(s)["kind"] == "rush_remonstrance" for s in inputs.audience_scenes)
     # 不进 due-review、不占接管窗
     assert list_due_review_scenes(db, state) == []
     assert dossier_id not in dossiers_with_pending_due_review(db, state)

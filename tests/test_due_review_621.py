@@ -220,22 +220,15 @@ def test_due_review_scene_tops_next_audience_with_origin_context(game):
     assert len(scenes) == 1
     scene = scenes[0]
     assert scene["origin_context"] == "三年火器见眉目"
-    assert "复命" in scene["scene_text"]
-    assert "三年火器见眉目" in scene["scene_text"]
-    # P4 哨兵：枚举/系统词不进玩家可见串
-    banned = (
-        "fulfilled", "degraded", "failed", "transformed", "executing",
-        "AWAITING_DECISION", "<<DECISION>>", "EXTRACTION_MODULES",
-        "progress_band", "is_terminal",
-    )
-    blob = json.dumps(scene, ensure_ascii=False)
-    for token in banned:
-        assert token not in blob
-        assert token not in scene["scene_text"]
+    assert scene["kind"] == "due_review"
+    assert scene["criterion_text"] == "火器见眉目"
+    from ming_sim.beat_orchestration import BEAT_OPEN, assemble_beat_inputs
+    inputs = assemble_beat_inputs(db, state, beat_kind=BEAT_OPEN)
+    assert json.loads(inputs.audience_scenes[0])["origin_context"] == scene["origin_context"]
 
 
-def test_due_review_scene_tops_live_open_night_even_with_body(game):
-    """C1：生产 open-beat 供 body 时，复命仍须顶上真实召对开夜账。"""
+def test_due_review_scene_does_not_splice_character_speech_into_opening(game):
+    """Open beat is the only source of opening prose; due-review stays in scene facts."""
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.commit()
@@ -257,11 +250,10 @@ def test_due_review_scene_tops_live_open_night_even_with_body(game):
     open_entries = [e for e in ledger if "开夜" in (e.get("tags") or [])]
     assert open_entries, ledger
     open_text = str(open_entries[0].get("body") or "")
-    assert open_beat in open_text
-    assert "复命" in open_text
-    assert "三年火器见眉目" in open_text
-    for token in ("fulfilled", "AWAITING_DECISION", "<<DECISION>>"):
-        assert token not in open_text
+    assert open_text == open_beat
+    from ming_sim.beat_orchestration import BEAT_OPEN, assemble_beat_inputs
+    inputs = assemble_beat_inputs(db, state, beat_kind=BEAT_OPEN)
+    assert json.loads(inputs.audience_scenes[0])["origin_context"] == stages[0]["origin_context"]
 
 
 # ── P1 有案卷桥 / 无案卷分支 ──────────────────────────────────────────
@@ -556,7 +548,8 @@ def test_three_beat_timing_todo_then_scene_then_slot(game):
     # beat2: 召对场面可读
     scenes = list_due_review_scenes(db, state)
     assert len(scenes) == 1
-    assert "复命" in scenes[0]["scene_text"]
+    assert scenes[0]["kind"] == "due_review"
+    assert scenes[0]["criterion_text"] == stages[0]["criterion_text"]
 
     # beat3: 下一 settle 落格 + 消费
     _settle_empty_month(db, state, content)
@@ -614,7 +607,8 @@ def test_input_closed_set_degrades_when_sources_missing(game):
     assert inp["progress_reports"] == []
     assert inp.get("transformation_tendency_facts", {}).get("exposure_count", 0) == 0
     scene = project_due_review_scene(db, todo, review_input=inp)
-    assert scene["scene_text"]
+    assert scene["kind"] == "due_review"
+    assert scene["has_durable_effects"] is False
 
 
 def test_formal_review_blocks_extractor_second_terminal(game):
@@ -819,12 +813,6 @@ def test_p6_gap_visible_cause_not_auto(game):
     )
     write_due_staged_commitment_todos(db, state)
     scene = list_due_review_scenes(db, state)[0]
-    gap_text = scene.get("gap_text")
-    statement_text = scene.get("statement_text")
-    # 0118：缺口 + 陈词双到位（真值非空，缺席/None 不得靠 or "" 蒙混）
-    assert isinstance(gap_text, str) and gap_text.strip()
-    assert isinstance(statement_text, str) and statement_text.strip()
-    # 因不自动：不得出现机械归因定论词
-    for banned in ("真没办", "被吞", "欺瞒坐实", "归因="):
-        assert banned not in scene["scene_text"]
-        assert banned not in statement_text
+    assert scene["kind"] == "due_review"
+    assert scene["has_durable_effects"] is False
+    assert scene["memorial_text"] == "臣工奏称已办十之七八"

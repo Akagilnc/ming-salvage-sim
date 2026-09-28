@@ -67,7 +67,8 @@ def test_return_report_source_metadata_contract(game):
 
     minister = next(iter(db.content.characters))
     unsupported = persist_return_report(db, state, minister, "请查访宫中流言真假。")
-    assert unsupported["source_kind"] == "unsupported"
+    assert unsupported["source_kind"] == "inquiry"
+    assert unsupported["source_ref"] == "查访/unsupported"
     assert "result_kind" not in unsupported
 
 
@@ -202,7 +203,7 @@ def test_firsthand_witness_matrix(game):
     assert override["source_ref"] == "查访/powers"
 
 
-def test_unsupported_inquiry_is_not_persisted_as_false_office_report(game):
+def test_unknown_inquiry_is_persisted_without_fabricating_a_source(game):
     db, state, _content = game
     minister = next(iter(db.content.characters))
     before = db.conn.execute(
@@ -214,8 +215,10 @@ def test_unsupported_inquiry_is_not_persisted_as_false_office_report(game):
     after = db.conn.execute(
         "SELECT COUNT(*) FROM character_knowledge_sources"
     ).fetchone()[0]
-    assert report["source_kind"] == "unsupported"
-    assert after == before
+    assert report["source_kind"] == "inquiry"
+    assert report["source_ref"] == "查访/unsupported"
+    assert after == before + 1
+    assert db.get_character_knowledge(state, minister)["events"][-1]["source_id"].startswith("near_minister:")
 
 
 def test_bandit_inquiry_uses_shipped_inner_rebellion_kind(game):

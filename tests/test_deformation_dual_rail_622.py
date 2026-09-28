@@ -341,14 +341,11 @@ def test_ac6_sentinel_no_system_tokens_on_three_surfaces(game):
     )
     write_due_staged_commitment_todos(db, state)
 
-    # 面 3：到期复命 scene_text（落格前可读）
+    # 到期场面只供结构化事实，人物话语由场景 LLM 生成。
     scenes = list_due_review_scenes(db, state)
-    assert scenes
-    for token in ("变形", "分界", "transformed", "degraded", "beyond_intent",
-                  "fulfilled", "failed", "executing", "progress_band"):
-        assert token not in scenes[0]["scene_text"], token
-        assert token not in scenes[0].get("gap_text", ""), token
-        assert token not in scenes[0].get("statement_text", ""), token
+    assert scenes and scenes[0]["kind"] == "due_review"
+    assert "scene_text" not in scenes[0]
+    assert "gap_text" not in scenes[0]
 
     db.conn.execute(
         "UPDATE next_audience_todos SET created_turn=?",

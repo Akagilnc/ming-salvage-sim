@@ -255,9 +255,11 @@ def assemble_beat_inputs(
     if beat_kind == BEAT_OPEN:
         from ming_sim.due_review import current_audience_scene
         current = current_audience_scene(db, state)
-        audience_scenes = (() if current is None else (
-            json.dumps(current, ensure_ascii=False, sort_keys=True),
-        ))
+        from ming_sim.urge_lever import list_urge_audience_scenes
+        scenes = ([current] if current is not None else []) + list_urge_audience_scenes(db, state)
+        audience_scenes = tuple(
+            json.dumps(scene, ensure_ascii=False, sort_keys=True) for scene in scenes
+        )
     elif beat_kind == BEAT_SUMMON:
         # ADR 0096 / #1566：场外传召的正向结构化事实（旨意已发、驰递未达、尚未入殿）。
         # 走既有 audience_scenes 槽进 LLM 材料，不另开字段、不写玩家可见模板。

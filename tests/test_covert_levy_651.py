@@ -62,7 +62,7 @@ def test_exposure_uses_single_dispatcher_and_projects_exact_case(game, monkeypat
     assert scene["kind"] == ENTRY_KIND
     assert scene["dossier_id"] == did and scene["executor_id"] == executor
     assert scene["channels"] == ["稽核"]
-    assert scene["scene_text"] == ""  # audience LLM receives facts, not a fixed memorial
+    assert "scene_text" not in scene  # audience LLM receives facts, not a fixed memorial
     beat = assemble_beat_inputs(db, state, beat_kind=BEAT_OPEN)
     assert beat.audience_scenes and f'"dossier_id": {did}' in beat.audience_scenes[0]
     assert build_due_review_input(db, todo)["commitment_ref"] == issue_id

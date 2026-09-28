@@ -145,6 +145,15 @@ def _player_month(db, state, content, monkeypatch, dossier_id, *, effects=None):
 def test_prohibit_covert_levy_commission_binds_exposed_dossier(game, monkeypatch):
     db, state, content = game
     did, actor = _bound_exposure(db, state, monkeypatch)
+    other_did, _ = _bound_exposure(db, state, monkeypatch)
+    from ming_sim.beat_orchestration import BEAT_OPEN, assemble_beat_inputs
+    beat = assemble_beat_inputs(db, state, beat_kind=BEAT_OPEN)
+    assert json.loads(beat.audience_scenes[0])["dossier_id"] == did
+    rejected = dispatch_declaration(db, state, {"commissions": [{
+        "text": "禁绝摊派", "dossier_action_type": PROHIBITION_ACTION,
+        "target_id": other_did,
+    }]}, minister_name=actor)
+    assert not rejected.commissions.applied and rejected.commissions.rejected
     decl = {
         "commissions": [{
             "text": "此等借饷扰民之举，即刻禁绝。",

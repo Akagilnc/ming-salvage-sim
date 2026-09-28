@@ -1505,18 +1505,16 @@ def _stage_prohibit_covert_levy(
     """禁摊派交办：绑定当前暴露案卷 → 既有 directive 暂存并标夜应允。"""
     from ming_sim.audience_night import mark_actions_night_approved
     from ming_sim.covert_levy import PROHIBITION_ACTION
-    from ming_sim.due_review import list_due_review_scenes
+    from ming_sim.due_review import current_audience_scene
 
     try:
         dossier_id = int(item["target_id"])
     except (KeyError, TypeError, ValueError):
         raise KeyError("禁摊派交办缺场面案卷 id") from None
-    if not any(
-        scene.get("kind") == "covert_levy_exposure"
-        and not scene.get("decision")
-        and int(scene.get("dossier_id") or 0) == dossier_id
-        for scene in list_due_review_scenes(db, state)
-    ):
+    scene = current_audience_scene(db, state)
+    if not (scene and scene.get("kind") == "covert_levy_exposure"
+            and not scene.get("decision")
+            and int(scene.get("dossier_id") or 0) == dossier_id):
         raise KeyError(f"当前无待裁的暗渠摊派暴露案卷：{dossier_id}")
     body = _declared_prose(item.get("text"))
     if body is None:

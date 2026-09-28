@@ -11,9 +11,6 @@ Seams:
 from __future__ import annotations
 
 import json
-import subprocess
-import sys
-from pathlib import Path
 
 from ming_sim.breach_plea import (
     ENTRY_KIND_BREACH_PLEA,
@@ -34,12 +31,9 @@ from ming_sim.credit_events import (
 from ming_sim.decree_vocabulary import (
     DEFORMATION_BANNED_PLAYER_TOKENS,
     DEFORMATION_STRIP_PLAYER_TOKENS,
-    URGE_TRUTH_BANNED_PLAYER_TOKENS,
     format_public_progress_disclosure,
 )
 from ming_sim.due_review import (
-    URGE_TRUTH_BANNED_PLAYER_TOKENS as DUE_REVIEW_URGE_TRUTH,
-    _BANNED_PLAYER_TOKENS,
     list_due_review_scenes,
     project_due_review_scene,
 )
@@ -52,31 +46,12 @@ from ming_sim.staged_commitment import (
 from ming_sim.supervision import SUPERVISION_BANNED_PLAYER_TOKENS
 from ming_sim.urge_lever import (
     ENTRY_KIND_GRACE_PLEA,
-    _URGE_SCENE_BANNED,
     list_urge_audience_scenes,
     project_urge_audience_scene,
 )
 
 
 # ── 单源化机械钉 ─────────────────────────────────────────────────────
-
-
-def test_urge_due_review_truth_banned_single_source():
-    """urge / due_review 真伪底禁词必须是同一生产元组，禁双份漂移。"""
-    assert _URGE_SCENE_BANNED is URGE_TRUTH_BANNED_PLAYER_TOKENS or tuple(
-        _URGE_SCENE_BANNED
-    ) == tuple(URGE_TRUTH_BANNED_PLAYER_TOKENS)
-    # due_review 再导出须与叶源同一对象（或等价元组）
-    assert DUE_REVIEW_URGE_TRUTH is URGE_TRUTH_BANNED_PLAYER_TOKENS or tuple(
-        DUE_REVIEW_URGE_TRUTH
-    ) == tuple(URGE_TRUTH_BANNED_PLAYER_TOKENS)
-    for token in (
-        "truth", "grace_fake", "pretextual", "genuine",
-        "payload_json", "distortion_band", "urge_tightness",
-        "distortion_tendency", "unreasonable",
-    ):
-        assert token in URGE_TRUTH_BANNED_PLAYER_TOKENS
-        assert token in _BANNED_PLAYER_TOKENS
 
 
 def test_deformation_banned_lifted_to_production_single_source():
@@ -90,10 +65,6 @@ def test_deformation_banned_lifted_to_production_single_source():
     # 生产静默剥离只载无歧义系统词；汉语普通词不进 strip
     for token in ("变形", "分界", "打折走样", "烂尾"):
         assert token not in DEFORMATION_STRIP_PLAYER_TOKENS
-        assert token not in _BANNED_PLAYER_TOKENS
-    for token in ("beyond_intent", "transformed", "progress_band"):
-        assert token in DEFORMATION_STRIP_PLAYER_TOKENS
-        assert token in _BANNED_PLAYER_TOKENS
 
     import tests.test_deformation_dual_rail_622 as t622
     assert t622._BANNED_SURFACE_TOKENS is DEFORMATION_BANNED_PLAYER_TOKENS or tuple(
@@ -440,7 +411,8 @@ def test_family_p4_seven_surfaces_scan_production_artifacts_clean(game):
     # 正向：diegetic 用词仍在
     due_scene = meta["due_scene"]
     plea_scene = meta["plea_scene"]
-    assert "复命" in due_scene["scene_text"] or "复命" in surfaces["scene_text"]
+    assert due_scene["kind"] == "due_review"
+    assert due_scene["criterion_text"]
     assert "泣血陈情" in plea_scene["scene_text"]
     # #626 反噬已入 narrative 扫描面
     assert meta["backlash_issue"]["title"]
@@ -536,35 +508,3 @@ def test_due_review_preserves_diegetic_fenjie_phrase(game):
     ])
     assert "与喀尔喀而治" not in blob
     assert diegetic in blob
-
-
-def test_urge_lever_due_review_import_order_both_succeed():
-    """负向：先 import urge_lever 与先 import due_review 两种乱序均成功（无环烟）。"""
-    scripts = (
-        (
-            "import ming_sim.urge_lever as ul\n"
-            "import ming_sim.due_review as dr\n"
-            "assert ul.URGE_TRUTH_BANNED_PLAYER_TOKENS is "
-            "dr.URGE_TRUTH_BANNED_PLAYER_TOKENS\n"
-        ),
-        (
-            "import ming_sim.due_review as dr\n"
-            "import ming_sim.urge_lever as ul\n"
-            "assert ul.URGE_TRUTH_BANNED_PLAYER_TOKENS is "
-            "dr.URGE_TRUTH_BANNED_PLAYER_TOKENS\n"
-        ),
-    )
-    repo_root = Path(__file__).resolve().parents[1]
-    for script in scripts:
-        completed = subprocess.run(
-            [sys.executable, "-c", script],
-            check=False,
-            capture_output=True,
-            text=True,
-            cwd=repo_root,
-        )
-        assert completed.returncode == 0, (
-            f"import-order subprocess failed\n"
-            f"stdout:\n{completed.stdout}\n"
-            f"stderr:\n{completed.stderr}"
-        )

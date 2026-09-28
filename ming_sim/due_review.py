@@ -19,11 +19,7 @@ from ming_sim.breach_plea import (
     ENTRY_KIND_BREACH_PLEA,
     project_breach_plea_scene,
 )
-from ming_sim.decree_vocabulary import (
-    DEFORMATION_STRIP_PLAYER_TOKENS,
-    URGE_TRUTH_BANNED_PLAYER_TOKENS,
-    terminal_report_facade,
-)
+from ming_sim.decree_vocabulary import terminal_report_facade
 from ming_sim.staged_commitment import (
     ENTRY_KIND_GRACE_PLEA,
     ENTRY_KIND_RUSH_REMONSTRANCE,
@@ -33,27 +29,6 @@ from ming_sim.staged_commitment import (
     list_due_stages_for_scan,
     normalize_commitment_stages,
 )
-from ming_sim.supervision import SUPERVISION_BANNED_PLAYER_TOKENS
-
-# 真伪底禁词叶源在 decree_vocabulary；此处再导出供既有 import 路径兼容。
-# URGE_TRUTH_BANNED_PLAYER_TOKENS  # re-export
-
-# 玩家可见串静默剥离集（运行时）：仅无歧义系统词/引擎键。
-# 汉语普通词（变形/分界/打折走样/烂尾/钝化…）不进本集——由 assert 哨兵响亮拦截。
-_BANNED_PLAYER_TOKENS = (
-    "AWAITING_DECISION", "<<DECISION>>", "EXTRACTION_MODULES",
-    "close=True", "close=False",
-) + tuple(DEFORMATION_STRIP_PLAYER_TOKENS) + tuple(
-    URGE_TRUTH_BANNED_PLAYER_TOKENS
-) + tuple(
-    token for token in SUPERVISION_BANNED_PLAYER_TOKENS
-    if not any("\u4e00" <= ch <= "\u9fff" for ch in token)
-)
-assert not any(
-    any("\u4e00" <= ch <= "\u9fff" for ch in token)
-    for token in _BANNED_PLAYER_TOKENS
-)
-
 # next_audience_todos.entry_kind 单一分派（#623+#624 合成，禁第二份谓词）：
 #   staged       → 到期终裁（due-review 四缝）
 #   breach_plea  → 挽留投影 / apply 跳过保留 pending
@@ -273,38 +248,6 @@ def build_due_review_input(db: Any, todo: Dict[str, object]) -> Dict[str, object
     }
 
 
-def _strip_banned(text: str) -> str:
-    out = str(text or "")
-    for token in _BANNED_PLAYER_TOKENS:
-        out = out.replace(token, "")
-    return out
-
-
-def _gap_and_statement(review_input: Dict[str, object]) -> tuple[str, str]:
-    """0118 最小玩家面：果可见、因不自动。"""
-    effects = list(review_input.get("durable_effects") or [])
-    reports = list(review_input.get("progress_reports") or [])
-    criterion = str(review_input.get("criterion_text") or "").strip() or "所约之事"
-
-    if effects:
-        gap = f"「{criterion}」一侧已见实账落地"
-    elif reports:
-        gap = f"「{criterion}」交付仍有亏欠，表报与实况未尽合"
-    else:
-        gap = f"「{criterion}」到期未见可核之实绩"
-
-    statement = ""
-    if reports:
-        last = reports[-1]
-        memorial = str(last.get("memorial_text") or "").strip()
-        if memorial:
-            statement = f"承办人陈词：{memorial}"
-    if not statement:
-        statement = "承办人陈词：容臣细禀（尚未具状）。"
-    # 永不自动翻「因」
-    return _strip_banned(gap), _strip_banned(statement)
-
-
 def project_due_review_scene(
     db: Any,
     todo: Dict[str, object],
@@ -313,22 +256,13 @@ def project_due_review_scene(
 ) -> Dict[str, object]:
     """复命场面投影（ID-13 用词，P4 定性、无数字面板）。"""
     inp = review_input if review_input is not None else build_due_review_input(db, todo)
-    origin = str(inp.get("origin_context") or todo.get("origin_context") or "").strip()
-    gap_text, statement_text = _gap_and_statement(inp)
+    origin = str(inp.get("origin_context") or todo.get("origin_context") or "")
     mid = bool(inp.get("mid_stage"))
-    phase_hint = "中途复命" if mid else "到期复命"
-    origin_bit = f"昔有「{origin}」之约，今期已至。" if origin else "前诺到期，例应复命。"
-    scene_text = _strip_banned(
-        f"{phase_hint}：{origin_bit}{gap_text}。{statement_text}"
-    )
+    reports = list(inp.get("progress_reports") or [])
     entry_kind = str(todo.get("entry_kind") or ENTRY_KIND_STAGED)
     scene_kind = "covert_levy_exposure" if audience_todo_lane(entry_kind) == _AUDIENCE_LANE_COVERT_LEVY else "due_review"
     payload = todo.get("payload_json") or {}
     reopened = scene_kind == "covert_levy_exposure" and bool(payload.get("shortfall_reopened"))
-    # Covert exposure is rendered by the existing audience LLM from the facts
-    # below; unlike ordinary due review it must not inject a fixed memorial.
-    if scene_kind == "covert_levy_exposure":
-        scene_text = ""
     if reopened:
         # A prohibition reminder is a fresh shortfall projection, not a replay
         # of the already-settled exposure and its adjudication materials.
@@ -354,9 +288,8 @@ def project_due_review_scene(
         "origin_context": origin,
         "criterion_text": str(todo.get("criterion_text") or ""),
         "mid_stage": mid,
-        "gap_text": gap_text,
-        "statement_text": statement_text,
-        "scene_text": scene_text,
+        "has_durable_effects": bool(inp.get("durable_effects")),
+        "memorial_text": str(reports[-1].get("memorial_text") or "") if reports else "",
         "branch": str(inp.get("branch") or "no_dossier"),
         "dossier_id": inp.get("dossier_id"),
         "executor_id": str((inp.get("dossier") or {}).get("executor_id") or ""),
@@ -392,11 +325,7 @@ def list_due_review_scenes(
 
 def current_audience_scene(db: Any, state: Any = None) -> Dict[str, object] | None:
     """Return the one due-review scene currently presented to the sovereign."""
-    return next((
-        scene for scene in list_due_review_scenes(db, state)
-        if scene.get("kind") == "covert_levy_exposure"
-        or scene.get("shortfall_reopened") is True
-    ), None)
+    return next(iter(list_due_review_scenes(db, state)), None)
 
 
 def _add_owned_dossier(

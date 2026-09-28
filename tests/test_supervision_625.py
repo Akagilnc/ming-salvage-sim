@@ -593,10 +593,10 @@ def test_ac5_banned_tokens_absent_from_named_surfaces(game):
     todo = db.list_next_audience_todos(status=TODO_STATUS_PENDING)[0]
     scene = project_due_review_scene(db, todo)
 
-    # scene_text
-    assert_no_banned_tokens(scene["scene_text"], surface="scene_text")
-    assert_no_banned_tokens(scene.get("gap_text"), surface="scene_text.gap")
-    assert_no_banned_tokens(scene.get("statement_text"), surface="scene_text.statement")
+    # 结构化场面事实供场景 LLM；不投影固定复命话语。
+    assert scene["kind"] == "due_review"
+    assert "scene_text" not in scene
+    assert "gap_text" not in scene
 
     # memorial_text（奏报正文）
     for row in db.list_dossier_progress(subject_id):

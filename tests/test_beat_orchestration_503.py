@@ -716,8 +716,8 @@ def test_no_generator_leaves_opening_empty_and_keeps_close_fallback(game):
     )
     due_scenes = list_due_review_scenes(db, state)
     urge_scenes = list_urge_audience_scenes(db, state)
-    assert due_scenes and "scene_text" in due_scenes[0]
-    assert urge_scenes and "scene_text" in urge_scenes[0]
+    assert due_scenes and due_scenes[0]["kind"] == "due_review"
+    assert urge_scenes and urge_scenes[0]["kind"] == "rush_remonstrance"
     night_id, _cid = an.attach_chat_turn_to_night(
         db, state, minister, agno_session_id="s", agno_runs_before=0,
         time_of_day="戌时", location="乾清宫",
