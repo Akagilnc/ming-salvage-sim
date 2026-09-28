@@ -2048,6 +2048,7 @@ class GameDB:
                 ON character_knowledge_events(character_name, turn, id);
 
             -- #1829 公开说法：独立记录，投影进公开层；不改人物实况。
+            -- 排除名单与正文同表（#1829 reopen），不另抄见闻来源。
             CREATE TABLE IF NOT EXISTS public_sayings (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 turn INTEGER NOT NULL,
@@ -2057,6 +2058,8 @@ class GameDB:
                 involved_characters TEXT NOT NULL DEFAULT '[]',
                 affair_ref TEXT NOT NULL DEFAULT '',
                 source_id TEXT NOT NULL UNIQUE,
+                excluded_names TEXT NOT NULL DEFAULT '[]',
+                excluded_targets TEXT NOT NULL DEFAULT '{}',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
             CREATE INDEX IF NOT EXISTS idx_public_sayings_affair
@@ -10599,14 +10602,6 @@ class GameDB:
                 if table == "pending_actions":
                     self._discard_deleted_directive_forecast(target_id)
                 self._delete_row_in_tx(table, target_id)
-                # #1839：公开说法写口附带 character_knowledge_sources（source_id=
-                # public_saying:<id>，仅承载排除名单）；前像删行时同步清掉，避免
-                # 孤儿 exclusion 源在说法已撤回后仍挡见闻。
-                if table == "public_sayings":
-                    self.conn.execute(
-                        "DELETE FROM character_knowledge_sources WHERE source_id = ?",
-                        (f"public_saying:{target_id}",),
-                    )
             elif strategy in {"restore_row", "restore_deleted_row"}:
                 before_row = self._json_load_row(item["before_json"])
                 if table == "pending_actions" and before_row.get("kind") == "directive":
@@ -21458,6 +21453,19 @@ class GameDB:
                     return [str(name) for name in json.loads(order["excluded_names"] or "[]")]
                 except (TypeError, ValueError):
                     return []
+        # #1829 reopen：公开说法排除名单与正文同表，按 public_saying:<id> 回查。
+        match = re.fullmatch(r"public_saying:(\d+)", source)
+        if match:
+            saying = self.conn.execute(
+                "SELECT excluded_names FROM public_sayings WHERE id=?",
+                (int(match.group(1)),),
+            ).fetchone()
+            if saying is not None:
+                try:
+                    return [str(name) for name in json.loads(saying["excluded_names"] or "[]")]
+                except (TypeError, ValueError):
+                    return []
+            return []
         row = self.conn.execute(
             "SELECT excluded_names FROM character_knowledge_sources WHERE source_id=?", (source,)
         ).fetchone()
@@ -21470,27 +21478,40 @@ class GameDB:
 
     def knowledge_exclusion_targets_for_source(self, source_id: str) -> Dict[str, List[str]]:
         source = str(source_id or "")
-        order_id = None
         # Private briefs and retained bare secret-order sources share the
         # canonical exclusions persisted on secret_orders.
         match = re.fullmatch(r"secret_order(?:_brief)?:(\d+)", source)
         if match:
-            order_id = int(match.group(1))
-        if order_id is None:
             row = self.conn.execute(
-                "SELECT excluded_targets FROM character_knowledge_sources WHERE source_id=?", (source,)
+                "SELECT excluded_targets FROM secret_orders WHERE id=?",
+                (int(match.group(1)),),
             ).fetchone()
-            if row is None:
-                return {"people": [], "offices": []}
             try:
-                payload = json.loads(row["excluded_targets"] or "{}")
+                payload = json.loads((row["excluded_targets"] if row else "{}") or "{}")
             except (TypeError, ValueError):
                 payload = {}
             return {"people": [str(x) for x in payload.get("people", [])],
                     "offices": [str(x) for x in payload.get("offices", [])]}
-        row = self.conn.execute("SELECT excluded_targets FROM secret_orders WHERE id=?", (order_id,)).fetchone()
+        # #1829 reopen：公开说法排除目标与正文同表。
+        match = re.fullmatch(r"public_saying:(\d+)", source)
+        if match:
+            row = self.conn.execute(
+                "SELECT excluded_targets FROM public_sayings WHERE id=?",
+                (int(match.group(1)),),
+            ).fetchone()
+            try:
+                payload = json.loads((row["excluded_targets"] if row else "{}") or "{}")
+            except (TypeError, ValueError):
+                payload = {}
+            return {"people": [str(x) for x in payload.get("people", [])],
+                    "offices": [str(x) for x in payload.get("offices", [])]}
+        row = self.conn.execute(
+            "SELECT excluded_targets FROM character_knowledge_sources WHERE source_id=?", (source,)
+        ).fetchone()
+        if row is None:
+            return {"people": [], "offices": []}
         try:
-            payload = json.loads((row["excluded_targets"] if row else "{}") or "{}")
+            payload = json.loads(row["excluded_targets"] or "{}")
         except (TypeError, ValueError):
             payload = {}
         return {"people": [str(x) for x in payload.get("people", [])],

@@ -1367,9 +1367,8 @@ def _dispatch_public_sayings(
     source_turn_error: Optional[str] = None,
 ) -> SectionResult:
     """公开说法：R3 记录 + 进公开层。声明可带 `excluded_names`/`excluded_offices`
-    ——密令『瞒某人』这类显式排除黑名单随说法一起落进它自己的 source
-    （`public_saying:<id>`），一票否决压过公开层与职位桶（既有
-    `knowledge_row_visible_to` 读口，本节只补上一直缺失的写口，#1829/#1832）。
+    ——密令『瞒某人』排除名单与正文同落公开说法表（#1829 reopen），读口按
+    `public_saying:<id>` 一票否决压过公开层与职位桶。
 
     夜上下文源轮缺失/不属本夜时整项 missing_ref（第四类统一源轮校验）。
     """
