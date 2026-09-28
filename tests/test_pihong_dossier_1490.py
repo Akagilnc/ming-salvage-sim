@@ -598,6 +598,147 @@ def _657_subprocess_resolve(db_path: str, choices: list, *, crash: str='', prewr
     import subprocess
     import sys
     import textwrap
+    worker = textwrap.dedent(
+        r"""
+        import asyncio, json, os, sys
+        db_path = sys.argv[1]
+        choices = json.loads(sys.argv[2])
+        crash = sys.argv[3]
+        prewrite_mode = sys.argv[4]
+        os.environ["MING_SIM_DB"] = db_path
+        os.environ["OPENAI_API_KEY"] = "sk-test"
+        os.environ.pop("MING_SIM_LLM_BACKEND", None)
+
+        import httpx
+        import ming_sim.beat_orchestration as bo
+        import ming_sim.decree as dm
+        import ming_sim.rescript_actions as ra
+        import ming_sim.session as session_mod
+        import web_app
+        from ming_sim.models import TurnPhase
+
+        def _det_gen(_inputs):
+            name = str(getattr(_inputs, "person_name", "") or "") or "臣"
+            return f"{name}入殿请安。"
+
+        bo.create_llm_beat_generator = lambda _cfg: _det_gen
+        web_app.load_runtime_llm = lambda: {}
+        web_app.run_highlight_judge = lambda **_k: []
+
+        # 真 phase2：只 stub LLM 边界
+        dm.create_season_simulator_agent = lambda *a, **k: None
+        dm.create_ending_summary_agent = lambda *a, **k: None
+        dm._make_relation_brew_runner = lambda *a, **k: None
+        import ming_sim.mechanical_tail as mechanical_tail
+        mechanical_tail._run_relation_brew = lambda *a, **k: None
+        import ming_sim.decree_forecast as decree_forecast
+        import ming_sim.month_chain as month_chain
+        month_chain.run_world_segment_text = lambda *a, **k: ""
+        decree_forecast.produce_forecast_product = lambda *a, **k: {
+            "verdict": {"decision": "promulgated"},
+            "declaration": {"effects": {}},
+            "questions": None,
+            "forecast_text": "",
+            "visible_refs": {},
+        }
+        # Agent-text boundary only. parse_agent_json, archive, and advance stay real.
+        import ming_sim.agents as agents_mod
+        _real_run_agent_text = agents_mod.run_agent_text
+
+        def _run_agent_text(agent, prompt, tag, **kwargs):
+            if tag == "gazette":
+                return '{"title":"邸报","report":"本月实况。"}'
+            return _real_run_agent_text(agent, prompt, tag, **kwargs)
+
+        agents_mod.run_agent_text = _run_agent_text
+        # #1745：结算拒收递话同属外层 LLM 缝（复用单一 agent 边界夹具）。
+        from tests.section_rejection_helpers import install_settlement_attendant_agent_stub
+        install_settlement_attendant_agent_stub(None, dm)
+
+        if crash == "phase2":
+            def _kill_at_phase2(*a, **k):
+                # §E.2：领域 commit 后、写 extracted 前真杀进程（禁 SSE 捕获后正常 close）
+                os._exit(97)
+
+            session_mod.resolve_decisions_phase2 = _kill_at_phase2
+            dm.resolve_decisions_phase2 = _kill_at_phase2
+
+        if prewrite_mode == "revise":
+            def _fake_prewrite(batch, **kwargs):
+                out = {}
+                for it in batch.items:
+                    if getattr(it, "needs_revise_llm", False) or str(
+                        (it.choice or {}).get("action") or ""
+                    ) == "return_revise":
+                        # 完整合法 Layer-A raw（六必填+三 PRESENT）；禁伪造 draft_capability
+                        # #1624：assignment 组合契约须 transaction_category 或点将主办
+                        out[it.decision_key] = [
+                            {"label": "新拟甲", "hint": "h1",
+                             "action_type": "assignment", "target_kind": "region",
+                             "target_id": "shaanxi", "locality_scope": "single",
+                             "region_id": "shaanxi", "assignee_name": "",
+                             "transaction_category": "督赈", "deadline_months": 2,
+                             "participant_roster": [
+                                 {"character_id": "毕自严", "tier": "主办",
+                                  "role": "", "delegator_id": None},
+                             ]},
+                            {"label": "新拟乙", "hint": "h2",
+                             "action_type": "assignment", "target_kind": "region",
+                             "target_id": "shaanxi", "locality_scope": "single",
+                             "region_id": "shaanxi", "assignee_name": "杨嗣昌",
+                             "transaction_category": "",
+                             "participant_roster": [
+                                 {"character_id": "杨嗣昌", "tier": "主办",
+                                  "role": "", "delegator_id": None},
+                             ]},
+                        ]
+                return ra.PrewriteResults(revise_by_key=out)
+            ra.run_prewrite_llms = _fake_prewrite
+        elif prewrite_mode == "deliberate":
+            def _fake_prewrite(batch, **kwargs):
+                out = {}
+                for it in batch.items:
+                    out[it.decision_key] = {
+                        "title": "廷议", "body": "臣请集议。", "stance": "主赈",
+                        "supporter_ids": [],
+                    }
+                return ra.PrewriteResults(deliberate_by_key=out)
+            ra.run_prewrite_llms = _fake_prewrite
+
+        game = web_app.WebGame(fresh=False)
+        web_app.web_game = game
+        # 保持待裁
+        game.state.turn_phase = TurnPhase.AWAITING_DECISION.value
+        game.session.state.turn_phase = TurnPhase.AWAITING_DECISION.value
+        game.db.save_state(game.state)
+
+        summary = {"db_path": db_path, "body": choices}
+        try:
+            async def _post():
+                transport = httpx.ASGITransport(app=web_app.app)
+                async with httpx.AsyncClient(transport=transport, base_url="http://t") as client:
+                    return await client.post(
+                        "/api/decree/resolve_decisions/stream",
+                        json={"choices": choices},
+                    )
+            r = asyncio.run(_post())
+            summary.update({
+                "status_code": r.status_code,
+                "text_head": (r.text or "")[:2500],
+                "done": "event: done" in (r.text or ""),
+                "error": "event: error" in (r.text or ""),
+                "turn": int(game.state.turn),
+            })
+        except Exception as exc:
+            summary.update({"exc": type(exc).__name__, "msg": str(exc)[:500]})
+        finally:
+            try:
+                game.session.close()
+            except Exception:
+                pass
+        print("@@SUMMARY@@" + json.dumps(summary, ensure_ascii=False), flush=True)
+        """
+    )
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     body_json = json.dumps(choices, ensure_ascii=False, separators=(',', ':'))
     proc = subprocess.run([sys.executable, '-c', worker, db_path, body_json, crash, prewrite_mode], capture_output=True, text=True, timeout=timeout, cwd=root, env={**os.environ, 'MING_SIM_DB': db_path, 'OPENAI_API_KEY': 'sk-test'})
@@ -2746,6 +2887,28 @@ def _1778_raw_options():
     two_leads = _roster(_ROSTER_LEAD, '杨嗣昌') + _roster('陈新甲', tier='协办')
     return {'assignment_national': {'label': '责户部清理钱粮亏短', 'hint': '所安者太仓', 'action_type': 'assignment', 'assignee_name': '', 'target_kind': 'issue', 'target_id': '太仓亏空', 'locality_scope': 'national', 'region_id': '', 'transaction_category': '钱粮', 'deadline_months': 3, 'participant_roster': lead}, 'grant_national': {'label': '发内帑周转军国急用', 'hint': '所解者急饷', 'action_type': 'grant_allocation', 'assignee_name': '', 'target_kind': 'issue', 'target_id': '太仓亏空', 'locality_scope': 'national', 'region_id': '', 'transaction_category': '', 'grant_action': '项目经费', 'amount': 200, 'account': '内库', 'participant_roster': lead}, 'policy_national': {'label': '清丈全国田亩', 'hint': '所清者隐田', 'action_type': 'policy', 'assignee_name': '', 'target_kind': 'policy', 'target_id': '清丈天下田亩', 'locality_scope': 'national', 'region_id': '', 'transaction_category': '', 'participant_roster': two_leads}, 'special_none': {'label': '特旨慰谕九边', 'hint': '所安者边军', 'action_type': 'special_decree', 'assignee_name': '', 'target_kind': 'policy', 'target_id': '慰谕九边', 'locality_scope': 'none', 'region_id': '', 'transaction_category': '', 'participant_roster': lead}, 'assignment_single': {'label': '拨赈陕西饥民', 'hint': '所安者秦民', 'action_type': 'assignment', 'assignee_name': '', 'target_kind': 'region', 'target_id': 'shaanxi', 'locality_scope': 'single', 'region_id': 'shaanxi', 'transaction_category': '督赈', 'deadline_months': 2, 'participant_roster': lead}}
 
+def _1778_generate(monkeypatch, db, state, items):
+    """真实票拟生成入口（canned run_agent_text，无 live LLM）。"""
+    import ming_sim.rescript_draft as draft_mod
+    from ming_sim.rescript_draft import (
+        build_rescript_draft_payload,
+        generate_rescript_draft,
+    )
+
+    monkeypatch.setattr(
+        draft_mod, "run_agent_text",
+        lambda *a, **k: json.dumps({"items": items}, ensure_ascii=False),
+    )
+    return generate_rescript_draft(
+        object(),
+        build_rescript_draft_payload(
+            state, "邸报", {"regions": {"cols": ["id", "name", "kind"], "rows": [["shaanxi", "陕西", "腹地"]]}},
+            {"name": "杨嗣昌", "office": "兵部尚书", "faction": "东林"},
+        ),
+        int(state.turn),
+    )
+
+
 def _1778_roster_of(option):
     return [(str(e.get('character_id') or ''), str(e.get('tier') or '')) for e in option.get('participant_roster') or [] if isinstance(e, dict)]
 
@@ -2846,3 +3009,140 @@ def test_1778_drafted_roster_rides_to_pihong_and_nails_the_dossier(web_game, mon
     assert mid.get('mode') == 'midzhi'
     assert mid['region_id'] == ''
     assert _1778_roster_of(mid) == [(_ROSTER_LEAD, '主办')]
+
+def test_1778_missing_roster_heals_then_error_pack_without_assigning_anyone(
+    web_game, monkeypatch, tmp_path,
+):
+    """验收 3：没写名单＝票没拟完 → 补交点名 participant_roster；耗尽只留错误包。"""
+    import ming_sim.rescript_draft as draft_mod
+    from ming_sim.rescript_draft import (
+        RESCRIPT_OPTION_FIELD_HEAL_RETRIES,
+        build_rescript_draft_payload,
+        generate_rescript_draft,
+    )
+
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
+    db, state = web_game.db, web_game.session.state
+    raw = _1778_raw_options()
+    naked = {k: v for k, v in raw["assignment_national"].items()
+             if k != "participant_roster"}
+    item = {
+        "title": "太仓亏空", "context": "太仓见底。",
+        "options": [naked, raw["grant_national"]],
+    }
+
+    heal_prompts: list[str] = []
+
+    def _never_heals(_agent, prompt, tag="", **_kw):
+        if tag == "rescript-draft-heal":
+            heal_prompts.append(prompt)
+        return json.dumps({"items": [item]}, ensure_ascii=False)
+
+    monkeypatch.setattr(draft_mod, "run_agent_text", _never_heals)
+    before = len(db.list_decree_dossiers())
+    drafts = generate_rescript_draft(
+        object(),
+        build_rescript_draft_payload(
+            state, "邸报", {},
+            {"name": "杨嗣昌", "office": "兵部尚书", "faction": "东林"},
+        ),
+        int(state.turn),
+    )
+
+    # 补交请求逐轮点名 typed 字段（机器只认键，不解析散文）
+    assert len(heal_prompts) == RESCRIPT_OPTION_FIELD_HEAL_RETRIES
+    body = json.loads(heal_prompts[0])
+    failure = body["failures"][0]
+    assert failure["heal_id"] == "0:0"
+    fields = {str(f["field"]) for f in failure["field_failures"]}
+    assert fields == {"participant_roster"}
+    expected = next(
+        f["expected"] for f in failure["field_failures"]
+        if f["field"] == "participant_roster"
+    )
+    assert expected["require_tier"] == "主办"
+    assert "主办" in expected["tiers"]
+
+    # 耗尽：只剔该 option，兄弟照出；错误包响亮留痕
+    assert drafts is not None and len(drafts) == 1
+    assert [str(o["label"]) for o in drafts[0]["options"]] == ["发内帑周转军国急用"]
+    note = json.loads(
+        (tmp_path / "ud" / "error_packs" / "rescript_draft_degraded" / "turn1.json")
+        .read_text(encoding="utf-8")
+    )
+    assert note["reason"] == "option_missing_fields_heal_exhausted"
+    dropped = note["dropped_options"]
+    assert [d["heal_id"] for d in dropped] == ["0:0"]
+    assert dropped[0]["missing_fields"] == ["participant_roster"]
+
+    # 不成案、不配人
+    assert len(db.list_decree_dossiers()) == before
+
+def test_1621_http_follow_draft_uses_catalog_army_id(web_game, monkeypatch):
+    """合法军 id 从生成边界进 HTTP follow_draft，案卷 target_id 为真军 id。"""
+    from ming_sim.models import TurnPhase
+    from ming_sim.rescript_draft import build_rescript_draft_payload, generate_rescript_draft
+    import ming_sim.rescript_draft as draft_mod
+
+    db, state = web_game.db, web_game.state
+    army_raw = {
+        "label": "敕关宁严守",
+        "hint": "所安者宁锦",
+        "action_type": "military_order",
+        "assignee_name": "祖大寿",
+        "target_kind": "army",
+        "target_id": "guanning",
+        "locality_scope": "none",
+        "region_id": "",
+        "transaction_category": "",
+        "station": "辽东 / 宁远锦州",
+        "deadline_months": 1,
+        "participant_roster": _roster("祖大寿"),
+    }
+    generated_json = json.dumps({"items": [{
+        "title": "宁锦急务", "context": "关宁待敕。",
+        "options": [army_raw, {**army_raw, "label": "备拟"}],
+    }]}, ensure_ascii=False)
+    monkeypatch.setattr(draft_mod, "run_agent_text", lambda *a, **k: generated_json)
+    generated = generate_rescript_draft(
+        object(),
+        build_rescript_draft_payload(
+            state, "邸报", {"armies": {"cols": ["id", "name", "station", "owner_power"], "rows": [["guanning", "关宁军", "辽东 / 宁远锦州", "ming"]]}},
+            {"name": "杨嗣昌", "office": "兵部尚书", "faction": "东林"},
+        ),
+        int(state.turn),
+    )
+    assert generated is not None
+    army_opt = generated[0]["options"][0]
+    assert army_opt["target_id"] == "guanning"
+
+    _657_install_real_phase2_llm_boundary(monkeypatch)
+    db.conn.execute("DELETE FROM pending_decisions")
+    db.conn.commit()
+    db.save_rescript_drafts(int(state.turn), [{
+        "title": "急务-军令", "context": "c",
+        "options": [army_opt, {"label": "备", "hint": "h", "draft_capability": "x"}],
+        "actor_name": "杨嗣昌", "actor_office": "兵部尚书", "actor_faction": "东林",
+    }])
+    db.conn.commit()
+    db.save_resolve_context(
+        int(state.turn), "诏", "邸报", {"candidate_events": [], "transit_semantics": []},
+        secret_orders=[], relevant_memories=[],
+    )
+    state.turn_phase = TurnPhase.AWAITING_DECISION.value
+    db.save_state(state)
+    desk = db.list_rescript_desk(int(state.turn))
+    key = desk[0]["decision_key"]
+    r = asyncio.run(_post_resolve([{
+        "decision_key": key,
+        "action": "follow_draft",
+        "label": army_opt["label"],
+        "draft_capability": army_opt["draft_capability"],
+    }]))
+    assert r.status_code == 200, r.text
+    assert "event: error" not in r.text, r.text
+    assert "event: done" in r.text, r.text
+    dossiers = db.list_decree_dossiers()
+    assert dossiers and dossiers[-1]["target_id"] == "guanning"
+
+
