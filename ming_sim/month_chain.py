@@ -789,6 +789,25 @@ def _settle_edicts(
 
     db, state = session.db, session.state
     outcome = None
+    # 夜里已暂存且本月同批顺颁的任免，以首案物化前盘面校验一次。
+    # 保存通过的案号：逐旨落账若中断，重开不能拿第一案改过的盘面重验第二案。
+    prevalidated = set(chain.get("recommendation_prevalidated_ids") or [])
+    if "recommendation_prevalidated_ids" not in chain:
+        candidates = []
+        for row in db.list_decree_dossiers(status="proposed"):
+            if int(row.get("created_turn") or 0) != int(state.turn):
+                continue
+            ref = decree_ref_for_dossier(db, row)
+            staged = db.staged_declarations.staged_for(ref)
+            verdict = staged[0].verdict if staged else None
+            if isinstance(verdict, dict) and verdict.get("decision") in {"promulgated", "force_promulgated"}:
+                candidates.append(row)
+        appointments = [row for row in candidates if row.get("action_type") == "appointment"]
+        if len(appointments) > 1:
+            db._prevalidate_office_recommendation_snapshots(state, appointments)
+            prevalidated = {int(row["id"]) for row in appointments}
+            chain["recommendation_prevalidated_ids"] = sorted(prevalidated)
+            _save_chain(db, int(state.turn), chain, source=Provenance.player_decree)
     for dossier in db.list_decree_dossiers():
         if _is_stalled_deliberation(dossier):
             continue
@@ -837,18 +856,23 @@ def _settle_edicts(
                 current = db.get_decree_dossier(int(dossier["id"])) or dossier
                 if str(current.get("status") or "") == "proposed":
                     # 判决与元数据、预声明中旨代价同一事务；两种入口共用 DB 写口。
-                    with atomic(db):
-                        db.apply_dossier_promulgation(
-                            state, int(dossier["id"]), str(verdict["decision"]),
-                            blocked_layer=str(verdict.get("blocked_layer") or ""),
-                            reason=str(verdict.get("reason") or ""),
-                            legal_reason_code=str(verdict.get("legal_reason_code") or ""),
-                            primary_opponents=verdict.get("primary_opponents") or [],
-                            gatekeeper_id=verdict.get("gatekeeper_id"),
-                            criteria_snapshot=verdict.get("criteria_snapshot") or {},
-                            content=session.content, registry=registry,
-                        )
-                        db._record_dossier_verdict_metadata(state, int(dossier["id"]), verdict)
+                    previous = getattr(db.conn, "_recommendation_snapshots_prevalidated", False)
+                    db.conn._recommendation_snapshots_prevalidated = previous or int(dossier["id"]) in prevalidated
+                    try:
+                        with atomic(db):
+                            db.apply_dossier_promulgation(
+                                state, int(dossier["id"]), str(verdict["decision"]),
+                                blocked_layer=str(verdict.get("blocked_layer") or ""),
+                                reason=str(verdict.get("reason") or ""),
+                                legal_reason_code=str(verdict.get("legal_reason_code") or ""),
+                                primary_opponents=verdict.get("primary_opponents") or [],
+                                gatekeeper_id=verdict.get("gatekeeper_id"),
+                                criteria_snapshot=verdict.get("criteria_snapshot") or {},
+                                content=session.content, registry=registry,
+                            )
+                            db._record_dossier_verdict_metadata(state, int(dossier["id"]), verdict)
+                    finally:
+                        db.conn._recommendation_snapshots_prevalidated = previous
         current = db.get_decree_dossier(int(dossier["id"])) or dossier
         if str(current.get("promulgation_decision") or "") == "promulgated":
             def persist_result(_decree_ref: str, result: Any) -> None:
