@@ -403,7 +403,7 @@ def test_typed_affair_new_issues_share_provenance_and_close_final_state(game):
 
 
 def test_strategic_event_unauthorized_person_origin_reaches_final_projection(game):
-    """战略人物越权来源拒收须进入最终 applied_person_changes；material sibling 仍触发。"""
+    """战略人物越权来源逐项拒收；已声明的合法同批战果仍落账。"""
     db, state, content = game
     issues_mod.bind_content(content)
     state.year = 1638
@@ -444,6 +444,10 @@ def test_strategic_event_unauthorized_person_origin_reaches_final_projection(gam
         },
         content=content,
         open_affair_ids_at_input={authorized.id},
+        ordered_effect_event_ids={
+            "region_delta": ["wuyin_lubian"],
+            "人物变更": ["wuyin_lubian"],
+        },
     )
     assert out["issue_summary"]["new_issues"][0].get("rejected") is not True
     assert db.has_event_triggered("wuyin_lubian")
