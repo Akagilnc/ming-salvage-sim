@@ -3,16 +3,15 @@
 section 5 power_updates、section 9b character_power_changes：原先 `try: db.apply_*()
 except Exception: print [WARN]` 整段吞——连代码异常都被吞掉(违 ADR 0005/决定 1)。
 改为:LLM 脏数据(未知 power id/未知人物/字段非法)逐项拒收留痕,好项照落;
-代码异常(KeyError/AttributeError 等)上抛到 settle 层回滚整批。
+代码异常(KeyError/AttributeError 等)原样上抛，原子分派回滚整批。
 
-经 driver.run_settle 端到端驱动(公共接口,与 test_rejection_wiring.py 同风格)。
+从现役 pre_settle 与 dispatch_declaration 入口验证逐项拒收。
 """
 
 from __future__ import annotations
 
 import pytest
 
-from tests.section_rejection_helpers import prepare_then_settle as _run_settle
 from tests.section_rejection_helpers import game, rejection_rows as _rejection_rows
 
 
@@ -21,7 +20,16 @@ def run_settle(db, state, content, extracted, **kwargs):
     for item in (extracted.get("power_updates") or {}).values():
         if isinstance(item, dict):
             item.setdefault("origin_ref", "盘面自发")
-    return _run_settle(db, state, content, extracted, **kwargs)
+    from ming_sim.applier import Provenance
+    from ming_sim.declaration_dispatch import dispatch_declaration
+    from ming_sim.decree import pre_settle
+    from tests.conftest import with_monthly_reports
+
+    pre_settle(state, db, content=content)
+    return dispatch_declaration(
+        db, state, {"effects": with_monthly_reports(db, extracted)},
+        source=Provenance.player_decree,
+    )
 
 
 def _valid_power_id(db):
@@ -77,9 +85,7 @@ def test_illegal_power_field_rejected(game):
 
 
 def test_power_deltas_code_exception_aborts_settlement(game, monkeypatch):
-    """apply_power_deltas 内代码异常(bug 类,非脏数据)→ 上抛 SettlementAbort 回滚整批,
-    绝不被原 try/except 吞掉(ADR 0005/决定 1)。"""
-    from ming_sim.exceptions import SettlementAbort
+    """apply_power_deltas 内代码异常原样上抛，原子分派回滚整批。"""
 
     db, state, content = game
     good = _valid_power_id(db)
@@ -88,7 +94,7 @@ def test_power_deltas_code_exception_aborts_settlement(game, monkeypatch):
         raise AttributeError("code bug in apply_power_deltas")
     monkeypatch.setattr(type(db), "apply_power_deltas", _boom)
 
-    with pytest.raises(SettlementAbort):
+    with pytest.raises(AttributeError):
         run_settle(db, state, content, {
             "power_updates": {good: {"leverage": 3}},
         }, narrative="x", decree_text="y")
