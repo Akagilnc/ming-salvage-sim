@@ -46,13 +46,6 @@ class _BoomExtractor:
         raise RuntimeError("抽取持续失败·真失败注入")
 
 
-class _CannedEndorsementExtractor:
-    def run(self, _material):
-        class _R:
-            content = '{"endorsements":[]}'
-        return _R()
-
-
 def _fake_settlement_llm(monkeypatch, *, narrative="本月邸报：边饷已清。", delta=None):
     monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
     monkeypatch.setattr(

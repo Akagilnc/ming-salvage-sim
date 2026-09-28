@@ -44,10 +44,6 @@ class _BoomExtractor:
         raise RuntimeError("抽取持续失败·#1468 负向钉")
 
 
-class _CannedEndorsementExtractor:
-    def run(self, _material):
-        return SimpleNamespace(content='{"endorsements":[]}')
-
 
 class _CannedMinisterAgent:
     """非流式 session.chat 读 agent.run().content（非 generator）。"""

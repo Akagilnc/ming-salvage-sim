@@ -43,16 +43,6 @@ from ming_sim.models import TurnPhase
 from ming_sim.session import ChatTurnResult
 
 
-class _CannedEndorsementExtractor:
-    """#612 夜级 endorsement-only 离线边界：默认空绑定（不改既有收夜断言）。"""
-
-    def run(self, _material):
-        class _R:
-            content = '{"endorsements":[]}'
-        return _R()
-
-
-
 # ── canned LLM 边界（唯一 fake）────────────────────────────────────────
 class _RunContent:
     event = "RunContent"

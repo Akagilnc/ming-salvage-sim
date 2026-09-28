@@ -30,12 +30,6 @@ class _CannedExtractor:
         return SimpleNamespace(content='{"facts":[]}')
 
 
-class _CannedEndorsementExtractor:
-    def run(self, _material):
-        return SimpleNamespace(content='{"endorsements":[]}')
-
-
-
 
 class _StreamFarewellAgent:
     def run(self, *_a, **_k):
