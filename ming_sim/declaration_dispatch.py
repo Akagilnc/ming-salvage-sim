@@ -1308,13 +1308,11 @@ def _dispatch_inquiries(
         except KeyError as exc:
             _reject(rejected, item, str(exc), "hallucinated_id", source)
             continue
-        try:
-            report = db.persist_return_report(
-                state, attendant, query, chat_turn_id=int(chat_turn_id or 0),
-            )
-        except Exception as exc:
-            _reject(rejected, item, f"查访未能持久留档：{exc}", "invalid_state", source)
-            continue
+        # 可预期拒收只在声明形状/幻影 id；持久化失败不得洗成 invalid_state 继续
+        # （失败诚实宪法：未识别异常保留真因，由事务/调用方接住）。
+        report = db.persist_return_report(
+            state, attendant, query, chat_turn_id=int(chat_turn_id or 0),
+        )
         applied.append({
             "attendant": attendant,
             "query": query,

@@ -240,6 +240,50 @@ def test_inquiry_declaration_persists_return_report(game):
                for r in sources)
 
 
+def test_inquiry_persistence_failure_is_not_washed_as_rejection(game, monkeypatch):
+    """持久化未识别异常须保留真因上抛，不得洗成 invalid_state 拒收后继续。"""
+    db, state, content = game
+    night = open_night(db, state)
+    attendant = _active_minister(db, content)
+    cur = db.conn.execute(
+        "INSERT INTO chat_messages (minister_name, turn, role, content, knowledge_status) "
+        "VALUES ('殿上', ?, 'user', '查军情', 'held')",
+        (int(state.turn),),
+    )
+    uid = int(cur.lastrowid)
+    cur = db.conn.execute(
+        "INSERT INTO chat_messages (minister_name, turn, role, content, knowledge_status) "
+        "VALUES ('殿上', ?, 'minister', '领旨', 'held')",
+        (int(state.turn),),
+    )
+    mid = int(cur.lastrowid)
+    cur = db.conn.execute(
+        "INSERT INTO chat_turns "
+        "(minister_name, turn, year, period, user_message_id, minister_message_id, "
+        " status, night_id, night_seq) "
+        "VALUES ('殿上', ?, ?, ?, ?, ?, 'active', ?, 1)",
+        (int(state.turn), int(state.year), int(state.period), uid, mid, int(night["id"])),
+    )
+    ctid = int(cur.lastrowid)
+    db.conn.commit()
+
+    class _Boom(RuntimeError):
+        pass
+
+    def _boom(*_a, **_k):
+        raise _Boom("simulated persist failure")
+
+    monkeypatch.setattr(db, "persist_return_report", _boom)
+    decl = normalize_audience_declaration({
+        "inquiries": [{"attendant": attendant.name, "query": "请查访军情如何？"}],
+    })
+    with pytest.raises(_Boom, match="simulated persist failure"):
+        dispatch_declaration(
+            db, state, decl, minister_name="殿上",
+            night_id=int(night["id"]), chat_turn_id=ctid,
+        )
+
+
 def test_rush_commitment_stages_pending_催办(game):
     db, state, content = game
     night = open_night(db, state)
