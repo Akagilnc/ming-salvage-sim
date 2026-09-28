@@ -4696,12 +4696,11 @@ def test_658_deliberate_backed_and_stalled_dossier_first(game):
     assert db.find_deliberation_dossier_by_decision_key(key3) is None
 
 
-def test_658_backing_credit_on_punish_promulgation(game, monkeypatch):
-    """#658：正向 chat→commit→verdict 写辜负；零写与同批后案失败回滚在同一 applier 夹具。"""
-    from types import SimpleNamespace
+def test_658_backing_credit_on_punish_promulgation(game):
+    """场景惩处交办→提交→判决记信用；另验零写与同批失败回滚。"""
     from ming_sim import rescript_actions as ra
     from ming_sim.credit_events import KIND_BETRAY
-    from ming_sim.session import GameSession
+    from ming_sim.declaration_dispatch import dispatch_declaration
 
     db, state, content = game
     minister = _summonable_name(db, content)
@@ -4727,47 +4726,13 @@ def test_658_backing_credit_on_punish_promulgation(game, monkeypatch):
     )
     bid = int(db.find_deliberation_dossier_by_decision_key(key)["id"])
 
-    tool_args: dict = {
-        "decree_text": f"背信弃义，着罚{minister}俸示惩。",
-        "punish_action": "罚俸",
-        "target_id": minister,
-        "amount": 100,
-    }
-
-    # Mock only the external classifier transport.  The real chat classifier,
-    # staging, commit and verdict seams carry backing_dossier_id end to end.
-    import ming_sim.cli_backend as cli_backend
-
-    def _classifier_backend(_prompt, _config, *, tag):
-        assert tag == "action_intent"
-        return (json.dumps({
-            "kind": "punishment",
-            "punish_action": "罚俸",
-            "name": minister,
-            "amount": 100,
-            "backing_dossier_id": bid,
-        }, ensure_ascii=False), 1)
-
-    monkeypatch.setattr(
-        cli_backend, "_run_json_extractor_for_config", _classifier_backend,
-    )
-
-    class _Agent:
-        def run(self, _message):
-            return SimpleNamespace(
-                content="臣已拟旨。",
-                tools=[
-                    SimpleNamespace(
-                        tool_name="propose_directive",
-                        result="",
-                        arguments=dict(tool_args),
-                    )
-                ],
-            )
-
-    sess = _658_session(db, state, content, agent=_Agent())
-    sess._start_cli_action_intent = GameSession._start_cli_action_intent.__get__(sess)
-    sess._finish_cli_action_intent = GameSession._finish_cli_action_intent.__get__(sess)
+    staged = dispatch_declaration(db, state, {"commissions": [{
+        "text": f"背信弃义，着罚{minister}俸示惩。",
+        "punishment": {"punish_action": "罚俸", "target_id": minister,
+                       "amount": 100, "backing_dossier_id": bid},
+    }]}, minister_name=actor)
+    assert staged.commissions.rejected == []
+    pid = staged.commissions.applied[0]["id"]
 
     def _edge_count() -> int:
         return int(db.conn.execute(
@@ -4775,15 +4740,10 @@ def test_658_backing_credit_on_punish_promulgation(game, monkeypatch):
             (KIND_BETRAY,),
         ).fetchone()["c"])
 
-    # 正向：唯一一次 chat→commit→verdict 全链
-    result = GameSession.chat(sess, actor, f"拟旨罚{minister}俸。")
-    assert result.pending_action_id
-    db.commit_pending_actions(
-        state, content=content, action_ids=[int(result.pending_action_id)],
-    )
+    db.commit_pending_actions(state, content=content, action_ids=[pid])
     punish = next(
         d for d in db.list_decree_dossiers()
-        if d["pending_action_id"] == int(result.pending_action_id)
+        if d["pending_action_id"] == pid
     )
     assert int(_dossier_payload(punish).get("backing_dossier_id") or 0) == bid
     edges_before = _edge_count()
@@ -5538,37 +5498,35 @@ def test_658_mixed_ordinary_triad_and_target_rejected(game, monkeypatch):
     ).fetchone()["c"] == before_dirs
 
 
-def test_658_chat_staging_preserves_push_target(game, monkeypatch):
-    """#658：对话拟旨经共享生产接缝 stage→commit→成案，复用同案卷。"""
-    from types import SimpleNamespace
-    import ming_sim.cli_backend as cli_backend
+def test_658_scene_commission_staging_preserves_push_target(game):
+    """现役强推声明暂存→提交→成案，复用原案卷而非再立案。"""
+    from ming_sim.declaration_dispatch import dispatch_declaration
 
     db, state, content = game
     stalled, _ = _658_plant_stalled_deliberation(db, state, content, title="对话强推")
     did = int(stalled["id"])
     before = len(db.list_decree_dossiers())
     minister = _summonable_name(db, content)
-    character = content.characters[minister]
+    pending_before = {r["id"] for r in db.list_pending_actions(state.turn)}
+    for invalid in (
+        {"target_dossier_id": 0},
+        {"target_dossier_id": did + 99999},
+        {"target_dossier_id": did, "appointment": {
+            "name": minister, "office": "兵部尚书", "appoint_action": "任命",
+        }},
+    ):
+        refused = dispatch_declaration(db, state, {"commissions": [{
+            "text": "着即强推此议", **invalid,
+        }]}, minister_name=minister)
+        assert refused.commissions.applied == []
+        assert refused.commissions.rejected
+        assert {r["id"] for r in db.list_pending_actions(state.turn)} == pending_before
 
-    def backend(prompt, *_a, **_k):
-        return (json.dumps({
-            "拟旨意图": "拟旨",
-            "目标案卷ID": did,
-        }, ensure_ascii=False), 1)
-
-    monkeypatch.setattr(cli_backend, "_run_backend_for_config", backend)
-    # channel=cli 走 conversation materialize（非 api passthrough）
-    sess = _658_session(db, state, content)
-    sess.llm_config = SimpleNamespace(channel="cli")
-    out = sess.apply_cli_conversation_actions(
-        character,
-        f"着即强推案卷{did}",
-        "臣遵旨拟强推此议。",
-        has_directive=False,
-        secret_order_id=None,
-        preclassified_intent=[{"kind": "draft"}],
-    )
-    pid = int(out.get("pending_action_id") or 0)
+    result = dispatch_declaration(db, state, {"commissions": [{
+        "text": "着即强推此议", "target_dossier_id": did,
+    }]}, minister_name=minister)
+    assert result.commissions.rejected == []
+    pid = result.commissions.applied[0]["id"]
     assert pid > 0
     staged = json.loads(db.conn.execute(
         "SELECT payload_json FROM pending_actions WHERE id=?", (pid,),

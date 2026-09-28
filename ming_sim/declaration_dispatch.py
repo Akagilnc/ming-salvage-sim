@@ -1233,6 +1233,19 @@ def _dispatch_commissions(
         if not isinstance(mode, str) or mode not in {"ordinary", "midzhi"}:
             _reject(rejected, item, "交办模式非法", "invalid_enum", source)
             continue
+        from ming_sim.db import imperial_push_target_dossier_id
+        try:
+            push_id = imperial_push_target_dossier_id(item)
+        except ValueError as exc:
+            _reject(rejected, item, str(exc), "invalid_shape", source)
+            continue
+        if push_id is not None:
+            if grant_raw or appointment_fields:
+                _reject(rejected, item, "御笔强推不可与普通拨帑或任免交办并存", "invalid_shape", source)
+                continue
+            if db.get_decree_dossier(push_id) is None:
+                _reject(rejected, item, "御笔强推目标案卷不存在", "missing_ref", source)
+                continue
         text = item.get("text")
         try:
             if grant_raw:
@@ -1249,14 +1262,17 @@ def _dispatch_commissions(
                 # 收夜成案需要 ordinary triad；纯正文走 special_decree 最小结构
                 # （与 _ensure_directive_dossier 无结构回退同形，声明侧一次给齐）。
                 # target_id 按本批已落条数区分，避免同回合多条纯正文互撞。
-                payload = {
-                    "text": body,
-                    "dossier_action_type": "special_decree",
-                    "target_kind": "policy",
-                    "target_id": f"commission-text:{int(state.turn)}:{len(applied)}",
-                    "locality_scope": "none",
-                    "mode": mode,
-                }
+                if push_id is not None:
+                    payload = {"text": body, "target_dossier_id": push_id, "mode": mode}
+                else:
+                    payload = {
+                        "text": body,
+                        "dossier_action_type": "special_decree",
+                        "target_kind": "policy",
+                        "target_id": f"commission-text:{int(state.turn)}:{len(applied)}",
+                        "locality_scope": "none",
+                        "mode": mode,
+                    }
         except KeyError as exc:
             _reject(rejected, item, str(exc), "hallucinated_id", source)
             continue

@@ -229,6 +229,7 @@ def build_c0_declaration_shape() -> str:
         '  "commissions": [\n'
         "    {\n"
         '      "text": "交办正文（原样，不删改）", "mode": "ordinary|midzhi（中旨明示才填 midzhi）",\n'
+        '      "target_dossier_id": "御笔强推已有案卷 id（不与 grant/appointment 同填）",\n'
         '      "appointment": {\n'
         '        "name": "人名", "office": "官职", "appoint_action": "任命|罢免",\n'
         '        "region_id": "任所 region id（地方/督抚/边镇任命必填；中央可空）"\n'
@@ -243,7 +244,8 @@ def build_c0_declaration_shape() -> str:
         '      "punishment": {"target_id": "处置人名（压下时可空）", '
         '"punish_action": "惩处动作（压下时为无）", "issue_id": "弹劾事项 id（有则填）", '
         '"issue_disposition": "办人|压下（弹劾事项有则填）", '
-        '"transaction_category": "事务类别（有则填）", "amount": "罚俸金额（罚俸时填）"},\n'
+        '"transaction_category": "事务类别（有则填）", "amount": "罚俸金额（罚俸时填）", '
+        '"backing_dossier_id": "所援案卷 id（有则填）"},\n'
         '      "pacification": {"target_id": "自新内乱首领的具名 id", "mode": "ordinary|midzhi"},\n'
         '      "secret_order": {"title": "密令标题", "content": "密令正文", '
         '"assignee": "承办人 id", "tags": [], "deadline_months": 0, '
