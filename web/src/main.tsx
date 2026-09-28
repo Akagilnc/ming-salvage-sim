@@ -626,6 +626,18 @@ export function App() {
   return (
     <main className="game-shell" data-settlement-display={settlementDisplay ? "1" : "0"}>
       {currentGazette}
+      {/* 必达：续跑入口仍挂既有 phase===settling（及 issueDecree 恢复分流）；展示态门控不误关。
+          ship-pre r4：崩溃/中止后重载时相位停在 settling——last_decree 已被 begin_turn 清空。
+          #1418 r2 / #657：all-decided 或 typed resume_phase2 → 同条续跑面，空 POST resolve_decisions/stream。
+          #1808 A：与 hud-error 同槽（.recovery-banner fixed top:64px）——恢复面挂载时 HUD 门控避让，
+          不得压盖唯一续跑 CTA；fail-closed 回 player 时本面不挂，HUD 核心验收仍成立。 */}
+      {(advanceRefreshFailed || pausedDecisionError || settlementHudError || (settleResumeMounted && (!state.settlement_entry_inflight || phase2Resume))) && !edictOpen && !chatOpen ? (
+        <div className="recovery-banner" role="alert" data-testid={advanceRefreshFailed ? "advance-refresh-recovery" : settleResumeMounted && phase2Resume ? "settle-resume" : pausedDecisionError ? "decision-recovery" : settleResumeMounted ? "settle-resume" : "hud-error"}>
+          <span className="recovery-banner-message">{advanceRefreshFailed ? `新月盘面载入失败：${error}` : pausedDecisionError || settlementHudError || state.settlement_recovery?.message || "上月结算未完成（进度已保存）。"}{!advanceRefreshFailed && state.settlement_recovery?.error_pack_path ? ` 错误包：${state.settlement_recovery.error_pack_path}；请把它发给作者。` : ""}</span>
+          <button className="seal-btn-issue" onClick={advanceRefreshFailed ? retryAdvanceRefresh : pausedDecisionError ? retryPendingDecisions : phase2Resume ? resumePhase2 : failedEntryWasRetreat || (settleResumeMounted && state.settlement_recovery?.ready_replay === false) ? advanceWithoutEdict : issueDecree} disabled={!!busy}>重试</button>
+        </div>
+      ) : null}
+
       {/* Keep the main face mounted, but never expose or accept actions against the stale month. */}
       <div inert={advanceRefreshFailed} aria-hidden={advanceRefreshFailed} style={{ display: "contents", visibility: advanceRefreshFailed ? "hidden" : undefined }}>
       <GameHud
@@ -867,17 +879,6 @@ export function App() {
         />
       ) : null}
 
-      {/* 必达：续跑入口仍挂既有 phase===settling（及 issueDecree 恢复分流）；展示态门控不误关。
-          ship-pre r4：崩溃/中止后重载时相位停在 settling——last_decree 已被 begin_turn 清空。
-          #1418 r2 / #657：all-decided 或 typed resume_phase2 → 同条续跑面，空 POST resolve_decisions/stream。
-          #1808 A：与 hud-error 同槽（.recovery-banner fixed top:64px）——恢复面挂载时 HUD 门控避让，
-          不得压盖唯一续跑 CTA；fail-closed 回 player 时本面不挂，HUD 核心验收仍成立。 */}
-      {(advanceRefreshFailed || pausedDecisionError || settlementHudError || (settleResumeMounted && (!state.settlement_entry_inflight || phase2Resume))) && !edictOpen && !chatOpen ? (
-        <div className="recovery-banner" role="alert" data-testid={advanceRefreshFailed ? "advance-refresh-recovery" : settleResumeMounted && phase2Resume ? "settle-resume" : pausedDecisionError ? "decision-recovery" : settleResumeMounted ? "settle-resume" : "hud-error"}>
-          <span className="recovery-banner-message">{advanceRefreshFailed ? `新月盘面载入失败：${error}` : pausedDecisionError || settlementHudError || state.settlement_recovery?.message || "上月结算未完成（进度已保存）。"}{!advanceRefreshFailed && state.settlement_recovery?.error_pack_path ? ` 错误包：${state.settlement_recovery.error_pack_path}；请把它发给作者。` : ""}</span>
-          <button className="seal-btn-issue" onClick={advanceRefreshFailed ? retryAdvanceRefresh : pausedDecisionError ? retryPendingDecisions : phase2Resume ? resumePhase2 : failedEntryWasRetreat || (settleResumeMounted && state.settlement_recovery?.ready_replay === false) ? advanceWithoutEdict : issueDecree} disabled={!!busy}>重试</button>
-        </div>
-      ) : null}
 
 
       {cheatOpen ? (

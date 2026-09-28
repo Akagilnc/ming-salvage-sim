@@ -1791,7 +1791,7 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     const retry = panel.querySelector("button") as HTMLButtonElement | null;
     expect(retry).not.toBeNull();
     expect(retry!.disabled).toBe(false);
-    expect(retry!.textContent).toContain("重新拉取");
+    expect(retry!.textContent).toBe("重试");
 
     unmountTrackedRoots();
     const host2 = await mountApp();
@@ -1869,7 +1869,7 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     const alerts = host.querySelectorAll('[role="alert"]');
     expect(alerts.length).toBe(1);
     expect(
-      host.querySelector('[data-testid="decision-recovery"] [role="alert"]'),
+      host.querySelector('[data-testid="decision-recovery"][role="alert"]'),
     ).toBe(alerts[0]);
 
     // modal 不卸载；已选态仍在；可再落印
