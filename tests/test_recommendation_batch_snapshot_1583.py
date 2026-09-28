@@ -82,16 +82,20 @@ def test_same_batch_consecutive_appointments_keep_prebatch_recommendation_snapsh
     )
     assert {item["id"] for item in committed} == {id1, id2}
 
-    # 两道夜里判决同批已暂存；不在测试中代写物化结果。
-    for pending_id in (id1, id2):
-        did = _proposed_appointment_dossier_id(db, pending_id)
-        ref = decree_ref_for_dossier(db, db.get_decree_dossier(did))
-        db.staged_declarations.stage(
-            decree_ref=ref, declaration={}, turn=int(state.turn),
-            verdict={"decision": "promulgated"}, forecast_text="",
-        )
+    # 第一案夜里已有判决，第二案过月时补跑判官（首案已改盘面）。
+    did = _proposed_appointment_dossier_id(db, id1)
+    ref = decree_ref_for_dossier(db, db.get_decree_dossier(did))
+    db.staged_declarations.stage(
+        decree_ref=ref, declaration={}, turn=int(state.turn),
+        verdict={"decision": "promulgated"}, forecast_text="",
+    )
+    monkeypatch.setattr("ming_sim.decree_forecast.produce_forecast_product", lambda *_a: {
+        "declaration": {}, "verdict": {"decision": "promulgated"},
+        "questions": None, "forecast_text": "",
+    })
     before_turn = int(state.turn)
     session = _prepare_player_month(db, state, content, monkeypatch)
+    session.llm_config = object()  # enable the month-chain's exhausted forecast branch
     session.resolve_turn(allow_empty_decree=True)
     db.save_turn_report(state, "邸报", knowledge_items=[], attendant_message="")
     session.resolve_turn(allow_empty_decree=True)
