@@ -308,35 +308,6 @@ def test_travel_tone_updates_this_round_summon_ledger(game):
     assert int(matched[0]["entry_id"]) == int(entry_id)
 
 
-def test_scene_chat_turn_agno_session_id_is_scene_night(game, monkeypatch):
-    """殿上建轮的 agno_session_id 对准场景会话，撤回/失败才截得到。"""
-    from ming_sim.audience_night import SCENE_CHAT_SPEAKER, ensure_open_night_for_audience
-
-    db, state, content = game
-    night = ensure_open_night_for_audience(db, state)
-    night_id = int(night["id"])
-
-    class _FakeWeb:
-        def __init__(self):
-            self.db = db
-            self.state = state
-            self.session = SimpleNamespace(registry=None, temporary_characters={})
-
-        def _persistent_chat_minister(self, name):
-            return True
-
-        def _minister_agno_session_id(self, minister_name: str) -> str:
-            # production seam under test — copy of intended web_app behavior
-            if minister_name == SCENE_CHAT_SPEAKER:
-                open_n = ensure_open_night_for_audience(self.db, self.state)
-                return f"scene-night-{int(open_n['id'])}"
-            return f"minister-{minister_name}-turn-{self.state.turn}"
-
-    web = _FakeWeb()
-    sid = web._minister_agno_session_id(SCENE_CHAT_SPEAKER)
-    assert sid == f"scene-night-{night_id}"
-
-
 def test_old_minister_agent_surface_gone():
     """生成链零动作工具：旧大臣 agent / 动作工具入口不复存在。"""
     import importlib
