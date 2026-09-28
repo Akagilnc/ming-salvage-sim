@@ -18,10 +18,8 @@ import sqlite3
 import pytest
 
 from ming_sim.db import GameDB
-from ming_sim.decree import (
-    project_dossiers_for_simulator,
-    settle_with_delta,
-)
+from ming_sim.decree import project_dossiers_for_simulator
+from tests.test_due_review_621 import _settle_empty_month
 from ming_sim.due_review import (
     build_due_review_input,
     project_due_review_scene,
@@ -161,13 +159,6 @@ def _insert_staged(db, state, content, *, dossier_id: int, due_turn: int):
     return int(created["issue_id"])
 
 
-def _settle(db, state, content, *, narrative="本月邸报，边事略平。", **extracted):
-    settle_with_delta(
-        state, db, extracted, before_turn=state.turn, content=content,
-        narrative=narrative,
-    )
-
-
 def _table_cols(db, table: str) -> set[str]:
     return {
         str(row["name"])
@@ -293,8 +284,8 @@ def test_ac1_monthly_write_idempotent_readable_and_restore(game, tmp_path, conte
         restored.close()
 
 
-def test_ac1_settle_segment_writes_presence(game):
-    """事实行随 grant recon 同段写入（settle_with_delta atomic）。"""
+def test_ac1_settle_segment_writes_presence(game, monkeypatch):
+    """事实行随真实过月 grant recon 同段写入。"""
     db, state, content = game
     owner, _ = _pair_same_faction(db)
     auditor = _upright_and_mediocre(db)[1]
@@ -304,7 +295,7 @@ def test_ac1_settle_segment_writes_presence(game):
     )
     before_turn = int(state.turn)
     before = len(db.list_supervision_presence(subject_id))
-    _settle(db, state, content)
+    _settle_empty_month(db, state, content, monkeypatch)
     after = db.list_supervision_presence(subject_id)
     assert len(after) == before + 1
     # settle 推进 turn；在场行键控 before_turn
