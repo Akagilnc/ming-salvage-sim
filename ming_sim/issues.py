@@ -8313,8 +8313,7 @@ def _apply_recovery_driven_transfers(
     if db.population_unit != POPULATION_UNIT_PERSONS:
         return [], []
     turn = int(state.turn)
-    # #1843 reopen：旧 turn_extractions 去重读已删；新链防重复靠暂存声明 settled
-    # 终态与 #1846 已落不动。本函数内 seen_keys 仅拦同一次调用内的双扣。
+    # 月份推进事务只执行一次；同一案在本次扫描内仅回流一次。
     seen_keys: set[tuple[int, int]] = set()
 
     records: List[Dict[str, object]] = []
@@ -9502,12 +9501,7 @@ def _apply_score_extraction_body(
     # 注：建筑的新建/变更/废止不走顶层字段，全由 issue 的 effect_on_resolve /
     #     effect_on_fail 里的 `buildings` 段在局势结案时落地（见 _apply_issue_buildings）。
 
-    # 4.5) #652 已付赈济/招抚先回流，再允许投贼吃同省余池。
-    recovery_applied, recovery_rejections = _apply_recovery_driven_transfers(
-        db, state, commit=commit_now,
-    )
-    applied_transfers.extend(recovery_applied)
-    transfer_rejections.extend(recovery_rejections)
+    # #652 回流在月份推进时统一执行；本段流寇只吃当时余池。
     applied_absorptions, absorption_rejections, absorption_power_changes = (
         _apply_bandit_absorptions(
             db, state, extracted.get("bandit_absorptions") or [], commit=commit_now,

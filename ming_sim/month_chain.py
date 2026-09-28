@@ -1571,6 +1571,9 @@ def _advance_after_gazette(
         chain = _load_chain(db, turn)
         db.mark_directives_issued(state)
         clear_return_revise_choice_anchors(db, None)
+        # #652：刚结束的月份的执行判定和实付已落定；下月任何吸收前回流。
+        from ming_sim.issues import _apply_recovery_driven_transfers
+        _apply_recovery_driven_transfers(db, state, commit=False)
         state.next_period()
         _carry_pending_clarification_actions(db, state, turn, content=content)
         state.turn_phase = "issued"
