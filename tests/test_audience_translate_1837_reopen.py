@@ -107,6 +107,25 @@ def test_prohibit_covert_levy_commission_binds_exposed_dossier(game, monkeypatch
     assert int(row["night_approved"] or 0) == 1
 
 
+def test_commission_failure_does_not_erase_prior_staged_item(game):
+    db, state, content = game
+    night = open_night(db, state)
+    actor = _active_minister(db, content).name
+    decl = normalize_audience_declaration({"commissions": [
+        {"text": "着户部核实边饷。"},
+        {"text": ""},
+    ]})
+    result = dispatch_declaration(
+        db, state, decl, minister_name=actor, night_id=int(night["id"]),
+    )
+    assert len(result.commissions.applied) == 1
+    assert len(result.commissions.rejected) == 1
+    staged_id = result.commissions.applied[0]["id"]
+    assert db.conn.execute(
+        "SELECT status FROM pending_actions WHERE id=?", (staged_id,)
+    ).fetchone()["status"] == "pending"
+
+
 def test_recommendation_commission_stages_office_with_reason(game):
     db, state, content = game
     night = open_night(db, state)
