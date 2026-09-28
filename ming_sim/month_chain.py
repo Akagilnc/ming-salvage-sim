@@ -1241,13 +1241,17 @@ def _run_month_drift(
         from ming_sim.covert_levy import settle_exposure_from_canonical_actions, write_exposure_todos
         write_exposure_todos(db, state)
         settle_exposure_from_canonical_actions(db, state, {})
-        rejections = apply_issue_inertia_and_ongoing(db, state)
-        if rejections:
-            _collect_inline_rejections(
-                collector, {"issue_inertia": {"entity_rejections": rejections}},
-                turn, source,
-            )
-            collector.flush_to_db(db)
+        person_changes: list[dict[str, object]] = []
+        rejections = apply_issue_inertia_and_ongoing(
+            db, state, applied_person_changes=person_changes,
+        )
+        _collect_inline_rejections(
+            collector, {
+                "issue_inertia": {"entity_rejections": rejections},
+                "issue_summary": {"applied_person_changes": person_changes},
+            }, turn, source,
+        )
+        collector.flush_to_db(db)
         db.recompute_all_faction_leverage()
         clear_gated_legacies(db, state)
         apply_pending_due_reviews(db, state, commit=False)

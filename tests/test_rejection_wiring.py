@@ -201,6 +201,21 @@ def test_noncancellable_cancel_rejection_carries_reason(game, monkeypatch, tmp_p
     assert rows[0][1]  # reason 非空
 
 
+def test_rejected_appointment_carries_rejection_cause(game, monkeypatch, tmp_path):
+    """Rejected appointments report the rejection, not the model's appointment rationale."""
+    db, state, content = game
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    existing = next(iter(content.characters))
+    run_settle(db, state, content, {
+        "appointments": [{"origin_ref": "盘面自发", "name": existing,
+                          "office": "贵妃", "office_type": "后宫", "reason": "椒房之选"}],
+    })
+    rows = [r for r in _rejection_rows(db, state.turn) if r[0] == "applied_person_changes"]
+    assert len(rows) == 1
+    assert rows[0][1] and rows[0][1] != "椒房之选"
+    assert rows[0][2] == "appointment_rejected"
+
+
 def test_bridge_synthesizes_reason_when_producer_omits(game):
     """桥接层集中守 ADR「拒收行必带原因」不变式:任何 producer 漏给 reason,
     落库前合成非空兜底——规则写一处,未来新 section 免疫同类缺陷(fix-coverage
@@ -531,6 +546,39 @@ def test_issue_close_power_move_backlash_rejection_is_not_duplicated(game, monke
         ch.office = old_office
         ch.office_type = old_office_type
 
+
+
+def test_inertia_power_move_backlash_rejection_lands_in_reports(game, monkeypatch, tmp_path):
+    """Natural issue resolution must persist nested person backlash rejections."""
+    from tests.test_due_review_621 import _settle_empty_month
+
+    db, state, content = game
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    turn = state.turn
+    name = active_ming_character(db, content)
+    ch = content.characters[name]
+    old_power, old_office, old_office_type = ch.power_id, ch.office, ch.office_type
+    db.insert_issue(
+        state, kind="situation", title="惯性反噬留痕测试", bar_value=99, inertia=1,
+        effect_on_resolve={"人物变更": [{
+            "origin_ref": "盘面自发", "name": name, "动作": "易主",
+            "new_power": "houjin", "方式": "主动投敌",
+            "反噬": {"查无此势力": {"leverage": 5}}, "reason": "测试惯性反噬拒收",
+        }]},
+    )
+    db.conn.commit()
+    try:
+        _settle_empty_month(db, state, content, monkeypatch)
+        rows = db.conn.execute(
+            "SELECT section, reason, category FROM rejection_reports WHERE turn=? ORDER BY id",
+            (turn,),
+        ).fetchall()
+        assert len(rows) == 1
+        assert rows[0]["section"] == "issue_summary.applied_person_changes.backlash_results"
+        assert rows[0]["reason"] == "power_updates 引用未入库势力 '查无此势力'"
+        assert rows[0]["category"] == "hallucinated_id"
+    finally:
+        ch.power_id, ch.office, ch.office_type = old_power, old_office, old_office_type
 
 
 def test_provenance_from_stored_recovers_all_forms():
