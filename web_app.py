@@ -2262,15 +2262,6 @@ class WebGame:
             return False
         return get_open_night(self.db) is not None
 
-    def _finish_offsite_summon_scene(
-        self, *, origin_id: str, minister_name: str, gate_cm: Any,
-    ) -> None:
-        """#1838 reopen：场外传召账照记；旁白由场景戏文写，不再单独调 LLM。"""
-        return
-
-
-
-
     def chat(self, minister_name: str, message: str, intent: Optional[str] = None) -> Dict[str, Any]:
         # #498 AC10：LLM 生成不持 write_gate，使颁诏入口可观测 in-flight 并有界超时；
         # 仅 prologue/epilogue 写库持锁。
@@ -2336,8 +2327,6 @@ class WebGame:
         accepted_turn = 0
         result = None
         translation_scheduled = False
-        # #1566：场外记召成功后在 gate 外物化 scene；（minister, admission_result, origin_id）
-        offsite_summon: Optional[tuple[str, str, str]] = None
         # #542 r6e：prologue（_start_chat_turn / append）纳入既有 try/except；
         # 与流式 L2414-2428 同缝——drain 在 write_gate 外，再 abandon + fail。
         try:
@@ -2378,12 +2367,8 @@ class WebGame:
                                 AudienceAdmission.SUMMON_FRESH,
                                 AudienceAdmission.SUMMON_IN_TRANSIT,
                             ):
-                                # 记召已落账；scene 在 gate 外生成（见 with 后）。
-                                offsite_summon = (
-                                    minister_name,
-                                    admission.result.value,
-                                    origin_id,
-                                )
+                                # 传召事实已落账；仍建场景轮，但不让场外人物入殿。
+                                offsite_turn = True
                             else:
                                 raise HTTPException(
                                     status_code=409,
@@ -2407,31 +2392,17 @@ class WebGame:
                             AudienceAdmission.SUMMON_FRESH,
                             AudienceAdmission.SUMMON_IN_TRANSIT,
                         )
-                    if offsite_summon is None:
-                        if self._persistent_chat_minister(minister_name):
-                            chat_turn_id, before_snapshot = self._start_chat_turn(
-                                minister_name,
-                                message=text,
-                                attach_to_hall=not offsite_turn,
-                            )
-                        self.chat_history.setdefault(minister_name, []).append({"role": "user", "content": text})
-                        if minister_name not in self.session.temporary_characters:
-                            message_id = self.db.append_chat_message(minister_name, accepted_turn, "user", text)
-                            if chat_turn_id:
-                                self.db.update_chat_turn_messages(chat_turn_id, user_message_id=message_id)
-                if offsite_summon is not None:
-                    summon_name, summon_result, summon_origin = offsite_summon
-                    self._finish_offsite_summon_scene(
-                        origin_id=summon_origin, minister_name=summon_name,
-                        gate_cm=gate_cm,
-                    )
-                    # #1566：成功载荷的同连接 DB 投影读须纳入 ticketed gate 短临界段，
-                    # 与并发同源请求的读/写在同一 sqlite connection 上互斥；LLM 早已在
-                    # write_back 内结清，此处只剩纯读。
-                    with gate_cm:
-                        return self._summon_admission_success_payload(
-                            summon_name, summon_result,
+                    if self._persistent_chat_minister(minister_name):
+                        chat_turn_id, before_snapshot = self._start_chat_turn(
+                            minister_name,
+                            message=text,
+                            attach_to_hall=not offsite_turn,
                         )
+                    self.chat_history.setdefault(minister_name, []).append({"role": "user", "content": text})
+                    if minister_name not in self.session.temporary_characters:
+                        message_id = self.db.append_chat_message(minister_name, accepted_turn, "user", text)
+                        if chat_turn_id:
+                            self.db.update_chat_turn_messages(chat_turn_id, user_message_id=message_id)
                 # #1842：殿上真实召对入口切 scene_chat；密令仍走旧 session.chat。
                 # 退役：旧分类器 / 故事抽取 / 边事件判官 / 代码触发读心（转译承接）。
                 if explicit_secret_order:

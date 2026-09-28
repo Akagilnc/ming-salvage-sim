@@ -1708,8 +1708,11 @@ def _scene_pending_audience_facts(db: Any, state: Any) -> list[str]:
     ):
         if not isinstance(scene, dict):
             continue
-        # Scene text is a legacy fixed memorial, not a fact for the scene LLM.
-        facts = {key: value for key, value in scene.items() if key != "scene_text"}
+        # These are legacy composed memorials, not facts for the scene LLM.
+        facts = {
+            key: value for key, value in scene.items()
+            if key not in {"scene_text", "gap_text", "statement_text"}
+        }
         lines.append(json.dumps(facts, ensure_ascii=False, sort_keys=True))
     for summon in list_unsettled_summons(db):
         facts = {key: summon[key] for key in ("person_name", "kind", "travel_tone") if key in summon}
