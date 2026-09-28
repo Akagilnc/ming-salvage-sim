@@ -332,42 +332,36 @@ def test_confirmation_bubi_zhaoban_no_wordlist_when_extractor_fails(monkeypatch)
     assert result["target_ids"] == []
 
 
-def test_mixed_directive_and_secret_confirmation_commits_both(game):
+def test_scene_promises_confirm_directive_and_secret_order_independently(game):
+    """同轮两项应允：密令即落档，拟旨经收夜提交，不彼此吞并。"""
+    from ming_sim.declaration_dispatch import dispatch_declaration
+
     db, state, content = game
     minister = next(iter(content.characters.values())).name
-    ch = SimpleNamespace(name=minister, office_type="兵部")
-    db.stage_pending_action(
-        state.turn, kind="directive", action="拟旨", minister_name=minister, target_id=None,
+    directive_id = db.stage_pending_action(
+        state.turn, kind="directive", action="拟旨", minister_name=minister,
         payload={**_POLICY_FIELDS, "text": "着户部清核辽饷。", "actor": minister},
     )
-    db.stage_pending_action(
-        state.turn, kind="secret_order", action="新建", minister_name=minister, target_id=None,
-        payload={
-            "covert_task": TYPED_COVERT_TASK,
-            "title": "暗查辽饷",
-            "content": "暗查辽饷侵冒。",
-            "assignee": minister,
-            "tags": [],
-            "deadline_months": 0,
-        },
+    secret_id = db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name=minister,
+        payload={"covert_task": TYPED_COVERT_TASK, "title": "暗查辽饷",
+                 "content": "暗查辽饷侵冒。", "assignee": minister,
+                 "tags": [], "deadline_months": 0},
     )
-
-    out = GameSession.apply_cli_conversation_actions(
-        _session(db, state, content=content),
-        ch,
-        player_message="圣旨和密令都准。",
-        answer="臣领旨。",
-        has_directive=False,
-        secret_order_id=None,
-        preclassified_intent={"kind": "confirmation", "confirmation": "应允"},
-    )
-
-    assert out["pending_action_failures"] == []
-    assert db.list_pending_actions(state.turn) == []
+    result = dispatch_declaration(db, state, {"promises": [
+        {"action_id": action_id, "decision": "应允"}
+        for action_id in (directive_id, secret_id)
+    ]}, minister_name=minister)
+    assert result.promises.rejected == []
+    assert {r["action_id"] for r in result.promises.applied} == {directive_id, secret_id}
     assert [order["title"] for order in db.list_secret_orders()] == ["暗查辽饷"]
-    directives = db.list_directives(state, statuses=("pending",))
-    assert len(directives) == 1
-    assert directives[0]["text"] == "着户部清核辽饷。"
+    assert db.conn.execute(
+        "SELECT night_approved FROM pending_actions WHERE id=?", (directive_id,),
+    ).fetchone()["night_approved"] == 1
+    db.commit_pending_actions(state, action_ids=[directive_id])
+    assert db.list_pending_actions(state.turn) == []
+    directives = db.list_directives(state, statuses=("draft",))
+    assert len(directives) == 1 and directives[0]["text"] == "着户部清核辽饷。"
 
 
 @pytest.mark.parametrize("kind", ["directive", "office"])
