@@ -176,6 +176,4 @@ describe.sequential("medium: shared Electron geometry", () => {
       expect(result.textareaHit, `${result.viewportWidth}x${result.viewportHeight} textareaHit`).toBe(true);
     }
   });
-  // #1854：统一恢复横幅由 main.tsx 按状态挂载；挂载/按钮行为由 appDurableWiring 从真实 App 入口覆盖。
-  // 不另造手写 .recovery-banner 夹具几何测（删孤儿组件 ≠ 造平行测试）。
 });
