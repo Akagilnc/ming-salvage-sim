@@ -21,5 +21,3 @@ def test_exact_target_canonicalizers_reject_prose(content, canonicalize, raw):
     """受控别名/命名空间不放宽 exact seam 为子串或散文匹配。"""
     entities = content.regions if canonicalize is canonical_region_id_exact else content.armies
     assert canonicalize(raw, entities) is None
-
-
