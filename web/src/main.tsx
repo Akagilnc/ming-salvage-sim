@@ -879,9 +879,9 @@ export function App() {
           #1418 r2 / #657：all-decided 或 typed resume_phase2 → 同条续跑面，空 POST resolve_decisions/stream。
           #1808 A：与 hud-error 同槽（.recovery-banner fixed top:64px）——恢复面挂载时 HUD 门控避让，
           不得压盖唯一续跑 CTA；fail-closed 回 player 时本面不挂，HUD 核心验收仍成立。 */}
-      {settleResumeMounted || settlementHudError ? (
-        <div className="recovery-banner" role="alert">
-          <span className="recovery-banner-message">{state.settlement_recovery?.message || settlementHudError || "上月结算未完成（进度已保存）。"}</span>
+      {(settleResumeMounted || settlementHudError) && !edictOpen && !chatOpen ? (
+        <div className="recovery-banner" role="alert" data-testid={settleResumeMounted ? "settle-resume" : "hud-error"}>
+          <span className="recovery-banner-message">{settlementHudError || state.settlement_recovery?.message || "上月结算未完成（进度已保存）。"}{state.settlement_recovery?.error_pack_path ? ` 错误包：${state.settlement_recovery.error_pack_path}；请把它发给作者。` : ""}</span>
           <button className="seal-btn-issue" onClick={phase2Resume ? resumePhase2 : issueDecree} disabled={!!busy}>重试</button>
         </div>
       ) : null}

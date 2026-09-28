@@ -1040,7 +1040,6 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     const resume = host.querySelector('[data-testid="settle-resume"] button') as HTMLButtonElement | null;
     expect(resume).not.toBeNull();
     expect(resume!.disabled).toBe(false);
-    expect(resume!.textContent).toContain("续跑结算");
     // 核账递话条同屏（展示态真源），不挡续跑
     expect(host.querySelector("[data-testid=wang-settlement-slip]")).not.toBeNull();
 
@@ -1365,7 +1364,8 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     expect(host.querySelector(".hud2-stage")).toBeNull();
     expect(edictCommand(host)).toBeNull();
     expect(findButton(host, "盖玺颁诏过月")).toBeFalsy();
-    expect(findButton(host, "重试载入新月盘面")).toBeFalsy();
+    const retry = findButton(host, "重试");
+    expect(retry).toBeTruthy();
     expect(host.textContent).not.toContain(MIDCOURSE_ISSUE);
 
     const getsBeforeDismiss = stateGets;
@@ -1387,7 +1387,15 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     expect(streamPosts()).toBe(streamPostsBeforeDismiss);
     expect(host.querySelector(".hud2-stage")).toBeNull();
     expect(edictCommand(host)).toBeNull();
-    expect(findButton(host, "重试载入新月盘面")).toBeFalsy();
+    expect(findButton(host, "重试")).toBeTruthy();
+    failPostAdvanceRefresh = false;
+    liveState.turn = { year: 1627, period: 11, turn: 6, phase: "player", settlement_display: false };
+    await click(findButton(host, "重试"));
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector(".hud2-stage")).not.toBeNull());
+    });
+    expect(streamPosts()).toBe(streamPostsBeforeDismiss);
+    expect(host.querySelector("[data-testid=settlement-gazette-panel]")).toBeNull();
   });
 
   it("#1852 写成即推进：本面邸报阅读中不弹 closed/密令/结局；朕知道了后仍按既有规则弹", async () => {
@@ -2125,7 +2133,6 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     const resume = host.querySelector('[data-testid="settle-resume"] button') as HTMLButtonElement | null;
     expect(resume).not.toBeNull();
     expect(resume!.disabled).toBe(false);
-    expect(resume!.textContent).toContain("续跑结算");
     // #1808 A：settle-resume 挂载时 hud-error 门控避让，不得压盖唯一续跑 CTA。
     expect(host.querySelector('[data-testid="hud-error"]')).toBeNull();
     // 陈旧常态写面不再当权威：settling 门控已投影续跑，busy 已清。
@@ -2146,7 +2153,6 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     expect(host.querySelector('[data-testid="decision-recovery"]')).toBeNull();
     const resume = host.querySelector('[data-testid="settle-resume"] button') as HTMLButtonElement;
     expect(resume.disabled).toBe(false);
-    expect(resume.textContent).toContain("续跑结算");
 
     // 刷新重挂仍在
     unmountTrackedRoots();
