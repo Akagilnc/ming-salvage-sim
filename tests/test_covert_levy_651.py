@@ -56,6 +56,52 @@ def test_exposure_uses_single_dispatcher_and_projects_exact_case(game, monkeypat
     assert build_due_review_input(db, todo)["commitment_ref"] == issue_id
 
 
+def test_same_segment_denunciation_creates_exposure_todo(game, monkeypatch):
+    from ming_sim.applier import Provenance
+    from ming_sim.declaration_dispatch import dispatch_declaration
+    from tests.test_faction_denunciation_627 import _enemy_accuser
+
+    db, state, _ = game
+    did, _, _, executor = _bound_case(db, state)
+    faction = db.conn.execute("SELECT faction FROM characters WHERE name=?", (executor,)).fetchone()[0]
+    accuser = _enemy_accuser(db, faction)
+    monkeypatch.setattr(db, "read_dossier_fork_state", lambda dossier_id: {
+        "dossier_id": dossier_id, "fork": True, "reported_bands": ["有成"],
+        "execution_outcome": "transformed", "actual_effect_count": 1, "beyond_intent": True,
+    })
+    dispatch_declaration(
+        db, state,
+        {"effects": {"faction_denunciations": [{
+            "accuser_name": accuser, "subject_name": executor,
+            "target_dossier_id": did, "memorial_text": "臣请查此案。",
+        }]}},
+        source=Provenance.player_decree,
+        visible_refs={"dossiers": {did}},
+    )
+    assert db.list_faction_denunciations(target_dossier_id=did)
+    todos = db.list_next_audience_todos(status="pending")
+    assert any(t["entry_kind"] == ENTRY_KIND for t in todos)
+
+
+def test_empty_effect_month_rechecks_persisted_exposure(game, monkeypatch):
+    from tests.test_month_chain_1843 import _prepare_player_month
+
+    db, state, content = game
+    did, _, _, _ = _bound_case(db, state)
+    monkeypatch.setattr(db, "read_dossier_fork_state", lambda dossier_id: {
+        "dossier_id": dossier_id, "fork": True, "reported_bands": ["有成"],
+        "execution_outcome": "transformed", "actual_effect_count": 1, "beyond_intent": True,
+    })
+    db.conn.execute(
+        "INSERT INTO decree_dossier_links(source_dossier_id,target_dossier_id,relation_type,note) "
+        "VALUES (?,?,'稽核','查账')", (did, did),
+    )
+    session = _prepare_player_month(db, state, content, monkeypatch)
+    session.resolve_turn(allow_empty_decree=True)
+    todos = db.list_next_audience_todos(status="pending")
+    assert any(t["entry_kind"] == ENTRY_KIND for t in todos)
+
+
 def test_natural_prohibition_binds_only_current_case_and_is_night_approved(game, monkeypatch):
     db, state, _ = game
     first, _, first_army, actor = _bound_case(db, state)
