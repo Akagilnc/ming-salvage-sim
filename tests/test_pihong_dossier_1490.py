@@ -5780,19 +5780,28 @@ def _1778_plant_and_follow(web_game, monkeypatch, drafts, *, desk_action="follow
     desk_action="midzhi" 时用同文件既有 midzhi 短 dict 形，从 head 取本案 C.4 键
     （必含 participant_roster）；不复刻 web 投影全键表。
     返回 {title: 新增案卷行}；断言留给调用方（外部结构化结果，不看散文）。
+
+    落桌写库经 SessionWriteQueue.run_exclusive（#1884 / #1845 同类）：上一轮
+    过月后的机械尾可能仍在写同一连接，布置不得绕开写闸。
     """
+    from ming_sim.session_write_queue import get_session_write_queue
+
     state, db = web_game.session.state, web_game.db
-    db.conn.execute("DELETE FROM pending_decisions")
-    db.conn.commit()
-    db.save_rescript_drafts(int(state.turn), drafts)
-    db.conn.commit()
-    db.save_resolve_context(
-        int(state.turn), "诏", "邸报",
-        {"candidate_events": [], "transit_semantics": []},
-        secret_orders=[], relevant_memories=[],
-    )
-    state.turn_phase = TurnPhase.AWAITING_DECISION.value
-    db.save_state(state)
+
+    def plant_desk():
+        db.conn.execute("DELETE FROM pending_decisions")
+        db.conn.commit()
+        db.save_rescript_drafts(int(state.turn), drafts)
+        db.conn.commit()
+        db.save_resolve_context(
+            int(state.turn), "诏", "邸报",
+            {"candidate_events": [], "transit_semantics": []},
+            secret_orders=[], relevant_memories=[],
+        )
+        state.turn_phase = TurnPhase.AWAITING_DECISION.value
+        db.save_state(state)
+
+    get_session_write_queue(web_game.session).run_exclusive(plant_desk)
 
     async def _get_state():
         async with _client() as client:
