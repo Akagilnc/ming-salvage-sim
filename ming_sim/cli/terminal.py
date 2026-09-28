@@ -99,7 +99,7 @@ def choose_minister(session: GameSession) -> Optional[Character]:
     names = [
         name for name in characters
         if _is_summonable_court_minister(characters[name], resolve_power_id=resolve)
-        and session.db.get_character_status(name)[0] not in ("offstage", "candidate")
+        and session.db.get_character_status(name)[0] != "offstage"
     ]
     print("\n可召见大臣：")
     for idx, name in enumerate(names, 1):

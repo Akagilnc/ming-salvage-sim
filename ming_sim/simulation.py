@@ -82,7 +82,6 @@ TOP_LEVEL_ALIASES = {
     "人事变更": "office_changes",
     "人物状态变化": "character_status_changes",
     "人物易主": "character_power_changes",
-    "后宫册封": "appointments",
     "person_changes": "人物变更",
     "人物变更": "人物变更",
     "密令副作用": "secret_order_updates",

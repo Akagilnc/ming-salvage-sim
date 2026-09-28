@@ -189,35 +189,13 @@ class TurnSnapshot:
     previous_summary: str = ""
 
 
-def _find_candidate_by_name(content: GameContent, name: str) -> Optional[str]:
-    """后宫 candidate 升格时，extractor 输出的称呼（如'李氏雪凝'）可能与原名（'李雪凝'）
-    不完全一致。在 content.characters 里找：精确匹配 → aliases 含 name → name 含原名/原名含 name。
-    返回 content.characters 里的原始 key，找不到返回 None。
-    只对 office_type='后宫' 且 status='candidate' 的人物做匹配。"""
-    # 精确匹配
-    if name in content.characters:
-        c = content.characters[name]
-        if c.office_type == "后宫" and c.status == "candidate":
-            return name
-    # aliases 匹配 & 子串匹配
-    for key, c in content.characters.items():
-        if c.office_type != "后宫" or c.status != "candidate":
-            continue
-        if name in (c.aliases or []):
-            return key
-        # 子串匹配（直接）
-        if key in name or name in key:
-            return key
-    return None
-
-
 def _is_ming_court_minister_character(
     character: Any,
     *,
     power_id: Optional[str] = None,
     resolve_power_id: Optional[Callable[[Any], str]] = None,
 ) -> bool:
-    """在册身份归一（ming-guard / 别名 canonical）：非后宫 ∧ 非 candidate ∧ power=ming。
+    """在册身份归一（ming-guard / 别名 canonical）：非后宫 ∧ power=ming。
 
     #1317 r2：与「在朝可召资格」拆成两条单真源——身份解析必须认识所有在册者
     （含宗藩/未仕），否则史宪之/福王别名 _find_existing_minister→None→建重档/绕宗藩闸。
@@ -230,8 +208,6 @@ def _is_ming_court_minister_character(
     if character is None:
         return False
     if getattr(character, "office_type", None) == "后宫":
-        return False
-    if getattr(character, "status", None) == "candidate":
         return False
     if power_id is None and resolve_power_id is not None:
         power_id = resolve_power_id(character)
@@ -259,13 +235,13 @@ def _is_summonable_court_minister(
 
 
 def _find_existing_minister(content: GameContent, name: str, db: "GameDB") -> Optional[str]:
-    """铨选查重 / 别名身份归一：拟任者是否已在册（非 candidate）。精确名 → aliases 命中。
+    """铨选查重 / 别名身份归一：拟任者是否已在册。精确名 → aliases 命中。
     不做子串互含——'李标' vs '标' 那种巧合会误拒同义改写。
-    后宫人物不在此查（走 _find_candidate_by_name）。返回在册原始 key，无则 None。
+    后宫人物不在此查。返回在册原始 key，无则 None。
 
     吃「在册身份归一」(_is_ming_court_minister_character)，**含宗藩/未仕**——五处解析
     （本函数 / db._commit_office_action / create_secret_order / apply_office_appointment 别名归一 /
-    _apply_unlisted_person_registration）共吃，禁与可召谓词混用（#1317 r2）。
+    转译入册）共吃，禁与可召谓词混用（#1317 r2）。
     power_id 用 db.resolve_power_id 惰性入参（DB 权威，#125）：招抚归明者可召即可罢/可任；
     外藩(皇太极) resolve≠ming 仍不接。"""
     resolve = db.resolve_power_id
@@ -274,7 +250,7 @@ def _find_existing_minister(content: GameContent, name: str, db: "GameDB") -> Op
         if _is_ming_court_minister_character(c, resolve_power_id=resolve):
             return name
     for key, c in content.characters.items():
-        # 别名命中后才进谓词；谓词内后宫/candidate 先闸再惰性 resolve——禁第二份类型表。
+        # 别名命中后才进谓词；谓词内后宫先闸再惰性 resolve——禁第二份类型表。
         if name not in (c.aliases or []):
             continue
         if _is_ming_court_minister_character(c, resolve_power_id=resolve):
@@ -302,21 +278,11 @@ def register_unlisted_person_record(
     """登记名册外人物的唯一权威构档：查重（`_find_existing_minister`，姓名与
     别名both查）+ `db.add_character` 落库 + portrait_id 回填。
 
-    这是登记本身的唯一实现——`GameSession._apply_unlisted_person_registration`
-    （召对场景 LLM 工具触发）与 `ming_sim.declaration_dispatch._dispatch_registrations`
-    （转译声明触发）共用本函数，不各自维护一份查重规则。「登记后是否立刻传召」
-    「绑定 agent registry」等各自会话形态专属的后续动作，留给两个调用方自己在
-    拿到返回的 `Character` 后处理，不在此处发生。
+    转译声明分派复用本函数，不另维护查重规则。
 
     本函数不替 LLM 生成 `style`（人物材料上的可感文字，P7：玩家可感文本模板
     违宪）——`style` 原样存调用方传入的值，缺省是空字符串，不合成占位文案。
-    历史召对场景 LLM 工具路径（`_apply_unlisted_person_registration`）按
-    source 归一的只是 `loyalty`/`source_label` 这两项——那是该路径自己算好后
-    显式传入的既有行为，本票未改动；`register_unlisted_person` 工具 schema
-    本就没给 LLM 开放 `style` 字段，故该路径的 `style` 目前恒为空，走本函数
-    既有下游缺省，不是被按 source 合成。转译声明路径的调用方
-    （`_dispatch_registrations`）则原样透传声明里的 `style`（LLM 自己写的），
-    没有就留空，不落任何合成文案。
+    转译声明原样透传 style，未提供则留空。
 
     `region_id` 是调用方显式传入的 typed 任所（声明/工具 payload 的 `region_id`/
     `任所`/`office_region`），原样写入 `Character.office_region` 供
@@ -598,7 +564,6 @@ def apply_appointment(
 
     #1837 reopen：旧大臣 Agent registry 已退役；``registry`` 形参保留为兼容位
     （调用方仍可按位置传 None），代码不再注册 / 刷新 agent。
-    后宫 candidate 升格与选妃工具一并删除（后宫以后再设计）。
     """
     # 位置兼容：历史调用 ``apply_appointment(db, state, content, registry, data)``
     # 与关键字 ``data=`` 并存；若第 4 位实际是 data dict，认作 data。
@@ -633,7 +598,7 @@ def apply_appointment(
 
     # ── 查重：精确名 + aliases 命中即拒，不重复建档 ──────────
     # 身份归一认识未仕/宗藩——在册者（含史可法诸生）由此拒新建，走 apply_office_appointment。
-    # #1837 reopen：后宫 candidate 升格随选妃工具删除；后宫新建仍可走普通建档。
+    # 后宫现有人物保留；不从旧候选状态升格。
     if name in content.characters:
         return ("", "")
     if not is_consort:
@@ -1883,99 +1848,6 @@ class GameSession:
         )
 
 
-
-    def _apply_appointment(self, payload: str, appointer: Character) -> Tuple[str, str]:
-        """吏部 propose_appointment 落地：建档入库 + 注册 Agent，本回合即可召见。
-        吏部尚书 LLM 已判过史实合理性；代码端只做姓名查重与字段兜底，不做历史校验。
-        返回 (新任者姓名, 被腾缺罢黜者姓名)；payload 不合法或重名则返回 ("", "")。
-
-        恢复窗婉拒（PR #90 R2 codex P2）：FRONT_HALF_DONE 时不落地——此写在 settle
-        重试事务边界外，重放中止回滚不会回滚它=恢复窗改盘。session.chat 与 web
-        流式路都委托本方法，顶部守门一处覆盖两路（与 draft 的 _proposal_blocked 同例）。"""
-        if self._proposal_blocked(self.state):
-            return ("", "")
-        import json as _json
-        try:
-            data = _json.loads(payload) if payload else {}
-        except (ValueError, TypeError):
-            return ("", "")
-        return apply_appointment(self.db, self.state, self.content, self.registry, data, llm_config=self.llm_config)
-
-    def _apply_unlisted_person_registration(self, payload: str) -> Tuple[str, bool]:
-        """登记史实未预设/用户确认背景的人物，进入本局正式可召见人物池。
-
-        恢复窗婉拒（PR #90 R2 codex P2）：同 _apply_appointment，事务边界外直写一律冻。
-        查重/落库唯一实现见 `register_unlisted_person_record`，与转译声明分派
-        共用；本方法只处理召对场景专属的后续动作（agent registry 绑定、临时
-        人物清理、是否随即传召），以及这条历史工具路径自己既有的 loyalty/
-        source_label 按 source 归一取舍——style 不再合成占位文案（P7），只原样
-        取 LLM 明确给的字段；`register_unlisted_person` 工具的 schema 本就没
-        给 LLM 开放 style 字段（tools.py），故此路径目前恒为空，走
-        `register_unlisted_person_record` 既有下游缺省。"""
-        if self._proposal_blocked(self.state):
-            return ("", False)
-        import json as _json
-        try:
-            data = _json.loads(payload) if payload else {}
-        except (ValueError, TypeError):
-            return ("", False)
-        if not isinstance(data, dict):
-            return ("", False)
-        aliases_raw = data.get("aliases") or []
-        aliases = [str(a) for a in aliases_raw] if isinstance(aliases_raw, list) else []
-        source_kind = str(data.get("source") or "historical").strip()
-        if source_kind == "historical":
-            source_label, loyalty = "史实人物补档", 62
-        elif source_kind == "user_confirmed":
-            source_label, loyalty = "皇帝确认背景补档", 60
-        else:
-            source_label, loyalty = "名册外人物补档", 60
-        # P7：style 只能原样来自 LLM 明确字段，零删改，不合成补文案（register_unlisted_person
-        # 工具 schema 本就没给 LLM 开放 style 字段，故此路径目前恒为空，走下游既有缺省）。
-        style = str(data.get("style") or "")
-        # Typed 任所 only：region_id / 任所 / office_region；不从官名或 location 推断。
-        seat = str(
-            data.get("region_id") or data.get("任所") or data.get("office_region") or ""
-        ).strip()
-        from ming_sim.exceptions import OfficeAppointmentRejection
-        try:
-            character = register_unlisted_person_record(
-                self.db, self.state, self.content,
-                name=str(data.get("name") or ""),
-                office=str(data.get("office") or ""),
-                office_type=str(data.get("office_type") or ""),
-                faction=str(data.get("faction") or ""),
-                aliases=aliases,
-                source_label=source_label,
-                style=style,
-                loyalty=loyalty,
-                summary=str(data.get("summary") or ""),
-                region_id=seat,
-                llm_config=self.llm_config,
-            )
-        except OfficeAppointmentRejection:
-            return ("", False)
-        if character is None:
-            return ("", False)
-        self.temporary_characters.pop(character.name, None)
-        return (character.name, bool(data.get("summon_after", True)))
-
-
-    def _apply_close_secret_order(self, payload: str) -> None:
-        """report_secret_order_result 哨兵落库。"""
-        import json as _json
-        try:
-            data = _json.loads(payload) if payload else {}
-        except (ValueError, TypeError):
-            return
-        if not isinstance(data, dict):
-            return
-        order_id = int(data.get("order_id") or 0)
-        status = str(data.get("status") or "")
-        result = str(data.get("result") or "")
-        if order_id and status in {"done", "failed"}:
-            print(f"[secret_order] 结案 id={order_id} status={status} result={result!r}")
-            self.db.close_secret_order(order_id, status, result, self.state.turn)
 
     # ── 拟旨 / 草案阶段 ───────────────────────────────────────────────────
 

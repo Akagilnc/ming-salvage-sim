@@ -46,14 +46,8 @@ textual_facts / public_sayings / presence / scene_facts（原生 `origin_ref`
 要同样的回滚兜底（直接调用，失败即代表某处不变式被打破，按 ADR 0005 响亮
 失败而非当作 LLM 数据问题吞掉）。
 
-`register_unlisted_person_record`（本模块 `_dispatch_registrations` 与
-`GameSession._apply_unlisted_person_registration` 共用）本身不再合成
-`style` 占位文案（P7），也不再对调用方传入的 `style`/`summary` 做任何删改
-（P6）：声明给什么就原样存什么，没给就是空字符串。历史召对工具路径按
-source 归一的只是 `loyalty`/`source_label`——那是那条既有路径自己算好后
-显式传入的既有行为，本票未改动；该路径的 `register_unlisted_person` 工具
-schema 本就没给 LLM 开放 `style` 字段，故其 `style` 目前恒为空，走本函数
-既有下游缺省，不是被按 source 合成。
+`register_unlisted_person_record` 是登记唯一写核；转译声明的 `style`/
+`summary` 原样存储，缺省为空，不合成玩家可感文案（P6/P7）。
 """
 
 from __future__ import annotations
@@ -312,6 +306,7 @@ def _dispatch_declaration_sections(
         travel_tones=_dispatch_travel_tones(
             db, declaration.get("travel_tones"), night_id=night_id,
             chat_turn_id=origin_ctid, source=source,
+            source_turn_error=source_turn_err, state=state,
         ),
     )
     _record_unknown_sections(collector, declaration, turn, source)
@@ -1758,15 +1753,17 @@ def _dispatch_travel_tones(
     night_id: int,
     chat_turn_id: int,
     source: Provenance,
+    source_turn_error: str,
+    state: Any,
 ) -> SectionResult:
-    """传召行程语气声明 → 更新本轮已落传召账（ADR 0096）。"""
-    from ming_sim.audience_night import update_summon_travel_tone
+    """传召行程语气声明 → 本轮传召账；已有口令账则更新它。"""
+    from ming_sim.audience_night import record_summon_fresh, update_summon_travel_tone
     from ming_sim.issues import normalize_travel_tone
 
     items, rejected = _section_items(raw, label="行程语气声明", source=source)
-    if int(night_id or 0) <= 0:
+    if int(night_id or 0) <= 0 or source_turn_error:
         for item in items:
-            _reject(rejected, item, "行程语气须在召对夜内声明", "missing_ref", source)
+            _reject(rejected, item, source_turn_error or "行程语气须在召对夜内声明", "missing_ref", source)
         return SectionResult(applied=[], rejected=rejected)
     applied: List[Any] = []
     for item in items:
@@ -1784,9 +1781,25 @@ def _dispatch_travel_tones(
                 db, night_id=int(night_id), person_name=person, travel_tone=tone,
                 origin_chat_turn_id=chat_turn_id,
             )
-        except KeyError as exc:
-            _reject(rejected, item, str(exc), "missing_ref", source)
-            continue
+        except KeyError:
+            # A non-command-shaped summons (e.g. an urgent summons) has no
+            # deterministic command ledger. The translator supplies the person;
+            # only an offsite, eligible person can acquire a fresh summons here.
+            row = db.conn.execute(
+                "SELECT status, location, transit_to FROM characters WHERE name=?",
+                (person,),
+            ).fetchone()
+            from ming_sim.matching import canonicalize_location_region_id
+            if (row is None or str(row['status']) != 'active'
+                    or str(row['transit_to'] or '')
+                    or canonicalize_location_region_id(str(row['location'] or '')) in ('', 'beizhili')):
+                _reject(rejected, item, f"本轮无可传召的场外人物：{person}", "missing_ref", source)
+                continue
+            entry_id = record_summon_fresh(
+                db, int(night_id), person,
+                origin_id=f"scene:xuan:{int(state.turn)}:{person}",
+                origin_chat_turn_id=chat_turn_id, travel_tone=tone,
+            )
         except ValueError as exc:
             _reject(rejected, item, str(exc), "invalid_state", source)
             continue
@@ -2458,18 +2471,12 @@ def _dispatch_registrations(
     source_turn_error: Optional[str] = None,
 ) -> SectionResult:
     """入册：登记名册外人物进入本局可召见人物池。构档的唯一权威实现是
-    `ming_sim.session.register_unlisted_person_record`——`GameSession.
-    _apply_unlisted_person_registration`（召对场景 LLM 工具触发）与本函数
-    共用它，查重规则、落库都不在两处各写一份。「登记之后随手把他召上殿」是
-    召对专属的 UI 便利动作，留给召对侧自己决定要不要做；入册本身与是否立刻
-    传召是两件事，本分派器只管前者。
+    `ming_sim.session.register_unlisted_person_record`；本分派器只管入册。
 
     夜上下文源轮缺失/不属本夜时整项 missing_ref（第四类统一源轮校验）。
 
     `style`（人物材料上的可感文字）原样取声明自带的值、零删改地传给共享写核，
-    不合成任何占位文案（P7）——声明没给就留空。`_apply_unlisted_person_registration`
-    那条历史工具路径按 source 归一的是 `loyalty`/`source_label`，不是
-    `style`（见 `register_unlisted_person_record`）。
+    不合成任何占位文案（P7）——声明没给就留空。
 
     typed 任所（`region_id` / `任所` / `office_region`）原样传给共享写核，不从
     官名或 location 推断。地方/督抚/边镇缺 seat 或未知 region 时，

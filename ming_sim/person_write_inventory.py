@@ -65,7 +65,7 @@ PERSON_WRITE_POINT_INVENTORY = (
         "location": "ming_sim/db.py:add_character",
         "owner": "legacy_person_path",
         "disposition": "migrate_to_person_applier",
-        "reason": "运行时建人仅后宫 candidate 专用入口可保留，其余应收口。",
+        "reason": "运行时建人应收口到人物单入口。",
     },
     {
         "location": "ming_sim/issues.py:_displace_duplicate_offices",
@@ -97,12 +97,7 @@ PERSON_WRITE_POINT_INVENTORY = (
         "disposition": "adr0009_exempt",
         "reason": "#668/0095 在途倒数 tick：remaining-=速度后 ≤0 时引擎落抵达（location=transit_to、清四量），属确定性结算逻辑（非 LLM 产 delta），豁免于 ADR 0009 person applier 收口。",
     },
-    {
-        "location": "ming_sim/session.py:apply_appointment:candidate_upgrade",
-        "owner": "candidate_entry",
-        "disposition": "dedicated_person_entry",
-        "reason": "后宫 candidate 创建/册封是 ADR 0009 明确专用入口。",
-    },
+
 )
 
 _MUTATING_SQL_MARKERS = (
@@ -206,6 +201,4 @@ def _inventory_location(relative: str, function_name: str, sql: str) -> str:
             return "ming_sim/db.py:add_character"
         if function_name == "seed_static_data":
             return "ming_sim/db.py:seed_static_data"
-    if relative == "ming_sim/session.py" and "office_type='后宫'" in sql:
-        return "ming_sim/session.py:apply_appointment:candidate_upgrade"
     return f"{relative}:{function_name}"

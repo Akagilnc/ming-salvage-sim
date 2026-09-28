@@ -101,7 +101,7 @@ def effect_brief(applied: Dict[str, object]) -> str:
     if person_changes:
         adjustments = [
             p for p in person_changes
-            if str(p.get("动作") or p.get("action") or "") in {"任命", "调任", "易主", "册封", "行止"}
+            if str(p.get("动作") or p.get("action") or "") in {"任命", "调任", "易主", "行止"}
         ]
         if adjustments:
             names = "、".join(_short(p.get("name") or p.get("姓名"), 8) for p in adjustments[:3])

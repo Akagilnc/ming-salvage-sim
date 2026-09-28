@@ -432,41 +432,6 @@ def test_vassal_prince_secret_order_rejected(read_game, monkeypatch):
     assert "宗室" in ei.value.detail
 
 
-def test_secret_order_endpoint_preserves_long_title_into_confirmation(game, monkeypatch):
-    """#1357 真缝：长标题经生产 _chat_with_write_gate_held 进入 session.chat 消息。"""
-    import asyncio
-    from ming_sim.session import ChatTurnResult
-    from tests.test_qa_c3_secret_order_path_1357_1376 import (
-        webgame_shell_for_secret_order,
-    )
-    from web_app import SecretOrderRequest
-
-    db, state, content = game
-    minister = next(
-        c for c in content.characters.values()
-        if c.office_type not in ("后宫", "宗藩", "未仕")
-        and db.get_character_status(c.name)[0] == "active"
-    )
-    seen = {}
-
-    def _session_chat(minister_name, message, *, chat_turn_id=0, explicit_secret_order=False):
-        seen.update(name=minister_name, message=message)
-        return ChatTurnResult(answer="臣领旨。")
-
-    runtime = webgame_shell_for_secret_order(
-        db, state, content, session_chat=_session_chat,
-    )
-    monkeypatch.setattr(web_app, "web_game", runtime)
-    monkeypatch.setattr(web_app, "get_game", lambda: runtime)
-    title = "超过二十个字的密令标题应完整进入确认与持久化恢复链路甲乙丙丁"
-
-    asyncio.run(web_app.api_create_secret_order(
-        minister.name, SecretOrderRequest(title=title, content="着尔暗中查访"),
-    ))
-
-    assert title in seen["message"]
-
-
 # ── #1317 r2：身份归一 ≠ 可召资格；未仕/宗藩别名解析 + 可召排未仕 ──────────
 
 

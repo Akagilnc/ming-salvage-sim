@@ -306,7 +306,7 @@ def test_rush_commitment_stages_pending_催办(game):
 
 
 def test_travel_tone_updates_this_round_summon_ledger(game, monkeypatch):
-    from tests.conftest import stub_audience_translate, stub_scene_agent
+    from tests.conftest import persist_and_schedule_scene, stub_audience_translate, stub_scene_agent
     from tests.test_audience_translation_1838 import _scene_session
 
     db, state, content = game
@@ -325,27 +325,29 @@ def test_travel_tone_updates_this_round_summon_ledger(game, monkeypatch):
             return SimpleNamespace(content="殿上回奏。", tools=[])
 
     stub_scene_agent(monkeypatch, SceneAgent())
-    stub_audience_translate(monkeypatch)
     sess = _scene_session(db, state, content, monkeypatch)
+    stub_audience_translate(monkeypatch, lambda prompt, config: {
+        "scene_facts": [{
+            "body": prompt.split("【本轮回话】", 1)[1].removesuffix("\n"),
+            "role": "scene", "audibility": "殿上公开", "person_names": [],
+        }],
+        "travel_tones": [{"person_name": person, "tone": "星夜兼程"}],
+    })
     old_id = record_summon_fresh(
         db, int(night["id"]), person, origin_id="earlier-summon",
         origin_chat_turn_id=0,
     )
     ctid = db.create_chat_turn(state, "殿上", "s", 0, night_id=int(night["id"]), status="active")
-    sess.scene_chat(f"宣{person}", chat_turn_id=ctid)
-    before = list_unsettled_summons(db)
-    summoned = [item for item in before if item["person_name"] == person]
-    assert summoned and summoned[-1].get("travel_tone") == "常行"
-    decl = normalize_audience_declaration({
-        "travel_tones": [{"person_name": person, "tone": "星夜兼程"}],
-    })
-    result = dispatch_declaration(
-        db, state, decl, minister_name="殿上", night_id=int(night["id"]), chat_turn_id=ctid,
-    )
-    assert result.travel_tones.rejected == []
+    reply = sess.scene_chat(f"星夜宣{person}来京", chat_turn_id=ctid)
+    future = persist_and_schedule_scene(sess, db, reply)
+    assert future is not None
+    future.result()
     matched = [item for item in list_unsettled_summons(db) if item["person_name"] == person]
     assert matched and matched[-1].get("travel_tone") == "星夜兼程"
-    assert matched[-1]["entry_id"] == summoned[-1]["entry_id"]
+    assert db.conn.execute(
+        "SELECT origin_chat_turn_id FROM story_ledger_entries WHERE id=?",
+        (matched[-1]["entry_id"],),
+    ).fetchone()[0] == ctid
     assert matched[0]["entry_id"] == old_id
     assert matched[0]["travel_tone"] == "常行"
     from ming_sim.audience_night import commit_fresh_summons_for_night

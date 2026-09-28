@@ -425,11 +425,11 @@ def _is_cover_change(item: Dict[str, object]) -> bool:
     if _is_punitive_change(item):
         return False
     action = str(item.get("动作") or item.get("action") or "").strip()
-    if action in {"任命", "调任", "册封"}:
+    if action in {"任命", "调任"}:
         return True
     if action == "处置":
         status = str(item.get("status") or "").strip()
-        return status in {"active", "candidate"} or not status
+        return status in {"active"} or not status
     return False
 
 

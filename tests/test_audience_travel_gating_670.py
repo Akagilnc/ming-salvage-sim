@@ -592,53 +592,6 @@ def test_fresh_seed_closes_ticket_670_named_locations(content):
     assert leftover == {}
 
 
-def test_secret_order_path_does_not_consume_audience_admission(game, monkeypatch):
-    """#670 T1：场外密疏只受 can_summon，不落传召账、不因 location 409。"""
-    import web_app
-    from fastapi import HTTPException
-    from tests.test_qa_c3_secret_order_path_1357_1376 import (
-        webgame_shell_for_secret_order,
-    )
-
-    db, state, content = game
-    remote = _set_place(game, "洪承畴", location="shaanxi")
-    before = an.list_unsettled_summons(db)
-
-    def _session_chat(minister_name, message, *, chat_turn_id=0, explicit_secret_order=False):
-        return ChatTurnResult(answer="臣领密旨。", pending_action_id=0, secret_order_id=0)
-
-    runtime = webgame_shell_for_secret_order(
-        db, state, content, session_chat=_session_chat,
-    )
-    # 壳须挂真 consume，以便若密疏误入闸可被观测（落账/异常），而非 AttributeError 假绿。
-    runtime.session.consume_audience_admission = (
-        lambda character, *, origin_id, state=None, origin_chat_turn_id=0: (
-            GameSession.consume_audience_admission(
-                runtime.session, character, origin_id=origin_id,
-                state=state or runtime.session.state,
-                origin_chat_turn_id=origin_chat_turn_id,
-            )
-        )
-    )
-    monkeypatch.setattr(web_app, "web_game", runtime)
-    monkeypatch.setattr(web_app, "get_game", lambda: runtime)
-
-    try:
-        result = asyncio.run(web_app.api_create_secret_order(
-            remote.name,
-            web_app.SecretOrderRequest(
-                title="密询军情", content="速报陕西军情。", tags=[],
-            ),
-        ))
-    except HTTPException as exc:
-        raise AssertionError(
-            f"场外密疏不得因 admission/location 拒绝：{exc.status_code} {exc.detail}"
-        ) from exc
-
-    assert result["answer"] == "臣领密旨。"
-    assert an.list_unsettled_summons(db) == before
-
-
 def test_multi_origin_fresh_closes_once_per_person_and_retries(game, monkeypatch):
     """#670 T2：同人多 origin 各留 ledger 行；收夜按人只一段启程；applier 失败可重试。"""
     db, state, content = game

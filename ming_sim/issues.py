@@ -3376,7 +3376,7 @@ def _pending_person_changes_block_event_gate(
                 status = "dismissed"
             else:
                 status = str(item.get("status") or "").strip()
-                if status in {"active", "candidate"}:
+                if status in {"active"}:
                     continue
             if status not in PERSON_STATUSES:
                 continue
@@ -4758,7 +4758,7 @@ def _strategic_result_item_has_material_world_state(item: Dict[str, object]) -> 
     action = str(item.get("动作") or item.get("action") or "").strip()
     if action in {"处置", "罢黜"} and item.get("status"):
         return True
-    if action in {"任命", "调任", "册封"} and (
+    if action in {"任命", "调任"} and (
         item.get("new_office") or item.get("office")
     ):
         return True
@@ -6333,8 +6333,8 @@ def apply_office_appointment(
         return {"name": name, "new_office": new_office, "rejected": True, "reason": "name 或 new_office 空"}
     # 别名归一：自然语言/LLM 可能用别名（韩老、温首辅、史宪之、福王…），解析到在册规范 key，
     # 否则 in_roster 按确切 key 漏判 → 误走新建档（CMR R3 gemini；#1317 r2 身份归一含未仕/宗藩）。
-    # _find_existing_minister 吃在册身份归一（非后宫∧非 candidate∧ming，**含宗藩/未仕**）；
-    # candidate/不在册返 None → name 不变（candidate 仍由 in_roster 确切 key 命中走激活分支）。
+    # _find_existing_minister 吃在册身份归一（非后宫、ming，含宗藩/未仕）；
+    # 不在册返 None → name 不变。
     if content is not None:
         from ming_sim.session import _find_existing_minister
         canon = _find_existing_minister(content, name, db)
@@ -6643,7 +6643,6 @@ def _apply_person_changes(
     needs_person_change_commit = False
     person_statuses = {
         "active",
-        "candidate",
         "offstage",
         "dismissed",
         "imprisoned",
@@ -6651,7 +6650,7 @@ def _apply_person_changes(
         "retired",
         "dead",
     }
-    disposition_statuses = person_statuses - {"active", "candidate"}
+    disposition_statuses = person_statuses - {"active"}
     for item in changes:
         name = str(item.get("name") or "").strip()
         action = str(item.get("动作") or "").strip()
@@ -6753,7 +6752,7 @@ def _apply_person_changes(
                 applied.append(
                     rejected(
                         item,
-                        "处置 不直接迁入 active/candidate，走任命/册封级联",
+                        "处置 不直接迁入 active，走任命级联",
                         "invalid_transition",
                         status=status,
                     )
@@ -7203,61 +7202,6 @@ def _apply_person_changes(
                 log_applied(wrapped, item)
             continue
 
-        if action == "册封":
-            if content is None:
-                applied.append(rejected(item, "无 content，跳过册封", "missing_ref"))
-                continue
-            office = str(item.get("office") or item.get("位号") or "").strip()
-            office_type = str(item.get("office_type") or item.get("官署类别") or "后宫").strip()
-            if office_type != "后宫":
-                applied.append(rejected(item, "册封 仅适用于后宫 office_type", "invalid_transition"))
-                continue
-            from ming_sim.session import _find_candidate_by_name, apply_appointment
-
-            if _find_candidate_by_name(content, name) is None:
-                if item.get("legacy_appointment"):
-                    applied.append(rejected(item, "册封建档被拒", "appointment_rejected"))
-                else:
-                    applied.append(rejected(item, "非既有 candidate", "hallucinated_id"))
-                continue
-
-            approved = item.get("approved", item.get("准许", True))
-            origin_error = origin_rejected(item)
-            if origin_error:
-                applied.append(origin_error)
-                continue
-            appointed, displaced = apply_appointment(
-                db,
-                state,
-                content,
-                registry,
-                {
-                    "name": name,
-                    "office": office,
-                    "office_type": "后宫",
-                    "faction": "后宫",
-                    "reason": str(item.get("reason") or ""),
-                    "approved": approved,
-                },
-                llm_config=llm_config,
-                commit=commit_person_change,
-            )
-            if appointed:
-                result: Dict[str, object] = {
-                    "name": appointed,
-                    "动作": action,
-                    "office": office,
-                    "office_type": "后宫",
-                    "reason": str(item.get("reason") or ""),
-                }
-                if displaced:
-                    result["displaced"] = displaced
-                applied.append(result)
-                log_applied(result, item)
-            else:
-                applied.append(rejected(item, "册封建档被拒", "appointment_rejected"))
-            continue
-
         if action == "行止":
             if content is not None and name not in content.characters:
                 applied.append(rejected(item, "非既有人物", "hallucinated_id"))
@@ -7378,8 +7322,6 @@ def _legacy_person_report_section(result: Dict[str, object]) -> str:
         return "character_power_changes"
     if source.get("legacy_spillover"):
         return "office_changes"
-    if action == "册封":
-        return "appointments"
     if action in {"任命", "调任"}:
         return "office_changes"
     return ""
