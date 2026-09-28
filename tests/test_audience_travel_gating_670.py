@@ -74,25 +74,6 @@ def _chat_turn_count(db):
 
 
 
-def _web_hall_runtime(db, state, content, *, session_chat):
-    """#670：常规 Web.chat（gate_already_held=False）殿上入口壳；挂真 admission。
-
-    #1566：同壳挂场外 scene 物化，经 beat generator seam 注入测试替身。
-    WebGame 类方法经 __new__ 实例可直接解析，不再手绑类方法。
-    """
-    from tests.test_qa_c3_secret_order_path_1357_1376 import (
-        webgame_shell_for_secret_order,
-    )
-
-    runtime = webgame_shell_for_secret_order(
-        db, state, content, session_chat=session_chat,
-    )
-    s = runtime.session
-    s.admit_audience = MethodType(GameSession.admit_audience, s)
-    s.consume_audience_admission = MethodType(GameSession.consume_audience_admission, s)
-    return runtime
-
-
 def test_audience_admission_distinguishes_capital_fresh_and_existing_transit(game):
     sess = _session(game)
     capital = _set_place(game, "毕自严", location="beizhili")

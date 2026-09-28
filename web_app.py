@@ -2538,12 +2538,9 @@ class WebGame:
         if result.proposed_directive is not None:
             d = result.proposed_directive
             proposed = {"id": d.id, "text": d.text, "status": d.status, "notes": d.notes}
-        # opening/enter beat：慢 join 在 gate 外；短事务内与回话全有或全无。
-        scene_generated = self.session.join_chat_turn_scene(chat_turn_id)
         cm = write_gate if write_gate is not None else contextlib.nullcontext()
         with cm:
             with atomic(self.db):
-                self.session.persist_chat_turn_scene(scene_generated or [])
                 payload = self._chat_payload(
                     minister_name,
                     answer,

@@ -128,10 +128,10 @@ def test_dismiss_via_cli_command_writes_exit_ledger(game, monkeypatch):
     db, state, content = game
     character = _active_minister(db, content)
     session = _cli_session(db, state, content)
-    answers = iter(["朕问卿边事如何？", "退下"])
+    answers = iter(["退下"])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
 
-    assert term.minister_chat(session, character) == "dismiss"
+    assert term.minister_chat(session, character, selected=True) == "dismiss"
 
     nid = int(an.get_open_night(db)["id"])
     last = an.list_ledger(db, nid)[-1]
