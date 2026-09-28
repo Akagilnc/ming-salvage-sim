@@ -15,7 +15,6 @@ from ming_sim.distance import DistanceMatrix
 from ming_sim.exceptions import SettlementAbort
 from ming_sim.session import GameSession
 from ming_sim.decree import prepare_resolve_front_half
-from tests.settlement_seam_helpers import settle_effects as settle_with_delta
 from ming_sim.simulation import build_simulator_payload
 from tests.dossier_test_helpers import rejected_verdict
 from tests.test_qa_c_p0_1380_1355 import _fake_session, _minister_wang_shaohui
@@ -130,9 +129,8 @@ def test_yuan_keli_appointment_no_summon_stays_henan(game, monkeypatch):
     assert payload.get("summon_after") == "否"
 
     dossier_id = _close_office_to_dossier(db, state, content, pending["id"])
-    settle_with_delta(
-        state, db, {}, before_turn=int(state.turn), content=content,
-        dossier_verdicts=[{"dossier_id": dossier_id, "decision": "promulgated"}],
+    db.apply_dossier_verdicts(
+        state, [{"dossier_id": dossier_id, "decision": "promulgated"}], content=content,
     )
     after = _yuan_row(db, "袁可立")
     assert (after["status"], after["office"], after["location"], after["transit_to"] or "") == (
@@ -189,10 +187,12 @@ def test_three_anchor_summons_arrive_in_successive_months(game, monkeypatch):
         )
 
     dossier_id = _close_office_to_dossier(db, state, content, pending["id"])
-    settle_with_delta(
-        state, db, {}, before_turn=int(state.turn), content=content,
-        dossier_verdicts=[{"dossier_id": dossier_id, "decision": "promulgated"}],
+    db.apply_dossier_verdicts(
+        state, [{"dossier_id": dossier_id, "decision": "promulgated"}], content=content,
     )
+
+    from tests.test_due_review_621 import _settle_empty_month
+    _settle_empty_month(db, state, content, monkeypatch)
 
     expected_arrival = {1: "孙传庭", 2: "徐光启", 3: "袁崇焕"}
     seen: set[str] = set()
@@ -204,9 +204,7 @@ def test_three_anchor_summons_arrive_in_successive_months(game, monkeypatch):
         assert expected_arrival[month] not in seen
         seen.update(waiting)
         if month < 3:
-            settle_with_delta(
-                state, db, {}, before_turn=int(state.turn), content=content,
-            )
+            _settle_empty_month(db, state, content, monkeypatch)
 
     assert seen == {"孙传庭", "徐光启", "袁崇焕"}
     transit = {row["name"] for row in payload["transit_semantics"]}
@@ -309,10 +307,7 @@ def test_appointment_summon_rejected_leaves_no_travel(game, monkeypatch):
     dossier_id = _close_office_to_dossier(db, state, content, pending["id"])
     before = _yuan_row(db)
 
-    settle_with_delta(
-        state, db, {}, before_turn=int(state.turn), content=content,
-        dossier_verdicts=[rejected_verdict(dossier_id)],
-    )
+    db.apply_dossier_verdicts(state, [rejected_verdict(dossier_id)], content=content)
 
     assert list_unsettled_summons(db) == []
     after = _yuan_row(db)
@@ -361,9 +356,8 @@ def test_appointment_summon_consumes_0009_four_states(
     dossier_id = _close_office_to_dossier(db, state, content, pending["id"])
     before_logs = db.conn.execute("SELECT COUNT(*) FROM person_logs").fetchone()[0]
 
-    settle_with_delta(
-        state, db, {}, before_turn=int(state.turn), content=content,
-        dossier_verdicts=[{"dossier_id": dossier_id, "decision": "promulgated"}],
+    db.apply_dossier_verdicts(
+        state, [{"dossier_id": dossier_id, "decision": "promulgated"}], content=content,
     )
 
     row = _yuan_row(db)
@@ -550,9 +544,8 @@ def test_current_office_noop_still_stages_summon_after(game, monkeypatch):
     assert "传召未结" not in json.loads(ledger["tags"])
 
     dossier_id = _close_office_to_dossier(db, state, content, rows[0]["id"])
-    settle_with_delta(
-        state, db, {}, before_turn=int(state.turn), content=content,
-        dossier_verdicts=[{"dossier_id": dossier_id, "decision": "promulgated"}],
+    db.apply_dossier_verdicts(
+        state, [{"dossier_id": dossier_id, "decision": "promulgated"}], content=content,
     )
     assert db.conn.execute(
         "SELECT office FROM characters WHERE name=?", (target.name,),
@@ -712,9 +705,8 @@ def test_appointment_summon_already_in_capital_projects_waiting(game, monkeypatc
     pending, origin = _stage_yuan_appointment_summon(game, monkeypatch)
     dossier_id = _close_office_to_dossier(db, state, content, pending["id"])
 
-    settle_with_delta(
-        state, db, {}, before_turn=int(state.turn), content=content,
-        dossier_verdicts=[{"dossier_id": dossier_id, "decision": "promulgated"}],
+    db.apply_dossier_verdicts(
+        state, [{"dossier_id": dossier_id, "decision": "promulgated"}], content=content,
     )
 
     unsettled = list_unsettled_summons(db)
