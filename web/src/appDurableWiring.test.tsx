@@ -1,9 +1,11 @@
 import React, { act } from "react";
+import { readFileSync } from "node:fs";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "./main";
 import { SETTLEMENT_CLOSED_REASON } from "./settlementPresentation";
+import { measureElectronLayout } from "./testSupport/electronLayout";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 // jsdom 无布局：给 stage 非零尺寸，使 GameHud ready=true（地图/局势框/上月已结入口可挂）。
@@ -1705,26 +1707,50 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     expect(host2.querySelector('[data-testid="decision-modal"]')!.textContent).toContain("辽东战守");
   });
 
-  it("awaiting_decision + 损坏 pending：DecisionRecoveryPanel 可点；刷新重挂后仍在", async () => {
-    stubSettlementFetch(settlementBaseState("awaiting_decision", {
-      pending_decisions: [{ broken: true }],
+  it("settling 恢复：长错误包路径下统一横幅可点；刷新重挂后仍在", async () => {
+    const errorPackPath = `/${"long-directory/".repeat(24)}error-pack`;
+    stubSettlementFetch(settlementBaseState("settling", {
+      settlement_recovery: { message: "结算中止", ready_replay: true, error_pack_path: errorPackPath },
     }));
     const host = await mountApp();
     await act(async () => {
-      await vi.waitFor(() => expect(host.querySelector('[data-testid="decision-recovery"]')).not.toBeNull());
+      await vi.waitFor(() => expect(host.querySelector('[data-testid="settle-resume"]')).not.toBeNull());
     });
-    const panel = host.querySelector('[data-testid="decision-recovery"]')!;
-    expect(panel.textContent).toMatch(/批红|待批/);
+    const panel = host.querySelector('[data-testid="settle-resume"]')!;
+    expect(panel.textContent).toContain(errorPackPath);
     const retry = panel.querySelector("button") as HTMLButtonElement | null;
     expect(retry).not.toBeNull();
     expect(retry!.disabled).toBe(false);
 
+    // Measure the actual App-mounted banner, not a replacement component fixture.
+    const geometry = await measureElectronLayout<{ visible: boolean; hit: boolean; fits: boolean; messageFits: boolean }>(
+      host.outerHTML,
+      ["base", "hud2", "decision"].map((name) => readFileSync(`${process.cwd()}/src/styles/${name}.css`, "utf8")).join("\n"),
+      [{ width: 800, height: 600 }, { width: 360, height: 640 }],
+      `(() => {
+        const banner = document.querySelector('.recovery-banner');
+        const button = banner?.querySelector('button');
+        const message = banner?.querySelector('.recovery-banner-message');
+        if (!banner || !button || !message) return { error: 'missing mounted recovery action' };
+        const b = button.getBoundingClientRect();
+        const r = banner.getBoundingClientRect();
+        const x = b.left + b.width / 2, y = b.top + b.height / 2;
+        return {
+          visible: b.width > 0 && b.height > 0 && b.left >= 0 && b.right <= innerWidth && b.top >= 0 && b.bottom <= innerHeight,
+          hit: document.elementFromPoint(x, y) === button && !button.disabled,
+          fits: r.left >= 0 && r.right <= innerWidth,
+          messageFits: message.scrollWidth <= message.clientWidth,
+        };
+      })()`,
+    );
+    for (const result of geometry) expect(result).toEqual({ visible: true, hit: true, fits: true, messageFits: true });
+
     unmountTrackedRoots();
     const host2 = await mountApp();
     await act(async () => {
-      await vi.waitFor(() => expect(host2.querySelector('[data-testid="decision-recovery"]')).not.toBeNull());
+      await vi.waitFor(() => expect(host2.querySelector('[data-testid="settle-resume"]')).not.toBeNull());
     });
-    expect((host2.querySelector('[data-testid="decision-recovery"] button') as HTMLButtonElement).disabled).toBe(false);
+    expect((host2.querySelector('[data-testid="settle-resume"] button') as HTMLButtonElement).disabled).toBe(false);
   });
 
   it("#1620 落印 SSE error 同页保留 picks + 单一 recovery alert + 可再落印", async () => {
