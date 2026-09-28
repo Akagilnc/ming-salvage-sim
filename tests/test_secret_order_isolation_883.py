@@ -1260,18 +1260,11 @@ def test_976_non_create_pure_public_not_auto_pinned_as_secret_origin(game):
             assert public_q in text, f"{action}: pure public not remembered after project"
 
 
-def test_976_production_session_extract_update_withholds_oral(game, monkeypatch):
-    """生产 extract「更新」：新口谕须 pin → stage → commit → withheld 不进共享。
-
-    建议修法红测：口述更新→stage→commit→oral withheld shared=false。
-    催办/记进展 无新正文不 pin（见 tools pure-public 测）；仅 更新 钉 pin。
-    """
+def test_976_scene_secret_update_withholds_source_oral(game):
+    """场景 typed 更新绑定源轮口谕；提交后 withheld 且不进共享。"""
     import json as _json
-    import types
-    from types import SimpleNamespace
-
-    import ming_sim.cli_backend as cb
-    from ming_sim.session import GameSession
+    from ming_sim.audience_night import open_night
+    from ming_sim.declaration_dispatch import dispatch_declaration
 
     db, state, content = game
     # extract 路径只对召对对象名下 active 密令 stage；承办人=召对对象。
@@ -1284,44 +1277,39 @@ def test_976_production_session_extract_update_withholds_oral(game, monkeypatch)
         "不得走漏半句，亦不可经司礼监转呈。"
     )
     new_content = "扩查国丈典当及内库往来，事密勿使司礼监知。"
+    night = open_night(db, state)
+    chat_turn_id = db.create_chat_turn(
+        state, assignee.name, "scene-secret-update", 0, night_id=int(night["id"]),
+    )
     mid_sec = db.append_chat_message(assignee.name, state.turn, "user", secret_q)
-
-    # CLI extract 路径：api channel 会 early-return；需 CLI backend env。
-    # 非 classifier 契约：显式 candidate，禁止 serial classify → 真 subprocess。
-    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
-    monkeypatch.setattr(cb, "_trace", lambda rec: None)
-    monkeypatch.setattr(cb, "extract_minister_actions", lambda *a, **k: {
-        "secret_action": "更新", "order_id": oid,
-        "new_title": "密查国丈（扩）", "new_content": new_content,
-        "deadline_months": 0, "cultivate_skill": "", "cultivate_trait": "",
-    })
-    monkeypatch.setattr(cb, "extract_confirmation_intent", lambda *a, **k: "")
-    monkeypatch.setattr(cb, "extract_appointment_action", lambda *a, **k: {
-        "appoint_action": "无", "name": "", "office": "",
-    })
-    monkeypatch.setattr(cb, "resolve_minister_actions", lambda *a, **k: {
-        "decree_text": None, "secret_order": None,
-    })
-
-    sess = SimpleNamespace(
-        db=db, state=state, registry=None, content=content,
-        llm_config=SimpleNamespace(channel=""),
+    mid_reply = db.append_chat_message(
+        assignee.name, state.turn, "minister", "臣领旨，请陛下定夺。",
     )
-    sess.apply_cli_conversation_actions = types.MethodType(
-        GameSession.apply_cli_conversation_actions, sess,
+    db.update_chat_turn_messages(
+        chat_turn_id, user_message_id=mid_sec, minister_message_id=mid_reply,
     )
-    out = sess.apply_cli_conversation_actions(
-        SimpleNamespace(name=assignee.name, office_type="兵部"),
-        secret_q, "臣领旨，已拟改旨，请陛下定夺。",
-        has_directive=False, secret_order_id=None,
-        preclassified_intent={
-            "kind": "secret", "secret_action": "更新", "order_id": oid,
-            "new_title": "密查国丈（扩）", "new_content": new_content,
-            "deadline_months": 0, "cultivate_skill": "", "cultivate_trait": "",
-        },
+    declaration = {"commissions": [{
+        "secret_order_update": {"order_id": oid, "title": "密查国丈（扩）",
+                                "content": new_content},
+    }]}
+    missing_source = dispatch_declaration(
+        db, state, declaration, minister_name=assignee.name, night_id=int(night["id"]),
     )
-    pid = int(out.get("pending_action_id") or 0)
-    assert pid > 0
+    assert missing_source.commissions.applied == []
+    assert missing_source.commissions.rejected
+    other = _active_ministers(db, content)[1]
+    wrong_assignee = dispatch_declaration(
+        db, state, declaration, minister_name=other.name,
+        night_id=int(night["id"]), chat_turn_id=chat_turn_id,
+    )
+    assert wrong_assignee.commissions.applied == []
+    assert wrong_assignee.commissions.rejected
+    result = dispatch_declaration(
+        db, state, declaration, minister_name=assignee.name,
+        night_id=int(night["id"]), chat_turn_id=chat_turn_id,
+    )
+    assert result.commissions.rejected == []
+    pid = result.commissions.applied[0]["id"]
     staged = db.conn.execute(
         "SELECT payload_json, action FROM pending_actions WHERE id=?", (pid,),
     ).fetchone()
@@ -1341,14 +1329,10 @@ def test_976_production_session_extract_update_withholds_oral(game, monkeypatch)
     )
 
 
-def test_976_production_extract_rush_progress_no_pure_public_pin(game, monkeypatch):
-    """生产 extract 催办/记进展：仅 update/显式 pin 才 classified，late chat 不猜字面。"""
+def test_976_scene_rush_progress_do_not_pin_pure_public_message(game):
+    """场景催办/记进展不擅自绑定公开问话作密令口谕。"""
     import json as _json
-    import types
-    from types import SimpleNamespace
-
-    import ming_sim.cli_backend as cb
-    from ming_sim.session import GameSession
+    from ming_sim.declaration_dispatch import dispatch_declaration
 
     db, state, content = game
     assignee = _active_ministers(db, content)[0]
@@ -1369,42 +1353,17 @@ def test_976_production_extract_rush_progress_no_pure_public_pin(game, monkeypat
             )
             db.conn.commit()
         mid_pub = db.append_chat_message(assignee.name, state.turn, "user", public_q)
-        # 非 classifier 契约：显式 candidate，禁止 serial classify → 真 subprocess。
-        monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
-        monkeypatch.setattr(cb, "_trace", lambda rec: None)
-        monkeypatch.setattr(cb, "extract_minister_actions", lambda *a, **k: {
-            "secret_action": secret_action, "order_id": oid,
-            "new_title": "", "new_content": "",
-            "deadline_months": int(extra.get("deadline_months") or 0),
-            "cultivate_skill": "", "cultivate_trait": "",
-        })
-        monkeypatch.setattr(cb, "extract_confirmation_intent", lambda *a, **k: "")
-        monkeypatch.setattr(cb, "extract_appointment_action", lambda *a, **k: {
-            "appoint_action": "无", "name": "", "office": "",
-        })
-        monkeypatch.setattr(cb, "resolve_minister_actions", lambda *a, **k: {
-            "decree_text": None, "secret_order": None,
-        })
-        sess = SimpleNamespace(
-            db=db, state=state, registry=None, content=content,
-            llm_config=SimpleNamespace(channel=""),
+        declaration = (
+            {"rushes": [{"target_kind": "secret_order", "target_id": oid,
+                         "deadline_months": extra["deadline_months"]}]}
+            if secret_action == "催办" else
+            {"commissions": [{"secret_order_progress": {
+                "order_id": oid, "note": "本轮已核办进展"}}]}
         )
-        sess.apply_cli_conversation_actions = types.MethodType(
-            GameSession.apply_cli_conversation_actions, sess,
-        )
-        out = sess.apply_cli_conversation_actions(
-            SimpleNamespace(name=assignee.name, office_type="兵部"),
-            public_q, "臣遵旨催办/记进展。",
-            has_directive=False, secret_order_id=None,
-            preclassified_intent={
-                "kind": "secret", "secret_action": secret_action, "order_id": oid,
-                "new_title": "", "new_content": "",
-                "deadline_months": int(extra.get("deadline_months") or 0),
-                "cultivate_skill": "", "cultivate_trait": "",
-            },
-        )
-        pid = int(out.get("pending_action_id") or 0)
-        assert pid > 0, secret_action
+        result = dispatch_declaration(db, state, declaration, minister_name=assignee.name)
+        section = result.rushes if secret_action == "催办" else result.commissions
+        assert section.rejected == []
+        pid = section.applied[0]["id"]
         staged = db.conn.execute(
             "SELECT payload_json, action FROM pending_actions WHERE id=?", (pid,),
         ).fetchone()

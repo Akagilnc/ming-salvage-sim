@@ -1091,6 +1091,48 @@ def _dispatch_commissions(
             applied.append({"id": row_id, "kind": "secret_order"})
             continue
 
+        update = item.get("secret_order_update")
+        if update is not None:
+            from ming_sim.strict_types import strict_int
+            if not isinstance(update, Mapping) or any(
+                item.get(key) for key in
+                ("grant", "appointment", "punishment", "pacification", "assignment",
+                 "secret_order", "secret_order_progress")
+            ):
+                _reject(rejected, item, "密令修改载荷须为独立对象", "invalid_shape", source)
+                continue
+            try:
+                order_id = strict_int(update.get("order_id"), accept_numeric_strings=False)
+            except (TypeError, ValueError):
+                order_id = 0
+            actor = str(minister_name or "").strip() or _commission_fallback_actor(db)
+            target = next((o for o in db.get_active_secret_orders_for_minister(actor)
+                           if int(o["id"]) == order_id), None)
+            content_text = update.get("content")
+            if target is None or order_id <= 0 or not isinstance(content_text, str) or not content_text.strip():
+                _reject(rejected, item, "密令修改须指向承办人的有效密令并提供正文", "invalid_state", source)
+                continue
+            source_turn = db.conn.execute(
+                "SELECT user_message_id FROM chat_turns "
+                "WHERE id=? AND minister_name=? AND turn=? AND status='active'",
+                (int(source_chat_turn_id), actor, int(state.turn)),
+            ).fetchone()
+            if source_turn is None or source_turn["user_message_id"] is None:
+                _reject(rejected, item, "密令修改缺本轮口谕源轮", "missing_ref", source)
+                continue
+            payload = {
+                "new_title": update.get("title") or target["title"],
+                "new_content": content_text,
+                "deadline_months": update.get("deadline_months", 0),
+                "origin_chat_message_id": int(source_turn["user_message_id"]),
+            }
+            row_id = db.stage_pending_action(
+                int(state.turn), "secret_order", "更新", actor, payload,
+                target_id=order_id,
+            )
+            applied.append({"id": row_id, "kind": "secret_order"})
+            continue
+
         secret = item.get("secret_order")
         if secret is not None:
             if not isinstance(secret, Mapping) or any(
