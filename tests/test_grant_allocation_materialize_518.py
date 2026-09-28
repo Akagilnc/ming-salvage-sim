@@ -2,7 +2,7 @@
 
 Seams:
 - ACTION_CLUSTERS grant_allocation 行 + materialize_fn
-- run_materialize_pipeline / apply_cli_conversation_actions
+- run_materialize_pipeline / dispatch_declaration
 - commit_pending_actions（收夜落案卷；国库源不成效果）
 - apply_dossier_verdicts / create_decree_dossier（0055：国库判决后落，内帑豁免直落）
 - create_fiscal_item / list_fiscal_effects_for_dossier / apply_fixed_period_flows
@@ -12,13 +12,11 @@ Seams:
 from __future__ import annotations
 
 import json
-import types
 from types import SimpleNamespace
 
 import pytest
 
 import ming_sim.action_materialize  # noqa: F401 -- installs package catalog
-import ming_sim.cli_backend as cb
 from ming_sim.action_clusters import (
     ACTION_CLUSTERS,
     candidates_from_classifier_payload,
@@ -30,7 +28,7 @@ from ming_sim.action_materialize import (
 )
 from ming_sim.decree import reload_state_from_db
 from ming_sim.flows import apply_fixed_period_flows
-from ming_sim.session import GameSession
+from ming_sim.declaration_dispatch import dispatch_declaration
 from tests.dossier_test_helpers import rejected_verdict as _rejected_verdict
 
 
@@ -369,47 +367,22 @@ def test_jiaxian_and_yinxu_land_narrative_tags_without_overwriting_office(game):
     assert not any(ch.isdigit() for ch in str(yin_logs[0]["payload_summary"] or ""))
 
 
-def _bind_apply(db, state, content=None):
-    s = SimpleNamespace(
-        db=db, state=state, registry=None, content=content,
-        llm_config=SimpleNamespace(channel="cli", cli_runner="codex"),
-    )
-    s.apply_cli_conversation_actions = types.MethodType(
-        GameSession.apply_cli_conversation_actions, s)
-    return s
+def _scene_grant(db, state, actor):
+    result = dispatch_declaration(db, state, {"commissions": [{
+        "text": "臣请户部发帑三十万两赈陕西灾民。",
+        "grant": {"grant_action": "赈灾", "amount": 30,
+                  "account": "国库", "target_kind": "region", "target_id": "shaanxi"},
+    }]}, minister_name=actor.name)
+    assert result.commissions.rejected == []
+    return result.commissions.applied[0]["id"]
 
 
-def _silence_serial(monkeypatch):
-    monkeypatch.setattr(cb, "extract_minister_actions", lambda *a, **k: {
-        "secret_action": "无", "order_id": 0, "new_title": "", "new_content": "",
-        "deadline_months": 0, "cultivate_skill": "", "cultivate_trait": "",
-    })
-    monkeypatch.setattr(cb, "extract_appointment_action", lambda *a, **k: {
-        "appoint_action": "无", "name": "", "office": "",
-    })
-    monkeypatch.setattr(cb, "extract_draft_intent", lambda *a, **k: {
-        "draft_action": "无", "draft_text": "", "target_candidate": "",
-    })
-    monkeypatch.setattr(cb, "extract_confirmation_intent", lambda *a, **k: "无")
-
-
-def test_scripted_grant_stages_via_apply_then_close_night(game, monkeypatch):
-    """真实 apply 缝暂存拨帑；收夜落案卷后国库仍待判决。"""
+def test_scene_grant_stages_then_close_night(game):
+    """场景交办暂存拨帑；收夜落案卷后国库仍待判决。"""
     db, state, content = game
     actor = _active_ming(db, content)
     treasury_before = int(state.metrics["国库"])
-    _silence_serial(monkeypatch)
-    sess = _bind_apply(db, state, content)
-    scripted = candidates_from_classifier_payload({
-        "kind": "grant_allocation", "grant_action": "赈灾",
-        "amount": 30, "account": "国库", "target_id": "shaanxi",
-    }, soft=False)
-    out = sess.apply_cli_conversation_actions(
-        actor, "调银三十万两赈灾。",
-        "臣请户部发帑三十万两赈陕西灾民，请陛下定夺准驳。",
-        has_directive=False, secret_order_id=None, preclassified_intent=scripted,
-    )
-    pending_id = out.get("pending_action_id")
+    pending_id = _scene_grant(db, state, actor)
     assert pending_id
     assert int(state.metrics["国库"]) == treasury_before
     dossier = _close_night_dossier(db, state, content, pending_id)
@@ -498,29 +471,17 @@ def test_jiaxian_rejected_does_not_write_office_or_tag(game):
     ).fetchone()[0] == 0
 
 
-def test_confirm_accept_does_not_spend_treasury(game, monkeypatch):
+def test_scene_confirm_accept_does_not_spend_treasury(game):
     """应允只过确认闸，不得在判决前扣国库。"""
     db, state, content = game
     actor = _active_ming(db, content)
     treasury_before = int(state.metrics["国库"])
-    _silence_serial(monkeypatch)
-    sess = _bind_apply(db, state, content)
-    scripted = candidates_from_classifier_payload({
-        "kind": "grant_allocation", "grant_action": "赈灾",
-        "amount": 30, "account": "国库", "target_id": "shaanxi",
-    }, soft=False)
-    out = sess.apply_cli_conversation_actions(
-        actor, "调银三十万两赈灾。",
-        "臣请户部发帑赈陕西。",
-        has_directive=False, secret_order_id=None, preclassified_intent=scripted,
-    )
-    pending_id = out.get("pending_action_id")
-    sess.apply_cli_conversation_actions(
-        actor, "准。", "臣遵旨。",
-        has_directive=False, secret_order_id=None,
-        preclassified_intent=[{"kind": "confirmation", "confirmation": "应允"}],
-        confirm_target_ids={int(pending_id)},
-    )
+    pending_id = _scene_grant(db, state, actor)
+    approved = dispatch_declaration(db, state, {"promises": [{
+        "action_id": pending_id, "decision": "应允",
+    }]}, minister_name=actor.name)
+    assert approved.promises.rejected == []
+    assert approved.promises.applied[0]["action_id"] == pending_id
     assert int(state.metrics["国库"]) == treasury_before
 
 
