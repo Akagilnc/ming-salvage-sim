@@ -177,14 +177,18 @@ def test_update_directive_candidate_preserves_underscore_flags(game):
     assert payload.get("_needs_clarification") is True, "下划线控制键保留（不被静默抹掉）"
 
 
-def test_prefix_two_decrees_stage_independently(game):
-    """L2：显式前缀「拟旨如下：」连拟两道 → 两条独立候选（不 upsert 压扁前一道）。"""
+def test_two_declared_decrees_stage_independently(game):
+    """Two distinct translated commissions keep independent pending identities."""
     db, state, content = game
     name = _active_minister_name(db, content)
     an.open_night(db, state, location="乾清宫", time_of_day="夜")
 
-    id1 = db.stage_explicit_directive(state.turn, name, "着户部清查三边粮饷。")
-    id2 = db.stage_explicit_directive(state.turn, name, "着兵部核饷九边军械。")
+    id1 = db.stage_directive_candidate(state.turn, name, payload={
+        **_POLICY_FIELDS, "text": "着户部清查三边粮饷。", "actor": name,
+    })
+    id2 = db.stage_directive_candidate(state.turn, name, payload={
+        **_POLICY_FIELDS, "text": "着兵部核饷九边军械。", "actor": name,
+    })
 
     assert id1 != id2, "第二道另起独立候选"
     pend = _pending_directives(db, state.turn)

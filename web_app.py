@@ -2,7 +2,7 @@
 """FastAPI web entry for Ming Salvage Sim.
 
 薄壳：路由调 ming_sim.session.GameSession（与 CLI 共用同一流转层）。
-拟旨候选：大臣 propose_directive/前缀/自然语言 → pending_actions 闸门 → 对话确认或颁诏默认同意。
+拟旨候选：召对转译交办 → pending_actions → 收夜成案 → 过月颁布关。
 """
 
 from __future__ import annotations
@@ -85,7 +85,6 @@ from ming_sim.session import (
     AudienceAdmission,
     _is_summonable_court_minister,
     _pending_action_failure_payload,
-    coalesce_pending_action_id,
 )
 from ming_sim.highlight_judge import (
     DEFAULT_HIGHLIGHT_JUDGE_TIMEOUT_S,

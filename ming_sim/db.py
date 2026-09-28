@@ -18314,54 +18314,6 @@ class GameDB:
             minister_name=minister_name, target_id=None, payload=payload,
         )
 
-    def stage_explicit_directive(
-        self, turn: int, minister_name: str, text: str, *, mode: Optional[str] = None,
-    ) -> int:
-        """显式拟旨（前缀「拟旨如下：」/ tool propose_directive）落候选的**单一 seam**（#502 L2，
-        CLI 非流式 + web streaming 共用，杜绝双路径漂移）。显式拟旨每次都是**新拟独立一道**：
-        该大臣已有 ≥1 道 pending directive 时 INSERT 新候选（不 upsert 压扁前一道）；无候选时
-        走 upsert（首道 INSERT，行为与旧路等价）。返回候选行 id。
-
-        mode 只接 typed token（midzhi/ordinary/中旨直发/普通）或 None（#1731）：
-        来源为路径内分类器 typed 判断；无 typed 判断时传 None，新旨回退 ordinary。
-        玩家散文不得入此槽。"""
-        from ming_sim.cli_backend import resolve_directive_mode
-
-        payload = {
-            "text": text,
-            "actor": minister_name,
-            "mode": resolve_directive_mode(extracted=mode),
-            "dossier_action_type": "special_decree",
-            "target_kind": "policy",
-        }
-        existing = [
-            p for p in self.list_pending_actions(int(turn), minister_name=minister_name)
-            if p["kind"] == "directive"
-        ]
-        if existing:
-            candidate_id = self.stage_directive_candidate(
-                int(turn), minister_name, payload,
-            )
-        else:
-            candidate_id = self.upsert_pending_directive(
-                int(turn), minister_name, payload,
-            )
-        # 显式 tool/前缀入口没有另跑语义抽取；以该候选自身作为叙事案卷的
-        # canonical target，避免旧载荷在成案规范化时被拒绝。初次写入即完整，
-        # 不再对新候选执行第二次「改草」递增版本。
-        candidate = self.conn.execute(
-            "SELECT payload_json FROM pending_actions WHERE id=?", (int(candidate_id),),
-        ).fetchone()
-        if candidate is not None:
-            stored = json.loads(candidate["payload_json"] or "{}")
-            stored["target_id"] = f"pending-directive:{candidate_id}"
-            self.conn.execute(
-                "UPDATE pending_actions SET payload_json=? WHERE id=?",
-                (json.dumps(stored, ensure_ascii=False), int(candidate_id)),
-            )
-            self.conn.commit()
-        return candidate_id
-
     def update_office_candidate_payload(
         self, candidate_id: int, payload: Dict[str, object],
     ) -> int:

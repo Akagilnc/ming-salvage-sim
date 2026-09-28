@@ -310,7 +310,6 @@ def test_worker_cleanup_failure_still_emits_error_and_releases_gate():
     agent = _StreamCrashAgent()
     runtime.session.registry = SimpleNamespace(get=lambda _c, **_kw: agent)
     runtime.session._character = lambda name: minister_double(minister)
-    runtime.session._start_cli_action_intent = lambda *_a, **_k: None
 
     gen = runtime.chat_stream(minister, "辽东军情如何？")
     events = list(gen)  # consumer drives generator to completion
@@ -333,7 +332,6 @@ def test_worker_cleanup_double_failure_emits_original_error_end_and_logs(caplog)
     agent = _StreamCrashAgent()
     runtime.session.registry = SimpleNamespace(get=lambda _c, **_kw: agent)
     runtime.session._character = lambda name: minister_double(minister)
-    runtime.session._start_cli_action_intent = lambda *_a, **_k: None
 
     abandon_calls: list[int] = []
 
@@ -398,7 +396,6 @@ def test_worker_postprocess_exception_emits_error_end():
     runtime, minister = _base_runtime(db)
     runtime.session.registry = SimpleNamespace(get=lambda _c, **_kw: None)
     runtime.session._character = lambda name: minister_double(minister)
-    runtime.session._start_cli_action_intent = lambda *_a, **_k: None
     runtime.session.abandon_chat_turn_scene = lambda *_a, **_k: None
     runtime.session.close_night_after_chat_if_needed = None
 
@@ -732,15 +729,6 @@ class RunCompletedEvent:
     content = None
     tools = []
     status = "COMPLETED"
-
-
-class ToolCallCompletedEvent:
-    """agno 同名事件替身：type(event).__name__ == 'ToolCallCompletedEvent'。"""
-
-    def __init__(self, tool):
-        self.tool = tool
-        self.event = "ToolCallCompleted"
-        self.content = None
 
 
 class _RunErrorAgent:
@@ -1319,7 +1307,7 @@ def test_chat_stream_halfstream_retry_replaces_temp_presentation(monkeypatch, ga
     事件序列：content delta → replace delta → content delta → done。
     按客户端规则重放后，临时正文 = done.answer（不叠旧半句）。不锁措辞。
 
-    首 attempt 即使带旧工具事件也不得执行退场；重试只处理场景正文。
+    首 attempt 的部分正文不得残留；重试只处理新一轮场景正文。
     """
 
     class _PartialDismissThenOk:
@@ -1330,12 +1318,6 @@ def test_chat_stream_halfstream_retry_replaces_temp_presentation(monkeypatch, ga
             self.calls += 1
             if self.calls == 1:
                 yield RunContent("旧半句")
-                tool = SimpleNamespace(
-                    tool_name="dismiss_minister",
-                    result="__dismiss__",
-                    tool_args={},
-                )
-                yield ToolCallCompletedEvent(tool)
                 raise LLMUnavailable(
                     "连接失败",
                     code="llm_connection_error",

@@ -602,15 +602,6 @@ def test_capture_escalate_report_failure_raises_llm_unavailable(game, monkeypatc
 # ── 召对 materialize 路 ─────────────────────────────────────────────
 
 
-def _silence_side_extractors(monkeypatch, cb):
-    monkeypatch.setattr(cb, "extract_minister_actions", lambda *a, **k: {
-        "secret_action": "无", "order_id": 0, "new_title": "", "new_content": "",
-        "deadline_months": 0, "cultivate_skill": "", "cultivate_trait": "",
-    })
-    monkeypatch.setattr(cb, "extract_appointment_action", lambda *a, **k: {
-        "appoint_action": "无", "name": "", "office": "",
-    })
-    monkeypatch.setattr(cb, "extract_confirmation_intent", lambda *a, **k: "无")
 
 
 def test_batch_drafts_heal_truncation(game, monkeypatch):

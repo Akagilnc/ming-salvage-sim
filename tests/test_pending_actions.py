@@ -815,7 +815,7 @@ def test_commit_does_not_crash_when_action_raises(game):
 
 
 # ── 任免(office)自然语言确认流 ────────────────────────────────────────────
-# 任免与密令无关:独立检测(不进 extract_minister_actions)、随召对触发、ungated
+# 任免与密令无关：独立检测、随召对触发、ungated
 # (任何召对都可能派官)、覆盖大臣+太监、公开。行为契约:口头(非前缀)任命 → 检测出
 # → stage 成 kind=office 暂存,颁诏前不动 characters 表。
 

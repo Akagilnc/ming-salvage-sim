@@ -573,6 +573,11 @@ def _run_loaded_month_chain(
     )
     world_outcome = _run_world_segment(session, chain, source=source)
     declaration_outcome = world_outcome or declaration_outcome
+    # The player month no longer enters settle_with_delta. Reuse its canonical
+    # exposure resolution after both edict verdicts and world effects have landed.
+    from ming_sim.covert_levy import settle_exposure_from_canonical_actions
+    with atomic(db):
+        settle_exposure_from_canonical_actions(db, state, {})
     desk = _materialize_rescript_desk(db, state, chain)
     if desk is not None:
         return ResolveResult(

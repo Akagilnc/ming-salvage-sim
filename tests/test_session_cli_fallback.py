@@ -79,130 +79,16 @@ def test_scene_directive_midzhi_stages_draft(game):
     assert dossiers[0]["mode"] == "midzhi"
 
 
-def test_confirmation_mixed_rejection_and_approval_cues_uses_semantic_extractor(monkeypatch):
-    """“不必多言，准了”这类混合句不能被拒绝子串抢先误删 pending。"""
-    calls = []
-
-    def _semantic_confirmation(prompt, llm_config=None, tag="", *, policy=None):
-        calls.append((prompt, tag))
-        return (json.dumps({"确认": "应允"}, ensure_ascii=False), 1)
-
-    monkeypatch.setattr(cb, "_run_json_extractor_for_config", _semantic_confirmation)
-
-    result = cb.extract_confirmation_intent(
-        player_message="不必多言，准了。",
-        minister_reply="臣候旨。",
-        pending_summaries=["新建密令：暗查辽饷"],
-        llm_config=SimpleNamespace(channel="api"),
-    )
-
-    assert result["confirmation"] == "应允"
-    assert result["target_ids"] == []
-    assert calls and calls[0][1] == "confirmation"
 
 
-def test_confirmation_question_with_approval_words_uses_semantic_extractor(monkeypatch):
-    """“若准奏会如何？”只是追问后果，不能因含“准奏”走快路提交 pending。"""
-    calls = []
-
-    def _semantic_confirmation(prompt, llm_config=None, tag="", *, policy=None):
-        calls.append((prompt, tag))
-        return (json.dumps({"确认": "无"}, ensure_ascii=False), 1)
-
-    monkeypatch.setattr(cb, "_run_json_extractor_for_config", _semantic_confirmation)
-
-    result = cb.extract_confirmation_intent(
-        player_message="若准奏会如何？",
-        minister_reply="臣候旨。",
-        pending_summaries=["草拟圣旨：清核辽饷"],
-        llm_config=SimpleNamespace(channel="api"),
-    )
-
-    assert result["confirmation"] == "无"
-    assert result["target_ids"] == []
-    assert calls and calls[0][1] == "confirmation"
 
 
-def test_confirmation_negated_approval_phrase_is_rejection(monkeypatch):
-    """“不可照办”由结构化 LLM 枚举判拒绝，不靠含“照办”的词表快路。"""
-    calls = []
-
-    def _semantic_confirmation(prompt, llm_config=None, tag="", *, policy=None):
-        calls.append((prompt, tag))
-        return (json.dumps({"确认": "拒绝"}, ensure_ascii=False), 1)
-
-    monkeypatch.setattr(cb, "_run_json_extractor_for_config", _semantic_confirmation)
-
-    result = cb.extract_confirmation_intent(
-        player_message="不可照办。",
-        minister_reply="臣候旨。",
-        pending_summaries=["新建密令：暗查辽饷"],
-        llm_config=SimpleNamespace(channel="api"),
-    )
-
-    assert result["confirmation"] == "拒绝"
-    assert result["target_ids"] == []
-    assert calls and calls[0][1] == "confirmation"
 
 
-def test_confirmation_soft_negated_approval_phrase_is_rejection(monkeypatch):
-    """“先别照办”由结构化 LLM 枚举判拒绝，不靠词表快路。"""
-    calls = []
-
-    def _semantic_confirmation(prompt, llm_config=None, tag="", *, policy=None):
-        calls.append((prompt, tag))
-        return (json.dumps({"确认": "拒绝"}, ensure_ascii=False), 1)
-
-    monkeypatch.setattr(cb, "_run_json_extractor_for_config", _semantic_confirmation)
-
-    result = cb.extract_confirmation_intent(
-        player_message="先别照办。",
-        minister_reply="臣候旨。",
-        pending_summaries=["新建密令：暗查辽饷"],
-        llm_config=SimpleNamespace(channel="api"),
-    )
-
-    assert result["confirmation"] == "拒绝"
-    assert result["target_ids"] == []
-    assert calls and calls[0][1] == "confirmation"
 
 
-def test_confirmation_negated_approval_no_wordlist_when_extractor_fails(monkeypatch):
-    """抽取失败 → 「无」；禁词表快路在 extractor down 时顶替拒绝。"""
-    monkeypatch.setattr(
-        cb,
-        "_run_json_extractor_for_config",
-        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("extractor down")),
-    )
-
-    result = cb.extract_confirmation_intent(
-        player_message="不可准奏。",
-        minister_reply="臣候旨。",
-        pending_summaries=["草拟圣旨：清核辽饷"],
-        llm_config=SimpleNamespace(channel="api"),
-    )
-
-    assert result["confirmation"] == "无"
-    assert result["target_ids"] == []
 
 
-def test_confirmation_bubi_zhaoban_no_wordlist_when_extractor_fails(monkeypatch):
-    """抽取失败 → 「无」；“不必照办”亦不得词表快路顶替。"""
-    monkeypatch.setattr(
-        cb,
-        "_run_json_extractor_for_config",
-        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("extractor down")),
-    )
-
-    result = cb.extract_confirmation_intent(
-        player_message="不必照办。",
-        minister_reply="臣候旨。",
-        pending_summaries=["新建密令：暗查辽饷"],
-        llm_config=SimpleNamespace(channel="api"),
-    )
-
-    assert result["confirmation"] == "无"
-    assert result["target_ids"] == []
 
 
 def test_scene_promises_confirm_directive_and_secret_order_independently(game):
@@ -246,8 +132,8 @@ def test_pending_directive_identity_version_increments_on_edit(game):
 
     db, state, content = game
     minister = next(iter(content.characters.values())).name
-    pending_id = db.stage_explicit_directive(
-        state.turn, minister, "着户部清核辽饷。",
+    pending_id = db.stage_directive_candidate(
+        state.turn, minister, {**_POLICY_FIELDS, "text": "着户部清核辽饷。", "actor": minister},
     )
 
     row = db.conn.execute(
@@ -283,7 +169,7 @@ def test_undo_directive_edit_restores_text_with_new_forecast_version(game):
 
     db, state, content = game
     minister = next(iter(content.characters.values())).name
-    pending_id = db.stage_explicit_directive(state.turn, minister, "着户部清核辽饷。")
+    pending_id = db.stage_directive_candidate(state.turn, minister, {**_POLICY_FIELDS, "text": "着户部清核辽饷。", "actor": minister})
     chat_turn_id = db.create_chat_turn(state, minister, "undo-directive-edit", 0)
     before = db.capture_chat_rollback_snapshot()
     db.update_directive_candidate(pending_id, {
@@ -313,7 +199,7 @@ def test_withdraw_directive_invalidates_its_forecast(game):
 
     db, state, content = game
     minister = next(iter(content.characters.values())).name
-    pending_id = db.stage_explicit_directive(state.turn, minister, "着户部清核辽饷。")
+    pending_id = db.stage_directive_candidate(state.turn, minister, {**_POLICY_FIELDS, "text": "着户部清核辽饷。", "actor": minister})
     forecast_ref = pending_action_decree_ref(pending_id, 1)
     stage_declaration(
         db, decree_ref=forecast_ref, declaration={"commissions": []}, turn=state.turn,
@@ -350,17 +236,6 @@ def _forecast_config():
     )
 
 
-def test_confirmation_all_regex_does_not_treat_preparing_as_all_targets():
-    """“都准备好了”里的“准”不是确认“都准”，不能把 directive 一并卷入。"""
-    pending = [
-        {"id": 1, "kind": "directive", "action": "拟旨"},
-        {"id": 2, "kind": "secret_order", "action": "新建"},
-        {"id": 3, "kind": "office", "action": "任命"},
-    ]
-
-    targets = session_mod._confirmation_targets_for_message(pending, "都准备好了。")
-
-    assert [item["id"] for item in targets] == [2, 3]
 
 
 def test_scene_new_secret_order_is_not_confirmed_in_same_turn(game):
@@ -515,99 +390,10 @@ def test_propose_appointment_continue_draft_same_direction(
         assert [r["mode"] for r in rows] == list(expected_modes)
 
 
-def test_scene_confirmation_ignores_retired_tool_outputs(game, monkeypatch, _offline_scene_beat_generator):
-    """场景生成链不消费旧密令或拟旨工具；确认只处理夜内既有候选。"""
-    from ming_sim.audience_night import open_night
-    from tests.conftest import stub_scene_agent, stub_audience_translate, offline_empty_audience_translate
-    from tests.test_scene_llm_1836 import _sess
-
-    db, state, content = game
-    minister = "毕自严"
-    open_night(db, state)
-    old_id = db.stage_pending_action(
-        state.turn, kind="secret_order", action="新建", minister_name=minister,
-        target_id=None, payload={
-            "covert_task": TYPED_COVERT_TASK, "title": "旧候选",
-            "content": "旧候选内容", "assignee": minister,
-            "tags": [], "deadline_months": 0,
-        },
-    )
-
-    class SceneAgent:
-        tools = []
-
-        def run(self, message):
-            return SimpleNamespace(content="臣遵旨。", tools=[
-                SimpleNamespace(tool_name="secret_order", result="__secret_order__新令"),
-                SimpleNamespace(tool_name="propose_directive", result="__pending_directive__新旨"),
-            ])
-
-    stub_scene_agent(monkeypatch, SceneAgent())
-    stub_audience_translate(monkeypatch, lambda prompt, cfg: {
-        **offline_empty_audience_translate(prompt, cfg),
-        "promises": [{"action_id": old_id, "decision": "应允"}],
-    })
-    sess = _sess(db, state, content)
-    sess.scene_chat("准")
-
-    orders = db.list_secret_orders()
-    assert len(orders) == 1 and orders[0]["title"] == "旧候选"
-    assert db.list_pending_actions(state.turn) == []
 
 
-def test_secret_order_extract_fallback_preserves_structured_metadata(monkeypatch):
-    """API/按钮兼容文本带出的标签/期限，在 extractor 空结果时也不能丢。"""
-    monkeypatch.setattr(cb, "_run_backend_for_config", lambda *a, **k: ("{}", 1))
-    tags = ["辽饷", "关宁"]
-    deadline = 3
-
-    out = cb._extract_secret_order(
-        f"密令如下：暗查辽饷侵冒。\n标签：{', '.join(tags)}\n期限：{deadline}月",
-        "臣领旨。",
-        "魏忠贤",
-        llm_config=SimpleNamespace(channel="cli"),
-    )
-
-    assert out["tags"] == tags
-    assert out["deadline_months"] == deadline
-
-    negative = cb._extract_secret_order(
-        "密令如下：暗查辽饷侵冒。\n期限：-5月",
-        "臣领旨。",
-        "魏忠贤",
-        llm_config=SimpleNamespace(channel="cli"),
-    )
-    assert negative["deadline_months"] == 0
 
 
-def test_secret_order_extract_keeps_explicit_zero_deadline(monkeypatch):
-    """LLM 明确给 0 月时，不被御旨里的 fallback 期限覆盖。"""
-    explicit_zero = 0
-    monkeypatch.setattr(
-        cb,
-        "_run_backend_for_config",
-        lambda *a, **k: (json.dumps({
-            "标题": "暗查辽饷",
-            "内容": "暗查辽饷侵冒。",
-            "承办人": "魏忠贤",
-            "期限月数": explicit_zero,
-            "差务": "清丈",
-            "价值轴": ["实务事功"],
-            "方向": 1,
-            "交付单位": "万亩",
-            "交付目标": 1, "效果符号": 1, "地区": "henan", "地区字段": "registered_land", "地区目标值": "421",
-            "标签": [],
-        }, ensure_ascii=False), 1),
-    )
-
-    out = cb._extract_secret_order(
-        "密令如下：暗查辽饷侵冒。\n期限：3月",
-        "臣领旨。",
-        "魏忠贤",
-        llm_config=SimpleNamespace(channel="cli"),
-    )
-
-    assert out["deadline_months"] == explicit_zero
 
 
 @pytest.mark.parametrize("use_alias", [False, True])
@@ -645,34 +431,6 @@ def _link_night_chat_turn(db, state, night_id, minister, user_text, minister_tex
     return tid
 
 
-def test_secret_context_feed_isolates_by_open_night(game):
-    """#504 AC2「按夜取回」：同回合多夜时，密令喂料只取当前开着的夜——上一夜（已收）
-    的密谋正文不得串进本夜的按钮确认喂料（接缝④·multi-night isolation #498）。"""
-    import ming_sim.audience_night as an
-    db, state, _ = game
-    minister = "魏忠贤"
-    night1_mark, night2_mark = "MARK_NIGHT1_密谋", "MARK_NIGHT2_军饷"
-
-    # 第一夜：一段密谋，随后收夜
-    n1 = an.open_night(db, state)["id"]
-    _link_night_chat_turn(
-        db, state, n1, minister,
-        f"命东厂暗查阉党第一夜密谋 {night1_mark}。", "臣领密旨，第一夜遵办。")
-    db.conn.execute(
-        "UPDATE audience_nights SET status='closed' WHERE id=?", (int(n1),))
-    db.conn.commit()
-
-    # 第二夜：另起一段任务，按钮确认取喂料
-    n2 = an.open_night(db, state)["id"]
-    _link_night_chat_turn(
-        db, state, n2, minister,
-        f"命李若琏第二夜暗查关宁军饷 {night2_mark}。", "臣领命，第二夜遵办。")
-
-    ctx = session_mod._recent_audience_context_for_secret_order(
-        db, minister, int(state.turn), "密令如下：可，照办")
-
-    assert night2_mark in ctx  # 本夜正文取到
-    assert night1_mark not in ctx  # 上一夜正文不串入
 
 
 def test_begin_turn_syncs_offices_with_runtime_llm_config(monkeypatch):

@@ -17,7 +17,6 @@ from types import SimpleNamespace
 import pytest
 
 import ming_sim.action_materialize  # noqa: F401 -- installs package catalog
-import ming_sim.cli_backend as cb
 import ming_sim.session as session_mod
 import web_app
 from ming_sim.action_clusters import (
@@ -84,19 +83,12 @@ def _active_ming(db, content, *, exclude=""):
 
 
 def _silence_serial(monkeypatch, *, lead: str = ""):
-    monkeypatch.setattr(cb, "extract_minister_actions", lambda *a, **k: {
-        "secret_action": "无", "order_id": 0, "new_title": "", "new_content": "",
-        "deadline_months": 0, "cultivate_skill": "", "cultivate_trait": "",
-    })
-    monkeypatch.setattr(cb, "extract_appointment_action", lambda *a, **k: {
-        "appoint_action": "无", "name": "", "office": "",
-    })
+    import ming_sim.cli_backend as cb
     # #1778：交办后置抽取同缝；lead 非空则带回承办人/名单
     monkeypatch.setattr(
         cb, "extract_draft_intent",
         lambda *a, **k: _extract_lead_result(lead),
     )
-    monkeypatch.setattr(cb, "extract_confirmation_intent", lambda *a, **k: "无")
 
 
 

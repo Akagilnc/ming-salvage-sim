@@ -1072,11 +1072,6 @@ def test_http_chat_issue_stream_pay_decree_keeps_month_unadvanced(
         def get_last_run_output(self):
             return None
 
-    def fake_confirm(player_message, *_a, **_k):
-        if str(player_message or "").strip() == "准":
-            return "应允"
-        return "无"
-
     monkeypatch.setenv("MING_SIM_DB", str(tmp_path / "ming.db"))
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
@@ -1095,7 +1090,6 @@ def test_http_chat_issue_stream_pay_decree_keeps_month_unadvanced(
         decree_mod, "simulate_season_with_payload",
         lambda *a, **k: (decision_report, k.get("simulator_payload") or {}),
     )
-    monkeypatch.setattr(cb, "extract_confirmation_intent", fake_confirm)
 
     game = web_app.WebGame(fresh=False)
     monkeypatch.setattr(web_app, "web_game", game)

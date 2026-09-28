@@ -28,51 +28,13 @@ def _cli_codex_cfg() -> LLMConfig:
     )
 
 
-def _so_json(**fields) -> str:
-    base = {
-        "标题": "密查",
-        "内容": "TASK_BODY",
-        "承办人": "",
-        "期限月数": 0,
-        "标签": [],
-    }
-    base.update(fields)
-    return json.dumps(base, ensure_ascii=False)
-
-
-def _patch_backend(monkeypatch, payload: str):
-    monkeypatch.setattr(cb, "_run_backend", lambda p: (payload, 1))
 
 
 
-def test_secret_exclusion_extracts_people_and_offices(monkeypatch):
-    canned = json.dumps({
-        "标题": "密查",
-        "内容": "查账",
-        "承办人": "毕自严",
-        "排除对象": {"人物": ["魏忠贤"], "机构": ["司礼监"]},
-    }, ensure_ascii=False)
-    monkeypatch.setattr(cb, "_run_backend", lambda p: (canned, 1))
-    result = cb._extract_secret_order("密查账目", "臣领旨", "毕自严")
-    assert result["excluded_names"] == ["魏忠贤"]
-    assert result["excluded_offices"] == ["司礼监"]
-    assert result["excluded_targets"] == {"people": ["魏忠贤"], "offices": ["司礼监"]}
 
 
-def test_extract_secret_order_preserves_long_title_without_formal_cap(monkeypatch):
-    long_title = "查核辽饷转运与沿途侵蚀及军粮实数并追索责任官员"
-    assert len(long_title) > 20
-    canned = _so_json(标题=long_title, 内容="查明事实并回奏。", 承办人="毕自严", 标签=["辽饷"])
 
-    def fake_json_extractor(prompt, llm_config=None, tag="", *, policy=None):
-        return canned, 1
 
-    monkeypatch.setattr(cb, "_run_json_extractor_for_config", fake_json_extractor)
-    result = cb._extract_secret_order(
-        f"密令如下：{long_title}\n查明事实并回奏。", "臣领密旨", "毕自严",
-    )
-    assert result["title"] == long_title
-    assert len(result["title"]) == len(long_title)
 
 
 def test_typed_secret_exclusions_canonicalize_roster_alias_and_office(game):
@@ -91,29 +53,6 @@ def test_typed_secret_exclusions_canonicalize_roster_alias_and_office(game):
     assert offices == [office]
 
 
-def test_secret_content_assembly_is_emperor_plus_extractor_only():
-    """#1274 K1：拼装输入结构化——仅 emperor_intent + extractor_content；无 reply 形参。"""
-    import inspect
-
-    params = inspect.signature(cb.assemble_secret_order_content).parameters
-    assert set(params) == {"emperor_intent", "extractor_content"}
-    assert "reply" not in params and "minister_reply" not in params
-
-    task = "密查关宁欠饷"
-    extracted = f"{task}，三月内回奏，方法：密访核册"
-    body = cb.assemble_secret_order_content(
-        emperor_intent=task,
-        extractor_content=extracted,
-    )
-    assert body == extracted
-    # 御旨未覆盖时兜底并入御旨，仍不接受第三路 reply
-    partial = "臣已领旨办理。"
-    merged = cb.assemble_secret_order_content(
-        emperor_intent=f"{task}，三月内回奏",
-        extractor_content=partial,
-    )
-    assert task in merged and "三月内回奏" in merged
-    assert partial in merged
 
 
 # ── enrich_initiative_effects ──
@@ -646,130 +585,25 @@ def test_run_runner_execs_resolved_abspath(monkeypatch, runner, resolved):
     assert captured["cmd"][0] == resolved
 
 
-# ── extract_minister_actions ──
-
-def test_extract_minister_actions_update(monkeypatch):
-    canned = json.dumps({
-        "密令动作": "更新", "目标密令编号": 6,
-        "新标题": "拨内库补边军欠饷", "新内容": "每月内库百万、半年通计六百万，按月御前领发",
-        "期限月数": 6,
-    }, ensure_ascii=False)
-    monkeypatch.setattr(cb, "_run_backend", lambda p: (canned, 1))
-    act = cb.extract_minister_actions(
-        "记得更新你的密令。是每月100万内库", "臣已记明，改按月月百万",
-        [{"id": 6, "title": "拨内库百万补边军欠饷", "content": "限期半年"}], is_consort=False,
-    )
-    assert act["secret_action"] == "更新"
-    assert act["order_id"] == 6
-    assert "月月百万" in act["new_content"] or "每月" in act["new_content"]
 
 
-def test_extract_minister_actions_preserves_long_new_title(monkeypatch):
-    long_title = "查核辽饷转运与沿途侵蚀及军粮实数并追索责任官员"
-    assert len(long_title) > 20
-    canned = json.dumps({
-        "密令动作": "更新", "目标密令编号": 6,
-        "新标题": long_title, "新内容": "查明事实并回奏",
-        "期限月数": 3,
-    }, ensure_ascii=False)
-    monkeypatch.setattr(cb, "_run_backend", lambda p: (canned, 1))
-    act = cb.extract_minister_actions(
-        "把标题改全些", "臣遵旨",
-        [{"id": 6, "title": "旧标题", "content": "旧内容"}], is_consort=False,
-    )
-    assert act["secret_action"] == "更新"
-    assert act["new_title"] == long_title
-    assert len(act["new_title"]) == len(long_title)
 
 
-def test_extract_minister_actions_none(monkeypatch):
-    monkeypatch.setattr(cb, "_run_backend", lambda p: ('{"密令动作":"无","目标密令编号":0}', 1))
-    act = cb.extract_minister_actions("MSG", "REPLY", [{"id": 6, "title": "x", "content": "y"}])
-    assert act["secret_action"] == "无"
 
 
-def test_extract_minister_actions_backend_error_safe(monkeypatch):
-    monkeypatch.setattr(cb, "_run_backend", lambda p: (_ for _ in ()).throw(RuntimeError("backend down")))
-    act = cb.extract_minister_actions("随便", "臣以为", [{"id": 6, "title": "x", "content": "y"}])
-    assert act["secret_action"] == "无"
-    assert act["order_id"] == 0
 
 
-def test_extract_minister_actions_nonint_ids_floor_to_zero(monkeypatch):
-    canned = json.dumps(
-        {"密令动作": "催办", "目标密令编号": "六号", "期限月数": "三个月"},
-        ensure_ascii=False,
-    )
-    monkeypatch.setattr(cb, "_run_backend", lambda p: (canned, 1))
-    act = cb.extract_minister_actions("催一下", "臣加紧", [{"id": 6, "title": "x", "content": "y"}])
-    assert act["secret_action"] == "催办"
-    assert act["order_id"] == 0
-    assert act["deadline_months"] == 0
 
 
-def test_extract_minister_actions_unknown_action_floored(monkeypatch):
-    canned = json.dumps({"密令动作": "乱填的动作", "目标密令编号": 6}, ensure_ascii=False)
-    monkeypatch.setattr(cb, "_run_backend", lambda p: (canned, 1))
-    act = cb.extract_minister_actions("x", "y", [{"id": 6, "title": "t", "content": "c"}])
-    assert act["secret_action"] == "无"
+
 
 
 # ── lenient JSON via public extract seam ──
 
-@pytest.mark.parametrize(
-    "raw,expect_action,expect_order_id",
-    [
-        ('{"密令动作":"更新","目标密令编号":6}', "更新", 6),
-        ('```json\n{"密令动作":"更新","目标密令编号":6}\n```', "更新", 6),
-        ('note {"密令动作":"更新","目标密令编号":6} tail', "更新", 6),
-        ("NOT_JSON", "无", 0),
-        ("prefix {bad: json,} suffix", "无", 0),
-        ('{\n  "密令动作": "更新", // c\n  "目标密令编号": 6,\n}', "更新", 6),
-        ('{"密令动作":"更新","目标密令编号":6,}', "更新", 6),
-    ],
-)
-def test_extract_parses_lenient_backend_json(monkeypatch, raw, expect_action, expect_order_id):
-    """_loads_lenient 契约经 extract_minister_actions 公开出口观察。"""
-    monkeypatch.setattr(cb, "_run_backend", lambda p: (raw, 1))
-    act = cb.extract_minister_actions("x", "y", [{"id": 6, "title": "t", "content": "c"}])
-    assert act["secret_action"] == expect_action
-    assert act["order_id"] == expect_order_id
 
 
-@pytest.mark.parametrize(
-    "raw,expect_new_content",
-    [
-        # 外层尾逗号/注释迫使走 JSONC cleaner；串内 //、URL、,}、转义引号须原样进入 new_content
-        ('{"密令动作":"更新","目标密令编号":6,"新内容":"a//b",}', "a//b"),
-        ('{"密令动作":"更新","目标密令编号":6,"新内容":"http://x.com//y",}', "http://x.com//y"),
-        ('{"密令动作":"更新","目标密令编号":6,"新内容":"x,}",}', "x,}"),
-        ('{"密令动作":"更新","目标密令编号":6,"新内容":"he said \\"hi\\" //x",}', 'he said "hi" //x'),
-        (
-            '{\n  "密令动作": "更新", // c\n  "目标密令编号": 6,\n  "新内容": "a//b",\n}',
-            "a//b",
-        ),
-    ],
-    ids=["slash_in_string", "url_in_string", "comma_brace_in_string",
-         "escaped_quote_slash", "comment_plus_slash_string"],
-)
-def test_extract_lenient_cleaner_preserves_quoted_delimiters(
-    monkeypatch, raw, expect_new_content,
-):
-    """畸形外层分隔迫使 quote-aware 清洗；消费字段 new_content 保留串内精确字节。"""
-    monkeypatch.setattr(cb, "_run_backend", lambda p: (raw, 1))
-    act = cb.extract_minister_actions("x", "y", [{"id": 6, "title": "t", "content": "c"}])
-    assert act["secret_action"] == "更新"
-    assert act["order_id"] == 6
-    assert act["new_content"] == expect_new_content
 
 
-def test_extract_preserves_array_trailing_comma_via_loads_path(monkeypatch):
-    """数组尾逗号清洗仍可达（dict 根 + 嵌套数组）。"""
-    raw = '{"密令动作":"更新","目标密令编号":6,"xs":[1, 2, ]}'
-    monkeypatch.setattr(cb, "_run_backend", lambda p: (raw, 1))
-    act = cb.extract_minister_actions("x", "y", [{"id": 6, "title": "t", "content": "c"}])
-    assert act["secret_action"] == "更新"
-    assert act["order_id"] == 6
 
 
 # ── CliChat public: prompt shape + typed completion structure ──
@@ -1064,14 +898,6 @@ def test_office_inference_llm_call_is_traced(monkeypatch):
     assert len(recs) == 1 and "绝无此名的杜撰怪衔甲" in recs[0]["prompt"]
 
 
-def test_secret_extract_traces_exactly_once(monkeypatch):
-    recs = []
-    monkeypatch.setattr(cb, "_trace", lambda rec: recs.append(rec))
-    canned = '{"标题":"密查","内容":"查关宁军饷","承办人":"骆养性","期限月数":3,"标签":["关宁"]}'
-    monkeypatch.setattr(cb, "_run_agy", lambda prompt, **kw: (canned, 1))
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-    cb._extract_secret_order("密查关宁军饷", "臣遵旨", "骆养性")
-    assert len(recs) == 1, f"密令提取应恰好 1 条 trace，实 {len(recs)}"
 
 
 # ── #1256 cursor / kimi / grok + #1274-qa-y1 pi runners ──

@@ -3,7 +3,7 @@
 处方 A：拟旨路含任免/起复 → 并行/multi stage kind=office；确认/颁诏走既有
 apply_dossier_promulgation→_commit_office_action。
 P5：appointment 须在结构化 intent/candidates 中给出（multi draft+appointment）；
-分类器已跑且无 appointment 结构 → 禁串行 extract_appointment_action（#568）。
+任免只取转译的结构化声明，不另起串行抽取。
 前缀「拟旨如下」任免走随诏 extractor office_changes（#344 US3），不入并行抽取。
 """
 

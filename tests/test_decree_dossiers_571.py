@@ -459,24 +459,6 @@ def test_committing_each_directive_creates_independent_restoreable_dossier(game)
     assert all(row["pending_action_id"] in ids for row in dossiers[-2:])
 
 
-def test_explicit_directive_without_extractor_payload_becomes_narrative_dossier(game):
-    db, state, content = game
-    minister = _active_minister(db)
-
-    candidate_id = db.stage_explicit_directive(
-        state.turn, minister, "着有司清核河工。",
-    )
-    db.commit_pending_actions(
-        state, content=content, action_ids=[candidate_id],
-    )
-
-    dossier = next(
-        row for row in db.list_decree_dossiers()
-        if row["pending_action_id"] == candidate_id
-    )
-    assert dossier["action_type"] == "special_decree"
-    assert dossier["target_kind"] == "policy"
-    assert dossier["target_id"] == f"pending-directive:{candidate_id}"
 
 
 def test_pending_directive_only_enters_settlement_after_final_approval(game):

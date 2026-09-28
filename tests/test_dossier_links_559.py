@@ -1,10 +1,6 @@
-import json
-import threading
-from types import SimpleNamespace
 
 import pytest
 
-from ming_sim import cli_backend
 from ming_sim.session import GameSession
 from ming_sim.skills import bind_content as bind_skills_content
 from tests.dossier_test_helpers import TYPED_COVERT_EXTRACT, TYPED_COVERT_TASK, rejected_verdict as _rejected_verdict
@@ -55,117 +51,14 @@ def test_only_confirmed_narrowed_references_are_persisted(game):
     assert db.list_dossier_links(xuanda, direction="incoming") == []
 
 
-def test_secret_order_extractor_only_carries_explicit_confirmed_dossier_ids(monkeypatch):
-    extracted = {
-        "标题": "护行三路饷银",
-        "内容": "护卫辽东、宣大、东江三份补饷案卷。",
-        "承办人": "孙承宗",
-        "期限月数": 1,
-        "差务": "清丈",
-        "价值轴": ["实务事功"],
-        "方向": 1,
-        "交付单位": "万亩",
-        "交付目标": 1, "效果符号": 1,
-        "标签": ["护饷"],
-        "排除对象": {"人物": [], "机构": []},
-        "案卷关联": [
-            {"目标案卷ID": 11, "类型": "护卫", "说明": "护送辽东饷银"},
-            {"目标案卷ID": 12, "类型": "护卫", "说明": "护送宣大饷银"},
-            {"目标案卷ID": "模糊的东江案", "类型": "护卫", "说明": "未钉死"},
-        ],
-    }
-    def run_extractor(*args, **kwargs):
-        value = ({"confirmed_links": [{"target_dossier_id": 11, "relation_type": "护卫"}, {"target_dossier_id": 12, "relation_type": "护卫"}]}
-                 if kwargs.get("tag") == "dossier_link_confirmation" else extracted)
-        return json.dumps(value, ensure_ascii=False), 1
-
-    monkeypatch.setattr(cli_backend, "_run_json_extractor_for_config", run_extractor)
-
-    result = cli_backend._extract_secret_order(
-        "护卫边军饷银", "臣领命：只护辽东补饷、宣大补饷。", "孙承宗",
-        dossier_candidates=[
-            {"id": 11, "decree_text": "辽东补饷"},
-            {"id": 12, "decree_text": "宣大补饷"},
-            {"id": 13, "decree_text": "东江补饷"},
-        ],
-    )
-
-    assert [link["target_dossier_id"] for link in result["dossier_links"]] == [11, 12]
 
 
-@pytest.mark.parametrize("reply", [
-    "臣不能确认护卫辽东补饷。",
-    "臣只是引述旧案辽东补饷，并未承诺关联。",
-    "臣会照看那份饷案。",
-    "臣确认护卫辽东补饷补充。",
-])
-def test_semantic_verdict_rejects_negative_quote_vague_and_containment(monkeypatch, reply):
-    monkeypatch.setattr(
-        cli_backend, "_run_json_extractor_for_config",
-        lambda *args, **kwargs: (json.dumps({"confirmed_links": []}), 1),
-    )
-    links = cli_backend.confirm_dossier_links(
-        reply,
-        [{"id": 11, "decree_text": "辽东补饷"},
-         {"id": 12, "decree_text": "辽东补饷补充"}],
-        [{"target_dossier_id": 11, "relation_type": "护卫", "note": "护送"},
-         {"target_dossier_id": 12, "relation_type": "护卫", "note": "护送补充案"}],
-    )
-    assert links == []
 
 
-@pytest.mark.parametrize("verdict", [
-    {"confirmed_ids": [True]},
-    {"confirmed_ids": [{"id": 11}]},
-    {"confirmed_ids": "11"},
-    {"confirmed_ids": {"id": 11}},
-    {},
-    [11],
-])
-def test_semantic_verdict_bad_shape_fails_closed_without_crashing(monkeypatch, verdict):
-    monkeypatch.setattr(
-        cli_backend, "_run_json_extractor_for_config",
-        lambda *args, **kwargs: (json.dumps(verdict), 1),
-    )
-
-    assert cli_backend.confirm_dossier_links(
-        "臣明确确认护卫辽东补饷。",
-        [{"id": 11, "decree_text": "辽东补饷"}],
-        [{"target_dossier_id": 11, "relation_type": "护卫", "note": "护送"}],
-    ) == []
 
 
-def test_semantic_verdict_can_narrow_to_exactly_one_proposed_candidate(monkeypatch):
-    monkeypatch.setattr(
-        cli_backend, "_run_json_extractor_for_config",
-        lambda *args, **kwargs: (json.dumps({"confirmed_links": [{"target_dossier_id": 12, "relation_type": "接应"}, {"target_dossier_id": 999, "relation_type": "接应"}]}), 1),
-    )
-    links = cli_backend.confirm_dossier_links(
-        "臣明确确认接应辽东补饷补充案。",
-        [{"id": 11, "decree_text": "辽东补饷"},
-         {"id": 12, "decree_text": "辽东补饷补充"}],
-        [{"target_dossier_id": 11, "relation_type": "护卫", "note": "护送"},
-         {"target_dossier_id": 12, "relation_type": "接应", "note": "接应补充案"}],
-    )
-    assert links == [{"target_dossier_id": 12, "relation_type": "接应", "note": "接应补充案"}]
 
 
-def test_secret_order_extractor_rejects_model_id_outside_visible_candidates(monkeypatch):
-    monkeypatch.setattr(
-        cli_backend, "_run_json_extractor_for_config",
-        lambda *args, **kwargs: (json.dumps({
-            "内容": "护送旧案", "案卷关联": [
-                {"目标案卷ID": 99, "类型": "护卫", "说明": "模型臆造"}
-            ]
-        }, ensure_ascii=False), 1),
-    )
-
-    result = cli_backend._extract_secret_order(
-        "护送旧案", "臣领命，护卫虚构旧旨。", "孙承宗",
-        dossier_candidates=[{"id": 11, "decree_text": "辽东补饷"}],
-    )
-
-    assert result["dossier_links"] == []
 
 
 def test_reference_candidates_hide_other_ministers_secret_dossiers(game):
@@ -264,22 +157,6 @@ def test_unknown_target_link_is_rejected_and_audited(game):
     assert "指向不存在案卷" in audit[-1]["reason"]
 
 
-def test_same_target_multiple_relations_keep_exact_confirmed_tuples(monkeypatch):
-    monkeypatch.setattr(
-        cli_backend, "_run_json_extractor_for_config",
-        lambda *args, **kwargs: (json.dumps({"confirmed_links": [
-            {"target_dossier_id": 11, "relation_type": "护卫"},
-            {"target_dossier_id": 11, "relation_type": "稽核"},
-        ]}, ensure_ascii=False), 1),
-    )
-    proposals = [
-        {"target_dossier_id": 11, "relation_type": "护卫", "note": "护送"},
-        {"target_dossier_id": 11, "relation_type": "稽核", "note": "查账"},
-        {"target_dossier_id": 11, "relation_type": "接应", "note": "接应"},
-    ]
-    assert cli_backend.confirm_dossier_links(
-        "臣确认护卫并稽核该案。", [{"id": 11, "decree_text": "辽饷"}], proposals,
-    ) == proposals[:2]
 
 
 def test_force_promulgated_rejected_dossier_is_referenceable(game):
@@ -316,52 +193,3 @@ def test_pending_rejection_does_not_follow_reused_rolled_back_source_id(game):
     reused_id = _make_dossier(db, state, "后建案卷")
     assert db.list_dossier_link_rejections(reused_id) == []
     assert db.list_dossier_link_rejections(pending_action_id=action_id)
-
-
-def test_serial_and_parallel_join_share_proposal_normalization(monkeypatch):
-    candidates = [{"id": 11, "decree_text": "辽饷"}]
-    mixed = [
-        {"target_dossier_id": 11, "relation_type": " 护卫 ", "note": " 护送 "},
-        {"target_dossier_id": 11, "relation_type": "稽核", "note": "   "},
-        {"target_dossier_id": 11, "relation_type": "越权", "note": "坏类型"},
-        {"target_dossier_id": True, "relation_type": "护卫", "note": "坏 ID"},
-        {"target_dossier_id": 99, "relation_type": "接应", "note": "不可见"},
-    ]
-    monkeypatch.setattr(
-        cli_backend, "_run_json_extractor_for_config",
-        lambda *args, **kwargs: (json.dumps({"confirmed_links": [
-            {"target_dossier_id": 11, "relation_type": "护卫"},
-            {"target_dossier_id": 11, "relation_type": "稽核"},
-        ]}, ensure_ascii=False), 1),
-    )
-
-    normalized = cli_backend._normalize_dossier_link_proposals(candidates, mixed)
-    serial = cli_backend.confirm_dossier_links("臣确认护卫辽饷。", candidates, mixed)
-    confirmed = {(11, "护卫"), (11, "稽核")}
-    parallel_join = [item for identity, item in normalized.items() if identity in confirmed]
-
-    assert serial == parallel_join == [
-        {"target_dossier_id": 11, "relation_type": "护卫", "note": "护送"}
-    ]
-
-
-def test_cli_secret_extraction_overlaps_independent_confirmation(monkeypatch):
-    import threading
-    barrier = threading.Barrier(2)
-    seen = []
-    extracted = {"标题": "护饷", "内容": "护饷", "承办人": "孙承宗", "案卷关联": [
-        {"目标案卷ID": 11, "类型": "护卫", "说明": "护送"}]}
-    def runner(*args, **kwargs):
-        seen.append(kwargs.get("tag"))
-        barrier.wait()
-        value = ({"confirmed_links": [{"target_dossier_id": 11, "relation_type": "护卫"}]}
-                 if kwargs.get("tag") == "dossier_link_confirmation" else extracted)
-        return json.dumps(value, ensure_ascii=False), 1
-    monkeypatch.setattr(cli_backend, "_run_json_extractor_for_config", runner)
-    result = cli_backend._extract_secret_order(
-        "护饷", "臣确认护卫辽饷。", "孙承宗",
-        llm_config=SimpleNamespace(channel="cli", cli_runner="codex"),
-        dossier_candidates=[{"id": 11, "decree_text": "辽饷"}],
-    )
-    assert set(seen) == {"secret_extract", "dossier_link_confirmation"}
-    assert result["dossier_links"][0]["target_dossier_id"] == 11

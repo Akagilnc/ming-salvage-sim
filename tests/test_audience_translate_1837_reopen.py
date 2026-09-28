@@ -21,6 +21,7 @@ from ming_sim.audience_translate import normalize_audience_declaration
 from ming_sim.covert_levy import PROHIBITION_ACTION, write_exposure_todos
 from ming_sim.declaration_dispatch import dispatch_declaration
 from ming_sim.session import GameSession
+from tests.settlement_seam_helpers import make_light_session
 
 
 def _hong(db, content) -> str:
@@ -51,7 +52,7 @@ def _active_minister(db, content, *, office_type: str | None = None):
 
 
 def _bound_exposure(db, state, monkeypatch):
-    army = db.conn.execute("SELECT id FROM armies LIMIT 1").fetchone()
+    army = db.conn.execute("SELECT id FROM armies WHERE owner_power='ming' LIMIT 1").fetchone()
     executor = db.conn.execute(
         "SELECT name FROM characters WHERE status='active' LIMIT 1"
     ).fetchone()[0]
@@ -91,10 +92,8 @@ def _scene_declaration(db, state, content, monkeypatch, words, declaration, *, m
         ))
     stub_audience_translate(monkeypatch, lambda prompt, config: {
         **declaration,
-        "scene_facts": [{
-            "body": prompt.split("【本轮回话】", 1)[1].removesuffix("\n"),
-            "role": "scene", "audibility": "殿上公开", "person_names": [],
-        }],
+        "scene_facts": [{"body": scene_reply or "殿上应对。", "role": "scene",
+                         "audibility": "殿上公开", "person_names": []}],
     })
     night = open_night(db, state)
     ctid = db.create_chat_turn(
@@ -114,6 +113,33 @@ def _close_offline(db, state, content, night_id):
             run=lambda _: SimpleNamespace(content='{"endorsements": []}'),
         ),
     )
+
+
+def _player_month(db, state, content, monkeypatch, dossier_id, *, effects=None):
+    """Drive the player month entry with only model outputs supplied offline."""
+    import threading
+    import ming_sim.month_chain as month_chain
+    import ming_sim.month_translate as month_translate
+    from ming_sim.decree_forecast import decree_ref_for_dossier, stage_declaration
+
+    dossier = db.get_decree_dossier(dossier_id)
+    stage_declaration(
+        db, decree_ref=decree_ref_for_dossier(db, dossier),
+        declaration={"effects": {}}, turn=int(state.turn),
+        verdict={"decision": "promulgated"}, forecast_text="",
+    )
+    monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "世界段" if effects else "")
+    monkeypatch.setattr(month_translate, "translate_month_segment", lambda *a, **k: {"effects": effects or {}})
+    monkeypatch.setattr("ming_sim.session.write_decree_with_agno", lambda *a, **k: "诏")
+    session = make_light_session(db, state, content)
+    session._write_gate = threading.Lock()
+    before = int(state.turn)
+    result = session.resolve_turn(allow_empty_decree=True)
+    assert result.stage == "gazette"
+    # The same player entry resumes after the (offline) gazette is archived.
+    db.save_turn_report(state, "月报", title="月报", public_body="月报")
+    result = session.resolve_turn(allow_empty_decree=True)
+    assert result.advanced and int(state.turn) > before
 
 
 def test_prohibit_covert_levy_commission_binds_exposed_dossier(game, monkeypatch):
@@ -146,20 +172,17 @@ def test_prohibit_covert_levy_commission_binds_exposed_dossier(game, monkeypatch
     assert dossier is not None
     assert dossier["action_type"] == PROHIBITION_ACTION
     assert dossier["target_id"] == str(did)
-    db.apply_dossier_verdicts(
-        state, [{"dossier_id": int(dossier["id"]), "decision": "promulgated"}],
-        content=content,
-    )
-    from ming_sim.decree import settle_with_delta
     from ming_sim.covert_levy import active_prohibition_dossier
-    assert active_prohibition_dossier(db, did)["id"] == dossier["id"]
     army_id = db.conn.execute("SELECT target_id FROM decree_dossiers WHERE id=?", (did,)).fetchone()[0]
     db.conn.execute("UPDATE armies SET arrears=10 WHERE id=?", (army_id,))
     before = int(state.turn)
-    settle_with_delta(state, db, {"fiscal_creates": [{
-        "key": "禁后摊派", "account": "国库", "direction": "income", "init_value": 2,
-        "origin_ref": f"dossier:{did}", "beyond_intent": True,
-    }]}, before_turn=before, content=content)
+    _player_month(db, state, content, monkeypatch, int(dossier["id"]), effects={
+        "fiscal_creates": [{
+            "key": "禁后摊派", "account": "国库", "direction": "income", "init_value": 2,
+            "origin_ref": f"dossier:{did}", "beyond_intent": True,
+        }],
+    })
+    assert active_prohibition_dossier(db, did)["id"] == dossier["id"]
     assert int(state.turn) > before
     assert db.get_fiscal_config().get("禁后摊派_base") is None
     from ming_sim.due_review import list_due_review_scenes
@@ -242,10 +265,7 @@ def test_recommendation_commission_stages_office_with_reason(game, monkeypatch):
         (result.commissions.applied[0]["id"],),
     ).fetchone()
     assert dossier is not None
-    db.apply_dossier_verdicts(
-        state, [{"dossier_id": int(dossier["id"]), "decision": "promulgated"}],
-        content=content,
-    )
+    _player_month(db, state, content, monkeypatch, int(dossier["id"]))
     appointed = db.conn.execute(
         "SELECT office FROM characters WHERE name=?", (same_faction.name,),
     ).fetchone()
@@ -304,11 +324,13 @@ def test_inquiry_declaration_persists_return_report(game, monkeypatch):
     ).fetchall()
     assert sources
     known = db.get_character_knowledge(state, attendant.name)
-    assert {r["source_id"] for r in sources} <= {
-        event["source_id"] for event in known["events"]
-    }
+    report_events = [event for event in known["events"]
+                     if event["source_id"] in {r["source_id"] for r in sources}]
+    assert report_events
     from ming_sim.audience_night import summon_enter
     from ming_sim.materials import prepare_scene_materials, release_material_tree
+    # A fresh night must make this report readable, not merely list a carrier.
+    _close_offline(db, state, content, int(open_night(db, state)["id"]))
     night = open_night(db, state)
     summon_enter(db, int(night["id"]), attendant.name, empty_scaffold=True)
     prepared = prepare_scene_materials(db, state)
@@ -316,7 +338,8 @@ def test_inquiry_declaration_persists_return_report(game, monkeypatch):
         from pathlib import Path
         carrier = f"人物/{attendant.name}/经历.txt"
         assert carrier in prepared.index_lines
-        assert (Path(prepared.root) / carrier).is_file()
+        experience = (Path(prepared.root) / carrier).read_text(encoding="utf-8")
+        assert all(event["body"] in experience for event in report_events)
     finally:
         release_material_tree(prepared.root)
 
@@ -389,10 +412,8 @@ def test_repeated_urgent_summons_have_independent_rollback_origins(game, monkeyp
     sess = _scene_session(db, state, content, monkeypatch)
     tones = iter(("星夜兼程", "加急"))
     stub_audience_translate(monkeypatch, lambda prompt, config: {
-        "scene_facts": [{
-            "body": prompt.split("【本轮回话】", 1)[1].removesuffix("\n"),
-            "role": "scene", "audibility": "殿上公开", "person_names": [],
-        }],
+        "scene_facts": [{"body": "殿上应对。", "role": "scene",
+                         "audibility": "殿上公开", "person_names": []}],
         "travel_tones": [{"person_name": person, "tone": next(tones)}],
     })
     turns = []
@@ -430,13 +451,11 @@ def test_travel_tone_updates_this_round_summon_ledger(game, monkeypatch):
         def run(self, message):
             return SimpleNamespace(content="殿上回奏。", tools=[])
 
-    stub_scene_agent(monkeypatch, SceneAgent())
     sess = _scene_session(db, state, content, monkeypatch)
+    stub_scene_agent(monkeypatch, SceneAgent())
     stub_audience_translate(monkeypatch, lambda prompt, config: {
-        "scene_facts": [{
-            "body": prompt.split("【本轮回话】", 1)[1].removesuffix("\n"),
-            "role": "scene", "audibility": "殿上公开", "person_names": [],
-        }],
+        "scene_facts": [{"body": "殿上回奏。", "role": "scene",
+                         "audibility": "殿上公开", "person_names": []}],
         "travel_tones": [{"person_name": person, "tone": "星夜兼程"}],
     })
     old_id = record_summon_fresh(
@@ -505,10 +524,8 @@ def test_urgent_summons_cannot_bypass_audience_admission(game, monkeypatch, inel
     night = open_night(db, state)
     sess = _scene_session(db, state, content, monkeypatch)
     stub_audience_translate(monkeypatch, lambda prompt, config: {
-        "scene_facts": [{
-            "body": prompt.split("【本轮回话】", 1)[1].removesuffix("\n"),
-            "role": "scene", "audibility": "殿上公开", "person_names": [],
-        }],
+        "scene_facts": [{"body": "殿上应对。", "role": "scene",
+                         "audibility": "殿上公开", "person_names": []}],
         "travel_tones": [{"person_name": person, "tone": "星夜兼程"}],
     })
     ctid = db.create_chat_turn(state, "殿上", "s", 0, night_id=int(night["id"]), status="active")

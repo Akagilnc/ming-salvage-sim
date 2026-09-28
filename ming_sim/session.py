@@ -73,7 +73,7 @@ AUTO_SAVE_KEEP_TURNS = 3  # 每个 campaign 保留最近 N 个 turn 的全部自
 # #1769 成案补交：原抽 + LLM 重写 N 次 = 总计 N+1（owner：N=2 → 总计 3，与召对「第一次不叫重试」同形状）。
 # 与 DRAFT_PARTICIPANT_HEAL_RETRIES（组合/名册内部 heal）独立；内部 heal 不冒充成案补交次数。
 DRAFT_ADMISSION_RESUBMIT_REWRITES = 2
-_CLI_ACTION_INTENT_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="cli-action-intent")
+_SCENE_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="scene-turn")
 
 
 def prune_auto_saves(saves_dir: str, campaign_id: str, keep_turns: int = AUTO_SAVE_KEEP_TURNS) -> None:
@@ -365,65 +365,6 @@ def register_unlisted_person_record(
     return character
 
 
-def _recent_audience_context_for_secret_order(
-    db: Any, minister_name: str, turn: int, current_message: str, limit: int = 8,
-) -> str:
-    """取当前大臣最近召对正文，供“密令”按钮确认短句补足任务上下文。
-
-    #504 AC2「按夜取回」：喂料按**当前开着的夜**取回——只认本夜该大臣的对话轮
-    （撤回/失败轮排除），不让同回合上一夜的密谋正文串进本夜（接缝④「密令喂料按夜
-    从账/记录取回」）。无开着的夜（旧档/无夜路径）才回落 turn 域取回，语义不变。"""
-    conn = getattr(db, "conn", None)
-    if conn is None:
-        return ""
-    night_id = 0
-    night_getter = getattr(db, "_current_open_night_id", None)
-    if callable(night_getter):
-        try:
-            night_id = int(night_getter() or 0)
-        except Exception:
-            night_id = 0
-    try:
-        if night_id > 0:
-            # 本夜该大臣对话轮的用户/大臣消息（撤回 undone_at / failed·undone 轮排除）；
-            # 一轮两条消息各成一行，按 message id 序取最近 limit 条。
-            rows = conn.execute(
-                """
-                SELECT m.role AS role, m.content AS content
-                FROM chat_turns t
-                JOIN chat_messages m
-                  ON m.id IN (t.user_message_id, t.minister_message_id)
-                WHERE t.night_id = ?
-                  AND t.minister_name = ?
-                  AND t.undone_at IS NULL
-                  AND t.status NOT IN ('failed', 'undone', 'consumed')
-                ORDER BY m.id DESC
-                LIMIT ?
-                """,
-                (int(night_id), str(minister_name or ""), int(limit)),
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                """
-                SELECT role, content FROM chat_messages
-                WHERE minister_name = ? AND turn = ?
-                ORDER BY id DESC
-                LIMIT ?
-                """,
-                (str(minister_name or ""), int(turn), int(limit)),
-            ).fetchall()
-    except Exception:
-        return ""
-    current = (current_message or "").strip()
-    lines: List[str] = []
-    for row in reversed(rows):
-        role = str(row["role"] if "role" in row.keys() else "")
-        content = str(row["content"] if "content" in row.keys() else "").strip()
-        if not content or content == current:
-            continue
-        label = "皇帝" if role == "user" else "大臣"
-        lines.append(f"{label}：{content}")
-    return "\n".join(lines[-limit:])
 
 
 def _canonical_minister_key(content: Any, name: str, db: "GameDB") -> str:
@@ -490,45 +431,6 @@ def _target_active_officeholder(db: Any, name: str, content: Any = None) -> bool
     return str(row["status"] or "") == "active" and bool(str(row["office"] or "").strip())
 
 
-def _cancel_staged_opposing_office(
-    db: Any, opposing_action: str, target_name: str, turn: int, content: Any = None,
-    region_id: str = "",
-) -> Optional[int]:
-    """撤销同回合针对同一人的一条【反向暂存任免】，返回其 id；无则 None（对冲，ADR 0028
-    R1/R2 双向对称）。
-
-    这是「名册 ⊕ 暂存」比对真基准的落地：暂存免职/任命未提交时名册仍是旧态，皇帝反悔
-    （留任冲免职、免去冲任命）若只比名册会被误判 no-op 丢弃或另 stage 孤儿。姓名按 canonical
-    口径归一，别名/新候选按同一原名兜底比对；两侧都带 typed 任所且不同 → 不是同一职缺身份，
-    不对冲。撤销走 withdraw_pending_action（只删 pending，已 committed 不动），night_approved
-    但未收夜提交的暂存仍属 pending、照样对冲。"""
-    conn = getattr(db, "conn", None)
-    clean = str(target_name or "").strip()
-    if conn is None or not clean or opposing_action not in ("任命", "罢免"):
-        return None
-    target_key = _canonical_minister_key(content, clean, db)
-    want_region = str(region_id or "").strip()
-    for pa in db.list_pending_actions(int(turn)):
-        if pa.get("kind") != "office" or pa.get("action") != opposing_action:
-            continue
-        try:
-            payload = json.loads(pa.get("payload_json") or "{}")
-        except (ValueError, TypeError):
-            continue
-        if not isinstance(payload, dict):
-            continue
-        staged = str(payload.get("name") or "").strip()
-        if not staged or _canonical_minister_key(content, staged, db) != target_key:
-            continue
-        staged_region = str(
-            payload.get("region_id") or payload.get("任所") or payload.get("辖区") or ""
-        ).strip()
-        # 人+任所身份：双方都 typed 且不同 seat → 跨省同名职，不对冲。
-        if want_region and staged_region and want_region != staged_region:
-            continue
-        if db.withdraw_pending_action(int(pa["id"]), int(turn)):
-            return int(pa["id"])
-    return None
 
 
 def canonical_new_appointment_person_fields(
@@ -647,113 +549,10 @@ def apply_appointment(
     return (name, displaced)
 
 
-def coalesce_pending_action_id(prior: int, staged: int) -> int:
-    """Same-turn tool aggregation: non-zero staged wins; zero must not erase prior success."""
-    staged_id = int(staged or 0)
-    if staged_id > 0:
-        return staged_id
-    return int(prior or 0)
 
 
-def _pending_action_brief(pa: Dict[str, Any]) -> str:
-    """暂存动作的一句话摘要，供对话确认意图判定时告诉 LLM『有哪些待皇帝定夺』。"""
-    import json as _json
-    kind = pa.get("kind")
-    action = pa.get("action")
-    try:
-        payload = _json.loads(pa.get("payload_json") or "{}")
-    except (ValueError, TypeError):
-        payload = {}
-    if not isinstance(payload, dict):
-        payload = {}
-    if kind == "office":
-        who = payload.get("name") or ""
-        office = payload.get("office") or ""
-        return f"{action}「{who}」" + (f"为「{office}」" if office else "")
-    if kind == "consort":
-        return f"调教「{payload.get('name') or ''}」"
-    if kind == "directive":
-        dat = str(payload.get("dossier_action_type") or "").strip()
-        if dat == "assignment":
-            title = str(
-                payload.get("title") or payload.get("target_id") or ""
-            ).strip()
-            if title:
-                return f"交办「{title[:30]}」"
-        text = str(payload.get("text") or "")
-        return f"草拟圣旨：{text[:30]}"
-    # secret_order：带 title/content 线索，供 confirmation 列表区分多候选（#1509）
-    title = str(payload.get("title") or "").strip()
-    content = str(payload.get("content") or "").strip()
-    cue = title or content[:30]
-    return f"{action}密令" + (f"：{cue}" if cue else "")
 
 
-def _confirmation_targets_for_message(pending_actions: List[Dict[str, Any]], message: str) -> List[Dict[str, Any]]:
-    """Choose which pending action family this chat confirmation can affect."""
-    text = message or ""
-    secret = [p for p in pending_actions if p["kind"] == "secret_order"]
-    office = [p for p in pending_actions if p["kind"] == "office"]
-    consort = [p for p in pending_actions if p["kind"] == "consort"]
-    non_directive = [p for p in pending_actions if p["kind"] != "directive"]
-    directive = [p for p in pending_actions if p["kind"] == "directive"]
-    all_mentioned = (
-        any(token in text for token in ("全都", "全部", "一并", "一概", "尽数"))
-        or re.search(r"都(?:准了|准(?!备)|照办|作罢|驳回|驳了|拒绝|拒了|不准|不允|撤了|撤回)", text) is not None
-    )
-    family_targets: List[Dict[str, Any]] = []
-    if any(token in text for token in ("密令", "密旨", "密谕")):
-        family_targets.extend(secret)
-    if any(token in text for token in ("任免", "任命", "罢免", "罢黜", "起用", "升任", "调任", "撤职")):
-        family_targets.extend(office)
-    if any(token in text for token in ("调教", "后宫", "妃嫔", "嫔妃")):
-        family_targets.extend(consort)
-    directive_mentioned = any(token in text for token in ("圣旨", "旨意", "拟旨", "诏书", "诏文", "草案"))
-    if directive_mentioned and directive:
-        family_targets.extend(directive)
-    if family_targets:
-        return family_targets
-    if all_mentioned:
-        return pending_actions
-    return non_directive or directive
-
-
-_CONFIRM_ENUM = frozenset({"应允", "拒绝", "留中", "修改", "无"})
-
-
-def _coerce_confirmation_result(raw: Any) -> Tuple[str, List[int], str]:
-    """Normalize extract_confirmation_intent / stub → (确认枚举, 合法目标 id 列表, new_content)。
-
-    生产契约返回 dict；既有测试 stub 可仍返回纯字符串（目标 id 视为空）。
-    #1376：修改判词携带 typed new_content 作为唯一权威正文。
-    """
-    if isinstance(raw, str):
-        v = raw.strip()
-        return (v if v in _CONFIRM_ENUM else "无"), [], ""
-    if isinstance(raw, dict):
-        v = str(raw.get("confirmation") or raw.get("确认") or "无").strip()
-        if v not in _CONFIRM_ENUM:
-            v = "无"
-        tids: List[int] = []
-        for key in ("target_ids", "目标编号"):
-            blob = raw.get(key)
-            if blob is None:
-                continue
-            seq = blob if isinstance(blob, list) else [blob]
-            for t in seq:
-                try:
-                    i = int(t)
-                except (TypeError, ValueError):
-                    digits = "".join(ch for ch in str(t) if ch.isdigit())
-                    if not digits:
-                        continue
-                    i = int(digits)
-                if i > 0 and i not in tids:
-                    tids.append(i)
-            break
-        new_content = str(raw.get("new_content") or raw.get("新内容") or "")
-        return v, tids, new_content
-    return "无", [], ""
 
 
 def _pending_action_failure_payload(pa: Dict[str, Any]) -> Dict[str, Any]:
@@ -887,9 +686,8 @@ class GameSession:
         self.llm_config = llm_config
         from ming_sim.beat_orchestration import ChatTurnSceneRegistry, create_llm_beat_generator
         self._beat_generator = create_llm_beat_generator(llm_config)
-        # Scene lifecycle lives in beat_orchestration; session only holds the registry handle.
-        # No dedicated scene executor (C6 rejected); open/enter share the action-intent pool.
-        self._scene_registry = ChatTurnSceneRegistry(_CLI_ACTION_INTENT_EXECUTOR)
+        # Scene lifecycle lives in beat_orchestration; session holds the registry handle.
+        self._scene_registry = ChatTurnSceneRegistry(_SCENE_EXECUTOR)
         # #1749：db/agno 打开后构造任一步失败须关闭，禁泄漏连接（load_state 等）。
         self.db = None  # type: ignore[assignment]
         self.agno_db = None  # type: ignore[assignment]
