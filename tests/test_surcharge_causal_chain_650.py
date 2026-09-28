@@ -3,7 +3,6 @@
 canonical＝ADR 0089（明渠）＋0087（人口守恒转移）＋#650 票面（庭判 run
 01a02d46 通过）。因果五环：皇帝下旨加派 → 逐省累积账当回合落库（P1）→
 结算按账机械驱动农民→流民入池（量级 clamp，0087 applier 机械转移）→
-邸报/召对输入侧事实回响（ADR 0143：只断 effect_brief 事实平面，不钉散文）
 → 停加派/蠲免后入池止（出口回流归 S5 #652）。
 
 主测缝（PRD Testing Decisions 预定）：apply_score_extraction / settle_with_delta /
@@ -23,7 +22,6 @@ from ming_sim.decree import pre_settle, settle_with_delta as _settle_with_delta
 from ming_sim.exceptions import SettlementAbort
 from ming_sim.issues import apply_historical_fiscal_rates, apply_score_extraction
 import ming_sim.issues as issues
-from ming_sim.memories import effect_brief
 from ming_sim.population_pressure import regional_displaced_pressure_brief
 from ming_sim.simulation import build_simulator_payload
 
@@ -524,21 +522,6 @@ def test_displaced_trend_does_not_call_post_levy_return_an_increase(game):
     assert "陕西：流民压力低，近月回落，期间加派致流民流入" in brief
     assert "因加派而上升" not in brief
 
-
-def test_effect_brief_carries_levy_echo_fact(game):
-    db, state, content = game
-    apply_score_extraction(db, state, {
-        "surcharge_decrees": [_decree(db, state, monthly_amount=10.0)],
-    }, content, None)
-    before_turn = state.turn
-    _settle_month(state, db, {}, before_turn=before_turn, content=content)
-    applied = db.get_turn_extraction(before_turn)["extractor_output"]
-    brief = effect_brief(applied)
-    want = _expected_inflow_persons(10.0, SHAANXI_SUPPORT)
-    assert f"陕西农民流失{want}口为流民（加派）" in brief
-
-
-# ── legacy 万口径档：折算随存档单位换算，sub-万不可表达 ────────────────────────
 
 def _make_legacy_db(content, path: str) -> GameDB:
     db = GameDB(path, content)

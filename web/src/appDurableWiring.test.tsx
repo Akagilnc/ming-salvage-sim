@@ -1445,7 +1445,7 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
         status: "defeat",
         label: "煤山自缢",
         summary: "终章。",
-        timeline: [{ turn: 6, year: 1627, period: 11, decree_brief: "", effect_brief: "", gazette: "十月邸报" }],
+        timeline: [{ turn: 6, year: 1627, period: 11, gazette: "十月邸报" }],
       };
       let liveState: Record<string, unknown> = {
         ...settlementBaseState("player"),

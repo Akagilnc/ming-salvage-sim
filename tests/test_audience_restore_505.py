@@ -1037,7 +1037,7 @@ def test_657_s12_reconciles_s_u_q_and_finishes_summon(game, monkeypatch):
     db.save_resolve_context(
         int(state.turn), "诏", "邸报",
         {"candidate_events": [], "transit_semantics": []},
-        secret_orders=[], relevant_memories=[],
+        secret_orders=[],
     )
     desk = db.list_rescript_desk(int(state.turn))
     key = next(r["decision_key"] for r in desk if r["title"] == "S12全链")

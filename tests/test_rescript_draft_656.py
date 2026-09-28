@@ -1071,7 +1071,7 @@ def test_restore_roundtrip_preserves_draft_rows_field_by_field(game):
     persist_resolve_context(
         db, turn, {},
         decree_text="诏", narrative="邸报",
-        simulator_payload={}, secret_orders=[], relevant_memories=[],
+        simulator_payload={}, secret_orders=[],
         rescript_drafts=[{
             "event_id": "issue:7", "title": "辽饷告匮",
             "context": "九边欠饷数月，饥溃可待。",
@@ -1136,7 +1136,7 @@ def _ready_with_drafts(db, state, drafts):
     persist_resolve_context(
         db, state.turn, {},
         decree_text="诏", narrative="邸报",
-        simulator_payload={}, secret_orders=[], relevant_memories=[],
+        simulator_payload={}, secret_orders=[],
         rescript_drafts=drafts,
     )
 
@@ -1172,7 +1172,7 @@ def test_resimulation_clear_invalidates_stale_drafts(game):
     # 重跑结果为空列表（本月确无急务）→ 零残留
     persist_resolve_context(
         db, turn, {}, decree_text="诏", narrative="邸报新",
-        simulator_payload={}, secret_orders=[], relevant_memories=[],
+        simulator_payload={}, secret_orders=[],
         rescript_drafts=[],
     )
     assert db.list_rescript_drafts() == []
@@ -1187,7 +1187,7 @@ def test_resimulation_clear_degraded_rerun_leaves_no_stale_drafts(game):
     # 重跑降级：persist 不携 rescript_drafts（None）
     persist_resolve_context(
         db, turn, {}, decree_text="诏", narrative="邸报新",
-        simulator_payload={}, secret_orders=[], relevant_memories=[],
+        simulator_payload={}, secret_orders=[],
     )
     assert db.get_resolve_context(turn) is not None
     assert db.list_rescript_drafts() == []   # 无头版，而非旧版冒充
@@ -1246,7 +1246,7 @@ def test_resimulation_clear_new_results_fully_replace_old_drafts(game):
     clear_for_resimulation(db, turn)
     persist_resolve_context(
         db, turn, {}, decree_text="诏", narrative="邸报新",
-        simulator_payload={}, secret_orders=[], relevant_memories=[],
+        simulator_payload={}, secret_orders=[],
         rescript_drafts=_draft_rows("新急务"),
     )
     assert [d["title"] for d in db.list_rescript_drafts()] == ["新急务"]

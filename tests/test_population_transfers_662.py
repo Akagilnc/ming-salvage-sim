@@ -5,8 +5,8 @@ canonical＝ADR 0087 + #662 票庭判词（run 01a02d40-244d-7e4c-8386-5af682d58
   活跃局势 issue）及阶级余额与人口单位；代码侧只守物理不变量，禁引擎侧自动触发（无双驱动）；
 - origin 分立＝reason 枚举「灾害」／「兵灾」（落库字段即 reason，无第二 origin 字段）；
 - 与加派/摊派入口合流同一本账：同一 classes 省级行池＋同一原语，下游只认账不认来源；
-- 邸报/召对定性回响走既有 effect_brief／classes_brief 特征面（P4 零数值）。
-主测缝＝S2 同缝：apply_score_extraction / settle_with_delta / effect_brief /
+- 邸报/召对定性回响走既有 classes_brief 特征面（P4 零数值）。
+主测缝＝S2 同缝：apply_score_extraction / settle_with_delta /
 prompt 契约文本 / GameDB 重开接续。mutation oracle 复用 #649 家族，不另立机制。
 """
 
@@ -30,7 +30,6 @@ import pytest
 from ming_sim.db import GameDB
 from ming_sim.decree import settle_with_delta
 from ming_sim.issues import apply_score_extraction
-from ming_sim.memories import effect_brief
 from ming_sim.agents import build_simulator_context
 from ming_sim.materials import list_materials, prepare_character_materials, read_material
 from ming_sim.simulation import (
@@ -163,7 +162,6 @@ def test_mutation_oracle_bites_disaster_war_mutations(war_shaanxi):
         _conservation_oracle(before1, m3, [record])
 
 
-# ── 邸报/召对定性回响：effect_brief 事实摘要带 reason；玩家面 classes_brief 定性零数值 ──
 
 
 

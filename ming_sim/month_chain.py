@@ -1609,7 +1609,6 @@ def _save_chain(
         str(ctx.get("narrative") or ""),
         payload,
         secret_orders=ctx.get("secret_orders"),
-        relevant_memories=ctx.get("relevant_memories"),
         extracted=ctx.get("extracted"),
         source=source_value or Provenance.system_simulation.value,
         attendant_message=str(ctx.get("attendant_message") or ""),

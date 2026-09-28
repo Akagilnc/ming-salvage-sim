@@ -110,12 +110,12 @@ def test_resolve_context_roundtrips_grouped_secret_orders_as_dict(game):
         "待核议": [],
     }
     db.save_resolve_context(
-        state.turn, "诏", "邸报", {}, secret_orders=grouped, relevant_memories=[],
+        state.turn, "诏", "邸报", {}, secret_orders=grouped,
     )
     ctx = db.get_resolve_context(state.turn)
     assert isinstance(ctx["secret_orders"], dict)
     assert set(ctx["secret_orders"].keys()) == {"在办", "待核议"}
     assert "secret_orders" not in (ctx.get("simulator_payload") or {})
 
-    db.save_resolve_context(state.turn, "诏", "邸报", {}, secret_orders={}, relevant_memories=[])
+    db.save_resolve_context(state.turn, "诏", "邸报", {}, secret_orders={})
     assert db.get_resolve_context(state.turn)["secret_orders"] == {}

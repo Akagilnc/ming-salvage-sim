@@ -10,7 +10,6 @@ from __future__ import annotations
 import pytest
 
 import ming_sim.issues as I
-from ming_sim.memories import effect_brief
 from tests.conftest import active_ming_character
 
 
@@ -551,44 +550,6 @@ def test_inertia_natural_resolve_applies_unified_person_change_with_bound_conten
         assert row["office"] == "陕西总督"
         assert content.characters[name].office == "陕西总督"
     finally:
-        content.characters[name].office = old_office
-
-
-def test_issue_resolve_person_effect_is_visible_to_effect_brief(game):
-    db, state, content = game
-    name = active_ming_character(db, content)
-    old_status = content.characters[name].status
-    old_office = content.characters[name].office
-    issue_id = db.insert_issue(
-        state,
-        kind="situation",
-        title="结案人事摘要测试",
-        bar_value=50,
-        effect_on_resolve={
-            "人物变更": [
-                {"name": name, "动作": "处置", "status": "dismissed", "reason": "结案问责"}
-            ]
-        },
-    )
-
-    try:
-        applied = I.apply_score_extraction(
-            db,
-            state,
-            {
-                "close_issues": [
-                    {"issue_id": issue_id, "reason": "resolved", "narrative": "测试结案"}
-                ]
-            },
-            content=content,
-        )
-
-        assert applied["issue_summary"]["applied_person_changes"] == [
-            {"name": name, "动作": "处置", "status": "dismissed", "reason": "结案问责"}
-        ]
-        assert f"处分：{name}" in effect_brief({"issue_summary": applied["issue_summary"]})
-    finally:
-        content.characters[name].status = old_status
         content.characters[name].office = old_office
 
 

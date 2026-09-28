@@ -973,7 +973,6 @@ def test_settle_rejects_non_integer_frozen_open_affair_ids(game, bad_id):
         ctx["narrative"],
         payload,
         secret_orders=ctx.get("secret_orders"),
-        relevant_memories=ctx.get("relevant_memories"),
         extracted=None,
         source=ctx.get("source") or "system_simulation",
         attendant_message=ctx.get("attendant_message") or "",

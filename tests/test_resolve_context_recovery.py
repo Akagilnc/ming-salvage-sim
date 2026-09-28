@@ -21,7 +21,7 @@ def test_persist_resolve_context_stores_extracted_delta(game):
     persist_resolve_context(
         db, turn, extracted,
         decree_text="减赋诏", narrative="本月邸报……",
-        simulator_payload={"k": "v"}, secret_orders=[], relevant_memories=[],
+        simulator_payload={"k": "v"}, secret_orders=[],
     )
 
     ctx = db.get_resolve_context(turn)
@@ -41,7 +41,7 @@ def test_persist_resolve_context_stores_source_for_recovery(game):
     persist_resolve_context(
         db, turn, {"region_delta": {"shanxi": {"unrest": 1}}},
         decree_text="x", narrative="y",
-        simulator_payload={}, secret_orders=[], relevant_memories=[],
+        simulator_payload={}, secret_orders=[],
         source=Provenance.player_decree,
     )
     assert db.get_resolve_context(turn)["source"] == "player_decree", "玩家来源须持久化进 resolve_context"
@@ -54,7 +54,7 @@ def test_persist_resolve_context_source_defaults_system_simulation(game):
     persist_resolve_context(
         db, turn, {"region_delta": {"shanxi": {"unrest": 1}}},
         decree_text="x", narrative="y",
-        simulator_payload={}, secret_orders=[], relevant_memories=[],
+        simulator_payload={}, secret_orders=[],
     )
     assert db.get_resolve_context(turn)["source"] == "system_simulation"
 
@@ -68,7 +68,7 @@ def test_persist_sanitizes_malformed_delta_and_records_rejection(game):
     persist_resolve_context(
         db, turn, bad,
         decree_text="d", narrative="n",
-        simulator_payload={}, secret_orders=[], relevant_memories=[],
+        simulator_payload={}, secret_orders=[],
     )
 
     assert db.get_resolve_context(turn)["extracted"]["region_delta"] == {}
@@ -90,7 +90,7 @@ def test_persist_accepts_person_change_delta_after_applier_is_wired(game):
     persist_resolve_context(
         db, turn, extracted,
         decree_text="x", narrative="y",
-        simulator_payload={}, secret_orders=[], relevant_memories=[],
+        simulator_payload={}, secret_orders=[],
     )
 
     ctx = db.get_resolve_context(turn)
@@ -106,7 +106,7 @@ def test_settle_clears_resolve_context_on_completion(game):
     persist_resolve_context(
         db, turn, extracted,
         decree_text="d", narrative="n",
-        simulator_payload={}, secret_orders=[], relevant_memories=[],
+        simulator_payload={}, secret_orders=[],
     )
     assert db.get_resolve_context(turn) is not None
 
@@ -132,7 +132,7 @@ def test_resolve_context_survives_mid_settle_crash(game, monkeypatch, tmp_path):
     persist_resolve_context(
         db, turn, extracted,
         decree_text="d", narrative="n",
-        simulator_payload={}, secret_orders=[], relevant_memories=[],
+        simulator_payload={}, secret_orders=[],
     )
 
     class _Boom(RuntimeError):
@@ -163,7 +163,7 @@ def test_hitl_phase1_save_path_not_regressed(game):
     # 复刻 decree.py:326 HITL 暂停时的原始调用（不带 extracted）。
     db.save_resolve_context(
         turn, "HITL诏书", "含决策点的邸报", {"payload": 1},
-        secret_orders=[{"id": 7}], relevant_memories=[{"m": "x"}],
+        secret_orders=[{"id": 7}],
     )
 
     ctx = db.get_resolve_context(turn)
@@ -180,7 +180,7 @@ def test_hitl_phase1_save_path_not_regressed(game):
         db, turn, extracted,
         decree_text="HITL诏书", narrative="含决策点的邸报",
         simulator_payload={"payload": 1},
-        secret_orders=[{"id": 7}], relevant_memories=[{"m": "x"}],
+        secret_orders=[{"id": 7}],
     )
     ctx2 = db.get_resolve_context(turn)
     assert ctx2["extracted"] == extracted
@@ -201,7 +201,7 @@ def test_hitl_phase1_placeholder_extracted_is_none(game):
     db, state, content = game
     turn = state.turn
     db.save_resolve_context(turn, "d", "n", {"k": "v"},
-                            secret_orders=[], relevant_memories=[])
+                            secret_orders=[])
     ctx = db.get_resolve_context(turn)
     assert ctx is not None
     assert ctx["extracted"] is None
@@ -213,7 +213,7 @@ def test_genuinely_empty_delta_distinguishable_from_placeholder(game):
     db, state, content = game
     turn = state.turn
     db.save_resolve_context(turn, "d", "n", {"k": "v"},
-                            secret_orders=[], relevant_memories=[], extracted={})
+                            secret_orders=[],extracted={})
     ctx = db.get_resolve_context(turn)
     assert ctx is not None
     assert ctx["extracted"] == {}
@@ -233,7 +233,7 @@ def test_advance_without_edict_ignores_stale_ready_context(game, monkeypatch):
     db, state, content = game
     turn = state.turn
     db.save_resolve_context(turn, "d", "n", {}, secret_orders=[],
-                            relevant_memories=[], extracted={"metric_delta": {"国库": 1}})
+                            extracted={"metric_delta": {"国库": 1}})
     assert db.get_resolve_context(turn) is not None
 
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
@@ -261,7 +261,7 @@ def test_corrupt_extracted_json_returns_none_not_empty(game):
     db, state, content = game
     turn = state.turn
     db.save_resolve_context(turn, "d", "n", {}, secret_orders=[],
-                            relevant_memories=[], extracted={"metric_delta": {"国库": 1}})
+                            extracted={"metric_delta": {"国库": 1}})
     db.conn.execute(
         "UPDATE pending_resolve_context SET extracted_delta_json='not json' WHERE turn=?",
         (turn,),
@@ -282,7 +282,7 @@ def test_type_corrupt_extracted_json_returns_none(game):
     db, state, content = game
     turn = state.turn
     db.save_resolve_context(turn, "d", "n", {}, secret_orders=[],
-                            relevant_memories=[], extracted={"metric_delta": {"国库": 1}})
+                            extracted={"metric_delta": {"国库": 1}})
     db.conn.execute(
         "UPDATE pending_resolve_context SET extracted_delta_json='[1, 2]' WHERE turn=?",
         (turn,))

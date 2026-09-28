@@ -2388,7 +2388,7 @@ def test_657_s2_s3_lock_boundary_and_parallel_summons(game, monkeypatch):
     db.save_rescript_drafts(int(state.turn), drafts)
     db.save_resolve_context(
         int(state.turn), "诏", "邸报", {"candidate_events": []},
-        secret_orders=[], relevant_memories=[],
+        secret_orders=[],
     )
     db.conn.commit()
     desk = db.list_rescript_desk(int(state.turn))

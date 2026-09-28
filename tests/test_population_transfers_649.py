@@ -5,9 +5,9 @@ canonical＝ADR 0087/0088 + #649 冻结票面（含庭裁修正案 r1-r5）：
 - reason×方向矩阵（加派/摊派/灾害/兵灾/逃亡；回流出池见 #652 settle 真缝），出阵组合逐项拒收；
 - class_delta 写 population 由静默忽略升格逐项拒收；两轴分立（数据拒收不中止事务）；
 - 单位随存档 population_unit（新档人/sub-万精确，legacy 万口径、sub-万不可表达）；
-- restore 后流民池从 classes 只读 DB 无损接续；effect_brief 机器面事实摘要。
+- restore 后流民池从 classes 只读 DB 无损接续。
 主测缝（PRD Testing Decisions 预定）：apply_score_extraction / settle_with_delta /
-effect_brief 纯函数——只测外部行为，不打内部桩。
+只测外部行为，不打内部桩。
 """
 
 from __future__ import annotations
@@ -20,7 +20,6 @@ import pytest
 from ming_sim.db import GameDB, POPULATION_UNIT_PERSONS, POPULATION_UNIT_WAN
 from ming_sim.decree import settle_with_delta
 from ming_sim.issues import apply_score_extraction
-from ming_sim.memories import effect_brief
 
 # ── 独立 oracle（content 冻结 seed 字面，非实现推导）──────────────────────────
 FARMER_SHAANXI = 6000000      # content/classes.json 农民@shaanxi（人）
@@ -346,46 +345,6 @@ def test_new_save_unit_is_persons(game):
     assert applied["population_transfers"][0]["population_unit"] == POPULATION_UNIT_PERSONS
 
 
-# ── effect_brief 机器面事实摘要（F1 §1.5，随档口径措辞）───────────────────────
-
-def test_effect_brief_persons_unit_wording():
-    """新档（人口径）：省名（非裸 region_id）+ N 口文案。"""
-    brief = effect_brief({"population_transfers": [{
-        "source": "农民@shaanxi", "target": "流民@shaanxi", "amount": 3000,
-        "reason": "加派", "region_id": "shaanxi", "region_name": "陕西",
-        "population_unit": "人",
-    }]})
-    assert "陕西农民流失3000口为流民（加派）" in brief  # 省名真源＝applied.region_name
-    assert "shaanxi" not in brief
-    assert "万口" not in brief
-
-
-def test_effect_brief_wan_unit_wording_and_reflux():
-    """legacy 档（万口径）：N 万口文案；回流句省名同样落汉字。"""
-    brief = effect_brief({"population_transfers": [
-        {"source": "农民@shaanxi", "target": "流民@shaanxi", "amount": 3,
-         "reason": "灾害", "region_id": "shaanxi", "region_name": "陕西",
-         "population_unit": "万人"},
-        {"source": "流民@henan", "target": "农民@henan", "amount": 5,
-         "reason": "回流", "region_id": "henan", "region_name": "河南",
-         "population_unit": "万人"},
-    ]})
-    assert "陕西农民流失3万口为流民（灾害）" in brief
-    assert "河南流民5万口归农（回流）" in brief
-    # 旧留痕无 region_name 槽时退回 region_id，不炸
-    fallback = effect_brief({"population_transfers": [{
-        "source": "农民@shaanxi", "target": "流民@shaanxi", "amount": 3,
-        "reason": "灾害", "region_id": "shaanxi", "population_unit": "万人",
-    }]})
-    assert "shaanxi农民流失3万口为流民（灾害）" in fallback
-
-
-def test_effect_brief_ignores_rejected_transfers():
-    brief = effect_brief({"population_transfers": [{"rejected": True}]})
-    assert brief == effect_brief({})
-
-
-# ── 结算管线桥接 + restore 只读 DB 无损接续（F2/F3）──────────────────────────
 
 def test_settle_bridge_rejection_reports_and_turn_extractions(game):
     """settle_with_delta 内：坏项经 RejectionCollector 落 rejection_reports（section=
