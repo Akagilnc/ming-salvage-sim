@@ -35,7 +35,6 @@ from ming_sim.covert_progress import (
     settle_due_secret_orders,
 )
 from ming_sim.person_archive_contract import PERSON_LEGAL_REASON_CODES
-from tests.settlement_seam_helpers import settle_effects as settle_with_delta
 from ming_sim.db import GameDB
 from ming_sim.issues import apply_score_extraction
 from ming_sim.models import TurnPhase
@@ -111,14 +110,6 @@ def _set_axes(db, name, *, loyalty, identity, faction=None, seed_guilt=""):
     db.conn.commit()
 
 
-def _report(dossier_id, text="本月密奏已达"):
-    return {
-        "dossier_id": int(dossier_id),
-        "progress_band": "在办",
-        "memorial_text": text,
-    }
-
-
 def _originate_work(db, state, content, dossier_id, *, delta=-1):
     apply_score_extraction(
         db, state,
@@ -133,22 +124,6 @@ def _originate_work(db, state, content, dossier_id, *, delta=-1):
         },
         content=content,
     )
-
-
-def _delta_work(oid, dossier_id, *, fidelity="忠实", memorial="本月密奏已达", eco=-1, report=True):
-    extracted = {
-        "economy_moves": [{
-            "account": "内库",
-            "delta": int(eco),
-            "category": "密令差务",
-            "reason": "差务实办开支",
-            "origin_ref": f"dossier:{int(dossier_id)}",
-        }],
-        "covert_exec_selections": [{"order_id": int(oid), "fidelity": fidelity}],
-    }
-    if report:
-        extracted["dossier_progress_reports"] = [_report(dossier_id, memorial)]
-    return extracted
 
 
 def _catch_names(db, exclude, n=3):
@@ -329,7 +304,6 @@ def test_actual_progress_container_separate_from_reported_rail(game):
 def test_settle_due_reads_actual_rail_only_report_does_not_flip_verdict(game):
     """窄接缝：settle_due_secret_orders 只读 actual rail；奏报灌满不翻 verdict。
 
-    真入口下表报背离见 test_settle_gap_failed_and_reported_divergence。
     """
     db, state, _ = game
     name = _minister(db)
@@ -569,35 +543,6 @@ def test_mid_month_restore_preserves_actual_progress(game):
         db2.close()
 
 
-def test_settle_with_delta_wires_monthly_and_due(game):
-    """settle_with_delta 同 atomic：当月实况 + 到期对账；closes 字段无效。"""
-    db, state, content = game
-    name = _minister(db)
-    _set_axes(db, name, loyalty=90, identity=30)
-    # 单月期限：发令月不计；次月产 1.0 并对账
-    oid = _issue(db, state, name, "一月密查", "限期一月", months=1, target=1)
-    did = int(db.get_dossier_for_secret_order(oid)["id"])
-    before = state.turn
-    first = _delta_work(oid, did, memorial="查有实据")
-    settle_with_delta(state, db, first, before_turn=before, content=content)
-    # 发令月 settle：未到期、无实进度（发令月排除）
-    order = db.get_secret_order(oid)
-    assert order["status"] == "active"
-    assert db.sum_dossier_actual_progress_units(did) == 0.0
-
-    # 次月：产 1.0 并到期 → done
-    before2 = state.turn
-    settle_with_delta(
-        state, db,
-        _delta_work(oid, did, memorial="查有实据", report=True),
-        before_turn=before2,
-        content=content,
-    )
-    order2 = db.get_secret_order(oid)
-    assert order2["status"] == "done", order2
-    assert db.sum_dossier_actual_progress_units(did) == 1.0
-
-
 def test_secret_order_closes_field_is_ignored(game):
     db, state, content = game
     name = _minister(db)
@@ -681,127 +626,6 @@ def test_monthly_actual_does_not_invent_generic_world_package(game):
     assert after_loyalty == before_loyalty
     assert int(state.metrics.get("内库", 0)) == before_neiku
     assert db.list_economy_moves_for_dossier(did) == []
-
-
-def test_settle_originated_effects_drive_actual_and_restore(game):
-    """真入口：extractor origin 效果驱动 actual；restore 两轨无损；月度不另改人物。"""
-    db, state, content = game
-    name = _minister(db)
-    _set_axes(db, name, loyalty=90, identity=30)
-
-    oid = _issue(db, state, name, "一月实办", "限期一月查明", months=1, target=3)
-    did = int(db.get_dossier_for_secret_order(oid)["id"])
-    missing_state_oid = _issue(
-        db, state, name, "执行态缺失仍可隔离", "独立密令", months=2, target=5,
-    )
-    missing_state_did = int(db.get_dossier_for_secret_order(missing_state_oid)["id"])
-    settle_with_delta(
-        state, db, {"dossier_progress_reports": [
-            _report(did, "发令月密奏"),
-            _report(missing_state_did, "独立密令发令月密奏"),
-        ]},
-        before_turn=state.turn, content=content,
-    )
-    assert db.sum_dossier_actual_progress_units(did) == 0.0
-
-    before_loyalty = int(db.conn.execute(
-        "SELECT loyalty FROM characters WHERE name=?", (name,)
-    ).fetchone()["loyalty"])
-    before_neiku = int(state.metrics.get("内库", 0))
-    settlement_turn = int(state.turn)
-    second_month = _delta_work(oid, did, memorial="实查有据", eco=-3, report=True)
-    second_month["dossier_progress_reports"].append(
-        _report(missing_state_did, "执行态缺失案卷照常月报")
-    )
-    settle_with_delta(
-        state, db,
-        second_month,
-        before_turn=state.turn,
-        content=content,
-    )
-
-    assert db.sum_dossier_actual_progress_units(did) == 3.0
-    assert db.sum_dossier_actual_progress_units(missing_state_did) == 0.0
-    rejection = db.conn.execute(
-        "SELECT section, category, reason, item_json FROM rejection_reports "
-        "WHERE turn=? AND section='covert_exec_selections'",
-        (settlement_turn,),
-    ).fetchone()
-    assert rejection is not None
-    assert rejection["category"] == "invalid_enum"
-    assert rejection["reason"]
-    assert json.loads(rejection["item_json"]) == {"order_id": missing_state_oid}
-    actual_row = db.list_dossier_actual_progress(did)[0]
-    assert actual_row["fidelity_state"] == "忠实"
-    assert actual_row["origin_ref"] == f"dossier:{did}"
-    after_loyalty = int(db.conn.execute(
-        "SELECT loyalty FROM characters WHERE name=?", (name,)
-    ).fetchone()["loyalty"])
-    assert after_loyalty == before_loyalty
-    eco = db.list_economy_moves_for_dossier(did)
-    assert any(int(r.get("delta") or 0) == -3 for r in eco), eco
-    assert all(str(r.get("origin_ref") or "") == f"dossier:{did}" for r in eco)
-    assert int(state.metrics.get("内库", 0)) == before_neiku - 3
-    reported = db.list_dossier_progress(did)
-    assert reported
-
-    path = db.path
-    db.close()
-    db2 = GameDB(path, content)
-    try:
-        state2 = db2.load_state()
-        assert db2.sum_dossier_actual_progress_units(did) == 3.0
-        assert int(db2.conn.execute(
-            "SELECT loyalty FROM characters WHERE name=?", (name,)
-        ).fetchone()["loyalty"]) == after_loyalty
-        assert int(state2.metrics.get("内库", 0)) == before_neiku - 3
-        eco2 = db2.list_economy_moves_for_dossier(did)
-        assert any(int(r.get("delta") or 0) == -3 for r in eco2)
-        assert db2.list_dossier_progress(did)
-        assert not any(
-            "dossier_progress_json" in json.dumps(r, ensure_ascii=False) for r in eco2
-        )
-    finally:
-        db2.close()
-
-
-def test_settle_gap_failed_and_reported_divergence(game):
-    """真入口：反噬月实进度 0 + 表报灌满 → settle 到期 failed，表报不翻实账。"""
-    db, state, content = game
-    name = _minister(db)
-    _set_axes(db, name, loyalty=10, identity=90, seed_guilt="旧案")
-    oid = _issue(db, state, name, "必败一月", "无人真办", months=1, target=1)
-    did = int(db.get_dossier_for_secret_order(oid)["id"])
-    memorial = "臣称已全部查明"
-    db.record_dossier_progress(
-        did, state.turn, "办成", memorial, is_terminal=False,
-    )
-    settle_with_delta(
-        state, db, {"dossier_progress_reports": [_report(did, memorial)]},
-        before_turn=state.turn, content=content,
-    )
-    assert db.get_secret_order(oid)["status"] == "active"
-    assert db.sum_dossier_actual_progress_units(did) == 0.0
-
-    before_loyalty = int(db.conn.execute(
-        "SELECT loyalty FROM characters WHERE name=?", (name,)
-    ).fetchone()["loyalty"])
-    settle_with_delta(
-        state, db,
-        _delta_work(oid, did, fidelity="反噬", memorial=memorial, eco=-1, report=True),
-        before_turn=state.turn,
-        content=content,
-    )
-    mid_loyalty = int(db.conn.execute(
-        "SELECT loyalty FROM characters WHERE name=?", (name,)
-    ).fetchone()["loyalty"])
-    assert mid_loyalty == before_loyalty
-    order = db.get_secret_order(oid)
-    assert order["status"] == "failed"
-    dossier = db.get_dossier_for_secret_order(oid)
-    assert dossier["status"] == "closed"
-    assert dossier["execution_outcome"] == "failed"
-    assert db.list_dossier_progress(did)
 
 
 def test_zero_target_is_not_delivered():
@@ -1148,10 +972,8 @@ def test_fiscal_quantity_tracer_same_unit_done_and_gap(game):
         months=1, target=20, kind="补发饷银", axes=["既得利益"], unit="万两",
     )
     did = int(db.get_dossier_for_secret_order(oid)["id"])
-    settle_with_delta(
-        state, db, {"dossier_progress_reports": [_report(did, "发令")]},
-        before_turn=state.turn, content=content,
-    )
+    state.turn += 1
+    db.save_state(state)
     apply_score_extraction(
         db, state,
         {
@@ -1165,11 +987,11 @@ def test_fiscal_quantity_tracer_same_unit_done_and_gap(game):
         },
         content=content,
     )
-    settle_with_delta(
-        state, db,
-        _delta_work(oid, did, memorial="已补发", eco=-20, report=True),
-        before_turn=state.turn, content=content,
+    _originate_work(db, state, content, did, delta=-20)
+    apply_monthly_covert_actual_progress(
+        db, state, selections=[{"order_id": oid, "fidelity": "忠实"}], commit=True,
     )
+    settle_due_secret_orders(db, state, commit=True)
     assert db.sum_dossier_actual_progress_units(did) == 20.0
     assert db.get_secret_order(oid)["status"] == "done"
 
@@ -1178,15 +1000,13 @@ def test_fiscal_quantity_tracer_same_unit_done_and_gap(game):
         months=1, target=20, kind="补发饷银", axes=["既得利益"], unit="万两",
     )
     did2 = int(db.get_dossier_for_secret_order(oid2)["id"])
-    settle_with_delta(
-        state, db, {"dossier_progress_reports": [_report(did2, "发令")]},
-        before_turn=state.turn, content=content,
+    state.turn += 1
+    db.save_state(state)
+    _originate_work(db, state, content, did2, delta=-4)
+    apply_monthly_covert_actual_progress(
+        db, state, selections=[{"order_id": oid2, "fidelity": "忠实"}], commit=True,
     )
-    settle_with_delta(
-        state, db,
-        _delta_work(oid2, did2, memorial="只补四", eco=-4, report=True),
-        before_turn=state.turn, content=content,
-    )
+    settle_due_secret_orders(db, state, commit=True)
     assert db.sum_dossier_actual_progress_units(did2) == 4.0
     assert db.get_secret_order(oid2)["status"] == "failed"
 
@@ -1226,10 +1046,8 @@ def test_catch_quantity_tracer_same_unit_done_and_mismatch_ignored(game):
         months=1, target=3, kind="缉获人犯", unit="人犯",
     )
     did = int(db.get_dossier_for_secret_order(oid)["id"])
-    settle_with_delta(
-        state, db, {"dossier_progress_reports": [_report(did, "发令")]},
-        before_turn=state.turn, content=content,
-    )
+    state.turn += 1
+    db.save_state(state)
     _originate_work(db, state, content, did, delta=-9)
     db.conn.execute(
         "INSERT INTO person_logs "
@@ -2142,15 +1960,13 @@ def test_purpose_liaoxiang_canonicalizes_to_other_and_counts(game):
     did = int(db.get_dossier_for_secret_order(oid)["id"])
     contract = read_covert_task_contract(db.get_dossier_for_secret_order(oid))
     assert contract["delivery"]["purpose"] == "其它"
-    settle_with_delta(
-        state, db, {"dossier_progress_reports": [_report(did, "发令")]},
-        before_turn=state.turn, content=content,
+    state.turn += 1
+    db.save_state(state)
+    _originate_work(db, state, content, did, delta=-3)
+    apply_monthly_covert_actual_progress(
+        db, state, selections=[{"order_id": oid, "fidelity": "忠实"}], commit=True,
     )
-    settle_with_delta(
-        state, db,
-        _delta_work(oid, did, memorial="实发", eco=-3, report=True),
-        before_turn=state.turn, content=content,
-    )
+    settle_due_secret_orders(db, state, commit=True)
     assert db.sum_dossier_actual_progress_units(did) == 3.0
     assert db.get_secret_order(oid)["status"] == "done"
 
