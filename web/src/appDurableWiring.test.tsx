@@ -1780,17 +1780,17 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     expect(host2.querySelector('[data-testid="decision-modal"]')!.textContent).toContain("辽东战守");
   });
 
-  it("awaiting_decision + 损坏 pending：统一恢复横幅可点；刷新重挂后仍在", async () => {
-    stubSettlementFetch(settlementBaseState("awaiting_decision", {
-      pending_decisions: [{ broken: true }],
-      settlement_recovery: { message: "结算中止", error_pack_path: `/${"long-directory/".repeat(24)}error-pack` },
+  it("settling 恢复：长错误包路径下统一横幅可点；刷新重挂后仍在", async () => {
+    const errorPackPath = `/${"long-directory/".repeat(24)}error-pack`;
+    stubSettlementFetch(settlementBaseState("settling", {
+      settlement_recovery: { message: "结算中止", ready_replay: true, error_pack_path: errorPackPath },
     }));
     const host = await mountApp();
     await act(async () => {
-      await vi.waitFor(() => expect(host.querySelector('[data-testid="decision-recovery"]')).not.toBeNull());
+      await vi.waitFor(() => expect(host.querySelector('[data-testid="settle-resume"]')).not.toBeNull());
     });
-    const panel = host.querySelector('[data-testid="decision-recovery"]')!;
-    expect(panel.textContent).toMatch(/批红|待批/);
+    const panel = host.querySelector('[data-testid="settle-resume"]')!;
+    expect(panel.textContent).toContain(errorPackPath);
     const retry = panel.querySelector("button") as HTMLButtonElement | null;
     expect(retry).not.toBeNull();
     expect(retry!.disabled).toBe(false);
@@ -1821,9 +1821,9 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     unmountTrackedRoots();
     const host2 = await mountApp();
     await act(async () => {
-      await vi.waitFor(() => expect(host2.querySelector('[data-testid="decision-recovery"]')).not.toBeNull());
+      await vi.waitFor(() => expect(host2.querySelector('[data-testid="settle-resume"]')).not.toBeNull());
     });
-    expect((host2.querySelector('[data-testid="decision-recovery"] button') as HTMLButtonElement).disabled).toBe(false);
+    expect((host2.querySelector('[data-testid="settle-resume"] button') as HTMLButtonElement).disabled).toBe(false);
   });
 
   it("#1620 落印 SSE error 同页保留 picks + 单一 recovery alert + 可再落印", async () => {
