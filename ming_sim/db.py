@@ -22390,10 +22390,9 @@ class GameDB:
            into the shared ledger (disease root 1).
         """
         pins = self._coerce_positive_message_ids(origin_chat_message_ids)
+        # Keep earlier oral provenance when a later approval/update names another pin.
+        pins = list(dict.fromkeys([*self._brief_origin_chat_message_ids(int(order_id)), *pins]))
         pins_json = safe_json_dumps(pins, ensure_ascii=False)
-        # ON CONFLICT replaces origin_chat_message_ids (overwrite, not merge).
-        # Acceptable: withhold is monotonic; registered origin set reflects the
-        # latest classification event for this order_id, not a historical union.
         self.conn.execute(
             "INSERT INTO secret_order_briefs "
             "(order_id,turn,year,period,minister_name,title,body,origin_chat_message_ids) "

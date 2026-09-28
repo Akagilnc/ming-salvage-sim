@@ -981,13 +981,7 @@ def _person_audience_experience(db: Any, name: str) -> list[dict]:
 
 def _secret_order_chat_turn_ids(db: Any) -> set[int]:
     """Use durable oral pins, including later approvals and updates, not only issuance."""
-    message_ids = [mid for mid, durable in db._secret_origin_message_protection().items() if durable]
-    # Brief pins may be replaced on an update; earlier oral lines stay withheld.
-    message_ids.extend(
-        int(row["id"]) for row in db.conn.execute(
-            "SELECT id FROM chat_messages WHERE knowledge_status='withheld'"
-        )
-    )
+    message_ids = list(db._secret_origin_message_protection())
     if not message_ids:
         return set()
     placeholders = ",".join("?" for _ in message_ids)
