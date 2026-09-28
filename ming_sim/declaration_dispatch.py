@@ -1235,6 +1235,28 @@ def _dispatch_commissions(
             continue
 
         def _stage_office(shared_text: str) -> Dict[str, Any]:
+            from ming_sim.action_materialize import (
+                _apply_existing_appointment_hit, _same_direction_office_hits,
+            )
+            from types import SimpleNamespace
+            hits = _same_direction_office_hits(
+                db, int(state.turn), name=str(appointment_fields["name"]),
+                office=str(appointment_fields["office"]),
+                action=str(appointment_fields["appoint_action"]),
+                region_id=str(appointment_fields.get("region_id") or ""),
+            )
+            if len(hits) > 1:
+                _reject(rejected, item, "同向任免候选不唯一", "invalid_state", source)
+                return None
+            if hits:
+                oid = _apply_existing_appointment_hit(
+                    SimpleNamespace(db=db), hits[0],
+                    extracted_mode=appointment_fields.get("mode"),
+                    region_id=str(appointment_fields.get("region_id") or ""),
+                    minister_name=minister_name, turn=int(state.turn),
+                    annotate=True,
+                )
+                return {"id": oid, "kind": "office"}
             # office 成案链只吃任免字段；禁把 grant 的 execution_surface 等带进
             # appointment 案卷（会撞「execution_surface 与案卷动作策略不符」）。
             office_payload = dict(appointment_fields or {})
@@ -1255,7 +1277,9 @@ def _dispatch_commissions(
 
         # 仅任免 → office 成案链（收夜 → appointment 案卷 → 过月落职）。
         if appointment_fields and not grant_raw:
-            applied.append(_stage_office(str(payload.get("text") or "")))
+            staged = _stage_office(str(payload.get("text") or ""))
+            if staged is not None:
+                applied.append(staged)
             continue
 
         # 有拨帑（±任免）或纯正文拟旨：一份 directive 载荷。任免字段已挂同一 payload

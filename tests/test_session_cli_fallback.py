@@ -1506,11 +1506,14 @@ def test_scene_appointment_region_id_stages_same_seat(game):
 def test_propose_appointment_continue_draft_same_direction(
     game, appointee, seed_modes, continue_mode, expected_id_relation, expected_modes,
 ):
-    """#1731 工具续拟：同向命中合并/多命中禁插（单一入口，覆盖沉默·降级·多命中）。"""
+    """#1731 场景任免续拟：同向命中合并/多命中禁插。"""
+    from ming_sim.audience_translate import normalize_audience_declaration
+    from ming_sim.declaration_dispatch import dispatch_declaration
+
     db, state, content = game
     minister = "毕自严"
+    appointee = minister
     office = "户部尚书"
-    character = content.characters[minister]
     seed_ids = []
     for mode in seed_modes:
         seed_ids.append(db.stage_pending_action(
@@ -1521,24 +1524,14 @@ def test_propose_appointment_continue_draft_same_direction(
                 "appointer": minister, "mode": mode,
             },
         ))
-    body = {"name": appointee, "office": office, "reason": "续拟"}
+    appointment = {"name": appointee, "office": office, "appoint_action": "任命"}
     if continue_mode is not None:
-        body["mode"] = continue_mode
-    elif expected_id_relation == "same":
-        # 沉默：走真工具省略 mode
-        propose = _propose_appointment_tool(character, db, state)
-        marker = propose(name=appointee, office=office, reason="续拟")
-        body = json.loads(marker.removeprefix("__pending_appointment__"))
-        assert "mode" not in body
-
-    sess = GameSession.__new__(GameSession)
-    sess.db = db
-    sess.state = state
-    sess.content = content
-    sess.registry = None
-    continued_id = sess._stage_appointment_candidate(
-        json.dumps(body, ensure_ascii=False), character,
-    )
+        appointment["mode"] = continue_mode
+    declaration = normalize_audience_declaration({"commissions": [{
+        "text": "着毕自严继续掌户部。", "appointment": appointment,
+    }]})
+    result = dispatch_declaration(db, state, declaration, minister_name=minister)
+    continued_id = result.commissions.applied[0]["id"] if result.commissions.applied else 0
     rows = [
         {"id": int(p["id"]), "mode": json.loads(p["payload_json"]).get("mode")}
         for p in db.list_pending_actions(state.turn)
@@ -1551,6 +1544,7 @@ def test_propose_appointment_continue_draft_same_direction(
         assert rows == [{"id": seed_ids[0], "mode": expected_modes[0]}]
     else:
         assert continued_id == 0
+        assert len(result.commissions.rejected) == 1
         assert [r["id"] for r in rows] == seed_ids
         assert [r["mode"] for r in rows] == list(expected_modes)
 
