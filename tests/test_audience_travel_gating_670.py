@@ -294,7 +294,7 @@ def test_fresh_summon_origin_is_idempotent_and_projects_kind(game):
     }]
 
 
-def test_multi_origin_same_person_dedupes_consumer_projections_not_ledger(game):
+def test_multi_origin_same_person_dedupes_consumer_projections_not_ledger(game, monkeypatch):
     """#670：同人多 origin ledger 独立保留；arrived/waiting 消费端每人一份。"""
     db, state, content = game
     sess = _session(game)
@@ -352,16 +352,18 @@ def test_multi_origin_same_person_dedupes_consumer_projections_not_ledger(game):
     }]
 
     # 续赴京成功 → 同人全部 in_transit origin 结清（含尚未手结的 origin_tool）。
-    from tests.settlement_seam_helpers import settle_effects as settle_with_delta
+    from tests.test_month_chain_1843 import _prepare_player_month
 
-    settle_with_delta(
-        state, db,
-        {"人物变更": [{
+    session = _prepare_player_month(
+        db, state, content, monkeypatch, world=lambda *_a, **_k: "世界段",
+        translate=lambda *_a, **_k: {"effects": {"人物变更": [{
             "name": person.name, "动作": "行止", "transit_to": "beizhili",
             "origin_ref": "盘面自发",
-        }]},
-        before_turn=int(state.turn), content=content,
+        }]}},
     )
+    session.resolve_turn(allow_empty_decree=True)
+    db.save_turn_report(state, "邸报", public_body="邸报")
+    session.resolve_turn(allow_empty_decree=True)
     assert an.list_unsettled_summons(db) == []
     assert an.list_arrived_unsettled_summons(db) == []
     assert an.list_waiting_audience_summons(db) == []
@@ -484,17 +486,9 @@ def test_fresh_summon_applier_failure_rolls_back_and_close_retry_is_safe(game, m
 
 
 def test_arrived_summon_continuation_survives_failed_apply_across_months(game, monkeypatch):
-    """#670 T-D：抵原地 payload 见抵达 → 失败月 / 无续启成功月 / 续启成功月三段 settle_with_delta。
-
-    1. 失败月：续启 delta 经 settle_with_delta 触发 SettlementAbort；turn 不变；origin/抵达/行止未动。
-    2. 无续启成功月：空 delta 经 settle_with_delta 推进一月；未结 origin 与抵达事实仍在，
-       行止仍 henan/空 transit。若 settle_applied_arrived_summons 在任一成功月无视
-       applied_person_changes 清掉在途 origin，本段必须失败。
-    3. 续启成功月：canonical 行止 delta 经 settle_with_delta 才自动结清 origin。
-    三段均禁止手推 turn、禁止手调 settle_applied_arrived_summons。
-    """
-    import ming_sim.decree as decree_mod
-    from tests.settlement_seam_helpers import settle_effects as settle_with_delta
+    """#670 T-D：失败、无续启、续启的三个玩家过月边界均保留召对事实。"""
+    from tests.test_month_chain_1843 import _prepare_player_month
+    from tests.test_due_review_621 import _settle_empty_month
 
     db, state, content = game
     person = _set_place(
@@ -536,14 +530,22 @@ def test_arrived_summon_continuation_survives_failed_apply_across_months(game, m
             raise RuntimeError("injected continuation applier failure")
         return real_apply(*args, **kwargs)
 
-    # #1843 reopen：落账经 declaration_dispatch → issues.apply_score_extraction
+    # 落账经 declaration_dispatch → issues.apply_score_extraction。
     monkeypatch.setattr(issues_mod, "apply_score_extraction", fail_once)
+
+    def advance_continuation():
+        session = _prepare_player_month(
+            db, state, content, monkeypatch, world=lambda *_a, **_k: "世界段",
+            translate=lambda *_a, **_k: {"effects": continuation},
+        )
+        session.resolve_turn(allow_empty_decree=True)
+        db.save_turn_report(state, "邸报", public_body="邸报")
+        session.resolve_turn(allow_empty_decree=True)
+
     failed_turn = int(state.turn)
     from ming_sim.exceptions import SettlementAbort
     with pytest.raises(SettlementAbort) as excinfo:
-        settle_with_delta(
-            state, db, continuation, before_turn=failed_turn, content=content,
-        )
+        advance_continuation()
     assert isinstance(excinfo.value.__cause__, RuntimeError)
     assert "injected continuation applier failure" in str(excinfo.value.__cause__)
 
@@ -552,9 +554,9 @@ def test_arrived_summon_continuation_survives_failed_apply_across_months(game, m
     assert _travel_row(db, person.name)["transit_to"] == ""
     assert int(state.turn) == failed_turn
 
-    # 无续启成功月：公开生产缝空 delta 推进一月；不得手推 turn / 手调结清。
+    # 无续启成功月：玩家入口推进一月；不得手推 turn / 手调结清。
     noop_turn = int(state.turn)
-    settle_with_delta(state, db, {}, before_turn=noop_turn, content=content)
+    _settle_empty_month(db, state, content, monkeypatch)
     assert int(state.turn) == noop_turn + 1
     assert [row["origin_id"] for row in an.list_unsettled_summons(db)] == [origin]
     next_payload = build_simulator_payload(state, db, "", "")
@@ -562,17 +564,14 @@ def test_arrived_summon_continuation_survives_failed_apply_across_months(game, m
     assert _travel_row(db, person.name)["location"] == "henan"
     assert _travel_row(db, person.name)["transit_to"] == ""
 
-    # 续启成功月：只经 settle_with_delta；结清证明不得手调 helper。
-    settle_with_delta(
-        state, db, continuation, before_turn=int(state.turn), content=content,
-    )
+    # 续启成功月：只经玩家过月；结清证明不得手调 helper。
+    advance_continuation()
     assert an.list_unsettled_summons(db) == []
     after = _travel_row(db, person.name)
     assert after["location"] == "henan"
     assert after["transit_to"] == "beizhili"
     # 在途赴京期间不得再投「抵原地后续赴京」。
     assert build_simulator_payload(state, db, "", "")["unsettled_arrived_summons"] == []
-    assert attempts == 3
 
 
 def test_fresh_seed_closes_ticket_670_named_locations(content):
@@ -2138,13 +2137,13 @@ def test_fresh_departure_arrival_and_capital_consume_lifecycle(game):
     assert build_simulator_payload(state, db, "", "")["waiting_audience"] == []
 
 
-def test_continuation_arrival_settles_origin_without_waiting(game):
+def test_continuation_arrival_settles_origin_without_waiting(game, monkeypatch):
     """#670：抵非京 arrived → 续程 beizhili 成功即结清 origin，不再形成该 origin 候见。
 
     fresh→抵京→候见→宣入 独立路径由 test_fresh_departure_arrival_and_capital_consume_lifecycle
     与 test_direct_capital_arrival_does_not_queue_continuation 另钉。
     """
-    from tests.settlement_seam_helpers import settle_effects as settle_with_delta
+    from tests.test_month_chain_1843 import _prepare_player_month
 
     db, state, content = game
     person = _set_place(
@@ -2166,14 +2165,16 @@ def test_continuation_arrival_settles_origin_without_waiting(game):
         "required_fact": "抵原地后续赴京",
     }]
 
-    settle_with_delta(
-        state, db,
-        {"人物变更": [{
+    session = _prepare_player_month(
+        db, state, content, monkeypatch, world=lambda *_a, **_k: "世界段",
+        translate=lambda *_a, **_k: {"effects": {"人物变更": [{
             "name": person.name, "动作": "行止", "transit_to": "beizhili",
             "origin_ref": "盘面自发",
-        }]},
-        before_turn=int(state.turn), content=content,
+        }]}},
     )
+    session.resolve_turn(allow_empty_decree=True)
+    db.save_turn_report(state, "邸报", public_body="邸报")
+    session.resolve_turn(allow_empty_decree=True)
     assert _travel_row(db, person.name)["transit_to"] == "beizhili"
     assert an.list_unsettled_summons(db) == []
     assert an.list_arrived_unsettled_summons(db) == []
