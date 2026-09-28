@@ -32,6 +32,7 @@ import { DecisionModal } from "./components/decisionModal";
 import { DecisionRecoveryPanel } from "./components/decisionRecovery";
 import { needsPhase2Resume } from "./decisionRouting";
 import { getMapIntelStyle, refreshLabelMaps } from "./format";
+import { opensAudienceOnResume } from "./reopenLanding";
 import {
   isFaceReachable,
   isSettlementDisplay,
@@ -98,7 +99,6 @@ export function App() {
   const [audienceScrollGeneration, setAudienceScrollGeneration] = React.useState(0);
   const audienceScrollPositionsRef = React.useRef(new Map<string, number>());
   const audienceResumeCheckedRef = React.useRef(false);
-  const audienceResumeGenerationRef = React.useRef(0);
   const invalidateAudienceScroll = React.useCallback(() => {
     setAudienceScrollGeneration((generation) => generation + 1);
   }, []);
@@ -270,7 +270,6 @@ export function App() {
     clearSettlementHudError();
     setUndoneChatIdentity(null);
     audienceResumeCheckedRef.current = false;
-    audienceResumeGenerationRef.current += 1;
     setAppView("game");
     await loadState();
   }, [loadState, resetLocalEdictState, clearSettlementHudError]);
@@ -284,7 +283,6 @@ export function App() {
     // #1808 C：退菜单清 settlementHudError，接缝归既有退出路径。
     clearSettlementHudError();
     audienceResumeCheckedRef.current = false;
-    audienceResumeGenerationRef.current += 1;
     await fetch("/api/menu/exit_to_menu", { method: "POST" });
     setState(null);
     setUndoneChatIdentity(null);
@@ -349,24 +347,14 @@ export function App() {
 
   // #1852：退役自动弹出全屏邸报窗。写成即推进的当次阅读由 settlementGazetteReading 本面落位；
   // 刷新 / 重开落新月份盘面；旧月邸报只经木牌 / 史册自取。
+  // #1855 / ADR 0158 决定 7：三种落点由 state.reopen_landing 驱动，前端不猜夜/核账。
 
   React.useEffect(() => {
     if (!state || appView !== "game" || audienceResumeCheckedRef.current) return;
     audienceResumeCheckedRef.current = true;
-    const generation = audienceResumeGenerationRef.current;
-    api<{ night_id: number; status: string }>("/api/audience/scroll")
-      .then((scroll) => {
-        if (generation !== audienceResumeGenerationRef.current) return;
-        if (scroll.night_id > 0 && scroll.status === "open") {
-          setSelectedMinister(AUDIENCE_SCENE_SPEAKER);
-          setActiveModal("chat");
-        }
-      })
-      .catch((err) => {
-        if (generation === audienceResumeGenerationRef.current) {
-          setError(err instanceof Error ? err.message : String(err));
-        }
-      });
+    if (!opensAudienceOnResume(state.reopen_landing)) return;
+    setSelectedMinister(AUDIENCE_SCENE_SPEAKER);
+    setActiveModal("chat");
   }, [state, appView]);
 
   // 全局 ESC：按 z-index 优先级，最前面的弹窗先关。
