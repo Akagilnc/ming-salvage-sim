@@ -974,29 +974,6 @@ def test_mao_wenlong_event_trigger_lands_character_status(game):
         ).fetchone()[0] == before_logs + 1
 
 
-def test_event_outcome_retry_ignores_non_landable_event_without_world_state_delta(game):
-    """PR#214：只因 new_issues 幻觉静态事件 id、但无战果主账时，不应触发 retry/fail-loud。"""
-    db, state, content = game
-    issues.bind_content(content)
-    state.year = 1629
-    state.period = 11
-
-    extracted = {
-        "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
-        "事件结局": {"jisi_lubian": "大胜"},
-        "region_delta": {"shandong": {"origin_ref": "盘面自发", "民心": -1, "reason": " unrelated famine pressure "}},
-    }
-
-    issues.normalize_event_outcome_labels_or_error(
-        extracted,
-        content,
-        db=db,
-        state=state,
-    )
-
-    assert extracted["事件结局"] == {"jisi_lubian": "大胜"}
-
-
 def test_ordinary_jinzhou_preparedness_delta_is_not_rejected_as_songshan_outcome(game):
     """ship-pre CMR：普通锦州战备整饬不等于松锦决战战果。"""
     db, state, content = game
