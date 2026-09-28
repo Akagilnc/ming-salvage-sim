@@ -107,7 +107,6 @@ def _base_runtime(db):
         state=state,
         db=db,
         close=lambda: None,
-        abandon_chat_turn_scene=lambda *_a, **_k: None,
         # #1842：WebGame persist 尾必调；轻壳无 pending 时 no-op。
         schedule_pending_scene_translation=lambda result: None,
         _character=lambda name: character,
@@ -387,7 +386,6 @@ def test_worker_postprocess_exception_emits_error_end():
     runtime, minister = _base_runtime(db)
     runtime.session.registry = SimpleNamespace(get=lambda _c, **_kw: None)
     runtime.session._character = lambda name: minister_double(minister)
-    runtime.session.abandon_chat_turn_scene = lambda *_a, **_k: None
     runtime.session.close_night_after_chat_if_needed = None
 
     runtime._scene_chat_stream_payload = (  # type: ignore[method-assign]

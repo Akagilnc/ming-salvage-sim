@@ -152,25 +152,8 @@ class _FakeSession(HallAdmissionSessionMixin):
 
     def refresh_runtime_after_chat_rollback(self):
         return None
-
-    # #542 scene lifecycle seams — production chat_stream/_start_chat_turn call these.
-    def start_chat_turn_scene(self, *_a, **_k):
-        return None
-
-    def start_chat_turn_exit_scene(self, *_a, **_k):
-        return None
-
     def start_exit_scene_from_dismiss_tools(self, *a, **k):
         return GameSession.start_exit_scene_from_dismiss_tools(self, *a, **k)
-
-    def join_chat_turn_scene(self, *_a, **_k):
-        return []
-
-    def persist_chat_turn_scene(self, *_a, **_k):
-        return None
-
-    def abandon_chat_turn_scene(self, *_a, **_k):
-        return None
 
     def can_summon(self, character):
         # #1402：web _require_active_minister 改调 session.can_summon——假壳挂真方法，禁自造文案表

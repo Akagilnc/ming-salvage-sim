@@ -531,9 +531,6 @@ def test_stream_post_reply_exception_preserves_phase_and_recovers_original_turn(
     game = web_game
     minister = next(iter(game.content.characters))
     install_hall_admission(game.session)
-    game.session.start_chat_turn_scene = lambda *_a, **_k: None
-    game.session.join_chat_turn_scene = lambda *_a, **_k: []
-    game.session.persist_chat_turn_scene = lambda *_a, **_k: None
     game.session.schedule_pending_scene_translation = lambda *_a, **_k: None
     game._spawn_pending_write_thread = lambda *_a, **_k: None
     calls = []
@@ -568,9 +565,6 @@ def test_dispatch_exception_after_persist_retains_reply_recovery(web_game, monke
     game = web_game
     minister = next(iter(game.content.characters))
     install_hall_admission(game.session)
-    game.session.start_chat_turn_scene = lambda *_a, **_k: None
-    game.session.join_chat_turn_scene = lambda *_a, **_k: []
-    game.session.persist_chat_turn_scene = lambda *_a, **_k: None
     game.session.scene_chat = lambda *_a, **_k: ChatTurnResult(answer="臣遵旨。")
     game.session.schedule_pending_scene_translation = lambda *_a, **_k: (_ for _ in ()).throw(
         RuntimeError("translation dispatch failed"))

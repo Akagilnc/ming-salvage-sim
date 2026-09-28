@@ -389,8 +389,6 @@ def test_terminal_persistent_chat_finalization_failure_rolls_back_real_turn(game
         return real_append(name, turn, role, body, *args, **kwargs)
 
     def fail_minister_persist(name, turn, body, chat_turn_id, *args, **kwargs):
-        # #542：有 join_chat_turn_scene 时 finalization 走 persist_minister_reply，
-        # 与 append_chat_message(minister) 同为回话落盘缝。
         raise RuntimeError("finalization write failed")
 
     monkeypatch.setattr(db, "append_chat_message", fail_minister_write)
@@ -421,12 +419,6 @@ def test_terminal_persistent_chat_finalization_failure_rolls_back_real_turn(game
         content=content,
         temporary_characters=set(),
         scene_chat=scene_chat,
-        # #542 scene lifecycle seams — CLI minister_chat start/join/persist/abandon.
-        start_chat_turn_scene=lambda *_a, **_k: None,
-        start_chat_turn_exit_scene=lambda *_a, **_k: None,
-        join_chat_turn_scene=lambda *_a, **_k: [],
-        persist_chat_turn_scene=lambda *_a, **_k: None,
-        abandon_chat_turn_scene=lambda *_a, **_k: None,
         # #1842：persist 尾必调；本测在落大臣行前失败，仍须绑契约防 AttributeError。
         schedule_pending_scene_translation=lambda result: None,
     )

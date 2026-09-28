@@ -101,12 +101,6 @@ def _cli_session(db, state, content):
     return SimpleNamespace(
         db=db, state=state, content=content, temporary_characters=set(),
         chat=chat, scene_chat=scene_chat,
-        # #542 scene lifecycle seams（CLI minister_chat / 退下会调）；替身 no-op。
-        start_chat_turn_scene=lambda *_a, **_k: None,
-        start_chat_turn_exit_scene=lambda *_a, **_k: None,
-        join_chat_turn_scene=lambda *_a, **_k: [],
-        persist_chat_turn_scene=lambda *_a, **_k: None,
-        abandon_chat_turn_scene=lambda *_a, **_k: None,
         # #1842：persist 尾必调；轻壳无 pending 时 no-op。
         schedule_pending_scene_translation=lambda result: None,
     )

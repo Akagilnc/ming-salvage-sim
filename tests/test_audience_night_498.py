@@ -641,12 +641,6 @@ def test_cli_minister_chat_anchors_turn_to_night(game, monkeypatch):
     session = SimpleNamespace(
         db=db, state=state, content=content, temporary_characters=set(),
         chat=chat, scene_chat=scene_chat,
-        # #542 scene lifecycle seams — CLI minister_chat start/join/persist/abandon.
-        start_chat_turn_scene=lambda *_a, **_k: None,
-        start_chat_turn_exit_scene=lambda *_a, **_k: None,
-        join_chat_turn_scene=lambda *_a, **_k: [],
-        persist_chat_turn_scene=lambda *_a, **_k: None,
-        abandon_chat_turn_scene=lambda *_a, **_k: None,
         # #1842：persist 尾必调；轻壳无 pending 时 no-op。
         schedule_pending_scene_translation=lambda result: None,
     )
