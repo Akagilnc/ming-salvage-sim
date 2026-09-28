@@ -875,8 +875,9 @@ def _settle_edicts(
                         from ming_sim.applier import register_runtime_outcome_callbacks
                         names = tuple(sorted(affected))
                         def refresh_affected() -> None:
+                            project = getattr(registry, "project_outcome", registry.refresh)
                             for name in names:
-                                registry.refresh(name)
+                                project(name)
 
                         register_runtime_outcome_callbacks(db, on_commit=refresh_affected)
         current = db.get_decree_dossier(int(dossier["id"])) or dossier

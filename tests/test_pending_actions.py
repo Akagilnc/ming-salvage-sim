@@ -31,7 +31,6 @@ import ming_sim.cli_backend as cb
 import ming_sim.issues as issues
 from ming_sim.db import GameDB
 from ming_sim.decree import pre_settle, reload_state_from_db
-from tests.settlement_seam_helpers import settle_effects as settle_with_delta
 from ming_sim.registry import MinisterRegistry
 from ming_sim.session import GameSession, TurnPhase
 from tests.dossier_test_helpers import LIAO_PAY_COVERT_TASK, create_test_secret_order, promulgate_proposed_appointments
@@ -1879,6 +1878,21 @@ def _two_active_ming(db, content):
     return actives[0], actives[1]
 
 
+def _promulgate_player_dossiers(db, state, content, monkeypatch, reg, verdicts):
+    from ming_sim.decree_forecast import decree_ref_for_dossier
+    from tests.test_month_chain_1843 import _prepare_player_month
+
+    for verdict in verdicts:
+        dossier = db.get_decree_dossier(verdict["dossier_id"])
+        db.staged_declarations.stage(
+            decree_ref=decree_ref_for_dossier(db, dossier), declaration={},
+            turn=int(state.turn), verdict={"decision": verdict["decision"]}, forecast_text="",
+        )
+    player = _prepare_player_month(db, state, content, monkeypatch)
+    player.registry = reg
+    player.resolve_turn(allow_empty_decree=True)
+
+
 class _FakeRegistry:
     """记录 register/refresh 调用,证明 office commit 真把 content/registry 透传到落地核。"""
     def __init__(self):
@@ -1928,7 +1942,7 @@ def test_commit_appointment_existing_minister_by_alias(game, monkeypatch):
 
 def test_commit_reappoint_reactivates_dismissed_minister(game, monkeypatch):
     """重新任命【已罢黜】大臣 → 外层 settle 顺颁后改回 active 并授官。
-    #672：registry 只在 settle_with_delta outer commit 后 refresh；事务内零刷新。"""
+    #672：案卷在玩家月链顺颁后刷新 registry。"""
     db, state, content = game
     a, b = _two_active_ming(db, content)
     objb = content.characters[b.name]
@@ -1953,14 +1967,7 @@ def test_commit_reappoint_reactivates_dismissed_minister(game, monkeypatch):
         ]
         reg = _FakeRegistry()
 
-        def mid_txn_applier(_db, _state, _extracted, _content, _registry):
-            assert reg.refreshed == [], "事务内不得 refresh registry"
-            return {}
-
-        settle_with_delta(
-            state, db, {}, before_turn=int(state.turn), content=content,
-            registry=reg, dossier_verdicts=verdicts, delta_applier=mid_txn_applier,
-        )
+        _promulgate_player_dossiers(db, state, content, monkeypatch, reg, verdicts)
         row = db.conn.execute(
             "SELECT status, office FROM characters WHERE name=?", (b.name,)).fetchone()
         assert row["status"] == "active"        # 起复:改回 active
@@ -2096,7 +2103,7 @@ def test_displace_duplicate_offices_recomputes_office_type(game):
 
 
 def test_commit_dismiss_refreshes_registry(game, monkeypatch):
-    """罢免经 settle_with_delta 顺颁后刷新被罢者 Agent；事务内零刷新。(#672)"""
+    """罢免经玩家月链顺颁后刷新被罢者 Agent。(#672)"""
     db, state, content = game
     a, b = _two_active_ming(db, content)
     sess = types.SimpleNamespace(
@@ -2116,22 +2123,14 @@ def test_commit_dismiss_refreshes_registry(game, monkeypatch):
     ]
     reg = _FakeRegistry()
 
-    def mid_txn_applier(_db, _state, _extracted, _content, _registry):
-        assert reg.refreshed == [], "事务内不得 refresh registry"
-        return {}
-
-    settle_with_delta(
-        state, db, {}, before_turn=int(state.turn), content=content,
-        registry=reg, dossier_verdicts=verdicts, delta_applier=mid_txn_applier,
-    )
+    _promulgate_player_dossiers(db, state, content, monkeypatch, reg, verdicts)
     assert b.name in reg.refreshed
     assert db.conn.execute(
         "SELECT status FROM characters WHERE name=?", (b.name,)).fetchone()["status"] == "dismissed"
 
 
-def test_office_appointment_refreshes_displaced_holder(game):
-    """兼衔部分顶替经真实 settle_with_delta：事务内零 refresh；
-    outer commit 后新任者与部分被顶替者（仍留其余官职）均 refresh。(#672)"""
+def test_office_appointment_refreshes_displaced_holder(game, monkeypatch):
+    """兼衔部分顶替顺颁后新任者与部分被顶替者均刷新。(#672)"""
     db, state, content = game
     new_holder, partial = _two_active_ming(db, content)
     # 旧任兼两职；新任只占其一 → 部分顶替，不落到听用候铨。
@@ -2159,14 +2158,7 @@ def test_office_appointment_refreshes_displaced_holder(game):
     assert verdicts, "任命 pending 须落 proposed 案卷"
     reg = _FakeRegistry()
 
-    def mid_txn_applier(_db, _state, _extracted, _content, _registry):
-        assert reg.refreshed == [], "事务内不得 refresh registry"
-        return {}
-
-    settle_with_delta(
-        state, db, {}, before_turn=int(state.turn), content=content,
-        registry=reg, dossier_verdicts=verdicts, delta_applier=mid_txn_applier,
-    )
+    _promulgate_player_dossiers(db, state, content, monkeypatch, reg, verdicts)
 
     row_partial = db.conn.execute(
         "SELECT office, office_type FROM characters WHERE name=?",
@@ -2305,8 +2297,8 @@ def test_front_half_done_directive_confirmation_commits_without_second_review(ga
     assert row["text"] == "着户部清核辽饷。"
 
 
-def test_settle_pending_cultivate_refreshes_after_outer_commit(game, monkeypatch):
-    """#672：phase-2/recovery commit_pending(registry=None) 后宫调教须 outer-commit refresh。"""
+def test_pending_cultivate_refreshes_after_commit(game):
+    """#672：后宫调教经正式 pending-action 提交刷新 registry。"""
     consort = next((c for c in content_consort_candidates(game)), None)
     if consort is None:
         pytest.skip("基底无 active 后宫角色")
@@ -2326,14 +2318,7 @@ def test_settle_pending_cultivate_refreshes_after_outer_commit(game, monkeypatch
 
     reg = _Reg()
 
-    def mid_txn_applier(_db, _state, _extracted, _content, _registry):
-        assert reg.refreshed == [], "事务内不得 refresh registry"
-        return {}
-
-    settle_with_delta(
-        state, db, {}, before_turn=int(state.turn), content=content,
-        registry=reg, delta_applier=mid_txn_applier,
-    )
+    db.commit_pending_actions(state, content=content, registry=reg)
     assert consort.name in reg.refreshed
     traits = db.get_consort_traits(consort.name)
     assert "理财" in (traits.get("extra_skills") or [])
@@ -2388,14 +2373,7 @@ def test_new_consort_registers_after_outer_commit(game, monkeypatch):
 
         reg = _Reg()
 
-        def mid_txn_applier(_db, _state, _extracted, _content, _registry):
-            assert reg.registered == [] and reg.refreshed == []
-            return {}
-
-        settle_with_delta(
-            state, db, {}, before_turn=int(state.turn), content=content,
-            registry=reg, dossier_verdicts=verdicts, delta_applier=mid_txn_applier,
-        )
+        _promulgate_player_dossiers(db, state, content, monkeypatch, reg, verdicts)
         assert new_consort in reg.registered
         assert new_consort not in reg.refreshed
         row = db.conn.execute(
