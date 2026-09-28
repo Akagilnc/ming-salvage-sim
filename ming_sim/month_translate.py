@@ -119,6 +119,29 @@ def translate_month_segment(
     return normalize_audience_declaration(declaration)
 
 
+def _translate_month_segment_front(
+    db: Any,
+    *,
+    segment: str,
+    turn: int,
+    decree_payload: Mapping[str, object],
+    llm_config: Any = None,
+    translate_fn: Optional[MonthTranslateFn] = None,
+    continuing_dossiers: tuple[Mapping[str, object], ...] | list[Mapping[str, object]] = (),
+) -> tuple[dict[str, object], dict[str, list[int]]]:
+    """过月段转译前半：冻结可见引用、拼 grounding、一次转出 C0 声明。"""
+    refs = _visible_effect_refs(db, turn, decree_payload)
+    declaration = translate_month_segment(
+        segment=segment,
+        target_grounding=build_translation_target_grounding(db) + _effect_ref_grounding(refs),
+        decree_payload=decree_payload,
+        llm_config=llm_config,
+        translate_fn=translate_fn,
+        continuing_dossiers=continuing_dossiers,
+    )
+    return declaration, refs
+
+
 def stage_month_segment(
     db: Any,
     *,
@@ -130,13 +153,9 @@ def stage_month_segment(
     translate_fn: Optional[MonthTranslateFn] = None,
 ) -> int:
     """预推段转译一次，只暂存声明；持久化、作废、按旨序结算沿 C0 原入口。"""
-    refs = _visible_effect_refs(db, turn, decree_payload)
-    declaration = translate_month_segment(
-        segment=segment,
-        target_grounding=build_translation_target_grounding(db) + _effect_ref_grounding(refs),
-        decree_payload=decree_payload,
-        llm_config=llm_config,
-        translate_fn=translate_fn,
+    declaration, refs = _translate_month_segment_front(
+        db, segment=segment, turn=turn, decree_payload=decree_payload,
+        llm_config=llm_config, translate_fn=translate_fn,
     )
     return stage_declaration(
         db, decree_ref=decree_ref, declaration=declaration, turn=turn,
@@ -160,14 +179,11 @@ def dispatch_month_segment(
     from ming_sim.materials import continuing_dossier_facts
 
     payload = decree_payload or {}
-    refs = _visible_effect_refs(db, int(state.turn), payload)
-    declaration = translate_month_segment(
-        segment=segment,
-        target_grounding=build_translation_target_grounding(db) + _effect_ref_grounding(refs),
-        decree_payload=payload,
-        llm_config=llm_config,
-        translate_fn=translate_fn,
-        continuing_dossiers=continuing_dossier_facts(db, int(state.turn)),
+    turn = int(state.turn)
+    declaration, refs = _translate_month_segment_front(
+        db, segment=segment, turn=turn, decree_payload=payload,
+        llm_config=llm_config, translate_fn=translate_fn,
+        continuing_dossiers=continuing_dossier_facts(db, turn),
     )
     return dispatch_declaration(
         db, state, declaration,

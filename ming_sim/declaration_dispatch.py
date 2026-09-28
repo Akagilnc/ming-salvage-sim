@@ -89,7 +89,7 @@ from ming_sim.audience_night import (
 from ming_sim.entities.affair import ATTACH_BIRTH, ATTACH_EXPERIENCE, declaration_from_payload
 from ming_sim.error_pack import rejections_jsonl_path
 from ming_sim.relations import summon_edge_origin
-from ming_sim.issues import apply_person_changes_only
+from ming_sim.issues import _ORDERED_DELTA_FIELDS, apply_person_changes_only
 from ming_sim.public_sayings import record_public_saying
 from ming_sim.relations import validate_edge_kind
 
@@ -298,10 +298,7 @@ def _effect_extraction_from_clean(
 ) -> tuple[dict[str, object], dict[str, list[tuple[str, object]]], dict[str, list[str]]]:
     """Build one apply_score_extraction payload from a single effect envelope."""
     extraction = copy.deepcopy(dict(empty_extraction))
-    ordered_deltas = {field: [] for field in (
-        "metric_delta", "faction_delta", "class_delta",
-        "region_delta", "army_delta", "power_updates",
-    )}
+    ordered_deltas = {field: [] for field in _ORDERED_DELTA_FIELDS}
     ordered_effect_event_ids = {field: [] for field in empty_extraction}
     for field, value in clean.items():
         if field not in empty_extraction:
@@ -434,10 +431,7 @@ def _dispatch_effects(
         open_affair_ids=set(refs.get("affairs", ())),
     )
     extraction = copy.deepcopy(EMPTY_EXTRACTION)
-    ordered_deltas = {field: [] for field in (
-        "metric_delta", "faction_delta", "class_delta",
-        "region_delta", "army_delta", "power_updates",
-    )}
+    ordered_deltas = {field: [] for field in _ORDERED_DELTA_FIELDS}
     ordered_effect_event_ids = {field: [] for field in EMPTY_EXTRACTION}
     effect_sequence: list[tuple[dict[str, object], dict[str, list[tuple[str, object]]], dict[str, list[str]]]] = []
     accepted_effect = False
