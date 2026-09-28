@@ -2315,15 +2315,6 @@ class WebGame:
         if getattr(self.state, "turn_phase", None) in FRONT_HALF_DONE_PHASES:
             raise HTTPException(status_code=409, detail="月末结算/亲裁进行中，暂不能召对。")
 
-    @staticmethod
-    def _message_is_formal_secret_order(message: str) -> bool:
-        """#1566：正式密令前缀入口（复用既有 _SECRET_PREFIXES，不另造分类器）。
-
-        ADR 0096：密疏不受 location 分流；公开 chat/stream 须在 admission 前识别。
-        """
-        from ming_sim.cli_backend import _SECRET_PREFIXES
-        return (message or "").strip().startswith(_SECRET_PREFIXES)
-
     def _open_night_court_break(self, message: str) -> bool:
         """#1716：已开夜的收夜口令不得被场外记召短路。
 
