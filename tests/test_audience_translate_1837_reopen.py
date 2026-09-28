@@ -245,7 +245,8 @@ def test_rush_commitment_stages_pending_催办(game):
         "VALUES ('差务', '分段试办', 'active', ?, ?)",
         (
             json.dumps([
-                {"stage_idx": 0, "due_turn": int(state.turn) + 3, "criterion_text": "首段"},
+                {"stage_idx": 0, "due_turn": int(state.turn) + 2, "criterion_text": "首段"},
+                {"stage_idx": 1, "due_turn": int(state.turn) + 3, "criterion_text": "次段"},
             ], ensure_ascii=False),
             int(state.turn),
         ),
@@ -256,7 +257,7 @@ def test_rush_commitment_stages_pending_催办(game):
         "rushes": [{
             "target_kind": "commitment",
             "target_id": issue_id,
-            "stage_idx": 0,
+            "stage_idx": 1,
             "deadline_months": 1,
             "reason": "限期下月办结",
         }],
@@ -273,8 +274,16 @@ def test_rush_commitment_stages_pending_催办(game):
     assert row["kind"] == "commitment" and row["action"] == "催办"
     assert int(row["target_id"]) == issue_id
     payload = json.loads(row["payload_json"])
+    assert int(payload["stage_idx"]) == 1
     assert int(payload["deadline_months"]) == 1
     assert "限期下月" in payload["reason"]
+    db.commit_pending_actions(state, content=content, registry=None)
+    from ming_sim.staged_commitment import normalize_commitment_stages
+    stages = normalize_commitment_stages(db.conn.execute(
+        "SELECT stages_json FROM issues WHERE id=?", (issue_id,)
+    ).fetchone()["stages_json"])
+    assert int(stages[0]["due_turn"]) == int(state.turn) + 2
+    assert int(stages[1]["due_turn"]) == int(state.turn) + 1
 
 
 def test_travel_tone_updates_this_round_summon_ledger(game):
