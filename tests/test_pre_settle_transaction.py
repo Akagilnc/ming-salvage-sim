@@ -178,21 +178,21 @@ def test_crash_inside_pre_settle_no_missing_fiscal(game, monkeypatch):
 # cmr S4 r1 修复回归（F1 settling 复位 / F2 sticky / F3 skip 路守门）
 # ---------------------------------------------------------------------------
 
-def test_two_consecutive_driver_settles_both_get_fiscal_tick(game):
-    """driver 连续结算两回合，第二回合财政照常落账（cmr S4 r1 F1，3/3 critical）。
+def test_two_consecutive_player_months_both_get_fiscal_tick(game, monkeypatch):
+    """玩家连续结算两回合，第二回合财政照常落账（cmr S4 r1 F1，3/3 critical）。
 
     settling 推进回合后不复位的话，第二回合 pre_settle 被守门跳过=
     此后每月财政/暂存/密令全静默丢。
     """
-    from tests.section_rejection_helpers import prepare_then_settle as run_settle
+    from tests.test_due_review_621 import _settle_empty_month
     db, state, content = game
     t1 = state.turn
-    run_settle(db, state, content, {})
+    _settle_empty_month(db, state, content, monkeypatch)
     t2 = state.turn
     assert t2 == t1 + 1
     assert state.turn_phase != "settling"  # 推进后复位
 
-    run_settle(db, state, content, {})
+    _settle_empty_month(db, state, content, monkeypatch)
     assert state.turn == t2 + 1
     rows_t2 = db.conn.execute(
         "SELECT COUNT(*) FROM economy_ledger WHERE turn=?", (t2,)).fetchone()[0]
