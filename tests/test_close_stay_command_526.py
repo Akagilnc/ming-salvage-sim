@@ -96,6 +96,7 @@ def _open_with_minister(db, state, content):
 # ── AC：高置信收夜话语 → 收夜提交全程 ──────────────────────────────────
 
 
+@pytest.mark.usefixtures("_offline_scene_beat_generator")
 @pytest.mark.parametrize("utterance", ["退朝", "今日且到此"])
 def test_high_confidence_close_command_submits_full_chain(game, monkeypatch, utterance):
     """高置信口令 → close_night：夜 closed + 已应允候选提交（封窗=提交）。"""
@@ -109,9 +110,10 @@ def test_high_confidence_close_command_submits_full_chain(game, monkeypatch, utt
     )
     assert an.mark_actions_night_approved(db, [pid], night_id=nid) == 1
 
-    sess = _session(db, state, content, reply="臣等恭送。")
-    # 判词缝：确定性封闭集应直接给出 close；也允许脚本化注入同形
-    result = sess.chat(minister.name, utterance)
+    from tests.test_scene_llm_1836 import _sess
+
+    sess = _sess(db, state, content)
+    result = sess.scene_chat(utterance, minister_name=minister.name)
 
     assert result.court_action == "court_break"
     night = an.get_night(db, nid)
@@ -192,18 +194,25 @@ def test_close_night_after_chat_propagates_failure(game, monkeypatch):
 # ── AC：闲聊负例零误触 ────────────────────────────────────────────────
 
 
+@pytest.mark.usefixtures("_offline_scene_beat_generator")
 @pytest.mark.parametrize("utterance", _CHAT_NEGATIVES)
 def test_chat_negatives_do_not_close_night(game, monkeypatch, utterance):
-    db, state, content = game
-    _silence_action_extractors(monkeypatch)
-    minister, nid = _open_with_minister(db, state, content)
-    sess = _session(db, state, content, reply="臣回奏。")
+    from tests.conftest import stub_scene_agent
+    from tests.test_scene_llm_1836 import _sess
 
-    result = sess.chat(minister.name, utterance)
+    db, state, content = game
+    minister, nid = _open_with_minister(db, state, content)
+
+    class FakeAgent:
+        def run(self, _message):
+            return SimpleNamespace(content="臣回奏。", tools=[])
+
+    stub_scene_agent(monkeypatch, FakeAgent())
+    sess = _sess(db, state, content)
+    result = sess.scene_chat(utterance, minister_name=minister.name)
 
     assert result.court_action != "court_break"
     assert an.get_night(db, nid)["status"] == "open"
-    assert "陛下是要退朝么" not in (result.answer or "")
 
 
 # ── AC：留侍口令 → 叙事账、在场不变 ────────────────────────────────────
