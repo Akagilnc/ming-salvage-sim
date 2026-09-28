@@ -451,4 +451,3 @@ def test_gazette_failure_retries_report_only(game, monkeypatch):
     assert archive["title"] == _TITLE
     assert archive["report"] == _REPORT
 
-
