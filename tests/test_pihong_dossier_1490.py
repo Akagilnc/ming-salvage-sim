@@ -903,25 +903,30 @@ def test_657_http_default_hold_keyed_empty_action_and_betray(web_game, monkeypat
     db, state = web_game.db, web_game.state
     _657_install_real_phase2_llm_boundary(monkeypatch)
     opt = _layer_a_option()
-    db.conn.execute("DELETE FROM pending_decisions WHERE kind='rescript_draft'")
-    db.save_rescript_drafts(int(state.turn), [{
-        "title": "HTTP默认留中",
-        "context": "c",
-        "options": [opt, _layer_a_option(label="备", hint="h")],
-        "actor_name": "杨嗣昌",
-        "actor_office": "兵部尚书",
-        "actor_faction": "东林",
-    }])
-    db.save_resolve_context(
-        int(state.turn), "诏", "邸报",
-        {"candidate_events": [], "transit_semantics": []},
-        secret_orders=[], relevant_memories=[],
-    )
-    state.turn_phase = TurnPhase.AWAITING_DECISION.value
-    db.save_state(state)
-    db.conn.commit()
-    desk = db.list_rescript_desk(int(state.turn))
-    key = next(r["decision_key"] for r in desk if r["title"] == "HTTP默认留中")
+    from ming_sim.session_write_queue import get_session_write_queue
+
+    def plant_hold():
+        db.conn.execute("DELETE FROM pending_decisions WHERE kind='rescript_draft'")
+        db.save_rescript_drafts(int(state.turn), [{
+            "title": "HTTP默认留中",
+            "context": "c",
+            "options": [opt, _layer_a_option(label="备", hint="h")],
+            "actor_name": "杨嗣昌",
+            "actor_office": "兵部尚书",
+            "actor_faction": "东林",
+        }])
+        db.save_resolve_context(
+            int(state.turn), "诏", "邸报",
+            {"candidate_events": [], "transit_semantics": []},
+            secret_orders=[], relevant_memories=[],
+        )
+        state.turn_phase = TurnPhase.AWAITING_DECISION.value
+        db.save_state(state)
+        db.conn.commit()
+        desk = db.list_rescript_desk(int(state.turn))
+        return next(r["decision_key"] for r in desk if r["title"] == "HTTP默认留中")
+
+    key = get_session_write_queue(web_game.session).run_exclusive(plant_hold)
 
     r = asyncio.run(_post_resolve([{"decision_key": key}]))
     assert r.status_code == 200, r.text
@@ -1300,29 +1305,38 @@ def _657_subprocess_resolve(
 
 
 def _657_plant_awaiting_web(web_game, *, drafts=None, decisions=None, title="陕西告饥"):
-    """web_game 上种植急务/decision + resolve_context，相位 AWAITING_DECISION。"""
+    """web_game 上种植急务/decision + resolve_context，相位 AWAITING_DECISION。
+
+    经既有 SessionWriteQueue.run_exclusive 落盘（#1845/#1884）：后台机械尾
+    可能仍占同一连接时，测试布置不得绕开写闸。
+    """
     from ming_sim.models import TurnPhase
+    from ming_sim.session_write_queue import get_session_write_queue
 
     db, state = web_game.db, web_game.state
-    db.conn.execute("DELETE FROM pending_decisions")
-    db.conn.commit()
-    if drafts:
-        db.save_rescript_drafts(int(state.turn), drafts)
-    if decisions:
-        db.save_pending_decisions(int(state.turn), decisions)
-    db.save_resolve_context(
-        int(state.turn), "诏", "邸报",
-        {"candidate_events": [], "transit_semantics": []},
-        secret_orders=[], relevant_memories=[],
-    )
-    # Phase 2 needs its gazette prerequisite before the real month chain can advance.
-    db.save_turn_report(state, "邸报")
-    state.turn_phase = TurnPhase.AWAITING_DECISION.value
-    db.save_state(state)
-    web_game.state.turn_phase = TurnPhase.AWAITING_DECISION.value
-    web_game.session.state.turn_phase = TurnPhase.AWAITING_DECISION.value
-    db.conn.commit()
-    return db.list_rescript_desk(int(state.turn))
+
+    def plant():
+        db.conn.execute("DELETE FROM pending_decisions")
+        db.conn.commit()
+        if drafts:
+            db.save_rescript_drafts(int(state.turn), drafts)
+        if decisions:
+            db.save_pending_decisions(int(state.turn), decisions)
+        db.save_resolve_context(
+            int(state.turn), "诏", "邸报",
+            {"candidate_events": [], "transit_semantics": []},
+            secret_orders=[], relevant_memories=[],
+        )
+        # Phase 2 needs its gazette prerequisite before the real month chain can advance.
+        db.save_turn_report(state, "邸报")
+        state.turn_phase = TurnPhase.AWAITING_DECISION.value
+        db.save_state(state)
+        web_game.state.turn_phase = TurnPhase.AWAITING_DECISION.value
+        web_game.session.state.turn_phase = TurnPhase.AWAITING_DECISION.value
+        db.conn.commit()
+        return db.list_rescript_desk(int(state.turn))
+
+    return get_session_write_queue(web_game.session).run_exclusive(plant)
 
 
 def test_1627_stamp_ignores_pre_edict_clarification_directive(web_game):
@@ -2548,22 +2562,26 @@ def test_1621_http_follow_draft_uses_catalog_army_id(web_game, monkeypatch):
     assert army_opt["target_id"] == "guanning"
 
     _657_install_real_phase2_llm_boundary(monkeypatch)
-    db.conn.execute("DELETE FROM pending_decisions")
-    db.conn.commit()
-    db.save_rescript_drafts(int(state.turn), [{
-        "title": "急务-军令", "context": "c",
-        "options": [army_opt, {"label": "备", "hint": "h", "draft_capability": "x"}],
-        "actor_name": "杨嗣昌", "actor_office": "兵部尚书", "actor_faction": "东林",
-    }])
-    db.conn.commit()
-    db.save_resolve_context(
-        int(state.turn), "诏", "邸报", {"candidate_events": [], "transit_semantics": []},
-        secret_orders=[], relevant_memories=[],
-    )
-    state.turn_phase = TurnPhase.AWAITING_DECISION.value
-    db.save_state(state)
-    desk = db.list_rescript_desk(int(state.turn))
-    key = desk[0]["decision_key"]
+    from ming_sim.session_write_queue import get_session_write_queue
+
+    def plant_army():
+        db.conn.execute("DELETE FROM pending_decisions")
+        db.conn.commit()
+        db.save_rescript_drafts(int(state.turn), [{
+            "title": "急务-军令", "context": "c",
+            "options": [army_opt, {"label": "备", "hint": "h", "draft_capability": "x"}],
+            "actor_name": "杨嗣昌", "actor_office": "兵部尚书", "actor_faction": "东林",
+        }])
+        db.conn.commit()
+        db.save_resolve_context(
+            int(state.turn), "诏", "邸报", {"candidate_events": [], "transit_semantics": []},
+            secret_orders=[], relevant_memories=[],
+        )
+        state.turn_phase = TurnPhase.AWAITING_DECISION.value
+        db.save_state(state)
+        return db.list_rescript_desk(int(state.turn))[0]["decision_key"]
+
+    key = get_session_write_queue(web_game.session).run_exclusive(plant_army)
     r = asyncio.run(_post_resolve([{
         "decision_key": key,
         "action": "follow_draft",
@@ -3163,25 +3181,31 @@ def test_1620_http_follow_draft_office_token_routes_to_person(web_game, monkeypa
     token = "陕西巡抚"
     # 只中和 phase2 LLM 边界；保留真结算/推月（同 s5/1621）
     _657_install_real_phase2_llm_boundary(monkeypatch)
+    from ming_sim.session_write_queue import get_session_write_queue
 
-    db.conn.execute("DELETE FROM pending_decisions")
-    db.conn.commit()
     opt = _layer_a_option(
         label=f"责成{token}",
         assignee_name=token,
         transaction_category="督赈",
     )
-    urgent, _ = _plant_urgent_desk(
-        db, state, options=[opt, _layer_a_option(label="备")],
-    )
-    db.save_resolve_context(
-        int(state.turn), "诏", "邸报",
-        {"candidate_events": [], "transit_semantics": []},
-        secret_orders=[], relevant_memories=[],
-    )
-    db.save_turn_report(state, "邸报")
-    state.turn_phase = TurnPhase.AWAITING_DECISION.value
-    db.save_state(state)
+
+    def plant_office_token():
+        db.conn.execute("DELETE FROM pending_decisions")
+        db.conn.commit()
+        urgent, _ = _plant_urgent_desk(
+            db, state, options=[opt, _layer_a_option(label="备")],
+        )
+        db.save_resolve_context(
+            int(state.turn), "诏", "邸报",
+            {"candidate_events": [], "transit_semantics": []},
+            secret_orders=[], relevant_memories=[],
+        )
+        db.save_turn_report(state, "邸报")
+        state.turn_phase = TurnPhase.AWAITING_DECISION.value
+        db.save_state(state)
+        return urgent
+
+    urgent = get_session_write_queue(web_game.session).run_exclusive(plant_office_token)
     before = len(db.list_decree_dossiers())
     turn_before = int(web_game.state.turn)
     # 浏览器同形精简 follow：无 assignee overlay
@@ -5780,19 +5804,28 @@ def _1778_plant_and_follow(web_game, monkeypatch, drafts, *, desk_action="follow
     desk_action="midzhi" 时用同文件既有 midzhi 短 dict 形，从 head 取本案 C.4 键
     （必含 participant_roster）；不复刻 web 投影全键表。
     返回 {title: 新增案卷行}；断言留给调用方（外部结构化结果，不看散文）。
+
+    落桌写库经 SessionWriteQueue.run_exclusive（#1884 / #1845 同类）：上一轮
+    过月后的机械尾可能仍在写同一连接，布置不得绕开写闸。
     """
+    from ming_sim.session_write_queue import get_session_write_queue
+
     state, db = web_game.session.state, web_game.db
-    db.conn.execute("DELETE FROM pending_decisions")
-    db.conn.commit()
-    db.save_rescript_drafts(int(state.turn), drafts)
-    db.conn.commit()
-    db.save_resolve_context(
-        int(state.turn), "诏", "邸报",
-        {"candidate_events": [], "transit_semantics": []},
-        secret_orders=[], relevant_memories=[],
-    )
-    state.turn_phase = TurnPhase.AWAITING_DECISION.value
-    db.save_state(state)
+
+    def plant_desk():
+        db.conn.execute("DELETE FROM pending_decisions")
+        db.conn.commit()
+        db.save_rescript_drafts(int(state.turn), drafts)
+        db.conn.commit()
+        db.save_resolve_context(
+            int(state.turn), "诏", "邸报",
+            {"candidate_events": [], "transit_semantics": []},
+            secret_orders=[], relevant_memories=[],
+        )
+        state.turn_phase = TurnPhase.AWAITING_DECISION.value
+        db.save_state(state)
+
+    get_session_write_queue(web_game.session).run_exclusive(plant_desk)
 
     async def _get_state():
         async with _client() as client:
