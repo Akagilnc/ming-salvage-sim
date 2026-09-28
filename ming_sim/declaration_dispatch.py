@@ -1128,12 +1128,18 @@ def _dispatch_commissions(
             from ming_sim.action_materialize import stage_assignment_candidate
             actor = str(minister_name or "").strip() or _commission_fallback_actor(db)
             try:
+                roster = assignment.get("participant_roster")
+                if roster is not None:
+                    from ming_sim.cli_backend import normalize_draft_person_roster
+                    roster = normalize_draft_person_roster(
+                        roster, db=db, content=getattr(db, "content", None),
+                    )
                 row_id = stage_assignment_candidate(
                     db, int(state.turn), actor, text=body,
                     title=assignment.get("title", ""),
                     target_id=assignment.get("target_id", ""),
                     assignee=assignment.get("assignee", ""),
-                    participant_roster=assignment.get("participant_roster"),
+                    participant_roster=roster,
                     extracted_mode=assignment.get("mode"),
                     commitment_kind=assignment.get("commitment_kind"),
                     stop_condition=assignment.get("stop_condition"),
