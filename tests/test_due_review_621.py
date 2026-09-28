@@ -18,7 +18,7 @@ import pytest
 
 import ming_sim.issues as issue_engine
 from ming_sim.audience_night import list_ledger, open_night
-from tests.settlement_seam_helpers import settle_effects as settle_with_delta
+from tests.test_month_chain_1843 import _prepare_player_month
 from ming_sim.due_review import (
     apply_pending_due_reviews,
     build_due_review_input,
@@ -99,11 +99,14 @@ def _insert_staged_commitment(
     return int(created["issue_id"]), origin
 
 
-def _settle_empty_month(db, state, content):
+def _settle_empty_month(db, state, content, monkeypatch):
     before = state.turn
-    report = settle_with_delta(state, db, {}, before_turn=before, content=content)
+    session = _prepare_player_month(db, state, content, monkeypatch)
+    session.resolve_turn(allow_empty_decree=True)
+    db.save_turn_report(state, "邸报", public_body="邸报")
+    result = session.resolve_turn(allow_empty_decree=True)
     assert state.turn == before + 1
-    return report
+    return result
 
 
 def _cost_events(db, dossier_id, *, identity="连坐"):
@@ -267,7 +270,7 @@ def test_due_review_scene_tops_live_open_night_even_with_body(game):
 # ── P1 有案卷桥 / 无案卷分支 ──────────────────────────────────────────
 
 
-def test_dossier_branch_writes_execution_slot_via_adapter(game):
+def test_dossier_branch_writes_execution_slot_via_adapter(game, monkeypatch):
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.commit()
@@ -291,13 +294,13 @@ def test_dossier_branch_writes_execution_slot_via_adapter(game):
         origin_ref=f"dossier:{dossier_id}",
         title="有案卷分段之诺",
     )
-    # settle 写 todo（中段到期）→ 次回合 settle 落格
-    _settle_empty_month(db, state, content)
+    # 过月写 todo（中段到期）→ 次回合落格
+    _settle_empty_month(db, state, content, monkeypatch)
     assert db.list_next_audience_todos(status=TODO_STATUS_PENDING)
     scenes = list_due_review_scenes(db, state)
     assert scenes and scenes[0]["origin_context"] == "三年火器见眉目"
 
-    _settle_empty_month(db, state, content)
+    _settle_empty_month(db, state, content, monkeypatch)
     dossier = db.get_decree_dossier(dossier_id)
     # 中段：过程态 executing，不结案
     assert dossier["execution_outcome"] == "executing"
@@ -527,7 +530,7 @@ def test_executing_outcome_rejects_close_true(game):
 # ── P4/P5 时序与机械哨兵 ──────────────────────────────────────────────
 
 
-def test_three_beat_timing_todo_then_scene_then_slot(game):
+def test_three_beat_timing_todo_then_scene_then_slot(game, monkeypatch):
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.commit()
@@ -543,12 +546,12 @@ def test_three_beat_timing_todo_then_scene_then_slot(game):
     )
 
     # beat0: 未到期
-    _settle_empty_month(db, state, content)
+    _settle_empty_month(db, state, content, monkeypatch)
     assert db.list_next_audience_todos() == []
     assert not list_due_review_scenes(db, state)
 
-    # beat1: settle 写 todo
-    _settle_empty_month(db, state, content)
+    # beat1: 过月写 todo
+    _settle_empty_month(db, state, content, monkeypatch)
     todos = db.list_next_audience_todos(status=TODO_STATUS_PENDING)
     assert len(todos) == 1
     # 落格尚未发生
@@ -558,8 +561,8 @@ def test_three_beat_timing_todo_then_scene_then_slot(game):
     assert len(scenes) == 1
     assert "复命" in scenes[0]["scene_text"]
 
-    # beat3: 下一 settle 落格 + 消费
-    _settle_empty_month(db, state, content)
+    # beat3: 下一过月落格 + 消费
+    _settle_empty_month(db, state, content, monkeypatch)
     assert db.get_decree_dossier(dossier_id)["execution_outcome"]
     assert db.list_next_audience_todos(status=TODO_STATUS_PENDING) == []
 
@@ -570,7 +573,7 @@ def test_five_module_extractor_fanout_is_retired():
     assert not hasattr(simulation, "extract_scores_by_modules_with_agno")
 
 
-def test_due_review_settle_does_not_pause_or_decision(game):
+def test_due_review_settle_does_not_pause_or_decision(game, monkeypatch):
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.commit()
@@ -584,12 +587,12 @@ def test_due_review_settle_does_not_pause_or_decision(game):
     _insert_staged_commitment(
         db, state, content, stages=stages, origin_ref=f"dossier:{dossier_id}",
     )
-    report1 = _settle_empty_month(db, state, content)
-    assert "<<DECISION>>" not in report1
+    result1 = _settle_empty_month(db, state, content, monkeypatch)
+    assert result1.awaiting is False
     assert state.turn_phase != TurnPhase.AWAITING_DECISION.value
-    report2 = _settle_empty_month(db, state, content)
-    assert "<<DECISION>>" not in report2
-    assert state.turn_phase == TurnPhase.SUMMONING.value
+    result2 = _settle_empty_month(db, state, content, monkeypatch)
+    assert result2.awaiting is False
+    assert state.turn_phase == TurnPhase.ISSUED.value
     assert db.list_pending_decisions(state.turn) == []
     assert db.list_pending_decisions(state.turn - 1) == []
 
