@@ -3281,8 +3281,6 @@ class WebGame:
                             ),
                         )
                         if stage_failures:
-                            # Merge into method-local channel; confirmation-path
-                            # pending_action_failures are appended below.
                             tool_stage_failures.extend(stage_failures)
                 elif (
                     tool_name == "propose_appointment"
