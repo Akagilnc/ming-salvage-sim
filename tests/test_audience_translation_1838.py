@@ -11,6 +11,8 @@
 
 from __future__ import annotations
 
+from ming_sim.session_write_queue import get_session_write_queue
+
 from types import SimpleNamespace
 
 from ming_sim.audience_night import (
@@ -197,7 +199,7 @@ def _scene_session(db, state, content, monkeypatch):
     from ming_sim.session import _CLI_ACTION_INTENT_EXECUTOR
     sess._beat_generator = deterministic_test_beat_generator
     sess._scene_registry = ChatTurnSceneRegistry(_CLI_ACTION_INTENT_EXECUTOR)
-    sess._write_gate = None
+    sess._write_gate = get_session_write_queue(sess).write_gate
     return sess
 
 

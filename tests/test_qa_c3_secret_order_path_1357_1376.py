@@ -9,6 +9,8 @@
 
 from __future__ import annotations
 
+from ming_sim.session_write_queue import get_session_write_queue
+
 import asyncio
 import threading
 from types import MethodType, SimpleNamespace
@@ -42,7 +44,7 @@ def webgame_shell_for_secret_order(db, state, content, *, session_chat):
     禁 mock 生产缺失符号（掩 AttributeError）。
     """
     runtime = object.__new__(web_app.WebGame)
-    runtime._write_gate = threading.Lock()
+    runtime._write_gate = get_session_write_queue(runtime).write_gate
     from ming_sim.session_write_queue import SessionWriteQueue
     runtime._write_queue = SessionWriteQueue()
     runtime._write_gate = runtime._write_queue.write_gate

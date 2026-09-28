@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from ming_sim.session_write_queue import get_session_write_queue
+
 import json
 import threading
 from tests.wait_utils import wait_until
@@ -89,7 +91,7 @@ class _FakeSession(HallAdmissionSessionMixin):
             timeout_seconds=30.0, default_headers=None,
         )
         # 高亮离线：禁 FakeSession llm_config 半字段触发真 create_chat_model
-        self._write_gate = None
+        self._write_gate = get_session_write_queue(self).write_gate
         # 绑生产 scene_chat 及依赖方法（不平行实现 tool 暂存）
         # #1842：WebGame persist 尾必调 schedule_pending_scene_translation——假壳缺绑
         # 会在回话已入档后 AttributeError，失败回滚 history，观察者离开回归永久停车。

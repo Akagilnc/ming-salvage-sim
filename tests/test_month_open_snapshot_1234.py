@@ -13,6 +13,8 @@
 
 from __future__ import annotations
 
+from ming_sim.session_write_queue import get_session_write_queue
+
 from contextlib import contextmanager
 from types import SimpleNamespace
 
@@ -378,7 +380,7 @@ def test_web_advance_entry_exposes_settlement_display(game, monkeypatch):
     actions = []
     runtime.session.end_turn = lambda: actions.append("end_turn")
     runtime.refresh_turn = lambda: actions.append("refresh")
-    runtime._write_gate = threading.Lock()
+    runtime._write_gate = get_session_write_queue(runtime).write_gate
     mid = {}
 
     def _observe_then_done(**_kw):
@@ -425,7 +427,7 @@ def test_web_advance_entry_awaiting_keeps_phase_and_decisions(game, monkeypatch)
     turn_before = int(state.turn)
     runtime = _runtime(db, state)
     runtime.directive_rows = lambda: []
-    runtime._write_gate = threading.Lock()
+    runtime._write_gate = get_session_write_queue(runtime).write_gate
     decisions = [
         {
             "event_id": "evt-await-c2",

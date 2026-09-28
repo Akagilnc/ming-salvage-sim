@@ -14,6 +14,8 @@ TurnPhase.X.value——它们 pin 的是**落盘字符串值本身**，有意 en
 
 from __future__ import annotations
 
+from ming_sim.session_write_queue import get_session_write_queue
+
 import json
 import sqlite3
 import threading
@@ -183,7 +185,7 @@ def _recovery_session(db, state, content, monkeypatch):
     sess._beat_generator = None
     sess._scene_registry = None
     sess._decree_draft_fingerprint = ()
-    sess._write_gate = None
+    sess._write_gate = get_session_write_queue(sess).write_gate
     monkeypatch.setattr(GameSession, "auto_save", lambda self, tag: None)
     return sess
 
