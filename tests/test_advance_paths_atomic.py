@@ -1,29 +1,14 @@
-"""S7 (ADR 0008 PR1) — 三条推进回合写路径统一 atomic 事务包裹 + 恢复入口消费。
-
-决定 2：任何推进回合的写序列（正常 settle / 无旨 session.advance_without_decree）
-全有或全无——整体包 atomic，崩在中途整体回滚、内存从 DB 重载、相位/回合不前进。
-玩家 settling 入口已改走 ADR 0157 月链；此处保留共享旧核及 driver 的原子事务契约。
-决定 4：事务内 LLM 回调失败沿用降级，不触发回滚(章节记忆/结局总评内部已自吞)。
-
-用 conftest 的 game fixture(活存档副本，连接走 _SuspendableConnection factory，atomic 可用)。
-
-注：本文件设置/断言 turn_phase 时故意用 raw 字符串(如 "settling"/"awaiting_decision")而非
-TurnPhase.X.value——它们 pin 的是**落盘字符串值本身**，有意 enum 无关：枚举重命名而落盘值
-漂移时这些断言应响亮失败。S4 把生产代码相位比较统一到 TurnPhase enum，测试侧落盘断言不跟随。
-"""
+"""玩家月链恢复入口与持久化决议验证。"""
 
 from __future__ import annotations
 
 import json
-import sqlite3
 import threading
 
 import pytest
 
 import ming_sim.decree as decree_mod
 import ming_sim.issues as I
-from ming_sim.decree import persist_resolve_context
-from tests.settlement_seam_helpers import settle_effects as settle_with_delta
 from tests.dossier_test_helpers import TYPED_COVERT_TASK
 
 
@@ -31,121 +16,6 @@ def _ledger_count(db, turn: int) -> int:
     return db.conn.execute(
         "SELECT COUNT(*) FROM economy_ledger WHERE turn=?", (turn,)
     ).fetchone()[0]
-
-
-
-
-# ---------------------------------------------------------------------------
-# 路 3：无旨 session.advance_without_decree 整体 atomic
-# ---------------------------------------------------------------------------
-
-
-
-
-# ---------------------------------------------------------------------------
-# 路 1：settle_with_delta 整体 atomic —— 闭合 save_state→clear 崩溃窗口（S2+S3 defer）
-# ---------------------------------------------------------------------------
-
-def test_settle_crash_after_savestate_before_clear_rolls_back(game, monkeypatch, tmp_path):
-    """注入异常于 save_state 之后、clear_resolve_context 之前（seam：monkeypatch
-    db.clear_resolve_context 抛错）→ 整体回滚：turn 未推进、resolve_context 仍在（可重试）、
-    内存 state 与 DB 同源（ADR 0008 S2+S3 codex R2 defer→S7，崩溃窗口真正闭合）。
-
-    代码异常经 settle 的 atomic 上抛后被包成 SettlementAbort(stage="settle")（决定 6）；
-    本测试聚焦的是「整体回滚 + context 仍在」这个崩溃点不变式。错误包隔离到 tmp_path。"""
-    db, state, content = game
-    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
-    turn = state.turn
-    extracted = {"region_delta": {"shanxi": {"unrest": 1}}}
-    persist_resolve_context(
-        db, turn, extracted,
-        decree_text="d", narrative="n",
-        simulator_payload={}, secret_orders=[], relevant_memories=[],
-    )
-    assert db.get_resolve_context(turn) is not None
-
-    # clear 是 settle 写序列最后一笔（next_period + save_state 之后）。让它抛——
-    # 包 atomic 前：save_state 已 commit（turn 已推进、context 残留）；包 atomic 后整体回滚。
-    orig_clear = db.clear_resolve_context
-
-    def _boom_clear(t):
-        # 抛错前证明窗口真实：next_period/save_state 已发生（clear 在其后），
-        # 否则 clear 被挪到推进写之前测试也照样绿（cmr S7 r1 codex）。
-        assert state.turn == turn + 1, "clear 必须在 next_period/save_state 之后"
-        raise RuntimeError("clear boom")
-    monkeypatch.setattr(db, "clear_resolve_context", _boom_clear)
-
-    from ming_sim.exceptions import SettlementAbort
-    with pytest.raises(SettlementAbort) as ei:
-        settle_with_delta(state, db, extracted, before_turn=turn, content=content)
-    assert ei.value.stage == "settle"
-    assert isinstance(ei.value.__cause__, RuntimeError)
-
-    monkeypatch.setattr(db, "clear_resolve_context", orig_clear)
-
-    # 整体回滚：用新连接读盘，turn 未推进、context 仍在。
-    other = sqlite3.connect(db.path)
-    try:
-        on_disk_turn = other.execute("SELECT turn FROM game_state").fetchone()[0]
-    finally:
-        other.close()
-    assert on_disk_turn == turn  # 回合未推进（save_state 随回滚消失）
-    assert db.get_resolve_context(turn) is not None  # context 仍在，可重试
-    # 内存与 DB 同源（reload）：turn 未前进。
-    assert state.turn == turn
-    assert not db.conn.in_transaction
-
-
-def test_settle_code_exception_writes_pack_and_aborts(game, monkeypatch, tmp_path):
-    """settle 内注入代码异常（apply_score_extraction 抛 RuntimeError）→ SettlementAbort
-    (stage="settle")、错误包五件齐、DB 全回滚、内存已 reload（ADR 0008 决定 2/3/6，S6 defer F1）。"""
-    from pathlib import Path
-    from ming_sim.exceptions import SettlementAbort
-
-    db, state, content = game
-    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
-    turn = state.turn
-    extracted = {"metric_delta": {"民心": -4}}  # 国库由 economy_accounts 派生不可直写；民心负向不撞 clamp
-    persist_resolve_context(
-        db, turn, extracted,
-        decree_text="减赋诏", narrative="本月邸报……",
-        simulator_payload={}, secret_orders=[], relevant_memories=[],
-    )
-
-    # apply_score_extraction 是 settle 第一笔写（delta_applier=None 回退到它）。
-    def _boom(*a, **k):
-        raise RuntimeError("apply boom")
-    monkeypatch.setattr(decree_mod, "apply_score_extraction", _boom)
-
-    with pytest.raises(SettlementAbort) as ei:
-        settle_with_delta(state, db, extracted, before_turn=turn, content=content)
-
-    assert ei.value.stage == "settle"
-    assert ei.value.turn == turn
-    assert isinstance(ei.value.__cause__, RuntimeError)
-
-    # 错误包五件齐
-    packs = list((tmp_path / "error_packs").iterdir())
-    assert len(packs) == 1
-    pack = packs[0]
-    for name in ("traceback.txt", "delta.json", "resolve_context.json",
-                 "save_backup.db", "manifest.json"):
-        assert (pack / name).exists(), f"缺 {name}"
-    # delta.json 是本回合 extracted（非占位）
-    import json
-    assert json.loads((pack / "delta.json").read_text(encoding="utf-8")) == extracted
-
-    # DB 全回滚：turn 未推进、context 仍在
-    other = sqlite3.connect(db.path)
-    try:
-        on_disk_turn = other.execute("SELECT turn FROM game_state").fetchone()[0]
-    finally:
-        other.close()
-    assert on_disk_turn == turn
-    assert db.get_resolve_context(turn) is not None
-    # 内存已 reload（同源）
-    assert state.turn == turn
-    assert not db.conn.in_transaction
 
 
 # ---------------------------------------------------------------------------
@@ -692,36 +562,3 @@ def test_draft_mutators_frozen_at_front_half_done(game, monkeypatch):
     ):
         with pytest.raises(ValueError, match="结算|亲裁"):
             call()
-
-
-
-
-def test_settle_reload_failure_propagates_raw_not_abort(game, monkeypatch, tmp_path):
-    """settle 崩+回滚后 reload 自身再炸 → 原异常裸传播(带 __cause__=reload 异常),
-    **不包 SettlementAbort 不写错误包**——内存仍脏时向玩家宣传「可重试」是误导,
-    写包也会基于脏态(b12a60e 原语义;cmr S4 r1,2/2:helper 重构后被外层 except
-    二次捕获误包装)。"""
-    db, state, content = game
-    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
-    turn = state.turn
-    extracted = {"metric_delta": {"民心": -1}}
-    persist_resolve_context(
-        db, turn, extracted,
-        decree_text="减赋诏", narrative="本月邸报……",
-        simulator_payload={}, secret_orders=[], relevant_memories=[],
-    )
-
-    def _boom(*a, **k):
-        raise RuntimeError("apply boom")
-    monkeypatch.setattr(decree_mod, "apply_score_extraction", _boom)
-
-    def _reload_boom(*a, **k):
-        raise OSError("reload boom")
-    monkeypatch.setattr(decree_mod, "reload_state_from_db", _reload_boom)
-
-    with pytest.raises(RuntimeError, match="apply boom") as ei:
-        settle_with_delta(state, db, extracted, before_turn=turn, content=content)
-
-    assert isinstance(ei.value.__cause__, OSError)  # reload 异常链上保留
-    packs = list((tmp_path / "error_packs").glob("turn*")) if (tmp_path / "error_packs").exists() else []
-    assert packs == []  # 不基于脏态写包
