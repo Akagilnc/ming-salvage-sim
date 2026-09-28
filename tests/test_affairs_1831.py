@@ -395,7 +395,7 @@ def test_typed_affair_new_issues_share_provenance_and_close_final_state(game):
     assert db.affairs.get(existing.id).status == "open"
     assert any(
         row["report_section"] == "affair_declarations"
-        and "未了局势" in row["reason"]
+        and row["category"] == "invalid_shape"
         for row in result["validate_shape_rejections"]
     )
 
