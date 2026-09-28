@@ -51,7 +51,7 @@ def test_scene_chat_one_call_returns_multi_person_script(game, monkeypatch):
     night_id = int(get_open_night(db)["id"])
     for name in ("王绍徽", "毕自严"):
         if name not in present_names_at(db, night_id):
-            summon_enter(db, night_id, name, body="", empty_scaffold=True)
+            summon_enter(db, night_id, name)
 
     script = (
         "王绍徽出列奏道：臣以为洪承畴可当一面。\n"

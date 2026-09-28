@@ -591,7 +591,7 @@ def test_withdraw_pending_action_removes_before_decree(game):
 
     db, state, content = game
     name = _active_minister_name(db, content)
-    night = an.open_night(db, state, empty_scaffold=True)
+    night = an.open_night(db, state)
     pid = db.stage_pending_action(
         state.turn, kind="office", action="任命", minister_name=name, target_id=None,
         payload={"text": "测试任免原文", "name": "袁崇焕", "office": "辽东巡抚", "summon_after": "是"},
@@ -619,7 +619,7 @@ def test_withdraw_pending_action_does_not_commit_outer_transaction(game):
 
     db, state, content = game
     name = _active_minister_name(db, content)
-    night = an.open_night(db, state, empty_scaffold=True)
+    night = an.open_night(db, state)
     pending_id = db.stage_pending_action(
         state.turn, kind="office", action="任命", minister_name=name, target_id=None,
         payload={"text": "测试任免原文", "name": "袁崇焕", "office": "辽东巡抚", "summon_after": "是"},

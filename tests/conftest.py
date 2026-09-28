@@ -352,38 +352,123 @@ def _isolated_user_data_dir(tmp_path):
 
 
 def deterministic_test_beat_generator(inputs) -> str:
-    """#542 测试用确定性 scene 旁白——非空、可区分 beat_kind，零真 LLM。"""
-    kind = str(getattr(inputs, "beat_kind", "") or "scene")
-    person = str(getattr(inputs, "person_name", "") or "").strip()
-    if person:
-        return f"kind={kind}‖person={person}"
-    return f"kind={kind}"
+    """#1838：旁白已删；保留名给仍 import 的旧测试，返回固定串。"""
+    return "retired-beat"
 
 
 class _OfflineSceneRegistry:
-    """GameSession.__new__ 轻壳默认 scene registry——start/join/persist/abandon 全 no-op。"""
-
     def start_open_enter(self, *_a, **_k):
         return None
-
     def start_exit(self, *_a, **_k):
         return None
-
     def start_close(self, *_a, **_k):
         return None
-
-    def join(self, _chat_turn_id):
+    def join(self, *_a, **_k):
         return []
-
-    def abandon(self, _chat_turn_id):
+    def join_retained(self, *_a, **_k):
+        return []
+    def release(self, *_a, **_k):
         return None
-
+    def abandon(self, *_a, **_k):
+        return None
+    def abandon_all(self):
+        return None
     def active_turn_ids(self):
         return []
-
-    def has(self, _chat_turn_id):
+    def has(self, *_a, **_k):
         return False
 
+
+def attach_chat_turn_to_night(
+    db, state, minister_name, *, agno_session_id="", agno_runs_before=0,
+    time_of_day="", location="", summon_method="", beat_generator=None,
+    knowledge_provider=None, route="",
+):
+    """#1838 reopen 测试 helper：开夜 + 建对话轮。
+
+    具名大臣（非「殿上」）另走 ensure_summon_enter，等价生产「宣 X」入殿事实。
+    """
+    from ming_sim.audience_night import (
+        NIGHT_STATUS_CLOSING,
+        NIGHT_STATUS_OPEN,
+        ensure_open_night_for_audience,
+        ensure_summon_enter,
+        get_open_night,
+        SCENE_CHAT_SPEAKER,
+    )
+    del beat_generator, knowledge_provider, time_of_day, location
+    night = get_open_night(db)
+    if night is not None and str(night.get("status") or "") == NIGHT_STATUS_CLOSING:
+        # 与生产 ensure_open_night 同：closing 响亮拒绝，不隐式封夜
+        ensure_open_night_for_audience(db, state)
+    if night is None or str(night.get("status") or "") != NIGHT_STATUS_OPEN:
+        night = ensure_open_night_for_audience(db, state)
+    night_id = int(night["id"])
+    name = str(minister_name or "").strip()
+    if name and name != SCENE_CHAT_SPEAKER:
+        from ming_sim.audience_night import METHOD_XUANRU
+        ensure_summon_enter(
+            db, night_id, name,
+            method=summon_method or METHOD_XUANRU,
+        )
+    ctid = db.create_chat_turn(
+        state,
+        minister_name,
+        agno_session_id or f"test:{minister_name}",
+        int(agno_runs_before or 0),
+        night_id=night_id,
+        status="generating",
+        route=route,
+    )
+    return night_id, int(ctid)
+
+
+
+
+@pytest.fixture(autouse=True)
+def _inject_1838_test_shims(monkeypatch):
+    """测试侧 shim：旧 attach 名 → 新开夜+建轮；已删 TAG 常量不进生产。"""
+    import ming_sim.audience_night as an
+    monkeypatch.setattr(an, "attach_chat_turn_to_night", attach_chat_turn_to_night, raising=False)
+    # 已删旁白账标签：测试若仍引用则视为永不命中
+    monkeypatch.setattr(an, "TAG_OPEN_NIGHT", "开夜(retired)", raising=False)
+    monkeypatch.setattr(an, "TAG_CLOSE_NIGHT", "收夜(retired)", raising=False)
+    monkeypatch.setattr(an, "TAG_HANDOFF", "交接(retired)", raising=False)
+    monkeypatch.setattr(an, "TAG_AUTO_CLOSE", "顺势收夜(retired)", raising=False)
+
+    # 轻量 no-op：旧测试若 setattr session._scene_registry / 调 ensure_summon_scaffold
+    def _noop_scaffold(*_a, **_k):
+        return None
+    monkeypatch.setattr(an, "ensure_summon_scaffold_reenterable", _noop_scaffold, raising=False)
+    import types, sys
+    if "ming_sim.beat_orchestration" not in sys.modules:
+        bo = types.ModuleType("ming_sim.beat_orchestration")
+        bo.create_llm_beat_generator = lambda _cfg: deterministic_test_beat_generator
+        bo.ChatTurnSceneRegistry = _OfflineSceneRegistry
+        bo.persist_chat_turn_scene = lambda *_a, **_k: None
+        bo.BEAT_OPEN = "open"
+        bo.BEAT_ENTER = "enter"
+        bo.BEAT_EXIT = "exit"
+        bo.BEAT_CLOSE = "close"
+        sys.modules["ming_sim.beat_orchestration"] = bo
+
+    from ming_sim.session import GameSession
+    def _noop(*_a, **_k):
+        return None
+    def _noop_list(*_a, **_k):
+        return []
+    for name, fn in (
+        ("start_chat_turn_scene", _noop),
+        ("start_chat_turn_exit_scene", _noop),
+        ("join_chat_turn_scene", _noop_list),
+        ("join_rescript_summon_scene", _noop_list),
+        ("release_rescript_summon_scene", _noop),
+        ("persist_chat_turn_scene", _noop),
+        ("abandon_chat_turn_scene", _noop),
+    ):
+        monkeypatch.setattr(GameSession, name, fn, raising=False)
+
+    yield
 
 def offline_empty_audience_translate(prompt, llm_config):
     """离线转译边界：无政务声明，但逐字保留受控输入中的回话。"""
@@ -451,32 +536,10 @@ def persist_and_schedule_scene(sess, db, result, *, speaker: str = "殿上"):
 
 @pytest.fixture
 def _offline_scene_beat_generator():
-    """#542：轻壳测试显式 opt-in 的 offline scene / beat 双缝（非 autouse）。
-
-    真实 DB 与无关测试默认走生产 create_llm_beat_generator + ChatTurnSceneRegistry。
-    需要离线 scene / 确定性旁白的用例再请求本 fixture：
-
-    - factory 缝：create_llm_beat_generator → 确定性假 generator
-    - 类属性缝：GameSession._beat_generator / _scene_registry 默认假
-      （覆盖 __new__ 轻壳 resolve_turn / start_chat_turn_scene）
-    - #1842：patch `_default_translate_runner` 空声明（收夜 catch-up / 后台转译禁 sk-test）
-    独立 MonkeyPatch：测试内 monkeypatch.undo() 不会撤掉本兜底。
-    """
+    """#1838 reopen：旁白 beat 已删；仅保留离线转译 stub（兼容旧请求名）。"""
     import ming_sim.audience_translate as at
-    import ming_sim.beat_orchestration as bo
-    from ming_sim.session import GameSession
 
     mp = pytest.MonkeyPatch()
-    mp.setattr(
-        bo, "create_llm_beat_generator",
-        lambda _cfg: deterministic_test_beat_generator,
-    )
-    mp.setattr(
-        GameSession, "_beat_generator", deterministic_test_beat_generator, raising=False,
-    )
-    mp.setattr(
-        GameSession, "_scene_registry", _OfflineSceneRegistry(), raising=False,
-    )
     mp.setattr(at, "_default_translate_runner", offline_empty_audience_translate)
     yield
     mp.undo()

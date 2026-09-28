@@ -26,7 +26,7 @@ def _people(db, count):
     return [str(row["name"]) for row in rows]
 
 
-def _secret(db, state, *, title="密查漕弊", body="暗访仓胥", tags=None):
+def _secret(db, state, *, title="密查漕弊", tags=None):
     lead = _actor(db)
     order_id = create_test_secret_order(db,
         state, lead, title, body, tags or ["稽核"], deadline_months=3,
@@ -243,7 +243,7 @@ def test_s2_private_field_rejects_non_batch_and_public_ids(game):
     lead, worker = _people(db, 2)
     _o1, batch_id = _secret(db, state, title="本批密令")[1:]
     # second secret not in auth set
-    _lead2, _o2, other_secret = _secret(db, state, title="他批密令", body="另案")
+    _lead2, _o2, other_secret = _secret(db, state, title="他批密令")
     # seed lead on both so append shape is valid if auth were open
     for did in (batch_id, other_secret):
         d = db.get_decree_dossier(did)

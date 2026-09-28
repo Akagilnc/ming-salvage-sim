@@ -1134,7 +1134,6 @@ def _657_subprocess_resolve(
         os.environ.pop("MING_SIM_LLM_BACKEND", None)
 
         import httpx
-        import ming_sim.beat_orchestration as bo
         import ming_sim.decree as dm
         import ming_sim.rescript_actions as ra
         import ming_sim.session as session_mod
@@ -2375,7 +2374,6 @@ def test_657_s10_http_five_actions_and_1490_no_regress(web_game, monkeypatch):
     monkeypatch.setattr(
         web_game.session, "_beat_generator", _det_gen, raising=False,
     )
-    import ming_sim.beat_orchestration as bo
     monkeypatch.setattr(bo, "create_llm_beat_generator", lambda _cfg: _det_gen)
 
     cases = [
@@ -2916,8 +2914,6 @@ def test_657_s5_http_generator_failure_blocks_phase2_and_same_body_retry(
             raise RuntimeError("generator inject fail")
         name = str(getattr(inputs, "person_name", "") or "") or "臣"
         return f"{name}再入殿。"
-
-    import ming_sim.beat_orchestration as bo
     monkeypatch.setattr(bo, "create_llm_beat_generator", lambda _cfg: _gen)
     monkeypatch.setattr(web_game.session, "_beat_generator", _gen, raising=False)
 
@@ -2987,16 +2983,14 @@ def test_657_s6_http_present_target_gets_unique_origin_body(web_game, monkeypatc
 
     def _gen(_inputs):
         return gen_body
-
-    import ming_sim.beat_orchestration as bo
     monkeypatch.setattr(bo, "create_llm_beat_generator", lambda _cfg: _gen)
     monkeypatch.setattr(web_game.session, "_beat_generator", _gen, raising=False)
 
     _657_install_real_phase2_llm_boundary(monkeypatch)
 
     # 先使目标已在场
-    night = open_night(db, state, empty_scaffold=True)
-    summon_enter(db, int(night["id"]), "杨嗣昌", empty_scaffold=False)
+    night = open_night(db, state)
+    summon_enter(db, int(night["id"]), "杨嗣昌")
     db.conn.commit()
 
     opt = normalize_rescript_layer_a_option({
@@ -3080,8 +3074,6 @@ def test_657_web_http_hitl_lock_boundary_same_gate(web_game, monkeypatch):
     def _gen(inputs):
         name = str(getattr(inputs, "person_name", "") or "") or "臣"
         return f"{name}锁窗入殿。"
-
-    import ming_sim.beat_orchestration as bo
     monkeypatch.setattr(bo, "create_llm_beat_generator", lambda _cfg: _gen)
     monkeypatch.setattr(web_game.session, "_beat_generator", _gen, raising=False)
 
@@ -3551,7 +3543,6 @@ def test_657_summon_missing_tag_enter_blocks_phase2_then_retry(
     from ming_sim.audience_night import TAG_ENTER, rescript_summon_origin_ref
     from ming_sim.models import TurnPhase
     from ming_sim.rescript_draft import normalize_rescript_layer_a_option
-    import ming_sim.beat_orchestration as bo
 
     db, state = web_game.db, web_game.state
     opt = normalize_rescript_layer_a_option({
@@ -4118,8 +4109,6 @@ def test_657_summon_single_flight_concurrent_http(web_game, monkeypatch):
         release.wait()
         name = str(getattr(inputs, "person_name", "") or "") or "臣"
         return f"{name}single-flight。"
-
-    import ming_sim.beat_orchestration as bo
     monkeypatch.setattr(bo, "create_llm_beat_generator", lambda _cfg: _gen)
     monkeypatch.setattr(web_game.session, "_beat_generator", _gen, raising=False)
     _657_install_real_phase2_llm_boundary(monkeypatch)

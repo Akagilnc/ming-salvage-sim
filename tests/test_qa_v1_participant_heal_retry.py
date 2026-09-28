@@ -916,7 +916,6 @@ def test_heal_keeps_first_extract_non_roster_fields(game, monkeypatch):
                 amount=999,
                 target_id="other-issue",
                 mode="中旨直发",
-                body="已被纠错轮改写的正文",
                 action="policy",
             ), ensure_ascii=False), 1)
         return (json.dumps(_payload(
@@ -924,7 +923,6 @@ def test_heal_keeps_first_extract_non_roster_fields(game, monkeypatch):
             amount=50,
             target_id="liao-pay",
             mode="普通",
-            body="着毕自严核拨辽饷五十万。",
         ), ensure_ascii=False), 1)
 
     monkeypatch.setattr(cb, "_run_backend_for_config", backend)

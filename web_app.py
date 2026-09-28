@@ -2035,46 +2035,28 @@ class WebGame:
         # #498：进入召对即开夜；对话轮挂 night_id，status=generating 至回话入档。
         # 测试替身无 conn/夜表时回退 create_chat_turn（lifecycle 双接口仍可测）。
         # #1566：场外密疏只挂当前夜，不入殿、不启殿上 scene；route 落 chat_turns。
+        # #1838 reopen：建轮 = 确保开夜 + create_chat_turn；入殿账只由「宣 X」/批红召见写。
         if hasattr(self.db, "conn"):
             from ming_sim.audience_night import (
-                attach_chat_turn_to_night,
                 ensure_open_night_for_audience,
                 get_open_night,
             )
-            if attach_to_hall:
-                night_was_open = get_open_night(self.db) is not None
-                _night_id, chat_turn_id = attach_chat_turn_to_night(
-                    self.db,
-                    self.state,
-                    minister_name,
-                    agno_session_id=agno_session_id,
-                    agno_runs_before=runs_before,
-                    beat_generator=None,
-                    route=route,
-                )
-                if not night_was_open:
-                    from ming_sim.decree_forecast import schedule_held_decree_forecasts
-                    schedule_held_decree_forecasts(self.session)
-                from ming_sim.audience_night import recognize_xuan_command
-                if chat_turn_id and not recognize_xuan_command(message):
-                    self.session.start_chat_turn_scene(minister_name, chat_turn_id)
-            else:
-                night_was_open = get_open_night(self.db) is not None
-                night = get_open_night(self.db) or ensure_open_night_for_audience(
-                    self.db, self.state,
-                )
-                if not night_was_open:
-                    from ming_sim.decree_forecast import schedule_held_decree_forecasts
-                    schedule_held_decree_forecasts(self.session)
-                chat_turn_id = self.db.create_chat_turn(
-                    self.state,
-                    minister_name,
-                    agno_session_id,
-                    runs_before,
-                    night_id=int(night["id"]),
-                    status="generating",
-                    route=route,
-                )
+            night_was_open = get_open_night(self.db) is not None
+            night = get_open_night(self.db) or ensure_open_night_for_audience(
+                self.db, self.state,
+            )
+            if not night_was_open:
+                from ming_sim.decree_forecast import schedule_held_decree_forecasts
+                schedule_held_decree_forecasts(self.session)
+            chat_turn_id = self.db.create_chat_turn(
+                self.state,
+                minister_name,
+                agno_session_id,
+                runs_before,
+                night_id=int(night["id"]),
+                status="generating",
+                route=route,
+            )
         else:
             chat_turn_id = self.db.create_chat_turn(
                 self.state,
@@ -2083,9 +2065,6 @@ class WebGame:
                 runs_before,
                 route=route,
             )
-            from ming_sim.audience_night import recognize_xuan_command
-            if attach_to_hall and chat_turn_id and not recognize_xuan_command(message):
-                self.session.start_chat_turn_scene(minister_name, chat_turn_id)
         return chat_turn_id, snapshot
 
     def _record_chat_rollback_items(
@@ -2367,26 +2346,9 @@ class WebGame:
     def _finish_offsite_summon_scene(
         self, *, origin_id: str, minister_name: str, gate_cm: Any,
     ) -> None:
-        """#1566：gate 内组装 DB 输入、gate 外生成、gate 内短写。无专用 Future。"""
-        from ming_sim.beat_orchestration import (
-            assemble_offsite_summon_inputs,
-            persist_chat_turn_scene,
-            run_beat_generator,
-        )
+        """#1838 reopen：场外传召账照记；旁白由场景戏文写，不再单独调 LLM。"""
+        return
 
-        with gate_cm:
-            assembled = assemble_offsite_summon_inputs(
-                self.db, self.state, origin_id=origin_id, person_name=minister_name,
-            )
-        if assembled is None:
-            return
-        entry_id, inputs = assembled
-        body = run_beat_generator(
-            getattr(self.session, "_beat_generator", None), inputs,
-        )
-        with gate_cm:
-            with atomic(self.db):
-                persist_chat_turn_scene(self.db, [(entry_id, body)])
 
     def _summon_admission_success_payload(
         self, minister_name: str, admission_result: str,
@@ -2613,12 +2575,8 @@ class WebGame:
                 if result.proposed_directive is not None:
                     d = result.proposed_directive
                     proposed = {"id": d.id, "text": d.text, "status": d.status, "notes": d.notes}
-                scene_generated = self.session.join_chat_turn_scene(chat_turn_id)
                 with gate_cm:
-                    # 慢 scene 等待在 gate 外；短事务内与回话全有或全无。
-                    with atomic(self.db):
-                        self.session.persist_chat_turn_scene(scene_generated)
-                        payload = self._chat_payload(
+                    payload = self._chat_payload(
                         minister_name, result.answer,
                         court_action=result.court_action, next_minister=result.next_minister,
                         proposed_directive=proposed, appointed_minister=result.appointed_minister,
@@ -2666,13 +2624,6 @@ class WebGame:
                 # drain 在 write_gate 外（与 stream / retry 同序），再短写 fail。
                 # 内层守护对齐流式：二次失败记日志不吞原错；abandon / 终态写分 try，
                 # 终态写尽力而为——abandon 崩不得跳过 fail，否则 turn 卡 generating。
-                try:
-                    self.session.abandon_chat_turn_scene(chat_turn_id)
-                except Exception:
-                    logger.exception(
-                        "nonstream chat cleanup: abandon_chat_turn_scene failed chat_turn_id=%s",
-                        chat_turn_id,
-                    )
                 try:
                     with cleanup_gate:
                         if chat_turn_id:
@@ -2823,7 +2774,7 @@ class WebGame:
         # #1566：route 权威解码——场外密令不启殿上 scene；密令重试保 explicit_secret_order。
         from ming_sim.audience_night import decode_chat_turn_route
         retry_route = decode_chat_turn_route(target.get("route"))
-        # #542 r6e：reopen + start_chat_turn_scene 纳入既有 try/except；
+        # #542 r6e：reopen 纳入既有 try/except；
         # 失败复用 abandon + restore interrupted；drain 在 write_gate 外。
         try:
             try:
@@ -2845,9 +2796,6 @@ class WebGame:
                     # 即可 durable 落副作用（dismiss 账/拟旨/任免候选等，session.py tool 环）。捕于
                     # reopen 后、session.chat 前，成功后记 diff 供撤回、失败时回滚，杜绝双 stage/粘滞。
                     before_snapshot = self.db.capture_chat_rollback_snapshot()
-                    from ming_sim.audience_night import recognize_xuan_command
-                    if retry_route["start_hall_scene"] and not recognize_xuan_command(question):
-                        self.session.start_chat_turn_scene(minister_name, chat_turn_id)
                 # #1842：重试入口同切 scene_chat（密令 route 仍走 session.chat）。
                 if retry_route["explicit_secret_order"]:
                     result = self.session.chat(
@@ -2865,11 +2813,8 @@ class WebGame:
                 if result.proposed_directive is not None:
                     d = result.proposed_directive
                     proposed = {"id": d.id, "text": d.text, "status": d.status, "notes": d.notes}
-                scene_generated = self.session.join_chat_turn_scene(chat_turn_id)
                 with gate:
-                    with atomic(self.db):
-                        self.session.persist_chat_turn_scene(scene_generated)
-                        payload = self._chat_payload(
+                    payload = self._chat_payload(
                         minister_name, result.answer,
                         court_action=result.court_action, next_minister=result.next_minister,
                         proposed_directive=proposed, appointed_minister=result.appointed_minister,
@@ -2914,13 +2859,6 @@ class WebGame:
                 # #542：running Future 的 cancel/join 必须在 write gate 外；锁内仅 rollback 短写。
                 # 内层守护对齐流式/非流 chat：二次失败记日志不吞原错；abandon / 终态写分 try，
                 # 终态写尽力而为——abandon 崩不得跳过 restore，否则 turn 卡 generating。
-                try:
-                    self.session.abandon_chat_turn_scene(chat_turn_id)
-                except Exception:
-                    logger.exception(
-                        "retry cleanup: abandon_chat_turn_scene failed chat_turn_id=%s",
-                        chat_turn_id,
-                    )
                 try:
                     with cleanup_gate:
                         reply_persisted = self._record_persisted_reply_failure(
@@ -3011,11 +2949,8 @@ class WebGame:
             d = result.proposed_directive
             proposed = {"id": d.id, "text": d.text, "status": d.status, "notes": d.notes}
         # opening/enter beat：慢 join 在 gate 外；短事务内与回话全有或全无。
-        scene_generated = self.session.join_chat_turn_scene(chat_turn_id)
         cm = write_gate if write_gate is not None else contextlib.nullcontext()
         with cm:
-            with atomic(self.db):
-                self.session.persist_chat_turn_scene(scene_generated or [])
                 payload = self._chat_payload(
                     minister_name,
                     answer,
@@ -3178,11 +3113,8 @@ class WebGame:
         # 不延后 dismiss、不加次数例外（fo2Oe 处方驳回；按事实修）。
         if exit_started_during_stream["v"] and not interpreted.get("court_action"):
             interpreted["court_action"] = "dismiss"
-        scene_generated = self.session.join_chat_turn_scene(chat_turn_id)
         cm = write_gate if write_gate is not None else contextlib.nullcontext()
         with cm:
-            with atomic(self.db):
-                self.session.persist_chat_turn_scene(scene_generated or [])
                 payload = self._chat_payload(
                     minister_name,
                     interpreted["answer"],
@@ -4008,14 +3940,6 @@ class WebGame:
             # ADR 0005 / #1408：清理二次失败记日志不宽吞；abandon / 终态写分 try，
             # 清理异常不覆盖原始错误、不阻断终态上抛。
             try:
-                if chat_turn_id:
-                    self.session.abandon_chat_turn_scene(chat_turn_id)
-            except Exception:
-                logger.exception(
-                    "stream prologue cleanup: abandon_chat_turn_scene failed chat_turn_id=%s",
-                    chat_turn_id,
-                )
-            try:
                 with write_gate:
                     self._fail_chat_turn_and_reload(chat_turn_id, before_snapshot, error)
             except Exception:
@@ -4068,14 +3992,6 @@ class WebGame:
                 ev_queue.put({"type": "accepted", **identity})
         except Exception as error:  # noqa: BLE001
             # ADR 0005 / #1408：清理二次失败记日志不宽吞；原始 error 仍下发。
-            try:
-                if chat_turn_id:
-                    self.session.abandon_chat_turn_scene(chat_turn_id)
-            except Exception:
-                logger.exception(
-                    "stream identity cleanup: abandon_chat_turn_scene failed chat_turn_id=%s",
-                    chat_turn_id,
-                )
             try:
                 with write_gate:
                     self._fail_chat_turn_and_reload(chat_turn_id, before_snapshot, error)
@@ -4229,14 +4145,6 @@ class WebGame:
                         reply_persisted = True
                     if payload is None and not reply_persisted:
                         try:
-                            if chat_turn_id:
-                                self.session.abandon_chat_turn_scene(chat_turn_id)
-                        except Exception:
-                            logger.exception(
-                                "stream worker cleanup: abandon_chat_turn_scene failed chat_turn_id=%s",
-                                chat_turn_id,
-                            )
-                        try:
                             with write_gate:
                                 self._fail_chat_turn_and_reload(chat_turn_id, before_snapshot, error)
                         except Exception:
@@ -4271,14 +4179,6 @@ class WebGame:
             thread.start()
         except Exception as error:
             # ADR 0005 / #1408：清理二次失败记日志不宽吞；原始异常仍上抛。
-            try:
-                if chat_turn_id:
-                    self.session.abandon_chat_turn_scene(chat_turn_id)
-            except Exception:
-                logger.exception(
-                    "stream start cleanup: abandon_chat_turn_scene failed chat_turn_id=%s",
-                    chat_turn_id,
-                )
             try:
                 with write_gate:
                     self._fail_chat_turn_and_reload(chat_turn_id, before_snapshot, error)
@@ -4483,10 +4383,8 @@ def _auto_close_open_night_gate_free(
         content=getattr(game, "content", None),
         registry=getattr(session, "registry", None) if session is not None else None,
         wait_timeout_s=float(inflight_wait_s),
-        beat_generator=getattr(session, "_beat_generator", None) if session is not None else None,
         llm_config=getattr(session, "llm_config", None) if session is not None else None,
         write_gate=_game_write_gate(game) if write_gate is None else write_gate,
-        scene_registry=getattr(session, "_scene_registry", None) if session is not None else None,
     )
 
 

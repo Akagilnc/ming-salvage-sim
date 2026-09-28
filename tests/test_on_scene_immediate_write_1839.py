@@ -72,8 +72,8 @@ def test_kill_lands_status_and_next_materials_show_it(game, tmp_path):
     witness = _active_minister(db, exclude={victim})
     night = an.open_night(db, state, location="乾清宫", time_of_day="夜")
     night_id = int(night["id"])
-    an.summon_enter(db, night_id, victim, body="宣入", empty_scaffold=True)
-    an.summon_enter(db, night_id, witness, body="宣入", empty_scaffold=True)
+    an.summon_enter(db, night_id, victim)
+    an.summon_enter(db, night_id, witness)
 
     declaration = {
         "on_scene_facts": [{
@@ -112,7 +112,7 @@ def test_textual_fact_and_public_saying_land_and_show_in_materials(game, tmp_pat
     yuan = _active_minister(db, exclude={sun})
     night = an.open_night(db, state, location="乾清宫", time_of_day="夜")
     night_id = int(night["id"])
-    an.summon_enter(db, night_id, sun, body="宣入", empty_scaffold=True)
+    an.summon_enter(db, night_id, sun)
 
     arm_injury = "左臂中箭，血透重甲，犹力战不退"
     death_rumour = "关外传袁崇焕已死于宁远城下"
@@ -151,8 +151,8 @@ def test_undo_reverses_round_on_scene_writes(game):
     partner = _active_minister(db, exclude={victim})
     night = an.open_night(db, state, location="乾清宫", time_of_day="夜")
     night_id = int(night["id"])
-    an.summon_enter(db, night_id, victim, body="宣入", empty_scaffold=True)
-    an.summon_enter(db, night_id, partner, body="宣入", empty_scaffold=True)
+    an.summon_enter(db, night_id, victim)
+    an.summon_enter(db, night_id, partner)
 
     arm_injury = "臂骨已折，不能挽弓"
     declaration = {

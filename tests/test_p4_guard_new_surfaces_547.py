@@ -14,7 +14,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 from ming_sim import audience_night as an
-from ming_sim.beat_orchestration import (
     BEAT_ENTER,
     assemble_beat_inputs,
     create_llm_beat_generator,

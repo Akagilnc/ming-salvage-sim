@@ -1547,7 +1547,6 @@ def test_hot_replace_409_while_offsite_scene_ticket_open(game, monkeypatch):
 
 def test_offsite_scene_assembles_under_gate_generates_without_gate(game):
     """#1566：组装持 gate、生成不持 gate、ticket 在 provider 终态前仍 open。"""
-    from ming_sim import beat_orchestration as bo
 
     db, state, content = game
     remote = _set_place(game, "洪承畴", location="shaanxi")
@@ -2722,7 +2721,7 @@ def test_fresh_summon_same_beizhili_journey_attaches_origin_without_reapply(game
         and str(getattr(ch, "office", "") or "").strip()
         and ch.name != person.name
     )
-    night_id = int(an.open_night(db, state, empty_scaffold=True)["id"])
+    night_id = int(an.open_night(db, state)["id"])
     pids: list[int] = []
     for office, seat in (("三边总督", "shaanxi"), ("蓟辽总督", "liaodong")):
         pid = int(db.stage_pending_action(

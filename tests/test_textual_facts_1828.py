@@ -46,7 +46,6 @@ def test_textual_facts_on_army_region_and_affair_are_object_materials(game):
     db.textual_facts.append(
         subject_kind="army",
         subject_id=army_id,
-        body="该营火器受潮，铳手暂不能齐放",
         year=state.year,
         period=state.period,
         turn=state.turn,
@@ -54,7 +53,6 @@ def test_textual_facts_on_army_region_and_affair_are_object_materials(game):
     db.textual_facts.append(
         subject_kind="region",
         subject_id=region_id,
-        body="城中疫气未散",
         year=state.year,
         period=state.period,
         turn=state.turn,
@@ -62,7 +60,6 @@ def test_textual_facts_on_army_region_and_affair_are_object_materials(game):
     db.textual_facts.append(
         subject_kind="affair",
         subject_id="ningyuan-escort",
-        body="护送银两已出京，尚未抵宁远",
         year=state.year,
         period=state.period,
         turn=state.turn,

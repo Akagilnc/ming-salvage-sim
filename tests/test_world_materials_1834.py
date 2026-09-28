@@ -192,12 +192,12 @@ def test_world_materials_include_textual_facts_once_and_gazette_not_duplicated(g
     db, state, content = game
     name = next(iter(content.characters))
     db.textual_facts.append(
-        subject_kind="character", subject_id=name, body="世界可见人物文字事实",
+        subject_kind="character", subject_id=name,
         year=int(state.year), period=int(state.period), turn=int(state.turn),
     )
     region = db.conn.execute("SELECT id FROM regions ORDER BY id LIMIT 1").fetchone()
     db.textual_facts.append(
-        subject_kind="region", subject_id=str(region["id"]), body="世界可见地方文字事实",
+        subject_kind="region", subject_id=str(region["id"]),
         year=int(state.year), period=int(state.period), turn=int(state.turn),
     )
     affair = db.affairs.open(
@@ -205,7 +205,7 @@ def test_world_materials_include_textual_facts_once_and_gazette_not_duplicated(g
         year=state.year, period=state.period, turn=state.turn,
     )
     db.textual_facts.append(
-        subject_kind="affair", subject_id=str(affair.id), body="affair-fact-body",
+        subject_kind="affair", subject_id=str(affair.id),
         year=int(state.year), period=int(state.period), turn=int(state.turn),
         origin_ref=db.affairs.origin_ref(affair.id),
     )

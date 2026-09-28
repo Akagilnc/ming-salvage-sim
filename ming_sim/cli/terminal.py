@@ -189,7 +189,6 @@ def _fail_cli_chat_turn_scene(
 
     cleanup 自身失败由调用方链到原 scene 异常（不得 `except: pass` 吞掉）。
     """
-    session.abandon_chat_turn_scene(int(chat_turn_id))
     if scaffold_owned:
         if before_snapshot is not None and hasattr(
             session.db, "record_chat_turn_rollback_diffs",
@@ -222,90 +221,11 @@ def _fail_cli_chat_turn_scene(
 
 
 def _record_audience_exit(session: GameSession, name: str) -> None:
-    """CLI「退下」控制口令：垫位告退 + 唯一 scene registry 生成 exit 旁白。
-
-    此路不经 session.chat，须自落；tool dismiss 由 session.chat 单缝处理。
-    禁止同步 beat_generator（#542）：失败走 abandon + fail/回滚，与回话中断同族。
-    无开夜/不在场时既有 no-op；缺 conn 的轻量 session double 跳过。
-    """
+    """CLI「退下」控制口令：落空正文告退账（#1838 reopen：无旁白调用）。"""
     if not hasattr(session.db, "conn"):
         return
-    from ming_sim.applier import atomic
-    from ming_sim.audience_night import dismiss_from_audience, get_open_night
-
-    open_n = get_open_night(session.db)
-    if open_n is None:
-        dismiss_from_audience(session.db, name, state=session.state)
-        return
-    night_id = int(open_n["id"])
-
-    can_scene = all(
-        hasattr(session, attr)
-        for attr in (
-            "start_chat_turn_exit_scene",
-            "join_chat_turn_scene",
-            "persist_chat_turn_scene",
-            "abandon_chat_turn_scene",
-        )
-    )
-    can_turn = hasattr(session.db, "create_chat_turn") and hasattr(session.db, "fail_chat_turn")
-
-    chat_turn_id = 0
-    scaffold_owned = False
-    before_snapshot = None
-    if can_scene and can_turn:
-        row = session.db.conn.execute(
-            "SELECT id FROM chat_turns WHERE night_id = ? AND minister_name = ? "
-            "AND status IN ('active', 'generating') ORDER BY id DESC LIMIT 1",
-            (night_id, name),
-        ).fetchone()
-        if row is not None:
-            chat_turn_id = int(row["id"])
-        else:
-            if hasattr(session.db, "capture_chat_rollback_snapshot"):
-                before_snapshot = session.db.capture_chat_rollback_snapshot()
-            chat_turn_id = int(session.db.create_chat_turn(
-                session.state, name, f"cli-exit:{name}", 0, night_id=night_id,
-            ))
-            scaffold_owned = True
-        if before_snapshot is None and hasattr(session.db, "capture_chat_rollback_snapshot"):
-            before_snapshot = session.db.capture_chat_rollback_snapshot()
-
-    entry_id = dismiss_from_audience(
-        session.db, name, night_id=night_id,
-        origin_chat_turn_id=int(chat_turn_id or 0),
-        state=session.state,
-    )
-    if not entry_id:
-        if scaffold_owned and chat_turn_id:
-            session.db.fail_chat_turn(int(chat_turn_id))
-        return
-    if not (can_scene and chat_turn_id):
-        return
-
-    session.start_chat_turn_exit_scene(
-        name, int(chat_turn_id), int(entry_id), night_id=night_id,
-    )
-    try:
-        generated = session.join_chat_turn_scene(int(chat_turn_id))
-        with atomic(session.db):
-            session.persist_chat_turn_scene(generated)
-        # Scaffold turn has no minister reply — retire so in-flight guards stay clear.
-        # Exit ledger keeps origin binding; success path does not record rollback diffs.
-        if scaffold_owned:
-            session.db.mark_chat_turn_failed(int(chat_turn_id))
-    except BaseException as exc:
-        # 与 minister_chat 失败清理同族：abandon + rollback/fail；cleanup 失败链到原异常。
-        try:
-            _fail_cli_chat_turn_scene(
-                session, int(chat_turn_id),
-                before_snapshot=before_snapshot,
-                scaffold_owned=scaffold_owned,
-                entry_id=int(entry_id),
-            )
-        except BaseException as cleanup_error:
-            raise exc from cleanup_error
-        raise
+    from ming_sim.audience_night import dismiss_from_audience
+    dismiss_from_audience(session.db, name)
 
 
 def _handle_court_command(
@@ -456,11 +376,9 @@ def _retry_interrupted_reply_cli(session: GameSession, minister_name: str) -> Op
         print(f"{minister_name}上一轮回奏仍在进行，请稍候再问。\n")
         return
     # #1566：route 权威解码——与 Web retry 同核；场外密令不启殿上 scene。
-    from ming_sim.audience_night import decode_chat_turn_route, recognize_xuan_command
+    from ming_sim.audience_night import decode_chat_turn_route
     retry_route = decode_chat_turn_route(target.get("route"))
     try:
-        if retry_route["start_hall_scene"] and not recognize_xuan_command(question):
-            session.start_chat_turn_scene(minister_name, chat_turn_id)
         # #1842：殿上重试走 scene_chat；显式密令仍走 session.chat（与 Web 同核）。
         if retry_route["explicit_secret_order"]:
             result = session.chat(
@@ -475,11 +393,7 @@ def _retry_interrupted_reply_cli(session: GameSession, minister_name: str) -> Op
             )
         answer = str(getattr(result, "answer", "") or "")
         if hasattr(db, "persist_minister_reply"):
-            scene_generated = session.join_chat_turn_scene(chat_turn_id)
-            from ming_sim.applier import atomic
-            with atomic(db):
-                session.persist_chat_turn_scene(scene_generated)
-                db.persist_minister_reply(minister_name, accepted_turn, answer, chat_turn_id)
+            db.persist_minister_reply(minister_name, accepted_turn, answer, chat_turn_id)
         else:
             mid = db.append_chat_message(minister_name, accepted_turn, "minister", answer)
             db.update_chat_turn_messages(chat_turn_id, minister_message_id=int(mid))
@@ -505,7 +419,6 @@ def _retry_interrupted_reply_cli(session: GameSession, minister_name: str) -> Op
             logger.exception(
                 "CLI retry rollback/forecast recovery failed chat_turn_id=%s", chat_turn_id,
             )
-        session.abandon_chat_turn_scene(chat_turn_id)
         print(f"重试回话失败：{exc}\n")
         return None
     # #1716/#1842：与 Web retry 同缝——回话已落库后消费 court_action 收夜。
@@ -621,26 +534,32 @@ def minister_chat(session: GameSession, character: Character) -> str:
             if persistent_chat:
                 if lifecycle_supported:
                     rollback_snapshot = session.db.capture_chat_rollback_snapshot()
-                    # #498：CLI 与 web 共用 attach_chat_turn_to_night，禁止 night_id=0 旁路
-                    # #503/#542：生产路径与 Web/收夜共用真实 scene LLM adapter。
+                    # #1838 reopen：CLI 选臣 = 确保开夜 + 建轮；入殿走「宣 X」同入口。
                     from ming_sim.audience_night import (
-                        attach_chat_turn_to_night, get_open_night, recognize_xuan_command,
+                        ensure_open_night_for_audience, get_open_night, recognize_xuan_command,
                     )
                     night_was_open = get_open_night(session.db) is not None
-                    _night_id, chat_turn_id = attach_chat_turn_to_night(
-                        session.db,
-                        session.state,
-                        character.name,
-                        agno_session_id=f"cli:{character.name}",
-                        agno_runs_before=0,
-                        beat_generator=None,
-                        route=cli_route,
+                    night = get_open_night(session.db) or ensure_open_night_for_audience(
+                        session.db, session.state,
                     )
                     if not night_was_open:
                         from ming_sim.decree_forecast import schedule_held_decree_forecasts
                         schedule_held_decree_forecasts(session)
+                    # 选臣后以「宣 X」入殿（与 web 名册点选同形）
                     if not recognize_xuan_command(question):
-                        session.start_chat_turn_scene(character.name, chat_turn_id)
+                        from ming_sim.audience_night import ensure_summon_enter
+                        ensure_summon_enter(
+                            session.db, int(night["id"]), character.name,
+                        )
+                    chat_turn_id = session.db.create_chat_turn(
+                        session.state,
+                        "殿上",
+                        f"cli:殿上",
+                        0,
+                        night_id=int(night["id"]),
+                        status="generating",
+                        route=cli_route,
+                    )
                 user_message_id = session.db.append_chat_message(
                     character.name, accepted_turn, "user", question,
                 )
@@ -659,18 +578,13 @@ def minister_chat(session: GameSession, character: Character) -> str:
             else:
                 result = session.scene_chat(
                     question, chat_turn_id=chat_turn_id,
-                    minister_name=character.name,
+                    minister_name="殿上",
                 )
             if persistent_chat:
-                if (chat_turn_id and hasattr(session.db, "persist_minister_reply")
-                        and hasattr(session, "join_chat_turn_scene")):
-                    scene_generated = session.join_chat_turn_scene(chat_turn_id)
-                    from ming_sim.applier import atomic
-                    with atomic(session.db):
-                        session.persist_chat_turn_scene(scene_generated)
-                        session.db.persist_minister_reply(
-                            character.name, accepted_turn, result.answer, chat_turn_id,
-                        )
+                if chat_turn_id and hasattr(session.db, "persist_minister_reply"):
+                    session.db.persist_minister_reply(
+                        character.name, accepted_turn, result.answer, chat_turn_id,
+                    )
                     minister_message_id = 0
                 else:
                     minister_message_id = session.db.append_chat_message(
@@ -690,7 +604,6 @@ def minister_chat(session: GameSession, character: Character) -> str:
         except BaseException as original_error:
             try:
                 if chat_turn_id:
-                    session.abandon_chat_turn_scene(chat_turn_id)
                     session.db.record_chat_turn_rollback_diffs(
                         chat_turn_id, rollback_snapshot or {},
                         session.db.capture_chat_rollback_snapshot(),

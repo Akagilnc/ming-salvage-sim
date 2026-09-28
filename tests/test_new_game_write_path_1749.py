@@ -450,7 +450,6 @@ def test_gamesession_load_state_failure_closes_partial_resources(tmp_path, monke
     """
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-    import ming_sim.beat_orchestration as bo
     from ming_sim.db import GameDB
     from ming_sim.models import LLMConfig
     from tests.conftest import deterministic_test_beat_generator

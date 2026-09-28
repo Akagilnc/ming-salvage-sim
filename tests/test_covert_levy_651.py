@@ -9,7 +9,6 @@ from ming_sim.decree import project_dossiers_for_simulator
 from ming_sim.issues import apply_score_extraction
 from ming_sim.due_review import audience_todo_lane, build_due_review_input, list_due_review_scenes
 from ming_sim.simulation import EMPTY_EXTRACTION, MODULE_FIELDS
-from ming_sim.beat_orchestration import assemble_beat_inputs, BEAT_OPEN
 from ming_sim.action_clusters import candidates_from_classifier_payload
 from ming_sim.action_materialize import MaterializeCtx, run_materialize_pipeline
 from types import SimpleNamespace

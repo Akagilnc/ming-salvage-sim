@@ -991,11 +991,6 @@ class GameSession:
         self.content = content if content is not None else GameContent.load()
         _bind_all_content(self.content)
         self.llm_config = llm_config
-        from ming_sim.beat_orchestration import ChatTurnSceneRegistry, create_llm_beat_generator
-        self._beat_generator = create_llm_beat_generator(llm_config)
-        # Scene lifecycle lives in beat_orchestration; session only holds the registry handle.
-        # No dedicated scene executor (C6 rejected); open/enter share the action-intent pool.
-        self._scene_registry = ChatTurnSceneRegistry(_CLI_ACTION_INTENT_EXECUTOR)
         # #1749：db/agno 打开后构造任一步失败须关闭，禁泄漏连接（load_state 等）。
         self.db = None  # type: ignore[assignment]
         self.agno_db = None  # type: ignore[assignment]
@@ -1504,11 +1499,9 @@ class GameSession:
             content=getattr(self, "content", None),
             registry=getattr(self, "registry", None),
             wait_timeout_s=0.0,
-            beat_generator=getattr(self, "_beat_generator", None),
             llm_config=getattr(self, "llm_config", None),
             write_gate=getattr(self, "_write_gate", None),
             write_queue=self._write_queue,
-            scene_registry=getattr(self, "_scene_registry", None),
         )
         result.court_action = "court_break"
 
@@ -1566,11 +1559,9 @@ class GameSession:
                     content=getattr(self, "content", None),
                     registry=getattr(self, "registry", None),
                     wait_timeout_s=0.0,
-                    beat_generator=getattr(self, "_beat_generator", None),
                     llm_config=getattr(self, "llm_config", None),
                     write_gate=gate,
                     write_queue=self._write_queue,
-                    scene_registry=getattr(self, "_scene_registry", None),
                 )
 
             # 屏障只等前序票工人终态/空放行（K10a：无 elapsed 熔断）。
@@ -1702,47 +1693,13 @@ class GameSession:
             return [cand]
         return candidates
 
-    def start_chat_turn_scene(self, minister_name: str, chat_turn_id: int) -> None:
-        """委托编排层启动本轮 open/enter scene（与回话并行，join 后原子落账）。"""
-        self._scene_registry.start_open_enter(
-            self.db, self.state,
-            minister_name=minister_name,
-            chat_turn_id=int(chat_turn_id or 0),
-            beat_generator=self._beat_generator,
-        )
-
-    def start_chat_turn_exit_scene(
-        self, person_name: str, chat_turn_id: int, entry_id: int, *,
-        night_id: int = 0,
-    ) -> None:
-        """令退垫位账已落后，登记 exit 生成进本轮同一 scene registry。"""
-        if not night_id and chat_turn_id:
-            row = self.db.conn.execute(
-                "SELECT night_id FROM chat_turns WHERE id = ?", (int(chat_turn_id),),
-            ).fetchone()
-            night_id = int(row["night_id"] or 0) if row is not None else 0
-        self._scene_registry.start_exit(
-            self.db, self.state,
-            person_name=person_name,
-            chat_turn_id=int(chat_turn_id or 0),
-            entry_id=int(entry_id or 0),
-            night_id=int(night_id or 0),
-            beat_generator=self._beat_generator,
-        )
-
     def start_exit_scene_from_dismiss_tools(
         self,
         person_name: str,
         chat_turn_id: int,
         tools: Any,
     ) -> bool:
-        """tools 契约已含 dismiss 时立刻落垫位；有 chat_turn_id 则登记本轮 exit（#542）。
-
-        在仍可与回话流 / action_intent / open-enter 重叠的最早可知点调用。
-        幂等：人已不在场时 dismiss_from_audience 返 None，不重复 start_exit。
-        chat_turn_id=0 仍落告退账（#500 名单即时去人），只是不进 scene registry。
-        返回是否新登记了 exit。
-        """
+        """tools 含 dismiss 时落空正文告退账（#1838：无旁白调用）。"""
         if not hasattr(self.db, "conn"):
             return False
         has_dismiss = False
@@ -1757,35 +1714,8 @@ class GameSession:
         from ming_sim.audience_night import dismiss_from_audience
         entry_id = dismiss_from_audience(
             self.db, person_name, origin_chat_turn_id=int(chat_turn_id or 0),
-            state=self.state,
         )
-        if not entry_id or not chat_turn_id:
-            return False
-        self.start_chat_turn_exit_scene(
-            person_name, int(chat_turn_id), int(entry_id),
-        )
-        return True
-
-    def join_chat_turn_scene(self, chat_turn_id: int) -> list[tuple[int, str]]:
-        """委托编排层等待本轮 scene；调用方在短事务内 persist。"""
-        return self._scene_registry.join(int(chat_turn_id or 0))
-
-    def join_rescript_summon_scene(self, chat_turn_id: int) -> list[tuple[int, str]]:
-        """#657 summon 等待：retain claim 直至 finish durable 终态后 release。"""
-        return self._scene_registry.join_retained(int(chat_turn_id or 0))
-
-    def release_rescript_summon_scene(self, chat_turn_id: int) -> None:
-        """#657 summon 终态释放 registry claim（consumed/failed 写后）。"""
-        self._scene_registry.release(int(chat_turn_id or 0))
-
-    def persist_chat_turn_scene(self, generated: list[tuple[int, str]]) -> None:
-        """委托编排层短写已 join 的 scene 正文。"""
-        from ming_sim.beat_orchestration import persist_chat_turn_scene as _persist
-        _persist(self.db, generated)
-
-    def abandon_chat_turn_scene(self, chat_turn_id: int) -> None:
-        """委托编排层排空本轮 scene（cancel 或 join drain，不落库）。"""
-        self._scene_registry.abandon(int(chat_turn_id or 0))
+        return bool(entry_id)
 
     def _mark_control_turn_translation_done(self, chat_turn_id: int) -> None:
         """口令早退轮：复用转译水位单真源，避免假 pending 进 list_pending_translations。"""
@@ -1885,11 +1815,9 @@ class GameSession:
                     content=getattr(self, "content", None),
                     registry=getattr(self, "registry", None),
                     wait_timeout_s=0.0,
-                    beat_generator=getattr(self, "_beat_generator", None),
                     llm_config=getattr(self, "llm_config", None),
                     write_gate=getattr(self, "_write_gate", None),
                     write_queue=self._write_queue,
-                    scene_registry=getattr(self, "_scene_registry", None),
                 )
                 result.court_action = "court_break"
                 return result
@@ -1917,7 +1845,6 @@ class GameSession:
                     ensure_summon_enter(
                         self.db, night_id, target.name,
                         origin_chat_turn_id=int(chat_turn_id or 0),
-                        empty_scaffold=True,
                     )
                     # #1838 / ADR 0158：宣 X 当场先切御前主角（不等转译）。
                     # 夜当前值是投影；ctid>0 时同步写 chat_turns.protagonist_name
@@ -1942,8 +1869,7 @@ class GameSession:
                     if on_protagonist_changed is not None:
                         on_protagonist_changed()
             # 被拒的宣召仍是一轮殿上戏文；只在合法入殿时先写入殿账。
-            if chat_turn_id:
-                self.start_chat_turn_scene(str(minister_name or ""), int(chat_turn_id))
+            # #1838 reopen：不再等入殿旁白。
 
         # 材料目录：在场诸人各一份；开场最小集 + 只读工具。
         prepared = prepare_scene_materials(self.db, self.state)
@@ -4091,10 +4017,8 @@ class GameSession:
                     content=getattr(self, "content", None),
                     registry=getattr(self, "registry", None),
                     wait_timeout_s=inflight_wait_s,
-                    beat_generator=self._beat_generator,
                     llm_config=getattr(self, "llm_config", None),
                     write_gate=self._write_gate,
-                    scene_registry=self._scene_registry,
                 )
         except (AudienceNightError, LLMUnavailable):
             # #1235 真失败另形：收夜中止后人话 + 出展示态（欠账耗尽=失败单源）。
@@ -4202,7 +4126,6 @@ class GameSession:
             debuts_this_turn=self.debuts_this_turn,
             content=self.content, registry=self.registry,
             cheat_directive=cheat_directive,
-            scene_registry=self._scene_registry,
             **resolve_kwargs,
         )
         if result.advanced and not result.awaiting:
@@ -4431,9 +4354,9 @@ class GameSession:
         }
 
     def commit_rescript_phase1(self, prewrite_state: Dict[str, object]) -> Dict[str, object]:
-        """#657 ① 短写（调用方已持 write_gate）：C1 apply + summon 垫位/CAS + 全 start。
+        """#657 ① 短写（调用方已持 write_gate）：C1 apply + 召见入殿事实账。
 
-        内部不 join。无急务 summon 时 summon 段空转。
+        #1838 reopen：召见只落入殿账，不建旁白对话轮、不 start scene。
         """
         from ming_sim import rescript_actions as ra
         from ming_sim.audience_night import (
@@ -4455,7 +4378,6 @@ class GameSession:
             self.db, self.state, batch, prewrite, content=self.content,
         )
 
-        # 未消费 summon：垫位/CAS + discover/BeatInputs + 全部 start
         summons: List[Dict[str, object]] = []
         for key in apply.summon_keys:
             item = next((i for i in batch.items if i.decision_key == key), None)
@@ -4470,26 +4392,9 @@ class GameSession:
                 person_name=target,
                 origin_ref=origin,
             )
-            if scaffold.get("consumed"):
-                summons.append({
-                    "decision_key": key,
-                    "origin_ref": origin,
-                    "consumed": True,
-                    **scaffold,
-                })
-                continue
-            ctid = int(scaffold["chat_turn_id"])
-            # discover + start（零 LLM 在 discover；LLM 在 registry Future）
-            self._scene_registry.start_open_enter(
-                self.db, self.state,
-                minister_name=target,
-                chat_turn_id=ctid,
-                beat_generator=self._beat_generator,
-            )
             summons.append({
                 "decision_key": key,
                 "origin_ref": origin,
-                "consumed": False,
                 "target": target,
                 **scaffold,
             })
@@ -4504,24 +4409,12 @@ class GameSession:
     def join_rescript_summons(
         self, phase1_state: Dict[str, object],
     ) -> Dict[str, object]:
-        """#657 ② 无锁等待：join 全部 summon target Future。不得持 write_gate。"""
+        """#1838 reopen：召见无旁白 Future 可等；原样透传 phase1 summons。"""
         if phase1_state.get("ready_replay"):
             return {"joined": [], "ready_replay": True}
         joined: List[Dict[str, object]] = []
         for sc in phase1_state.get("summons") or []:
-            if sc.get("consumed"):
-                joined.append({**sc, "generated": []})
-                continue
-            ctid = int(sc.get("chat_turn_id") or 0)
-            try:
-                # retain claim across wait so concurrent same-body retry coalesces
-                generated = self.join_rescript_summon_scene(ctid)
-            except Exception as exc:
-                # §D.1 ② 无锁等待：只汇合 Future / 记 error，**零写库**。
-                # failed 持久化挪到 ③ finish（持 write_gate）——禁无锁② UPDATE+commit。
-                joined.append({**sc, "generated": [], "error": str(exc)})
-                continue
-            joined.append({**sc, "generated": list(generated)})
+            joined.append({**sc, "generated": []})
         return {"joined": joined, "ready_replay": False}
 
     def finish_rescript_phase2(
@@ -4531,24 +4424,11 @@ class GameSession:
         *,
         cheat_directive: str = "",
     ) -> str:
-        """#657 ③ 短写（调用方已持 write_gate）：persist + 门闩 + phase2。
+        """#657 ③ 短写（调用方已持 write_gate）：召见消费门闩 + phase2。
 
-        return_revise 清锚在月份推进事务完成（与 next_period 同 atomic）。
+        #1838 reopen：已消费 ≔ origin_ref 入殿账存在；不再 persist 旁白 / release registry。
         """
-        from ming_sim.applier import atomic
-
         if not phase1_state.get("ready_replay"):
-            # ③ 持 write_gate：成功则 persist；失败状态统一在门闩后唯一写点落 failed。
-            with atomic(self.db):
-                for item in join_state.get("joined") or []:
-                    if item.get("error"):
-                        continue
-                    generated = item.get("generated") or []
-                    if generated:
-                        self.persist_chat_turn_scene(list(generated))
-
-            # D.8 门闩：未消费 summon → 响亮失败（§D.0 唯一谓词）
-            # 权威=行事实：先扫本次 join，再扫 durable decided summon（共享迭代器）。
             from ming_sim.audience_night import rescript_summon_origin_consumed
             unconsumed: List[str] = []
             seen_origins: set[str] = set()
@@ -4566,25 +4446,10 @@ class GameSession:
                         "body": str(row["body"] or ""),
                         "tags": str(row["tags"] or "[]"),
                     }
-                if item.get("error"):
-                    ok = False
-                elif item.get("consumed"):
-                    # 既有消费：prepare 已判；门闩仍复核 TAG_ENTER+非空 body
-                    ok = rescript_summon_origin_consumed(entry)
-                else:
-                    generated_bodies = [
-                        str(b)
-                        for _eid, b in (item.get("generated") or [])
-                        if str(b).strip()
-                    ]
-                    ok = rescript_summon_origin_consumed(
-                        entry, expected_bodies=generated_bodies,
-                    )
-                if not ok:
+                if not rescript_summon_origin_consumed(entry):
                     unconsumed.append(
                         f"{item.get('decision_key')}:{item.get('target') or ''}:{origin}"
                     )
-            # join_state 空/残缺时仍以 durable 行事实挡 phase2（S5/D.8）
             for fact in self._iter_unconsumed_decided_summons():
                 origin = str(fact.get("origin_ref") or "")
                 if origin in seen_origins:
@@ -4593,38 +4458,9 @@ class GameSession:
                     f"{fact.get('decision_key')}:{fact.get('target') or ''}:{origin}"
                 )
             if unconsumed:
-                # 唯一失败写点：generator error 与门闩未消费同形
-                # generating 空问话 → failed，供 CAS 重入（#657 Spec4 重试）。
-                with atomic(self.db):
-                    for item in join_state.get("joined") or []:
-                        if item.get("consumed"):
-                            continue
-                        ctid_fail = int(item.get("chat_turn_id") or 0)
-                        if ctid_fail > 0:
-                            self.db.conn.execute(
-                                "UPDATE chat_turns SET status='failed' "
-                                "WHERE id=? AND status='generating' "
-                                "AND user_message_id IS NULL",
-                                (ctid_fail,),
-                            )
-                # durable failed 已写 → 唯一 release，允许合法重入
-                for item in join_state.get("joined") or []:
-                    ctid_rel = int(item.get("chat_turn_id") or 0)
-                    if ctid_rel > 0:
-                        self.release_rescript_summon_scene(ctid_rel)
                 raise ValueError(
                     "召见尚未消费，不得推进 phase2：" + "; ".join(unconsumed)
                 )
-            # 消费成功 / 已消费短路：空问话 scaffold → status=consumed
-            # （含 retry 时 origin 已 consumed 但 scaffold 仍 generating 的可恢复终态）
-            for item in join_state.get("joined") or []:
-                if item.get("error"):
-                    continue
-                ctid = int(item.get("chat_turn_id") or 0)
-                if ctid > 0:
-                    self.db.complete_rescript_summon_scaffold_turn(ctid)
-                    # durable consumed 已写 → 唯一 release
-                    self.release_rescript_summon_scene(ctid)
 
         if not (self.last_decree or "").strip():
             ctx0 = self.db.get_resolve_context(self.state.turn)
@@ -4637,7 +4473,6 @@ class GameSession:
             content=self.content, registry=self.registry,
             cheat_directive=cheat_directive,
         )
-        # 批红续跑与 submit_decisions 同一规则：主链未推进不得标 ISSUED。
         self.state.turn_phase = (
             TurnPhase.ISSUED.value
             if int(self.state.turn) != before_turn or self.state.ended
@@ -4883,9 +4718,6 @@ class GameSession:
                 materials_error = exc
                 logger.exception("GameSession.registry materials close failed")
             self.registry = None
-        scene = getattr(self, "_scene_registry", None)
-        if scene is not None:
-            scene.abandon_all()
         agno = getattr(self, "agno_db", None)
         if agno is not None:
             close_fn = getattr(agno, "close", None)

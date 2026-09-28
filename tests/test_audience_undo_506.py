@@ -576,7 +576,7 @@ def test_undo_erases_inactive_office_summon_origin_bound_to_chat_turn(game):
     """#672：ensure inactive office origin 绑 chat-turn；undo 按 typed source 清。"""
     db, state, content = game
     m = _active_minister(db, content)
-    night = an.open_night(db, state, empty_scaffold=True)
+    night = an.open_night(db, state)
     night_id = int(night["id"])
 
     def _writes(_nid: int, chat_id: int) -> None:
@@ -609,7 +609,7 @@ def test_reject_pending_discards_inactive_office_summon_origin(game):
     """#672：确认拒绝只清仍 inactive 的 office:<pending_id> origin。"""
     db, state, content = game
     m = _active_minister(db, content)
-    night = an.open_night(db, state, empty_scaffold=True)
+    night = an.open_night(db, state)
     pending_id = db.stage_pending_action(
         int(state.turn), "office", "任命", m,
         {"text": "测试任免原文", "name": "袁崇焕", "office": "辽东巡抚", "summon_after": "是"},

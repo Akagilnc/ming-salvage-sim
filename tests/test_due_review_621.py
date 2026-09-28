@@ -235,7 +235,9 @@ def test_due_review_scene_tops_next_audience_with_origin_context(game):
 
 
 def test_due_review_scene_tops_live_open_night_even_with_body(game):
-    """C1：生产 open-beat 供 body 时，复命仍须顶上真实召对开夜账。"""
+    """#1838 reopen：待裁场面进场景开场最小集，不再写开夜旁白账。"""
+    from ming_sim.materials import _scene_opening_text, _scene_pending_audience_facts
+
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.commit()
@@ -248,20 +250,15 @@ def test_due_review_scene_tops_live_open_night_even_with_body(game):
     _insert_staged_commitment(db, state, content, stages=stages)
     write_due_staged_commitment_todos(db, state)
 
-    # 模拟生产 ensure_open_night_for_audience(..., body=open_beat_text)
-    open_beat = "戌时乾清宫，烛影摇红，召对启。"
-    night = open_night(
-        db, state, time_of_day="戌时", location="乾清宫", body=open_beat,
-    )
-    ledger = list_ledger(db, int(night["id"]))
-    open_entries = [e for e in ledger if "开夜" in (e.get("tags") or [])]
-    assert open_entries, ledger
-    open_text = str(open_entries[0].get("body") or "")
-    assert open_beat in open_text
-    assert "复命" in open_text
-    assert "三年火器见眉目" in open_text
+    open_night(db, state, time_of_day="戌时", location="乾清宫")
+    facts = _scene_pending_audience_facts(db, state)
+    opening = _scene_opening_text(state, [], "", [], facts)
+    assert "当前待裁场面" in opening
+    assert facts, "待裁场面须原样进入开场最小集"
+    joined = "\n".join(facts)
+    assert "三年火器见眉目" in joined or "火器见眉目" in joined
     for token in ("fulfilled", "AWAITING_DECISION", "<<DECISION>>"):
-        assert token not in open_text
+        assert token not in opening
 
 
 # ── P1 有案卷桥 / 无案卷分支 ──────────────────────────────────────────

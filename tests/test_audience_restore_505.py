@@ -1011,7 +1011,6 @@ def test_657_s12_reconciles_s_u_q_and_finishes_summon(game, monkeypatch):
         prepare_rescript_summon_scaffold,
         rescript_summon_origin_ref,
     )
-    from ming_sim.beat_orchestration import ChatTurnSceneRegistry
     from ming_sim.models import TurnPhase
     from ming_sim.rescript_draft import normalize_rescript_layer_a_option
     from ming_sim.session import GameSession
@@ -1054,7 +1053,7 @@ def test_657_s12_reconciles_s_u_q_and_finishes_summon(game, monkeypatch):
     db.conn.commit()
     origin_s = rescript_summon_origin_ref(int(turn_s), int(idx_s), 0)
 
-    night = open_night(db, state, empty_scaffold=True)
+    night = open_night(db, state)
     night_id = int(night["id"])
     sc = prepare_rescript_summon_scaffold(
         db, state, person_name=minister, origin_ref=origin_s,
@@ -1166,7 +1165,6 @@ def test_657_s13_reconcile_after_cas_reuses_ids(game):
         prepare_rescript_summon_scaffold,
         rescript_summon_origin_ref,
     )
-    from ming_sim.beat_orchestration import persist_chat_turn_scene
 
     db, state, content = game
     minister = _657_active_minister(db, content)

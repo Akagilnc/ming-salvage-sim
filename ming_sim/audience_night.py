@@ -28,11 +28,8 @@ from ming_sim.participant_roster import is_non_person_participant_name
 logger = logging.getLogger(__name__)
 
 # ── 引擎侧口令标签常量（ADR 0035：确定性写读）──────────────────────────
-TAG_OPEN_NIGHT = "开夜"
 TAG_ENTER = "入殿"
-TAG_CLOSE_NIGHT = "收夜"
 TAG_STANDING_ROSTER = "常在员额"
-TAG_AUTO_CLOSE = "顺势收夜"
 TAG_MINGFA = "明发"  # 夜内定案的旨在公开层账上标已明发（#502 AC6，供 #459 扩散）
 _MINGFA_ID_PREFIX = "明发#"  # 明发账挂 directive_id 的结构化标（逐条幂等续跑，#502 L6）
 
@@ -116,8 +113,6 @@ def _travel_tone_from_tags(tags: Sequence[Any]) -> str:
 _SUMMON_ORIGIN_PREFIX = "传召源#"
 # #526 / #471 S10：留侍叙事账标签——非进/出，不驱动在场（口径回灌 #500）
 TAG_STAY_ATTEND = "留侍"
-# #1585：交接旁白标签——软段切换事实（A 在场时 B 宣入），驱动 divider 投影但不驱动在场
-TAG_HANDOFF = "交接"
 
 # #526 结构化口令判词（引擎只认判词，不重解析散文；非 ACTION_CLUSTERS）
 CMD_CLOSE_NIGHT = "close_night"
@@ -542,13 +537,9 @@ def night_scroll_container(night: Dict[str, Any], ledgers: List[Dict[str, Any]],
 def read_night_scroll(db: Any, night_id: int) -> List[Dict[str, Any]]:
     """Read one audience night as the shared live/archive scroll contract.
 
-    The two durable stores remain untouched.  This projection merges them, omits
-    extraction-derived ledger cards by structural provenance
-    (`source_chat_turn_id>0`, same shape as cascade_echo production marks — no
-    text-stare paraphrase detection), derives scene dividers from handoff or
-    exit facts (named for the next entrance), and leaves the coda generation
-    slot empty. Memory consumers still read `list_ledger` directly and see every
-    story fact.
+    #1838 reopen：进出与气氛在场景戏文里，卷轴不再有开场/入殿旁白/收夜/余韵卡；
+    分幕线只来自转译声明的 exit（有正文）。口令账仅保留有正文的 exit/scene。
+    Memory consumers still read `list_ledger` directly and see every story fact.
     """
     night = get_night(db, night_id)
     if night is None:
@@ -643,55 +634,27 @@ def read_night_scroll(db: Any, night_id: int) -> List[Dict[str, Any]]:
 
     for entry in ledgers:
         tags = set(entry.get("tags") or [])
-        # #1293a：非口令/框架账（_is_command_entry 补集，含抽取派生与其它
-        # source>0 留痕如路径应答）一律不上 live/档案同源卷轴；禁盯 body。
+        # #1293a：非口令/框架账一律不上 live/档案同源卷轴；禁盯 body。
         if not _is_command_entry(entry):
             continue
-        # #1566：场外传召账（未入殿）有自由 body 时按 entrance 投影并锚定 speaker，
-        # 供 minister scroll lens 可见承接；空 body 仍不进卷轴。
-        is_offsite_summon = (
+        # #1838 reopen：入殿/开夜/收夜/交接/场外传召旁白账不再投影；
+        # 只投影有正文的 exit / 留侍 / 其它 scene 口令账。
+        if TAG_ENTER in tags:
+            continue
+        if (
             TAG_ENTER not in tags
-            and (
-                TAG_SUMMON_UNSETTLED in tags
-                or TAG_IN_TRANSIT in tags
-            )
+            and (TAG_SUMMON_UNSETTLED in tags or TAG_IN_TRANSIT in tags)
             and any(method in tags for method in SUMMON_METHODS)
-        )
-        if TAG_OPEN_NIGHT in tags:
-            beat = "opening"
-        elif TAG_CLOSE_NIGHT in tags:
-            beat = "closing"
-        elif TAG_HANDOFF in tags:
-            # #1585：公开投影为「exit」（退侍殿侧），内部 TAG_HANDOFF/TAG_STAY_ATTEND
-            # 事实不变——不写 TAG_EXIT、机器 presence 不退出（ADR 0035：殿侧侍立非硬状态）。
-            beat = "exit"
-        elif TAG_ENTER in tags:
-            beat = "entrance"
-        elif is_offsite_summon:
-            # #1566：场外传召（未入殿）投影为结构化非 entrance scene。
-            # ADR 0096：本回合开不成召对、抵京候旨召见——scene 围绕
-            # 「传召已发、人在途」承接，而非入殿。
-            beat = "summon"
-        elif TAG_EXIT in tags:
+        ):
+            continue
+        if TAG_EXIT in tags:
             beat = "exit"
         else:
             beat = "aside" if entry["audibility"] == AUDIBILITY_PRIVATE else "scene"
-        # #657 S4/P7：OPEN/ENTER/summon 口令账仅 body.strip() 非空才投影；
-        # 空垫位不进 scroll（无空条、无人物锚、无固定句冒充）。
-        # #1561：普通公共 scene 同属玩家可见 scene，空正文亦不投影；
-        # aside/closing 等其它 beat 不在本票扩域。
-        # #1585：交接投影为 exit 时和真实告退共用此标签；无显式 body 的 TAG_EXIT
-        # 一律空 scaffold，生成落地前不投影，persist_chat_turn_scene 原地补写。
-        # #1566：空 summon 垫位同不投影。
-        if beat in {"opening", "entrance", "exit", "summon", "scene"} and not str(entry.get("body") or "").strip():
+        if not str(entry.get("body") or "").strip():
             continue
         person = (entry.get("person_names") or [""])[0] if entry.get("person_names") else ""
-        if beat == "aside" and person:
-            speaker = person
-        elif is_offsite_summon and person:
-            speaker = person
-        else:
-            speaker = ""
+        speaker = person if beat == "aside" and person else ""
         events.append((
             _entry_order_key(entry), 10,
             message(role="attendant" if beat == "aside" else "scene",
@@ -700,59 +663,37 @@ def read_night_scroll(db: Any, night_id: int) -> List[Dict[str, Any]]:
                     content=entry["body"], beat=beat),
         ))
 
-    # #1585：divider 由交接事实或既有 EXIT 承载；handoff→divider(B)→entrance(B)，
-    # 显式退场为 exit→divider(B)→entrance(B)。不在每个新入殿后再造平行 divider。
+    # 分幕线只来自有正文的 exit（转译 presence exit 或 CLI 告退）。
     facts = sorted(ledgers, key=lambda e: (_entry_order_key(e), int(e["id"])))
     divided_identities: set[tuple[str, float]] = set()
     for index, entry in enumerate(facts):
         tags = set(entry.get("tags") or [])
-        is_exit = (_is_command_entry(entry) and TAG_EXIT in tags) or entry.get("presence_effect") == PRESENCE_EXIT
-        is_handoff = _is_command_entry(entry) and TAG_HANDOFF in tags and TAG_STAY_ATTEND in tags
+        is_exit = (
+            (_is_command_entry(entry) and TAG_EXIT in tags)
+            or entry.get("presence_effect") == PRESENCE_EXIT
+        )
+        if not (is_exit and str(entry.get("body") or "").strip()):
+            continue
         fact_order = _entry_order_key(entry)
         person = (entry.get("person_names") or [""])[0]
         identity_key = (person, fact_order)
-
-        following = facts[index + 1] if index + 1 < len(facts) else None
-        following_tags = set(following.get("tags") or []) if following else set()
-        followed_by_handoff = bool(following and _is_command_entry(following)
-                                   and TAG_HANDOFF in following_tags
-                                   and TAG_STAY_ATTEND in following_tags)
-
-        # #1585：交接正文生成前 body 为空——divider 须等交接实体旁白落定才派生，
-        # 否则先出现孤立分幕、后补 exit/entrance，分幕顺序失真（#1585 空 scaffold coverage）。
-        if is_handoff and str(entry.get("body") or "").strip() and identity_key not in divided_identities:
-            divided_identities.add(identity_key)
-            next_name = person
-            for later in facts[index + 1:]:
-                later_tags = set(later.get("tags") or [])
-                if ((_is_command_entry(later) and TAG_ENTER in later_tags)
-                        or later.get("presence_effect") == PRESENCE_ENTER):
-                    next_name = (later.get("person_names") or [""])[0] or person
-                    break
-            events.append((fact_order, 90,
-                message(role="scene", speaker=next_name, audibility=AUDIBILITY_PUBLIC,
-                        time=entry["created_at"], content="", beat="divider", soft_boundary=True),
-            ))
-        elif is_exit and str(entry.get("body") or "").strip() and not followed_by_handoff and identity_key not in divided_identities:
-            divided_identities.add(identity_key)
-            next_name = ""
-            for later in facts[index + 1:]:
-                later_tags = set(later.get("tags") or [])
-                if ((_is_command_entry(later) and TAG_ENTER in later_tags)
-                        or later.get("presence_effect") == PRESENCE_ENTER):
-                    next_name = (later.get("person_names") or [""])[0]
-                    break
-            events.append((fact_order, 90,
-                message(role="scene", speaker=next_name, audibility=AUDIBILITY_PUBLIC,
-                        time=entry["created_at"], content="", beat="divider", soft_boundary=True),
-            ))
+        if identity_key in divided_identities:
+            continue
+        divided_identities.add(identity_key)
+        next_name = ""
+        for later in facts[index + 1:]:
+            later_tags = set(later.get("tags") or [])
+            if ((_is_command_entry(later) and TAG_ENTER in later_tags)
+                    or later.get("presence_effect") == PRESENCE_ENTER):
+                next_name = (later.get("person_names") or [""])[0]
+                break
+        events.append((fact_order, 90,
+            message(role="scene", speaker=next_name, audibility=AUDIBILITY_PUBLIC,
+                    time=entry["created_at"], content="", beat="divider", soft_boundary=True),
+        ))
 
     events.sort(key=lambda item: (item[0], item[1]))
-    scroll = [item[2] for item in events]
-    scroll.append(message(role="scene", speaker="", audibility=AUDIBILITY_PUBLIC,
-                          time=night.get("closed_at") or night.get("opened_at"),
-                          content="", beat="coda"))
-    return scroll
+    return [item[2] for item in events]
 
 
 def _night_direct_write_allowed_tables() -> frozenset:
@@ -988,13 +929,10 @@ def open_night(
     *,
     time_of_day: str = "",
     location: str = "",
-    body: str = "",
-    empty_scaffold: bool = False,
 ) -> Dict[str, Any]:
-    """开夜：夜实体 + 开夜账 + 常在员额入殿账，单事务全有或全无。
+    """开夜：夜实体 + 常在员额入殿账，单事务全有或全无。
 
-    #657 empty_scaffold=True：registry/summon 开夜垫位路径——OPEN 与员额 ENTER
-    只落 body=""，禁止固定开夜句/「随侍在侧」成功旁路。
+    #1838 reopen：只记事实（谁常在）；不再写开夜旁白账。气氛由场景 LLM 第一轮戏文写。
     """
     existing = get_open_night(db)
     if existing is not None and existing["status"] == NIGHT_STATUS_OPEN:
@@ -1015,32 +953,8 @@ def open_night(
     location = str(location or "").strip() or DEFAULT_LOCATION
 
     roster = resolve_standing_roster(db)
-    if empty_scaffold:
-        # #657 P7/W1：垫位路径只许空 body；不叠复命场面、不用固定开夜句。
-        open_body = ""
-    else:
-        # N1（#1561）：删除固定 opening fallback。空 body 时留空垫位；
-        # opening 成色只走既有 LLM 输入/materials seam（attach_chat_turn_to_night
-        # → generate_open_beat_body），不再写「{location}·{time_of_day}，召对启。」。
-        open_body = body or ""
-        # #621：次回合召对顶出复命场面（pending todo 投影；P4 定性、不停轮）。
-        # body 是开夜气氛层（含 LLM open-beat）；复命是召对顶出层——二者叠加，
-        # 不得因调用方已供 body 而跳过（生产 ensure_open_night_for_audience 常带 body）。
-        # #1561 N1：仅 opening 已有显式非空 body 时叠加；无 generator 的空垫位
-        # 不得被 pending due/urge scene_text 填成确定性正文（整段迁移属 #1571）。
-        from ming_sim.due_review import list_due_review_scenes
-        from ming_sim.urge_lever import list_urge_audience_scenes
-        scenes = list_due_review_scenes(db, state)
-        # #624 / ADR 0078：谏/宽限同款次回合召对顶出（不进 due-review 白名单、不占接管窗）
-        scenes = list(scenes) + list(list_urge_audience_scenes(db, state))
-        if scenes and str(open_body).strip():
-            scene_lines = [str(s.get("scene_text") or "").strip() for s in scenes]
-            scene_lines = [line for line in scene_lines if line]
-            if scene_lines:
-                open_body = open_body + "\n" + "\n".join(scene_lines)
 
-    # 原子：实体 + 开夜账 + 员额入殿账，SAVEPOINT 全有或全无。
-    # 不 BEGIN 顶层事务（避免嵌套/泄漏；外层 atomic 可组合）。
+    # 原子：实体 + 员额入殿账，SAVEPOINT 全有或全无。
     sp = f"open_night_{int(state.turn)}_{id(state)}"
     db.conn.execute(f"SAVEPOINT {sp}")
     try:
@@ -1061,32 +975,18 @@ def open_night(
             ),
         )
         night_id = int(cur.lastrowid)
-        append_ledger_entry(
-            db, night_id,
-            person_names=[],
-            audibility=AUDIBILITY_PUBLIC,
-            body=open_body,
-            tags=[TAG_OPEN_NIGHT],
-            check_dead=False,
-            commit=False,
-        )
         for name in roster:
-            # #657 P7/W3：registry 开夜垫位路径员额 ENTER 先落 body=""；
-            # 禁止 generator 完成前落「随侍在侧」固定句。
-            # P29（#1561）：删除固定「随侍在侧。」fallback，body 始终置空；
-            # standing-roster 无生成路由，仅保留 typed tags/person_names。
-            roster_body = ""
+            # 常在员额入殿账 body 恒空——只驱动在场，不写旁白。
             append_ledger_entry(
                 db, night_id,
                 person_names=[name],
                 audibility=AUDIBILITY_PUBLIC,
-                body=roster_body,
+                body="",
                 tags=[TAG_ENTER, TAG_STANDING_ROSTER],
                 check_dead=True,
                 commit=False,
             )
         db.conn.execute(f"RELEASE SAVEPOINT {sp}")
-        # 非外层 atomic 时提交本夜写入（不用 owns_transaction：in_transaction 时它恒 False）
         if _should_commit(db):
             db.conn.commit()
     except Exception:
@@ -1119,28 +1019,21 @@ def summon_enter(
     person_name: str,
     *,
     method: str = METHOD_XUANRU,
-    body: str = "",
     audibility: str = AUDIBILITY_PUBLIC,
     origin_chat_turn_id: int = 0,
     origin_ref: str = "",
-    empty_scaffold: bool = False,
     commit: bool = True,
 ) -> int:
+    """落入殿事实账。#1838 reopen：正文恒空——入殿气氛由场景戏文写，不写旁白句。"""
     name = str(person_name or "").strip()
     if not name:
         raise AudienceNightError("宣召人名不能为空", code="empty_person")
     method = _validate_summon_method(method, default=METHOD_XUANRU)
-    # #657 P7/W2：成功垫位只许 body=""；删固定入殿句成功旁路。
-    # 非 scaffold 旧调用仍可 body or 固定句（兼容既有 attach 路径的非空 generator 正文）。
-    if empty_scaffold:
-        text = ""
-    else:
-        text = body or f"{method}{name}入殿。"
     return append_ledger_entry(
         db, night_id,
         person_names=[name],
         audibility=audibility,
-        body=text,
+        body="",
         tags=[TAG_ENTER, method],
         check_dead=True,
         origin_chat_turn_id=origin_chat_turn_id,
@@ -1376,34 +1269,27 @@ def close_night(
     content: Any = None,
     registry: Any = None,
     auto: bool = False,
-    body: str = "",
     wait_timeout_s: float | None = None,
     crash_after_step: Optional[int] = None,
     on_step: Optional[Callable[[int, Dict[str, Any]], None]] = None,
     on_closing: Optional[Callable[[], None]] = None,
-    beat_generator: Any = None,
-    knowledge_provider: Any = None,
     llm_config: Any = None,
     write_gate: Any = None,
     endorsement_extractor_agent: Any = None,
-    scene_registry: Any = None,
-    close_chat_turn_id: int = 0,
     translate_fn: Any = None,
     write_queue: Any = None,
 ) -> Dict[str, Any]:
     """收夜：短写前提 → 无锁待补转译 + 夜级 endorsement-only 批 → 短写终局。
 
-    分相：
-    1. OPEN 期：等在飞回话清；有限 join 转译 single-flight owner 后重读 DB；
-       经调用方既有 ChatTurnSceneRegistry start_close（不立即 join）；持 write_gate
-       原子复查并冻结 CLOSING、提交 draft 前提。不得自建第二 registry/executor/Thread。
-    2. 提交前先补跑待补转译（CLOSING restore 同路）；之后
-       endorsement-only LLM 与 close scene 并行（无 DB transaction / 无 runtime write
-       gate）；终局写入前 join close scene。
-    3. 重取 gate：原子落背书水位；consort/明发/收夜账/CLOSED。
+    #1838 reopen：不再有收夜旁白 LLM 调用与收夜账；收讫只看 audience_nights.status。
+    背书批仍由 #1842 路径承接（本函数仍调 endorsement batch）。
 
-    背书或 close scene 失败 → OPEN、cursor=0、draft identity 保留；scene 失败另走
-    chat-turn abandon/fail。成功前不得判官/公开明发/终局效果/CLOSED。
+    分相：
+    1. OPEN 期：等在飞回话清；补跑转译；持 write_gate 冻结 CLOSING、提交 draft 前提。
+    2. endorsement-only LLM（无 DB transaction / 无 runtime write gate）。
+    3. 重取 gate：原子落背书水位；consort/明发/CLOSED。
+
+    背书失败 → OPEN、cursor=0、draft identity 保留。成功前不得判官/公开明发/终局效果/CLOSED。
     """
     if wait_timeout_s is None:
         wait_timeout_s = DEFAULT_IN_FLIGHT_WAIT_S
@@ -1423,167 +1309,77 @@ def close_night(
     if night["status"] == NIGHT_STATUS_CLOSED:
         return {"closed": True, "night_id": int(night_id), "already": True}
 
-    close_body = str(body or "")
-    close_ctid = int(close_chat_turn_id or 0)
-    close_scaffold_owned = False
-    close_started = False
-    need_close_scene = (not close_body) and beat_generator is not None
-    reg = scene_registry if (
-        scene_registry is not None and hasattr(scene_registry, "start_close")
-    ) else None
-
-    def _start_close_scene() -> None:
-        nonlocal close_ctid, close_scaffold_owned, close_started
-        if not need_close_scene or reg is None or close_started:
-            return
-        from ming_sim import beat_orchestration as beats
-        # #542 r6e: start_close 同步抛错时 helper 经异常交出 ctid；finally 置
-        # close_started，使既有 abandon/fail/OPEN 清理必跑到。
-        try:
-            close_ctid, close_scaffold_owned = beats.start_close_scene_on_registry(
+    if night["status"] == NIGHT_STATUS_OPEN:
+        wait_in_flight_clear(
+            db, night_id, timeout_s=wait_timeout_s, write_gate=write_gate,
+        )
+        from ming_sim.audience_translation import catch_up_pending_translations
+        if llm_config is not None and write_gate is not None and write_queue is not None:
+            catch_up_pending_translations(
                 db, state,
                 night_id=int(night_id),
-                scene_registry=reg,
-                beat_generator=beat_generator,
-                knowledge_provider=knowledge_provider,
-                chat_turn_id=int(close_ctid or 0),
+                llm_config=llm_config,
+                translate_fn=translate_fn,
+                write_gate=write_gate,
+                write_queue=write_queue,
             )
-        except BaseException as start_exc:
-            owned = getattr(start_exc, "close_scene_ownership", None)
-            if owned is not None:
-                close_ctid = int(owned[0])
-                close_scaffold_owned = bool(owned[1])
-            raise
-        finally:
-            close_started = bool(close_ctid)
-
-    def _cleanup_close_scene_early(primary_exc: BaseException) -> None:
-        """T15: after start_close through phase-1, any failure drains/fails scaffold and reopens."""
-        cleanup_exc: BaseException | None = None
-        if close_started and reg is not None:
-            try:
-                if hasattr(reg, "abandon"):
-                    reg.abandon(int(close_ctid))
-                if close_scaffold_owned and hasattr(db, "fail_chat_turn"):
-                    with gate:
-                        restored_ids = db.fail_chat_turn(int(close_ctid))
-                    from ming_sim.decree_forecast import schedule_restored_decree_forecasts
-                    schedule_restored_decree_forecasts(db, restored_ids)
-            except BaseException as exc:
-                cleanup_exc = exc
         with gate:
             _set_night_fields(
-                db, night_id, status=NIGHT_STATUS_OPEN, closed_at=None,
-                close_commit_cursor=0,
+                db, night_id, status=NIGHT_STATUS_CLOSING,
             )
-        if cleanup_exc is not None:
-            raise primary_exc from cleanup_exc
-        raise primary_exc
-
-    try:
-        if night["status"] == NIGHT_STATUS_OPEN:
-            # In-flight wait：轮询短持 gate 读，sleep 闸外（禁持锁睡眠）。
-            wait_in_flight_clear(
-                db, night_id, timeout_s=wait_timeout_s, write_gate=write_gate,
-            )
-            # #1842：封夜提交 join 最后一轮转译须在 OPEN 期完成；CLOSING
-            # 只允许待补既有源轮的应允，其余玩家输入仍拒绝。
-            # join / catch-up 在闸外（LLM + 串行锁）；落账自持 write_gate。
-            # 屏障未清空不得 catch-up / 置 CLOSING——timeout 仅轮询上限，保持 OPEN 续等。
-            from ming_sim.audience_translation import catch_up_pending_translations
-            # catch_up 契约：单轮失败标 pending、不抛；代码异常按 ADR 0005 上抛。
-            # translate_fn=None 走默认 runner（#1842：收夜补跑不因缺注入而跳过）。
-            if llm_config is not None and write_gate is not None and write_queue is not None:
-                catch_up_pending_translations(
-                    db, state,
-                    night_id=int(night_id),
-                    llm_config=llm_config,
-                    translate_fn=translate_fn,
-                    write_gate=write_gate,
-                    write_queue=write_queue,
-                )
-            # #1353：start_close 的 assemble/知识短读与置 CLOSING 同持 write_gate。
-            # 禁闸外知识链读共享 conn——后于屏障领票的尾随若尚未 wait_prior，
-            # 并发 SELECT 会 sqlite3.Row IndexError（tuple index out of range）。
-            # start_close 只同步组 inputs + 提交 Future，不 join LLM。
-            with gate:
-                _start_close_scene()
-                _set_night_fields(
-                    db, night_id, status=NIGHT_STATUS_CLOSING,
-                )
-                if on_closing is not None:
-                    on_closing()
-                night = get_night(db, night_id)
-            assert night is not None
-        else:
-            # Resume CLOSING：仍无 body 时 start 同一 registry 缝（不自建平行生命周期）。
-            # CLOSING restore drain 留作 ADR 0036 崩溃恢复口（下方提交前补跑）。
-            # 与 OPEN 同：start_close 短读持 gate；重读 night 同持。
-            with gate:
-                _start_close_scene()
-                if on_closing is not None:
-                    on_closing()
-                night = get_night(db, night_id) or night
-
-        cursor = int(night["close_commit_cursor"] or 0)
-
-        def _advance(step: int) -> None:
-            nonlocal cursor
-            _set_night_fields(db, night_id, close_commit_cursor=int(step))
-            cursor = int(step)
-            if on_step is not None:
-                on_step(step, get_night(db, night_id) or {})
-            if crash_after_step is not None and int(crash_after_step) == int(step):
-                raise AudienceNightError(
-                    f"收夜提交崩溃注入：step={step}",
-                    code="close_crash",
-                    detail={"night_id": int(night_id), "step": int(step)},
-                )
-
-        # 本夜待补先补跑再提交应允；CLOSING restore 亦须在游标前补跑。
-        # 仍待补的轮次不挡退朝，过月 join 后另走迟到应允成案口。
-        _drain_pending_translations_or_fail_closed(
-            db, int(night_id), llm_config=llm_config, write_gate=write_gate,
-            game_state=state, translate_fn=translate_fn, write_queue=write_queue,
-        )
-
-        # ── Phase 1: short writes for draft-dossier prerequisites only ─────────
+            if on_closing is not None:
+                on_closing()
+            night = get_night(db, night_id)
+        assert night is not None
+    else:
         with gate:
-            # 恢复态游标可能已越过前两步；新补到的同夜应允仍须提交。
-            _commit_night_approved(
-                db, state, int(night_id),
-                kinds=_CLOSE_COMMIT_KINDS_OFFICE,
-                content=content, registry=registry,
-            )
-            if cursor < CLOSE_STEP_COMMIT_OFFICE:
-                _advance(CLOSE_STEP_COMMIT_OFFICE)
+            if on_closing is not None:
+                on_closing()
+            night = get_night(db, night_id) or night
 
-            _commit_night_approved(
-                db, state, int(night_id),
-                kinds=_CLOSE_COMMIT_KINDS_DIRECTIVE,
-                content=content, registry=registry,
-                directive_status="draft",
-            )
-            if cursor < CLOSE_STEP_TRANSFER_CANDIDATES:
-                # Draft dossiers / turn_directives are durable prerequisites only.
-                _advance(CLOSE_STEP_TRANSFER_CANDIDATES)
-    except BaseException as early_exc:
-        # Only clean when close scene was started; bare pre-start failures pass through.
-        if close_started:
-            _cleanup_close_scene_early(early_exc)
-        raise
+    cursor = int(night["close_commit_cursor"] or 0)
 
-    # #1842 / ADR 0155：收夜旧边事件判官退役——转译已在场中声明边事件并落账；
-    # 不再 prepare/invoke/finalize relation judge，也不为判官另建 scaffold 轮。
-    # ── Phase 2: endorsement LLM ∥ close scene (join before finalize) ──────
-    # Both branches end before finalize or reopen. No ExceptionGroup bus /
-    # second registry/executor/Thread. First observed failure propagates;
-    # sibling still drains; join/cleanup chains via __cause__.
-    primary_exc: BaseException | None = None
+    def _advance(step: int) -> None:
+        nonlocal cursor
+        _set_night_fields(db, night_id, close_commit_cursor=int(step))
+        cursor = int(step)
+        if on_step is not None:
+            on_step(step, get_night(db, night_id) or {})
+        if crash_after_step is not None and int(crash_after_step) == int(step):
+            raise AudienceNightError(
+                f"收夜提交崩溃注入：step={step}",
+                code="close_crash",
+                detail={"night_id": int(night_id), "step": int(step)},
+            )
+
+    _drain_pending_translations_or_fail_closed(
+        db, int(night_id), llm_config=llm_config, write_gate=write_gate,
+        game_state=state, translate_fn=translate_fn, write_queue=write_queue,
+    )
+
+    # ── Phase 1: short writes for draft-dossier prerequisites only ─────────
+    with gate:
+        _commit_night_approved(
+            db, state, int(night_id),
+            kinds=_CLOSE_COMMIT_KINDS_OFFICE,
+            content=content, registry=registry,
+        )
+        if cursor < CLOSE_STEP_COMMIT_OFFICE:
+            _advance(CLOSE_STEP_COMMIT_OFFICE)
+
+        _commit_night_approved(
+            db, state, int(night_id),
+            kinds=_CLOSE_COMMIT_KINDS_DIRECTIVE,
+            content=content, registry=registry,
+            directive_status="draft",
+        )
+        if cursor < CLOSE_STEP_TRANSFER_CANDIDATES:
+            _advance(CLOSE_STEP_TRANSFER_CANDIDATES)
+
+    # ── Phase 2: endorsement LLM（#1842 仍承接；本票只删旁白并行） ──────
     try:
         from ming_sim.audience_extraction import run_endorsement_batch_for_night
 
-        # Endorsement LLM must not hold runtime write gate / DB transaction.
         run_endorsement_batch_for_night(
             db=db,
             night_id=int(night_id),
@@ -1591,55 +1387,20 @@ def close_night(
             write_gate=gate,
             extractor_agent=endorsement_extractor_agent,
         )
-    except Exception as exc:
-        primary_exc = exc
-
-    join_exc: BaseException | None = None
-    if close_started and reg is not None:
-        try:
-            from ming_sim import beat_orchestration as beats
-            joined_body = beats.join_close_scene_on_registry(
-                db,
-                scene_registry=reg,
-                chat_turn_id=int(close_ctid),
-                write_gate=gate,
-            )
-            if joined_body and not close_body:
-                close_body = str(joined_body)
-        except Exception as exc:
-            join_exc = exc
-
-    if primary_exc is not None or join_exc is not None:
+    except Exception:
         with gate:
-            if close_scaffold_owned and close_ctid and hasattr(db, "fail_chat_turn"):
-                restored_ids = db.fail_chat_turn(int(close_ctid))
-                from ming_sim.decree_forecast import schedule_restored_decree_forecasts
-                schedule_restored_decree_forecasts(db, restored_ids)
             _set_night_fields(
                 db, night_id, status=NIGHT_STATUS_OPEN, closed_at=None,
                 close_commit_cursor=0,
             )
-        if primary_exc is not None:
-            if join_exc is not None:
-                raise primary_exc from join_exc
-            raise primary_exc
-        raise join_exc
+        raise
 
-    # ── Phase 3: short writes — final effects, 明发, close ledger, CLOSED ──
-    # Close body joined above (or explicit body=); no generator under the runtime
-    # gate (ADR 0005: no silent in-gate fallback).
-    # #1353 r7：phase3 前 get_night 与终局写同持 gate（禁闸外裸读）。
+    # ── Phase 3: short writes — final effects, 明发, CLOSED ──
     with gate:
         night = get_night(db, night_id) or night
         cursor = int(night["close_commit_cursor"] or 0)
         if cursor < CLOSE_STEP_ENDORSEMENT_BOUND:
-            # settle path should have advanced this; missing watermark is a hard fault.
-            # Restore OPEN so the player can retry (ADR 0036); keep code + diagnostics.
             fault_cursor = int(cursor)
-            if close_scaffold_owned and close_ctid and hasattr(db, "fail_chat_turn"):
-                restored_ids = db.fail_chat_turn(int(close_ctid))
-                from ming_sim.decree_forecast import schedule_restored_decree_forecasts
-                schedule_restored_decree_forecasts(db, restored_ids)
             _set_night_fields(
                 db, night_id, status=NIGHT_STATUS_OPEN, closed_at=None,
                 close_commit_cursor=0,
@@ -1659,34 +1420,13 @@ def close_night(
                 content=content, registry=registry,
             )
             publish_night_directives(db, int(night_id))
-            tags = [TAG_CLOSE_NIGHT]
-            if auto:
-                tags.append(TAG_AUTO_CLOSE)
-            existing_tags = {
-                t for e in list_ledger(db, night_id) if _is_command_entry(e)
-                for t in e.get("tags") or []
-            }
-            if TAG_CLOSE_NIGHT not in existing_tags:
-                final_close_body = close_body or (
-                    "王承恩代宣退朝，召对到此。" if auto else "退朝，召对到此。"
-                )
-                append_ledger_entry(
-                    db, night_id,
-                    person_names=[],
-                    audibility=AUDIBILITY_PUBLIC,
-                    body=final_close_body,
-                    tags=tags,
-                    check_dead=False,
-                    allow_closing=True,
-                )
+            # #1838 reopen：不写收夜旁白账与代码兜底句；收讫以 status=closed 为准。
             _set_night_fields(
                 db, night_id,
                 status=NIGHT_STATUS_CLOSED,
                 closed_at=_now_iso(),
                 close_commit_cursor=CLOSE_STEP_FINALIZE,
             )
-        if close_scaffold_owned and close_ctid:
-            db.mark_chat_turn_failed(int(close_ctid))
         final = get_night(db, night_id)
 
     return {
@@ -1706,24 +1446,15 @@ def auto_close_open_night(
     registry: Any = None,
     wait_timeout_s: float | None = None,
     crash_after_step: Optional[int] = None,
-    beat_generator: Any = None,
-    knowledge_provider: Any = None,
     llm_config: Any = None,
     write_gate: Any = None,
     endorsement_extractor_agent: Any = None,
-    scene_registry: Any = None,
-    close_chat_turn_id: int = 0,
-    body: str = "",
     on_closing: Optional[Callable[[], None]] = None,
 ) -> Optional[Dict[str, Any]]:
     """颁诏/过回合前：有开夜则顺势收夜；无开夜返回 None。
 
     write_gate 应为真实 runtime Lock（或 CLI 下 None）；close_night 只在短写阶段持锁，
     endorsement LLM 期间释放。调用方不得在外层持同一把非重入锁再传入 nullcontext。
-    scene_registry：既有 ChatTurnSceneRegistry（session 持有）；start_close 后与
-    endorsement 并行，终局写入前 join；不自建第二 registry/executor。
-    #1353 fold-in r5：欠账补跑内部静默，不透传过月 SSE。
-    #1353 r10：wrapper 入口 get_open_night 短持 gate（r7 修了 close_night 内、漏此处）。
     """
     with _gate_cm(write_gate):
         open_n = get_open_night(db)
@@ -1735,16 +1466,11 @@ def auto_close_open_night(
         content=content,
         registry=registry,
         auto=True,
-        body=body,
         wait_timeout_s=wait_timeout_s,
         crash_after_step=crash_after_step,
-        beat_generator=beat_generator,
-        knowledge_provider=knowledge_provider,
         llm_config=llm_config,
         write_gate=write_gate,
         endorsement_extractor_agent=endorsement_extractor_agent,
-        scene_registry=scene_registry,
-        close_chat_turn_id=int(close_chat_turn_id or 0),
         on_closing=on_closing,
     )
 
@@ -1755,9 +1481,8 @@ def ensure_open_night_for_audience(
     *,
     time_of_day: str = "",
     location: str = "",
-    body: str = "",
 ) -> Dict[str, Any]:
-    return open_night(db, state, time_of_day=time_of_day, location=location, body=body)
+    return open_night(db, state, time_of_day=time_of_day, location=location)
 
 
 def _summon_origin_tag(origin_id: object) -> str:
@@ -2264,25 +1989,15 @@ def dismiss_from_audience(
     night_id: Optional[int] = None,
     body: str = "",
     origin_chat_turn_id: int = 0,
-    state: Any = None,
-    beat_generator: Any = None,
-    knowledge_provider: Any = None,
     allow_closing: bool = False,
 ) -> Optional[int]:
     """「令 X 退下」口令：确定性落告退账，即时反映于名单查询。
 
     不在场者令退 = 幂等 no-op（不落账、返 None）；名不填 → 响亮 empty_person。
-
-    只落垫位/显式 body——exit 旁白由调用方登记本轮 ChatTurnSceneRegistry（#542）。
-    `beat_generator` / `knowledge_provider` 形参保留兼容，**故意忽略**（禁止同步旁路）。
+    #1838 reopen：正文恒空（无旁白调用）；在场由 TAG_EXIT 驱动，戏文由场景 LLM 写。
 
     `origin_chat_turn_id`（#506 L1）：tool 触发的令退发生在某一对话轮内时绑该轮 chat_turn_id，
-    使撤回本轮据 origin 删掉告退账、令退者在场复原（否则告退账残留 → 按夜取数 ≠ 未发生，
-    且被令退者永久差出）。0=不属某轮的独立令退（无撤回目标）。
-
-    无显式 body 时落真正空 TAG_EXIT scaffold（P7：禁固定告退模板）。玩家可见正文
-    只由调用方既有 ChatTurnSceneRegistry.start_exit 回填；read_night_scroll 空检
-    在生成完成前不投影半成品。
+    使撤回本轮据 origin 删掉告退账、令退者在场复原。0=不属某轮的独立令退。
     """
     name = str(person_name or "").strip()
     if not name:
@@ -2295,8 +2010,6 @@ def dismiss_from_audience(
         nid = int(open_n["id"])
     if name not in present_names_at(db, int(nid)):
         return None
-    # state/beat_generator/knowledge_provider: compatibility only — no sync LLM here.
-    _ = (state, beat_generator, knowledge_provider)
     return append_ledger_entry(
         db, int(nid),
         person_names=[name],
@@ -2589,7 +2302,7 @@ def audience_scene_recap(
 
 def _is_command_entry(entry: Dict[str, Any]) -> bool:
     """口令/框架账（发起/进出/收夜/常在员额）由引擎侧确定性写入、`source_chat_turn_id==0`；
-    抽取账（`>0`）的 tags 是 LLM 开放叙事标签。引擎口令常量标（TAG_ENTER/TAG_CLOSE_NIGHT…）
+    抽取账（`>0`）的 tags 是 LLM 开放叙事标签。引擎口令常量标（TAG_ENTER/TAG_EXIT…）
     只在口令账上机器承重——抽取账开放 tags 不得驱动机器态（ADR 0035：在场等机器承重态输入
     不解析自由文本；否则 LLM 写「入殿」旁路死账、写「收夜」旁路收夜账幂等）。"""
     return int(entry.get("source_chat_turn_id") or 0) == 0
@@ -2643,10 +2356,8 @@ def ensure_summon_enter(
     person_name: str,
     *,
     method: str = METHOD_XUANRU,
-    body: str = "",
     origin_chat_turn_id: int = 0,
     origin_ref: str = "",
-    empty_scaffold: bool = False,
     commit: bool = True,
 ) -> Optional[int]:
     name = str(person_name or "").strip()
@@ -2657,10 +2368,9 @@ def ensure_summon_enter(
     if not origin_ref and name in present_names_at(db, night_id):
         return None
     return summon_enter(
-        db, night_id, name, method=method, body=body,
+        db, night_id, name, method=method,
         origin_chat_turn_id=origin_chat_turn_id,
         origin_ref=origin_ref,
-        empty_scaffold=empty_scaffold,
         commit=commit,
     )
 
@@ -2672,18 +2382,10 @@ def rescript_summon_origin_ref(source_turn: int, idx: int, revision_round: int) 
 
 def rescript_summon_origin_consumed(
     entry: Optional[Mapping[str, Any]],
-    *,
-    expected_bodies: Optional[Sequence[str]] = None,
 ) -> bool:
-    """#657 §D.0 consumed 唯一谓词（prepare / phase2 门闩共用）。
+    """#1838 reopen / #657：已消费 ≔ origin 行存在 ∧ TAG_ENTER∈tags。
 
-    consumed ≔ origin 行存在
-      ∧ TAG_ENTER∈tags
-      ∧ body.strip() 非空
-      ∧（若给 expected_bodies）body 等于本轮已成功 persist 的 generator 非空返回值之一
-
-    prepare 路径无本轮 generator：只检 TAG_ENTER+非空 body（即既有成功消费账）。
-    空 body ≠ 消费；缺 TAG_ENTER 的非空 body ≠ 消费。
+    不再依赖旁白正文；入殿账正文恒空。
     """
     if entry is None:
         return False
@@ -2698,17 +2400,7 @@ def rescript_summon_origin_consumed(
     else:
         tags_list = []
     tags = [str(t) for t in tags_list]
-    if TAG_ENTER not in tags:
-        return False
-    body = str(entry.get("body") or "")
-    if not body.strip():
-        return False
-    if expected_bodies is None:
-        return True
-    allowed = [str(b) for b in expected_bodies if str(b).strip()]
-    if not allowed:
-        return False
-    return body in allowed
+    return TAG_ENTER in tags
 
 
 def _ledger_by_origin_ref(db: Any, origin: str) -> Optional[Dict[str, Any]]:
@@ -2733,115 +2425,6 @@ def _ledger_by_origin_ref(db: Any, origin: str) -> Optional[Dict[str, Any]]:
     }
 
 
-def ensure_summon_scaffold_reenterable(
-    db: Any,
-    *,
-    origin_ref: str,
-    entry_id: int,
-    chat_turn_id: int,
-    expected_night_id: int,
-) -> None:
-    """#657 D.6：空垫位复用 CAS（failed→generating）。
-
-    单短 atomic 内 §D.6.2 全谓词复核（含 TAG_ENTER、空 body、night 三方一致、
-    minister_message 空）；generating no-op 与 failed→CAS 共用同一套谓词；
-    interrupted/其它 raise。不调 reopen_interrupted；不改 reconcile。
-    """
-    from ming_sim.applier import atomic
-
-    origin = str(origin_ref or "").strip()
-    if not origin:
-        raise AudienceNightError("ensure_summon_scaffold 缺 origin_ref", code="bad_origin")
-    eid = int(entry_id)
-    ctid = int(chat_turn_id)
-    expect_night = int(expected_night_id)
-    with atomic(db):
-        # 事务内重新 SELECT，禁止信任事务前快照
-        entry = db.conn.execute(
-            "SELECT id, body, origin_ref, origin_chat_turn_id, night_id, tags "
-            "FROM story_ledger_entries WHERE id = ?",
-            (eid,),
-        ).fetchone()
-        if entry is None:
-            raise AudienceNightError(
-                f"summon 垫位不存在：entry={eid}", code="scaffold_missing",
-            )
-        ct = db.conn.execute(
-            "SELECT id, status, user_message_id, minister_message_id, night_id "
-            "FROM chat_turns WHERE id = ?",
-            (ctid,),
-        ).fetchone()
-        if ct is None:
-            raise AudienceNightError(
-                f"summon scaffold chat_turn 不存在：{ctid}", code="scaffold_ct_missing",
-            )
-        if str(entry["origin_ref"] or "") != origin:
-            raise AudienceNightError(
-                f"summon 垫位 origin 漂移：entry={eid}", code="scaffold_origin_mismatch",
-            )
-        tags = [str(t) for t in _json_list(entry["tags"] if "tags" in entry.keys() else None)]
-        if TAG_ENTER not in tags:
-            raise AudienceNightError(
-                f"summon 垫位缺 TAG_ENTER：entry={eid}", code="scaffold_no_enter_tag",
-            )
-        if str(entry["body"] or "").strip():
-            raise AudienceNightError(
-                f"summon 垫位已消费（body 非空）：entry={eid}", code="scaffold_consumed",
-            )
-        if int(entry["origin_chat_turn_id"] or 0) != ctid:
-            raise AudienceNightError(
-                f"summon 垫位 chat_turn 绑定漂移：entry={eid}", code="scaffold_ct_mismatch",
-            )
-        le_night = int(entry["night_id"] or 0)
-        ct_night = int(ct["night_id"] or 0)
-        if not (ct_night == le_night == expect_night):
-            raise AudienceNightError(
-                f"summon 垫位 night 不一致：ct={ct_night} le={le_night} expect={expect_night}",
-                code="scaffold_night_mismatch",
-            )
-        night = get_night(db, le_night)
-        if night is None or str(night.get("status") or "") not in {
-            NIGHT_STATUS_OPEN, NIGHT_STATUS_CLOSING,
-        }:
-            raise AudienceNightError(
-                f"summon 垫位夜不可用：night={le_night}", code="scaffold_night",
-            )
-        if ct["user_message_id"] is not None:
-            raise AudienceNightError(
-                f"summon scaffold 已有问话，不得 CAS：{ctid}", code="scaffold_has_user",
-            )
-        minister_mid = ct["minister_message_id"]
-        if minister_mid is not None and int(minister_mid or 0) != 0:
-            raise AudienceNightError(
-                f"summon scaffold 已有大臣回复，不得 CAS：{ctid}",
-                code="scaffold_has_minister",
-            )
-        status = str(ct["status"] or "")
-        if status == "generating":
-            return  # no-op；§D.6.2 谓词已在事务内复核
-        if status == "failed":
-            cur = db.conn.execute(
-                "UPDATE chat_turns SET status = 'generating' "
-                "WHERE id = ? AND status = 'failed' "
-                "AND user_message_id IS NULL "
-                "AND (minister_message_id IS NULL OR minister_message_id = 0)",
-                (ctid,),
-            )
-            if cur.rowcount != 1:
-                raise AudienceNightError(
-                    f"summon scaffold CAS 失败：{ctid}", code="scaffold_cas_failed",
-                )
-            return
-        if status == "interrupted":
-            raise AudienceNightError(
-                f"summon scaffold 为 interrupted，不得 CAS/reopen：{ctid}",
-                code="scaffold_interrupted",
-            )
-        raise AudienceNightError(
-            f"summon scaffold 状态不可复用：{status!r}", code="scaffold_bad_status",
-        )
-
-
 def prepare_rescript_summon_scaffold(
     db: Any,
     state: GameState,
@@ -2852,10 +2435,11 @@ def prepare_rescript_summon_scaffold(
     time_of_day: str = "",
     location: str = "",
 ) -> Dict[str, Any]:
-    """#657 D.4/D.5：新鲜空垫位 atomic 或复用已有空 origin 行。
+    """#1838 reopen / #657：批红召见只落入殿事实账。
 
-    返回 {entry_id, chat_turn_id, night_id, consumed: bool}。
-    UNIQUE 冲突：再 SELECT；非空=consumed；空=复用；禁冲突当成功。
+    返回 {entry_id, night_id, consumed: bool}。
+    已消费 ≔ origin_ref 行存在 ∧ TAG_ENTER；不再建 generating 对话轮、不依赖旁白正文。
+    幂等靠 origin_ref UNIQUE。
     """
     from ming_sim.applier import atomic
 
@@ -2866,71 +2450,13 @@ def prepare_rescript_summon_scaffold(
 
     existing = _ledger_by_origin_ref(db, origin)
     if existing is not None:
-        if rescript_summon_origin_consumed(existing):
-            # 已消费：同步 scaffold → consumed 终态（禁 generating 永挂 wait_in_flight）
-            ctid_done = int(existing.get("origin_chat_turn_id") or 0)
-            if ctid_done > 0 and hasattr(db, "complete_rescript_summon_scaffold_turn"):
-                db.complete_rescript_summon_scaffold_turn(ctid_done)
-            return {
-                "entry_id": int(existing["id"]),
-                "chat_turn_id": ctid_done,
-                "night_id": int(existing["night_id"]),
-                "consumed": True,
-            }
-        if str(existing.get("body") or "").strip():
-            # 非空 body 但缺 TAG_ENTER 等 → 非合法消费，响亮失败（禁当 consumed 放行）
-            raise AudienceNightError(
-                f"summon origin 行非空但未满足消费谓词：origin={origin}",
-                code="scaffold_malformed_body",
-            )
-        # 空垫位复用
-        entry_id = int(existing["id"])
-        ctid = int(existing.get("origin_chat_turn_id") or 0)
-        if ctid <= 0:
-            raise AudienceNightError(
-                f"空垫位缺 chat_turn 绑定：origin={origin}", code="scaffold_unbound",
-            )
-        night_id = int(existing["night_id"])
-        night = get_night(db, night_id)
-        night_ok = (
-            night is not None
-            and str(night.get("status") or "") in {NIGHT_STATUS_OPEN, NIGHT_STATUS_CLOSING}
-        )
-        if not night_ok:
-            # §D.5/D.6：复用须同 origin/entry/chat_turn/**原夜**一致。
-            # 禁跨夜改写 ledger/chat_turn.night_id。原夜已闭则重开同一夜（S5 重入）。
-            with atomic(db):
-                other = get_open_night(db)
-                if other is not None and int(other["id"]) != night_id:
-                    raise AudienceNightError(
-                        f"summon 垫位原夜已闭且另有开夜：origin={origin}",
-                        code="scaffold_night_conflict",
-                    )
-                cur = db.conn.execute(
-                    "UPDATE audience_nights SET status = ?, closed_at = NULL "
-                    "WHERE id = ? AND status = ?",
-                    (NIGHT_STATUS_OPEN, night_id, NIGHT_STATUS_CLOSED),
-                )
-                if cur.rowcount != 1:
-                    raise AudienceNightError(
-                        f"summon 垫位原夜不可重开：night={night_id}",
-                        code="scaffold_night",
-                    )
-        ensure_summon_scaffold_reenterable(
-            db,
-            origin_ref=origin,
-            entry_id=entry_id,
-            chat_turn_id=ctid,
-            expected_night_id=night_id,
-        )
         return {
-            "entry_id": entry_id,
-            "chat_turn_id": ctid,
-            "night_id": night_id,
-            "consumed": False,
+            "entry_id": int(existing["id"]),
+            "chat_turn_id": int(existing.get("origin_chat_turn_id") or 0),
+            "night_id": int(existing["night_id"]),
+            "consumed": rescript_summon_origin_consumed(existing),
         }
 
-    # 新鲜垫位 D.4
     try:
         with atomic(db):
             night = get_open_night(db)
@@ -2938,32 +2464,21 @@ def prepare_rescript_summon_scaffold(
                 night = open_night(
                     db, state,
                     time_of_day=time_of_day, location=location,
-                    empty_scaffold=True,
                 )
             night_id = int(night["id"])
             entry_id = summon_enter(
                 db, night_id, name,
                 method=method,
-                empty_scaffold=True,
                 origin_ref=origin,
                 commit=False,
             )
-            chat_turn_id = db.create_chat_turn(
-                state, name, f"rescript-summon:{origin}", 0,
-                night_id=night_id, status="generating",
-            )
-            db.conn.execute(
-                "UPDATE story_ledger_entries SET origin_chat_turn_id = ? WHERE id = ?",
-                (int(chat_turn_id), int(entry_id)),
-            )
         return {
             "entry_id": int(entry_id),
-            "chat_turn_id": int(chat_turn_id),
+            "chat_turn_id": 0,
             "night_id": night_id,
-            "consumed": False,
+            "consumed": True,
         }
     except sqlite3.IntegrityError as exc:
-        # origin_ref UNIQUE only：typed errorcode，禁 str(exc) taxonomy
         unique_codes = {
             getattr(sqlite3, "SQLITE_CONSTRAINT_UNIQUE", None),
             getattr(sqlite3, "SQLITE_CONSTRAINT", None),
@@ -2975,168 +2490,12 @@ def prepare_rescript_summon_scaffold(
         again = _ledger_by_origin_ref(db, origin)
         if again is None:
             raise
-        if rescript_summon_origin_consumed(again):
-            return {
-                "entry_id": int(again["id"]),
-                "chat_turn_id": int(again.get("origin_chat_turn_id") or 0),
-                "night_id": int(again["night_id"]),
-                "consumed": True,
-            }
-        if str(again.get("body") or "").strip():
-            raise AudienceNightError(
-                f"summon origin 冲突行非空但未满足消费谓词：origin={origin}",
-                code="scaffold_malformed_body",
-            )
-        # 空冲突 → 复用，非成功消费
-        entry_id = int(again["id"])
-        ctid = int(again.get("origin_chat_turn_id") or 0)
-        night_id = int(again["night_id"])
-        if ctid > 0:
-            ensure_summon_scaffold_reenterable(
-                db,
-                origin_ref=origin,
-                entry_id=entry_id,
-                chat_turn_id=ctid,
-                expected_night_id=night_id,
-            )
         return {
-            "entry_id": entry_id,
-            "chat_turn_id": ctid,
-            "night_id": night_id,
-            "consumed": False,
+            "entry_id": int(again["id"]),
+            "chat_turn_id": int(again.get("origin_chat_turn_id") or 0),
+            "night_id": int(again["night_id"]),
+            "consumed": rescript_summon_origin_consumed(again),
         }
-
-
-def find_prior_speaker_still_present(db: Any, night_id: int, exclude_name: str = "") -> Optional[str]:
-    """Find the previous chat turn's minister who is still present (A in the handoff).
-
-    Returns A's name when A is present and A != exclude_name (the new entrant B).
-    Returns None when there is no prior speaker or A has already left.
-    """
-    turns = list_chat_turns_for_night(db, int(night_id))
-    prior = ""
-    for turn in reversed(turns):
-        name = str(turn.get("minister_name") or "").strip()
-        if not name or name == exclude_name:
-            continue
-        prior = name
-        break
-    if not prior or prior not in present_names_at(db, int(night_id)):
-        return None
-    return prior
-
-
-def attach_chat_turn_to_night(
-    db: Any,
-    state: GameState,
-    minister_name: str,
-    *,
-    agno_session_id: str = "",
-    agno_runs_before: int = 0,
-    time_of_day: str = "",
-    location: str = "",
-    summon_method: str = METHOD_XUANRU,
-    beat_generator: Any = None,
-    knowledge_provider: Any = None,
-    route: str = "",
-) -> tuple[int, int]:
-    """开夜（若需）+ 首次对话落宣入账 + 建 generating 对话轮挂 night_id/night_seq。
-
-    beat_generator 注入时（#503 编排）：开夜/入殿账正文经编排层路由输入后由内容生成填充，
-    落为对应账正文。不注入时 opening 按 #1561 留空；仅既有 entrance 路径仍可能使用
-    #498 确定性兜底正文。见 beat_orchestration。
-    """
-    from ming_sim import beat_orchestration as beats
-
-    # beat 正文（慢 LLM）在**任何落库之前**全部生成好，再落库——生成中途抛错则本次零写入，
-    # 不留「开着的夜有开夜/员额账却无入殿账、无对话轮」的半场（#503 L4）。
-    # 也不把 LLM 调用裹进写事务（否则持写锁跨 ~15-30s LLM，撞 #498/#499 写锁纪律，P5）。
-    existing = get_open_night(db)
-    if existing is not None and existing["status"] == NIGHT_STATUS_CLOSING:
-        # 上一夜收夜未完（closing）：open_night 会响亮拒绝——早于任何 beat 生成触发，零写零浪费。
-        ensure_open_night_for_audience(
-            db, state, time_of_day=time_of_day, location=location,
-        )  # 必抛 night_closing_incomplete
-
-    enter_body = ""
-    if existing is not None and existing["status"] == NIGHT_STATUS_OPEN:
-        # 已开夜：不重复开夜账；入殿账只在真正首入殿时生成（重复起聊＝奏对非再入殿）。
-        night = existing
-        night_id = int(night["id"])
-        if beat_generator is not None and minister_name not in persons_entered_tonight(db, night_id):
-            enter_body = beats.generate_enter_beat_body(
-                db, state, night=night, person_name=minister_name,
-                summon_method=summon_method,
-                beat_generator=beat_generator, knowledge_provider=knowledge_provider,
-            )
-    else:
-        # 新夜：开夜账 + 首入殿账都先生成，再一并落库（生成抛错 → 本次零写入）。
-        # 首入殿时夜尚无公开层/前情（无明旨、无前次），以刚生成的开夜气氛作临时公开层供给
-        # （不复刻 open_night 的员额账内部格式）。
-        open_body = ""
-        if beat_generator is not None:
-            open_body = beats.generate_open_beat_body(
-                db, state, time_of_day=time_of_day, location=location,
-                beat_generator=beat_generator, knowledge_provider=knowledge_provider,
-            )
-            enter_body = beats.generate_enter_beat_body(
-                db, state,
-                night={"id": 0, "time_of_day": time_of_day, "location": location},
-                person_name=minister_name, summon_method=summon_method,
-                beat_generator=beat_generator, knowledge_provider=knowledge_provider,
-                extra_public_layer=(open_body,) if open_body else (),
-            )
-        night = ensure_open_night_for_audience(
-            db, state, time_of_day=time_of_day, location=location, body=open_body,
-        )
-    night_id = int(night["id"])
-    # 入殿账须早于本轮对话轮落 seq（进殿在先、奏对在后，时序对齐）；chat_turn_id 此时尚未
-    # 生成，故先落账后建轮，再回绑 origin_chat_turn_id——撤回本轮据此删该轮所产入殿账（#506）。
-    # 三步（落入殿账 / 建轮 / 回绑 origin）整段原子（#506 L2）：中途崩溃则全回滚，绝不留
-    # origin=0 的孤儿入殿账（否则撤回删不掉、与令退残留同形脏账）。seq 时序不变（enter 先 create
-    # 后，各自单调分配）；atomic 暂停内层 commit、末尾一次落定或整体回滚。
-    from ming_sim.applier import atomic
-    with atomic(db):
-        # #1585：当夜已开且前一位奏对者 A 仍在场时，B 宣入前须落一笔
-        # TAG_STAY_ATTEND + TAG_HANDOFF 的交接垫位（不写 TAG_EXIT、不改 presence）。
-        # 交接正文与入殿正文同轮 ChatTurnSceneRegistry 并行生成，同轮 join 回填。
-        # handoff 先于 enter 落 seq（进殿在先、奏对在后），discover_open_enter_tasks
-        # 通过 origin_chat_turn_id 同时发现二者。
-        handoff_entry_id = None
-        if existing is not None and existing["status"] == NIGHT_STATUS_OPEN and minister_name not in persons_entered_tonight(db, night_id):
-            prior_speaker = find_prior_speaker_still_present(db, night_id, exclude_name=minister_name)
-            if prior_speaker:
-                handoff_entry_id = append_ledger_entry(
-                    db, night_id,
-                    person_names=[prior_speaker],
-                    audibility=AUDIBILITY_PUBLIC,
-                    body="",
-                    tags=[TAG_STAY_ATTEND, TAG_HANDOFF],
-                    check_dead=False,
-                    commit=False,
-                )
-        enter_entry_id = ensure_summon_enter(
-            db, night_id, minister_name, method=summon_method, body=enter_body,
-        )
-        chat_turn_id = db.create_chat_turn(
-            state,
-            minister_name,
-            agno_session_id,
-            agno_runs_before,
-            night_id=night_id,
-            route=route,
-        )
-        if handoff_entry_id:
-            db.conn.execute(
-                "UPDATE story_ledger_entries SET origin_chat_turn_id = ? WHERE id = ?",
-                (int(chat_turn_id), int(handoff_entry_id)),
-            )
-        if enter_entry_id:
-            db.conn.execute(
-                "UPDATE story_ledger_entries SET origin_chat_turn_id = ? WHERE id = ?",
-                (int(chat_turn_id), int(enter_entry_id)),
-            )
-    return night_id, int(chat_turn_id)
 
 
 def mark_actions_night_approved(

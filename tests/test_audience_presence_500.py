@@ -369,7 +369,7 @@ def test_present_names_at_uses_timeline_key_not_raw_seq(game):
     bi_seq = _last_seq(db, nid)
     # 补跑抽取账：时序键落在两道入殿账之间（早排），但其自身 seq 最大（补跑晚落）。
     an.append_ledger_entry(
-        db, nid, body="（补跑抽取账·无在场效果）", order_key=float(xu_seq) + 0.5,
+        db, nid, order_key=float(xu_seq) + 0.5,
     )
     present = an.present_names_at(db, nid, at_seq=bi_seq)
     assert "毕自严" in present  # 旧码在大 seq 抽取账处误 break → 毕自严漏掉
@@ -405,18 +405,18 @@ def test_audible_interval_public_only(game):
     an.summon_enter(db, nid, "毕自严")
     # 王绍徽入殿前的公开对话：不在其侍立区间，不该流入
     before_id = an.append_ledger_entry(
-        db, nid, person_names=["毕自严"], body="毕自严先奏钱粮。",
+        db, nid, person_names=["毕自严"],
         audibility=AUDIBILITY_PUBLIC,
     )
     an.summon_enter(db, nid, "王绍徽")  # 王绍徽侍立区间起点
     # 区间内御前低语：私账不流入
     whisper_id = an.append_ledger_entry(
-        db, nid, person_names=[STANDING], body="王承恩附耳低语。",
+        db, nid, person_names=[STANDING],
         audibility=AUDIBILITY_PRIVATE,
     )
     # 区间内公开条目：应流入
     public_id = an.append_ledger_entry(
-        db, nid, person_names=["王绍徽"], body="王绍徽当廷奏对。",
+        db, nid, person_names=["王绍徽"],
         audibility=AUDIBILITY_PUBLIC,
     )
 

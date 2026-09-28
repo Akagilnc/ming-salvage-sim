@@ -98,7 +98,7 @@ export function filterScrollForSelectedMinister(
 
 function isNamedSoftSegmentAnchor(message: AudienceScrollMessage): boolean {
   return (
-    (message.beat === "entrance" || message.beat === "divider" || message.beat === "summon")
+    (message.beat === "divider")
     && !!message.speaker
   );
 }

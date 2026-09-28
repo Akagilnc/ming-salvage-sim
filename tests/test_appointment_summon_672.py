@@ -39,7 +39,7 @@ def _stage_yuan_appointment_summon(
 ):
     db, state, content = game
     minister = _minister_wang_shaohui(db, content)
-    open_night(db, state, empty_scaffold=True)
+    open_night(db, state)
 
     def _backend(*a, **k):
         if ban_appointment_extract and k.get("tag") == "appointment":
@@ -299,7 +299,7 @@ def test_three_anchor_summons_arrive_in_successive_months(game, monkeypatch):
 def test_appointment_summon_staging_rolls_back_both_rows(game, monkeypatch):
     db, state, content = game
     minister = _minister_wang_shaohui(db, content)
-    open_night(db, state, empty_scaffold=True)
+    open_night(db, state)
     monkeypatch.setattr(cb, "_run_backend_for_config", lambda *a, **k: ("{}", 1))
     monkeypatch.setattr(
         audience_night, "ensure_inactive_office_summon",
@@ -328,7 +328,7 @@ def test_appointment_summon_staging_rolls_back_both_rows(game, monkeypatch):
 def test_dedup_promotes_existing_appointment_summon(game, monkeypatch):
     db, state, content = game
     minister = _minister_wang_shaohui(db, content)
-    open_night(db, state, empty_scaffold=True)
+    open_night(db, state)
     monkeypatch.setattr(cb, "_run_backend_for_config", lambda *a, **k: ("{}", 1))
     session = _fake_session(db, state, content)
     # First stage by canonical, promote summon_after via roster alias — one origin.
@@ -564,7 +564,7 @@ def test_serial_appointment_fallback_preserves_summon_after(game, monkeypatch):
     """
     db, state, content = game
     minister = _minister_wang_shaohui(db, content)
-    open_night(db, state, empty_scaffold=True)
+    open_night(db, state)
 
     def _fake_run(prompt, llm_config=None, tag="", *, policy=None):
         if tag == "appointment":
@@ -639,7 +639,7 @@ def test_single_pending_identity_mismatch_does_not_corrupt_or_bind_summon(
     """#672：单 pending 身份绕过——错配/缺联合键不得改旧 row，也不得绑旧 origin。"""
     db, state, content = game
     minister = _minister_wang_shaohui(db, content)
-    open_night(db, state, empty_scaffold=True)
+    open_night(db, state)
     monkeypatch.setattr(cb, "_run_backend_for_config", lambda *a, **k: ("{}", 1))
     session = _fake_session(db, state, content)
 
@@ -687,7 +687,7 @@ def test_current_office_noop_still_stages_summon_after(game, monkeypatch):
     """#672：summon-only 复用 appointment pending，顺颁不得截掉目标的兼职。"""
     db, state, content = game
     minister = _minister_wang_shaohui(db, content)
-    open_night(db, state, empty_scaffold=True)
+    open_night(db, state)
     monkeypatch.setattr(cb, "_run_backend_for_config", lambda *a, **k: ("{}", 1))
 
     target = content.characters["韩爌"]
@@ -739,7 +739,7 @@ def test_dismiss_with_summon_after_does_not_stage_origin(game, monkeypatch):
     """#672：罢免+summon_after 在物化边界收敛为无传召，不留永久 inactive origin。"""
     db, state, content = game
     minister = _minister_wang_shaohui(db, content)
-    open_night(db, state, empty_scaffold=True)
+    open_night(db, state)
     monkeypatch.setattr(cb, "_run_backend_for_config", lambda *a, **k: ("{}", 1))
 
     target = next(
@@ -828,7 +828,7 @@ def test_path_only_omitted_name_still_promotes_summon_on_single_pending(
     """#672：单 pending path-only 省略 name 时从 row payload 取人名，summon 随同一 pending。"""
     db, state, content = game
     minister = _minister_wang_shaohui(db, content)
-    open_night(db, state, empty_scaffold=True)
+    open_night(db, state)
     monkeypatch.setattr(cb, "_run_backend_for_config", lambda *a, **k: ("{}", 1))
     session = _fake_session(db, state, content)
 

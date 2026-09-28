@@ -846,7 +846,7 @@ def test_web_issue_close_binds_endorsements_gate_free_after_same_night_dossier(w
                 ).fetchone()["status"] == "interrupted"
                 with pytest.raises(an.AudienceNightError) as story_exc:
                     an.append_ledger_entry(
-                        game.db, night_id, body="偷渡故事账", tags=["试"],
+                        game.db, night_id, tags=["试"],
                     )
                 assert story_exc.value.code == "night_closing"
                 with pytest.raises(an.AudienceNightError) as stage_exc:
@@ -907,7 +907,7 @@ def test_web_issue_close_binds_endorsements_gate_free_after_same_night_dossier(w
     )
     assert int(restored_id) > 0
     story_id = an.append_ledger_entry(
-        game.db, night_id, body="失败重开后故事账", tags=["试"],
+        game.db, night_id, tags=["试"],
     )
     assert int(story_id) > 0
     updated = game.db.update_directive_candidate(
@@ -945,28 +945,17 @@ def test_web_issue_close_binds_endorsements_gate_free_after_same_night_dossier(w
     )
     game.db.conn.commit()
 
-    # Sync dual close failure (endorsement + beat) → shared converter 409, both diags visible.
-    # Deterministic beat for the final retry (ticket: 测试注入假输出、零真 LLM).
-    def _deterministic_beat(inputs):
-        return f"kind={getattr(inputs, 'beat_kind', 'close')}"
-
-    class _BoomBothEndorsement:
+    # #1838 reopen：收夜旁白已删；双因退化为背书批失败单因。
+    class _BoomEndorsement:
         def run(self, materials):
             raise RuntimeError("endorsement boom dual")
 
-    def _boom_both_beat(_inputs):
-        raise RuntimeError("close beat dual fault")
-
     monkeypatch.setattr(
         agents_mod, "create_endorsement_extractor_agent",
-        lambda *a, **k: _BoomBothEndorsement(),
+        lambda *a, **k: _BoomEndorsement(),
     )
-    game.session._beat_generator = _boom_both_beat
 
-    # 双因保留：注入诊断经 _retryable_audience_close_http 链因拼进 detail（生产契约
-    # 即 str join，非 LLM 生成物分类）。409 + OPEN + 两条注入诊断均在 detail。
     endorsement_diag = "endorsement boom dual"
-    beat_diag = "close beat dual fault"
 
     async def dual_fail_sync_endpoints():
         async with _client() as client:
@@ -975,7 +964,6 @@ def test_web_issue_close_binds_endorsements_gate_free_after_same_night_dossier(w
             issue_detail = issue.json().get("detail")
             assert isinstance(issue_detail, str), issue_detail
             assert endorsement_diag in issue_detail, issue_detail
-            assert beat_diag in issue_detail, issue_detail
             assert an.get_night(game.db, night_id)["status"] == an.NIGHT_STATUS_OPEN
 
             advance = await client.post("/api/decree/advance_without_edict")
@@ -983,17 +971,15 @@ def test_web_issue_close_binds_endorsements_gate_free_after_same_night_dossier(w
             advance_detail = advance.json().get("detail")
             assert isinstance(advance_detail, str), advance_detail
             assert endorsement_diag in advance_detail, advance_detail
-            assert beat_diag in advance_detail, advance_detail
             assert an.get_night(game.db, night_id)["status"] == an.NIGHT_STATUS_OPEN
 
     asyncio.run(dual_fail_sync_endpoints())
 
-    # Restore tracing endorsement + deterministic beat (no real LLM on final retry).
+    # Restore tracing endorsement（#1838：无收夜旁白 beat）。
     monkeypatch.setattr(
         agents_mod, "create_endorsement_extractor_agent",
         lambda *a, **k: _TracingEndorsementExtractor(),
     )
-    game.session._beat_generator = _deterministic_beat
 
     # Final close attempt succeeds through the same real Web seam.
     entered.clear()
@@ -1063,12 +1049,8 @@ def test_legacy_pending_only_advances_to_durable_dossier_without_review_api(web_
     state_payload, response = asyncio.run(scenario())
     assert dossiered_id not in {row["id"] for row in state_payload["directives"]}
     assert response.status_code == 200
+    # #1838 reopen：收讫以夜 status 为准，无收夜旁白账
     assert an.get_night(game.db, int(night["id"]))["status"] == "closed"
-    closes = [
-        row for row in an.list_ledger(game.db, int(night["id"]))
-        if an.TAG_CLOSE_NIGHT in (row.get("tags") or [])
-    ]
-    assert len(closes) == 1
     dossier = game.db.get_dossier_for_directive(directive_id)
     assert dossier is not None
     assert int(game.db.load_state().turn) == turn_before + 1

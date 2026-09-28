@@ -9,7 +9,6 @@ import pytest
 
 from ming_sim import agents as agents_mod
 from ming_sim import audience_night as an
-from ming_sim import beat_orchestration as bo
 from ming_sim.audience_extraction import (
     ExtractionShapeError,
     parse_endorsement_batch,
@@ -816,19 +815,16 @@ def test_mingfa_publication_ignores_extractor_source_and_malformed_suffix_on_ret
         db, night_id,
         person_names=[minister],
         audibility=an.AUDIBILITY_PUBLIC,
-        body="抽取叙事妄称已明发",
         tags=[an.TAG_MINGFA, an.mingfa_publication_tag(first_directive)],
         source_chat_turn_id=chat_turn_id,
         check_dead=False,
     )
     malformed_tag = f"{an.mingfa_publication_tag(first_directive)}abc"
     an.append_ledger_entry(
-        db, night_id, person_names=[], audibility=an.AUDIBILITY_PUBLIC,
-        body="畸形后缀碰撞", tags=[malformed_tag], source_chat_turn_id=0, check_dead=False,
+        db, night_id, person_names=[], audibility=an.AUDIBILITY_PUBLIC, tags=[malformed_tag], source_chat_turn_id=0, check_dead=False,
     )
     an.append_ledger_entry(
-        db, night_id, person_names=[], audibility=an.AUDIBILITY_PUBLIC,
-        body="上标数字不得冒充明发", tags=["明发#²"], source_chat_turn_id=0, check_dead=False,
+        db, night_id, person_names=[], audibility=an.AUDIBILITY_PUBLIC, tags=["明发#²"], source_chat_turn_id=0, check_dead=False,
     )
     assert an.engine_command_mingfa_publication_ids(an.list_ledger(db, night_id)) == set()
     assert db.list_night_promulgated_directives(night_id) == []

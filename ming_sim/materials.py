@@ -1668,13 +1668,39 @@ def _scene_spoken_text(db: Any) -> str:
     return "\n".join(lines)
 
 
+def _scene_pending_audience_facts(db: Any, state: Any) -> list[str]:
+    """#1838 reopen：待裁场面原样事实（到期复命 / 暗渠摊派暴露与缺口重开 / 谏催）。
+
+    原喂开夜旁白；现并入场景开场最小集。结构化事实原样，不加措辞模板。
+    """
+    from ming_sim.due_review import list_due_review_scenes
+    from ming_sim.urge_lever import list_urge_audience_scenes
+
+    lines: list[str] = []
+    for scene in list(list_due_review_scenes(db, state)) + list(
+        list_urge_audience_scenes(db, state)
+    ):
+        if not isinstance(scene, dict):
+            continue
+        # 原样 JSON 事实：整份 dict 序列化，不抽 scene_text 模板。
+        try:
+            import json
+            lines.append(json.dumps(scene, ensure_ascii=False, sort_keys=True))
+        except (TypeError, ValueError):
+            text = str(scene.get("scene_text") or "").strip()
+            if text:
+                lines.append(text)
+    return lines
+
+
 def _scene_opening_text(
     state: Any,
     present_rows: Sequence[tuple[str, str]],
     spoken: str,
     handling_by_person: Sequence[tuple[str, Sequence[tuple[str, str]]]],
+    pending_audience_facts: Sequence[str] = (),
 ) -> str:
-    """场景 LLM 开场最小集（ADR 0155）：在场诸人身份职位、日期、各人正经手事务一句、本场已说的话。"""
+    """场景 LLM 开场最小集（ADR 0155）：在场、日期、正经手、本场已说、当前待裁场面。"""
     if present_rows:
         present_line = "、".join(
             f"{name}（{office}）" if office else name for name, office in present_rows
@@ -1698,6 +1724,12 @@ def _scene_opening_text(
         parts.append("（无）")
     parts.append("本场已说的话：")
     parts.append(spoken if spoken.strip() else "（尚无）")
+    # #1838 reopen / ADR 0155：当前待裁场面（到期复命、暗渠摊派暴露/缺口重开）
+    parts.append("当前待裁场面：")
+    if pending_audience_facts:
+        parts.extend(str(line) for line in pending_audience_facts)
+    else:
+        parts.append("（无）")
     parts.append(
         "在场诸人各自材料在 人物/<名>/ 下（人物档料、经历、公事档案、朝臣名册、事务、公开说法）。"
         "根目录 INDEX 一行一项。其余想读自己读。"
@@ -1876,7 +1908,10 @@ def prepare_scene_materials(
         scene_materials_root(db, state),
         lambda tmp: _write_scene_tree(tmp, db, state, present_rows, person_payloads, night_id),
     )
-    opening = _scene_opening_text(state, present_rows, spoken, handling_by_person)
+    pending_facts = _scene_pending_audience_facts(db, state)
+    opening = _scene_opening_text(
+        state, present_rows, spoken, handling_by_person, pending_facts,
+    )
     return PreparedMaterials(root=dest, opening=opening, index_lines=tuple(index))
 
 
