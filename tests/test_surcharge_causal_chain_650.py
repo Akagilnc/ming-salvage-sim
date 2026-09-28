@@ -209,6 +209,11 @@ def test_surcharge_filter_does_not_capture_other_transfer_origins(game):
         "surcharge_decrees": [decree], "population_transfers": [transfer],
     }, content, None)
     assert len(applied["population_transfers"]) == 1
+    from ming_sim.population_pressure import iter_recent_population_transfers
+    assert any(
+        item["reason"] == "灾害" and item["amount"] == 1
+        for _, item in iter_recent_population_transfers(db)
+    )
 
 
 def test_repeated_delta_apply_does_not_consume_levy_ledger(game):

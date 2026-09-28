@@ -2309,6 +2309,12 @@ def _apply_population_transfers(
                 "WHERE name=? AND region_id=?",
                 (amount, dst_cls, dst_region),
             )
+            db.conn.execute(
+                "INSERT INTO population_transfer_ledger "
+                "(turn, source, target, amount, reason, origin_ref) VALUES (?, ?, ?, ?, ?, ?)",
+                (int(db.conn.execute("SELECT turn FROM game_state WHERE id=1").fetchone()[0]),
+                 source, target, amount, reason, origin_ref),
+            )
         region_name = str(db.conn.execute(
             "SELECT name FROM regions WHERE id=?", (src_region,)
         ).fetchone()["name"] or "")

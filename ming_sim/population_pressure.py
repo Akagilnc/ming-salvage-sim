@@ -42,13 +42,14 @@ def displaced_pool_balance_rows(db: Any) -> List[Dict[str, object]]:
 def iter_recent_population_transfers(
     db: Any, *, recent_turns: int = 3,
 ) -> Iterator[Tuple[int, Dict[str, Any]]]:
-    """近窗实际发生的 population_transfers 共享读核。
-
-    #1843 reopen：旧 turn_extractions 已删；新链不另建逐段结果账。
-    本函数在新档恒为空迭代（整函数退役由 #1861 随 build_simulator_payload 删）。
-    yield (turn, item)。
-    """
-    yield from ()
+    """从人口守恒原语同事务写的物理事实读取近窗实入转移。"""
+    turn = int(db.conn.execute("SELECT turn FROM game_state WHERE id=1").fetchone()[0])
+    for row in db.conn.execute(
+        "SELECT turn, source, target, amount, reason, origin_ref "
+        "FROM population_transfer_ledger WHERE turn >= ? ORDER BY id",
+        (turn - recent_turns + 1,),
+    ):
+        yield int(row["turn"]), dict(row)
 
 
 def recent_reflux_cause_rows(
@@ -105,8 +106,8 @@ def recent_reflux_cause_rows(
 def regional_displaced_pressure_brief(db: Any, *, recent_turns: int = 3) -> str:
     """Describe current pressure and recent direction without exposing headcounts.
 
-    Current class balances are the magnitude source; durable settlement extractions
-    are the trend source.  This is a read model only and creates no public event.
+    Current class balances are the magnitude source; actual transfer facts
+    are the trend source. This read model creates no public event.
     """
     rows = db.conn.execute(
         """

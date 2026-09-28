@@ -508,12 +508,15 @@ def test_recovery_shared_pool_advances_once_after_empty_effect_month(game, monke
     assert session.advance_without_decree().advanced is True
     assert _pop(db, "流民", "shaanxi") == 0
     assert _pop(db, "农民", "shaanxi") == before_farmers + 100000
+    from ming_sim.population_pressure import recent_reflux_cause_rows
+    assert len(recent_reflux_cause_rows(db)) == 2
     from ming_sim.db import GameDB
     loaded = GameDB(_database_path(db), content)
     try:
         assert loaded.load_state().turn == closed_turn + 1
         assert _pop(loaded, "流民", "shaanxi") == 0
         assert _pop(loaded, "农民", "shaanxi") == before_farmers + 100000
+        assert len(recent_reflux_cause_rows(loaded)) == 2
     finally:
         loaded.close()
 

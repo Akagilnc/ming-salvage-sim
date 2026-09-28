@@ -2011,6 +2011,18 @@ class GameDB:
             CREATE INDEX IF NOT EXISTS idx_classes_region
             ON classes(region_id, name);
 
+            CREATE TABLE IF NOT EXISTS population_transfer_ledger (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                turn INTEGER NOT NULL,
+                source TEXT NOT NULL,
+                target TEXT NOT NULL,
+                amount INTEGER NOT NULL,
+                reason TEXT NOT NULL,
+                origin_ref TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_population_transfer_turn
+            ON population_transfer_ledger(turn);
+
             CREATE TABLE IF NOT EXISTS event_memories (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 subject_type TEXT NOT NULL,
