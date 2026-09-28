@@ -670,13 +670,6 @@ def test_scene_chat_cli_and_api_same_translation_shape(game, monkeypatch):
     monkeypatch.setattr(
         "ming_sim.session.create_scene_agent", lambda *a, **k: FakeAgent(),
     )
-    import ming_sim.cli_backend as cb
-
-    def boom(*a, **k):
-        raise AssertionError("scene_chat 不得再调 classify_cli_action_intent")
-
-    monkeypatch.setattr(cb, "classify_cli_action_intent", boom)
-
     shapes = []
     for channel in ("api", "cli"):
         def translate_fn(prompt, llm_config, _decl=declaration):

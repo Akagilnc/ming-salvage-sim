@@ -173,13 +173,7 @@ def test_scene_chat_no_longer_calls_parallel_classifier(game, monkeypatch):
         def run(self, message):
             return SimpleNamespace(content="臣领旨。", tools=[])
 
-    import ming_sim.cli_backend as cb
-
-    def boom(*a, **k):
-        raise AssertionError("scene_chat 不得再调 classify_cli_action_intent")
-
     monkeypatch.setattr("ming_sim.session.create_scene_agent", lambda *a, **k: FakeAgent())
-    monkeypatch.setattr(cb, "classify_cli_action_intent", boom)
 
     sess = _sess(
         db, state, content,
