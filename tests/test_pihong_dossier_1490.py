@@ -2874,84 +2874,8 @@ def test_1589_empty_desk_rejects_nonempty_keyless_choices(web_game, monkeypatch)
     assert phase2_calls == [1], "真正空 choices 续跑仍合法，走 submit_decisions"
 
 
-def test_657_s5_http_generator_failure_blocks_phase2_and_same_body_retry(
-    web_game, monkeypatch,
-):
-    """S5：真 HTTP summon；generator 失败挡 phase2；修后同 body 重试恰一条消费账。"""
-    from ming_sim.audience_night import TAG_ENTER, rescript_summon_origin_ref
-    from ming_sim.models import TurnPhase
-    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
-
-    db, state = web_game.db, web_game.state
-    opt = normalize_rescript_layer_a_option({
-        "label": "备", "hint": "h", "action_type": "assignment",
-        "assignee_name": "", "target_kind": "region", "target_id": "shaanxi",
-        "locality_scope": "single", "region_id": "shaanxi",
-        "transaction_category": "督赈",
-    })
-    fail = {"v": True}
-
-    def _gen(inputs):
-        if fail["v"]:
-            raise RuntimeError("generator inject fail")
-        name = str(getattr(inputs, "person_name", "") or "") or "臣"
-        return f"{name}再入殿。"
-
-    _657_install_real_phase2_llm_boundary(monkeypatch)
-    phase2_calls = {"n": 0}
-    _real_p2 = session_mod.resolve_decisions_phase2
-
-    def _count_phase2(*a, **k):
-        phase2_calls["n"] += 1
-        return _real_p2(*a, **k)
-
-    monkeypatch.setattr(session_mod, "resolve_decisions_phase2", _count_phase2)
-
-    desk = _657_plant_awaiting_web(web_game, drafts=[{
-        "title": "S5召见", "context": "c",
-        "options": [opt, {"label": "x", "hint": "h", "draft_capability": "x"}],
-        "actor_name": "杨嗣昌", "actor_office": "o", "actor_faction": "f",
-    }])
-    key = desk[0]["decision_key"]
-    body = [{
-        "decision_key": key, "action": "summon",
-        "label": "召见", "summon_target": "杨嗣昌",
-    }]
-    turn_before = int(state.turn)
-    r1 = asyncio.run(_post_resolve(body))
-    assert r1.status_code == 200
-    assert "event: error" in r1.text or "event: done" not in r1.text
-    assert phase2_calls["n"] == 0, "generator 失败不得进 phase2"
-    assert web_game.state.turn_phase != TurnPhase.ISSUED.value
-    hit = next(r for r in db.list_rescript_drafts() if r["title"] == "S5召见")
-    assert hit["status"] == "decided"
-    assert (hit["choice"] or {}).get("action") == "summon"
-    assert int(web_game.state.turn) == turn_before
-
-    # 修 generator 后同 body 重试
-    fail["v"] = False
-    web_game.state.turn_phase = TurnPhase.AWAITING_DECISION.value
-    web_game.session.state.turn_phase = TurnPhase.AWAITING_DECISION.value
-    db.save_state(web_game.state)
-    r2 = asyncio.run(_post_resolve(body))
-    assert r2.status_code == 200 and "event: done" in r2.text, r2.text
-    assert phase2_calls["n"] == 1
-    # §E.4 S5：消费成功且月可推
-    assert int(web_game.state.turn) == turn_before + 1
-    kind, turn_s, idx_s = key.split(":")
-    origin = rescript_summon_origin_ref(int(turn_s), int(idx_s), 0)
-    rows = db.conn.execute(
-        "SELECT body, tags FROM story_ledger_entries WHERE origin_ref=?",
-        (origin,),
-    ).fetchall()
-    assert len(rows) == 1
-    tags = json.loads(rows[0]["tags"] or "[]")
-    assert TAG_ENTER in tags
-    assert str(rows[0]["body"] or "").strip() == "杨嗣昌再入殿。"
-
-
-def test_657_s6_http_present_target_gets_unique_origin_body(web_game, monkeypatch):
-    """S6：目标已在场，真 HTTP summon → 该 origin 恰一条 TAG_ENTER，body==generator。"""
+def test_657_s6_http_present_target_gets_unique_origin_entry(web_game, monkeypatch):
+    """S6：目标已在场，真 HTTP summon → 该 origin 恰一条 TAG_ENTER 事实账。"""
     from ming_sim.audience_night import (
         TAG_ENTER, open_night, rescript_summon_origin_ref, summon_enter,
     )
@@ -2959,11 +2883,6 @@ def test_657_s6_http_present_target_gets_unique_origin_body(web_game, monkeypatc
     from ming_sim.rescript_draft import normalize_rescript_layer_a_option
 
     db, state = web_game.db, web_game.state
-    gen_body = "杨嗣昌已在场仍独立入账。"
-
-    def _gen(_inputs):
-        return gen_body
-
     _657_install_real_phase2_llm_boundary(monkeypatch)
 
     # 先使目标已在场
@@ -2998,7 +2917,7 @@ def test_657_s6_http_present_target_gets_unique_origin_body(web_game, monkeypatc
     assert len(rows) == 1
     tags = json.loads(rows[0]["tags"] or "[]")
     assert TAG_ENTER in tags
-    assert str(rows[0]["body"] or "") == gen_body
+    assert not rows[0]["body"]
 
 
 def test_657_web_http_hitl_lock_boundary_same_gate(web_game, monkeypatch):
@@ -3626,42 +3545,6 @@ def test_1682_phase2_surfaces_ambiguous_stored_choice(game):
     with pytest.raises(ValueError, match="重复"):
         session.submit_hitl_choices(choice, write_gate=nullcontext())
     assert db.list_pending_decisions(int(state.turn))[0]["status"] == "pending"
-
-
-def test_657_consumed_scaffold_finalized_on_retry(game):
-    """④ consumed origin 短路时 scaffold 仍须落 consumed 终态（禁 generating 永挂）。"""
-    from ming_sim.audience_night import (
-        TAG_ENTER,
-        prepare_rescript_summon_scaffold,
-        rescript_summon_origin_ref,
-    )
-
-    db, state, _content = game
-    origin = rescript_summon_origin_ref(int(state.turn), 0, 0)
-    first = prepare_rescript_summon_scaffold(
-        db, state, person_name="杨嗣昌", origin_ref=origin,
-    )
-    ctid = int(first["chat_turn_id"])
-    eid = int(first["entry_id"])
-    # 模拟：body 已落 + TAG_ENTER，但 scaffold 仍 generating（崩溃窗口）
-    db.conn.execute(
-        "UPDATE story_ledger_entries SET body=?, tags=? WHERE id=?",
-        ("杨嗣昌入殿。", json.dumps([TAG_ENTER, "宣入"], ensure_ascii=False), eid),
-    )
-    db.conn.execute(
-        "UPDATE chat_turns SET status='generating' WHERE id=?",
-        (ctid,),
-    )
-    db.conn.commit()
-
-    again = prepare_rescript_summon_scaffold(
-        db, state, person_name="杨嗣昌", origin_ref=origin,
-    )
-    assert again.get("consumed") is True
-    st = db.conn.execute(
-        "SELECT status FROM chat_turns WHERE id=?", (ctid,),
-    ).fetchone()
-    assert str(st["status"]) == "consumed"
 
 
 def test_657_clear_revise_anchor_corrupt_json_fails_loud(game):
