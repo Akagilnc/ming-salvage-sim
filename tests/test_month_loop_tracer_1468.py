@@ -612,21 +612,5 @@ def test_issue_1716_offsite_court_break_via_nonstream(tracer_client, monkeypatch
     _assert_court_break_closed(game, body, night_id, remote=remote)
 
 
-# ── #1725/#1740 settlement typed progress facts via real SSE entry ───────
-
-
-def _stage_payloads_from_sse(events: list[dict]) -> list[dict]:
-    """Extract stage event payloads; require dict shape (content + typed progress)."""
-    stages: list[dict] = []
-    for ev in events:
-        if ev.get("event") != "stage":
-            continue
-        raw = ev.get("data") or "{}"
-        payload = json.loads(raw) if isinstance(raw, str) else raw
-        assert isinstance(payload, dict), f"stage payload must be dict: {payload!r}"
-        stages.append(payload)
-    return stages
-
-
 
 

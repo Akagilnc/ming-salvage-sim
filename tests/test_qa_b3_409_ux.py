@@ -222,13 +222,11 @@ def test_resolve_decisions_stream_awaiting_still_submits_under_lock(monkeypatch)
     game = _ResolveGame(TurnPhase.AWAITING_DECISION.value, gate)
     submitted = {"ok": False}
 
-    def _submit_hitl(choices, *, write_gate, on_event=None, cheat_directive=""):
+    def _submit_hitl(choices, *, write_gate, cheat_directive=""):
         with write_gate:
             assert gate.locked(), "submit must run while write gate held"
             game.actions.append("submit")
             submitted["ok"] = True
-            if on_event:
-                on_event("stage", "数值推演结算")
             return "邸报：已裁。"
 
     game.session.submit_hitl_choices = _submit_hitl  # type: ignore[method-assign]
@@ -242,7 +240,7 @@ def test_resolve_decisions_stream_awaiting_still_submits_under_lock(monkeypatch)
     events = asyncio.run(_consume_resolve_sse())
     assert submitted["ok"] is True
     kinds = [ev for ev, _ in events]
-    assert "stage" in kinds
+    assert "stage" not in kinds
     assert kinds[-1] == "done"
     payload = events[-1][1]
     assert payload["report"] == "邸报：已裁。"
@@ -264,11 +262,9 @@ def test_load_save_409_during_resolve_body_keeps_old_session_tail(monkeypatch):
     release_body = threading.Event()
     resolve_done = threading.Event()
 
-    def _submit_hitl(choices, *, write_gate, on_event=None, cheat_directive=""):
+    def _submit_hitl(choices, *, write_gate, cheat_directive=""):
         with write_gate:
             game.actions.append("submit")
-            if on_event:
-                on_event("stage", "数值推演结算")
             # Completed settlement advances the turn while still under the gate.
             game.state.turn_phase = TurnPhase.ISSUED.value
             game.state.turn += 1

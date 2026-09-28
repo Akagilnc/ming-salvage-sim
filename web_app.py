@@ -7203,16 +7203,12 @@ def api_issue_decree(body: IssueDecreeRequest = IssueDecreeRequest()) -> Dict[st
 
 @app.post("/api/decree/issue/stream")
 async def api_issue_decree_stream(body: IssueDecreeRequest = IssueDecreeRequest()) -> StreamingResponse:
-    """流式颁诏：推演过程（阶段/思考/正文）实时 SSE 推给前端。
+    """流式颁诏：终态（done / decisions / error）经 SSE 推给前端。
 
-    resolve_turn 是阻塞的同步调用，且 on_event 是 push 式回调。
-    用 worker 线程跑 resolve_turn，回调把事件投进 Queue；
-    async generator 从 Queue 拉事件转成 SSE。
+    #1852：核账等待面不呈现推演阶段进度；worker 只投终态。
+    resolve_turn 是阻塞的同步调用，用 worker 线程跑；async generator 从 Queue 拉终态转 SSE。
     """
     ev_queue: "queue.Queue[tuple[str, Any]]" = queue.Queue()
-
-    def on_event(kind: str, data: Any) -> None:
-        ev_queue.put((kind, data))
 
     def worker() -> None:
         game = None
@@ -7234,7 +7230,7 @@ async def api_issue_decree_stream(body: IssueDecreeRequest = IssueDecreeRequest(
                     # #1277/#1351：获锁后、resolve_turn 前比对令牌；不匹配 → 409（样板 finally 清展示态）。
                     _reject_stale_month_token(game, body.expected_turn, token_label="颁诏")
                     result = game.session.resolve_turn(
-                        on_event=on_event, cheat_directive=body.cheat, inflight_wait_s=0.0,
+                        cheat_directive=body.cheat, inflight_wait_s=0.0,
                         write_gate_already_held=True,
                     )
                     decree = game.session.last_decree
@@ -7321,11 +7317,7 @@ async def api_issue_decree_stream(body: IssueDecreeRequest = IssueDecreeRequest(
             if kind == "__error__":
                 yield sse_event("error", data if isinstance(data, dict) else {"message": data})
                 break
-            # stage carries typed progress dict {content,current,total}; thinking/text are strings.
-            if kind == "stage" and isinstance(data, dict):
-                yield sse_event(kind, data)
-            else:
-                yield sse_event(kind, {"content": data})
+            # #1852：中间 stage/thinking/text 已退役；非终态事件不转发。
 
     return StreamingResponse(generate(), media_type="text/event-stream")
 
@@ -7340,13 +7332,10 @@ class ResolveDecisionsRequest(BaseModel):
 
 @app.post("/api/decree/resolve_decisions/stream")
 async def api_resolve_decisions_stream(body: ResolveDecisionsRequest) -> StreamingResponse:
-    """皇帝亲裁完决策点，流式跑 phase2 结算（extractor→落库→结局）。
+    """皇帝亲裁完决策点，流式跑 phase2 结算。
     与 issue/stream 同结构：worker 跑 session.submit_hitl_choices（唯一 HITL 编排入口，
-    keyed 权威由 validate_all 整批拒），SSE 推 stage/text + done。"""
+    keyed 权威由 validate_all 整批拒），SSE 只推终态 done/error。"""
     ev_queue: "queue.Queue[tuple[str, Any]]" = queue.Queue()
-
-    def on_event(kind: str, data: Any) -> None:
-        ev_queue.put((kind, data))
 
     def worker() -> None:
         game = None
@@ -7376,7 +7365,6 @@ async def api_resolve_decisions_stream(body: ResolveDecisionsRequest) -> Streami
                     report = game.session.submit_hitl_choices(
                         body.choices,
                         write_gate=_game_write_gate(game),
-                        on_event=on_event,
                         cheat_directive=body.cheat,
                     )
                     decree = game.session.last_decree
@@ -7439,10 +7427,7 @@ async def api_resolve_decisions_stream(body: ResolveDecisionsRequest) -> Streami
             if kind == "__error__":
                 yield sse_event("error", data if isinstance(data, dict) else {"message": data})
                 break
-            if kind == "stage" and isinstance(data, dict):
-                yield sse_event(kind, data)
-            else:
-                yield sse_event(kind, {"content": data})
+            # #1852：中间 stage/thinking/text 已退役；非终态事件不转发。
 
     return StreamingResponse(generate(), media_type="text/event-stream")
 

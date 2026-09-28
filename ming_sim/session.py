@@ -4017,13 +4017,12 @@ class GameSession:
 
         write_queue.barrier(_drain_catch_up_and_continue)
 
-    def resolve_turn(self, decree: str = "", on_event=None, cheat_directive: str = "",
+    def resolve_turn(self, decree: str = "", cheat_directive: str = "",
                      inflight_wait_s: float | None = None,
                      *, allow_empty_decree: bool = False,
                      write_gate_already_held: bool = False) -> ResolveResult:
         """颁诏并推演本回合（phase1）。
 
-        on_event(kind, data): 推演过程实时回调，透传给 resolve_directives。
         cheat_directive: 作弊控制台强制结算项，一次性透传给 resolve_directives。
         allow_empty_decree: 退朝无旨入口（#1274）置 True——directives=[] 仍走完整结算链
             （source=system_simulation）；颁诏 issue 路径保持默认 False（无草案 → 400）。
@@ -4201,7 +4200,6 @@ class GameSession:
             self.state, self.db, self.agno_db, self.llm_config,
             directives, decree_text, deaths_this_turn=self.deaths_this_turn,
             debuts_this_turn=self.debuts_this_turn,
-            on_event=on_event,
             content=self.content, registry=self.registry,
             cheat_directive=cheat_directive,
             scene_registry=self._scene_registry,
@@ -4531,7 +4529,6 @@ class GameSession:
         phase1_state: Dict[str, object],
         join_state: Dict[str, object],
         *,
-        on_event=None,
         cheat_directive: str = "",
     ) -> str:
         """#657 ③ 短写（调用方已持 write_gate）：persist + 门闩 + phase2。
@@ -4637,7 +4634,7 @@ class GameSession:
         before_turn = int(self.state.turn)
         report = resolve_decisions_phase2(
             self.state, self.db, self.agno_db, self.llm_config,
-            on_event=on_event, content=self.content, registry=self.registry,
+            content=self.content, registry=self.registry,
             cheat_directive=cheat_directive,
         )
         # 批红续跑与 submit_decisions 同一规则：主链未推进不得标 ISSUED。
@@ -4654,13 +4651,12 @@ class GameSession:
         choices: List[Dict[str, object]],
         *,
         write_gate: Any,
-        on_event=None,
         cheat_directive: str = "",
     ) -> str:
         """#657 急务/keyed 唯一编排出口。
 
         PRE 锁外 → ① 持 write_gate → ② 无锁 join → ③ 再持同一 write_gate。
-        调用方只注入既有 write_gate / on_event；禁平行复制本配方。
+        调用方只注入既有 write_gate；禁平行复制本配方。
         """
         if write_gate is None:
             raise ValueError("resolve_rescript_decisions 须注入既有 write_gate")
@@ -4670,7 +4666,7 @@ class GameSession:
         joined = self.join_rescript_summons(p1)
         with write_gate:
             return self.finish_rescript_phase2(
-                p1, joined, on_event=on_event, cheat_directive=cheat_directive,
+                p1, joined, cheat_directive=cheat_directive,
             )
 
     def _iter_unconsumed_decided_summons(self) -> List[Dict[str, object]]:
@@ -4731,7 +4727,6 @@ class GameSession:
         choices: List[Dict[str, object]],
         *,
         write_gate: Any,
-        on_event=None,
         cheat_directive: str = "",
     ) -> str:
         """#657 HITL 公共入口：desk 非空或 choices 非空 → resolve_rescript_decisions；
@@ -4758,7 +4753,6 @@ class GameSession:
             return self.resolve_rescript_decisions(
                 choices,
                 write_gate=write_gate,
-                on_event=on_event,
                 cheat_directive=cheat_directive,
             )
         # 空 desk 且无 key：未消费 durable summon 仍走同一 resolver
@@ -4767,16 +4761,15 @@ class GameSession:
             return self.resolve_rescript_decisions(
                 recovery,
                 write_gate=write_gate,
-                on_event=on_event,
                 cheat_directive=cheat_directive,
             )
         with write_gate:
             return self.submit_decisions(
-                choices, on_event=on_event, cheat_directive=cheat_directive,
+                choices, cheat_directive=cheat_directive,
             )
 
     def submit_decisions(
-        self, choices: List[Dict[str, object]], on_event=None, cheat_directive: str = ""
+        self, choices: List[Dict[str, object]], cheat_directive: str = ""
     ) -> str:
         """空 desk 续跑：复算既有 decided 行，零新增领域写。
 
@@ -4797,7 +4790,7 @@ class GameSession:
         before_turn = int(self.state.turn)
         report = resolve_decisions_phase2(
             self.state, self.db, self.agno_db, self.llm_config,
-            on_event=on_event, content=self.content, registry=self.registry,
+            content=self.content, registry=self.registry,
             cheat_directive=cheat_directive,
         )
         self.state.turn_phase = (

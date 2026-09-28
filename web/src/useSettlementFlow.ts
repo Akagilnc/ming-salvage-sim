@@ -1,6 +1,6 @@
 import React from "react";
 import { ApiRequestError, api } from "./api";
-import { consumeSettleStream, type SettlementStageUpdate } from "./settleStream";
+import { consumeSettleStream } from "./settleStream";
 import {
   needsPhase2Resume,
   replacePendingDecisionsOnRefresh,
@@ -128,12 +128,8 @@ export function useSettlementFlow({
     };
   }, [state?.mechanical_tail_pending, state?.ending?.summary_pending, loadState]);
 
-  // #1852：SSE stage/thinking/text 仍消费（流不可断），但不驱动任何等待面呈现。
-  const consumeSettle = (response: Response) => consumeSettleStream(response, {
-    onStage: (_update: SettlementStageUpdate) => {},
-    onThinking: () => {},
-    onNarrative: () => {},
-  });
+  // #1852：结算流只认终态；不再挂空 stage/thinking/text 回调。
+  const consumeSettle = (response: Response) => consumeSettleStream(response);
 
   // #1796：盖玺/退朝共用开场——busy 挂同会话切面；清 HUD 失败位。
   // 真源仍是 settlement_display；submitDecisions 另有 HITL 续推文案，不经此路。

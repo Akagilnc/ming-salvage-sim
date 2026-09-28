@@ -1,7 +1,6 @@
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { readFileSync } from "node:fs";
 import { GameHud, resolveUnreadMemorialCount } from "./gameHud";
 import { MinisterCardList, AppointmentDrawer } from "./drawers";
 import {
@@ -468,14 +467,6 @@ describe("QA A-1 #1276/#1282/#1285 GameHud HUD 对齐", () => {
     expect(edictImg?.classList.contains("hud-cmd-blocked-by-edict")).toBe(false);
     act(() => { edictCap?.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
     expect(closed).toEqual(["edict"]);
-  });
-});
-
-describe("#1852 SettlementLock 退役", () => {
-  it("main 不再 import 旧等待卡，改挂本面邸报落位", () => {
-    const mainSrc = readFileSync(`${process.cwd()}/src/main.tsx`, "utf8");
-    expect(mainSrc).not.toMatch(/from ["'].*settlementLock["']/);
-    expect(mainSrc).toMatch(/SettlementGazettePanel/);
   });
 });
 

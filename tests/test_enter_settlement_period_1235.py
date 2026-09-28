@@ -799,10 +799,7 @@ def test_disconnect_mid_settlement_reconnect_coherent(web_game, monkeypatch):
     real_resolve = game.session.resolve_turn
 
     def _held_resolve(*a, **k):
-        # 先推一条 stage，让 SSE generate 不堵在首个 queue.get（便于客户端弃流）。
-        on_event = k.get("on_event")
-        if callable(on_event):
-            on_event("stage", "推演中")
+        # #1852：结算流不再推中间 stage；以跨线程 Event 标 resolve 已入，客户端见后弃流。
         entered_resolve.set()
         release_resolve.wait()
         return real_resolve(*a, **k)
@@ -818,11 +815,10 @@ def test_disconnect_mid_settlement_reconnect_coherent(web_game, monkeypatch):
                         "POST", "/api/decree/issue/stream", json={},
                     ) as resp:
                         stream_meta["status"] = resp.status_code
-                        # 读到首条 stage（resolve 已入）即弃流
-                        async for _chunk in resp.aiter_text():
-                            if entered_resolve.is_set():
-                                break
-                        # 离开 stream 上下文 = 客户端断开；worker 线程须独立续跑
+                        # 不依赖中间 SSE：resolve 已入即断开；worker 线程须独立续跑
+                        while not entered_resolve.is_set():
+                            await asyncio.sleep(0.01)
+                        # 离开 stream 上下文 = 客户端断开
 
             asyncio.run(go())
         except Exception as exc:  # noqa: BLE001
