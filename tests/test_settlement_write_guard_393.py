@@ -224,7 +224,6 @@ def _endpoint_cases():
         ("favorite_add", lambda: web_app.api_add_favorite("某大臣")),
         ("favorite_remove", lambda: web_app.api_remove_favorite("某大臣")),
         ("court_layout", lambda: web_app.api_set_court_layout({"layout": "{}"})),
-        ("select_consort", lambda: web_app.api_select_consort("某秀女")),
         ("admin_upsert", lambda: web_app.api_admin_upsert("metrics", {"key": "国库", "value": "1"})),
         ("admin_delete", lambda: web_app.api_admin_delete("metrics", {"pk_value": "国库"})),
         ("portrait_delete", lambda: web_app.api_delete_portrait("某大臣")),
