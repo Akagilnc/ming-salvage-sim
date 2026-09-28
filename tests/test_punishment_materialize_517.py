@@ -5,7 +5,7 @@ Seams:
 - run_materialize_pipeline / declaration dispatch
 - commit_pending_actions（收夜落案卷，不成效果）
 - apply_dossier_verdicts（0055 顺颁才落机械效果）
-- extract_appointment_action（「拿问去职」不得折罢免）
+- typed 惩处交办不经任免分类器（「拿问去职」不得折罢免）
 - reload_state_from_db（只读 DB 无损接续）
 """
 
@@ -13,20 +13,18 @@ from __future__ import annotations
 
 import inspect
 import json
-import types
 from types import SimpleNamespace
 
 import pytest
 
 import ming_sim.action_materialize  # noqa: F401 -- installs package catalog
 import ming_sim.action_materialize as am
-import ming_sim.cli_backend as cb
 import web_app
 from ming_sim.action_clusters import candidates_from_classifier_payload
 from ming_sim.action_materialize import MaterializeCtx, run_materialize_pipeline
 from ming_sim.decree import reload_state_from_db
 from ming_sim.models import CourtContext
-from ming_sim.session import GameSession
+from ming_sim.declaration_dispatch import dispatch_declaration
 from tests.dossier_test_helpers import rejected_verdict as _rejected_verdict
 
 
@@ -404,52 +402,22 @@ def test_punishment_restore_from_db_only_is_lossless(game):
     assert restored["target_id"] == target.name
 
 
-def _bind_apply(db, state, content=None):
-    s = SimpleNamespace(
-        db=db, state=state, registry=None, content=content,
-        llm_config=SimpleNamespace(channel="cli", cli_runner="codex"),
-    )
-    s.apply_cli_conversation_actions = types.MethodType(
-        GameSession.apply_cli_conversation_actions, s)
-    return s
+def _scene_punishment(db, state, actor, target, *, category=""):
+    result = dispatch_declaration(db, state, {"commissions": [{
+        "text": f"臣请将{target.name}拿问下狱，请陛下定夺准驳。",
+        "punishment": {"punish_action": "拿问下狱", "target_id": target.name,
+                       "transaction_category": category},
+    }]}, minister_name=actor.name)
+    assert result.commissions.rejected == []
+    return result.commissions.applied[0]["id"]
 
 
-def _silence_serial(monkeypatch):
-    monkeypatch.setattr(cb, "extract_minister_actions", lambda *a, **k: {
-        "secret_action": "无", "order_id": 0, "new_title": "", "new_content": "",
-        "deadline_months": 0, "cultivate_skill": "", "cultivate_trait": "",
-    })
-    monkeypatch.setattr(cb, "extract_appointment_action", lambda *a, **k: {
-        "appoint_action": "无", "name": "", "office": "",
-    })
-    monkeypatch.setattr(cb, "extract_draft_intent", lambda *a, **k: {
-        "draft_action": "无", "draft_text": "", "target_candidate": "",
-    })
-    monkeypatch.setattr(cb, "extract_confirmation_intent", lambda *a, **k: "无")
-
-
-def test_scripted_punishment_stages_via_apply_then_close_night(game, monkeypatch):
-    """真实 apply 缝暂存惩处；收夜落案卷后 imprisoned 仍待判决。"""
+def test_scene_punishment_stages_then_close_night(game):
+    """场景惩处暂存；收夜落案卷后 imprisoned 仍待判决。"""
     db, state, content = game
     actor = _active_ming(db, content)
     target = _active_ming(db, content, exclude=actor.name)
-    _silence_serial(monkeypatch)
-    monkeypatch.setattr(
-        cb, "extract_appointment_action",
-        lambda *a, **k: (_ for _ in ()).throw(
-            AssertionError("拿问不得走任免抽取")),
-    )
-    sess = _bind_apply(db, state, content)
-    scripted = candidates_from_classifier_payload({
-        "kind": "punishment", "punish_action": "拿问下狱", "name": target.name,
-        "transaction_category": "缉拿",
-    }, soft=False)
-    out = sess.apply_cli_conversation_actions(
-        actor, f"将{target.name}拿问下狱。",
-        f"臣请将{target.name}拿问下狱，请陛下定夺准驳。",
-        has_directive=False, secret_order_id=None, preclassified_intent=scripted,
-    )
-    pending_id = out.get("pending_action_id")
+    pending_id = _scene_punishment(db, state, actor, target, category="缉拿")
     assert pending_id
     assert db.get_character_status(target.name)[0] == "active"
     dossier = _close_night_dossier(db, state, content, pending_id)
@@ -463,28 +431,17 @@ def test_scripted_punishment_stages_via_apply_then_close_night(game, monkeypatch
     assert db.get_character_status(target.name)[0] == "imprisoned"
 
 
-def test_confirm_accept_does_not_imprison(game, monkeypatch):
+def test_scene_confirm_accept_does_not_imprison(game):
     """应允只过确认闸，不得在判决前落下狱。"""
     db, state, content = game
     actor = _active_ming(db, content)
     target = _active_ming(db, content, exclude=actor.name)
-    _silence_serial(monkeypatch)
-    sess = _bind_apply(db, state, content)
-    scripted = candidates_from_classifier_payload({
-        "kind": "punishment", "punish_action": "拿问下狱", "name": target.name,
-    }, soft=False)
-    out = sess.apply_cli_conversation_actions(
-        actor, f"将{target.name}拿问下狱。",
-        f"臣请将{target.name}拿问下狱，请陛下定夺准驳。",
-        has_directive=False, secret_order_id=None, preclassified_intent=scripted,
-    )
-    pending_id = out.get("pending_action_id")
-    sess.apply_cli_conversation_actions(
-        actor, "准。", "臣遵旨。",
-        has_directive=False, secret_order_id=None,
-        preclassified_intent=[{"kind": "confirmation", "confirmation": "应允"}],
-        confirm_target_ids={int(pending_id)},
-    )
+    pending_id = _scene_punishment(db, state, actor, target)
+    approved = dispatch_declaration(db, state, {"promises": [{
+        "action_id": pending_id, "decision": "应允",
+    }]}, minister_name=actor.name)
+    assert approved.promises.rejected == []
+    assert approved.promises.applied[0]["action_id"] == pending_id
     assert db.get_character_status(target.name)[0] == "active"
     assert content.characters[target.name].status == "active"
 
