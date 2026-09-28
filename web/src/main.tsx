@@ -623,15 +623,14 @@ export function App() {
       onDismiss={dismissSettlementGazette}
     />
   ) : null;
-  if (advanceRefreshFailed) {
-    return <main className="game-shell">
-      <div className="recovery-banner" role="alert"><span className="recovery-banner-message">新月盘面载入失败：{error}</span><button type="button" onClick={() => void retryAdvanceRefresh()}>重试</button></div>
-      {currentGazette}
-    </main>;
-  }
-
   return (
     <main className="game-shell" data-settlement-display={settlementDisplay ? "1" : "0"}>
+      {advanceRefreshFailed ? (
+        <>
+          <div className="recovery-banner" role="alert"><span className="recovery-banner-message">新月盘面载入失败：{error}</span><button type="button" onClick={() => void retryAdvanceRefresh()}>重试</button></div>
+          {currentGazette}
+        </>
+      ) : <>
       <GameHud
         stageRef={hudStageCbRef}
         ready={ready}
@@ -917,6 +916,7 @@ export function App() {
           <DecisionModal decisions={pendingDecisions} failures={decisionFailures} onResolve={submitDecisions} busy={busy} />
         </div>
       ) : null}
+      </>}
     </main>
   );
 }

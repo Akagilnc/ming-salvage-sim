@@ -1390,10 +1390,13 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     expect(findButton(host, "重试")).toBeTruthy();
     failPostAdvanceRefresh = false;
     liveState.turn = { year: 1627, period: 11, turn: 6, phase: "player", settlement_display: false };
+    const getsBeforeRetry = stateGets;
     await click(findButton(host, "重试"));
     await act(async () => {
       await vi.waitFor(() => expect(host.querySelector(".hud2-stage")).not.toBeNull());
     });
+    expect(stateGets).toBeGreaterThan(getsBeforeRetry);
+    expect(host.querySelector(".hud2-val")?.textContent).toContain("11");
     expect(streamPosts()).toBe(streamPostsBeforeDismiss);
     expect(host.querySelector("[data-testid=settlement-gazette-panel]")).toBeNull();
   });
