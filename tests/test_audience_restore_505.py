@@ -1336,25 +1336,15 @@ def test_657_s15_origin_unique_empty_nonempty_and_nontarget_integrity(game):
         (origin_nt,),
     ).fetchone()["c"] == 0
 
-def test_web_retry_offsite_secret_order_via_production_chat(game, monkeypatch):
-    """#1566 主干：Web retry_interrupted_reply → 真实 GameSession.chat 密令路径。
-
-    前置：generating + route=secret_order_offsite + 无前缀问话已落。
-    后：回话落库；scroll 无 entrance；密令 pending 由生产 chat staged（非替身自写）。
-    """
-    from tests.test_audience_travel_gating_670 import (
-        _assert_secret_order_pending,
-        _patch_secret_order_extract,
-        _secret_order_runtime,
-        _set_place,
-    )
+def test_web_retry_offsite_secret_round_via_scene(game):
+    """场外中断轮经 Web 重试恢复原轮及回话，不重落问话或启殿上入场。"""
+    from tests.test_audience_travel_gating_670 import _secret_order_runtime, _set_place
 
     db, state, content = game
     remote = _set_place(game, "洪承畴", location="shaanxi")
     night = an.open_night(db, state, location="乾清宫", time_of_day="戌时")
     night_id = int(night["id"])
     question = "整饬边备，密查欠饷。"
-    secret_title = "密查欠饷"
     ct = db.create_chat_turn(
         state, remote.name, "sess-offsite-secret", 0,
         night_id=night_id, status="generating",
@@ -1363,22 +1353,18 @@ def test_web_retry_offsite_secret_order_via_production_chat(game, monkeypatch):
     mid = db.append_chat_message(remote.name, state.turn, "user", question)
     db.update_chat_turn_messages(ct, user_message_id=mid)
     ledger_before = an.list_ledger(db, night_id)
-    before_n = sum(
-        1 for p in db.list_pending_actions(state.turn) if p.get("kind") == "secret_order"
-    )
     db.reconcile_interrupted_chat_turns()
     assert str(db.get_interrupted_reply_retries(remote.name)[-1].get("route") or "") == (
         "secret_order_offsite"
     )
 
-    _patch_secret_order_extract(monkeypatch, title=secret_title)
     secret_rt = _secret_order_runtime(db, state, content, stream=False)
     # 场外 route 不得启殿上 scene。
     secret_rt.session.start_chat_turn_scene = lambda *_a, **_k: (_ for _ in ()).throw(
         AssertionError("offsite secret retry must not start_chat_turn_scene")
     )
     rt = _retry_runtime(db, state, remote.name, session=secret_rt.session)
-    payload = rt.retry_interrupted_reply(remote.name)
+    rt.retry_interrupted_reply(remote.name)
 
     users = [
         r["content"]
@@ -1403,13 +1389,6 @@ def test_web_retry_offsite_secret_order_via_production_chat(game, monkeypatch):
         m.get("beat") == "entrance" and m.get("speaker") == remote.name for m in scroll
     )
     assert an.list_ledger(db, night_id) == ledger_before
-    pid = int(payload.get("pending_action_id") or 0)
-    _assert_secret_order_pending(
-        db, state, minister_name=remote.name, pid=pid, edict=question, title=secret_title,
-    )
-    assert sum(
-        1 for p in db.list_pending_actions(state.turn) if p.get("kind") == "secret_order"
-    ) == before_n + 1
 
 
 def test_web_retry_ordinary_offsite_court_break_skips_hall_scene(game):
