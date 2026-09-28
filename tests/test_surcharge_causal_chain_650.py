@@ -6,8 +6,8 @@ canonical＝ADR 0089（明渠）＋0087（人口守恒转移）＋#650 票面（
 邸报/召对输入侧事实回响（ADR 0143：只断 effect_brief 事实平面，不钉散文）
 → 停加派/蠲免后入池止（出口回流归 S5 #652）。
 
-主测缝（PRD Testing Decisions 预定）：apply_score_extraction / settle_with_delta /
-apply_historical_fiscal_rates（饷率 effect 通道）——只测外部行为，不打内部桩。
+主测缝：apply_score_extraction / 玩家过月 /
+apply_historical_fiscal_rates（饷率 effect 通道）。
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ import pytest
 
 from ming_sim.db import GameDB
 from ming_sim.decree import pre_settle
-from tests.settlement_seam_helpers import settle_effects as _settle_with_delta
+from tests.test_month_chain_1843 import _prepare_player_month
 from ming_sim.exceptions import SettlementAbort
 from ming_sim.issues import apply_historical_fiscal_rates, apply_score_extraction
 import ming_sim.issues as issues
@@ -66,9 +66,17 @@ def _decree(db: GameDB, state, region_id="shaanxi", monthly_amount=10.0, **kw):
     return item
 
 
-def _settle_month(state, db, delta, **kwargs):
-    pre_settle(state, db, content=kwargs.get("content"))
-    return _settle_with_delta(state, db, delta, **kwargs)
+def _settle_month(state, db, delta, *, before_turn, content, monkeypatch, narrative="邸报"):
+    """只替换世界段模型缝；财政、效果和月末均经玩家过月事务。"""
+    assert state.turn == before_turn
+    session = _prepare_player_month(
+        db, state, content, monkeypatch,
+        world=lambda *_a, **_k: narrative if delta else "",
+        translate=lambda *_a, **_k: {"effects": delta},
+    )
+    session.resolve_turn(allow_empty_decree=True)
+    db.save_turn_report(state, narrative, public_body=narrative)
+    session.resolve_turn(allow_empty_decree=True)
 
 
 def _expected_inflow_persons(base_wan: float, support: int) -> int:
@@ -343,7 +351,7 @@ def test_zero_base_province_gets_no_transfer(game):
 # ── 持久累积账损坏须 fail-loud，月效来源不得伪归最后一道旨 ───────────────────
 
 @pytest.mark.parametrize("corruption", ["bad_json", "bad_base", "missing_pool"])
-def test_levy_ledger_corruption_fails_loud(game, corruption):
+def test_levy_ledger_corruption_fails_loud(game, corruption, monkeypatch):
     db, state, content = game
     apply_score_extraction(db, state, {
         "surcharge_decrees": [_decree(db, state,monthly_amount=10.0)],
@@ -362,7 +370,7 @@ def test_levy_ledger_corruption_fails_loud(game, corruption):
     db.conn.commit()
 
     with pytest.raises((ValueError, SettlementAbort)) as caught:
-        _settle_month(state, db, {}, before_turn=state.turn, content=content)
+        _settle_month(state, db, {}, before_turn=state.turn, content=content, monkeypatch=monkeypatch)
     detail = " ".join(str(item) for item in (caught.value, caught.value.__cause__))
     assert "shaanxi" in detail
 
@@ -371,13 +379,13 @@ def test_levy_ledger_corruption_fails_loud(game, corruption):
 
 # ── AC3：真实玩家回响链（结构化事实输入→自由叙事原样持久化→召对读链）──────────
 
-def test_exact_levy_fact_stays_out_of_public_read_chain_and_free_report_enters_it(game):
+def test_exact_levy_fact_stays_out_of_public_read_chain_and_free_report_enters_it(game, monkeypatch):
     """精确机械人数不进公开链；既有 writer 的自由邸报原样进入公开读链。"""
     db, state, content = game
     first_turn = state.turn
     _settle_month(
         state, db, {"surcharge_decrees": [_decree(db, state,monthly_amount=10.0)]},
-        before_turn=first_turn, content=content, narrative="陕西加派月报。",
+        before_turn=first_turn, content=content, monkeypatch=monkeypatch, narrative="陕西加派月报。",
     )
     want = _expected_inflow_persons(10.0, SHAANXI_SUPPORT)
     fact = f"陕西农民流失{want}口为流民（加派）"
@@ -391,7 +399,7 @@ def test_exact_levy_fact_stays_out_of_public_read_chain_and_free_report_enters_i
     # 此处 narrative 代表既有 player-facing simulator 的自由输出；archive writer 未替换。
     _settle_month(
         state, db, {"surcharge_decrees": [_decree(db, state,monthly_amount=-10.0)]},
-        before_turn=second_turn, content=content, narrative=free_body,
+        before_turn=second_turn, content=content, monkeypatch=monkeypatch, narrative=free_body,
     )
     assert db.get_turn_report(second_turn) == free_body
     public_read = " ".join(
@@ -491,20 +499,20 @@ def test_legacy_fiscal_engine_rejects_surcharge_and_never_consumes_it(legacy_gam
 
 # ── AC4/AC5：e2e 验收锚用例①前半——陕西加派→流民↑→回响；restore 接续；停加派止 ──
 
-def test_e2e_surcharge_and_stop_share_month_open_snapshot(game):
+def test_e2e_surcharge_and_stop_share_month_open_snapshot(game, monkeypatch):
     db, state, content = game
     want = _expected_inflow_persons(10.0, SHAANXI_SUPPORT)
 
     turn = state.turn
     _settle_month(state, db, {"surcharge_decrees": [_decree(db, state, monthly_amount=10.0)]},
-                  before_turn=turn, content=content)
+                  before_turn=turn, content=content, monkeypatch=monkeypatch)
     assert _pop(db, "流民", "shaanxi") == DISPLACED_SHAANXI
 
     turn = state.turn
     _settle_month(state, db, {"surcharge_decrees": [_decree(db, state, monthly_amount=-10.0)]},
-                  before_turn=turn, content=content)
+                  before_turn=turn, content=content, monkeypatch=monkeypatch)
     assert _pop(db, "流民", "shaanxi") == DISPLACED_SHAANXI + want
 
     turn = state.turn
-    _settle_month(state, db, {}, before_turn=turn, content=content)
+    _settle_month(state, db, {}, before_turn=turn, content=content, monkeypatch=monkeypatch)
     assert _pop(db, "流民", "shaanxi") == DISPLACED_SHAANXI + want
