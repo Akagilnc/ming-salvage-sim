@@ -38,28 +38,6 @@ def test_minister_agent_address_terms_positive_in_audience_section():
         assert bad not in section, bad
 
 
-def test_season_simulator_uses_fed_reign_label_not_self_compute():
-    """#1344：上下文 turn_header 喂 reign_period_label 事实。"""
-    from ming_sim.agents import build_simulator_context
-    from ming_sim.models import reign_period_label
-
-    label = reign_period_label(1627, 10)
-    assert label == "天启七年十月"
-    ctx = build_simulator_context(
-        {
-            "turn": {
-                "year": 1627,
-                "period": 10,
-                "turn": 1,
-                "reign_period_label": label,
-            },
-            "decree_text": "",
-        }
-    )
-    assert "天启七年十月" in ctx
-    assert "【本回合年月】" in ctx
-    # 西历裸拼不得作为抬头权威
-    assert "【本回合年月】1627 年 10 月" not in ctx
 
 
 def test_gazette_header_uses_report_own_month_not_current_turn(game):

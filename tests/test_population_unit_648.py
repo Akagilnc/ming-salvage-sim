@@ -20,7 +20,6 @@ from ming_sim.issues import (
     auto_trigger_seed_issues,
     bind_content as issues_bind_content,
 )
-from ming_sim.simulation import build_simulator_payload
 
 # ── F3/r2 冻结 seed oracle（独立真源=票面冻结表，非实现推导）──────────────────
 AGENDA_FROZEN = "就食求赈，流徙谋生"
@@ -195,32 +194,8 @@ def test_population_unit_mutation_matrix(game, legacy_game):
 
 # ── prompt 契约（④ new-save / ⑤ old-save）＋ F2 机面/玩家面拆分 ────────────
 
-def test_prompt_contract_new_save_persons(game):
-    """④ 新档写端契约：population_unit=人（与 manpower 同刻度）；玩家面投影万口、机面裸人。"""
-    db, state, content = game
-    issues_bind_content(content)
-
-    payload = build_simulator_payload(state, db, "诏文", "")
-    rows = payload["regions"]["rows"]
-    cols = payload["regions"]["cols"]
-    pop_col = cols.index("population")
-    name_col = cols.index("name")
-    beizhili = next(r for r in rows if r[name_col].startswith("北直隶"))
-    # 玩家可感 LLM 输入：约N万口定性（P4 正向投影），无裸大数直出
-    assert beizhili[pop_col] == "约720万口"
 
 
-def test_prompt_contract_legacy_save_wan(legacy_game):
-    """⑤ 旧档写端契约：缺 DB 标 → population_unit=万人，展示沿 legacy 原样不加换算。"""
-    db, state = legacy_game
-
-    payload = build_simulator_payload(state, db, "诏文", "")
-    rows = payload["regions"]["rows"]
-    cols = payload["regions"]["cols"]
-    pop_col = cols.index("population")
-    name_col = cols.index("name")
-    beizhili = next(r for r in rows if r[name_col].startswith("北直隶"))
-    assert beizhili[pop_col] == 720  # 万人口径原样
 
 
 # ── F1：class 写面只收 satisfaction/leverage（流民行含内）───────────────────

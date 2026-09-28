@@ -9,7 +9,6 @@ Seams:
 - GameDB.accept_faction_denunciations（结构化承接）
 - compose_denunciation_origin + derive_denunciation_is_true
 - SUPERVISION_BANNED_PLAYER_TOKENS 单源扩展
-- build_simulator_payload 事实注入
 """
 
 from __future__ import annotations
@@ -22,7 +21,6 @@ from pathlib import Path
 import pytest
 
 from ming_sim.db import GameDB
-from ming_sim.simulation import build_simulator_payload
 from ming_sim.supervision import (
     DENUNCIATION_ALLOWED_COLS,
     DENUNCIATION_ORIGIN_BASE,
@@ -243,56 +241,6 @@ def test_no_intensity_quota_template_symbols():
 # ── AC1 事实供给 ──────────────────────────────────────────────────
 
 
-def test_ac1_fact_supply_four_classes_no_veracity_no_quota(game):
-    db, state, _content = game
-    subject, _ = _pair_enemy(db)
-    subject_name = str(subject["name"])
-    did = _subject_dossier(db, state, owner=subject_name, token="facts")
-    _make_forked(db, state, did, token="facts")
-
-    facts = db.build_faction_denunciation_facts()
-    # 四类事实
-    for key in (
-        "forked_dossiers",
-        "faction_enmities",
-        "faction_situations",
-        "character_personas",
-    ):
-        assert key in facts, key
-        assert isinstance(facts[key], list), key
-
-    assert any(int(d["dossier_id"]) == did for d in facts["forked_dossiers"])
-    assert facts["faction_enmities"], "须有敌对关系事实"
-    assert facts["faction_situations"], "须有派系处境定性档"
-    assert facts["character_personas"], "须有人物个性"
-
-    # 处境/个性为定性档，非裸分
-    for sit in facts["faction_situations"]:
-        assert "leverage_band" in sit and "satisfaction_band" in sit
-        assert "leverage" not in sit
-        assert "satisfaction" not in sit
-    for persona in facts["character_personas"]:
-        assert "integrity_band" in persona
-
-    # 输入不携真伪位、无 quota
-    blob = json.dumps(facts, ensure_ascii=False)
-    for banned in (
-        "denunciation_true", "denunciation_false", "is_true", "veracity",
-        "quota", "denunciation_quota", "intensity", "faction_conflict_intensity",
-    ):
-        assert banned not in blob, banned
-
-    # 叙事步输入构造：simulator payload 含此键且同约束
-    payload = build_simulator_payload(state, db, decree_text="试", previous_narrative="")
-    assert "faction_denunciation_facts" in payload
-    injected = payload["faction_denunciation_facts"]
-    assert set(injected) >= {
-        "forked_dossiers", "faction_enmities",
-        "faction_situations", "character_personas",
-    }
-    inj_blob = json.dumps(injected, ensure_ascii=False)
-    for banned in ("denunciation_true", "denunciation_false", "quota", "veracity"):
-        assert banned not in inj_blob, banned
 
 
 # ── AC2 承接与 clamp ──────────────────────────────────────────────

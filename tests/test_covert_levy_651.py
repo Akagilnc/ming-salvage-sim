@@ -5,7 +5,6 @@ from ming_sim.covert_levy import (
     army_pay_fact_for_dossier, settle_exposure_from_canonical_actions,
     write_exposure_todos,
 )
-from ming_sim.decree import project_dossiers_for_simulator
 from ming_sim.issues import apply_score_extraction
 from ming_sim.due_review import audience_todo_lane, build_due_review_input, list_due_review_scenes
 from ming_sim.simulation import EMPTY_EXTRACTION, MODULE_FIELDS
@@ -100,16 +99,6 @@ def test_natural_prohibition_binds_only_current_case_and_is_night_approved(game,
     assert set(ctx.out) == {"pending_action_id"}
 
 
-def test_pay_fact_reaches_both_production_judge_inputs(game):
-    db, state, _ = game
-    did, _, army_id, _ = _bound_case(db, state)
-    db.conn.execute(
-        "UPDATE armies SET arrears=9, consecutive_pay_shortfall_months=3 WHERE id=?", (army_id,)
-    )
-    rows = [dict(r) for r in db.list_decree_dossiers_for_simulation(state.turn)]
-    simulator = project_dossiers_for_simulator(rows, db, state)
-    sim_row = next(row for row in simulator if row["id"] == did)
-    assert sim_row["army_pay_fact"]["consecutive_pay_shortfall_months"] == 3
 
 
 def test_rejected_canonical_results_neither_consume_nor_create_channel(game, monkeypatch):

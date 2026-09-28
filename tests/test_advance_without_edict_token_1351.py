@@ -25,18 +25,8 @@ from ming_sim.session import GameSession
 
 
 def _canned(monkeypatch):
-    monkeypatch.setattr(
-        "ming_sim.month_chain.run_world_segment_text",
-        lambda *_a, **_k: "令牌测无旨月邸报。",
-    )
-    monkeypatch.setattr(
-        "ming_sim.month_chain.run_gazette_text",
-        lambda *_a, **_k: ("邸报", "令牌测无旨月邸报。"),
-    )
-    monkeypatch.setattr(
-        "ming_sim.month_translate.translate_month_segment",
-        lambda *_a, **_k: {"effects": {}},
-    )
+    from tests.settlement_seam_helpers import canned_full_settlement
+    canned_full_settlement(monkeypatch, narrative="令牌测无旨月邸报。")
 
 
 def _session(db, state, content):

@@ -88,6 +88,11 @@ def _stub_outer_llm_seams(monkeypatch) -> None:
             {"dossier_id": row["id"], "decision": "promulgated"} for row in dossiers
         ],
     )
+    monkeypatch.setattr(
+        decree_mod,
+        "create_ending_summary_agent",
+        lambda *a, **k: None,
+    )
     # #1745：结算拒收递话同属外层 LLM 缝——漏 stub 会在有玩家来源拒收时 sk-test 真网 401。
     from tests.section_rejection_helpers import install_settlement_attendant_agent_stub
     install_settlement_attendant_agent_stub(monkeypatch, decree_mod)

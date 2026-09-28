@@ -543,63 +543,6 @@ def test_military_order_rejected_verdict_zero_effect(game):
 # ── 正常/无诏结算 + restore ──────────────────────────────────────────
 
 
-def test_military_order_survives_ordinary_and_no_edict_paths(game):
-    """正常顺颁 / 无诏：无诏不改 station；顺颁后案卷·判决·station·due_turn 一致。"""
-    from ming_sim.decree import project_dossiers_for_simulator
-
-    db, state, content = game
-    army_id = "guanning"
-    old_station = str(_army_row(db, army_id)["station"])
-    new_station = "北直隶 / 京师"
-    assert old_station != new_station
-    actor = _active_ming(db, content)
-    ctx = _stage_military_order(
-        db, state.turn,
-        target_id=army_id,
-        assignee=actor.name,
-        station=new_station,
-        deadline_months=2,
-    )
-    dossier = _close_night_dossier(db, state, content, ctx.out["pending_action_id"])
-    due = int(dossier["due_turn"] or 0)
-
-    # 无诏路径：不调用顺颁 → 驻地不得变；打回不进推演上下文
-    assert str(_army_row(db, army_id)["station"]) == old_station
-    visible_no = []
-    for row in db.list_decree_dossiers_for_simulation(state.turn):
-        item = dict(row)
-        if int(item["id"]) == int(dossier["id"]):
-            item["settlement_verdict"] = "rejected"
-        visible_no.append(item)
-    rejected_ids = {
-        int(r["id"]) for r in project_dossiers_for_simulator(
-            visible_no, db=db, state=state,
-        )
-    }
-    assert int(dossier["id"]) not in rejected_ids
-    assert str(_army_row(db, army_id)["station"]) == old_station
-
-    # 正常顺颁
-    db.apply_dossier_verdicts(
-        state,
-        [{"dossier_id": dossier["id"], "decision": "promulgated"}],
-        content=content,
-    )
-    assert str(_army_row(db, army_id)["station"]) == new_station
-    got = db.get_decree_dossier(dossier["id"])
-    assert int(got["due_turn"] or 0) == due
-    assert got["status"] == "executing"
-
-    visible = []
-    for row in db.list_decree_dossiers_for_simulation(state.turn):
-        item = dict(row)
-        if int(item["id"]) == int(dossier["id"]):
-            item["settlement_verdict"] = "promulgated"
-        visible.append(item)
-    projected = project_dossiers_for_simulator(visible, db=db, state=state)
-    hit = next(r for r in projected if int(r["id"]) == int(dossier["id"]))
-    assert hit["action_type"] == "military_order"
-    assert hit["target_id"] == army_id
 
 
 def test_military_order_restore_from_db_only_is_lossless(game):

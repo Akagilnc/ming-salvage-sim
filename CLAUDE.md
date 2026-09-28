@@ -40,7 +40,7 @@
 - **启动脱 key**：`GameSession` 构造即不连 LLM（连通校验只在设置页主动提交配置时跑），CLI 无 api key 能起。
 - **delta 落库单一入口**：`db.apply_score_extraction(db, state, extracted, content, registry)`，内部分发到 region/army/building/economy/issue 各 apply。我产符合 schema 的 delta 即可，driver 不用自己写落库。
 - **schema 契约**：全在 `simulation.py`（`TOP_LEVEL_ALIASES`/`ITEM_FIELD_ALIASES`/`EMPTY_EXTRACTION`/`MODULE_FIELDS`/`_clean_*`/`_sanitize_module_output`/`_merge_module_outputs`）。这是我产 delta 的**格式契约 + 落库守门**，零 agno 依赖，必须保留。
-- **接口层（确定性↔LLM，别让 LLM 自己数数）**：`agents.build_simulator_context`（盘面→TSV）。喂给我的盘面快照由它生成。结局总评只读历月邸报，不再拼 effect_brief／build_timeline。
+- **接口层（确定性↔LLM，别让 LLM 自己数数）**：材料目录开场最小集（`materials.prepare_world_materials` → 世界段／逐旨预推同一读法）。结局总评只读历月邸报。
 - **结算编排骨架**：玩家颁诏与退朝共用 `decree.resolve_directives → month_chain.run_player_month_chain`（ADR 0157）：收夜与 `pre_settle` 后，按旨序消费夜里暂存声明，推演／转译／提交世界段；未完成请旨先停批红，邸报归档后才判结局、推进月份。恢复从暂存声明及落账状态续跑，ready=1 持久 delta 与对话探针 driver 已删除。调用顺序与边界见 `docs/SETTLEMENT_FLOW.md`，规则真源见 ADR 0157。
 - **运行形态（web 第一，CLI 沉浸版后续）**：**目前 web 版本是第一个尝试方向**，走真实 LLM 后端（codex / agy / hermes，见下）。**「agent session 直接当后端」属后续的 CLI 文字沉浸版**——session 串行（一次一个 LLM 调用）使它在 web 月末并发轰多个 extractor 时会死锁，故那条路留给 CLI 沉浸版、不用在 web。⚠️ 别再凭「探针走 CLI」判 web 路 bug「够不着玩家」：web 是当前真实运行形态，web 路的问题就是真问题。
 - **6 文件三向处置**（agents/simulation/registry/decree/memories/llm_model）：🟢 保留契约/骨架 🟡 提炼成我的玩法说明书 🔴 扔纯 agno 管道（`llm_model.py` 整扔）。**领域金矿本体在 `content/prompts/*.md`（含 `gazette_author.md` 邸报作者提示）**。

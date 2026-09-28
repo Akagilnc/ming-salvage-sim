@@ -30,7 +30,6 @@ import pytest
 from ming_sim.db import GameDB
 from ming_sim.decree import settle_with_delta
 from ming_sim.issues import apply_score_extraction
-from ming_sim.agents import build_simulator_context
 from ming_sim.materials import list_materials, prepare_character_materials, read_material
 @pytest.fixture
 def disaster_shaanxi(game):

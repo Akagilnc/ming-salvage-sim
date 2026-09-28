@@ -23,23 +23,8 @@ from tests.dossier_test_helpers import create_test_secret_order
 
 def _canned_no_edict_settlement(monkeypatch):
     """无旨全链只罐装外部 LLM 缝。"""
-    import ming_sim.decree as decree_mod
-
-    monkeypatch.setattr(
-        "ming_sim.month_chain.run_world_segment_text",
-        lambda *_a, **_k: "本月退朝无旨邸报。",
-    )
-    monkeypatch.setattr(
-        "ming_sim.month_chain.run_gazette_text",
-        lambda *_a, **_k: ("邸报", "本月退朝无旨邸报。"),
-    )
-    monkeypatch.setattr(
-        "ming_sim.month_translate.translate_month_segment",
-        lambda *_a, **_k: {"effects": {}},
-    )
-    # #1745：结算拒收递话同属外层 LLM 缝。
-    from tests.section_rejection_helpers import install_settlement_attendant_agent_stub
-    install_settlement_attendant_agent_stub(monkeypatch, decree_mod)
+    from tests.settlement_seam_helpers import canned_full_settlement
+    canned_full_settlement(monkeypatch, narrative="本月退朝无旨邸报。")
 
 
 def _fake_session(db, state, content=None):

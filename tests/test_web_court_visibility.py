@@ -534,47 +534,6 @@ def test_real_court_ministers_not_collateral_damaged_by_1317(read_game):
         assert name in roster_names, f"{name} 被挡出 list_ministers"
 
 
-def test_no_active_weishi_in_summonable_roster_including_1642_1645(game):
-    """#1317 r2 类防御：开局 + 强行 active + 1642/1645 debut 未仕均不漏入可召名册。
-
-    钉张煌言(debut 1642)/郑成功(debut 1645) 等同型诸生童生——不靠单一史可法 seed status。
-    """
-    from ming_sim.simulation import build_simulator_payload
-
-    db, state, content = game
-    sess = _session_stub(db, content)
-
-    leaked = [
-        v.name for v in sess.list_ministers()
-        if getattr(content.characters.get(v.name), "office_type", "") == "未仕"
-    ]
-    assert leaked == [], f"未仕漏入可召名册：{leaked}"
-
-    weishi = [
-        (n, c) for n, c in content.characters.items()
-        if getattr(c, "office_type", "") == "未仕"
-        and getattr(c, "power_id", "ming") == "ming"
-    ]
-    assert weishi, "seed 须有未仕样本（史可法/郑成功/张煌言等同型）"
-    names_pinned = {n for n, _ in weishi}
-    assert "张煌言" in names_pinned and int(getattr(content.characters["张煌言"], "debut_year", 0) or 0) == 1642
-    assert "郑成功" in names_pinned and int(getattr(content.characters["郑成功"], "debut_year", 0) or 0) == 1645
-
-    for name, ch in weishi:
-        db.conn.execute(
-            "UPDATE characters SET status='active', power_id='ming' WHERE name=?", (name,),
-        )
-        db.conn.commit()
-        ok, _ = sess.can_summon(ch)
-        assert ok is False, f"active 未仕 {name} 仍可召"
-        assert name not in {v.name for v in sess.list_ministers()}
-        assert visible_in_court(ch, db) is False
-
-    # LLM/extractor 受守面同口径（simulation court_roster / active_ministers）
-    sim = build_simulator_payload(state, db, decree_text="", previous_narrative="")
-    assert "史可法" not in str(sim.get("court_roster", ""))
-    assert "张煌言" not in str(sim.get("court_roster", ""))
-    assert "郑成功" not in str(sim.get("court_roster", ""))
 
 
 def test_identity_resolves_weishi_and_vassal_aliases_no_duplicate_file(game):

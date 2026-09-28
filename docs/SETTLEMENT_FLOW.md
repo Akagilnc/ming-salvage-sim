@@ -262,7 +262,7 @@ session.advance_without_decree / POST /api/decree/advance_without_edict:
 
 ## 已知接口层（确定性↔我，别让我自己数数）
 
-- `ming_sim.agents.build_simulator_context(payload)` — 盘面→TSV 文本（喂给我读盘）
+- `ming_sim.materials.prepare_world_materials` — 世界段／逐旨预推材料目录
 
 结局总评只读机械尾已装载的历月邸报；`effect_brief`／`build_timeline` 已随 #1845 退役。
 

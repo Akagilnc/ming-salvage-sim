@@ -649,36 +649,6 @@ def test_multi_stage_due_settlement_stays_out_of_awaiting_decision(game):
     assert len(db.list_next_audience_todos(status="consumed")) == 1
 
 
-def test_staged_commitment_skips_form3_one_shot_due_channel(game):
-    """闸类负向：分段不落派生 end_turn、不进 form③ due_commitment（避免 DECISION 停轮通道）。"""
-    from ming_sim.simulation import build_simulator_payload
-
-    db, state, content = game
-    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
-    db.conn.commit()
-
-    stages = [
-        {
-            "stage_idx": 0,
-            "due_turn": state.turn,
-            "criterion_text": "火器见眉目",
-            "origin_context": "三年火器见眉目",
-        },
-    ]
-    issue_id = _insert_staged_commitment(db, state, content, stages=stages)
-    # 派生 end_turn 不落 DB（仅 stages 承载段到期）
-    row = _issue_row(db, issue_id)
-    assert int(row["end_turn"] or 0) == 0
-    payload = build_simulator_payload(state, db, "", "")
-    due = [
-        item
-        for item in payload.get("due_commitments") or []
-        if item.get("entry_kind") == "due_commitment"
-        and int(item.get("issue_id") or 0) == issue_id
-    ]
-    assert due == []
-    write_due_staged_commitment_todos(db, state)
-    assert db.list_next_audience_todos()
 
 
 def test_last_stage_due_with_ongoing_does_not_mechanical_expire(game):

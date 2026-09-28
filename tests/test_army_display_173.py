@@ -139,31 +139,6 @@ def test_army_payload_exposes_approx_arrears_text_not_raw(game):
     assert "12.5" not in expected
 
 
-def test_simulator_payload_exposes_army_needed(game):
-    """simulator/extractor 盘面须暴露引擎实扣 army_needed。"""
-    from ming_sim.simulation import build_simulator_payload
-
-    db, _state, _ = game
-    aid = db.conn.execute(
-        "SELECT id FROM armies WHERE owner_power='ming' AND salary_rate>0 LIMIT 1"
-    ).fetchone()["id"]
-    db.conn.execute(
-        "UPDATE armies SET manpower=manpower+100000 WHERE id=?", (aid,)
-    )
-    db.conn.commit()
-    full = db.conn.execute("SELECT * FROM armies WHERE id=?", (aid,)).fetchone()
-    name = full["name"]
-    expected = army_needed(full)
-
-    for payload in (
-        build_simulator_payload(_state, db, "x", "y"),
-    ):
-        armies = payload["armies"]
-        assert "army_needed" in armies["cols"]
-        ni = armies["cols"].index("army_needed")
-        nidx = armies["cols"].index("name")
-        row = next(r for r in armies["rows"] if r[nidx] == name)
-        assert int(row[ni]) == expected
 
 
 def test_danger_order_uses_army_needed_for_arrears_months(game):

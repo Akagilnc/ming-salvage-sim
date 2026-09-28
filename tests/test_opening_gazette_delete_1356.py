@@ -31,18 +31,8 @@ def _seed_text() -> str:
 
 
 def _canned_settle(monkeypatch, narrative: str) -> None:
-    monkeypatch.setattr(
-        "ming_sim.month_chain.run_world_segment_text",
-        lambda *_a, **_k: narrative,
-    )
-    monkeypatch.setattr(
-        "ming_sim.month_chain.run_gazette_text",
-        lambda *_a, **_k: ("邸报", narrative),
-    )
-    monkeypatch.setattr(
-        "ming_sim.month_translate.translate_month_segment",
-        lambda *_a, **_k: {"effects": {}},
-    )
+    from tests.settlement_seam_helpers import canned_full_settlement
+    canned_full_settlement(monkeypatch, narrative=narrative)
 
 
 def _session(db, state, content) -> GameSession:

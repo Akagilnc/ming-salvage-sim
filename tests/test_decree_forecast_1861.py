@@ -103,6 +103,9 @@ def test_scene_chat_approval_forecasts_each_decree_without_visible_effect(game, 
     }, ensure_ascii=False) + "<<END>>"
 
     def simulate(_agent, _prompt, **kwargs):
+        decree_fact = json.loads(_prompt)["this_decree"]
+        assert decree_fact["payload"]["target_id"] == "test-policy"
+        assert decree_fact["payload"]["mode"] == "midzhi"
         policies.append(kwargs.get("transport_policy"))
         return before_question + decision_block + after_question
 

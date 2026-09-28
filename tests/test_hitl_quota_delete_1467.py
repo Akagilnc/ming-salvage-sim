@@ -28,6 +28,17 @@ from ming_sim.paths import user_data_path
 _REPO = Path(__file__).resolve().parents[1]
 
 
+def _stub_full_settlement(monkeypatch, *, narrative: str, payload_spy=None):
+    """只替外部 LLM 缝；结算脊骨走生产码。"""
+
+    def _sim(*a, **k):
+        payload = k.get("simulator_payload") or {}
+        if payload_spy is not None:
+            payload_spy.append(payload)
+        return narrative, payload
+
+
+
 def test_hitl_quota_mechanism_fully_deleted():
     """机制缺席：配置读写/loader/API/payload 注入/UI 选择器全部不在。"""
     # config / loader 符号
