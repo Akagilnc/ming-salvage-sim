@@ -2638,9 +2638,6 @@ class GameSession:
             return ask
         return text + "\n" + ask
 
-    @staticmethod
-    def _normalized_content_key(text: str) -> str:
-        return "".join(ch for ch in (text or "") if ch.isalnum())
 
     @staticmethod
     def _secret_order_command_material(player_message: str) -> str:
@@ -3127,36 +3124,6 @@ class GameSession:
         self.temporary_characters.pop(character.name, None)
         return (character.name, bool(data.get("summon_after", True)))
 
-    def _apply_secret_order(self, payload: str, minister_name: str) -> int:
-        """issue_secret_order 哨兵落库，返回新建密令 id（失败返回 0）。"""
-        import json as _json
-        try:
-            data = _json.loads(payload) if payload else {}
-        except (ValueError, TypeError):
-            return 0
-        if not isinstance(data, dict):
-            return 0
-        # No formal title hard-cap (align with tools/web extract paths).
-        title = str(data.get("title") or "").strip()
-        content = str(data.get("content") or "").strip()
-        if not title or not content:
-            return 0
-        tags_raw = data.get("tags") or []
-        tags = [str(k).strip() for k in tags_raw if str(k).strip()] if isinstance(tags_raw, list) else []
-        assignee = str(data.get("assignee") or "").strip() or minister_name
-        try:
-            deadline = max(0, min(int(data.get("deadline_months") or 0), 36))
-        except (TypeError, ValueError):
-            deadline = 0
-        print(f"[secret_order] 截获密令 minister={minister_name} assignee={assignee} title={title!r} tags={tags}")
-        excluded = data.get("excluded_names") if isinstance(data.get("excluded_names"), list) else []
-        excluded_offices = data.get("excluded_offices") if isinstance(data.get("excluded_offices"), list) else []
-        return self.db.create_secret_order(
-            self.state, assignee, title, content, tags, deadline_months=deadline,
-            excluded_names=excluded, excluded_offices=excluded_offices,
-            # minister_name = audience speaker (may differ from assignee).
-            origin_minister_name=minister_name,
-        )
 
     def _apply_close_secret_order(self, payload: str) -> None:
         """report_secret_order_result 哨兵落库。"""
