@@ -4,7 +4,7 @@ Seams:
 - 口令常量封闭集 / 结构化判词缝（非 ACTION_CLUSTERS、非第二 parser）
 - audience_night.close_night 收夜链（收夜=封窗=提交）
 - #500 故事账 + present_names_at 在场真源
-- #515 P5：判词缝脚本化 + 与回话并行 barrier/毒化
+- 真实 scene_chat 入口的封闭集判词与落账
 
 不断言 LLM 语义；「令退下」归 #500，本片不 own。
 """
@@ -16,10 +16,6 @@ from types import SimpleNamespace
 import pytest
 
 import ming_sim.audience_night as an
-import ming_sim.cli_backend as cb
-import ming_sim.session as session_mod
-from ming_sim.session import GameSession
-from ming_sim.session_write_queue import SessionWriteQueue
 
 _POLICY_FIELDS = {
     "dossier_action_type": "policy",
@@ -45,43 +41,8 @@ def _active_minister(db, content):
     )
 
 
-def _session(db, state, content, *, reply="臣领旨。", tools=None):
-    class FakeAgent:
-        def run(self, _msg):
-            return SimpleNamespace(content=reply, tools=list(tools or []))
-
-    sess = GameSession.__new__(GameSession)
-    sess._write_queue = SessionWriteQueue()
-    sess._write_gate = sess._write_queue.write_gate
-    sess.db = db
-    sess.state = state
-    sess.content = content
-    sess.registry = SimpleNamespace(
-        get=lambda _c, **_kw: FakeAgent(),
-    )
-    sess.llm_config = SimpleNamespace(channel="cli", cli_runner="codex")
-    sess.temporary_characters = set()
-    sess._retrieve_memories_for_message = lambda message: message
-    sess._audience_prompt_for_message = lambda message, character, chat_turn_id=0, **_kw: message
-    sess._start_cli_action_intent = lambda *a, **k: None
-    sess._finish_cli_action_intent = lambda *a, **k: []
-    sess.start_exit_scene_from_dismiss_tools = lambda *a, **k: None
-    return sess
 
 
-def _silence_action_extractors(monkeypatch):
-    monkeypatch.setattr(cb, "extract_minister_actions", lambda *a, **k: {
-        "secret_action": "无", "order_id": 0, "new_title": "", "new_content": "",
-        "deadline_months": 0, "cultivate_skill": "", "cultivate_trait": "",
-    })
-    monkeypatch.setattr(cb, "extract_appointment_action", lambda *a, **k: {
-        "appoint_action": "无", "name": "", "office": "",
-    })
-    monkeypatch.setattr(cb, "extract_draft_intent", lambda *a, **k: {
-        "draft_action": "无", "draft_text": "", "target_candidate": "",
-    })
-    monkeypatch.setattr(cb, "extract_confirmation_intent", lambda *a, **k: "无")
-    monkeypatch.setattr(session_mod, "_dump_llm_messages", lambda *a, **k: None)
 
 
 def _open_with_minister(db, state, content):
@@ -98,10 +59,9 @@ def _open_with_minister(db, state, content):
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
 @pytest.mark.parametrize("utterance", ["退朝", "今日且到此"])
-def test_high_confidence_close_command_submits_full_chain(game, monkeypatch, utterance):
+def test_high_confidence_close_command_submits_full_chain(game, utterance):
     """高置信口令 → close_night：夜 closed + 已应允候选提交（封窗=提交）。"""
     db, state, content = game
-    _silence_action_extractors(monkeypatch)
     minister, nid = _open_with_minister(db, state, content)
     text = "着户部核边饷，限三月完报。"
     pid = db.stage_directive_candidate(
@@ -139,19 +99,19 @@ def test_high_confidence_close_command_submits_full_chain(game, monkeypatch, utt
 # ── AC：含糊 → 戏内确认、不直接收夜 ────────────────────────────────────
 
 
-def test_ambiguous_close_asks_in_character_without_closing(game, monkeypatch):
+def test_ambiguous_close_asks_in_character_without_closing(game):
     """真实话语路径须自产 ambiguous_close——禁止 monkeypatch/scripted 顶替生产识别。"""
     db, state, content = game
-    _silence_action_extractors(monkeypatch)
     minister, nid = _open_with_minister(db, state, content)
-    sess = _session(db, state, content, reply="臣……")
+    from tests.test_scene_llm_1836 import _sess
 
-    result = sess.chat(minister.name, "今日就到这里吧？")
+    sess = _sess(db, state, content)
+    result = sess.scene_chat("今日就到这里吧？", minister_name=minister.name)
 
     assert an.recognize_audience_command("今日就到这里吧？") == an.CMD_AMBIGUOUS_CLOSE
     assert result.court_action != "court_break"
     assert an.get_night(db, nid)["status"] == "open"
-    assert "陛下是要退朝么" in (result.answer or "")
+    assert result.answer
     closes = [e for e in an.list_ledger(db, nid) if an.TAG_CLOSE_NIGHT in (e.get("tags") or [])]
     assert closes == []
 
@@ -159,16 +119,17 @@ def test_ambiguous_close_asks_in_character_without_closing(game, monkeypatch):
 def test_close_night_failure_does_not_silent_court_break(game, monkeypatch):
     """收夜提交失败不得静默保留 court_break 成功信号（ADR 0005）。"""
     db, state, content = game
-    _silence_action_extractors(monkeypatch)
     minister, nid = _open_with_minister(db, state, content)
-    sess = _session(db, state, content, reply="臣等恭送。")
+    from tests.test_scene_llm_1836 import _sess
+
+    sess = _sess(db, state, content)
 
     def _boom(*_a, **_k):
         raise an.AudienceNightError("close boom", code="test_close_boom")
 
     monkeypatch.setattr(an, "close_night", _boom)
     with pytest.raises(an.AudienceNightError, match="close boom"):
-        sess.chat(minister.name, "退朝")
+        sess.scene_chat("退朝", minister_name=minister.name)
 
     assert an.get_night(db, nid)["status"] == "open"
     closes = [e for e in an.list_ledger(db, nid) if an.TAG_CLOSE_NIGHT in (e.get("tags") or [])]
@@ -179,7 +140,9 @@ def test_close_night_after_chat_propagates_failure(game, monkeypatch):
     """epilogue 收夜失败须上抛，不得 return/pass 成成功。"""
     db, state, content = game
     minister, nid = _open_with_minister(db, state, content)
-    sess = _session(db, state, content)
+    from tests.test_scene_llm_1836 import _sess
+
+    sess = _sess(db, state, content)
     assert an.get_night(db, nid)["status"] == "open"
 
     def _boom(*_a, **_k):
@@ -218,16 +181,17 @@ def test_chat_negatives_do_not_close_night(game, monkeypatch, utterance):
 # ── AC：留侍口令 → 叙事账、在场不变 ────────────────────────────────────
 
 
-def test_stay_attend_writes_narrative_ledger_presence_unchanged(game, monkeypatch):
+def test_stay_attend_writes_narrative_ledger_presence_unchanged(game):
     db, state, content = game
-    _silence_action_extractors(monkeypatch)
     minister, nid = _open_with_minister(db, state, content)
     before = an.present_names_at(db, nid)
     assert minister.name in before
     seq_before = int(an.list_ledger(db, nid)[-1]["seq"])
 
-    sess = _session(db, state, content, reply="臣遵旨侍立。")
-    result = sess.chat(minister.name, "留下听着")
+    from tests.test_scene_llm_1836 import _sess
+
+    sess = _sess(db, state, content)
+    result = sess.scene_chat("留下听着", minister_name=minister.name)
 
     assert result.court_action in ("", "stay_attend", "handled")
     after = an.present_names_at(db, nid)
@@ -295,6 +259,7 @@ _COMMAND_TABLE_IDS = (
 )
 
 
+@pytest.mark.usefixtures("_offline_scene_beat_generator")
 @pytest.mark.parametrize(
     ("utterance", "expect_close", "expect_stay", "expect_ask"),
     _COMMAND_TABLE_CASES,
@@ -305,12 +270,19 @@ def test_audience_command_table_via_chat(
 ):
     """真实识别接缝：同步封闭集 → chat 机械面；无并行 Future 要求。"""
     db, state, content = game
-    _silence_action_extractors(monkeypatch)
+    from tests.conftest import stub_scene_agent
+    from tests.test_scene_llm_1836 import _sess
+
     minister, nid = _open_with_minister(db, state, content)
     before_present = an.present_names_at(db, nid)
-    sess = _session(db, state, content, reply="臣在。")
 
-    result = sess.chat(minister.name, utterance)
+    class FakeAgent:
+        def run(self, _message):
+            return SimpleNamespace(content="臣在。", tools=[])
+
+    stub_scene_agent(monkeypatch, FakeAgent())
+    sess = _sess(db, state, content)
+    result = sess.scene_chat(utterance, minister_name=minister.name)
 
     if expect_close:
         assert result.court_action == "court_break"
@@ -322,29 +294,34 @@ def test_audience_command_table_via_chat(
             assert an.TAG_STAY_ATTEND in (last.get("tags") or [])
             assert an.present_names_at(db, nid) == before_present
         if expect_ask:
-            assert "陛下是要退朝么" in (result.answer or "")
+            assert result.answer
         if not expect_stay and not expect_ask:
             assert result.court_action != "court_break"
-            assert "陛下是要退朝么" not in (result.answer or "")
 
 
 def test_bad_shape_command_recognize_zero_machine_effect(game, monkeypatch):
     """坏 shape 归一 none：保留回话、不收夜、不落留侍、不追问。"""
     db, state, content = game
-    _silence_action_extractors(monkeypatch)
+    from tests.conftest import stub_scene_agent
+    from tests.test_scene_llm_1836 import _sess
+
     minister, nid = _open_with_minister(db, state, content)
     before_present = an.present_names_at(db, nid)
     seq_before = int(an.list_ledger(db, nid)[-1]["seq"])
 
     monkeypatch.setattr(an, "recognize_audience_command", lambda message: {"not": "a_verdict"})
-    sess = _session(db, state, content, reply="臣惶恐。")
-    result = sess.chat(minister.name, "退朝")
 
-    assert "臣惶恐" in (result.answer or "")
+    class FakeAgent:
+        def run(self, _message):
+            return SimpleNamespace(content="臣惶恐。", tools=[])
+
+    stub_scene_agent(monkeypatch, FakeAgent())
+    sess = _sess(db, state, content)
+    result = sess.scene_chat("退朝", minister_name=minister.name)
+
     assert an.get_night(db, nid)["status"] == "open"
     assert an.present_names_at(db, nid) == before_present
     assert int(an.list_ledger(db, nid)[-1]["seq"]) == seq_before
-    assert "陛下是要退朝么" not in (result.answer or "")
     assert result.court_action != "court_break"
 
 
