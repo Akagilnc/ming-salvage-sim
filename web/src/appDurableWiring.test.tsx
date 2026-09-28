@@ -1106,6 +1106,8 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     };
     const advancedState = {
       ...settlementBaseState("player"),
+      // #1855：邸报写成推进后后端投影 month；刷新/重开只认此字段，不弹旧月邸报、不进殿上。
+      reopen_landing: "month",
       turn: { year: 1627, period: 11, turn: 6, phase: "player", settlement_display: false },
       previous_summary: "十月邸报·本面",
       previous_reign_period_label: "天启七年十月",
@@ -1170,10 +1172,12 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     expect(host.textContent).toContain(MIDCOURSE_ISSUE);
 
     // 模拟刷新：重挂 App，落新月份盘面、不自动弹旧月邸报；史册仍可读本月档
+    // #1855：reopen_landing=month → 不进殿上、不回核账等待面
     unmountTrackedRoots();
     const host2 = await mountApp();
     expect(host2.querySelector("[data-testid=settlement-gazette-panel]")).toBeNull();
     expect(host2.querySelector('[role="dialog"][aria-label="邸报"]')).toBeNull();
+    expect(host2.querySelector(".chat-composer")).toBeNull();
     expect(host2.textContent).toContain("11 月");
     expect(host2.querySelector("[data-testid=wang-settlement-slip]")).toBeNull();
     await click(findButton(host2, "史册"));
