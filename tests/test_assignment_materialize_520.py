@@ -230,11 +230,6 @@ def _close_night_dossier(db, state, content, pending_id):
     )
 
 
-class _EmptyEndorsementAgent:
-    """收夜 endorsement 批空结果（本片不测背书，禁活 LLM；同 strategy_selection_568）。"""
-
-    def run(self, _materials):
-        return json.dumps({"endorsements": []}, ensure_ascii=False)
 
 
 class _CannedStoryExtractor:
@@ -256,7 +251,6 @@ def _close_night_approved_directives(db, state, content, night_id, pending_ids):
     assert n == len(ids), f"应允未全中 night={night_id} ids={ids} marked={n}"
     result = an.close_night(
         db, state, night_id=int(night_id), content=content,
-        endorsement_extractor_agent=_EmptyEndorsementAgent(),
     )
     assert result.get("closed") is True or result.get("already") is True
     return result

@@ -137,17 +137,11 @@ def _payload(row):
         return {}
 
 
-class _EmptyEndorsementAgent:
-    """收夜 endorsement-only 批脚本化空结果（本片不测背书，禁活 LLM）。"""
-
-    def run(self, materials):
-        return json.dumps({"endorsements": []}, ensure_ascii=False)
 
 
 def _close_night(db, state, night_id, content):
     return an.close_night(
         db, state, night_id=int(night_id), content=content,
-        endorsement_extractor_agent=_EmptyEndorsementAgent(),
     )
 
 

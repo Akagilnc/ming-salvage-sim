@@ -3747,48 +3747,6 @@ class WebGame:
             ticket_key=("startup",),
         )
 
-    def pending_story_extractions(self) -> Dict[str, Any]:
-        """#501/#1353：待补抽取只读诊断（本开夜 turn ids + 大臣名 + 计数）。
-
-        与 close_night drain 挡收夜判定同一真源（list_unextracted via helper）。
-        #1842：转译承接后水位同表；本接口亦投影转译待补的结构化系统提示态
-        （kind/retryable），供 0158 决定 6；玩家手动补写 CTA 走 translation/retry。
-        无开夜则回全库待补。测试替身无 conn 时空。
-        """
-        if not hasattr(self.db, "conn"):
-            return {"night_id": 0, "count": 0, "pending": []}
-        from ming_sim.audience_night import get_open_night
-        from ming_sim.audience_translation import list_pending_translations
-
-        open_n = get_open_night(self.db)
-        nid = int(open_n["id"]) if open_n else None
-        night_status = str((open_n or {}).get("status") or "")
-        retry_rows = list_pending_translations(
-            self.db, night_id=int(nid) if nid else None,
-            write_queue=self._runtime_write_queue(),
-        )
-        retry_by_turn = {int(r["chat_turn_id"]): r for r in retry_rows}
-        rows = self.db.list_unextracted_replies(night_id=int(nid) if nid else None)
-        pending = [
-            {
-                "chat_turn_id": int(r.get("chat_turn_id") or 0),
-                "minister_name": str(r.get("minister_name") or ""),
-                "night_id": int(r.get("night_id") or 0),
-                "kind": str(r.get("kind") or "translation_pending"),
-                "retryable": bool(retry_by_turn.get(int(r.get("chat_turn_id") or 0), {}).get("retryable", False)),
-                "extract_status": str(r.get("extract_status") or "pending"),
-                "error_pack_path": str(r.get("error_pack_path") or ""),
-            }
-            for r in rows
-        ]
-        out: Dict[str, Any] = {
-            "night_id": int(nid or 0),
-            "count": len(pending),
-            "pending": pending,
-        }
-        if night_status:
-            out["night_status"] = night_status
-        return out
 
     def pending_translation_retries(
         self, *, night_id: Optional[int] = None, chat_turn_id: Optional[int] = None,
@@ -6700,10 +6658,6 @@ async def api_retry_interrupted_reply(minister_name: str, chat_turn_id: int = Bo
         raise _retryable_audience_close_http(e) from None
 
 
-@app.get("/api/audience/extraction/pending")
-async def api_pending_story_extractions() -> Dict[str, Any]:
-    """#501/#1353/#1842：本开夜转译待补只读投影（含 kind/retryable 系统提示态）。"""
-    return get_game().pending_story_extractions()
 
 
 class TranslationRetryRequest(BaseModel):

@@ -154,12 +154,10 @@ NIGHT_STATUS_CLOSED = "closed"
 
 CLOSE_STEP_COMMIT_OFFICE = 1
 CLOSE_STEP_TRANSFER_CANDIDATES = 2
-CLOSE_STEP_ENDORSEMENT_BOUND = 3
-CLOSE_STEP_FINALIZE = 4
+CLOSE_STEP_FINALIZE = 3
 CLOSE_STEPS = (
     CLOSE_STEP_COMMIT_OFFICE,
     CLOSE_STEP_TRANSFER_CANDIDATES,
-    CLOSE_STEP_ENDORSEMENT_BOUND,
     CLOSE_STEP_FINALIZE,
 )
 
@@ -169,8 +167,8 @@ DEFAULT_IN_FLIGHT_WAIT_S = 30.0
 DEFAULT_IN_FLIGHT_POLL_S = 0.05
 
 # 收夜提交的 night-domain kinds（密令应允即落地，不进收夜提交）
-# Pre-endorsement: only draft-dossier prerequisites (endorsement targets). Final
-# gameplay effects such as consort cultivation run only after endorsement binding.
+# #1842：背书随转译挂载荷、成案继承；不再有 endorsement-bound 水位。
+# 草稿案卷前提（office/directive）先提交；consort 等终局效果在 FINALIZE。
 _CLOSE_COMMIT_KINDS_OFFICE = frozenset({"office"})
 _CLOSE_COMMIT_KINDS_DIRECTIVE = frozenset({"directive"})
 _CLOSE_COMMIT_KINDS_FINAL = frozenset({"consort"})
@@ -329,11 +327,11 @@ def get_open_night(db: Any) -> Optional[Dict[str, Any]]:
     return _hydrate_night(_row_dict(row)) if row is not None else None
 
 
-def night_endorsement_bound(night: Optional[Dict[str, Any]]) -> bool:
-    """Endorsement-bound watermark is close_commit_cursor, not a parallel column."""
+def night_dossiers_ready(night: Optional[Dict[str, Any]]) -> bool:
+    """#1842：草稿案卷前提已提交（可明发/终局）；取代旧 endorsement-bound 水位。"""
     if not night:
         return False
-    return int(night.get("close_commit_cursor") or 0) >= CLOSE_STEP_ENDORSEMENT_BOUND
+    return int(night.get("close_commit_cursor") or 0) >= CLOSE_STEP_TRANSFER_CANDIDATES
 
 
 def assert_night_accepts_player_input(
@@ -1244,8 +1242,8 @@ def _commit_night_approved(
 
 
 def publish_night_directives(db: Any, night_id: int) -> None:
-    """背书落定后，以同一入口幂等记本夜已成案拟旨的明发账。"""
-    # 夜内定案的旨落公开层账、标已明发（#502 AC6）——仅 endorsement 成功之后。
+    """成案后以同一入口幂等记本夜已成案拟旨的明发账。"""
+    # 夜内定案的旨落公开层账、标已明发（#502 AC6）；#1842 背书已随载荷继承。
     already_ids = {
         str(did)
         for did in engine_command_mingfa_publication_ids(list_ledger(db, night_id))
@@ -1259,7 +1257,6 @@ def publish_night_directives(db: Any, night_id: int) -> None:
         JOIN decree_dossiers d ON d.pending_action_id = pa.id
         WHERE pa.night_id = ? AND pa.kind = 'directive'
           AND pa.status = 'committed' AND pa.committed_directive_id > 0
-          AND pa.late_endorsement_pending = 0
         GROUP BY td.id, td.actor, td.text
         ORDER BY td.id
         """,
@@ -1291,13 +1288,12 @@ def commit_late_night_approved(
     db: Any, state: GameState, *, content: Any, registry: Any,
     llm_config: Any = None, write_gate: Any = None,
 ) -> None:
-    """过月 join 后沿收夜提交、背书、明发入口补完迟到应允。"""
+    """过月 join 后沿收夜提交、明发入口补完迟到应允（#1842：背书随载荷，不另补批）。"""
     nights = db.conn.execute(
         "SELECT DISTINCT n.id FROM audience_nights n "
         "JOIN pending_actions pa ON pa.night_id=n.id "
         "WHERE n.turn=? AND n.status=? AND "
-        "((pa.status='pending' AND pa.night_approved=1) OR "
-        "(pa.status='committed' AND pa.late_endorsement_pending=1)) ORDER BY n.id",
+        "pa.status='pending' AND pa.night_approved=1 ORDER BY n.id",
         (int(state.turn), NIGHT_STATUS_CLOSED),
     ).fetchall()
     if not nights:
@@ -1314,16 +1310,7 @@ def commit_late_night_approved(
                 _commit_night_approved(
                     db, state, nid, kinds=kinds, content=content, registry=registry,
                 )
-            late_ids = [int(row["id"]) for row in db.conn.execute(
-                "SELECT id FROM pending_actions WHERE night_id=? AND status='committed' "
-                "AND late_endorsement_pending=1 ORDER BY id", (nid,),
-            ).fetchall()]
-        if late_ids:
-            from ming_sim.audience_extraction import run_endorsement_batch_for_night
-            run_endorsement_batch_for_night(
-                db=db, night_id=nid, llm_config=llm_config, write_gate=gate,
-                late_action_ids=late_ids,
-            )
+            publish_night_directives(db, nid)
 
 
 def _drain_pending_translations_or_fail_closed(
@@ -1385,25 +1372,17 @@ def close_night(
     knowledge_provider: Any = None,
     llm_config: Any = None,
     write_gate: Any = None,
-    endorsement_extractor_agent: Any = None,
     scene_registry: Any = None,
     close_chat_turn_id: int = 0,
     translate_fn: Any = None,
     write_queue: Any = None,
 ) -> Dict[str, Any]:
-    """收夜：短写前提 → 无锁待补转译 + 夜级 endorsement-only 批 → 短写终局。
+    """收夜：短写前提 → 无锁待补转译 → 短写终局（#1842：背书随转译，无夜级批）。
 
     分相：
-    1. OPEN 期：等在飞回话清；有限 join 转译 single-flight owner 后重读 DB；
-       经调用方既有 ChatTurnSceneRegistry start_close（不立即 join）；持 write_gate
-       原子复查并冻结 CLOSING、提交 draft 前提。不得自建第二 registry/executor/Thread。
-    2. 提交前先补跑待补转译（CLOSING restore 同路）；之后
-       endorsement-only LLM 与 close scene 并行（无 DB transaction / 无 runtime write
-       gate）；终局写入前 join close scene。
-    3. 重取 gate：原子落背书水位；consort/明发/收夜账/CLOSED。
-
-    背书或 close scene 失败 → OPEN、cursor=0、draft identity 保留；scene 失败另走
-    chat-turn abandon/fail。成功前不得判官/公开明发/终局效果/CLOSED。
+    1. OPEN 期：等在飞回话清；补跑待补转译后冻结 CLOSING，提交 draft 前提。
+    2. join close scene（若有）；失败 → OPEN、cursor=0。
+    3. 重取 gate：consort/明发/收夜账/CLOSED。背书已在转译落定、成案继承。
     """
     if wait_timeout_s is None:
         wait_timeout_s = DEFAULT_IN_FLIGHT_WAIT_S
@@ -1573,28 +1552,8 @@ def close_night(
             _cleanup_close_scene_early(early_exc)
         raise
 
-    # #1842 / ADR 0155：收夜旧边事件判官退役——转译已在场中声明边事件并落账；
-    # 不再 prepare/invoke/finalize relation judge，也不为判官另建 scaffold 轮。
-    # ── Phase 2: endorsement LLM ∥ close scene (join before finalize) ──────
-    # Both branches end before finalize or reopen. No ExceptionGroup bus /
-    # second registry/executor/Thread. First observed failure propagates;
-    # sibling still drains; join/cleanup chains via __cause__.
-    primary_exc: BaseException | None = None
-    try:
-        from ming_sim.audience_extraction import run_endorsement_batch_for_night
-
-        # Endorsement LLM must not hold runtime write gate / DB transaction.
-        run_endorsement_batch_for_night(
-            db=db,
-            night_id=int(night_id),
-            llm_config=llm_config,
-            write_gate=gate,
-            extractor_agent=endorsement_extractor_agent,
-        )
-    except Exception as exc:
-        primary_exc = exc
-
-    join_exc: BaseException | None = None
+    # #1842 / ADR 0155：收夜旧边事件判官与夜级背书批退役——转译已声明并挂载荷。
+    # ── Phase 2: join close scene only ─────────────────────────────────────
     if close_started and reg is not None:
         try:
             from ming_sim import beat_orchestration as beats
@@ -1606,24 +1565,17 @@ def close_night(
             )
             if joined_body and not close_body:
                 close_body = str(joined_body)
-        except Exception as exc:
-            join_exc = exc
-
-    if primary_exc is not None or join_exc is not None:
-        with gate:
-            if close_scaffold_owned and close_ctid and hasattr(db, "fail_chat_turn"):
-                restored_ids = db.fail_chat_turn(int(close_ctid))
-                from ming_sim.decree_forecast import schedule_restored_decree_forecasts
-                schedule_restored_decree_forecasts(db, restored_ids)
-            _set_night_fields(
-                db, night_id, status=NIGHT_STATUS_OPEN, closed_at=None,
-                close_commit_cursor=0,
-            )
-        if primary_exc is not None:
-            if join_exc is not None:
-                raise primary_exc from join_exc
-            raise primary_exc
-        raise join_exc
+        except Exception as join_exc:
+            with gate:
+                if close_scaffold_owned and close_ctid and hasattr(db, "fail_chat_turn"):
+                    restored_ids = db.fail_chat_turn(int(close_ctid))
+                    from ming_sim.decree_forecast import schedule_restored_decree_forecasts
+                    schedule_restored_decree_forecasts(db, restored_ids)
+                _set_night_fields(
+                    db, night_id, status=NIGHT_STATUS_OPEN, closed_at=None,
+                    close_commit_cursor=0,
+                )
+            raise join_exc
 
     # ── Phase 3: short writes — final effects, 明发, close ledger, CLOSED ──
     # Close body joined above (or explicit body=); no generator under the runtime
@@ -1632,9 +1584,8 @@ def close_night(
     with gate:
         night = get_night(db, night_id) or night
         cursor = int(night["close_commit_cursor"] or 0)
-        if cursor < CLOSE_STEP_ENDORSEMENT_BOUND:
-            # settle path should have advanced this; missing watermark is a hard fault.
-            # Restore OPEN so the player can retry (ADR 0036); keep code + diagnostics.
+        if cursor < CLOSE_STEP_TRANSFER_CANDIDATES:
+            # Phase 1 应已推进到 TRANSFER_CANDIDATES；缺失则响亮失败并重开。
             fault_cursor = int(cursor)
             if close_scaffold_owned and close_ctid and hasattr(db, "fail_chat_turn"):
                 restored_ids = db.fail_chat_turn(int(close_ctid))
@@ -1645,8 +1596,8 @@ def close_night(
                 close_commit_cursor=0,
             )
             raise AudienceNightError(
-                f"收夜背书水位未落定（night_id={int(night_id)}, cursor={fault_cursor}）",
-                code="endorsement_not_bound",
+                f"收夜案卷前提未落定（night_id={int(night_id)}, cursor={fault_cursor}）",
+                code="close_prerequisites_incomplete",
                 detail={"night_id": int(night_id), "cursor": fault_cursor},
             )
         if cursor < CLOSE_STEP_FINALIZE:
@@ -1710,7 +1661,6 @@ def auto_close_open_night(
     knowledge_provider: Any = None,
     llm_config: Any = None,
     write_gate: Any = None,
-    endorsement_extractor_agent: Any = None,
     scene_registry: Any = None,
     close_chat_turn_id: int = 0,
     body: str = "",
@@ -1718,10 +1668,9 @@ def auto_close_open_night(
 ) -> Optional[Dict[str, Any]]:
     """颁诏/过回合前：有开夜则顺势收夜；无开夜返回 None。
 
-    write_gate 应为真实 runtime Lock（或 CLI 下 None）；close_night 只在短写阶段持锁，
-    endorsement LLM 期间释放。调用方不得在外层持同一把非重入锁再传入 nullcontext。
-    scene_registry：既有 ChatTurnSceneRegistry（session 持有）；start_close 后与
-    endorsement 并行，终局写入前 join；不自建第二 registry/executor。
+    write_gate 应为真实 runtime Lock（或 CLI 下 None）；close_night 只在短写阶段持锁。
+    scene_registry：既有 ChatTurnSceneRegistry（session 持有）；start_close 后终局
+    写入前 join；不自建第二 registry/executor。
     #1353 fold-in r5：欠账补跑内部静默，不透传过月 SSE。
     #1353 r10：wrapper 入口 get_open_night 短持 gate（r7 修了 close_night 内、漏此处）。
     """
@@ -1742,7 +1691,6 @@ def auto_close_open_night(
         knowledge_provider=knowledge_provider,
         llm_config=llm_config,
         write_gate=write_gate,
-        endorsement_extractor_agent=endorsement_extractor_agent,
         scene_registry=scene_registry,
         close_chat_turn_id=int(close_chat_turn_id or 0),
         on_closing=on_closing,

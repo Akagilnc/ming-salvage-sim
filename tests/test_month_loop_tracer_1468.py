@@ -61,10 +61,6 @@ class _CannedMinisterAgent:
 def _stub_outer_llm_seams(monkeypatch) -> None:
     """只换最外层 LLM 工厂/调用；结算核、收夜、HTTP 路由全真跑。"""
     monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
-    monkeypatch.setattr(
-        agents_mod, "create_endorsement_extractor_agent",
-        lambda *a, **k: _CannedEndorsementExtractor(),
-    )
     # #642：召对/收夜关系判官同属外层 LLM 缝——漏 stub 会在有 window 时真网挂起，
     # 票据不归还 → xdist 下 _wait_pending_writes 墙钟假红。
     # 高亮判官默认 8s 超时——必须零延迟 stub，否则两月链必破速度红线。
@@ -211,12 +207,13 @@ def _get_state(client: TestClient) -> dict:
 
 
 def _pending_payload(client: TestClient) -> dict:
-    resp = client.get("/api/audience/extraction/pending")
-    _assert_not_bare_500(resp, step="GET /api/audience/extraction/pending")
+    """#1842：待补投影唯一真源 = list_pending_translations → chat.translation_retries。"""
+    resp = client.get("/api/audience/chat")
+    _assert_not_bare_500(resp, step="GET /api/audience/chat")
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert isinstance(body, dict)
-    return body
+    retries = list(body.get("translation_retries") or [])
+    return {"pending": retries, "count": len(retries)}
 
 
 def _parse_sse(text: str) -> list[dict]:
@@ -412,7 +409,7 @@ def _plant_extraction_debt(game, minister: str, *, sess_tag: str) -> int:
     an.ensure_summon_enter(game.db, nid, minister)
     ctid = game.db.create_chat_turn(game.state, minister, sess_tag, 0, night_id=nid)
     game.db.persist_minister_reply(minister, int(game.state.turn), "臣愿肩起此事。", ctid)
-    assert int(game.db.count_pending_story_extractions(night_id=nid) or 0) >= 1
+    assert len((game.db.list_unextracted_replies(night_id=nid) or [])) >= 1
     return int(ctid)
 
 

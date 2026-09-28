@@ -2554,9 +2554,6 @@ class GameDB:
             "pending_actions", "night_approved", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column(
             "pending_actions", "version", "INTEGER NOT NULL DEFAULT 1")
-        # #1871：封夜后迟到应允的补背书待办；背书落库同事务清零。
-        self.ensure_column(
-            "pending_actions", "late_endorsement_pending", "INTEGER NOT NULL DEFAULT 0")
         # fiscal_config 科目元数据列（数据驱动预算目录）：budget_role=fixed 的 base 项靠
         # account/direction/display 由 flows.compute_budget_lines 动态生成预算行；
         # dynamic 项（田赋/辽饷/盐税/商税/皇庄）走省级公式/皇庄专路，这三列留空。
@@ -10298,225 +10295,6 @@ class GameDB:
         )
         self.conn.commit()
 
-    def list_endorsement_candidates(
-        self, night_id: int, *, action_ids: Optional[Sequence[int]] = None,
-    ) -> List[Dict[str, Any]]:
-        """Eligible dossier refs for the night-level endorsement-only batch.
-
-        Only dossiers whose pending_action is bound to this night (Phase-1 draft
-        prerequisites). Global proposed dossiers from other nights are excluded.
-        """
-        nid = int(night_id)
-        ids = {int(i) for i in action_ids} if action_ids is not None else None
-        # Normal batch omits late-marked actions; the late batch names them via action_ids.
-        late_sql = "" if ids is not None else " AND pa.late_endorsement_pending = 0"
-        rows = self.conn.execute(
-            "SELECT d.id AS id, d.decree_text AS decree_text, d.pending_action_id "
-            "FROM decree_dossiers d "
-            "JOIN pending_actions pa ON pa.id = d.pending_action_id "
-            "WHERE pa.night_id = ? AND pa.night_id > 0 AND d.pending_action_id > 0 "
-            "AND d.status = 'proposed'" + late_sql + " ORDER BY d.id",
-            (nid,),
-        ).fetchall()
-        return [{
-            "ref": {"dossier_id": int(row["id"])},
-            "decree_text": str(row["decree_text"] or ""),
-        } for row in rows if ids is None or int(row["pending_action_id"]) in ids]
-
-    def list_endorsement_batch_inputs(
-        self, night_id: int, *, action_ids: Optional[Sequence[int]] = None,
-    ) -> Dict[str, Any]:
-        """Immutable snapshot inputs for night-level endorsement-only binding."""
-        nid = int(night_id)
-        candidates = self.list_endorsement_candidates(nid, action_ids=action_ids)
-        turn_rows = self.conn.execute(
-            """
-            SELECT t.id AS chat_turn_id, t.night_seq, t.minister_name,
-                   um.content AS emperor_text, mm.content AS minister_reply
-            FROM chat_turns t
-            LEFT JOIN chat_messages um ON um.id = t.user_message_id
-            LEFT JOIN chat_messages mm ON mm.id = t.minister_message_id
-            WHERE t.night_id = ?
-              AND t.status = 'active'
-              AND t.minister_message_id IS NOT NULL
-              AND t.minister_message_id > 0
-            ORDER BY t.night_seq, t.id
-            """,
-            (nid,),
-        ).fetchall()
-        turns: List[Dict[str, Any]] = []
-        for row in turn_rows:
-            cid = int(row["chat_turn_id"])
-            fact_rows = self.conn.execute(
-                """
-                SELECT body, person_names, tags, audibility
-                FROM story_ledger_entries
-                WHERE night_id = ? AND source_chat_turn_id = ?
-                ORDER BY COALESCE(order_key, seq), seq, id
-                """,
-                (nid, cid),
-            ).fetchall()
-            ordinary_facts = []
-            for fr in fact_rows:
-                try:
-                    persons = json.loads(fr["person_names"] or "[]")
-                except (TypeError, ValueError):
-                    persons = []
-                try:
-                    tags = json.loads(fr["tags"] or "[]")
-                except (TypeError, ValueError):
-                    tags = []
-                ordinary_facts.append({
-                    "body": str(fr["body"] or ""),
-                    "person_names": persons if isinstance(persons, list) else [],
-                    "tags": tags if isinstance(tags, list) else [],
-                    "audibility": str(fr["audibility"] or ""),
-                })
-            turns.append({
-                "source_chat_turn_id": cid,
-                "night_seq": int(row["night_seq"] or 0),
-                "minister_name": str(row["minister_name"] or ""),
-                "emperor_text": str(row["emperor_text"] or ""),
-                "minister_reply": str(row["minister_reply"] or ""),
-                "ordinary_facts": ordinary_facts,
-            })
-        return {"candidates": candidates, "turns": turns}
-
-    def settle_endorsement_batch(
-        self,
-        night_id: int,
-        endorsements: Sequence[Mapping[str, Any]],
-        *, late_action_ids: Optional[Sequence[int]] = None,
-    ) -> List[int]:
-        """Atomically persist normal or late night endorsements and their completion mark.
-
-        Invalid items go to the established rejection channel; valid ones INSERT OR
-        IGNORE (retry-idempotent unique key). Normal batch advances the existing
-        close_commit_cursor step; late batch clears only its pending action markers
-        and publishes the resulting directives in the same transaction.
-
-        dossier_id is checked against the same night candidate snapshot used for the
-        batch inputs (not a fresh global proposed scan).
-        """
-        from ming_sim.audience_night import (
-            CLOSE_STEP_ENDORSEMENT_BOUND,
-            get_night,
-            night_endorsement_bound,
-        )
-
-        nid = int(night_id)
-        if late_action_ids is None and night_endorsement_bound(get_night(self, nid)):
-            return []
-        late_ids = sorted({int(i) for i in late_action_ids or ()})
-        if late_action_ids is not None and not late_ids:
-            return []
-        accepted: List[Mapping[str, Any]] = []
-        rejected: List[tuple[Mapping[str, Any], str]] = []
-        # One snapshot for both surviving turns and night-scoped candidates.
-        batch_inputs = self.list_endorsement_batch_inputs(
-            nid, action_ids=late_ids if late_action_ids is not None else None,
-        )
-        surviving = {
-            int(t["source_chat_turn_id"])
-            for t in (batch_inputs.get("turns") or [])
-        }
-        candidate_ids: set[int] = set()
-        for cand in (batch_inputs.get("candidates") or []):
-            if not isinstance(cand, Mapping):
-                continue
-            ref = cand.get("ref")
-            if isinstance(ref, Mapping) and not isinstance(ref.get("dossier_id"), bool):
-                did_raw = ref.get("dossier_id")
-                if isinstance(did_raw, int) and did_raw > 0:
-                    candidate_ids.add(int(did_raw))
-        _BANNED_STORY_FIELDS = (
-            "body", "presence_effect", "audibility", "tags", "person_names", "facts",
-        )
-        for item in endorsements:
-            if not isinstance(item, Mapping):
-                rejected.append(({"raw": repr(item)}, "背书项非对象"))
-                continue
-            try:
-                if any(field in item for field in _BANNED_STORY_FIELDS):
-                    raise ValueError("背书项不得含故事字段")
-                source_cid = item.get("source_chat_turn_id")
-                if isinstance(source_cid, bool) or not isinstance(source_cid, int) or source_cid <= 0:
-                    raise ValueError("背书来源对话轮 id 须为正整数")
-                if int(source_cid) not in surviving:
-                    raise ValueError("背书来源对话轮不在本夜 surviving turns")
-                dossier_id = item.get("dossier_id")
-                if isinstance(dossier_id, bool) or not isinstance(dossier_id, int) or dossier_id <= 0:
-                    raise ValueError("背书案卷 id 须为正整数")
-                if int(dossier_id) not in candidate_ids:
-                    raise ValueError("背书案卷不在本夜候选")
-                self._validate_dossier_endorsement(
-                    dossier_id,
-                    form=item.get("form"),
-                    endorser_id=item.get("endorser_id", ""),
-                    imperial=item.get("imperial", False),
-                    source_chat_turn_id=int(source_cid),
-                )
-            except (TypeError, KeyError, ValueError) as exc:
-                rejected.append((dict(item), str(exc)))
-                continue
-            accepted.append(item)
-
-        new_ids: List[int] = []
-        collector = None
-        with atomic(self):
-            if rejected:
-                from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
-                collector = RejectionCollector()
-                turn = 0
-                trow = self.conn.execute(
-                    "SELECT turn FROM audience_nights WHERE id=?", (nid,),
-                ).fetchone()
-                if trow is not None:
-                    turn = int(trow["turn"] or 0)
-                for item, reason in rejected:
-                    collector.record(
-                        "endorsements",
-                        RejectedItem(
-                            item=dict(item), reason=reason, category="invalid_item",
-                            source=Provenance.system_simulation,
-                        ),
-                        turn,
-                    )
-                collector.flush_to_db(self)
-            for item in accepted:
-                eid = self.add_dossier_endorsement(
-                    int(item.get("dossier_id") or 0),
-                    form=str(item.get("form") or ""),
-                    endorser_id=str(item.get("endorser_id") or ""),
-                    imperial=bool(item.get("imperial", False)),
-                    source_chat_turn_id=int(item.get("source_chat_turn_id") or 0),
-                    commit=False,
-                )
-                new_ids.append(int(eid))
-            if late_action_ids is None:
-                # Initial night batch: same transaction as endorsement rows.
-                self.conn.execute(
-                    "UPDATE audience_nights SET close_commit_cursor = ? "
-                    "WHERE id = ? AND close_commit_cursor < ?",
-                    (int(CLOSE_STEP_ENDORSEMENT_BOUND), nid, int(CLOSE_STEP_ENDORSEMENT_BOUND)),
-                )
-            else:
-                self.conn.execute(
-                    f"UPDATE pending_actions SET late_endorsement_pending=0 "
-                    f"WHERE night_id=? AND status='committed' AND late_endorsement_pending=1 "
-                    f"AND id IN ({','.join('?' for _ in late_ids)})",
-                    (nid, *late_ids),
-                )
-                # 补批与明发同一持久提交点；崩溃后不能只剩已背书、未明发。
-                from ming_sim.audience_night import publish_night_directives
-                publish_night_directives(self, nid)
-        # 本方法即外层 owner：atomic 提交后镜像（0008-D5；#1745 补缺镜像）。
-        if collector is not None:
-            from ming_sim.applier import mirror_rejections_after_commit
-            from ming_sim.error_pack import rejections_jsonl_path
-            mirror_rejections_after_commit(self, collector, rejections_jsonl_path)
-        return new_ids
-
     def list_unextracted_replies(
         self, *, night_id: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
@@ -10550,11 +10328,6 @@ class GameDB:
         ).fetchall()
         return [self._row_dict(r) for r in rows]
 
-    def count_pending_story_extractions(
-        self, *, night_id: Optional[int] = None,
-    ) -> int:
-        """尚待抽取落账的完整回话轮数（''/'pending' 皆算）；收夜清空待补的判据（AC10）。"""
-        return len(self.list_unextracted_replies(night_id=night_id))
 
     def is_global_last_active_chat_turn(self, chat_turn_id: int) -> bool:
         row = self.conn.execute(
@@ -18230,7 +18003,7 @@ class GameDB:
     ) -> int:
         """标本夜已应允（收夜提交白名单）。返回更新行数。"""
         from ming_sim.audience_night import (
-            AudienceNightError, CLOSE_STEP_TRANSFER_CANDIDATES,
+            AudienceNightError,
             NIGHT_STATUS_CLOSED, NIGHT_STATUS_CLOSING,
             assert_night_accepts_player_input, get_night,
             is_pending_source_round,
@@ -18261,14 +18034,11 @@ class GameDB:
         if night_id is not None:
             extra = " AND night_id = ?"
             params.append(int(night_id))
+        # #1842：背书随转译挂载荷，不再置 late_endorsement_pending。
         cur = self.conn.execute(
-            f"UPDATE pending_actions SET night_approved = 1, "
-            f"late_endorsement_pending = CASE WHEN ? THEN 1 ELSE late_endorsement_pending END "
+            f"UPDATE pending_actions SET night_approved = 1 "
             f"WHERE id IN ({placeholders}) AND status = 'pending'{extra}",
-            [int(bool(pending_source and night is not None and (
-                int(night["close_commit_cursor"] or 0)
-                >= CLOSE_STEP_TRANSFER_CANDIDATES
-            ))), *params],
+            params,
         )
         if (
             not bool(getattr(self.conn, "_commit_suspended", False))
@@ -18276,6 +18046,118 @@ class GameDB:
         ):
             self.conn.commit()
         return int(cur.rowcount or 0)
+
+    def attach_pending_action_endorsement(
+        self, action_id: int, entry: Mapping[str, object], *, commit: bool = True,
+    ) -> None:
+        """#1842：把本轮背书挂进暂存载荷 endorsements 列表（不造待背书表）。"""
+        aid = int(action_id)
+        row = self.conn.execute(
+            "SELECT payload_json, status FROM pending_actions WHERE id=?",
+            (aid,),
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"暂存动作不存在：{aid}")
+        if str(row["status"] or "") != "pending":
+            raise ValueError(f"暂存动作状态不可挂背书：{row['status']}")
+        try:
+            payload = json.loads(str(row["payload_json"] or "{}"))
+        except (TypeError, ValueError):
+            payload = {}
+        if not isinstance(payload, dict):
+            payload = {}
+        form = str(entry.get("form") or "").strip()
+        endorser_id = str(entry.get("endorser_id") or "").strip()
+        imperial = bool(entry.get("imperial", False))
+        source_cid = int(entry.get("source_chat_turn_id") or 0)
+        # 暂存阶段尚无 dossier：只验形式/人物/来源轮（与 _validate 同口径）。
+        if form == "御笔手敕":
+            imperial, endorser_id = True, ""
+        if form not in {"会签", "当面站台", "御笔手敕"}:
+            raise ValueError("背书形式非法")
+        if form == "御笔手敕":
+            if not imperial or endorser_id:
+                raise ValueError("御笔手敕必须使用御笔标记且不得具名大臣")
+        else:
+            if imperial or not endorser_id:
+                raise ValueError("会签/当面站台必须具名背书人")
+            if self.conn.execute(
+                "SELECT 1 FROM characters WHERE name=?", (endorser_id,),
+            ).fetchone() is None:
+                raise ValueError("背书人物不存在")
+        if source_cid <= 0:
+            raise ValueError("背书来源对话轮 id 须为正整数")
+        if self.conn.execute(
+            "SELECT 1 FROM chat_turns WHERE id=?", (source_cid,),
+        ).fetchone() is None:
+            raise ValueError("背书来源对话轮不存在")
+        items = list(payload.get("endorsements") or [])
+        if not isinstance(items, list):
+            items = []
+        # 同轮同形同人去重（INSERT OR IGNORE 同语义）。
+        key = (form, endorser_id, imperial, source_cid)
+        kept = []
+        for raw in items:
+            if not isinstance(raw, Mapping):
+                continue
+            k = (
+                str(raw.get("form") or "").strip(),
+                str(raw.get("endorser_id") or "").strip(),
+                bool(raw.get("imperial", False)),
+                int(raw.get("source_chat_turn_id") or 0),
+            )
+            if k == key:
+                continue
+            kept.append(dict(raw))
+        kept.append({
+            "form": form, "endorser_id": endorser_id,
+            "imperial": imperial, "source_chat_turn_id": source_cid,
+        })
+        payload["endorsements"] = kept
+        self.conn.execute(
+            "UPDATE pending_actions SET payload_json=? WHERE id=?",
+            (json.dumps(payload, ensure_ascii=False), aid),
+        )
+        if commit and (
+            not bool(getattr(self.conn, "_commit_suspended", False))
+            and int(getattr(self.conn, "_atomic_depth", 0) or 0) == 0
+        ):
+            self.conn.commit()
+
+    def inherit_payload_endorsements(
+        self, dossier_id: int, payload: Mapping[str, object], *, commit: bool = False,
+    ) -> List[int]:
+        """#1842：成案时把载荷 endorsements 继承到案卷（来源仍为声明轮）。"""
+        raw_items = payload.get("endorsements") if isinstance(payload, Mapping) else None
+        if not isinstance(raw_items, list) or not raw_items:
+            return []
+        new_ids: List[int] = []
+        for raw in raw_items:
+            if not isinstance(raw, Mapping):
+                continue
+            form = str(raw.get("form") or "").strip()
+            endorser_id = str(raw.get("endorser_id") or "").strip()
+            imperial = bool(raw.get("imperial", False))
+            source_cid = int(raw.get("source_chat_turn_id") or 0)
+            if form == "御笔手敕":
+                imperial, endorser_id = True, ""
+            if form not in {"会签", "当面站台", "御笔手敕"} or source_cid <= 0:
+                continue
+            eid = self.add_dossier_endorsement(
+                int(dossier_id),
+                form=form,
+                endorser_id=endorser_id,
+                imperial=imperial,
+                source_chat_turn_id=source_cid,
+                commit=False,
+            )
+            new_ids.append(int(eid))
+        if commit and new_ids and (
+            not bool(getattr(self.conn, "_commit_suspended", False))
+            and int(getattr(self.conn, "_atomic_depth", 0) or 0) == 0
+        ):
+            self.conn.commit()
+        return new_ids
 
     def list_night_approved_pending(
         self, night_id: int, *, kind: Optional[str] = None,
@@ -19335,7 +19217,7 @@ class GameDB:
             # draft 时则已越过最终提交边界，应当立即取得案卷身份。
             # #658：与 free-form / confirm 共吃 _ensure_directive_dossier（含御笔强推）。
             if status == "draft":
-                self._ensure_directive_dossier(
+                dossier_ids = self._ensure_directive_dossier(
                     state, did, text, payload, commit=False,
                 )
                 # conversational commit 的 pending_action_id 绑回案卷（push 复用路径
@@ -19346,6 +19228,11 @@ class GameDB:
                     "OR pending_action_id=0 OR pending_action_id=?)",
                     (int(pa["id"]), int(did), int(pa["id"])),
                 )
+                # #1842：载荷背书随成案继承到案卷（来源仍为声明轮）。
+                for dossier_id in dossier_ids or []:
+                    self.inherit_payload_endorsements(
+                        int(dossier_id), payload, commit=False,
+                    )
                 # ADR 0028 / #1837：组合载荷（拨帑±任免）同一份 pending 同时产任免案卷；
                 # 任免字段只进 appointment 案卷，禁把 grant 的 execution_surface 带过去。
                 if not self._materialize_combined_appointment_from_directive(
@@ -19480,6 +19367,11 @@ class GameDB:
             status="proposed",
             commit=False,
         )
+        if dossier_id:
+            # #1842：office 成案同样继承载荷背书。
+            self.inherit_payload_endorsements(
+                int(dossier_id), staged_payload, commit=False,
+            )
         return dossier_id != 0
 
     def _recommendation_snapshot_ready(

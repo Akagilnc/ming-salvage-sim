@@ -130,6 +130,7 @@ class DeclarationDispatchResult:
 
     commissions: SectionResult
     promises: SectionResult
+    endorsements: SectionResult
     textual_facts: SectionResult
     public_sayings: SectionResult
     on_scene_facts: SectionResult
@@ -146,6 +147,7 @@ class DeclarationDispatchResult:
         return DeclarationDispatchResult(
             commissions=self.commissions.merge(other.commissions),
             promises=self.promises.merge(other.promises),
+            endorsements=self.endorsements.merge(other.endorsements),
             textual_facts=self.textual_facts.merge(other.textual_facts),
             public_sayings=self.public_sayings.merge(other.public_sayings),
             on_scene_facts=self.on_scene_facts.merge(other.on_scene_facts),
@@ -159,7 +161,7 @@ class DeclarationDispatchResult:
 
 
 _SECTION_FIELDS: Tuple[str, ...] = (
-    "commissions", "promises", "textual_facts", "public_sayings",
+    "commissions", "promises", "endorsements", "textual_facts", "public_sayings",
     "on_scene_facts", "presence", "scene_facts", "edge_events",
     "protagonist", "registrations", "effects",
 )
@@ -169,7 +171,8 @@ _KNOWN_SECTIONS = frozenset(_SECTION_FIELDS)
 def _empty_dispatch_result() -> DeclarationDispatchResult:
     empty = SectionResult(applied=[], rejected=[])
     return DeclarationDispatchResult(
-        commissions=empty, promises=empty, textual_facts=empty, public_sayings=empty,
+        commissions=empty, promises=empty, endorsements=empty,
+        textual_facts=empty, public_sayings=empty,
         on_scene_facts=empty, presence=empty, scene_facts=empty, edge_events=empty,
         protagonist=ProtagonistResult(validated=None, rejected=[]), registrations=empty,
         effects=empty,
@@ -242,6 +245,15 @@ def _dispatch_declaration_sections(
         minister_name=minister_name, source=source,
     )
     turn = int(state.turn)
+    promises = _dispatch_promises(
+        db, state, declaration.get("promises"), night_id=night_id,
+        chat_turn_id=origin_ctid, source=source,
+    )
+    # 背书在应允之后：挂暂存载荷，或已成案则直接写案卷（迟到转译）。
+    endorsements = _dispatch_endorsements(
+        db, state, declaration.get("endorsements"), night_id=night_id,
+        chat_turn_id=origin_ctid, source=source,
+    )
     result = DeclarationDispatchResult(
         commissions=commissions,
         effects=_dispatch_effects(
@@ -250,10 +262,8 @@ def _dispatch_declaration_sections(
             turn=turn, source=source, visible_refs=visible_refs,
             defer_disclosure=defer_disclosure,
         ),
-        promises=_dispatch_promises(
-            db, state, declaration.get("promises"), night_id=night_id,
-            chat_turn_id=origin_ctid, source=source,
-        ),
+        promises=promises,
+        endorsements=endorsements,
         # 第四类夜绑定 section 统一消费源轮校验（ADR 0038 / #1839 AC3）：
         # 缺源轮或不属本夜 → 逐项 missing_ref，零落账；过月 night_id<=0 不拦。
         textual_facts=_dispatch_textual_facts(
@@ -1131,6 +1141,117 @@ def _commission_fallback_actor(db: Any) -> str:
         "AND power_id='ming' ORDER BY name LIMIT 1"
     ).fetchone()
     return str(row["name"]) if row is not None else ""
+
+
+def _dispatch_endorsements(
+    db: Any, state: Any, raw: object, *, night_id: int,
+    chat_turn_id: int, source: Provenance,
+) -> SectionResult:
+    """#1842：每轮转译声明对暂存交办的会签/当面站台/御笔手敕。
+
+    挂在 pending_actions.payload_json["endorsements"]，成案时继承到案卷；
+    目标已成案（迟到转译）则按 pending_action_id 直写案卷背书。来源为本轮。
+    """
+    from ming_sim.strict_types import strict_int
+
+    items, rejected = _section_items(raw, label="背书声明", source=source)
+    applied: List[Any] = []
+    ctid = int(chat_turn_id or 0)
+    if ctid <= 0 and items:
+        for item in items:
+            _reject(
+                rejected, item, "背书须绑定本轮对话源", "missing_ref", source,
+            )
+        return SectionResult(applied=applied, rejected=rejected)
+    for item in items:
+        try:
+            action_id = strict_int(
+                item.get("action_id"), accept_numeric_strings=False,
+            )
+        except (TypeError, ValueError):
+            action_id = 0
+        form = str(item.get("form") or "").strip()
+        endorser_id = str(item.get("endorser_id") or "").strip()
+        if action_id <= 0 or form not in {"会签", "当面站台", "御笔手敕"}:
+            _reject(
+                rejected, item,
+                "背书须含正 action_id 与 会签|当面站台|御笔手敕",
+                "invalid_shape", source,
+            )
+            continue
+        imperial = form == "御笔手敕"
+        if imperial:
+            endorser_id = ""
+        elif not endorser_id:
+            _reject(
+                rejected, item, "会签/当面站台必须具名背书人",
+                "invalid_shape", source,
+            )
+            continue
+        row = db.conn.execute(
+            "SELECT id, night_id, status, payload_json FROM pending_actions "
+            "WHERE id=? AND turn=?",
+            (action_id, int(state.turn)),
+        ).fetchone()
+        if row is None or int(row["night_id"] or 0) != int(night_id):
+            _reject(
+                rejected, item, f"暂存动作不属本夜暂存清单：{action_id}",
+                "missing_ref", source,
+            )
+            continue
+        entry = {
+            "form": form,
+            "endorser_id": endorser_id,
+            "imperial": imperial,
+            "source_chat_turn_id": ctid,
+        }
+        status = str(row["status"] or "")
+        if status == "pending":
+            try:
+                db.attach_pending_action_endorsement(
+                    action_id, entry, commit=False,
+                )
+            except (TypeError, ValueError, KeyError) as exc:
+                _reject(rejected, item, str(exc), "invalid_item", source)
+                continue
+        elif status == "committed":
+            drow = db.conn.execute(
+                "SELECT id FROM decree_dossiers WHERE pending_action_id=? "
+                "ORDER BY id", (action_id,),
+            ).fetchall()
+            if not drow:
+                _reject(
+                    rejected, item,
+                    f"已成案暂存无对应案卷：{action_id}",
+                    "missing_ref", source,
+                )
+                continue
+            try:
+                for d in drow:
+                    db.add_dossier_endorsement(
+                        int(d["id"]),
+                        form=form,
+                        endorser_id=endorser_id,
+                        imperial=imperial,
+                        source_chat_turn_id=ctid,
+                        commit=False,
+                    )
+            except (TypeError, ValueError) as exc:
+                _reject(rejected, item, str(exc), "invalid_item", source)
+                continue
+        else:
+            _reject(
+                rejected, item,
+                f"暂存动作状态不可挂背书：{status}",
+                "invalid_item", source,
+            )
+            continue
+        applied.append({
+            "action_id": action_id, "form": form,
+            "endorser_id": endorser_id, "imperial": imperial,
+            "source_chat_turn_id": ctid,
+        })
+    return SectionResult(applied=applied, rejected=rejected)
 
 
 def _dispatch_promises(

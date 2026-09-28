@@ -52,10 +52,6 @@ def web_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
     monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
-    monkeypatch.setattr(
-        agents_mod, "create_endorsement_extractor_agent",
-        lambda *a, **k: _CannedEndorsementExtractor(),
-    )
     monkeypatch.setattr(web_app, "run_highlight_judge", lambda **_k: [])
     # stream worker 在 payload 前启动 _start_cli_action_intent → 真 classify LLM；
     # 本测只钉写入口锁，动作意图分类确定性空返，禁真网。

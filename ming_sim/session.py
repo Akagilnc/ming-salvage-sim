@@ -1804,8 +1804,8 @@ class GameSession:
         - 皇帝「宣 X」→ 引擎落入殿账（ADR 0037）→ 起一次场景调用
         - 「退朝」口令 → 收夜（与既有 command-verdict 同缝）
         - 一条对话轮 = 整段自由戏文（可含多人）；生成链零动作工具
-        - 回话落定后一次转译（完整声明）；ctid>0 时后台按轮串行、前台不等
-          （#1842）；ctid==0 同步落定（无生命周期测/直调）
+        - 回话落定后一次转译（完整声明）；后台按轮串行、前台不等（#1842）。
+          须 chat_turn_id>0（生产不变式；无对话轮的同步转译已删）。
         - 退役与回话并行的意图分类器 / 应允判读 / 故事抽取 / 边事件判官 /
           代码触发读心（转译承接）；旧按大臣 chat() 入口暂留（收口在 X1）
         - stream_emit 非空：同核走 transport 流式（SSE delta / 重试 / 失败路径）
@@ -1876,21 +1876,10 @@ class GameSession:
                     result.court_action = "stay_attend"
                 return result
             if audience_command_verdict == CMD_CLOSE_NIGHT:
-                if ctid != 0:
+                # 生产：退朝只标 court_break，由 epilogue 收夜（join 转译）。
+                # ctid==0 的当场收夜分支随同步转译一并删除。
+                if ctid > 0:
                     self._mark_control_turn_translation_done(ctid)
-                    result.court_action = "court_break"
-                    return result
-                close_night(
-                    self.db, self.state,
-                    content=getattr(self, "content", None),
-                    registry=getattr(self, "registry", None),
-                    wait_timeout_s=0.0,
-                    beat_generator=getattr(self, "_beat_generator", None),
-                    llm_config=getattr(self, "llm_config", None),
-                    write_gate=getattr(self, "_write_gate", None),
-                    write_queue=self._write_queue,
-                    scene_registry=getattr(self, "_scene_registry", None),
-                )
                 result.court_action = "court_break"
                 return result
 
@@ -1955,13 +1944,10 @@ class GameSession:
         # opening 已在 create_scene_agent instructions；run 输入只传本轮皇帝原话。
         agent_prompt = message_text
         transport_attempts_box: list = []
-        side_effects: dict = {"court_action": ""}
         if stream_emit is not None:
             answer, transport_attempts_box = self._run_scene_agent_transport(
                 agent, agent_prompt, stream_emit,
                 chat_turn_id=int(chat_turn_id or 0),
-                side_effects=side_effects,
-                minister_name=str(minister_name or ""),
             )
         else:
             from ming_sim.llm_transport import (
@@ -1986,8 +1972,6 @@ class GameSession:
             answer = extract_agent_text(run_output)
             transport_attempts_box = transport_attempts_public(attempts)
         result = ChatTurnResult(answer=answer)
-        if side_effects.get("court_action"):
-            result.court_action = str(side_effects["court_action"])
         if transport_attempts_box:
             # 结构化 attempts 账挂结果，供流式 payload 回指（非 prose）。
             result.transport_attempts = transport_attempts_box  # type: ignore[attr-defined]
@@ -2018,10 +2002,8 @@ class GameSession:
         stream_emit: Any,
         *,
         chat_turn_id: int = 0,
-        side_effects: Optional[dict] = None,
-        minister_name: str = "",
     ) -> tuple[str, list]:
-        """场景 agent 的 transport 流式核——与 web 大臣流同政策，不经旧分类器链。"""
+        """场景 agent 的 transport 流式核——生产唯一流式核（#1842）。"""
         from ming_sim.llm_model import extract_agent_text, fail_if_llm_error
         from ming_sim.llm_transport import (
             bind_transport_sdk_budget,
@@ -2039,7 +2021,6 @@ class GameSession:
         chunks: list[str] = []
         run_output_box: list = []
         stream_attempt_n = {"n": 0}
-        effects = side_effects if side_effects is not None else {}
 
         def _on_event(event: Any) -> None:
             name = type(event).__name__
@@ -2048,30 +2029,9 @@ class GameSession:
                 if piece:
                     chunks.append(piece)
                     stream_emit(piece)
-            if name == "ToolCallCompletedEvent":
-                tool = getattr(event, "tool", None)
-                tname = str(getattr(tool, "tool_name", "") or "")
-                tres = str(getattr(tool, "result", "") or "")
-                if tname == "dismiss_minister" or tres.startswith("__dismiss__"):
-                    effects["court_action"] = "dismiss"
-                    # 流中退场登记（与旧 _chat_stream_payload 同缝；幂等不双落）
-                    start_exit = getattr(
-                        self, "start_exit_scene_from_dismiss_tools", None,
-                    )
-                    if callable(start_exit) and int(chat_turn_id or 0) > 0:
-                        start_exit(
-                            str(minister_name or ""),
-                            int(chat_turn_id),
-                            [tool],
-                        )
             if name in ("RunOutput", "RunCompletedEvent"):
                 run_output_box.clear()
                 run_output_box.append(event)
-                for tool in list(getattr(event, "tools", None) or []):
-                    tname = str(getattr(tool, "tool_name", "") or "")
-                    tres = str(getattr(tool, "result", "") or "")
-                    if tname == "dismiss_minister" or tres.startswith("__dismiss__"):
-                        effects["court_action"] = "dismiss"
 
         def _after_stream():
             run_output = run_output_box[0] if run_output_box else None
@@ -2125,88 +2085,19 @@ class GameSession:
         night_id: int,
         chat_turn_id: int = 0,
     ) -> None:
-        """#1837/#1842：场景入口转译完整声明；ctid>0 暂存待 persist 后调度，否则同步。"""
-        from ming_sim.audience_translate import (
-            AudienceTranslateError,
-            run_audience_turn_translation,
-        )
-        from ming_sim.token_stats import tlog
-
+        """#1837/#1842：场景入口只暂存转译参数；persist 后 schedule 后台唯一路径。"""
         if GameSession._proposal_blocked(self.state):
             return
         ctid = int(chat_turn_id or 0)
-        nid = int(night_id or 0)
-
-        if ctid > 0:
-            # 生产路径：只暂存；Web/CLI 回话 persist 后
-            # schedule_pending_scene_translation 才起后台（ADR 0155 / 0036）。
-            result.pending_audience_translation = {
-                "emperor_message": emperor_message,
-                "reply": reply,
-                "night_id": nid,
-                "chat_turn_id": ctid,
-                "minister_name": "",
-            }
+        if ctid <= 0:
             return
-
-        try:
-            dispatch = run_audience_turn_translation(
-                self.db,
-                self.state,
-                emperor_message=emperor_message,
-                reply=reply,
-                night_id=nid,
-                chat_turn_id=0,
-                minister_name="",
-                llm_config=getattr(self, "llm_config", None),
-            )
-        except AudienceTranslateError as exc:
-            # 失败诚实：真因落痕 + 既有 pending_action_failures 显眼回场；
-            # 不进 dispatch、不洗成成功空声明。
-            tlog(f"[audience_translate] 转译失败：{exc}")
-            result.pending_action_failures.append({
-                "id": 0,
-                "kind": "audience_translate",
-                "action": "转译",
-                "minister_name": "",
-                "message": f"召对转译失败：{exc}",
-                "category": "translate_failed",
-                "source": "audience_translate",
-                "chat_turn_id": ctid,
-            })
-            return
-        # 呈现用：本轮新交办的首条 id（若有）；应允不另占 pending_action_id。
-        if dispatch.commissions.applied:
-            first = dispatch.commissions.applied[0]
-            result.pending_action_id = int(first.get("id") or 0)
-        # ADR 0038：密令应允即落地——同步转译回填 secret_order_id（ctid>0 后台路径
-        # 前台不等，由调用方读表/列表可见性验收）。
-        if not int(getattr(result, "secret_order_id", 0) or 0):
-            for item in dispatch.promises.applied:
-                try:
-                    oid_i = int(item.get("secret_order_id") or 0)
-                except (TypeError, ValueError, AttributeError):
-                    oid_i = 0
-                if oid_i > 0:
-                    result.secret_order_id = oid_i
-                    break
-        # 拒收当事实回场（挂既有 pending_action_failures）；不做「所指未明 → 强制追问」。
-        for section_name in ("commissions", "promises"):
-            section = getattr(dispatch, section_name)
-            for item in section.rejected:
-                reason = getattr(item, "reason", str(item))
-                result.pending_action_failures.append({
-                    "id": 0,
-                    "kind": "audience_translate",
-                    "action": section_name,
-                    "minister_name": "",
-                    "message": str(reason),
-                    "section": section_name,
-                    "reason": reason,
-                    "category": getattr(item, "category", ""),
-                    "source": "audience_translate",
-                    "chat_turn_id": ctid,
-                })
+        result.pending_audience_translation = {
+            "emperor_message": emperor_message,
+            "reply": reply,
+            "night_id": int(night_id or 0),
+            "chat_turn_id": ctid,
+            "minister_name": "",
+        }
 
     def schedule_pending_scene_translation(
         self, result: "ChatTurnResult",

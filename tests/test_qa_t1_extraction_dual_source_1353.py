@@ -21,8 +21,6 @@ from types import SimpleNamespace
 
 import pytest
 
-import ming_sim.agents as agents_mod
-import ming_sim.audience_extraction as ae
 import ming_sim.audience_translation as audience_translation
 import ming_sim.cli.terminal as term
 import ming_sim.issues as issues_mod
@@ -34,14 +32,23 @@ from tests.test_audience_extraction_501 import (
     _minister,
     _open_night_with_persisted_reply,
 )
+from ming_sim.session_write_queue import SessionWriteQueue, ClassifiedWriteGate
 from tests.test_no_edict_full_settlement_1274 import _canned_full_settlement
 from tests.conftest import stub_audience_translate
 
+def _close_with_gate(db, state, *, night_id, translate_fn=None, llm_config=object(), **extra):
+    q = SessionWriteQueue()
+    return an.close_night(
+        db, state, night_id=night_id, llm_config=llm_config,
+        write_gate=q.write_gate, write_queue=q, translate_fn=translate_fn, **extra,
+    )
+
+
 
 def _pending_api(db) -> dict:
-    runtime = object.__new__(web_app.WebGame)
-    runtime.session = SimpleNamespace(db=db)
-    return runtime.pending_story_extractions()
+    from ming_sim.audience_translation import list_pending_translations
+    rows = list_pending_translations(db)
+    return {"pending": rows, "count": len(rows)}
 
 
 @pytest.fixture
@@ -62,21 +69,13 @@ def test_drain_fail_cleanup_does_not_hide_blocking_turn(game, tmp_path, monkeypa
     """#1353 负向：收夜不得 fail 掉挡夜的回话 turn（待补保留，轮仍 active）。"""
     db, state, content = game
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
-    monkeypatch.setattr(
-        "ming_sim.audience_extraction.extract_endorsements_for_night",
-        lambda **k: [],
-    )
     minister = _minister(db, content)
     nid, ctid = _open_night_with_persisted_reply(db, state, minister)
 
     def boom_translate(prompt, llm_config):
         raise RuntimeError("translate exhausted")
 
-    an.close_night(
-        db, state, night_id=nid,
-        llm_config=object(), write_gate=threading.Lock(),
-        translate_fn=boom_translate,
-    )
+    _close_with_gate(db, state, night_id=nid, translate_fn=boom_translate)
     row = db.conn.execute(
         "SELECT status, extract_status, minister_message_id FROM chat_turns WHERE id=?",
         (ctid,),
@@ -93,20 +92,13 @@ def test_drain_fail_concurrent_heal_asks_retry_no_dual_source(
     """#1842：转译 catch-up 失败后收夜不 fail-closed；待补水位仍可查。"""
     db, state, content = game
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
-    monkeypatch.setattr(
-        "ming_sim.audience_extraction.extract_endorsements_for_night",
-        lambda **k: [],
-    )
     minister = _minister(db, content)
     nid, ctid = _open_night_with_persisted_reply(db, state, minister)
 
     def boom_translate(prompt, llm_config):
         raise RuntimeError("translate exhausted")
 
-    an.close_night(
-        db, state, night_id=nid, llm_config=object(), write_gate=threading.Lock(),
-        translate_fn=boom_translate,
-    )
+    _close_with_gate(db, state, night_id=nid, translate_fn=boom_translate)
     # 外部可见：转译待补仍在；水位未标 done
     assert db.get_story_extract_status(ctid) in ("", "pending")
     assert int(_pending_api(db)["count"]) >= 1
@@ -121,20 +113,13 @@ def test_debt_exhausted_single_source_no_player_cta(game, tmp_path, monkeypatch)
     """#1842：欠账耗尽不挡收夜；诊断 pending 可查；无玩家补写 CTA 面。"""
     db, state, content = game
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
-    monkeypatch.setattr(
-        "ming_sim.audience_extraction.extract_endorsements_for_night",
-        lambda **k: [],
-    )
     minister = _minister(db, content)
     nid, ctid = _open_night_with_persisted_reply(db, state, minister)
 
     def boom_translate(prompt, llm_config):
         raise RuntimeError("translate exhausted")
 
-    an.close_night(
-        db, state, night_id=nid, llm_config=object(), write_gate=threading.Lock(),
-        translate_fn=boom_translate,
-    )
+    _close_with_gate(db, state, night_id=nid, translate_fn=boom_translate)
     payload = _pending_api(db)
     assert int(payload["count"]) >= 1
     assert any(int(p["chat_turn_id"]) == ctid for p in payload["pending"])
@@ -147,10 +132,6 @@ def test_partial_heal_single_source_pending_only_fresh(
     """部分已 done、部分 pending → 诊断 pending 只含鲜集（不 fail-closed）。"""
     db, state, content = game
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
-    monkeypatch.setattr(
-        "ming_sim.audience_extraction.extract_endorsements_for_night",
-        lambda **k: [],
-    )
     minister = _minister(db, content)
     nid, ctid_stale = _open_night_with_persisted_reply(db, state, minister, reply="甲。")
     ctid_fresh = db.create_chat_turn(state, minister, "sess", 0, night_id=nid)
@@ -164,10 +145,7 @@ def test_partial_heal_single_source_pending_only_fresh(
     def boom_translate(prompt, llm_config):
         raise RuntimeError("translate exhausted")
 
-    an.close_night(
-        db, state, night_id=nid, llm_config=object(), write_gate=threading.Lock(),
-        translate_fn=boom_translate,
-    )
+    _close_with_gate(db, state, night_id=nid, translate_fn=boom_translate)
     payload = _pending_api(db)
     api_ids = {int(p["chat_turn_id"]) for p in payload.get("pending") or []}
     assert api_ids == {ctid_fresh}, api_ids
@@ -178,10 +156,6 @@ def test_close_retry_on_healed_cleanup_no_stale_ids(game, tmp_path, monkeypatch)
     """#1842：已愈待补收夜可成；不再发 close_retry / pending_extraction 双源。"""
     db, state, content = game
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
-    monkeypatch.setattr(
-        "ming_sim.audience_extraction.extract_endorsements_for_night",
-        lambda **k: [],
-    )
     minister = _minister(db, content)
     nid, ctid_stale = _open_night_with_persisted_reply(db, state, minister)
     db.conn.execute(
@@ -191,9 +165,7 @@ def test_close_retry_on_healed_cleanup_no_stale_ids(game, tmp_path, monkeypatch)
     )
     db.conn.commit()
 
-    result = an.close_night(
-        db, state, night_id=nid, llm_config=object(), write_gate=threading.Lock(),
-    )
+    result = _close_with_gate(db, state, night_id=nid)
     assert result.get("closed") is True or an.get_night(db, nid)["status"] == an.NIGHT_STATUS_CLOSED
     assert int(_pending_api(db)["count"]) == 0
     del ctid_stale
@@ -215,13 +187,17 @@ def test_close_after_chat_passes_write_gate_like_auto_close(
 
     from ming_sim.session import GameSession
 
-    gate = threading.Lock()
+    q = SessionWriteQueue()
+    gate = q.write_gate
     seen: dict = {}
 
     real_close = an.close_night
 
     def track_close(*a, **k):
         seen["write_gate"] = k.get("write_gate")
+        # 确保 catch-up 有 queue
+        k = dict(k)
+        k.setdefault("write_queue", q)
         return real_close(*a, **k)
 
     monkeypatch.setattr(an, "close_night", track_close)
@@ -234,11 +210,7 @@ def test_close_after_chat_passes_write_gate_like_auto_close(
     sess.llm_config = object()
     sess._scene_registry = None
     sess._write_gate = gate
-
-    monkeypatch.setattr(
-        "ming_sim.audience_extraction.extract_endorsements_for_night",
-        lambda **k: [],
-    )
+    sess._write_queue = q
     # 口令收夜与颁诏 auto_close 同穿 write_gate；#1842 后不因 pending 中止。
     sess.close_night_after_chat_if_needed("court_break", write_gate=gate)
     assert seen.get("write_gate") is gate
@@ -246,7 +218,6 @@ def test_close_after_chat_passes_write_gate_like_auto_close(
 
     # 夜或已关或仍开（待补保留）；闸仍传入
     seen.clear()
-    # 若已关则 reopen 再测 auto_close 闸
     night = an.get_night(db, nid)
     if night and night["status"] == an.NIGHT_STATUS_CLOSED:
         an._set_night_fields(db, nid, status=an.NIGHT_STATUS_OPEN, closed_at=None)
@@ -258,21 +229,20 @@ def test_close_after_chat_session_write_gate_fallback(game, tmp_path, monkeypatc
     """session._write_gate 回落：未显式传 write_gate 时仍穿既有锁。"""
     db, state, content = game
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
-    monkeypatch.setattr(
-        "ming_sim.audience_extraction.extract_endorsements_for_night",
-        lambda **k: [],
-    )
     minister = _minister(db, content)
     _open_night_with_persisted_reply(db, state, minister)
 
     from ming_sim.session import GameSession
 
-    gate = threading.Lock()
+    q = SessionWriteQueue()
+    gate = q.write_gate
     seen: dict = {}
     real_close = an.close_night
 
     def track_close(*a, **k):
         seen["write_gate"] = k.get("write_gate")
+        k = dict(k)
+        k.setdefault("write_queue", q)
         return real_close(*a, **k)
 
     monkeypatch.setattr(an, "close_night", track_close)
@@ -283,6 +253,7 @@ def test_close_after_chat_session_write_gate_fallback(game, tmp_path, monkeypatc
     sess.content = content
     sess.registry = None
     sess.llm_config = object()
+    sess._write_queue = q
     sess._scene_registry = None
     sess._write_gate = gate
 
