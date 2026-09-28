@@ -618,7 +618,8 @@ def test_assignment_title_structured_anchor_not_emperor_prose(game, monkeypatch)
         monkeypatch,
         translate_fn=translate_fn,
     )
-    wg.chat(actor.name, player)
+    events = list(wg.chat_stream("殿上", player))
+    assert "error" not in [e.get("type") for e in events], events
     wg._runtime_write_queue().barrier(lambda: None)
     night = an.get_open_night(db)
     assert night is not None
@@ -1421,12 +1422,30 @@ def _wire_web_game(db, state, content, agent, monkeypatch, *, translate_fn=None)
 
     monkeypatch.setattr(session_mod, "_dump_llm_messages", lambda *a, **k: None)
 
+    class _RunContent:
+        event = "RunContent"
+        def __init__(self, content: str):
+            self.content = content
+
+    class _RunCompleted:
+        content = ""
+        tools: list = []
+
     class _SceneShim:
         def run(self, *_a, **_k):
             out = agent.run() if hasattr(agent, "run") else SimpleNamespace(
                 content=getattr(agent, "content", ""), tools=[],
             )
-            return out
+            if hasattr(out, "__iter__") and not hasattr(out, "content"):
+                yield from out
+                return
+            text = str(getattr(out, "content", "") or "")
+            if text:
+                yield _RunContent(text)
+            done = _RunCompleted()
+            done.content = text
+            done.tools = list(getattr(out, "tools", None) or [])
+            yield done
 
     monkeypatch.setattr(session_mod, "create_scene_agent", lambda *a, **k: _SceneShim())
     import ming_sim.materials as materials_mod
@@ -1472,10 +1491,16 @@ class _SyncAgent:
 
 
 def _latest_chat_turn_id(db, minister_name: str) -> int:
+    # #1849 reopen：殿上唯一入口；兼容旧调用传大臣名时回落「殿上」。
     row = db.conn.execute(
         "SELECT id FROM chat_turns WHERE minister_name=? ORDER BY id DESC LIMIT 1",
-        (minister_name,),
+        ("殿上",),
     ).fetchone()
+    if row is None:
+        row = db.conn.execute(
+            "SELECT id FROM chat_turns WHERE minister_name=? ORDER BY id DESC LIMIT 1",
+            (minister_name,),
+        ).fetchone()
     assert row is not None
     return int(row["id"])
 
@@ -1526,7 +1551,8 @@ def test_cross_round_assignment_update_undo_restores_before_image(game, monkeypa
     )
 
     # ① 第一轮：空转译产源轮 → 授权缝 stage 原题名
-    wg.chat(minister.name, "核钱粮的事你办。")
+    events1 = list(wg.chat_stream("殿上", "核钱粮的事你办。"))
+    assert "error" not in [e.get("type") for e in events1], events1
     wg._runtime_write_queue().barrier(lambda: None)
     ctid1 = _latest_chat_turn_id(db, minister.name)
     staged_id = _stage_assignment_under_chat_turn(
@@ -1543,7 +1569,8 @@ def test_cross_round_assignment_update_undo_restores_before_image(game, monkeypa
     original_payload = dict(rows[0][1])
 
     # ② 第二轮：target_candidate 原地更新题名（仍走授权 stage 缝）
-    wg.chat(minister.name, "这核钱粮你加紧办。")
+    events2 = list(wg.chat_stream("殿上", "这核钱粮你加紧办。"))
+    assert "error" not in [e.get("type") for e in events2], events2
     wg._runtime_write_queue().barrier(lambda: None)
     ctid2 = _latest_chat_turn_id(db, minister.name)
     assert ctid2 != ctid1
@@ -1564,8 +1591,8 @@ def test_cross_round_assignment_update_undo_restores_before_image(game, monkeypa
     assert "加紧" in str(mid.get("title") or mid.get("text") or "")
 
     # ③ 撤回第二轮 → 第一轮前像
-    assert wg.can_undo_last_chat(minister.name)
-    wg.undo_last_chat(minister.name)
+    assert wg.can_undo_last_chat("殿上")
+    wg.undo_last_chat("殿上")
     restored = json.loads(db.conn.execute(
         "SELECT payload_json FROM pending_actions WHERE id=?",
         (staged_id,),

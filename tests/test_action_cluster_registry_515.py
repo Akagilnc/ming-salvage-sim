@@ -954,10 +954,29 @@ def _wire_web_game(db, state, content, agent, monkeypatch, *, translate_fn=None)
 
     monkeypatch.setattr(session_mod, "_dump_llm_messages", lambda *a, **k: None)
     # scene_chat 用 create_scene_agent；挡真实 LLM，回放 agent 正文。
+    class _RunContent:
+        event = "RunContent"
+        def __init__(self, content: str):
+            self.content = content
+
+    class _RunCompleted:
+        content = ""
+        tools: list = []
+
     class _SceneShim:
         def run(self, *_a, **_k):
+            # #1849 reopen：scene transport 认 RunContent/RunCompleted 事件名。
             out = agent.run() if hasattr(agent, "run") else SimpleNamespace(content=getattr(agent, "content", ""), tools=[])
-            return out
+            if hasattr(out, "__iter__") and not hasattr(out, "content"):
+                yield from out
+                return
+            text = str(getattr(out, "content", "") or "")
+            if text:
+                yield _RunContent(text)
+            done = _RunCompleted()
+            done.content = text
+            done.tools = list(getattr(out, "tools", None) or [])
+            yield done
     monkeypatch.setattr(session_mod, "create_scene_agent", lambda *a, **k: _SceneShim())
     import ming_sim.materials as materials_mod
     monkeypatch.setattr(
@@ -975,6 +994,7 @@ def _wire_web_game(db, state, content, agent, monkeypatch, *, translate_fn=None)
     wg.session = sess
     # db/state/content 是 WebGame 从 session 投影的 property，不直写。
     wg.chat_history = {name: [] for name in content.characters}
+    wg.chat_history["殿上"] = []
     from ming_sim.session_write_queue import SessionWriteQueue
     wg._write_queue = SessionWriteQueue()
     wg._write_gate = wg._write_queue.write_gate
@@ -987,7 +1007,6 @@ def _wire_web_game(db, state, content, agent, monkeypatch, *, translate_fn=None)
     wg._mark_pending_write = lambda key=None: wg._write_queue.claim(key=key or ("pending",))  # type: ignore
     wg._complete_pending_write = lambda ticket=None: wg._write_queue.complete(ticket)  # type: ignore
     wg.favorites = set()
-    wg.suggestions_for = lambda _c: []
     # Keep unrelated background trails quiet.
     wg._spawn_pending_write_thread = lambda *a, **k: None
     wg._trail_highlight_judge_after_reply = lambda *a, **k: []
@@ -1019,16 +1038,18 @@ def test_webgame_chat_create_then_undo_removes_candidate(game, monkeypatch):
     wg = _wire_web_game(db, state, content, agent, monkeypatch, translate_fn=translate_fn)
 
     before = _count_pending(db, state.turn)
-    payload = wg.chat(minister.name, "拟一道旨赈陕西。")
+    events = list(wg.chat_stream("殿上", "拟一道旨赈陕西。"))
+    assert "error" not in [e.get("type") for e in events], events
+    payload = next(e for e in events if e.get("type") == "done")["payload"]
     wg._runtime_write_queue().barrier(lambda: None)
     assert payload.get("answer")
     assert any(
         p["kind"] == "directive" for p in db.list_pending_actions(int(state.turn))
     ), db.list_pending_actions(int(state.turn))
     assert _count_pending(db, state.turn) == before + 1
-    assert wg.can_undo_last_chat(minister.name)
+    assert wg.can_undo_last_chat("殿上")
 
-    wg.undo_last_chat(minister.name)
+    wg.undo_last_chat("殿上")
     assert not any(
         p["kind"] == "directive" for p in db.list_pending_actions(int(state.turn))
     )
@@ -1060,7 +1081,7 @@ def test_webgame_cross_round_update_then_undo_restores_before_image(game, monkey
         db, state, content, PhaseAgent(), monkeypatch, translate_fn=translate_fn,
     )
 
-    wg.chat(minister.name, "拟一道旨赈陕西。")
+    list(wg.chat_stream("殿上", "拟一道旨赈陕西。"))
     wg._runtime_write_queue().barrier(lambda: None)
     rows = [
         p for p in db.list_pending_actions(int(state.turn))
@@ -1071,7 +1092,7 @@ def test_webgame_cross_round_update_then_undo_restores_before_image(game, monkey
     original_text = json.loads(rows[0]["payload_json"])["text"]
     assert original_text == original
 
-    wg.chat(minister.name, "把赈银改成五十万两。")
+    list(wg.chat_stream("殿上", "把赈银改成五十万两。"))
     wg._runtime_write_queue().barrier(lambda: None)
     after = [
         p for p in db.list_pending_actions(int(state.turn))
@@ -1080,7 +1101,7 @@ def test_webgame_cross_round_update_then_undo_restores_before_image(game, monkey
     assert len(after) == 2, after
     assert any(int(p["id"]) == pid for p in after)
 
-    wg.undo_last_chat(minister.name)
+    wg.undo_last_chat("殿上")
     # ADR 0038：撤第二轮须留下第一轮前像——pid 行必须仍 pending 且正文不变。
     restored_row = db.conn.execute(
         "SELECT payload_json, status FROM pending_actions WHERE id=?",
@@ -1124,12 +1145,12 @@ def test_undo_restored_approved_decree_restarts_forecast_for_new_version(game, m
     stage_declaration(db, decree_ref=old_ref, declaration={"commissions": []}, turn=state.turn)
 
     chat_turn_id = db.create_chat_turn(
-        state, minister.name, "undo-approved-decree", 0, night_id=int(night["id"]),
+        state, "殿上", "undo-approved-decree", 0, night_id=int(night["id"]),
     )
     db.update_chat_turn_messages(
         chat_turn_id,
-        db.append_chat_message(minister.name, state.turn, "user", "改拟旨。"),
-        db.append_chat_message(minister.name, state.turn, "minister", "臣遵旨。"),
+        db.append_chat_message("殿上", state.turn, "user", "改拟旨。"),
+        db.append_chat_message("殿上", state.turn, "minister", "臣遵旨。"),
     )
     before = db.capture_chat_rollback_snapshot()
     db.update_directive_candidate(pending_id, {
@@ -1161,7 +1182,7 @@ def test_undo_restored_approved_decree_restarts_forecast_for_new_version(game, m
         api_key="test", base_url="https://example.invalid/v1", model="test-model",
     )
 
-    wg.undo_last_chat(minister.name)
+    wg.undo_last_chat("殿上")
     assert get_session_write_queue(wg.session).wait_idle(timeout_s=5)
 
     restored = db.conn.execute(
@@ -1285,7 +1306,7 @@ def test_one_intent_probe_raw_chat_to_pending_api_one_ordinary(game, monkeypatch
         int(r["id"])
         for r in db.list_pending_actions(int(state.turn))
     }
-    wg.chat(minister.name, _EMPEROR_1744)
+    list(wg.chat_stream("殿上", _EMPEROR_1744))
     wg._runtime_write_queue().barrier(lambda: None)
     rows = _pending_directives_via_api(monkeypatch, wg, minister_name=minister.name)
     # API 可能按 minister 过滤；转译 actor 未必是 minister——改查全库新 directive
@@ -1322,7 +1343,7 @@ def test_scene_chat_translation_can_stage_multiple_commissions(game, monkeypatch
         translate_fn=translate_fn,
     )
     before = {int(r["id"]) for r in db.list_pending_actions(int(state.turn))}
-    wg.chat(minister.name, "清核太仓，另着陕西巡抚督办赈灾。")
+    list(wg.chat_stream("殿上", "清核太仓，另着陕西巡抚督办赈灾。"))
     wg._runtime_write_queue().barrier(lambda: None)
     new_dirs = [
         r for r in db.list_pending_actions(int(state.turn))

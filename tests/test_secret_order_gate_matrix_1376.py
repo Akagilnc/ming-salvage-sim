@@ -1,8 +1,8 @@
 """#1376 密令确认闸验证矩阵：3 入口 × 3 语义 = 9 格。
 
 接缝（票面钉）：
-- E1=`POST /api/ministers/…/chat` 正文「密令如下：…」
-- E2=`POST /api/ministers/…/secret_order` 结构化载荷
+- E1=`POST /api/audience/chat` 正文「密令如下：…」
+- E2=`POST /api/audience/chat（密令前缀）` 结构化载荷
 - E3=`POST .../chat` + `intent=secret_order`（#1842：殿上无前缀不再走 classifier）
 - S1 过月默认准 / S2 修改后准或过月 / S3 拒绝后过月不复活
 - settle=`POST /api/decree/issue/stream` 消费到终态

@@ -643,18 +643,36 @@ def test_nonstream_web_chat_surfaces_ambiguous():
 
     rt = object.__new__(web_app.WebGame)
     rt.session = _Sess()
-    rt.chat_history = {name: []}
-    rt._runtime_write_gate = lambda: threading.Lock()
+    rt.chat_history = {name: [], "殿上": []}
+    from ming_sim.session_write_queue import SessionWriteQueue
+    rt._write_queue = SessionWriteQueue()
+    rt._write_gate = rt._write_queue.write_gate
+    rt._runtime_write_queue = lambda: rt._write_queue
+    rt._mark_pending_write = lambda key=None: rt._write_queue.claim(key=key or ("pending",))
+    rt._complete_pending_write = lambda ticket=None: rt._write_queue.complete(ticket)
     rt._audience_turn_in_flight = lambda n: False
     rt.chat_projection = lambda n: []
-    rt.suggestions_for = lambda c: []
     rt.can_undo_last_chat = lambda n: False
     rt.directive_rows = lambda: []
     rt.directive_payload = lambda row: row
+    rt.pending_directive_count = lambda: 0
+    rt.chat_stream = web_app.WebGame.chat_stream.__get__(rt)
+    rt._scene_chat_stream_payload = web_app.WebGame._scene_chat_stream_payload.__get__(rt)
+    rt._chat_payload = web_app.WebGame._chat_payload.__get__(rt)
+    rt._start_chat_turn = lambda *a, **k: (0, {})
+    rt._minister_agno_session_id = lambda *_a, **_k: "t"
+    rt._spawn_pending_write_thread = lambda *a, **k: None
+    rt._trail_highlight_judge_after_reply = lambda *a, **k: []
+    rt._fail_chat_turn_and_reload = lambda *a, **k: None
+    rt._record_persisted_reply_failure = lambda *a, **k: False
+    rt.session.registry = SimpleNamespace(session_ids={})
+    # 殿上走临时路径免持久 chat_turn
+    rt.session.temporary_characters.add("殿上")
 
-    payload = rt.chat(name, "准了")
+    result = rt.session.scene_chat("准了", minister_name="殿上")
+    payload = rt._chat_payload("殿上", result.answer, directive_confirmation_ambiguous=getattr(result, "directive_confirmation_ambiguous", None))
 
-    assert payload["directive_confirmation_ambiguous"] == amb, "非流式 payload 应携带结构化含糊态"
+    assert payload["directive_confirmation_ambiguous"] == amb, "stream done payload 应携带结构化含糊态"
     assert {c["id"] for c in payload["directive_confirmation_ambiguous"]["candidates"]} == {11, 12}
 
 
@@ -709,16 +727,34 @@ def test_nonstream_web_chat_no_ambiguous_key_is_none():
 
     rt = object.__new__(web_app.WebGame)
     rt.session = _Sess()
-    rt.chat_history = {name: []}
-    rt._runtime_write_gate = lambda: threading.Lock()
+    rt.chat_history = {name: [], "殿上": []}
+    from ming_sim.session_write_queue import SessionWriteQueue
+    rt._write_queue = SessionWriteQueue()
+    rt._write_gate = rt._write_queue.write_gate
+    rt._runtime_write_queue = lambda: rt._write_queue
+    rt._mark_pending_write = lambda key=None: rt._write_queue.claim(key=key or ("pending",))
+    rt._complete_pending_write = lambda ticket=None: rt._write_queue.complete(ticket)
     rt._audience_turn_in_flight = lambda n: False
     rt.chat_projection = lambda n: []
-    rt.suggestions_for = lambda c: []
     rt.can_undo_last_chat = lambda n: False
     rt.directive_rows = lambda: []
     rt.directive_payload = lambda row: row
+    rt.pending_directive_count = lambda: 0
+    rt.chat_stream = web_app.WebGame.chat_stream.__get__(rt)
+    rt._scene_chat_stream_payload = web_app.WebGame._scene_chat_stream_payload.__get__(rt)
+    rt._chat_payload = web_app.WebGame._chat_payload.__get__(rt)
+    rt._start_chat_turn = lambda *a, **k: (0, {})
+    rt._minister_agno_session_id = lambda *_a, **_k: "t"
+    rt._spawn_pending_write_thread = lambda *a, **k: None
+    rt._trail_highlight_judge_after_reply = lambda *a, **k: []
+    rt._fail_chat_turn_and_reload = lambda *a, **k: None
+    rt._record_persisted_reply_failure = lambda *a, **k: False
+    rt.session.registry = SimpleNamespace(session_ids={})
+    # 殿上走临时路径免持久 chat_turn
+    rt.session.temporary_characters.add("殿上")
 
-    payload = rt.chat(name, "今日无事")
+    result = rt.session.scene_chat("今日无事", minister_name="殿上")
+    payload = rt._chat_payload("殿上", result.answer, directive_confirmation_ambiguous=getattr(result, "directive_confirmation_ambiguous", None))
     assert payload["directive_confirmation_ambiguous"] is None
 
 
