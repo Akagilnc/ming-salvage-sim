@@ -734,15 +734,6 @@ class RunCompletedEvent:
     status = "COMPLETED"
 
 
-class ToolCallCompletedEvent:
-    """agno 同名事件替身：type(event).__name__ == 'ToolCallCompletedEvent'。"""
-
-    def __init__(self, tool):
-        self.tool = tool
-        self.event = "ToolCallCompleted"
-        self.content = None
-
-
 class _RunErrorAgent:
     def run(self, *_a, **_k):
         yield RunErrorEvent("Unknown model error")
@@ -1317,11 +1308,10 @@ def test_chat_stream_halfstream_retry_replaces_temp_presentation(monkeypatch, ga
     事件序列：content delta → replace delta → content delta → done。
     按客户端规则重放后，临时正文 = done.answer（不叠旧半句）。不锁措辞。
 
-    同案动作/结果相容：首 attempt 流中 dismiss 落账后瞬断，终 attempt 无 dismiss 工具
-    → done.court_action 仍为 dismiss（不延后退场、不加次数例外）。
+    场景召对不消费旧 minister dismiss tool；只验证半流替换与重试。
     """
 
-    class _PartialDismissThenOk:
+    class _PartialThenOk:
         def __init__(self):
             self.calls = 0
 
@@ -1329,12 +1319,6 @@ def test_chat_stream_halfstream_retry_replaces_temp_presentation(monkeypatch, ga
             self.calls += 1
             if self.calls == 1:
                 yield RunContent("旧半句")
-                tool = SimpleNamespace(
-                    tool_name="dismiss_minister",
-                    result="__dismiss__",
-                    tool_args={},
-                )
-                yield ToolCallCompletedEvent(tool)
                 raise LLMUnavailable(
                     "连接失败",
                     code="llm_connection_error",
@@ -1344,7 +1328,7 @@ def test_chat_stream_halfstream_retry_replaces_temp_presentation(monkeypatch, ga
             yield RunContent("新整段")
             yield RunCompletedEvent()
 
-    agent = _PartialDismissThenOk()
+    agent = _PartialThenOk()
     web_game, minister = _transport_web_game(game, agent, monkeypatch)
 
     response = _post_chat_stream(monkeypatch, web_game, minister)
@@ -1355,7 +1339,6 @@ def test_chat_stream_halfstream_retry_replaces_temp_presentation(monkeypatch, ga
     assert agent.calls == 2
     attempts = done.get("transport_attempts") or []
     assert [a.get("outcome") for a in attempts] == ["retryable_fail", "ok"]
-    assert done.get("court_action") == "dismiss", done
 
     # 呈现结构：delta 序列含 replace，且位于首段 content 与后续 content 之间
     delta_seq = [
@@ -1397,7 +1380,7 @@ def test_chat_stream_halfstream_terminal_fail_replaces_temp(
 ):
     """#1465 ④：半流已出 delta 后终失败 → content → replace → error；重放临时正文空。
 
-    恢复/重发由 dismiss 耗尽案与 three_transient 案承担；系统层 typed 由 RunErrorEvent 案承担。
+    恢复/重发由半流耗尽案与 three_transient 案承担；系统层 typed 由 RunErrorEvent 案承担。
     """
 
     class _PartialThenTerminal:
@@ -1470,16 +1453,10 @@ def test_chat_stream_error_status_run_output_system_layer_not_diegetic(
     assert detail.get("provider_message")
 
 
-def test_chat_stream_halfstream_dismiss_exhaust_no_double_side_effect_recovery(
+def test_chat_stream_halfstream_exhaust_recovers_failed_turn(
     monkeypatch, game,
 ):
-    """#1465 ④ 半流相容：已执行退场后 transport 耗尽 → 退场不重复；终失败既有恢复。
-
-    首 attempt：delta + dismiss 落账后瞬断；后续 attempt 再瞬断至耗尽。
-    - start_exit 只新登记一次（0036 落账即史实；重试不重置 exit_started）
-    - 终失败 fail_chat_turn 恢复：轮 failed、告退账按 origin 回滚、夜开、可重发
-    不另造半流回滚机制。
-    """
+    """#1465 半流 transport 耗尽后失败轮回滚，夜仍开且可重发。"""
     from ming_sim import audience_night as an
 
     def _conn_err(_n):
@@ -1489,7 +1466,7 @@ def test_chat_stream_halfstream_dismiss_exhaust_no_double_side_effect_recovery(
             provider_message="connection reset",
         )
 
-    class _DismissThenAlwaysFail:
+    class _PartialThenAlwaysFail:
         def __init__(self):
             self.calls = 0
 
@@ -1497,31 +1474,13 @@ def test_chat_stream_halfstream_dismiss_exhaust_no_double_side_effect_recovery(
             self.calls += 1
             if self.calls == 1:
                 yield RunContent("旧半句")
-                tool = SimpleNamespace(
-                    tool_name="dismiss_minister",
-                    result="__dismiss__",
-                    tool_args={},
-                )
-                yield ToolCallCompletedEvent(tool)
                 raise _conn_err(self.calls)
-            # 后续 attempt 无 dismiss 工具——不得再落告退
             yield RunContent("再半句")
             raise _conn_err(self.calls)
 
-    agent = _DismissThenAlwaysFail()
+    agent = _PartialThenAlwaysFail()
     web_game, minister = _transport_web_game(game, agent, monkeypatch)
     db = web_game.db
-
-    exit_starts = {"n": 0}
-    real_start_exit = web_game.session.start_exit_scene_from_dismiss_tools
-
-    def _count_start_exit(*a, **k):
-        result = real_start_exit(*a, **k)
-        if result:
-            exit_starts["n"] += 1
-        return result
-
-    web_game.session.start_exit_scene_from_dismiss_tools = _count_start_exit  # type: ignore[method-assign]
 
     response = _post_chat_stream(monkeypatch, web_game, minister)
     assert response.status_code == 200, response.text
@@ -1530,7 +1489,6 @@ def test_chat_stream_halfstream_dismiss_exhaust_no_double_side_effect_recovery(
     detail = events[-1][1]
     max_a = default_transport_policy().max_attempts
     assert agent.calls == max_a
-    assert exit_starts["n"] == 1, exit_starts  # 退场副作用不重复
     attempts = detail.get("transport_attempts") or []
     assert len(attempts) == max_a
     assert attempts[-1].get("outcome") == "terminal_fail"
@@ -1542,7 +1500,7 @@ def test_chat_stream_halfstream_dismiss_exhaust_no_double_side_effect_recovery(
     ).fetchone()
     assert fail_row is not None and str(fail_row["status"]) == "interrupted"
 
-    # 既有 fail_chat_turn 恢复：本轮 origin/source 绑定的进出账全清（含告退 scaffold）
+    # 既有 fail_chat_turn 恢复：本轮 origin/source 绑定的账全清
     open_night = an.get_open_night(db)
     assert open_night is not None
     turn_ledger = db.conn.execute(

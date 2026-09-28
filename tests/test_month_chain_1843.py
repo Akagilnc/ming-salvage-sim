@@ -12,7 +12,6 @@ import ming_sim.decree as decree_mod
 import ming_sim.month_chain as month_chain
 import ming_sim.month_translate as month_translate
 import ming_sim.simulation as simulation
-from ming_sim.session_write_queue import ClassifiedWriteGate
 from ming_sim.declaration_dispatch import pending_action_decree_ref
 from ming_sim.session_write_queue import get_session_write_queue
 from tests.settlement_seam_helpers import make_light_session
@@ -74,7 +73,6 @@ def _prepare_player_month(db, state, content, monkeypatch, *, world=None, transl
     if secret_orders_supply is not None:
         monkeypatch.setattr(month_chain, "run_secret_orders_supply", secret_orders_supply)
     session = make_light_session(db, state, content)
-    session._write_gate = ClassifiedWriteGate()
     return session
 
 
@@ -205,7 +203,6 @@ def test_unforecast_edict_is_caught_up_once_and_crash_does_not_double_charge(gam
     monkeypatch.setattr(declaration_dispatch, "settle_staged_declarations_in_decree_order", flaky)
     session = make_light_session(db, state, content)
     session.llm_config = object()
-    session._write_gate = ClassifiedWriteGate()
     with pytest.raises(SettlementAbort) as exc_info:
         session.resolve_turn(allow_empty_decree=True)
     assert isinstance(exc_info.value.__cause__, RuntimeError)
@@ -244,7 +241,6 @@ def test_questions_hold_rescript_and_gazette_is_required_before_advance(game, mo
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
     session = make_light_session(db, state, content)
     session.llm_config = object()
-    session._write_gate = ClassifiedWriteGate()
     monkeypatch.setattr(
         month_chain, "_run_decree_continuation_text", lambda *a, **k: "",
     )
@@ -399,7 +395,6 @@ def test_player_entry_recovers_ending_after_interrupted_segment(game, monkeypatc
     monkeypatch.setattr(month_chain, "run_world_segment_text", world)
     monkeypatch.setattr(month_translate, "translate_month_segment", lambda *_a, **_k: {"effects": {}})
     session = make_light_session(db, state, content)
-    session._write_gate = ClassifiedWriteGate()
 
     from ming_sim.exceptions import SettlementAbort
 
