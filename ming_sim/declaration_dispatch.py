@@ -1785,15 +1785,19 @@ def _dispatch_travel_tones(
             # A non-command-shaped summons (e.g. an urgent summons) has no
             # deterministic command ledger. The translator supplies the person;
             # only an offsite, eligible person can acquire a fresh summons here.
-            row = db.conn.execute(
-                "SELECT status, location, transit_to FROM characters WHERE name=?",
-                (person,),
-            ).fetchone()
-            from ming_sim.matching import canonicalize_location_region_id
-            if (row is None or str(row['status']) != 'active'
-                    or str(row['transit_to'] or '')
-                    or canonicalize_location_region_id(str(row['location'] or '')) in ('', 'beizhili')):
+            from ming_sim.session import AudienceAdmission, GameSession
+            character = db.content.characters.get(person)
+            if character is None:
                 _reject(rejected, item, f"本轮无可传召的场外人物：{person}", "missing_ref", source)
+                continue
+            # Reuse the same admission gate as scene_chat, without starting a
+            # second scene session or parsing the emperor's free text.
+            admission_session = GameSession.__new__(GameSession)
+            admission_session.db = db
+            admission_session.temporary_characters = {}
+            decision = admission_session.admit_audience(character)
+            if decision.result is not AudienceAdmission.SUMMON_FRESH:
+                _reject(rejected, item, decision.reason or f"本轮无可传召的场外人物：{person}", "invalid_state", source)
                 continue
             entry_id = record_summon_fresh(
                 db, int(night_id), person,

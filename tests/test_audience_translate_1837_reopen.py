@@ -381,6 +381,38 @@ def test_travel_tone_updates_this_round_summon_ledger(game, monkeypatch):
     assert arrival_turns[person] < arrival_turns[ordinary]
 
 
+@pytest.mark.parametrize("ineligible", ["enemy", "vassal"])
+def test_urgent_summons_cannot_bypass_audience_admission(game, monkeypatch, ineligible):
+    from tests.conftest import persist_and_schedule_scene, stub_audience_translate
+    from tests.test_audience_translation_1838 import _scene_session
+
+    db, state, content = game
+    person = _hong(db, content)
+    db.conn.execute(
+        "UPDATE characters SET status='active', location='shaanxi', transit_to='' WHERE name=?",
+        (person,),
+    )
+    if ineligible == "enemy":
+        db.conn.execute("UPDATE characters SET power_id='houjin' WHERE name=?", (person,))
+    else:
+        content.characters[person].office_type = "宗藩"
+    night = open_night(db, state)
+    sess = _scene_session(db, state, content, monkeypatch)
+    stub_audience_translate(monkeypatch, lambda prompt, config: {
+        "scene_facts": [{
+            "body": prompt.split("【本轮回话】", 1)[1].removesuffix("\n"),
+            "role": "scene", "audibility": "殿上公开", "person_names": [],
+        }],
+        "travel_tones": [{"person_name": person, "tone": "星夜兼程"}],
+    })
+    ctid = db.create_chat_turn(state, "殿上", "s", 0, night_id=int(night["id"]), status="active")
+    reply = sess.scene_chat(f"星夜宣{person}来京", chat_turn_id=ctid)
+    future = persist_and_schedule_scene(sess, db, reply)
+    assert future is not None
+    future.result()
+    assert not [row for row in list_unsettled_summons(db) if row["person_name"] == person]
+
+
 def test_old_minister_agent_surface_gone():
     """生成链零动作工具：旧大臣 agent / 动作工具入口不复存在。"""
     import importlib
