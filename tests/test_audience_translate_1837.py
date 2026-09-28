@@ -144,7 +144,27 @@ def test_pending_round_approval_endorsed_before_close_or_after_month_join(
         minister_name="", night_id=nid,
     )
     aid = int(action.commissions.applied[0]["id"])
-    ctid = _persist_night_chat(db, state, nid, "准", "臣领旨。")
+    if timing == "before_close":
+        ctid = _persist_night_chat(db, state, nid, "准", "臣领旨。")
+    else:
+        def failed_translation(prompt, llm_config):
+            raise RuntimeError("translation unavailable")
+
+        class FakeAgent:
+            def run(self, message):
+                return SimpleNamespace(content="臣领旨。", tools=[])
+
+        monkeypatch.setattr(
+            "ming_sim.session.create_scene_agent", lambda *a, **k: FakeAgent(),
+        )
+        sess = _sess(db, state, content, monkeypatch, translate_fn=failed_translation)
+        # 真召对入口：回话先落库、后台转译失败，留下待补轮。
+        ctid = int(db.create_chat_turn(state, "殿上", "test-sess", 0, night_id=nid))
+        result = sess.scene_chat("准", chat_turn_id=ctid)
+        future = persist_and_schedule_scene(sess, db, result)
+        assert future is not None
+        with pytest.raises(RuntimeError, match="translation unavailable"):
+            future.result(timeout=30)
 
     def _declare_approve_and_endorse(*, with_promise: bool = True):
         decl = {
@@ -167,10 +187,21 @@ def test_pending_round_approval_endorsed_before_close_or_after_month_join(
         _declare_approve_and_endorse(with_promise=True)
         close_night(db, state, **close_kwargs)
     else:
-        # 先关夜成案，再迟到声明背书（不再应允）
-        db.mark_pending_night_approved([aid], night_id=nid, source_chat_turn_id=ctid)
+        # 回话已持久化而转译失败；收夜补跑也失败，过月入口才补齐。
         close_night(db, state, **close_kwargs)
-        _declare_approve_and_endorse(with_promise=False)
+
+        def recovered_translation(prompt, llm_config):
+            return {
+                **offline_empty_audience_translate(prompt, llm_config),
+                "promises": [{"action_id": aid, "decision": "应允"}],
+                "endorsements": [{
+                    "action_id": aid, "form": "御笔手敕", "endorser_id": "",
+                }],
+            }
+
+        stub_audience_translate(monkeypatch, recovered_translation)
+        sess = _sess(db, state, content, monkeypatch, translate_fn=recovered_translation)
+        sess.await_translations_before_month()
 
     row = db.conn.execute(
         "SELECT status, night_approved, committed_directive_id "
