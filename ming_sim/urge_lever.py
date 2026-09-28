@@ -450,7 +450,7 @@ def _record_commitment_urge(
         "new_due": int(new_due),
         "deadline_months": int(deadline_months),
         "tightness": tightness,
-        "reason": str(reason or "")[:120],
+        "reason": str(reason or ""),
     }
     db.conn.execute(
         """
@@ -547,7 +547,7 @@ def rush_staged_commitment_stage(
         (stages_blob, int(commitment_ref)),
     )
 
-    why = (reason or "").strip()[:120] or "奉旨加急"
+    why = reason if str(reason or "").strip() else "奉旨加急"
     if record_history:
         _record_commitment_urge(
             db, state,

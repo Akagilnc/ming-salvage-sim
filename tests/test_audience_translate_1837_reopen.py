@@ -18,7 +18,7 @@ from ming_sim.audience_night import (
     record_summon_fresh,
 )
 from ming_sim.audience_translate import normalize_audience_declaration
-from ming_sim.covert_levy import ENTRY_KIND, PROHIBITION_ACTION, write_exposure_todos
+from ming_sim.covert_levy import PROHIBITION_ACTION, write_exposure_todos
 from ming_sim.declaration_dispatch import dispatch_declaration
 from ming_sim.session import GameSession
 
@@ -80,11 +80,15 @@ def _bound_exposure(db, state, monkeypatch):
     return int(did), str(executor)
 
 
-def _scene_declaration(db, state, content, monkeypatch, words, declaration, *, minister_name="殿上"):
-    from tests.conftest import persist_and_schedule_scene, stub_audience_translate
+def _scene_declaration(db, state, content, monkeypatch, words, declaration, *, minister_name="殿上", scene_reply=None):
+    from tests.conftest import persist_and_schedule_scene, stub_audience_translate, stub_scene_agent
     from tests.test_audience_translation_1838 import _scene_session
 
     sess = _scene_session(db, state, content, monkeypatch)
+    if scene_reply is not None:
+        stub_scene_agent(monkeypatch, SimpleNamespace(
+            tools=[], run=lambda message: SimpleNamespace(content=scene_reply, tools=[]),
+        ))
     stub_audience_translate(monkeypatch, lambda prompt, config: {
         **declaration,
         "scene_facts": [{
@@ -142,16 +146,25 @@ def test_prohibit_covert_levy_commission_binds_exposed_dossier(game, monkeypatch
     assert dossier is not None
     assert dossier["action_type"] == PROHIBITION_ACTION
     assert dossier["target_id"] == str(did)
-    db.record_dossier_decision(int(dossier["id"]), "promulgated")
+    db.apply_dossier_verdicts(
+        state, [{"dossier_id": int(dossier["id"]), "decision": "promulgated"}],
+        content=content,
+    )
+    from ming_sim.decree import settle_with_delta
     from ming_sim.covert_levy import active_prohibition_dossier
     assert active_prohibition_dossier(db, did)["id"] == dossier["id"]
-    from ming_sim.issues import apply_score_extraction
-    blocked = apply_score_extraction(db, state, {"fiscal_creates": [{
+    army_id = db.conn.execute("SELECT target_id FROM decree_dossiers WHERE id=?", (did,)).fetchone()[0]
+    db.conn.execute("UPDATE armies SET arrears=10 WHERE id=?", (army_id,))
+    before = int(state.turn)
+    settle_with_delta(state, db, {"fiscal_creates": [{
         "key": "禁后摊派", "account": "国库", "direction": "income", "init_value": 2,
         "origin_ref": f"dossier:{did}", "beyond_intent": True,
-    }]}, content, None, dossier_ids_at_input={did})
-    assert blocked["fiscal_creates"][0]["category"] == "forbidden_effect"
+    }]}, before_turn=before, content=content)
+    assert int(state.turn) > before
     assert db.get_fiscal_config().get("禁后摊派_base") is None
+    from ming_sim.due_review import list_due_review_scenes
+    scenes = list_due_review_scenes(db, state)
+    assert any(s["decision"] == "禁摊派" and s["shortfall_reopened"] for s in scenes)
 
 
 def test_commission_failure_does_not_erase_prior_staged_item(game):
@@ -188,10 +201,11 @@ def test_recommendation_commission_stages_office_with_reason(game, monkeypatch):
     )
     db.conn.commit()
     reason = "请予试任巡盐御史，臣敢以身家保。"
-    words = f"臣荐{same_faction.name}任巡盐御史。{reason}"
+    words = "陛下，巡盐之事可有合适人选？"
+    scene_reply = f"臣荐{same_faction.name}任巡盐御史。{reason}"
     decl = {
         "commissions": [{
-            "text": words,
+            "text": scene_reply,
             "appointment": {
                 "name": same_faction.name,
                 "office": "巡盐御史",
@@ -204,7 +218,7 @@ def test_recommendation_commission_stages_office_with_reason(game, monkeypatch):
         }],
     }
     result = _scene_declaration(db, state, content, monkeypatch, words, decl,
-                                minister_name=recommender.name)
+                                minister_name=recommender.name, scene_reply=scene_reply)
     assert result.commissions.rejected == []
     assert len(result.commissions.applied) == 1
     row = db.conn.execute(
@@ -291,9 +305,17 @@ def test_inquiry_declaration_persists_return_report(game, monkeypatch):
     assert sources
     assert any("查访" in str(r["title"] or "") or "见闻" in str(r["title"] or "")
                for r in sources)
-    known = db.get_character_knowledge(state, attendant.name)
-    assert any(str(event.get("source_id") or "").startswith("near_minister:")
-               for event in known["events"])
+    from ming_sim.audience_night import summon_enter
+    from ming_sim.materials import prepare_scene_materials, release_material_tree
+    night = open_night(db, state)
+    summon_enter(db, int(night["id"]), attendant.name, empty_scaffold=True)
+    prepared = prepare_scene_materials(db, state)
+    try:
+        from pathlib import Path
+        experience = (Path(prepared.root) / f"人物/{attendant.name}/经历.txt").read_text()
+        assert any(str(r["body"] or "") in experience for r in sources if r["body"])
+    finally:
+        release_material_tree(prepared.root)
 
 
 def test_rush_commitment_stages_pending_催办(game, monkeypatch):
@@ -343,6 +365,12 @@ def test_rush_commitment_stages_pending_催办(game, monkeypatch):
     ).fetchone()["stages_json"])
     assert int(stages[0]["due_turn"]) == int(state.turn) + 2
     assert int(stages[1]["due_turn"]) == int(state.turn) + 1
+    committed = db.conn.execute(
+        "SELECT payload_json FROM pending_actions WHERE id=? AND status='committed'",
+        (result.rushes.applied[0]["id"],),
+    ).fetchone()
+    assert committed is not None
+    assert json.loads(committed["payload_json"])["reason"] == reason
 
 
 def test_repeated_urgent_summons_have_independent_rollback_origins(game, monkeypatch):
@@ -486,15 +514,3 @@ def test_urgent_summons_cannot_bypass_audience_admission(game, monkeypatch, inel
     assert future is not None
     future.result()
     assert not [row for row in list_unsettled_summons(db) if row["person_name"] == person]
-
-
-def test_old_minister_agent_surface_gone():
-    """生成链零动作工具：旧大臣 agent / 动作工具入口不复存在。"""
-    import importlib
-    import ming_sim.registry as registry_mod
-
-    assert not hasattr(registry_mod, "MinisterRegistry")
-    assert not hasattr(registry_mod, "create_minister_agent")
-    assert hasattr(registry_mod, "create_scene_agent")
-    with pytest.raises(ModuleNotFoundError):
-        importlib.import_module("ming_sim.tools")

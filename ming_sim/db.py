@@ -19227,7 +19227,7 @@ class GameDB:
                 "new_due": int(result["due_turn"]),
                 "deadline_months": int(result["deadline_months"]),
                 "tightness": max(0, int(result["old_due"]) - int(result["due_turn"])),
-                "reason": str(result.get("reason") or "")[:120],
+                "reason": str(result.get("reason") or ""),
             })
             self.conn.execute(
                 "UPDATE pending_actions SET payload_json=? WHERE id=?",
@@ -23030,7 +23030,7 @@ class GameDB:
         target_turn = int(state.turn) + months
         old_due = int(row["due_turn"] or 0)
         stamp = f"〔{period_label(state.year, state.period)}〕"
-        why = (reason or "").strip()[:120] or "奉旨加急"
+        why = reason if str(reason or "").strip() else "奉旨加急"
         prev = row["result"] or ""
         lines = [ln for ln in prev.split("\n") if ln.strip()]
         with atomic(self):

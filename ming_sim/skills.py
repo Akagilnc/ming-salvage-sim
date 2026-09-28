@@ -1,4 +1,4 @@
-"""Skill 体系查询：技能来源、可用技能、技能卡渲染、skill_tool 模板。L4。
+"""Skill 体系查询：技能来源、可用技能、技能卡渲染。L4。
 
 通过 bind_content() 注入 GameContent（过渡期）；步骤7 起由 GameSession 统一注入。
 """
@@ -124,10 +124,3 @@ def print_all_skill_cards(db: Optional[GameDB] = None) -> None:
                 if skill_id not in c.common_skills
             )
             print(f"- {character.name}（{character.office}）：{office_names or '仅通用 skill'}")
-
-
-def skill_template(template_id: str, **values: object) -> str:
-    template = _ctx().skill_tool_templates.get(template_id)
-    if template is None:
-        raise SystemExit(f"skill_tools.json 缺少模板：{template_id}")
-    return template.format(**values)
