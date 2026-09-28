@@ -22,7 +22,7 @@ from ming_sim.materials import (
 from ming_sim.audience_night import record_summon_in_transit
 from ming_sim.models import LLMConfig, reign_period_label
 from tests.conftest import append_night_chat, open_audience_night
-from tests.dossier_test_helpers import create_test_secret_order
+from tests.dossier_test_helpers import create_test_secret_order, TYPED_COVERT_TASK
 from tests.settlement_seam_helpers import make_light_session
 from tests.test_month_chain_1843 import _forbid_extractor, _stage_edict
 
@@ -136,9 +136,19 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
         ), turn,
     )
     collector.flush_to_db(db)
-    order_id = create_test_secret_order(
-        db, state, minister, "密题不入邸报", "密令原件", ["查办"],
+    night_id = open_audience_night(db, state)
+    secret_turn, first_mid = append_night_chat(db, state, night_id, minister, "问密", "答密", 1)
+    pending_create = db.stage_pending_action(
+        turn, kind="secret_order", action="新建", minister_name=minister,
+        payload={
+            "title": "密题不入邸报", "content": "密令原件", "assignee": minister,
+            "tags": ["查办"], "covert_task": TYPED_COVERT_TASK,
+        },
     )
+    committed = db.commit_pending_actions(state, minister_name=minister, action_ids={pending_create}, content=content)
+    assert committed
+    order_id = int(db.conn.execute("SELECT id FROM secret_orders ORDER BY id DESC LIMIT 1").fetchone()[0])
+
     secret_did = int(db.get_dossier_for_secret_order(order_id)["id"])
     db.conn.execute(
         "UPDATE decree_dossiers SET status='executing', decree_text=? WHERE id=?",
@@ -167,20 +177,35 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
         subject_kind="character", subject_id=minister, body=_PLAIN_DOSSIER_FACT,
         year=year, period=period, turn=turn, origin_ref=f"dossier:{plain_did}",
     )
-    db.upsert_secret_order_brief(
-        state, order_id, minister, "密报题", _SECRET_BRIEF,
+    plain_turn, _ = append_night_chat(db, state, night_id, minister, "问私", "答私", 2)
+    later_turn, later_mid = append_night_chat(db, state, night_id, minister, "再问密", "再答密", 3)
+    pending_update = db.stage_pending_action(
+        turn, kind="secret_order", action="更新", minister_name=minister,
+        target_id=order_id, payload={
+            "new_title": "密报题", "new_content": _SECRET_BRIEF,
+            "origin_chat_message_id": later_mid,
+        },
     )
-    night_id = open_audience_night(db, state)
-    secret_turn, _mid = append_night_chat(db, state, night_id, minister, "问密", "答密", 1)
-    plain_turn, _mid = append_night_chat(db, state, night_id, minister, "问私", "答私", 2)
-    db.conn.execute(
-        "UPDATE chat_turns SET route='secret_order' WHERE id=?", (secret_turn,),
+    assert db.commit_pending_actions(state, minister_name=minister, action_ids={pending_update}, content=content)
+    pending_turn, pending_mid = append_night_chat(db, state, night_id, minister, "待决密", "待决答", 4)
+    db.stage_pending_action(
+        turn, kind="secret_order", action="更新", minister_name=minister,
+        target_id=999999, payload={"new_title": "待决密题", "new_content": "待决密令", "origin_chat_message_id": pending_mid},
     )
-    db.conn.commit()
     append_ledger_entry(
         db, night_id, person_names=[minister], audibility=AUDIBILITY_PRIVATE,
         body=_SECRET_AUDIENCE, tags=["scroll_role:minister"],
         source_chat_turn_id=secret_turn, origin_chat_turn_id=secret_turn,
+    )
+    append_ledger_entry(
+        db, night_id, person_names=[minister], audibility=AUDIBILITY_PRIVATE,
+        body="密令分轮应允经历1862", tags=["scroll_role:minister"],
+        source_chat_turn_id=later_turn, origin_chat_turn_id=later_turn,
+    )
+    append_ledger_entry(
+        db, night_id, person_names=[minister], audibility=AUDIBILITY_PRIVATE,
+        body="待决密令经历1862", tags=["scroll_role:minister"],
+        source_chat_turn_id=pending_turn, origin_chat_turn_id=pending_turn,
     )
     append_ledger_entry(
         db, night_id, person_names=[minister], audibility=AUDIBILITY_PRIVATE,
@@ -330,6 +355,8 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
     assert _SECRET_FACT not in seen["files"]
     assert _SECRET_BRIEF not in seen["files"]
     assert _SECRET_AUDIENCE not in seen["files"]
+    assert "密令分轮应允经历1862" not in seen["files"]
+    assert "待决密令经历1862" not in seen["files"]
     assert _PRIVATE_KEEP in seen["files"]
     assert _SECRET_DOSSIER_LEDGER not in seen["files"]
     assert _PLAIN_DOSSIER_LEDGER in seen["files"]
@@ -363,6 +390,7 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
         experience_text = (prepared.root / experience).read_text(encoding="utf-8")
         assert _SECRET_BRIEF in experience_text
         assert _SECRET_AUDIENCE in experience_text
+        assert "密令分轮应允经历1862" in experience_text
         assert _PRIVATE_KEEP in experience_text
     finally:
         release_material_tree(prepared.root)
@@ -375,6 +403,8 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
         )
         assert _SECRET_BRIEF in world_experience
         assert _SECRET_AUDIENCE in world_experience
+        assert "密令分轮应允经历1862" in world_experience
+        assert "待决密令经历1862" in world_experience
         assert _PRIVATE_KEEP in world_experience
         board = next(rel for rel in world.index_lines if rel.endswith("全局.txt"))
         board_text = (world.root / board).read_text(encoding="utf-8")
@@ -382,27 +412,6 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
         assert _PLAIN_DOSSIER_LEDGER in board_text
     finally:
         release_material_tree(world.root)
-
-
-def test_author_unknown_route_raises_before_writing(game, monkeypatch):
-    """未知 chat_turns.route 由权威解码失败，作者不得把它当成非密令继续供料。"""
-    db, state, _content = game
-    db.conn.execute(
-        "INSERT INTO chat_turns (minister_name, turn, year, period, route) "
-        "VALUES (?, ?, ?, ?, ?)",
-        ("未名", int(state.turn), int(state.year), int(state.period), "mystery"),
-    )
-    db.conn.commit()
-    called: list[str] = []
-    monkeypatch.setattr(
-        "ming_sim.agents.run_agent_text",
-        lambda *_a, **_k: called.append("called") or json.dumps(
-            {"title": _TITLE, "report": _REPORT}, ensure_ascii=False,
-        ),
-    )
-    with pytest.raises(ValueError, match="mystery"):
-        month_chain.run_gazette_text(db, state, _llm(), {})
-    assert called == []
 
 
 def test_gazette_failure_retries_report_only(game, monkeypatch):

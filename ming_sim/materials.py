@@ -980,15 +980,19 @@ def _person_audience_experience(db: Any, name: str) -> list[dict]:
 
 
 def _secret_order_chat_turn_ids(db: Any) -> set[int]:
-    """chat_turns.route 解码为显式密令的轮。未知 route 由权威解码响亮失败。"""
-    from ming_sim.audience_night import decode_chat_turn_route
-
-    ids: set[int] = set()
-    for row in db.conn.execute("SELECT id, route FROM chat_turns").fetchall():
-        decoded = decode_chat_turn_route(row["route"])
-        if decoded["explicit_secret_order"]:
-            ids.add(int(row["id"]))
-    return ids
+    """Use durable oral pins, including later approvals and updates, not only issuance."""
+    message_ids = list(db._secret_origin_message_protection())
+    if not message_ids:
+        return set()
+    placeholders = ",".join("?" for _ in message_ids)
+    return {
+        int(row["id"])
+        for row in db.conn.execute(
+            f"SELECT id FROM chat_turns WHERE user_message_id IN ({placeholders}) "
+            f"OR minister_message_id IN ({placeholders})",
+            [*message_ids, *message_ids],
+        )
+    }
 
 
 def _omit_secret_order_audience(entries: Sequence[dict], secret_turn_ids: set[int]) -> list[dict]:
