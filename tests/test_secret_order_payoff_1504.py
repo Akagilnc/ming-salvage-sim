@@ -1844,10 +1844,8 @@ def test_http_chat_stream_secret_landing_recovery_player_readback(
         assert any(
             recovery["report"] in str(h.get("content") or "") for h in reload_minister
         ), "读回的大臣回话须与 stream done 的 report 同一份"
-        assert reload_payload.get("pending_action_failures") == []
-        pending_resp = client.get("/api/pending_actions")
-        assert pending_resp.status_code == 200, pending_resp.text
-        assert (pending_resp.json() or {}).get("actions") == []
+        assert "pending_action_failures" not in reload_payload
+        assert game.db.list_pending_actions(game.state.turn) == []
         orders_resp = client.get("/api/secret_orders")
         assert orders_resp.status_code == 200, orders_resp.text
         assert (orders_resp.json() or {}).get("orders") == []
@@ -1987,77 +1985,6 @@ def test_http_chat_stream_secret_landing_a_path_abandon_no_default(
             assert game.db.list_failed_secret_order_actions() == []
         # #1765 ②验收5：过回合维持既有丢弃不阻塞；失败诊断照旧留痕（0005）。
         assert _secret_landing_rejection_items(game.db), "过回合后终失败诊断须仍在库"
-    finally:
-        wait_pending_writes(game)
-        if game.session:
-            game.session.close()
-
-
-def test_http_retry_landable_failed_pending_does_not_commit_secret_order(
-    tmp_path, monkeypatch, _offline_scene_beat_generator,
-):
-    """#1765 ②验收4：同形 payload 经活提交路真落得成密令；Web POST retry 落不成、行仍 failed。
-
-    前提先用活的 commit_pending_actions 钉死（旧重放正是在这种 payload 上会写成密令），
-    否则「没落库」只是空断言。入口=POST /api/pending_actions/{id}/retry；不锁状态码、不扫路由表。
-    """
-    from fastapi.testclient import TestClient
-
-    import web_app
-    from tests.dossier_test_helpers import LIAO_PAY_COVERT_TASK
-
-    game, name, _stream, wait_pending_writes = _web_secret_landing_client(
-        tmp_path, monkeypatch, _secret_landing_backend(lambda: ""),
-    )
-    client = TestClient(web_app.app)
-
-    def _stage(title: str) -> int:
-        return game.db.stage_pending_action(
-            game.state.turn, kind="secret_order", action="新建",
-            minister_name=name, target_id=None,
-            payload={
-                "title": title,
-                "content": "密查辽饷去向",
-                "assignee": name,
-                "tags": ["辽饷"],
-                "deadline_months": 0,
-                "covert_task": LIAO_PAY_COVERT_TASK,
-            },
-        )
-
-    def _titles() -> list:
-        return [str(order.get("title") or "") for order in game.db.list_secret_orders()]
-
-    try:
-        # 前提：同形 payload 走活的提交路真能落成密令（旧重放即靠这条落库）
-        landable_id = _stage("暗查辽饷")
-        game.db.commit_pending_actions(game.state, action_ids=[landable_id])
-        wait_pending_writes(game)
-        assert "暗查辽饷" in _titles(), (
-            "前提不成立：该 payload 经活提交路都落不成密令，下面的断言是空断言"
-        )
-
-        # 同形 payload 的 failed 行：只有重放才可能把它落成密令
-        failed_id = _stage("暗查蓟镇")
-        game.db.conn.execute(
-            "UPDATE pending_actions SET status=\'failed\' WHERE id=?",
-            (failed_id,),
-        )
-        game.db.conn.commit()
-        assert "暗查蓟镇" not in _titles()
-
-        resp = client.post(f"/api/pending_actions/{failed_id}/retry")
-        wait_pending_writes(game)
-
-        assert "暗查蓟镇" not in _titles(), "Web POST retry 不得把 failed 暂存落成密令"
-        try:
-            body = resp.json()
-        except ValueError:
-            body = None
-        retry = body.get("retry") if isinstance(body, dict) else None
-        assert not (isinstance(retry, dict) and retry.get("committed")), resp.text
-        failed = game.db.list_pending_actions(game.state.turn, status="failed")
-        assert any(int(row["id"]) == int(failed_id) for row in failed)
     finally:
         wait_pending_writes(game)
         if game.session:

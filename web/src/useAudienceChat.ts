@@ -1,7 +1,7 @@
 import React from "react";
 import { ApiRequestError, api, streamChat } from "./api";
 import { chatReducer } from "./mindreading";
-import type { ChatIdentity, ChatMessage, ChatResponse, PendingActionFailure, Minister, ReplyRetry, ServerChatMessage, Suggestion, TranslationRetry } from "./types";
+import type { ChatIdentity, ChatMessage, ChatResponse, Minister, ReplyRetry, ServerChatMessage, Suggestion, TranslationRetry } from "./types";
 import { audienceHistoryPath } from "./audienceScene";
 
 /**
@@ -24,7 +24,6 @@ export type AudienceHistoryData = {
   history: ServerChatMessage[];
   suggestions: Suggestion[];
   can_undo_last_chat: boolean;
-  pending_action_failures?: PendingActionFailure[];
   campaign_id: string;
   /** Persisted current open-night identity; 0 means no open audience night. */
   night_id: number;

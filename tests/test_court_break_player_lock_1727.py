@@ -145,7 +145,6 @@ def test_court_break_locks_player_writes_and_closes_night(web_game, monkeypatch)
                                 f"/api/ministers/{minister}/secret_order",
                                 json={"title": "边饷", "content": "速办边饷"},
                             ),
-                            "withdraw": client.post("/api/pending_actions/1/withdraw"),
                         }
                         return {
                             name: (await request).status_code
@@ -181,7 +180,6 @@ def test_court_break_locks_player_writes_and_closes_night(web_game, monkeypatch)
         "chat": 409,
         "undo": 409,
         "secret_order": 409,
-        "withdraw": 409,
     }
     # end 后终态：夜 closed + 收尾三拍 + 告退轮仍在（未被 undo 抽空）。
     row = game.db.conn.execute(

@@ -2937,14 +2937,6 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
       if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
       if (u.pathname.endsWith("/api/game/state")) return jsonResp(base);
       if (u.pathname.endsWith("/api/directives") && init?.method === "POST") return createGate;
-      if (u.pathname.endsWith("/api/pending_actions/failures")) {
-        return jsonResp({
-          pending_action_failures: [{
-            id: 42, kind: "secret_order", action: "落库",
-            message: "密令未能正式落库",
-          }],
-        });
-      }
       return jsonResp({});
     }));
     const host = await mountApp();
