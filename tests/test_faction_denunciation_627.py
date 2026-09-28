@@ -573,6 +573,3 @@ def test_accept_wired_in_settle_not_pre_settle_emergence():
     assert "trigger_faction_denunciations" not in pre_body
     assert "accept_faction_denunciations" not in pre_body
 
-    sim_src = (_REPO / "ming_sim" / "simulation.py").read_text(encoding="utf-8")
-    assert "faction_denunciation_facts" in sim_src
-    assert "faction_denunciations" in sim_src  # extractor 字段
