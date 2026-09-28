@@ -1360,20 +1360,29 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     });
     expect(stateGets).toBeGreaterThan(getsBeforeDone);
     expect(host.querySelector("[data-testid=settlement-gazette-panel]")!.textContent).toContain("十月邸报·刷新失败仍可读");
-    // 旧月可操作盘面不得投影；#1854 才接手统一提示/重试，本票不得留独立重试入口。
-    expect(host.querySelector(".hud2-stage")).toBeNull();
-    expect(edictCommand(host)).toBeNull();
-    expect(findButton(host, "盖玺颁诏过月")).toBeFalsy();
+    // 主界面仍挂着，但旧月内容不可见、不可交互；提示与阅读独立可达。
+    const staleFace = host.querySelector("main > div[inert]");
+    expect(staleFace?.getAttribute("aria-hidden")).toBe("true");
+    expect(staleFace?.getAttribute("style")).toContain("visibility: hidden");
+    expect(staleFace?.querySelector(".hud2-stage")).not.toBeNull();
     const retry = findButton(host, "重试");
     expect(retry).toBeTruthy();
-    expect(host.textContent).not.toContain(MIDCOURSE_ISSUE);
 
-    const getsBeforeDismiss = stateGets;
     const streamPosts = () => fetchMock.mock.calls.filter(([url, init]) => {
       const path = new URL(String(url), "http://t.local").pathname;
       return path.endsWith("/api/decree/issue/stream") && init?.method === "POST";
     }).length;
     const streamPostsBeforeDismiss = streamPosts();
+    // 阅读中同一钮先试一次：载入仍失败，邸报保持可读且不重新过月。
+    const getsBeforeReadingRetry = stateGets;
+    await click(retry);
+    await act(async () => {
+      await vi.waitFor(() => expect(stateGets).toBeGreaterThan(getsBeforeReadingRetry));
+      await Promise.resolve();
+    });
+    expect(host.querySelector("[data-testid=settlement-gazette-panel]")?.textContent).toContain("十月邸报·刷新失败仍可读");
+    expect(streamPosts()).toBe(streamPostsBeforeDismiss);
+    const getsBeforeDismiss = stateGets;
     const dismiss = Array.from(host.querySelectorAll("button")).find((b) =>
       (b.textContent || "").includes("朕知道了"),
     );
@@ -1385,15 +1394,14 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     // 关闭阅读不触发重试或推进；旧月入口仍不可提交。
     expect(stateGets).toBe(getsBeforeDismiss);
     expect(streamPosts()).toBe(streamPostsBeforeDismiss);
-    expect(host.querySelector(".hud2-stage")).toBeNull();
-    expect(edictCommand(host)).toBeNull();
+    expect(host.querySelector("main > div[inert]")).not.toBeNull();
     expect(findButton(host, "重试")).toBeTruthy();
     failPostAdvanceRefresh = false;
     liveState.turn = { year: 1627, period: 11, turn: 6, phase: "player", settlement_display: false };
     const getsBeforeRetry = stateGets;
     await click(findButton(host, "重试"));
     await act(async () => {
-      await vi.waitFor(() => expect(host.querySelector(".hud2-stage")).not.toBeNull());
+      await vi.waitFor(() => expect(host.querySelector("main > div[inert]")).toBeNull());
     });
     expect(stateGets).toBeGreaterThan(getsBeforeRetry);
     expect(host.querySelector(".hud2-val")?.textContent).toContain("11");

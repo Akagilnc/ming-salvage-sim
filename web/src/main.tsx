@@ -626,11 +626,11 @@ export function App() {
   return (
     <main className="game-shell" data-settlement-display={settlementDisplay ? "1" : "0"}>
       {advanceRefreshFailed ? (
-        <>
-          <div className="recovery-banner" role="alert"><span className="recovery-banner-message">新月盘面载入失败：{error}</span><button type="button" onClick={() => void retryAdvanceRefresh()}>重试</button></div>
-          {currentGazette}
-        </>
-      ) : <>
+        <div className="recovery-banner" role="alert"><span className="recovery-banner-message">新月盘面载入失败：{error}</span><button type="button" onClick={() => void retryAdvanceRefresh()}>重试</button></div>
+      ) : null}
+      {currentGazette}
+      {/* Keep the main face mounted, but never expose or accept actions against the stale month. */}
+      <div inert={advanceRefreshFailed} aria-hidden={advanceRefreshFailed} style={{ display: "contents", visibility: advanceRefreshFailed ? "hidden" : undefined }}>
       <GameHud
         stageRef={hudStageCbRef}
         ready={ready}
@@ -648,9 +648,6 @@ export function App() {
         onCloseEdict={() => setActiveModal("none")}
         settlementFace={settlementFace}
       />
-
-      {/* 当次邸报占主面阅读区，不另开遮蔽全屏的窗。 */}
-      {currentGazette}
 
       <CourtDrawer
         state={state}
@@ -916,7 +913,7 @@ export function App() {
           <DecisionModal decisions={pendingDecisions} failures={decisionFailures} onResolve={submitDecisions} busy={busy} />
         </div>
       ) : null}
-      </>}
+      </div>
     </main>
   );
 }
