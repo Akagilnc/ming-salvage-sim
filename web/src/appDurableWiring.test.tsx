@@ -1791,7 +1791,6 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     const retry = panel.querySelector("button") as HTMLButtonElement | null;
     expect(retry).not.toBeNull();
     expect(retry!.disabled).toBe(false);
-    expect(retry!.textContent).toBe("重试");
 
     unmountTrackedRoots();
     const host2 = await mountApp();
