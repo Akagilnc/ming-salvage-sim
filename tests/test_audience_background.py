@@ -353,14 +353,13 @@ def test_withdrawal_under_web_write_gate_returns_undone_turn(game):
 
 
 
-def test_audience_prompt_does_not_expose_unissued_draft_to_uninvolved_minister(game):
+def test_current_unissued_draft_is_not_character_carryover(game):
     """本回合未明发草案不应绕过见闻投影，注入未参与大臣的召对提示。
 
     #1769 只放行**跨月**未入档旨稿（上月已随颁诏发出、仅未落档）；本回合刚拟、
     还在御案上的草案仍是密事，不得越过排除边界。
     """
-    db, state, content = game
-    minister = next(iter(content.characters.values()))
+    db, state, _content = game
     db.add_directive(
         state, None, "着户部清核辽饷。", "player-decree-test",
         dossier_payload={
@@ -368,14 +367,8 @@ def test_audience_prompt_does_not_expose_unissued_draft_to_uninvolved_minister(g
             "target_id": "liaoxiang-audit", "locality_scope": "none",
         },
     )
-    session = SimpleNamespace(db=db, state=state)
-    prepared = prepare_character_materials(db, state, minister)
-
-    prompt = GameSession._audience_prompt_for_message(
-        session, "辽饷近况如何？", minister, prepared=prepared
-    )
-
-    assert "着户部清核辽饷" not in prompt
+    from ming_sim.materials import _carryover_drafts
+    assert _carryover_drafts(db, state) == []
 
 
 
@@ -387,13 +380,7 @@ def test_audience_prompt_does_not_create_near_minister_report_for_ordinary_minis
         if character.office_type not in {"司礼监", "内廷"}
         and "太监" not in character.office
     )
-    session = SimpleNamespace(db=db, state=state)
-    prepared = prepare_character_materials(db, state, minister)
-
-    GameSession._audience_prompt_for_message(
-        session, "请查访各镇欠饷如何？", minister, prepared=prepared
-    )
-
+    prepare_character_materials(db, state, minister)
     assert not any(
         item.get("source_id", "").startswith("near_minister:")
         for item in db.get_character_knowledge(state, minister.name)["events"]

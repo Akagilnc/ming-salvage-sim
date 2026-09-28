@@ -1987,22 +1987,6 @@ class GameSession:
         )
 
 
-    def _audience_prompt_for_message(
-        self,
-        message: str,
-        character: Character,
-        *,
-        chat_turn_id: int = 0,
-        prepared: Optional[PreparedMaterials] = None,
-    ) -> str:
-        """兼容旧测试的开场投影；生产入口已走 scene_chat + 转译查访。
-
-        #1837 reopen：关键词触发查访与 registry 材料接管均已删除。
-        """
-        del character, chat_turn_id  # 旧 agent 路径专属参数，保留签名兼容。
-        if prepared is None:
-            return message
-        return str(getattr(prepared, "opening", "") or "") + "\n\n" + message
 
     def apply_cli_conversation_actions(
         self, character: Character, player_message: str, answer: str,

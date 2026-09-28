@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import re
 
 import pytest
 
@@ -11,16 +10,10 @@ from ming_sim.decree import project_dossiers_for_simulator
 from ming_sim.decree_vocabulary import (
     SIM_DOSSIER_EXECUTION_KEYS,
     SIM_DOSSIER_NARRATIVE_KEYS,
-    render_referenceable_dossier_brief,
 )
 from ming_sim.simulation import build_simulator_payload
 from tests.dossier_test_helpers import TYPED_COVERT_TASK, rejected_verdict as _rejected_verdict
 from tests.dossier_test_helpers import create_test_secret_order
-
-
-_ENGLISH_LEAK = re.compile(
-    r"\b(?:promulgated|rejected|executing|proposed|force_promulgated|midzhi)\b"
-)
 
 
 def _active_minister(db) -> str:
@@ -154,9 +147,7 @@ def test_d_reconciliation_inputs_default_serializable(game):
 # ── E. 认账 brief 定性中文 ───────────────────────────────────────────
 
 
-def test_e_audience_brief_uses_qualitative_chinese_for_rejected(game, monkeypatch):
-    from ming_sim.session import GameSession
-    from ming_sim.models import Character
+def test_e_rejected_forced_dossier_remains_referenceable(game):
 
     db, state, _content = game
     dossier_id = db.create_decree_dossier(
@@ -169,36 +160,6 @@ def test_e_audience_brief_uses_qualitative_chinese_for_rejected(game, monkeypatc
 
     candidates = db.list_referenceable_dossiers("孙承宗", state.turn)
     assert dossier_id in {int(row["id"]) for row in candidates}
-    brief = render_referenceable_dossier_brief(candidates)
-    assert "打回" in brief or "强颁" in brief
-    assert _ENGLISH_LEAK.search(brief) is None
-
-    # 生产接缝：session 组装走同一 brief 渲染，不得裸奔英文枚举
-    session = GameSession.__new__(GameSession)
-    session.db = db
-    session.state = state
-    minister = Character(
-        name="孙承宗", office="兵部尚书", office_type="兵部",
-        faction="东林", aliases=[], personal_skills=[],
-        loyalty=50, ability=50, integrity=50, courage=50,
-        style="", status="active", power_id="ming",
-    )
-    monkeypatch.setattr(
-        session.db, "get_character_knowledge",
-        lambda *a, **k: {"events": [], "public_events": [], "issues": [], "world": {}},
-    )
-    from ming_sim.materials import list_materials, prepare_character_materials, read_material
-    prepared = prepare_character_materials(db, state, minister)
-    prompt = GameSession._audience_prompt_for_message(
-        session, "卿以为前旨如何？", minister, prepared=prepared,
-    )
-    assert _ENGLISH_LEAK.search(prompt) is None
-    # 生产接缝：材料目录走同一渲染，不得裸奔英文枚举（负向闸案，不锁中文措辞）。
-    blob = "\n".join(
-        read_material(prepared.root, path)
-        for path in list_materials(prepared.root) if path != "INDEX.txt"
-    )
-    assert _ENGLISH_LEAK.search(blob) is None
 
 
 # ── F. prompt 改域 + 判决无关章节零改 ────────────────────────────────

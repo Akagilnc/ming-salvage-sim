@@ -336,21 +336,13 @@ def test_draft_admission_exhaust_keeps_draft_and_advances(admission_game, monkey
     _finish_month_after_gazette(game, turn)
     assert source_turn < int(game.state.turn)
 
-    # 下月召对真实供料（验收 2「下次召对大臣可就此追问」，复用 A 路、无新通知）：
-    # 大臣本月奏对的组装输入里带该旨原文与「尚未入档」事实，回禀措辞由 LLM 自己长。
-    minister = next(
-        c for c in game.session.content.characters.values()
-        if c.office_type not in ("后宫",)
+    # 跨月未入档旨稿进入现役角色材料供料；按结构化 id/正文核对，
+    # 不锁召对提示词。当前回合尚未跨月的草案仍被 carryover 边界排除。
+    from ming_sim.materials import _carryover_drafts
+    assert any(
+        int(d["id"]) == did and d["text"] == row["text"]
+        for d in _carryover_drafts(game.db, game.state)
     )
-    from ming_sim.materials import prepare_character_materials
-    audience_input = game.session._audience_prompt_for_message(
-        "卿有何事？", minister,
-        prepared=prepare_character_materials(game.db, game.state, minister),
-    )
-    assert str(row["text"] or "") in audience_input
-    assert str(did) in audience_input
-    # 反向（本回合新拟草案不得越界）归其契约本家：
-    # test_audience_background.py::test_audience_prompt_does_not_expose_unissued_draft_...
 
     # 下月拟诏真实入口：write_decree → 供料含 admission_status=上月未入档
     payloads = _write_decree_capture_payloads(monkeypatch, game)
