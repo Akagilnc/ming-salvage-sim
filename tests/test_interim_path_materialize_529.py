@@ -10,6 +10,7 @@ Seams:
 """
 
 from __future__ import annotations
+from tests.conftest import open_hall_turn
 
 import json
 from types import SimpleNamespace
@@ -816,7 +817,7 @@ def test_undo_restores_payload_and_ledger_mark(game):
 
     # 完整召对轮窗口：前像 → attach 轮 → 路径改写 → diff → 撤回
     before_snap = db.capture_chat_rollback_snapshot()
-    night_id, ctid = an.attach_chat_turn_to_night(db, state, actor)
+    night_id, ctid = open_hall_turn(db, state, actor)
     uid = db.conn.execute(
         "INSERT INTO chat_messages (minister_name, turn, role, content) "
         "VALUES (?, ?, 'emperor', ?)",

@@ -521,8 +521,8 @@ def test_audience_prompt_rebuilds_from_directory_and_persisted_turns(game):
     character = _active_minister(db, content)
     night = open_night(db, state, location="乾清宫", time_of_day="戌时")
     summon_enter(db, int(night["id"]), character.name)
-    from tests.conftest import attach_chat_turn_to_night
-    _nid, ct = attach_chat_turn_to_night(
+    from tests.conftest import open_hall_turn
+    _nid, ct = open_hall_turn(
         db, state, character.name, agno_session_id="sess", agno_runs_before=0,
     )
     spoken = "臣已核过边饷册。"

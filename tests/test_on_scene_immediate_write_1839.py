@@ -11,6 +11,7 @@ Seams:
 """
 
 from __future__ import annotations
+from tests.conftest import open_hall_turn
 
 import json
 
@@ -38,7 +39,7 @@ def _run_round_with_declaration(db, state, minister: str, declaration: dict, *, 
     """一轮窗口：搭建对话轮 → 公开入口分派（入口自记前像）→ 标抽取水位。"""
     if night_id <= 0 and an.get_open_night(db) is None:
         an.open_night(db, state, location="乾清宫", time_of_day="夜")
-    night_id, chat_id = an.attach_chat_turn_to_night(db, state, minister)
+    night_id, chat_id = open_hall_turn(db, state, minister)
     uid = db.conn.execute(
         "INSERT INTO chat_messages (minister_name, turn, role, content) "
         "VALUES (?, ?, 'emperor', ?)",

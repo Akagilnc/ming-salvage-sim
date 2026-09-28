@@ -323,70 +323,6 @@ def test_worker_cleanup_failure_still_emits_error_and_releases_gate():
     _assert_write_path_free(runtime)
 
 
-def test_worker_cleanup_double_failure_emits_original_error_end_and_logs(caplog):
-    """#1353 r13 / ADR 0005：payload-None 清理 abandon + fail 双二次失败 →
-    消费者有界收到*原始* error→end；清理异常只 logger.exception 记 traceback，不覆盖原错、不阻断终态。"""
-    import logging
-
-    db = _WorkerPathDB()
-    runtime, minister = _base_runtime(db)
-    agent = _StreamCrashAgent()
-    runtime.session.registry = SimpleNamespace(get=lambda _c, **_kw: agent)
-    runtime.session._character = lambda name: minister_double(minister)
-    runtime.session._start_cli_action_intent = lambda *_a, **_k: None
-
-    abandon_calls: list[int] = []
-
-    def _boom_abandon(ctid):
-        abandon_calls.append(int(ctid))
-        raise RuntimeError("abandon 二次崩溃")
-
-    runtime.session.abandon_chat_turn_scene = _boom_abandon
-
-    primary = "LLM 流式调用崩溃。"
-    events: list[dict] = []
-    done = threading.Event()
-    box: dict = {}
-
-    def consume() -> None:
-        try:
-            for item in runtime.chat_stream(minister, "辽东军情如何？"):
-                events.append(item)
-                if item.get("type") == "end":
-                    break
-            box["ok"] = True
-        except Exception as exc:  # noqa: BLE001
-            box["exc"] = exc
-        finally:
-            done.set()
-
-    with caplog.at_level(logging.ERROR, logger="web_app"):
-        th = threading.Thread(target=consume, daemon=True)
-        th.start()
-        done.wait()
-        th.join()
-
-    assert box.get("ok") is True, box
-    types = [e.get("type") for e in events]
-    assert "error" in types, events
-    assert types[-1] == "end", events
-    err_idx = types.index("error")
-    assert types[err_idx + 1] == "end", types
-    err = next(e for e in events if e.get("type") == "error")
-    # 原始 error 不变：清理二次崩溃不得覆盖 message
-    assert err.get("message") == primary, err
-    assert "abandon" not in str(err.get("message") or "")
-    assert "fail_chat_turn" not in str(err.get("message") or "")
-    assert abandon_calls == [7]
-
-    # 日志机械断言：abandon + fail 两次 cleanup 均 logger.exception 留痕
-    joined = "\n".join(r.getMessage() for r in caplog.records)
-    assert "stream worker cleanup: abandon_chat_turn_scene failed" in joined, joined
-    assert "stream worker cleanup: fail_chat_turn/reload failed" in joined, joined
-    # traceback 须在 exception 记录里（logger.exception → exc_info）
-    assert any(r.exc_info for r in caplog.records), caplog.records
-    _assert_write_path_free(runtime)
-
 
 def test_worker_postprocess_exception_emits_error_end():
     """#1353 r12：payload 成功后后处理（_spawn_pending_write_thread 高亮）抛错 → 单一出口 error→end。
@@ -543,21 +479,19 @@ def _runtime_for_nonstream_chat(*, start_scene=None, append_error=None, abandon_
 
 
 def test_nonstream_chat_prologue_failure_fails_turn_and_abandons_scene():
-    """#542 r6e: 非流 chat 在 _start_chat_turn 之后 prologue 写失败，须 abandon + fail，
-    且写路径释放（经 _assert_write_path_free 公开探针）。"""
+    """#1838：非流 chat prologue 写失败须 fail 终态，写路径释放（旁白 abandon 已删）。"""
     boom = RuntimeError("DB 写盘失败（模拟非流 prologue 崩溃）")
     runtime, minister, abandoned, failed, _restored = _runtime_for_nonstream_chat(
         append_error=boom,
     )
     with pytest.raises(RuntimeError, match="非流 prologue"):
         runtime.chat(minister, "辽东军情如何？")
-    assert abandoned == [7]
     assert failed == [7]
     _assert_write_path_free(runtime)
 
 
 def test_nonstream_chat_abandon_secondary_failure_still_fails_turn():
-    """#1408 r2: abandon 二次异常不得跳过 fail 终态写，且原错不叠二次。"""
+    """#1838：prologue 失败仍须 fail 终态写，原错不叠二次。"""
     boom = RuntimeError("DB 写盘失败（模拟非流 prologue 崩溃）")
     abandon_boom = RuntimeError("abandon 二次崩溃")
     runtime, minister, abandoned, failed, _restored = _runtime_for_nonstream_chat(
@@ -567,48 +501,10 @@ def test_nonstream_chat_abandon_secondary_failure_still_fails_turn():
     with pytest.raises(RuntimeError, match="非流 prologue") as excinfo:
         runtime.chat(minister, "辽东军情如何？")
     assert excinfo.value is boom
-    assert abandoned == [7]
     assert failed == [7]
     _assert_write_path_free(runtime)
 
 
-def test_retry_start_scene_failure_restores_interrupted_and_abandons():
-    """#542 r6e: retry reopen 后 start_chat_turn_scene 同步抛错，须 abandon + restore
-    interrupted、不 fail，且写路径释放。"""
-    def _boom_start(_minister, _ctid):
-        raise RuntimeError("start_chat_turn_scene boom")
-
-    runtime, minister, abandoned, failed, restored = _runtime_for_nonstream_chat(
-        start_scene=_boom_start,
-    )
-    with pytest.raises(RuntimeError, match="start_chat_turn_scene boom"):
-        runtime.retry_interrupted_reply(minister)
-    assert abandoned == [7]
-    assert restored == [7]
-    assert failed == []  # retry 失败翻回 interrupted，不 fail
-    _assert_write_path_free(runtime)
-
-
-def test_retry_abandon_secondary_failure_still_restores_interrupted():
-    """#1408 r2: retry 路 abandon 二次异常不得跳过 restore 终态写，且原错不叠二次。"""
-    def _boom_start(_minister, _ctid):
-        raise RuntimeError("start_chat_turn_scene boom")
-
-    abandon_boom = RuntimeError("abandon 二次崩溃")
-    runtime, minister, abandoned, failed, restored = _runtime_for_nonstream_chat(
-        start_scene=_boom_start,
-        abandon_error=abandon_boom,
-    )
-    with pytest.raises(RuntimeError, match="start_chat_turn_scene boom") as excinfo:
-        runtime.retry_interrupted_reply(minister)
-    assert "abandon" not in str(excinfo.value)
-    assert abandoned == [7]
-    assert restored == [7]
-    assert failed == []
-    _assert_write_path_free(runtime)
-
-
-# ── #1452：非流式两入口 LLM 死 + 流式 RunErrorEvent 戏内单源 ─────────────────
 
 
 def _parse_sse(text: str) -> list[tuple[str, dict]]:
@@ -1470,95 +1366,3 @@ def test_chat_stream_error_status_run_output_system_layer_not_diegetic(
     assert detail.get("provider_message")
 
 
-def test_chat_stream_halfstream_dismiss_exhaust_no_double_side_effect_recovery(
-    monkeypatch, game,
-):
-    """#1465 ④ 半流相容：已执行退场后 transport 耗尽 → 退场不重复；终失败既有恢复。
-
-    首 attempt：delta + dismiss 落账后瞬断；后续 attempt 再瞬断至耗尽。
-    - start_exit 只新登记一次（0036 落账即史实；重试不重置 exit_started）
-    - 终失败 fail_chat_turn 恢复：轮 failed、告退账按 origin 回滚、夜开、可重发
-    不另造半流回滚机制。
-    """
-    from ming_sim import audience_night as an
-
-    def _conn_err(_n):
-        return LLMUnavailable(
-            "连接失败",
-            code="llm_connection_error",
-            provider_message="connection reset",
-        )
-
-    class _DismissThenAlwaysFail:
-        def __init__(self):
-            self.calls = 0
-
-        def run(self, *_a, **_k):
-            self.calls += 1
-            if self.calls == 1:
-                yield RunContent("旧半句")
-                tool = SimpleNamespace(
-                    tool_name="dismiss_minister",
-                    result="__dismiss__",
-                    tool_args={},
-                )
-                yield ToolCallCompletedEvent(tool)
-                raise _conn_err(self.calls)
-            # 后续 attempt 无 dismiss 工具——不得再落告退
-            yield RunContent("再半句")
-            raise _conn_err(self.calls)
-
-    agent = _DismissThenAlwaysFail()
-    web_game, minister = _transport_web_game(game, agent, monkeypatch)
-    db = web_game.db
-
-    exit_starts = {"n": 0}
-    real_start_exit = web_game.session.start_exit_scene_from_dismiss_tools
-
-    def _count_start_exit(*a, **k):
-        result = real_start_exit(*a, **k)
-        if result:
-            exit_starts["n"] += 1
-        return result
-
-    web_game.session.start_exit_scene_from_dismiss_tools = _count_start_exit  # type: ignore[method-assign]
-
-    response = _post_chat_stream(monkeypatch, web_game, minister)
-    assert response.status_code == 200, response.text
-    events = _parse_sse(response.text)
-    assert events[-1][0] == "error", events
-    detail = events[-1][1]
-    max_a = default_transport_policy().max_attempts
-    assert agent.calls == max_a
-    assert exit_starts["n"] == 1, exit_starts  # 退场副作用不重复
-    attempts = detail.get("transport_attempts") or []
-    assert len(attempts) == max_a
-    assert attempts[-1].get("outcome") == "terminal_fail"
-
-    failed_turn = int(detail.get("chat_turn_id") or 0)
-    assert failed_turn > 0
-    fail_row = db.conn.execute(
-        "SELECT status FROM chat_turns WHERE id=?", (failed_turn,),
-    ).fetchone()
-    assert fail_row is not None and str(fail_row["status"]) == "interrupted"
-
-    # 既有 fail_chat_turn 恢复：本轮 origin/source 绑定的进出账全清（含告退 scaffold）
-    open_night = an.get_open_night(db)
-    assert open_night is not None
-    turn_ledger = db.conn.execute(
-        "SELECT id FROM story_ledger_entries "
-        "WHERE origin_chat_turn_id=? OR source_chat_turn_id=?",
-        (failed_turn, failed_turn),
-    ).fetchall()
-    assert turn_ledger == [], turn_ledger
-    # 夜开 + 可重发（写路径已释放；重发会再走入殿）
-    ok_agent = _CountingFailAgent(fail_times=0, error_factory=_conn_err)
-    web_game.session.registry.agent = ok_agent
-    stub_scene_agent(monkeypatch, ok_agent)
-    response2 = _post_chat_stream(monkeypatch, web_game, minister, message="再问边饷。")
-    events2 = _parse_sse(response2.text)
-    assert "done" in [e[0] for e in events2], events2
-    done2 = next(e[1] for e in events2 if e[0] == "done")
-    assert int(done2.get("chat_turn_id") or 0) != failed_turn
-    assert int(done2.get("minister_message_id") or 0) > 0
-    assert an.get_open_night(db) is not None

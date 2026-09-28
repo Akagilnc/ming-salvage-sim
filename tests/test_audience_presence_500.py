@@ -9,6 +9,7 @@ summon_enter 落入殿账；断言推导器读账的机器承重态（在场/不
 """
 
 from __future__ import annotations
+from tests.conftest import open_hall_turn
 
 import pytest
 
@@ -218,7 +219,7 @@ def test_session_chat_tool_dismiss_writes_exit_ledger(game):
 
     db, state, content = game
     minister = _active_minister(db, content)
-    an.attach_chat_turn_to_night(db, state, minister.name)  # 生产同：session.chat 前已开夜入殿
+    open_hall_turn(db, state, minister.name)  # 生产同：session.chat 前已开夜入殿
     nid = int(an.get_open_night(db)["id"])
     assert minister.name in an.present_names_at(db, nid)
 
@@ -239,7 +240,7 @@ def test_session_chat_non_dismiss_leaves_present(game):
 
     db, state, content = game
     minister = _active_minister(db, content)
-    an.attach_chat_turn_to_night(db, state, minister.name)
+    open_hall_turn(db, state, minister.name)
     nid = int(an.get_open_night(db)["id"])
 
     result = GameSession.chat(

@@ -1389,9 +1389,6 @@ def _wire_web_game(db, state, content, agent, monkeypatch, *, translate_fn=None)
     sess.previous_summary = ""
     sess.last_decree = ""
     sess.agno_db = None
-    sess._beat_generator = None
-    from tests.conftest import _OfflineSceneRegistry
-    sess._scene_registry = _OfflineSceneRegistry()
     sess._retrieve_memories_for_message = lambda message: message
     stub_audience_translate(monkeypatch, translate_fn)
     stub_scene_agent(monkeypatch, agent)

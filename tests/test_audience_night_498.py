@@ -8,6 +8,7 @@
 """
 
 from __future__ import annotations
+from tests.conftest import open_hall_turn
 
 import os
 import sqlite3
@@ -191,7 +192,7 @@ def test_two_nights_isolated_and_timeline_alignable(game):
 def test_chat_completion_via_attach(game):
     db, state, content = game
     minister = _active_minister(db, content)
-    night_id, chat_id = an.attach_chat_turn_to_night(
+    night_id, chat_id = open_hall_turn(
         db, state, minister, agno_session_id="s1", agno_runs_before=0,
         location="便殿", time_of_day="申时",
     )
@@ -208,7 +209,7 @@ def test_attach_without_scene_anchors_persists_readable_defaults(game):
     """真实入口（web/CLI attach）不带玩家选值时，夜容器时辰/地点仍持久非空、可读（#498 AC）。"""
     db, state, content = game
     minister = _active_minister(db, content)
-    night_id, _chat_id = an.attach_chat_turn_to_night(
+    night_id, _chat_id = open_hall_turn(
         db, state, minister, agno_session_id="s1", agno_runs_before=0,
     )
     row = db.conn.execute(
@@ -474,7 +475,7 @@ def test_closing_cursor0_reopen_refuses_new_and_explicit_resume_commits(content)
         assert an.get_night(db2, night["id"])["status"] == "closing"
         # 新召对：open_night 无 content/registry → 响亮拒绝，不隐式封夜、不丢任免
         with pytest.raises(AudienceNightError) as ei:
-            an.attach_chat_turn_to_night(
+            open_hall_turn(
                 db2, state2, minister, agno_session_id="new", agno_runs_before=0)
         assert ei.value.code == "night_closing_incomplete"
         assert an.get_night(db2, night["id"])["status"] == "closing"

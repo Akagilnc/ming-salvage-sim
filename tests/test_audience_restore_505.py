@@ -1,6 +1,6 @@
 """#505 [S4] 续夜 restore：重开回到最后一条持久化对话轮续夜（ADR 0036）。
 
-一条贯穿真实入口→DB 末态的 tracer：用生产 seam（open_night / attach_chat_turn_to_night /
+一条贯穿真实入口→DB 末态的 tracer：用生产 seam（open_night / open_hall_turn /
 append_chat_message）造出「回话生成半途被 kill」的真实崩溃态（generating 轮、问话已落、
 回话未落），再用**重开真路径**（同库新建 GameDB + reconcile_interrupted_chat_turns）断言：
 
@@ -24,7 +24,7 @@ from fastapi import HTTPException
 import ming_sim.issues as issues_mod
 import web_app
 from ming_sim import audience_night as an
-from tests.conftest import attach_chat_turn_to_night
+from tests.conftest import open_hall_turn
 from ming_sim.db import GameDB
 from ming_sim.session import ChatTurnResult
 from web_app import FRONT_HALF_DONE_PHASES
@@ -66,7 +66,7 @@ def restore_env(content, tmp_path):
 
 def _start_generating_turn(db, state, minister, question):
     """生产 seam 造在飞 generating 轮：问话已落库并链接，回话未落（= 生成半途被 kill）。"""
-    _night_id, ct = attach_chat_turn_to_night(
+    _night_id, ct = open_hall_turn(
         db, state, minister, agno_session_id="sess", agno_runs_before=0,
     )
     mid = db.append_chat_message(minister, state.turn, "user", question)
@@ -76,7 +76,7 @@ def _start_generating_turn(db, state, minister, question):
 
 def _land_full_turn(db, state, minister, question, answer):
     """生产 seam 造完成轮：问话 + 回话都落库、链接（generating→active）。"""
-    _night_id, ct = attach_chat_turn_to_night(
+    _night_id, ct = open_hall_turn(
         db, state, minister, agno_session_id="sess", agno_runs_before=0,
     )
     uid = db.append_chat_message(minister, state.turn, "user", question)
@@ -612,7 +612,7 @@ def test_reconcile_truncates_agno_runs_to_turn_start(restore_env):
     an.open_night(db, state, location="乾清宫", time_of_day="戌时")
     # 本轮起点 agno_runs_before=1；崩溃时 Agno 3 runs 已长到 2（半途生成写入未随回话回滚）。
     _seed_agno_v3_runs(db, "sess", run_count=2)
-    _nid, ct = attach_chat_turn_to_night(
+    _nid, ct = open_hall_turn(
         db, state, minister, agno_session_id="sess", agno_runs_before=1,
     )
     mid = db.append_chat_message(minister, state.turn, "user", "剿抚孰先？")
@@ -729,7 +729,7 @@ def test_reconcile_blob_baseline_drops_table_only_new_run(restore_env):
     _insert_agno_table_run(db, "sess", "table-new", run_index=0)
     assert db.agno_runs_length("sess") == 3
 
-    _nid, ct = attach_chat_turn_to_night(
+    _nid, ct = open_hall_turn(
         db, state, minister, agno_session_id="sess", agno_runs_before=2,
     )
     mid = db.append_chat_message(minister, state.turn, "user", "剿抚孰先？")
@@ -806,7 +806,7 @@ def test_reconcile_marks_questionless_orphan_failed(restore_env):
     db, state, content = env.db, env.state, env.content
     minister = _active_minister(db, content)
     night = an.open_night(db, state, location="乾清宫", time_of_day="戌时")
-    _nid, ct = attach_chat_turn_to_night(
+    _nid, ct = open_hall_turn(
         db, state, minister, agno_session_id="sess", agno_runs_before=0,
     )
     # 不 append 问话、不 link user_message_id：generating 且无 user_message。

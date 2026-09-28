@@ -9,6 +9,7 @@
 """
 
 from __future__ import annotations
+from tests.conftest import open_hall_turn
 
 import json
 from typing import Callable, Dict, Mapping, Optional
@@ -51,7 +52,7 @@ def _run_round(
     `declaration` 若给出则经现役转译入口落账；否则只推进空轮水位。
     """
     before = db.capture_chat_rollback_snapshot()
-    night_id, chat_id = an.attach_chat_turn_to_night(db, state, minister)
+    night_id, chat_id = open_hall_turn(db, state, minister)
     uid = db.conn.execute(
         "INSERT INTO chat_messages (minister_name, turn, role, content) "
         "VALUES (?, ?, 'emperor', ?)",
@@ -514,7 +515,7 @@ def test_attach_origin_bind_atomic_no_orphan_enter_on_midway_crash(game):
     db.create_chat_turn = _boom
     try:
         with pytest.raises(RuntimeError):
-            an.attach_chat_turn_to_night(db, state, m)
+            open_hall_turn(db, state, m)
     finally:
         db.create_chat_turn = orig_create
 

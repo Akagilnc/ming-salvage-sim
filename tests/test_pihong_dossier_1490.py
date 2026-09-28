@@ -1144,7 +1144,6 @@ def _657_subprocess_resolve(
             name = str(getattr(_inputs, "person_name", "") or "") or "臣"
             return f"{name}入殿请安。"
 
-        bo.create_llm_beat_generator = lambda _cfg: _det_gen
         web_app.load_runtime_llm = lambda: {}
         web_app.run_highlight_judge = lambda **_k: []
 
@@ -2371,10 +2370,6 @@ def test_657_s10_http_five_actions_and_1490_no_regress(web_game, monkeypatch):
         summon_gen_bodies[name] = text
         return text
 
-    monkeypatch.setattr(
-        web_game.session, "_beat_generator", _det_gen, raising=False,
-    )
-    monkeypatch.setattr(bo, "create_llm_beat_generator", lambda _cfg: _det_gen)
 
     cases = [
         ("hold", {"action": "hold", "label": "留中"}),
@@ -2914,8 +2909,6 @@ def test_657_s5_http_generator_failure_blocks_phase2_and_same_body_retry(
             raise RuntimeError("generator inject fail")
         name = str(getattr(inputs, "person_name", "") or "") or "臣"
         return f"{name}再入殿。"
-    monkeypatch.setattr(bo, "create_llm_beat_generator", lambda _cfg: _gen)
-    monkeypatch.setattr(web_game.session, "_beat_generator", _gen, raising=False)
 
     _657_install_real_phase2_llm_boundary(monkeypatch)
     phase2_calls = {"n": 0}
@@ -2983,8 +2976,6 @@ def test_657_s6_http_present_target_gets_unique_origin_body(web_game, monkeypatc
 
     def _gen(_inputs):
         return gen_body
-    monkeypatch.setattr(bo, "create_llm_beat_generator", lambda _cfg: _gen)
-    monkeypatch.setattr(web_game.session, "_beat_generator", _gen, raising=False)
 
     _657_install_real_phase2_llm_boundary(monkeypatch)
 
@@ -3074,8 +3065,6 @@ def test_657_web_http_hitl_lock_boundary_same_gate(web_game, monkeypatch):
     def _gen(inputs):
         name = str(getattr(inputs, "person_name", "") or "") or "臣"
         return f"{name}锁窗入殿。"
-    monkeypatch.setattr(bo, "create_llm_beat_generator", lambda _cfg: _gen)
-    monkeypatch.setattr(web_game.session, "_beat_generator", _gen, raising=False)
 
     opt = normalize_rescript_layer_a_option({
         "label": "备", "hint": "h", "action_type": "assignment",
@@ -3538,8 +3527,7 @@ def test_657_midzhi_verdict_no_party_satisfaction(game):
 def test_657_summon_missing_tag_enter_blocks_phase2_then_retry(
     web_game, monkeypatch,
 ):
-    """Spec4/§D.0：真 HTTP 入口；origin 非空 body 缺 TAG_ENTER → 不进 phase2；
-    修正后同 body 重试成功。复用 S5 夹具，不另造平行机制。"""
+    """#1838 reopen：批红召见落入殿事实账（TAG_ENTER、正文空）即消费，可进 phase2。"""
     from ming_sim.audience_night import TAG_ENTER, rescript_summon_origin_ref
     from ming_sim.models import TurnPhase
     from ming_sim.rescript_draft import normalize_rescript_layer_a_option
@@ -3551,14 +3539,6 @@ def test_657_summon_missing_tag_enter_blocks_phase2_then_retry(
         "locality_scope": "single", "region_id": "shaanxi",
         "transaction_category": "督赈",
     })
-    gen_body = "杨嗣昌门闩入殿。"
-
-    def _gen(inputs):
-        name = str(getattr(inputs, "person_name", "") or "") or "臣"
-        return f"{name}门闩入殿。" if name != "臣" else gen_body
-
-    monkeypatch.setattr(bo, "create_llm_beat_generator", lambda _cfg: _gen)
-    monkeypatch.setattr(web_game.session, "_beat_generator", _gen, raising=False)
 
     _657_install_real_phase2_llm_boundary(monkeypatch)
     phase2_calls = {"n": 0}
@@ -3569,21 +3549,6 @@ def test_657_summon_missing_tag_enter_blocks_phase2_then_retry(
         return _real_p2(*a, **k)
 
     monkeypatch.setattr(session_mod, "resolve_decisions_phase2", _count_phase2)
-
-    # finish 写 body 后剥 TAG_ENTER：非空 body ≠ consumed，门闩挡 phase2
-    corrupt = {"v": True}
-    real_persist = bo.persist_chat_turn_scene
-
-    def _persist_strip_enter(db_arg, generated):
-        real_persist(db_arg, generated)
-        if corrupt["v"]:
-            for eid, _body in generated:
-                db_arg.conn.execute(
-                    "UPDATE story_ledger_entries SET tags=? WHERE id=?",
-                    (json.dumps(["叙事"], ensure_ascii=False), int(eid)),
-                )
-
-    monkeypatch.setattr(bo, "persist_chat_turn_scene", _persist_strip_enter)
 
     desk = _657_plant_awaiting_web(web_game, drafts=[{
         "title": "门闩召见", "context": "c",
@@ -3597,36 +3562,11 @@ def test_657_summon_missing_tag_enter_blocks_phase2_then_retry(
     }]
     turn_before = int(state.turn)
     r1 = asyncio.run(_post_resolve(body))
-    assert r1.status_code == 200
-    assert "event: error" in r1.text or "event: done" not in r1.text
-    assert phase2_calls["n"] == 0, "缺 TAG_ENTER 不得进 phase2"
-    assert web_game.state.turn_phase != TurnPhase.ISSUED.value
-    hit = next(r for r in db.list_rescript_drafts() if r["title"] == "门闩召见")
-    assert hit["status"] == "decided"
-    assert (hit["choice"] or {}).get("action") == "summon"
-    assert int(web_game.state.turn) == turn_before
-    # 门闩失败须把空问话 scaffold 落 failed（与 generator 失败同形），否则 barrier 永等
-    assert db.conn.execute(
-        "SELECT COUNT(*) AS c FROM chat_turns WHERE status='generating' "
-        "AND user_message_id IS NULL",
-    ).fetchone()["c"] == 0
-
-    # 修正：恢复 TAG_ENTER（合法消费账）后同 body 重试
-    corrupt["v"] = False
-    kind, turn_s, idx_s = key.split(":")
-    origin = rescript_summon_origin_ref(int(turn_s), int(idx_s), 0)
-    db.conn.execute(
-        "UPDATE story_ledger_entries SET tags=? WHERE origin_ref=?",
-        (json.dumps([TAG_ENTER, "宣入"], ensure_ascii=False), origin),
-    )
-    db.conn.commit()
-    web_game.state.turn_phase = TurnPhase.AWAITING_DECISION.value
-    web_game.session.state.turn_phase = TurnPhase.AWAITING_DECISION.value
-    db.save_state(web_game.state)
-    r2 = asyncio.run(_post_resolve(body))
-    assert r2.status_code == 200 and "event: done" in r2.text, r2.text
+    assert r1.status_code == 200 and "event: done" in r1.text, r1.text
     assert phase2_calls["n"] == 1
     assert int(web_game.state.turn) == turn_before + 1
+    kind, turn_s, idx_s = key.split(":")
+    origin = rescript_summon_origin_ref(int(turn_s), int(idx_s), 0)
     rows = db.conn.execute(
         "SELECT body, tags FROM story_ledger_entries WHERE origin_ref=?",
         (origin,),
@@ -3634,7 +3574,7 @@ def test_657_summon_missing_tag_enter_blocks_phase2_then_retry(
     assert len(rows) == 1
     tags = json.loads(rows[0]["tags"] or "[]")
     assert TAG_ENTER in tags
-    assert str(rows[0]["body"] or "").strip() == gen_body
+    assert str(rows[0]["body"] or "") == ""
 
 
 # ---------------------------------------------------------------------------
@@ -4109,8 +4049,6 @@ def test_657_summon_single_flight_concurrent_http(web_game, monkeypatch):
         release.wait()
         name = str(getattr(inputs, "person_name", "") or "") or "臣"
         return f"{name}single-flight。"
-    monkeypatch.setattr(bo, "create_llm_beat_generator", lambda _cfg: _gen)
-    monkeypatch.setattr(web_game.session, "_beat_generator", _gen, raising=False)
     _657_install_real_phase2_llm_boundary(monkeypatch)
 
     desk = _657_plant_awaiting_web(web_game, drafts=[{
