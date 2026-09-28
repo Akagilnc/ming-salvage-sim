@@ -281,6 +281,75 @@ def test_s2_private_field_rejects_non_batch_and_public_ids(game):
     assert rows[2]["character_id"] == worker
 
 
+def test_month_segment_dispatch_uses_secret_order_dossier_ids_authority(game):
+    """#1862 reopen：月段翻译→dispatch 以案卷自身密令指向为唯一写权。"""
+    from ming_sim.month_translate import dispatch_month_segment
+
+    db, state, _content = game
+    lead, worker = _people(db, 2)
+    order_id = create_test_secret_order(
+        db, state, lead, "密查仓胥", "暗访通州仓", ["稽核"], deadline_months=3,
+    )
+    dossier_id = int(db.get_dossier_for_secret_order(order_id)["id"])
+    db.append_decree_dossier_participants(dossier_id, [{
+        "character_id": lead, "tier": "主办", "role": "密访",
+    }], state=state)
+    plain_id = db.create_decree_dossier(
+        state, action_type="policy", decree_text="公开案",
+        target_kind="issue", target_id="plain-secret-auth-1252",
+    )
+    db.apply_dossier_promulgation(state, plain_id, "promulgated")
+    db.append_decree_dossier_participants(plain_id, [{
+        "character_id": lead, "tier": "主办", "role": "承办",
+    }], state=state)
+
+    def translate(_request, _cfg):
+        return {
+            "effects": {
+                "secret_dossier_participants": [
+                    {
+                        "dossier_id": dossier_id,
+                        "character_id": worker,
+                        "tier": "协办",
+                        "role": "随员",
+                        "delegator_id": lead,
+                    },
+                    {
+                        "dossier_id": plain_id,
+                        "character_id": worker,
+                        "tier": "协办",
+                        "role": "随员",
+                        "delegator_id": lead,
+                    },
+                ],
+            },
+        }
+
+    result = dispatch_month_segment(
+        db, state, segment="密令参与人月段", translate_fn=translate,
+    )
+    assert result.effects.applied, result.effects.rejected
+    rows = list(result.effects.applied[0].get("secret_dossier_participants") or [])
+
+    def _row_dossier_id(row: dict) -> int:
+        if row.get("dossier_id") is not None:
+            return int(row["dossier_id"])
+        item = row.get("item") if isinstance(row.get("item"), dict) else {}
+        return int(item.get("dossier_id") or 0)
+
+    secret_row = next(r for r in rows if _row_dossier_id(r) == dossier_id)
+    plain_row = next(r for r in rows if _row_dossier_id(r) == plain_id)
+    assert secret_row.get("rejected") is not True, secret_row
+    assert plain_row.get("rejected") is True, plain_row
+    roster = db.get_decree_dossier(dossier_id)["participant_roster"]
+    assert any(
+        row.get("character_id") == worker and row.get("tier") == "协办"
+        for row in roster
+    )
+    plain_roster = db.get_decree_dossier(plain_id)["participant_roster"]
+    assert all(row.get("character_id") != worker for row in plain_roster)
+
+
 @pytest.mark.parametrize("authority", [None, set()])
 def test_s2_missing_secret_authority_never_rebuilds_from_live_db(game, authority):
     """⑤ 私授权 None/空集不重建。"""
