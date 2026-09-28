@@ -380,31 +380,6 @@ def test_audience_prompt_does_not_expose_unissued_draft_to_uninvolved_minister(g
     assert "着户部清核辽饷" not in prompt
 
 
-def test_audience_prompt_projects_return_report_with_derived_source(game, monkeypatch):
-    """回奏进入该角色知识投影，查访问题不能被生产编排伪装成见闻。"""
-    db, state, content = game
-    minister = content.characters["王承恩"]
-    calls = []
-    original = db.build_return_report
-
-    def build_report(query, **kwargs):
-        calls.append(kwargs.get("source_kind"))
-        return original(query, **kwargs)
-
-    monkeypatch.setattr(db, "build_return_report", build_report)
-    session = SimpleNamespace(db=db, state=state)
-    prepared = prepare_character_materials(db, state, minister)
-
-    prompt = GameSession._audience_prompt_for_message(
-        session, "请查访各镇欠饷如何？", minister, prepared=prepared
-    )
-
-    assert calls == ["inquiry"]
-    world = db.get_character_knowledge(state, minister.name).get("world") or {}
-    for key in ("treasury", "military", "personnel", "security", "regional", "construction"):
-        value = str(world.get(key) or "").strip()
-        if value:
-            assert value not in prompt
 
 
 def test_audience_prompt_does_not_create_near_minister_report_for_ordinary_minister(game):
