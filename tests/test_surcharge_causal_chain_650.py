@@ -284,7 +284,7 @@ def test_player_month_recovery_consumes_old_levy_once(game, monkeypatch):
     assert db.get_resolve_context(turn)["extracted"] is None
 
 
-def test_province_without_population_pool_rejects_surcharge_and_old_ledger_exits(game):
+def test_province_without_population_pool_rejects_surcharge_and_old_ledger_exits(game, monkeypatch):
     """辽东无完整农民/流民加派池（#659 仅军户/流民）：新旨不落账，历史毒账也不得 soft-lock。"""
     db, state, content = game
     applied = apply_score_extraction(db, state, {
@@ -304,7 +304,8 @@ def test_province_without_population_pool_rejects_surcharge_and_old_ledger_exits
     farmer_before = _pop(db, "农民", "liaodong")
     displaced_before = _pop(db, "流民", "liaodong")
 
-    _settle_month(state, db, {}, before_turn=before_turn, content=content)
+    from tests.test_due_review_621 import _settle_empty_month
+    _settle_empty_month(db, state, content, monkeypatch)
 
     assert state.turn == before_turn + 1
     assert _pop(db, "农民", "liaodong") == farmer_before
@@ -399,13 +400,13 @@ def test_exact_levy_fact_stays_out_of_public_read_chain_and_free_report_enters_i
     assert free_body in public_read
 
 
-def test_production_inputs_project_qualitative_regional_displaced_trend(game):
+def test_production_inputs_project_qualitative_regional_displaced_trend(game, monkeypatch):
     db, state, content = game
     apply_score_extraction(db, state, {
         "surcharge_decrees": [_decree(db, state, monthly_amount=10.0)],
     }, content, None)
-    turn = state.turn
-    _settle_month(state, db, {}, before_turn=turn, content=content)
+    from tests.test_due_review_621 import _settle_empty_month
+    _settle_empty_month(db, state, content, monkeypatch)
     want = _expected_inflow_persons(10.0, SHAANXI_SUPPORT)
 
     payload_text = str(build_simulator_payload(state, db, "", "")["classes_brief"])
