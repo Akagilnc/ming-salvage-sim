@@ -2285,7 +2285,6 @@ class GameDB:
             "INTEGER NOT NULL DEFAULT 0 CHECK (edict_overdraw >= 0)",
         )
         self._migrate_building_logs_to_durable_audit()
-        self._migrate_endorsement_decision_provenance()
         self._ensure_office_type_parents()
         self._ensure_event_parents()
         for column, definition in {
@@ -3630,67 +3629,6 @@ class GameDB:
                 if str(office_type).strip()
             }
         ) - set(PERSON_TITLE_KINDS)
-
-    def _migrate_endorsement_decision_provenance(self) -> None:
-        """#658 ADR 0070 later-wins：背书 provenance = chat_turn XOR decision_key。
-
-        旧表带 chat_turns FK 且无 decision_key；重建以允许批红路径不伪造 chat turn。
-        既有行一律 source_chat_turn_id>0 + decision_key=''，满足新 CHECK。
-        """
-        cols = {
-            str(row["name"])
-            for row in self.conn.execute(
-                "PRAGMA table_info(decree_dossier_endorsements)"
-            ).fetchall()
-        }
-        if not cols:
-            return
-        has_decision_key = "decision_key" in cols
-        has_chat_fk = any(
-            str(row["table"]) == "chat_turns"
-            for row in self.conn.execute(
-                "PRAGMA foreign_key_list(decree_dossier_endorsements)"
-            ).fetchall()
-        )
-        if has_decision_key and not has_chat_fk:
-            return
-        # 旧表可能尚无 decision_key 列；SELECT 用条件表达式兜底。
-        select_key = (
-            "decision_key" if has_decision_key else "'' AS decision_key"
-        )
-        self.conn.executescript(
-            f"""
-            CREATE TABLE decree_dossier_endorsements_658 (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                dossier_id INTEGER NOT NULL,
-                form TEXT NOT NULL CHECK(form IN ('会签','当面站台','御笔手敕')),
-                endorser_id TEXT NOT NULL DEFAULT '',
-                imperial INTEGER NOT NULL DEFAULT 0 CHECK(imperial IN (0,1)),
-                source_chat_turn_id INTEGER NOT NULL DEFAULT 0,
-                decision_key TEXT NOT NULL DEFAULT '',
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(dossier_id, form, endorser_id, imperial, source_chat_turn_id, decision_key),
-                CHECK (
-                    (source_chat_turn_id > 0 AND decision_key = '')
-                    OR (source_chat_turn_id = 0 AND decision_key != '')
-                ),
-                FOREIGN KEY(dossier_id) REFERENCES decree_dossiers(id) ON DELETE CASCADE
-            );
-            INSERT INTO decree_dossier_endorsements_658
-                (id, dossier_id, form, endorser_id, imperial,
-                 source_chat_turn_id, decision_key, created_at)
-            SELECT id, dossier_id, form, endorser_id, imperial,
-                   source_chat_turn_id,
-                   {select_key},
-                   created_at
-            FROM decree_dossier_endorsements;
-            DROP TABLE decree_dossier_endorsements;
-            ALTER TABLE decree_dossier_endorsements_658
-                RENAME TO decree_dossier_endorsements;
-            CREATE INDEX IF NOT EXISTS idx_dossier_endorsements_dossier
-                ON decree_dossier_endorsements(dossier_id, id);
-            """
-        )
 
     def _migrate_building_logs_to_durable_audit(self) -> None:
         """Keep building history after its live building has been removed."""
@@ -19263,7 +19201,7 @@ class GameDB:
         }
         for key in (
             "appointment_tenure", "任别", "faction", "summon_after",
-            "text", "affair_id", "region_id",
+            "text", "affair_id", "region_id", "endorsements",
         ):
             value = payload.get(key)
             if value not in (None, ""):

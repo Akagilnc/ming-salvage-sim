@@ -185,9 +185,6 @@ def test_pending_round_approval_endorsed_before_close_or_after_month_join(
     assert len(ends) == 1
     assert ends[0]["form"] == "御笔手敕"
     assert ends[0]["source_chat_turn_id"] == ctid
-    assert int(did) in (
-        set()  # 明发 ids are directive ids not dossier
-    ) or True
     pubs = engine_command_mingfa_publication_ids(list_ledger(db, nid))
     assert int(row["committed_directive_id"]) in pubs
 
