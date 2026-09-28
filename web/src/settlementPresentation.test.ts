@@ -67,7 +67,7 @@ const ROSTER: Record<Exclude<FaceAccess, "open">, SettlementFaceKey[]> = {
     "court_roster", "appointment_roster", "harem_roster", "building", "economy",
     "memorials", "gazette", "audience_archive", "history", "closed_issues", "legacies", "menu",
   ],
-  must: ["decision_modal", "decision_recovery", "settle_resume"],
+  must: ["decision_modal"],
   present: ["wang_slip"],
   excluded: ["cheat_console", "ending"],
 };

@@ -1826,9 +1826,8 @@ class WebGame:
                 and self.db.get_resolve_context(self.state.turn) is not None
                 and not pending_decisions
             )
-            # #1620 / ADR 0008 决定 6/7：settling 恢复面投影既有 abort message + ready 判别。
-            # ready_replay=True → 续跑结算（重放 apply）；False → 重新推演（fallthrough）。
-            # #1846 / ADR 0157：月链 call_failure 优先——不再假装 legacy ready 重放。
+            # #1620 / ADR 0008 决定 6/7：settling 恢复面投影 abort message + ready 判别。
+            # #1846 / ADR 0157：月链 call_failure 优先；前端统一「重试」，不双钮分流。
             settlement_recovery = None
             if turn_phase == TurnPhase.SETTLING.value:
                 from ming_sim.error_pack import (

@@ -3,7 +3,6 @@ import { readFileSync } from "node:fs";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { DecisionModal } from "./decisionModal";
-import { DecisionRecoveryPanel } from "./decisionRecovery";
 import { EdictModal } from "./edictModal";
 import { FullscreenModal } from "./hud";
 import type { GameState, PendingDecision } from "../types";
@@ -178,15 +177,18 @@ describe.sequential("medium: shared Electron geometry", () => {
     }
   });
 
-  it("#1620 recovery banner：长错误包路径下按钮仍在视口且可命中", async () => {
+  it("#1854 统一恢复横幅：长错误包路径下「重试」仍在视口且可命中", async () => {
     const longPath = `/${"long-directory/".repeat(24)}error-pack-1620`;
     const page = renderToStaticMarkup(
-      <div data-testid="decision-recovery">
-        <DecisionRecoveryPanel
-          message={`结算中止，请重试。\n错误包：${longPath}\n请将整个目录发给作者。`}
-          busy=""
-          onRetry={noop}
-        />
+      <div
+        className="recovery-banner"
+        role="alert"
+        data-testid="decision-recovery"
+      >
+        <span className="recovery-banner-message">{
+          `结算中止，请重试。\n错误包：${longPath}\n请将整个目录发给作者。`
+        }</span>
+        <button type="button" className="seal-btn-issue" onClick={noop}>重试</button>
       </div>,
     );
     const results = await measureElectronLayout<{

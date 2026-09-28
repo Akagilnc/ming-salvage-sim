@@ -462,8 +462,8 @@ export type GameState = {
   /** #1625：结算入口进程内在飞；刷新/重拉只等待，不打回或续跑。 */
   settlement_entry_inflight?: boolean;
   /**
-   * #1620 / ADR 0008 决定 6/7：settling 恢复面投影。
-   * ready_replay=true → 续跑结算；false → 重新推演。message 含错误包路径与发给作者指引。
+   * #1620 / #1846 / ADR 0008 决定 6/7：settling 恢复面投影。
+   * message 含错误包路径与发给作者指引；前端统一一行一钮「重试」。
    */
   settlement_recovery?: {
     ready_replay: boolean;

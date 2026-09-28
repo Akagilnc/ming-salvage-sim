@@ -1778,7 +1778,7 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     expect(host2.querySelector('[data-testid="decision-modal"]')!.textContent).toContain("辽东战守");
   });
 
-  it("awaiting_decision + 损坏 pending：DecisionRecoveryPanel 可点；刷新重挂后仍在", async () => {
+  it("awaiting_decision + 损坏 pending：统一恢复横幅可点；刷新重挂后仍在", async () => {
     stubSettlementFetch(settlementBaseState("awaiting_decision", {
       pending_decisions: [{ broken: true }],
     }));
