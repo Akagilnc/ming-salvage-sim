@@ -1,249 +1,80 @@
-"""#504 / ADR 0028 R1+R2：任免的双向对冲 —— 名册 ⊕ 同夜暂存为比对真基准。
-
-行为契约（对着 issue #504 AC6/AC7）：召对里皇帝反悔时，本轮抽出的任免与同夜一条
-【尚未落库的反向暂存任免】相抵，须撤销那条暂存、不落新动作——暂存免职未提交时名册仍
-显示在职，只比名册会把「留任」误判 no-op 丢弃（免职照旧执行、反悔失效）；暂存任命未落库
-时被任者尚不在册，只比名册会把「免去」另 stage 成孤儿罢免。双向对称。
-
-外部行为契约的观测点 = `GameSession.apply_cli_conversation_actions`（CLI 后端会话落地
-唯一真源），断言真实 pending_actions / characters 表可观测态。office 意图用
-preclassified_intent 直喂（并发分类器同款结构），不打真实 LLM 边界。
-
-AC1（密令按钮轮不跑任免分类器）另有一条调用审计 tracer。
-"""
+"""#504：反悔只撤指定的现役暂存；新的真实免职另立候选。"""
 
 from __future__ import annotations
 
 import json
-import types
-from types import SimpleNamespace
 
-import pytest
-
-import ming_sim.cli_backend as cb
-from ming_sim.session import GameSession
+from ming_sim.declaration_dispatch import dispatch_declaration
 
 
-def _session(db, state, content):
-    s = SimpleNamespace(
-        db=db, state=state, registry=None, content=content,
-        llm_config=SimpleNamespace(channel="cli"),
-    )
-    s.apply_cli_conversation_actions = types.MethodType(
-        GameSession.apply_cli_conversation_actions, s)
-    s._merge_staged_new_secret_order_content = types.MethodType(
-        GameSession._merge_staged_new_secret_order_content, s)
-    return s
-
-
-def _active_ming_minister(db, content, *, exclude=()):
-    for ch in content.characters.values():
-        if getattr(ch, "power_id", "ming") != "ming":
-            continue
-        if getattr(ch, "office_type", "") == "后宫":
-            continue
-        if not getattr(ch, "office", ""):
-            continue
-        if ch.name in exclude:
-            continue
-        if db.get_character_status(ch.name)[0] == "active":
-            return ch
-    raise AssertionError("找不到 active 的大明大臣")
-
-
-def _office_pendings(db, turn):
-    return [p for p in db.list_pending_actions(turn) if p["kind"] == "office"]
-
-
-def _stage_office(sess, summoner, *, action, name, office, message, region_id=""):
-    intent = {
-        "kind": "appointment", "appoint_action": action,
-        "name": name, "office": office,
-    }
-    seat = str(region_id or "").strip()
-    if seat:
-        intent["region_id"] = seat
-    return sess.apply_cli_conversation_actions(
-        SimpleNamespace(name=summoner.name, office_type=summoner.office_type),
-        message, "臣领旨。",
-        has_directive=False, secret_order_id=None,
-        preclassified_intent=intent,
+def _minister(db, content):
+    return next(
+        ch for ch in content.characters.values()
+        if getattr(ch, "power_id", "ming") == "ming"
+        and getattr(ch, "office_type", "") != "后宫"
+        and getattr(ch, "office", "")
+        and db.get_character_status(ch.name)[0] == "active"
     )
 
 
-# ── AC6：暂存免职后「留任」→ 复任对冲掉暂存免职，不被 no-op 误丢 ─────────────
-def test_reinstatement_cancels_staged_dismissal(game):
-    """留任的现实抽取形 office="" —— 不得靠 stuffed office 拧开 no-op 门才对冲（判词 L2）。"""
+def _office_rows(db, turn):
+    return [row for row in db.list_pending_actions(turn) if row["kind"] == "office"]
+
+
+def _appoint(db, state, minister, *, action, office):
+    result = dispatch_declaration(db, state, {"commissions": [{
+        "text": "任免具奏。",
+        "appointment": {"appoint_action": action, "name": minister.name, "office": office},
+    }]}, minister_name=minister.name)
+    assert not result.commissions.rejected
+    return result
+
+
+def _reject(db, state, minister, action_id):
+    return dispatch_declaration(db, state, {"promises": [{
+        "action_id": action_id, "decision": "拒绝",
+    }]}, minister_name=minister.name).promises
+
+
+def test_reconsider_dismissal_leaves_incumbent_in_place(game):
     db, state, content = game
-    target = _active_ming_minister(db, content)
-    summoner = _active_ming_minister(db, content, exclude={target.name})
+    minister = _minister(db, content)
+    _appoint(db, state, minister, action="罢免", office=minister.office)
+    pending = _office_rows(db, state.turn)
+    assert len(pending) == 1
 
-    sess = _session(db, state, content)
-    _stage_office(sess, summoner, action="罢免", name=target.name,
-                  office=target.office, message=f"将{target.name}革职拿问。")
-    staged = _office_pendings(db, state.turn)
-    assert len(staged) == 1 and staged[0]["action"] == "罢免"
+    result = _reject(db, state, minister, int(pending[0]["id"]))
 
-    # 「留任原职」LLM 常抽不出具体 office → office=""；对冲不得依赖 office 字符串。
-    res = _stage_office(sess, summoner, action="任命", name=target.name,
-                        office="",
-                        message=f"再想想，还是命{target.name}留任原职。")
-
-    # 复任对冲掉暂存免职：无残留 office 暂存，也不 stage 新任命（净效果 = 留任）。
-    assert _office_pendings(db, state.turn) == []
-    assert not res.get("pending_action_id")
-    # 免职从未落库，名册原封不动。
-    row = db.conn.execute(
-        "SELECT status, office FROM characters WHERE name=?", (target.name,)
-    ).fetchone()
-    assert row["status"] == "active"
+    assert len(result.applied) == 1 and not result.rejected
+    assert _office_rows(db, state.turn) == []
+    assert db.get_character_status(minister.name)[0] == "active"
 
 
-# ── L3：在职者「改任暂存 + 革职」→ 撤掉暂存任命，但仍落真罢免（不吞） ──────────
-def test_dismissal_after_reassignment_cancels_appointment_but_still_stages(game):
+def test_reconsider_reassignment_then_dismiss_incumbent(game):
     db, state, content = game
-    target = _active_ming_minister(db, content)
-    summoner = _active_ming_minister(db, content, exclude={target.name})
+    minister = _minister(db, content)
+    new_office = next(o for o in ("陕西巡抚", "蓟辽总督", "钦差督师") if o != minister.office)
+    _appoint(db, state, minister, action="任命", office=new_office)
+    pending = _office_rows(db, state.turn)
+    assert len(pending) == 1
 
-    sess = _session(db, state, content)
-    # 改任到一个与现职不同的官（否则同职=no-op，测不到改任）。
-    cur_office = target.office or ""
-    new_office = next(
-        o for o in ("陕西巡抚", "蓟辽总督", "钦差督师", "南京守备")
-        if o not in cur_office)
-    # 先对在职者 stage 一条改任任命（升迁/调任）。
-    _stage_office(sess, summoner, action="任命", name=target.name,
-                  office=new_office, message=f"改授{target.name}{new_office}。")
-    staged = _office_pendings(db, state.turn)
-    assert len(staged) == 1 and staged[0]["action"] == "任命"
+    result = _reject(db, state, minister, int(pending[0]["id"]))
+    assert len(result.applied) == 1 and not result.rejected
+    _appoint(db, state, minister, action="罢免", office=minister.office)
 
-    # 再革职：撤掉暂存改任，但目标仍在职有实职 → 仍须落真罢免。
-    res = _stage_office(sess, summoner, action="罢免", name=target.name,
-                        office="", message=f"不必了，将{target.name}革职拿问。")
-
-    remaining = _office_pendings(db, state.turn)
-    assert [p["action"] for p in remaining] == ["罢免"]
-    assert res.get("pending_action_id")
-    assert json.loads(remaining[0]["payload_json"])["name"] == target.name
+    remaining = _office_rows(db, state.turn)
+    assert len(remaining) == 1 and remaining[0]["action"] == "罢免"
+    assert json.loads(remaining[0]["payload_json"])["name"] == minister.name
 
 
-# ── AC7（对称向）：暂存任命后「免去」→ 罢免对冲掉暂存任命，不落孤儿罢免 ────────
-def test_cancellation_cancels_staged_appointment(game):
+def test_reconsider_without_candidate_does_not_remove_unrelated_pending(game):
     db, state, content = game
-    summoner = _active_ming_minister(db, content)
-    newname = "对冲新抚甲"
-    content.characters.pop(newname, None)
-    assert db.conn.execute(
-        "SELECT name FROM characters WHERE name=?", (newname,)).fetchone() is None
+    minister = _minister(db, content)
+    _appoint(db, state, minister, action="罢免", office=minister.office)
+    pending = _office_rows(db, state.turn)
+    assert len(pending) == 1
 
-    sess = _session(db, state, content)
-    _stage_office(sess, summoner, action="任命", name=newname,
-                  office="陕西巡抚", message=f"着{newname}任陕西巡抚。")
-    staged = _office_pendings(db, state.turn)
-    assert len(staged) == 1 and staged[0]["action"] == "任命"
+    result = _reject(db, state, minister, int(pending[0]["id"]) + 100000)
 
-    res = _stage_office(sess, summoner, action="罢免", name=newname,
-                        office="", message=f"不任了，免去{newname}。")
-
-    # 暂存任命被对冲撤销：无残留 office 暂存、不 stage 孤儿罢免、被任者从未落库。
-    assert _office_pendings(db, state.turn) == []
-    assert not res.get("pending_action_id")
-    assert db.conn.execute(
-        "SELECT name FROM characters WHERE name=?", (newname,)).fetchone() is None
-
-
-def test_cross_seat_typed_cancel_does_not_hedge(game):
-    """双方 typed 且 region 不同 → 跨 seat 不对冲；空 office 反悔仍按人接住。"""
-    db, state, content = game
-    summoner = _active_ming_minister(db, content)
-    newname = "跨省对冲乙"
-    content.characters.pop(newname, None)
-
-    sess = _session(db, state, content)
-    _stage_office(
-        sess, summoner, action="任命", name=newname, office="巡抚",
-        region_id="shaanxi", message=f"着{newname}任陕西巡抚。",
-    )
-    staged = _office_pendings(db, state.turn)
-    assert len(staged) == 1
-    assert json.loads(staged[0]["payload_json"])["region_id"] == "shaanxi"
-
-    # 双方 typed 不同 seat：不得撤陕西 pending
-    res = _stage_office(
-        sess, summoner, action="罢免", name=newname, office="",
-        region_id="henan", message=f"免去{newname}河南之任。",
-    )
-    remaining = _office_pendings(db, state.turn)
-    assert len(remaining) == 2
-    actions = {p["action"] for p in remaining}
-    assert actions == {"任命", "罢免"}
-    by_action = {
-        p["action"]: json.loads(p["payload_json"]) for p in remaining
-    }
-    assert by_action["任命"]["region_id"] == "shaanxi"
-    assert by_action["罢免"]["region_id"] == "henan"
-    assert res.get("pending_action_id")
-
-    # ADR 0028：空 office / 空任所反悔仍按人撤掉陕西任命
-    res2 = _stage_office(
-        sess, summoner, action="罢免", name=newname, office="",
-        message=f"不任了，免去{newname}。",
-    )
-    left = _office_pendings(db, state.turn)
-    assert [p["action"] for p in left] == ["罢免"]
-    assert json.loads(left[0]["payload_json"])["region_id"] == "henan"
-    assert not res2.get("pending_action_id")
-
-
-# ── 负向：无相抵暂存时，罢免照常 stage，绝不被对冲误吞 ────────────────────────
-def test_plain_dismissal_without_opposing_pending_still_stages(game):
-    db, state, content = game
-    target = _active_ming_minister(db, content)
-    summoner = _active_ming_minister(db, content, exclude={target.name})
-
-    sess = _session(db, state, content)
-    res = _stage_office(sess, summoner, action="罢免", name=target.name,
-                        office=target.office, message=f"将{target.name}革职。")
-
-    staged = _office_pendings(db, state.turn)
-    assert len(staged) == 1 and staged[0]["action"] == "罢免"
-    assert res.get("pending_action_id")
-    assert json.loads(staged[0]["payload_json"])["name"] == target.name
-
-
-# ── AC1：密令按钮轮按按钮路由，不跑任免/确认等其它 LLM 分类器（调用审计）────────
-def test_secret_prefix_turn_runs_no_appointment_classifier(game, monkeypatch):
-    db, state, content = game
-    monkeypatch.setattr(cb, "_trace", lambda rec: None)
-    minister = _active_ming_minister(db, content)
-
-    def _forbidden(*a, **k):
-        raise AssertionError("密令按钮轮不应触发任免/确认/会话密令/拟旨等其它 LLM 分类器")
-
-    monkeypatch.setattr(cb, "extract_appointment_action", _forbidden)
-    monkeypatch.setattr(cb, "extract_confirmation_intent", _forbidden)
-    monkeypatch.setattr(cb, "extract_minister_actions", _forbidden)
-    monkeypatch.setattr(cb, "extract_draft_intent", _forbidden)
-
-    # 密令轮的轻 LLM 字段提取（decision 2 允许）走 _run_backend_for_config，喂固定 JSON。
-    # #1765 gate：夹具须含冻结合同必需结构字段（效果符号等）；行为断言一字不改。
-    monkeypatch.setattr(cb, "_run_backend_for_config",
-                        lambda prompt, llm_config=None, tag="", *, policy=None: (json.dumps({
-                            "标题": "密查关宁军饷", "内容": "着人密查关宁军饷截留。",
-                            "承办人": minister.name, "期限月数": 0, "差务": "核发辽饷",
-                            "价值轴": ["实务事功"], "方向": 1, "交付单位": "万两",
-                            "交付目标": 1, "效果符号": 1,
-                            "钱粮用途": "辽饷", "钱粮类别": "军饷", "钱粮账户": "国库",
-                            "标签": ["关宁"],
-                        }, ensure_ascii=False), 1))
-
-    sess = _session(db, state, content)
-    res = sess.apply_cli_conversation_actions(
-        SimpleNamespace(name=minister.name, office_type=minister.office_type),
-        "密令如下：着人密查关宁军饷截留，不得声张。", "臣领密旨。",
-        has_directive=False, secret_order_id=None)
-
-    # 走密令路：落一条 secret_order 暂存（未打任免/确认分类器即已由 _forbidden 保证）。
-    pend = db.list_pending_actions(state.turn)
-    assert res.get("pending_action_id")
-    assert [p["kind"] for p in pend] == ["secret_order"]
+    assert not result.applied and len(result.rejected) == 1
+    assert [row["id"] for row in _office_rows(db, state.turn)] == [pending[0]["id"]]
