@@ -531,14 +531,22 @@ def minister_chat(session: GameSession, character: Character, *, selected: bool 
                     if not night_was_open:
                         from ming_sim.decree_forecast import schedule_held_decree_forecasts
                         schedule_held_decree_forecasts(session)
-                    chat_turn_id = session.db.create_chat_turn(
-                        session.state,
-                        "殿上",
-                        f"cli:殿上",
-                        0,
-                        night_id=int(night["id"]),
-                        status="generating",
-                    )
+                    from ming_sim.applier import atomic
+                    from ming_sim.audience_night import ensure_summon_enter
+                    with atomic(session.db):
+                        chat_turn_id = session.db.create_chat_turn(
+                            session.state,
+                            "殿上",
+                            "cli:殿上",
+                            0,
+                            night_id=int(night["id"]),
+                            status="generating",
+                        )
+                        if question == f"宣{character.name}":
+                            ensure_summon_enter(
+                                session.db, int(night["id"]), character.name,
+                                origin_chat_turn_id=chat_turn_id, commit=False,
+                            )
                 user_message_id = session.db.append_chat_message(
                     character.name, accepted_turn, "user", question,
                 )

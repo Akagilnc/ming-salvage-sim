@@ -381,7 +381,6 @@ def open_hall_turn(
         int(agno_runs_before or 0),
         night_id=night_id,
         status="generating",
-        route=route,
     ))
     name = str(minister_name or "").strip()
     if name and name != SCENE_CHAT_SPEAKER:
