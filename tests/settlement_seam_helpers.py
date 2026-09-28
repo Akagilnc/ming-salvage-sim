@@ -168,15 +168,17 @@ def settle_effects(
             # 空 delta 旧核仍走 apply_score_extraction（含回流等 always-on 步）。
             from ming_sim.issues import apply_score_extraction
             with atomic(db):
-                apply_score_extraction(
+                applied = apply_score_extraction(
                     db, state, {}, content=content, registry=registry,
                 )
+                from ming_sim.audience_night import settle_applied_arrived_summons
                 from ming_sim.covert_levy import (
                     settle_exposure_from_canonical_actions,
                     write_exposure_todos,
                 )
-                write_exposure_todos(db, state, {})
-                settle_exposure_from_canonical_actions(db, state, {})
+                settle_applied_arrived_summons(db, applied)
+                write_exposure_todos(db, state, applied)
+                settle_exposure_from_canonical_actions(db, state, applied)
         from ming_sim.issues import apply_issue_inertia_and_ongoing, clear_gated_legacies
         from ming_sim.audience_night import retire_unsettled_summons_for_inactive
         from ming_sim.covert_levy import settle_exposure_from_canonical_actions

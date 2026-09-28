@@ -26,36 +26,37 @@ def test_history_turn_reads_decree_text_from_resolve_context(game):
 
 
 def test_dispatch_settles_arrived_summons_and_exposure_hooks(game):
-    """#670/#651 挂在 declaration_dispatch 逐段落账之后（与落账同事务）。"""
+    """#670/#651 挂在 declaration_dispatch 逐段落账之后（与落账同事务）。
+
+    settle_exposure 必须收到本段 report，不能空 dict（默许/查办依赖 applied）。
+    """
     from ming_sim.applier import Provenance
     from ming_sim.declaration_dispatch import dispatch_declaration
-    from ming_sim import audience_night as an
-    from ming_sim.covert_levy import write_exposure_todos
-    import ming_sim.declaration_dispatch as dd
     import ming_sim.covert_levy as cl
     import ming_sim.audience_night as an_mod
 
     db, state, content = game
-    calls = {"summon": 0, "exposure": 0}
+    calls = {"summon": 0, "write": 0, "settle": 0, "settle_applied": []}
     real_summon = an_mod.settle_applied_arrived_summons
-    real_exp = cl.write_exposure_todos
+    real_write = cl.write_exposure_todos
+    real_settle = cl.settle_exposure_from_canonical_actions
 
     def spy_summon(db, applied):
         calls["summon"] += 1
         return real_summon(db, applied)
 
-    def spy_exp(db, state, applied=None):
-        calls["exposure"] += 1
-        return real_exp(db, state, applied)
+    def spy_write(db, state, applied=None):
+        calls["write"] += 1
+        return real_write(db, state, applied)
 
-    # Patch at module level used by dispatch
-    import tests.settlement_seam_helpers as _  # noqa ensure path
-    orig_dispatch = dd._dispatch_effects
+    def spy_settle(db, state, applied):
+        calls["settle"] += 1
+        calls["settle_applied"].append(applied)
+        return real_settle(db, state, applied)
 
-    # Monkey via simple reassignment in local import path - use setattr on audience/covert
-    # The dispatch does local import; patch the source modules.
     an_mod.settle_applied_arrived_summons = spy_summon
-    cl.write_exposure_todos = spy_exp
+    cl.write_exposure_todos = spy_write
+    cl.settle_exposure_from_canonical_actions = spy_settle
     try:
         dispatch_declaration(
             db, state,
@@ -64,9 +65,15 @@ def test_dispatch_settles_arrived_summons_and_exposure_hooks(game):
         )
     finally:
         an_mod.settle_applied_arrived_summons = real_summon
-        cl.write_exposure_todos = real_exp
+        cl.write_exposure_todos = real_write
+        cl.settle_exposure_from_canonical_actions = real_settle
     assert calls["summon"] == 1
-    assert calls["exposure"] == 1
+    assert calls["write"] == 1
+    assert calls["settle"] == 1
+    # 必须是本段 report（mapping），不是空 dict 冒充。
+    assert calls["settle_applied"] and isinstance(calls["settle_applied"][0], dict)
+    assert calls["settle_applied"][0] is not None
+    assert calls["settle_applied"][0] != {}
 
 
 def test_month_drift_runs_exposure_settlement(game, monkeypatch):

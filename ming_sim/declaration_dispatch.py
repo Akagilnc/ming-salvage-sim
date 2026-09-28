@@ -481,9 +481,14 @@ def _dispatch_effects(
     # #670：续启赴京成功后结清 in_transit 传召，与本段落账同事务。
     from ming_sim.audience_night import settle_applied_arrived_summons
     settle_applied_arrived_summons(db, report)
-    # #651：揭破待办以本段已落结果为据（民变实况用本段 population_transfers）。
-    from ming_sim.covert_levy import write_exposure_todos
+    # #651：揭破待办与揭破结算均以本段已落结果为据（默许/查办读 population_transfers
+    # 与人物/关系结果；民变实况写待办同用本段 transfers）。空 applied 会使默许/查办不可达。
+    from ming_sim.covert_levy import (
+        settle_exposure_from_canonical_actions,
+        write_exposure_todos,
+    )
     write_exposure_todos(db, state, report)
+    settle_exposure_from_canonical_actions(db, state, report)
     _collect_inline_rejections(collector, report, turn, source)
     _persist_specialized_extraction(
         db, state, extraction, collector=collector, turn=turn, source=source,
