@@ -27,7 +27,6 @@ from ming_sim.issues import (
     gather_candidate_events,
     gather_impeachment_surge_candidates,
     issue_to_payload,
-    normalize_event_outcome_labels_or_error,
 )
 from ming_sim.models import GameState, loads_effect_dict, reign_period_label
 from ming_sim.paths import bundled_path
