@@ -416,16 +416,18 @@ def test_strategic_event_unauthorized_person_origin_reaches_final_projection(gam
         name="另事", origin="另一件交办",
         year=state.year, period=state.period, turn=state.turn,
     )
+    db.affairs.declare_closed(unauthorized.id, turn=state.turn)
     db.conn.execute(
         "UPDATE regions SET military_pressure = ? WHERE id = ?", (20, "beizhili"),
     )
     db.conn.execute(
         "UPDATE characters SET status = ? WHERE name = ?", ("active", "卢象升"),
     )
-    out = apply_score_extraction(
-        db,
-        state,
-        {
+    from ming_sim.month_translate import dispatch_month_segment
+
+    dispatch_month_segment(db, state, segment="戊寅虏变战果", translate_fn=lambda _request, _config: {
+        "effects": [{
+            "event_id": "wuyin_lubian",
             "new_issues": [{"origin_kind": "event_pool", "id": "wuyin_lubian"}],
             "region_delta": {
                 "beizhili": {
@@ -441,15 +443,8 @@ def test_strategic_event_unauthorized_person_origin_reaches_final_projection(gam
                 "origin_ref": db.affairs.origin_ref(unauthorized.id),
                 "reason": "戊寅虏变软判主帅功过",
             }],
-        },
-        content=content,
-        open_affair_ids_at_input={authorized.id},
-        ordered_effect_event_ids={
-            "region_delta": ["wuyin_lubian"],
-            "人物变更": ["wuyin_lubian"],
-        },
-    )
-    assert out["issue_summary"]["new_issues"][0].get("rejected") is not True
+        }],
+    })
     assert db.has_event_triggered("wuyin_lubian")
     assert db.conn.execute(
         "SELECT military_pressure FROM regions WHERE id = ?", ("beizhili",),
@@ -457,12 +452,10 @@ def test_strategic_event_unauthorized_person_origin_reaches_final_projection(gam
     assert db.conn.execute(
         "SELECT status FROM characters WHERE name = ?", ("卢象升",),
     ).fetchone()["status"] == "active"
-    rejected_persons = [
-        row for row in out["applied_person_changes"]
-        if row.get("rejected") and row.get("name") == "卢象升"
-    ]
-    assert len(rejected_persons) == 1
-    assert "事务不在本批" in str(rejected_persons[0].get("reason") or "")
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM rejection_reports WHERE section='applied_person_changes' "
+        "AND category='invalid_enum'"
+    ).fetchone()[0] == 1
 
 
 def test_new_issue_affair_attach_failure_leaves_no_partial_product(game, monkeypatch):
