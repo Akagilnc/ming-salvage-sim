@@ -3536,9 +3536,6 @@ class WebGame:
             answer = GameSession._ensure_clarification_cue(answer, directive_ambiguous)
         # Sync/web consume the same typed action-report projection seam.
         answer = GameSession._append_action_reports(answer, res)
-        pending_action_failures = list(res.get("pending_action_failures") or [])
-        if tool_stage_failures:
-            pending_action_failures = pending_action_failures + list(tool_stage_failures)
         # 仅解释/登记；join + 短事务落账由 _chat_stream_payload 在 gate 外/内分阶完成。
         return {
             "answer": answer,
@@ -3550,7 +3547,6 @@ class WebGame:
             "displaced": displaced,
             "secret_order_id": secret_order_id,
             "pending_action_id": pending_action_id,
-            "pending_action_failures": pending_action_failures,
             "directive_ambiguous": directive_ambiguous,
             "decree_validation_failure": res.get("decree_validation_failure"),
             "secret_order_landing_recovery": res.get("secret_order_landing_recovery"),

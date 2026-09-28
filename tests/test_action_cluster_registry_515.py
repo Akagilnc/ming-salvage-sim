@@ -1219,21 +1219,6 @@ _PROBE_RAW_DRAFT_1744 = {
 }
 
 
-def _pending_directives_via_api(monkeypatch, wg, *, minister_name: str):
-    """生产读缝：db.list_pending_actions → 该大臣 directive 列表。
-
-    #1853：player-facing GET /api/pending_actions 已退役；暂存真源仍在 DB。
-    """
-    del monkeypatch  # 保留签名兼容既有调用点
-    return [
-        row for row in wg.db.list_pending_actions(int(wg.state.turn))
-        if row.get("kind") == "directive"
-        and row.get("status") == "pending"
-        and row.get("minister_name") == minister_name
-        and row.get("action") == "拟旨"
-    ]
-
-
 def _bind_draft_extract_1744(monkeypatch, *, minister_name: str):
     monkeypatch.setattr(cb, "extract_draft_intent", lambda *a, **k: {
         "draft_action": "拟旨",
@@ -1288,8 +1273,6 @@ def test_one_intent_probe_raw_chat_to_pending_api_one_ordinary(game, monkeypatch
     }
     wg.chat(minister.name, _EMPEROR_1744)
     wg._runtime_write_queue().barrier(lambda: None)
-    rows = _pending_directives_via_api(monkeypatch, wg, minister_name=minister.name)
-    # API 可能按 minister 过滤；转译 actor 未必是 minister——改查全库新 directive
     all_new = [
         r for r in db.list_pending_actions(int(state.turn))
         if int(r["id"]) not in before and r.get("kind") == "directive"
