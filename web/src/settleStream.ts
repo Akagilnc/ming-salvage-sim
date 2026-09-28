@@ -1,4 +1,5 @@
-// 颁诏/续裁共用：消费 SSE 推演流，stage/thinking/text 实时更新进度区，
+// 颁诏/续裁共用：消费 SSE 推演流。
+// #1852：stage/thinking/text 仍解析（流契约），等待面不再呈现推演/推敲/进度；
 // 返回传输终态：done（是否过月由 data.advanced 判定）/ decisions（暂停待裁）/ error。
 export type SettleStreamOutcome = { kind: "done" | "decisions" | "error"; data: any };
 

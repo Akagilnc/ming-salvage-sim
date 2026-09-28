@@ -111,14 +111,11 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     }));
     const host = document.createElement("div"); document.body.appendChild(host);
     await act(async () => { trackRoot(host).render(<App />); });
-    // 自动邸报弹出后关掉，再经木牌重开
-    await act(async () => {
-      await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="邸报"]')).not.toBeNull());
-    });
-    await click(host.querySelector('[aria-label="关闭弹窗"]'));
+    // #1852：不自动弹；经木牌自取
     await act(async () => {
       await vi.waitFor(() => expect(findButton(host, "邸报")).toBeTruthy());
     });
+    expect(host.querySelector('[role="dialog"][aria-label="邸报"]')).toBeNull();
     await click(findButton(host, "邸报"));
     await act(async () => {
       await vi.waitFor(() => {
@@ -1097,10 +1094,407 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     });
   });
 
-  it("#1725 SSE typed progress 贯通 App：consumeSettleStream → useSettlementFlow → progressbar", async () => {
-    // Full chain via existing App entry. Arbitrary stage labels + current/total must drive
-    // the real progressbar; no mock of consumeSettleStream / useSettlementFlow / SettlementLock.
-    // Mutation (setSettleProgress → null) must fail this test; label reverse-lookup must not invent bars.
+  it("#1852 写成即推进：本面邸报落位；朕知道了只关阅读；刷新不自动弹", async () => {
+    let streamController!: ReadableStreamDefaultController<Uint8Array>;
+    const encoder = new TextEncoder();
+    let liveState: Record<string, unknown> = {
+      ...settlementBaseState("player"),
+      turn: { year: 1627, period: 10, turn: 5, phase: "player", settlement_display: false },
+      previous_summary: "",
+      pending_decisions: [],
+      directives: [{ id: 1, text: "拨辽饷", status: "draft" }],
+    };
+    const advancedState = {
+      ...settlementBaseState("player"),
+      turn: { year: 1627, period: 11, turn: 6, phase: "player", settlement_display: false },
+      previous_summary: "十月邸报·本面",
+      previous_reign_period_label: "天启七年十月",
+      last_attendant_message: "奴婢呈上。",
+      pending_decisions: [],
+      directives: [],
+      issues: [{ id: 1, kind: "situation", title: MIDCOURSE_ISSUE, status: "open", progress: 10, fail_condition: "" }],
+    };
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      const u = new URL(String(url), "http://t.local");
+      if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
+      if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
+      if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
+      if (u.pathname.endsWith("/api/game/state")) return jsonResp(liveState);
+      if (u.pathname.endsWith("/api/history/turns")) return jsonResp({
+        turns: [{ kind: "month", turn: 5, year: 1627, period: 10, has_report: true, has_attendant: true, has_directive: true }],
+      });
+      if (u.pathname.includes("/api/history/turn/")) return jsonResp({
+        turn: 5, year: 1627, period: 10, report: "十月邸报·本面", decree: "",
+      });
+      if (u.pathname.endsWith("/api/court_layout")) return jsonResp({ layout: "{}" });
+      if (u.pathname.endsWith("/api/decree/issue/stream") && init?.method === "POST") {
+        return new Response(new ReadableStream<Uint8Array>({
+          start(controller) { streamController = controller; },
+        }), { status: 200, headers: { "Content-Type": "text/event-stream" } });
+      }
+      return jsonResp({});
+    }));
+
+    const host = await mountApp();
+    await click(edictCommand(host));
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="诏书草案"]')).not.toBeNull());
+    });
+    await click(findButton(host, "盖玺颁诏过月"));
+    await act(async () => {
+      await vi.waitFor(() => expect(streamController).toBeTruthy());
+    });
+
+    liveState = advancedState;
+    await act(async () => {
+      streamController.enqueue(encoder.encode(
+        `event: done\ndata: ${JSON.stringify({ advanced: true, report: "十月邸报·本面" })}\n\n`,
+      ));
+      streamController.close();
+    });
+
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector("[data-testid=settlement-gazette-panel]")).not.toBeNull());
+    });
+    expect(host.querySelector('[role="dialog"][aria-label="邸报"]')).toBeNull();
+    expect(host.querySelector("[data-testid=settlement-gazette-panel]")!.textContent).toContain("十月邸报·本面");
+    expect(host.querySelector("[data-testid=wang-settlement-slip]")).toBeNull();
+
+    const dismiss = Array.from(host.querySelectorAll("button")).find((b) =>
+      (b.textContent || "").includes("朕知道了"),
+    );
+    expect(dismiss).toBeTruthy();
+    await click(dismiss);
+    expect(host.querySelector("[data-testid=settlement-gazette-panel]")).toBeNull();
+    // 新月盘面可见半程局势（已非核账）
+    expect(host.textContent).toContain(MIDCOURSE_ISSUE);
+
+    // 模拟刷新：重挂 App，落新月份盘面、不自动弹旧月邸报；史册仍可读本月档
+    unmountTrackedRoots();
+    const host2 = await mountApp();
+    expect(host2.querySelector("[data-testid=settlement-gazette-panel]")).toBeNull();
+    expect(host2.querySelector('[role="dialog"][aria-label="邸报"]')).toBeNull();
+    expect(host2.textContent).toContain("11 月");
+    expect(host2.querySelector("[data-testid=wang-settlement-slip]")).toBeNull();
+    await click(findButton(host2, "史册"));
+    await act(async () => {
+      await vi.waitFor(() =>
+        expect(host2.querySelector('[role="dialog"][aria-label="史册：历代奏报、诏书与递话"]')).not.toBeNull(),
+      );
+    });
+  });
+
+  it("#1852 写成即推进：成功过月清旧月本地拟诏态（compose / failed 卡不残留）", async () => {
+    let streamController!: ReadableStreamDefaultController<Uint8Array>;
+    const encoder = new TextEncoder();
+    let releaseCreate!: (value: Response) => void;
+    const createGate = new Promise<Response>((resolve) => { releaseCreate = resolve; });
+    let liveState: Record<string, unknown> = {
+      ...settlementBaseState("player"),
+      turn: { year: 1627, period: 10, turn: 5, phase: "player", settlement_display: false },
+      previous_summary: "",
+      pending_decisions: [],
+      // 耐久草案保证盖玺可点；另起本地 create 失败卡 + compose 残留验清零。
+      directives: [{ id: 1, text: "拨辽饷", status: "draft" }],
+      cased_directives: [],
+      pending_directive_count: 0,
+    };
+    const advancedState = {
+      ...settlementBaseState("player"),
+      turn: { year: 1627, period: 11, turn: 6, phase: "player", settlement_display: false },
+      previous_summary: "十月邸报·清拟诏",
+      previous_reign_period_label: "天启七年十月",
+      last_attendant_message: "奴婢呈上。",
+      pending_decisions: [],
+      directives: [],
+      cased_directives: [],
+      pending_directive_count: 0,
+      closed_this_turn: [],
+    };
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      const u = new URL(String(url), "http://t.local");
+      if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
+      if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
+      if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
+      if (u.pathname.endsWith("/api/game/state")) return jsonResp(liveState);
+      if (u.pathname.endsWith("/api/history/turns")) return jsonResp({ turns: [] });
+      if (u.pathname.endsWith("/api/court_layout")) return jsonResp({ layout: "{}" });
+      if (u.pathname.endsWith("/api/directives") && init?.method === "POST") return createGate;
+      if (u.pathname.endsWith("/api/decree/issue/stream") && init?.method === "POST") {
+        return new Response(new ReadableStream<Uint8Array>({
+          start(controller) { streamController = controller; },
+        }), { status: 200, headers: { "Content-Type": "text/event-stream" } });
+      }
+      return jsonResp({});
+    }));
+
+    const host = await mountApp();
+    await click(edictCommand(host));
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="诏书草案"]')).not.toBeNull());
+    });
+    const ta = host.querySelector<HTMLTextAreaElement>(".desk-compose textarea");
+    expect(ta).not.toBeNull();
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
+      setter.call(ta!, "旧月未落库草案");
+      ta!.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await click(findButton(host, "新增草案"));
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[data-directive-phase="inflight"]')).not.toBeNull());
+    });
+    await act(async () => {
+      releaseCreate({
+        ok: false,
+        status: 400,
+        statusText: "Bad Request",
+        json: async () => ({ detail: { message: "old-month-local-fail" } }),
+      } as unknown as Response);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[data-directive-phase="failed"]')).not.toBeNull());
+    });
+    expect(host.querySelector('[data-role="local-error"]')?.textContent).toBe("old-month-local-fail");
+    expect(host.querySelector<HTMLTextAreaElement>(".desk-compose textarea")?.value).toBe("旧月未落库草案");
+
+    await click(findButton(host, "盖玺颁诏过月"));
+    await act(async () => {
+      await vi.waitFor(() => expect(streamController).toBeTruthy());
+    });
+    liveState = advancedState;
+    await act(async () => {
+      streamController.enqueue(encoder.encode(
+        `event: done\ndata: ${JSON.stringify({ advanced: true, report: "十月邸报·清拟诏" })}\n\n`,
+      ));
+      streamController.close();
+    });
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector("[data-testid=settlement-gazette-panel]")).not.toBeNull());
+    });
+    const dismiss = Array.from(host.querySelectorAll("button")).find((b) =>
+      (b.textContent || "").includes("朕知道了"),
+    );
+    expect(dismiss).toBeTruthy();
+    await click(dismiss);
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector("[data-testid=settlement-gazette-panel]")).toBeNull());
+    });
+    // 新月盘面：同会话核账面已卸，拟诏可开。
+    expect(host.querySelector("[data-testid=wang-settlement-slip]")).toBeNull();
+    const reopen = edictCommand(host);
+    expect(reopen).toBeTruthy();
+    await click(reopen);
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="诏书草案"]')).not.toBeNull());
+    });
+    expect(host.querySelector('[data-directive-phase="failed"]')).toBeNull();
+    expect(host.querySelector('[data-role="local-error"]')).toBeNull();
+    expect(host.querySelector<HTMLTextAreaElement>(".desk-compose textarea")?.value).toBe("");
+    expect(host.textContent).not.toContain("old-month-local-fail");
+    expect(host.textContent).not.toContain("旧月未落库草案");
+  });
+
+  it("#1852 真实页面：服务端已推进但载入新月失败时邸报可读可关、旧月入口不可提交", async () => {
+    let streamController!: ReadableStreamDefaultController<Uint8Array>;
+    const encoder = new TextEncoder();
+    let stateGets = 0;
+    let failPostAdvanceRefresh = false;
+    const liveState: Record<string, unknown> = {
+      ...settlementBaseState("player"),
+      turn: { year: 1627, period: 10, turn: 5, phase: "player", settlement_display: false },
+      previous_summary: "",
+      pending_decisions: [],
+      directives: [{ id: 1, text: "拨辽饷", status: "draft" }],
+    };
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      const u = new URL(String(url), "http://t.local");
+      if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
+      if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
+      if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
+      if (u.pathname.endsWith("/api/game/state")) {
+        stateGets += 1;
+        if (failPostAdvanceRefresh) {
+          return new Response(JSON.stringify({ detail: { message: "账本刷新失败（页面）" } }), {
+            status: 503,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        return jsonResp(liveState);
+      }
+      if (u.pathname.endsWith("/api/history/turns")) return jsonResp({ turns: [] });
+      if (u.pathname.endsWith("/api/court_layout")) return jsonResp({ layout: "{}" });
+      if (u.pathname.endsWith("/api/decree/issue/stream") && init?.method === "POST") {
+        return new Response(new ReadableStream<Uint8Array>({
+          start(controller) { streamController = controller; },
+        }), { status: 200, headers: { "Content-Type": "text/event-stream" } });
+      }
+      return jsonResp({});
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const host = await mountApp();
+    expect(host.querySelector(".hud2-stage")).not.toBeNull();
+    expect(edictCommand(host)).toBeTruthy();
+    await click(edictCommand(host));
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="诏书草案"]')).not.toBeNull());
+    });
+    await click(findButton(host, "盖玺颁诏过月"));
+    await act(async () => {
+      await vi.waitFor(() => expect(streamController).toBeTruthy());
+    });
+
+    failPostAdvanceRefresh = true;
+    const getsBeforeDone = stateGets;
+    await act(async () => {
+      streamController.enqueue(encoder.encode(
+        `event: done\ndata: ${JSON.stringify({ advanced: true, report: "十月邸报·刷新失败仍可读" })}\n\n`,
+      ));
+      streamController.close();
+    });
+
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector("[data-testid=settlement-gazette-panel]")).not.toBeNull());
+    });
+    expect(stateGets).toBeGreaterThan(getsBeforeDone);
+    expect(host.querySelector("[data-testid=settlement-gazette-panel]")!.textContent).toContain("十月邸报·刷新失败仍可读");
+    // 旧月可操作盘面不得投影；#1854 才接手统一提示/重试，本票不得留独立重试入口。
+    expect(host.querySelector(".hud2-stage")).toBeNull();
+    expect(edictCommand(host)).toBeNull();
+    expect(findButton(host, "盖玺颁诏过月")).toBeFalsy();
+    expect(findButton(host, "重试载入新月盘面")).toBeFalsy();
+    expect(host.textContent).not.toContain(MIDCOURSE_ISSUE);
+
+    const getsBeforeDismiss = stateGets;
+    const streamPosts = () => fetchMock.mock.calls.filter(([url, init]) => {
+      const path = new URL(String(url), "http://t.local").pathname;
+      return path.endsWith("/api/decree/issue/stream") && init?.method === "POST";
+    }).length;
+    const streamPostsBeforeDismiss = streamPosts();
+    const dismiss = Array.from(host.querySelectorAll("button")).find((b) =>
+      (b.textContent || "").includes("朕知道了"),
+    );
+    expect(dismiss).toBeTruthy();
+    await click(dismiss);
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector("[data-testid=settlement-gazette-panel]")).toBeNull());
+    });
+    // 关闭阅读不触发重试或推进；旧月入口仍不可提交。
+    expect(stateGets).toBe(getsBeforeDismiss);
+    expect(streamPosts()).toBe(streamPostsBeforeDismiss);
+    expect(host.querySelector(".hud2-stage")).toBeNull();
+    expect(edictCommand(host)).toBeNull();
+    expect(findButton(host, "重试载入新月盘面")).toBeFalsy();
+  });
+
+  it("#1852 写成即推进：本面邸报阅读中不弹 closed/密令/结局；朕知道了后仍按既有规则弹", async () => {
+    vi.useFakeTimers();
+    try {
+      let streamController!: ReadableStreamDefaultController<Uint8Array>;
+      const encoder = new TextEncoder();
+      const autoOpenOrder = {
+        id: 1, title: "密", content: "", status: "active", minister_name: "",
+        year_issued: 1627, period_issued: 10,
+        dossier_progress: [{ turn: 5 }],
+      };
+      const ending = {
+        status: "defeat",
+        label: "煤山自缢",
+        summary: "终章。",
+        timeline: [{ turn: 6, year: 1627, period: 11, decree_brief: "", effect_brief: "", gazette: "十月邸报" }],
+      };
+      let liveState: Record<string, unknown> = {
+        ...settlementBaseState("player"),
+        turn: { year: 1627, period: 10, turn: 5, phase: "player", settlement_display: false },
+        previous_summary: "",
+        pending_decisions: [],
+        directives: [{ id: 1, text: "拨辽饷", status: "draft" }],
+        closed_this_turn: [],
+        ending: null,
+      };
+      const advancedState = {
+        ...settlementBaseState("player"),
+        turn: { year: 1627, period: 11, turn: 6, phase: "player", settlement_display: false },
+        previous_summary: "十月邸报·压弹窗",
+        previous_reign_period_label: "天启七年十月",
+        last_attendant_message: "奴婢呈上。",
+        pending_decisions: [],
+        directives: [],
+        closed_this_turn: [{
+          id: 2, kind: "situation", title: "已结边饷·过月", status: "resolved",
+          bar_value: 0, bar_good_meaning: "妥", bar_bad_meaning: "",
+          closed_turn: 5, stage_text: "", effect: {},
+        }],
+        ending,
+      };
+      const closedAuto = await import("./settlementPresentation");
+      const closedSpy = vi.spyOn(closedAuto, "shouldAutoOpenClosedIssuesAfterSettlement").mockReturnValue(true);
+
+      vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+        const u = new URL(String(url), "http://t.local");
+        if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
+        if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [autoOpenOrder] });
+        if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
+        if (u.pathname.endsWith("/api/game/state")) return jsonResp(liveState);
+        if (u.pathname.endsWith("/api/history/turns")) return jsonResp({ turns: [] });
+        if (u.pathname.endsWith("/api/court_layout")) return jsonResp({ layout: "{}" });
+        if (u.pathname.endsWith("/api/decree/issue/stream") && init?.method === "POST") {
+          return new Response(new ReadableStream<Uint8Array>({
+            start(controller) { streamController = controller; },
+          }), { status: 200, headers: { "Content-Type": "text/event-stream" } });
+        }
+        return jsonResp({});
+      }));
+
+      const host = await mountApp();
+      await click(edictCommand(host));
+      await act(async () => {
+        await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="诏书草案"]')).not.toBeNull());
+      });
+      await click(findButton(host, "盖玺颁诏过月"));
+      await act(async () => {
+        await vi.waitFor(() => expect(streamController).toBeTruthy());
+      });
+
+      liveState = advancedState;
+      await act(async () => {
+        streamController.enqueue(encoder.encode(
+          `event: done\ndata: ${JSON.stringify({ advanced: true, report: "十月邸报·压弹窗" })}\n\n`,
+        ));
+        streamController.close();
+      });
+      await act(async () => {
+        await vi.waitFor(() => expect(host.querySelector("[data-testid=settlement-gazette-panel]")).not.toBeNull());
+      });
+
+      // 阅读态期间：closed / 密令 / 结局均不得盖住本面邸报
+      await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+      expect(host.querySelector("[data-testid=settlement-gazette-panel]")).not.toBeNull();
+      expect(host.querySelector('[role="dialog"][aria-label="局势了结"]')).toBeNull();
+      expect(host.querySelector('[role="dialog"][aria-label="密令进度"]')).toBeNull();
+      expect(host.querySelector(".modal-bg-ending")).toBeNull();
+
+      const dismiss = Array.from(host.querySelectorAll("button")).find((b) =>
+        (b.textContent || "").includes("朕知道了"),
+      );
+      await click(dismiss);
+      expect(host.querySelector("[data-testid=settlement-gazette-panel]")).toBeNull();
+
+      // 朕知道了后：既有自动弹出规则仍生效（结局立即；密令 400ms；closed 当谓词放行）
+      expect(host.querySelector(".modal-bg-ending")).not.toBeNull();
+      expect(host.querySelector('[role="dialog"][aria-label="局势了结"]')).not.toBeNull();
+      await act(async () => { await vi.advanceTimersByTimeAsync(400); });
+      expect(host.querySelector('[role="dialog"][aria-label="密令进度"]')).not.toBeNull();
+      closedSpy.mockRestore();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("#1852 SSE 推演事件不驱动等待面：无进度条 / 无推敲 / 无 SettlementLock", async () => {
     let streamController!: ReadableStreamDefaultController<Uint8Array>;
     const encoder = new TextEncoder();
     const liveState = settlementBaseState("settling", {
@@ -1140,7 +1534,6 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
       await vi.waitFor(() => expect(streamController).toBeTruthy());
     });
 
-    // Stage label is arbitrary chrome; progress facts are independent typed fields.
     await act(async () => {
       streamController.enqueue(encoder.encode(
         'event: stage\ndata: {"content":"任意显示文案","current":3,"total":6}\n\n',
@@ -1153,40 +1546,16 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
       ));
     });
 
-    await act(async () => {
-      await vi.waitFor(() => {
-        const bar = host.querySelector('[data-testid="settlement-wait-progress"]');
-        expect(bar).not.toBeNull();
-        expect(bar?.getAttribute("role")).toBe("progressbar");
-        expect(bar?.getAttribute("aria-valuenow")).toBe("3");
-        expect(bar?.getAttribute("aria-valuemax")).toBe("6");
-        expect(bar?.getAttribute("aria-valuemin")).toBe("0");
-      });
-    });
-    // Stage chrome via structured stage node — not whole-decor mixed narrative text.
-    const stageNode = host.querySelector(".settlement-lock-stage");
-    expect(stageNode).not.toBeNull();
-    expect(stageNode?.textContent || "").toContain("任意显示文案");
-    // thinking/narrative stream events may arrive; do not lock generated body text.
-    // Center lock present; must not swallow recovery / decision faces (still settling recovery banner path).
-    expect(host.querySelector(".settlement-lock")).not.toBeNull();
+    await act(async () => { await Promise.resolve(); });
+    expect(host.querySelector('[data-testid="settlement-wait-progress"]')).toBeNull();
+    expect(host.querySelector("[data-testid=settlement-lock-decor]")).toBeNull();
+    expect(host.querySelector(".settlement-lock")).toBeNull();
+    expect(host.textContent).not.toContain("推敲片段甲");
+    expect(host.textContent).not.toContain("奏章片段乙");
+    expect(host.textContent).not.toContain("任意显示文案");
+    // 核账叙事仍在（王承恩固定提示）
+    expect(host.querySelector("[data-testid=wang-settlement-slip]")).not.toBeNull();
 
-    // Ending round 7/7 via same typed fields.
-    await act(async () => {
-      streamController.enqueue(encoder.encode(
-        'event: stage\ndata: {"content":"结局收束文案","current":7,"total":7}\n\n',
-      ));
-    });
-    await act(async () => {
-      await vi.waitFor(() => {
-        const bar = host.querySelector('[data-testid="settlement-wait-progress"]');
-        expect(bar?.getAttribute("aria-valuenow")).toBe("7");
-        expect(bar?.getAttribute("aria-valuemax")).toBe("7");
-      });
-    });
-    expect(host.querySelector(".settlement-lock-stage")?.textContent || "").toContain("结局收束文案");
-
-    // End via decisions so we do not hit window.location.reload; keep chain proof intact.
     await act(async () => {
       streamController.enqueue(encoder.encode(
         `event: decisions\ndata: ${JSON.stringify({ decisions: [validDecision] })}\n\n`,
@@ -1198,9 +1567,9 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     });
   });
 
-  it("#1796 有草案点盖玺：拟诏台立即收起，核账期面 + 居中等待卡，灰钮不可见", async () => {
-    // 真实入口：开拟诏 → 盖玺 → busy 同会话装饰立即切面；流挂起期间断言外可见结果。
-    // settlement_display 持久真源不升格；流终态走 decisions 避免 reload。
+  it("#1796 有草案点盖玺：拟诏台立即收起，核账期面，灰钮不可见", async () => {
+    // 真实入口：开拟诏 → 盖玺 → busy 同会话立即切面；流挂起期间断言外可见结果。
+    // settlement_display 持久真源不升格；流终态走 decisions 避免完成路径。
     let streamController!: ReadableStreamDefaultController<Uint8Array>;
     const encoder = new TextEncoder();
     const liveState: Record<string, unknown> = {
@@ -1240,18 +1609,15 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     expect(seal).toBeTruthy();
     await click(seal);
 
-    // 立即：拟诏台收起；居中等待卡；灰盖玺钮不再可见。
+    // 立即：拟诏台收起；#1852 无居中进度卡；灰盖玺钮不再可见。
     await act(async () => {
       await vi.waitFor(() => {
         expect(host.querySelector('[role="dialog"][aria-label="诏书草案"]')).toBeNull();
-        expect(host.querySelector("[data-testid=settlement-lock-decor]")).not.toBeNull();
+        expect(host.querySelector("[data-testid=wang-settlement-slip]")).not.toBeNull();
       });
     });
+    expect(host.querySelector("[data-testid=settlement-lock-decor]")).toBeNull();
     expect(findButton(host, "盖玺颁诏过月")).toBeFalsy();
-    // 核账期面（同会话 face）：王承恩递话 + 半程局势藏；#1725 兜底措辞/aria 刻度不重证
-    await act(async () => {
-      await vi.waitFor(() => expect(host.querySelector("[data-testid=wang-settlement-slip]")).not.toBeNull());
-    });
     expect(host.textContent).not.toContain(MIDCOURSE_ISSUE);
 
     // 收束：decisions → 必达 DecisionModal 仍可达（#1236；兼本票批红从新入口之证明）
@@ -1267,7 +1633,7 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     });
   });
 
-  it("#1796 无草案退朝结束本月：同样切核账期面 + 居中卡", async () => {
+  it("#1796 无草案退朝结束本月：同样切核账期面（无进度卡）", async () => {
     let releaseAdvance!: (value: Response) => void;
     const advanceGate = new Promise<Response>((resolve) => { releaseAdvance = resolve; });
     let liveState: Record<string, unknown> = {
@@ -1322,10 +1688,10 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     await act(async () => {
       await vi.waitFor(() => {
         expect(host.querySelector('[role="dialog"][aria-label="诏书草案"]')).toBeNull();
-        expect(host.querySelector("[data-testid=settlement-lock-decor]")).not.toBeNull();
+        expect(host.querySelector("[data-testid=wang-settlement-slip]")).not.toBeNull();
       });
     });
-    expect(host.querySelector("[data-testid=wang-settlement-slip]")).not.toBeNull();
+    expect(host.querySelector("[data-testid=settlement-lock-decor]")).toBeNull();
 
     // 放行 advance：awaiting 停窗，busy 清后批红必达
     liveState = settlementBaseState("awaiting_decision", {
@@ -2055,7 +2421,7 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     expect(economyOpen!.textContent).not.toContain(`${SNAP_ARMY_PAY_LOSS}万两`);
   });
 
-  it("gazette：核账期邸报（上月）可读且正文=状态口 previous_summary（isFaceReachable 真链）", async () => {
+  it("gazette：核账期上月邸报经木牌可读；正文=状态口 previous_summary（#1852 不自动弹）", async () => {
     // #1356 F4：App 接缝——previous_* 与 turn.reign_period_label 同给，报头不得混充当前月
     // #671：唯一官方邸报 App→DOM 逐字契约（咬 state trim / prop trim / strip 三处）
     // #671：last_attendant_message 经 App 接线可达 gazette-attendant（不经 strip；在 document 外）
@@ -2074,6 +2440,10 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
       pending_decisions: [],
     }));
     const host = await mountApp();
+    // #1852：刷新 / 核账等待不自动弹全屏邸报
+    expect(host.querySelector('[role="dialog"][aria-label="邸报"]')).toBeNull();
+    expect(host.querySelector("[data-testid=settlement-gazette-panel]")).toBeNull();
+    await click(findButton(host, "邸报"));
     await act(async () => {
       await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="邸报"]')).not.toBeNull());
     });
@@ -2093,8 +2463,8 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     expect(host.textContent).toContain(SNAP_CLOSED);
   });
 
-  it("gazette：仅有 last_attendant_message 时核账期仍自动弹邸报", async () => {
-    // #671：attendant-only 月完——自动门槛认递话存在，dialog 含原文
+  it("gazette：仅有 last_attendant_message 时亦不自动弹；木牌可开空卷轴+递话", async () => {
+    // #671/#1852：attendant-only——自取门槛仍认递话；不自动弹
     stubSettlementFetch(settlementBaseState("player", {
       previous_summary: "",
       previous_reign_period_label: "天启七年九月",
@@ -2110,6 +2480,8 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
       pending_decisions: [],
     }));
     const host = await mountApp();
+    expect(host.querySelector('[role="dialog"][aria-label="邸报"]')).toBeNull();
+    await click(findButton(host, "邸报"));
     await act(async () => {
       await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="邸报"]')).not.toBeNull());
     });
