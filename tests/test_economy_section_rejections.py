@@ -7,16 +7,14 @@
 （不污染玩家可见 economy_moves list、_player_visible pop）；issue-effect 路 economy 拒收经
 entity/inertia sink 达 rejection_reports，不蒸发。
 
-注：driver.run_settle 走 canonicalize_extraction（不调 cleaner）→ 这些端到端测试覆盖
-**applier 拒收**；cleaner（_sanitize_module_output 路）的透传由 test_clean_economy_moves_*
-直接单测覆盖（cmr r1 claude）。
+从现役原子声明入口验证 applier 的拒收契约。
 """
 
 from __future__ import annotations
 
 from functools import partial
 
-from tests.section_rejection_helpers import prepare_then_settle as run_settle
+from tests.section_rejection_helpers import run_declaration as run_settle
 from tests.section_rejection_helpers import game, rejection_rows
 
 ECO_REJ = "economy_moves_rejections"
@@ -31,7 +29,7 @@ def _guoku(db):
 
 
 def test_top_level_bad_account_rejected_good_lands(game):
-    """顶层 economy_moves 账户非法 → invalid_enum 逐项拒收达 rejection_reports（applier 拒收；cleaner 透传由单测另覆盖），同信封合法项照落。"""
+    """顶层 economy_moves 账户非法 → invalid_enum 逐项拒收达 rejection_reports（applier 拒收），同信封合法项照落。"""
     db, state, content = game
     turn = state.turn
 

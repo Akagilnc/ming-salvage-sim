@@ -9,12 +9,12 @@ class 则只收嵌套字段 dict、扁平 int 逐项拒收。
 拒收项落独立 *_rejections 段（不复用 faction_delta/class_delta，后者仍载 web 面板的
 已落 delta dict——cmr r1 claude：复用同 key 会令面板误渲染拒收项）。
 
-经 driver.run_settle 端到端驱动（公共接口，与 test_power_section_rejections.py 同风格）。
+经现役原子声明入口验证逐项拒收。
 """
 
 from __future__ import annotations
 
-from tests.section_rejection_helpers import prepare_then_settle as run_settle
+from tests.section_rejection_helpers import run_declaration as run_settle
 from tests.section_rejection_helpers import game, rejection_rows as _rejection_rows
 
 FACTION_REJ_SECTION = "faction_delta_rejections"

@@ -8,14 +8,14 @@ fiscal_removes / fiscal_creates / fiscal_changes 三段原先 LLM 脏项要么 p
 「在场即须合法」vs「缺省走默认」:fiscal_creates 的 init_value 缺省 0 合法、在场脏值拒;
 fiscal_changes 的 delta 显式给 0 = 无操作不记拒。
 
-经 driver.run_settle 端到端驱动(公共接口,与 test_section4_rejections.py 同风格)。
+从现役原子声明入口验证逐项拒收。
 """
 
 from __future__ import annotations
 
 import pytest
 
-from tests.section_rejection_helpers import prepare_then_settle as _run_settle
+from tests.section_rejection_helpers import run_declaration as _run_settle
 from tests.section_rejection_helpers import game, rejection_rows as _rejection_rows
 
 

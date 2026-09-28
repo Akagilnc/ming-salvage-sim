@@ -3,14 +3,14 @@
 updates 数据校验类拒收带精确 category（未知 order_id → missing_ref，坏值/非 active → invalid_enum）。
 
 只覆盖 LLM 数据校验类拒收；落库真异常（except）的拒收不在此（属 #63.4 设计待定，不动）。
-经 driver.run_settle 端到端查 rejection_reports。
+经现役原子声明入口查 rejection_reports。
 """
 
 from __future__ import annotations
 
 from functools import partial
 
-from tests.section_rejection_helpers import prepare_then_settle as run_settle
+from tests.section_rejection_helpers import run_declaration as run_settle
 from ming_sim import issues
 from tests.section_rejection_helpers import game, rejection_rows
 from tests.dossier_test_helpers import create_test_secret_order

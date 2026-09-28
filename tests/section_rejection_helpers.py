@@ -46,8 +46,9 @@ def install_settlement_attendant_agent_stub(
         )
 
 
-def run_declaration(db, state, content, raw_delta):
+def run_declaration(db, state, content, raw_delta, *, narrative="", decree_text=""):
     """Enter the current fiscal bracket and atomically dispatch a month declaration."""
+    del narrative, decree_text
     from ming_sim.applier import Provenance
     from ming_sim.declaration_dispatch import dispatch_declaration
     from ming_sim.decree import pre_settle
