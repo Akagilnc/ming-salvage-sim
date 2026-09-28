@@ -65,7 +65,7 @@ def _strength(db: GameDB, power_id: str) -> int:
     ).fetchone()[0])
 
 
-def _recovery_grant(db, state, *, action="赈灾", amount=30, region_id="shaanxi"):
+def _recovery_grant(db, state, *, action="赈灾", amount=30, region_id="shaanxi", cadence="一次性"):
     state.metrics["内库"] = max(int(state.metrics.get("内库") or 0), amount + 50)
     dossier_id = db.create_decree_dossier(
         state, action_type="grant_allocation",
@@ -73,7 +73,7 @@ def _recovery_grant(db, state, *, action="赈灾", amount=30, region_id="shaanxi
         target_kind="region", target_id=region_id,
         payload={
             "grant_action": action, "account": "内库", "amount": amount,
-            "execution_surface": "immediate", "cadence": "一次性",
+            "execution_surface": "immediate", "cadence": cadence,
         },
     )
     db.apply_dossier_promulgation(state, dossier_id, "promulgated")
@@ -506,6 +506,34 @@ def test_recovery_shared_pool_advances_once_after_empty_effect_month(game, monke
         assert _pop(loaded, "农民", "shaanxi") == before_farmers + 100000
     finally:
         loaded.close()
+
+
+@pytest.mark.usefixtures("_offline_scene_beat_generator")
+def test_monthly_recovery_follows_each_month_actual_payment(game, monkeypatch):
+    db, state, content = game
+    _reset_shaanxi_pool(db)
+    dossier_id = _recovery_grant(db, state, amount=10, cadence="每月")
+    canned_full_settlement(monkeypatch, skip_fixed_flows=True)
+    session = make_light_session(db, state, content)
+    before = _pop(db, "流民", "shaanxi")
+    for _ in range(2):
+        # 月度实付按既有账本入口写入；月链只负责在推进时消费本月到账。
+        db.record_issue_economy_move(
+            state, "内库", -10, "赈灾", "本月到账",
+            origin_ref=f"dossier:{dossier_id}",
+        )
+        waiting = session.advance_without_decree()
+        assert waiting.stage == "gazette"
+        turn = state.turn
+        db.conn.execute(
+            "INSERT INTO turn_reports (turn, year, period, report) VALUES (?, ?, ?, ?)",
+            (turn, state.year, state.period, "邸报已成"),
+        )
+        db.conn.commit()
+        assert session.advance_without_decree().advanced is True
+        after = _pop(db, "流民", "shaanxi")
+        assert before - after == 10 * RECOVERY_PERSONS_PER_WAN
+        before = after
 
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
