@@ -161,7 +161,8 @@ export function useSettlementFlow({
 
   const retryAdvanceRefresh = async () => {
     try {
-      await loadState();
+      const next = await loadState();
+      if (!next) return;
       setAdvanceRefreshFailed(false);
       setError("");
       if (!settlementGazetteReading) setPostAdvanceOverlayHold(false);
@@ -202,6 +203,7 @@ export function useSettlementFlow({
       setError(err instanceof Error ? err.message : String(err));
     }
     if (generation !== sessionGeneration.current) return;
+    if (!next) setAdvanceRefreshFailed(true);
     const fromPayload = typeof data.report === "string" ? data.report : "";
     const fromState = next?.previous_summary
       || (typeof embedded?.previous_summary === "string" ? embedded.previous_summary : "")
