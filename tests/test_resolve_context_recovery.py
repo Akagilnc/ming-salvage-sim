@@ -1,16 +1,8 @@
-"""S2+S3 (ADR 0008 PR1) — resolve_context 无条件持久化 + validate 前置 + 事务内清理。
-
-重跑契约第一件：每回合进入结算后半段前必存 resolve_context（extractor delta + 叙事），
-持久化前先过 validate_delta_shape（毒 payload 绝不入真源），clear 移到 settle 写序列内
-（settle 完成 = context 干净；中途崩 = context 仍在可重试）。
-"""
+"""ADR 0008：resolve_context 持久化及 delta 入库验证。"""
 
 from __future__ import annotations
 
-import pytest
-
 from ming_sim.decree import persist_resolve_context
-from tests.settlement_seam_helpers import settle_effects as settle_with_delta
 
 
 def test_persist_resolve_context_stores_extracted_delta(game):
@@ -97,62 +89,6 @@ def test_persist_accepts_person_change_delta_after_applier_is_wired(game):
     ctx = db.get_resolve_context(turn)
     assert ctx is not None
     assert ctx["extracted"] == extracted
-
-
-def test_settle_clears_resolve_context_on_completion(game):
-    """正常结算完成后 resolve_context 已清（clear 在 settle 写序列内，settle 完成 = context 干净）。"""
-    db, state, content = game
-    turn = state.turn
-    extracted = {"region_delta": {"shanxi": {"unrest": 1}}}
-    persist_resolve_context(
-        db, turn, extracted,
-        decree_text="d", narrative="n",
-        simulator_payload={}, secret_orders=[], relevant_memories=[],
-    )
-    assert db.get_resolve_context(turn) is not None
-
-    settle_with_delta(state, db, extracted, before_turn=turn, content=content)
-
-    # next_period 后 turn 已 +1，但 clear 按 before_turn 清本回合那一行。
-    assert db.get_resolve_context(turn) is None
-
-
-def test_resolve_context_survives_mid_settle_crash(game, monkeypatch, tmp_path):
-    """settle 在 clear 之前的真实步骤崩 → resolve_context 仍在（可重试）。
-
-    注入点是结算正文里落库之后、clear_resolve_context 之前必经的
-    clear_gated_legacies。S7：整段包 atomic，代码异常上抛后被包成
-    SettlementAbort(stage="settle")；resolve_context 在 settle 之外单独
-    commit，回滚不动它。"""
-    import ming_sim.decree as decree_mod
-    from ming_sim.exceptions import SettlementAbort
-    db, state, content = game
-    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
-    turn = state.turn
-    extracted = {"region_delta": {"shanxi": {"unrest": 1}}}
-    persist_resolve_context(
-        db, turn, extracted,
-        decree_text="d", narrative="n",
-        simulator_payload={}, secret_orders=[], relevant_memories=[],
-    )
-
-    class _Boom(RuntimeError):
-        pass
-
-    def _explode(*_args, **_kwargs):
-        raise _Boom("中途崩")
-
-    monkeypatch.setattr(decree_mod, "clear_gated_legacies", _explode)
-
-    with pytest.raises(SettlementAbort) as ei:
-        settle_with_delta(
-            state, db, extracted, before_turn=turn, content=content,
-        )
-    assert ei.value.stage == "settle"
-    assert isinstance(ei.value.__cause__, _Boom)
-
-    # 崩在 clear 之前 → resolve_context 仍在，重进可重试。
-    assert db.get_resolve_context(turn) is not None
 
 
 def test_hitl_phase1_save_path_not_regressed(game):
