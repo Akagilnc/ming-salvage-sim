@@ -1449,79 +1449,47 @@ def test_tool_staged_action_is_not_confirmed_in_same_chat_turn(game):
     assert len(db.list_pending_actions(state.turn)) == 1
 
 
-def test_propose_appointment_tool_mode_contract(game, tool_mode, expected):
-    """#1731 类B：propose_appointment 省略 mode=沉默→ordinary；显式 midzhi 保留。"""
+@pytest.mark.parametrize("mode", [None, "ordinary", "midzhi"])
+def test_scene_appointment_mode_contract(game, mode):
+    """任免声明的显式密旨/普通模式不得被工具退役吞掉。"""
+    from ming_sim.audience_translate import normalize_audience_declaration
+    from ming_sim.declaration_dispatch import dispatch_declaration
+
     db, state, content = game
     minister = "毕自严"
-    appointee = f"工具候选模式{expected}{tool_mode}"
-    character = content.characters[minister]
-    propose = _propose_appointment_tool(character, db, state)
-    kwargs = {"name": appointee, "office": "户部尚书", "faction": "中立", "reason": "试"}
-    if tool_mode is not None:
-        kwargs["mode"] = tool_mode
-    marker = propose(**kwargs)
-    assert marker.startswith("__pending_appointment__")
-    body = json.loads(marker.removeprefix("__pending_appointment__"))
-    if tool_mode is None:
-        assert "mode" not in body
-    else:
-        assert body["mode"] == expected
-
-    sess = GameSession.__new__(GameSession)
-    sess.db = db
-    sess.state = state
-    sess.content = content
-    sess.registry = None
-    pending_id = sess._stage_appointment_candidate(
-        json.dumps(body, ensure_ascii=False), character,
-    )
-    assert pending_id
-    staged = json.loads(
-        next(p for p in db.list_pending_actions(state.turn) if p["id"] == pending_id)[
-            "payload_json"
-        ]
-    )
-    assert staged["mode"] == expected
+    appointment = {"name": minister, "office": "户部尚书", "appoint_action": "任命"}
+    if mode is not None:
+        appointment["mode"] = mode
+    declaration = normalize_audience_declaration({"commissions": [{
+        "text": "着毕自严为户部尚书。", "appointment": appointment,
+    }]})
+    result = dispatch_declaration(db, state, declaration, minister_name=minister)
+    assert result.commissions.rejected == []
+    rows = [p for p in db.list_pending_actions(state.turn) if p["kind"] == "office"]
+    assert len(rows) == 1
+    assert json.loads(rows[0]["payload_json"]).get("mode", "ordinary") == (mode or "ordinary")
 
 
-def test_propose_appointment_tool_region_id_stages_same_seat(game):
-    """#1812：真工具 region_id → marker body → pending 同一 seat；不从官名推断。"""
+def test_scene_appointment_region_id_stages_same_seat(game):
+    """地方任所只来自声明 region_id，不从官名推断。"""
+    from ming_sim.audience_translate import normalize_audience_declaration
+    from ming_sim.declaration_dispatch import dispatch_declaration
+
     db, state, content = game
     minister = "毕自严"
-    appointee = "工具任所候选甲"
-    character = content.characters[minister]
-    propose = _propose_appointment_tool(character, db, state)
-    marker = propose(
-        name=appointee, office="陕西巡抚", faction="中立",
-        reason="试任所", region_id="shaanxi",
-    )
-    assert marker.startswith("__pending_appointment__")
-    body = json.loads(marker.removeprefix("__pending_appointment__"))
-    assert body["region_id"] == "shaanxi"
-    assert "陕西" not in body.get("region_id", "")
-
-    # 省略 region_id 不得从官名推断任所
-    bare = propose(name=appointee, office="河南巡抚", reason="无任所")
-    bare_body = json.loads(bare.removeprefix("__pending_appointment__"))
-    assert "region_id" not in bare_body
-
-    sess = GameSession.__new__(GameSession)
-    sess.db = db
-    sess.state = state
-    sess.content = content
-    sess.registry = None
-    pending_id = sess._stage_appointment_candidate(
-        json.dumps(body, ensure_ascii=False), character,
-    )
-    assert pending_id
-    staged = json.loads(
-        next(p for p in db.list_pending_actions(state.turn) if p["id"] == pending_id)[
-            "payload_json"
-        ]
-    )
-    assert staged["region_id"] == "shaanxi"
-    assert staged["name"] == appointee
-    assert staged["office"] == "陕西巡抚"
+    declaration = normalize_audience_declaration({"commissions": [{
+        "text": "着毕自严为陕西巡抚。",
+        "appointment": {"name": minister, "office": "陕西巡抚",
+                        "appoint_action": "任命", "region_id": "shaanxi"},
+    }]})
+    result = dispatch_declaration(db, state, declaration, minister_name=minister)
+    assert result.commissions.rejected == []
+    rows = [p for p in db.list_pending_actions(state.turn) if p["kind"] == "office"]
+    assert len(rows) == 1
+    payload = json.loads(rows[0]["payload_json"])
+    assert payload["region_id"] == "shaanxi"
+    assert payload["name"] == minister
+    assert payload["office"] == "陕西巡抚"
 
 
 @pytest.mark.parametrize(

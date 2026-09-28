@@ -816,6 +816,14 @@ def _commission_appointment_fields(
             category="invalid_shape", source=source,
         )
     payload: Dict[str, Any] = {"name": name, "office": office, "appoint_action": action}
+    mode = appointment.get("mode")
+    if mode is not None:
+        if not isinstance(mode, str) or mode not in {"ordinary", "midzhi"}:
+            return None, RejectedItem(
+                item=dict(appointment), reason=f"任免模式非法：{mode}",
+                category="invalid_enum", source=source,
+            )
+        payload["mode"] = mode
     tenure = str(
         appointment.get("appointment_tenure") or appointment.get("任别") or ""
     ).strip()
