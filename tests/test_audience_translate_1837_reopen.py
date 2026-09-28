@@ -329,6 +329,26 @@ def test_travel_tone_updates_this_round_summon_ledger(game, monkeypatch):
     assert matched[-1]["entry_id"] == summoned[-1]["entry_id"]
     assert matched[0]["entry_id"] == old_id
     assert matched[0]["travel_tone"] == "常行"
+    from ming_sim.audience_night import commit_fresh_summons_for_night
+    ordinary = "毕自严"
+    db.conn.execute(
+        "UPDATE characters SET location='shaanxi', transit_to='' WHERE name=?", (ordinary,)
+    )
+    record_summon_fresh(db, int(night["id"]), ordinary, origin_id="ordinary-comparison")
+    commit_fresh_summons_for_night(db, state, int(night["id"]), content=content)
+    trip = db.conn.execute(
+        "SELECT transit_to, transit_speed_factor, transit_distance_remaining "
+        "FROM characters WHERE name=?", (person,)
+    ).fetchone()
+    assert trip["transit_to"] == "beizhili"
+    assert trip["transit_distance_remaining"] > 0
+    ordinary_trip = db.conn.execute(
+        "SELECT transit_to, transit_speed_factor, transit_distance_remaining "
+        "FROM characters WHERE name=?", (ordinary,)
+    ).fetchone()
+    assert ordinary_trip["transit_to"] == "beizhili"
+    assert trip["transit_distance_remaining"] == ordinary_trip["transit_distance_remaining"]
+    assert trip["transit_speed_factor"] > ordinary_trip["transit_speed_factor"]
 
 
 def test_old_minister_agent_surface_gone():
