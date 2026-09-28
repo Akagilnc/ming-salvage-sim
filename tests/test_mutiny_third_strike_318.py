@@ -419,16 +419,6 @@ def test_transfer_to_ming_requires_d6_pay_source(game, cutover):
 
 
 
-@pytest.mark.parametrize(
-    "morale,loyalty,latched,expect_zero",
-    (
-        (90, 15, 1, True),   # 高 morale / 低 loyalty + latch → zero_combat
-        (10, 85, 0, False),  # 低 morale / 高 loyalty 未闩 → 可战
-    ),
-    ids=("high_morale_low_loyalty_latched", "low_morale_high_loyalty_clear"),
-)
-
-
 @pytest.mark.parametrize("fiscal_path", PATHS)
 @pytest.mark.parametrize(
     "identity",
