@@ -17,6 +17,7 @@ import pytest
 
 import ming_sim.month_chain as month_chain
 import ming_sim.decree as decree_mod
+from ming_sim.session_write_queue import ClassifiedWriteGate
 from ming_sim.applier import Provenance
 from ming_sim.session_write_queue import get_session_write_queue
 from tests.settlement_seam_helpers import make_light_session
@@ -77,7 +78,7 @@ def test_advance_schedules_mechanical_tail_after_front_month_advance(game, monke
 
     monkeypatch.setattr("ming_sim.mechanical_tail._run_relation_brew", recording_brew)
     session = make_light_session(db, state, content)
-    session._write_gate = threading.Lock()
+    session._write_gate = ClassifiedWriteGate()
     session.llm_config = object()
     session.agno_db = object()
 
@@ -109,7 +110,7 @@ def test_reopen_resumes_incomplete_mechanical_tail(game, monkeypatch):
     from ming_sim.mechanical_tail import ensure_mechanical_tails
 
     session = make_light_session(db, state, content)
-    session._write_gate = threading.Lock()
+    session._write_gate = ClassifiedWriteGate()
     session.llm_config = object()
     session.agno_db = object()
 
@@ -167,7 +168,7 @@ def test_exhausted_mechanical_tail_fails_and_blocks_next_month(game, monkeypatch
         "ming_sim.mechanical_tail._run_relation_brew", boom,
     )
     session = make_light_session(db, state, content)
-    session._write_gate = threading.Lock()
+    session._write_gate = ClassifiedWriteGate()
     session.llm_config = object()
     session.agno_db = object()
     executor = _install_deferred(monkeypatch)
@@ -207,7 +208,7 @@ def test_real_brew_failure_reaches_tail_failure_and_retry(game, monkeypatch):
         raise LLMUnavailable("酿制耗尽", stage="relation-brew")
     monkeypatch.setattr("ming_sim.agents.run_agent_text", exhausted)
     session = make_light_session(db, state, content)
-    session._write_gate = threading.Lock()
+    session._write_gate = ClassifiedWriteGate()
     session.llm_config = object()
     session.agno_db = object()
     executor = _install_deferred(monkeypatch)
@@ -245,7 +246,7 @@ def test_web_barrier_resumes_pending_tail_before_join(game, monkeypatch):
         db, closed_turn, settled_year=state.year, settled_period=state.period,
     )
     session = make_light_session(db, state, content)
-    session._write_gate = threading.Lock()
+    session._write_gate = ClassifiedWriteGate()
     session.llm_config = object()
     session.agno_db = object()
     queue = get_session_write_queue(session)
@@ -296,7 +297,7 @@ def test_non_exhausted_tail_failure_stays_pending_and_retries(game, monkeypatch)
     _forbid_extractor(monkeypatch)
     _archive_and_stub_world(db, state, monkeypatch)
     session = make_light_session(db, state, content)
-    session._write_gate = threading.Lock()
+    session._write_gate = ClassifiedWriteGate()
     session.llm_config = object()
     session.agno_db = object()
     calls = []
