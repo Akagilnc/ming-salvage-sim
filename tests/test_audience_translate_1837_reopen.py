@@ -286,35 +286,49 @@ def test_rush_commitment_stages_pending_催办(game):
     assert int(stages[1]["due_turn"]) == int(state.turn) + 1
 
 
-def test_travel_tone_updates_this_round_summon_ledger(game):
+def test_travel_tone_updates_this_round_summon_ledger(game, monkeypatch):
+    from tests.conftest import stub_audience_translate, stub_scene_agent
+    from tests.test_audience_translation_1838 import _scene_session
+
     db, state, content = game
     night = open_night(db, state)
     person = _hong(db, content)
-    # 模拟「宣 X」当场落下的传召账（常行）
-    entry_id = record_summon_fresh(
-        db, int(night["id"]), person,
-        origin_id=f"scene:xuan:{int(state.turn)}:{person}",
+    db.conn.execute(
+        "UPDATE characters SET location='shaanxi', transit_to='' WHERE name=?", (person,)
+    )
+    if db.get_character_status(person)[0] != "active":
+        db.set_character_status(state, person, "active")
+
+    class SceneAgent:
+        tools = []
+
+        def run(self, message):
+            return SimpleNamespace(content="殿上回奏。", tools=[])
+
+    stub_scene_agent(monkeypatch, SceneAgent())
+    stub_audience_translate(monkeypatch)
+    sess = _scene_session(db, state, content, monkeypatch)
+    old_id = record_summon_fresh(
+        db, int(night["id"]), person, origin_id="earlier-summon",
         origin_chat_turn_id=0,
-        travel_tone="常行",
     )
+    ctid = db.create_chat_turn(state, "殿上", "s", 0, night_id=int(night["id"]), status="active")
+    sess.scene_chat(f"宣{person}", chat_turn_id=ctid)
     before = list_unsettled_summons(db)
-    assert any(
-        item["person_name"] == person and item.get("travel_tone") == "常行"
-        for item in before
-    )
+    summoned = [item for item in before if item["person_name"] == person]
+    assert summoned and summoned[-1].get("travel_tone") == "常行"
     decl = normalize_audience_declaration({
         "travel_tones": [{"person_name": person, "tone": "星夜兼程"}],
     })
     result = dispatch_declaration(
-        db, state, decl, minister_name="殿上", night_id=int(night["id"]),
+        db, state, decl, minister_name="殿上", night_id=int(night["id"]), chat_turn_id=ctid,
     )
     assert result.travel_tones.rejected == []
-    assert len(result.travel_tones.applied) == 1
-    after = list_unsettled_summons(db)
-    matched = [item for item in after if item["person_name"] == person]
-    assert matched and matched[0].get("travel_tone") == "星夜兼程"
-    # 同一条账被更新，不另起行
-    assert int(matched[0]["entry_id"]) == int(entry_id)
+    matched = [item for item in list_unsettled_summons(db) if item["person_name"] == person]
+    assert matched and matched[-1].get("travel_tone") == "星夜兼程"
+    assert matched[-1]["entry_id"] == summoned[-1]["entry_id"]
+    assert matched[0]["entry_id"] == old_id
+    assert matched[0]["travel_tone"] == "常行"
 
 
 def test_old_minister_agent_surface_gone():
