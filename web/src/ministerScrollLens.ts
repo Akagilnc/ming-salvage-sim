@@ -20,9 +20,9 @@ export type MinisterScrollLensOptions = {
  * - Messages with chat_turn_id follow every named minister in that turn in/out as a whole
  *   turn — segment ownerHint never overrides a formal turn.
  * - Messages without chat_turn_id follow the soft segment ownerHint (side interjections travel
- *   with the named entrance/divider stretch).
- * - Single-principal unanchored stretch (empty-speaker entrance + one turn owner): whole stretch
- *   kept for that principal so entrance/scene without chat_turn_id is not orphaned.
+ *   with the named divider stretch).
+ * - Single-principal unanchored stretch (scene + one turn owner): whole stretch
+ *   kept for that principal so scene without chat_turn_id is not orphaned.
  * - 无主消息不泛留: turns without a named minister speaker (and without window claim) are dropped.
  */
 export function filterScrollForSelectedMinister(
@@ -58,8 +58,7 @@ export function filterScrollForSelectedMinister(
   };
 
   for (const message of messages) {
-    // Named entrance/divider/summon starts a new soft segment. Empty-speaker anchors stay put
-    // (backend entrance speaker is often ""; final divider speaker is often "").
+    // Named divider starts a new soft segment; empty-speaker dividers stay put.
     const startsSegment = isNamedSoftSegmentAnchor(message);
     if (startsSegment && current.messages.length > 0) {
       flush();
@@ -87,7 +86,7 @@ export function filterScrollForSelectedMinister(
         // else: other minister's turn, or orphan turn — drop from this window
         continue;
       }
-      // No chat_turn_id: follow soft segment (side interjection / entrance / local scene).
+      // No chat_turn_id: follow soft segment (side interjection / local scene).
       if (segmentOwner === selectedMinister) {
         out.push(message);
       }
@@ -114,7 +113,7 @@ function resolveSegmentOwner(
     }
   }
   // No named anchor: prefer chat_turn principals. A single turn principal owns the
-  // whole stretch (empty-speaker entrance / local scene / side lines without turns).
+  // whole stretch (local scene / side lines without turns).
   // Side interjections without chat_turn_id must not create a second principal.
   const turnPrincipals = new Set<string>();
   for (const message of segment.messages) {
