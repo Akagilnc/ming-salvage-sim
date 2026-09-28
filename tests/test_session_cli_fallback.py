@@ -498,45 +498,20 @@ def test_secret_order_tool_progress_stages_pending_action_not_direct_write(game)
 
 
 
-def test_propose_directive_tool_arguments_stages_draft(game):
-    """session 路 tool 参数兼容 arguments/tool_args，避免丢 Agno/Phidata decree_text。"""
+def test_scene_directive_midzhi_stages_draft(game):
+    """场景交办明示中旨时暂存与成案皆保留模式。"""
+    from ming_sim.audience_translate import normalize_audience_declaration
+    from ming_sim.declaration_dispatch import dispatch_declaration
+
     db, state, content = game
-    minister = "毕自严"
-
-    class Agent:
-        def run(self, _message):
-            return SimpleNamespace(
-                content="臣已拟旨，请陛下定夺。",
-                tools=[SimpleNamespace(
-                    tool_name="propose_directive",
-                    result="",
-                    arguments={"decree_text": "着户部清核辽饷。", "mode": "midzhi"},
-                )],
-            )
-
-    class Registry:
-        def get(self, _character, **_kw):
-            return Agent()
-
-
-    sess = GameSession.__new__(GameSession)
-    sess.db = db
-    sess.state = state
-    sess.content = content
-    sess.registry = Registry()
-    sess.llm_config = SimpleNamespace(channel="api")
-    sess.temporary_characters = set()
-    sess._audience_prompt_for_message = lambda message, *_a, **_kw: message
-    sess._start_cli_action_intent = lambda *_args, **_kwargs: None
-    sess._finish_cli_action_intent = lambda *_args, **_kwargs: None
-
-    result = GameSession.chat(sess, minister, "中旨直发，拟一道清查辽饷的旨。")
-
-    assert result.pending_action_id
+    declaration = normalize_audience_declaration({"commissions": [{
+        "text": "着户部清核辽饷。", "mode": "midzhi",
+    }]})
+    result = dispatch_declaration(db, state, declaration, minister_name="毕自严")
+    assert result.commissions.rejected == []
     pending = [p for p in db.list_pending_actions(state.turn) if p["kind"] == "directive"]
     assert len(pending) == 1
     pending_payload = json.loads(pending[0]["payload_json"])
-    assert pending_payload["text"] == "着户部清核辽饷。"
     assert pending_payload["mode"] == "midzhi"
 
     db.commit_pending_actions(state, kind_filter="directive")

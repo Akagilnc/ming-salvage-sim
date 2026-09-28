@@ -1163,6 +1163,10 @@ def _dispatch_commissions(
             rejected.append(appt_rejected)
             continue
 
+        mode = item.get("mode", "ordinary")
+        if not isinstance(mode, str) or mode not in {"ordinary", "midzhi"}:
+            _reject(rejected, item, "交办模式非法", "invalid_enum", source)
+            continue
         text = item.get("text")
         try:
             if grant_raw:
@@ -1185,7 +1189,7 @@ def _dispatch_commissions(
                     "target_kind": "policy",
                     "target_id": f"commission-text:{int(state.turn)}:{len(applied)}",
                     "locality_scope": "none",
-                    "mode": "ordinary",
+                    "mode": mode,
                 }
         except KeyError as exc:
             _reject(rejected, item, str(exc), "hallucinated_id", source)
@@ -1215,6 +1219,8 @@ def _dispatch_commissions(
                 payload["region_id"] = str(grant_raw["target_id"]).strip()
 
         # #1783/#1778：承办人、名单、期限为既有 staging 字段（stage_grant 同款），
+        if grant_raw:
+            payload["mode"] = mode
         # 非 #1815 新形；声明给出则透传到 directive payload，代码不猜当前大臣。
         _attach_commission_staging_fields(
             payload, item, turn=int(state.turn),

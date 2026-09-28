@@ -228,7 +228,7 @@ def build_c0_declaration_shape() -> str:
         "{\n"
         '  "commissions": [\n'
         "    {\n"
-        '      "text": "交办正文（原样，不删改）",\n'
+        '      "text": "交办正文（原样，不删改）", "mode": "ordinary|midzhi（中旨明示才填 midzhi）",\n'
         '      "appointment": {\n'
         '        "name": "人名", "office": "官职", "appoint_action": "任命|罢免",\n'
         '        "region_id": "任所 region id（地方/督抚/边镇任命必填；中央可空）"\n'
