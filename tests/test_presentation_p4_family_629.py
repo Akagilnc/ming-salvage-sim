@@ -437,11 +437,9 @@ def test_family_p4_seven_surfaces_scan_production_artifacts_clean(game):
     for name in CREDIT_BANNED_SCAN_SURFACES:
         assert_no_family_p4_banned_tokens(surfaces[name], surface=name)
 
-    # 正向：diegetic 用词仍在
-    due_scene = meta["due_scene"]
-    plea_scene = meta["plea_scene"]
-    assert "复命" in due_scene["scene_text"] or "复命" in surfaces["scene_text"]
-    assert "泣血陈情" in plea_scene["scene_text"]
+    # Pending matters carry facts rather than prewritten dialogue.
+    assert meta["due_scene"]["criterion_text"]
+    assert meta["plea_scene"]["criterion_text"]
     # #626 反噬已入 narrative 扫描面
     assert meta["backlash_issue"]["title"]
     assert str(meta["backlash_issue"]["title"]) in surfaces["narrative"]

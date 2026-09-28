@@ -85,7 +85,7 @@ def parse_dossier_id(origin_ref: object) -> Optional[int]:
 
 
 def encode_plea_meta(meta: Dict[str, object]) -> str:
-    """origin_context 承载机读元数据（场面投影只取 display，不泄 JSON）。"""
+    """origin_context 承载机读元数据。"""
     payload = dict(meta or {})
     return _META_PREFIX + json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
 
@@ -292,7 +292,6 @@ def _merge_plea_kind_into_todo(
     breach_kind: str,
     reason: str,
     target_dossier_id: int,
-    display: str,
     extra: Optional[Dict[str, object]],
 ) -> int:
     """同回合第二类松手：显式并入既有 pending，log+meta 记全被吞类。"""
@@ -320,15 +319,6 @@ def _merge_plea_kind_into_todo(
             meta["reason"] = f"{prev}；{add}"[:400]
     if int(target_dossier_id or 0) > 0 and int(meta.get("target_dossier_id") or 0) <= 0:
         meta["target_dossier_id"] = int(target_dossier_id)
-    if display:
-        # 场面词保留首条 display；并入类记入 absorbed_labels
-        labels = meta.get("absorbed_labels")
-        if not isinstance(labels, list):
-            labels = []
-        label = BREACH_KIND_LABELS.get(kind, kind)
-        if label and label not in labels and kind != primary:
-            labels.append(label)
-        meta["absorbed_labels"] = labels
     if extra:
         for k, v in extra.items():
             if k not in meta:
@@ -350,7 +340,6 @@ def write_breach_plea_todo(
     breach_kind: str,
     reason: str = "",
     target_dossier_id: int = 0,
-    display: str = "",
     extra: Optional[Dict[str, object]] = None,
     commit: bool = False,
 ) -> int:
@@ -372,9 +361,6 @@ def write_breach_plea_todo(
     due = commitment_natural_due_turn(row)
     due_turn = due if due > 0 else turn
     title = str(row["title"] or "")
-    disp = str(display or "").strip() or (
-        f"臣工泣谏：皇上于「{title}」有{label}之举，臣的信心一半是皇爷给的，请陛下三思。"
-    )
 
     # 同回合已有条 → 并入（禁 UNIQUE+IGNORE 静默吞）
     existing = _find_pending_plea_same_turn(db, int(commitment_ref), turn)
@@ -393,7 +379,6 @@ def write_breach_plea_todo(
             breach_kind=kind,
             reason=str(reason or label)[:400],
             target_dossier_id=int(target_dossier_id or 0),
-            display=disp[:400],
             extra=extra,
         )
 
@@ -401,7 +386,6 @@ def write_breach_plea_todo(
         "breach_kind": kind,
         "reason": str(reason or label)[:400],
         "target_dossier_id": int(target_dossier_id or 0),
-        "display": disp[:400],
         "commitment_title": title[:120],
         "absorbed_breach_kinds": [],
     }
@@ -429,7 +413,6 @@ def write_breach_plea_todo(
                 breach_kind=kind,
                 reason=str(reason or label)[:400],
                 target_dossier_id=int(target_dossier_id or 0),
-                display=disp[:400],
                 extra=extra,
             )
         logger.warning(
@@ -448,10 +431,6 @@ def project_breach_plea_scene(
     meta = decode_plea_meta(todo.get("origin_context"))
     breach_kind = str(meta.get("breach_kind") or "")
     label = BREACH_KIND_LABELS.get(breach_kind, str(todo.get("criterion_text") or "松手"))
-    absorbed = meta.get("absorbed_labels") or []
-    if isinstance(absorbed, list) and absorbed:
-        label = label + "、" + "、".join(str(x) for x in absorbed if x)
-    display = str(meta.get("display") or "").strip()
     return {
         "kind": "breach_plea",
         "entry_kind": ENTRY_KIND_BREACH_PLEA,
@@ -461,7 +440,9 @@ def project_breach_plea_scene(
         "due_turn": int(todo.get("due_turn") or 0),
         "breach_kind": breach_kind,
         "criterion_text": str(todo.get("criterion_text") or label),
-        "origin_context": display,
+        "commitment_title": str(meta.get("commitment_title") or ""),
+        "reason": str(meta.get("reason") or ""),
+        "absorbed_breach_kinds": list(meta.get("absorbed_breach_kinds") or []),
         "channel": "audience_pending",
     }
 
@@ -1108,10 +1089,6 @@ def _scan_funding_cutoff(db: Any, state: Any) -> List[int]:
             breach_kind=BREACH_KIND_FUNDING,
             reason=reason,
             target_dossier_id=int(parse_dossier_id(origin) or 0),
-            display=(
-                f"主办哭谏：前诺「{row['title']}」月供已断，"
-                f"臣的信心一半是皇爷给的，请陛下复其供亿。"
-            ),
         )
         if tid:
             written.append(tid)
@@ -1160,10 +1137,6 @@ def _scan_misappropriation(db: Any, state: Any) -> List[int]:
             breach_kind=BREACH_KIND_MISAPPROPRIATION,
             reason=f"专款「{hit_account}」被挪作他用",
             target_dossier_id=int(parse_dossier_id(origin) or 0),
-            display=(
-                f"主办哭谏：专款「{hit_account}」本为「{row['title']}」所备，"
-                f"今见他流，臣的信心一半是皇爷给的，求陛下守约。"
-            ),
         )
         if tid:
             written.append(tid)
@@ -1314,10 +1287,6 @@ def _scan_remove_sponsor(db: Any, state: Any) -> List[int]:
             breach_kind=BREACH_KIND_REMOVE_SPONSOR,
             reason=f"主办{who}{kind_word}，人亡政息",
             target_dossier_id=int(parse_dossier_id(origin) or 0),
-            display=(
-                f"臣工哭谏：「{row['title']}」主办{who}已去，"
-                f"臣的信心一半是皇爷给的，人亡则政息，请陛下慎之。"
-            ),
             extra={
                 "removed_sponsors": removed,
                 "transferred_sponsors": transferred,
@@ -1382,18 +1351,12 @@ def try_defer_revoke_to_breach_plea(
         return None
     written: List[int] = []
     for cid in commitment_ids:
-        issue = _issue_row(db, cid)
-        title = str(issue["title"] if issue is not None else "前诺")
         tid = write_breach_plea_todo(
             db, state,
             commitment_ref=cid,
             breach_kind=BREACH_KIND_POLICY_REVERSAL,
             reason=str(reason or "撤回成命")[:400],
             target_dossier_id=int(target_dossier_id or 0),
-            display=(
-                f"主办泣血陈情：皇上欲撤「{title}」之旨，"
-                f"臣的信心一半是皇爷给的，求陛下收回成命。"
-            ),
             extra={
                 "deferred_revoke": True,
                 "revoke_dossier_id": int(revoke_dossier_id or 0),
