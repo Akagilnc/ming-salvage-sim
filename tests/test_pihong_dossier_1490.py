@@ -610,7 +610,6 @@ def _657_subprocess_resolve(db_path: str, choices: list, *, crash: str='', prewr
         os.environ.pop("MING_SIM_LLM_BACKEND", None)
 
         import httpx
-        import ming_sim.beat_orchestration as bo
         import ming_sim.decree as dm
         import ming_sim.rescript_actions as ra
         import ming_sim.session as session_mod
@@ -621,7 +620,6 @@ def _657_subprocess_resolve(db_path: str, choices: list, *, crash: str='', prewr
             name = str(getattr(_inputs, "person_name", "") or "") or "臣"
             return f"{name}入殿请安。"
 
-        bo.create_llm_beat_generator = lambda _cfg: _det_gen
         web_app.load_runtime_llm = lambda: {}
         web_app.run_highlight_judge = lambda **_k: []
 
@@ -1216,6 +1214,246 @@ def test_1682_late_grants_follow_policy_without_consuming_verdict_batch(game, mo
     assert state.metrics == metrics_before
     assert db.load_state().metrics == metrics_before
 
+
+def test_657_s10_http_five_actions_and_1490_no_regress(web_game, monkeypatch):
+    """P3+S10(+S1)：六动作参数表真 HTTP + 真 phase2 外部结构化终局。
+
+    不含 S5/S6（独立符号）。#1490 批红 force/hold 物化由同文件既有 #1490 专测覆盖，
+    不在本符号 stub phase2 冒充。five_actions_domain_writes 保留领域写，不得标 P3。
+    """
+    from ming_sim.audience_night import TAG_ENTER
+    from ming_sim.models import TurnPhase
+    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
+
+    db, state = web_game.db, web_game.state
+    opt = normalize_rescript_layer_a_option({
+        "label": "发帑赈济", "hint": "所安者饥民",
+        "action_type": "assignment", "assignee_name": "",
+        "target_kind": "region", "target_id": "shaanxi",
+        "locality_scope": "single", "region_id": "shaanxi",
+        "transaction_category": "督赈", "deadline_months": 2,
+        "participant_roster": _roster(_ROSTER_LEAD),
+    })
+    # #1590：同一真实入口 tracer 的 follow_draft 使用生成边界产出的 catalog 合法目标。
+    import ming_sim.rescript_draft as draft_mod
+    from ming_sim.rescript_draft import build_rescript_draft_payload, generate_rescript_draft
+
+    liaodong_raw = {**opt, "label": "经略辽东", "target_id": "liaodong", "region_id": "liaodong"}
+    liaodong_raw.pop("draft_capability", None)
+    generated_json = json.dumps({"items": [{
+        "title": "辽东急务", "context": "辽东待议。",
+        "options": [liaodong_raw, {**liaodong_raw, "label": "备拟"}],
+    }]}, ensure_ascii=False)
+    monkeypatch.setattr(draft_mod, "run_agent_text", lambda *a, **k: generated_json)
+    generated = generate_rescript_draft(
+        object(),
+        build_rescript_draft_payload(
+            state, "邸报", {"regions": {"cols": ["id", "name", "kind"], "rows": [["liaodong", "辽东", "边地"], ["shaanxi", "陕西", "腹地"]]}},
+            {"name": "杨嗣昌", "office": "兵部尚书", "faction": "东林"},
+        ),
+        int(state.turn),
+    )
+    assert generated is not None
+    liaodong_opt = generated[0]["options"][0]
+
+    # 真 phase2（只 stub LLM 边界）；六动作各推月后按当前 turn 再种
+    _657_install_real_phase2_llm_boundary(monkeypatch)
+
+    cases = [
+        ("hold", {"action": "hold", "label": "留中"}),
+        ("follow_draft", {
+            "action": "follow_draft", "label": liaodong_opt["label"],
+            "draft_capability": liaodong_opt["draft_capability"],
+        }),
+        ("midzhi", {
+            "action": "midzhi", "label": "中旨",
+            "action_type": "assignment",
+            "target_kind": "region", "target_id": "shaanxi",
+            "locality_scope": "single", "region_id": "shaanxi",
+            "transaction_category": "督赈", "deadline_months": 1,
+            "participant_roster": _roster(_ROSTER_LEAD),
+        }),
+        ("deliberate", {"action": "deliberate", "label": "下部议"}),
+        ("return_revise", {"action": "return_revise", "label": "发回改票"}),
+        # summon 置末：开夜后 auto_close 会等在飞；后续 case 不再触发 barrier 死等
+        ("summon", {
+            "action": "summon", "label": "召见", "summon_target": "杨嗣昌",
+        }),
+    ]
+
+    for name, choice_body in cases:
+        # phase2/refresh 可能换 state 对象——每轮从 session 重取真源
+        state = web_game.session.state
+        db = web_game.db
+        from ming_sim.session_write_queue import get_session_write_queue
+
+        def plant_case():
+            db.conn.execute("DELETE FROM pending_decisions")
+            db.conn.commit()
+            case_opt = liaodong_opt if name == "follow_draft" else opt
+            db.save_rescript_drafts(int(state.turn), [{
+                "title": f"急务-{name}", "context": "c",
+                "options": [case_opt, {"label": "备", "hint": "h", "draft_capability": "x"}],
+                "actor_name": "杨嗣昌", "actor_office": "兵部尚书", "actor_faction": "东林",
+            }])
+            db.conn.commit()
+            db.save_resolve_context(
+                int(state.turn), "诏", "邸报", {"candidate_events": [], "transit_semantics": []},
+                secret_orders=[],
+            )
+            state.turn_phase = TurnPhase.AWAITING_DECISION.value
+            db.save_state(state)
+            return db.list_rescript_desk(int(state.turn))[0]["decision_key"]
+
+        key = get_session_write_queue(web_game.session).run_exclusive(plant_case)
+        choice = {**choice_body, "decision_key": key}
+
+        if name == "deliberate":
+            import ming_sim.rescript_actions as ra
+
+            def _fake_prewrite(batch, **kwargs):
+                return ra.PrewriteResults(deliberate_by_key={
+                    key: {
+                        "title": "廷议", "body": "臣请集议。", "stance": "主赈",
+                        "supporter_ids": [],
+                    },
+                })
+
+            monkeypatch.setattr(ra, "run_prewrite_llms", _fake_prewrite)
+        if name == "return_revise":
+            import ming_sim.rescript_actions as ra
+
+            def _fake_prewrite_rev(batch, **kwargs):
+                return ra.PrewriteResults(revise_by_key={
+                    key: [
+                        _layer_a_option(label="新甲", hint="h1"),
+                        _layer_a_option(label="新乙", hint="h2"),
+                    ],
+                })
+
+            monkeypatch.setattr(ra, "run_prewrite_llms", _fake_prewrite_rev)
+
+        r = asyncio.run(_post_resolve([choice]))
+        assert r.status_code == 200, f"{name}: {r.text}"
+        assert "event: error" not in r.text, f"{name}: {r.text}"
+        assert "event: done" in r.text, f"{name}: {r.text}"
+
+        hit = next(x for x in db.list_rescript_drafts() if x["title"] == f"急务-{name}")
+        if name == "hold":
+            assert hit["status"] == "decided"
+            assert (hit["choice"] or {}).get("action") == "hold"
+            edges = db.conn.execute(
+                "SELECT event_kind FROM relation_edge_events "
+                "WHERE target=? AND event_kind=?",
+                ("杨嗣昌", "辜负"),
+            ).fetchall()
+            assert edges, "hold 须写辜负信用边"
+        elif name == "follow_draft":
+            assert hit["status"] == "decided"
+            dossiers = db.list_decree_dossiers()
+            assert dossiers and dossiers[-1]["target_id"] == "liaodong"
+        elif name == "midzhi":
+            mids = [d for d in db.list_decree_dossiers() if d.get("mode") == "midzhi"]
+            assert mids and mids[-1]["status"] == "proposed"
+        elif name == "deliberate":
+            drow = db.find_deliberation_dossier_by_decision_key(key)
+            assert drow is not None
+            assert _dossier_payload(drow).get("deliberation_state") == "stalled"
+            issue = db.conn.execute(
+                "SELECT title, origin_ref FROM issues WHERE origin_ref=?",
+                (f"dossier:{int(drow['id'])}",),
+            ).fetchone()
+            assert issue is not None
+        elif name == "summon":
+            assert hit["status"] == "decided"
+            assert (hit["choice"] or {}).get("action") == "summon"
+            # S1：无需再 attach 即有全局 origin_ref+TAG_ENTER 事实账。
+            from ming_sim.audience_night import rescript_summon_origin_ref
+            kind, turn_s, idx_s = key.split(":")
+            origin = rescript_summon_origin_ref(int(turn_s), int(idx_s), 0)
+            row = db.conn.execute(
+                "SELECT body, tags FROM story_ledger_entries WHERE origin_ref=?",
+                (origin,),
+            ).fetchone()
+            assert row is not None
+            tags = json.loads(row["tags"] or "[]")
+            assert TAG_ENTER in tags
+            assert not row["body"]
+        elif name == "return_revise":
+            assert hit["status"] == "pending"
+            assert int(hit["revision_round"] or 0) == 1
+            labels = [str(o.get("label") or "") for o in (hit["options"] or [])]
+            assert "新甲" in labels
+
+
+def test_1621_http_follow_draft_uses_catalog_army_id(web_game, monkeypatch):
+    """合法军 id 从生成边界进 HTTP follow_draft，案卷 target_id 为真军 id。"""
+    from ming_sim.models import TurnPhase
+    from ming_sim.rescript_draft import build_rescript_draft_payload, generate_rescript_draft
+    import ming_sim.rescript_draft as draft_mod
+
+    db, state = web_game.db, web_game.state
+    army_raw = {
+        "label": "敕关宁严守",
+        "hint": "所安者宁锦",
+        "action_type": "military_order",
+        "assignee_name": "祖大寿",
+        "target_kind": "army",
+        "target_id": "guanning",
+        "locality_scope": "none",
+        "region_id": "",
+        "transaction_category": "",
+        "station": "辽东 / 宁远锦州",
+        "deadline_months": 1,
+        "participant_roster": _roster("祖大寿"),
+    }
+    generated_json = json.dumps({"items": [{
+        "title": "宁锦急务", "context": "关宁待敕。",
+        "options": [army_raw, {**army_raw, "label": "备拟"}],
+    }]}, ensure_ascii=False)
+    monkeypatch.setattr(draft_mod, "run_agent_text", lambda *a, **k: generated_json)
+    generated = generate_rescript_draft(
+        object(),
+        build_rescript_draft_payload(
+            state, "邸报", {"armies": {"cols": ["id", "name", "station", "owner_power"], "rows": [["guanning", "关宁军", "辽东 / 宁远锦州", "ming"]]}},
+            {"name": "杨嗣昌", "office": "兵部尚书", "faction": "东林"},
+        ),
+        int(state.turn),
+    )
+    assert generated is not None
+    army_opt = generated[0]["options"][0]
+    assert army_opt["target_id"] == "guanning"
+
+    _657_install_real_phase2_llm_boundary(monkeypatch)
+    db.conn.execute("DELETE FROM pending_decisions")
+    db.conn.commit()
+    db.save_rescript_drafts(int(state.turn), [{
+        "title": "急务-军令", "context": "c",
+        "options": [army_opt, {"label": "备", "hint": "h", "draft_capability": "x"}],
+        "actor_name": "杨嗣昌", "actor_office": "兵部尚书", "actor_faction": "东林",
+    }])
+    db.conn.commit()
+    db.save_resolve_context(
+        int(state.turn), "诏", "邸报", {"candidate_events": [], "transit_semantics": []},
+        secret_orders=[],
+    )
+    state.turn_phase = TurnPhase.AWAITING_DECISION.value
+    db.save_state(state)
+    desk = db.list_rescript_desk(int(state.turn))
+    key = desk[0]["decision_key"]
+    r = asyncio.run(_post_resolve([{
+        "decision_key": key,
+        "action": "follow_draft",
+        "label": army_opt["label"],
+        "draft_capability": army_opt["draft_capability"],
+    }]))
+    assert r.status_code == 200, r.text
+    assert "event: error" not in r.text, r.text
+    assert "event: done" in r.text, r.text
+    dossiers = db.list_decree_dossiers()
+    assert dossiers and dossiers[-1]["target_id"] == "guanning"
+
+
 def test_657_mixed_batch_follow_plus_decision_and_no_context_copy(web_game, monkeypatch):
     """C1.1：急务 follow + decision 打回；真 HTTP；③后 extracted 空杀进程；
     同 DB 同 body 重 POST 无双写；resolve_context 无批副本键。"""
@@ -1367,76 +1605,21 @@ def test_1589_empty_desk_rejects_nonempty_keyless_choices(web_game, monkeypatch)
     assert 'event: done' in r2.text, r2.text
     assert phase2_calls == [1], '真正空 choices 续跑仍合法，走 submit_decisions'
 
-def test_657_s5_http_generator_failure_blocks_phase2_and_same_body_retry(web_game, monkeypatch):
-    """S5：真 HTTP summon；generator 失败挡 phase2；修后同 body 重试恰一条消费账。"""
-    from ming_sim.audience_night import TAG_ENTER, rescript_summon_origin_ref
+
+def test_657_s6_http_present_target_gets_unique_origin_entry(web_game, monkeypatch):
+    """S6：目标已在场，真 HTTP summon → 该 origin 恰一条 TAG_ENTER 事实账。"""
+    from ming_sim.audience_night import (
+        TAG_ENTER, open_night, rescript_summon_origin_ref, summon_enter,
+    )
     from ming_sim.models import TurnPhase
     from ming_sim.rescript_draft import normalize_rescript_layer_a_option
-    db, state = (web_game.db, web_game.state)
-    opt = normalize_rescript_layer_a_option({'label': '备', 'hint': 'h', 'action_type': 'assignment', 'assignee_name': '', 'target_kind': 'region', 'target_id': 'shaanxi', 'locality_scope': 'single', 'region_id': 'shaanxi', 'transaction_category': '督赈'})
-    fail = {'v': True}
 
-    def _gen(inputs):
-        if fail['v']:
-            raise RuntimeError('generator inject fail')
-        name = str(getattr(inputs, 'person_name', '') or '') or '臣'
-        return f'{name}再入殿。'
-    import ming_sim.beat_orchestration as bo
-    monkeypatch.setattr(bo, 'create_llm_beat_generator', lambda _cfg: _gen)
-    monkeypatch.setattr(web_game.session, '_beat_generator', _gen, raising=False)
+    db, state = web_game.db, web_game.state
     _657_install_real_phase2_llm_boundary(monkeypatch)
-    phase2_calls = {'n': 0}
-    _real_p2 = session_mod.resolve_decisions_phase2
 
-    def _count_phase2(*a, **k):
-        phase2_calls['n'] += 1
-        return _real_p2(*a, **k)
-    monkeypatch.setattr(session_mod, 'resolve_decisions_phase2', _count_phase2)
-    desk = _657_plant_awaiting_web(web_game, drafts=[{'title': 'S5召见', 'context': 'c', 'options': [opt, {'label': 'x', 'hint': 'h', 'draft_capability': 'x'}], 'actor_name': '杨嗣昌', 'actor_office': 'o', 'actor_faction': 'f'}])
-    key = desk[0]['decision_key']
-    body = [{'decision_key': key, 'action': 'summon', 'label': '召见', 'summon_target': '杨嗣昌'}]
-    turn_before = int(state.turn)
-    r1 = asyncio.run(_post_resolve(body))
-    assert r1.status_code == 200
-    assert 'event: error' in r1.text or 'event: done' not in r1.text
-    assert phase2_calls['n'] == 0, 'generator 失败不得进 phase2'
-    assert web_game.state.turn_phase != TurnPhase.ISSUED.value
-    hit = next((r for r in db.list_rescript_drafts() if r['title'] == 'S5召见'))
-    assert hit['status'] == 'decided'
-    assert (hit['choice'] or {}).get('action') == 'summon'
-    assert int(web_game.state.turn) == turn_before
-    fail['v'] = False
-    web_game.state.turn_phase = TurnPhase.AWAITING_DECISION.value
-    web_game.session.state.turn_phase = TurnPhase.AWAITING_DECISION.value
-    db.save_state(web_game.state)
-    r2 = asyncio.run(_post_resolve(body))
-    assert r2.status_code == 200 and 'event: done' in r2.text, r2.text
-    assert phase2_calls['n'] == 1
-    assert int(web_game.state.turn) == turn_before + 1
-    kind, turn_s, idx_s = key.split(':')
-    origin = rescript_summon_origin_ref(int(turn_s), int(idx_s), 0)
-    rows = db.conn.execute('SELECT body, tags FROM story_ledger_entries WHERE origin_ref=?', (origin,)).fetchall()
-    assert len(rows) == 1
-    tags = json.loads(rows[0]['tags'] or '[]')
-    assert TAG_ENTER in tags
-    assert str(rows[0]['body'] or '').strip() == '杨嗣昌再入殿。'
-
-def test_657_s6_http_present_target_gets_unique_origin_body(web_game, monkeypatch):
-    """S6：目标已在场，真 HTTP summon → 该 origin 恰一条 TAG_ENTER，body==generator。"""
-    from ming_sim.audience_night import TAG_ENTER, open_night, rescript_summon_origin_ref, summon_enter
-    from ming_sim.models import TurnPhase
-    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
-    db, state = (web_game.db, web_game.state)
-    gen_body = '杨嗣昌已在场仍独立入账。'
-
-    def _gen(_inputs):
-        return gen_body
-    import ming_sim.beat_orchestration as bo
-    monkeypatch.setattr(bo, 'create_llm_beat_generator', lambda _cfg: _gen)
-    monkeypatch.setattr(web_game.session, '_beat_generator', _gen, raising=False)
-    _657_install_real_phase2_llm_boundary(monkeypatch)
-    night = open_night(db, state, empty_scaffold=True)
-    summon_enter(db, int(night['id']), '杨嗣昌', empty_scaffold=False)
+    # 先使目标已在场
+    night = open_night(db, state)
+    summon_enter(db, int(night["id"]), "杨嗣昌")
     db.conn.commit()
     opt = normalize_rescript_layer_a_option({'label': '备', 'hint': 'h', 'action_type': 'assignment', 'assignee_name': '', 'target_kind': 'region', 'target_id': 'shaanxi', 'locality_scope': 'single', 'region_id': 'shaanxi', 'transaction_category': '督赈'})
     desk = _657_plant_awaiting_web(web_game, drafts=[{'title': 'S6召见', 'context': 'c', 'options': [opt, {'label': 'x', 'hint': 'h', 'draft_capability': 'x'}], 'actor_name': '杨嗣昌', 'actor_office': 'o', 'actor_faction': 'f'}])
@@ -1450,7 +1633,8 @@ def test_657_s6_http_present_target_gets_unique_origin_body(web_game, monkeypatc
     assert len(rows) == 1
     tags = json.loads(rows[0]['tags'] or '[]')
     assert TAG_ENTER in tags
-    assert str(rows[0]['body'] or '') == gen_body
+    assert not rows[0]["body"]
+
 
 def test_657_web_http_hitl_lock_boundary_same_gate(web_game, monkeypatch):
     """Class4/S2 web 生产调用：真 HTTP → submit_hitl；①/③ 持同一 gate，② 释放。"""
@@ -1496,16 +1680,26 @@ def test_657_web_http_hitl_lock_boundary_same_gate(web_game, monkeypatch):
     web_game.session.finish_rescript_phase2 = _finish
 
     def _gen(inputs):
-        name = str(getattr(inputs, 'person_name', '') or '') or '臣'
-        return f'{name}锁窗入殿。'
-    import ming_sim.beat_orchestration as bo
-    monkeypatch.setattr(bo, 'create_llm_beat_generator', lambda _cfg: _gen)
-    monkeypatch.setattr(web_game.session, '_beat_generator', _gen, raising=False)
-    opt = normalize_rescript_layer_a_option({'label': '备', 'hint': 'h', 'action_type': 'assignment', 'assignee_name': '', 'target_kind': 'region', 'target_id': 'shaanxi', 'locality_scope': 'single', 'region_id': 'shaanxi', 'transaction_category': '督赈'})
-    desk = _657_plant_awaiting_web(web_game, drafts=[{'title': '锁窗召见', 'context': 'c', 'options': [opt, {'label': 'x', 'hint': 'h', 'draft_capability': 'x'}], 'actor_name': '杨嗣昌', 'actor_office': 'o', 'actor_faction': 'f'}])
-    key = desk[0]['decision_key']
-    r = asyncio.run(_post_resolve([{'decision_key': key, 'action': 'summon', 'label': '召见', 'summon_target': '杨嗣昌'}]))
-    assert r.status_code == 200 and 'event: done' in r.text, r.text
+        name = str(getattr(inputs, "person_name", "") or "") or "臣"
+        return f"{name}锁窗入殿。"
+
+    opt = normalize_rescript_layer_a_option({
+        "label": "备", "hint": "h", "action_type": "assignment",
+        "assignee_name": "", "target_kind": "region", "target_id": "shaanxi",
+        "locality_scope": "single", "region_id": "shaanxi",
+        "transaction_category": "督赈",
+    })
+    desk = _657_plant_awaiting_web(web_game, drafts=[{
+        "title": "锁窗召见", "context": "c",
+        "options": [opt, {"label": "x", "hint": "h", "draft_capability": "x"}],
+        "actor_name": "杨嗣昌", "actor_office": "o", "actor_faction": "f",
+    }])
+    key = desk[0]["decision_key"]
+    r = asyncio.run(_post_resolve([{
+        "decision_key": key, "action": "summon",
+        "label": "召见", "summon_target": "杨嗣昌",
+    }]))
+    assert r.status_code == 200 and "event: done" in r.text, r.text
     kinds = [k for k, _ in events]
     assert 'commit' in kinds and 'join_free' in kinds and ('finish' in kinds)
     assert any((k == 'join_free' and v for k, v in events))
@@ -1693,22 +1887,23 @@ def test_657_midzhi_verdict_no_party_satisfaction(game):
     parties = json.loads(str(stored['affected_parties_json'] or '[]'))
     assert parties == []
 
-def test_657_summon_missing_tag_enter_blocks_phase2_then_retry(web_game, monkeypatch):
-    """Spec4/§D.0：真 HTTP 入口；origin 非空 body 缺 TAG_ENTER → 不进 phase2；
-    修正后同 body 重试成功。复用 S5 夹具，不另造平行机制。"""
+
+def test_657_summon_missing_tag_enter_blocks_phase2_then_retry(
+    web_game, monkeypatch,
+):
+    """#1838 reopen：批红召见落入殿事实账（TAG_ENTER、正文空）即消费，可进 phase2。"""
     from ming_sim.audience_night import TAG_ENTER, rescript_summon_origin_ref
     from ming_sim.models import TurnPhase
     from ming_sim.rescript_draft import normalize_rescript_layer_a_option
-    import ming_sim.beat_orchestration as bo
-    db, state = (web_game.db, web_game.state)
-    opt = normalize_rescript_layer_a_option({'label': '备', 'hint': 'h', 'action_type': 'assignment', 'assignee_name': '', 'target_kind': 'region', 'target_id': 'shaanxi', 'locality_scope': 'single', 'region_id': 'shaanxi', 'transaction_category': '督赈'})
-    gen_body = '杨嗣昌门闩入殿。'
 
-    def _gen(inputs):
-        name = str(getattr(inputs, 'person_name', '') or '') or '臣'
-        return f'{name}门闩入殿。' if name != '臣' else gen_body
-    monkeypatch.setattr(bo, 'create_llm_beat_generator', lambda _cfg: _gen)
-    monkeypatch.setattr(web_game.session, '_beat_generator', _gen, raising=False)
+    db, state = web_game.db, web_game.state
+    opt = normalize_rescript_layer_a_option({
+        "label": "备", "hint": "h", "action_type": "assignment",
+        "assignee_name": "", "target_kind": "region", "target_id": "shaanxi",
+        "locality_scope": "single", "region_id": "shaanxi",
+        "transaction_category": "督赈",
+    })
+
     _657_install_real_phase2_llm_boundary(monkeypatch)
     phase2_calls = {'n': 0}
     _real_p2 = session_mod.resolve_decisions_phase2
@@ -1716,47 +1911,39 @@ def test_657_summon_missing_tag_enter_blocks_phase2_then_retry(web_game, monkeyp
     def _count_phase2(*a, **k):
         phase2_calls['n'] += 1
         return _real_p2(*a, **k)
-    monkeypatch.setattr(session_mod, 'resolve_decisions_phase2', _count_phase2)
-    corrupt = {'v': True}
-    real_persist = bo.persist_chat_turn_scene
 
-    def _persist_strip_enter(db_arg, generated):
-        real_persist(db_arg, generated)
-        if corrupt['v']:
-            for eid, _body in generated:
-                db_arg.conn.execute('UPDATE story_ledger_entries SET tags=? WHERE id=?', (json.dumps(['叙事'], ensure_ascii=False), int(eid)))
-    monkeypatch.setattr(bo, 'persist_chat_turn_scene', _persist_strip_enter)
-    desk = _657_plant_awaiting_web(web_game, drafts=[{'title': '门闩召见', 'context': 'c', 'options': [opt, {'label': 'x', 'hint': 'h', 'draft_capability': 'x'}], 'actor_name': '杨嗣昌', 'actor_office': 'o', 'actor_faction': 'f'}])
-    key = desk[0]['decision_key']
-    body = [{'decision_key': key, 'action': 'summon', 'label': '召见', 'summon_target': '杨嗣昌'}]
+    monkeypatch.setattr(session_mod, "resolve_decisions_phase2", _count_phase2)
+
+    desk = _657_plant_awaiting_web(web_game, drafts=[{
+        "title": "门闩召见", "context": "c",
+        "options": [opt, {"label": "x", "hint": "h", "draft_capability": "x"}],
+        "actor_name": "杨嗣昌", "actor_office": "o", "actor_faction": "f",
+    }])
+    key = desk[0]["decision_key"]
+    body = [{
+        "decision_key": key, "action": "summon",
+        "label": "召见", "summon_target": "杨嗣昌",
+    }]
     turn_before = int(state.turn)
     r1 = asyncio.run(_post_resolve(body))
-    assert r1.status_code == 200
-    assert 'event: error' in r1.text or 'event: done' not in r1.text
-    assert phase2_calls['n'] == 0, '缺 TAG_ENTER 不得进 phase2'
-    assert web_game.state.turn_phase != TurnPhase.ISSUED.value
-    hit = next((r for r in db.list_rescript_drafts() if r['title'] == '门闩召见'))
-    assert hit['status'] == 'decided'
-    assert (hit['choice'] or {}).get('action') == 'summon'
-    assert int(web_game.state.turn) == turn_before
-    assert db.conn.execute("SELECT COUNT(*) AS c FROM chat_turns WHERE status='generating' AND user_message_id IS NULL").fetchone()['c'] == 0
-    corrupt['v'] = False
-    kind, turn_s, idx_s = key.split(':')
-    origin = rescript_summon_origin_ref(int(turn_s), int(idx_s), 0)
-    db.conn.execute('UPDATE story_ledger_entries SET tags=? WHERE origin_ref=?', (json.dumps([TAG_ENTER, '宣入'], ensure_ascii=False), origin))
-    db.conn.commit()
-    web_game.state.turn_phase = TurnPhase.AWAITING_DECISION.value
-    web_game.session.state.turn_phase = TurnPhase.AWAITING_DECISION.value
-    db.save_state(web_game.state)
-    r2 = asyncio.run(_post_resolve(body))
-    assert r2.status_code == 200 and 'event: done' in r2.text, r2.text
-    assert phase2_calls['n'] == 1
+    assert r1.status_code == 200 and "event: done" in r1.text, r1.text
+    assert phase2_calls["n"] == 1
     assert int(web_game.state.turn) == turn_before + 1
-    rows = db.conn.execute('SELECT body, tags FROM story_ledger_entries WHERE origin_ref=?', (origin,)).fetchall()
+    kind, turn_s, idx_s = key.split(":")
+    origin = rescript_summon_origin_ref(int(turn_s), int(idx_s), 0)
+    rows = db.conn.execute(
+        "SELECT body, tags FROM story_ledger_entries WHERE origin_ref=?",
+        (origin,),
+    ).fetchall()
     assert len(rows) == 1
     tags = json.loads(rows[0]['tags'] or '[]')
     assert TAG_ENTER in tags
-    assert str(rows[0]['body'] or '').strip() == gen_body
+    assert str(rows[0]["body"] or "") == ""
+
+
+# ---------------------------------------------------------------------------
+# #657 大理寺六类：扩展既有 tracer，不另造夹具族
+# ---------------------------------------------------------------------------
 
 def test_657_preferred_hitl_choice_urgent_follow_draft_ordinary_intact():
     """② 共享首选项投影：急务=follow_draft+capability；普通 decision 不变。"""
@@ -1790,22 +1977,6 @@ def test_1682_phase2_surfaces_ambiguous_stored_choice(game):
     with pytest.raises(ValueError, match='重复'):
         session.submit_hitl_choices(choice, write_gate=nullcontext())
     assert db.list_pending_decisions(int(state.turn))[0]['status'] == 'pending'
-
-def test_657_consumed_scaffold_finalized_on_retry(game):
-    """④ consumed origin 短路时 scaffold 仍须落 consumed 终态（禁 generating 永挂）。"""
-    from ming_sim.audience_night import TAG_ENTER, prepare_rescript_summon_scaffold, rescript_summon_origin_ref
-    db, state, _content = game
-    origin = rescript_summon_origin_ref(int(state.turn), 0, 0)
-    first = prepare_rescript_summon_scaffold(db, state, person_name='杨嗣昌', origin_ref=origin)
-    ctid = int(first['chat_turn_id'])
-    eid = int(first['entry_id'])
-    db.conn.execute('UPDATE story_ledger_entries SET body=?, tags=? WHERE id=?', ('杨嗣昌入殿。', json.dumps([TAG_ENTER, '宣入'], ensure_ascii=False), eid))
-    db.conn.execute("UPDATE chat_turns SET status='generating' WHERE id=?", (ctid,))
-    db.conn.commit()
-    again = prepare_rescript_summon_scaffold(db, state, person_name='杨嗣昌', origin_ref=origin)
-    assert again.get('consumed') is True
-    st = db.conn.execute('SELECT status FROM chat_turns WHERE id=?', (ctid,)).fetchone()
-    assert str(st['status']) == 'consumed'
 
 def test_657_clear_revise_anchor_corrupt_json_fails_loud(game):
     """④ 清锚扫描：choice_json 损坏 / 非 object → 响亮失败，禁静默跳过。"""
@@ -1972,17 +2143,6 @@ def test_657_summon_single_flight_concurrent_http(web_game, monkeypatch):
     opt = normalize_rescript_layer_a_option({'label': '备', 'hint': 'h', 'action_type': 'assignment', 'assignee_name': '', 'target_kind': 'region', 'target_id': 'shaanxi', 'locality_scope': 'single', 'region_id': 'shaanxi', 'transaction_category': '督赈'})
     started = threading.Event()
     release = threading.Event()
-    gen_calls = {'n': 0}
-
-    def _gen(inputs):
-        gen_calls['n'] += 1
-        started.set()
-        release.wait()
-        name = str(getattr(inputs, 'person_name', '') or '') or '臣'
-        return f'{name}single-flight。'
-    import ming_sim.beat_orchestration as bo
-    monkeypatch.setattr(bo, 'create_llm_beat_generator', lambda _cfg: _gen)
-    monkeypatch.setattr(web_game.session, '_beat_generator', _gen, raising=False)
     _657_install_real_phase2_llm_boundary(monkeypatch)
     desk = _657_plant_awaiting_web(web_game, drafts=[{'title': '单飞召见', 'context': 'c', 'options': [opt, {'label': 'x', 'hint': 'h', 'draft_capability': 'x'}], 'actor_name': '杨嗣昌', 'actor_office': 'o', 'actor_faction': 'f'}])
     key = desk[0]['decision_key']
@@ -1995,6 +2155,9 @@ def test_657_summon_single_flight_concurrent_http(web_game, monkeypatch):
         real_begin(game)
         if int(getattr(game, '_settlement_entry_inflight', 0) or 0) >= 2:
             second_arrived.set()
+        else:
+            started.set()
+            release.wait()
     monkeypatch.setattr(web_app, '_begin_settlement_entry', _observe_begin)
 
     def _post():
@@ -2013,13 +2176,7 @@ def test_657_summon_single_flight_concurrent_http(web_game, monkeypatch):
     assert len(rows) == 1
     tags = json.loads(rows[0]['tags'] or '[]')
     assert TAG_ENTER in tags
-    assert str(rows[0]['body'] or '').strip()
-    ctid = int(rows[0]['origin_chat_turn_id'] or 0)
-    assert ctid > 0
-    assert gen_calls['n'] <= 4, gen_calls
-    assert db.conn.execute('SELECT COUNT(*) AS c FROM chat_turns WHERE id=?', (ctid,)).fetchone()['c'] == 1
     assert int(web_game.state.turn) == turn_before + 1
-    assert db.conn.execute('SELECT status FROM chat_turns WHERE id=?', (ctid,)).fetchone()['status'] == 'consumed'
 
 def test_1625_phase1_publication_projects_only_coherent_recovery_tuples(web_game):
     """#1625：真实 GET 横穿 phase1 发布时，旧相位必须携带 typed in-flight。"""
@@ -2414,7 +2571,9 @@ def test_658_free_decree_capture_target_dossier_real_entry(game, monkeypatch):
     monkeypatch.setattr(cli_backend, '_run_backend_for_config', backend)
     text_in = f'着即中旨直发强推南迁之议（案卷{did}）'
     session = make_light_session(db, state, content)
+    from ming_sim.session_write_queue import get_session_write_queue
     web_game = types.SimpleNamespace(db=db, state=state, content=content, session=session, directive_rows=lambda: db.list_directives(state, statuses=('pending', 'draft')), directive_payload=lambda row: dict(row))
+    web_game._write_gate = get_session_write_queue(web_game).write_gate
     monkeypatch.setattr(web_app, 'get_game', lambda: web_game)
     result = asyncio.run(web_app.api_create_directive(web_app.DirectiveRequest(text=text_in)))
     dir_id = int(result['directive']['id'])

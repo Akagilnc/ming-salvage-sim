@@ -719,11 +719,6 @@ def test_legacy_pending_only_advances_to_durable_dossier_without_review_api(web_
     assert dossiered_id not in {row["id"] for row in state_payload["directives"]}
     assert response.status_code == 200
     assert an.get_night(game.db, int(night["id"]))["status"] == "closed"
-    closes = [
-        row for row in an.list_ledger(game.db, int(night["id"]))
-        if an.TAG_CLOSE_NIGHT in (row.get("tags") or [])
-    ]
-    assert len(closes) == 1
     dossier = game.db.get_dossier_for_directive(directive_id)
     assert dossier is not None
     assert int(game.db.load_state().turn) == turn_before + 1
@@ -846,4 +841,3 @@ def test_sync_advance_endpoint_does_not_stall_event_loop(web_game, monkeypatch):
     assert ticks >= mid_ticks
     # #1353 K10a：工人终态后继续，不按在飞 elapsed 造 409
     assert status == 200, f"advance after chat terminal expected 200, got {status}"
-

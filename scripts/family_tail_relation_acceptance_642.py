@@ -220,23 +220,19 @@ def _production_summon_turn(
     minister: str,
     utterance: str,
 ) -> Dict[str, Any]:
-    """真实 Web 召对缝：attach → scene_chat → persist；边事件经转译声明落账（#1842）。"""
-    from ming_sim.audience_night import attach_chat_turn_to_night
+    """真实 Web 召对缝：开夜 + 建轮 → scene_chat → persist；边事件经转译声明落账。"""
+    from ming_sim.audience_night import ensure_open_night_for_audience, get_open_night
 
     db, state = sess.db, sess.state
     accepted_turn = int(state.turn)
     rollback_snapshot = db.capture_chat_rollback_snapshot()
-    _night_id, chat_turn_id = attach_chat_turn_to_night(
-        db,
-        state,
-        minister,
-        agno_session_id=f"gate642:{minister}",
-        agno_runs_before=0,
-        beat_generator=None,
+    night = get_open_night(db) or ensure_open_night_for_audience(db, state)
+    _night_id = int(night["id"])
+    chat_turn_id = db.create_chat_turn(
+        state, "殿上", f"gate642:{minister}", 0,
+        night_id=_night_id, status="generating",
     )
-    # 气氛 scene 非本锚契约：不 start_chat_turn_scene。召对主链=
-    # scene_chat（#1836/#1842 单入口）+ persist；边事件/水位由转译承接，
-    # 不复活收夜 relation judge Future。
+    # scene_chat（#1836/#1842 单入口）+ persist；边事件/水位由转译承接。
     user_message_id = db.append_chat_message(
         minister, accepted_turn, "user", utterance,
     )
@@ -291,12 +287,10 @@ def _close_night_production_judge(
         sess.db,
         sess.state,
         night_id=night_id,
-        body="退朝。",
         content=content,
         registry=sess.registry,
         llm_config=cfg,
         write_gate=write_gate,
-        scene_registry=getattr(sess, "_scene_registry", None),
         write_queue=sess._write_queue,
         wait_timeout_s=0.0,
     )

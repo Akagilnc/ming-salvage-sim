@@ -111,7 +111,6 @@ def test_night_archive_involved_people_drops_non_persons(game):
     an.summon_enter(db, night["id"], "杨嗣昌", method=an.METHOD_XUANRU)
     an.append_ledger_entry(
         db, night["id"],
-        body="议边饷。",
         tags=["军务"],
         person_names=[
             "王承恩", "杨嗣昌", "皇帝", "陛下", "户部", "大臣",

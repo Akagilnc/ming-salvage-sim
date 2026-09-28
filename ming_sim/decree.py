@@ -895,7 +895,6 @@ def resolve_directives(
     registry=None,
     cheat_directive: str = "",
     source: Provenance = Provenance.player_decree,
-    scene_registry=None,
 ) -> ResolveResult:
     """玩家过月入口：前括号之后走 ADR 0157 主链，不再用 extractor 落账。
 
@@ -923,7 +922,6 @@ def resolve_directives(
         decree_text=decree_text,
         content=content,
         registry=registry,
-        scene_registry=scene_registry,
         source=source,
     )
 
@@ -1128,7 +1126,6 @@ def prepare_resolve_front_half(
     decree_text: str = "",
     content=None,
     registry=None,
-    scene_registry=None,
     source: object = Provenance.player_decree,
 ) -> List[Dict[str, object]]:
     """共享前半段 seam（ADR 0004 / #668）：pre_settle + ready=0 占位（含 transit_arrivals）。
@@ -1162,7 +1159,6 @@ def prepare_resolve_front_half(
             pre_settle(
                 state, db,
                 content=content, registry=registry,
-                scene_registry=scene_registry,
                 transit_arrivals_out=transit_arrivals_box,
             )
             # #668：transit_arrivals 与 ready=0 占位同外层 atomic 写入。
@@ -1197,7 +1193,6 @@ def prepare_resolve_front_half(
 
 def pre_settle(
     state: GameState, db: GameDB, *, content=None, registry=None,
-    scene_registry=None,
     transit_arrivals_out: Optional[List[Dict[str, object]]] = None,
 ) -> List[Dict[str, object]]:
     """确定性结算「前括号」：固定月度财政 tick + auto_trigger 硬立 seed 情势，均在 LLM 推演前。
@@ -1232,16 +1227,7 @@ def pre_settle(
     # 放在 atomic 外：收夜提交与错误包独立；成功后 pre_settle 事务内 commit_pending 仍幂等。
     # #503：收夜 beat 生产路径接通编排缝。
     from ming_sim.audience_night import auto_close_open_night
-    from ming_sim.beat_orchestration import create_llm_beat_generator
-    effective_llm = getattr(db, "llm_config", None)
-    # No usable config → skip adapter construction (probe/engine often pass bare GameDB).
-    beat_generator = (
-        create_llm_beat_generator(effective_llm) if effective_llm is not None else None
-    )
-    # #542：调用方既有 ChatTurnSceneRegistry（session._scene_registry）；不在此新建。
-    auto_close_open_night(db, state, content=content, registry=registry,
-                          beat_generator=beat_generator,
-                          scene_registry=scene_registry)
+    auto_close_open_night(db, state, content=content, registry=registry)
     # atomic + 最外层回滚后从 DB 重载（ADR 0008 决定 3 第三条）：apply_fixed_period_flows 直改了
     # state.metrics（flows.py:192）、尾部 turn_phase 已被赋 settling，脏 settling 会被下次 pre_settle
     # 守门跳过=该月财政永久丢（cmr S4 r1 F4）。嵌套时跳过 reload，由最外层拥有者处理。见 atomic_and_reload。

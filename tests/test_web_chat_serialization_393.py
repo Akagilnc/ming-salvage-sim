@@ -96,23 +96,6 @@ class _FakeSession(HallAdmissionSessionMixin):
         # #1842：WebGame persist 尾必调；轻壳无 pending 时 no-op（与生产同形入口）。
         from ming_sim.session import GameSession
         return GameSession.schedule_pending_scene_translation(self, result)
-
-    # #542 scene lifecycle seams — production chat_stream/_start_chat_turn call these.
-    def start_chat_turn_scene(self, *_a, **_k):
-        return None
-
-    def start_chat_turn_exit_scene(self, *_a, **_k):
-        return None
-
-    def join_chat_turn_scene(self, *_a, **_k):
-        return []
-
-    def persist_chat_turn_scene(self, *_a, **_k):
-        return None
-
-    def abandon_chat_turn_scene(self, *_a, **_k):
-        return None
-
     def can_summon(self, character):
         # #1402：web _require_active_minister 改调 session.can_summon——假壳挂真方法，禁自造文案表
         from ming_sim.session import GameSession

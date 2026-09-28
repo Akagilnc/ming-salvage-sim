@@ -32,7 +32,7 @@ function hongSecretOrderScroll(): AudienceScrollMessage[] {
 function softSegmentWithAside(): AudienceScrollMessage[] {
   return [
     msg({ role: "scene", speaker: "洪承畴", content: "", beat: "divider", soft_boundary: true }),
-    msg({ role: "scene", speaker: "洪承畴", content: "洪承畴趋入殿中。", beat: "entrance" }),
+    msg({ role: "scene", speaker: "洪承畴", content: "洪承畴趋入殿中。", beat: "scene" }),
     msg({ role: "user", speaker: "朕", content: "边务如何？", beat: "dialogue", chat_turn_id: 1 }),
     msg({ role: "minister", speaker: "洪承畴", content: "臣自三边来。", beat: "dialogue", chat_turn_id: 1 }),
     msg({ role: "minister", speaker: "杨嗣昌", content: "殿侧容臣插一句。", beat: "dialogue" }),
@@ -118,7 +118,7 @@ describe("filterScrollForSelectedMinister (#1511 lens)", () => {
     expect(filterScrollForSelectedMinister(scroll, "许誉卿")).toEqual(scroll);
   });
 
-  it("entrance/divider 软段 + 殿侧他臣插话：不串窗且不误删本段上下文", () => {
+  it("场景/divider 软段 + 殿侧他臣插话：不串窗且不误删本段上下文", () => {
     const scroll = softSegmentWithAside();
 
     const hong = filterScrollForSelectedMinister(scroll, "洪承畴");
@@ -145,9 +145,9 @@ describe("filterScrollForSelectedMinister (#1511 lens)", () => {
     expect(filterScrollForSelectedMinister(scroll, "许誉卿")).toEqual([]);
   });
 
-  it("backend-shaped empty-speaker entrance still binds the soft stretch to the turn principal", () => {
+  it("empty-speaker scene still binds the soft stretch to the turn principal", () => {
     const scroll: AudienceScrollMessage[] = [
-      msg({ role: "scene", speaker: "", content: "洪承畴入殿。", beat: "entrance" }),
+      msg({ role: "scene", speaker: "", content: "洪承畴入殿。", beat: "scene" }),
       msg({ role: "user", speaker: "朕", content: "问", beat: "dialogue", chat_turn_id: 5 }),
       msg({ role: "minister", speaker: "洪承畴", content: "答", beat: "dialogue", chat_turn_id: 5 }),
       msg({ role: "minister", speaker: "杨嗣昌", content: "侧言", beat: "dialogue" }),
@@ -167,7 +167,7 @@ describe("filterScrollForSelectedMinister (#1511 lens)", () => {
   it("具名 divider 段内后续他臣正式 turn：前臣窗移除、后臣窗完整、无 turn 殿侧插话仍随软段", () => {
     const scroll: AudienceScrollMessage[] = [
       msg({ role: "scene", speaker: "洪承畴", content: "", beat: "divider", soft_boundary: true }),
-      msg({ role: "scene", speaker: "洪承畴", content: "洪承畴趋入殿中。", beat: "entrance" }),
+      msg({ role: "scene", speaker: "洪承畴", content: "洪承畴趋入殿中。", beat: "scene" }),
       msg({ role: "user", speaker: "朕", content: "边务如何？", beat: "dialogue", chat_turn_id: 1 }),
       msg({ role: "minister", speaker: "洪承畴", content: "臣自三边来。", beat: "dialogue", chat_turn_id: 1 }),
       // Formal later turn by another minister inside the same named soft segment
@@ -217,22 +217,6 @@ describe("filterScrollForSelectedMinister (#1511 lens)", () => {
     expect(
       filterScrollForSelectedMinister(scroll, "许誉卿", { claimedTurnId: 11 }).map((m) => m.content),
     ).toEqual([]);
-  });
-
-  it("具名 summon 接在前臣段后：目标臣收 summon，前臣不继承", () => {
-    const scroll: AudienceScrollMessage[] = [
-      msg({ role: "scene", speaker: "洪承畴", content: "洪承畴趋入殿中。", beat: "entrance" }),
-      msg({ role: "minister", speaker: "洪承畴", content: "臣自三边来。", beat: "dialogue", chat_turn_id: 1 }),
-      msg({ role: "scene", speaker: "许誉卿", content: "驿路传召许誉卿。", beat: "summon" }),
-    ];
-    const xu = filterScrollForSelectedMinister(scroll, "许誉卿");
-    expect(xu.map((m) => ({ beat: m.beat, speaker: m.speaker }))).toEqual([
-      { beat: "summon", speaker: "许誉卿" },
-    ]);
-    const hong = filterScrollForSelectedMinister(scroll, "洪承畴");
-    expect(hong.some((m) => m.beat === "summon")).toBe(false);
-    expect(hong.some((m) => m.speaker === "许誉卿")).toBe(false);
-    expect(hong.some((m) => m.beat === "entrance" && m.speaker === "洪承畴")).toBe(true);
   });
 
   it("现行单场景轮按参与臣过滤时保留殿上正式对话", () => {

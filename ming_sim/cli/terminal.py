@@ -189,7 +189,6 @@ def _fail_cli_chat_turn_scene(
 
     cleanup 自身失败由调用方链到原 scene 异常（不得 `except: pass` 吞掉）。
     """
-    session.abandon_chat_turn_scene(int(chat_turn_id))
     if scaffold_owned:
         if before_snapshot is not None and hasattr(
             session.db, "record_chat_turn_rollback_diffs",
@@ -222,90 +221,11 @@ def _fail_cli_chat_turn_scene(
 
 
 def _record_audience_exit(session: GameSession, name: str) -> None:
-    """CLI「退下」控制口令：垫位告退 + 唯一 scene registry 生成 exit 旁白。
-
-    此路不经 session.chat，须自落；tool dismiss 由 session.chat 单缝处理。
-    禁止同步 beat_generator（#542）：失败走 abandon + fail/回滚，与回话中断同族。
-    无开夜/不在场时既有 no-op；缺 conn 的轻量 session double 跳过。
-    """
+    """CLI「退下」控制口令：落空正文告退账（#1838 reopen：无旁白调用）。"""
     if not hasattr(session.db, "conn"):
         return
-    from ming_sim.applier import atomic
-    from ming_sim.audience_night import dismiss_from_audience, get_open_night
-
-    open_n = get_open_night(session.db)
-    if open_n is None:
-        dismiss_from_audience(session.db, name, state=session.state)
-        return
-    night_id = int(open_n["id"])
-
-    can_scene = all(
-        hasattr(session, attr)
-        for attr in (
-            "start_chat_turn_exit_scene",
-            "join_chat_turn_scene",
-            "persist_chat_turn_scene",
-            "abandon_chat_turn_scene",
-        )
-    )
-    can_turn = hasattr(session.db, "create_chat_turn") and hasattr(session.db, "fail_chat_turn")
-
-    chat_turn_id = 0
-    scaffold_owned = False
-    before_snapshot = None
-    if can_scene and can_turn:
-        row = session.db.conn.execute(
-            "SELECT id FROM chat_turns WHERE night_id = ? AND minister_name = ? "
-            "AND status IN ('active', 'generating') ORDER BY id DESC LIMIT 1",
-            (night_id, name),
-        ).fetchone()
-        if row is not None:
-            chat_turn_id = int(row["id"])
-        else:
-            if hasattr(session.db, "capture_chat_rollback_snapshot"):
-                before_snapshot = session.db.capture_chat_rollback_snapshot()
-            chat_turn_id = int(session.db.create_chat_turn(
-                session.state, name, f"cli-exit:{name}", 0, night_id=night_id,
-            ))
-            scaffold_owned = True
-        if before_snapshot is None and hasattr(session.db, "capture_chat_rollback_snapshot"):
-            before_snapshot = session.db.capture_chat_rollback_snapshot()
-
-    entry_id = dismiss_from_audience(
-        session.db, name, night_id=night_id,
-        origin_chat_turn_id=int(chat_turn_id or 0),
-        state=session.state,
-    )
-    if not entry_id:
-        if scaffold_owned and chat_turn_id:
-            session.db.fail_chat_turn(int(chat_turn_id))
-        return
-    if not (can_scene and chat_turn_id):
-        return
-
-    session.start_chat_turn_exit_scene(
-        name, int(chat_turn_id), int(entry_id), night_id=night_id,
-    )
-    try:
-        generated = session.join_chat_turn_scene(int(chat_turn_id))
-        with atomic(session.db):
-            session.persist_chat_turn_scene(generated)
-        # Scaffold turn has no minister reply — retire so in-flight guards stay clear.
-        # Exit ledger keeps origin binding; success path does not record rollback diffs.
-        if scaffold_owned:
-            session.db.mark_chat_turn_failed(int(chat_turn_id))
-    except BaseException as exc:
-        # 与 minister_chat 失败清理同族：abandon + rollback/fail；cleanup 失败链到原异常。
-        try:
-            _fail_cli_chat_turn_scene(
-                session, int(chat_turn_id),
-                before_snapshot=before_snapshot,
-                scaffold_owned=scaffold_owned,
-                entry_id=int(entry_id),
-            )
-        except BaseException as cleanup_error:
-            raise exc from cleanup_error
-        raise
+    from ming_sim.audience_night import dismiss_from_audience
+    dismiss_from_audience(session.db, name)
 
 
 def _handle_court_command(
@@ -324,7 +244,6 @@ def _handle_court_command(
     if raw in STAY_ATTEND_COMMANDS or lowered in STAY_ATTEND_COMMANDS:
         from ming_sim.audience_night import stay_attend_in_audience
         stay_attend_in_audience(session.db, current.name)
-        print(f"{current.name}留下听着，殿侧侍立。\n")
         return "handled"
 
     # 技能卡查看
@@ -455,22 +374,14 @@ def _retry_interrupted_reply_cli(session: GameSession, minister_name: str) -> Op
     if not db.reopen_interrupted_chat_turn_for_retry(chat_turn_id):
         print(f"{minister_name}上一轮回奏仍在进行，请稍候再问。\n")
         return
-    # #1849 reopen：重试只走 scene_chat，不再按 route 分密令/场外。
-    from ming_sim.audience_night import recognize_xuan_command
     try:
-        if not recognize_xuan_command(question):
-            session.start_chat_turn_scene(minister_name, chat_turn_id)
         result = session.scene_chat(
             question, chat_turn_id=chat_turn_id,
             minister_name=minister_name,
         )
         answer = str(getattr(result, "answer", "") or "")
         if hasattr(db, "persist_minister_reply"):
-            scene_generated = session.join_chat_turn_scene(chat_turn_id)
-            from ming_sim.applier import atomic
-            with atomic(db):
-                session.persist_chat_turn_scene(scene_generated)
-                db.persist_minister_reply(minister_name, accepted_turn, answer, chat_turn_id)
+            db.persist_minister_reply(minister_name, accepted_turn, answer, chat_turn_id)
         else:
             mid = db.append_chat_message(minister_name, accepted_turn, "minister", answer)
             db.update_chat_turn_messages(chat_turn_id, minister_message_id=int(mid))
@@ -496,7 +407,6 @@ def _retry_interrupted_reply_cli(session: GameSession, minister_name: str) -> Op
             logger.exception(
                 "CLI retry rollback/forecast recovery failed chat_turn_id=%s", chat_turn_id,
             )
-        session.abandon_chat_turn_scene(chat_turn_id)
         print(f"重试回话失败：{exc}\n")
         return None
     # #1716/#1842：与 Web retry 同缝——回话已落库后消费 court_action 收夜。
@@ -533,16 +443,23 @@ def _cli_write_gate(session: GameSession):
     return get_session_write_queue(session).write_gate
 
 
-def minister_chat(session: GameSession, character: Character) -> str:
+def minister_chat(session: GameSession, character: Character, *, selected: bool = False) -> str:
     """与一位大臣对话。返回 'dismiss' | 'court_break' | 'summon:<name>'。"""
     other = next((n for n in session.content.characters if n != character.name), character.name)
-    print(f"\n{character.name}入殿。可持续问话；done/退下 退下，“传{other}来”换人，quit 退朝审阅诏书，exit 退出游戏。")
+    print(f"\n当前选择：{character.name}。可持续问话；done/退下 退下，“传{other}来”换人，quit 退朝审阅诏书，exit 退出游戏。")
     print("提示：陛下示意采纳后（如“准奏”），大臣会拟旨呈陛下核定。\n")
     # #505：入殿时显眼提示回话中断恢复入口（与 web ChatModal 同语义）。
     # #1353：欠账抽取无玩家手动补写面——过月内部 drain 唯一处理路。
     _print_interrupted_reply_retry_hint(session, character.name)
+    from ming_sim.audience_night import get_open_night, present_names_at
+    night = get_open_night(session.db) if selected else None
+    pending_xuan = selected and (
+        night is None or character.name not in present_names_at(session.db, int(night["id"]))
+    )
     while True:
-        question = input("朕问：").strip()
+        # A selection is its own scene turn; the first question remains the player's text.
+        question = f"宣{character.name}" if pending_xuan else input("朕问：").strip()
+        pending_xuan = False
         if not question:
             print("可继续问话；若要让其退下，请输入 done。")
             continue
@@ -551,7 +468,6 @@ def minister_chat(session: GameSession, character: Character) -> str:
         if low_q in {"重试回话", "retry reply", "retry_reply"}:
             retry_action = _retry_interrupted_reply_cli(session, character.name)
             if retry_action == "court_break":
-                print(f"{character.name}退下。\n")
                 return "court_break"
             continue
         cmd = _handle_court_command(session, question, character)
@@ -559,7 +475,6 @@ def minister_chat(session: GameSession, character: Character) -> str:
             continue
         if cmd == "dismiss":
             _record_audience_exit(session, character.name)
-            print(f"{character.name}退下。\n")
             return "dismiss"
         if cmd == "court_break":
             # #526/#1842：高置信收夜口令 → 前台先返回；队列随后 FIFO 转译 join→封夜。
@@ -585,11 +500,10 @@ def minister_chat(session: GameSession, character: Character) -> str:
                     # #1353 fold-in r8：欠账耗尽/收夜失败留本回合，可重按退朝；CLI 不退出。
                     print(f"\n收夜未成：{err}\n")
                     continue
-            print(f"{character.name}退下。\n")
             return "court_break"
         if cmd and cmd.startswith("summon:"):
             target_name = cmd.split(":", 1)[1]
-            print(f"{character.name}退下。\n传{target_name}入殿。\n")
+
             return cmd
         # 非控制指令 → 与 agent 对话。CLI 也落 chat_messages，供 session.chat
         # 内部的密令短确认上下文读取（web 路已有同款持久化）。
@@ -608,25 +522,31 @@ def minister_chat(session: GameSession, character: Character) -> str:
             if persistent_chat:
                 if lifecycle_supported:
                     rollback_snapshot = session.db.capture_chat_rollback_snapshot()
-                    # #498：CLI 与 web 共用 attach_chat_turn_to_night，禁止 night_id=0 旁路
-                    # #503/#542：生产路径与 Web/收夜共用真实 scene LLM adapter。
-                    from ming_sim.audience_night import (
-                        attach_chat_turn_to_night, get_open_night, recognize_xuan_command,
-                    )
+                    # #1838 reopen：CLI 选臣 = 确保开夜 + 建轮；入殿走「宣 X」同入口。
+                    from ming_sim.audience_night import ensure_open_night_for_audience
                     night_was_open = get_open_night(session.db) is not None
-                    _night_id, chat_turn_id = attach_chat_turn_to_night(
-                        session.db,
-                        session.state,
-                        character.name,
-                        agno_session_id=f"cli:{character.name}",
-                        agno_runs_before=0,
-                        beat_generator=None,
+                    night = get_open_night(session.db) or ensure_open_night_for_audience(
+                        session.db, session.state,
                     )
                     if not night_was_open:
                         from ming_sim.decree_forecast import schedule_held_decree_forecasts
                         schedule_held_decree_forecasts(session)
-                    if not recognize_xuan_command(question):
-                        session.start_chat_turn_scene(character.name, chat_turn_id)
+                    from ming_sim.applier import atomic
+                    from ming_sim.audience_night import ensure_summon_enter
+                    with atomic(session.db):
+                        chat_turn_id = session.db.create_chat_turn(
+                            session.state,
+                            "殿上",
+                            "cli:殿上",
+                            0,
+                            night_id=int(night["id"]),
+                            status="generating",
+                        )
+                        if question == f"宣{character.name}":
+                            ensure_summon_enter(
+                                session.db, int(night["id"]), character.name,
+                                origin_chat_turn_id=chat_turn_id, commit=False,
+                            )
                 user_message_id = session.db.append_chat_message(
                     character.name, accepted_turn, "user", question,
                 )
@@ -634,20 +554,17 @@ def minister_chat(session: GameSession, character: Character) -> str:
                     session.db.update_chat_turn_messages(
                         chat_turn_id, user_message_id=user_message_id,
                     )
+            # #1842：殿上走 scene_chat；显式密令仍走 session.chat（与 Web 同核）。
+            # 殿上不派旧判官/尾随抽取——转译一次承接。
             result = session.scene_chat(
                 question, chat_turn_id=chat_turn_id,
-                minister_name=character.name,
+                minister_name="殿上",
             )
             if persistent_chat:
-                if (chat_turn_id and hasattr(session.db, "persist_minister_reply")
-                        and hasattr(session, "join_chat_turn_scene")):
-                    scene_generated = session.join_chat_turn_scene(chat_turn_id)
-                    from ming_sim.applier import atomic
-                    with atomic(session.db):
-                        session.persist_chat_turn_scene(scene_generated)
-                        session.db.persist_minister_reply(
-                            character.name, accepted_turn, result.answer, chat_turn_id,
-                        )
+                if chat_turn_id and hasattr(session.db, "persist_minister_reply"):
+                    session.db.persist_minister_reply(
+                        character.name, accepted_turn, result.answer, chat_turn_id,
+                    )
                     minister_message_id = 0
                 else:
                     minister_message_id = session.db.append_chat_message(
@@ -667,7 +584,6 @@ def minister_chat(session: GameSession, character: Character) -> str:
         except BaseException as original_error:
             try:
                 if chat_turn_id:
-                    session.abandon_chat_turn_scene(chat_turn_id)
                     session.db.record_chat_turn_rollback_diffs(
                         chat_turn_id, rollback_snapshot or {},
                         session.db.capture_chat_rollback_snapshot(),
@@ -693,11 +609,10 @@ def minister_chat(session: GameSession, character: Character) -> str:
             print(f"【腾缺去职】{result.displaced_minister}原任官缺由新任接掌，已罢黜出朝堂名册。\n")
         if result.court_action == "dismiss":
             # 告退账已由 session.chat（court_action=dismiss 单缝）落地，此处不重复写。
-            print(f"{character.name}退下。\n")
             return "dismiss"
         if result.court_action == "summon" and result.next_minister:
             is_temporary = result.next_minister in session.temporary_characters
-            print(f"{character.name}退下。\n{'临时传' if is_temporary else '传'}{result.next_minister}入殿。\n")
+
             return f"{'summon-temp' if is_temporary else 'summon'}:{result.next_minister}"
 
 
@@ -864,7 +779,7 @@ def play_turn(session: GameSession) -> None:
             if character is None:
                 action = review_directives(session)
             else:
-                chat_action = minister_chat(session, character)
+                chat_action = minister_chat(session, character, selected=True)
                 if chat_action == "dismiss":
                     continue
                 if chat_action.startswith("summon:"):

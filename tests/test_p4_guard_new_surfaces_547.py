@@ -14,11 +14,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 from ming_sim import audience_night as an
-from ming_sim.beat_orchestration import (
-    BEAT_ENTER,
-    assemble_beat_inputs,
-    create_llm_beat_generator,
-)
 from ming_sim.decree import _rescript_decisions
 from ming_sim.models import TurnPhase
 from tests.dossier_test_helpers import create_test_secret_order
@@ -187,37 +182,8 @@ def test_scroll_and_highlight_list_keep_sentinels_out_and_world_facts_in(game, m
     an.append_ledger_entry(
         db, night_id, body=scene_body, tags=["军务"], person_names=[minister],
     )
-    enter_inputs = assemble_beat_inputs(
-        db, state, beat_kind=BEAT_ENTER, night_id=night_id,
-        time_of_day="戌时", location="乾清宫",
-        person_name=minister, summon_method=an.METHOD_XUANRU,
-    )
-    llm_calls = []
-
-    class _FakeAgent:
-        def __init__(self, **_kwargs):
-            pass
-
-        def run(self, prompt):
-            llm_calls.append(prompt)
-            return SimpleNamespace(content="entry")
-
-    monkeypatch.setattr("agno.agent.Agent", _FakeAgent)
-    monkeypatch.setattr("ming_sim.llm_model.create_chat_model", lambda *_a, **_k: object())
-    monkeypatch.setattr(
-        "ming_sim.llm_model.extract_agent_text",
-        lambda result: str(result.content),
-    )
-    enter_body = create_llm_beat_generator(object())(enter_inputs)
-    assert len(llm_calls) == 1
-    routed_materials = json.loads(llm_calls[0])
-    assert routed_materials["场景节点"] == BEAT_ENTER
-    assert routed_materials["人物"] == minister
-    assert routed_materials["召法"] == an.METHOD_XUANRU
-    an.append_ledger_entry(
-        db, night_id, body=enter_body, tags=[an.TAG_ENTER],
-        person_names=[minister],
-    )
+    # #1838：入殿只记事实账（正文空），不经 beat generator
+    an.summon_enter(db, night_id, minister, method=an.METHOD_XUANRU)
     _turn_id, mid = append_night_chat(
         db, state, night_id, minister,
         f"辽饷与{facts['army_name']}兵额如何？",
@@ -241,7 +207,6 @@ def test_scroll_and_highlight_list_keep_sentinels_out_and_world_facts_in(game, m
     _assert_no_character_axis_keys(payload, where="api_audience_scroll")
     _assert_no_character_axis_keys(scroll, where="read_night_scroll")
     _assert_no_character_axis_keys(projection, where="build_chat_projection")
-    _assert_no_character_sentinel_leak(enter_inputs, where="assemble_beat_inputs")
 
     minister_msgs = [m for m in scroll if m.get("role") == "minister"]
     assert minister_msgs and minister_msgs[0]["highlights"] == ["辽饷", f"兵{facts['manpower']}"]

@@ -481,23 +481,6 @@ class _GapBSession(HallAdmissionSessionMixin):
                 if stream_emit is not None:
                     stream_emit(str(content))
         return ChatTurnResult(answer="".join(parts))
-
-    # #542 scene lifecycle seams — production chat_stream/_start_chat_turn call these.
-    def start_chat_turn_scene(self, *_a, **_k):
-        return None
-
-    def start_chat_turn_exit_scene(self, *_a, **_k):
-        return None
-
-    def join_chat_turn_scene(self, *_a, **_k):
-        return []
-
-    def persist_chat_turn_scene(self, *_a, **_k):
-        return None
-
-    def abandon_chat_turn_scene(self, *_a, **_k):
-        return None
-
     def schedule_pending_scene_translation(self, result):
         # #1842：WebGame persist 尾必调；轻壳无 pending 时 no-op。
         return None

@@ -1,6 +1,7 @@
 """#670 召对 travel-gating 的公开 admission 与 fresh seed 契约。"""
 
 from __future__ import annotations
+from tests.conftest import open_hall_turn
 
 import asyncio
 import json
@@ -69,8 +70,6 @@ def _chat_message_count(db):
 
 def _chat_turn_count(db):
     return int(db.conn.execute("SELECT COUNT(*) AS n FROM chat_turns").fetchone()["n"])
-
-
 
 
 
@@ -445,8 +444,8 @@ def test_multi_origin_fresh_independent_retract_and_single_departure(game, monke
     origin_b = "web:tool:second"
 
     # 两源轮绑各自 chat_turn，模拟 fail_chat_turn 按 origin_chat_turn_id 独立清理。
-    _n1, turn_a = an.attach_chat_turn_to_night(db, state, "毕自严")
-    _n2, turn_b = an.attach_chat_turn_to_night(db, state, "毕自严")
+    _n1, turn_a = open_hall_turn(db, state, "毕自严")
+    _n2, turn_b = open_hall_turn(db, state, "毕自严")
     entry_a = an.record_summon_fresh(
         db, night_id, person.name,
         origin_id=origin_a, origin_chat_turn_id=int(turn_a),
@@ -750,124 +749,6 @@ def test_session_register_unlisted_summon_after_uses_admission(game, monkeypatch
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-def _install_secret_order_agent(runtime, *, stream: bool = False) -> None:
-    """#1566：在既有 hall 壳上只换 LLM 边界 agent + 密令落地真方法。
-
-    复用 tests/test_audience_background._FakeAgent 流式形态；channel=api 走 #344
-    前缀密令 resolve 路。殿上 chat_stream 经类实例解析，不手绑。
-    """
-    from tests.test_audience_background import RunContent, RunOutput, ToolExec, _FakeAgent
-
-    class _SyncAgent(_FakeAgent):
-        def run(self, *_a, **_k):
-            return SimpleNamespace(content="".join(self.chunks), tools=self.tools)
-
-        def get_last_run_output(self):
-            return None
-
-    agent: Any
-    # #1566：密令 route 须吞 summon+dismiss court actions，仍只 stage 密令。
-    non_secret_tools = [
-        ToolExec("propose_directive", "__pending_directive__不得物化的普通旨意"),
-        ToolExec(
-            "rush_staged_commitment",
-            '__commitment_rush__{"issue_id": 1, "stage_idx": 0, "deadline_months": 1}',
-        ),
-        ToolExec("summon_minister", "__summon__杨嗣昌"),
-        ToolExec("dismiss_minister", "__dismiss__"),
-    ]
-    if stream:
-        agent = _FakeAgent(tools=non_secret_tools, chunks=["臣", "领密旨。"])
-    else:
-        agent = _SyncAgent(tools=non_secret_tools, chunks=["臣领密旨。"])
-
-    s = runtime.session
-    s.registry = SimpleNamespace(get=lambda _ch, **_kw: agent, session_ids={})
-    s.llm_config = SimpleNamespace(channel="api")
-    s._audience_prompt_for_message = (
-        lambda msg, character=None, chat_turn_id=0, **_kw: msg
-    )
-    s.start_exit_scene_from_dismiss_tools = lambda *_a, **_k: False
-    # 旧分类器链已删；密令/交办由 scene_chat + 转译。此处只绑仍在的口令/合并缝。
-    for name in (
-        "chat",
-        "_apply_audience_command_verdict",
-        "_recognize_audience_command_verdict",
-        "_merge_staged_new_secret_order_content",
-    ):
-        setattr(s, name, MethodType(getattr(GameSession, name), s))
-
-
-# 共享夹具：抽取器正文必须与 player_command 相异，才能发现装配吞独立内容（#1565 F7）。
-SECRET_ORDER_STRUCTURED_CONTENT = "【抽取结构化正文】密查边饷侵冒并限期密报"
-
-
-def _patch_secret_order_extract(monkeypatch, *, title: str) -> None:
-    """#1565/0142：密令题名只认抽取器显式「标题」；测试灌入结构化 title，禁 [:14] 散文 oracle。
-
-    闸门测只关心 pending 管线与 travel 行为，灌完整 covert_task（非零契约）。
-    content 固定为与 player_command 相异的结构化正文——命令来源与抽取正文分槽验证。
-    零契约不暂存见 #1504；抽取异常仍暂存见 #354——两契约不在本夹具范围。
-    """
-    import ming_sim.cli_backend as cb
-    from tests.dossier_test_helpers import TYPED_COVERT_TASK
-
-    def _stub(
-        player_command, minister_reply, default_assignee="", llm_config=None, **_kw,
-    ):
-        # 故意不回写 player_command：相异正文才能锁住「抽取 content 槽」不被命令覆盖。
-        assert str(player_command or "").strip() != SECRET_ORDER_STRUCTURED_CONTENT
-        return {
-            "title": title,
-            "content": SECRET_ORDER_STRUCTURED_CONTENT,
-            "assignee": default_assignee or "",
-            "tags": [],
-            "deadline_months": 0,
-            "excluded_names": [],
-            "excluded_offices": [],
-            "dossier_links": [],
-            "covert_task": dict(TYPED_COVERT_TASK),
-        }
-
-    monkeypatch.setattr(cb, "_extract_secret_order", _stub)
-
-
-def _assert_secret_order_pending(
-    db, state, *, minister_name: str, pid: int, edict: str, title: str,
-) -> None:
-    assert pid > 0, f"密令须落入 pending 管线，got pending_action_id={pid}"
-    row = next(
-        (p for p in db.list_pending_actions(state.turn) if int(p["id"]) == pid),
-        None,
-    )
-    assert row is not None
-    assert row["kind"] == "secret_order"
-    assert row["action"] == "新建"
-    assert row["minister_name"] == minister_name
-    assert row["status"] == "pending"
-    payload = json.loads(row["payload_json"])
-    # 两种来源分槽：命令原文 ≠ 抽取结构化正文；pending 承接抽取 content 槽。
-    assert str(edict or "").strip(), "命令来源（player_command）须非空"
-    assert edict != SECRET_ORDER_STRUCTURED_CONTENT
-    assert payload["content"] == SECRET_ORDER_STRUCTURED_CONTENT
-    assert payload["content"] != edict
-    # 题名=显式结构化字段，非 content/edict 散文截取
-    assert payload["title"] == title
-    assert str(payload["title"]).strip()
-    # 完整契约随 stub 入 payload；禁止 staging 散文合成题名/合同
-    assert isinstance(payload.get("covert_task"), dict)
 
 
 
@@ -1343,7 +1224,7 @@ def test_tool_summon_binds_origin_chat_turn_id_and_undo_deletes(game, monkeypatc
     monkeypatch.setattr(session_mod, "_dump_llm_messages", lambda *a, **k: None)
 
     # 与生产 web 轮窗口同缝：先建 chat_turn，再把真实 id 传入 chat/tool。
-    _night_id, chat_turn_id = an.attach_chat_turn_to_night(db, state, capital.name)
+    _night_id, chat_turn_id = open_hall_turn(db, state, capital.name)
     result = sess.chat(capital.name, "传洪承畴来", chat_turn_id=int(chat_turn_id))
     assert not result.court_action
     unsettled = an.list_unsettled_summons(db)
@@ -1364,7 +1245,7 @@ def test_tool_summon_binds_origin_chat_turn_id_and_undo_deletes(game, monkeypatc
     ).fetchone()["n"] == 0
 
     # 再跑一轮：回话落库升 active 后 undo 同样按 origin 删账。
-    _night_id2, chat_turn_id2 = an.attach_chat_turn_to_night(db, state, capital.name)
+    _night_id2, chat_turn_id2 = open_hall_turn(db, state, capital.name)
     sess.chat(capital.name, "再请传洪承畴", chat_turn_id=int(chat_turn_id2))
     unsettled2 = an.list_unsettled_summons(db)
     assert len(unsettled2) == 1
@@ -1419,7 +1300,7 @@ def test_fresh_summon_same_beizhili_journey_attaches_origin_without_reapply(game
         and str(getattr(ch, "office", "") or "").strip()
         and ch.name != person.name
     )
-    night_id = int(an.open_night(db, state, empty_scaffold=True)["id"])
+    night_id = int(an.open_night(db, state)["id"])
     pids: list[int] = []
     for office, seat in (("三边总督", "shaanxi"), ("蓟辽总督", "liaodong")):
         pid = int(db.stage_pending_action(

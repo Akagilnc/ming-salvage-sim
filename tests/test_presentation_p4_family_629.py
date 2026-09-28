@@ -3,9 +3,9 @@
 Seams:
 - urge / due_review 真伪底禁词单源（禁双份漂移）
 - #622 变形禁词生产单源（禁测试本地平行表）
-- FAMILY_P4_BANNED_PLAYER_TOKENS × CREDIT_BANNED_SCAN_SURFACES 七面
+- FAMILY_P4_BANNED_PLAYER_TOKENS × CREDIT_BANNED_SCAN_SURFACES 六面
   覆盖：变形 / 真伪底 / 信用事件类 / 钝化 / 根基档
-- 七面被扫串一律来自生产投影/db 行/真实 payload 组装（禁手写串顶替）
+- 六面被扫串一律来自生产投影/db 行/真实 payload 组装（禁手写串顶替）
 """
 
 from __future__ import annotations
@@ -17,6 +17,7 @@ from pathlib import Path
 
 from ming_sim.breach_plea import (
     ENTRY_KIND_BREACH_PLEA,
+    encode_plea_meta,
     project_breach_plea_scene,
 )
 from ming_sim.commitment_backlash import (
@@ -40,7 +41,6 @@ from ming_sim.decree_vocabulary import (
 from ming_sim.due_review import (
     URGE_TRUTH_BANNED_PLAYER_TOKENS as DUE_REVIEW_URGE_TRUTH,
     _BANNED_PLAYER_TOKENS,
-    list_due_review_scenes,
     project_due_review_scene,
 )
 from ming_sim.issues import apply_score_extraction
@@ -52,8 +52,6 @@ from ming_sim.staged_commitment import (
 from ming_sim.supervision import SUPERVISION_BANNED_PLAYER_TOKENS
 from ming_sim.urge_lever import (
     ENTRY_KIND_GRACE_PLEA,
-    _URGE_SCENE_BANNED,
-    list_urge_audience_scenes,
     project_urge_audience_scene,
 )
 
@@ -63,9 +61,6 @@ from ming_sim.urge_lever import (
 
 def test_urge_due_review_truth_banned_single_source():
     """urge / due_review 真伪底禁词必须是同一生产元组，禁双份漂移。"""
-    assert _URGE_SCENE_BANNED is URGE_TRUTH_BANNED_PLAYER_TOKENS or tuple(
-        _URGE_SCENE_BANNED
-    ) == tuple(URGE_TRUTH_BANNED_PLAYER_TOKENS)
     # due_review 再导出须与叶源同一对象（或等价元组）
     assert DUE_REVIEW_URGE_TRUTH is URGE_TRUTH_BANNED_PLAYER_TOKENS or tuple(
         DUE_REVIEW_URGE_TRUTH
@@ -101,11 +96,9 @@ def test_deformation_banned_lifted_to_production_single_source():
     ) == tuple(DEFORMATION_BANNED_PLAYER_TOKENS)
 
 
-def test_family_p4_banned_covers_five_categories_and_seven_surfaces():
-    """全族禁词单源须覆盖五类系统词；扫描面钉死七面。"""
-    assert len(CREDIT_BANNED_SCAN_SURFACES) == 7
+def test_family_p4_banned_covers_five_categories_and_six_surfaces():
+    """全族禁词单源须覆盖五类系统词与现行扫描面。"""
     assert set(CREDIT_BANNED_SCAN_SURFACES) == {
-        "scene_text",
         "narrative",
         "turn_report",
         "knowledge_items",
@@ -141,7 +134,7 @@ def test_family_p4_banned_covers_five_categories_and_seven_surfaces():
         assert token in BACKLASH_BANNED_PLAYER_TOKENS
 
 
-# ── 七面活体产品扫描 ─────────────────────────────────────────────────
+# ── 六面活体产品扫描 ─────────────────────────────────────────────────
 
 
 def _active_holder(db) -> str:
@@ -203,7 +196,7 @@ def _seed_halfway_commitment(db, state, *, did: int, title: str) -> int:
 
 
 def _collect_seven_surfaces(db, state, content, *, token: str, memorial_extra: str = ""):
-    """组装 CREDIT_BANNED_SCAN_SURFACES 七面——每面均来自生产投影/db 行/payload。
+    """组装 CREDIT_BANNED_SCAN_SURFACES 六面——每面均来自生产投影/db 行/payload。
 
     返回 (surfaces, meta)；meta 含 due_scene/plea_scene/backlash_issue 等供断言。
     """
@@ -290,11 +283,11 @@ def _collect_seven_surfaces(db, state, content, *, token: str, memorial_extra: s
         stage_idx=state.turn,
         due_turn=state.turn,
         criterion_text="断供",
-        origin_context=json.dumps({
+        origin_context=encode_plea_meta({
             "breach_kind": "funding_cutoff",
             "commitment_title": "P4 终验分段之诺",
-            "display": "主办泣血陈情：前诺遭断供，求皇上收回成命。",
-        }, ensure_ascii=False),
+            "reason": "断供",
+        }),
         status=TODO_STATUS_PENDING,
         entry_kind=ENTRY_KIND_BREACH_PLEA,
         created_turn=state.turn,
@@ -357,19 +350,6 @@ def _collect_seven_surfaces(db, state, content, *, token: str, memorial_extra: s
     knowledge_rows = db.knowledge_items_for_turn(int(report_turn_state.turn))
 
     surfaces: dict[str, str] = {
-        "scene_text": "\n".join([
-            str(due_scene.get("scene_text") or ""),
-            str(urge_scene.get("scene_text") or ""),
-            str(plea_scene.get("scene_text") or ""),
-            "\n".join(
-                str(s.get("scene_text") or "")
-                for s in list_due_review_scenes(db, state)
-            ),
-            "\n".join(
-                str(s.get("scene_text") or "")
-                for s in list_urge_audience_scenes(db, state)
-            ),
-        ]),
         "origin_context": "\n".join([
             str(due_scene.get("origin_context") or ""),
             str(urge_scene.get("origin_context") or ""),
@@ -420,7 +400,7 @@ def _collect_seven_surfaces(db, state, content, *, token: str, memorial_extra: s
 
 
 def test_family_p4_seven_surfaces_scan_production_artifacts_clean(game):
-    """七面扫描：每面串取自生产投影/db 行/payload 组装，不得裸露全族禁词。
+    """六面扫描：每面串取自生产投影/db 行/payload 组装，不得裸露全族禁词。
 
     narrative 面实例化 #626 commitment_backlash issue 并扫其玩家可见叙事；
     turn_report/knowledge_items 经 save_turn_report 生产写口回读。
@@ -437,11 +417,6 @@ def test_family_p4_seven_surfaces_scan_production_artifacts_clean(game):
     for name in CREDIT_BANNED_SCAN_SURFACES:
         assert_no_family_p4_banned_tokens(surfaces[name], surface=name)
 
-    # 正向：diegetic 用词仍在
-    due_scene = meta["due_scene"]
-    plea_scene = meta["plea_scene"]
-    assert "复命" in due_scene["scene_text"] or "复命" in surfaces["scene_text"]
-    assert "泣血陈情" in plea_scene["scene_text"]
     # #626 反噬已入 narrative 扫描面
     assert meta["backlash_issue"]["title"]
     assert str(meta["backlash_issue"]["title"]) in surfaces["narrative"]
@@ -453,7 +428,7 @@ def test_family_p4_seven_surfaces_scan_production_artifacts_clean(game):
 
 
 def test_family_p4_seven_surfaces_red_when_banned_token_injected(game):
-    """负向：向活体链路注入 FAMILY_P4 禁词，七面扫描须响亮变红（证明非空心）。"""
+    """负向：向活体链路注入 FAMILY_P4 禁词，六面扫描须响亮变红（证明非空心）。"""
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.commit()
@@ -521,15 +496,9 @@ def test_due_review_preserves_diegetic_fenjie_phrase(game):
     scene = project_due_review_scene(db, staged_todo)
     # 投影后原词完整——静默剥离不得剜「分界」
     assert diegetic in str(scene.get("criterion_text") or "")
-    assert "分界" in str(scene.get("scene_text") or "") or diegetic in str(
-        scene.get("origin_context") or ""
-    )
-    assert "与喀尔喀" in str(scene.get("scene_text") or "") + str(
-        scene.get("origin_context") or ""
-    ) + str(scene.get("criterion_text") or "")
+    assert diegetic in str(scene.get("origin_context") or "")
     # 不得被剜成残句「与喀尔喀而治」
     blob = "\n".join([
-        str(scene.get("scene_text") or ""),
         str(scene.get("origin_context") or ""),
         str(scene.get("criterion_text") or ""),
         str(scene.get("gap_text") or ""),
@@ -544,14 +513,14 @@ def test_urge_lever_due_review_import_order_both_succeed():
         (
             "import ming_sim.urge_lever as ul\n"
             "import ming_sim.due_review as dr\n"
-            "assert ul.URGE_TRUTH_BANNED_PLAYER_TOKENS is "
-            "dr.URGE_TRUTH_BANNED_PLAYER_TOKENS\n"
+            "assert callable(ul.project_urge_audience_scene)\n"
+            "assert callable(dr.project_due_review_scene)\n"
         ),
         (
             "import ming_sim.due_review as dr\n"
             "import ming_sim.urge_lever as ul\n"
-            "assert ul.URGE_TRUTH_BANNED_PLAYER_TOKENS is "
-            "dr.URGE_TRUTH_BANNED_PLAYER_TOKENS\n"
+            "assert callable(ul.project_urge_audience_scene)\n"
+            "assert callable(dr.project_due_review_scene)\n"
         ),
     )
     repo_root = Path(__file__).resolve().parents[1]

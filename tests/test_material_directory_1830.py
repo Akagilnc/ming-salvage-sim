@@ -59,8 +59,8 @@ def test_prepare_writes_typed_tree_and_index(game, tmp_path):
     db.textual_facts.append(
         subject_kind="character",
         subject_id=character.name,
-        body="本官亲见府库告罄。",
         year=state.year, period=state.period, turn=state.turn,
+        body="测试文字事实",
     )
     dest = tmp_path / "materials"
     prepared = prepare_character_materials(db, state, character, dest_root=dest)
@@ -521,8 +521,8 @@ def test_audience_prompt_rebuilds_from_directory_and_persisted_turns(game):
     character = _active_minister(db, content)
     night = open_night(db, state, location="乾清宫", time_of_day="戌时")
     summon_enter(db, int(night["id"]), character.name)
-    from ming_sim.audience_night import attach_chat_turn_to_night
-    _nid, ct = attach_chat_turn_to_night(
+    from tests.conftest import open_hall_turn
+    _nid, ct = open_hall_turn(
         db, state, character.name, agno_session_id="sess", agno_runs_before=0,
     )
     spoken = "臣已核过边饷册。"
@@ -536,7 +536,7 @@ def test_audience_prompt_rebuilds_from_directory_and_persisted_turns(game):
         db, int(night["id"]), person_names=[character.name],
         body=spoken, audibility=AUDIBILITY_PUBLIC,
     )
-    assert close_night(db, state, night_id=int(night["id"]), body="退朝。")['closed']
+    assert close_night(db, state, night_id=int(night["id"]))['closed']
     open_night(db, state, location="乾清宫", time_of_day="次夜")
 
     model = SimpleNamespace(materials_dir="")

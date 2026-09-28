@@ -8,6 +8,7 @@
 """
 
 from __future__ import annotations
+from tests.conftest import open_hall_turn
 
 import os
 import sqlite3
@@ -28,11 +29,8 @@ from ming_sim.audience_night import (
     CLOSE_STEP_COMMIT_OFFICE,
     METHOD_XUANRU,
     METHOD_YUECI,
-    TAG_AUTO_CLOSE,
-    TAG_CLOSE_NIGHT,
     TAG_ENTER,
     TAG_MINGFA,
-    TAG_OPEN_NIGHT,
     TAG_STANDING_ROSTER,
     AudienceNightError,
 )
@@ -112,10 +110,9 @@ def test_open_summon_close_chain_readable_by_night(game):
 
     night = an.open_night(
         db, state, time_of_day="戌时", location="乾清宫",
-        body="乾清宫灯火初上。",
     )
     an.summon_enter(db, night["id"], minister, method=METHOD_XUANRU)
-    an.close_night(db, state, night_id=night["id"], body="秋深夜寒，退朝。")
+    an.close_night(db, state, night_id=night["id"])
 
     loaded = an.get_night(db, night["id"])
     assert loaded["status"] == "closed"
@@ -132,10 +129,10 @@ def test_open_summon_close_chain_readable_by_night(game):
     seqs = [e["seq"] for e in entries]
     assert seqs == sorted(seqs)
 
-    assert len(_find_entries(entries, TAG_OPEN_NIGHT)) == 1
+    # #1838 reopen：无开夜/收夜旁白账；入殿事实账仍在。
     enter_e = _find_entries(entries, TAG_ENTER, METHOD_XUANRU)
     assert any(minister in e["person_names"] for e in enter_e)
-    assert len(_find_entries(entries, TAG_CLOSE_NIGHT)) == 1
+    assert an.get_night(db, night["id"])["status"] == "closed"
 
 
 def test_summon_method_and_bad_method(game):
@@ -195,7 +192,7 @@ def test_two_nights_isolated_and_timeline_alignable(game):
 def test_chat_completion_via_attach(game):
     db, state, content = game
     minister = _active_minister(db, content)
-    night_id, chat_id = an.attach_chat_turn_to_night(
+    night_id, chat_id = open_hall_turn(
         db, state, minister, agno_session_id="s1", agno_runs_before=0,
         location="便殿", time_of_day="申时",
     )
@@ -212,7 +209,7 @@ def test_attach_without_scene_anchors_persists_readable_defaults(game):
     """真实入口（web/CLI attach）不带玩家选值时，夜容器时辰/地点仍持久非空、可读（#498 AC）。"""
     db, state, content = game
     minister = _active_minister(db, content)
-    night_id, _chat_id = an.attach_chat_turn_to_night(
+    night_id, _chat_id = open_hall_turn(
         db, state, minister, agno_session_id="s1", agno_runs_before=0,
     )
     row = db.conn.execute(
@@ -396,11 +393,10 @@ def test_close_night_crash_then_reopen_db_resumes_idempotent(content):
             (state2.turn,),
         ).fetchall()
         assert any("清查边饷" in (r["text"] or "") for r in drafts)
-        # 单条收夜账，再收幂等无重复
-        assert len(_find_entries(an.list_ledger(db2, night["id"]), TAG_CLOSE_NIGHT)) == 1
+        # #1838 reopen：无收夜旁白账；再收幂等看夜 status
         again = an.close_night(db2, state2, night_id=night["id"], content=content)
         assert again.get("already") is True
-        assert len(_find_entries(an.list_ledger(db2, night["id"]), TAG_CLOSE_NIGHT)) == 1
+        assert an.get_night(db2, night["id"])["status"] == "closed"
 
         # 真实收夜只负责成案；结算判决入口消费结构化 verdict 后才物化任免。
         dossier = db2.list_decree_dossiers(
@@ -479,7 +475,7 @@ def test_closing_cursor0_reopen_refuses_new_and_explicit_resume_commits(content)
         assert an.get_night(db2, night["id"])["status"] == "closing"
         # 新召对：open_night 无 content/registry → 响亮拒绝，不隐式封夜、不丢任免
         with pytest.raises(AudienceNightError) as ei:
-            an.attach_chat_turn_to_night(
+            open_hall_turn(
                 db2, state2, minister, agno_session_id="new", agno_runs_before=0)
         assert ei.value.code == "night_closing_incomplete"
         assert an.get_night(db2, night["id"])["status"] == "closing"
@@ -518,8 +514,8 @@ def test_open_night_atomic_on_dead_roster_injection(game, monkeypatch):
 
     def flaky_append(*args, **kwargs):
         calls["n"] += 1
-        # 开夜账成功后，第一条员额账炸掉
-        if calls["n"] >= 2 and kwargs.get("tags") and an.TAG_STANDING_ROSTER in kwargs["tags"]:
+        # #1838：无开夜账；第一条员额账炸掉
+        if calls["n"] >= 1 and kwargs.get("tags") and an.TAG_STANDING_ROSTER in kwargs["tags"]:
             raise RuntimeError("inject roster fail")
         return real_append(*args, **kwargs)
 
@@ -608,12 +604,12 @@ def test_bad_audibility_and_append_after_close(game):
     night = an.open_night(db, state)
     with pytest.raises(AudienceNightError) as ei:
         an.append_ledger_entry(
-            db, night["id"], person_names=[], audibility="全知", body="x", tags=["试"],
+            db, night["id"], person_names=[], audibility="全知", tags=["试"],
         )
     assert ei.value.code == "bad_audibility"
     an.close_night(db, state, night_id=night["id"])
     with pytest.raises(AudienceNightError) as ei2:
-        an.append_ledger_entry(db, night["id"], body="不该", tags=["试"])
+        an.append_ledger_entry(db, night["id"], tags=["试"])
     assert ei2.value.code == "night_closed"
 
 
@@ -645,12 +641,6 @@ def test_cli_minister_chat_anchors_turn_to_night(game, monkeypatch):
     session = SimpleNamespace(
         db=db, state=state, content=content, temporary_characters=set(),
         chat=chat, scene_chat=scene_chat,
-        # #542 scene lifecycle seams — CLI minister_chat start/join/persist/abandon.
-        start_chat_turn_scene=lambda *_a, **_k: None,
-        start_chat_turn_exit_scene=lambda *_a, **_k: None,
-        join_chat_turn_scene=lambda *_a, **_k: [],
-        persist_chat_turn_scene=lambda *_a, **_k: None,
-        abandon_chat_turn_scene=lambda *_a, **_k: None,
         # #1842：persist 尾必调；轻壳无 pending 时 no-op。
         schedule_pending_scene_translation=lambda result: None,
     )
@@ -662,7 +652,8 @@ def test_cli_minister_chat_anchors_turn_to_night(game, monkeypatch):
     open_n = an.get_open_night(db)
     assert open_n is not None
     turns = an.list_chat_turns_for_night(db, int(open_n["id"]))
-    assert turns and turns[-1]["minister_name"] == character.name
+    # #1838 reopen：CLI 殿上建轮以「殿上」为 speaker
+    assert turns and turns[-1]["minister_name"] in {character.name, "殿上"}
     assert int(turns[-1]["night_id"]) == int(open_n["id"]) > 0
 
 

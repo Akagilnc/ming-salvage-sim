@@ -51,7 +51,7 @@ def test_scene_chat_one_call_returns_multi_person_script(game, monkeypatch):
     night_id = int(get_open_night(db)["id"])
     for name in ("王绍徽", "毕自严"):
         if name not in present_names_at(db, night_id):
-            summon_enter(db, night_id, name, body="", empty_scaffold=True)
+            summon_enter(db, night_id, name)
 
     script = (
         "王绍徽出列奏道：臣以为洪承畴可当一面。\n"
@@ -113,6 +113,82 @@ def test_xuan_lands_enter_then_present_on_next_prepare(game, monkeypatch, tmp_pa
     prepared = prepare_scene_materials(db, state, dest_root=tmp_path / "after-xuan")
     assert any(p.startswith(f"人物/{target}/") for p in list_materials(prepared.root))
     assert result.answer  # 宣后仍起一次场景调用
+
+
+@pytest.mark.usefixtures("_offline_scene_beat_generator")
+def test_cli_selection_uses_scene_turn_as_admission_origin(game, monkeypatch):
+    from ming_sim.cli.terminal import minister_chat
+
+    db, state, content = game
+    character = content.characters["王绍徽"]
+    sess = _sess(db, state, content, llm_config=SimpleNamespace(channel=""))
+    sess.schedule_pending_scene_translation = lambda result: None
+    calls = []
+    readings = []
+
+    class FakeAgent:
+        tools = []
+
+        def run(self, message):
+            calls.append(message)
+            return SimpleNamespace(content="臣在。", tools=[])
+
+    def scene_agent(_config, prepared, **_kwargs):
+        readings.append(prepared.opening)
+        return FakeAgent()
+
+    monkeypatch.setattr("ming_sim.session.create_scene_agent", scene_agent)
+    answers = iter(["边饷如何？", "done"])
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
+
+    assert minister_chat(sess, character, selected=True) == "dismiss"
+    assert calls == [f"宣{character.name}", "边饷如何？"]
+    night = get_open_night(db)
+    assert night is not None
+    entries = [e for e in list_ledger(db, int(night["id"])) if TAG_ENTER in e["tags"] and character.name in e["person_names"]]
+    assert len(entries) == 1
+    assert entries[0]["origin_chat_turn_id"] > 0
+    # The next scene invocation receives the persisted first turn, not just the admission ledger.
+    first = list_chat_turns_for_night(db, int(night["id"]))[0]
+    reply = db.conn.execute(
+        "SELECT content FROM chat_messages WHERE id=?", (first["minister_message_id"],)
+    ).fetchone()["content"]
+    assert reply in readings[1]
+
+
+@pytest.mark.usefixtures("_offline_scene_beat_generator")
+def test_remote_xuan_feeds_summon_facts_to_scene(game, monkeypatch):
+    import json
+    from ming_sim.audience_night import list_unsettled_summons
+    from ming_sim.materials import _scene_pending_audience_facts
+
+    db, state, content = game
+    target = "洪承畴"
+    db.conn.execute("UPDATE characters SET location=? WHERE name=?", ("shaanxi", target))
+    db.conn.commit()
+    character = content.characters[target]
+    character.location = "shaanxi"
+    sess = _sess(db, state, content, llm_config=SimpleNamespace(channel=""))
+
+    openings = []
+
+    class FakeAgent:
+        tools = []
+
+        def run(self, message):
+            return SimpleNamespace(content="传召已发。", tools=[])
+
+    def scene_agent(_config, prepared, **_kwargs):
+        openings.append(prepared.opening)
+        return FakeAgent()
+
+    monkeypatch.setattr("ming_sim.session.create_scene_agent", scene_agent)
+    sess.scene_chat(f"宣{target}")
+    assert list_unsettled_summons(db)
+    facts = [json.loads(line) for line in _scene_pending_audience_facts(db, state)]
+    assert any(fact.get("person_name") == target and fact.get("kind") == "fresh" for fact in facts)
+    assert any(json.dumps(fact, ensure_ascii=False, sort_keys=True) in openings[0]
+               for fact in facts if fact.get("person_name") == target)
 
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")

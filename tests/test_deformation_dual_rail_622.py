@@ -3,7 +3,7 @@
 测试预算 ≤3：
 ① AC1+AC2（transformed/degraded 对照）端到端 tracer + AC4 溯源 + 假进度零入 apply
 ② AC5 稽核信号正负成对
-③ AC6 哨兵（progress_band + 公开面渲染 + scene_text 三面）
+③ AC6 哨兵（progress_band + 公开面渲染）
 
 #621 接管窗/连坐/fail-closed 既有断言不得放松（本文件不改 #621 测）。
 """
@@ -21,7 +21,6 @@ from ming_sim.decree_vocabulary import (
 from ming_sim.due_review import (
     apply_pending_due_reviews,
     decide_due_review_verdict,
-    list_due_review_scenes,
 )
 from ming_sim.flows import _apply_economy_list
 from ming_sim.issues import apply_issue_inertia_and_ongoing, apply_score_extraction
@@ -312,7 +311,7 @@ def test_ac5_audit_fork_signal_present_only_with_audit_link(game):
 
 
 def test_ac6_sentinel_no_system_tokens_on_three_surfaces(game):
-    """断言面=progress_band 列 + 公开面渲染 + 到期复命 scene_text；变形/分界等零裸露。"""
+    """断言面=progress_band 列 + 公开面渲染。"""
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.commit()
@@ -340,15 +339,6 @@ def test_ac6_sentinel_no_system_tokens_on_three_surfaces(game):
         db, state, content, dossier_id=dossier_id, title="哨兵·清丈",
     )
     write_due_staged_commitment_todos(db, state)
-
-    # 面 3：到期复命 scene_text（落格前可读）
-    scenes = list_due_review_scenes(db, state)
-    assert scenes
-    for token in ("变形", "分界", "transformed", "degraded", "beyond_intent",
-                  "fulfilled", "failed", "executing", "progress_band"):
-        assert token not in scenes[0]["scene_text"], token
-        assert token not in scenes[0].get("gap_text", ""), token
-        assert token not in scenes[0].get("statement_text", ""), token
 
     db.conn.execute(
         "UPDATE next_audience_todos SET created_turn=?",

@@ -45,7 +45,7 @@ def test_scene_recap_quotes_public_dialogue_within_presence_interval(game):
     an.summon_enter(db, nid, "徐光启")
     heard = _public(db, nid, "徐光启", "徐光启奏：宜用洪承畴督师陕西。")
     whisper = an.append_ledger_entry(
-        db, nid, person_names=[STANDING], body="王承恩附耳：此人跋扈。",
+        db, nid, person_names=[STANDING],
         audibility=AUDIBILITY_PRIVATE,
     )
 

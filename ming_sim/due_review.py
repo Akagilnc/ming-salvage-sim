@@ -280,31 +280,6 @@ def _strip_banned(text: str) -> str:
     return out
 
 
-def _gap_and_statement(review_input: Dict[str, object]) -> tuple[str, str]:
-    """0118 最小玩家面：果可见、因不自动。"""
-    effects = list(review_input.get("durable_effects") or [])
-    reports = list(review_input.get("progress_reports") or [])
-    criterion = str(review_input.get("criterion_text") or "").strip() or "所约之事"
-
-    if effects:
-        gap = f"「{criterion}」一侧已见实账落地"
-    elif reports:
-        gap = f"「{criterion}」交付仍有亏欠，表报与实况未尽合"
-    else:
-        gap = f"「{criterion}」到期未见可核之实绩"
-
-    statement = ""
-    if reports:
-        last = reports[-1]
-        memorial = str(last.get("memorial_text") or "").strip()
-        if memorial:
-            statement = f"承办人陈词：{memorial}"
-    if not statement:
-        statement = "承办人陈词：容臣细禀（尚未具状）。"
-    # 永不自动翻「因」
-    return _strip_banned(gap), _strip_banned(statement)
-
-
 def project_due_review_scene(
     db: Any,
     todo: Dict[str, object],
@@ -314,21 +289,11 @@ def project_due_review_scene(
     """复命场面投影（ID-13 用词，P4 定性、无数字面板）。"""
     inp = review_input if review_input is not None else build_due_review_input(db, todo)
     origin = str(inp.get("origin_context") or todo.get("origin_context") or "").strip()
-    gap_text, statement_text = _gap_and_statement(inp)
     mid = bool(inp.get("mid_stage"))
-    phase_hint = "中途复命" if mid else "到期复命"
-    origin_bit = f"昔有「{origin}」之约，今期已至。" if origin else "前诺到期，例应复命。"
-    scene_text = _strip_banned(
-        f"{phase_hint}：{origin_bit}{gap_text}。{statement_text}"
-    )
     entry_kind = str(todo.get("entry_kind") or ENTRY_KIND_STAGED)
     scene_kind = "covert_levy_exposure" if audience_todo_lane(entry_kind) == _AUDIENCE_LANE_COVERT_LEVY else "due_review"
     payload = todo.get("payload_json") or {}
     reopened = scene_kind == "covert_levy_exposure" and bool(payload.get("shortfall_reopened"))
-    # Covert exposure is rendered by the existing audience LLM from the facts
-    # below; unlike ordinary due review it must not inject a fixed memorial.
-    if scene_kind == "covert_levy_exposure":
-        scene_text = ""
     if reopened:
         # A prohibition reminder is a fresh shortfall projection, not a replay
         # of the already-settled exposure and its adjudication materials.
@@ -354,9 +319,6 @@ def project_due_review_scene(
         "origin_context": origin,
         "criterion_text": str(todo.get("criterion_text") or ""),
         "mid_stage": mid,
-        "gap_text": gap_text,
-        "statement_text": statement_text,
-        "scene_text": scene_text,
         "branch": str(inp.get("branch") or "no_dossier"),
         "dossier_id": inp.get("dossier_id"),
         "executor_id": str((inp.get("dossier") or {}).get("executor_id") or ""),

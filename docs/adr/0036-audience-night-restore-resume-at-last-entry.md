@@ -28,3 +28,4 @@ Status: Accepted（2026-07-02：本地 cmr 十轮收敛（codex xhigh + agy + Op
 后出注记（2026-09-09，决策票 [#1823](https://github.com/Akagilnc/ming-salvage-sim/issues/1823) owner 拍）：丢失回话的重试与转译待补、过月耗尽的重试同一形态（出事记录下一条系统提示行 + 「重试」），仍是系统层动作；重开直接回到殿上、卷开在最后一轮；「未落库政务」面板与召对内密令失败行退役（拒收是戏内事实回场，#1820）。见 [0158](0158-v2-frontend-receives-audience-month-and-recovery.md)。
 
 后出注记（2026-09-24，[#1871](https://github.com/Akagilnc/ming-salvage-sim/issues/1871) 御批，owner 原话指针 uuid `8bd4cd7c-2521-44b7-84eb-5093b2570a1d`；2026-09-28 #1842 改定）：封夜时仍待补的既有源轮不阻挡退朝；其迟到应允在过月前补齐时照常成案。**不再**另补背书批——迟到转译落地时背书随载荷挂到该交办成的案卷，明发沿同一入口。
+〔2026-09-28 后出注记（#1838 reopen）：上文「收夜 beat 消费在场名单生成收尾叙事」标作废；收夜不再写旁白账。:14 背书段由 #1842 改。〕

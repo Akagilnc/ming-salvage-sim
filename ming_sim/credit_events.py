@@ -72,7 +72,6 @@ CREDIT_BANNED_PLAYER_TOKENS = (
 
 # 扫描面清单（与 #624/#622 同形；#629 收口全族）
 CREDIT_BANNED_SCAN_SURFACES = (
-    "scene_text",
     "narrative",
     "turn_report",
     "knowledge_items",

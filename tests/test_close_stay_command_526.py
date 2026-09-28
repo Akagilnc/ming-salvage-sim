@@ -104,12 +104,8 @@ def test_high_confidence_close_command_submits_full_chain(game, monkeypatch, utt
 
     assert result.court_action == "court_break"
     night = an.get_night(db, nid)
+    # #1838 reopen：收讫以夜 status 为准，无收夜旁白账
     assert night is not None and night["status"] == "closed"
-    closes = [
-        e for e in an.list_ledger(db, nid)
-        if an.TAG_CLOSE_NIGHT in (e.get("tags") or [])
-    ]
-    assert closes, "收夜账应落"
     # 已应允候选收夜提交：不再滞留 night_approved pending；pending 终态 committed
     assert not db.list_night_approved_pending(nid, kind="directive")
     prow = db.conn.execute(
@@ -139,8 +135,6 @@ def test_ambiguous_close_asks_in_character_without_closing(game, monkeypatch):
     assert result.court_action != "court_break"
     assert an.get_night(db, nid)["status"] == "open"
     assert "陛下是要退朝么" in (result.answer or "")
-    closes = [e for e in an.list_ledger(db, nid) if an.TAG_CLOSE_NIGHT in (e.get("tags") or [])]
-    assert closes == []
 
 
 def test_close_night_failure_does_not_silent_court_break(game, monkeypatch):
@@ -158,8 +152,6 @@ def test_close_night_failure_does_not_silent_court_break(game, monkeypatch):
         sess.chat(minister.name, "退朝")
 
     assert an.get_night(db, nid)["status"] == "open"
-    closes = [e for e in an.list_ledger(db, nid) if an.TAG_CLOSE_NIGHT in (e.get("tags") or [])]
-    assert closes == []
 
 
 def test_close_night_after_chat_propagates_failure(game, monkeypatch):

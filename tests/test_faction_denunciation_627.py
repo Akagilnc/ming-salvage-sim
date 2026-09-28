@@ -303,7 +303,6 @@ def test_ac2_scripted_accept_and_clamp(game):
         state,
         [_scripted_entry(
             accuser=accuser, subject=subject_name, dossier_id=9_999_999,
-            body="妄指无案",
         )],
         commit=True,
     )
@@ -314,7 +313,6 @@ def test_ac2_scripted_accept_and_clamp(game):
         state,
         [_scripted_entry(
             accuser="不存在之人甲乙丙", subject=subject_name, dossier_id=did,
-            body="鬼影弹章",
         )],
         commit=True,
     )
@@ -344,11 +342,9 @@ def test_ac3_veracity_true_and_false_from_fork(game):
         [
             _scripted_entry(
                 accuser=accuser, subject=subject_name, dossier_id=did_true,
-                body="真分叉弹章",
             ),
             _scripted_entry(
                 accuser=accuser, subject=subject_name, dossier_id=did_false,
-                body="无分叉私货弹章",
             ),
         ],
         commit=True,
@@ -377,7 +373,7 @@ def test_ac4_dedup_upgrade_closed_and_restore(game, tmp_path, content):
     did = _subject_dossier(db, state, owner=subject_name, token="dedup")
     _make_forked(db, state, did, token="dedup")
     entry = _scripted_entry(
-        accuser=accuser, subject=subject_name, dossier_id=did, body="初弹",
+        accuser=accuser, subject=subject_name, dossier_id=did,
     )
 
     first = db.accept_faction_denunciations(state, [entry], commit=True)
@@ -393,7 +389,7 @@ def test_ac4_dedup_upgrade_closed_and_restore(game, tmp_path, content):
     same_turn_up = db.accept_faction_denunciations(
         state,
         [_scripted_entry(
-            accuser=accuser, subject=subject_name, dossier_id=did, body="同回合升级再弹",
+            accuser=accuser, subject=subject_name, dossier_id=did,
         )],
         commit=True,
     )
@@ -412,7 +408,7 @@ def test_ac4_dedup_upgrade_closed_and_restore(game, tmp_path, content):
     upgraded = db.accept_faction_denunciations(
         state,
         [_scripted_entry(
-            accuser=accuser, subject=subject_name, dossier_id=did, body="升级再弹",
+            accuser=accuser, subject=subject_name, dossier_id=did,
         )],
         commit=True,
     )
@@ -430,7 +426,6 @@ def test_ac4_dedup_upgrade_closed_and_restore(game, tmp_path, content):
         state,
         [_scripted_entry(
             accuser=accuser, subject=subject_name, dossier_id=did_closed,
-            body="结案勿弹",
         )],
         commit=True,
     )
@@ -450,7 +445,7 @@ def test_ac4_dedup_upgrade_closed_and_restore(game, tmp_path, content):
         again = restored.accept_faction_denunciations(
             state,
             [_scripted_entry(
-                accuser=accuser, subject=subject_name, dossier_id=did, body="升级再弹",
+                accuser=accuser, subject=subject_name, dossier_id=did,
             )],
             commit=True,
         )
