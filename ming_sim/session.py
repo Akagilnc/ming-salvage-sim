@@ -940,7 +940,6 @@ class GameSession:
             self.power_renames_this_turn: List[Dict[str, object]] = []
             self.previous_summary = ""
             self.registry = None  # #1837 reopen：旧大臣 Agent 退役；占位避免属性缺失
-            self.temporary_characters: Dict[str, Character] = {}
             self.last_decree = ""
             # P1-1：last_decree 所覆盖的 draft 指纹（write_decree 时记，颁诏时校验是否已陈旧）。
             self._decree_draft_fingerprint: Tuple[Tuple[int, str], ...] = ()
@@ -1094,8 +1093,6 @@ class GameSession:
         return views
 
     def _character(self, name: str) -> Character:
-        if name in self.temporary_characters:
-            return self.temporary_characters[name]
         return character_from_name(name)
 
     def _retrieve_memories_for_message(self, message: str) -> str:
@@ -1106,24 +1103,17 @@ class GameSession:
         self,
         name_or_text: str,
         current: Optional[Character] = None,
-        allow_temporary: bool = False,
-    ) -> Tuple[Character, bool]:
-        """召见人物：只认正式名册。
-
-        #1837 reopen：临时召见整条删除（生产上 allow_temporary 本就恒 False）。
-        """
+    ) -> Character:
+        """召见人物：只认正式名册。"""
         target = match_minister_from_text(name_or_text, current)
         if target is not None:
-            return (target, False)
+            return target
         clean_name = str(name_or_text or "").strip()
         if clean_name in self.content.characters:
-            return (self.content.characters[clean_name], False)
+            return self.content.characters[clean_name]
         raise ValueError(f"人物未建档：{clean_name}")
 
     def can_summon(self, character: Character) -> Tuple[bool, str]:
-        # #670 / ADR 0038：临时内存人物不得自动获朝臣资格；须先持久入册再过本闸与 admission。
-        if character.name in self.temporary_characters:
-            return (False, f"{character.name}未入本局人物档，须先补档后方可召见。")
         # 宗藩（就藩宗室）非朝堂命官，不可召见——与 web _require_active_minister / 各 roster 同口径
         # （PR#121 隐藏宗藩）。can_summon 是 summon_minister 工具链（session + web 流式两路）的共用闸，
         # 集中守此一处即覆盖两路，否则裁判可绕列表按名召宗藩（cmr R4 cross-section）。
@@ -1538,15 +1528,13 @@ class GameSession:
             target = chars.get(fragment) or match_minister_from_text(fragment)
             if target is None:
                 try:
-                    target, _tmp = self.summon_character(
-                        fragment, allow_temporary=False,
-                    )
+                    target = self.summon_character(fragment)
                 except ValueError:
                     target = None
             if target is not None:
                 decision = self.consume_audience_admission(
                     target,
-                    origin_id=f"scene:xuan:{int(self.state.turn)}:{target.name}",
+                    origin_id=f"scene:xuan:{int(chat_turn_id or 0)}:{target.name}",
                     origin_chat_turn_id=int(chat_turn_id or 0),
                 )
                 if decision.allowed:

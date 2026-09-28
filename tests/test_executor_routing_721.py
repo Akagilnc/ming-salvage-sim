@@ -260,53 +260,6 @@ def test_unknown_appointee_normalizes_unrecognized_faction(env):
     assert person["faction"] == "中立"
 
 
-def test_assignment_extract_missing_lead_heals_then_fails_loud(env, monkeypatch):
-    """#1778 验收 6：后置抽取为空 → 同缝补交 → 耗尽不成案响亮（0005）。"""
-    import ming_sim.cli_backend as cb
-    from ming_sim.action_materialize import MaterializeCtx, run_materialize_pipeline
-    from ming_sim.action_clusters import candidates_from_classifier_payload
-    from types import SimpleNamespace
-
-    db, state, content = env
-    def empty_extract(*_a, **_k):
-        return {"draft_action": "无", "draft_text": "", "target_candidate": ""}
-
-    monkeypatch.setattr(cb, "extract_draft_intent", empty_extract)
-    # 恢复文走 LLM；本条只钉不成案，不测戏内回禀措辞
-    monkeypatch.setattr(
-        cb, "compose_decree_validation_recovery",
-        lambda *a, **k: "交办缺承办人，请陛下明示人选。",
-    )
-    candidates = candidates_from_classifier_payload(
-        {"kind": "assignment", "title": "清丈", "target_id": "清丈田亩"},
-        soft=False,
-    )
-    before = len(db.list_decree_dossiers())
-    pending_before = len(db.list_pending_actions(state.turn))
-    ctx = MaterializeCtx(
-        session=SimpleNamespace(db=db, state=state, content=content),
-        character=SimpleNamespace(name="陈新甲", office_type="文官"),
-        player_message="着户部清丈天下田亩",
-        reply="臣领旨。",
-        message_text="着户部清丈天下田亩",
-        explicit_prefixed=False,
-        has_directive=False,
-        pend_for_minister=[],
-        out={},
-        intent=None,
-        intent_kind="none",
-        llm_config=None,
-        intent_candidates=candidates,
-        recent_context="",
-    )
-    run_materialize_pipeline(ctx)
-    assert not ctx.out.get("pending_action_id")
-    assert len(db.list_pending_actions(state.turn)) == pending_before
-    assert len(db.list_decree_dossiers()) == before
-    failure = ctx.out.get("decree_validation_failure") or {}
-    assert set(failure.get("failed_fields") or []) == {
-        "assignee", "participant_roster",
-    }
 
 
 def test_real_assignment_stage_lead_comes_from_extract_not_summoned_minister(env):

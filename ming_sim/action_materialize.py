@@ -1,28 +1,18 @@
-"""登记表驱动的动作物化委派（#515）。
+"""共用交办写口与动作字段目录。
 
-唯一扩展挂点：本模块 `install_action_catalog` 装入的 ACTION_CLUSTERS 行
-直接携带 materialize_fn + FieldSpec。真实 consumer 只调
-`run_materialize_pipeline`。串行 fallback 与并发判词共用 handler。
-
-新增聚类 = 在 `_build_catalog()` 加一行（含 fn），不改编排散点、无副作用 register。
+真实召对声明由 declaration_dispatch 分派；本模块保留其复用的写口和
+既有成案、批红所需的字段契约，不保留退役分类器的物化编排。
 """
 
 from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass, field, replace
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from ming_sim.decree_vocabulary import TARGET_KINDS
 from ming_sim.execution_pressure import write_locality_scope_for_target_kind
 from ming_sim.executor_routing import duty_route_categories
-from ming_sim.structured_decree import (
-    StructuredDecreeCombinationError,
-    apply_assembled_to_payload,
-    assemble_structured_decree,
-)
-
 from ming_sim.action_clusters import (
     ActionCluster,
     FieldSpec,
@@ -31,79 +21,14 @@ from ming_sim.action_clusters import (
     EFFECT_NOOP,
     cluster_by_kind,
     install_action_catalog,
-    materialize_clusters_ordered,
     validate_action_candidate_shape,
 )
 
 
-@dataclass
-class MaterializeCtx:
-    """物化上下文——真实 session/db 引用，handler 不另开落库路径。"""
-
-    session: Any
-    character: Any
-    player_message: str
-    reply: str
-    message_text: str
-    explicit_prefixed: bool
-    has_directive: bool
-    pend_for_minister: List[Dict[str, Any]]
-    out: Dict[str, Any]
-    intent: Optional[Dict[str, Any]]
-    intent_kind: str
-    llm_config: Any
-    intent_candidates: Optional[List[Dict[str, Any]]] = None
-    candidate_kind_index: int = 0
-    candidate_kind_count: int = 1
-    # #519：一句多旨整表消费（N>1 已注册候选）时为 True；handler 不得 upsert 压扁兄弟项
-    multi_intent_batch: bool = False
-    batch_state: Dict[str, Any] = field(default_factory=dict)
-    conversation_intent_handled: bool = False
-    draft_staged: bool = False
-    # ADR 0028 / #520：最近相关召对上下文（与分类器同源喂料，案卷 text 取链）
-    recent_context: str = ""
-    # #568：当前对话轮 id（session.chat/web/CLI 作用域透传）；点策 origin 结构化排除本轮
-    chat_turn_id: int = 0
 
 
-def _draft_path_took_effect(ctx: MaterializeCtx) -> bool:
-    """#1380：拟旨通道是否已占本轮（对话拟旨 / multi draft 候选）。"""
-    if ctx.draft_staged or ctx.intent_kind == "draft":
-        return True
-    if ctx.intent_candidates and any(
-        str(c.get("kind") or "") == "draft" for c in ctx.intent_candidates
-    ):
-        return True
-    return False
 
 
-def _materializable_draft_xiexang(
-    ctx: MaterializeCtx,
-    candidate: Dict[str, Any],
-) -> Dict[str, Any]:
-    """在真实写入前置条件齐全时，把 draft 协饷投影为本轮 grant 候选。
-
-    列表契约逐项独立物化；不按付款字段相等折叠。
-    draft+协饷验证失败保持零写且产出 typed 呈现信号，不退回 ordinary draft。
-    """
-    if (
-        str(candidate.get("kind") or "").strip() != "draft"
-        or str(candidate.get("grant_action") or "").strip() != "协饷"
-    ):
-        return candidate
-    require_materializable_xiexang_payload(
-        ctx.session.db,
-        text=ctx.reply,
-        amount=candidate.get("amount"),
-        account=str(candidate.get("account") or ""),
-        purpose=str(candidate.get("purpose") or ""),
-        target_kind=str(candidate.get("target_kind") or ""),
-        target_id=str(candidate.get("target_id") or ""),
-        cadence=str(candidate.get("cadence") or ""),
-    )
-    promoted = dict(candidate)
-    promoted["kind"] = "grant_allocation"
-    return promoted
 
 
 def _flush_rejection_collector(db: Any, collector: Any) -> None:
@@ -116,64 +41,6 @@ def _flush_rejection_collector(db: Any, collector: Any) -> None:
         mirror_rejections_after_commit(db, collector, rejections_jsonl_path)
 
 
-def _record_decree_validation_failures(
-    ctx: MaterializeCtx,
-    out: Dict[str, Any],
-    failures: list[tuple[dict[str, Any], BaseException]],
-) -> None:
-    """Persist every engine rejection, then generate a player-lane recovery report."""
-    from ming_sim.applier import (
-        Provenance, RejectedItem, RejectionCollector,
-    )
-    from ming_sim.cli_backend import compose_decree_validation_recovery
-
-    diagnostic_failures = [
-        {
-            "candidate": candidate,
-            "message": str(exc),
-            "failed_fields": sorted(str(field) for field in exc.failed_fields),
-        }
-        for candidate, exc in failures
-    ]
-    failed_fields = {
-        field
-        for failure in diagnostic_failures
-        for field in failure["failed_fields"]
-    }
-    collector = RejectionCollector()
-    for failure in diagnostic_failures:
-        collector.record(
-            "audience_decree",
-            RejectedItem(
-                item=failure["candidate"],
-                reason=failure["message"],
-                category="decree_validation",
-                source=Provenance.player_decree,
-            ),
-            int(ctx.session.state.turn),
-        )
-    # Recovery generation stays outside the rejection write window (0005).
-    _flush_rejection_collector(ctx.session.db, collector)
-    prior_output = json.dumps(
-        [failure["candidate"] for failure in diagnostic_failures],
-        ensure_ascii=False,
-    )
-    # C6：复用 minister_speaker_role 档料，不在 compose 内复制人物/党派材料。
-    role = minister_speaker_role(
-        ctx.character.name, ctx.character, db=ctx.session.db,
-    )
-    report = compose_decree_validation_recovery(
-        sorted(failed_fields),
-        speaker_name=ctx.character.name,
-        speaker_role=role,
-        emperor_words=ctx.player_message,
-        prior_output=prior_output,
-        llm_config=ctx.llm_config,
-    )
-    out["decree_validation_failure"] = {
-        "failed_fields": sorted(failed_fields),
-        "report": report,
-    }
 
 
 def _record_secret_landing_rejection(
@@ -224,234 +91,24 @@ def _record_secret_landing_rejection(
     _flush_rejection_collector(db, collector)
 
 
-def _rejection_item_for_exc(
-    original_item: dict[str, Any],
-    exc: BaseException,
-) -> dict[str, Any]:
-    """Prefer typed partial_result when present; else fall back to classifier item."""
-    partial = getattr(exc, "partial_result", None)
-    if isinstance(partial, dict) and partial:
-        return dict(partial)
-    return dict(original_item or {})
 
 
-def _raise_cached_draft_combo_failure(
-    exc: StructuredDecreeCombinationError,
-    candidate_kind_index: int,
-) -> None:
-    """Re-raise batch combo failure only for indexes marked in draft_failures.
-
-    Legal siblings return without recording a rejection or re-extracting.
-    partial_result is narrowed to the failed draft so ledger item_json keeps
-    the actual rejected decree fields (ADR 0008 decision 5).
-    """
-    draft_failures = dict(getattr(exc, "draft_failures", None) or {})
-    idx = int(candidate_kind_index)
-    if draft_failures and idx not in draft_failures:
-        return
-    partial = getattr(exc, "partial_result", None)
-    drafts = partial.get("drafts") if isinstance(partial, dict) else None
-    draft_item: dict[str, Any] = {}
-    if isinstance(drafts, list) and 0 <= idx < len(drafts) and isinstance(drafts[idx], dict):
-        draft_item = dict(drafts[idx])
-    elif isinstance(partial, dict) and partial:
-        draft_item = dict(partial)
-    fields = frozenset(draft_failures.get(idx) or getattr(exc, "failed_fields", None) or ())
-    raise StructuredDecreeCombinationError(
-        str(exc),
-        partial_result=draft_item,
-        failed_fields=fields,
-        draft_failures={idx: fields} if fields else dict(draft_failures),
-    ) from exc
 
 
-def _invoke_materializer(
-    ctx: MaterializeCtx,
-    fn: Any,
-    original_item: dict[str, Any],
-    failures: list[tuple[dict[str, Any], BaseException]],
-) -> None:
-    """Run one materializer and route every typed validation failure identically."""
-    try:
-        fn(ctx)
-    except (
-        StructuredDecreeCombinationError,
-        DecreeMaterializationValidationError,
-    ) as exc:
-        failures.append((_rejection_item_for_exc(original_item, exc), exc))
 
 
-def _prevalidate_grant_allocation_candidate(
-    ctx: MaterializeCtx,
-    candidate: Dict[str, Any],
-) -> None:
-    """Pure grant typed checks before any batch write transaction.
-
-    No-op / non-materializable grants share _grant_allocation_attemptable with
-    the handler; only attemptable candidates run shape checks here.
-    """
-    if not _grant_allocation_attemptable(ctx, candidate):
-        return
-    grant_action = str(candidate.get("grant_action") or "").strip()
-    target_kind, target_id = _grant_target(candidate)
-    body = str(ctx.reply or "").strip()
-    if grant_action == "协饷":
-        require_materializable_xiexang_payload(
-            ctx.session.db,
-            text=body,
-            amount=candidate.get("amount"),
-            account=str(candidate.get("account") or ""),
-            purpose=str(candidate.get("purpose") or ""),
-            target_kind=str(target_kind or ""),
-            target_id=str(target_id or ""),
-            cadence=str(candidate.get("cadence") or ""),
-        )
-        return
-    try:
-        require_grant_allocation_shape(
-            grant_action=grant_action,
-            amount=candidate.get("amount"),
-            account=candidate.get("account"),
-        )
-    except ValueError as exc:
-        field = str(getattr(exc, "field", "") or "").strip() or "amount"
-        raise DecreeMaterializationValidationError(
-            str(exc), failed_fields=(field,),
-        ) from exc
 
 
-def _draft_heal_or_escalate(
-    ctx: MaterializeCtx, **kwargs: Any,
-) -> Optional[Dict[str, Any]]:
-    """自愈抽取；真不在册 → 戏内回禀、不落草案、不炸整轮。
-
-    唯一权威：batch preheat 与 draft/assignment handler 共用，禁平行闭包。
-    #1778：require_execution_lead 缺主办耗尽 → DecreeMaterializationValidationError。
-    """
-    from ming_sim.cli_backend import (
-        MissingExecutionLeadError,
-        UnknownParticipantEscalate,
-        compose_unknown_participant_inworld_report,
-        extract_draft_intent_with_roster_heal,
-    )
-
-    try:
-        return extract_draft_intent_with_roster_heal(**kwargs)
-    except MissingExecutionLeadError as exc:
-        raise DecreeMaterializationValidationError(
-            str(exc),
-            failed_fields=tuple(getattr(exc, "failed_fields", ()) or (
-                "assignee", "participant_roster",
-            )),
-        ) from exc
-    except UnknownParticipantEscalate as exc:
-        # C6：minister 回禀复用 minister_speaker_role 档料，不只装「大臣+姓名」。
-        role = minister_speaker_role(
-            ctx.character.name, ctx.character, db=ctx.session.db,
-        )
-        report = compose_unknown_participant_inworld_report(
-            exc.names,
-            voice="minister",
-            speaker_name=ctx.character.name,
-            speaker_role=role,
-            llm_config=ctx.llm_config,
-        )
-        # batch_state is the sole store; handlers project into out when consuming.
-        ctx.batch_state["unknown_participant_escalate"] = {
-            "names": list(exc.names),
-            "report": report,
-        }
-        return None
 
 
-def _project_unknown_participant_escalate(ctx: MaterializeCtx) -> bool:
-    """Copy escalate payload from batch_state into out. Returns True if projected."""
-    esc = ctx.batch_state.get("unknown_participant_escalate")
-    if esc is None:
-        return False
-    ctx.out["unknown_participant_escalate"] = esc
-    return True
 
 
-def _draft_existing_surface(ctx: MaterializeCtx) -> Dict[str, Any]:
-    """pending/committed draft 探测与 dir_candidates 装配——preheat 与 handler 单源。"""
-    session = ctx.session
-    minister_name = ctx.character.name
-    pend_for_minister = ctx.pend_for_minister
-    has_pending_directive = any(p["kind"] == "directive" for p in pend_for_minister)
-    committed_draft = None
-    if not has_pending_directive:
-        for _directive in reversed(
-            session.db.list_directives(session.state, statuses=("draft",))
-        ):
-            if session.db.get_dossier_for_directive(int(_directive["id"])) is not None:
-                continue
-            if str(_directive["actor"] or "") == minister_name:
-                committed_draft = _directive
-                break
-    dir_candidates: list[dict[str, Any]] = []
-    for _p in pend_for_minister:
-        if _p["kind"] != "directive":
-            continue
-        _val = _p["payload_json"] or "{}"
-        try:
-            _cp = _val if isinstance(_val, (list, dict)) else json.loads(_val)
-        except (ValueError, TypeError):
-            _cp = {}
-        _txt = str(_cp.get("text") or "") if isinstance(_cp, dict) else ""
-        _mode = _cp.get("mode") if isinstance(_cp, dict) else None
-        dir_candidates.append({
-            "id": int(_p["id"]), "text": _txt, "summary": _txt[:40], "mode": _mode,
-        })
-    existing_draft_text = ""
-    if dir_candidates:
-        existing_draft_text = str(dir_candidates[-1].get("text") or "")
-    elif committed_draft is not None and not has_pending_directive:
-        existing_draft_text = str(committed_draft["text"] or "")
-    has_committed_directive = committed_draft is not None
-    return {
-        "has_pending_directive": has_pending_directive,
-        "committed_draft": committed_draft,
-        "has_committed_directive": has_committed_directive,
-        "has_existing_draft": has_pending_directive or has_committed_directive,
-        "dir_candidates": dir_candidates,
-        "existing_draft_text": existing_draft_text,
-    }
 
 
-def _attribute_draft_combo_failures(
-    exc: StructuredDecreeCombinationError,
-    pure_draft_records: list[tuple[Dict[str, Any], Dict[str, Any], str, int]],
-    validation_failures: list[tuple[dict[str, Any], BaseException]],
-) -> None:
-    """Map combo draft_failures indexes onto batch rejection rows (legal siblings skip)."""
-    for (
-        _candidate, original_candidate, _original_kind, original_draft_index,
-    ) in pure_draft_records:
-        try:
-            _raise_cached_draft_combo_failure(exc, original_draft_index)
-        except StructuredDecreeCombinationError as attributed:
-            validation_failures.append(
-                (_rejection_item_for_exc(original_candidate, attributed), attributed),
-            )
 
 
-def _draft_extract_admitted(ctx: MaterializeCtx) -> bool:
-    """draft 抽取/物化准入唯一权威——preheat 与 handler 共用，禁平行复制。"""
-    return not (
-        ctx.explicit_prefixed
-        or ctx.has_directive
-        or ctx.out.get("pending_action_id")
-    )
 
 
-def _secret_extract_admitted(ctx: MaterializeCtx) -> bool:
-    """secret/cultivate 抽取/物化准入唯一权威——preheat 与 handler 共用。"""
-    return not (
-        ctx.out.get("pending_action_id")
-        or ctx.out.get("secret_order_id")
-        or ctx.explicit_prefixed
-    )
 
 
 def _secret_order_pending_payload(
@@ -686,836 +343,27 @@ def land_or_recover_new_secret_order(
     out["pending_action_id"] = 0
 
 
-def _grant_allocation_attemptable(
-    ctx: MaterializeCtx, intent: Dict[str, Any],
-) -> bool:
-    """Pure: grant handler 是否会调用 stage。handler 与批预热投影共用，禁平行预测。
-
-    #1783：按几件事拆旨后同一事不再并列拟旨/拨帑/交办候选；身份钳随并列形态删除。
-    同通道内独立数组项（#518 另拨/再赏、#519 两件事）各自照落。
-    """
-    if (
-        ctx.draft_staged
-        or ctx.out.get("pending_action_id")
-        or ctx.conversation_intent_handled
-    ):
-        return False
-    grant_action = str(intent.get("grant_action") or "").strip()
-    if grant_action not in (GRANT_ACTIONS - {"无"}):
-        return False
-    _target_kind, target_id = _grant_target(intent)
-    # 协饷缺 target 仍交 stage fail-loud；其它 grant 无目标则无物化。
-    if not target_id and grant_action != "协饷":
-        return False
-    return True
 
 
-def _batch_write_pass_admission_ctx(
-    ctx: MaterializeCtx,
-    candidate_records: list[tuple[Dict[str, Any], Dict[str, Any], str, int]],
-) -> MaterializeCtx:
-    """投影写遍 draft/secret 准入 ctx。
-
-    与 pipeline grant_staged 同口径：仅 _grant_allocation_attemptable 为真的
-    grant 会解除显式前缀；存在 grant kind 本身不构成解除（禁宽泛预测）。
-    """
-    if not ctx.explicit_prefixed:
-        return ctx
-    for candidate, _original, _original_kind, _idx in candidate_records:
-        if str(candidate.get("kind") or "") != "grant_allocation":
-            continue
-        projected = replace(
-            ctx,
-            intent=candidate,
-            intent_kind="grant_allocation",
-            intent_candidates=None,
-            conversation_intent_handled=False,
-            draft_staged=False,
-        )
-        if _grant_allocation_attemptable(projected, candidate):
-            return replace(ctx, explicit_prefixed=False)
-    return ctx
 
 
-def _secret_mode_needs(
-    candidate_records: list[tuple[Dict[str, Any], Dict[str, Any], str, int]],
-) -> tuple[bool, bool]:
-    """同批 secret 模式需求：新建 → new；既有动作/cultivate → actions。可并存。"""
-    need_new = False
-    need_actions = False
-    for candidate, _original, _original_kind, _idx in candidate_records:
-        kind = str(candidate.get("kind") or "")
-        if kind == "cultivate":
-            need_actions = True
-        elif kind == "secret":
-            if candidate.get("secret_action") == "新建":
-                need_new = True
-            else:
-                need_actions = True
-    return need_new, need_actions
 
 
-def _preheat_batch_draft_extractions(
-    ctx: MaterializeCtx,
-    candidate_records: list[tuple[Dict[str, Any], Dict[str, Any], str, int]],
-    draft_total: int,
-    validation_failures: list[tuple[dict[str, Any], BaseException]],
-) -> None:
-    """Run draft LLM extractions into batch_state before any write transaction.
-
-    Multi-draft combo failure is attributed per draft_failures index only;
-    legal siblings get no rejection row. Any typed failure keeps the batch at
-    zero writes (caller skips the write pass). Admission shares handler authority.
-    """
-    pure_draft_records = [
-        (candidate, original, original_kind, original_draft_index)
-        for candidate, original, original_kind, original_draft_index in candidate_records
-        if str(candidate.get("kind") or "") == "draft"
-    ]
-    if not pure_draft_records:
-        return
-    # 无消费者不抽：写遍准入（含实际 grant 落地后解除前缀）与 handler 同一权威。
-    if not _draft_extract_admitted(
-        _batch_write_pass_admission_ctx(ctx, candidate_records),
-    ):
-        return
-
-    session = ctx.session
-
-    if draft_total > 1:
-        try:
-            batch_res = _draft_heal_or_escalate(
-                ctx,
-                player_message=ctx.player_message,
-                minister_reply=ctx.reply,
-                llm_config=ctx.llm_config,
-                draft_count=draft_total,
-                content=getattr(session, "content", None),
-                db=session.db,
-            )
-        except StructuredDecreeCombinationError as exc:
-            # Failures land in validation_failures; pipeline returns before write pass.
-            # No draft_combo_error/drafts residue — handler multi path never runs here.
-            _attribute_draft_combo_failures(
-                exc, pure_draft_records, validation_failures,
-            )
-            return
-        if batch_res is None:
-            # escalate already in batch_state via _draft_heal_or_escalate.
-            return
-        ctx.batch_state["drafts"] = list(batch_res.get("drafts") or [])
-        return
-
-    # Single pure draft: preheat so the write pass never opens LLM I/O.
-    _candidate, original_candidate, _original_kind, _original_draft_index = pure_draft_records[0]
-    surface = _draft_existing_surface(ctx)
-    try:
-        healed = _draft_heal_or_escalate(
-            ctx,
-            player_message=ctx.player_message,
-            minister_reply=ctx.reply,
-            llm_config=ctx.llm_config,
-            has_pending_draft=surface["has_existing_draft"],
-            existing_draft_text=surface["existing_draft_text"],
-            existing_candidates=surface["dir_candidates"] or None,
-            content=getattr(session, "content", None),
-            db=session.db,
-        )
-    except StructuredDecreeCombinationError as exc:
-        validation_failures.append(
-            (_rejection_item_for_exc(original_candidate, exc), exc),
-        )
-        return
-    ctx.batch_state["draft_single"] = healed
 
 
-def _secret_extract_bundle(
-    ctx: MaterializeCtx, *, prefer_new: bool,
-) -> Dict[str, Any]:
-    """secret/cultivate LLM 抽取装配唯一权威（preheat 与 handler fallback 共调）。"""
-    from ming_sim.cli_backend import _extract_secret_order, extract_minister_actions
-
-    session = ctx.session
-    minister_name = ctx.character.name
-    if prefer_new:
-        return {
-            "mode": "new",
-            "secret": _extract_secret_order(
-                ctx.player_message,
-                ctx.reply,
-                minister_name,
-                ctx.llm_config,
-                force_default_assignee=False,
-                dossier_candidates=session.db.list_referenceable_dossiers(
-                    minister_name, session.state.turn,
-                ),
-            ),
-        }
-    active = list(session.db.get_active_secret_orders_for_minister(minister_name) or [])
-    if not active:
-        return {
-            "mode": "none",
-            "act": None,
-            "active": active,
-        }
-    return {
-        "mode": "actions",
-        "act": extract_minister_actions(
-            ctx.player_message, ctx.reply, active, llm_config=ctx.llm_config,
-        ),
-        "active": active,
-    }
 
 
-def _preheat_batch_secret_extractions(
-    ctx: MaterializeCtx,
-    candidate_records: list[tuple[Dict[str, Any], Dict[str, Any], str, int]],
-) -> None:
-    """Run secret/cultivate LLM extractions into batch_state before writes.
-
-    同批多 mode 分槽（new / actions）一次收齐；写遍只消费对应槽，禁止
-    单槽 prefer_new 互斥导致写遍 fallback 重抽。无消费者（准入失败）不预热。
-
-    新建密令若落不了库：在写事务前完成耐久诊断 + 回禀 compose，投影进
-    batch_state；写遍只合并投影，事务内零产文（#1765 C1）。
-    """
-    from ming_sim.cli_backend import secret_order_can_land
-
-    need_new, need_actions = _secret_mode_needs(candidate_records)
-    if not (need_new or need_actions):
-        return
-    # 无消费者不抽：写遍准入（含实际 grant 落地后解除前缀）与 handler 同一权威。
-    if not _secret_extract_admitted(
-        _batch_write_pass_admission_ctx(ctx, candidate_records),
-    ):
-        return
-    slots: Dict[str, Any] = {}
-    if need_new:
-        slots["new"] = _secret_extract_bundle(ctx, prefer_new=True)
-        secret = dict((slots["new"] or {}).get("secret") or {})
-        if not secret_order_can_land(secret):
-            # Diagnose + compose outside write T; commit facts before recovery I/O.
-            ctx.batch_state["secret_landing_recovery"] = (
-                _prepare_unlandable_secret_recovery(
-                    db=ctx.session.db,
-                    turn=int(ctx.session.state.turn),
-                    minister_name=ctx.character.name,
-                    secret=secret,
-                    player_message=ctx.player_message,
-                    llm_config=ctx.llm_config,
-                    character=ctx.character,
-                    chat_turn_id=int(ctx.chat_turn_id or 0),
-                )
-            )
-    if need_actions:
-        slots["actions"] = _secret_extract_bundle(ctx, prefer_new=False)
-    # Key presence marks batch write path: handler must not re-extract.
-    ctx.batch_state["secret_extract_by_mode"] = slots
 
 
-def run_materialize_pipeline(ctx: MaterializeCtx) -> None:
-    """按登记 priority 依次调用已注册 materializer。
-
-    各 handler 内部保留既有互斥/结构化判词/串行抽取语义；编排层不再出现
-    secret/cultivate/draft/appointment 字面量分叉。
-    同一 callable 只跑一次（secret/cultivate 共享 extract 缝）。
-    """
-    if ctx.intent_candidates:
-        # classifier 的列表契约逐项消费；confirmation 仍在 session 上游按 primary
-        # 裁决并提前返回。每项复用登记行自带的同一 handler，不复制 kind 分支。
-        # 批路径选路 (a)/#1730：先收齐全批抽取+纯校验（无事务），任一 typed 失败
-        # 则零业务写直接落拒收；全成功再一次短 atomic 落 deterministic 写。
-        # 禁止 with atomic 包住任何 LLM 调用。
-        from ming_sim.applier import atomic
-
-        baseline_out = dict(ctx.out)
-        multi_batch = len(ctx.intent_candidates) > 1
-        draft_total = sum(
-            str(candidate.get("kind") or "") == "draft"
-            for candidate in ctx.intent_candidates
-        )
-        draft_index = 0
-        candidate_records = []
-        validation_failures: list[tuple[dict[str, Any], BaseException]] = []
-        for candidate in ctx.intent_candidates:
-            original_candidate = dict(candidate)
-            original_kind = str(candidate.get("kind") or "")
-            original_draft_index = draft_index
-            if original_kind == "draft":
-                draft_index += 1
-            try:
-                materializable = _materializable_draft_xiexang(ctx, candidate)
-            except DecreeMaterializationValidationError as exc:
-                validation_failures.append((original_candidate, exc))
-                continue
-            candidate_records.append((
-                materializable, original_candidate, original_kind, original_draft_index,
-            ))
-        if ctx.explicit_prefixed:
-            candidate_records.sort(
-                key=lambda record: str(record[0].get("kind") or "")
-                != "grant_allocation"
-            )
-
-        # Pass 1 pure grant checks (no T): drop failing candidates from the write set.
-        validated_records = []
-        for (
-            candidate, original_candidate, original_kind, original_draft_index,
-        ) in candidate_records:
-            if str(candidate.get("kind") or "") == "grant_allocation":
-                try:
-                    _prevalidate_grant_allocation_candidate(ctx, candidate)
-                except DecreeMaterializationValidationError as exc:
-                    validation_failures.append(
-                        (_rejection_item_for_exc(original_candidate, exc), exc),
-                    )
-                    continue
-            validated_records.append(
-                (candidate, original_candidate, original_kind, original_draft_index),
-            )
-        candidate_records = validated_records
-
-        kind_counts: Dict[str, int] = {}
-        for candidate, _original_candidate, _original_kind, _original_index in candidate_records:
-            kind = str(candidate.get("kind") or "")
-            kind_counts[kind] = kind_counts.get(kind, 0) + 1
-
-        # Typed failure already known → zero business write; skip LLM preheat.
-        if validation_failures:
-            _record_decree_validation_failures(ctx, ctx.out, validation_failures)
-            return
-
-        # Pass 1 LLM preheat (no T): draft/secret/assignment extractions land in batch_state.
-        _preheat_batch_draft_extractions(
-            ctx, candidate_records, draft_total, validation_failures,
-        )
-        _preheat_batch_secret_extractions(ctx, candidate_records)
-        _preheat_batch_assignment_extractions(
-            ctx, candidate_records, validation_failures,
-        )
-        if validation_failures:
-            _record_decree_validation_failures(ctx, ctx.out, validation_failures)
-            return
-
-        # Pass 2: short deterministic write atomic only (no LLM).
-        kind_indexes: Dict[str, int] = {}
-        grant_staged = False
-        out_merges: list[dict[str, Any]] = []
-        draft_staged_any = False
-        write_failures: list[tuple[dict[str, Any], BaseException]] = []
-        try:
-            with atomic(ctx.session.db):
-                for (
-                    candidate, original_candidate, original_kind, original_draft_index,
-                ) in candidate_records:
-                    kind = str(candidate.get("kind") or "")
-                    cluster = cluster_by_kind(kind)
-                    if cluster is None or cluster.effect != EFFECT_MATERIALIZE:
-                        continue
-                    fn = cluster.materialize_fn
-                    if fn is None:
-                        continue
-                    kind_index = kind_indexes.get(kind, 0)
-                    kind_indexes[kind] = kind_index + 1
-                    candidate_out = dict(baseline_out)
-                    candidate_ctx = replace(
-                        ctx,
-                        out=candidate_out,
-                        intent=candidate,
-                        intent_kind=cluster.kind,
-                        intent_candidates=None,
-                        explicit_prefixed=ctx.explicit_prefixed and not grant_staged,
-                        candidate_kind_index=(
-                            original_draft_index if original_kind == "draft" else kind_index
-                        ),
-                        candidate_kind_count=(
-                            draft_total if original_kind == "draft" else kind_counts[kind]
-                        ),
-                        multi_intent_batch=multi_batch,
-                        conversation_intent_handled=False,
-                        draft_staged=False,
-                    )
-                    try:
-                        fn(candidate_ctx)
-                    except (
-                        StructuredDecreeCombinationError,
-                        DecreeMaterializationValidationError,
-                    ) as exc:
-                        # Unexpected after pre-validation: roll back the short write T.
-                        write_failures.append(
-                            (_rejection_item_for_exc(original_candidate, exc), exc),
-                        )
-                        raise
-                    if kind == "grant_allocation" and int(
-                        candidate_out.get("pending_action_id") or 0
-                    ) > int(baseline_out.get("pending_action_id") or 0):
-                        grant_staged = True
-                    out_merges.append(candidate_out)
-                    if candidate_ctx.draft_staged:
-                        draft_staged_any = True
-        except (
-            StructuredDecreeCombinationError,
-            DecreeMaterializationValidationError,
-        ):
-            # out never merged on this path — no projection reset needed.
-            _record_decree_validation_failures(
-                ctx, ctx.out, write_failures or validation_failures,
-            )
-            return
-
-        # 批候选各自从 baseline 复制完整 out 再写；顺序 update 会用后项 0/空 failures
-        # 抹掉先项成功 ID 与独立失败。与 session.coalesce_pending_action_id 同规：
-        # 非零 ID 不被 0 覆盖；各候选相对 baseline 新追加的 failures 累计。
-        # 键存在性按 baseline/候选键并集：无结果不发键（#651）；显式零/空键保留（#1504）。
-        # 不得以值真假 pop（值假 ≠ 键缺）。
-        from ming_sim.session import coalesce_pending_action_id
-
-        baseline_failure_count = len(baseline_out.get("pending_action_failures") or [])
-        _PENDING_MERGE_KEYS = ("pending_action_id", "pending_action_failures")
-        for merged in out_merges:
-            has_prior_id = "pending_action_id" in ctx.out
-            has_cand_id = "pending_action_id" in merged
-            prior_id = (
-                int(ctx.out.get("pending_action_id") or 0) if has_prior_id else 0
-            )
-            staged_id = (
-                int(merged.get("pending_action_id") or 0) if has_cand_id else 0
-            )
-            has_prior_failures = "pending_action_failures" in ctx.out
-            has_cand_failures = "pending_action_failures" in merged
-            prior_failures = (
-                list(ctx.out.get("pending_action_failures") or [])
-                if has_prior_failures else []
-            )
-            if has_cand_failures:
-                cand_failures = list(merged.get("pending_action_failures") or [])
-                added_failures = cand_failures[baseline_failure_count:]
-            else:
-                added_failures = []
-            ctx.out.update(
-                {k: v for k, v in merged.items() if k not in _PENDING_MERGE_KEYS}
-            )
-            if has_prior_id or has_cand_id:
-                ctx.out["pending_action_id"] = coalesce_pending_action_id(
-                    prior_id, staged_id,
-                )
-            else:
-                ctx.out.pop("pending_action_id", None)
-            if has_prior_failures or has_cand_failures:
-                ctx.out["pending_action_failures"] = prior_failures + added_failures
-            else:
-                ctx.out.pop("pending_action_failures", None)
-        if draft_staged_any:
-            ctx.draft_staged = True
-
-        # #1380：拟旨优先后仍须并行 office（仅 LLM 分类路；前缀路禁，见 #344 US3）
-        # D 成功尾部保持 COMMIT 后另起，不并进批 T。
-        if _draft_path_took_effect(ctx) and not ctx.explicit_prefixed:
-            parallel_stage_office_from_appointment_intent(ctx)
-        return
-
-    seen: set = set()
-    validation_failures: list[tuple[dict[str, Any], BaseException]] = []
-    for cluster in materialize_clusters_ordered():
-        fn = cluster.materialize_fn
-        if fn is None or fn in seen:
-            continue
-        seen.add(fn)
-        _invoke_materializer(ctx, fn, {}, validation_failures)
-    if validation_failures:
-        _record_decree_validation_failures(ctx, ctx.out, validation_failures)
-    # #1380：LLM 分类拟旨路并行 office（无任免意图则 no-op）。
-    # 显式「拟旨如下」前缀任免走随诏 extractor office_changes（#344 US3 / ADR 0028 /
-    # test_decree_prefix_appointment_not_double_staged）；禁并行 LLM 抽取。
-    if _draft_path_took_effect(ctx) and not ctx.explicit_prefixed:
-        parallel_stage_office_from_appointment_intent(ctx)
 
 
 # ── handlers（委派既有 stage，不另造落库）────────────────────────────
 
 
-def _materialize_secret_and_cultivate(ctx: MaterializeCtx) -> None:
-    """密令会话动作 + 调教：并发判词与串行 extract_minister_actions 同缝。"""
-    if not _secret_extract_admitted(ctx):
-        return
-    session = ctx.session
-    minister_name = ctx.character.name
-    intent = ctx.intent
-    intent_kind = ctx.intent_kind
-    # Batch path: preheat owned multi-mode slots. Key presence ⇒ never re-extract.
-    in_batch = "secret_extract_by_mode" in ctx.batch_state
-    mode_slots = ctx.batch_state.get("secret_extract_by_mode") if in_batch else None
-    if (
-        intent is not None
-        and intent_kind == "secret"
-        and intent.get("secret_action") == "新建"
-    ):
-        if in_batch:
-            bundle = mode_slots.get("new") if isinstance(mode_slots, dict) else None
-            if not isinstance(bundle, dict):
-                return
-        else:
-            bundle = _secret_extract_bundle(ctx, prefer_new=True)
-        secret = dict(bundle.get("secret") or {})
-        # #1765：classifier 与显式前缀共用 land_or_recover（产物缺口→揣摩/追问）。
-        # 批写路径只消费预热 recovery，禁止 atomic 内 compose。
-        ctx.conversation_intent_handled = True
-        prepared = None
-        if in_batch:
-            raw_prepared = ctx.batch_state.get("secret_landing_recovery")
-            if isinstance(raw_prepared, dict):
-                prepared = raw_prepared
-        land_or_recover_new_secret_order(
-            db=session.db,
-            turn=int(session.state.turn),
-            minister_name=minister_name,
-            secret=secret,
-            player_message=ctx.player_message,
-            llm_config=ctx.llm_config,
-            out=ctx.out,
-            character=ctx.character,
-            chat_turn_id=int(ctx.chat_turn_id or 0),
-            prepared_recovery=prepared,
-        )
-        return
-
-    # Kind gate BEFORE actions extract（F5：非批不得在 kind 拒绝前开 LLM）。
-    if intent is not None and intent_kind not in ("secret", "none"):
-        return
-    if intent is not None and intent_kind == "none":
-        # 分类器已定 none：空 act 无消费者，免抽。
-        return
-
-    if in_batch:
-        bundle = mode_slots.get("actions") if isinstance(mode_slots, dict) else None
-        if not isinstance(bundle, dict):
-            return
-    else:
-        bundle = _secret_extract_bundle(ctx, prefer_new=False)
-    active = list(bundle.get("active") or [])
-    if not active:
-        return
-
-    if intent is not None and intent_kind == "secret":
-        extracted = dict(bundle.get("act") or {})
-        act = extracted if extracted.get("secret_action") != "无" else intent
-    else:
-        # intent is None：分类器未跑，串行回落。
-        act = dict(bundle.get("act") or {})
-
-    sa = act["secret_action"]
-    if sa and sa != "无":
-        ctx.conversation_intent_handled = True
-    target = None
-    if act["order_id"]:
-        target = next((o for o in active if int(o["id"]) == act["order_id"]), None)
-    if target is None and len(active) == 1:
-        target = active[0]
-    if target is not None and sa and sa != "无":
-        oid = int(target["id"])
-        target_active = str(target.get("status") or "active") == "active"
-        if target_active and sa == "更新":
-            ctx.out["pending_action_id"] = session.db.stage_pending_action(
-                session.state.turn, kind="secret_order", action="更新",
-                minister_name=minister_name, target_id=oid,
-                payload=session.db.attach_secret_oral_pin(
-                    minister_name, int(session.state.turn), {
-                        "new_title": act["new_title"] or str(target.get("title") or ""),
-                        "new_content": act["new_content"] or str(target.get("content") or ""),
-                        "deadline_months": act["deadline_months"],
-                    },
-                ),
-            )
-        elif target_active and sa == "催办":
-            rush_deadline = int(act.get("deadline_months") or 0)
-            if rush_deadline <= 0 and not any(
-                token in ctx.message_text
-                for token in ("即刻", "立即", "立刻", "马上", "本月", "当月", "即日")
-            ):
-                rush_deadline = 1
-            ctx.out["pending_action_id"] = session.db.stage_pending_action(
-                session.state.turn, kind="secret_order", action="催办",
-                minister_name=minister_name, target_id=oid,
-                payload={
-                    "deadline_months": rush_deadline,
-                    "reason": ctx.player_message[:80],
-                },
-            )
-        elif target_active and sa == "提交核议":
-            ctx.out["pending_action_id"] = session.db.stage_pending_action(
-                session.state.turn, kind="secret_order", action="提交核议",
-                minister_name=minister_name, target_id=oid,
-                payload={"claim": ctx.reply.strip()},
-            )
-        elif target_active and sa == "记进展" and int(target.get("turn_issued") or 0) != int(session.state.turn):
-            ctx.out["pending_action_id"] = session.db.stage_pending_action(
-                session.state.turn, kind="secret_order", action="记进展",
-                minister_name=minister_name, target_id=oid,
-                payload={"note": ctx.reply.strip()},
-            )
 
 
-def _materialize_draft(ctx: MaterializeCtx) -> None:
-    from ming_sim.cli_backend import (
-        normalize_draft_person_roster,
-        resolve_directive_mode,
-    )
-
-    session = ctx.session
-    minister_name = ctx.character.name
-    intent = ctx.intent
-    intent_kind = ctx.intent_kind
-
-    surface = _draft_existing_surface(ctx)
-    has_pending_directive = surface["has_pending_directive"]
-    committed_draft = surface["committed_draft"]
-    has_committed_directive = surface["has_committed_directive"]
-    has_existing_draft = surface["has_existing_draft"]
-    dir_candidates = surface["dir_candidates"]
-    existing_draft_text = surface["existing_draft_text"]
-    if not (
-        (intent is not None and intent_kind == "draft")
-        or has_pending_directive
-        or has_committed_directive
-    ):
-        return
-
-    if not _draft_extract_admitted(ctx):
-        return
-
-    if (
-        intent is not None
-        and intent_kind == "draft"
-        and ctx.candidate_kind_count > 1
-    ):
-        # Batch multi-draft: preheat owns extract/combo; handler only consumes cache.
-        if _project_unknown_participant_escalate(ctx):
-            return
-        drafts = list(ctx.batch_state.get("drafts") or [])
-        if ctx.candidate_kind_index >= len(drafts):
-            return
-        batch_draft = drafts[ctx.candidate_kind_index]
-        if not isinstance(batch_draft, dict):
-            return
-        draft_res = dict(batch_draft)
-    else:
-        # Batch path may preheat single-draft extract into batch_state (no L in write T).
-        if "draft_single" in ctx.batch_state:
-            healed = ctx.batch_state.get("draft_single")
-            if healed is None:
-                _project_unknown_participant_escalate(ctx)
-                return
-            draft_res = dict(healed) if isinstance(healed, dict) else healed
-        else:
-            healed = _draft_heal_or_escalate(
-                ctx,
-                player_message=ctx.player_message,
-                minister_reply=ctx.reply,
-                llm_config=ctx.llm_config,
-                has_pending_draft=has_existing_draft,
-                existing_draft_text=existing_draft_text,
-                existing_candidates=dir_candidates or None,
-                content=getattr(session, "content", None),
-                db=session.db,
-            )
-            if healed is None:
-                _project_unknown_participant_escalate(ctx)
-                return
-            draft_res = healed
-        if intent is not None and intent_kind == "draft" and not has_existing_draft:
-            # #515 的并行 classifier 已经确定“拟旨”，大臣回话仍是正文真源；
-            # #571 的串行抽取只补案卷结构字段，失败不得吞掉已判定的动作。
-            draft_res = {
-                **draft_res,
-                "draft_action": "拟旨",
-                "draft_text": ctx.reply,
-                "target_candidate": "",
-            }
-
-    if draft_res["draft_action"] == "拟旨" and str(draft_res.get("target_candidate") or "") == "含糊":
-        ctx.out["directive_confirmation_ambiguous"] = {
-            "candidates": [{"id": c["id"], "summary": c["summary"]} for c in dir_candidates]
-        }
-        ctx.draft_staged = True
-        return
-    if draft_res["draft_action"] == "拟旨" and draft_res["draft_text"]:
-        semantic_payload = {
-            "text": draft_res["draft_text"],
-            "actor": minister_name,
-        }
-        # F3：与 capture 共用 normalize_draft_person_roster（禁第二份 inline 形）。
-        if "participant_roster" in draft_res and draft_res.get("participant_roster") is not None:
-            content = getattr(session, "content", None)
-            if content is not None:
-                draft_res["participant_roster"] = normalize_draft_person_roster(
-                    draft_res.get("participant_roster"),
-                    db=session.db,
-                    content=content,
-                )
-        _target = str(draft_res.get("target_candidate") or "")
-        _target_id = int(_target) if _target.isdigit() else None
-        pending_target = next(
-            (c for c in dir_candidates if c["id"] == _target_id), None,
-        ) if _target_id is not None else None
-        # 单候选且抽取器未回目标时，下面的真实落点仍是 upsert 该候选，不是新建。
-        if pending_target is None and len(dir_candidates) == 1 and _target != "新":
-            pending_target = dir_candidates[0]
-        # 多旨批无 pending_target 时不得把 committed draft 当成改写目标（P1）。
-        is_existing_update = (
-            pending_target is not None
-            or (
-                committed_draft is not None
-                and not has_pending_directive
-                and not ctx.multi_intent_batch
-            )
-        )
-        existing_mode = None
-        if is_existing_update:
-            if pending_target is not None:
-                existing_mode = pending_target.get("mode")
-            elif committed_draft is not None:
-                existing_mode = session.db.read_directive_dossier_payload(
-                    committed_draft
-                ).get("mode")
-        # Batch extractor already requires+normalizes per-item mode. Do not
-        # rebroadcast the whole utterance (often the first item's declaration)
-        # over every sibling; keep single-item/supplement path on emperor text.
-        if ctx.candidate_kind_count > 1:
-            draft_res["mode"] = resolve_directive_mode(
-                extracted=draft_res.get("mode"),
-            )
-        else:
-            draft_res["mode"] = resolve_directive_mode(
-                extracted=draft_res.get("mode"), existing=existing_mode,
-            )
-
-        if (
-            str(draft_res.get("dossier_action_type") or "") == "grant_allocation"
-            and str(draft_res.get("grant_action") or "") == "协饷"
-        ):
-            draft_res.update(require_materializable_xiexang_payload(
-                session.db,
-                text=draft_res.get("draft_text"),
-                amount=draft_res.get("amount"),
-                account=str(draft_res.get("account") or ""),
-                purpose=str(draft_res.get("purpose") or ""),
-                target_kind=str(draft_res.get("target_kind") or ""),
-                target_id=str(draft_res.get("target_id") or ""),
-                cadence=str(draft_res.get("cadence") or ""),
-            ))
-        dossier_cluster = cluster_by_kind(
-            str(draft_res.get("dossier_action_type") or "")
-        )
-        dossier_carriers = tuple(
-            spec.name for spec in (dossier_cluster.fields if dossier_cluster else ())
-        )
-        # execution_surface 仅 grant FieldSpec→dossier_carriers 投影，禁通用透传（#1624）。
-        mechanical_fields = (
-            "dossier_action_type", "target_kind", "target_id", "mode",
-            "assignee",
-            "deadline_months", "punish_action", "locality_scope",
-            # #653：pay_order_override 结构化载荷随拟旨草案整道入 staging payload。
-            "entries",
-            # #658：御笔强推 target 须随对话拟旨 staging 完整保留，禁第二案卷。
-            "target_dossier_id",
-            "affair_declaration",
-        ) + dossier_carriers
-        for field_name in mechanical_fields:
-            if draft_res.get(field_name) not in (None, ""):
-                semantic_payload[field_name] = draft_res[field_name]
-        # #568：点策 origin 走既有 source_chat_turn_id 填值路径（directive 成案消费）
-        try:
-            origin_pin = int(draft_res.get("source_chat_turn_id") or 0)
-        except (TypeError, ValueError):
-            origin_pin = 0
-        if origin_pin > 0:
-            semantic_payload["source_chat_turn_id"] = origin_pin
-        if isinstance(draft_res.get("participant_roster"), list):
-            semantic_payload["participant_roster"] = draft_res["participant_roster"]
-        # #1624：召对拟旨走共同契约组装（不按 target_kind 覆盖已给 locality）
-        if semantic_payload.get("target_kind") not in (None, ""):
-            assembled = assemble_structured_decree(
-                semantic_payload,
-                conn=getattr(session.db, "conn", None),
-                regions_content=getattr(
-                    getattr(session, "content", None), "regions", None,
-                ),
-                validate=True,
-            )
-            apply_assembled_to_payload(semantic_payload, assembled)
-        # #658：纯强推不得 setdefault 普通 triad，否则混载触发互斥拒收 / 造第二案卷
-        from ming_sim.db import classify_directive_structured_kind
-        if not is_existing_update and classify_directive_structured_kind(
-            semantic_payload,
-        ) != "push":
-            semantic_payload.setdefault("dossier_action_type", "special_decree")
-            semantic_payload.setdefault("target_kind", "policy")
-            semantic_payload.setdefault("target_id", ctx.player_message.strip())
-        if ctx.candidate_kind_count > 1:
-            ctx.out["pending_action_id"] = session.db.stage_directive_candidate(
-                session.state.turn, minister_name,
-                payload=semantic_payload,
-            )
-        elif dir_candidates and _target == "新":
-            ctx.out["pending_action_id"] = session.db.stage_directive_candidate(
-                session.state.turn, minister_name,
-                payload=semantic_payload,
-            )
-        elif pending_target is not None:
-            # 显式 id 或 #502 单 pending 推断：仍更新该条（P2）；sibling 由各自 handler 独立落。
-            ctx.out["pending_action_id"] = session.db.update_directive_candidate(
-                int(pending_target["id"]),
-                payload=semantic_payload,
-            )
-        elif ctx.multi_intent_batch:
-            # #519：一句多旨——无 pending_target 时独立 stage，不得改写 committed（P1）。
-            ctx.out["pending_action_id"] = session.db.stage_directive_candidate(
-                session.state.turn, minister_name,
-                payload=semantic_payload,
-            )
-        elif committed_draft is not None and not has_pending_directive:
-            did = int(committed_draft["id"])
-            session.db.update_directive_text(
-                did, draft_res["draft_text"], dossier_payload=semantic_payload,
-            )
-            ctx.out["directive"] = {
-                "id": did,
-                "text": draft_res["draft_text"],
-                "status": "draft",
-                "notes": f"由{minister_name}拟旨入档",
-            }
-        else:
-            pid = session.db.upsert_pending_directive(
-                session.state.turn, minister_name,
-                payload=semantic_payload,
-            )
-            ctx.out["pending_action_id"] = pid
-        ctx.draft_staged = True
 
 
-def _structured_appointment_from_ctx(ctx: MaterializeCtx) -> Optional[Dict[str, Any]]:
-    """P5：先读结构化 intent / multi 候选，有则免 LLM 抽取。
-
-    返回 appointment 形 dict（含 appoint_action/name/office…）；无可复用结构返 None。
-    注意：None 在「分类器/预分类已跑且无 appointment」与「分类器未跑」两种语义下
-    均可能出现——调用方须用 intent/candidates 是否非 None 区分，见 parallel。
-    """
-    intent = ctx.intent
-    if isinstance(intent, dict) and str(intent.get("kind") or "") == "appointment":
-        return dict(intent)
-    if isinstance(intent, dict):
-        action = str(intent.get("appoint_action") or "").strip()
-        if action in {"任命", "罢免"}:
-            return dict(intent)
-    for candidate in ctx.intent_candidates or []:
-        if not isinstance(candidate, dict):
-            continue
-        if str(candidate.get("kind") or "") == "appointment":
-            return dict(candidate)
-        action = str(candidate.get("appoint_action") or "").strip()
-        if action in {"任命", "罢免"}:
-            return dict(candidate)
-    return None
 
 
 def _persist_appointment_summon(
@@ -1644,229 +492,8 @@ def _apply_existing_appointment_hit(
         return resolved
 
 
-def _stage_office_pending_core(
-    ctx: MaterializeCtx,
-    appt: Dict[str, Any],
-    *,
-    mode_mark: Optional[str] = None,
-    tenure_mark: Optional[str] = None,
-    annotate_existing: bool = False,
-    require_office_for_appoint: bool = False,
-    write_primary_pending_id: bool = True,
-) -> Optional[int]:
-    """#1380 DRY：_materialize_appointment 与 parallel 旁路共用 hedge/去重/落库。
-
-    返回 pending id；对冲 no-op / 字段不全返 None。
-    annotate_existing：主路径对既有同向任命并入路径标记。
-    require_office_for_appoint：parallel 任命必须带职名。
-    write_primary_pending_id：主路径写 out['pending_action_id']；parallel 不覆盖 directive id。
-    """
-    from ming_sim.applier import atomic
-    from ming_sim.cli_backend import resolve_directive_mode
-    from ming_sim.session import (
-        _appointment_intent_is_current_office_noop,
-        _cancel_staged_opposing_office,
-        _canonical_minister_key,
-        _target_active_officeholder,
-    )
-
-    session = ctx.session
-    minister_name = ctx.character.name
-
-    def persist_appointment_summon(
-        pending_id: int, person_name: str, *, promote_payload: bool,
-    ) -> None:
-        _persist_appointment_summon(
-            session, pending_id, person_name,
-            promote_payload=promote_payload,
-            origin_chat_turn_id=int(ctx.chat_turn_id or 0),
-        )
-
-    content_ref = getattr(session, "content", None)
-    action = str(appt.get("appoint_action") or "").strip()
-    appt_name = str(appt.get("name") or "").strip()
-    appt_office = str(appt.get("office") or "").strip()
-    # FieldSpec 「任命后传召」：仅任命可承载；罢免组合收敛为无传召。
-    want_summon = (
-        action == "任命"
-        and str(appt.get("summon_after") or "否").strip() == "是"
-    )
-
-    if action not in {"任命", "罢免"} or not appt_name:
-        return None
-    if action == "任命" and require_office_for_appoint and not appt_office:
-        return None
-
-    appt_region = str(
-        appt.get("region_id") or appt.get("任所") or appt.get("辖区") or ""
-    ).strip()
-
-    def consume_same_direction_hit(office_for_match: str) -> Tuple[bool, Optional[int]]:
-        """同名同职同向命中消费：唯一 → 合并点原地更新；多命中禁插；零命中放行。
-
-        返回 (consumed, pending_id|None)。mode/tenure/region 责任只在合并点。
-        """
-        if not appt_name or not office_for_match:
-            return False, None
-        existing_hits = _same_direction_office_hits(
-            session.db,
-            int(session.state.turn),
-            name=appt_name,
-            office=office_for_match,
-            action=action,
-            region_id=appt_region,
-            content=content_ref,
-            pend_for_minister=ctx.pend_for_minister,
-        )
-        if len(existing_hits) > 1:
-            # 多命中≠无命中：不得再 INSERT 第三条
-            return True, None
-        if len(existing_hits) != 1:
-            return False, None
-        resolved = _apply_existing_appointment_hit(
-            session,
-            existing_hits[0],
-            extracted_mode=appt.get("mode") or mode_mark,
-            tenure_mark=tenure_mark if annotate_existing else None,
-            # Seat identity always backfills on hit — parallel multi-intent must
-            # not drop a later typed region just because annotate_existing is off.
-            region_id=appt_region,
-            minister_name=minister_name,
-            turn=int(session.state.turn),
-            person_name=appt_name,
-            summon_after=want_summon,
-            origin_chat_turn_id=int(ctx.chat_turn_id or 0),
-            annotate=True,
-        )
-        return True, resolved
-
-    consumed, hit_id = consume_same_direction_hit(appt_office)
-    if consumed:
-        if hit_id and write_primary_pending_id:
-            ctx.out["pending_action_id"] = hit_id
-        return hit_id
-
-    if action == "任命":
-        hedged = _cancel_staged_opposing_office(
-            session.db, "罢免", appt_name, int(session.state.turn),
-            content=content_ref,
-            region_id=appt_region,
-        )
-        if hedged:
-            return None
-        # 现职 no-op 只豁免重复官职写；同句 summon_after 仍须落单一 pending/origin。
-        current_office_noop = _appointment_intent_is_current_office_noop(
-            session.db, appt_name, appt_office or appt.get("office", ""),
-            content=content_ref,
-        )
-        if current_office_noop and not want_summon:
-            return None
-        if current_office_noop:
-            canonical_name = _canonical_minister_key(content_ref, appt_name, session.db)
-            current_row = session.db.conn.execute(
-                "SELECT office FROM characters WHERE name=?", (canonical_name,),
-            ).fetchone()
-            appt_office = str(current_row["office"] or "").strip()
-            # 职名后补后再消费同向命中（字段后补≠无命中）
-            consumed, hit_id = consume_same_direction_hit(appt_office)
-            if consumed:
-                if hit_id and write_primary_pending_id:
-                    ctx.out["pending_action_id"] = hit_id
-                return hit_id
-    elif action == "罢免":
-        cancelled = _cancel_staged_opposing_office(
-            session.db, "任命", appt_name, int(session.state.turn),
-            content=content_ref,
-            region_id=appt_region,
-        )
-        if cancelled and not _target_active_officeholder(
-            session.db, appt_name, content=content_ref,
-        ):
-            return None
-
-    # #1731：同向唯一命中已在上方消费；此处仅真正无命中才新建。
-    payload = {
-        "name": appt_name,
-        "office": appt_office,
-        "appointer": minister_name,
-        "mode": resolve_directive_mode(extracted=appt.get("mode") or mode_mark),
-        "summon_after": "是" if want_summon else "否",
-    }
-    # 成案核优先 payload 原样 text：会话任免把玩家原话带入，免 commit 回落题名。
-    player_text = str(ctx.player_message or "")
-    if player_text.strip():
-        payload["text"] = player_text
-    if appt_region:
-        payload["region_id"] = appt_region
-    # 署理等任别随新建候选写入；特旨仅 mode（上已 resolve）
-    if tenure_mark == "署理":
-        payload["任别"] = "署理"
-    else:
-        tenure = str(
-            appt.get("appointment_tenure") or appt.get("任别") or ""
-        ).strip()
-        if tenure in {"真除", "署理", "兼署", "加衔"}:
-            payload["任别"] = tenure
-    with atomic(session.db):
-        pending_id = session.db.stage_pending_action(
-            session.state.turn, kind="office", action=action,
-            minister_name=minister_name, target_id=None,
-            payload=payload,
-        )
-        if not pending_id:
-            return None
-        resolved = int(pending_id)
-        if want_summon:
-            persist_appointment_summon(
-                resolved, appt_name, promote_payload=False,
-            )
-    if write_primary_pending_id:
-        ctx.out["pending_action_id"] = resolved
-    return resolved
 
 
-def parallel_stage_office_from_appointment_intent(ctx: MaterializeCtx) -> Optional[int]:
-    """#1380 处方 A：拟旨通道并行 stage kind=office。
-
-    仅作用于非前缀（explicit_prefixed=False）的分类/串行拟旨路。
-    前缀「拟旨如下」任免走随诏 extractor office_changes（#344 US3 / ADR 0028）。
-    P5 三态：
-      1) intent/candidates 含 appointment 结构 → 用之，禁 LLM；
-      2) 分类器/预分类已跑（intent 或 candidates 非 None）且无 appointment
-         → 结构化缺席即定论，禁 LLM（#568 strategy_selection 等）；
-      3) 分类器未跑（二者皆 None）→ 才允许 extract_appointment_action。
-    multi 已含 appointment 时主路径 _materialize_appointment 先落库；本缝以
-    实时 DB 去重并入，禁因 pend_for_minister 快照过期而双 stage（#515/#519）。
-    无任免意图 → 不写 office（负向契约）。返回新建/并入的 pending id；无动作返回 None。
-    """
-    from ming_sim.cli_backend import extract_appointment_action
-
-    # 前缀路零 LLM（#344 US3）——调用方亦应闸，此处双保险
-    if ctx.explicit_prefixed:
-        return None
-    # 主路径 appointment 单项物化中；禁本缝重复
-    if ctx.intent_kind == "appointment":
-        return None
-
-    # P5：结构化优先
-    appt = _structured_appointment_from_ctx(ctx)
-    if appt is None:
-        # 分类器/预分类已给出结构化产物且无 appointment → 不得补串行抽取
-        # （#568 点策 draft/strategy_selection 本就有结构，禁 must-not-call 违约）
-        has_structure = ctx.intent is not None or ctx.intent_candidates is not None
-        if has_structure:
-            return None
-        appt = extract_appointment_action(
-            ctx.player_message, ctx.reply, llm_config=ctx.llm_config,
-        )
-
-    # 去重读实时 DB：同回合主路径刚 stage 的 office 不在 apply 入口 pend 快照里
-    stage_ctx = replace(ctx, pend_for_minister=None)
-    return _stage_office_pending_core(
-        stage_ctx, appt,
-        require_office_for_appoint=True,
-        write_primary_pending_id=False,
-    )
 
 
 def stage_pacification_candidate(
@@ -1881,8 +508,8 @@ def stage_pacification_candidate(
 ) -> int:
     """Shared pacification candidate write: mode + same-target update.
 
-    Used by classifier materialize and API/CLI tool propose_directive so both
-    channels share admission payload shape (commit still runs _find_pacification_target).
+    Reused by audience translation; commit resolves the target through
+    _find_pacification_target.
     """
     from ming_sim.cli_backend import resolve_directive_mode
 
@@ -2119,69 +746,8 @@ def stage_punishment_candidate(
     return db.stage_directive_candidate(int(turn), minister_name, payload=staged)
 
 
-def _materialize_punishment(ctx: MaterializeCtx) -> None:
-    """暂存惩处案卷；人物效果按 ADR 0055 判决后落。"""
-    if (
-        ctx.intent_kind != "punishment"
-        or ctx.explicit_prefixed
-        or ctx.draft_staged
-        or ctx.out.get("pending_action_id")
-        or ctx.conversation_intent_handled
-    ):
-        return
-    intent = ctx.intent or {}
-    target_id = str(intent.get("name") or intent.get("target_id") or "").strip()
-    punish_action = str(intent.get("punish_action") or "").strip()
-    disposition = str(intent.get("issue_disposition") or "").strip()
-    if disposition not in issue_dispositions_allowed() and (
-        not target_id or punish_action not in punish_actions_effective()
-    ):
-        return
-    pending_id = stage_punishment_candidate(
-        ctx.session.db,
-        ctx.session.state.turn,
-        ctx.character.name,
-        text=ctx.reply,
-        target_id=target_id,
-        punish_action=punish_action,
-        extracted_mode=intent.get("mode"),
-        amount=intent.get("amount"),
-        transaction_category=intent.get("transaction_category"),
-        backing_dossier_id=intent.get("backing_dossier_id"),
-        issue_id=intent.get("issue_id"),
-        issue_disposition=intent.get("issue_disposition"),
-        pend_for_minister=ctx.pend_for_minister,
-    )
-    if pending_id:
-        ctx.out["pending_action_id"] = pending_id
 
 
-def _materialize_pacification(ctx: MaterializeCtx) -> None:
-    """暂存招抚案卷；确认与判后人物易主仍走既有案卷链。"""
-    if (
-        ctx.intent_kind != "pacification"
-        or ctx.explicit_prefixed
-        or ctx.draft_staged
-        or ctx.out.get("pending_action_id")
-        or ctx.conversation_intent_handled
-    ):
-        return
-    intent = ctx.intent or {}
-    target_id = intent.get("target_id")
-    if not isinstance(target_id, str) or not target_id.strip():
-        return
-    minister_name = ctx.character.name
-    pending_id = stage_pacification_candidate(
-        ctx.session.db,
-        ctx.session.state.turn,
-        minister_name,
-        text=ctx.reply,
-        target_id=target_id.strip(),
-        extracted_mode=intent.get("mode"),
-        pend_for_minister=ctx.pend_for_minister,
-    )
-    if pending_id:
-        ctx.out["pending_action_id"] = pending_id
 
 
 GRANT_ACTIONS = frozenset({
@@ -2300,13 +866,6 @@ def require_grant_allocation_shape(
     return out
 
 
-def _grant_cadence(intent: Dict[str, Any]) -> str:
-    cadence = str(intent.get("cadence") or "").strip()
-    if cadence in {"一次性", "每月"}:
-        return cadence
-    if str(intent.get("grant_action") or "").strip() in GRANT_MONEY_ACTIONS:
-        return "一次性"
-    return ""
 
 
 def _grant_target(intent: Dict[str, Any]) -> Tuple[str, str]:
@@ -2654,58 +1213,6 @@ def stage_grant_allocation_candidate(
     return db.stage_directive_candidate(int(turn), minister_name, payload=staged)
 
 
-def _materialize_grant_allocation(ctx: MaterializeCtx) -> None:
-    """暂存恩赏·拨帑案卷；钱粮按 ADR 0055 分流落地。
-
-    #1503：显式拟旨前缀若带 typed grant 候选，仍走本单轨（不再因 explicit_prefixed 早退）。
-    draft_staged / 已有 pending 仍互斥，避免与 generic special_decree 双写。
-    #1783：一件事一案；期限（日级不足一月→下一回合）挂同一 grant 候选。
-    是否 attempt stage 的纯门闩见 _grant_allocation_attemptable（与批预热投影共用）。
-    """
-    if ctx.intent_kind != "grant_allocation":
-        return
-    intent = ctx.intent or {}
-    if not _grant_allocation_attemptable(ctx, intent):
-        return
-    grant_action = str(intent.get("grant_action") or "").strip()
-    target_kind, target_id = _grant_target(intent)
-    assignee = str(
-        intent.get("assignee")
-        or intent.get("assignee_id")
-        or intent.get("assignee_name")
-        or ""
-    ).strip()
-    # 非人物目标的拨帑：classifier 姓名＝承办人（#1783 一件事一案；加衔/荫叙姓名仍是受赏人）
-    if not assignee and target_kind not in {"character", "person"}:
-        assignee = str(intent.get("name") or "").strip()
-    roster = intent.get("participant_roster")
-    pending_id = stage_grant_allocation_candidate(
-        ctx.session.db,
-        ctx.session.state.turn,
-        ctx.character.name,
-        text=ctx.reply,
-        grant_action=grant_action,
-        target_kind=target_kind,
-        target_id=target_id,
-        extracted_mode=intent.get("mode"),
-        amount=intent.get("amount"),
-        account=resolve_grant_account(
-            grant_action=grant_action,
-            account=intent.get("account"),
-        ),
-        purpose=str(intent.get("purpose") or "").strip(),
-        cadence=_grant_cadence(intent),
-        # #1624：classifier 已验 execution_surface 交 stage，禁在此静默丢弃。
-        execution_surface=intent.get("execution_surface"),
-        end_turn=intent.get("end_turn"),
-        deadline_months=intent.get("deadline_months"),
-        target_candidate=intent.get("target_candidate"),
-        assignee=assignee,
-        participant_roster=roster if isinstance(roster, list) else None,
-        pend_for_minister=ctx.pend_for_minister,
-    )
-    if pending_id:
-        ctx.out["pending_action_id"] = pending_id
 
 
 def _parse_json_field(raw: object) -> Any:
@@ -2749,22 +1256,6 @@ def _assignment_absolute_end_turn(
     return 0
 
 
-def _context_line_present(haystack: str, needle: str) -> bool:
-    """整行/整句相等才算已在上下文中；禁止 substring 吞掉当轮短句。"""
-    n = str(needle or "").strip()
-    if not n:
-        return False
-    for raw in str(haystack or "").splitlines():
-        line = raw.strip()
-        if not line:
-            continue
-        if line == n:
-            return True
-        if "：" in line:
-            content = line.split("：", 1)[1].strip()
-            if content == n:
-                return True
-    return False
 
 
 def stage_assignment_candidate(
@@ -2917,372 +1408,20 @@ def stage_assignment_candidate(
     return db.stage_directive_candidate(int(turn), minister_name, payload=staged)
 
 
-def _assignment_dossier_text(ctx: MaterializeCtx) -> str:
-    """案卷 text：ADR 0028 最近相关对话上下文链 + 本轮皇帝/大臣句。
-
-    不得仅取 ctx.reply or ctx.player_message；recent_context 与分类器同源。
-    当轮句按整行锚接入，禁止 substring 判断把短句吞进前轮长文。
-    recent_context 空时仍须同时保留皇帝任务描述与大臣领命回话（首轮交办）。
-    本链是正文真源供料，不是题名解析来源。
-    """
-    recent = str(ctx.recent_context or "").strip()
-    reply = str(ctx.reply or "").strip()
-    player = str(ctx.player_message or "").strip()
-    chunks: list[str] = []
-    if recent:
-        chunks.append(recent)
-    if player and not _context_line_present(recent, player):
-        chunks.append(f"皇帝：{player}")
-    if reply and not _context_line_present(recent, reply):
-        chunks.append(f"大臣：{reply}")
-    return "\n".join(chunks).strip()
 
 
-def _assignment_leads_from_extract(extracted: Mapping[str, Any]) -> tuple[str, list]:
-    """从拟旨同缝单条抽取结果投影承办人/名单（#1778）。
-
-    assignment preheat 不传 draft_count，结果无 drafts；只读顶层键。
-    有无主办已由 extract require_execution_lead 判定，本函数不重判。
-    """
-    assignee = str(
-        extracted.get("assignee")
-        or extracted.get("assignee_id")
-        or extracted.get("assignee_name")
-        or ""
-    ).strip()
-    roster = extracted.get("participant_roster")
-    return assignee, list(roster) if isinstance(roster, list) else []
 
 
-def _resolve_assignment_extract(ctx: MaterializeCtx) -> Dict[str, Any]:
-    """召对交办承办人：复用拟旨 extract_draft_intent_with_roster_heal 同缝。
-
-    batch preheat 写入 batch_state['assignment_extract']；单候选/非批路径当场抽。
-    """
-    cached = ctx.batch_state.get("assignment_extract")
-    if isinstance(cached, dict):
-        return dict(cached)
-    if "assignment_extract" in ctx.batch_state and cached is None:
-        # preheat 已 escalate；handler 投影回禀
-        _project_unknown_participant_escalate(ctx)
-        raise DecreeMaterializationValidationError(
-            "交办旨意缺少承办人/参与名单主办",
-            failed_fields=("assignee", "participant_roster"),
-        )
-    healed = _draft_heal_or_escalate(
-        ctx,
-        player_message=ctx.player_message,
-        minister_reply=ctx.reply,
-        llm_config=ctx.llm_config,
-        content=getattr(ctx.session, "content", None),
-        db=ctx.session.db,
-        require_execution_lead=True,
-    )
-    if healed is None:
-        _project_unknown_participant_escalate(ctx)
-        raise DecreeMaterializationValidationError(
-            "交办旨意缺少承办人/参与名单主办",
-            failed_fields=("assignee", "participant_roster"),
-        )
-    return dict(healed)
 
 
-def _preheat_batch_assignment_extractions(
-    ctx: MaterializeCtx,
-    candidate_records: list[tuple[Dict[str, Any], Dict[str, Any], str, int]],
-    validation_failures: list[tuple[dict[str, Any], BaseException]],
-) -> None:
-    """批路径：交办后置抽取在写事务外完成（与 draft preheat 同形）。"""
-    assignment_records = [
-        (candidate, original)
-        for candidate, original, original_kind, _idx in candidate_records
-        if str(candidate.get("kind") or "") == "assignment"
-        or str(original_kind or "") == "assignment"
-    ]
-    if not assignment_records:
-        return
-    # 同批多道交办共用一次大臣回话抽取（#12 不另造第二份抽取器）。
-    _candidate, original_candidate = assignment_records[0]
-    try:
-        healed = _draft_heal_or_escalate(
-            ctx,
-            player_message=ctx.player_message,
-            minister_reply=ctx.reply,
-            llm_config=ctx.llm_config,
-            content=getattr(ctx.session, "content", None),
-            db=ctx.session.db,
-            require_execution_lead=True,
-        )
-    except DecreeMaterializationValidationError as exc:
-        validation_failures.append(
-            (_rejection_item_for_exc(original_candidate, exc), exc),
-        )
-        return
-    ctx.batch_state["assignment_extract"] = healed
 
 
-def _materialize_assignment(ctx: MaterializeCtx) -> None:
-    """暂存交办·责成案卷；initiative 按 ADR 0055 判决后落。
-
-    #1503：显式拟旨前缀若带真实 assignment 候选，仍走本单轨（不再因 explicit_prefixed 早退）。
-    意图粒度由分类/候选归一表达；本 handler 按候选契约单轨记账，不从 title 有无猜独立性。
-    #1565/0142：题名=分类 title|target_id 结构化锚；正文=_assignment_dossier_text 上下文链；
-    禁 player_message 散文截断当 title；缺锚走既有 DecreeMaterializationValidationError 恢复接缝。
-    #1778：承办人/名单后置抽取（拟旨同缝），代码不配人。
-    """
-    if (
-        ctx.intent_kind != "assignment"
-        or ctx.draft_staged
-        or ctx.out.get("pending_action_id")
-        or ctx.conversation_intent_handled
-    ):
-        return
-    intent = ctx.intent or {}
-    title = str(intent.get("title") or "").strip()
-    target_id = str(intent.get("target_id") or "").strip()
-    body = _assignment_dossier_text(ctx)
-    # require_execution_lead 已在同缝判过主办；此处只投影名单键，不叠第二份判定。
-    extracted = _resolve_assignment_extract(ctx)
-    assignee, roster = _assignment_leads_from_extract(extracted)
-    # #1565：已识别 assignment 不得三空静默早退；缺正文/题名交 stage validation 恢复接缝。
-    pending_id = stage_assignment_candidate(
-        ctx.session.db,
-        ctx.session.state.turn,
-        ctx.character.name,
-        text=body,
-        title=title,
-        target_id=target_id,
-        assignee=assignee,
-        participant_roster=roster,
-        extracted_mode=intent.get("mode"),
-        commitment_kind=intent.get("commitment_kind"),
-        stop_condition=intent.get("stop_condition"),
-        end_turn=intent.get("end_turn"),
-        deadline_months=intent.get("deadline_months"),
-        ongoing_effects=intent.get("ongoing_effects"),
-        stages=intent.get("stages"),
-        target_candidate=intent.get("target_candidate"),
-        transaction_category=intent.get("transaction_category"),
-        source_chat_turn_id=ctx.chat_turn_id,
-        pend_for_minister=ctx.pend_for_minister,
-    )
-    if pending_id:
-        ctx.out["pending_action_id"] = pending_id
 
 
-def stage_military_order_candidate(
-    db: Any,
-    turn: int,
-    minister_name: str,
-    *,
-    text: str,
-    target_id: str,
-    assignee: str = "",
-    station: object = "",
-    station_region: object = "",
-    deadline_months: object = 0,
-    due_turn: object = 0,
-    office: object = "",
-    region_id: object = "",
-    extracted_mode: object = None,
-    target_candidate: object = None,
-    transaction_category: object = "",
-    pend_for_minister: Optional[List[Dict[str, Any]]] = None,
-) -> int:
-    """Shared military_order candidate write (#521 / #502).
-
-    收夜只成案卷；station/station_region/office 按 ADR 0055 判后物化。既有军调驻不写 new_armies。
-    期限只落 due_turn；admission 仅对限期出战（无 station）强制未来 due。
-    同军多道独立军令各自成候选；仅 structured target_candidate id 才改草点名更新。
-    """
-    from ming_sim.cli_backend import resolve_directive_mode
-
-    target = str(target_id or "").strip()
-    if not target:
-        return 0
-    body = str(text or "").strip()
-    if not body:
-        return 0
-    owner = str(assignee or "").strip()
-
-    pending_rows = list(pend_for_minister or [])
-    if not pending_rows:
-        pending_rows = [
-            p for p in db.list_pending_actions(int(turn), minister_name=minister_name)
-            if p.get("kind") == "directive" and p.get("status") == "pending"
-        ]
-
-    # #521 r2 / #502：不得仅凭同一 target_id 把独立军令当改草覆盖。
-    existing_id = 0
-    existing_mode = None
-    pointed = str(target_candidate or "").strip()
-    if pointed.isdigit():
-        want_id = int(pointed)
-        for row in pending_rows:
-            if row.get("kind") != "directive":
-                continue
-            if int(row["id"]) != want_id:
-                continue
-            try:
-                payload = json.loads(str(row.get("payload_json") or "{}"))
-            except (TypeError, ValueError):
-                break
-            if not isinstance(payload, dict):
-                break
-            if str(payload.get("dossier_action_type") or "").strip() != "military_order":
-                break
-            existing_id = want_id
-            existing_mode = payload.get("mode")
-            break
-
-    mode = resolve_directive_mode(extracted=extracted_mode, existing=existing_mode)
-    staged: Dict[str, Any] = {
-        "text": body,
-        "actor": minister_name,
-        "dossier_action_type": "military_order",
-        "target_kind": "army",
-        "target_id": target,
-        "mode": mode,
-    }
-    if owner:
-        staged["assignee"] = owner
-    category = str(transaction_category or "").strip()
-    if category:
-        staged["transaction_category"] = category
-    dest = str(station or "").strip()
-    if dest:
-        staged["station"] = dest
-    dest_region = str(station_region or "").strip()
-    if dest_region:
-        staged["station_region"] = dest_region
-    # 相对月数 / 绝对 due_turn → 未来 due（与 admission 同形）
-    try:
-        absolute_due = int(due_turn or 0)
-    except (TypeError, ValueError):
-        absolute_due = 0
-    try:
-        months = int(deadline_months or 0)
-    except (TypeError, ValueError):
-        months = 0
-    cur = int(turn)
-    if absolute_due <= cur and months > 0:
-        absolute_due = cur + months
-    if absolute_due > cur:
-        staged["due_turn"] = absolute_due
-    elif months > 0:
-        staged["deadline_months"] = months
-    office_title = str(office or "").strip()
-    if office_title:
-        staged["office"] = office_title
-    # Preserve typed 任所 for local/边镇 office changes; never invent from station.
-    seat = str(region_id or "").strip()
-    if seat:
-        staged["region_id"] = seat
-    if existing_id:
-        return db.update_directive_candidate(existing_id, staged)
-    return db.stage_directive_candidate(int(turn), minister_name, payload=staged)
 
 
-def _materialize_military_order(ctx: MaterializeCtx) -> None:
-    """暂存军令·调遣案卷；station/office 按 ADR 0055 判决后落。"""
-    if (
-        ctx.intent_kind != "military_order"
-        or ctx.explicit_prefixed
-        or ctx.draft_staged
-        or ctx.out.get("pending_action_id")
-        or ctx.conversation_intent_handled
-    ):
-        return
-    intent = ctx.intent or {}
-    target_id = str(intent.get("target_id") or "").strip()
-    if not target_id:
-        return
-    assignee = str(intent.get("name") or intent.get("assignee") or "").strip()
-    body = str(ctx.reply or ctx.player_message or "").strip()
-    if not body:
-        return
-    pending_id = stage_military_order_candidate(
-        ctx.session.db,
-        ctx.session.state.turn,
-        ctx.character.name,
-        text=body,
-        target_id=target_id,
-        assignee=assignee,
-        station=intent.get("station"),
-        station_region=(
-            intent.get("station_region")
-            or intent.get("实际驻地")
-            or intent.get("驻地省")
-        ),
-        deadline_months=intent.get("deadline_months"),
-        due_turn=intent.get("due_turn"),
-        office=intent.get("office"),
-        region_id=(
-            intent.get("region_id")
-            or intent.get("任所")
-            or intent.get("辖区")
-        ),
-        extracted_mode=intent.get("mode"),
-        target_candidate=intent.get("target_candidate"),
-        transaction_category=intent.get("transaction_category"),
-        pend_for_minister=ctx.pend_for_minister,
-    )
-    if pending_id:
-        ctx.out["pending_action_id"] = pending_id
 
 
-def _resolve_unique_active_authority(
-    db: Any,
-    turn: int,
-    *,
-    authority_id: object = 0,
-    holder_id: object = "",
-    privilege: object = "",
-) -> Optional[Dict[str, Any]]:
-    """候选层：自然语言/结构字段唯一解析到现存在持 authority_records 行。
-
-    0/多条 → None（不得发生产项）。显式 authority_id 优先。
-    """
-    holder = str(holder_id or "").strip()
-    priv = str(privilege or "").strip()
-    if priv in {"", "无"}:
-        priv = ""
-    try:
-        aid = int(authority_id or 0)
-    except (TypeError, ValueError):
-        aid = 0
-    if aid > 0:
-        rec = db.get_authority(aid)
-        if rec is None or bool(rec.get("revoked")):
-            return None
-        try:
-            effective = int(rec.get("effective_turn") or 0)
-        except (TypeError, ValueError):
-            effective = 0
-        if effective > int(turn):
-            return None
-        exp = rec.get("expires_turn")
-        if exp not in (None, ""):
-            try:
-                if int(exp) < int(turn):
-                    return None
-            except (TypeError, ValueError):
-                return None
-        if holder and str(rec.get("holder_id") or "") != holder:
-            return None
-        if priv and str(rec.get("privilege") or "") != priv:
-            return None
-        return rec
-    if not holder:
-        return None
-    matches = list(db.list_active_authorities(int(turn), holder_id=holder))
-    if priv:
-        matches = [
-            m for m in matches if str(m.get("privilege") or "") == priv
-        ]
-    if len(matches) != 1:
-        return None
-    return matches[0]
 
 
 def _authorization_scope_parts(
@@ -3413,154 +1552,10 @@ def stage_authorization_candidate(
     return db.stage_directive_candidate(int(turn), minister_name, payload=staged)
 
 
-def _materialize_authorization(ctx: MaterializeCtx) -> None:
-    """暂存公开委任授权案卷；authority_changes 授予按 ADR 0055 判决后落。"""
-    if (
-        ctx.intent_kind != "authorization"
-        or ctx.explicit_prefixed
-        or ctx.draft_staged
-        or ctx.out.get("pending_action_id")
-        or ctx.conversation_intent_handled
-    ):
-        return
-    intent = ctx.intent or {}
-    if str(intent.get("target_candidate") or "").strip() == "含糊":
-        ctx.out["directive_confirmation_ambiguous"] = {"candidates": []}
-        return
-    body = str(ctx.reply or ctx.player_message or "").strip()
-    if not body:
-        return
-    pending_id = stage_authorization_candidate(
-        ctx.session.db,
-        ctx.session.state.turn,
-        ctx.character.name,
-        text=body,
-        privilege=intent.get("privilege"),
-        target_id=intent.get("target_id"),
-        target_kind=intent.get("target_kind"),
-        scope=intent.get("scope"),
-        extracted_mode=intent.get("mode"),
-        target_candidate=intent.get("target_candidate"),
-        pend_for_minister=ctx.pend_for_minister,
-    )
-    if pending_id:
-        ctx.out["pending_action_id"] = pending_id
 
 
-def stage_revoke_authority_candidate(
-    db: Any,
-    turn: int,
-    minister_name: str,
-    *,
-    text: str,
-    authority_id: object = 0,
-    holder_id: object = "",
-    privilege: object = "",
-    extracted_mode: object = None,
-    target_candidate: object = None,
-    pend_for_minister: Optional[List[Dict[str, Any]]] = None,
-) -> int:
-    """Shared revoke_authority candidate write (#523 / #611).
-
-    唯一解析到现存 authority_records.id；0/多匹配不暂存。
-    收夜只成案卷；收回走 authority_changes，判后物化。
-    """
-    from ming_sim.cli_backend import resolve_directive_mode
-
-    if str(target_candidate or "").strip() == "含糊":
-        return 0
-    body = str(text or "").strip()
-    if not body:
-        return 0
-    rec = _resolve_unique_active_authority(
-        db, int(turn),
-        authority_id=authority_id,
-        holder_id=holder_id,
-        privilege=privilege,
-    )
-    if rec is None:
-        return 0
-    aid = int(rec["id"])
-    holder = str(rec.get("holder_id") or "").strip()
-    grant_dossier_id = int(rec.get("dossier_id") or 0)
-
-    pending_rows = list(pend_for_minister or [])
-    if not pending_rows:
-        pending_rows = [
-            p for p in db.list_pending_actions(int(turn), minister_name=minister_name)
-            if p.get("kind") == "directive" and p.get("status") == "pending"
-        ]
-    existing_id = 0
-    existing_mode = None
-    pointed = str(target_candidate or "").strip()
-    if pointed.isdigit():
-        want_id = int(pointed)
-        for row in pending_rows:
-            if int(row["id"]) != want_id:
-                continue
-            try:
-                payload = json.loads(str(row.get("payload_json") or "{}"))
-            except (TypeError, ValueError):
-                break
-            if not isinstance(payload, dict):
-                break
-            if str(payload.get("dossier_action_type") or "").strip() != "revoke_authority":
-                break
-            existing_id = want_id
-            existing_mode = payload.get("mode")
-            break
-
-    mode = resolve_directive_mode(extracted=extracted_mode, existing=existing_mode)
-    staged: Dict[str, Any] = {
-        "text": body,
-        "actor": minister_name,
-        "dossier_action_type": "revoke_authority",
-        "target_kind": "character",
-        "target_id": holder,
-        "name": holder,
-        "holder_id": holder,
-        "authority_id": aid,
-        "privilege": str(rec.get("privilege") or ""),
-        "grant_dossier_id": grant_dossier_id,
-        "mode": mode,
-    }
-    if existing_id:
-        return db.update_directive_candidate(existing_id, staged)
-    return db.stage_directive_candidate(int(turn), minister_name, payload=staged)
 
 
-def _materialize_revoke_authority(ctx: MaterializeCtx) -> None:
-    """暂存收权·罢差案卷；authority_changes 收回按 ADR 0055 判决后落。"""
-    if (
-        ctx.intent_kind != "revoke_authority"
-        or ctx.explicit_prefixed
-        or ctx.draft_staged
-        or ctx.out.get("pending_action_id")
-        or ctx.conversation_intent_handled
-    ):
-        return
-    intent = ctx.intent or {}
-    if str(intent.get("target_candidate") or "").strip() == "含糊":
-        ctx.out["directive_confirmation_ambiguous"] = {"candidates": []}
-        return
-    body = str(ctx.reply or ctx.player_message or "").strip()
-    if not body:
-        return
-    holder = str(intent.get("name") or intent.get("holder_id") or "").strip()
-    pending_id = stage_revoke_authority_candidate(
-        ctx.session.db,
-        ctx.session.state.turn,
-        ctx.character.name,
-        text=body,
-        authority_id=intent.get("authority_id"),
-        holder_id=holder,
-        privilege=intent.get("privilege"),
-        extracted_mode=intent.get("mode"),
-        target_candidate=intent.get("target_candidate"),
-        pend_for_minister=ctx.pend_for_minister,
-    )
-    if pending_id:
-        ctx.out["pending_action_id"] = pending_id
 
 
 # 纯授权案卷归收权·罢差（ADR 0041/0071）；不得入撤回成命目标域。
@@ -3583,25 +1578,6 @@ def _dossier_is_revocable_decree(db: Any, dossier: Dict[str, Any]) -> bool:
     return True
 
 
-def _list_revocable_decree_candidates(db: Any) -> List[Dict[str, Any]]:
-    """含糊问清候选：与 admission 同一语义资格的可撤成命。"""
-    rows = db.conn.execute(
-        "SELECT id, decree_text, status, action_type FROM decree_dossiers "
-        "WHERE status IN ('promulgated', 'executing') ORDER BY id",
-    ).fetchall()
-    out: List[Dict[str, Any]] = []
-    for row in rows:
-        dossier = {
-            "id": int(row["id"]),
-            "decree_text": row["decree_text"],
-            "status": row["status"],
-            "action_type": row["action_type"],
-        }
-        if not _dossier_is_revocable_decree(db, dossier):
-            continue
-        text = str(row["decree_text"] or "").strip() or f"案卷{int(row['id'])}"
-        out.append({"id": int(row["id"]), "summary": text})
-    return out
 
 
 def _parse_revoke_decree_target(
@@ -3750,39 +1726,6 @@ def stage_revoke_decree_candidate(
     return db.stage_directive_candidate(int(turn), minister_name, payload=staged)
 
 
-def _materialize_revoke_decree(ctx: MaterializeCtx) -> None:
-    """暂存撤回成命案卷；breach/initiative 终结按 ADR 0055 判决后落。"""
-    if (
-        ctx.intent_kind != "revoke_decree"
-        or ctx.explicit_prefixed
-        or ctx.draft_staged
-        or ctx.out.get("pending_action_id")
-        or ctx.conversation_intent_handled
-    ):
-        return
-    intent = ctx.intent or {}
-    if str(intent.get("target_candidate") or "").strip() == "含糊":
-        # #502 含糊三态：给出真实可撤成命候选，供皇帝点名；不静默暂存
-        ctx.out["directive_confirmation_ambiguous"] = {
-            "candidates": _list_revocable_decree_candidates(ctx.session.db),
-        }
-        return
-    body = str(ctx.reply or ctx.player_message or "").strip()
-    if not body:
-        return
-    pending_id = stage_revoke_decree_candidate(
-        ctx.session.db,
-        ctx.session.state.turn,
-        ctx.character.name,
-        text=body,
-        target_id=intent.get("target_id"),
-        target_kind=intent.get("target_kind"),
-        extracted_mode=intent.get("mode"),
-        target_candidate=intent.get("target_candidate"),
-        pend_for_minister=ctx.pend_for_minister,
-    )
-    if pending_id:
-        ctx.out["pending_action_id"] = pending_id
 
 
 _RESPONSIBLE_BODY_SPLIT = re.compile(r"[,，、/;／|]")
@@ -3852,152 +1795,8 @@ def assert_responsible_bodies_org_only(
             raise ValueError(f"responsible_bodies 禁个人名：{name}")
 
 
-def stage_referral_candidate(
-    db: Any,
-    turn: int,
-    minister_name: str,
-    *,
-    text: str,
-    title: str = "",
-    target_id: str = "",
-    deadline_months: object = 0,
-    responsible_bodies: object = None,
-    extracted_mode: object = None,
-    target_candidate: object = None,
-    source_chat_turn_id: object = 0,
-    pend_for_minister: Optional[List[Dict[str, Any]]] = None,
-) -> int:
-    """Shared referral candidate write (#524 / #502).
-
-    下议只承 deadline_months(1–36) 与非空机关/职司 responsible_bodies；
-    落 end_turn=turn+N 与 payload.responsible_bodies。禁个人 owner/assignee。
-    initiative 按 ADR 0055 判后创建。
-    #1565/0142：题名=显式 title|结构化 target_id 锚；正文唯一真源=payload.text；
-    禁散文截题、禁空正文借题名伪造成功、禁缺锚静默丢单。
-    """
-    from ming_sim.cli_backend import resolve_directive_mode
-
-    body = str(text or "").strip()
-    if not body:
-        raise DecreeMaterializationValidationError(
-            "下议旨意缺少正文", failed_fields=("text",),
-        )
-    matter_title = str(title or "").strip() or str(target_id or "").strip()
-    if not matter_title:
-        raise DecreeMaterializationValidationError(
-            "下议旨意缺少结构化题名（title 或 target_id）",
-            failed_fields=("title",),
-        )
-    matter_id = str(target_id or "").strip() or matter_title
-
-    try:
-        months = int(deadline_months or 0)
-    except (TypeError, ValueError):
-        months = 0
-    # FieldSpec int_hi=36 已在 normalize 夹紧；此处仍守 <=0 不产项
-    if months <= 0:
-        return 0
-    bodies = parse_responsible_bodies(responsible_bodies)
-    if not bodies:
-        return 0
-    try:
-        assert_responsible_bodies_org_only(
-            bodies,
-            known_person_names=character_person_names(db),
-            current_minister=minister_name,
-        )
-    except ValueError:
-        return 0
-
-    pending_rows = list(pend_for_minister or [])
-    if not pending_rows:
-        pending_rows = [
-            p for p in db.list_pending_actions(int(turn), minister_name=minister_name)
-            if p.get("kind") == "directive" and p.get("status") == "pending"
-        ]
-
-    existing_id = 0
-    existing_mode = None
-    pointed = str(target_candidate or "").strip()
-    if pointed.isdigit():
-        want_id = int(pointed)
-        for row in pending_rows:
-            if row.get("kind") != "directive":
-                continue
-            if int(row["id"]) != want_id:
-                continue
-            try:
-                payload = json.loads(str(row.get("payload_json") or "{}"))
-            except (TypeError, ValueError):
-                break
-            if not isinstance(payload, dict):
-                break
-            if str(payload.get("dossier_action_type") or "").strip() != "referral":
-                break
-            existing_id = want_id
-            existing_mode = payload.get("mode")
-            break
-
-    mode = resolve_directive_mode(extracted=extracted_mode, existing=existing_mode)
-    staged: Dict[str, Any] = {
-        "text": body,
-        "actor": minister_name,
-        "dossier_action_type": "referral",
-        "target_kind": "issue",
-        "target_id": matter_id,
-        "title": matter_title,
-        "end_turn": int(turn) + months,
-        "deadline_months": months,
-        "responsible_bodies": bodies,
-        "mode": mode,
-    }
-    try:
-        origin_cid = int(source_chat_turn_id or 0)
-    except (TypeError, ValueError):
-        origin_cid = 0
-    if origin_cid > 0:
-        staged["source_chat_turn_id"] = origin_cid
-    # 禁个人 owner：显式不写 assignee/assignee_id
-    if existing_id:
-        return db.update_directive_candidate(existing_id, staged)
-    return db.stage_directive_candidate(int(turn), minister_name, payload=staged)
 
 
-def _materialize_referral(ctx: MaterializeCtx) -> None:
-    """暂存下议案卷；initiative 按 ADR 0055 判决后落。
-
-    #1565/0142：题名=title|target_id 结构化锚；正文=reply 或 player_message 任务供料；
-    禁 player_message 散文截断当 title；缺锚走既有 validation 恢复接缝。
-    """
-    if (
-        ctx.intent_kind != "referral"
-        or ctx.explicit_prefixed
-        or ctx.draft_staged
-        or ctx.out.get("pending_action_id")
-        or ctx.conversation_intent_handled
-    ):
-        return
-    intent = ctx.intent or {}
-    title = str(intent.get("title") or "").strip()
-    target_id = str(intent.get("target_id") or "").strip()
-    body = str(ctx.reply or ctx.player_message or "").strip()
-    # #1565：已识别 referral 不得三空静默早退；缺正文/题名交 stage validation 恢复接缝。
-    pending_id = stage_referral_candidate(
-        ctx.session.db,
-        ctx.session.state.turn,
-        ctx.character.name,
-        text=body,
-        title=title,
-        target_id=target_id,
-        deadline_months=intent.get("deadline_months"),
-        responsible_bodies=intent.get("responsible_bodies"),
-        extracted_mode=intent.get("mode"),
-        target_candidate=intent.get("target_candidate"),
-        source_chat_turn_id=ctx.chat_turn_id,
-        pend_for_minister=ctx.pend_for_minister,
-    )
-    if pending_id:
-        ctx.out["pending_action_id"] = pending_id
 
 
 def validate_tingtui_appointment_shape(obj: Any) -> Tuple[bool, str]:
@@ -4104,121 +1903,10 @@ def _match_office_row_by_name_office(
     return hits
 
 
-def _select_pending_office_for_path(
-    db: Any,
-    turn: int,
-    *,
-    name: str = "",
-    office: str = "",
-    region_id: str = "",
-    target_candidate: object = None,
-    pend_for_minister: Optional[List[Dict[str, Any]]] = None,
-    content: Any = None,
-) -> Tuple[Optional[Dict[str, Any]], str]:
-    """在本夜 pending 人事候选上选对应条。
-
-    返回 (row|None, status)：hit / ambiguous / miss / 含糊。
-    单条直取；多条人+职(+任所)联合唯一命中；禁姓名-only/纯数字 id 旁路；含糊/歧义零改。
-    两省同名同职靠 region_id 消歧——有 typed 任所时不得把跨 seat 候选并成歧义/错并。
-    """
-    pointed = str(target_candidate or "").strip()
-    if pointed == "含糊":
-        return None, "含糊"
-
-    rows = _list_pending_office_rows(
-        db, turn, pend_for_minister=pend_for_minister,
-    )
-    # 纯数字 target_candidate 不是人+职联合键：多候选时不得旁路直改。
-    # 单条仍走下方直取；多条且无完整人+职 → 歧义零改。
-
-    if not rows:
-        return None, "miss"
-
-    want_name = str(name or "").strip()
-    want_office = str(office or "").strip()
-    want_region = str(region_id or "").strip()
-
-    if len(rows) == 1:
-        # #529：完全省略 name+office 的路径应答 → 唯一候选直取。
-        # #672：任一身份字段在场则必须完整人+职联合命中，缺一/错配零改该 row。
-        if not want_name and not want_office:
-            return rows[0], "hit"
-        if not want_name or not want_office:
-            return None, "miss"
-        hits = _match_office_row_by_name_office(
-            rows,
-            name=want_name,
-            office=want_office,
-            region_id=want_region,
-            content=content,
-            db=db,
-        )
-        if len(hits) == 1:
-            return hits[0], "hit"
-        return None, "miss"
-
-    # 多条必须人+职同时在场；缺一（含仅数字 id / 姓名-only）→ 歧义，戏内确认
-    if not want_name or not want_office:
-        return None, "ambiguous"
-
-    hits = _match_office_row_by_name_office(
-        rows,
-        name=want_name,
-        office=want_office,
-        region_id=want_region,
-        content=content,
-        db=db,
-    )
-    if len(hits) == 1:
-        return hits[0], "hit"
-    if len(hits) >= 2:
-        return None, "ambiguous"
-    # 人+职齐全但 0 命中 → fallback（无对应暂存）
-    return None, "miss"
 
 
-def _office_path_ambiguous_payload(
-    db: Any,
-    turn: int,
-    *,
-    pend_for_minister: Optional[List[Dict[str, Any]]] = None,
-) -> Dict[str, Any]:
-    """路径应答歧义：统一构造 directive_confirmation_ambiguous 载荷。"""
-    return {
-        "candidates": [
-            {"id": int(r["id"]), "summary": _pending_office_brief(r)}
-            for r in _list_pending_office_rows(
-                db, int(turn), pend_for_minister=pend_for_minister,
-            )
-        ],
-    }
 
 
-def _path_marks_from_appt(appt: Dict[str, Any]) -> Tuple[Optional[str], Optional[str]]:
-    """从结构化意图取路径/续拟标记：typed mode 与署理任别。互不写对方字段。
-
-    mode 含 ordinary（显式降级）与 midzhi；过滤 ordinary 会导致路径早退口
-    丢掉降级语义（#1731 r4）。最终写入仍由合并点 resolve。
-    """
-    mode_mark: Optional[str] = None
-    raw_mode = str(appt.get("mode") or "").strip()
-    if raw_mode in {"midzhi", "中旨直发"}:
-        mode_mark = "midzhi"
-    elif raw_mode in {"ordinary", "普通"}:
-        mode_mark = "ordinary"
-
-    tenure_mark: Optional[str] = None
-    for key in ("appointment_tenure", "任别"):
-        if key not in appt:
-            continue
-        raw = appt.get(key)
-        if raw is None:
-            continue
-        val = str(raw).strip()
-        if val == "署理":
-            tenure_mark = "署理"
-        break
-    return mode_mark, tenure_mark
 
 
 def _annotate_office_pending_path(
@@ -4342,170 +2030,14 @@ def _write_path_nature_ledger(
     )
 
 
-def _materialize_appointment(ctx: MaterializeCtx) -> None:
-    from ming_sim.cli_backend import extract_appointment_action
-
-    if (
-        ctx.explicit_prefixed or ctx.draft_staged
-        or ctx.out.get("pending_action_id") or ctx.conversation_intent_handled
-    ):
-        return
-
-    session = ctx.session
-    minister_name = ctx.character.name
-    intent = ctx.intent
-    intent_kind = ctx.intent_kind
-
-    if intent is not None:
-        appt = (
-            intent if intent_kind == "appointment"
-            else {"appoint_action": "无", "name": "", "office": ""}
-        )
-    else:
-        appt = extract_appointment_action(
-            ctx.player_message, ctx.reply, llm_config=ctx.llm_config)
-
-    content_ref = getattr(session, "content", None)
-    mode_mark, tenure_mark = _path_marks_from_appt(appt)
-    appt_name = str(appt.get("name") or "").strip()
-    appt_office = str(appt.get("office") or "").strip()
-    target_candidate = appt.get("target_candidate")
-
-    # #529 路径应答：特旨/署理在既有 pending 人事候选上原地改；歧义零改。
-    if mode_mark or tenure_mark:
-        if str(target_candidate or "").strip() == "含糊":
-            ctx.out["directive_confirmation_ambiguous"] = _office_path_ambiguous_payload(
-                session.db,
-                int(session.state.turn),
-                pend_for_minister=ctx.pend_for_minister,
-            )
-            return
-        path_region = str(
-            appt.get("region_id") or appt.get("任所") or appt.get("辖区") or ""
-        ).strip()
-        row, status = _select_pending_office_for_path(
-            session.db,
-            int(session.state.turn),
-            name=appt_name,
-            office=appt_office,
-            region_id=path_region,
-            target_candidate=target_candidate,
-            pend_for_minister=ctx.pend_for_minister,
-            content=content_ref,
-        )
-        if status in {"ambiguous", "含糊"}:
-            ctx.out["directive_confirmation_ambiguous"] = _office_path_ambiguous_payload(
-                session.db,
-                int(session.state.turn),
-                pend_for_minister=ctx.pend_for_minister,
-            )
-            return
-        incoming_action = str(appt.get("appoint_action") or "").strip()
-        row_action = str(row.get("action") or "").strip() if row is not None else ""
-        if (
-            status == "hit" and row is not None
-            and (incoming_action == "无" or incoming_action == row_action)
-        ):
-            # 路径只并入同向 action；反向任免继续走下方既有 staging/对冲管线。
-            # 同人同职再发任命+路径：no-op 去重，中旨/任别/summon 并入既有条。
-            # path-only 省略 name 时从命中 row payload 取 canonical 人名，走共享 summon tail。
-            person_for_summon = appt_name or str(
-                _office_payload(row).get("name") or ""
-            ).strip()
-            row_is_appoint = str(row.get("action") or "") == "任命"
-            # 合并点吃原始 mode（含 ordinary）；禁止传过滤后的 midzhi-only 标记
-            resolved = _apply_existing_appointment_hit(
-                session,
-                row,
-                extracted_mode=appt.get("mode") or mode_mark,
-                tenure_mark=tenure_mark,
-                region_id=path_region,
-                minister_name=minister_name,
-                turn=int(session.state.turn),
-                person_name=person_for_summon,
-                summon_after=(
-                    str(appt.get("summon_after") or "否").strip() == "是"
-                    and bool(person_for_summon)
-                    and row_is_appoint
-                    and str(appt.get("appoint_action") or "").strip() != "罢免"
-                ),
-                origin_chat_turn_id=int(ctx.chat_turn_id or 0),
-                annotate=True,
-            )
-            ctx.out["pending_action_id"] = resolved
-            # 路径命中后：若本轮仍是完整任命语义且已并入，不再新建第二候选
-            if appt.get("appoint_action") in ("任命", "罢免") and appt_name:
-                same = _match_office_row_by_name_office(
-                    [row], name=appt_name, office=appt_office,
-                    region_id=path_region,
-                    content=content_ref, db=session.db,
-                )
-                if same or not appt_name:
-                    return
-            else:
-                return
-        # miss：无对应暂存 → fallback 走下方普通人事管线（需完整任命字段）
-
-    # #519/#504/#1380：同人同职去重 + 对冲 + 落库 —— 与 parallel 共用 helper
-    _stage_office_pending_core(
-        ctx, appt,
-        mode_mark=mode_mark,
-        tenure_mark=tenure_mark,
-        annotate_existing=True,
-        write_primary_pending_id=True,
-    )
 
 
-def _pending_office_brief(row: Dict[str, Any]) -> str:
-    payload = _office_payload(row)
-    name = str(payload.get("name") or "").strip()
-    office = str(payload.get("office") or "").strip()
-    action = str(row.get("action") or "").strip()
-    if name and office:
-        return f"{action}{name}为{office}" if action else f"{name}/{office}"
-    return name or office or f"pending:{row.get('id')}"
 
 
-def _materialize_prohibit_covert_levy(ctx: MaterializeCtx) -> None:
-    """Bind natural language to the one exposed case currently before the throne."""
-    if ctx.intent_kind != "prohibit_covert_levy" or not ctx.intent:
-        return
-    from ming_sim.audience_night import mark_actions_night_approved
-    from ming_sim.covert_levy import PROHIBITION_ACTION
-    from ming_sim.due_review import current_audience_scene
-
-    scene = current_audience_scene(ctx.session.db, ctx.session.state)
-    if scene is None or scene.get("kind") != "covert_levy_exposure" or scene.get("decision"):
-        return
-    dossier_id = int(scene["dossier_id"])
-    payload = {
-        "text": ctx.player_message.strip(),
-        "actor": str(ctx.character.name),
-        "dossier_action_type": PROHIBITION_ACTION,
-        "target_kind": "dossier",
-        "target_id": str(dossier_id),
-        "mode": "ordinary",
-    }
-    pending_id = ctx.session.db.stage_directive_candidate(
-        int(ctx.session.state.turn), str(ctx.character.name), payload=payload,
-    )
-    mark_actions_night_approved(ctx.session.db, [pending_id])
-    from ming_sim.audience_night import get_open_night
-    from ming_sim.decree_forecast import (
-        bind_forecast_owner, schedule_pending_decree_forecast,
-    )
-    open_night_row = get_open_night(ctx.session.db)
-    if open_night_row is not None:
-        bind_forecast_owner(ctx.session)
-        schedule_pending_decree_forecast(
-            ctx.session, int(pending_id), night_id=int(open_night_row["id"]),
-        )
-    ctx.out["pending_action_id"] = pending_id
 
 
 def _build_catalog() -> Tuple[ActionCluster, ...]:
-    """单一登记定义：label/kind/effect/fields/materialize_fn 同表。"""
-    secret_fn = _materialize_secret_and_cultivate
+    """共享动作字段目录；无分类器物化委派。"""
     return (
         ActionCluster("无", "none", EFFECT_NOOP, priority=0),
         ActionCluster(
@@ -4533,17 +2065,14 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                 FieldSpec("new_content", "新内容", None, ""),
                 FieldSpec("deadline_months", "期限月数", None, 0, as_int=True, int_hi=36),
             ),
-            materialize_fn=secret_fn,
         ),
         ActionCluster(
             "拟旨", "draft", EFFECT_MATERIALIZE, priority=50,
             fields=(),
-            materialize_fn=_materialize_draft,
         ),
         ActionCluster(
             "禁绝暗渠摊派", "prohibit_covert_levy", EFFECT_MATERIALIZE, priority=54,
             fields=(),
-            materialize_fn=_materialize_prohibit_covert_levy,
         ),
         ActionCluster(
             "招抚", "pacification", EFFECT_MATERIALIZE, priority=55,
@@ -4555,7 +2084,6 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                     frozenset({"ordinary", "midzhi"}), "",
                 ),
             ),
-            materialize_fn=_materialize_pacification,
         ),
         ActionCluster(
             "交办·责成", "assignment", EFFECT_MATERIALIZE, priority=56,
@@ -4585,7 +2113,6 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                 # 明确改草指向：分类归一化须保留，供 stage 只更新点名候选
                 FieldSpec("target_candidate", "目标候选", None, "", max_len=40),
             ),
-            materialize_fn=_materialize_assignment,
         ),
         ActionCluster(
             "恩赏·拨帑", "grant_allocation", EFFECT_MATERIALIZE, priority=57,
@@ -4637,7 +2164,6 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                 # 明确改草指向：分类归一化须保留，供 stage 只更新点名候选
                 FieldSpec("target_candidate", "目标候选", None, "", max_len=40),
             ),
-            materialize_fn=_materialize_grant_allocation,
         ),
         ActionCluster(
             "委任授权", "authorization", EFFECT_MATERIALIZE, priority=56,
@@ -4656,7 +2182,6 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                     frozenset({"ordinary", "midzhi"}), "",
                 ),
             ),
-            materialize_fn=_materialize_authorization,
         ),
         ActionCluster(
             "惩处", "punishment", EFFECT_MATERIALIZE, priority=58,
@@ -4698,7 +2223,6 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                     frozenset({"无", "办人", "压下"}), "无",
                 ),
             ),
-            materialize_fn=_materialize_punishment,
         ),
         ActionCluster(
             "军令·调遣", "military_order", EFFECT_MATERIALIZE, priority=59,
@@ -4729,7 +2253,6 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                     frozenset({"ordinary", "midzhi"}), "",
                 ),
             ),
-            materialize_fn=_materialize_military_order,
         ),
         ActionCluster(
             "收权·罢差", "revoke_authority", EFFECT_MATERIALIZE, priority=61,
@@ -4750,7 +2273,6 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                     frozenset({"ordinary", "midzhi"}), "",
                 ),
             ),
-            materialize_fn=_materialize_revoke_authority,
         ),
         ActionCluster(
             "撤回成命", "revoke_decree", EFFECT_MATERIALIZE, priority=62,
@@ -4765,7 +2287,6 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                     frozenset({"ordinary", "midzhi"}), "",
                 ),
             ),
-            materialize_fn=_materialize_revoke_decree,
         ),
         ActionCluster(
             "下议", "referral", EFFECT_MATERIALIZE, priority=63,
@@ -4787,7 +2308,6 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                 ),
                 FieldSpec("target_candidate", "目标候选", None, "", max_len=40),
             ),
-            materialize_fn=_materialize_referral,
         ),
         ActionCluster(
             "任免", "appointment", EFFECT_MATERIALIZE, priority=60,
@@ -4815,7 +2335,6 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                 ),
                 FieldSpec("target_candidate", "目标候选", None, "", max_len=40),
             ),
-            materialize_fn=_materialize_appointment,
         ),
     )
 

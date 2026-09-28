@@ -436,7 +436,7 @@ class _GapBRegistry:
 
 
 class _GapBSession(HallAdmissionSessionMixin):
-    temporary_characters: set = set()
+
 
     def __init__(self, characters, agents, state, db):
         self.state = state

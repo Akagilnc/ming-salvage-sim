@@ -20,7 +20,7 @@ from ming_sim.simulation import build_simulator_payload
 def _session(game):
     db, _state, content = game
     sess = GameSession.__new__(GameSession)
-    sess.db, sess.content, sess.temporary_characters = db, content, {}
+    sess.db, sess.content = db, content
     return sess
 
 
@@ -201,7 +201,7 @@ def test_cli_initial_selection_rejects_unknown_unregistered_person(game, monkeyp
     )
 
     assert terminal.choose_minister(sess) is None
-    assert unknown not in sess.temporary_characters
+
     assert an.list_unsettled_summons(db) == []
     assert _chat_turn_count(db) == 0
     assert _chat_message_count(db) == 0
@@ -768,7 +768,7 @@ def test_cli_midflow_summon_rejects_unknown_unregistered_person(game, monkeypatc
     outcome = terminal._handle_court_command(sess, f"传{unknown}来", current)
 
     assert outcome == "handled"
-    assert unknown not in sess.temporary_characters
+
     assert an.list_unsettled_summons(db) == []
     assert _chat_turn_count(db) == 0
     assert _chat_message_count(db) == 0
@@ -1386,7 +1386,7 @@ def test_legacy_capital_aliases_admit_in_capital_and_migrate_on_reopen(game):
         assert row["location"] == "beizhili"
         assert content.characters["毕自严"].location == "beizhili"
         rsess = GameSession.__new__(GameSession)
-        rsess.db, rsess.content, rsess.temporary_characters = restored, content, {}
+        rsess.db, rsess.content = restored, content
         assert rsess.admit_audience(content.characters["毕自严"]).result is (
             AudienceAdmission.IN_CAPITAL
         )

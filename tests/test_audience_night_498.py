@@ -643,7 +643,7 @@ def test_cli_minister_chat_anchors_turn_to_night(game, monkeypatch):
         return chat(minister_name or "", message, chat_turn_id=chat_turn_id)
 
     session = SimpleNamespace(
-        db=db, state=state, content=content, temporary_characters=set(),
+        db=db, state=state, content=content,
         chat=chat, scene_chat=scene_chat,
         # #542 scene lifecycle seams — CLI minister_chat start/join/persist/abandon.
         start_chat_turn_scene=lambda *_a, **_k: None,

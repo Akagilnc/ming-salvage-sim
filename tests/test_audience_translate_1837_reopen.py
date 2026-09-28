@@ -80,20 +80,49 @@ def _bound_exposure(db, state, monkeypatch):
     return int(did), str(executor)
 
 
+def _scene_declaration(db, state, content, monkeypatch, words, declaration, *, minister_name="殿上"):
+    from tests.conftest import persist_and_schedule_scene, stub_audience_translate
+    from tests.test_audience_translation_1838 import _scene_session
+
+    sess = _scene_session(db, state, content, monkeypatch)
+    stub_audience_translate(monkeypatch, lambda prompt, config: {
+        **declaration,
+        "scene_facts": [{
+            "body": prompt.split("【本轮回话】", 1)[1].removesuffix("\n"),
+            "role": "scene", "audibility": "殿上公开", "person_names": [],
+        }],
+    })
+    night = open_night(db, state)
+    ctid = db.create_chat_turn(
+        state, minister_name, "s", 0, night_id=int(night["id"]), status="active",
+    )
+    reply = sess.scene_chat(words, chat_turn_id=ctid, minister_name=minister_name)
+    future = persist_and_schedule_scene(sess, db, reply, speaker=minister_name)
+    assert future is not None
+    return future.result()
+
+
+def _close_offline(db, state, content, night_id):
+    from ming_sim.audience_night import close_night
+    return close_night(
+        db, state, night_id=night_id, content=content,
+        endorsement_extractor_agent=SimpleNamespace(
+            run=lambda _: SimpleNamespace(content='{"endorsements": []}'),
+        ),
+    )
+
+
 def test_prohibit_covert_levy_commission_binds_exposed_dossier(game, monkeypatch):
     db, state, content = game
-    night = open_night(db, state)
     did, actor = _bound_exposure(db, state, monkeypatch)
-    decl = normalize_audience_declaration({
+    decl = {
         "commissions": [{
             "text": "此等借饷扰民之举，即刻禁绝。",
             "dossier_action_type": PROHIBITION_ACTION,
             "target_id": did,
         }],
-    })
-    result = dispatch_declaration(
-        db, state, decl, minister_name=actor, night_id=int(night["id"]),
-    )
+    }
+    result = _scene_declaration(db, state, content, monkeypatch, "此等借饷扰民之举，即刻禁绝。", decl)
     assert result.commissions.rejected == []
     assert len(result.commissions.applied) == 1
     row = db.conn.execute(
@@ -105,6 +134,24 @@ def test_prohibit_covert_levy_commission_binds_exposed_dossier(game, monkeypatch
     assert payload["dossier_action_type"] == PROHIBITION_ACTION
     assert payload["target_kind"] == "dossier" and payload["target_id"] == str(did)
     assert int(row["night_approved"] or 0) == 1
+    _close_offline(db, state, content, int(open_night(db, state)["id"]))
+    dossier = db.conn.execute(
+        "SELECT id, action_type, target_id FROM decree_dossiers WHERE pending_action_id=?",
+        (result.commissions.applied[0]["id"],),
+    ).fetchone()
+    assert dossier is not None
+    assert dossier["action_type"] == PROHIBITION_ACTION
+    assert dossier["target_id"] == str(did)
+    db.record_dossier_decision(int(dossier["id"]), "promulgated")
+    from ming_sim.covert_levy import active_prohibition_dossier
+    assert active_prohibition_dossier(db, did)["id"] == dossier["id"]
+    from ming_sim.issues import apply_score_extraction
+    blocked = apply_score_extraction(db, state, {"fiscal_creates": [{
+        "key": "禁后摊派", "account": "国库", "direction": "income", "init_value": 2,
+        "origin_ref": f"dossier:{did}", "beyond_intent": True,
+    }]}, content, None, dossier_ids_at_input={did})
+    assert blocked["fiscal_creates"][0]["category"] == "forbidden_effect"
+    assert db.get_fiscal_config().get("禁后摊派_base") is None
 
 
 def test_commission_failure_does_not_erase_prior_staged_item(game):
@@ -126,9 +173,8 @@ def test_commission_failure_does_not_erase_prior_staged_item(game):
     ).fetchone()["status"] == "pending"
 
 
-def test_recommendation_commission_stages_office_with_reason(game):
+def test_recommendation_commission_stages_office_with_reason(game, monkeypatch):
     db, state, content = game
-    night = open_night(db, state)
     recommender = _active_minister(db, content, office_type="兵部")
     same_faction = next(
         c for c in content.characters.values()
@@ -142,9 +188,10 @@ def test_recommendation_commission_stages_office_with_reason(game):
     )
     db.conn.commit()
     reason = "请予试任巡盐御史，臣敢以身家保。"
-    decl = normalize_audience_declaration({
+    words = f"臣荐{same_faction.name}任巡盐御史。{reason}"
+    decl = {
         "commissions": [{
-            "text": f"臣荐{same_faction.name}任巡盐御史。{reason}",
+            "text": words,
             "appointment": {
                 "name": same_faction.name,
                 "office": "巡盐御史",
@@ -155,11 +202,9 @@ def test_recommendation_commission_stages_office_with_reason(game):
                 "reason": reason,
             },
         }],
-    })
-    result = dispatch_declaration(
-        db, state, decl,
-        minister_name=recommender.name, night_id=int(night["id"]),
-    )
+    }
+    result = _scene_declaration(db, state, content, monkeypatch, words, decl,
+                                minister_name=recommender.name)
     assert result.commissions.rejected == []
     assert len(result.commissions.applied) == 1
     row = db.conn.execute(
@@ -173,6 +218,26 @@ def test_recommendation_commission_stages_office_with_reason(game):
     assert payload["reason"] == reason
     assert payload["recommendation"]["recommender"] == recommender.name
     assert payload["recommendation"]["candidate"]["name"] == same_faction.name
+    approval = _scene_declaration(db, state, content, monkeypatch, "准", {
+        "promises": [{"action_id": result.commissions.applied[0]["id"], "decision": "应允"}],
+    })
+    assert len(approval.promises.applied) == 1
+    _close_offline(db, state, content, int(open_night(db, state)["id"]))
+    dossier = db.conn.execute(
+        "SELECT id FROM decree_dossiers WHERE pending_action_id=?",
+        (result.commissions.applied[0]["id"],),
+    ).fetchone()
+    assert dossier is not None
+    db.apply_dossier_verdicts(
+        state, [{"dossier_id": int(dossier["id"]), "decision": "promulgated"}],
+        content=content,
+    )
+    appointed = db.conn.execute(
+        "SELECT office FROM characters WHERE name=?", (same_faction.name,),
+    ).fetchone()
+    assert appointed["office"] == "巡盐御史"
+    events = db.list_recommendation_events(state, recommender.name)
+    assert any(e["candidate"] == same_faction.name and e["reason"] == reason for e in events)
 
 
 def test_recommendation_outside_slice_is_rejected(game):
@@ -207,43 +272,16 @@ def test_recommendation_outside_slice_is_rejected(game):
     assert result.commissions.rejected[0].category in {"invalid_state", "hallucinated_id"}
 
 
-def test_inquiry_declaration_persists_return_report(game):
+def test_inquiry_declaration_persists_return_report(game, monkeypatch):
     db, state, content = game
-    night = open_night(db, state)
     attendant = _active_minister(db, content)
     db.conn.execute(
         "UPDATE characters SET office='御前近臣' WHERE name=?", (attendant.name,)
     )
     query = "请查访各镇欠饷军情如何？"
-    # 建一轮对话轮，查访可绑源轮
-    cur = db.conn.execute(
-        "INSERT INTO chat_messages (minister_name, turn, role, content, knowledge_status) "
-        "VALUES ('殿上', ?, 'user', ?, 'held')",
-        (int(state.turn), query),
-    )
-    uid = int(cur.lastrowid)
-    cur = db.conn.execute(
-        "INSERT INTO chat_messages (minister_name, turn, role, content, knowledge_status) "
-        "VALUES ('殿上', ?, 'minister', '奴婢领旨。', 'held')",
-        (int(state.turn),),
-    )
-    mid = int(cur.lastrowid)
-    cur = db.conn.execute(
-        "INSERT INTO chat_turns "
-        "(minister_name, turn, year, period, user_message_id, minister_message_id, "
-        " status, night_id, night_seq) "
-        "VALUES ('殿上', ?, ?, ?, ?, ?, 'active', ?, 1)",
-        (int(state.turn), int(state.year), int(state.period), uid, mid, int(night["id"])),
-    )
-    ctid = int(cur.lastrowid)
-    db.conn.commit()
-    decl = normalize_audience_declaration({
+    result = _scene_declaration(db, state, content, monkeypatch, query, {
         "inquiries": [{"attendant": attendant.name, "query": query}],
     })
-    result = dispatch_declaration(
-        db, state, decl, minister_name="殿上",
-        night_id=int(night["id"]), chat_turn_id=ctid,
-    )
     assert result.inquiries.rejected == []
     assert len(result.inquiries.applied) == 1
     sources = db.conn.execute(
@@ -253,11 +291,13 @@ def test_inquiry_declaration_persists_return_report(game):
     assert sources
     assert any("查访" in str(r["title"] or "") or "见闻" in str(r["title"] or "")
                for r in sources)
+    known = db.get_character_knowledge(state, attendant.name)
+    assert any(str(event.get("source_id") or "").startswith("near_minister:")
+               for event in known["events"])
 
 
-def test_rush_commitment_stages_pending_催办(game):
+def test_rush_commitment_stages_pending_催办(game, monkeypatch):
     db, state, content = game
-    night = open_night(db, state)
     minister = _active_minister(db, content)
     cur = db.conn.execute(
         "INSERT INTO issues(kind, title, status, stages_json, origin_turn) "
@@ -272,18 +312,18 @@ def test_rush_commitment_stages_pending_催办(game):
     )
     issue_id = int(cur.lastrowid)
     db.conn.commit()
-    decl = normalize_audience_declaration({
+    reason = "限期下月办结" * 25
+    decl = {
         "rushes": [{
             "target_kind": "commitment",
             "target_id": issue_id,
             "stage_idx": 1,
             "deadline_months": 1,
-            "reason": "限期下月办结",
+            "reason": reason,
         }],
-    })
-    result = dispatch_declaration(
-        db, state, decl, minister_name=minister.name, night_id=int(night["id"]),
-    )
+    }
+    result = _scene_declaration(db, state, content, monkeypatch,
+                                "分段试办限期下月办结", decl, minister_name=minister.name)
     assert result.rushes.rejected == []
     assert len(result.rushes.applied) == 1
     row = db.conn.execute(
@@ -295,7 +335,7 @@ def test_rush_commitment_stages_pending_催办(game):
     payload = json.loads(row["payload_json"])
     assert int(payload["stage_idx"]) == 1
     assert int(payload["deadline_months"]) == 1
-    assert "限期下月" in payload["reason"]
+    assert payload["reason"] == reason
     db.commit_pending_actions(state, content=content, registry=None)
     from ming_sim.staged_commitment import normalize_commitment_stages
     stages = normalize_commitment_stages(db.conn.execute(
@@ -303,6 +343,41 @@ def test_rush_commitment_stages_pending_催办(game):
     ).fetchone()["stages_json"])
     assert int(stages[0]["due_turn"]) == int(state.turn) + 2
     assert int(stages[1]["due_turn"]) == int(state.turn) + 1
+
+
+def test_repeated_urgent_summons_have_independent_rollback_origins(game, monkeypatch):
+    from tests.conftest import persist_and_schedule_scene, stub_audience_translate
+    from tests.test_audience_translation_1838 import _scene_session
+
+    db, state, content = game
+    night = open_night(db, state)
+    person = _hong(db, content)
+    db.conn.execute(
+        "UPDATE characters SET location='shaanxi', transit_to='' WHERE name=?", (person,)
+    )
+    sess = _scene_session(db, state, content, monkeypatch)
+    tones = iter(("星夜兼程", "加急"))
+    stub_audience_translate(monkeypatch, lambda prompt, config: {
+        "scene_facts": [{
+            "body": prompt.split("【本轮回话】", 1)[1].removesuffix("\n"),
+            "role": "scene", "audibility": "殿上公开", "person_names": [],
+        }],
+        "travel_tones": [{"person_name": person, "tone": next(tones)}],
+    })
+    turns = []
+    for words in (f"星夜宣{person}来京", f"加急宣{person}来京"):
+        ctid = db.create_chat_turn(state, "殿上", "s", 0, night_id=int(night["id"]), status="active")
+        reply = sess.scene_chat(words, chat_turn_id=ctid)
+        future = persist_and_schedule_scene(sess, db, reply)
+        assert future is not None
+        future.result()
+        turns.append(ctid)
+    rows = [row for row in list_unsettled_summons(db) if row["person_name"] == person]
+    assert len(rows) == 2
+    assert [row["travel_tone"] for row in rows] == ["星夜兼程", "加急"]
+    db.fail_chat_turn(turns[0])
+    rows = [row for row in list_unsettled_summons(db) if row["person_name"] == person]
+    assert len(rows) == 1 and rows[0]["travel_tone"] == "加急"
 
 
 def test_travel_tone_updates_this_round_summon_ledger(game, monkeypatch):

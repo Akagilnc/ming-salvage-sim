@@ -98,7 +98,7 @@ def _cli_session(db, state, content):
         return chat(minister_name or "", message, chat_turn_id=chat_turn_id)
 
     return SimpleNamespace(
-        db=db, state=state, content=content, temporary_characters=set(),
+        db=db, state=state, content=content,
         chat=chat, scene_chat=scene_chat,
         # #542 scene lifecycle seams（CLI minister_chat / 退下会调）；替身 no-op。
         start_chat_turn_scene=lambda *_a, **_k: None,
@@ -190,7 +190,7 @@ def _session_double(db, state, content, registry):
     sess.content = content
     sess.registry = registry
     sess.llm_config = SimpleNamespace(channel="api")
-    sess.temporary_characters = set()
+
     sess._audience_prompt_for_message = lambda message, *_a, **_kw: message
     sess._start_cli_action_intent = lambda *a, **k: None
     sess._finish_cli_action_intent = lambda *a, **k: None

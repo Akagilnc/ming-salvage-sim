@@ -139,9 +139,7 @@ def choose_minister(session: GameSession) -> Optional[Character]:
         if candidate is None:
             # #670：未知/未注册人物不得临时旁路入殿；须 ADR 0038 持久入册后再走 admission。
             try:
-                candidate, _is_temporary = session.summon_character(
-                    raw, None, allow_temporary=False,
-                )
+                candidate = session.summon_character(raw)
             except ValueError:
                 print("请输入有效编号或姓名。")
                 continue
@@ -367,9 +365,7 @@ def _handle_court_command(
         name_fragment = summon_m.group(1)
         # #670：未知/未注册人物不得临时旁路入殿；须 ADR 0038 持久入册后再走 admission。
         try:
-            target, _is_temporary = session.summon_character(
-                name_fragment, current, allow_temporary=False,
-            )
+            target = session.summon_character(name_fragment, current)
         except ValueError:
             print("人物未建档，须先补档后方可召见。\n")
             return "handled"
@@ -593,9 +589,8 @@ def minister_chat(session: GameSession, character: Character) -> str:
             target_name = cmd.split(":", 1)[1]
             print(f"{character.name}退下。\n传{target_name}入殿。\n")
             return cmd
-        # 非控制指令 → 与 agent 对话。CLI 也落 chat_messages，供 session.chat
-        # 内部的密令短确认上下文读取（web 路已有同款持久化）。
-        persistent_chat = character.name not in session.temporary_characters
+        # 非控制指令 → 场景对话，并持久记录对话轮。
+        persistent_chat = True
         accepted_turn = int(session.state.turn)
         user_message_id: int | None = None
         chat_turn_id = 0
@@ -705,9 +700,8 @@ def minister_chat(session: GameSession, character: Character) -> str:
             print(f"{character.name}退下。\n")
             return "dismiss"
         if result.court_action == "summon" and result.next_minister:
-            is_temporary = result.next_minister in session.temporary_characters
-            print(f"{character.name}退下。\n{'临时传' if is_temporary else '传'}{result.next_minister}入殿。\n")
-            return f"{'summon-temp' if is_temporary else 'summon'}:{result.next_minister}"
+            print(f"{character.name}退下。\n传{result.next_minister}入殿。\n")
+            return f"summon:{result.next_minister}"
 
 
 def review_directives(session: GameSession) -> str:
@@ -878,9 +872,6 @@ def play_turn(session: GameSession) -> None:
                     continue
                 if chat_action.startswith("summon:"):
                     pending_character = session.content.characters[chat_action.split(":", 1)[1]]
-                    continue
-                if chat_action.startswith("summon-temp:"):
-                    pending_character = session.temporary_characters[chat_action.split(":", 1)[1]]
                     continue
                 # court_break 或对话结束 → 审阅
                 action = review_directives(session)

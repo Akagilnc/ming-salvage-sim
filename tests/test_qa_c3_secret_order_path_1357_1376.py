@@ -58,7 +58,7 @@ def webgame_shell_for_secret_order(db, state, content, *, session_chat):
         db=db,
         state=state,
         content=content,
-        temporary_characters=set(),
+
         registry=SimpleNamespace(),
         chat=session_chat,
         # #1842/#1812：生产殿上入口改走 scene_chat；壳须同挂并兼容旧 stub 签名。
@@ -75,10 +75,11 @@ def webgame_shell_for_secret_order(db, state, content, *, session_chat):
     )
     # #1402：web _require_active_minister 改调 session.can_summon——壳须挂真方法
     runtime.session.can_summon = MethodType(GameSession.can_summon, runtime.session)
+    runtime.session.admit_audience = MethodType(GameSession.admit_audience, runtime.session)
+    runtime.session.consume_audience_admission = MethodType(GameSession.consume_audience_admission, runtime.session)
     # Bind real WebGame helpers used by chat body.
     runtime._runtime_write_gate = web_app.WebGame._runtime_write_gate.__get__(runtime)
     runtime._reject_if_settlement_phase = web_app.WebGame._reject_if_settlement_phase.__get__(runtime)
-    runtime._persistent_chat_minister = web_app.WebGame._persistent_chat_minister.__get__(runtime)
     runtime._audience_turn_in_flight = lambda _name: False
     runtime._start_chat_turn = lambda _name, **_k: (0, {})
     runtime._record_chat_rollback_items = lambda *_a, **_k: None
@@ -341,7 +342,6 @@ def test_confirm_secret_order_http_returns_id_and_list_visible(
         name = _active_minister_name(game.db, game.content)
         # 唯一 fake 面：大臣回话 agent + 转译双桩；落库走生产 promises→commit。
         agent = _CannedAgent()
-        game.session.registry.get = lambda _ch, **_kw: agent
         stub_scene_agent(monkeypatch, agent)
 
         # stage 须挂本夜 night_id，否则 promises 按 missing_ref 拒收。

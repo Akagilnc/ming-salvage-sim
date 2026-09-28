@@ -101,7 +101,7 @@ def _base_runtime(db):
     runtime._mark_pending_write = lambda key=None: runtime._write_queue.claim(key=key or ("pending",))  # type: ignore
     runtime._complete_pending_write = lambda ticket=None: runtime._write_queue.complete(ticket)  # type: ignore
     sess = install_hall_admission(SimpleNamespace(
-        temporary_characters=set(),
+
         content=SimpleNamespace(characters={character.name: character}),
         state=state,
         db=db,
@@ -517,7 +517,7 @@ def _runtime_for_nonstream_chat(*, start_scene=None, append_error=None, abandon_
     runtime._mark_pending_write = lambda key=None: runtime._write_queue.claim(key=key or ("pending",))  # type: ignore
     runtime._complete_pending_write = lambda ticket=None: runtime._write_queue.complete(ticket)  # type: ignore
     runtime.session = install_hall_admission(SimpleNamespace(
-        temporary_characters=set(),
+
         content=SimpleNamespace(characters={character.name: character}),
         state=state,
         db=db,

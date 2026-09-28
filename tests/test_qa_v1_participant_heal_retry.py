@@ -44,7 +44,7 @@ def _fake_session(db, state, content):
     sess._decree_draft_fingerprint = ()
     sess._scene_registry = sess._beat_generator = None
     sess.auto_save = lambda *a, **k: None
-    sess.temporary_characters = set()
+
     return sess
 
 

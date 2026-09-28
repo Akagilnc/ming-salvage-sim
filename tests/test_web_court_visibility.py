@@ -200,13 +200,13 @@ def _stub_game(monkeypatch, db, content):
     """把 web_app.web_game 换成轻量 stub（复用真 db/content），供 _require_active_minister 端点守门测试。
 
     #1402：端点改调 session.can_summon 取文案——stub 须挂真 GameSession.can_summon
-    （db + temporary_characters），不得再空壳 SimpleNamespace。
+    （db），不得再空壳 SimpleNamespace。
     """
     from ming_sim.session import GameSession
 
     sess = GameSession.__new__(GameSession)
     sess.db = db
-    sess.temporary_characters = {}
+
     stub = SimpleNamespace(
         session=sess,
         content=content,
@@ -262,7 +262,7 @@ def test_zongfan_cannot_be_summoned_via_can_summon(game):
     db, state, content = game
     sess = GameSession.__new__(GameSession)
     sess.db = db
-    sess.temporary_characters = {}
+
     prince = next((n for n, c in content.characters.items() if c.office_type == "宗藩"), None)
     if prince is None:
         pytest.skip("基底盘面无宗藩人物")
@@ -286,7 +286,7 @@ def _bare_session(db):
     from ming_sim.session import GameSession
     sess = GameSession.__new__(GameSession)
     sess.db = db
-    sess.temporary_characters = {}
+
     return sess
 
 
@@ -417,7 +417,7 @@ def test_vassal_prince_secret_order_rejected(read_game, monkeypatch):
     name = next((n for n, c in content.characters.items() if c.office_type == "宗藩"), None)
     if name is None:
         pytest.skip("基底盘面无宗藩人物")
-    sess = SimpleNamespace(content=content, temporary_characters=set(), db=db)
+    sess = SimpleNamespace(content=content, db=db)
     sess.can_summon = MethodType(GameSession.can_summon, sess)
     stub = SimpleNamespace(
         content=content,
@@ -441,7 +441,7 @@ def _session_stub(db, content):
     sess = GameSession.__new__(GameSession)
     sess.db = db
     sess.content = content
-    sess.temporary_characters = {}
+
     return sess
 
 

@@ -1908,33 +1908,21 @@ class WebGame:
         }
 
     # ── 聊天 ──────────────────────────────────────────────────────────────
-    def _persistent_chat_minister(self, minister_name: str) -> bool:
-        return minister_name not in self.session.temporary_characters
-
     def chat_projection(self, minister_name: str) -> List[Dict[str, Any]]:
-        """召对显示投影（#499 单一真源）：持久大臣 → DB turn-identified 投影（含既存
-        读心记录按轮归位）；临时召见 → 内存历史（无 chat_turn/无持久读心）。三处出口
-        （历史入口 / 回话 done / 撤回）共用它，杜绝 setChat(history) 抹掉历史记录。"""
-        if self._persistent_chat_minister(minister_name):
-            # Lightweight stream seams intentionally expose neither a durable connection nor
-            # the night-aware projection signature. Production DBs always use the night owner.
-            if not hasattr(self.db, "conn"):
-                return self.db.build_chat_projection(minister_name)
-            from ming_sim.audience_night import get_open_night
-            night = get_open_night(self.db)
-            from ming_sim.audience_night import SCENE_CHAT_SPEAKER
-            if minister_name == SCENE_CHAT_SPEAKER and night:
-                turns = self.db.list_hall_chat_turns(int(night["id"]))
-                ids = {int(row["id"]) for row in turns}
-                history = [message for speaker in dict.fromkeys(row["minister_name"] for row in turns)
-                           for message in self.db.build_chat_projection(speaker, int(night["id"]))
-                           if int(message.get("chat_turn_id") or 0) in ids]
-                return sorted(history, key=lambda message: int(message.get("chat_turn_id") or 0))
-            return self.db.build_chat_projection(minister_name, int(night["id"]) if night else 0)
-        return [
-            {"role": m["role"], "content": m["content"], "chat_turn_id": 0}
-            for m in self.chat_history.get(minister_name, [])
-        ]
+        """召对显示投影：DB turn-identified 投影，供历史、回话与撤回共用。"""
+        # Lightweight stream seams may not expose a durable connection.
+        if not hasattr(self.db, "conn"):
+            return self.db.build_chat_projection(minister_name)
+        from ming_sim.audience_night import get_open_night, SCENE_CHAT_SPEAKER
+        night = get_open_night(self.db)
+        if minister_name == SCENE_CHAT_SPEAKER and night:
+            turns = self.db.list_hall_chat_turns(int(night["id"]))
+            ids = {int(row["id"]) for row in turns}
+            history = [message for speaker in dict.fromkeys(row["minister_name"] for row in turns)
+                       for message in self.db.build_chat_projection(speaker, int(night["id"]))
+                       if int(message.get("chat_turn_id") or 0) in ids]
+            return sorted(history, key=lambda message: int(message.get("chat_turn_id") or 0))
+        return self.db.build_chat_projection(minister_name, int(night["id"]) if night else 0)
 
     def _minister_agno_session_id(self, minister_name: str) -> str:
         # 所有 Web 召对都由场景 agent 生成；chat_turn 与 agent 必须绑同一 Agno session。
@@ -1945,8 +1933,6 @@ class WebGame:
         return f"scene-night-pending-turn-{int(self.state.turn)}"
 
     def can_undo_last_chat(self, minister_name: str) -> bool:
-        if not self._persistent_chat_minister(minister_name):
-            return False
         if self.state.turn_phase not in (TurnPhase.SUMMONING.value, TurnPhase.REVIEWING.value):
             return False
         from ming_sim.audience_night import SCENE_CHAT_SPEAKER, get_open_night
@@ -1982,8 +1968,6 @@ class WebGame:
         in-flight = `status='generating'`，或 `status='active'` 且 `minister_message_id` 仍空
         （#498 挂夜轮以 generating 起笔，回话入档后升 active）。走 GameDB 查询 seam，
         不直摸 db.conn（测试替身可 stub list_in_flight_chat_turns）。"""
-        if not self._persistent_chat_minister(minister_name):
-            return False
         if hasattr(self.db, "list_in_flight_chat_turns"):
             rows = self.db.list_in_flight_chat_turns(
                 minister_name=minister_name, turn=int(self.state.turn),
@@ -2155,8 +2139,6 @@ class WebGame:
                         return result
         if self.state.turn_phase not in (TurnPhase.SUMMONING.value, TurnPhase.REVIEWING.value):
             raise HTTPException(status_code=409, detail="本回合已经进入颁诏结算，不能撤回召对。")
-        if not self._persistent_chat_minister(minister_name):
-            raise HTTPException(status_code=409, detail="临时召见人物暂不支持撤回。")
         row = self.db.get_last_active_chat_turn(minister_name, self.state.turn)
         if row is None:
             raise HTTPException(status_code=404, detail="本回合没有可撤回的召对。")
@@ -2245,24 +2227,15 @@ class WebGame:
         # lengthens append_chat_message; background stream + early assert flaked
         # and tore down the shared DB under the worker → SIGSEGV).
         minister_message_id = 0
-        if minister_name not in self.session.temporary_characters:
-            turn = int(self.state.turn if accepted_turn is None else accepted_turn)
-            if chat_turn_id:
-                # 单一事务插入回话、链接 turn 并升为 active，避免提交后出现未链接回话。
-                # 失败须上抛，禁 catch 后仍返回成功。
-                minister_message_id = int(
-                    self.db.persist_minister_reply(
-                        minister_name,
-                        turn,
-                        answer,
-                        chat_turn_id,
-                    )
-                )
-            else:
-                # 无持久 chat_turn（如临时召见路径异常）：仅落消息，无可链接的任务。
-                minister_message_id = int(
-                    self.db.append_chat_message(minister_name, turn, "minister", answer)
-                )
+        turn = int(self.state.turn if accepted_turn is None else accepted_turn)
+        if chat_turn_id:
+            minister_message_id = int(self.db.persist_minister_reply(
+                minister_name, turn, answer, chat_turn_id,
+            ))
+        else:
+            minister_message_id = int(self.db.append_chat_message(
+                minister_name, turn, "minister", answer,
+            ))
         self.chat_history[minister_name].append({"role": "minister", "content": answer})
         open_night = None
         if hasattr(self.db, "conn"):
@@ -2416,7 +2389,7 @@ class WebGame:
         gate_already_held: bool,
         intent: Optional[str] = None,
     ) -> Dict[str, Any]:
-        if minister_name not in self.content.characters and minister_name not in self.session.temporary_characters:
+        if minister_name not in self.content.characters:
             raise HTTPException(status_code=404, detail=f"未找到大臣：{minister_name}")
         text = message.strip()
         if not text:
@@ -2530,22 +2503,20 @@ class WebGame:
                             AudienceAdmission.SUMMON_IN_TRANSIT,
                         )
                     if offsite_summon is None:
-                        if self._persistent_chat_minister(minister_name):
-                            from ming_sim.audience_night import encode_chat_turn_route
-                            chat_turn_id, before_snapshot = self._start_chat_turn(
-                                minister_name,
-                                message=text,
-                                attach_to_hall=not offsite_turn,
-                                route=encode_chat_turn_route(
-                                    explicit_secret_order=explicit_secret_order,
-                                    offsite=offsite_turn,
-                                ),
-                            )
+                        from ming_sim.audience_night import encode_chat_turn_route
+                        chat_turn_id, before_snapshot = self._start_chat_turn(
+                            minister_name,
+                            message=text,
+                            attach_to_hall=not offsite_turn,
+                            route=encode_chat_turn_route(
+                                explicit_secret_order=explicit_secret_order,
+                                offsite=offsite_turn,
+                            ),
+                        )
                         self.chat_history.setdefault(minister_name, []).append({"role": "user", "content": text})
-                        if minister_name not in self.session.temporary_characters:
-                            message_id = self.db.append_chat_message(minister_name, accepted_turn, "user", text)
-                            if chat_turn_id:
-                                self.db.update_chat_turn_messages(chat_turn_id, user_message_id=message_id)
+                        message_id = self.db.append_chat_message(minister_name, accepted_turn, "user", text)
+                        if chat_turn_id:
+                            self.db.update_chat_turn_messages(chat_turn_id, user_message_id=message_id)
                 if offsite_summon is not None:
                     summon_name, summon_result, summon_origin = offsite_summon
                     self._finish_offsite_summon_scene(
@@ -3264,7 +3235,7 @@ class WebGame:
 
     def chat_stream(self, minister_name: str, message: str, intent: Optional[str] = None) -> Iterator[Dict[str, Any]]:
         scene_chat = minister_name == "殿上"
-        if not scene_chat and minister_name not in self.content.characters and minister_name not in self.session.temporary_characters:
+        if not scene_chat and minister_name not in self.content.characters:
             yield {"type": "error", "message": f"未找到大臣：{minister_name}"}
             return
         text = message.strip()
@@ -3395,22 +3366,20 @@ class WebGame:
                     AudienceAdmission.SUMMON_IN_TRANSIT,
                 )
             if offsite_summon is None:
-                if self._persistent_chat_minister(minister_name):
-                    from ming_sim.audience_night import encode_chat_turn_route
-                    chat_turn_id, before_snapshot = self._start_chat_turn(
-                        minister_name,
-                        message=text,
-                        attach_to_hall=not offsite_secret_order,
-                        route=encode_chat_turn_route(
-                            explicit_secret_order=explicit_secret_order,
-                            offsite=offsite_secret_order,
-                        ),
-                    )
+                from ming_sim.audience_night import encode_chat_turn_route
+                chat_turn_id, before_snapshot = self._start_chat_turn(
+                    minister_name,
+                    message=text,
+                    attach_to_hall=not offsite_secret_order,
+                    route=encode_chat_turn_route(
+                        explicit_secret_order=explicit_secret_order,
+                        offsite=offsite_secret_order,
+                    ),
+                )
                 self.chat_history.setdefault(minister_name, []).append({"role": "user", "content": text})
-                if minister_name not in self.session.temporary_characters:
-                    message_id = self.db.append_chat_message(minister_name, accepted_turn, "user", text)
-                    if chat_turn_id:
-                        self.db.update_chat_turn_messages(chat_turn_id, user_message_id=message_id)
+                message_id = self.db.append_chat_message(minister_name, accepted_turn, "user", text)
+                if chat_turn_id:
+                    self.db.update_chat_turn_messages(chat_turn_id, user_message_id=message_id)
         except Exception as error:
             # Release gate before scene drain — prologue may have already started futures.
             if gate_held:
@@ -5965,8 +5934,6 @@ _STATUS_LABEL_WEB = {
 
 
 def _require_active_minister(minister_name: str) -> None:
-    if minister_name in get_game().session.temporary_characters:
-        return
     if minister_name not in get_game().content.characters:
         raise HTTPException(status_code=404, detail=f"未找到人物：{minister_name}")
     character = get_game().content.characters[minister_name]
@@ -6148,8 +6115,11 @@ async def api_create_secret_order(minister_name: str, request: SecretOrderReques
         lines.append(f"期限：{int(request.deadline_months)}月")
 
     # #1727：端点侧补屏障拒——持闸兼容路 gate_already_held 会跳过 _chat_core 内检查。
+    _refuse_settling_or_busy_write_phase(game)
     _refuse_if_open_night_barrier(game)
-
+    gate = _game_write_gate(game)
+    _acquire_web_write_gate_or_409(gate)
+    gate.release()
     return await run_in_threadpool(game.chat, minister_name, "\n".join(lines))
 
 

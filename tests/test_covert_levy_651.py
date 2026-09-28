@@ -11,7 +11,6 @@ from ming_sim.due_review import audience_todo_lane, build_due_review_input, list
 from ming_sim.simulation import EMPTY_EXTRACTION, MODULE_FIELDS
 from ming_sim.beat_orchestration import assemble_beat_inputs, BEAT_OPEN
 from ming_sim.action_clusters import candidates_from_classifier_payload
-from ming_sim.action_materialize import MaterializeCtx, run_materialize_pipeline
 from types import SimpleNamespace
 
 
@@ -69,35 +68,6 @@ def test_exposure_uses_single_dispatcher_and_projects_exact_case(game, monkeypat
     assert build_due_review_input(db, todo)["commitment_ref"] == issue_id
 
 
-def test_natural_prohibition_binds_only_current_case_and_is_night_approved(game, monkeypatch):
-    db, state, _ = game
-    first, _, first_army, actor = _bound_case(db, state)
-    second, _, _, _ = _bound_case(db, state)
-    _exposed_todo(db, state, monkeypatch, first)
-    _exposed_todo(db, state, monkeypatch, second)
-    db.conn.execute("UPDATE armies SET arrears=5 WHERE id=?", (first_army,))
-    candidates = candidates_from_classifier_payload(
-        [{"kind": "prohibit_covert_levy"}], soft=False,
-    )
-    ctx = MaterializeCtx(
-        session=SimpleNamespace(db=db, state=state),
-        character=SimpleNamespace(name=actor),
-        player_message="此等借饷扰民之举，即刻禁绝。", reply="臣领旨。",
-        message_text="此等借饷扰民之举，即刻禁绝。", explicit_prefixed=False,
-        has_directive=False, pend_for_minister=[], out={}, intent=None,
-        intent_kind="none", llm_config=None, intent_candidates=candidates,
-    )
-    run_materialize_pipeline(ctx)
-    pending = db.conn.execute(
-        "SELECT payload_json,night_approved FROM pending_actions WHERE id=?",
-        (ctx.out["pending_action_id"],),
-    ).fetchone()
-    import json
-    payload = json.loads(pending["payload_json"])
-    assert payload["dossier_action_type"] == PROHIBITION_ACTION
-    assert payload["target_kind"] == "dossier" and payload["target_id"] == str(first)
-    assert pending["night_approved"] == 1
-    assert set(ctx.out) == {"pending_action_id"}
 
 
 def test_pay_fact_reaches_both_production_judge_inputs(game):
@@ -533,25 +503,6 @@ def test_false_denunciation_is_not_retroactively_made_true_by_current_fork(game,
     assert write_exposure_todos(db, state) == 1
 
 
-def test_current_reopened_reminder_prevents_binding_a_later_exposure(game, monkeypatch):
-    db, state, _ = game
-    first, _, first_army, actor = _bound_case(db, state)
-    _exposed_todo(db, state, monkeypatch, first)
-    db.conn.execute("UPDATE armies SET arrears=5 WHERE id=?", (first_army,))
-    _promulgated_prohibition(db, state, first)
-    assert settle_exposure_from_canonical_actions(db, state, {}) == 1
-    second, _, _, _ = _bound_case(db, state)
-    _exposed_todo(db, state, monkeypatch, second)
-    ctx = MaterializeCtx(
-        session=SimpleNamespace(db=db, state=state), character=SimpleNamespace(name=actor),
-        player_message="禁绝摊派", reply="臣领旨", message_text="禁绝摊派",
-        explicit_prefixed=False, has_directive=False, pend_for_minister=[], out={},
-        intent=None, intent_kind="none", llm_config=None,
-        intent_candidates=candidates_from_classifier_payload([{"kind": "prohibit_covert_levy"}], soft=False),
-    )
-    run_materialize_pipeline(ctx)
-    assert "pending_action_id" not in ctx.out
-    assert str(first) in assemble_beat_inputs(db, state, beat_kind=BEAT_OPEN).audience_scenes[0]
 
 
 def test_population_transfer_is_the_self_grown_unrest_channel(game, monkeypatch):

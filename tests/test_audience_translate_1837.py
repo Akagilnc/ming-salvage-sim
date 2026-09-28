@@ -43,7 +43,7 @@ def _sess(db, state, content, monkeypatch, *, llm_config=None, translate_fn=None
     sess.content = content
     sess.registry = None
     sess.llm_config = llm_config or SimpleNamespace(channel="api")
-    sess.temporary_characters = {}
+
     sess.agno_db = None
     sess._beat_generator = None
     sess._scene_registry = None
@@ -163,11 +163,11 @@ def test_pending_round_approval_endorsed_before_close_or_after_month_join(
             if self.fail_once:
                 self.fail_once = False
                 raise RuntimeError("endorsement unavailable")
-            return json.dumps({"endorsements": [{
+            return SimpleNamespace(content=json.dumps({"endorsements": [{
                 "dossier_id": int(c["ref"]["dossier_id"]),
                 "form": "御笔手敕", "endorser_id": "", "imperial": True,
                 "source_chat_turn_id": ctid, "decision_key": "",
-            } for c in candidates]}, ensure_ascii=False)
+            } for c in candidates]}, ensure_ascii=False))
 
     endorsement_agent = EndorsementAgent()
     endorsement_agent.approve_during_transfer_window = timing == "after_transfer"

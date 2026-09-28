@@ -70,12 +70,11 @@ class _FakeGame:
         self.state = SimpleNamespace(turn=3, turn_phase=turn_phase, metrics={})
         self.db = _RecordingDB()
         self._write_gate = threading.Lock()
-        consort = SimpleNamespace(name="某秀女", office_type="后宫", status="candidate", office="")
+        consort = SimpleNamespace(name="某妃", office_type="后宫", status="active", office="")
         minister = SimpleNamespace(name="某大臣", office_type="文官")
-        self.content = SimpleNamespace(characters={"某秀女": consort, "某大臣": minister})
+        self.content = SimpleNamespace(characters={"某妃": consort, "某大臣": minister})
         self.session = SimpleNamespace(
             content=self.content, state=self.state, db=self.db,
-            temporary_characters=set(),
             registry=SimpleNamespace(refresh=lambda *a, **k: None, register=lambda *a, **k: None),
             await_translations_before_month=lambda after_drain=None: after_drain() if after_drain else None,
         )
@@ -87,10 +86,10 @@ class _FakeGame:
     def _runtime_write_gate(self):
         return self._write_gate
 
-    def chat(self, *a, **k):
+    def chat(self, minister_name, message, *a, **k):
         with web_app._serialized_web_write(self):
             self.db.writes.append("chat")
-        return {}
+        return {"answer": "臣领旨。", "minister": minister_name, "message": message}
 
     def _chat_with_write_gate_held(self, minister_name, message):
         """Fake 侧真实缝：调用方已持闸时直接记写，不重入 _serialized_web_write。"""

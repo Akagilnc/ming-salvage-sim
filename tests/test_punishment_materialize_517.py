@@ -1,8 +1,6 @@
 """#517 惩处·宥赦：真实候选、案卷与 ADR 0055 判决后人物效果。
 
 Seams:
-- ACTION_CLUSTERS punishment 行 + materialize_fn
-- run_materialize_pipeline / declaration dispatch
 - commit_pending_actions（收夜落案卷，不成效果）
 - apply_dossier_verdicts（0055 顺颁才落机械效果）
 - typed 惩处交办不经任免分类器（「拿问去职」不得折罢免）
@@ -21,23 +19,12 @@ import ming_sim.action_materialize  # noqa: F401 -- installs package catalog
 import ming_sim.action_materialize as am
 import web_app
 from ming_sim.action_clusters import candidates_from_classifier_payload
-from ming_sim.action_materialize import MaterializeCtx, run_materialize_pipeline
 from ming_sim.decree import reload_state_from_db
 from ming_sim.models import CourtContext
 from ming_sim.declaration_dispatch import dispatch_declaration
 from tests.dossier_test_helpers import rejected_verdict as _rejected_verdict
 
 
-def _ctx(db, character, candidates, turn, *, message, reply):
-    return MaterializeCtx(
-        session=SimpleNamespace(db=db, state=SimpleNamespace(turn=turn)),
-        character=SimpleNamespace(name=character, office_type="文官"),
-        player_message=message,
-        reply=reply,
-        message_text=message,
-        explicit_prefixed=False, has_directive=False, pend_for_minister=[], out={},
-        intent=None, intent_kind="none", llm_config=None, intent_candidates=candidates,
-    )
 
 
 def _active_ming(db, content, *, exclude=""):
@@ -51,26 +38,6 @@ def _active_ming(db, content, *, exclude=""):
     )
 
 
-def _stage_punishment(db, turn, target, *, action="拿问下狱", amount=0, message=None, reply=None):
-    actor = db.conn.execute(
-        "SELECT name FROM characters WHERE power_id='ming' AND status='active' LIMIT 1"
-    ).fetchone()["name"]
-    payload = {
-        "kind": "punishment",
-        "punish_action": action,
-        "transaction_category": "缉拿",
-        "name": target,
-    }
-    if amount:
-        payload["amount"] = amount
-    candidate = candidates_from_classifier_payload(payload, soft=False)
-    ctx = _ctx(
-        db, actor, candidate, turn,
-        message=message or f"将{target}{action}。",
-        reply=reply or f"臣请将{target}{action}，请陛下定夺准驳。",
-    )
-    run_materialize_pipeline(ctx)
-    return ctx
 
 
 def _close_night_dossier(db, state, content, pending_id):
@@ -81,37 +48,6 @@ def _close_night_dossier(db, state, content, pending_id):
     )
 
 
-def test_naowen_stages_then_dossier_then_imprisoned_only_after_verdict(game):
-    """AC1：拿问下狱 → 暂存 → 收夜落案卷 → imprisoned 只在 0055 顺颁后生效。"""
-    db, state, content = game
-    target = _active_ming(db, content)
-    before_status = db.get_character_status(target.name)[0]
-    assert before_status == "active"
-
-    ctx = _stage_punishment(db, state.turn, target.name, action="拿问下狱")
-    pending_id = ctx.out["pending_action_id"]
-    assert pending_id
-    pending = json.loads(db.conn.execute(
-        "SELECT payload_json FROM pending_actions WHERE id=?", (pending_id,),
-    ).fetchone()["payload_json"])
-    assert pending["dossier_action_type"] == "punishment"
-    assert pending["punish_action"] == "拿问下狱"
-    assert pending["target_id"] == target.name
-    assert db.get_character_status(target.name)[0] == "active"
-
-    dossier = _close_night_dossier(db, state, content, pending_id)
-    assert dossier["action_type"] == "punishment"
-    assert dossier["status"] == "proposed"
-    assert dossier["target_id"] == target.name
-    assert db.get_character_status(target.name)[0] == "active", "收夜只落案卷，不得先下狱"
-
-    db.apply_dossier_verdicts(
-        state,
-        [{"dossier_id": dossier["id"], "decision": "promulgated"}],
-        content=content,
-    )
-    assert db.get_character_status(target.name)[0] == "imprisoned"
-    assert content.characters[target.name].status == "imprisoned"
 
 
 @pytest.mark.parametrize("disposition", ["办人", "压下"])
@@ -258,148 +194,14 @@ def test_prestaged_impeachment_punishments_skip_person_writes_after_first_closes
     ).fetchone()[0] == 0
 
 
-def test_naowen_rejected_verdict_leaves_status_untouched(game):
-    """AC1 打回拍：案卷在、imprisoned 零落。"""
-    db, state, content = game
-    target = _active_ming(db, content)
-    ctx = _stage_punishment(db, state.turn, target.name)
-    dossier = _close_night_dossier(db, state, content, ctx.out["pending_action_id"])
-    db.apply_dossier_verdicts(state, [_rejected_verdict(dossier["id"])], content=content)
-    assert db.get_character_status(target.name)[0] == "active"
-    assert content.characters[target.name].status == "active"
 
 
-def test_pardon_migrates_imprisoned_to_active_after_verdict(game):
-    """AC2：宥赦回迁 imprisoned→active，同样走案卷+判决双拍。"""
-    db, state, content = game
-    target = _active_ming(db, content)
-    db.set_character_status(state, target.name, "imprisoned", "旧案在押")
-    content.characters[target.name].status = "imprisoned"
-    ctx = _stage_punishment(db, state.turn, target.name, action="放归")
-    dossier = _close_night_dossier(db, state, content, ctx.out["pending_action_id"])
-    assert db.get_character_status(target.name)[0] == "imprisoned"
-    db.apply_dossier_verdicts(
-        state,
-        [{"dossier_id": dossier["id"], "decision": "promulgated"}],
-        content=content,
-    )
-    assert db.get_character_status(target.name)[0] == "active"
-    assert content.characters[target.name].status == "active"
 
 
-def test_fine_stripping_and_beating_land_distinct_effects(game):
-    """AC3：罚俸落钱粮减项；削籍=dismissed+获罪削籍；廷杖只落叙事、无状态转移。"""
-    db, state, content = game
-    fine_target = _active_ming(db, content)
-    strip_target = _active_ming(db, content, exclude=fine_target.name)
-    names = {fine_target.name, strip_target.name}
-    beat_target = next(
-        ch for ch in content.characters.values()
-        if getattr(ch, "office_type", "") not in ("后宫", "宗藩")
-        and db.resolve_power_id(ch) == "ming"
-        and db.get_character_status(ch.name)[0] == "active"
-        and ch.name not in names
-        and str(getattr(ch, "office", "") or "").strip()
-    )
-
-    treasury_before = int(state.metrics["国库"])
-    fine_status = db.get_character_status(fine_target.name)[0]
-    beat_status = db.get_character_status(beat_target.name)[0]
-    beat_logs_before = db.conn.execute(
-        "SELECT COUNT(*) FROM person_logs WHERE person_name=?", (beat_target.name,),
-    ).fetchone()[0]
-
-    fine_ctx = _stage_punishment(
-        db, state.turn, fine_target.name, action="罚俸", amount=80,
-    )
-    strip_ctx = _stage_punishment(db, state.turn, strip_target.name, action="削籍")
-    beat_ctx = _stage_punishment(db, state.turn, beat_target.name, action="廷杖")
-    fine_d = _close_night_dossier(db, state, content, fine_ctx.out["pending_action_id"])
-    strip_d = _close_night_dossier(db, state, content, strip_ctx.out["pending_action_id"])
-    beat_d = _close_night_dossier(db, state, content, beat_ctx.out["pending_action_id"])
-    assert db.get_character_status(fine_target.name)[0] == fine_status
-    assert db.get_character_status(strip_target.name)[0] == "active"
-    assert db.get_character_status(beat_target.name)[0] == beat_status
-
-    db.apply_dossier_verdicts(state, [
-        {"dossier_id": fine_d["id"], "decision": "promulgated"},
-        {"dossier_id": strip_d["id"], "decision": "promulgated"},
-        {"dossier_id": beat_d["id"], "decision": "promulgated"},
-    ], content=content)
-
-    moves = db.list_economy_moves_for_dossier(fine_d["id"])
-    assert moves, "罚俸须落 economy_moves"
-    assert moves[0]["category"] == "罚俸"
-    assert int(moves[0]["delta"]) == -80
-    assert int(state.metrics["国库"]) == treasury_before - 80
-    assert db.get_character_status(fine_target.name)[0] == fine_status
-
-    status, reason = db.get_character_status(strip_target.name)
-    row = db.conn.execute(
-        "SELECT status, reason_code, status_reason FROM characters WHERE name=?",
-        (strip_target.name,),
-    ).fetchone()
-    assert status == "dismissed"
-    assert row["reason_code"] == "获罪削籍"
-    assert content.characters[strip_target.name].status == "dismissed"
-
-    assert db.get_character_status(beat_target.name)[0] == beat_status
-    beat_logs = db.conn.execute(
-        "SELECT action, payload_summary FROM person_logs WHERE person_name=? ORDER BY id",
-        (beat_target.name,),
-    ).fetchall()
-    assert len(beat_logs) == beat_logs_before + 1
-    assert beat_logs[-1]["action"] == "廷杖"
-    assert "80" not in str(beat_logs[-1]["payload_summary"] or "")
 
 
-def test_naowen_quzhi_is_punishment_not_dismiss(game):
-    """AC4：拿问去职走惩处下狱，不得折成任免罢免。"""
-    db, state, content = game
-    target = _active_ming(db, content)
-    ctx = _stage_punishment(db, state.turn, target.name, action="拿问去职")
-    pending_id = ctx.out["pending_action_id"]
-    row = db.conn.execute(
-        "SELECT kind, action, payload_json FROM pending_actions WHERE id=?",
-        (pending_id,),
-    ).fetchone()
-    payload = json.loads(row["payload_json"])
-    assert row["kind"] == "directive"
-    assert payload["dossier_action_type"] == "punishment"
-    assert payload["punish_action"] == "拿问去职"
-    office_rows = [
-        r for r in db.list_pending_actions(int(state.turn))
-        if r["kind"] == "office" and r["action"] == "罢免"
-    ]
-    assert office_rows == []
-
-    dossier = _close_night_dossier(db, state, content, pending_id)
-    db.apply_dossier_verdicts(
-        state,
-        [{"dossier_id": dossier["id"], "decision": "promulgated"}],
-        content=content,
-    )
-    assert db.get_character_status(target.name)[0] == "imprisoned"
 
 
-def test_punishment_restore_from_db_only_is_lossless(game):
-    """AC5：restore 只读 DB 能接续下狱结果与案卷。"""
-    db, state, content = game
-    target = _active_ming(db, content)
-    ctx = _stage_punishment(db, state.turn, target.name, action="拿问下狱")
-    dossier = _close_night_dossier(db, state, content, ctx.out["pending_action_id"])
-    db.apply_dossier_verdicts(
-        state,
-        [{"dossier_id": dossier["id"], "decision": "promulgated"}],
-        content=content,
-    )
-    content.characters[target.name].status = "active"
-    reload_state_from_db(db, state, content=content)
-    assert db.get_character_status(target.name)[0] == "imprisoned"
-    assert content.characters[target.name].status == "imprisoned"
-    restored = db.get_decree_dossier(dossier["id"])
-    assert restored["action_type"] == "punishment"
-    assert restored["target_id"] == target.name
 
 
 def _scene_punishment(db, state, actor, target, *, category=""):
@@ -446,40 +248,8 @@ def test_scene_confirm_accept_does_not_imprison(game):
     assert content.characters[target.name].status == "active"
 
 
-def test_cisi_kills_only_after_verdict(game):
-    """同类型：赐死走同一案卷+判决双拍，顺颁后 dead。"""
-    db, state, content = game
-    target = _active_ming(db, content)
-    ctx = _stage_punishment(db, state.turn, target.name, action="赐死")
-    dossier = _close_night_dossier(db, state, content, ctx.out["pending_action_id"])
-    assert db.get_character_status(target.name)[0] == "active"
-    db.apply_dossier_verdicts(
-        state,
-        [{"dossier_id": dossier["id"], "decision": "promulgated"}],
-        content=content,
-    )
-    assert db.get_character_status(target.name)[0] == "dead"
-    assert content.characters[target.name].status == "dead"
 
 
-def test_zhaoxue_restores_dismissed_to_active_after_verdict(game):
-    """同类型：昭雪回迁 dismissed→active。"""
-    db, state, content = game
-    target = _active_ming(db, content)
-    db.set_character_status(
-        state, target.name, "dismissed", "获罪削籍", reason_code="获罪削籍",
-    )
-    content.characters[target.name].status = "dismissed"
-    ctx = _stage_punishment(db, state.turn, target.name, action="昭雪")
-    dossier = _close_night_dossier(db, state, content, ctx.out["pending_action_id"])
-    assert db.get_character_status(target.name)[0] == "dismissed"
-    db.apply_dossier_verdicts(
-        state,
-        [{"dossier_id": dossier["id"], "decision": "promulgated"}],
-        content=content,
-    )
-    assert db.get_character_status(target.name)[0] == "active"
-    assert content.characters[target.name].status == "active"
 
 
 def test_punishment_admission_rejects_missing_blank_or_illegal_action(game):
@@ -515,23 +285,6 @@ def test_punishment_admission_rejects_missing_blank_or_illegal_action(game):
     assert ok["punish_action"] == "拿问下狱"
 
 
-def test_pardon_refuses_dead_keeps_terminal_status(game):
-    """类3：宥赦拒绝 dead，人物保持终态。"""
-    db, state, content = game
-    target = _active_ming(db, content)
-    db.set_character_status(state, target.name, "dead", "旧案赐死")
-    content.characters[target.name].status = "dead"
-    ctx = _stage_punishment(db, state.turn, target.name, action="放归")
-    dossier = _close_night_dossier(db, state, content, ctx.out["pending_action_id"])
-    assert db.get_character_status(target.name)[0] == "dead"
-    with pytest.raises(ValueError, match="dead|终态|宥赦|放归"):
-        db.apply_dossier_verdicts(
-            state,
-            [{"dossier_id": dossier["id"], "decision": "promulgated"}],
-            content=content,
-        )
-    assert db.get_character_status(target.name)[0] == "dead"
-    assert content.characters[target.name].status == "dead"
 
 
 # ── #517 r2 四类 ──────────────────────────────────────────────
@@ -596,78 +349,8 @@ def test_fine_admission_requires_positive_amount(game):
     assert payload["amount"] == 80
 
 
-def test_fine_underfunded_treasury_fails_loud_not_fulfilled(game):
-    """r2 类2：罚俸减项不足额/零落账响亮失败，事务回滚，不得 fulfilled。"""
-    db, state, content = game
-    target = _active_ming(db, content)
-    state.metrics["国库"] = 30
-    db.sync_economy_accounts(state)
-    treasury_before = int(state.metrics["国库"])
-
-    ctx = _stage_punishment(
-        db, state.turn, target.name, action="罚俸", amount=80,
-    )
-    dossier = _close_night_dossier(db, state, content, ctx.out["pending_action_id"])
-    assert db.list_economy_moves_for_dossier(dossier["id"]) == []
-
-    with pytest.raises(ValueError, match="不足|罚俸|amount"):
-        db.apply_dossier_verdicts(
-            state,
-            [{"dossier_id": dossier["id"], "decision": "promulgated"}],
-            content=content,
-        )
-
-    # 回滚：国库与案卷均不得伪造成功结案
-    assert int(state.metrics["国库"]) == treasury_before
-    assert db.list_economy_moves_for_dossier(dossier["id"]) == []
-    row = db.get_decree_dossier(dossier["id"])
-    assert row["status"] == "proposed"
-    assert str(row.get("execution_outcome") or "") != "fulfilled"
 
 
-def test_promulgated_terminal_punishment_enters_sim_as_inert_context(game):
-    """r2 类3：顺颁 terminal punishment 进当月推演惰性上下文；无叙事重放物化面。"""
-    from ming_sim.decree import project_dossiers_for_simulator
-
-    db, state, content = game
-    target = _active_ming(db, content)
-    ctx = _stage_punishment(db, state.turn, target.name, action="拿问下狱")
-    dossier = _close_night_dossier(db, state, content, ctx.out["pending_action_id"])
-    decree_text = str(dossier.get("decree_text") or "")
-
-    # 结算组装窗：list_for_simulation 含 proposed；settlement_verdict=promulgated 表示顺颁。
-    visible = []
-    for row in db.list_decree_dossiers_for_simulation(state.turn):
-        item = dict(row)
-        if int(item["id"]) == int(dossier["id"]):
-            item["settlement_verdict"] = "promulgated"
-        visible.append(item)
-
-    projected = project_dossiers_for_simulator(visible, db=db, state=state)
-    hit = next(r for r in projected if int(r["id"]) == int(dossier["id"]))
-    assert hit["action_type"] == "punishment"
-    assert hit["target_id"] == target.name
-    assert "decree_text" not in hit
-    assert "payload" not in hit and "payload_json" not in hit
-    summary = hit["execution_summary"]
-    assert summary["command"] == decree_text
-    assert summary.get("punish_action") == "拿问下狱"
-    # 目标在行级 target_id，不重复塞进 summary，避免破坏既有 in-transit 组装契约
-    assert hit["target_id"] == target.name
-
-    # 打回不得进推演上下文
-    rejected_visible = []
-    for row in db.list_decree_dossiers_for_simulation(state.turn):
-        item = dict(row)
-        if int(item["id"]) == int(dossier["id"]):
-            item["settlement_verdict"] = "rejected"
-        rejected_visible.append(item)
-    rejected_ids = {
-        int(r["id"]) for r in project_dossiers_for_simulator(
-            rejected_visible, db=db, state=state,
-        )
-    }
-    assert int(dossier["id"]) not in rejected_ids
 
 
 @pytest.mark.parametrize(
@@ -710,46 +393,3 @@ def test_declared_punishment_keeps_typed_admission(game, action, amount, categor
         assert result.commissions.applied == []
         assert result.commissions.rejected
         assert new == []
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-def test_punishment_promulgation_refreshes_target_after_outer_commit(game):
-    """#672：惩处人物处置经 outer-commit callback 刷新 registry。"""
-    from ming_sim.decree import settle_with_delta
-
-    db, state, content = game
-    target = _active_ming(db, content)
-    ctx = _stage_punishment(db, state.turn, target.name, action="拿问下狱")
-    pending_id = ctx.out["pending_action_id"]
-    dossier = _close_night_dossier(db, state, content, pending_id)
-
-    class _Reg:
-        def __init__(self):
-            self.refreshed = []
-
-        def refresh(self, name):
-            self.refreshed.append(name)
-
-    reg = _Reg()
-    settle_with_delta(
-        state, db, {}, before_turn=int(state.turn), content=content, registry=reg,
-        dossier_verdicts=[{"dossier_id": dossier["id"], "decision": "promulgated"}],
-        delta_applier=lambda *a, **k: {},
-    )
-    assert target.name in reg.refreshed
-    assert db.get_character_status(target.name)[0] == "imprisoned"

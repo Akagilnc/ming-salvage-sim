@@ -1,8 +1,7 @@
-"""#515 S0：动作分类器扩展挂点 + 识别兜底 + 脚本化判词契约。
+"""#515 S0：动作字段目录 + 识别兜底 + 脚本化判词契约。
 
 Seams:
-- ACTION_CLUSTERS 唯一登记（含 materialize_fn / FieldSpec）
-- run_materialize_pipeline / session.chat / WebGame.chat+undo_last_chat
+- ACTION_CLUSTERS 字段目录 / WebGame.chat+undo_last_chat
 
 不断言 LLM 语义；不另造 undo；不手抄 snapshot 生命周期。
 """
@@ -21,14 +20,10 @@ import ming_sim.action_materialize  # noqa: F401 — install catalog
 import ming_sim.session as session_mod
 from ming_sim.action_clusters import (
     ACTION_CLUSTERS,
-    EFFECT_ANSWER_EXISTING,
-    EFFECT_MATERIALIZE,
-    EFFECT_NOOP,
     ActionCandidateShapeError,
     assert_action_candidate_shape,
     candidates_from_classifier_payload,
     cluster_by_kind,
-    materialize_clusters_ordered,
     normalize_intent_candidates,
     normalize_one_candidate,
     primary_intent,
@@ -45,17 +40,7 @@ from ming_sim.session import GameSession
 from web_app import WebGame
 
 
-# ── 单一挂点 ──────────────────────────────────────────────────────────
-
-
-
-
-def test_registry_row_carries_handler_and_effect():
-    assert cluster_by_kind("none").effect == EFFECT_NOOP
-    assert cluster_by_kind("confirmation").effect == EFFECT_ANSWER_EXISTING
-    for c in materialize_clusters_ordered():
-        assert c.effect == EFFECT_MATERIALIZE
-        assert c.materialize_fn is not None
+# ── 字段目录 ──────────────────────────────────────────────────────────
 
 
 def test_registry_rows_generate_shape_contract_matrix():
@@ -236,7 +221,6 @@ def _wire_web_game(db, state, content, agent, monkeypatch, *, translate_fn=None)
     sess.llm_config = SimpleNamespace(
         channel="cli", cli_runner="codex", base_url="", model="test", api_key="",
     )
-    sess.temporary_characters = set()
     sess.previous_summary = ""
     sess.last_decree = ""
     sess.agno_db = None

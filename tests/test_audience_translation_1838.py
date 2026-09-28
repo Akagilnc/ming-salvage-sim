@@ -191,7 +191,7 @@ def _scene_session(db, state, content, monkeypatch):
     sess.content = content
     sess.registry = None
     sess.llm_config = SimpleNamespace(channel="")
-    sess.temporary_characters = {}
+
     sess.agno_db = None
     from ming_sim.beat_orchestration import ChatTurnSceneRegistry
     from ming_sim.session import _CLI_ACTION_INTENT_EXECUTOR

@@ -8,14 +8,11 @@ from types import SimpleNamespace
 import pytest
 
 import ming_sim.audience_night as audience_night
-import ming_sim.cli_backend as cb
-import ming_sim.session as session_mod
 import ming_sim.simulation as simulation
 from ming_sim.db import GameDB
 from ming_sim import issues as issues_mod
 from ming_sim.issues import apply_score_extraction, apply_issue_tracker_output
 from ming_sim.public_sayings import list_public_sayings, record_public_saying
-from ming_sim.session import GameSession
 
 
 
@@ -46,53 +43,6 @@ def _declaration(*, attach="new", birth_key="", affair_id=None, identity=""):
     return body
 
 
-
-
-def _session(db, state, content, *, reply):
-    class FakeAgent:
-        def run(self, _msg):
-            return SimpleNamespace(content=reply, tools=[])
-
-    sess = GameSession.__new__(GameSession)
-    sess.db = db
-    sess.state = state
-    sess.content = content
-    sess.registry = SimpleNamespace(get=lambda _c, **_kw: FakeAgent())
-    sess.llm_config = SimpleNamespace(channel="cli", cli_runner="agy")
-    sess.temporary_characters = {}
-    sess._retrieve_memories_for_message = lambda message: message
-    return sess
-
-
-def _script_split(monkeypatch, drafts, *, batch_declaration):
-    classified = json.dumps(
-        [{"动作类型": "拟旨"} for _ in drafts], ensure_ascii=False,
-    )
-
-    def scripted_backend(*_args, **kwargs):
-        tag = kwargs.get("tag")
-        if tag == "action_intent":
-            return classified, 0
-        if tag == "draft_intent":
-            return json.dumps(
-                {"事务声明": batch_declaration, "成品旨稿": drafts},
-                ensure_ascii=False,
-            ), 0
-        raise AssertionError(f"unexpected backend call: {tag}")
-
-    monkeypatch.setattr(cb, "_run_backend_for_config", scripted_backend)
-    monkeypatch.setattr(session_mod, "_dump_llm_messages", lambda *a, **k: None)
-    monkeypatch.setattr(
-        cb, "extract_confirmation_intent",
-        lambda *a, **k: {"confirmation": "应允", "target_ids": [], "new_content": ""},
-    )
-    monkeypatch.setattr(
-        cb, "extract_directive_confirmation",
-        lambda player_message, minister_reply, candidates, llm_config=None: {
-            "decision": "应允",
-            "target_ids": [int(item["id"]) for item in candidates],
-        },
-    )
 
 
 def _ningyuan_drafts(db, minister):
@@ -153,17 +103,30 @@ def test_ningyuan_close_night_one_affair_three_dossiers(game, monkeypatch):
     night = audience_night.open_night(db, state)
     audience_night.summon_enter(db, int(night["id"]), minister)
     drafts = _ningyuan_drafts(db, minister)
-    _script_split(monkeypatch, drafts, batch_declaration=_declaration())
-    sess = _session(db, state, content, reply="臣拟三道：拨银、调将、派兵护送去宁远。")
-    sess.chat(minister, ORIGIN)
+    from tests.test_audience_translate_1837_reopen import _scene_declaration
+    result = _scene_declaration(db, state, content, monkeypatch, ORIGIN, {
+        "commissions": [
+            {"text": draft["正文"], "affair_declaration": _declaration(birth_key="ningyuan-escort")}
+            for draft in drafts
+        ],
+    }, minister_name=minister)
+    assert len(result.commissions.applied) == 3
 
     pending = [
-        row for row in db.list_pending_actions(int(state.turn), minister_name=minister)
+        row for row in db.list_pending_actions(int(state.turn))
         if row["kind"] == "directive"
     ]
     assert len(pending) == 3
-    sess.chat(minister, "三事全允")
-    audience_night.close_night(db, state, night_id=night["id"], content=content)
+    approval = _scene_declaration(db, state, content, monkeypatch, "准", {
+        "promises": [{"action_id": row["id"], "decision": "应允"} for row in pending],
+    })
+    assert len(approval.promises.applied) == 3
+    audience_night.close_night(
+        db, state, night_id=night["id"], content=content,
+        endorsement_extractor_agent=SimpleNamespace(
+            run=lambda _: SimpleNamespace(content='{"endorsements": []}'),
+        ),
+    )
 
     open_affairs = db.affairs.list_open()
     assert len(open_affairs) == 1
@@ -240,14 +203,25 @@ def test_existing_open_affair_grounds_split_declaration(game, monkeypatch):
     )
     night = audience_night.open_night(db, state)
     audience_night.summon_enter(db, int(night["id"]), minister)
-    _script_split(
-        monkeypatch, _ningyuan_drafts(db, minister),
-        batch_declaration=_declaration(attach="existing", affair_id=existing.id),
+    from tests.test_audience_translate_1837_reopen import _scene_declaration
+    result = _scene_declaration(db, state, content, monkeypatch, ORIGIN, {
+        "commissions": [
+            {"text": draft["正文"], "affair_declaration": _declaration(attach="existing", affair_id=existing.id)}
+            for draft in _ningyuan_drafts(db, minister)
+        ],
+    }, minister_name=minister)
+    assert len(result.commissions.applied) == 3
+    approval = _scene_declaration(db, state, content, monkeypatch, "准", {
+        "promises": [{"action_id": item["id"], "decision": "应允"}
+                     for item in result.commissions.applied],
+    })
+    assert len(approval.promises.applied) == 3
+    audience_night.close_night(
+        db, state, night_id=night["id"], content=content,
+        endorsement_extractor_agent=SimpleNamespace(
+            run=lambda _: SimpleNamespace(content='{"endorsements": []}'),
+        ),
     )
-    sess = _session(db, state, content, reply="臣拟三道接到前案。")
-    sess.chat(minister, ORIGIN)
-    sess.chat(minister, "三事全允")
-    audience_night.close_night(db, state, night_id=night["id"], content=content)
     assert [row.id for row in db.affairs.list_open()] == [existing.id]
     assert len(db.affairs.dossiers(existing.id)) == 3
 
@@ -444,6 +418,7 @@ def test_strategic_event_unauthorized_person_origin_reaches_final_projection(gam
         },
         content=content,
         open_affair_ids_at_input={authorized.id},
+        ordered_effect_event_ids={"region_delta": ["wuyin_lubian"]},
     )
     assert out["issue_summary"]["new_issues"][0].get("rejected") is not True
     assert db.has_event_triggered("wuyin_lubian")

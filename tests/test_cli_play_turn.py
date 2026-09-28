@@ -168,7 +168,7 @@ def test_terminal_minister_chat_persists_messages_before_session_chat(monkeypatc
             self.db = Db()
             self.state = SimpleNamespace(turn=7)
             self.content = SimpleNamespace(characters={"魏忠贤": object(), "韩爌": object()})
-            self.temporary_characters = set()
+
 
         def scene_chat(self, question, *, chat_turn_id=0, stream_emit=None, minister_name=""):
             assert self.db.messages == [
@@ -223,7 +223,7 @@ def test_terminal_minister_chat_removes_user_message_when_session_chat_fails(mon
             self.db = Db()
             self.state = SimpleNamespace(turn=7)
             self.content = SimpleNamespace(characters={"魏忠贤": object(), "韩爌": object()})
-            self.temporary_characters = set()
+
 
         def scene_chat(self, question, *, chat_turn_id=0, stream_emit=None, minister_name=""):
             assert self.db.messages == [
@@ -272,7 +272,7 @@ def test_terminal_minister_chat_removes_user_message_when_session_chat_interrupt
             self.db = Db()
             self.state = SimpleNamespace(turn=7)
             self.content = SimpleNamespace(characters={"魏忠贤": object(), "韩爌": object()})
-            self.temporary_characters = set()
+
 
         def scene_chat(self, question, *, chat_turn_id=0, stream_emit=None, minister_name=""):
             assert self.db.messages == [
@@ -311,7 +311,7 @@ def test_terminal_minister_chat_preserves_chat_error_when_rollback_fails(monkeyp
             self.db = Db()
             self.state = SimpleNamespace(turn=7)
             self.content = SimpleNamespace(characters={"魏忠贤": object(), "韩爌": object()})
-            self.temporary_characters = set()
+
 
         def scene_chat(self, question, *, chat_turn_id=0, stream_emit=None, minister_name=""):
             raise RuntimeError("LLM down")
@@ -348,7 +348,7 @@ def test_terminal_minister_chat_reply_persist_failure_keeps_user_message(monkeyp
             self.db = Db()
             self.state = SimpleNamespace(turn=7)
             self.content = SimpleNamespace(characters={"魏忠贤": object(), "韩爌": object()})
-            self.temporary_characters = set()
+
 
         def scene_chat(self, question, *, chat_turn_id=0, stream_emit=None, minister_name=""):
             return SimpleNamespace(
@@ -425,7 +425,7 @@ def test_terminal_persistent_chat_finalization_failure_rolls_back_real_turn(game
         db=db,
         state=state,
         content=content,
-        temporary_characters=set(),
+
         scene_chat=scene_chat,
         # #542 scene lifecycle seams — CLI minister_chat start/join/persist/abandon.
         start_chat_turn_scene=lambda *_a, **_k: None,
@@ -670,7 +670,7 @@ def test_terminal_minister_chat_accepts_retry_reply_command(game, monkeypatch):
     sess.state = state
     sess.content = content
     sess.llm_config = SimpleNamespace(channel="api")
-    sess.temporary_characters = set()
+
     sess.registry = SimpleNamespace(
         get=lambda _ch, **_kw: SimpleNamespace(
             run=lambda *_a, **_k: SimpleNamespace(content="臣遵旨。", tools=[]),

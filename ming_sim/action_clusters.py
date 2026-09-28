@@ -1,8 +1,7 @@
 """动作档机械聚类登记表（#515 S0）。
 
-唯一真源：ACTION_CLUSTERS（由 action_materialize.install 装入完整行，
-含 effect / fields / materialize_fn）。prompt 字段枚举、shape 校验、
-dispatcher 均只读本表。
+唯一真源：ACTION_CLUSTERS（由 action_materialize.install 装入字段行）。
+prompt 字段枚举与 shape 校验只读本表；转译交办由 declaration_dispatch 分派。
 
 范围（ADR 0039 / #513）：机械聚类挂点，不是 25 词语义表。
 """
@@ -10,9 +9,9 @@ dispatcher 均只读本表。
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any, Callable, Dict, FrozenSet, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Dict, FrozenSet, List, Mapping, Optional, Sequence, Tuple
 
 
 EFFECT_NOOP = "noop"
@@ -46,13 +45,9 @@ class ActionCluster:
     effect: str
     priority: int = 100
     fields: Tuple[FieldSpec, ...] = ()
-    # 物化委派：同一登记行携带；noop/answer 为 None
-    materialize_fn: Optional[Callable[..., None]] = field(
-        default=None, compare=False, hash=False, repr=False,
-    )
 
 
-# 由 action_materialize.install_action_catalog() 装入（含 materialize_fn）。
+# 由 action_materialize.install_action_catalog() 装入。
 ACTION_CLUSTERS: Tuple[ActionCluster, ...] = ()
 LABEL_TO_KIND: Dict[str, str] = {}
 KNOWN_KINDS: FrozenSet[str] = frozenset()
@@ -69,8 +64,6 @@ def install_action_catalog(clusters: Sequence[ActionCluster]) -> None:
     KNOWN_KINDS = frozenset(c.kind for c in ACTION_CLUSTERS)
     specs: Dict[str, FieldSpec] = {}
     for c in ACTION_CLUSTERS:
-        if c.effect == EFFECT_MATERIALIZE and c.materialize_fn is None:
-            raise RuntimeError(f"materialize cluster {c.kind!r} lacks materialize_fn")
         for f in c.fields:
             # 同名 FieldSpec 以先出现为准（catalog 内不得自相矛盾）
             specs.setdefault(f.name, f)
@@ -84,7 +77,7 @@ def _field_specs() -> Mapping[str, FieldSpec]:
 
 
 def _ensure_catalog() -> None:
-    """Lazy-load action_materialize so ACTION_CLUSTERS carries materialize_fn."""
+    """Lazy-load the shared action field catalog."""
     if ACTION_CLUSTERS:
         return
     import ming_sim.action_materialize  # noqa: F401
@@ -286,16 +279,6 @@ def project_cluster_fields(kind: str, obj: Mapping[str, Any]) -> Dict[str, Any]:
         if _field_raw(obj, spec) is not None else spec.default
         for spec in cluster.fields
     }
-
-
-def materialize_clusters_ordered() -> Tuple[ActionCluster, ...]:
-    _ensure_catalog()
-    return tuple(
-        sorted(
-            (c for c in ACTION_CLUSTERS if c.effect == EFFECT_MATERIALIZE),
-            key=lambda c: c.priority,
-        )
-    )
 
 
 def cluster_effect(kind: str) -> str:

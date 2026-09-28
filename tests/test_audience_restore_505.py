@@ -225,7 +225,6 @@ def test_pure_audience_zero_ledger_turn_survives_reopen(restore_env):
 class _RetrySession:
     """最小真路径替身：chat 复用被指定 chat_turn，落回话由 WebGame._chat_payload 走真实 db。"""
 
-    temporary_characters: set = set()
 
     def __init__(self, db, state, minister):
         self.db = db
@@ -1149,7 +1148,7 @@ def test_657_s12_reconciles_s_u_q_and_finishes_summon(game, monkeypatch):
     sess.agno_db = None
     sess.registry = None
     sess.last_decree = "诏"
-    sess.temporary_characters = {}
+
     executor = ThreadPoolExecutor(max_workers=2)
     sess._scene_registry = ChatTurnSceneRegistry(executor)
     sess._write_gate = threading.Lock()
@@ -1500,7 +1499,7 @@ def test_cli_retry_ordinary_offsite_court_break_closes_night(game, monkeypatch):
     sess.state = state
     sess.content = content
     sess.llm_config = SimpleNamespace(channel="api")
-    sess.temporary_characters = set()
+
     sess.registry = None
 
     def _scene_chat(message, *, chat_turn_id=0, stream_emit=None, minister_name=""):

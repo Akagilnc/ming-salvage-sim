@@ -2332,7 +2332,7 @@ def _complete_session(game):
     session.power_renames_this_turn = []
     session.previous_summary = ""
     session.registry = None
-    session.temporary_characters = {}
+
     session.last_decree = ""
     session.last_report = ""
     session._decree_draft_fingerprint = ()

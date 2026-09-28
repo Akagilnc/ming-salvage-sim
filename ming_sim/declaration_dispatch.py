@@ -1023,7 +1023,7 @@ def _attach_commission_affair(
     except ValueError as exc:
         _reject(rejected, item, str(exc), "invalid_shape", source)
         return False
-    payload["affair_id"] = affair_id
+    payload["affair_declaration"] = raw_affair
     return True
 
 
@@ -1443,8 +1443,8 @@ def _dispatch_commissions(
             # appointment 案卷（会撞「execution_surface 与案卷动作策略不符」）。
             office_payload = dict(appointment_fields or {})
             office_payload["text"] = shared_text
-            if "affair_id" in payload:
-                office_payload["affair_id"] = payload["affair_id"]
+            if "affair_declaration" in payload:
+                office_payload["affair_declaration"] = payload["affair_declaration"]
             for key in ("reason", "recommendation", "faction", "replaces"):
                 if key in payload:
                     office_payload[key] = payload[key]
@@ -1681,7 +1681,7 @@ def _dispatch_rushes(
             deadline = max(0, min(int(raw_deadline if raw_deadline is not None else 1), 36))
         except (TypeError, ValueError):
             deadline = 1
-        reason = str(item.get("reason") or "")[:120]
+        reason = str(item.get("reason") or "")
         actor = str(minister_name or "").strip() or _commission_fallback_actor(db)
         if target_kind == "commitment":
             row = db.conn.execute(
@@ -1794,14 +1794,13 @@ def _dispatch_travel_tones(
             # second scene session or parsing the emperor's free text.
             admission_session = GameSession.__new__(GameSession)
             admission_session.db = db
-            admission_session.temporary_characters = {}
             decision = admission_session.admit_audience(character)
             if decision.result is not AudienceAdmission.SUMMON_FRESH:
                 _reject(rejected, item, decision.reason or f"本轮无可传召的场外人物：{person}", "invalid_state", source)
                 continue
             entry_id = record_summon_fresh(
                 db, int(night_id), person,
-                origin_id=f"scene:xuan:{int(state.turn)}:{person}",
+                origin_id=f"scene:xuan:{chat_turn_id}:{person}",
                 origin_chat_turn_id=chat_turn_id, travel_tone=tone,
             )
         except ValueError as exc:

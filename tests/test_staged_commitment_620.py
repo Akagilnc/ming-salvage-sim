@@ -16,7 +16,6 @@ from types import SimpleNamespace
 import pytest
 
 from ming_sim.action_clusters import candidates_from_classifier_payload
-from ming_sim.action_materialize import MaterializeCtx, run_materialize_pipeline
 from ming_sim.decree import settle_with_delta
 from ming_sim.issues import apply_score_extraction
 from ming_sim.models import TurnPhase
@@ -95,25 +94,6 @@ def _active_ming(db, content):
     )
 
 
-def _materialize_ctx(db, character, candidates, turn, *, message, reply, content=None):
-    return MaterializeCtx(
-        session=SimpleNamespace(
-            db=db, state=SimpleNamespace(turn=turn), content=content,
-        ),
-        character=SimpleNamespace(name=character, office_type="文官"),
-        player_message=message,
-        reply=reply,
-        message_text=message,
-        explicit_prefixed=False,
-        has_directive=False,
-        pend_for_minister=[],
-        out={},
-        intent=None,
-        intent_kind="none",
-        llm_config=None,
-        intent_candidates=candidates,
-        recent_context="",
-    )
 
 
 def _stub_assignment_extract_lead(monkeypatch, lead_name: str):
@@ -171,138 +151,10 @@ def test_one_multi_stage_commitment_is_single_issue_object(game):
 # ── AC2：生产捕获路径（召对 materializer / 邸报 score）scripted 夹具 ─
 
 
-def test_audience_materializer_captures_三年x_五年y_into_stages(game, monkeypatch):
-    """召对生产路径：正文「三年X五年Y」经 stage_assignment_candidate 落段（非测专用 helper）。"""
-    db, state, content = game
-    actor = _active_ming(db, content)
-    promise = "臣请立军令状：三年火器见眉目，五年新历成。请陛下定夺准驳。"
-    _stub_assignment_extract_lead(monkeypatch, actor.name)
-    # 分类器不给 stages——生产 capture 须从正文解析
-    payload = {
-        "kind": "assignment",
-        "title": "徐光启火器历法之诺",
-        "target_id": "xuguangqi-staged",
-        "commitment_kind": "until_stop",
-    }
-    candidates = candidates_from_classifier_payload(payload, soft=False)
-    ctx = _materialize_ctx(
-        db, actor.name, candidates, state.turn,
-        message="准徐光启分段之诺。",
-        reply=promise,
-        content=content,
-    )
-    run_materialize_pipeline(ctx)
-    assert ctx.out.get("pending_action_id"), "须暂存交办候选"
-    pending = json.loads(db.conn.execute(
-        "SELECT payload_json FROM pending_actions WHERE id=?",
-        (ctx.out["pending_action_id"],),
-    ).fetchone()["payload_json"])
-    stages = normalize_commitment_stages(pending.get("stages"))
-    assert len(stages) == 2
-    assert stages[0]["due_turn"] == state.turn + 36
-    assert stages[0]["criterion_text"] == "火器见眉目"
-    assert stages[0]["origin_context"] == "三年火器见眉目"
-    assert stages[1]["due_turn"] == state.turn + 60
-    assert stages[1]["criterion_text"] == "新历成"
-    assert stages[1]["origin_context"] == "五年新历成"
 
 
-def test_audience_entry_tolerates_classifier_bad_stages_falls_back_to_narrative(game, monkeypatch):
-    """召对入口分层：分类器坏形 stages 不抛未捕获异常；正文年诺仍文本捕获落段。
-
-    库层 capture/stages_to_json 显式喂入仍 ValueError（见 list_bad_shape 测）。
-    """
-    db, state, content = game
-    actor = _active_ming(db, content)
-    promise = "臣请立军令状：三年火器见眉目，五年新历成。请陛下定夺准驳。"
-    _stub_assignment_extract_lead(monkeypatch, actor.name)
-    payload = {
-        "kind": "assignment",
-        "title": "徐光启火器历法之诺",
-        "target_id": "xuguangqi-staged-bad-clf",
-        "commitment_kind": "until_stop",
-        # 分类器产出坏形 list（due_turn=0）——入口须容错，不得掀翻召对
-        "stages": [{"due_turn": 0, "criterion_text": "x"}],
-    }
-    candidates = candidates_from_classifier_payload(payload, soft=False)
-    ctx = _materialize_ctx(
-        db, actor.name, candidates, state.turn,
-        message="准徐光启分段之诺。",
-        reply=promise,
-        content=content,
-    )
-    run_materialize_pipeline(ctx)  # 不得 raise
-    assert ctx.out.get("pending_action_id"), "坏形 stages 不得阻断交办暂存"
-    pending = json.loads(db.conn.execute(
-        "SELECT payload_json FROM pending_actions WHERE id=?",
-        (ctx.out["pending_action_id"],),
-    ).fetchone()["payload_json"])
-    stages = normalize_commitment_stages(pending.get("stages"))
-    assert len(stages) == 2
-    assert stages[0]["origin_context"] == "三年火器见眉目"
-    assert stages[1]["origin_context"] == "五年新历成"
-    # 库层仍响亮（分层：入口容错 ≠ 库层静默）
-    with pytest.raises(ValueError, match="有效段"):
-        capture_commitment_stages(
-            [{"due_turn": 0, "criterion_text": "x"}], origin_turn=1,
-        )
 
 
-def test_audience_entry_structured_stages_without_year_promise_lands(game, monkeypatch):
-    """真入口结构化正向：分类器 nested stages 经 FieldSpec 运输后落段。
-
-    正文无「三年X五年Y」字样——不得靠叙事年诺回落；证明 str(list)→repr
-    运输洞已用 json.dumps 堵住（#620 r6 classifier-stages-string-transport）。
-    """
-    db, state, content = game
-    actor = _active_ming(db, content)
-    reply = "臣请立军令状，分阶段推进火器与历法，请陛下定夺准驳。"
-    assert "三年" not in reply and "五年" not in reply
-    _stub_assignment_extract_lead(monkeypatch, actor.name)
-    structured = [
-        {
-            "due_turn": int(state.turn) + 36,
-            "criterion_text": "火器见眉目",
-            "origin_context": "火器阶段",
-        },
-        {
-            "due_turn": int(state.turn) + 60,
-            "criterion_text": "新历成",
-            "origin_context": "历法阶段",
-        },
-    ]
-    payload = {
-        "kind": "assignment",
-        "title": "徐光启结构化分段之诺",
-        "target_id": "xuguangqi-structured-clf",
-        "commitment_kind": "until_stop",
-        "stages": structured,
-    }
-    candidates = candidates_from_classifier_payload(payload, soft=False)
-    # 运输层：合法 JSON 数组串（非 Python repr 单引号）
-    transported = candidates[0]["stages"]
-    assert isinstance(transported, str)
-    assert json.loads(transported) == structured
-    ctx = _materialize_ctx(
-        db, actor.name, candidates, state.turn,
-        message="准徐光启分段之诺。",
-        reply=reply,
-        content=content,
-    )
-    run_materialize_pipeline(ctx)
-    assert ctx.out.get("pending_action_id"), "结构化 stages 须落交办候选"
-    pending = json.loads(db.conn.execute(
-        "SELECT payload_json FROM pending_actions WHERE id=?",
-        (ctx.out["pending_action_id"],),
-    ).fetchone()["payload_json"])
-    stages = normalize_commitment_stages(pending.get("stages"))
-    assert len(stages) == 2
-    assert stages[0]["due_turn"] == int(state.turn) + 36
-    assert stages[0]["criterion_text"] == "火器见眉目"
-    assert stages[0]["origin_context"] == "火器阶段"
-    assert stages[1]["due_turn"] == int(state.turn) + 60
-    assert stages[1]["criterion_text"] == "新历成"
-    assert stages[1]["origin_context"] == "历法阶段"
 
 
 def test_gazette_score_path_captures_三年x_五年y_from_stage_text(game):

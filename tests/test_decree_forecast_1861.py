@@ -30,7 +30,7 @@ def _sess(db, state, content, monkeypatch, translate_fn):
     sess.llm_config = LLMConfig(
         api_key="test", base_url="https://example.invalid/v1", model="test-model",
     )
-    sess.temporary_characters = {}
+
     sess.agno_db = None
     sess._beat_generator = None
     sess._scene_registry = None

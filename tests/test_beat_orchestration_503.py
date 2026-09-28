@@ -133,7 +133,7 @@ def test_web_retry_failed_scene_drain_does_not_hold_write_gate(game):
     drain_entered, release_drain = threading.Event(), threading.Event()
 
     class _Session(HallAdmissionSessionMixin):
-        temporary_characters: set = set()
+
 
         def __init__(self):
             self.db, self.state = db, state
@@ -819,7 +819,7 @@ def test_cli_dismiss_routes_exit_through_scene_registry(game, monkeypatch):
 
     session = GameSession.__new__(GameSession)
     session.db, session.state, session.content = db, state, content
-    session.temporary_characters = set()
+
     session._beat_generator = slow_exit
     session._scene_registry = bo.ChatTurnSceneRegistry(ThreadPoolExecutor(max_workers=2))
     worker = threading.Thread(target=term._record_audience_exit, args=(session, minister))
@@ -1118,7 +1118,7 @@ def test_cli_exit_cleanup_failure_chains_to_scene_error(game, monkeypatch):
 
     session = GameSession.__new__(GameSession)
     session.db, session.state, session.content = db, state, content
-    session.temporary_characters = set()
+
     session._beat_generator = boom_exit
     session._scene_registry = bo.ChatTurnSceneRegistry(ThreadPoolExecutor(max_workers=2))
 
@@ -1525,7 +1525,7 @@ def test_stream_join_and_abandon_do_not_hold_write_gate(monkeypatch):
             yield  # pragma: no cover
 
     class _Session(HallAdmissionSessionMixin):
-        temporary_characters: set = set()
+
 
         def __init__(self):
             self.content = SimpleNamespace(
@@ -2039,7 +2039,7 @@ def test_cli_scaffold_exit_failure_deletes_exit_ledger(game, monkeypatch):
 
     session = GameSession.__new__(GameSession)
     session.db, session.state, session.content = db, state, content
-    session.temporary_characters = set()
+
     session._beat_generator = boom_exit
     session._scene_registry = bo.ChatTurnSceneRegistry(ThreadPoolExecutor(max_workers=2))
 
@@ -2124,7 +2124,7 @@ def test_657_s2_s3_lock_boundary_and_parallel_summons(game, monkeypatch):
     sess.agno_db = None
     sess.registry = None
     sess.last_decree = "诏"
-    sess.temporary_characters = {}
+
     executor = ThreadPoolExecutor(max_workers=4)
     sess._scene_registry = ChatTurnSceneRegistry(executor)
     sess._write_gate = threading.Lock()

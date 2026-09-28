@@ -83,7 +83,7 @@ class _FakeSession(HallAdmissionSessionMixin):
         self.content = content
         self.registry = _FakeRegistry(agent)
         self._fake_scene_agent = agent
-        self.temporary_characters = set()
+
         self.llm_config = SimpleNamespace(
             channel="api", base_url="", model="test", api_key="",
             timeout_seconds=30.0, default_headers=None,
