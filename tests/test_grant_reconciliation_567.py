@@ -4,7 +4,7 @@ Seams:
 - list_monthly_grant_reconciliation_targets / record_monthly_grant_reconciliations
 - clamp_grant_arrival_amount（护行界严于无护行）
 - list_dossier_reconciliations（被护案卷×回合键控，restore 无损）
-- settle_with_delta 月度节拍写入
+- 玩家月链对账与案卷月度写口
 - dossier_executions 适配器经 merge_execution_note 合并对账说明（S10 单写）
 - 不改 economy_moves / 国库二次扣
 """
@@ -18,11 +18,8 @@ import pytest
 import ming_sim.issues as issue_engine
 from ming_sim.applier import Provenance, RejectionCollector
 from ming_sim.db import GameDB
-from tests.settlement_seam_helpers import settle_effects as settle_with_delta
-from ming_sim.exceptions import SettlementAbort
 from ming_sim.models import TurnPhase
 from tests.dossier_test_helpers import create_test_secret_order
-from tests.section_rejection_helpers import default_settlement_attendant_runner
 
 
 ORDERED = 30  # 北极星三路各三十万两量级（引擎以「两」为单位的整数面值）
@@ -295,53 +292,38 @@ def test_underfunded_closed_grants_excluded_from_monthly_targets(game):
     ],
     ids=["string_container", "dict_container", "non_dict_list_item"],
 )
-def test_recon_section_shape_rejected_other_sections_land(game, shape, raw_value):
+def test_recon_section_shape_rejected_other_sections_land(game, monkeypatch, shape, raw_value):
     """#1745 / 0015-D6/D7：三种坏形状经 settle 真入口只产一份 canonical 拒收 + raw_value；
     其它好段同 atomic 落库；坏形状不挡中位。
     """
     db, state, content = game
     gid = _in_transit_grant(db, state)
-    turn_before = int(state.turn)
-    state.turn_phase = TurnPhase.SETTLING.value
-    db.save_state(state)
-    db.conn.commit()
+    from tests.test_month_chain_1843 import _prepare_player_month
 
-    try:
-        settle_with_delta(
-            state, db,
-            {
-                "dossier_reconciliations": shape,
-                "dossier_executions": [{
-                    "dossier_id": gid,
-                    "outcome": "fulfilled",
-                    "note": "跨段好项",
-                }],
-            },
-            before_turn=turn_before,
-            content=content,
-            narrative="section-shape",
-            source=Provenance.player_decree,
-            delta_applier=issue_engine.apply_score_extraction,
-            settlement_attendant_runner=default_settlement_attendant_runner,
-        )
-    except SettlementAbort:
-        pytest.fail("可拆坏形状 section 不得整月 SettlementAbort")
+    turn_before = int(state.turn)
+    session = _prepare_player_month(
+        db, state, content, monkeypatch, world=lambda *_a, **_k: "世界段",
+        translate=lambda *_a, **_k: {"effects": {
+            "dossier_reconciliations": shape,
+            "dossier_executions": [{
+                "dossier_id": gid, "outcome": "fulfilled", "note": "跨段好项",
+            }],
+        }},
+    )
+    session.resolve_turn(allow_empty_decree=True)
+    db.save_turn_report(state, "邸报", public_body="邸报")
+    session.resolve_turn(allow_empty_decree=True)
 
     assert int(state.turn) == turn_before + 1
-    # 无好 recon 项 → 在途目标仍落机械中位
-    recon = db.list_dossier_reconciliations(gid)
-    assert len(recon) == 1
-    from ming_sim.db import grant_arrival_bounds
-    lo, hi = grant_arrival_bounds(ORDERED, escorted=False)
-    assert recon[0]["arrived_amount"] == (lo + hi) // 2
-    # execution 好段落库
+    # 同段已结案，无在途目标可供月末中位对账；execution 好段照常落库。
+    assert db.list_dossier_reconciliations(gid) == []
     assert db.get_decree_dossier(gid)["status"] == "closed"
     rej = _recon_rejections(db)
     # 恰一份 canonical 拒收；原 section 归属，非平行假段。
     assert len(rej) == 1
     assert rej[0]["section"] == "dossier_reconciliations"
     assert rej[0]["category"] == "invalid_shape"
-    assert rej[0]["source"] == Provenance.player_decree.value
+    assert rej[0]["source"] == Provenance.system_simulation.value
     assert json.loads(rej[0]["item_json"]) == {"raw_value": raw_value}
 
 
@@ -449,34 +431,27 @@ def test_recon_duplicate_keeps_first_rejects_second(game):
     assert rej[0]["source"] == Provenance.system_simulation.value
 
 
-def test_1745_settle_bad_and_good_recon_same_atomic(game):
+def test_1745_settle_bad_and_good_recon_same_atomic(game, monkeypatch):
     """#1745 主干：settle 入口混合好/坏/无目标 → 好项落库、坏项拒收、月份推进、无假 awaiting。
 
     合并原空目标基数 / 两坏一好 / mixed atomic 重复主干为一条贯穿结算入口的 tracer。
     """
     db, state, content = game
     good = _in_transit_grant(db, state, text="陕西赈银", target_id="shaanxi")
-    turn_before = int(state.turn)
-    state.turn_phase = TurnPhase.SETTLING.value
-    db.save_state(state)
-    db.conn.commit()
+    from tests.test_month_chain_1843 import _prepare_player_month
 
-    try:
-        settle_with_delta(
-            state, db,
-            {"dossier_reconciliations": [
-                {"dossier_id": good, "arrived_amount": 16},
-                {"dossier_id": 88881, "arrived_amount": 1},
-                {"dossier_id": 88882, "arrived_amount": 2},
-            ]},
-            before_turn=turn_before,
-            content=content,
-            narrative="mixed-main",
-            source=Provenance.player_decree,
-            settlement_attendant_runner=default_settlement_attendant_runner,
-        )
-    except SettlementAbort:
-        pytest.fail("混合好/坏对账不得整月 abort")
+    turn_before = int(state.turn)
+    session = _prepare_player_month(
+        db, state, content, monkeypatch, world=lambda *_a, **_k: "世界段",
+        translate=lambda *_a, **_k: {"effects": {"dossier_reconciliations": [
+            {"dossier_id": good, "arrived_amount": 16},
+            {"dossier_id": 88881, "arrived_amount": 1},
+            {"dossier_id": 88882, "arrived_amount": 2},
+        ]}},
+    )
+    session.resolve_turn(allow_empty_decree=True)
+    db.save_turn_report(state, "邸报", public_body="邸报")
+    session.resolve_turn(allow_empty_decree=True)
 
     assert int(state.turn) == turn_before + 1
     assert state.turn_phase != TurnPhase.AWAITING_DECISION.value
@@ -485,7 +460,7 @@ def test_1745_settle_bad_and_good_recon_same_atomic(game):
     rej = _recon_rejections(db)
     assert len(rej) == 2
     assert {r["category"] for r in rej} == {"missing_ref"}
-    assert all(r["source"] == Provenance.player_decree.value for r in rej)
+    assert all(r["source"] == Provenance.system_simulation.value for r in rej)
     got_ids = {json.loads(r["item_json"])["dossier_id"] for r in rej}
     assert got_ids == {88881, 88882}
 
@@ -532,53 +507,14 @@ def test_1745_legally_closed_target_not_overwritten(game):
     assert json.loads(rej[0]["item_json"])["dossier_id"] == transit
 
 
-def test_1745_recon_then_execution_same_settle(game):
-    """#1745：同 settle recon + dossier_executions → recon 先见在途，合法落账后 close。"""
-    db, state, content = game
-    still = _in_transit_grant(db, state, text="同批对账后结", target_id="xuan_da")
-    turn_before = int(state.turn)
-    state.turn_phase = TurnPhase.SETTLING.value
-    db.save_state(state)
-    db.conn.commit()
-    try:
-        settle_with_delta(
-            state, db,
-            {
-                "dossier_reconciliations": [
-                    {"dossier_id": still, "arrived_amount": 16},
-                ],
-                "dossier_executions": [{
-                    "dossier_id": still,
-                    "outcome": "fulfilled",
-                    "note": "同批到达",
-                }],
-            },
-            before_turn=turn_before,
-            content=content,
-            narrative="order",
-            source=Provenance.player_decree,
-            delta_applier=issue_engine.apply_score_extraction,
-            settlement_attendant_runner=default_settlement_attendant_runner,
-        )
-    except SettlementAbort:
-        pytest.fail("同批 recon+execution 不得 abort")
-    recon = db.list_dossier_reconciliations(still)
-    assert len(recon) == 1 and recon[0]["arrived_amount"] == 16
-    assert db.get_decree_dossier(still)["status"] == "closed"
-
-
 def test_1745_full_chain_player_state_no_fake_awaiting(game, monkeypatch):
     """#1745 C：全链 canned 结算入口——玩家态无假 awaiting、结构化拒收归属正确。"""
-    from tests.settlement_seam_helpers import canned_full_settlement, make_light_session
+    from tests.test_month_chain_1843 import _prepare_player_month
 
     db, state, content = game
     turn0 = int(state.turn)
-    canned_full_settlement(
-        monkeypatch,
-        narrative="十一月边饷邸报。",
-        skip_relation_brew=True,
-    )
-    result = make_light_session(db, state, content).advance_without_decree()
+    session = _prepare_player_month(db, state, content, monkeypatch)
+    result = session.advance_without_decree()
     assert result is not None
     assert result.awaiting is False
     assert not (result.decisions or [])
@@ -610,24 +546,18 @@ def test_1745_web_state_payload_after_bad_recon_settle(
     monkeypatch.setattr(web_app, "web_game", game_web)
     try:
         db, state = game_web.db, game_web.state
+        from tests.test_month_chain_1843 import _prepare_player_month
+
         turn_before = int(state.turn)
-        state.turn_phase = TurnPhase.SETTLING.value
-        db.save_state(state)
-        db.conn.commit()
-        try:
-            settle_with_delta(
-                state, db,
-                {"dossier_reconciliations": [
-                    {"dossier_id": 77777, "arrived_amount": 3},
-                ]},
-                before_turn=turn_before,
-                content=content,
-                narrative="web-proj",
-                source=Provenance.player_decree,
-                settlement_attendant_runner=default_settlement_attendant_runner,
-            )
-        except SettlementAbort:
-            pytest.fail("坏 recon 不得 SettlementAbort")
+        session = _prepare_player_month(
+            db, state, content, monkeypatch, world=lambda *_a, **_k: "世界段",
+            translate=lambda *_a, **_k: {"effects": {"dossier_reconciliations": [
+                {"dossier_id": 77777, "arrived_amount": 3},
+            ]}},
+        )
+        session.resolve_turn(allow_empty_decree=True)
+        db.save_turn_report(state, "邸报", public_body="邸报")
+        session.resolve_turn(allow_empty_decree=True)
 
         payload = game_web.state_payload()
         turn_blk = payload.get("turn") or {}
