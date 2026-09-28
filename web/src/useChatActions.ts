@@ -12,7 +12,6 @@ import type {
   RetryReadFailure,
   SecretOrder,
   ServerChatMessage,
-  Suggestion,
   TranslationRetry,
 } from "./types";
 import { AUDIENCE_SCENE_SPEAKER, audienceRetryPath, audienceUndoPath } from "./audienceScene";
@@ -68,11 +67,10 @@ export function useChatActions({
   clearPendingText: () => void;
   applyHistory: (history: ServerChatMessage[]) => void;
   loadHistoryProjection: (minister: string) => Promise<AudienceHistoryData | null>;
-  runAudienceTurn: (minister: string, message: string, cb: SendChatCallbacks, intent?: "secret_order") => Promise<void>;
+  runAudienceTurn: (minister: string, message: string, cb: SendChatCallbacks) => Promise<void>;
   invalidateAudienceScroll: () => void;
   currentNightId: number;
 }) {
-  const [suggestions, setSuggestions] = React.useState<Suggestion[]>([]);
   const [chatNotice, setChatNotice] = React.useState("");
   const [replyRetries, setReplyRetries] = React.useState<ReplyRetry[]>([]);
   const [translationRetries, setTranslationRetries] = React.useState<TranslationRetry[]>([]);
@@ -80,7 +78,6 @@ export function useChatActions({
   const [canUndoLastChat, setCanUndoLastChat] = React.useState(false);
   const [composerHint, setComposerHint] = React.useState("");
   const [input, setInput] = React.useState("");
-  const [composerIntent, setComposerIntent] = React.useState<"secret_order" | undefined>();
   const [temporaryActiveMinister, setTemporaryActiveMinister] = React.useState<Minister | null>(null);
   const recoveryTimer = React.useRef<number | undefined>(undefined);
   const recoveryRun = React.useRef(0);
@@ -103,7 +100,6 @@ export function useChatActions({
     if (!data || selectedMinisterRef.current !== ministerName) return null;
     const allKnown = rosterRef.current;
     setTemporaryActiveMinister(allKnown.some((m) => m.name === data.minister.name) ? null : data.minister);
-    setSuggestions(data.suggestions);
     setCanUndoLastChat(!!data.can_undo_last_chat);
     // #505：崩溃遗留的中断轮 → 系统层重试入口。
     setReplyRetries(data.reply_retries ?? []);
@@ -115,28 +111,22 @@ export function useChatActions({
   React.useEffect(() => {
     if (!selectedMinister) {
       resetPanel();
-      setSuggestions([]);
       setChatNotice("");
       setCanUndoLastChat(false);
       setComposerHint("");
-      setComposerIntent(undefined);
       return;
     }
     resetPanel();
-    setSuggestions([]);
     setCanUndoLastChat(false);
     setRetryReadFailure(null);
     setComposerHint("");
-    setComposerIntent(undefined);
     loadMinisterChat(selectedMinister)
       .catch((err) => setError(err.message));
   }, [selectedMinister, loadMinisterChat]);
 
   // 关召对只 setActiveModal("none"), 不改 selectedMinister / 不走 resetPanel；
-  // composerIntent 是 composer-session 态，离 chat 面必须随 session 死。
   React.useEffect(() => {
     if (activeModal !== "chat") {
-      setComposerIntent(undefined);
       recoveryRun.current += 1;
       window.clearTimeout(recoveryTimer.current);
     }
@@ -155,7 +145,6 @@ export function useChatActions({
     : null;
 
   const sendChat = async (targetMinisterName: string, text = input) => {
-    const intent = text === input ? composerIntent : undefined;
     if (busy) return;
     const message = text.trim();
     if (!message) {
@@ -173,7 +162,6 @@ export function useChatActions({
     setChatNotice("");
     if (fromComposer) {
       setInput("");
-      setComposerIntent(undefined);
     }
     // 面板归属与卷轴当前奏对者是两种身份：前者只用于判断玩家是否已离开发起面板。
     const initiatingPanelName = selectedMinisterRef.current;
@@ -195,8 +183,7 @@ export function useChatActions({
         void refreshDurableProjection({ secretOrders: true });
         // 面板态：仅当前大臣面板未切走才落。
         if (selectedMinisterRef.current !== initiatingPanelName) return;
-        setSuggestions(data.suggestions);
-        setCanUndoLastChat(!!data.can_undo_last_chat);
+            setCanUndoLastChat(!!data.can_undo_last_chat);
         if (data.court_action === "dismiss") {
           clearPendingText();
         }
@@ -233,11 +220,10 @@ export function useChatActions({
         }
         if (fromComposer && selectedMinisterRef.current === initiatingPanelName) {
           setInput(message);
-          setComposerIntent(intent);
         }
         setError(err instanceof Error ? err.message : String(err));
       },
-    }, intent);
+    });
   };
 
   // Selection resets/loads the scene panel first; only then start its first stream.
@@ -249,34 +235,30 @@ export function useChatActions({
   }, [selectedMinister]);
 
   const openChat = (minister: Minister) => {
-    if (minister.status && minister.status !== "active") {
-      setError(`${minister.name}已${minister.status_label}${minister.status_reason ? "（" + minister.status_reason + "）" : ""}，无法召见。`);
+    // #1849 reopen：召对只有殿上一个入口；非殿上名一律当「宣 X」加速器。
+    if (minister.name !== AUDIENCE_SCENE_SPEAKER) {
+      if (minister.status && minister.status !== "active") {
+        setError(`${minister.name}已${minister.status_label}${minister.status_reason ? "（" + minister.status_reason + "）" : ""}，无法召见。`);
+        return;
+      }
+      summonMinister(minister.name);
       return;
     }
-    const isConsort = (state?.consorts || []).some((consort) => consort.name === minister.name);
-    // 开夜中切大臣：写进夜卷轴「宣X」，不换面板归属。
-    if (activeModal === "chat" && currentNightId > 0 && !isConsort && activeMinister) {
-      void sendChat(activeMinister.name, `宣${minister.name}`);
-      return;
-    }
-    const switchingMinister = selectedMinister !== minister.name;
+    const switchingMinister = selectedMinister !== AUDIENCE_SCENE_SPEAKER;
     if (switchingMinister) {
       resetPanel();
-      setSuggestions([]);
       setTemporaryActiveMinister(null);
       setCanUndoLastChat(false);
     }
-    setSelectedMinister(minister.name);
+    setSelectedMinister(AUDIENCE_SCENE_SPEAKER);
     setActiveModal("chat");
     setError("");
     setComposerHint("");
     setChatNotice("");
     setCanUndoLastChat(false);
     clearPendingText();
-    // 切换大臣时 selected-minister effect 会加载；只有重开同一大臣（effect 不触发）才显式加载，
-    // 免得一次切换发两条同大臣 GET（#499 陈旧快照回覆源头之一）。
     if (!switchingMinister) {
-      loadMinisterChat(minister.name).catch((err) => setError(err.message));
+      loadMinisterChat(AUDIENCE_SCENE_SPEAKER).catch((err) => setError(err.message));
     }
   };
 
@@ -298,12 +280,12 @@ export function useChatActions({
     setComposerHint("");
     clearPendingText();
     try {
-      const data = await api<ChatUndoResponse>(audienceUndoPath(targetMinisterName), {
+      const data = await api<ChatUndoResponse>(audienceUndoPath(), {
         method: "POST",
       });
       // Undo's GLOBAL effects (secret orders / directives / full state) apply
       // regardless — the undo mutated game state, not just the panel. But the
-      // minister-PANEL writes (history / suggestions / undo-availability / notice)
+      // minister-PANEL writes (history / undo-availability / notice)
       // are gated on the staleness guard (#325, broad-scope): openChat does NOT
       // block on `busy`, so the player can switch ministers during the undo POST;
       // writing A's post-undo history into B's open panel is the same bleed.
@@ -326,8 +308,7 @@ export function useChatActions({
       if (selectedMinisterRef.current === initiatingPanelName) {
         // #499：撤回后剩余轮的读心递话仍随 turn-identified 投影归位。
         applyHistory(data.history);
-        setSuggestions(data.suggestions);
-        setCanUndoLastChat(!!data.can_undo_last_chat);
+            setCanUndoLastChat(!!data.can_undo_last_chat);
         setChatNotice("已撤回最近一轮召对。");
       }
     } catch (err) {
@@ -347,7 +328,7 @@ export function useChatActions({
     setChatNotice("");
     setRetryReadFailure(null);
     try {
-      const data = await api<ChatResponse>(audienceRetryPath(targetMinisterName), {
+      const data = await api<ChatResponse>(audienceRetryPath(), {
         method: "POST",
         body: JSON.stringify({ chat_turn_id: chatTurnId }),
       });
@@ -361,8 +342,7 @@ export function useChatActions({
       void refreshDurableProjection({ secretOrders: true });
       if (selectedMinisterRef.current !== initiatingPanelName) return;
       applyHistory(data.history);
-      setSuggestions(data.suggestions);
-      setCanUndoLastChat(!!data.can_undo_last_chat);
+        setCanUndoLastChat(!!data.can_undo_last_chat);
       setReplyRetries((current) => current.filter((retry) => retry.chat_turn_id !== chatTurnId));
       setChatNotice("本轮恢复完成。");
       invalidateAudienceScroll();
@@ -426,7 +406,6 @@ export function useChatActions({
   };
 
   return {
-    suggestions,
     chatNotice,
     replyRetries,
     translationRetries,
@@ -435,7 +414,6 @@ export function useChatActions({
     composerHint,
     setComposerHint,
     input,
-    setComposerIntent,
     setInput,
     activeMinister,
     openChat,

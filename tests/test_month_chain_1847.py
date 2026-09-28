@@ -651,9 +651,10 @@ def test_decree_continuation_keeps_forecast_and_lands_affair_effect(game, monkey
     db.conn.commit()
     captured = {}
 
-    def fake_agent(llm_config, sim_payload):
+    def fake_agent(llm_config, prepared):
         del llm_config
-        captured["sim_payload"] = sim_payload
+        captured["prepared_root"] = str(getattr(prepared, "root", "") or "")
+        captured["prepared_opening"] = str(getattr(prepared, "opening", "") or "")
         return object()
 
     def fake_run(agent, message, tag="", transport_policy=None):
@@ -675,21 +676,11 @@ def test_decree_continuation_keeps_forecast_and_lands_affair_effect(game, monkey
             "reason": "批红后续推",
         }]}}
 
-    import ming_sim.simulation as simulation
-
-    real_payload = simulation.build_simulator_payload
-
-    def payload_with_world_event(*args, **kwargs):
-        payload = real_payload(*args, **kwargs)
-        payload["candidate_events"] = [{"id": "ev-boundary", "title": "边警"}]
-        return payload
-
     _forbid_extractor(monkeypatch)
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
     monkeypatch.setattr("ming_sim.agents.create_decree_forecast_agent", fake_agent)
     monkeypatch.setattr("ming_sim.agents.run_agent_text", fake_run)
     monkeypatch.setattr(month_translate, "translate_month_segment", translate)
-    monkeypatch.setattr(simulation, "build_simulator_payload", payload_with_world_event)
     session = make_light_session(db, state, content)
     session.llm_config = object()
     session._write_gate = threading.Lock()
@@ -711,7 +702,14 @@ def test_decree_continuation_keeps_forecast_and_lands_affair_effect(game, monkey
     message = str(captured.get("message") or "")
     assert "预推不可见:陕西赈灾" in message
     assert question_context in message
-    assert captured["sim_payload"]["candidate_events"] == []
+    # 本旨随调用消息；材料目录独立存在且在调用后已释放。
+    payload = json.loads(message)
+    assert payload["this_decree"]["decree_text"]
+    assert payload["this_decree"]["status"] == "promulgated"
+    assert "decree-forecast" in str(captured.get("prepared_root") or "")
+    assert captured.get("prepared_opening")
+    from pathlib import Path
+    assert not Path(str(captured["prepared_root"])).exists()
     assert str(affair.id) in str(captured.get("grounding") or "")
     assert db.conn.execute(
         "SELECT COUNT(*) FROM economy_ledger WHERE category='问后加赈'",

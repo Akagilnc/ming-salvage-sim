@@ -44,7 +44,7 @@ const jsonResp = (payload: unknown): Response => ({ ok: true, json: async () => 
 
 type HookApi = ReturnType<typeof useAudienceChat>;
 
-function mount(scrollMode: "audience" | "legacy" = "legacy", refreshOnEnd = false) {
+function mount(refreshOnEnd = false) {
   const hookRef = { current: null as HookApi | null };
   const busyRef = { current: "" };
   const setModalRef = { current: (_m: string) => {} };
@@ -66,7 +66,7 @@ function mount(scrollMode: "audience" | "legacy" = "legacy", refreshOnEnd = fals
     hookRef.current = hook;
     return (
       <ChatModal
-        minister={MINISTER} ministers={[MINISTER]} portraitPrefix="minister_" scrollMode={scrollMode}
+        minister={MINISTER} ministers={[MINISTER]} portraitPrefix="minister_"
         currentCampaignId={hook.currentCampaignId}
         currentNightId={hook.currentNightId}
         undoneChatIdentity={null}
@@ -76,10 +76,10 @@ function mount(scrollMode: "audience" | "legacy" = "legacy", refreshOnEnd = fals
         failedIdentity={hook.failedIdentity}
         scrollGeneration={scrollGeneration}
         streamingMinisterMessage={hook.streamingMinisterMessage}
-        suggestions={[]} chatNotice="" canUndoLastChat={false}
-        composerHint="" input="" busy={busy} error="" secretOrders={[]}
+        chatNotice="" canUndoLastChat={false}
+        composerHint="" input="" busy={busy} error=""
         onInput={() => {}} onSend={() => {}} onUndo={() => {}}
-        onHint={() => {}} onFavorite={() => {}} onClose={() => {}} onCancel={() => {}}
+        onHint={() => {}} onClose={() => {}} onCancel={() => {}}
       />
     );
   }
@@ -131,7 +131,7 @@ describe("召对投递（#499 经真实 useAudienceChat 生产控制器）", () 
         [{ event: "done", data: { history: [], suggestions: [], directives: [] } }, { event: "end", data: {} }],
       );
     }));
-    const { hookRef, rows } = mount("audience", true);
+    const { hookRef, rows } = mount(true);
     await tick();
     expect(scrollCalls).toBe(1);
 
@@ -168,7 +168,7 @@ describe("召对投递（#499 经真实 useAudienceChat 生产控制器）", () 
         { event: "error", data: { message: "回话失败", campaign_id: "", night_id: 24, chat_turn_id: 8 } },
       ]);
     }));
-    const { hookRef, rows } = mount("audience");
+    const { hookRef, rows } = mount();
     await tick();
 
     await act(async () => { await hookRef.current!.sendChat("温体仁", "失败问话", noCbs); });
@@ -194,7 +194,7 @@ describe("召对投递（#499 经真实 useAudienceChat 生产控制器）", () 
         { event: "delta", data: { content: "未完成回话" } },
       ]);
     }));
-    const { hookRef, rows } = mount("audience", true);
+    const { hookRef, rows } = mount(true);
     await tick();
 
     let failedTurn: unknown;
@@ -304,7 +304,7 @@ describe("召对投递（#499 经真实 useAudienceChat 生产控制器）", () 
   });
 
   it("陈旧同大臣历史响应：更旧的 GET 迟到不抹掉新完成的轮（generation 守卫）", async () => {
-    const { hookRef, rows } = mount();
+    const { hookRef } = mount();
     const hook = hookRef.current!;
     let releaseOld!: () => void;
     const oldGate = new Promise<void>((r) => { releaseOld = r; });
@@ -315,17 +315,20 @@ describe("召对投递（#499 经真实 useAudienceChat 生产控制器）", () 
         if (call === 1) { await oldGate; return jsonResp({ minister: MINISTER, history: [U("问1", 10), M("答1", 10)], suggestions: [], can_undo_last_chat: false }); }
         return jsonResp({ minister: MINISTER, history: [U("问1", 10), M("答1", 10), U("问2", 11), M("答2", 11)], suggestions: [], can_undo_last_chat: false });
       }
-      return jsonResp({});
+      return jsonResp({ night_id: 0, messages: [] });
     }));
 
+    const chatRows = () => hookRef.current!.chat.map((m) => `${m.role}:${m.content}`);
+
     // 先发一次历史 GET（更旧快照，门控挂起），再发第二次（更新快照，立即返回）
+    // #1849 reopen：夜卷轴是唯一呈现；generation 守卫仍落在 hook.chat 状态上。
     let pOld!: Promise<unknown>;
     act(() => { pOld = hook.loadHistory("温体仁"); });
     await act(async () => { await hook.loadHistory("温体仁"); });  // gen2 落新快照
-    expect(rows()).toEqual(["user:问1", "minister:答1", "user:问2", "minister:答2"]);
+    expect(chatRows()).toEqual(["user:问1", "minister:答1", "user:问2", "minister:答2"]);
 
     releaseOld();  // 更旧的 GET 迟到——generation 已推进，须丢弃、不回退
     await act(async () => { await pOld; });
-    expect(rows()).toEqual(["user:问1", "minister:答1", "user:问2", "minister:答2"]);
+    expect(chatRows()).toEqual(["user:问1", "minister:答1", "user:问2", "minister:答2"]);
   });
 });

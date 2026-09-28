@@ -838,6 +838,7 @@ def test_cli_reasoning_strength_runners_single_source_in_cli_backend():
     assert '{"codex"' not in src and "{'codex'" not in src
 
 
+
 def test_agent_factories_omit_max_tokens_on_param_surface(monkeypatch):
     """#1472：ming_sim.agents 现役工厂 + gate 真实参数面无 max_tokens 键。"""
     from types import SimpleNamespace
@@ -858,7 +859,6 @@ def test_agent_factories_omit_max_tokens_on_param_surface(monkeypatch):
         ending_summary_prompt="es",
     )
     monkeypatch.setattr(agents_mod, "_ctx", lambda: fake_ctx)
-    monkeypatch.setattr(agents_mod, "build_simulator_context", lambda payload: "ctx")
     monkeypatch.setattr(agents_mod, "create_chat_model", spy)
     monkeypatch.setattr(agents_mod, "Agent", lambda **kwargs: kwargs)
     monkeypatch.setattr(agents_mod, "tlog", lambda *a, **k: None)
@@ -877,12 +877,10 @@ def test_agent_factories_omit_max_tokens_on_param_surface(monkeypatch):
     # ming_sim.agents 现役工厂——逐项命名调用，漏一个即红
     factories = [
         ("create_highlight_judge_agent", lambda: agents_mod.create_highlight_judge_agent(cfg)),
-        ("create_endorsement_extractor_agent", lambda: agents_mod.create_endorsement_extractor_agent(cfg)),
         ("create_world_segment_agent", lambda: agents_mod.create_world_segment_agent(
             cfg, SimpleNamespace(root="", opening="盘面"),
         )),
         ("create_decree_writer_agent", lambda: agents_mod.create_decree_writer_agent(cfg, object())),
-        ("create_season_simulator_agent", lambda: agents_mod.create_season_simulator_agent(cfg, object())),
         ("create_promulgation_judge_agent", lambda: agents_mod.create_promulgation_judge_agent(
             cfg, object(),
             session_id="promulgation-judge-turn-test",
@@ -919,6 +917,7 @@ def test_agent_factories_omit_max_tokens_on_param_surface(monkeypatch):
     cb._run_api_for_config("输出 {}", cfg, tag="gate")
     assert len(seen) == before_gate + 1, f"gate must hit create_chat_model once, got +{len(seen) - before_gate}"
     assert "max_tokens" not in seen[-1], seen[-1]
+
 
 
 def test_gate_evidence_config_omits_max_tokens():

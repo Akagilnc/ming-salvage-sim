@@ -260,7 +260,7 @@ def group_secret_orders_for_sim(
     非 active 密令落到此函数时忽略不进任何组。
 
     #883：本分组只喂 personnel_secret extractor 独立 rail；simulator 公共轨不收密令正文，
-    只见 `build_simulator_payload` 派生的扁平 `due_commitments`。
+    公开 due_commitments 由调用方从分组派生；密令正文不进公开轨。
     """
     groups: Dict[str, List[Dict[str, object]]] = {"在办": [], "待核议": []}
     bucket = {"active": "在办"}
@@ -324,7 +324,7 @@ def augment_secret_orders_with_due_commitments(
     ADR 0013 D3/D9 要求：无 ongoing_effects、仅 end_turn 的未来一次性承诺，到期不 close，
     但要从 active_issues 背景顶成本回合显式待裁输入。本函数在分组的
     `secret_orders["待核议"]` 里追加带 `entry_kind:"due_commitment"` 的条目；
-    simulator 轨另由 `build_simulator_payload` 从分组抠出扁平顶层 `due_commitments`
+    公开轨由调用方从分组抠出扁平顶层 `due_commitments`
     （公开轨），分组本身只留给 extractor。
     """
     rows = db.conn.execute(

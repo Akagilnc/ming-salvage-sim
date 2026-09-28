@@ -980,15 +980,19 @@ def _person_audience_experience(db: Any, name: str) -> list[dict]:
 
 
 def _secret_order_chat_turn_ids(db: Any) -> set[int]:
-    """chat_turns.route 解码为显式密令的轮。未知 route 由权威解码响亮失败。"""
-    from ming_sim.audience_night import decode_chat_turn_route
-
-    ids: set[int] = set()
-    for row in db.conn.execute("SELECT id, route FROM chat_turns").fetchall():
-        decoded = decode_chat_turn_route(row["route"])
-        if decoded["explicit_secret_order"]:
-            ids.add(int(row["id"]))
-    return ids
+    """Use durable oral pins, including later approvals and updates, not only issuance."""
+    message_ids = list(db._secret_origin_message_protection())
+    if not message_ids:
+        return set()
+    placeholders = ",".join("?" for _ in message_ids)
+    return {
+        int(row["id"])
+        for row in db.conn.execute(
+            f"SELECT id FROM chat_turns WHERE user_message_id IN ({placeholders}) "
+            f"OR minister_message_id IN ({placeholders})",
+            [*message_ids, *message_ids],
+        )
+    }
 
 
 def _omit_secret_order_audience(entries: Sequence[dict], secret_turn_ids: set[int]) -> list[dict]:
@@ -1238,6 +1242,20 @@ def secret_order_dossier_ids(db: Any) -> set[int]:
     }
 
 
+# 密令来源 origin / source_id 唯一前缀（#1862 reopen）。拼接与判定都走这里。
+SECRET_ORDER_ORIGIN_PREFIX = "secret_order:"
+
+
+def is_secret_order_origin(origin: object) -> bool:
+    """是否密令来源：origin/source_id 以 SECRET_ORDER_ORIGIN_PREFIX 开头。"""
+    return str(origin or "").startswith(SECRET_ORDER_ORIGIN_PREFIX)
+
+
+def secret_order_origin(order_id: object) -> str:
+    """密令来源字符串：前缀 + 密令 id。"""
+    return f"{SECRET_ORDER_ORIGIN_PREFIX}{int(order_id)}"
+
+
 def dossier_id_in_origin(origin: object) -> Optional[int]:
     text = str(origin or "")
     if not text.startswith("dossier:"):
@@ -1381,16 +1399,12 @@ def _write_world_tree(
     board_text: str,
     include_fact: Any = None,
     include_event: Any = None,
-    *,
-    exclude_secret_order_audience: bool = False,
+    secret_turn_ids: set[int] | None = None,
 ) -> list[str]:
     from ming_sim.knowledge import build_character_knowledge
 
     index: list[str] = []
     textual_facts = getattr(db, "textual_facts", None)
-    secret_turn_ids = (
-        _secret_order_chat_turn_ids(db) if exclude_secret_order_audience else set()
-    )
 
     board_rel = f"{_BOARD_DIR}/全局.txt"
     _write_text(tmp / board_rel, board_text)
@@ -1406,9 +1420,7 @@ def _write_world_tree(
         )
         person_dir = f"{_PERSON_DIR}/{_safe_segment(name)}"
         rel = f"{person_dir}/经历.txt"
-        audience = _person_audience_experience(db, name)
-        if exclude_secret_order_audience:
-            audience = _omit_secret_order_audience(audience, secret_turn_ids)
+        audience = _omit_secret_order_audience(_person_audience_experience(db, name), secret_turn_ids or set())
         _write_text(tmp / rel, _experience_text(
             _knowledge_for_experience(knowledge, include_event),
             audience,
@@ -1460,6 +1472,23 @@ def _write_world_tree(
     return index
 
 
+def dossier_paid_amount(db: Any, dossier_id: object) -> int:
+    """案卷已从账本实付总额（economy moves 负向 delta 之和）。
+
+    世界段在途案卷与逐旨预推「本旨」事实共用；无案卷行或尚无动账时为 0。
+    """
+    try:
+        oid = int(dossier_id)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return 0
+    if oid <= 0:
+        return 0
+    return sum(
+        max(0, -int(move.get("delta") or 0))
+        for move in db.list_economy_moves_for_dossier(oid)
+    )
+
+
 def continuing_dossier_facts(db: Any, turn: int) -> list[dict[str, object]]:
     """本月世界段要接着办的案卷：模拟清单里仍在执行的。
 
@@ -1473,10 +1502,6 @@ def continuing_dossier_facts(db: Any, turn: int) -> list[dict[str, object]]:
         if status != "executing":
             continue
         dossier_id = int(row["id"])
-        paid = sum(
-            max(0, -int(move.get("delta") or 0))
-            for move in db.list_economy_moves_for_dossier(dossier_id)
-        )
         payload = row.get("payload") or {}
         if not isinstance(payload, dict):
             payload = {}
@@ -1488,7 +1513,7 @@ def continuing_dossier_facts(db: Any, turn: int) -> list[dict[str, object]]:
             "target_kind": str(row.get("target_kind") or ""),
             "target_id": str(row.get("target_id") or ""),
             "grant_action": str(payload.get("grant_action") or ""),
-            "paid": paid,
+            "paid": dossier_paid_amount(db, dossier_id),
         })
     return facts
 
@@ -1922,8 +1947,8 @@ def prepare_world_materials(
     include_fact: Any = None,
     include_event: Any = None,
     ledger_origin_prefix_excluded: str = "",
-    exclude_secret_order_audience: bool = False,
     exclude_secret_order_dossiers: bool = False,
+    exclude_secret_order_audience: bool = False,
 ) -> PreparedMaterials:
     """过月推演者材料目录：盘面全量 + 开着的事务清单进开场最小集；人物经历、
     公开说法、历月邸报按需自读（#1834）。写入（拒收/实况回目录、下月材料）不
@@ -1956,7 +1981,7 @@ def prepare_world_materials(
         lambda tmp: _write_world_tree(
             tmp, db, state, public_events, affair_lines, board_text,
             include_fact, include_event,
-            exclude_secret_order_audience=exclude_secret_order_audience,
+            _secret_order_chat_turn_ids(db) if exclude_secret_order_audience else None,
         ),
     )
 

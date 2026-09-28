@@ -1,17 +1,31 @@
-"""Shared setup seam for rejection-section integration tests."""
+"""拒收段集成测的薄夹具。
+
+#1846：不复刻已删的 driver 编排。仅：
+- prepare_resolve_front_half（生产前半段 seam）
+- settle_with_delta + 确定性 applier（生产后半段核，整删归 #1843）
+- 默认 attendant runner / rejection_rows 查询
+"""
 
 from __future__ import annotations
 
 import json
+
+from ming_sim.applier import Provenance
+from ming_sim.decree import prepare_resolve_front_half, settle_with_delta
+from ming_sim.issues import apply_score_extraction
+from ming_sim.models import LLMConfig
+from ming_sim.simulation import canonicalize_extraction
 
 # game：conftest 已改为方案 (c) session 模板 + 每案文件拷贝（#1233）。
 # 本模块不再维护平行 module-cache 池；re-export 供既有
 # ``from tests.section_rejection_helpers import game`` 消费方零改 import。
 from tests.conftest import game as game  # noqa: F401
 
+_DETERMINISTIC_LLM = LLMConfig(api_key="", base_url="", model="", channel="api")
+_UNSET = object()
+
 
 def default_settlement_attendant_runner(*, year, period, rejections):
-    """#1745：settle 注入边界；真实非空文本，不锁措辞、非生产零宽。"""
     del year, period
     return "递话" if rejections else ""
 
@@ -19,70 +33,78 @@ def default_settlement_attendant_runner(*, year, period, rejections):
 def install_settlement_attendant_agent_stub(
     monkeypatch, decree_mod, *, text="递话", capture=None,
 ):
-    """#1745：替身下移到真实 runner 的 agent 边界（不整换 run_settlement_attendant_message）。
-
-    capture 若给出，追加生产事实包 rejections 列表（section/category/reason）。
-    monkeypatch 可为 pytest MonkeyPatch，或带 setattr(module, name, value) 的同形对象；
-    为 None 时直接写 decree_mod（子进程 worker 无 monkeypatch 对象）。
-    """
-    class _Out:
-        content = text
-
-    class _Agent:
-        def run(self, prompt):
-            if capture is not None:
-                payload = json.loads(prompt)
-                capture.append(list(payload.get("rejections") or []))
-            return _Out()
-
-    factory = lambda *_a, **_k: _Agent()  # noqa: E731 — 与既有 lambda 工厂同形
-    if monkeypatch is None:
-        setattr(decree_mod, "create_settlement_attendant_agent", factory)
-    else:
-        monkeypatch.setattr(
-            decree_mod,
-            "create_settlement_attendant_agent",
-            factory,
-        )
+    """#1871：代码触发递话 agent 已删；旧调用点保留 no-op，runner 形参仍由 #1843 承接。"""
+    del monkeypatch, decree_mod, text, capture
 
 
 def prepare_then_settle(db, state, content, raw_delta, **kwargs):
-    """Test glue: explicit driver prepare → settle (not a production one-shot rail)."""
-    from driver import run_prepare, run_settle as _drv_settle
-
+    """prepare_resolve_front_half → settle_with_delta（生产 seam，非平行旧入口）。"""
     prep_kw = {}
     if "registry" in kwargs:
         prep_kw["registry"] = kwargs["registry"]
     if "source" in kwargs:
         prep_kw["source"] = kwargs["source"]
-    run_prepare(db, state, content, **prep_kw)
+    prepare_resolve_front_half(
+        state, db, content=content,
+        registry=prep_kw.get("registry"),
+        source=prep_kw.get("source", Provenance.player_decree),
+    )
     from tests.conftest import with_monthly_reports
-    settle_kw = dict(kwargs)
-    settle_kw.setdefault(
-        "settlement_attendant_runner", default_settlement_attendant_runner,
-    )
-    return _drv_settle(
-        db, state, content, with_monthly_reports(db, raw_delta), **settle_kw,
+    return _settle_after_prepare(
+        db, state, content, with_monthly_reports(db, raw_delta), **kwargs,
     )
 
 
-def run_settle(db, state, content, raw_delta, **kwargs):
-    """已 prepare 后的 driver settle；默认注入 attendant runner（#1745 测试入口）。"""
-    from driver import run_settle as _drv_settle
-
-    settle_kw = dict(kwargs)
-    settle_kw.setdefault(
-        "settlement_attendant_runner", default_settlement_attendant_runner,
+def _settle_after_prepare(db, state, content, raw_delta, **kwargs):
+    if raw_delta is None:
+        raw_delta = {}
+    if not isinstance(raw_delta, dict):
+        raise ValueError(f"delta 必须是 object(dict)，实得 {type(raw_delta).__name__}")
+    before_turn = int(state.turn)
+    extracted = canonicalize_extraction(raw_delta)
+    attendant = kwargs.pop("settlement_attendant_runner", _UNSET)
+    if attendant is _UNSET:
+        attendant = default_settlement_attendant_runner
+    source = kwargs.pop("source", Provenance.player_decree)
+    registry = kwargs.pop("registry", None)
+    narrative = kwargs.pop("narrative", "")
+    decree_text = kwargs.pop("decree_text", "")
+    if kwargs:
+        raise TypeError(f"unexpected settle kwargs: {sorted(kwargs)}")
+    return settle_with_delta(
+        state, db, extracted,
+        before_turn=before_turn,
+        content=content,
+        registry=registry,
+        narrative=narrative,
+        decree_text=decree_text,
+        extractor_output=json.dumps(extracted, ensure_ascii=False),
+        source=source,
+        delta_applier=lambda d, s, ex, ct, rg: apply_score_extraction(
+            d, s, ex, content=ct, registry=rg, llm_config=_DETERMINISTIC_LLM,
+        ),
+        settlement_attendant_runner=attendant,
     )
-    return _drv_settle(db, state, content, raw_delta, **settle_kw)
+
+
+# 兼容旧 import 名：已 prepare 后的 settle
+run_settle = _settle_after_prepare
+
+
+def run_prepare(db, state, content, *, registry=None, source=Provenance.player_decree,
+                decree_text: str = "") -> dict:
+    """薄包装生产 prepare_resolve_front_half；返回 simulator_payload。"""
+    prepare_resolve_front_half(
+        state, db, decree_text=decree_text, content=content,
+        registry=registry, source=source,
+    )
+    ctx = db.get_resolve_context(int(state.turn)) or {}
+    return dict(ctx.get("simulator_payload") or {})
 
 
 def rejection_rows(db, turn, section=None, *, columns="section, reason, category, source"):
-    query = (
-        f"SELECT {columns} FROM rejection_reports"
-        " WHERE turn=?"
-    )
-    params = [turn]
+    query = f"SELECT {columns} FROM rejection_reports WHERE turn=?"
+    params: list = [turn]
     if section is not None:
         query += " AND section=?"
         params.append(section)

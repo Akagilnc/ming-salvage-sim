@@ -30,7 +30,7 @@ import ming_sim.session as session_mod
 import web_app
 from ming_sim.decree import write_decree_with_agno as _real_write_decree_with_agno
 from ming_sim.error_pack import latest_error_pack_for_turn
-from tests.test_army_pay_decree_1503 import _set_guanning_arrears
+from tests.army_pay_helpers import _set_guanning_arrears
 from tests.test_month_loop_tracer_1468 import (
     _get_state,
     _post_issue_stream,

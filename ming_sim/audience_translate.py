@@ -1,14 +1,16 @@
 """召对转译：每轮一次完整声明（C1a/C1b/C2；后台化归 T2 #1842）。
 
 每轮回话落定后起一次转译 LLM，读本轮（皇帝原话 + 回话 + 本场已说的话 +
-本夜暂存清单），一次声明本轮全部记录——交办载荷与应允、当场实况（生死 /
-下狱 / 革职）、文字事实、公开说法、在场进出、说话人分段、边事件、御前主角、
-入册；代码只把声明交给 :func:`ming_sim.audience_translation.apply_audience_round_translation`
+本夜暂存清单），一次声明本轮全部记录——交办载荷与应允、对暂存交办的背书
+（会签/当面站台/御笔手敕）、当场实况（生死 / 下狱 / 革职）、文字事实、
+公开说法、在场进出、说话人分段、边事件、御前主角、入册；代码只把声明交给
+:func:`ming_sim.audience_translation.apply_audience_round_translation`
 （经 C0 分派器）落账（ADR 0155 场中承接）。
 
-生产上转译是后台任务（#1842）：按轮串行、前台不等；封夜提交 join 最后一轮；
-耗尽 = 该轮待补，不挡下一句。场景 LLM 零动作工具、零格式约束；两通道同形。
-承接不了的交办由分派器逐项拒收当事实回场，代码不做「所指未明 → 强制追问」闸。
+生产上转译是后台任务（#1842）：按轮串行、前台不等；收夜先补跑再提交成案；
+耗尽 = 该轮待补，不挡下一句与退朝，过月前 join 补齐。场景 LLM 零动作工具、
+零格式约束。承接不了的交办由分派器逐项拒收当事实回场，代码不做
+「所指未明 → 强制追问」闸。
 """
 
 from __future__ import annotations
@@ -16,8 +18,6 @@ from __future__ import annotations
 import json
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
 
-from ming_sim.applier import Provenance
-from ming_sim.declaration_dispatch import DeclarationDispatchResult
 from ming_sim.decree_vocabulary import TARGET_KINDS
 
 TranslateFn = Callable[[str, Any], Mapping[str, object]]
@@ -26,6 +26,7 @@ TranslateFn = Callable[[str, Any], Mapping[str, object]]
 _DECLARATION_KEYS: tuple[str, ...] = (
     "commissions",
     "promises",
+    "endorsements",
     "textual_facts",
     "public_sayings",
     "on_scene_facts",
@@ -243,6 +244,10 @@ def build_c0_declaration_shape() -> str:
         "    }\n"
         "  ],\n"
         '  "promises": [{"action_id": 正整数, "decision": "应允|拒绝"}],\n'
+        '  "endorsements": [\n'
+        '    {"action_id": 正整数, "form": "会签|当面站台|御笔手敕", '
+        '"endorser_id": "人名（御笔手敕为空）"}\n'
+        '  ],\n'
         '  "on_scene_facts": [\n'
         "    {\n"
         '      "name": "人名",\n'
@@ -313,6 +318,8 @@ def build_audience_translate_prompt(
         "不要拆成拟旨 / 拨帑 / 交办三道。\n"
         "- 皇帝对已暂存交办说「准」「照办」等应允语义 → promises 里 decision=应允；"
         "「不准」「作罢」→ 拒绝。皇帝本轮未表态 → promises 为空（默认不应允）。\n"
+        "- 本轮有人当面说出担名（会签/当面站台）或皇帝说要亲笔担某旨 → endorsements "
+        "指向暂存清单里那件（action_id）；御笔手敕的 endorser_id 为空。\n"
         "- 当场已发生（斩杀/拿下/伤臂/告退等）走 on_scene_facts / textual_facts / "
         "presence / public_sayings / edge_events，不要写成交办。\n"
         "- effects 是过月才核算的旨意办理效果；召对夜本轮留空，不得将尚未发生的效果写成当场实况。\n"
@@ -419,76 +426,3 @@ def translate_audience_turn(
     except Exception as exc:
         raise AudienceTranslateError(str(exc) or exc.__class__.__name__) from exc
     return normalize_audience_declaration(raw)
-
-
-def apply_audience_turn_translation(
-    db: Any,
-    state: Any,
-    declaration: Mapping[str, object],
-    *,
-    night_id: int,
-    chat_turn_id: int = 0,
-    minister_name: str = "",
-    source: Provenance = Provenance.system_simulation,
-) -> DeclarationDispatchResult:
-    """把转译声明交给场中承接落账核（C0 分派 + 源轮/水位）。
-
-    ``chat_turn_id`` 是当场实况源轮；落账核经统一分派器自记撤回前像。
-    """
-    from ming_sim.audience_translation import apply_audience_round_translation
-
-    return apply_audience_round_translation(
-        db,
-        state,
-        declaration,
-        night_id=int(night_id or 0),
-        chat_turn_id=int(chat_turn_id or 0),
-        minister_name=minister_name,
-        source=source,
-    )
-
-
-def run_audience_turn_translation(
-    db: Any,
-    state: Any,
-    *,
-    emperor_message: str,
-    reply: str,
-    night_id: int,
-    chat_turn_id: int = 0,
-    minister_name: str = "",
-    llm_config: Any = None,
-    translate_fn: Optional[TranslateFn] = None,
-    source: Provenance = Provenance.system_simulation,
-) -> DeclarationDispatchResult:
-    """组装本轮上下文 → 转译 → 落账。scene_chat 同步路径与后台 worker 共用。
-
-    转译调用失败抛 :class:`AudienceTranslateError`，不进入落账核
-    （失败≠成功空声明）。
-
-    ``chat_turn_id`` 原样下传（不另造平行快照）；过月/无源轮传 0。
-    """
-    ctid = int(chat_turn_id or 0)
-    night_said = build_night_said_so_far(
-        db, int(night_id or 0), until_chat_turn_id=ctid,
-    )
-    pending = build_pending_summaries(db, int(state.turn), night_id=int(night_id or 0))
-    target_grounding = build_translation_target_grounding(db)
-    declaration = translate_audience_turn(
-        emperor_message=emperor_message,
-        reply=reply,
-        night_said=night_said,
-        pending_summaries=pending,
-        target_grounding=target_grounding,
-        llm_config=llm_config,
-        translate_fn=translate_fn,
-    )
-    return apply_audience_turn_translation(
-        db,
-        state,
-        declaration,
-        night_id=int(night_id or 0),
-        chat_turn_id=ctid,
-        minister_name=minister_name,
-        source=source,
-    )

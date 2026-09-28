@@ -374,22 +374,11 @@ def _retry_interrupted_reply_cli(session: GameSession, minister_name: str) -> Op
     if not db.reopen_interrupted_chat_turn_for_retry(chat_turn_id):
         print(f"{minister_name}上一轮回奏仍在进行，请稍候再问。\n")
         return
-    # #1566：route 权威解码——与 Web retry 同核；场外密令不启殿上 scene。
-    from ming_sim.audience_night import decode_chat_turn_route
-    retry_route = decode_chat_turn_route(target.get("route"))
     try:
-        # #1842：殿上重试走 scene_chat；显式密令仍走 session.chat（与 Web 同核）。
-        if retry_route["explicit_secret_order"]:
-            result = session.chat(
-                minister_name, question,
-                chat_turn_id=chat_turn_id,
-                explicit_secret_order=True,
-            )
-        else:
-            result = session.scene_chat(
-                question, chat_turn_id=chat_turn_id,
-                minister_name=minister_name,
-            )
+        result = session.scene_chat(
+            question, chat_turn_id=chat_turn_id,
+            minister_name=minister_name,
+        )
         answer = str(getattr(result, "answer", "") or "")
         if hasattr(db, "persist_minister_reply"):
             db.persist_minister_reply(minister_name, accepted_turn, answer, chat_turn_id)
@@ -529,11 +518,7 @@ def minister_chat(session: GameSession, character: Character, *, selected: bool 
             "update_chat_turn_messages", "record_chat_turn_rollback_diffs", "fail_chat_turn",
         ))
         try:
-            # #1566：CLI 前缀密令落 route=secret_order，供中断重试权威解码。
-            from ming_sim.cli_backend import _SECRET_PREFIXES
-            cli_explicit_secret = question.startswith(_SECRET_PREFIXES)
-            from ming_sim.audience_night import encode_chat_turn_route
-            cli_route = encode_chat_turn_route(explicit_secret_order=cli_explicit_secret)
+            # #1849 reopen：CLI 也不再分密令/场外 route；前缀原文随问话进 scene 转译。
             if persistent_chat:
                 if lifecycle_supported:
                     rollback_snapshot = session.db.capture_chat_rollback_snapshot()
@@ -553,7 +538,6 @@ def minister_chat(session: GameSession, character: Character, *, selected: bool 
                         0,
                         night_id=int(night["id"]),
                         status="generating",
-                        route=cli_route,
                     )
                 user_message_id = session.db.append_chat_message(
                     character.name, accepted_turn, "user", question,
@@ -564,17 +548,10 @@ def minister_chat(session: GameSession, character: Character, *, selected: bool 
                     )
             # #1842：殿上走 scene_chat；显式密令仍走 session.chat（与 Web 同核）。
             # 殿上不派旧判官/尾随抽取——转译一次承接。
-            if cli_explicit_secret:
-                result = session.chat(
-                    character.name, question,
-                    chat_turn_id=chat_turn_id,
-                    explicit_secret_order=True,
-                )
-            else:
-                result = session.scene_chat(
-                    question, chat_turn_id=chat_turn_id,
-                    minister_name="殿上",
-                )
+            result = session.scene_chat(
+                question, chat_turn_id=chat_turn_id,
+                minister_name="殿上",
+            )
             if persistent_chat:
                 if chat_turn_id and hasattr(session.db, "persist_minister_reply"):
                     session.db.persist_minister_reply(

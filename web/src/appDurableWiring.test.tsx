@@ -1,9 +1,11 @@
 import React, { act } from "react";
+import { readFileSync } from "node:fs";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "./main";
 import { SETTLEMENT_CLOSED_REASON } from "./settlementPresentation";
+import { measureElectronLayout } from "./testSupport/electronLayout";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 // jsdom 无布局：给 stage 非零尺寸，使 GameHud ready=true（地图/局势框/上月已结入口可挂）。
@@ -340,9 +342,8 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
       if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
       if (u.pathname.endsWith("/api/game/state")) return jsonResp(makeState(1, [], roster));
       if (u.pathname.endsWith("/api/decree/advance_without_edict")) return jsonResp({ state: makeState(2, [], roster), pending_action_failures: [] });
-      if (u.pathname.endsWith("/chat/stream")) return sseResp("done", { response: "臣等恭送", directives: [], pending_count: 0, suggestions: [], can_undo_last_chat: false, pending_action_failures: [], court_action: "court_break" });
+      if (u.pathname.endsWith("/chat/stream")) return sseResp("done", { response: "臣等恭送", directives: [], pending_count: 0, suggestions: [], can_undo_last_chat: false, court_action: "court_break" });
       if (u.pathname.endsWith("/api/audience/chat")) return jsonResp({ minister: roster[0], history: [], suggestions: [], campaign_id: "c1", night_id: 77 });
-      if (u.pathname.endsWith("/api/audience/extraction/pending")) return jsonResp({ count: 0 });
       return jsonResp({});
     }));
     const host = document.createElement("div"); document.body.appendChild(host);
@@ -400,7 +401,6 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
       if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
       if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
       if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
-      if (u.pathname.endsWith("/api/audience/extraction/pending")) return jsonResp({ count: 0 });
       if (u.pathname.endsWith("/api/audience/scroll")) return jsonResp({ night_id: 1, messages: [] });
       if (u.pathname.endsWith("/api/history/turns")) return jsonResp({ turns: [] });
       if (u.pathname.endsWith("/api/court_layout")) return jsonResp({ layout: "{}" });
@@ -417,7 +417,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
         return sseResp("done", {
           answer: "ok", history: [], directives: [],
           pending_count: 1, pending_directive_count: 1,
-          suggestions: [], can_undo_last_chat: true, pending_action_failures: [],
+          suggestions: [], can_undo_last_chat: true,
         });
       }
       return jsonResp({});
@@ -437,7 +437,8 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
       setter?.call(textarea, "拟旨如下：着户部从国库拨银一万两赈济陕西饥民。");
       textarea.dispatchEvent(new Event("input", { bubbles: true }));
     });
-    await click(host.querySelector(".primary-action"));
+    // 发送钮：勿用 bare .primary-action（朝堂抽屉/HUD 同 class 会先命中）。
+    await click(findButton(host, "发送"));
     // onDone 触发 refresh → stateCall>=2；不盯 busy 呈现措辞。
     await act(async () => {
       await vi.waitFor(() => expect(stateCall).toBeGreaterThanOrEqual(2));
@@ -480,7 +481,6 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
       if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
       if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
       if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
-      if (u.pathname.endsWith("/api/audience/extraction/pending")) return jsonResp({ count: 0 });
       if (u.pathname.endsWith("/api/audience/scroll")) return jsonResp({
         night_id: 1,
         translation_retries: translationDone ? [] : [{ chat_turn_id: 8, retryable: true }],
@@ -528,7 +528,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
         return jsonResp({
           answer: "臣已拟旨。", history: [], directives: [],
           pending_count: 1, pending_directive_count: 1,
-          suggestions: [], can_undo_last_chat: true, pending_action_failures: [],
+          suggestions: [], can_undo_last_chat: true,
         });
       }
       if (u.pathname.endsWith("/chat/undo") && init?.method === "POST") {
@@ -536,7 +536,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
           campaign_id: "c1", night_id: 1, undone_chat_turn_id: 7,
           history: [], suggestions: [], directives: [],
           pending_count: 0, pending_directive_count: 0,
-          secret_orders: [], can_undo_last_chat: false, pending_action_failures: [],
+          secret_orders: [], can_undo_last_chat: false,
         });
       }
       return jsonResp({});
@@ -1003,35 +1003,28 @@ const byAria = (host: HTMLElement, label: string) =>
 
 describe("#1236 App must-face wiring（settlement_display 真链）", () => {
 
-  it("#1849 后宫妃嫔从真实入口读取既有 legacy 会话", async () => {
+  it("#1849 reopen 后宫卡片不再打开任何召对面板", async () => {
     const paths: string[] = [];
     const liveState = settlementBaseState("player", {
       turn: { year: 1627, period: 10, turn: 5, phase: "player", settlement_display: false },
     });
     stubSettlementFetch(liveState, [], undefined, (url) => {
       paths.push(url.pathname);
-      if (url.pathname === `/api/ministers/${encodeURIComponent(SNAP_CONSORT)}/chat`) {
-        return jsonResp({
-          minister: liveState.consorts[0], history: [], suggestions: [],
-          campaign_id: "c1", night_id: 0, can_undo_last_chat: false,
-        });
-      }
     });
 
     const host = await mountApp();
     await click(byAria(host, "后宫"));
-    const consort = Array.from(host.querySelectorAll(".harem-drawer.open button.minister-card")).find(
-      (button) => (button.textContent || "").includes(SNAP_CONSORT),
+    const consort = Array.from(host.querySelectorAll(".harem-drawer.open .minister-card")).find(
+      (el) => (el.textContent || "").includes(SNAP_CONSORT),
     );
     expect(consort).toBeTruthy();
-    await click(consort);
-
-    await act(async () => {
-      await vi.waitFor(() => expect(paths).toContain(
-        `/api/ministers/${encodeURIComponent(SNAP_CONSORT)}/chat`,
-      ));
-    });
+    // 与朝臣同形：只读名单，不可点开面板。
+    expect(consort!.tagName.toLowerCase()).not.toBe("button");
+    if (consort instanceof HTMLElement) await click(consort);
+    await tick();
+    expect(paths.some((p) => p.includes("/api/ministers/"))).toBe(false);
     expect(paths).not.toContain("/api/audience/chat");
+    expect(host.querySelector("textarea")).toBeNull();
   });
 
   it("phase===settling：续跑入口可点；刷新重挂后仍在", async () => {
@@ -1055,7 +1048,6 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     const paths: string[] = [];
     let liveState = settlementBaseState("settling", {
       settlement_recovery: {
-        ready_replay: true,
         error_pack_path: "/tmp/error_packs/turn5_attempt1",
         message: "abort-guidance",
       },
@@ -1075,16 +1067,13 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
       });
       if (u.pathname.endsWith("/api/court_layout")) return jsonResp({ layout: "{}" });
       if (u.pathname.endsWith("/api/decree/issue/stream")) {
-        return sseResp("done", { ok: true });
-      }
-      if (u.pathname.endsWith("/api/decree/advance_without_edict") && init?.method === "POST") {
         liveState = settlementBaseState("player", {
           turn: { year: 1627, period: 11, turn: 6, phase: "player", settlement_display: false },
           settlement_recovery: undefined,
           previous_summary: "new month report",
           directives: [],
         });
-        return jsonResp({ state: liveState, advanced: true });
+        return sseResp("done", { ok: true });
       }
       return jsonResp({});
     }));
@@ -1101,13 +1090,13 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     unmountTrackedRoots();
     paths.length = 0;
     liveState = settlementBaseState("settling", {
-      settlement_recovery: { ready_replay: false, message: "stopped", error_pack_path: "" },
+      settlement_recovery: { message: "stopped", error_pack_path: "" },
       directives: [],
     });
     const reopened = await mountApp();
     await click(reopened.querySelector('[data-testid="settle-resume"] button') as HTMLButtonElement);
-    expect(paths).toContain("POST /api/decree/advance_without_edict");
-    expect(paths).not.toContain("POST /api/decree/issue/stream");
+    expect(paths).toContain("POST /api/decree/issue/stream");
+    expect(paths).not.toContain("POST /api/decree/advance_without_edict");
     await act(async () => {
       await vi.waitFor(() => expect(reopened.querySelector(".hud2-val")?.textContent).toContain("11"));
     });
@@ -1445,7 +1434,7 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
         status: "defeat",
         label: "煤山自缢",
         summary: "终章。",
-        timeline: [{ turn: 6, year: 1627, period: 11, decree_brief: "", effect_brief: "", gazette: "十月邸报" }],
+        timeline: [{ turn: 6, year: 1627, period: 11, gazette: "十月邸报" }],
       };
       let liveState: Record<string, unknown> = {
         ...settlementBaseState("player"),
@@ -1533,6 +1522,78 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("#1852 SSE 推演事件不驱动等待面：无进度条 / 无推敲 / 无 SettlementLock", async () => {
+    let streamController!: ReadableStreamDefaultController<Uint8Array>;
+    const encoder = new TextEncoder();
+    const liveState = settlementBaseState("settling", {
+      settlement_recovery: {
+        error_pack_path: "/tmp/error_packs/turn5_attempt1",
+        message: "abort-guidance",
+      },
+    });
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      const u = new URL(String(url), "http://t.local");
+      if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
+      if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
+      if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
+      if (u.pathname.endsWith("/api/game/state")) return jsonResp(liveState);
+      if (u.pathname.endsWith("/api/history/turns")) return jsonResp({
+        turns: [{ kind: "month", turn: 4, year: 1627, period: 9, has_report: true, has_attendant: false, has_directive: true }],
+      });
+      if (u.pathname.includes("/api/history/turn/")) return jsonResp({
+        turn: 4, year: 1627, period: 9, report: SNAP_GAZETTE, decree: "",
+      });
+      if (u.pathname.endsWith("/api/court_layout")) return jsonResp({ layout: "{}" });
+      if (u.pathname.endsWith("/api/decree/issue/stream") && init?.method === "POST") {
+        return new Response(new ReadableStream<Uint8Array>({
+          start(controller) { streamController = controller; },
+        }), { status: 200, headers: { "Content-Type": "text/event-stream" } });
+      }
+      return jsonResp({});
+    }));
+
+    const host = await mountApp();
+    const resume = host.querySelector('[data-testid="settle-resume"] button') as HTMLButtonElement | null;
+    expect(resume).not.toBeNull();
+    await click(resume);
+
+    await act(async () => {
+      await vi.waitFor(() => expect(streamController).toBeTruthy());
+    });
+
+    await act(async () => {
+      streamController.enqueue(encoder.encode(
+        'event: stage\ndata: {"content":"任意显示文案","current":3,"total":6}\n\n',
+      ));
+      streamController.enqueue(encoder.encode(
+        'event: thinking\ndata: {"content":"推敲片段甲"}\n\n',
+      ));
+      streamController.enqueue(encoder.encode(
+        'event: text\ndata: {"content":"奏章片段乙"}\n\n',
+      ));
+    });
+
+    await act(async () => { await Promise.resolve(); });
+    expect(host.querySelector('[data-testid="settlement-wait-progress"]')).toBeNull();
+    expect(host.querySelector("[data-testid=settlement-lock-decor]")).toBeNull();
+    expect(host.querySelector(".settlement-lock")).toBeNull();
+    expect(host.textContent).not.toContain("推敲片段甲");
+    expect(host.textContent).not.toContain("奏章片段乙");
+    expect(host.textContent).not.toContain("任意显示文案");
+    // 核账叙事仍在（王承恩固定提示）
+    expect(host.querySelector("[data-testid=wang-settlement-slip]")).not.toBeNull();
+
+    await act(async () => {
+      streamController.enqueue(encoder.encode(
+        `event: decisions\ndata: ${JSON.stringify({ decisions: [validDecision] })}\n\n`,
+      ));
+      streamController.close();
+    });
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[data-testid="decision-modal"]')).not.toBeNull());
+    });
   });
 
   it("#1796 有草案点盖玺：拟诏台立即收起，核账期面，灰钮不可见", async () => {
@@ -1705,26 +1766,50 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     expect(host2.querySelector('[data-testid="decision-modal"]')!.textContent).toContain("辽东战守");
   });
 
-  it("awaiting_decision + 损坏 pending：DecisionRecoveryPanel 可点；刷新重挂后仍在", async () => {
-    stubSettlementFetch(settlementBaseState("awaiting_decision", {
-      pending_decisions: [{ broken: true }],
+  it("settling 恢复：长错误包路径下统一横幅可点；刷新重挂后仍在", async () => {
+    const errorPackPath = `/${"long-directory/".repeat(24)}error-pack`;
+    stubSettlementFetch(settlementBaseState("settling", {
+      settlement_recovery: { message: "结算中止", error_pack_path: errorPackPath },
     }));
     const host = await mountApp();
     await act(async () => {
-      await vi.waitFor(() => expect(host.querySelector('[data-testid="decision-recovery"]')).not.toBeNull());
+      await vi.waitFor(() => expect(host.querySelector('[data-testid="settle-resume"]')).not.toBeNull());
     });
-    const panel = host.querySelector('[data-testid="decision-recovery"]')!;
-    expect(panel.textContent).toMatch(/批红|待批/);
+    const panel = host.querySelector('[data-testid="settle-resume"]')!;
+    expect(panel.textContent).toContain(errorPackPath);
     const retry = panel.querySelector("button") as HTMLButtonElement | null;
     expect(retry).not.toBeNull();
     expect(retry!.disabled).toBe(false);
 
+    // Measure the actual App-mounted banner, not a replacement component fixture.
+    const geometry = await measureElectronLayout<{ visible: boolean; hit: boolean; fits: boolean; messageFits: boolean }>(
+      host.outerHTML,
+      ["base", "hud2", "decision"].map((name) => readFileSync(`${process.cwd()}/src/styles/${name}.css`, "utf8")).join("\n"),
+      [{ width: 800, height: 600 }, { width: 360, height: 640 }],
+      `(() => {
+        const banner = document.querySelector('.recovery-banner');
+        const button = banner?.querySelector('button');
+        const message = banner?.querySelector('.recovery-banner-message');
+        if (!banner || !button || !message) return { error: 'missing mounted recovery action' };
+        const b = button.getBoundingClientRect();
+        const r = banner.getBoundingClientRect();
+        const x = b.left + b.width / 2, y = b.top + b.height / 2;
+        return {
+          visible: b.width > 0 && b.height > 0 && b.left >= 0 && b.right <= innerWidth && b.top >= 0 && b.bottom <= innerHeight,
+          hit: document.elementFromPoint(x, y) === button && !button.disabled,
+          fits: r.left >= 0 && r.right <= innerWidth,
+          messageFits: message.scrollWidth <= message.clientWidth,
+        };
+      })()`,
+    );
+    for (const result of geometry) expect(result).toEqual({ visible: true, hit: true, fits: true, messageFits: true });
+
     unmountTrackedRoots();
     const host2 = await mountApp();
     await act(async () => {
-      await vi.waitFor(() => expect(host2.querySelector('[data-testid="decision-recovery"]')).not.toBeNull());
+      await vi.waitFor(() => expect(host2.querySelector('[data-testid="settle-resume"]')).not.toBeNull());
     });
-    expect((host2.querySelector('[data-testid="decision-recovery"] button') as HTMLButtonElement).disabled).toBe(false);
+    expect((host2.querySelector('[data-testid="settle-resume"] button') as HTMLButtonElement).disabled).toBe(false);
   });
 
   it("#1620 落印 SSE error 同页保留 picks + 单一 recovery alert + 可再落印", async () => {
@@ -1826,7 +1911,6 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     let liveState: Record<string, unknown> = settlementBaseState("settling", {
       settlement_recovery: {
         message: "上月结算未完成（进度已保存）。",
-        ready_replay: true,
         error_pack_path: "/tmp/error_packs/turn5_attempt1",
       },
       previous_summary: "",
@@ -2256,10 +2340,12 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     const haremOpen = host.querySelector(".harem-drawer.open");
     expect(haremOpen).not.toBeNull();
     expect(haremOpen!.textContent).toContain(SNAP_CONSORT);
-    const haremCard = Array.from(haremOpen!.querySelectorAll("button.minister-card")).find((b) =>
-      (b.textContent || "").includes(SNAP_CONSORT),
-    ) as HTMLButtonElement | undefined;
-    expect(haremCard?.disabled).toBe(true);
+    // #1849 reopen：后宫卡与朝臣同形只读，不再是可点开面板的 button。
+    const haremCard = Array.from(haremOpen!.querySelectorAll(".minister-card")).find((el) =>
+      (el.textContent || "").includes(SNAP_CONSORT),
+    );
+    expect(haremCard).toBeTruthy();
+    expect(haremCard!.tagName.toLowerCase()).not.toBe("button");
     await closeOpenOverlay(host);
 
     // memorials：只读可达；与局势脱钩——核账期仍可读收件箱，不得泄漏半程议题（#1726）
@@ -2937,14 +3023,6 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
       if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
       if (u.pathname.endsWith("/api/game/state")) return jsonResp(base);
       if (u.pathname.endsWith("/api/directives") && init?.method === "POST") return createGate;
-      if (u.pathname.endsWith("/api/pending_actions/failures")) {
-        return jsonResp({
-          pending_action_failures: [{
-            id: 42, kind: "secret_order", action: "落库",
-            message: "密令未能正式落库",
-          }],
-        });
-      }
       return jsonResp({});
     }));
     const host = await mountApp();
@@ -3171,7 +3249,6 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
         }
         return jsonResp({ ...baseState, cased_directives: casedDirectives });
       }
-      if (u.pathname.endsWith("/api/audience/extraction/pending")) return jsonResp({ count: 0 });
       if (u.pathname.endsWith("/api/audience/scroll")) return jsonResp({ night_id: 1, messages: [] });
       if (u.pathname.endsWith("/api/audience/chat/stream") && init?.method === "POST") {
         return new Response(new ReadableStream<Uint8Array>({
@@ -3180,7 +3257,7 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
       }
       if (u.pathname.endsWith("/api/audience/chat")) {
         return jsonResp({
-          minister, history: [], suggestions: [], pending_action_failures: [],
+          minister, history: [], suggestions: [],
           night_id: 1, can_undo_last_chat: false,
         });
       }
@@ -3206,7 +3283,7 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     await act(async () => {
       streamController.enqueue(encoder.encode(`event: done\ndata: ${JSON.stringify({
         history: [], suggestions: [], directives: [], pending_count: 0,
-        pending_directive_count: 0, pending_action_failures: [],
+        pending_directive_count: 0,
         can_undo_last_chat: true, night_id: 1,
       })}\n\n`));
     });

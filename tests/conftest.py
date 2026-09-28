@@ -421,12 +421,44 @@ def _offline_audience_translation_provider():
 
 
 def stub_scene_agent(monkeypatch, agent):
-    """#1842：经 create_scene_agent 工厂缝注入 scene agent（禁实例双桩属性）。"""
+    """#1842：经 create_scene_agent 工厂缝注入 scene agent（禁实例双桩属性）。
+
+    #1849 reopen：scene transport 迭代 RunContent 事件；若替身 run() 返回单对象，包成生成器。
+    """
+    class _RunContent:
+        event = "RunContent"
+
+        def __init__(self, content: str):
+            self.content = content
+
+    class _RunCompleted:
+        content = ""
+        tools: list = []
+
+    class _SceneAgentAdapter:
+        def __init__(self, inner):
+            self._inner = inner
+            self.name = getattr(inner, "name", "scene")
+
+        def run(self, *a, **k):
+            out = self._inner.run(*a, **k) if hasattr(self._inner, "run") else self._inner
+            if hasattr(out, "__iter__") and not hasattr(out, "content"):
+                yield from out
+                return
+            text = str(getattr(out, "content", "") or "")
+            if text:
+                yield _RunContent(text)
+            done = _RunCompleted()
+            done.content = text
+            done.tools = list(getattr(out, "tools", None) or [])
+            yield done
+
+    adapted = _SceneAgentAdapter(agent)
     monkeypatch.setattr(
         "ming_sim.session.create_scene_agent",
-        lambda *a, **k: agent,
+        lambda *a, **k: adapted,
     )
-    return agent
+    return adapted
 
 
 def stub_audience_translate(monkeypatch, fn=None):

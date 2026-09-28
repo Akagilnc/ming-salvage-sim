@@ -228,15 +228,3 @@ def test_apply_army_delta_chinese_keys(game):
     ).fetchone()
     assert row["firearm_equipment"] == 25
     assert row["cannon_equipment"] == 5
-
-
-def test_simulator_payload_includes_firearm(read_game):
-    """喂 simulator 的军表必须带火器/大炮列。"""
-    db, state, _ = read_game
-    from ming_sim.simulation import build_simulator_payload
-
-    payload = build_simulator_payload(state, db, "", "")
-    armies = payload.get("armies") or {}
-    cols = armies.get("cols") or []
-    assert "firearm_equipment" in cols
-    assert "cannon_equipment" in cols

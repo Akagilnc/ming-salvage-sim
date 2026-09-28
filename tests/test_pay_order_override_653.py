@@ -1069,20 +1069,6 @@ def test_fiscal_fact_brief_bad_json_fails_loud(game):
         build_fiscal_fact_brief(db)
 
 
-def test_simulator_payload_accepts_recaptured_region_without_settle(game):
-    """真实 payload：收复/legacy 明控省缺基座时合法出列，不阻断月末推演。"""
-    from ming_sim.simulation import build_simulator_payload
-
-    db, state, _content = game
-    db.conn.execute(
-        "UPDATE regions SET controlled_by='ming', fiscal='{}' WHERE id='taiwan'"
-    )
-    payload = build_simulator_payload(state, db, "", "")
-    assert isinstance(payload["fiscal_fact_brief"], list)
-    assert not any(
-        e["subject_kind"] == "region" and e["subject_id"] == "taiwan"
-        for e in payload["fiscal_fact_brief"]
-    )
 
 
 def test_fiscal_fact_brief_haircut_and_relief_facts(game):
@@ -1128,15 +1114,6 @@ def test_class_delta_stays_on_internal_slot():
     assert sum("class_delta" in fields for fields in MODULE_FIELDS.values()) == 1
 
 
-def test_simulator_payload_contains_fiscal_fact_brief(game):
-    """F3 三断言之③：simulator payload 含 fiscal_fact_brief（输入侧特征包）。"""
-    from ming_sim.simulation import build_simulator_payload
-
-    db, state, _content = game
-    payload = build_simulator_payload(state, db, "", "")
-    brief = payload["fiscal_fact_brief"]
-    assert isinstance(brief, list)
-    assert brief == build_fiscal_fact_brief(db)
 
 
 def test_apply_score_extraction_accepts_llm_direction_with_fiscal_loss(game):

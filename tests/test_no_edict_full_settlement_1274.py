@@ -114,7 +114,6 @@ def test_no_edict_zero_decisions_completes_without_stuck(game, monkeypatch):
     _canned_full_settlement(
         monkeypatch,
         narrative="本月无重大抉择，朝局按惯性推移。",
-        decisions=[],  # 零决策
     )
     result = _session(db, state, content).advance_without_decree()
     assert result is not None

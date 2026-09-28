@@ -144,7 +144,6 @@ export function App() {
 
   // 召对动作群（useChatActions.ts）：召对面板外围态 + 开召对/发问/撤回/重试。
   const {
-    suggestions,
     chatNotice,
     replyRetries,
     translationRetries,
@@ -153,7 +152,6 @@ export function App() {
     composerHint,
     setComposerHint,
     input,
-    setComposerIntent,
     setInput,
     activeMinister,
     openChat,
@@ -634,7 +632,7 @@ export function App() {
       {(advanceRefreshFailed || pausedDecisionError || settlementHudError || (settleResumeMounted && (!state.settlement_entry_inflight || phase2Resume))) && !edictOpen && !chatOpen ? (
         <div className="recovery-banner" role="alert" data-testid={advanceRefreshFailed ? "advance-refresh-recovery" : settleResumeMounted && phase2Resume ? "settle-resume" : pausedDecisionError ? "decision-recovery" : settleResumeMounted ? "settle-resume" : "hud-error"}>
           <span className="recovery-banner-message">{advanceRefreshFailed ? `新月盘面载入失败：${error}` : pausedDecisionError || settlementHudError || state.settlement_recovery?.message || "上月结算未完成（进度已保存）。"}{!advanceRefreshFailed && state.settlement_recovery?.error_pack_path ? ` 错误包：${state.settlement_recovery.error_pack_path}；请把它发给作者。` : ""}</span>
-          <button className="seal-btn-issue" onClick={advanceRefreshFailed ? retryAdvanceRefresh : pausedDecisionError ? retryPendingDecisions : phase2Resume ? resumePhase2 : failedEntryWasRetreat || (settleResumeMounted && state.settlement_recovery?.ready_replay === false) ? advanceWithoutEdict : issueDecree} disabled={!!busy}>重试</button>
+          <button className="seal-btn-issue" onClick={advanceRefreshFailed ? retryAdvanceRefresh : pausedDecisionError ? retryPendingDecisions : phase2Resume ? resumePhase2 : failedEntryWasRetreat ? advanceWithoutEdict : issueDecree} disabled={!!busy}>重试</button>
         </div>
       ) : null}
 
@@ -681,7 +679,6 @@ export function App() {
         open={haremDrawerOpen}
         onGroupChange={setHaremGroup}
         onClose={() => setHaremDrawerOpen(false)}
-        onOpenChat={openChat}
         onUploadPortrait={uploadPortrait}
         chatEntryEnabled={chatEntryEnabled}
         phase={state.turn.phase}
@@ -747,13 +744,11 @@ export function App() {
           <ChatModal
             minister={activeMinister}
             ministers={audienceRoster}
-            portraitPrefix={(state.consorts || []).some((c) => c.name === activeMinister.name) ? "consort_" : "minister_"}
-            scrollMode={(state.consorts || []).some((c) => c.name === activeMinister.name) ? "legacy" : "audience"}
+            portraitPrefix="minister_"
             currentCampaignId={currentCampaignId}
             currentNightId={currentNightId}
             undoneChatIdentity={undoneChatIdentity}
             chat={chat}
-            suggestions={suggestions}
             pendingUserMessage={pendingUserMessage}
             pendingIdentity={pendingIdentity}
             failedIdentity={failedIdentity}
@@ -765,18 +760,15 @@ export function App() {
             input={input}
             busy={busy}
             error={error}
-            secretOrders={secretOrders.filter((o) => o.status === "active")}
             replyRetries={replyRetries}
             translationRetries={translationRetries}
             retryReadFailure={retryReadFailure}
             onInput={setInput}
-            onIntent={setComposerIntent}
             onSend={sendChat}
             onRetryReply={retryInterruptedReply}
             onRetryTranslation={retryTranslation}
             onUndo={undoLastChat}
             onHint={setComposerHint}
-            onFavorite={toggleFavorite}
             scrollPosition={audienceScrollPositionsRef.current.get(`${currentCampaignId}:${currentNightId}`)}
             onScrollPositionChange={(position) => audienceScrollPositionsRef.current.set(`${currentCampaignId}:${currentNightId}`, position)}
             onClose={() => setActiveModal("none")}

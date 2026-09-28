@@ -641,7 +641,7 @@ def test_1745_web_state_payload_after_bad_recon_settle(
         assert payload.get("pending_decisions") in (None, [])
         assert payload.get("resume_phase2") in (False, None)
         recovery = payload.get("settlement_recovery")
-        assert recovery in (None, {}) or recovery.get("ready_replay") is not True
+        assert recovery in (None, {}) or isinstance(recovery, dict)
         # 结构化投影：不把拒收明细键塞进 state_payload（P4）；只断键存在性
         assert "rejection_reports" not in payload
         assert db.conn.execute(

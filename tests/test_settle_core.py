@@ -273,10 +273,6 @@ def test_settlement_archive_writes_rollback_on_later_failure(game, monkeypatch):
     assert db.conn.execute(
         "SELECT 1 FROM turn_reports WHERE turn=?", (turn,)
     ).fetchone() is None
-    assert db.conn.execute(
-        "SELECT 1 FROM event_memories WHERE turn=? AND event_type='chapter_summary'",
-        (turn,),
-    ).fetchone() is None
 
 
 def test_pre_settle_runs_fixed_fiscal_tick(game):

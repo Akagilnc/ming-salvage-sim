@@ -378,7 +378,6 @@ def _source_archive_rows(db: Any, character_name: str, upto_turn: int) -> list[D
         # not independently authorizable sources.  Their explicit ``:public``
         # counterparts remain source-scoped and are projected below.
         if ((source_id.startswith("turn_report:") and not source_id.endswith(":public"))
-                or (source_id.startswith("chapter:") and not source_id.startswith("chapter_source:"))
                 or re.fullmatch(r"settlement:narrative:\d+", source_id)):
             continue
         participants = participant_roster_names(row["participant_roster"])
@@ -600,27 +599,22 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
     def source_projection(turn: int, fallback: object, *, public_counterpart: str = "") -> str:
         """Project aggregate narrative from source rows, never from redaction.
 
-        Reports and chapter memories are rendered aggregates.  When their turn
-        has source-scoped knowledge rows, those rows are the only material used
-        for this character.  Without an independent source, it grants nothing.
+        Turn reports are rendered aggregates.  When their turn has source-scoped
+        knowledge rows, those rows are the only material used for this character.
+        Without an independent source, it grants nothing.
         """
         # Only durable source rows are inputs here.  The synthetic
-        # ``turn_report:*``/``chapter:*`` rows below are read-model outputs;
-        # feeding one archive back into the next archive would duplicate
-        # material and make an already-rendered aggregate look like an
-        # unrestricted source.
+        # ``turn_report:*`` rows below are read-model outputs; feeding one
+        # archive back into the next would duplicate material.
         rows = []
         for row in public_events:
             source_id = str(row.get("source_id") or "")
-            # ``turn_report:*:public`` and ``chapter_source:*`` are explicit,
-            # source-scoped public counterparts written by the archive API.
-            # Unlike aggregate read-model rows, each has its own durable source
-            # boundary and remains visible beside a same-turn secret.
+            # ``turn_report:*:public`` is an explicit, source-scoped public
+            # counterpart written by the archive API.
             aggregate_row = (
                 source_id.startswith("opening:")
                 or source_id.startswith("directive:")
                 or (source_id.startswith("turn_report:") and not source_id.endswith(":public"))
-                or source_id.startswith("chapter:")
                 or source_id == f"settlement:narrative:{turn}"
             )
             if int(row.get("turn") or 0) == turn and not aggregate_row:
@@ -631,27 +625,14 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
         # synthetic bundle and lose its independently addressable history.
         counterpart_rows = [row for row in rows if str(row.get("source_id") or "") == public_counterpart]
         # Independently public source rows are already the canonical audience
-        # material.  Do not add a report/chapter rendering of the same turn on
-        # top of them: that is how ordinary monthly prose was repeated.
+        # material.  Do not add a report rendering of the same turn on top of them.
         if any(
             not row.get("excluded_names")
-            and not str(row.get("source_id") or "").startswith(("turn_report:", "chapter_source:"))
+            and not str(row.get("source_id") or "").startswith("turn_report:")
             for row in rows
         ):
             return ""
         if counterpart_rows:
-            # A chapter's public counterpart is derived from the same
-            # independently public source set as that turn's gazette.  Keep
-            # the gazette projection as the one monthly rendering instead of
-            # replaying identical prose through the chapter archive.
-            if public_counterpart.startswith("chapter_source:"):
-                report_counterpart = f"turn_report:{turn}:public"
-                report_rows = [
-                    row for row in rows
-                    if str(row.get("source_id") or "") == report_counterpart
-                ]
-                if report_rows:
-                    return ""
             rows = counterpart_rows
         visible = [
             row for row in rows
@@ -694,8 +675,6 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
                     "source_id": f"projection:turn_report:{report['turn']}",
                     "excluded_names": "[]",
                 })
-    # #1845：章节记忆退役——大臣知识面不再灌 chapter_summary；历月邸报自 turn_report 读。
-
     visible_events = [
         {
             key: (_prose(value) if key == "body" else value)
@@ -713,12 +692,8 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
         source_id = str(row.get("source_id") or "")
         if source_id.startswith("turn_report:") and source_id.endswith(":public"):
             turn = source_id.removeprefix("turn_report:").removesuffix(":public")
-        elif source_id.startswith("chapter_source:"):
-            turn = source_id.removeprefix("chapter_source:")
         elif source_id.startswith("projection:turn_report:"):
             turn = source_id.removeprefix("projection:turn_report:")
-        elif source_id.startswith("projection:chapter:"):
-            turn = source_id.removeprefix("projection:chapter:")
         else:
             continue
         if turn.isdigit():
@@ -732,16 +707,12 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
         # Aggregate archive writers leave compatibility source rows behind.
         # They are not authorization boundaries: when the turn contains a
         # restricted source their prose may be a rewrite of that source.  The
-        # character-specific turn_report/chapter projection above is the only
-        # archive representation allowed into the audience view.
-        if not str(row.get("source_id") or "").startswith(
-            ("turn_report:", "chapter_source:")
-        )
+        # character-specific turn_report projection above is the only archive
+        # representation allowed into the audience view.
+        if not str(row.get("source_id") or "").startswith("turn_report:")
         and not re.fullmatch(r"settlement:narrative:\d+", str(row.get("source_id") or ""))
         # When a source-preserving archive projection exists for this turn,
-        # expose it once through that archive rather than beside its source
-        # row.  This keeps normal monthly prose from being tripled by source,
-        # gazette, and chapter read models.
+        # expose it once through that archive rather than beside its source row.
         and (
             int(row.get("turn") or 0) not in projected_turns
             or bool(row.get("excluded_names"))
@@ -753,17 +724,6 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
             db,
             {**row, "office_type": office_type, "office": office_name},
             character_name,
-        )
-    ]
-    report_projection_turns = {
-        int(row.get("turn") or 0) for row in visible_public
-        if str(row.get("source_id") or "").startswith("projection:turn_report:")
-    }
-    visible_public = [
-        row for row in visible_public
-        if not (
-            str(row.get("source_id") or "").startswith("projection:chapter:")
-            and int(row.get("turn") or 0) in report_projection_turns
         )
     ]
     projection_bodies_by_turn: dict[int, list[str]] = {}

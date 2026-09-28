@@ -46,25 +46,13 @@ class _BoomExtractor:
         raise RuntimeError("抽取持续失败·真失败注入")
 
 
-class _CannedEndorsementExtractor:
-    def run(self, _material):
-        class _R:
-            content = '{"endorsements":[]}'
-        return _R()
-
-
 def _fake_settlement_llm(monkeypatch, *, narrative="本月邸报：边饷已清。", delta=None):
-    monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
     monkeypatch.setattr(
         decree_mod, "llm_promulgation_verdicts",
         lambda dossiers, _state, **_kwargs: [
             {"dossier_id": row["id"], "decision": "promulgated"}
             for row in dossiers
         ],
-    )
-    monkeypatch.setattr(
-        decree_mod, "simulate_season_with_payload",
-        lambda *a, **k: (narrative, k.get("simulator_payload") or {}),
     )
     monkeypatch.setattr(session_mod, "write_decree_with_agno", lambda *a, **k: "奉天承运，诏曰……")
     monkeypatch.setattr(
@@ -92,10 +80,6 @@ def web_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
     monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
-    monkeypatch.setattr(
-        agents_mod, "create_endorsement_extractor_agent",
-        lambda *a, **k: _CannedEndorsementExtractor(),
-    )
     # #544 / #1353 r6：高亮判官同属回话后 LLM 边界——离线中和。
     monkeypatch.setattr(web_app, "run_highlight_judge", lambda **_k: [])
     game = web_app.WebGame(fresh=False)
@@ -145,7 +129,9 @@ def _open_night_with_unextracted_reply(game, minister, reply="臣愿肩起此事
     an.ensure_summon_enter(db, nid, minister)
     ctid = db.create_chat_turn(state, minister, "sess-1235", 0, night_id=nid)
     db.persist_minister_reply(minister, int(state.turn), reply, ctid)
-    assert db.count_pending_story_extractions(night_id=nid) >= 1
+
+    assert len(db.list_unextracted_replies(night_id=nid)) >= 1
+
     return nid, ctid
 
 
@@ -275,7 +261,9 @@ def test_true_failure_pending_translation_exits_display(web_game, monkeypatch, t
         assert payload["metrics"][k] == int(game.state.metrics[k])  # 活值，非冻快照
     # 夜保持开（0036 原意），可重按过月
     assert an.get_night(game.db, nid)["status"] == an.NIGHT_STATUS_OPEN
-    assert game.db.count_pending_story_extractions(night_id=nid) >= 1
+
+    assert len(game.db.list_unextracted_replies(night_id=nid)) >= 1
+
     assert game.db.get_story_extract_status(ctid) in ("", "pending")
 
 

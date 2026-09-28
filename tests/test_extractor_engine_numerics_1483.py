@@ -1,7 +1,6 @@
 """#1483 — engine 阈值输入与 P4 叙事输入分界。
 
 ① simulator factions_brief：定性投影 + leverage<=30 语义记号（代码预计算），禁裸数。
-走真实装配：build_simulator_payload。
 """
 
 from __future__ import annotations
@@ -10,7 +9,6 @@ from ming_sim.qualitative import power_band, satisfaction_band
 from ming_sim.simulation import (
     _LEVERAGE_BELOW_SUPPRESSION_MARK,
     _LEVERAGE_SUPPRESSION_LINE,
-    build_simulator_payload,
 )
 
 _SENT_MINXIN = 55
@@ -61,30 +59,3 @@ def _plant(db, state) -> tuple[str, str]:
     assert power_band(_SENT_LEV_LOW) == power_band(_SENT_LEV_MID)
     assert _SENT_LEV_LOW <= _LEVERAGE_SUPPRESSION_LINE < _SENT_LEV_MID
     return low_name, mid_name
-
-
-def test_simulator_factions_brief_qualitative_with_suppression_mark(game):
-    """P1 双向：factions_brief 无裸数 + leverage<=30 含语义记号（代码预计算）。"""
-    db, state, _content = game
-    low_name, mid_name = _plant(db, state)
-
-    payload = build_simulator_payload(state, db, "测试诏", "")
-    brief = str(payload["factions_brief"])
-
-    # —— 无裸数（P4 叙事输入）——
-    assert f"势力{_SENT_LEV_LOW}" not in brief
-    assert f"势力{_SENT_LEV_MID}" not in brief
-    assert f"满意{_SENT_SAT}" not in brief
-    # 定性档仍在
-    assert f"势力{power_band(_SENT_LEV_LOW)}" in brief
-    assert f"满意{satisfaction_band(_SENT_SAT)}" in brief
-
-    # —— 含语义记号；仅 <=30 侧带标（同 band 的 35 不带）——
-    assert _LEVERAGE_BELOW_SUPPRESSION_MARK in brief
-    assert low_name in brief and mid_name in brief
-    # 按分号切段，钉 low 段有标、mid 段无标
-    segments = [s for s in brief.split("；") if s]
-    low_seg = next(s for s in segments if s.startswith(low_name))
-    mid_seg = next(s for s in segments if s.startswith(mid_name))
-    assert _LEVERAGE_BELOW_SUPPRESSION_MARK in low_seg, low_seg
-    assert _LEVERAGE_BELOW_SUPPRESSION_MARK not in mid_seg, mid_seg

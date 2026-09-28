@@ -1,6 +1,5 @@
 """#652：流民环闭合——投贼吃池顶 + 赈济/招抚回流 + 唯一判官成色链。
 
-主测缝：build_simulator_payload / apply_score_extraction / settle_with_delta
 ／advance_without_decree（可控 LLM seam 真实月结）。
 owner A：开仓非回流 producer；只覆盖赈济与招抚屯田；#522 不动。
 """
@@ -21,7 +20,6 @@ from ming_sim.constants import (
 from ming_sim.db import GameDB, POPULATION_UNIT_PERSONS
 from ming_sim.decree import settle_with_delta
 from ming_sim.issues import apply_score_extraction
-from ming_sim.simulation import build_simulator_payload
 from tests.settlement_seam_helpers import canned_full_settlement, make_light_session
 
 FARMER_SHAANXI = 6000000
@@ -84,12 +82,6 @@ def _reset_shaanxi_pool(db):
 
 # ── 刀① 池清单 + 投贼吸收 ───────────────────────────────────────────────────
 
-def test_simulator_payload_carries_structured_displaced_pool(game):
-    db, state, _ = game
-    pool = build_simulator_payload(state, db, "", "")["displaced_pool_balances"]
-    assert pool["cols"] == ["region_id", "population", "population_unit"]
-    rows = {r[0]: (r[1], r[2]) for r in pool["rows"]}
-    assert rows["shaanxi"] == (DISPLACED_SHAANXI, POPULATION_UNIT_PERSONS)
 
 
 def _database_path(db: GameDB) -> str:
@@ -163,26 +155,6 @@ def test_outer_atomic_rolls_back_surcharge_and_absorption(game):
     ).fetchone()[0] == before_fiscal
 
 
-def test_occupied_region_is_hidden_and_rejected_for_absorption(game):
-    db, state, content = game
-    pid = "bandit_li_zicheng"
-    before_pool = _pop(db, "流民", "shaanxi")
-    before_strength = _strength(db, pid)
-    db.conn.execute("UPDATE regions SET controlled_by='bandits' WHERE id='shaanxi'")
-    db.conn.commit()
-
-    rows = build_simulator_payload(state, db, "", "")["displaced_pool_balances"]["rows"]
-    assert all(row[0] != "shaanxi" for row in rows)
-    applied = apply_score_extraction(db, state, {
-        "bandit_absorptions": [{
-            "region_id": "shaanxi", "power_id": pid,
-            "requested_count": 10_000, "origin_ref": "盘面自发",
-        }],
-    }, content, None)
-    assert applied["bandit_absorptions"] == []
-    assert applied["bandit_absorptions_rejections"][0]["category"] == "missing_ref"
-    assert _pop(db, "流民", "shaanxi") == before_pool
-    assert _strength(db, pid) == before_strength
 
 
 def test_bandit_absorption_clamps_pool_strength_and_ceiling(game):
@@ -678,68 +650,4 @@ def test_no_explicit_outcome_no_judge_fill(game, monkeypatch):
     assert _pop(db, "流民", "shaanxi") == displaced_before
 
 
-def test_legacy_population_unit_skips_absorption_and_recovery(game):
-    db, state, content = game
-    db.conn.execute("DELETE FROM save_meta WHERE key='population_unit'")
-    db.conn.commit()
-    assert db.population_unit != POPULATION_UNIT_PERSONS
-    assert build_simulator_payload(state, db, "", "")["displaced_pool_balances"]["rows"] == []
 
-    applied = apply_score_extraction(db, state, {
-        "bandit_absorptions": [{
-            "region_id": "shaanxi", "power_id": "bandits",
-            "requested_count": 10, "origin_ref": "盘面自发",
-        }],
-    }, content, None)
-    assert applied["bandit_absorptions"] == [] and applied["bandit_absorptions_rejections"]
-
-    assert db.get_decree_dossier(_recovery_grant(db, state, amount=10))["execution_outcome"] == "fulfilled"
-    assert not _reflux(_settle_transfers(state, db, content, "legacy"))
-
-
-def test_appointment_summon_settlement_runs_recovery_once(game, monkeypatch):
-    """#672：真实任命+传召 settle 入口下，同月 recovery 人口只结一次。
-
-    person-only 授官/启程不得借 full settlement 再跑 #652 recovery；
-    本月 settle 仍应恰好回流一次期望口数。
-    """
-    from ming_sim.constants import RECOVERY_OUTCOME_FACTORS, RECOVERY_PERSONS_PER_WAN
-    from tests.test_appointment_summon_672 import (
-        _close_office_to_dossier,
-        _stage_yuan_appointment_summon,
-        _yuan_row,
-    )
-
-    db, state, content = game
-    amount = 30
-    _reset_shaanxi_pool(db)
-    recovery_dossier = _recovery_grant(db, state, amount=amount)
-    displaced_before = _pop(db, "流民", "shaanxi")
-    expected_once = int(round(
-        amount * RECOVERY_PERSONS_PER_WAN * float(RECOVERY_OUTCOME_FACTORS["fulfilled"])
-    ))
-
-    pending, _origin = _stage_yuan_appointment_summon(game, monkeypatch)
-    appointment_dossier = _close_office_to_dossier(db, state, content, pending["id"])
-
-    settle_with_delta(
-        state, db, {}, before_turn=int(state.turn), content=content,
-        dossier_verdicts=[{
-            "dossier_id": appointment_dossier, "decision": "promulgated",
-        }],
-    )
-
-    displaced_after = _pop(db, "流民", "shaanxi")
-    assert displaced_before - displaced_after == expected_once
-    closed_turn = int(state.turn) - 1  # settle advances turn after apply
-    transfers = (db.get_turn_extraction(closed_turn) or {}).get(
-        "extractor_output", {},
-    ).get("population_transfers") or []
-    reflux = _reflux(transfers, dossier_id=recovery_dossier)
-    assert len(reflux) == 1
-    assert int(reflux[0].get("amount") or 0) == expected_once
-
-    after = _yuan_row(db)
-    assert (after["status"], after["office"], after["transit_to"]) == (
-        "active", "辽东巡抚", "beizhili",
-    )

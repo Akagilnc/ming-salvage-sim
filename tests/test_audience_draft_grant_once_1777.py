@@ -16,7 +16,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from tests.test_army_pay_decree_1503 import _set_guanning_arrears
+from tests.army_pay_helpers import _set_guanning_arrears
 from tests.conftest import offline_empty_audience_translate, stub_audience_translate, stub_scene_agent
 
 _EDICT = "着户部自国库拨银十五万两，专解关宁军前补发欠饷，不得加派于民。钦此。"
@@ -131,7 +131,7 @@ def test_http_audience_one_matter_grant_with_deadline_1783(
 
         client = TestClient(web_app.app)
         petition = client.post(
-            f"/api/ministers/{name}/chat",
+            "/api/audience/chat",
             json={"message": _UTTERANCE},
         )
         assert petition.status_code == 200, petition.text
@@ -157,7 +157,7 @@ def test_http_audience_one_matter_grant_with_deadline_1783(
             for p in pending
         )
 
-        confirm = client.post(f"/api/ministers/{name}/chat", json={"message": "准"})
+        confirm = client.post("/api/audience/chat", json={"message": "准"})
         assert confirm.status_code == 200, confirm.text
         game._runtime_write_queue().barrier(lambda: None)
         wait_pending_writes(game)

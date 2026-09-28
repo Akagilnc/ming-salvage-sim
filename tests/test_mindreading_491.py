@@ -2,7 +2,7 @@
 
 from dataclasses import replace
 
-from ming_sim.mindreading import is_inner_court_attendant
+from ming_sim.audience_night import is_inner_court_attendant
 
 
 def test_attendant_is_selected_by_office_not_name(game):

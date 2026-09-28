@@ -251,7 +251,6 @@ def _drive_resolve_directives(db, state, content, monkeypatch, *, simulator_beha
     """stub 驱动真实 resolve_directives。simulator_behavior: 'fail' / 'decision'。"""
     import ming_sim.decree as decree_mod
 
-    monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
 
     decision_narrative = (
         "本月邸报正文。\n<<DECISION>>"
@@ -264,7 +263,6 @@ def _drive_resolve_directives(db, state, content, monkeypatch, *, simulator_beha
         if simulator_behavior == "fail":
             raise RuntimeError("simulated simulator crash")
         return decision_narrative, k.get("simulator_payload") or {}
-    monkeypatch.setattr(decree_mod, "simulate_season_with_payload", _stub_sim)
 
     return decree_mod.resolve_directives(
         state, db, None, None, [1], "减赋诏",
@@ -393,7 +391,7 @@ def test_guarded_early_return_does_not_consume_pending(game):
     早退路事务外 commit 会造成跨事务半写。孤儿防线由终端路测试接管
     （test_advance_paths_atomic 的 settle 回滚/HITL 重抽/advance 各条）。"""
     from ming_sim.decree import pre_settle
-    from tests.test_pending_actions import _active_minister_name
+    from tests.legacy_staging_helpers import _active_minister_name
     db, state, content = game
     name = _active_minister_name(db, content)
 

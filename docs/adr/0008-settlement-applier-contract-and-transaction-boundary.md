@@ -18,13 +18,13 @@ Status: accepted（实现分波次,见末节;#73 产出问题 1/4 的答案;r1 �
    - **resolve_context 无条件持久化**:现状只有 HITL 回合才 `save_resolve_context`(decree.py:324)——改为每回合进入后半段前必存(extractor delta + 叙事);**持久化前先过 `validate_delta_shape`——畸形 delta 绝不入 resolve_context**(否则毒 payload 钉进重试真源:apply 永崩、而「重跑 extractor」被「context 已存在」挡死=永久 soft-lock),校验失败响亮报错、重跑 extractor 重新生成;**清理在后半段事务内作最后一笔**(commit 后再清会留「已提交但 context 残留」的崩溃窗口)。重跑保证收窄为:**不重跑 simulator/extractor(贵的两步)**——同进程重试用内存产出,跨进程恢复从 resolve_context 重灌;章节记忆/结局总评产出**不入** resolve_context,崩在其后重试会重调这两个便宜调用(可接受)。
    - **pre_settle 自成事务 + 完成相位**:pre_settle(暂存动作 commit + 固定财政 + auto_trigger,**连同推演前的其余确定性写如 `auto_submit_due_secret_orders`,decree.py:240——一并纳入,不留事务外散写**)整体包成**自己的单事务**,完成时**同事务内**落中间相位(如 `settling`)——崩在内部=回滚=相位未变=重进时**干净重跑前半段**。**`settling` 只意味着「前半段已完成,不再重跑 pre_settle」,不意味着后半段就绪**:恢复入口先查 resolve_context——有(extractor 已产出)→ 直入 apply 重试;无(崩在推演/抽取期间)→ **重跑 simulator/extractor**(此窗口的 LLM 产出本就没持久化,重跑是唯一选择,与决定 3 第一条的「不重跑」承诺不冲突——那条只覆盖 resolve_context 已存在的情形)。⚠️ `settling` 必须加进 `begin_turn` 的相位保活白名单(session.py:432-436,白名单外的相位重载即被重置回 summoning,守门失效——`awaiting_decision` 当年就为此补过)。验收测试=崩溃重载于 settling 不二次财政 tick、崩于 pre_settle 内部财政不缺账、崩于推演期间恢复后能重新推演并结算。
    - **内存态与 DB 同源恢复**:DB 回滚**不会**还原内存副作用(`state.metrics` 直加 flows.py:192、`content.characters`/registry 注册、`state.next_period()`)。事务期内**正常写内存**(后续逻辑要读,不搞选择性推迟——那会让事务内读到新旧混杂);回滚后重跑前把 state/content/registry 统一从 DB 重载(与 restore 同路径)。
-   〔重构衔接：本条 resolve_context 无条件持久化与 ready=1 重放仅属 legacy 整段流程，分段流程不使用它们；恢复真源见 #1846。pre_settle 自事务、settling 相位与内存态重载保留。〕
+   〔#1846 2026-09-28：ready=1 持久 delta 与其重放、重演已删除；resolve_context 仅保留本月诏书/payload/来源等过月上下文。恢复真源 = 暂存声明与落账相位。pre_settle 自事务、settling 相位与内存态重载、错误包保留。〕
 
 4. **事务内 LLM 调用边界**:后半段含章节记忆/结局总评两个 LLM 调用,其失败**沿用现行降级保底、不触发回滚**(memories.py「不抛断游戏」铁律)——只有代码异常触发回滚。持锁横跨分钟级 LLM 在 CLI 串行下可接受(探针走 CLI);实现**可自由**先收集 LLM 产出、再开短事务集中写入以减持锁时长,只要「章节记忆在结局判定前」等顺序不变式保持——本 ADR 只约束写入的原子性,不约束持锁方案。 〔重构衔接：上述后半段 LLM 边界仅属 legacy；分段流程的收尾顺序见 #1843／#1845。〕
 
 5. **拒收报告,分析优先**:拒收记录落库为结构化行(turn/section/原 item/原因/类别/**source**),**DB 为分析真源**,支撑「哪个 section 最常被喂脏」聚合;镜像到可回收 jsonl 须**内存缓冲、事务 commit 成功后才 append**(事务内写文件回滚不掉=回滚后留脏行);行带 turn+attempt 标记,attempt 计数**不从 DB 取**(随回滚重置),从错误目录已有文件推导。**provenance 进契约**:适配器入参带 `source: player_decree|hitl_decision|secret_order|system_simulation|unknown`(由 extractor/driver 灌注;现 schema 无通用来源字段,仅 issue 有 origin_kind——PR1 扩展)。**玩家可见性按 source 字段 gate**:仅 `player_decree`/`hitl_decision` 来源的拒收,邸报给一句 in-world 提示(如「有司奏:某事窒碍未行」);系统推演来源对玩家安静。〔2026-09-09 后出注记（proposed，随重构设计待评审）：[0153](0153-v2-world-record-and-two-way-mediation.md) 末段 / 决策票 #1820——拒收当事实回给同一场推演者自行处置，邸报提示句由推演者据实编话、代码不另加；拒收留痕与 DB 分析真源不变。〕
 
-6. **中止与错误包**:代码异常中止时,玩家见「本月结算失败,进度已保存,可重试」;同时自动落错误包到**用户可写目录**(走 paths.py 的 user-data helper——frozen 打包下 `data/` 相对路径不可写),内容=traceback + 当回合 delta JSON + resolve context + **存档副本(SQLite,仅用 `conn.backup()` API——WAL 模式直接 copy 文件得坏/旧快照;`wal_checkpoint` 后拷贝在 checkpoint→拷贝窗口仍可能混入并发写,不采用)** + manifest(db 路径/turn/版本号/attempt)。重试仍炸(同一 apply 异常反复)→ 先提供**「重新推演」**逃生口(清 resolve_context、重跑 simulator/extractor 重产 delta;原 delta 已在错误包留档不丢证据)→ 仍不行才引导发错误包 + 冻结该局存档、换开新局;**不提供「跳过本月结算」**(=自愿半落库,污染盘面与试玩反馈)。〔重构衔接：本条错误包要求保留；上述清 resolve_context 重演方式仅属 legacy。分段恢复由 #1846 承接，玩家失败与重试呈现统一见 [0158](0158-v2-frontend-receives-audience-month-and-recovery.md)，此处不另定义恢复路径。〕
+6. **中止与错误包**:代码异常中止时,玩家见「本月结算失败,进度已保存,可重试」;同时自动落错误包到**用户可写目录**(走 paths.py 的 user-data helper——frozen 打包下 `data/` 相对路径不可写),内容=traceback + 当回合 delta JSON + resolve context + **存档副本(SQLite,仅用 `conn.backup()` API——WAL 模式直接 copy 文件得坏/旧快照;`wal_checkpoint` 后拷贝在 checkpoint→拷贝窗口仍可能混入并发写,不采用)** + manifest(db 路径/turn/版本号/attempt)。重试仍炸(同一 apply 异常反复)→ 先提供**「重新推演」**逃生口(清 resolve_context、重跑 simulator/extractor 重产 delta;原 delta 已在错误包留档不丢证据)→ 仍不行才引导发错误包 + 冻结该局存档、换开新局;**不提供「跳过本月结算」**(=自愿半落库,污染盘面与试玩反馈)。〔#1846 2026-09-28：错误包要求保留；清 resolve_context 重演（ready 重放）已删除。分段恢复由 #1846 承接，玩家失败与重试呈现统一见 [0158](0158-v2-frontend-receives-audience-month-and-recovery.md)。〕
 
 7. **不建自动回收 telemetry**(探针期过早工程化)。试玩形态=**试玩者本地跑**(不考虑作者托管 web),回收唯一路径=手动发错误目录——中止提示必须自带指引(写明完整路径+「请把它发给作者」),拒收 jsonl 与错误包集中同一目录,一次打包全带走。
 
@@ -46,10 +46,10 @@ Status: accepted（实现分波次,见末节;#73 产出问题 1/4 的答案;r1 �
 ## Consequences
 
 - **后半段**半落库在结构上不可达:apply 全落或回合停在可重试态;pre_settle 效果保持已落(设计使然)。
-- 重试不重跑 simulator/extractor(resolve_context 为真源);章节记忆/结局总评便宜调用可能重调(决定 3/4 接受);崩在推演期间的恢复须重新推演(该窗口产出未持久化)。
+- 〔#1846 2026-09-28：resolve_context 不再是 ready delta 重跑真源；过月恢复以暂存声明与落账相位为准，已落不动。〕
 - 新实体类型落库 = 写一个适配器,错误语义免费继承——M3 财政 port(#66)的 settle_tick 直接做成适配器。
 - #14(静默吞)从 127 个 except 逐个修,变成 17 个 section 迁一个契约;#63 的拒收目录由结构化报告自动产出。
 - 邸报一句话提示与「瘦裁判」(CONTEXT.md)分工一致:裁判拦一致性错误并留痕,不算历史判断。
-- driver(ADR 0004)走同一结算核,自动获得事务+重跑语义;driver 无聊天/LLM 路径,provenance 由其 delta 信封灌注。
+- 〔#1846/#1843 2026-09-28：driver 与 ready 重跑语义已删除；玩家链走 month_chain，恢复真源见 #1846。〕
 
 〔2026-09-10 后出注记：#1820 拍的「拒收当事实回给同一场推演者、改口重交」随核算反馈驱动的同场续演循环取消——拒收项留痕、本月不重交，作为实况进入邸报作者供料与下月材料（密令来源的只走密报）；落账及拒收承接见 #1843，邸报供料见 #1862；决策缘由见 [0157](0157-v2-month-waits-for-exhausted-model-call-recovery.md) 与 [0153](0153-v2-world-record-and-two-way-mediation.md) 后出注记二。本条其余拒收留痕规则不变。〕

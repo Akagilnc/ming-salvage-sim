@@ -319,7 +319,7 @@ def build_minister_tools(character: Character, context: CourtContext):
         # 恢复窗总闸（PR #90 R2 codex P2）：FRONT_HALF_DONE 时四个 action 都是
         # settle 重试事务边界外的直写，重放中止回滚不回滚它们——dispatcher 一处冻全部。
         if context.state.turn_phase in FRONT_HALF_DONE_PHASES:
-            return "本月结算未完（恢复中），密令房暂不办事；请先续跑结算，再行降旨。"
+            return "本月结算未完（恢复中），密令房暂不办事；请先点「重试」完成过月，再行降旨。"
         act = (action or "").strip().lower()
         if act == "issue":
             return _secret_order_issue(
@@ -525,7 +525,7 @@ def build_minister_tools(character: Character, context: CourtContext):
         reason：催办缘由（简短）。
         """
         if context.state.turn_phase in FRONT_HALF_DONE_PHASES:
-            return "本月结算未完（恢复中），暂不能催办承诺；请先续跑结算。"
+            return "本月结算未完（恢复中），暂不能催办承诺；请先点「重试」完成过月。"
         try:
             iid = int(issue_id)
         except (TypeError, ValueError):

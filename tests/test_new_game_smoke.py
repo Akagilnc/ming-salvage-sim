@@ -1,6 +1,6 @@
-"""新档冒烟（#96 release 清单 / #92 E2E 确定性核）：开新档 → driver.run_settle 跑 3 回合全链
-（pre_settle 固定财政 tick → settle_with_delta 落库/inertia/结局/推进，同真实核 ADR 0004）→
-restore 接续。含 #66 省级财政基座 shadow 推进的真实链路验证。无需 LLM（driver 收确定性 delta）。
+"""新档冒烟（#96 release 清单 / #92 E2E 确定性核）：开新档 → prepare+settle 跑 3 回合全链
+（pre_settle 固定财政 tick → settle_with_delta 落库/inertia/结局/推进）→
+restore 接续。含 #66 省级财政基座 shadow 推进的真实链路验证。无需 LLM。
 
 实玩（真 LLM 邸报/extractor + 浏览器多机兼容）是另一层，需真人 + LLM 后端，不在本确定性冒烟内。
 """
@@ -17,7 +17,6 @@ from ming_sim.db import GameDB
 import ming_sim.issues as issues_mod
 from ming_sim.models import LLMConfig
 from ming_sim.session import GameSession
-from driver import open_game
 from tests.section_rejection_helpers import prepare_then_settle as run_settle
 
 
@@ -177,8 +176,12 @@ def test_new_game_three_turn_chain_advances_substrate_and_restores(fresh_game_di
 
     # restore：关库重开 → 状态接续（turn 一致 + 基座仍在）
     db.close()
-    db2, state2, _content2 = open_game(dbp)
+    content2 = GameContent.load()
+    bind_content(content2)
+    issues_mod.bind_content(content2)
+    db2 = GameDB(dbp, content2)
     try:
+        state2 = db2.load_state()
         assert state2.turn == state.turn, "restore 接续：turn 一致"
         assert _shaanxi_settle(db2) is not None, "restore 后 #66 基座仍在 DB"
     finally:

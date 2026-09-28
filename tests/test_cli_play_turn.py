@@ -635,7 +635,7 @@ def test_play_turn_reports_secret_order_failure_when_settlement_aborts(monkeypat
 def test_terminal_minister_chat_accepts_retry_reply_command(game, monkeypatch):
     """#1716 CLI：minister_chat「重试回话」成功收夜后返回 court_break，关夜且无 presence。
 
-    入口仍是 minister_chat 的重试命令；route 保持、不重记问话既有契约一并覆盖。
+    入口仍是 minister_chat 的重试命令；不重记问话既有契约一并覆盖。
     """
     import types
 
@@ -648,7 +648,6 @@ def test_terminal_minister_chat_accepts_retry_reply_command(game, monkeypatch):
     ct = db.create_chat_turn(
         state, character.name, f"cli:{character.name}", 0,
         night_id=night_id, status="generating",
-        route="offsite",
     )
     mid = db.append_chat_message(character.name, state.turn, "user", question)
     db.update_chat_turn_messages(ct, user_message_id=mid)
@@ -668,8 +667,6 @@ def test_terminal_minister_chat_accepts_retry_reply_command(game, monkeypatch):
         session_ids={},
     )
     sess._audience_prompt_for_message = lambda msg, character=None, chat_turn_id=0, **_kw: msg
-    sess._start_cli_action_intent = lambda *_a, **_k: None
-    sess._finish_cli_action_intent = lambda *_a, **_k: None
     sess.close_night_after_chat_if_needed = types.MethodType(
         GameSession.close_night_after_chat_if_needed, sess,
     )
@@ -693,11 +690,10 @@ def test_terminal_minister_chat_accepts_retry_reply_command(game, monkeypatch):
     assert term.minister_chat(sess, character) == "court_break"
 
     row = db.conn.execute(
-        "SELECT status, minister_message_id, route FROM chat_turns WHERE id=?", (ct,),
+        "SELECT status, minister_message_id FROM chat_turns WHERE id=?", (ct,),
     ).fetchone()
     assert row["status"] == "active"
     assert row["minister_message_id"]
-    assert str(row["route"] or "") == "offsite"
 
     # #1842：回话返回后后台 schedule 封夜；等外部可见 CLOSED（禁假定同步）。
     from tests.wait_utils import wait_until
@@ -742,7 +738,7 @@ def test_play_turn_hitl_advancement_ends_turn(game, monkeypatch, action):
     db.save_resolve_context(
         turn_before, "测试诏书", "月报",
         {"candidate_events": [], "transit_semantics": []},
-        secret_orders=[], relevant_memories=[],
+        secret_orders=[],
     )
     db.save_turn_report(state, "邸报已成")
 

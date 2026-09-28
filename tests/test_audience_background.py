@@ -121,15 +121,6 @@ class _FakeSession(HallAdmissionSessionMixin):
     def _character(self, minister_name: str):
         return self.content.characters[minister_name]
 
-    def _start_cli_action_intent(self, _character, _message):
-        return None
-
-    def _finish_cli_action_intent(self, _future):
-        return None
-
-    def _confirmation_intent_for_preexisting_pending(self, *args, **kwargs):
-        return GameSession._confirmation_intent_for_preexisting_pending(self, *args, **kwargs)
-
     def _stage_appointment_candidate(self, *args, **kwargs):
         return GameSession._stage_appointment_candidate(self, *args, **kwargs)
 
@@ -142,9 +133,6 @@ class _FakeSession(HallAdmissionSessionMixin):
 
     def _audience_prompt_for_message(self, message, *_a, **_kw):
         return f"【增强上下文】{message}"
-
-    def apply_cli_conversation_actions(self, *_args, **_kwargs):
-        return {"directive": None, "secret_order_id": None, "pending_action_id": 0}
 
     def pending_count(self) -> int:
         return 0
@@ -192,7 +180,6 @@ def _web_game(db, state, content, agent: _FakeAgent, monkeypatch=None) -> WebGam
     game = WebGame.__new__(WebGame)
     game.session = _FakeSession(db, state, content, agent)
     game.chat_history = {name: [] for name in content.characters}
-    game.suggestions_for = lambda _character: []
     from ming_sim.session_write_queue import SessionWriteQueue
     game._write_queue = SessionWriteQueue()
     game._write_gate = game._write_queue.write_gate
@@ -241,7 +228,7 @@ def test_chat_stream_observer_departure_after_acceptance_still_completes_turn(ga
     agent = _FakeAgent()
     web_game = _web_game(db, state, content, agent, monkeypatch)
 
-    stream = web_game.chat_stream(minister_name, "户部钱粮如何？")
+    stream = web_game.chat_stream("殿上", "户部钱粮如何？")
     _assert_next_accepted(stream)
     assert next(stream) == {"type": "delta", "content": "臣"}
 
@@ -250,59 +237,11 @@ def test_chat_stream_observer_departure_after_acceptance_still_completes_turn(ga
     assert agent.completed.wait(5), agent.calls
     # fixture 关闭共享 DB 前必须等 queue + 本 owner 转译 ledger 终态（禁盲等 history）。
     _wait_for_pending_writes_to_drain(web_game)
-    assert web_game.chat_history[minister_name] == [
+    assert web_game.chat_history["殿上"] == [
         {"role": "user", "content": "户部钱粮如何？"},
         {"role": "minister", "content": "臣遵旨。"},
     ]
-    assert db.can_undo_last_chat_turn(minister_name, state.turn)
-
-
-def test_chat_reload_exposes_retryable_failed_secret_order(game):
-    db, state, content = game
-    minister_name = "毕自严"
-    web_game = _web_game(db, state, content, _FakeAgent())
-    secret_id = db.stage_pending_action(
-        state.turn, kind="secret_order", action="新建", minister_name=minister_name, target_id=None,
-        payload={"title": "暗查辽饷", "content": "密查辽饷去向", "assignee": minister_name},
-    )
-    db.stage_pending_action(
-        state.turn, kind="office", action="任命", minister_name=minister_name, target_id=None,
-        payload={"text": "测试任免原文", "name": "测试新臣", "office": "太常寺卿"},
-    )
-    db.conn.execute("UPDATE pending_actions SET status='failed'")
-    db.conn.commit()
-
-    failures = web_game.pending_action_failures_for(minister_name)
-
-    assert len(failures) == 1
-    assert failures[0]["id"] == secret_id
-    assert failures[0]["kind"] == "secret_order"
-    assert "密令" in failures[0]["message"]
-
-
-def test_undo_chat_response_preserves_retryable_failed_secret_order(game):
-    db, state, content = game
-    minister_name = "毕自严"
-    web_game = _web_game(db, state, content, _FakeAgent())
-    failed_id = db.stage_pending_action(
-        state.turn, kind="secret_order", action="新建", minister_name=minister_name, target_id=None,
-        payload={"title": "暗查辽饷", "content": "密查辽饷去向", "assignee": minister_name},
-    )
-    db.conn.execute("UPDATE pending_actions SET status='failed' WHERE id=?", (failed_id,))
-    db.conn.commit()
-    chat_turn_id = db.create_chat_turn(state, minister_name, "undo-failure-refresh", 0)
-    db.update_chat_turn_messages(
-        chat_turn_id,
-        db.append_chat_message(minister_name, state.turn, "user", "无关问话"),
-        db.append_chat_message(minister_name, state.turn, "minister", "臣谨奏。"),
-    )
-    assert db.can_undo_last_chat_turn(minister_name, state.turn)
-
-    out = web_game.undo_last_chat(minister_name)
-
-    failures = out["pending_action_failures"]
-    assert [f["id"] for f in failures] == [failed_id]
-    assert "密令" in failures[0]["message"]
+    assert db.can_undo_last_chat_turn("殿上", state.turn)
 
 
 def test_newer_interrupted_turn_blocks_withdrawal_of_completed_turn(game):
@@ -343,203 +282,7 @@ def test_withdrawal_under_web_write_gate_returns_undone_turn(game):
     assert db.get_last_active_chat_turn(minister_name, state.turn) is None
 
 
-def test_stream_tool_staged_secret_order_merges_emperor_not_reply(game, monkeypatch):
 
-    """#413/#405/#1274 K1：web streaming tool-call 并御旨；reply 不入 content。"""
-    db, state, content = game
-    minister_name = "毕自严"
-    tool_payload = json.dumps({
-        "title": "密查辽饷",
-        "content": "密查辽饷去向。",
-        "assignee": minister_name,
-        "tags": ["辽饷"],
-        "deadline_months": 3,
-    }, ensure_ascii=False)
-    agent = _FakeAgent(
-        [ToolExec("issue_secret_order", f"__secret_order__{tool_payload}")],
-        chunks=["臣当", "先封存兵部辽饷册，再密访关宁诸将。"],
-    )
-    web_game = _web_game(db, state, content, agent, monkeypatch)
-
-    payload = web_game._chat_stream_payload(
-        minister_name,
-        "密令如下：密查辽饷去向，三月内回奏，不可声张。",
-        chat_turn_id=0,
-        before_snapshot={},
-        accepted_turn=state.turn,
-        emit_delta=lambda _chunk, replace=False: None,
-    )
-
-    pending = db.list_pending_actions(state.turn)
-    assert len(pending) == 1
-    assert payload["pending_action_id"] == pending[0]["id"]
-    staged = json.loads(pending[0]["payload_json"])
-    assert "密查辽饷去向" in staged["content"]
-    assert "三月内回奏" in staged["content"]
-    assert "不可声张" in staged["content"]
-    # reply 散文补充未走 tool/extractor 字段 → 不入 content
-    assert "封存兵部辽饷册" not in staged["content"]
-
-
-def test_stream_confirmation_ignores_same_turn_secret_order_tool_output(game, monkeypatch):
-    """streaming 路径确认旧 pending 时，也不能把同轮 tool sentinel 留成新 pending。"""
-    db, state, content = game
-    minister_name = "毕自严"
-    db.stage_pending_action(
-        state.turn, kind="secret_order", action="新建", minister_name=minister_name, target_id=None,
-        payload={
-            "title": "旧候选",
-            "content": "旧候选内容",
-            "assignee": minister_name,
-            "tags": [],
-            "deadline_months": 0,
-            "covert_task": TYPED_COVERT_TASK,
-        },
-    )
-    tool_payload = json.dumps({
-        "title": "同句新令",
-        "content": "同句新令内容",
-        "assignee": minister_name,
-        "tags": [],
-        "deadline_months": 0,
-    }, ensure_ascii=False)
-    monkeypatch.setattr(
-        cb,
-        "_run_api_for_config",
-        lambda *a, **k: (json.dumps({"确认": "应允"}, ensure_ascii=False), 1),
-    )
-    agent = _FakeAgent(
-        [ToolExec("secret_order", f"__secret_order__{tool_payload}")],
-        chunks=["臣", "遵旨。"],
-    )
-    web_game = _web_game(db, state, content, agent, monkeypatch)
-    web_game.session.apply_cli_conversation_actions = types.MethodType(
-        GameSession.apply_cli_conversation_actions, web_game.session)
-
-    payload = web_game._chat_stream_payload(
-        minister_name,
-        "准了",
-        chat_turn_id=0,
-        before_snapshot={},
-        accepted_turn=state.turn,
-        emit_delta=lambda _chunk, replace=False: None,
-    )
-
-    assert payload["pending_action_id"] == 0
-    orders = db.list_secret_orders()
-    assert len(orders) == 1
-    assert orders[0]["title"] == "旧候选"
-    assert db.list_pending_actions(state.turn) == []
-
-
-def test_stream_secret_order_tool_blocked_in_recovery_window(game):
-    """FRONT_HALF_DONE 恢复窗内，streaming tool sentinel 不得新 stage 密令。"""
-    from ming_sim.models import TurnPhase
-
-    db, state, content = game
-    state.turn_phase = TurnPhase.SETTLING.value
-    minister_name = "毕自严"
-    tool_payload = json.dumps({
-        "title": "恢复窗新令",
-        "content": "恢复窗不应暂存。",
-        "assignee": minister_name,
-        "tags": [],
-        "deadline_months": 0,
-    }, ensure_ascii=False)
-    web_game = _web_game(
-        db,
-        state,
-        content,
-        _FakeAgent([ToolExec("secret_order", f"__secret_order__{tool_payload}")]),
-    )
-
-    payload = web_game._chat_stream_payload(
-        minister_name,
-        "密令如下：恢复窗新令",
-        chat_turn_id=0,
-        before_snapshot={},
-        accepted_turn=state.turn,
-        emit_delta=lambda _chunk, replace=False: None,
-    )
-
-    assert payload["pending_action_id"] == 0
-    assert db.list_pending_actions(state.turn) == []
-
-
-def test_stream_secret_order_plain_tool_result_does_not_stage_empty_candidate(game, monkeypatch):
-
-    """secret_order 工具的普通查询文本不是 sentinel，stream 路不得误建空 pending 新密令。"""
-    db, state, content = game
-    minister_name = "毕自严"
-    agent = _FakeAgent([ToolExec("secret_order", "密令 #1 状态：active。")])
-    web_game = _web_game(db, state, content, agent, monkeypatch)
-
-    payload = web_game._chat_stream_payload(
-        minister_name,
-        "查一下密令进展。",
-        chat_turn_id=0,
-        before_snapshot={},
-        accepted_turn=state.turn,
-        emit_delta=lambda _chunk, replace=False: None,
-    )
-
-    assert payload["pending_action_id"] == 0
-    assert db.list_pending_actions(state.turn) == []
-
-
-def test_chat_stream_uses_session_augmented_audience_prompt(game, monkeypatch):
-
-    """web streaming 应与非流式召对一样把记忆/草案增强 prompt 送给大臣 agent。"""
-    db, state, content = game
-    minister_name = "毕自严"
-    agent = _FakeAgent()
-    web_game = _web_game(db, state, content, agent, monkeypatch)
-
-    web_game._chat_stream_payload(
-        minister_name,
-        "辽饷近况如何？",
-        chat_turn_id=0,
-        before_snapshot={},
-        accepted_turn=state.turn,
-        emit_delta=lambda _chunk, replace=False: None,
-    )
-
-    assert agent.calls[0][0][0] == "【增强上下文】辽饷近况如何？"
-
-
-def test_web_chat_stream_assemble_preserves_leading_trailing_whitespace(game, monkeypatch):
-    """#1842 / P6：WebGame._chat_stream_payload 拼装保留首尾空白；.strip() 变异须红。
-
-    复用本文件既有 _web_game / _FakeAgent 真实入口；咬住 web_app._after_stream
-    的 "".join(chunks)（与 session scene 拼装彼此独立）。
-    """
-    db, state, content = game
-    minister_name = "毕自严"
-    raw = "\n  臣顿首。  \n"
-    agent = _FakeAgent(chunks=["\n  ", "臣顿首。", "  \n"])
-    web_game = _web_game(db, state, content, agent, monkeypatch)
-
-    deltas: list[str] = []
-    payload = web_game._chat_stream_payload(
-        minister_name,
-        "辽饷近况如何？",
-        chat_turn_id=0,
-        before_snapshot={},
-        accepted_turn=state.turn,
-        emit_delta=lambda chunk, replace=False: (
-            deltas.append(chunk) if chunk else None
-        ),
-    )
-
-    assert payload["answer"] == raw
-    assert payload["answer"] != payload["answer"].strip()
-    assert "".join(deltas) == raw
-    mid = int(payload.get("minister_message_id") or 0)
-    assert mid > 0
-    persisted = db.conn.execute(
-        "SELECT content FROM chat_messages WHERE id=?", (mid,),
-    ).fetchone()["content"]
-    assert persisted == raw
 
 
 def test_audience_prompt_does_not_expose_unissued_draft_to_uninvolved_minister(game):
@@ -615,7 +358,7 @@ def test_audience_prompt_does_not_create_near_minister_report_for_ordinary_minis
 
 
 class _CliActionSession(_FakeSession):
-    """CLI 路召对：动作经 apply_cli_conversation_actions 落地（密令/pending_action）。"""
+    """殿上召对夹具：直接在 scene_chat 结果上注入密令/pending 标识。"""
 
     def __init__(self, db, state, content, agent, *, secret_order_id=0, pending_action_id=0):
         super().__init__(db, state, content, agent)
@@ -623,23 +366,14 @@ class _CliActionSession(_FakeSession):
         self._pending_action_id = pending_action_id
         self.apply_calls = []
 
-    def apply_cli_conversation_actions(self, *_args, **_kwargs):
-        self.apply_calls.append((_args, _kwargs))
-        return {
-            "directive": None,
-            "secret_order_id": self._secret_order_id,
-            "pending_action_id": self._pending_action_id,
-        }
-
     def scene_chat(self, message, *, chat_turn_id=0, stream_emit=None, minister_name="", on_protagonist_changed=None):
-        # 生产 scene_chat 后接 CLI apply（密令/pending 落地夹具）
         result = GameSession.scene_chat(
             self, message, chat_turn_id=chat_turn_id, stream_emit=stream_emit,
             minister_name=minister_name, on_protagonist_changed=on_protagonist_changed,
         )
-        applied = self.apply_cli_conversation_actions(message, result.answer)
-        result.secret_order_id = int(applied.get("secret_order_id") or 0)
-        result.pending_action_id = int(applied.get("pending_action_id") or 0)
+        self.apply_calls.append((message, result.answer))
+        result.secret_order_id = int(self._secret_order_id or 0)
+        result.pending_action_id = int(self._pending_action_id or 0)
         return result
 
 
@@ -648,7 +382,6 @@ def _cli_web_game(db, state, content, agent, monkeypatch=None, **kwargs) -> WebG
     game = WebGame.__new__(WebGame)
     game.session = _CliActionSession(db, state, content, agent, **kwargs)
     game.chat_history = {name: [] for name in content.characters}
-    game.suggestions_for = lambda _character: []
     from ming_sim.session_write_queue import SessionWriteQueue
     game._write_queue = SessionWriteQueue()
     game._write_gate = game._write_queue.write_gate
@@ -662,49 +395,6 @@ def _cli_web_game(db, state, content, agent, monkeypatch=None, **kwargs) -> WebG
         stub_audience_translate(monkeypatch)
     return game
 
-
-def test_background_audience_secret_order_persists_after_observer_departure(game, monkeypatch):
-    """密令结果：退出观看窗后，后台仍跑完 CLI 动作落地（apply_cli_conversation_actions）
-    并完成回话入档（#383 US5）。"""
-    db, state, content = game
-    minister_name = "毕自严"
-    agent = _FakeAgent()
-    web_game = _cli_web_game(
-        db, state, content, agent, monkeypatch, secret_order_id=4242,
-    )
-
-    stream = web_game.chat_stream(minister_name, "密查盐政亏空。")
-    _assert_next_accepted(stream)
-    assert next(stream)["type"] == "delta"
-    stream.close()
-
-    assert agent.completed.wait(5), agent.calls
-    # 后台跑完：queue + 转译 ledger 终态后断言外部结构化结果（禁盲等 history）。
-    _wait_for_pending_writes_to_drain(web_game)
-    assert len(web_game.session.apply_calls) >= 1
-    assert len(web_game.chat_history[minister_name]) >= 2
-    assert db.can_undo_last_chat_turn(minister_name, state.turn)
-
-
-def test_background_audience_pending_action_persists_after_observer_departure(game, monkeypatch):
-    """pending_action（如调教/任免暂存）：退出后后台仍跑完落地（#383 US6）。"""
-    db, state, content = game
-    minister_name = "毕自严"
-    agent = _FakeAgent()
-    web_game = _cli_web_game(
-        db, state, content, agent, monkeypatch, pending_action_id=77,
-    )
-
-    stream = web_game.chat_stream(minister_name, "着王承恩调教自省。")
-    _assert_next_accepted(stream)
-    assert next(stream)["type"] == "delta"
-    stream.close()
-
-    assert agent.completed.wait(5), agent.calls
-    _wait_for_pending_writes_to_drain(web_game)
-    assert len(web_game.session.apply_calls) >= 1
-    assert len(web_game.chat_history[minister_name]) >= 2
-    assert db.can_undo_last_chat_turn(minister_name, state.turn)
 
 
 def test_background_audience_recommendation_stages_candidate_snapshot(game, monkeypatch):
@@ -740,18 +430,26 @@ def test_background_audience_recommendation_stages_candidate_snapshot(game, monk
     web_game = _web_game(db, state, content, agent, monkeypatch)
     stub_audience_translate(monkeypatch, translate_fn)
 
-    events = list(web_game.chat_stream(minister_name, "可荐何人巡盐？"))
+    stream = web_game.chat_stream("殿上", "可荐何人巡盐？")
+    _assert_next_accepted(stream)
+    assert next(stream)["type"] == "delta"
+    stream.close()  # 离开实时流；转译仍须完成并落持久账。
 
-    player_text = "".join(
-        event.get("content", "") for event in events if event.get("type") == "delta"
-    )
-    # 旧 tool envelope 不得泄漏到玩家可见流
-    assert "[[recommend_person:" not in player_text
-    assert "__pending_recommendation__" not in player_text
-    assert "done" in [e.get("type") for e in events], events
-
-    # 转译后台串行：join owner ledger 后再断言外部 pending 账（禁盲轮询条数）。
+    assert agent.completed.wait(5), agent.calls
     _wait_for_pending_writes_to_drain(web_game)
+    night = db.conn.execute("SELECT id FROM audience_nights ORDER BY id DESC LIMIT 1").fetchone()
+    assert night is not None
+    history = db.build_chat_projection("殿上", int(night["id"]))
+    assert [(row["role"], row["chat_turn_id"]) for row in history] == [
+        ("user", history[0]["chat_turn_id"]),
+        ("minister", history[0]["chat_turn_id"]),
+    ]
+    assert history[0]["chat_turn_id"] > 0
+    web_game.chat_history.clear()  # 刷新/重开不得依赖流式观察者的内存态。
+    assert [
+        (row["role"], row["chat_turn_id"]) for row in web_game.chat_projection("殿上")
+    ] == [(row["role"], row["chat_turn_id"]) for row in history]
+    assert db.can_undo_last_chat_turn("殿上", state.turn)
     pending = db.list_pending_actions(state.turn)
     office_rows = [p for p in pending if p["kind"] == "office"]
     assert len(office_rows) >= 1, pending
@@ -767,7 +465,7 @@ def test_llm_failure_does_not_leave_half_chat_in_history(game, monkeypatch):
     agent = _EmptyAgent()
     web_game = _web_game(db, state, content, agent, monkeypatch)
 
-    events = list(web_game.chat_stream(minister_name, "户部钱粮如何？"))
+    events = list(web_game.chat_stream("殿上", "户部钱粮如何？"))
 
     # #1353 r11：worker 失败双终态 error→end
     types = [e.get("type") for e in events]
@@ -775,7 +473,7 @@ def test_llm_failure_does_not_leave_half_chat_in_history(game, monkeypatch):
     assert types[-1] == "end", events
     assert types[types.index("error") + 1] == "end", types
     assert agent.completed.is_set(), events
-    assert web_game.chat_history[minister_name] == [{"role": "user", "content": "户部钱粮如何？"}]
+    assert web_game.chat_history["殿上"] == [{"role": "user", "content": "户部钱粮如何？"}]
     assert db.conn.execute("SELECT COUNT(*) FROM chat_messages").fetchone()[0] == 1
     row = db.conn.execute("SELECT status FROM chat_turns").fetchone()
     assert row["status"] == "interrupted"
@@ -809,7 +507,6 @@ def test_background_audience_failure_after_action_rolls_back_cleanly(game, monke
     web_game = WebGame.__new__(WebGame)
     web_game.session = _RaisingActionSession(db, state, content, agent)
     web_game.chat_history = {name: [] for name in content.characters}
-    web_game.suggestions_for = lambda _character: []
     from ming_sim.session_write_queue import SessionWriteQueue
     web_game._write_queue = SessionWriteQueue()
     web_game._write_gate = web_game._write_queue.write_gate
@@ -821,7 +518,7 @@ def test_background_audience_failure_after_action_rolls_back_cleanly(game, monke
     stub_scene_agent(monkeypatch, agent)
     stub_audience_translate(monkeypatch)
 
-    events = list(web_game.chat_stream(minister_name, "拟一道清核辽饷的旨。"))
+    events = list(web_game.chat_stream("殿上", "拟一道清核辽饷的旨。"))
 
     # #1353 r11：worker 失败双终态 error→end
     types = [e.get("type") for e in events]
@@ -841,7 +538,7 @@ def test_background_audience_failure_after_action_rolls_back_cleanly(game, monke
         for row in db.list_directives(state, statuses=("pending", "draft"))
     )
     # 回话未落时问话保留为可重试的 interrupted 轮，而非删掉玩家输入。
-    assert web_game.chat_history[minister_name] == [{"role": "user", "content": "拟一道清核辽饷的旨。"}]
+    assert web_game.chat_history["殿上"] == [{"role": "user", "content": "拟一道清核辽饷的旨。"}]
     assert db.conn.execute("SELECT COUNT(*) FROM chat_messages").fetchone()[0] == 1
     assert db.conn.execute("SELECT status FROM chat_turns").fetchone()["status"] == "interrupted"
 
@@ -858,19 +555,25 @@ def test_chat_stream_rejects_second_concurrent_turn_same_minister(game, monkeypa
     web_game = _web_game(db, state, content, agent, monkeypatch)
 
     # 预置一个 in-flight turn（已受理、minister_message_id 仍空 = 后台仍在回奏）
-    db.create_chat_turn(state, minister_name, "sess-inflight", 0)
+    from tests.conftest import open_audience_night
+    night_id = open_audience_night(db, state)
+    db.create_chat_turn(state, "殿上", "sess-inflight", 0, night_id=night_id)
     turns_before = db.conn.execute("SELECT COUNT(*) FROM chat_turns").fetchone()[0]
 
-    events = list(web_game.chat_stream(minister_name, "再问一句。"))
+    events = list(web_game.chat_stream("殿上", "再问一句。"))
 
     assert events[-1]["type"] == "error"
     assert "仍在进行" in str(events[-1].get("message", ""))
     # 未创建第二个并发 turn
     assert db.conn.execute("SELECT COUNT(*) FROM chat_turns").fetchone()[0] == turns_before
     # 一个完成的（可撤回）turn 不算 in-flight：写入 minister_message_id 后应放行新问
-    db.update_chat_turn_messages(
-        db.get_last_active_chat_turn(minister_name, state.turn)["id"], minister_message_id=999)
-    assert web_game._audience_turn_in_flight(minister_name) is False
+    row = db.conn.execute(
+        "SELECT id FROM chat_turns WHERE minister_name=? ORDER BY id DESC LIMIT 1",
+        ("殿上",),
+    ).fetchone()
+    assert row is not None
+    db.update_chat_turn_messages(int(row["id"]), minister_message_id=999)
+    assert web_game._audience_turn_in_flight("殿上") is False
 
 
 def test_chat_stream_closed_before_turn_creation_is_noop(read_game, monkeypatch):
@@ -886,9 +589,9 @@ def test_chat_stream_closed_before_turn_creation_is_noop(read_game, monkeypatch)
     turns_before = db.conn.execute("SELECT COUNT(*) FROM chat_turns").fetchone()[0]
     msgs_before = db.conn.execute("SELECT COUNT(*) FROM chat_messages").fetchone()[0]
 
-    stream = web_game.chat_stream(minister_name, "户部钱粮如何？")
+    stream = web_game.chat_stream("殿上", "户部钱粮如何？")
     stream.close()  # 首次迭代前离开 → 生成器体从未执行 → turn 未创建
 
     assert db.conn.execute("SELECT COUNT(*) FROM chat_turns").fetchone()[0] == turns_before
     assert db.conn.execute("SELECT COUNT(*) FROM chat_messages").fetchone()[0] == msgs_before
-    assert web_game.chat_history[minister_name] == []
+    assert web_game.chat_history.get("殿上", []) == []

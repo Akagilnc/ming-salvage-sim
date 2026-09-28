@@ -297,14 +297,14 @@ def test_questions_hold_rescript_and_gazette_is_required_before_advance(game, mo
     del pending_id
 
 
-def test_player_recovery_discards_legacy_ready_delta(game, monkeypatch):
-    """旧 extractor ready 不能在玩家入口落账；原诏及来源仍用于新月链续跑。"""
+def test_player_recovery_uses_resolve_context_decree_not_ready_delta(game, monkeypatch):
+    """#1846：玩家入口从 resolve_context 原诏续跑；不再存在 ready delta 落账。"""
     db, state, content = game
     turn = int(state.turn)
     decree_mod.pre_settle(state, db, content=content)
     db.save_resolve_context(
         turn, "崩溃前原诏", "旧叙事", {},
-        extracted={"metric_delta": {"民心": -40}}, source="player_decree",
+        source="player_decree",
     )
     support = db.load_state().metrics["民心"]
     _forbid_extractor(monkeypatch)
@@ -314,10 +314,11 @@ def test_player_recovery_discards_legacy_ready_delta(game, monkeypatch):
 
     assert result.stage == "gazette"
     assert int(state.turn) == turn
+    # 无 ready delta：不得出现 metric_delta 级大跳（旧 ready 会 -40）
     assert db.load_state().metrics["民心"] > support - 40
     assert session.last_decree == "崩溃前原诏"
     ctx = db.get_resolve_context(turn)
-    assert ctx["extracted"] is None
+    assert "extracted" not in ctx
     assert ctx["source"] == "player_decree"
 
 
@@ -342,7 +343,7 @@ def test_finish_rescript_phase2_stays_settling_until_advanced(game, monkeypatch)
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
     session = make_light_session(db, state, content)
     session.state.turn_phase = TurnPhase.SETTLING.value
-    session.finish_rescript_phase2({"ready_replay": True}, {})
+    session.finish_rescript_phase2({"apply": None, "summons": [], "revise_keys": [], "batch": None}, {"joined": []})
     assert int(session.state.turn) == closed_turn
     assert session.state.turn_phase == TurnPhase.SETTLING.value
 

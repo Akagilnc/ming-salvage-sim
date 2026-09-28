@@ -44,10 +44,6 @@ class _BoomExtractor:
         raise RuntimeError("抽取持续失败·#1468 负向钉")
 
 
-class _CannedEndorsementExtractor:
-    def run(self, _material):
-        return SimpleNamespace(content='{"endorsements":[]}')
-
 
 class _CannedMinisterAgent:
     """非流式 session.chat 读 agent.run().content（非 generator）。"""
@@ -61,10 +57,6 @@ class _CannedMinisterAgent:
 def _stub_outer_llm_seams(monkeypatch) -> None:
     """只换最外层 LLM 工厂/调用；结算核、收夜、HTTP 路由全真跑。"""
     monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
-    monkeypatch.setattr(
-        agents_mod, "create_endorsement_extractor_agent",
-        lambda *a, **k: _CannedEndorsementExtractor(),
-    )
     # #642：召对/收夜关系判官同属外层 LLM 缝——漏 stub 会在有 window 时真网挂起，
     # 票据不归还 → xdist 下 _wait_pending_writes 墙钟假红。
     # 高亮判官默认 8s 超时——必须零延迟 stub，否则两月链必破速度红线。
@@ -81,7 +73,6 @@ def _stub_outer_llm_seams(monkeypatch) -> None:
         },
     )
     # 月末推演 LLM 边界（sim/extract/拟诏/章记）；resolve_directives 结算核真跑。
-    monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
     monkeypatch.setattr(
         decree_mod,
         "llm_promulgation_verdicts",
@@ -91,11 +82,8 @@ def _stub_outer_llm_seams(monkeypatch) -> None:
     )
     monkeypatch.setattr(
         decree_mod,
-        "simulate_season_with_payload",
-        lambda *a, **k: (
-            "本月邸报：边饷已清，流寇未息。",
-            k.get("simulator_payload") or {},
-        ),
+        "create_ending_summary_agent",
+        lambda *a, **k: None,
     )
     # #1745：结算拒收递话同属外层 LLM 缝——漏 stub 会在有玩家来源拒收时 sk-test 真网 401。
     from tests.section_rejection_helpers import install_settlement_attendant_agent_stub
@@ -211,12 +199,15 @@ def _get_state(client: TestClient) -> dict:
 
 
 def _pending_payload(client: TestClient) -> dict:
-    resp = client.get("/api/audience/extraction/pending")
-    _assert_not_bare_500(resp, step="GET /api/audience/extraction/pending")
+
+    """#1842：待补投影唯一真源 = list_pending_translations → chat.translation_retries。"""
+    resp = client.get("/api/audience/chat")
+    _assert_not_bare_500(resp, step="GET /api/audience/chat")
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert isinstance(body, dict)
-    return body
+    retries = list(body.get("translation_retries") or [])
+    return {"pending": retries, "count": len(retries)}
+
 
 
 def _parse_sse(text: str) -> list[dict]:
@@ -336,7 +327,7 @@ def _play_one_month(
     assert game is not None
 
     chat = client.post(
-        f"/api/ministers/{minister}/chat",
+        "/api/audience/chat",
         json={"message": f"边饷如何？本月{month_label}召对。"},
     )
     _assert_not_bare_500(chat, step=f"{month_label} chat")
@@ -412,7 +403,9 @@ def _plant_extraction_debt(game, minister: str, *, sess_tag: str) -> int:
     an.ensure_summon_enter(game.db, nid, minister)
     ctid = game.db.create_chat_turn(game.state, minister, sess_tag, 0, night_id=nid)
     game.db.persist_minister_reply(minister, int(game.state.turn), "臣愿肩起此事。", ctid)
-    assert int(game.db.count_pending_story_extractions(night_id=nid) or 0) >= 1
+
+    assert int(len(game.db.list_unextracted_replies(night_id=nid)) or 0) >= 1
+
     return int(ctid)
 
 
@@ -560,7 +553,7 @@ def test_issue_1716_offsite_court_break_via_stream(tracer_client, kind, monkeypa
     stub_scene_agent(monkeypatch, agent)
 
     stream = client.post(
-        f"/api/ministers/{remote}/chat/stream",
+        "/api/audience/chat/stream",
         json={"message": "退朝"},
     )
     _assert_not_bare_500(stream, step=f"#1716 chat/stream {kind} 退朝")
@@ -573,16 +566,15 @@ def test_issue_1716_offsite_court_break_via_stream(tracer_client, kind, monkeypa
     done = json.loads(done_raw) if isinstance(done_raw, str) else done_raw
     assert isinstance(done, dict), done
     _assert_court_break_closed(game, done, night_id, remote=remote)
-    if kind == "offsite":
-        # 正式场外：该人本夜回话轮 route 须编码 offsite（非殿上）。
-        turn = game.db.conn.execute(
-            "SELECT route FROM chat_turns "
-            "WHERE night_id=? AND minister_name=? AND status='active' "
-            "ORDER BY id DESC LIMIT 1",
-            (night_id, remote),
-        ).fetchone()
-        assert turn is not None
-        assert str(turn["route"] or "") == "offsite", dict(turn)
+    # 退朝轮仍由殿上入口持久记录。
+    turn = game.db.conn.execute(
+        "SELECT minister_name FROM chat_turns "
+        "WHERE night_id=? AND status='active' "
+        "ORDER BY id DESC LIMIT 1",
+        (night_id,),
+    ).fetchone()
+    assert turn is not None
+    assert str(turn["minister_name"] or "") == "殿上"
 
 
 def test_issue_1716_offsite_court_break_via_nonstream(tracer_client, monkeypatch):
@@ -602,7 +594,7 @@ def test_issue_1716_offsite_court_break_via_nonstream(tracer_client, monkeypatch
     game.session.registry.get = lambda _ch, **_kw: sync
     stub_scene_agent(monkeypatch, sync)
     resp = client.post(
-        f"/api/ministers/{remote}/chat", json={"message": "退朝"},
+        "/api/audience/chat", json={"message": "退朝"},
     )
     _assert_not_bare_500(resp, step="#1716 chat 场外退朝")
     assert resp.status_code == 200, resp.text

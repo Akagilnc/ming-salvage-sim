@@ -15,7 +15,6 @@ attempt 计数**从错误目录已有文件推导**（同 turn 既有目录数�
 
 from __future__ import annotations
 
-import hashlib
 import json
 import traceback
 from datetime import datetime, timezone
@@ -73,12 +72,6 @@ def _read_version() -> str:
         return Path(bundled_path("VERSION")).read_text(encoding="utf-8").strip()
     except Exception:
         return "unknown"
-
-
-def ready_payload_digest(payload: object) -> str:
-    """Stable identity for an ADR0008 persisted ready payload."""
-    canonical = safe_json_dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 _COMPLETE_PACK_FILES = frozenset({
@@ -224,101 +217,9 @@ def write_error_pack(
         "exception_type": type(exc).__name__,
         "exception_message": str(exc),
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        "ready_payload_digest": ready_payload_digest(extracted) if extracted is not None else None,
     }
     (pack_dir / "manifest.json").write_text(
         safe_json_dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
     )
 
     return str(pack_dir)
-
-
-# #671：sim 真成功后、companion join 前的 durable 完成态标记（∈ simulator_payload）。
-# 唯一命中条件：payload.get(KEY) is True。clear_for_resimulation 必剥，避免撞 ADR 0008 重推演。
-ARRIVAL_COMPANION_SIM_DONE_KEY = "arrival_companion_sim_done"
-
-
-def clear_for_resimulation(db: Any, turn: int) -> None:
-    """作废旧 ready 产物：把 resolve_context 降级为非 ready。
-
-    旧核据 ADR 0008 决定 6 重跑 simulator/extractor；玩家入口据 ADR 0157
-    从暂存声明及已落账状态续跑月链，不重放旧 delta。
-
-    **降级而非删行**（cmr S7 r3，2/2）：决定 6 的「清」指清 LLM 段产出（extracted），
-    phase1 字段（叙事/诏书/payload/亲裁上下文）是 HITL 重抽的数据依赖、且是唯一持久副本
-    ——整行删除会把 HITL 叉钉进「awaiting+决策在+context 没了 → phase2 永远拒收」的新
-    软死锁。降级后：settling 叉重试 extracted=None → 恢复分流不命中 → fallthrough 重新
-    推演；旧 HITL 叉保留原诏、来源及已裁记录，续跑玩家月链。
-
-    **settling 相位不清**：pre_settle 前半段确实提交了（固定财政 + 暂存动作），重推演
-    只重跑 LLM 段，前半段不可重跑（否则二次 tick）。
-
-    **单事务原子性**（#656 A2-r4）：rejection 作废标记、该 turn 陈旧票拟行删除、
-    ready context 降级同处一个 `applier.atomic(db)`——中途任何一步失败（如降级写
-    异常）整体回滚，不留「票拟已删、ready 真源仍在」的半作废状态。atomic 内
-    commit 全部暂停，由最外层统一落定。
-    """
-    ctx = db.get_resolve_context(int(turn))
-    with atomic(db):
-        db.conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS rejection_reports (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                turn INTEGER NOT NULL,
-                section TEXT NOT NULL,
-                item_json TEXT NOT NULL,
-                reason TEXT NOT NULL,
-                category TEXT NOT NULL,
-                source TEXT NOT NULL,
-                attempt INTEGER NOT NULL DEFAULT 1,
-                resimulation_invalidated INTEGER NOT NULL DEFAULT 0,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            )
-            """
-        )
-        cols = {str(row[1]) for row in db.conn.execute("PRAGMA table_info(rejection_reports)").fetchall()}
-        if "resimulation_invalidated" not in cols:
-            db.conn.execute(
-                "ALTER TABLE rejection_reports ADD COLUMN resimulation_invalidated INTEGER NOT NULL DEFAULT 0"
-            )
-        # #1730：重模拟只作废结算段拒收；召对段 audience_decree 是玩家已见的 durable 账，
-        # 不得被 clear_for_resimulation 无差别抹掉（0008-D5 玩家来源门依赖未作废行）。
-        db.conn.execute(
-            "UPDATE rejection_reports SET resimulation_invalidated=1 "
-            "WHERE turn=? AND section != 'audience_decree'",
-            (int(turn),),
-        )
-        # #656 A2：重模拟作废与陈旧票拟同生死——ready context 降级的同一作废动作里，
-        # 清掉该 turn 已持久化的 kind='rescript_draft' 行（ADR 0008 决定 6「清 LLM 段
-        # 产出」：票拟行是 LLM 段产出）。否则重跑若抽取为空／降级／分拣人缺位，旧票拟
-        # 会残留并冒充本月头版。phase1 context 与 decision 行不动；复用现表，不建 tombstone。
-        db.conn.execute(
-            "DELETE FROM pending_decisions WHERE turn = ? AND kind = 'rescript_draft'",
-            (int(turn),),
-        )
-        if ctx is None:
-            return
-        # #671：剥 companion 完成态标记——降级后 ready=0 且 narrative/attendant 可非空，
-        # 但不得命中标记，SETTLING fallthrough 仍按 ADR 0008 重跑 simulator。
-        payload = (
-            dict(ctx["simulator_payload"])
-            if isinstance(ctx.get("simulator_payload"), dict)
-            else {}
-        )
-        payload.pop(ARRIVAL_COMPANION_SIM_DONE_KEY, None)
-        db.save_resolve_context(
-            int(turn),
-            str(ctx.get("decree_text") or ""),
-            str(ctx.get("narrative") or ""),
-            payload,
-            # 分组承载是 dict（#48）；兼容在途旧 list 形状的 ctx，二者都透传。
-            secret_orders=ctx.get("secret_orders") if isinstance(ctx.get("secret_orders"), (list, dict)) else {},
-            relevant_memories=ctx.get("relevant_memories") if isinstance(ctx.get("relevant_memories"), list) else [],
-            # 拒收来源随降级保留（#144 cmr r1）：source 是 phase1 持久字段，重抽后
-            # 恢复重放仍需原始 provenance 判玩家可见性；不回传会被默认 system_simulation
-            # 盖掉原 player_decree/hitl_decision，使降级路径静默吞掉玩家可见提示。
-            source=str(ctx.get("source") or "system_simulation"),
-            # #671：王承恩递话随 phase1 字段保留，不得因重模拟降级清空。
-            attendant_message=str(ctx.get("attendant_message") or ""),
-            # 不传 extracted → upsert ready=0：LLM 段产出清除，phase1 字段保留。
-        )

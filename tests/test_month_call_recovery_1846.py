@@ -436,7 +436,6 @@ def test_settlement_recovery_projects_month_call_failure(
     recovery = web_game.state_payload().get("settlement_recovery")
     assert isinstance(recovery, dict)
     assert recovery.get("retryable") is True
-    assert recovery.get("ready_replay") is False
     assert recovery.get("error_pack_path")
     assert "核账期可见原文" in str(recovery.get("message") or "")
     chain = (db.get_resolve_context(turn) or {}).get("simulator_payload", {}).get(

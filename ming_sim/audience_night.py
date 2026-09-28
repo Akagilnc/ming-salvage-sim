@@ -20,8 +20,8 @@ from datetime import datetime, timezone
 from collections.abc import Mapping
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
+from ming_sim.db import normalize_office
 from ming_sim.error_pack import error_packs_root
-from ming_sim.mindreading import is_inner_court_attendant
 from ming_sim.models import GameState
 from ming_sim.participant_roster import is_non_person_participant_name
 
@@ -32,6 +32,29 @@ TAG_ENTER = "入殿"
 TAG_STANDING_ROSTER = "常在员额"
 TAG_MINGFA = "明发"  # 夜内定案的旨在公开层账上标已明发（#502 AC6，供 #459 扩散）
 _MINGFA_ID_PREFIX = "明发#"  # 明发账挂 directive_id 的结构化标（逐条幂等续跑，#502 L6）
+
+_INNER_COURT_ATTENDANT_OFFICES = frozenset({"信邸内官随驾", "御前近臣"})
+
+
+def _character_field(character: object, field: str) -> object:
+    if isinstance(character, Mapping) or hasattr(character, "keys"):
+        try:
+            return character[field]  # type: ignore[index]
+        except (KeyError, IndexError, TypeError):
+            return ""
+    return getattr(character, field, "")
+
+
+def is_inner_court_attendant(character: object) -> bool:
+    """按御前近臣的职位识别近侍，不把具体姓名写死。
+
+    开夜常在员额靠它；近臣资格由当前占据的槽位授予，而非职位描述中碰巧出现的词。
+    """
+    offices = normalize_office(str(_character_field(character, "office") or ""))
+    return any(
+        office in _INNER_COURT_ATTENDANT_OFFICES
+        for office in offices.split(",")
+    )
 
 
 def mingfa_publication_tag(directive_id: int | str) -> str:
@@ -149,12 +172,10 @@ NIGHT_STATUS_CLOSED = "closed"
 
 CLOSE_STEP_COMMIT_OFFICE = 1
 CLOSE_STEP_TRANSFER_CANDIDATES = 2
-CLOSE_STEP_ENDORSEMENT_BOUND = 3
-CLOSE_STEP_FINALIZE = 4
+CLOSE_STEP_FINALIZE = 3
 CLOSE_STEPS = (
     CLOSE_STEP_COMMIT_OFFICE,
     CLOSE_STEP_TRANSFER_CANDIDATES,
-    CLOSE_STEP_ENDORSEMENT_BOUND,
     CLOSE_STEP_FINALIZE,
 )
 
@@ -164,8 +185,8 @@ DEFAULT_IN_FLIGHT_WAIT_S = 30.0
 DEFAULT_IN_FLIGHT_POLL_S = 0.05
 
 # 收夜提交的 night-domain kinds（密令应允即落地，不进收夜提交）
-# Pre-endorsement: only draft-dossier prerequisites (endorsement targets). Final
-# gameplay effects such as consort cultivation run only after endorsement binding.
+# #1842：背书随转译挂载荷、成案继承；不再有 endorsement-bound 水位。
+# 草稿案卷前提（office/directive）先提交；consort 等终局效果在 FINALIZE。
 _CLOSE_COMMIT_KINDS_OFFICE = frozenset({"office"})
 _CLOSE_COMMIT_KINDS_DIRECTIVE = frozenset({"directive"})
 _CLOSE_COMMIT_KINDS_FINAL = frozenset({"consort"})
@@ -324,11 +345,11 @@ def get_open_night(db: Any) -> Optional[Dict[str, Any]]:
     return _hydrate_night(_row_dict(row)) if row is not None else None
 
 
-def night_endorsement_bound(night: Optional[Dict[str, Any]]) -> bool:
-    """Endorsement-bound watermark is close_commit_cursor, not a parallel column."""
+def night_dossiers_ready(night: Optional[Dict[str, Any]]) -> bool:
+    """#1842：草稿案卷前提已提交（可明发/终局）；取代旧 endorsement-bound 水位。"""
     if not night:
         return False
-    return int(night.get("close_commit_cursor") or 0) >= CLOSE_STEP_ENDORSEMENT_BOUND
+    return int(night.get("close_commit_cursor") or 0) >= CLOSE_STEP_TRANSFER_CANDIDATES
 
 
 def assert_night_accepts_player_input(
@@ -423,44 +444,6 @@ def list_ledger(db: Any, night_id: int) -> List[Dict[str, Any]]:
         })
     return out
 
-
-# #1566/#1716：chat_turns.route 闭集唯一真源（encode/decode/normalize 共用，禁平行闭集）。
-# offsite = 非殿上且非密令（如场外收夜口令）；禁假冒 secret_order_offsite。
-CHAT_TURN_ROUTES = frozenset({"", "offsite", "secret_order", "secret_order_offsite"})
-
-
-def normalize_chat_turn_route(route: object) -> str:
-    """#1566：route 闭集校验。'' 合法；未知非空响亮失败（禁静默洗成普通 route）。"""
-    value = str(route or "").strip()
-    if value not in CHAT_TURN_ROUTES:
-        raise ValueError(f"unsupported chat_turn route: {value!r}")
-    return value
-
-
-def encode_chat_turn_route(*, explicit_secret_order: bool, offsite: bool = False) -> str:
-    """#1566/#1716：创建 chat_turns.route 的权威编码。
-
-    '' / offsite / secret_order / secret_order_offsite。
-    """
-    if explicit_secret_order:
-        return "secret_order_offsite" if offsite else "secret_order"
-    return "offsite" if offsite else ""
-
-
-def decode_chat_turn_route(route: object) -> Dict[str, bool]:
-    """#1566/#1716：中断重试消费 chat_turns.route 的权威解码。
-
-    返回 {explicit_secret_order, start_hall_scene}；Web/CLI 重试只消费此结果，
-    禁止各端自造 if-else 分叉。未知非空经 normalize 响亮失败。
-    """
-    value = normalize_chat_turn_route(route)
-    if value == "secret_order_offsite":
-        return {"explicit_secret_order": True, "start_hall_scene": False}
-    if value == "secret_order":
-        return {"explicit_secret_order": True, "start_hall_scene": True}
-    if value == "offsite":
-        return {"explicit_secret_order": False, "start_hall_scene": False}
-    return {"explicit_secret_order": False, "start_hall_scene": True}
 
 
 def list_chat_turns_for_night(db: Any, night_id: int) -> List[Dict[str, Any]]:
@@ -619,19 +602,6 @@ def read_night_scroll(db: Any, night_id: int) -> List[Dict[str, Any]]:
                             content=content, beat="dialogue",
                             chat_turn_id=int(turn["id"])),
                 ))
-        # 历史递话记录是对话轮的持久消息，紧随该轮奏对归位；不并入故事账。
-        if hasattr(db, "list_mindreading_records"):
-            for record_index, record in enumerate(db.list_mindreading_records(int(turn["id"]))):
-                narration = str(record.get("narration") or "").strip()
-                if narration:
-                    events.append((
-                        float(int(turn.get("night_seq") or 0)), 30 + record_index,
-                        message(role="attendant", speaker=str(record.get("reader") or "近臣"),
-                                audibility=AUDIBILITY_PRIVATE, time=None,
-                                content=narration, beat="aside", chat_turn_id=int(turn["id"]),
-                                record_id=int(record.get("id") or 0)),
-                    ))
-
     for entry in ledgers:
         tags = set(entry.get("tags") or [])
         # #1293a：非口令/框架账一律不上 live/档案同源卷轴；禁盯 body。
@@ -1137,8 +1107,8 @@ def _commit_night_approved(
 
 
 def publish_night_directives(db: Any, night_id: int) -> None:
-    """背书落定后，以同一入口幂等记本夜已成案拟旨的明发账。"""
-    # 夜内定案的旨落公开层账、标已明发（#502 AC6）——仅 endorsement 成功之后。
+    """成案后以同一入口幂等记本夜已成案拟旨的明发账。"""
+    # 夜内定案的旨落公开层账、标已明发（#502 AC6）；#1842 背书已随载荷继承。
     already_ids = {
         str(did)
         for did in engine_command_mingfa_publication_ids(list_ledger(db, night_id))
@@ -1152,7 +1122,6 @@ def publish_night_directives(db: Any, night_id: int) -> None:
         JOIN decree_dossiers d ON d.pending_action_id = pa.id
         WHERE pa.night_id = ? AND pa.kind = 'directive'
           AND pa.status = 'committed' AND pa.committed_directive_id > 0
-          AND pa.late_endorsement_pending = 0
         GROUP BY td.id, td.actor, td.text
         ORDER BY td.id
         """,
@@ -1184,13 +1153,12 @@ def commit_late_night_approved(
     db: Any, state: GameState, *, content: Any, registry: Any,
     llm_config: Any = None, write_gate: Any = None,
 ) -> None:
-    """过月 join 后沿收夜提交、背书、明发入口补完迟到应允。"""
+    """过月 join 后沿收夜提交、明发入口补完迟到应允（#1842：背书随载荷，不另补批）。"""
     nights = db.conn.execute(
         "SELECT DISTINCT n.id FROM audience_nights n "
         "JOIN pending_actions pa ON pa.night_id=n.id "
         "WHERE n.turn=? AND n.status=? AND "
-        "((pa.status='pending' AND pa.night_approved=1) OR "
-        "(pa.status='committed' AND pa.late_endorsement_pending=1)) ORDER BY n.id",
+        "pa.status='pending' AND pa.night_approved=1 ORDER BY n.id",
         (int(state.turn), NIGHT_STATUS_CLOSED),
     ).fetchall()
     if not nights:
@@ -1207,16 +1175,7 @@ def commit_late_night_approved(
                 _commit_night_approved(
                     db, state, nid, kinds=kinds, content=content, registry=registry,
                 )
-            late_ids = [int(row["id"]) for row in db.conn.execute(
-                "SELECT id FROM pending_actions WHERE night_id=? AND status='committed' "
-                "AND late_endorsement_pending=1 ORDER BY id", (nid,),
-            ).fetchall()]
-        if late_ids:
-            from ming_sim.audience_extraction import run_endorsement_batch_for_night
-            run_endorsement_batch_for_night(
-                db=db, night_id=nid, llm_config=llm_config, write_gate=gate,
-                late_action_ids=late_ids,
-            )
+            publish_night_directives(db, nid)
 
 
 def _drain_pending_translations_or_fail_closed(
@@ -1279,7 +1238,7 @@ def close_night(
     translate_fn: Any = None,
     write_queue: Any = None,
 ) -> Dict[str, Any]:
-    """收夜：短写前提 → 无锁待补转译 + 夜级 endorsement-only 批 → 短写终局。
+    """收夜：短写前提 → 无锁待补转译 → 短写终局（#1842：背书随转译，无夜级批）。
 
     #1838 reopen：不再有收夜旁白 LLM 调用与收夜账；收讫只看 audience_nights.status。
     背书批仍由 #1842 路径承接（本函数仍调 endorsement batch）。
@@ -1376,38 +1335,19 @@ def close_night(
         if cursor < CLOSE_STEP_TRANSFER_CANDIDATES:
             _advance(CLOSE_STEP_TRANSFER_CANDIDATES)
 
-    # ── Phase 2: endorsement LLM（#1842 仍承接；本票只删旁白并行） ──────
-    try:
-        from ming_sim.audience_extraction import run_endorsement_batch_for_night
-
-        run_endorsement_batch_for_night(
-            db=db,
-            night_id=int(night_id),
-            llm_config=llm_config,
-            write_gate=gate,
-            extractor_agent=endorsement_extractor_agent,
-        )
-    except Exception:
-        with gate:
-            _set_night_fields(
-                db, night_id, status=NIGHT_STATUS_OPEN, closed_at=None,
-                close_commit_cursor=0,
-            )
-        raise
-
     # ── Phase 3: short writes — final effects, 明发, CLOSED ──
     with gate:
         night = get_night(db, night_id) or night
         cursor = int(night["close_commit_cursor"] or 0)
-        if cursor < CLOSE_STEP_ENDORSEMENT_BOUND:
+        if cursor < CLOSE_STEP_TRANSFER_CANDIDATES:
             fault_cursor = int(cursor)
             _set_night_fields(
                 db, night_id, status=NIGHT_STATUS_OPEN, closed_at=None,
                 close_commit_cursor=0,
             )
             raise AudienceNightError(
-                f"收夜背书水位未落定（night_id={int(night_id)}, cursor={fault_cursor}）",
-                code="endorsement_not_bound",
+                f"收夜案卷前提未落定（night_id={int(night_id)}, cursor={fault_cursor}）",
+                code="close_prerequisites_incomplete",
                 detail={"night_id": int(night_id), "cursor": fault_cursor},
             )
         if cursor < CLOSE_STEP_FINALIZE:
@@ -2492,6 +2432,136 @@ def prepare_rescript_summon_scaffold(
             "night_id": int(again["night_id"]),
             "consumed": rescript_summon_origin_consumed(again),
         }
+
+
+def find_prior_speaker_still_present(db: Any, night_id: int, exclude_name: str = "") -> Optional[str]:
+    """Find the previous chat turn's minister who is still present (A in the handoff).
+
+    Returns A's name when A is present and A != exclude_name (the new entrant B).
+    Returns None when there is no prior speaker or A has already left.
+    """
+    turns = list_chat_turns_for_night(db, int(night_id))
+    prior = ""
+    for turn in reversed(turns):
+        name = str(turn.get("minister_name") or "").strip()
+        if not name or name == exclude_name:
+            continue
+        prior = name
+        break
+    if not prior or prior not in present_names_at(db, int(night_id)):
+        return None
+    return prior
+
+
+def attach_chat_turn_to_night(
+    db: Any,
+    state: GameState,
+    minister_name: str,
+    *,
+    agno_session_id: str = "",
+    agno_runs_before: int = 0,
+    time_of_day: str = "",
+    location: str = "",
+    summon_method: str = METHOD_XUANRU,
+    beat_generator: Any = None,
+    knowledge_provider: Any = None,
+) -> tuple[int, int]:
+    """开夜（若需）+ 首次对话落宣入账 + 建 generating 对话轮挂 night_id/night_seq。
+
+    beat_generator 注入时（#503 编排）：开夜/入殿账正文经编排层路由输入后由内容生成填充，
+    落为对应账正文。不注入时 opening 按 #1561 留空；仅既有 entrance 路径仍可能使用
+    #498 确定性兜底正文。见 beat_orchestration。
+    """
+    from ming_sim import beat_orchestration as beats
+
+    # beat 正文（慢 LLM）在**任何落库之前**全部生成好，再落库——生成中途抛错则本次零写入，
+    # 不留「开着的夜有开夜/员额账却无入殿账、无对话轮」的半场（#503 L4）。
+    # 也不把 LLM 调用裹进写事务（否则持写锁跨 ~15-30s LLM，撞 #498/#499 写锁纪律，P5）。
+    existing = get_open_night(db)
+    if existing is not None and existing["status"] == NIGHT_STATUS_CLOSING:
+        # 上一夜收夜未完（closing）：open_night 会响亮拒绝——早于任何 beat 生成触发，零写零浪费。
+        ensure_open_night_for_audience(
+            db, state, time_of_day=time_of_day, location=location,
+        )  # 必抛 night_closing_incomplete
+
+    enter_body = ""
+    if existing is not None and existing["status"] == NIGHT_STATUS_OPEN:
+        # 已开夜：不重复开夜账；入殿账只在真正首入殿时生成（重复起聊＝奏对非再入殿）。
+        night = existing
+        night_id = int(night["id"])
+        if beat_generator is not None and minister_name not in persons_entered_tonight(db, night_id):
+            enter_body = beats.generate_enter_beat_body(
+                db, state, night=night, person_name=minister_name,
+                summon_method=summon_method,
+                beat_generator=beat_generator, knowledge_provider=knowledge_provider,
+            )
+    else:
+        # 新夜：开夜账 + 首入殿账都先生成，再一并落库（生成抛错 → 本次零写入）。
+        # 首入殿时夜尚无公开层/前情（无明旨、无前次），以刚生成的开夜气氛作临时公开层供给
+        # （不复刻 open_night 的员额账内部格式）。
+        open_body = ""
+        if beat_generator is not None:
+            open_body = beats.generate_open_beat_body(
+                db, state, time_of_day=time_of_day, location=location,
+                beat_generator=beat_generator, knowledge_provider=knowledge_provider,
+            )
+            enter_body = beats.generate_enter_beat_body(
+                db, state,
+                night={"id": 0, "time_of_day": time_of_day, "location": location},
+                person_name=minister_name, summon_method=summon_method,
+                beat_generator=beat_generator, knowledge_provider=knowledge_provider,
+                extra_public_layer=(open_body,) if open_body else (),
+            )
+        night = ensure_open_night_for_audience(
+            db, state, time_of_day=time_of_day, location=location, body=open_body,
+        )
+    night_id = int(night["id"])
+    # 入殿账须早于本轮对话轮落 seq（进殿在先、奏对在后，时序对齐）；chat_turn_id 此时尚未
+    # 生成，故先落账后建轮，再回绑 origin_chat_turn_id——撤回本轮据此删该轮所产入殿账（#506）。
+    # 三步（落入殿账 / 建轮 / 回绑 origin）整段原子（#506 L2）：中途崩溃则全回滚，绝不留
+    # origin=0 的孤儿入殿账（否则撤回删不掉、与令退残留同形脏账）。seq 时序不变（enter 先 create
+    # 后，各自单调分配）；atomic 暂停内层 commit、末尾一次落定或整体回滚。
+    from ming_sim.applier import atomic
+    with atomic(db):
+        # #1585：当夜已开且前一位奏对者 A 仍在场时，B 宣入前须落一笔
+        # TAG_STAY_ATTEND + TAG_HANDOFF 的交接垫位（不写 TAG_EXIT、不改 presence）。
+        # 交接正文与入殿正文同轮 ChatTurnSceneRegistry 并行生成，同轮 join 回填。
+        # handoff 先于 enter 落 seq（进殿在先、奏对在后），discover_open_enter_tasks
+        # 通过 origin_chat_turn_id 同时发现二者。
+        handoff_entry_id = None
+        if existing is not None and existing["status"] == NIGHT_STATUS_OPEN and minister_name not in persons_entered_tonight(db, night_id):
+            prior_speaker = find_prior_speaker_still_present(db, night_id, exclude_name=minister_name)
+            if prior_speaker:
+                handoff_entry_id = append_ledger_entry(
+                    db, night_id,
+                    person_names=[prior_speaker],
+                    audibility=AUDIBILITY_PUBLIC,
+                    body="",
+                    tags=[TAG_STAY_ATTEND, TAG_HANDOFF],
+                    check_dead=False,
+                    commit=False,
+                )
+        enter_entry_id = ensure_summon_enter(
+            db, night_id, minister_name, method=summon_method, body=enter_body,
+        )
+        chat_turn_id = db.create_chat_turn(
+            state,
+            minister_name,
+            agno_session_id,
+            agno_runs_before,
+            night_id=night_id,
+        )
+        if handoff_entry_id:
+            db.conn.execute(
+                "UPDATE story_ledger_entries SET origin_chat_turn_id = ? WHERE id = ?",
+                (int(chat_turn_id), int(handoff_entry_id)),
+            )
+        if enter_entry_id:
+            db.conn.execute(
+                "UPDATE story_ledger_entries SET origin_chat_turn_id = ? WHERE id = ?",
+                (int(chat_turn_id), int(enter_entry_id)),
+            )
+    return night_id, int(chat_turn_id)
 
 
 def mark_actions_night_approved(

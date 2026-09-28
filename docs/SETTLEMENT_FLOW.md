@@ -1,9 +1,12 @@
-# SETTLEMENT_FLOW.md — 玩家过月与 driver 结算边界
+# SETTLEMENT_FLOW.md — 玩家过月结算边界
 
-> 玩家入口已接入 ADR 0157。下方 S1/phase2 是旧核资料；`driver.py` 只复用其确定性结算部分，不运行旧 phase2。它不是 Web／GameSession 的现行过月顺序；规则以 [ADR 0157](adr/0157-v2-month-waits-for-exhausted-model-call-recovery.md) 为准。
+规则真源：[ADR 0157](adr/0157-v2-month-waits-for-exhausted-model-call-recovery.md)；失败与恢复：[ADR 0157](adr/0157-v2-month-waits-for-exhausted-model-call-recovery.md) + #1846；前端呈现：[ADR 0158](adr/0158-v2-frontend-receives-audience-month-and-recovery.md)。
 
-**玩家链**：`GameSession.resolve_turn → decree.resolve_directives → month_chain.run_player_month_chain`；颁诏、退朝同链。收夜与 `pre_settle` 提交后，逐旨消费暂存声明、推演并转译世界段；未完成请旨停在批红前，邸报归档后才判结局并推进月份。推进后机械尾（关系／派系酿制、结局总评；#1845）经 `SessionWriteQueue` 票键 `("mechanical-tail", closed_turn)` 后台跑，不挡新月前台；未完态写在 closed turn 的 month_chain，重开 `ensure_mechanical_tails` 续接，下次过月 barrier join。各段幂等恢复，不重放旧 extractor ready delta；旧档 ready 产物先降级，保留原诏与来源后续跑新链。章节记忆不再由玩家链生成；历月邸报以年月一行索引入材料目录。
-**driver 核**：`driver.py` 仍复用 `pre_settle`、`settle_with_delta`（ADR 0004／0008）；其 delta ready 重放只属于 driver，不得据此推断玩家流程。
+**玩家链（唯一现行入口）**：`GameSession.resolve_turn → decree.resolve_directives → month_chain.run_player_month_chain`；颁诏、退朝同链。收夜与 `pre_settle` 提交后，逐旨消费暂存声明、推演并转译世界段；未完成请旨停在批红前，邸报归档后才判结局并推进月份。推进后机械尾（关系／派系酿制、结局总评；#1845）经 `SessionWriteQueue` 票键 `("mechanical-tail", closed_turn)` 后台跑，不挡新月前台；未完态写在 closed turn 的 month_chain，重开 `ensure_mechanical_tails` 续接，下次过月 barrier join。
+
+**恢复真源（#1846）**：暂存声明与落账相位；已落不动。无 ready=1 持久 delta、无重放、无「重新推演」逃生口分流。对话探针 `driver.py` 已删（#1846 reopen）；旧核后半段 `settle_with_delta` 整删归 #1843。
+
+**resolve_context**：过月前段仍持久本月诏书／payload／来源（史册与机械尾要用）；不含 extractor delta。
 
 ## #571 S1 案卷颁布关（旧核资料；非玩家月链）
 
@@ -15,11 +18,11 @@
 
 这段只描述 #571 S1 与 #609 已实现的案卷判决与执行闸；其它案卷扩展不属于本契约。
 
-## S1 旧核结算顺序（资料；driver 仅复用确定性核）
+## S1 旧核结算顺序（历史资料；#1843 待删后半段）
 
 ```
 [step1：召见 / 拟旨阶段]
-  driver 读盘 → 我演大臣对话 → 我帮玩家拟旨
+  （历史：探针 driver 读盘；已删）
 
 [颁诏后开始结算]
   1. before_turn = state.turn                    # 记下推进不变式的基线
@@ -38,15 +41,14 @@
            在飞回话：工人落终态即续跑（K10a 不把健康腿伪造成失败）；真挂死由
            provider/worker 硬超时落失败终态后 vacate，屏障只等终态——禁 elapsed 伪判。
            欠账抽取并入过月 drain/catch_up（玩家无感；统一重试耗尽才走失败单源）；
-           背书：一夜一批 single-flight owner 去重（队列只管写序，不建第二套 dedup）；
-           已绑定→续跑；真失败 fail-closed 保持 OPEN（禁第二次 LLM / contended 409）。
-           见 `ming_sim/session_write_queue.py` + `audience_night.py` + `audience_extraction.py`。
+           背书随每轮转译声明挂暂存交办，成案时继承；迟到转译在过月前补齐。
+           见 `ming_sim/session_write_queue.py` + `audience_night.py`。
          ↳ #542 收夜 scene 生命周期（调用方 registry 所有）：
-           start_close_scene_on_registry（不立即 join）→ 与 endorsement 并行 →
+           start_close_scene_on_registry（不立即 join）→
            终局写入前 join_close_scene_on_registry（join-before-finalize）；
            失败 abandon/fail_chat_turn 后原样上抛，夜保持 OPEN、不进 settling。
            无 scene_registry/无 start_close 能力或无 beat_generator 时不提交 close Future。
-     a. db.commit_pending_actions(...)            # 动作闸门：聊天暂存的结构化写动作批量落库（driver 路无暂存=no-op）
+     a. db.commit_pending_actions(...)            # 动作闸门：聊天暂存的结构化写动作批量落库（无暂存时 no-op）
         # 〔ADR 0055/ADR 0057 interim：经外廷受判类此步改为只物化案卷、效果结算判决后落（颁布判官），见 ADR 0055〕
      b. apply_historical_fiscal_rates(state, db)  # #259 饷率事件前置：同 tick 置结局 + 改 settle.p
         ↳ 仅处理 category="fiscal_levy" 的历史事件；shadow stub 的结局须经事件白名单归一
@@ -100,10 +102,9 @@
      幂等守门：相位已在 FRONT_HALF_DONE_PHASES（settling/awaiting_decision/…）时直接
      return，不二次落财政；崩在内部 = 全回滚 = 相位未变 = 重进干净重跑。
 
-  3. db.save_resolve_context(decree_text, ready=0) # 诏书原文占位真源：跨进程恢复不丢玩家手改稿
+  3. db.save_resolve_context(decree_text, …) # 本月诏书/payload 占位：跨进程恢复不丢玩家手改稿（无 extracted）
      与 2 同一外层 atomic 提交：settling 相位与 context 行同生共死（回滚时一并 reload 刷内存）。
-     driver 与引擎共用 `prepare_resolve_front_half`：`driver prepare` 写入 ready=0（含 transit_arrivals handoff），
-     外部据已提交盘面产叙事+delta 后再 `driver settle --delta` 升 ready=1（见 8.5）。
+     `prepare_resolve_front_half` 写入本月 context 占位（含 transit_arrivals）。
 
   4. secret_orders = group_secret_orders_for_sim(active 行)  # 密令只进「在办」；#1504 结案不靠 pending 核议
      secret_orders = augment_secret_orders_with_due_commitments(secret_orders, db, state)
@@ -132,20 +133,13 @@
                          + narrative
 
   8. [我产 delta JSON]  ← 档房书办身份，按 DELTA_SCHEMA.md 产
-     - 单份合并（不分四模块），driver 喂给 apply_score_extraction
+     - 单份合并（不分四模块）喂给 apply_score_extraction
      - 产物 shape 畸形（非 dict / 损坏 JSON / 未知顶层字段）→ write_error_pack 落五件套
        诊断包 + 抛 SettlementAbort 响亮中止（不再静默吞）；重试 = 重跑 simulator/extractor
 
-  8.5 persist_resolve_context(db, before_turn, extracted, ...)
-     - 先过 validate_delta_shape（毒 payload 不得钉进重试真源），再存 ready=1
-     - 跨进程恢复的重跑真源：崩溃后直接重放落库，不再花一次 LLM 重推演
-     - driver 路（两阶段，禁一站式）：
-       1) `run_prepare` → 共享 `prepare_resolve_front_half`（pre_settle + ready=0 + transit_arrivals）
-       2) 外部产 narrative+delta（可读已提交盘面与 arrivals handoff）
-       3) `run_settle` 只消费同 turn settling+ready=0：合并案卷键∪既有 transit_arrivals → ready=1 → settle_with_delta
-       未 prepare 的 settle 响亮失败且零写；settling+ready=1 崩溃重入只读 context，不二次 tick
+  （8.5 已删：persist_resolve_context / ready=1 重放；#1846）
 
-  ── 后半段 settle_with_delta：整段单一 atomic 事务，9–16 全有或全无 ──
+  ── 后半段 settle_with_delta（旧核；#1843 待删）：整段单一 atomic 事务，9–16 全有或全无 ──
   9. db.commit_pending_actions(..., registry=None)  # 正常路通常为 no-op；覆盖恢复/重抽路的新暂存动作
      affected_people += db.apply_dossier_verdicts(..., registry=None)
      affected_people += db.apply_dossier_promulgation(..., registry=None)
@@ -240,53 +234,50 @@ session.advance_without_decree / POST /api/decree/advance_without_edict:
 
 **禁止**：把召对口/seed 口写成「结算 extractor 一步」；禁止文档或实现对酿制输出做字数 clamp（CLAUDE.md P6 / ADR 0142）。普通读面仍是「摘要＋最近事件」五字段 DTO（`project_relation_ledger`）；完整历史只进 coda 酿制输入。
 
-## 旧核崩溃 / 中止恢复（ADR 0008 PR1，driver）
+## 崩溃 / 中止恢复（#1846）
 
-以下 ready=1 重放仅属旧核／driver。玩家 `session.py` 在 settling 恢复时降级旧 ready extractor 产物，并由 ADR 0157 暂存声明及落账状态接续：
+玩家 settling 恢复以月链 call_failure 与落账相位为真源；ready=1 重放已删除：
 
 - `awaiting_decision` → 幂等返回已存决策点等亲裁，不推进月份。
-- driver `settling` + ready=1 的 resolve_context → `driver.run_settle` 消费已存 delta，不重跑其外部生成步骤；玩家入口不走此路。
-- 玩家 `settling` → 若有旧 ready delta，先降级；新月链从已暂存／已落账状态接续。`pre_settle` 被 settling 守门跳过，财政不二落。
+- （已删）driver ready=1 重放路径。
+- 玩家 `settling` → 新月链从已暂存／已落账状态接续。`pre_settle` 被 settling 守门跳过，财政不二落。
 - settling 恢复窗口内**冻结改盘操作**：
   - 下旨草案/撤回/跳过等 7 个入口（`session._refuse_if_settling`；web 对应端点 409，CLI 打印恢复指引并留在本回合交互循环不重印回合头）。
   - 全部聊天侧新写入一并冻（`_proposal_blocked` 总闸）：任免候选暂存、编外人物登记、密令房 tool、CLI 前缀密令 upsert；恢复期不得把新动作插入已冻结的旧回合。
   - 窗前已暂存的记录由各自原有提交边界处理；玩家月链只消费其暂存声明及落账状态。
-- 旧核 ready payload 值级失败时，`error_pack.clear_for_resimulation` 可降级 context；玩家入口遇旧 ready 也先降级，保留原诏与来源。
+- （已删）ready 降级 / clear_for_resimulation。
 - 旧核中止的五件套错误包不覆盖旧包；玩家月链错误边界见 ADR 0157／0158。
 
 ## 不变式 / 雷区
 
-- **旧核顺序**：以下 `save_turn_extraction`、`chapter memory` 先后约束属于旧核资料；driver 跳过章节记忆，玩家顺序以 ADR 0157 与 `month_chain.py` 为准。
+- **旧核顺序**：以下 `save_turn_extraction`、`chapter memory` 先后约束属于旧核资料；玩家顺序以 ADR 0157 与 `month_chain.py` 为准。
 - **推进条件**：玩家月链停在批红／邸报时 `advanced=False`；只有邸报已归档、完成推进时 turn 才加一。
 - **HITL 暂停时不要推进**：return awaiting=True 时 state.turn 不动，玩家亲裁后续跑 phase2 才推。
 - **结算只判一次结局**：state.ended=True 后保持不动，继续推月只走 fixed flows。
-- **玩家推进尾**：只有批红及请旨续落完成、邸报已归档，`month_chain._advance_after_gazette` 才推进；无旨月同链。`settle_with_delta` 是 driver 旧核的推进尾。
+- **玩家推进尾**：只有批红及请旨续落完成、邸报已归档，`month_chain._advance_after_gazette` 才推进；无旨月同链。`settle_with_delta` 是旧核推进尾（#1843 待删）；玩家推进尾是 `month_chain._advance_after_gazette`。
 - **回滚后必 reload**：事务回滚只回 SQLite，内存副作用（metrics 直加 / 脏 settling 相位）必须 `reload_state_from_db` 刷净——脏 settling 被 pre_settle 守门跳过=下月财政永久丢。atomic 体内禁止 reload（读到未提交脏写）；嵌套时只有最外层回滚后才重载。
-- **旧核毒 payload 不入真源**：`persist_resolve_context` 前必过 `validate_delta_shape`；shape 垃圾走 SettlementAbort+错误包。
-- **settling 可见 ⟹ context 行可见**：settling 相位与 resolve_context 行（引擎/driver 共用 prepare 的 ready=0 占位）必须同一事务提交；driver settle 再把 ready=0 升 ready=1。prepare 不许拆成两笔——拆了就是「相位卡 settling、恢复入口无米下锅、玩家手改旨意原文蒸发」。
+- shape 垃圾走 SettlementAbort+错误包（声明分派 / apply 侧校验）。
+- **settling 可见 ⟹ context 行可见**：settling 相位与 resolve_context 行（`prepare_resolve_front_half` 占位）必须同一事务提交。prepare 不许拆成两笔。
 
 ## 已知接口层（确定性↔我，别让我自己数数）
 
-- `ming_sim.memories.effect_brief(applied)` — 把 delta 聚合成一句话「国库+200、了结局势X、人事调整：…」
-- `ming_sim.memories.build_timeline(db)` — 重建历史时间线
-- `ming_sim.agents.build_simulator_context(payload)` — 盘面→TSV 文本（喂给我读盘）
+- `ming_sim.materials.prepare_world_materials` — 世界段／逐旨预推材料目录
 
-这三个函数零 agno 依赖，driver 直接调用。
+结局总评只读机械尾已装载的历月邸报；`effect_brief`／`build_timeline` 已随 #1845 退役。
 
 ## 真相源对照
 
 | 文件 | 看什么 |
 |---|---|
-| `ming_sim/decree.py` | `resolve_directives` 转入玩家月链；`pre_settle` 由玩家与 driver 共用；`settle_with_delta`、`persist_resolve_context` 是 driver 旧核；旧核关系酿制 Future 的 start/join/drain |
+| `ming_sim/decree.py` | `resolve_directives` 转入玩家月链；`pre_settle` / `prepare_resolve_front_half` 为前半段；`settle_with_delta` 待 #1843 删 |
 | `ming_sim/month_chain.py` | 玩家过月逐旨落账、世界段、请旨等待、邸报后推进及分段恢复 |
 | `ming_sim/relation_brew.py` | `MonthEndRelationBrewLeg` prepare/brew/persist；`select_brew_targets` / `build_brew_input`（含 #642 prior_events） |
 | `ming_sim/relation_read.py` | `project_relation_ledger` 五字段读面；`load_relation_history_before` coda 历史读缝 |
 | `ming_sim/session_write_queue.py` | per-session 单写者有序票据队列（#1353 / ADR 0149）：尾随领票、写经 `TicketedWriteGate`/`run`、过月=`barrier`、失败空放行、撤回 `cancel_key`；屏障只等工人终态（K10a 无 elapsed 熔断） |
 | `ming_sim/audience_night.py` | `auto_close_open_night` / `close_night`：颁诏 / 退朝遇开夜时顺势自动收夜（#498）；在飞只依工人终态续跑（K10a）；欠账并入过月 drain；`scene_registry` 调用方所有，start→并行→终局前 join，失败 OPEN fail-closed |
-| `ming_sim/audience_extraction.py` | 收夜 endorsement 批：一夜一批 single-flight 去重；真失败 fail-closed 保持 OPEN，禁第二次 LLM；写序归队列票据 |
 | `ming_sim/beat_orchestration.py` | `ChatTurnSceneRegistry` + `start_close_scene_on_registry` / `join_close_scene_on_registry`：收夜 scene 进既有 registry，不自建第二 executor（#542） |
 | `ming_sim/applier.py` | `atomic` 事务边界（`_SuspendableConnection`：内层 commit 暂停、executescript 拒绝、嵌套深度计数）+ `RejectionCollector` 拒收留痕契约 |
-| `ming_sim/error_pack.py` | `write_error_pack` 五件套诊断包 / `clear_for_resimulation` 重新推演逃生口 |
+| `ming_sim/error_pack.py` | `write_error_pack` 五件套诊断包（#1846：无 clear_for_resimulation） |
 | `ming_sim/session.py` | settling/awaiting 恢复分流入口 + 恢复窗口冻结（`_refuse_if_settling` 7 入口；`_proposal_blocked` 即时写/新暂存总闸） |
 | `ming_sim/tools.py` | 密令房 tool dispatcher 的恢复窗冻结（issue/progress/submit/rush 四 action 一处冻） |
 | `ming_sim/flows.py` | `apply_fixed_period_flows` `compute_budget_lines` |

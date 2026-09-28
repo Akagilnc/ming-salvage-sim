@@ -177,7 +177,7 @@ def test_court_break_writes_no_exit_ledger(game, monkeypatch):
     assert an.get_night(db, nid)["status"] == an.NIGHT_STATUS_CLOSED
 
 
-# ── L1 R2：court_action=dismiss 单缝——非流式 web /api/ministers/{name}/chat
+# ── L1 R2：court_action=dismiss 单缝——非流式 web /api/audience/chat
 #          与 CLI tool 路共 GameSession.chat 产源，令退落告退账、名单即时去人 ──
 
 
@@ -193,8 +193,6 @@ def _session_double(db, state, content, registry):
     sess.llm_config = SimpleNamespace(channel="api")
     sess.temporary_characters = set()
     sess._audience_prompt_for_message = lambda message, *_a, **_kw: message
-    sess._start_cli_action_intent = lambda *a, **k: None
-    sess._finish_cli_action_intent = lambda *a, **k: None
     return sess
 
 

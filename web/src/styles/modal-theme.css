@@ -293,15 +293,7 @@
   border: 1px solid rgba(74, 45, 20, 0.18);
 }
 
-/* 通配平级化的补偿例外：以下组件规则（chat.css 米色钮 / secret-order.css 深底密令卡）
-   在通配 important 年代被压住，如今会透出——显式写回通配年代的观感（透明底、墨字）。 */
-.modal-bg-chat .hitl-bar button {
-  background: transparent;
-  color: #1a1410;
-}
-.modal-bg-chat .hitl-bar button:hover {
-  background: transparent;
-}
+/* 通配平级化的补偿例外：密令卡在通配 important 年代被压住，如今会透出。 */
 .modal-bg-chat .secret-order-item {
   background: transparent;
 }
@@ -355,8 +347,6 @@
 .modal-bg-ending .ending-timeline-date { color: #f0c98a; }
 .modal-bg-ending .ending-timeline-date span { color: #a98c69; }
 .modal-bg-ending .ending-timeline-chapter { color: #e0563f; }
-.modal-bg-ending .ending-timeline-decree { color: #c9a572; }
-.modal-bg-ending .ending-timeline-effect { color: #9ec7aa; }
 
 /* 终章弹窗：覆盖 .modal-bg-state * 的透明通配，恢复深色国史馆样式 */
 .modal-bg-ending .ending-document {

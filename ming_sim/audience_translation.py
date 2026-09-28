@@ -41,17 +41,18 @@ def translation_holding_write_gate(gate: Any) -> bool:
     """该 gate 是否正被转译短持（与所有权同临界可读；不 join、不 cancel）。"""
     from ming_sim.session_write_queue import ClassifiedWriteGate
 
-    if isinstance(gate, ClassifiedWriteGate):
-        return gate.is_held_by_translation()
-    return False
+    if not isinstance(gate, ClassifiedWriteGate):
+        raise TypeError("转译写闸须为 ClassifiedWriteGate")
+    return gate.is_held_by_translation()
 
 
 def wait_translation_write_gate_released(gate: Any) -> None:
     """等到该 gate 不再被转译持有（不抢闸、不加超时；结算/他写不抬此等待）。"""
     from ming_sim.session_write_queue import ClassifiedWriteGate
 
-    if isinstance(gate, ClassifiedWriteGate):
-        gate.wait_while_held_by_translation()
+    if not isinstance(gate, ClassifiedWriteGate):
+        raise TypeError("转译写闸须为 ClassifiedWriteGate")
+    gate.wait_while_held_by_translation()
 
 
 @contextlib.contextmanager
@@ -59,14 +60,9 @@ def _translation_write_cm(gate: Any) -> Iterator[None]:
     """转译侧短持会话 write_gate；holder kind 与取得所有权同临界（#1842）。"""
     from ming_sim.session_write_queue import ClassifiedWriteGate
 
-    if gate is None:
-        yield
-        return
-    if isinstance(gate, ClassifiedWriteGate):
-        gate.acquire_translation()
-    else:
-        # 裸 Lock 测试夹具：无分类能力，仅保互斥（生产路径均为 ClassifiedWriteGate）。
-        gate.acquire()
+    if not isinstance(gate, ClassifiedWriteGate):
+        raise TypeError("转译写闸须为 ClassifiedWriteGate")
+    gate.acquire_translation()
     try:
         yield
     finally:
@@ -265,14 +261,13 @@ def run_turn_translation_job(
     source: Provenance = Provenance.system_simulation,
 ) -> DeclarationDispatchResult:
     """单轮转译+落账（已持夜串行锁时由 worker 调用；失败标 pending）。"""
-    from ming_sim.audience_translate import (
-        AudienceTranslateError,
-        run_audience_turn_translation,
-    )
+    from ming_sim.audience_translate import AudienceTranslateError
 
     ctid = int(chat_turn_id or 0)
     nid = int(night_id or 0)
-    gate = write_gate  # 可为 None（单写测试路径）
+    if write_gate is None:
+        raise TypeError("转译写闸须为 ClassifiedWriteGate")
+    gate = write_gate
 
     def _gate_cm():
         # 转译短持带 holder kind，供前台非阻塞抢闸区分「等转译」与「结算 → 409」。
@@ -311,11 +306,12 @@ def run_turn_translation_job(
             from ming_sim.declaration_dispatch import ProtagonistResult
             empty = SectionResult(applied=[], rejected=[])
             return DeclarationDispatchResult(
-                commissions=empty, promises=empty, textual_facts=empty,
-                public_sayings=empty, on_scene_facts=empty, presence=empty,
+                commissions=empty, promises=empty, endorsements=empty,
+                textual_facts=empty, public_sayings=empty,
+                on_scene_facts=empty, presence=empty,
                 scene_facts=empty, edge_events=empty,
                 protagonist=ProtagonistResult(validated=None, rejected=[]),
-                registrations=empty,
+                registrations=empty, effects=empty,
             )
 
     try:

@@ -18,14 +18,11 @@ from openai import APIConnectionError, APIStatusError, APITimeoutError
 
 from ming_sim.agents import (
     _dump_llm_messages,
-    create_arrival_attendant_agent,
     create_decree_writer_agent,
     create_promulgation_judge_agent,
     create_ending_summary_agent,
     create_relation_brew_agent,
     create_faction_brew_agent,
-    create_season_simulator_agent,
-    create_settlement_attendant_agent,
     parse_agent_json,
     run_agent_text,
 )
@@ -37,9 +34,7 @@ from ming_sim.constants import TURN_UNIT
 from ming_sim.context import ENDING_LABELS, ENDING_ONGOING, ENDING_TIMEOUT, victory_status
 from ming_sim.db import GameDB
 from ming_sim.error_pack import (
-    ARRIVAL_COMPANION_SIM_DONE_KEY,
     _next_attempt,
-    clear_for_resimulation,
     rejections_jsonl_path,
     settlement_abort_message,
     write_error_pack,
@@ -74,19 +69,10 @@ from ming_sim.appointment_tenure import (
     normalize_appointment_tenure,
 )
 from ming_sim.participant_roster import resolve_dossier_owner_name
-from ming_sim.supervision import unpack_supervision_surface
 from ming_sim.decree_vocabulary import (
-    SIM_DOSSIER_EXECUTION_KEYS,
-    SIM_DOSSIER_NARRATIVE_KEYS,
     dossier_action_policy,
-    qualitative_dossier_outcome,
-    qualitative_promulgation_slot,
 )
 from ming_sim.relation_brew import MonthEndRelationBrewLeg
-from ming_sim.simulation import (
-    build_simulator_payload,
-    simulate_season_with_payload,
-)
 from ming_sim.strict_types import (
     IMPERIAL_AUTHORITY_BANDS, validate_affected_parties, validate_rejection_verdict,
     validate_verdict_affected_parties,
@@ -113,7 +99,6 @@ from ming_sim.settlement_payload import (  # noqa: E402
     bind_decision_options,
     bind_decisions_to_candidate_events,
     group_secret_orders_for_sim,
-    iter_secret_order_ids,
     parse_decision_blocks,
 )
 
@@ -180,91 +165,6 @@ def collect_new_arrival_waiting_audience(
         })
     return result
 
-
-def run_arrival_attendant_message(
-    llm_config: LLMConfig,
-    *,
-    year: int,
-    period: int,
-    arrivals: Sequence[Mapping[str, object]],
-    agent=None,
-) -> str:
-    """#671：王承恩抵京报到 one-shot。集合非空而空文 → LLMContractError。"""
-    if not arrivals:
-        return ""
-    facts = {
-        "year": int(year),
-        "period": int(period),
-        "arrivals": [
-            {
-                "name": str(row.get("name") or row.get("person_name") or "").strip(),
-                "location": str(row.get("location") or "").strip(),
-                "status": str(row.get("status") or "候旨"),
-            }
-            for row in arrivals
-            if str(row.get("name") or row.get("person_name") or "").strip()
-        ],
-    }
-    if not facts["arrivals"]:
-        return ""
-    runner = agent if agent is not None else create_arrival_attendant_agent(llm_config)
-    try:
-        text = run_agent_text(
-            runner,
-            json.dumps(facts, ensure_ascii=False),
-            tag="arrival-attendant",
-        )
-    except (APITimeoutError, APIConnectionError, APIStatusError) as error:
-        # 生产 provider 调用适配缝：只捕已知超时/连接/HTTP 异常，译 LLMUnavailable
-        #（保留 cause）。LLMContractError（空文）与程序错不捕，照旧响亮上抛。
-        raise llm_unavailable_from_error(error, "王承恩抵京报到") from error
-    text = str(text or "")
-    if not text.strip():
-        raise LLMContractError("王承恩抵京报到返回空文")
-    return text  # 原文，含首尾空白（P6：零删改）
-
-
-def run_settlement_attendant_message(
-    llm_config: LLMConfig,
-    *,
-    year: int,
-    period: int,
-    rejections: Sequence[Mapping[str, object]],
-    agent=None,
-) -> str:
-    """#1745：王承恩结算拒收递话 one-shot。有玩家来源拒收而空文 → LLMContractError。
-
-    只吃结构化 section/category/reason；原文返回（P6 零删改）。
-    """
-    if not rejections:
-        return ""
-    facts = {
-        "year": int(year),
-        "period": int(period),
-        "rejections": [
-            {
-                "section": str(row.get("section") or ""),
-                "category": str(row.get("category") or ""),
-                "reason": str(row.get("reason") or ""),
-            }
-            for row in rejections
-        ],
-    }
-    if not facts["rejections"]:
-        return ""
-    runner = agent if agent is not None else create_settlement_attendant_agent(llm_config)
-    try:
-        text = run_agent_text(
-            runner,
-            json.dumps(facts, ensure_ascii=False),
-            tag="settlement-attendant",
-        )
-    except (APITimeoutError, APIConnectionError, APIStatusError) as error:
-        raise llm_unavailable_from_error(error, "王承恩结算拒收递话") from error
-    text = str(text or "")
-    if not text.strip():
-        raise LLMContractError("王承恩结算拒收递话返回空文")
-    return text  # 原文，含首尾空白（P6：零删改）
 
 
 # #1753 decision key promulgation-verdict-heal-by-resume-then-fail-closed：
@@ -849,22 +749,6 @@ def _open_affair_ids_from_payload(payload: object) -> set[int]:
     return ids
 
 
-def secret_dossier_ids_from_secret_orders(db: GameDB, secret_orders: object) -> set[int]:
-    """#1252: freeze secret-dossier roster-write authority from batch secret_orders.
-
-    Resolve each real secret-order id via get_dossier_for_secret_order. Missing
-    authority is an empty closed set — callers must never rebuild from live DB
-    beyond the frozen order-id batch.
-    """
-    out: set[int] = set()
-    for order_id in iter_secret_order_ids(secret_orders):
-        dossier = db.get_dossier_for_secret_order(int(order_id))
-        if dossier is None:
-            continue
-        out.add(int(dossier["id"]))
-    return out
-
-
 def _record_settlement_narrative_sources(
     db: GameDB, state: GameState, narrative: str, *, commit: bool = False,
 ) -> None:
@@ -957,178 +841,6 @@ def write_decree_with_agno(
     if not text.strip():
         raise LLMContractError("拟诏输出为空。")
     return text.strip()
-
-
-def _simulator_link_item(item: Dict[str, object]) -> Dict[str, object]:
-    return {
-        "target_dossier_id": int(item["target_dossier_id"]),
-        "relation_type": str(item.get("relation_type") or ""),
-        "note": str(item.get("note") or ""),
-    }
-
-
-def _simulator_promulgated_turn(row: Dict[str, object], db: GameDB) -> int:
-    """Resolve promulgated_turn from row or durable decision history (fail loud)."""
-    if row.get("promulgated_turn") not in (None, ""):
-        try:
-            return int(row["promulgated_turn"])  # type: ignore[arg-type]
-        except (TypeError, ValueError):
-            pass
-    # ADR 0005: db read errors must not collapse into hollow 0 for 邸报 inputs.
-    hist = db.list_decree_dossier_decisions(int(row["id"]))
-    for item in hist:
-        if str(item.get("decision") or "") == "promulgated":
-            return int(item.get("turn") or 0)
-        if str(item.get("rescript_action") or "") == "force_promulgated":
-            return int(item.get("turn") or 0)
-    return 0
-
-
-def _simulator_dossier_links(
-    row: Dict[str, object], db: GameDB,
-) -> List[Dict[str, object]]:
-    if isinstance(row.get("links"), list):
-        raw = row["links"]  # type: ignore[assignment]
-    else:
-        # ADR 0005: no silent empty-links on db/schema failure.
-        raw = db.list_dossier_links(int(row["id"]))
-    return [
-        _simulator_link_item(item)
-        for item in raw
-        if isinstance(item, dict) and item.get("target_dossier_id") is not None
-    ]
-
-
-def _project_one_dossier_for_simulator(
-    row: Dict[str, object],
-    *,
-    track: str,
-    db: GameDB,
-    execution_summary: Optional[Dict[str, object]] = None,
-    side_fields: Optional[Dict[str, object]] = None,
-) -> Dict[str, object]:
-    """#569 B + #613: fixed-key projection with execution-side tenure fields."""
-    stigma = row.get("stigma")
-    if not isinstance(stigma, list):
-        stigma = []
-    roster = row.get("participant_roster")
-    if not isinstance(roster, list):
-        roster = []
-    projected: Dict[str, object] = {
-        "id": int(row["id"]),
-        "action_type": str(row.get("action_type") or ""),
-        "status": str(row.get("status") or ""),
-        "decision": qualitative_promulgation_slot(row),
-        "outcome": qualitative_dossier_outcome(
-            row.get("execution_outcome"), status=row.get("status"),
-        ),
-        "note": str(row.get("execution_note") or ""),
-        "mode": str(row.get("mode") or "ordinary"),
-        "stigma": list(stigma),
-        "participant_roster": list(roster),
-        "links": _simulator_dossier_links(row, db),
-        "execution_signal": row.get("execution_signal"),
-        "due_turn": int(row.get("due_turn") or 0),
-        "created_turn": int(row.get("created_turn") or 0),
-        "promulgated_turn": _simulator_promulgated_turn(row, db),
-        "target_kind": str(row.get("target_kind") or ""),
-        "target_id": str(row.get("target_id") or ""),
-        "executor_kind": str(row.get("executor_kind") or ""),
-        "executor_id": str(row.get("executor_id") or ""),
-    }
-    # #613: tenure + #611 authority projection ride the fixed-key surface.
-    projected.update(dict(side_fields or {}))
-    # #625: supervision fact bottom (read-only inject; empty when none).
-    projected.update(
-        unpack_supervision_surface(
-            db.build_supervision_judge_surface(int(row["id"]))
-        )
-    )
-    # #651: expose durable monthly pay truth before execution is judged; this
-    # remains a field of the canonical dossier rather than a parallel wrapper.
-    from ming_sim.covert_levy import army_pay_fact_for_dossier
-    projected["army_pay_fact"] = army_pay_fact_for_dossier(db, int(row["id"]))
-    if track == "narrative":
-        projected["decree_text"] = str(row.get("decree_text") or "")
-        expected = SIM_DOSSIER_NARRATIVE_KEYS
-    else:
-        projected["execution_summary"] = dict(execution_summary or {})
-        expected = SIM_DOSSIER_EXECUTION_KEYS
-    keys = set(projected)
-    if keys != expected:
-        raise RuntimeError(
-            f"simulator dossier projection key drift track={track} "
-            f"missing={sorted(expected - keys)} extra={sorted(keys - expected)}"
-        )
-    return projected
-
-
-def project_dossiers_for_simulator(
-    simulation_visible_dossiers: List[Dict[str, object]],
-    db: GameDB,
-    state: GameState,
-) -> List[Dict[str, object]]:
-    """Assemble decree_dossiers for the month simulator (ADR 0055 / #517 / #569 / #613).
-
-    db/state are required: #569 links/promulgated_turn and #613 tenure + #611
-    authority projection must read DB truth; silent skip is not allowed.
-    """
-    if db is None or state is None:
-        raise TypeError(
-            "project_dossiers_for_simulator requires db and state "
-            "(no silent skip of execution-side projection)"
-        )
-    dossier_payload: List[Dict[str, object]] = []
-    for row in simulation_visible_dossiers:
-        payload = _dossier_payload_dict(row)
-        policy = dossier_action_policy(row.get("action_type"), payload)
-        # Narrative-owned effects are simulator material.  Deterministically
-        # materialized payload-owned work remains visible only as inert execution
-        # context: decree text and mechanical payload must not be replayed.
-        admitted = (
-            str(row.get("status") or "") != "proposed"
-            or str(row.get("settlement_verdict") or "") == "promulgated"
-        )
-        # #613: same #611 projection + executor tenure on the sim assembly chain.
-        side_fields: Dict[str, object] = (
-            execution_side_read_fields(db, state, row) if admitted else {}
-        )
-        if policy["effect_owner"] == "narrative" and admitted:
-            dossier_payload.append(
-                _project_one_dossier_for_simulator(
-                    row, track="narrative", db=db, side_fields=side_fields,
-                )
-            )
-            continue
-        # In-transit executing work and just-promulgated payload-owned work need
-        # command/target context without re-materializing.
-        just_promulgated_payload = (
-            policy["effect_owner"] == "payload"
-            and policy.get("execution_surface") == "terminal"
-            and str(row.get("settlement_verdict") or "") == "promulgated"
-        )
-        if admitted and (
-            str(row.get("status") or "") == "executing" or just_promulgated_payload
-        ):
-            execution_summary: Dict[str, object] = {
-                "command": str(row.get("decree_text") or "").strip(),
-            }
-            # target_id 已在行级字段；此处补 payload 侧必要动作上下文（金额/账户/惩处动作）。
-            for key in (
-                "amount", "account", "target_account", "purpose", "reason",
-                "punish_action",
-            ):
-                value = payload.get(key)
-                if value not in (None, ""):
-                    execution_summary[key] = value
-            dossier_payload.append(
-                _project_one_dossier_for_simulator(
-                    row, track="execution",
-                    execution_summary=execution_summary, db=db,
-                    side_fields=side_fields,
-                )
-            )
-    return dossier_payload
 
 
 def _requires_full_settlement(state: GameState, db: GameDB) -> bool:
@@ -1249,94 +961,6 @@ def _provenance_from_stored(value: object) -> Provenance:
         except KeyError:
             pass
     return Provenance.system_simulation
-
-
-# #657：HITL phase2 续跑时 persist 不得触碰急务票拟行（return_revise 等跨 phase2 存活）。
-# 与 None/[]（#656 空票拟 → DELETE 本回合 draft）三态分立。
-_PRESERVE_RESCRIPT_DRAFTS = object()
-
-
-class _AppendRescriptDrafts:
-    """#657 HITL phase2：追加本回合新票拟，不 DELETE 既有急务行。"""
-
-    __slots__ = ("items",)
-
-    def __init__(self, items: List[Dict[str, object]]) -> None:
-        self.items = list(items)
-
-
-def persist_resolve_context(
-    db: GameDB,
-    turn: int,
-    extracted: Dict[str, object],
-    *,
-    decree_text: str,
-    narrative: str,
-    simulator_payload: Dict[str, object],
-    secret_orders: Dict[str, object],
-    relevant_memories: List[Dict],
-    source: Provenance = Provenance.system_simulation,
-    rescript_drafts: Optional[List[Dict[str, object]]] = None,
-    attendant_message: str = "",
-) -> Dict[str, object]:
-    """ADR 0008 S2：每回合进入结算后半段前无条件持久化 resolve_context（extractor delta + 叙事）。
-
-    source（#144）：拒收 provenance 一并持久化，driver 崩溃恢复据此还原
-    原始来源——否则玩家来源(player_decree/hitl)拒收被恢复路记成 system_simulation、静默不提示。
-
-    driver 重跑真源：跨进程恢复从此重灌；玩家月链改用暂存声明及落账状态。
-    **持久化前先过 validate_delta_shape**——形状畸形的 delta 绝不入 resolve_context
-    （否则钉进重试真源：apply 永崩、而「重跑 extractor」被「context 已存在」挡死=soft-lock）。
-    校验失败响亮抛 ValueError，save 不执行。注意此门只挡形状毒：shape 合法但值级
-    必炸的 payload（如 new_armies 项里非数值兵力）由 ADR 0008 决定 6 的「重新推演」
-    逃生口兜底（清 context 重产 delta）；driver 不能假设 ready=1 即重放安全。
-    """
-    cleaned, rejections = sanitize_delta_shape(extracted)
-    validate_delta_shape(cleaned)  # sanitized ready context must itself satisfy the shape gate
-    try:
-        attempt = _next_attempt(turn)
-    except Exception:
-        attempt = 1
-    collector = RejectionCollector(attempt=attempt)
-    with atomic(db):
-        for section, item, reason in rejections:
-            collector.record(
-                section,
-                RejectedItem(
-                    item=item,
-                    reason=reason,
-                    category="invalid_shape",
-                    source=Provenance(source),
-                ),
-                turn,
-            )
-        collector.flush_to_db(db)
-        db.save_resolve_context(
-            turn, decree_text, narrative, simulator_payload,
-            secret_orders=secret_orders, relevant_memories=relevant_memories,
-            extracted=cleaned, source=Provenance(source).value,
-            attendant_message=attendant_message,
-        )
-        # #656 / F2.5：急务票拟行与重跑真源同一事务——ready context 存在 ⟺ 票拟已落
-        # （生成成功时）。崩溃恢复从持久层读回，不重跑已完成的票拟步（F1.3）；
-        # extractor 中止则整个事务回滚，票拟一并回滚不落、重试重生成。
-        # #657：_PRESERVE_RESCRIPT_DRAFTS → 零触碰；_AppendRescriptDrafts → 追加不删既有。
-        if rescript_drafts is _PRESERVE_RESCRIPT_DRAFTS:
-            pass
-        elif isinstance(rescript_drafts, _AppendRescriptDrafts):
-            if rescript_drafts.items:
-                db.append_rescript_drafts(turn, rescript_drafts.items)
-        elif isinstance(rescript_drafts, list) and rescript_drafts:
-            db.save_rescript_drafts(turn, rescript_drafts)
-        elif rescript_drafts is None or (isinstance(rescript_drafts, list) and len(rescript_drafts) == 0):
-            # r4 p3：空/None 时同一事务内 DELETE 本回合 kind='rescript_draft' 行，
-            # 防同回合二次 persist 残留上一 attempt 的行（F2.5 context⟺票拟对应）。
-            db.conn.execute(
-                "DELETE FROM pending_decisions WHERE turn = ? AND kind = 'rescript_draft'",
-                (int(turn),),
-            )
-    mirror_rejections_after_commit(db, collector, rejections_jsonl_path)
-    return cleaned
 
 
 # 同源恢复刷新的标量字段（与 db.load_state 读盘列对齐）。metrics 单独深刷。
@@ -1509,11 +1133,11 @@ def prepare_resolve_front_half(
     resolve_directives 与 driver.prepare 共用此 helper。外层 atomic 使 settling 相位与
     ready=0 context 同生共死。已有 context 的 FRONT_HALF_DONE 重入只读返回既有
     transit_arrivals，禁止 placeholder upsert 覆写 durable 真源（ready=0 原诏/source
-    与 ready=1 崩溃重放载荷），不二次 tick/财政。返回本回合 `transit_arrivals`
+    ），不二次 tick/财政。返回本回合 `transit_arrivals`
     （无抵达 = `[]`）。
     """
     # 已有-context 重入：只读既有真源。save_resolve_context 是整行 upsert，placeholder
-    # 默认空字段会冲掉 ready=0 原诏/source 与 ready=1 extracted/contract/narrative。
+    # 默认空字段会冲掉已有原诏/source/narrative。
     if state.turn_phase in FRONT_HALF_DONE_PHASES:
         existing = db.get_resolve_context(int(state.turn))
         if existing is not None:
@@ -1524,8 +1148,7 @@ def prepare_resolve_front_half(
 
     # 诏书占位真源（ship-pre r5）：pre_settle 成功后立即把 decree_text 落为 ready=0
     # 占位——begin_turn 会清内存 last_decree，跨进程恢复的 no-ready fallthrough 没有
-    # 此行就只能用 LLM 从草案重新生成，玩家手改的原诏蒸发。HITL/ready persist 后续
-    # 同键 upsert，settle 尾 clear 收掉。
+    # 此行就只能用 LLM 从草案重新生成，玩家手改的原诏蒸发。后续同键 upsert 保留本月上下文。
     #
     # 占位与 settling 相位同事务可见（PR #90 R1 codex P2）：外层 atomic 把 pre_settle
     # 的内层事务并入（flat 可重入），崩在「settling 已提交、占位未落」的窗口不再可能
@@ -1544,7 +1167,7 @@ def prepare_resolve_front_half(
                 "open_affairs": db.affairs.input_brief(getattr(db, "textual_facts", None)),
             }
             # #671：占位 upsert 不得以默认空串覆盖已持久 attendant_message
-            #（clear_for_resimulation 后 phase 非 FRONT_HALF_DONE 重入时尤甚）。
+            #（同 turn 占位重入时尤甚）。
             prior_placeholder = db.get_resolve_context(int(state.turn))
             preserved_attendant = (
                 str(prior_placeholder.get("attendant_message") or "")
@@ -1553,7 +1176,7 @@ def prepare_resolve_front_half(
             )
             db.save_resolve_context(
                 state.turn, decree_text, "", placeholder_payload,
-                secret_orders={}, relevant_memories=[],  # #48：占位用分组承载的空 dict（旋即被真存覆盖）
+                secret_orders={},
                 source=Provenance(source).value,  # #146 A：归一 enum/合法值串
                 attendant_message=preserved_attendant,
             )
@@ -2002,8 +1625,8 @@ def _collect_inline_rejections(
                     _scan(f"{section}.{subkey}", subvalue)
 
 
-def _ensure_rejection_reports_table(db: GameDB) -> str:
-    """Ensure rejection_reports exists; return SQL fragment for non-invalidated rows."""
+def _ensure_rejection_reports_table(db: GameDB) -> None:
+    """Ensure rejection_reports exists."""
     db.conn.execute(
         """
         CREATE TABLE IF NOT EXISTS rejection_reports (
@@ -2015,27 +1638,24 @@ def _ensure_rejection_reports_table(db: GameDB) -> str:
             category TEXT NOT NULL,
             source TEXT NOT NULL,
             attempt INTEGER NOT NULL DEFAULT 1,
-            resimulation_invalidated INTEGER NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         )
         """
     )
-    cols = {str(row[1]) for row in db.conn.execute("PRAGMA table_info(rejection_reports)").fetchall()}
-    return "resimulation_invalidated = 0" if "resimulation_invalidated" in cols else "1=1"
 
 
 def list_durable_player_visible_rejections(
     db: GameDB, turn: int,
 ) -> List[Dict[str, object]]:
-    """0008-D5 来源门：本 turn 未作废的 player_decree/hitl_decision 拒收结构化事实。
+    """0008-D5 来源门：本 turn 的 player_decree/hitl_decision 拒收结构化事实。
 
     只投影 section/category/reason 供 LLM 呈现接缝；不含 item 明细（不泄技术载荷）。
     """
-    invalidated_expr = _ensure_rejection_reports_table(db)
+    _ensure_rejection_reports_table(db)
     rows = db.conn.execute(
-        f"""
+        """
         SELECT section, category, reason FROM rejection_reports
-        WHERE turn=? AND source IN (?, ?) AND {invalidated_expr}
+        WHERE turn=? AND source IN (?, ?)
         ORDER BY id
         """,
         (int(turn), Provenance.player_decree.value, Provenance.hitl_decision.value),
@@ -2051,7 +1671,7 @@ def list_durable_player_visible_rejections(
 
 
 def _has_durable_player_visible_rejection(db: GameDB, turn: int) -> bool:
-    """True when any non-resimulation-invalidated player-source rejection exists for turn."""
+    """True when any player-source rejection exists for turn."""
     return bool(list_durable_player_visible_rejections(db, turn))
 
 
@@ -2369,11 +1989,6 @@ def resolve_decisions_phase2(
     if ctx is None:
         raise LLMContractError("无待决推演上下文，无法续跑结算（phase1 未暂停或已结算）。")
     before_turn = state.turn
-    if ctx.get("extracted") is not None:
-        # 旧 phase2 ready delta 不是新月链的恢复真源；保留原诏/来源与已裁记录，
-        # 废弃旧整段落账产物后从现役暂存声明继续。
-        clear_for_resimulation(db, before_turn)
-        ctx = db.get_resolve_context(before_turn) or ctx
     from ming_sim.month_chain import run_player_month_chain
     result = run_player_month_chain(
         state, db, agno_db, llm_config,

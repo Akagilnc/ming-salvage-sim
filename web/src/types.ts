@@ -462,12 +462,10 @@ export type GameState = {
   /** #1625：结算入口进程内在飞；刷新/重拉只等待，不打回或续跑。 */
   settlement_entry_inflight?: boolean;
   /**
-   * #1620 / ADR 0008 决定 6/7：settling 恢复面投影。
-   * ready_replay=true → 续跑结算；false → 重新推演。message 含错误包路径与发给作者指引。
+   * #1846：settling 恢复面投影。message / error_pack_path 给同一颗「重试」；无 ready 重放分流。
    */
   settlement_recovery?: {
-    ready_replay: boolean;
-    /** #1846：核账期失败可点「重试」；legacy ready 重放亦为 true */
+    /** #1846：核账期失败可点「重试」 */
     retryable?: boolean;
     error_pack_path: string;
     message: string;
@@ -482,7 +480,7 @@ export type GameState = {
 
 export type EndingTimelineItem = {
   turn: number; year: number; period: number;
-  decree_brief: string; effect_brief: string; gazette: string;
+  gazette: string;
 };
 
 export type EndingPayload = {
@@ -492,12 +490,10 @@ export type EndingPayload = {
 };
 
 export type ChatMessage = {
-  /** user=朕 / minister=大臣 / attendant=递话（王承恩读心，ADR 0046） */
-  role: "user" | "minister" | "attendant";
+  /** user=朕 / minister=大臣 */
+  role: "user" | "minister";
   content: string;
-  /** attendant 递话的稳定记录身份（#499）：按 (chatTurnId, recordId) 去重/归位，不依赖 narration 文本 */
   chatTurnId?: number;
-  recordId?: number;
   /** #544：判官短语清单（仅大臣）；前端匹配后渲染，未命中静默丢弃 */
   highlights?: string[];
 };
@@ -519,23 +515,17 @@ export type AudienceScrollMessage = {
   record_id?: number;
 };
 
-/** 服务端 turn-identified 召对投影里的一条消息（#499）：user/minister 带 chat_turn_id，
- *  attendant 递话额外带 record_id；前端映射为 ChatMessage 后渲染。 */
+/** 服务端 turn-identified 召对投影里的一条消息（#499）：user/minister 带 chat_turn_id；
+ *  前端映射为 ChatMessage 后渲染。 */
 export type ServerChatMessage = {
-  role: "user" | "minister" | "attendant";
+  role: "user" | "minister";
   content: string;
   chat_turn_id?: number;
-  record_id?: number;
   /** #544：高亮判官短语清单（仅大臣气泡有意义） */
   highlights?: string[];
 };
 
-export type Suggestion = {
-  label: string;
-  text: string;
-  prefix?: boolean;
-  intent?: "secret_order";
-};
+
 
 export type ModalName = "none" | "state" | "chat" | "edict" | "report" | "history" | "audience_archive" | "menu" | "secret_orders" | "ending";
 
@@ -680,7 +670,6 @@ export type ChatResponse = {
   night_id: number;
   chat_turn_id: number;
   history: ServerChatMessage[];
-  suggestions: Suggestion[];
   directives: Directive[];
   pending_count?: number;
   /** #1716：chat done 载荷同步对话式拟旨暂存数，拟诏台 settle 不单靠 refresh 竞态。 */
@@ -691,7 +680,6 @@ export type ChatResponse = {
   registered_minister?: string;
   proposed_directive?: ProposedDirective | null;
   secret_order_id?: number;
-  pending_action_failures?: PendingActionFailure[];
   // #502 AC5：多道准驳含糊态（候选 id/摘要）供前端展示大臣追问哪一道；无则缺席/null。
   directive_confirmation_ambiguous?: DirectiveConfirmationAmbiguous | null;
   // #670：成功记召机面控制码（SUMMON_FRESH / SUMMON_IN_TRANSIT）；禁止写入 setError/danger note。
@@ -707,13 +695,11 @@ export type ChatUndoResponse = {
   night_id: number;
   undone_chat_turn_id: number;
   history: ServerChatMessage[];
-  suggestions: Suggestion[];
   directives: Directive[];
   pending_count: number;
   pending_directive_count?: number;
   secret_orders: SecretOrder[];
   can_undo_last_chat: boolean;
-  pending_action_failures?: PendingActionFailure[];
 };
 
 export type ApiErrorDetail = {

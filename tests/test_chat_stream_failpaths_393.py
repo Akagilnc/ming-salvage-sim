@@ -155,7 +155,7 @@ def _base_runtime(db):
 def test_prologue_failure_fails_orphan_turn_and_releases_gate():
     db = _FailingPrologueDB()
     runtime, minister = _base_runtime(db)
-    gen = runtime.chat_stream(minister, "辽东军情如何？")
+    gen = runtime.chat_stream("殿上", "辽东军情如何？")
     with pytest.raises(RuntimeError):
         next(gen)  # prologue 在 append_chat_message 崩 → 重新抛出
     # 孤儿轮被失败掉（不留 active 无回复轮挡住该大臣）
@@ -196,7 +196,7 @@ def test_prologue_finally_does_not_release_foreign_gate_holder():
 
     runtime._complete_pending_write = complete_then_hand_path_to_other
 
-    gen = runtime.chat_stream(minister, "辽东军情如何？")
+    gen = runtime.chat_stream("殿上", "辽东军情如何？")
     with pytest.raises(RuntimeError):
         next(gen)
 
@@ -255,7 +255,7 @@ def test_prologue_cleanup_failure_still_releases_gate_and_counter():
     db = _DoubleFailDB()
     runtime, minister = _base_runtime(db)
 
-    gen = runtime.chat_stream(minister, "辽东军情如何？")
+    gen = runtime.chat_stream("殿上", "辽东军情如何？")
     with pytest.raises(RuntimeError):
         next(gen)
 
@@ -271,7 +271,7 @@ class _StreamCrashAgent:
 
 
 class _WorkerPathDB:
-    """Prologue succeeds (append_chat_message OK) but worker _chat_stream_payload crashes
+    """Prologue succeeds (append_chat_message OK) but worker scene payload crashes
     AND fail_chat_turn also crashes → worker double-failure path."""
 
     def create_chat_turn(self, *a, **k):
@@ -303,16 +303,15 @@ class _WorkerPathDB:
 
 
 def test_worker_cleanup_failure_still_emits_error_and_releases_gate():
-    """R3 self-check: worker 内 _chat_stream_payload 崩 → _fail_chat_turn_and_reload 自身也崩 →
+    """R3 self-check: worker 内 scene payload 崩 → _fail_chat_turn_and_reload 自身也崩 →
     仍须推 error 事件给消费者（否则 generator 永久挂死）、释放写路径 + pending ownership。"""
     db = _WorkerPathDB()
     runtime, minister = _base_runtime(db)
     agent = _StreamCrashAgent()
     runtime.session.registry = SimpleNamespace(get=lambda _c, **_kw: agent)
     runtime.session._character = lambda name: minister_double(minister)
-    runtime.session._start_cli_action_intent = lambda *_a, **_k: None
 
-    gen = runtime.chat_stream(minister, "辽东军情如何？")
+    gen = runtime.chat_stream("殿上", "辽东军情如何？")
     events = list(gen)  # consumer drives generator to completion
 
     # #1353 r11：error+end 双终态（消费者没挂死，且以 end 收束）
@@ -322,6 +321,59 @@ def test_worker_cleanup_failure_still_emits_error_and_releases_gate():
     assert types[types.index("error") + 1] == "end", types
     _assert_write_path_free(runtime)
 
+
+def test_worker_cleanup_double_failure_emits_original_error_end_and_logs(caplog):
+    """#1353 r13 / ADR 0005：payload-None 清理 abandon + fail 双二次失败 →
+    消费者有界收到*原始* error→end；清理异常只 logger.exception 记 traceback，不覆盖原错、不阻断终态。"""
+    import logging
+
+    db = _WorkerPathDB()
+    runtime, minister = _base_runtime(db)
+    agent = _StreamCrashAgent()
+    runtime.session.registry = SimpleNamespace(get=lambda _c, **_kw: agent)
+    runtime.session._character = lambda name: minister_double(minister)
+
+    primary = "LLM 流式调用崩溃。"
+    events: list[dict] = []
+    done = threading.Event()
+    box: dict = {}
+
+    def consume() -> None:
+        try:
+            for item in runtime.chat_stream("殿上", "辽东军情如何？"):
+                events.append(item)
+                if item.get("type") == "end":
+                    break
+            box["ok"] = True
+        except Exception as exc:  # noqa: BLE001
+            box["exc"] = exc
+        finally:
+            done.set()
+
+    with caplog.at_level(logging.ERROR, logger="web_app"):
+        th = threading.Thread(target=consume, daemon=True)
+        th.start()
+        done.wait()
+        th.join()
+
+    assert box.get("ok") is True, box
+    types = [e.get("type") for e in events]
+    assert "error" in types, events
+    assert types[-1] == "end", events
+    err_idx = types.index("error")
+    assert types[err_idx + 1] == "end", types
+    err = next(e for e in events if e.get("type") == "error")
+    # 原始 error 不变：清理二次崩溃不得覆盖 message
+    assert err.get("message") == primary, err
+    assert "abandon" not in str(err.get("message") or "")
+    assert "fail_chat_turn" not in str(err.get("message") or "")
+
+    # 日志机械断言：abandon + fail 两次 cleanup 均 logger.exception 留痕
+    joined = "\n".join(r.getMessage() for r in caplog.records)
+    assert "stream worker cleanup: fail_chat_turn/reload failed" in joined, joined
+    # traceback 须在 exception 记录里（logger.exception → exc_info）
+    assert any(r.exc_info for r in caplog.records), caplog.records
+    _assert_write_path_free(runtime)
 
 
 def test_worker_postprocess_exception_emits_error_end():
@@ -334,7 +386,6 @@ def test_worker_postprocess_exception_emits_error_end():
     runtime, minister = _base_runtime(db)
     runtime.session.registry = SimpleNamespace(get=lambda _c, **_kw: None)
     runtime.session._character = lambda name: minister_double(minister)
-    runtime.session._start_cli_action_intent = lambda *_a, **_k: None
     runtime.session.abandon_chat_turn_scene = lambda *_a, **_k: None
     runtime.session.close_night_after_chat_if_needed = None
 
@@ -357,7 +408,7 @@ def test_worker_postprocess_exception_emits_error_end():
 
     def consume() -> None:
         try:
-            for item in runtime.chat_stream(minister, "边饷如何？"):
+            for item in runtime.chat_stream("殿上", "边饷如何？"):
                 events.append(item)
                 if item.get("type") == "end":
                     break
@@ -538,28 +589,6 @@ def _assert_structured_llm_http(response) -> dict:
     return detail
 
 
-def test_nonstream_api_chat_llm_unavailable_is_structured_not_500(monkeypatch):
-    """#1452 A：POST /api/ministers/{name}/chat 底层 LLMUnavailable → 非 500 结构化。"""
-    provider = "Unknown model error: top_p not supported"
-
-    class _BoomChat:
-        def chat(self, minister_name: str, message: str, intent=None, *, explicit_secret_order=False):
-            raise LLMUnavailable(
-                CLI_RUNNER_PLAYER_MESSAGE,
-                code="llm_cli_error",
-                provider_message=provider,
-            )
-
-    monkeypatch.setattr(web_app, "_require_active_minister", lambda _n: None)
-    monkeypatch.setattr(web_app, "get_game", lambda: _BoomChat())
-
-    response = TestClient(web_app.app).post(
-        "/api/ministers/测试大臣/chat", json={"message": "边饷如何？"},
-    )
-    detail = _assert_structured_llm_http(response)
-    assert detail["code"] == "llm_cli_error"
-    assert detail["message"] == CLI_RUNNER_PLAYER_MESSAGE
-    assert detail["provider_message"] == provider
 
 
 def test_nonstream_api_issue_decree_llm_unavailable_is_structured_not_500(
@@ -628,15 +657,6 @@ class RunCompletedEvent:
     content = None
     tools = []
     status = "COMPLETED"
-
-
-class ToolCallCompletedEvent:
-    """agno 同名事件替身：type(event).__name__ == 'ToolCallCompletedEvent'。"""
-
-    def __init__(self, tool):
-        self.tool = tool
-        self.event = "ToolCallCompleted"
-        self.content = None
 
 
 class _RunErrorAgent:
@@ -716,7 +736,7 @@ def _post_chat_stream(monkeypatch, web_game, minister: str, message: str = "边�
     monkeypatch.setattr(web_app, "_require_active_minister", lambda _n: None)
     monkeypatch.setattr(web_app, "get_game", lambda: web_game)
     return TestClient(web_app.app).post(
-        f"/api/ministers/{minister}/chat/stream", json={"message": message},
+        "/api/audience/chat/stream", json={"message": message},
     )
 
 
@@ -839,7 +859,8 @@ def test_chat_stream_two_transient_then_success_three_attempts(monkeypatch, game
 
     agent.run = _timed_run  # type: ignore[method-assign]
     web_game, minister = _transport_web_game(game, agent, monkeypatch)
-    web_game.session.registry.session_ids[minister] = session_id
+    # #1849 reopen：殿上入口；agno 会话键挂「殿上」
+    web_game.session.registry.session_ids["殿上"] = session_id
 
     # 游戏账基线（截史不得动问话/回话账）
     user_msgs_before = int(
@@ -968,7 +989,7 @@ def test_chat_stream_three_transient_exhausted_system_fail_then_resend(monkeypat
     ).fetchone()
     assert fail_row is not None
     assert str(fail_row["status"]) == "interrupted"
-    assert web_game.interrupted_reply_retries(minister)[-1]["chat_turn_id"] == failed_turn
+    assert web_game.interrupted_reply_retries("殿上")[-1]["chat_turn_id"] == failed_turn
 
     # 实际重发：换可成功 agent（#1842：经 create_scene_agent 工厂缝）
     ok_agent = _CountingFailAgent(fail_times=0, error_factory=_conn_err)
@@ -1212,12 +1233,10 @@ def test_chat_stream_halfstream_retry_replaces_temp_presentation(monkeypatch, ga
 
     事件序列：content delta → replace delta → content delta → done。
     按客户端规则重放后，临时正文 = done.answer（不叠旧半句）。不锁措辞。
-
-    同案动作/结果相容：首 attempt 流中 dismiss 落账后瞬断，终 attempt 无 dismiss 工具
-    → done.court_action 仍为 dismiss（不延后退场、不加次数例外）。
+    #1836 reopen：场景核零动作工具，半流案不再夹 dismiss 副作用。
     """
 
-    class _PartialDismissThenOk:
+    class _PartialThenOk:
         def __init__(self):
             self.calls = 0
 
@@ -1225,22 +1244,15 @@ def test_chat_stream_halfstream_retry_replaces_temp_presentation(monkeypatch, ga
             self.calls += 1
             if self.calls == 1:
                 yield RunContent("旧半句")
-                tool = SimpleNamespace(
-                    tool_name="dismiss_minister",
-                    result="__dismiss__",
-                    tool_args={},
-                )
-                yield ToolCallCompletedEvent(tool)
                 raise LLMUnavailable(
                     "连接失败",
                     code="llm_connection_error",
                     provider_message="connection reset",
                 )
-            # 终 attempt 工具账无 dismiss——结构结果须仍对齐已落账退场
             yield RunContent("新整段")
             yield RunCompletedEvent()
 
-    agent = _PartialDismissThenOk()
+    agent = _PartialThenOk()
     web_game, minister = _transport_web_game(game, agent, monkeypatch)
 
     response = _post_chat_stream(monkeypatch, web_game, minister)
@@ -1251,7 +1263,6 @@ def test_chat_stream_halfstream_retry_replaces_temp_presentation(monkeypatch, ga
     assert agent.calls == 2
     attempts = done.get("transport_attempts") or []
     assert [a.get("outcome") for a in attempts] == ["retryable_fail", "ok"]
-    assert done.get("court_action") == "dismiss", done
 
     # 呈现结构：delta 序列含 replace，且位于首段 content 与后续 content 之间
     delta_seq = [
@@ -1293,7 +1304,7 @@ def test_chat_stream_halfstream_terminal_fail_replaces_temp(
 ):
     """#1465 ④：半流已出 delta 后终失败 → content → replace → error；重放临时正文空。
 
-    恢复/重发由 dismiss 耗尽案与 three_transient 案承担；系统层 typed 由 RunErrorEvent 案承担。
+    恢复/重发由 three_transient 案承担；系统层 typed 由 RunErrorEvent 案承担。
     """
 
     class _PartialThenTerminal:
@@ -1364,5 +1375,3 @@ def test_chat_stream_error_status_run_output_system_layer_not_diegetic(
     assert "workdir" not in str(detail.get("message") or "")
     assert "exit code" not in str(detail.get("message") or "").lower()
     assert detail.get("provider_message")
-
-

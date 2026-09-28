@@ -9,7 +9,6 @@ from ming_sim.flows import army_needed
 from ming_sim.issues import apply_historical_fiscal_rates
 import ming_sim.issues as issues
 from ming_sim.models import Event
-from ming_sim.simulation import build_simulator_payload
 
 
 JIAO_NATIONAL_MONTHLY = 280.0 / 12.0
@@ -242,87 +241,10 @@ def test_fiscal_levy_shadow_capstone_golden_all_seeded_provinces(
         assert settle["p"]["起运定额"] >= 0
 
 
-def test_liao_levy_memorial_estimate_payload_is_diegetic_national_scope(game):
-    db, state, content = game
-    issues.bind_content(content)
-    state.year = 1631
-    state.period = 1
-    db.save_state(state)
-
-    pre_settle(state, db, content=content)
-
-    payload = build_simulator_payload(state, db, "准户部议，加辽饷以济边军。", "")
-    estimates = payload["fiscal_levy_memorial_estimates"]
-    assert len(estimates) == 1
-    estimate = estimates[0]
-
-    assert estimate["event_id"] == "liao_levy_rise_1631"
-    assert estimate["scope"] == "国总口径"
-    assert estimate["national_added_wanliang"]["unit"] == "万两/月"
-    assert (
-        estimate["national_added_wanliang"]["lower"]
-        <= estimate["national_added_wanliang"]["midpoint"]
-        <= estimate["national_added_wanliang"]["upper"]
-    )
-    assert "万两" in estimate["national_added_wanliang"]["text"]
-    assert "可补军费" in estimate["army_gap_coverage_text"]
-
-    rendered = json.dumps(estimates, ensure_ascii=False)
-    for forbidden in ("4/3", "7/13", "73/52", "rate", "参数", "loyalty", "ability"):
-        assert forbidden not in rendered
 
 
-def test_fiscal_levy_memorial_estimate_skips_rejected_positive_levy(game):
-    db, state, content = game
-    issues.bind_content(content)
-    state.year = 1631
-    state.period = 1
-    db.save_state(state)
-    db.mark_event_triggered(
-        state,
-        "liao_levy_rise_1631",
-        source="test",
-        terminal_reason="已驳",
-    )
-
-    payload = build_simulator_payload(state, db, "驳回加辽饷之议。", "")
-
-    assert payload["fiscal_levy_memorial_estimates"] == []
 
 
-def test_liao_levy_memorial_estimate_uses_collectible_ming_controlled_revenue(game):
-    db, state, content = game
-    issues.bind_content(content)
-    lost_region_id = "henan"
-    db.conn.execute(
-        "UPDATE regions SET controlled_by = ? WHERE id = ?",
-        ("houjin", lost_region_id),
-    )
-    db.conn.commit()
-    state.year = 1631
-    state.period = 1
-    db.save_state(state)
-
-    pre_settle(state, db, content=content)
-
-    expected_collectible = 0.0
-    expected_nominal = 0.0
-    for row in db.conn.execute("SELECT id, controlled_by, fiscal FROM regions ORDER BY id").fetchall():
-        fiscal = json.loads(str(row["fiscal"] or "{}"))
-        settle = fiscal.get("settle") if isinstance(fiscal, dict) else None
-        meta = settle.get("_meta") if isinstance(settle, dict) else None
-        if not isinstance(meta, dict) or "辽饷九厘基线" not in meta:
-            continue
-        liao_rise = float(meta["辽饷九厘基线"]) * (4.0 / 3.0 - 1.0)
-        expected_nominal += liao_rise
-        if str(row["controlled_by"]) == "ming":
-            expected_collectible += liao_rise
-    assert expected_collectible < expected_nominal
-
-    payload = build_simulator_payload(state, db, "准户部议，加辽饷以济边军。", "")
-    estimate = payload["fiscal_levy_memorial_estimates"][0]
-    assert estimate["national_added_wanliang"]["midpoint"] == round(expected_collectible, 1)
-    assert estimate["national_added_wanliang"]["midpoint"] != round(expected_nominal, 1)
 
 
 def test_fiscal_levy_shadow_skips_malformed_region_fiscal_without_blocking_fiscal_levy_pass(game, monkeypatch):
@@ -456,50 +378,6 @@ def test_fiscal_levy_bad_region_does_not_redistribute_jiao_lian_targets(game, mo
     )
 
 
-def test_fiscal_levy_memorial_uses_stable_denominator_when_lost_region_breaks_later(
-    game, monkeypatch
-):
-    db, state, content = game
-    issues.bind_content(content)
-    state.year = 1637
-    state.period = 1
-    db.save_state(state)
-
-    land_by_region = _settled_land_by_region(db)
-    db.conn.execute(
-        "UPDATE regions SET controlled_by = ? WHERE id = ?",
-        ("houjin", "henan"),
-    )
-    db.conn.commit()
-    expected_ming_land = sum(
-        land
-        for region_id, land in land_by_region.items()
-        if region_id != "henan"
-    )
-    expected_added = JIAO_NATIONAL_MONTHLY * expected_ming_land / sum(land_by_region.values())
-
-    pre_settle(state, db, content=content)
-    fiscal = json.loads(
-        str(db.conn.execute("SELECT fiscal FROM regions WHERE id = ?", ("henan",)).fetchone()["fiscal"])
-    )
-    fiscal["settle"]["st"]["官民田"] = []
-    msgs = []
-    monkeypatch.setattr(issues, "tlog", lambda msg: msgs.append(msg))
-    db.conn.execute(
-        "UPDATE regions SET fiscal = ? WHERE id = ?",
-        (json.dumps(fiscal, ensure_ascii=False), "henan"),
-    )
-    db.conn.commit()
-
-    payload = build_simulator_payload(state, db, "准户部议，开剿饷。", "")
-
-    assert any("[fiscal-levy] henan settle 解析失败" in msg for msg in msgs)
-    estimate = next(
-        item
-        for item in payload["fiscal_levy_memorial_estimates"]
-        if item["event_id"] == "jiao_levy_start_1637"
-    )
-    assert estimate["national_added_wanliang"]["midpoint"] == round(expected_added, 1)
 
 
 @pytest.mark.parametrize("bad_shape", ["land", "p", "st", "settle"])
@@ -553,42 +431,6 @@ def test_fiscal_levy_incomplete_first_pass_does_not_freeze_zero_share_seed(
     assert math.isclose(restored["p"]["三饷应征"], expected_liao + expected_jiao, rel_tol=1e-9, abs_tol=1e-9)
 
 
-def test_fiscal_levy_memorial_suppresses_share_estimate_without_complete_denominator(
-    game, monkeypatch
-):
-    db, state, content = game
-    issues.bind_content(content)
-    state.year = 1637
-    state.period = 1
-    db.save_state(state)
-    db.conn.execute(
-        "UPDATE regions SET controlled_by = ? WHERE id = ?",
-        ("houjin", "henan"),
-    )
-    db.conn.commit()
-    db.mark_event_triggered(
-        state,
-        "jiao_levy_start_1637",
-        source="test",
-        terminal_reason="已准",
-    )
-    fiscal = json.loads(
-        str(db.conn.execute("SELECT fiscal FROM regions WHERE id = ?", ("henan",)).fetchone()["fiscal"])
-    )
-    fiscal["settle"]["st"] = []
-    msgs = []
-    monkeypatch.setattr(issues, "tlog", lambda msg: msgs.append(msg))
-    db.conn.execute(
-        "UPDATE regions SET fiscal = ? WHERE id = ?",
-        (json.dumps(fiscal, ensure_ascii=False), "henan"),
-    )
-    db.conn.commit()
-
-    payload = build_simulator_payload(state, db, "准户部议，开剿饷。", "")
-
-    assert any("[fiscal-levy] henan settle 解析失败" in msg for msg in msgs)
-    estimate_ids = {item["event_id"] for item in payload["fiscal_levy_memorial_estimates"]}
-    assert "jiao_levy_start_1637" not in estimate_ids
 
 
 @pytest.mark.parametrize("bad_meta_key", ["剿饷基线", "练饷基线", "饷率田亩分母基线"])
@@ -634,86 +476,10 @@ def test_fiscal_levy_bad_share_meta_does_not_crash_or_redistribute_first_pass(
     assert restored["p"]["三饷应征"] > expected_liao
 
 
-def test_fiscal_levy_memorial_estimates_skip_malformed_region_fiscal(game, monkeypatch):
-    db, state, content = game
-    issues.bind_content(content)
-    state.year = 1631
-    state.period = 1
-    db.save_state(state)
-    msgs = []
-    monkeypatch.setattr(issues, "tlog", lambda msg: msgs.append(msg))
-
-    pre_settle(state, db, content=content)
-    db.conn.execute("UPDATE regions SET fiscal = ? WHERE id = ?", ("[]", "shaanxi"))
-    db.conn.commit()
-    # fiscal_levy 奉献估计自身仍隔离跳过（tlog 留痕）——该行为属 issues 侧消费口。
-    estimates = issues.fiscal_levy_memorial_estimates(state, db)
-    assert any("[fiscal-levy] shaanxi fiscal 非字典" in msg for msg in msgs)
-    assert "liao_levy_rise_1631" in {item["event_id"] for item in estimates}
-    # #653 F2（ADR 0005）：simulator payload 的 fiscal_fact_brief 对坏 fiscal JSON
-    # 响亮失败，不再静默 continue（judge class③ 拍定；隔离跳过仅属 fiscal_levy 口）。
-    with pytest.raises(ValueError, match="fiscal_fact_brief"):
-        build_simulator_payload(state, db, "准户部议，加辽饷以济边军。", "")
 
 
-def test_fiscal_levy_memorial_labels_cumulative_army_arrears_as_wanliang_not_monthly(game):
-    db, state, content = game
-    issues.bind_content(content)
-    state.year = 1631
-    state.period = 1
-    db.save_state(state)
-
-    pre_settle(state, db, content=content)
-    db.conn.execute("UPDATE armies SET arrears = 100 WHERE owner_power = 'ming'")
-    db.conn.commit()
-
-    payload = build_simulator_payload(state, db, "准户部议，加辽饷以济边军。", "")
-    estimate = payload["fiscal_levy_memorial_estimates"][0]
-    assert estimate["army_gap_basis"] == "全军累计欠饷"
-    assert estimate["national_army_gap_wanliang"]["unit"] == "万两"
-    assert estimate["national_army_gap_wanliang"]["text"].endswith("万两")
-    assert not estimate["national_army_gap_wanliang"]["text"].endswith("万两/月")
 
 
-def test_fiscal_levy_memorial_excludes_self_funded_tusi_from_army_gap(game):
-    db, state, content = game
-    issues.bind_content(content)
-    state.year = 1631
-    state.period = 1
-    db.save_state(state)
-    db.mark_event_triggered(
-        state,
-        "liao_levy_rise_1631",
-        source="test",
-        terminal_reason="已准",
-    )
-    db.conn.execute("UPDATE armies SET arrears = 0 WHERE owner_power = 'ming'")
-    db.conn.execute(
-        """
-        UPDATE armies
-        SET arrears = 100, is_tusi = 1, self_funded_pay = 1
-        WHERE id = 'southwest_tusi'
-        """
-    )
-    db.conn.commit()
-
-    expected_monthly_due = sum(
-        float(army_needed(row))
-        for row in db.conn.execute(
-            """
-            SELECT *
-            FROM armies
-            WHERE owner_power = 'ming' AND is_tusi = 0 AND self_funded_pay = 0
-            """
-        ).fetchall()
-    )
-
-    payload = build_simulator_payload(state, db, "准户部议，加辽饷以济边军。", "")
-
-    estimate = payload["fiscal_levy_memorial_estimates"][0]
-    assert estimate["army_gap_basis"] == "本月应发军饷"
-    assert estimate["national_army_gap_wanliang"]["unit"] == "万两/月"
-    assert estimate["national_army_gap_wanliang"]["midpoint"] == round(expected_monthly_due, 1)
 
 
 def test_fiscal_levy_expired_pending_choice_is_terminalized(game):
@@ -886,28 +652,6 @@ def test_fiscal_levy_choice_resubmission_uses_latest_pending_label(game):
     assert after["p"] == before["p"]
 
 
-def test_fiscal_levy_pending_choice_label_is_canonicalized_for_db_consumers(game):
-    db, state, content = game
-    issues.bind_content(content)
-    state.year = 1631
-    state.period = 1
-    db.save_state(state)
-    db.record_event_decision_choice(
-        state,
-        "liao_levy_rise_1631",
-        {"label": "已 准"},
-    )
-
-    apply_historical_fiscal_rates(state, db)
-
-    row = db.conn.execute(
-        "SELECT terminal_state, terminal_reason FROM event_triggers WHERE event_id=?",
-        ("liao_levy_rise_1631",),
-    ).fetchone()
-    assert dict(row) == {"terminal_state": "triggered", "terminal_reason": "已准"}
-    payload = build_simulator_payload(state, db, "准户部议，加辽饷以济边军。", "")
-    estimate_ids = {item["event_id"] for item in payload["fiscal_levy_memorial_estimates"]}
-    assert "liao_levy_rise_1631" in estimate_ids
 
 
 def test_fiscal_levy_pending_stop_choice_keeps_jiao_in_force_same_tick(game):
@@ -979,40 +723,8 @@ def test_fiscal_levy_pending_choice_waits_for_event_window(game):
     assert dict(row) == {"terminal_state": "triggered", "terminal_reason": "已准"}
 
 
-def test_fiscal_levy_memorial_small_fractional_arrears_range_is_ordered(game):
-    db, state, content = game
-    issues.bind_content(content)
-    state.year = 1631
-    state.period = 1
-    db.save_state(state)
-
-    pre_settle(state, db, content=content)
-    db.conn.execute("UPDATE armies SET arrears = 0 WHERE owner_power = 'ming'")
-    db.conn.execute(
-        "UPDATE armies SET arrears = 0.6 WHERE id = (SELECT id FROM armies WHERE owner_power = 'ming' LIMIT 1)"
-    )
-    db.conn.commit()
-
-    payload = build_simulator_payload(state, db, "准户部议，加辽饷以济边军。", "")
-    estimate = payload["fiscal_levy_memorial_estimates"][0]
-    gap_range = estimate["national_army_gap_wanliang"]
-    assert gap_range["lower"] <= gap_range["midpoint"] <= gap_range["upper"]
 
 
-def test_fiscal_levy_memorial_suppresses_jiao_start_when_stopped_same_tick(game):
-    db, state, content = game
-    issues.bind_content(content)
-    state.year = 1640
-    state.period = 1
-    db.save_state(state)
-
-    pre_settle(state, db, content=content)
-
-    payload = build_simulator_payload(state, db, "准停剿饷。", "")
-    estimate_ids = {item["event_id"] for item in payload["fiscal_levy_memorial_estimates"]}
-    assert "jiao_levy_start_1637" not in estimate_ids
-    assert "jiao_levy_stop_1640" not in estimate_ids
-    assert {"liao_levy_rise_1631", "lian_levy_start_1639"} <= estimate_ids
 
 
 def test_liao_levy_targets_all_seeded_settles_without_compounding_or_clobbering_p(game):

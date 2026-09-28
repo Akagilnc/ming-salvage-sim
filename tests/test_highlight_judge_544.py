@@ -215,7 +215,7 @@ def test_chat_stream_done_before_highlights_and_degrade(game, monkeypatch):
     # run_highlight_judge 契约：失败/超时/坏输出只回 []、不抛（一层边界在其内部）。
     monkeypatch.setattr(web_app_mod, "run_highlight_judge", lambda **_k: [])
 
-    events = list(web_game.chat_stream(minister, "军务如何？"))
+    events = list(web_game.chat_stream("殿上", "军务如何？"))
     types = [e.get("type") for e in events]
     assert "delta" in types
     assert "done" in types
@@ -225,7 +225,7 @@ def test_chat_stream_done_before_highlights_and_degrade(game, monkeypatch):
     done = next(e for e in events if e["type"] == "done")
     assert done["payload"]["answer"] == "臣陈辽饷。"
     # 回话已落库且高亮为空
-    mid = int(db.get_last_active_chat_turn(minister, state.turn)["minister_message_id"])
+    mid = int(db.get_last_active_chat_turn("殿上", state.turn)["minister_message_id"])
     assert db.get_message_highlights(mid) == []
     _drain(web_game)
 
@@ -250,7 +250,7 @@ def test_chat_stream_slow_success_attaches_after_done(game, monkeypatch):
 
     monkeypatch.setattr(web_app_mod, "run_highlight_judge", slow_ok)
 
-    stream = web_game.chat_stream(minister, "如何？")
+    stream = web_game.chat_stream("殿上", "如何？")
     events: List[Dict[str, Any]] = []
     done_seen = False
     hl_before_done = False
@@ -273,8 +273,8 @@ def test_chat_stream_slow_success_attaches_after_done(game, monkeypatch):
     assert mid > 0
     assert db.get_message_highlights(mid) == ["军务"]
     # 投影读端
-    proj = db.build_chat_projection(minister)
-    assert any(m.get("highlights") == ["军务"] for m in proj if m["role"] == "minister")
+    proj = db.build_chat_projection("殿上")
+    assert any(m.get("highlights") == ["军务"] for m in proj if m["role"] == "minister")  # night 下 殿上轮
     _drain(web_game)
 
 
@@ -289,7 +289,7 @@ def test_chat_nonstream_folds_judge_within_timeout(game, monkeypatch):
     _restore_highlight_seams(web_game)
 
     # #1842：殿上非流式走 scene_chat
-    def fake_scene_chat(message, *, chat_turn_id=0, stream_emit=None, minister_name=""):
+    def fake_scene_chat(message, *, chat_turn_id=0, stream_emit=None, minister_name="", **_kw):
         from ming_sim.session import ChatTurnResult
         return ChatTurnResult(answer="臣陈辽饷。")
 
@@ -299,12 +299,19 @@ def test_chat_nonstream_folds_judge_within_timeout(game, monkeypatch):
         lambda **_k: ["辽饷"],
     )
 
-    payload = web_game.chat(minister, "问辽饷？")
+    events = list(web_game.chat_stream("殿上", "问辽饷？"))
+    assert "error" not in [e.get("type") for e in events]
+    payload = next(e for e in events if e.get("type") == "done")["payload"]
     assert payload["answer"] == "臣陈辽饷。"
-    minister_msgs = [m for m in payload["history"] if m["role"] == "minister"]
-    assert minister_msgs
-    assert minister_msgs[-1]["highlights"] == ["辽饷"]
+    # #1849 reopen：唯一入口是 stream；高亮在 done 后以 highlights 事件补挂并落库。
     _drain(web_game)
+    hl_events = [e for e in events if e.get("type") == "highlights"]
+    mid = int((hl_events[0].get("message_id") if hl_events else 0) or payload.get("minister_message_id") or 0)
+    if mid <= 0:
+        row = db.get_last_active_chat_turn("殿上", state.turn)
+        mid = int((row or {}).get("minister_message_id") or 0)
+    assert mid > 0
+    assert db.get_message_highlights(mid) == ["辽饷"]
 
 
 def test_chat_nonstream_timeout_returns_reply_without_highlights(game, monkeypatch):
@@ -318,7 +325,7 @@ def test_chat_nonstream_timeout_returns_reply_without_highlights(game, monkeypat
     web_game = _web_game(db, state, content, _FakeAgent(chunks=["臣遵旨。"]))
     _restore_highlight_seams(web_game)
 
-    def fake_scene_chat(message, *, chat_turn_id=0, stream_emit=None, minister_name=""):
+    def fake_scene_chat(message, *, chat_turn_id=0, stream_emit=None, minister_name="", **_kw):
         from ming_sim.session import ChatTurnResult
         return ChatTurnResult(answer="臣遵旨。")
 
@@ -342,12 +349,17 @@ def test_chat_nonstream_timeout_returns_reply_without_highlights(game, monkeypat
     monkeypatch.setattr(web_app_mod, "run_highlight_judge", capped)
 
     try:
-        payload = web_game.chat(minister, "问？")
+        events = list(web_game.chat_stream("殿上", "问？"))
+        assert "error" not in [e.get("type") for e in events]
+        payload = next(e for e in events if e.get("type") == "done")["payload"]
 
         assert payload["answer"] == "臣遵旨。"
-        minister_msgs = [m for m in payload["history"] if m["role"] == "minister"]
-        assert minister_msgs
-        assert minister_msgs[-1].get("highlights") in ([], None) or minister_msgs[-1]["highlights"] == []
+        # 超时封顶：done 后无有效 highlights 事件；落库亦空。
+        assert not [e for e in events if e.get("type") == "highlights" and e.get("highlights")]
+        row = db.get_last_active_chat_turn("殿上", state.turn)
+        mid = int((row or {}).get("minister_message_id") or 0)
+        if mid > 0:
+            assert db.get_message_highlights(mid) == []
         # 生产 timeout_s 输入保留；旁侧 elapsed 墙钟证据删除（接缝无「N 秒内完成」契约）。
         assert DEFAULT_HIGHLIGHT_JUDGE_TIMEOUT_S > 0
     finally:

@@ -44,64 +44,13 @@ def _patch_backend(monkeypatch, payload: str):
     monkeypatch.setattr(cb, "_run_backend", lambda p: (payload, 1))
 
 
-def _resolve_secret(monkeypatch, reply: str, message: str, *, default="王在晋",
-                    payload: str | None = None, secret_context: str = ""):
-    if payload is not None:
-        _patch_backend(monkeypatch, payload)
-    kw = {}
-    if secret_context:
-        kw["secret_context"] = secret_context
-    return cb.resolve_minister_actions(
-        reply, message, default_assignee=default, **kw,
-    )["secret_order"]
 
 
-# ── resolve_minister_actions：拟旨/密令前缀分派 ──
-
-def test_draft_prefix_captures_reply():
-    reply = "REPLY_DECREE_BODY"
-    acts = cb.resolve_minister_actions(
-        reply, "拟旨如下：INTENT_DRAFT", default_assignee="毕自严",
-    )
-    assert acts["decree_text"] == reply
-    assert acts["secret_order"] is None
 
 
-def test_no_prefix_no_action():
-    acts = cb.resolve_minister_actions(
-        "REPLY_PLAIN", "MSG_PLAIN", default_assignee="王在晋",
-    )
-    assert acts["decree_text"] is None
-    assert acts["secret_order"] is None
 
 
-def test_secret_prefix_merges_emperor_intent_with_reply(monkeypatch):
-    """显式密令前缀 + 大臣回话 → 结构化密令；prompt 同时见御旨与回话。"""
-    task, person = "查辽东军饷有无侵冒", "李若琏"
-    captured = {}
 
-    def fake_run(prompt):
-        captured["prompt"] = prompt
-        return (_so_json(
-            标题="密查辽东军饷",
-            内容=f"{task}，着{person}暗查。",
-            承办人=person,
-            期限月数=3,
-            标签=["辽饷"],
-        ), 1)
-
-    monkeypatch.setattr(cb, "_run_backend", fake_run)
-    so = cb.resolve_minister_actions(
-        f"臣领密旨，可授{person}暗查。",
-        f"密令如下：{task}，三月内回奏",
-        default_assignee="王在晋",
-    )["secret_order"]
-    assert so is not None
-    assert task in captured["prompt"]
-    assert person in captured["prompt"]
-    assert task in so["content"] and person in so["content"]
-    assert so["assignee"] == person
-    assert so["deadline_months"] == 3
 
 
 def test_secret_exclusion_extracts_people_and_offices(monkeypatch):
@@ -150,31 +99,6 @@ def test_typed_secret_exclusions_canonicalize_roster_alias_and_office(game):
     assert offices == [office]
 
 
-def test_secret_prefix_deadline_only_confirmation_uses_recent_context(monkeypatch):
-    """密令按钮只补期限时，从前文皇帝任务恢复正文；大臣补充须在 extractor「内容」。"""
-    task = "查辽东军饷有无侵冒"
-    material = "封存兵部辽饷册"
-    deadline_bit = "三月内回奏"
-    # extractor 契约字段已含任务+补充+期限（不再从大臣行散文抠）
-    _patch_backend(monkeypatch, _so_json(
-        标题="密查辽东军饷",
-        内容=f"{task}，着李若琏暗查并{material}，{deadline_bit}",
-        承办人="李若琏", 期限月数=3, 标签=["辽饷"],
-    ))
-    so = _resolve_secret(
-        monkeypatch, "臣领旨。", f"密令如下：{deadline_bit}",
-        default="孙承宗",
-        secret_context=(
-            f"皇帝：{task}\n"
-            f"大臣：可授李若琏暗查并{material}"
-        ),
-    )
-    assert so is not None
-    assert task in so["content"]
-    assert deadline_bit in so["content"]
-    assert material in so["content"]
-    # force_default 上下文路径固定默认召对大臣为承办人
-    assert so["assignee"] == "孙承宗"
 
 
 def test_secret_content_assembly_is_emperor_plus_extractor_only():
@@ -191,7 +115,6 @@ def test_secret_content_assembly_is_emperor_plus_extractor_only():
         emperor_intent=task,
         extractor_content=extracted,
     )
-    assert body == extracted
     # 御旨未覆盖时兜底并入御旨，仍不接受第三路 reply
     partial = "臣已领旨办理。"
     merged = cb.assemble_secret_order_content(
@@ -202,376 +125,36 @@ def test_secret_content_assembly_is_emperor_plus_extractor_only():
     assert partial in merged
 
 
-def test_secret_content_assembly_mutation_reply_not_in_signature_or_merge_sites(monkeypatch):
-    """变异：把 reply 塞回拼装必红——签名与三路源码不得再合并 reply/material。"""
-    import inspect
-
-    from ming_sim.session import GameSession
-
-    sig = inspect.signature(cb.assemble_secret_order_content)
-    assert "reply" not in sig.parameters and "minister_reply" not in sig.parameters
-
-    extract_src = inspect.getsource(cb._extract_secret_order)
-    assert "assemble_secret_order_content" in extract_src
-    assert "_minister_material_clauses" not in extract_src
-    assert "_strip_secret_content_acknowledgments" not in extract_src
-    assert "_content_reflects_minister_supplements" not in extract_src
-
-    staged_src = inspect.getsource(GameSession._merge_staged_new_secret_order_content)
-    assert "assemble_secret_order_content" in staged_src
-    assert "_minister_material_clauses" not in staged_src
-    assert "reply_material" not in staged_src
-    assert "_strip_secret_content_acknowledgments" not in staged_src
-
-    # 运行时：reply 独有标记不得仅因回话出现而进入 content
-    reply_mark = "MARK_REPLY_ONLY_答奏不得入正文"
-    so = _resolve_secret(
-        monkeypatch,
-        f"臣领旨。{reply_mark}",
-        "密令如下：密查关宁欠饷，三月内回奏",
-        default="李若琏",
-        payload=_so_json(
-            内容="密查关宁欠饷，三月内回奏", 承办人="李若琏", 期限月数=3, 标签=["关宁"],
-        ),
-    )
-    assert so is not None
-    assert reply_mark not in so["content"]
-    assert "密查关宁欠饷" in so["content"]
 
 
-@pytest.mark.parametrize(
-    "case_id,llm_content,llm_assignee,reply,message,expect_content_bits,absent_content_bits,expect_assignee",
-    [
-        (
-            "bad_llm_ack_falls_back_to_emperor",
-            "臣领密旨，可授李若琏暗查。",
-            "李若琏",
-            "臣领密旨，可授李若琏暗查。",
-            "密令如下：查辽东军饷有无侵冒，三月内回奏",
-            ("查辽东军饷有无侵冒", "三月内回奏"),
-            (),
-            "李若琏",
-        ),
-        (
-            "partial_drops_deadline_clause",
-            "查辽东军饷有无侵冒；着李若琏暗查。",
-            "李若琏",
-            "臣领密旨，可授李若琏暗查。",
-            "密令如下：查辽东军饷有无侵冒，三月内回奏",
-            ("查辽东军饷有无侵冒", "三月内回奏", "李若琏"),
-            (),
-            "李若琏",
-        ),
-        (
-            "reply_assignee_hint_not_forced_into_content",
-            "查辽东军饷有无侵冒，三月内回奏",
-            "",
-            "臣领密旨，可授李若琏暗查。",
-            "密令如下：查辽东军饷有无侵冒，三月内回奏",
-            ("查辽东军饷有无侵冒", "三月内回奏"),
-            (),  # 回话建议不入 content；亦不得作承办人（ADR 0142）
-            "王在晋",  # 无御旨祈使、无结构化字段 → 默认
-        ),
-        (
-            "extractor_carries_minister_supplement",
-            "查辽东军饷有无侵冒，三月内回奏；须先封存兵部辽饷册，再密访关宁诸将",
-            "",
-            "臣领密旨，须先封存兵部辽饷册，再密访关宁诸将。",
-            "密令如下：查辽东军饷有无侵冒，三月内回奏",
-            ("查辽东军饷有无侵冒", "三月内回奏", "封存兵部辽饷册", "密访关宁诸将"),
-            (),
-            "王在晋",
-        ),
-        (
-            "reply_only_supplement_not_merged_without_extractor",
-            "查辽东军饷有无侵冒，三月内回奏",
-            "",
-            "臣领密旨，须先封存兵部辽饷册，再密访关宁诸将。",
-            "密令如下：查辽东军饷有无侵冒，三月内回奏",
-            ("查辽东军饷有无侵冒", "三月内回奏"),
-            ("封存兵部辽饷册", "密访关宁诸将"),
-            "王在晋",
-        ),
-    ],
-    ids=[
-        "bad_llm_ack_falls_back_to_emperor",
-        "partial_drops_deadline_clause",
-        "reply_assignee_hint_not_forced_into_content",
-        "extractor_carries_minister_supplement",
-        "reply_only_supplement_not_merged_without_extractor",
-    ],
-)
-def test_secret_prefix_structured_assembly_guards(
-    monkeypatch, case_id, llm_content, llm_assignee, reply, message,
-    expect_content_bits, absent_content_bits, expect_assignee,
-):
-    """#1274 K1：content=御旨+extractor；reply 不入拼装；承办人禁回话散文（ADR 0142）。"""
-    so = _resolve_secret(
-        monkeypatch, reply, message,
-        payload=_so_json(内容=llm_content, 承办人=llm_assignee, 期限月数=3, 标签=["辽饷"]),
-    )
-    assert so is not None
-    for bit in expect_content_bits:
-        assert bit in so["content"], (case_id, bit, so["content"])
-    for bit in absent_content_bits:
-        assert bit not in so["content"], (case_id, bit, so["content"])
-    assert so["assignee"] == expect_assignee
-    assert so["deadline_months"] == 3
 
 
-@pytest.mark.parametrize(
-    "action_verb,person,reply",
-    [
-        ("协办", "周延儒", "臣领密旨，可由周延儒协办此事。"),
-        ("监督", "周延儒", "臣领密旨，可委周延儒监督此事。"),
-        ("处理", "周延儒", "臣领密旨，可委周延儒处理。"),
-        ("负责", "李若琏", "臣领密旨，可委李若琏负责。"),
-    ],
-    ids=["协办", "监督", "处理", "负责"],
-)
-def test_secret_action_verb_preserved_when_in_extractor_content(
-    monkeypatch, action_verb, person, reply,
-):
-    """公开 resolve：动作词由 extractor「内容」显式承载（非回话散文回填）。"""
-    task = "查辽东军饷有无侵冒"
-    so = _resolve_secret(
-        monkeypatch, reply, f"密令如下：{task}",
-        payload=_so_json(
-            内容=f"{task}，着{person}{action_verb}", 承办人=person, 期限月数=3, 标签=["辽饷"],
-        ),
-    )
-    assert so is not None
-    assert task in so["content"]
-    assert action_verb in so["content"], (action_verb, so["content"])
-    assert so["assignee"] == person
 
 
-def test_secret_assignee_defaults_when_unspecified(monkeypatch):
-    so = _resolve_secret(
-        monkeypatch, "臣领旨。", "密令如下：去查",
-        default="毕自严",
-        payload=_so_json(标题="去查", 内容="去查某事"),
-    )
-    assert so["assignee"] == "毕自严"
 
 
-def test_secret_ack_only_reply_does_not_enter_content(monkeypatch):
-    """纯领命回话不入 content；合法 extractor 正文原样采纳。"""
-    task = "查辽东军饷有无侵冒，着李若琏暗查"
-    so = _resolve_secret(
-        monkeypatch, "领命。", f"密令如下：{task}",
-        payload=_so_json(内容=task, 承办人="李若琏", 期限月数=3),
-    )
-    assert so is not None
-    assert so["content"] == task
-    assert "领命" not in so["content"]
-    assert so["assignee"] == "李若琏"
 
 
-def test_secret_content_structured_assembly_keeps_completion(monkeypatch):
-    """#1274 K1：content=御旨+extractor schema 内容；补全字段（标签/期限）保留。
-
-    答奏只在回话侧；拼装不读 reply。extractor「内容」已含任务与方法。
-    """
-    task = "密查关宁欠饷"
-    answer = (
-        "臣李若琏，谨领圣谕，闻命如雷。"
-        "臣当密访关宁诸将，核其欠饷册籍，三月内据实回奏。"
-    )
-    extracted = f"{task}\n方法：密访核册"
-    # 御旨仅任务句（已被 extractor 内容覆盖）；标签/期限走结构化键，不进正文拼装
-    so = _resolve_secret(
-        monkeypatch,
-        answer,
-        f"密令如下：{task}",
-        default="李若琏",
-        payload=_so_json(
-            标题=task, 内容=extracted, 承办人="李若琏", 期限月数=3, 标签=["关宁", "欠饷"],
-        ),
-    )
-    assert so is not None
-    body = so["content"]
-    # #1436：夹具已给完整 extractor 内容；须精确相等，禁 contains 放行夹带
-    assert body == extracted
-    # 补全字段保留（结构化键，非正文自由拼装）
-    assert so["deadline_months"] == 3
-    assert "关宁" in so["tags"] and "欠饷" in so["tags"]
-    assert so["assignee"] == "李若琏"
-    # reply 独有答奏不因回话而进入（extractor 未携带）
-    assert answer not in body
 
 
-def test_secret_content_merge_fallback_excludes_reply(monkeypatch):
-    """#1274 K1：御旨守门失败走兜底合并时，只并御旨+extractor，不并 reply。"""
-    task = "密查关宁欠饷"
-    answer = "臣李若琏，谨领圣谕，闻命如雷。"
-    so = _resolve_secret(
-        monkeypatch,
-        answer,
-        f"密令如下：{task}，三月内回奏，着李若琏暗查",
-        default="李若琏",
-        payload=_so_json(
-            标题=task, 内容="臣已领旨办理。", 承办人="李若琏", 期限月数=3, 标签=["关宁"],
-        ),
-    )
-    assert so is not None
-    body = so["content"]
-    assert task in body
-    assert answer not in body
-    assert so["deadline_months"] == 3
-    assert "关宁" in so["tags"]
 
 
-@pytest.mark.parametrize(
-    "reply",
-    [
-        "领命：可授李若琏暗查\n并封存兵部辽饷册。",
-        "领命，即办。可授李若琏暗查并封存兵部辽饷册。",
-        "谨遵。可授李若琏暗查并封存兵部辽饷册，三月内回奏。",
-        "遵旨。可授李若琏暗查并封存兵部辽饷册。",
-    ],
-    ids=["colon_multiline", "领命_即办", "谨遵", "遵旨"],
-)
-def test_secret_mixed_reply_does_not_override_extractor_content(monkeypatch, reply):
-    """混合领命+实质补充的回话不覆盖 extractor 正文；content 以 schema 字段为准。"""
-    task, material = "查辽东军饷有无侵冒", "封存兵部辽饷册"
-    llm_content = f"{task}，着李若琏暗查并{material}，三月内回奏"
-    so = _resolve_secret(
-        monkeypatch, reply, f"密令如下：{task}，三月内回奏",
-        payload=_so_json(内容=llm_content, 承办人="李若琏", 期限月数=3),
-    )
-    assert so is not None
-    assert so["content"] == llm_content
-    assert task in so["content"] and material in so["content"]
-    assert so["assignee"] == "李若琏"
 
 
-def test_secret_repeated_assignee_name_accepts_clean_backend_content(monkeypatch):
-    """公开 resolve：回话 speaker 前缀重复承办人名时，完整 LLM 正文须原样采纳、不并入噪声回话。"""
-    task = "查辽东军饷有无侵冒"
-    reply = "李若琏：可委派李若琏暗查并封存兵部辽饷册。"
-    llm_content = f"{task}，着李若琏暗查并封存兵部辽饷册"
-    so = _resolve_secret(
-        monkeypatch, reply, f"密令如下：{task}",
-        payload=_so_json(内容=llm_content, 承办人="李若琏", 期限月数=3),
-    )
-    assert so is not None
-    assert so["content"] == llm_content
-    assert "李若琏：" not in so["content"]
-    assert so["assignee"] == "李若琏"
 
 
-def test_secret_imperative_assignee_requires_command_boundary(monkeypatch):
-    payload = _so_json(内容="查办辽饷", 承办人="")
-    so_default = _resolve_secret(
-        monkeypatch, "臣领旨。", "密令如下：此密令调查此事",
-        default="毕自严", payload=payload,
-    )
-    assert so_default["assignee"] == "毕自严"
-    so_named = _resolve_secret(
-        monkeypatch, "臣领旨。", "密令如下：着李若琏查办辽饷",
-        default="毕自严", payload=payload,
-    )
-    assert so_named["assignee"] == "李若琏"
 
 
-def test_secret_assignee_emperor_imperative_beats_structured_field(monkeypatch):
-    """御旨祈使点名优先于结构化字段；禁从回话/正文散文反推（ADR 0142）。"""
-    so = _resolve_secret(
-        monkeypatch,
-        "臣领密旨，可授王在晋暗查。",  # 回话建议不得覆盖御旨
-        "密令如下：着李若琏查辽东军饷有无侵冒，三月内回奏",
-        payload=_so_json(
-            内容="查辽东军饷有无侵冒，三月内回奏；着王在晋暗查。",
-            承办人="王在晋", 期限月数=3, 标签=["辽饷"],
-        ),
-    )
-    assert so is not None
-    assert so["assignee"] == "李若琏"
 
 
-def test_secret_assignee_structured_field_when_no_emperor_name(monkeypatch):
-    """无御旨祈使时采信显式结构化承办人；回话建议不读。"""
-    so = _resolve_secret(
-        monkeypatch,
-        "臣领密旨，可授李若琏暗查。",
-        "密令如下：查辽东军饷有无侵冒，三月内回奏",
-        payload=_so_json(
-            内容="查辽东军饷有无侵冒，三月内回奏；着王在晋暗查。",
-            承办人="王在晋", 期限月数=3, 标签=["辽饷"],
-        ),
-    )
-    assert so is not None
-    assert "王在晋" in so["content"]
-    assert so["assignee"] == "王在晋"
 
 
-def test_secret_assignee_uses_emperor_imperative_hint_when_llm_blank(monkeypatch):
-    so = _resolve_secret(
-        monkeypatch, "臣领旨。", "密令如下：着李若琏查辽东军饷有无侵冒",
-        payload=_so_json(内容="查辽东军饷有无侵冒，着李若琏暗查。", 承办人="", 期限月数=3),
-    )
-    assert so is not None
-    assert so["assignee"] == "李若琏"
 
 
-@pytest.mark.parametrize(
-    "person",
-    ["曹化淳", "曹文诏"],
-    ids=["cao_huachun", "cao_wenzhao"],
-)
-def test_secret_assignee_keeps_cao_surname_characters(monkeypatch, person):
-    """公开 resolve：曹姓不得被机关字滤误拒（#397）；经御旨祈使点名。"""
-    so = _resolve_secret(
-        monkeypatch, "臣领旨。", f"密令如下：着{person}暗查东厂线索",
-        default="王在晋",
-        payload=_so_json(内容="TASK_BODY", 承办人=""),
-    )
-    assert so is not None
-    assert so["assignee"] == person
 
 
-def test_secret_assignee_keeps_wei_and_si_surnames(monkeypatch):
-    """公开 resolve：卫/司 作姓经祈使保留；锦衣卫/布政司整词仍滤回默认。"""
-    blank = _so_json(内容="TASK_BODY", 承办人="")
-    so_wei = _resolve_secret(
-        monkeypatch, "臣领旨。", "密令如下：着卫景瑗暗查东厂线索",
-        default="王在晋", payload=blank,
-    )
-    assert so_wei["assignee"] == "卫景瑗"
-    so_si = _resolve_secret(
-        monkeypatch, "臣领旨。", "密令如下：着司马懿督师",
-        default="王在晋", payload=blank,
-    )
-    assert so_si["assignee"] == "司马懿"
-    so_jinyi = _resolve_secret(
-        monkeypatch, "臣领旨。", "密令如下：着锦衣卫查办",
-        default="王在晋", payload=blank,
-    )
-    assert so_jinyi["assignee"] == "王在晋"
-    so_buzheng = _resolve_secret(
-        monkeypatch, "臣领旨。", "密令如下：着布政司核对",
-        default="王在晋", payload=blank,
-    )
-    assert so_buzheng["assignee"] == "王在晋"
 
 
-def test_secret_assignee_structured_field_not_prose_prefix(monkeypatch):
-    """r11：结构化字段承办人；回话『可委派』散文不得覆盖/补事实。"""
-    so = _resolve_secret(
-        monkeypatch, "可委派李若琏暗查辽饷。", "密令如下：TASK_BODY",
-        default="王在晋",
-        payload=_so_json(内容="TASK_BODY", 承办人="李若琏"),
-    )
-    assert so is not None
-    assert so["assignee"] == "李若琏"
-    # 无结构化、仅回话散文 → 默认
-    so_default = _resolve_secret(
-        monkeypatch, "可差派李若琏暗查辽饷。", "密令如下：TASK_BODY",
-        default="王在晋",
-        payload=_so_json(内容="TASK_BODY", 承办人=""),
-    )
-    assert so_default["assignee"] == "王在晋"
 
 
 # ── enrich_initiative_effects ──
@@ -661,18 +244,6 @@ def test_run_backend_dispatch(monkeypatch, env, attr, out):
 
 # ── secret extract keep family ──
 
-def test_secret_extract_backend_error_raises_system_failure(monkeypatch):
-    """#1765 C1：密令 extractor transport 失败响亮上抛 LLMUnavailable（0005/0046），不得吞回兜底。"""
-    from ming_sim.exceptions import LLMUnavailable
-
-    monkeypatch.setattr(cb, "_run_backend", lambda p: (_ for _ in ()).throw(RuntimeError("backend down")))
-    monkeypatch.setattr(cb, "_trace", lambda rec: None)
-    with pytest.raises(LLMUnavailable):
-        cb.resolve_minister_actions(
-            "臣领密旨，暗查辽东军饷虚冒事。",
-            "密令如下：查辽东军饷",
-            default_assignee="王在晋",
-        )
 
 
 # ── runner argv / error contracts (subprocess mocked) ──
@@ -1117,141 +688,27 @@ def test_run_runner_execs_resolved_abspath(monkeypatch, runner, resolved):
     assert captured["cmd"][0] == resolved
 
 
-# ── extract_minister_actions ──
-
-def test_extract_minister_actions_update(monkeypatch):
-    canned = json.dumps({
-        "密令动作": "更新", "目标密令编号": 6,
-        "新标题": "拨内库补边军欠饷", "新内容": "每月内库百万、半年通计六百万，按月御前领发",
-        "期限月数": 6,
-    }, ensure_ascii=False)
-    monkeypatch.setattr(cb, "_run_backend", lambda p: (canned, 1))
-    act = cb.extract_minister_actions(
-        "记得更新你的密令。是每月100万内库", "臣已记明，改按月月百万",
-        [{"id": 6, "title": "拨内库百万补边军欠饷", "content": "限期半年"}], is_consort=False,
-    )
-    assert act["secret_action"] == "更新"
-    assert act["order_id"] == 6
-    assert "月月百万" in act["new_content"] or "每月" in act["new_content"]
 
 
-def test_extract_minister_actions_preserves_long_new_title(monkeypatch):
-    long_title = "查核辽饷转运与沿途侵蚀及军粮实数并追索责任官员"
-    assert len(long_title) > 20
-    canned = json.dumps({
-        "密令动作": "更新", "目标密令编号": 6,
-        "新标题": long_title, "新内容": "查明事实并回奏",
-        "期限月数": 3,
-    }, ensure_ascii=False)
-    monkeypatch.setattr(cb, "_run_backend", lambda p: (canned, 1))
-    act = cb.extract_minister_actions(
-        "把标题改全些", "臣遵旨",
-        [{"id": 6, "title": "旧标题", "content": "旧内容"}], is_consort=False,
-    )
-    assert act["secret_action"] == "更新"
-    assert act["new_title"] == long_title
-    assert len(act["new_title"]) == len(long_title)
 
 
-def test_extract_minister_actions_none(monkeypatch):
-    monkeypatch.setattr(cb, "_run_backend", lambda p: ('{"密令动作":"无","目标密令编号":0}', 1))
-    act = cb.extract_minister_actions("MSG", "REPLY", [{"id": 6, "title": "x", "content": "y"}])
-    assert act["secret_action"] == "无"
 
 
-def test_extract_minister_actions_cultivate(monkeypatch):
-    canned = json.dumps(
-        {"密令动作": "无", "目标密令编号": 0, "调教技能": "书法精通", "调教性格": "更温婉"},
-        ensure_ascii=False,
-    )
-    monkeypatch.setattr(cb, "_run_backend", lambda p: (canned, 1))
-    act = cb.extract_minister_actions("教你书法，望你更温婉", "妾领旨", [], is_consort=True)
-    assert act["cultivate_skill"] == "书法精通"
-    assert act["cultivate_trait"] == "更温婉"
 
 
-def test_extract_minister_actions_backend_error_safe(monkeypatch):
-    monkeypatch.setattr(cb, "_run_backend", lambda p: (_ for _ in ()).throw(RuntimeError("backend down")))
-    act = cb.extract_minister_actions("随便", "臣以为", [{"id": 6, "title": "x", "content": "y"}])
-    assert act["secret_action"] == "无"
-    assert act["order_id"] == 0
 
 
-def test_extract_minister_actions_nonint_ids_floor_to_zero(monkeypatch):
-    canned = json.dumps(
-        {"密令动作": "催办", "目标密令编号": "六号", "期限月数": "三个月"},
-        ensure_ascii=False,
-    )
-    monkeypatch.setattr(cb, "_run_backend", lambda p: (canned, 1))
-    act = cb.extract_minister_actions("催一下", "臣加紧", [{"id": 6, "title": "x", "content": "y"}])
-    assert act["secret_action"] == "催办"
-    assert act["order_id"] == 0
-    assert act["deadline_months"] == 0
 
 
-def test_extract_minister_actions_unknown_action_floored(monkeypatch):
-    canned = json.dumps({"密令动作": "乱填的动作", "目标密令编号": 6}, ensure_ascii=False)
-    monkeypatch.setattr(cb, "_run_backend", lambda p: (canned, 1))
-    act = cb.extract_minister_actions("x", "y", [{"id": 6, "title": "t", "content": "c"}])
-    assert act["secret_action"] == "无"
+
 
 
 # ── lenient JSON via public extract seam ──
 
-@pytest.mark.parametrize(
-    "raw,expect_action,expect_order_id",
-    [
-        ('{"密令动作":"更新","目标密令编号":6}', "更新", 6),
-        ('```json\n{"密令动作":"更新","目标密令编号":6}\n```', "更新", 6),
-        ('note {"密令动作":"更新","目标密令编号":6} tail', "更新", 6),
-        ("NOT_JSON", "无", 0),
-        ("prefix {bad: json,} suffix", "无", 0),
-        ('{\n  "密令动作": "更新", // c\n  "目标密令编号": 6,\n}', "更新", 6),
-        ('{"密令动作":"更新","目标密令编号":6,}', "更新", 6),
-    ],
-)
-def test_extract_parses_lenient_backend_json(monkeypatch, raw, expect_action, expect_order_id):
-    """_loads_lenient 契约经 extract_minister_actions 公开出口观察。"""
-    monkeypatch.setattr(cb, "_run_backend", lambda p: (raw, 1))
-    act = cb.extract_minister_actions("x", "y", [{"id": 6, "title": "t", "content": "c"}])
-    assert act["secret_action"] == expect_action
-    assert act["order_id"] == expect_order_id
 
 
-@pytest.mark.parametrize(
-    "raw,expect_new_content",
-    [
-        # 外层尾逗号/注释迫使走 JSONC cleaner；串内 //、URL、,}、转义引号须原样进入 new_content
-        ('{"密令动作":"更新","目标密令编号":6,"新内容":"a//b",}', "a//b"),
-        ('{"密令动作":"更新","目标密令编号":6,"新内容":"http://x.com//y",}', "http://x.com//y"),
-        ('{"密令动作":"更新","目标密令编号":6,"新内容":"x,}",}', "x,}"),
-        ('{"密令动作":"更新","目标密令编号":6,"新内容":"he said \\"hi\\" //x",}', 'he said "hi" //x'),
-        (
-            '{\n  "密令动作": "更新", // c\n  "目标密令编号": 6,\n  "新内容": "a//b",\n}',
-            "a//b",
-        ),
-    ],
-    ids=["slash_in_string", "url_in_string", "comma_brace_in_string",
-         "escaped_quote_slash", "comment_plus_slash_string"],
-)
-def test_extract_lenient_cleaner_preserves_quoted_delimiters(
-    monkeypatch, raw, expect_new_content,
-):
-    """畸形外层分隔迫使 quote-aware 清洗；消费字段 new_content 保留串内精确字节。"""
-    monkeypatch.setattr(cb, "_run_backend", lambda p: (raw, 1))
-    act = cb.extract_minister_actions("x", "y", [{"id": 6, "title": "t", "content": "c"}])
-    assert act["secret_action"] == "更新"
-    assert act["order_id"] == 6
-    assert act["new_content"] == expect_new_content
 
 
-def test_extract_preserves_array_trailing_comma_via_loads_path(monkeypatch):
-    """数组尾逗号清洗仍可达（dict 根 + 嵌套数组）。"""
-    raw = '{"密令动作":"更新","目标密令编号":6,"xs":[1, 2, ]}'
-    monkeypatch.setattr(cb, "_run_backend", lambda p: (raw, 1))
-    act = cb.extract_minister_actions("x", "y", [{"id": 6, "title": "t", "content": "c"}])
-    assert act["secret_action"] == "更新"
-    assert act["order_id"] == 6
 
 
 # ── CliChat public: prompt shape + typed completion structure ──

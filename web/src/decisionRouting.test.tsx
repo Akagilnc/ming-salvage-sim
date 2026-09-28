@@ -1,7 +1,4 @@
-import React, { act } from "react";
-import { createRoot } from "react-dom/client";
-import { describe, expect, it, vi } from "vitest";
-import { DecisionRecoveryPanel } from "./decisionRecovery";
+import { describe, expect, it } from "vitest";
 import {
   PAUSED_DECISION_MSG,
   needsPhase2Resume,
@@ -9,18 +6,8 @@ import {
   routeIssueDecisions,
   routeRefreshDecisions,
   routeRetryDecisions,
-} from "../decisionRouting";
-import type { PendingDecision } from "../types";
-
-(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-
-function render(element: React.ReactNode) {
-  const host = document.createElement("div");
-  document.body.appendChild(host);
-  const root = createRoot(host);
-  act(() => root.render(<>{element}</>));
-  return { host, cleanup: () => act(() => { root.unmount(); host.remove(); }) };
-}
+} from "./decisionRouting";
+import type { PendingDecision } from "./types";
 
 const validDecision: PendingDecision = {
   idx: 0,
@@ -35,38 +22,6 @@ const validDecision2: PendingDecision = {
   context: "河决在即，地方请银修堤。",
   options: [{ label: "拨银修堤", hint: "保住沿河百姓。" }],
 };
-
-describe("DecisionRecoveryPanel (unit)", () => {
-  it("shows the paused-turn error and exposes a retry action", () => {
-    const onRetry = vi.fn();
-
-    const { host, cleanup } = render(
-      <DecisionRecoveryPanel
-        message={PAUSED_DECISION_MSG}
-        busy=""
-        onRetry={onRetry}
-      />,
-    );
-
-    expect(host.querySelector('[role="alert"]')?.textContent).toContain("仍在等待批红");
-    act(() => (host.querySelector("button") as HTMLButtonElement).click());
-    expect(onRetry).toHaveBeenCalledTimes(1);
-    cleanup();
-  });
-
-  it("disables retry while the recovery request is running", () => {
-    const { host, cleanup } = render(
-      <DecisionRecoveryPanel
-        message={PAUSED_DECISION_MSG}
-        busy="重新拉取批红"
-        onRetry={vi.fn()}
-      />,
-    );
-
-    expect((host.querySelector("button") as HTMLButtonElement).disabled).toBe(true);
-    cleanup();
-  });
-});
 
 describe("decision routing — issueDecree entry (routeIssueDecisions)", () => {
   it("rejects the whole batch when any decision is corrupt, not just the bad item (批示错位 guard)", () => {
