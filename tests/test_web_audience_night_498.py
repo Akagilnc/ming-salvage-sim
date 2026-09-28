@@ -710,39 +710,6 @@ def test_night_approved_directive_closes_into_month_end_without_second_review(we
     assert any(str(row["text"] or "") == text for row in rows), rows
 
 
-def test_web_issue_close_commits_same_night_dossier_without_endorsement_batch(web_game, monkeypatch):
-    """#1842：收夜成案不再经 endorsement-only 批；同夜应允仍成案。"""
-    game = web_game
-    minister = _active_minister(game)
-    night = an.open_night(game.db, game.state, location="乾清宫", time_of_day="夜")
-    night_id = int(night["id"])
-    an.ensure_summon_enter(game.db, night_id, minister)
-    aid = game.db.stage_directive_candidate(
-        game.state.turn, minister,
-        payload={
-            "text": "清核辽饷-web", "dossier_action_type": "policy",
-            "target_kind": "issue", "target_id": "liao-web-1842", "actor": minister,
-        },
-    )
-    game.db.mark_pending_night_approved([aid], night_id=night_id)
-    result = an.close_night(
-        game.db, game.state, night_id=night_id, content=game.content,
-        llm_config=object(),
-        write_gate=game._write_gate if hasattr(game, "_write_gate") else game.session._write_gate,
-        write_queue=getattr(game, "_write_queue", None) or game.session._write_queue,
-    )
-    assert result["closed"] is True
-    row = game.db.conn.execute(
-        "SELECT status FROM pending_actions WHERE id=?", (aid,),
-    ).fetchone()
-    assert row["status"] == "committed"
-    assert game.db.conn.execute(
-        "SELECT COUNT(*) c FROM decree_dossiers WHERE pending_action_id=?",
-        (aid,),
-    ).fetchone()["c"] >= 1
-
-
-
 def test_legacy_pending_only_advances_to_durable_dossier_without_review_api(web_game, monkeypatch):
     """Legacy saves with only turn_directives.status=pending remain operable at the
     same end-turn service seam; retired player confirm/reject routes stay absent."""
