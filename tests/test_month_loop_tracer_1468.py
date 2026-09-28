@@ -187,9 +187,7 @@ def _pick_active_minister(state: dict) -> str:
 
 
 def _install_canned_minister(game, monkeypatch) -> None:
-    agent = _CannedMinisterAgent()
-    game.session.registry.get = lambda _ch, **_kw: agent
-    stub_scene_agent(monkeypatch, agent)
+    stub_scene_agent(monkeypatch, _CannedMinisterAgent())
 
 
 def _turn_of(state: dict) -> int:

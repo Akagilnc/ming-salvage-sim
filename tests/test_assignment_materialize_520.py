@@ -703,9 +703,7 @@ def test_ordinary_assignment_without_commitment_lands(tracer_client, monkeypatch
     assign_text = "这核钱粮的事你办。"
 
     _silence_serial(monkeypatch, lead=minister)
-    agent = _SyncAgent("臣请奉行：核钱粮。请陛下定夺准驳。")
-    game.session.registry.get = lambda _ch, **_kw: agent
-    stub_scene_agent(monkeypatch, agent)
+    stub_scene_agent(monkeypatch, _SyncAgent("臣请奉行：核钱粮。请陛下定夺准驳。"))
 
     box, translate_fn = _text_commission_translate(assign_text)
     stub_audience_translate(monkeypatch, translate_fn)
@@ -815,9 +813,7 @@ def test_pure_inquiry_stages_zero_mechanical_matters(tracer_client, monkeypatch)
             return SimpleNamespace(content=text, tools=[])
 
     _silence_serial(monkeypatch, lead=minister)
-    agent = _PhaseAgent()
-    game.session.registry.get = lambda _ch, **_kw: agent
-    stub_scene_agent(monkeypatch, agent)
+    stub_scene_agent(monkeypatch, _PhaseAgent())
     stub_audience_translate(monkeypatch, offline_empty_audience_translate)
 
     # ① 纯问事：HTTP chat + 空转译 → 零 pending
