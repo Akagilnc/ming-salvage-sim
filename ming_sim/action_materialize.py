@@ -2048,7 +2048,7 @@ def stage_revoke_decree_candidate(
     return db.stage_directive_candidate(int(turn), minister_name, payload=staged)
 
 def _build_catalog() -> Tuple[ActionCluster, ...]:
-    """单一登记定义：label/kind/effect/fields/materialize_fn 同表。"""
+    """单一登记定义：label/kind/effect/fields 同表（FieldSpec 枚举真源）。"""
     return (
         ActionCluster("无", "none", EFFECT_NOOP, priority=0),
         ActionCluster(
@@ -2076,25 +2076,21 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                 FieldSpec("new_content", "新内容", None, ""),
                 FieldSpec("deadline_months", "期限月数", None, 0, as_int=True, int_hi=36),
             ),
-            materialize_fn=None,
         ),
         ActionCluster(
             "调教", "cultivate", EFFECT_MATERIALIZE, priority=40,
             fields=(
                 FieldSpec("cultivate_skill", "调教技能", None, "", max_len=30),
                 FieldSpec("cultivate_trait", "调教性格", None, "", max_len=30),
-            ),
-            materialize_fn=None,  # 同 extract 缝，一 fn 两 kind
+            )
         ),
         ActionCluster(
             "拟旨", "draft", EFFECT_MATERIALIZE, priority=50,
             fields=(),
-            materialize_fn=None,
         ),
         ActionCluster(
             "禁绝暗渠摊派", "prohibit_covert_levy", EFFECT_MATERIALIZE, priority=54,
             fields=(),
-            materialize_fn=None,
         ),
         ActionCluster(
             "招抚", "pacification", EFFECT_MATERIALIZE, priority=55,
@@ -2106,7 +2102,6 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                     frozenset({"ordinary", "midzhi"}), "",
                 ),
             ),
-            materialize_fn=None,
         ),
         ActionCluster(
             "交办·责成", "assignment", EFFECT_MATERIALIZE, priority=56,
@@ -2136,7 +2131,6 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                 # 明确改草指向：分类归一化须保留，供 stage 只更新点名候选
                 FieldSpec("target_candidate", "目标候选", None, "", max_len=40),
             ),
-            materialize_fn=None,
         ),
         ActionCluster(
             "恩赏·拨帑", "grant_allocation", EFFECT_MATERIALIZE, priority=57,
@@ -2188,7 +2182,6 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                 # 明确改草指向：分类归一化须保留，供 stage 只更新点名候选
                 FieldSpec("target_candidate", "目标候选", None, "", max_len=40),
             ),
-            materialize_fn=None,
         ),
         ActionCluster(
             "委任授权", "authorization", EFFECT_MATERIALIZE, priority=56,
@@ -2207,7 +2200,6 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                     frozenset({"ordinary", "midzhi"}), "",
                 ),
             ),
-            materialize_fn=None,
         ),
         ActionCluster(
             "惩处", "punishment", EFFECT_MATERIALIZE, priority=58,
@@ -2249,7 +2241,6 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                     frozenset({"无", "办人", "压下"}), "无",
                 ),
             ),
-            materialize_fn=None,
         ),
         ActionCluster(
             "军令·调遣", "military_order", EFFECT_MATERIALIZE, priority=59,
@@ -2280,7 +2271,6 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                     frozenset({"ordinary", "midzhi"}), "",
                 ),
             ),
-            materialize_fn=None,
         ),
         ActionCluster(
             "收权·罢差", "revoke_authority", EFFECT_MATERIALIZE, priority=61,
@@ -2301,7 +2291,6 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                     frozenset({"ordinary", "midzhi"}), "",
                 ),
             ),
-            materialize_fn=None,
         ),
         ActionCluster(
             "撤回成命", "revoke_decree", EFFECT_MATERIALIZE, priority=62,
@@ -2316,7 +2305,6 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                     frozenset({"ordinary", "midzhi"}), "",
                 ),
             ),
-            materialize_fn=None,
         ),
         ActionCluster(
             "下议", "referral", EFFECT_MATERIALIZE, priority=63,
@@ -2338,7 +2326,6 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                 ),
                 FieldSpec("target_candidate", "目标候选", None, "", max_len=40),
             ),
-            materialize_fn=None,
         ),
         ActionCluster(
             "任免", "appointment", EFFECT_MATERIALIZE, priority=60,
@@ -2366,7 +2353,6 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                 ),
                 FieldSpec("target_candidate", "目标候选", None, "", max_len=40),
             ),
-            materialize_fn=None,
         ),
     )
 
