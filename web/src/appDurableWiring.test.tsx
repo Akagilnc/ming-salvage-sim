@@ -1055,7 +1055,6 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     const paths: string[] = [];
     let liveState = settlementBaseState("settling", {
       settlement_recovery: {
-        ready_replay: true,
         error_pack_path: "/tmp/error_packs/turn5_attempt1",
         message: "abort-guidance",
       },
@@ -1101,7 +1100,7 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     unmountTrackedRoots();
     paths.length = 0;
     liveState = settlementBaseState("settling", {
-      settlement_recovery: { ready_replay: false, message: "stopped", error_pack_path: "" },
+      settlement_recovery: { message: "stopped", error_pack_path: "" },
       directives: [],
     });
     const reopened = await mountApp();
@@ -1540,7 +1539,6 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     const encoder = new TextEncoder();
     const liveState = settlementBaseState("settling", {
       settlement_recovery: {
-        ready_replay: true,
         error_pack_path: "/tmp/error_packs/turn5_attempt1",
         message: "abort-guidance",
       },
@@ -1899,7 +1897,6 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     let liveState: Record<string, unknown> = settlementBaseState("settling", {
       settlement_recovery: {
         message: "上月结算未完成（进度已保存）。",
-        ready_replay: true,
         error_pack_path: "/tmp/error_packs/turn5_attempt1",
       },
       previous_summary: "",

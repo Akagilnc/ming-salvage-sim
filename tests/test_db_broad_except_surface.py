@@ -65,8 +65,7 @@ def test_resolve_context_corrupt_payload_falls_back_and_surfaces(game, monkeypat
     db, _state, _content = game
     db.save_resolve_context(
         500, decree_text="旨", narrative="报",
-        simulator_payload={"a": 1}, secret_orders={"在办": []}, relevant_memories=[],
-    )
+        simulator_payload={"a": 1}, secret_orders={"在办": []}, relevant_memories=[])
     db.conn.execute(
         "UPDATE pending_resolve_context SET simulator_payload_json = ? WHERE turn = ?",
         ("{坏payload", 500),
@@ -85,8 +84,7 @@ def test_resolve_context_corrupt_secret_orders_falls_back_to_dict_and_surfaces(g
     db, _state, _content = game
     db.save_resolve_context(
         502, decree_text="旨", narrative="报",
-        simulator_payload={}, secret_orders={"在办": [{"id": 1}]}, relevant_memories=[],
-    )
+        simulator_payload={}, secret_orders={"在办": [{"id": 1}]}, relevant_memories=[])
     db.conn.execute(
         "UPDATE pending_resolve_context SET secret_orders_json = ? WHERE turn = ?",
         ("{坏orders", 502),
@@ -108,8 +106,7 @@ def test_resolve_context_corrupt_extracted_returns_none_and_surfaces(game, monke
     # 显式传 extracted（非 None）→ ready=1，get 时 extracted 可见路径。
     db.save_resolve_context(
         501, decree_text="旨", narrative="报",
-        simulator_payload={}, extracted={"国库": 1},
-    )
+        simulator_payload={})
     db.conn.execute(
         "UPDATE pending_resolve_context SET extracted_delta_json = ? WHERE turn = ?",
         ("{坏delta", 501),
@@ -120,7 +117,6 @@ def test_resolve_context_corrupt_extracted_returns_none_and_surfaces(game, monke
     ctx = db.get_resolve_context(501)
 
     assert ctx is not None
-    assert ctx["extracted"] is None  # 行为：ready=1 但损坏 → 回 None 逼重抽（cmr r4 设计）
     assert any("extracted_delta JSON 损坏" in m for m in msgs), msgs
 
 

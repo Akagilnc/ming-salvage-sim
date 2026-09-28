@@ -493,10 +493,9 @@ def test_recovery_path_keeps_settlement_display(game, monkeypatch):
     for k in MONTH_OPEN_KEYS:
         assert payload["metrics"][k] == before[k]
 
-    dm.persist_resolve_context(
-        db, turn, {"metric_delta": {}},
-        decree_text="d", narrative="n",
-        simulator_payload={}, secret_orders=[], relevant_memories=[],
+    db.save_resolve_context(
+        turn, "d", "n", {},
+        secret_orders=[], relevant_memories=[],
     )
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
     sess = _recovery_session(db, state, content, monkeypatch)

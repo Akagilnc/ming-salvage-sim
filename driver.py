@@ -2,7 +2,7 @@
 
 形态(1) 我在对话里直接当 runtime+LLM：自产邸报叙事 + 中文 schema 形态的稀疏 delta，
 driver 负责把 delta 规范化后跑引擎的确定性结算核。法定顺序（ADR 0004 / #668）：
-`prepare`（pre_settle + ready=0 handoff）→ 外部产叙事+delta → `settle`（ready=1 + settle_with_delta）。
+`prepare`（pre_settle + context handoff）→ 外部产叙事+delta → `settle`（settle_with_delta，无 ready 重放）。
 真实流程与本 driver 共用同一结算核与同一前半段 seam（prepare_resolve_front_half）。
 """
 
@@ -20,7 +20,6 @@ from ming_sim.decree import (
     _dossier_ids_from_simulator_payload,
     _open_affair_ids_from_payload,
     _provenance_from_stored,
-    persist_resolve_context,
     prepare_resolve_front_half,
     secret_dossier_ids_from_secret_orders,
     settle_with_delta,
@@ -50,8 +49,8 @@ DEFAULT_DB = str(Path(__file__).resolve().parent / "data" / "probe.db")
 _DETERMINISTIC_LLM = LLMConfig(api_key="", base_url="", model="", channel="api")
 
 # delta 容器/二级类型处理的单一真源已抽到 ming_sim.issues.validate_delta_shape/sanitize_delta_shape(#57/#63):
-# driver 在升 ready=1 前只让不可拆形状（顶层非 dict/未知顶层字段）响亮失败；
-# 可拆坏项由 persist_resolve_context 逐项拒收留痕并保存净化版，apply_score_extraction 自身也兜底。
+# driver 在 settle 前只让不可拆形状（顶层非 dict/未知顶层字段）响亮失败；
+# 可拆坏项由 settle 内 sanitize/apply 拒收留痕。#1846：不再写 ready=1 持久 delta。
 # 前半段财政 tick 的原子化属 prepare 事务边界(ADR 0008 / prepare_resolve_front_half)。
 
 
@@ -179,20 +178,12 @@ def run_prepare(db, state, content, *, registry=None, source: Provenance = Prove
 def run_settle(db, state, content, raw_delta, *, narrative="", decree_text="", registry=None,
                source: Provenance = Provenance.player_decree,
                settlement_attendant_runner=None) -> str:
-    """后半段：消费同 turn 已 prepare 的 settling+ready=0 context，升 ready=1 后 settle。
+    """后半段：消费同 turn 已 prepare 的 settling context，直接 settle。
 
-    不再调用 pre_settle；未 prepare 响亮 ValueError 且零写。settling + ready=1 崩溃重入
-    只读既有 context，不二次 prepare/tick。
+    #1846：不再升 ready=1 / 不持久化 extractor delta；旧档 ready 重放已删除。
+    未 prepare 响亮 ValueError 且零写。
 
-    source 默认 player_decree：探针每回合即皇帝下旨之结算，拒收 source 门按 0008-D5；
-    呈现由外部 LLM/注入 runner 据实编织（0150-D5-b / P7），代码不写戏内固定句、
-    不造零宽占位。缺 runner 且有玩家来源拒收 → settle 诚实失败。纯世界推演可传
-    source=system_simulation。
-
-    narrative 落 turn_logs/turn_reports 作下月前文 + 玩家邸报；canonical delta 先落
-    pending_resolve_context 作重跑真源，turn_extractions.extractor_output 存 applied
-    结果供玩家明细/timeline 读取。
-    章节记忆 / 结局总评不注入（driver 无 llm_config），由对话里的我另行产出。
+    source 默认 player_decree：探针每回合即皇帝下旨之结算，拒收 source 门按 0008-D5。
     畸形 delta 抛 `ValueError`（库语义）；CLI 由 `main()` 转退出码。
     """
     # public 边界:None 当空回合;falsy/非 dict([]/""/0/str)不静默吞成空结算照样推进(codex-P1a)。
@@ -204,55 +195,56 @@ def run_settle(db, state, content, raw_delta, *, narrative="", decree_text="", r
     before_turn = state.turn
     ctx = _require_prepared_context(db, state)
 
-    # settling + ready=1 崩溃重入：只读 context，不二次 freeze/persist/tick。
-    stored_extracted = ctx.get("extracted")
-    if isinstance(stored_extracted, dict):
-        extracted = stored_extracted
-        narrative = narrative if narrative else str(ctx.get("narrative") or "")
-        decree_text = decree_text if decree_text else str(ctx.get("decree_text") or "")
-        source = _provenance_from_stored(ctx.get("source"))
-        simulator_payload = (
-            ctx.get("simulator_payload")
-            if isinstance(ctx.get("simulator_payload"), dict) else {}
-        )
-        secret_orders_for_sim = _recovered_grouped(ctx.get("secret_orders"))
-        dossier_ids_at_input = _dossier_ids_from_simulator_payload(simulator_payload)
-        secret_dossier_ids_at_input = secret_dossier_ids_from_secret_orders(
-            db, secret_orders_for_sim,
-        )
-        open_affair_ids_at_input = _open_affair_ids_from_payload(simulator_payload)
-    else:
-        # ready=0 → 校验 delta、冻结 closed set、合并 arrivals、升 ready=1。
-        extracted = canonicalize_extraction(raw_delta)
-        _validate_delta_shape(extracted)  # 崩前拦畸形/未知字段
-        # Freeze the roster-write authority after prepare (engine-aligned: post pre_settle).
-        dossier_ids_at_input = {
-            int(row["id"]) for row in db.list_decree_dossiers_for_simulation(before_turn)
-        }
-        # #1252: freeze secret-order batch the same way decree does — DB select +
-        # group, then derive secret_dossier_ids_at_input. Persist the grouped
-        # secret_orders so recovery can re-derive the closed set (never []).
-        secret_orders_for_sim = group_secret_orders_for_sim(
-            _select_secret_orders_for_sim(db)
-        )
-        secret_orders_for_sim = augment_secret_orders_with_due_commitments(
-            secret_orders_for_sim, db, state,
-        )
-        secret_dossier_ids_at_input = secret_dossier_ids_from_secret_orders(
-            db, secret_orders_for_sim,
-        )
-        simulator_payload = _merge_settle_simulator_payload(
-            ctx,
-            dossier_ids_at_input=dossier_ids_at_input,
-        )
-        open_affair_ids_at_input = _open_affair_ids_from_payload(simulator_payload)
-        extracted = persist_resolve_context(
-            db, before_turn, extracted,
-            decree_text=decree_text, narrative=narrative,
-            simulator_payload=simulator_payload,
+    extracted = canonicalize_extraction(raw_delta)
+    _validate_delta_shape(extracted)  # 崩前拦畸形/未知字段
+    dossier_ids_at_input = {
+        int(row["id"]) for row in db.list_decree_dossiers_for_simulation(before_turn)
+    }
+    secret_orders_for_sim = group_secret_orders_for_sim(
+        _select_secret_orders_for_sim(db)
+    )
+    secret_orders_for_sim = augment_secret_orders_with_due_commitments(
+        secret_orders_for_sim, db, state,
+    )
+    secret_dossier_ids_at_input = secret_dossier_ids_from_secret_orders(
+        db, secret_orders_for_sim,
+    )
+    simulator_payload = _merge_settle_simulator_payload(
+        ctx,
+        dossier_ids_at_input=dossier_ids_at_input,
+    )
+    open_affair_ids_at_input = _open_affair_ids_from_payload(simulator_payload)
+    # 刷新本月上下文（诏书/叙事/payload），不写 extracted；shape 拒收仍落审计。
+    from ming_sim.issues import sanitize_delta_shape
+    from ming_sim.applier import RejectionCollector, RejectedItem, atomic
+    from ming_sim.decree import mirror_rejections_after_commit, rejections_jsonl_path, _next_attempt
+    cleaned, rejections = sanitize_delta_shape(extracted)
+    _validate_delta_shape(cleaned)
+    try:
+        attempt = _next_attempt(before_turn)
+    except Exception:
+        attempt = 1
+    collector = RejectionCollector(attempt=attempt)
+    with atomic(db):
+        for section, item, reason in rejections:
+            collector.record(
+                section,
+                RejectedItem(
+                    item=item,
+                    reason=reason,
+                    category="invalid_shape",
+                    source=Provenance(source),
+                ),
+                before_turn,
+            )
+        collector.flush_to_db(db)
+        db.save_resolve_context(
+            before_turn, decree_text, narrative, simulator_payload,
             secret_orders=secret_orders_for_sim, relevant_memories=[],
-            source=source,  # 持久化来源，崩溃恢复重放据此还原（#144）
+            source=Provenance(source).value,
         )
+    mirror_rejections_after_commit(db, collector, rejections_jsonl_path)
+    extracted = cleaned
 
     report = settle_with_delta(
         state,

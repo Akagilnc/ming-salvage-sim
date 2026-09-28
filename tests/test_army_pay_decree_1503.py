@@ -270,14 +270,12 @@ def test_promulgation_recovery_does_not_double_debit(game, monkeypatch):
     arrears_after_pre = _army_row(db)["arrears"]
     _promulgate(db, state, content, did)
     db.save_resolve_context(
-        turn, "拨饷诏", "旧邸报", {}, extracted={"metric_delta": {"民心": -30}},
-    )
+        turn, "拨饷诏", "旧邸报", {})
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
     session = _recovery_session(db, state, content, monkeypatch)
     result = session.resolve_turn()
     assert result.stage == "gazette"
     assert state.turn == turn
-    assert db.get_resolve_context(turn)["extracted"] is None
     session.resolve_turn()
     assert state.turn == turn
     moves = db.list_economy_moves_for_dossier(did)

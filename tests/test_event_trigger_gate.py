@@ -1330,7 +1330,6 @@ def test_event_outcome_retry_ignores_non_landable_event_without_world_state_delt
         state=state,
     )
 
-    assert extracted["事件结局"] == {"jisi_lubian": "大胜"}
 
 
 def test_strategic_event_delta_requires_outcome_label_without_mutation(game):

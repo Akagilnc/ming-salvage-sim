@@ -148,9 +148,7 @@ def test_s2_secret_field_appends_via_real_settle_and_recovery_replays(game):
     db.save_resolve_context(
         state.turn, "", "",
         {"decree_dossiers": []},
-        secret_orders=grouped,
-        extracted=with_monthly_reports(db, delta),
-    )
+        secret_orders=grouped, delta))
     driver.run_settle(db, state, content, with_monthly_reports(db, delta))
     roster2 = db.get_decree_dossier(dossier_id)["participant_roster"]
     assert any(

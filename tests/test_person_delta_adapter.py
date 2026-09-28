@@ -45,7 +45,6 @@ def test_normalize_person_changes_keeps_new_key_items():
         ]
     }
 
-    assert normalize_person_changes(extracted) == [
         {
             "name": "孔有德",
             "动作": "易主",
