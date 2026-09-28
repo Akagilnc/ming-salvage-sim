@@ -798,13 +798,8 @@ def _settle_edicts(
                         if row.get("action_type") == "appointment"
                         and int(row.get("created_turn") or 0) == int(state.turn)]
         if len(appointments) > 1:
-            for row in appointments:
-                try:
-                    db._prevalidate_office_recommendation_snapshots(state, [row])
-                except ValueError:
-                    invalid.add(int(row["id"]))
-                else:
-                    prevalidated.add(int(row["id"]))
+            invalid = db._invalid_office_recommendation_snapshots(state, appointments)
+            prevalidated = {int(row["id"]) for row in appointments} - invalid
             chain["recommendation_prevalidated_ids"] = sorted(prevalidated)
             chain["recommendation_invalid_ids"] = sorted(invalid)
             _save_chain(db, int(state.turn), chain, source=Provenance.player_decree)

@@ -19417,14 +19417,11 @@ class GameDB:
             )
         )
 
-    def _prevalidate_office_recommendation_snapshots(
+    def _invalid_office_recommendation_snapshots(
         self, state: GameState, dossiers: Iterable[Dict[str, object]],
-    ) -> None:
-        """批前统一校验即将物化的任命荐人快照（#1583）。
-
-        以本批结算开始时盘面为准；任一失效即在首条物化前 fail-loud，
-        错误文案与物化缝保持一致。
-        """
+    ) -> set[int]:
+        """返回批前盘面中确实不匹配的荐人快照案号；其他异常原样上抛。"""
+        invalid = set()
         for row in dossiers:
             if str(row.get("action_type") or "") != "appointment":
                 continue
@@ -19440,7 +19437,15 @@ class GameDB:
             if not self._recommendation_snapshot_ready(
                 state, payload, minister_name=minister,
             ):
-                raise ValueError("任免案卷载荷物化失败")
+                invalid.add(int(row["id"]))
+        return invalid
+
+    def _prevalidate_office_recommendation_snapshots(
+        self, state: GameState, dossiers: Iterable[Dict[str, object]],
+    ) -> None:
+        """批前统一校验即将物化的任命荐人快照（#1583）。"""
+        if self._invalid_office_recommendation_snapshots(state, dossiers):
+            raise ValueError("任免案卷载荷物化失败")
 
     def _commit_office_action(
         self, state: GameState, pa: Dict[str, object], payload: Dict[str, object],
