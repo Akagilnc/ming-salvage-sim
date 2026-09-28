@@ -116,6 +116,36 @@ def test_xuan_lands_enter_then_present_on_next_prepare(game, monkeypatch, tmp_pa
 
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
+def test_cli_selection_uses_scene_turn_as_admission_origin(game, monkeypatch):
+    from ming_sim.cli.terminal import minister_chat
+
+    db, state, content = game
+    character = content.characters["王绍徽"]
+    sess = _sess(db, state, content, llm_config=SimpleNamespace(channel=""))
+    sess.schedule_pending_scene_translation = lambda result: None
+    calls = []
+
+    class FakeAgent:
+        tools = []
+
+        def run(self, message):
+            calls.append(message)
+            return SimpleNamespace(content="臣在。", tools=[])
+
+    monkeypatch.setattr("ming_sim.session.create_scene_agent", lambda *a, **k: FakeAgent())
+    answers = iter(["done"])
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
+
+    assert minister_chat(sess, character, selected=True) == "dismiss"
+    assert calls == [f"宣{character.name}"]
+    night = get_open_night(db)
+    assert night is not None
+    entries = [e for e in list_ledger(db, int(night["id"])) if TAG_ENTER in e["tags"] and character.name in e["person_names"]]
+    assert len(entries) == 1
+    assert entries[0]["origin_chat_turn_id"] > 0
+
+
+@pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_retire_via_scene_chat_closes_night_and_keeps_last_turn(game, monkeypatch):
     """AC3：scene_chat('退朝') 真入口收夜；同库重读最后一条持久化对话轮仍在。"""
     db, state, content = game

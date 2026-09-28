@@ -244,7 +244,6 @@ def _handle_court_command(
     if raw in STAY_ATTEND_COMMANDS or lowered in STAY_ATTEND_COMMANDS:
         from ming_sim.audience_night import stay_attend_in_audience
         stay_attend_in_audience(session.db, current.name)
-        print(f"{current.name}留下听着，殿侧侍立。\n")
         return "handled"
 
     # 技能卡查看
@@ -455,7 +454,7 @@ def _cli_write_gate(session: GameSession):
     return get_session_write_queue(session).write_gate
 
 
-def minister_chat(session: GameSession, character: Character) -> str:
+def minister_chat(session: GameSession, character: Character, *, selected: bool = False) -> str:
     """与一位大臣对话。返回 'dismiss' | 'court_break' | 'summon:<name>'。"""
     other = next((n for n in session.content.characters if n != character.name), character.name)
     print(f"\n当前选择：{character.name}。可持续问话；done/退下 退下，“传{other}来”换人，quit 退朝审阅诏书，exit 退出游戏。")
@@ -463,8 +462,15 @@ def minister_chat(session: GameSession, character: Character) -> str:
     # #505：入殿时显眼提示回话中断恢复入口（与 web ChatModal 同语义）。
     # #1353：欠账抽取无玩家手动补写面——过月内部 drain 唯一处理路。
     _print_interrupted_reply_retry_hint(session, character.name)
+    from ming_sim.audience_night import get_open_night, present_names_at
+    night = get_open_night(session.db) if selected else None
+    pending_xuan = selected and (
+        night is None or character.name not in present_names_at(session.db, int(night["id"]))
+    )
     while True:
-        question = input("朕问：").strip()
+        # A selection is its own scene turn; the first question remains the player's text.
+        question = f"宣{character.name}" if pending_xuan else input("朕问：").strip()
+        pending_xuan = False
         if not question:
             print("可继续问话；若要让其退下，请输入 done。")
             continue
@@ -532,9 +538,7 @@ def minister_chat(session: GameSession, character: Character) -> str:
                 if lifecycle_supported:
                     rollback_snapshot = session.db.capture_chat_rollback_snapshot()
                     # #1838 reopen：CLI 选臣 = 确保开夜 + 建轮；入殿走「宣 X」同入口。
-                    from ming_sim.audience_night import (
-                        ensure_open_night_for_audience, get_open_night, recognize_xuan_command,
-                    )
+                    from ming_sim.audience_night import ensure_open_night_for_audience
                     night_was_open = get_open_night(session.db) is not None
                     night = get_open_night(session.db) or ensure_open_night_for_audience(
                         session.db, session.state,
@@ -542,12 +546,6 @@ def minister_chat(session: GameSession, character: Character) -> str:
                     if not night_was_open:
                         from ming_sim.decree_forecast import schedule_held_decree_forecasts
                         schedule_held_decree_forecasts(session)
-                    # 选臣后以「宣 X」入殿（与 web 名册点选同形）
-                    if not recognize_xuan_command(question):
-                        from ming_sim.audience_night import ensure_summon_enter
-                        ensure_summon_enter(
-                            session.db, int(night["id"]), character.name,
-                        )
                     chat_turn_id = session.db.create_chat_turn(
                         session.state,
                         "殿上",
@@ -796,7 +794,7 @@ def play_turn(session: GameSession) -> None:
             if character is None:
                 action = review_directives(session)
             else:
-                chat_action = minister_chat(session, character)
+                chat_action = minister_chat(session, character, selected=True)
                 if chat_action == "dismiss":
                     continue
                 if chat_action.startswith("summon:"):
