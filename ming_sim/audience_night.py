@@ -1140,7 +1140,7 @@ def publish_night_directives(db: Any, night_id: int) -> None:
             db, night_id,
             person_names=[str(_pd["actor"] or "")] if _pd["actor"] else [],
             audibility=AUDIBILITY_PUBLIC,
-            body=f"明发旨意：{str(_pd['text'] or '')}",
+            body=str(_pd["text"] or ""),
             tags=[TAG_MINGFA, mingfa_publication_tag(_did_int)],
             check_dead=False,
             allow_closing=True,
