@@ -1207,7 +1207,8 @@ def _run_month_drift(
         retire_unsettled_summons_for_inactive(db)
         # #651：漂移只承接不依赖本段 applied 的持久态（已决「禁摊派」欠饷是否再开口）。
         # 默许/查办必须在逐段落账接缝带该段 report 结算，见 declaration_dispatch。
-        from ming_sim.covert_levy import settle_exposure_from_canonical_actions
+        from ming_sim.covert_levy import settle_exposure_from_canonical_actions, write_exposure_todos
+        write_exposure_todos(db, state)
         settle_exposure_from_canonical_actions(db, state, {})
         rejections = apply_issue_inertia_and_ongoing(db, state)
         if rejections:
