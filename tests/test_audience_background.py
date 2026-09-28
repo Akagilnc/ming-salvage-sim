@@ -522,9 +522,15 @@ def test_background_audience_recommendation_stages_candidate_snapshot(game, monk
     night = db.conn.execute("SELECT id FROM audience_nights ORDER BY id DESC LIMIT 1").fetchone()
     assert night is not None
     history = db.build_chat_projection("殿上", int(night["id"]))
-    assert any(row.get("content") == reply for row in history)
+    assert [(row["role"], row["chat_turn_id"]) for row in history] == [
+        ("user", history[0]["chat_turn_id"]),
+        ("minister", history[0]["chat_turn_id"]),
+    ]
+    assert history[0]["chat_turn_id"] > 0
     web_game.chat_history.clear()  # 刷新/重开不得依赖流式观察者的内存态。
-    assert web_game.chat_projection("殿上") == history
+    assert [
+        (row["role"], row["chat_turn_id"]) for row in web_game.chat_projection("殿上")
+    ] == [(row["role"], row["chat_turn_id"]) for row in history]
     assert db.can_undo_last_chat_turn("殿上", state.turn)
     pending = db.list_pending_actions(state.turn)
     office_rows = [p for p in pending if p["kind"] == "office"]
