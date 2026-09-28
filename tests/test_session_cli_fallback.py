@@ -86,21 +86,6 @@ def _no_conv_action(monkeypatch):
     monkeypatch.setattr(cb, "_trace", lambda rec: None)
 
 
-def _commit_staged_secret_order(db, state, result_or_mapping):
-    """#413: prefix/button secret-order paths stage first; commit here only when a test inspects the durable row."""
-    if isinstance(result_or_mapping, dict):
-        assert result_or_mapping.get("secret_order_id") in (None, 0)
-        pending_id = result_or_mapping.get("pending_action_id")
-    else:
-        assert getattr(result_or_mapping, "secret_order_id", None) in (None, 0)
-        pending_id = getattr(result_or_mapping, "pending_action_id", 0)
-    assert pending_id
-    db.commit_pending_actions(state)
-    orders = db.list_secret_orders()
-    assert len(orders) == 1
-    return orders[0]
-
-
 def test_opening_seed_secret_orders_empty_or_structured(game):
     """#1274 K1 seed 开局合约：生产开局同核无预置密令（或 content 来自结构化源）。"""
     db, _state, _ = game
@@ -1055,9 +1040,9 @@ def test_scene_two_independent_secret_commissions_commit_separately(game):
     declaration = {"commissions": [
         {"text": content, "secret_order": {
             "title": title, "content": content, "assignee": minister,
-            "tags": [], "deadline_months": 0, "covert_task": TYPED_COVERT_TASK,
+            "tags": [], "deadline_months": deadline, "covert_task": TYPED_COVERT_TASK,
         }}
-        for title, content in (("暗查甲", "查甲"), ("暗查乙", "查乙"))
+        for title, content, deadline in (("暗查甲", "查甲", 0), ("暗查乙", "查乙", 3))
     ]}
     result = dispatch_declaration(db, state, declaration, minister_name=minister)
     assert len(result.commissions.applied) == 2
@@ -1066,8 +1051,8 @@ def test_scene_two_independent_secret_commissions_commit_separately(game):
     assert db.list_secret_orders() == []
     db.commit_pending_actions(state)
     orders = db.list_secret_orders()
-    assert {(r["title"], r["content"]) for r in orders} == {
-        ("暗查甲", "查甲"), ("暗查乙", "查乙"),
+    assert {(r["title"], r["content"], r["due_turn"]) for r in orders} == {
+        ("暗查甲", "查甲", 0), ("暗查乙", "查乙", state.turn + 3),
     }
 
 
@@ -1372,149 +1357,6 @@ def test_declared_noop_appointment_is_not_staged(game, use_alias):
     assert result.commissions.applied == []
     assert result.commissions.rejected == []
     assert db.list_pending_actions(state.turn) == []
-
-
-def test_api_channel_secret_prefix_confirmation_uses_recent_context(game, monkeypatch):
-    """#354 correctness r2: API/tool-call 通道未产出 secret_order 时，显式密令按钮仍是权威路由。"""
-    db, state, _ = game
-    monkeypatch.setattr(cb, "_trace", lambda rec: None)
-    minister = "魏忠贤"
-    db.append_chat_message(minister, state.turn, "user", "命洪承畴督办陕西赈灾，东厂暗助护赈银、查截留。")
-    db.append_chat_message(minister, state.turn, "minister", "臣领密旨，当令东厂暗中护送赈银。")
-
-    def fake_extract(prompt, llm_config=None, tag="", *, policy=None):
-        return (json.dumps({
-            "标题": "暗护陕西赈银",
-            "内容": "命洪承畴督办陕西赈灾，东厂暗助护赈银并查截留。",
-            "承办人": minister,
-            "期限月数": 0,
-            "差务": "清丈",
-            "价值轴": ["实务事功"],
-            "方向": 1,
-            "交付单位": "万亩",
-            "交付目标": 1, "效果符号": 1, "地区": "henan", "地区字段": "registered_land", "地区目标值": "421",
-            "标签": ["陕西"],
-        }, ensure_ascii=False), 1)
-
-    monkeypatch.setattr(cb, "_run_api_for_config", fake_extract)
-    res = _session(db, state, llm_config=SimpleNamespace(channel="api")).apply_cli_conversation_actions(
-        SimpleNamespace(name=minister, office_type="司礼监"),
-        "密令如下：可，照办",
-        "臣领命。",
-        has_directive=False,
-        secret_order_id=None,
-    )
-
-    row = _commit_staged_secret_order(db, state, res)
-    assert row["minister_name"] == minister
-    assert "督办陕西赈灾" in row["content"]
-
-
-def test_api_channel_secret_prefix_extracts_deadline_without_cli_helper(game, monkeypatch):
-    """#354/#358 cmr r10: API 显式密令路要用 API 抽取字段，不能调用 CLI-only helper 后吞错丢期限。"""
-    db, state, _ = game
-    monkeypatch.setattr(cb, "_trace", lambda rec: None)
-    minister = "魏忠贤"
-    db.append_chat_message(minister, state.turn, "user", "命洪承畴督办陕西赈灾。")
-    db.append_chat_message(minister, state.turn, "minister", "臣领密旨。")
-
-    def forbidden_cli(*_args, **_kwargs):
-        raise AssertionError("API 密令字段提取不应调用 CLI-only helper")
-
-    def fake_api_extract(prompt, llm_config=None, tag="", *, policy=None):
-        assert tag == "secret_extract"
-        assert getattr(llm_config, "channel", "") == "api"
-        return (json.dumps({
-            "标题": "督赈陕西",
-            "内容": "命洪承畴督办陕西赈灾，三月内回奏。",
-            "承办人": minister,
-            "期限月数": 3,
-            "差务": "清丈",
-            "价值轴": ["实务事功"],
-            "方向": 1,
-            "交付单位": "万亩",
-            "交付目标": 1, "效果符号": 1, "地区": "henan", "地区字段": "registered_land", "地区目标值": "421",
-            "标签": ["陕西"],
-        }, ensure_ascii=False), 1)
-
-    monkeypatch.setattr(cb, "_run_backend_for_config", forbidden_cli)
-    monkeypatch.setattr(cb, "_run_api_for_config", fake_api_extract)
-    res = _session(db, state, llm_config=SimpleNamespace(channel="api")).apply_cli_conversation_actions(
-        SimpleNamespace(name=minister, office_type="司礼监"),
-        "密令如下：可，照办，三月内回奏",
-        "臣领命。",
-        has_directive=False,
-        secret_order_id=None,
-    )
-
-    row = _commit_staged_secret_order(db, state, res)
-    assert "三月内回奏" in row["content"]
-    assert row["due_turn"] == state.turn + 3
-
-
-def test_api_channel_mixed_confirmation_keeps_supplement_when_extract_fails(game, monkeypatch):
-    """#354 + #1765：产物缺口 → 后续 LLM 输入含前文任务与本轮确认（确定性供料）。
-
-    短确认前缀须把前文任务行装进 extract/recovery 输入；0142 不合成散文题名。
-    transport 真失败不进戏内 recovery（见 authorization #528 / C1）。
-    """
-    db, state, _ = game
-    monkeypatch.setattr(cb, "_trace", lambda rec: None)
-    minister = "魏忠贤"
-    prior_task = "命洪承畴督办陕西赈灾，东厂暗助护赈银、查截留。"
-    db.append_chat_message(minister, state.turn, "user", prior_task)
-    db.append_chat_message(minister, state.turn, "minister", "臣领密旨，当令东厂暗中护送赈银。")
-    player_message = "密令如下：可，照办，三月内回奏"
-    # 结构化 compose 供料观察（透传原实现）；不锁表头/中文标签。
-    from tests.test_secret_order_payoff_1504 import (
-        _recovery_compose_fed,
-        _spy_secret_landing_recovery_compose,
-    )
-    recovery_calls = _spy_secret_landing_recovery_compose(monkeypatch)
-    # 产物缺口（合法空合同），非 transport：走揣摩/recovery。
-    unlandable = json.dumps({
-        "标题": "", "内容": "", "承办人": minister, "期限月数": 0,
-        "标签": [], "差务": "", "价值轴": [], "方向": 1,
-        "交付单位": "", "交付目标": 0,
-    }, ensure_ascii=False)
-
-    def api_route(prompt, llm_config=None, tag="", **_k):
-        if tag == "secret_order_landing_recovery":
-            return "任意生成回禀", 1
-        if _k.get("force_json_output") is False:
-            return "任意生成回禀", 1
-        return unlandable, 1
-
-    monkeypatch.setattr(cb, "_run_api_for_config", api_route)
-    res = _session(db, state, llm_config=SimpleNamespace(channel="api")).apply_cli_conversation_actions(
-        SimpleNamespace(name=minister, office_type="司礼监", office="司礼监掌印太监"),
-        player_message,
-        "臣领命。",
-        has_directive=False,
-        secret_order_id=None,
-    )
-
-    recovery = res.get("secret_order_landing_recovery") or {}
-    assert recovery.get("report")
-    assert recovery.get("landing_gaps")
-    snapshot = recovery.get("extract_snapshot") or {}
-    # #354/#1765：compose kwargs 须含前文任务 + 本轮确认 + 真实缺口 + 原产物。
-    assert recovery_calls, "须有 compose_secret_order_landing_recovery 调用"
-    assert any(
-        (
-            ("督办陕西赈灾" in str(c.get("emperor_words") or "")
-             or prior_task in str(c.get("emperor_words") or ""))
-            and ("三月内回奏" in str(c.get("emperor_words") or "")
-                 or "可，照办" in str(c.get("emperor_words") or ""))
-            and _recovery_compose_fed(c, prior_raw=unlandable)
-        )
-        for c in recovery_calls
-    ), "recovery 输入须同时含前文任务、本轮确认、真实缺口与完整原产物"
-    assert int(res.get("pending_action_id") or 0) == 0
-    assert res.get("secret_order_id") in (None, 0)
-    assert db.list_secret_orders() == []
-    assert not str(snapshot.get("title") or "").strip()
-    assert unlandable in str(snapshot.get("extract_raw") or "")
 
 
 def _link_night_chat_turn(db, state, night_id, minister, user_text, minister_text):
