@@ -1,7 +1,7 @@
 """#652：流民环闭合——投贼吃池顶 + 赈济/招抚回流 + 唯一判官成色链。
 
-主测缝：build_simulator_payload / apply_score_extraction / settle_with_delta
-／advance_without_decree（可控 LLM seam 真实月结）。
+主测缝：build_simulator_payload / apply_score_extraction /
+advance_without_decree（可控 LLM seam 真实月结）。
 owner A：开仓非回流 producer；只覆盖赈济与招抚屯田；#522 不动。
 """
 
@@ -19,7 +19,6 @@ from ming_sim.constants import (
     RECOVERY_PERSONS_PER_WAN,
 )
 from ming_sim.db import GameDB, POPULATION_UNIT_PERSONS
-from tests.settlement_seam_helpers import settle_effects as settle_with_delta
 from ming_sim.issues import apply_score_extraction
 from ming_sim.simulation import build_simulator_payload
 from tests.settlement_seam_helpers import canned_full_settlement, make_light_session
@@ -27,26 +26,6 @@ from tests.settlement_seam_helpers import canned_full_settlement, make_light_ses
 FARMER_SHAANXI = 6000000
 DISPLACED_SHAANXI = 150000
 
-
-
-def _settle_transfers(state, db, content, narrative="settle"):
-    """经 settle_effects 落账；返回本回合 recovery 路径写出的 population_transfers。"""
-    from unittest.mock import patch
-    from tests.settlement_seam_helpers import settle_effects as settle_with_delta
-    captured = []
-    real = None
-    import ming_sim.issues as issues_mod
-    real = issues_mod._apply_recovery_driven_transfers
-
-    def _spy(db, state, *, commit=True):
-        applied, rejected = real(db, state, commit=commit)
-        captured.extend(applied)
-        return applied, rejected
-
-    before = state.turn
-    with patch.object(issues_mod, "_apply_recovery_driven_transfers", _spy):
-        settle_with_delta(state, db, {}, before_turn=before, content=content, narrative=narrative)
-    return list(captured)
 
 
 
@@ -333,7 +312,9 @@ def test_non_recovery_grant_no_回流(game):
     db.apply_dossier_promulgation(state, dossier_id, "promulgated")
     assert db.get_decree_dossier(dossier_id)["execution_outcome"] == "fulfilled"
     assert db.list_economy_moves_for_dossier(dossier_id)
-    assert not _reflux(_settle_transfers(state, db, content, "非回流"))
+    before = _pop(db, "流民", "shaanxi")
+    assert not _reflux(apply_score_extraction(db, state, {}, content, None)["population_transfers"])
+    assert _pop(db, "流民", "shaanxi") == before
 
 
 def test_recovery_without_paid_evidence_produces_nothing(game):
@@ -348,7 +329,7 @@ def test_recovery_without_paid_evidence_produces_nothing(game):
     db.conn.commit()
     assert db.list_economy_moves_for_dossier(dossier_id) == []
     before = _pop(db, "流民", "shaanxi")
-    assert not _reflux(_settle_transfers(state, db, content, "无实付"))
+    assert not _reflux(apply_score_extraction(db, state, {}, content, None)["population_transfers"])
     assert _pop(db, "流民", "shaanxi") == before
 
 
@@ -680,6 +661,6 @@ def test_legacy_population_unit_skips_absorption_and_recovery(game):
     assert applied["bandit_absorptions"] == [] and applied["bandit_absorptions_rejections"]
 
     assert db.get_decree_dossier(_recovery_grant(db, state, amount=10))["execution_outcome"] == "fulfilled"
-    assert not _reflux(_settle_transfers(state, db, content, "legacy"))
+    assert not _reflux(apply_score_extraction(db, state, {}, content, None)["population_transfers"])
 
 
