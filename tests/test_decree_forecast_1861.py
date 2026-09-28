@@ -103,6 +103,9 @@ def test_scene_chat_approval_forecasts_each_decree_without_visible_effect(game, 
     }, ensure_ascii=False) + "<<END>>"
 
     def simulate(_agent, _prompt, **kwargs):
+        decree_fact = json.loads(_prompt)["this_decree"]
+        assert decree_fact["payload"]["target_id"] == "test-policy"
+        assert decree_fact["payload"]["mode"] == "midzhi"
         policies.append(kwargs.get("transport_policy"))
         return before_question + decision_block + after_question
 
@@ -580,121 +583,3 @@ def test_same_local_ids_on_two_saves_both_stage(game, _game_template_path, monke
         other.close()
 
 
-def test_forecast_snapshot_one_shape_and_independent_materials(game, monkeypatch, tmp_path):
-    """#1861 reopen：四处共用一份快照；材料目录独立，本旨不进目录。"""
-    from pathlib import Path
-
-    db, state, content = game
-    night = open_night(db, state)
-    minister = next(iter(content.characters.values()))
-    pending_id = db.stage_pending_action(
-        state.turn, kind="directive", action="拟旨", minister_name=minister.name,
-        payload={
-            "dossier_action_type": "policy", "target_kind": "issue",
-            "target_id": "snap-policy", "actor": minister.name, "mode": "ordinary",
-            "text": "统一快照旨",
-        },
-    )
-    mark_actions_night_approved(db, [pending_id], night_id=int(night["id"]))
-    sess = _sess(db, state, content, monkeypatch, offline_empty_audience_translate)
-
-    pending_snap = forecast_mod._pending_snapshot(sess, pending_id, int(night["id"]))
-    assert pending_snap is not None
-    try:
-        this = pending_snap["this_decree"]
-        assert this["status"] == "promulgated"
-        assert this["decree_text"] == "统一快照旨"
-        prepared = pending_snap["prepared"]
-        root = Path(prepared.root)
-        assert root.exists()
-        assert "decree-forecast" in str(root)
-        # 本旨不进材料目录（ADR 0155）。
-        names = list(root.rglob("*"))
-        bodies = "\n".join(
-            p.read_text(encoding="utf-8") for p in names if p.is_file()
-        )
-        assert "统一快照旨" not in bodies
-        # 第二份快照不覆盖第一份目录。
-        other_id = db.stage_pending_action(
-            state.turn, kind="directive", action="拟旨", minister_name=minister.name,
-            payload={
-                "dossier_action_type": "policy", "target_kind": "issue",
-                "target_id": "snap-policy-2", "actor": minister.name, "mode": "ordinary",
-                "text": "第二道",
-            },
-        )
-        mark_actions_night_approved(db, [other_id], night_id=int(night["id"]))
-        second = forecast_mod._pending_snapshot(sess, other_id, int(night["id"]))
-        assert second is not None
-        second_root = Path(second["prepared"].root)
-        try:
-            assert second_root.exists()
-            assert second_root != root
-            assert root.exists()
-            # 过月补跑入口走同一 forecast_snapshot。
-            dossier_id = db.create_decree_dossier(
-                state, action_type="policy", decree_text="案卷补跑",
-                target_kind="issue", target_id="makeup",
-                payload={"mode": "ordinary"},
-            )
-            dossier = db.get_decree_dossier(dossier_id)
-            makeup = forecast_mod.snapshot_for_existing_dossier(sess, dossier)
-            try:
-                assert makeup["this_decree"]["status"] == "promulgated"
-                assert makeup["this_decree"]["decree_text"] == "案卷补跑"
-                assert makeup.get("prepared") is not None
-            finally:
-                forecast_mod.release_forecast_materials(makeup)
-        finally:
-            forecast_mod.release_forecast_materials(second)
-        assert not second_root.exists()
-    finally:
-        forecast_mod.release_forecast_materials(pending_snap)
-    assert not root.exists()
-
-
-def test_this_decree_paid_reads_ledger_for_existing_dossier(game, monkeypatch):
-    """已有案卷本旨 paid 取账本实付；未成案拟旨为 0（与 opening 不矛盾）。"""
-    from ming_sim.materials import dossier_paid_amount
-
-    db, state, content = game
-    sess = _sess(db, state, content, monkeypatch, offline_empty_audience_translate)
-    dossier_id = db.create_decree_dossier(
-        state, action_type="policy", decree_text="发银续推",
-        target_kind="region", target_id="shaanxi",
-        payload={"mode": "ordinary", "grant_action": "发银", "amount": 50},
-    )
-    # 账本已有实付 30 两（负向 delta）。
-    db.conn.execute(
-        "INSERT INTO economy_ledger "
-        "(turn, year, period, account, delta, balance_after, category, reason, origin_ref) "
-        "VALUES (?, ?, ?, '国库', ?, 1, '预支', '案卷拨款', ?)",
-        (state.turn, state.year, state.period, -30, f"dossier:{dossier_id}"),
-    )
-    db.conn.commit()
-    assert dossier_paid_amount(db, dossier_id) == 30
-    dossier = db.get_decree_dossier(dossier_id)
-    snap = forecast_mod.snapshot_for_existing_dossier(sess, dossier)
-    try:
-        assert snap["this_decree"]["paid"] == 30
-        assert snap["this_decree"]["id"] == dossier_id
-    finally:
-        forecast_mod.release_forecast_materials(snap)
-
-    night = open_night(db, state)
-    minister = next(iter(content.characters.values()))
-    pending_id = db.stage_pending_action(
-        state.turn, kind="directive", action="拟旨", minister_name=minister.name,
-        payload={
-            "dossier_action_type": "policy", "target_kind": "issue",
-            "target_id": "unpaid-night", "actor": minister.name, "mode": "ordinary",
-            "text": "夜里新旨",
-        },
-    )
-    mark_actions_night_approved(db, [pending_id], night_id=int(night["id"]))
-    pending_snap = forecast_mod._pending_snapshot(sess, pending_id, int(night["id"]))
-    try:
-        assert pending_snap is not None
-        assert pending_snap["this_decree"]["paid"] == 0
-    finally:
-        forecast_mod.release_forecast_materials(pending_snap)

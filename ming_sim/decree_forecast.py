@@ -82,7 +82,7 @@ def _this_decree_fact(
 ) -> Dict[str, object]:
     """本旨事实：随调用消息携带，不进材料目录（ADR 0155）。
 
-    字段形状沿 continuing_dossier_facts，另附 mode；status 固定按已颁看待。
+    字段形状沿 continuing_dossier_facts，另附完整载荷与 mode；status 固定按已颁看待。
     已有案卷的 paid 从账本实付投影（materials.dossier_paid_amount）；
     夜里尚未成案的拟旨 id 无动账，投影为 0。
     """
@@ -98,18 +98,10 @@ def _this_decree_fact(
         "target_kind": str(candidate.get("target_kind") or ""),
         "target_id": str(candidate.get("target_id") or ""),
         "grant_action": str(payload.get("grant_action") or ""),
+        "payload": payload,
         "mode": str(candidate.get("mode") or payload.get("mode") or "ordinary"),
         "paid": paid,
     }
-
-
-def _as_promulgated(candidate: Dict[str, Any], turn: int) -> Dict[str, Any]:
-    """按已颁看待：唯一写法。"""
-    visible = copy.deepcopy(candidate)
-    visible["settlement_verdict"] = "promulgated"
-    visible["promulgation_decision"] = "promulgated"
-    visible["promulgated_turn"] = int(turn)
-    return visible
 
 
 def release_forecast_materials(snapshot: Optional[Dict[str, Any]]) -> None:
@@ -148,17 +140,20 @@ def forecast_snapshot(
     turn = int(state.turn)
     # 判官上下文用原始候选；推演侧本旨事实按已颁看待。
     context = decree.build_promulgation_judge_context(db, state, [body])
-    promulgated = _as_promulgated(body, turn)
     # 与世界段同一读法；独立 dest_root，避免并行预推互踩固定「世界推演」根。
     dest_parent = Path(world_materials_root(db, state)).parent / "decree-forecast"
     prepared = prepare_world_materials(db, state, dest_root=dest_parent)
-    grounding, refs = _frozen_effect_refs(db, turn, payload)
+    try:
+        grounding, refs = _frozen_effect_refs(db, turn, payload)
+        this_decree = _this_decree_fact(body, decree_text=text, db=db)
+    except BaseException:
+        release_material_tree(prepared.root)
+        raise
     return {
         "candidate": body,
-        "promulgated_candidate": promulgated,
         "context": context,
         "prepared": prepared,
-        "this_decree": _this_decree_fact(promulgated, decree_text=text, db=db),
+        "this_decree": this_decree,
         "target_grounding": grounding,
         "visible_refs": refs,
         "decree_ref": decree_ref,
@@ -311,9 +306,6 @@ def produce_forecast_product(session: Any, snapshot: Dict[str, Any]) -> Dict[str
         questions = None
         forecast_text = None
         if str(verdict.get("decision") or "") == "promulgated":
-            candidate["settlement_verdict"] = "promulgated"
-            candidate["promulgation_decision"] = "promulgated"
-            candidate["promulgated_turn"] = int(snapshot["turn"])
             agent = agents.create_decree_forecast_agent(
                 session.llm_config, snapshot["prepared"],
             )
