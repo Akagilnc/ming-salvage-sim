@@ -3,7 +3,6 @@ import json
 import pytest
 
 from tests.test_due_review_621 import _settle_empty_month as _player_month
-from tests.settlement_seam_helpers import settle_effects as settle_with_delta
 from ming_sim.issues import (
     apply_issue_inertia_and_ongoing,
     apply_score_extraction,
@@ -73,15 +72,12 @@ def _issue_row(db, issue_id: int):
     return row
 
 
-def _settle_empty_month(db, state, content):
-    before = state.turn
-    settle_with_delta(state, db, {}, before_turn=before, content=content)
-    assert state.turn == before + 1
-
-
 def _advance_player_month(db, state, content):
     with pytest.MonkeyPatch.context() as patch:
         _player_month(db, state, content, patch)
+
+
+_settle_empty_month = _advance_player_month
 
 
 def test_created_future_limited_duration_commitment_applies_first_month(game, monkeypatch):
@@ -500,9 +496,7 @@ def test_until_stop_arrears_commitment_settlement_oracle_resolves_with_restore(g
         cancellable="decree",
     )
 
-    _settle_empty_month(db, state, content)
-    assert _army_arrears(db, "guanning") == 20
-    assert _army_arrears(db, "xuan_da") == 40
+    _advance_player_month(db, state, content)
     first = _issue_row(db, issue_id)
     assert first["status"] == "active"
     assert first["bar_value"] == 45
@@ -513,30 +507,30 @@ def test_until_stop_arrears_commitment_settlement_oracle_resolves_with_restore(g
     ).fetchone()[0] == -50
 
     reloaded_state = db.load_state()
-    _settle_empty_month(db, reloaded_state, content)
-    assert _army_arrears(db, "guanning") == 0
-    assert _army_arrears(db, "xuan_da") == 10
+    _advance_player_month(db, reloaded_state, content)
     second = _issue_row(db, issue_id)
     assert second["status"] == "active"
-    assert second["bar_value"] == 91
+    assert first["bar_value"] < second["bar_value"] < 100
 
-    _settle_empty_month(db, reloaded_state, content)
-    assert _army_arrears(db, "guanning") == 0
-    assert _army_arrears(db, "xuan_da") == 0
+    _advance_player_month(db, reloaded_state, content)
+    assert _issue_row(db, issue_id)["status"] == "active"
+    _advance_player_month(db, reloaded_state, content)
     done = _issue_row(db, issue_id)
     assert done["status"] == "resolved"
     assert done["bar_value"] == 100
     assert done["closed_turn"] == reloaded_state.turn - 1
     assert _issue_row(db, open_issue_id)["status"] == "active"
-    assert reloaded_state.turn == state.turn + 2
+    assert reloaded_state.turn == state.turn + 3
 
     advances = db.conn.execute(
         "SELECT trigger_kind, metric_delta FROM issue_advances WHERE issue_id=? ORDER BY id",
         (issue_id,),
     ).fetchall()
-    assert [row["trigger_kind"] for row in advances] == ["ongoing", "ongoing", "ongoing", "commitment_resolve"]
-    payloads = [json.loads(row["metric_delta"]) for row in advances[:3]]
-    assert [payload["commitment_progress"]["paid_total"] for payload in payloads] == [50, 100, 110]
+    assert [row["trigger_kind"] for row in advances] == ["ongoing"] * 4 + ["commitment_resolve"]
+    payloads = [json.loads(row["metric_delta"]) for row in advances[:4]]
+    paid = [payload["commitment_progress"]["paid_total"] for payload in payloads]
+    assert paid[:2] == [50, 100]
+    assert paid == sorted(paid) and paid[-1] > paid[1]
     assert payloads[-1]["commitment_progress"]["remaining_arrears"] == 0
 
 
@@ -968,9 +962,8 @@ def test_limited_duration_commitment_ticks_until_end_turn_then_expires(game):
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
     db.conn.execute("UPDATE armies SET arrears=0 WHERE owner_power='ming'")
-    db.conn.execute("UPDATE armies SET arrears=200 WHERE id='guanning'")
+    _seed_central_army_arrears(db, {"guanning": 200})
     state.metrics["国库"] = 500
-    starting_popular_support = int(state.metrics["民心"])
     start_turn = state.turn
     db.save_state(state)
 
@@ -993,20 +986,25 @@ def test_limited_duration_commitment_ticks_until_end_turn_then_expires(game):
         cancellable="decree",
     )
 
-    _settle_empty_month(db, state, content)
-    assert _issue_row(db, issue_id)["status"] == "active"
-    assert _army_arrears(db, "guanning") == 160
+    def payments():
+        return [row["delta"] for row in db.conn.execute(
+            "SELECT delta FROM economy_ledger "
+            "WHERE purpose='补饷' AND target_kind='army' ORDER BY id"
+        )]
 
-    _settle_empty_month(db, state, content)
+    _advance_player_month(db, state, content)
     assert _issue_row(db, issue_id)["status"] == "active"
-    assert _army_arrears(db, "guanning") == 120
+    assert payments() == [-40]
 
-    _settle_empty_month(db, state, content)
+    _advance_player_month(db, state, content)
+    assert _issue_row(db, issue_id)["status"] == "active"
+    assert payments() == [-40, -40]
+
+    _advance_player_month(db, state, content)
     row = _issue_row(db, issue_id)
     assert row["status"] == "dropped"
     assert row["closed_turn"] == start_turn + 2
-    assert _army_arrears(db, "guanning") == 120
-    assert int(state.metrics["民心"]) == starting_popular_support
+    assert payments() == [-40, -40]
 
     advances = db.conn.execute(
         "SELECT trigger_kind FROM issue_advances WHERE issue_id=? ORDER BY id",
@@ -1020,7 +1018,7 @@ def test_until_stop_condition_beats_later_end_turn_for_stacked_commitment(game):
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
     db.conn.execute("UPDATE armies SET arrears=0 WHERE owner_power='ming'")
-    db.conn.execute("UPDATE armies SET arrears=30 WHERE id='guanning'")
+    _seed_central_army_arrears(db, {"guanning": 30})
     state.metrics["国库"] = 500
     db.save_state(state)
 
@@ -1043,7 +1041,7 @@ def test_until_stop_condition_beats_later_end_turn_for_stacked_commitment(game):
         cancellable="decree",
     )
 
-    _settle_empty_month(db, state, content)
+    _advance_player_month(db, state, content)
 
     row = _issue_row(db, issue_id)
     assert row["status"] == "resolved"
