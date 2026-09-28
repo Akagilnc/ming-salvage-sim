@@ -54,7 +54,6 @@ def canned_full_settlement(
     """
     simulator_calls = simulator_calls if simulator_calls is not None else []
     decisions = list(decisions or [])
-    monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
 
     # #658：真实 ensure 成案后颁布判官亦为外部 LLM 缝——canned 默认全顺颁。
     # 替身换 llm_promulgation_verdicts 后生产不触 get_or_create，无需再 patch 工厂。
@@ -65,27 +64,6 @@ def canned_full_settlement(
         ]
 
     monkeypatch.setattr(decree_mod, "llm_promulgation_verdicts", _promulgate)
-
-    def _sim(*a, **k):
-        payload = k.get("simulator_payload") or (a[10] if len(a) > 10 else None) or {}
-        simulator_calls.append({
-            "decree_text": a[3] if len(a) > 3 else k.get("decree_text", ""),
-            "payload": payload,
-        })
-        text = narrative
-        if decisions:
-            blocks = []
-            for i, d in enumerate(decisions):
-                title = d.get("title") or f"决策{i}"
-                opts = d.get("options") or ["准", "不准"]
-                opt_lines = "\n".join(f"- {o}" for o in opts)
-                blocks.append(
-                    f"<<DECISION title=\"{title}\">>\n{opt_lines}\n<</DECISION>>"
-                )
-            text = text + "\n" + "\n".join(blocks)
-        return text, payload
-
-    monkeypatch.setattr(decree_mod, "simulate_season_with_payload", _sim)
 
     def _world(*_a, **_k):
         simulator_calls.append({"world": True, "narrative": narrative})
@@ -100,7 +78,6 @@ def canned_full_settlement(
         "ming_sim.month_translate.translate_month_segment",
         lambda *_a, **_k: {"effects": {}},
     )
-    monkeypatch.setattr(decree_mod, "create_ending_summary_agent", lambda *a, **k: None)
     # #1745：复用单一 agent 边界夹具（不整换 run_settlement_attendant_message）。
     from tests.section_rejection_helpers import install_settlement_attendant_agent_stub
     install_settlement_attendant_agent_stub(monkeypatch, decree_mod)
