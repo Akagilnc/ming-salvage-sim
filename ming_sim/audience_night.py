@@ -2065,6 +2065,7 @@ def update_summon_travel_tone(
     night_id: int,
     person_name: str,
     travel_tone: str,
+    origin_chat_turn_id: int,
 ) -> int:
     """更新本夜该人未结传召账的行程语气（#1837 reopen / ADR 0096）。
 
@@ -2080,6 +2081,12 @@ def update_summon_travel_tone(
         if int(item.get("night_id") or 0) != int(night_id):
             continue
         if item.get("person_name") != name:
+            continue
+        row = db.conn.execute(
+            "SELECT origin_chat_turn_id FROM story_ledger_entries WHERE id=?",
+            (int(item["entry_id"]),),
+        ).fetchone()
+        if row is None or int(row["origin_chat_turn_id"] or 0) != int(origin_chat_turn_id):
             continue
         target = item
         break

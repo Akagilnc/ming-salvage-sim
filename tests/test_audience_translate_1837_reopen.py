@@ -190,15 +190,10 @@ def test_recommendation_outside_slice_is_rejected(game):
 def test_inquiry_declaration_persists_return_report(game):
     db, state, content = game
     night = open_night(db, state)
-    attendant = next(
-        (c for c in content.characters.values()
-         if c.status == "active" and (
-             "司礼" in (c.office or "") or c.office_type in ("司礼监", "内廷")
-         )),
-        None,
+    attendant = _active_minister(db, content)
+    db.conn.execute(
+        "UPDATE characters SET office='御前近臣' WHERE name=?", (attendant.name,)
     )
-    if attendant is None:
-        attendant = _active_minister(db, content)
     query = "请查访各镇欠饷军情如何？"
     # 建一轮对话轮，查访可绑源轮
     cur = db.conn.execute(

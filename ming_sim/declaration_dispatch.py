@@ -301,7 +301,8 @@ def _dispatch_declaration_sections(
             minister_name=minister_name, source=source,
         ),
         travel_tones=_dispatch_travel_tones(
-            db, declaration.get("travel_tones"), night_id=night_id, source=source,
+            db, declaration.get("travel_tones"), night_id=night_id,
+            chat_turn_id=origin_ctid, source=source,
         ),
     )
     _record_unknown_sections(collector, declaration, turn, source)
@@ -1308,6 +1309,13 @@ def _dispatch_inquiries(
         except KeyError as exc:
             _reject(rejected, item, str(exc), "hallucinated_id", source)
             continue
+        from ming_sim.mindreading import is_inner_court_attendant
+        character = db.conn.execute(
+            "SELECT office FROM characters WHERE name=?", (attendant,)
+        ).fetchone()
+        if not is_inner_court_attendant(character):
+            _reject(rejected, item, "受命者不是近侍", "invalid_state", source)
+            continue
         # 可预期拒收只在声明形状/幻影 id；持久化失败不得洗成 invalid_state 继续
         # （失败诚实宪法：未识别异常保留真因，由事务/调用方接住）。
         report = db.persist_return_report(
@@ -1415,6 +1423,7 @@ def _dispatch_travel_tones(
     raw: object,
     *,
     night_id: int,
+    chat_turn_id: int,
     source: Provenance,
 ) -> SectionResult:
     """传召行程语气声明 → 更新本轮已落传召账（ADR 0096）。"""
@@ -1440,6 +1449,7 @@ def _dispatch_travel_tones(
         try:
             entry_id = update_summon_travel_tone(
                 db, night_id=int(night_id), person_name=person, travel_tone=tone,
+                origin_chat_turn_id=chat_turn_id,
             )
         except KeyError as exc:
             _reject(rejected, item, str(exc), "missing_ref", source)

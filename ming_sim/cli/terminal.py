@@ -619,12 +619,15 @@ def minister_chat(session: GameSession, character: Character) -> str:
                     from ming_sim.audience_night import (
                         attach_chat_turn_to_night, get_open_night, recognize_xuan_command,
                     )
-                    night_was_open = get_open_night(session.db) is not None
+                    open_night = get_open_night(session.db)
+                    night_was_open = open_night is not None
+                    from ming_sim.audience_night import ensure_open_night_for_audience
+                    scene_night = open_night or ensure_open_night_for_audience(session.db, session.state)
                     _night_id, chat_turn_id = attach_chat_turn_to_night(
                         session.db,
                         session.state,
                         character.name,
-                        agno_session_id=f"cli:{character.name}",
+                        agno_session_id=f"scene-night-{scene_night['id']}",
                         agno_runs_before=0,
                         beat_generator=None,
                         route=cli_route,

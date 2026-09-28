@@ -19349,7 +19349,7 @@ class GameDB:
         }
         for key in (
             "appointment_tenure", "任别", "faction", "summon_after",
-            "text", "affair_id", "region_id",
+            "text", "affair_id", "region_id", "reason", "recommendation",
         ):
             value = payload.get(key)
             if value not in (None, ""):
