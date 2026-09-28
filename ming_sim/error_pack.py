@@ -15,7 +15,6 @@ attempt 计数**从错误目录已有文件推导**（同 turn 既有目录数�
 
 from __future__ import annotations
 
-import hashlib
 import json
 import traceback
 from datetime import datetime, timezone
@@ -73,12 +72,6 @@ def _read_version() -> str:
         return Path(bundled_path("VERSION")).read_text(encoding="utf-8").strip()
     except Exception:
         return "unknown"
-
-
-def ready_payload_digest(payload: object) -> str:
-    """Stable identity for an ADR0008 persisted ready payload."""
-    canonical = safe_json_dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 _COMPLETE_PACK_FILES = frozenset({
@@ -224,7 +217,6 @@ def write_error_pack(
         "exception_type": type(exc).__name__,
         "exception_message": str(exc),
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        "ready_payload_digest": ready_payload_digest(extracted) if extracted is not None else None,
     }
     (pack_dir / "manifest.json").write_text(
         safe_json_dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
@@ -234,6 +226,5 @@ def write_error_pack(
 
 
 # #671：sim 真成功后、companion join 前的 durable 完成态标记（∈ simulator_payload）。
-ARRIVAL_COMPANION_SIM_DONE_KEY = "arrival_companion_sim_done"
 
 

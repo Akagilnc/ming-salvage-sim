@@ -209,7 +209,7 @@ def _month_fact_materials(
         if exists is not None:
             for row in db.conn.execute(
                 "SELECT section, item_json, reason, category, source FROM rejection_reports "
-                "WHERE turn=? AND COALESCE(resimulation_invalidated, 0)=0 ORDER BY id",
+                "WHERE turn=? ORDER BY id",
                 (turn,),
             ):
                 if not include_secret_sources and str(row["source"] or "") == "secret_order":

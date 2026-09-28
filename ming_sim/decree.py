@@ -1977,8 +1977,8 @@ def _collect_inline_rejections(
                     _scan(f"{section}.{subkey}", subvalue)
 
 
-def _ensure_rejection_reports_table(db: GameDB) -> str:
-    """Ensure rejection_reports exists; return SQL fragment for non-invalidated rows."""
+def _ensure_rejection_reports_table(db: GameDB) -> None:
+    """Ensure rejection_reports exists."""
     db.conn.execute(
         """
         CREATE TABLE IF NOT EXISTS rejection_reports (
@@ -1990,27 +1990,24 @@ def _ensure_rejection_reports_table(db: GameDB) -> str:
             category TEXT NOT NULL,
             source TEXT NOT NULL,
             attempt INTEGER NOT NULL DEFAULT 1,
-            resimulation_invalidated INTEGER NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         )
         """
     )
-    cols = {str(row[1]) for row in db.conn.execute("PRAGMA table_info(rejection_reports)").fetchall()}
-    return "resimulation_invalidated = 0" if "resimulation_invalidated" in cols else "1=1"
 
 
 def list_durable_player_visible_rejections(
     db: GameDB, turn: int,
 ) -> List[Dict[str, object]]:
-    """0008-D5 来源门：本 turn 未作废的 player_decree/hitl_decision 拒收结构化事实。
+    """0008-D5 来源门：本 turn 的 player_decree/hitl_decision 拒收结构化事实。
 
     只投影 section/category/reason 供 LLM 呈现接缝；不含 item 明细（不泄技术载荷）。
     """
-    invalidated_expr = _ensure_rejection_reports_table(db)
+    _ensure_rejection_reports_table(db)
     rows = db.conn.execute(
-        f"""
+        """
         SELECT section, category, reason FROM rejection_reports
-        WHERE turn=? AND source IN (?, ?) AND {invalidated_expr}
+        WHERE turn=? AND source IN (?, ?)
         ORDER BY id
         """,
         (int(turn), Provenance.player_decree.value, Provenance.hitl_decision.value),
@@ -2026,7 +2023,7 @@ def list_durable_player_visible_rejections(
 
 
 def _has_durable_player_visible_rejection(db: GameDB, turn: int) -> bool:
-    """True when any non-resimulation-invalidated player-source rejection exists for turn."""
+    """True when any player-source rejection exists for turn."""
     return bool(list_durable_player_visible_rejections(db, turn))
 
 

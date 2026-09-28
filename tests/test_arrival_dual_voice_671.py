@@ -12,7 +12,6 @@ from openai import APIConnectionError, APIStatusError, APITimeoutError
 
 from ming_sim import audience_night as an
 from ming_sim.db import GameDB
-from ming_sim.error_pack import ARRIVAL_COMPANION_SIM_DONE_KEY
 
 # 含首尾空白：生成→DB→状态投影须逐字保留（P6 零删改）
 ATTENDANT_TEXT = "\n  奴婢禀报：洪承畴、孙传庭本月抵京候旨，尚未宣入。  \n"
