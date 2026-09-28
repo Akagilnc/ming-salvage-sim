@@ -1711,8 +1711,9 @@ def test_session_manual_directive_keeps_structured_action_at_submission(
         session.db.close()
 
 
-def test_probe_directive_shared_entry_creates_and_settles_structured_dossier(game):
-    from tests.settlement_seam_helpers import settle_effects as settle_with_delta
+def test_probe_directive_shared_entry_creates_and_settles_structured_dossier(game, monkeypatch):
+    from ming_sim.decree_forecast import decree_ref_for_dossier
+    from tests.test_month_chain_1843 import _prepare_player_month
     from ming_sim.session import GameSession
     from scripts.probe_directive_contract import add_narrative_probe_directive
 
@@ -1733,17 +1734,14 @@ def test_probe_directive_shared_entry_creates_and_settles_structured_dossier(gam
     assert dossier["target_kind"] == "issue"
     assert dossier["target_id"] == "probe:contract-smoke:1"
 
-    settle_with_delta(
-        state,
-        db,
-        {},
-        before_turn=state.turn,
-        content=content,
-        dossier_verdicts=[{
-            "dossier_id": dossier["id"],
-            "decision": "promulgated",
-        }],
+    db.staged_declarations.stage(
+        decree_ref=decree_ref_for_dossier(db, dossier), declaration={},
+        turn=int(state.turn), verdict={"decision": "promulgated"}, forecast_text="",
     )
+    player = _prepare_player_month(db, state, content, monkeypatch)
+    player.resolve_turn(allow_empty_decree=True)
+    db.save_turn_report(state, "邸报", public_body="邸报")
+    player.resolve_turn(allow_empty_decree=True)
 
     assert state.turn == 2
     assert db.get_decree_dossier(dossier["id"])["status"] == "executing"
