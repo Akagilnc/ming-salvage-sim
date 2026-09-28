@@ -1682,14 +1682,9 @@ def _scene_pending_audience_facts(db: Any, state: Any) -> list[str]:
     ):
         if not isinstance(scene, dict):
             continue
-        # 原样 JSON 事实：整份 dict 序列化，不抽 scene_text 模板。
-        try:
-            import json
-            lines.append(json.dumps(scene, ensure_ascii=False, sort_keys=True))
-        except (TypeError, ValueError):
-            text = str(scene.get("scene_text") or "").strip()
-            if text:
-                lines.append(text)
+        # Scene text is a legacy fixed memorial, not a fact for the scene LLM.
+        facts = {key: value for key, value in scene.items() if key != "scene_text"}
+        lines.append(json.dumps(facts, ensure_ascii=False, sort_keys=True))
     return lines
 
 
