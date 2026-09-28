@@ -1,13 +1,6 @@
-"""新档冒烟（#96 release 清单 / #92 E2E 确定性核）：开新档 → driver.run_settle 跑 3 回合全链
-（玩家月链 pre_settle → 逐段落账／月末漂移 → 邸报后推进）→
-restore 接续。含 #66 省级财政基座 shadow 推进的真实链路验证。无需 LLM（driver 收确定性 delta）。
-
-实玩（真 LLM 邸报/extractor + 浏览器多机兼容）是另一层，需真人 + LLM 后端，不在本确定性冒烟内。
-"""
+"""新档冒烟：验证财政基座、外键与关闭重开后的官类引用；构造时不调用 LLM。"""
 import json
-import os
 import sqlite3
-import tempfile
 
 import pytest
 
@@ -17,7 +10,6 @@ from ming_sim.db import GameDB
 import ming_sim.issues as issues_mod
 from ming_sim.models import LLMConfig
 from ming_sim.session import GameSession
-from tests.section_rejection_helpers import prepare_then_settle as run_settle
 
 
 def _shaanxi_settle(db):
