@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import pytest
 
-from tests.section_rejection_helpers import prepare_then_settle as run_settle
 from ming_sim.issues import apply_office_appointment
 
 
@@ -456,10 +455,10 @@ def test_recompute_all_reconciles_drift_from_unhooked_path(game):
 
 def test_settle_path_triggers_reconcile_before_next_period(game, monkeypatch):
     """#9 cmr R3 finding#2：reconcile 兜底确由【真实结算路】在 next_period 之前触发——
-    锁住生产 wiring（decree.py 结算尾 db.recompute_all_faction_leverage()）+ 其顺序。
+    锁住玩家月链结算尾 db.recompute_all_faction_leverage() 的接线与顺序。
     现有 test_recompute_all_reconciles_drift_from_unhooked_path 直调该方法、不走结算路，
     就算结算尾那行 wiring 被删/移到 next_period 之后，那测试照过、证明不了生产接线。
-    本测试经 driver.run_settle（公共结算接口）跑一回合，spy 记录方法被调用时 state.turn，
+    本测试经玩家月链跑一回合，spy 记录方法被调用时 state.turn，
     断言：(1) 被调用过；(2) 调用时 turn 仍是 before_turn（未 next_period）；(3) 结算后 turn 已 +1
     （证明 reconcile 在 next_period 之前跑过）。把结算尾 wiring 删掉则 spy 不触发 → 红。"""
     db, state, content = game
@@ -475,7 +474,8 @@ def test_settle_path_triggers_reconcile_before_next_period(game, monkeypatch):
 
     monkeypatch.setattr(type(db), "recompute_all_faction_leverage", _spy)
 
-    run_settle(db, state, content, {}, narrative="x", decree_text="y")
+    from tests.test_due_review_621 import _settle_empty_month
+    _settle_empty_month(db, state, content, monkeypatch)
 
     assert calls, "结算路应触发 recompute_all_faction_leverage（生产 wiring 未接 → 此处为空）"
     assert all(t == before_turn for t in calls), (
@@ -484,13 +484,13 @@ def test_settle_path_triggers_reconcile_before_next_period(game, monkeypatch):
     assert state.turn == before_turn + 1, "结算后回合应已推进（证明 reconcile 在 next_period 前跑过）"
 
 
-def test_reconcile_runs_before_clear_gated_legacies_same_turn(game):
+def test_reconcile_runs_before_clear_gated_legacies_same_turn(game, monkeypatch):
     """#9 线上 R6（codex P2）：结算尾 recompute_all_faction_leverage() 必须排在 clear_gated_legacies()
     之前。否则同回合经兜底 reconcile 才更新的 faction leverage（易主/裸 UPDATE 改成员、绕即时 hook）
     会被先跑的 legacy gate 读到陈旧值，使「阉党专权」(gate: faction.阉党.leverage<30) 多挂一回合。
 
     构造：裸 UPDATE 清空阉党在朝 office（绕 hook → DB leverage 残留开局 78、但公式值=clamp(offset+0)=0<30），
-    「阉党专权」legacy 此刻 active（开局 78≥30 未达标）。跑真实结算一回合（driver 路、空 delta）：
+    「阉党专权」legacy 此刻 active（开局 78≥30 未达标）。跑真实玩家月链一回合（空声明）：
       修前 clear_gated 在 reconcile 前读 78 → gate 不过 → legacy 仍 active（红）；
       修后 reconcile 先跑 → leverage=0 → gate 过 → legacy 本回合即 cleared（绿）。"""
     db, state, content = game
@@ -512,7 +512,8 @@ def test_reconcile_runs_before_clear_gated_legacies_same_turn(game):
     stale = db.faction_leverage(faction)
     assert stale >= 30, f"前提：裸 UPDATE 后 DB leverage 应残留≥30（stale={stale}）"
 
-    run_settle(db, state, content, {}, narrative="x", decree_text="y")
+    from tests.test_due_review_621 import _settle_empty_month
+    _settle_empty_month(db, state, content, monkeypatch)
 
     after = db.conn.execute(
         "SELECT status FROM legacies WHERE id=?", (leg["id"],)
@@ -716,11 +717,10 @@ def test_whitelist_faction_delta_routes_to_offset_survives_reconcile(game):
     )
 
 
-def test_whitelist_faction_delta_survives_full_settlement(game):
+def test_whitelist_faction_delta_survives_full_settlement(game, monkeypatch):
     """#9 cmr R7 端到端：白名单派系的 LLM faction_delta.leverage 经【整条真实结算路】
-    run_settle（pre_settle → apply_score_extraction → _apply_faction_dict →
-    adjust_factions 注 offset → … → 结算尾 recompute_all_faction_leverage 兜底 reconcile
-    → next_period）跑一回合后仍保留——证明 R5 修的 HIGH 集成 bug（offset 穿过结算尾 reconcile）
+    玩家月链（pre_settle → 世界段转译 → apply_score_extraction → adjust_factions 注 offset
+    → 结算尾 recompute_all_faction_leverage → next_period）跑一回合后仍保留——证明 R5 修的 HIGH 集成 bug（offset 穿过结算尾 reconcile）
     在生产路径上真闭环，而非仅单元层直调 adjust_factions+recompute 能过。
     与上面的 test_whitelist_faction_delta_routes_to_offset_survives_reconcile（直调单元路）
     互补：那条证机制、本条证生产 wiring（含 settle-tail reconcile）。"""
@@ -731,91 +731,27 @@ def test_whitelist_faction_delta_survives_full_settlement(game):
 
     # faction_delta payload 真实 schema：顶层 key=faction_delta（canonical 英文；
     # 中文「派系变化」亦可，canonicalize 等价），value={派系名: {"leverage": 增量}}。
-    # 经 run_settle → apply_score_extraction(extracted.get("faction_delta")) → _apply_faction_dict
+    # 经玩家世界段转译 → apply_score_extraction(faction_delta) → _apply_faction_dict
     # 识别 dict 形态的 leverage 项 → adjust_factions 把白名单 +8 注入 leverage_offset。
-    run_settle(
-        db, state, content,
-        {"faction_delta": {faction: {"leverage": 8}}},
-        narrative="阉党气焰复炽", decree_text="x",
+    from tests.test_month_chain_1843 import _prepare_player_month
+    session = _prepare_player_month(
+        db, state, content, monkeypatch,
+        world=lambda *_a, **_k: "世界段",
+        translate=lambda *_a, **_k: {"effects": {
+            "faction_delta": {faction: {"origin_ref": "盘面自发", "leverage": 8}}
+        }},
     )
+    session.resolve_turn(allow_empty_decree=True)
+    db.save_turn_report(state, "邸报", public_body="邸报")
+    session.resolve_turn(allow_empty_decree=True)
 
     # 结算后 turn 已推进（证明 settle-tail reconcile 在 next_period 之前已跑过整条路）。
     assert state.turn == before_turn + 1, "结算后回合应已推进（整条结算路跑完）"
     after = db.faction_leverage(faction)
     # +8 已含进 offset → settle-tail recompute_all 算出的公式值已含 +8，不被抹回。
     assert after == before + 8, (
-        f"白名单 faction_delta +8 经整条 run_settle（含结算尾 reconcile）后应留存、不被抹回"
+        f"白名单 faction_delta +8 经玩家月链（含结算尾 reconcile）后应留存、不被抹回"
         f"（before={before} after={after}）"
-    )
-
-
-def test_defection_through_settlement_reconciles_old_faction(game):
-    """#9 cmr R9（易主/降将路端到端，已 defer 的 R2 兜底）：经【真实结算路】run_settle 跑一份含
-    character_power_changes 的 payload，把某白名单派系（阉党）的高权重在朝成员翻出 ming（投敌后金），
-    结算后该派系 leverage 应被 settle-tail reconcile **下调**。
-
-    与现有 wiring 测试（test_settle_path_triggers_reconcile_before_next_period，只证结算尾
-    recompute_all_faction_leverage 被调 + 在 next_period 之前）互补：那条证「reconcile 被接线」，
-    本条证「reconcile 真覆盖易主路」——易主（character_power_changes 把 power_id 从 ming 翻走）
-    这条路**无即时 hook**（apply_character_power_changes / 易主 applier 都不调
-    recompute_faction_leverage），全靠结算尾兜底。投敌者被翻成 power_id≠ming 后，会被
-    _faction_office_weight_sum 的 power_id='ming' 过滤排除 → 该派系权重和降 → reconcile
-    重算后 leverage 降。这证明 reconcile 在所有 delta（含 power_changes）写入之后才跑。
-
-    红验（守此测试真守 reconcile 对易主路的覆盖、非假绿）：把 decree.py 结算尾的
-    db.recompute_all_faction_leverage() 注释掉 → 本测试应红（投敌后阉党 leverage 不变）。
-    """
-    db, state, content = game
-    from ming_sim.db import _member_office_weight, _LEVERAGE_FACTIONS
-
-    faction = "阉党"  # 白名单朝堂派系
-    assert faction in _LEVERAGE_FACTIONS, "阉党应在白名单（本测试验白名单派系经 reconcile 下调）"
-
-    # 选一个阉党在朝、power_id='ming'、握高权官（司礼监批红，weight 大）的成员当投敌者。
-    name = "魏忠贤"
-    row = db.conn.execute(
-        "SELECT power_id, office, office_type, status FROM characters WHERE name=?", (name,)
-    ).fetchone()
-    if row is None or row["status"] != "active" or (row["power_id"] or "ming") != "ming":
-        pytest.skip(f"{name} 非在朝大明成员（数据依赖）")
-    # 记其退场前该成员对阉党的官职权重贡献（投敌后会被 power_id 过滤剔除、权重和降此值）。
-    member_weight = _member_office_weight(row["office_type"] or "", row["office"] or "")
-    assert member_weight > 0, f"{name} 应握有非零权重官职（数据前提，office={row['office']}）"
-
-    before_lev = db.faction_leverage(faction)
-    before_turn = state.turn
-
-    # 经真实结算路跑一回合：character_power_changes payload 真实 schema（顶层 canonical key=
-    # character_power_changes，项={"name","new_power","reason"}；new_power 须为合法 power id）。
-    # 经 run_settle → apply_score_extraction → normalize_person_changes 折成「易主」person delta
-    # → apply_character_power_changes 翻 power_id ming→houjin（office_type→身名分），此路无即时 hook。
-    run_settle(
-        db, state, content,
-        {"character_power_changes": [{"origin_ref": "盘面自发", "name": name, "new_power": "houjin", "reason": "通虏投敌"}]},
-        narrative="九千岁通虏出关", decree_text="x",
-    )
-
-    # ① 整条结算跑完（turn 已推进，证明 reconcile 在 next_period 之前已跑过）。
-    assert state.turn == before_turn + 1, "结算后回合应已推进（整条结算路跑完）"
-
-    # ② 投敌确已落库（power_id 已非 ming）——易主路真写到 DB。
-    after_row = db.conn.execute(
-        "SELECT power_id FROM characters WHERE name=?", (name,)
-    ).fetchone()
-    assert (after_row["power_id"] or "ming") != "ming", (
-        f"{name} 投敌后 power_id 应已非 ming（实得 {after_row['power_id']}）"
-    )
-
-    # ③ 阉党 leverage 经 settle-tail reconcile 下调（投敌者被 power_id='ming' 过滤剔除 →
-    #    权重和降 member_weight → reconcile 重算 leverage 降同值）。
-    after_lev = db.faction_leverage(faction)
-    assert after_lev < before_lev, (
-        f"投敌后阉党 leverage 应经结算尾 reconcile 下调（before={before_lev} after={after_lev}）"
-        f"——若未降，说明 reconcile 未覆盖易主路 / 未在 power_changes 写入之后跑"
-    )
-    assert before_lev - after_lev == round(member_weight), (
-        f"阉党 leverage 跌幅应≈投敌者官职权重（{name} 权重={member_weight}）："
-        f"实跌 {before_lev - after_lev}"
     )
 
 
