@@ -452,9 +452,6 @@ def test_gamesession_load_state_failure_closes_partial_resources(tmp_path, monke
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     from ming_sim.db import GameDB
     from ming_sim.models import LLMConfig
-    from tests.conftest import deterministic_test_beat_generator
-
-    monkeypatch.setattr(bo, "create_llm_beat_generator", lambda _c: deterministic_test_beat_generator)
     dbp = str(tmp_path / "ud" / "partial-gs.db")
     os.makedirs(os.path.dirname(dbp), exist_ok=True)
 
