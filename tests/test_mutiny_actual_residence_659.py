@@ -18,7 +18,6 @@ from ming_sim.db import GameDB
 from ming_sim.fiscal_fact_brief import build_fiscal_fact_brief
 from ming_sim.issues import apply_score_extraction
 from ming_sim.models import Event
-from ming_sim.simulation import build_simulator_payload
 
 # content/classes.json 冻结字面（施工 oracle，非实现推导）
 JUNHU_LIAODONG = 230000
@@ -90,118 +89,6 @@ def _simulator_army_dicts(payload_armies):
     return list(payload_armies)
 
 
-def test_mutiny_arrears_desertion_real_payload_tracer(game, tmp_path):
-    """真实入口 tracer：盘面哗变+长期欠饷+station_region → simulator/extractor 可见 → 逃亡落账守恒。
-
-    只构造盘面事实与既有 shape 的 population_transfers；不 fake 触发公式、
-    不 grep prompt 文案、不加第二转移核。S7 军镇属地同缝顺带钉住。
-    """
-    db, state, content = game
-    # 人读 station 故意不可解析；结构化驻地与饷源分属；闩哗变 + 分源长期欠饷
-    db.conn.execute(
-        "UPDATE armies SET station=?, station_region='dongjiang_area',"
-        " pay_source_region='liaodong', is_mutinied=1, loyalty=10 WHERE id='dongjiang'",
-        ("___not_a_place___",),
-    )
-    _pin_split_arrears(db, "dongjiang", province=40.0, central=20.0)
-    assert _pop(db, "军户", "dongjiang_area") == JUNHU_DONGJIANG
-    assert _pop(db, "流民", "dongjiang_area") == LIUMIN_DONGJIANG
-    assert _pop(db, "军户", "liaodong") == JUNHU_LIAODONG
-
-    # 1) simulator 输入面：zero_combat / station_region / 分源欠饷属地=驻地
-    payload = build_simulator_payload(state, db, decree_text="", previous_narrative="")
-    armies = _simulator_army_dicts(payload["armies"])
-    dong = next(
-        a for a in armies
-        if "东江" in str(a.get("name", "")) or str(a.get("id", "")) == "dongjiang"
-    )
-    assert dong.get("zero_combat") is True
-    assert dong.get("station_region") == "dongjiang_area"
-    assert "is_mutinied" not in dong
-
-    fiscal = payload["fiscal_fact_brief"]
-    dong_arrears = [
-        e for e in fiscal
-        if e["subject_id"] == "dongjiang" and e["metric"] == "分源欠饷月数"
-    ]
-    assert dong_arrears
-    assert all(e["region"] == "dongjiang_area" for e in dong_arrears)
-    assert all(int(e["window_turns"]) >= 1 for e in dong_arrears)
-    assert not any(
-        e["subject_id"] == "dongjiang" and e["region"] == "liaodong"
-        for e in fiscal
-    )
-
-    # S7 军镇压力经 build_simulator_payload 投影面按 station_region 挂属地
-    # （契约主钉落 payload 投影，盖住 project 漏键；不新开核、不钉 raw-only）
-    _executing_dossier(db, state, "dongjiang_area")
-    _executing_dossier(db, state, "liaodong")
-    surface = build_simulator_payload(
-        state, db, decree_text="", previous_narrative="",
-    )["execution_two_axis"]
-    by_rid = {str(p["region_id"]): p for p in surface["provinces"]}
-    assert any(
-        g["army_id"] == "dongjiang"
-        for g in by_rid["dongjiang_area"]["garrison_pressure_rows"]
-    )
-    assert not any(
-        g["army_id"] == "dongjiang"
-        for g in by_rid["liaodong"]["garrison_pressure_rows"]
-    )
-
-    # 4) 沿既有 applier 申报 reason=逃亡；守恒、属地不串
-    total_before = _global_population(db)
-    desert_amt = 3000
-    applied = apply_score_extraction(db, state, {
-        "population_transfers": [{
-            "source": "军户@dongjiang_area",
-            "target": "流民@dongjiang_area",
-            "amount": desert_amt,
-            "reason": "逃亡",
-            "origin_ref": "盘面自发",
-        }],
-    }, content, None)
-    assert not applied["population_transfers_rejections"]
-    assert _pop(db, "军户", "dongjiang_area") == JUNHU_DONGJIANG - desert_amt
-    assert _pop(db, "流民", "dongjiang_area") == LIUMIN_DONGJIANG + desert_amt
-    assert _pop(db, "军户", "liaodong") == JUNHU_LIAODONG  # 非驻地省不串
-    assert _global_population(db) == total_before
-
-    # 5) save/restore 只读 DB 接续
-    path = str(tmp_path / "659_restore.db")
-    db.conn.commit()
-    shutil.copyfile(db.path, path)
-    restored = GameDB(path, content)
-    try:
-        row = restored.conn.execute(
-            "SELECT station, station_region, pay_source_region, is_mutinied "
-            "FROM armies WHERE id='dongjiang'"
-        ).fetchone()
-        assert row["station"] == "___not_a_place___"
-        assert row["station_region"] == "dongjiang_area"
-        assert row["pay_source_region"] == "liaodong"
-        assert int(row["is_mutinied"]) == 1
-        assert _pop(restored, "军户", "dongjiang_area") == JUNHU_DONGJIANG - desert_amt
-        assert _pop(restored, "流民", "dongjiang_area") == LIUMIN_DONGJIANG + desert_amt
-        r_entries = build_fiscal_fact_brief(restored)
-        assert all(
-            e["region"] == "dongjiang_area"
-            for e in r_entries
-            if e["subject_id"] == "dongjiang" and e["metric"] == "分源欠饷月数"
-        )
-        r_payload = build_simulator_payload(
-            restored.load_state(), restored, decree_text="", previous_narrative="",
-        )
-        r_dong = next(
-            a for a in _simulator_army_dicts(r_payload["armies"])
-            if "东江" in str(a.get("name", "")) or str(a.get("id", "")) == "dongjiang"
-        )
-        assert r_dong.get("zero_combat") is True
-        assert r_dong.get("station_region") == "dongjiang_area"
-    finally:
-        restored.close()
-        if os.path.exists(path):
-            os.remove(path)
 
 
 def test_redeploy_moves_fact_region_keeps_pay_source(game):

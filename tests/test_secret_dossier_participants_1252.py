@@ -57,23 +57,6 @@ def _grouped(db, state, order_ids=None):
 # ── S1: 私读缝 ──────────────────────────────────────────────
 
 
-def test_s1_private_rail_exposes_secret_dossier_id_and_roster(game):
-    """personnel_secret 私轨为本批密令暴露 dossier_id+participant_roster。"""
-    from ming_sim.simulation import build_simulator_payload
-
-    db, state, _content = game
-    lead, order_id, dossier_id = _secret(db, state)
-    db.append_decree_dossier_participants(dossier_id, [{
-        "character_id": lead, "tier": "主办", "role": "密访",
-    }], state=state)
-
-    public = build_simulator_payload(state, db, "", "")
-    assert all(
-        int(row["id"]) != dossier_id
-        for row in public.get("decree_dossiers") or []
-        if isinstance(row, dict) and row.get("id") is not None
-    )
-    assert str(dossier_id) not in str(public.get("secret_orders") or "")
 
 
 def test_s1_public_projection_filter_unchanged(game):

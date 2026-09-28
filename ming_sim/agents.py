@@ -33,7 +33,7 @@ from ming_sim.llm_transport import (
     run_with_transport,
     transport_failure_unavailable,
 )
-from ming_sim.models import GameState, LLMConfig, reign_period_label
+from ming_sim.models import GameState, LLMConfig
 from ming_sim.token_stats import record_stream_metrics, tlog
 
 _content: Optional[GameContent] = None
@@ -730,140 +730,32 @@ def create_endorsement_extractor_agent(llm_config: LLMConfig) -> Agent:
     )
 
 
-def _is_cols_rows_table(v: object) -> bool:
-    """判断某字段是否 {cols,rows} 二维表（可转 TSV）。"""
-    return isinstance(v, dict) and set(v.keys()) == {"cols", "rows"}
+def create_decree_forecast_agent(llm_config: LLMConfig, prepared: Any) -> Agent:
+    """逐旨预推：与世界段同一材料目录读法，本旨事实由调用消息携带。"""
+    from ming_sim.materials import material_tools
 
-
-def _table_to_tsv(name: str, table: Dict[str, object]) -> str:
-    """{cols,rows} → 真 TSV 文本块（tab 分隔、换行分行）。
-
-    放在 json.dumps 之外，避免 \\t/\\n 被 JSON 转义吃掉压缩收益（实测比 dict-of-rows -25%、
-    比转义后塞进 JSON 再 -10%）。空表只吐表头行（空）。None → 空串。
-    """
-    cols = [str(c) for c in (table.get("cols") or [])]
-    rows = table.get("rows") or []
-    lines = ["\t".join(cols)]
-    for r in rows:  # type: ignore[assignment]
-        lines.append("\t".join("" if v is None else str(v) for v in r))
-    return f"## {name}（TSV，首行列名，tab 分隔）\n" + "\n".join(lines)
-
-
-def build_simulator_context(simulator_payload: Optional[Dict[str, object]]) -> str:
-    """拼 simulator/extractor 共用的盘面前缀段（turn_header + 盘面 TSV 块 + 其余 JSON）。
-
-    缓存关键：simulator 与 extractor 的 system instructions 前缀都是
-    `[game_world, simulator_context, ...]`。本函数对二者吐出**字节级一致**的 simulator_context，
-    simulator 先跑就把 `game_world + simulator_context` 写进 DeepSeek 前缀缓存，extractor
-    再命中。turn_header 文案、取值路径(统一从 payload['turn'])、序列化参数三者两边同源。
-
-    BUG 修复：历史上 simulator 用 state 路径+文案「邸报抬头与正文涉及年月」，extractor 用
-    payload['turn']+文案「抽取涉及年月」→ 第一个字节就分叉 → extractor 整段 payload 全 miss。
-    实测统一后结算 token -14.7%。
-
-    TSV 优化：`{cols,rows}` 二维表（regions/armies/buildings/court_roster/powers_brief）转**真
-    TSV 文本块**（json.dumps 之外，免转义），按「变化最小→最易变」排序——建筑/人物在前，军队/
-    地区其次，诏书/记忆/issue 等高频变化字段连同非表字段走尾部 JSON。其余字段（含 factions_brief/
-    classes_brief 叙述串、issues/memories 等）维持 JSON。实测表类 -25% token。
-    """
-    payload = simulator_payload or {}
-    turn_header = ""
-    # build_simulator_payload 恒带 turn；缺 label 时只走 reign_period_label()，禁西历字面抬头。
-    if isinstance(payload.get("turn"), dict):
-        t = payload["turn"]
-        label = t.get("reign_period_label")
-        if not label:
-            y, p = t.get("year"), t.get("period")
-            if y is not None and p is not None:
-                try:
-                    label = reign_period_label(int(y), int(p))
-                except (TypeError, ValueError):
-                    label = ""
-            else:
-                label = ""
-        if label:
-            turn_header = (
-                f"【本回合年月】{label}（第 {t.get('turn')} 回合）。"
-                f"涉及年月时以此为准。\n"
-            )
-
-    # 盘面表（{cols,rows}）转 TSV，按「稳→变」排序置前；缺失/非表的跳过。
-    table_order = ("buildings", "court_roster", "armies", "regions")
-    tsv_blocks: List[str] = []
-    consumed: set[str] = set()
-    for name in table_order:
-        v = payload.get(name)
-        if _is_cols_rows_table(v):
-            tsv_blocks.append(_table_to_tsv(name, v))  # type: ignore[arg-type]
-            consumed.add(name)
-    # table_order 未列到、但仍是 {cols,rows} 的表也转 TSV（防新增表字段漏压缩），稳定排序。
-    for name in sorted(k for k in payload if k not in consumed and _is_cols_rows_table(payload.get(k))):
-        tsv_blocks.append(_table_to_tsv(name, payload[name]))  # type: ignore[arg-type]
-        consumed.add(name)
-
-    rest = {k: v for k, v in payload.items() if k not in consumed}
-    parts = [turn_header + "【本回合推演输入 simulator_payload】"]
-    parts.extend(tsv_blocks)
-    parts.append("## 其余字段（JSON）\n" + json.dumps(rest, ensure_ascii=False, sort_keys=False))
-    return "\n".join(parts)
-
-
-def create_season_simulator_agent(
-    llm_config: LLMConfig,
-    agno_db: SqliteDb,
-    state: Optional[GameState] = None,
-    db: Optional[object] = None,
-    simulator_payload: Optional[Dict[str, object]] = None,
-) -> Agent:
-    """月末推演日讲官。全量盘面走 user payload，无 tool。
-    走 advanced 角色派生：若 advanced_model 已配，用更强模型；否则 fallback 主 model。
-    一次性 agent：不传 db，免得 runs 累积撑爆 <db>.emperor.db。"""
-    del db, state, agno_db
-    cfg = _llm_for_role(llm_config, "simulator")
-    tlog(f"[simulator] 使用模型 {describe_effective_model(cfg)}")
-    # simulator_context 与 extractor 共用 build_simulator_context → 字节一致 → 暖好 extractor 前缀缓存。
-    simulator_context = build_simulator_context(simulator_payload)
-    from ming_sim.action_clusters import season_option_contract_prompt
-    instructions = [
-        _ctx().game_world_prompt,
-        simulator_context,
-        _ctx().season_simulator_prompt,
-        season_option_contract_prompt("grant_allocation"),
-    ]
-    if is_minimax_base_url(cfg.base_url):
-        instructions.insert(0, _MINIMAX_SHORT_THINKING_PROMPT)
-
-    return Agent(
-        name="月末推演日讲官",
-        id="season-simulator",
-        model=create_chat_model(cfg, temperature=0.9, top_p=0.95, enable_thinking=True),
-        instructions=instructions,
-        add_history_to_context=False,
-        markdown=False,
-    )
-
-
-def create_decree_forecast_agent(
-    llm_config: LLMConfig,
-    simulator_payload: Dict[str, object],
-) -> Agent:
-    """逐旨夜里预推；复用 simulator 模型与盘面投影，不跑月度邸报契约。"""
     cfg = _llm_for_role(llm_config, "simulator")
     tlog(f"[decree-forecast] 使用模型 {describe_effective_model(cfg)}")
+    model = create_chat_model(cfg, temperature=0.9, top_p=0.95, enable_thinking=True)
+    root = getattr(prepared, "root", "")
+    if hasattr(model, "materials_dir"):
+        model.materials_dir = str(root or "")
     instructions = [
         _ctx().game_world_prompt,
-        build_simulator_context(simulator_payload),
         "只推演本次输入中这一道旨在当前盘面上的可能后果。",
         "这是夜里预推，不推演月度世界事件，也不生成月末邸报。",
         "若推演需要皇帝裁决，请在问处给出标准 DECISION 结构并停在问处；问后内容不属于本段。",
+        "开场只有最小集。其余材料在当前目录，按需自读。",
+        str(getattr(prepared, "opening", "") or ""),
     ]
     if is_minimax_base_url(cfg.base_url):
         instructions.insert(0, _MINIMAX_SHORT_THINKING_PROMPT)
     return Agent(
         name="逐旨预推者",
         id="decree-forecast",
-        model=create_chat_model(cfg, temperature=0.9, top_p=0.95, enable_thinking=True),
+        model=model,
         instructions=instructions,
+        tools=material_tools(root),
         add_history_to_context=False,
         markdown=False,
     )

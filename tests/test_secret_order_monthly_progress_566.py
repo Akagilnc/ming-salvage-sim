@@ -46,26 +46,14 @@ def _production_session(db, state, content):
 
 def _canned_monthly_settlement(monkeypatch, extractor_calls):
     """Keep the production settlement pipeline; replace only external LLM seams."""
-    import ming_sim.decree as decree
+    from tests.settlement_seam_helpers import canned_full_settlement
 
-    monkeypatch.setattr(decree, "create_season_simulator_agent", lambda *a, **k: None)
-    monkeypatch.setattr(
-        decree, "simulate_season_with_payload",
-        lambda *a, **k: ("本月公开邸报", k["simulator_payload"]),
-    )
+    def _track_world(*_a, **_k):
+        extractor_calls.append("world")
+        return "本月公开邸报"
 
-    def extract(_agents, db, state, _narrative, *args, **kwargs):
-        extractor_calls.append(state.turn)
-        reports = [{
-            "dossier_id": item["dossier_id"],
-            "progress_band": "月度核验",
-            "memorial_text": "本月长差已有密奏",
-        } for item in db.list_monthly_dossier_progress_nudges()]
-        return {"dossier_progress_reports": reports}, "out", "in"
-
-    # #1745：结算拒收递话同属外层 LLM 缝。
-    from tests.section_rejection_helpers import install_settlement_attendant_agent_stub
-    install_settlement_attendant_agent_stub(monkeypatch, decree)
+    canned_full_settlement(monkeypatch, narrative="本月公开邸报")
+    monkeypatch.setattr("ming_sim.month_chain.run_world_segment_text", _track_world)
 
 
 def _settle(db, state, content, narrative="本月邸报", progress=None):

@@ -454,35 +454,32 @@ def _run_decree_continuation_text(
     import json
 
     from ming_sim.agents import create_decree_forecast_agent, run_agent_text
-    from ming_sim.decree_forecast import decree_ref_for_dossier
+    from ming_sim.decree_forecast import (
+        decree_ref_for_dossier,
+        forecast_snapshot,
+        release_forecast_materials,
+    )
     from ming_sim.llm_transport import audience_transport_policy
-    from ming_sim import decree as decree_mod
-    from ming_sim import simulation
 
-    db, state = session.db, session.state
+    db = session.db
     decree_ref = decree_ref_for_dossier(db, dossier)
-    visible = dict(dossier)
-    visible["promulgation_decision"] = "promulgated"
-    projected = decree_mod.project_dossiers_for_simulator([visible], db, state)
-    sim_payload = simulation.build_simulator_payload(
-        state, db, str(dossier.get("decree_text") or ""), "",
-        decree_dossiers=projected,
-    )
-    # 与夜里逐旨预推同一边界：续推这一道旨，不带世界候选事件。
-    sim_payload["candidate_events"] = []
-    sim_payload["rescript_answers"] = list(answers)
-    agent = create_decree_forecast_agent(session.llm_config, sim_payload)
-    return run_agent_text(
-        agent,
-        json.dumps({
-            "instruction": "皇帝已批红答复本旨请旨。只续写问后后果，勿重写问前已落之事。",
-            "prior_forecast_text": db.staged_declarations.forecast_text_for(decree_ref),
-            "questions": db.staged_declarations.questions_for(decree_ref),
-            "answers": answers,
-        }, ensure_ascii=False),
-        tag="decree-forecast-continue",
-        transport_policy=audience_transport_policy(),
-    )
+    snapshot = forecast_snapshot(session, dict(dossier), decree_ref=decree_ref)
+    try:
+        agent = create_decree_forecast_agent(session.llm_config, snapshot["prepared"])
+        return run_agent_text(
+            agent,
+            json.dumps({
+                "instruction": "皇帝已批红答复本旨请旨。只续写问后后果，勿重写问前已落之事。",
+                "this_decree": snapshot["this_decree"],
+                "prior_forecast_text": db.staged_declarations.forecast_text_for(decree_ref),
+                "questions": db.staged_declarations.questions_for(decree_ref),
+                "answers": answers,
+            }, ensure_ascii=False),
+            tag="decree-forecast-continue",
+            transport_policy=audience_transport_policy(),
+        )
+    finally:
+        release_forecast_materials(snapshot)
 
 
 def run_player_month_chain(

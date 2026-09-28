@@ -578,3 +578,76 @@ def test_same_local_ids_on_two_saves_both_stage(game, _game_template_path, monke
         for sess, *_rest in armed:
             get_session_write_queue(sess).wait_idle(timeout_s=5)
         other.close()
+
+
+def test_forecast_snapshot_one_shape_and_independent_materials(game, monkeypatch, tmp_path):
+    """#1861 reopen：四处共用一份快照；材料目录独立，本旨不进目录。"""
+    from pathlib import Path
+
+    db, state, content = game
+    night = open_night(db, state)
+    minister = next(iter(content.characters.values()))
+    pending_id = db.stage_pending_action(
+        state.turn, kind="directive", action="拟旨", minister_name=minister.name,
+        payload={
+            "dossier_action_type": "policy", "target_kind": "issue",
+            "target_id": "snap-policy", "actor": minister.name, "mode": "ordinary",
+            "text": "统一快照旨",
+        },
+    )
+    mark_actions_night_approved(db, [pending_id], night_id=int(night["id"]))
+    sess = _sess(db, state, content, monkeypatch, offline_empty_audience_translate)
+
+    pending_snap = forecast_mod._pending_snapshot(sess, pending_id, int(night["id"]))
+    assert pending_snap is not None
+    try:
+        this = pending_snap["this_decree"]
+        assert this["status"] == "promulgated"
+        assert this["decree_text"] == "统一快照旨"
+        prepared = pending_snap["prepared"]
+        root = Path(prepared.root)
+        assert root.exists()
+        assert "decree-forecast" in str(root)
+        # 本旨不进材料目录（ADR 0155）。
+        names = list(root.rglob("*"))
+        bodies = "\n".join(
+            p.read_text(encoding="utf-8") for p in names if p.is_file()
+        )
+        assert "统一快照旨" not in bodies
+        # 第二份快照不覆盖第一份目录。
+        other_id = db.stage_pending_action(
+            state.turn, kind="directive", action="拟旨", minister_name=minister.name,
+            payload={
+                "dossier_action_type": "policy", "target_kind": "issue",
+                "target_id": "snap-policy-2", "actor": minister.name, "mode": "ordinary",
+                "text": "第二道",
+            },
+        )
+        mark_actions_night_approved(db, [other_id], night_id=int(night["id"]))
+        second = forecast_mod._pending_snapshot(sess, other_id, int(night["id"]))
+        assert second is not None
+        second_root = Path(second["prepared"].root)
+        try:
+            assert second_root.exists()
+            assert second_root != root
+            assert root.exists()
+            # 过月补跑入口走同一 forecast_snapshot。
+            dossier_id = db.create_decree_dossier(
+                state, action_type="policy", decree_text="案卷补跑",
+                target_kind="issue", target_id="makeup",
+                payload={"mode": "ordinary"},
+            )
+            dossier = db.get_decree_dossier(dossier_id)
+            makeup = forecast_mod.snapshot_for_existing_dossier(sess, dossier)
+            try:
+                assert makeup["this_decree"]["status"] == "promulgated"
+                assert makeup["this_decree"]["decree_text"] == "案卷补跑"
+                assert makeup.get("prepared") is not None
+            finally:
+                forecast_mod.release_forecast_materials(makeup)
+        finally:
+            forecast_mod.release_forecast_materials(second)
+        assert not second_root.exists()
+    finally:
+        forecast_mod.release_forecast_materials(pending_snap)
+    assert not root.exists()

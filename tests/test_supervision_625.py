@@ -19,7 +19,6 @@ import pytest
 
 from ming_sim.db import GameDB
 from ming_sim.decree import (
-    project_dossiers_for_simulator,
     settle_with_delta,
 )
 from ming_sim.due_review import (
@@ -634,26 +633,6 @@ def test_ac5_banned_tokens_absent_from_named_surfaces(game):
 # ── 注入面 ────────────────────────────────────────────────────────
 
 
-def test_injection_simulator_and_extractor_surfaces(game):
-    db, state, content = game
-    owner, auditor_row = _pair_same_faction(db)
-    subject_id = _subject_dossier(db, state, owner=str(owner["name"]), token="inj")
-    _audit_dossier(
-        db, state, auditor=str(auditor_row["name"]), subject_id=subject_id, token="inj",
-    )
-    db.record_monthly_supervision_facts(state.turn, commit=True)
-    db.record_loophole_exposure(
-        subject_id, state.turn, "policy", "degraded", commit=True,
-    )
-
-    visible = [dict(r) for r in db.list_decree_dossiers_for_simulation(state.turn)]
-    projected = project_dossiers_for_simulator(visible, db=db, state=state)
-    hit = next(r for r in projected if int(r["id"]) == subject_id)
-    assert "supervision_history" in hit
-    assert "loophole_exposures" in hit
-    assert "transformation_tendency_facts" in hit
-    assert hit["supervision_history"]
-    assert hit["loophole_exposures"]
 
 
 def test_due_review_supervision_history_no_longer_hardcoded_empty(game):

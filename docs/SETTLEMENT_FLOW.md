@@ -269,9 +269,9 @@ session.advance_without_decree / POST /api/decree/advance_without_edict:
 
 - `ming_sim.memories.effect_brief(applied)` — 把 delta 聚合成一句话「国库+200、了结局势X、人事调整：…」
 - `ming_sim.memories.build_timeline(db)` — 重建历史时间线
-- `ming_sim.agents.build_simulator_context(payload)` — 盘面→TSV 文本（喂给我读盘）
+- `ming_sim.materials.prepare_world_materials(db, state)` — 盘面全量 + 开着的事务进开场最小集；世界段与逐旨预推同一目录读法
 
-这三个函数零 agno 依赖，driver 直接调用。
+前两个函数零 agno 依赖；材料目录是推演者现行读盘接缝。
 
 ## 真相源对照
 

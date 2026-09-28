@@ -36,7 +36,6 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from ming_sim.agents import bind_content as bind_agent_content, build_simulator_context
 from ming_sim.content import GameContent
 from ming_sim.context import bind_content
 from ming_sim.db import GameDB
@@ -55,7 +54,6 @@ from ming_sim.cli_backend import (
 from ming_sim.issues import bind_content as bind_issue_content
 from ming_sim.models import Character, LLMConfig
 from ming_sim.session import GameSession
-from ming_sim.simulation import build_simulator_payload
 
 _LOG = logging.getLogger("issue-570-acceptance")
 _BLOCKED_LAYERS = frozenset({"cabinet_drafting", "palace_rescript", "six_offices"})
@@ -249,8 +247,6 @@ def _plant_p4_input_sentinels(db: GameDB, state) -> dict:
 def _p4_input_construction_pin(db: GameDB, state) -> dict:
     """ADR 0143：确定性钉 simulator 材料装配不含四类抽象裸值（非盯产物散文）。"""
     sentinels = _plant_p4_input_sentinels(db, state)
-    payload = build_simulator_payload(state, db, "", "")
-    rendered = build_simulator_context(payload)
     leaks: list[str] = []
 
     cs = payload.get("current_state") or {}
@@ -735,7 +731,6 @@ def main() -> int:
                     "(non-vital 太常寺卿 arm)"
                 ),
                 "p4_input": (
-                    "build_simulator_payload + build_simulator_context: "
                     "sentinel 民心/皇威/满意度/局势进度 bare values absent"
                 ),
                 "p4_evidence_faces": (

@@ -24,8 +24,6 @@ from ming_sim.exceptions import SettlementAbort
 from ming_sim.issues import apply_historical_fiscal_rates, apply_score_extraction
 import ming_sim.issues as issues
 from ming_sim.memories import effect_brief
-from ming_sim.population_pressure import regional_displaced_pressure_brief
-from ming_sim.simulation import build_simulator_payload
 
 # ── 独立 oracle（content 冻结 seed 字面，非实现推导）──────────────────────────
 FARMER_SHAANXI = 6000000      # content/classes.json 农民@shaanxi（人）
@@ -481,48 +479,10 @@ def test_exact_levy_fact_stays_out_of_public_read_chain_and_free_report_enters_i
     assert free_body in public_read
 
 
-def test_production_inputs_project_qualitative_regional_displaced_trend(game):
-    db, state, content = game
-    apply_score_extraction(db, state, {
-        "surcharge_decrees": [_decree(db, state, monthly_amount=10.0)],
-    }, content, None)
-    turn = state.turn
-    _settle_month(state, db, {}, before_turn=turn, content=content)
-    want = _expected_inflow_persons(10.0, SHAANXI_SUPPORT)
-
-    payload_text = str(build_simulator_payload(state, db, "", "")["classes_brief"])
-    assert "陕西：流民压力" in payload_text
-    assert "近月上升，期间加派致流民流入" in payload_text
-    assert str(want) not in payload_text
 
 
-def test_displaced_trend_separates_total_direction_from_levy_cause(game):
-    db, state, _ = game
-    db.save_turn_extraction(
-        state, decree_text="", narrative="", extractor_input="{}",
-        extractor_output=json.dumps({"population_transfers": [
-            {"source": "农民@shaanxi", "target": "流民@shaanxi", "amount": 1, "reason": "加派"},
-            {"source": "农民@shaanxi", "target": "流民@shaanxi", "amount": 100, "reason": "灾害"},
-        ]}, ensure_ascii=False),
-    )
-    brief = regional_displaced_pressure_brief(db)
-    assert "陕西：流民压力" in brief
-    assert "近月上升，期间加派致流民流入" in brief
-    assert "因加派而上升" not in brief
 
 
-def test_displaced_trend_does_not_call_post_levy_return_an_increase(game):
-    db, state, _ = game
-    db.save_turn_extraction(
-        state, decree_text="", narrative="", extractor_input="{}",
-        extractor_output=json.dumps({"population_transfers": [
-            {"source": "农民@shaanxi", "target": "流民@shaanxi", "amount": 1, "reason": "加派"},
-            {"source": "流民@shaanxi", "target": "农民@shaanxi", "amount": 10, "reason": "回流"},
-        ]}, ensure_ascii=False),
-    )
-    brief = regional_displaced_pressure_brief(db)
-    assert "陕西：流民压力低，近月回落，期间加派致流民流入" in brief
-    assert "因加派而上升" not in brief
 
 
 def test_effect_brief_carries_levy_echo_fact(game):

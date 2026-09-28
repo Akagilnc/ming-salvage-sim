@@ -25,11 +25,8 @@ from ming_sim.session import GameSession
 
 
 def _canned(monkeypatch):
-    monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
-    monkeypatch.setattr(
-        decree_mod, "simulate_season_with_payload",
-        lambda *a, **k: ("令牌测无旨月邸报。", k.get("simulator_payload") or {}),
-    )
+    from tests.settlement_seam_helpers import canned_full_settlement
+    canned_full_settlement(monkeypatch, narrative="令牌测无旨月邸报。")
 
 
 def _session(db, state, content):

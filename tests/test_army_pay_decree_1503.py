@@ -1772,10 +1772,6 @@ def test_http_chat_issue_stream_pay_decree_keeps_month_unadvanced(
 <<DECISION>>
 {"title":"国帑济关宁","context":"关宁欠饷尚重，奏请圣裁","options":[{"label":"发国库银三十万两济关宁","hint":"军心稍定，国库益绌","action_type":"grant_allocation","grant_action":"协饷","account":"国库","amount":30,"purpose":"补饷","target_kind":"army","target_id":"guanning","cadence":"一次性"},{"label":"暂缓国帑","hint":"国库得保，边军仍困"}]}
 <<END>>"""
-    monkeypatch.setattr(
-        decree_mod, "simulate_season_with_payload",
-        lambda *a, **k: (decision_report, k.get("simulator_payload") or {}),
-    )
     monkeypatch.setattr(cb, "classify_cli_action_intent", fake_classify)
     monkeypatch.setattr(cb, "extract_confirmation_intent", fake_confirm)
 

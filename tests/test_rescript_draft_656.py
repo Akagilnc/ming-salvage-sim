@@ -381,37 +381,6 @@ def test_payload_projection_excludes_machine_condition_fields():
     assert payload["turn"]["year"] == 1630 and payload["turn"]["reign_period_label"]
 
 
-def test_payload_projects_consumable_region_targets_from_real_monthly_board(game):
-    """系统票拟看到同批盘面的合法 region id，而非从地名臆造目标。"""
-    from ming_sim.simulation import build_simulator_payload
-
-    db, state, _content = game
-    simulator_payload = build_simulator_payload(state, db, "", "")
-    payload = build_rescript_draft_payload(
-        state, "邸报", simulator_payload,
-        {"name": "首辅", "office": "内阁首辅", "faction": "阉党"},
-    )
-
-    targets = {row["id"]: row for row in payload["region_targets"]}
-    assert targets["liaodong"] == {
-        "id": "liaodong", "name": "辽东 / 宁锦", "kind": "边镇",
-    }
-    assert "ningyuan" not in targets
-
-    bad = dict(simulator_payload)
-    for table in (
-        {"cols": ["id", "name", "kind"], "rows": [["liaodong"]]},
-        {"cols": ["id", "name", "kind"], "rows": [["", "辽东", "边镇"]]},
-        {"cols": ["id", "name", "kind"], "rows": [[123, "辽东", "边镇"]]},
-        {"cols": ["id", "name", "kind"], "rows": [["liaodong", ["辽东"], "边镇"]]},
-        {"cols": ["id", "name", "kind"], "rows": ["abc"]},
-    ):
-        bad["regions"] = table
-        with pytest.raises(ValueError):
-            build_rescript_draft_payload(
-                state, "邸报", bad,
-                {"name": "首辅", "office": "内阁首辅", "faction": "阉党"},
-            )
 
 
 def test_generate_ungrounded_region_heals_then_drops_sibling_kept(monkeypatch, tmp_path):
@@ -438,38 +407,6 @@ def test_generate_ungrounded_region_heals_then_drops_sibling_kept(monkeypatch, t
     assert drafts[0]["options"][0].get("label") == sibling.get("label")
 
 
-def test_payload_projects_consumable_army_targets_from_real_monthly_board(game):
-    """系统票拟看到同批盘面的合法 army id，而非把省 id 当军."""
-    from ming_sim.action_materialize import GRANT_ACTIONS
-    from ming_sim.simulation import build_simulator_payload
-
-    db, state, _content = game
-    simulator_payload = build_simulator_payload(state, db, "", "")
-    enemy_ids = {
-        "manchu_banners_main",
-        "han_liaoren_corps",
-        "mongol_chahar_host",
-        "korean_border_army",
-        "bandit_wangjiayin",
-    }
-    army_board = simulator_payload["armies"]
-    id_index = army_board["cols"].index("id")
-    assert enemy_ids <= {row[id_index] for row in army_board["rows"]}
-
-    payload = build_rescript_draft_payload(
-        state, "邸报", simulator_payload,
-        {"name": "首辅", "office": "内阁首辅", "faction": "阉党"},
-    )
-
-    targets = {row["id"]: row for row in payload["army_targets"]}
-    assert targets["guanning"]["id"] == "guanning"
-    assert targets["guanning"]["name"]
-    assert "liaodong" not in targets
-    assert enemy_ids.isdisjoint(targets)
-    # #1620：非军饷 grant_action 闭集同源；军饷走 grant_kind=army_pay
-    assert payload["grant_actions"] == sorted(GRANT_ACTIONS - {"无", "协饷"})
-    assert "协饷" not in payload["grant_actions"]
-    assert payload["grant_kinds"] == ["army_pay"]
 
 
 def test_generate_ungrounded_army_heals_then_drops_sibling_kept(monkeypatch, tmp_path):

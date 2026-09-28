@@ -15,7 +15,6 @@ import pytest
 from ming_sim import issues
 from ming_sim.decree import settle_with_delta
 from tests.conftest import with_monthly_reports
-from ming_sim.simulation import build_simulator_payload
 from tests.dossier_test_helpers import TYPED_COVERT_TASK, create_test_secret_order
 
 
@@ -804,22 +803,6 @@ def test_883_cross_turn_repeat_disclosed_does_not_mint_duplicate_public_event(ga
     assert "首度公开883" in (after_second[0].get("body") or "")
 
 
-def test_883_public_llm_contexts_never_preload_secret_orders(game):
-    """契约钉 #883：仅 personnel_secret 可读密令；公共 LLM 输入不得预读。"""
-    db, state, _content = game
-    marker = "乙巳密查内廷账目公共输入"
-    secret_orders = {"在办": [{"id": 883, "content": marker}], "待核议": []}
-
-    simulator_payload = build_simulator_payload(
-        state, db, "", "", secret_orders=secret_orders,
-    )
-
-    assert "secret_orders" not in simulator_payload
-    assert marker not in str(simulator_payload)
-
-    # 默认路径（不传 secret_orders）：公共 payload 不得出现 secret_orders 键/空壳
-    default_sim = build_simulator_payload(state, db, "", "")
-    assert "secret_orders" not in default_sim
 
 
 def test_976_cross_person_speaker_user_origin_withheld_not_shared(game):

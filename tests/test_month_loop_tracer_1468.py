@@ -81,7 +81,6 @@ def _stub_outer_llm_seams(monkeypatch) -> None:
         },
     )
     # 月末推演 LLM 边界（sim/extract/拟诏/章记）；resolve_directives 结算核真跑。
-    monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
     monkeypatch.setattr(
         decree_mod,
         "llm_promulgation_verdicts",
@@ -91,11 +90,8 @@ def _stub_outer_llm_seams(monkeypatch) -> None:
     )
     monkeypatch.setattr(
         decree_mod,
-        "simulate_season_with_payload",
-        lambda *a, **k: (
-            "本月邸报：边饷已清，流寇未息。",
-            k.get("simulator_payload") or {},
-        ),
+        "create_ending_summary_agent",
+        lambda *a, **k: None,
     )
     # #1745：结算拒收递话同属外层 LLM 缝——漏 stub 会在有玩家来源拒收时 sk-test 真网 401。
     from tests.section_rejection_helpers import install_settlement_attendant_agent_stub

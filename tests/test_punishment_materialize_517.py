@@ -692,49 +692,6 @@ def test_fine_underfunded_treasury_fails_loud_not_fulfilled(game):
     assert str(row.get("execution_outcome") or "") != "fulfilled"
 
 
-def test_promulgated_terminal_punishment_enters_sim_as_inert_context(game):
-    """r2 类3：顺颁 terminal punishment 进当月推演惰性上下文；无叙事重放物化面。"""
-    from ming_sim.decree import project_dossiers_for_simulator
-
-    db, state, content = game
-    target = _active_ming(db, content)
-    ctx = _stage_punishment(db, state.turn, target.name, action="拿问下狱")
-    dossier = _close_night_dossier(db, state, content, ctx.out["pending_action_id"])
-    decree_text = str(dossier.get("decree_text") or "")
-
-    # 结算组装窗：list_for_simulation 含 proposed；settlement_verdict=promulgated 表示顺颁。
-    visible = []
-    for row in db.list_decree_dossiers_for_simulation(state.turn):
-        item = dict(row)
-        if int(item["id"]) == int(dossier["id"]):
-            item["settlement_verdict"] = "promulgated"
-        visible.append(item)
-
-    projected = project_dossiers_for_simulator(visible, db=db, state=state)
-    hit = next(r for r in projected if int(r["id"]) == int(dossier["id"]))
-    assert hit["action_type"] == "punishment"
-    assert hit["target_id"] == target.name
-    assert "decree_text" not in hit
-    assert "payload" not in hit and "payload_json" not in hit
-    summary = hit["execution_summary"]
-    assert summary["command"] == decree_text
-    assert summary.get("punish_action") == "拿问下狱"
-    # 目标在行级 target_id，不重复塞进 summary，避免破坏既有 in-transit 组装契约
-    assert hit["target_id"] == target.name
-
-    # 打回不得进推演上下文
-    rejected_visible = []
-    for row in db.list_decree_dossiers_for_simulation(state.turn):
-        item = dict(row)
-        if int(item["id"]) == int(dossier["id"]):
-            item["settlement_verdict"] = "rejected"
-        rejected_visible.append(item)
-    rejected_ids = {
-        int(r["id"]) for r in project_dossiers_for_simulator(
-            rejected_visible, db=db, state=state,
-        )
-    }
-    assert int(dossier["id"]) not in rejected_ids
 
 
 def test_api_tool_punishment_stages_structured_not_special_decree(game):
