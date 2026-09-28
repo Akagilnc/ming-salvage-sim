@@ -87,8 +87,8 @@ def test_settle_none_branch_legacy_env_enriches(game, monkeypatch):
     assert _j.loads(row["effect_on_resolve"]) == {"metrics": {"民心": 1}}
 
 
-def test_driver_run_settle_records_malformed_delta(game):
-    """ADR0015：driver.run_settle 对可拆畸形 delta 逐项拒收留痕，净化后继续。"""
+def test_prepare_then_settle_records_malformed_delta(game):
+    """ADR0015：prepare_then_settle 对可拆畸形 delta 逐项拒收留痕，净化后继续。"""
     from tests.section_rejection_helpers import prepare_then_settle
     db, state, content = game
     turn = state.turn
@@ -100,8 +100,8 @@ def test_driver_run_settle_records_malformed_delta(game):
     assert any(r["section"] == "region_delta" and '"entity_id": "shanxi"' in r["item_json"] for r in rows)
 
 
-def test_driver_run_settle_deterministic_under_legacy_env(game, monkeypatch):
-    """#54:探针 driver(run_settle)即便设了 MING_SIM_LLM_BACKEND 也**绝不** spawn CLI
+def test_prepare_then_settle_deterministic_under_legacy_env(game, monkeypatch):
+    """#54:测试夹具 prepare_then_settle即便设了 MING_SIM_LLM_BACKEND 也**绝不** spawn CLI
     enrichment——dialogue-Claude 已自产完整 delta,落库核不得再起第二个 LLM(ADR-0004)。
     注入确定性 applier 使 cli_backend_active 恒 False,enrich 不被调用、国策效果不落 floor。"""
     from tests.section_rejection_helpers import prepare_then_settle

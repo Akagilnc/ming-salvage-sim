@@ -20,3 +20,5 @@ Status: accepted
 - **CLAUDE.md「结算编排骨架」里"driver 照此复刻"一句作废**，改述为"driver 复用 `settle_with_delta`，与真实流程同核"。实现时同步改 CLAUDE.md / SETTLEMENT_FLOW.md。
 - 结算脊柱从此只有一份；探针不会和生产结算悄悄分叉。
 - 先做这条（抽核 + driver），#4 城防炮即可经此核 TDD 验证，确立实现顺序。
+
+〔#1846 2026-09-28 reopen：按陛下裁定（uuid `1c439239-e748-417a-ac37-79603374583a`），`driver.py` 与只为它保留的 ready=1 重放路径已删除；本 ADR 整份已被取代。玩家链走 `month_chain`；CLI 沉浸版日后直接接新月链。〕

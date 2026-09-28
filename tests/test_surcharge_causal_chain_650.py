@@ -316,8 +316,7 @@ def test_player_month_recovery_consumes_old_levy_once(game, monkeypatch):
     before = _pop(db, "流民", "shaanxi")
     pre_settle(state, db, content=content)
     db.save_resolve_context(
-        turn, "测试诏", "旧邸报", {}, extracted={"metric_delta": {"民心": -30}},
-    )
+        turn, "测试诏", "旧邸报", {})
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
     session = _recovery_session(db, state, content, monkeypatch)
     result = session.resolve_turn()
@@ -326,7 +325,6 @@ def test_player_month_recovery_consumes_old_levy_once(game, monkeypatch):
     session.resolve_turn()
     assert _pop(db, "流民", "shaanxi") == before + want
     assert int(state.turn) == turn
-    assert db.get_resolve_context(turn)["extracted"] is None
 
 
 def test_province_without_population_pool_rejects_surcharge_and_old_ledger_exits(game):

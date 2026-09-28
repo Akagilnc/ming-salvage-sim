@@ -73,8 +73,6 @@ from ming_sim.token_stats import tlog
 
 logger = logging.getLogger(__name__)
 
-CURRENT_RESOLVE_CONTRACT_VERSION = 1
-
 # ADR 0088 / #648：人口存储单位口径。content 静态人口量已全线「人」（与 armies.manpower
 # 同刻度）；存档口径判别持久化在 DB 内（save_meta 表），新档 seed 落「人」标，
 # 无标旧档一律判「万人」legacy——不得读 content 元信息判别（其不随档持久化）。
@@ -1341,7 +1339,8 @@ class GameDB:
                 narrative TEXT NOT NULL DEFAULT '',
                 simulator_payload_json TEXT NOT NULL DEFAULT '{}',
                 secret_orders_json TEXT NOT NULL DEFAULT '[]',
-                resolve_contract_version INTEGER NOT NULL DEFAULT 0,
+                source TEXT NOT NULL DEFAULT 'system_simulation',
+                attendant_message TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
@@ -2572,14 +2571,6 @@ class GameDB:
         # 标记缺失就补校准（与 flag 取或）。标记写入与 offset/leverage 写入同事务提交(见 1041 行的
         # commit)——崩在校准中途则标记未落、下次开档重做，二者全有或全无(原子)。
         self._leverage_offsets_calibrated = self._has_meta_flag("__leverage_offsets_calibrated")
-        # extractor 产出的 canonical delta：resolve_context 无条件持久化的重跑真源（ADR 0008 S2）。
-        # 老存档此列缺省 '{}'（HITL 暂停时 phase1 尚无 delta，亦填 '{}'）。
-        self.ensure_column("pending_resolve_context", "extracted_delta_json", "TEXT NOT NULL DEFAULT '{}'")
-        # 判别位：1=extractor 真产出过（'{}' 即真空 delta），0=占位（phase1 未跑/失败未存）。
-        # 没有它 '{}' 三义不可分，恢复入口会把占位当真 delta 重放（cmr S2+S3 F1）。
-        self.ensure_column("pending_resolve_context", "extracted_ready", "INTEGER NOT NULL DEFAULT 0")
-        # ready replay 契约版本：升级前在途行缺列后取 0，仅重推演一次；本版 ready 写 1。
-        self.ensure_column("pending_resolve_context", "resolve_contract_version", "INTEGER NOT NULL DEFAULT 0")
         # 拒收 provenance source（#144 / ADR 0008 决定 5）：崩溃恢复重放须用原始来源，否则玩家
         # 来源(player_decree/hitl)的拒收被恢复路记成 system_simulation、静默不提示。老档缺省
         # 'system_simulation'（旧档缺来源时的默认值）。
@@ -11434,7 +11425,7 @@ class GameDB:
         idx 从本回合保留的 decision 行最大 idx 之后续编（与 decision 行共占
         (turn, idx) 主键不撞）。event_id 缺失的急务在此确定性合成 `urgent:{turn}:{idx}`
         （票面 F2.2）。
-        只写 conn 不 commit——提交交调用方事务（与 persist_resolve_context 同事务序列，F2.5）。
+        只写 conn 不 commit——提交交调用方事务（与 save_resolve_context 同事务序列，F2.5）。
         """
         # 先删后算 idx（#656 A3）：起始 idx 只由保留的 decision 行决定——相同
         # decision 盘面重复覆写得到相同 idx 与 `urgent:{turn}:{idx}`，合成身份不随
@@ -11449,7 +11440,7 @@ class GameDB:
         """#657：HITL phase2 续跑追加本回合新票拟，不 DELETE 既有急务行。
 
         保留 return_revise/decided/跨月 backlog；只在 max(idx)+1 后续插。
-        只写 conn 不 commit——与 persist_resolve_context 同事务。
+        只写 conn 不 commit——与 save_resolve_context 同事务。
         """
         self._insert_rescript_draft_rows(int(turn), drafts)
 
@@ -19349,30 +19340,23 @@ class GameDB:
         # #48：分组承载 dict {在办,待核议} 为正形；运行期仍兼容旧档/占位的 list（json 落库不挑类型），
         # 故注解取两者并集，不窄化成 dict-only（否则误判恢复路 list 调用为类型错）。
         secret_orders: Optional[Dict[str, object] | List[Dict[str, object]]] = None,
-        extracted: Optional[Dict[str, object]] = None,
         source: str = "system_simulation",
         attendant_message: str = "",
     ) -> None:
-        """暂存 phase1 推演结果，供 phase2 读回（决策暂停期间不重算 simulator）。
+        """暂存本月过月上下文（诏书/payload/来源），供批红、月链相位与机械尾读回。
 
-        extracted：extractor 产出的 canonical delta（ADR 0008 S2 无条件持久化的重跑真源）。
-        传 None = 占位（HITL phase1 尚未跑 extractor）→ ready=0，get 时 extracted 不可见；
-        显式传 dict（含空 {} = 真空 delta）→ ready=1。判别位防恢复入口把占位当真 delta 重放。
+        #1846：不再持久化 ready=1 extractor delta；恢复真源是暂存声明与落账相位。
         """
         self.conn.execute(
             """INSERT INTO pending_resolve_context
                (turn, decree_text, narrative, simulator_payload_json,
-                secret_orders_json, extracted_delta_json,
-                extracted_ready, resolve_contract_version, source, attendant_message)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                secret_orders_json, source, attendant_message)
+               VALUES (?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(turn) DO UPDATE SET
                    decree_text = excluded.decree_text,
                    narrative = excluded.narrative,
                    simulator_payload_json = excluded.simulator_payload_json,
                    secret_orders_json = excluded.secret_orders_json,
-                   extracted_delta_json = excluded.extracted_delta_json,
-                   extracted_ready = excluded.extracted_ready,
-                   resolve_contract_version = excluded.resolve_contract_version,
                    source = excluded.source,
                    attendant_message = excluded.attendant_message""",
             (
@@ -19381,9 +19365,6 @@ class GameDB:
                 # #48：分组承载是 dict；空 dict 也按 dict 存（`or []` 会把 {} 退成 []，
                 # 与 Dict 契约不符）。显式传 list（旧档/占位）仍原样存，None→{}。
                 safe_json_dumps(secret_orders if secret_orders is not None else {}, ensure_ascii=False),
-                safe_json_dumps(extracted if extracted is not None else {}, ensure_ascii=False),
-                1 if extracted is not None else 0,
-                CURRENT_RESOLVE_CONTRACT_VERSION if extracted is not None else 0,
                 # source 显式归一为枚举「值」字符串：Provenance 是 (str, Enum)，str(member) 在多数
                 # Python 版本落 'Provenance.player_decree' 而非 'player_decree'——重抽时
                 # Provenance(...) 不匹配 → 静默退回 system_simulation 丢源（Sourcery #175 bug_risk）。
@@ -19395,11 +19376,10 @@ class GameDB:
         self.conn.commit()
 
     def get_resolve_context(self, turn: int) -> Optional[Dict[str, object]]:
-        """读回 phase1 暂存的推演上下文。无则 None。"""
+        """读回本月过月上下文。无则 None。"""
         row = self.conn.execute(
             "SELECT decree_text, narrative, simulator_payload_json, "
-            "secret_orders_json, extracted_delta_json, "
-            "extracted_ready, resolve_contract_version, source, attendant_message "
+            "secret_orders_json, source, attendant_message "
             "FROM pending_resolve_context WHERE turn = ?",
             (int(turn),),
         ).fetchone()
@@ -19411,19 +19391,6 @@ class GameDB:
             except Exception as exc:
                 tlog(f"[db] resolve_context {label} JSON 损坏，回退默认、恢复将丢该段（turn={turn}）：{exc}")  # #14 surface
                 return default
-        def _load_extracted():
-            # ready=0 占位不可见；ready=1 但 JSON 损坏也回 None（逼「重跑 extractor」）——
-            # 吞成 {} 会复活判别位刚消掉的歧义：重放空 delta=整月效果静默丢（cmr r4）。
-            if not row["extracted_ready"]:
-                return None
-            try:
-                parsed = json.loads(row["extracted_delta_json"])
-            except Exception as exc:
-                tlog(f"[db] resolve_context extracted_delta JSON 损坏，回 None 逼重抽（turn={turn}）：{exc}")  # #14 surface
-                return None
-            # 合法 JSON 非 dict（type-corrupt）同样回 None（重抽）：原样返回会让恢复叉
-            # 抛 LLMContractError 绕过逃生口=corruption 软死锁（ship-pre r1）。
-            return parsed if isinstance(parsed, dict) else None
         attendant_message = str(row["attendant_message"] or "")
         return {
             "decree_text": row["decree_text"],
@@ -19432,9 +19399,7 @@ class GameDB:
             # secret_orders 是 dict-first 承载（#48：save 时 None→{}），损坏 fallback 也用 {} 对齐
             # 契约——回 [] 会把分组 dict 退成 list、破坏 secret_orders.在办 式 dict 消费者（cmr CodeRabbit）。
             "secret_orders": _load(row["secret_orders_json"], {}, "secret_orders"),
-            "extracted": _load_extracted(),
-            "resolve_contract_version": int(row["resolve_contract_version"] or 0),
-            "source": row["source"] or "system_simulation",  # 拒收来源，恢复重放用（#144）
+            "source": row["source"] or "system_simulation",
             "attendant_message": attendant_message,  # #671 王承恩独立递话
         }
 

@@ -1826,8 +1826,7 @@ class WebGame:
                 and self.db.get_resolve_context(self.state.turn) is not None
                 and not pending_decisions
             )
-            # #1620 / ADR 0008 决定 6/7：settling 恢复面投影 abort message + ready 判别。
-            # #1846 / ADR 0157：月链 call_failure 优先；前端统一「重试」，不双钮分流。
+            # #1846 / ADR 0157：settling 恢复面只投影月链失败与错误包；无 ready 重放分流。
             settlement_recovery = None
             if turn_phase == TurnPhase.SETTLING.value:
                 from ming_sim.error_pack import (
@@ -1835,12 +1834,10 @@ class WebGame:
                     settlement_abort_message,
                 )
                 from ming_sim.month_chain import month_chain_call_failure
-                ctx = self.db.get_resolve_context(self.state.turn)
                 month_failure = month_chain_call_failure(self.db, int(self.state.turn))
                 if month_failure is not None:
                     # 本次失败记录是诊断包真源；没有本次包就空着，不借同月旧包。
                     settlement_recovery = {
-                        "ready_replay": False,
                         "retryable": True,
                         "error_pack_path": str(month_failure.get("error_pack_path") or ""),
                         "message": str(month_failure.get("message") or ""),
@@ -1850,9 +1847,7 @@ class WebGame:
                     pack_path = latest_error_pack_for_turn(
                         self.db.path, int(self.state.turn),
                     )
-                    ready_replay = ctx is not None and ctx.get("extracted") is not None
                     settlement_recovery = {
-                        "ready_replay": bool(ready_replay),
                         "retryable": True,
                         "error_pack_path": pack_path or "",
                         "message": (
@@ -1932,7 +1927,7 @@ class WebGame:
             "resume_phase2": durable_phase2_resume and not settlement_entry_inflight,
             # #1625：只投影进程内既有入口计数；供刷新/重拉区分在飞与真暂停。
             "settlement_entry_inflight": settlement_entry_inflight,
-            # #1620：settling 恢复面（ADR 0008 决定 6/7 message + ready_replay）
+            # #1846：settling 恢复面（message + error_pack_path）
             "settlement_recovery": settlement_recovery,
             "last_decree": self.last_decree,
             "last_report": self.last_report,

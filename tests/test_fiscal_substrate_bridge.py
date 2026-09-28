@@ -877,8 +877,8 @@ def test_substrate_hub_cutover_runs_multi_tick_treasury_trajectory(fresh_game):
     assert taicang_loss_stocks[-1] > taicang_loss_months[-1]
 
 
-def test_ready_context_retry_does_not_recompute_substrate_hub_pre_settle(fresh_game):
-    from ming_sim.decree import persist_resolve_context, pre_settle
+def test_settling_context_retry_does_not_recompute_substrate_hub_pre_settle(fresh_game):
+    from ming_sim.decree import pre_settle
 
     db, state = fresh_game
     turn = state.turn
@@ -888,17 +888,15 @@ def test_ready_context_retry_does_not_recompute_substrate_hub_pre_settle(fresh_g
     before_containers = _hub_container_snapshot(db)
     before_balance = state.metrics["国库"]
 
-    persist_resolve_context(
-        db,
+    db.save_resolve_context(
         turn,
+        "测试诏",
+        "测试邸报",
         {},
-        decree_text="测试诏",
-        narrative="测试邸报",
-        simulator_payload={},
         secret_orders=[],
         
     )
-    assert db.get_resolve_context(turn)["extracted"] == {}
+    assert db.get_resolve_context(turn) is not None
 
     pre_settle(state, db)
 

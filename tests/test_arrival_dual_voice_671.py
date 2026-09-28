@@ -12,13 +12,10 @@ from openai import APIConnectionError, APIStatusError, APITimeoutError
 
 from ming_sim import audience_night as an
 from ming_sim.db import GameDB
-from ming_sim.error_pack import ARRIVAL_COMPANION_SIM_DONE_KEY
-
 
 # 含首尾空白：生成→DB→状态投影须逐字保留（P6 零删改）
 ATTENDANT_TEXT = "\n  奴婢禀报：洪承畴、孙传庭本月抵京候旨，尚未宣入。  \n"
 SIM_REPORT = "《双星抵京》\n天启七年十月 月末奏章\n\n一、人事除目\n洪承畴、孙传庭抵京候旨。\n\n十、诏书核销\n本月无新旨 → 已办成。"
-
 
 def _set_place(game, name, *, location, transit_to=""):
     db, _state, content = game
@@ -28,7 +25,6 @@ def _set_place(game, name, *, location, transit_to=""):
     )
     db.conn.commit()
     return content.characters[name]
-
 
 def _seed_waiting_arrivals(game, names):
     """种同月多人：资本 waiting + frozen transit_arrivals 将由 tick stub 提供。"""
@@ -46,7 +42,6 @@ def _seed_waiting_arrivals(game, names):
     assert {row["person_name"] for row in waiting} == set(names)
     return arrivals, waiting
 
-
 def _stub_settlement_llms(decree_mod, monkeypatch, *, simulate, attendant=None):
     monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
     monkeypatch.setattr(decree_mod, "simulate_season_with_payload", simulate)
@@ -60,7 +55,6 @@ def _stub_settlement_llms(decree_mod, monkeypatch, *, simulate, attendant=None):
         "llm_promulgation_verdicts",
         lambda *a, **k: [],
     )
-
 
 def test_run_arrival_attendant_message_preserves_raw_text(monkeypatch):
     """成功返回未 strip 原文；纯空白仍抛 LLMContractError。"""
@@ -88,7 +82,6 @@ def test_run_arrival_attendant_message_preserves_raw_text(monkeypatch):
             object(), year=1627, period=10, arrivals=arrivals, agent=object(),
         )
 
-
 def test_run_arrival_attendant_message_real_extract_preserves_whitespace(monkeypatch):
     """#671①：真实入口 agent.run → extract_agent_text → run_agent_text 不得 strip。"""
     import ming_sim.agents as agents_mod
@@ -110,7 +103,6 @@ def test_run_arrival_attendant_message_real_extract_preserves_whitespace(monkeyp
         object(), year=1627, period=10, arrivals=arrivals,
     )
     assert got == raw
-
 
 @pytest.mark.parametrize(
     "error_factory",
@@ -153,34 +145,6 @@ def test_run_arrival_attendant_message_translates_provider_errors(monkeypatch, e
 
 
 
-def test_clear_for_resimulation_preserves_attendant_message(game):
-    """#671：重模拟降级须保留 attendant_message（同 source 保留范式）；必剥 companion 标记。"""
-    from ming_sim.error_pack import clear_for_resimulation
-
-    db, state, _content = game
-    turn = state.turn
-    db.save_resolve_context(
-        turn, "d", "n",
-        {"k": "v", ARRIVAL_COMPANION_SIM_DONE_KEY: True},
-        secret_orders=[],
-        extracted={"metric_delta": {"国库": 1}},
-        source="player_decree",
-        attendant_message=ATTENDANT_TEXT,
-    )
-    assert db.get_resolve_context(turn)["attendant_message"] == ATTENDANT_TEXT
-
-    clear_for_resimulation(db, turn)
-
-    ctx = db.get_resolve_context(turn)
-    assert ctx is not None
-    assert ctx["extracted"] is None
-    assert ctx["attendant_message"] == ATTENDANT_TEXT
-    assert ctx["narrative"] == "n"
-    payload = ctx["simulator_payload"]
-    assert isinstance(payload, dict)
-    assert ARRIVAL_COMPANION_SIM_DONE_KEY not in payload
-    assert payload.get("k") == "v"
-    db.clear_resolve_context(turn)
 
 
 
@@ -210,7 +174,6 @@ def test_history_turn_api_returns_attendant_message_raw(game, monkeypatch):
     assert payload["exists"] is True
     assert payload["report"] == SIM_REPORT
     assert payload["attendant_message"] == ATTENDANT_TEXT
-
 
 def test_history_turn_api_blank_attendant_alone_is_absent(game, monkeypatch):
     """#671③：纯空白 report/递话 → exists=false；有正文侧时空白原文仍回传。"""
@@ -247,7 +210,6 @@ def test_history_turn_api_blank_attendant_alone_is_absent(game, monkeypatch):
     assert present["report"] == SIM_REPORT
     assert present["attendant_message"] == blank
 
-
 def test_history_turn_api_attendant_only_returns_archived_year_period(game, monkeypatch):
     """#671：attendant-only 月档详情 year/period 回落 turn_reports 存档行（非 0）。"""
     import asyncio
@@ -269,7 +231,6 @@ def test_history_turn_api_attendant_only_returns_archived_year_period(game, monk
     assert payload["report"] == ""
     assert payload["attendant_message"] == ATTENDANT_TEXT
     assert payload["directives"] == []
-
 
 def test_history_archive_list_marks_attendant_presence(game, monkeypatch):
     """#671：月档列表 has_report/has_attendant 按正文空白存在位；不冒充奏报。"""

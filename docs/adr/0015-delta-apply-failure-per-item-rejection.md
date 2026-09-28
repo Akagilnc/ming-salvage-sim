@@ -47,3 +47,5 @@ ADR 0005 / 0008 已钉死大半：代码错（KeyError/AttributeError/schema 漂
 - restore 无损不受影响：好项当回合全落、坏项留痕（崩溃安全），崩溃续跑读 `resolve_context`（干净那批）。
 
 〔2026-09-10 后出注记：#1820 拍的「拒收当事实回给同一场推演者、改口重交」随核算反馈驱动的同场续演循环取消——拒收项留痕、本月不重交，作为实况进入邸报作者供料与下月材料（密令来源的只走密报）；落账及拒收承接见 #1843，邸报供料见 #1862；决策缘由见 [0157](0157-v2-month-waits-for-exhausted-model-call-recovery.md) 与 [0153](0153-v2-world-record-and-two-way-mediation.md) 后出注记二。本条其余拒收留痕规则不变。〕
+
+〔#1846 2026-09-28 reopen：`clear_for_resimulation` 与「断点续跑的重试真源 = ready=1 的 delta 重放」已删除。过月恢复真源改为暂存声明与落账相位；本 ADR 的 per-item 拒收留痕仍有效，但不再依赖 ready 重放或 resimulation 作废标记作玩家恢复路径。〕

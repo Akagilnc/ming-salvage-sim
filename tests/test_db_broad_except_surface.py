@@ -7,18 +7,16 @@
 覆盖的回退形状：
   - `list_pending_decisions`：options_json 损坏 → 回 []（默认回退）；choice_json 损坏 → 回 None（崩溃路修复）；
   - `legacy_modifiers`：损坏 → 跳过该 legacy（`continue` 变体）；
-  - `get_resolve_context`：simulator_payload 等损坏 → 回退默认；extracted_delta 损坏（ready=1）→ 回 None 逼重抽。
+  - `get_resolve_context`：simulator_payload 等损坏 → 回退默认。
 """
 
 import ming_sim.db as db_mod
-
 
 def _capture_tlog(monkeypatch):
     """把 db 模块级 tlog 换成捕获器，返回收集到的消息 list。"""
     msgs: list[str] = []
     monkeypatch.setattr(db_mod, "tlog", lambda m: msgs.append(m))
     return msgs
-
 
 def test_pending_decisions_corrupt_options_json_falls_back_and_surfaces(game, monkeypatch):
     db, _state, _content = game
@@ -40,7 +38,6 @@ def test_pending_decisions_corrupt_options_json_falls_back_and_surfaces(game, mo
     # 可观测：tlog 留痕，且点名是 options_json 损坏
     assert any("options_json 损坏" in m for m in msgs), msgs
 
-
 def test_pending_decisions_corrupt_choice_json_returns_none_and_surfaces(game, monkeypatch):
     db, _state, _content = game
     # 损坏 choice_json（options 合法）——修复前 result 构建处 `json.loads(choice)` 无保护会崩。
@@ -58,7 +55,6 @@ def test_pending_decisions_corrupt_choice_json_returns_none_and_surfaces(game, m
     assert len(out) == 1
     assert out[0]["choice"] is None  # 行为：损坏 choice 回退 None，不再崩
     assert any("choice_json 损坏" in m for m in msgs), msgs
-
 
 def test_resolve_context_corrupt_payload_falls_back_and_surfaces(game, monkeypatch):
     db, _state, _content = game
@@ -78,7 +74,6 @@ def test_resolve_context_corrupt_payload_falls_back_and_surfaces(game, monkeypat
     assert ctx is not None
     assert ctx["simulator_payload"] == {}  # 行为：损坏回退默认 {}，不抛
     assert any("simulator_payload JSON 损坏" in m for m in msgs), msgs
-
 
 def test_resolve_context_corrupt_secret_orders_falls_back_to_dict_and_surfaces(game, monkeypatch):
     db, _state, _content = game
@@ -102,25 +97,6 @@ def test_resolve_context_corrupt_secret_orders_falls_back_to_dict_and_surfaces(g
     assert any("secret_orders JSON 损坏" in m for m in msgs), msgs
 
 
-def test_resolve_context_corrupt_extracted_returns_none_and_surfaces(game, monkeypatch):
-    db, _state, _content = game
-    # 显式传 extracted（非 None）→ ready=1，get 时 extracted 可见路径。
-    db.save_resolve_context(
-        501, decree_text="旨", narrative="报",
-        simulator_payload={}, extracted={"国库": 1},
-    )
-    db.conn.execute(
-        "UPDATE pending_resolve_context SET extracted_delta_json = ? WHERE turn = ?",
-        ("{坏delta", 501),
-    )
-    db.conn.commit()
-
-    msgs = _capture_tlog(monkeypatch)
-    ctx = db.get_resolve_context(501)
-
-    assert ctx is not None
-    assert ctx["extracted"] is None  # 行为：ready=1 但损坏 → 回 None 逼重抽（cmr r4 设计）
-    assert any("extracted_delta JSON 损坏" in m for m in msgs), msgs
 
 
 def test_legacy_modifiers_corrupt_json_skips_and_surfaces(game, monkeypatch):

@@ -55,7 +55,6 @@ from ming_sim.decree import (
     resolve_directives,
     write_decree_with_agno,
 )
-from ming_sim.error_pack import clear_for_resimulation
 from ming_sim.issues import bind_content as _bind_issues
 from ming_sim.issues import sync_opening_legacies
 from ming_sim.mindreading import is_inner_court_attendant
@@ -4048,17 +4047,12 @@ class GameSession:
                 decisions=self.pending_decisions(),
                 advanced=False,
             )
-        # settling 仅证明前半段已提交；旧档 ready extractor delta 不是 ADR 0157 的
-        # 暂存声明真源。先降级旧产物，再由现役月链按持久落账状态续跑，财政不二落。
+        # settling 仅证明前半段已提交；#1846 恢复真源是暂存声明与落账相位，
+        # 从 context 恢复来源和原诏后续跑月链，财政不二落。
         recovered_source = None
         if self.state.turn_phase == TurnPhase.SETTLING.value:
             ctx = self.db.get_resolve_context(self.state.turn)
-            if ctx is not None and ctx.get("extracted") is not None:
-                clear_for_resimulation(self.db, self.state.turn)
-                ctx = self.db.get_resolve_context(self.state.turn)
-            # 从 context 恢复来源和原诏；前半段 settling 守门保证财政不二落。
             if ctx is not None:
-                # 仅恢复态（来自非 ready SETTLING ctx）才覆盖默认 player——正常颁诏路不进此分支。
                 recovered_source = _provenance_from_stored(ctx.get("source"))
                 stored = str(ctx.get("decree_text") or "").strip()
                 if stored:
@@ -4269,9 +4263,9 @@ class GameSession:
         # 缺键/重复键/desk 外键/非 object 项由 validate_request_keys（内存）
         # 在领域写前整批拒，此处不再静默丢非 object 项。
         req = list(choices)
-        # C1.1：① 已落 decided、③ phase2 未写 extracted 的崩溃重入——
+        # C1.1：① 已落 decided、③ phase2 崩溃重入——
         # list_rescript_desk 只 pending，须把请求键对应 decided 行并入 desk
-        # 供 validate already_applied；旧 ready 的选择已落，不再二次写选择。
+        # 供 validate already_applied；已落选择不再二次写。
         desk_keys = {str(r.get("decision_key") or "") for r in desk}
         missing_keys = [
             str(c.get("decision_key") or "").strip()
@@ -4282,20 +4276,6 @@ class GameSession:
         ]
         if missing_keys:
             desk.extend(self.db.get_rescript_desk_rows_by_keys(missing_keys))
-        ready_replay = ctx is not None and ctx.get("extracted") is not None
-        if ready_replay:
-            # #1589 Spec-1：ready-replay 短路前仍须过 validate_all 同一权威请求索引
-            # 校验（缺键/重复键/desk 外键整批拒）；只校 envelope/key membership，
-            # 不比较/采纳重交 choice 内容；下游先废弃旧 extracted，再续新月链。
-            ra.validate_request_keys(desk, req)
-            return {
-                "ready_replay": True,
-                "batch": None,
-                "prewrite": None,
-                "desk": desk,
-                "choices": req,
-            }
-
         def _rescript_can_summon(name: str):
             """validate_all 唯一资格出口：str→Character→can_summon；成功回 canonical。"""
             raw = str(name or "").strip()
@@ -4419,7 +4399,6 @@ class GameSession:
             deliberate_runner=_deliberate_runner if any(i.needs_deliberate_llm for i in batch.items) else None,
         )
         return {
-            "ready_replay": False,
             "batch": batch,
             "prewrite": prewrite,
             "desk": desk,
@@ -4436,14 +4415,6 @@ class GameSession:
             prepare_rescript_summon_scaffold,
             rescript_summon_origin_ref,
         )
-
-        if prewrite_state.get("ready_replay"):
-            return {
-                "ready_replay": True,
-                "apply": None,
-                "summons": [],
-                "revise_keys": [],
-            }
 
         batch: ra.ValidatedBatch = prewrite_state["batch"]  # type: ignore[assignment]
         prewrite: ra.PrewriteResults = prewrite_state["prewrite"]  # type: ignore[assignment]
@@ -4490,7 +4461,6 @@ class GameSession:
                 **scaffold,
             })
         return {
-            "ready_replay": False,
             "apply": apply,
             "summons": summons,
             "revise_keys": list(apply.revise_keys),
@@ -4501,8 +4471,6 @@ class GameSession:
         self, phase1_state: Dict[str, object],
     ) -> Dict[str, object]:
         """#657 ② 无锁等待：join 全部 summon target Future。不得持 write_gate。"""
-        if phase1_state.get("ready_replay"):
-            return {"joined": [], "ready_replay": True}
         joined: List[Dict[str, object]] = []
         for sc in phase1_state.get("summons") or []:
             if sc.get("consumed"):
@@ -4518,7 +4486,7 @@ class GameSession:
                 joined.append({**sc, "generated": [], "error": str(exc)})
                 continue
             joined.append({**sc, "generated": list(generated)})
-        return {"joined": joined, "ready_replay": False}
+        return {"joined": joined}
 
     def finish_rescript_phase2(
         self,
@@ -4533,94 +4501,93 @@ class GameSession:
         """
         from ming_sim.applier import atomic
 
-        if not phase1_state.get("ready_replay"):
-            # ③ 持 write_gate：成功则 persist；失败状态统一在门闩后唯一写点落 failed。
+        # ③ 持 write_gate：成功则 persist；失败状态统一在门闩后唯一写点落 failed。
+        with atomic(self.db):
+            for item in join_state.get("joined") or []:
+                if item.get("error"):
+                    continue
+                generated = item.get("generated") or []
+                if generated:
+                    self.persist_chat_turn_scene(list(generated))
+
+        # D.8 门闩：未消费 summon → 响亮失败（§D.0 唯一谓词）
+        # 权威=行事实：先扫本次 join，再扫 durable decided summon（共享迭代器）。
+        from ming_sim.audience_night import rescript_summon_origin_consumed
+        unconsumed: List[str] = []
+        seen_origins: set[str] = set()
+        for item in join_state.get("joined") or []:
+            origin = str(item.get("origin_ref") or "")
+            if origin:
+                seen_origins.add(origin)
+            row = self.db.conn.execute(
+                "SELECT body, tags FROM story_ledger_entries WHERE origin_ref = ?",
+                (origin,),
+            ).fetchone()
+            entry = None
+            if row is not None:
+                entry = {
+                    "body": str(row["body"] or ""),
+                    "tags": str(row["tags"] or "[]"),
+                }
+            if item.get("error"):
+                ok = False
+            elif item.get("consumed"):
+                # 既有消费：prepare 已判；门闩仍复核 TAG_ENTER+非空 body
+                ok = rescript_summon_origin_consumed(entry)
+            else:
+                generated_bodies = [
+                    str(b)
+                    for _eid, b in (item.get("generated") or [])
+                    if str(b).strip()
+                ]
+                ok = rescript_summon_origin_consumed(
+                    entry, expected_bodies=generated_bodies,
+                )
+            if not ok:
+                unconsumed.append(
+                    f"{item.get('decision_key')}:{item.get('target') or ''}:{origin}"
+                )
+        # join_state 空/残缺时仍以 durable 行事实挡 phase2（S5/D.8）
+        for fact in self._iter_unconsumed_decided_summons():
+            origin = str(fact.get("origin_ref") or "")
+            if origin in seen_origins:
+                continue
+            unconsumed.append(
+                f"{fact.get('decision_key')}:{fact.get('target') or ''}:{origin}"
+            )
+        if unconsumed:
+            # 唯一失败写点：generator error 与门闩未消费同形
+            # generating 空问话 → failed，供 CAS 重入（#657 Spec4 重试）。
             with atomic(self.db):
                 for item in join_state.get("joined") or []:
-                    if item.get("error"):
+                    if item.get("consumed"):
                         continue
-                    generated = item.get("generated") or []
-                    if generated:
-                        self.persist_chat_turn_scene(list(generated))
-
-            # D.8 门闩：未消费 summon → 响亮失败（§D.0 唯一谓词）
-            # 权威=行事实：先扫本次 join，再扫 durable decided summon（共享迭代器）。
-            from ming_sim.audience_night import rescript_summon_origin_consumed
-            unconsumed: List[str] = []
-            seen_origins: set[str] = set()
+                    ctid_fail = int(item.get("chat_turn_id") or 0)
+                    if ctid_fail > 0:
+                        self.db.conn.execute(
+                            "UPDATE chat_turns SET status='failed' "
+                            "WHERE id=? AND status='generating' "
+                            "AND user_message_id IS NULL",
+                            (ctid_fail,),
+                        )
+            # durable failed 已写 → 唯一 release，允许合法重入
             for item in join_state.get("joined") or []:
-                origin = str(item.get("origin_ref") or "")
-                if origin:
-                    seen_origins.add(origin)
-                row = self.db.conn.execute(
-                    "SELECT body, tags FROM story_ledger_entries WHERE origin_ref = ?",
-                    (origin,),
-                ).fetchone()
-                entry = None
-                if row is not None:
-                    entry = {
-                        "body": str(row["body"] or ""),
-                        "tags": str(row["tags"] or "[]"),
-                    }
-                if item.get("error"):
-                    ok = False
-                elif item.get("consumed"):
-                    # 既有消费：prepare 已判；门闩仍复核 TAG_ENTER+非空 body
-                    ok = rescript_summon_origin_consumed(entry)
-                else:
-                    generated_bodies = [
-                        str(b)
-                        for _eid, b in (item.get("generated") or [])
-                        if str(b).strip()
-                    ]
-                    ok = rescript_summon_origin_consumed(
-                        entry, expected_bodies=generated_bodies,
-                    )
-                if not ok:
-                    unconsumed.append(
-                        f"{item.get('decision_key')}:{item.get('target') or ''}:{origin}"
-                    )
-            # join_state 空/残缺时仍以 durable 行事实挡 phase2（S5/D.8）
-            for fact in self._iter_unconsumed_decided_summons():
-                origin = str(fact.get("origin_ref") or "")
-                if origin in seen_origins:
-                    continue
-                unconsumed.append(
-                    f"{fact.get('decision_key')}:{fact.get('target') or ''}:{origin}"
-                )
-            if unconsumed:
-                # 唯一失败写点：generator error 与门闩未消费同形
-                # generating 空问话 → failed，供 CAS 重入（#657 Spec4 重试）。
-                with atomic(self.db):
-                    for item in join_state.get("joined") or []:
-                        if item.get("consumed"):
-                            continue
-                        ctid_fail = int(item.get("chat_turn_id") or 0)
-                        if ctid_fail > 0:
-                            self.db.conn.execute(
-                                "UPDATE chat_turns SET status='failed' "
-                                "WHERE id=? AND status='generating' "
-                                "AND user_message_id IS NULL",
-                                (ctid_fail,),
-                            )
-                # durable failed 已写 → 唯一 release，允许合法重入
-                for item in join_state.get("joined") or []:
-                    ctid_rel = int(item.get("chat_turn_id") or 0)
-                    if ctid_rel > 0:
-                        self.release_rescript_summon_scene(ctid_rel)
-                raise ValueError(
-                    "召见尚未消费，不得推进 phase2：" + "; ".join(unconsumed)
-                )
-            # 消费成功 / 已消费短路：空问话 scaffold → status=consumed
-            # （含 retry 时 origin 已 consumed 但 scaffold 仍 generating 的可恢复终态）
-            for item in join_state.get("joined") or []:
-                if item.get("error"):
-                    continue
-                ctid = int(item.get("chat_turn_id") or 0)
-                if ctid > 0:
-                    self.db.complete_rescript_summon_scaffold_turn(ctid)
-                    # durable consumed 已写 → 唯一 release
-                    self.release_rescript_summon_scene(ctid)
+                ctid_rel = int(item.get("chat_turn_id") or 0)
+                if ctid_rel > 0:
+                    self.release_rescript_summon_scene(ctid_rel)
+            raise ValueError(
+                "召见尚未消费，不得推进 phase2：" + "; ".join(unconsumed)
+            )
+        # 消费成功 / 已消费短路：空问话 scaffold → status=consumed
+        # （含 retry 时 origin 已 consumed 但 scaffold 仍 generating 的可恢复终态）
+        for item in join_state.get("joined") or []:
+            if item.get("error"):
+                continue
+            ctid = int(item.get("chat_turn_id") or 0)
+            if ctid > 0:
+                self.db.complete_rescript_summon_scaffold_turn(ctid)
+                # durable consumed 已写 → 唯一 release
+                self.release_rescript_summon_scene(ctid)
 
         if not (self.last_decree or "").strip():
             ctx0 = self.db.get_resolve_context(self.state.turn)

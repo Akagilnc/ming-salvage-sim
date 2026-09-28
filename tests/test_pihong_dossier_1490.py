@@ -28,7 +28,6 @@ import web_app
 from ming_sim.models import TurnPhase
 from tests.dossier_test_helpers import rejected_verdict
 
-
 @pytest.fixture
 def web_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
     """真实 WebGame + ASGI 入口；仅中和构造/LLM 边界（与 #498/#1235 同形）。"""
@@ -81,12 +80,10 @@ def web_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
     except Exception:
         pass
 
-
 def _client() -> httpx.AsyncClient:
     return httpx.AsyncClient(
         transport=httpx.ASGITransport(app=web_app.app), base_url="http://t",
     )
-
 
 async def _post_resolve(choices: list[dict]) -> httpx.Response:
     async with _client() as client:
@@ -95,13 +92,11 @@ async def _post_resolve(choices: list[dict]) -> httpx.Response:
             json={"choices": choices},
         )
 
-
 async def _get_state() -> dict:
     async with _client() as client:
         r = await client.get("/api/game/state")
         assert r.status_code == 200, r.text
         return r.json()
-
 
 def _plant_dossier_awaiting(db, state):
     """种 QA 同形：dossier 批红待裁 + resolve_context（含 candidate_events，触发 bind）。"""
@@ -154,7 +149,6 @@ def _plant_dossier_awaiting(db, state):
     state.turn_phase = TurnPhase.AWAITING_DECISION.value
     db.save_state(state)
     return dossier_id
-
 
 def test_missing_dossier_fields_stay_pending_then_full_retry_decides(
     web_game, monkeypatch,
@@ -219,7 +213,6 @@ def test_missing_dossier_fields_stay_pending_then_full_retry_decides(
     assert choice.get("dossier_id") == dossier_id
     assert choice.get("dossier_decision") == "force_promulgated"
 
-
 def test_bind_preserves_dossier_event_id():
     """#1490 接收端病灶：bind 不得把 dossier: 前缀 event_id 当 off-snapshot 解绑。"""
     from ming_sim.settlement_payload import bind_decisions_to_candidate_events
@@ -236,7 +229,6 @@ def test_bind_preserves_dossier_event_id():
     payload = {"candidate_events": [{"id": "ev1", "title": "边警"}]}
     out = bind_decisions_to_candidate_events(decisions, payload)
     assert out[0]["event_id"] == "dossier:8"
-
 
 def test_bind_unbinds_dossier_prefix_without_capability_fields():
     """#1492 A：due-commitment 形 origin_ref=dossier:N + 纯 {label,hint} options
@@ -256,7 +248,6 @@ def test_bind_unbinds_dossier_prefix_without_capability_fields():
     assert "event_id" not in out[0] or not str(out[0].get("event_id") or "").startswith(
         "dossier:"
     ), out[0]
-
 
 def _plant_due_commitment_shaped_awaiting(db, state, *, dossier_id: int = 12):
     """种 due-commitment 同形：event_id=dossier:N，options 仅 {label,hint}。"""
@@ -280,7 +271,6 @@ def _plant_due_commitment_shaped_awaiting(db, state, *, dossier_id: int = 12):
     )
     state.turn_phase = TurnPhase.AWAITING_DECISION.value
     db.save_state(state)
-
 
 def test_due_commitment_shaped_submit_does_not_poison_or_deadlock(
     web_game, monkeypatch,
@@ -318,7 +308,6 @@ def test_due_commitment_shaped_submit_does_not_poison_or_deadlock(
     assert stored_choice.get("note") == "准销。"
     assert not stored_choice.get("dossier_decision")
 
-
 def test_lying_label_rebuilt_from_server_option(web_game, monkeypatch):
     """#1492 D 真 HTTP：合法能力对 + 撒谎 label/hint → 落库取服务端 option，客户端只留 note。"""
     db, state = web_game.db, web_game.state
@@ -354,7 +343,6 @@ def test_lying_label_rebuilt_from_server_option(web_game, monkeypatch):
     assert choice.get("hint") == "以中旨强行颁出", choice
     assert choice.get("note") == "准。先济关宁边饷。"
 
-
 def test_parse_rescript_capability_pair_rejects_non_positive_and_unknown():
     """#1494 共享校验器：正整数 id + 支持动作枚举；其余一律 None。"""
     from ming_sim.settlement_payload import parse_rescript_capability_pair
@@ -381,7 +369,6 @@ def test_parse_rescript_capability_pair_rejects_non_positive_and_unknown():
     assert parse_rescript_capability_pair({"dossier_decision": "hold"}) is None
     assert parse_rescript_capability_pair(None) is None
     assert parse_rescript_capability_pair("force_promulgated") is None
-
 
 def test_mixed_legal_illegal_options_illegal_choice_stays_pending(
     web_game, monkeypatch,
@@ -507,7 +494,6 @@ def test_mixed_legal_illegal_options_illegal_choice_stays_pending(
     assert choice.get("dossier_decision") == "force_promulgated"
     assert choice.get("label") == "强颁"
 
-
 def test_ordinary_event_with_hallucinated_capability_submits(
     web_game, monkeypatch,
 ):
@@ -572,7 +558,6 @@ def test_ordinary_event_with_hallucinated_capability_submits(
     assert stored.get("note") == "准销。"
     assert not stored.get("dossier_decision")
 
-
 # ---------------------------------------------------------------------------
 # #657 片2：C1 ＋ 五动作领域写（rescript_actions 模块级）
 # ---------------------------------------------------------------------------
@@ -583,13 +568,11 @@ _ROSTER = [
     {"character_id": _ROSTER_LEAD, "tier": "主办", "role": "总核", "delegator_id": None},
 ]
 
-
 def _roster(*names, tier="主办"):
     return [
         {"character_id": n, "tier": tier, "role": "", "delegator_id": None}
         for n in names
     ]
-
 
 def _layer_a_option(**overrides):
     from ming_sim.rescript_draft import normalize_rescript_layer_a_option
@@ -610,7 +593,6 @@ def _layer_a_option(**overrides):
     base.update(overrides)
     return normalize_rescript_layer_a_option(base)
 
-
 def _plant_urgent_desk(db, state, *, options=None, actor_name="杨嗣昌"):
     opts = options or [_layer_a_option(), _layer_a_option(label="缓征", hint="先赈后征")]
     db.save_rescript_drafts(int(state.turn), [{
@@ -626,7 +608,6 @@ def _plant_urgent_desk(db, state, *, options=None, actor_name="杨嗣昌"):
     urgent = next(r for r in desk if r["kind"] == "rescript_draft")
     return urgent, opts
 
-
 def _dossier_payload(row):
     if not isinstance(row, dict):
         return {}
@@ -638,7 +619,6 @@ def _dossier_payload(row):
     except (TypeError, ValueError):
         return {}
     return loaded if isinstance(loaded, dict) else {}
-
 
 def test_657_c1_validate_rejects_stale_capability_and_desk_outsider(game):
     """C1.5 stale capability；desk 外键整批拒。"""
@@ -659,7 +639,6 @@ def test_657_c1_validate_rejects_stale_capability_and_desk_outsider(game):
             "action": "hold",
             "label": "留中",
         }])
-
 
 def test_657_c1_decided_mismatch_rejects_and_cas0(game):
     """C1.3/C1.4：decided 不匹配 / 空 choice → 整批拒。"""
@@ -690,7 +669,6 @@ def test_657_c1_decided_mismatch_rejects_and_cas0(game):
         ra.validate_all([empty_decided], [{
             "decision_key": key, "action": "hold", "label": "留中",
         }])
-
 
 def test_657_p6_mapper_deliberate_preserve_free_text(game):
     """#657 Class3 P6：label/note/title/body 原文落库；title>80 响亮拒绝。"""
@@ -808,7 +786,6 @@ def test_657_p6_mapper_deliberate_preserve_free_text(game):
         with pytest.raises(ValueError):
             normalize_rescript_layer_a_option(bad)
 
-
 def test_657_default_hold_missing_and_empty_action(game):
     """#657 Class2 V1–V5：缺行/keyed 无 action/keyed 空 action → hold；
     decided 精确重放过、不匹配拒；revise 锚 + 空 action 不重新 default。"""
@@ -897,7 +874,6 @@ def test_657_default_hold_missing_and_empty_action(game):
     assert batch5.items[0].already_applied
     assert key2 not in batch5.default_hold_keys
 
-
 def test_657_http_default_hold_keyed_empty_action_and_betray(web_game, monkeypatch):
     """#657 Class2 V6 必跑：真 HTTP keyed 仅 decision_key → 持久 hold + 辜负。"""
     db, state = web_game.db, web_game.state
@@ -933,7 +909,6 @@ def test_657_http_default_hold_keyed_empty_action_and_betray(web_game, monkeypat
         ("杨嗣昌", "辜负"),
     ).fetchall()
     assert edges, "HTTP default hold 须写辜负"
-
 
 def test_657_five_actions_domain_writes(game):
     """五动作至少各一领域断言；summon 只 CAS decided。"""
@@ -1051,7 +1026,6 @@ def test_657_five_actions_domain_writes(game):
     assert "consumed_epoch" not in cols
     _ = derive_draft_capability  # import seam kept warm
 
-
 # ---------------------------------------------------------------------------
 # #657 helpers：跨进程 HTTP 崩溃重入（C1.1 / C1.2 共用；禁第二 worker 族）
 # ---------------------------------------------------------------------------
@@ -1064,7 +1038,6 @@ def _657_db_path_of(game_or_path) -> str:
         return str(path)
     db = getattr(game_or_path, "db", None)
     return str(getattr(db, "path", None) or getattr(db, "db_path", None) or "")
-
 
 def _657_install_real_phase2_llm_boundary(monkeypatch_or_module):
     """只中和 phase2 LLM 边界；保留 resolve_decisions_phase2 真结算/推月。"""
@@ -1096,7 +1069,6 @@ def _657_install_real_phase2_llm_boundary(monkeypatch_or_module):
     else:
         install_settlement_attendant_agent_stub(None, dm)
     # subprocess worker 内无 monkeypatch 对象时同步写 dm
-
 
 def _657_subprocess_resolve(
     db_path: str,
@@ -1298,7 +1270,6 @@ def _657_subprocess_resolve(
     data["_killed"] = False
     return data
 
-
 def _657_plant_awaiting_web(web_game, *, drafts=None, decisions=None, title="陕西告饥"):
     """web_game 上种植急务/decision + resolve_context，相位 AWAITING_DECISION。"""
     from ming_sim.models import TurnPhase
@@ -1323,7 +1294,6 @@ def _657_plant_awaiting_web(web_game, *, drafts=None, decisions=None, title="陕
     web_game.session.state.turn_phase = TurnPhase.AWAITING_DECISION.value
     db.conn.commit()
     return db.list_rescript_desk(int(state.turn))
-
 
 def test_1627_stamp_ignores_pre_edict_clarification_directive(web_game):
     """亲裁落印不被颁诏前留下的待澄清拟旨阻断。"""
@@ -1376,7 +1346,6 @@ def test_1627_stamp_ignores_pre_edict_clarification_directive(web_game):
     finally:
         probe.close()
 
-
 def test_657_record_event_choice_failure_rolls_back_batch(game, monkeypatch):
     """Class 5：record_event_decision_choice 抛错 → 整批回滚，零 decided/零事件账。"""
     from ming_sim import rescript_actions as ra
@@ -1428,7 +1397,6 @@ def test_657_record_event_choice_failure_rolls_back_batch(game, monkeypatch):
     ).fetchone()["c"]
     assert after_triggers == before_triggers
 
-
 def test_657_return_revise_round_prior_and_clear_anchor(web_game, monkeypatch):
     """C1.2：真 HTTP return_revise → ①后 phase2 前崩溃 → 同 DB 同 body 重 POST
     round 不双增 → 清锚后新 capability HTTP follow_draft。复用 C1.1 subprocess helper。"""
@@ -1477,7 +1445,6 @@ def test_657_return_revise_round_prior_and_clear_anchor(web_game, monkeypatch):
         assert (hit["choice"] or {}).get("action") == "return_revise"
         assert len(hit["prior_options_json"] or []) == 1
         ctx = probe.get_resolve_context(int(probe.load_state().turn))
-        assert ctx is None or ctx.get("extracted") is None
         new_labels = [str(o.get("label") or "") for o in (hit["options"] or [])]
         assert "新拟甲" in new_labels
         new_caps = [str(o.get("draft_capability") or "") for o in (hit["options"] or [])]
@@ -1531,7 +1498,6 @@ def test_657_return_revise_round_prior_and_clear_anchor(web_game, monkeypatch):
     finally:
         probe.close()
 
-
 def test_657_prewrite_failure_zero_db_writes(game):
     """prewrite 任一腿失败 → 整批中止，apply 前零写。"""
     from ming_sim import rescript_actions as ra
@@ -1556,7 +1522,6 @@ def test_657_prewrite_failure_zero_db_writes(game):
 
     with pytest.raises(KeyboardInterrupt):
         ra.run_prewrite_llms(batch, deliberate_runner=interrupted)
-
 
 def test_657_abi_mapper_matrix_a1_a12(game):
     """A1–A12：map 正/负 + 判后 follow/midzhi→apply 链（补 A5/A6/A11）。"""
@@ -2189,7 +2154,6 @@ def test_657_abi_mapper_matrix_a1_a12(game):
     ra.apply_rescript_batch(db, state, batch2, ra.PrewriteResults(), content=content)
     assert len(db.list_decree_dossiers()) == mid
 
-
 def test_1682_late_grants_follow_policy_without_consuming_verdict_batch(game, monkeypatch):
     """Late HITL grants auto-promulgate only canonical review-exempt dossiers."""
     from ming_sim import rescript_actions as ra
@@ -2316,7 +2280,6 @@ def test_1682_late_grants_follow_policy_without_consuming_verdict_batch(game, mo
     assert db.get_pending_promulgation_verdicts(state.turn) == verdicts_before
     assert state.metrics == metrics_before
     assert db.load_state().metrics == metrics_before
-
 
 def test_657_s10_http_five_actions_and_1490_no_regress(web_game, monkeypatch):
     """P3+S10(+S1)：六动作参数表真 HTTP + 真 phase2 外部结构化终局。
@@ -2507,7 +2470,6 @@ def test_657_s10_http_five_actions_and_1490_no_regress(web_game, monkeypatch):
             labels = [str(o.get("label") or "") for o in (hit["options"] or [])]
             assert "新甲" in labels
 
-
 def test_1621_http_follow_draft_uses_catalog_army_id(web_game, monkeypatch):
     """合法军 id 从生成边界进 HTTP follow_draft，案卷 target_id 为真军 id。"""
     from ming_sim.models import TurnPhase
@@ -2575,7 +2537,6 @@ def test_1621_http_follow_draft_uses_catalog_army_id(web_game, monkeypatch):
     assert "event: done" in r.text, r.text
     dossiers = db.list_decree_dossiers()
     assert dossiers and dossiers[-1]["target_id"] == "guanning"
-
 
 def test_657_mixed_batch_follow_plus_decision_and_no_context_copy(web_game, monkeypatch):
     """C1.1：急务 follow + decision 打回；真 HTTP；③后 extracted 空杀进程；
@@ -2654,7 +2615,6 @@ def test_657_mixed_batch_follow_plus_decision_and_no_context_copy(web_game, monk
             "action": "decision",
         }
         ctx = probe.get_resolve_context(int(probe.load_state().turn))
-        assert ctx is None or ctx.get("extracted") is None
         mid_dossiers = len(probe.list_decree_dossiers())
         assert mid_dossiers > dossiers_before
         choice_fp = json.dumps(decs[0]["choice"], ensure_ascii=False, sort_keys=True)
@@ -2681,7 +2641,6 @@ def test_657_mixed_batch_follow_plus_decision_and_no_context_copy(web_game, monk
         _ = choice_fp
     finally:
         probe.close()
-
 
 def test_1589_mixed_desk_keyless_choice_rejected_batch_zero_writes(web_game):
     """#1589：mixed desk 单条无键 choice 修前被 _normalize 按 decision idx 位置猜绑
@@ -2732,10 +2691,8 @@ def test_1589_mixed_desk_keyless_choice_rejected_batch_zero_writes(web_game):
         assert all(not row.get("choice") for row in rows), rows
         assert len(probe.list_decree_dossiers()) == dossiers_before
         ctx = probe.get_resolve_context(turn_before)
-        assert ctx is None or ctx.get("extracted") is None
     finally:
         probe.close()
-
 
 def test_1589_pure_decision_keyless_rejected_then_keyed_same_choice_passes(web_game):
     """#1589：纯 decision 无急务时，无键合法 choice 修前经 submit_decisions 位置匹配受理；
@@ -2798,70 +2755,6 @@ def test_1589_pure_decision_keyless_rejected_then_keyed_same_choice_passes(web_g
         probe.close()
 
 
-def test_1589_ready_replay_rejects_bad_keys(web_game, monkeypatch):
-    """#1589 fix5：ready-replay 短路前仍过 validate_all 同一权威请求索引校验——
-    缺键/重复键/desk 外未知键整批拒，冻结 extracted/pending_decisions 领域状态不变；
-    只校 envelope/key membership，不比较/采纳重交 choice 内容（§B.3 语义不变）。"""
-    db, state = web_game.db, web_game.state
-    _657_plant_awaiting_web(web_game, decisions=[{
-        "title": "辽东战和", "context": "c",
-        "options": [{"label": "战", "hint": ""}, {"label": "和", "hint": ""}],
-        "event_id": "",
-    }])
-    turn = int(state.turn)
-    d_key = str(db.list_rescript_desk(turn)[0]["decision_key"])
-    # 手工把 context 升级为 ready（extracted 非空）：模拟「phase2 已抽取、settle 曾 abort」。
-    db.save_resolve_context(
-        turn, "诏", "邸报", {"candidate_events": []},
-        secret_orders=[],
-        extracted={"metric_delta": {}},
-    )
-    ctx = db.get_resolve_context(turn)
-    assert ctx is not None and ctx.get("extracted") is not None
-
-    phase2_calls: list[int] = []
-
-    def _phase2(_state, _db, *_a, **_k):
-        phase2_calls.append(1)
-        return "不应到此"
-
-    monkeypatch.setattr(session_mod, "resolve_decisions_phase2", _phase2)
-
-    bad_batches = (
-        [{"label": "战"}],  # 缺键
-        [
-            {"decision_key": d_key, "label": "战"},
-            {"decision_key": d_key, "label": "和"},
-        ],  # 重复键
-        [{"decision_key": "decision:9999:0", "label": "战"}],  # desk 外未知键
-    )
-    for bad in bad_batches:
-        state.turn_phase = TurnPhase.AWAITING_DECISION.value
-        db.save_state(state)
-        r = asyncio.run(_post_resolve(bad))
-        assert r.status_code == 200, r.text
-        assert "event: error" in r.text, r.text
-        assert "event: done" not in r.text, r.text
-
-    assert phase2_calls == [], "缺键/重复键/未知键均须整批拒，phase2 不得被调用"
-    ctx_after = db.get_resolve_context(turn)
-    assert ctx_after is not None and ctx_after.get("extracted") is not None, (
-        "整批拒不得清空/覆盖冻结的 ready extracted"
-    )
-    row = db.list_pending_decisions(turn)[0]
-    assert row["status"] == "pending"
-    assert row["choice"] is None
-
-    # 有效 key + 无关畸形字段不得挡 extracted_ready 的 phase2 重放
-    state.turn_phase = TurnPhase.AWAITING_DECISION.value
-    db.save_state(state)
-    r_ok = asyncio.run(_post_resolve([
-        {"decision_key": d_key, "label": "战", "dossier_id": "stale"},
-    ]))
-    assert r_ok.status_code == 200, r_ok.text
-    assert "event: error" not in r_ok.text, r_ok.text
-    assert "event: done" in r_ok.text, r_ok.text
-    assert phase2_calls == [1], "有效 key 携无关字段须进入冻结 extracted 的 phase2 重放"
 
 
 def test_1589_empty_desk_rejects_nonempty_keyless_choices(web_game, monkeypatch):
@@ -2892,7 +2785,6 @@ def test_1589_empty_desk_rejects_nonempty_keyless_choices(web_game, monkeypatch)
     assert r2.status_code == 200, r2.text
     assert "event: done" in r2.text, r2.text
     assert phase2_calls == [1], "真正空 choices 续跑仍合法，走 submit_decisions"
-
 
 def test_657_s5_http_generator_failure_blocks_phase2_and_same_body_retry(
     web_game, monkeypatch,
@@ -2973,7 +2865,6 @@ def test_657_s5_http_generator_failure_blocks_phase2_and_same_body_retry(
     assert TAG_ENTER in tags
     assert str(rows[0]["body"] or "").strip() == "杨嗣昌再入殿。"
 
-
 def test_657_s6_http_present_target_gets_unique_origin_body(web_game, monkeypatch):
     """S6：目标已在场，真 HTTP summon → 该 origin 恰一条 TAG_ENTER，body==generator。"""
     from ming_sim.audience_night import (
@@ -3027,7 +2918,6 @@ def test_657_s6_http_present_target_gets_unique_origin_body(web_game, monkeypatc
     tags = json.loads(rows[0]["tags"] or "[]")
     assert TAG_ENTER in tags
     assert str(rows[0]["body"] or "") == gen_body
-
 
 def test_657_web_http_hitl_lock_boundary_same_gate(web_game, monkeypatch):
     """Class4/S2 web 生产调用：真 HTTP → submit_hitl；①/③ 持同一 gate，② 释放。"""
@@ -3106,7 +2996,6 @@ def test_657_web_http_hitl_lock_boundary_same_gate(web_game, monkeypatch):
     assert "commit" in kinds and "join_free" in kinds and "finish" in kinds
     assert any(k == "join_free" and v for k, v in events)
 
-
 def test_657_illegal_summon_target_http_zero_writes(web_game, monkeypatch):
     """非法 summon target → 公共 HTTP 零 choice 落库、零 decided、零 scaffold。"""
     from ming_sim.models import TurnPhase
@@ -3147,7 +3036,6 @@ def test_657_illegal_summon_target_http_zero_writes(web_game, monkeypatch):
         "SELECT COUNT(*) AS c FROM story_ledger_entries"
     ).fetchone()["c"]
     assert ledger_after == ledger_before
-
 
 def test_1620_http_follow_draft_office_token_routes_to_person(web_game, monkeypatch):
     """#1620 A：真 HTTP follow 职司 token → 真人 executor；真 phase2 可推月。"""
@@ -3211,7 +3099,6 @@ def test_1620_http_follow_draft_office_token_routes_to_person(web_game, monkeypa
     # 真 phase2 契约：消费成功且月可推
     assert int(web_game.state.turn) == turn_before + 1
 
-
 def test_1620_http_follow_draft_grant_uses_stored_amount(web_game, monkeypatch):
     """#1620 B：完整 grant option + 浏览器精简 follow（无 amount/account）真 HTTP 成案。"""
     from ming_sim.models import TurnPhase
@@ -3272,7 +3159,6 @@ def test_1620_http_follow_draft_grant_uses_stored_amount(web_game, monkeypatch):
     assert int(payload.get("amount") or 0) == 500
     assert str(payload.get("grant_action") or "") == "赏赉"
 
-
 def test_1620_layer_a_money_grant_requires_positive_amount():
     """#1620：层 A shape 独掌 grant——正 amount/honorific/私库 + 非法 action/非积分 amount。"""
     from ming_sim.rescript_draft import normalize_rescript_layer_a_option
@@ -3323,7 +3209,6 @@ def test_1620_layer_a_money_grant_requires_positive_amount():
     })
     assert honor.get("grant_action") == "加衔"
     assert "amount" not in honor
-
 
 def test_1620_materialize_rejects_illegal_account_like_shape(
     game, monkeypatch, tmp_path,
@@ -3413,7 +3298,6 @@ def test_1620_materialize_rejects_illegal_account_like_shape(
         assert all(row["source"] == "player_decree" for row in ledger)
         assert all(row["reason"] for row in ledger)
 
-
 def test_657_follow_draft_ignores_client_field_overlay(game):
     """Spec1/A12：同 capability 不得靠客户端字段 overlay 改机械载荷。"""
     from ming_sim import rescript_actions as ra
@@ -3459,7 +3343,6 @@ def test_657_follow_draft_ignores_client_field_overlay(game):
     assert "不存在的人" not in str(payload.get("assignee_name") or "")
     assert "不存在的人" not in str(created.get("executor_id") or "")
 
-
 def test_657_midzhi_persists_decision_key_and_llm_label(game):
     """Spec2 + P7：midzhi payload 带 decision_key；decree_text 用 LLM label 非固定钮文。"""
     from ming_sim import rescript_actions as ra
@@ -3496,7 +3379,6 @@ def test_657_midzhi_persists_decision_key_and_llm_label(game):
             {k: v for k, v in choice.items() if k != "decision_key"},
             mode="midzhi", db=db, content=content, state=state,
         )
-
 
 def test_657_midzhi_verdict_no_party_satisfaction(game):
     """Spec3/§C.8：midzhi 判决不写派系 satisfaction，且不落库猜派。"""
@@ -3541,7 +3423,6 @@ def test_657_midzhi_verdict_no_party_satisfaction(game):
     ).fetchone()
     parties = json.loads(str(stored["affected_parties_json"] or "[]"))
     assert parties == []
-
 
 def test_657_summon_missing_tag_enter_blocks_phase2_then_retry(
     web_game, monkeypatch,
@@ -3645,7 +3526,6 @@ def test_657_summon_missing_tag_enter_blocks_phase2_then_retry(
     assert TAG_ENTER in tags
     assert str(rows[0]["body"] or "").strip() == gen_body
 
-
 # ---------------------------------------------------------------------------
 # #657 大理寺六类：扩展既有 tracer，不另造夹具族
 # ---------------------------------------------------------------------------
@@ -3684,7 +3564,6 @@ def test_657_preferred_hitl_choice_urgent_follow_draft_ordinary_intact():
     assert pref2["dossier_decision"] == "hold"
     assert "follow_draft" not in str(pref2.get("action") or "")
 
-
 def test_1682_phase2_surfaces_ambiguous_stored_choice(game):
     """批红真入口拒绝同名选项，且拒绝前不得落亲裁。"""
     from contextlib import nullcontext
@@ -3708,7 +3587,6 @@ def test_1682_phase2_surfaces_ambiguous_stored_choice(game):
     with pytest.raises(ValueError, match="重复"):
         session.submit_hitl_choices(choice, write_gate=nullcontext())
     assert db.list_pending_decisions(int(state.turn))[0]["status"] == "pending"
-
 
 def test_657_consumed_scaffold_finalized_on_retry(game):
     """④ consumed origin 短路时 scaffold 仍须落 consumed 终态（禁 generating 永挂）。"""
@@ -3745,7 +3623,6 @@ def test_657_consumed_scaffold_finalized_on_retry(game):
     ).fetchone()
     assert str(st["status"]) == "consumed"
 
-
 def test_657_clear_revise_anchor_corrupt_json_fails_loud(game):
     """④ 清锚扫描：choice_json 损坏 / 非 object → 响亮失败，禁静默跳过。"""
     from ming_sim import rescript_actions as ra
@@ -3770,7 +3647,6 @@ def test_657_clear_revise_anchor_corrupt_json_fails_loud(game):
     with pytest.raises(ValueError, match="非 object"):
         ra.clear_return_revise_choice_anchors(db, None)
 
-
 def test_657_default_hold_preserves_red_pen_note(game):
     """⑤ 默认 hold 保留朱笔 note。"""
     from ming_sim import rescript_actions as ra
@@ -3786,7 +3662,6 @@ def test_657_default_hold_preserves_red_pen_note(game):
     assert key in batch.default_hold_keys
     assert batch.items[0].choice.get("action") == "hold"
     assert batch.items[0].choice.get("note") == "着再议。"
-
 
 def test_657_appointment_name_target_id_conflict_batch_reject(game):
     """⑥ appointment/dismiss name≠target_id 在 mapper 单一边界整批拒绝。"""
@@ -3826,7 +3701,6 @@ def test_657_appointment_name_target_id_conflict_batch_reject(game):
             },
             db=db, content=content, state=state,
         )
-
 
 def test_657_punishment_name_target_id_conflict_zero_writes(web_game, monkeypatch):
     """punishment name≠target_id → 整批拒；真 HTTP 零 dossier/character 写。"""
@@ -3922,7 +3796,6 @@ def test_657_punishment_name_target_id_conflict_zero_writes(web_game, monkeypatc
     hit = next(row for row in db.list_rescript_drafts() if row["title"] == "惩处冲突")
     assert hit["status"] == "pending"
     assert hit.get("choice") in (None, {},)
-
 
 def test_657_revise_deliberate_strict_contracts_zero_write_on_bad_shape(game, monkeypatch):
     """revise 拒 monthly items[]/目录外军/无 kind 直写协饷；deliberate 拒缺 stance；合法进 prewrite。"""
@@ -4092,7 +3965,6 @@ def test_657_revise_deliberate_strict_contracts_zero_write_on_bad_shape(game, mo
     assert hit2["status"] == "pending"
     assert hit2.get("choice") in (None, {},)
 
-
 def test_657_summon_single_flight_concurrent_http(web_game, monkeypatch):
     """summon 同 body 并发：单 chat_turn / 单 ledger body / 单月推进；失败后可重入。"""
     import threading
@@ -4184,7 +4056,6 @@ def test_657_summon_single_flight_concurrent_http(web_game, monkeypatch):
         "SELECT status FROM chat_turns WHERE id=?", (ctid,),
     ).fetchone()["status"] == "consumed"
 
-
 def test_1625_phase1_publication_projects_only_coherent_recovery_tuples(web_game):
     """#1625：真实 GET 横穿 phase1 发布时，旧相位必须携带 typed in-flight。"""
     db, original_state = web_game.db, web_game.state
@@ -4250,7 +4121,6 @@ def test_1625_phase1_publication_projects_only_coherent_recovery_tuples(web_game
     assert durable["settlement_entry_inflight"] is False
     assert durable["pending_decisions"] == desk_holder["desk"]
     assert durable["resume_phase2"] is False
-
 
 def test_1625_inflight_phase2_does_not_advertise_resume(web_game, monkeypatch):
     """#1625：在飞 phase2 吃空案头时 GET 不得 resume_phase2。
@@ -4374,7 +4244,6 @@ def test_1625_inflight_phase2_does_not_advertise_resume(web_game, monkeypatch):
     assert done.get("resume_phase2") is False
     assert done.get("settlement_entry_inflight") is False
 
-
 def test_657_resume_phase2_signal_empty_desk_http(web_game, monkeypatch):
     """crash 后 desk 空 pending：state_payload.resume_phase2；空 POST stream 完成 phase2。"""
     from ming_sim.models import TurnPhase
@@ -4421,7 +4290,6 @@ def test_657_resume_phase2_signal_empty_desk_http(web_game, monkeypatch):
     assert r.status_code == 200
     # durable：空 POST 续跑完成 → 月推进；不解析 SSE 自由文本
     assert int(web_game.state.turn) == turn_before + 1
-
 
 def test_657_applied_revise_refresh_resumes_without_hold(web_game, monkeypatch):
     """已应用 return_revise 仍 pending：真 GET 不把它当待裁；空 POST 清锚、不留中、不双增。"""
@@ -4513,13 +4381,11 @@ def test_657_applied_revise_refresh_resumes_without_hold(web_game, monkeypatch):
     assert hit["status"] == "pending"
     assert not (hit["choice"] or {})
 
-
 def _summonable_name(db, content):
     from ming_sim import rescript_actions as ra
     ids = ra.list_deliberation_candidate_ids(db, content)
     assert ids, "fixture 须有可召大臣"
     return ids[0]
-
 
 def _658_plant_stalled_deliberation(db, state, content, *, title="议而不决"):
     """最短：经 deliberate 真写核种一条 stalled 案卷 + active issue。"""
@@ -4543,7 +4409,6 @@ def _658_plant_stalled_deliberation(db, state, content, *, title="议而不决")
     stalled = db.find_deliberation_dossier_by_decision_key(key)
     assert stalled is not None
     return stalled, key
-
 
 def test_658_stalled_excluded_from_promulgation_validation(game, monkeypatch):
     """冷场案卷不进过月补跑判官；同月普通案卷仍补跑。"""
@@ -4585,7 +4450,6 @@ def test_658_stalled_excluded_from_promulgation_validation(game, monkeypatch):
         "deliberation_state",
     ) == "stalled"
 
-
 def _658_session(db, state, content, *, agent=None):
     """最小真 GameSession 壳：只填 chat/add_directive 所需属性。"""
     from types import SimpleNamespace
@@ -4606,10 +4470,8 @@ def _658_session(db, state, content, *, agent=None):
             def get(self, _character, **_kw):
                 return agent
 
-
         sess.registry = _Registry()
     return sess
-
 
 def test_658_deliberate_backed_and_stalled_dossier_first(game):
     """#658：有站台 → backed+当面站台背书；无人 → stalled+dossier: issue；非法身份零写。"""
@@ -4694,7 +4556,6 @@ def test_658_deliberate_backed_and_stalled_dossier_first(game):
         )
     assert len(db.list_decree_dossiers()) == dossiers_before
     assert db.find_deliberation_dossier_by_decision_key(key3) is None
-
 
 def test_658_backing_credit_on_punish_promulgation(game, monkeypatch):
     """#658：正向 chat→commit→verdict 写辜负；零写与同批后案失败回滚在同一 applier 夹具。"""
@@ -4886,7 +4747,6 @@ def test_658_backing_credit_on_punish_promulgation(game, monkeypatch):
     assert db.get_decree_dossier(first_id)["status"] == "proposed"
     assert db.get_decree_dossier(second_id)["status"] == "proposed"
 
-
 def test_658_stage_rejects_bad_backing_zero_write(game):
     """#658：stage 首写接缝拒坏 shape / 不存在 id；pending/案卷/信用零写。"""
     from ming_sim.action_materialize import stage_punishment_candidate
@@ -4967,7 +4827,6 @@ def test_658_stage_rejects_bad_backing_zero_write(game):
     ).fetchone()["payload_json"])
     assert staged2.get("backing_dossier_id") in (None, "")
 
-
 def test_658_endorsement_provenance_xor(game):
     """#658：背书 provenance 恰为 chat_turn 或 decision_key 之一。"""
     db, state, content = game
@@ -4999,7 +4858,6 @@ def test_658_endorsement_provenance_xor(game):
             did, form="会签", endorser_id=minister,
         )
 
-
 def test_658_candidates_require_active_status(game):
     """#658：罢黜等非 active 不得入廷议站台候选。"""
     from ming_sim import rescript_actions as ra
@@ -5027,7 +4885,6 @@ def test_658_candidates_require_active_status(game):
             content=content,
         )
     assert len(db.list_decree_dossiers()) == before
-
 
 def test_658_free_decree_capture_target_dossier_real_entry(game, monkeypatch):
     """#658：Web 真入口 → 真实 resolve_directives 成案/颁布/仿真/封驳三选/restore。"""
@@ -5175,7 +5032,6 @@ def test_658_free_decree_capture_target_dossier_real_entry(game, monkeypatch):
     finally:
         reopened.close()
 
-
 def test_658_typed_target_and_backing_reject_bad_shapes(game, monkeypatch):
     """#658：typed 解析边界表驱动 + 一条外部入口零写（不跨裸值/双别名/session 全排列）。"""
     from ming_sim.db import imperial_push_target_dossier_id, parse_backing_dossier_id
@@ -5321,7 +5177,6 @@ def test_658_typed_target_and_backing_reject_bad_shapes(game, monkeypatch):
         "deliberation_state",
     ) == "stalled"
 
-
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_658_routing_rejected_draft_retries_across_real_turn_boundaries(
     game, monkeypatch, tmp_path,
@@ -5451,7 +5306,6 @@ def test_658_routing_rejected_draft_retries_across_real_turn_boundaries(
     )
     assert provenance["source"] == "player-decree-test"
 
-
 def test_658_ordinary_edit_does_not_inherit_push_target(game):
     """#658：普通 triad 改草不得继承旧强推 target。"""
     db, state, content = game
@@ -5505,7 +5359,6 @@ def test_658_ordinary_edit_does_not_inherit_push_target(game):
     assert "target_kind" not in staged
     assert "target_id" not in staged
 
-
 def test_658_mixed_ordinary_triad_and_target_rejected(game, monkeypatch):
     """#658：普通 triad + target 矛盾载荷——一条真实入口零写（禁 classifier/session/backend 三份）。"""
     import ming_sim.cli_backend as cli_backend
@@ -5536,7 +5389,6 @@ def test_658_mixed_ordinary_triad_and_target_rejected(game, monkeypatch):
     assert db.conn.execute(
         "SELECT COUNT(*) AS c FROM turn_directives"
     ).fetchone()["c"] == before_dirs
-
 
 def test_658_chat_staging_preserves_push_target(game, monkeypatch):
     """#658：对话拟旨经共享生产接缝 stage→commit→成案，复用同案卷。"""
@@ -5595,7 +5447,6 @@ def test_658_chat_staging_preserves_push_target(game, monkeypatch):
         "SELECT status FROM issues WHERE origin_ref=?", (f"dossier:{did}",),
     ).fetchone()
     assert issue is not None and str(issue["status"]) == "resolved"
-
 
 def test_658_endorsement_old_schema_migration_preserves_rows(tmp_path, content):
     """#658：旧背书表（chat FK、无 decision_key）升级保行数/id/provenance，新 XOR 可写。"""
@@ -5684,7 +5535,6 @@ def test_658_endorsement_old_schema_migration_preserves_rows(tmp_path, content):
     finally:
         reopened.close()
 
-
 # ---------------------------------------------------------------------------
 # #1778：参与名单由拟票大臣写进票拟；成案钉进案卷；代码不配人
 # ---------------------------------------------------------------------------
@@ -5742,7 +5592,6 @@ def _1778_raw_options():
         },
     }
 
-
 def _1778_generate(monkeypatch, db, state, items):
     """真实票拟生成入口（canned run_agent_text，无 live LLM）。"""
     import ming_sim.rescript_draft as draft_mod
@@ -5765,14 +5614,12 @@ def _1778_generate(monkeypatch, db, state, items):
         int(state.turn),
     )
 
-
 def _1778_roster_of(option):
     return [
         (str(e.get("character_id") or ""), str(e.get("tier") or ""))
         for e in (option.get("participant_roster") or [])
         if isinstance(e, dict)
     ]
-
 
 def _1778_plant_and_follow(web_game, monkeypatch, drafts, *, desk_action="follow_draft"):
     """落桌 → GET /api/game/state 看见票面名单 → 逐条 follow_draft/midzhi 成案。
@@ -5856,7 +5703,6 @@ def _1778_plant_and_follow(web_game, monkeypatch, drafts, *, desk_action="follow
         if int(d["id"]) not in before
     ]
     return {str(d["decree_text"] or ""): d for d in created}
-
 
 def test_1778_drafted_roster_rides_to_pihong_and_nails_the_dossier(
     web_game, monkeypatch, tmp_path,
@@ -5960,7 +5806,6 @@ def test_1778_drafted_roster_rides_to_pihong_and_nails_the_dossier(
     assert mid.get("mode") == "midzhi"
     assert mid["region_id"] == ""
     assert _1778_roster_of(mid) == [(_ROSTER_LEAD, "主办")]
-
 
 def test_1778_missing_roster_heals_then_error_pack_without_assigning_anyone(
     web_game, monkeypatch, tmp_path,

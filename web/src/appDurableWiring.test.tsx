@@ -1057,7 +1057,6 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     const paths: string[] = [];
     let liveState = settlementBaseState("settling", {
       settlement_recovery: {
-        ready_replay: true,
         error_pack_path: "/tmp/error_packs/turn5_attempt1",
         message: "abort-guidance",
       },
@@ -1103,7 +1102,7 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     unmountTrackedRoots();
     paths.length = 0;
     liveState = settlementBaseState("settling", {
-      settlement_recovery: { ready_replay: false, message: "stopped", error_pack_path: "" },
+      settlement_recovery: { message: "stopped", error_pack_path: "" },
       directives: [],
     });
     const reopened = await mountApp();
@@ -1537,6 +1536,78 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     }
   });
 
+  it("#1852 SSE 推演事件不驱动等待面：无进度条 / 无推敲 / 无 SettlementLock", async () => {
+    let streamController!: ReadableStreamDefaultController<Uint8Array>;
+    const encoder = new TextEncoder();
+    const liveState = settlementBaseState("settling", {
+      settlement_recovery: {
+        error_pack_path: "/tmp/error_packs/turn5_attempt1",
+        message: "abort-guidance",
+      },
+    });
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      const u = new URL(String(url), "http://t.local");
+      if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
+      if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
+      if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
+      if (u.pathname.endsWith("/api/game/state")) return jsonResp(liveState);
+      if (u.pathname.endsWith("/api/history/turns")) return jsonResp({
+        turns: [{ kind: "month", turn: 4, year: 1627, period: 9, has_report: true, has_attendant: false, has_directive: true }],
+      });
+      if (u.pathname.includes("/api/history/turn/")) return jsonResp({
+        turn: 4, year: 1627, period: 9, report: SNAP_GAZETTE, decree: "",
+      });
+      if (u.pathname.endsWith("/api/court_layout")) return jsonResp({ layout: "{}" });
+      if (u.pathname.endsWith("/api/decree/issue/stream") && init?.method === "POST") {
+        return new Response(new ReadableStream<Uint8Array>({
+          start(controller) { streamController = controller; },
+        }), { status: 200, headers: { "Content-Type": "text/event-stream" } });
+      }
+      return jsonResp({});
+    }));
+
+    const host = await mountApp();
+    const resume = host.querySelector('[data-testid="settle-resume"] button') as HTMLButtonElement | null;
+    expect(resume).not.toBeNull();
+    await click(resume);
+
+    await act(async () => {
+      await vi.waitFor(() => expect(streamController).toBeTruthy());
+    });
+
+    await act(async () => {
+      streamController.enqueue(encoder.encode(
+        'event: stage\ndata: {"content":"任意显示文案","current":3,"total":6}\n\n',
+      ));
+      streamController.enqueue(encoder.encode(
+        'event: thinking\ndata: {"content":"推敲片段甲"}\n\n',
+      ));
+      streamController.enqueue(encoder.encode(
+        'event: text\ndata: {"content":"奏章片段乙"}\n\n',
+      ));
+    });
+
+    await act(async () => { await Promise.resolve(); });
+    expect(host.querySelector('[data-testid="settlement-wait-progress"]')).toBeNull();
+    expect(host.querySelector("[data-testid=settlement-lock-decor]")).toBeNull();
+    expect(host.querySelector(".settlement-lock")).toBeNull();
+    expect(host.textContent).not.toContain("推敲片段甲");
+    expect(host.textContent).not.toContain("奏章片段乙");
+    expect(host.textContent).not.toContain("任意显示文案");
+    // 核账叙事仍在（王承恩固定提示）
+    expect(host.querySelector("[data-testid=wang-settlement-slip]")).not.toBeNull();
+
+    await act(async () => {
+      streamController.enqueue(encoder.encode(
+        `event: decisions\ndata: ${JSON.stringify({ decisions: [validDecision] })}\n\n`,
+      ));
+      streamController.close();
+    });
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[data-testid="decision-modal"]')).not.toBeNull());
+    });
+  });
+
   it("#1796 有草案点盖玺：拟诏台立即收起，核账期面，灰钮不可见", async () => {
     // 真实入口：开拟诏 → 盖玺 → busy 同会话立即切面；流挂起期间断言外可见结果。
     // settlement_display 持久真源不升格；流终态走 decisions 避免完成路径。
@@ -1710,7 +1781,7 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
   it("settling 恢复：长错误包路径下统一横幅可点；刷新重挂后仍在", async () => {
     const errorPackPath = `/${"long-directory/".repeat(24)}error-pack`;
     stubSettlementFetch(settlementBaseState("settling", {
-      settlement_recovery: { message: "结算中止", ready_replay: true, error_pack_path: errorPackPath },
+      settlement_recovery: { message: "结算中止", error_pack_path: errorPackPath },
     }));
     const host = await mountApp();
     await act(async () => {
@@ -1852,7 +1923,6 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     let liveState: Record<string, unknown> = settlementBaseState("settling", {
       settlement_recovery: {
         message: "上月结算未完成（进度已保存）。",
-        ready_replay: true,
         error_pack_path: "/tmp/error_packs/turn5_attempt1",
       },
       previous_summary: "",

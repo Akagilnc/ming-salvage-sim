@@ -462,12 +462,10 @@ export type GameState = {
   /** #1625：结算入口进程内在飞；刷新/重拉只等待，不打回或续跑。 */
   settlement_entry_inflight?: boolean;
   /**
-   * #1620 / #1846 / ADR 0008 决定 6/7：settling 恢复面投影。
-   * message 含错误包路径与发给作者指引；前端统一一行一钮「重试」。
+   * #1846：settling 恢复面投影。message / error_pack_path 给同一颗「重试」；无 ready 重放分流。
    */
   settlement_recovery?: {
-    ready_replay: boolean;
-    /** #1846：核账期失败可点「重试」；legacy ready 重放亦为 true */
+    /** #1846：核账期失败可点「重试」 */
     retryable?: boolean;
     error_pack_path: string;
     message: string;

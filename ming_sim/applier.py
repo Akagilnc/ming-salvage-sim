@@ -304,7 +304,6 @@ CREATE TABLE IF NOT EXISTS rejection_reports (
     category TEXT    NOT NULL,
     source   TEXT    NOT NULL,
     attempt  INTEGER NOT NULL DEFAULT 1,
-    resimulation_invalidated INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 """
@@ -351,14 +350,6 @@ class RejectionCollector:
         空缓冲时直接返回（幂等）。
         """
         db.conn.execute(_CREATE_REJECTION_REPORTS)
-        cols = {
-            str(row[1]) for row in db.conn.execute("PRAGMA table_info(rejection_reports)").fetchall()
-        }
-        if "resimulation_invalidated" not in cols:
-            db.conn.execute(
-                "ALTER TABLE rejection_reports "
-                "ADD COLUMN resimulation_invalidated INTEGER NOT NULL DEFAULT 0"
-            )
         if not self._buffer:
             return
         db.conn.executemany(

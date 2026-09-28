@@ -16,10 +16,6 @@ import pytest
 import ming_sim.decree as decree_mod
 from ming_sim.exceptions import SettlementAbort
 
-
-
-
-
 def test_attempt_derived_from_existing_dirs(game, monkeypatch, tmp_path):
     """同 turn 写两次包 → attempt=1,2（从错误目录文件数推导，不从 DB）。"""
     from ming_sim.error_pack import write_error_pack
@@ -36,7 +32,6 @@ def test_attempt_derived_from_existing_dirs(game, monkeypatch, tmp_path):
     assert m2["attempt"] == 2
     assert Path(p1) != Path(p2)
 
-
 def test_write_error_pack_inside_atomic_is_rejected(game, monkeypatch, tmp_path):
     """在 atomic 内写包 → backup_to 守卫响亮拒绝（钉住「包必须在 atomic 外」约束）。"""
     from ming_sim.applier import atomic
@@ -52,74 +47,10 @@ def test_write_error_pack_inside_atomic_is_rejected(game, monkeypatch, tmp_path)
 
 
 
-def test_clear_for_resimulation_downgrades_context_keeps_settling(game):
-    """重新推演逃生口：context 降级非 ready（保 phase1 字段），settling 相位不动。
-
-    整行删除会毁掉 HITL 重抽的数据依赖（phase1 叙事/payload 唯一副本）并造成
-    awaiting 叉新软死锁（cmr S7 r3，2/2）。
-    """
-    from ming_sim.error_pack import clear_for_resimulation
-    from ming_sim.models import TurnPhase
-    db, state, content = game
-    turn = state.turn
-
-    # 立一个 ready 的 resolve_context + settling 相位。
-    db.save_resolve_context(turn, "d", "n", {"k": "v"},
-                            secret_orders=[],
-                            extracted={"metric_delta": {"国库": 1}})
-    state.turn_phase = TurnPhase.SETTLING.value
-    db.save_state(state)
-    assert db.get_resolve_context(turn) is not None
-
-    clear_for_resimulation(db, turn)
-
-    # 降级：LLM 段产出清除、phase1 字段保留。
-    ctx = db.get_resolve_context(turn)
-    assert ctx is not None
-    assert ctx["extracted"] is None
-    assert ctx["decree_text"] == "d"
-    assert ctx["narrative"] == "n"
-    assert ctx["simulator_payload"] == {"k": "v"}
-    # settling 相位不动（DB 与内存都仍为 settling）。
-    assert state.turn_phase == TurnPhase.SETTLING.value
-    assert db.load_state().turn_phase == TurnPhase.SETTLING.value
-    db.clear_resolve_context(turn)
 
 
-def test_clear_for_resimulation_preserves_source(game):
-    """降级回写须保留 provenance source（#144 cmr r1 回归）。
-
-    clear_for_resimulation 回读 phase1 字段重建 context；source 是 #144 新增的
-    phase1 持久字段，恢复重放据此判玩家可见性。若回写漏传 source，会被
-    save_resolve_context 默认 system_simulation 盖掉，使降级路径静默吞掉
-    player_decree/hitl_decision 来源 → 恢复后玩家可见拒收提示丢失。
-    """
-    from ming_sim.error_pack import clear_for_resimulation
-    db, state, content = game
-    turn = state.turn
-
-    db.save_resolve_context(turn, "d", "n", {"k": "v"},
-                            secret_orders=[],
-                            extracted={"metric_delta": {"国库": 1}},
-                            source="player_decree")
-    assert db.get_resolve_context(turn)["source"] == "player_decree"
-
-    clear_for_resimulation(db, turn)
-
-    ctx = db.get_resolve_context(turn)
-    assert ctx is not None
-    assert ctx["extracted"] is None, "LLM 段产出仍应清除"
-    assert ctx["source"] == "player_decree", "玩家来源须随降级保留，不被默认 system_simulation 盖回"
-    db.clear_resolve_context(turn)
 
 
-def test_clear_for_resimulation_noop_when_no_context(game):
-    """无 context 行时逃生口 no-op（分支双侧）。"""
-    from ming_sim.error_pack import clear_for_resimulation
-    db, state, content = game
-    db.clear_resolve_context(state.turn)
-    clear_for_resimulation(db, state.turn)
-    assert db.get_resolve_context(state.turn) is None
 
 
 def test_rejections_jsonl_path_in_error_dir(monkeypatch, tmp_path):
@@ -130,7 +61,6 @@ def test_rejections_jsonl_path_in_error_dir(monkeypatch, tmp_path):
     jsonl = Path(rejections_jsonl_path())
     assert jsonl.parent == error_packs_root()
     assert jsonl.name == "rejections.jsonl"
-
 
 # ---------------------------------------------------------------------------
 # cmr S6 r1 修复回归（F2 attempt 防覆盖 / F3 mirror 父目录 / F4 中断不降级）
@@ -155,7 +85,6 @@ def test_attempt_never_overwrites_existing_pack(game, tmp_path, monkeypatch):
     assert pack.endswith("attempt3")  # max+1，不是 len+1=2
     assert (stale / "manifest.json").read_text(encoding="utf-8") == '{"sentinel": "keep me"}'
 
-
 def test_mirror_writes_to_rejections_jsonl_path(game, tmp_path, monkeypatch):
     """rejections_jsonl_path 开箱可写：父目录就位，mirror 直接 append（cmr S6 r1 F3）。"""
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
@@ -174,7 +103,6 @@ def test_mirror_writes_to_rejections_jsonl_path(game, tmp_path, monkeypatch):
 
     lines = open(path, encoding="utf-8").readlines()
     assert len(lines) == 1
-
 
 def test_web_issue_endpoint_returns_structured_abort(monkeypatch):
     """SettlementAbort 在 /api/decree/issue 回结构化非 500，玩家看得到指引（cmr S6 r2 codex）。"""
@@ -212,9 +140,6 @@ def test_web_issue_endpoint_returns_structured_abort(monkeypatch):
     assert "可重试" in str(ei.value.detail)
     assert "错误包" in str(ei.value.detail)
 
-
-
-
 def test_next_attempt_skips_malformed_and_foreign_entries(game, monkeypatch, tmp_path):
     """attempt 推导跳过畸形后缀/他 turn/非目录项，取本 turn 数字后缀 max+1
     （PR #90 R3 sourcery：钉 _next_attempt 防御分支）。"""
@@ -235,7 +160,6 @@ def test_next_attempt_skips_malformed_and_foreign_entries(game, monkeypatch, tmp
     m = json.loads((Path(p) / "manifest.json").read_text(encoding="utf-8"))
     assert m["attempt"] == 8  # 7+1，不被 X/99/文件项带偏
 
-
 def test_version_read_failure_falls_back_to_unknown(game, monkeypatch, tmp_path):
     """VERSION 缺失/读失败 → manifest.version='unknown'，写包不失败
     （PR #90 R3 sourcery：钉 _read_version 防御分支）。"""
@@ -250,55 +174,3 @@ def test_version_read_failure_falls_back_to_unknown(game, monkeypatch, tmp_path)
 
     m = json.loads((Path(p) / "manifest.json").read_text(encoding="utf-8"))
     assert m["version"] == "unknown"
-
-
-def test_clear_for_resimulation_preserves_audience_decree_rows(game):
-    """T4：重模拟作废范围排除召对段；settlement 段仍作废。"""
-    from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
-    from ming_sim.error_pack import clear_for_resimulation
-
-    db, state, _content = game
-    turn = state.turn
-    collector = RejectionCollector()
-    collector.record(
-        "audience_decree",
-        RejectedItem(
-            item={"kind": "draft"},
-            reason="audience validation",
-            category="decree_validation",
-            source=Provenance.player_decree,
-        ),
-        turn,
-    )
-    collector.record(
-        "region_delta",
-        RejectedItem(
-            item={"raw_value": []},
-            reason="settlement shape",
-            category="invalid_shape",
-            source=Provenance.player_decree,
-        ),
-        turn,
-    )
-    collector.flush_to_db(db)
-    db.conn.commit()
-
-    db.save_resolve_context(
-        turn, "d", "n", {"k": "v"},
-        secret_orders=[],
-        extracted={"metric_delta": {"国库": 1}},
-        source="player_decree",
-    )
-    clear_for_resimulation(db, turn)
-
-    rows = {
-        str(row["section"]): int(row["resimulation_invalidated"] or 0)
-        for row in db.conn.execute(
-            "SELECT section, resimulation_invalidated FROM rejection_reports WHERE turn=?",
-            (turn,),
-        ).fetchall()
-    }
-    assert rows["audience_decree"] == 0
-    assert rows["region_delta"] == 1
-    assert decree_mod._has_durable_player_visible_rejection(db, turn)
-    db.clear_resolve_context(turn)
