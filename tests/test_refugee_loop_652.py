@@ -474,6 +474,41 @@ def _force_in_transit_recovery_grant(db, state, *, amount=40, region_id="shaanxi
 
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
+def test_recovery_shared_pool_advances_once_after_empty_effect_month(game, monkeypatch):
+    """无效果月同省多案仅在推进时分配余池；读档重进不再扣。"""
+    db, state, content = game
+    db.conn.execute(
+        "UPDATE classes SET population=100000 WHERE name='流民' AND region_id='shaanxi'"
+    )
+    db.conn.commit()
+    _recovery_grant(db, state, amount=30)
+    _recovery_grant(db, state, amount=30)
+    before_farmers = _pop(db, "农民", "shaanxi")
+    canned_full_settlement(monkeypatch, skip_fixed_flows=True)
+    session = make_light_session(db, state, content)
+    waiting = session.advance_without_decree()
+    assert waiting.stage == "gazette"
+    assert _pop(db, "流民", "shaanxi") == 100000
+    closed_turn = state.turn
+    db.conn.execute(
+        "INSERT INTO turn_reports (turn, year, period, report) VALUES (?, ?, ?, ?)",
+        (closed_turn, state.year, state.period, "邸报已成"),
+    )
+    db.conn.commit()
+    assert session.advance_without_decree().advanced is True
+    assert _pop(db, "流民", "shaanxi") == 0
+    assert _pop(db, "农民", "shaanxi") == before_farmers + 100000
+    from ming_sim.db import GameDB
+    loaded = GameDB(_database_path(db), content)
+    try:
+        assert loaded.load_state().turn == closed_turn + 1
+        assert _pop(loaded, "流民", "shaanxi") == 0
+        assert _pop(loaded, "农民", "shaanxi") == before_farmers + 100000
+    finally:
+        loaded.close()
+
+
+@pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_in_transit_relief_stays_executing_before_gazette(game, monkeypatch):
     """次月无旨：真实强颁留下的在途赈灾，经世界段与转译落账，读档后仍在。
 
