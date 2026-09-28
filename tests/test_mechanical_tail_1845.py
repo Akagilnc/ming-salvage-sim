@@ -499,7 +499,12 @@ def test_chapter_memory_retired_from_three_readers(game, monkeypatch):
     )
     assert text == "史评"
     assert "timeline" not in seen["payload"]
-    assert seen["payload"]["gazettes"]
+    gazettes = seen["payload"]["gazettes"]
+    assert gazettes
+    for row in gazettes:
+        assert "body" in row and row["body"]
+        # 模型输入每期正文只一份，不另带 gazette 重复键
+        assert "gazette" not in row
     ending = db.get_ending_summary()
     assert ending is not None
     for row in ending["timeline"]:

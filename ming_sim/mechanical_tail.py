@@ -101,12 +101,12 @@ def generate_ending_summary_for_tail(
                 body = str(row.get("report") or row.get("body") or "").strip()
                 if not body:
                     continue
+                # 模型输入每期只保留一个正文键 body（与 ending_summary prompt 一致）。
                 loaded.append({
                     "turn": turn,
                     "year": int(row.get("year") or 0),
                     "period": int(row.get("period") or 0),
                     "body": body,
-                    "gazette": body,
                 })
         return loaded
 
@@ -132,13 +132,13 @@ def generate_ending_summary_for_tail(
     )
     if not summary_text:
         return ""
-    # 终章逐月历程与总评输入同源：同一份邸报列表，不再另建时间线。
+    # 终章 UI 历程从同一份已加载邸报投影 gazette，不另读、不把第二份正文送进模型。
     timeline = [
         {
             "turn": int(row["turn"]),
             "year": int(row["year"]),
             "period": int(row["period"]),
-            "gazette": str(row.get("gazette") or row.get("body") or ""),
+            "gazette": str(row.get("body") or ""),
         }
         for row in reports
     ]
