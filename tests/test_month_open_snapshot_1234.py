@@ -299,24 +299,14 @@ def test_capture_before_mutation_on_advance_without_edict(game, monkeypatch):
     assert db.get_month_open_snapshot(int(state.turn)) == before
 
 
-def test_settle_with_delta_expires_snapshot_inside_atomic(game):
-    """月推进完成：后半段 atomic 内过期快照（与 clear_resolve_context 同窗）。"""
-    import ming_sim.decree as dm
+def test_player_month_advance_expires_snapshot(game, monkeypatch):
+    """邸报完成后的真实月推进清除本月快照。"""
+    from tests.test_due_review_621 import _settle_empty_month
 
     db, state, content = game
     turn = int(state.turn)
     db.capture_month_open_snapshot(state)
-    state.turn_phase = TurnPhase.SETTLING.value
-    db.save_state(state)
-
-    report = dm.settle_with_delta(
-        state, db, {},
-        before_turn=turn,
-        content=content,
-        decree_text="d",
-        narrative="n",
-    )
-    assert isinstance(report, str)
+    _settle_empty_month(db, state, content, monkeypatch)
     assert db.get_month_open_snapshot(turn) is None
     assert state.turn == turn + 1
     payload = _runtime(db, state).state_payload()
