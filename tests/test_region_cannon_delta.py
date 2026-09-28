@@ -2,7 +2,7 @@
 
 城防炮（城头红夷炮）此前无 delta 写入路径：apply_region_cannon 已存在且带
 city_level×8 clamp，但零调用方；region_delta 带「城防炮」会被当非法字段拒。
-本组验证：经 run_settle / settle_with_delta 喂中文 schema delta，城防炮按 clamp 落库。
+本组验证：经声明落账喂中文 schema delta，城防炮按 clamp 落库。
 """
 
 from __future__ import annotations

@@ -1,5 +1,5 @@
 """新档冒烟（#96 release 清单 / #92 E2E 确定性核）：开新档 → driver.run_settle 跑 3 回合全链
-（pre_settle 固定财政 tick → settle_with_delta 落库/inertia/结局/推进，同真实核 ADR 0004）→
+（玩家月链 pre_settle → 逐段落账／月末漂移 → 邸报后推进）→
 restore 接续。含 #66 省级财政基座 shadow 推进的真实链路验证。无需 LLM（driver 收确定性 delta）。
 
 实玩（真 LLM 邸报/extractor + 浏览器多机兼容）是另一层，需真人 + LLM 后端，不在本确定性冒烟内。

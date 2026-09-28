@@ -3,7 +3,7 @@
 Seams:
 - apply_score_extraction / insert_issue（stages_json 落库；字符串面解析或响亮拒绝）
 - 生产 capture_commitment_stages（召对 materializer / 邸报 new_issues，「三年X五年Y」）
-- settle_with_delta 结算内确定性写 next_audience_todos
+- 玩家过月链确定性写 next_audience_todos
 - list_next_audience_todos 下一召对回合可读 + load_state restore 接续
 - 负向：不置 TurnPhase.AWAITING_DECISION；无 pending_decisions / <<DECISION>>
 """
@@ -572,11 +572,11 @@ def test_stage_due_dedup_key_is_commitment_id_times_stage_idx(game):
     assert all(int(t["commitment_ref"]) == issue_id for t in todos)
 
 
-# ── AC 负向：不停轮（真入口 settle_with_delta + 闸类一条）────────────
+# ── AC 负向：真实玩家过月不停轮 ────────────
 
 
 def test_stage_due_via_settle_does_not_pause_turn(game):
-    """经 settle_with_delta 真入口：段到期写 todo 后相位/pending_decisions/DECISION 均不停轮。"""
+    """经玩家过月入口：段到期写 todo 后相位和 pending_decisions 均不停轮。"""
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.commit()

@@ -1,7 +1,7 @@
 """#1345/#1382 A2 → #1274 QA J-1 改写 → #1382 last_report 耐久投影。
 
 原钉：快路 advance_without_edict 落正式月档（save_turn_report）。
-#1274 owner B-2：快路已废；无旨月走完整结算链，月档由 settle_with_delta 正常链落
+#1274 owner B-2：快路已废；无旨月走完整玩家月链，邸报归档后推进
 （DRY，禁两条结算路）。
 
 #1382 大理寺：`last_report` 不得靠 session 瞬态；状态口按 state.turn-1 读

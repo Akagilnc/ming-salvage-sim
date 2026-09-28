@@ -1,4 +1,4 @@
-"""pre_settle 行为测试（#1843 reopen：settle_with_delta 旧核已删）。"""
+"""玩家月链 pre_settle 行为测试。"""
 
 from __future__ import annotations
 
