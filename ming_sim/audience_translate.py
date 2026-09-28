@@ -263,6 +263,7 @@ def build_c0_declaration_shape() -> str:
         "    }\n"
         "  ],\n"
         '  "promises": [{"action_id": 正整数, "decision": "应允|拒绝|修改", '
+        '"mode": "拟旨应允时明确的 ordinary|midzhi（有则填）", '
         '"new_content": "仅修改新建密令时填完整正文"}],\n'
         '  "inquiries": [{"attendant": "受命近侍", "query": "所查之事"}],\n'
         '  "rushes": [{\n'

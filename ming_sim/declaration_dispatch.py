@@ -1754,6 +1754,14 @@ def _dispatch_promises(
             continue
         kind = str(row["kind"] or "")
         action = str(row["action"] or "")
+        declared_mode = item.get("mode")
+        if declared_mode is not None and (
+            kind != "directive" or decision != "应允"
+            or not isinstance(declared_mode, str)
+            or declared_mode not in {"ordinary", "midzhi"}
+        ):
+            _reject(rejected, item, "应允模式仅可指定普通/中旨拟旨", "invalid_shape", source)
+            continue
         applied_row: Dict[str, Any] = {
             "action_id": action_id, "decision": decision, "kind": kind, "action": action,
         }
@@ -1799,11 +1807,29 @@ def _dispatch_promises(
                         if oid_i > 0:
                             applied_row["secret_order_id"] = oid_i
                             break
-            elif int(row["night_approved"] or 0) == 1:
-                # 同版已应允：不再列入本轮 applied，夜间预推只在首次转换时起。
-                # 密令不走这里，回填仍读本轮落地行。
-                continue
             else:
+                changed = False
+                if kind == "directive" and declared_mode is not None:
+                    payload = json.loads(row["payload_json"] or "{}")
+                    if not isinstance(payload, dict):
+                        raise ValueError("拟旨候选载荷损坏")
+                    if payload.get("mode", "ordinary") != declared_mode:
+                        payload["mode"] = declared_mode
+                        if int(row["night_approved"] or 0):
+                            db._discard_pending_decree_forecast(action_id)
+                            db.conn.execute(
+                                "UPDATE pending_actions SET payload_json=?, version=version+1 WHERE id=?",
+                                (json.dumps(payload, ensure_ascii=False), action_id),
+                            )
+                        else:
+                            db.conn.execute(
+                                "UPDATE pending_actions SET payload_json=? WHERE id=?",
+                                (json.dumps(payload, ensure_ascii=False), action_id),
+                            )
+                        changed = True
+                if int(row["night_approved"] or 0) and not changed:
+                    # 同版重复应允不触发判官/推演（包含已耗尽的版本）。
+                    continue
                 db.mark_pending_night_approved(
                     [action_id], night_id=night_id or None,
                     source_chat_turn_id=chat_turn_id,

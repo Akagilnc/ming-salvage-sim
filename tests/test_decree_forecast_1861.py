@@ -266,17 +266,20 @@ def test_reapproval_changes_version_and_restarts_only_that_forecast(game, monkey
         month_translate, "run_declaration_translate_prompt",
         lambda *_a, **_k: {"commissions": []},
     )
-    sess = _sess(db, state, content, monkeypatch, lambda *_a, **_k: {})
+    approved_mode = [None]
+
+    def translate_fn(prompt, llm_config):
+        promise = {"action_id": pending_id, "decision": "应允"}
+        if approved_mode[0] is not None:
+            promise["mode"] = approved_mode[0]
+        return {**offline_empty_audience_translate(prompt, llm_config),
+                "promises": [promise]}
+
+    sess = _sess(db, state, content, monkeypatch, translate_fn)
 
     def approve(mode=None):
-        intent = {"kind": "confirmation", "confirmation": "应允"}
-        if mode is not None:
-            intent["mode"] = mode
-        sess.apply_cli_conversation_actions(
-            minister, "应允。", "臣领旨。",
-            has_directive=False, secret_order_id=None,
-            preclassified_intent=intent, confirm_target_ids={pending_id},
-        )
+        approved_mode[0] = mode
+        sess.scene_chat("应允此旨")
         assert get_session_write_queue(sess).wait_idle(timeout_s=5)
 
     approve()
@@ -302,46 +305,6 @@ def test_reapproval_changes_version_and_restarts_only_that_forecast(game, monkey
         "SELECT version FROM pending_actions WHERE id=?", (pending_id,),
     ).fetchone()[0]) == 2
     assert len(db.staged_declarations.staged_for(pending_action_decree_ref(pending_id, 2))) == 1
-
-
-def test_same_version_reapproval_does_not_rerun_after_exhaustion(game, monkeypatch):
-    db, state, content = game
-    open_night(db, state)
-    minister = next(iter(content.characters.values()))
-    pending_id = db.stage_pending_action(
-        state.turn, kind="directive", action="拟旨", minister_name=minister.name,
-        payload=_policy_payload(minister.name, text="着户部核饷。"),
-    )
-    calls = []
-
-    def judge(_agent, _prompt, **_kwargs):
-        calls.append(1)
-        raise LLMUnavailable("rate limited", status_code=429)
-
-    monkeypatch.setattr(decree_mod, "run_agent_text", judge)
-    monkeypatch.setattr(
-        forecast_mod.agents, "run_agent_text",
-        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("耗尽不得推演")),
-    )
-    sess = _sess(db, state, content, monkeypatch, lambda *_a, **_k: {})
-
-    def approve():
-        sess.apply_cli_conversation_actions(
-            minister, "应允。", "臣领旨。",
-            has_directive=False, secret_order_id=None,
-            preclassified_intent={"kind": "confirmation", "confirmation": "应允"},
-            confirm_target_ids={pending_id},
-        )
-        assert get_session_write_queue(sess).wait_idle(timeout_s=5)
-
-    approve()
-    assert calls == [1]
-    assert db.staged_declarations.staged_for(pending_action_decree_ref(pending_id, 1)) == ()
-    approve()
-    assert calls == [1]
-    assert int(db.conn.execute(
-        "SELECT version FROM pending_actions WHERE id=?", (pending_id,),
-    ).fetchone()[0]) == 1
 
 
 def test_repeat_scene_approval_does_not_rerun_exhausted_forecast(game, monkeypatch):
