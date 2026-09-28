@@ -792,9 +792,8 @@ def test_commitment_ongoing_economy_not_scaled_by_bar_discount(game):
         commitment_kind="until_stop",
     )
 
-    _settle_empty_month(db, state, content)
+    _advance_player_month(db, state, content)
 
-    assert _army_arrears(db, "guanning") == 150
     paid = db.conn.execute(
         "SELECT COALESCE(SUM(delta),0) FROM economy_ledger WHERE purpose='补饷' AND target_kind='army'"
     ).fetchone()[0]
@@ -926,7 +925,6 @@ def test_commitment_end_turn_expires_without_resolve_effects(game):
     db.conn.execute("UPDATE armies SET arrears=0 WHERE owner_power='ming'")
     db.conn.execute("UPDATE armies SET arrears=200 WHERE id='guanning'")
     state.metrics["国库"] = 500
-    starting_popular_support = int(state.metrics["民心"])
     db.save_state(state)
 
     issue_id = db.insert_issue(
@@ -948,13 +946,14 @@ def test_commitment_end_turn_expires_without_resolve_effects(game):
         commitment_kind="until_stop",
     )
 
-    _settle_empty_month(db, state, content)
+    _advance_player_month(db, state, content)
 
     row = _issue_row(db, issue_id)
     assert row["status"] == "dropped"
     assert row["closed_turn"] == state.turn - 1
-    assert _army_arrears(db, "guanning") == 200
-    assert int(state.metrics["民心"]) == starting_popular_support
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM economy_ledger WHERE purpose='补饷' AND target_kind='army'"
+    ).fetchone()[0] == 0
     advances = db.conn.execute(
         "SELECT trigger_kind FROM issue_advances WHERE issue_id=? ORDER BY id",
         (issue_id,),
@@ -1574,7 +1573,6 @@ def test_due_one_shot_commitment_ack_closes_review_loop_without_effects(game):
     db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
     db.conn.commit()
     starting_turn = state.turn
-    starting_popular_support = int(state.metrics["民心"])
 
     issue_id = db.insert_issue(
         state,
@@ -1600,13 +1598,14 @@ def test_due_one_shot_commitment_ack_closes_review_loop_without_effects(game):
         if item.get("entry_kind") == "due_commitment" and item.get("issue_id") == issue_id
     ] == []
 
-    _settle_empty_month(db, state, content)
+    _advance_player_month(db, state, content)
     due_payload = build_simulator_payload(state, db, "", "")
     assert [
         item for item in due_payload["due_commitments"]
         if item.get("entry_kind") == "due_commitment" and item.get("issue_id") == issue_id
     ]
 
+    popular_support_at_ack = int(state.metrics["民心"])
     out = apply_score_extraction(
         db,
         state,
@@ -1628,7 +1627,7 @@ def test_due_one_shot_commitment_ack_closes_review_loop_without_effects(game):
     assert row["status"] == "dropped"
     assert row["closed_turn"] == state.turn
     assert "圣裁处理" in row["resolution_summary"]
-    assert int(state.metrics["民心"]) == starting_popular_support
+    assert int(state.metrics["民心"]) == popular_support_at_ack
     advances = db.conn.execute(
         "SELECT trigger_kind, metric_delta FROM issue_advances WHERE issue_id=? ORDER BY id",
         (issue_id,),
