@@ -1,5 +1,8 @@
 import json
 
+import pytest
+
+from tests.test_due_review_621 import _settle_empty_month as _player_month
 from tests.settlement_seam_helpers import settle_effects as settle_with_delta
 from ming_sim.issues import (
     apply_issue_inertia_and_ongoing,
@@ -76,6 +79,11 @@ def _settle_empty_month(db, state, content):
     assert state.turn == before + 1
 
 
+def _advance_player_month(db, state, content):
+    with pytest.MonkeyPatch.context() as patch:
+        _player_month(db, state, content, patch)
+
+
 def test_created_future_limited_duration_commitment_applies_first_month(game, monkeypatch):
     db, state, content = game
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
@@ -109,7 +117,7 @@ def test_created_future_limited_duration_commitment_applies_first_month(game, mo
     assert created["rejected"] is False
     issue_id = created["issue_id"]
 
-    _settle_empty_month(db, state, content)
+    _advance_player_month(db, state, content)
 
     assert int(state.metrics["皇威"]) == starting_authority - 1
     row = _issue_row(db, issue_id)
@@ -154,7 +162,7 @@ def test_character_loyalty_commitment_ongoing_applies_monthly_and_records_progre
         cancellable="decree",
     )
 
-    _settle_empty_month(db, state, content)
+    _advance_player_month(db, state, content)
 
     assert _character_loyalty(db, "毛文龙") == 46
     row = _issue_row(db, issue_id)
@@ -206,7 +214,7 @@ def test_legacy_character_resolve_condition_commitment_settles_when_threshold_re
         cancellable="decree",
     )
 
-    _settle_empty_month(db, state, content)
+    _advance_player_month(db, state, content)
 
     assert _character_loyalty(db, "毛文龙") == 66
     row = _issue_row(db, issue_id)
@@ -244,7 +252,7 @@ def test_faction_class_commitment_ongoing_applies_monthly_when_counted(game):
         cancellable="decree",
     )
 
-    _settle_empty_month(db, state, content)
+    _advance_player_month(db, state, content)
 
     assert _faction_satisfaction(db, "军队") == 52
     assert _class_satisfaction(db, "士绅") == 47
@@ -282,7 +290,7 @@ def test_commitment_ongoing_malformed_entity_payloads_are_rejected_without_crash
         commitment_kind="until_stop",
     )
 
-    _settle_empty_month(db, state, content)
+    _advance_player_month(db, state, content)
 
     assert _faction_satisfaction(db, "军队") == 52
     rows = db.conn.execute(
