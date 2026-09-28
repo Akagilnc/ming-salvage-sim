@@ -1646,10 +1646,6 @@ def test_stream_join_and_abandon_do_not_hold_write_gate(monkeypatch):
     # 轻量 mock 无 SuspendableConnection；join 后 persist 短临界段用 nullcontext，
     # 否则 atomic(db) 因无 conn 失败 → 旧测靠 abandon.wait(2) AssertionError 被吞才“绿”。
     monkeypatch.setattr(web_app, "atomic", lambda _db: contextlib.nullcontext())
-    monkeypatch.setattr(
-        web_app, "_audience_prompt_for_web_chat",
-        lambda *_a, **_k: "prompt",
-    )
     monkeypatch.setattr(web_app, "fail_if_llm_error", lambda *_a, **_k: None)
     monkeypatch.setattr(web_app, "extract_agent_text", lambda *_a, **_k: "臣遵旨。")
     monkeypatch.setattr(web_app, "_dump_llm_messages", lambda *_a, **_k: None)

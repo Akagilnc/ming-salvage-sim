@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import inspect
 import json
 import logging
 import os
@@ -751,39 +750,6 @@ def in_talent_pool(character: Character, db, current_year: int, current_period: 
     if debut_year > current_year or (debut_year == current_year and debut_month > current_period):
         return False
     return _character_power_id(character, db) == "ming"
-
-
-def _audience_prompt_for_web_chat(
-    session: Any,
-    text: str,
-    character: Character,
-    chat_turn_id: int,
-    *,
-    prepared: Any = None,
-) -> str:
-    """Build a minister prompt without mistaking production failures for legacy APIs.
-
-    Lightweight test doubles may still expose the old one-argument builder.
-    Choose that compatibility path by binding its signature *before* invoking
-    it, so a TypeError raised inside the real per-character builder propagates
-    to the normal chat-turn rollback path instead of causing an unscoped retry.
-
-    #1812/#1830：本消息只备一次材料，供 Agent 与组装提示共用——与 CLI
-    `GameSession.chat` 同一份权威 prepare 契约，本函数就是 web 这一侧的唯一
-    真实 chat 入口，失败按 ADR 0005 响亮抛出，不吞异常伪装降级回奏。`prepared`
-    由调用方（`_chat_stream_payload`）唯一一次备好并传入，本函数不得自备
-    第二份（那会与 registry.get 首建 agent 时吃到的那份材料互相脱节）。
-    """
-    prompt_builder = getattr(session, "_audience_prompt_for_message", None)
-    if prompt_builder is None:
-        return text
-    signature = inspect.signature(prompt_builder)
-    try:
-        signature.bind(text, character, chat_turn_id=chat_turn_id, prepared=prepared)
-    except TypeError:
-        signature.bind(text)
-        return prompt_builder(text)
-    return prompt_builder(text, character, chat_turn_id=chat_turn_id, prepared=prepared)
 
 
 class WebGame:
