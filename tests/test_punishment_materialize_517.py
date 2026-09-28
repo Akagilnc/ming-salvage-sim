@@ -117,8 +117,8 @@ def test_naowen_stages_then_dossier_then_imprisoned_only_after_verdict(game):
 
 
 @pytest.mark.parametrize("disposition", ["办人", "压下"])
-def test_active_impeachment_disposition_flows_from_player_tool_to_dossier(game, disposition):
-    """#660：玩家动作的 typed 处置直达案卷；办人目标由动作选择而非 roster 顺序决定。"""
+def test_active_impeachment_disposition_flows_from_translation_to_dossier(game, disposition):
+    """#660：转译声明的 typed 处置直达案卷；办人目标由声明选择而非 roster 顺序决定。"""
     db, state, content = game
     actor = _active_ming(db, content)
     first = _active_ming(db, content, exclude=actor.name)
@@ -141,37 +141,33 @@ def test_active_impeachment_disposition_flows_from_player_tool_to_dossier(game, 
     projected = next(row for row in knowledge["issues"] if row["id"] == issue_id)
     assert projected["target_roster"] == [first.name, selected.name]
 
-    reply = "臣据实拟就，不替圣意增删一字。"
+    from ming_sim.audience_night import open_night
+    from ming_sim.audience_translate import normalize_audience_declaration
+    from ming_sim.declaration_dispatch import dispatch_declaration
 
-    class Agent:
-        def run(self, _message):
-            return SimpleNamespace(content=reply, tools=[SimpleNamespace(
-                tool_name="propose_directive", result="", arguments={
-                    "decree_text": "照此处置。",
-                    "punish_action": "拿问下狱" if disposition == "办人" else "无",
-                    "target_id": selected.name if disposition == "办人" else "",
-                    "issue_id": issue_id,
-                    "issue_disposition": disposition,
-                },
-            )])
-
-    sess = _directive_session(db, state, content)
-    sess.registry = SimpleNamespace(get=lambda _character, **_kw: Agent())
-    sess.llm_config = SimpleNamespace(channel="api")
-    sess.temporary_characters = set()
-    sess._audience_prompt_for_message = lambda message, *_a, **_kw: message
-    sess._start_cli_action_intent = lambda *_args, **_kwargs: None
-    sess._finish_cli_action_intent = lambda *_args, **_kwargs: None
-    result = GameSession.chat(sess, actor.name, f"对此弹劾潮{disposition}。")
+    night = open_night(db, state)
+    declaration = normalize_audience_declaration({"commissions": [{
+        "text": "照此处置。",
+        "punishment": {
+            "punish_action": "拿问下狱" if disposition == "办人" else "无",
+            "target_id": selected.name if disposition == "办人" else "",
+            "issue_id": issue_id, "issue_disposition": disposition,
+        },
+    }]})
+    result = dispatch_declaration(
+        db, state, declaration, minister_name=actor.name, night_id=int(night["id"]),
+    )
+    assert result.commissions.rejected == []
+    pending_id = result.commissions.applied[0]["id"]
     pending = json.loads(db.conn.execute(
-        "SELECT payload_json FROM pending_actions WHERE id=?", (result.pending_action_id,),
+        "SELECT payload_json FROM pending_actions WHERE id=?", (pending_id,),
     ).fetchone()["payload_json"])
     assert pending["text"] == "照此处置。"
     assert pending["issue_id"] == issue_id
     assert pending["issue_disposition"] == disposition
     assert pending["target_id"] == (selected.name if disposition == "办人" else str(issue_id))
 
-    dossier = _close_night_dossier(db, state, content, result.pending_action_id)
+    dossier = _close_night_dossier(db, state, content, pending_id)
     before_authority = state.metrics["皇威"]
     before_sat = db.faction_satisfaction(faction)
     db.apply_dossier_verdicts(

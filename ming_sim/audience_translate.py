@@ -240,6 +240,10 @@ def build_c0_declaration_shape() -> str:
         f'        "target_kind": "{target_kind_hint}",\n'
         '        "target_id": "目标 id", "cadence": "一次性|每月"\n'
         "      },\n"
+        '      "punishment": {"target_id": "处置人名（压下时可空）", '
+        '"punish_action": "惩处动作（压下时为无）", "issue_id": "弹劾事项 id（有则填）", '
+        '"issue_disposition": "办人|压下（弹劾事项有则填）", '
+        '"transaction_category": "事务类别（有则填）", "amount": "罚俸金额（罚俸时填）"},\n'
         '      "recommendation": {\n'
         '        "recommender": "荐者人名", "reason": "荐词原句（非空，逐字）"\n'
         "      },\n"
