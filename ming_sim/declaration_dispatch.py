@@ -1729,9 +1729,9 @@ def _dispatch_promises(
         except (TypeError, ValueError):
             action_id = 0
         decision = str(item.get("decision") or "").strip()
-        if action_id <= 0 or decision not in {"应允", "拒绝", "修改"}:
+        if action_id <= 0 or decision not in {"应允", "拒绝", "修改", "留中"}:
             _reject(
-                rejected, item, "判词声明须含正 action_id 与 应允/拒绝/修改",
+                rejected, item, "判词声明须含正 action_id 与 应允/拒绝/修改/留中",
                 "invalid_shape", source,
             )
             continue
@@ -1739,7 +1739,7 @@ def _dispatch_promises(
         # 另一夜，声明也不得应允/拒绝它——同样按「不存在实体」拒收（不静默
         # 误批，也不当真拒收物理删除他夜暂存）。
         row = db.conn.execute(
-            "SELECT night_id, kind, action, night_approved, payload_json FROM pending_actions "
+            "SELECT night_id, kind, action, minister_name, night_approved, payload_json FROM pending_actions "
             "WHERE id=? AND turn=? AND status='pending'",
             (action_id, int(state.turn)),
         ).fetchone()
@@ -1765,7 +1765,14 @@ def _dispatch_promises(
         applied_row: Dict[str, Any] = {
             "action_id": action_id, "decision": decision, "kind": kind, "action": action,
         }
-        if decision == "修改":
+        if decision == "留中":
+            if kind != "directive":
+                _reject(rejected, item, "仅拟旨候选可留中", "invalid_shape", source)
+                continue
+            db.hold_over_pending_actions(
+                int(state.turn), str(row["minister_name"]), [action_id],
+            )
+        elif decision == "修改":
             new_content = item.get("new_content")
             if (
                 kind != "secret_order" or action != "新建"
