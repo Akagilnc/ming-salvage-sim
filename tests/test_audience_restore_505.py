@@ -875,6 +875,43 @@ def test_start_chat_turn_second_turn_reads_agno_v3_runs(web_game):
     assert row["status"] == "generating"
 
 
+def test_two_scene_undos_reset_next_scene_history(web_game, monkeypatch):
+    from types import SimpleNamespace
+    from tests.conftest import stub_scene_agent, stub_audience_translate
+
+    game = web_game
+    db = game.db
+    turns = []
+    for index in range(2):
+        chat_id, snapshot = game._start_chat_turn("殿上", message="宣毕自严")
+        sid = db.conn.execute("SELECT agno_session_id FROM chat_turns WHERE id=?", (chat_id,)).fetchone()[0]
+        user_id = db.append_chat_message("殿上", game.state.turn, "user", f"question-{index}")
+        reply_id = db.append_chat_message("殿上", game.state.turn, "minister", f"reply-{index}")
+        db.update_chat_turn_messages(chat_id, user_message_id=user_id, minister_message_id=reply_id)
+        game._record_chat_rollback_items(chat_id, snapshot)
+        if index == 0:
+            _seed_agno_v3_runs(db, sid, 1)
+        turns.append(chat_id)
+    assert db.agno_runs_length(sid) == 1
+    assert game.undo_last_chat("殿上")["undone_chat_turn_id"] == turns[1]
+    assert game.undo_last_chat("殿上")["undone_chat_turn_id"] == turns[0]
+    assert db.agno_runs_length(sid) == 0
+    assert not game.chat_projection("殿上")
+
+    class SceneAgent:
+        tools = []
+
+        def run(self, message):
+            return SimpleNamespace(content="臣奏。", tools=[])
+
+    stub_scene_agent(monkeypatch, SceneAgent())
+    stub_audience_translate(monkeypatch)
+    next_id, _ = game._start_chat_turn("殿上", message="宣毕自严")
+    assert db.conn.execute("SELECT agno_runs_before FROM chat_turns WHERE id=?", (next_id,)).fetchone()[0] == 0
+    game.session.scene_chat("宣毕自严", chat_turn_id=next_id)
+    assert not any(row.get("chat_turn_id") in turns for row in game.chat_projection("殿上"))
+
+
 def test_load_save_reconciles_interrupted_orphan(web_game):
     """换档重建（load_save）与 __init__ 同序重开对账：存档里的在飞孤儿轮终态化、
     不再永挡续问/收夜（finding2）。"""
