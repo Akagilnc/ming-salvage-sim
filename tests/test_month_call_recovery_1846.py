@@ -317,7 +317,8 @@ def test_world_translate_exhaustion_keeps_text_resume_retries_translate_only(
         lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("must not repush world")),
     )
     db.save_turn_report(state, "邸报已成")
-    result = session.resolve_turn(allow_empty_decree=True)
+    # Web's advance_without_edict endpoint uses this exact session entry after reopening.
+    result = session.advance_without_decree()
     assert result.advanced is True
     assert world_calls == [1]
     assert translate_calls == ["fail", "ok"]

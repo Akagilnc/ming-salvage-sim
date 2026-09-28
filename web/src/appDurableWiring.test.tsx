@@ -1077,6 +1077,15 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
       if (u.pathname.endsWith("/api/decree/issue/stream")) {
         return sseResp("done", { ok: true });
       }
+      if (u.pathname.endsWith("/api/decree/advance_without_edict") && init?.method === "POST") {
+        liveState = settlementBaseState("player", {
+          turn: { year: 1627, period: 11, turn: 6, phase: "player", settlement_display: false },
+          settlement_recovery: undefined,
+          previous_summary: "new month report",
+          directives: [],
+        });
+        return jsonResp({ state: liveState, advanced: true });
+      }
       return jsonResp({});
     }));
     const host = await mountApp();
@@ -1099,6 +1108,11 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     await click(reopened.querySelector('[data-testid="settle-resume"] button') as HTMLButtonElement);
     expect(paths).toContain("POST /api/decree/advance_without_edict");
     expect(paths).not.toContain("POST /api/decree/issue/stream");
+    await act(async () => {
+      await vi.waitFor(() => expect(reopened.querySelector(".hud2-val")?.textContent).toContain("11"));
+    });
+    expect(reopened.querySelector('[data-testid="settle-resume"]')).toBeNull();
+    expect(reopened.querySelector('[data-testid="settlement-gazette-panel"]')?.textContent).toContain("new month report");
   });
 
   it("#1852 写成即推进：本面邸报落位；朕知道了只关阅读；刷新不自动弹", async () => {
