@@ -1219,16 +1219,15 @@ def test_commitment_malformed_pay_target_does_not_fall_back_to_priority_pool(gam
         commitment_kind="until_stop",
     )
 
-    _settle_empty_month(db, state, content)
+    _advance_player_month(db, state, content)
 
-    assert db.conn.execute(
-        """
-        SELECT 1 FROM rejection_reports
-        WHERE category = 'missing_ref'
-          AND reason LIKE '%补饷目标军队未入库%'
-        """
-    ).fetchone() is not None
-    assert _army_arrears(db, "guanning") == 100
+    rejected = db.conn.execute(
+        "SELECT item_json FROM rejection_reports "
+        "WHERE category='missing_ref'"
+    ).fetchall()
+    assert any(json.loads(row["item_json"]).get("target_id") == "__missing_army__"
+               for row in rejected)
+    assert _army_arrears(db, "guanning") == 101
     assert _army_arrears(db, "xuan_da") == 100
     assert db.conn.execute(
         "SELECT COALESCE(SUM(delta), 0) FROM economy_ledger WHERE purpose='补饷'"
@@ -1267,16 +1266,16 @@ def test_non_arrears_commitment_missing_pay_target_does_not_open_priority_pool(g
         commitment_kind="until_stop",
     )
 
-    _settle_empty_month(db, state, content)
+    _advance_player_month(db, state, content)
 
-    assert db.conn.execute(
-        """
-        SELECT 1 FROM rejection_reports
-        WHERE category = 'missing_ref'
-          AND reason LIKE '%补饷必须指定%'
-        """
-    ).fetchone() is not None
-    assert _army_arrears(db, "guanning") == 100
+    rejected = db.conn.execute(
+        "SELECT item_json FROM rejection_reports "
+        "WHERE category='missing_ref'"
+    ).fetchall()
+    assert any(json.loads(row["item_json"]).get("purpose") == "补饷"
+               and not json.loads(row["item_json"]).get("target_id")
+               for row in rejected)
+    assert _army_arrears(db, "guanning") == 101
     assert _army_arrears(db, "xuan_da") == 100
     assert db.conn.execute(
         "SELECT COALESCE(SUM(delta), 0) FROM economy_ledger WHERE purpose='补饷'"
