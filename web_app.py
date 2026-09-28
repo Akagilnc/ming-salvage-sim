@@ -3376,11 +3376,7 @@ def _auto_close_open_night_gate_free(
 def _game_write_gate(game) -> threading.Lock:
     if hasattr(game, "_runtime_write_gate"):
         return game._runtime_write_gate()
-    gate = getattr(game, "_write_gate", None)
-    if gate is None:
-        gate = threading.Lock()
-        setattr(game, "_write_gate", gate)
-    return gate
+    return game._write_gate
 
 
 def _refuse_settling_or_busy_write_phase(game) -> None:

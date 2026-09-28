@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from ming_sim.session_write_queue import ClassifiedWriteGate
+
 import asyncio
 import json
 import threading
@@ -95,7 +97,7 @@ class _SettlementGame:
         self.state = SimpleNamespace(turn=9, ended=False, turn_phase="awaiting_decision")
         self.session = _SettlementSession(self.state)
         self.db = SimpleNamespace(list_pending_actions=lambda *_args, **_kwargs: [])
-        self._write_gate = threading.Lock()
+        self._write_gate = ClassifiedWriteGate()
 
     def refresh_turn(self):
         self.session.actions.append("refresh")

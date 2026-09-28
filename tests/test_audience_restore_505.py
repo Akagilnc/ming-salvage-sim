@@ -279,7 +279,6 @@ def _retry_runtime(db, state, minister, *, session=None):
     # WebGame.db/state 均为只读 property（读 session.db / session.state）——经 session 供给。
     rt.session = session if session is not None else _RetrySession(db, state, minister)
     rt.chat_history = {minister: []}
-    rt._write_gate = __import__("threading").Lock()
     rt._runtime_write_gate = lambda: rt._write_gate
     rt.directive_rows = lambda: []
     rt.directive_payload = lambda row: row
@@ -1110,8 +1109,8 @@ def test_657_s12_reconciles_s_u_q_and_finishes_summon(game, monkeypatch):
     sess.temporary_characters = {}
     executor = ThreadPoolExecutor(max_workers=2)
     sess._scene_registry = ChatTurnSceneRegistry(executor)
-    sess._write_gate = threading.Lock()
-    sess._write_queue = type("Q", (), {"write_gate": sess._write_gate})()
+    from ming_sim.session_write_queue import get_session_write_queue
+    sess._write_gate = get_session_write_queue(sess).write_gate
     started: list[int] = []
     real_start = sess._scene_registry.start_open_enter
 

@@ -9,6 +9,8 @@ QA 只 curl 到 {\"layout\":\"{}\"} 不等于殿上无卡。本钉锁后端契�
 """
 from __future__ import annotations
 
+from ming_sim.session_write_queue import ClassifiedWriteGate
+
 import asyncio
 import threading
 from types import SimpleNamespace
@@ -31,7 +33,7 @@ class _Game:
     def __init__(self) -> None:
         self.db = _KvDB()
         self.state = SimpleNamespace(turn=1, turn_phase="summoning", metrics={})
-        self._write_gate = threading.Lock()
+        self._write_gate = ClassifiedWriteGate()
 
     def _runtime_write_gate(self):
         return self._write_gate

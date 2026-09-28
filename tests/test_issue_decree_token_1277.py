@@ -8,6 +8,8 @@
 
 from __future__ import annotations
 
+from ming_sim.session_write_queue import ClassifiedWriteGate
+
 import threading
 from types import SimpleNamespace
 
@@ -56,7 +58,7 @@ def _web_runtime(db, state, content, *, monkeypatch):
                 "phase": state.turn_phase,
             }
         },
-        _write_gate=threading.Lock(),
+        _write_gate=ClassifiedWriteGate(),
     )
 
     monkeypatch.setattr(web_app, "get_game", lambda: runtime)

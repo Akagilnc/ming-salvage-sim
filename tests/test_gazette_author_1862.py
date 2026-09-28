@@ -53,8 +53,7 @@ def _session(db, state, content, monkeypatch):
     monkeypatch.setattr(month_translate, "translate_month_segment", lambda *_a, **_k: {"effects": {}})
     session = make_light_session(db, state, content)
     session.llm_config = _llm()
-    from ming_sim.session_write_queue import ClassifiedWriteGate
-    session._write_gate = ClassifiedWriteGate()
+    session._write_gate = session._write_queue.write_gate
     return session
 
 

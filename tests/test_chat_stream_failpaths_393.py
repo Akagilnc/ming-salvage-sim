@@ -10,6 +10,8 @@ _serialized_web_write), not private _write_gate.locked() / _pending_writes_count
 """
 from __future__ import annotations
 
+from ming_sim.session_write_queue import get_session_write_queue
+
 import json
 import threading
 from types import SimpleNamespace
@@ -93,7 +95,6 @@ def _base_runtime(db):
     character = minister_double("测试大臣")
     state = SimpleNamespace(turn=1, year=1628, period=1, turn_phase="summoning")
     runtime = object.__new__(web_app.WebGame)
-    runtime._write_gate = threading.Lock()
     from ming_sim.session_write_queue import SessionWriteQueue
     runtime._write_queue = SessionWriteQueue()
     runtime._write_gate = runtime._write_queue.write_gate
@@ -506,7 +507,6 @@ def _runtime_for_nonstream_chat(*, start_scene=None, append_error=None, abandon_
             raise abandon_error
 
     runtime = object.__new__(web_app.WebGame)
-    runtime._write_gate = threading.Lock()
     from ming_sim.session_write_queue import SessionWriteQueue
     runtime._write_queue = SessionWriteQueue()
     runtime._write_gate = runtime._write_queue.write_gate
@@ -644,7 +644,7 @@ def test_nonstream_api_issue_decree_llm_unavailable_is_structured_not_500(
         refresh_turn=lambda: None,
         directive_rows=lambda: [],
         state_payload=lambda: {"turn": {"turn": int(state.turn)}},
-        _write_gate=threading.Lock(),
+        _write_gate=get_session_write_queue(session).write_gate,
     )
     monkeypatch.setattr(web_app, "get_game", lambda: runtime)
     monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda *_a, **_k: None)
@@ -1401,4 +1401,70 @@ def test_chat_stream_error_status_run_output_system_layer_not_diegetic(
     assert detail.get("provider_message")
 
 
+def test_chat_stream_halfstream_exhaust_recovers_failed_turn(
+    monkeypatch, game,
+):
+    """#1465 半流 transport 耗尽后失败轮回滚，夜仍开且可重发。"""
+    from ming_sim import audience_night as an
 
+    def _conn_err(_n):
+        return LLMUnavailable(
+            "连接失败",
+            code="llm_connection_error",
+            provider_message="connection reset",
+        )
+
+    class _PartialThenAlwaysFail:
+        def __init__(self):
+            self.calls = 0
+
+        def run(self, *_a, **_k):
+            self.calls += 1
+            if self.calls == 1:
+                yield RunContent("旧半句")
+                raise _conn_err(self.calls)
+            yield RunContent("再半句")
+            raise _conn_err(self.calls)
+
+    agent = _PartialThenAlwaysFail()
+    web_game, minister = _transport_web_game(game, agent, monkeypatch)
+    db = web_game.db
+
+    response = _post_chat_stream(monkeypatch, web_game, minister)
+    assert response.status_code == 200, response.text
+    events = _parse_sse(response.text)
+    assert events[-1][0] == "error", events
+    detail = events[-1][1]
+    max_a = default_transport_policy().max_attempts
+    assert agent.calls == max_a
+    attempts = detail.get("transport_attempts") or []
+    assert len(attempts) == max_a
+    assert attempts[-1].get("outcome") == "terminal_fail"
+
+    failed_turn = int(detail.get("chat_turn_id") or 0)
+    assert failed_turn > 0
+    fail_row = db.conn.execute(
+        "SELECT status FROM chat_turns WHERE id=?", (failed_turn,),
+    ).fetchone()
+    assert fail_row is not None and str(fail_row["status"]) == "interrupted"
+
+    # 既有 fail_chat_turn 恢复：本轮 origin/source 绑定的账全清
+    open_night = an.get_open_night(db)
+    assert open_night is not None
+    turn_ledger = db.conn.execute(
+        "SELECT id FROM story_ledger_entries "
+        "WHERE origin_chat_turn_id=? OR source_chat_turn_id=?",
+        (failed_turn, failed_turn),
+    ).fetchall()
+    assert turn_ledger == [], turn_ledger
+    # 夜开 + 可重发（写路径已释放；重发会再走入殿）
+    ok_agent = _CountingFailAgent(fail_times=0, error_factory=_conn_err)
+    web_game.session.registry.agent = ok_agent
+    stub_scene_agent(monkeypatch, ok_agent)
+    response2 = _post_chat_stream(monkeypatch, web_game, minister, message="再问边饷。")
+    events2 = _parse_sse(response2.text)
+    assert "done" in [e[0] for e in events2], events2
+    done2 = next(e[1] for e in events2 if e[0] == "done")
+    assert int(done2.get("chat_turn_id") or 0) != failed_turn
+    assert int(done2.get("minister_message_id") or 0) > 0
+    assert an.get_open_night(db) is not None
