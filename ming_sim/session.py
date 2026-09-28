@@ -3607,8 +3607,8 @@ class GameSession:
         """CLI/web 退朝；无旨月亦走完整结算链（#1274 / owner B-2）。
 
         有草案/pending → 视同颁诏 resolve_turn。
-        无草案 → allow_empty_decree，source=system_simulation，pre_settle+simulator+
-        settle_with_delta 全链照跑（邸报/种子局势/议题惯性/结局判定）；16ms 快路已废。
+        无草案 → allow_empty_decree，source=system_simulation，仍走玩家月链
+        （邸报/种子局势/议题惯性/结局判定）；16ms 快路已废。
         """
         if self.db.list_directives(self.state, statuses=("pending", "draft")):
             return self.resolve_turn(

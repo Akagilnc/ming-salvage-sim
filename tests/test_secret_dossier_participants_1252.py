@@ -63,38 +63,8 @@ def test_s1_public_projection_filter_unchanged(game):
 
 # ── S2: 私字段 + 冻结授权 + apply ───────────────────────────
 
-def test_s2_secret_field_appends_via_prepare_then_settle(game):
-    """真实 prepare+settle 入口可落密令 roster（secret_dossier_participants）。"""
-    from tests.section_rejection_helpers import prepare_then_settle
-    import ming_sim.issues as issue_engine
 
-    db, state, content = game
-    lead, worker = _people(db, 2)
-    order_id = create_test_secret_order(db,
-        state, lead, "密查仓胥", "暗访通州仓", ["密访"], deadline_months=1,
-        covert_task=TYPED_COVERT_TASK,
-    )
-    dossier_id = int(db.get_dossier_for_secret_order(order_id)["id"])
-    db.append_decree_dossier_participants(dossier_id, [{
-        "character_id": lead, "tier": "主办", "role": "密访",
-    }], state=state)
 
-    # 直接走 apply 生产入口：secret 权威显式传入
-    result = issue_engine.apply_score_extraction(db, state, {
-        "secret_dossier_participants": [{
-            "dossier_id": dossier_id,
-            "character_id": worker,
-            "tier": "协办",
-            "role": "随员核账",
-            "delegator_id": lead,
-        }],
-    }, secret_dossier_ids_at_input={dossier_id})
-    assert result["secret_dossier_participants"][0].get("rejected") is not True
-    roster = db.get_decree_dossier(dossier_id)["participant_roster"]
-    assert any(
-        row.get("character_id") == worker and row.get("tier") == "协办"
-        for row in roster
-    )
 
 def test_s2_tracer_613_565_readers_see_appended_roster(game):
     """② 同一 tracer 尾断言 #613/#565 读端可见追加参与人。"""
@@ -307,15 +277,7 @@ def test_s2_missing_secret_authority_never_rebuilds_from_live_db(game, authority
     assert result["secret_dossier_participants"][0]["rejected"] is True
     assert len(db.get_decree_dossier(dossier_id)["participant_roster"]) == 1
 
-def test_s3_runtime_contract_owns_secret_field():
-    """私字段归 personnel_secret：钉 MODULE_FIELDS/EMPTY_EXTRACTION/TOP_LEVEL_ALIASES。"""
-    from ming_sim.simulation import (
-        EMPTY_EXTRACTION,
-        MODULE_FIELDS,
-        TOP_LEVEL_ALIASES,
-    )
 
-    assert "secret_dossier_participants" in MODULE_FIELDS["personnel_secret"]
-    assert "secret_dossier_participants" not in MODULE_FIELDS["issues"]
-    assert "secret_dossier_participants" in EMPTY_EXTRACTION
-    assert TOP_LEVEL_ALIASES["密令案卷参与人"] == "secret_dossier_participants"
+
+
+# ── S3: prompt 正向特征化 + DELTA_SCHEMA ─────────────────────

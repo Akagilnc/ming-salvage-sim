@@ -17,7 +17,7 @@ import ming_sim.month_translate as month_translate
 from ming_sim.declaration_dispatch import pending_action_decree_ref
 from ming_sim.exceptions import LLMUnavailable
 from ming_sim.models import TurnPhase
-from tests.settlement_seam_helpers import make_light_session
+from tests.month_chain_helpers import make_light_session
 from tests.test_month_chain_1843 import _forbid_extractor, _stage_edict
 from tests.dossier_test_helpers import create_test_secret_order
 
@@ -175,7 +175,11 @@ def test_this_turn_rejection_opens_triad_on_same_desk(game, monkeypatch):
     )
 
 
-def test_answering_triad_applies_and_releases_rescript_gate(game, monkeypatch):
+@pytest.mark.parametrize("decision, status", [
+    ("withdrawn", "closed"), ("hold", "proposed"),
+    ("force_promulgated", "executing"),
+])
+def test_answering_triad_applies_and_releases_rescript_gate(game, monkeypatch, decision, status):
     db, state, content = game
     minister = next(iter(content.characters.values())).name
     pending_id = _stage_rejected_edict(db, state, minister)
@@ -187,23 +191,23 @@ def test_answering_triad_applies_and_releases_rescript_gate(game, monkeypatch):
     session = make_light_session(db, state, content)
     session.resolve_turn(allow_empty_decree=True)
     desk_row = session.pending_decisions()[0]
-    withdrawn = next(
-        opt for opt in desk_row["options"] if opt.get("dossier_decision") == "withdrawn"
+    selected = next(
+        opt for opt in desk_row["options"] if opt.get("dossier_decision") == decision
     )
 
     session.submit_hitl_choices(
         [{
             "decision_key": desk_row["decision_key"],
-            "label": withdrawn["label"],
-            "hint": withdrawn.get("hint") or "",
-            "dossier_id": withdrawn["dossier_id"],
-            "dossier_decision": "withdrawn",
+            "label": selected["label"],
+            "hint": selected.get("hint") or "",
+            "dossier_id": selected["dossier_id"],
+            "dossier_decision": decision,
         }],
         write_gate=session._write_gate,
     )
 
-    dossier = db.get_decree_dossier(int(withdrawn["dossier_id"]))
-    assert dossier["status"] == "closed"
+    dossier = db.get_decree_dossier(int(selected["dossier_id"]))
+    assert dossier["status"] == status
     assert dossier["rescript_pending"] is False
     assert session.state.turn_phase == TurnPhase.SETTLING.value
     # 零待批后主链停在邸报交接，不得仍卡批红。

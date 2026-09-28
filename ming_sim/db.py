@@ -1287,32 +1287,11 @@ class GameDB:
                 FOREIGN KEY(event_id) REFERENCES events(id)
             );
 
-            CREATE TABLE IF NOT EXISTS turn_logs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                turn INTEGER NOT NULL,
-                year INTEGER NOT NULL,
-                period INTEGER NOT NULL,
-                message TEXT NOT NULL,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            );
-
             CREATE TABLE IF NOT EXISTS turn_reports (
                 turn INTEGER PRIMARY KEY,
                 year INTEGER NOT NULL,
                 period INTEGER NOT NULL,
                 report TEXT NOT NULL,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            );
-
-            -- 推演链每回合一行：extractor_input 留原输入，extractor_output 留 applied 可见结果。
-            CREATE TABLE IF NOT EXISTS turn_extractions (
-                turn INTEGER PRIMARY KEY,
-                year INTEGER NOT NULL,
-                period INTEGER NOT NULL,
-                decree_text TEXT NOT NULL DEFAULT '',
-                narrative TEXT NOT NULL DEFAULT '',
-                extractor_input TEXT NOT NULL DEFAULT '',
-                extractor_output TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
@@ -2010,6 +1989,18 @@ class GameDB:
 
             CREATE INDEX IF NOT EXISTS idx_classes_region
             ON classes(region_id, name);
+
+            CREATE TABLE IF NOT EXISTS population_transfer_ledger (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                turn INTEGER NOT NULL,
+                source TEXT NOT NULL,
+                target TEXT NOT NULL,
+                amount INTEGER NOT NULL,
+                reason TEXT NOT NULL,
+                origin_ref TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_population_transfer_turn
+            ON population_transfer_ledger(turn);
 
             CREATE TABLE IF NOT EXISTS character_knowledge_events (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -5851,7 +5842,7 @@ class GameDB:
         两层设计：
           (1) 即时 hook（set_character_status / set_character_office / _displace_duplicate_offices /
               add_character）——单个成员状态/官职/易主变动时就地重算其所属派系，保回合内即时联动。
-          (2) 本方法（reconcile 兜底）——在月末结算尾（settle_with_delta 的 atomic 内、delta 全部
+          (2) 本方法（reconcile 兜底）——在月末结算尾（delta 全部
               落库且 inertia 推进之后、next_period 之前）扫一遍全部白名单派系，重算成公式末值。
               覆盖任何绕过 hook 的路径（裸 UPDATE 改 office_type、power_id 翻走的易主/降臣、
               放归赦还后任命被拒回滚、未挂 hook 的新建大臣 等），保末态与公式一致、无残留漂移。
@@ -9081,28 +9072,11 @@ class GameDB:
             return ""
 
         # 上回合奏报单独存在 turn_reports，直接取。
+        # #1843 reopen：旧 turn_logs 回落随旧结算核删除；无邸报即真空。
         report = self.get_turn_report(previous_turn)
         if report:
             return report
-        if previous_turn == 0:
-            return ""
-
-        logs = self.conn.execute(
-            "SELECT message FROM turn_logs WHERE turn = ? ORDER BY id",
-            (previous_turn,),
-        ).fetchall()
-        # #1356：非 t0 亦禁固定空态句；无 report 且无 logs → 真真空。
-        if not logs:
-            return ""
-
-        lines = [
-            f"上{TURN_UNIT}回顾：",
-            f"钱粮：{self.turn_economy_summary(previous_turn)}",
-            f"地区：{self.turn_region_summary(previous_turn)}",
-            f"军队：{self.turn_army_summary(previous_turn)}",
-            f"势力：{self.turn_power_summary(previous_turn)}",
-        ]
-        return "\n".join(lines)
+        return ""
 
     def previous_turn_reign_period_label(self, state: GameState) -> str:
         """邸报面报头年月 ≡ 所显示报文自身所属月（#1356）。
@@ -9127,31 +9101,8 @@ class GameDB:
                 return reign_period_label(int(row["year"]), int(row["period"]))
             except (TypeError, ValueError):
                 return ""
-        # 空行/无行：t0 → 空；非 t0 仅 logs 回落有文时才给 label
-        if previous_turn == 0:
-            return ""
-        has_logs = self.conn.execute(
-            "SELECT 1 FROM turn_logs WHERE turn = ? LIMIT 1",
-            (previous_turn,),
-        ).fetchone()
-        if not has_logs:
-            return ""
-        # 日志回落路径：回推上一月，与 summary 回落同形
-        prev_year, prev_period = int(state.year), int(state.period) - 1
-        if prev_period < 1:
-            prev_period = 12
-            prev_year -= 1
-        try:
-            return reign_period_label(prev_year, prev_period)
-        except (TypeError, ValueError):
-            return ""
-
-    def record_log(self, state: GameState, message: str) -> None:
-        self.conn.execute(
-            "INSERT INTO turn_logs (turn, year, period, message) VALUES (?, ?, ?, ?)",
-            (state.turn, state.year, state.period, message),
-        )
-        self.conn.commit()
+        # #1843 reopen：无有效邸报则真空；旧 turn_logs 回落已删。
+        return ""
 
     def append_chat_message(self, minister_name: str, turn: int, role: str, content: str) -> int:
         """召对聊天单条消息落库（chat_messages）。
@@ -10450,7 +10401,7 @@ class GameDB:
         title: str = "",
         commit: bool = True,
     ) -> None:
-        """每回合月末奏报单独存档（turn_reports），与 turn_logs 解耦。
+        """每回合月末奏报单独存档（turn_reports）。
 
         ``report`` is a presentation aggregate and is not used for access
         control.  Producers that mix public and restricted material may pass
@@ -10744,18 +10695,15 @@ class GameDB:
             SELECT turn, MAX(year) AS year, MAX(period) AS period,
                    MAX(has_report) AS has_report,
                    MAX(has_attendant) AS has_attendant,
-                   MAX(has_extraction) AS has_extraction,
                    MAX(has_directive) AS has_directive
             FROM (
                 SELECT turn, year, period,
                        CASE WHEN length(trim(COALESCE(report, ''), char(9)||char(10)||char(13)||' ')) > 0 THEN 1 ELSE 0 END AS has_report,
                        CASE WHEN length(trim(COALESCE(attendant_message, ''), char(9)||char(10)||char(13)||' ')) > 0 THEN 1 ELSE 0 END AS has_attendant,
-                       0 AS has_extraction, 0 AS has_directive
+                       0 AS has_directive
                 FROM turn_reports
                 UNION ALL
-                SELECT turn, year, period, 0, 0, 1, 0 FROM turn_extractions
-                UNION ALL
-                SELECT turn, year, period, 0, 0, 0, 1 FROM turn_directives WHERE status = 'issued'
+                SELECT turn, year, period, 0, 0, 1 FROM turn_directives WHERE status = 'issued'
             )
             GROUP BY turn ORDER BY turn
             """
@@ -10764,7 +10712,7 @@ class GameDB:
             "kind": "month", "turn": int(r["turn"]), "year": int(r["year"]),
             "period": int(r["period"]), "has_report": bool(r["has_report"]),
             "has_attendant": bool(r["has_attendant"]),
-            "has_extraction": bool(r["has_extraction"]), "has_directive": bool(r["has_directive"]),
+            "has_directive": bool(r["has_directive"]),
         } for r in rows]
 
     def list_closed_night_archives(self) -> List[Dict[str, object]]:
@@ -10848,7 +10796,6 @@ class GameDB:
                 **night,
                 "has_report": bool(material.get("has_report", False)),
                 "has_attendant": bool(material.get("has_attendant", False)),
-                "has_extraction": bool(material.get("has_extraction", False)),
                 "has_directive": bool(material.get("has_directive", False)),
             })
         return sorted(combined, key=lambda item: (int(item["turn"]), 0 if item["kind"] == "month" else int(item["night_id"])))
@@ -10920,35 +10867,6 @@ class GameDB:
             for r in rows
         ]
 
-    def save_turn_extraction(
-        self,
-        state: GameState,
-        decree_text: str = "",
-        narrative: str = "",
-        extractor_input: str = "",
-        extractor_output: str = "",
-    ) -> None:
-        """推演链留痕（turn_extractions）：输入 + applied 可见输出。"""
-        self.conn.execute(
-            """
-            INSERT INTO turn_extractions
-                (turn, year, period, decree_text, narrative, extractor_input, extractor_output)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(turn) DO UPDATE SET
-                year = excluded.year,
-                period = excluded.period,
-                decree_text = excluded.decree_text,
-                narrative = excluded.narrative,
-                extractor_input = excluded.extractor_input,
-                extractor_output = excluded.extractor_output
-            """,
-            (state.turn, state.year, state.period,
-             sanitize_sqlite_text(decree_text), sanitize_sqlite_text(narrative),
-             sanitize_sqlite_text(extractor_input), sanitize_sqlite_text(extractor_output)),
-        )
-        self.conn.commit()
-
-    # ── HITL 决策点 ─────────────────────────────────────────────────────
     def save_pending_decisions(self, turn: int, decisions: List[Dict[str, object]]) -> None:
         """覆写本回合待裁 decision 行（先清后插），idx 按列表顺序。choice 初始空（待皇帝选）。
 
@@ -15777,14 +15695,19 @@ class GameDB:
                 # 走 materialize_pay_order_decree 唯一入口（真实案卷资格＋颁布门校验、
                 # 整批先验后写 fail-loud、stale until 清理）；打回在上方 decision 分支
                 # 早退零写。物化落在结算尾段 atomic 内（apply_dossier_verdicts 在
-                # settle_with_delta 事务内、本月 fixed flow 已结束后）→ 自下一次结算起
+                # 玩家月链事务内、本月 fixed flow 已结束后）→ 自下一次结算起
                 # 生效，当月已按旧序完成的结算不追溯（F1.3）。
                 self._apply_pay_order_override_effect(state, row, payload, dossier_id)
             elif row["action_type"] == "punishment":
                 # #517 / ADR 0055：结构化惩处效果自案卷物化，判决后才落人物/钱粮。
-                affected_people.update(self._apply_punishment_verdict_effect(
-                    state, row, payload, dossier_id, content=content, registry=None,
-                ) or set())
+                previous_materializing = getattr(self.conn, "_materializing_dossier_id", 0)
+                self.conn._materializing_dossier_id = int(dossier_id)
+                try:
+                    affected_people.update(self._apply_punishment_verdict_effect(
+                        state, row, payload, dossier_id, content=content, registry=None,
+                    ) or set())
+                finally:
+                    self.conn._materializing_dossier_id = previous_materializing
             elif row["action_type"] == "pacification":
                 # #522 / ADR 0055：结构化招抚效果自案卷物化，交既有 #190 易主。
                 # 反噬绑定目标当前原势力真实失方削弱（ADR 0009 决定 3）；禁止空对象。
@@ -18814,14 +18737,11 @@ class GameDB:
             )
         )
 
-    def _prevalidate_office_recommendation_snapshots(
+    def _invalid_office_recommendation_snapshots(
         self, state: GameState, dossiers: Iterable[Dict[str, object]],
-    ) -> None:
-        """批前统一校验即将物化的任命荐人快照（#1583）。
-
-        以本批结算开始时盘面为准；任一失效即在首条物化前 fail-loud，
-        错误文案与物化缝保持一致。
-        """
+    ) -> set[int]:
+        """返回批前盘面中确实不匹配的荐人快照案号；其他异常原样上抛。"""
+        invalid = set()
         for row in dossiers:
             if str(row.get("action_type") or "") != "appointment":
                 continue
@@ -18837,7 +18757,15 @@ class GameDB:
             if not self._recommendation_snapshot_ready(
                 state, payload, minister_name=minister,
             ):
-                raise ValueError("任免案卷载荷物化失败")
+                invalid.add(int(row["id"]))
+        return invalid
+
+    def _prevalidate_office_recommendation_snapshots(
+        self, state: GameState, dossiers: Iterable[Dict[str, object]],
+    ) -> None:
+        """批前统一校验即将物化的任命荐人快照（#1583）。"""
+        if self._invalid_office_recommendation_snapshots(state, dossiers):
+            raise ValueError("任免案卷载荷物化失败")
 
     def _commit_office_action(
         self, state: GameState, pa: Dict[str, object], payload: Dict[str, object],
@@ -19227,51 +19155,6 @@ class GameDB:
             "DELETE FROM month_open_snapshot WHERE turn = ?", (int(turn),)
         )
         self.conn.commit()
-
-    def get_turn_extraction(self, turn: int) -> Optional[Dict[str, object]]:
-        """读 turn_extractions 一行；extractor_output JSON 解析失败时原样回字符串。"""
-        row = self.conn.execute(
-            "SELECT turn, year, period, decree_text, narrative, extractor_input, extractor_output "
-            "FROM turn_extractions WHERE turn = ?",
-            (int(turn),),
-        ).fetchone()
-        if row is None:
-            return None
-        def _parse(text: str) -> object:
-            text = (text or "").strip()
-            if not text:
-                return None
-            try:
-                return json.loads(text)
-            except Exception:
-                pass
-            # LLM 多输出一个 }，顶层提前关闭，trailing 是被截出的字段。
-            # 去掉多余 }，接回 trailing（trailing 本身以顶层 } 结尾）。
-            try:
-                dec = json.JSONDecoder()
-                obj, end = dec.raw_decode(text)
-                trailing = text[end:].strip()
-                if trailing.startswith(","):
-                    prefix = text[:end].rstrip()
-                    if prefix.endswith("}"):
-                        fixed = prefix[:-1] + trailing
-                        try:
-                            return json.loads(fixed)
-                        except Exception:
-                            pass
-                return obj
-            except Exception:
-                pass
-            return text
-        return {
-            "turn": int(row["turn"]),
-            "year": int(row["year"]),
-            "period": int(row["period"]),
-            "decree_text": row["decree_text"] or "",
-            "narrative": row["narrative"] or "",
-            "extractor_input": _parse(row["extractor_input"] or ""),
-            "extractor_output": _parse(row["extractor_output"] or ""),
-        }
 
     def get_authority(self, authority_id: int) -> Optional[Dict[str, object]]:
         row = self.conn.execute(

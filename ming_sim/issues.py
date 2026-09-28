@@ -3625,6 +3625,11 @@ _LEGACY_PCT_CAP = 5  # 单条帝国修正对某维度的百分比上限，防幅
 # applier 是唯一的枚举守门（cleaner 只做 direction 同义词映射等无损规范化,cmr S3 r2）。
 _FISCAL_ACCOUNTS = ("国库", "内库")
 _FISCAL_DIRECTIONS = ("income", "expense")
+# #1843 reopen：方向同义词归一表从旧 extractor 清洗迁到本唯一使用处。
+_DIRECTION_NORMALIZE = {
+    "income": "income", "收": "income", "收入": "income", "进账": "income",
+    "expense": "expense", "支": "expense", "支出": "expense", "出账": "expense",
+}
 
 
 def _clamp_pct(v: object) -> Optional[int]:
@@ -7875,17 +7880,8 @@ def _apply_recovery_driven_transfers(
     if db.population_unit != POPULATION_UNIT_PERSONS:
         return [], []
     turn = int(state.turn)
-    # 本回合已落回流 provenance（含本 settle 前半段 / 重放）。
+    # 月份推进事务只执行一次；同一案在本次扫描内仅回流一次。
     seen_keys: set[tuple[int, int]] = set()
-    prior = db.get_turn_extraction(turn) or {}
-    prior_out = prior.get("extractor_output") if isinstance(prior, dict) else None
-    if isinstance(prior_out, dict):
-        for item in prior_out.get("population_transfers") or []:
-            if not isinstance(item, dict) or item.get("reason") != "回流":
-                continue
-            ref = str(item.get("origin_ref") or "")
-            if ref.startswith("dossier:") and ref[8:].isdigit():
-                seen_keys.add((int(ref[8:]), turn))
 
     records: List[Dict[str, object]] = []
     remaining_by_region: Dict[str, int] = {}
@@ -9038,12 +9034,7 @@ def _apply_score_extraction_body(
     # 注：建筑的新建/变更/废止不走顶层字段，全由 issue 的 effect_on_resolve /
     #     effect_on_fail 里的 `buildings` 段在局势结案时落地（见 _apply_issue_buildings）。
 
-    # 4.5) #652 已付赈济/招抚先回流，再允许投贼吃同省余池。
-    recovery_applied, recovery_rejections = _apply_recovery_driven_transfers(
-        db, state, commit=commit_now,
-    )
-    applied_transfers.extend(recovery_applied)
-    transfer_rejections.extend(recovery_rejections)
+    # #652 回流在月份推进时统一执行；本段流寇只吃当时余池。
     applied_absorptions, absorption_rejections, absorption_power_changes = (
         _apply_bandit_absorptions(
             db, state, extracted.get("bandit_absorptions") or [], commit=commit_now,
@@ -9442,7 +9433,6 @@ def _apply_score_extraction_body(
         # simulation._DIRECTION_NORMALIZE（懒 import 避循环）。先归一再去重：ADR0027
         # 承诺载体都是月度【支出】(delta<0)，dedup/残留观测只对【支出】fiscal_create 生效；
         # 同名的【收入】新科目(如新税)与承诺无关，绝不可被误去重或误报残留(codex correctness)。
-        from ming_sim.simulation import _DIRECTION_NORMALIZE
         direction_raw = str(create.get("direction") or "").strip()
         direction = _DIRECTION_NORMALIZE.get(direction_raw, direction_raw)
         key = str(create.get("key") or "").strip()

@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import json
+import threading
 import sqlite3
 from pathlib import Path
 
@@ -125,6 +126,7 @@ def test_web_issue_endpoint_returns_structured_abort(monkeypatch):
                 turn=3, stage="extract", error_pack_path="/tmp/x")
 
     class _StubGame:
+        _write_gate = threading.Lock()
         session = _StubSession()
         class state:
             ended = False

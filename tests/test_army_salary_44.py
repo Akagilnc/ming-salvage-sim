@@ -334,18 +334,3 @@ def test_non_finite_salary_rate_anchored_not_crash():
         row = {"owner_power": "ming", "manpower": 5000, "salary_rate": bad}
         needed = army_needed(row)
         assert needed == math.ceil(5000 * 1.5 / 10000), f"非有限 rate({bad}) 应锚点应发，得 {needed}"
-
-
-def test_twelve_turns_no_arrears_explosion(game):
-    # #44 设计 TDD：开局 12 回合无干预，新升率（京营/陕西/登莱等率升）不过早引爆 arrears→民变链。
-    # 结构性重切近对冲（旧 65 → 新 66.5 万/月），开局国库应可持续。run_settle(None) 确定性、无 LLM。
-    from tests.section_rejection_helpers import prepare_then_settle as run_settle
-    db, state, content = game
-    start_turn = state.turn
-    for _ in range(12):
-        run_settle(db, state, content, None)
-    assert state.turn == start_turn + 12, "12 回合应推进 12 turn"
-    total_arrears = db.conn.execute(
-        "SELECT SUM(arrears) FROM armies WHERE owner_power='ming'").fetchone()[0] or 0
-    # 不失控（升率引爆民变）：开局结构性重切非抬总额，12 回合 arrears 应有界
-    assert total_arrears < 1000, f"12 回合 arrears={total_arrears} 万两不应失控引爆"

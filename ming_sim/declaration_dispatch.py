@@ -482,11 +482,21 @@ def _dispatch_effects(
         effect_sequence=effect_sequence if isinstance(raw, list) else None,
         defer_disclosure=defer_disclosure,
     )
+    # #670：续启赴京成功后结清 in_transit 传召，与本段落账同事务。
+    from ming_sim.audience_night import settle_applied_arrived_summons
+    settle_applied_arrived_summons(db, report)
     _collect_inline_rejections(collector, report, turn, source)
     _persist_specialized_extraction(
         db, state, extraction, collector=collector, turn=turn, source=source,
         defer_monthly_secret_supply=defer_disclosure,
     )
+    # 检举在 specialized extraction 中落库；待办须在它之后扫描。
+    from ming_sim.covert_levy import (
+        settle_exposure_from_canonical_actions,
+        write_exposure_todos,
+    )
+    write_exposure_todos(db, state, report)
+    settle_exposure_from_canonical_actions(db, state, report)
     return SectionResult(applied=[report], rejected=rejected)
 
 

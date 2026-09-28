@@ -4,18 +4,17 @@ section 4 的 create_armies_from_extraction(new_armies)、apply_region_deltas
 (region_delta)、apply_army_deltas(army_delta):原先脏项在 db 方法内要么直接
 raise(坏一项崩整月,#63「崩整批」死法)、要么 print 静默跳。改为:LLM 脏数据
 (查无此地/此军/字段非法/值不可解析)逐项拒收留痕,好项照落;代码异常(bug 类)
-仍上抛 SettlementAbort 回滚整批。clamp 语义(region cannon city_level×8、army
+仍原样上抛并回滚原子分派。clamp 语义(region cannon city_level×8、army
 cannon cap 12、firearm 0-100)保持——clamp 不是拒收,clamp 后照落。
 
-经 driver.run_settle 端到端驱动(公共接口,与 test_power_section_rejections.py 同风格)。
+从现役 pre_settle 与 dispatch_declaration 入口验证逐项拒收。
 """
 
 from __future__ import annotations
 
 import pytest
 
-from tests.section_rejection_helpers import prepare_then_settle as _run_settle
-from tests.section_rejection_helpers import game, rejection_rows as _rejection_rows
+from tests.section_rejection_helpers import game, rejection_rows as _rejection_rows, run_declaration
 
 
 def run_settle(db, state, content, extracted, **kwargs):
@@ -27,7 +26,7 @@ def run_settle(db, state, content, extracted, **kwargs):
     for item in extracted.get("new_armies") or []:
         if isinstance(item, dict):
             item.setdefault("origin_ref", "盘面自发")
-    return _run_settle(db, state, content, extracted, **kwargs)
+    return run_declaration(db, state, content, extracted)
 
 
 def _a_region(db):
@@ -370,12 +369,10 @@ def test_duplicate_army_without_manpower_rejected(game):
     assert rows[0][1]
 
 
-# ---- 代码异常(bug 类,非脏数据)→ 上抛 SettlementAbort 回滚整批 ----
+# ---- 代码异常(bug 类,非脏数据)→ 原样上抛，原子分派回滚整批 ----
 
 def test_region_deltas_code_exception_aborts_settlement(game, monkeypatch):
-    """apply_region_deltas 内代码异常(bug 类)→ 上抛 SettlementAbort 回滚整批,
-    绝不被吞(ADR 0005/决定 1)。"""
-    from ming_sim.exceptions import SettlementAbort
+    """apply_region_deltas 内代码异常原样上抛，原子分派回滚整批。"""
     db, state, content = game
     good = _a_region(db)
 
@@ -383,15 +380,14 @@ def test_region_deltas_code_exception_aborts_settlement(game, monkeypatch):
         raise AttributeError("code bug in apply_region_deltas")
     monkeypatch.setattr(type(db), "apply_region_deltas", _boom)
 
-    with pytest.raises(SettlementAbort):
+    with pytest.raises(AttributeError):
         run_settle(db, state, content, {
             "region_delta": {good: {"public_support": 2}},
         }, narrative="x", decree_text="y")
 
 
 def test_army_deltas_code_exception_aborts_settlement(game, monkeypatch):
-    """apply_army_deltas 内代码异常 → 上抛 SettlementAbort 回滚整批,绝不被吞。"""
-    from ming_sim.exceptions import SettlementAbort
+    """apply_army_deltas 内代码异常原样上抛，原子分派回滚整批。"""
     db, state, content = game
     good = _an_army(db)
 
@@ -399,15 +395,14 @@ def test_army_deltas_code_exception_aborts_settlement(game, monkeypatch):
         raise KeyError("code bug in apply_army_deltas")
     monkeypatch.setattr(type(db), "apply_army_deltas", _boom)
 
-    with pytest.raises(SettlementAbort):
+    with pytest.raises(KeyError):
         run_settle(db, state, content, {
             "army_delta": {good: {"morale": 2}},
         }, narrative="x", decree_text="y")
 
 
 def test_create_armies_code_exception_aborts_settlement(game, monkeypatch):
-    """create_armies_from_extraction 内代码异常 → 上抛 SettlementAbort 回滚整批,绝不被吞。"""
-    from ming_sim.exceptions import SettlementAbort
+    """create_armies_from_extraction 内代码异常原样上抛，原子分派回滚整批。"""
     db, state, content = game
     good_owner = _valid_power_id(db)
 
@@ -415,7 +410,7 @@ def test_create_armies_code_exception_aborts_settlement(game, monkeypatch):
         raise AttributeError("code bug in create_armies_from_extraction")
     monkeypatch.setattr(type(db), "create_armies_from_extraction", _boom)
 
-    with pytest.raises(SettlementAbort):
+    with pytest.raises(AttributeError):
         run_settle(db, state, content, {
             "new_armies": [{"id": "x_corps", "owner_power": good_owner,
                             "manpower": 1000, "maintenance_per_turn": 1}],

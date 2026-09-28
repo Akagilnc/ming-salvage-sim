@@ -10,76 +10,6 @@ def _reports(db):
 
 
 
-def test_driver_validate_rejection_mirrors_jsonl_after_outer_atomic(game, tmp_path, monkeypatch):
-    """driver.run_settle 的外层事务提交后也要镜像 validate 层拒收 jsonl。"""
-    from pathlib import Path
-
-    from tests.section_rejection_helpers import prepare_then_settle as run_settle
-
-    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
-    db, state, content = game
-    turn = state.turn
-
-    report = run_settle(
-        db,
-        state,
-        content,
-        {"economy_moves": [None]},
-        narrative="本月邸报。",
-        decree_text="诏",
-    )
-
-    rows = _reports(db)
-    assert [(r["section"], json.loads(r["item_json"])) for r in rows] == [
-        ("economy_moves", {"raw_value": None}),
-    ]
-    assert {r["source"] for r in rows} == {"player_decree"}
-    # typed 槽：玩家来源拒收经 attendant 接缝
-    archives = db.list_monthly_archives()
-    hit = next(a for a in archives if int(a["turn"]) == turn)
-    assert hit["has_attendant"] is True
-    assert isinstance(report, str)
-    assert rows[0]["turn"] == turn
-    jsonl = Path(tmp_path) / "error_packs" / "rejections.jsonl"
-    assert jsonl.exists()
-    mirrored = [json.loads(line) for line in jsonl.read_text(encoding="utf-8").splitlines()]
-    assert len(mirrored) == 1
-    assert mirrored[0]["turn"] == turn
-    assert mirrored[0]["section"] == "economy_moves"
-    assert json.loads(mirrored[0]["item_json"]) == {"raw_value": None}
-
-def test_validate_and_module_rejections_do_not_leak_into_player_visible_extraction(game, tmp_path, monkeypatch):
-    """ADR 0015/P4：shape/module 拒收桶是内部信号，不写进玩家可见 extractor_output。"""
-    from tests.section_rejection_helpers import prepare_then_settle as run_settle
-
-    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
-    db, state, content = game
-    turn = state.turn
-
-    run_settle(
-        db,
-        state,
-        content,
-        {
-            "economy_moves": [None],
-            "_module_rejections": [
-                {
-                    "rejected": True,
-                    "item": {"field": "army_delta", "owner_module": "military_external", "value": {}},
-                    "reason": "misrouted",
-                    "category": "module_misroute",
-                }
-            ],
-        },
-        narrative="本月邸报。",
-        decree_text="诏",
-    )
-
-    visible = db.get_turn_extraction(turn)["extractor_output"]
-    assert "validate_shape_rejections" not in visible
-    assert "module_misroute_rejections" not in visible
-
-
 
 
 def test_utf8_safe_serialization_preserves_chinese_and_escapes_lone_surrogate(game):
@@ -97,14 +27,7 @@ def test_utf8_safe_serialization_preserves_chinese_and_escapes_lone_surrogate(ga
     assert "中文" in row["item_json"]
     assert "\\ud800" in row["item_json"]
 
-def test_misrouted_module_field_becomes_rejection_not_only_trace():
-    from ming_sim.simulation import _sanitize_module_output
 
-    cleaned = _sanitize_module_output("internal", {"army_delta": {"a": {"morale": 1}}})
-    rejections = cleaned.get("_module_rejections") or []
-    assert rejections
-    assert rejections[0]["rejected"] is True
-    assert rejections[0]["item"] == {"field": "army_delta", "owner_module": "military_external", "value": {"a": {"morale": 1}}}
 
 
 

@@ -1,6 +1,7 @@
 import asyncio
 import json
 import types
+import threading
 
 import pytest
 import ming_sim.cli_backend as cli_backend
@@ -225,40 +226,17 @@ def test_month_end_participant_batch_rejects_each_malformed_item(game, bad_patch
     roster = db.get_decree_dossier(dossier_id)["participant_roster"]
     assert [item["character_id"] for item in roster] == [lead, good]
 
-def test_apply_score_extraction_respects_frozen_dossier_ids_at_input(game):
-    """生产 apply 入口：dossier_ids_at_input 外的案卷不得扩写 roster。"""
-    db, state, _content = game
-    lead, worker = _active_people(db, 2)
-    visible_id = db.create_decree_dossier(
-        state, action_type="assignment", decree_text="命修历。",
-        target_kind="issue", target_id="calendar",
-        participants=[{"character_id": lead, "tier": "主办"}],
-    )
-    closed_id = db.create_decree_dossier(
-        state, action_type="assignment", decree_text="旧案已结。",
-        target_kind="issue", target_id="closed-calendar",
-        participants=[{"character_id": lead, "tier": "主办"}],
-    )
-    db.conn.execute("UPDATE decree_dossiers SET status='closed' WHERE id=?", (closed_id,))
-    created_id = db.create_decree_dossier(
-        state, action_type="assignment", decree_text="同批新案。",
-        target_kind="issue", target_id="same-batch",
-        participants=[{"character_id": lead, "tier": "主办"}],
-    )
-    freeze_ids = {visible_id}  # 故意不含 closed/created
-    additions = [
-        {"dossier_id": dossier_id, "character_id": worker, "tier": "协办", "delegator_id": lead}
-        for dossier_id in (visible_id, closed_id, created_id)
-    ]
-    issue_engine.apply_score_extraction(
-        db, state, {"dossier_participants": additions},
-        dossier_ids_at_input=freeze_ids,
-    )
-    assert len(db.get_decree_dossier(visible_id)["participant_roster"]) == 2
-    assert len(db.get_decree_dossier(closed_id)["participant_roster"]) == 1
-    assert len(db.get_decree_dossier(created_id)["participant_roster"]) == 1
 
-def test_extractor_never_reconstructs_missing_dossier_authority_from_live_db(game):
+
+
+
+
+
+
+@pytest.mark.parametrize("authority", [None, set()])
+def test_extractor_never_reconstructs_missing_dossier_authority_from_live_db(
+    game, authority,
+):
     db, state, _content = game
     lead, worker = _active_people(db, 2)
     dossier_id = db.create_decree_dossier(
@@ -1049,6 +1027,7 @@ def test_manual_directive_capture_reaches_structured_dossier(
         import web_app
 
         web_game = types.SimpleNamespace(
+            _write_gate=threading.Lock(),
             db=db, state=state, content=content, session=session,
             directive_rows=lambda: db.list_directives(
                 state, statuses=("pending", "draft"),
@@ -1138,6 +1117,7 @@ def test_manual_directive_capture_rejects_malformed_roster(
         from fastapi import HTTPException
 
         web_game = types.SimpleNamespace(
+            _write_gate=threading.Lock(),
             db=db, state=state, content=content, session=session,
             directive_rows=lambda: db.list_directives(
                 state, statuses=("pending", "draft"),
@@ -1201,6 +1181,7 @@ def test_manual_directive_capture_rejects_missing_empty_or_invalid_tier_without_
         from fastapi import HTTPException
 
         web_game = types.SimpleNamespace(
+            _write_gate=threading.Lock(),
             db=db, state=state, content=content, session=session,
             directive_rows=lambda: db.list_directives(
                 state, statuses=("pending", "draft"),
@@ -1587,8 +1568,10 @@ def test_session_manual_directive_keeps_structured_action_at_submission(
     finally:
         session.db.close()
 
-def test_probe_directive_shared_entry_creates_and_settles_structured_dossier(game):
-    from ming_sim.decree import settle_with_delta
+
+def test_probe_directive_shared_entry_creates_and_settles_structured_dossier(game, monkeypatch):
+    from ming_sim.decree_forecast import decree_ref_for_dossier
+    from tests.test_month_chain_1843 import _prepare_player_month
     from ming_sim.session import GameSession
     from scripts.probe_directive_contract import add_narrative_probe_directive
 
@@ -1609,17 +1592,14 @@ def test_probe_directive_shared_entry_creates_and_settles_structured_dossier(gam
     assert dossier["target_kind"] == "issue"
     assert dossier["target_id"] == "probe:contract-smoke:1"
 
-    settle_with_delta(
-        state,
-        db,
-        {},
-        before_turn=state.turn,
-        content=content,
-        dossier_verdicts=[{
-            "dossier_id": dossier["id"],
-            "decision": "promulgated",
-        }],
+    db.staged_declarations.stage(
+        decree_ref=decree_ref_for_dossier(db, dossier), declaration={},
+        turn=int(state.turn), verdict={"decision": "promulgated"}, forecast_text="",
     )
+    player = _prepare_player_month(db, state, content, monkeypatch)
+    player.resolve_turn(allow_empty_decree=True)
+    db.save_turn_report(state, "邸报", public_body="邸报")
+    player.resolve_turn(allow_empty_decree=True)
 
     assert state.turn == 2
     assert db.get_decree_dossier(dossier["id"])["status"] == "executing"

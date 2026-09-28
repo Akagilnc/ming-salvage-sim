@@ -13,9 +13,7 @@ from ming_sim.models import Character
 from ming_sim.person_archive_contract import PERSON_TITLE_KINDS
 from ming_sim.person_delta_adapter import normalize_person_changes
 from ming_sim.simulation import (
-    MODULE_FIELDS,
-    _localized_extraction,
-    _sanitize_module_output,
+    build_simulator_payload,
 )
 from tests.conftest import active_ming_character
 from tests.dossier_test_helpers import create_test_secret_order
@@ -170,51 +168,6 @@ def test_apply_score_extraction_does_not_echo_normalized_person_changes(game):
     assert "pairing_warnings" not in applied
 
 
-def test_apply_score_extraction_applies_person_change_power_move(game):
-    db, state, content = game
-    name = active_ming_character(db, content)
-    old_power = content.characters[name].power_id
-    item = {
-        "name": name,
-        "origin_ref": "盘面自发", "动作": "易主",
-        "new_power": "houjin",
-        "方式": "主动投敌",
-        "反噬": {"houjin": {"leverage": 2}},
-        "reason": "降金",
-    }
-
-    try:
-        sanitized = _sanitize_module_output("personnel_secret", {"人物变更": [item]})
-        expected_sanitized = dict(item)
-        expected_sanitized["action"] = expected_sanitized.pop("动作")
-        assert sanitized["人物变更"] == [expected_sanitized]
-        assert "人物变更" in _localized_extraction({"人物变更": []})
-
-        applied = issues.apply_score_extraction(db, state, sanitized, content=content)
-
-        row = db.conn.execute(
-            "SELECT power_id, office, office_type FROM characters WHERE name=?", (name,)
-        ).fetchone()
-        assert row["power_id"] == "houjin"
-        assert row["office"] == "降臣"
-        assert row["office_type"] == "身名分"
-        assert content.characters[name].power_id == "houjin"
-        assert content.characters[name].office == "降臣"
-        assert content.characters[name].office_type == "身名分"
-        assert applied["applied_person_changes"] == [
-            {
-                "name": name,
-                "origin_ref": "盘面自发", "动作": "易主",
-                "old_power": old_power,
-                "new_power": "houjin",
-                "new_title": "降臣",
-                "方式": "主动投敌",
-                "反噬": {"houjin": {"leverage": 2}},
-                "reason": "降金",
-            }
-        ]
-    finally:
-        content.characters[name].power_id = old_power
 
 
 def test_apply_score_extraction_rejects_person_change_power_move_without_way(read_game):
@@ -2613,11 +2566,6 @@ def test_empty_new_person_change_key_does_not_shadow_legacy_normalization():
     ]
 
 
-def test_personnel_secret_module_fields_only_advertise_unified_person_key():
-    allowed = MODULE_FIELDS["personnel_secret"]
-
-    assert "人物变更" in allowed
-    assert {"appointments", "office_changes", "character_status_changes", "character_power_changes"}.isdisjoint(allowed)
 
 
 

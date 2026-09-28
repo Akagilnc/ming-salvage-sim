@@ -1523,6 +1523,7 @@ describe("AudienceArchiveModal — read-only scene archive", () => {
 
   it("#671 史册月档经 HistoryModal fetch 呈现独立递话原文", async () => {
     const raw = "\n  **皇爷**，洪承畴本月抵京候旨。  \n";
+    const decree = "着宁远补饷三十万两";
     const blank = "   \n\t  ";
     const monthTurn = { kind: "month" as const, turn: 7, year: 1, period: 11, has_report: true, has_attendant: true, has_directive: false };
     const fetchMock = vi.fn().mockImplementation((url: string) => Promise.resolve({
@@ -1536,7 +1537,7 @@ describe("AudienceArchiveModal — read-only scene archive", () => {
             period: 11,
             report: "一、人事除目",
             attendant_message: raw,
-            decree_text: "",
+            decree_text: decree,
             directives: [],
           },
     }));
@@ -1558,6 +1559,8 @@ describe("AudienceArchiveModal — read-only scene archive", () => {
     const section = host.querySelector("[data-testid=history-attendant]");
     // trim 仅判空；DOM 写原文（含空白与 markdown 标记）
     expect(section!.querySelector("pre")?.textContent).toBe(raw);
+    expect(Array.from(host.querySelectorAll("pre.memorial-text"))
+      .some((element) => element.textContent === decree)).toBe(true);
 
     // 纯空白递话：先等详情 report 正文落地，再断言 section 缺席
     fetchMock.mockImplementation((url: string) => Promise.resolve({

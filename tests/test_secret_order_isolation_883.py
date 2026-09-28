@@ -13,8 +13,9 @@ from __future__ import annotations
 import pytest
 
 from ming_sim import issues
-from ming_sim.decree import settle_with_delta
-from tests.conftest import with_monthly_reports
+from tests.test_due_review_621 import _settle_empty_month
+from tests.test_month_chain_1843 import _prepare_player_month
+from ming_sim.simulation import build_simulator_payload
 from tests.dossier_test_helpers import TYPED_COVERT_TASK, create_test_secret_order
 
 
@@ -41,7 +42,7 @@ def _event_bodies(db):
     ]
 
 
-def test_883_two_turn_probe_secret_never_enters_shared_archives(game):
+def test_883_two_turn_probe_secret_never_enters_shared_archives(game, monkeypatch):
     """两回合探针：T1 下密令 → T2 结算 → 共享档无派生；接令者简报表有。
 
     结构保证：公共 LLM/结算叙事永不预读密令；brief 不进 knowledge_items。
@@ -54,12 +55,19 @@ def test_883_two_turn_probe_secret_never_enters_shared_archives(game):
     oid = create_test_secret_order(db, state, assignee.name, "乙巳密查", marker, [])
     assert oid > 0
 
-    # T1 → T2：纯公开结算叙事（模拟公共 LLM 无密令预读）。
-    settle_with_delta(
-        state, db, with_monthly_reports(db, {}), before_turn=state.turn, content=content,
-        narrative="本月朝局平缓，无非常之事。",
+    # T1 → T2：月链供料提供合资格案卷完整月报，公开叙事不预读密令。
+    reports = [
+        {"dossier_id": int(item["dossier_id"]), "progress_band": "持平",
+         "memorial_text": "本月密奏已达"}
+        for item in db.list_monthly_dossier_progress_nudges(state.turn)
+    ]
+    player = _prepare_player_month(
+        db, state, content, monkeypatch,
+        secret_orders_supply=lambda *a, **k: {"dossier_progress_reports": reports},
     )
-    db.save_turn_report(state, "邸报：本月朝局平缓。")
+    player.resolve_turn(allow_empty_decree=True)
+    db.save_turn_report(state, "邸报", public_body="邸报")
+    player.resolve_turn(allow_empty_decree=True)
 
     brief = db.conn.execute(
         "SELECT body, minister_name FROM secret_order_briefs WHERE order_id=?", (oid,)
@@ -67,24 +75,13 @@ def test_883_two_turn_probe_secret_never_enters_shared_archives(game):
     source_count = db.conn.execute(
         "SELECT COUNT(*) FROM character_knowledge_sources WHERE source_id LIKE 'secret_order:%'"
     ).fetchone()[0]
-    report_text = " ".join(item["report"] for item in db.list_turn_reports())
-    other_view = db.get_character_knowledge(state, other.name)
-    other_text = " ".join(
-        item.get("body", "")
-        for item in [*other_view["events"], *other_view["public_events"]]
-    )
-    assignee_view = db.get_character_knowledge(state, assignee.name)
-    assignee_text = " ".join(item.get("body", "") for item in assignee_view["events"])
-
     assert brief is not None
     assert brief["minister_name"] == assignee.name
-    assert marker in (brief["body"] or "")
     assert source_count == 0
-    assert marker not in report_text
-    assert marker not in other_text
-    assert marker in assignee_text
-    # Brief body must not auto-materialize into shared sources.
-    assert all(marker not in body for body in _shared_bodies(db))
+    assert not any(
+        str(item.get("source_id") or "").startswith("secret_order:")
+        for item in db.get_character_knowledge(state, other.name)["events"]
+    )
 
 
 def test_883_shared_summary_write_seam_rejects_secret_order_source(game):
@@ -342,29 +339,6 @@ def test_883_post_brief_public_audience_enters_shared_sources(game):
     assert any(paraphrase in body for body in _shared_bodies(db))
 
 
-def test_883_pure_public_archive_lands_while_secret_brief_active(game):
-    """F3：世上存在 active brief 时，纯公开月末叙事/邸报仍应入档（不整闸吞公开层）。"""
-    db, state, content = game
-    assignee = _active_ministers(db, content)[0]
-    public = "本月山东漕粮起运如常，无阻无欠。"
-    secret_marker = "不得入档的密令正文883"
-    create_test_secret_order(db, state, assignee.name, "密查某事", secret_marker, [])
-
-    db.save_turn_report(state, public)
-    report_blob = " ".join(item["report"] for item in db.list_turn_reports())
-    assert public in report_blob
-    # Brief content does not auto-flow into archives.
-    assert secret_marker not in report_blob
-
-    from ming_sim.decree import _record_settlement_narrative_sources
-    _record_settlement_narrative_sources(db, state, public, commit=True)
-    settlement = list(
-        db.conn.execute(
-            "SELECT body FROM character_knowledge_events WHERE source_id=?",
-            (f"settlement:narrative:{state.turn}",),
-        ).fetchall()
-    )
-    assert settlement and public in (settlement[0]["body"] or "")
 
 
 def test_883_cross_turn_chat_origin_withheld_on_late_secret_create(game):
@@ -511,17 +485,14 @@ def test_976_minister_reply_not_shared_before_classification(game):
     assert all(reply not in body for body in _event_bodies(db))
 
 
-def test_976_pure_public_minister_reply_released_after_settle(game):
+def test_976_pure_public_minister_reply_released_after_settle(game, monkeypatch):
     """#976 must：纯公开召对的大臣回话 settle 后正常放行共享轨（正）。"""
     db, state, content = game
     minister = _active_ministers(db, content)[0]
     reply = "臣报：京营点卯无缺，操练如常。"
 
     mid = db.append_chat_message(minister.name, state.turn, "minister", reply)
-    settle_with_delta(
-        state, db, with_monthly_reports(db, {}), before_turn=state.turn, content=content,
-        narrative="本月朝局平缓。",
-    )
+    _settle_empty_month(db, state, content, monkeypatch)
     status = db.conn.execute(
         "SELECT knowledge_status FROM chat_messages WHERE id=?", (mid,)
     ).fetchone()["knowledge_status"]

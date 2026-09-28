@@ -1,16 +1,17 @@
 """#1583：同批连续任命 — 批前统一荐人快照校验，批内有序物化。
 
 验收：同一批两份任命案卷，候选为同一在职人物、均携相同批前快照，
-目标官职依次不同；经正常 settle（apply_dossier_verdicts 嵌于 settle_with_delta）
-按序生效，末职=第二条目标，turn 恰好推进 1；批外真实陈旧快照仍拒。
+目标官职依次不同；经玩家过月入口按序生效，末职=第二条目标，
+turn 恰好推进 1；批外真实陈旧快照仍拒。
 """
 
 from __future__ import annotations
 
 import pytest
 
-from ming_sim.decree import settle_with_delta
-from tests.dossier_test_helpers import promulgate_proposed_appointments
+from tests.test_month_chain_1843 import _prepare_player_month
+from ming_sim.decree_forecast import decree_ref_for_dossier
+from ming_sim.exceptions import SettlementAbort
 
 
 def _pick_recommender(content):
@@ -55,8 +56,8 @@ def _proposed_appointment_dossier_id(db, pending_id):
     )
 
 
-def test_same_batch_consecutive_appointments_keep_prebatch_recommendation_snapshot(game):
-    """tracer：同人同批两任命、同批前快照 → 正常 settle 按序物化，末职=第二条，turn+1。"""
+def test_same_batch_consecutive_appointments_keep_prebatch_recommendation_snapshot(game, monkeypatch):
+    """同人同批两任命：预判暂存后经玩家月链物化。"""
     db, state, content = game
     recommender = _pick_recommender(content)
     row = next(
@@ -81,16 +82,23 @@ def test_same_batch_consecutive_appointments_keep_prebatch_recommendation_snapsh
     )
     assert {item["id"] for item in committed} == {id1, id2}
 
-    # 真入口：正常 settle 内顺颁（非直测 helper / 非单独 apply）。第一条物化后
-    # 候选人现职已变；若仍按批内中间态二次校验，第二条会误判快照过期并卡月。
-    before_turn = int(state.turn)
-    settle_with_delta(
-        state, db, {}, before_turn=before_turn, content=content,
-        dossier_verdicts=[
-            {"dossier_id": _proposed_appointment_dossier_id(db, id1), "decision": "promulgated"},
-            {"dossier_id": _proposed_appointment_dossier_id(db, id2), "decision": "promulgated"},
-        ],
+    # 第一案夜里已有判决，第二案过月时补跑判官（首案已改盘面）。
+    did = _proposed_appointment_dossier_id(db, id1)
+    ref = decree_ref_for_dossier(db, db.get_decree_dossier(did))
+    db.staged_declarations.stage(
+        decree_ref=ref, declaration={}, turn=int(state.turn),
+        verdict={"decision": "promulgated"}, forecast_text="",
     )
+    monkeypatch.setattr("ming_sim.decree_forecast.produce_forecast_product", lambda *_a: {
+        "declaration": {}, "verdict": {"decision": "promulgated"},
+        "questions": None, "forecast_text": "",
+    })
+    before_turn = int(state.turn)
+    session = _prepare_player_month(db, state, content, monkeypatch)
+    session.llm_config = object()  # enable the month-chain's exhausted forecast branch
+    session.resolve_turn(allow_empty_decree=True)
+    db.save_turn_report(state, "邸报", knowledge_items=[], attendant_message="")
+    session.resolve_turn(allow_empty_decree=True)
 
     assert state.turn == before_turn + 1
 
@@ -109,7 +117,7 @@ def test_same_batch_consecutive_appointments_keep_prebatch_recommendation_snapsh
     assert by_office[second_office]["candidate"] == name
 
 
-def test_stale_recommendation_snapshot_still_rejected_outside_mutating_batch(game):
+def test_stale_recommendation_snapshot_still_rejected_outside_mutating_batch(game, monkeypatch):
     """批外真实陈旧快照仍按既有契约拒绝——不得为点绿放松校验。"""
     db, state, content = game
     recommender = _pick_recommender(content)
@@ -133,8 +141,16 @@ def test_stale_recommendation_snapshot_still_rejected_outside_mutating_batch(gam
     )
     assert result and result[0]["id"] == action_id
 
-    with pytest.raises(ValueError, match="任免案卷载荷物化失败"):
-        promulgate_proposed_appointments(db, state, content)
+    did = _proposed_appointment_dossier_id(db, action_id)
+    ref = decree_ref_for_dossier(db, db.get_decree_dossier(did))
+    db.staged_declarations.stage(
+        decree_ref=ref, declaration={}, turn=int(state.turn),
+        verdict={"decision": "promulgated"}, forecast_text="",
+    )
+    session = _prepare_player_month(db, state, content, monkeypatch)
+    with pytest.raises(SettlementAbort):
+        session.resolve_turn(allow_empty_decree=True)
+    assert db.get_decree_dossier(did)["status"] == "proposed"
 
     assert db.list_recommendation_events(state, recommender.name) == []
     char = db.conn.execute(

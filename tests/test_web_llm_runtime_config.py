@@ -4,6 +4,7 @@ import asyncio
 import json
 from pathlib import Path
 import sqlite3
+import threading
 from types import SimpleNamespace
 
 import pytest
@@ -142,7 +143,7 @@ def test_build_llm_config_switches_to_api_on_real_key_over_backend_env(monkeypat
         cli_model="gpt-cli",
         cli_timeout_seconds=240,
     )
-    fake = SimpleNamespace(
+    fake = SimpleNamespace(_write_gate=threading.Lock(),
         session=SimpleNamespace(
             llm_config=current,
             begin_turn=lambda: None,
@@ -183,7 +184,7 @@ def test_build_llm_config_recovers_preserved_api_key_on_switch_back(monkeypatch)
     monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {"api": {"api_key": "sk-preserved"}})
     current = LLMConfig(api_key="", base_url="https://x/v1", model="m", channel="cli",
                         cli_runner="codex", cli_model="gpt-5.5")
-    fake = SimpleNamespace(session=SimpleNamespace(llm_config=current, begin_turn=lambda: None))
+    fake = SimpleNamespace(_write_gate=threading.Lock(), session=SimpleNamespace(llm_config=current, begin_turn=lambda: None))
 
     cfg = web_app.WebGame.build_llm_config(fake, "", "", "", channel="api")
 
@@ -202,7 +203,7 @@ def test_set_llm_config_cli_placeholder_not_real_api_key(monkeypatch):
         cli_model="gpt-5.5",
     )
     # api_set_llm_config 改为 build→verify(offload)→commit 分步（#56）：fake 提供新两法。
-    fake = SimpleNamespace(
+    fake = SimpleNamespace(_write_gate=threading.Lock(),
         build_llm_config=lambda *a, **k: cfg,
         commit_llm_config=lambda c: c,
     )
@@ -226,7 +227,7 @@ def test_api_set_llm_config_response_reports_reasoning_capability(monkeypatch):
         model="deepseek-chat",
         channel="api",
     )
-    fake = SimpleNamespace(
+    fake = SimpleNamespace(_write_gate=threading.Lock(),
         build_llm_config=lambda *a, **k: cfg,
         commit_llm_config=lambda c: c,
     )
@@ -254,7 +255,7 @@ def test_api_set_llm_config_explicit_cli_channel_switch(monkeypatch):
                          channel="cli", cli_runner="agy", cli_model="", cli_timeout_seconds=240,
                          reasoning_strength=k.get("reasoning_strength") or "")
 
-    fake = SimpleNamespace(build_llm_config=fake_build, commit_llm_config=lambda c: c)
+    fake = SimpleNamespace(_write_gate=threading.Lock(), build_llm_config=fake_build, commit_llm_config=lambda c: c)
     monkeypatch.setattr(web_app, "get_game", lambda: fake)
     monkeypatch.setattr(web_app, "_verify_llm_configs_or_raise", lambda c: None)
 
@@ -282,7 +283,7 @@ def test_api_set_llm_config_keep_sentinels_pass_none_to_build(monkeypatch):
         built.update(k)
         return LLMConfig(api_key="sk", base_url="https://x/v1", model="m", channel="api")
 
-    fake = SimpleNamespace(build_llm_config=fake_build, commit_llm_config=lambda c: c)
+    fake = SimpleNamespace(_write_gate=threading.Lock(), build_llm_config=fake_build, commit_llm_config=lambda c: c)
     monkeypatch.setattr(web_app, "get_game", lambda: fake)
     monkeypatch.setattr(web_app, "_verify_llm_configs_or_raise", lambda c: None)
 
@@ -306,7 +307,7 @@ def test_commit_cli_seeds_api_slot_from_session_when_slot_empty(monkeypatch):
     new_cli = LLMConfig(api_key="", base_url="https://x/v1", model="m", channel="cli",
                         cli_runner="codex", cli_model="gpt-5.5", cli_timeout_seconds=240,
                         reasoning_strength="off")
-    fake = SimpleNamespace(session=SimpleNamespace(llm_config=prev, begin_turn=lambda: None))
+    fake = SimpleNamespace(_write_gate=threading.Lock(), session=SimpleNamespace(llm_config=prev, begin_turn=lambda: None))
 
     web_app.WebGame.commit_llm_config(fake, new_cli)
 
@@ -325,7 +326,7 @@ def test_commit_cli_preserves_when_slot_already_has_key(monkeypatch):
     prev = LLMConfig(api_key="", base_url="", model="m", channel="cli", cli_runner="codex", cli_model="gpt-5.5")
     new_cli = LLMConfig(api_key="", base_url="", model="m", channel="cli",
                         cli_runner="codex", cli_model="gpt-5.5", cli_timeout_seconds=240)
-    fake = SimpleNamespace(session=SimpleNamespace(llm_config=prev, begin_turn=lambda: None))
+    fake = SimpleNamespace(_write_gate=threading.Lock(), session=SimpleNamespace(llm_config=prev, begin_turn=lambda: None))
 
     web_app.WebGame.commit_llm_config(fake, new_cli)
 
@@ -348,7 +349,7 @@ def test_api_set_llm_config_commit_runs_on_event_loop(monkeypatch):
     def rec_verify(c):
         seen["verify_thread"] = threading.current_thread()
 
-    fake = SimpleNamespace(build_llm_config=lambda *a, **k: cfg, commit_llm_config=rec_commit)
+    fake = SimpleNamespace(_write_gate=threading.Lock(), build_llm_config=lambda *a, **k: cfg, commit_llm_config=rec_commit)
     monkeypatch.setattr(web_app, "get_game", lambda: fake)
     monkeypatch.setattr(web_app, "_verify_llm_configs_or_raise", rec_verify)
 
@@ -365,7 +366,7 @@ def test_api_set_llm_config_verify_runs_off_event_loop(monkeypatch):
     cfg = LLMConfig(api_key="", base_url="", model="m", channel="cli",
                     cli_runner="codex", cli_model="gpt-5.5", cli_timeout_seconds=240)
     seen = {}
-    fake = SimpleNamespace(build_llm_config=lambda *a, **k: cfg, commit_llm_config=lambda c: c)
+    fake = SimpleNamespace(_write_gate=threading.Lock(), build_llm_config=lambda *a, **k: cfg, commit_llm_config=lambda c: c)
     monkeypatch.setattr(web_app, "get_game", lambda: fake)
 
     def rec_verify(c):
@@ -386,7 +387,7 @@ def test_api_set_llm_config_verify_failure_skips_commit_and_passes_through_httpe
     cfg = LLMConfig(api_key="", base_url="", model="m", channel="cli",
                     cli_runner="codex", cli_model="gpt-5.5", cli_timeout_seconds=240)
     commit_calls = []
-    fake = SimpleNamespace(
+    fake = SimpleNamespace(_write_gate=threading.Lock(),
         build_llm_config=lambda *a, **k: cfg,
         commit_llm_config=lambda c: commit_calls.append(c),
     )
@@ -766,6 +767,7 @@ def test_api_set_llm_config_accepts_default_headers(monkeypatch):
 
     committed = []
     game = SimpleNamespace(
+        _write_gate=threading.Lock(),
         build_llm_config=fake_build,
         commit_llm_config=lambda c: committed.append(c) or c,
     )
@@ -998,7 +1000,7 @@ def test_1271_three_endpoints_grok_reasoning_supported_and_capability_list(monke
     assert "grok" in get_result["cli_reasoning_runners"]
     assert set(get_result["cli_reasoning_runners"]) == set(CLI_REASONING_STRENGTH_RUNNERS)
 
-    fake = SimpleNamespace(
+    fake = SimpleNamespace(_write_gate=threading.Lock(),
         build_llm_config=lambda *a, **k: cfg,
         commit_llm_config=lambda c: c,
     )
@@ -1293,7 +1295,7 @@ def test_build_llm_config_does_not_reuse_placeholder_as_api_key(monkeypatch):
         cli_runner="codex",
         cli_model="gpt-cli",
     )
-    fake = SimpleNamespace(session=SimpleNamespace(llm_config=current, begin_turn=lambda: None))
+    fake = SimpleNamespace(_write_gate=threading.Lock(), session=SimpleNamespace(llm_config=current, begin_turn=lambda: None))
 
     # 空表单 + CLI 局：保留 cli 通道（#51）、不把占位符当 API key 带入。
     cfg = web_app.WebGame.build_llm_config(fake, "", "", "")

@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 
 from ming_sim.db import GameDB
 from ming_sim.session import AudienceAdmission, ChatTurnResult, GameSession
+from ming_sim.simulation import build_simulator_payload
 from ming_sim import audience_night as an
 
 
@@ -267,6 +268,115 @@ def test_fresh_summon_origin_is_idempotent_and_projects_kind(game):
     }]
 
 
+def test_multi_origin_same_person_dedupes_consumer_projections_not_ledger(game, monkeypatch):
+    """#670：同人多 origin ledger 独立保留；arrived/waiting 消费端每人一份。"""
+    db, state, content = game
+    sess = _session(game)
+    sess.state = state
+    person = _set_place(
+        game, "洪承畴", location="shaanxi", transit_to="henan", transit_start_turn=0,
+    )
+    origin_chat = "web:chat:1"
+    origin_tool = "web:tool:2"
+
+    first = sess.consume_audience_admission(
+        person, origin_id=origin_chat, state=state,
+    )
+    second = sess.consume_audience_admission(
+        person, origin_id=origin_tool, state=state,
+    )
+    assert first.result is AudienceAdmission.SUMMON_IN_TRANSIT
+    assert second.result is AudienceAdmission.SUMMON_IN_TRANSIT
+    # 成功记召无固定承旨句。
+    assert first.reason == "" and second.reason == ""
+
+    unsettled = an.list_unsettled_summons(db)
+    assert len(unsettled) == 2
+    assert {row["origin_id"] for row in unsettled} == {origin_chat, origin_tool}
+    first_entry = next(row for row in unsettled if row["origin_id"] == origin_chat)
+    second_entry = next(row for row in unsettled if row["origin_id"] == origin_tool)
+
+    # 抵非京 → arrived 每人 1 条（最早 origin），ledger 仍 2 行。
+    assert _arrive_at_destination(game, person.name) == [
+        {"name": person.name, "location": "henan"},
+    ]
+    arrived = an.list_arrived_unsettled_summons(db)
+    assert arrived == [{
+        "person_name": person.name,
+        "original_destination": "henan",
+        "origin_id": origin_chat,
+        "source_entry_id": first_entry["entry_id"],
+        "required_fact": "抵原地后续赴京",
+    }]
+    payload = build_simulator_payload(state, db, "", "")
+    assert payload["unsettled_arrived_summons"] == arrived
+    assert len(an.list_unsettled_summons(db)) == 2
+
+    # 结清其一 origin 后另一仍未结，投影仍 1 人份。
+    assert an.settle_summon_origin(db, origin_chat) is True
+    remaining = an.list_unsettled_summons(db)
+    assert [row["origin_id"] for row in remaining] == [origin_tool]
+    arrived_after = an.list_arrived_unsettled_summons(db)
+    assert arrived_after == [{
+        "person_name": person.name,
+        "original_destination": "henan",
+        "origin_id": origin_tool,
+        "source_entry_id": second_entry["entry_id"],
+        "required_fact": "抵原地后续赴京",
+    }]
+
+    # 续赴京成功 → 同人全部 in_transit origin 结清（含尚未手结的 origin_tool）。
+    from tests.test_month_chain_1843 import _prepare_player_month
+
+    session = _prepare_player_month(
+        db, state, content, monkeypatch, world=lambda *_a, **_k: "世界段",
+        translate=lambda *_a, **_k: {"effects": {"人物变更": [{
+            "name": person.name, "动作": "行止", "transit_to": "beizhili",
+            "origin_ref": "盘面自发",
+        }]}},
+    )
+    session.resolve_turn(allow_empty_decree=True)
+    db.save_turn_report(state, "邸报", public_body="邸报")
+    session.resolve_turn(allow_empty_decree=True)
+    assert an.list_unsettled_summons(db) == []
+    assert an.list_arrived_unsettled_summons(db) == []
+    assert an.list_waiting_audience_summons(db) == []
+
+    # waiting 消费端 dedupe：直接 capital 在途账（不依赖续程后残留 origin）。
+    db.conn.execute(
+        "UPDATE characters SET location=?, transit_to='', transit_distance_remaining=NULL, "
+        "transit_speed_factor=NULL WHERE name=?",
+        ("beizhili", person.name),
+    )
+    db.conn.commit()
+    night = an.get_open_night(db) or an.open_night(db, state)
+    wait_a = "web:chat:wait-a"
+    wait_b = "web:chat:wait-b"
+    id_a = an.record_summon_in_transit(
+        db, int(night["id"]), person.name, origin_id=wait_a,
+    )
+    id_b = an.record_summon_in_transit(
+        db, int(night["id"]), person.name, origin_id=wait_b,
+    )
+    assert len(an.list_unsettled_summons(db)) == 2
+    waiting = an.list_waiting_audience_summons(db)
+    assert waiting == [{
+        "person_name": person.name,
+        "origin_id": wait_a,
+        "source_entry_id": id_a,
+        "location": "beizhili",
+    }]
+    assert build_simulator_payload(state, db, "", "")["waiting_audience"] == waiting
+    assert an.settle_summon_origin(db, wait_a) is True
+    assert an.list_waiting_audience_summons(db) == [{
+        "person_name": person.name,
+        "origin_id": wait_b,
+        "source_entry_id": id_b,
+        "location": "beizhili",
+    }]
+    assert an.settle_summon_origin(db, wait_b) is True
+    assert an.list_unsettled_summons(db) == []
+    assert an.list_waiting_audience_summons(db) == []
 
 
 def test_fresh_summon_departs_via_canonical_applier_only_when_night_closes(game):
@@ -349,6 +459,93 @@ def test_fresh_summon_applier_failure_rolls_back_and_close_retry_is_safe(game, m
     assert unsettled[0]["kind"] == "in_transit"
 
 
+def test_arrived_summon_continuation_survives_failed_apply_across_months(game, monkeypatch):
+    """#670 T-D：失败、无续启、续启的三个玩家过月边界均保留召对事实。"""
+    from tests.test_month_chain_1843 import _prepare_player_month
+    from tests.test_due_review_621 import _settle_empty_month
+
+    db, state, content = game
+    person = _set_place(
+        game, "洪承畴", location="shaanxi", transit_to="henan", transit_start_turn=0,
+    )
+    night_id = int(an.open_night(db, state)["id"])
+    origin = "command:arrived-1"
+    entry_id = an.record_summon_in_transit(
+        db, night_id, person.name, origin_id=origin,
+    )
+
+    assert _arrive_at_destination(game, person.name) == [
+        {"name": person.name, "location": "henan"}
+    ]
+    arrived_fact = {
+        "person_name": person.name,
+        "original_destination": "henan",
+        "origin_id": origin,
+        "source_entry_id": entry_id,
+        "required_fact": "抵原地后续赴京",
+    }
+    payload = build_simulator_payload(state, db, "", "")
+    assert payload["unsettled_arrived_summons"] == [arrived_fact]
+    assert _travel_row(db, person.name)["location"] == "henan"
+    assert _travel_row(db, person.name)["transit_to"] == ""
+
+    import ming_sim.issues as issues_mod
+    real_apply = issues_mod.apply_score_extraction
+    attempts = 0
+    continuation = {"人物变更": [{
+        "name": person.name, "动作": "行止", "transit_to": "beizhili",
+        "origin_ref": "盘面自发",
+    }]}
+
+    def fail_once(*args, **kwargs):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("injected continuation applier failure")
+        return real_apply(*args, **kwargs)
+
+    # 落账经 declaration_dispatch → issues.apply_score_extraction。
+    monkeypatch.setattr(issues_mod, "apply_score_extraction", fail_once)
+
+    def advance_continuation():
+        session = _prepare_player_month(
+            db, state, content, monkeypatch, world=lambda *_a, **_k: "世界段",
+            translate=lambda *_a, **_k: {"effects": continuation},
+        )
+        session.resolve_turn(allow_empty_decree=True)
+        db.save_turn_report(state, "邸报", public_body="邸报")
+        session.resolve_turn(allow_empty_decree=True)
+
+    failed_turn = int(state.turn)
+    from ming_sim.exceptions import SettlementAbort
+    with pytest.raises(SettlementAbort) as excinfo:
+        advance_continuation()
+    assert isinstance(excinfo.value.__cause__, RuntimeError)
+    assert "injected continuation applier failure" in str(excinfo.value.__cause__)
+
+    assert [row["origin_id"] for row in an.list_unsettled_summons(db)] == [origin]
+    assert _travel_row(db, person.name)["location"] == "henan"
+    assert _travel_row(db, person.name)["transit_to"] == ""
+    assert int(state.turn) == failed_turn
+
+    # 无续启成功月：玩家入口推进一月；不得手推 turn / 手调结清。
+    noop_turn = int(state.turn)
+    _settle_empty_month(db, state, content, monkeypatch)
+    assert int(state.turn) == noop_turn + 1
+    assert [row["origin_id"] for row in an.list_unsettled_summons(db)] == [origin]
+    next_payload = build_simulator_payload(state, db, "", "")
+    assert next_payload["unsettled_arrived_summons"] == [arrived_fact]
+    assert _travel_row(db, person.name)["location"] == "henan"
+    assert _travel_row(db, person.name)["transit_to"] == ""
+
+    # 续启成功月：只经玩家过月；结清证明不得手调 helper。
+    advance_continuation()
+    assert an.list_unsettled_summons(db) == []
+    after = _travel_row(db, person.name)
+    assert after["location"] == "henan"
+    assert after["transit_to"] == "beizhili"
+    # 在途赴京期间不得再投「抵原地后续赴京」。
+    assert build_simulator_payload(state, db, "", "")["unsettled_arrived_summons"] == []
 
 
 def test_fresh_seed_closes_ticket_670_named_locations(content):
@@ -857,11 +1054,63 @@ def test_legacy_capital_aliases_admit_in_capital_and_migrate_on_reopen(game):
 
 
 
+def test_continuation_arrival_settles_origin_without_waiting(game, monkeypatch):
+    """#670：抵非京 arrived → 续程 beizhili 成功即结清 origin，不再形成该 origin 候见。
+
+    fresh→抵京→候见→宣入 独立路径由 test_fresh_departure_arrival_and_capital_consume_lifecycle
+    与 test_direct_capital_arrival_does_not_queue_continuation 另钉。
+    """
+    from tests.test_month_chain_1843 import _prepare_player_month
+
+    db, state, content = game
+    person = _set_place(
+        game, "洪承畴", location="shaanxi", transit_to="henan", transit_start_turn=0,
+    )
+    night_id = int(an.open_night(db, state)["id"])
+    origin = "command:continue-wait-1"
+    entry_id = an.record_summon_in_transit(
+        db, night_id, person.name, origin_id=origin,
+    )
+    assert _arrive_at_destination(game, person.name) == [
+        {"name": person.name, "location": "henan"}
+    ]
+    assert an.list_arrived_unsettled_summons(db) == [{
+        "person_name": person.name,
+        "original_destination": "henan",
+        "origin_id": origin,
+        "source_entry_id": entry_id,
+        "required_fact": "抵原地后续赴京",
+    }]
+
+    session = _prepare_player_month(
+        db, state, content, monkeypatch, world=lambda *_a, **_k: "世界段",
+        translate=lambda *_a, **_k: {"effects": {"人物变更": [{
+            "name": person.name, "动作": "行止", "transit_to": "beizhili",
+            "origin_ref": "盘面自发",
+        }]}},
+    )
+    session.resolve_turn(allow_empty_decree=True)
+    db.save_turn_report(state, "邸报", public_body="邸报")
+    session.resolve_turn(allow_empty_decree=True)
+    assert _travel_row(db, person.name)["transit_to"] == "beizhili"
+    assert an.list_unsettled_summons(db) == []
+    assert an.list_arrived_unsettled_summons(db) == []
+
+    # 即便再强制抵京，该 origin 已结清，不得复活为候见。
+    db.conn.execute(
+        "UPDATE characters SET location=?, transit_to='', transit_distance_remaining=NULL, "
+        "transit_speed_factor=NULL WHERE name=?",
+        ("beizhili", person.name),
+    )
+    db.conn.commit()
+    assert an.list_unsettled_summons(db) == []
+    assert an.list_waiting_audience_summons(db) == []
+    assert build_simulator_payload(state, db, "", "")["waiting_audience"] == []
 
 
-def test_waiting_inactive_retires_on_month(game):
-    """#670：候见中 dismiss → 月结 retire 结清。"""
-    from ming_sim.decree import settle_with_delta
+def test_waiting_inactive_retires_on_month(game, monkeypatch):
+    """#670：候见中 dismiss → 玩家过月 retire 结清。"""
+    from tests.test_due_review_621 import _settle_empty_month
 
     db, state, content = game
     person = _set_place(game, "洪承畴", location="beizhili")
@@ -877,11 +1126,51 @@ def test_waiting_inactive_retires_on_month(game):
     # inactive 后 kind 不再 waiting（status 非 active），但仍未结直至月结 retire。
     assert an.list_unsettled_summons(db)[0]["kind"] == "in_transit"
 
-    settle_with_delta(state, db, {}, before_turn=int(state.turn), content=content)
+    _settle_empty_month(db, state, content, monkeypatch)
     assert an.list_unsettled_summons(db) == []
 
 
+def test_waiting_active_departure_settles_and_does_not_revive(game):
+    """#670：候见中 canonical 行止离京 → origin 结清；抵非京不再续赴京。"""
+    from ming_sim.issues import _apply_person_changes
 
+    db, state, content = game
+    person = _set_place(game, "洪承畴", location="beizhili")
+    night_id = int(an.open_night(db, state)["id"])
+    origin = "command:waiting-leave-1"
+    entry_id = an.record_summon_in_transit(
+        db, night_id, person.name, origin_id=origin,
+    )
+    assert an.list_unsettled_summons(db) == [{
+        "entry_id": entry_id,
+        "night_id": night_id,
+        "person_name": person.name,
+        "origin_id": origin,
+        "kind": "waiting",
+    }]
+
+    results = _apply_person_changes(
+        db, state,
+        [{
+            "name": person.name, "动作": "行止", "transit_to": "shaanxi",
+            "origin_ref": "盘面自发",
+        }],
+        content=content,
+    )
+    assert results and not results[0].get("rejected")
+    assert _travel_row(db, person.name)["transit_to"] == "shaanxi"
+    assert an.list_unsettled_summons(db) == []
+    assert an.list_waiting_audience_summons(db) == []
+
+    # 抵非京后不得复活「续赴京」
+    db.conn.execute(
+        "UPDATE characters SET location=?, transit_to='', transit_distance_remaining=NULL, "
+        "transit_speed_factor=NULL WHERE name=?",
+        ("shaanxi", person.name),
+    )
+    db.conn.commit()
+    assert an.list_arrived_unsettled_summons(db) == []
+    assert build_simulator_payload(state, db, "", "")["unsettled_arrived_summons"] == []
 
 def test_waiting_active_departure_settle_failure_rolls_back_all_four_sides(
     game, monkeypatch,
@@ -1159,9 +1448,9 @@ def test_shuntian_zhili_aliases_migrate_on_reopen(game):
         restored.close()
 
 
-def test_inactive_person_skips_continuation_and_retires_on_month(game):
-    """#670：非 active 不投续程；月结退役结清 origin。"""
-    from ming_sim.decree import settle_with_delta
+def test_inactive_person_skips_continuation_and_retires_on_month(game, monkeypatch):
+    """#670：非 active 不投续程；玩家过月退役结清 origin。"""
+    from tests.test_due_review_621 import _settle_empty_month
 
     db, state, content = game
     person = _set_place(
@@ -1179,7 +1468,7 @@ def test_inactive_person_skips_continuation_and_retires_on_month(game):
     assert an.list_arrived_unsettled_summons(db) == []
     assert [row["origin_id"] for row in an.list_unsettled_summons(db)] == [origin]
 
-    settle_with_delta(state, db, {}, before_turn=int(state.turn), content=content)
+    _settle_empty_month(db, state, content, monkeypatch)
     assert an.list_unsettled_summons(db) == []
 
 

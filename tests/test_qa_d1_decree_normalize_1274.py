@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import types
+import threading
 
 import pytest
 
@@ -228,6 +229,7 @@ def test_web_create_directive_long_extract_still_lands_real_draft(game, monkeypa
     session.llm_config = None
     session.content = content
     web_game = types.SimpleNamespace(
+        _write_gate=threading.Lock(),
         db=db, state=state, content=content, session=session,
         directive_rows=lambda: db.list_directives(
             state, statuses=("pending", "draft"),

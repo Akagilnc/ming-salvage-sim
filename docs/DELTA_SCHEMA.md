@@ -1,8 +1,8 @@
-# DELTA_SCHEMA.md — 我产 delta JSON 的格式契约
+# Delta Schema
 
-**真相源**：`ming_sim/simulation.py`（`EMPTY_EXTRACTION` / `MODULE_FIELDS` / `_clean_*`）+ `ming_sim/issues.py`（落库守门）+ `ming_sim/constants.py`（白名单）。
+**真相源**：`ming_sim/simulation.py`（`EMPTY_EXTRACTION`、`ITEM_FIELD_ALIASES`、`_canonical_item_fields`、`read_beyond_intent_raw`）+ `ming_sim/issues.py`（落库守门）+ `ming_sim/constants.py`（白名单）。
 
-用途：每回合月末，我以裁判身份产一份 delta JSON，由 driver 喂 `apply_score_extraction(db, state, extracted)` 落库。**分层校验（ADR 0015 r4 终态）**：顶层非 dict（连 section 都拆不出）才整份重产；未知顶层 key＝可拆 section → 按段拒收留痕，其余 section 照落，**不整份退**；已知 section 内值/项不合法逐项拒收留痕。必须查表，不要凭"我以为"。
+用途：过月逐段声明由 `declaration_dispatch` 交 `apply_score_extraction` 落库；下文记录效果字段约束。**分层校验（ADR 0015 r4 终态）**：顶层非 dict（连 section 都拆不出）才整份重产；未知顶层 key＝可拆 section → 按段拒收留痕，其余 section 照落，**不整份退**；已知 section 内值/项不合法逐项拒收留痕。必须查表，不要凭"我以为"。
 产出前自查顶层字段集（与 `EMPTY_EXTRACTION` 对齐）：未知 key 不再响亮中止，但会被整段拒收留痕、白产一段——别指望守门人帮忙猜拼写。
 
 ## ADR 0055 效果分工线与 origin 槽
@@ -59,7 +59,7 @@
 }
 ```
 
-中英文 key 都吃（`钱粮收支`==`economy_moves`），别名表见 `simulation.py:TOP_LEVEL_ALIASES`（人口转移亦收 `人口转移` / `流民转移`）。**未知顶层 key 按本文开头的分层规则：按段拒收留痕、其余照落，不整份退（ADR 0015 r4）。** item 字段同样有中英双语别名表（`ITEM_FIELD_ALIASES`）。
+C0 效果字段须用 `EMPTY_EXTRACTION` 中的键；条目字段别名由 `ITEM_FIELD_ALIASES` 规范化。未知字段按段拒收留痕，其余照落。
 
 ---
 
@@ -111,8 +111,8 @@ canonical 段形＝list，每条记录**同时表达两条腿**：applier 读一
 
 - applier 将拟转数额封顶为当时 source 省级行实有余额，并在同一事务中 source 减、target 增同一实数额；已应用记录的 `amount` 是实际转移量。
 - 逐项拒收面（坏项留痕、同批合法项照落，ADR 0015/0008）：方向出阵、reason 枚举外、amount 非严格 int/≤0、region 未知或两侧不同省、source/target 触全国行、origin_ref 缺失/伪前缀/未颁案卷、白名单外字段（任何形式的绝对值覆写均不合法——人口只经本原语守恒变动，禁凭空造人/单侧写）。
-- 灾害／兵灾入口（#662/S14）：发生与否及具体量级由 internal extractor 依据既有盘面（region `natural_disaster`/`human_disaster` 字段、military_pressure 定性档、活跃局势 issue）、`class_population_balances` 与 `population_unit` 软判；无事实支撑不得申报该 reason（无灾不入）。代码仅校验上述物理不变量并守恒记账，不建引擎侧自动触发（与 extractor 无双驱动并存）。origin 标即 `reason` 枚举本身，无第二 origin 字段；与加派/摊派入口合流同一 classes 行池账，下游只认账不认来源。
-- item 字段中英别名：`源`/`源阶级`→source、`目标`/`目标阶级`→target、`数额`/`口数`→amount、`原因`→reason（prompt 中文 shape 教 `原因`，与 `ITEM_FIELD_ALIASES` 单一真源；勿另教别名表外标签如「缘由」）。接口层：internal extractor 专属输入面带按 class@region_id 键合的省级人口余额＋本档 population_unit 的 `class_population_balances` TSV（不进玩家可感 simulator 数表）。simulator 另有机面 `displaced_pool_balances`（省级流民池 `region_id`+余额+单位，#652 投贼吃池顶；classes_brief 仍定性）。
+- 灾害／兵灾入口（#662/S14）：转译依据盘面事实判断具体量级；无事实支撑不得申报。代码校验物理不变量并守恒记账，不自动触发人口迁移；各原因合流同一 classes 行池账。
+- 条目字段规范化以 `ITEM_FIELD_ALIASES` 为准；人口余额与单位由月链材料供给，不将引擎数表当玩家呈现。
 
 ### `bandit_absorptions` — 流民投贼吸收（#652/ADR 0087）
 
@@ -263,7 +263,7 @@ canonical 段形＝list，每项落一道加派旨：逐省累积账当回合落
 | `stop_condition` | dict；落库到 `issues.stop_condition` 时以 JSON 字符串保存。条件 dict 用 `{"army.guanning.arrears":"<=0"}` 这种形态：key 带表/对象/字段，operator 写在 value 内 |
 | `bar_good_meaning` / `bar_bad_meaning` | 文案 |
 | `ongoing_effects` / `effect_on_resolve` / `effect_on_fail` | dict，月度持续/结案/失败效果 |
-| `ongoing_effects.economy[]` | 与顶层 `economy_moves` 同形；#1260 嵌套通道直走 `_apply_economy_list`（不经 `_clean_economy_moves`），`beyond_intent` 吃全套别名 `beyond_intent` / `旨外` / `旨外标记` / `旨外恶果`（真源=simulation 别名表） |
+| `ongoing_effects.economy[]` | 与顶层 `economy_moves` 同形；嵌套通道走 `_apply_economy_list`；旨外标记以 `read_beyond_intent_raw` 为准 |
 | `cancellable` | "decree" / "never" / "by_progress" |
 | `narrative` | 立项叙事 |
 
@@ -456,18 +456,6 @@ personnel_secret 模块产出；settle 内经 `record_monthly_dossier_progress` 
 
 ---
 
-## 模块归属（仅参考，driver 现在合并产出，不分模块）
-
-| 模块 | 顶层字段 |
-|---|---|
-| `internal` | `metric_delta` `economy_moves` `faction_delta` `class_delta` `population_transfers` `surcharge_decrees` `region_delta` `fiscal_changes` `fiscal_creates` `fiscal_removes` |
-| `military_external` | `army_delta` `new_armies` `power_updates` `bandit_absorptions` `world_advance` |
-| `issues` | `issue_advances` `new_issues` `事件结局` `cancels` `close_issues` `dossier_executions` `dossier_participants` `authority_changes` `dossier_reconciliations` `faction_denunciations` |
-| `personnel_secret` | `人物变更` `secret_order_updates` `covert_exec_selections` `dossier_progress_reports` `secret_dossier_participants` `emperor_fate` |
-| `relations` | `relation_edge_events` |
-
----
-
 ## 落库守门 - 已经踩过的坑（list of pain）
 
 | 字段 | 我犯过的错 | 真相 |
@@ -486,7 +474,7 @@ personnel_secret 模块产出；settle 内经 `record_monthly_dossier_progress` 
 
 | 文件 | 看什么 |
 |---|---|
-| `ming_sim/simulation.py` | `EMPTY_EXTRACTION` / `TOP_LEVEL_ALIASES` / `ITEM_FIELD_ALIASES` / `MODULE_FIELDS` / `_clean_*` |
+| `ming_sim/simulation.py` | `EMPTY_EXTRACTION` / `ITEM_FIELD_ALIASES` / `_canonical_item_fields` / `read_beyond_intent_raw` |
 | `ming_sim/issues.py` | `apply_score_extraction()` 里各 issue/new_issue 校验、`origin_kind`/`kind` 白名单 |
 | `ming_sim/db.py` | `set_character_status()` 状态白名单、各 `apply_*_deltas` 字段守门 |
 | `ming_sim/constants.py` | `REGION_*` / `ARMY_*` / `POWER_*` / `BUILDING_*` / `ECONOMY_ACCOUNTS` / `SCORE_METRICS` |

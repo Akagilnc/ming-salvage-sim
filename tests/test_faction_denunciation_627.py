@@ -575,18 +575,3 @@ def test_ac5_zero_template_banned_tokens_exposure_and_622(game):
     hit = next(s for s in signals if int(s["target_dossier_id"]) == did)
     assert hit["fork"] is True
     assert hit["fork"] == db.read_dossier_fork_state(did)["fork"]
-
-
-def test_accept_wired_in_settle_not_pre_settle_emergence():
-    """承接在 settle 抽取后；pre_settle 不再硬触发检举。"""
-    decree_src = (_REPO / "ming_sim" / "decree.py").read_text(encoding="utf-8")
-    assert "accept_faction_denunciations" in decree_src
-    # pre_settle 内不得再 trigger
-    tree = ast.parse(decree_src)
-    pre = next(
-        n for n in tree.body
-        if isinstance(n, ast.FunctionDef) and n.name == "pre_settle"
-    )
-    pre_body = ast.get_source_segment(decree_src, pre) or ""
-    assert "trigger_faction_denunciations" not in pre_body
-    assert "accept_faction_denunciations" not in pre_body

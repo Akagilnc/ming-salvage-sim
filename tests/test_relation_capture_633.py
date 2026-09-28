@@ -23,8 +23,6 @@ from ming_sim.relations import (
 import pytest
 from ming_sim.simulation import (
     EMPTY_EXTRACTION,
-    MODULE_FIELDS,
-    _FIELD_OWNER_MODULE,
 )
 
 
@@ -39,12 +37,6 @@ def _triplets(rows):
 # ── 路由归属：受控 section 归 relations 独占槽 ────────────────────────
 
 
-def test_relation_edge_events_slot_owned_by_relations_module():
-    assert "relations" in MODULE_FIELDS
-    assert MODULE_FIELDS["relations"] == {"relation_edge_events"}
-    assert "relation_edge_events" in EMPTY_EXTRACTION
-    assert EMPTY_EXTRACTION["relation_edge_events"] == []
-    assert _FIELD_OWNER_MODULE["relation_edge_events"] == "relations"
 
 
 # ── TD-1 结算侧：当场落库、origin 回指本回合、方向三元组 ─────────────
@@ -450,24 +442,6 @@ def test_missing_frozen_dossier_set_is_empty_closed_set(game):
     assert len(_edge_rows(db, source="温体仁", target="周延儒")) == 1
 
 
-def test_module_misroute_of_relation_field_is_stripped_not_applied(monkeypatch):
-    """大臣互动错放进其它模块：白名单剔除 + misroute 留痕，不落库。"""
-    from ming_sim.simulation import _sanitize_module_output
-
-    msgs: list[str] = []
-    import ming_sim.simulation as sim
-    monkeypatch.setattr(sim, "tlog", lambda m: msgs.append(m))
-    out = _sanitize_module_output(
-        "issues",
-        {"new_issues": [], "relation_edge_events": [{"施动者": "甲"}]},
-    )
-    assert out.get("relation_edge_events") in ([], None)
-    hit = next(
-        r for r in (out.get("_module_rejections") or [])
-        if (r.get("item") or {}).get("field") == "relation_edge_events"
-    )
-    assert hit["category"] == "misrouted_field"
-    assert "relations" in hit["reason"]
 
 
 # ── F1：context 存储零删改，全链字节相等 ────────────────────────────

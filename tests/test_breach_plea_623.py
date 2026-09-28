@@ -34,7 +34,7 @@ from ming_sim.breach_plea import (
     try_defer_revoke_to_breach_plea,
     write_breach_plea_todo,
 )
-from ming_sim.decree import settle_with_delta
+from tests.test_due_review_621 import _settle_empty_month
 from ming_sim.due_review import (
     apply_pending_due_reviews,
     dossiers_with_pending_due_review,
@@ -121,13 +121,6 @@ def _insert_commitment(
         kwargs["stop_condition"] = stop_condition
     issue_id = db.insert_issue(state, **kwargs)
     return int(issue_id), origin_ref
-
-
-def _settle_empty_month(db, state, content):
-    before = state.turn
-    report = settle_with_delta(state, db, {}, before_turn=before, content=content)
-    assert state.turn == before + 1
-    return report
 
 
 def _pending_pleas(db):
@@ -512,7 +505,7 @@ def test_persist_via_extraction_cancels_true_entry(game):
 # ── 沉默滚存 / 到期失效 ──────────────────────────────────────────────
 
 
-def test_silence_keeps_pending_across_settle(game):
+def test_silence_keeps_pending_across_settle(game, monkeypatch):
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.commit()
@@ -539,8 +532,8 @@ def test_silence_keeps_pending_across_settle(game):
     assert _pending_pleas(db)
     assert db.get_decree_dossier(did)["status"] == "executing"
 
-    # 再 settle 一拍仍 pending 可顶出
-    _settle_empty_month(db, state, content)
+    # 再过月一拍仍 pending 可顶出
+    _settle_empty_month(db, state, content, monkeypatch)
     assert _pending_pleas(db)
     scenes = list_due_review_scenes(db, state)
     assert any(s.get("kind") == "breach_plea" for s in scenes)
@@ -679,7 +672,7 @@ def test_breach_plea_survives_restore(game):
     db2.close()
 
 
-def test_no_decision_pause_on_breach_plea_settle(game):
+def test_no_decision_pause_on_breach_plea_settle(game, monkeypatch):
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.commit()
@@ -691,10 +684,9 @@ def test_no_decision_pause_on_breach_plea_settle(game):
         db, state, title="不停轮", origin_ref=f"dossier:{did}",
         ongoing_effects={}, bar_value=15, end_turn=state.turn + 24,
     )
-    report = _settle_empty_month(db, state, content)
-    assert "<<DECISION>>" not in report
+    result = _settle_empty_month(db, state, content, monkeypatch)
+    assert result.awaiting is False
     assert state.turn_phase != TurnPhase.AWAITING_DECISION.value
-    assert "AWAITING_DECISION" not in report
 
 
 def test_try_defer_only_for_commitment_kind(game):

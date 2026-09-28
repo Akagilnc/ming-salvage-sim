@@ -25,20 +25,13 @@ class _HistoryDB:
             "attendant_message": "",
         }
 
-    def get_turn_extraction(self, turn: int):
+    def get_resolve_context(self, turn: int):
         return {
-            "turn": turn,
-            "year": 2,
-            "period": 3,
             "decree_text": "诏曰：赈济辽东。",
-            "extractor_output": {
-                "economy_moves": [{"account": "国库", "delta": -20}],
-                "character": {"loyalty": 88, "ability": 77},
-            },
         }
 
     def list_directives_by_turn(self, turn: int):
-        return [{"id": 7, "text": "命户部发帑", "notes": "家赀约十万两"}]
+        return [{"id": 7, "year": 2, "period": 3, "text": "命户部发帑", "notes": "家赀约十万两"}]
 
 
 def test_history_payload_preserves_narrative_without_machine_ledger(monkeypatch):
@@ -54,7 +47,7 @@ def test_history_payload_preserves_narrative_without_machine_ledger(monkeypatch)
         "report": "邸报：国丈家赀约数十万两。",
         "attendant_message": "",
         "decree_text": "诏曰：赈济辽东。",
-        "directives": [{"id": 7, "text": "命户部发帑", "notes": "家赀约十万两"}],
+        "directives": [{"id": 7, "year": 2, "period": 3, "text": "命户部发帑", "notes": "家赀约十万两"}],
     }
 
 

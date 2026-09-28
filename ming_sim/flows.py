@@ -2167,7 +2167,7 @@ def _apply_population_transfers(
     行；origin_ref 缺失/伪前缀/未颁案卷；白名单外字段。数据拒收永不中止事务；代码
     异常照常上抛由 applier.atomic 回滚（两轴分立）。
 
-    返回 (applied list, rejections list)：前者供 turn_extractions 留痕，
+    返回 (applied list, rejections list)：前者供当前声明落账反馈，
     后者由顶层置于 "population_transfers_rejections" 段、桥接自动收。
     不复用 DeltaApplyResult（其 applied 声明为 dict、文档限定 faction/class）；
     本核 applied 为转移记录 list，直接声明窄类型（#649 C2）。
@@ -2308,6 +2308,12 @@ def _apply_population_transfers(
                 "UPDATE classes SET population = population + ?, updated_at = CURRENT_TIMESTAMP "
                 "WHERE name=? AND region_id=?",
                 (amount, dst_cls, dst_region),
+            )
+            db.conn.execute(
+                "INSERT INTO population_transfer_ledger "
+                "(turn, source, target, amount, reason, origin_ref) VALUES (?, ?, ?, ?, ?, ?)",
+                (int(db.conn.execute("SELECT turn FROM game_state WHERE id=1").fetchone()[0]),
+                 source, target, amount, reason, origin_ref),
             )
         region_name = str(db.conn.execute(
             "SELECT name FROM regions WHERE id=?", (src_region,)

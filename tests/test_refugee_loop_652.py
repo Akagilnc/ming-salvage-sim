@@ -1,6 +1,7 @@
 """#652：流民环闭合——投贼吃池顶 + 赈济/招抚回流 + 唯一判官成色链。
 
-／advance_without_decree（可控 LLM seam 真实月结）。
+主测缝：build_simulator_payload / apply_score_extraction /
+advance_without_decree（可控 LLM seam 真实月结）。
 owner A：开仓非回流 producer；只覆盖赈济与招抚屯田；#522 不动。
 """
 
@@ -18,12 +19,15 @@ from ming_sim.constants import (
     RECOVERY_PERSONS_PER_WAN,
 )
 from ming_sim.db import GameDB, POPULATION_UNIT_PERSONS
-from ming_sim.decree import settle_with_delta
 from ming_sim.issues import apply_score_extraction
-from tests.settlement_seam_helpers import canned_full_settlement, make_light_session
+from ming_sim.simulation import build_simulator_payload
+from tests.month_chain_helpers import canned_full_settlement, make_light_session
 
 FARMER_SHAANXI = 6000000
 DISPLACED_SHAANXI = 150000
+
+
+
 
 
 def _pop(db: GameDB, name: str, region_id: str) -> int:
@@ -40,7 +44,7 @@ def _strength(db: GameDB, power_id: str) -> int:
     ).fetchone()[0])
 
 
-def _recovery_grant(db, state, *, action="赈灾", amount=30, region_id="shaanxi"):
+def _recovery_grant(db, state, *, action="赈灾", amount=30, region_id="shaanxi", cadence="一次性"):
     state.metrics["内库"] = max(int(state.metrics.get("内库") or 0), amount + 50)
     dossier_id = db.create_decree_dossier(
         state, action_type="grant_allocation",
@@ -48,17 +52,13 @@ def _recovery_grant(db, state, *, action="赈灾", amount=30, region_id="shaanxi
         target_kind="region", target_id=region_id,
         payload={
             "grant_action": action, "account": "内库", "amount": amount,
-            "execution_surface": "immediate", "cadence": "一次性",
+            "execution_surface": "immediate", "cadence": cadence,
         },
     )
     db.apply_dossier_promulgation(state, dossier_id, "promulgated")
     return dossier_id
 
 
-def _settle_transfers(state, db, content, narrative="settle"):
-    before = state.turn
-    settle_with_delta(state, db, {}, before_turn=before, content=content, narrative=narrative)
-    return db.get_turn_extraction(before)["extractor_output"]["population_transfers"]
 
 
 def _reflux(transfers, *, dossier_id=None):
@@ -257,88 +257,9 @@ def test_free_positive_bandit_strength_rejected_negative_ok(game):
     assert _strength(db, pid) == max(0, before2 - 3)
 
 
-# ── 刀② recovery producer ───────────────────────────────────────────────────
+# 回流的正例由下方真实月链 in_transit 用例验证；效果落账入口不再触发。
 
-@pytest.mark.parametrize("action", ["赈灾", "招抚屯田"])
-def test_recovery_grant_produces_回流_on_settle(game, action):
-    db, state, content = game
-    amount = 30
-    treasury_before = int(state.metrics["内库"])
-    dossier_id = _recovery_grant(db, state, action=action, amount=amount)
-    row = db.get_decree_dossier(dossier_id)
-    assert row["status"] == "closed" and row["execution_outcome"] == "fulfilled"
-    assert int(state.metrics["内库"]) == treasury_before - amount
-    assert db.list_economy_moves_for_dossier(dossier_id)
-
-    displaced_before, farmer_before = _pop(db, "流民", "shaanxi"), _pop(db, "农民", "shaanxi")
-    expected = min(int(round(amount * RECOVERY_PERSONS_PER_WAN)), displaced_before)
-    transfers = _settle_transfers(state, db, content, action)
-    reflux = _reflux(transfers, dossier_id=dossier_id)
-    assert len(reflux) == 1 and reflux[0]["amount"] == expected
-    assert _pop(db, "流民", "shaanxi") == displaced_before - expected
-    assert _pop(db, "农民", "shaanxi") == farmer_before + expected
-
-
-def test_paid_recovery_preempts_same_turn_absorption(game):
-    db, state, content = game
-    db.conn.execute(
-        "UPDATE classes SET population=100000 WHERE name='流民' AND region_id='shaanxi'"
-    )
-    db.conn.commit()
-    pid = "bandit_li_zicheng"
-    dossier_id = _recovery_grant(db, state, amount=30)
-    strength_before = _strength(db, pid)
-    before_turn = int(state.turn)
-    settle_with_delta(
-        state, db, {
-            "bandit_absorptions": [{
-                "region_id": "shaanxi", "power_id": pid,
-                "requested_count": 100_000, "origin_ref": "盘面自发",
-            }],
-        }, before_turn=before_turn, content=content, narrative="回流先于投贼",
-    )
-    output = db.get_turn_extraction(before_turn)["extractor_output"]
-    reflux = _reflux(output["population_transfers"], dossier_id=dossier_id)
-    absorption = output["bandit_absorptions"]
-    assert [item["amount"] for item in reflux] == [60_000]
-    assert [item["actual_count"] for item in absorption] == [40_000]
-    assert _pop(db, "流民", "shaanxi") == 0
-    assert _strength(db, pid) == (
-        strength_before + 40_000 // BANDIT_ABSORPTION_PERSONS_PER_STRENGTH
-    )
-
-
-def test_two_recovery_dossiers_share_remaining_pool(game):
-    db, state, content = game
-    db.conn.execute(
-        "UPDATE classes SET population=100000 WHERE name='流民' AND region_id='shaanxi'"
-    )
-    db.conn.commit()
-    first = _recovery_grant(db, state, amount=30)
-    second = _recovery_grant(db, state, amount=30)
-    farmer_before = _pop(db, "农民", "shaanxi")
-
-    reflux = _reflux(_settle_transfers(state, db, content, "双案同省"))
-    assert [(r["origin_ref"], r["amount"]) for r in reflux] == [
-        (f"dossier:{first}", 60_000),
-        (f"dossier:{second}", 40_000),
-    ]
-    assert _pop(db, "流民", "shaanxi") == 0
-    assert _pop(db, "农民", "shaanxi") == farmer_before + 100_000
-
-
-def test_recovery_fires_once_across_subsequent_settles(game):
-    db, state, content = game
-    _recovery_grant(db, state, amount=20)
-    first = _reflux(_settle_transfers(state, db, content, "一次"))
-    assert len(first) == 1
-    after = _pop(db, "流民", "shaanxi")
-    second = _settle_transfers(state, db, content, "下月")
-    assert not _reflux(second)
-    assert _pop(db, "流民", "shaanxi") == after
-
-
-def test_llm_free_回流_rejected_engine_still_lands(game):
+def test_llm_free_回流_rejected(game):
     db, state, content = game
     free = apply_score_extraction(db, state, {
         "population_transfers": [{
@@ -350,11 +271,24 @@ def test_llm_free_回流_rejected_engine_still_lands(game):
     assert free["population_transfers_rejections"]
     assert _pop(db, "流民", "shaanxi") == DISPLACED_SHAANXI
 
-    _recovery_grant(db, state, amount=15)
-    assert _reflux(_settle_transfers(state, db, content, "单核"))
+
+def _advance_canned_month(db, state, content, monkeypatch):
+    """Only external LLM calls are canned; settlement and advancement remain real."""
+    canned_full_settlement(monkeypatch, skip_fixed_flows=True)
+    session = make_light_session(db, state, content)
+    waiting = session.advance_without_decree()
+    assert waiting.stage == "gazette"
+    turn = state.turn
+    db.conn.execute(
+        "INSERT INTO turn_reports (turn, year, period, report) VALUES (?, ?, ?, ?)",
+        (turn, state.year, state.period, "邸报已成"),
+    )
+    db.conn.commit()
+    assert session.advance_without_decree().advanced is True
 
 
-def test_non_recovery_grant_no_回流(game):
+@pytest.mark.usefixtures("_offline_scene_beat_generator")
+def test_non_recovery_grant_no_回流(game, monkeypatch):
     db, state, content = game
     state.metrics["内库"] = max(int(state.metrics.get("内库") or 0), 80)
     dossier_id = db.create_decree_dossier(
@@ -368,10 +302,13 @@ def test_non_recovery_grant_no_回流(game):
     db.apply_dossier_promulgation(state, dossier_id, "promulgated")
     assert db.get_decree_dossier(dossier_id)["execution_outcome"] == "fulfilled"
     assert db.list_economy_moves_for_dossier(dossier_id)
-    assert not _reflux(_settle_transfers(state, db, content, "非回流"))
+    before = _pop(db, "流民", "shaanxi")
+    _advance_canned_month(db, state, content, monkeypatch)
+    assert _pop(db, "流民", "shaanxi") == before
 
 
-def test_recovery_without_paid_evidence_produces_nothing(game):
+@pytest.mark.usefixtures("_offline_scene_beat_generator")
+def test_recovery_without_paid_evidence_produces_nothing(game, monkeypatch):
     db, state, content = game
     dossier_id = _recovery_grant(db, state, amount=30)
     assert db.list_economy_moves_for_dossier(dossier_id)
@@ -383,7 +320,7 @@ def test_recovery_without_paid_evidence_produces_nothing(game):
     db.conn.commit()
     assert db.list_economy_moves_for_dossier(dossier_id) == []
     before = _pop(db, "流民", "shaanxi")
-    assert not _reflux(_settle_transfers(state, db, content, "无实付"))
+    _advance_canned_month(db, state, content, monkeypatch)
     assert _pop(db, "流民", "shaanxi") == before
 
 
@@ -460,7 +397,6 @@ def _canned_judge(monkeypatch, *, outcome, dossier_id, sim_calls):
         narrative=narrative,
         simulator_calls=sim_calls,
         skip_fixed_flows=True,
-        skip_relation_brew=True,
     )
 
 
@@ -509,6 +445,83 @@ def _force_in_transit_recovery_grant(db, state, *, amount=40, region_id="shaanxi
 
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
+def test_recovery_shared_pool_advances_once_after_empty_effect_month(game, monkeypatch):
+    """无效果月同省多案仅在推进时分配余池；读档重进不再扣。"""
+    db, state, content = game
+    db.conn.execute(
+        "UPDATE classes SET population=100000 WHERE name='流民' AND region_id='shaanxi'"
+    )
+    db.conn.commit()
+    _recovery_grant(db, state, amount=30)
+    _recovery_grant(db, state, amount=30)
+    before_farmers = _pop(db, "农民", "shaanxi")
+    canned_full_settlement(monkeypatch, skip_fixed_flows=True)
+    session = make_light_session(db, state, content)
+    waiting = session.advance_without_decree()
+    assert waiting.stage == "gazette"
+    assert _pop(db, "流民", "shaanxi") == 100000
+    closed_turn = state.turn
+    db.conn.execute(
+        "INSERT INTO turn_reports (turn, year, period, report) VALUES (?, ?, ?, ?)",
+        (closed_turn, state.year, state.period, "邸报已成"),
+    )
+    db.conn.commit()
+    # 推进事务在回流之后崩溃：回滚池、重试只执行一次。
+    original_next_period = state.next_period
+    def fail_advance():
+        raise RuntimeError("advance interrupted")
+    monkeypatch.setattr(state, "next_period", fail_advance)
+    from ming_sim.exceptions import SettlementAbort
+    with pytest.raises(SettlementAbort):
+        session.advance_without_decree()
+    assert _pop(db, "流民", "shaanxi") == 100000
+    monkeypatch.setattr(state, "next_period", original_next_period)
+    assert session.advance_without_decree().advanced is True
+    assert _pop(db, "流民", "shaanxi") == 0
+    assert _pop(db, "农民", "shaanxi") == before_farmers + 100000
+    from ming_sim.population_pressure import recent_reflux_cause_rows
+    assert len(recent_reflux_cause_rows(db)) == 2
+    from ming_sim.db import GameDB
+    loaded = GameDB(_database_path(db), content)
+    try:
+        assert loaded.load_state().turn == closed_turn + 1
+        assert _pop(loaded, "流民", "shaanxi") == 0
+        assert _pop(loaded, "农民", "shaanxi") == before_farmers + 100000
+        assert len(recent_reflux_cause_rows(loaded)) == 2
+    finally:
+        loaded.close()
+
+
+@pytest.mark.usefixtures("_offline_scene_beat_generator")
+def test_monthly_recovery_follows_each_month_actual_payment(game, monkeypatch):
+    db, state, content = game
+    _reset_shaanxi_pool(db)
+    dossier_id = _recovery_grant(db, state, amount=10, cadence="每月")
+    canned_full_settlement(monkeypatch)
+    session = make_light_session(db, state, content)
+    before = _pop(db, "流民", "shaanxi")
+    for _ in range(2):
+        waiting = session.advance_without_decree()
+        assert waiting.stage == "gazette"
+        turn = state.turn
+        paid = db.conn.execute(
+            "SELECT COALESCE(SUM(-delta), 0) FROM economy_ledger "
+            "WHERE origin_ref=? AND turn=? AND delta<0",
+            (f"dossier:{dossier_id}", turn),
+        ).fetchone()[0]
+        assert paid > 0
+        db.conn.execute(
+            "INSERT INTO turn_reports (turn, year, period, report) VALUES (?, ?, ?, ?)",
+            (turn, state.year, state.period, "邸报已成"),
+        )
+        db.conn.commit()
+        assert session.advance_without_decree().advanced is True
+        after = _pop(db, "流民", "shaanxi")
+        assert before - after == paid * RECOVERY_PERSONS_PER_WAN
+        before = after
+
+
+@pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_in_transit_relief_stays_executing_before_gazette(game, monkeypatch):
     """次月无旨：真实强颁留下的在途赈灾，经世界段与转译落账，读档后仍在。
 
@@ -550,6 +563,8 @@ def test_in_transit_relief_stays_executing_before_gazette(game, monkeypatch):
     def _translate_model(_prompt, _llm_config, *, tag, policy=None):
         del _prompt, policy
         assert tag == "month_segment_translate"
+        # 本月各效果段不得预支下月回流。
+        assert _pop(db, "流民", "shaanxi") == displaced_before
         return {"effects": {"dossier_executions": [{
             "dossier_id": shaanxi_id,
             "outcome": "fulfilled",
@@ -618,36 +633,27 @@ def test_month_settle_carries_disaster_rows_to_judge(game, monkeypatch):
     assert db.get_decree_dossier(dossier_id)["status"] == "executing"
 
 
+
+
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
-def test_no_explicit_outcome_no_judge_fill(game, monkeypatch):
-    """无明确结局：issues 空抄录 → 案卷不闭合、无 recovery；调用次数仍为既有一次。
-
-    无灾路径：引擎不得代判官补写结局（有灾赈灾必写结局是判官软契约）。
-    """
+def test_legacy_population_unit_skips_absorption_and_recovery(game, monkeypatch):
     db, state, content = game
-    amount = 40
-    _reset_shaanxi_pool(db)
-    dossier_id = _in_transit_recovery_grant(db, state, amount=amount, tag="no-out")
-    displaced_before = _pop(db, "流民", "shaanxi")
+    db.conn.execute("DELETE FROM save_meta WHERE key='population_unit'")
+    db.conn.commit()
+    assert db.population_unit != POPULATION_UNIT_PERSONS
+    assert build_simulator_payload(state, db, "", "")["displaced_pool_balances"]["rows"] == []
 
-    sim_calls: list = []
-    _canned_judge(
-        monkeypatch, outcome=None, dossier_id=dossier_id, sim_calls=sim_calls,
-    )
+    applied = apply_score_extraction(db, state, {
+        "bandit_absorptions": [{
+            "region_id": "shaanxi", "power_id": "bandits",
+            "requested_count": 10, "origin_ref": "盘面自发",
+        }],
+    }, content, None)
+    assert applied["bandit_absorptions"] == [] and applied["bandit_absorptions_rejections"]
 
-    closed_turn = int(state.turn)
-    make_light_session(db, state, content).advance_without_decree()
-
-    assert int(state.turn) == closed_turn
-
-    row = db.get_decree_dossier(dossier_id)
-    assert row["status"] == "executing"
-    assert str(row["execution_outcome"] or "") == ""
-
-    extraction = db.get_turn_extraction(closed_turn)
-    transfers = (extraction or {}).get("extractor_output", {}).get("population_transfers") or []
-    assert not _reflux(transfers, dossier_id=dossier_id)
-    assert _pop(db, "流民", "shaanxi") == displaced_before
-
+    assert db.get_decree_dossier(_recovery_grant(db, state, amount=10))["execution_outcome"] == "fulfilled"
+    before = _pop(db, "流民", "shaanxi")
+    _advance_canned_month(db, state, content, monkeypatch)
+    assert _pop(db, "流民", "shaanxi") == before
 
 

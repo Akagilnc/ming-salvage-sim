@@ -516,6 +516,8 @@ def test_personal_projection_only_reads_the_current_open_night(game):
     assert {message["chat_turn_id"] for message in projection} == {current_turn}
 
 
+
+
 def test_history_projection_handlers_are_sync_for_sqlite_access():
     import inspect
     import web_app

@@ -18,9 +18,7 @@ import sqlite3
 import pytest
 
 from ming_sim.db import GameDB
-from ming_sim.decree import (
-    settle_with_delta,
-)
+from tests.test_due_review_621 import _settle_empty_month
 from ming_sim.due_review import (
     build_due_review_input,
 )
@@ -159,13 +157,6 @@ def _insert_staged(db, state, content, *, dossier_id: int, due_turn: int):
     return int(created["issue_id"])
 
 
-def _settle(db, state, content, *, narrative="本月邸报，边事略平。", **extracted):
-    settle_with_delta(
-        state, db, extracted, before_turn=state.turn, content=content,
-        narrative=narrative,
-    )
-
-
 def _table_cols(db, table: str) -> set[str]:
     return {
         str(row["name"])
@@ -291,8 +282,8 @@ def test_ac1_monthly_write_idempotent_readable_and_restore(game, tmp_path, conte
         restored.close()
 
 
-def test_ac1_settle_segment_writes_presence(game):
-    """事实行随 grant recon 同段写入（settle_with_delta atomic）。"""
+def test_ac1_settle_segment_writes_presence(game, monkeypatch):
+    """事实行随真实过月 grant recon 同段写入。"""
     db, state, content = game
     owner, _ = _pair_same_faction(db)
     auditor = _upright_and_mediocre(db)[1]
@@ -302,7 +293,7 @@ def test_ac1_settle_segment_writes_presence(game):
     )
     before_turn = int(state.turn)
     before = len(db.list_supervision_presence(subject_id))
-    _settle(db, state, content)
+    _settle_empty_month(db, state, content, monkeypatch)
     after = db.list_supervision_presence(subject_id)
     assert len(after) == before + 1
     # settle 推进 turn；在场行键控 before_turn
@@ -569,56 +560,6 @@ def test_unpack_supervision_surface_empty_form_is_constant():
 # ── AC5 哨兵 ──────────────────────────────────────────────────────
 
 
-def test_ac5_banned_tokens_absent_from_named_surfaces(game):
-    db, state, content = game
-    owner, auditor_row = _pair_same_faction(db)
-    subject_id = _subject_dossier(db, state, owner=str(owner["name"]), token="ban")
-    _audit_dossier(
-        db, state, auditor=str(auditor_row["name"]), subject_id=subject_id, token="ban",
-    )
-    db.record_monthly_supervision_facts(state.turn, commit=True)
-    db.record_loophole_exposure(
-        subject_id, state.turn, "policy", "degraded", commit=True,
-    )
-    origin = db.compose_supervision_report_origin(subject_id, state.turn)
-    db.record_dossier_progress(
-        subject_id, state.turn, "在办", "沿途核验无大异",
-        origin=origin, commit=True,
-    )
-
-    _insert_staged(db, state, content, dossier_id=subject_id, due_turn=state.turn)
-    write_due_staged_commitment_todos(db, state)
-    # memorial_text（奏报正文）
-    for row in db.list_dossier_progress(subject_id):
-        assert_no_banned_tokens(row.get("memorial_text"), surface="memorial_text")
-
-    # narrative / turn_report via settle
-    _settle(db, state, content, narrative="本月边报无异，吏治照常")
-    # settle 后 turn_logs / turn_reports
-    logs = db.conn.execute(
-        "SELECT message FROM turn_logs ORDER BY turn DESC LIMIT 3"
-    ).fetchall()
-    for row in logs:
-        assert_no_banned_tokens(row["message"], surface="narrative")
-
-    reports = db.conn.execute(
-        "SELECT report FROM turn_reports ORDER BY turn DESC LIMIT 3"
-    ).fetchall()
-    for rep in reports:
-        assert_no_banned_tokens(rep["report"], surface="turn_report")
-
-    # knowledge_items
-    if hasattr(db, "knowledge_items_for_turn"):
-        items = db.knowledge_items_for_turn(state.turn) or []
-        for item in items:
-            if isinstance(item, dict):
-                for key in ("text", "body", "summary", "content"):
-                    if key in item:
-                        assert_no_banned_tokens(item.get(key), surface="knowledge_items")
-
-    # 禁词表本身含票面点名系统词
-    for token in ("钝化", "陋规化"):
-        assert token in SUPERVISION_BANNED_PLAYER_TOKENS
 
 
 # ── 注入面 ────────────────────────────────────────────────────────

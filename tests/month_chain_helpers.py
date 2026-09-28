@@ -1,8 +1,4 @@
-"""Shared light GameSession + canned monthly LLM seams (no external model).
-
-Used by full-settlement tracers (#1274 no-edict, #652 judge chain, …).
-Only replaces outer LLM factories/calls; production spine stays real.
-"""
+"""Light GameSession and canned external model seams for real player-month tests."""
 
 from __future__ import annotations
 
@@ -44,17 +40,12 @@ def canned_full_settlement(
     *,
     narrative: str = "本月边情邸报：辽饷催征，流寇未息。",
     simulator_calls: Optional[list] = None,
-    source_spy: Optional[list] = None,
     skip_fixed_flows: bool = False,
-    skip_relation_brew: bool = False,
 ) -> list:
-    """Replace only external LLM seams; keep production settlement spine.
-
-    """
+    """Replace only external LLM seams; keep production settlement spine."""
     simulator_calls = simulator_calls if simulator_calls is not None else []
 
     # #658：真实 ensure 成案后颁布判官亦为外部 LLM 缝——canned 默认全顺颁。
-    # 替身换 llm_promulgation_verdicts 后生产不触 get_or_create，无需再 patch 工厂。
     def _promulgate(dossiers, *_a, **_k):
         return [
             {"dossier_id": int(row["id"]), "decision": "promulgated"}
@@ -76,31 +67,9 @@ def canned_full_settlement(
         "ming_sim.month_translate.translate_month_segment",
         lambda *_a, **_k: {"effects": {}},
     )
-    monkeypatch.setattr(decree_mod, "create_ending_summary_agent", lambda *a, **k: None)
-    # #1745/#1871：settlement_attendant_runner stub（agent 已删）。
     from tests.section_rejection_helpers import install_settlement_attendant_agent_stub
     install_settlement_attendant_agent_stub(monkeypatch, decree_mod)
     if skip_fixed_flows:
         monkeypatch.setattr(decree_mod, "apply_fixed_period_flows", lambda *_a, **_k: None)
-
-    if skip_relation_brew:
-        class _SkipBrewLeg:
-            def prepare(self):
-                return False
-
-        monkeypatch.setattr(
-            decree_mod,
-            "_make_relation_brew_runner",
-            lambda *_a, **_k: (lambda *_a2, **_k2: _SkipBrewLeg()),
-        )
-
-    if source_spy is not None:
-        real_settle = decree_mod.settle_with_delta
-
-        def _spy_settle(*a, **k):
-            source_spy.append(k.get("source"))
-            return real_settle(*a, **k)
-
-        monkeypatch.setattr(decree_mod, "settle_with_delta", _spy_settle)
 
     return simulator_calls

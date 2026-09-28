@@ -789,6 +789,20 @@ def _settle_edicts(
 
     db, state = session.db, session.state
     outcome = None
+    # 同月任免的快照均以首案物化前盘面为准。未判案只记录校验结果，
+    # 直到判官实际顺颁才消费；中断重开仍认这一批的原始盘面。
+    prevalidated = set(chain.get("recommendation_prevalidated_ids") or [])
+    invalid = set(chain.get("recommendation_invalid_ids") or [])
+    if "recommendation_prevalidated_ids" not in chain:
+        appointments = [row for row in db.list_decree_dossiers(status="proposed")
+                        if row.get("action_type") == "appointment"
+                        and int(row.get("created_turn") or 0) == int(state.turn)]
+        if len(appointments) > 1:
+            invalid = db._invalid_office_recommendation_snapshots(state, appointments)
+            prevalidated = {int(row["id"]) for row in appointments} - invalid
+            chain["recommendation_prevalidated_ids"] = sorted(prevalidated)
+            chain["recommendation_invalid_ids"] = sorted(invalid)
+            _save_chain(db, int(state.turn), chain, source=Provenance.player_decree)
     for dossier in db.list_decree_dossiers():
         if _is_stalled_deliberation(dossier):
             continue
@@ -836,19 +850,36 @@ def _settle_edicts(
             if isinstance(verdict, dict) and verdict.get("decision"):
                 current = db.get_decree_dossier(int(dossier["id"])) or dossier
                 if str(current.get("status") or "") == "proposed":
+                    # 失效快照只在实际顺颁时拒，不因未判/打回阻断整月。
+                    if int(dossier["id"]) in invalid and verdict["decision"] in {"promulgated", "force_promulgated"}:
+                        raise ValueError("任免案卷载荷物化失败")
                     # 判决与元数据、预声明中旨代价同一事务；两种入口共用 DB 写口。
-                    with atomic(db):
-                        db.apply_dossier_promulgation(
-                            state, int(dossier["id"]), str(verdict["decision"]),
-                            blocked_layer=str(verdict.get("blocked_layer") or ""),
-                            reason=str(verdict.get("reason") or ""),
-                            legal_reason_code=str(verdict.get("legal_reason_code") or ""),
-                            primary_opponents=verdict.get("primary_opponents") or [],
-                            gatekeeper_id=verdict.get("gatekeeper_id"),
-                            criteria_snapshot=verdict.get("criteria_snapshot") or {},
-                            content=session.content, registry=registry,
-                        )
-                        db._record_dossier_verdict_metadata(state, int(dossier["id"]), verdict)
+                    previous = getattr(db.conn, "_recommendation_snapshots_prevalidated", False)
+                    db.conn._recommendation_snapshots_prevalidated = previous or int(dossier["id"]) in prevalidated
+                    try:
+                        with atomic(db):
+                            affected = db.apply_dossier_promulgation(
+                                state, int(dossier["id"]), str(verdict["decision"]),
+                                blocked_layer=str(verdict.get("blocked_layer") or ""),
+                                reason=str(verdict.get("reason") or ""),
+                                legal_reason_code=str(verdict.get("legal_reason_code") or ""),
+                                primary_opponents=verdict.get("primary_opponents") or [],
+                                gatekeeper_id=verdict.get("gatekeeper_id"),
+                                criteria_snapshot=verdict.get("criteria_snapshot") or {},
+                                content=session.content, registry=registry,
+                            )
+                            db._record_dossier_verdict_metadata(state, int(dossier["id"]), verdict)
+                    finally:
+                        db.conn._recommendation_snapshots_prevalidated = previous
+                    if registry is not None and affected:
+                        from ming_sim.applier import register_runtime_outcome_callbacks
+                        names = tuple(sorted(affected))
+                        def refresh_affected() -> None:
+                            project = getattr(registry, "project_outcome", registry.refresh)
+                            for name in names:
+                                project(name)
+
+                        register_runtime_outcome_callbacks(db, on_commit=refresh_affected)
         current = db.get_decree_dossier(int(dossier["id"])) or dossier
         if str(current.get("promulgation_decision") or "") == "promulgated":
             def persist_result(_decree_ref: str, result: Any) -> None:
@@ -1205,13 +1236,22 @@ def _run_month_drift(
         )
         db.record_monthly_loophole_exposures_from_reconciliations(turn, commit=False)
         retire_unsettled_summons_for_inactive(db)
-        rejections = apply_issue_inertia_and_ongoing(db, state)
-        if rejections:
-            _collect_inline_rejections(
-                collector, {"issue_inertia": {"entity_rejections": rejections}},
-                turn, source,
-            )
-            collector.flush_to_db(db)
+        # #651：漂移只承接不依赖本段 applied 的持久态（已决「禁摊派」欠饷是否再开口）。
+        # 默许/查办必须在逐段落账接缝带该段 report 结算，见 declaration_dispatch。
+        from ming_sim.covert_levy import settle_exposure_from_canonical_actions, write_exposure_todos
+        write_exposure_todos(db, state)
+        settle_exposure_from_canonical_actions(db, state, {})
+        person_changes: list[dict[str, object]] = []
+        rejections = apply_issue_inertia_and_ongoing(
+            db, state, applied_person_changes=person_changes,
+        )
+        _collect_inline_rejections(
+            collector, {
+                "issue_inertia": {"entity_rejections": rejections},
+                "issue_summary": {"applied_person_changes": person_changes},
+            }, turn, source,
+        )
+        collector.flush_to_db(db)
         db.recompute_all_faction_leverage()
         clear_gated_legacies(db, state)
         apply_pending_due_reviews(db, state, commit=False)
@@ -1535,6 +1575,9 @@ def _advance_after_gazette(
         chain = _load_chain(db, turn)
         db.mark_directives_issued(state)
         clear_return_revise_choice_anchors(db, None)
+        # #652：刚结束的月份的执行判定和实付已落定；下月任何吸收前回流。
+        from ming_sim.issues import _apply_recovery_driven_transfers
+        _apply_recovery_driven_transfers(db, state, commit=False)
         state.next_period()
         _carry_pending_clarification_actions(db, state, turn, content=content)
         state.turn_phase = "issued"

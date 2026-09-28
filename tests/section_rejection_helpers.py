@@ -1,29 +1,15 @@
 """拒收段集成测的薄夹具。
 
-#1846：不复刻已删的 driver 编排。仅：
-- prepare_resolve_front_half（生产前半段 seam）
-- settle_with_delta + 确定性 applier（生产后半段核，整删归 #1843）
-- 默认 attendant runner / rejection_rows 查询
+#1843：只经现役声明分发入口及拒收账查询。
 """
 
 from __future__ import annotations
 
-import json
-
-from ming_sim.applier import Provenance
-from ming_sim.decree import prepare_resolve_front_half, settle_with_delta
-from ming_sim.issues import apply_score_extraction
-from ming_sim.models import LLMConfig
-from ming_sim.simulation import canonicalize_extraction
 
 # game：conftest 已改为方案 (c) session 模板 + 每案文件拷贝（#1233）。
 # 本模块不再维护平行 module-cache 池；re-export 供既有
 # ``from tests.section_rejection_helpers import game`` 消费方零改 import。
 from tests.conftest import game as game  # noqa: F401
-
-_DETERMINISTIC_LLM = LLMConfig(api_key="", base_url="", model="", channel="api")
-_UNSET = object()
-
 
 def default_settlement_attendant_runner(*, year, period, rejections):
     del year, period
@@ -37,69 +23,19 @@ def install_settlement_attendant_agent_stub(
     del monkeypatch, decree_mod, text, capture
 
 
-def prepare_then_settle(db, state, content, raw_delta, **kwargs):
-    """prepare_resolve_front_half → settle_with_delta（生产 seam，非平行旧入口）。"""
-    prep_kw = {}
-    if "registry" in kwargs:
-        prep_kw["registry"] = kwargs["registry"]
-    if "source" in kwargs:
-        prep_kw["source"] = kwargs["source"]
-    prepare_resolve_front_half(
-        state, db, content=content,
-        registry=prep_kw.get("registry"),
-        source=prep_kw.get("source", Provenance.player_decree),
-    )
+def run_declaration(db, state, content, raw_delta, *, narrative="", decree_text=""):
+    """Enter the current fiscal bracket and atomically dispatch a month declaration."""
+    del narrative, decree_text
+    from ming_sim.applier import Provenance
+    from ming_sim.declaration_dispatch import dispatch_declaration
+    from ming_sim.decree import pre_settle
     from tests.conftest import with_monthly_reports
-    return _settle_after_prepare(
-        db, state, content, with_monthly_reports(db, raw_delta), **kwargs,
+
+    pre_settle(state, db, content=content)
+    return dispatch_declaration(
+        db, state, {"effects": with_monthly_reports(db, raw_delta)},
+        source=Provenance.player_decree,
     )
-
-
-def _settle_after_prepare(db, state, content, raw_delta, **kwargs):
-    if raw_delta is None:
-        raw_delta = {}
-    if not isinstance(raw_delta, dict):
-        raise ValueError(f"delta 必须是 object(dict)，实得 {type(raw_delta).__name__}")
-    before_turn = int(state.turn)
-    extracted = canonicalize_extraction(raw_delta)
-    attendant = kwargs.pop("settlement_attendant_runner", _UNSET)
-    if attendant is _UNSET:
-        attendant = default_settlement_attendant_runner
-    source = kwargs.pop("source", Provenance.player_decree)
-    registry = kwargs.pop("registry", None)
-    narrative = kwargs.pop("narrative", "")
-    decree_text = kwargs.pop("decree_text", "")
-    if kwargs:
-        raise TypeError(f"unexpected settle kwargs: {sorted(kwargs)}")
-    return settle_with_delta(
-        state, db, extracted,
-        before_turn=before_turn,
-        content=content,
-        registry=registry,
-        narrative=narrative,
-        decree_text=decree_text,
-        extractor_output=json.dumps(extracted, ensure_ascii=False),
-        source=source,
-        delta_applier=lambda d, s, ex, ct, rg: apply_score_extraction(
-            d, s, ex, content=ct, registry=rg, llm_config=_DETERMINISTIC_LLM,
-        ),
-        settlement_attendant_runner=attendant,
-    )
-
-
-# 兼容旧 import 名：已 prepare 后的 settle
-run_settle = _settle_after_prepare
-
-
-def run_prepare(db, state, content, *, registry=None, source=Provenance.player_decree,
-                decree_text: str = "") -> dict:
-    """薄包装生产 prepare_resolve_front_half；返回 simulator_payload。"""
-    prepare_resolve_front_half(
-        state, db, decree_text=decree_text, content=content,
-        registry=registry, source=source,
-    )
-    ctx = db.get_resolve_context(int(state.turn)) or {}
-    return dict(ctx.get("simulator_payload") or {})
 
 
 def rejection_rows(db, turn, section=None, *, columns="section, reason, category, source"):

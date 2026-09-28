@@ -6,7 +6,7 @@
 
 ## 📚 工作手册（每回合开始前必查，别凭"我以为"）
 - **[docs/DELTA_SCHEMA.md](docs/DELTA_SCHEMA.md)** — 我产 delta JSON 的格式契约：顶层字段、字段约束、白名单、踩过的坑。**产 delta 前查。**
-- **[docs/SETTLEMENT_FLOW.md](docs/SETTLEMENT_FLOW.md)** — 月末结算管线：玩家月链顺序 + 不变式 + 接口层。**写结算时查。**
+- **[docs/SETTLEMENT_FLOW.md](docs/SETTLEMENT_FLOW.md)** — 月末结算管线：玩家月链顺序 + 不变式 + 接口层。**写过月 / 结算时查。**
 - **[TODOS.md](TODOS.md)** — 待修 bug + 探针工程待办。**每回合结算前扫一眼有无"本月要顺手修"的项**。
 - **[docs/FISCAL_PROVINCE_SUBSTRATE.md](docs/FISCAL_PROVINCE_SUBSTRATE.md)** — 省级财政基座设计（三饷/火耗/起运存留/宗禄/逋赋/隐田），**22 轮跨模型评审已收敛，现 v23（2026-06-10 拍板补「三饷计火耗」：火耗应派=(正赋+三饷)×火耗率）**；可执行 spike `spike_settle_tick.py`（G1–G22 全 PASS，5 层断言+独立 oracle，~20 mutation 自验全咬）。**状态：`ming_sim` 已 port 省级 tick/DB bridge；新档已接入 substrate hub cutover，明控且已 seed 的省级起运、盐税、商税、太仓亏空、边饷 hub 与中央军饷开始驱动国库和分源欠饷；旧档保留 legacy 财政引擎**（见 [Milestone #1](https://github.com/Akagilnc/ming-salvage-sim/milestone/1) / Epic #65 / #261）。**非每回合必查；要动省级财政机制时查。**
 - **[docs/AUDIENCE_NORTH_STAR.md](docs/AUDIENCE_NORTH_STAR.md)** — 召对体验**北极星案例**（单场·越次召对·杨嗣昌 + 连场·乾清宫一夜）：召对记录全文 + 海报 html + 小红书卡 + 王承恩递话旁白层 + 召对流程用词。**做 / 评召对时对着它比。**
@@ -38,10 +38,10 @@
 
 ## 关键技术事实（已挖过，省得重来）
 - **启动脱 key**：`GameSession` 构造即不连 LLM（连通校验只在设置页主动提交配置时跑），CLI 无 api key 能起。
-- **delta 落库单一入口**：`db.apply_score_extraction(db, state, extracted, content, registry)`，内部分发到 region/army/building/economy/issue 各 apply。我产符合 schema 的 delta 即可，driver 不用自己写落库。
-- **schema 契约**：全在 `simulation.py`（`TOP_LEVEL_ALIASES`/`ITEM_FIELD_ALIASES`/`EMPTY_EXTRACTION`/`MODULE_FIELDS`/`_clean_*`/`_sanitize_module_output`/`_merge_module_outputs`）。这是我产 delta 的**格式契约 + 落库守门**，零 agno 依赖，必须保留。
-- **接口层（确定性↔LLM，别让 LLM 自己数数）**：材料目录开场最小集（`materials.prepare_world_materials` → 世界段／逐旨预推同一读法）。结局总评只读历月邸报。
-- **结算编排骨架**：玩家颁诏与退朝共用 `decree.resolve_directives → month_chain.run_player_month_chain`（ADR 0157）：收夜与 `pre_settle` 后，按旨序消费夜里暂存声明，推演／转译／提交世界段；未完成请旨先停批红，邸报归档后才判结局、推进月份。恢复从暂存声明及落账状态续跑，ready=1 持久 delta 与对话探针 driver 已删除。调用顺序与边界见 `docs/SETTLEMENT_FLOW.md`，规则真源见 ADR 0157。
+- **delta 落库单一入口**：`apply_score_extraction(db, state, extracted, …)`（经 `declaration_dispatch` 由月链调用），内部分发到 region/army/building/economy/issue 各 apply。
+- **schema 契约**（#1843 reopen 后）：`EMPTY_EXTRACTION`（C0 声明形状真源）、`ITEM_FIELD_ALIASES` / `_canonical_item_fields`（条目字段规范化）、`read_beyond_intent_raw`（超出旨意读取）。五模块 extractor 别名/MODULE_FIELDS/清洗函数已删。
+- **接口层（确定性↔LLM，别让 LLM 自己数数）**：材料目录（#1834）与月链供料；旧 `memories.effect_brief` / `build_simulator_context` 盘面 TSV 路径待 #1845/#1861 整删。
+- **结算编排骨架**：玩家颁诏与退朝共用 `decree.resolve_directives → month_chain.run_player_month_chain`（ADR 0157）：收夜与 `pre_settle` 后，按旨序消费夜里暂存声明，推演／转译／提交世界段；未完成请旨先停批红，邸报归档后才判结局、推进月份。恢复从暂存声明及落账状态续跑；章节记忆退役。对话探针 `driver.py` 与旧核 `settle_with_delta` 已删（#1843 reopen）；CLI 沉浸版将来直接接新月链。调用顺序与边界见 `docs/SETTLEMENT_FLOW.md`，规则真源见 ADR 0157。
 - **运行形态（web 第一，CLI 沉浸版后续）**：**目前 web 版本是第一个尝试方向**，走真实 LLM 后端（codex / agy / hermes，见下）。**「agent session 直接当后端」属后续的 CLI 文字沉浸版**——session 串行（一次一个 LLM 调用）使它在 web 月末并发轰多个 extractor 时会死锁，故那条路留给 CLI 沉浸版、不用在 web。⚠️ 别再凭「探针走 CLI」判 web 路 bug「够不着玩家」：web 是当前真实运行形态，web 路的问题就是真问题。
 - **6 文件三向处置**（agents/simulation/registry/decree/memories/llm_model）：🟢 保留契约/骨架 🟡 提炼成我的玩法说明书 🔴 扔纯 agno 管道（`llm_model.py` 整扔）。**领域金矿本体在 `content/prompts/*.md`（含 `gazette_author.md` 邸报作者提示）**。
 

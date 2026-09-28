@@ -10,6 +10,7 @@
 """
 
 from __future__ import annotations
+import threading
 
 import asyncio
 import json
@@ -57,6 +58,7 @@ def _web_create(game_tuple, monkeypatch, text: str):
     session.llm_config = None
     session.content = content
     web_game = types.SimpleNamespace(
+        _write_gate=threading.Lock(),
         db=db, state=state, content=content, session=session,
         directive_rows=lambda: db.list_directives(
             state, statuses=("pending", "draft"),

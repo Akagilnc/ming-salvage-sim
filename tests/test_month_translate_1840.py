@@ -568,7 +568,8 @@ def test_world_segment_repeated_entity_effects_apply_in_order(game):
     ).fetchall()
     assert len(refs) == 2
     assert refs[0][0] == refs[1][0]
-    assert _pop(db, "流民", "shaanxi") == refugees_before - 2000
+    # #652：世界段不回流；仅邸报后月份推进会扣池。
+    assert _pop(db, "流民", "shaanxi") == refugees_before
 
 
 @pytest.mark.parametrize(

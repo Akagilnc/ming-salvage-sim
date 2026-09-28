@@ -14,7 +14,7 @@ import ming_sim.month_translate as month_translate
 import ming_sim.simulation as simulation
 from ming_sim.declaration_dispatch import pending_action_decree_ref
 from ming_sim.session_write_queue import get_session_write_queue
-from tests.settlement_seam_helpers import make_light_session
+from tests.month_chain_helpers import make_light_session
 from tests.dossier_test_helpers import create_test_secret_order
 
 
@@ -231,6 +231,10 @@ def test_questions_hold_rescript_and_gazette_is_required_before_advance(game, mo
         name="请旨可见", origin="旨意", year=state.year, period=state.period, turn=state.turn,
     )
     pending_id, ref = _stage_edict(db, state, minister, "陕西赈灾", "陕西赈灾", -1, affair.id)
+    from tests.test_refugee_loop_652 import _recovery_grant, _pop
+    _recovery_grant(db, state, amount=10)
+    pool_before = _pop(db, "流民", "shaanxi")
+    farmers_before = _pop(db, "农民", "shaanxi")
     db.conn.execute(
         "UPDATE staged_declarations SET questions_json=? WHERE decree_ref=?",
         ('[{"title":"是否加赈","context":"c","options":[{"label":"加","hint":"h1"},{"label":"否","hint":"h2"}]}]', ref),
@@ -249,6 +253,7 @@ def test_questions_hold_rescript_and_gazette_is_required_before_advance(game, mo
     assert held.awaiting is True
     assert held.advanced is False
     assert int(state.turn) == closed_turn
+    assert _pop(db, "流民", "shaanxi") == pool_before
     assert any(row["title"] == "是否加赈" for row in held.decisions)
 
     # 历史留中回流的同一请旨仍未答，不能因案卷创建于前月越过批红。
@@ -282,6 +287,7 @@ def test_questions_hold_rescript_and_gazette_is_required_before_advance(game, mo
     waiting_gazette = session.resolve_turn(allow_empty_decree=True)
     assert waiting_gazette.stage == "gazette"
     assert int(state.turn) == closed_turn
+    assert _pop(db, "流民", "shaanxi") == pool_before
 
     db.conn.execute(
         "INSERT INTO turn_reports (turn, year, period, report) VALUES (?, ?, ?, ?)",
@@ -291,6 +297,9 @@ def test_questions_hold_rescript_and_gazette_is_required_before_advance(game, mo
     advanced = session.resolve_turn(allow_empty_decree=True)
     assert advanced.advanced is True
     assert int(state.turn) == closed_turn + 1
+    from ming_sim.constants import RECOVERY_PERSONS_PER_WAN
+    assert _pop(db, "流民", "shaanxi") == pool_before - 10 * RECOVERY_PERSONS_PER_WAN
+    assert _pop(db, "农民", "shaanxi") == farmers_before + 10 * RECOVERY_PERSONS_PER_WAN
     del pending_id
 
 
