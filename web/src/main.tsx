@@ -208,7 +208,6 @@ export function App() {
   const {
     settlementGazetteReading,
     advanceRefreshFailed,
-    retryAdvanceRefresh,
     dismissSettlementGazette,
     suppressPostAdvanceOverlays,
     pendingDecisions,
@@ -613,13 +612,18 @@ export function App() {
       .catch((error) => setError(error instanceof Error ? error.message : String(error)));
   };
 
-  if (advanceRefreshFailed && !settlementGazetteReading) {
-    return (
-      <main className="game-shell">
-        <div role="alert">新月盘面尚未载入。{error}</div>
-        <button onClick={() => void retryAdvanceRefresh()}>重试载入新月盘面</button>
-      </main>
-    );
+  // 已推进但新月状态未确认：旧 state 只供内存持有，不得投影为可操作盘面。
+  // #1854 接手此处的统一失败提示与重试；当次邸报仍可独立阅读、关闭。
+  const currentGazette = settlementGazetteReading ? (
+    <SettlementGazettePanel
+      report={settlementGazetteReading.report}
+      attendantMessage={settlementGazetteReading.attendantMessage}
+      periodLabel={settlementGazetteReading.periodLabel}
+      onDismiss={dismissSettlementGazette}
+    />
+  ) : null;
+  if (advanceRefreshFailed) {
+    return <main className="game-shell">{currentGazette}</main>;
   }
 
   return (
@@ -643,14 +647,7 @@ export function App() {
       />
 
       {/* 当次邸报占主面阅读区，不另开遮蔽全屏的窗。 */}
-      {settlementGazetteReading ? (
-        <SettlementGazettePanel
-          report={settlementGazetteReading.report}
-          attendantMessage={settlementGazetteReading.attendantMessage}
-          periodLabel={settlementGazetteReading.periodLabel}
-          onDismiss={dismissSettlementGazette}
-        />
-      ) : null}
+      {currentGazette}
 
       <CourtDrawer
         state={state}
