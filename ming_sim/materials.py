@@ -1673,6 +1673,7 @@ def _scene_pending_audience_facts(db: Any, state: Any) -> list[str]:
 
     原喂开夜旁白；现并入场景开场最小集。结构化事实原样，不加措辞模板。
     """
+    from ming_sim.audience_night import list_unsettled_summons
     from ming_sim.due_review import list_due_review_scenes
     from ming_sim.urge_lever import list_urge_audience_scenes
 
@@ -1684,6 +1685,9 @@ def _scene_pending_audience_facts(db: Any, state: Any) -> list[str]:
             continue
         # Scene text is a legacy fixed memorial, not a fact for the scene LLM.
         facts = {key: value for key, value in scene.items() if key != "scene_text"}
+        lines.append(json.dumps(facts, ensure_ascii=False, sort_keys=True))
+    for summon in list_unsettled_summons(db):
+        facts = {key: summon[key] for key in ("person_name", "kind", "travel_tone") if key in summon}
         lines.append(json.dumps(facts, ensure_ascii=False, sort_keys=True))
     return lines
 
