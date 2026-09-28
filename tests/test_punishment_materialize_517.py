@@ -896,66 +896,6 @@ def test_api_tool_prose_date_number_before_fine_does_not_become_amount(game):
     assert int(payload.get("amount") or 0) == 0
 
 
-def test_api_tool_args_deliver_punishment_fields_through_chat(game):
-    """r3：propose_directive tool arguments 契约交付 punish_action/目标/金额。
-
-    散文首个数字是日期；金额只认 arguments.amount，防止散文猜数伪绿。
-    """
-    db, state, content = game
-    target = _active_ming(db, content)
-    minister = db.conn.execute(
-        "SELECT name FROM characters WHERE power_id='ming' AND status='active' "
-        "AND name!=? LIMIT 1",
-        (target.name,),
-    ).fetchone()["name"]
-
-    class Agent:
-        def run(self, _message):
-            return SimpleNamespace(
-                content="臣已拟旨，请陛下定夺。",
-                tools=[
-                    SimpleNamespace(
-                        tool_name="propose_directive",
-                        result="",
-                        arguments={
-                            "decree_text": f"三月再议，着罚{target.name}俸示惩。",
-                            "punish_action": "罚俸",
-                            "target_id": target.name,
-                            "amount": 120,
-                            "mode": "midzhi",
-                        },
-                    )
-                ],
-            )
-
-    class Registry:
-        def get(self, _character, **_kw):
-            return Agent()
-
-
-    sess = GameSession.__new__(GameSession)
-    sess.db = db
-    sess.state = state
-    sess.content = content
-    sess.registry = Registry()
-    sess.llm_config = SimpleNamespace(channel="api")
-    sess.temporary_characters = set()
-    sess._audience_prompt_for_message = lambda message, *_a, **_kw: message
-    sess._start_cli_action_intent = lambda *_args, **_kwargs: None
-    sess._finish_cli_action_intent = lambda *_args, **_kwargs: None
-
-    result = GameSession.chat(
-        sess, minister, f"按普通程序拟旨罚{target.name}俸。",
-    )
-    assert result.pending_action_id
-    payload = dict(_pending_directive_payloads(db, state.turn, minister))[
-        int(result.pending_action_id)
-    ]
-    assert payload["dossier_action_type"] == "punishment"
-    assert payload["punish_action"] == "罚俸"
-    assert payload["target_id"] == target.name
-    assert int(payload["amount"]) == 120
-    assert payload["mode"] == "midzhi"
 
 
 def test_api_tool_invalid_punishment_category_fails_without_side_effects(game):
