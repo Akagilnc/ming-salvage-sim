@@ -18,7 +18,6 @@ from ming_sim.executor_routing import duty_route_categories
 from ming_sim.action_clusters import (
     ActionCluster,
     FieldSpec,
-    EFFECT_ANSWER_EXISTING,
     EFFECT_MATERIALIZE,
     EFFECT_NOOP,
     cluster_by_kind,
@@ -2051,19 +2050,6 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
     """单一登记定义：label/kind/effect/fields 同表（FieldSpec 枚举真源）。"""
     return (
         ActionCluster("无", "none", EFFECT_NOOP, priority=0),
-        ActionCluster(
-            "确认", "confirmation", EFFECT_ANSWER_EXISTING, priority=10,
-            fields=(
-                FieldSpec(
-                    "confirmation", "确认",
-                    # #1376：修改=原地更新同一 pending 候选内容（owner 既裁）
-                    frozenset({"应允", "拒绝", "留中", "修改", "无"}), "无",
-                ),
-                # #1376：修改判词携带 typed 新内容——唯一权威正文，禁从 player_message 散文裁剪
-                FieldSpec("new_content", "新内容", None, ""),
-                FieldSpec("target_ids", "目标编号", None, []),
-            ),
-        ),
         ActionCluster(
             "密令动作", "secret", EFFECT_MATERIALIZE, priority=30,
             fields=(

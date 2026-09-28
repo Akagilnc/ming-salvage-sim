@@ -1277,65 +1277,6 @@ _SECRET_PREFIXES = ("密令如下：", "密令如下:", "密令：", "密令:")
 # 不靠关键字白名单（脆、永远漏），交给 LLM 读对话判意图——皇帝本轮对该大臣【现有密令】
 # 要做什么（更新内容 / 提交核议 / 催办 / 记进展），以及若是妃嫔有无调教。
 # 只在「大臣有 active 密令 或 是妃嫔」时调（省 token）。
-def extract_minister_actions(
-    player_message: str,
-    minister_reply: str,
-    active_orders: List[Dict[str, Any]],
-    is_consort: bool = False,
-    llm_config: Any = None,
-) -> Dict[str, Any]:
-    """LLM 判皇帝本轮对密令/妃嫔的意图，返回结构化动作。失败返回「无」动作。"""
-    orders_brief = "；".join(
-        f"#{o.get('id')}「{o.get('title', '')}」：{str(o.get('content', ''))[:50]}"
-        for o in (active_orders or [])
-    ) or "（无）"
-    consort_line = (
-        '  "调教技能": "", "调教性格": "",   // 仅当此人是妃嫔、且皇帝在调教她(赐技能/改性格)时填，否则空\n'
-        if is_consort else ""
-    )
-    prompt = (
-        "你是信息抽取器，不扮演、不写圣旨。读皇帝这句话 + 大臣回话 + 该大臣现有密令清单，"
-        "判断皇帝**本轮**对密令"
-        + ("（及调教妃嫔）" if is_consort else "")
-        + "的意图。只输出一个 JSON 对象（无代码围栏、无多余字）：\n"
-        "{\n"
-        '  "密令动作": "无|更新|提交核议|催办|记进展",  // 皇帝补充/改/纠正某现有密令的内容或数额=更新；让其呈报办结待核=提交核议；催/加急/限期=催办；问进度并据回话记录=记进展；都不是=无\n'
-        '  "目标密令编号": 0,                        // 上述动作针对哪条现有密令的 id（清单里的 #数字）；只有一条时填那条\n'
-        '  "新标题": "", "新内容": "", "期限月数": 0,  // 仅"更新"时给：综合皇帝话+大臣回话，写该密令改后的【完整新要旨】\n'
-        + consort_line +
-        "}\n"
-        "判定要点：皇帝口语如「更新/改成/其实是/纠正/补充…」指向某现有密令即「更新」，新内容要把改动并入完整要旨（别只写增量）。语义判断，别拘泥字面措辞。\n\n"
-        "【该大臣现有密令】" + orders_brief + "\n"
-        "【皇帝】" + (player_message or "（无）") + "\n"
-        "【大臣回话】" + (minister_reply or "（无）") + "\n"
-    )
-    raw = ""
-    try:
-        raw, _ = _run_backend_for_config(prompt, llm_config, tag="minister_actions")
-    except Exception as exc:  # 抽取失败不阻断对话
-        _log(f"大臣动作抽取失败：{exc}")
-    obj = _loads_lenient(raw) or {}
-
-    def _int(v, hi=10**9):
-        try:
-            return max(0, min(int(v or 0), hi))
-        except (TypeError, ValueError):
-            return 0
-
-    # 动作归一到固定枚举：LLM 返回枚举外的串 → 「无」，防按未知动作误操作（CMR F10）。
-    # order_id 不在此处强校验 active：消费方（web/session）持 active 清单做范围校验 + 单条兜底。
-    _raw_action = str(obj.get("密令动作") or "无").strip()
-    _action = _raw_action if _raw_action in {"无", "更新", "提交核议", "催办", "记进展"} else "无"
-    return {
-        "secret_action": _action,
-        "order_id": _int(obj.get("目标密令编号")),
-        # Title has no formal length cap (family removed silent 20-char hard trunc).
-        "new_title": str(obj.get("新标题") or "").strip(),
-        "new_content": str(obj.get("新内容") or ""),
-        "deadline_months": _int(obj.get("期限月数"), 36),
-        "cultivate_skill": str(obj.get("调教技能") or "").strip()[:20],
-        "cultivate_trait": str(obj.get("调教性格") or "").strip()[:20],
-    }
 
 
 
@@ -3603,86 +3544,6 @@ def resubmit_draft_admission_payload(
     return payload
 
 
-# 任免(office)会话动作抽取：与密令【完全独立】——任免和密令无关，故另起一函数，
-# 不并进 extract_minister_actions、不挂密令那个 active gate。随召对触发（任何召对都
-# 可能口头派官/罢官，含跟太监说），ungated；过判由「应允才落、拒绝就丢」兜底。
-def extract_appointment_action(
-    player_message: str,
-    minister_reply: str,
-    llm_config: Any = None,
-) -> Dict[str, Any]:
-    """LLM 判皇帝本轮口头是否在任免某人（任命/罢免），返回结构化动作。失败/无 → 「无」。
-    只判自然语言；显式「拟旨如下：」里的任免走 extractor 的 office_changes，不在此。
-
-    字段/枚举唯一真源 = appointment catalog FieldSpec（含 summon_after）；
-    串行 fallback 与分类器同形，禁止手写第二份字段定义。
-    """
-    from ming_sim.action_clusters import cluster_by_kind, normalize_one_candidate
-
-    cluster = cluster_by_kind("appointment")
-    if cluster is None:
-        raise RuntimeError("appointment cluster missing from action catalog")
-    # Prompt 字段行直接从 catalog FieldSpec 生成，不复制枚举。
-    field_lines: List[str] = []
-    for spec in cluster.fields:
-        if spec.allowed is not None:
-            vals = sorted(spec.allowed, key=lambda x: (x != "无", x))
-            field_lines.append(f'  "{spec.zh}": "{"|".join(vals)}",')
-        elif spec.as_int:
-            field_lines.append(f'  "{spec.zh}": 0,')
-        else:
-            field_lines.append(f'  "{spec.zh}": "",')
-    if field_lines:
-        field_lines[-1] = field_lines[-1].rstrip(",")
-    schema = "{\n" + "\n".join(field_lines) + "\n}"
-    prompt = (
-        "你是信息抽取器，不扮演、不写圣旨。读皇帝这句话 + 被召对者回话，判断皇帝**本轮**"
-        "是否在口头任免某人（授官/升迁/调任=任命；革职/罢黜=罢免）。"
-        "拿问、下狱、赐死、廷杖、罚俸、削籍、放归、昭雪属惩处，不是任免，任免动作填「无」。"
-        "只输出一个 JSON 对象（无代码围栏、无多余字）：\n"
-        + schema + "\n"
-        "判定要点：皇帝口语如「着X任/授X为/升X/调X去/革X职/罢X」即任免；"
-        "对已拟任免的路径应答「特旨钦命」→任免动作可无、颁布方式=中旨直发；"
-        "「署理」→任免动作可无、任别=署理。"
-        "地方/督抚/边镇任命须填任所为英文 region_id（如 shaanxi/fujian/liaodong）；"
-        "任所是辖域不是行止去向；中央衙门任命任所留空。"
-        "任命并令其入京/来见/赴阙 → 任命后传召=是；未要求传召则否。"
-        "闲谈、议事、下密令、拟旨、惩处都不算。"
-        "语义判断，别拘字面。无任免且无路径应答 → 任免动作填「无」、其余留空。\n\n"
-        "【皇帝】" + (player_message or "（无）") + "\n"
-        "【回话】" + (minister_reply or "（无）") + "\n"
-    )
-    raw = ""
-    try:
-        raw, _ = _run_backend_for_config(prompt, llm_config, tag="appointment")
-    except Exception as exc:  # 抽取失败不阻断对话
-        _log(f"任免动作抽取失败：{exc}")
-    obj = _loads_lenient(raw) or {}
-    if not isinstance(obj, dict):
-        obj = {}
-    # 颁布方式：先把中文/前缀声明归一到 catalog 枚举 ordinary|midzhi，再 soft normalize。
-    mapped_mode = _directive_mode(obj.get("颁布方式") if "颁布方式" in obj else obj.get("mode"))
-    if mapped_mode is not None:
-        obj = {**obj, "mode": mapped_mode}
-    # 不收「顶替」字段：顶替/去职由落地核按 office 自动去重（与 extractor office_changes 同机制）。
-    # soft normalize 经 catalog：枚举外 → default；summon_after 等字段与分类器同形。
-    normalized = normalize_one_candidate({**obj, "kind": "appointment"}, soft=True)
-    result = {
-        "appoint_action": str(normalized.get("appoint_action") or "无"),
-        "name": str(normalized.get("name") or "").strip()[:20],
-        "office": str(normalized.get("office") or "").strip()[:40],
-        "summon_after": str(normalized.get("summon_after") or "否"),
-    }
-    seat = str(normalized.get("region_id") or "").strip()[:40]
-    if seat:
-        result["region_id"] = seat
-    mode = str(normalized.get("mode") or "").strip()
-    if mode:
-        result["mode"] = mode
-    tenure = str(normalized.get("appointment_tenure") or "").strip()
-    if tenure:
-        result["appointment_tenure"] = tenure
-    return result
 
 
 
@@ -4421,42 +4282,6 @@ def _extract_secret_order(
         result["extract_raw"] = raw
     return result
 
-def resolve_minister_actions(
-    minister_reply: str, player_message: str = "", default_assignee: str = "", llm_config: Any = None,
-    secret_context: str = "",
-    dossier_candidates: Optional[List[Dict[str, Any]]] = None,
-) -> Dict[str, Any]:
-    """玩家上一句带拟旨/密令前缀时生成候选。
-    - 拟旨：大臣回话原文即圣旨草稿（单一文本字段，够用）。
-    - 密令（#397/#1274 K1）：经 _extract_secret_order 结构化装配 content=御旨+extractor
-      「内容」（reply 不入拼装）；产物缺口由上游 land_or_recover 处置；call 失败响亮上抛。
-    返回 {decree_text, secret_order}。"""
-    out: Dict[str, Any] = {"decree_text": None, "secret_order": None}
-    reply = (minister_reply or "").strip()
-
-    draft_intent = _matched_prefix(player_message, _DRAFT_PREFIXES)
-    if draft_intent is not None:
-        out["decree_text"] = reply or draft_intent or None
-
-    secret_intent = _matched_prefix(player_message, _SECRET_PREFIXES)
-    if secret_intent is not None and (reply or secret_intent):
-        secret_command = secret_intent
-        force_default_assignee = False
-        if _secret_prefix_needs_recent_context(secret_intent) and (secret_context or "").strip():
-            secret_command = (
-                (secret_context or "").strip()
-                + ("\n【本轮确认】" + secret_intent if secret_intent else "")
-            ).strip()
-            force_default_assignee = True
-        # #397/#1274 K1：显式『密令如下：<X>』的密令正文须留住御旨 X——交
-        # _extract_secret_order 结构化装配（御旨+extractor「内容」；reply 不入拼装）。
-        out["secret_order"] = _extract_secret_order(
-            secret_command, reply, default_assignee, llm_config,
-            force_default_assignee=force_default_assignee,
-            dossier_candidates=dossier_candidates,
-        )
-
-    return out
 
 
 # 纯确认短句的原子片段：密令按钮当轮若【整句】只由这些片段拼成（如「可，照办」=可+照办、
@@ -4605,7 +4430,6 @@ class CliChat(OpenAIChat):
         global _seq
         assistant_message.metrics.start_timer()
         # 拟旨/密令不走 agno function-calling（agy 不支持）。大臣照常自然回话；
-        # 玩家用拟旨/密令按钮（消息带前缀）时，handler 用 resolve_minister_actions
         # 把这句回话原文整段入档。invoke 只负责出文本。
         materials = str(getattr(self, "materials_dir", "") or "").strip() or None
         prompt = _cli_prompt(messages, response_format, tools, materials_dir=materials)

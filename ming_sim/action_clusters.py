@@ -15,7 +15,6 @@ from typing import Any, Dict, FrozenSet, List, Mapping, Optional, Sequence, Tupl
 
 
 EFFECT_NOOP = "noop"
-EFFECT_ANSWER_EXISTING = "answer_existing"
 EFFECT_MATERIALIZE = "materialize"
 
 @dataclass(frozen=True)

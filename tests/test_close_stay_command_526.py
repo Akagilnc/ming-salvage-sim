@@ -68,13 +68,6 @@ def _session(db, state, content, *, reply="臣领旨。", tools=None):
 
 
 def _silence_action_extractors(monkeypatch):
-    monkeypatch.setattr(cb, "extract_minister_actions", lambda *a, **k: {
-        "secret_action": "无", "order_id": 0, "new_title": "", "new_content": "",
-        "deadline_months": 0, "cultivate_skill": "", "cultivate_trait": "",
-    })
-    monkeypatch.setattr(cb, "extract_appointment_action", lambda *a, **k: {
-        "appoint_action": "无", "name": "", "office": "",
-    })
     monkeypatch.setattr(cb, "extract_draft_intent", lambda *a, **k: {
         "draft_action": "无", "draft_text": "", "target_candidate": "",
     })
