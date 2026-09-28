@@ -342,7 +342,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
       if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
       if (u.pathname.endsWith("/api/game/state")) return jsonResp(makeState(1, [], roster));
       if (u.pathname.endsWith("/api/decree/advance_without_edict")) return jsonResp({ state: makeState(2, [], roster), pending_action_failures: [] });
-      if (u.pathname.endsWith("/chat/stream")) return sseResp("done", { response: "臣等恭送", directives: [], pending_count: 0, suggestions: [], can_undo_last_chat: false, pending_action_failures: [], court_action: "court_break" });
+      if (u.pathname.endsWith("/chat/stream")) return sseResp("done", { response: "臣等恭送", directives: [], pending_count: 0, suggestions: [], can_undo_last_chat: false, court_action: "court_break" });
       if (u.pathname.endsWith("/api/audience/chat")) return jsonResp({ minister: roster[0], history: [], suggestions: [], campaign_id: "c1", night_id: 77 });
       if (u.pathname.endsWith("/api/audience/extraction/pending")) return jsonResp({ count: 0 });
       return jsonResp({});
@@ -419,7 +419,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
         return sseResp("done", {
           answer: "ok", history: [], directives: [],
           pending_count: 1, pending_directive_count: 1,
-          suggestions: [], can_undo_last_chat: true, pending_action_failures: [],
+          suggestions: [], can_undo_last_chat: true,
         });
       }
       return jsonResp({});
@@ -530,7 +530,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
         return jsonResp({
           answer: "臣已拟旨。", history: [], directives: [],
           pending_count: 1, pending_directive_count: 1,
-          suggestions: [], can_undo_last_chat: true, pending_action_failures: [],
+          suggestions: [], can_undo_last_chat: true,
         });
       }
       if (u.pathname.endsWith("/chat/undo") && init?.method === "POST") {
@@ -538,7 +538,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
           campaign_id: "c1", night_id: 1, undone_chat_turn_id: 7,
           history: [], suggestions: [], directives: [],
           pending_count: 0, pending_directive_count: 0,
-          secret_orders: [], can_undo_last_chat: false, pending_action_failures: [],
+          secret_orders: [], can_undo_last_chat: false,
         });
       }
       return jsonResp({});
@@ -3030,14 +3030,6 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
       if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
       if (u.pathname.endsWith("/api/game/state")) return jsonResp(base);
       if (u.pathname.endsWith("/api/directives") && init?.method === "POST") return createGate;
-      if (u.pathname.endsWith("/api/pending_actions/failures")) {
-        return jsonResp({
-          pending_action_failures: [{
-            id: 42, kind: "secret_order", action: "落库",
-            message: "密令未能正式落库",
-          }],
-        });
-      }
       return jsonResp({});
     }));
     const host = await mountApp();
@@ -3273,7 +3265,7 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
       }
       if (u.pathname.endsWith("/api/audience/chat")) {
         return jsonResp({
-          minister, history: [], suggestions: [], pending_action_failures: [],
+          minister, history: [], suggestions: [],
           night_id: 1, can_undo_last_chat: false,
         });
       }
@@ -3299,7 +3291,7 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     await act(async () => {
       streamController.enqueue(encoder.encode(`event: done\ndata: ${JSON.stringify({
         history: [], suggestions: [], directives: [], pending_count: 0,
-        pending_directive_count: 0, pending_action_failures: [],
+        pending_directive_count: 0,
         can_undo_last_chat: true, night_id: 1,
       })}\n\n`));
     });

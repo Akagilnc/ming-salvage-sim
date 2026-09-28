@@ -220,7 +220,6 @@ def _endpoint_cases():
     return [
         ("secret_order", lambda: web_app.api_create_secret_order(
             "某大臣", web_app.SecretOrderRequest(title="密", content="内容"))),
-        ("withdraw_pending", lambda: web_app.api_withdraw_pending_action(5)),
         ("favorite_add", lambda: web_app.api_add_favorite("某大臣")),
         ("favorite_remove", lambda: web_app.api_remove_favorite("某大臣")),
         ("court_layout", lambda: web_app.api_set_court_layout({"layout": "{}"})),

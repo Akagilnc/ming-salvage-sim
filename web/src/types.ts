@@ -689,7 +689,6 @@ export type ChatResponse = {
   registered_minister?: string;
   proposed_directive?: ProposedDirective | null;
   secret_order_id?: number;
-  pending_action_failures?: PendingActionFailure[];
   // #502 AC5：多道准驳含糊态（候选 id/摘要）供前端展示大臣追问哪一道；无则缺席/null。
   directive_confirmation_ambiguous?: DirectiveConfirmationAmbiguous | null;
   // #670：成功记召机面控制码（SUMMON_FRESH / SUMMON_IN_TRANSIT）；禁止写入 setError/danger note。
@@ -711,7 +710,6 @@ export type ChatUndoResponse = {
   pending_directive_count?: number;
   secret_orders: SecretOrder[];
   can_undo_last_chat: boolean;
-  pending_action_failures?: PendingActionFailure[];
 };
 
 export type ApiErrorDetail = {

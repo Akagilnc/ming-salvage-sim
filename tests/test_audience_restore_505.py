@@ -285,7 +285,6 @@ def _retry_runtime(db, state, minister, *, session=None):
     rt.directive_payload = lambda row: row
     rt.suggestions_for = lambda character: []
     rt.can_undo_last_chat = lambda name: False
-    rt.pending_action_failures_for = lambda name: []
     rt._audience_turn_in_flight = lambda name: False
     # 整轮 pending 由 retry 本体持有；转译与高亮尾随在本单元测试外——不起后台线程。
     from ming_sim.session_write_queue import SessionWriteQueue

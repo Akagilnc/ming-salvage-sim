@@ -177,7 +177,6 @@ def test_web_retry_failed_scene_drain_does_not_hold_write_gate(game):
     rt.directive_payload = lambda row: row
     rt.suggestions_for = lambda _c: []
     rt.can_undo_last_chat = lambda _n: False
-    rt.pending_action_failures_for = lambda _n: []
     errors: list[BaseException] = []
 
     def run_retry():

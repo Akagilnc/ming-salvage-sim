@@ -1985,23 +1985,6 @@ class WebGame:
                             and self.db.is_global_last_active_chat_turn(int(active["id"])))
         return self.db.can_undo_last_chat_turn(minister_name, self.state.turn)
 
-    def pending_action_failures_for(self, minister_name: str) -> List[Dict[str, Any]]:
-        """该召对对象未能落库的密令动作（只报事实：重放入口已删，此处无处置动作）。"""
-        return [
-            _pending_action_failure_payload(action)
-            for action in self.db.list_failed_secret_order_actions(minister_name)
-        ]
-
-    def pending_action_failures(self) -> List[Dict[str, Any]]:
-        """所有未能落库的密令动作，不依赖承办人当前是否可召见；
-
-        只报事实，不承诺处置——承办人可召见时玩家在召对里当场再说，
-        不可召见时本回合结束即随既有边界丢弃（#1765 ②）。"""
-        return [
-            _pending_action_failure_payload(action)
-            for action in self.db.list_failed_secret_order_actions()
-        ]
-
     def _audience_turn_in_flight(self, minister_name: str) -> bool:
         """#383 背景召对契约：同一大臣已有「已受理、尚未完成回奏」的 turn 时，不得再开新轮。
 
@@ -2239,7 +2222,6 @@ class WebGame:
             "secret_orders": self.db.list_secret_orders(),
             "suggestions": self.suggestions_for(character) if character is not None else [],
             "can_undo_last_chat": self.can_undo_last_chat(minister_name),
-            "pending_action_failures": self.pending_action_failures_for(minister_name),
         }
 
     def _chat_payload(
@@ -2254,7 +2236,6 @@ class WebGame:
         displaced_minister: str = "",
         secret_order_id: int = 0,
         pending_action_id: int = 0,
-        pending_action_failures: Optional[List[Dict[str, Any]]] = None,
         chat_turn_id: int = 0,
         accepted_turn: Optional[int] = None,
         directive_confirmation_ambiguous: Optional[Dict[str, Any]] = None,
@@ -2312,7 +2293,6 @@ class WebGame:
             "displaced_minister": displaced_minister,
             "secret_order_id": secret_order_id or 0,
             "pending_action_id": pending_action_id or 0,
-            "pending_action_failures": pending_action_failures or [],
             # #502 AC5：多道准驳含糊态（候选 id/摘要）供前端展示大臣追问；无则 None。
             "directive_confirmation_ambiguous": directive_confirmation_ambiguous or None,
             "decree_validation_failure": decree_validation_failure or None,
@@ -2414,7 +2394,6 @@ class WebGame:
             "displaced_minister": "",
             "secret_order_id": 0,
             "pending_action_id": 0,
-            "pending_action_failures": [],
             "directive_confirmation_ambiguous": None,
             "directives": [self.directive_payload(row) for row in self.directive_rows()],
             "pending_count": self.session.pending_count(),
@@ -2620,7 +2599,6 @@ class WebGame:
                         displaced_minister=result.displaced_minister,
                         secret_order_id=result.secret_order_id,
                         pending_action_id=getattr(result, "pending_action_id", 0),
-                        pending_action_failures=getattr(result, "pending_action_failures", []),
                         chat_turn_id=chat_turn_id,
                         accepted_turn=accepted_turn,
                         # #502 R1：非流式路径同 surface 结构化含糊态（与 stream 同真源，禁双路径漂移）。
@@ -2767,7 +2745,6 @@ class WebGame:
             "pending_count": self.session.pending_count(),
             "pending_directive_count": self.pending_directive_count(),
             "suggestions": [], "can_undo_last_chat": self.can_undo_last_chat(minister_name),
-            "pending_action_failures": self.pending_action_failures_for(minister_name),
         }
 
     def retry_interrupted_reply(self, minister_name: str, target_chat_turn_id: Optional[int] = None) -> Dict[str, Any]:
@@ -2871,7 +2848,6 @@ class WebGame:
                         displaced_minister=result.displaced_minister,
                         secret_order_id=result.secret_order_id,
                         pending_action_id=getattr(result, "pending_action_id", 0),
-                        pending_action_failures=getattr(result, "pending_action_failures", []),
                         chat_turn_id=chat_turn_id,
                         accepted_turn=accepted_turn,
                         directive_confirmation_ambiguous=getattr(
@@ -3021,9 +2997,6 @@ class WebGame:
                     displaced_minister=getattr(result, "displaced_minister", "") or "",
                     secret_order_id=int(getattr(result, "secret_order_id", 0) or 0),
                     pending_action_id=int(getattr(result, "pending_action_id", 0) or 0),
-                    pending_action_failures=list(
-                        getattr(result, "pending_action_failures", []) or []
-                    ),
                     chat_turn_id=chat_turn_id,
                     accepted_turn=accepted_turn,
                     directive_confirmation_ambiguous=getattr(
@@ -3188,7 +3161,6 @@ class WebGame:
                     displaced_minister=interpreted["displaced"],
                     secret_order_id=interpreted["secret_order_id"],
                     pending_action_id=interpreted["pending_action_id"],
-                    pending_action_failures=interpreted["pending_action_failures"],
                     chat_turn_id=chat_turn_id,
                     accepted_turn=accepted_turn,
                     directive_confirmation_ambiguous=interpreted["directive_ambiguous"],
@@ -3303,8 +3275,6 @@ class WebGame:
                             ),
                         )
                         if stage_failures:
-                            # Merge into method-local channel; confirmation-path
-                            # pending_action_failures are appended below.
                             tool_stage_failures.extend(stage_failures)
                 elif (
                     tool_name == "propose_appointment"
@@ -3558,9 +3528,6 @@ class WebGame:
             answer = GameSession._ensure_clarification_cue(answer, directive_ambiguous)
         # Sync/web consume the same typed action-report projection seam.
         answer = GameSession._append_action_reports(answer, res)
-        pending_action_failures = list(res.get("pending_action_failures") or [])
-        if tool_stage_failures:
-            pending_action_failures = pending_action_failures + list(tool_stage_failures)
         # 仅解释/登记；join + 短事务落账由 _chat_stream_payload 在 gate 外/内分阶完成。
         return {
             "answer": answer,
@@ -3572,7 +3539,6 @@ class WebGame:
             "displaced": displaced,
             "secret_order_id": secret_order_id,
             "pending_action_id": pending_action_id,
-            "pending_action_failures": pending_action_failures,
             "directive_ambiguous": directive_ambiguous,
             "decree_validation_failure": res.get("decree_validation_failure"),
             "secret_order_landing_recovery": res.get("secret_order_landing_recovery"),
@@ -6360,13 +6326,6 @@ async def api_secret_orders(status: str = "") -> Dict[str, Any]:
     return {"orders": orders}
 
 
-def _player_visible_pending_actions(actions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    return [
-        action for action in actions
-        if not (action.get("kind") == "secret_order" and action.get("action") == "新建")
-    ]
-
-
 def _failed_secret_order_ids_for_turn(game: WebGame, turn: int) -> set[int]:
     db = getattr(game, "db", None)
     if db is None or not hasattr(db, "list_pending_actions"):
@@ -6424,41 +6383,6 @@ def _capture_settlement_failure_snapshot(
             exc_info=True,
         )
         return None
-
-
-@app.get("/api/pending_actions")
-async def api_pending_actions() -> Dict[str, Any]:
-    """列出本回合待确认动作(动作闸门 ADR 0006):皇帝复核区,颁诏批量落库前可见可撤。"""
-    game = get_game()
-    return {"actions": _player_visible_pending_actions(
-        game.db.list_pending_actions(int(game.state.turn)))}
-
-
-@app.get("/api/pending_actions/failures")
-async def api_pending_action_failures() -> Dict[str, Any]:
-    game = get_game()
-    return {"pending_action_failures": game.pending_action_failures()}
-
-
-@app.post("/api/pending_actions/{action_id}/withdraw")
-async def api_withdraw_pending_action(action_id: int) -> Dict[str, Any]:
-    """皇帝撤回一条尚未颁诏落库的暂存动作。不存在→404;存在但已落库/非本回合→409。
-    先原子条件 DELETE(以删成功为真源,免 check-then-act 竞态,pr-loop sourcery),
-    失败再查行分流 404/409。"""
-    game = get_game()
-    # #1727：收夜屏障窗内拒撤回 pending（与 undo/secret_order 同族召对写入口）。
-    _refuse_if_open_night_barrier(game)
-    with _serialized_web_write(game):
-        if game.db.withdraw_pending_action(int(action_id), int(game.state.turn)):
-            return {"withdrawn": action_id, "actions": _player_visible_pending_actions(
-                game.db.list_pending_actions(int(game.state.turn)))}
-        # #1749：404/409 分流也须在 gate 内读库；门外读会撞退休关闭。
-        row = game.db.conn.execute(
-            "SELECT turn, status FROM pending_actions WHERE id=?", (int(action_id),),
-        ).fetchone()
-    if row is None:
-        raise HTTPException(status_code=404, detail="该待确认动作不存在。")
-    raise HTTPException(status_code=409, detail="该动作已落库或非本回合，无法撤回。")
 
 
 @app.get("/api/history/turns")
@@ -6621,7 +6545,6 @@ async def api_audience_chat_history() -> Dict[str, Any]:
         "history": game.chat_projection(SCENE_CHAT_SPEAKER),
         "suggestions": [],
         "can_undo_last_chat": game.can_undo_last_chat(SCENE_CHAT_SPEAKER),
-        "pending_action_failures": game.pending_action_failures_for(SCENE_CHAT_SPEAKER),
         "reply_retries": game.reply_retries(SCENE_CHAT_SPEAKER),
         "generating_turn_ids": [int(r["id"]) for r in game.db.list_in_flight_chat_turns(
             night_id=int(open_night["id"]) if open_night else None,
@@ -6665,7 +6588,6 @@ async def api_chat_history(minister_name: str) -> Dict[str, Any]:
         "history": game.chat_projection(minister_name),
         "suggestions": game.suggestions_for(character),
         "can_undo_last_chat": game.can_undo_last_chat(minister_name),
-        "pending_action_failures": game.pending_action_failures_for(minister_name),
         # #505/#1853：每个原轮各自投影待恢复状态。
         "reply_retries": game.reply_retries(minister_name),
         "generating_turn_ids": [int(r["id"]) for r in game.db.list_in_flight_chat_turns(

@@ -642,66 +642,6 @@ def test_withdraw_pending_action_does_not_commit_outer_transaction(game):
     ).fetchone()[0] == 1
 
 
-def test_pending_actions_endpoints(game, monkeypatch):
-    """皇帝复核区端点:GET 列本回合待确认动作;withdraw 撤回一条;不存在→404,已落库→409(可辨)。"""
-    import asyncio
-    import pytest
-    from fastapi import HTTPException
-    import web_app
-    db, state, content = game
-    name = _active_minister_name(db, content)
-    oid = create_test_secret_order(db, state, name, "原标题", "原内容", [], deadline_months=0)
-    pid = db.stage_pending_action(state.turn, kind="secret_order", action="更新",
-                                  minister_name=name, target_id=oid, payload={"new_title": "x"})
-    monkeypatch.setattr(web_app, "get_game", lambda: types.SimpleNamespace(db=db, state=state))
-
-    listed = asyncio.run(web_app.api_pending_actions())
-    assert [a["id"] for a in listed["actions"]] == [pid]
-
-    out = asyncio.run(web_app.api_withdraw_pending_action(pid))
-    assert out["withdrawn"] == pid and out["actions"] == []
-
-    # 不存在 → 404
-    with pytest.raises(HTTPException) as e404:
-        asyncio.run(web_app.api_withdraw_pending_action(pid))
-    assert e404.value.status_code == 404
-
-    # 已落库(committed)→ 409(与 404 可辨)
-    pid2 = db.stage_pending_action(state.turn, kind="secret_order", action="更新",
-                                   minister_name=name, target_id=oid,
-                                   payload={"new_title": "已落", "new_content": "已落", "deadline_months": 0})
-    db.commit_pending_actions(state)   # pid2 → committed
-    with pytest.raises(HTTPException) as e409:
-        asyncio.run(web_app.api_withdraw_pending_action(pid2))
-    assert e409.value.status_code == 409
-
-
-def test_pending_actions_endpoint_hides_new_secret_order_candidates(game, monkeypatch):
-    """#414: 新密令候选不得作为 player-facing pending delivery state 暴露。"""
-    import asyncio
-    import web_app
-
-    db, state, content = game
-    name = _active_minister_name(db, content)
-    oid = create_test_secret_order(db, state, name, "原标题", "原内容", [], deadline_months=0)
-    visible_pid = db.stage_pending_action(
-        state.turn, kind="secret_order", action="更新", minister_name=name,
-        target_id=oid, payload={"new_title": "改"})
-    hidden_pid = db.stage_pending_action(
-        state.turn, kind="secret_order", action="新建", minister_name=name,
-        target_id=None,
-        payload={"title": "暗查辽饷", "content": "密查辽饷去向", "assignee": name,
-                 "tags": [], "deadline_months": 0, "covert_task": LIAO_PAY_COVERT_TASK})
-    monkeypatch.setattr(web_app, "get_game", lambda: types.SimpleNamespace(db=db, state=state))
-
-    listed = asyncio.run(web_app.api_pending_actions())
-
-    assert [a["id"] for a in listed["actions"]] == [visible_pid]
-    assert hidden_pid not in [a["id"] for a in listed["actions"]]
-
-
-
-
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_web_advance_without_edict_returns_failed_secret_order_payload(game, monkeypatch):
     """web 退朝默认提交密令失败时，要返回可重试 failure payload。"""
@@ -1493,29 +1433,6 @@ def test_drop_pending_actions_for_minister_does_not_commit_outer_transaction(gam
         "SELECT status FROM pending_actions WHERE id=?", (pending_id,)
     ).fetchone()
     assert row is not None and row["status"] == "pending"
-
-
-def test_pending_action_failures_endpoint_lists_all_failed_secret_orders(game, monkeypatch):
-    import asyncio
-    import types
-    import web_app
-
-    db, state, _content = game
-    pending_id = db.stage_pending_action(
-        state.turn, kind="secret_order", action="新建", minister_name="离席大臣", target_id=None,
-        payload={"title": "暗查辽饷", "content": "暗查辽饷侵冒。", "assignee": "离席大臣"},
-    )
-    db.conn.execute("UPDATE pending_actions SET status='failed' WHERE id=?", (pending_id,))
-    db.conn.commit()
-    game_obj = types.SimpleNamespace(db=db, state=state)
-    game_obj.pending_action_failures = types.MethodType(web_app.WebGame.pending_action_failures, game_obj)
-    monkeypatch.setattr(web_app, "get_game", lambda: game_obj)
-
-    out = asyncio.run(web_app.api_pending_action_failures())
-
-    failures = out["pending_action_failures"]
-    assert [failure["id"] for failure in failures] == [pending_id]
-    assert failures[0]["minister_name"] == "离席大臣"
 
 
 def test_failed_secret_order_does_not_block_later_audience(game, monkeypatch):

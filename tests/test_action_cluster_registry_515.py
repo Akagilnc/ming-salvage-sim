@@ -1176,7 +1176,7 @@ def test_undo_restored_approved_decree_restarts_forecast_for_new_version(game, m
 # ── #1744：分类粒度 / draft 共存边界 → chat → HTTP 可见 ──
 # 独有契约（本区）：
 # - one_intent_probe_raw_chat_to_pending_api：冻结 probe-shaped raw 经 classify 入口归一
-#   + WebGame.chat + GET /api/pending_actions 恰一 ordinary（运输契约，非 live LLM）
+#   + WebGame.chat + db.list_pending_actions 恰一 ordinary（运输契约，非 live LLM）
 # - draft_plus_independent_titleless_assignment：空 title ≠ 意图身份（删门反向）
 # - draft_plus_digit_target_candidate_updates：batch 含 draft 时 digit 续办仍原地更新，
 #   且 draft/assignment 两种候选顺序均成立（相对 520 beat8 的独有：draft 共存边界）
@@ -1213,20 +1213,6 @@ _PROBE_RAW_DRAFT_1744 = {
     "事项处置": "无",
     "承诺类型": "无",
 }
-
-
-def _pending_directives_via_api(monkeypatch, wg, *, minister_name: str):
-    """生产读缝：GET /api/pending_actions → 该大臣 directive 列表。"""
-    monkeypatch.setattr(web_app, "get_game", lambda: wg)
-    payload = TestClient(web_app.app).get("/api/pending_actions").json()
-    assert isinstance(payload.get("actions"), list)
-    return [
-        row for row in payload["actions"]
-        if row.get("kind") == "directive"
-        and row.get("status") == "pending"
-        and row.get("minister_name") == minister_name
-        and row.get("action") == "拟旨"
-    ]
 
 
 def _bind_draft_extract_1744(monkeypatch, *, minister_name: str):
@@ -1283,8 +1269,6 @@ def test_one_intent_probe_raw_chat_to_pending_api_one_ordinary(game, monkeypatch
     }
     wg.chat(minister.name, _EMPEROR_1744)
     wg._runtime_write_queue().barrier(lambda: None)
-    rows = _pending_directives_via_api(monkeypatch, wg, minister_name=minister.name)
-    # API 可能按 minister 过滤；转译 actor 未必是 minister——改查全库新 directive
     all_new = [
         r for r in db.list_pending_actions(int(state.turn))
         if int(r["id"]) not in before and r.get("kind") == "directive"
