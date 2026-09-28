@@ -349,6 +349,15 @@ def test_travel_tone_updates_this_round_summon_ledger(game, monkeypatch):
     assert ordinary_trip["transit_to"] == "beizhili"
     assert trip["transit_distance_remaining"] == ordinary_trip["transit_distance_remaining"]
     assert trip["transit_speed_factor"] > ordinary_trip["transit_speed_factor"]
+    from ming_sim.decree import tick_transit_arrivals
+    from math import ceil
+    arrival_turns = {}
+    for turn in range(int(state.turn) + 1, int(state.turn) + ceil(ordinary_trip["transit_distance_remaining"]) + 2):
+        state.turn = turn
+        for arrived in tick_transit_arrivals(db, state, content):
+            if arrived["name"] in (person, ordinary):
+                arrival_turns[arrived["name"]] = turn
+    assert arrival_turns[person] < arrival_turns[ordinary]
 
 
 def test_old_minister_agent_surface_gone():
