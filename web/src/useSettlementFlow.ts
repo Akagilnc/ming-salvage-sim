@@ -56,6 +56,8 @@ export function useSettlementFlow({
     React.useState<SettlementGazetteReading | null>(null);
   // #1852：写成即推进期间挡住 closed/密令/结局自动弹层，避免盖住本面邸报；无正文可呈时随即放下。
   const [postAdvanceOverlayHold, setPostAdvanceOverlayHold] = React.useState(false);
+  const sessionGeneration = React.useRef(0);
+  const [advanceRefreshFailed, setAdvanceRefreshFailed] = React.useState(false);
 
   // 刷新恢复：若回合停在 awaiting_decision 且有未裁决策点，自动重弹决策弹窗。
   // #657：typed resume_phase2 时空 pending 不报 PAUSED，接到 phase2 空 POST 续跑。
@@ -150,17 +152,33 @@ export function useSettlementFlow({
     setSettlementHudError("");
     setSettlementGazetteReading(null);
     setPostAdvanceOverlayHold(false);
+    setAdvanceRefreshFailed(false);
+    sessionGeneration.current += 1;
   }, []);
 
-  const dismissSettlementGazette = React.useCallback(() => {
+  const dismissSettlementGazette = React.useCallback(async () => {
+    const generation = sessionGeneration.current;
+    if (advanceRefreshFailed) {
+      try {
+        const fresh = await loadState();
+        if (!fresh || generation !== sessionGeneration.current) return;
+        setAdvanceRefreshFailed(false);
+      } catch (err) {
+        if (generation === sessionGeneration.current) setError(err instanceof Error ? err.message : String(err));
+        return; // Keep the report readable until the new month's state can be loaded.
+      }
+    }
+    if (generation !== sessionGeneration.current) return;
     setSettlementGazetteReading(null);
     setPostAdvanceOverlayHold(false);
-  }, []);
+  }, [advanceRefreshFailed, loadState, setError]);
 
   /** #1852：月份已推进 → 刷账本 + 本面开阅读态（不 reload）。 */
   const openGazetteAfterAdvance = async (payload: Record<string, unknown> | null | undefined) => {
     const data = payload || {};
+    const generation = sessionGeneration.current;
     await forwardSteamEvents(data);
+    if (generation !== sessionGeneration.current) return;
     // 新月盘面：立刻离开同会话核账面，避免 busy 残留把拟诏等关掉。
     setBusy("");
     // 先挡住过月自动弹层，再 loadState 翻 turn——否则 closed/密令/结局会抢在本面邸报之前。
@@ -176,8 +194,11 @@ export function useSettlementFlow({
       next = await loadState();
     } catch (err) {
       console.warn("[settlement] post-advance refresh failed", err);
+      if (generation !== sessionGeneration.current) return;
+      setAdvanceRefreshFailed(true);
       setError(err instanceof Error ? err.message : String(err));
     }
+    if (generation !== sessionGeneration.current) return;
     const fromPayload = typeof data.report === "string" ? data.report : "";
     const fromState = next?.previous_summary
       || (typeof embedded?.previous_summary === "string" ? embedded.previous_summary : "")

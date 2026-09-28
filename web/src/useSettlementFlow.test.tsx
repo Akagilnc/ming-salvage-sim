@@ -699,6 +699,21 @@ describe("#1852 写成即推进：本面邸报阅读态，不整页 reload", () 
     cleanup();
   });
 
+  it("退局后迟到的新月刷新不得重挂上一局邸报", async () => {
+    let finishRefresh!: (state: GameState) => void;
+    const loadState = vi.fn(() => new Promise<GameState>((resolve) => { finishRefresh = resolve; }));
+    vi.stubGlobal("fetch", vi.fn(async () => sseAdvancedResponse("旧局邸报")));
+    const { hookRef, cleanup } = mountHarness({ loadState });
+    let issuing!: Promise<void>;
+    await act(async () => { issuing = hookRef.current!.issueDecree(); });
+    expect(loadState).toHaveBeenCalledTimes(1);
+    await act(async () => hookRef.current!.clearSettlementHudError());
+    await act(async () => { finishRefresh(advancedMonthState); await issuing; });
+    expect(hookRef.current!.settlementGazetteReading).toBeNull();
+    expect(hookRef.current!.suppressPostAdvanceOverlays).toBe(false);
+    cleanup();
+  });
+
   it("issueDecree advanced 后 loadState 失败：仍可阅读已收到的邸报", async () => {
     const FAIL_MSG = "账本刷新失败（替身）";
     const loadState = vi
@@ -719,7 +734,8 @@ describe("#1852 写成即推进：本面邸报阅读态，不整页 reload", () 
     expect(hookRef.current!.suppressPostAdvanceOverlays).toBe(true);
     expect(host.querySelector('[data-testid="error"]')?.textContent).toBe(FAIL_MSG);
     expect(host.querySelector('[data-testid="busy"]')?.textContent).toBe("");
-    await act(async () => hookRef.current!.dismissSettlementGazette());
+    await act(async () => { await hookRef.current!.dismissSettlementGazette(); });
+    expect(loadState).toHaveBeenCalledTimes(2);
     expect(hookRef.current!.suppressPostAdvanceOverlays).toBe(false);
     await act(async () => hookRef.current!.clearSettlementHudError());
     expect(hookRef.current!.settlementGazetteReading).toBeNull();
