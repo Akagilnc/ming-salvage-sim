@@ -631,6 +631,16 @@ export function App() {
         settlementFace={settlementFace}
       />
 
+      {/* 当次邸报占主面阅读区，不另开遮蔽全屏的窗。 */}
+      {settlementGazetteReading ? (
+        <SettlementGazettePanel
+          report={settlementGazetteReading.report}
+          attendantMessage={settlementGazetteReading.attendantMessage}
+          periodLabel={settlementGazetteReading.periodLabel}
+          onDismiss={dismissSettlementGazette}
+        />
+      ) : null}
+
       <CourtDrawer
         state={state}
         ministers={ministers}
@@ -849,16 +859,6 @@ export function App() {
             }
             summonMinister(name);
           }}
-        />
-      ) : null}
-
-      {/* #1852：写成即推进后的本面邸报阅读态；朕知道了只关阅读，不控月份。 */}
-      {settlementGazetteReading ? (
-        <SettlementGazettePanel
-          report={settlementGazetteReading.report}
-          attendantMessage={settlementGazetteReading.attendantMessage}
-          periodLabel={settlementGazetteReading.periodLabel}
-          onDismiss={dismissSettlementGazette}
         />
       ) : null}
 

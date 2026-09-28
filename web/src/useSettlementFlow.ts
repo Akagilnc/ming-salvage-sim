@@ -148,6 +148,8 @@ export function useSettlementFlow({
   // #1808 C：退局/再入局清 HUD 残留——接缝归既有 exitToMenu / enterGameAfterMenu。
   const clearSettlementHudError = React.useCallback(() => {
     setSettlementHudError("");
+    setSettlementGazetteReading(null);
+    setPostAdvanceOverlayHold(false);
   }, []);
 
   const dismissSettlementGazette = React.useCallback(() => {
@@ -167,15 +169,15 @@ export function useSettlementFlow({
     resetLocalEdictState?.();
     // 盖玺时 activeModal 可能仍挂 edict（busy 仅藏台、未清槽）；成功过月须卸掉，免弹回盖住本面邸报。
     onMonthAdvanced?.();
-    let next: GameState | null;
+    // 先保存已收到的邸报：随后刷新失败也不能丢掉当次阅读。
+    const embedded = data.state as GameState | undefined;
+    let next: GameState | null = null;
     try {
       next = await loadState();
     } catch (err) {
-      // loadState 失败则 hold 不得卡死：调用方响亮告警 + 既有恢复后仍须能弹 closed/密令/结局。
-      setPostAdvanceOverlayHold(false);
-      throw err;
+      console.warn("[settlement] post-advance refresh failed", err);
+      setError(err instanceof Error ? err.message : String(err));
     }
-    const embedded = data.state as GameState | undefined;
     const fromPayload = typeof data.report === "string" ? data.report : "";
     const fromState = next?.previous_summary
       || (typeof embedded?.previous_summary === "string" ? embedded.previous_summary : "")
