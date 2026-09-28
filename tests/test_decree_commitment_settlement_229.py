@@ -734,7 +734,7 @@ def test_commitment_progress_text_splits_by_commitment_shape_and_gate(game):
         commitment_kind="until_stop",
     )
 
-    _settle_empty_month(db, state, content)
+    _advance_player_month(db, state, content)
     issues = {
         item["issue_id"]: item
         for item in build_simulator_payload(state, db, "", "")["active_issues"]
@@ -1427,7 +1427,7 @@ def test_one_shot_end_turn_commitment_surfaces_in_existing_review_channel(game):
     assert due["due_turn"] == state.turn
     assert "到期待裁" in due["review_reason"]
 
-    _settle_empty_month(db, state, content)
+    _advance_player_month(db, state, content)
     row = _issue_row(db, issue_id)
     assert row["status"] == "active"
     assert row["closed_turn"] is None
