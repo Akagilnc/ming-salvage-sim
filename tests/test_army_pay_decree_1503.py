@@ -1042,45 +1042,20 @@ def test_non_xiexang_payload_cannot_smuggle_army_pay_purpose(game):
     assert _army_row(db) == before
 
 
-def test_explicit_draft_prefix_without_grant_candidate_stays_generic(game, monkeypatch):
-    """非载荷拟旨：classifier 无 grant 候选时仍走 generic special_decree；颁布不误落补饷。"""
-    import types
-
-    import ming_sim.cli_backend as cb
-    from ming_sim.session import GameSession
+def test_plain_scene_commission_does_not_create_army_pay(game):
+    """纯正文交办不凭补饷措辞制造拨饷载荷；颁布后亦不误落军饷。"""
+    from ming_sim.declaration_dispatch import dispatch_declaration
 
     db, state, content = game
     actor = db.conn.execute(
         "SELECT name FROM characters WHERE power_id='ming' AND status='active' LIMIT 1"
     ).fetchone()["name"]
-    character = content.characters[actor]
     seed = "臣遵旨，着户部清核辽饷。钦此。"
-
-    monkeypatch.setattr(cb, "extract_minister_actions", lambda *a, **k: {
-        "secret_action": "无", "order_id": 0, "new_title": "", "new_content": "",
-        "deadline_months": 0, "cultivate_skill": "", "cultivate_trait": "",
-    })
-    monkeypatch.setattr(cb, "extract_confirmation_intent", lambda *a, **k: "无")
-
-    sess = types.SimpleNamespace(
-        db=db,
-        state=state,
-        content=content,
-        llm_config=types.SimpleNamespace(channel="cli"),
-        registry=None,
-    )
-    sess.apply_cli_conversation_actions = types.MethodType(
-        GameSession.apply_cli_conversation_actions, sess,
-    )
-    out = sess.apply_cli_conversation_actions(
-        character,
-        "拟旨如下：着户部清核辽饷。",
-        seed,
-        has_directive=False,
-        secret_order_id=None,
-        preclassified_intent=[],  # classifier 已跑、无动作
-    )
-    pending_id = out.get("pending_action_id")
+    out = dispatch_declaration(db, state, {"commissions": [{
+        "text": seed,
+    }]}, minister_name=actor)
+    assert out.commissions.rejected == []
+    pending_id = out.commissions.applied[0]["id"]
     assert pending_id
     pending = json.loads(db.conn.execute(
         "SELECT payload_json FROM pending_actions WHERE id=?", (pending_id,),
