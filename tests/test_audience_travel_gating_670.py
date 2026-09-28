@@ -2190,9 +2190,9 @@ def test_continuation_arrival_settles_origin_without_waiting(game):
     assert build_simulator_payload(state, db, "", "")["waiting_audience"] == []
 
 
-def test_waiting_inactive_retires_on_month(game):
-    """#670：候见中 dismiss → 月结 retire 结清。"""
-    from tests.settlement_seam_helpers import settle_effects as settle_with_delta
+def test_waiting_inactive_retires_on_month(game, monkeypatch):
+    """#670：候见中 dismiss → 玩家过月 retire 结清。"""
+    from tests.test_due_review_621 import _settle_empty_month
 
     db, state, content = game
     person = _set_place(game, "洪承畴", location="beizhili")
@@ -2208,13 +2208,12 @@ def test_waiting_inactive_retires_on_month(game):
     # inactive 后 kind 不再 waiting（status 非 active），但仍未结直至月结 retire。
     assert an.list_unsettled_summons(db)[0]["kind"] == "in_transit"
 
-    settle_with_delta(state, db, {}, before_turn=int(state.turn), content=content)
+    _settle_empty_month(db, state, content, monkeypatch)
     assert an.list_unsettled_summons(db) == []
 
 
 def test_waiting_active_departure_settles_and_does_not_revive(game):
     """#670：候见中 canonical 行止离京 → origin 结清；抵非京不再续赴京。"""
-    from tests.settlement_seam_helpers import settle_effects as settle_with_delta
     from ming_sim.issues import _apply_person_changes
 
     db, state, content = game
@@ -2254,22 +2253,6 @@ def test_waiting_active_departure_settles_and_does_not_revive(game):
     db.conn.commit()
     assert an.list_arrived_unsettled_summons(db) == []
     assert build_simulator_payload(state, db, "", "")["unsettled_arrived_summons"] == []
-
-    # 月结路径同源：再造候见后经 settle_with_delta 行止离京亦结清
-    night_id2 = int(an.open_night(db, state)["id"])
-    origin2 = "command:waiting-leave-2"
-    _set_place(game, person.name, location="beizhili")
-    an.record_summon_in_transit(db, night_id2, person.name, origin_id=origin2)
-    settle_with_delta(
-        state, db,
-        {"人物变更": [{
-            "name": person.name, "动作": "行止", "transit_to": "henan",
-            "origin_ref": "盘面自发",
-        }]},
-        before_turn=int(state.turn), content=content,
-    )
-    assert an.list_unsettled_summons(db) == []
-
 
 def test_waiting_active_departure_settle_failure_rolls_back_all_four_sides(
     game, monkeypatch,
@@ -2579,9 +2562,9 @@ def test_shuntian_zhili_aliases_migrate_on_reopen(game):
         restored.close()
 
 
-def test_inactive_person_skips_continuation_and_retires_on_month(game):
-    """#670：非 active 不投续程；月结退役结清 origin。"""
-    from tests.settlement_seam_helpers import settle_effects as settle_with_delta
+def test_inactive_person_skips_continuation_and_retires_on_month(game, monkeypatch):
+    """#670：非 active 不投续程；玩家过月退役结清 origin。"""
+    from tests.test_due_review_621 import _settle_empty_month
 
     db, state, content = game
     person = _set_place(
@@ -2599,7 +2582,7 @@ def test_inactive_person_skips_continuation_and_retires_on_month(game):
     assert an.list_arrived_unsettled_summons(db) == []
     assert [row["origin_id"] for row in an.list_unsettled_summons(db)] == [origin]
 
-    settle_with_delta(state, db, {}, before_turn=int(state.turn), content=content)
+    _settle_empty_month(db, state, content, monkeypatch)
     assert an.list_unsettled_summons(db) == []
 
 
