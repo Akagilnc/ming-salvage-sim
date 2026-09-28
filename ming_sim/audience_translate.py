@@ -144,7 +144,7 @@ def build_night_said_so_far(
             body = str(row["content"] or "")
             if not body.strip():
                 continue
-            lines.append(f"{role_label}：{body}")
+            lines.append(f"[chat_turn_id={tid}] {role_label}：{body}")
     for entry in list_ledger(db, int(night_id)):
         src = int(entry.get("source_chat_turn_id") or 0)
         origin = int(entry.get("origin_chat_turn_id") or 0)
@@ -251,6 +251,8 @@ def build_c0_declaration_shape() -> str:
         '"assignee": "承办人 id", "tags": [], "deadline_months": 0, '
         '"covert_task": {}},\n'
         '      "secret_order_progress": {"order_id": "往期有效密令 id", "note": "本轮具名进展"},\n'
+        '      "strategy_selection": {"target_id": "已选方案的政策目标 id", '
+        '"source_chat_turn_id": "本场已说的大臣陈策轮 chat_turn_id（不能填本轮）"},\n'
         '      "secret_order_update": {"order_id": "承办人现役密令 id", '
         '"title": "新标题（有则填）", "content": "完整新正文（必填）", '
         '"deadline_months": "期限月数（有则填）"},\n'
@@ -345,6 +347,9 @@ def build_audience_translate_prompt(
         "- 离殿后独立责成的事项逐件给 commission.assignment；title/target_id 是事项锚，"
         "assignee/participant_roster 来自已明确的承办人；续办只在能指向既有候选时填 target_candidate。"
         "不从当场问答推造独立差事。\n"
+        "- 皇帝从本场大臣陈策中点选方案时，交办正文由转译明确给出，"
+        "commission.strategy_selection 指向【本场已说的话】中对应陈策轮 chat_turn_id；"
+        "无该源轮不得猜造。\n"
         "- 具名秘密差事的新建走 commission.secret_order；必须含 title、content、"
         "承办人与已确定的 covert_task 冻结任务契约；无契约不得编造。"
         "往期密令具名进展走 commission.secret_order_progress；不凭空记进展。\n"

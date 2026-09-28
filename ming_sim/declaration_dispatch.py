@@ -1061,6 +1061,50 @@ def _dispatch_commissions(
                 _reject(rejected, item, str(exc), "invalid_shape", source)
             continue
 
+        strategy = item.get("strategy_selection")
+        if strategy is not None:
+            from ming_sim.strict_types import strict_int
+            body = _declared_prose(item.get("text"))
+            actor = str(minister_name or "").strip()
+            if not isinstance(strategy, Mapping) or any(
+                item.get(key) for key in
+                ("grant", "appointment", "punishment", "pacification", "assignment", "secret_order")
+            ):
+                _reject(rejected, item, "点策交办须为独立结构化载荷", "invalid_shape", source)
+                continue
+            try:
+                origin_id = strict_int(strategy.get("source_chat_turn_id"), accept_numeric_strings=False)
+            except (TypeError, ValueError):
+                origin_id = 0
+            target_id = strategy.get("target_id")
+            if not body or not actor or not isinstance(target_id, str) or not target_id.strip() or origin_id <= 0:
+                _reject(rejected, item, "点策交办须有正文、目标和陈策源轮", "invalid_shape", source)
+                continue
+            origin = db.conn.execute(
+                "SELECT 1 FROM chat_turns earlier JOIN chat_turns current "
+                "ON earlier.night_id=current.night_id AND earlier.turn=current.turn "
+                "WHERE earlier.id=? AND current.id=? AND earlier.id<current.id "
+                "AND earlier.minister_name=? AND current.minister_name=? "
+                "AND earlier.minister_message_id IS NOT NULL "
+                "AND earlier.status='active' AND current.status='active' "
+                "AND earlier.undone_at IS NULL AND current.undone_at IS NULL",
+                (origin_id, int(source_chat_turn_id or 0), actor, actor),
+            ).fetchone()
+            if origin is None:
+                _reject(rejected, item, "点策陈策轮不属本夜前序有效召对", "missing_ref", source)
+                continue
+            payload = {
+                "text": body, "actor": actor,
+                "dossier_action_type": "strategy_selection", "target_kind": "policy",
+                "target_id": target_id.strip(), "source_chat_turn_id": origin_id,
+                "mode": "ordinary",
+            }
+            row_id = db.stage_pending_action(
+                int(state.turn), "directive", "拟旨", actor, payload,
+            )
+            applied.append({"id": row_id, "payload": payload, "kind": "directive"})
+            continue
+
         progress = item.get("secret_order_progress")
         if progress is not None:
             from ming_sim.strict_types import strict_int
