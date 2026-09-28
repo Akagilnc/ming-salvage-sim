@@ -1652,7 +1652,9 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     });
   });
 
-  it("#1796 无草案退朝结束本月：同样切核账期面（无进度卡）", async () => {
+  it("#1796 无草案退朝失败后从原入口重试，不误走颁诏", async () => {
+    let advancePosts = 0;
+    let issuePosts = 0;
     let releaseAdvance!: (value: Response) => void;
     const advanceGate = new Promise<Response>((resolve) => { releaseAdvance = resolve; });
     let liveState: Record<string, unknown> = {
@@ -1681,8 +1683,10 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
       });
       if (u.pathname.endsWith("/api/court_layout")) return jsonResp({ layout: "{}" });
       if (u.pathname.endsWith("/api/decree/advance_without_edict") && init?.method === "POST") {
-        return advanceGate;
+        advancePosts += 1;
+        return advancePosts === 1 ? advanceGate : jsonResp({ state: liveState, awaiting_decision: true, decisions: [validDecision] });
       }
+      if (u.pathname.endsWith("/api/decree/issue/stream") && init?.method === "POST") issuePosts += 1;
       return jsonResp({});
     }));
 
@@ -1712,24 +1716,20 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     });
     expect(host.querySelector("[data-testid=settlement-lock-decor]")).toBeNull();
 
-    // 放行 advance：awaiting 停窗，busy 清后批红必达
-    liveState = settlementBaseState("awaiting_decision", {
-      pending_decisions: [validDecision],
-      previous_summary: "",
-    });
     await act(async () => {
-      releaseAdvance(jsonResp({
-        state: liveState,
-        awaiting_decision: true,
-        decisions: [validDecision],
-        pending_action_failures: [],
-      }));
+      releaseAdvance(new Response(JSON.stringify({ detail: "退朝入口失败" }), { status: 503, headers: { "Content-Type": "application/json" } }));
       await Promise.resolve();
     });
     await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[role="alert"] button')).not.toBeNull());
+    });
+    liveState = settlementBaseState("awaiting_decision", { pending_decisions: [validDecision], previous_summary: "" });
+    await click(host.querySelector('[role="alert"] button') as HTMLButtonElement);
+    await act(async () => {
       await vi.waitFor(() => expect(host.querySelector('[data-testid="decision-modal"]')).not.toBeNull());
     });
-    expect(host.querySelector("[data-testid=settlement-lock-decor]")).toBeNull();
+    expect(advancePosts).toBe(2);
+    expect(issuePosts).toBe(0);
   });
 
   it("awaiting_decision + 合法 pending：DecisionModal 可点；刷新重挂后仍在", async () => {

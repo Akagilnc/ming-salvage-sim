@@ -215,6 +215,7 @@ export function App() {
     decisionFailures,
     pausedDecisionError,
     settlementHudError,
+    failedEntryWasRetreat,
     clearSettlementHudError,
     issueDecree,
     advanceWithoutEdict,
@@ -804,7 +805,7 @@ export function App() {
             onSaveDirective={saveDirective}
             onDeleteDirective={deleteDirective}
             onIssueDecree={issueDecree}
-            onAdvanceWithoutEdict={advanceWithoutEdict}
+            onAdvanceWithoutEdict={() => { setActiveModal("none"); void advanceWithoutEdict(); }}
           />
         </FullscreenModal>
       ) : null}
@@ -878,7 +879,7 @@ export function App() {
       {(settleResumeMounted || settlementHudError) && !edictOpen && !chatOpen ? (
         <div className="recovery-banner" role="alert" data-testid={settleResumeMounted ? "settle-resume" : "hud-error"}>
           <span className="recovery-banner-message">{settlementHudError || state.settlement_recovery?.message || "上月结算未完成（进度已保存）。"}{state.settlement_recovery?.error_pack_path ? ` 错误包：${state.settlement_recovery.error_pack_path}；请把它发给作者。` : ""}</span>
-          <button className="seal-btn-issue" onClick={phase2Resume ? resumePhase2 : issueDecree} disabled={!!busy}>重试</button>
+          <button className="seal-btn-issue" onClick={phase2Resume ? resumePhase2 : failedEntryWasRetreat ? advanceWithoutEdict : issueDecree} disabled={!!busy}>重试</button>
         </div>
       ) : null}
 

@@ -52,6 +52,7 @@ export function useSettlementFlow({
   const [pausedDecisionError, setPausedDecisionError] = React.useState("");
   // #1808：phase-1 fail-closed 的 HUD 专用位——与共享 error 分轨，避免召对等通道泄漏到普通 HUD。
   const [settlementHudError, setSettlementHudError] = React.useState("");
+  const [failedEntryWasRetreat, setFailedEntryWasRetreat] = React.useState(false);
   const [settlementGazetteReading, setSettlementGazetteReading] =
     React.useState<SettlementGazetteReading | null>(null);
   // #1852：写成即推进期间挡住 closed/密令/结局自动弹层，避免盖住本面邸报；无正文可呈时随即放下。
@@ -136,7 +137,8 @@ export function useSettlementFlow({
 
   // #1796：盖玺/退朝共用开场——busy 挂同会话切面；清 HUD 失败位。
   // 真源仍是 settlement_display；submitDecisions 另有 HITL 续推文案，不经此路。
-  const beginSettlementWait = () => {
+  const beginSettlementWait = (retreat = false) => {
+    setFailedEntryWasRetreat(retreat);
     setBusy("月末结算");
     setSettlementHudError("");
   };
@@ -150,6 +152,7 @@ export function useSettlementFlow({
   // #1808 C：退局/再入局清 HUD 残留——接缝归既有 exitToMenu / enterGameAfterMenu。
   const clearSettlementHudError = React.useCallback(() => {
     setSettlementHudError("");
+    setFailedEntryWasRetreat(false);
     setSettlementGazetteReading(null);
     setPostAdvanceOverlayHold(false);
     setAdvanceRefreshFailed(false);
@@ -360,7 +363,7 @@ export function useSettlementFlow({
   // 真空仍禁用；draft/pending 走 issueDecree，不经此路。
   // #1796：与盖玺同 busy 标——同会话立即收拟诏台 + 切核账期面。
   const advanceWithoutEdict = async () => {
-    beginSettlementWait();
+    beginSettlementWait(true);
     setError("");
     // #1351 A1：携客户端所见 turn 作令牌；409 且服务端已更大 → 视作已推进刷新，不报假错。
     const expectedTurn = state?.turn?.turn;
@@ -475,6 +478,7 @@ export function useSettlementFlow({
     decisionFailures,
     pausedDecisionError,
     settlementHudError,
+    failedEntryWasRetreat,
     clearSettlementHudError,
     issueDecree,
     advanceWithoutEdict,
