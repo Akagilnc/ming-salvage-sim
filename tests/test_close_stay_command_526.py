@@ -63,8 +63,6 @@ def _session(db, state, content, *, reply="臣领旨。", tools=None):
     sess.temporary_characters = set()
     sess._retrieve_memories_for_message = lambda message: message
     sess._audience_prompt_for_message = lambda message, character, chat_turn_id=0, **_kw: message
-    sess._start_cli_action_intent = lambda *a, **k: None
-    sess._finish_cli_action_intent = lambda *a, **k: []
     sess.start_exit_scene_from_dismiss_tools = lambda *a, **k: None
     return sess
 
@@ -80,7 +78,6 @@ def _silence_action_extractors(monkeypatch):
     monkeypatch.setattr(cb, "extract_draft_intent", lambda *a, **k: {
         "draft_action": "无", "draft_text": "", "target_candidate": "",
     })
-    monkeypatch.setattr(cb, "extract_confirmation_intent", lambda *a, **k: "无")
     monkeypatch.setattr(session_mod, "_dump_llm_messages", lambda *a, **k: None)
 
 

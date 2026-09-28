@@ -342,7 +342,6 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
       if (u.pathname.endsWith("/api/decree/advance_without_edict")) return jsonResp({ state: makeState(2, [], roster), pending_action_failures: [] });
       if (u.pathname.endsWith("/chat/stream")) return sseResp("done", { response: "臣等恭送", directives: [], pending_count: 0, suggestions: [], can_undo_last_chat: false, pending_action_failures: [], court_action: "court_break" });
       if (u.pathname.endsWith("/api/audience/chat")) return jsonResp({ minister: roster[0], history: [], suggestions: [], campaign_id: "c1", night_id: 77 });
-      if (u.pathname.endsWith("/api/audience/extraction/pending")) return jsonResp({ count: 0 });
       return jsonResp({});
     }));
     const host = document.createElement("div"); document.body.appendChild(host);
@@ -400,7 +399,6 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
       if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
       if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
       if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
-      if (u.pathname.endsWith("/api/audience/extraction/pending")) return jsonResp({ count: 0 });
       if (u.pathname.endsWith("/api/audience/scroll")) return jsonResp({ night_id: 1, messages: [] });
       if (u.pathname.endsWith("/api/history/turns")) return jsonResp({ turns: [] });
       if (u.pathname.endsWith("/api/court_layout")) return jsonResp({ layout: "{}" });
@@ -480,7 +478,6 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
       if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
       if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
       if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
-      if (u.pathname.endsWith("/api/audience/extraction/pending")) return jsonResp({ count: 0 });
       if (u.pathname.endsWith("/api/audience/scroll")) return jsonResp({
         night_id: 1,
         translation_retries: translationDone ? [] : [{ chat_turn_id: 8, retryable: true }],
@@ -3171,7 +3168,6 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
         }
         return jsonResp({ ...baseState, cased_directives: casedDirectives });
       }
-      if (u.pathname.endsWith("/api/audience/extraction/pending")) return jsonResp({ count: 0 });
       if (u.pathname.endsWith("/api/audience/scroll")) return jsonResp({ night_id: 1, messages: [] });
       if (u.pathname.endsWith("/api/audience/chat/stream") && init?.method === "POST") {
         return new Response(new ReadableStream<Uint8Array>({

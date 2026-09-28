@@ -704,7 +704,7 @@ def test_appointment_summon_settlement_runs_recovery_once(game, monkeypatch):
     本月 settle 仍应恰好回流一次期望口数。
     """
     from ming_sim.constants import RECOVERY_OUTCOME_FACTORS, RECOVERY_PERSONS_PER_WAN
-    from tests.test_appointment_summon_672 import (
+    from tests.legacy_staging_helpers import (
         _close_office_to_dossier,
         _stage_yuan_appointment_summon,
         _yuan_row,

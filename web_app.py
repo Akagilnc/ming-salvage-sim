@@ -3057,7 +3057,6 @@ class WebGame:
         accepted_turn: int,
         emit_delta,
         write_gate: Optional[threading.Lock] = None,
-        action_intent_future: Optional[Future] = None,
         explicit_secret_order: bool = False,
     ) -> Dict[str, Any]:
         character = self.session._character(minister_name)
@@ -3073,8 +3072,6 @@ class WebGame:
             from ming_sim.materials import prepare_character_materials
             prepared = prepare_character_materials(self.session.db, self.session.state, character)
         agent = self.session.registry.get(character, prepared=prepared)
-        # 动作意图分类只读皇帝消息，是唯一可与回话重叠的独立调用：由 worker 先于回话
-        # 发出（跨越回话流式在飞），此处消费一次；不再在本轮内二次发起。
         # The session audience seam is per-character: passing only the message
         # makes a web-streamed question bypass that perspective.
         agent_prompt = _audience_prompt_for_web_chat(
@@ -3172,7 +3169,7 @@ class WebGame:
         # 短事务原子持久化 reply + 本轮全部 scene。join 不得早于 start_exit。
         interpreted = self._chat_stream_interpret_tools(
             minister_name, text, character, answer, run_output,
-            action_intent_future, chat_turn_id, explicit_secret_order,
+            chat_turn_id, explicit_secret_order,
         )
         # 动作/结果相容：流中已启退场而终 attempt 工具账未带 dismiss 时，结构结果仍须对齐史实。
         # 不延后 dismiss、不加次数例外（fo2Oe 处方驳回；按事实修）。
@@ -3215,11 +3212,11 @@ class WebGame:
         character: Any,
         answer: str,
         run_output: Any,
-        action_intent_future: Any,
         chat_turn_id: int,
         explicit_secret_order: bool = False,
     ) -> Dict[str, Any]:
-        # 截 propose_directive：入 pending_actions；截 propose_appointment：吏部铨选建档
+        # 截 propose_directive：入 pending_actions；截 propose_appointment：吏部铨选建档。
+        # #1871：意图分类器链已删；应允/交办由转译声明。本函数只截 tool 结果。
         proposed = None
         appointed = ""
         registered = ""
@@ -3233,7 +3230,6 @@ class WebGame:
         # #1566：密令 route 须在 command-verdict / exit / summon·dismiss 之前成立。
         message_text = (text or "").strip()
         from ming_sim.cli_backend import _DRAFT_PREFIXES, _SECRET_PREFIXES
-        from ming_sim.action_clusters import is_confirmation_decision, resolve_primary_intent
         explicit_draft_prefix = message_text.startswith(_DRAFT_PREFIXES)
         explicit_secret_prefix = message_text.startswith(_SECRET_PREFIXES)
         explicit_secret_route = explicit_secret_order or explicit_secret_prefix
@@ -3256,20 +3252,6 @@ class WebGame:
             answer = cmd_result.answer
             if cmd_result.court_action:
                 court_action = cmd_result.court_action
-        if hasattr(self.db, "list_pending_actions"):
-            preexisting_pending_action_ids = {
-                int(p["id"]) for p in self.db.list_pending_actions(self.state.turn, minister_name=character.name)
-            }
-        else:
-            preexisting_pending_action_ids = set()
-        preclassified_intent = self.session._finish_cli_action_intent(action_intent_future)
-        confirmation_intent_for_pending = getattr(
-            self.session, "_confirmation_intent_for_preexisting_pending", None)
-        if confirmation_intent_for_pending is not None and not explicit_secret_order:
-            preclassified_intent = confirmation_intent_for_pending(
-                character.name, text, answer, preclassified_intent, preexisting_pending_action_ids)
-        confirmation_turn = is_confirmation_decision(
-            resolve_primary_intent(preclassified_intent))
         if run_output is not None:
             for tool_exec in getattr(run_output, "tools", None) or []:
                 res = str(getattr(tool_exec, "result", "") or "")
@@ -3277,7 +3259,7 @@ class WebGame:
                 if tool_name == "propose_directive" or res.startswith("__pending_directive__"):
                     # confirmation / secret 前缀仍整枚跳过；孪生抑制在
                     # _stage_directive_tool_candidate generic 尾路按 kind 分派。
-                    if confirmation_turn or explicit_secret_route:
+                    if explicit_secret_route:
                         continue
                     args = getattr(tool_exec, "arguments", {}) or getattr(tool_exec, "tool_args", {}) or {}
                     if not isinstance(args, dict):
@@ -3305,7 +3287,6 @@ class WebGame:
                                 issue_id=args.get("issue_id"),
                                 issue_disposition=args.get("issue_disposition"),
                                 mode=args.get("mode") or args.get("颁布方式"),
-                                intent_candidates=preclassified_intent,
                             ),
                         )
                         if stage_failures:
@@ -3317,7 +3298,7 @@ class WebGame:
                     or res.startswith("__pending_appointment__")
                     or res.startswith("__pending_recommendation__")
                 ):
-                    if confirmation_turn or explicit_draft_prefix or explicit_secret_route:
+                    if explicit_draft_prefix or explicit_secret_route:
                         continue
                     payload_json = res.removeprefix("__pending_recommendation__")
                     payload_json = payload_json.removeprefix("__pending_appointment__").strip()
@@ -3331,7 +3312,7 @@ class WebGame:
                         ),
                     )
                 elif tool_name == "register_unlisted_person" or res.startswith("__pending_unlisted_person__"):
-                    if confirmation_turn or explicit_draft_prefix or explicit_secret_route:
+                    if explicit_draft_prefix or explicit_secret_route:
                         continue
                     payload_json = res.removeprefix("__pending_unlisted_person__").strip()
                     if not payload_json:
@@ -3401,7 +3382,7 @@ class WebGame:
                                 character.name, int(chat_turn_id), int(entry_id),
                             )
                 elif res.startswith("__commitment_rush__"):
-                    if confirmation_turn or explicit_draft_prefix or explicit_secret_route:
+                    if explicit_draft_prefix or explicit_secret_route:
                         continue
                     if GameSession._proposal_blocked(self.state):
                         continue
@@ -3439,7 +3420,7 @@ class WebGame:
                     or res.startswith("__secret_order__")
                     or res.startswith("__secret_action__")
                 ):
-                    if confirmation_turn or explicit_draft_prefix:
+                    if explicit_draft_prefix:
                         continue
                     if GameSession._proposal_blocked(self.state):
                         continue
@@ -3528,45 +3509,13 @@ class WebGame:
                                 tool_pending_action_id, staged_id,
                             )
                 # 密令结案不再走大臣工具：月末 settle 按实进度对账派生 done/failed（#1504）
-        # CLI 后端（agy/codex）：玩家用拟旨/密令按钮（消息带前缀）时，把大臣这句回话原文入档。
-        # CLI 后端会话落地走共享真源 session.apply_cli_conversation_actions(同 session.chat 非流式路径)，
-        # 杜绝 web/CLI 两边逻辑漂移（CMR F3 / codexC-1）。
-        # #568：chat_turn_id 经 session 作用域透传（apply 签名不动），供点策 origin 结构化排除本轮。
-        prev_turn = getattr(self.session, "_active_chat_turn_id", 0)
-        self.session._active_chat_turn_id = int(chat_turn_id or 0)
-        try:
-            res = self.session.apply_cli_conversation_actions(
-                character, text, answer,
-                has_directive=proposed is not None or bool(pending_action_id),
-                secret_order_id=secret_order_id,
-                preclassified_intent=preclassified_intent,
-                confirm_target_ids=preexisting_pending_action_ids,
-                explicit_secret_order=explicit_secret_order,
-                prior_pending_action_failures=tool_stage_failures,
+        if pending_action_id and tool_pending_action_id:
+            self.session._merge_staged_new_secret_order_content(
+                tool_pending_action_id,
+                character.name,
+                text,
             )
-        finally:
-            self.session._active_chat_turn_id = prev_turn
-        if proposed is None and res["directive"]:
-            proposed = res["directive"]
-        if res["secret_order_id"]:
-            secret_order_id = res["secret_order_id"]
-        pending_action_id = pending_action_id or int(res.get("pending_action_id") or 0)
-        if pending_action_id:
-            if tool_pending_action_id:
-                self.session._merge_staged_new_secret_order_content(
-                    tool_pending_action_id,
-                    character.name,
-                    text,
-                )
-        # #502 AC5：多道准驳含糊 → 结构化含糊态透进 chat payload + 大臣当场追问哪一道（表面契约可达）。
-        directive_ambiguous = res.get("directive_confirmation_ambiguous")
-        if directive_ambiguous:
-            answer = GameSession._ensure_clarification_cue(answer, directive_ambiguous)
-        # Sync/web consume the same typed action-report projection seam.
-        answer = GameSession._append_action_reports(answer, res)
-        pending_action_failures = list(res.get("pending_action_failures") or [])
-        if tool_stage_failures:
-            pending_action_failures = pending_action_failures + list(tool_stage_failures)
+        pending_action_failures = list(tool_stage_failures)
         # 仅解释/登记；join + 短事务落账由 _chat_stream_payload 在 gate 外/内分阶完成。
         return {
             "answer": answer,
@@ -3579,9 +3528,9 @@ class WebGame:
             "secret_order_id": secret_order_id,
             "pending_action_id": pending_action_id,
             "pending_action_failures": pending_action_failures,
-            "directive_ambiguous": directive_ambiguous,
-            "decree_validation_failure": res.get("decree_validation_failure"),
-            "secret_order_landing_recovery": res.get("secret_order_landing_recovery"),
+            "directive_ambiguous": None,
+            "decree_validation_failure": None,
+            "secret_order_landing_recovery": None,
         }
 
     def _trail_highlight_judge_after_reply(
@@ -3746,49 +3695,6 @@ class WebGame:
             "audience-startup-extraction-catchup",
             ticket_key=("startup",),
         )
-
-    def pending_story_extractions(self) -> Dict[str, Any]:
-        """#501/#1353：待补抽取只读诊断（本开夜 turn ids + 大臣名 + 计数）。
-
-        与 close_night drain 挡收夜判定同一真源（list_unextracted via helper）。
-        #1842：转译承接后水位同表；本接口亦投影转译待补的结构化系统提示态
-        （kind/retryable），供 0158 决定 6；玩家手动补写 CTA 走 translation/retry。
-        无开夜则回全库待补。测试替身无 conn 时空。
-        """
-        if not hasattr(self.db, "conn"):
-            return {"night_id": 0, "count": 0, "pending": []}
-        from ming_sim.audience_night import get_open_night
-        from ming_sim.audience_translation import list_pending_translations
-
-        open_n = get_open_night(self.db)
-        nid = int(open_n["id"]) if open_n else None
-        night_status = str((open_n or {}).get("status") or "")
-        retry_rows = list_pending_translations(
-            self.db, night_id=int(nid) if nid else None,
-            write_queue=self._runtime_write_queue(),
-        )
-        retry_by_turn = {int(r["chat_turn_id"]): r for r in retry_rows}
-        rows = self.db.list_unextracted_replies(night_id=int(nid) if nid else None)
-        pending = [
-            {
-                "chat_turn_id": int(r.get("chat_turn_id") or 0),
-                "minister_name": str(r.get("minister_name") or ""),
-                "night_id": int(r.get("night_id") or 0),
-                "kind": str(r.get("kind") or "translation_pending"),
-                "retryable": bool(retry_by_turn.get(int(r.get("chat_turn_id") or 0), {}).get("retryable", False)),
-                "extract_status": str(r.get("extract_status") or "pending"),
-                "error_pack_path": str(r.get("error_pack_path") or ""),
-            }
-            for r in rows
-        ]
-        out: Dict[str, Any] = {
-            "night_id": int(nid or 0),
-            "count": len(pending),
-            "pending": pending,
-        }
-        if night_status:
-            out["night_status"] = night_status
-        return out
 
     def pending_translation_retries(
         self, *, night_id: Optional[int] = None, chat_turn_id: Optional[int] = None,
@@ -4114,7 +4020,6 @@ class WebGame:
                             minister_name, text, chat_turn_id, before_snapshot,
                             accepted_turn, emit_delta,
                             write_gate=write_gate,
-                            action_intent_future=None,
                             explicit_secret_order=True,
                         )
                     else:
@@ -6698,12 +6603,6 @@ async def api_retry_interrupted_reply(minister_name: str, chat_turn_id: int = Bo
     except AudienceNightError as e:
         # CLOSING / night admission → 409 (retryable); reuse shared converter, no status fork.
         raise _retryable_audience_close_http(e) from None
-
-
-@app.get("/api/audience/extraction/pending")
-async def api_pending_story_extractions() -> Dict[str, Any]:
-    """#501/#1353/#1842：本开夜转译待补只读投影（含 kind/retryable 系统提示态）。"""
-    return get_game().pending_story_extractions()
 
 
 class TranslationRetryRequest(BaseModel):

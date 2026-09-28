@@ -1478,19 +1478,6 @@ class GameDB:
             CREATE INDEX IF NOT EXISTS idx_story_ledger_night_seq
                 ON story_ledger_entries(night_id, seq);
 
-            CREATE TABLE IF NOT EXISTS mindreading_records (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                chat_turn_id INTEGER NOT NULL,
-                reader TEXT NOT NULL,
-                target TEXT NOT NULL,
-                source TEXT NOT NULL,
-                precision TEXT NOT NULL,
-                narration TEXT NOT NULL,
-                FOREIGN KEY(chat_turn_id) REFERENCES chat_turns(id)
-            );
-            CREATE INDEX IF NOT EXISTS idx_mindreading_records_chat_turn
-                ON mindreading_records(chat_turn_id, id);
-
             CREATE TABLE IF NOT EXISTS chat_turn_rollback_items (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 chat_turn_id INTEGER NOT NULL,
@@ -9388,12 +9375,10 @@ class GameDB:
         return history
 
     def build_chat_projection(self, minister_name: str, night_id: Optional[int] = None) -> List[Dict[str, Any]]:
-        """当前召对夜的 turn-identified 投影：user/minister 逐条带 chat_turn_id，
-        每轮的读心记录（带持久 id）紧随该轮大臣回话之后归位。
+        """当前召对夜的 turn-identified 投影：user/minister 逐条带 chat_turn_id。
 
         单一真源：以 chat_messages（与 load_all_chat_history 同基）为骨架，join
-        chat_turns 打 turn 身份、按 (chat_turn_id, id) 织入 mindreading_records。
-        前端据此一投影渲染，不再靠 setChat(history) 覆盖抹掉读心递话。
+        chat_turns 打 turn 身份。前端据此一投影渲染。
         """
         if night_id is None:
             open_night = self.conn.execute(
@@ -9421,21 +9406,18 @@ class GameDB:
         else:
             msgs = []
         msg_turn: Dict[int, int] = {}
-        minister_msg_turn: Dict[int, int] = {}
         for t in turns:
             tid = int(t["id"])
             if t["user_message_id"] is not None:
                 msg_turn[int(t["user_message_id"])] = tid
             if t["minister_message_id"] is not None:
                 msg_turn[int(t["minister_message_id"])] = tid
-                minister_msg_turn[int(t["minister_message_id"])] = tid
-        records_cache: Dict[int, List[Dict[str, object]]] = {}
         projection: List[Dict[str, Any]] = []
         for m in msgs:
             mid = int(m["id"])
             turn_id = msg_turn.get(mid, 0)
             role = m["role"]
-            # #544：只大臣气泡携带判官清单；帝/递话恒 []（SELECT 已点名 highlights_json）
+            # #544：只大臣气泡携带判官清单；帝侧恒 []（SELECT 已点名 highlights_json）
             highlights = (
                 self._parse_highlights_json(m["highlights_json"])
                 if role == "minister"
@@ -9447,21 +9429,6 @@ class GameDB:
                 "chat_turn_id": turn_id,
                 "highlights": highlights,
             })
-            # 读心紧随该轮大臣回话归位（一个轮次可有多条读心，按 id 顺序）
-            if mid in minister_msg_turn:
-                t = minister_msg_turn[mid]
-                if t not in records_cache:
-                    records_cache[t] = self.list_mindreading_records(t)
-                for rec in records_cache[t]:
-                    narration = str(rec.get("narration") or "").strip()
-                    if not narration:
-                        continue
-                    projection.append({
-                        "role": "attendant",
-                        "content": narration,
-                        "chat_turn_id": t,
-                        "record_id": int(rec.get("id") or 0),
-                    })
         return projection
 
     def list_hall_chat_turns(self, night_id: int) -> List[Dict[str, Any]]:
@@ -9470,15 +9437,6 @@ class GameDB:
             "SELECT id, minister_name, status, user_message_id, minister_message_id FROM chat_turns "
             "WHERE night_id=? AND route IN ('', 'secret_order') ORDER BY id",
             (int(night_id),),
-        ).fetchall()
-        return [dict(row) for row in rows]
-
-    def list_mindreading_records(self, chat_turn_id: int) -> List[Dict[str, object]]:
-        # id 是稳定记录身份（#499）：前端按 (chat_turn_id, id) 去重/归位，不依赖 narration 文本。
-        rows = self.conn.execute(
-            "SELECT id,reader,target,source,precision,narration FROM mindreading_records "
-            "WHERE chat_turn_id=? ORDER BY id",
-            (int(chat_turn_id),),
         ).fetchall()
         return [dict(row) for row in rows]
 
@@ -10550,12 +10508,6 @@ class GameDB:
         ).fetchall()
         return [self._row_dict(r) for r in rows]
 
-    def count_pending_story_extractions(
-        self, *, night_id: Optional[int] = None,
-    ) -> int:
-        """尚待抽取落账的完整回话轮数（''/'pending' 皆算）；收夜清空待补的判据（AC10）。"""
-        return len(self.list_unextracted_replies(night_id=night_id))
-
     def is_global_last_active_chat_turn(self, chat_turn_id: int) -> bool:
         row = self.conn.execute(
             "SELECT id FROM chat_turns WHERE status IN ('active', 'interrupted') ORDER BY id DESC LIMIT 1"
@@ -10784,10 +10736,6 @@ class GameDB:
                     draft_ids_to_delete.append(did)
         with self.conn:
             self._delete_turn_scoped_knowledge_sources_in_tx(chat_turn_id)
-            self.conn.execute(
-                "DELETE FROM mindreading_records WHERE chat_turn_id = ?",
-                (int(chat_turn_id),),
-            )
             # #634 撤回联动（ADR 0038 白名单③）：删该轮源绑定的召对边事件；undone 轮
             # 天然出判官窗口（status != active），水位随逐轮标记失效自动回退。
             self.delete_relation_edge_events_for_chat_turn(chat_turn_id)

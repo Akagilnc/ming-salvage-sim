@@ -9,16 +9,6 @@ from ming_sim.audience_translation import list_pending_translations
 from tests.conftest import append_night_chat, open_audience_night
 
 
-def _archive_mindreading(db, chat_turn_id, *, target, narration):
-    db.conn.execute(
-        "INSERT INTO mindreading_records "
-        "(chat_turn_id, reader, target, source, precision, narration) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
-        (chat_turn_id, "王承恩", target, "察言观色", "约略", narration),
-    )
-    db.conn.commit()
-
-
 def _scroll_game(db):
     return SimpleNamespace(
         db=db,
@@ -253,9 +243,6 @@ def test_real_http_scroll_merges_ministers_asides_and_story_without_raw_characte
     db, state, _ = game
     night_id = open_audience_night(db, state)
     first_turn, _ = append_night_chat(db, state, night_id, "杨嗣昌", "辽饷如何？", "臣请据实核账。", 10)
-    _archive_mindreading(
-        db, first_turn, target="杨嗣昌", narration="万岁爷，他尚有保留。",
-    )
     an.append_ledger_entry(
         db, night_id, body="杨嗣昌以身家作保。", tags=["站台", "作保"],
         person_names=["杨嗣昌"], source_chat_turn_id=first_turn, order_key=10,
@@ -272,8 +259,8 @@ def test_real_http_scroll_merges_ministers_asides_and_story_without_raw_characte
     contents = [message["content"] for message in messages]
 
     assert [content for content in contents if content in {
-        "辽饷如何？", "臣请据实核账。", "万岁爷，他尚有保留。", "边情如何？", "边关尚稳。",
-    }] == ["辽饷如何？", "臣请据实核账。", "万岁爷，他尚有保留。", "边情如何？", "边关尚稳。"]
+        "辽饷如何？", "臣请据实核账。", "边情如何？", "边关尚稳。",
+    }] == ["辽饷如何？", "臣请据实核账。", "边情如何？", "边关尚稳。"]
     assert "杨嗣昌以身家作保。" not in contents
     # #1293a：抽取派生（含非对话复述的故事事实）不上 live 卷轴
     assert "帘外忽起雨声。" not in contents
@@ -293,10 +280,6 @@ def test_real_http_scroll_merges_ministers_asides_and_story_without_raw_characte
         if message["content"] in dialogue_contents:
             expected_fields.add("chat_turn_id")
             assert message["chat_turn_id"] > 0
-        if message["role"] == "attendant" and message["content"] == "万岁爷，他尚有保留。":
-            expected_fields.update({"chat_turn_id", "record_id"})
-            assert message["chat_turn_id"] > 0
-            assert message["record_id"] > 0
         assert set(message) == expected_fields
         assert forbidden_character_stats.isdisjoint(message)
         assert forbidden_character_stats.isdisjoint(message["container"])
@@ -359,32 +342,6 @@ def test_scroll_derives_soft_boundary_and_omits_dialogue_carried_action(game):
     divider = next(m for m in scroll if m["beat"] == "divider")
     assert divider["soft_boundary"] is True
     assert divider["speaker"] == "洪承畴"
-
-
-def test_scroll_merges_mindreading_and_uses_structured_dedup_boundaries(game):
-    db, state, _ = game
-    night_id = open_audience_night(db, state)
-    turn_id, _ = append_night_chat(db, state, night_id, "杨嗣昌", "卿可担名？", "臣愿当面作保。", 10)
-    _archive_mindreading(
-        db, turn_id, target="杨嗣昌", narration="万岁爷，他这话留了半分。",
-    )
-    an.append_ledger_entry(
-        db, night_id, body="杨嗣昌以身家作保。", tags=["站台", "作保"],
-        person_names=["杨嗣昌"], source_chat_turn_id=turn_id, order_key=10,
-    )
-    an.append_ledger_entry(
-        db, night_id, body="帘外忽起雨声。", tags=["天气"],
-        person_names=[], source_chat_turn_id=turn_id, order_key=10,
-    )
-
-    scroll = an.read_night_scroll(db, night_id)
-
-    aside = next(message for message in scroll if message["role"] == "attendant")
-    assert (aside["speaker"], aside["beat"], aside["audibility"]) == ("王承恩", "aside", an.AUDIBILITY_PRIVATE)
-    assert aside["content"] == "万岁爷，他这话留了半分。"
-    assert "杨嗣昌以身家作保。" not in [message["content"] for message in scroll]
-    # #1293a：抽取派生故事事实不上卷轴；王承恩读心旁白仍在
-    assert "帘外忽起雨声。" not in [message["content"] for message in scroll]
 
 
 def test_extractor_open_tags_do_not_drive_beat_or_soft_boundary(game):

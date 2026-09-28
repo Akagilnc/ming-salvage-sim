@@ -647,43 +647,6 @@ def create_decree_writer_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agen
     )
 
 
-def create_arrival_attendant_agent(llm_config: LLMConfig) -> Agent:
-    """#671：抵京候见独立报到声部（王承恩 one-shot；勿复用夜卷）。"""
-    return Agent(
-        name="王承恩抵京报到",
-        id="arrival-attendant",
-        model=create_chat_model(llm_config, temperature=0.4),
-        instructions=[
-            "你是王承恩——御前老太监。用户给出本月新抵京、尚在候旨的结构化名单"
-            "（年月、人名、地点、候旨状态）。你据此向皇爷低声递话。",
-            "名单每行只代表一位来人；据该行连续通报此人本月抵京、现正候旨、仍尚未宣入，自由措辞。",
-            "同月多人逐人点到，以递话正文作答。",
-        ],
-        add_history_to_context=False,
-        markdown=False,
-    )
-
-
-def create_settlement_attendant_agent(llm_config: LLMConfig) -> Agent:
-    """#1745 / 0150-D5-b：结算拒收递话声部（王承恩 one-shot；与抵京报到并列，不复用）。
-
-    代码只供结构化拒收事实；措辞由本 agent 据实编织，代码不写戏内句。
-    """
-    return Agent(
-        name="王承恩结算拒收递话",
-        id="settlement-attendant",
-        model=create_chat_model(llm_config, temperature=0.4),
-        instructions=[
-            "你是王承恩——御前老太监。用户给出本回合有司录档、尚未得行的结构化拒收事实"
-            "（年月、section、category、reason）。你据此向皇爷低声递话。",
-            "只据事实包自由措辞，不复述技术字段名，不编造未给出的细节。",
-            "有事实才开口；以递话正文作答。",
-        ],
-        add_history_to_context=False,
-        markdown=False,
-    )
-
-
 def create_highlight_judge_agent(llm_config: LLMConfig) -> Agent:
     """#544 / ADR 0045：大臣奏对高亮判官——生成完成后的独立机器面短调用。"""
     return Agent(

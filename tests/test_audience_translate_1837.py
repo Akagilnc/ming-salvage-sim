@@ -641,69 +641,6 @@ def test_emperor_准_via_scene_chat_approves_no_reply_stays_unapproved(game, mon
     assert int(pa["committed_directive_id"] or 0) > 0
 
 
-def test_scene_chat_cli_and_api_same_translation_shape(game, monkeypatch):
-    """AC3：CLI 与 API 通道产出同一形状，不再前缀+二次分类两套路。"""
-    db, state, content = game
-    open_night(db, state, location="乾清宫", time_of_day="夜")
-    region = _region_id(db)
-    person = _hong_name(db, content)
-    edict = f"任命{person}为陕西巡抚，调银三十万两赈灾"
-    declaration = {
-        "commissions": [{
-            "text": edict,
-            "appointment": {
-                "name": person, "office": "陕西巡抚", "appoint_action": "任命",
-            },
-            "grant": {
-                "grant_action": "赈灾", "amount": 30, "account": "国库",
-                "target_kind": "region", "target_id": region,
-                "execution_surface": "immediate",
-            },
-        }],
-        "promises": [],
-    }
-
-    class FakeAgent:
-        def run(self, message):
-            return SimpleNamespace(content="臣等遵旨。", tools=[])
-
-    monkeypatch.setattr(
-        "ming_sim.session.create_scene_agent", lambda *a, **k: FakeAgent(),
-    )
-    import ming_sim.cli_backend as cb
-
-    def boom(*a, **k):
-        raise AssertionError("scene_chat 不得再调 classify_cli_action_intent")
-
-    monkeypatch.setattr(cb, "classify_cli_action_intent", boom)
-
-    shapes = []
-    for channel in ("api", "cli"):
-        def translate_fn(prompt, llm_config, _decl=declaration):
-            shapes.append(normalize_audience_declaration(_decl))
-            return {**offline_empty_audience_translate(prompt, llm_config), **_decl}
-
-        sess = _sess(
-            db, state, content, monkeypatch,
-            llm_config=SimpleNamespace(channel=channel),
-            translate_fn=translate_fn,
-        )
-        before = db.conn.execute(
-            "SELECT COUNT(*) c FROM pending_actions WHERE status='pending'"
-        ).fetchone()["c"]
-        result = sess.scene_chat(edict)
-        after = db.conn.execute(
-            "SELECT COUNT(*) c FROM pending_actions WHERE status='pending'"
-        ).fetchone()["c"]
-        assert after > before
-        assert result.pending_action_id > 0
-
-    assert len(shapes) == 2
-    assert shapes[0] == shapes[1]
-    assert "commissions" in shapes[0] and "promises" in shapes[0]
-    assert "noise" not in shapes[0]
-
-
 def test_unhandleable_commission_rejected_as_fact_no_forced_ask(game):
     """AC4：查无此人 / 幻影地区 → 拒收当事实；不强制追问。"""
     db, state, content = game

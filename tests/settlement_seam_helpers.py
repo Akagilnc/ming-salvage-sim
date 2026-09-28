@@ -101,7 +101,7 @@ def canned_full_settlement(
         lambda *_a, **_k: {"effects": {}},
     )
     monkeypatch.setattr(decree_mod, "create_ending_summary_agent", lambda *a, **k: None)
-    # #1745：复用单一 agent 边界夹具（不整换 run_settlement_attendant_message）。
+    # #1745/#1871：settlement_attendant_runner stub（agent 已删）。
     from tests.section_rejection_helpers import install_settlement_attendant_agent_stub
     install_settlement_attendant_agent_stub(monkeypatch, decree_mod)
     if skip_fixed_flows:

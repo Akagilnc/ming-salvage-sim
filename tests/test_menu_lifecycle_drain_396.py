@@ -447,14 +447,6 @@ class _GapBSession(HallAdmissionSessionMixin):
     def _character(self, name):
         return self.content.characters[name]
 
-    def _start_cli_action_intent(self, *_a, **_k):
-        return None
-
-    def _finish_cli_action_intent(self, *_a, **_k):
-        return None
-
-    def apply_cli_conversation_actions(self, *_a, **_k):
-        return {"directive": None, "secret_order_id": 0, "pending_action_id": 0}
 
     def pending_count(self):
         return 0

@@ -192,8 +192,6 @@ def _session_double(db, state, content, registry):
     sess.llm_config = SimpleNamespace(channel="api")
     sess.temporary_characters = set()
     sess._audience_prompt_for_message = lambda message, *_a, **_kw: message
-    sess._start_cli_action_intent = lambda *a, **k: None
-    sess._finish_cli_action_intent = lambda *a, **k: None
     return sess
 
 

@@ -94,58 +94,6 @@ def test_dossier_roster_rejects_unknown_character_references_at_write_boundary(g
     }]
 
 
-def test_conversation_draft_roster_reaches_committed_dossier(game, monkeypatch):
-    db, state, content = game
-    people = _active_people(db, 3)
-    minister = people[0]
-    character = next(ch for ch in content.characters.values() if ch.name == minister)
-    active_names = {
-        str(row["name"]) for row in db.conn.execute(
-            "SELECT name FROM characters WHERE status='active'"
-        ).fetchall()
-    }
-    aliased, alias = next(
-        (ch, alias)
-        for ch in content.characters.values() if ch.name in active_names
-        for alias in ch.aliases if alias != ch.name
-    )
-    roster = [
-        {"character_id": people[0], "tier": "主办", "role": "总理"},
-        {"character_id": alias, "tier": "主办", "role": "会办"},
-        {"character_id": people[2], "tier": "协办", "role": "核账"},
-    ]
-    expected_roster = [
-        roster[0], {**roster[1], "character_id": aliased.name}, roster[2],
-    ]
-    canned = {
-        "拟旨意图": "拟旨", "动作类型": "assignment", "目标类型": "issue",
-        "目标ID": "granary-audit", "承办人": minister, "参与人": roster,
-    }
-    monkeypatch.setattr(
-        cli_backend, "_run_backend_for_config",
-        lambda *args, **kwargs: (json.dumps(canned, ensure_ascii=False), 1),
-    )
-    session = types.SimpleNamespace(
-        db=db, state=state, content=content, registry=None,
-        llm_config=types.SimpleNamespace(channel="cli"),
-    )
-
-    out = GameSession.apply_cli_conversation_actions(
-        session, character, player_message="拟旨查仓。", answer="着会同清查仓储。",
-        has_directive=False, secret_order_id=None,
-        preclassified_intent={"kind": "draft"},
-    )
-    db.commit_pending_actions(
-        state, content=content, action_ids=[out["pending_action_id"]],
-        directive_status="draft",
-    )
-
-    dossier = db.list_decree_dossiers()[-1]
-    assert dossier["participant_roster"] == [
-        {**item, "delegator_id": None} for item in expected_roster
-    ]
-
-
 @pytest.mark.parametrize("draft_count", [1, 2])
 @pytest.mark.parametrize("bad_roster", [
     ["not-an-object"],
@@ -156,42 +104,6 @@ def test_conversation_draft_roster_reaches_committed_dossier(game, monkeypatch):
     0,
     False,
 ])
-def test_conversation_draft_rejects_malformed_roster_without_staging(
-    game, monkeypatch, bad_roster, draft_count,
-):
-    db, state, content = game
-    minister = _active_minister(db)
-    character = next(ch for ch in content.characters.values() if ch.name == minister)
-    draft = {
-        "正文": "着会同清查仓储。", "动作类型": "assignment", "目标类型": "issue",
-        "目标ID": "granary-audit", "承办人": minister, "参与人": bad_roster,
-        "颁布方式": "普通",
-    }
-    canned = (
-        {"拟旨意图": "拟旨", **draft}
-        if draft_count == 1
-        else {"成品旨稿": [draft, {**draft, "正文": "再核各仓旧账。"}]}
-    )
-    monkeypatch.setattr(
-        cli_backend, "_run_backend_for_config",
-        lambda *args, **kwargs: (json.dumps(canned, ensure_ascii=False), 1),
-    )
-    session = types.SimpleNamespace(
-        db=db, state=state, content=content, registry=None,
-        llm_config=types.SimpleNamespace(channel="cli"),
-    )
-
-    with pytest.raises(ValueError):
-        GameSession.apply_cli_conversation_actions(
-            session, character, player_message="拟旨查仓。", answer="着会同清查仓储。",
-            has_directive=False, secret_order_id=None,
-            preclassified_intent=[{"kind": "draft"}] * draft_count,
-        )
-
-    assert db.list_pending_actions(state.turn) == []
-    assert db.list_directives(state) == []
-    assert db.list_decree_dossiers() == []
-
 
 @pytest.mark.parametrize("write_path", ["create", "append"])
 @pytest.mark.parametrize("delegation", ["self", "unrelated"])

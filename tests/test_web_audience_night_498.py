@@ -137,7 +137,6 @@ def web_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
 
     允许 canned seam（定义真源 / runtime lookup，本 fixture 唯一 fake 面）：
     - agents.create_endorsement_extractor_agent → 收夜 endorsement-only 批
-    - GameSession._start/_finish_cli_action_intent → 动作意图分类器（禁 sk-test 真网）
     - web_app.run_highlight_judge → 回话 done 后高亮判官（#544；禁 sk-test 真网）
     - _fake_settlement_llm：decree 判官/推演/抽取/拟诏
     - load_runtime_llm 配置中和
@@ -151,16 +150,6 @@ def web_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
     monkeypatch.setattr(
         agents_mod, "create_endorsement_extractor_agent",
         lambda *a, **k: _CannedEndorsementExtractor(),
-    )
-    # 动作意图分类器：chat stream 在 payload 前可并发启动；取证定位为另一 sk-test 401 源。
-    # 本 fixture 只钉夜/在飞接缝，分类确定性空返，禁真网（与 #1727 fixture 同边界）。
-    monkeypatch.setattr(
-        session_mod.GameSession, "_start_cli_action_intent",
-        lambda self, *_a, **_k: None,
-    )
-    monkeypatch.setattr(
-        session_mod.GameSession, "_finish_cli_action_intent",
-        lambda self, *_a, **_k: None,
     )
     # #544 / #1353 r6：高亮判官同属回话后 LLM 边界——离线中和，禁 sk-test 打真 OpenAI。
     monkeypatch.setattr(web_app, "run_highlight_judge", lambda **_k: [])

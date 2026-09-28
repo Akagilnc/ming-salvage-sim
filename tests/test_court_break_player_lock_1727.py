@@ -57,16 +57,6 @@ def web_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
         lambda *a, **k: _CannedEndorsementExtractor(),
     )
     monkeypatch.setattr(web_app, "run_highlight_judge", lambda **_k: [])
-    # stream worker 在 payload 前启动 _start_cli_action_intent → 真 classify LLM；
-    # 本测只钉写入口锁，动作意图分类确定性空返，禁真网。
-    monkeypatch.setattr(
-        session_mod.GameSession, "_start_cli_action_intent",
-        lambda self, *_a, **_k: None,
-    )
-    monkeypatch.setattr(
-        session_mod.GameSession, "_finish_cli_action_intent",
-        lambda self, *_a, **_k: None,
-    )
     game = web_app.WebGame(fresh=False)
     monkeypatch.setattr(web_app, "web_game", game)
     yield game

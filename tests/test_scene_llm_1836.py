@@ -160,31 +160,3 @@ def test_retire_via_scene_chat_closes_night_and_keeps_last_turn(game, monkeypatc
     assert int(turns_after[-1]["id"]) == ctid
     assert int(turns_after[-1].get("minister_message_id") or 0) == minister_mid
 
-
-@pytest.mark.usefixtures("_offline_scene_beat_generator")
-def test_scene_chat_no_longer_calls_parallel_classifier(game, monkeypatch):
-    """#1837：场景入口退役并行分类器；回话后走转译（复用 conftest 离线空声明缝）。"""
-    db, state, content = game
-    open_night(db, state)
-
-    class FakeAgent:
-        tools = []
-
-        def run(self, message):
-            return SimpleNamespace(content="臣领旨。", tools=[])
-
-    import ming_sim.cli_backend as cb
-
-    def boom(*a, **k):
-        raise AssertionError("scene_chat 不得再调 classify_cli_action_intent")
-
-    monkeypatch.setattr("ming_sim.session.create_scene_agent", lambda *a, **k: FakeAgent())
-    monkeypatch.setattr(cb, "classify_cli_action_intent", boom)
-
-    sess = _sess(
-        db, state, content,
-        llm_config=SimpleNamespace(channel="cli", cli_runner="codex"),
-    )
-    result = sess.scene_chat("着户部拨银三十万两赈灾")
-    assert result.answer == "臣领旨。"
-    assert result.pending_action_id == 0

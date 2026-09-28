@@ -310,7 +310,6 @@ def test_worker_cleanup_failure_still_emits_error_and_releases_gate():
     agent = _StreamCrashAgent()
     runtime.session.registry = SimpleNamespace(get=lambda _c, **_kw: agent)
     runtime.session._character = lambda name: minister_double(minister)
-    runtime.session._start_cli_action_intent = lambda *_a, **_k: None
 
     gen = runtime.chat_stream(minister, "辽东军情如何？")
     events = list(gen)  # consumer drives generator to completion
@@ -333,7 +332,6 @@ def test_worker_cleanup_double_failure_emits_original_error_end_and_logs(caplog)
     agent = _StreamCrashAgent()
     runtime.session.registry = SimpleNamespace(get=lambda _c, **_kw: agent)
     runtime.session._character = lambda name: minister_double(minister)
-    runtime.session._start_cli_action_intent = lambda *_a, **_k: None
 
     abandon_calls: list[int] = []
 
@@ -398,7 +396,6 @@ def test_worker_postprocess_exception_emits_error_end():
     runtime, minister = _base_runtime(db)
     runtime.session.registry = SimpleNamespace(get=lambda _c, **_kw: None)
     runtime.session._character = lambda name: minister_double(minister)
-    runtime.session._start_cli_action_intent = lambda *_a, **_k: None
     runtime.session.abandon_chat_turn_scene = lambda *_a, **_k: None
     runtime.session.close_night_after_chat_if_needed = None
 

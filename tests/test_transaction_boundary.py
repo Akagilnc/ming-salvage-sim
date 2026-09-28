@@ -588,7 +588,7 @@ def test_outer_atomic_rollback_discards_registry_refresh_callback(game):
     均回前态；另一次真实 outer commit 只刷新一次。
     """
     from ming_sim.decree import atomic_and_reload, settle_with_delta
-    from tests.test_punishment_materialize_517 import (
+    from tests.legacy_staging_helpers import (
         _close_night_dossier,
         _stage_punishment,
     )

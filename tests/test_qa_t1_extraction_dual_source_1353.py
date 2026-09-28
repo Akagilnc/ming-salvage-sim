@@ -39,9 +39,22 @@ from tests.conftest import stub_audience_translate
 
 
 def _pending_api(db) -> dict:
-    runtime = object.__new__(web_app.WebGame)
-    runtime.session = SimpleNamespace(db=db)
-    return runtime.pending_story_extractions()
+    """#1871：旧 extraction/pending 投影已删；用现役未转译水位观测。"""
+    rows = db.list_unextracted_replies() or []
+    pending = [
+        {
+            "chat_turn_id": int(r.get("chat_turn_id") or 0),
+            "minister_name": str(r.get("minister_name") or ""),
+            "night_id": int(r.get("night_id") or 0),
+            "extract_status": str(r.get("extract_status") or "pending"),
+        }
+        for r in rows
+    ]
+    return {
+        "night_id": int((pending[0]["night_id"] if pending else 0) or 0),
+        "count": len(pending),
+        "pending": pending,
+    }
 
 
 @pytest.fixture

@@ -1586,53 +1586,6 @@ def test_batch_compose_exception_keeps_secret_landing_diagnostic(game, monkeypat
     ).fetchone()["n"] == 0
 
 
-def test_secret_landing_recovery_explicit_prefix_entry(game, monkeypatch):
-    """#1765 双入口差：显式前缀路收敛到 recovery（classifier 半边见上测）。"""
-    from ming_sim.session import GameSession
-
-    db, state, content = game
-    name = _minister(db)
-    ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
-    emperor = "暗查辽饷侵冒"
-    recovery_calls = _spy_secret_landing_recovery_compose(monkeypatch)
-    zero = json.dumps({
-        "标题": "", "内容": "", "承办人": name, "期限月数": 0,
-        "标签": [], "差务": "", "价值轴": [], "方向": 1,
-        "交付单位": "", "交付目标": 0,
-    }, ensure_ascii=False)
-
-    def _json_extract(prompt, llm_config=None, tag="", **_k):
-        return (zero, 1)
-
-    def _prose(prompt, llm_config=None, tag="", **_k):
-        return ("任意生成回禀", 1)
-
-    _stub_secret_landing_llm(monkeypatch, extract_fn=_json_extract, prose_fn=_prose)
-
-    sess = GameSession.__new__(GameSession)
-    sess.db = db
-    sess.state = state
-    sess.content = content
-    sess.llm_config = SimpleNamespace(channel="cli")
-    sess.temporary_characters = set()
-
-    out = GameSession.apply_cli_conversation_actions(
-        sess, ch,
-        player_message=f"密令如下：{emperor}",
-        answer="臣领密旨。",
-        has_directive=False, secret_order_id=None,
-    )
-
-    recovery = out.get("secret_order_landing_recovery") or {}
-    assert recovery.get("report") and recovery.get("landing_gaps")
-    assert int(out.get("pending_action_id") or 0) == 0
-    assert db.list_secret_orders() == []
-    assert recovery_calls, "须有 compose_secret_order_landing_recovery 调用"
-    assert any(
-        _recovery_compose_fed(c, emperor, prior_raw=zero) for c in recovery_calls
-    ), "显式前缀 recovery 输入须含皇帝原话、真实缺口与原产物"
-
-
 def test_secret_extract_transport_error_raises_system_failure(game, monkeypatch):
     """#1765 C1：程序/transport 真异常走既有系统失败接缝，不得吞回正常 out。"""
     from ming_sim.action_clusters import candidates_from_classifier_payload

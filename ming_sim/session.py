@@ -58,7 +58,7 @@ from ming_sim.decree import (
 from ming_sim.error_pack import clear_for_resimulation
 from ming_sim.issues import bind_content as _bind_issues
 from ming_sim.issues import sync_opening_legacies
-from ming_sim.mindreading import is_inner_court_attendant
+from ming_sim.audience_night import is_inner_court_attendant
 from ming_sim.llm_model import create_agno_db, extract_agent_text
 from ming_sim.models import Character, CourtContext, GameState, LLMConfig, is_vassal_prince, is_weishi
 from ming_sim.paths import user_data_path
@@ -73,7 +73,7 @@ AUTO_SAVE_KEEP_TURNS = 3  # 每个 campaign 保留最近 N 个 turn 的全部自
 # #1769 成案补交：原抽 + LLM 重写 N 次 = 总计 N+1（owner：N=2 → 总计 3，与召对「第一次不叫重试」同形状）。
 # 与 DRAFT_PARTICIPANT_HEAL_RETRIES（组合/名册内部 heal）独立；内部 heal 不冒充成案补交次数。
 DRAFT_ADMISSION_RESUBMIT_REWRITES = 2
-_CLI_ACTION_INTENT_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="cli-action-intent")
+_SCENE_BEAT_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="scene-beat")
 
 
 def prune_auto_saves(saves_dir: str, campaign_id: str, keep_turns: int = AUTO_SAVE_KEEP_TURNS) -> None:
@@ -795,71 +795,6 @@ def _pending_action_brief(pa: Dict[str, Any]) -> str:
     return f"{action}密令" + (f"：{cue}" if cue else "")
 
 
-def _confirmation_targets_for_message(pending_actions: List[Dict[str, Any]], message: str) -> List[Dict[str, Any]]:
-    """Choose which pending action family this chat confirmation can affect."""
-    text = message or ""
-    secret = [p for p in pending_actions if p["kind"] == "secret_order"]
-    office = [p for p in pending_actions if p["kind"] == "office"]
-    consort = [p for p in pending_actions if p["kind"] == "consort"]
-    non_directive = [p for p in pending_actions if p["kind"] != "directive"]
-    directive = [p for p in pending_actions if p["kind"] == "directive"]
-    all_mentioned = (
-        any(token in text for token in ("全都", "全部", "一并", "一概", "尽数"))
-        or re.search(r"都(?:准了|准(?!备)|照办|作罢|驳回|驳了|拒绝|拒了|不准|不允|撤了|撤回)", text) is not None
-    )
-    family_targets: List[Dict[str, Any]] = []
-    if any(token in text for token in ("密令", "密旨", "密谕")):
-        family_targets.extend(secret)
-    if any(token in text for token in ("任免", "任命", "罢免", "罢黜", "起用", "升任", "调任", "撤职")):
-        family_targets.extend(office)
-    if any(token in text for token in ("调教", "后宫", "妃嫔", "嫔妃")):
-        family_targets.extend(consort)
-    directive_mentioned = any(token in text for token in ("圣旨", "旨意", "拟旨", "诏书", "诏文", "草案"))
-    if directive_mentioned and directive:
-        family_targets.extend(directive)
-    if family_targets:
-        return family_targets
-    if all_mentioned:
-        return pending_actions
-    return non_directive or directive
-
-
-_CONFIRM_ENUM = frozenset({"应允", "拒绝", "留中", "修改", "无"})
-
-
-def _coerce_confirmation_result(raw: Any) -> Tuple[str, List[int], str]:
-    """Normalize extract_confirmation_intent / stub → (确认枚举, 合法目标 id 列表, new_content)。
-
-    生产契约返回 dict；既有测试 stub 可仍返回纯字符串（目标 id 视为空）。
-    #1376：修改判词携带 typed new_content 作为唯一权威正文。
-    """
-    if isinstance(raw, str):
-        v = raw.strip()
-        return (v if v in _CONFIRM_ENUM else "无"), [], ""
-    if isinstance(raw, dict):
-        v = str(raw.get("confirmation") or raw.get("确认") or "无").strip()
-        if v not in _CONFIRM_ENUM:
-            v = "无"
-        tids: List[int] = []
-        for key in ("target_ids", "目标编号"):
-            blob = raw.get(key)
-            if blob is None:
-                continue
-            seq = blob if isinstance(blob, list) else [blob]
-            for t in seq:
-                try:
-                    i = int(t)
-                except (TypeError, ValueError):
-                    digits = "".join(ch for ch in str(t) if ch.isdigit())
-                    if not digits:
-                        continue
-                    i = int(digits)
-                if i > 0 and i not in tids:
-                    tids.append(i)
-            break
-        new_content = str(raw.get("new_content") or raw.get("新内容") or "")
-        return v, tids, new_content
-    return "无", [], ""
 
 
 def _pending_action_failure_payload(pa: Dict[str, Any]) -> Dict[str, Any]:
@@ -994,8 +929,8 @@ class GameSession:
         from ming_sim.beat_orchestration import ChatTurnSceneRegistry, create_llm_beat_generator
         self._beat_generator = create_llm_beat_generator(llm_config)
         # Scene lifecycle lives in beat_orchestration; session only holds the registry handle.
-        # No dedicated scene executor (C6 rejected); open/enter share the action-intent pool.
-        self._scene_registry = ChatTurnSceneRegistry(_CLI_ACTION_INTENT_EXECUTOR)
+        # Scene open/enter/exit/close share one process-local beat executor pool.
+        self._scene_registry = ChatTurnSceneRegistry(_SCENE_BEAT_EXECUTOR)
         # #1749：db/agno 打开后构造任一步失败须关闭，禁泄漏连接（load_state 等）。
         self.db = None  # type: ignore[assignment]
         self.agno_db = None  # type: ignore[assignment]
@@ -1387,73 +1322,7 @@ class GameSession:
             schedule_held_decree_forecasts(self)
         return decision
 
-    def _start_cli_action_intent(self, character: Character, message: str) -> Optional[Future]:
-        """召对动作判断只读皇帝消息，可与大臣回话并发。
 
-        #1502：API 与 CLI 自然语言并行提交既有 classifier。
-        #1503 / ADR 0028：显式拟旨前缀亦提交一次 typed classifier（载荷式成案）；
-        密令前缀仍跳过（权威路由，不跑其它分类器）。无可用通道时不启动。
-        """
-        from ming_sim.cli_backend import (
-            _SECRET_PREFIXES, classify_cli_action_intent,
-            cli_backend_from_env,
-        )
-        channel = (getattr(getattr(self, "llm_config", None), "channel", "") or "").strip().lower()
-        # API/CLI 可跑预分类；其它通道仍需 CLI backend 在场
-        if channel not in {"cli", "api"} and cli_backend_from_env() is None:
-            return None
-        # CLI 动作分类器与大臣回话一律并发；不按 runner 退串行。
-        text = (message or "").strip()
-        # 密令前缀 = 权威类别声明，不跑动作分类器；拟旨前缀见 #1503。
-        if text.startswith(_SECRET_PREFIXES):
-            return None
-        minister_name = character.name
-        pend_for_minister = self.db.list_pending_actions(self.state.turn, minister_name=minister_name)
-        confirm_targets = _confirmation_targets_for_message(pend_for_minister, text)
-        if GameSession._proposal_blocked(self.state) and not confirm_targets:
-            return None
-        # 本夜已暂存（含 id）供跨轮指代/改草填 target_candidate；确认优先仍由 prompt 规则约束。
-        summaries = [
-            f"#{int(p['id'])} {_pending_action_brief(p)}"
-            for p in pend_for_minister
-        ]
-        is_consort = getattr(character, "office_type", "") == "后宫"
-        active_orders = [] if GameSession._proposal_blocked(self.state) else self.db.get_active_secret_orders_for_minister(minister_name)
-        has_pending_draft = any(p["kind"] == "directive" for p in pend_for_minister)
-        recent_context = _recent_audience_context_for_secret_order(
-            self.db, minister_name, int(self.state.turn), text,
-        )
-        backing_candidates = self.db.list_endorsed_dossier_candidates(
-            int(self.state.turn),
-        )
-        return _CLI_ACTION_INTENT_EXECUTOR.submit(
-            classify_cli_action_intent,
-            text,
-            active_orders,
-            is_consort,
-            has_pending_draft,
-            summaries,
-            getattr(self, "llm_config", None),
-            recent_context,
-            int(self.state.turn),
-            backing_candidates,
-        )
-
-    def _finish_cli_action_intent(self, future: Optional[Future]) -> Optional[List[Dict[str, Any]]]:
-        """Join concurrent classifier. None=did not run; list (possibly empty)=ran.
-
-        #515: classifier output contract is a candidate list. Failure → [] (zero writes).
-        """
-        if future is None:
-            return None
-        from ming_sim.action_clusters import normalize_intent_candidates
-        try:
-            result = future.result()
-        except Exception:
-            return []
-        # normalize_intent_candidates(None) is None; non-None raw → list (soft).
-        normalized = normalize_intent_candidates(result)
-        return [] if normalized is None else normalized
 
     def _recognize_audience_command_verdict(self, message: str) -> str:
         """#526：同步识别收夜/留侍/含糊口令。纯封闭集匹配，无 Future/宽降级。"""
@@ -1627,80 +1496,6 @@ class GameSession:
         thread.start()
         return thread
 
-    def _confirmation_intent_for_preexisting_pending(
-        self,
-        minister_name: str,
-        player_message: str,
-        reply: str,
-        preclassified_intent: Optional[Any],
-        confirm_target_ids: set[int],
-    ) -> Optional[Any]:
-        """Classify confirmation before consuming same-turn write tools.
-
-        Confirmation rounds are intentionally terminal for new inferred writes:
-        the minister's reply may restate or tool-emit the same order, but that
-        output must not stage a fresh pending action before the old visible one
-        is committed/rejected.
-
-        #515: accepts dict or list; returns list (or None if classifier did not run).
-        """
-        from ming_sim.cli_backend import _DRAFT_PREFIXES, _SECRET_PREFIXES, extract_confirmation_intent
-        from ming_sim.action_clusters import (
-            EFFECT_ANSWER_EXISTING,
-            cluster_effect,
-            normalize_intent_candidates,
-            normalize_one_candidate,
-            resolve_primary_intent,
-        )
-
-        if preclassified_intent is None:
-            candidates: Optional[List[Dict[str, Any]]] = None
-        else:
-            candidates = normalize_intent_candidates(preclassified_intent)
-            if candidates is None:
-                candidates = []
-
-        intent = resolve_primary_intent(candidates)
-        message_text = (player_message or "").strip()
-        if message_text.startswith(_DRAFT_PREFIXES) or message_text.startswith(_SECRET_PREFIXES):
-            return candidates
-        if not confirm_target_ids:
-            return candidates
-        if intent is not None and cluster_effect(
-            str(intent.get("kind") or "")
-        ) == EFFECT_ANSWER_EXISTING:
-            return candidates if candidates is not None else []
-        pend_for_minister = self.db.list_pending_actions(
-            self.state.turn, minister_name=minister_name)
-        allowed_confirm_ids = {int(pid) for pid in confirm_target_ids}
-        pend_for_minister = [p for p in pend_for_minister if int(p["id"]) in allowed_confirm_ids]
-        confirm_targets = _confirmation_targets_for_message(pend_for_minister, message_text)
-        if not confirm_targets:
-            return candidates
-        summaries = [
-            f"[{int(p['id'])}] {_pending_action_brief(p)}" for p in confirm_targets
-        ]
-        confirm, named, new_content = _coerce_confirmation_result(
-            extract_confirmation_intent(
-                player_message, reply, summaries,
-                llm_config=getattr(self, "llm_config", None),
-            )
-        )
-        # #1376：修改同属确认族（原地改候选，屏蔽同轮新建推断）
-        # #1509 r3：同次 confirmation 的目标编号必须随 candidate 过缝，
-        # 不得在此丢弃——下游 apply 在 intent 非 None 时不再二调 extractor。
-        if confirm in ("应允", "拒绝", "留中", "修改"):
-            payload: Dict[str, Any] = {
-                "kind": "confirmation", "confirmation": confirm,
-            }
-            if named:
-                payload["target_ids"] = list(named)
-            if new_content:
-                payload["new_content"] = new_content
-            # target_ids/new_content 仅经 payload→normalize_one_candidate 单一路径保留
-            cand = normalize_one_candidate(payload, soft=False)
-            return [cand]
-        return candidates
 
     def start_chat_turn_scene(self, minister_name: str, chat_turn_id: int) -> None:
         """委托编排层启动本轮 open/enter scene（与回话并行，join 后原子落账）。"""
@@ -2262,16 +2057,12 @@ class GameSession:
             message, character, chat_turn_id=chat_turn_id, prepared=prepared,
         )
         # #1566：密令 route 须在 command-verdict / exit / summon·dismiss 之前成立。
+        # #1871：意图分类器链已删；应允/交办由转译声明。本入口仅旧 agent tool 截获残路。
         message_text = (message or "").strip()
         from ming_sim.cli_backend import _DRAFT_PREFIXES, _SECRET_PREFIXES
-        from ming_sim.action_clusters import is_confirmation_decision, resolve_primary_intent
         explicit_draft_prefix = message_text.startswith(_DRAFT_PREFIXES)
         explicit_secret_prefix = message_text.startswith(_SECRET_PREFIXES)
         explicit_secret_route = explicit_secret_order or explicit_secret_prefix
-        action_intent_future = (
-            None if explicit_secret_route
-            else self._start_cli_action_intent(character, message)
-        )
         # #526：收夜/留侍口令为确定性封闭集，同步识别（无耗时软判，不建 Future）。
         # #1566：密令 route 跳过 command-verdict（typed 退朝不得收夜/留侍）。
         audience_command_verdict = (
@@ -2282,30 +2073,20 @@ class GameSession:
         _dump_llm_messages(run_output, f"大臣对话/{minister_name}")
         answer = extract_agent_text(run_output)
         result = ChatTurnResult(answer=answer)
-        # #542：run_output.tools 已含 dismiss → 立刻 start_exit，与仍在飞的
-        # action_intent 和/或本轮 open/enter 重叠；不得等 finish action_intent。
+        # #542：run_output.tools 已含 dismiss → 立刻 start_exit，与本轮 open/enter 重叠。
         # #1566：密令 route 跳过 exit scene（dismiss tool 亦不启退场）。
         if not explicit_secret_route:
             self.start_exit_scene_from_dismiss_tools(
                 character.name, int(chat_turn_id or 0),
                 getattr(run_output, "tools", None) or [],
             )
-        preexisting_pending_action_ids = {
-            int(p["id"]) for p in self.db.list_pending_actions(self.state.turn, minister_name=character.name)
-        }
-        # #526：先落口令机械面（收夜/留侍/含糊确认），再 finish 动作分类。
+        # #526：落口令机械面（收夜/留侍/含糊确认）。
         if not explicit_secret_route:
             self._apply_audience_command_verdict(
                 result, character, message,
                 verdict=audience_command_verdict,
                 chat_turn_id=int(chat_turn_id or 0),
             )
-        preclassified_intent = self._finish_cli_action_intent(action_intent_future)
-        if not explicit_secret_route:
-            preclassified_intent = self._confirmation_intent_for_preexisting_pending(
-                character.name, message, answer, preclassified_intent, preexisting_pending_action_ids)
-        primary_intent = resolve_primary_intent(preclassified_intent)
-        confirmation_turn = is_confirmation_decision(primary_intent)
         for tool_exec in getattr(run_output, "tools", None) or []:
             tool_name = getattr(tool_exec, "tool_name", "")
             tool_result = str(getattr(tool_exec, "result", "") or "")
@@ -2347,7 +2128,7 @@ class GameSession:
             elif tool_name == "propose_directive" or tool_result.startswith("__pending_directive__"):
                 # confirmation / secret 前缀仍整枚跳过；孪生抑制在
                 # _stage_directive_tool_candidate generic 尾路按 kind 分派。
-                if confirmation_turn or explicit_secret_route:
+                if explicit_secret_route:
                     continue
                 args = getattr(tool_exec, "arguments", {}) or getattr(tool_exec, "tool_args", {}) or {}
                 if not isinstance(args, dict):
@@ -2358,16 +2139,7 @@ class GameSession:
                 if draft_text and self._proposal_blocked(self.state):
                     draft_text = ""  # 恢复窗婉拒：不入档（见 _proposal_blocked）
                 if draft_text:
-                    # #502 L2 / #522 / #517：tool 拟旨与 CLI 共用候选 seam；
-                    # 站台案卷由并行分类候选按惩处目标关联，不从 tool 参数伪造。
-                    tool_target = str(args.get("target_id") or args.get("name") or "")
-                    classified_backing = next((
-                        candidate.get("backing_dossier_id")
-                        for candidate in (preclassified_intent or [])
-                        if candidate.get("kind") == "punishment"
-                        and str(candidate.get("target_id") or candidate.get("name") or "") == tool_target
-                        and candidate.get("backing_dossier_id") is not None
-                    ), None)
+                    # #502 L2 / #522 / #517：tool 拟旨候选 seam（分类器已退役，无并行候选关联）。
                     stage_failures: List[Dict[str, Any]] = []
                     result.pending_action_id = coalesce_pending_action_id(
                         result.pending_action_id,
@@ -2379,15 +2151,10 @@ class GameSession:
                             name=args.get("name"),
                             amount=args.get("amount"),
                             transaction_category=args.get("transaction_category"),
-                            backing_dossier_id=(
-                                args.get("backing_dossier_id")
-                                if args.get("backing_dossier_id") is not None
-                                else classified_backing
-                            ),
+                            backing_dossier_id=args.get("backing_dossier_id"),
                             issue_id=args.get("issue_id"),
                             issue_disposition=args.get("issue_disposition"),
                             mode=args.get("mode") or args.get("颁布方式"),
-                            intent_candidates=preclassified_intent,
                         ),
                     )
                     if stage_failures:
@@ -2397,7 +2164,7 @@ class GameSession:
             elif (tool_name == "propose_appointment"
                   or tool_result.startswith("__pending_appointment__")
                   or tool_result.startswith("__pending_recommendation__")):
-                if confirmation_turn or explicit_draft_prefix or explicit_secret_route:
+                if explicit_draft_prefix or explicit_secret_route:
                     continue
                 payload = tool_result.removeprefix("__pending_recommendation__")
                 payload = payload.removeprefix("__pending_appointment__").strip()
@@ -2408,7 +2175,7 @@ class GameSession:
                     ),
                 )
             elif tool_name == "register_unlisted_person" or tool_result.startswith("__pending_unlisted_person__"):
-                if confirmation_turn or explicit_draft_prefix or explicit_secret_route:
+                if explicit_draft_prefix or explicit_secret_route:
                     continue
                 payload = tool_result.removeprefix("__pending_unlisted_person__").strip()
                 registered, summon_after = self._apply_unlisted_person_registration(payload)
@@ -2431,7 +2198,7 @@ class GameSession:
                 tool_name == "rush_staged_commitment"
                 or tool_result.startswith("__commitment_rush__")
             ):
-                if confirmation_turn or explicit_draft_prefix or explicit_secret_route:
+                if explicit_draft_prefix or explicit_secret_route:
                     continue
                 if self._proposal_blocked(self.state):
                     continue
@@ -2466,7 +2233,7 @@ class GameSession:
                 or tool_result.startswith("__secret_order__")
                 or tool_result.startswith("__secret_action__")
             ):
-                if confirmation_turn or explicit_draft_prefix:
+                if explicit_draft_prefix:
                     continue
                 if self._proposal_blocked(self.state):
                     continue
@@ -2530,15 +2297,6 @@ class GameSession:
                                 },
                             ),
                         )
-        # CLI 后端（agy/codex）：玩家用拟旨/密令按钮（消息带前缀）时，把大臣这句回话原文入档。
-        # #568：chat_turn_id 经 session 作用域透传至 materialize（apply 签名不动）。
-        self._cli_backend_fallback_actions(
-            result, character, message,
-            preclassified_intent=preclassified_intent,
-            confirm_target_ids=preexisting_pending_action_ids,
-            chat_turn_id=int(chat_turn_id or 0),
-            explicit_secret_order=explicit_secret_order,
-        )
         return result
 
     def _audience_prompt_for_message(
@@ -2605,499 +2363,6 @@ class GameSession:
                 release_material_tree(prepared.root)
         return prepared.opening + "\n\n" + message
 
-    def apply_cli_conversation_actions(
-        self, character: Character, player_message: str, answer: str,
-        has_directive: bool, secret_order_id: Optional[int],
-        preclassified_intent: Optional[Any] = None,
-        confirm_target_ids: Optional[set[int]] = None,
-        explicit_secret_order: bool = False,
-        prior_pending_action_failures: Optional[List[Dict[str, Any]]] = None,
-    ) -> Dict[str, Any]:
-        """CLI 后端（无 function-calling）会话落地的【唯一真源】，session.chat 非流式路径与
-        web streaming 路径共用，杜绝两边逻辑漂移（CMR F3 / codexC-1）。
-
-        做三件事：① 前缀「拟旨」→ pending directive；② 前缀「密令」→ pending
-        secret_order 新建候选；③ 无前缀时只按 LLM 结构化判词物化会话动作并暂存。
-        入参 has_directive / secret_order_id 表示 agno 工具路径是否已产出（已产则不重复）。
-        返回 {"directive": {id,text,status,notes}|None, "secret_order_id": int|None}。
-
-        #515：preclassified_intent 接受 list（生产契约）或 dict（测试/旧注入）；
-        None = 分类器未跑（CLI 串行回落；API 早退）；[] = 已跑无动作（零 classifier 写入）。
-        #1502：API 在 classifier 已跑（含 []）时进入既有 materialize，不再无条件 passthrough。
-        """
-        from ming_sim.cli_backend import (
-            _DRAFT_PREFIXES, _SECRET_PREFIXES,
-            cli_backend_from_env, resolve_minister_actions,
-            extract_confirmation_intent,
-            extract_directive_confirmation,
-        )
-        from ming_sim.action_clusters import (
-            EFFECT_ANSWER_EXISTING,
-            cluster_effect,
-            normalize_intent_candidates,
-            resolve_primary_intent,
-        )
-        out: Dict[str, Any] = {
-            "directive": None,
-            "secret_order_id": secret_order_id,
-            "pending_action_failures": [],
-        }
-        intent_candidates = normalize_intent_candidates(preclassified_intent)
-        intent = resolve_primary_intent(intent_candidates)
-        # intent is None only when classifier did not run; [] → primary {kind:none}.
-        intent_kind = str((intent or {}).get("kind") or "none")
-        minister_name = character.name
-        reply = (answer or "").strip()
-        llm_config = getattr(self, "llm_config", None)
-        # 显式前缀(拟旨如下:/密令如下:)= 皇帝已明示动作类别。
-        # 后置 LLM 抽取器（确认/密令/调教/拟旨/任免）仍由本闸统一跳过（#344 US3）。
-        # #1503：拟旨前缀可携带**并发** typed classifier 候选；载荷式（grant_allocation）
-        # 走既有 stage_grant_allocation_candidate，不再先落 generic special_decree。
-        # 确认闸门仍跳过：否则前缀消息在有 pending 时既多跑 extract_confirmation_intent，
-        # 还可能被误判「应允/拒绝」提前 return、吞掉这道前缀拟旨/密令（确认句本无前缀）。
-        message_text = (player_message or "").strip()
-        explicit_prefixed = (
-            explicit_secret_order
-            or message_text.startswith(_DRAFT_PREFIXES)
-            or message_text.startswith(_SECRET_PREFIXES)
-        )
-        channel = (getattr(getattr(self, "llm_config", None), "channel", "") or "").strip().lower()
-        api_explicit_prefix = channel == "api" and explicit_prefixed
-        # #1502：API 仅在 classifier 未运行（preclassified is None）时 passthrough 早退；
-        # 已跑（含 []）则交既有 materialize 消费 structured candidates。
-        # 显式前缀仍走前缀/resolve 路（#344）。确认块在本闸之前，位置与所有权不动。
-        api_or_no_cli_passthrough = (
-            channel != "cli" and (channel == "api" or cli_backend_from_env() is None) and not api_explicit_prefix
-        )
-        # 对话确认(ADR 0006 重设计)：本召对的大臣有上一轮经领命确认、尚未落库的暂存动作时，
-        # 皇帝这句应允 → 当场 commit、拒绝 → 丢、未表态 → 留(颁诏对没回的算同意)。
-        # 只在该大臣有 outstanding 暂存时才判(省 token)，commit/drop 按该大臣过滤、不波及他人。
-        pend_for_minister = self.db.list_pending_actions(
-            self.state.turn, minister_name=minister_name)
-        if confirm_target_ids is not None:
-            allowed_confirm_ids = {int(pid) for pid in confirm_target_ids}
-            pend_for_minister = [p for p in pend_for_minister if int(p["id"]) in allowed_confirm_ids]
-        # 同一大臣同时有非 directive 暂存与 directive 草案时，普通确认仍优先处理非 directive；
-        # 明说拟旨/圣旨则只处理 directive，明说“都/一并”或同时点名两族才同句处理两族。
-        confirm_targets = _confirmation_targets_for_message(pend_for_minister, message_text)
-        directive_confirm_targets = [p for p in confirm_targets if p["kind"] == "directive"]
-        if confirm_targets and not explicit_prefixed:
-            confirm_action_ids = {int(p["id"]) for p in confirm_targets}
-            summaries = [
-                f"[{int(p['id'])}] {_pending_action_brief(p)}" for p in confirm_targets
-            ]
-            confirm_named_ids: List[int] = []
-            confirm_new_content: str = ""
-            if intent is not None:
-                # #1509 r3：preclassification 已跑过同次 confirmation 抽取时，
-                # 确认枚举与目标编号均取自 intent（禁二调 extractor / 禁散文机械解析）。
-                # #1376：修改判词携带 typed new_content，下游修改支路以此为权威正文。
-                if cluster_effect(intent_kind) == EFFECT_ANSWER_EXISTING:
-                    confirm, confirm_named_ids, confirm_new_content = _coerce_confirmation_result(intent)
-                else:
-                    confirm = "无"
-            else:
-                confirm, confirm_named_ids, confirm_new_content = _coerce_confirmation_result(
-                    extract_confirmation_intent(
-                        player_message, reply, summaries, llm_config=llm_config)
-                )
-            # 多道并存（#502 AC4/AC5）：≥2 道 directive 候选时，口头准驳/留中须指向具体某道。
-            # 点名指认 → 只作用那几道 + 清全组待澄清标（含糊 episode 了结）；否则（含糊/无/
-            # 空指向）一律按含糊处置——结构化含糊态 + 追问 + 标待澄清 + **本轮不再 stage 新拟旨**，
-            # 直接 return（L1：删 else free-fall，杜绝纯准驳口令误建第三道）。
-            # #525：留中复用同一 target_ids/含糊规则，未点名兄弟仍走默认准。
-            if confirm in ("应允", "拒绝", "留中") and len(directive_confirm_targets) >= 2:
-                dir_cands = [
-                    {"id": int(p["id"]), "summary": _pending_action_brief(p)}
-                    for p in directive_confirm_targets
-                ]
-                res = extract_directive_confirmation(
-                    player_message, reply, dir_cands, llm_config=llm_config)
-                decision = res.get("decision")
-                tids = {int(i) for i in (res.get("target_ids") or [])}
-                named = decision in ("应允", "拒绝", "留中") and bool(tids)
-                if named:
-                    # 指明了哪道：清全组待澄清标（未点名兄弟复位普通 pending、重回「不回→默认同意」；
-                    # L4 兑现 docstring「下一句指明后清标」），confirm 收窄为点名那几道。
-                    for p in directive_confirm_targets:
-                        self.db.clear_directive_needs_clarification(int(p["id"]))
-                    confirm = decision
-                    directive_confirm_targets = [
-                        p for p in directive_confirm_targets if int(p["id"]) in tids]
-                    confirm_targets = [
-                        p for p in confirm_targets
-                        if p["kind"] != "directive" or int(p["id"]) in tids]
-                    confirm_action_ids = {int(p["id"]) for p in confirm_targets}
-                else:
-                    out["directive_confirmation_ambiguous"] = {"candidates": dir_cands}
-                    for p in directive_confirm_targets:
-                        self.db.flag_directive_needs_clarification(int(p["id"]))
-                    return out
-            if confirm == "应允":
-                # 确认轮仍是皇帝权威：只为有效对象补确认元数据；载荷有效性及失败状态
-                # 仍由 commit_pending_actions 拥有，坏 JSON/非对象必须原样交给该终端。
-                from ming_sim.cli_backend import resolve_directive_mode
-                from ming_sim.audience_night import get_open_night, mark_actions_night_approved
-                recovery_confirmation = self.state.turn_phase in FRONT_HALF_DONE_PHASES
-                open_n = None if recovery_confirmation else get_open_night(self.db)
-                valid_payloads = {}
-                for pending in confirm_targets:
-                    if pending["kind"] not in {"directive", "office"}:
-                        continue
-                    try:
-                        payload = json.loads(pending.get("payload_json"))
-                    except (ValueError, TypeError):
-                        continue
-                    if not isinstance(payload, dict):
-                        continue
-                    payload["mode"] = resolve_directive_mode(
-                        extracted=(intent or {}).get("mode"),
-                        existing=payload.get("mode"),
-                    )
-                    if pending["kind"] == "directive" and (
-                            recovery_confirmation or open_n is not None):
-                        payload["_directive_status"] = "pending"
-                        payload.pop("_needs_clarification", None)
-                    valid_payloads[int(pending["id"])] = (pending, payload)
-                unchanged_approved_ids: set[int] = set()
-                for pending_id, (pending, payload) in valid_payloads.items():
-                    encoded_payload = json.dumps(payload, ensure_ascii=False)
-                    version_sql = ""
-                    if pending["kind"] == "directive":
-                        row = self.db.conn.execute(
-                            "SELECT night_approved, version, payload_json "
-                            "FROM pending_actions WHERE id=?",
-                            (pending_id,),
-                        ).fetchone()
-                        previous: object = None
-                        if row is not None:
-                            try:
-                                previous = json.loads(row["payload_json"] or "{}")
-                            except (ValueError, TypeError):
-                                previous = None
-                        # 再次应允只在载荷本身变了时作废旧预算并递增版本。
-                        # 下划线控制键是本轮书记，不算改旨。
-                        changed = (
-                            not isinstance(previous, dict)
-                            or {
-                                key: value for key, value in previous.items()
-                                if not str(key).startswith("_")
-                            } != {
-                                key: value for key, value in payload.items()
-                                if not str(key).startswith("_")
-                            }
-                        )
-                        already_approved = (
-                            row is not None and int(row["night_approved"] or 0) == 1
-                        )
-                        if already_approved and changed:
-                            self.db._discard_pending_decree_forecast(
-                                pending_id, int(row["version"] or 1),
-                            )
-                            version_sql = ", version=version+1"
-                        elif already_approved:
-                            # 同版再次应允：不重跑判官/推演/转译，含上次已耗尽未预成。
-                            unchanged_approved_ids.add(pending_id)
-                    self.db.conn.execute(
-                        f"UPDATE pending_actions SET payload_json=?{version_sql} "
-                        "WHERE id=?",
-                        (encoded_payload, pending_id),
-                    )
-                    pending["payload_json"] = encoded_payload
-                if valid_payloads:
-                    self.db.conn.commit()
-
-                if not recovery_confirmation:
-                    # 恢复窗确认不进此分支：动作留 pending，由推进回合的终端 atomic 统一落，
-                    # 避免事务外落真表后 settle 中止造成半写（所有权规则，ship-pre r2）。
-                    # #498 / ADR 0038：开夜期间 office/consort/directive 应允 = 标 night_approved，
-                    # 收夜才提交；密令仍应允即落地（白名单直写）。无开夜则保持历史即时 commit。
-                    applied: List[Dict[str, Any]] = []
-                    if open_n is not None:
-                        defer_ids = {
-                            int(p["id"]) for p in confirm_targets
-                            if p["kind"] in {"office", "consort", "directive"}
-                        }
-                        immediate_ids = confirm_action_ids - defer_ids
-                        if defer_ids:
-                            mark_actions_night_approved(
-                                self.db, sorted(defer_ids), night_id=int(open_n["id"]))
-                            if directive_confirm_targets:
-                                from ming_sim.decree_forecast import schedule_pending_decree_forecast
-
-                                for pending in directive_confirm_targets:
-                                    if int(pending["id"]) in unchanged_approved_ids:
-                                        continue
-                                    schedule_pending_decree_forecast(
-                                        self, int(pending["id"]),
-                                        night_id=int(open_n["id"]),
-                                    )
-                        if immediate_ids:
-                            from ming_sim.applier import (
-                                RejectionCollector, mirror_rejections_after_commit,
-                            )
-                            from ming_sim.error_pack import rejections_jsonl_path
-                            _rc = RejectionCollector()
-                            applied = self.db.commit_pending_actions(
-                                self.state, minister_name=minister_name,
-                                action_ids=immediate_ids,
-                                content=getattr(self, "content", None),
-                                registry=getattr(self, "registry", None),
-                                rejection_collector=_rc,
-                            )
-                            mirror_rejections_after_commit(
-                                self.db, _rc, rejections_jsonl_path,
-                            )
-                    else:
-                        from ming_sim.applier import (
-                            RejectionCollector, mirror_rejections_after_commit,
-                        )
-                        from ming_sim.error_pack import rejections_jsonl_path
-                        _rc = RejectionCollector()
-                        applied = self.db.commit_pending_actions(
-                            self.state, minister_name=minister_name,
-                            directive_status="pending" if directive_confirm_targets else "draft",
-                            action_ids=confirm_action_ids,
-                            content=getattr(self, "content", None),
-                            registry=getattr(self, "registry", None),
-                            rejection_collector=_rc,
-                        )
-                        mirror_rejections_after_commit(
-                            self.db, _rc, rejections_jsonl_path,
-                        )
-                    # #1376：应允即落地的新建密令须把真实 order id 回填确认响应
-                    # （内容在 stage 时已定文，落行不经 LLM；此处只取 commit 回执）。
-                    if not out.get("secret_order_id"):
-                        for item in applied or []:
-                            if (
-                                item.get("kind") == "secret_order"
-                                and str(item.get("action") or "") == "新建"
-                            ):
-                                oid = item.get("secret_order_id") or item.get("target_id")
-                                try:
-                                    oid_i = int(oid or 0)
-                                except (TypeError, ValueError):
-                                    oid_i = 0
-                                if oid_i > 0:
-                                    out["secret_order_id"] = oid_i
-                                    break
-                    failures = [
-                        _pending_action_failure_payload(p)
-                        for p in self.db.list_pending_actions(
-                            int(self.state.turn), status="failed", minister_name=minister_name)
-                        if int(p["id"]) in confirm_action_ids
-                    ]
-                    if failures:
-                        out["pending_action_failures"] = failures
-            elif confirm == "拒绝":
-                self.db.drop_pending_actions_for_minister(
-                    self.state.turn, minister_name,
-                    action_ids=confirm_action_ids)
-            elif confirm == "留中":
-                # #525：显式留中 → durable held_over 档，移出 pending 活跃集；
-                # commit_pending_actions 只读 pending，默认提交跳过、不成案。
-                self.db.hold_over_pending_actions(
-                    self.state.turn, minister_name,
-                    action_ids=confirm_action_ids)
-            elif confirm == "修改":
-                # #1376 owner：修改=更新同一 pending 密令候选内容（id 不变），不 commit、不新建。
-                # 仅 secret_order/新建；非密令整改不得吞掉既有 kind 物化缝（回落 confirm=无）。
-                # #1376 修订：正文仅从 typed new_content 消费，删除对 player_message 散文的
-                # 裁剪、元数据与承办人机梅解析；未填 new_content 则不覆写正文。
-                # #1509：多候选目标只信同次 confirmation JSON 的合法「目标编号」，
-                # 禁 regex/序数/title 机梅读玩家散文；无唯一合法编号 → ambiguity。
-                secret_new = [
-                    p for p in confirm_targets
-                    if (
-                        p.get("kind") == "secret_order"
-                        and str(p.get("action") or "") == "新建"
-                    )
-                ]
-                if not secret_new:
-                    # 非密令「修改」：不提前 return，放行既有 directive/office 等补充路径。
-                    confirm = "无"
-                else:
-                    if len(secret_new) == 1:
-                        resolved = list(secret_new)
-                    else:
-                        allowed = {int(p["id"]) for p in secret_new}
-                        named_set = {
-                            i for i in confirm_named_ids if i in allowed
-                        }
-                        # #1509-F1：修改只更新「同一」候选；0 个或多于 1 个合法编号
-                        # 一律 ambiguous，禁止整族批量覆写（复用应允/拒绝含糊缝）。
-                        if len(named_set) != 1:
-                            out["directive_confirmation_ambiguous"] = {
-                                "candidates": [
-                                    {
-                                        "id": int(p["id"]),
-                                        "summary": _pending_action_brief(p),
-                                    }
-                                    for p in secret_new
-                                ],
-                            }
-                            return out
-                        resolved = [
-                            p for p in secret_new if int(p["id"]) in named_set
-                        ]
-                    # A modification without a complete typed body did not succeed.
-                    # Keep every candidate unchanged and do not advertise a pending id.
-                    if not confirm_new_content.strip():
-                        out["directive_confirmation_ambiguous"] = {
-                            "candidates": [
-                                {
-                                    "id": int(p["id"]),
-                                    "summary": _pending_action_brief(p),
-                                }
-                                for p in resolved
-                            ],
-                        }
-                        return out
-                    for pending in resolved:
-                        try:
-                            payload = json.loads(pending.get("payload_json") or "{}")
-                        except (ValueError, TypeError):
-                            payload = {}
-                        if not isinstance(payload, dict):
-                            payload = {}
-                        # #1376：正文唯取完整、非空 typed new_content。
-                        payload["content"] = confirm_new_content
-                        encoded = json.dumps(payload, ensure_ascii=False)
-                        cur = self.db.conn.execute(
-                            "UPDATE pending_actions SET payload_json=? "
-                            "WHERE id=? AND status='pending'",
-                            (encoded, int(pending["id"])),
-                        )
-                        if cur.rowcount != 1:
-                            continue
-                        pending["payload_json"] = encoded
-                        out["pending_action_id"] = int(pending["id"])
-                    if not bool(getattr(self.db.conn, "_commit_suspended", False)) and int(
-                        getattr(self.db.conn, "_atomic_depth", 0) or 0
-                    ) <= 0:
-                        self.db.conn.commit()
-                    # 密令修改已落地：确认族提前返回，屏蔽同轮新建 materialize。
-                    return out
-            if confirm in ("应允", "拒绝", "留中"):
-                # 本轮是对暂存的确认：大臣回话已【复述】该动作(领命 prompt 所致),若继续走下面的
-                # 抽取,会把刚 commit 的动作从复述里重抽成新暂存→颁诏二次落库,或重建刚拒的动作。
-                # 故确认轮直接返回,不再抽新动作(线上 codex P2)。确认句无前缀,前缀路无损失。
-                return out
-        # #1502：classifier 未跑 → API 仍早退；已跑（list，含空）→ 进入 materialize
-        if api_or_no_cli_passthrough and intent_candidates is None and not explicit_secret_order:
-            return out
-        if GameSession._proposal_blocked(self.state):
-            # 恢复窗总闸（PR #90 R1/R2/R3 收束为单一出口）：前缀拟旨/密令与自然语言
-            # 抽取的新暂存（密令动作/调教/任免）一并婉拒——窗内新写在 settle 重试事务
-            # 边界外，窗内新 stage 则会被重试 settle 的 commit_pending_actions 落进
-            # 「保存的 delta 推演时并不知道」的旧回合。上方对话确认块（应允延迟提交/
-            # 拒绝丢弃）针对的是窗前已暂存的 pending，保持可用（ship-pre r2 设计）。
-            # 抽取器（LLM 调用）一并跳过。
-            return out
-        # generic 拟旨 fallback 必须等 typed materialize 的真实结果；候选形状不代表成案。
-        # Tool-stage directive failure already decided this lane — do not re-stage via generic.
-        # Do not fake has_directive; only suppress the matching generic directive fallback.
-        prior_directive_failed = any(
-            str((failure or {}).get("kind") or "") == "directive"
-            for failure in (prior_pending_action_failures or [])
-        )
-        needs_draft_fallback = False
-        needs_secret_fallback = (
-            not has_directive
-            and not out["secret_order_id"]
-            and (explicit_secret_order or message_text.startswith(_SECRET_PREFIXES))
-        )
-        secret_context = ""
-        if needs_secret_fallback:
-            secret_context = _recent_audience_context_for_secret_order(
-                getattr(self, "db", None), minister_name, int(self.state.turn), message_text)
-        if needs_draft_fallback or needs_secret_fallback:
-            # Typed Web intent joins the existing explicit-secret extractor seam only here;
-            # the player's wire text, chat record, and role-play prompt remain untouched.
-            extraction_message = player_message
-            if explicit_secret_order and not message_text.startswith(_SECRET_PREFIXES):
-                extraction_message = f"{_SECRET_PREFIXES[0]}{player_message}"
-            acts = resolve_minister_actions(
-                reply, extraction_message, default_assignee=minister_name, llm_config=llm_config,
-                secret_context=secret_context,
-                dossier_candidates=self.db.list_referenceable_dossiers(
-                    minister_name, self.state.turn))
-        else:
-            acts = {"decree_text": None, "secret_order": None}
-        if not has_directive and not prior_directive_failed and acts["decree_text"]:
-            # #502 L2：前缀「拟旨如下：」显式拟旨走单一 seam——已有候选则新拟独立一道，不压扁前道。
-            # #1731：mode 只接分类器 typed token / None，玩家散文永不入 typed 槽。
-            out["pending_action_id"] = self.db.stage_explicit_directive(
-                self.state.turn, minister_name, acts["decree_text"],
-                mode=(intent or {}).get("mode"),
-            )
-        # #568：点策 origin / #1765 密令诊断源轮——chat_turn_id 由 session.chat/web/CLI
-        # 写入 _active_chat_turn_id 作用域，apply 签名不增参。
-        try:
-            active_chat_turn_id = int(getattr(self, "_active_chat_turn_id", 0) or 0)
-        except (TypeError, ValueError):
-            active_chat_turn_id = 0
-        if not out["secret_order_id"] and acts["secret_order"]:
-            # #1765：显式前缀与 classifier 共用统一落库（产物缺口→揣摩/追问）。
-            from ming_sim.action_materialize import land_or_recover_new_secret_order
-            land_or_recover_new_secret_order(
-                db=self.db,
-                turn=int(self.state.turn),
-                minister_name=minister_name,
-                secret=acts["secret_order"],
-                player_message=player_message,
-                llm_config=llm_config,
-                out=out,
-                character=character,
-                chat_turn_id=active_chat_turn_id,
-            )
-
-        # #515：登记表驱动物化——handler 挂在 ACTION_CLUSTERS 行上；pipeline 只读表。
-        import ming_sim.action_materialize  # noqa: F401 — install catalog
-        from ming_sim.action_materialize import MaterializeCtx, run_materialize_pipeline
-        # ADR 0028：案卷正文与分类同源，取最近相关召对上下文（复用密令喂料 helper，不平行）。
-        recent_context = _recent_audience_context_for_secret_order(
-            getattr(self, "db", None), minister_name, int(self.state.turn), message_text,
-        )
-        mat_ctx = MaterializeCtx(
-            session=self,
-            character=character,
-            player_message=player_message,
-            reply=reply,
-            message_text=message_text,
-            explicit_prefixed=explicit_prefixed,
-            has_directive=has_directive,
-            pend_for_minister=pend_for_minister,
-            out=out,
-            intent=intent,
-            intent_kind=intent_kind,
-            llm_config=llm_config,
-            intent_candidates=intent_candidates,
-            recent_context=recent_context,
-            chat_turn_id=active_chat_turn_id,
-        )
-        run_materialize_pipeline(mat_ctx)
-        if (
-            not has_directive
-            and not prior_directive_failed
-            and not out.get("pending_action_id")
-            and not out.get("decree_validation_failure")
-            and message_text.startswith(_DRAFT_PREFIXES)
-        ):
-            fallback = resolve_minister_actions(
-                reply, player_message, default_assignee=minister_name,
-                llm_config=llm_config,
-                dossier_candidates=self.db.list_referenceable_dossiers(
-                    minister_name, self.state.turn,
-                ),
-            )
-            if fallback["decree_text"]:
-                # #1731：mode 只接分类器 typed token / None，玩家散文永不入 typed 槽。
-                out["pending_action_id"] = self.db.stage_explicit_directive(
-                    self.state.turn, minister_name, fallback["decree_text"],
-                    mode=(intent or {}).get("mode"),
-                )
-        return out
 
     @staticmethod
     def _append_action_reports(answer: str, actions: Dict[str, Any]) -> str:
@@ -3223,67 +2488,6 @@ class GameSession:
         ) <= 0:
             self.db.conn.commit()
 
-    def _cli_backend_fallback_actions(
-        self, result: "ChatTurnResult", character: Character, player_message: str = "",
-        preclassified_intent: Optional[Any] = None,
-        confirm_target_ids: Optional[set[int]] = None,
-        chat_turn_id: int = 0,
-        explicit_secret_order: bool = False,
-    ) -> None:
-        """session.chat 非流式路径：调共享会话落地，映射回 ChatTurnResult（agno 工具不触发时）。"""
-        preexisting_pending_id = int(getattr(result, "pending_action_id", 0) or 0)
-        # Carry tool-stage failures into shared landing so generic directive fallback can suppress.
-        prior_failures = list(getattr(result, "pending_action_failures", None) or [])
-        # #568：当前轮 id 写入作用域供 apply→materialize 结构化排除点策轮（apply 签名不动）。
-        prev_turn = getattr(self, "_active_chat_turn_id", 0)
-        self._active_chat_turn_id = int(chat_turn_id or 0)
-        try:
-            res = self.apply_cli_conversation_actions(
-                character, player_message, result.answer or "",
-                has_directive=result.proposed_directive is not None or bool(result.pending_action_id),
-                secret_order_id=result.secret_order_id,
-                preclassified_intent=preclassified_intent,
-                confirm_target_ids=confirm_target_ids,
-                explicit_secret_order=explicit_secret_order,
-                prior_pending_action_failures=prior_failures,
-            )
-        finally:
-            self._active_chat_turn_id = prev_turn
-        if result.proposed_directive is None and res["directive"]:
-            d = res["directive"]
-            result.proposed_directive = DirectiveView(
-                id=d["id"], text=d["text"], status=d["status"],
-                source="大臣拟旨", notes=d["notes"],
-            )
-        if res["secret_order_id"]:
-            result.secret_order_id = res["secret_order_id"]
-        if res.get("pending_action_id"):
-            # 非流式路径与流式同 surface 暂存信号,杜绝两边漂移(ship-pre CMR)。
-            result.pending_action_id = res["pending_action_id"]
-        if getattr(result, "pending_action_id", 0):
-            if preexisting_pending_id:
-                self._merge_staged_new_secret_order_content(
-                    preexisting_pending_id,
-                    character.name,
-                    player_message,
-                )
-        if res.get("pending_action_failures"):
-            # Preserve tool-stage diagnostics (e.g. #522 招抚未知/歧义) then append
-            # confirmation-commit failures from the shared CLI seam.
-            prior = list(result.pending_action_failures or [])
-            result.pending_action_failures = prior + list(res["pending_action_failures"])
-        # #502 AC5：把结构化含糊态透到 ChatTurnResult，供大臣当场追问哪一道（表面契约可达）。
-        if res.get("directive_confirmation_ambiguous"):
-            result.directive_confirmation_ambiguous = res["directive_confirmation_ambiguous"]
-            result.answer = GameSession._ensure_clarification_cue(
-                result.answer or "", res["directive_confirmation_ambiguous"])
-        # Project typed recovery onto ChatTurnResult so sync/retry web paths can pass it through.
-        if res.get("decree_validation_failure"):
-            result.decree_validation_failure = res["decree_validation_failure"]
-        if res.get("secret_order_landing_recovery"):
-            result.secret_order_landing_recovery = res["secret_order_landing_recovery"]
-        # Typed failures share one projection seam; prose has already been generated by LLM.
-        result.answer = GameSession._append_action_reports(result.answer or "", res)
 
     def _apply_appointment(self, payload: str, appointer: Character) -> Tuple[str, str]:
         """吏部 propose_appointment 落地：建档入库 + 注册 Agent，本回合即可召见。
