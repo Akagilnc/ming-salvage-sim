@@ -38,15 +38,7 @@ from agno.models.message import Message
 from agno.models.openai import OpenAIChat
 from agno.models.response import ModelResponse
 from openai.types.chat import ChatCompletion, ChatCompletionMessage
-from openai.types.chat.chat_completion_message_function_tool_call import (
-    ChatCompletionMessageFunctionToolCall,
-    Function as ToolFunction,
-)
 from openai.types.chat.chat_completion import Choice
-from openai.types.chat.chat_completion_chunk import (
-    ChoiceDeltaToolCall,
-    ChoiceDeltaToolCallFunction,
-)
 from pydantic import BaseModel
 
 # CLI runner 默认模型单一真源在 models（L0 叶子），此处 re-export 保留
@@ -4614,78 +4606,9 @@ def _secret_prefix_needs_recent_context(secret_intent: str) -> bool:
     return bool(_SECRET_CONFIRM_ATOM_RE.match(compact))
 
 
-_CLI_RECOMMENDATION_CALL = re.compile(
-    r"\n?\[\[recommend_person:(\{.*?\})\]\]\s*$", re.DOTALL,
-)
-_CLI_RECOMMENDATION_PREFIX = "[[recommend_person:"
-
-
-def _cli_prompt(
-    messages: List[Message], response_format: object, tools: object,
-    *,
-    materials_dir: Optional[str] = None,
-) -> str:
-    """Build one CLI prompt, including instructions derived from offered tools."""
-    prompt = _messages_to_prompt(messages, response_format, materials_dir=materials_dir)
-    recommendation_schema = next(
-        (tool.get("function", tool) for tool in (tools or [])
-         if isinstance(tool, dict) and tool.get("function", tool).get("name") == "recommend_person"),
-        None,
-    )
-    if recommendation_schema:
-        prompt += (
-            "\n\n【荐人调用】只有确要调用此工具时，回答末尾追加"
-            f"[[recommend_person:<arguments JSON>]]；arguments 须严格符合以下已提供的工具 schema：{json.dumps(recommendation_schema.get('parameters') or {}, ensure_ascii=False)}"
-        )
-    return prompt
-
-
-def _cli_stream_safe_prefix(text: str) -> tuple[str, str]:
-    """Release text that cannot belong to a trailing recommendation envelope."""
-    marker_at = text.rfind(_CLI_RECOMMENDATION_PREFIX)
-    if marker_at >= 0:
-        return text[:marker_at], text[marker_at:]
-    keep = 0
-    for length in range(1, min(len(text), len(_CLI_RECOMMENDATION_PREFIX) - 1) + 1):
-        if text.endswith(_CLI_RECOMMENDATION_PREFIX[:length]):
-            keep = length
-    return (text[:-keep], text[-keep:]) if keep else (text, "")
-
-
-def _cli_recommendation_call(text: str, tools: object) -> tuple[str, list[ChatCompletionMessageFunctionToolCall]]:
-    """Adapt an explicit CLI recommendation envelope into the existing tool seam."""
-    offered = next(
-        (tool.get("function", tool) for tool in (tools or [])
-         if isinstance(tool, dict) and tool.get("function", tool).get("name") == "recommend_person"),
-        None,
-    )
-    match = _CLI_RECOMMENDATION_CALL.search(text) if offered else None
-    if not match:
-        return text, []
-    try:
-        payload = json.loads(match.group(1))
-    except (TypeError, ValueError):
-        return text, []
-    schema = offered.get("parameters") or {}
-    required = schema.get("required") or []
-    properties = schema.get("properties") or {}
-    if (not isinstance(payload, dict)
-            or any(not str(payload.get(key) or "").strip() for key in required)
-            or any(key not in properties for key in payload)):
-        return text, []
-    call = ChatCompletionMessageFunctionToolCall(
-        id="cli-recommendation",
-        type="function",
-        function=ToolFunction(name=offered["name"], arguments=json.dumps(payload, ensure_ascii=False)),
-    )
-    return text[:match.start()].rstrip(), [call]
-
-
-def _fake_completion(
-    text: str, model_id: str, tool_calls: list[ChatCompletionMessageFunctionToolCall] | None = None,
-) -> ChatCompletion:
+def _fake_completion(text: str, model_id: str) -> ChatCompletion:
     """把纯文本包成 OpenAI ChatCompletion 交给 agno 解析。"""
-    msg = ChatCompletionMessage(role="assistant", content=text, tool_calls=tool_calls)
+    msg = ChatCompletionMessage(role="assistant", content=text)
     choice = Choice(index=0, message=msg, finish_reason="stop")
     return ChatCompletion(
         id="cli-backend", choices=[choice], created=0,
@@ -4727,11 +4650,8 @@ class CliChat(OpenAIChat):
     ):
         global _seq
         assistant_message.metrics.start_timer()
-        # 拟旨/密令不走 agno function-calling（agy 不支持）。大臣照常自然回话；
-        # 玩家用拟旨/密令按钮（消息带前缀）时，handler 用 resolve_minister_actions
-        # 把这句回话原文整段入档。invoke 只负责出文本。
         materials = str(getattr(self, "materials_dir", "") or "").strip() or None
-        prompt = _cli_prompt(messages, response_format, tools, materials_dir=materials)
+        prompt = _messages_to_prompt(messages, response_format, materials_dir=materials)
         with _TRACE_LOCK:  # 原子自增，防并发丢增量/seq 重复（#83）
             _seq += 1
             seq = _seq
@@ -4768,11 +4688,7 @@ class CliChat(OpenAIChat):
             _log(f"#{seq} {tag} {dt}s attempts={attempts} resp={len(text)}c"
                  + (f" ERROR={error}" if error else ""))
 
-        text, tool_calls = _cli_recommendation_call(text, tools)
-        provider_response = (
-            _fake_completion(text, self.id, tool_calls)
-            if tool_calls else _fake_completion(text, self.id)
-        )
+        provider_response = _fake_completion(text, self.id)
         return self._parse_provider_response(provider_response, response_format=response_format)
 
     async def ainvoke(  # type: ignore[override]
@@ -4812,8 +4728,7 @@ class CliChat(OpenAIChat):
             )
             return
         materials = str(getattr(self, "materials_dir", "") or "").strip() or None
-        prompt = _cli_prompt(messages, response_format, tools, materials_dir=materials)
-        held = ""
+        prompt = _messages_to_prompt(messages, response_format, materials_dir=materials)
         try:
             # #1465 切片③：空转判死归子进程增量读（新字节即活动，不设总墙钟），
             # 本处只搬 `_iter_cli_runner_text` 已判活的文本 —— 机器横幅不进 delta。
@@ -4827,9 +4742,7 @@ class CliChat(OpenAIChat):
                 materials_dir=materials,
             )
             for delta in stream:
-                ready, held = _cli_stream_safe_prefix(held + str(delta))
-                if ready:
-                    yield ModelResponse(role="assistant", content=ready)
+                yield ModelResponse(role="assistant", content=str(delta))
         except Exception as exc:
             # #1299/#1310：流式 runner 失败同翻 typed，禁机器横幅进 delta/content。
             # #1465：已 typed 的可重试瞬断原样上浮（同 invoke）。
@@ -4839,25 +4752,6 @@ class CliChat(OpenAIChat):
             if isinstance(exc, (LLMUnavailable, TransportIdleTimeout)):
                 raise
             raise cli_runner_unavailable(exc, backend=self.backend) from exc
-        text, tool_calls = _cli_recommendation_call(held, tools)
-        if text:
-            yield ModelResponse(role="assistant", content=text)
-        if tool_calls:
-            yield ModelResponse(
-                role="assistant",
-                tool_calls=[
-                    ChoiceDeltaToolCall(
-                        index=index,
-                        id=call.id,
-                        type=call.type,
-                        function=ChoiceDeltaToolCallFunction(
-                            name=call.function.name,
-                            arguments=call.function.arguments,
-                        ),
-                    )
-                    for index, call in enumerate(tool_calls)
-                ],
-            )
 
     async def ainvoke_stream(self, *args, **kwargs):  # type: ignore[override]
         for response in self.invoke_stream(*args, **kwargs):

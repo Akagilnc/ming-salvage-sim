@@ -393,6 +393,12 @@ def test_terminal_persistent_chat_finalization_failure_rolls_back_real_turn(game
         # 与 append_chat_message(minister) 同为回话落盘缝。
         raise RuntimeError("finalization write failed")
 
+    from ming_sim.audience_night import ensure_open_night_for_audience
+    from tests.test_audience_restore_505 import _seed_agno_v3_runs
+
+    night = ensure_open_night_for_audience(db, state)
+    scene_session_id = f"scene-night-{night['id']}"
+    _seed_agno_v3_runs(db, scene_session_id, 1)
     monkeypatch.setattr(db, "append_chat_message", fail_minister_write)
     monkeypatch.setattr(db, "persist_minister_reply", fail_minister_persist)
     answers = iter([marker])
@@ -434,7 +440,11 @@ def test_terminal_persistent_chat_finalization_failure_rolls_back_real_turn(game
     with pytest.raises(RuntimeError, match="finalization write failed"):
         term.minister_chat(session, character)
 
-    turn = db.conn.execute("SELECT id, status FROM chat_turns ORDER BY id DESC LIMIT 1").fetchone()
+    turn = db.conn.execute(
+        "SELECT id, status, agno_session_id, agno_runs_before FROM chat_turns ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    assert turn["agno_session_id"] == scene_session_id
+    assert turn["agno_runs_before"] == 1
     assert turn["status"] == "failed"
     assert received_chat_turn_ids == [turn["id"]]
     assert db.conn.execute(

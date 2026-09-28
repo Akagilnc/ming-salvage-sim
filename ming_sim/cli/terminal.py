@@ -606,11 +606,8 @@ def minister_chat(session: GameSession, character: Character) -> str:
             "update_chat_turn_messages", "record_chat_turn_rollback_diffs", "fail_chat_turn",
         ))
         try:
-            # #1566：CLI 前缀密令落 route=secret_order，供中断重试权威解码。
-            from ming_sim.cli_backend import _SECRET_PREFIXES
-            cli_explicit_secret = False  # #1837 reopen: 密令前缀走转译，不另路由
             from ming_sim.audience_night import encode_chat_turn_route
-            cli_route = encode_chat_turn_route(explicit_secret_order=cli_explicit_secret)
+            cli_route = encode_chat_turn_route(explicit_secret_order=False)
             if persistent_chat:
                 if lifecycle_supported:
                     rollback_snapshot = session.db.capture_chat_rollback_snapshot()
@@ -623,12 +620,13 @@ def minister_chat(session: GameSession, character: Character) -> str:
                     night_was_open = open_night is not None
                     from ming_sim.audience_night import ensure_open_night_for_audience
                     scene_night = open_night or ensure_open_night_for_audience(session.db, session.state)
+                    scene_session_id = f"scene-night-{scene_night['id']}"
                     _night_id, chat_turn_id = attach_chat_turn_to_night(
                         session.db,
                         session.state,
                         character.name,
-                        agno_session_id=f"scene-night-{scene_night['id']}",
-                        agno_runs_before=0,
+                        agno_session_id=scene_session_id,
+                        agno_runs_before=session.db.agno_runs_length(scene_session_id),
                         beat_generator=None,
                         route=cli_route,
                     )
