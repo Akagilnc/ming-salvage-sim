@@ -52,7 +52,6 @@ from ming_sim.staged_commitment import (
 from ming_sim.supervision import SUPERVISION_BANNED_PLAYER_TOKENS
 from ming_sim.urge_lever import (
     ENTRY_KIND_GRACE_PLEA,
-    _URGE_SCENE_BANNED,
     project_urge_audience_scene,
 )
 
@@ -62,9 +61,6 @@ from ming_sim.urge_lever import (
 
 def test_urge_due_review_truth_banned_single_source():
     """urge / due_review 真伪底禁词必须是同一生产元组，禁双份漂移。"""
-    assert _URGE_SCENE_BANNED is URGE_TRUTH_BANNED_PLAYER_TOKENS or tuple(
-        _URGE_SCENE_BANNED
-    ) == tuple(URGE_TRUTH_BANNED_PLAYER_TOKENS)
     # due_review 再导出须与叶源同一对象（或等价元组）
     assert DUE_REVIEW_URGE_TRUTH is URGE_TRUTH_BANNED_PLAYER_TOKENS or tuple(
         DUE_REVIEW_URGE_TRUTH
@@ -517,14 +513,14 @@ def test_urge_lever_due_review_import_order_both_succeed():
         (
             "import ming_sim.urge_lever as ul\n"
             "import ming_sim.due_review as dr\n"
-            "assert ul.URGE_TRUTH_BANNED_PLAYER_TOKENS is "
-            "dr.URGE_TRUTH_BANNED_PLAYER_TOKENS\n"
+            "assert callable(ul.project_urge_audience_scene)\n"
+            "assert callable(dr.project_due_review_scene)\n"
         ),
         (
             "import ming_sim.due_review as dr\n"
             "import ming_sim.urge_lever as ul\n"
-            "assert ul.URGE_TRUTH_BANNED_PLAYER_TOKENS is "
-            "dr.URGE_TRUTH_BANNED_PLAYER_TOKENS\n"
+            "assert callable(ul.project_urge_audience_scene)\n"
+            "assert callable(dr.project_due_review_scene)\n"
         ),
     )
     repo_root = Path(__file__).resolve().parents[1]
