@@ -304,61 +304,9 @@ def test_free_positive_bandit_strength_rejected_negative_ok(game):
     assert _strength(db, pid) == max(0, before2 - 3)
 
 
-# ── 刀② recovery producer ───────────────────────────────────────────────────
+# 回流的正例由下方真实月链 in_transit 用例验证；效果落账入口不再触发。
 
-@pytest.mark.parametrize("action", ["赈灾", "招抚屯田"])
-def test_recovery_grant_produces_回流_on_settle(game, action):
-    db, state, content = game
-    amount = 30
-    treasury_before = int(state.metrics["内库"])
-    dossier_id = _recovery_grant(db, state, action=action, amount=amount)
-    row = db.get_decree_dossier(dossier_id)
-    assert row["status"] == "closed" and row["execution_outcome"] == "fulfilled"
-    assert int(state.metrics["内库"]) == treasury_before - amount
-    assert db.list_economy_moves_for_dossier(dossier_id)
-
-    displaced_before, farmer_before = _pop(db, "流民", "shaanxi"), _pop(db, "农民", "shaanxi")
-    expected = min(int(round(amount * RECOVERY_PERSONS_PER_WAN)), displaced_before)
-    transfers = _settle_transfers(state, db, content, action)
-    reflux = _reflux(transfers, dossier_id=dossier_id)
-    assert len(reflux) == 1 and reflux[0]["amount"] == expected
-    assert _pop(db, "流民", "shaanxi") == displaced_before - expected
-    assert _pop(db, "农民", "shaanxi") == farmer_before + expected
-
-
-
-
-def test_two_recovery_dossiers_share_remaining_pool(game):
-    db, state, content = game
-    db.conn.execute(
-        "UPDATE classes SET population=100000 WHERE name='流民' AND region_id='shaanxi'"
-    )
-    db.conn.commit()
-    first = _recovery_grant(db, state, amount=30)
-    second = _recovery_grant(db, state, amount=30)
-    farmer_before = _pop(db, "农民", "shaanxi")
-
-    reflux = _reflux(_settle_transfers(state, db, content, "双案同省"))
-    assert [(r["origin_ref"], r["amount"]) for r in reflux] == [
-        (f"dossier:{first}", 60_000),
-        (f"dossier:{second}", 40_000),
-    ]
-    assert _pop(db, "流民", "shaanxi") == 0
-    assert _pop(db, "农民", "shaanxi") == farmer_before + 100_000
-
-
-def test_recovery_fires_once_across_subsequent_settles(game):
-    db, state, content = game
-    _recovery_grant(db, state, amount=20)
-    first = _reflux(_settle_transfers(state, db, content, "一次"))
-    assert len(first) == 1
-    after = _pop(db, "流民", "shaanxi")
-    second = _settle_transfers(state, db, content, "下月")
-    assert not _reflux(second)
-    assert _pop(db, "流民", "shaanxi") == after
-
-
-def test_llm_free_回流_rejected_engine_still_lands(game):
+def test_llm_free_回流_rejected(game):
     db, state, content = game
     free = apply_score_extraction(db, state, {
         "population_transfers": [{
@@ -369,9 +317,6 @@ def test_llm_free_回流_rejected_engine_still_lands(game):
     assert free["population_transfers"] == []
     assert free["population_transfers_rejections"]
     assert _pop(db, "流民", "shaanxi") == DISPLACED_SHAANXI
-
-    _recovery_grant(db, state, amount=15)
-    assert _reflux(_settle_transfers(state, db, content, "单核"))
 
 
 def test_non_recovery_grant_no_回流(game):
@@ -570,6 +515,8 @@ def test_in_transit_relief_stays_executing_before_gazette(game, monkeypatch):
     def _translate_model(_prompt, _llm_config, *, tag, policy=None):
         del _prompt, policy
         assert tag == "month_segment_translate"
+        # 本月各效果段不得预支下月回流。
+        assert _pop(db, "流民", "shaanxi") == displaced_before
         return {"effects": {"dossier_executions": [{
             "dossier_id": shaanxi_id,
             "outcome": "fulfilled",
