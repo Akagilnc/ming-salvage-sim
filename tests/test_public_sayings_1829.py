@@ -149,7 +149,10 @@ def test_public_saying_excluded_name_does_not_see_it_others_do(game, monkeypatch
     chat_turn_id = int(db.create_chat_turn(
         state, "殿上", "s", 0, night_id=int(night["id"]), status="active",
     ))
-    reply = session.scene_chat("对外只说此事，勿使某人得知。", chat_turn_id=chat_turn_id)
+    reply = session.scene_chat(
+        f"密令：对外只说{claim}，瞒着{excluded_name}，不要让他得知。",
+        chat_turn_id=chat_turn_id,
+    )
     pending = persist_and_schedule_scene(session, db, reply)
     assert pending is not None
     pending.result()
