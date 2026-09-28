@@ -221,24 +221,6 @@ class _ExtractStub:
         return out
 
 
-class _ClassifierStub:
-    """分类器 stub：mode 驱动 typed 返回；不解析消息语义。
-
-    #1376 E1/E2 专项契约：mode=fail_if_called → 被调用即失败，证明
-    E1/E2 经结构性前缀/端点路由达 stage，未经 classifier。
-    """
-
-    def __init__(self) -> None:
-        self.mode: str = "fail_if_called"  # fail_if_called | secret_new
-
-    def __call__(self, player_message: str, *args, **kwargs) -> List[Dict[str, Any]]:
-        del player_message, args, kwargs
-        if self.mode == "secret_new":
-            return [{"kind": "secret", "secret_action": "新建"}]
-        # fail_if_called：任何调用皆为契约违反
-        raise AssertionError(
-            "classifier must not be called for E1/E2 (fail-if-called)"
-        )
 
 
 # ── 公共 fixture ───────────────────────────────────────────────────────
@@ -298,11 +280,9 @@ def matrix_env(tmp_path, monkeypatch, _offline_scene_beat_generator):
     _install_settlement_llm_stubs(monkeypatch)
 
     confirm = _ConfirmStub()
-    classifier = _ClassifierStub()
     extract = _ExtractStub()
 
     monkeypatch.setattr(cli_backend, "extract_confirmation_intent", confirm)
-    monkeypatch.setattr(cli_backend, "classify_cli_action_intent", classifier)
     monkeypatch.setattr(cli_backend, "_extract_secret_order", extract)
 
     monkeypatch.setattr(web_app, "web_game", None)
@@ -346,7 +326,6 @@ def matrix_env(tmp_path, monkeypatch, _offline_scene_beat_generator):
         "client": client,
         "game": game,
         "confirm": confirm,
-        "classifier": classifier,
         "extract": extract,
         "home": home,
         "ud": ud,
@@ -422,18 +401,15 @@ def _payload_of(row: dict) -> dict:
 def _issue_entry(env: dict, *, entry: str = "E1") -> dict:
     client: TestClient = env["client"]
     game = env["game"]
-    classifier: _ClassifierStub = env["classifier"]
 
     if entry == "E1":
         # E1：显式前缀路由，classifier 不得被调用
-        classifier.mode = "fail_if_called"
         resp = client.post(
             f"/api/ministers/{MINISTER}/chat",
             json={"message": E1_MESSAGE},
         )
     elif entry == "E2":
         # E2：结构化端点路由，classifier 不得被调用
-        classifier.mode = "fail_if_called"
         resp = client.post(
             f"/api/ministers/{MINISTER}/secret_order",
             json={
@@ -445,7 +421,6 @@ def _issue_entry(env: dict, *, entry: str = "E1") -> dict:
         )
     elif entry == "E3":
         # E3：#1842 殿上无前缀不再走 classifier；显式 intent 走密令 session.chat。
-        classifier.mode = "fail_if_called"
         resp = client.post(
             f"/api/ministers/{MINISTER}/chat",
             json={"message": E3_MESSAGE, "intent": "secret_order"},
@@ -619,7 +594,6 @@ def test_matrix_S2_modify_then_land(matrix_env, cell, entry, via_approve):
     client = env["client"]
     game = env["game"]
     confirm: _ConfirmStub = env["confirm"]
-    classifier: _ClassifierStub = env["classifier"]
 
     ids_before = _order_ids(client)
 
@@ -634,7 +608,6 @@ def test_matrix_S2_modify_then_land(matrix_env, cell, entry, via_approve):
     # S2_MODIFY_MESSAGE 不含结构化「修改：」前缀→旧 prefix parser 无法直接产出 S2_MODIFY_BODY，
     # 证明生产须从 typed new_content 消费而非裁剪玩家散文。
     confirm.push("修改", new_content=S2_MODIFY_BODY)
-    classifier.mode = "none"
     _chat(env, S2_MODIFY_MESSAGE)
 
     pending_mid = _db_pending_secret_new(game)
@@ -697,8 +670,6 @@ def test_matrix_S3_reject_then_settle_no_resurrection(matrix_env, cell, entry):
     # S3 三格分别使用不同的真实拒绝表达；stub 仅灌「拒绝」判词，不扫/不断言措辞
     s3_reject_msg = S3_REJECT_MESSAGES[cell]
     confirm.push("拒绝")
-    classifier_mode = env["classifier"]
-    classifier_mode.mode = "none"  # 确认轮 classifier 可跑但不得影响判词
     _chat(env, s3_reject_msg)
 
     assert _db_pending_secret_new(game) == [], (
