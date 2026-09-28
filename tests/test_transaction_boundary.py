@@ -581,14 +581,15 @@ def test_begin_failure_at_entry_restores_flags(game, monkeypatch):
     db.conn.commit()
 
 
-def test_outer_atomic_rollback_discards_registry_refresh_callback(game):
-    """#672：真实 settle_with_delta 的 affected refresh 挂最外层 commit；outer rollback 丢弃。
+def test_outer_atomic_rollback_discards_registry_refresh_callback(game, monkeypatch):
+    """#672：玩家月链的 affected refresh 挂最外层 commit；outer rollback 丢弃。
 
     nested settle 返回后 registry 仍未刷新；外层故障回滚后人物 DB/content 与 registry
     均回前态；另一次真实 outer commit 只刷新一次。
     """
     from ming_sim.decree import atomic_and_reload
-    from tests.settlement_seam_helpers import settle_effects as settle_with_delta
+    from ming_sim.decree_forecast import decree_ref_for_dossier
+    from tests.test_month_chain_1843 import _prepare_player_month
     from tests.test_punishment_materialize_517 import (
         _close_night_dossier,
         _stage_punishment,
@@ -616,14 +617,16 @@ def test_outer_atomic_rollback_discards_registry_refresh_callback(game):
             self.refreshed.append(name)
 
     reg = _Reg()
+    db.staged_declarations.stage(
+        decree_ref=decree_ref_for_dossier(db, dossier), declaration={},
+        turn=before_turn, verdict={"decision": "promulgated"}, forecast_text="",
+    )
+    player = _prepare_player_month(db, state, content, monkeypatch)
+    player.registry = reg
 
     with pytest.raises(RuntimeError, match="outer boom"):
         with atomic_and_reload(db, state, content=content, registry=reg):
-            settle_with_delta(
-                state, db, {}, before_turn=before_turn, content=content, registry=reg,
-                dossier_verdicts=[{"dossier_id": dossier["id"], "decision": "promulgated"}],
-                delta_applier=lambda *a, **k: {},
-            )
+            player.resolve_turn(allow_empty_decree=True)
             # nested settle 已返回：人物已物化但 registry 仍挂 outer-commit。
             assert reg.refreshed == []
             assert db.get_character_status(target.name)[0] == "imprisoned"
@@ -635,13 +638,9 @@ def test_outer_atomic_rollback_discards_registry_refresh_callback(game):
     assert int(state.turn) == before_turn
     assert db.get_decree_dossier(dossier["id"])["status"] == "proposed"
 
-    # 真实 outer commit：settle 返回后仍未刷新，最外层退出只刷新一次。
+    # 真实 outer commit：月链返回后仍未刷新，最外层退出只刷新一次。
     with atomic_and_reload(db, state, content=content, registry=reg):
-        settle_with_delta(
-            state, db, {}, before_turn=int(state.turn), content=content, registry=reg,
-            dossier_verdicts=[{"dossier_id": dossier["id"], "decision": "promulgated"}],
-            delta_applier=lambda *a, **k: {},
-        )
+        player.resolve_turn(allow_empty_decree=True)
         assert reg.refreshed == []
     assert reg.refreshed == [target.name]
     assert db.get_character_status(target.name)[0] == "imprisoned"

@@ -871,9 +871,14 @@ def _settle_edicts(
                             db._record_dossier_verdict_metadata(state, int(dossier["id"]), verdict)
                     finally:
                         db.conn._recommendation_snapshots_prevalidated = previous
-                    if registry is not None:
-                        for name in sorted(affected):
-                            registry.refresh(name)
+                    if registry is not None and affected:
+                        from ming_sim.applier import register_runtime_outcome_callbacks
+                        names = tuple(sorted(affected))
+                        def refresh_affected() -> None:
+                            for name in names:
+                                registry.refresh(name)
+
+                        register_runtime_outcome_callbacks(db, on_commit=refresh_affected)
         current = db.get_decree_dossier(int(dossier["id"])) or dossier
         if str(current.get("promulgation_decision") or "") == "promulgated":
             def persist_result(_decree_ref: str, result: Any) -> None:
