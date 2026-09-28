@@ -224,7 +224,3 @@ def write_error_pack(
 
     return str(pack_dir)
 
-
-# #671：sim 真成功后、companion join 前的 durable 完成态标记（∈ simulator_payload）。
-
-
