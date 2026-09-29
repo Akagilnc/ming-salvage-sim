@@ -72,36 +72,62 @@ DEFAULT_EXTRACT_PAYLOAD: Dict[str, Any] = {
 }
 
 
-def test_secret_commission_pins_source_turn_before_later_held_chat(game):
-    """后台转译 A 时，B 已入库：密令口谕血缘只能指向 A。"""
-    from ming_sim.declaration_dispatch import dispatch_declaration
+def test_secret_commission_pins_source_turn_before_later_held_chat(game, monkeypatch, _offline_scene_beat_generator):
+    """A 的转译晚于 B 的问话入库，后续放行时只保密 A。"""
+    from ming_sim.audience_night import open_night
+    from tests.test_audience_translation_1838 import _scene_session
 
     db, state, content = game
     minister = MINISTER if MINISTER in content.characters else next(iter(content.characters))
-    first = db.append_chat_message(minister, state.turn, "user", "密令口谕")
-    source = db.conn.execute(
-        "INSERT INTO chat_turns(minister_name, turn, year, period, user_message_id) "
-        "VALUES (?, ?, ?, ?, ?)",
-        (minister, state.turn, state.year, state.period, first),
-    ).lastrowid
-    later = db.append_chat_message(minister, state.turn, "user", "另一轮问话")
-    db.conn.execute(
-        "INSERT INTO chat_turns(minister_name, turn, year, period, user_message_id) "
-        "VALUES (?, ?, ?, ?, ?)",
-        (minister, state.turn, state.year, state.period, later),
+    other = next(name for name in content.characters if name != minister)
+    session = _scene_session(db, state, content, monkeypatch)
+    night = open_night(db, state)
+    declarations = iter((
+        {"commissions": [{
+            "text": "交办", "secret_order": {**DEFAULT_EXTRACT_PAYLOAD, "assignee": minister},
+        }]},
+        {},
+    ))
+
+    def translate(prompt, config):
+        return {**offline_empty_audience_translate(prompt, config), **next(declarations)}
+
+    stub_audience_translate(monkeypatch, translate)
+    rounds = []
+    for words in ("密令口谕", "另一轮问话"):
+        ctid = db.create_chat_turn(state, minister, "scene", 0, night_id=int(night["id"]))
+        mid = db.append_chat_message(minister, state.turn, "user", words)
+        db.update_chat_turn_messages(ctid, user_message_id=mid)
+        reply = session.scene_chat(words, chat_turn_id=ctid, minister_name=minister)
+        db.persist_minister_reply(minister, state.turn, reply.answer, ctid)
+        rounds.append((mid, reply))
+
+    # 两轮均已落笔后才启动 A 的转译，不用真实并发或猜测 worker 时序。
+    a = session.schedule_pending_scene_translation(rounds[0][1]).result()
+    b = session.schedule_pending_scene_translation(rounds[1][1]).result()
+    assert a.commissions.applied and not a.commissions.rejected, a.commissions
+    assert not b.commissions.rejected, b.commissions
+    applied = db.commit_pending_actions(
+        state, minister_name=minister,
+        action_ids={a.commissions.applied[0]["id"]}, content=content,
     )
-    declaration = {"commissions": [{
-        "text": "交办", "secret_order": {**DEFAULT_EXTRACT_PAYLOAD, "assignee": minister},
-    }]}
-    result = dispatch_declaration(
-        db, state, declaration, minister_name=minister, source_chat_turn_id=source,
-    )
-    assert not result.commissions.rejected
-    staged = db.conn.execute(
-        "SELECT payload_json FROM pending_actions WHERE id=?",
-        (result.commissions.applied[0]["id"],),
-    ).fetchone()
-    assert json.loads(staged["payload_json"])["origin_chat_message_id"] == first
+    assert applied and applied[0]["kind"] == "secret_order"
+    db.release_held_audience_knowledge()
+
+    first, later = (row[0] for row in rounds)
+    statuses = {row["id"]: row["knowledge_status"] for row in db.conn.execute(
+        "SELECT id, knowledge_status FROM chat_messages WHERE id IN (?, ?)", (first, later),
+    )}
+    sources = {row["source_id"] for row in db.conn.execute(
+        "SELECT source_id FROM character_knowledge_sources WHERE source_id IN (?, ?)",
+        (f"chat_message:{first}", f"chat_message:{later}"),
+    )}
+    assert statuses[first] == "withheld"
+    assert statuses[later] == "released"
+    assert f"chat_message:{first}" not in sources
+    assert f"chat_message:{later}" in sources
+    other_sources = {row["source_id"] for row in db.get_character_knowledge(state, other)["public_events"]}
+    assert f"chat_message:{first}" not in other_sources
 
 
 # ── LLM / 结算边界 stub ────────────────────────────────────────────────
