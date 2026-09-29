@@ -8,11 +8,8 @@ import math
 import re
 import sqlite3
 from types import SimpleNamespace
-from typing import Callable, Dict, List, Mapping, Optional
+from typing import Dict, List, Mapping, Optional
 
-from agno.agent import Agent
-
-from ming_sim.agents import parse_agent_json, run_agent_stream_text, run_agent_text
 from ming_sim.commitment_backlash import build_backlash_narrative_features
 from ming_sim.constants import TURN_UNIT
 from ming_sim.context import historical_anchor_for_month, victory_status
@@ -42,8 +39,6 @@ from ming_sim.settlement_payload import (
     augment_secret_orders_with_due_commitments,
     iter_secret_order_ids,
 )
-
-from ming_sim.token_stats import tlog
 
 
 ITEM_FIELD_ALIASES = {
@@ -773,70 +768,6 @@ def build_simulator_payload(
             "供叙事长出玩家可见文案；含与 #625 反制 bar 用语区分约束，不含成句模板。"
         ),
     }
-
-
-def simulate_season_with_agno(
-    agent: Agent,
-    state: GameState,
-    db: GameDB,
-    decree_text: str,
-    previous_narrative: str,
-    deaths_this_turn: Optional[List[Dict[str, str]]] = None,
-    debuts_this_turn: Optional[List[Dict[str, str]]] = None,
-    on_thinking: Optional[Callable[[str], None]] = None,
-    on_text: Optional[Callable[[str], None]] = None,
-    relevant_memories: Optional[List[Dict[str, object]]] = None,
-    secret_orders: Optional[Dict[str, object]] = None,
-) -> str:
-    """推演 agent: 全量盘面塞 user payload，无 tool。"""
-    narrative, _payload = simulate_season_with_payload(
-        agent,
-        state,
-        db,
-        decree_text,
-        previous_narrative,
-        deaths_this_turn=deaths_this_turn,
-        debuts_this_turn=debuts_this_turn,
-        on_thinking=on_thinking,
-        on_text=on_text,
-        relevant_memories=relevant_memories,
-        secret_orders=secret_orders,
-    )
-    return narrative
-
-
-def simulate_season_with_payload(
-    agent: Agent,
-    state: GameState,
-    db: GameDB,
-    decree_text: str,
-    previous_narrative: str,
-    deaths_this_turn: Optional[List[Dict[str, str]]] = None,
-    debuts_this_turn: Optional[List[Dict[str, str]]] = None,
-    on_thinking: Optional[Callable[[str], None]] = None,
-    on_text: Optional[Callable[[str], None]] = None,
-    relevant_memories: Optional[List[Dict[str, object]]] = None,
-    secret_orders: Optional[Dict[str, object]] = None,
-    simulator_payload: Optional[Dict[str, object]] = None,
-) -> tuple[str, Dict[str, object]]:
-    """推演 agent，同时返回本次推演 user payload，供 extractor 复用缓存前缀。"""
-    payload = simulator_payload or build_simulator_payload(
-        state, db, decree_text, previous_narrative,
-        deaths_this_turn=deaths_this_turn,
-        debuts_this_turn=debuts_this_turn,
-        relevant_memories=relevant_memories,
-        secret_orders=secret_orders,
-    )
-    raw = run_agent_stream_text(
-        agent,
-        json.dumps({"instruction": "请根据 system 中的 simulator_payload 写本月月末奏章。"}, ensure_ascii=False),
-        tag="simulator",
-        on_thinking=on_thinking,
-        on_text=on_text,
-    )
-    # #671 / P6 / ADR 0142：输出侧零删改。空文契约由 run_agent_stream_text 临时副本判空/abort；
-    # 此处不得再 strip 回写。
-    return raw, payload
 
 
 EMPTY_EXTRACTION: Dict[str, object] = {
