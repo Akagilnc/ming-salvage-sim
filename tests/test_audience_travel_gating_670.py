@@ -14,7 +14,6 @@ from fastapi.testclient import TestClient
 
 from ming_sim.db import GameDB
 from ming_sim.session import AudienceAdmission, ChatTurnResult, GameSession
-from ming_sim.simulation import build_simulator_payload
 from ming_sim import audience_night as an
 
 
@@ -308,8 +307,6 @@ def test_multi_origin_same_person_dedupes_consumer_projections_not_ledger(game, 
         "source_entry_id": first_entry["entry_id"],
         "required_fact": "抵原地后续赴京",
     }]
-    payload = build_simulator_payload(state, db, "", "")
-    assert payload["unsettled_arrived_summons"] == arrived
     assert len(an.list_unsettled_summons(db)) == 2
 
     # 结清其一 origin 后另一仍未结，投影仍 1 人份。
@@ -366,7 +363,6 @@ def test_multi_origin_same_person_dedupes_consumer_projections_not_ledger(game, 
         "source_entry_id": id_a,
         "location": "beizhili",
     }]
-    assert build_simulator_payload(state, db, "", "")["waiting_audience"] == waiting
     assert an.settle_summon_origin(db, wait_a) is True
     assert an.list_waiting_audience_summons(db) == [{
         "person_name": person.name,
@@ -484,8 +480,6 @@ def test_arrived_summon_continuation_survives_failed_apply_across_months(game, m
         "source_entry_id": entry_id,
         "required_fact": "抵原地后续赴京",
     }
-    payload = build_simulator_payload(state, db, "", "")
-    assert payload["unsettled_arrived_summons"] == [arrived_fact]
     assert _travel_row(db, person.name)["location"] == "henan"
     assert _travel_row(db, person.name)["transit_to"] == ""
 
@@ -533,8 +527,6 @@ def test_arrived_summon_continuation_survives_failed_apply_across_months(game, m
     _settle_empty_month(db, state, content, monkeypatch)
     assert int(state.turn) == noop_turn + 1
     assert [row["origin_id"] for row in an.list_unsettled_summons(db)] == [origin]
-    next_payload = build_simulator_payload(state, db, "", "")
-    assert next_payload["unsettled_arrived_summons"] == [arrived_fact]
     assert _travel_row(db, person.name)["location"] == "henan"
     assert _travel_row(db, person.name)["transit_to"] == ""
 
@@ -544,8 +536,6 @@ def test_arrived_summon_continuation_survives_failed_apply_across_months(game, m
     after = _travel_row(db, person.name)
     assert after["location"] == "henan"
     assert after["transit_to"] == "beizhili"
-    # 在途赴京期间不得再投「抵原地后续赴京」。
-    assert build_simulator_payload(state, db, "", "")["unsettled_arrived_summons"] == []
 
 
 def test_fresh_seed_closes_ticket_670_named_locations(content):
@@ -927,7 +917,6 @@ def test_continuation_arrival_settles_origin_without_waiting(game, monkeypatch):
     db.conn.commit()
     assert an.list_unsettled_summons(db) == []
     assert an.list_waiting_audience_summons(db) == []
-    assert build_simulator_payload(state, db, "", "")["waiting_audience"] == []
 
 
 def test_waiting_inactive_retires_on_month(game, monkeypatch):
@@ -992,7 +981,6 @@ def test_waiting_active_departure_settles_and_does_not_revive(game):
     )
     db.conn.commit()
     assert an.list_arrived_unsettled_summons(db) == []
-    assert build_simulator_payload(state, db, "", "")["unsettled_arrived_summons"] == []
 
 def test_waiting_active_departure_settle_failure_rolls_back_all_four_sides(
     game, monkeypatch,

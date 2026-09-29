@@ -428,7 +428,6 @@ def is_vassal_prince(character: "Character") -> bool:
     单一定义，所有面引用此规则（PR#121，cmr R3–R5 cross-section coverage-drift 收敛于此）。
     受守面清单（新增同类面时一并加，勿漏）：
     - web_app: visible_in_court / in_talent_pool / _require_active_minister / api_create_secret_order
-    - simulation: court_roster / active_ministers / _talent_pool_rows（SQL office_type NOT IN(…'宗藩'…)）
     - materials: 人物/朝臣名册.txt
     - session: can_summon（召对 choke）/ list_ministers（召见阶段名册）
     - issues: apply_office_appointment（任命落地核 choke——授官会改 office_type、反解 roster 隐藏，必守）
@@ -456,10 +455,9 @@ def is_weishi(character: "Character") -> bool:
     - web_app: visible_in_court
     - cli: terminal.choose_minister
     - cli_backend: _draft_intent_character_roster_facts（拟诏事实块）
-    - simulation: court_roster / active_ministers（SQL office_type NOT IN(…'未仕')）
     - materials: 人物/朝臣名册.txt
     - db: current_court_roster_rows（已排）
-    - web_app: in_talent_pool / simulation._talent_pool_rows（未入仕非「可起复前臣」）
+    - web_app: in_talent_pool（未入仕非「可起复前臣」）
     任命写路径（apply_office_appointment）**不**守本闸——未仕入仕是合法铨选。
     同型 seed 先例：郑成功/张煌言等诸生童生 offstage（非钱谦益——钱为罢居礼部、非未仕）。
     容 None：传 None 返 False。"""

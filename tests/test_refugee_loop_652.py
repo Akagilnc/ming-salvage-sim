@@ -1,6 +1,6 @@
 """#652：流民环闭合——投贼吃池顶 + 赈济/招抚回流 + 唯一判官成色链。
 
-主测缝：build_simulator_payload / apply_score_extraction /
+主测缝：apply_score_extraction /
 advance_without_decree（可控 LLM seam 真实月结）。
 owner A：开仓非回流 producer；只覆盖赈济与招抚屯田；#522 不动。
 """
@@ -20,7 +20,6 @@ from ming_sim.constants import (
 )
 from ming_sim.db import GameDB, POPULATION_UNIT_PERSONS
 from ming_sim.issues import apply_score_extraction
-from ming_sim.simulation import build_simulator_payload
 from tests.month_chain_helpers import canned_full_settlement, make_light_session
 
 FARMER_SHAANXI = 6000000
@@ -479,15 +478,12 @@ def test_recovery_shared_pool_advances_once_after_empty_effect_month(game, monke
     assert session.advance_without_decree().advanced is True
     assert _pop(db, "流民", "shaanxi") == 0
     assert _pop(db, "农民", "shaanxi") == before_farmers + 100000
-    from ming_sim.population_pressure import recent_reflux_cause_rows
-    assert len(recent_reflux_cause_rows(db)) == 2
     from ming_sim.db import GameDB
     loaded = GameDB(_database_path(db), content)
     try:
         assert loaded.load_state().turn == closed_turn + 1
         assert _pop(loaded, "流民", "shaanxi") == 0
         assert _pop(loaded, "农民", "shaanxi") == before_farmers + 100000
-        assert len(recent_reflux_cause_rows(loaded)) == 2
     finally:
         loaded.close()
 
@@ -641,7 +637,6 @@ def test_legacy_population_unit_skips_absorption_and_recovery(game, monkeypatch)
     db.conn.execute("DELETE FROM save_meta WHERE key='population_unit'")
     db.conn.commit()
     assert db.population_unit != POPULATION_UNIT_PERSONS
-    assert build_simulator_payload(state, db, "", "")["displaced_pool_balances"]["rows"] == []
 
     applied = apply_score_extraction(db, state, {
         "bandit_absorptions": [{
