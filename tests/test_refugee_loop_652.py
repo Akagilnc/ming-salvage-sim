@@ -399,21 +399,6 @@ def _canned_judge(monkeypatch, *, outcome, dossier_id, sim_calls):
     )
 
 
-def _assert_two_axis_projection(payload, *, expect_disaster: bool = False):
-    assert "execution_two_axis" in payload
-    surface = payload["execution_two_axis"]
-    dumped = json.dumps(surface, ensure_ascii=False)
-    assert "owner_ability" not in dumped
-    assert "owner_load" not in dumped
-    shaanxi = next(
-        (p for p in surface.get("provinces") or [] if p.get("region_id") == "shaanxi"),
-        None,
-    )
-    assert shaanxi is not None, "executing 陕差须出现在 two_axis"
-    if expect_disaster:
-        assert shaanxi.get("disaster_rows"), "有灾 fixture 时须含灾情占用字段"
-
-
 def _force_in_transit_recovery_grant(db, state, *, amount=40, region_id="shaanxi", tag="赈"):
     """真实强颁：打回后强颁。在途赈灾付银后停在 executing，不留 promulgated。"""
     from tests.dossier_test_helpers import rejected_verdict
@@ -606,10 +591,10 @@ def test_in_transit_relief_stays_executing_before_gazette(game, monkeypatch):
 
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
-def test_month_settle_carries_disaster_rows_to_judge(game, monkeypatch):
-    """月结入口：有灾 + executing 赈灾时 two_axis 灾行进入唯一判官输入。
+def test_month_settle_with_disaster_and_executing_relief(game, monkeypatch):
+    """月结入口：有灾 + executing 赈灾仍走真实执行链。
 
-    有灾必折损是 season_simulator 软判（本测不 canned 冒充成色）。
+    有灾必折损是推演者软判（本测不 canned 冒充成色）。
     """
     db, state, content = game
     _reset_shaanxi_pool(db)

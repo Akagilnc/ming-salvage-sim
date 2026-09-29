@@ -1268,7 +1268,7 @@ def test_657_s10_http_five_actions_and_1490_no_regress(web_game, monkeypatch):
     })
     # #1590：同一真实入口 tracer 的 follow_draft 使用生成边界产出的 catalog 合法目标。
     import ming_sim.rescript_draft as draft_mod
-    from ming_sim.rescript_draft import build_rescript_draft_payload, generate_rescript_draft
+    from ming_sim.rescript_draft import generate_rescript_draft
 
     liaodong_raw = {**opt, "label": "经略辽东", "target_id": "liaodong", "region_id": "liaodong"}
     liaodong_raw.pop("draft_capability", None)
@@ -1279,10 +1279,10 @@ def test_657_s10_http_five_actions_and_1490_no_regress(web_game, monkeypatch):
     monkeypatch.setattr(draft_mod, "run_agent_text", lambda *a, **k: generated_json)
     generated = generate_rescript_draft(
         object(),
-        build_rescript_draft_payload(
-            state, "邸报", {"regions": {"cols": ["id", "name", "kind"], "rows": [["liaodong", "辽东", "边地"], ["shaanxi", "陕西", "腹地"]]}},
-            {"name": "杨嗣昌", "office": "兵部尚书", "faction": "东林"},
-        ),
+        {"active_issues": [], "region_targets": [
+            {"id": "liaodong", "name": "辽东", "kind": "边地"},
+            {"id": "shaanxi", "name": "陕西", "kind": "腹地"},
+        ]},
         int(state.turn),
     )
     assert generated is not None
@@ -1421,7 +1421,7 @@ def test_657_s10_http_five_actions_and_1490_no_regress(web_game, monkeypatch):
 def test_1621_http_follow_draft_uses_catalog_army_id(web_game, monkeypatch):
     """合法军 id 从生成边界进 HTTP follow_draft，案卷 target_id 为真军 id。"""
     from ming_sim.models import TurnPhase
-    from ming_sim.rescript_draft import build_rescript_draft_payload, generate_rescript_draft
+    from ming_sim.rescript_draft import generate_rescript_draft
     import ming_sim.rescript_draft as draft_mod
 
     db, state = web_game.db, web_game.state
@@ -1446,10 +1446,9 @@ def test_1621_http_follow_draft_uses_catalog_army_id(web_game, monkeypatch):
     monkeypatch.setattr(draft_mod, "run_agent_text", lambda *a, **k: generated_json)
     generated = generate_rescript_draft(
         object(),
-        build_rescript_draft_payload(
-            state, "邸报", {"armies": {"cols": ["id", "name", "station", "owner_power"], "rows": [["guanning", "关宁军", "辽东 / 宁远锦州", "ming"]]}},
-            {"name": "杨嗣昌", "office": "兵部尚书", "faction": "东林"},
-        ),
+        {"active_issues": [], "army_targets": [
+            {"id": "guanning", "name": "关宁军", "station": "辽东 / 宁远锦州"},
+        ]},
         int(state.turn),
     )
     assert generated is not None
@@ -2860,10 +2859,7 @@ def _1778_raw_options():
 def _1778_generate(monkeypatch, db, state, items):
     """真实票拟生成入口（canned run_agent_text，无 live LLM）。"""
     import ming_sim.rescript_draft as draft_mod
-    from ming_sim.rescript_draft import (
-        build_rescript_draft_payload,
-        generate_rescript_draft,
-    )
+    from ming_sim.rescript_draft import generate_rescript_draft
 
     monkeypatch.setattr(
         draft_mod, "run_agent_text",
@@ -2871,10 +2867,9 @@ def _1778_generate(monkeypatch, db, state, items):
     )
     return generate_rescript_draft(
         object(),
-        build_rescript_draft_payload(
-            state, "邸报", {"regions": {"cols": ["id", "name", "kind"], "rows": [["shaanxi", "陕西", "腹地"]]}},
-            {"name": "杨嗣昌", "office": "兵部尚书", "faction": "东林"},
-        ),
+        {"active_issues": [], "region_targets": [
+            {"id": "shaanxi", "name": "陕西", "kind": "腹地"},
+        ]},
         int(state.turn),
     )
 
@@ -2987,7 +2982,6 @@ def test_1778_missing_roster_heals_then_error_pack_without_assigning_anyone(
     import ming_sim.rescript_draft as draft_mod
     from ming_sim.rescript_draft import (
         RESCRIPT_OPTION_FIELD_HEAL_RETRIES,
-        build_rescript_draft_payload,
         generate_rescript_draft,
     )
 
@@ -3012,10 +3006,7 @@ def test_1778_missing_roster_heals_then_error_pack_without_assigning_anyone(
     before = len(db.list_decree_dossiers())
     drafts = generate_rescript_draft(
         object(),
-        build_rescript_draft_payload(
-            state, "邸报", {},
-            {"name": "杨嗣昌", "office": "兵部尚书", "faction": "东林"},
-        ),
+        {"active_issues": []},
         int(state.turn),
     )
 
@@ -3051,7 +3042,7 @@ def test_1778_missing_roster_heals_then_error_pack_without_assigning_anyone(
 def test_1621_http_follow_draft_uses_catalog_army_id(web_game, monkeypatch):
     """合法军 id 从生成边界进 HTTP follow_draft，案卷 target_id 为真军 id。"""
     from ming_sim.models import TurnPhase
-    from ming_sim.rescript_draft import build_rescript_draft_payload, generate_rescript_draft
+    from ming_sim.rescript_draft import generate_rescript_draft
     import ming_sim.rescript_draft as draft_mod
 
     db, state = web_game.db, web_game.state
@@ -3076,10 +3067,9 @@ def test_1621_http_follow_draft_uses_catalog_army_id(web_game, monkeypatch):
     monkeypatch.setattr(draft_mod, "run_agent_text", lambda *a, **k: generated_json)
     generated = generate_rescript_draft(
         object(),
-        build_rescript_draft_payload(
-            state, "邸报", {"armies": {"cols": ["id", "name", "station", "owner_power"], "rows": [["guanning", "关宁军", "辽东 / 宁远锦州", "ming"]]}},
-            {"name": "杨嗣昌", "office": "兵部尚书", "faction": "东林"},
-        ),
+        {"active_issues": [], "army_targets": [
+            {"id": "guanning", "name": "关宁军", "station": "辽东 / 宁远锦州"},
+        ]},
         int(state.turn),
     )
     assert generated is not None
