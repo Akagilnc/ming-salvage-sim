@@ -59,8 +59,7 @@ def test_pending_decisions_corrupt_choice_json_returns_none_and_surfaces(game, m
 def test_resolve_context_corrupt_payload_falls_back_and_surfaces(game, monkeypatch):
     db, _state, _content = game
     db.save_resolve_context(
-        500, decree_text="旨", narrative="报",
-        simulator_payload={"a": 1},
+        500, decree_text="旨", simulator_payload={"a": 1},
     )
     db.conn.execute(
         "UPDATE pending_resolve_context SET simulator_payload_json = ? WHERE turn = ?",

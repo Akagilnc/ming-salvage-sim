@@ -46,15 +46,14 @@ def bind_decision_options(options: object) -> Dict[str, Dict[str, object]]:
     return bound
 
 
-def parse_decision_blocks(narrative: str) -> tuple[str, List[Dict[str, object]]]:
-    """读取旧决策机标，返回 (去掉机标后的文本, 决策列表)。
+def parse_decision_blocks(text: str) -> List[Dict[str, object]]:
+    """读取世界段请旨机标中的决策列表，不改写原文。
 
     每块须含 title/context/options（2-3 项，每项 label + 可选 hint）。
-    解析失败的块直接丢弃（连同标记一起剥离），不抛断——无决策块视作普通回合。
-    最多取 MAX_DECISIONS_PER_TURN 条，超出忽略。
+    解析失败的块忽略，最多取 MAX_DECISIONS_PER_TURN 条。
     """
     decisions: List[Dict[str, object]] = []
-    for m in _DECISION_RE.finditer(narrative or ""):
+    for m in _DECISION_RE.finditer(text or ""):
         if len(decisions) >= MAX_DECISIONS_PER_TURN:
             break
         try:
@@ -104,9 +103,7 @@ def parse_decision_blocks(narrative: str) -> tuple[str, List[Dict[str, object]]]
         if event_id:
             decision["event_id"] = event_id
         decisions.append(decision)
-    # #671 / P6 / ADR 0142：剥离 DECISION 机标后不得 strip 邸报原文（零删改）
-    clean = _DECISION_RE.sub("", narrative or "")
-    return clean, decisions
+    return decisions
 
 
 def parse_rescript_capability_pair(

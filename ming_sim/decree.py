@@ -1073,7 +1073,7 @@ def prepare_resolve_front_half(
     （无抵达 = `[]`）。
     """
     # 已有-context 重入：只读既有真源。save_resolve_context 是整行 upsert，placeholder
-    # 默认空字段会冲掉已有原诏/source/narrative。
+    # 默认空字段会冲掉已有原诏/source。
     if state.turn_phase in FRONT_HALF_DONE_PHASES:
         existing = db.get_resolve_context(int(state.turn))
         if existing is not None:
@@ -1111,7 +1111,7 @@ def prepare_resolve_front_half(
                 else ""
             )
             db.save_resolve_context(
-                state.turn, decree_text, "", placeholder_payload,
+                state.turn, decree_text, placeholder_payload,
                 source=Provenance(source).value,  # #146 A：归一 enum/合法值串
                 attendant_message=preserved_attendant,
             )

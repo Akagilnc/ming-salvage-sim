@@ -9,7 +9,6 @@ def test_history_turn_reads_decree_text_from_resolve_context(game, monkeypatch):
     db.save_resolve_context(
         turn,
         decree_text="着宁远补饷三十万两",
-        narrative="",
         simulator_payload={},
     )
     db.save_turn_report(state, "邸报正文", knowledge_items=[], attendant_message="")

@@ -264,11 +264,17 @@ def _gazette_feed(db: Any, state: Any, chain: Dict[str, Any]) -> Dict[str, Any]:
     from ming_sim.audience_night import list_waiting_audience_summons
     from ming_sim.decree import collect_new_arrival_waiting_audience
     from ming_sim.models import reign_period_label
+    from ming_sim.materials import is_secret_order_origin, secret_order_dossier_ids
     from ming_sim.settlement_payload import list_due_commitments
 
     turn = int(state.turn)
     materials = _month_fact_materials(db, state, chain, include_secret_sources=False)
-    due_commitments = list_due_commitments(db, state)
+    secret_dossiers = secret_order_dossier_ids(db)
+    due_commitments = [
+        item for item in list_due_commitments(db, state)
+        if not is_secret_order_origin(item["origin_ref"])
+        and not _origin_is_secret_dossier(item["origin_ref"], secret_dossiers)
+    ]
     return {
         "instruction": "据已落定的实况写本期邸报。title 由你写，report 是全文。",
         "reign_period_label": reign_period_label(int(state.year), int(state.period)),
@@ -1602,7 +1608,7 @@ def _split_at_question(text: str) -> tuple[str, List[dict]]:
     questions: List[dict] = []
     first_start: Optional[int] = None
     for match in _DECISION_RE.finditer(text):
-        parsed = parse_decision_blocks(match.group(0))[1]
+        parsed = parse_decision_blocks(match.group(0))
         if not parsed:
             continue
         if first_start is None:
@@ -1632,7 +1638,6 @@ def _save_chain(
     db.save_resolve_context(
         turn,
         decree_text or str(ctx.get("decree_text") or ""),
-        str(ctx.get("narrative") or ""),
         payload,
         source=source_value or Provenance.system_simulation.value,
         attendant_message=str(ctx.get("attendant_message") or ""),

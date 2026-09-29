@@ -237,11 +237,17 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
     record_summon_in_transit(
         db, night_id, arriver, origin_id="gazette-arrive-1862",
     )
-    db.conn.execute(
-        "INSERT INTO issues (kind, title, origin_turn, commitment_kind, end_turn, stage_text) "
-        "VALUES ('commitment', ?, ?, 'once', ?, ?)",
-        ("到期公开承诺1862", turn, turn, "公开到期正文1862"),
-    )
+    for origin, title in (
+        ("", "到期公开承诺1862"),
+        ("secret_order:9", "密令到期承诺1862"),
+        (f"dossier:{secret_did}", "密令案卷到期承诺1862"),
+        (f"dossier:{plain_did}", "普通案卷到期承诺1862"),
+    ):
+        db.conn.execute(
+            "INSERT INTO issues (kind, title, origin_turn, commitment_kind, end_turn, stage_text, origin_ref) "
+            "VALUES ('commitment', ?, ?, 'once', ?, ?, ?)",
+            (title, turn, turn, title, origin),
+        )
     db.conn.execute(
         "UPDATE audience_nights SET status='closed' WHERE id=?", (night_id,),
     )
@@ -338,10 +344,9 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
     label = reign_period_label(year, period)
     assert payload["reign_period_label"] == label
     assert label in seen["instructions"]
-    assert any(
-        item.get("entry_kind") == "due_commitment" and item.get("title") == "到期公开承诺1862"
-        for item in payload["due_commitments"]
-    )
+    assert {item["origin_ref"] for item in payload["due_commitments"]} == {
+        "", f"dossier:{plain_did}",
+    }
     assert any(
         item.get("person_name") == arriver and item.get("origin_id") == "gazette-arrive-1862"
         for item in payload["waiting_audience"]

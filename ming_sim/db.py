@@ -1292,8 +1292,7 @@ class GameDB:
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
-            -- HITL 重大决策点：simulator 邸报里产出的待皇帝亲裁抉择。每回合 ≤5 条。
-            -- phase1 存入待选，phase2 读回皇帝选择拼进 narrative 喂 extractor。
+            -- HITL 重大决策点：世界段请旨机标产出的待皇帝亲裁抉择。每回合 ≤5 条。
             CREATE TABLE IF NOT EXISTS pending_decisions (
                 turn INTEGER NOT NULL,
                 idx INTEGER NOT NULL,
@@ -1312,7 +1311,6 @@ class GameDB:
             CREATE TABLE IF NOT EXISTS pending_resolve_context (
                 turn INTEGER PRIMARY KEY,
                 decree_text TEXT NOT NULL DEFAULT '',
-                narrative TEXT NOT NULL DEFAULT '',
                 simulator_payload_json TEXT NOT NULL DEFAULT '{}',
                 source TEXT NOT NULL DEFAULT 'system_simulation',
                 attendant_message TEXT NOT NULL DEFAULT '',
@@ -18803,7 +18801,7 @@ class GameDB:
         return cur.rowcount
 
     def save_resolve_context(
-        self, turn: int, decree_text: str, narrative: str,
+        self, turn: int, decree_text: str,
         simulator_payload: Dict[str, object],
         source: str = "system_simulation",
         attendant_message: str = "",
@@ -18814,16 +18812,15 @@ class GameDB:
         """
         self.conn.execute(
             """INSERT INTO pending_resolve_context
-               (turn, decree_text, narrative, simulator_payload_json, source, attendant_message)
-               VALUES (?, ?, ?, ?, ?, ?)
+               (turn, decree_text, simulator_payload_json, source, attendant_message)
+               VALUES (?, ?, ?, ?, ?)
                ON CONFLICT(turn) DO UPDATE SET
                    decree_text = excluded.decree_text,
-                   narrative = excluded.narrative,
                    simulator_payload_json = excluded.simulator_payload_json,
                    source = excluded.source,
                    attendant_message = excluded.attendant_message""",
             (
-                int(turn), sanitize_sqlite_text(decree_text), sanitize_sqlite_text(narrative),
+                int(turn), sanitize_sqlite_text(decree_text),
                 safe_json_dumps(simulator_payload or {}, ensure_ascii=False),
                 # source 显式归一为枚举「值」字符串：Provenance 是 (str, Enum)，str(member) 在多数
                 # Python 版本落 'Provenance.player_decree' 而非 'player_decree'——重抽时
@@ -18838,8 +18835,7 @@ class GameDB:
     def get_resolve_context(self, turn: int) -> Optional[Dict[str, object]]:
         """读回本月过月上下文。无则 None。"""
         row = self.conn.execute(
-            "SELECT decree_text, narrative, simulator_payload_json, "
-            "source, attendant_message "
+            "SELECT decree_text, simulator_payload_json, source, attendant_message "
             "FROM pending_resolve_context WHERE turn = ?",
             (int(turn),),
         ).fetchone()
@@ -18854,7 +18850,6 @@ class GameDB:
         attendant_message = str(row["attendant_message"] or "")
         return {
             "decree_text": row["decree_text"],
-            "narrative": row["narrative"],
             "simulator_payload": _load(row["simulator_payload_json"], {}, "simulator_payload"),
             "source": row["source"] or "system_simulation",
             "attendant_message": attendant_message,  # #671 王承恩独立递话
