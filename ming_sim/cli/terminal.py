@@ -428,7 +428,6 @@ def minister_chat(session: GameSession, character: Character, *, selected: bool 
                         auto_close_open_night(
                             session.db, session.state,
                             content=getattr(session, "content", None),
-                            wait_timeout_s=0.0,
                             write_gate=_cli_write_gate(session),
                             llm_config=getattr(session, "llm_config", None),
                         )

@@ -376,12 +376,10 @@ def test_advance_short_hold_409_when_gate_taken_after_admit(monkeypatch):
     gate_held_by_peer = threading.Event()
     real_auto = web_app._auto_close_open_night_gate_free
 
-    def _wrapped_auto(game_arg, *, inflight_wait_s=0.0, write_gate=None):
+    def _wrapped_auto(game_arg, *, write_gate=None):
         at_short_hold.set()
         gate_held_by_peer.wait()
-        return real_auto(
-            game_arg, inflight_wait_s=inflight_wait_s, write_gate=write_gate,
-        )
+        return real_auto(game_arg, write_gate=write_gate)
 
     monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", _wrapped_auto)
 

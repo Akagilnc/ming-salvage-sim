@@ -1,13 +1,4 @@
-"""结算 payload 工具：与事务/恢复/相位无关的纯/准纯函数（#91 coordinator 拆分第一刀）。
-
-从 decree.py 抽出——这些是叶子函数（解析邸报决策块、密令分组承载、已裁决策正文、玩家可见
-呈现脱敏 + 注入文案常量），无 state 写 / 无事务 / 无相位转移、从不被测试 monkeypatch，
-故可纯搬家、行为保持。decree.py 仍 re-import 它们保 `from ming_sim.decree import X` 公开表面。
-
-真正的事务编排 / 恢复路由 / error-pack / 相位 coordinator 拆分**不在此**——那些函数的契约
-是隐式的 `monkeypatch.setattr(decree_mod, ...)`（几十处测试 patch decree 模块级名），跨模块搬会
-静默破坏 monkeypatch（测试仍绿但行为变），须配设计讨论决定 patch 焊点与相位守门归属。
-"""
+"""结算 payload 的请旨解析与批红选项校验。请旨来自逐旨／世界段推演，不从邸报抽取。"""
 
 from __future__ import annotations
 
@@ -66,7 +57,7 @@ def bind_decision_options(options: object) -> Dict[str, Dict[str, object]]:
 
 
 def parse_decision_blocks(narrative: str) -> tuple[str, List[Dict[str, object]]]:
-    """从邸报抽 <<DECISION>>...<<END>> JSON 块，返回 (剥离后的干净邸报, 决策列表)。
+    """解析推演段的 <<DECISION>>...<<END>> 请旨块。
 
     每块须含 title/context/options（2-3 项，每项 label + 可选 hint）。
     解析失败的块直接丢弃（连同标记一起剥离），不抛断——无决策块视作普通回合。
@@ -123,7 +114,7 @@ def parse_decision_blocks(narrative: str) -> tuple[str, List[Dict[str, object]]]
         if event_id:
             decision["event_id"] = event_id
         decisions.append(decision)
-    # #671 / P6 / ADR 0142：剥离 DECISION 机标后不得 strip 邸报原文（零删改）
+    # #671 / P6 / ADR 0142：剥离机标后不 strip 段文原文（零删改）
     clean = _DECISION_RE.sub("", narrative or "")
     return clean, decisions
 

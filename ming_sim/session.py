@@ -1066,7 +1066,6 @@ class GameSession:
                 close_night(
                     self.db, self.state,
                     content=getattr(self, "content", None),
-                    wait_timeout_s=0.0,
                     llm_config=getattr(self, "llm_config", None),
                     write_gate=gate,
                     write_queue=self._write_queue,
@@ -1224,7 +1223,6 @@ class GameSession:
                 close_night(
                     self.db, self.state,
                     content=getattr(self, "content", None),
-                    wait_timeout_s=0.0,
                     llm_config=getattr(self, "llm_config", None),
                     write_gate=getattr(self, "_write_gate", None),
                     write_queue=self._write_queue,
@@ -1831,7 +1829,6 @@ class GameSession:
         write_queue.barrier(_drain_catch_up_and_continue)
 
     def resolve_turn(self, decree: str = "", cheat_directive: str = "",
-                     inflight_wait_s: float | None = None,
                      *, allow_empty_decree: bool = False,
                      write_gate_already_held: bool = False) -> ResolveResult:
         """颁诏并推演本回合（phase1）。
@@ -1897,7 +1894,6 @@ class GameSession:
                 auto_close_open_night(
                     self.db, self.state,
                     content=getattr(self, "content", None),
-                    wait_timeout_s=inflight_wait_s,
                     llm_config=getattr(self, "llm_config", None),
                     write_gate=self._write_gate,
                 )
@@ -2481,7 +2477,7 @@ class GameSession:
         return report
 
     def advance_without_decree(
-        self, inflight_wait_s: float | None = None, *, write_gate_already_held: bool = False,
+        self, *, write_gate_already_held: bool = False,
     ):
         """CLI/web 退朝；无旨月亦走完整结算链（#1274 / owner B-2）。
 
@@ -2491,11 +2487,10 @@ class GameSession:
         """
         if self.db.list_directives(self.state, statuses=("pending", "draft")):
             return self.resolve_turn(
-                inflight_wait_s=inflight_wait_s,
                 write_gate_already_held=write_gate_already_held,
             )
         return self.resolve_turn(
-            inflight_wait_s=inflight_wait_s, allow_empty_decree=True,
+            allow_empty_decree=True,
             write_gate_already_held=write_gate_already_held,
         )
 

@@ -200,11 +200,6 @@ def knowledge_row_visible_to(
     return True
 
 
-def _prose(text: object) -> str:
-    """Carry durable report prose without mechanically interpreting it."""
-    return str(text or "")
-
-
 def project_issue_materials(
     db: Any, character_name: str, knowledge: Dict[str, object],
 ) -> list[Dict[str, object]]:
