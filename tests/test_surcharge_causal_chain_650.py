@@ -273,8 +273,7 @@ def test_player_month_recovery_consumes_old_levy_once(game, monkeypatch):
     turn = int(state.turn)
     before = _pop(db, "流民", "shaanxi")
     pre_settle(state, db, content=content)
-    db.save_resolve_context(
-        turn, "测试诏", "旧邸报", {})
+    db.save_resolve_context(turn, "测试诏", {})
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
     session = _recovery_session(db, state, content, monkeypatch)
     result = session.resolve_turn()

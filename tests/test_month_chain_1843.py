@@ -309,7 +309,7 @@ def test_player_recovery_uses_resolve_context_decree_not_ready_delta(game, monke
     turn = int(state.turn)
     decree_mod.pre_settle(state, db, content=content)
     db.save_resolve_context(
-        turn, "崩溃前原诏", "旧叙事", {},
+        turn, "崩溃前原诏", {},
         source="player_decree",
     )
     support = db.load_state().metrics["民心"]
@@ -342,7 +342,7 @@ def test_finish_rescript_phase2_stays_settling_until_advanced(game, monkeypatch)
         "UPDATE staged_declarations SET questions_json=? WHERE decree_ref=?",
         ('[{"title":"是否加赈"}]', ref),
     )
-    db.save_resolve_context(state.turn, "赈灾诏", "", {})
+    db.save_resolve_context(state.turn, "赈灾诏", {})
     db.conn.commit()
     closed_turn = int(state.turn)
     _forbid_extractor(monkeypatch)

@@ -241,11 +241,11 @@ def test_financial_decision_uses_stored_option_not_client_payload(amount):
             ],
         },
     ]
-    raw = "邸报" + "".join(
+    raw = "世界段" + "".join(
         f"<<DECISION>>{json.dumps(block, ensure_ascii=False)}<<END>>"
         for block in blocks
     )
-    _clean, decisions = parse_decision_blocks(raw)
+    decisions = parse_decision_blocks(raw)
     if type(amount) is not int:
         # Parse/save boundary rejects the whole malformed typed decision.
         assert [decision["title"] for decision in decisions] == ["巡河"]
@@ -366,7 +366,7 @@ def test_decision_parser_rejects_unknown_typed_action_and_keeps_sibling():
         )
     )
 
-    _clean, decisions = parse_decision_blocks(raw)
+    decisions = parse_decision_blocks(raw)
 
     assert [decision["title"] for decision in decisions] == ["犒军", "巡河"]
     assert decisions[0]["options"][0]["action_type"] == "grant_allocation"
@@ -382,8 +382,7 @@ def test_decision_parser_rejects_empty_or_ambiguous_labels(labels):
         "options": [{"label": label, "hint": "h"} for label in labels],
     }
     raw = f"<<DECISION>>{json.dumps(block, ensure_ascii=False)}<<END>>"
-    clean, decisions = parse_decision_blocks(raw)
-    assert clean == ""
+    decisions = parse_decision_blocks(raw)
     assert decisions == []
 
 

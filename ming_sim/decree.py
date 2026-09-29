@@ -79,21 +79,12 @@ from ming_sim.token_stats import tlog
 # 满 240 回合（即第 240 个回合结算完，1647.09）仍未分胜负则强制 timeout 收尾。
 TIMEOUT_TURN = 240
 
-# 结算 payload 工具（注入文案常量 / 决策块解析 / 密令分组承载 / 已裁决策正文 / 玩家可见
-# 呈现脱敏）已抽到 ming_sim.settlement_payload（#91 coordinator 拆分第一刀，纯搬家、行为保持）。
+# 决策块解析等叶子函数已抽到 ming_sim.settlement_payload（#91 coordinator 拆分）。
 # 此处 re-import 保 `from ming_sim.decree import X` 公开表面 + decree 内部调用点不变。
 from ming_sim.settlement_payload import (  # noqa: E402
-    CHEAT_NARRATIVE_PREFIX,
-    DECISION_NARRATIVE_PREFIX,
-    MAX_DECISIONS_PER_TURN,
     _DECISION_RE,
-    _format_decision_directive,
-    _select_secret_orders_for_sim,
-    _strip_player_internal_fields,
-    augment_secret_orders_with_due_commitments,
     bind_decision_options,
     bind_decisions_to_candidate_events,
-    group_secret_orders_for_sim,
     parse_decision_blocks,
 )
 
@@ -1082,7 +1073,7 @@ def prepare_resolve_front_half(
     （无抵达 = `[]`）。
     """
     # 已有-context 重入：只读既有真源。save_resolve_context 是整行 upsert，placeholder
-    # 默认空字段会冲掉已有原诏/source/narrative。
+    # 默认空字段会冲掉已有原诏/source。
     if state.turn_phase in FRONT_HALF_DONE_PHASES:
         existing = db.get_resolve_context(int(state.turn))
         if existing is not None:
@@ -1120,8 +1111,7 @@ def prepare_resolve_front_half(
                 else ""
             )
             db.save_resolve_context(
-                state.turn, decree_text, "", placeholder_payload,
-                secret_orders={},
+                state.turn, decree_text, placeholder_payload,
                 source=Provenance(source).value,  # #146 A：归一 enum/合法值串
                 attendant_message=preserved_attendant,
             )

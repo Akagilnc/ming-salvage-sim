@@ -669,9 +669,8 @@ def test_play_turn_hitl_advancement_ends_turn(game, monkeypatch, action):
     state.turn_phase = TurnPhase.AWAITING_DECISION.value
     db.save_state(state)
     db.save_resolve_context(
-        turn_before, "测试诏书", "月报",
+        turn_before, "测试诏书",
         {"candidate_events": [], "transit_semantics": []},
-        secret_orders=[],
     )
     db.save_turn_report(state, "邸报已成")
 
