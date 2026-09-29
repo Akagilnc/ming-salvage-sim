@@ -187,17 +187,28 @@ def _runtime_payload(db, state):
 
 
 def test_web_entry_captures_before_await_close(web_game, monkeypatch):
-    """点即入时序：入口一受理即 capture；await 抛错前快照已在。"""
+    """退朝受理后收夜前，状态口以核账为落点；失败后退出展示态。"""
     game = web_game
     before = _click_before(game.state)
     turn = int(game.state.turn)
     captured_at = {}
+    an.open_night(game.db, game.state, location="乾清宫", time_of_day="夜")
 
     from ming_sim.audience_night import AudienceNightError
 
     def _boom_close(_g, **_k):
-        snap = _g.db.get_month_open_snapshot(int(_g.state.turn))
-        captured_at["before_await"] = snap
+        captured_at["before_await"] = _g.db.get_month_open_snapshot(int(_g.state.turn))
+
+        async def read_state():
+            async with _client() as client:
+                return await client.get("/api/game/state")
+
+        # The close seam runs inside the accepted HTTP request, before the night closes.
+        # Read through a second HTTP connection without scheduling another worker.
+        response = asyncio.run(read_state())
+        assert response.status_code == 200, response.text
+        assert an.get_open_night(game.db) is not None
+        captured_at["state"] = response.json()
         raise AudienceNightError(
             "收夜中止：本夜仍有未完成回话（在飞/挂起），chat_turn_ids=[9]。夜保持开启，可原地重试。",
             code="in_flight_chat",
@@ -213,6 +224,8 @@ def test_web_entry_captures_before_await_close(web_game, monkeypatch):
     assert resp.status_code == 409, resp.text
     # 受理时已 capture（await 前快照 = 点击前四键）
     assert captured_at["before_await"] == before
+    assert captured_at["state"]["turn"]["settlement_display"] is True
+    assert captured_at["state"]["reopen_landing"] == "settlement"
     # 真失败后展示态退出
     assert game.db.get_month_open_snapshot(turn) is None
     assert game.state_payload()["turn"]["settlement_display"] is False
@@ -505,50 +518,6 @@ def test_concurrent_advance_noncreator_must_not_clear_owner_snapshot(web_game, m
 
     # A 仍在办时快照保持；释放后创建者失败路径仍可自行 exit（单请求口径不回归）
     assert game.db.get_month_open_snapshot(turn) == before
-
-
-def test_reopen_landing_settlement_beats_open_night(web_game, monkeypatch):
-    """退朝入口受理后、收夜前，另一连接的状态口须以核账为落点。"""
-    import threading
-
-    game = web_game
-    an.open_night(game.db, game.state, location="乾清宫", time_of_day="夜")
-    entered = threading.Event()
-    release = threading.Event()
-
-    def _hold_close(_g, **_kw):
-        entered.set()
-        release.wait()
-        raise RuntimeError("stop after observation")
-
-    monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", _hold_close)
-
-    def _post():
-        async def go():
-            async with _client() as client:
-                return await client.post("/api/decree/advance_without_edict")
-        try:
-            asyncio.run(go())
-        except RuntimeError:
-            pass
-
-    worker = threading.Thread(target=_post)
-    worker.start()
-    try:
-        assert entered.wait(5)
-
-        async def read_state():
-            async with _client() as client:
-                return await client.get("/api/game/state")
-
-        resp = asyncio.run(read_state())
-        assert resp.status_code == 200, resp.text
-        assert an.get_open_night(game.db) is not None
-        assert resp.json()["turn"]["settlement_display"] is True
-        assert resp.json()["reopen_landing"] == "settlement"
-    finally:
-        release.set()
-        worker.join()
 
 
 def test_exit_settlement_display_acquires_write_gate(web_game):
