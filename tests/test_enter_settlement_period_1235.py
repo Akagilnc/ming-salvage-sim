@@ -173,17 +173,28 @@ def _runtime_payload(db, state):
 
 
 def test_web_entry_captures_before_await_close(web_game, monkeypatch):
-    """点即入时序：入口一受理即 capture；await 抛错前快照已在。"""
+    """退朝受理后收夜前，状态口以核账为落点；失败后退出展示态。"""
     game = web_game
     before = _click_before(game.state)
     turn = int(game.state.turn)
     captured_at = {}
+    an.open_night(game.db, game.state, location="乾清宫", time_of_day="夜")
 
     from ming_sim.audience_night import AudienceNightError
 
     def _boom_close(_g, **_k):
-        snap = _g.db.get_month_open_snapshot(int(_g.state.turn))
-        captured_at["before_await"] = snap
+        captured_at["before_await"] = _g.db.get_month_open_snapshot(int(_g.state.turn))
+
+        async def read_state():
+            async with _client() as client:
+                return await client.get("/api/game/state")
+
+        # The close seam runs inside the accepted HTTP request, before the night closes.
+        # Read through a second HTTP connection without scheduling another worker.
+        response = asyncio.run(read_state())
+        assert response.status_code == 200, response.text
+        assert an.get_open_night(game.db) is not None
+        captured_at["state"] = response.json()
         raise AudienceNightError(
             "收夜中止：本夜仍有未完成回话（在飞/挂起），chat_turn_ids=[9]。夜保持开启，可原地重试。",
             code="in_flight_chat",
@@ -199,6 +210,8 @@ def test_web_entry_captures_before_await_close(web_game, monkeypatch):
     assert resp.status_code == 409, resp.text
     # 受理时已 capture（await 前快照 = 点击前四键）
     assert captured_at["before_await"] == before
+    assert captured_at["state"]["turn"]["settlement_display"] is True
+    assert captured_at["state"]["reopen_landing"] == "settlement"
     # 真失败后展示态退出
     assert game.db.get_month_open_snapshot(turn) is None
     assert game.state_payload()["turn"]["settlement_display"] is False
@@ -484,6 +497,8 @@ def test_concurrent_advance_noncreator_must_not_clear_owner_snapshot(web_game, m
         # B 幂等 no-op 后 409：non-blocking exit 撞锁 skip，不得代清 A 的快照
         assert game.db.get_month_open_snapshot(turn) == before
         assert game.state_payload()["turn"]["settlement_display"] is True
+        # #1855：点即入核账期 → 真 WebGame 状态口投影 settlement
+        assert game.state_payload()["reopen_landing"] == "settlement"
         # accept 幂等：B 再调仍 False（非创建）
         assert web_app._accept_settlement_period(game) is False
     finally:
@@ -743,6 +758,8 @@ def test_noncreator_exit_must_not_clear_owner_during_gatefree(web_game, monkeypa
     assert b_result.get("status") == 409, b_result
     assert game.db.get_month_open_snapshot(turn) is None
     assert game.state_payload()["turn"]["settlement_display"] is False
+    # #1855：核账脸退出后落本月盘面
+    assert game.state_payload()["reopen_landing"] == "month"
     assert web_app._settlement_entry_inflight(game) == 0
     assert game.state.turn_phase not in (
         TurnPhase.SETTLING.value, TurnPhase.AWAITING_DECISION.value,

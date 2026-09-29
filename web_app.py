@@ -1805,6 +1805,18 @@ class WebGame:
                     }
         # #1726：奏疏收件箱与未读数同份 list，禁每请求双跑 list_player_memorials。
         memorials = self.memorial_payloads()
+        # #1855 / ADR 0158 决定 7：重开落点由账本状态投影；前端不猜。
+        # 序：核账期（含停住，ADR 0149 点即入）→ settlement；夜未收 → audience；其余 → month。
+        # 点退朝后收夜前并存窗：快照已立，开夜不得覆盖核账落点。
+        reopen_landing = "month"
+        open_night = None
+        if hasattr(self.db, "conn"):
+            from ming_sim.audience_night import get_open_night
+            open_night = get_open_night(self.db)
+        if settlement_display:
+            reopen_landing = "settlement"
+        elif open_night is not None:
+            reopen_landing = "audience"
         return {
             "turn": {"year": self.state.year, "period": self.state.period,
                      "turn": self.state.turn, "phase": turn_phase,
@@ -1812,6 +1824,7 @@ class WebGame:
                      # #1356：年号纪年投影单真源，前端报头直显，禁第二份 epoch 表
                      "reign_period_label": reign_period_label(
                          self.state.year, self.state.period)},
+            "reopen_landing": reopen_landing,
             "metrics": display_metrics,
             "previous_summary": self.previous_summary,
             # #1356：邸报报头年月 ≡ 报文自身月（turn_reports 已存 year/period 投影）；

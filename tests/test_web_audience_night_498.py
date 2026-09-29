@@ -715,11 +715,15 @@ def test_legacy_pending_only_advances_to_durable_dossier_without_review_api(web_
 
     state_payload, response = asyncio.run(scenario())
     assert dossiered_id not in {row["id"] for row in state_payload["directives"]}
+    # #1855：夜未收时真 HTTP 状态口投影 audience（非手造轻壳）
+    assert state_payload["reopen_landing"] == "audience"
     assert response.status_code == 200
     assert an.get_night(game.db, int(night["id"]))["status"] == "closed"
     dossier = game.db.get_dossier_for_directive(directive_id)
     assert dossier is not None
     assert int(game.db.load_state().turn) == turn_before + 1
+    # #1855：推进后落本月盘面（复用本案真实过月，不另造 mock 伪全链）
+    assert game.state_payload()["reopen_landing"] == "month"
 
 
 def test_asgi_hanging_chat_issue_waits_for_worker_terminal(web_game, monkeypatch):

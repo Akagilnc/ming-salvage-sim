@@ -178,6 +178,31 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     expect(calls).toContain("GET /api/audience/chat");
     expect(calls.some((call) => call.includes("/api/ministers/"))).toBe(false);
     expect(host.textContent).toContain("杨嗣昌御前低语");
+
+    // 关档后夜仍未收：重挂从状态口进入殿上，卷轴停在已存最后一轮。
+    unmountTrackedRoots();
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      const path = new URL(String(url), "http://t.local").pathname;
+      if (path.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
+      if (path.endsWith("/api/game/state")) return jsonResp({
+        ...makeState(1, [], [minister("杨嗣昌"), minister("洪承畴")]),
+        reopen_landing: "audience",
+      });
+      if (path.endsWith("/api/audience/chat")) return jsonResp({ campaign_id: "c", night_id: 23, history: [], suggestions: [], can_undo_last_chat: false });
+      if (path.endsWith("/api/audience/scroll")) return jsonResp({ night_id: 23, status: "open", messages: [
+        { role: "minister", speaker: "洪承畴", content: "先轮奏报", beat: "dialogue", chat_turn_id: 1 },
+        { role: "minister", speaker: "洪承畴", content: "末轮奏报", beat: "dialogue", chat_turn_id: 2 },
+      ] });
+      if (path.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
+      if (path.endsWith("/api/saves")) return jsonResp({ saves: [] });
+      return jsonResp({});
+    }));
+    const reopened = document.createElement("div"); document.body.appendChild(reopened);
+    await act(async () => { trackRoot(reopened).render(<App />); });
+    await act(async () => {
+      await vi.waitFor(() => expect(reopened.querySelector("textarea")).not.toBeNull());
+      await vi.waitFor(() => expect(reopened.querySelector('[data-audience-turn-id="2"]')).not.toBeNull());
+    });
   });
 
   it("密令召见从真实入口在同一殿上卷宣人，不再打开按大臣实时会话 (#1849)", async () => {
@@ -1116,6 +1141,8 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     };
     const advancedState = {
       ...settlementBaseState("player"),
+      // #1855：邸报写成推进后后端投影 month；刷新/重开只认此字段，不弹旧月邸报、不进殿上。
+      reopen_landing: "month",
       turn: { year: 1627, period: 11, turn: 6, phase: "player", settlement_display: false },
       previous_summary: "十月邸报·本面",
       previous_reign_period_label: "天启七年十月",
@@ -1179,11 +1206,24 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     // 新月盘面可见半程局势（已非核账）
     expect(host.textContent).toContain(MIDCOURSE_ISSUE);
 
-    // 模拟刷新：重挂 App，落新月份盘面、不自动弹旧月邸报；史册仍可读本月档
+    // 同一状态口在核账未完时重开：殿上夜卷虽仍在，玩家先落核账。
+    liveState = {
+      ...settlementBaseState("settling"),
+      reopen_landing: "settlement",
+      turn: { year: 1627, period: 10, turn: 5, phase: "settling", settlement_display: true },
+    };
+    unmountTrackedRoots();
+    const settlingHost = await mountApp();
+    expect(settlingHost.querySelector(".chat-composer")).toBeNull();
+    expect(settlingHost.querySelector("[data-testid=wang-settlement-slip]")).not.toBeNull();
+
+    // 月完后再重开：落新月份盘面、不自动弹旧月邸报；史册仍可读本月档。
+    liveState = advancedState;
     unmountTrackedRoots();
     const host2 = await mountApp();
     expect(host2.querySelector("[data-testid=settlement-gazette-panel]")).toBeNull();
     expect(host2.querySelector('[role="dialog"][aria-label="邸报"]')).toBeNull();
+    expect(host2.querySelector(".chat-composer")).toBeNull();
     expect(host2.textContent).toContain("11 月");
     expect(host2.querySelector("[data-testid=wang-settlement-slip]")).toBeNull();
     await click(findButton(host2, "史册"));
@@ -3169,40 +3209,6 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     expect(host.querySelector('[data-local-key]')).toBeNull();
   });
 
-  it("关档再开会重新检查并恢复同一未闭召对夜", async () => {
-    const minister = { name: "洪承畴", office: "三边总督", status: "active" };
-    let scrollChecks = 0;
-    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
-      const u = new URL(String(url), "http://t.local");
-      if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
-      if (u.pathname.endsWith("/api/game/state")) return jsonResp(makeState(1, [], [minister]));
-      if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
-      if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
-      if (u.pathname.endsWith("/api/audience/scroll")) {
-        scrollChecks += 1;
-        return jsonResp({ night_id: 9, status: "open", messages: [] });
-      }
-      if (u.pathname.endsWith("/api/audience/chat")) return jsonResp({
-        minister, history: [], suggestions: [], campaign_id: "c1", night_id: 9,
-        can_undo_last_chat: false,
-      });
-      if (u.pathname.endsWith("/api/menu/exit_to_menu") && init?.method === "POST") return jsonResp({});
-      if (u.pathname.endsWith("/api/menu/continue")) return sseResp("done", { state: { ok: true } });
-      return jsonResp({});
-    }));
-    const host = await mountApp();
-    await act(async () => { await vi.waitFor(() => expect(host.querySelector(".chat-composer")).not.toBeNull()); });
-    await click(host.querySelector(".composer-exit"));
-    await click(host.querySelector('[aria-label="游戏菜单"]'));
-    await tick();
-    await click(findButton(host, "回到主菜单"));
-    await tick();
-    await click(host.querySelector(".menu-btn.primary"));
-    await act(async () => { await vi.waitFor(() => expect(host.querySelector(".hud2-stage")).toBeNull()); });
-    await click(Array.from(host.querySelectorAll("button")).find((b) => (b.textContent || "").trim() === "继续"));
-    await act(async () => { await vi.waitFor(() => expect(host.querySelector(".chat-composer")).not.toBeNull()); });
-    expect(scrollChecks).toBeGreaterThanOrEqual(2);
-  });
 
   // #1764 成案 tracer 共享夹具：召对流 + 可切换的 state 权威投影（在线 end / 离面重入同形）。
   // 两个读取来源须隔离：在线 end 投影应用失败不得由稍后木牌重取补救；离面案只证木牌重入。
