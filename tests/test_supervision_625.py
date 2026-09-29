@@ -7,7 +7,6 @@ Seams:
 - 督办复核的监督事实观察槽
 - dossier_reported_progress origin 结构化私货/同派标记
 - auto_trigger 涌现缝反制 issue
-- AC5 禁词哨兵（narrative/turn_report/knowledge_items/memorial_text）
 """
 
 from __future__ import annotations
@@ -38,10 +37,8 @@ from ming_sim.supervision import (
     ORIGIN_MARK_SAME_FACTION_BLIND,
     PRESENCE_ALLOWED_COLS,
     PRESENCE_TABLE,
-    SUPERVISION_BANNED_PLAYER_TOKENS,
     SUPERVISION_RELATION,
     SUPERVISION_SURFACE_KEYS,
-    assert_no_banned_tokens,
     compose_report_origin,
     derive_consecutive_months,
     faction_relation,

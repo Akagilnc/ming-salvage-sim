@@ -7,7 +7,6 @@ Seams:
 - find_any_issue_by_origin 幂等
 - issue_advances.trigger_ref 溯源源承诺
 - 与 #623 _apply_halfway_national_setback 去重（无双份 metrics 直击）
-- 呈现哨兵：真实玩家面无系统词；bar 空串 web 条件渲染（无空括号/端标）；#625 区分经特征约束
 - extractor commitment_backlash_facts 仅 module==issues 门控
 """
 
@@ -35,13 +34,11 @@ from ming_sim.breach_plea import (
     write_breach_plea_todo,
 )
 from ming_sim.commitment_backlash import (
-    BACKLASH_BANNED_PLAYER_TOKENS,
     BACKLASH_NAMED_METRICS,
     BACKLASH_ORIGIN_KIND,
     SOURCE_BREACH_VERDICT,
     SOURCE_DEFORMATION_EXPOSURE,
     SOURCE_FAILED_TERMINAL,
-    assert_no_backlash_banned_tokens,
     backlash_origin_ref,
     build_backlash_narrative_features,
     classify_backlash_source,

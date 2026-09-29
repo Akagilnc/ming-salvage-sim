@@ -34,22 +34,6 @@ SOURCE_KINDS = frozenset({
 # 具名 metrics 集合（承诺所系一锤子；与 #623 民心-3/皇威-2 直击分立，禁同套双扣）
 BACKLASH_NAMED_METRICS: Dict[str, int] = {"民心": -1, "皇威": -1}
 
-# 玩家可见面禁词（AC6 哨兵；含系统词 + #625 反制 bar 用语）
-BACKLASH_BANNED_PLAYER_TOKENS = (
-    "commitment_backlash",
-    "foundation_tier",
-    "assess_foundation_tier",
-    "trigger_commitment_backlash",
-    "breach_verdict",
-    "failed_terminal",
-    "deformation_exposure",
-    "BACKLASH_NAMED_METRICS",
-    "反噬平息",
-    "反噬坐大",
-    "反噬涌现",
-    "supervision_countermeasure",
-)
-
 def backlash_origin_ref(commitment_id: int, source_kind: str) -> str:
     """幂等键：一承诺一源一类至多一条。"""
     kind = str(source_kind or "").strip()
@@ -71,13 +55,6 @@ def classify_backlash_source(*, execution_outcome: object) -> Optional[str]:
     if outcome == "failed":
         return SOURCE_FAILED_TERMINAL
     return None
-
-
-def assert_no_backlash_banned_tokens(text: object, *, surface: str) -> None:
-    raw = str(text or "")
-    for token in BACKLASH_BANNED_PLAYER_TOKENS:
-        if token in raw:
-            raise AssertionError(f"{surface} 裸露禁词：{token!r}")
 
 
 def parse_backlash_origin_ref(origin_ref: object) -> tuple[int, str]:

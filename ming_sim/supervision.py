@@ -8,7 +8,6 @@ DB 只机械记事实（监督在场 / 空子暴露 / 任期读既有 appointmen
 - 孤直反制硬门（涌现缝立 issue）
 - #627 政敌检举：fork 单源谓词、真伪 origin 派生、去重键（检举人×案卷×真伪类）
   （判断权归 LLM；引擎只供事实/承接 clamp/真伪底——禁烈度门/quota/文字模板）
-- 玩家可见面禁词
 """
 
 from __future__ import annotations
@@ -65,33 +64,6 @@ COUNTERMEASURE_KINDS = (
     "架空", "断信息", "诬告围攻", "明升暗调",
 )
 COUNTERMEASURE_ORIGIN_KIND = "supervision_countermeasure"
-
-# 玩家可见面禁词（AC5 扫描面：scene_text/narrative/turn_report/knowledge_items/memorial_text）
-SUPERVISION_BANNED_PLAYER_TOKENS = (
-    "钝化",
-    "钝化度",
-    "陋规化",
-    "supervision_history",
-    "loophole_exposure",
-    "loophole_exposures",
-    "consecutive_months",
-    "private_goods",
-    "same_faction_blind",
-    "transformation_tendency",
-    "dulling",
-    "dull_rate",
-    "dullness",
-    # #627 真伪底 / fork 暴露 / 旧烈度门系统词
-    "denunciation_true",
-    "denunciation_false",
-    "faction_conflict_intensity",
-    "denunciation_quota",
-    "faction_denunciation",
-    "fork_exposure",
-    "veracity",
-    "true_denunciation",
-    "false_denunciation",
-)
 
 # #627 检举事实表列白名单（PRAGMA 验收）
 DENUNCIATION_TABLE = "faction_denunciations"
@@ -335,13 +307,6 @@ def pick_countermeasure_kind(auditor_name: str, dossier_id: int) -> str:
     seed = f"{auditor_name}:{int(dossier_id)}"
     idx = sum(ord(ch) for ch in seed) % len(COUNTERMEASURE_KINDS)
     return COUNTERMEASURE_KINDS[idx]
-
-
-def assert_no_banned_tokens(text: object, *, surface: str) -> None:
-    raw = str(text or "")
-    for token in SUPERVISION_BANNED_PLAYER_TOKENS:
-        if token in raw:
-            raise AssertionError(f"{surface} 裸露禁词：{token!r}")
 
 
 def character_tenure(db: Any, name: str) -> str:

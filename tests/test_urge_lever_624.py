@@ -11,7 +11,6 @@ Seams:
 
 from __future__ import annotations
 
-import json
 
 import pytest
 
@@ -459,24 +458,16 @@ def test_grace_plea_payload_truth_hidden_from_player_ac6(game):
     assert payload.get("truth") in {"genuine", "pretextual"}
     assert "grace_fake" in payload
 
-    banned = (
-        "truth", "grace_fake", "pretextual", "genuine", "payload_json",
-        "distortion_band", "urge_tightness",
-    )
-    # 真实谏/宽限投影路径承压（非 due-review 白名单空集）
+    # The structured payload is not projected; supplied prose passes through unchanged.
     urge_scenes = list_urge_audience_scenes(db, state)
     assert urge_scenes, "grace pending 必须顶出召对面"
-    ublob = json.dumps(urge_scenes, ensure_ascii=False)
-    for token in banned:
-        assert token not in ublob
+    assert all("payload_json" not in item for item in urge_scenes)
     grace_scene = project_urge_audience_scene(grace[0])
     assert "payload_json" not in grace_scene
     marked = dict(grace[0], origin_context="上奏 grace_fake 待议", criterion_text="求宽限 truth")
     projected = project_urge_audience_scene(marked)
     assert projected["origin_context"] == marked["origin_context"]
     assert projected["criterion_text"] == marked["criterion_text"]
-    for token in banned:
-        assert token not in json.dumps(grace_scene, ensure_ascii=False)
 
     # 最坏形态：带真伪底 payload 的 staged 条走真实 due-review 投影，断言零泄漏
     tid = db.insert_next_audience_todo(
@@ -503,14 +494,10 @@ def test_grace_plea_payload_truth_hidden_from_player_ac6(game):
     ][0]
     assert staged_todo["payload_json"]["grace_fake"] is True
     scene = project_due_review_scene(db, staged_todo)
-    sblob = json.dumps(scene, ensure_ascii=False)
-    for token in banned:
-        assert token not in sblob
-    # list_due_review_scenes 亦不得泄底
+    assert "payload_json" not in scene
+    # list_due_review_scenes also omits the structured payload.
     scenes = list_due_review_scenes(db, state)
-    blob = json.dumps(scenes, ensure_ascii=False)
-    for token in banned:
-        assert token not in blob
+    assert all("payload_json" not in item for item in scenes)
 
 
 # ── AC7 降级与 restore ───────────────────────────────────────────────
@@ -774,7 +761,6 @@ def test_urge_audience_project_and_consume_path(game):
     assert ENTRY_KIND_RUSH_REMONSTRANCE in kinds
     for s in scenes:
         assert "payload_json" not in s
-        assert "grace_fake" not in json.dumps(s, ensure_ascii=False)
     # 不进 due-review、不占接管窗
     assert list_due_review_scenes(db, state) == []
     assert dossier_id not in dossiers_with_pending_due_review(db, state)

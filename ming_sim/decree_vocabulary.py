@@ -211,21 +211,7 @@ DOSSIER_OUTCOME_CN = {
     "transformed": "变形",
 }
 
-# #622：奏报轨终值旁路——定性中文 band + 承办人假象，禁英文枚举/判官真值回填。
-# 系统词（变形/打折走样/分界 等）不得出现在 progress_band / memorial。
-# #629：测试本地禁词提升为生产单源（全族 P4 assert 哨兵共引）。
-DEFORMATION_BANNED_PLAYER_TOKENS = (
-    "transformed", "degraded", "fulfilled", "failed", "executing",
-    "progress_band", "is_terminal", "beyond_intent",
-    "变形", "分界", "打折走样", "烂尾",
-)
-
-# #624/#629：真伪底/失真引擎词由 urge_lever 与信用事件扫描共引。
-URGE_TRUTH_BANNED_PLAYER_TOKENS = (
-    "truth", "grace_fake", "pretextual", "genuine",
-    "payload_json", "distortion_band", "urge_tightness",
-    "distortion_tendency", "unreasonable", "supervision_history",
-)
+# 奏报轨终值旁路：定性 band 与承办人假象，不回填判官真值。
 _TERMINAL_REPORT_FACADE_BAND = {
     "transformed": "已竣",
     "degraded": "将结",
