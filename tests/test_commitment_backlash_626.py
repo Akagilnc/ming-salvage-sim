@@ -40,7 +40,6 @@ from ming_sim.commitment_backlash import (
     SOURCE_DEFORMATION_EXPOSURE,
     SOURCE_FAILED_TERMINAL,
     backlash_origin_ref,
-    build_backlash_narrative_features,
     classify_backlash_source,
 )
 from ming_sim.constants import GATE_TABLES

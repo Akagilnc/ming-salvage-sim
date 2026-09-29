@@ -9,13 +9,12 @@
 分档：触发侧重算 assess_foundation_tier，零新列；唯 halfway 触发。
 
 P7：硬门只落结构化事实（origin_ref/source_kind/commitment 链接/trigger_ref/
-metrics 账）；玩家可见文案由既有叙事 LLM 步从特征化输入长出（与 new_issues
-同格）。『与 #625 用语区分』以特征约束传给叙事步，不落代码文案常量。
+metrics 账）；玩家可见文案由既有叙事 LLM 步生成。
 """
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Dict, Optional
 
 # 涌现 origin 与 #625 反制隔离
 BACKLASH_ORIGIN_KIND = "commitment_backlash"
@@ -55,80 +54,3 @@ def classify_backlash_source(*, execution_outcome: object) -> Optional[str]:
     if outcome == "failed":
         return SOURCE_FAILED_TERMINAL
     return None
-
-
-def parse_backlash_origin_ref(origin_ref: object) -> tuple[int, str]:
-    """origin_ref → (commitment_id, source_kind)；非法则 (0, "")."""
-    raw = str(origin_ref or "").strip()
-    parts = raw.split(":")
-    if len(parts) != 3 or parts[0] != "commitment":
-        return 0, ""
-    try:
-        cid = int(parts[1])
-    except (TypeError, ValueError):
-        return 0, ""
-    kind = str(parts[2] or "").strip()
-    if kind not in SOURCE_KINDS:
-        return 0, ""
-    return cid, kind
-
-
-def build_backlash_narrative_features(db: Any) -> List[Dict[str, object]]:
-    """特征化输入包：供月链叙事步骤长出玩家文案。
-
-    与 new_issues LLM 路径同格——引擎只供结构化事实与呈现约束，不供成句模板。
-    『与 #625 用语区分』经 presentation_constraints.avoid_phrases 传入，非 bar 常量。
-    """
-    rows = db.conn.execute(
-        """
-        SELECT i.id, i.origin_ref, i.title,
-               (
-                   SELECT a.trigger_ref FROM issue_advances a
-                   WHERE a.issue_id = i.id
-                     AND a.trigger_kind = 'commitment_backlash'
-                   ORDER BY a.id DESC LIMIT 1
-               ) AS trigger_ref
-        FROM issues i
-        WHERE i.origin_kind = ? AND i.status = 'active'
-        ORDER BY i.id
-        """,
-        (BACKLASH_ORIGIN_KIND,),
-    ).fetchall()
-    features: List[Dict[str, object]] = []
-    for row in rows:
-        origin_ref = str(row["origin_ref"] or "")
-        cid, source_kind = parse_backlash_origin_ref(origin_ref)
-        commitment_title = ""
-        if cid > 0:
-            crow = db.conn.execute(
-                "SELECT title FROM issues WHERE id=?", (cid,),
-            ).fetchone()
-            if crow is not None:
-                commitment_title = str(crow["title"] or "")
-        if not commitment_title:
-            # 回退：硬门可能以源承诺 title 作 issue 标题链接（仍是既有事实，非新模板）
-            commitment_title = str(row["title"] or "")
-        trigger_ref = str(row["trigger_ref"] or "")
-        if not trigger_ref and cid > 0:
-            trigger_ref = f"issue:{cid}"
-        features.append({
-            "issue_id": int(row["id"]),
-            "commitment_ref": int(cid),
-            "commitment_title": commitment_title,
-            "source_kind": source_kind,
-            "origin_ref": origin_ref,
-            "trigger_ref": trigger_ref,
-            "metrics_delta": dict(BACKLASH_NAMED_METRICS),
-            # 特征约束→叙事步：与 #625 bar「反噬平息/坐大」区分；禁系统词入玩家面
-            "presentation_constraints": {
-                "avoid_phrases": ["反噬平息", "反噬坐大"],
-                "banned_system_tokens": [
-                    "commitment_backlash",
-                    "foundation_tier",
-                    "breach_verdict",
-                    "failed_terminal",
-                    "deformation_exposure",
-                ],
-            },
-        })
-    return features
