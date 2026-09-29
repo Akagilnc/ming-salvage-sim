@@ -69,9 +69,6 @@ from ming_sim.participant_roster import resolve_dossier_owner_name
 from ming_sim.decree_vocabulary import (
     dossier_action_policy,
 )
-from ming_sim.simulation import (
-    build_simulator_payload,
-)
 from ming_sim.strict_types import (
     IMPERIAL_AUTHORITY_BANDS, validate_affected_parties, validate_rejection_verdict,
     validate_verdict_affected_parties,

@@ -374,24 +374,17 @@ def test_manual_owner_example_seal_advances(tracer_client, monkeypatch):
     _assert_drafted_roster_nailed(game.db, matched[0])
 
 
-def _two_axis_owner_and_province_open(db, *, owner_name: str, region_id: str):
-    """0092 两轴既有面：结构化 owner_open_count / province_open_count（不锁 TSV 措辞）。"""
-    from ming_sim.execution_pressure import build_execution_two_axis_surface
-
-    surface = build_execution_two_axis_surface(db, transit_semantics=[])
-    owner_open = 0
-    for block in surface.get("provinces") or []:
-        for own in block.get("owners") or []:
-            if str(own.get("owner_name") or "") == owner_name:
-                owner_open = int(own.get("owner_open_count") or 0)
-                break
-        if owner_open:
-            break
-    province_open = 0
-    for block in surface.get("provinces") or []:
-        if str(block.get("region_id") or "") == region_id:
-            province_open = int(block.get("province_open_count") or 0)
-            break
+def _executing_counts(db, *, owner_name: str, region_id: str):
+    """Observe durable executing dossiers, not the retired simulator board."""
+    owner_open = db.conn.execute(
+        "SELECT COUNT(*) FROM decree_dossiers d, json_each(d.participant_roster) r "
+        "WHERE d.status='executing' AND json_extract(r.value, '$.tier')='主办' "
+        "AND json_extract(r.value, '$.character_id')=?", (owner_name,),
+    ).fetchone()[0]
+    province_open = db.conn.execute(
+        "SELECT COUNT(*) FROM decree_dossiers "
+        "WHERE status='executing' AND region_id=?", (region_id,),
+    ).fetchone()[0]
     return owner_open, province_open
 
 
@@ -399,10 +392,10 @@ def test_http_manual_directive_lands_beyond_fifteen_initiatives_1790(
     tracer_client, monkeypatch,
 ):
     """#1790 验收：≥15 件 initiative 在办时票拟再下一旨 → 第 16 成案、executing 差务、
-    turn+1 不中止；两轴该主办/属地在办数 +1。
+    turn+1 不中止；该主办/属地在办案卷数 +1。
 
     入口＝既有票拟 /api/directives（#1624 seal 同形），非 apply 层 helper、非 1565 交办、
-    非 #1783 拨帑 tracer。填帽 insert_issue 直落；观察面 build_execution_two_axis_surface。
+    非 #1783 拨帑 tracer。填帽 insert_issue 直落；观察面为持久化案卷。
     """
     import ming_sim.cli_backend as cli_backend
     import web_app
@@ -425,7 +418,7 @@ def test_http_manual_directive_lands_beyond_fifteen_initiatives_1790(
             effect_on_resolve={"metrics": {"民心": 1}},
         )
     assert db.count_active_initiatives() >= 15
-    owner_before, province_before = _two_axis_owner_and_province_open(
+    owner_before, province_before = _executing_counts(
         db, owner_name=owner_name, region_id=region_id,
     )
 
@@ -466,7 +459,7 @@ def test_http_manual_directive_lands_beyond_fifteen_initiatives_1790(
     landed = db.find_active_issue_by_origin("decree", f"dossier:{dossier['id']}")
     assert landed is not None and str(landed["kind"]) == "initiative", landed
 
-    owner_after, province_after = _two_axis_owner_and_province_open(
+    owner_after, province_after = _executing_counts(
         db, owner_name=owner_name, region_id=region_id,
     )
     assert owner_after == owner_before + 1, (owner_before, owner_after)

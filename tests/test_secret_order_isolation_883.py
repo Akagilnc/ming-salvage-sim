@@ -15,7 +15,6 @@ import pytest
 from ming_sim import issues
 from tests.test_due_review_621 import _settle_empty_month
 from tests.test_month_chain_1843 import _prepare_player_month
-from ming_sim.simulation import build_simulator_payload
 from tests.dossier_test_helpers import TYPED_COVERT_TASK, create_test_secret_order
 
 

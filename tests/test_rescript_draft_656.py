@@ -14,11 +14,9 @@ import pytest
 
 import ming_sim.rescript_draft as rescript_mod
 from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
-from ming_sim.constants import TURN_UNIT
 from ming_sim.db import GameDB
 from ming_sim.exceptions import LLMUnavailable, SettlementAbort
 from ming_sim.rescript_draft import (
-    build_rescript_draft_payload,
     generate_rescript_draft,
     select_triage_actor,
     validate_rescript_draft_items,
@@ -308,56 +306,6 @@ def test_validate_and_persist_preserve_whitespace_verbatim(game):
     assert row["context"] == raw_context
     assert row["options"] == drafts[0]["options"]
 
-def test_payload_projection_excludes_machine_condition_fields():
-    """A4 判词：票拟 issue 投影是字段白名单——只携绑定 issue_id 与明确的定性/
-    叙事文字；机器契约字段（resolve/fail/stop condition 及中文别名）整体不进票拟
-    输入，seed_events 的 public_support >60 / unrest <30 阈值串零穿透；未知字段
-    不透传（删除「任意字符串全透传」根因，零字符串扫描/擦洗）。"""
-    from ming_sim.models import GameState
-
-    state = GameState.__new__(GameState)
-    state.year, state.period, state.turn = 1630, 4, 40
-    resolve_cond = ("陕西 public_support（地方民心）>60 且 unrest（动乱值）<30，"
-                    "且驻陕官军/边军已能压制叛军即可结案")
-    simulator_payload = {"active_issues": [{
-        "issue_id": 42, "kind": "situation", "title": "陕西告饥",
-        "状态": "流民渐聚", "进度": "未见起色",
-        "局势走向": -7, "end_turn": 48,
-        "结案条件": resolve_cond,
-        "resolve_condition": resolve_cond,
-        "fail_condition": "陕西流寇成股（万人以上）攻破州县",
-        "stop_condition": "民力已竭",
-        f"当前每{TURN_UNIT}效果": {"metrics": {"民心": -1},
-            "economy": [{"account": "国库", "delta": -500}]},
-        f"上{TURN_UNIT}推进": {"delta_bar": 12, "narrative": "抚臣发帑赈济"},
-        "commitment_progress": {"months_elapsed": 3, "paid_total": 150,
-                                "remaining_to_goal": "距达标仍有差距"},
-        "未知嵌套": {"深层文字": "某处告急", "阈值": "public_support >60"},
-    }]}
-    payload = build_rescript_draft_payload(state, "邸报正文", simulator_payload,
-                                           {"name": "首辅", "office": "内阁首辅", "faction": "阉党"})
-    issues = payload["active_issues"]
-    assert len(issues) == 1
-    issue = issues[0]
-    # 白名单内：绑定 id 与定性/叙事文字
-    assert issue["issue_id"] == 42                      # 权威绑定快照保留
-    assert issue["title"] == "陕西告饥"
-    assert issue["状态"] == "流民渐聚"                   # 定性叙事保留
-    assert issue["进度"] == "未见起色"                   # 定性档位保留
-    # 白名单外字段整体不透传（含机器契约条件与任意未知嵌套）
-    for field in ("kind", "局势走向", "end_turn", "结案条件", "resolve_condition",
-                  "fail_condition", "stop_condition", f"当前每{TURN_UNIT}效果",
-                  f"上{TURN_UNIT}推进", "commitment_progress", "未知嵌套"):
-        assert field not in issue, field
-    # 机械负向判据：seed_events 阈值串零穿透整个 payload（含邸报正文之外的一切 slot）
-    serialized = json.dumps(payload, ensure_ascii=False)
-    assert ">60" not in serialized
-    assert "<30" not in serialized
-    assert "万人以上" not in serialized
-    # 纪年契约字段照旧
-    assert payload["turn"]["year"] == 1630 and payload["turn"]["reign_period_label"]
-
-
 
 def test_generate_ungrounded_region_heals_then_drops_sibling_kept(monkeypatch, tmp_path):
     """#1746：region target 未接地 → heal 耗尽只剔该 option，兄弟保留。"""
@@ -381,7 +329,6 @@ def test_generate_ungrounded_region_heals_then_drops_sibling_kept(monkeypatch, t
     assert drafts is not None and len(drafts) == 1
     assert len(drafts[0]["options"]) == 1
     assert drafts[0]["options"][0].get("label") == sibling.get("label")
-
 
 
 def test_generate_ungrounded_army_heals_then_drops_sibling_kept(monkeypatch, tmp_path):
@@ -410,41 +357,6 @@ def test_generate_ungrounded_army_heals_then_drops_sibling_kept(monkeypatch, tmp
     assert len(drafts[0]["options"]) == 1
     assert drafts[0]["options"][0].get("label") == sibling.get("label")
 
-def test_payload_projects_character_targets_full_characters_name_set(game):
-    """#1804：票拟入口人物目录外延＝characters.name 全集；不筛在朝/官职；无裸属性。"""
-    from ming_sim.rescript_draft import character_targets_from_db
-
-    db, state, _content = game
-    # 离场且无官职的在册人——目录与闸均须收纳（防回退 #1778）
-    db.conn.execute(
-        "UPDATE characters SET status='retired', office='' "
-        "WHERE name=(SELECT name FROM characters LIMIT 1)"
-    )
-    db.conn.commit()
-    known = {
-        str(row["name"])
-        for row in db.conn.execute("SELECT name FROM characters").fetchall()
-        if str(row["name"] or "").strip()
-    }
-    office_by_name = {
-        str(row["name"]): str(row["office"] or "")
-        for row in db.conn.execute("SELECT name, office FROM characters").fetchall()
-    }
-    # 票拟入口缝：目录由 db 投影注入 payload，不经共享 simulator_payload。
-    payload = build_rescript_draft_payload(
-        state, "邸报", {},
-        {"name": "首辅", "office": "内阁首辅", "faction": "阉党"},
-        character_targets=character_targets_from_db(db),
-    )
-    catalog = payload["character_targets"]
-    assert isinstance(catalog, list) and catalog
-    names = {row["name"] for row in catalog}
-    assert names == known
-    for row in catalog:
-        assert set(row) == {"name", "office"}
-        assert row["office"] == office_by_name[row["name"]]
-        for banned in ("loyalty", "ability", "integrity", "courage", "identity", "faction"):
-            assert banned not in row
 
 def test_generate_combined_target_and_roster_failures_reported_together_then_land(
     monkeypatch, tmp_path,
@@ -753,14 +665,6 @@ def test_generate_rejects_military_order_empty_assignee(monkeypatch, tmp_path):
     assert opts[0]["action_type"] == "assignment"
     assert opts[0]["label"] == item["options"][1]["label"]
 
-def test_payload_projection_without_active_issues_degrades_to_empty():
-    from ming_sim.models import GameState
-
-    state = GameState.__new__(GameState)
-    state.year, state.period, state.turn = 1630, 4, 40
-    payload = build_rescript_draft_payload(state, "邸报", {},
-                                           {"name": "首辅", "office": "内阁首辅", "faction": "阉党"})
-    assert payload["active_issues"] == []
 
 def test_prompt_zero_numeric_instruction_is_positive_qualitative():
     """P4 落 prompt 用正向表述，不写「不要显示数值」式负向句；其余承载事实/F2.3/

@@ -22,7 +22,6 @@ from ming_sim.decree import pre_settle
 from tests.test_month_chain_1843 import _prepare_player_month
 from ming_sim.exceptions import SettlementAbort
 from ming_sim.issues import apply_historical_fiscal_rates, apply_score_extraction
-from ming_sim.simulation import build_simulator_payload
 import ming_sim.issues as issues
 
 # ── 独立 oracle（content 冻结 seed 字面，非实现推导）──────────────────────────
@@ -214,11 +213,10 @@ def test_surcharge_filter_does_not_capture_other_transfer_origins(game):
         "surcharge_decrees": [decree], "population_transfers": [transfer],
     }, content, None)
     assert len(applied["population_transfers"]) == 1
-    from ming_sim.population_pressure import iter_recent_population_transfers
-    assert any(
-        item["reason"] == "灾害" and item["amount"] == 1
-        for _, item in iter_recent_population_transfers(db)
-    )
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM population_transfer_ledger WHERE reason='灾害' "
+        "AND amount=1 AND origin_ref=?", (other["origin_ref"],),
+    ).fetchone()[0] == 1
 
 
 def test_repeated_delta_apply_does_not_consume_levy_ledger(game):
@@ -401,27 +399,6 @@ def test_exact_levy_fact_stays_out_of_public_read_chain_and_free_report_enters_i
         item.get("body", "") for item in db.get_character_knowledge(state, "温体仁")["public_events"]
     )
     assert free_body in public_read
-
-
-def test_production_inputs_project_qualitative_regional_displaced_trend(game, monkeypatch):
-    db, state, content = game
-    apply_score_extraction(db, state, {
-        "surcharge_decrees": [_decree(db, state, monthly_amount=10.0)],
-    }, content, None)
-    from tests.test_due_review_621 import _settle_empty_month
-    _settle_empty_month(db, state, content, monkeypatch)
-    want = _expected_inflow_persons(10.0, SHAANXI_SUPPORT)
-
-    payload_text = str(build_simulator_payload(state, db, "", "")["classes_brief"])
-    assert "陕西：流民压力" in payload_text
-    assert "近月上升，期间加派致流民流入" in payload_text
-    assert str(want) not in payload_text
-
-
-
-
-
-
 
 
 # ── legacy 万口径档：折算随存档单位换算，sub-万不可表达 ────────────────────────
