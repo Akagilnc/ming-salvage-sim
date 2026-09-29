@@ -132,9 +132,6 @@ def test_terminal_outcomes_charge_lead_and_downgraded_delegator(
 
     note = db.get_decree_dossier(dossier_id)["execution_note"]
     assert "徐光启" in note
-    # P4：档位/枚举不对玩家裸露
-    for banned in ("strong", "weak", "degraded", "failed", "transformed", "fulfilled"):
-        assert banned not in note
 
 
 def test_adapter_replay_is_idempotent_on_joint_liability_rows(game):

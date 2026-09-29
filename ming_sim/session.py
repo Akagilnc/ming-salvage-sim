@@ -1062,7 +1062,6 @@ class GameSession:
                 close_night(
                     self.db, self.state,
                     content=getattr(self, "content", None),
-                    wait_timeout_s=0.0,
                     llm_config=getattr(self, "llm_config", None),
                     write_gate=gate,
                     write_queue=self._write_queue,
@@ -1142,7 +1141,7 @@ class GameSession:
         - 回话落定后一次转译（完整声明）；后台按轮串行、前台不等（#1842）。
           须 chat_turn_id>0（生产不变式；无对话轮的同步转译已删）。
         - 退役与回话并行的意图分类器 / 应允判读 / 故事抽取 / 边事件判官 /
-          代码触发读心（转译承接）；旧按大臣 chat() 入口暂留（收口在 X1）
+          代码触发读心（转译承接）；按大臣 chat() 入口已退役。
         - stream_emit 非空：同核走 transport 流式（SSE delta / 重试 / 失败路径）
         """
         from ming_sim.audience_night import (
@@ -1220,7 +1219,6 @@ class GameSession:
                 close_night(
                     self.db, self.state,
                     content=getattr(self, "content", None),
-                    wait_timeout_s=0.0,
                     llm_config=getattr(self, "llm_config", None),
                     write_gate=getattr(self, "_write_gate", None),
                     write_queue=self._write_queue,
@@ -1827,7 +1825,6 @@ class GameSession:
         write_queue.barrier(_drain_catch_up_and_continue)
 
     def resolve_turn(self, decree: str = "", cheat_directive: str = "",
-                     inflight_wait_s: float | None = None,
                      *, allow_empty_decree: bool = False,
                      write_gate_already_held: bool = False) -> ResolveResult:
         """颁诏并推演本回合（phase1）。
@@ -1893,7 +1890,6 @@ class GameSession:
                 auto_close_open_night(
                     self.db, self.state,
                     content=getattr(self, "content", None),
-                    wait_timeout_s=inflight_wait_s,
                     llm_config=getattr(self, "llm_config", None),
                     write_gate=self._write_gate,
                 )
@@ -2478,7 +2474,7 @@ class GameSession:
         return report
 
     def advance_without_decree(
-        self, inflight_wait_s: float | None = None, *, write_gate_already_held: bool = False,
+        self, *, write_gate_already_held: bool = False,
     ):
         """CLI/web 退朝；无旨月亦走完整结算链（#1274 / owner B-2）。
 
@@ -2488,11 +2484,10 @@ class GameSession:
         """
         if self.db.list_directives(self.state, statuses=("pending", "draft")):
             return self.resolve_turn(
-                inflight_wait_s=inflight_wait_s,
                 write_gate_already_held=write_gate_already_held,
             )
         return self.resolve_turn(
-            inflight_wait_s=inflight_wait_s, allow_empty_decree=True,
+            allow_empty_decree=True,
             write_gate_already_held=write_gate_already_held,
         )
 

@@ -181,7 +181,7 @@
 .decision-hint-line { font-size: 13px; color: #9a8d6a; }
 
 /* #1854 核账期统一恢复横幅：一行系统提示 +「重试」
-   #1236：z-index 须高于 SettlementLock 装饰（40），保证必达面不被遮。 */
+   #1236：保证必达批红面不被其他浮层遮住。 */
 .recovery-banner {
   position: fixed;
   top: 64px;

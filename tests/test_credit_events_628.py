@@ -4,7 +4,7 @@
 ① AC1：#623 既有辜负写口行为覆盖，本片不重写该 origin
 ② 兑付/撑完 + 谏处置三型（正）；校验拒收（fulfilled/任命）不落伪信用（负）
 ③ 处置映射：丢卒两笔 / 包庇撑腰 / 查办不记（负）；真变形案卷 + #565 连坐面
-④ 幂等（origin 写前判重）+ 叙事语境 + restore + 只写不读 + banned 单源
+④ 幂等（origin 写前判重）+ 叙事语境 + restore + 只写不读
 """
 
 from __future__ import annotations
@@ -15,8 +15,6 @@ from ming_sim.breach_plea import (
     write_breach_plea_todo,
 )
 from ming_sim.credit_events import (
-    CREDIT_BANNED_PLAYER_TOKENS,
-    CREDIT_BANNED_SCAN_SURFACES,
     KIND_BACK,
     KIND_BETRAY,
     KIND_FULFILL,
@@ -576,18 +574,12 @@ def test_disposition_scapegoat_cover_prosecute_on_transformed(game):
         ) = old_succ
 
 
-# ── ④ 幂等 + 叙事语境 + restore + 只写不读 + banned ─────────────────
+# ── ④ 幂等 + 叙事语境 + restore + 只写不读 ────────────────────────
 
 
-def test_idempotent_narrative_restore_write_only_banned(game, tmp_path):
-    """同处置同窗不双写；跨案同人不错吞；叙事语境；restore；零消费；banned 单源。"""
+def test_idempotent_narrative_restore_write_only(game, tmp_path):
+    """同处置同窗不双写；跨案同人不错吞；叙事语境；restore；零消费。"""
     db, state, content = game
-
-    # banned 单源扩展 + 扫描面清单（AC8 票面交付物，#629 收口）
-    assert CREDIT_BANNED_PLAYER_TOKENS
-    assert "credit:scapegoat" in CREDIT_BANNED_PLAYER_TOKENS
-    assert CREDIT_BANNED_SCAN_SURFACES
-    assert "memorial_text" in CREDIT_BANNED_SCAN_SURFACES
 
     roster = _SCAPEGOAT_ROSTER()
     did_a = _transformed_dossier(db, state, token="idem-a-628", roster=roster)

@@ -118,8 +118,7 @@ def test_web_issue_endpoint_returns_structured_abort(monkeypatch):
                 after_drain()
 
         def resolve_turn(
-            self, cheat_directive="", inflight_wait_s=None,
-            write_gate_already_held=False,
+            self, cheat_directive="", write_gate_already_held=False,
         ):
             raise SettlementAbort(
                 "本月结算失败，进度已保存，可重试。\n错误包已生成：/tmp/x\n请把该文件夹发给作者，以便排查。",

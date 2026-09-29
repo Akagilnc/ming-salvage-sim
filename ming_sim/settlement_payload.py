@@ -1,12 +1,4 @@
-"""结算 payload 工具：与事务/恢复/相位无关的纯/准纯函数（#91 coordinator 拆分第一刀）。
-
-从 decree.py 抽出——这些是决策块等叶子函数，无 state 写 / 无事务 / 无相位转移，
-decree.py 只 re-import 当前调用者使用的名字。
-
-真正的事务编排 / 恢复路由 / error-pack / 相位 coordinator 拆分**不在此**——那些函数的契约
-是隐式的 `monkeypatch.setattr(decree_mod, ...)`（几十处测试 patch decree 模块级名），跨模块搬会
-静默破坏 monkeypatch（测试仍绿但行为变），须配设计讨论决定 patch 焊点与相位守门归属。
-"""
+"""结算 payload 的请旨解析与批红选项校验。请旨来自逐旨／世界段推演，不从邸报抽取。"""
 
 from __future__ import annotations
 
@@ -26,7 +18,8 @@ RESCRIPT_CAPABILITY_DECISIONS = frozenset({
     "force_promulgated", "withdrawn", "hold",
 })
 
-# 决策块边界标记：当前月链只用它读取请旨候选，不改写自由正文。
+# 逐旨／世界段预推的请旨机标；不解析邸报正文。
+# 只匹配显式机标本体；邻接 whitespace 属原文，不得一并消费（P6 / #671 / ADR 0142）
 _DECISION_RE = re.compile(r"<<DECISION>>\s*(\{.*?\})\s*<<END>>", re.DOTALL)
 MAX_DECISIONS_PER_TURN = 5
 

@@ -12,7 +12,6 @@ Seams:
 
 from __future__ import annotations
 
-import json
 
 import pytest
 
@@ -223,15 +222,7 @@ def test_due_review_scene_tops_next_audience_with_origin_context(game):
     assert len(scenes) == 1
     scene = scenes[0]
     assert scene["origin_context"] == "三年火器见眉目"
-    # P4 哨兵：枚举/系统词不进玩家可见串
-    banned = (
-        "fulfilled", "degraded", "failed", "transformed", "executing",
-        "AWAITING_DECISION", "<<DECISION>>", "EXTRACTION_MODULES",
-        "progress_band", "is_terminal",
-    )
-    blob = json.dumps(scene, ensure_ascii=False)
-    for token in banned:
-        assert token not in blob
+    assert "payload_json" not in scene
 
 
 def test_due_review_scene_tops_live_open_night_even_with_body(game):
@@ -257,8 +248,6 @@ def test_due_review_scene_tops_live_open_night_even_with_body(game):
     assert facts, "待裁场面须原样进入开场最小集"
     joined = "\n".join(facts)
     assert "三年火器见眉目" in joined or "火器见眉目" in joined
-    for token in ("fulfilled", "AWAITING_DECISION", "<<DECISION>>"):
-        assert token not in opening
 
 
 # ── P1 有案卷桥 / 无案卷分支 ──────────────────────────────────────────

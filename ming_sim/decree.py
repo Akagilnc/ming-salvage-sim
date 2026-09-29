@@ -79,7 +79,7 @@ from ming_sim.token_stats import tlog
 # 满 240 回合（即第 240 个回合结算完，1647.09）仍未分胜负则强制 timeout 收尾。
 TIMEOUT_TURN = 240
 
-# 决策块解析等叶子函数已抽到 ming_sim.settlement_payload（#91 coordinator 拆分）。
+# 逐旨／世界段请旨解析工具位于 ming_sim.settlement_payload，不从邸报抽取。
 # 此处 re-import 保 `from ming_sim.decree import X` 公开表面 + decree 内部调用点不变。
 from ming_sim.settlement_payload import (  # noqa: E402
     _DECISION_RE,

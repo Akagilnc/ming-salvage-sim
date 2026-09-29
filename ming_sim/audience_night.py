@@ -180,8 +180,6 @@ CLOSE_STEPS = (
 )
 
 # 在飞回话：轮询间隔；wait 只消费既有 chat turn/worker 终态，不按 elapsed 伪造失败（#1353 K10a）。
-# DEFAULT_IN_FLIGHT_WAIT_S 仅作签名/调用方兼容残留，不再驱动墙钟 409。
-DEFAULT_IN_FLIGHT_WAIT_S = 30.0
 DEFAULT_IN_FLIGHT_POLL_S = 0.05
 
 # 收夜提交的 night-domain kinds（密令应允即落地，不进收夜提交）
@@ -1033,7 +1031,6 @@ def wait_in_flight_clear(
     db: Any,
     night_id: int,
     *,
-    timeout_s: float | None = None,
     poll_s: float | None = None,
     write_gate: Any = None,
 ) -> None:
@@ -1041,10 +1038,8 @@ def wait_in_flight_clear(
 
     #1353 K10a / ADR 0149：工人落 active/failed/interrupted 终态即续跑。
     真挂死终结属 provider/worker 接缝（硬超时 → 失败终态 → 本等待自然解除）；
-    timeout_s 保留调用方签名兼容，**不再**用于墙钟 409。
     #1353 r7：每次轮询短持 write_gate 读共享 conn，sleep 必在闸外（禁持锁睡眠）。
     """
-    del timeout_s  # 签名兼容；禁 elapsed 伪造失败（K10a）
     if poll_s is None:
         poll_s = DEFAULT_IN_FLIGHT_POLL_S
     gate = _gate_cm(write_gate)
@@ -1223,7 +1218,6 @@ def close_night(
     night_id: Optional[int] = None,
     content: Any = None,
     auto: bool = False,
-    wait_timeout_s: float | None = None,
     crash_after_step: Optional[int] = None,
     on_step: Optional[Callable[[int, Dict[str, Any]], None]] = None,
     on_closing: Optional[Callable[[], None]] = None,
@@ -1245,8 +1239,6 @@ def close_night(
 
     背书失败 → OPEN、cursor=0、draft identity 保留。成功前不得判官/公开明发/终局效果/CLOSED。
     """
-    if wait_timeout_s is None:
-        wait_timeout_s = DEFAULT_IN_FLIGHT_WAIT_S
     # #1353 r7：共享 conn 读一律短持 runtime gate（禁闸外裸 SELECT）。
     gate = _gate_cm(write_gate)
     if night_id is None:
@@ -1265,7 +1257,7 @@ def close_night(
 
     if night["status"] == NIGHT_STATUS_OPEN:
         wait_in_flight_clear(
-            db, night_id, timeout_s=wait_timeout_s, write_gate=write_gate,
+            db, night_id, write_gate=write_gate,
         )
         from ming_sim.audience_translation import catch_up_pending_translations
         if llm_config is not None and write_gate is not None and write_queue is not None:
@@ -1373,7 +1365,6 @@ def auto_close_open_night(
     state: GameState,
     *,
     content: Any = None,
-    wait_timeout_s: float | None = None,
     crash_after_step: Optional[int] = None,
     llm_config: Any = None,
     write_gate: Any = None,
@@ -1394,7 +1385,6 @@ def auto_close_open_night(
         night_id=int(open_n["id"]),
         content=content,
         auto=True,
-        wait_timeout_s=wait_timeout_s,
         crash_after_step=crash_after_step,
         llm_config=llm_config,
         write_gate=write_gate,

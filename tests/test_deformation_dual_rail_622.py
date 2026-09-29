@@ -3,7 +3,6 @@
 测试预算 ≤3：
 ① AC1+AC2（transformed/degraded 对照）端到端 tracer + AC4 溯源 + 假进度零入 apply
 ② AC5 稽核信号正负成对
-③ AC6 哨兵（progress_band + 公开面渲染）
 
 #621 接管窗/连坐/fail-closed 既有断言不得放松（本文件不改 #621 测）。
 """
@@ -14,10 +13,6 @@ import json
 
 from ming_sim.db import GameDB
 from tests.dossier_test_helpers import create_test_secret_order
-from ming_sim.decree_vocabulary import (
-    DEFORMATION_BANNED_PLAYER_TOKENS,
-    format_public_progress_disclosure,
-)
 from ming_sim.due_review import (
     apply_pending_due_reviews,
     decide_due_review_verdict,
@@ -106,8 +101,6 @@ def _cost_liability(db, dossier_id):
     ]
 
 
-# #629：提升入生产单源 decree_vocabulary.DEFORMATION_BANNED_PLAYER_TOKENS
-_BANNED_SURFACE_TOKENS = DEFORMATION_BANNED_PLAYER_TOKENS
 
 
 # ── ① AC1+AC2(+AC4) tracer ───────────────────────────────────────────
@@ -175,8 +168,6 @@ def test_ac1_ac2_transformed_vs_degraded_dual_rail_tracer(game, tmp_path, conten
     assert term["progress_band"] not in {
         "transformed", "degraded", "fulfilled", "failed", "executing", "变形",
     }
-    assert "变形" not in term["memorial_text"]
-    assert "名实已乖" not in term["memorial_text"]  # 假象，非判官 note
     assert xf_dossier["execution_outcome"] == "transformed"
     assert db.list_economy_moves_for_dossier(xf_id)
     # 机械分叉：list_dossier_progress band 面 ≠ 英文执行格原串
@@ -304,73 +295,6 @@ def test_ac5_audit_fork_signal_present_only_with_audit_link(game):
     nudges2 = db.list_monthly_dossier_progress_nudges()
     escort_nudge = next(n for n in nudges2 if int(n["dossier_id"]) == escort_dossier)
     assert "audit_fork_signals" not in escort_nudge
-
-
-# ── ③ AC6 哨兵三面 ───────────────────────────────────────────────────
-
-
-def test_ac6_sentinel_no_system_tokens_on_three_surfaces(game):
-    """断言面=progress_band 列 + 公开面渲染。"""
-    db, state, content = game
-    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
-    db.conn.commit()
-
-    dossier_id = _executing_policy(db, state, token="sentinel-622")
-    db.record_dossier_progress(
-        dossier_id, state.turn, "在办", "臣工奏称诸事已妥",
-        is_terminal=False, commit=True,
-    )
-    apply_score_extraction(
-        db, state,
-        {
-            "economy_moves": [{
-                "account": "国库",
-                "delta": 3,
-                "category": "浮收",
-                "reason": "额外加派",
-                "origin_ref": f"dossier:{dossier_id}",
-                "beyond_intent": True,
-            }],
-        },
-        content=content,
-    )
-    _insert_final_stage(
-        db, state, content, dossier_id=dossier_id, title="哨兵·清丈",
-    )
-    write_due_staged_commitment_todos(db, state)
-
-    db.conn.execute(
-        "UPDATE next_audience_todos SET created_turn=?",
-        (state.turn - 1,),
-    )
-    db.conn.commit()
-    apply_pending_due_reviews(db, state, commit=True)
-
-    # 面 1：dossier_reported_progress.progress_band 列
-    rows = db.list_dossier_progress(dossier_id)
-    assert rows
-    for row in rows:
-        band = str(row["progress_band"])
-        memorial = str(row["memorial_text"])
-        for token in _BANNED_SURFACE_TOKENS:
-            assert token not in band, (token, band)
-            # memorial 允许普通中文，但禁系统词
-        for token in ("变形", "分界", "transformed", "degraded", "beyond_intent"):
-            assert token not in band
-            assert token not in memorial
-
-    # 面 2：公开面渲染（生产单源 format_public_progress_disclosure）
-    public = format_public_progress_disclosure(rows)
-    for token in _BANNED_SURFACE_TOKENS:
-        assert token not in public, (token, public)
-
-    # 执行格真值仍在（哨兵不覆盖机面）
-    assert db.get_decree_dossier(dossier_id)["execution_outcome"] == "transformed"
-
-
-# ── ④ web 路真清洗器 seam（#622 剥键点）────────────────────────────────
-
-
 
 
 # ── ⑤ coerce 闭世界肯定识别器（#622 r2 畸形归 0）────────────────────

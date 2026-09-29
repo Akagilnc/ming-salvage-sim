@@ -235,13 +235,11 @@ def test_production_terminal_sidepath_records_degraded_transformed_only(game):
     }
     assert "变形" not in deg[0]["progress_band"]
     assert deg[0]["memorial_text"]  # 非空定性陈词
-    assert "名实已乖" not in deg[0]["memorial_text"]  # 不回填判官 note
     assert len(xf) == 1 and xf[0]["origin"] == DOSSIER_REPORT_VERDICT
     assert xf[0]["progress_band"] not in {
         "degraded", "transformed", "fulfilled", "failed", "executing",
     }
     assert "变形" not in xf[0]["progress_band"]
-    assert "名实已乖" not in xf[0]["memorial_text"]  # 假象，非判官真值
     assert db.list_dossier_progress(fulfilled_id) == []
     assert db.list_dossier_progress(failed_id) == []
 

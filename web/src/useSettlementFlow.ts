@@ -274,7 +274,7 @@ export function useSettlementFlow({
       if (outcome.kind === "decisions") {
         // 出重大抉择：暂停弹窗逐个亲裁，裁完调 submitDecisions 续跑结算。
         // #1234：同会话停窗经既有状态口刷新 React 态——yearMonthLabel / 顶栏四键读到 settlement_display 与快照叠影。
-        // 不 reload（整页刷新只在月完成）；不自判核账态；不平行第二展示通道。
+        // 此处不 reload；仅 409 且服务端已推进时以整页刷新恢复陈旧令牌。不自判核账态，不平行第二展示通道。
         const failures = outcome.data?.pending_action_failures || [];
         setDecisionFailures(failures);
         const route = routeIssueDecisions(outcome.data.decisions || []);
@@ -384,7 +384,7 @@ export function useSettlementFlow({
         },
       );
       // #1433 / #1337 hop 族：退朝若停在批红，消费 awaiting_decision/decisions（同 issueDecree），
-      // 不盲 reload——整页刷新只在月完成；批红面经 loadState 状态口投影不丢。
+      // 不盲 reload——批红面经 loadState 状态口投影；仅 409 且服务端已推进时整页刷新。
       if (data.awaiting_decision) {
         const failures = data.pending_action_failures || [];
         setDecisionFailures(failures);

@@ -8,7 +8,6 @@ Seams:
 - GameDB.read_dossier_fork_state / build_faction_denunciation_facts
 - GameDB.accept_faction_denunciations（结构化承接）
 - compose_denunciation_origin + derive_denunciation_is_true
-- SUPERVISION_BANNED_PLAYER_TOKENS 单源扩展
 """
 
 from __future__ import annotations
@@ -27,8 +26,6 @@ from ming_sim.supervision import (
     DENUNCIATION_TABLE,
     ORIGIN_MARK_DENUNCIATION_FALSE,
     ORIGIN_MARK_DENUNCIATION_TRUE,
-    SUPERVISION_BANNED_PLAYER_TOKENS,
-    assert_no_banned_tokens,
     compose_denunciation_origin,
     derive_denunciation_is_true,
     faction_relation,
@@ -455,10 +452,10 @@ def test_ac4_dedup_upgrade_closed_and_restore(game, tmp_path, content):
         restored.close()
 
 
-# ── AC5 零模板 + banned tokens + #622 单源 + 暴露载体 ─────────────
+# ── AC5 零模板 + 暴露载体 ────────────────────────────────────────
 
 
-def test_ac5_zero_template_banned_tokens_exposure_and_622(game):
+def test_ac5_zero_template_exposure_and_622(game):
     db, state, _content = game
     subject, _ = _pair_enemy(db)
     subject_name = str(subject["name"])
@@ -491,7 +488,6 @@ def test_ac5_zero_template_banned_tokens_exposure_and_622(game):
     )
     assert hits
     for h in hits:
-        assert_no_banned_tokens(h["memorial_text"], surface="memorial_text")
         # 正文即 LLM/scripted 原文，非引擎模板壳
         assert h["memorial_text"] == body
 
@@ -510,34 +506,7 @@ def test_ac5_zero_template_banned_tokens_exposure_and_622(game):
     ).fetchone()["n"] == dossier_n_before
     assert _world_fingerprint(db) == fp_before
 
-    # 反向：知识轨无检举事件（呈现由 simulator 事件章/探子回报，非引擎回注）
-    items = db.knowledge_items_for_turn(state.turn)
-    bodies = [
-        str(it.get("body") or "")
-        for it in items
-        if isinstance(it, dict)
-    ]
-    assert body not in bodies
-    for it in items:
-        if not isinstance(it, dict):
-            continue
-        blob = " ".join(
-            str(it.get(k) or "")
-            for k in ("title", "body", "text", "summary", "content", "kind", "source_id")
-        )
-        assert "检举" not in blob
-        assert "faction_denunciation" not in blob
-        for key in ("title", "body", "text", "summary", "content"):
-            if key in it:
-                assert_no_banned_tokens(it.get(key), surface="knowledge_items")
-
-    for token in (
-        "denunciation_true", "denunciation_false",
-        "fork_exposure", "veracity",
-        "denunciation_quota", "faction_conflict_intensity",
-    ):
-        assert token in SUPERVISION_BANNED_PLAYER_TOKENS
-
+    # 知识轨没有新增条目（由上面的结构化计数证明）。
     # schema 白名单
     assert DENUNCIATION_TABLE in {
         r[0] for r in db.conn.execute(

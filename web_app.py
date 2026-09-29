@@ -3238,7 +3238,7 @@ def _exit_settlement_display_on_failure(game, *, blocking: bool = False) -> None
 
 
 def _auto_close_open_night_gate_free(
-    game, *, inflight_wait_s: float = 0.0, write_gate: Any = None,
+    game, *, write_gate: Any = None,
 ) -> None:
     """Close the open audience night outside any outer runtime write gate.
 
@@ -3262,7 +3262,6 @@ def _auto_close_open_night_gate_free(
         db,
         game.state,
         content=getattr(game, "content", None),
-        wait_timeout_s=float(inflight_wait_s),
         llm_config=getattr(session, "llm_config", None) if session is not None else None,
         write_gate=_game_write_gate(game) if write_gate is None else write_gate,
     )
@@ -3470,7 +3469,7 @@ def _settlement_period_entry(
 
         def _close_open_night() -> None:
             _auto_close_open_night_gate_free(
-                game, inflight_wait_s=0.0, write_gate=close_gate,
+                game, write_gate=close_gate,
             )
 
         sess.await_translations_before_month(after_drain=_close_open_night)
@@ -5615,7 +5614,7 @@ def api_advance_without_edict(
                 # → resolve_turn(allow_empty_decree) → pre_settle+simulator+settle）。
                 # 16ms 快路已废；decree.advance_without_edict 空壳已删；有草案时 advance 内转 resolve_turn。
                 settlement_result = game.session.advance_without_decree(
-                    inflight_wait_s=0.0, write_gate_already_held=True,
+                    write_gate_already_held=True,
                 )
                 # #1769：last_decree 须在 end_turn/refresh 之前取样
                 # （refresh→begin_turn 会清 last_decree）。awaiting 不计 steam。
@@ -5772,7 +5771,7 @@ def api_issue_decree(body: IssueDecreeRequest = IssueDecreeRequest()) -> Dict[st
                 # #1277/#1351：获锁后、resolve_turn 前比对令牌；不匹配 → 409（样板 finally 清展示态）。
                 _reject_stale_month_token(game, body.expected_turn, token_label="颁诏")
                 result = game.session.resolve_turn(
-                    cheat_directive=body.cheat, inflight_wait_s=0.0,
+                    cheat_directive=body.cheat,
                     write_gate_already_held=True,
                 )
                 decree = game.session.last_decree
@@ -5876,7 +5875,7 @@ async def api_issue_decree_stream(body: IssueDecreeRequest = IssueDecreeRequest(
                     # #1277/#1351：获锁后、resolve_turn 前比对令牌；不匹配 → 409（样板 finally 清展示态）。
                     _reject_stale_month_token(game, body.expected_turn, token_label="颁诏")
                     result = game.session.resolve_turn(
-                        cheat_directive=body.cheat, inflight_wait_s=0.0,
+                        cheat_directive=body.cheat,
                         write_gate_already_held=True,
                     )
                     decree = game.session.last_decree
