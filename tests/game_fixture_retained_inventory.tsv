@@ -150,25 +150,6 @@ tests/test_decree_commitment_settlement_229.py	test_one_shot_end_turn_commitment
 tests/test_decree_commitment_settlement_229.py	test_semantically_empty_one_shot_commitment_surfaces_and_acks_once	1431	writable isolation required: line 1433 invokes execute(UPDATE issues SET status='dropped' WHERE status='active')
 tests/test_decree_commitment_settlement_229.py	test_metadata_only_one_shot_commitment_surfaces_and_acks_once	1498	writable isolation required: line 1500 invokes execute(UPDATE issues SET status='dropped' WHERE status='active')
 tests/test_decree_commitment_settlement_229.py	test_due_one_shot_commitment_ack_closes_review_loop_without_effects	1562	writable isolation required: line 1564 invokes execute(UPDATE issues SET status='dropped' WHERE status='active')
-tests/test_driver.py	test_cli_settle_rejects_non_dict_envelope_delta	25	writable isolation required: line 29 invokes write_text
-tests/test_driver.py	test_run_settle_none_delta_is_empty_turn	46	writable isolation required: line 50 invokes run_settle
-tests/test_driver.py	test_run_settle_logs_chapter_memory_skip	54	writable isolation required: line 59 invokes run_settle
-tests/test_driver.py	test_run_settle_no_chapter_skip_audit_when_settle_aborts	65	writable isolation required: line 73 invokes run_settle
-tests/test_driver.py	test_run_settle_records_non_dict_nested_value	78	writable isolation required: line 82 invokes run_settle
-tests/test_driver.py	test_run_settle_records_non_dict_module_value	98	writable isolation required: line 102 invokes run_settle
-tests/test_driver.py	test_run_settle_normalizes_chinese_delta_and_advances	125	writable isolation required at line 134: production mutation/isolation call: run_settle
-tests/test_driver.py	test_run_settle_persists_applied_person_results_for_player_visible_extraction	173	writable isolation required: line 178 invokes run_settle
-tests/test_driver.py	test_run_settle_preserves_legacy_person_key_order_after_issue_close	213	writable isolation required: line 221 invokes insert_issue
-tests/test_driver.py	test_run_settle_preserves_unified_person_key_order_after_issue_close	267	writable isolation required: line 275 invokes insert_issue
-tests/test_driver.py	test_cli_settle_applies_delta_file	329	writable isolation required at line 337: production mutation/isolation call: write_text
-tests/test_driver.py	test_cli_settle_envelope_persists_narrative	351	writable isolation required: line 357 invokes write_text
-tests/test_driver.py	test_run_settle_persists_resolve_context_before_settle	384	writable isolation required: line 404 invokes run_settle
-tests/test_driver.py	test_run_settle_clears_resolve_context_on_completion	415	writable isolation required: line 419 invokes run_settle
-tests/test_driver.py	test_crash_inside_pre_settle_leaves_no_ready_context	423	writable isolation required: exercises a real transaction, rollback, or settlement lifecycle boundary
-tests/test_driver.py	test_persist_crash_rolls_back_pre_settle	443	writable isolation required: isolated read_game/query_only probe reaches a real SQLite write in test_persist_crash_rolls_back_pre_settle
-tests/test_driver.py	test_run_settle_player_sourced_rejection_surfaces_diegetic_hint	561	writable isolation required: line 566 invokes run_settle
-tests/test_driver.py	test_run_settle_no_rejection_no_hint	575	writable isolation required: line 579 invokes run_settle
-tests/test_driver.py	test_run_settle_system_source_rejection_stays_silent	585	writable isolation required: line 589 invokes run_settle
 tests/test_economy_section_rejections.py	test_top_level_bad_account_rejected_good_lands	34	writable isolation required: line 39 invokes run_settle
 tests/test_economy_section_rejections.py	test_top_level_nonint_delta_rejected	52	writable isolation required: line 57 invokes run_settle
 tests/test_economy_section_rejections.py	test_zero_delta_economy_no_reject_no_apply	80	writable isolation required: line 85 invokes run_settle
@@ -578,9 +559,9 @@ tests/test_power_section_rejections.py	test_reason_carrier_aliases_not_recorded_
 tests/test_power_section_rejections.py	test_all_reason_aliases_consumed_as_reason	255	writable isolation required: line 261 invokes run_settle
 tests/test_pre_settle_transaction.py	test_crash_reload_at_settling_no_double_fiscal_tick	30	writable isolation required: line 38 invokes pre_settle
 tests/test_pre_settle_transaction.py	test_settling_survives_begin_turn_phase_whitelist	57	writable isolation required: line 65 invokes save_state
-tests/test_pre_settle_transaction.py	test_driver_pre_settle_same_transaction_semantics	118	writable isolation required: line 133 invokes pre_settle
+tests/test_pre_settle_transaction.py	test_pre_settle_rolls_back_on_seed_issue_failure	116	writable isolation required: invokes pre_settle
 tests/test_pre_settle_transaction.py	test_crash_inside_pre_settle_no_missing_fiscal	146	writable isolation required: line 160 invokes pre_settle
-tests/test_pre_settle_transaction.py	test_two_consecutive_driver_settles_both_get_fiscal_tick	182	writable isolation required: line 191 invokes run_settle
+tests/test_pre_settle_transaction.py	test_two_consecutive_player_months_both_get_fiscal_tick	178	writable isolation required: invokes _settle_empty_month
 tests/test_pre_settle_transaction.py	test_enter_review_does_not_clobber_settling	203	writable isolation required: line 211 invokes save_state
 tests/test_pre_settle_transaction.py	test_advance_without_edict_refused_after_settling	224	writable isolation required: line 229 invokes pre_settle
 tests/test_pre_settle_transaction.py	test_simulator_failure_keeps_settling_for_retry	274	writable isolation required: real resolve entry persists settling state and verifies simulator failure remains retryable without advancing

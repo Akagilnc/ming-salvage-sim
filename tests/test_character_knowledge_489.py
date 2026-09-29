@@ -784,8 +784,8 @@ def test_knowledge_exclusion_reads_current_office_without_nameerror(
     else:
         assert knowledge["events"] == []
 
-def test_knowledge_projects_gazette_and_chapter_sources_per_character(game):
-    """同一份公共叙事中的密事不能借原始邸报/章节副本泄漏。"""
+def test_knowledge_projects_public_events_without_leaking_private_matters(game):
+    """邸报含密事时，人物知识面只投影其有权知道的公开事件。"""
     db, state, content = game
     ministers = [
         character for character in content.characters.values()

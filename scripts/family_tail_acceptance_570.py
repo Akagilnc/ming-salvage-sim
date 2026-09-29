@@ -230,7 +230,7 @@ def _first_month_gazette_via_production_settle(
 ) -> str:
     """#1356 P-5 邸报臂：生产 GameSession 首月 advance_without_decree 落库 turn_report。
 
-    不 mock simulator/extractor/memory；不 GameSession.__new__；不自造 narrative。
+    使用真实玩家月链写邸报；不 GameSession.__new__；不自造 narrative。
     结算失败或空报 → 返回空串（空不计过；不恢复 seed/固定模板）。
     须在种植 proposed 案卷之前调用（否则结算会再进颁布判官）。
     """
@@ -550,8 +550,7 @@ def main() -> int:
             for line in trace_path.read_text(encoding="utf-8").splitlines()
             if line.strip()
         ]
-        # #1356 r4 诚实契约：真实首月结算会追加 simulator/extractor/chapter_memory
-        # 等多条 TRACE，不再要求 length == samples。
+        # 首月结算中的其他模型调用也可能留下 TRACE，不要求总条数等于样本数。
         # 仍钉：全部无 error；颁布判官每 sample 恰 1 条。
         errored = [r for r in trace_records if r.get("error") is not None]
         if errored:
@@ -610,8 +609,8 @@ def main() -> int:
             },
             "trace_contract": (
                 f"cli: all traces error-free ∧ promulgation-judge count == samples "
-                f"({args.samples}); settlement simulator/extractor/... extras allowed "
-                f"(no longer length == samples)"
+                f"({args.samples}); other month-chain traces allowed "
+                f"(total length is not constrained)"
             ),
         },
         "summary": {
@@ -629,7 +628,7 @@ def main() -> int:
             "P4: 邸报 arm 仍经生产首月结算取落库 "
             "turn_report 作真报证据（空不造假、不恢复 seed）。"
             "密奏=dossier progress；召对=referenceable brief。",
-            "CLI trace: real first-month settle emits extra simulator/extractor traces; "
+            "CLI trace: first-month settlement may add other model traces; "
             "contract pins judge-count == samples and zero errors, not total length.",
         ],
         "samples": samples,

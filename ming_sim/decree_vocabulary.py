@@ -118,7 +118,7 @@ TARGET_KINDS = frozenset({
 # ADR 0055 / #560: the single policy source for dossier admission and effect
 # timing.  Consumers must not infer these properties from ad-hoc action sets.
 # ``payload`` means a structured effect is materialized after promulgation;
-# ``narrative`` means the simulator/extractor owns the effect; ``immediate``
+# ``narrative`` means the month-chain world segment owns the effect; ``immediate``
 # is an exempt palace/private action already materialized at admission.
 _DOSSIER_NARRATIVE_ACTIONS = frozenset({
     "policy", "strategy_selection", "approve_reject", "special_decree",

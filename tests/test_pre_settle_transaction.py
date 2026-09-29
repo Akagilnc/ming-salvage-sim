@@ -113,9 +113,8 @@ def test_due_secret_order_submission_rolls_back_on_pre_settle_crash(saved_game, 
     assert "[期限届满]" not in (row[1] or "")
 
 
-def test_driver_pre_settle_same_transaction_semantics(game, monkeypatch):
-    """driver 路径（直接调 pre_settle）同样获得自事务语义：内部崩溃 → 财政回滚、phase 未推进
-    （ADR 0004/0008，driver 与真实流程同核同位）。"""
+def test_pre_settle_rolls_back_on_seed_issue_failure(game, monkeypatch):
+    """pre_settle 内部崩溃时财政回滚，结算相位不推进。"""
     import ming_sim.decree as dm
     db, state, content = game
     turn = state.turn
@@ -123,11 +122,10 @@ def test_driver_pre_settle_same_transaction_semantics(game, monkeypatch):
     before_ledger = _ledger_count(db, turn)
 
     def _boom(*a, **k):
-        raise RuntimeError("driver pre_settle boom")
+        raise RuntimeError("pre_settle boom")
     monkeypatch.setattr(dm, "auto_trigger_seed_issues", _boom)
 
-    # driver.run_settle 内部第一步即 pre_settle；这里直接调 pre_settle 等价（同函数同核）。
-    with pytest.raises(RuntimeError, match="driver pre_settle boom"):
+    with pytest.raises(RuntimeError, match="pre_settle boom"):
         pre_settle(state, db)
 
     other = sqlite3.connect(db.path)

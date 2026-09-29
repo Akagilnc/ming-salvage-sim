@@ -15432,7 +15432,7 @@ class GameDB:
                 )
                 return
             # Narrative-owned effects are deliberately left to the
-            # simulator/extractor; immediate-owned effects were staged before
+            # month-chain world segment and translation; immediate-owned effects were staged before
             # this gate.  Only payload-owned actions enter this dispatcher.
             if policy["effect_owner"] != "payload":
                 if policy["effect_owner"] == "narrative":

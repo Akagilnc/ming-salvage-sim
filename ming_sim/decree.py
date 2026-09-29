@@ -977,8 +977,7 @@ def atomic_and_reload(
 ) -> "Iterator[_AtomicOutcome]":
     """`with atomic(db)` + 「最外层异常回滚后从 DB 重载内存」的公共内核（ADR 0008 S4）。
 
-    沿用结算管线的 try/atomic/except-reload-reraise（pre_settle / month_chain /
-    resolve_directives 前括号 + fallback + HITL 暂停三件 + driver.run_settle）。
+    供 pre_settle 与玩家月链中需要事务回滚并重载内存状态的步骤使用。
 
     语义（逐处保真）：
     - body 包进 `with atomic(db)`，正常退出由 atomic 统一提交（嵌套时由最外层落定）。
@@ -1153,16 +1152,16 @@ def pre_settle(
     「不再重跑前半段」正是 settling 的语义，恢复后重进 pre_settle 不二次落财政。
 
     auto_submit_due_secret_orders（原在 resolve_directives 调用点）挪入本事务：它只是
-    「推演前的确定性写」，崩溃时密令呈递须随财政一并回滚；挪入不改它先于 simulator 的事实。
+    「推演前的确定性写」，崩溃时密令呈递须随财政一并回滚；挪入不改它先于世界段的事实。
     """
     # 幂等守门：前半段已提交相位（FRONT_HALF_DONE_PHASES 单一真源）重进不重跑财政
     # （防二次 tick，cmr S4 r2/r3）。早退**不消费**暂存动作。所有权规则（cmr S7 r5/r6）：
     # ① 正常路=pre_settle 前半段事务内 commit（下方正常体）——ADR 0006 要求推演前盘面
-    #   已定，动作必须先于 simulator 提交；extractor 后炸时前半段保持已落是 ADR 决定 2
+    #   已定，动作必须先于世界段提交；后续步骤失败时前半段保持已落是 ADR 决定 2
     #   明文设计（「pre_settle 的效果在中止/重试时保持已落，这是设计而非缺陷」），非半写。
     # ② 前半段已提交后（本守门内）新 stage 的动作=推进回合的终端写路
     #   各自在 atomic 内 commit；
-    #   早退路在事务外 commit 会让重推演路上 extractor 再炸时动作已提交而回合未推进。
+    #   早退路在事务外 commit 会让恢复中的后续步骤失败时动作已提交而回合未推进。
     if state.turn_phase in FRONT_HALF_DONE_PHASES:
         return []
     if transit_arrivals_out is not None:
@@ -1183,8 +1182,8 @@ def pre_settle(
             on_error=lambda _exc: collector.reset(),
         ):
             # 动作闸门(ADR 0006)：颁诏最前批量落库本回合暂存的结构化聊天写动作（密令更新/催办/任免/…），
-            # 在跑 LLM 结算管线前，使 simulator/extractor 读到的盘面与旧「召对期直写」时序一致。
-            # driver 路径无聊天暂存 → 空 no-op。幂等（committed 行不重跑）。
+            # 在跑月链世界段前，使后续步骤读到已落账的聊天动作。
+            # 无聊天暂存时为空操作；committed 行不重跑。
             # #1560 / CONTEXT：过回合丢弃既有 failed secret-order intents，再 commit；
             # 顺序在 commit 前，避免误清同次 commit 新产生的 failure。
             discarded_failed = db.discard_failed_secret_order_intents()

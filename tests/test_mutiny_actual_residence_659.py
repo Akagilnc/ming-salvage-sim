@@ -4,9 +4,7 @@
 改取 station_region（饷源 pay_source_region 只服务分账）；逃亡落既有
 population_transfers。禁止 station 文本解析、第二事实核、第二转移核。
 
-主行为闭环（#659 判词）：simulator / internal extractor 输入面同时可见哗变
-（zero_combat）／长期分源欠饷／station_region 与该省军户·流民余额，再沿
-apply_score_extraction 落既有 shape 的 reason=逃亡 转移并守恒记账。
+本文件验证调防后的驻地与饷源分离、非法驻地拒收，以及新档驻地和人口切片。
 """
 
 from __future__ import annotations
