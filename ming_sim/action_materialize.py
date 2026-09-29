@@ -1482,7 +1482,7 @@ def stage_authorization_candidate(
     """Shared authorization candidate write (#528 / #611).
 
     holder = 确认闸对象 = 当前大臣；收夜只成案卷；授予走 authority_changes，判后物化。
-    禁止技能 id / grant_skill 镜像。
+    持有型授权仅走 authority_changes，不建立平行授权账。
     """
     from ming_sim.cli_backend import resolve_directive_mode
 

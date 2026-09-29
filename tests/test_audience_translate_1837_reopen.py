@@ -315,13 +315,13 @@ def test_recommendation_outside_slice_is_rejected(game):
     assert result.commissions.rejected[0].category in {"invalid_state", "hallucinated_id"}
 
 
-def test_inquiry_declaration_persists_return_report(game, monkeypatch):
+def test_inquiry_declaration_preserves_assignment_in_attendant_materials(game, monkeypatch):
     db, state, content = game
     attendant = _active_minister(db, content)
     db.conn.execute(
         "UPDATE characters SET office='御前近臣' WHERE name=?", (attendant.name,)
     )
-    query = "请查访各镇欠饷军情如何？"
+    query = "去查那件未见于词表的事，原话留档。"
     result = _scene_declaration(db, state, content, monkeypatch, query, {
         "inquiries": [{"attendant": attendant.name, "query": query}],
     })
@@ -329,13 +329,18 @@ def test_inquiry_declaration_persists_return_report(game, monkeypatch):
     assert len(result.inquiries.applied) == 1
     sources = db.conn.execute(
         "SELECT source_id FROM character_knowledge_sources "
-        "WHERE source_id LIKE 'near_minister:%'"
+        "WHERE kind='inquiry_assignment'"
     ).fetchall()
     assert sources
     known = db.get_character_knowledge(state, attendant.name)
     report_events = [event for event in known["events"]
                      if event["source_id"] in {r["source_id"] for r in sources}]
-    assert report_events
+    assert len(report_events) == 1
+    assert report_events[0]["body"] == query
+    assert report_events[0]["kind"] == "inquiry_assignment"
+    other = next(c.name for c in content.characters.values() if c.name != attendant.name)
+    assert not any(e["source_id"] in {r["source_id"] for r in sources}
+                   for e in db.get_character_knowledge(state, other)["events"])
     from ming_sim.audience_night import summon_enter
     from ming_sim.materials import prepare_scene_materials, release_material_tree
     # A fresh night must make this report readable, not merely list a carrier.

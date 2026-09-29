@@ -1605,7 +1605,7 @@ def _dispatch_inquiries(
     chat_turn_id: int = 0,
     source_turn_error: Optional[str] = None,
 ) -> SectionResult:
-    """近臣查访声明 → 既有 persist_return_report 写口（ADR 0042）。"""
+    """近臣查访声明 → 近侍角色见闻来源账（ADR 0034）。"""
     items, rejected = _section_items(raw, label="查访声明", source=source)
     if source_turn_error:
         for item in items:
@@ -1635,15 +1635,15 @@ def _dispatch_inquiries(
             continue
         # 可预期拒收只在声明形状/幻影 id；持久化失败不得洗成 invalid_state 继续
         # （失败诚实宪法：未识别异常保留真因，由事务/调用方接住）。
-        report = db.persist_return_report(
-            state, attendant, query, chat_turn_id=int(chat_turn_id or 0),
+        # Source-turn identity keeps retries idempotent; the shared knowledge
+        # reader already scopes this record to its assignee and handles undo.
+        db.register_character_knowledge_source(
+            state, [{"character_id": attendant}], "inquiry_assignment",
+            "奉旨查访", query,
+            source_id=(f"inquiry:{state.turn}:{attendant}:{len(applied)}"
+                       + (f":chat_turn:{int(chat_turn_id)}" if chat_turn_id else "")),
         )
-        applied.append({
-            "attendant": attendant,
-            "query": query,
-            "source_kind": report.get("source_kind"),
-            "source_ref": report.get("source_ref"),
-        })
+        applied.append({"attendant": attendant, "query": query})
     return SectionResult(applied=applied, rejected=rejected)
 
 

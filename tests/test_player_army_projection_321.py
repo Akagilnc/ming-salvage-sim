@@ -17,7 +17,6 @@ from ming_sim.db import (
     mutiny_loyalty_cap,
 )
 from ming_sim.flows import apply_fixed_period_flows, derive_army_mutiny_state
-from ming_sim.intelligence import _qualitative_domain_statement
 from ming_sim.knowledge import build_character_knowledge
 from ming_sim.report import print_header
 from ming_sim.materials import list_materials, prepare_character_materials, read_material
@@ -299,13 +298,9 @@ def test_four_chains_embed_situation_matrix(game):
     map_army2 = _find_army_in_map_nodes(runtime.map_nodes())
     _assert_structured_situation(map_army2, sit, "WebGame.map_nodes")
 
-    # 链2：report / intelligence / knowledge（LLM 输入装配）
+    # 链2：report / knowledge（LLM 输入装配）
     report = db.army_report(limit=30)
     _assert_chain_embeds_situation(report, sit, "army_report")
-
-    intel_text, intel_src = _qualitative_domain_statement(db, "各军欠饷如何")
-    assert intel_src == "armies"
-    _assert_chain_embeds_situation(intel_text, sit, "intelligence")
 
     war = next(c for c in content.characters.values() if c.office_type == "兵部")
     knowledge = build_character_knowledge(db, state, war.name)

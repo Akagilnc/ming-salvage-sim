@@ -36,8 +36,6 @@ def available_skill_ids(character: Character, db: Optional[GameDB] = None) -> Li
     skill_ids = list(c.common_skills)
     skill_ids.extend(c.office_default_skills.get(character.office_type, []))
     skill_ids.extend(c.personal_skill_ids.get(character.name, []))
-    if db is not None:
-        skill_ids.extend(db.active_skill_grants(character.name))
     seen: set = set()
     unique = []
     for skill_id in skill_ids:
@@ -70,8 +68,6 @@ def skill_source_labels(character: Character, skill_id: str, db: Optional[GameDB
         labels.append(f"{character.office_type}官职")
     if skill_id in c.personal_skill_ids.get(character.name, []):
         labels.append("个人")
-    if db is not None and skill_id in db.active_skill_grants(character.name):
-        labels.append("皇帝授权")
     if not labels:
         labels.append(str(c.skill_catalog.get(skill_id, {}).get("kind", "未知")))
     return labels
@@ -81,8 +77,7 @@ def skill_summary_line(character: Character, skill_id: str, db: Optional[GameDB]
     c = _ctx()
     labels = "/".join(skill_source_labels(character, skill_id, db))
     description = c.skill_descriptions.get(skill_id, "暂无说明。")
-    tool_flag = "可生成指令" if skill_id in c.directive_skill_ids else "可奏对查询"
-    return f"- {skill_display_name(skill_id)}（{labels}，{tool_flag}）：{description}"
+    return f"- {skill_display_name(skill_id)}（{labels}）：{description}"
 
 
 def print_skill_card(character: Character, db: Optional[GameDB] = None) -> None:
@@ -95,11 +90,6 @@ def print_skill_card(character: Character, db: Optional[GameDB] = None) -> None:
     )
     for skill_id in available_skill_ids(character, db):
         print(skill_summary_line(character, skill_id, db))
-    granted = db.active_skill_grants(character.name) if db is not None else []
-    if granted:
-        print("当前额外授权：" + "、".join(skill_display_name(skill_id) for skill_id in granted))
-    else:
-        print("当前额外授权：无")
 
 
 def print_all_skill_cards(db: Optional[GameDB] = None) -> None:

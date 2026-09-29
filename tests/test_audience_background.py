@@ -332,20 +332,6 @@ def test_current_unissued_draft_is_not_character_carryover(game):
     assert _carryover_drafts(db, state) == []
 
 
-def test_audience_prompt_does_not_create_near_minister_report_for_ordinary_minister(game):
-    db, state, content = game
-    minister = next(
-        character for character in content.characters.values()
-        if character.office_type not in {"司礼监", "内廷"}
-        and "太监" not in character.office
-    )
-    prepare_character_materials(db, state, minister)
-    assert not any(
-        item.get("source_id", "").startswith("near_minister:")
-        for item in db.get_character_knowledge(state, minister.name)["events"]
-    )
-
-
 def test_background_audience_recommendation_stages_candidate_snapshot(game, monkeypatch):
     """#1842：殿上荐人经转译交办任免进 pending；不经旧 tool envelope、不触真网。
 

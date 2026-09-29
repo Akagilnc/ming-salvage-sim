@@ -1257,7 +1257,6 @@ def test_manual_directive_capture_reaches_structured_dossier(
         ).fetchone()
         assert (row["status"], row["office"]) == ("dismissed", "")
     else:
-        assert db.list_skill_grants_for_dossier(dossier["id"]) == []
         assert "authorization_id" not in json.loads(dossier["payload_json"])
 
 
@@ -2322,7 +2321,7 @@ def _complete_session(game):
     return session
 
 
-def test_secret_authorization_dossier_does_not_map_payload_to_skill_grant(game):
+def test_secret_authorization_dossier_does_not_preserve_legacy_payload(game):
     db, state, content = game
     character = next(
         item for item in content.characters.values()
@@ -2348,13 +2347,12 @@ def test_secret_authorization_dossier_does_not_map_payload_to_skill_grant(game):
         state, [{"dossier_id": dossier["id"], "decision": "promulgated"}],
         content=content,
     )
-    assert db.list_skill_grants_for_dossier(dossier["id"]) == []
     stored_payload = json.loads(dossier["payload_json"])
     assert "authorization_id" not in stored_payload
     assert "authorization_ids" not in stored_payload
 
 
-def test_secret_authorization_rejects_missing_assignee_without_grant(game):
+def test_secret_authorization_rejects_missing_assignee(game):
     db, state, content = game
     actor = _active_minister(db)
     payload = {
@@ -2363,7 +2361,6 @@ def test_secret_authorization_rejects_missing_assignee_without_grant(game):
         "assignee": actor, "authorization_id": "理财",
     }
     payload.pop("assignee")
-    before = db.conn.execute("SELECT COUNT(*) FROM skill_grants").fetchone()[0]
     directive_id = db.add_directive(
         state, None, "残缺密授权", "player_decree", dossier_payload=payload,
     )
@@ -2381,10 +2378,6 @@ def test_secret_authorization_rejects_missing_assignee_without_grant(game):
         ).fetchall()
     ]
     assert any("assignee" in r for r in reasons)
-    assert db.conn.execute("SELECT COUNT(*) FROM skill_grants").fetchone()[0] == before
-    assert db.conn.execute(
-        "SELECT COUNT(*) FROM skill_grants WHERE TRIM(character_name)='' OR TRIM(skill_id)=''"
-    ).fetchone()[0] == 0
 
 
 def test_in_transit_allocation_requires_execution_verdict(game):

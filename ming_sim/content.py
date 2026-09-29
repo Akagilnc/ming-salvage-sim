@@ -620,9 +620,6 @@ def load_skill_content() -> Tuple[
     Dict[str, List[str]],
     List[str],
     Dict[str, str],
-    Dict[str, List[str]],
-    Dict[str, str],
-    Set[str],
     Dict[str, Dict[str, object]],
 ]:
     data = require_dict(load_json_asset("skills.json"), "skills.json")
@@ -635,9 +632,6 @@ def load_skill_content() -> Tuple[
     personal_skill_ids = dict_of_string_lists(data.get("personal_skill_ids"), "skills.json.personal_skill_ids")
     common_skills = string_list(data.get("common_skills"), "skills.json.common_skills")
     skill_descriptions = dict_of_strings(data.get("skill_descriptions"), "skills.json.skill_descriptions")
-    grant_keywords = dict_of_string_lists(data.get("grant_keywords"), "skills.json.grant_keywords")
-    directive_keywords = dict_of_strings(data.get("directive_keywords"), "skills.json.directive_keywords")
-    directive_skill_ids = set(string_list(data.get("directive_skill_ids"), "skills.json.directive_skill_ids"))
     office_definitions: Dict[str, Dict[str, object]] = {}
     for office_type, raw in require_dict(data.get("office_definitions"), "skills.json.office_definitions").items():
         item = require_dict(raw, f"skills.json.office_definitions.{office_type}")
@@ -657,16 +651,11 @@ def load_skill_content() -> Tuple[
     for mapping_name, mapping in {
         "office_default_skills": office_default_skills,
         "personal_skill_ids": personal_skill_ids,
-        "grant_keywords": grant_keywords,
     }.items():
         for key, skill_ids in mapping.items():
             for skill_id in skill_ids:
                 if skill_id not in skill_catalog:
                     raise SystemExit(f"{mapping_name}.{key} 引用了未定义 skill：{skill_id}")
-    for keyword, skill_id in directive_keywords.items():
-        if skill_id not in skill_catalog:
-            raise SystemExit(f"directive_keywords.{keyword} 引用了未定义 skill：{skill_id}")
-
     return (
         office_skills_data,
         skill_catalog,
@@ -674,9 +663,6 @@ def load_skill_content() -> Tuple[
         personal_skill_ids,
         common_skills,
         skill_descriptions,
-        grant_keywords,
-        directive_keywords,
-        directive_skill_ids,
         office_definitions,
     )
 
@@ -748,16 +734,13 @@ class GameContent:
     powers: Dict[str, Power] = field(default_factory=dict)
     classes: Dict[str, SocialClass] = field(default_factory=dict)
 
-    # skill 体系（load_skill_content 十元组）
+    # skill 体系
     office_skills: Dict[str, List[str]] = field(default_factory=dict)
     skill_catalog: Dict[str, Dict[str, object]] = field(default_factory=dict)
     office_default_skills: Dict[str, List[str]] = field(default_factory=dict)
     personal_skill_ids: Dict[str, List[str]] = field(default_factory=dict)
     common_skills: List[str] = field(default_factory=list)
     skill_descriptions: Dict[str, str] = field(default_factory=dict)
-    grant_keywords: Dict[str, List[str]] = field(default_factory=dict)
-    directive_keywords: Dict[str, str] = field(default_factory=dict)
-    directive_skill_ids: Set[str] = field(default_factory=set)
     office_definitions: Dict[str, Dict[str, object]] = field(default_factory=dict)
 
     # 提示词（#1837 reopen：minister/consort agent prompt 随旧 agent 退役）
@@ -791,9 +774,6 @@ class GameContent:
             personal_skill_ids,
             common_skills,
             skill_descriptions,
-            grant_keywords,
-            directive_keywords,
-            directive_skill_ids,
             office_definitions,
         ) = load_skill_content()
         return cls(
@@ -815,9 +795,6 @@ class GameContent:
             personal_skill_ids=personal_skill_ids,
             common_skills=common_skills,
             skill_descriptions=skill_descriptions,
-            grant_keywords=grant_keywords,
-            directive_keywords=directive_keywords,
-            directive_skill_ids=directive_skill_ids,
             office_definitions=office_definitions,
             fiscal_items=load_fiscal_config(),
             game_world_prompt=load_text_asset("prompts/game_world.md"),

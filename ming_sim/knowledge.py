@@ -535,7 +535,7 @@ def _issue_audience_case_events(
 
     Read-time only.  Must never be folded into ``build_character_knowledge`` /
     ``get_character_knowledge`` events — those APIs return durable rows only
-    (#492 near_minister tail contract).
+    (durable knowledge events remain distinct from prompt-only synthesis).
     """
     known = set(known_source_ids or ())
     synthesized: list[Dict[str, object]] = []

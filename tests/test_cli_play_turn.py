@@ -172,7 +172,7 @@ def test_terminal_minister_chat_persists_messages_before_session_chat(monkeypatc
 
         def scene_chat(self, question, *, chat_turn_id=0, stream_emit=None, minister_name=""):
             assert self.db.messages == [
-                ("魏忠贤", 7, "user", "命洪承畴督办陕西赈灾，东厂暗助护赈银。")
+                ("魏忠贤", 7, "user", "交给洪承畴督办陕西赈灾，东厂暗助护赈银。")
             ]
             return SimpleNamespace(
                 answer="臣领密旨，当令东厂暗中护送赈银。",
@@ -187,13 +187,13 @@ def test_terminal_minister_chat_persists_messages_before_session_chat(monkeypatc
         def schedule_pending_scene_translation(self, result):
             return _cli_schedule_pending_noop(self, result)
 
-    answers = iter(["命洪承畴督办陕西赈灾，东厂暗助护赈银。", "done"])
+    answers = iter(["交给洪承畴督办陕西赈灾，东厂暗助护赈银。", "done"])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
     session = Session()
 
     assert term.minister_chat(session, SimpleNamespace(name="魏忠贤")) == "dismiss"
     assert session.db.messages == [
-        ("魏忠贤", 7, "user", "命洪承畴督办陕西赈灾，东厂暗助护赈银。"),
+        ("魏忠贤", 7, "user", "交给洪承畴督办陕西赈灾，东厂暗助护赈银。"),
         ("魏忠贤", 7, "minister", "臣领密旨，当令东厂暗中护送赈银。"),
     ]
 
@@ -408,8 +408,10 @@ def test_terminal_persistent_chat_finalization_failure_rolls_back_real_turn(game
     def scene_chat(_question, *, chat_turn_id=0, stream_emit=None, minister_name=""):
         assert chat_turn_id > 0
         received_chat_turn_ids.append(chat_turn_id)
-        db.persist_return_report(
-            state, character.name, "陕西巡抚可有？", chat_turn_id=chat_turn_id,
+        db.register_character_knowledge_source(
+            state, [{"character_id": character.name}], "inquiry_assignment",
+            "奉旨查访", "陕西巡抚可有？",
+            source_id=f"inquiry:cli:chat_turn:{chat_turn_id}",
         )
         assert db.conn.execute(
             "SELECT COUNT(*) FROM character_knowledge_sources WHERE source_id LIKE ?",

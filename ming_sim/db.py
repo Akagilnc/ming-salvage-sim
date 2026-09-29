@@ -1808,18 +1808,6 @@ class GameDB:
             CREATE INDEX IF NOT EXISTS idx_authority_records_holder
                 ON authority_records(holder_id, revoked, effective_turn);
 
-            CREATE TABLE IF NOT EXISTS skill_grants (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                character_name TEXT NOT NULL,
-                skill_id TEXT NOT NULL,
-                granted_by TEXT NOT NULL,
-                source_turn INTEGER NOT NULL,
-                dossier_id INTEGER,
-                active INTEGER NOT NULL DEFAULT 1,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY(character_name) REFERENCES characters(name)
-            );
-
             CREATE TABLE IF NOT EXISTS turn_directives (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 turn INTEGER NOT NULL,
@@ -2467,7 +2455,6 @@ class GameDB:
         if "turn" in office_change_cols:
             self.conn.execute("ALTER TABLE office_change_records DROP COLUMN turn")
             self.conn.commit()
-        self.ensure_column("skill_grants", "dossier_id", "INTEGER")
         self.ensure_column(
             "decree_dossiers", "execution_outcome", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column(
@@ -4127,24 +4114,6 @@ class GameDB:
             """
         ).fetchall()
         return [dict(row) for row in rows]
-
-    def build_return_report(
-        self, query: str, *, source_kind: str, source_ref: str
-    ) -> Dict[str, str]:
-        """Convenience seam for the near-minister channel (#492)."""
-        from ming_sim.intelligence import build_return_report
-
-        return build_return_report(
-            self, query, source_kind=source_kind, source_ref=source_ref
-        )
-
-    def persist_return_report(
-        self, state: GameState, character_name: str, query: str, *, chat_turn_id: int = 0,
-    ) -> Dict[str, str]:
-        """Persist a role-scoped near-minister report (#492)."""
-        from ming_sim.intelligence import persist_return_report
-
-        return persist_return_report(self, state, character_name, query, chat_turn_id=chat_turn_id)
 
     def is_army_pay_source_cutover_enabled(self) -> bool:
         row = self.conn.execute(
@@ -17264,7 +17233,7 @@ class GameDB:
         """#528：公开委任案卷顺颁后走 #611 authority_changes 授予槽。
 
         完整授予条目：动作=授予 + dossier_id + holder_id + privilege + scope。
-        不直写 authority_records，不写 skill_grants / grant_skill。
+        不直写 authority_records。
         Returns False when duplicate_active_authority was soft-rejected and
         terminal failure already recorded — caller must return early.
         Returns True when the grant landed.
@@ -17327,7 +17296,7 @@ class GameDB:
         """#523：收权案卷顺颁后走 #611 authority_changes 收回槽。
 
         生产项显式携 authority_id + 本项 dossier_id；观感边由 #611 槽写入。
-        不直写 skill_grants，不走 0056 毁约轨。
+        不走 0056 毁约轨。
         """
         from ming_sim.issues import apply_score_extraction
         from ming_sim.strict_types import strict_int
@@ -19935,75 +19904,12 @@ class GameDB:
         projected.sort(key=lambda item: int(item["id"]))
         return projected
 
-    def grant_skill(
-        self, state: GameState, character_name: str, skill_id: str,
-        granted_by: str = "皇帝", *, dossier_id: Optional[int] = None,
-        commit: bool = True,
-    ) -> bool:
-        exists = self.conn.execute(
-            """
-            SELECT 1 FROM skill_grants
-            WHERE character_name = ? AND skill_id = ? AND active = 1
-            LIMIT 1
-            """,
-            (character_name, skill_id),
-        ).fetchone()
-        if exists:
-            return False
-        self.conn.execute(
-            """
-            INSERT INTO skill_grants
-                (character_name, skill_id, granted_by, source_turn, dossier_id, active)
-            VALUES (?, ?, ?, ?, ?, 1)
-            """,
-            (
-                character_name, skill_id, granted_by, state.turn,
-                None if dossier_id is None else int(dossier_id),
-            ),
-        )
-        if commit:
-            self.conn.commit()
-        return True
-
-    def revoke_skill(self, character_name: str, skill_id: str) -> bool:
-        cursor = self.conn.execute(
-            """
-            UPDATE skill_grants
-            SET active = 0
-            WHERE character_name = ? AND skill_id = ? AND active = 1
-            """,
-            (character_name, skill_id),
-        )
-        self.conn.commit()
-        return cursor.rowcount > 0
-
-    def active_skill_grants(self, character_name: str) -> List[str]:
-        rows = self.conn.execute(
-            """
-            SELECT skill_id FROM skill_grants
-            WHERE character_name = ? AND active = 1
-            ORDER BY id
-            """,
-            (character_name,),
-        ).fetchall()
-        return [str(row["skill_id"]) for row in rows]
-
     def list_office_effects_for_dossier(
         self, dossier_id: int,
     ) -> List[Dict[str, object]]:
         return [
             dict(row) for row in self.conn.execute(
                 "SELECT * FROM office_change_records WHERE dossier_id=? ORDER BY id",
-                (int(dossier_id),),
-            ).fetchall()
-        ]
-
-    def list_skill_grants_for_dossier(
-        self, dossier_id: int,
-    ) -> List[Dict[str, object]]:
-        return [
-            dict(row) for row in self.conn.execute(
-                "SELECT * FROM skill_grants WHERE dossier_id=? ORDER BY id",
                 (int(dossier_id),),
             ).fetchall()
         ]

@@ -222,6 +222,7 @@ def test_latched_loyalty_raw_positive_noop_when_legacy_flips_effect_sign(game):
 
 def test_latched_loyalty_legacy_flip_preflight_rejects_strategic_envelope(game):
     """#319 P2 预检同口径：legacy 翻负的 latched loyalty 不得靠 material 门半落兄弟结果。"""
+    from ming_sim.declaration_dispatch import dispatch_declaration
     db, state, content = game
     issue_engine.bind_content(content)
     state.year = 1629
@@ -237,10 +238,9 @@ def test_latched_loyalty_legacy_flip_preflight_rejects_strategic_envelope(game):
     db.conn.execute("UPDATE regions SET military_pressure = ? WHERE id = ?", (20, "beizhili"))
     before_loyalty = _row(db, "loyalty")["loyalty"]
 
-    out = issue_engine.apply_score_extraction(
-        db,
-        state,
-        {
+    out = dispatch_declaration(
+        db, state, {"effects": [{
+            "event_id": "jisi_lubian",
             "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
             "事件结局": {"jisi_lubian": "入塞被遏"},
             "region_delta": {
@@ -257,11 +257,11 @@ def test_latched_loyalty_legacy_flip_preflight_rejects_strategic_envelope(game):
                     "reason": "己巳之变安抚哗变军",
                 }
             },
-        },
-        content=content,
+        }]},
+        night_id=0,
     )
 
-    assert out["issue_summary"]["new_issues"][0]["rejected"] is True
+    assert out.effects.rejected
     assert not db.has_event_triggered("jisi_lubian")
     assert db.conn.execute(
         "SELECT military_pressure FROM regions WHERE id = ?", ("beizhili",)
@@ -271,6 +271,7 @@ def test_latched_loyalty_legacy_flip_preflight_rejects_strategic_envelope(game):
 
 def test_latched_loyalty_at_mutiny_cap_preflight_rejects_strategic_envelope(game):
     """#319：loyalty 已贴 mutiny_loyalty_cap 时，正 delta 预检须拒整封，防兄弟结果半落。"""
+    from ming_sim.declaration_dispatch import dispatch_declaration
     db, state, content = game
     issue_engine.bind_content(content)
     state.year = 1629
@@ -286,10 +287,9 @@ def test_latched_loyalty_at_mutiny_cap_preflight_rejects_strategic_envelope(game
     before_loyalty = _row(db, "loyalty")["loyalty"]
     assert before_loyalty == 80
 
-    out = issue_engine.apply_score_extraction(
-        db,
-        state,
-        {
+    out = dispatch_declaration(
+        db, state, {"effects": [{
+            "event_id": "jisi_lubian",
             "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
             "事件结局": {"jisi_lubian": "入塞被遏"},
             "region_delta": {
@@ -306,11 +306,11 @@ def test_latched_loyalty_at_mutiny_cap_preflight_rejects_strategic_envelope(game
                     "reason": "己巳之变安抚哗变军",
                 }
             },
-        },
-        content=content,
+        }]},
+        night_id=0,
     )
 
-    assert out["issue_summary"]["new_issues"][0]["rejected"] is True
+    assert out.effects.rejected
     assert not db.has_event_triggered("jisi_lubian")
     assert db.conn.execute(
         "SELECT military_pressure FROM regions WHERE id = ?", ("beizhili",)

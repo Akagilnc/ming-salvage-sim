@@ -26,7 +26,7 @@ from ming_sim.session import (
     _is_summonable_court_minister,
     _pending_action_failure_payload,
 )
-from ming_sim.skills import print_all_skill_cards, print_skill_card, skill_display_name
+from ming_sim.skills import print_all_skill_cards, print_skill_card
 
 logger = logging.getLogger(__name__)
 
@@ -155,24 +155,6 @@ def choose_minister(session: GameSession) -> Optional[Character]:
                 print(decision.reason)
             continue
         return candidate
-
-
-def _skill_ids_from_text(session: GameSession, text: str) -> List[str]:
-    matched: List[str] = []
-    for keyword, skill_ids in session.content.grant_keywords.items():
-        if keyword in text:
-            matched.extend(skill_ids)
-    for skill_id, definition in session.content.skill_catalog.items():
-        name = str(definition.get("name", ""))
-        if skill_id in text or (name and name in text):
-            matched.append(skill_id)
-    unique: List[str] = []
-    seen: set = set()
-    for skill_id in matched:
-        if skill_id not in seen:
-            seen.add(skill_id)
-            unique.append(skill_id)
-    return unique
 
 
 def _fail_cli_chat_turn_scene(
@@ -326,25 +308,10 @@ def _handle_court_command(
         return "handled"
 
     # 技能卡查看
-    if (lowered in {"skills", "skill", "技能", "技能卡", "查看技能", "查看skill"} or "技能" in raw) \
-            and not any(w in raw for w in ("授权", "授予", "交给", "收回", "撤销", "取消授权", "命", "令", "着")):
+    if lowered in {"skills", "skill", "技能", "技能卡", "查看技能", "查看skill"}:
         target = match_minister_from_text(raw, None) or current
         print_skill_card(target, session.db)
         print()
-        return "handled"
-
-    # 收回授权
-    if "授权" in raw and any(w in raw for w in ("收回", "撤销", "取消", "停用", "夺回")):
-        target = match_minister_from_text(raw, None) or current
-        revoked = [
-            skill_display_name(sid)
-            for sid in _skill_ids_from_text(session, raw)
-            if session.db.revoke_skill(target.name, sid)
-        ]
-        if revoked:
-            print(f"已收回{target.name}：{'、'.join(revoked)}。\n")
-        else:
-            print(f"{target.name}没有可收回的相关授权，或未识别要收回的 skill。\n")
         return "handled"
 
     # 退下（短句正则，不误伤长对话）
@@ -379,20 +346,6 @@ def _handle_court_command(
                 print(decision.reason + "\n")
             return "handled"
         return f"summon:{target.name}"
-
-    # 授予授权
-    if any(w in raw for w in ("授权", "交给", "授予")):
-        target = match_minister_from_text(raw, None) or current
-        granted = [
-            skill_display_name(sid)
-            for sid in _skill_ids_from_text(session, raw)
-            if session.db.grant_skill(session.state, target.name, sid)
-        ]
-        if granted:
-            print(f"已授权{target.name}：{'、'.join(granted)}。\n")
-        else:
-            print(f"{target.name}已有相关授权，或未识别要授权的 skill。\n")
-        return "handled"
 
     return None
 
