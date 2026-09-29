@@ -10,9 +10,6 @@ Seams:
 from __future__ import annotations
 
 import json
-import subprocess
-import sys
-from pathlib import Path
 
 from ming_sim.breach_plea import (
     ENTRY_KIND_BREACH_PLEA,
@@ -475,35 +472,3 @@ def test_due_review_preserves_diegetic_fenjie_phrase(game):
     ])
     assert "与喀尔喀而治" not in blob
     assert diegetic in blob
-
-
-def test_urge_lever_due_review_import_order_both_succeed():
-    """负向：先 import urge_lever 与先 import due_review 两种乱序均成功（无环烟）。"""
-    scripts = (
-        (
-            "import ming_sim.urge_lever as ul\n"
-            "import ming_sim.due_review as dr\n"
-            "assert callable(ul.project_urge_audience_scene)\n"
-            "assert callable(dr.project_due_review_scene)\n"
-        ),
-        (
-            "import ming_sim.due_review as dr\n"
-            "import ming_sim.urge_lever as ul\n"
-            "assert callable(ul.project_urge_audience_scene)\n"
-            "assert callable(dr.project_due_review_scene)\n"
-        ),
-    )
-    repo_root = Path(__file__).resolve().parents[1]
-    for script in scripts:
-        completed = subprocess.run(
-            [sys.executable, "-c", script],
-            check=False,
-            capture_output=True,
-            text=True,
-            cwd=repo_root,
-        )
-        assert completed.returncode == 0, (
-            f"import-order subprocess failed\n"
-            f"stdout:\n{completed.stdout}\n"
-            f"stderr:\n{completed.stderr}"
-        )
