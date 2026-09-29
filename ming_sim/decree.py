@@ -79,19 +79,12 @@ from ming_sim.token_stats import tlog
 # 满 240 回合（即第 240 个回合结算完，1647.09）仍未分胜负则强制 timeout 收尾。
 TIMEOUT_TURN = 240
 
-# 结算 payload 工具（请旨解析 / 密令分组承载 / 玩家可见呈现脱敏）
-# 位于 ming_sim.settlement_payload。
+# 逐旨／世界段请旨解析工具位于 ming_sim.settlement_payload，不从邸报抽取。
 # 此处 re-import 保 `from ming_sim.decree import X` 公开表面 + decree 内部调用点不变。
 from ming_sim.settlement_payload import (  # noqa: E402
-    CHEAT_NARRATIVE_PREFIX,
-    MAX_DECISIONS_PER_TURN,
     _DECISION_RE,
-    _select_secret_orders_for_sim,
-    _strip_player_internal_fields,
-    augment_secret_orders_with_due_commitments,
     bind_decision_options,
     bind_decisions_to_candidate_events,
-    group_secret_orders_for_sim,
     parse_decision_blocks,
 )
 
@@ -864,9 +857,9 @@ def resolve_directives(
 
     before_turn = state.turn
 
-    # 草案内容已由拟诏合并进 decree_text，simulator 只读 decree_text，不再单传逐条草案。
+    # 草案内容已由拟诏合并进 decree_text；月链沿已保存的旨意继续。
 
-    # 1) 前括号确定性结算：与探针 driver 共用 prepare_resolve_front_half（ADR 0004 / #668）。
+    # 1) 前括号确定性结算：玩家月链的唯一准备入口。
     prepare_resolve_front_half(
         state, db,
         decree_text=decree_text,
@@ -923,7 +916,7 @@ def reload_state_from_db(db: GameDB, state: GameState, *, content=None) -> GameS
     刷掉，否则脏内存会污染重跑（如脏 settling 相位被守门跳过=整月财政丢，cmr S4 r1 F4）。
 
     走 db.load_state 同路径（与 restore 同源），但 load_state 返回**新对象**；state 被各处
-    持引用（session.state、driver 闭包、各调用栈），必须**原地刷新**而非返回新对象——把 DB 值
+    持引用（session.state、各调用栈），必须**原地刷新**而非返回新对象——把 DB 值
     写回同一对象的字段、metrics dict 原地 update-then-prune（任何时刻非空），返回同一 state（id 不变）。
 
     content 非 None 时以 DB 全量重建 characters（restore 同路径 _sync_offices_from_db_impl）：
@@ -975,8 +968,7 @@ def atomic_and_reload(
 ) -> "Iterator[_AtomicOutcome]":
     """`with atomic(db)` + 「最外层异常回滚后从 DB 重载内存」的公共内核（ADR 0008 S4）。
 
-    沿用结算管线的 try/atomic/except-reload-reraise（pre_settle / month_chain /
-    resolve_directives 前括号 + fallback + HITL 暂停三件 + driver.run_settle）。
+    供 pre_settle 与玩家月链中需要事务回滚并重载内存状态的步骤使用。
 
     语义（逐处保真）：
     - body 包进 `with atomic(db)`，正常退出由 atomic 统一提交（嵌套时由最外层落定）。
@@ -1073,14 +1065,14 @@ def prepare_resolve_front_half(
 ) -> List[Dict[str, object]]:
     """共享前半段 seam（ADR 0004 / #668）：pre_settle + ready=0 占位（含 transit_arrivals）。
 
-    resolve_directives 与 driver.prepare 共用此 helper。外层 atomic 使 settling 相位与
+    玩家月链通过 resolve_directives 调用此 helper。外层 atomic 使 settling 相位与
     ready=0 context 同生共死。已有 context 的 FRONT_HALF_DONE 重入只读返回既有
     transit_arrivals，禁止 placeholder upsert 覆写 durable 真源（ready=0 原诏/source
     ），不二次 tick/财政。返回本回合 `transit_arrivals`
     （无抵达 = `[]`）。
     """
     # 已有-context 重入：只读既有真源。save_resolve_context 是整行 upsert，placeholder
-    # 默认空字段会冲掉已有原诏/source/narrative。
+    # 默认空字段会冲掉已有原诏/source。
     if state.turn_phase in FRONT_HALF_DONE_PHASES:
         existing = db.get_resolve_context(int(state.turn))
         if existing is not None:
@@ -1118,8 +1110,7 @@ def prepare_resolve_front_half(
                 else ""
             )
             db.save_resolve_context(
-                state.turn, decree_text, "", placeholder_payload,
-                secret_orders={},
+                state.turn, decree_text, placeholder_payload,
                 source=Provenance(source).value,  # #146 A：归一 enum/合法值串
                 attendant_message=preserved_attendant,
             )
@@ -1140,8 +1131,7 @@ def pre_settle(
 ) -> List[Dict[str, object]]:
     """确定性结算「前括号」：固定月度财政 tick + auto_trigger 硬立 seed 情势，均在 LLM 推演前。
 
-    返回本回合程序硬触发的清单。真实流程与探针 driver 共用此核（ADR 0004）。
-    content 供 office(任免)暂存动作落库；driver 路径无聊天暂存。
+    返回本回合程序硬触发的清单；content 供 office(任免)暂存动作落库。
 
     ADR 0008 S4：整段（暂存动作 commit + 固定财政 + auto_trigger + 到期密令呈递）包成
     **自己的单事务**——崩在内部=全回滚=相位未变=重进时干净重跑前半段。完成时**同事务内**
@@ -1151,16 +1141,16 @@ def pre_settle(
     「不再重跑前半段」正是 settling 的语义，恢复后重进 pre_settle 不二次落财政。
 
     auto_submit_due_secret_orders（原在 resolve_directives 调用点）挪入本事务：它只是
-    「推演前的确定性写」，崩溃时密令呈递须随财政一并回滚；挪入不改它先于 simulator 的事实。
+    「推演前的确定性写」，崩溃时密令呈递须随财政一并回滚；挪入不改它先于世界段的事实。
     """
     # 幂等守门：前半段已提交相位（FRONT_HALF_DONE_PHASES 单一真源）重进不重跑财政
     # （防二次 tick，cmr S4 r2/r3）。早退**不消费**暂存动作。所有权规则（cmr S7 r5/r6）：
     # ① 正常路=pre_settle 前半段事务内 commit（下方正常体）——ADR 0006 要求推演前盘面
-    #   已定，动作必须先于 simulator 提交；extractor 后炸时前半段保持已落是 ADR 决定 2
+    #   已定，动作必须先于世界段提交；后续步骤失败时前半段保持已落是 ADR 决定 2
     #   明文设计（「pre_settle 的效果在中止/重试时保持已落，这是设计而非缺陷」），非半写。
     # ② 前半段已提交后（本守门内）新 stage 的动作=推进回合的终端写路
     #   各自在 atomic 内 commit；
-    #   早退路在事务外 commit 会让重推演路上 extractor 再炸时动作已提交而回合未推进。
+    #   早退路在事务外 commit 会让恢复中的后续步骤失败时动作已提交而回合未推进。
     if state.turn_phase in FRONT_HALF_DONE_PHASES:
         return []
     if transit_arrivals_out is not None:
@@ -1181,8 +1171,8 @@ def pre_settle(
             on_error=lambda _exc: collector.reset(),
         ):
             # 动作闸门(ADR 0006)：颁诏最前批量落库本回合暂存的结构化聊天写动作（密令更新/催办/任免/…），
-            # 在跑 LLM 结算管线前，使 simulator/extractor 读到的盘面与旧「召对期直写」时序一致。
-            # driver 路径无聊天暂存 → 空 no-op。幂等（committed 行不重跑）。
+            # 在跑月链世界段前，使后续步骤读到已落账的聊天动作。
+            # 无聊天暂存时为空操作；committed 行不重跑。
             # #1560 / CONTEXT：过回合丢弃既有 failed secret-order intents，再 commit；
             # 顺序在 commit 前，避免误清同次 commit 新产生的 failure。
             discarded_failed = db.discard_failed_secret_order_intents()

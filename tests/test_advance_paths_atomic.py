@@ -20,7 +20,7 @@ def _ledger_count(db, turn: int) -> int:
 
 
 # ---------------------------------------------------------------------------
-# B. 恢复入口消费：旧 ready 选择验证后由玩家月链续跑；driver 核另行保留
+# B. 恢复入口消费：由玩家月链接续已保存的结算进度
 # ---------------------------------------------------------------------------
 
 def _recovery_session(db, state, content, monkeypatch):
@@ -130,10 +130,7 @@ def test_submit_event_decision_binds_from_candidate_snapshot_without_event_id(ga
     db.save_resolve_context(
         turn,
         "测试诏书",
-        "邸报正文未回显事件编号。",
         {"candidate_events": [{"id": event_id, "title": "毛文龙裁断"}]},
-        secret_orders=[],
-        
     )
     db.save_pending_decisions(turn, [{
         "title": "毛文龙裁断",
@@ -203,8 +200,7 @@ def test_submit_decisions_does_not_overwrite_already_decided_rows(game, monkeypa
     original = {"label": "斩", "note": "原裁断"}
     # phase1 HITL 暂停上下文——与真实 awaiting 存档同形
     db.save_resolve_context(
-        turn, "HITL诏", "待续邸报", {"candidate_events": []},
-        secret_orders=[],
+        turn, "HITL诏", {"candidate_events": []},
     )
     ctx = db.get_resolve_context(turn)
     assert ctx is not None

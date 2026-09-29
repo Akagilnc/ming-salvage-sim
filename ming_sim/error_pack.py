@@ -187,10 +187,10 @@ def write_error_pack(
     )
     (pack_dir / "traceback.txt").write_text(tb_text, encoding="utf-8")
 
-    # delta.json（extractor 失败时 extracted=None → {} + 说明）
+    # delta.json（无已提交的结构化产物时 extracted=None → {} + 说明）
     if extracted is None:
         delta_payload: Dict[str, object] = {
-            "_note": "extractor 失败 / 无 delta；本回合无可落库产物（重试将重跑 simulator/extractor）。",
+            "_note": "本次失败无可记录的结构化产物；重试从已保存的月链进度接续。",
         }
     else:
         delta_payload = extracted

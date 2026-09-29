@@ -1292,8 +1292,7 @@ class GameDB:
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
-            -- HITL 重大决策点：simulator 邸报里产出的待皇帝亲裁抉择。每回合 ≤5 条。
-            -- phase1 存入待选，phase2 读回皇帝选择拼进 narrative 喂 extractor。
+            -- HITL 重大决策点：世界段请旨机标产出的待皇帝亲裁抉择。每回合 ≤5 条。
             CREATE TABLE IF NOT EXISTS pending_decisions (
                 turn INTEGER NOT NULL,
                 idx INTEGER NOT NULL,
@@ -1307,14 +1306,12 @@ class GameDB:
                 PRIMARY KEY (turn, idx)
             );
 
-            -- phase1→phase2 之间暂存推演上下文，避免决策暂停后重算 simulator。
+            -- 过月上下文：存阶段进度与原诏，供暂停后续跑。
             -- 每回合至多一行（turn 主键），phase2 跑完即删。
             CREATE TABLE IF NOT EXISTS pending_resolve_context (
                 turn INTEGER PRIMARY KEY,
                 decree_text TEXT NOT NULL DEFAULT '',
-                narrative TEXT NOT NULL DEFAULT '',
                 simulator_payload_json TEXT NOT NULL DEFAULT '{}',
-                secret_orders_json TEXT NOT NULL DEFAULT '[]',
                 source TEXT NOT NULL DEFAULT 'system_simulation',
                 attendant_message TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -2227,7 +2224,7 @@ class GameDB:
         # 误覆盖动态态）；列已存在的后续 load 跳过（army_needed 的 rate<=0 锚定兜底 runtime 漏网）。
         if self.ensure_column("armies", "salary_rate", "REAL NOT NULL DEFAULT 0"):
             self._backfill_salary_rate()
-        # #173：维护费列退役迁移——**必须在每个打开路径跑**。driver 开现存档只走 GameDB.__init__→
+        # #173：维护费列退役迁移——**必须在每个打开路径跑**。现存档只走 GameDB.__init__→
         # init_schema、不走 seed_static_data；若只挂 seed，现存档（probe.db: maintenance INTEGER
         # NOT NULL 无 default）永不删列 → 删列后建新军 INSERT（已不含该列）崩（cmr drop R1 codex high）。
         # 现存档此刻维护费列在：先确保 arrears 换算读完维护费（幂等 version gate），再 drop；新档此时
@@ -2596,9 +2593,9 @@ class GameDB:
         self.affairs = AffairStore(self.conn)
         self.conn.commit()
         self._migrate_legacy_office_pollution()
-        # #9 R1 finding#1 [P1]：老档迁移校准须放在「seed 路 + driver 路」都过的点。driver.open_game
-        # 只 GameDB()（→ init_schema）+ load_state、不调 seed_static_data，故若校准仅在 seed 末尾，
-        # driver 路老档的 offset 永远停在默认 0 → leverage=0+权重和（未锚定钦定基线、错值）。
+        # #9 R1 finding#1 [P1]：老档迁移校准须放在新档 seed 与现存档打开都经过的点。
+        # 现存档只 GameDB()（→ init_schema）+ load_state、不调 seed_static_data，故若校准仅在 seed 末尾，
+        # 老档的 offset 永远停在默认 0 → leverage=0+权重和（未锚定钦定基线、错值）。
         # 因此：leverage_offset 列**本次刚 ADD**且 factions 表已有行（=老档，characters 此刻亦已持久化、
         # 权重和可算）时，在此立即一次性反推校准（offset_col_added=True 走老档分支：offset=当前 DB
         # leverage − 权重和）。放在 _migrate_legacy_office_pollution 之后，使权重和按【已清洗】的 office
@@ -3928,7 +3925,7 @@ class GameDB:
                 )
         self._migrate_arrears_unit_to_silver(is_fresh_armies_seed)
         self._initialize_army_pay_source_spine(is_fresh_armies_seed)
-        # #173：维护费列退役 drop 已上移至 init_schema（每个打开路径都跑，含 driver 开现存档的纯
+        # #173：维护费列退役 drop 已上移至 init_schema（每个打开路径都跑，含现存档的纯
         # init_schema 路径，见 cmr drop R1）；此处新档 seed INSERT 后该列本就不存在，无需再 drop。
         self._apply_region_city_levels()  # 新档 region 此时才 INSERT 完，按史实补 city_level
         # 新档罢居/在途 office 污染清洗：init_schema 路径在空表上 no-op（构造在 seed 前），
@@ -10481,9 +10478,9 @@ class GameDB:
 
         Aggregate archives are presentation artifacts.  Replaying the durable
         public rows here keeps source_id and explicit exclusions attached to
-        each item when a turn report or chapter is saved.  Source rows are
-        included as well: settlement producers may register a participating
-        item before either aggregate is rendered, and the archive write must
+        each item when a turn report is saved.  Source rows are included as
+        well: settlement producers may register a participating item before
+        the report is rendered, and the archive write must
         not lose that item's access boundary.
         """
         rows = self.conn.execute(
@@ -15432,7 +15429,7 @@ class GameDB:
                 )
                 return
             # Narrative-owned effects are deliberately left to the
-            # simulator/extractor; immediate-owned effects were staged before
+            # month-chain world segment and translation; immediate-owned effects were staged before
             # this gate.  Only payload-owned actions enter this dispatcher.
             if policy["effect_owner"] != "payload":
                 if policy["effect_owner"] == "narrative":
@@ -17911,8 +17908,8 @@ class GameDB:
         按 id 序(=操作发生序)apply。落得了标 committed、落不了标 failed(都不留 pending,
         故幂等:已 committed/失败/held_over 不在 pending 清单、不重跑)。
         #525：held_over 留中档由同表 durable 保留、本终端只读 pending，故默认提交跳过留中。
-        在 resolve_turn 最前、跑 LLM 结算管线之前调,使盘面时序与旧"召对期直写"一致。
-        content 用于任免落库；探针 driver 路径无聊天暂存时为 no-op。
+        在月链世界段之前调，使后续步骤读到已落账的聊天动作。
+        content 用于任免落库；无聊天暂存时为 no-op。
         minister_name 非空=对话确认当场 commit:只落该召对对象的暂存(应允即落,不波及他人);
         action_ids 非空=进一步只落指定 pending_actions.id（召对确认只可作用于本轮开始前可见项）;
         默认 None=颁诏批量落全回合。
@@ -18804,11 +18801,8 @@ class GameDB:
         return cur.rowcount
 
     def save_resolve_context(
-        self, turn: int, decree_text: str, narrative: str,
+        self, turn: int, decree_text: str,
         simulator_payload: Dict[str, object],
-        # #48：分组承载 dict {在办,待核议} 为正形；运行期仍兼容旧档/占位的 list（json 落库不挑类型），
-        # 故注解取两者并集，不窄化成 dict-only（否则误判恢复路 list 调用为类型错）。
-        secret_orders: Optional[Dict[str, object] | List[Dict[str, object]]] = None,
         source: str = "system_simulation",
         attendant_message: str = "",
     ) -> None:
@@ -18818,22 +18812,16 @@ class GameDB:
         """
         self.conn.execute(
             """INSERT INTO pending_resolve_context
-               (turn, decree_text, narrative, simulator_payload_json,
-                secret_orders_json, source, attendant_message)
-               VALUES (?, ?, ?, ?, ?, ?, ?)
+               (turn, decree_text, simulator_payload_json, source, attendant_message)
+               VALUES (?, ?, ?, ?, ?)
                ON CONFLICT(turn) DO UPDATE SET
                    decree_text = excluded.decree_text,
-                   narrative = excluded.narrative,
                    simulator_payload_json = excluded.simulator_payload_json,
-                   secret_orders_json = excluded.secret_orders_json,
                    source = excluded.source,
                    attendant_message = excluded.attendant_message""",
             (
-                int(turn), sanitize_sqlite_text(decree_text), sanitize_sqlite_text(narrative),
+                int(turn), sanitize_sqlite_text(decree_text),
                 safe_json_dumps(simulator_payload or {}, ensure_ascii=False),
-                # #48：分组承载是 dict；空 dict 也按 dict 存（`or []` 会把 {} 退成 []，
-                # 与 Dict 契约不符）。显式传 list（旧档/占位）仍原样存，None→{}。
-                safe_json_dumps(secret_orders if secret_orders is not None else {}, ensure_ascii=False),
                 # source 显式归一为枚举「值」字符串：Provenance 是 (str, Enum)，str(member) 在多数
                 # Python 版本落 'Provenance.player_decree' 而非 'player_decree'——重抽时
                 # Provenance(...) 不匹配 → 静默退回 system_simulation 丢源（Sourcery #175 bug_risk）。
@@ -18847,8 +18835,7 @@ class GameDB:
     def get_resolve_context(self, turn: int) -> Optional[Dict[str, object]]:
         """读回本月过月上下文。无则 None。"""
         row = self.conn.execute(
-            "SELECT decree_text, narrative, simulator_payload_json, "
-            "secret_orders_json, source, attendant_message "
+            "SELECT decree_text, simulator_payload_json, source, attendant_message "
             "FROM pending_resolve_context WHERE turn = ?",
             (int(turn),),
         ).fetchone()
@@ -18863,11 +18850,7 @@ class GameDB:
         attendant_message = str(row["attendant_message"] or "")
         return {
             "decree_text": row["decree_text"],
-            "narrative": row["narrative"],
             "simulator_payload": _load(row["simulator_payload_json"], {}, "simulator_payload"),
-            # secret_orders 是 dict-first 承载（#48：save 时 None→{}），损坏 fallback 也用 {} 对齐
-            # 契约——回 [] 会把分组 dict 退成 list、破坏 secret_orders.在办 式 dict 消费者（cmr CodeRabbit）。
-            "secret_orders": _load(row["secret_orders_json"], {}, "secret_orders"),
             "source": row["source"] or "system_simulation",
             "attendant_message": attendant_message,  # #671 王承恩独立递话
         }
@@ -20663,7 +20646,7 @@ class GameDB:
         known_sources = {str(item["source_id"]) for item in result}
         # #883 contract: this is the sole private read seam for secret orders.
         # Briefs deliberately do not carry a shared source id and therefore
-        # cannot be materialized into gazettes, chapters, or public events.
+        # cannot be materialized into gazettes or public events.
         if character_name:
             for row in self.conn.execute(
                 "SELECT turn, year, period, title, body, order_id FROM secret_order_briefs "
@@ -22038,42 +22021,6 @@ class GameDB:
                 f"ids={[x['id'] for x in submitted]} (status unchanged)"
             )
         return submitted
-
-    def get_secret_orders_by_keywords(
-        self, keywords: List[str], limit: int = 5, current_turn: int = 0
-    ) -> List[Dict[str, object]]:
-        """检索进行中（active）密令，tags LIKE 匹配，供推演 secret_orders 字段注入。"""
-        if not keywords:
-            return self.list_secret_orders(status="active")[:limit]
-        like_clauses = " OR ".join(["tags LIKE ?" for _ in keywords])
-        like_params = [f"%{k}%" for k in keywords]
-        rows = self.conn.execute(
-            f"""
-            SELECT * FROM secret_orders
-            WHERE status = 'active' AND ({like_clauses})
-            ORDER BY importance DESC, id DESC
-            LIMIT ?
-            """,
-            like_params + [limit],
-        ).fetchall()
-        if not rows:
-            return self.list_secret_orders(status="active")[:limit]
-        return [
-            {
-                "id": int(r["id"]),
-                "turn_issued": int(r["turn_issued"]),
-                "year_issued": int(r["year_issued"]),
-                "period_issued": int(r["period_issued"]),
-                "minister_name": r["minister_name"],
-                "title": r["title"],
-                "content": r["content"],
-                "tags": json.loads(r["tags"] or "[]") if isinstance(r["tags"], str) else (r["tags"] or []),
-                "importance": int(r["importance"]),
-                "status": r["status"],
-                "result": r["result"] or "",
-            }
-            for r in rows
-        ]
 
     # ── 调试用通用 CRUD（仅限白名单核心表）──────────────────────
     # 表名 → 主键列。只暴露核心几张，防误删元数据/日志表。

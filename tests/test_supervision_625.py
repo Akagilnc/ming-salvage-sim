@@ -4,7 +4,7 @@ Seams:
 - dossier_supervision_presence / dossier_loophole_exposures 事实表
 - record_monthly_supervision_facts（与 grant recon 同段）
 - build_due_review_input.supervision_history
-- simulator/extractor 执行格面观察槽
+- 督办复核的监督事实观察槽
 - dossier_reported_progress origin 结构化私货/同派标记
 - auto_trigger 涌现缝反制 issue
 - AC5 禁词哨兵（narrative/turn_report/knowledge_items/memorial_text）
@@ -354,7 +354,7 @@ def test_ac2_paired_observation_slots_and_countermeasure_hard_gate(game):
     assert "dull" not in json.dumps(tend_m, ensure_ascii=False).lower()
     assert "钝化" not in json.dumps(tend_m, ensure_ascii=False)
 
-    # 执行格判词观察槽：注入 due_review / simulator 面
+    # 执行格判词观察槽：督办复核读取监督事实
     _insert_staged(db, state, content, dossier_id=sub_m, due_turn=state.turn)
     write_due_staged_commitment_todos(db, state)
     todo = db.list_next_audience_todos(status=TODO_STATUS_PENDING)[0]

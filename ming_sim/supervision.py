@@ -22,7 +22,7 @@ from ming_sim.qualitative import qualitative_character_axis
 # 监督关系：本票只记「稽核」在场（护卫属 #567 押解口径，不入钝化事实底）
 SUPERVISION_RELATION = "稽核"
 
-# 判官读面三键（simulator / due_review / issues extractor 共调）
+# 督办判官读面的三个结构化键
 SUPERVISION_SURFACE_KEYS = (
     "supervision_history",
     "loophole_exposures",
@@ -269,7 +269,7 @@ def derive_consecutive_months(
 def unpack_supervision_surface(
     surface: Mapping[str, object] | None = None,
 ) -> Dict[str, object]:
-    """surface 三键 unpack 单源 helper——due_review / simulator / extractor 共调。"""
+    """为督办复核解包监督读面的三个结构化键。"""
     src = surface or {}
     tendency = src.get("transformation_tendency_facts")
     return {

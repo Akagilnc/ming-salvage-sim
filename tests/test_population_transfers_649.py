@@ -5,8 +5,8 @@ canonical＝ADR 0087/0088 + #649 冻结票面（含庭裁修正案 r1-r5）：
 - reason×方向矩阵（加派/摊派/灾害/兵灾/逃亡；回流出池见 #652 settle 真缝），出阵组合逐项拒收；
 - class_delta 写 population 由静默忽略升格逐项拒收；两轴分立（数据拒收不中止事务）；
 - 单位随存档 population_unit（新档人/sub-万精确，legacy 万口径、sub-万不可表达）；
-- restore 后流民池从 classes 只读 DB 无损接续；effect_brief 机器面事实摘要。
-主测缝：apply_score_extraction / effect_brief 纯函数——只测外部行为。
+- restore 后流民池从 classes 只读 DB 无损接续。
+主测缝：apply_score_extraction 落账及恢复后的 DB 状态。
 """
 
 from __future__ import annotations

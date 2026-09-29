@@ -97,7 +97,7 @@ def parse_backlash_origin_ref(origin_ref: object) -> tuple[int, str]:
 
 
 def build_backlash_narrative_features(db: Any) -> List[Dict[str, object]]:
-    """特征化输入包：供既有叙事 LLM 步（simulator/extractor）长出玩家文案。
+    """特征化输入包：供月链叙事步骤长出玩家文案。
 
     与 new_issues LLM 路径同格——引擎只供结构化事实与呈现约束，不供成句模板。
     『与 #625 用语区分』经 presentation_constraints.avoid_phrases 传入，非 bar 常量。

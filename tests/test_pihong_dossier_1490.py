@@ -69,9 +69,7 @@ def _657_install_real_phase2_llm_boundary(monkeypatch_or_module):
     """只中和 phase2 LLM 边界；保留 resolve_decisions_phase2 真结算/推月。"""
     import ming_sim.mechanical_tail as mechanical_tail
 
-    # 章节/关系酿制：禁 sk-test 打真网；record 空操作。
-    # 旧 settle 注入缝 + #1845 机械尾真源缝（brew 已迁出 decree runner）。
-    # #1843 reopen：_make_relation_brew_runner 已随旧核删除
+    # 机械尾关系酿制改为空操作，避免 sk-test 配置触发真实模型调用。
     _noop_brew = lambda *a, **k: None
     if hasattr(monkeypatch_or_module, "setattr"):
         monkeypatch_or_module.setattr(
@@ -126,7 +124,6 @@ def _657_subprocess_resolve(
         web_app.run_highlight_judge = lambda **_k: []
 
         # 真 phase2：只 stub LLM 边界
-        # #1843 reopen：_make_relation_brew_runner 已随旧核删除
         import ming_sim.mechanical_tail as mechanical_tail
         mechanical_tail._run_relation_brew = lambda *a, **k: None
         import ming_sim.decree_forecast as decree_forecast
@@ -288,7 +285,7 @@ def _plant_dossier_awaiting(db, state):
     dossier_id = db.create_decree_dossier(state, action_type='policy', decree_text='密查陕西驿卒', target_kind='issue', target_id='river-works')
     options = [{'label': '强颁', 'hint': '以中旨强行颁出', 'dossier_id': dossier_id, 'dossier_decision': 'force_promulgated'}, {'label': '收回', 'hint': '收回此道准旨', 'dossier_id': dossier_id, 'dossier_decision': 'withdrawn'}, {'label': '留中', 'hint': '留待下月重判', 'dossier_id': dossier_id, 'dossier_decision': 'hold'}]
     db.save_pending_decisions(state.turn, [{'event_id': f'dossier:{dossier_id}', 'title': '批红待裁', 'context': '密查陕西驿卒', 'rejection_reason': '科臣封驳', 'opposition': '东林', 'options': options}])
-    db.save_resolve_context(state.turn, '诏曰密查', '待续邸报', {'candidate_events': [{'id': 'ev_border', 'title': '边警'}], 'transit_semantics': []}, secret_orders=[])
+    db.save_resolve_context(state.turn, '诏曰密查', {'candidate_events': [{'id': 'ev_border', 'title': '边警'}], 'transit_semantics': []})
     state.turn_phase = TurnPhase.AWAITING_DECISION.value
     db.save_state(state)
     return dossier_id
@@ -353,7 +350,7 @@ def _plant_due_commitment_shaped_awaiting(db, state, *, dossier_id: int=12):
     """种 due-commitment 同形：event_id=dossier:N，options 仅 {label,hint}。"""
     options = [{'label': '准其销号', 'hint': '事已办结'}, {'label': '着再催办', 'hint': '期限宽延'}]
     db.save_pending_decisions(state.turn, [{'event_id': f'dossier:{dossier_id}', 'title': '承诺到期核验', 'context': '清丈之诺届期', 'options': options}])
-    db.save_resolve_context(state.turn, '诏曰核验', '待续邸报', {'candidate_events': [{'id': 'ev_border', 'title': '边警'}]}, secret_orders=[])
+    db.save_resolve_context(state.turn, '诏曰核验', {'candidate_events': [{'id': 'ev_border', 'title': '边警'}]})
     state.turn_phase = TurnPhase.AWAITING_DECISION.value
     db.save_state(state)
 
@@ -431,7 +428,7 @@ def test_mixed_legal_illegal_options_illegal_choice_stays_pending(web_game, monk
     dossier_id = db.create_decree_dossier(state, action_type='policy', decree_text='密查陕西驿卒', target_kind='issue', target_id='river-works')
     options = [{'label': '强颁', 'hint': '以中旨强行颁出', 'dossier_id': dossier_id, 'dossier_decision': 'force_promulgated'}, {'label': '伪收回', 'hint': '残对负 id', 'dossier_id': -9, 'dossier_decision': 'withdrawn'}, {'label': '伪留中', 'hint': '未知动作', 'dossier_id': dossier_id, 'dossier_decision': 'promulgated'}, {'label': '裸字段', 'hint': '仅非 None', 'dossier_id': dossier_id, 'dossier_decision': None}]
     db.save_pending_decisions(state.turn, [{'event_id': f'dossier:{dossier_id}', 'title': '批红待裁', 'context': '密查陕西驿卒', 'options': options}])
-    db.save_resolve_context(state.turn, '诏曰密查', '待续邸报', {'candidate_events': [{'id': 'ev_border', 'title': '边警'}]}, secret_orders=[])
+    db.save_resolve_context(state.turn, '诏曰密查', {'candidate_events': [{'id': 'ev_border', 'title': '边警'}]})
     state.turn_phase = TurnPhase.AWAITING_DECISION.value
     db.save_state(state)
     phase2_calls: list[list] = []
@@ -481,7 +478,7 @@ def test_ordinary_event_with_hallucinated_capability_submits(web_game, monkeypat
     db, state = (web_game.db, web_game.state)
     event_id = 'mao_wenlong'
     db.save_pending_decisions(state.turn, [{'event_id': event_id, 'title': '边警', 'context': '辽东来报', 'options': [{'label': '准其销号', 'hint': '事已办结'}, {'label': '强颁', 'hint': '幻觉批红', 'dossier_id': 3, 'dossier_decision': 'hold'}]}])
-    db.save_resolve_context(state.turn, '诏曰边警', '待续邸报', {'candidate_events': [{'id': event_id, 'title': '边警'}]}, secret_orders=[])
+    db.save_resolve_context(state.turn, '诏曰边警', {'candidate_events': [{'id': event_id, 'title': '边警'}]})
     state.turn_phase = TurnPhase.AWAITING_DECISION.value
     db.save_state(state)
     phase2_calls: list[list] = []
@@ -676,7 +673,7 @@ def test_657_http_default_hold_keyed_empty_action_and_betray(web_game, monkeypat
     opt = _layer_a_option()
     db.conn.execute("DELETE FROM pending_decisions WHERE kind='rescript_draft'")
     db.save_rescript_drafts(int(state.turn), [{'title': 'HTTP默认留中', 'context': 'c', 'options': [opt, _layer_a_option(label='备', hint='h')], 'actor_name': '杨嗣昌', 'actor_office': '兵部尚书', 'actor_faction': '东林'}])
-    db.save_resolve_context(int(state.turn), '诏', '邸报', {'candidate_events': [], 'transit_semantics': []}, secret_orders=[])
+    db.save_resolve_context(int(state.turn), '诏', {'candidate_events': [], 'transit_semantics': []})
     state.turn_phase = TurnPhase.AWAITING_DECISION.value
     db.save_state(state)
     db.conn.commit()
@@ -779,7 +776,7 @@ def _657_plant_awaiting_web(web_game, *, drafts=None, decisions=None, title='陕
         db.save_rescript_drafts(int(state.turn), drafts)
     if decisions:
         db.save_pending_decisions(int(state.turn), decisions)
-    db.save_resolve_context(int(state.turn), '诏', '邸报', {'candidate_events': [], 'transit_semantics': []}, secret_orders=[])
+    db.save_resolve_context(int(state.turn), '诏', {'candidate_events': [], 'transit_semantics': []})
     db.save_turn_report(state, '邸报')
     state.turn_phase = TurnPhase.AWAITING_DECISION.value
     db.save_state(state)
@@ -886,7 +883,7 @@ def test_657_return_revise_round_prior_and_clear_anchor(web_game, monkeypatch):
         state = probe.load_state()
         state.turn_phase = TurnPhase.AWAITING_DECISION.value
         probe.save_state(state)
-        probe.save_resolve_context(int(state.turn), '诏', '邸报', {'candidate_events': [], 'transit_semantics': []}, secret_orders=[])
+        probe.save_resolve_context(int(state.turn), '诏', {'candidate_events': [], 'transit_semantics': []})
         probe.conn.commit()
         new_opt = next((o for o in hit['options'] or [] if str(o.get('label') or '') == '新拟甲'))
         follow_cap = str(new_opt.get('draft_capability') or '')
@@ -1314,8 +1311,7 @@ def test_657_s10_http_five_actions_and_1490_no_regress(web_game, monkeypatch):
             }])
             db.conn.commit()
             db.save_resolve_context(
-                int(state.turn), "诏", "邸报", {"candidate_events": [], "transit_semantics": []},
-                secret_orders=[],
+                int(state.turn), "诏", {"candidate_events": [], "transit_semantics": []},
             )
             state.turn_phase = TurnPhase.AWAITING_DECISION.value
             db.save_state(state)
@@ -1449,8 +1445,7 @@ def test_1621_http_follow_draft_uses_catalog_army_id(web_game, monkeypatch):
     }])
     db.conn.commit()
     db.save_resolve_context(
-        int(state.turn), "诏", "邸报", {"candidate_events": [], "transit_semantics": []},
-        secret_orders=[],
+        int(state.turn), "诏", {"candidate_events": [], "transit_semantics": []},
     )
     state.turn_phase = TurnPhase.AWAITING_DECISION.value
     db.save_state(state)
@@ -1754,7 +1749,7 @@ def test_1620_http_follow_draft_office_token_routes_to_person(web_game, monkeypa
     db.conn.commit()
     opt = _layer_a_option(label=f'责成{token}', assignee_name=token, transaction_category='督赈')
     urgent, _ = _plant_urgent_desk(db, state, options=[opt, _layer_a_option(label='备')])
-    db.save_resolve_context(int(state.turn), '诏', '邸报', {'candidate_events': [], 'transit_semantics': []}, secret_orders=[])
+    db.save_resolve_context(int(state.turn), '诏', {'candidate_events': [], 'transit_semantics': []})
     db.save_turn_report(state, '邸报')
     state.turn_phase = TurnPhase.AWAITING_DECISION.value
     db.save_state(state)
@@ -1793,7 +1788,7 @@ def test_1620_http_follow_draft_grant_uses_stored_amount(web_game, monkeypatch):
     def _phase2(_state, _db, *_a, **_k):
         return '邸报：赏已落。'
     monkeypatch.setattr(session_mod, 'resolve_decisions_phase2', _phase2)
-    db.save_resolve_context(int(state.turn), '诏', '邸报', {'candidate_events': [], 'transit_semantics': []}, secret_orders=[])
+    db.save_resolve_context(int(state.turn), '诏', {'candidate_events': [], 'transit_semantics': []})
     state.turn_phase = TurnPhase.AWAITING_DECISION.value
     db.save_state(state)
     before = len(db.list_decree_dossiers())
@@ -2067,14 +2062,15 @@ def test_657_revise_deliberate_strict_contracts_zero_write_on_bad_shape(game, mo
     """revise 拒 monthly items[]/目录外军/无 kind 直写协饷；deliberate 拒缺 stance；合法进 prewrite。"""
     from ming_sim.rescript_actions import PrewriteResults
     from ming_sim.rescript_draft import normalize_rescript_layer_a_option
+    from ming_sim.decree import prepare_resolve_front_half
     from ming_sim.session import GameSession
     from ming_sim.models import TurnPhase
     import ming_sim.agents as agents_mod
     db, state, content = game
     opt = normalize_rescript_layer_a_option({'label': '备', 'hint': 'h', 'action_type': 'assignment', 'assignee_name': '', 'target_kind': 'region', 'target_id': 'shaanxi', 'locality_scope': 'single', 'region_id': 'shaanxi', 'transaction_category': '督赈'})
     db.conn.execute("DELETE FROM pending_decisions WHERE kind='rescript_draft'")
+    prepare_resolve_front_half(state, db, decree_text='诏', content=content)
     db.save_rescript_drafts(int(state.turn), [{'title': '改票契约', 'context': 'c', 'options': [opt, {'label': 'x', 'hint': 'h', 'draft_capability': 'z'}], 'actor_name': '杨嗣昌', 'actor_office': 'o', 'actor_faction': 'f'}])
-    db.save_resolve_context(int(state.turn), '诏', '邸报', {'candidate_events': [], 'transit_semantics': [], 'armies': {'cols': ['id', 'name', 'station', 'owner_power'], 'rows': [['guanning', '关宁军', '宁远', 'ming'], ['manchu_banners_main', '八旗主力', '辽东', 'qing']]}}, secret_orders=[])
     state.turn_phase = TurnPhase.AWAITING_DECISION.value
     db.save_state(state)
     desk = db.list_rescript_desk(int(state.turn))
@@ -2100,7 +2096,7 @@ def test_657_revise_deliberate_strict_contracts_zero_write_on_bad_shape(game, mo
     assert hit.get('choice') in (None, {})
 
     def _military_option(target_id):
-        return normalize_rescript_layer_a_option({'label': '调驻', 'hint': 'h2', 'action_type': 'military_order', 'assignee_name': '祖大寿', 'target_kind': 'army', 'target_id': target_id, 'locality_scope': 'none', 'region_id': '', 'transaction_category': '', 'station': '宁远'})
+        return normalize_rescript_layer_a_option({'label': '调驻', 'hint': 'h2', 'action_type': 'military_order', 'assignee_name': '祖大寿', 'target_kind': 'army', 'target_id': target_id, 'locality_scope': 'none', 'region_id': '', 'transaction_category': '', 'station': '宁远', 'participant_roster': _roster('祖大寿')})
     seen_payload = {}
 
     def _outside_army_revise_text(_agent, raw_payload, **_kwargs):
@@ -2109,7 +2105,11 @@ def test_657_revise_deliberate_strict_contracts_zero_write_on_bad_shape(game, mo
     monkeypatch.setattr(agents_mod, 'run_agent_text', _outside_army_revise_text)
     with pytest.raises(RuntimeError):
         sess.prepare_rescript_prewrite([{'decision_key': key, 'action': 'return_revise', 'note': '再拟'}])
-    assert seen_payload['army_targets'] == [{'id': 'guanning', 'name': '关宁军', 'station': '宁远'}]
+    targets = {row['id']: row for row in seen_payload['army_targets']}
+    assert targets['guanning']['station'] == db.conn.execute(
+        "SELECT station FROM armies WHERE id='guanning'"
+    ).fetchone()['station']
+    assert 'manchu_banners_main' not in targets
     hit = next((r for r in db.list_rescript_drafts() if r['title'] == '改票契约'))
     assert hit['status'] == 'pending'
     assert hit.get('choice') in (None, {})
@@ -2121,6 +2121,9 @@ def test_657_revise_deliberate_strict_contracts_zero_write_on_bad_shape(game, mo
         hit = next((r for r in db.list_rescript_drafts() if r['title'] == '改票契约'))
         assert hit['status'] == 'pending'
         assert hit.get('choice') in (None, {})
+    monkeypatch.setattr(agents_mod, 'run_agent_text', lambda *_a, **_k: json.dumps({'options': [_military_option('guanning')]}, ensure_ascii=False))
+    military_pre = sess.prepare_rescript_prewrite([{'decision_key': key, 'action': 'return_revise', 'note': '再拟'}])
+    assert military_pre['prewrite'].revise_by_key[key][0]['target_id'] == 'guanning'
     owner_opt = {'label': '着户部继续核查陕西赈务，按月具报。', 'hint': '督赈', 'action_type': 'assignment', 'target_kind': 'region', 'target_id': 'shaanxi', 'locality_scope': 'single', 'region_id': 'shaanxi', 'assignee_name': '', 'transaction_category': '督赈', 'deadline_months': 2, 'participant_roster': _roster(_ROSTER_LEAD)}
 
     def _ok_revise_text(*_a, **_k):
@@ -2879,7 +2882,7 @@ def _1778_plant_and_follow(web_game, monkeypatch, drafts, *, desk_action='follow
         db.conn.commit()
         db.save_rescript_drafts(int(state.turn), drafts)
         db.conn.commit()
-        db.save_resolve_context(int(state.turn), '诏', '邸报', {'candidate_events': [], 'transit_semantics': []}, secret_orders=[])
+        db.save_resolve_context(int(state.turn), '诏', {'candidate_events': [], 'transit_semantics': []})
         state.turn_phase = TurnPhase.AWAITING_DECISION.value
         db.save_state(state)
     get_session_write_queue(web_game.session).run_exclusive(plant_desk)
@@ -3070,8 +3073,7 @@ def test_1621_http_follow_draft_uses_catalog_army_id(web_game, monkeypatch):
     }])
     db.conn.commit()
     db.save_resolve_context(
-        int(state.turn), "诏", "邸报", {"candidate_events": [], "transit_semantics": []},
-        secret_orders=[],
+        int(state.turn), "诏", {"candidate_events": [], "transit_semantics": []},
     )
     state.turn_phase = TurnPhase.AWAITING_DECISION.value
     db.save_state(state)

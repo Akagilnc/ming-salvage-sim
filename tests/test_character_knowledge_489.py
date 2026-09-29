@@ -784,8 +784,8 @@ def test_knowledge_exclusion_reads_current_office_without_nameerror(
     else:
         assert knowledge["events"] == []
 
-def test_knowledge_projects_gazette_and_chapter_sources_per_character(game):
-    """同一份公共叙事中的密事不能借原始邸报/章节副本泄漏。"""
+def test_knowledge_projects_public_events_without_leaking_private_matters(game):
+    """邸报含密事时，人物知识面只投影其有权知道的公开事件。"""
     db, state, content = game
     ministers = [
         character for character in content.characters.values()
@@ -858,7 +858,7 @@ def test_knowledge_projects_mixed_archive_from_durable_source_scope(game):
     assert secret_marker in knower_text
 
 def test_rewritten_archive_cannot_reintroduce_restricted_source(game):
-    """章节改写不是来源边界；受限事项必须在改写后仍不可见。"""
+    """邸报正文不是受限事项的来源边界；保存后仍不可向排除者泄露。"""
     db, state, content = game
     ministers = [
         character for character in content.characters.values()

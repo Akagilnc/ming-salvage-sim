@@ -223,8 +223,7 @@ def build_translation_target_grounding(db: Any, state: Any = None) -> str:
 
 def build_c0_declaration_shape() -> str:
     """C0 唯一输出形状，召对与过月转译共用。"""
-    # 效果 delta 的唯一形状真源沿用旧结算入口的 EMPTY_EXTRACTION，避免声明层
-    # 另手维护一份平行字段表。
+    # 效果 delta 的形状真源是 simulation.EMPTY_EXTRACTION；声明层不另维护字段表。
     from ming_sim.simulation import EMPTY_EXTRACTION
 
     # target_kind 表面唯一真源 = decree_vocabulary.TARGET_KINDS，禁手抄分叉。

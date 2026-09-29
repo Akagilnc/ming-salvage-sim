@@ -369,7 +369,7 @@ def _source_archive_rows(db: Any, character_name: str, upto_turn: int) -> list[D
     projected: list[Dict[str, object]] = []
     for row in rows:
         source_id = str(row["source_id"] or "")
-        # Plain turn-report/chapter rows are rendered aggregate read models,
+        # Plain turn-report rows are rendered aggregate read models,
         # not independently authorizable sources.  Their explicit ``:public``
         # counterparts remain source-scoped and are projected below.
         if ((source_id.startswith("turn_report:") and not source_id.endswith(":public"))

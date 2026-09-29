@@ -1,8 +1,8 @@
-"""S6 (ADR 0008 PR1) — extractor 失败响亮中止 + 错误包。
+"""S6 (ADR 0008 PR1) — 月链失败响亮中止与错误包。
 
-决定 3（:406 改响亮中止）：extractor 抛错不再 extracted={} 静默续跑——上抛 SettlementAbort，
-回合不推进、无落库。决定 6/7：自动落错误包到 user-data 目录（traceback + delta + resolve_context
-+ 存档副本 + manifest），attempt 从目录文件数推导，中止提示自带路径指引。
+失败时上抛 SettlementAbort，不静默续跑；保存已完成步骤并供重试续接。
+错误包写入 user-data 目录（traceback + delta + resolve_context + 存档副本 + manifest），
+attempt 从目录文件数推导，中止提示自带路径指引。
 """
 
 from __future__ import annotations
