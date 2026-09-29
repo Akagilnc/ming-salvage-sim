@@ -947,6 +947,7 @@ def test_976_stage_confirm_pin_provenance_not_max_held_user(game):
             "title": "密查国丈",
             "content": extracted,
             "assignee": assignee.name,
+            "origin_chat_message_id": mid_sec,
             "tags": [],
             "deadline_months": 0,
             "excluded_names": [],
@@ -1415,6 +1416,7 @@ def _stage_new_secret(db, state, minister_name: str, marker: str) -> tuple[int, 
             "tags": [], "deadline_months": 0,
             "excluded_names": [], "excluded_offices": [],
             "covert_task": TYPED_COVERT_TASK,
+            "origin_chat_message_id": mid,
         },
     )
     return mid, pid

@@ -109,9 +109,8 @@ class _Row(dict):
         return super().keys()
 
 
-def test_directive_payload_authority_not_notes_alias(monkeypatch):
+def test_directive_payload_authority_not_notes_alias():
     """#1319(a)：notes 备注不得投影成 authority；无真 authority 则空串。"""
-    monkeypatch.setattr(web_app, "skill_display_name", lambda _sid: "")
     game = web_app.WebGame.__new__(web_app.WebGame)
     row = _Row(
         id=9,

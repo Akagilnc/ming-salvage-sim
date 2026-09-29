@@ -22,7 +22,6 @@ from ming_sim.qualitative import (
     qualitative_band,
     qualitative_character_axes,
 )
-from ming_sim.skills import available_skill_names
 
 _content: Optional[GameContent] = None
 
@@ -311,7 +310,6 @@ def character_context_with_db(
         + faction_context_with_db(character, db)
         + held_authority_context(character, db, turn=turn)
         + relation_ledger_context(character, db)
-        + f"当前可用技能：{available_skill_names(character, db)}"
     )
 
 

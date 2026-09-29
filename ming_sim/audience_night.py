@@ -427,9 +427,8 @@ def list_ledger(db: Any, night_id: int) -> List[Dict[str, Any]]:
     return out
 
 
-# #1566/#1716：chat_turns.route 闭集唯一真源（encode/decode/normalize 共用，禁平行闭集）。
-# offsite = 非殿上且非密令（如场外收夜口令）；禁假冒 secret_order_offsite。
-CHAT_TURN_ROUTES = frozenset({"", "offsite", "secret_order", "secret_order_offsite"})
+# Scene turns are either in court or offsite.
+CHAT_TURN_ROUTES = frozenset({"", "offsite"})
 
 
 def normalize_chat_turn_route(route: object) -> str:
@@ -440,30 +439,6 @@ def normalize_chat_turn_route(route: object) -> str:
     return value
 
 
-def encode_chat_turn_route(*, explicit_secret_order: bool, offsite: bool = False) -> str:
-    """#1566/#1716：创建 chat_turns.route 的权威编码。
-
-    '' / offsite / secret_order / secret_order_offsite。
-    """
-    if explicit_secret_order:
-        return "secret_order_offsite" if offsite else "secret_order"
-    return "offsite" if offsite else ""
-
-
-def decode_chat_turn_route(route: object) -> Dict[str, bool]:
-    """#1566/#1716：中断重试消费 chat_turns.route 的权威解码。
-
-    返回 {explicit_secret_order, start_hall_scene}；Web/CLI 重试只消费此结果，
-    禁止各端自造 if-else 分叉。未知非空经 normalize 响亮失败。
-    """
-    value = normalize_chat_turn_route(route)
-    if value == "secret_order_offsite":
-        return {"explicit_secret_order": True, "start_hall_scene": False}
-    if value == "secret_order":
-        return {"explicit_secret_order": True, "start_hall_scene": True}
-    if value == "offsite":
-        return {"explicit_secret_order": False, "start_hall_scene": False}
-    return {"explicit_secret_order": False, "start_hall_scene": True}
 
 
 def list_chat_turns_for_night(db: Any, night_id: int) -> List[Dict[str, Any]]:

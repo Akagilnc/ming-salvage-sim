@@ -238,6 +238,13 @@ def _forecast_config():
 
 
 
+def _secret_source_turn(db, state, minister, words):
+    turn_id = db.create_chat_turn(state, minister, "scene", 0)
+    message_id = db.append_chat_message(minister, state.turn, "user", words)
+    db.update_chat_turn_messages(turn_id, user_message_id=message_id)
+    return turn_id
+
+
 def test_scene_new_secret_order_is_not_confirmed_in_same_turn(game):
     """同轮新建密令不能被同轮应允声明直接落地。"""
     from ming_sim.audience_translate import normalize_audience_declaration
@@ -256,13 +263,22 @@ def test_scene_new_secret_order_is_not_confirmed_in_same_turn(game):
         }}],
         "promises": [{"action_id": next_id, "decision": "应允"}],
     })
-    result = dispatch_declaration(db, state, declaration, minister_name=minister)
+    source_turn = _secret_source_turn(db, state, minister, "密查辽饷。")
+    later_turn = _secret_source_turn(db, state, minister, "今日还有何事？")
+    assert later_turn > source_turn
+    result = dispatch_declaration(
+        db, state, declaration, minister_name=minister, chat_turn_id=source_turn,
+    )
     assert result.commissions.rejected == []
     assert result.commissions.applied[0]["id"] == next_id
     assert len(result.promises.rejected) == 1
     assert db.list_secret_orders() == []
     pending = db.list_pending_actions(state.turn)
     assert len(pending) == 1 and pending[0]["kind"] == "secret_order"
+    source_mid = db.conn.execute(
+        "SELECT user_message_id FROM chat_turns WHERE id=?", (source_turn,),
+    ).fetchone()[0]
+    assert json.loads(pending[0]["payload_json"])["origin_chat_message_id"] == source_mid
 
 
 def test_scene_two_independent_secret_commissions_commit_separately(game):
@@ -278,7 +294,10 @@ def test_scene_two_independent_secret_commissions_commit_separately(game):
         }}
         for title, content, deadline in (("暗查甲", "查甲", 0), ("暗查乙", "查乙", 3))
     ]}
-    result = dispatch_declaration(db, state, declaration, minister_name=minister)
+    source_turn = _secret_source_turn(db, state, minister, "暗查甲、暗查乙")
+    result = dispatch_declaration(
+        db, state, declaration, minister_name=minister, chat_turn_id=source_turn,
+    )
     assert len(result.commissions.applied) == 2
     assert result.commissions.rejected == []
     assert len(db.list_pending_actions(state.turn)) == 2

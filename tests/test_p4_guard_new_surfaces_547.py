@@ -120,9 +120,6 @@ def _world_facts(db, state) -> dict[str, object]:
 def _state_payload_runtime(db, state, content, *, pending_decisions=None):
     """既有轻壳（同 1234 形）+ 真 content/public_character，走 WebGame.state_payload。"""
     import web_app
-    from ming_sim.skills import bind_content as bind_skills_content
-
-    bind_skills_content(content)
     runtime = object.__new__(web_app.WebGame)
     runtime.favorites = set()
     runtime.session = SimpleNamespace(

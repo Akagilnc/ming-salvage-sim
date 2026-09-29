@@ -405,33 +405,6 @@ def test_db_resolve_power_id_authoritative(game):
     assert db.resolve_power_id(ghost2) == "ming"
 
 
-def test_vassal_prince_secret_order_rejected(read_game, monkeypatch):
-    """密令端点 api_create_secret_order 也须拒宗藩（同 /chat 的 API 直连绕过形态，cmr R5）。"""
-    import asyncio
-    import pytest
-    from types import MethodType, SimpleNamespace
-    from fastapi import HTTPException
-    from ming_sim.session import GameSession
-    from web_app import SecretOrderRequest
-    db, state, content = read_game
-    name = next((n for n, c in content.characters.items() if c.office_type == "宗藩"), None)
-    if name is None:
-        pytest.skip("基底盘面无宗藩人物")
-    sess = SimpleNamespace(content=content, db=db)
-    sess.can_summon = MethodType(GameSession.can_summon, sess)
-    stub = SimpleNamespace(
-        content=content,
-        session=sess,
-        character_power_id=lambda c: web_app._character_power_id(c, db),
-    )
-    monkeypatch.setattr(web_app, "web_game", stub)
-    req = SecretOrderRequest(title="密查", content="着尔暗中查访")
-    with pytest.raises(HTTPException) as ei:
-        asyncio.run(web_app.api_create_secret_order(name, req))
-    assert ei.value.status_code == 409
-    assert "宗室" in ei.value.detail
-
-
 # ── #1317 r2：身份归一 ≠ 可召资格；未仕/宗藩别名解析 + 可召排未仕 ──────────
 
 

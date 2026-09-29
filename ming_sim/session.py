@@ -62,7 +62,6 @@ from ming_sim.mindreading import is_inner_court_attendant
 from ming_sim.llm_model import create_agno_db, extract_agent_text
 from ming_sim.models import Character, CourtContext, GameState, LLMConfig, is_vassal_prince, is_weishi
 from ming_sim.paths import user_data_path
-from ming_sim.skills import bind_content as _bind_skills
 
 logger = logging.getLogger(__name__)
 
@@ -643,7 +642,6 @@ def _sync_offices_from_db_impl(content: GameContent, db: "GameDB", llm_config: O
 
 def _bind_all_content(content: GameContent) -> None:
     """把 GameContent 注入所有 bind_content 模块。GameSession 启动时调一次。"""
-    _bind_skills(content)
     _bind_context(content)
     _bind_agents(content)
     _bind_issues(content)

@@ -99,7 +99,6 @@ from ming_sim.session_write_queue import (
     get_session_write_queue,
 )
 from ming_sim.token_stats import tlog
-from ming_sim.skills import available_skill_ids, skill_display_name, skill_source_labels
 from ming_sim.context import match_minister_from_text
 from ming_sim.flows import compute_budget_lines
 from ming_sim.exceptions import LLMContractError  # noqa: F401  (保留：供错误处理)
@@ -670,13 +669,6 @@ class ChatRequest(BaseModel):
 class DirectiveRequest(BaseModel):
     text: str
     notes: str = ""
-
-
-class SecretOrderRequest(BaseModel):
-    title: str
-    content: str
-    tags: List[str] = []
-    deadline_months: int = 0
 
 
 class DirectivePatch(BaseModel):
@@ -1380,15 +1372,6 @@ class WebGame:
             "summary": summary,
             "portrait_id": character.portrait_id,
             "power_id": power_id,
-            "skills": [
-                {
-                    "id": skill_id,
-                    "name": skill_display_name(skill_id),
-                    "sources": skill_source_labels(character, skill_id, self.db),
-                    "description": self.content.skill_descriptions.get(skill_id, ""),
-                }
-                for skill_id in available_skill_ids(character, self.db)
-            ],
             "favorite": character.name in self.favorites,
         }
 
@@ -1401,8 +1384,6 @@ class WebGame:
             "event_id": row["event_id"] or "",
             "event_title": (row["event_title"] if "event_title" in row.keys() else "") or "",
             "actor": row["actor"] or "",
-            "skill_id": row["skill_id"] or "",
-            "skill_name": skill_display_name(str(row["skill_id"] or "")),
             "text": row["text"],
             "source": row["source"],
             "status": row["status"],
@@ -2449,7 +2430,6 @@ class WebGame:
                     # #1566：正式密令前缀须先入密令管线，不得被 location admission 抢先截获。
                     # #1716：已开夜收夜口令跳过场外记召（与 stream 同缝）。
                     # #1837 reopen：密令不再走旧 agent；前缀原文进转译。
-                    explicit_secret_order = False
                     court_break_open_night = self._open_night_court_break(text)
                     secret_order_bypass = (
                         gate_already_held or court_break_open_night
@@ -2487,7 +2467,7 @@ class WebGame:
                                     ),
                                 )
                     elif not gate_already_held and (
-                        explicit_secret_order or court_break_open_night
+                        court_break_open_night
                     ):
                         # #1716：收夜/密令 bypass 后仍取非消费地点分流；收夜不因 reason 拦截。
                         decision = self.session.admit_audience(
@@ -2502,15 +2482,11 @@ class WebGame:
                             AudienceAdmission.SUMMON_IN_TRANSIT,
                         )
                     if offsite_summon is None:
-                        from ming_sim.audience_night import encode_chat_turn_route
                         chat_turn_id, before_snapshot = self._start_chat_turn(
                             minister_name,
                             message=text,
                             attach_to_hall=not offsite_turn,
-                            route=encode_chat_turn_route(
-                                explicit_secret_order=explicit_secret_order,
-                                offsite=offsite_turn,
-                            ),
+                            route="offsite" if offsite_turn else "",
                         )
                         self.chat_history.setdefault(minister_name, []).append({"role": "user", "content": text})
                         message_id = self.db.append_chat_message(minister_name, accepted_turn, "user", text)
@@ -2745,9 +2721,9 @@ class WebGame:
         before_snapshot: Dict[str, Any] = {}
         result = None
         translation_scheduled = False
-        # #1566：route 权威解码——场外密令不启殿上 scene；密令重试保 explicit_secret_order。
-        from ming_sim.audience_night import decode_chat_turn_route
-        retry_route = decode_chat_turn_route(target.get("route"))
+        # 场外对话不启殿上 scene；密令意图由当轮消息传入。
+        from ming_sim.audience_night import normalize_chat_turn_route
+        retry_in_hall = normalize_chat_turn_route(target.get("route")) != "offsite"
         # #542 r6e：reopen + start_chat_turn_scene 纳入既有 try/except；
         # 失败复用 abandon + restore interrupted；drain 在 write_gate 外。
         try:
@@ -2771,7 +2747,7 @@ class WebGame:
                     # reopen 后、session.chat 前，成功后记 diff 供撤回、失败时回滚，杜绝双 stage/粘滞。
                     before_snapshot = self.db.capture_chat_rollback_snapshot()
                     from ming_sim.audience_night import recognize_xuan_command
-                    if retry_route["start_hall_scene"] and not recognize_xuan_command(question):
+                    if retry_in_hall and not recognize_xuan_command(question):
                         self.session.start_chat_turn_scene(minister_name, chat_turn_id)
                 # #1837 reopen：密令重试退役；一律 scene_chat。
                 result = self.session.scene_chat(
@@ -3311,11 +3287,10 @@ class WebGame:
             # #1716：已开夜收夜口令跳过场外记召，否则散夜被 SUMMON_* 短路、夜永不关。
             offsite_secret_order = False
             # #1837 reopen：密令前缀/按钮不再走旧 agent；原文随皇帝话进转译。
-            explicit_secret_order = False  # #1837 reopen：密令不再走旧 agent
             court_break_open_night = self._open_night_court_break(text)
             if scene_chat:
                 offsite_secret_order = False
-            elif not explicit_secret_order and not court_break_open_night:
+            elif not court_break_open_night:
                 stream_origin = f"web:stream:{accepted_turn}:{minister_name}"
                 admission = self.session.consume_audience_admission(
                     self.session._character(minister_name),
@@ -3365,15 +3340,11 @@ class WebGame:
                     AudienceAdmission.SUMMON_IN_TRANSIT,
                 )
             if offsite_summon is None:
-                from ming_sim.audience_night import encode_chat_turn_route
                 chat_turn_id, before_snapshot = self._start_chat_turn(
                     minister_name,
                     message=text,
                     attach_to_hall=not offsite_secret_order,
-                    route=encode_chat_turn_route(
-                        explicit_secret_order=explicit_secret_order,
-                        offsite=offsite_secret_order,
-                    ),
+                    route="offsite" if offsite_secret_order else "",
                 )
                 self.chat_history.setdefault(minister_name, []).append({"role": "user", "content": text})
                 message_id = self.db.append_chat_message(minister_name, accepted_turn, "user", text)
@@ -5990,7 +5961,7 @@ async def api_audience_chat_history() -> Dict[str, Any]:
         "minister": {
             "name": SCENE_CHAT_SPEAKER, "office": "一夜一卷", "office_type": "scene",
             "faction": "", "style": "", "status": "active", "status_label": "在殿",
-            "summary": "", "favorite": False, "skills": [],
+            "summary": "", "favorite": False,
         },
         "campaign_id": str(game.db.kv_get("campaign_id") or ""),
         "night_id": int(open_night["id"]) if open_night else 0,
@@ -6001,7 +5972,7 @@ async def api_audience_chat_history() -> Dict[str, Any]:
         "reply_retries": game.reply_retries(SCENE_CHAT_SPEAKER),
         "generating_turn_ids": [int(r["id"]) for r in game.db.list_in_flight_chat_turns(
             night_id=int(open_night["id"]) if open_night else None,
-        ) if r.get("route", "") in ("", "secret_order")],
+        ) if r.get("route", "") == ""],
         "translation_retries": game.pending_translation_retries(
             night_id=int(open_night["id"]) if open_night else None,
         ),
@@ -6089,36 +6060,6 @@ async def api_retry_pending_translation(
     return await run_in_threadpool(
         game.retry_pending_translation, int(request.chat_turn_id),
     )
-
-
-@app.post("/api/ministers/{minister_name}/secret_order")
-async def api_create_secret_order(minister_name: str, request: SecretOrderRequest) -> Dict[str, Any]:
-    """兼容旧按钮端点：转成场景输入，走同一回话／转译／确认闸门。"""
-    game = get_game()
-    _require_active_minister(minister_name)
-    title = request.title.strip()
-    content = request.content.strip()
-    if not title or not content:
-        raise HTTPException(status_code=400, detail="title 和 content 不能为空")
-    lines = [f"密令如下：{title}", content]
-    tags_raw = request.tags if isinstance(request.tags, list) else []
-    tags = [str(tag).strip() for tag in tags_raw if str(tag).strip()]
-    if tags:
-        lines.append("标签：" + "、".join(tags))
-    provided_fields = (
-        getattr(request, "model_fields_set", None)
-        or getattr(request, "__fields_set__", set())
-    )
-    if "deadline_months" in provided_fields and request.deadline_months is not None:
-        lines.append(f"期限：{int(request.deadline_months)}月")
-
-    # #1727：端点侧补屏障拒——持闸兼容路 gate_already_held 会跳过 _chat_core 内检查。
-    _refuse_settling_or_busy_write_phase(game)
-    _refuse_if_open_night_barrier(game)
-    gate = _game_write_gate(game)
-    _acquire_web_write_gate_or_409(gate)
-    gate.release()
-    return await run_in_threadpool(game.chat, minister_name, "\n".join(lines))
 
 
 @app.post("/api/ministers/{minister_name}/chat")

@@ -931,9 +931,6 @@ class GameDB:
 
             CREATE TABLE IF NOT EXISTS offices (
                 office_type TEXT PRIMARY KEY,
-                skills TEXT NOT NULL,
-                tools TEXT NOT NULL,
-                authority_scope TEXT NOT NULL,
                 power INTEGER NOT NULL,
                 responsibility INTEGER NOT NULL,
                 corruption_risk INTEGER NOT NULL
@@ -1419,8 +1416,7 @@ class GameDB:
                 error_pack_path TEXT NOT NULL DEFAULT '',
                 post_reply_recovery TEXT NOT NULL DEFAULT '',
                 post_reply_error_pack_path TEXT NOT NULL DEFAULT '',
-                -- #1566/#1716：typed route（'' / offsite / secret_order / secret_order_offsite）；
-                -- 中断重试经 decode_chat_turn_route 恢复 explicit_secret_order / 殿上 scene。
+                -- Scene route: '' (in court) or offsite (no hall scene on retry).
                 route TEXT NOT NULL DEFAULT '',
                 -- #1838：本轮转译声明的御前主角（按源轮；空=本轮未声明）
                 protagonist_name TEXT NOT NULL DEFAULT '',
@@ -2508,7 +2504,7 @@ class GameDB:
         # #506 轮级撤销：undo_chat_turn 写 undone_at；旧档 chat_turns 建于该列进 CREATE 之前
         # 时缺列，undo 的 UPDATE 会 OperationalError（no such column: undone_at）→ 整撤回回滚。
         self.ensure_column("chat_turns", "undone_at", "TEXT")
-        # #1566：typed 密令 route 旧档补列（中断重试恢复 explicit_secret_order / 殿上 scene）。
+        # Scene route persists offsite admission for interrupted-turn retry.
         self.ensure_column("chat_turns", "route", "TEXT NOT NULL DEFAULT ''")
         # #1838 C1b：本轮转译声明的御前主角（按源轮持久化；夜当前值在 audience_nights）。
         self.ensure_column("chat_turns", "protagonist_name", "TEXT NOT NULL DEFAULT ''")
@@ -3720,14 +3716,11 @@ class GameDB:
         self.conn.execute(
             """
             INSERT OR IGNORE INTO offices
-            (office_type, skills, tools, authority_scope, power, responsibility, corruption_risk)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            (office_type, power, responsibility, corruption_risk)
+            VALUES (?, ?, ?, ?)
             """,
             (
                 office_type,
-                json.dumps(definition.get("skills", []), ensure_ascii=False),
-                json.dumps(definition.get("tools", []), ensure_ascii=False),
-                str(definition.get("authority_scope", office_type)),
                 int(definition.get("power", 0)),
                 int(definition.get("responsibility", 0)),
                 int(definition.get("corruption_risk", 0)),
@@ -18056,22 +18049,10 @@ class GameDB:
         """把一条结构化聊天写动作存进 pending_actions 暂存(status=pending)。返回行 id。
         颁诏时 commit_pending_actions 批量落库;颁诏前不动真实表。
 
-        secret_order 新建: pin oral-decree ``origin_chat_message_id`` at stage time
-        so later same-turn confirmation user lines cannot steal max(held id)
-        bloodline.  Non-create (更新/催办/记进展/提交核议) does **not** auto-pin
-        latest held — pure-public 问话 must not become secret-origin withheld
-        (S3 参与即知).  New oral on non-create requires explicit
-        ``origin_chat_message_id`` in payload.
+        Secret oral provenance must be pinned by the source turn at the caller;
+        another turn's held message is never a valid substitute.
         """
         payload_data: Dict[str, object] = dict(payload or {})
-        if (
-            str(kind) == "secret_order"
-            and str(action) == "新建"
-            and payload_data.get("origin_chat_message_id") is None
-        ):
-            origin_mid = self._latest_held_user_chat_message_id(minister_name, turn)
-            if origin_mid is not None:
-                payload_data["origin_chat_message_id"] = int(origin_mid)
         # #498：开夜期间 stage 的暂存挂 night_id；收夜只交本夜已应允 id
         # #612：CLOSING 冻结新 stage（endorsement LLM 窗口输入冻结）
         from ming_sim.audience_night import assert_night_accepts_player_input
@@ -18990,6 +18971,7 @@ class GameDB:
                     excluded_names=excluded, excluded_offices=excluded_offices,
                     origin_minister_name=str(pa.get("minister_name") or "") or None,
                     origin_chat_message_id=origin_mid,
+                    origin_chat_message_ids=[] if origin_mid is None else None,
                     pending_action_id=int(pa["id"]),
                     covert_task=frozen_task,
                 )

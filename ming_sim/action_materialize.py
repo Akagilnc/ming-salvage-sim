@@ -128,6 +128,8 @@ def _secret_order_pending_payload(
         "excluded_offices": secret.get("excluded_offices") or [],
         "dossier_links": secret.get("dossier_links") or [],
     }
+    if secret.get("origin_chat_message_id") is not None:
+        payload["origin_chat_message_id"] = secret["origin_chat_message_id"]
     if frozen is not None:
         payload["covert_task"] = frozen
     return payload
@@ -453,6 +455,7 @@ def _apply_existing_appointment_hit(
     summon_after: bool = False,
     origin_chat_turn_id: int = 0,
     annotate: bool = False,
+    recommendation_fields: Optional[Dict[str, Any]] = None,
 ) -> int:
     """既有命中唯一合并点：原地更新（mode 可升可降、字段可补）→ 同一 id。
 
@@ -481,6 +484,16 @@ def _apply_existing_appointment_hit(
             )
             if pending_id:
                 resolved = int(pending_id)
+        if recommendation_fields:
+            current = session.db.conn.execute(
+                "SELECT payload_json FROM pending_actions WHERE id=?", (resolved,),
+            ).fetchone()
+            stored = json.loads(current["payload_json"] or "{}")
+            stored.update(recommendation_fields)
+            session.db.conn.execute(
+                "UPDATE pending_actions SET payload_json=? WHERE id=?",
+                (json.dumps(stored, ensure_ascii=False), resolved),
+            )
         if summon_after and person_name:
             _persist_appointment_summon(
                 session,

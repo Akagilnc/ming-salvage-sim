@@ -133,7 +133,6 @@ export type Minister = {
   favorite: boolean;
   portrait_id?: string;  // 空/undefined=无专属，前端 fallback 到池
   power_id?: string;     // 大明=ming, 后金=houjin, 流寇=bandits 等
-  skills: Array<{ id: string; name: string; sources: string[]; description: string }>;
 };
 
 export type EventItem = {

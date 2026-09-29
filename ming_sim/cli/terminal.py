@@ -26,7 +26,6 @@ from ming_sim.session import (
     _is_summonable_court_minister,
     _pending_action_failure_payload,
 )
-from ming_sim.skills import print_all_skill_cards, print_skill_card
 
 logger = logging.getLogger(__name__)
 
@@ -108,7 +107,7 @@ def choose_minister(session: GameSession) -> Optional[Character]:
         tag = "" if status == "active" else f"  [{_STATUS_LABEL.get(status, status)}]"
         print(f"{idx}. {c.name}（{c.office}，{c.faction}）{tag}")
     while True:
-        raw = input("召见谁？输入编号或姓名，skills 查看技能卡，quit 退朝审阅诏书，exit 退出游戏：").strip()
+        raw = input("召见谁？输入编号或姓名，quit 退朝审阅诏书，exit 退出游戏：").strip()
         if not raw:
             print("请输入编号或姓名。")
             continue
@@ -117,9 +116,6 @@ def choose_minister(session: GameSession) -> Optional[Character]:
             raise ExitGame
         if lowered in COURT_BREAK_COMMANDS:
             return None
-        if lowered in {"skills", "skill", "技能", "技能卡", "查看技能"}:
-            print_all_skill_cards(session.db)
-            continue
         candidate: Optional[Character] = None
         if raw.isdigit() and 1 <= int(raw) <= len(names):
             candidate = characters[names[int(raw) - 1]]
@@ -292,7 +288,7 @@ def _handle_court_command(
     session: GameSession, text: str, current: Character
 ) -> Optional[str]:
     """CLI 控制指令识别。返回：'dismiss' | 'court_break' | 'summon:<name>' |
-    'handled'（技能等已处理）| None（非控制指令，交给 chat）。"""
+    'handled'（口令已处理）| None（非控制指令，交给 chat）。"""
     raw = text.strip()
     lowered = raw.lower()
     if lowered in EXIT_COMMANDS:
@@ -305,13 +301,6 @@ def _handle_court_command(
         from ming_sim.audience_night import stay_attend_in_audience
         stay_attend_in_audience(session.db, current.name)
         print(f"{current.name}留下听着，殿侧侍立。\n")
-        return "handled"
-
-    # 技能卡查看
-    if lowered in {"skills", "skill", "技能", "技能卡", "查看技能", "查看skill"}:
-        target = match_minister_from_text(raw, None) or current
-        print_skill_card(target, session.db)
-        print()
         return "handled"
 
     # 退下（短句正则，不误伤长对话）
@@ -403,10 +392,10 @@ def _retry_interrupted_reply_cli(session: GameSession, minister_name: str) -> Op
         print(f"{minister_name}上一轮回奏仍在进行，请稍候再问。\n")
         return
     # #1566：route 权威解码——与 Web retry 同核；场外密令不启殿上 scene。
-    from ming_sim.audience_night import decode_chat_turn_route, recognize_xuan_command
-    retry_route = decode_chat_turn_route(target.get("route"))
+    from ming_sim.audience_night import normalize_chat_turn_route, recognize_xuan_command
+    retry_in_hall = normalize_chat_turn_route(target.get("route")) != "offsite"
     try:
-        if retry_route["start_hall_scene"] and not recognize_xuan_command(question):
+        if retry_in_hall and not recognize_xuan_command(question):
             session.start_chat_turn_scene(minister_name, chat_turn_id)
         # #1837 reopen：密令前缀路由退役；重试一律 scene_chat。
         result = session.scene_chat(
@@ -552,8 +541,7 @@ def minister_chat(session: GameSession, character: Character) -> str:
             "update_chat_turn_messages", "record_chat_turn_rollback_diffs", "fail_chat_turn",
         ))
         try:
-            from ming_sim.audience_night import encode_chat_turn_route
-            cli_route = encode_chat_turn_route(explicit_secret_order=False)
+            cli_route = ""
             if persistent_chat:
                 if lifecycle_supported:
                     rollback_snapshot = session.db.capture_chat_rollback_snapshot()
@@ -679,8 +667,7 @@ def review_directives(session: GameSession) -> str:
                 print(f"   {wrap(d.text)}")
         elif not pending and not staged_directives:
             print("（暂无指令。back 继续召见，或 add 新增。）")
-        print("\n操作：issue 结束回合 | back 继续召见 | add 新增 | edit N 改 | del N 删 | "
-              "skills 技能卡 | exit 退出")
+        print("\n操作：issue 结束回合 | back 继续召见 | add 新增 | edit N 改 | del N 删 | exit 退出")
         raw = input("诏书草案> ").strip()
         if not raw:
             continue
@@ -701,9 +688,6 @@ def review_directives(session: GameSession) -> str:
                 continue
             session.back_to_summoning()
             return "back"
-        if lowered in {"skills", "skill", "技能", "技能卡", "查看技能"}:
-            print_all_skill_cards(session.db)
-            continue
         if lowered in {"issue", "颁布", "颁布诏书", "发布", "拟诏"}:
             from ming_sim.session import FRONT_HALF_DONE_PHASES
             if session.state.turn_phase in FRONT_HALF_DONE_PHASES:

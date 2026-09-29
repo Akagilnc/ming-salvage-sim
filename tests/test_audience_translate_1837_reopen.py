@@ -235,6 +235,11 @@ def test_recommendation_commission_stages_office_with_reason(game, monkeypatch):
     reason = "请予试任巡盐御史，臣敢以身家保。"
     words = "陛下，巡盐之事可有合适人选？"
     scene_reply = f"臣荐{same_faction.name}任巡盐御史。{reason}"
+    existing_id = db.stage_pending_action(
+        state.turn, "office", "任命", recommender.name,
+        {"name": same_faction.name, "office": "巡盐御史", "appoint_action": "任命",
+         "text": scene_reply},
+    )
     decl = {
         "commissions": [{
             "text": scene_reply,
@@ -253,6 +258,7 @@ def test_recommendation_commission_stages_office_with_reason(game, monkeypatch):
                                 minister_name=recommender.name, scene_reply=scene_reply)
     assert result.commissions.rejected == []
     assert len(result.commissions.applied) == 1
+    assert result.commissions.applied[0]["id"] == existing_id
     row = db.conn.execute(
         "SELECT kind, action, payload_json FROM pending_actions WHERE id=?",
         (result.commissions.applied[0]["id"],),

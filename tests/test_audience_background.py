@@ -12,7 +12,6 @@ import ming_sim.cli_backend as cb
 from ming_sim.exceptions import LLMUnavailable
 from ming_sim.materials import prepare_character_materials
 from ming_sim.session import GameSession
-from ming_sim.skills import bind_content as bind_skills_content
 from tests.dossier_test_helpers import TYPED_COVERT_TASK
 from tests.web_audience_test_doubles import HallAdmissionSessionMixin
 from web_app import WebGame
@@ -159,7 +158,6 @@ class _FakeSession(HallAdmissionSessionMixin):
 
 
 def _web_game(db, state, content, agent: _FakeAgent, monkeypatch=None) -> WebGame:
-    bind_skills_content(content)
     game = WebGame.__new__(WebGame)
     game.session = _FakeSession(db, state, content, agent)
     game.chat_history = {name: [] for name in content.characters}

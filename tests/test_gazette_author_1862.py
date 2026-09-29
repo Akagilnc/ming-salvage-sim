@@ -167,16 +167,17 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
         subject_kind="character", subject_id=minister, body=_PLAIN_DOSSIER_FACT,
         year=year, period=period, turn=turn, origin_ref=f"dossier:{plain_did}",
     )
-    db.upsert_secret_order_brief(
-        state, order_id, minister, "密报题", _SECRET_BRIEF,
-    )
     night_id = open_audience_night(db, state)
     secret_turn, _mid = append_night_chat(db, state, night_id, minister, "问密", "答密", 1)
     plain_turn, _mid = append_night_chat(db, state, night_id, minister, "问私", "答私", 2)
-    db.conn.execute(
-        "UPDATE chat_turns SET route='secret_order' WHERE id=?", (secret_turn,),
+    secret_mid = db.conn.execute(
+        "SELECT user_message_id FROM chat_turns WHERE id=?", (secret_turn,),
+    ).fetchone()[0]
+    db.upsert_secret_order_brief(
+        state, order_id, minister, "密报题", _SECRET_BRIEF,
+        origin_chat_message_ids=[secret_mid],
     )
-    db.conn.commit()
+    assert secret_mid in db._secret_origin_message_protection()
     append_ledger_entry(
         db, night_id, person_names=[minister], audibility=AUDIBILITY_PRIVATE,
         body=_SECRET_AUDIENCE, tags=["scroll_role:minister"],
@@ -382,27 +383,6 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
         assert _PLAIN_DOSSIER_LEDGER in board_text
     finally:
         release_material_tree(world.root)
-
-
-def test_author_unknown_route_raises_before_writing(game, monkeypatch):
-    """未知 chat_turns.route 由权威解码失败，作者不得把它当成非密令继续供料。"""
-    db, state, _content = game
-    db.conn.execute(
-        "INSERT INTO chat_turns (minister_name, turn, year, period, route) "
-        "VALUES (?, ?, ?, ?, ?)",
-        ("未名", int(state.turn), int(state.year), int(state.period), "mystery"),
-    )
-    db.conn.commit()
-    called: list[str] = []
-    monkeypatch.setattr(
-        "ming_sim.agents.run_agent_text",
-        lambda *_a, **_k: called.append("called") or json.dumps(
-            {"title": _TITLE, "report": _REPORT}, ensure_ascii=False,
-        ),
-    )
-    with pytest.raises(ValueError, match="mystery"):
-        month_chain.run_gazette_text(db, state, _llm(), {})
-    assert called == []
 
 
 def test_gazette_failure_retries_report_only(game, monkeypatch):

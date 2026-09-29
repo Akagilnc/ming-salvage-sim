@@ -107,50 +107,6 @@ _webgame_shell = webgame_shell_for_secret_order
 # ── #1357 死链 ──────────────────────────────────────────────────────────────
 
 
-def test_secret_order_endpoint_production_path_no_attribute_error(game, monkeypatch):
-    """#1357：兼容密令端点须走生产 chat 入口，不得 AttributeError→500。
-
-    红：web_app 调 game._chat_with_write_gate_held 而 WebGame 无此方法 → AttributeError。
-    绿：方法存在且委托真实 chat 语义，端点 200 返回回话载荷。
-    """
-    db, state, content = game
-    name = _active_minister_name(db, content)
-    seen: list[tuple[str, str]] = []
-
-    def _session_chat(minister_name, message, *, chat_turn_id=0, explicit_secret_order=False):
-        seen.append((minister_name, message))
-        return ChatTurnResult(
-            answer="臣领密旨，请陛下定夺。",
-            pending_action_id=0,
-            secret_order_id=0,
-        )
-
-    runtime = _webgame_shell(db, state, content, session_chat=_session_chat)
-    monkeypatch.setattr(web_app, "web_game", runtime)
-    monkeypatch.setattr(web_app, "get_game", lambda: runtime)
-
-    # Production symbol must exist on the class (not only on test doubles).
-    assert hasattr(web_app.WebGame, "_chat_with_write_gate_held"), (
-        "WebGame 生产代码缺 _chat_with_write_gate_held → secret_order 端点必 500"
-    )
-
-    result = asyncio.run(web_app.api_create_secret_order(
-        name,
-        web_app.SecretOrderRequest(
-            title="暗查辽饷",
-            content="密查辽东军饷侵冒。",
-            tags=["辽饷"],
-            deadline_months=3,
-        ),
-    ))
-
-    assert seen == [(name, "密令如下：暗查辽饷\n密查辽东军饷侵冒。\n标签：辽饷\n期限：3月")]
-    assert result["answer"] == "臣领密旨，请陛下定夺。"
-    assert result["secret_order_id"] == 0
-    # 确认闸门：端点不得直写 secret_orders
-    assert db.list_secret_orders() == []
-
-
 def test_webgame_chat_with_write_gate_held_is_callable_when_gate_held(game, monkeypatch):
     """调用方已持 write_gate 时，_chat_with_write_gate_held 不得因重入死锁。
 

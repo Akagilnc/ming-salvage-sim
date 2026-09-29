@@ -1,9 +1,7 @@
-"""#1376 密令确认闸验证矩阵：3 入口 × 3 语义 = 9 格。
+"""#1376 密令确认闸：对话入口，默认准／修改／拒绝。
 
-接缝（票面钉）：
+接缝：
 - E1=`POST /api/ministers/…/chat` 正文「密令如下：…」
-- E2=`POST /api/ministers/…/secret_order` 结构化载荷
-- E3=`POST .../chat` + `intent=secret_order`（同走现役场景转译）
 - S1 过月默认准 / S2 修改后准或过月 / S3 拒绝后过月不复活
 - settle=`POST /api/decree/issue/stream` 消费到终态
 - LLM 全 stub；新建/确认/修改/拒绝均由 `_default_translate_runner` 声明分派
@@ -31,12 +29,10 @@ from tests.conftest import offline_empty_audience_translate, stub_audience_trans
 
 # ── 矩阵常量 ───────────────────────────────────────────────────────────
 
-# 票面 E1/E2/E3 指定王之臣；临时 DB 前置合法置于 beizhili/可召（ADR 0096），不改生产 gate。
+# 临时 DB 前置合法置于 beizhili/可召（ADR 0096），不改生产 gate。
 MINISTER = "王之臣"
 E1_MESSAGE = "密令如下：密察关宁欠饷"
 E2_TITLE = "密察关宁欠饷"
-E2_CONTENT = "密察关宁欠饷"
-E3_MESSAGE = "你替朕悄悄查一查关宁欠饷实数"
 
 # 离线转译声明的 typed 载荷；S2 修改正文由测试显式提供
 RESTATED_CONTENT = "密察关宁欠饷，据实密奏，不得声张。"
@@ -49,8 +45,6 @@ S2_APPROVE_MESSAGE = "准"
 # S3 三格分别使用的真实拒绝表达（stub 仅灌「拒绝」判词，不扫/不断言措辞）。
 S3_REJECT_MESSAGES = {
     "E1S3": "此事作罢",
-    "E2S3": "朕再思之，不必查了",
-    "E3S3": "算了",
 }
 
 DEFAULT_EXTRACT_PAYLOAD: Dict[str, Any] = {
@@ -76,6 +70,38 @@ DEFAULT_EXTRACT_PAYLOAD: Dict[str, Any] = {
         },
     },
 }
+
+
+def test_secret_commission_pins_source_turn_before_later_held_chat(game):
+    """后台转译 A 时，B 已入库：密令口谕血缘只能指向 A。"""
+    from ming_sim.declaration_dispatch import dispatch_declaration
+
+    db, state, content = game
+    minister = MINISTER if MINISTER in content.characters else next(iter(content.characters))
+    first = db.append_chat_message(minister, state.turn, "user", "密令口谕")
+    source = db.conn.execute(
+        "INSERT INTO chat_turns(minister_name, turn, year, period, user_message_id) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (minister, state.turn, state.year, state.period, first),
+    ).lastrowid
+    later = db.append_chat_message(minister, state.turn, "user", "另一轮问话")
+    db.conn.execute(
+        "INSERT INTO chat_turns(minister_name, turn, year, period, user_message_id) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (minister, state.turn, state.year, state.period, later),
+    )
+    declaration = {"commissions": [{
+        "text": "交办", "secret_order": {**DEFAULT_EXTRACT_PAYLOAD, "assignee": minister},
+    }]}
+    result = dispatch_declaration(
+        db, state, declaration, minister_name=minister, source_chat_turn_id=source,
+    )
+    assert not result.commissions.rejected
+    staged = db.conn.execute(
+        "SELECT payload_json FROM pending_actions WHERE id=?",
+        (result.commissions.applied[0]["id"],),
+    ).fetchone()
+    assert json.loads(staged["payload_json"])["origin_chat_message_id"] == first
 
 
 # ── LLM / 结算边界 stub ────────────────────────────────────────────────
@@ -357,23 +383,6 @@ def _issue_entry(env: dict, *, entry: str = "E1") -> dict:
             f"/api/ministers/{MINISTER}/chat",
             json={"message": E1_MESSAGE},
         )
-    elif entry == "E2":
-        # E2：兼容端点转到同一场景入口
-        resp = client.post(
-            f"/api/ministers/{MINISTER}/secret_order",
-            json={
-                "title": E2_TITLE,
-                "content": E2_CONTENT,
-                "tags": ["关宁", "欠饷"],
-                "deadline_months": 3,
-            },
-        )
-    elif entry == "E3":
-        # E3：带 intent 的对话入口同走场景转译
-        resp = client.post(
-            f"/api/ministers/{MINISTER}/chat",
-            json={"message": E3_MESSAGE, "intent": "secret_order"},
-        )
     else:
         raise AssertionError(f"unknown entry {entry}")
 
@@ -466,17 +475,15 @@ def _settle_month(env: dict) -> dict:
     return data if isinstance(data, dict) else {}
 
 
-# ── 9 格 ───────────────────────────────────────────────────────────────
+# ── 对话确认闸 ─────────────────────────────────────────────────────────
 
 
 @pytest.mark.parametrize(
     "cell,entry",
     [
         ("E1S1", "E1"),
-        ("E2S1", "E2"),
-        ("E3S1", "E3"),
     ],
-    ids=["E1S1", "E2S1", "E3S1"],
+    ids=["E1S1"],
 )
 def test_matrix_S1_default_commit_on_settle(matrix_env, cell, entry):
     """S1：下令→列表无新 id→不确认→过月→唯一新 id，content=候选 payload 动态传递。"""
@@ -528,10 +535,9 @@ def test_matrix_S1_default_commit_on_settle(matrix_env, cell, entry):
     "cell,entry,via_approve",
     [
         ("E1S2", "E1", True),
-        ("E2S2", "E2", False),  # 修改→不准→过月
-        ("E3S2", "E3", True),
+        ("E1S2-deferred", "E1", False),
     ],
-    ids=["E1S2", "E2S2", "E3S2"],
+    ids=["E1S2", "E1S2-deferred"],
 )
 def test_matrix_S2_modify_then_land(matrix_env, cell, entry, via_approve):
     """S2：下令→确认判词=修改+new_content→准或过月；候选 id 不变；落地=typed new_content。"""
@@ -592,10 +598,8 @@ def test_matrix_S2_modify_then_land(matrix_env, cell, entry, via_approve):
     "cell,entry",
     [
         ("E1S3", "E1"),
-        ("E2S3", "E2"),
-        ("E3S3", "E3"),
     ],
-    ids=["E1S3", "E2S3", "E3S3"],
+    ids=["E1S3"],
 )
 def test_matrix_S3_reject_then_settle_no_resurrection(matrix_env, cell, entry):
     """S3：下令→确认判词=拒绝→过月；无新 order id；候选取消；过月不复活。"""

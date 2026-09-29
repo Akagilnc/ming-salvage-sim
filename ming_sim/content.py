@@ -613,58 +613,16 @@ def dict_of_strings(value: object, path: str) -> Dict[str, str]:
     return output
 
 
-def load_skill_content() -> Tuple[
-    Dict[str, List[str]],
-    Dict[str, Dict[str, object]],
-    Dict[str, List[str]],
-    Dict[str, List[str]],
-    List[str],
-    Dict[str, str],
-    Dict[str, Dict[str, object]],
-]:
+def load_office_definitions() -> Dict[str, Dict[str, object]]:
     data = require_dict(load_json_asset("skills.json"), "skills.json")
-    office_skills_data = dict_of_string_lists(data.get("office_skills"), "skills.json.office_skills")
-    skill_catalog = {
-        str(key): require_dict(value, f"skills.json.skill_catalog.{key}")
-        for key, value in require_dict(data.get("skill_catalog"), "skills.json.skill_catalog").items()
-    }
-    office_default_skills = dict_of_string_lists(data.get("office_default_skills"), "skills.json.office_default_skills")
-    personal_skill_ids = dict_of_string_lists(data.get("personal_skill_ids"), "skills.json.personal_skill_ids")
-    common_skills = string_list(data.get("common_skills"), "skills.json.common_skills")
-    skill_descriptions = dict_of_strings(data.get("skill_descriptions"), "skills.json.skill_descriptions")
-    office_definitions: Dict[str, Dict[str, object]] = {}
-    for office_type, raw in require_dict(data.get("office_definitions"), "skills.json.office_definitions").items():
-        item = require_dict(raw, f"skills.json.office_definitions.{office_type}")
-        skills_ref = str(item.get("skills_ref") or office_type)
-        office_definitions[str(office_type)] = {
-            "skills": office_skills_data.get(skills_ref, []),
-            "tools": string_list(item.get("tools"), f"skills.json.office_definitions.{office_type}.tools"),
-            "authority_scope": str_field(item, "authority_scope", f"skills.json.office_definitions.{office_type}"),
-            "power": int_field(item, "power", f"skills.json.office_definitions.{office_type}"),
-            "responsibility": int_field(item, "responsibility", f"skills.json.office_definitions.{office_type}"),
-            "corruption_risk": int_field(item, "corruption_risk", f"skills.json.office_definitions.{office_type}"),
+    return {
+        str(office_type): {
+            field: int_field(require_dict(raw, f"office_definitions.{office_type}"), field,
+                             f"office_definitions.{office_type}")
+            for field in ("power", "responsibility", "corruption_risk")
         }
-
-    for skill_id in common_skills:
-        if skill_id not in skill_catalog:
-            raise SystemExit(f"common_skills 引用了未定义 skill：{skill_id}")
-    for mapping_name, mapping in {
-        "office_default_skills": office_default_skills,
-        "personal_skill_ids": personal_skill_ids,
-    }.items():
-        for key, skill_ids in mapping.items():
-            for skill_id in skill_ids:
-                if skill_id not in skill_catalog:
-                    raise SystemExit(f"{mapping_name}.{key} 引用了未定义 skill：{skill_id}")
-    return (
-        office_skills_data,
-        skill_catalog,
-        office_default_skills,
-        personal_skill_ids,
-        common_skills,
-        skill_descriptions,
-        office_definitions,
-    )
+        for office_type, raw in require_dict(data.get("office_definitions"), "office_definitions").items()
+    }
 
 
 def load_fiscal_config() -> "List[Dict[str, object]]":
@@ -734,13 +692,6 @@ class GameContent:
     powers: Dict[str, Power] = field(default_factory=dict)
     classes: Dict[str, SocialClass] = field(default_factory=dict)
 
-    # skill 体系
-    office_skills: Dict[str, List[str]] = field(default_factory=dict)
-    skill_catalog: Dict[str, Dict[str, object]] = field(default_factory=dict)
-    office_default_skills: Dict[str, List[str]] = field(default_factory=dict)
-    personal_skill_ids: Dict[str, List[str]] = field(default_factory=dict)
-    common_skills: List[str] = field(default_factory=list)
-    skill_descriptions: Dict[str, str] = field(default_factory=dict)
     office_definitions: Dict[str, Dict[str, object]] = field(default_factory=dict)
 
     # 提示词（#1837 reopen：minister/consort agent prompt 随旧 agent 退役）
@@ -767,15 +718,7 @@ class GameContent:
         buildings = load_building_content()
         powers = load_powers()
         classes = load_class_content()
-        (
-            office_skills_data,
-            skill_catalog,
-            office_default_skills,
-            personal_skill_ids,
-            common_skills,
-            skill_descriptions,
-            office_definitions,
-        ) = load_skill_content()
+        office_definitions = load_office_definitions()
         return cls(
             factions=factions,
             characters=characters,
@@ -789,12 +732,6 @@ class GameContent:
             faction_metrics=tuple(factions.keys()),
             powers=powers,
             classes=classes,
-            office_skills=office_skills_data,
-            skill_catalog=skill_catalog,
-            office_default_skills=office_default_skills,
-            personal_skill_ids=personal_skill_ids,
-            common_skills=common_skills,
-            skill_descriptions=skill_descriptions,
             office_definitions=office_definitions,
             fiscal_items=load_fiscal_config(),
             game_world_prompt=load_text_asset("prompts/game_world.md"),

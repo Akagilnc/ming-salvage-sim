@@ -1338,65 +1338,10 @@ def test_657_s15_origin_unique_empty_nonempty_and_nontarget_integrity(game):
         (origin_nt,),
     ).fetchone()["c"] == 0
 
-def test_web_retry_offsite_secret_round_via_scene(game):
-    """场外中断轮经 Web 重试恢复原轮及回话，不重落问话或启殿上入场。"""
-    from tests.test_audience_travel_gating_670 import _set_place
-
-    db, state, content = game
-    remote = _set_place(game, "洪承畴", location="shaanxi")
-    night = an.open_night(db, state, location="乾清宫", time_of_day="戌时")
-    night_id = int(night["id"])
-    question = "整饬边备，密查欠饷。"
-    ct = db.create_chat_turn(
-        state, remote.name, "sess-offsite-secret", 0,
-        night_id=night_id, status="generating",
-        route="secret_order_offsite",
-    )
-    mid = db.append_chat_message(remote.name, state.turn, "user", question)
-    db.update_chat_turn_messages(ct, user_message_id=mid)
-    ledger_before = an.list_ledger(db, night_id)
-    db.reconcile_interrupted_chat_turns()
-    assert str(db.get_interrupted_reply_retries(remote.name)[-1].get("route") or "") == (
-        "secret_order_offsite"
-    )
-
-    session = _RetrySession(db, state, remote.name)
-    # 场外 route 不得启殿上 scene。
-    session.start_chat_turn_scene = lambda *_a, **_k: (_ for _ in ()).throw(
-        AssertionError("offsite secret retry must not start_chat_turn_scene")
-    )
-    rt = _retry_runtime(db, state, remote.name, session=session)
-    rt.retry_interrupted_reply(remote.name)
-
-    users = [
-        r["content"]
-        for r in db.conn.execute(
-            "SELECT content FROM chat_messages WHERE role='user' AND minister_name=?",
-            (remote.name,),
-        ).fetchall()
-    ]
-    assert users == [question]
-    assert len(db.conn.execute(
-        "SELECT id FROM chat_messages WHERE role='minister' AND minister_name=?",
-        (remote.name,),
-    ).fetchall()) == 1
-    row = db.conn.execute(
-        "SELECT status, minister_message_id, route FROM chat_turns WHERE id=?", (ct,),
-    ).fetchone()
-    assert row["status"] == "active"
-    assert row["minister_message_id"]
-    assert str(row["route"] or "") == "secret_order_offsite"
-    scroll = an.read_night_scroll(db, night_id)
-    assert not any(
-        m.get("beat") == "entrance" and m.get("speaker") == remote.name for m in scroll
-    )
-    assert an.list_ledger(db, night_id) == ledger_before
-
-
 def test_web_retry_ordinary_offsite_court_break_skips_hall_scene(game):
     """#1716：route=offsite 中断恢复经真实 retry 入口，不得启殿上 scene / 写 presence·entrance。
 
-    与上条 secret_order_offsite 同形恢复主干；本条覆盖普通场外（收夜口令）route 解码分支。
+    场外收夜口令恢复仍不启殿上 scene。
     """
     from tests.test_audience_travel_gating_670 import _set_place
 
@@ -1418,9 +1363,6 @@ def test_web_retry_ordinary_offsite_court_break_skips_hall_scene(game):
     db.reconcile_interrupted_chat_turns()
     interrupted = db.get_interrupted_reply_retries(remote.name)[-1]
     assert str(interrupted.get("route") or "") == "offsite"
-    # decode 契约：offsite → start_hall_scene=False（与 secret_order_offsite 同值域）。
-    decoded = an.decode_chat_turn_route(interrupted.get("route"))
-    assert decoded == {"explicit_secret_order": False, "start_hall_scene": False}
 
     session = _RetrySession(db, state, remote.name)
 

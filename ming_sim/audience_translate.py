@@ -168,8 +168,8 @@ def build_night_said_so_far(
     return lines
 
 
-def build_translation_target_grounding(db: Any) -> str:
-    """权威目标目录：dispatcher 可校验的 region/army/character/issue 投影。
+def build_translation_target_grounding(db: Any, state: Any = None) -> str:
+    """权威目标目录：dispatcher 可校验的目标与当前场面投影。
 
     只读 DB 真源；查询失败按 ADR 0005 上抛，不得静默退化为空目录。
     不猜、不从正文匹配改写模型输出。
@@ -200,12 +200,21 @@ def build_translation_target_grounding(db: Any) -> str:
         lines.append(f"issue\t{int(row['id'])}\t{str(row['title'] or '')}")
         for stage in stages:
             lines.append(f"stage\t{int(row['id'])}\t{stage['stage_idx']}\t{stage}")
+    for row in db.conn.execute(
+        "SELECT id, title FROM secret_orders WHERE status='active' ORDER BY id"
+    ).fetchall():
+        lines.append(f"secret_order\t{int(row['id'])}\t{str(row['title'] or '')}")
+    if state is not None:
+        from ming_sim.due_review import current_audience_scene
+        scene = current_audience_scene(db, state)
+        if scene and scene.get("kind") == "covert_levy_exposure" and not scene.get("decision"):
+            lines.append("scene\t" + json.dumps(scene, ensure_ascii=False, sort_keys=True))
     if not lines:
         return ""
     body = "\n".join(lines)
     return (
         "【权威目标目录】\n"
-        "grant.target_id / appointment.region_id 必须是下列目录中的精确 id，禁止编造。\n"
+        "grant.target_id / appointment.region_id / rushes.target_id / 禁摊派案卷 id 必须取对应目录中的精确 id，禁止编造。\n"
         f"{body}\n"
     )
 
@@ -363,7 +372,7 @@ def build_audience_translate_prompt(
         "保持不知情；无排除则给空数组。\n"
         "- 无对应事实的 section 输出空数组（protagonist 无则省略或 null），不要编造。\n"
         "- 承接不了的交办仍写入 commissions（由代码拒收），不要改写皇帝原话去猜。\n"
-        "- 暗渠揭破场面呈上后皇帝禁摊派 → commissions 一项 dossier_action_type=prohibit_covert_levy（案卷由代码按场面绑定）。\n"
+        "- 暗渠揭破场面呈上后皇帝禁摊派 → commissions 一项 dossier_action_type=prohibit_covert_levy，target_id 填当前场面案卷 dossier_id。\n"
         "- 大臣具名举荐某人任某差并附荐词 → commissions 任命 + recommendation（荐者/荐词原句）。\n"
         "- 皇帝交代近侍查某事 → inquiries；催某件分段事或密令 → rushes；传召说明缓急 → travel_tones。\n"
         f"{grounding_block}"
@@ -519,7 +528,7 @@ def run_audience_turn_translation(
         db, int(night_id or 0), until_chat_turn_id=ctid,
     )
     pending = build_pending_summaries(db, int(state.turn), night_id=int(night_id or 0))
-    target_grounding = build_translation_target_grounding(db)
+    target_grounding = build_translation_target_grounding(db, state)
     declaration = translate_audience_turn(
         emperor_message=emperor_message,
         reply=reply,

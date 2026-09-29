@@ -249,7 +249,10 @@ def _dispatch_declaration_sections(
     commissions = _dispatch_commissions(
         db, state, declaration.get("commissions"),
         minister_name=minister_name, source=source,
-        source_chat_turn_id=origin_ctid,
+        source_chat_turn_id=(
+            int(chat_turn_id or source_chat_turn_id or 0)
+            if source_turn_err is None else 0
+        ),
     )
     turn = int(state.turn)
     result = DeclarationDispatchResult(
@@ -1183,11 +1186,21 @@ def _dispatch_commissions(
             if not secret_order_can_land(dict(secret)):
                 _reject(rejected, item, "密令缺标题、内容或冻结任务契约", "invalid_shape", source)
                 continue
-            actor = str(minister_name or "").strip() or _commission_fallback_actor(db)
             out: Dict[str, Any] = {}
+            source_turn = db.conn.execute(
+                "SELECT minister_name, user_message_id FROM chat_turns "
+                "WHERE id=? AND turn=? AND status='active'",
+                (int(source_chat_turn_id), int(state.turn)),
+            ).fetchone()
+            if source_turn is None or source_turn["user_message_id"] is None:
+                _reject(rejected, item, "密令缺本轮口谕源轮", "missing_ref", source)
+                continue
+            pinned = dict(secret)
+            pinned["origin_chat_message_id"] = int(source_turn["user_message_id"])
+            actor = str(minister_name or "").strip() or str(source_turn["minister_name"])
             land_or_recover_new_secret_order(
                 db=db, turn=int(state.turn), minister_name=actor,
-                secret=dict(secret), player_message=str(item.get("text") or ""),
+                secret=pinned, player_message=str(item.get("text") or ""),
                 llm_config=None, out=out,
             )
             applied.append({"id": out["pending_action_id"], "kind": "secret_order"})
@@ -1428,6 +1441,11 @@ def _dispatch_commissions(
                     region_id=str(appointment_fields.get("region_id") or ""),
                     minister_name=minister_name, turn=int(state.turn),
                     annotate=True,
+                    recommendation_fields={
+                        key: payload[key]
+                        for key in ("reason", "recommendation", "faction")
+                        if payload.get("recommendation") and key in payload
+                    },
                 )
                 return {"id": oid, "kind": "office"}
             if appointment_fields["appoint_action"] == "任命":
