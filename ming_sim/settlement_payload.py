@@ -27,15 +27,7 @@ CHEAT_NARRATIVE_PREFIX = (
     "与下方正常邸报冲突时以本段为准，本段没提的下方照常抽。照字面落库：\n"
 )
 
-# HITL 决策点：皇帝亲裁后，把所选选项+自由批语作为「圣意既定」拼到邸报最前喂 extractor。
-# 与 cheat 同机制（既成事实、最高优先级），但语气是皇帝御断而非天命强制。
-DECISION_NARRATIVE_PREFIX = (
-    "【圣意亲裁·结算优先】以下为本回合月末重大抉择，陛下已御笔亲断，最高优先级。"
-    "你必须把每条裁断当作百分百已发生的结果，按其方向抽对应结构化增量与事项推进，"
-    "与下方正常邸报冲突时以本段为准。各条裁断如下：\n"
-)
-
-# 决策块边界标记。simulator 在邸报末尾按规范输出，本回合解析后从 narrative 剥离。
+# 逐旨／世界段预推的请旨机标；不解析邸报正文。
 # 只匹配显式机标本体；邻接 whitespace 属原文，不得一并消费（P6 / #671 / ADR 0142）
 _DECISION_RE = re.compile(r"<<DECISION>>\s*(\{.*?\})\s*<<END>>", re.DOTALL)
 MAX_DECISIONS_PER_TURN = 5
@@ -370,36 +362,6 @@ def augment_secret_orders_with_due_commitments(
             pending.append(item)
     groups.setdefault("在办", [])
     return groups
-
-
-def _format_decision_directive(decisions: List[Dict[str, object]]) -> str:
-    """把皇帝已裁的决策点拼成喂 extractor 的「圣意亲裁」正文。
-    每条：标题 + 所选选项 label/hint + 自由批语。未裁的跳过。"""
-    lines: List[str] = []
-    for i, d in enumerate(decisions, 1):
-        choice = d.get("choice") or {}
-        if not isinstance(choice, dict):
-            continue
-        label = str(choice.get("label") or "").strip()
-        note = str(choice.get("note") or "").strip()
-        if not label and not note:
-            continue
-        title = str(d.get("title") or f"抉择{i}").strip()
-        selected = bind_decision_options(d.get("options") or []).get(label)
-        # Typed grants are governed by their dossier status, not generic
-        # "already happened" prose.  Their note remains an imperial fact.
-        if isinstance(selected, Mapping) and selected.get("action_type") == "grant_allocation":
-            if note:
-                lines.append(f"{i}. 【{title}】朱批：{note}")
-            continue
-        seg = f"{i}. 【{title}】陛下御断：{label or '（未选预设项）'}"
-        hint = str(choice.get("hint") or "").strip()
-        if hint:
-            seg += f"（倾向：{hint}）"
-        if note:
-            seg += f"。朱批：{note}"
-        lines.append(seg)
-    return "\n".join(lines)
 
 
 def _player_visible_extractor_output(applied: object) -> object:

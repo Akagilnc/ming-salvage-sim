@@ -1145,7 +1145,7 @@ class GameSession:
         - 回话落定后一次转译（完整声明）；后台按轮串行、前台不等（#1842）。
           须 chat_turn_id>0（生产不变式；无对话轮的同步转译已删）。
         - 退役与回话并行的意图分类器 / 应允判读 / 故事抽取 / 边事件判官 /
-          代码触发读心（转译承接）；旧按大臣 chat() 入口暂留（收口在 X1）
+          代码触发读心（转译承接）；按大臣 chat() 入口已退役。
         - stream_emit 非空：同核走 transport 流式（SSE delta / 重试 / 失败路径）
         """
         from ming_sim.audience_night import (
