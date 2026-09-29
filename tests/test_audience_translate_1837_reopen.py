@@ -358,6 +358,34 @@ def test_inquiry_declaration_preserves_assignment_in_attendant_materials(game, m
         release_material_tree(prepared.root)
 
 
+@pytest.mark.parametrize("with_source_turn", [False, True])
+def test_separate_inquiries_same_turn_survive_and_retry_is_idempotent(game, with_source_turn):
+    db, state, content = game
+    attendant = _active_minister(db, content)
+    db.conn.execute(
+        "UPDATE characters SET office='御前近臣' WHERE name=?", (attendant.name,)
+    )
+    night_id = int(open_night(db, state)["id"]) if with_source_turn else 0
+    chat_turn_id = (db.create_chat_turn(state, attendant.name, "s", 0,
+                                        night_id=night_id, status="active")
+                    if with_source_turn else 0)
+    queries = ("查访一件无关常用词的事", "请再查另一件完全不同的事")
+    for query in queries:
+        declaration = {"inquiries": [{"attendant": attendant.name, "query": query}]}
+        result = dispatch_declaration(db, state, declaration,
+                                      night_id=night_id, chat_turn_id=chat_turn_id)
+        assert len(result.inquiries.applied) == 1
+        assert not result.inquiries.rejected
+        dispatch_declaration(db, state, declaration,
+                             night_id=night_id, chat_turn_id=chat_turn_id)  # retry
+
+    assignments = [event for event in db.get_character_knowledge(state, attendant.name)["events"]
+                   if event["kind"] == "inquiry_assignment"]
+    assert len(assignments) == 2
+    assert {event["body"] for event in assignments} == set(queries)
+    assert len({event["source_id"] for event in assignments}) == 2
+
+
 def test_rush_commitment_stages_pending_催办(game, monkeypatch):
     db, state, content = game
     minister = _active_minister(db, content)

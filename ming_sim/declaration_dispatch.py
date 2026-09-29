@@ -54,6 +54,7 @@ from __future__ import annotations
 
 import contextlib
 import copy
+import hashlib
 import json
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, Iterator, List, Mapping, Optional, Sequence, Tuple
@@ -1612,7 +1613,7 @@ def _dispatch_inquiries(
             _reject(rejected, item, source_turn_error, "missing_ref", source)
         return SectionResult(applied=[], rejected=rejected)
     applied: List[Any] = []
-    for item in items:
+    for index, item in enumerate(items):
         attendant = str(item.get("attendant") or item.get("person_name") or "").strip()
         query = item.get("query")
         if not attendant:
@@ -1635,12 +1636,13 @@ def _dispatch_inquiries(
             continue
         # 可预期拒收只在声明形状/幻影 id；持久化失败不得洗成 invalid_state 继续
         # （失败诚实宪法：未识别异常保留真因，由事务/调用方接住）。
-        # Source-turn identity keeps retries idempotent; the shared knowledge
-        # reader already scopes this record to its assignee and handles undo.
+        # Use the exact declared subject as identity, not as a fact selector.
+        # A turn/position alone collides across separately dispatched statements.
+        subject_id = hashlib.sha256(query.encode("utf-8")).hexdigest()
         db.register_character_knowledge_source(
             state, [{"character_id": attendant}], "inquiry_assignment",
             "奉旨查访", query,
-            source_id=(f"inquiry:{state.turn}:{attendant}:{len(applied)}"
+            source_id=(f"inquiry:{state.turn}:{attendant}:{index}:{subject_id}"
                        + (f":chat_turn:{int(chat_turn_id)}" if chat_turn_id else "")),
         )
         applied.append({"attendant": attendant, "query": query})
