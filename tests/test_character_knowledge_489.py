@@ -858,7 +858,7 @@ def test_knowledge_projects_mixed_archive_from_durable_source_scope(game):
     assert secret_marker in knower_text
 
 def test_rewritten_archive_cannot_reintroduce_restricted_source(game):
-    """章节改写不是来源边界；受限事项必须在改写后仍不可见。"""
+    """邸报正文不是受限事项的来源边界；保存后仍不可向排除者泄露。"""
     db, state, content = game
     ministers = [
         character for character in content.characters.values()

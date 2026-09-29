@@ -69,9 +69,7 @@ def _657_install_real_phase2_llm_boundary(monkeypatch_or_module):
     """只中和 phase2 LLM 边界；保留 resolve_decisions_phase2 真结算/推月。"""
     import ming_sim.mechanical_tail as mechanical_tail
 
-    # 章节/关系酿制：禁 sk-test 打真网；record 空操作。
-    # 旧 settle 注入缝 + #1845 机械尾真源缝（brew 已迁出 decree runner）。
-    # #1843 reopen：_make_relation_brew_runner 已随旧核删除
+    # 机械尾关系酿制改为空操作，避免 sk-test 配置触发真实模型调用。
     _noop_brew = lambda *a, **k: None
     if hasattr(monkeypatch_or_module, "setattr"):
         monkeypatch_or_module.setattr(
@@ -126,7 +124,6 @@ def _657_subprocess_resolve(
         web_app.run_highlight_judge = lambda **_k: []
 
         # 真 phase2：只 stub LLM 边界
-        # #1843 reopen：_make_relation_brew_runner 已随旧核删除
         import ming_sim.mechanical_tail as mechanical_tail
         mechanical_tail._run_relation_brew = lambda *a, **k: None
         import ming_sim.decree_forecast as decree_forecast
