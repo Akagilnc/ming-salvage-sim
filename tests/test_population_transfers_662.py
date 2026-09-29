@@ -5,14 +5,10 @@ canonical＝ADR 0087 + #662 票庭判词（run 01a02d40-244d-7e4c-8386-5af682d58
   活跃局势 issue）及阶级余额与人口单位；代码侧只守物理不变量，禁引擎侧自动触发（无双驱动）；
 - origin 分立＝reason 枚举「灾害」／「兵灾」（落库字段即 reason，无第二 origin 字段）；
 - 与加派/摊派入口合流同一本账：同一 classes 省级行池＋同一原语，下游只认账不认来源；
-- 邸报/召对定性回响走既有 effect_brief／classes_brief 特征面（P4 零数值）。
-主测缝＝apply_score_extraction / effect_brief / prompt 契约文本 / GameDB 重开接续。
+主测缝＝apply_score_extraction 的人口守恒落账。
 """
 
 from __future__ import annotations
-
-import json
-from types import SimpleNamespace
 
 from test_population_transfers_649 import (
     DISPLACED_SHAANXI,
@@ -26,12 +22,8 @@ from test_population_transfers_649 import (
 
 import pytest
 
-from ming_sim.db import GameDB
 from ming_sim.issues import apply_score_extraction
-from ming_sim.materials import list_materials, prepare_character_materials, read_material
-from ming_sim.simulation import (
-    simulate_season_with_payload
-)
+
 
 @pytest.fixture
 def disaster_shaanxi(game):
@@ -80,35 +72,6 @@ def test_disaster_and_war_amounts_above_old_caps_land_and_conserve(war_shaanxi):
         DISPLACED_SHAANXI + disaster_amount + war_amount
     )
     assert _global_population(db) == total_before
-
-
-class _ExtractorAgent:
-    def __init__(self, response):
-        self.response = response
-
-    def run(self, _prompt):
-        return SimpleNamespace(content=self.response)
-
-
-class _SimulatorAgent(_ExtractorAgent):
-    """不接受 stream 参数，令真实 simulator runner 走其普通 run 兼容支路。"""
-
-
-def _module_response(module, transfers):
-    payload = {
-        "internal": {"metric_delta": {}, "economy_moves": [], "fiscal_changes": [],
-                     "fiscal_creates": [], "fiscal_removes": [], "faction_delta": {},
-                     "class_delta": {}, "population_transfers": transfers, "region_delta": {}},
-        "military_external": {"army_delta": {}, "new_armies": [], "power_updates": {}, "world_advance": {}},
-        "issues": {"issue_advances": [], "new_issues": [], "事件结局": {}, "cancels": [], "close_issues": []},
-        "personnel_secret": {"人物变更": [], "secret_order_updates": [], "emperor_fate": None},
-        "relations": {"relation_edge_events": []},
-    }[module]
-    return json.dumps(payload, ensure_ascii=False)
-
-
-
-
 
 
 # ── 守恒与 mutation：沿 S2 断言族扩展（复用 #649 oracle，不另立机制）─────────

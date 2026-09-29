@@ -747,22 +747,6 @@ def _open_affair_ids_from_payload(payload: object) -> set[int]:
     return ids
 
 
-def secret_dossier_ids_from_secret_orders(db: GameDB, secret_orders: object) -> set[int]:
-    """#1252: freeze secret-dossier roster-write authority from batch secret_orders.
-
-    Resolve each real secret-order id via get_dossier_for_secret_order. Missing
-    authority is an empty closed set — callers must never rebuild from live DB
-    beyond the frozen order-id batch.
-    """
-    out: set[int] = set()
-    for order_id in iter_secret_order_ids(secret_orders):
-        dossier = db.get_dossier_for_secret_order(int(order_id))
-        if dossier is None:
-            continue
-        out.add(int(dossier["id"]))
-    return out
-
-
 
 def write_decree_with_agno(
     llm_config: LLMConfig,
