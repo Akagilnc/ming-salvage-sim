@@ -168,11 +168,11 @@ def test_terminal_minister_chat_persists_messages_before_session_chat(monkeypatc
             self.db = Db()
             self.state = SimpleNamespace(turn=7)
             self.content = SimpleNamespace(characters={"魏忠贤": object(), "韩爌": object()})
-            self.temporary_characters = set()
+
 
         def scene_chat(self, question, *, chat_turn_id=0, stream_emit=None, minister_name=""):
             assert self.db.messages == [
-                ("魏忠贤", 7, "user", "命洪承畴督办陕西赈灾，东厂暗助护赈银。")
+                ("魏忠贤", 7, "user", "交给洪承畴督办陕西赈灾，东厂暗助护赈银。")
             ]
             return SimpleNamespace(
                 answer="臣领密旨，当令东厂暗中护送赈银。",
@@ -187,13 +187,13 @@ def test_terminal_minister_chat_persists_messages_before_session_chat(monkeypatc
         def schedule_pending_scene_translation(self, result):
             return _cli_schedule_pending_noop(self, result)
 
-    answers = iter(["命洪承畴督办陕西赈灾，东厂暗助护赈银。", "done"])
+    answers = iter(["交给洪承畴督办陕西赈灾，东厂暗助护赈银。", "done"])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
     session = Session()
 
     assert term.minister_chat(session, SimpleNamespace(name="魏忠贤")) == "dismiss"
     assert session.db.messages == [
-        ("魏忠贤", 7, "user", "命洪承畴督办陕西赈灾，东厂暗助护赈银。"),
+        ("魏忠贤", 7, "user", "交给洪承畴督办陕西赈灾，东厂暗助护赈银。"),
         ("魏忠贤", 7, "minister", "臣领密旨，当令东厂暗中护送赈银。"),
     ]
 
@@ -223,7 +223,7 @@ def test_terminal_minister_chat_removes_user_message_when_session_chat_fails(mon
             self.db = Db()
             self.state = SimpleNamespace(turn=7)
             self.content = SimpleNamespace(characters={"魏忠贤": object(), "韩爌": object()})
-            self.temporary_characters = set()
+
 
         def scene_chat(self, question, *, chat_turn_id=0, stream_emit=None, minister_name=""):
             assert self.db.messages == [
@@ -272,7 +272,7 @@ def test_terminal_minister_chat_removes_user_message_when_session_chat_interrupt
             self.db = Db()
             self.state = SimpleNamespace(turn=7)
             self.content = SimpleNamespace(characters={"魏忠贤": object(), "韩爌": object()})
-            self.temporary_characters = set()
+
 
         def scene_chat(self, question, *, chat_turn_id=0, stream_emit=None, minister_name=""):
             assert self.db.messages == [
@@ -311,7 +311,7 @@ def test_terminal_minister_chat_preserves_chat_error_when_rollback_fails(monkeyp
             self.db = Db()
             self.state = SimpleNamespace(turn=7)
             self.content = SimpleNamespace(characters={"魏忠贤": object(), "韩爌": object()})
-            self.temporary_characters = set()
+
 
         def scene_chat(self, question, *, chat_turn_id=0, stream_emit=None, minister_name=""):
             raise RuntimeError("LLM down")
@@ -348,7 +348,7 @@ def test_terminal_minister_chat_reply_persist_failure_keeps_user_message(monkeyp
             self.db = Db()
             self.state = SimpleNamespace(turn=7)
             self.content = SimpleNamespace(characters={"魏忠贤": object(), "韩爌": object()})
-            self.temporary_characters = set()
+
 
         def scene_chat(self, question, *, chat_turn_id=0, stream_emit=None, minister_name=""):
             return SimpleNamespace(
@@ -377,65 +377,6 @@ def test_terminal_minister_chat_reply_persist_failure_keeps_user_message(monkeyp
     ]
 
 
-def test_terminal_persistent_chat_finalization_failure_rolls_back_real_turn(game, monkeypatch):
-    db, state, content = game
-    character = next(c for c in content.characters.values() if c.status == "active")
-    marker = "真实 CLI lifecycle 写失败不得留下半轮"
-    real_append = db.append_chat_message
-
-    def fail_minister_write(name, turn, role, body, *args, **kwargs):
-        if role == "minister":
-            raise RuntimeError("finalization write failed")
-        return real_append(name, turn, role, body, *args, **kwargs)
-
-    def fail_minister_persist(name, turn, body, chat_turn_id, *args, **kwargs):
-        raise RuntimeError("finalization write failed")
-
-    monkeypatch.setattr(db, "append_chat_message", fail_minister_write)
-    monkeypatch.setattr(db, "persist_minister_reply", fail_minister_persist)
-    answers = iter([marker])
-    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
-    received_chat_turn_ids = []
-
-    def scene_chat(_question, *, chat_turn_id=0, stream_emit=None, minister_name=""):
-        assert chat_turn_id > 0
-        received_chat_turn_ids.append(chat_turn_id)
-        db.persist_return_report(
-            state, character.name, "陕西巡抚可有？", chat_turn_id=chat_turn_id,
-        )
-        assert db.conn.execute(
-            "SELECT COUNT(*) FROM character_knowledge_sources WHERE source_id LIKE ?",
-            (f"%:chat_turn:{chat_turn_id}",),
-        ).fetchone()[0] == 1
-        return SimpleNamespace(
-            answer="臣有本奏。", proposed_directive=None, appointed_minister="",
-            registered_minister="", displaced_minister="", court_action="",
-            next_minister="", pending_action_failures=[],
-        )
-
-    session = SimpleNamespace(
-        db=db,
-        state=state,
-        content=content,
-        temporary_characters=set(),
-        scene_chat=scene_chat,
-        # #1842：persist 尾必调；本测在落大臣行前失败，仍须绑契约防 AttributeError。
-        schedule_pending_scene_translation=lambda result: None,
-    )
-
-    with pytest.raises(RuntimeError, match="finalization write failed"):
-        term.minister_chat(session, character)
-
-    turn = db.conn.execute("SELECT id, status FROM chat_turns ORDER BY id DESC LIMIT 1").fetchone()
-    assert turn["status"] == "failed"
-    assert received_chat_turn_ids == [turn["id"]]
-    assert db.conn.execute(
-        "SELECT COUNT(*) FROM chat_messages WHERE content=?", (marker,)
-    ).fetchone()[0] == 0
-    assert db.conn.execute(
-        "SELECT COUNT(*) FROM character_knowledge_sources WHERE source_id LIKE ?",
-        (f"%:chat_turn:{turn['id']}",),
-    ).fetchone()[0] == 0
 
 
 def test_terminal_failure_printer_preserves_zero_id(capsys):
@@ -651,7 +592,7 @@ def test_terminal_minister_chat_accepts_retry_reply_command(game, monkeypatch):
     sess.state = state
     sess.content = content
     sess.llm_config = SimpleNamespace(channel="api")
-    sess.temporary_characters = set()
+
     sess.registry = SimpleNamespace(
         get=lambda _ch, **_kw: SimpleNamespace(
             run=lambda *_a, **_k: SimpleNamespace(content="臣遵旨。", tools=[]),

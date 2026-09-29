@@ -495,7 +495,6 @@ def run_player_month_chain(
     decree_text: str = "",
     before_turn: int = 0,
     content: Any = None,
-    registry: Any = None,
     source: Provenance = Provenance.system_simulation,
     cheat_directive: str = "",
 ) -> Any:
@@ -536,7 +535,7 @@ def run_player_month_chain(
     try:
         return _run_loaded_month_chain(
             state, db, agno_db, llm_config, chain,
-            decree_text=decree_text, content=content, registry=registry,
+            decree_text=decree_text, content=content,
             source=source,
         )
     except Exception as exc:
@@ -553,7 +552,6 @@ def _run_loaded_month_chain(
     *,
     decree_text: str,
     content: Any,
-    registry: Any,
     source: Provenance,
 ) -> Any:
     """已装入的月链。代码异常由入口收成同一条 call_failure，不在这里另做恢复。"""
@@ -570,7 +568,7 @@ def _run_loaded_month_chain(
         _save_chain(db, turn, chain, decree_text=decree_text, source=source)
 
     declaration_outcome = _settle_edicts(
-        session, registry=registry, chain=chain, on_outcome=persist_declaration_outcome,
+        session, chain=chain, on_outcome=persist_declaration_outcome,
     )
     world_outcome = _run_world_segment(session, chain, source=source)
     declaration_outcome = world_outcome or declaration_outcome
@@ -775,7 +773,7 @@ def _guard_month_call(
 
 
 def _settle_edicts(
-    session: Any, *, registry: Any, chain: Dict[str, Any], on_outcome: Any = None,
+    session: Any, *, chain: Dict[str, Any], on_outcome: Any = None,
 ) -> Optional[Dict[str, object]]:
     from ming_sim.declaration_dispatch import settle_staged_declarations_in_decree_order
     from ming_sim.decree import _is_stalled_deliberation
@@ -858,7 +856,7 @@ def _settle_edicts(
                     db.conn._recommendation_snapshots_prevalidated = previous or int(dossier["id"]) in prevalidated
                     try:
                         with atomic(db):
-                            affected = db.apply_dossier_promulgation(
+                            db.apply_dossier_promulgation(
                                 state, int(dossier["id"]), str(verdict["decision"]),
                                 blocked_layer=str(verdict.get("blocked_layer") or ""),
                                 reason=str(verdict.get("reason") or ""),
@@ -866,20 +864,11 @@ def _settle_edicts(
                                 primary_opponents=verdict.get("primary_opponents") or [],
                                 gatekeeper_id=verdict.get("gatekeeper_id"),
                                 criteria_snapshot=verdict.get("criteria_snapshot") or {},
-                                content=session.content, registry=registry,
+                                content=session.content,
                             )
                             db._record_dossier_verdict_metadata(state, int(dossier["id"]), verdict)
                     finally:
                         db.conn._recommendation_snapshots_prevalidated = previous
-                    if registry is not None and affected:
-                        from ming_sim.applier import register_runtime_outcome_callbacks
-                        names = tuple(sorted(affected))
-                        def refresh_affected() -> None:
-                            project = getattr(registry, "project_outcome", registry.refresh)
-                            for name in names:
-                                project(name)
-
-                        register_runtime_outcome_callbacks(db, on_commit=refresh_affected)
         current = db.get_decree_dossier(int(dossier["id"])) or dossier
         if str(current.get("promulgation_decision") or "") == "promulgated":
             def persist_result(_decree_ref: str, result: Any) -> None:

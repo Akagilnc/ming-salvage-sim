@@ -1560,7 +1560,7 @@ def test_settle_edicts_persists_pending_disclosures_in_same_transaction(game, mo
         db=db, state=state, llm_config=None, agno_db=None, content=content,
     )
     chain: dict = {}
-    _settle_edicts(sess, registry=None, chain=chain)
+    _settle_edicts(sess, chain=chain)
 
     assert db.staged_declarations.is_settled(ref)
     reloaded = _load_chain(db, turn)
@@ -1618,7 +1618,7 @@ def test_settle_edicts_persists_pending_disclosures_in_same_transaction(game, mo
 
     monkeypatch.setattr(month_chain, "_save_chain", boom_save)
     with pytest.raises(RuntimeError, match="injected chain save failure"):
-        _settle_edicts(sess, registry=None, chain=chain)
+        _settle_edicts(sess, chain=chain)
     assert not db.staged_declarations.is_settled(ref_2)
 
 
@@ -2051,7 +2051,7 @@ def test_pending_disclosures_share_commit_boundary_with_effects(game, monkeypatc
 
     monkeypatch.setattr(month_chain, "_save_chain", boom_save)
     with pytest.raises(RuntimeError, match="injected disclosure save failure"):
-        _settle_edicts(sess, registry=None, chain=chain)
+        _settle_edicts(sess, chain=chain)
 
     assert not db.staged_declarations.is_settled(ref)
     assert int(state.metrics["国库"]) == treasury_before
@@ -2059,7 +2059,7 @@ def test_pending_disclosures_share_commit_boundary_with_effects(game, monkeypatc
     assert not (reloaded.get("segment_applied_results") or [])
 
     monkeypatch.setattr(month_chain, "_save_chain", real_save)
-    _settle_edicts(sess, registry=None, chain={})
+    _settle_edicts(sess, chain={})
     assert db.staged_declarations.is_settled(ref)
     assert int(state.metrics["国库"]) == treasury_before - 17
     feed = month_chain.build_secret_orders_supply_feed(

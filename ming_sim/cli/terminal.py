@@ -26,7 +26,6 @@ from ming_sim.session import (
     _is_summonable_court_minister,
     _pending_action_failure_payload,
 )
-from ming_sim.skills import print_all_skill_cards, print_skill_card, skill_display_name
 
 logger = logging.getLogger(__name__)
 
@@ -99,7 +98,7 @@ def choose_minister(session: GameSession) -> Optional[Character]:
     names = [
         name for name in characters
         if _is_summonable_court_minister(characters[name], resolve_power_id=resolve)
-        and session.db.get_character_status(name)[0] not in ("offstage", "candidate")
+        and session.db.get_character_status(name)[0] != "offstage"
     ]
     print("\n可召见大臣：")
     for idx, name in enumerate(names, 1):
@@ -108,7 +107,7 @@ def choose_minister(session: GameSession) -> Optional[Character]:
         tag = "" if status == "active" else f"  [{_STATUS_LABEL.get(status, status)}]"
         print(f"{idx}. {c.name}（{c.office}，{c.faction}）{tag}")
     while True:
-        raw = input("召见谁？输入编号或姓名，skills 查看技能卡，quit 退朝审阅诏书，exit 退出游戏：").strip()
+        raw = input("召见谁？输入编号或姓名，quit 退朝审阅诏书，exit 退出游戏：").strip()
         if not raw:
             print("请输入编号或姓名。")
             continue
@@ -117,9 +116,6 @@ def choose_minister(session: GameSession) -> Optional[Character]:
             raise ExitGame
         if lowered in COURT_BREAK_COMMANDS:
             return None
-        if lowered in {"skills", "skill", "技能", "技能卡", "查看技能"}:
-            print_all_skill_cards(session.db)
-            continue
         candidate: Optional[Character] = None
         if raw.isdigit() and 1 <= int(raw) <= len(names):
             candidate = characters[names[int(raw) - 1]]
@@ -139,9 +135,7 @@ def choose_minister(session: GameSession) -> Optional[Character]:
         if candidate is None:
             # #670：未知/未注册人物不得临时旁路入殿；须 ADR 0038 持久入册后再走 admission。
             try:
-                candidate, _is_temporary = session.summon_character(
-                    raw, None, allow_temporary=False,
-                )
+                candidate = session.summon_character(raw)
             except ValueError:
                 print("请输入有效编号或姓名。")
                 continue
@@ -157,24 +151,6 @@ def choose_minister(session: GameSession) -> Optional[Character]:
                 print(decision.reason)
             continue
         return candidate
-
-
-def _skill_ids_from_text(session: GameSession, text: str) -> List[str]:
-    matched: List[str] = []
-    for keyword, skill_ids in session.content.grant_keywords.items():
-        if keyword in text:
-            matched.extend(skill_ids)
-    for skill_id, definition in session.content.skill_catalog.items():
-        name = str(definition.get("name", ""))
-        if skill_id in text or (name and name in text):
-            matched.append(skill_id)
-    unique: List[str] = []
-    seen: set = set()
-    for skill_id in matched:
-        if skill_id not in seen:
-            seen.add(skill_id)
-            unique.append(skill_id)
-    return unique
 
 
 def _fail_cli_chat_turn_scene(
@@ -232,7 +208,7 @@ def _handle_court_command(
     session: GameSession, text: str, current: Character
 ) -> Optional[str]:
     """CLI 控制指令识别。返回：'dismiss' | 'court_break' | 'summon:<name>' |
-    'handled'（技能等已处理）| None（非控制指令，交给 chat）。"""
+    'handled'（口令已处理）| None（非控制指令，交给 chat）。"""
     raw = text.strip()
     lowered = raw.lower()
     if lowered in EXIT_COMMANDS:
@@ -244,29 +220,6 @@ def _handle_court_command(
     if raw in STAY_ATTEND_COMMANDS or lowered in STAY_ATTEND_COMMANDS:
         from ming_sim.audience_night import stay_attend_in_audience
         stay_attend_in_audience(session.db, current.name)
-        return "handled"
-
-    # 技能卡查看
-    if (lowered in {"skills", "skill", "技能", "技能卡", "查看技能", "查看skill"} or "技能" in raw) \
-            and not any(w in raw for w in ("授权", "授予", "交给", "收回", "撤销", "取消授权", "命", "令", "着")):
-        target = match_minister_from_text(raw, None) or current
-        print_skill_card(target, session.db)
-        print()
-        return "handled"
-
-    # 收回授权
-    if "授权" in raw and any(w in raw for w in ("收回", "撤销", "取消", "停用", "夺回")):
-        target = match_minister_from_text(raw, None) or current
-        revoked = [
-            skill_display_name(sid)
-            for sid in _skill_ids_from_text(session, raw)
-            if session.db.revoke_skill(target.name, sid)
-        ]
-        if revoked:
-            print(f"已收回{target.name}：{'、'.join(revoked)}。\n")
-            session.registry.refresh(target.name)
-        else:
-            print(f"{target.name}没有可收回的相关授权，或未识别要收回的 skill。\n")
         return "handled"
 
     # 退下（短句正则，不误伤长对话）
@@ -286,9 +239,7 @@ def _handle_court_command(
         name_fragment = summon_m.group(1)
         # #670：未知/未注册人物不得临时旁路入殿；须 ADR 0038 持久入册后再走 admission。
         try:
-            target, _is_temporary = session.summon_character(
-                name_fragment, current, allow_temporary=False,
-            )
+            target = session.summon_character(name_fragment, current)
         except ValueError:
             print("人物未建档，须先补档后方可召见。\n")
             return "handled"
@@ -303,21 +254,6 @@ def _handle_court_command(
                 print(decision.reason + "\n")
             return "handled"
         return f"summon:{target.name}"
-
-    # 授予授权
-    if any(w in raw for w in ("授权", "交给", "授予")):
-        target = match_minister_from_text(raw, None) or current
-        granted = [
-            skill_display_name(sid)
-            for sid in _skill_ids_from_text(session, raw)
-            if session.db.grant_skill(session.state, target.name, sid)
-        ]
-        if granted:
-            print(f"已授权{target.name}：{'、'.join(granted)}。\n")
-            session.registry.refresh(target.name)
-        else:
-            print(f"{target.name}已有相关授权，或未识别要授权的 skill。\n")
-        return "handled"
 
     return None
 
@@ -505,9 +441,8 @@ def minister_chat(session: GameSession, character: Character, *, selected: bool 
             target_name = cmd.split(":", 1)[1]
 
             return cmd
-        # 非控制指令 → 与 agent 对话。CLI 也落 chat_messages，供 session.chat
-        # 内部的密令短确认上下文读取（web 路已有同款持久化）。
-        persistent_chat = character.name not in session.temporary_characters
+        # 非控制指令 → 场景对话，并持久记录对话轮。
+        persistent_chat = True
         accepted_turn = int(session.state.turn)
         user_message_id: int | None = None
         chat_turn_id = 0
@@ -640,8 +575,7 @@ def review_directives(session: GameSession) -> str:
                 print(f"   {wrap(d.text)}")
         elif not pending and not staged_directives:
             print("（暂无指令。back 继续召见，或 add 新增。）")
-        print("\n操作：issue 结束回合 | back 继续召见 | add 新增 | edit N 改 | del N 删 | "
-              "skills 技能卡 | exit 退出")
+        print("\n操作：issue 结束回合 | back 继续召见 | add 新增 | edit N 改 | del N 删 | exit 退出")
         raw = input("诏书草案> ").strip()
         if not raw:
             continue
@@ -662,9 +596,6 @@ def review_directives(session: GameSession) -> str:
                 continue
             session.back_to_summoning()
             return "back"
-        if lowered in {"skills", "skill", "技能", "技能卡", "查看技能"}:
-            print_all_skill_cards(session.db)
-            continue
         if lowered in {"issue", "颁布", "颁布诏书", "发布", "拟诏"}:
             from ming_sim.session import FRONT_HALF_DONE_PHASES
             if session.state.turn_phase in FRONT_HALF_DONE_PHASES:
@@ -784,9 +715,6 @@ def play_turn(session: GameSession) -> None:
                     continue
                 if chat_action.startswith("summon:"):
                     pending_character = session.content.characters[chat_action.split(":", 1)[1]]
-                    continue
-                if chat_action.startswith("summon-temp:"):
-                    pending_character = session.temporary_characters[chat_action.split(":", 1)[1]]
                     continue
                 # court_break 或对话结束 → 审阅
                 action = review_directives(session)

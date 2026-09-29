@@ -864,7 +864,6 @@ def resolve_directives(
     deaths_this_turn: Optional[List[Dict[str, str]]] = None,
     debuts_this_turn: Optional[List[Dict[str, str]]] = None,
     content=None,
-    registry=None,
     cheat_directive: str = "",
     source: Provenance = Provenance.player_decree,
 ) -> ResolveResult:
@@ -893,7 +892,6 @@ def resolve_directives(
         state, db,
         decree_text=decree_text,
         content=content,
-        registry=registry,
         source=source,
     )
 
@@ -903,7 +901,6 @@ def resolve_directives(
         decree_text=decree_text,
         before_turn=before_turn,
         content=content,
-        registry=registry,
         source=source,
         cheat_directive=cheat_directive,
     )
@@ -939,7 +936,7 @@ def _provenance_from_stored(value: object) -> Provenance:
 _RELOAD_SCALAR_FIELDS = ("year", "period", "turn", "turn_phase", "ended", "ending_status")
 
 
-def reload_state_from_db(db: GameDB, state: GameState, *, content=None, registry=None) -> GameState:
+def reload_state_from_db(db: GameDB, state: GameState, *, content=None) -> GameState:
     """回滚后把内存 state 从 DB 原地刷新（ADR 0008 决定 3 第三条）。
 
     DB 回滚只回 SQLite，Python 对象留脏（state.metrics 直加 flows.py:192、turn_phase、
@@ -954,9 +951,6 @@ def reload_state_from_db(db: GameDB, state: GameState, *, content=None, registry
     既清幽灵（任免 commit 先挂 content 再写 DB，回滚删行留幽灵——重试被误拒，cmr S5 r1
     codex trace），也刷掉存量人物的脏属性（罢免/调任/顶替改的 status/office/office_type
     随 DB 回滚必须同源还原，cmr S5 r2 双家共识）。
-    registry 重建依赖 GameSession 重型协作者，decree 层拿不全；被清条目对应的 registry
-    agent 若存在会成悬挂引用，本层无清理接口（限制：session 级重载后续接线时处理）。
-
     嵌套 atomic 内禁止 reload：depth>0 时 rollback 尚未发生（flat 语义，最外层才回滚），
     load_state 同连接会读到未提交脏写——把脏数据当真相刷进 state（cmr S5 r1 claude）。
     """
@@ -998,7 +992,6 @@ def atomic_and_reload(
     state: GameState,
     *,
     content=None,
-    registry=None,
     on_error: Optional[Callable[[BaseException], None]] = None,
 ) -> "Iterator[_AtomicOutcome]":
     """`with atomic(db)` + 「最外层异常回滚后从 DB 重载内存」的公共内核（ADR 0008 S4）。
@@ -1026,7 +1019,7 @@ def atomic_and_reload(
             on_error(exc)
         if getattr(db.conn, "_atomic_depth", 0) == 0:
             try:
-                reload_state_from_db(db, state, content=content, registry=registry)
+                reload_state_from_db(db, state, content=content)
             except BaseException as reload_exc:
                 # reload 失败标记落在专用句柄上（不挂异常属性）：settle 的外层 except
                 # 凭 `as` 句柄裸传播原异常,不包 SettlementAbort 不写错误包（内存仍脏时
@@ -1097,7 +1090,6 @@ def prepare_resolve_front_half(
     *,
     decree_text: str = "",
     content=None,
-    registry=None,
     source: object = Provenance.player_decree,
 ) -> List[Dict[str, object]]:
     """共享前半段 seam（ADR 0004 / #668）：pre_settle + ready=0 占位（含 transit_arrivals）。
@@ -1127,10 +1119,10 @@ def prepare_resolve_front_half(
     # ——要么两者都见，要么整段回滚重来。
     try:
         transit_arrivals_box: List[Dict[str, object]] = []
-        with atomic_and_reload(db, state, content=content, registry=registry):
+        with atomic_and_reload(db, state, content=content):
             pre_settle(
                 state, db,
-                content=content, registry=registry,
+                content=content,
                 transit_arrivals_out=transit_arrivals_box,
             )
             # #668：transit_arrivals 与 ready=0 占位同外层 atomic 写入。
@@ -1164,13 +1156,13 @@ def prepare_resolve_front_half(
 
 
 def pre_settle(
-    state: GameState, db: GameDB, *, content=None, registry=None,
+    state: GameState, db: GameDB, *, content=None,
     transit_arrivals_out: Optional[List[Dict[str, object]]] = None,
 ) -> List[Dict[str, object]]:
     """确定性结算「前括号」：固定月度财政 tick + auto_trigger 硬立 seed 情势，均在 LLM 推演前。
 
     返回本回合程序硬触发的清单。真实流程与探针 driver 共用此核（ADR 0004）。
-    content/registry 供 office(任免)暂存动作落库注册新臣；driver 路径无聊天暂存，传 None 即 no-op。
+    content 供 office(任免)暂存动作落库；driver 路径无聊天暂存。
 
     ADR 0008 S4：整段（暂存动作 commit + 固定财政 + auto_trigger + 到期密令呈递）包成
     **自己的单事务**——崩在内部=全回滚=相位未变=重进时干净重跑前半段。完成时**同事务内**
@@ -1199,14 +1191,14 @@ def pre_settle(
     # 放在 atomic 外：收夜提交与错误包独立；成功后 pre_settle 事务内 commit_pending 仍幂等。
     # #503：收夜 beat 生产路径接通编排缝。
     from ming_sim.audience_night import auto_close_open_night
-    auto_close_open_night(db, state, content=content, registry=registry)
+    auto_close_open_night(db, state, content=content)
     # atomic + 最外层回滚后从 DB 重载（ADR 0008 决定 3 第三条）：apply_fixed_period_flows 直改了
     # state.metrics（flows.py:192）、尾部 turn_phase 已被赋 settling，脏 settling 会被下次 pre_settle
     # 守门跳过=该月财政永久丢（cmr S4 r1 F4）。嵌套时跳过 reload，由最外层拥有者处理。见 atomic_and_reload。
     collector = RejectionCollector()
     try:
         with atomic_and_reload(
-            db, state, content=content, registry=registry,
+            db, state, content=content,
             on_error=lambda _exc: collector.reset(),
         ):
             # 动作闸门(ADR 0006)：颁诏最前批量落库本回合暂存的结构化聊天写动作（密令更新/催办/任免/…），
@@ -1218,7 +1210,7 @@ def pre_settle(
             if discarded_failed:
                 tlog(f"[pending_actions] 过回合丢弃既有 failed 密令意图 {discarded_failed} 条")
             committed = db.commit_pending_actions(
-                state, content=content, registry=registry,
+                state, content=content,
                 rejection_collector=collector,
             )
             if committed:
@@ -1349,7 +1341,6 @@ def resolve_decisions_phase2(
     agno_db: SqliteDb,
     llm_config: LLMConfig,
     content=None,
-    registry=None,
     cheat_directive: str = "",
 ) -> str:
     """phase2：皇帝亲裁完，读回 phase1 暂存上下文 + 已存决策点选择，续跑结算。
@@ -1363,7 +1354,6 @@ def resolve_decisions_phase2(
         state, db, agno_db, llm_config,
         decree_text=str(ctx.get("decree_text") or ""),
         content=content,
-        registry=registry,
         source=_provenance_from_stored(ctx.get("source")),
         cheat_directive=cheat_directive,
     )

@@ -28,7 +28,6 @@ def _recovery_session(db, state, content, monkeypatch):
     import ming_sim.session as session_mod
     from ming_sim.session import GameSession
 
-    monkeypatch.setattr(session_mod, "MinisterRegistry", lambda *a, **k: object())
     monkeypatch.setattr(session_mod, "_sync_offices_from_db_impl", lambda *a, **k: None)
     monkeypatch.setattr(
         decree_mod, "llm_promulgation_verdicts",

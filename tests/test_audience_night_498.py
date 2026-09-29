@@ -639,7 +639,7 @@ def test_cli_minister_chat_anchors_turn_to_night(game, monkeypatch):
         return chat(minister_name or "", message, chat_turn_id=chat_turn_id)
 
     session = SimpleNamespace(
-        db=db, state=state, content=content, temporary_characters=set(),
+        db=db, state=state, content=content,
         chat=chat, scene_chat=scene_chat,
         # #1842：persist 尾必调；轻壳无 pending 时 no-op。
         schedule_pending_scene_translation=lambda result: None,

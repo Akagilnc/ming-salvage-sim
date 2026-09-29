@@ -458,8 +458,7 @@ def test_production_rejects_bare_domain_scope(game):
 def test_promulgation_payload_does_not_write_authority_records(game):
     """授权案卷不得平行直写 authority_records；#528 仅经 authority_changes 授予。
 
-    完整 privilege/scope/holder 的公开委任顺颁后落一条授权档（单一入口）；
-    skill_grants 仍为零（禁技能镜像）。
+    完整 privilege/scope/holder 的公开委任顺颁后落一条授权档（单一入口）。
     """
     db, state, _content = game
     holder = _minister(db)
@@ -473,17 +472,12 @@ def test_promulgation_payload_does_not_write_authority_records(game):
         executor_id=holder,
         payload={
             "character_id": holder,
-            "skill_id": "便宜行事",
             "holder_id": holder,
             "privilege": "便宜行事",
             "scope": "issue:payload旁路",
             "mode": "ordinary",
         },
     )
-    skills_before = db.conn.execute(
-        "SELECT COUNT(*) AS n FROM skill_grants WHERE character_name=?",
-        (holder,),
-    ).fetchone()["n"]
     db.apply_dossier_promulgation(state, dossier_id, "promulgated")
     rows = db.conn.execute(
         "SELECT * FROM authority_records WHERE dossier_id=?",
@@ -493,10 +487,6 @@ def test_promulgation_payload_does_not_write_authority_records(game):
     assert str(rows[0]["holder_id"]) == holder
     assert str(rows[0]["privilege"]) == "便宜行事"
     assert str(rows[0]["scope"]) == "issue:payload旁路"
-    assert db.conn.execute(
-        "SELECT COUNT(*) AS n FROM skill_grants WHERE character_name=?",
-        (holder,),
-    ).fetchone()["n"] == skills_before
 
 
 def test_promulgation_judge_instructions_cover_held_authority_modifiers(monkeypatch):

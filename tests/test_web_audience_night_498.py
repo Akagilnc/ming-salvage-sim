@@ -460,7 +460,6 @@ async def _start_hanging_chat(game, client, minister, monkeypatch):
     """
     started, allow = threading.Event(), threading.Event()
     agent = _FakeAgent(started=started, allow=allow)
-    game.session.registry.get = lambda ch, **_kw: agent
     # #1842：殿上 scene_chat 双桩——与 registry 同注入 agent
     stub_scene_agent(monkeypatch, agent)
     task = asyncio.create_task(
@@ -498,7 +497,6 @@ def test_asgi_phase_flip_while_waiting_gate_rejected(web_game, monkeypatch):
     minister = _active_minister(game)
     # 装好 fake LLM：删掉持锁内复查时，失败只会因非法开夜/建轮（而非缺 API key 401）。
     _agent = _FakeAgent()
-    game.session.registry.get = lambda ch, **_kw: _agent
     stub_scene_agent(monkeypatch, _agent)
     game.state.turn_phase = TurnPhase.SUMMONING.value  # 锁前快速查通过
     nights0, turns0 = _count(game.db, "audience_nights"), _count(game.db, "chat_turns")

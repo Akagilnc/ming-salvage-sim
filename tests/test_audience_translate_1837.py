@@ -174,7 +174,7 @@ def test_pending_round_approval_endorsed_before_close_or_after_month_join(
             ).fetchone()
             assert not json.loads(restored["payload_json"]).get("endorsements")
             assert not restored["night_approved"]
-            close_night(db, state, content=content, registry=None)
+            close_night(db, state, content=content)
             assert db.conn.execute(
                 "SELECT COUNT(*) FROM decree_dossiers WHERE pending_action_id=?", (aid,),
             ).fetchone()[0] == 0
@@ -201,7 +201,7 @@ def test_pending_round_approval_endorsed_before_close_or_after_month_join(
 
     write_queue = SessionWriteQueue()
     close_kwargs = dict(
-        content=content, registry=None, llm_config=object(),
+        content=content, llm_config=object(),
         write_gate=write_queue.write_gate, write_queue=write_queue,
     )
     if timing == "before_close":
@@ -476,7 +476,7 @@ def test_appointment_and_relief_through_scene_chat_then_close_and_settle(game, m
             case["label"], approved,
         )
 
-        close_night(db, state, content=content, registry=None, wait_timeout_s=0.0)
+        close_night(db, state, content=content, wait_timeout_s=0.0)
         for p in pending:
             row = db.conn.execute(
                 "SELECT status FROM pending_actions WHERE id=?", (int(p["id"]),),
@@ -585,7 +585,7 @@ def test_emperor_准_via_scene_chat_approves_no_reply_stays_unapproved(game, mon
     assert int(row["night_approved"] or 0) == 1
 
     close_night(
-        db, state, content=content, registry=None, wait_timeout_s=0.0,
+        db, state, content=content, wait_timeout_s=0.0,
         write_gate=sess._write_gate, write_queue=sess._write_queue,
         llm_config=sess.llm_config,
     )
@@ -955,7 +955,7 @@ def test_pure_office_dossier_uses_payload_text_not_template(game):
     assert payload["text"] == edict
 
     db.mark_pending_night_approved([pending_id], night_id=night_id)
-    close_night(db, state, content=content, registry=None, wait_timeout_s=0.0)
+    close_night(db, state, content=content, wait_timeout_s=0.0)
 
     dossier = db.conn.execute(
         "SELECT decree_text, payload_json, action_type, status "

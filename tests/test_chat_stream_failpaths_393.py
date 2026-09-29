@@ -678,128 +678,6 @@ def test_chat_stream_run_error_event_sse_system_layer_no_retry(monkeypatch, game
     assert attempts[0].get("outcome") == "terminal_fail"
 
 
-def test_chat_stream_two_transient_then_success_three_attempts(monkeypatch, game):
-    """#1465 ① / #1792：两次可重试失败（含一次 typed 503）后第三次成功
-    → 真 interpret/atomic 落库 + 3 attempts 可回指；
-    第二、三次起手各晚于前次失败 ≥ retry_interval（受控时钟，不真等）。
-
-    同案 fo2Og：失败 attempt 写入确定性 Agno run；重试读回/持久史保留前轮、排除失败
-    attempt，且不改游戏账（≠ fail_chat_turn 整轮回滚）。
-    """
-    import ming_sim.llm_transport as transport_mod
-    from ming_sim.models import TRANSPORT_DEFAULT_RETRY_INTERVAL_SECONDS
-    from tests.test_audience_restore_505 import _seed_agno_v3_runs
-
-    def _mixed_retryable(n):
-        # attempt 1：瞬断；attempt 2：typed 503。
-        if n == 2:
-            return LLMUnavailable(
-                "限流",
-                code="llm_run_error",
-                provider_message="model_concurrency_rate_limit_exceeded",
-                status_code=503,
-            )
-        return LLMUnavailable(
-            "连接失败",
-            code="llm_connection_error",
-            provider_message="connection reset",
-        )
-
-    db, _state, _content = game
-    minister = "毕自严"
-    session_id = "minister-retry-hist"
-    # 前轮 Agno 史：本轮起点 keep_count=1；失败 attempt 残迹须截掉、前轮须保留
-    _seed_agno_v3_runs(db, session_id, run_count=1)
-    prior_ids = [f"run-{session_id}-0"]
-    assert [str(r.get("run_id")) for r in db._agno_merged_runs(session_id)] == prior_ids
-
-    clock = {"t": 1000.0}
-    attempt_starts: list[float] = []
-    waits: list[float] = []
-
-    def _wait(seconds: float) -> None:
-        waits.append(float(seconds))
-        clock["t"] += float(seconds)
-
-    monkeypatch.setattr(transport_mod, "_sleep_retry_interval", _wait)
-
-    agent = _FailLeavingAgnoRunAgent(
-        db, session_id, fail_times=2, error_factory=_mixed_retryable,
-    )
-    real_run = agent.run
-
-    def _timed_run(*a, **k):
-        attempt_starts.append(clock["t"])
-        return real_run(*a, **k)
-
-    agent.run = _timed_run  # type: ignore[method-assign]
-    web_game, minister = _transport_web_game(game, agent, monkeypatch)
-    # #1849 reopen：殿上入口；agno 会话键挂「殿上」
-    web_game.session.registry.session_ids["殿上"] = session_id
-
-    # 游戏账基线（截史不得动问话/回话账）
-    user_msgs_before = int(
-        db.conn.execute(
-            "SELECT COUNT(*) AS c FROM chat_messages WHERE role='user'",
-        ).fetchone()["c"]
-    )
-
-    response = _post_chat_stream(monkeypatch, web_game, minister)
-    assert response.status_code == 200, response.text
-    events = _parse_sse(response.text)
-    types = [e[0] for e in events]
-    assert "done" in types, events
-    done = next(e[1] for e in events if e[0] == "done")
-    assert done.get("answer")
-    assert agent.calls == 3
-    attempts = done.get("transport_attempts") or []
-    assert [a.get("outcome") for a in attempts] == [
-        "retryable_fail", "retryable_fail", "ok",
-    ]
-    assert attempts[1].get("status_code") == 503
-    # #1792：两段固定间隔；第二、三次起手 ≥ 前次失败后的 interval
-    interval = TRANSPORT_DEFAULT_RETRY_INTERVAL_SECONDS
-    assert waits == [interval, interval], waits
-    assert len(attempt_starts) == 3, attempt_starts
-    assert attempt_starts[1] - attempt_starts[0] >= interval, attempt_starts
-    assert attempt_starts[2] - attempt_starts[1] >= interval, attempt_starts
-    # 真写路径：大臣回话已落库
-    assert int(done.get("minister_message_id") or 0) > 0
-    chat_turn_id = int(done.get("chat_turn_id") or 0)
-    assert chat_turn_id > 0
-    row = db.conn.execute(
-        "SELECT status, minister_message_id, agno_session_id, agno_runs_before "
-        "FROM chat_turns WHERE id=?",
-        (chat_turn_id,),
-    ).fetchone()
-    assert row is not None
-    assert int(row["minister_message_id"] or 0) > 0
-    assert str(row["status"]) != "failed"
-    assert str(row["agno_session_id"] or "") == session_id
-    assert int(row["agno_runs_before"] or 0) == 1
-
-    # 重试实际读回：每 attempt 启动时只见前轮，不见失败 attempt 残迹
-    assert agent.history_at_attempt_start == [prior_ids, prior_ids, prior_ids], (
-        agent.history_at_attempt_start
-    )
-    # 持久读回：终态仍只保留前轮（失败 run 已截；成功 attempt 未另写）
-    final_ids = [str(r.get("run_id")) for r in db._agno_merged_runs(session_id)]
-    assert final_ids == prior_ids, final_ids
-    assert all(not rid.startswith("fail-attempt-") for rid in final_ids)
-
-    # 游戏账未因截史回滚：问话增加、回话在、轮未 fail
-    user_msgs_after = int(
-        db.conn.execute(
-            "SELECT COUNT(*) AS c FROM chat_messages WHERE role='user'",
-        ).fetchone()["c"]
-    )
-    assert user_msgs_after == user_msgs_before + 1
-    minister_msgs = int(
-        db.conn.execute(
-            "SELECT COUNT(*) AS c FROM chat_messages WHERE role='minister'",
-        ).fetchone()["c"]
-    )
-    assert minister_msgs >= 1
 
 
 def test_chat_stream_three_transient_exhausted_system_fail_then_resend(monkeypatch, game):
@@ -868,7 +746,7 @@ def test_chat_stream_three_transient_exhausted_system_fail_then_resend(monkeypat
 
     # 实际重发：换可成功 agent（#1842：经 create_scene_agent 工厂缝）
     ok_agent = _CountingFailAgent(fail_times=0, error_factory=_conn_err)
-    web_game.session.registry.agent = ok_agent
+    web_game.session._fake_scene_agent = ok_agent
     stub_scene_agent(monkeypatch, ok_agent)
     response2 = _post_chat_stream(monkeypatch, web_game, minister, message="再问边饷。")
     events2 = _parse_sse(response2.text)

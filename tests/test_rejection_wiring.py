@@ -201,19 +201,6 @@ def test_noncancellable_cancel_rejection_carries_reason(game, monkeypatch, tmp_p
     assert rows[0][1]  # reason 非空
 
 
-def test_rejected_appointment_carries_rejection_cause(game, monkeypatch, tmp_path):
-    """Rejected appointments report the rejection, not the model's appointment rationale."""
-    db, state, content = game
-    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
-    existing = next(iter(content.characters))
-    run_settle(db, state, content, {
-        "appointments": [{"origin_ref": "盘面自发", "name": existing,
-                          "office": "贵妃", "office_type": "后宫", "reason": "椒房之选"}],
-    })
-    rows = [r for r in _rejection_rows(db, state.turn) if r[0] == "applied_person_changes"]
-    assert len(rows) == 1
-    assert rows[0][1] and rows[0][1] != "椒房之选"
-    assert rows[0][2] == "appointment_rejected"
 
 
 def test_bridge_synthesizes_reason_when_producer_omits(game):

@@ -12,8 +12,6 @@ from types import SimpleNamespace
 import pytest
 
 import web_app
-from ming_sim import skills
-from ming_sim.cli import terminal
 
 
 class _HistoryDB:
@@ -167,30 +165,3 @@ def test_issue_terminals_keep_unadvanced_month_visible(monkeypatch):
     assert synced["advanced"] is False
     assert game.state.turn == 9
     assert game.session.actions == []
-
-
-def test_cli_skill_card_command_uses_qualitative_character_bands(capsys, monkeypatch):
-    character = SimpleNamespace(
-        name="袁崇焕",
-        office="蓟辽督师",
-        office_type="武臣",
-        faction="东林党",
-        loyalty=88,
-        ability=77,
-        integrity=66,
-        courage=55,
-        style="刚毅",
-    )
-    monkeypatch.setattr(skills, "available_skill_ids", lambda character, db=None: [])
-
-    handled = terminal._handle_court_command(
-        SimpleNamespace(db=None), "技能卡", character,
-    )
-
-    rendered = capsys.readouterr().out
-    assert handled == "handled"
-    assert "忠诚可托腹心" in rendered
-    assert "能力才具出众" in rendered
-    assert "清廉操守清正" in rendered
-    assert "胆略进退审慎" in rendered
-    assert all(raw not in rendered for raw in ("忠诚88", "能力77", "清廉66", "胆略55"))

@@ -383,7 +383,6 @@ export function ChatModal({
     dispatchSend(minister.name, input);
   };
 
-
   return (
     <div className="chat-full-grid">
       <aside className="modal-pane minister-side">

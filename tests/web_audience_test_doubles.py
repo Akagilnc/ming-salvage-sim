@@ -1,6 +1,6 @@
 """#670 Web 殿上 chat/chat_stream 测试壳共享 admission 契约。
 
-生产 WebGame 无条件调 session.consume_audience_admission（密疏 gate_already_held 除外）。
+生产 WebGame 殿上入口调 session.consume_audience_admission。
 测试假壳不得各自复制放行方法体，也不得在 web_app 对缺方法 fail-open。
 """
 
@@ -29,7 +29,7 @@ def allow_hall_admission(
 
 
 def allow_hall_admit_audience(character: Any) -> AudienceAdmissionDecision:
-    """密令/court_break 入口调 admit_audience；与 consume 同形放行，禁各壳自造。"""
+    """收夜入口调 admit_audience；与 consume 同形放行，禁各壳自造。"""
     del character
     return AudienceAdmissionDecision(
         AudienceAdmission.IN_CAPITAL,
@@ -42,7 +42,7 @@ class HallAdmissionSessionMixin:
     """给 class 体可改的假 Session 混入统一放行入口（实现只此一处）。"""
 
     consume_audience_admission = staticmethod(allow_hall_admission)
-    # #1842/#1566：正式密令前缀走 admit_audience（不 consume）；壳须同混入，禁 AttributeError→流挂。
+    # #1716：收夜入口走 admit_audience（不 consume）；壳须同混入。
     admit_audience = staticmethod(allow_hall_admit_audience)
 
 

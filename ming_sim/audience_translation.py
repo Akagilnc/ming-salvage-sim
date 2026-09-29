@@ -312,6 +312,7 @@ def run_turn_translation_job(
                 scene_facts=empty, edge_events=empty,
                 protagonist=ProtagonistResult(validated=None, rejected=[]),
                 registrations=empty, effects=empty,
+                inquiries=empty, rushes=empty, travel_tones=empty,
             )
 
     try:
@@ -329,7 +330,7 @@ def run_turn_translation_job(
             )
             pending = build_pending_summaries(db, int(state.turn), night_id=nid)
             from ming_sim.audience_translate import build_translation_target_grounding
-            target_grounding = build_translation_target_grounding(db)
+            target_grounding = build_translation_target_grounding(db, state)
         declaration = translate_audience_turn(
             emperor_message=emperor_message,
             reply=reply,

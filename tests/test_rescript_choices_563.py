@@ -85,12 +85,15 @@ def test_missing_dossier_mode_defaults_to_ordinary(game):
      ("midzhi", "清核河工", "midzhi"),
      (None, "中旨直发，清核河工", "ordinary")],
 )
-def test_explicit_staging_uses_typed_mode_not_minister_text(
+def test_declared_staging_uses_typed_mode_not_minister_text(
     game, caller_mode, minister_text, expected,
 ):
     db, state, _content = game
-    candidate_id = db.stage_explicit_directive(
-        state.turn, "温体仁", minister_text, mode=caller_mode,
+    candidate_id = db.stage_directive_candidate(
+        state.turn, "温体仁", {"text": minister_text, "actor": "温体仁",
+                             "mode": cli_backend.resolve_directive_mode(extracted=caller_mode),
+                             "dossier_action_type": "special_decree", "target_kind": "policy",
+                             "target_id": "river-works"},
     )
     db.commit_pending_actions(state, action_ids={candidate_id})
     db.ensure_dossiers_for_draft_directives(state)
@@ -102,8 +105,10 @@ def test_explicit_staging_uses_typed_mode_not_minister_text(
 
 def test_presence_aware_mode_preserves_draft_until_explicit_override(game):
     db, state, _content = game
-    candidate_id = db.stage_explicit_directive(
-        state.turn, "温体仁", "中旨直发，清核河工", mode="midzhi",
+    candidate_id = db.stage_directive_candidate(
+        state.turn, "温体仁", {"text": "中旨直发，清核河工", "actor": "温体仁",
+                             "mode": "midzhi", "dossier_action_type": "special_decree",
+                             "target_kind": "policy", "target_id": "river-works"},
     )
     db.update_directive_candidate(candidate_id, {"text": "增列核验期限"})
     pending = next(

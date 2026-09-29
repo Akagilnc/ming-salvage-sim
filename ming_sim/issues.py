@@ -1019,7 +1019,6 @@ def _apply_monthly_ongoing_entities(
     label: str,
     *,
     content=None,
-    registry=None,
     llm_config: Any = None,
     applied_person_changes: Optional[List[Dict[str, object]]] = None,
     origin_ref: str = "盘面自发",
@@ -1085,7 +1084,6 @@ def _apply_monthly_ongoing_entities(
             state,
             person_changes,
             content=effective_content,
-            registry=registry,
             llm_config=llm_config,
             source="system_simulation",
             derived_from=label,
@@ -3090,7 +3088,6 @@ def _register_runtime_rollback_snapshot(
     db: GameDB,
     state: GameState,
     content: Optional[GameContent],
-    registry: object = None,
 ) -> None:
     """Restore process memory if the caller rolls back the surrounding DB transaction."""
     conn = db.conn
@@ -3106,13 +3103,6 @@ def _register_runtime_rollback_snapshot(
             character_attrs[name] = dict(vars(character))
         except TypeError:
             character_attrs[name] = {}
-    registry_agents = getattr(registry, "agents", None)
-    registry_session_ids = getattr(registry, "session_ids", None)
-    registry_agents_snapshot = dict(registry_agents) if isinstance(registry_agents, dict) else None
-    registry_session_ids_snapshot = (
-        dict(registry_session_ids) if isinstance(registry_session_ids, dict) else None
-    )
-
     def restore_runtime() -> None:
         state.metrics.clear()
         state.metrics.update(metrics_snapshot)
@@ -3130,12 +3120,6 @@ def _register_runtime_rollback_snapshot(
                     pass
                 for attr, value in character_attrs.get(name, {}).items():
                     setattr(character, attr, value)
-        if registry_agents_snapshot is not None and isinstance(registry_agents, dict):
-            registry_agents.clear()
-            registry_agents.update(registry_agents_snapshot)
-        if registry_session_ids_snapshot is not None and isinstance(registry_session_ids, dict):
-            registry_session_ids.clear()
-            registry_session_ids.update(registry_session_ids_snapshot)
 
     callbacks.append(restore_runtime)
 
@@ -3376,7 +3360,7 @@ def _pending_person_changes_block_event_gate(
                 status = "dismissed"
             else:
                 status = str(item.get("status") or "").strip()
-                if status in {"active", "candidate"}:
+                if status in {"active"}:
                     continue
             if status not in PERSON_STATUSES:
                 continue
@@ -3762,7 +3746,6 @@ def _apply_issue_entities(
     effect: Dict[str, object],
     label: str,
     content=None,
-    registry=None,
     llm_config: Any = None,
     applied_person_changes: Optional[List[Dict[str, object]]] = None,
     commit: bool = True,
@@ -3863,7 +3846,6 @@ def _apply_issue_entities(
             state,
             status_person_changes,
             content=effective_content(),
-            registry=registry,
             llm_config=llm_config,
             source="system_simulation",
             derived_from=label,
@@ -3880,7 +3862,6 @@ def _apply_issue_entities(
             state,
             person_changes,
             content=effective_content(),
-            registry=registry,
             llm_config=llm_config,
             source="system_simulation",
             derived_from=label,
@@ -4567,7 +4548,6 @@ def _strategic_event_result_preflight_error(
                 state,
                 person_changes,
                 content=content,
-                registry=None,
                 llm_config=llm_config,
                 allow_legacy_partial_power=False,
                 external_transaction=True,
@@ -4763,7 +4743,7 @@ def _strategic_result_item_has_material_world_state(item: Dict[str, object]) -> 
     action = str(item.get("动作") or item.get("action") or "").strip()
     if action in {"处置", "罢黜"} and item.get("status"):
         return True
-    if action in {"任命", "调任", "册封"} and (
+    if action in {"任命", "调任"} and (
         item.get("new_office") or item.get("office")
     ):
         return True
@@ -6316,7 +6296,6 @@ def apply_office_appointment(
     db: GameDB,
     state: GameState,
     content,
-    registry,
     name: str,
     new_office: str,
     *,
@@ -6328,9 +6307,9 @@ def apply_office_appointment(
     llm_config: Any = None,
     commit: bool = True,
 ) -> Dict[str, object]:
-    """朝臣任命/调任的【唯一落地核】：在册且未死 → 改 active + 授官 + 顶替去重 + 同步内存/registry；
+    """朝臣任命/调任的【唯一落地核】：在册且未死 → 改 active + 授官 + 顶替去重 + 同步内存；
     不在册 → apply_appointment 建新档。extractor 的 office_changes 与 CLI 自然语言任免 commit
-    共用此核，杜绝两份会漂的 copy（CMR R2 reground）。后宫纳妃语义不同，不走此核（见 appointments）。
+    共用此核，杜绝两份会漂的 copy（CMR R2 reground）。
     返回结果 dict（rejected / kind=transfer|appoint / displaced 等）。"""
     name = str(name or "").strip()
     new_office = str(new_office or "").strip()
@@ -6338,8 +6317,8 @@ def apply_office_appointment(
         return {"name": name, "new_office": new_office, "rejected": True, "reason": "name 或 new_office 空"}
     # 别名归一：自然语言/LLM 可能用别名（韩老、温首辅、史宪之、福王…），解析到在册规范 key，
     # 否则 in_roster 按确切 key 漏判 → 误走新建档（CMR R3 gemini；#1317 r2 身份归一含未仕/宗藩）。
-    # _find_existing_minister 吃在册身份归一（非后宫∧非 candidate∧ming，**含宗藩/未仕**）；
-    # candidate/不在册返 None → name 不变（candidate 仍由 in_roster 确切 key 命中走激活分支）。
+    # _find_existing_minister 吃在册身份归一（非后宫、ming，含宗藩/未仕）；
+    # 不在册返 None → name 不变。
     if content is not None:
         from ming_sim.session import _find_existing_minister
         canon = _find_existing_minister(content, name, db)
@@ -6373,6 +6352,8 @@ def apply_office_appointment(
                     llm_config=llm_config or db.llm_config,
                 )
             )
+            if new_office_type == "后宫":
+                raise ValueError("后宫任命已退役")
             # Resolved seat is the sole identity for write / displace / projection.
             # Local same-office omit-region reuses character_offices; central strips.
             seat = _resolve_appointment_seat(
@@ -6417,11 +6398,6 @@ def apply_office_appointment(
             ch.office = new_office
             ch.office_type = new_office_type
             ch.office_region = seat
-            if registry is not None:
-                registry.refresh(name)
-                # 被顶替者 office/office_type 也变了,一并刷 Agent,免本回合后续用陈旧身份/工具(线上 gemini)。
-                for dp in displaced_parts:
-                    registry.refresh(dp.split(":")[0])
         except Exception as exc:
             _restore_person_write_state(db, content, snapshot, commit=commit)
             return _office_appointment_failure(name, new_office, exc)
@@ -6456,6 +6432,8 @@ def apply_office_appointment(
                 llm_config=llm_config or db.llm_config,
             )
         )
+        if new_office_type == "后宫":
+            raise ValueError("后宫任命已退役")
         seat = _resolve_appointment_seat(
             db,
             name=name,
@@ -6471,7 +6449,6 @@ def apply_office_appointment(
                 db,
                 state,
                 content,
-                registry,
                 appt,
                 llm_config=llm_config,
                 commit=commit,
@@ -6485,10 +6462,6 @@ def apply_office_appointment(
             displaced_parts = _displace_duplicate_offices(
                 db, content, appointed, new_office, region_id=seat, commit=commit,
             )
-            # 被顶替者一并刷 Agent(新任者 apply_appointment 内已注册)(线上 gemini)。
-            if registry is not None:
-                for dp in displaced_parts:
-                    registry.refresh(dp.split(":")[0])
             return {"name": appointed, "new_office": new_office, "kind": "appoint", "reason": reason,
                     **({"displaced": displaced_parts} if displaced_parts else {})}
     except Exception as exc:
@@ -6509,7 +6482,6 @@ def _apply_person_changes(
     state: GameState,
     changes: List[Dict[str, object]],
     content=None,
-    registry=None,
     llm_config: Any = None,
     source: str = "system_simulation",
     derived_from: str = "",
@@ -6648,7 +6620,6 @@ def _apply_person_changes(
     needs_person_change_commit = False
     person_statuses = {
         "active",
-        "candidate",
         "offstage",
         "dismissed",
         "imprisoned",
@@ -6656,7 +6627,7 @@ def _apply_person_changes(
         "retired",
         "dead",
     }
-    disposition_statuses = person_statuses - {"active", "candidate"}
+    disposition_statuses = person_statuses - {"active"}
     for item in changes:
         name = str(item.get("name") or "").strip()
         action = str(item.get("动作") or "").strip()
@@ -6758,7 +6729,7 @@ def _apply_person_changes(
                 applied.append(
                     rejected(
                         item,
-                        "处置 不直接迁入 active/candidate，走任命/册封级联",
+                        "处置 不直接迁入 active，走任命级联",
                         "invalid_transition",
                         status=status,
                     )
@@ -6895,7 +6866,6 @@ def _apply_person_changes(
                             db,
                             state,
                             content,
-                            registry,
                             name,
                             new_office,
                             reason=str(item.get("reason") or ""),
@@ -6975,7 +6945,6 @@ def _apply_person_changes(
                     db,
                     state,
                     content,
-                    registry,
                     name,
                     new_office,
                     reason=str(item.get("reason") or ""),
@@ -7208,61 +7177,6 @@ def _apply_person_changes(
                 log_applied(wrapped, item)
             continue
 
-        if action == "册封":
-            if content is None:
-                applied.append(rejected(item, "无 content，跳过册封", "missing_ref"))
-                continue
-            office = str(item.get("office") or item.get("位号") or "").strip()
-            office_type = str(item.get("office_type") or item.get("官署类别") or "后宫").strip()
-            if office_type != "后宫":
-                applied.append(rejected(item, "册封 仅适用于后宫 office_type", "invalid_transition"))
-                continue
-            from ming_sim.session import _find_candidate_by_name, apply_appointment
-
-            if _find_candidate_by_name(content, name) is None:
-                if item.get("legacy_appointment"):
-                    applied.append(rejected(item, "册封建档被拒", "appointment_rejected"))
-                else:
-                    applied.append(rejected(item, "非既有 candidate", "hallucinated_id"))
-                continue
-
-            approved = item.get("approved", item.get("准许", True))
-            origin_error = origin_rejected(item)
-            if origin_error:
-                applied.append(origin_error)
-                continue
-            appointed, displaced = apply_appointment(
-                db,
-                state,
-                content,
-                registry,
-                {
-                    "name": name,
-                    "office": office,
-                    "office_type": "后宫",
-                    "faction": "后宫",
-                    "reason": str(item.get("reason") or ""),
-                    "approved": approved,
-                },
-                llm_config=llm_config,
-                commit=commit_person_change,
-            )
-            if appointed:
-                result: Dict[str, object] = {
-                    "name": appointed,
-                    "动作": action,
-                    "office": office,
-                    "office_type": "后宫",
-                    "reason": str(item.get("reason") or ""),
-                }
-                if displaced:
-                    result["displaced"] = displaced
-                applied.append(result)
-                log_applied(result, item)
-            else:
-                applied.append(rejected(item, "册封建档被拒", "appointment_rejected"))
-            continue
-
         if action == "行止":
             if content is not None and name not in content.characters:
                 applied.append(rejected(item, "非既有人物", "hallucinated_id"))
@@ -7320,7 +7234,7 @@ def _apply_person_changes(
                 own_tx = commit_person_change
                 if own_tx:
                     _register_runtime_rollback_snapshot(
-                        db, state, content, registry,
+                        db, state, content,
                     )
 
                 def _write_leave_waiting() -> None:
@@ -7383,8 +7297,6 @@ def _legacy_person_report_section(result: Dict[str, object]) -> str:
         return "character_power_changes"
     if source.get("legacy_spillover"):
         return "office_changes"
-    if action == "册封":
-        return "appointments"
     if action in {"任命", "调任"}:
         return "office_changes"
     return ""
@@ -8089,7 +8001,6 @@ def apply_person_changes_only(
     person_changes: List[Dict[str, object]],
     *,
     content=None,
-    registry=None,
     llm_config: Any = None,
     origin_ref: str = "盘面自发",
     require_origin: bool = False,
@@ -8102,7 +8013,7 @@ def apply_person_changes_only(
     runtime_content = content if content is not None else _ctx()
     caller_transaction = db.conn.in_transaction
     if caller_transaction:
-        _register_runtime_rollback_snapshot(db, state, runtime_content, registry)
+        _register_runtime_rollback_snapshot(db, state, runtime_content)
     changes = _canonicalize_person_change_names(
         normalize_person_changes({"人物变更": list(person_changes or [])}),
         runtime_content,
@@ -8113,7 +8024,6 @@ def apply_person_changes_only(
         state,
         changes,
         content=runtime_content,
-        registry=registry,
         llm_config=llm_config,
         external_transaction=caller_transaction,
         origin_ref=origin_ref,
@@ -8179,7 +8089,6 @@ def apply_score_extraction(
     state: GameState,
     extracted: Dict[str, object],
     content=None,
-    registry=None,
     llm_config: Any = None,
     candidate_event_ids_at_input: Optional[set[str]] = None,
     impeachment_surge_candidates_at_input: Optional[List[Dict[str, object]]] = None,
@@ -8198,7 +8107,7 @@ def apply_score_extraction(
 ) -> Dict[str, object]:
     """落地结算声明到 state 与 db。
 
-    content/registry：若传入则处理 `appointments`——把诏书任命的新人建档入朝。
+    content：若传入则处理 `appointments`——把诏书任命的新人建档入朝。
     缺省则跳过。
 
     落账只认有序声明路径：``ordered_deltas`` 缺省时按 extracted 字段原序派生，
@@ -8210,7 +8119,7 @@ def apply_score_extraction(
     caller_transaction = db.conn.in_transaction
     commit_now = not caller_transaction
     if caller_transaction:
-        _register_runtime_rollback_snapshot(db, state, content, registry)
+        _register_runtime_rollback_snapshot(db, state, content)
     # #633 T1 r5 owner 裁决（B 案）：结算口边事件端点资格＝批内瞬态 canonical
     # 名册并集。此处取 pre-roster 观察点（任何人物变更 apply 前）；post-roster
     # 在人物变更全部落定后、relations 解析前另取。不建持久 snapshot、不新增
@@ -8241,7 +8150,6 @@ def apply_score_extraction(
             state,
             extracted,
             content=content,
-            registry=registry,
             llm_config=llm_config,
             candidate_event_ids_at_input=candidate_event_ids_at_input,
             impeachment_surge_candidates_at_input=impeachment_surge_candidates_at_input,
@@ -8348,7 +8256,6 @@ def _apply_score_extraction_body(
     extracted: Dict[str, object],
     *,
     content,
-    registry,
     llm_config: Any,
     candidate_event_ids_at_input: Optional[set[str]],
     impeachment_surge_candidates_at_input: Optional[List[Dict[str, object]]],
@@ -8750,7 +8657,6 @@ def _apply_score_extraction_body(
             state,
             changes,
             content=content,
-            registry=registry,
             llm_config=llm_config,
             allow_legacy_partial_power=legacy,
             external_transaction=db.conn.in_transaction,

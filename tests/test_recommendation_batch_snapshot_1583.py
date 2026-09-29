@@ -78,7 +78,7 @@ def test_same_batch_consecutive_appointments_keep_prebatch_recommendation_snapsh
         db, state, recommender.name, snapshot, second_office, "再调河道，接续核查",
     )
     committed = db.commit_pending_actions(
-        state, content=content, registry=None, action_ids=[id1, id2],
+        state, content=content, action_ids=[id1, id2],
     )
     assert {item["id"] for item in committed} == {id1, id2}
 
@@ -137,7 +137,7 @@ def test_stale_recommendation_snapshot_still_rejected_outside_mutating_batch(gam
     db.conn.commit()
 
     result = db.commit_pending_actions(
-        state, content=content, registry=None, action_ids=[action_id],
+        state, content=content, action_ids=[action_id],
     )
     assert result and result[0]["id"] == action_id
 

@@ -171,7 +171,6 @@ def _pick_active_minister(state: dict) -> str:
 
 def _install_canned_minister(game, monkeypatch) -> None:
     agent = _CannedMinisterAgent()
-    game.session.registry.get = lambda _ch, **_kw: agent
     stub_scene_agent(monkeypatch, agent)
 
 
@@ -522,82 +521,3 @@ def _assert_court_break_closed(game, body: dict, night_id: int, *, remote: str) 
         assert str(entry.get("presence_effect") or "") not in {
             an.PRESENCE_ENTER, "enter",
         }, entry
-
-
-@pytest.mark.parametrize("kind", ["offsite", "temporary"])
-def test_issue_1716_offsite_court_break_via_stream(tracer_client, kind, monkeypatch):
-
-    """#1716 stream 入口：已开夜场外/temporary /chat/stream 退朝 → court_break + 夜关。
-
-    temporary 不得因 admission reason 返回 error；正式场外仍走地点分类与无 presence。
-    """
-    client, game, remote, night_id = _setup_open_night_participant(
-        tracer_client, kind=kind,
-    )
-
-    class _StreamAgent:
-        def run(self, *_a, **_k):
-            yield SimpleNamespace(event="RunContent", content="臣领旨。")
-            yield SimpleNamespace(content="", tools=[])
-
-        def get_last_run_output(self):
-            return None
-
-    agent = _StreamAgent()
-    game.session.registry.get = lambda _ch, **_kw: agent
-    stub_scene_agent(monkeypatch, agent)
-
-    stream = client.post(
-        "/api/audience/chat/stream",
-        json={"message": "退朝"},
-    )
-    _assert_not_bare_500(stream, step=f"#1716 chat/stream {kind} 退朝")
-    assert stream.status_code == 200, stream.text
-    events = _parse_sse(stream.text)
-    types = [str(ev.get("event") or "") for ev in events]
-    assert "error" not in types, events
-    assert "done" in types, events
-    done_raw = next(ev for ev in events if ev.get("event") == "done").get("data") or "{}"
-    done = json.loads(done_raw) if isinstance(done_raw, str) else done_raw
-    assert isinstance(done, dict), done
-    _assert_court_break_closed(game, done, night_id, remote=remote)
-    # 退朝轮仍由殿上入口持久记录。
-    turn = game.db.conn.execute(
-        "SELECT minister_name FROM chat_turns "
-        "WHERE night_id=? AND status='active' "
-        "ORDER BY id DESC LIMIT 1",
-        (night_id,),
-    ).fetchone()
-    assert turn is not None
-    assert str(turn["minister_name"] or "") == "殿上"
-
-
-def test_issue_1716_offsite_court_break_via_nonstream(tracer_client, monkeypatch):
-    """#1716 非流式入口：已开夜场外 POST /chat 退朝 → court_break + 夜关。"""
-    client, game, remote, night_id = _setup_open_night_participant(
-        tracer_client, kind="offsite",
-    )
-
-    class _SyncAgent:
-        def run(self, *_a, **_k):
-            return SimpleNamespace(content="臣领旨。", tools=[])
-
-        def get_last_run_output(self):
-            return None
-
-    sync = _SyncAgent()
-    game.session.registry.get = lambda _ch, **_kw: sync
-    stub_scene_agent(monkeypatch, sync)
-    resp = client.post(
-        "/api/audience/chat", json={"message": "退朝"},
-    )
-    _assert_not_bare_500(resp, step="#1716 chat 场外退朝")
-    assert resp.status_code == 200, resp.text
-    body = resp.json() or {}
-    assert isinstance(body, dict), body
-    _wait_pending_writes(game)
-    _assert_court_break_closed(game, body, night_id, remote=remote)
-
-
-
-

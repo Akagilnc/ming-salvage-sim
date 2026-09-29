@@ -140,7 +140,7 @@ export function useChatActions({
     ? ([...state.ministers, ...(state.consorts || [])].find((m) => m.name === selectedMinister)
       || (selectedMinister === AUDIENCE_SCENE_SPEAKER ? {
         name: AUDIENCE_SCENE_SPEAKER, office: "一夜一卷", office_type: "scene", faction: "", style: "",
-        status: "active", status_label: "在殿", summary: "", favorite: false, skills: [],
+        status: "active", status_label: "在殿", summary: "", favorite: false,
       } : temporaryActiveMinister))
     : null;
 

@@ -392,10 +392,17 @@ def open_hall_turn(
     return night_id, ctid
 
 
+# The offline model needs the exact reply, not a parsed fragment of a prose prompt.
+# ContextVar keeps concurrent translation workers' inputs independent.
+from tests.offline_audience_reply import reply as _offline_audience_reply
+
+
 def offline_empty_audience_translate(prompt, llm_config):
     """离线转译边界：无政务声明，但逐字保留受控输入中的回话。"""
-    del llm_config
-    reply = prompt.split("【本轮回话】", 1)[1].removesuffix("\n")
+    del prompt, llm_config
+    reply = _offline_audience_reply.get()
+    if reply is None:
+        raise RuntimeError("离线转译未收到本轮结构化回话")
     return {"commissions": [], "promises": [], "scene_facts": [
         {"body": reply, "role": "scene", "audibility": "殿上公开", "person_names": []},
     ]}
@@ -412,6 +419,13 @@ def _offline_audience_translation_provider():
     import ming_sim.audience_translate as audience_translate
 
     mp = pytest.MonkeyPatch()
+    build_prompt = audience_translate.build_audience_translate_prompt
+
+    def capture_reply(*, reply, **kwargs):
+        _offline_audience_reply.set(reply)
+        return build_prompt(reply=reply, **kwargs)
+
+    mp.setattr(audience_translate, "build_audience_translate_prompt", capture_reply)
     mp.setattr(
         audience_translate, "_default_translate_runner", offline_empty_audience_translate,
     )

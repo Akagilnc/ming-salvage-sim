@@ -17,7 +17,6 @@ from types import SimpleNamespace
 import pytest
 
 import web_app
-from ming_sim.intelligence import _qualitative_domain_statement
 from ming_sim.knowledge import build_character_knowledge
 from ming_sim.materials import list_materials, prepare_character_materials, read_material
 
@@ -193,15 +192,6 @@ def test_shared_consumers_still_surface_status(read_game):
     """逐点真实消费出口：仍含原 status（禁以直调 army_report(limit=N) 顶替）。"""
     db, state, content = read_game
     seed_status = _guanning_db_status(db)
-
-    # 1) intelligence arrears domain → 真实 _qualitative_domain_statement
-    intel_text, intel_src = _qualitative_domain_statement(db, "各军欠饷如何")
-    assert intel_src == "armies"
-    _assert_text_keeps_statuses(
-        intel_text, _danger_top_statuses(db, 10), "intelligence"
-    )
-    if any(r["id"] == _GUANNING_ID for r in db.army_rows(limit=10, danger_order=True)):
-        assert seed_status in intel_text
 
     # 2) 兵部人物投影只见兵籍在册额，不携全表 status。
     war = next(c for c in content.characters.values() if c.office_type == "兵部")

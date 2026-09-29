@@ -189,7 +189,6 @@ DEFAULT_IN_FLIGHT_POLL_S = 0.05
 # 草稿案卷前提（office/directive）先提交；consort 等终局效果在 FINALIZE。
 _CLOSE_COMMIT_KINDS_OFFICE = frozenset({"office"})
 _CLOSE_COMMIT_KINDS_DIRECTIVE = frozenset({"directive"})
-_CLOSE_COMMIT_KINDS_FINAL = frozenset({"consort"})
 
 # ── 夜内真实盘面直写白名单（ADR 0038 防坑不变式；#506 AC3；#1839 第四类）────────
 # 撤回逆转干净的结构性前提：夜内对真实盘面的直写**只有**本表可枚举项，其余结构化
@@ -218,7 +217,7 @@ NIGHT_DIRECT_WRITE_WHITELIST: Dict[str, frozenset] = {
 # 却不在白名单授权的直写 = 越权夜内直写。暂存/候选层（pending_actions/turn_directives）是
 # 待确认层、收夜才提交，不算真实盘面直写，不在此集。
 _REAL_BOARD_TABLES = frozenset({
-    "characters", "character_offices", "consort_traits", "factions",
+    "characters", "character_offices", "dossier_reported_progress", "factions",
     "secret_orders", "secret_order_briefs", "relation_edge_events",
     "textual_facts", "public_sayings", "story_ledger_entries",
 })
@@ -908,12 +907,12 @@ def open_night(
     if existing is not None and existing["status"] == NIGHT_STATUS_OPEN:
         return existing
     if existing is not None and existing["status"] == NIGHT_STATUS_CLOSING:
-        # 上一夜收夜中断（closing）。不在此隐式续收：open_night 无 content/registry，
+        # 上一夜收夜中断（closing）。不在此隐式续收：open_night 无 content，
         # 隐式 close_night 会让缺依赖的已应允任免 terminal failed、夜仍被封=丢合法任免。
-        # 响亮停住——续收必须走携 content/registry 的显式 close/resume（resolve_turn/advance/
+        # 响亮停住——续收必须走携 content 的显式 close/resume（resolve_turn/advance/
         # auto_close_open_night），不准开新夜、不准封夜。
         raise AudienceNightError(
-            f"上一夜收夜未完（closing），须先携 content/registry 显式续收再开新夜：{int(existing['id'])}",
+            f"上一夜收夜未完（closing），须先携 content 显式续收再开新夜：{int(existing['id'])}",
             code="night_closing_incomplete",
             detail={"night_id": int(existing["id"])},
         )
@@ -1076,7 +1075,6 @@ def _commit_night_approved(
     *,
     kinds: frozenset,
     content: Any,
-    registry: Any,
     directive_status: str = "draft",
 ) -> List[Dict[str, object]]:
     """收夜提交本夜已应允白名单。沿用 commit_pending_actions 既有 terminal 语义：
@@ -1097,7 +1095,6 @@ def _commit_night_approved(
     applied = db.commit_pending_actions(
         state,
         content=content,
-        registry=registry,
         action_ids=action_ids,
         directive_status=directive_status,
         rejection_collector=collector,
@@ -1150,7 +1147,7 @@ def publish_night_directives(db: Any, night_id: int) -> None:
 
 
 def commit_late_night_approved(
-    db: Any, state: GameState, *, content: Any, registry: Any,
+    db: Any, state: GameState, *, content: Any,
     llm_config: Any = None, write_gate: Any = None,
 ) -> None:
     """过月 join 后沿收夜提交、明发入口补完迟到应允（#1842：背书随载荷，不另补批）。"""
@@ -1170,10 +1167,9 @@ def commit_late_night_approved(
             for kinds in (
                 _CLOSE_COMMIT_KINDS_OFFICE,
                 _CLOSE_COMMIT_KINDS_DIRECTIVE,
-                _CLOSE_COMMIT_KINDS_FINAL,
             ):
                 _commit_night_approved(
-                    db, state, nid, kinds=kinds, content=content, registry=registry,
+                    db, state, nid, kinds=kinds, content=content,
                 )
             publish_night_directives(db, nid)
 
@@ -1226,7 +1222,6 @@ def close_night(
     *,
     night_id: Optional[int] = None,
     content: Any = None,
-    registry: Any = None,
     auto: bool = False,
     wait_timeout_s: float | None = None,
     crash_after_step: Optional[int] = None,
@@ -1321,7 +1316,7 @@ def close_night(
         _commit_night_approved(
             db, state, int(night_id),
             kinds=_CLOSE_COMMIT_KINDS_OFFICE,
-            content=content, registry=registry,
+            content=content,
         )
         if cursor < CLOSE_STEP_COMMIT_OFFICE:
             _advance(CLOSE_STEP_COMMIT_OFFICE)
@@ -1329,7 +1324,7 @@ def close_night(
         _commit_night_approved(
             db, state, int(night_id),
             kinds=_CLOSE_COMMIT_KINDS_DIRECTIVE,
-            content=content, registry=registry,
+            content=content,
             directive_status="draft",
         )
         if cursor < CLOSE_STEP_TRANSFER_CANDIDATES:
@@ -1352,12 +1347,7 @@ def close_night(
             )
         if cursor < CLOSE_STEP_FINALIZE:
             commit_fresh_summons_for_night(
-                db, state, int(night_id), content=content, registry=registry,
-            )
-            _commit_night_approved(
-                db, state, int(night_id),
-                kinds=_CLOSE_COMMIT_KINDS_FINAL,
-                content=content, registry=registry,
+                db, state, int(night_id), content=content,
             )
             publish_night_directives(db, int(night_id))
             # #1838 reopen：不写收夜旁白账与代码兜底句；收讫以 status=closed 为准。
@@ -1383,7 +1373,6 @@ def auto_close_open_night(
     state: GameState,
     *,
     content: Any = None,
-    registry: Any = None,
     wait_timeout_s: float | None = None,
     crash_after_step: Optional[int] = None,
     llm_config: Any = None,
@@ -1404,7 +1393,6 @@ def auto_close_open_night(
         db, state,
         night_id=int(open_n["id"]),
         content=content,
-        registry=registry,
         auto=True,
         wait_timeout_s=wait_timeout_s,
         crash_after_step=crash_after_step,
@@ -1723,6 +1711,61 @@ def record_summon_fresh(
     )
 
 
+def update_summon_travel_tone(
+    db: Any,
+    *,
+    night_id: int,
+    person_name: str,
+    travel_tone: str,
+    origin_chat_turn_id: int,
+) -> int:
+    """更新本夜该人未结传召账的行程语气（#1837 reopen / ADR 0096）。
+
+    只改 tags 上的语气前缀，不另起行；无未结传召 → KeyError。
+    """
+    name = str(person_name or "").strip()
+    if not name:
+        raise ValueError("传召人名不能为空")
+    from ming_sim.issues import normalize_travel_tone
+    tone = normalize_travel_tone(travel_tone)
+    target = None
+    for item in list_unsettled_summons(db):
+        if int(item.get("night_id") or 0) != int(night_id):
+            continue
+        if item.get("person_name") != name:
+            continue
+        row = db.conn.execute(
+            "SELECT origin_chat_turn_id FROM story_ledger_entries WHERE id=?",
+            (int(item["entry_id"]),),
+        ).fetchone()
+        if row is None or int(row["origin_chat_turn_id"] or 0) != int(origin_chat_turn_id):
+            continue
+        target = item
+        break
+    if target is None:
+        raise KeyError(f"本夜无此人未结传召：{name}")
+    entry_id = int(target["entry_id"])
+    row = db.conn.execute(
+        "SELECT tags FROM story_ledger_entries WHERE id=?",
+        (entry_id,),
+    ).fetchone()
+    if row is None:
+        raise KeyError(f"传召账不存在：{entry_id}")
+    tags = [str(t) for t in json.loads(row["tags"] or "[]")]
+    tags = [t for t in tags if not str(t).startswith(_SUMMON_TRAVEL_TONE_PREFIX)]
+    tags.append(_travel_tone_tag(tone))
+    db.conn.execute(
+        "UPDATE story_ledger_entries SET tags=? WHERE id=?",
+        (json.dumps(tags, ensure_ascii=False), entry_id),
+    )
+    if (
+        not bool(getattr(db.conn, "_commit_suspended", False))
+        and int(getattr(db.conn, "_atomic_depth", 0) or 0) == 0
+    ):
+        db.conn.commit()
+    return entry_id
+
+
 def ensure_inactive_office_summon(
     db: Any, pending_id: int, person_name: str, *, night_id: int,
     origin_chat_turn_id: int = 0,
@@ -1796,7 +1839,6 @@ def commit_fresh_summons_for_night(
     night_id: int,
     *,
     content: Any = None,
-    registry: Any = None,
 ) -> List[str]:
     """收夜按人一次 canonical 启程；成功后标在途，origin 保持未结候见关联。
 
@@ -1819,7 +1861,7 @@ def commit_fresh_summons_for_night(
     from ming_sim.matching import is_capital_location
 
     origins: List[str] = []
-    with atomic_and_reload(db, state, content=content, registry=registry):
+    with atomic_and_reload(db, state, content=content):
         for person_name, items in by_person.items():
             row = db.conn.execute(
                 "SELECT location, transit_to, status FROM characters WHERE name=?",
@@ -1867,7 +1909,6 @@ def commit_fresh_summons_for_night(
                     "origin_ref": "盘面自发",
                 }],
                 content=content,
-                registry=None,
             )
             results = list(applied.get("applied_person_changes") or [])
             if not results or any(result.get("rejected") for result in results):

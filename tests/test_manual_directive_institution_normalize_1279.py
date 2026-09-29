@@ -5,7 +5,7 @@
   （禁 canon 后放行：司礼监/锦衣卫/东厂 恰为人名 alias；词表按明代衙门闭集扩）
 - 自称/集体闭集（陛下/皇帝/朝廷/朕…）→ 不产
 - 带姓称谓别名（韩阁老/毕户部/温阁老/曹太监/王兵部…）→ 走 canon 留人名
-- 禁复用 _is_institution_like_name 子串字集判参与人
+- 参与人不按机关名称中的单字误判身份
 - 禁放松 ADR 0053 主键校验缝（db.py _validate_participant_roster_references）
 """
 
@@ -208,12 +208,9 @@ def test_capture_manual_directive_drops_collective_and_institution_names(
 
 
 def test_non_person_filter_does_not_use_institution_substring_class():
-    """参与人缝禁复用 _is_institution_like_name 子串字集（防韩阁老含「阁」被误伤）。"""
+    """带姓称谓别名不是裸机构，不得被参与人分流误判。"""
     import ming_sim.cli_backend as cli_backend
 
-    # assignee-hint 子串仍拒识带机关字的线索（本职不变）
-    assert cli_backend._is_institution_like_name("韩阁老") is True
-    assert cli_backend._is_institution_like_name("毕户部") is True
     # 参与人 raw 三分流：带姓称谓别名不是裸机构，不得判非人
     assert cli_backend._is_non_person_participant_name("韩阁老") is False
     assert cli_backend._is_non_person_participant_name("毕户部") is False

@@ -397,7 +397,7 @@ def test_held_rejudgments_overlap_instead_of_waiting_in_one_worker(game, monkeyp
     from ming_sim.month_chain import _settle_edicts
 
     chain = {}
-    _settle_edicts(sess, registry=None, chain=chain)
+    _settle_edicts(sess, chain=chain)
     assert all(
         db.get_decree_dossier(dossier_id)["promulgation_decision"] == "promulgated"
         for dossier_id in ids
@@ -409,7 +409,7 @@ def test_held_rejudgments_overlap_instead_of_waiting_in_one_worker(game, monkeyp
         assert db.staged_declarations.is_settled(held_ref)
 
     # 再次进入月链结算：留中案卷仍保持 dossier 身份，旧 pending-action 暂存不被冒名结算
-    _settle_edicts(sess, registry=None, chain=chain)
+    _settle_edicts(sess, chain=chain)
     for dossier_id, pending_id in zip(ids, pending_ids):
         stale_ref = pending_action_decree_ref(pending_id, 1)
         held_ref = held_dossier_decree_ref(dossier_id)

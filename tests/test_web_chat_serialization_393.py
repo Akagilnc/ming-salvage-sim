@@ -49,16 +49,6 @@ class _SecretOrderAgent:
         yield completed
 
 
-class _FakeRegistry:
-    session_ids = {}
-
-    def __init__(self, agent: _FakeAgent):
-        self.agent = agent
-
-    def get(self, character, **_kw):
-        return self.agent
-
-
 class _FakeSession(HallAdmissionSessionMixin):
     temporary_characters = set()
 
@@ -66,7 +56,7 @@ class _FakeSession(HallAdmissionSessionMixin):
         self.state = state
         self.db = db
         self.content = SimpleNamespace(characters={character.name: character})
-        self.registry = _FakeRegistry(agent)
+        self._agent = agent
 
     def _character(self, minister_name: str):
         return self.content.characters[minister_name]
@@ -82,7 +72,7 @@ class _FakeSession(HallAdmissionSessionMixin):
         # #1849 reopen：殿上入口不绑单人 character；轻壳直接驱动假 agent。
         from ming_sim.session import ChatTurnResult
 
-        agent = self.registry.get(next(iter(self.content.characters.values())))
+        agent = self._agent
         parts: list[str] = []
         for event in agent.run():
             content = getattr(event, "content", None)

@@ -93,7 +93,7 @@ def test_no_edict_fast_path_branch_is_dead(game, monkeypatch):
     )
     result = resolve_directives(
         state, db, None, None, [], "",
-        content=content, registry=None,
+        content=content,
         source=Provenance.system_simulation,
     )
     assert result.awaiting is False

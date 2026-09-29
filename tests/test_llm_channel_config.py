@@ -279,16 +279,15 @@ def test_create_chat_model_omits_default_headers_when_empty(monkeypatch):
     assert "default_headers" not in captured[0]
 
 
-def test_minister_and_rescript_entries_pass_default_headers_at_transport(monkeypatch, game):
+def test_scene_and_rescript_entries_pass_default_headers_at_transport(monkeypatch, game, tmp_path):
     """#1794：召对/拟诏真实入口 → OpenAIChat 构造缝头表整张到达；不跑真实 LLM。"""
     from ming_sim.agents import bind_content as agents_bind, create_rescript_draft_agent
-    from ming_sim.models import CourtContext
-    from ming_sim.registry import bind_content as registry_bind, create_minister_agent
+    from ming_sim.materials import PreparedMaterials
+    from ming_sim.registry import create_scene_agent
 
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
     db, state, content = game
     agents_bind(content)
-    registry_bind(content)
 
     headers = {
         "X-Custom-Session": "sess-fixed-1",
@@ -311,16 +310,9 @@ def test_minister_and_rescript_entries_pass_default_headers_at_transport(monkeyp
 
     monkeypatch.setattr(llm_model, "OpenAIChat", spy)
 
-    character = next(
-        c for c in content.characters.values()
-        if c.office_type not in ("后宫", "宗藩")
-        and db.get_character_status(c.name)[0] == "active"
-    )
-    create_minister_agent(
-        character,
-        cfg,
-        CourtContext(state=state, db=db, previous_summary=""),
-        db,
+    create_scene_agent(
+        cfg, PreparedMaterials(root=tmp_path, opening="", index_lines=()),
+        content=content,
     )
     assert captured, "召对入口须构造 OpenAIChat"
     assert captured[-1].get("default_headers") == headers

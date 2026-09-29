@@ -821,7 +821,7 @@ def test_commitment_rush_via_pending_actions_gate(game):
         payload={"stage_idx": 0, "deadline_months": 3, "reason": "闸门催"},
     )
     assert pid > 0
-    applied = db.commit_pending_actions(state, content=content, registry=None)
+    applied = db.commit_pending_actions(state, content=content)
     assert any(int(a["id"]) == int(pid) for a in applied)
 
     after = normalize_commitment_stages(

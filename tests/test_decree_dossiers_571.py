@@ -285,25 +285,6 @@ def test_committing_each_directive_creates_independent_restoreable_dossier(game)
     assert len({row["id"] for row in dossiers[-2:]}) == 2
     assert all(row["pending_action_id"] in ids for row in dossiers[-2:])
 
-def test_explicit_directive_without_extractor_payload_becomes_narrative_dossier(game):
-    db, state, content = game
-    minister = _active_minister(db)
-
-    candidate_id = db.stage_explicit_directive(
-        state.turn, minister, "着有司清核河工。",
-    )
-    db.commit_pending_actions(
-        state, content=content, action_ids=[candidate_id],
-    )
-
-    dossier = next(
-        row for row in db.list_decree_dossiers()
-        if row["pending_action_id"] == candidate_id
-    )
-    assert dossier["action_type"] == "special_decree"
-    assert dossier["target_kind"] == "policy"
-    assert dossier["target_id"] == f"pending-directive:{candidate_id}"
-
 def test_pending_directive_only_enters_settlement_after_final_approval(game):
     db, state, content = game
     minister = _active_minister(db)
@@ -441,7 +422,7 @@ def test_office_action_waits_for_verdict_then_materializes_from_same_payload(gam
     before = db.conn.execute(
         "SELECT office FROM characters WHERE name=?", (minister,)
     ).fetchone()["office"]
-    db.commit_pending_actions(state, content=content, registry=None)
+    db.commit_pending_actions(state, content=content)
 
     dossier = next(
         row for row in db.list_decree_dossiers(target_kind="character", target_id=minister)
@@ -453,7 +434,7 @@ def test_office_action_waits_for_verdict_then_materializes_from_same_payload(gam
     ).fetchone()["office"] == before
 
     db.apply_dossier_promulgation(
-        state, dossier["id"], "promulgated", content=content, registry=None
+        state, dossier["id"], "promulgated", content=content
     )
     dossier = db.get_decree_dossier(dossier["id"])
     assert dossier["status"] == "executing"
@@ -947,7 +928,7 @@ def test_appointment_alias_uses_canonical_dossier_identity(game):
         minister_name=_active_minister(db), target_id=None,
         payload={"text": "测试任免原文", "name": alias, "office": "兵部主事"},
     )
-    db.commit_pending_actions(state, content=content, registry=None)
+    db.commit_pending_actions(state, content=content)
     dossier = next(
         row for row in db.list_decree_dossiers()
         if row["pending_action_id"] == pending_id
@@ -955,7 +936,7 @@ def test_appointment_alias_uses_canonical_dossier_identity(game):
     assert dossier["target_id"] == target.name
     assert dossier["executor_id"] == target.name
     db.apply_dossier_promulgation(
-        state, dossier["id"], "promulgated", content=content, registry=None,
+        state, dossier["id"], "promulgated", content=content,
     )
     assert [
         row["dossier_id"]
@@ -1080,7 +1061,6 @@ def test_manual_directive_capture_reaches_structured_dossier(
         ).fetchone()
         assert (row["status"], row["office"]) == ("dismissed", "")
     else:
-        assert db.list_skill_grants_for_dossier(dossier["id"]) == []
         assert "authorization_id" not in json.loads(dossier["payload_json"])
 
 @pytest.mark.parametrize(("entry", "bad_roster"), [
@@ -2137,7 +2117,6 @@ def test_secret_authorization_dossier_does_not_map_payload_to_skill_grant(game):
         state, [{"dossier_id": dossier["id"], "decision": "promulgated"}],
         content=content,
     )
-    assert db.list_skill_grants_for_dossier(dossier["id"]) == []
     stored_payload = json.loads(dossier["payload_json"])
     assert "authorization_id" not in stored_payload
     assert "authorization_ids" not in stored_payload
@@ -2151,7 +2130,6 @@ def test_secret_authorization_rejects_missing_assignee_without_grant(game):
         "assignee": actor, "authorization_id": "理财",
     }
     payload.pop("assignee")
-    before = db.conn.execute("SELECT COUNT(*) FROM skill_grants").fetchone()[0]
     directive_id = db.add_directive(
         state, None, "残缺密授权", "player_decree", dossier_payload=payload,
     )
@@ -2169,10 +2147,6 @@ def test_secret_authorization_rejects_missing_assignee_without_grant(game):
         ).fetchall()
     ]
     assert any("assignee" in r for r in reasons)
-    assert db.conn.execute("SELECT COUNT(*) FROM skill_grants").fetchone()[0] == before
-    assert db.conn.execute(
-        "SELECT COUNT(*) FROM skill_grants WHERE TRIM(character_name)='' OR TRIM(skill_id)=''"
-    ).fetchone()[0] == 0
 
 def test_in_transit_allocation_requires_execution_verdict(game):
     db, state, _content = game

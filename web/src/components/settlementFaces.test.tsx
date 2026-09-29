@@ -80,7 +80,7 @@ function makeState(
 function minister(name = "周延儒"): Minister {
   return {
     name, office: "首辅", office_type: "内阁", faction: "", style: "",
-    status: "active", status_label: "在朝", summary: "辅臣", favorite: false, skills: [],
+    status: "active", status_label: "在朝", summary: "辅臣", favorite: false,
   };
 }
 

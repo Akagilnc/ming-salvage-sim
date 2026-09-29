@@ -162,6 +162,7 @@ def _apply_existing_appointment_hit(
     summon_after: bool = False,
     origin_chat_turn_id: int = 0,
     annotate: bool = False,
+    recommendation_fields: Optional[Dict[str, Any]] = None,
 ) -> int:
     """既有命中唯一合并点：原地更新（mode 可升可降、字段可补）→ 同一 id。
 
@@ -190,6 +191,16 @@ def _apply_existing_appointment_hit(
             )
             if pending_id:
                 resolved = int(pending_id)
+        if recommendation_fields:
+            current = session.db.conn.execute(
+                "SELECT payload_json FROM pending_actions WHERE id=?", (resolved,),
+            ).fetchone()
+            stored = json.loads(current["payload_json"] or "{}")
+            stored.update(recommendation_fields)
+            session.db.conn.execute(
+                "UPDATE pending_actions SET payload_json=? WHERE id=?",
+                (json.dumps(stored, ensure_ascii=False), resolved),
+            )
         if summon_after and person_name:
             _persist_appointment_summon(
                 session,
@@ -215,8 +226,8 @@ def stage_pacification_candidate(
 ) -> int:
     """Shared pacification candidate write: mode + same-target update.
 
-    Used by classifier materialize and API/CLI tool propose_directive so both
-    channels share admission payload shape (commit still runs _find_pacification_target).
+    Reused by audience translation; commit resolves the target through
+    _find_pacification_target.
     """
     from ming_sim.cli_backend import resolve_directive_mode
 
@@ -1670,117 +1681,6 @@ def stage_authorization_candidate(
         return db.update_directive_candidate(existing_id, staged)
     return db.stage_directive_candidate(int(turn), minister_name, payload=staged)
 
-def stage_military_order_candidate(
-    db: Any,
-    turn: int,
-    minister_name: str,
-    *,
-    text: str,
-    target_id: str,
-    assignee: str = "",
-    station: object = "",
-    station_region: object = "",
-    deadline_months: object = 0,
-    due_turn: object = 0,
-    office: object = "",
-    region_id: object = "",
-    extracted_mode: object = None,
-    target_candidate: object = None,
-    transaction_category: object = "",
-    pend_for_minister: Optional[List[Dict[str, Any]]] = None,
-) -> int:
-    """Shared military_order candidate write (#521 / #502).
-
-    收夜只成案卷；station/station_region/office 按 ADR 0055 判后物化。既有军调驻不写 new_armies。
-    期限只落 due_turn；admission 仅对限期出战（无 station）强制未来 due。
-    同军多道独立军令各自成候选；仅 structured target_candidate id 才改草点名更新。
-    """
-    from ming_sim.cli_backend import resolve_directive_mode
-
-    target = str(target_id or "").strip()
-    if not target:
-        return 0
-    body = str(text or "").strip()
-    if not body:
-        return 0
-    owner = str(assignee or "").strip()
-
-    pending_rows = list(pend_for_minister or [])
-    if not pending_rows:
-        pending_rows = [
-            p for p in db.list_pending_actions(int(turn), minister_name=minister_name)
-            if p.get("kind") == "directive" and p.get("status") == "pending"
-        ]
-
-    # #521 r2 / #502：不得仅凭同一 target_id 把独立军令当改草覆盖。
-    existing_id = 0
-    existing_mode = None
-    pointed = str(target_candidate or "").strip()
-    if pointed.isdigit():
-        want_id = int(pointed)
-        for row in pending_rows:
-            if row.get("kind") != "directive":
-                continue
-            if int(row["id"]) != want_id:
-                continue
-            try:
-                payload = json.loads(str(row.get("payload_json") or "{}"))
-            except (TypeError, ValueError):
-                break
-            if not isinstance(payload, dict):
-                break
-            if str(payload.get("dossier_action_type") or "").strip() != "military_order":
-                break
-            existing_id = want_id
-            existing_mode = payload.get("mode")
-            break
-
-    mode = resolve_directive_mode(extracted=extracted_mode, existing=existing_mode)
-    staged: Dict[str, Any] = {
-        "text": body,
-        "actor": minister_name,
-        "dossier_action_type": "military_order",
-        "target_kind": "army",
-        "target_id": target,
-        "mode": mode,
-    }
-    if owner:
-        staged["assignee"] = owner
-    category = str(transaction_category or "").strip()
-    if category:
-        staged["transaction_category"] = category
-    dest = str(station or "").strip()
-    if dest:
-        staged["station"] = dest
-    dest_region = str(station_region or "").strip()
-    if dest_region:
-        staged["station_region"] = dest_region
-    # 相对月数 / 绝对 due_turn → 未来 due（与 admission 同形）
-    try:
-        absolute_due = int(due_turn or 0)
-    except (TypeError, ValueError):
-        absolute_due = 0
-    try:
-        months = int(deadline_months or 0)
-    except (TypeError, ValueError):
-        months = 0
-    cur = int(turn)
-    if absolute_due <= cur and months > 0:
-        absolute_due = cur + months
-    if absolute_due > cur:
-        staged["due_turn"] = absolute_due
-    elif months > 0:
-        staged["deadline_months"] = months
-    office_title = str(office or "").strip()
-    if office_title:
-        staged["office"] = office_title
-    # Preserve typed 任所 for local/边镇 office changes; never invent from station.
-    seat = str(region_id or "").strip()
-    if seat:
-        staged["region_id"] = seat
-    if existing_id:
-        return db.update_directive_candidate(existing_id, staged)
-    return db.stage_directive_candidate(int(turn), minister_name, payload=staged)
 
 def stage_referral_candidate(
     db: Any,
@@ -2062,13 +1962,6 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                 FieldSpec("new_content", "新内容", None, ""),
                 FieldSpec("deadline_months", "期限月数", None, 0, as_int=True, int_hi=36),
             ),
-        ),
-        ActionCluster(
-            "调教", "cultivate", EFFECT_MATERIALIZE, priority=40,
-            fields=(
-                FieldSpec("cultivate_skill", "调教技能", None, "", max_len=30),
-                FieldSpec("cultivate_trait", "调教性格", None, "", max_len=30),
-            )
         ),
         ActionCluster(
             "拟旨", "draft", EFFECT_MATERIALIZE, priority=50,

@@ -442,16 +442,6 @@ class _GapBAgent:
         yield _GapBRunCompleted()
 
 
-class _GapBRegistry:
-    session_ids: dict = {}
-
-    def __init__(self, agents: dict):
-        self.agents = agents
-
-    def get(self, character, **_kw):
-        return self.agents[character.name]
-
-
 class _GapBSession(HallAdmissionSessionMixin):
     temporary_characters: set = set()
 
@@ -459,7 +449,7 @@ class _GapBSession(HallAdmissionSessionMixin):
         self.state = state
         self.db = db
         self.content = SimpleNamespace(characters=characters)
-        self.registry = _GapBRegistry(agents)
+        self._agents = agents
 
     def _character(self, name):
         return self.content.characters[name]
@@ -472,7 +462,7 @@ class _GapBSession(HallAdmissionSessionMixin):
         # #1849 reopen：殿上入口不绑单人 character；轻壳取任一假 agent。
         from ming_sim.session import ChatTurnResult
 
-        agent = self.registry.get(next(iter(self.content.characters.values())))
+        agent = self._agents[next(iter(self.content.characters))]
         parts: list[str] = []
         for event in agent.run():
             content = getattr(event, "content", None)

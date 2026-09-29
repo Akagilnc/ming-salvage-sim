@@ -67,7 +67,6 @@ def test_settling_survives_begin_turn_phase_whitelist(game, monkeypatch):
 
     # 用 __new__ 跳过重型 __init__（agno/registry/LLM），只装 begin_turn 需要的协作者；
     # 重型协作者打桩（registry 建 agent / auto_save / office 同步均与白名单无关）。
-    monkeypatch.setattr(session_mod, "MinisterRegistry", lambda *a, **k: object())
     monkeypatch.setattr(session_mod, "_sync_offices_from_db_impl", lambda *a, **k: None)
     sess = GameSession.__new__(GameSession)
     sess.db = db
@@ -266,7 +265,7 @@ def _drive_resolve_directives(db, state, content, monkeypatch, *, simulator_beha
 
     return decree_mod.resolve_directives(
         state, db, None, None, [1], "减赋诏",
-        content=content, registry=None,
+        content=content,
     )
 
 
@@ -448,7 +447,7 @@ def test_placeholder_save_crash_rolls_back_settling(game, monkeypatch):
 
     with pytest.raises(RuntimeError, match="placeholder save crash"):
         decree_mod.resolve_directives(state, db, None, None, [1], "减赋诏",
-                                      content=content, registry=None)
+                                      content=content)
 
     monkeypatch.undo()
     assert state.turn_phase == "summoning"            # 内存已重载刷净

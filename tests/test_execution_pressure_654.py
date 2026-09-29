@@ -315,12 +315,12 @@ def test_national_creates_one_row_idempotent(env):
     cur = db.conn.execute(
         """
         INSERT INTO turn_directives
-        (turn, year, period, event_id, actor, skill_id, text, source, status,
+        (turn, year, period, event_id, actor, text, source, status,
          notes, dossier_payload_json)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?)
+        VALUES (?,?,?,?,?,?,?,?,?,?)
         """,
         (
-            state.turn, state.year, state.period, None, "毕自严", "",
+            state.turn, state.year, state.period, None, "毕自严",
             "清丈天下田亩", "test", "draft", "",
             json.dumps(payload, ensure_ascii=False),
         ),
@@ -382,12 +382,12 @@ def test_named_lead_bulk_single_region_syncs_executor(env):
     cur = db.conn.execute(
         """
         INSERT INTO turn_directives
-        (turn, year, period, event_id, actor, skill_id, text, source, status,
+        (turn, year, period, event_id, actor, text, source, status,
          notes, dossier_payload_json)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?)
+        VALUES (?,?,?,?,?,?,?,?,?,?)
         """,
         (
-            state.turn, state.year, state.period, None, "毕自严", "",
+            state.turn, state.year, state.period, None, "毕自严",
             "陕西清丈", "test", "draft", "",
             json.dumps(payload, ensure_ascii=False),
         ),
@@ -443,12 +443,12 @@ def test_get_dossier_for_directive_existence_sentinel(env):
     cur = db.conn.execute(
         """
         INSERT INTO turn_directives
-        (turn, year, period, event_id, actor, skill_id, text, source, status,
+        (turn, year, period, event_id, actor, text, source, status,
          notes, dossier_payload_json)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?)
+        VALUES (?,?,?,?,?,?,?,?,?,?)
         """,
         (
-            state.turn, state.year, state.period, None, "毕自严", "",
+            state.turn, state.year, state.period, None, "毕自严",
             "陕西清丈", "test", "draft", "",
             json.dumps(payload, ensure_ascii=False),
         ),
@@ -483,12 +483,12 @@ def test_ensure_directive_dossier_returns_list(env):
     cur = db.conn.execute(
         """
         INSERT INTO turn_directives
-        (turn, year, period, event_id, actor, skill_id, text, source, status,
+        (turn, year, period, event_id, actor, text, source, status,
          notes, dossier_payload_json)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?)
+        VALUES (?,?,?,?,?,?,?,?,?,?)
         """,
         (
-            state.turn, state.year, state.period, None, "毕自严", "",
+            state.turn, state.year, state.period, None, "毕自严",
             "河南清丈", "test", "draft", "",
             json.dumps(payload, ensure_ascii=False),
         ),
@@ -666,12 +666,12 @@ def _insert_directive(db, state, *, text: str, payload: dict, status: str = "dra
     cur = db.conn.execute(
         """
         INSERT INTO turn_directives
-        (turn, year, period, event_id, actor, skill_id, text, source, status,
+        (turn, year, period, event_id, actor, text, source, status,
          notes, dossier_payload_json)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?)
+        VALUES (?,?,?,?,?,?,?,?,?,?)
         """,
         (
-            state.turn, state.year, state.period, None, "毕自严", "",
+            state.turn, state.year, state.period, None, "毕自严",
             text, "test", status, "",
             json.dumps(payload, ensure_ascii=False),
         ),

@@ -440,7 +440,7 @@ def _record_commitment_urge(
         "new_due": int(new_due),
         "deadline_months": int(deadline_months),
         "tightness": tightness,
-        "reason": str(reason or "")[:120],
+        "reason": str(reason or ""),
     }
     db.conn.execute(
         """
@@ -537,7 +537,7 @@ def rush_staged_commitment_stage(
         (stages_blob, int(commitment_ref)),
     )
 
-    why = (reason or "").strip()[:120] or "奉旨加急"
+    why = reason if str(reason or "").strip() else "奉旨加急"
     if record_history:
         _record_commitment_urge(
             db, state,
@@ -672,8 +672,8 @@ def is_urge_audience_entry_kind(entry_kind: object) -> bool:
 def project_urge_audience_scene(todo: Dict[str, object]) -> Dict[str, object]:
     """谏/宽限召对顶出投影：P4 定性措辞；永不读 payload_json（真伪底禁泄）。"""
     kind = str(todo.get("entry_kind") or "").strip()
-    criterion = todo.get("criterion_text") or ""
-    origin = todo.get("origin_context") or ""
+    criterion = str(todo.get("criterion_text") or "")
+    origin = str(todo.get("origin_context") or "")
     label = "rush_remonstrance" if kind == ENTRY_KIND_RUSH_REMONSTRANCE else "grace_plea"
     return {
         "kind": label,

@@ -99,7 +99,6 @@ def test_court_break_locks_player_writes_and_closes_night(web_game, monkeypatch)
     night = an.open_night(game.db, game.state, location="乾清宫", time_of_day="夜")
     night_id = int(night["id"])
     agent = _StreamFarewellAgent()
-    game.session.registry.get = lambda _ch, **_kw: agent
     stub_scene_agent(monkeypatch, agent)
 
     statuses: dict[str, int] = {}

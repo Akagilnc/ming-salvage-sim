@@ -2,14 +2,13 @@
 """FastAPI web entry for Ming Salvage Sim.
 
 薄壳：路由调 ming_sim.session.GameSession（与 CLI 共用同一流转层）。
-拟旨候选：大臣 propose_directive/前缀/自然语言 → pending_actions 闸门 → 对话确认或颁诏默认同意。
+拟旨候选：召对转译交办 → pending_actions → 收夜成案 → 过月颁布关。
 """
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
-import inspect
 import json
 import logging
 import os
@@ -24,7 +23,7 @@ import time
 import threading
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from types import SimpleNamespace
-from typing import Any, AsyncIterator, Callable, Dict, Iterator, List, Literal, Optional
+from typing import Any, AsyncIterator, Callable, Dict, Iterator, List, Optional
 
 # 源码模式 `uvicorn web_app:app` 在 nohup/重定向（>> web_server.log）下 Python stdout 块缓冲，
 # 日志滞后数分钟、结算中段 tail 看不见进度（#84）。强制行缓冲让 tlog + 各 print 近实时落盘；
@@ -86,7 +85,6 @@ from ming_sim.session import (
     AudienceAdmission,
     _is_summonable_court_minister,
     _pending_action_failure_payload,
-    coalesce_pending_action_id,
 )
 from ming_sim.highlight_judge import (
     DEFAULT_HIGHLIGHT_JUDGE_TIMEOUT_S,
@@ -101,7 +99,6 @@ from ming_sim.session_write_queue import (
     get_session_write_queue,
 )
 from ming_sim.token_stats import tlog
-from ming_sim.skills import available_skill_ids, skill_display_name, skill_source_labels
 from ming_sim.context import match_minister_from_text
 from ming_sim.flows import compute_budget_lines
 from ming_sim.exceptions import LLMContractError  # noqa: F401  (保留：供错误处理)
@@ -1376,15 +1373,6 @@ class WebGame:
             "summary": summary,
             "portrait_id": character.portrait_id,
             "power_id": power_id,
-            "skills": [
-                {
-                    "id": skill_id,
-                    "name": skill_display_name(skill_id),
-                    "sources": skill_source_labels(character, skill_id, self.db),
-                    "description": self.content.skill_descriptions.get(skill_id, ""),
-                }
-                for skill_id in available_skill_ids(character, self.db)
-            ],
             "favorite": character.name in self.favorites,
         }
 
@@ -1397,8 +1385,6 @@ class WebGame:
             "event_id": row["event_id"] or "",
             "event_title": (row["event_title"] if "event_title" in row.keys() else "") or "",
             "actor": row["actor"] or "",
-            "skill_id": row["skill_id"] or "",
-            "skill_name": skill_display_name(str(row["skill_id"] or "")),
             "text": row["text"],
             "source": row["source"],
             "status": row["status"],
@@ -1897,39 +1883,25 @@ class WebGame:
         }
 
     # ── 聊天 ──────────────────────────────────────────────────────────────
-    def _persistent_chat_minister(self, minister_name: str) -> bool:
-        return minister_name not in self.session.temporary_characters
-
     def chat_projection(self, minister_name: str) -> List[Dict[str, Any]]:
-        """召对显示投影（#499 单一真源）：持久大臣 → DB turn-identified 投影（含既存
-        读心记录按轮归位）；临时召见 → 内存历史（无 chat_turn/无持久读心）。三处出口
-        （历史入口 / 回话 done / 撤回）共用它，杜绝 setChat(history) 抹掉历史记录。"""
-        if self._persistent_chat_minister(minister_name):
-            # Lightweight stream seams intentionally expose neither a durable connection nor
-            # the night-aware projection signature. Production DBs always use the night owner.
-            if not hasattr(self.db, "conn"):
-                return self.db.build_chat_projection(minister_name)
-            from ming_sim.audience_night import get_open_night
-            night = get_open_night(self.db)
-            from ming_sim.audience_night import SCENE_CHAT_SPEAKER
-            if minister_name == SCENE_CHAT_SPEAKER and night:
-                # #1849 reopen：殿上轮只按「殿上」一个名字取，不再拼按朝臣旧存储。
-                return self.db.build_chat_projection(SCENE_CHAT_SPEAKER, int(night["id"]))
-            return self.db.build_chat_projection(minister_name, int(night["id"]) if night else 0)
-        return [
-            {"role": m["role"], "content": m["content"], "chat_turn_id": 0}
-            for m in self.chat_history.get(minister_name, [])
-        ]
+        """当前召对夜的殿上投影；轻量测试替身可只实现单参读取。"""
+        if not hasattr(self.db, "conn"):
+            return self.db.build_chat_projection(minister_name)
+        from ming_sim.audience_night import get_open_night, SCENE_CHAT_SPEAKER
+        night = get_open_night(self.db)
+        return self.db.build_chat_projection(
+            SCENE_CHAT_SPEAKER, int(night["id"]) if night else 0,
+        )
 
     def _minister_agno_session_id(self, minister_name: str) -> str:
-        registry = self.session.registry
-        if registry is None:
-            return f"minister-{minister_name}-turn-{self.state.turn}"
-        return registry.session_ids.get(minister_name, f"minister-{minister_name}-turn-{self.state.turn}")
+        # 所有 Web 召对都由场景 agent 生成；chat_turn 与 agent 必须绑同一 Agno session。
+        from ming_sim.audience_night import get_open_night
+        night = get_open_night(self.db) if hasattr(self.db, "conn") else None
+        if night is not None:
+            return f"scene-night-{int(night['id'])}"
+        return f"scene-night-pending-turn-{int(self.state.turn)}"
 
     def can_undo_last_chat(self, minister_name: str) -> bool:
-        if not self._persistent_chat_minister(minister_name):
-            return False
         if self.state.turn_phase not in (TurnPhase.SUMMONING.value, TurnPhase.REVIEWING.value):
             return False
         from ming_sim.audience_night import SCENE_CHAT_SPEAKER, get_open_night
@@ -1943,18 +1915,19 @@ class WebGame:
         return self.db.can_undo_last_chat_turn(minister_name, self.state.turn)
 
     def _audience_turn_in_flight(self, minister_name: str) -> bool:
-        """#383 背景召对契约：同一大臣已有「已受理、尚未完成回奏」的 turn 时，不得再开新轮。
+        """同夜场景共用一个 agent session：前轮回话未落定时不准开下一轮。
 
-        in-flight = `status='generating'`，或 `status='active'` 且 `minister_message_id` 仍空
-        （#498 挂夜轮以 generating 起笔，回话入档后升 active）。走 GameDB 查询 seam，
-        不直摸 db.conn（测试替身可 stub list_in_flight_chat_turns）。"""
-        if not self._persistent_chat_minister(minister_name):
-            return False
+        后台转译不在此等待。无夜的轻量替身仍按大臣查；在飞的定义由 DB 写口维护。
+        """
         if hasattr(self.db, "list_in_flight_chat_turns"):
-            rows = self.db.list_in_flight_chat_turns(
+            if hasattr(self.db, "conn"):
+                from ming_sim.audience_night import get_open_night
+                night = get_open_night(self.db)
+                if night is not None:
+                    return bool(self.db.list_in_flight_chat_turns(night_id=int(night["id"])))
+            return bool(self.db.list_in_flight_chat_turns(
                 minister_name=minister_name, turn=int(self.state.turn),
-            )
-            return bool(rows)
+            ))
         # 极薄兜底：旧替身无接口时不挡（与 get_last_active 语义接近）
         existing = self.db.get_last_active_chat_turn(minister_name, self.state.turn)
         return existing is not None and not existing.get("minister_message_id")
@@ -1991,6 +1964,8 @@ class WebGame:
                 status="generating",
             )
         else:
+            agno_session_id = self._minister_agno_session_id(minister_name)
+            runs_before = self.db.agno_runs_length(agno_session_id)
             chat_turn_id = self.db.create_chat_turn(
                 self.state,
                 minister_name,
@@ -2046,7 +2021,7 @@ class WebGame:
     ) -> None:
         """召对中断/失败的统一善后：回滚副作用；有问话则保留并标 interrupted。
         所有「已建 chat_turn 但本轮未能正常完成」的路径都必须调用——否则留下 status=active 且
-        minister_message_id 为空的孤儿轮，`_audience_turn_in_flight` 会把该大臣永久判为「上一轮
+        minister_message_id 为空的孤儿轮，`_audience_turn_in_flight` 会把本夜永久判为「上一轮
         仍在进行」而拒收后续问话（cmr Gate2 F-B）。chat_turn_id=0（无持久轮）时为 no-op。
 
         Scene abandon/drain 由调用方在 write_gate 外先完成（C9/T1/T10）；本方法只做短事务写。
@@ -2095,8 +2070,6 @@ class WebGame:
                         return result
         if self.state.turn_phase not in (TurnPhase.SUMMONING.value, TurnPhase.REVIEWING.value):
             raise HTTPException(status_code=409, detail="本回合已经进入颁诏结算，不能撤回召对。")
-        if not self._persistent_chat_minister(minister_name):
-            raise HTTPException(status_code=409, detail="临时召见人物暂不支持撤回。")
         row = self.db.get_last_active_chat_turn(minister_name, self.state.turn)
         if row is None:
             raise HTTPException(status_code=404, detail="本回合没有可撤回的召对。")
@@ -2182,24 +2155,23 @@ class WebGame:
         # lengthens append_chat_message; background stream + early assert flaked
         # and tore down the shared DB under the worker → SIGSEGV).
         minister_message_id = 0
-        if minister_name not in self.session.temporary_characters:
-            turn = int(self.state.turn if accepted_turn is None else accepted_turn)
-            if chat_turn_id:
-                # 单一事务插入回话、链接 turn 并升为 active，避免提交后出现未链接回话。
-                # 失败须上抛，禁 catch 后仍返回成功。
-                minister_message_id = int(
-                    self.db.persist_minister_reply(
-                        minister_name,
-                        turn,
-                        answer,
-                        chat_turn_id,
-                    )
+        turn = int(self.state.turn if accepted_turn is None else accepted_turn)
+        if chat_turn_id:
+            # 单一事务插入回话、链接 turn 并升为 active，避免提交后出现未链接回话。
+            # 失败须上抛，禁 catch 后仍返回成功。
+            minister_message_id = int(
+                self.db.persist_minister_reply(
+                    minister_name,
+                    turn,
+                    answer,
+                    chat_turn_id,
                 )
-            else:
-                # 无持久 chat_turn（如临时召见路径异常）：仅落消息，无可链接的任务。
-                minister_message_id = int(
-                    self.db.append_chat_message(minister_name, turn, "minister", answer)
-                )
+            )
+        else:
+            # 无持久 chat_turn（如临时召见路径异常）：仅落消息，无可链接的任务。
+            minister_message_id = int(
+                self.db.append_chat_message(minister_name, turn, "minister", answer)
+            )
         self.chat_history.setdefault(minister_name, []).append({"role": "minister", "content": answer})
         open_night = None
         if hasattr(self.db, "conn"):
@@ -2387,7 +2359,7 @@ class WebGame:
                         assert_night_accepts_player_input(self.db, what="召对")
                     if self._audience_turn_in_flight(minister_name):
                         raise HTTPException(
-                            status_code=409, detail=f"{minister_name}上一轮回奏仍在进行，请稍候再问。")
+                            status_code=409, detail="本夜上一轮回奏仍在进行，请稍候再问。")
                     # #505 finding3：reopen 是 CAS（interrupted→generating）。未赢（并发/双击重试
                     # 已被别的调用翻走）→ 响亮 409，绝不 generate/persist 出第二条大臣回话。
                     if not self.db.reopen_interrupted_chat_turn_for_retry(chat_turn_id):
@@ -2579,13 +2551,12 @@ class WebGame:
         message_id: int,
         chat_turn_id: int = 0,
         timeout_s: float = DEFAULT_HIGHLIGHT_JUDGE_TIMEOUT_S,
-        gate_already_held: bool = False,
         pending_ticket: Optional[WriteTicket] = None,
     ) -> List[str]:
         """#544 / ADR 0045：回话完成后同通道高亮判官。超时/坏输出 → []，落库短语。
 
         判官失败边界在 run_highlight_judge（带日志）；此处只收窄写库 sqlite 异常并 warning。
-        写库经票据执行 seam；调用方已持闸时传 gate_already_held=True，禁同线程二次 acquire。
+        写库经票据执行 seam。
         匹配/剥离在前端，此处只存短语。无票且 seal → 零 LLM 零写。
         #1353：spawn 路票据由 spawner finally 归还；本腿只消费交接票。直接调用无票时自领自还。
         """
@@ -2594,13 +2565,13 @@ class WebGame:
         reply = str(minister_reply or "")
         if mid <= 0 or not reply.strip():
             return []
-        # 未由调用方领票且非持闸兼容路 → 本腿自领 turn key 票（生产写必经 seam）。
-        if pending_ticket is None and not gate_already_held and int(chat_turn_id or 0) > 0:
+        # 未由调用方领票 → 本腿自领 turn key 票（生产写必经 seam）。
+        if pending_ticket is None and int(chat_turn_id or 0) > 0:
             pending_ticket = self._mark_pending_write(
                 key=("turn", int(chat_turn_id)),
             )
             own_ticket = pending_ticket is not None
-        if pending_ticket is None and not gate_already_held:
+        if pending_ticket is None:
             # seal/拒票：禁无票裸写/裸跑 LLM
             return []
         try:
@@ -2613,18 +2584,8 @@ class WebGame:
                 llm_config=getattr(self.session, "llm_config", None),
                 timeout_s=timeout_s,
             ) or [])
-            # 此处再 with write_gate 会永久挂死（外层 finally 永不 release）。
-            # 已持闸时票仍覆盖本写（调用方收口 complete）；只做取消检查，不二次 acquire。
-            if gate_already_held:
-                if pending_ticket is not None and (
-                    pending_ticket.cancelled or pending_ticket._done
-                ):
-                    return []
-                gate_cm: Any = contextlib.nullcontext()
-            else:
-                gate_cm = self._ticketed_write_gate(pending_ticket)
             try:
-                with gate_cm:
+                with self._ticketed_write_gate(pending_ticket):
                     self.db.set_message_highlights(mid, phrases)
             except TicketCancelled:
                 return []
@@ -2636,7 +2597,7 @@ class WebGame:
                 return []
             return phrases
         finally:
-            # 仅自领票由本腿收口；spawn 交接/持闸兼容票由 spawner 或调用方归还。
+            # 仅自领票由本腿收口；spawn 交接票由 spawner 归还。
             if own_ticket:
                 self._complete_pending_write(pending_ticket)
 
@@ -2866,7 +2827,7 @@ class WebGame:
                     raise
             if self._audience_turn_in_flight(minister_name):
                 self._complete_pending_write(pending_ticket)
-                yield {"type": "error", "message": f"{minister_name}上一轮回奏仍在进行，请稍候再问。"}
+                yield {"type": "error", "message": "本夜上一轮回奏仍在进行，请稍候再问。"}
                 return
             accepted_turn = int(self.state.turn)
             chat_turn_id, before_snapshot = self._start_chat_turn(
@@ -3290,7 +3251,6 @@ def _auto_close_open_night_gate_free(
         db,
         game.state,
         content=getattr(game, "content", None),
-        registry=getattr(session, "registry", None) if session is not None else None,
         wait_timeout_s=float(inflight_wait_s),
         llm_config=getattr(session, "llm_config", None) if session is not None else None,
         write_gate=_game_write_gate(game) if write_gate is None else write_gate,
@@ -5315,8 +5275,6 @@ _STATUS_LABEL_WEB = {
 
 
 def _require_active_minister(minister_name: str) -> None:
-    if minister_name in get_game().session.temporary_characters:
-        return
     if minister_name not in get_game().content.characters:
         raise HTTPException(status_code=404, detail=f"未找到人物：{minister_name}")
     character = get_game().content.characters[minister_name]
@@ -5375,7 +5333,7 @@ async def api_audience_chat_history() -> Dict[str, Any]:
         "minister": {
             "name": SCENE_CHAT_SPEAKER, "office": "一夜一卷", "office_type": "scene",
             "faction": "", "style": "", "status": "active", "status_label": "在殿",
-            "summary": "", "favorite": False, "skills": [],
+            "summary": "", "favorite": False,
         },
         "campaign_id": str(game.db.kv_get("campaign_id") or ""),
         "night_id": int(open_night["id"]) if open_night else 0,
@@ -6140,42 +6098,6 @@ class LLMConfigRequest(BaseModel):
     cli_timeout_seconds: float = 0
     # #1794：附加请求头表；None=保留当前，{}=清空。
     default_headers: Optional[Dict[str, str]] = None
-
-
-@app.get("/api/consorts/candidates")
-async def api_consort_candidates() -> Dict[str, Any]:
-    """返回 status=candidate 的待选秀女，供选妃事件展示。"""
-    candidates = [
-        get_game().public_character(c)
-        for c in get_game().content.characters.values()
-        if c.office_type == "后宫" and c.status == "candidate" and get_game().character_power_id(c) == "ming"
-    ]
-    return {"candidates": candidates}
-
-
-@app.post("/api/consorts/{name}/select")
-async def api_select_consort(name: str) -> Dict[str, Any]:
-    """皇帝选中某秀女，转 active 并赋予初始位份。"""
-    game = get_game()
-    consort = game.content.characters.get(name)
-    if consort is None or consort.office_type != "后宫":
-        raise HTTPException(status_code=404, detail=f"未找到候选秀女：{name}")
-    if consort.status != "candidate":
-        raise HTTPException(status_code=409, detail=f"{name} 当前状态为 {consort.status}，不可再选。")
-    # 整段逻辑写（DB + in-memory state/content/registry）都在门内，避免提前释放锁后留下
-    # DB 已改、内存未改的窗口被结算/召对观察到（cmr Gate2 Finding2 DB/内存撕裂）。
-    with _serialized_web_write(game):
-        game.db.set_character_office(name, "嫔", "后宫", source="皇帝选妃")
-        game.db.set_character_status(game.state, name, "active", "皇帝选中入宫")
-        consort.office = "嫔"
-        consort.office_type = "后宫"
-        consort.status = "active"
-        # 同步进 registry（新增 agent）
-        game.session.registry.register(consort)
-        # #1749：public_character 读 DB；须在 gate 内快照，禁门后撞退休关闭。
-        selected = game.public_character(consort)
-    game.chat_history.setdefault(name, [])
-    return {"selected": selected}
 
 
 @app.get("/api/saves")

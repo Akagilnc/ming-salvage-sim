@@ -6,7 +6,6 @@ import pytest
 
 from ming_sim.models import Character
 from ming_sim.recommendations import build_recommendation_brief, validate_recommendation_snapshot
-from ming_sim.tools import build_minister_tools
 from tests.dossier_test_helpers import promulgate_proposed_appointments
 
 
@@ -218,22 +217,6 @@ def test_adopted_recommendation_is_an_auditable_event_after_restore(game):
     assert events[0]["target_office"] == "巡盐御史"
 
 
-def test_minister_tools_only_submit_recommendations(game):
-    db, state, content = game
-    minister = next(c for c in content.characters.values() if c.office_type not in ("后宫", "宗藩"))
-    tools = {tool.__name__: tool for tool in build_minister_tools(
-        minister, type("Context", (), {"db": db, "state": state})()
-    )}
-    assert "list_recommendable_persons" not in tools
-    assert "recommend_person" in tools
-    candidate = db.list_recommendation_candidates(state, minister.name)[0]
-
-    payload = tools["recommend_person"](candidate["name"], "巡盐御史", "请予试任")
-
-    assert payload.startswith("__pending_recommendation__")
-    assert candidate["name"] in payload
-
-
 def test_recommendation_appointment_preserves_kind_and_restores_both_types(game):
     db, state, content = game
     recommender = next(c for c in content.characters.values()
@@ -269,7 +252,7 @@ def test_recommendation_appointment_preserves_kind_and_restores_both_types(game)
             payload=payload,
         )
         result = db.commit_pending_actions(
-            state, content=content, registry=None, action_ids=[action_id]
+            state, content=content, action_ids=[action_id]
         )
         assert result and result[0]["id"] == action_id
         promulgate_proposed_appointments(db, state, content)

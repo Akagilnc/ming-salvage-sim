@@ -136,10 +136,10 @@ def _canned_scene_agent():
 
 
 def _install_canned_minister_factory(monkeypatch) -> None:
-    """外层模型工厂缝：create_minister_agent → canned（密令/旧 registry 路兜底）。"""
+    """外层模型工厂缝：create_scene_agent → canned（密令/旧 registry 路兜底）。"""
     import ming_sim.registry as reg
 
-    monkeypatch.setattr(reg, "create_minister_agent", lambda *a, **k: _canned_scene_agent())
+    monkeypatch.setattr(reg, "create_scene_agent", lambda *a, **k: _canned_scene_agent())
 
 
 def _empty_translate_fn(prompt, cfg):

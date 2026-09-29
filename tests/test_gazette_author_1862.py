@@ -141,6 +141,7 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
         turn, kind="secret_order", action="新建", minister_name=minister,
         payload={
             "title": "密题不入邸报", "content": "密令原件", "assignee": minister,
+            "origin_chat_message_id": first_mid,
             "tags": ["查办"], "covert_task": TYPED_COVERT_TASK,
         },
     )

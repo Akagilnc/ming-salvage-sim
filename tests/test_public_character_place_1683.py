@@ -24,9 +24,6 @@ def test_yuan_keli_init_db_location_henan(game):
 
 
 def _runtime(db, state, content):
-    from ming_sim.skills import bind_content as bind_skills_content
-
-    bind_skills_content(content)
     runtime = object.__new__(web_app.WebGame)
     runtime.favorites = set()
     runtime.session = SimpleNamespace(db=db, state=state, content=content)

@@ -253,12 +253,13 @@ def project_cluster_fields(kind: str, obj: Mapping[str, Any]) -> Dict[str, Any]:
     }
 
 
+def cluster_effect(kind: str) -> str:
+    c = cluster_by_kind(kind)
+    return c.effect if c else EFFECT_NOOP
+
+
 class ActionCandidateShapeError(ValueError):
     pass
-
-
-def empty_none_candidate() -> Dict[str, Any]:
-    return _blank_candidate(kind="none")
 
 
 def _blank_candidate(*, kind: str = "none") -> Dict[str, Any]:
@@ -351,23 +352,7 @@ def assert_action_candidate_shape(obj: Any) -> Dict[str, Any]:
     ok, reason = validate_action_candidate_shape(obj)
     if not ok:
         raise ActionCandidateShapeError(reason)
-    return normalize_one_candidate(obj, soft=False)
-
-
-def normalize_one_candidate(obj: Mapping[str, Any], *, soft: bool) -> Dict[str, Any]:
-    _ensure_catalog()
     kind = _resolve_kind(obj)
-    if kind is None:
-        if soft:
-            return empty_none_candidate()
-        raise ActionCandidateShapeError(
-            f"unknown action kind/label: {obj.get('kind') or obj.get('动作类型')!r}"
-        )
-    if not soft:
-        ok, reason = validate_action_candidate_shape(obj)
-        if not ok:
-            raise ActionCandidateShapeError(reason)
-
     out = _blank_candidate(kind=kind)
 
     def _enum(value: object, allowed: FrozenSet[str], default: str) -> str:
@@ -376,8 +361,6 @@ def normalize_one_candidate(obj: Mapping[str, Any], *, soft: bool) -> Dict[str, 
             return default
         if v in allowed:
             return v
-        if soft:
-            return default
         raise ActionCandidateShapeError(f"value {v!r} not in {sorted(allowed)}")
 
     for name, spec in _field_specs().items():

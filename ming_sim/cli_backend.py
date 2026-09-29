@@ -22,7 +22,6 @@ import json
 import logging
 import os
 import queue
-from concurrent.futures import ThreadPoolExecutor
 import re
 import shutil
 import subprocess
@@ -38,21 +37,12 @@ from agno.models.message import Message
 from agno.models.openai import OpenAIChat
 from agno.models.response import ModelResponse
 from openai.types.chat import ChatCompletion, ChatCompletionMessage
-from openai.types.chat.chat_completion_message_function_tool_call import (
-    ChatCompletionMessageFunctionToolCall,
-    Function as ToolFunction,
-)
 from openai.types.chat.chat_completion import Choice
-from openai.types.chat.chat_completion_chunk import (
-    ChoiceDeltaToolCall,
-    ChoiceDeltaToolCallFunction,
-)
 from pydantic import BaseModel
 
 # CLI runner 默认模型单一真源在 models（L0 叶子），此处 re-export 保留
 # `from ming_sim.cli_backend import CODEX_DEFAULT_MODEL` 既有路径（#60）。
 from ming_sim.models import CODEX_DEFAULT_MODEL, CLAUDE_DEFAULT_MODEL, LLMConfig
-from ming_sim.constants import DOSSIER_LINK_TYPES
 from ming_sim.decree_vocabulary import DIRECTIVE_ACTION_TYPES
 from ming_sim.structured_decree import (
     StructuredDecreeCombinationError,
@@ -4385,7 +4375,7 @@ def _fake_completion(
     text: str, model_id: str, tool_calls: list[ChatCompletionMessageFunctionToolCall] | None = None,
 ) -> ChatCompletion:
     """把纯文本包成 OpenAI ChatCompletion 交给 agno 解析。"""
-    msg = ChatCompletionMessage(role="assistant", content=text, tool_calls=tool_calls)
+    msg = ChatCompletionMessage(role="assistant", content=text)
     choice = Choice(index=0, message=msg, finish_reason="stop")
     return ChatCompletion(
         id="cli-backend", choices=[choice], created=0,
@@ -4430,7 +4420,7 @@ class CliChat(OpenAIChat):
         # 拟旨/密令不走 agno function-calling（agy 不支持）。大臣照常自然回话；
         # 把这句回话原文整段入档。invoke 只负责出文本。
         materials = str(getattr(self, "materials_dir", "") or "").strip() or None
-        prompt = _cli_prompt(messages, response_format, tools, materials_dir=materials)
+        prompt = _messages_to_prompt(messages, response_format, materials_dir=materials)
         with _TRACE_LOCK:  # 原子自增，防并发丢增量/seq 重复（#83）
             _seq += 1
             seq = _seq
@@ -4467,11 +4457,7 @@ class CliChat(OpenAIChat):
             _log(f"#{seq} {tag} {dt}s attempts={attempts} resp={len(text)}c"
                  + (f" ERROR={error}" if error else ""))
 
-        text, tool_calls = _cli_recommendation_call(text, tools)
-        provider_response = (
-            _fake_completion(text, self.id, tool_calls)
-            if tool_calls else _fake_completion(text, self.id)
-        )
+        provider_response = _fake_completion(text, self.id)
         return self._parse_provider_response(provider_response, response_format=response_format)
 
     async def ainvoke(  # type: ignore[override]
@@ -4511,8 +4497,7 @@ class CliChat(OpenAIChat):
             )
             return
         materials = str(getattr(self, "materials_dir", "") or "").strip() or None
-        prompt = _cli_prompt(messages, response_format, tools, materials_dir=materials)
-        held = ""
+        prompt = _messages_to_prompt(messages, response_format, materials_dir=materials)
         try:
             # #1465 切片③：空转判死归子进程增量读（新字节即活动，不设总墙钟），
             # 本处只搬 `_iter_cli_runner_text` 已判活的文本 —— 机器横幅不进 delta。
@@ -4526,9 +4511,7 @@ class CliChat(OpenAIChat):
                 materials_dir=materials,
             )
             for delta in stream:
-                ready, held = _cli_stream_safe_prefix(held + str(delta))
-                if ready:
-                    yield ModelResponse(role="assistant", content=ready)
+                yield ModelResponse(role="assistant", content=str(delta))
         except Exception as exc:
             # #1299/#1310：流式 runner 失败同翻 typed，禁机器横幅进 delta/content。
             # #1465：已 typed 的可重试瞬断原样上浮（同 invoke）。
@@ -4538,25 +4521,6 @@ class CliChat(OpenAIChat):
             if isinstance(exc, (LLMUnavailable, TransportIdleTimeout)):
                 raise
             raise cli_runner_unavailable(exc, backend=self.backend) from exc
-        text, tool_calls = _cli_recommendation_call(held, tools)
-        if text:
-            yield ModelResponse(role="assistant", content=text)
-        if tool_calls:
-            yield ModelResponse(
-                role="assistant",
-                tool_calls=[
-                    ChoiceDeltaToolCall(
-                        index=index,
-                        id=call.id,
-                        type=call.type,
-                        function=ChoiceDeltaToolCallFunction(
-                            name=call.function.name,
-                            arguments=call.function.arguments,
-                        ),
-                    )
-                    for index, call in enumerate(tool_calls)
-                ],
-            )
 
     async def ainvoke_stream(self, *args, **kwargs):  # type: ignore[override]
         for response in self.invoke_stream(*args, **kwargs):

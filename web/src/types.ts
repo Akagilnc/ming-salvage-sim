@@ -133,7 +133,6 @@ export type Minister = {
   favorite: boolean;
   portrait_id?: string;  // 空/undefined=无专属，前端 fallback 到池
   power_id?: string;     // 大明=ming, 后金=houjin, 流寇=bandits 等
-  skills: Array<{ id: string; name: string; sources: string[]; description: string }>;
 };
 
 export type EventItem = {
@@ -153,8 +152,6 @@ export type Directive = {
   event_id: string;
   event_title: string;
   actor: string;
-  skill_id: string;
-  skill_name: string;
   text: string;
   source: string;
   status: string; // pending（待核定大臣拟旨）| draft（颁诏候选）
@@ -525,7 +522,11 @@ export type ServerChatMessage = {
   highlights?: string[];
 };
 
-
+export type Suggestion = {
+  label: string;
+  text: string;
+  prefix?: boolean;
+};
 
 export type ModalName = "none" | "state" | "chat" | "edict" | "report" | "history" | "audience_archive" | "menu" | "secret_orders" | "ending";
 
@@ -801,7 +802,6 @@ export type HistoryDirective = {
   event_id: string;
   event_title: string;
   actor: string;
-  skill_id: string;
   text: string;
   source: string;
   status: string;
