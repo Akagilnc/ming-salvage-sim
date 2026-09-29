@@ -5420,12 +5420,6 @@ async def api_undo_audience_chat() -> Dict[str, Any]:
         return game.undo_last_chat(SCENE_CHAT_SPEAKER, gate_held=True)
 
 
-@app.get("/api/audience/extraction/pending")
-async def api_pending_story_extractions() -> Dict[str, Any]:
-    """#501/#1353/#1842：本开夜转译待补只读投影（含 kind/retryable 系统提示态）。"""
-    return get_game().pending_story_extractions()
-
-
 class TranslationRetryRequest(BaseModel):
     chat_turn_id: int
 

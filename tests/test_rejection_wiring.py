@@ -106,16 +106,6 @@ def test_rollback_leaves_no_rows_and_no_jsonl(game, monkeypatch, tmp_path):
     assert not (tmp_path / "error_packs" / "rejections.jsonl").exists()
 
 
-def _stub_settlement_attendant(monkeypatch, decree_mod, *, text="递话", capture=None):
-    """#1745：复用 section_rejection_helpers 单一 agent 边界夹具。"""
-    from tests.section_rejection_helpers import install_settlement_attendant_agent_stub
-    install_settlement_attendant_agent_stub(
-        monkeypatch, decree_mod, text=text, capture=capture,
-    )
-
-
-
-
 def test_issue_summary_nested_rejections_are_collected(game, monkeypatch, tmp_path):
     """issue_summary 是 dict(嵌套 new_issues/cancels 列表),桥接不能只看顶层 list
     ——new_issues 正是实测最常被喂脏的段(origin_kind 缺失被拒,agy 实录),

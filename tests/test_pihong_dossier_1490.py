@@ -67,14 +67,7 @@ def web_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
 
 def _657_install_real_phase2_llm_boundary(monkeypatch_or_module):
     """只中和 phase2 LLM 边界；保留 resolve_decisions_phase2 真结算/推月。"""
-    import ming_sim.decree as dm
     import ming_sim.mechanical_tail as mechanical_tail
-
-    def _set(name, value):
-        if hasattr(monkeypatch_or_module, "setattr"):
-            monkeypatch_or_module.setattr(dm, name, value)
-        else:
-            setattr(dm, name, value)
 
     # 章节/关系酿制：禁 sk-test 打真网；record 空操作。
     # 旧 settle 注入缝 + #1845 机械尾真源缝（brew 已迁出 decree runner）。
@@ -86,12 +79,6 @@ def _657_install_real_phase2_llm_boundary(monkeypatch_or_module):
         )
     else:
         mechanical_tail._run_relation_brew = _noop_brew
-    # #1745：结算拒收递话同属外层 LLM 缝（复用单一 agent 边界夹具）。
-    from tests.section_rejection_helpers import install_settlement_attendant_agent_stub
-    if hasattr(monkeypatch_or_module, "setattr"):
-        install_settlement_attendant_agent_stub(monkeypatch_or_module, dm)
-    else:
-        install_settlement_attendant_agent_stub(None, dm)
 
 def _657_subprocess_resolve(
     db_path: str,
@@ -162,9 +149,6 @@ def _657_subprocess_resolve(
             return _real_run_agent_text(agent, prompt, tag, **kwargs)
 
         agents_mod.run_agent_text = _run_agent_text
-        # #1745：结算拒收递话同属外层 LLM 缝（复用单一 agent 边界夹具）。
-        from tests.section_rejection_helpers import install_settlement_attendant_agent_stub
-        install_settlement_attendant_agent_stub(None, dm)
 
         if crash == "phase2":
             def _kill_at_phase2(*a, **k):
