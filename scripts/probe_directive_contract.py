@@ -1,6 +1,6 @@
 """Structured dossier payloads for executable probe directives.
 
-Probe decrees intentionally exercise narrative simulator/extractor behavior.
+Probe decrees intentionally exercise the player month chain's narrative path.
 Their stable probe identity is therefore an explicit narrative policy target;
 the helper never reads or infers semantics from decree prose.
 """

@@ -77,9 +77,9 @@ class OfficeAppointmentRejection(ValueError):
 class SettlementAbort(Exception):
     """结算中止可重试（ADR 0008 决定 3/6）。
 
-    extractor 失败 / 结算核代码异常时上抛——绝不静默续跑（半落库 P1 破口）。
+    月链模型调用失败 / 结算核代码异常时上抛——绝不静默续跑（半落库 P1 破口）。
     携带 turn / 阶段 / 错误包路径，供上层向玩家提示「本月结算失败，进度已保存，可重试」。
-    重试 = 重跑 simulator/extractor（其产出本未持久化），与决定 3 不冲突。
+    重试从已保存的月链进度接续，不重复已落账步骤。
     """
 
     def __init__(

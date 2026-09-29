@@ -233,7 +233,7 @@ class RejectedItem:
     """一条被拒收的 delta 项，附原因与分析类别。
 
     category 约定值（非 exhaustive）：hallucinated_id / invalid_enum / missing_ref。
-    source 由 driver/extractor 灌注，决定是否向玩家可见（ADR 0008 决定 5）。
+    source 由调用方传入，决定是否向玩家可见（ADR 0008 决定 5）。
     """
 
     item: dict                  # 原始 dict，原样保留便于重放分析
@@ -273,7 +273,7 @@ class SectionResult:
 class ApplyContext:
     """适配器入参，持结算所需的全部外部依赖。
 
-    source 由 driver/extractor 在调用前灌注。
+    source 由调用方在调用前传入。
     """
 
     db: Any          # GameDB（不在 applier 层导入 GameDB 避免循环）

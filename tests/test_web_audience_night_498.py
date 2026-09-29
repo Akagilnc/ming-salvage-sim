@@ -2,8 +2,8 @@
 
 真实 WebGame + 真实 FastAPI 路由（httpx.ASGITransport），只把 LLM 边界换成 canned：
 - 大臣对话 = 假 agent.run 的 canned 流；
-- 月末推演 = 只假 simulator/extractor 这层 LLM 种子，resolve_directives 的 pre-settle /
-  结算核 / 推进回合全部真跑；判官 verdict 仍固定为逐案 promulgated，非真实判官行为。
+- 月末链的模型边界以 canned 结果替代；pre-settle / 推进回合仍走生产路径；
+  判官 verdict 固定为逐案 promulgated，非真实判官行为。
 
 外部行为断言（HTTP/SSE + DB 末态），不钉内部 helper 结构。
 
@@ -80,7 +80,7 @@ class _FakeAgent:
 
 
 def _fake_settlement_llm(monkeypatch, *, narrative="本月邸报：边饷已清。", delta=None):
-    """只 fake 月末推演的 simulator LLM 调用；resolve_directives 结算核真跑。"""
+    """替换月链中的拟诏、世界段、转译和邸报模型调用；其余结算路径真跑。"""
     monkeypatch.setattr(
         decree_mod, "llm_promulgation_verdicts",
         lambda dossiers, _state, **_kwargs: [

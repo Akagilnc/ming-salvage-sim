@@ -436,8 +436,8 @@ def is_vassal_prince(character: "Character") -> bool:
     roster 类同时排 后宫/未仕，用 office_type in ('后宫','宗藩','未仕')；本 helper 只判宗藩这一面。
 
     **规则边界（玩家动作 vs 世界事件，cmr R7 拍）**：守的是「皇帝把宗室当朝堂命官来召见/任免/
-    罢免/下密令」这类玩家动作面。**simulator/extractor 叙事处置故意不守**——宗室可因世界事件
-    死/被俘/废为庶人（史实如福王 1641 被李自成所杀），extractor character_status_changes 的
+    罢免/下密令」这类玩家动作面。**世界段叙事处置故意不守**——宗室可因世界事件
+    死/被俘/废为庶人（史实如福王 1641 被李自成所杀），转译产生的 character_status_changes 的
     罢黜/处置路（issues.apply_person_status_changes）应允许改宗藩状态；况且 dismiss/dead 不改
     office_type，宗藩照旧不入任何 roster。勿在叙事处置路加宗藩闸（会掐掉合法 diegetic 事件）。
 
@@ -687,7 +687,7 @@ def period_label(year: int, month: int) -> str:
 
 
 # 年号纪年：西历年 → 天启/崇祯汉字年号。state.year 是西历（开局 1627=天启七年）；
-# 崇祯改元逾年，元年=1628。章节记忆/邸报 title 单一真源，禁「崇祯{year}年」字面拼接。
+# 崇祯改元逾年，元年=1628。年号格式统一由此换算，禁「崇祯{year}年」字面拼接。
 _CN_DIGITS = "零一二三四五六七八九"
 _CN_MONTH_ORDINAL = {
     1: "正", 2: "二", 3: "三", 4: "四", 5: "五", 6: "六",
