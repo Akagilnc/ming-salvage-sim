@@ -861,10 +861,6 @@ class GameSession:
     def _character(self, name: str) -> Character:
         return character_from_name(name)
 
-    def _retrieve_memories_for_message(self, message: str) -> str:
-        """Compatibility shim; character context owns all historical reads."""
-        return message
-
     def summon_character(
         self,
         name_or_text: str,
