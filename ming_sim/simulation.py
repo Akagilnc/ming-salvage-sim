@@ -37,7 +37,6 @@ from ming_sim.qualitative import (
 )
 from ming_sim.settlement_payload import (
     augment_secret_orders_with_due_commitments,
-    iter_secret_order_ids,
 )
 
 
@@ -266,7 +265,6 @@ def _project_simulator_current_state(metrics: object) -> Dict[str, object]:
     return projected
 
 
-# season_simulator.md 钱粮诚实章：leverage<=30 → 不可写「势力熏天」。
 # 阈值由代码预计算，以语义记号进 factions_brief；LLM 只消费记号、不自己数数。
 _LEVERAGE_SUPPRESSION_LINE = 30
 _LEVERAGE_BELOW_SUPPRESSION_MARK = "势力已跌破压制线"
