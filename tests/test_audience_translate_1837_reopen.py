@@ -147,18 +147,26 @@ def test_prohibit_covert_levy_commission_binds_exposed_dossier(game, monkeypatch
     did, actor = _bound_exposure(db, state, monkeypatch)
     other_did, _ = _bound_exposure(db, state, monkeypatch)
     from ming_sim.beat_orchestration import BEAT_OPEN, assemble_beat_inputs
+    from ming_sim.audience_translate import build_translation_target_grounding
     beat = assemble_beat_inputs(db, state, beat_kind=BEAT_OPEN)
-    assert json.loads(beat.audience_scenes[0])["dossier_id"] == did
+    exposed = {json.loads(s)["dossier_id"] for s in beat.audience_scenes}
+    assert exposed == {did, other_did}
+    grounded = {
+        json.loads(line.removeprefix("scene\t"))["dossier_id"]
+        for line in build_translation_target_grounding(db, state).splitlines()
+        if line.startswith("scene\t")
+    }
+    assert grounded == exposed
     rejected = dispatch_declaration(db, state, {"commissions": [{
         "text": "禁绝摊派", "dossier_action_type": PROHIBITION_ACTION,
-        "target_id": other_did,
+        "target_id": max(exposed) + 1,
     }]}, minister_name=actor)
     assert not rejected.commissions.applied and rejected.commissions.rejected
     decl = {
         "commissions": [{
             "text": "此等借饷扰民之举，即刻禁绝。",
             "dossier_action_type": PROHIBITION_ACTION,
-            "target_id": did,
+            "target_id": other_did,
         }],
     }
     result = _scene_declaration(db, state, content, monkeypatch, "此等借饷扰民之举，即刻禁绝。", decl)
@@ -171,7 +179,7 @@ def test_prohibit_covert_levy_commission_binds_exposed_dossier(game, monkeypatch
     payload = json.loads(row["payload_json"])
     assert row["kind"] == "directive" and row["action"] == "拟旨"
     assert payload["dossier_action_type"] == PROHIBITION_ACTION
-    assert payload["target_kind"] == "dossier" and payload["target_id"] == str(did)
+    assert payload["target_kind"] == "dossier" and payload["target_id"] == str(other_did)
     assert int(row["night_approved"] or 0) == 1
     _close_offline(db, state, content, int(open_night(db, state)["id"]))
     dossier = db.conn.execute(
@@ -180,18 +188,18 @@ def test_prohibit_covert_levy_commission_binds_exposed_dossier(game, monkeypatch
     ).fetchone()
     assert dossier is not None
     assert dossier["action_type"] == PROHIBITION_ACTION
-    assert dossier["target_id"] == str(did)
+    assert dossier["target_id"] == str(other_did)
     from ming_sim.covert_levy import active_prohibition_dossier
-    army_id = db.conn.execute("SELECT target_id FROM decree_dossiers WHERE id=?", (did,)).fetchone()[0]
+    army_id = db.conn.execute("SELECT target_id FROM decree_dossiers WHERE id=?", (other_did,)).fetchone()[0]
     db.conn.execute("UPDATE armies SET arrears=10 WHERE id=?", (army_id,))
     before = int(state.turn)
     _player_month(db, state, content, monkeypatch, int(dossier["id"]), effects={
         "fiscal_creates": [{
             "key": "禁后摊派", "account": "国库", "direction": "income", "init_value": 2,
-            "origin_ref": f"dossier:{did}", "beyond_intent": True,
+            "origin_ref": f"dossier:{other_did}", "beyond_intent": True,
         }],
     })
-    assert active_prohibition_dossier(db, did)["id"] == dossier["id"]
+    assert active_prohibition_dossier(db, other_did)["id"] == dossier["id"]
     assert int(state.turn) > before
     assert db.get_fiscal_config().get("禁后摊派_base") is None
     from ming_sim.due_review import list_due_review_scenes

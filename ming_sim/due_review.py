@@ -323,11 +323,6 @@ def list_due_review_scenes(
     return scenes
 
 
-def current_audience_scene(db: Any, state: Any = None) -> Dict[str, object] | None:
-    """Return the one due-review scene currently presented to the sovereign."""
-    return next(iter(list_due_review_scenes(db, state)), None)
-
-
 def _add_owned_dossier(
     owned: set[int], db: Any, origin_ref: object,
 ) -> None:

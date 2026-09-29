@@ -394,14 +394,22 @@ def test_declared_secret_order_preserves_blacklist_through_commit_restore_transf
     db, state, content = game
     assignee = next(c for c in content.characters.values() if c.office_type == "兵部")
     excluded = next(c for c in content.characters.values() if c.office_type == "户部")
+    from ming_sim.audience_night import open_night
     from ming_sim.declaration_dispatch import dispatch_declaration
+    night = open_night(db, state)
+    source_turn = db.create_chat_turn(
+        state, assignee.name, "scene", 0, night_id=int(night["id"]),
+    )
+    message_id = db.append_chat_message(assignee.name, state.turn, "user", "查户部旧账")
+    db.update_chat_turn_messages(source_turn, user_message_id=message_id)
+    db.persist_minister_reply(assignee.name, state.turn, "臣领旨。", source_turn)
     result = dispatch_declaration(db, state, {"commissions": [{
         "text": "查户部旧账", "secret_order": {
             "title": "密查亏空", "content": "查户部旧账", "assignee": assignee.name,
             "excluded_names": [excluded.name], "excluded_offices": ["户部"],
             "covert_task": TYPED_COVERT_TASK,
         },
-    }]}, minister_name=assignee.name)
+    }]}, minister_name=assignee.name, chat_turn_id=source_turn, night_id=int(night["id"]))
     assert len(result.commissions.applied) == 1
     assert result.commissions.rejected == []
     pending = db.list_pending_actions(state.turn, minister_name=assignee.name)

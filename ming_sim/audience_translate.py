@@ -205,10 +205,10 @@ def build_translation_target_grounding(db: Any, state: Any = None) -> str:
     ).fetchall():
         lines.append(f"secret_order\t{int(row['id'])}\t{str(row['title'] or '')}")
     if state is not None:
-        from ming_sim.due_review import current_audience_scene
-        scene = current_audience_scene(db, state)
-        if scene and scene.get("kind") == "covert_levy_exposure" and not scene.get("decision"):
-            lines.append("scene\t" + json.dumps(scene, ensure_ascii=False, sort_keys=True))
+        from ming_sim.due_review import list_due_review_scenes
+        for scene in list_due_review_scenes(db, state):
+            if scene.get("kind") == "covert_levy_exposure" and not scene.get("decision"):
+                lines.append("scene\t" + json.dumps(scene, ensure_ascii=False, sort_keys=True))
     if not lines:
         return ""
     body = "\n".join(lines)
