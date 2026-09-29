@@ -10481,9 +10481,9 @@ class GameDB:
 
         Aggregate archives are presentation artifacts.  Replaying the durable
         public rows here keeps source_id and explicit exclusions attached to
-        each item when a turn report or chapter is saved.  Source rows are
-        included as well: settlement producers may register a participating
-        item before either aggregate is rendered, and the archive write must
+        each item when a turn report is saved.  Source rows are included as
+        well: settlement producers may register a participating item before
+        the report is rendered, and the archive write must
         not lose that item's access boundary.
         """
         rows = self.conn.execute(
@@ -20663,7 +20663,7 @@ class GameDB:
         known_sources = {str(item["source_id"]) for item in result}
         # #883 contract: this is the sole private read seam for secret orders.
         # Briefs deliberately do not carry a shared source id and therefore
-        # cannot be materialized into gazettes, chapters, or public events.
+        # cannot be materialized into gazettes or public events.
         if character_name:
             for row in self.conn.execute(
                 "SELECT turn, year, period, title, body, order_id FROM secret_order_briefs "
