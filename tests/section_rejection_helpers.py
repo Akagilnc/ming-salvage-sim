@@ -11,18 +11,6 @@ from __future__ import annotations
 # ``from tests.section_rejection_helpers import game`` 消费方零改 import。
 from tests.conftest import game as game  # noqa: F401
 
-def default_settlement_attendant_runner(*, year, period, rejections):
-    del year, period
-    return "递话" if rejections else ""
-
-
-def install_settlement_attendant_agent_stub(
-    monkeypatch, decree_mod, *, text="递话", capture=None,
-):
-    """#1871：代码触发递话 agent 已删；旧调用点保留 no-op，runner 形参仍由 #1843 承接。"""
-    del monkeypatch, decree_mod, text, capture
-
-
 def run_declaration(db, state, content, raw_delta, *, narrative="", decree_text=""):
     """Enter the current fiscal bracket and atomically dispatch a month declaration."""
     del narrative, decree_text

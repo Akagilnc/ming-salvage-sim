@@ -42,12 +42,10 @@ from ming_sim.decree_vocabulary import (
 )
 from ming_sim.error_pack import error_packs_root
 from ming_sim.exceptions import LLMContractError, LLMUnavailable
-from ming_sim.models import GameState, reign_period_label
 from ming_sim.participant_roster import PARTICIPANT_LEAD_TIER, PARTICIPANT_TIERS
 from ming_sim.structured_decree import StructuredDecreeCombinationError
 from ming_sim.token_stats import tlog
 
-MAX_RESCRIPT_DRAFTS = 5
 # #1746：单 option 契约失败（缺/错/组合/接地/形）→ 同一会话补交（不含首抽）；耗尽只剔该 option。
 # decision: missing-field-heal-by-resume-not-drop / per-option-drop-after-heal-exhausted
 # decision: heal-covers-illegal-values-too（不问错在哪；不按错误种类分闸）
@@ -1167,41 +1165,6 @@ def _parse_rescript_json_strict(raw: str) -> Dict[str, Any]:
         )
     return data
 
-_RESCRIPT_ISSUE_TEXT_FIELDS = ("title", "状态", "进度", "待办未解进度")
-
-
-def _project_issue_qualitatively(issue: object) -> Optional[Dict[str, object]]:
-    """单条 issue 的票拟输入侧定性投影（P4 / ADR 0142/0143 唯一通道）。
-
-    字段白名单收窄（#656 A4 判词边界）：只携绑定所需 issue_id 与明确的定性/叙事
-    文字字段；resolve_condition/fail_condition/stop_condition（含「结案条件」「失败
-    条件」别名）等机器契约字段一律不进票拟输入——机器阈值串（如 seed_events 的
-    public_support >60 / unrest <30）随所属字段整体消失，不做任何字符串内扫描/
-    解析/替换。白名单外的未知字段（含任意嵌套结构）不透传——删除「任意字符串全
-    透传」的根因。simulator 共用投影不动——只在票拟 payload 出口收窄。
-    """
-    if not isinstance(issue, dict):
-        return None
-    row: Dict[str, object] = {}
-    if "issue_id" in issue:
-        row["issue_id"] = issue["issue_id"]
-    for field in _RESCRIPT_ISSUE_TEXT_FIELDS:
-        value = issue.get(field)
-        if isinstance(value, str) and value.strip():
-            row[field] = value
-    return row or None
-
-
-def _project_region_targets(table: object) -> List[Dict[str, str]]:
-    """Project the simulator's canonical typed region table into the target catalog."""
-    return _project_board_targets(
-        table,
-        fields=("id", "name", "kind"),
-        required=("id", "name", "kind"),
-        label="region",
-    )
-
-
 def _project_army_targets(table: object) -> List[Dict[str, str]]:
     """Project Ming-controlled armies from the simulator's full army board."""
     armies = _project_board_targets(
@@ -1214,22 +1177,6 @@ def _project_army_targets(table: object) -> List[Dict[str, str]]:
         {field: army[field] for field in ("id", "name", "station")}
         for army in armies
         if army["owner_power"] == "ming"
-    ]
-
-
-def character_targets_from_db(db: object) -> List[Dict[str, str]]:
-    """#1804：票拟人物目录＝characters.name 全集（name+office）。
-
-    不筛在朝/官职/事务类别；官职只供认人，不限可选性；禁忠诚/能力等裸属性。
-    真源是 characters 表；由票拟入口注入 payload，不进共享 simulator 盘面。
-    """
-    rows = db.conn.execute(  # type: ignore[attr-defined]
-        "SELECT name, office FROM characters ORDER BY name"
-    ).fetchall()
-    return [
-        {"name": str(row["name"]), "office": str(row["office"] or "")}
-        for row in rows
-        if str(row["name"] or "").strip()
     ]
 
 
@@ -1264,56 +1211,6 @@ def _project_board_targets(
         return targets
     except (KeyError, IndexError, TypeError, ValueError) as exc:
         raise ValueError(f"canonical {label} target table 畸形") from exc
-
-
-def build_rescript_draft_payload(
-    state: GameState,
-    narrative: str,
-    simulator_payload: Dict[str, object],
-    triage_actor: Dict[str, str],
-    character_targets: Optional[List[Dict[str, str]]] = None,
-) -> Dict[str, object]:
-    """票拟生成 LLM 步的确定性输入（F1.3：零依赖 extractor 输出，只读盘面投影）。
-
-    active_issues 取 simulator_payload 里已投影的一份再过票拟出口定性投影（0143
-    输入侧投影唯一通道，issue_id 是权威绑定快照）；缺失时回空表并留痕（无盘面可
-    投影＝无急务可选）。
-    character_targets 由票拟入口缝注入（#1804）；缺省不塞空目录（空目录会把合法名全拒）。
-    """
-    raw_issues = simulator_payload.get("active_issues")
-    if not isinstance(raw_issues, list):
-        tlog("[rescript] simulator_payload 无 active_issues 投影，按空盘面处理。")
-        raw_issues = []
-    active_issues = [
-        projected for projected in
-        (_project_issue_qualitatively(issue) for issue in raw_issues)
-        if projected is not None
-    ]
-    # #1620：非军饷 grant_action 闭集与 Layer-A 同源；军饷用 grant_kind=army_pay
-    # （生成侧 machine discriminator），层 A 映射到内部 grant_action=协饷。
-    from ming_sim.action_materialize import GRANT_ACTIONS
-
-    payload: Dict[str, object] = {
-        "turn": {
-            "year": state.year,
-            "period": state.period,
-            "turn": state.turn,
-            "reign_period_label": reign_period_label(state.year, state.period),
-        },
-        "gazette": narrative,
-        "triage_actor": dict(triage_actor),
-        "active_issues": active_issues,
-        "region_targets": _project_region_targets(simulator_payload.get("regions")),
-        "army_targets": _project_army_targets(simulator_payload.get("armies")),
-        "grant_actions": sorted(GRANT_ACTIONS - {"无", "协饷"}),
-        "grant_kinds": [_GRANT_KIND_ARMY_PAY],
-        "target": {"min_items": 3, "max_items": MAX_RESCRIPT_DRAFTS},
-    }
-    # #1804：与 region/army 同形人物目录；外延＝characters.name 全集（#1778）。
-    # 票拟入口注入；缺省不写键（旧夹具无目录不误伤 generation grounding）。
-    if character_targets is not None:
-        payload["character_targets"] = list(character_targets)
-    return payload
 
 
 def _option_failure_from_exc(

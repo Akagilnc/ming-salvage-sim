@@ -88,9 +88,6 @@ def _fake_settlement_llm(monkeypatch, *, narrative="本月邸报：边饷已清�
             for row in dossiers
         ],
     )
-    # #1745：结算拒收递话同属外层 LLM 缝（与 1468 _stub_outer_llm_seams 同源）。
-    from tests.section_rejection_helpers import install_settlement_attendant_agent_stub
-    install_settlement_attendant_agent_stub(monkeypatch, decree_mod)
     monkeypatch.setattr(session_mod, "write_decree_with_agno", lambda *a, **k: "奉天承运，诏曰……")
     monkeypatch.setattr(
         "ming_sim.month_chain.run_world_segment_text", lambda *a, **k: narrative,

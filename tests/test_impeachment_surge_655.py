@@ -5,7 +5,7 @@ import json
 
 import ming_sim.agents as agents_mod
 from ming_sim.db import GameDB
-from ming_sim.issues import apply_issue_tracker_output, gather_impeachment_surge_candidates, issue_to_payload
+from ming_sim.issues import apply_issue_tracker_output, gather_impeachment_surge_candidates
 from ming_sim.models import LLMConfig
 
 
@@ -244,8 +244,7 @@ def test_target_roster_survives_generic_issue_restore(game, content):
     restored = GameDB(path, content)
     try:
         row = restored.conn.execute("SELECT * FROM issues WHERE id=?", (issue_id,)).fetchone()
-        payload = issue_to_payload(row, [])
-        assert payload["target_roster"] == [owner]
+        assert json.loads(row["target_roster"]) == [owner]
         assert json.loads(row["participants"]) == []
         assert json.loads(row["participant_roster"]) == []
     finally:

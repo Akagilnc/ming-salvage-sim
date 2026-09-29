@@ -67,8 +67,6 @@ def canned_full_settlement(
         "ming_sim.month_translate.translate_month_segment",
         lambda *_a, **_k: {"effects": {}},
     )
-    from tests.section_rejection_helpers import install_settlement_attendant_agent_stub
-    install_settlement_attendant_agent_stub(monkeypatch, decree_mod)
     if skip_fixed_flows:
         monkeypatch.setattr(decree_mod, "apply_fixed_period_flows", lambda *_a, **_k: None)
 

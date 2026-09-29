@@ -725,10 +725,8 @@ def in_talent_pool(character: Character, db, current_year: int, current_period: 
 
     登场判据对齐 db.apply_historical_debuts（year+month），否则同年但月份未到的人物会提前进池。
 
-    范围说明：此函数是 ADR 0009 域内人才池 simulation._talent_pool_rows 的 **UI 子集**——后者覆盖
-    offstage/retired/dismissed/听用候铨被顶替全部可起复者，而 dismissed/retired/imprisoned 等在朝
-    转出的非 active 已在朝堂「全部」栏可见（visible_in_court 只挡 offstage），故 UI 人才池只补
-    offstage 这一漏面，两者口径不同、勿等同。"""
+    范围说明：dismissed/retired/imprisoned 等在朝转出的非 active 已在朝堂「全部」栏可见
+    （visible_in_court 只挡 offstage），故 UI 人才池只补 offstage 这一漏面。"""
     if character.office_type in ("后宫", "宗藩", "未仕"):
         return False
     if getattr(character, "faction", "") == "流寇":
@@ -5417,12 +5415,6 @@ async def api_undo_audience_chat() -> Dict[str, Any]:
     _refuse_if_open_night_barrier(game)
     with _serialized_web_write(game):
         return game.undo_last_chat(SCENE_CHAT_SPEAKER, gate_held=True)
-
-
-@app.get("/api/audience/extraction/pending")
-async def api_pending_story_extractions() -> Dict[str, Any]:
-    """#501/#1353/#1842：本开夜转译待补只读投影（含 kind/retryable 系统提示态）。"""
-    return get_game().pending_story_extractions()
 
 
 class TranslationRetryRequest(BaseModel):

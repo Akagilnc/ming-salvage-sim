@@ -12,9 +12,6 @@ from ming_sim.db import GameDB
 from ming_sim.models import Character
 from ming_sim.person_archive_contract import PERSON_TITLE_KINDS
 from ming_sim.person_delta_adapter import normalize_person_changes
-from ming_sim.simulation import (
-    build_simulator_payload,
-)
 from tests.conftest import active_ming_character
 from tests.dossier_test_helpers import create_test_secret_order
 
