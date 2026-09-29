@@ -19,11 +19,7 @@ from ming_sim.breach_plea import (
     ENTRY_KIND_BREACH_PLEA,
     project_breach_plea_scene,
 )
-from ming_sim.decree_vocabulary import (
-    DEFORMATION_STRIP_PLAYER_TOKENS,
-    URGE_TRUTH_BANNED_PLAYER_TOKENS,
-    terminal_report_facade,
-)
+from ming_sim.decree_vocabulary import terminal_report_facade
 from ming_sim.staged_commitment import (
     ENTRY_KIND_GRACE_PLEA,
     ENTRY_KIND_RUSH_REMONSTRANCE,
@@ -32,26 +28,6 @@ from ming_sim.staged_commitment import (
     TODO_STATUS_PENDING,
     list_due_stages_for_scan,
     normalize_commitment_stages,
-)
-from ming_sim.supervision import SUPERVISION_BANNED_PLAYER_TOKENS
-
-# 真伪底禁词叶源在 decree_vocabulary；此处再导出供既有 import 路径兼容。
-# URGE_TRUTH_BANNED_PLAYER_TOKENS  # re-export
-
-# 玩家可见串静默剥离集（运行时）：仅无歧义系统词/引擎键。
-# 汉语普通词（变形/分界/打折走样/烂尾/钝化…）不进本集——由 assert 哨兵响亮拦截。
-_BANNED_PLAYER_TOKENS = (
-    "AWAITING_DECISION", "<<DECISION>>", "EXTRACTION_MODULES",
-    "close=True", "close=False",
-) + tuple(DEFORMATION_STRIP_PLAYER_TOKENS) + tuple(
-    URGE_TRUTH_BANNED_PLAYER_TOKENS
-) + tuple(
-    token for token in SUPERVISION_BANNED_PLAYER_TOKENS
-    if not any("\u4e00" <= ch <= "\u9fff" for ch in token)
-)
-assert not any(
-    any("\u4e00" <= ch <= "\u9fff" for ch in token)
-    for token in _BANNED_PLAYER_TOKENS
 )
 
 # next_audience_todos.entry_kind 单一分派（#623+#624 合成，禁第二份谓词）：
@@ -271,13 +247,6 @@ def build_due_review_input(db: Any, todo: Dict[str, object]) -> Dict[str, object
         "opportunity_band": opportunity_band,
         "distortion_tendency": distortion_tendency,
     }
-
-
-def _strip_banned(text: str) -> str:
-    out = str(text or "")
-    for token in _BANNED_PLAYER_TOKENS:
-        out = out.replace(token, "")
-    return out
 
 
 def project_due_review_scene(

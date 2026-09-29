@@ -1,7 +1,6 @@
 """#629 S1 — P4 哨兵单源化 + 全族枚举终验。
 
 Seams:
-- urge / due_review 真伪底禁词单源（禁双份漂移）
 - #622 变形禁词生产单源（禁测试本地平行表）
 - FAMILY_P4_BANNED_PLAYER_TOKENS × CREDIT_BANNED_SCAN_SURFACES 六面
   覆盖：变形 / 真伪底 / 信用事件类 / 钝化 / 根基档
@@ -34,15 +33,9 @@ from ming_sim.credit_events import (
 )
 from ming_sim.decree_vocabulary import (
     DEFORMATION_BANNED_PLAYER_TOKENS,
-    DEFORMATION_STRIP_PLAYER_TOKENS,
-    URGE_TRUTH_BANNED_PLAYER_TOKENS,
     format_public_progress_disclosure,
 )
-from ming_sim.due_review import (
-    URGE_TRUTH_BANNED_PLAYER_TOKENS as DUE_REVIEW_URGE_TRUTH,
-    _BANNED_PLAYER_TOKENS,
-    project_due_review_scene,
-)
+from ming_sim.due_review import project_due_review_scene
 from ming_sim.issues import apply_score_extraction
 from ming_sim.staged_commitment import (
     ENTRY_KIND_STAGED,
@@ -59,21 +52,6 @@ from ming_sim.urge_lever import (
 # ── 单源化机械钉 ─────────────────────────────────────────────────────
 
 
-def test_urge_due_review_truth_banned_single_source():
-    """urge / due_review 真伪底禁词必须是同一生产元组，禁双份漂移。"""
-    # due_review 再导出须与叶源同一对象（或等价元组）
-    assert DUE_REVIEW_URGE_TRUTH is URGE_TRUTH_BANNED_PLAYER_TOKENS or tuple(
-        DUE_REVIEW_URGE_TRUTH
-    ) == tuple(URGE_TRUTH_BANNED_PLAYER_TOKENS)
-    for token in (
-        "truth", "grace_fake", "pretextual", "genuine",
-        "payload_json", "distortion_band", "urge_tightness",
-        "distortion_tendency", "unreasonable",
-    ):
-        assert token in URGE_TRUTH_BANNED_PLAYER_TOKENS
-        assert token in _BANNED_PLAYER_TOKENS
-
-
 def test_deformation_banned_lifted_to_production_single_source():
     """#622 测试本地禁词须提升入生产单源；测试只引用生产表。"""
     for token in (
@@ -82,14 +60,6 @@ def test_deformation_banned_lifted_to_production_single_source():
         "变形", "分界", "打折走样", "烂尾",
     ):
         assert token in DEFORMATION_BANNED_PLAYER_TOKENS
-    # 生产静默剥离只载无歧义系统词；汉语普通词不进 strip
-    for token in ("变形", "分界", "打折走样", "烂尾"):
-        assert token not in DEFORMATION_STRIP_PLAYER_TOKENS
-        assert token not in _BANNED_PLAYER_TOKENS
-    for token in ("beyond_intent", "transformed", "progress_band"):
-        assert token in DEFORMATION_STRIP_PLAYER_TOKENS
-        assert token in _BANNED_PLAYER_TOKENS
-
     import tests.test_deformation_dual_rail_622 as t622
     assert t622._BANNED_SURFACE_TOKENS is DEFORMATION_BANNED_PLAYER_TOKENS or tuple(
         t622._BANNED_SURFACE_TOKENS
@@ -494,10 +464,10 @@ def test_due_review_preserves_diegetic_fenjie_phrase(game):
         if str(t.get("entry_kind") or "") == ENTRY_KIND_STAGED
     ][0]
     scene = project_due_review_scene(db, staged_todo)
-    # 投影后原词完整——静默剥离不得剜「分界」
+    # 投影后原词完整
     assert diegetic in str(scene.get("criterion_text") or "")
     assert diegetic in str(scene.get("origin_context") or "")
-    # 不得被剜成残句「与喀尔喀而治」
+    # 不得成为残句「与喀尔喀而治」
     blob = "\n".join([
         str(scene.get("origin_context") or ""),
         str(scene.get("criterion_text") or ""),
