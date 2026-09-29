@@ -8960,7 +8960,7 @@ def _apply_score_extraction_body(
 
     def _norm_int_leaf(v):
         """无损整数串归一（cmr S3 r10,2/2）：strip 后能精确 int 的 str 转 int,
-        其余原样返回。无损归一在 cleaner（引擎路）与此处（driver 路）各一次,
+        其余原样返回。无损归一在 cleaner 与此处各一次,
         **判定语义只在 applier**（ship-pre r1 措辞修正:cleaner 残留的同式转换
         与本函数同结果,见 S3 disposition「无害重复」）。"""
         if isinstance(v, str):
@@ -9050,8 +9050,8 @@ def _apply_score_extraction_body(
     #      使同{月}「新立关税 + 立即调率」可一气落地。
     applied_fiscal_creates: List[Dict[str, object]] = []
     for create in extracted.get("fiscal_creates") or []:
-        # direction 同义词在唯一守门人处归一（cmr S3 r9:归一放 driver 不经过的
-        # cleaner 层=同输入两判;DELTA_SCHEMA 明言吃中文别名）。表与 cleaner 共用
+        # direction 同义词在唯一守门人处归一（cmr S3 r9:只放在可选的
+        # cleaner 层会让直接落账的声明漏判；DELTA_SCHEMA 明言吃中文别名）。表与 cleaner 共用
         # simulation._DIRECTION_NORMALIZE（懒 import 避循环）。先归一再去重：ADR0027
         # 承诺载体都是月度【支出】(delta<0)，dedup/残留观测只对【支出】fiscal_create 生效；
         # 同名的【收入】新科目(如新税)与承诺无关，绝不可被误去重或误报残留(codex correctness)。

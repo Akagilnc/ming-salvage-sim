@@ -562,10 +562,9 @@ def test_double_suffix_remove_rejected_not_destructive(game):
     assert after == before  # 真科目毫发无损
 
 
-def test_chinese_direction_alias_accepted_on_driver_path(game):
-    """direction='收' 经 driver 路也要同判落库——同义词归一须在唯一守门人(applier)
-    处做,放在 driver 不经过的 cleaner 层 = 同输入两判(cmr S3 r9 claude;
-    DELTA_SCHEMA 明言吃中文别名)。"""
+def test_chinese_direction_alias_accepted_at_applier(game):
+    """direction='收' 直接落账同判——同义词归一须在 applier，
+    不能仅在可选 cleaner 层（DELTA_SCHEMA 明言吃中文别名）。"""
     db, state, content = game
     turn = state.turn
 
@@ -580,9 +579,8 @@ def test_chinese_direction_alias_accepted_on_driver_path(game):
     assert rows == []
 
 
-def test_whitespace_only_key_rejected_on_driver_path(game):
-    """空白 key('  ')在 applier 不 strip 时两路两判——applier 守门处统一 strip
-    (cmr S3 r9 codex)。"""
+def test_whitespace_only_key_rejected_at_applier(game):
+    """空白 key('  ')在 applier 守门处统一 strip 并拒收。"""
     db, state, content = game
     turn = state.turn
 
@@ -598,8 +596,7 @@ def test_whitespace_only_key_rejected_on_driver_path(game):
 # ──────── cmr S3 r10:终局集中化——cleaner 零值逻辑,applier 唯一语义点 ────────
 
 def test_lossless_int_string_same_verdict_both_paths(game):
-    """无损整数串("5"/"300")在 applier 归一接受——转换留在 cleaner 时引擎路收
-    driver 路拒=同输入两判(cmr S3 r10,2/2 high;与 r9 direction 同处方)。"""
+    """无损整数串("5"/"300")在 applier 归一接受，不能只依赖可选 cleaner。"""
     db, state, content = game
     turn = state.turn
     key = next(iter(db.get_fiscal_config()))
@@ -617,9 +614,8 @@ def test_lossless_int_string_same_verdict_both_paths(game):
         "SELECT value FROM fiscal_config WHERE key='整串测试_base'").fetchone()[0] == 300
 
 
-def test_driver_path_display_defaults_from_key(game):
-    """display 缺省=key 去 _base 后缀——默认只在 cleaner 时 driver 路建出空名
-    预算行(DELTA_SCHEMA 契约对象正是 driver 路)(cmr S3 r10 claude medium)。"""
+def test_direct_fiscal_create_display_defaults_from_key(game):
+    """display 缺省=key 去 _base 后缀；直接落账不能依赖 cleaner 补默认值。"""
     db, state, content = game
 
     run_settle(db, state, content, {

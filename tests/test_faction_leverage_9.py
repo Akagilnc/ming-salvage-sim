@@ -807,8 +807,8 @@ def _make_legacy_save_without_offset_col(content):
     return path
 
 
-def test_legacy_save_calibrates_offset_via_driver_path(game):
-    """#9 R1 finding#1 [P1]：老档经 driver 风格 GameDB() 打开（仅 init_schema，不 seed_static_data）
+def test_legacy_save_calibrates_offset_on_open(game):
+    """#9 R1 finding#1 [P1]：老档经 GameDB() 打开（仅 init_schema，不 seed_static_data）
     时，leverage_offset 列刚 ADD 后必须立即一次性校准（offset = 当前 DB leverage − 权重和），
     使 leverage == clamp(offset+权重和) == 钦定基线，而非 0+权重和（未锚定基线的错值）。"""
     from ming_sim.db import GameDB, _LEVERAGE_FACTIONS
@@ -816,7 +816,7 @@ def test_legacy_save_calibrates_offset_via_driver_path(game):
     _, _, content = game
     path = _make_legacy_save_without_offset_col(content)
     try:
-        # driver 路：只 GameDB()（init_schema 内迁移校准），绝不 seed_static_data。
+        # 直接打开现存档：只 GameDB()（init_schema 内迁移校准），不 seed_static_data。
         db = GameDB(path, content)
         try:
             db.load_state()
@@ -829,11 +829,11 @@ def test_legacy_save_calibrates_offset_via_driver_path(game):
             lev = db.faction_leverage(faction)
             # offset 应被校准成 round(baseline − 权重和)，而非默认 0。
             assert offset == baseline - weight_sum, (
-                f"driver 路老档应一次性校准 offset：得 {offset}，期望 {baseline - weight_sum}"
+                f"老档应一次性校准 offset：得 {offset}，期望 {baseline - weight_sum}"
             )
             # leverage 应锚定钦定基线，而非 0+权重和。
             assert lev == max(0, min(100, round(offset + weight_sum))) == baseline, (
-                f"driver 路老档 leverage 应=钦定基线 {baseline}，得 {lev}（offset={offset} 权重={weight_sum}）"
+                f"老档 leverage 应=钦定基线 {baseline}，得 {lev}（offset={offset} 权重={weight_sum}）"
             )
         finally:
             db.close()
@@ -895,7 +895,7 @@ def test_col_added_uncalibrated_save_recalibrates_on_open(game):
         }
         assert baselines, "前置：白名单派系应在 content.factions"
 
-        # 正常开档（driver 路：仅 init_schema，不 seed_static_data）——这一步的 init_schema
+        # 正常开档（仅 init_schema，不 seed_static_data）——这一步的 init_schema
         # 须凭「列已存在但标记缺失」检测出未校准、补校准。
         db = GameDB(path, content)
         try:
@@ -974,7 +974,7 @@ def test_calibrated_save_without_marker_not_re_anchored(game):
         "前置：至少一个派系 offset 应非 0（才构成『已校准』态、与崩溃态区分）"
     )
     try:
-        # 正常开档（driver 路：仅 init_schema，不 seed_static_data）。
+        # 正常开档（仅 init_schema，不 seed_static_data）。
         db = GameDB(path, content)
         try:
             db.load_state()

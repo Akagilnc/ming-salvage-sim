@@ -2227,7 +2227,7 @@ class GameDB:
         # 误覆盖动态态）；列已存在的后续 load 跳过（army_needed 的 rate<=0 锚定兜底 runtime 漏网）。
         if self.ensure_column("armies", "salary_rate", "REAL NOT NULL DEFAULT 0"):
             self._backfill_salary_rate()
-        # #173：维护费列退役迁移——**必须在每个打开路径跑**。driver 开现存档只走 GameDB.__init__→
+        # #173：维护费列退役迁移——**必须在每个打开路径跑**。现存档只走 GameDB.__init__→
         # init_schema、不走 seed_static_data；若只挂 seed，现存档（probe.db: maintenance INTEGER
         # NOT NULL 无 default）永不删列 → 删列后建新军 INSERT（已不含该列）崩（cmr drop R1 codex high）。
         # 现存档此刻维护费列在：先确保 arrears 换算读完维护费（幂等 version gate），再 drop；新档此时
@@ -2596,9 +2596,9 @@ class GameDB:
         self.affairs = AffairStore(self.conn)
         self.conn.commit()
         self._migrate_legacy_office_pollution()
-        # #9 R1 finding#1 [P1]：老档迁移校准须放在「seed 路 + driver 路」都过的点。driver.open_game
-        # 只 GameDB()（→ init_schema）+ load_state、不调 seed_static_data，故若校准仅在 seed 末尾，
-        # driver 路老档的 offset 永远停在默认 0 → leverage=0+权重和（未锚定钦定基线、错值）。
+        # #9 R1 finding#1 [P1]：老档迁移校准须放在新档 seed 与现存档打开都经过的点。
+        # 现存档只 GameDB()（→ init_schema）+ load_state、不调 seed_static_data，故若校准仅在 seed 末尾，
+        # 老档的 offset 永远停在默认 0 → leverage=0+权重和（未锚定钦定基线、错值）。
         # 因此：leverage_offset 列**本次刚 ADD**且 factions 表已有行（=老档，characters 此刻亦已持久化、
         # 权重和可算）时，在此立即一次性反推校准（offset_col_added=True 走老档分支：offset=当前 DB
         # leverage − 权重和）。放在 _migrate_legacy_office_pollution 之后，使权重和按【已清洗】的 office
@@ -3928,7 +3928,7 @@ class GameDB:
                 )
         self._migrate_arrears_unit_to_silver(is_fresh_armies_seed)
         self._initialize_army_pay_source_spine(is_fresh_armies_seed)
-        # #173：维护费列退役 drop 已上移至 init_schema（每个打开路径都跑，含 driver 开现存档的纯
+        # #173：维护费列退役 drop 已上移至 init_schema（每个打开路径都跑，含现存档的纯
         # init_schema 路径，见 cmr drop R1）；此处新档 seed INSERT 后该列本就不存在，无需再 drop。
         self._apply_region_city_levels()  # 新档 region 此时才 INSERT 完，按史实补 city_level
         # 新档罢居/在途 office 污染清洗：init_schema 路径在空表上 no-op（构造在 seed 前），
@@ -17911,8 +17911,8 @@ class GameDB:
         按 id 序(=操作发生序)apply。落得了标 committed、落不了标 failed(都不留 pending,
         故幂等:已 committed/失败/held_over 不在 pending 清单、不重跑)。
         #525：held_over 留中档由同表 durable 保留、本终端只读 pending，故默认提交跳过留中。
-        在 resolve_turn 最前、跑 LLM 结算管线之前调,使盘面时序与旧"召对期直写"一致。
-        content 用于任免落库；探针 driver 路径无聊天暂存时为 no-op。
+        在月链世界段之前调，使后续步骤读到已落账的聊天动作。
+        content 用于任免落库；无聊天暂存时为 no-op。
         minister_name 非空=对话确认当场 commit:只落该召对对象的暂存(应允即落,不波及他人);
         action_ids 非空=进一步只落指定 pending_actions.id（召对确认只可作用于本轮开始前可见项）;
         默认 None=颁诏批量落全回合。

@@ -1955,7 +1955,7 @@ class GameSession:
             self.last_decree = ""
             self._decree_draft_fingerprint = ()
         if not directives and not settlement_due and not pending_action_due:
-            # 恢复态且有存诏：免草案要求（零草案 settling=driver 档/逃生口降级后是真实态，
+            # 恢复态且有存诏：免草案要求（零草案 settling 属真实恢复态，
             # 而 add 已冻结——硬要草案=循环死路，ship-pre r5）。directives 仅作非空哨兵。
             if (self.state.turn_phase in FRONT_HALF_DONE_PHASES
                     and (self.last_decree or "").strip()):

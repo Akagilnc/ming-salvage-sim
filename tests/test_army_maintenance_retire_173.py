@@ -59,7 +59,7 @@ def test_drop_maintenance_column_removes_and_idempotent(game):
 
 
 def test_existing_save_drops_maintenance_column_on_open(content, tmp_path):
-    # cmr drop R1(codex high)：driver 开现存档只走 GameDB.__init__→init_schema、不走 seed_static_data。
+    # cmr drop R1(codex high)：重开现存档只走 GameDB.__init__→init_schema、不走 seed_static_data。
     # 维护费退役 drop 须挂 init_schema，否则现存档（maintenance NOT NULL 无 default）不删列 → 删列后
     # 建新军 INSERT（已不含该列）崩。模拟「升级前老档」：seed 后 ADD 回 maintenance 列，重开同档（纯
     # init_schema 路径）应 drop 该列、且其后建新军不崩。

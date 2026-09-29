@@ -866,9 +866,9 @@ def resolve_directives(
 
     before_turn = state.turn
 
-    # 草案内容已由拟诏合并进 decree_text，simulator 只读 decree_text，不再单传逐条草案。
+    # 草案内容已由拟诏合并进 decree_text；月链沿已保存的旨意继续。
 
-    # 1) 前括号确定性结算：与探针 driver 共用 prepare_resolve_front_half（ADR 0004 / #668）。
+    # 1) 前括号确定性结算：玩家月链的唯一准备入口。
     prepare_resolve_front_half(
         state, db,
         decree_text=decree_text,
@@ -925,7 +925,7 @@ def reload_state_from_db(db: GameDB, state: GameState, *, content=None) -> GameS
     刷掉，否则脏内存会污染重跑（如脏 settling 相位被守门跳过=整月财政丢，cmr S4 r1 F4）。
 
     走 db.load_state 同路径（与 restore 同源），但 load_state 返回**新对象**；state 被各处
-    持引用（session.state、driver 闭包、各调用栈），必须**原地刷新**而非返回新对象——把 DB 值
+    持引用（session.state、各调用栈），必须**原地刷新**而非返回新对象——把 DB 值
     写回同一对象的字段、metrics dict 原地 update-then-prune（任何时刻非空），返回同一 state（id 不变）。
 
     content 非 None 时以 DB 全量重建 characters（restore 同路径 _sync_offices_from_db_impl）：
@@ -1074,7 +1074,7 @@ def prepare_resolve_front_half(
 ) -> List[Dict[str, object]]:
     """共享前半段 seam（ADR 0004 / #668）：pre_settle + ready=0 占位（含 transit_arrivals）。
 
-    resolve_directives 与 driver.prepare 共用此 helper。外层 atomic 使 settling 相位与
+    玩家月链通过 resolve_directives 调用此 helper。外层 atomic 使 settling 相位与
     ready=0 context 同生共死。已有 context 的 FRONT_HALF_DONE 重入只读返回既有
     transit_arrivals，禁止 placeholder upsert 覆写 durable 真源（ready=0 原诏/source
     ），不二次 tick/财政。返回本回合 `transit_arrivals`
@@ -1141,8 +1141,7 @@ def pre_settle(
 ) -> List[Dict[str, object]]:
     """确定性结算「前括号」：固定月度财政 tick + auto_trigger 硬立 seed 情势，均在 LLM 推演前。
 
-    返回本回合程序硬触发的清单。真实流程与探针 driver 共用此核（ADR 0004）。
-    content 供 office(任免)暂存动作落库；driver 路径无聊天暂存。
+    返回本回合程序硬触发的清单；content 供 office(任免)暂存动作落库。
 
     ADR 0008 S4：整段（暂存动作 commit + 固定财政 + auto_trigger + 到期密令呈递）包成
     **自己的单事务**——崩在内部=全回滚=相位未变=重进时干净重跑前半段。完成时**同事务内**
