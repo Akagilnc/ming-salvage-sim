@@ -180,6 +180,33 @@ def _client() -> httpx.AsyncClient:
     return httpx.AsyncClient(transport=httpx.ASGITransport(app=web_app.app), base_url="http://t")
 
 
+def test_scene_reply_waits_for_other_speaker_in_same_night(web_game, monkeypatch):
+    game = web_game
+    stub_scene_agent(monkeypatch, _FakeAgent())
+    stub_audience_translate(monkeypatch)
+    night = an.open_night(game.db, game.state, location="乾清宫", time_of_day="夜")
+    speaker = _active_minister(game)
+    first = game.db.create_chat_turn(
+        game.state, speaker, f"scene-night-{night['id']}", 0,
+        night_id=int(night["id"]), status="generating",
+    )
+    question_id = game.db.append_chat_message(speaker, int(game.state.turn), "user", "边务如何？")
+    game.db.update_chat_turn_messages(first, user_message_id=question_id)
+
+    async def ask_scene():
+        async with _client() as client:
+            return await client.post("/api/audience/chat/stream", json={"message": "再问殿上诸臣？"})
+
+    blocked = _parse_sse(asyncio.run(ask_scene()).text)
+    assert any(event["event"] == "error" for event in blocked)
+    assert _count(game.db, "chat_turns") == 1
+
+    game.db.persist_minister_reply(speaker, int(game.state.turn), "臣已奏。", first)
+    resumed = _parse_sse(asyncio.run(ask_scene()).text)
+    assert any(event["event"] == "done" for event in resumed)
+    assert _count(game.db, "chat_turns") == 2
+
+
 def test_persisted_reply_before_translation_admission_has_no_retry_button(web_game):
     """A complete reply is not an exhausted translation until the job actually fails."""
     game = web_game

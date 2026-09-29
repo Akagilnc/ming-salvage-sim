@@ -1942,16 +1942,19 @@ class WebGame:
         ]
 
     def _audience_turn_in_flight(self, minister_name: str) -> bool:
-        """#383 背景召对契约：同一大臣已有「已受理、尚未完成回奏」的 turn 时，不得再开新轮。
+        """同夜场景共用一个 agent session：前轮回话未落定时不准开下一轮。
 
-        in-flight = `status='generating'`，或 `status='active'` 且 `minister_message_id` 仍空
-        （#498 挂夜轮以 generating 起笔，回话入档后升 active）。走 GameDB 查询 seam，
-        不直摸 db.conn（测试替身可 stub list_in_flight_chat_turns）。"""
+        后台转译不在此等待。无夜的轻量替身仍按大臣查；在飞的定义由 DB 写口维护。
+        """
         if hasattr(self.db, "list_in_flight_chat_turns"):
-            rows = self.db.list_in_flight_chat_turns(
+            if hasattr(self.db, "conn"):
+                from ming_sim.audience_night import get_open_night
+                night = get_open_night(self.db)
+                if night is not None:
+                    return bool(self.db.list_in_flight_chat_turns(night_id=int(night["id"])))
+            return bool(self.db.list_in_flight_chat_turns(
                 minister_name=minister_name, turn=int(self.state.turn),
-            )
-            return bool(rows)
+            ))
         # 极薄兜底：旧替身无接口时不挡（与 get_last_active 语义接近）
         existing = self.db.get_last_active_chat_turn(minister_name, self.state.turn)
         return existing is not None and not existing.get("minister_message_id")
@@ -2069,7 +2072,7 @@ class WebGame:
     ) -> None:
         """召对中断/失败的统一善后：回滚副作用；有问话则保留并标 interrupted。
         所有「已建 chat_turn 但本轮未能正常完成」的路径都必须调用——否则留下 status=active 且
-        minister_message_id 为空的孤儿轮，`_audience_turn_in_flight` 会把该大臣永久判为「上一轮
+        minister_message_id 为空的孤儿轮，`_audience_turn_in_flight` 会把本夜永久判为「上一轮
         仍在进行」而拒收后续问话（cmr Gate2 F-B）。chat_turn_id=0（无持久轮）时为 no-op。
 
         Scene abandon/drain 由调用方在 write_gate 外先完成（C9/T1/T10）；本方法只做短事务写。
@@ -2395,7 +2398,7 @@ class WebGame:
                         from ming_sim.audience_night import assert_night_accepts_player_input
                         assert_night_accepts_player_input(self.db, what="召对")
                     if self._audience_turn_in_flight(minister_name):
-                        raise HTTPException(status_code=409, detail=f"{minister_name}上一轮回奏仍在进行，请稍候再问。")
+                        raise HTTPException(status_code=409, detail="本夜上一轮回奏仍在进行，请稍候再问。")
                     accepted_turn = int(self.state.turn)
                     # #1716：已开夜收夜口令跳过场外记召（与 stream 同缝）。
                     court_break_open_night = self._open_night_court_break(text)
@@ -2688,7 +2691,7 @@ class WebGame:
                         assert_night_accepts_player_input(self.db, what="召对")
                     if self._audience_turn_in_flight(minister_name):
                         raise HTTPException(
-                            status_code=409, detail=f"{minister_name}上一轮回奏仍在进行，请稍候再问。")
+                            status_code=409, detail="本夜上一轮回奏仍在进行，请稍候再问。")
                     # #505 finding3：reopen 是 CAS（interrupted→generating）。未赢（并发/双击重试
                     # 已被别的调用翻走）→ 响亮 409，绝不 generate/persist 出第二条大臣回话。
                     if not self.db.reopen_interrupted_chat_turn_for_retry(chat_turn_id):
@@ -3220,7 +3223,7 @@ class WebGame:
                     raise
             if self._audience_turn_in_flight(minister_name):
                 self._complete_pending_write(pending_ticket)
-                yield {"type": "error", "message": f"{minister_name}上一轮回奏仍在进行，请稍候再问。"}
+                yield {"type": "error", "message": "本夜上一轮回奏仍在进行，请稍候再问。"}
                 return
             accepted_turn = int(self.state.turn)
             # #1716：已开夜收夜口令跳过场外记召，否则散夜被 SUMMON_* 短路、夜永不关。
