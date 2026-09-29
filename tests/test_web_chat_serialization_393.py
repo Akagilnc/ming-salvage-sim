@@ -321,7 +321,7 @@ def test_nonstream_api_chat_keeps_game_state_responsive_while_chat_blocks(monkey
     class _SlowLLMGame:
         """离线慢 LLM 替身：chat 进入后保持阻塞，直至 state 探针完成。"""
 
-        def chat(self, minister_name: str, message: str, intent=None, *, explicit_secret_order=False):
+        def chat(self, minister_name: str, message: str):
             chat_entered.set()
             allow_finish.wait()
             events.append("chat")

@@ -68,7 +68,7 @@ export function useChatActions({
   clearPendingText: () => void;
   applyHistory: (history: ServerChatMessage[]) => void;
   loadHistoryProjection: (minister: string) => Promise<AudienceHistoryData | null>;
-  runAudienceTurn: (minister: string, message: string, cb: SendChatCallbacks, intent?: "secret_order") => Promise<void>;
+  runAudienceTurn: (minister: string, message: string, cb: SendChatCallbacks) => Promise<void>;
   invalidateAudienceScroll: () => void;
   currentNightId: number;
 }) {
@@ -80,7 +80,6 @@ export function useChatActions({
   const [canUndoLastChat, setCanUndoLastChat] = React.useState(false);
   const [composerHint, setComposerHint] = React.useState("");
   const [input, setInput] = React.useState("");
-  const [composerIntent, setComposerIntent] = React.useState<"secret_order" | undefined>();
   const [temporaryActiveMinister, setTemporaryActiveMinister] = React.useState<Minister | null>(null);
   const recoveryTimer = React.useRef<number | undefined>(undefined);
   const recoveryRun = React.useRef(0);
@@ -119,7 +118,6 @@ export function useChatActions({
       setChatNotice("");
       setCanUndoLastChat(false);
       setComposerHint("");
-      setComposerIntent(undefined);
       return;
     }
     resetPanel();
@@ -127,16 +125,13 @@ export function useChatActions({
     setCanUndoLastChat(false);
     setRetryReadFailure(null);
     setComposerHint("");
-    setComposerIntent(undefined);
     loadMinisterChat(selectedMinister)
       .catch((err) => setError(err.message));
   }, [selectedMinister, loadMinisterChat]);
 
-  // 关召对只 setActiveModal("none"), 不改 selectedMinister / 不走 resetPanel；
-  // composerIntent 是 composer-session 态，离 chat 面必须随 session 死。
+  // 关召对只 setActiveModal("none"), 不改 selectedMinister / 不走 resetPanel。
   React.useEffect(() => {
     if (activeModal !== "chat") {
-      setComposerIntent(undefined);
       recoveryRun.current += 1;
       window.clearTimeout(recoveryTimer.current);
     }
@@ -155,7 +150,6 @@ export function useChatActions({
     : null;
 
   const sendChat = async (targetMinisterName: string, text = input) => {
-    const intent = text === input ? composerIntent : undefined;
     if (busy) return;
     const message = text.trim();
     if (!message) {
@@ -171,10 +165,7 @@ export function useChatActions({
     setError("");
     setComposerHint("");
     setChatNotice("");
-    if (fromComposer) {
-      setInput("");
-      setComposerIntent(undefined);
-    }
+    if (fromComposer) setInput("");
     // 面板归属与卷轴当前奏对者是两种身份：前者只用于判断玩家是否已离开发起面板。
     const initiatingPanelName = selectedMinisterRef.current;
     // 流式/请求归属/派发由 hook 独占；App 只在 done 到手即幂等消费持久后果 + 面板态。
@@ -231,13 +222,10 @@ export function useChatActions({
           void awaitTerminal();
           return;
         }
-        if (fromComposer && selectedMinisterRef.current === initiatingPanelName) {
-          setInput(message);
-          setComposerIntent(intent);
-        }
+        if (fromComposer && selectedMinisterRef.current === initiatingPanelName) setInput(message);
         setError(err instanceof Error ? err.message : String(err));
       },
-    }, intent);
+    });
   };
 
   // Selection resets/loads the scene panel first; only then start its first stream.
@@ -435,7 +423,6 @@ export function useChatActions({
     composerHint,
     setComposerHint,
     input,
-    setComposerIntent,
     setInput,
     activeMinister,
     openChat,

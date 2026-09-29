@@ -23,7 +23,7 @@ import time
 import threading
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from types import SimpleNamespace
-from typing import Any, AsyncIterator, Callable, Dict, Iterator, List, Literal, Optional
+from typing import Any, AsyncIterator, Callable, Dict, Iterator, List, Optional
 
 # 源码模式 `uvicorn web_app:app` 在 nohup/重定向（>> web_server.log）下 Python stdout 块缓冲，
 # 日志滞后数分钟、结算中段 tail 看不见进度（#84）。强制行缓冲让 tlog + 各 print 近实时落盘；
@@ -663,7 +663,6 @@ def _api_reasoning_supported_for_effective_model(
 
 class ChatRequest(BaseModel):
     message: str
-    intent: Optional[Literal["secret_order"]] = None
 
 
 class DirectiveRequest(BaseModel):
@@ -2345,30 +2344,10 @@ class WebGame:
             "admission": str(admission_result or ""),
         }
 
-    def chat(self, minister_name: str, message: str, intent: Optional[str] = None) -> Dict[str, Any]:
+    def chat(self, minister_name: str, message: str) -> Dict[str, Any]:
         # #498 AC10：LLM 生成不持 write_gate，使颁诏入口可观测 in-flight 并有界超时；
         # 仅 prologue/epilogue 写库持锁。
-        # #670 / ADR 0096：殿上入口——自持闸 prologue 内消费 admission（与 chat_stream 同口径）。
-        return self._chat_core(minister_name, message, gate_already_held=False, intent=intent)
-
-    def _chat_with_write_gate_held(self, minister_name: str, message: str) -> Dict[str, Any]:
-        """#1357：兼容密令按钮端点已由 `_serialized_web_write` 持 write_gate。
-
-        与 `chat()` 同语义，但不得再 acquire 非可重入 Lock（会死锁）。
-        此兼容路径在外层闸内跑完整轮（含 LLM）；公开 chat/chat_stream 仍按 AC10
-        在生成期放闸。
-        #670：密疏只受 _require_active_minister/can_summon，不走殿上 admission。
-        """
-        return self._chat_core(minister_name, message, gate_already_held=True)
-
-    def _chat_core(
-        self,
-        minister_name: str,
-        message: str,
-        *,
-        gate_already_held: bool,
-        intent: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        # #670 / ADR 0096：殿上入口 prologue 内消费 admission（与 chat_stream 同口径）。
         if minister_name not in self.content.characters:
             raise HTTPException(status_code=404, detail=f"未找到大臣：{minister_name}")
         text = message.strip()
@@ -2380,7 +2359,7 @@ class WebGame:
         self._reject_if_settlement_phase()
         # 整轮（含 LLM 无锁窗 + epilogue）共用一次队列票据——对齐 chat_stream。
         # #1291 卸到 threadpool 后事件循环可与回菜单/新局重叠；不领票则 barrier/drain
-        # 当空闲关连接，epilogue 落库打到已关连接。公开 chat 与持闸密令路共用 claim→finally complete。
+        # 当空闲关连接，epilogue 落库打到已关连接。
         pending_ticket = self._mark_pending_write()
         if pending_ticket is None:
             raise HTTPException(
@@ -2388,23 +2367,16 @@ class WebGame:
                 detail="当前会话正在关闭，请回菜单重新进入。",
             )
         # #1353 r10：删简优先——屏障已受理则拒后序聊天（与 seal 合流），禁排队等屏障后
-        # 再写旧 night；公开路径 DB 缝另经 ticketed gate。持闸兼容路外层已持裸锁。
+        # 再写旧 night；DB 缝经 ticketed gate。
         # 失败清理在票可能已 complete 后走裸 runtime gate（ticketed 见 _done 会 TicketCancelled）。
-        if (
-            not gate_already_held
-            and self._runtime_write_queue().has_open_barrier()
-        ):
+        if self._runtime_write_queue().has_open_barrier():
             self._complete_pending_write(pending_ticket)
             raise HTTPException(
                 status_code=409,
                 detail="本夜收夜中，暂不能召对。",
             )
-        if gate_already_held:
-            gate_cm: Any = contextlib.nullcontext()
-            cleanup_gate: Any = contextlib.nullcontext()
-        else:
-            gate_cm = self._ticketed_write_gate(pending_ticket)
-            cleanup_gate = self._runtime_write_gate()
+        gate_cm = self._ticketed_write_gate(pending_ticket)
+        cleanup_gate = self._runtime_write_gate()
         chat_turn_id = 0
         before_snapshot: Dict[str, Any] = {}
         accepted_turn = 0
@@ -2425,17 +2397,10 @@ class WebGame:
                     if self._audience_turn_in_flight(minister_name):
                         raise HTTPException(status_code=409, detail=f"{minister_name}上一轮回奏仍在进行，请稍候再问。")
                     accepted_turn = int(self.state.turn)
-                    # #670：殿上 chat 自持闸时消费 admission；密疏兼容路（gate_already_held）不消费。
-                    # 闸只管殿上召对——书信/密疏只受基础资格（_require_active_minister/can_summon）。
-                    # #1566：正式密令前缀须先入密令管线，不得被 location admission 抢先截获。
                     # #1716：已开夜收夜口令跳过场外记召（与 stream 同缝）。
-                    # #1837 reopen：密令不再走旧 agent；前缀原文进转译。
                     court_break_open_night = self._open_night_court_break(text)
-                    secret_order_bypass = (
-                        gate_already_held or court_break_open_night
-                    )
                     offsite_turn = False
-                    if not secret_order_bypass:
+                    if not court_break_open_night:
                         origin_id = f"web:chat:{accepted_turn}:{minister_name}"
                         admission = self.session.consume_audience_admission(
                             self.session._character(minister_name),
@@ -2466,17 +2431,11 @@ class WebGame:
                                         if admission.result is not None else ""
                                     ),
                                 )
-                    elif not gate_already_held and (
-                        court_break_open_night
-                    ):
-                        # #1716：收夜/密令 bypass 后仍取非消费地点分流；收夜不因 reason 拦截。
+                    else:
+                        # #1716：收夜仍取非消费地点分流；不因 reason 拦截。
                         decision = self.session.admit_audience(
                             self.session._character(minister_name),
                         )
-                        if decision.reason and not court_break_open_night:
-                            raise HTTPException(
-                                status_code=409, detail=decision.reason,
-                            )
                         offsite_turn = decision.result in (
                             AudienceAdmission.SUMMON_FRESH,
                             AudienceAdmission.SUMMON_IN_TRANSIT,
@@ -2546,22 +2505,15 @@ class WebGame:
                 answer_text = str(getattr(result, "answer", "") or "")
                 message_id = int(payload.get("minister_message_id") or 0)
                 # #1842：转译后台承接记录；旧读心/抽取/判官尾随退役。高亮仍可跑（呈现腿）。
-                if chat_turn_id and answer_text and not gate_already_held:
+                if chat_turn_id and answer_text:
                     self._complete_pending_write(pending_ticket)
                     pending_ticket = None
                 if message_id and answer_text:
-                    held_ticket = pending_ticket if gate_already_held else None
                     self._trail_highlight_judge_after_reply(
                         answer_text,
                         message_id=message_id,
                         chat_turn_id=chat_turn_id,
-                        gate_already_held=gate_already_held,
-                        pending_ticket=held_ticket,
                     )
-                    if held_ticket is not None:
-                        # 持闸兼容：整轮票覆盖高亮写；trail 不二次 acquire，由调用方收口。
-                        self._complete_pending_write(held_ticket)
-                        pending_ticket = None
                     payload["history"] = self.chat_projection(minister_name)
             except Exception as error:
                 # drain 在 write_gate 外（与 stream / retry 同序），再短写 fail。
@@ -2950,13 +2902,12 @@ class WebGame:
         message_id: int,
         chat_turn_id: int = 0,
         timeout_s: float = DEFAULT_HIGHLIGHT_JUDGE_TIMEOUT_S,
-        gate_already_held: bool = False,
         pending_ticket: Optional[WriteTicket] = None,
     ) -> List[str]:
         """#544 / ADR 0045：回话完成后同通道高亮判官。超时/坏输出 → []，落库短语。
 
         判官失败边界在 run_highlight_judge（带日志）；此处只收窄写库 sqlite 异常并 warning。
-        写库经票据执行 seam；调用方已持闸时传 gate_already_held=True，禁同线程二次 acquire。
+        写库经票据执行 seam。
         匹配/剥离在前端，此处只存短语。无票且 seal → 零 LLM 零写。
         #1353：spawn 路票据由 spawner finally 归还；本腿只消费交接票。直接调用无票时自领自还。
         """
@@ -2965,13 +2916,13 @@ class WebGame:
         reply = str(minister_reply or "")
         if mid <= 0 or not reply.strip():
             return []
-        # 未由调用方领票且非持闸兼容路 → 本腿自领 turn key 票（生产写必经 seam）。
-        if pending_ticket is None and not gate_already_held and int(chat_turn_id or 0) > 0:
+        # 未由调用方领票 → 本腿自领 turn key 票（生产写必经 seam）。
+        if pending_ticket is None and int(chat_turn_id or 0) > 0:
             pending_ticket = self._mark_pending_write(
                 key=("turn", int(chat_turn_id)),
             )
             own_ticket = pending_ticket is not None
-        if pending_ticket is None and not gate_already_held:
+        if pending_ticket is None:
             # seal/拒票：禁无票裸写/裸跑 LLM
             return []
         try:
@@ -2984,19 +2935,8 @@ class WebGame:
                 llm_config=getattr(self.session, "llm_config", None),
                 timeout_s=timeout_s,
             ) or [])
-            # 持闸态是 _chat_core span 一等参数：密令兼容路外层已持非可重入 Lock，
-            # 此处再 with write_gate 会永久挂死（外层 finally 永不 release）。
-            # 已持闸时票仍覆盖本写（调用方收口 complete）；只做取消检查，不二次 acquire。
-            if gate_already_held:
-                if pending_ticket is not None and (
-                    pending_ticket.cancelled or pending_ticket._done
-                ):
-                    return []
-                gate_cm: Any = contextlib.nullcontext()
-            else:
-                gate_cm = self._ticketed_write_gate(pending_ticket)
             try:
-                with gate_cm:
+                with self._ticketed_write_gate(pending_ticket):
                     self.db.set_message_highlights(mid, phrases)
             except TicketCancelled:
                 return []
@@ -3008,7 +2948,7 @@ class WebGame:
                 return []
             return phrases
         finally:
-            # 仅自领票由本腿收口；spawn 交接/持闸兼容票由 spawner 或调用方归还。
+            # 仅自领票由本腿收口；spawn 交接票由 spawner 归还。
             if own_ticket:
                 self._complete_pending_write(pending_ticket)
 
@@ -3208,7 +3148,7 @@ class WebGame:
             "summary": summary,
         }
 
-    def chat_stream(self, minister_name: str, message: str, intent: Optional[str] = None) -> Iterator[Dict[str, Any]]:
+    def chat_stream(self, minister_name: str, message: str) -> Iterator[Dict[str, Any]]:
         scene_chat = minister_name == "殿上"
         if not scene_chat and minister_name not in self.content.characters:
             yield {"type": "error", "message": f"未找到大臣：{minister_name}"}
@@ -3283,14 +3223,10 @@ class WebGame:
                 yield {"type": "error", "message": f"{minister_name}上一轮回奏仍在进行，请稍候再问。"}
                 return
             accepted_turn = int(self.state.turn)
-            # #1566：正式密令前缀先入密令管线；场外记召成功后在 gate 外物化 scene。
             # #1716：已开夜收夜口令跳过场外记召，否则散夜被 SUMMON_* 短路、夜永不关。
-            offsite_secret_order = False
-            # #1837 reopen：密令前缀/按钮不再走旧 agent；原文随皇帝话进转译。
+            offsite_turn = False
             court_break_open_night = self._open_night_court_break(text)
-            if scene_chat:
-                offsite_secret_order = False
-            elif not court_break_open_night:
+            if not scene_chat and not court_break_open_night:
                 stream_origin = f"web:stream:{accepted_turn}:{minister_name}"
                 admission = self.session.consume_audience_admission(
                     self.session._character(minister_name),
@@ -3324,18 +3260,13 @@ class WebGame:
                             ),
                         }
                         return
-            else:
+            elif not scene_chat:
                 decision = self.session.admit_audience(
                     self.session._character(minister_name),
                 )
-                # #1716：与 nonstream 同缝——court_break_open_night 不因 temporary
-                # admission reason 阻断；仍保留正式场外人物的地点分类 / offsite route。
-                if decision.reason and not court_break_open_night:
-                    self._complete_pending_write(pending_ticket)
-                    pending_ticket = None
-                    yield {"type": "error", "message": decision.reason}
-                    return
-                offsite_secret_order = decision.result in (
+                # #1716：收夜不因 temporary admission reason 阻断；
+                # 仍保留正式场外人物的地点分类 / offsite route。
+                offsite_turn = decision.result in (
                     AudienceAdmission.SUMMON_FRESH,
                     AudienceAdmission.SUMMON_IN_TRANSIT,
                 )
@@ -3343,8 +3274,8 @@ class WebGame:
                 chat_turn_id, before_snapshot = self._start_chat_turn(
                     minister_name,
                     message=text,
-                    attach_to_hall=not offsite_secret_order,
-                    route="offsite" if offsite_secret_order else "",
+                    attach_to_hall=not offsite_turn,
+                    route="offsite" if offsite_turn else "",
                 )
                 self.chat_history.setdefault(minister_name, []).append({"role": "user", "content": text})
                 message_id = self.db.append_chat_message(minister_name, accepted_turn, "user", text)
@@ -3459,7 +3390,7 @@ class WebGame:
             reply_done_emitted = False
             try:
                 try:
-                    # #1842：殿上真实流式入口切 scene_chat（transport 同核）；密令仍走旧流式 payload。
+                    # #1842：流式入口共用 scene_chat（transport 同核）。
                     # 退役：旧分类器 / 故事抽取 / 边事件判官 / 代码触发读心。
                     # SSE 契约保持 accepted/delta/done/end。
                     payload = self._scene_chat_stream_payload(
@@ -3641,7 +3572,7 @@ class WebGame:
                 break
 
     def suggestions_for(self, character: Character) -> List[Dict[str, Any]]:
-        """召对快捷钮：仅保留意图声明前缀（拟旨/下密令）。
+        """召对快捷钮：仅保留拟旨前缀。
 
         ADR 0042 / #527：旧询问 chips（问在办事项/问阻力/查钱粮/查驻军/密查）已砍；
         问事走直接开口 + 角色见闻。character 保留在签名上以兼容三处 payload 调用点。
@@ -6068,9 +5999,9 @@ async def api_chat(minister_name: str, request: ChatRequest) -> Dict[str, Any]:
     from ming_sim.audience_night import AudienceNightError
     try:
         # #1291+#1322: 全同步 chat（→ session → cli subprocess.run）须卸出事件循环，
-        # 与 retry_interrupted_reply / secret_order 同构 run_in_threadpool；
+        # 与 retry_interrupted_reply 同构 run_in_threadpool；
         # 流式路走 run_in_executor，directives 走 to_thread——禁在 async handler 内直调。
-        return await run_in_threadpool(get_game().chat, minister_name, request.message, request.intent)
+        return await run_in_threadpool(get_game().chat, minister_name, request.message)
     except AudienceNightError as e:
         # CLOSING / night admission → 409 (retryable); same family as stream path.
         raise _retryable_audience_close_http(e) from None
@@ -6093,7 +6024,7 @@ async def api_undo_chat(minister_name: str) -> Dict[str, Any]:
 
 def _chat_stream_response(minister_name: str, request: ChatRequest) -> StreamingResponse:
     async def generate() -> AsyncIterator[str]:
-        iterator = iter(get_game().chat_stream(minister_name, request.message, request.intent))
+        iterator = iter(get_game().chat_stream(minister_name, request.message))
         loop = asyncio.get_running_loop()
         while True:
             item = await loop.run_in_executor(None, _next_or_none, iterator)

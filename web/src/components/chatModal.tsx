@@ -43,7 +43,6 @@ export function ChatModal({
   translationRetries = [],
   retryReadFailure = null,
   onInput,
-  onIntent,
   onSend,
   onRetryReply,
   onRetryTranslation,
@@ -85,7 +84,6 @@ export function ChatModal({
   translationRetries?: TranslationRetry[];
   retryReadFailure?: RetryReadFailure | null;
   onInput: (value: string) => void;
-  onIntent?: (intent: "secret_order" | undefined) => void;
   onSend: (ministerName: string, text?: string) => void;
   onRetryReply?: (ministerName: string, chatTurnId: number) => void;
   onRetryTranslation?: (chatTurnId: number) => void;
@@ -411,7 +409,6 @@ export function ChatModal({
 
   const sendSuggestion = (suggestion: Suggestion) => {
     if (suggestion.prefix) {
-      onIntent?.(suggestion.intent === "secret_order" ? suggestion.intent : undefined);
       onInput(suggestion.text);
       setTimeout(() => inputRef.current?.focus(), 0);
     } else {

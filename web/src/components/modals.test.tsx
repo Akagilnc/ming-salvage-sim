@@ -79,7 +79,6 @@ function renderModal(props: {
   suggestions?: Suggestion[];
   secretOrders?: React.ComponentProps<typeof ChatModal>["secretOrders"];
   onSend?: (ministerName: string, text?: string) => void;
-  onIntent?: (intent: "secret_order" | undefined) => void;
   onUndo?: (ministerName: string) => void;
   canUndoLastChat?: boolean;
   onFavorite?: (minister: Minister) => void;
@@ -151,7 +150,6 @@ function renderModal(props: {
         secretOrders={props.secretOrders ?? []}
         replyRetries={props.replyRetries}
         onInput={(value) => setInput(value)}
-        onIntent={props.onIntent}
         onSend={props.onSend ?? (() => {})}
         onRetryReply={props.onRetryReply}
         translationRetries={props.translationRetries}
@@ -491,47 +489,6 @@ describe("ChatModal — #545 final composer contract", () => {
     act(() => retreat.click());
     // 机制零改动：仍发后端 COURT_BREAK_COMMANDS 既认词
     expect(onSend).toHaveBeenCalledWith("周延儒", "退朝");
-  });
-});
-
-describe("ChatModal — #527 prefix chips only (拟旨/下密令)", () => {
-  /** Production suggestions_for payload after ADR 0042 / #527 cut. */
-  const PREFIX_SUGGESTIONS: Suggestion[] = [
-    { label: "拟旨", text: "拟旨如下：", prefix: true },
-    { label: "下密令", text: "密令如下：", prefix: true, intent: "secret_order" },
-  ];
-
-  it("switching from draft to typed secret-order replaces composer content and does not auto-send", () => {
-    const onSend = vi.fn();
-    const onIntent = vi.fn();
-    const host = renderModal({
-      minister: MINISTER_MOCK,
-      portraitPrefix: "minister_",
-      suggestions: PREFIX_SUGGESTIONS,
-      onSend,
-      onIntent,
-    });
-
-    const hitlButtons = Array.from(host.querySelectorAll(".hitl-bar button"));
-    expect(hitlButtons).toHaveLength(2);
-
-    const textarea = host.querySelector("textarea") as HTMLTextAreaElement;
-    expect(textarea).toBeTruthy();
-
-    const draftBtn = hitlButtons.find((b) => b.textContent?.trim() === "拟旨") as HTMLButtonElement;
-    act(() => {
-      draftBtn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    });
-    expect(textarea.value).toBe("拟旨如下：");
-    expect(onSend).not.toHaveBeenCalled();
-
-    const secretBtn = hitlButtons.find((b) => b.textContent?.trim() === "下密令") as HTMLButtonElement;
-    act(() => {
-      secretBtn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    });
-    expect(textarea.value).toBe("密令如下：");
-    expect(onIntent).toHaveBeenLastCalledWith("secret_order");
-    expect(onSend).not.toHaveBeenCalled();
   });
 });
 

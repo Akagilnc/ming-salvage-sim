@@ -153,7 +153,6 @@ export function App() {
     composerHint,
     setComposerHint,
     input,
-    setComposerIntent,
     setInput,
     activeMinister,
     openChat,
@@ -770,7 +769,6 @@ export function App() {
             translationRetries={translationRetries}
             retryReadFailure={retryReadFailure}
             onInput={setInput}
-            onIntent={setComposerIntent}
             onSend={sendChat}
             onRetryReply={retryInterruptedReply}
             onRetryTranslation={retryTranslation}

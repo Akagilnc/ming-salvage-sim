@@ -82,16 +82,16 @@ def _run_offsite_chat(runtime, minister_name, message, *, stream):
 
 
 def _web_hall_runtime(db, state, content, *, session_chat):
-    """#670：常规 Web.chat（gate_already_held=False）殿上入口壳；挂真 admission。
+    """#670：Web.chat 殿上入口壳；挂真 admission。
 
     #1566：同壳挂场外 scene 物化，经 beat generator seam 注入测试替身。
     WebGame 类方法经 __new__ 实例可直接解析，不再手绑类方法。
     """
     from tests.test_qa_c3_secret_order_path_1357_1376 import (
-        webgame_shell_for_secret_order,
+        webgame_shell_for_chat,
     )
 
-    runtime = webgame_shell_for_secret_order(
+    runtime = webgame_shell_for_chat(
         db, state, content, session_chat=session_chat,
     )
     s = runtime.session
