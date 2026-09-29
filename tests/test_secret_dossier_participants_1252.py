@@ -33,22 +33,6 @@ def _secret(db, state, *, title="密查漕弊", body="暗访仓胥", tags=None):
     assert dossier is not None
     return lead, int(order_id), int(dossier["id"])
 
-def _grouped(db, state, order_ids=None):
-    from ming_sim.settlement_payload import (
-        group_secret_orders_for_sim,
-        _select_secret_orders_for_sim,
-    )
-
-    if order_ids is None:
-        rows = _select_secret_orders_for_sim(db)
-    else:
-        wanted = {int(oid) for oid in order_ids}
-        rows = [
-            row for row in db.list_secret_orders()
-            if int(row["id"]) in wanted
-        ]
-    return group_secret_orders_for_sim(rows)
-
 # ── S1: 私读缝 ──────────────────────────────────────────────
 
 

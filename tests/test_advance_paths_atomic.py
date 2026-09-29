@@ -132,7 +132,6 @@ def test_submit_event_decision_binds_from_candidate_snapshot_without_event_id(ga
         "测试诏书",
         "邸报正文未回显事件编号。",
         {"candidate_events": [{"id": event_id, "title": "毛文龙裁断"}]},
-        secret_orders=[],
         
     )
     db.save_pending_decisions(turn, [{
@@ -204,7 +203,6 @@ def test_submit_decisions_does_not_overwrite_already_decided_rows(game, monkeypa
     # phase1 HITL 暂停上下文——与真实 awaiting 存档同形
     db.save_resolve_context(
         turn, "HITL诏", "待续邸报", {"candidate_events": []},
-        secret_orders=[],
     )
     ctx = db.get_resolve_context(turn)
     assert ctx is not None

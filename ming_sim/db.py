@@ -1307,14 +1307,13 @@ class GameDB:
                 PRIMARY KEY (turn, idx)
             );
 
-            -- phase1→phase2 之间暂存推演上下文，避免决策暂停后重算 simulator。
+            -- 过月上下文：存阶段进度与原诏，供暂停后续跑。
             -- 每回合至多一行（turn 主键），phase2 跑完即删。
             CREATE TABLE IF NOT EXISTS pending_resolve_context (
                 turn INTEGER PRIMARY KEY,
                 decree_text TEXT NOT NULL DEFAULT '',
                 narrative TEXT NOT NULL DEFAULT '',
                 simulator_payload_json TEXT NOT NULL DEFAULT '{}',
-                secret_orders_json TEXT NOT NULL DEFAULT '[]',
                 source TEXT NOT NULL DEFAULT 'system_simulation',
                 attendant_message TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -18806,9 +18805,6 @@ class GameDB:
     def save_resolve_context(
         self, turn: int, decree_text: str, narrative: str,
         simulator_payload: Dict[str, object],
-        # #48：分组承载 dict {在办,待核议} 为正形；运行期仍兼容旧档/占位的 list（json 落库不挑类型），
-        # 故注解取两者并集，不窄化成 dict-only（否则误判恢复路 list 调用为类型错）。
-        secret_orders: Optional[Dict[str, object] | List[Dict[str, object]]] = None,
         source: str = "system_simulation",
         attendant_message: str = "",
     ) -> None:
@@ -18818,22 +18814,17 @@ class GameDB:
         """
         self.conn.execute(
             """INSERT INTO pending_resolve_context
-               (turn, decree_text, narrative, simulator_payload_json,
-                secret_orders_json, source, attendant_message)
-               VALUES (?, ?, ?, ?, ?, ?, ?)
+               (turn, decree_text, narrative, simulator_payload_json, source, attendant_message)
+               VALUES (?, ?, ?, ?, ?, ?)
                ON CONFLICT(turn) DO UPDATE SET
                    decree_text = excluded.decree_text,
                    narrative = excluded.narrative,
                    simulator_payload_json = excluded.simulator_payload_json,
-                   secret_orders_json = excluded.secret_orders_json,
                    source = excluded.source,
                    attendant_message = excluded.attendant_message""",
             (
                 int(turn), sanitize_sqlite_text(decree_text), sanitize_sqlite_text(narrative),
                 safe_json_dumps(simulator_payload or {}, ensure_ascii=False),
-                # #48：分组承载是 dict；空 dict 也按 dict 存（`or []` 会把 {} 退成 []，
-                # 与 Dict 契约不符）。显式传 list（旧档/占位）仍原样存，None→{}。
-                safe_json_dumps(secret_orders if secret_orders is not None else {}, ensure_ascii=False),
                 # source 显式归一为枚举「值」字符串：Provenance 是 (str, Enum)，str(member) 在多数
                 # Python 版本落 'Provenance.player_decree' 而非 'player_decree'——重抽时
                 # Provenance(...) 不匹配 → 静默退回 system_simulation 丢源（Sourcery #175 bug_risk）。
@@ -18848,7 +18839,7 @@ class GameDB:
         """读回本月过月上下文。无则 None。"""
         row = self.conn.execute(
             "SELECT decree_text, narrative, simulator_payload_json, "
-            "secret_orders_json, source, attendant_message "
+            "source, attendant_message "
             "FROM pending_resolve_context WHERE turn = ?",
             (int(turn),),
         ).fetchone()
@@ -18865,9 +18856,6 @@ class GameDB:
             "decree_text": row["decree_text"],
             "narrative": row["narrative"],
             "simulator_payload": _load(row["simulator_payload_json"], {}, "simulator_payload"),
-            # secret_orders 是 dict-first 承载（#48：save 时 None→{}），损坏 fallback 也用 {} 对齐
-            # 契约——回 [] 会把分组 dict 退成 list、破坏 secret_orders.在办 式 dict 消费者（cmr CodeRabbit）。
-            "secret_orders": _load(row["secret_orders_json"], {}, "secret_orders"),
             "source": row["source"] or "system_simulation",
             "attendant_message": attendant_message,  # #671 王承恩独立递话
         }
@@ -22038,42 +22026,6 @@ class GameDB:
                 f"ids={[x['id'] for x in submitted]} (status unchanged)"
             )
         return submitted
-
-    def get_secret_orders_by_keywords(
-        self, keywords: List[str], limit: int = 5, current_turn: int = 0
-    ) -> List[Dict[str, object]]:
-        """检索进行中（active）密令，tags LIKE 匹配，供推演 secret_orders 字段注入。"""
-        if not keywords:
-            return self.list_secret_orders(status="active")[:limit]
-        like_clauses = " OR ".join(["tags LIKE ?" for _ in keywords])
-        like_params = [f"%{k}%" for k in keywords]
-        rows = self.conn.execute(
-            f"""
-            SELECT * FROM secret_orders
-            WHERE status = 'active' AND ({like_clauses})
-            ORDER BY importance DESC, id DESC
-            LIMIT ?
-            """,
-            like_params + [limit],
-        ).fetchall()
-        if not rows:
-            return self.list_secret_orders(status="active")[:limit]
-        return [
-            {
-                "id": int(r["id"]),
-                "turn_issued": int(r["turn_issued"]),
-                "year_issued": int(r["year_issued"]),
-                "period_issued": int(r["period_issued"]),
-                "minister_name": r["minister_name"],
-                "title": r["title"],
-                "content": r["content"],
-                "tags": json.loads(r["tags"] or "[]") if isinstance(r["tags"], str) else (r["tags"] or []),
-                "importance": int(r["importance"]),
-                "status": r["status"],
-                "result": r["result"] or "",
-            }
-            for r in rows
-        ]
 
     # ── 调试用通用 CRUD（仅限白名单核心表）──────────────────────
     # 表名 → 主键列。只暴露核心几张，防误删元数据/日志表。

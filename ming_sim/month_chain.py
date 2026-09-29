@@ -264,17 +264,11 @@ def _gazette_feed(db: Any, state: Any, chain: Dict[str, Any]) -> Dict[str, Any]:
     from ming_sim.audience_night import list_waiting_audience_summons
     from ming_sim.decree import collect_new_arrival_waiting_audience
     from ming_sim.models import reign_period_label
-    from ming_sim.settlement_payload import augment_secret_orders_with_due_commitments
+    from ming_sim.settlement_payload import list_due_commitments
 
     turn = int(state.turn)
     materials = _month_fact_materials(db, state, chain, include_secret_sources=False)
-    grouped = augment_secret_orders_with_due_commitments({}, db, state)
-    # Trust augment's Dict[str, list] contract — shape errors must fail loud.
-    due_commitments = [
-        item for group in grouped.values()
-        for item in group
-        if item.get("entry_kind") == "due_commitment"
-    ]
+    due_commitments = list_due_commitments(db, state)
     return {
         "instruction": "据已落定的实况写本期邸报。title 由你写，report 是全文。",
         "reign_period_label": reign_period_label(int(state.year), int(state.period)),
@@ -1640,7 +1634,6 @@ def _save_chain(
         decree_text or str(ctx.get("decree_text") or ""),
         str(ctx.get("narrative") or ""),
         payload,
-        secret_orders=ctx.get("secret_orders"),
         source=source_value or Provenance.system_simulation.value,
         attendant_message=str(ctx.get("attendant_message") or ""),
     )

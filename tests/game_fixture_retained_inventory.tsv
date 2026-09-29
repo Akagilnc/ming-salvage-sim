@@ -627,10 +627,6 @@ tests/test_relation_store_632.py	test_directed_edge_events_are_stored_and_querya
 tests/test_relation_store_632.py	test_edge_event_kind_and_evidence_are_fail_closed	38	writable isolation required: line 42 invokes record_relation_edge_event
 tests/test_relation_store_632.py	test_relation_edges_survive_restore	134	writable isolation required: line 136 invokes record_relation_edge_event
 tests/test_relation_store_632.py	test_record_relation_edge_event_respects_caller_owned_transaction	157	writable isolation required: line 165 invokes execute(DELETE FROM kv_store WHERE key='s1_rel_open')
-tests/test_secret_order_injection.py	test_pending_review_not_starved_by_full_active	18	writable isolation required: line 21 invokes execute(DELETE FROM secret_orders)
-tests/test_secret_order_injection.py	test_all_pending_review_kept_even_over_cap	32	writable isolation required: line 35 invokes execute(DELETE FROM secret_orders)
-tests/test_secret_order_injection.py	test_active_capped_when_no_pending	43	writable isolation required: line 46 invokes execute(DELETE FROM secret_orders)
-tests/test_secret_order_injection.py	test_active_fills_remaining_budget_after_pending	54	writable isolation required: line 57 invokes execute(DELETE FROM secret_orders)
 tests/test_secret_order_refresh.py	_registry	20	writable isolation required: line 27 invokes create_agno_db
 tests/test_secret_order_refresh.py	test_refresh_rebuilds_agent_with_new_secret_order	33	writable isolation required: line 40 invokes create_secret_order
 tests/test_secret_order_section_rejections.py	test_close_unknown_order_id_missing_ref	25	writable isolation required: line 31 invokes run_settle
@@ -642,8 +638,6 @@ tests/test_secret_order_section_rejections.py	test_update_valid_active_order_app
 tests/test_secret_order_section_rejections.py	test_apply_score_extraction_secret_order_update_respects_outer_transaction_rollback	130	writable isolation required: line 135 invokes create_secret_order
 tests/test_secret_order_section_rejections.py	test_apply_score_extraction_secret_order_close_respects_outer_transaction_rollback	154	writable isolation required: line 159 invokes create_secret_order
 tests/test_secret_order_section_rejections.py	test_oversized_order_id_rejected_not_crash	182	writable isolation required: line 191 invokes run_settle
-tests/test_secret_order_status_cn.py	test_simulator_payload_secret_orders_has_no_english_enum	148	writable isolation required: line 156 invokes create_secret_order
-tests/test_secret_order_status_cn.py	test_resolve_context_roundtrips_grouped_secret_orders_as_dict	234	writable isolation required: line 242 invokes save_resolve_context
 tests/test_secret_order_update.py	test_upsert_creates_then_updates	10	writable isolation required at line 13: production mutation/isolation call: upsert_secret_order
 tests/test_secret_order_update.py	test_upsert_different_minister_creates_new	25	writable isolation required at line 27: production mutation/isolation call: upsert_secret_order
 tests/test_secret_order_update.py	test_update_by_id_targets_exact_order_not_newest	35	writable isolation required: line 38 invokes create_secret_order
