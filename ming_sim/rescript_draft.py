@@ -1165,54 +1165,6 @@ def _parse_rescript_json_strict(raw: str) -> Dict[str, Any]:
         )
     return data
 
-def _project_army_targets(table: object) -> List[Dict[str, str]]:
-    """Project Ming-controlled armies from the simulator's full army board."""
-    armies = _project_board_targets(
-        table,
-        fields=("id", "name", "station", "owner_power"),
-        required=("id", "name", "owner_power"),
-        label="army",
-    )
-    return [
-        {field: army[field] for field in ("id", "name", "station")}
-        for army in armies
-        if army["owner_power"] == "ming"
-    ]
-
-
-def _project_board_targets(
-    table: object,
-    *,
-    fields: tuple[str, ...],
-    required: tuple[str, ...],
-    label: str,
-) -> List[Dict[str, str]]:
-    if table is None:
-        return []
-    try:
-        cols = table["cols"]  # type: ignore[index]
-        rows = table["rows"]  # type: ignore[index]
-        indexes = {field: cols.index(field) for field in fields}
-        targets = []
-        for row in rows:
-            if not isinstance(row, list):
-                raise ValueError(f"canonical {label} target row 非 list：{row!r}")
-            target = {}
-            for field, index in indexes.items():
-                value = row[index]
-                if value is not None and not isinstance(value, str):
-                    raise ValueError(
-                        f"canonical {label} target {field} 非字符串：{value!r}"
-                    )
-                target[field] = (value or "").strip()
-            targets.append(target)
-        if any(not target[field] for target in targets for field in required):
-            raise ValueError(f"canonical {label} target 含空 {'/'.join(required)}")
-        return targets
-    except (KeyError, IndexError, TypeError, ValueError) as exc:
-        raise ValueError(f"canonical {label} target table 畸形") from exc
-
-
 def _option_failure_from_exc(
     *,
     item_index: int,

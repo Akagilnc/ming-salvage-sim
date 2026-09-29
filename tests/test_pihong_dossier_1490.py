@@ -2067,14 +2067,15 @@ def test_657_revise_deliberate_strict_contracts_zero_write_on_bad_shape(game, mo
     """revise 拒 monthly items[]/目录外军/无 kind 直写协饷；deliberate 拒缺 stance；合法进 prewrite。"""
     from ming_sim.rescript_actions import PrewriteResults
     from ming_sim.rescript_draft import normalize_rescript_layer_a_option
+    from ming_sim.decree import prepare_resolve_front_half
     from ming_sim.session import GameSession
     from ming_sim.models import TurnPhase
     import ming_sim.agents as agents_mod
     db, state, content = game
     opt = normalize_rescript_layer_a_option({'label': '备', 'hint': 'h', 'action_type': 'assignment', 'assignee_name': '', 'target_kind': 'region', 'target_id': 'shaanxi', 'locality_scope': 'single', 'region_id': 'shaanxi', 'transaction_category': '督赈'})
     db.conn.execute("DELETE FROM pending_decisions WHERE kind='rescript_draft'")
+    prepare_resolve_front_half(state, db, decree_text='诏', content=content)
     db.save_rescript_drafts(int(state.turn), [{'title': '改票契约', 'context': 'c', 'options': [opt, {'label': 'x', 'hint': 'h', 'draft_capability': 'z'}], 'actor_name': '杨嗣昌', 'actor_office': 'o', 'actor_faction': 'f'}])
-    db.save_resolve_context(int(state.turn), '诏', '邸报', {'candidate_events': [], 'transit_semantics': [], 'armies': {'cols': ['id', 'name', 'station', 'owner_power'], 'rows': [['guanning', '关宁军', '宁远', 'ming'], ['manchu_banners_main', '八旗主力', '辽东', 'qing']]}}, secret_orders=[])
     state.turn_phase = TurnPhase.AWAITING_DECISION.value
     db.save_state(state)
     desk = db.list_rescript_desk(int(state.turn))
@@ -2100,7 +2101,7 @@ def test_657_revise_deliberate_strict_contracts_zero_write_on_bad_shape(game, mo
     assert hit.get('choice') in (None, {})
 
     def _military_option(target_id):
-        return normalize_rescript_layer_a_option({'label': '调驻', 'hint': 'h2', 'action_type': 'military_order', 'assignee_name': '祖大寿', 'target_kind': 'army', 'target_id': target_id, 'locality_scope': 'none', 'region_id': '', 'transaction_category': '', 'station': '宁远'})
+        return normalize_rescript_layer_a_option({'label': '调驻', 'hint': 'h2', 'action_type': 'military_order', 'assignee_name': '祖大寿', 'target_kind': 'army', 'target_id': target_id, 'locality_scope': 'none', 'region_id': '', 'transaction_category': '', 'station': '宁远', 'participant_roster': _roster('祖大寿')})
     seen_payload = {}
 
     def _outside_army_revise_text(_agent, raw_payload, **_kwargs):
@@ -2109,7 +2110,11 @@ def test_657_revise_deliberate_strict_contracts_zero_write_on_bad_shape(game, mo
     monkeypatch.setattr(agents_mod, 'run_agent_text', _outside_army_revise_text)
     with pytest.raises(RuntimeError):
         sess.prepare_rescript_prewrite([{'decision_key': key, 'action': 'return_revise', 'note': '再拟'}])
-    assert seen_payload['army_targets'] == [{'id': 'guanning', 'name': '关宁军', 'station': '宁远'}]
+    targets = {row['id']: row for row in seen_payload['army_targets']}
+    assert targets['guanning']['station'] == db.conn.execute(
+        "SELECT station FROM armies WHERE id='guanning'"
+    ).fetchone()['station']
+    assert 'manchu_banners_main' not in targets
     hit = next((r for r in db.list_rescript_drafts() if r['title'] == '改票契约'))
     assert hit['status'] == 'pending'
     assert hit.get('choice') in (None, {})
@@ -2121,6 +2126,9 @@ def test_657_revise_deliberate_strict_contracts_zero_write_on_bad_shape(game, mo
         hit = next((r for r in db.list_rescript_drafts() if r['title'] == '改票契约'))
         assert hit['status'] == 'pending'
         assert hit.get('choice') in (None, {})
+    monkeypatch.setattr(agents_mod, 'run_agent_text', lambda *_a, **_k: json.dumps({'options': [_military_option('guanning')]}, ensure_ascii=False))
+    military_pre = sess.prepare_rescript_prewrite([{'decision_key': key, 'action': 'return_revise', 'note': '再拟'}])
+    assert military_pre['prewrite'].revise_by_key[key][0]['target_id'] == 'guanning'
     owner_opt = {'label': '着户部继续核查陕西赈务，按月具报。', 'hint': '督赈', 'action_type': 'assignment', 'target_kind': 'region', 'target_id': 'shaanxi', 'locality_scope': 'single', 'region_id': 'shaanxi', 'assignee_name': '', 'transaction_category': '督赈', 'deadline_months': 2, 'participant_roster': _roster(_ROSTER_LEAD)}
 
     def _ok_revise_text(*_a, **_k):

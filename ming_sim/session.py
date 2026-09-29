@@ -2055,7 +2055,6 @@ class GameSession:
         from ming_sim.rescript_draft import (
             _assert_army_targets_grounded,
             _parse_rescript_json_strict,
-            _project_army_targets,
             normalize_rescript_layer_a_option,
         )
 
@@ -2122,9 +2121,11 @@ class GameSession:
         def _revise_runner(item: ra.ValidatedItem) -> List[Dict[str, object]]:
             # 单行改票：专用 agent + 唯一 {"options":[...]} shape；禁 monthly items[] / drafts[0]
             agent = create_rescript_revise_agent(self.llm_config, self.agno_db)
-            simulator_payload = ctx.get("simulator_payload") if ctx is not None else None
-            armies = simulator_payload.get("armies") if isinstance(simulator_payload, dict) else None
-            army_targets = _project_army_targets(armies)
+            army_targets = [
+                dict(row) for row in self.db.conn.execute(
+                    "SELECT id, name, station FROM armies WHERE owner_power='ming' ORDER BY name"
+                )
+            ]
             payload = {
                 "mode": "single_row_revise",
                 "title": item.row.get("title"),
