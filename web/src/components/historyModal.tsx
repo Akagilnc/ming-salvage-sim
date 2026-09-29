@@ -150,7 +150,6 @@ export function HistoryDetailView({
                   <b>#{d.id}</b>
                   {d.event_title ? <span>事项：{d.event_title}</span> : null}
                   {d.actor ? <span>主官：{d.actor}</span> : null}
-                  {d.skill_id ? <span>技能：{d.skill_id}</span> : null}
                   <span className="history-directive-source">{d.source}</span>
                 </div>
                 <pre className="memorial-text">{d.text}</pre>

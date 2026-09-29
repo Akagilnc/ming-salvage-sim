@@ -30,7 +30,6 @@ const MINISTER_MOCK: Minister = {
   status_label: "在朝",
   summary: "东林领袖",
   favorite: false,
-  skills: [],
 };
 
 const CONSORT_MOCK: Minister = {
@@ -43,7 +42,6 @@ const CONSORT_MOCK: Minister = {
   status_label: "在宫",
   summary: "后宫嫔妃",
   favorite: false,
-  skills: [],
 };
 
 describe("ScrollMessages — frozen ledger order", () => {
@@ -313,7 +311,7 @@ describe("EdictModal — decree desk behavior", () => {
   it("issues an approved conversational draft without a second review gate", () => {
     const onIssue = vi.fn();
     const { host } = renderEdictModal({
-      state: baseGameState({ directives: [{ id: 8, event_id: "", event_title: "", actor: "", skill_id: "", skill_name: "", text: "发饷辽东", source: "chat", status: "pending", notes: "", authority: "" }] }),
+      state: baseGameState({ directives: [{ id: 8, event_id: "", event_title: "", actor: "", text: "发饷辽东", source: "chat", status: "pending", notes: "", authority: "" }] }),
       onIssueDecree: onIssue,
     });
     const item = host.querySelector(".directive-item");

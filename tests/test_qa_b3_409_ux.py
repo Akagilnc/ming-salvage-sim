@@ -117,7 +117,6 @@ def test_directive_payload_authority_not_notes_alias():
         event_id="",
         event_title="",
         actor="袁崇焕",
-        skill_id="",
         text="发帑辽东",
         source="manual",
         status="draft",

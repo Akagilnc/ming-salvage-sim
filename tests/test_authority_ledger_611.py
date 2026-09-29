@@ -504,7 +504,6 @@ def test_promulgation_payload_does_not_write_authority_records(game):
         executor_id=holder,
         payload={
             "character_id": holder,
-            "skill_id": "便宜行事",
             "holder_id": holder,
             "privilege": "便宜行事",
             "scope": "issue:payload旁路",

@@ -204,12 +204,21 @@ def test_history_turn_api_returns_attendant_message_raw(game, monkeypatch):
     turn = int(state.turn)
     db.save_turn_report(state, SIM_REPORT, attendant_message=ATTENDANT_TEXT)
     assert db.get_turn_attendant_message(turn) == ATTENDANT_TEXT
+    # 旧档可能有废弃的授权列；历史 API 不得再泄出能力宣称。
+    db.conn.execute("ALTER TABLE turn_directives ADD COLUMN skill_id TEXT")
+    did = db.add_directive(state, None, "核查边饷", "御笔")
+    db.conn.execute(
+        "UPDATE turn_directives SET status='issued', skill_id=? WHERE id=?",
+        ("旧授权", did),
+    )
 
     monkeypatch.setattr(web_app, "get_game", lambda: type("G", (), {"db": db})())
     payload = asyncio.run(web_app.api_history_turn(turn))
     assert payload["exists"] is True
     assert payload["report"] == SIM_REPORT
     assert payload["attendant_message"] == ATTENDANT_TEXT
+    assert len(payload["directives"]) == 1
+    assert "skill_id" not in payload["directives"][0]
 
 
 def test_history_turn_api_blank_attendant_alone_is_absent(game, monkeypatch):

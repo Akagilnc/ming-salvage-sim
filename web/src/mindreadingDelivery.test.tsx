@@ -10,7 +10,7 @@ import type { ChatResponse, Minister, ServerChatMessage } from "./types";
 
 const MINISTER: Minister = {
   name: "温体仁", office: "礼部右侍郎", office_type: "礼部", faction: "浙党",
-  style: "", status: "active", status_label: "在朝", summary: "", favorite: false, skills: [],
+  style: "", status: "active", status_label: "在朝", summary: "", favorite: false,
 };
 
 const U = (content: string, turn: number): ServerChatMessage => ({ role: "user", content, chat_turn_id: turn });

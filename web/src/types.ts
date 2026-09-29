@@ -152,8 +152,6 @@ export type Directive = {
   event_id: string;
   event_title: string;
   actor: string;
-  skill_id: string;
-  skill_name: string;
   text: string;
   source: string;
   status: string; // pending（待核定大臣拟旨）| draft（颁诏候选）
@@ -814,7 +812,6 @@ export type HistoryDirective = {
   event_id: string;
   event_title: string;
   actor: string;
-  skill_id: string;
   text: string;
   source: string;
   status: string;

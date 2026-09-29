@@ -614,7 +614,7 @@ def dict_of_strings(value: object, path: str) -> Dict[str, str]:
 
 
 def load_office_definitions() -> Dict[str, Dict[str, object]]:
-    data = require_dict(load_json_asset("skills.json"), "skills.json")
+    data = require_dict(load_json_asset("office_definitions.json"), "office_definitions.json")
     return {
         str(office_type): {
             field: int_field(require_dict(raw, f"office_definitions.{office_type}"), field,

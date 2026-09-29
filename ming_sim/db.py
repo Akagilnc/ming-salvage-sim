@@ -1811,7 +1811,6 @@ class GameDB:
                 period INTEGER NOT NULL,
                 event_id TEXT,
                 actor TEXT,
-                skill_id TEXT,
                 text TEXT NOT NULL,
                 source TEXT NOT NULL,
                 status TEXT NOT NULL DEFAULT 'draft',
@@ -11594,7 +11593,7 @@ class GameDB:
         rows = self.conn.execute(
             """
             SELECT d.id, d.turn, d.year, d.period, d.event_id, d.actor,
-                   d.skill_id, d.text, d.source, d.status, d.notes,
+                   d.text, d.source, d.status, d.notes,
                    d.created_at, d.updated_at,
                    e.title AS event_title
             FROM turn_directives d
@@ -11613,7 +11612,6 @@ class GameDB:
                 "event_id": r["event_id"] or "",
                 "event_title": r["event_title"] or "",
                 "actor": r["actor"] or "",
-                "skill_id": r["skill_id"] or "",
                 "text": r["text"] or "",
                 "source": r["source"] or "",
                 "status": r["status"] or "",
@@ -11629,7 +11627,7 @@ class GameDB:
         rows = self.conn.execute(
             """
             SELECT d.id, d.turn, d.year, d.period, d.event_id, d.actor,
-                   d.skill_id, d.text, d.source, d.status, d.notes,
+                   d.text, d.source, d.status, d.notes,
                    d.created_at, d.updated_at,
                    e.title AS event_title
             FROM turn_directives d
@@ -11647,7 +11645,6 @@ class GameDB:
                 "event_id": r["event_id"] or "",
                 "event_title": r["event_title"] or "",
                 "actor": r["actor"] or "",
-                "skill_id": r["skill_id"] or "",
                 "text": r["text"] or "",
                 "source": r["source"] or "",
                 "status": r["status"] or "",
@@ -19099,9 +19096,9 @@ class GameDB:
             cur = self.conn.execute(
                 """
                 INSERT INTO turn_directives
-                (turn, year, period, event_id, actor, skill_id, text, source, status,
+                (turn, year, period, event_id, actor, text, source, status,
                  notes,dossier_payload_json)
-                VALUES (?, ?, ?, NULL, ?, '', ?, '大臣拟旨', ?, ?, ?)
+                VALUES (?, ?, ?, NULL, ?, ?, '大臣拟旨', ?, ?, ?)
                 """,
                 (
                     state.turn, state.year, state.period, actor, text, status,
@@ -19903,7 +19900,6 @@ class GameDB:
         text: str,
         source: str,
         actor: str = "",
-        skill_id: str = "",
         notes: str = "",
         status: str = "draft",
         dossier_payload: Optional[Dict[str, object]] = None,
@@ -19913,12 +19909,12 @@ class GameDB:
             cursor = self.conn.execute(
                 """
                 INSERT INTO turn_directives
-                (turn, year, period, event_id, actor, skill_id, text, source, status,
+                (turn, year, period, event_id, actor, text, source, status,
                  notes,dossier_payload_json)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (state.turn, state.year, state.period, event.id if event else None,
-                 actor or None, skill_id, text, source, status, notes,
+                 actor or None, text, source, status, notes,
                  json.dumps(dossier_payload or {}, ensure_ascii=False)),
             )
             directive_id = int(cursor.lastrowid)
@@ -20222,30 +20218,6 @@ class GameDB:
                 """,
                 (text, json.dumps(payload, ensure_ascii=False), directive_id),
             )
-
-    def update_directive(
-        self,
-        directive_id: int,
-        event: Event,
-        actor: str,
-        skill_id: str,
-        text: str,
-        notes: str,
-    ) -> None:
-        self.conn.execute(
-            """
-            UPDATE turn_directives
-            SET event_id = ?,
-                actor = ?,
-                skill_id = ?,
-                text = ?,
-                notes = ?,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE id = ?
-            """,
-            (event.id, actor, skill_id, text, notes, directive_id),
-        )
-        self.conn.commit()
 
     def delete_directive(self, directive_id: int) -> None:
         if self.get_dossier_for_directive(directive_id) is not None:

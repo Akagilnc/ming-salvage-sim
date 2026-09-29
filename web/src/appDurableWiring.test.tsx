@@ -42,7 +42,7 @@ const MENU_STATUS = {
   llm: { base_url: "x", model: "m", has_api_key: true, timeout_seconds: 1, thinking_level: "", advanced_model: "", advanced_base_url: "", has_advanced_api_key: false, advanced_thinking_level: "" },
 };
 const acct = () => ({ balance: 0, income: [], expense: [], income_total: 0, expense_total: 0, net: 0, movements: [], movements_total: 0 });
-const directive = () => ({ id: 1, event_id: "", event_title: "", actor: "", skill_id: "", skill_name: "", text: "旧草案", source: "", status: "draft", notes: "", authority: "" });
+const directive = () => ({ id: 1, event_id: "", event_title: "", actor: "", text: "旧草案", source: "", status: "draft", notes: "", authority: "" });
 const makeState = (turn: number, directives: unknown[] = [], ministers: unknown[] = []) => ({
   turn: { year: 1627, period: 10, turn, phase: "summoning" },
   metrics: {}, previous_summary: "", issues: [], legacies: [], closed_this_turn: [],
@@ -140,7 +140,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     });
   });
   it("真实 App 只从统一召对入口开夜卷，具体在役大臣卡不再开面板 (#1849)", async () => {
-    const minister = (name: string) => ({ name, office: "兵部", office_type: "内阁", faction: "", style: "", status: "active", status_label: "在朝", summary: "", favorite: false, skills: [] });
+    const minister = (name: string) => ({ name, office: "兵部", office_type: "内阁", faction: "", style: "", status: "active", status_label: "在朝", summary: "", favorite: false });
     const calls: string[] = [];
     vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
       const u = new URL(String(url), "http://t.local");
@@ -179,7 +179,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
   });
 
   it("密令召见从真实入口在同一殿上卷宣人，不再打开按大臣实时会话 (#1849)", async () => {
-    const minister = { name: "洪承畴", office: "兵部", office_type: "内阁", faction: "", style: "", status: "active", status_label: "在朝", summary: "", favorite: false, skills: [] };
+    const minister = { name: "洪承畴", office: "兵部", office_type: "内阁", faction: "", style: "", status: "active", status_label: "在朝", summary: "", favorite: false };
     const order = { id: 7, title: "整饬边备", content: "查核军饷", status: "active", minister_name: minister.name, year_issued: 1627, period_issued: 10, dossier_progress: [] };
     const calls: Array<{ path: string; body?: string }> = [];
     let replyStored = false;
@@ -230,7 +230,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
   });
 
   it("typed SSE error 经真实召对链只向玩家呈现结构化 message", async () => {
-    const minister = { name: "洪承畴", office: "兵部", office_type: "内阁", faction: "", style: "", status: "active", status_label: "在朝", summary: "", favorite: false, skills: [] };
+    const minister = { name: "洪承畴", office: "兵部", office_type: "内阁", faction: "", style: "", status: "active", status_label: "在朝", summary: "", favorite: false };
     const detail = {
       code: "llm_run_error",
       message: "通传未达，请稍后再召。",
@@ -276,7 +276,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
   });
 
   it("accepted 后普通流中断重读持久问话与原位重试，不回填输入框", async () => {
-    const minister = { name: "洪承畴", office: "兵部", office_type: "内阁", faction: "", style: "", status: "active", status_label: "在朝", summary: "", favorite: false, skills: [] };
+    const minister = { name: "洪承畴", office: "兵部", office_type: "内阁", faction: "", style: "", status: "active", status_label: "在朝", summary: "", favorite: false };
     let historyReads = 0;
     vi.stubGlobal("fetch", vi.fn(async (url: string) => {
       const path = new URL(String(url), "http://t.local").pathname;
@@ -383,7 +383,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     // 首拉 vacuum；done 带 count=1；后续 state GET 挂起——footer.enabled 须来自 done，非 refresh。
     const minister = {
       name: "郭允厚", office: "户部尚书", office_type: "户部", faction: "",
-      style: "", status: "active", status_label: "在朝", summary: "", favorite: false, skills: [] as unknown[],
+      style: "", status: "active", status_label: "在朝", summary: "", favorite: false,
     };
     const vacuum = {
       ...makeState(1, [], [minister]),
@@ -458,7 +458,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
   it("#1716 retry 即时加 pending_directive_count、undo 即时减，拟诏台不待 refresh/reload", async () => {
     const minister = {
       name: "郭允厚", office: "户部尚书", office_type: "户部", faction: "",
-      style: "", status: "active", status_label: "在朝", summary: "", favorite: false, skills: [] as unknown[],
+      style: "", status: "active", status_label: "在朝", summary: "", favorite: false,
     };
     const vacuum = {
       ...makeState(1, [], [minister]),
@@ -621,7 +621,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
   });
 
   it("#1853 重试后的记录连续读失败在原轮告知，恢复不重复已成功的 POST", async () => {
-    const minister = { name: "郭允厚", office: "户部尚书", office_type: "户部", faction: "", style: "", status: "active", status_label: "在朝", summary: "", favorite: false, skills: [] };
+    const minister = { name: "郭允厚", office: "户部尚书", office_type: "户部", faction: "", style: "", status: "active", status_label: "在朝", summary: "", favorite: false };
     let historyReads = 0;
     let retryPosts = 0;
     let replyPosts = 0;
@@ -944,11 +944,11 @@ const settlementBaseState = (phase: string, extra: Record<string, unknown> = {})
   }],
   ministers: [{
     name: SNAP_MINISTER, office: "首辅", office_type: "内阁", faction: "",
-    style: "", status: "active", status_label: "在朝", summary: "辅臣", favorite: false, skills: [],
+    style: "", status: "active", status_label: "在朝", summary: "辅臣", favorite: false,
   }],
   consorts: [{
     name: SNAP_CONSORT, title: "贵妃", status: "active", status_label: "在宫",
-    summary: "", favorite: false, skills: [],
+    summary: "", favorite: false,
   }],
   directives: [{ id: 1, text: "半程拟诏草稿", status: "draft" }],
   pending_count: 0, last_decree: "", last_report: SNAP_MEMORIAL,
@@ -2785,7 +2785,7 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     await act(async () => {
       releaseCreate(jsonResp({
         directives: [{
-          id: 9, event_id: "", event_title: "", actor: "", skill_id: "", skill_name: "",
+          id: 9, event_id: "", event_title: "", actor: "",
           text: "解太仓备用", source: "手动新增", status: "draft", notes: "", authority: "",
         }],
       }));
@@ -3092,7 +3092,7 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
   });
 
   it("关档再开会重新检查并恢复同一未闭召对夜", async () => {
-    const minister = { name: "洪承畴", office: "三边总督", status: "active", skills: [] };
+    const minister = { name: "洪承畴", office: "三边总督", status: "active" };
     let scrollChecks = 0;
     vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
       const u = new URL(String(url), "http://t.local");
@@ -3136,7 +3136,7 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     let casedDirectives: unknown[] = [];
     const minister = {
       name: "毕自严", office: "户部尚书", office_type: "户部", faction: "",
-      style: "", status: "active", status_label: "在朝", summary: "", favorite: false, skills: [],
+      style: "", status: "active", status_label: "在朝", summary: "", favorite: false,
     };
     const baseState = {
       ...settlementBaseState("player"),
@@ -3278,7 +3278,7 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
       turn: { year: 1627, period: 10, turn: 5, phase: "player", settlement_display: false },
       // 同时有草案 + 成案：一次断言两区铬字名与归属不混。
       directives: [{
-        id: 9, event_id: "", event_title: "", actor: "", skill_id: "", skill_name: "",
+        id: 9, event_id: "", event_title: "", actor: "",
         text: "草稿边饷", source: "手动新增", status: "draft", notes: "", authority: "",
       }],
       cased_directives: [{
@@ -3516,7 +3516,7 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
           talent_pool: [{
             name: "刘鸿训", office: "", office_type: "", faction: "", style: "",
             status: "offstage", status_label: "罢居", status_reason: "因病乞休",
-            summary: "前辅", favorite: false, skills: [],
+            summary: "前辅", favorite: false,
           }],
         });
       }

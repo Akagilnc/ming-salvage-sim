@@ -78,7 +78,6 @@ function minister(partial: Partial<Minister> & Pick<Minister, "name" | "office">
     status_label: "在朝",
     summary: "",
     favorite: false,
-    skills: [],
     ...partial,
   };
 }
