@@ -232,6 +232,9 @@ def build_c0_declaration_shape() -> str:
     # （#1897：只写 "{}" 的形状让真实模型交不出可消费的契约）。
     from ming_sim.covert_progress import describe_covert_task_contract
     covert_contract_shape = describe_covert_task_contract()
+    # 案卷关联的合法类型闭集同样只投影 constants 真源，禁手抄分叉。
+    from ming_sim.constants import DOSSIER_LINK_TYPES
+    dossier_link_types = "|".join(sorted(DOSSIER_LINK_TYPES))
     effect_shape = "\n".join(
         f"    {line}" for line in json.dumps(
             {"event_id": "仅属某事件战果时填事件 id；未填即独立", **EMPTY_EXTRACTION},
@@ -263,7 +266,9 @@ def build_c0_declaration_shape() -> str:
         '      "pacification": {"target_id": "自新内乱首领的具名 id", "mode": "ordinary|midzhi"},\n'
         '      "secret_order": {"title": "密令标题", "content": "密令正文（原样，不删改）", '
         '"assignee": "承办人名（名册人名，不得填场景）", "tags": [], "deadline_months": 0, '
-        '"excluded_names": [], "excluded_offices": [], "dossier_links": [],\n'
+        '"excluded_names": [], "excluded_offices": [], '
+        '"dossier_links": [{"target_dossier_id": 旧案卷id, '
+        f'"relation_type": "{dossier_link_types}", "note": "关联说明（必填）"}}],\n'
         '        "covert_task": '
         + covert_contract_shape
         + '},\n'

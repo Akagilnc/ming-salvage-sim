@@ -310,46 +310,29 @@ def test_late_translation_staged_secret_order_still_lands_under_its_source_night
     assert db.get_secret_order(order_id)["status"] == "active"
 
 
-def test_translation_prompt_hands_the_model_a_consumable_frozen_contract():
-    """J7：生产转译 prompt 必须给出 build_covert_task_contract 真收的字段定义。
+def test_frozen_contract_examples_are_consumable_and_sign_semantics_hold():
+    """差务契约真源自身可消费：样例真被 ``build_covert_task_contract`` 收下，
+    且钱粮符号语义按实现判定（+1 收入 / -1 支出，收入不得写补饷）。
 
-    只写 ``"covert_task": {}`` 的形状不是契约——真实模型无从交出消费者要的
-    字段。这里断言 prompt 里出现的字段集与真源闭集一致，且照它填的样例
-    真能被 build_covert_task_contract 收下（单一真源，不另抄字段表）。
+    #1897 R4：原用例把 prompt 里的字段名、样例序列化文本、措辞逐字断言钉在
+    一处（改个等义措辞即红），那是盯文不是对行为负责，已整段删除。此处只对
+    真源的消费行为负责——生产 prompt 由 ``describe_covert_task_contract``
+    投影这份真源，说明与实现分叉由那里的单一真源保证。
     """
-    from ming_sim.audience_translate import build_audience_translate_prompt
     from ming_sim.covert_progress import (
-        CANONICAL_UNITS, _CONTRACT_EXAMPLES, build_covert_task_contract,
+        _CONTRACT_EXAMPLES, build_covert_task_contract,
     )
-    from ming_sim.person_archive_contract import PERSON_ACTIONS
 
-    prompt = build_audience_translate_prompt(
-        emperor_message="此事要密办。", reply="臣领旨。",
-        night_said=[], pending_summaries=[],
-    )
-    for token in (
-        "covert_task", "effect_sign", "target_units", "person_action", "direction",
-        *CANONICAL_UNITS, *PERSON_ACTIONS,
-    ):
-        assert token in prompt, token
-
-    # prompt 里每份样例必须逐字就是被投影的样例，且真源都收得下——
-    # 说明与实现分叉时这条先炸（教模型交一份会被拒的载荷更糟）。
     for sample in _CONTRACT_EXAMPLES:
-        assert json.dumps(sample, ensure_ascii=False) in prompt
         build_covert_task_contract(covert_task=sample)
 
-    # 钱粮定向语义（J7 判词实错）：+1 是收入、-1 是支出。说明里若把符号写反，
-    # 模型照着填就会被 build_covert_task_contract 拒（收入写补饷直接抛错）。
-    assert "+1 是收入" in prompt and "-1 是支出" in prompt
-    assert "收款（effect_sign=-1）" not in prompt
-    # 支出（-1）必须给 purpose：照说明少给即拒收，钉住这条真语义。
+    # 收入（+1）不得声明为补饷支出：真源按此拒收，不是 prompt 措辞问题。
     with pytest.raises(Exception):
         build_covert_task_contract(covert_task={
-            "kind": "查赃", "axes": ["礼法名节"], "direction": -1,
+            "kind": "抄家入帑", "axes": ["实务事功"], "direction": 1,
             "delivery": {
-                "unit": "万两", "target_units": 5, "effect_sign": -1,
-                "category": "追赃", "account": "内库",
+                "unit": "万两", "target_units": 1, "effect_sign": 1,
+                "purpose": "补饷", "category": "密令差务", "account": "内库",
             },
         })
 
@@ -381,7 +364,8 @@ def test_failed_landing_keeps_the_original_pending_action_retryable(game, monkey
 
     assert failed.promises.applied == [], failed.promises.applied
     assert len(failed.promises.rejected) == 1
-    assert _rejection_rows(db, state.turn, "promises")[-1]["category"] == "invalid_state"
+    # 归类按真实失败原因：落库失败不是「实体状态不容许」（R1）。
+    assert _rejection_rows(db, state.turn, "promises")[-1]["category"] == "commit_failed"
     assert db.list_secret_orders() == []
     # 原暂存仍是 pending：不是 failed 死行，同一 id 可再应允。
     status = db.conn.execute(
@@ -393,3 +377,134 @@ def test_failed_landing_keeps_the_original_pending_action_retryable(game, monkey
     assert retried.promises.rejected == [], retried.promises.rejected
     order_id = int(retried.promises.applied[0]["secret_order_id"])
     assert db.get_secret_order(order_id)["status"] == "active"
+
+
+def test_approved_rush_reports_success_and_is_not_repeated(game):
+    """R1：密令催办应允成功即成功——不因「新建才有」的 order_id 判据被误报失败。
+
+    真实症状：applied=[] / rejected=[invalid_state] / status 被倒回 pending，
+    再次应允又把同一条催办写了一遍。
+    """
+    db, state, _ = game
+    minister = _minister(db)
+    night_id, ctid = _open_night(db, state, minister)
+
+    _dispatch(db, state, minister, _secret_order_declaration(assignee=minister),
+              ctid, night_id)
+    order_id = int(
+        _approve(db, state, minister, ctid, night_id,
+                 int(_staged_secret_order_rows(db, state.turn)[0]["id"]))
+        .promises.applied[0]["secret_order_id"]
+    )
+
+    def _rush():
+        return _dispatch(db, state, minister, {"rushes": [{
+            "target_kind": "secret_order", "target_id": order_id,
+            "deadline_months": 1, "reason": "着即催办",
+        }]}, ctid, night_id)
+
+    rushed = _rush()
+    assert rushed.rushes.rejected == [], rushed.rushes.rejected
+    staged_id = int(rushed.rushes.applied[0]["id"])
+
+    approved = _approve(db, state, minister, ctid, night_id, staged_id)
+    assert approved.promises.rejected == [], approved.promises.rejected
+    assert len(approved.promises.applied) == 1
+    status = db.conn.execute(
+        "SELECT status FROM pending_actions WHERE id=?", (staged_id,),
+    ).fetchone()["status"]
+    assert status == "committed", status
+
+    # 已成功落库的催办不再执行一遍：同一 id 不在 pending 清单里。
+    again = _approve(db, state, minister, ctid, night_id, staged_id)
+    assert again.promises.applied == [], again.promises.applied
+
+
+def test_declared_secret_order_keeps_legal_dossier_links(game):
+    """R2：合法案卷关联保持可消费——成案后关联真落库，不被当脏数据整条拒收。"""
+    db, state, _ = game
+    minister = _minister(db)
+    night_id, ctid = _open_night(db, state, minister)
+
+    # 先立一个旧案卷供新案卷指向。
+    _dispatch(db, state, minister, _secret_order_declaration(assignee=minister),
+              ctid, night_id)
+    old_order_id = int(
+        _approve(db, state, minister, ctid, night_id,
+                 int(_staged_secret_order_rows(db, state.turn)[0]["id"]))
+        .promises.applied[0]["secret_order_id"]
+    )
+    old_dossier_id = int(db.get_dossier_for_secret_order(old_order_id)["id"])
+
+    result = _dispatch(db, state, minister, _secret_order_declaration(
+        assignee=minister, title="再查一桩", dossier_links=[{
+            "target_dossier_id": old_dossier_id,
+            "relation_type": "稽核", "note": "并案同查",
+        }],
+    ), ctid, night_id)
+    assert result.commissions.rejected == [], result.commissions.rejected
+
+    staged_id = int(_staged_secret_order_rows(db, state.turn)[-1]["id"])
+    order_id = int(
+        _approve(db, state, minister, ctid, night_id, staged_id)
+        .promises.applied[0]["secret_order_id"]
+    )
+    new_dossier_id = int(db.get_dossier_for_secret_order(order_id)["id"])
+    assert [(int(link["target_dossier_id"]), link["relation_type"])
+            for link in db.list_dossier_links(new_dossier_id)] == [
+        (old_dossier_id, "稽核"),
+    ]
+
+
+@pytest.mark.parametrize("bad_links", [7, [7]], ids=["whole_field", "element"])
+def test_bad_dossier_links_reject_only_their_own_item(game, bad_links):
+    """R2 反面：关联字段坏类型只拒本项，同批合法密令照落（ADR 0005:12）。"""
+    db, state, _ = game
+    minister = _minister(db)
+    night_id, ctid = _open_night(db, state, minister)
+
+    declaration = {
+        "commissions": [
+            {"text": "此事要密办，卿去查来。",
+             "secret_order": _secret(assignee=minister, dossier_links=bad_links)},
+            {"text": "此事要密办，卿去查来。",
+             "secret_order": _secret(assignee=minister)},
+        ],
+    }
+    result = _dispatch(db, state, minister, declaration, ctid, night_id)
+    assert len(result.commissions.rejected) == 1
+    assert _rejection_rows(db, state.turn)[0]["category"] == "invalid_shape"
+    assert len(_staged_secret_order_rows(db, state.turn)) == 1
+
+
+def test_late_translated_rush_lands_under_its_source_night(game):
+    """R3：夜收后补译的密令催办承接源夜，随后应允接得上（同一暂存写口）。"""
+    db, state, _ = game
+    minister = _minister(db)
+    night_id, ctid = _open_night(db, state, minister)
+
+    _dispatch(db, state, minister, _secret_order_declaration(assignee=minister),
+              ctid, night_id)
+    order_id = int(
+        _approve(db, state, minister, ctid, night_id,
+                 int(_staged_secret_order_rows(db, state.turn)[0]["id"]))
+        .promises.applied[0]["secret_order_id"]
+    )
+
+    an.close_night(db, state, night_id=int(night_id))
+    assert an.get_open_night(db) is None
+
+    rushed = _dispatch(db, state, minister, {"rushes": [{
+        "target_kind": "secret_order", "target_id": order_id,
+        "deadline_months": 1, "reason": "补译催办",
+    }]}, ctid, night_id)
+    assert rushed.rushes.rejected == [], rushed.rushes.rejected
+    staged = db.conn.execute(
+        "SELECT id, night_id FROM pending_actions WHERE id=?",
+        (int(rushed.rushes.applied[0]["id"]),),
+    ).fetchone()
+    assert int(staged["night_id"]) == int(night_id)
+
+    approved = _approve(db, state, minister, ctid, night_id, int(staged["id"]))
+    assert approved.promises.rejected == [], approved.promises.rejected
+    assert len(approved.promises.applied) == 1

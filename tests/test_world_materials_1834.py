@@ -12,7 +12,6 @@ tests/test_material_directory_1830.py 的同一泛化入口覆盖，不在此重
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 from ming_sim.db import GameDB
 from ming_sim.materials import (
@@ -173,7 +172,11 @@ def test_world_materials_isolate_invocations_and_databases(game, tmp_path, monke
     assert read_material(first.root, "INDEX.txt")
     assert read_material(second.root, "INDEX.txt")
 
-    other = GameDB(str(Path(db.path).parent / "other.db"), content)
+    # 隔离：另建一个库必须落在本用例自己的临时目录里，且用完清理。
+    # 早先固定写 <db 同目录>/other.db —— 那是跨用例跨运行共用的系统临时目录，
+    # 上一轮遗留的旧 other.db 会被下一轮 GameDB 打开并触发 schema 报错。
+    other_path = tmp_path / "other.db"
+    other = GameDB(str(other_path), content)
     try:
         other.seed_static_data()
         other_state = other.load_state()
@@ -188,6 +191,7 @@ def test_world_materials_isolate_invocations_and_databases(game, tmp_path, monke
         assert same_db != other_db
     finally:
         other.close()
+        other_path.unlink(missing_ok=True)
 
 
 def test_world_materials_include_textual_facts_once_and_gazette_not_duplicated(game, tmp_path):

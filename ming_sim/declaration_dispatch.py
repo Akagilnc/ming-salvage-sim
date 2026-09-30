@@ -28,7 +28,9 @@ C1b（分段 / 在场 / 边事件）仍在其票内接线。C3 过月段转译�
 =引用的实体真不存在；``invalid_enum``=枚举值不在闭集；``invalid_shape``=
 字段缺失/类型/空值等形状问题；``invalid_state``=实体存在但当前状态不容许该
 动作（如已殁者不可入殿、姓名已在册不可再入册）；``missing_ref``=引用的上下文
-本身缺失（如不属本夜暂存清单的动作 id、不存在的夜、已结算的 decree_ref）。
+本身缺失（如不属本夜暂存清单的动作 id、不存在的夜、已结算的 decree_ref）；
+``commit_failed``=真实落库失败（DB 拒绝 / 异常），既非形状问题也非实体状态
+问题，须按此归类，不得冒称 ``invalid_state``。
 
 「各自所属事务」（existing-only `affair_declaration`）已接入 commissions /
 textual_facts / public_sayings / presence / scene_facts（原生 `origin_ref`
@@ -315,7 +317,7 @@ def _dispatch_declaration_sections(
         ),
         rushes=_dispatch_rushes(
             db, state, declaration.get("rushes"),
-            minister_name=minister_name, source=source,
+            minister_name=minister_name, source=source, night_id=night_id,
         ),
         travel_tones=_dispatch_travel_tones(
             db, declaration.get("travel_tones"), night_id=night_id,
@@ -1075,6 +1077,7 @@ def _dispatch_commissions(
                 applied.append(
                     _stage_prohibit_covert_levy(
                         db, state, item, minister_name=minister_name,
+                        night_id=int(night_id or 0),
                     )
                 )
             except KeyError as exc:
@@ -1247,16 +1250,24 @@ def _dispatch_commissions(
             # ADR 0005 决定 2：可选集合字段坏类型只拒本项，不带走同批合法交办。
             optional_lists = {
                 key: _declared_str_list(secret.get(key))
-                for key in (
-                    "tags", "excluded_names", "excluded_offices", "dossier_links",
-                )
+                for key in ("tags", "excluded_names", "excluded_offices")
             }
             bad_key = next(
                 (key for key, value in optional_lists.items() if value is None), "",
             )
+            # dossier_links 不是字符串数组：现役消费者 db.add_dossier_links 收的是
+            # 关联对象 {target_dossier_id, relation_type, note}（ADR 0054:5 案卷
+            # 关联契约）。按既有字段契约校验形状，坏类型同样只拒本项。
+            links = _declared_dossier_links(secret.get("dossier_links"))
             if bad_key:
                 _reject(
                     rejected, item, f"密令字段 {bad_key} 须为字符串数组", "invalid_shape", source,
+                )
+                continue
+            if links is None:
+                _reject(
+                    rejected, item, "密令字段 dossier_links 须为关联对象数组",
+                    "invalid_shape", source,
                 )
                 continue
             body = _declared_prose(secret.get("content"))
@@ -1277,7 +1288,7 @@ def _dispatch_commissions(
                 "deadline_months": secret.get("deadline_months", 0),
                 "excluded_names": optional_lists["excluded_names"],
                 "excluded_offices": optional_lists["excluded_offices"],
-                "dossier_links": optional_lists["dossier_links"],
+                "dossier_links": links,
                 "covert_task": frozen_task,
                 "origin_chat_message_id": int(source_turn["user_message_id"]),
             }
@@ -1612,6 +1623,28 @@ def _declared_str_list(raw: object) -> Optional[List[str]]:
     return items
 
 
+def _declared_dossier_links(raw: object) -> Optional[List[Dict[str, object]]]:
+    """密令的案卷关联声明：现役消费者 ``GameDB.add_dossier_links`` 收的是关联
+    对象 ``{target_dossier_id, relation_type, note}``（ADR 0054:5），不是字符串
+    数组——按既有字段契约校验，不得把合法关联当脏数据拒掉。整体非序列 / 元素非
+    对象返回 None，由调用方逐项 durable 拒收（ADR 0005 决定 2 只拒本项）。
+
+    元素内部不预判：目标案卷是否存在、类型是否在闭集、说明是否为空，都由
+    ``add_dossier_links`` 在成案那一刻按它自己的契约逐条判并留痕，此处不抢
+    它的判、也不替 LLM 猜。
+    """
+    if raw is None:
+        return []
+    if not isinstance(raw, (list, tuple)):
+        return None
+    links: List[Dict[str, object]] = []
+    for entry in raw:
+        if not isinstance(entry, Mapping):
+            return None
+        links.append(dict(entry))
+    return links
+
+
 def _commission_fallback_actor(db: Any) -> str:
     """场景整场入口无单人大臣锚时，directive.actor 回落殿前常在（王承恩优先）。"""
     for name in ("王承恩", "曹化淳"):
@@ -1748,8 +1781,13 @@ def _is_prohibit_covert_levy_item(item: Mapping[str, object]) -> bool:
 
 def _stage_prohibit_covert_levy(
     db: Any, state: Any, item: Mapping[str, object], *, minister_name: str,
+    night_id: int = 0,
 ) -> Dict[str, Any]:
-    """禁摊派交办：绑定当前暴露案卷 → 既有 directive 暂存并标夜应允。"""
+    """禁摊派交办：绑定当前暴露案卷 → 既有 directive 暂存并标夜应允。
+
+    ``night_id``：与 :func:`_dispatch_commissions` 其余分支同义，暂存与夜应允
+    一并挂源夜，夜收后补译的禁摊派仍接得上（ADR 0038 后出注记）。
+    """
     from ming_sim.audience_night import mark_actions_night_approved
     from ming_sim.covert_levy import PROHIBITION_ACTION
     from ming_sim.due_review import list_due_review_scenes
@@ -1777,10 +1815,12 @@ def _stage_prohibit_covert_levy(
         "target_id": str(dossier_id),
         "mode": "ordinary",
     }
+    staged_night = int(night_id or 0) or None
     row_id = db.stage_pending_action(
         int(state.turn), "directive", "拟旨", actor, payload,
+        night_id=staged_night,
     )
-    mark_actions_night_approved(db, [row_id])
+    mark_actions_night_approved(db, [row_id], night_id=staged_night)
     return {"id": row_id, "payload": payload, "kind": "directive"}
 
 
@@ -1904,9 +1944,16 @@ def _dispatch_rushes(
     *,
     minister_name: str,
     source: Provenance,
+    night_id: int = 0,
 ) -> SectionResult:
-    """催办声明 → 既有 pending 催办写口（密令 / 分段承诺，ADR 0078）。"""
+    """催办声明 → 既有 pending 催办写口（密令 / 分段承诺，ADR 0078）。
+
+    ``night_id`` 与 :func:`_dispatch_commissions` 同义：透传给每一条暂存，夜收
+    后补译的催办仍挂源夜，随后应允接得上（ADR 0038 后出注记）。漏传即退回
+    「取当前开着的夜」，夜已收时挂成 night_id=0 → 应允 missing_ref。
+    """
     items, rejected = _section_items(raw, label="催办声明", source=source)
+    staged_night = int(night_id or 0) or None
     applied: List[Any] = []
     for item in items:
         target_kind = str(item.get("target_kind") or "").strip()
@@ -1960,7 +2007,7 @@ def _dispatch_rushes(
             }
             row_id = db.stage_pending_action(
                 int(state.turn), "commitment", "催办", actor, payload,
-                target_id=target_id,
+                target_id=target_id, night_id=staged_night,
             )
             applied.append({
                 "id": row_id, "kind": "commitment", "target_id": target_id,
@@ -1982,7 +2029,7 @@ def _dispatch_rushes(
         payload = {"deadline_months": deadline, "reason": reason}
         row_id = db.stage_pending_action(
             int(state.turn), "secret_order", "催办", actor, payload,
-            target_id=target_id,
+            target_id=target_id, night_id=staged_night,
         )
         applied.append({
             "id": row_id, "kind": "secret_order", "target_id": target_id,
@@ -2148,35 +2195,42 @@ def _dispatch_promises(
                     state, action_ids=[action_id], rejection_collector=_rc,
                 )
                 mirror_rejections_after_commit(db, _rc, rejections_jsonl_path)
-                order_id = 0
-                for c in committed or []:
-                    if (
-                        int(c.get("id") or 0) == int(action_id)
+                # 成不成功只看本次提交的真实结果：该行进了 applied 即已落库
+                # （新建 / 更新 / 记进展 / 催办 一视同仁，#1897 R1）。不拿
+                # 「新建才有」的 order_id 判据套整个 secret_order 分支——那会把
+                # 已落库的催办等误报成失败并倒回 pending，重复应允再执行一遍。
+                entry = next(
+                    (
+                        c for c in committed or []
+                        if int(c.get("id") or 0) == int(action_id)
                         and c.get("kind") == "secret_order"
-                        and str(c.get("action") or "") == "新建"
-                    ):
-                        try:
-                            order_id = int(
-                                c.get("secret_order_id") or c.get("target_id") or 0,
-                            )
-                        except (TypeError, ValueError):
-                            order_id = 0
-                        break
-                if order_id <= 0:
+                    ),
+                    None,
+                )
+                if entry is None:
                     # #1897「保留待办可重试，不当成功」：真实成案失败不是应允成功。
                     # commit_pending_actions 已把该行标 failed——那会让原 action_id
                     # 永远重试不到（preexisting_pending_ids / pending 查询都跳过它）。
                     # 这里把它放回 pending 交还玩家，下一轮同一 action_id 可再应允。
+                    # 归类按真实失败原因：这是落库失败，不是实体状态不容许。
                     db.conn.execute(
                         "UPDATE pending_actions SET status='pending' WHERE id=?",
                         (int(action_id),),
                     )
                     _reject(
                         rejected, item,
-                        "密令成案失败，原暂存已保留可重试", "invalid_state", source,
+                        "密令未能落库，原暂存已保留可重试", "commit_failed", source,
                     )
                     continue
-                applied_row["secret_order_id"] = order_id
+                if str(entry.get("action") or "") == "新建":
+                    try:
+                        order_id = int(
+                            entry.get("secret_order_id") or entry.get("target_id") or 0,
+                        )
+                    except (TypeError, ValueError):
+                        order_id = 0
+                    if order_id > 0:
+                        applied_row["secret_order_id"] = order_id
             else:
                 changed = False
                 if kind == "directive" and declared_mode is not None:
