@@ -257,6 +257,9 @@ def build_c0_declaration_shape() -> str:
         '"transaction_category": "事务类别（有则填）", "amount": "罚俸金额（罚俸时填）", '
         '"backing_dossier_id": "所援案卷 id（有则填）"},\n'
         '      "pacification": {"target_id": "自新内乱首领的具名 id", "mode": "ordinary|midzhi"},\n'
+        '      "revoke": {"target_kind": "dossier|issue（不填按 dossier）", '
+        '"target_id": "所撤那道已发旨的案卷 id 或 issue id", '
+        '"target_candidate": "续办所指候选 id（撤令一般留空）"},\n'
         '      "secret_order": {"title": "密令标题", "content": "密令正文", '
         '"assignee": "承办人 id", "tags": [], "deadline_months": 0, '
         '"covert_task": {}},\n'
@@ -364,6 +367,9 @@ def build_audience_translate_prompt(
         "- 具名秘密差事的新建走 commission.secret_order；必须含 title、content、"
         "承办人与已确定的 covert_task 冻结任务契约；无契约不得编造。"
         "往期密令具名进展走 commission.secret_order_progress；不凭空记进展。\n"
+        "- 皇帝明确撤回一道**已发出**的旨（撤回成命）走 commission.revoke，"
+        "target_id 取那道旨的案卷 id；「撤回本场刚才的话」「撤回上一轮召对」"
+        "不是撤令，不填 revoke（由既有撤回机制处理）。\n"
         "- 皇帝对已暂存交办说「准」「照办」等应允语义 → promises 里 decision=应允；"
         "「不准」「作罢」→ 拒绝；修改已有新建密令 → 修改并给完整 typed new_content，"
         "不从原话截断猜正文。皇帝本轮未表态 → promises 为空（默认不应允）。\n"

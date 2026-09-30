@@ -13256,12 +13256,12 @@ class GameDB:
         find_any_issue_by_origin 幂等；不碰 trigger_gate 求值器、不扩门表白名单。
         分档触发侧重算 assess_foundation_tier（零新列）；唯 halfway 触发。
         一拍差：判决 closed_turn < 当前 turn 才扫（判决在 delta、扫描在次回合前括号）。
-        与 #623 立即倒退去重：本片只立承诺所系 issue＋本片具名 metrics 一锤子，不重放
-        breach_halfway_setback / 民心-3·皇威-2 直击；不写 ongoing_effects.metrics 镜像。
+        与 #1894 前的 #623 立即倒退去重：那条代码生成的全国余波已删，本片只
+        立承诺所系 issue＋本片具名 metrics 一锤子；不写 ongoing_effects.metrics 镜像。
 
         事废读源：todo.payload_json.verdict=='persist'（#623 finalize_persist 既判痕迹；
-        consumed 有三源不可区分，单独不得作既判证据；常经 0056 先关案卷时
-        execution_outcome 可能空，故不以执行格为事废唯一源）。
+        consumed 有三源不可区分，单独不得作既判证据；#1894 后 0056 不再抢先关案卷，
+        execution_outcome 在模型判决落地前本就为空，故不以执行格为事废唯一源）。
         烂尾：读执行格终值 failed（#621）。
         变形：execution_outcome==transformed 仅作候选；须经 #622 公开读端
         list_economy_moves_for_dossier + beyond_intent 确认分叉事实后才立案。
@@ -15872,9 +15872,15 @@ class GameDB:
 
     def breach_decree_dossier(
         self, state: GameState, dossier_id: int, *, reason: str = "撤回成命",
-        commit: bool = True,
+        commit: bool = True, close_target: bool = True,
     ) -> bool:
-        """Withdraw an issued promise; commit=False belongs wholly to its caller."""
+        """Withdraw an issued promise; commit=False belongs wholly to its caller.
+
+        #1894：``close_target=False`` 只落 0056 名声代价（毁约判定、皇威、当事
+        大臣观感、派系），**不**代模型把目标案卷结案——案卷的终局由执行格
+        判官的 ``dossier_executions`` 声明落（撤令当月见办理结果）。早于此处
+        关案会让那份声明被「案卷不在 executing」拒收。
+        """
         if commit:
             from ming_sim.decree import atomic_and_reload
             transaction = atomic_and_reload(self, state)
@@ -15947,10 +15953,16 @@ class GameDB:
                     "UPDATE decree_dossiers SET interruption_reason=CASE WHEN interruption_reason='' THEN ? ELSE interruption_reason END WHERE id=?",
                     (reason, int(dossier_id)),
                 )
-            else:
+            elif close_target:
                 self.conn.execute(
                     "UPDATE decree_dossiers SET status='closed',closed_turn=?,interruption_reason=?,closed_at=CURRENT_TIMESTAMP WHERE id=?",
                     (state.turn, reason, int(dossier_id)),
+                )
+            else:
+                # 撤令路径只记毁约账；结案留给执行格判官的声明。
+                logger.info(
+                    "breach recorded without closing dossier=%s reason=%s",
+                    int(dossier_id), reason,
                 )
         return True
 
@@ -16390,42 +16402,45 @@ class GameDB:
             reason = str(item.get("reason") or "收权被拒")
             raise ValueError(reason)
 
-    def _apply_revoke_decree_verdict_effect(
-        self, state, row, payload, dossier_id,
-    ) -> None:
-        """#523：撤回成命顺颁后终结目标承诺/旨意；捆带授权走 authority_changes。
+    def resolve_revoke_decree_target_ids(
+        self, payload: object, row: object = None,
+    ) -> tuple[int, int]:
+        """撤令目标解析唯一实现：(dossier_id, issue_id)。
 
-        非 undo、不删旧账。代价归 ADR 0056（breach_decree_dossier）。
+        撤令的三处读者共用本函数——判后物化（#523）、判前供料
+        （materials.revoke_target_facts）。读同一组结构化身份字段
+        ``revoke_target_dossier_id`` / ``revoke_target_issue_id``；两者皆无
+        时才按案卷行 ``target_kind``/``target_id`` 解析（接受 ``dossier:``/
+        ``issue:`` 前缀），issue 再经 ``origin_ref`` 回指案卷。两个字段可同时
+        在场（撤的是某道旨下出的承诺），**不得**读到其一即止。
+
+        无合法案卷来源时响亮拒绝；只读供料方按「无原旨可读」捕获。
         """
-        from ming_sim.issues import apply_score_extraction
         from ming_sim.strict_types import strict_int
 
-        try:
-            target_dossier_id = strict_int(
-                payload.get("revoke_target_dossier_id"),
-                accept_numeric_strings=True,
-            )
-        except (TypeError, ValueError):
-            target_dossier_id = 0
-        try:
-            target_issue_id = strict_int(
-                payload.get("revoke_target_issue_id"),
-                accept_numeric_strings=True,
-            )
-        except (TypeError, ValueError):
-            target_issue_id = 0
+        source = payload if isinstance(payload, Mapping) else {}
+        fields = row if isinstance(row, Mapping) else {}
+
+        def _id(key: str) -> int:
+            try:
+                return strict_int(source.get(key), accept_numeric_strings=True)
+            except (TypeError, ValueError):
+                return 0
+
+        target_dossier_id = _id("revoke_target_dossier_id")
+        target_issue_id = _id("revoke_target_issue_id")
 
         if target_dossier_id <= 0 and target_issue_id <= 0:
-            raw = str(payload.get("target_id") or row.get("target_id") or "").strip()
+            raw = str(
+                source.get("target_id") or fields.get("target_id") or ""
+            ).strip()
             kind = str(
-                payload.get("target_kind") or row.get("target_kind") or ""
+                source.get("target_kind") or fields.get("target_kind") or ""
             ).strip()
             if raw.startswith("dossier:"):
-                kind = "dossier"
-                raw = raw.split(":", 1)[1].strip()
+                kind, raw = "dossier", raw.split(":", 1)[1].strip()
             elif raw.startswith("issue:"):
-                kind = "issue"
-                raw = raw.split(":", 1)[1].strip()
+                kind, raw = "issue", raw.split(":", 1)[1].strip()
             try:
                 tid = strict_int(raw, accept_numeric_strings=True) if raw else 0
             except (TypeError, ValueError):
@@ -16441,7 +16456,7 @@ class GameDB:
         if target_dossier_id <= 0 and target_issue_id > 0:
             issue_row = self.conn.execute(
                 "SELECT kind, status, origin_ref FROM issues WHERE id=?",
-                (target_issue_id,),
+                (int(target_issue_id),),
             ).fetchone()
             if issue_row is None:
                 raise ValueError("撤回成命目标事项不存在")
@@ -16457,34 +16472,41 @@ class GameDB:
         if target_dossier_id <= 0:
             # 删除 standalone issue 免代价旁路（dossier_id=0 仍 cancel_issue）
             raise ValueError("撤回成命目标无合法案卷来源，不得免代价终结")
+        return int(target_dossier_id), int(target_issue_id)
+
+    def _apply_revoke_decree_verdict_effect(
+        self, state, row, payload, dossier_id,
+    ) -> None:
+        """#523：撤回成命顺颁后终结目标承诺/旨意；捆带授权走 authority_changes。
+
+        非 undo、不删旧账。代价归 ADR 0056（breach_decree_dossier）。
+        """
+        from ming_sim.issues import apply_score_extraction
+
+        target_dossier_id, target_issue_id = self.resolve_revoke_decree_target_ids(
+            payload, row,
+        )
 
         reason = str(
             payload.get("text") or row.get("decree_text") or "撤回成命"
         )[:400]
 
-        # #623 / ADR 0075：目标挂 active 承诺 → 当回合只写挽留 todo，
-        # 0056 名声笔与事轴结账延迟到坚持后（不顺颁即 breach+close）。
-        from ming_sim.breach_plea import (
-            apply_persist_revoke_tail,
-            try_defer_revoke_to_breach_plea,
-        )
-        deferred = try_defer_revoke_to_breach_plea(
-            self, state,
-            target_dossier_id=int(target_dossier_id),
-            target_issue_id=int(target_issue_id or 0),
-            revoke_dossier_id=int(dossier_id),
-            reason=reason,
-            commit=False,
-        )
-        if deferred and deferred.get("deferred"):
-            return
+        # #1894：撤旨照常过外廷。外廷（0055 颁布判决）准行即当月落实，
+        # 不再把撤令延后到下一次召对等一场挽留——旧 ADR 0075「先顶哭谏、
+        # 坚持撤才落账」的等待已退役（撤令/原旨/已落实况由既有材料目录供
+        # 外廷人物读，是否求情归模型，不设代码求情探测）。
+        from ming_sim.breach_plea import apply_persist_revoke_tail
 
-        # 立即路径收尾：0056 + 捆带授权收回 + 同源停 tick（与坚持落地共享）
+        # 立即路径收尾：0056 + 捆带授权收回 + 同源停 tick。
+        # close_target=False：0056 只落名声账；原案卷的结案（执行格终值与
+        # 半途后果）由执行格判官在本月声明 dossier_executions 落——代码不
+        # 抢在模型声明前关案（#1894 F2）。
         apply_persist_revoke_tail(
             self, state,
             target_dossier_id=int(target_dossier_id),
             reason=reason,
             apply_0056=True,
+            close_target=False,
             commitment_ref=int(target_issue_id or 0),
             authority_source_dossier_id=int(dossier_id),
             revoke_dossier_id=int(dossier_id),

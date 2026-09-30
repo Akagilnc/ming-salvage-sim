@@ -490,6 +490,23 @@ def revoke_pay_order_decree(
     )
 
 
+def dossier_override_still_in_force(db: Any, dossier_id: int) -> bool:
+    """该偿还序案卷是否仍有**在位** override 键（#1894 撤令准入的物理判据）。
+
+    案卷已 closed 不等于其 override 已退出格律：键仍在 fiscal_config 且未过
+    ``until_turn`` 时，祖制默认序/系数仍被压住，旨的实效仍在。判据只读既有
+    账本（键 + 期限伴随键），不反演前旨值、不新增机制。
+    """
+    turn = db._current_settle_turn()
+    origin = f"dossier:{int(dossier_id)}"
+    rows = db.conn.execute(
+        "SELECT key,value FROM fiscal_config WHERE origin_ref=? AND kind='override'",
+        (origin,),
+    ).fetchall()
+    config = {str(row["key"]): int(row["value"]) for row in rows}
+    return any(_is_override_key(key) and _live(config, key, turn) for key in config)
+
+
 def _default_of(key: str) -> int:
     parsed = parse_override_key(key)
     if parsed.family == DUE_PRIORITY_FAMILY:

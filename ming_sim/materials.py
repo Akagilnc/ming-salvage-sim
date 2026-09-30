@@ -18,7 +18,7 @@ import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, List, Optional, Sequence
+from typing import Any, Callable, List, Mapping, Optional, Sequence
 
 _UNSAFE = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
 _INDEX_NAME = "INDEX.txt"
@@ -1536,6 +1536,56 @@ def dossier_paid_amount(db: Any, dossier_id: object) -> int:
         max(0, -int(move.get("delta") or 0))
         for move in db.list_economy_moves_for_dossier(oid)
     )
+
+
+def revoke_target_facts(db: Any, payload: object, row: object = None) -> dict[str, object]:
+    """#1894：撤令所指那道**原旨**的事实（原旨、已投入、办理进度、参与者）。
+
+    供料接缝，不新增模型调用：撤令案卷的颁布判官（0055）与逐旨推演都据这份
+    事实判断准行/劝回/拖延，以及准行后原案卷的办理结果怎么落。只读 DB 真源；
+    目标身份解析复用 ``db.resolve_revoke_decree_target_ids``（判后物化同一实现，
+    禁平行口径），身份取自载荷与案卷行（与判后物化同一读口，缺行即漏回退）；
+    查无此事时返回空 dict（调用方按「无原旨可读」处理，不猜）。
+    """
+    if not isinstance(payload, Mapping) and not isinstance(row, Mapping):
+        return {}
+    try:
+        target_dossier_id, target_issue_id = db.resolve_revoke_decree_target_ids(payload, row)
+    except (AttributeError, TypeError, ValueError):
+        return {}
+    dossier = db.get_decree_dossier(int(target_dossier_id))
+    if dossier is None:
+        return {}
+    roster = [
+        {
+            "character_id": str(item.get("character_id") or ""),
+            "tier": str(item.get("tier") or ""),
+            "role": str(item.get("role") or ""),
+        }
+        for item in (dossier.get("participant_roster") or [])
+        if isinstance(item, dict)
+    ]
+    progress = [
+        {
+            "turn": int(row.get("turn") or 0),
+            "progress_band": str(row.get("progress_band") or ""),
+            "narrative": str(row.get("narrative") or ""),
+            "is_terminal": bool(row.get("is_terminal")),
+        }
+        for row in db.list_dossier_progress(int(target_dossier_id))
+    ]
+    return {
+        "dossier_id": int(target_dossier_id),
+        "issue_id": int(target_issue_id),
+        "status": str(dossier.get("status") or ""),
+        "action_type": str(dossier.get("action_type") or ""),
+        "decree_text": str(dossier.get("decree_text") or ""),
+        "promulgated_turn": int(dossier.get("promulgated_turn") or 0),
+        "executor_id": str(dossier.get("executor_id") or ""),
+        "paid": dossier_paid_amount(db, int(target_dossier_id)),
+        "participant_roster": roster,
+        "progress": progress,
+    }
 
 
 def continuing_dossier_facts(db: Any, turn: int) -> list[dict[str, object]]:

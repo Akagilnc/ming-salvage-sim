@@ -24,6 +24,7 @@ from ming_sim.declaration_dispatch import (
 from ming_sim.exceptions import LLMUnavailable
 from ming_sim.llm_transport import audience_transport_policy
 from ming_sim.materials import (
+    continuing_dossier_facts,
     prepare_world_materials,
     release_material_tree,
     world_materials_root,
@@ -86,11 +87,11 @@ def _this_decree_fact(
     已有案卷的 paid 从账本实付投影（materials.dossier_paid_amount）；
     夜里尚未成案的拟旨 id 无动账，投影为 0。
     """
-    from ming_sim.materials import dossier_paid_amount
+    from ming_sim.materials import dossier_paid_amount, revoke_target_facts
 
     payload = _payload_dict(candidate)
     paid = dossier_paid_amount(db, candidate.get("id")) if db is not None else 0
-    return {
+    fact: Dict[str, object] = {
         "id": candidate.get("id"),
         "status": "promulgated",
         "decree_text": decree_text,
@@ -102,6 +103,12 @@ def _this_decree_fact(
         "mode": str(candidate.get("mode") or payload.get("mode") or "ordinary"),
         "paid": paid,
     }
+    # #1894：撤令连同原旨、已投入与实际办理进度一起进推演输入（ADR 0155 本旨
+    # 事实走随调用消息，不进材料目录）。同一 run 内既有准行/劝回的判，也有
+    # 准行后原案卷办理结果的推演——不新增调用。
+    if str(candidate.get("action_type") or "") == "revoke_decree" and db is not None:
+        fact["revoke_target"] = revoke_target_facts(db, payload, candidate)
+    return fact
 
 
 def release_forecast_materials(snapshot: Optional[Dict[str, Any]]) -> None:
@@ -324,11 +331,17 @@ def produce_forecast_product(session: Any, snapshot: Dict[str, Any]) -> Dict[str
             prefix, questions = _split_at_question(str(narrative or ""))
             forecast_text = prefix
             if prefix.strip():
+                # #1894：在途案卷清单同世界段一份读口（materials.continuing_
+                # dossier_facts）——撤令的办理结果由执行格判官在本段声明
+                # dossier_executions，清单不给它就无从落原案卷的执行格。
                 declaration = translate_month_segment(
                     segment=prefix,
                     target_grounding=str(snapshot["target_grounding"]),
                     decree_payload=payload,
                     llm_config=session.llm_config,
+                    continuing_dossiers=continuing_dossier_facts(
+                        session.db, int(snapshot["turn"]),
+                    ),
                 )
         return {
             "verdict": verdict,

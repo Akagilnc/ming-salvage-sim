@@ -3,8 +3,9 @@
 方案 a（#625 形制）：代码侧确定性硬门，挂邸报前 auto_trigger 既有挂点；
 直读承诺/判决/暴露，find_any_issue_by_origin 幂等；不碰 trigger_gate。
 
-与 #623 切割：#623 当回合全国通用余波（metrics 直击 + breach_halfway_setback）
-不回撤；本模块只落绑定源承诺的后续事件。同一松手不双扣。
+与 #623 切割：#623 的代码生成余波（metrics 直击 + breach_halfway_setback 局势）
+已随 #1894「代码不替执行人物判事并造后果」删除；本模块只落绑定源承诺的后续
+事件，不重放任何全国余波。同一松手不双扣。
 
 分档：触发侧重算 assess_foundation_tier，零新列；唯 halfway 触发。
 
