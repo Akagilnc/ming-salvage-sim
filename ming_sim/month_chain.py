@@ -1015,17 +1015,47 @@ def _enrich_eligible_dossiers_for_supply(
     return out
 
 
+def _identity_materials(db: Any, state: Any, name: str) -> Dict[str, Any]:
+    """按身份投影某人此刻可见的材料（ADR 0034 非全知 / 0155 身份隔离 / #1814）。
+
+    走既有 knowledge 读口：只见本人见闻，不给全局实况。同场不等于人物全知。
+    查案对象不是真人物（如"某类人"式题名）时没有身份材料，如实留空，不编。
+    """
+    who = str(name or "").strip()
+    if not who:
+        return {}
+    row = db.conn.execute(
+        "SELECT name FROM characters WHERE name=?", (who,),
+    ).fetchone()
+    if row is None:
+        return {"name": who, "materials": ""}
+    from ming_sim.knowledge import build_character_knowledge, render_character_knowledge
+
+    knowledge = build_character_knowledge(db, state, who)
+    return {
+        "name": who,
+        "office": str(knowledge.get("office") or ""),
+        "materials": render_character_knowledge(knowledge, who, db=db, state=state),
+    }
+
+
 def _attach_investigation_facts(
-    db: Any, orders: List[Dict[str, Any]],
+    db: Any, state: Any, orders: List[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
     """#1896 给 4a 逐证清单：每条实有罪证的键、已投入多少、还差多少、是否已被毁。
 
-    供料是人物"能接触到的材料"（ADR 0034）：只列真相底 live 集里的实有罪证，
-    不塞机制说明以外的判定口径；空 lane 集照列空清单（清白目标也照开案，
-    不因无证而拒开——那会变成免费清白神谕）。
+    并按身份接入办案人与被查者的可及材料（#1814）：4a 一次 run 里既扮办案人
+    决定查法与投入，也扮经真实关系网知情后的被查者决定毁证／压案／不动——
+    两个人各自只见自己身份下能接触到的材料（ADR 0034／0155），同场不等于全知。
+
+    供料是人物"能接触到的材料"：只列真相底 live 集里的实有罪证，不塞机制说明
+    以外的判定口径；空 lane 集照列空清单（清白目标也照开案，不因无证而拒开——
+    那会变成免费清白神谕）。
     """
     from ming_sim.covert_progress import (
         investigation_fact_difficulty,
+        investigation_tip_records,
+        investigation_action_records,
         live_investigation_fact_keys,
         read_covert_task_contract,
         _investigation_target_of,
@@ -1045,12 +1075,11 @@ def _attach_investigation_facts(
         if not target:
             out.append(order)
             continue
+        did = int(dossier["id"])
         investigator = str(order.get("minister_name") or "")
         lanes = {
             str(lane["fact_key"]): lane
-            for lane in _lanes_from_payload(
-                _dossier_payload_map(db, int(dossier["id"]))
-            )
+            for lane in _lanes_from_payload(_dossier_payload_map(db, did))
         }
         facts: List[Dict[str, Any]] = []
         for key in live_investigation_fact_keys(db, target):
@@ -1059,21 +1088,29 @@ def _attach_investigation_facts(
             )
             lane = lanes.get(key, {})
             if difficulty == float("inf"):
-                state = "已被毁证湮灭"
+                state_text = "已被毁证湮灭"
             elif bool(lane.get("mastered")):
-                state = "已掌握"
+                state_text = "已掌握"
             else:
-                state = "在查"
+                state_text = "在查"
             # 不把 difficulty 数值递给模型：那是引擎的账，给了等于递答案，
             # 模型会照着填一个"刚好够"的值。人物只据实说自己下了多大劲。
             facts.append({
                 "fact_key": key,
                 "months_under_investigation": int(lane.get("months") or 0),
                 "effort_so_far": round(float(lane.get("effort") or 0.0), 3),
-                "state": state,
+                "state": state_text,
             })
         order["investigation_target"] = target
         order["investigation_facts"] = facts
+        order["investigator_identity_materials"] = _identity_materials(
+            db, state, investigator,
+        )
+        order["investigation_target_identity_materials"] = _identity_materials(
+            db, state, target,
+        )
+        order["investigation_tips"] = investigation_tip_records(db, did)
+        order["investigation_actions"] = investigation_action_records(db, did)[-6:]
         out.append(order)
     return out
 
@@ -1091,7 +1128,7 @@ def build_secret_orders_supply_feed(
     turn = int(state.turn)
     candidates = db.list_monthly_dossier_progress_nudges(turn)
     eligible = _enrich_eligible_dossiers_for_supply(db, candidates)
-    active_orders = _attach_investigation_facts(db, [
+    active_orders = _attach_investigation_facts(db, state, [
         dict(o) for o in db.list_secret_orders(status="active")
         if not _is_issuance_turn(o, turn)
     ])
@@ -1232,14 +1269,16 @@ def _step_4a_secret_order_supply(
         from ming_sim.decree import _collect_inline_rejections
         from ming_sim.error_pack import rejections_jsonl_path
 
+        collector = RejectionCollector()
+        selections = product.get("covert_exec_selections") or []
+        invalid_declarations = False
         try:
-            collector = RejectionCollector()
-            selections = product.get("covert_exec_selections") or []
             with atomic(db):
                 rows = apply_monthly_covert_actual_progress(
                     db, state, selections=selections, only_supplied=False, commit=False,
                 )
                 rejections = [r for r in rows if r.get("rejected")]
+                invalid_declarations = any(bool(r.get("invalid")) for r in rejections)
                 if rejections:
                     _collect_inline_rejections(
                         collector, {"covert_exec_selections": rows}, turn, source,
@@ -1249,6 +1288,11 @@ def _step_4a_secret_order_supply(
                 _save_chain(db, turn, chain, decree_text=decree_text, source=source)
                 mirror_rejections_after_commit(db, collector, rejections_jsonl_path)
         except Exception as exc:
+            if invalid_declarations:
+                # 无效声明不冒充合法完成：标 invalid，重试按 #1846 契约丢掉本月
+                # 4a 产物重来一次（已落的投入/毁证/查获不动、不双计）。
+                chain["secret_orders_supply_invalid"] = True
+                _save_chain(db, turn, chain, decree_text=decree_text, source=source)
             _abort_4a(exc)
 
     # Phase 4: Settle due secret orders

@@ -17,17 +17,17 @@ import pytest
 
 from ming_sim.covert_progress import (
     FACT_LANES_KEY,
-    INVESTIGATION_PROVENANCE_KEY,
+    INVESTIGATION_TIPS_KEY,
+    INVESTIGATION_ACTS_KEY,
     _CAPACITY_MAX,
     _CAPACITY_MIN,
-    _FACT_DIFFICULTY_EVIDENCE_EDGE,
-    _MONTHLY_EFFORT_CAP,
     CovertContractError,
     apply_investigation_monthly_effort,
     apply_investigation_spoliation,
     build_covert_task_contract,
     build_secret_covert_effect_briefs,
     decide_secret_order_settlement,
+    investigation_clue_records,
     investigation_fact_difficulty,
     investigation_monthly_capacity,
     live_investigation_fact_keys,
@@ -38,10 +38,9 @@ from ming_sim.covert_progress import (
     seed_guilt_counts_as_debt,
     apply_monthly_covert_actual_progress,
     investigation_lane_actual_units,
-    read_substantiated_legal_reason_code,
     settle_due_secret_orders,
 )
-from ming_sim.person_archive_contract import PERSON_LEGAL_REASON_CODES
+from ming_sim.applier import Provenance
 from ming_sim.db import GameDB
 from ming_sim.issues import apply_score_extraction
 from ming_sim.models import TurnPhase
@@ -115,6 +114,51 @@ def _set_axes(db, name, *, loyalty, identity, faction=None, seed_guilt=""):
             (60, faction),
         )
     db.conn.commit()
+
+
+def _next_month(db, state):
+    """推进一个月（落库 state），供逐月核算用。"""
+    state.turn += 1
+    db.save_state(state)
+    return state
+
+
+def _run_supply_4a(db, state, selections):
+    """经真实月链接缝跑步骤 4a，返回该月链状态。
+
+    查案落账的唯一生产入口在月链里，故端到端断言都走这里，不直接打引擎内层。
+    4a 产物按 #1846 的"已存产物接续"相位预置（``secret_orders_supply_product``），
+    不真调模型。
+    """
+    import ming_sim.month_chain as month_chain
+
+    turn = int(state.turn)
+    chain: dict = {
+        "secret_orders_supply_product": {
+            "dossier_progress_reports": [
+                {
+                    "dossier_id": int(row["dossier_id"]),
+                    "progress_band": "持平",
+                    "memorial_text": "据实以奏",
+                }
+                for row in db.list_monthly_dossier_progress_nudges(turn)
+            ],
+            "covert_exec_selections": list(selections),
+        },
+    }
+    month_chain._step_4a_secret_order_supply(
+        db, state, chain,
+        turn=turn, decree_text="", source=Provenance.secret_order, llm_config=None,
+    )
+    return chain
+
+
+def _declare_tip(db, state, oid, source):
+    """经真实 4a 入口声明一次真实通风报信（知情判定的声明真源）。"""
+    _next_month(db, state)
+    return _run_supply_4a(db, state, [{
+        "order_id": oid, "effort": 0.0, "tip_off": {"source": source},
+    }])
 
 
 def _originate_work(db, state, content, dossier_id, *, delta=-1):
@@ -759,9 +803,10 @@ def test_1376_candidate_confirm_freezes_explicit_typed_contract(game):
 
 
 def test_investigation_mastery_needs_effort_to_reach_fact_difficulty(game):
-    """#1896：投入累计到"该条罪证自己的难度"才记已掌握；无统一阈值、不自动写依律。
+    """#1896：投入累计到"该条罪证自己的难度"才记已掌握；无统一阈值、无月度门槛。
 
-    取代旧"执行态折固定增量、满 1 自动坐实并固定写依律"。
+    取代旧"执行态折固定增量、满 1 自动坐实并固定写依律"，也取代上一版误留的
+    单月硬顶／最低在查月数 floor（ADR 0098 后出修订明文退役）。
     """
     db, state, _ = game
     name = _minister(db)
@@ -783,51 +828,44 @@ def test_investigation_mastery_needs_effort_to_reach_fact_difficulty(game):
     )
     assert difficulty > 0.0
 
-    # 敷衍：本月零投入 → 不查获、也不改实证
-    state.turn += 1
-    db.save_state(state)
+    # 敷衍：显式 0 ＝合法零投入 → 不查获、也不改实证
+    _next_month(db, state)
     out = apply_monthly_covert_actual_progress(
         db, state, selections=[{"order_id": oid, "effort": 0.0}], commit=True,
     )
     row = next(r for r in out if r["order_id"] == oid)
     assert row["effort_applied"] == 0.0
-    assert row["units"] == 0.0
     assert investigation_lane_actual_units(db, did) == 0.0
-    payload = json.loads(db.get_dossier_for_secret_order(oid)["payload_json"])
-    lanes = {r["fact_key"]: r for r in payload[FACT_LANES_KEY]}
-    assert lanes[target]["mastered"] is False
-    assert lanes[target]["effort"] == 0.0
-    # 掌握证据 ≠ 已依法清算：满阈不自动写依律
-    assert read_substantiated_legal_reason_code(db, target, target) == ""
+    assert _lanes(db, oid)[target]["effort"] == 0.0
+    assert _lanes(db, oid)[target]["mastered"] is False
 
-    # 投入未达难度：累计但不查获（实投＝强度×承办人实况，非模型直采）
+    # 代码不替人物挑本月下手的罪：没给 fact_key → 无下手处，零投入
+    _next_month(db, state)
+    out = apply_monthly_covert_actual_progress(
+        db, state, selections=[{"order_id": oid, "effort": 1.0}], commit=True,
+    )
+    row = next(r for r in out if r["order_id"] == oid)
+    assert row["effort_applied"] == 0.0
+    assert row["fact_key"] == ""
+    assert _lanes(db, oid)[target]["effort"] == 0.0
+
+    # 投入未达难度：累计但不查获（实投＝强度×承办人真实处境，非模型直采）
     capacity = investigation_monthly_capacity(db, name, dossier_id=did)
     apply_investigation_monthly_effort(
-        db, did, target, name, fact_key=target,
-        intensity=0.5, commit=True,
+        db, did, target, name, fact_key=target, intensity=0.2, commit=True,
     )
-    payload = json.loads(db.get_dossier_for_secret_order(oid)["payload_json"])
-    lanes = {r["fact_key"]: r for r in payload[FACT_LANES_KEY]}
-    assert lanes[target]["mastered"] is False
-    assert lanes[target]["effort"] == pytest.approx(
-        min(_MONTHLY_EFFORT_CAP, 0.5 * capacity)
-    )
+    assert _lanes(db, oid)[target]["effort"] == pytest.approx(0.2 * capacity)
+    assert _lanes(db, oid)[target]["mastered"] is False
     assert investigation_lane_actual_units(db, did) == 0.0
 
-    # 首月在查（months=1）：即便满强度，单月也不得坐实（堵一月速坐实）
-    assert _lanes(db, oid)[target]["months"] == 1
+    # 补足到难度即记已掌握——不设最低在查月数 floor，也不写依律/翻轴
     apply_investigation_monthly_effort(
         db, did, target, name, fact_key=target, intensity=1.0, commit=True,
     )
-    # 次月补足：累计实投达难度且已满 floor → 该条已掌握，
-    # 且仍不自动写依律/翻轴（掌握 ≠ 清算）
-    assert _lanes(db, oid)[target]["months"] == 2
-    assert _lanes(db, oid)[target]["mastered"] is True
-    payload = json.loads(db.get_dossier_for_secret_order(oid)["payload_json"])
-    lanes = {r["fact_key"]: r for r in payload[FACT_LANES_KEY]}
-    assert lanes[target]["mastered"] is True
-    assert not lanes[target].get("reason_code")
-    assert read_substantiated_legal_reason_code(db, target, target) == ""
+    lane = _lanes(db, oid)[target]
+    assert lane["mastered"] is True
+    assert lane["effort"] >= difficulty
+    assert set(lane) == {"fact_key", "effort", "difficulty", "months", "mastered"}
     assert investigation_lane_actual_units(db, did) == 1.0
 
     # 运行期新长的把柄边入同一案即新 lane，可再查
@@ -838,9 +876,7 @@ def test_investigation_mastery_needs_effort_to_reach_fact_difficulty(game):
     edge_difficulty = investigation_fact_difficulty(
         db, target=target, fact_key=str(edge_id), investigator=name,
     )
-    # 边事实基准档更高（已落库的实物/证词边比待坐实罪谱更难撬）
     assert edge_difficulty > difficulty
-    # 逐月投入至该条难度（边事实更难，需更多月），满 floor 后方掌握
     result = {}
     for _ in range(12):
         result = apply_investigation_monthly_effort(
@@ -1003,11 +1039,26 @@ def test_spoliation_requires_real_knowledge_source(game):
     assert out["applied"] is False
     assert db.list_investigation_spoiled_facts(target) == []
 
-    # 真实关系网里的人递话 → 知情成立，其毁证选择被承接
+    # 光有关系边不够：没有真实传话声明，仍判未知情（关系边存在 ≠ 话递到了）
     informer = _relation_informer(db, name, target)
     out = apply_investigation_spoliation(
         db, target=target, fact_key=key, effect="gone",
         knowledge_source=informer, commit=True,
+    )
+    assert out["applied"] is False
+    assert db.list_investigation_spoiled_facts(target) == []
+
+    # 真实关系网里的人确经关系网把话递到（4a 声明）→ 知情成立，毁证被承接
+    oid = _issue(
+        db, state, name, "查核待毁", "查核待毁",
+        months=3, target=1, kind="查核", axes=["既得利益"],
+        investigation_target=target,
+    )
+    did = int(db.get_dossier_for_secret_order(oid)["id"])
+    _declare_tip(db, state, oid, informer)
+    out = apply_investigation_spoliation(
+        db, target=target, fact_key=key, effect="gone",
+        knowledge_source=informer, dossier_id=did, commit=True,
     )
     assert out["applied"] is True
     assert out["knowledge_source"] == informer
@@ -1082,11 +1133,18 @@ def test_spoliation_makes_fact_harder_and_survives_case_reopen(game):
         db, target=target, fact_key=str(edge_id), investigator=name,
     )
 
-    # 毁一条 → 该条变难查；同目标其他事实无损（知情来源须是真实关系网里的人）
+    # 毁一条 → 该条变难查；同目标其他事实无损（知情须有真实传话声明＋真实关系边）
     informer = _relation_informer(db, name, target)
+    tip_oid = _issue(
+        db, state, name, "查核待毁", "查核待毁",
+        months=3, target=1, kind="查核", axes=["既得利益"],
+        investigation_target=target,
+    )
+    tip_did = int(db.get_dossier_for_secret_order(tip_oid)["id"])
+    _declare_tip(db, state, tip_oid, informer)
     out = apply_investigation_spoliation(
         db, target=target, fact_key=target, effect="harder",
-        knowledge_source=informer, commit=True,
+        knowledge_source=informer, dossier_id=tip_did, commit=True,
     )
     assert out["applied"] is True
     harder = investigation_fact_difficulty(
@@ -1100,7 +1158,7 @@ def test_spoliation_makes_fact_harder_and_survives_case_reopen(game):
     # 毁成 gone → 该事实永不可查，且投入再多也查不回来
     apply_investigation_spoliation(
         db, target=target, fact_key=target, effect="gone",
-        knowledge_source=informer, commit=True,
+        knowledge_source=informer, dossier_id=tip_did, commit=True,
     )
     assert investigation_fact_difficulty(
         db, target=target, fact_key=target, investigator=name,
@@ -1184,11 +1242,11 @@ def test_false_memorial_does_not_create_or_erase_evidence(game):
     assert target in live_investigation_fact_keys(db, target)
 
 
-def test_4a_declaration_routes_to_per_fact_accounting_and_spoliation(game):
-    """#1896 贯穿 4a 接缝：effort/fact_key/spoliation 三项声明走既有写口落账。
+def test_4a_declaration_lands_actions_and_spoliation_through_month_chain(game):
+    """#1896 贯穿 4a 接缝：查法/传话/投入/毁证/压案声明都走既有写口落账。
 
-    不新增人物调用、不新增转译调用、不新增第二写口——只是既有
-    ``covert_exec_selections`` 里的查案项按新形状被核算。
+    不新增人物调用、不新增转译调用、不新增第二写口——既有
+    ``covert_exec_selections`` 里的查案项按新形状被读、被算、被记。
     """
     db, state, _ = game
     name = _minister(db)
@@ -1204,62 +1262,64 @@ def test_4a_declaration_routes_to_per_fact_accounting_and_spoliation(game):
         source=name, target=target, event_kind="把柄",
         context="第二条罪证", origin="test:1896-e2e", evidence=True,
     )
-    keys = live_investigation_fact_keys(db, target)
-    assert str(edge_id) in keys
+    assert str(edge_id) in live_investigation_fact_keys(db, target)
     oid = _issue(
         db, state, name, "查核两罪", "查核两罪",
         months=2, target=1, kind="查核", axes=["既得利益"],
         investigation_target=target,
     )
     did = int(db.get_dossier_for_secret_order(oid)["id"])
-    difficulty = investigation_fact_difficulty(
-        db, target=target, fact_key=target, investigator=name,
-    )
-    state.turn += 1
-    db.save_state(state)
     informer = _relation_informer(db, name, target)
-    # 4a 产物形状：深挖一条 + 毁掉另一条
+    edge_difficulty_before = investigation_fact_difficulty(
+        db, target=target, fact_key=str(edge_id), investigator=name,
+    )
+
+    # 4a 产物形状：查法 + 真实递话 + 深挖一条 + 知情后毁另一条 + 压案
     selection = {
         "order_id": oid,
         "effort": 1.0,
         "fact_key": target,
-        "spoliation": {
-            "effect": "harder", "fact_key": str(edge_id),
-            "knowledge_source": informer,
-        },
+        "method": "访查旧账",
+        "tip_off": {"source": informer},
+        "spoliation": {"effect": "harder", "fact_key": str(edge_id)},
+        "suppression": {"form": "托人说项"},
         "note": "臣已查得实据",
     }
-    apply_monthly_covert_actual_progress(
-        db, state, selections=[selection], commit=True,
+    _next_month(db, state)
+    chain = _run_supply_4a(db, state, [selection])
+    assert chain.get("covert_progress_done") is True
+    assert chain.get("secret_orders_supply_invalid") is not True
+
+    # 声明落账：传话、查法、压案都是账上事实（P1 全量落库）
+    payload = json.loads(db.get_dossier_for_secret_order(oid)["payload_json"])
+    assert payload[INVESTIGATION_TIPS_KEY][-1]["source"] == informer
+    acts = payload[INVESTIGATION_ACTS_KEY][-1]
+    assert acts["method"] == "访查旧账"
+    assert acts["suppression"] == {"form": "托人说项"}
+
+    # 深挖那条按其自身难度定去留（无月度门槛），毁证那条可查性被抬高
+    lane = _lanes(db, oid)[target]
+    assert lane["effort"] > 0.0
+    assert lane["mastered"] is (
+        lane["effort"] >= investigation_fact_difficulty(
+            db, target=target, fact_key=target, investigator=name,
+        )
     )
-    # 首月实投受引擎硬顶，尚不足坐实（最低在查月数亦未满）
-    assert investigation_lane_actual_units(db, did) == 0.0
-    state.turn += 1
-    db.save_state(state)
-    apply_monthly_covert_actual_progress(
-        db, state, selections=[selection], commit=True,
-    )
-    # 次月补足 → 深挖那条已掌握
-    assert investigation_lane_actual_units(db, did) == 1.0
-    # 毁证那条 → 可查性被抬高（不再只是边事实的基准档），但真相底不动、也未查获
-    harder = investigation_fact_difficulty(
+    assert investigation_fact_difficulty(
         db, target=target, fact_key=str(edge_id), investigator=name,
-    )
-    assert harder > _FACT_DIFFICULTY_EVIDENCE_EDGE
+    ) > edge_difficulty_before
     assert str(edge_id) in live_investigation_fact_keys(db, target)
-    # 实况轨逐月各落一笔（幂等键 dossier+turn），查获数取自 lane 账非月进度和
     rows = db.list_dossier_actual_progress(did)
-    assert len(rows) == 2
-    assert rows[-1]["units"] == 1.0
-    # 掌握不等于自动清算
-    assert read_substantiated_legal_reason_code(db, target, target) == ""
+    assert len(rows) == 1
+    assert rows[-1]["units"] == investigation_lane_actual_units(db, did)
+    # 掌握不等于自动清算：lane 上不再有依律/已清算字段
+    assert set(lane) == {"fact_key", "effort", "difficulty", "months", "mastered"}
 
 
 def _dig_months(db, state, oid, fact_key, intensity=1.0, months=1):
-    """经真实 4a 入口连推数月（逐月推进 turn，落一条 selections）。"""
+    """逐月推进 turn 并经真实 4a 入口落一条声明（供结算类用例连推数月）。"""
     for _ in range(int(months)):
-        state.turn += 1
-        db.save_state(state)
+        _next_month(db, state)
         apply_monthly_covert_actual_progress(
             db, state,
             selections=[{"order_id": oid, "fact_key": fact_key, "effort": intensity}],
@@ -1272,12 +1332,11 @@ def _lanes(db, oid):
     return {r["fact_key"]: r for r in payload[FACT_LANES_KEY]}
 
 
-def test_absurd_declared_effort_cannot_master_in_one_month(game):
-    """#1896 修判官 finding 1：4a 声明的 effort 是无上限裸数 → 当月坐实任意罪证。
+def test_deep_dig_lands_through_month_chain_entry(game):
+    """#1896 贯穿：4a 声明经真实月链接缝落账，实投达该条难度即记已掌握。
 
-    人物只声明 0..1 的**强度**（人心的选择），本月实投由引擎按其真实状态折算并
-    硬顶；且坐实须该条已在查满最低月数。故模型写 effort=100 也不能一月坐实。
-    经真实入口（4a selections → apply_monthly_covert_actual_progress）断言。
+    取代上一版两个反设门槛的用例：既不锁单月硬顶，也不锁最低在查月数 floor
+    （ADR 0098 后出修订已把两者退役）。此处只断言人物当月真实声明的后果。
     """
     db, state, _ = game
     name = _minister(db)
@@ -1291,100 +1350,86 @@ def test_absurd_declared_effort_cannot_master_in_one_month(game):
     _set_axes(db, name, loyalty=90, identity=30)
     key = live_investigation_fact_keys(db, target)[0]
     oid = _issue(
-        db, state, name, "查核", "查核",
-        months=6, target=1, kind="查核", axes=["既得利益"],
-        investigation_target=target,
+        db, state, name, "查核", "查核", months=6, target=1,
+        kind="查核", axes=["既得利益"], investigation_target=target,
     )
     did = int(db.get_dossier_for_secret_order(oid)["id"])
-
-    # 模型把 effort 填到荒谬的 100
-    state.turn += 1
-    db.save_state(state)
-    out = apply_monthly_covert_actual_progress(
-        db, state,
-        selections=[{"order_id": oid, "fact_key": key, "effort": 100}],
-        commit=True,
-    )
-    row = next(r for r in out if r["order_id"] == oid)
-    # 声明被 clamp 成强度 1；实投由引擎核出且有硬顶，不等于 100
-    assert row["effort_applied"] <= _MONTHLY_EFFORT_CAP
-    assert row["effort_applied"] < 100.0
-    # 且因最低在查月数未满，首月不得坐实
-    assert investigation_lane_actual_units(db, did) == 0.0
-    payload = json.loads(db.get_dossier_for_secret_order(oid)["payload_json"])
-    lanes = {r["fact_key"]: r for r in payload[FACT_LANES_KEY]}
-    assert lanes[key]["mastered"] is False
-    assert lanes[key]["months"] == 1
-
-    # 连续多月满强度深挖：逐月累计，但受硬顶约束，不会一月跳完
     difficulty = investigation_fact_difficulty(
         db, target=target, fact_key=key, investigator=name,
     )
-    months_needed = 0
-    for _ in range(12):
-        if investigation_lane_actual_units(db, did) >= 1.0:
-            break
-        state.turn += 1
-        db.save_state(state)
-        apply_monthly_covert_actual_progress(
-            db, state,
-            selections=[{"order_id": oid, "fact_key": key, "effort": 1.0}],
-            commit=True,
-        )
-        months_needed += 1
-    assert investigation_lane_actual_units(db, did) == 1.0
-    payload = json.loads(db.get_dossier_for_secret_order(oid)["payload_json"])
-    lanes = {r["fact_key"]: r for r in payload[FACT_LANES_KEY]}
-    assert lanes[key]["effort"] >= difficulty
-    # 首月那句 effort=100 已在案上，故总在查月数 = 1 + 循环月数，且已满 floor
-    assert lanes[key]["months"] == months_needed + 1
-    assert lanes[key]["months"] >= 2
+
+    # 模型把 effort 填到荒谬的 100 → 引擎只吃强度，实投由人物处境折算
+    _next_month(db, state)
+    chain = _run_supply_4a(
+        db, state, [{"order_id": oid, "fact_key": key, "effort": 100}],
+    )
+    assert chain.get("covert_progress_done") is True
+    assert chain.get("secret_orders_supply_invalid") is not True
+    lane = _lanes(db, oid)[key]
+    capacity = investigation_monthly_capacity(db, name, dossier_id=did)
+    assert lane["effort"] == pytest.approx(capacity)
+    assert lane["mastered"] is (capacity >= difficulty)
+    assert investigation_lane_actual_units(db, did) == float(lane["mastered"])
+
+    # 敷衍（显式 0）下月零投入：不增投入、不重复计数
+    _next_month(db, state)
+    _run_supply_4a(
+        db, state, [{"order_id": oid, "fact_key": key, "effort": 0.0}],
+    )
+    assert _lanes(db, oid)[key]["effort"] == lane["effort"]
+
+    # 未到差（人在途中）→ 本月查不动当地罪证，即便声明满强度
+    db.conn.execute(
+        "UPDATE characters SET transit_to='yunnan', transit_distance_remaining=3.5 "
+        "WHERE name=?",
+        (name,),
+    )
+    db.conn.commit()
+    before = investigation_lane_actual_units(db, did)
+    _next_month(db, state)
+    _run_supply_4a(
+        db, state, [{"order_id": oid, "fact_key": key, "effort": 1.0}],
+    )
+    assert _lanes(db, oid)[key]["effort"] == lane["effort"]
+    assert investigation_lane_actual_units(db, did) == before
 
 
-def test_capacity_bounds_effort_by_ability_presence_and_bandwidth(game):
-    """#1896 修判官 finding 1：实投按承办人真实状态折算（能力／在途／0092 带宽）。"""
+def test_capacity_bounds_effort_by_ability_presence_and_open_errands(game):
+    """#1896：实投按承办人真实处境折算（能力／到差／0092 owner 未结差务带宽）。"""
     db, state, _ = game
     name = _minister(db)
-    # 强能吏、在差上、无其它在办差务
+    # 强能吏、在差上
     db.conn.execute(
         "UPDATE characters SET ability=88, transit_to='' WHERE name=?", (name,),
     )
     db.conn.commit()
     free = investigation_monthly_capacity(db, name)
     assert free > 0.0
-    # 同样的强度，在途未到差 → 打折
+    # 在途未到差 → 不是打折，是本月查不动（已准设计「办案人得身在当地」）
     db.conn.execute(
         "UPDATE characters SET transit_to='yunnan' WHERE name=?", (name,),
     )
     db.conn.commit()
-    traveling = investigation_monthly_capacity(db, name)
-    assert traveling < free
+    assert investigation_monthly_capacity(db, name) == _CAPACITY_MIN
     db.conn.execute("UPDATE characters SET transit_to='' WHERE name=?", (name,))
     # 庸人 → 更低
     db.conn.execute("UPDATE characters SET ability=30 WHERE name=?", (name,))
     db.conn.commit()
-    weak = investigation_monthly_capacity(db, name)
-    assert weak < free
-    # 带宽：手上未结差务越多，可分的越少（0092 带宽①）
+    assert investigation_monthly_capacity(db, name) < free
+    # 带宽：owner 绑定的未结差务（普通交办案卷也算，不只密令）越多越少
     db.conn.execute("UPDATE characters SET ability=88 WHERE name=?", (name,))
     db.conn.commit()
     before = investigation_monthly_capacity(db, name)
-    for _ in range(2):
-        _issue(db, state, name, "另案", "另案", months=6, target=1)
+    for title in ("另案一", "另案二", "另案三"):
+        _issue(db, state, name, title, title, months=6, target=1)
     db.conn.commit()
     loaded = investigation_monthly_capacity(db, name)
     assert loaded < before
-    # 恒在引擎边界内，且与任何模型输入无关
     assert _CAPACITY_MIN <= loaded <= _CAPACITY_MAX
 
 
-def test_deep_dig_and_perfunctory_differ_but_are_bounded(game):
-    """#1896：深挖与敷衍产生不同实投，但两者都被引擎 clamp 在硬顶之下。
-
-    三个案各查一个不同对象，同月同承办人，唯一差别是声明强度——差异只能来自
-    声明本身，而实投一律受引擎硬顶约束。此处直接打引擎口（clamp 就在这一层）；
-    经 4a 入口的端到端断言见 test_absurd_declared_effort_cannot_master_in_one_month。
-    """
+def test_deep_dig_and_perfunctory_differ_but_stay_within_capacity(game):
+    """#1896：深挖与敷衍产生不同实投，差异只能来自人物自己的声明。"""
     db, state, _ = game
     name = _minister(db)
     targets = [
@@ -1395,24 +1440,275 @@ def test_deep_dig_and_perfunctory_differ_but_are_bounded(game):
         if live_investigation_fact_keys(db, row["name"])
     ][:3]
     _set_axes(db, name, loyalty=90, identity=30)
-    seen = {}
-    for target, intensity in zip(targets, (0.0, 1.0, 100.0)):
+    cases = []
+    for target in targets:
         key = live_investigation_fact_keys(db, target)[0]
         oid = _issue(
             db, state, name, "查核", "查核", months=6, target=1,
             kind="查核", axes=["既得利益"], investigation_target=target,
         )
-        did = int(db.get_dossier_for_secret_order(oid)["id"])
+        cases.append((target, key, oid))
+    seen = {}
+    for (target, key, oid), intensity in zip(cases, (0.0, 1.0, 100.0)):
         apply_investigation_monthly_effort(
-            db, did, target, name, fact_key=key, intensity=intensity, commit=True,
+            db, int(db.get_dossier_for_secret_order(oid)["id"]), target, name,
+            fact_key=key, intensity=intensity, commit=True,
         )
         seen[intensity] = float(_lanes(db, oid)[key]["effort"])
 
     idle, deep, over = seen[0.0], seen[1.0], seen[100.0]
     assert idle == 0.0                    # 敷衍／停办＝本月零投入
     assert deep > idle                    # 深挖确实多下了功夫
-    assert over == deep                    # 超范围声明被 clamp，与满强度无异
-    assert 0.0 < deep <= _MONTHLY_EFFORT_CAP   # 且都在引擎硬顶之下
+    assert over == deep                   # 超范围声明被 clamp，与满强度无异
+    assert 0.0 < deep <= _CAPACITY_MAX    # 上限只由人物真实处境给，不由月闸给
+
+
+def test_invalid_investigation_declaration_is_rejected_not_zero_effort(game):
+    """#1896：缺 effort／effort 非数字／只给旧执行态＝无效声明，不是合法零投入。
+
+    拒收且不写实况行；合法零投入只有一种写法：显式 effort: 0。
+    """
+    db, state, _ = game
+    name = _minister(db)
+    target = next(
+        row["name"] for row in db.conn.execute(
+            "SELECT name FROM characters WHERE status='active' AND name<>? ORDER BY name",
+            (name,),
+        ).fetchall()
+        if live_investigation_fact_keys(db, row["name"])
+    )
+    _set_axes(db, name, loyalty=90, identity=30)
+    key = live_investigation_fact_keys(db, target)[0]
+    oid = _issue(
+        db, state, name, "查核", "查核", months=6, target=1,
+        kind="查核", axes=["既得利益"], investigation_target=target,
+    )
+    did = int(db.get_dossier_for_secret_order(oid)["id"])
+    _next_month(db, state)
+
+    for bad in ({}, {"effort": "尽力"}, {"fidelity": "忠实", "fact_key": key}):
+        out = apply_monthly_covert_actual_progress(
+            db, state, selections=[{"order_id": oid, **bad}], commit=True,
+        )
+        row = next(r for r in out if r["order_id"] == oid)
+        assert row["rejected"] is True
+        assert row["invalid"] is True
+        assert row["category"] == "invalid_enum"
+        assert db.list_dossier_actual_progress(did) == []
+        assert _lanes(db, oid)[key]["effort"] == 0.0
+
+    # 合法零投入：显式 0 → 正常落账、无查获
+    out = apply_monthly_covert_actual_progress(
+        db, state, selections=[{"order_id": oid, "effort": 0.0}], commit=True,
+    )
+    row = next(r for r in out if r["order_id"] == oid)
+    assert "rejected" not in row
+    assert row["units"] == 0.0
+    assert len(db.list_dossier_actual_progress(did)) == 1
+
+
+def test_merged_clue_assists_the_fact_it_points_at(game):
+    """#1896：汇案的真实线索助它所指的实证，一次性消费；指向不存在的罪则丢弃。"""
+    db, state, _ = game
+    name = _minister(db)
+    target = db.conn.execute(
+        "SELECT name FROM characters WHERE name<>? AND status='active' LIMIT 1",
+        (name,),
+    ).fetchone()["name"]
+    _set_axes(db, name, loyalty=90, identity=30)
+    db.conn.execute("UPDATE characters SET seed_guilt=? WHERE name=?", ("侵冒", target))
+    db.conn.commit()
+    edge_id = db.record_relation_edge_event(
+        source=name, target=target, event_kind="把柄",
+        context="另指一条", origin="test:1896-clue", evidence=True,
+    )
+    oid = _issue(
+        db, state, name, "查核", "查核", months=6, target=1,
+        kind="查核", axes=["既得利益"], investigation_target=target,
+    )
+    did = int(db.get_dossier_for_secret_order(oid)["id"])
+
+    # 另一来源就同一目标再下一条密令 → 汇案，并带线索指针
+    merged = db.create_secret_order(
+        state, name, "并案线索", "有人告发一端",
+        [], deadline_months=3,
+        covert_task={
+            "kind": "查核", "axes": ["既得利益"], "direction": 1,
+            "investigation_target": target, "investigation_fact": str(edge_id),
+            "delivery": {
+                "target_units": 1.0, "effect_sign": 1, "investigation_target": target,
+                "investigation_fact": str(edge_id),
+            },
+        },
+    )
+    assert merged == oid  # 同目标汇案，不另开
+    assert investigation_clue_records(db, did)[-1]["fact_key"] == str(edge_id)
+
+    _next_month(db, state)
+    _run_supply_4a(db, state, [{"order_id": oid, "fact_key": target, "effort": 0.0}])
+    lanes = _lanes(db, oid)
+    assert lanes[str(edge_id)]["effort"] > 0.0      # 线索助了它所指的那条
+    assert lanes[target]["effort"] == 0.0           # 没助别的罪
+    assert investigation_clue_records(db, did)[-1]["credited"] is True
+
+    # 同一线索不再二次消费
+    consumed = float(lanes[str(edge_id)]["effort"])
+    _next_month(db, state)
+    _run_supply_4a(db, state, [{"order_id": oid, "fact_key": target, "effort": 0.0}])
+    assert float(_lanes(db, oid)[str(edge_id)]["effort"]) == consumed
+
+    # 指向不存在的罪 → 确定性丢弃，不造罪
+    db.conn.execute(
+        "UPDATE decree_dossiers SET payload_json=json_set(payload_json, "
+        "'$.fact_lanes[0].mastered', 0) WHERE id=?",
+        (did,),
+    )
+    db.conn.execute(
+        "UPDATE decree_dossiers SET payload_json=json_set(payload_json, "
+        "'$.fact_lanes[0].effort', 0) WHERE id=?",
+        (did,),
+    )
+    db.conn.commit()
+    bogus = db.create_secret_order(
+        state, name, "并案乱指", "指了一条不存在的罪",
+        [], deadline_months=3,
+        covert_task={
+            "kind": "查核", "axes": ["既得利益"], "direction": 1,
+            "investigation_target": target, "investigation_fact": "查无此证",
+            "delivery": {
+                "target_units": 1.0, "effect_sign": 1, "investigation_target": target,
+                "investigation_fact": "查无此证",
+            },
+        },
+    )
+    assert bogus == oid
+    _next_month(db, state)
+    _run_supply_4a(db, state, [{"order_id": oid, "fact_key": target, "effort": 0.0}])
+    assert investigation_clue_records(db, did)[-1]["dropped_fact_key"] == "查无此证"
+    assert "查无此证" not in _lanes(db, oid)
+
+
+def test_difficulty_rises_with_concealment_and_protection(game):
+    """#1896：难度读目标遮掩与庇护关系——庇护边不是证据边，也不能互相顶替。"""
+    db, state, _ = game
+    name = _minister(db)
+    target = db.conn.execute(
+        "SELECT name FROM characters WHERE name<>? AND status='active' LIMIT 1",
+        (name,),
+    ).fetchall()[0]["name"]
+    protector = db.conn.execute(
+        "SELECT name FROM characters WHERE name NOT IN (?,?) AND status='active' LIMIT 1",
+        (name, target),
+    ).fetchall()[0]["name"]
+    _set_axes(db, name, loyalty=90, identity=30)
+    db.conn.execute("UPDATE characters SET seed_guilt=? WHERE name=?", ("侵冒", target))
+    db.conn.execute("UPDATE characters SET identity=20 WHERE name=?", (target,))
+    db.conn.commit()
+    base = investigation_fact_difficulty(
+        db, target=target, fact_key=target, investigator=name,
+    )
+
+    # 真实非证据庇护边（站台）→ 难度升，且与同数量的证据边不是同一因子
+    peer = db.conn.execute(
+        "SELECT name FROM characters WHERE name NOT IN (?,?,?) AND status='active' LIMIT 1",
+        (name, target, protector),
+    ).fetchall()[0]["name"]
+    db.conn.execute("UPDATE characters SET seed_guilt=? WHERE name=?", ("侵冒", peer))
+    db.conn.execute("UPDATE characters SET identity=20 WHERE name=?", (peer,))
+    db.conn.commit()
+    peer_base = investigation_fact_difficulty(
+        db, target=peer, fact_key=peer, investigator=name,
+    )
+    db.record_relation_edge_event(
+        source=protector, target=target, event_kind="站台",
+        context="护短", origin="test:1896-protect", evidence=False,
+    )
+    db.record_relation_edge_event(
+        source=protector, target=peer, event_kind="把柄",
+        context="一条把柄", origin="test:1896-evidence", evidence=True,
+    )
+    db.conn.commit()
+    protected = investigation_fact_difficulty(
+        db, target=target, fact_key=target, investigator=name,
+    )
+    levered = investigation_fact_difficulty(
+        db, target=peer, fact_key=peer, investigator=name,
+    )
+    assert protected > base
+    assert levered > peer_base
+    # 庇护边按人计权、且权重高于把柄边：庇护不是"证据边多"的另一种写法
+    assert (protected / base) > (levered / peer_base)
+
+    # 目标自己更能掩饰 → 更难查
+    db.conn.execute("UPDATE characters SET identity=90 WHERE name=?", (target,))
+    db.conn.commit()
+    assert investigation_fact_difficulty(
+        db, target=target, fact_key=target, investigator=name,
+    ) > base
+
+
+def test_supply_feed_carries_identity_materials_for_both_sides(game):
+    """#1896：4a 供料按身份接入办案人与被查者的可及材料（#1814/ADR 0034、0155）。"""
+    from ming_sim.month_chain import build_secret_orders_supply_feed
+
+    db, state, _ = game
+    name = _minister(db)
+    target = next(
+        row["name"] for row in db.conn.execute(
+            "SELECT name FROM characters WHERE status='active' AND name<>? ORDER BY name",
+            (name,),
+        ).fetchall()
+        if live_investigation_fact_keys(db, row["name"])
+    )
+    _set_axes(db, name, loyalty=90, identity=30)
+    oid = _issue(
+        db, state, name, "密查有罪者", "密查有罪者",
+        months=3, target=1, kind="查核", axes=["既得利益"],
+        investigation_target=target,
+    )
+    did = int(db.get_dossier_for_secret_order(oid)["id"])
+    informer = _relation_informer(db, name, target)
+    _declare_tip(db, state, oid, informer)
+    _next_month(db, state)
+    _run_supply_4a(db, state, [{
+        "order_id": oid, "effort": 0.0, "fact_key": target,
+        "method": "访查旧账", "tip_off": {"source": informer},
+    }])
+
+    feed = build_secret_orders_supply_feed(db, state, {})
+    order = next(o for o in feed["active_secret_orders"] if int(o["id"]) == oid)
+    assert order["investigator_identity_materials"]["name"] == name
+    assert order["investigation_target_identity_materials"]["name"] == target
+    assert order["investigation_target_identity_materials"]["materials"]
+    # 已声明的真实行动与传话回喂给下月，人物据实接着办
+    assert order["investigation_tips"][-1]["source"] == informer
+    assert order["investigation_actions"][-1]["method"] == "访查旧账"
+    assert did
+
+
+def test_supply_feed_identity_material_is_empty_for_topic_target(game):
+    """#1896：查案对象不是真人物时，身份材料如实留空——不编造、不炸掉整月供料。"""
+    from ming_sim.month_chain import build_secret_orders_supply_feed
+
+    db, state, _ = game
+    name = _minister(db)
+    topic = "辽饷转运及押运相关人员"
+    _issue(
+        db, state, name, "查核题名", "查核题名",
+        months=3, target=1, kind="查核", axes=["既得利益"],
+        investigation_target=topic,
+    )
+    _next_month(db, state)
+    feed = build_secret_orders_supply_feed(db, state, {})
+    order = next(
+        o for o in feed["active_secret_orders"]
+        if o.get("investigation_target") == topic
+    )
+    assert order["investigation_facts"] == []
+    assert order["investigation_target_identity_materials"] == {
+        "name": topic, "materials": "",
+    }
+    assert order["investigator_identity_materials"]["name"] == name
 
 
 def test_supply_feed_carries_per_fact_investigation_materials(game):
@@ -1501,17 +1797,23 @@ def test_spoliated_fact_reported_as_unreachable_in_feed(game):
     _set_axes(db, name, loyalty=90, identity=30)
     key = live_investigation_fact_keys(db, target)[0]
     informer = _relation_informer(db, name, target)
+    spoiler = _issue(
+        db, state, name, "先毁证", "先毁证",
+        months=3, target=1, kind="查核", axes=["既得利益"],
+        investigation_target=target,
+    )
+    spoiler_did = int(db.get_dossier_for_secret_order(spoiler)["id"])
+    _declare_tip(db, state, spoiler, informer)
     apply_investigation_spoliation(
         db, target=target, fact_key=key, effect="gone",
-        knowledge_source=informer, commit=True,
+        knowledge_source=informer, dossier_id=spoiler_did, commit=True,
     )
     oid = _issue(
         db, state, name, "密查被毁证者", "密查被毁证者",
         months=3, target=1, kind="查核", axes=["既得利益"],
         investigation_target=target,
     )
-    state.turn += 1
-    db.save_state(state)
+    _next_month(db, state)
     feed = build_secret_orders_supply_feed(db, state, {})
     order = next(o for o in feed["active_secret_orders"] if int(o["id"]) == oid)
     fact = next(f for f in order["investigation_facts"] if f["fact_key"] == key)
@@ -1843,10 +2145,11 @@ def test_topic_investigation_backlash_fails_without_world_package(game):
     state.turn += 1
     db.save_state(state)
     out = apply_monthly_covert_actual_progress(
-        db, state, selections=[{"order_id": oid, "fidelity": "反噬"}], commit=True,
+        db, state, selections=[{"order_id": oid, "effort": 1.0}], commit=True,
     )
     row = next(r for r in out if r["order_id"] == oid)
     assert row["units"] == 0.0
+    assert row["effort_applied"] == 0.0  # 题名式对象无实有罪证 → 无从下手
     after_loyalty = int(db.conn.execute(
         "SELECT loyalty FROM characters WHERE name=?", (name,)
     ).fetchone()["loyalty"])

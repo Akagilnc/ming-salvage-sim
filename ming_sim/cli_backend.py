@@ -4240,6 +4240,7 @@ def _extract_secret_order(
             field=obj.get("地区字段"),
             region_target=obj.get("地区目标值"),
             investigation_target=obj.get("调查对象"),
+            investigation_fact=obj.get("调查事实"),
             effect_sign=obj.get("效果符号"),
         )
     except CovertContractError as exc:

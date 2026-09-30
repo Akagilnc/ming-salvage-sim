@@ -18,7 +18,7 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from ming_sim.constants import ECONOMY_ACCOUNTS, REGION_FIELD_ALIASES
 from ming_sim.materials import secret_order_origin
-from ming_sim.person_archive_contract import PERSON_ACTIONS, PERSON_LEGAL_REASON_CODES
+from ming_sim.person_archive_contract import PERSON_ACTIONS
 from ming_sim.value_matrix import (
     normalize_axes,
     normalize_direction,
@@ -39,7 +39,13 @@ CONTRACT_VERSION = 1
 CANONICAL_UNITS = ("万两", "人犯", "万亩")
 FACT_LANES_KEY = "fact_lanes"
 INVESTIGATION_PROVENANCE_KEY = "investigation_provenance"
-DEFAULT_SUBSTANTIATION_REASON = "依律"
+# #1896 4a 声明的领域落账（同一案卷 payload，无第二写口）：
+#   tips   真实通风报信声明（递话人 + 回合）——知情唯一来源
+#   clues  汇案并入的真实线索（各源助对应实证，消费一次）
+#   acts   查法／压案等人物当月真实行动声明（落账事实，不代人物决定后果）
+INVESTIGATION_TIPS_KEY = "investigation_tips"
+INVESTIGATION_CLUES_KEY = "investigation_clues"
+INVESTIGATION_ACTS_KEY = "investigation_acts"
 
 # #1896 逐证难度：首版常数随 playtest（同 0011-4 D4-6 先例），本 ADR 不发明精确值。
 # 真相底两类事实的基准难度不同：seed_guilt 是一条待坐实的罪谱，把柄边是已落库的
@@ -48,27 +54,37 @@ DEFAULT_SUBSTANTIATION_REASON = "依律"
 _FACT_DIFFICULTY_SEED_GUILT = 1.0
 _FACT_DIFFICULTY_EVIDENCE_EDGE = 1.4
 _SEVERITY_MULTIPLIER = {"轻": 0.8, "中": 1.0, "重": 1.3}
+# 关系网读全部真实边（0081 有向边）：庇护类边（站台/撑腰/恩义/协作/荐引…）
+# 与把柄类边分别计权——掩护来自"有人替他挡"，不来自"罪证条数"（J6）。
 _NETWORK_PER_EDGE = 0.05
 _NETWORK_EDGE_CAP = 10
+_PROTECTIVE_EDGE_KINDS = frozenset({"站台", "撑腰", "恩义", "协作", "荐引"})
+_PROTECTION_PER_EDGE = 0.08
+_PROTECTION_EDGE_CAP = 6
+# 目标自身遮掩：无 per-character 阴谋底座（ADR 0098 所指字段未落地），故按
+# characters.identity（身份掩饰）在参考值附近归一，不凭空新增数值轴。
+_CONCEALMENT_IDENTITY_REFERENCE = 50.0
+_CONCEALMENT_IDENTITY_CAP = 40.0
 _TRAVEL_PER_UNIT = 0.08
 _TRAVEL_TIME_CAP = 12.0
 _ABILITY_REFERENCE = 60.0
 _SPOILED_HARDER_MULTIPLIER = 1.5
 _MIN_DIFFICULTY = 0.1
 
-# #1896 月度投入的引擎侧边界：人物只声明"下了多大劲"（0..1 的强度，人心的选择），
-# 引擎按其真实状态折算本月实投并 clamp——P6「代码只做供事实、clamp、记账」。
-# 模型不得直采一个裸浮点当月坐实任意罪证（深挖也不是无限深挖）。
-_MONTHLY_EFFORT_CAP = 0.6
-_CAPACITY_MIN = 0.3
+# #1896 月度投入：人物只声明"下了多大劲"（0..1 的强度，人心的选择），引擎按其
+# 真实状态折算本月实投。**不设单月硬顶、不设最低在查月数 floor**——那是 ADR 0098
+# 后出修订明文退役的旧轨门槛（#1896「旧单月加成上限、最低在查月数 floor 的退役」）；
+# 上限由人物真实处境给出：未到差即零、能力/带宽自然封顶，不另加人为月闸。
+# 强度本身 clamp 到 0..1，故单月坐实仍只取决于"当月实投 ≥ 该条难度"。
+_CAPACITY_MIN = 0.0
 _CAPACITY_MAX = 1.2
 _ABILITY_CAPACITY_WEIGHT = 0.5
 _ABILITY_CAPACITY_REFERENCE = 60.0
-_TRANSIT_CAPACITY_PENALTY = 0.5   # 在途未到差
 _BANDWIDTH_PER_ERRAND = 0.15      # 0092 带宽①：未结差务越多，本案可分到的越少
 _BANDWIDTH_ERRAND_CAP = 3
-# 坐实最低在查月数：堵"一月速坐实"，并保住 0100 毁证／惊蛇窗口（0098 轨级口径 iii）。
-_MIN_MONTHS_UNDER_INVESTIGATION = 2
+# 真实线索（各源汇案）对所指实证的助力：只助它所指的那一条，一次性消费。
+# 首版随 playtest（同逐证难度常数口径），不给整案加成。
+_CLUE_ASSIST_EFFORT = 0.3
 
 _DISTANCE_MATRIX: Any = None
 
@@ -235,6 +251,12 @@ def covert_task_from_payload(payload: object) -> Optional[Dict[str, object]]:
         or payload.get("investigation_target")
         or ""
     ).strip()
+    investigation_fact = str(
+        delivery.get("investigation_fact")
+        or source.get("investigation_fact")
+        or payload.get("investigation_fact")
+        or ""
+    ).strip()
     if not kind and not unit and target is None and not normalize_axes(axes) and not investigation_target:
         return None
     out: Dict[str, object] = {}
@@ -270,6 +292,8 @@ def covert_task_from_payload(payload: object) -> Optional[Dict[str, object]]:
         out["person_action"] = person_action
     if investigation_target:
         out["investigation_target"] = investigation_target
+    if investigation_fact:
+        out["investigation_fact"] = investigation_fact
     return out or None
 
 
@@ -328,6 +352,7 @@ def build_covert_task_contract(
     region_target: object = None,
     person_action: object = None,
     investigation_target: object = None,
+    investigation_fact: object = None,
 ) -> Dict[str, object]:
     """确认闸一次生成可被 canonical applier 接受的 typed contract。缺字段响亮失败。"""
     del tags, deadline_span, due_turn
@@ -366,6 +391,8 @@ def build_covert_task_contract(
             person_action = extracted.get("person_action")
         if investigation_target is None:
             investigation_target = extracted.get("investigation_target")
+        if investigation_fact is None:
+            investigation_fact = extracted.get("investigation_fact")
     resolved_kind = str(kind or "").strip()
     if not resolved_kind:
         raise CovertContractError("密令确认缺少差务类型")
@@ -387,7 +414,7 @@ def build_covert_task_contract(
             "canonical_fields": [],
             "investigation_target": inv_target,
         }
-        return {
+        contract = {
             "version": CONTRACT_VERSION,
             "action_type": str(action_type or "secret_order"),
             "kind": resolved_kind,
@@ -396,6 +423,12 @@ def build_covert_task_contract(
             "investigation_target": inv_target,
             "delivery": delivery,
         }
+        inv_fact = str(investigation_fact or "").strip()
+        if inv_fact:
+            # 线索所指事实：汇案时按它把真实线索绑到对应实证（J9）。
+            contract["investigation_fact"] = inv_fact
+            delivery["investigation_fact"] = inv_fact
+        return contract
     unit, target = canonicalize_delivery_unit(delivery_unit, delivery_target_units)
     delivery: Dict[str, object] = {
         "unit": unit,
@@ -787,6 +820,11 @@ def _seed_guilt_severity(db: Any, target: str) -> str:
 
 
 def _lanes_from_payload(payload: Mapping[str, object]) -> List[Dict[str, object]]:
+    """lane 集读口：投入累计、逐条难度、已掌握。
+
+    #1896 后不再有 used／reason_code 字段——满阈自动写依律的旧清算轨已退役
+    （ADR 0098 后出修订），掌握证据本身不等于依法清算；去重读口按 mastered 判。
+    """
     raw = payload.get(FACT_LANES_KEY)
     lanes: List[Dict[str, object]] = []
     seen: set[str] = set()
@@ -810,16 +848,12 @@ def _lanes_from_payload(payload: Mapping[str, object]) -> List[Dict[str, object]
                 months = int(item.get("months") or 0)
             except (TypeError, ValueError):
                 months = 0
-            reason = str(item.get("reason_code") or "").strip()
-            legal = reason in PERSON_LEGAL_REASON_CODES
             lanes.append({
                 "fact_key": key,
                 "effort": max(0.0, effort),
                 "difficulty": max(0.0, difficulty),
                 "months": max(0, months),
                 "mastered": bool(item.get("mastered")),
-                "used": bool(item.get("used")) and legal,
-                "reason_code": reason if legal else "",
             })
     return lanes
 
@@ -827,9 +861,7 @@ def _lanes_from_payload(payload: Mapping[str, object]) -> List[Dict[str, object]
 def globally_used_fact_keys(db: Any, *, except_dossier_id: int = 0) -> set[str]:
     """已被别的案查获过的事实键（#1896 同一事实不重复查获）。
 
-    键取"已掌握（mastered）"而非"已清算（used）"：#1896 把满阈自动写依律废了，
-    掌握证据本身不再置 used，若仍按 used 去重，同一事实换个案就能重复查获、
-    重复坐实——那正是本票要堵的漏。
+    键取"已掌握（mastered）"：掌握证据不再置 used，故去重也只看掌握。
     """
     used: set[str] = set()
     rows = db.conn.execute(
@@ -846,7 +878,7 @@ def globally_used_fact_keys(db: Any, *, except_dossier_id: int = 0) -> set[str]:
         if not isinstance(payload, Mapping):
             continue
         for lane in _lanes_from_payload(payload):
-            if lane.get("mastered") or lane.get("used"):
+            if lane.get("mastered"):
                 used.add(str(lane["fact_key"]))
     return used
 
@@ -862,12 +894,25 @@ def _write_fact_lanes(
             "difficulty": float(lane.get("difficulty") or 0.0),
             "months": int(lane.get("months") or 0),
             "mastered": bool(lane.get("mastered")),
-            "used": bool(lane.get("used")),
-            "reason_code": str(lane.get("reason_code") or ""),
         }
         for lane in lanes
     ]
     db.update_decree_dossier_payload(int(dossier_id), payload, commit=commit)
+
+
+def _append_investigation_log(
+    db: Any, dossier_id: int, key: str, entry: Mapping[str, object], *, limit: int = 200,
+) -> None:
+    """把 4a 声明的真实行动／线索追加进案卷 payload（同一写口，无第二轨）。
+
+    只追加已发生的声明事实，不由此派生任何机制后果——人物怎么办归人物（P6）。
+    """
+    payload = _dossier_payload_map(db, dossier_id)
+    raw = payload.get(key)
+    items = list(raw) if isinstance(raw, list) else []
+    items.append(dict(entry))
+    payload[key] = items[-int(limit):]
+    db.update_decree_dossier_payload(int(dossier_id), payload)
 
 
 def investigation_fact_difficulty(
@@ -879,10 +924,12 @@ def investigation_fact_difficulty(
 ) -> float:
     """#1896 逐证难度：引擎从实账核算"这条罪证有多难查"。
 
-    四修正因子（ADR 0098 后出修订口径，全部读既有 substrate，不新立轴）：
+    五修正因子（ADR 0098 后出修订口径，全部读既有 substrate，不新立轴）：
     - 事实分档：seed_guilt 罪谱 vs 已落库 evidence 把柄边（后者更难撬）
     - 罪情轻重：seed_guilt 的 severity 档（越重越难查）
-    - 关系网：目标 evidence 边越多，掩护越厚
+    - 目标遮掩：characters.identity（身份掩饰越强，越难被撬开）
+    - 关系网：目标的 evidence 边（把柄越多越难查）与庇护边（有人替他挡，
+      按对手人数计，不按证据条数）
     - 实际到差行程：承办人当前所在地 → 目标所在地 的烘焙行程时间
 
     毁证（#1896 / ADR 0100 后出修订）按 fact_key 抬难度或直接封死，且真源在
@@ -900,8 +947,37 @@ def investigation_fact_difficulty(
     else:
         difficulty = _FACT_DIFFICULTY_EVIDENCE_EDGE
 
-    edges = db.get_relation_edge_events(person=name, evidence=True)
-    difficulty *= 1.0 + _NETWORK_PER_EDGE * min(len(edges), _NETWORK_EDGE_CAP)
+    # 目标遮掩与关系网掩护（#1896「目标遮掩、关系网」）：全部读真实账——
+    # 0081 有向边事件（庇护类与把柄类分开计权）＋ characters.identity（身份掩饰）。
+    # 边按人去重计（同一对手多条边只算一人），不拿证据条数冒充庇护。
+    protectors: set[str] = set()
+    edges = 0
+    for edge in db.get_relation_edge_events(person=name):
+        other = str(edge["target"]) if str(edge["source"]) == name else str(edge["source"])
+        other = str(other or "").strip()
+        if not other or other == name:
+            continue
+        if str(edge["event_kind"]) in _PROTECTIVE_EDGE_KINDS:
+            protectors.add(other)
+        elif bool(edge.get("evidence")):
+            edges += 1
+    difficulty *= 1.0 + _NETWORK_PER_EDGE * min(edges, _NETWORK_EDGE_CAP)
+    difficulty *= 1.0 + _PROTECTION_PER_EDGE * min(
+        len(protectors), _PROTECTION_EDGE_CAP,
+    )
+    target_row = db.conn.execute(
+        "SELECT identity, location FROM characters WHERE name=?", (name,),
+    ).fetchone()
+    if target_row is not None:
+        try:
+            conceal = float(target_row["identity"])
+        except (TypeError, ValueError):
+            conceal = _CONCEALMENT_IDENTITY_REFERENCE
+        delta = max(
+            -_CONCEALMENT_IDENTITY_CAP,
+            min(_CONCEALMENT_IDENTITY_CAP, conceal - _CONCEALMENT_IDENTITY_REFERENCE),
+        )
+        difficulty *= 1.0 + delta / _CONCEALMENT_IDENTITY_REFERENCE
 
     worker = str(investigator or "").strip()
     if worker:
@@ -911,9 +987,6 @@ def investigation_fact_difficulty(
         ).fetchone()
         if row is not None:
             here = str(row["location"] or "").strip()
-            target_row = db.conn.execute(
-                "SELECT location FROM characters WHERE name=?", (name,),
-            ).fetchone()
             there = str(
                 target_row["location"] if target_row is not None else ""
             ).strip()
@@ -954,11 +1027,13 @@ def investigation_monthly_capacity(
 ) -> float:
     """#1896 承办人本月能投多少查案的力气（引擎按实况折算，不采模型裸数）。
 
-    0092 带宽①「在办差务数×能力」＋实际到差行程：人物只声明"下了多大劲"
+    0092 带宽①「在办差务数×能力」＋实际到差：人物只声明"下了多大劲"
     （0..1 强度，是人心的选择），能投多少由他的真实处境决定——
     - 能力：强能吏跑得动更多（按参考能力归一）
-    - 在途（transit_to 非空）＝人尚未到差，投入打折
-    - 带宽：手上未结差务越多，本案分到的越少
+    - 到差：在途（transit_to 非空）＝人不在差上，本月查不动当地罪证 → 零
+      （已准设计 e6120b66「办案人得身在当地」；不是打折，是没到差就无从查）
+    - 带宽：owner 绑定的未结差务（decree_dossiers 主办案卷，在办态）越多，
+      本案分到的越少——真源是案卷主办人，不是密令表
     返回值恒在 [_CAPACITY_MIN, _CAPACITY_MAX] 内，且不含任何模型输入。
     """
     worker = str(investigator or "").strip()
@@ -967,6 +1042,8 @@ def investigation_monthly_capacity(
     row = db.conn.execute(
         "SELECT ability, transit_to FROM characters WHERE name=?", (worker,),
     ).fetchone()
+    if row is not None and str(row["transit_to"] or "").strip():
+        return _CAPACITY_MIN  # 未到差：无差可查，投入为零
     capacity = 1.0
     if row is not None:
         try:
@@ -977,17 +1054,14 @@ def investigation_monthly_capacity(
             capacity *= 1.0 + _ABILITY_CAPACITY_WEIGHT * (
                 (ability - _ABILITY_CAPACITY_REFERENCE) / _ABILITY_CAPACITY_REFERENCE
             )
-        if str(row["transit_to"] or "").strip():
-            capacity *= _TRANSIT_CAPACITY_PENALTY
-    open_errands = 0
-    for order in db.list_secret_orders(status="active"):
-        if int(order.get("id") or 0) == int(dossier_id or 0):
-            continue
-        if str(order.get("minister_name") or "") == worker:
-            open_errands += 1
-    capacity *= max(
-        _CAPACITY_MIN,
-        1.0 - _BANDWIDTH_PER_ERRAND * min(open_errands, _BANDWIDTH_ERRAND_CAP),
+    open_errands = db.conn.execute(
+        "SELECT COUNT(*) AS n FROM decree_dossiers "
+        "WHERE executor_kind='character' AND executor_id=? "
+        "AND status IN ('promulgated','executing') AND id<>?",
+        (worker, int(dossier_id or 0)),
+    ).fetchone()
+    capacity *= 1.0 - _BANDWIDTH_PER_ERRAND * min(
+        int(open_errands["n"] or 0), _BANDWIDTH_ERRAND_CAP,
     )
     return max(_CAPACITY_MIN, min(_CAPACITY_MAX, float(capacity)))
 
@@ -1020,79 +1094,10 @@ def seed_investigation_fact_lanes(
                 db, target=target, fact_key=key, investigator=investigator,
             ),
             "mastered": False,
-            "used": False,
-            "reason_code": "",
         })
         seen.add(key)
     _write_fact_lanes(db, dossier_id, lanes, commit=commit)
     return lanes
-
-
-def _master_lane(lane: Dict[str, object]) -> None:
-    """记"办案人已掌握此证"。
-
-    #1896：掌握证据 ≠ 已经依法清算 ≠ 自动翻轴。故此处只落 mastered，不再顺手
-    写依律 reason_code／used——清算沿其原有决定走（ADR 0098 后出修订明文）。
-    """
-    lane["mastered"] = True
-
-
-def read_substantiated_legal_reason_code(
-    db: Any, target: str, fact_key: str,
-) -> str:
-    """D4-4 consumption: legal-set reason_code for a substantiated fact lane."""
-    name = str(target or "").strip()
-    key = str(fact_key or "").strip()
-    if not name or not key:
-        return ""
-    rows = db.conn.execute("SELECT id, payload_json FROM decree_dossiers").fetchall()
-    for row in rows:
-        try:
-            payload = json.loads(str(row["payload_json"] or "{}"))
-        except (TypeError, ValueError):
-            continue
-        if not isinstance(payload, Mapping):
-            continue
-        contract = payload.get(CONTRACT_KEY) if isinstance(payload.get(CONTRACT_KEY), Mapping) else {}
-        if _investigation_target_of(contract) != name:
-            continue
-        for lane in _lanes_from_payload(payload):
-            if str(lane["fact_key"]) != key:
-                continue
-            code = str(lane.get("reason_code") or "").strip()
-            if bool(lane.get("mastered")) and code in PERSON_LEGAL_REASON_CODES:
-                return code
-    return ""
-
-
-def mark_investigation_fact_used(
-    db: Any, dossier_id: int, fact_key: str, *, commit: bool = False,
-) -> None:
-    """清算落账：显式依法坐实某条已掌握事实（唯一写 reason_code 的口）。
-
-    #1896 把"满阈自动坐实并固定写依律"废了，故此函数不再被进度推进调用；
-    它只服务后续清算自己的决定，reason_code 由调用方按真实清算给出。
-    """
-    key = str(fact_key)
-    lanes = _lanes_from_payload(_dossier_payload_map(db, dossier_id))
-    found = False
-    for lane in lanes:
-        if str(lane["fact_key"]) == key:
-            lane["reason_code"] = DEFAULT_SUBSTANTIATION_REASON
-            lane["used"] = DEFAULT_SUBSTANTIATION_REASON in PERSON_LEGAL_REASON_CODES
-            found = True
-            break
-    if not found:
-        lane = {
-            "fact_key": key,
-            "effort": 0.0,
-            "difficulty": 0.0,
-            "mastered": True,
-            "used": DEFAULT_SUBSTANTIATION_REASON in PERSON_LEGAL_REASON_CODES,
-            "reason_code": DEFAULT_SUBSTANTIATION_REASON,
-        }
-        lanes.append(lane)
-    _write_fact_lanes(db, dossier_id, lanes, commit=commit)
 
 
 def investigation_lane_actual_units(db: Any, dossier_id: int) -> float:
@@ -1101,6 +1106,70 @@ def investigation_lane_actual_units(db: Any, dossier_id: int) -> float:
         sum(1 for lane in _lanes_from_payload(_dossier_payload_map(db, dossier_id))
             if lane.get("mastered"))
     )
+
+
+def investigation_clue_records(db: Any, dossier_id: int) -> List[Dict[str, object]]:
+    """案卷已并入的真实线索（各源汇案），含是否已被本月核算消费。"""
+    raw = _dossier_payload_map(db, dossier_id).get(INVESTIGATION_CLUES_KEY)
+    return [dict(x) for x in raw if isinstance(x, Mapping)] if isinstance(raw, list) else []
+
+
+def _consume_monthly_clues(
+    db: Any,
+    dossier_id: int,
+    target: str,
+    investigator: str,
+    lanes: List[Dict[str, object]],
+    *,
+    live: set[str],
+    blocked: set[str],
+) -> float:
+    """线索只助其所指实有实证：把并入本案的真实线索按所指 fact_key 记成实投。
+
+    - 指向不存在/已被别案查获的罪 → 确定性丢弃（不造罪、不重复查获）；
+    - 同一线索只消费一次（``credited``），重开重试不双计；
+    - 并入来源不带 fact_key 时，按 ADR 0098 轨级口径确定性兜底：优先 seed_guilt
+      lane，否则取 fact_key 稳定序首条在查 lane——只在既有 lane 内移动，无从造真相；
+    - 线索把该条累计实投推过其难度时，同样按"达到难度即记已掌握"记查获。
+    """
+    by_key = {str(lane["fact_key"]): lane for lane in lanes}
+    available = [
+        key for key, lane in by_key.items()
+        if key in live and key not in blocked and not lane.get("mastered")
+    ]
+    fallback = None
+    if _is_seed_guilt_fact_key(target, target) and target in available:
+        fallback = target
+    elif available:
+        fallback = sorted(available)[0]
+
+    clues = investigation_clue_records(db, dossier_id)
+    if not clues:
+        return 0.0
+    credited = 0.0
+    for clue in clues:
+        if bool(clue.get("credited")):
+            continue
+        key = str(clue.get("fact_key") or "").strip() or (fallback or "")
+        lane = by_key.get(key)
+        if lane is None or key not in live or key in blocked:
+            clue["credited"] = True
+            clue["dropped_fact_key"] = key
+            continue
+        lane["effort"] = float(lane.get("effort") or 0.0) + _CLUE_ASSIST_EFFORT
+        clue["credited"] = True
+        clue["fact_key"] = key
+        credited += _CLUE_ASSIST_EFFORT
+        difficulty = investigation_fact_difficulty(
+            db, target=target, fact_key=key, investigator=investigator,
+        )
+        lane["difficulty"] = difficulty
+        if difficulty != float("inf") and float(lane["effort"]) >= difficulty:
+            lane["mastered"] = True
+    payload = _dossier_payload_map(db, dossier_id)
+    payload[INVESTIGATION_CLUES_KEY] = clues
+    db.update_decree_dossier_payload(int(dossier_id), payload)
+    return credited
 
 
 def apply_investigation_monthly_effort(
@@ -1116,12 +1185,14 @@ def apply_investigation_monthly_effort(
     """#1896 逐证核算：人物声明"下了多大劲"，引擎核出本月实投再记到该条事实上。
 
     与旧轨的分别（ADR 0098 后出修订取代项）：
-    - 投入不是模型直采的裸浮点：声明值只作**强度**（0..1，clamp），本月实投由
-      引擎按承办人真实状态折算（investigation_monthly_capacity：能力／在途／
-      0092 带宽）并硬顶 _MONTHLY_EFFORT_CAP——深挖也不是无限深挖（P6 clamp）；
+    - 声明值只作**强度**（0..1，clamp），本月实投由引擎按承办人真实处境折算
+      （investigation_monthly_capacity：能力／是否到差／0092 未结差务带宽）；
+      **无单月硬顶、无最低在查月数 floor**——两者已随旧轨退役（#1896 明文），
+      人物真下死力当月查出来就是查出来，不另加人为月闸；
     - 每条事实有自己的难度（investigation_fact_difficulty），累计实投达到该条
-      难度、且该条已在查满 _MIN_MONTHS_UNDER_INVESTIGATION 个月，才记 mastered
-      ——既无统一阈值，也不许"一月速坐实"（并保住 0100 毁证／惊蛇窗口）；
+      难度即记 mastered——无统一阈值，也无"一月不许坐实"；
+    - **fact_key 必填**：本月查哪条罪证是人物的选择，代码不代选（CLAUDE.md P6）；
+      未指明即本月无下手处 → 零投入，不自动路由到任何 lane；
     - 敷衍／停办（intensity<=0）就是本月零投入，不产查获、也不改实证；
     - 奏报自称成功不入本函数（P6：呈现层与实况分轨，谎奏不造罪不抹证）。
     """
@@ -1132,27 +1203,20 @@ def apply_investigation_monthly_effort(
         declared = float(intensity or 0.0)
     except (TypeError, ValueError):
         declared = 0.0
-    # clamp：声明只是强度，负归零、超 1 归 1；实投另由引擎按实况折算并硬顶。
     declared = max(0.0, min(1.0, declared))
-    if declared <= 0.0:
-        # 敷衍／停办：确定零投入，不必去算他的带宽与行程。
-        _write_fact_lanes(db, dossier_id, lanes, commit=commit)
-        return {"bound_fact_key": "", "effort_applied": 0.0, "declared_intensity": 0.0,
-                "capacity": 0.0, "mastered": [], "units": 0.0}
     live = set(live_investigation_fact_keys(db, target))
     blocked = globally_used_fact_keys(db, except_dossier_id=int(dossier_id))
     capacity = investigation_monthly_capacity(
         db, investigator, dossier_id=int(dossier_id),
     )
-    amount = min(_MONTHLY_EFFORT_CAP, declared * capacity)
-
-    if not lanes or amount <= 0.0:
-        _write_fact_lanes(db, dossier_id, lanes, commit=commit)
-        return {"bound_fact_key": "", "effort_applied": 0.0, "mastered": [], "units": 0.0}
+    amount = declared * capacity
 
     bound = str(fact_key or "").strip()
     if bound and (bound not in live or bound in blocked):
         # 线索只助其所指实有证据：指向不存在/已被别案查获的事实 → 确定性丢弃。
+        _consume_monthly_clues(
+            db, dossier_id, target, investigator, lanes, live=live, blocked=blocked,
+        )
         _write_fact_lanes(db, dossier_id, lanes, commit=commit)
         return {
             "bound_fact_key": "", "effort_applied": 0.0, "mastered": [],
@@ -1171,60 +1235,69 @@ def apply_investigation_monthly_effort(
                 "bound_fact_key": bound, "effort_applied": 0.0, "mastered": [],
                 "units": investigation_lane_actual_units(db, int(dossier_id)),
             }
-    if not bound:
-        # 未指明事实 → 按 fact_key 稳定序（seed 罪谱优先，边事件 id 升序）取首条
-        # 可查 lane（ADR 0098 确定性兜底路由口径：只在既有 lane 内移动、不造真相）。
-        for lane in lanes:
-            key = str(lane["fact_key"])
-            if key in live and key not in blocked and not lane.get("mastered"):
-                bound = key
-                break
+    if not bound or amount <= 0.0 or not lanes:
+        # 无下手处／敷衍停办／未到差（capacity=0）／空 lane 集：确定零投入。
+        # 真实线索仍各自助它所指的实证（一次性），但代码不替人物挑本月下手的。
+        credited = _consume_monthly_clues(
+            db, dossier_id, target, investigator, lanes, live=live, blocked=blocked,
+        )
+        _write_fact_lanes(db, dossier_id, lanes, commit=commit)
+        return {
+            "bound_fact_key": bound, "effort_applied": 0.0,
+            "declared_intensity": declared, "capacity": capacity,
+            "clue_credited": credited, "mastered": [],
+            "units": investigation_lane_actual_units(db, int(dossier_id)),
+        }
 
     mastered_now: List[str] = []
-    if bound:
-        for lane in lanes:
-            key = str(lane["fact_key"])
-            if key != bound:
-                continue
-            difficulty = investigation_fact_difficulty(
-                db, target=target, fact_key=key, investigator=investigator,
-            )
-            lane["difficulty"] = difficulty
-            if difficulty == float("inf"):
-                # 已被毁成 gone：投入无处可施，不得靠重开案/再投入把它查回来。
-                _write_fact_lanes(db, dossier_id, lanes, commit=commit)
-                return {
-                    "bound_fact_key": key, "effort_applied": 0.0, "mastered": [],
-                    "units": 0.0, "dropped_fact_key": key,
-                }
-            lane["effort"] = float(lane.get("effort") or 0.0) + amount
-            lane["months"] = int(lane.get("months") or 0) + 1
-            if (
-                not lane.get("mastered")
-                and float(lane["effort"]) >= float(difficulty)
-                and int(lane["months"]) >= _MIN_MONTHS_UNDER_INVESTIGATION
-            ):
-                _master_lane(lane)
-            if lane.get("mastered"):
-                mastered_now.append(key)
-            break
+    for lane in lanes:
+        key = str(lane["fact_key"])
+        if key != bound:
+            continue
+        difficulty = investigation_fact_difficulty(
+            db, target=target, fact_key=key, investigator=investigator,
+        )
+        lane["difficulty"] = difficulty
+        if difficulty == float("inf"):
+            # 已被毁成 gone：投入无处可施，不得靠重开案/再投入把它查回来。
+            _write_fact_lanes(db, dossier_id, lanes, commit=commit)
+            return {
+                "bound_fact_key": key, "effort_applied": 0.0, "mastered": [],
+                "units": 0.0, "dropped_fact_key": key,
+            }
+        lane["effort"] = float(lane.get("effort") or 0.0) + amount
+        lane["months"] = int(lane.get("months") or 0) + 1
+        # 掌握证据 ≠ 已经依法清算 ≠ 自动翻轴：只落 mastered，不写依律/翻轴。
+        if not lane.get("mastered") and float(lane["effort"]) >= float(difficulty):
+            lane["mastered"] = True
+        if lane.get("mastered"):
+            mastered_now.append(key)
+        break
+    credited = _consume_monthly_clues(
+        db, dossier_id, target, investigator, lanes, live=live, blocked=blocked,
+    )
     _write_fact_lanes(db, dossier_id, lanes, commit=commit)
     return {
         "bound_fact_key": bound,
         "effort_applied": amount,
         "declared_intensity": declared,
         "capacity": capacity,
+        "clue_credited": credited,
         "mastered": mastered_now,
         "units": investigation_lane_actual_units(db, int(dossier_id)),
     }
 
 
-def _investigation_knowledge_known(db: Any, target: str, source: str) -> bool:
-    """被查者是否真知自己被查：须有真实关系网来源（ADR 0034 非全知 / #1896 未知情不毁证）。
+def _investigation_knowledge_known(
+    db: Any, target: str, source: str, *, dossier_id: int = 0,
+) -> bool:
+    """被查者是否真知自己被查：须有**真实传话声明**＋账本里真实可递话的关系。
 
-    开案本身不等于目标知情——那是"开案即全知"的漏洞。通风报信人也必须是账本里
-    与该目标真有关系边的人物（0081 有向边，任意方向皆可：庇护、连坐、亲党皆算
-    有可能递话）。查无此人／无此边 → 确定性判未知情，毁证声明被拒。
+    开案本身不等于目标知情（那是"开案即全知"的漏洞）；关系边存在也不等于
+    话真递到了——两者都得有：①本案 4a 声明过此人经关系网把话递到（落
+    ``investigation_tips``，真实声明）；②此人在账本里确与该目标有关系边
+    （0081 有向边，任意方向皆可：庇护、连坐、亲党皆有可能递话）。
+    无声明／查无此人／无此边 → 确定性判未知情，其毁证与压案声明被拒。
     """
     who = str(source or "").strip()
     name = str(target or "").strip()
@@ -1236,10 +1309,44 @@ def _investigation_knowledge_known(db: Any, target: str, source: str) -> bool:
         "SELECT 1 FROM characters WHERE name=?", (who,),
     ).fetchone():
         return False
+    if not _investigation_tips(db, dossier_id, name):
+        return False  # 没有真实传话声明 → 不因关系边存在而替其知情
     return any(
         str(edge["source"]) == who or str(edge["target"]) == who
         for edge in db.get_relation_edge_events(person=name)
     )
+
+
+def _investigation_tips(db: Any, dossier_id: int, target: str) -> List[Dict[str, object]]:
+    """本案已声明的通风报信（递话人 + 回合），知情判定的声明真源。"""
+    return [
+        tip for tip in _tip_records(db, dossier_id)
+        if not target or str(tip.get("target") or target) == target
+    ]
+
+
+def _tip_records(db: Any, dossier_id: int) -> List[Dict[str, object]]:
+    if not int(dossier_id or 0):
+        return []
+    raw = _dossier_payload_map(db, dossier_id).get(INVESTIGATION_TIPS_KEY)
+    if not isinstance(raw, list):
+        return []
+    return [dict(x) for x in raw if isinstance(x, Mapping)]
+
+
+def investigation_tip_records(db: Any, dossier_id: int) -> List[Dict[str, object]]:
+    """4a 供料读口：本案已声明的真实通风报信。"""
+    return _tip_records(db, dossier_id)
+
+
+def investigation_action_records(db: Any, dossier_id: int) -> List[Dict[str, object]]:
+    """4a 供料读口：本案已落账的人物真实行动声明（查法／压案）。"""
+    if not int(dossier_id or 0):
+        return []
+    raw = _dossier_payload_map(db, dossier_id).get(INVESTIGATION_ACTS_KEY)
+    if not isinstance(raw, list):
+        return []
+    return [dict(x) for x in raw if isinstance(x, Mapping)]
 
 
 def apply_investigation_spoliation(
@@ -1249,6 +1356,7 @@ def apply_investigation_spoliation(
     fact_key: str,
     effect: str = "harder",
     knowledge_source: str = "",
+    dossier_id: int = 0,
     origin_ref: str = "",
     turn: Optional[int] = None,
     commit: bool = False,
@@ -1256,15 +1364,17 @@ def apply_investigation_spoliation(
     """毁证落账口：按对应事实改可查性，不团灭、不改真相底。
 
     知情与反应归人物（P6）：本函数只处理其**真实选择**的后果，并且要求人物确实
-    经真实关系网知情（knowledge_source）——未知情不替其毁证，知情也不强制毁证。
+    经真实传话声明知情（knowledge_source）——未知情不替其毁证，知情也不强制毁证。
     'gone' 之后该事实永不可查——关案重开、另起新案都不恢复（真源在 (target, fact_key)）。
     """
     name = str(target or "").strip()
     key = str(fact_key or "").strip()
     if not name or not key:
         raise CovertContractError("毁证落账缺少调查对象或事实键")
-    if not _investigation_knowledge_known(db, name, knowledge_source):
-        # fail-closed：无真实知情来源就不毁证，也不改任何实证。
+    if not _investigation_knowledge_known(
+        db, name, knowledge_source, dossier_id=int(dossier_id or 0),
+    ):
+        # fail-closed：无真实传话声明就不毁证，也不改任何实证。
         return {"target": name, "fact_key": key, "applied": False,
                 "reason": "无真实关系网知情来源，不代其毁证"}
     if key not in live_investigation_fact_keys(db, name):
@@ -1286,6 +1396,14 @@ def _investigation_target_of(contract: Mapping[str, object]) -> str:
     delivery = contract.get("delivery") if isinstance(contract.get("delivery"), Mapping) else {}
     return str(
         contract.get("investigation_target") or delivery.get("investigation_target") or ""
+    ).strip()
+
+
+def _investigation_fact_of(contract: Mapping[str, object]) -> str:
+    """密令合同自陈的线索所指事实（空＝不带指针，按 ADR 0098 兜底路由）。"""
+    delivery = contract.get("delivery") if isinstance(contract.get("delivery"), Mapping) else {}
+    return str(
+        contract.get("investigation_fact") or delivery.get("investigation_fact") or ""
     ).strip()
 
 
@@ -1312,22 +1430,42 @@ def merge_investigation_confirmation(
     *,
     pending_action_id: int = 0,
     origin_chat_message_ids: Sequence[int] = (),
+    fact_key: str = "",
     commit: bool = False,
 ) -> int:
+    """同目标汇案：并案卷 + 留下这条真实来源。
+
+    #1896：来源指针只是溯源；真实线索要真助它所指的实证，故每并入一条来源，
+    同时在 ``investigation_clues`` 落一条待消费线索（带 fact_key 时按其所指，
+    不带时由月核算按 ADR 0098 确定性兜底路由），月核算时一次性记成实投。
+    """
     dossier = db.get_dossier_for_secret_order(int(order_id))
     if dossier is None:
         raise CovertContractError("查案合流缺少案卷")
-    payload = _dossier_payload_map(db, int(dossier["id"]))
+    did = int(dossier["id"])
+    payload = _dossier_payload_map(db, did)
+    turn = int(getattr(state, "turn", 0) or 0)
     sources = payload.get(INVESTIGATION_PROVENANCE_KEY)
     if not isinstance(sources, list):
         sources = []
     sources.append({
         "pending_action_id": int(pending_action_id or 0),
         "origin_chat_message_ids": [int(x) for x in origin_chat_message_ids],
-        "turn": int(getattr(state, "turn", 0) or 0),
+        "turn": turn,
     })
     payload[INVESTIGATION_PROVENANCE_KEY] = sources
-    db.update_decree_dossier_payload(int(dossier["id"]), payload, commit=commit)
+    clues = payload.get(INVESTIGATION_CLUES_KEY)
+    if not isinstance(clues, list):
+        clues = []
+    clues.append({
+        "pending_action_id": int(pending_action_id or 0),
+        "origin_chat_message_ids": [int(x) for x in origin_chat_message_ids],
+        "fact_key": str(fact_key or "").strip(),
+        "turn": turn,
+        "credited": False,
+    })
+    payload[INVESTIGATION_CLUES_KEY] = clues[-200:]
+    db.update_decree_dossier_payload(did, payload, commit=commit)
     return int(order_id)
 
 
@@ -1399,29 +1537,46 @@ def _selection_map(raw_selections: object) -> Dict[int, Dict[str, object]]:
     return mapping
 
 
-def _investigation_declaration(sel: Mapping[str, object]) -> Dict[str, object]:
-    """#1896 4a 对查案密令的声明读口：查法/投入强度/所查事实/知情反应。
+def _investigation_declaration(
+    sel: Mapping[str, object] | None,
+) -> Dict[str, object]:
+    """#1896 4a 对查案密令的声明读口：查法/投入强度/所查事实/传话/知情反应。
 
     形状（ADR 0120 后出查案修订）——按人物当月真实办事声明，不读自由文本：
     - effort:   0..1 的**投入强度**（敷衍/停办 → 0）。只是"下了多大劲"，
-                引擎另按承办人真实状态折算本月实投并硬顶，故此值填多大都
-                不会当月坐实任意罪证。
-    - fact_key: str，本月下手的罪证（缺省 → 引擎按稳定序兜底路由）
-    - spoliation: {effect, fact_key, knowledge_source}，被查者知情后的毁证选择
+                引擎另按承办人真实处境（能力/是否到差/未结差务带宽）折算本月实投。
+                缺声明或不是数字 = **无效声明**（invalid），不是合法的零投入——
+                明确停办只有一种写法：effort: 0。
+    - fact_key: str，本月下手的罪证；人物没下手处就不给，代码不代选。
+    - method:   查法（人物本月怎么查，原样落账）
+    - tip_off:  {source} 真实通风报信：确有人经关系网把话递到被查者
+    - spoliation: {effect, fact_key} 被查者知情后的毁证选择
+    - suppression: {form} 被查者知情后的压案（行贿说项之类）声明
 
     奏报（memorial_text）不在此读口内：谎奏不造罪、不抹证（P6 实况/奏报分轨）。
     """
+    item = sel if isinstance(sel, Mapping) else {}
     out: Dict[str, object] = {}
-    raw_effort = sel.get("effort", sel.get("投入"))
-    if raw_effort is not None:
+    raw_effort = item.get("effort", item.get("投入"))
+    if raw_effort is None:
+        out["invalid"] = "查案密令缺少 effort 声明（敷衍/停办请显式给 0）"
+    else:
         try:
             out["intensity"] = max(0.0, min(1.0, float(raw_effort)))
         except (TypeError, ValueError):
-            pass
-    fact = str(sel.get("fact_key", sel.get("所查事实")) or "").strip()
+            out["invalid"] = "查案密令的 effort 不是数字"
+    fact = str(item.get("fact_key", item.get("所查事实")) or "").strip()
     if fact:
         out["fact_key"] = fact
-    spoil = sel.get("spoliation", sel.get("毁证"))
+    method = str(item.get("method", item.get("查法")) or "").strip()
+    if method:
+        out["method"] = method
+    tip = item.get("tip_off", item.get("通风报信"))
+    if isinstance(tip, Mapping):
+        source = str(tip.get("source", tip.get("递话人")) or "").strip()
+        if source:
+            out["tip_off"] = {"source": source}
+    spoil = item.get("spoliation", item.get("毁证"))
     if isinstance(spoil, Mapping):
         effect = str(spoil.get("effect") or "harder").strip()
         if effect in ("harder", "gone"):
@@ -1432,6 +1587,11 @@ def _investigation_declaration(sel: Mapping[str, object]) -> Dict[str, object]:
                     spoil.get("knowledge_source", spoil.get("知情来源")) or ""
                 ).strip(),
             }
+    suppress = item.get("suppression", item.get("压案"))
+    if isinstance(suppress, Mapping):
+        form = str(suppress.get("form", suppress.get("方式")) or "").strip()
+        if form:
+            out["suppression"] = {"form": form}
     return out
 
 
@@ -1544,12 +1704,16 @@ def _apply_investigation_selection(
     *,
     order: Mapping[str, object],
     dossier: Mapping[str, object],
-    sel: Mapping[str, object],
+    sel: Mapping[str, object] | None,
     target: str,
     investigator: str,
     turn: int,
 ) -> Dict[str, object]:
-    """查案密令的逐证落账（#1896）。幂等键＝(dossier, turn)，重开只续未成核算。"""
+    """查案密令的逐证落账（#1896）。幂等键＝(dossier, turn)，重开只续未成核算。
+
+    无效声明（缺 effort／effort 非数字／只给了旧执行态）不是合法的零投入：拒收、
+    不写实况行，由月链把本月 4a 产物标成 invalid 重来一次（#1846 失效与重起契约）。
+    """
     did = int(dossier["id"])
     oid = int(order["id"])
     # 同月重入不重复施加投入：实况轨已有本月行即说明本月已核算过。lane 累加本身
@@ -1559,6 +1723,19 @@ def _apply_investigation_selection(
         "WHERE dossier_id=? AND turn=? LIMIT 1",
         (did, int(turn)),
     ).fetchone()
+    declaration = _investigation_declaration(sel)
+    invalid = str(declaration.get("invalid") or "").strip()
+    if invalid:
+        return {
+            "order_id": oid,
+            "dossier_id": did,
+            "rejected": True,
+            "invalid": True,
+            "category": "invalid_enum",
+            "report_section": "covert_exec_selections",
+            "reason": f"密令 {oid} 查案声明无效：{invalid}",
+            "item": sel or {"order_id": oid},
+        }
     if existing is not None:
         return {
             "order_id": oid,
@@ -1571,7 +1748,21 @@ def _apply_investigation_selection(
             "originated_quantity": 0.0,
             "already_applied": True,
         }
-    declaration = _investigation_declaration(sel)
+    # 真实传话声明先落账：知情判定的唯一来源就是它（关系边存在不算）。
+    tip = declaration.get("tip_off")
+    tip_source = str(tip.get("source") or "").strip() if isinstance(tip, Mapping) else ""
+    if tip_source:
+        _append_investigation_log(db, did, INVESTIGATION_TIPS_KEY, {
+            "source": tip_source, "turn": int(turn), "target": target,
+        })
+    acts = {
+        key: declaration[key] for key in ("method", "suppression")
+        if declaration.get(key)
+    }
+    if acts:
+        _append_investigation_log(db, did, INVESTIGATION_ACTS_KEY, {
+            "turn": int(turn), "investigator": investigator, **acts,
+        })
     result = apply_investigation_monthly_effort(
         db, did, target, investigator,
         fact_key=str(declaration.get("fact_key") or ""),
@@ -1586,11 +1777,14 @@ def _apply_investigation_selection(
             spoiled_result = apply_investigation_spoliation(
                 db, target=target, fact_key=spoil_key,
                 effect=str(spoliation.get("effect") or "harder"),
-                knowledge_source=str(spoliation.get("knowledge_source") or ""),
+                knowledge_source=str(
+                    spoliation.get("knowledge_source") or tip_source
+                ),
+                dossier_id=did,
                 origin_ref=f"dossier:{did}", turn=turn, commit=False,
             )
     units = float(result.get("units") or 0.0)
-    note = str(sel.get("note") or sel.get("备注") or "").strip()
+    note = str((sel or {}).get("note") or (sel or {}).get("备注") or "").strip()
     if not note:
         note = f"查案实况：本月投入 {result.get('effort_applied', 0.0):g}，已掌握 {units:g} 条"
     row = db.record_dossier_actual_progress(

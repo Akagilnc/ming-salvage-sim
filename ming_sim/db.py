@@ -21466,6 +21466,7 @@ class GameDB:
             find_active_investigation_order_id,
             merge_investigation_confirmation,
             _investigation_target_of,
+            _investigation_fact_of,
         )
         covert_contract = build_covert_task_contract(covert_task=covert_task)
         inv_target = _investigation_target_of(covert_contract or {})
@@ -21478,6 +21479,7 @@ class GameDB:
                     existing_oid,
                     pending_action_id=int(pending_action_id or 0),
                     origin_chat_message_ids=provenance_message_ids,
+                    fact_key=_investigation_fact_of(covert_contract or {}),
                     commit=True,
                 )
         active_count = self.conn.execute(

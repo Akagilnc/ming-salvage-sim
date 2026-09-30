@@ -442,6 +442,24 @@ personnel_secret 模块产出；settle 内经 `record_monthly_dossier_progress` 
 - updates：`order_id` int + `sim_note`（本月推进实况）+ 可选 `impact` + 可选布尔 `disclosed`（中文键 `泄漏结论`；可省略）。`disclosed`/`泄漏结论`：密令情节已**实际公开**才为 true（被目击、闹至公堂、承办人被拿获、目标公开反击、明发上谕、科道公开参劾等）；为 true 时触发 `secret_order_disclosure:` 公开知识事件（简报升公共面的唯一闸）。风声/警觉/暴露风险仍为不填或 false。
 - 结案真源是 `settle_due_secret_orders`，不接受 extractor 结案字段。
 
+#### 查案密令的选择合同（#1896，唯一真源 = `ming_sim/covert_progress.py`）
+
+带 `investigation_target` 的密令不走 `fidelity`，改由步骤 4a（`covert_exec_selections`）按人物当月真实办事声明：
+
+| 字段 | 形状 | 语义与约束 |
+| --- | --- | --- |
+| `effort` | 数字 0..1（中文键 `投入`） | **必填**：本月投入强度。引擎按承办人真实处境（能力／是否到差／0092 owner 未结差务带宽）折算本月实投并累计；累计实投 ≥ 该条罪证难度即记已掌握。**缺字段或非数字＝无效声明**（拒收、不写实况行、月链把本月 4a 产物标 invalid 重来），不是合法的零投入——合法零投入只有显式 `effort: 0`。无单月硬顶、无最低在查月数 floor（ADR 0098 后出修订已退役）。 |
+| `fact_key` | str（中文键 `所查事实`） | 本月实际下手的罪证键，取自供料 `investigation_facts`。本月无从下手则省略——引擎**不替人物挑**一条（CLAUDE.md P6）。 |
+| `method` | str（中文键 `查法`） | 本月查法，原样落账为案卷事实。 |
+| `tip_off` | `{source}`（中文键 `通风报信`） | 真实通风报信声明：确有人经关系网把话递到被查者手里。被查者知情的**唯一**来源；关系边存在 ≠ 话递到了。开案本身不算知情。 |
+| `spoliation` | `{effect, fact_key}` | 被查者知情后的毁证选择；`effect` ∈ `harder`/`gone`。未知情不承接。 |
+| `suppression` | `{form}`（中文键 `压案`） | 被查者知情后的压案声明（行贿说项之类），落账为事实。 |
+| `note` | str | 密奏正文（可谎）。奏报不入实况轨：谎奏不造罪、不抹证。 |
+
+- 查案密令的合同另可带 `investigation_fact`（中文键 `调查事实`）：该来源线索所指的罪证键。同目标汇案时按它把真实线索绑到对应实证（一次性助一次实投）；不带指针则按 ADR 0098 轨级口径确定性兜底（优先 seed_guilt lane，否则稳定序首条在查 lane），指向不存在／已被别案查获的罪确定性丢弃。
+- 上述声明统一落在同一案卷 `payload_json`：`fact_lanes`（投入/难度/已掌握，无 `used`/`reason_code`——掌握证据≠依法清算）、`investigation_tips`、`investigation_clues`、`investigation_actions`。唯一写口是 `update_decree_dossier_payload`，无第二轨。
+- 到期结案读 `investigation_lane_actual_units`（真实掌握条数），不看奏报自称成功。
+
 ### `emperor_fate`
 - 顶层标量，不是 list/dict
 - 三选一：`"abdicate"` / `"suicide"` / `null`
