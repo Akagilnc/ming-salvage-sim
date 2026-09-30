@@ -261,9 +261,13 @@ class AffairStore:
     def attach_pointer(self, table: str, row_id: int | str, affair_id: int) -> None:
         """Unbound may bind once; same id is idempotent; a different id fails loud."""
         self.get(affair_id)
+        want = int(affair_id)
+        # 案卷指针的读写都在案卷 store（ADR 0151/0154）：此表不经动态 SQL 写。
+        if table == "decree_dossiers":
+            self.point_dossier(int(row_id), want)
+            return
         key_column = _POINTER_KEY_COLUMNS.get(table, "id")
         current = self._current_pointer(table, row_id)
-        want = int(affair_id)
         if current == want:
             return
         if current != 0:

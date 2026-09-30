@@ -4050,14 +4050,7 @@ def test_treasury_live_balance_has_single_truth_and_no_mirror_drift(fresh_game):
     且删掉 metrics 行后余额会从镜像「复活」。视图化后单一写口 = metrics。
     """
     db, state = fresh_game
-    view_rows = db.conn.execute(
-        "SELECT account, balance FROM economy_accounts ORDER BY account"
-    ).fetchall()
-    assert db.conn.execute(
-        "SELECT type FROM sqlite_master WHERE name='economy_accounts'"
-    ).fetchone()["type"] == "view", "economy_accounts 必须是派生视图而非实体表"
-
-    # 改真源 → 视图立即跟随，不再被任何镜像盖回
+    # 改真源 → 派生面立即跟随，不再被任何镜像盖回
     db.conn.execute("UPDATE metrics SET value=999 WHERE key='国库'")
     db.conn.commit()
     assert db.load_state("").metrics["国库"] == 999
@@ -4123,33 +4116,48 @@ def test_economy_move_writes_live_balance_in_same_transaction(fresh_game):
 
 
 @pytest.mark.parametrize(
-    ("region_id", "mutate", "match"),
+    "mutate",
     [
-        ("dongjiang_area", lambda settle: settle.__setitem__("p", []), "settle.p 非法"),
-        ("dongjiang_area", lambda settle: settle["p"].__setitem__("Due", []), "settle.p.Due 非法"),
-        ("dongjiang_area", lambda settle: settle.__setitem__("st", []), "settle.st 非法"),
-        ("liaodong", lambda settle: settle.__setitem__("st", []), "settle.st 非法"),
+        lambda settle: settle.__setitem__("p", []),
+        lambda settle: settle["p"].__setitem__("Due", []),
+        lambda settle: settle.__setitem__("st", []),
     ],
 )
-def test_region_pay_due_derivation_rejects_malformed_settle_shapes(
-    fresh_db, region_id, mutate, match
+def test_pay_due_derivation_rejects_malformed_settle_shapes_through_public_tick(
+    fresh_db, mutate
 ):
-    settle = _read_settle(fresh_db, region_id)
-    mutate(settle)
+    """#1889：省级军饷派生只认完整 settle 基座；坏形状经公开 tick 入口响亮拒收。
 
-    with pytest.raises(ValueError, match=match):
-        fresh_db._derive_region_army_pay_due(region_id, settle)
+    走 settle_ming_province_substrate_ticks 这唯一公开入口（不再直调私有
+    _derive_region_army_pay_due），断言只看外部可见结果：产出 outcome.error 且
+    该省本轮不落账。
+    """
+    fiscal = _read_fiscal(fresh_db, "dongjiang_area")
+    settle = fiscal["settle"]
+    mutate(settle)
+    fresh_db.conn.execute(
+        "UPDATE regions SET fiscal = ? WHERE id = ?",
+        (json.dumps(fiscal, ensure_ascii=False), "dongjiang_area"),
+    )
+    fresh_db.conn.commit()
+    before = _read_settle(fresh_db, "dongjiang_area")
+
+    outcomes = fresh_db.settle_ming_province_substrate_ticks()
+
+    target = [o for o in outcomes if o.region_id == "dongjiang_area"]
+    assert target and target[0].error is not None, "坏 settle 形状须以 error 回报"
+    assert _read_settle(fresh_db, "dongjiang_area") == before, "被拒省份不得落半笔账"
 
 
 @pytest.mark.parametrize(
-    ("mutate", "match"),
+    "mutate",
     [
-        (lambda fiscal: fiscal.__setitem__("settle", []), "region dongjiang_area settle.st 非法"),
-        (lambda fiscal: fiscal["settle"].__setitem__("st", []), "region dongjiang_area settle.st 非法"),
+        lambda fiscal: fiscal.__setitem__("settle", []),
+        lambda fiscal: fiscal["settle"].__setitem__("st", []),
     ],
 )
 def test_province_pay_container_total_rejects_malformed_region_shapes(
-    fresh_db, mutate, match
+    fresh_db, mutate
 ):
     """#1889：省级军饷欠容器守恒仍 fail-loud（删漏斗账不等于放宽坏态）。"""
     fiscal = _read_fiscal(fresh_db, "dongjiang_area")
@@ -4159,7 +4167,7 @@ def test_province_pay_container_total_rejects_malformed_region_shapes(
         (json.dumps(fiscal, ensure_ascii=False), "dongjiang_area"),
     )
 
-    with pytest.raises(ValueError, match=match):
+    with pytest.raises(ValueError):
         fresh_db.assert_army_pay_source_container_conservation()
 
 

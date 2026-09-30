@@ -31,7 +31,6 @@ tests/test_army_firearms.py	test_cannon_clamped_to_12	74	writable isolation requ
 tests/test_army_firearms.py	test_create_army_with_firearm	84	writable isolation required: line 86 invokes create_armies_from_extraction
 tests/test_army_firearms.py	test_create_army_cannon_count_clamped	98	writable isolation required: line 101 invokes create_armies_from_extraction
 tests/test_army_firearms.py	test_apply_army_delta_chinese_keys	182	writable isolation required: line 185 invokes create_armies_from_extraction
-tests/test_army_maintenance_retire_173.py	test_drop_maintenance_column_removes_and_idempotent	48	writable isolation required: line 51 invokes execute(ALTER TABLE armies ADD COLUMN maintenance_per_turn INTEGER NOT NULL DEFA)
 tests/test_army_maintenance_retire_173.py	test_legacy_new_army_needs_only_manpower	91	writable isolation required: line 94 invokes create_armies_from_extraction
 tests/test_army_maintenance_retire_173.py	test_new_army_maintenance_key_ignored	101	writable isolation required: line 104 invokes create_armies_from_extraction
 tests/test_army_maintenance_retire_173.py	test_pay_derives_from_manpower	134	writable isolation required: line 137 invokes create_armies_from_extraction

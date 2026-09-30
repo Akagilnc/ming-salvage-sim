@@ -390,22 +390,6 @@ class DossierStore:
         ) == 0:
             self._conn.commit()
 
-    @staticmethod
-    def ensure_locality_indexes(conn: Any) -> None:
-        """#654 / #1837：pending 幂等键＝(pending_action_id, region_id, action_type)；
-        directive 仍 (directive_id, region_id)；secret_order 不动。"""
-        conn.execute("DROP INDEX IF EXISTS idx_decree_dossiers_pending_action")
-        conn.execute("DROP INDEX IF EXISTS idx_decree_dossiers_directive")
-        conn.execute(
-            "CREATE UNIQUE INDEX IF NOT EXISTS idx_decree_dossiers_pending_action "
-            "ON decree_dossiers(pending_action_id, region_id, action_type) "
-            "WHERE pending_action_id > 0"
-        )
-        conn.execute(
-            "CREATE UNIQUE INDEX IF NOT EXISTS idx_decree_dossiers_directive "
-            "ON decree_dossiers(directive_id, region_id) WHERE directive_id > 0"
-        )
-
     def get(self, dossier_id: int) -> Optional[dict[str, object]]:
         row = self._conn.execute(
             "SELECT * FROM decree_dossiers WHERE id=?", (int(dossier_id),)
@@ -478,15 +462,8 @@ class DossierStore:
         ).fetchone()
         if row is None:
             return None
-        out = hydrate_dossier_row(row)
-        # 读缝附 payload 对象，避免调用方只认 payload 键时踩空
-        try:
-            out["payload"] = json.loads(str(out.get("payload_json") or "{}"))
-        except (TypeError, ValueError):
-            out["payload"] = {}
-        if not isinstance(out["payload"], dict):
-            out["payload"] = {}
-        return out
+        # hydrate_dossier_row 是唯一解析口（payload 已解析并 fail-loud），不再二次解析。
+        return hydrate_dossier_row(row)
 
     def authorizes_effects(self, dossier_id: int) -> bool:
         """Return whether a dossier crossed either lawful promulgation path."""
@@ -1055,19 +1032,6 @@ class DossierStore:
         )
         if commit:
             self._commit(True)
-
-    def set_raw_payload(self, dossier_id: int, payload: Mapping[str, object]) -> None:
-        """Payload write with no existence probe (idempotent backfill / push-bind path)."""
-        self._conn.execute(
-            "UPDATE decree_dossiers SET payload_json=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
-            (json.dumps(dict(payload), ensure_ascii=False), int(dossier_id)),
-        )
-
-    def proposed_appointment_rows(self) -> list[Any]:
-        return self._conn.execute(
-            "SELECT id,target_id,payload_json FROM decree_dossiers "
-            "WHERE status='proposed' AND action_type='appointment'"
-        ).fetchall()
 
     def ids_for_secret_order(self, secret_order_id: int) -> list[int]:
         rows = self._conn.execute(

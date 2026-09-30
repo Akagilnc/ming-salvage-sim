@@ -114,42 +114,43 @@ def test_person_title_kind_does_not_materialize_office_parent(fresh_game_dir):
     ).fetchone() is None
 
 
-def test_character_offices_has_no_office_type_second_write_port(fresh_game_dir):
-    """#1889：官职类别真源唯一 = characters.office_type。
+def test_appointment_category_survives_reopen_from_canonical_source(fresh_game_dir):
+    """#1889：官职类别真源唯一 = characters.office_type；备档只留历史官名。
 
-    原此用例守着「备档 office_type 被写成脏值后重开被镜像回真源」——那正是第二个
-    可写表示本身（还带 FK(office_type)→offices）。该列已删，故改守新不变量：
-    备档无该列、脏 office_type 写不进备档、外键保护与 FK 检查仍干净。
+    经真实入口授官 → 关闭重开：官职与类别仍与真源一致，起复按备档历史官名可复原品级
+    （behavior 由 test_office_rank_562 的 restoration 用例守）。此处守「重开不篡改真源、
+    不残留第二个可写类别」这一外部可见结果。
     """
     sess, dbp, content = fresh_game_dir
-    character = sess.db.conn.execute(
-        "SELECT name, office_type FROM characters ORDER BY name LIMIT 1"
+    db = sess.db
+    minister = db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' AND power_id='ming' "
+        "AND office_type NOT IN ('身名分', '待铨') ORDER BY name LIMIT 1"
+    ).fetchone()[0]
+    db.set_character_office(
+        minister, "山西巡抚", "地方", "真除", region_id="shaanxi",
+    )
+    db.conn.commit()
+    truth = db.conn.execute(
+        "SELECT office, office_type FROM characters WHERE name=?", (minister,)
     ).fetchone()
     sess.close()
-    raw = sqlite3.connect(dbp)
-    raw.execute("PRAGMA foreign_keys=OFF")
-    # 备档已无 office_type 列：脏值无处可写（写了即报错）
-    with pytest.raises(sqlite3.OperationalError):
-        raw.execute(
-            "UPDATE character_offices SET office_type='__stale_office_1026__' "
-            "WHERE character_name=?",
-            (character["name"],),
-        )
-    raw.rollback()
-    raw.close()
 
     reopened = GameDB(dbp, content=content)
     try:
-        cols = {
-            row["name"]
-            for row in reopened.conn.execute("PRAGMA table_info(character_offices)")
-        }
-        assert "office_type" not in cols, "备档不得再持有官职类别（第二写口）"
-        # 真源侧读得到，且重开后外键保护完好
-        assert reopened.conn.execute(
-            "SELECT office_type FROM characters WHERE name=?", (character["name"],)
-        ).fetchone()["office_type"] == character["office_type"]
-        assert reopened.conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
+        reopened.load_state()
+        row = reopened.conn.execute(
+            "SELECT office, office_type FROM characters WHERE name=?", (minister,)
+        ).fetchone()
+        assert (row["office"], row["office_type"]) == (truth["office"], truth["office_type"]), (
+            "重开后官职/类别须与真源一致（备档不得反向改写真源）"
+        )
+        archived = reopened.conn.execute(
+            "SELECT office_title FROM character_offices WHERE character_name=?", (minister,)
+        ).fetchone()
+        assert archived is not None and archived["office_title"] == "山西巡抚", (
+            "备档应留最近实职历史标题供起复读品级"
+        )
         assert reopened.conn.execute("PRAGMA foreign_key_check").fetchall() == []
     finally:
         reopened.close()

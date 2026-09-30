@@ -1924,7 +1924,6 @@ class GameDB:
             "edict_overdraw",
             "INTEGER NOT NULL DEFAULT 0 CHECK (edict_overdraw >= 0)",
         )
-        self._migrate_building_logs_to_durable_audit()
         self._ensure_office_type_parents()
         self._ensure_event_parents()
         for column, definition in {
@@ -1955,18 +1954,9 @@ class GameDB:
         # 火器装备(鸟铳,野战+守城)/大炮装备(红夷炮,守城攻城、不利野战)：simulator 软判用的两条军备轴
         self.ensure_column("armies", "firearm_equipment", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column("armies", "cannon_equipment", "INTEGER NOT NULL DEFAULT 0")
-        # #44 名义月饷率(两/兵·月)。仅列**首次 ADD** 时回填一次（gemini high：避免每次启动重扫/
-        # 误覆盖动态态）；列已存在的后续 load 跳过（army_needed 的 rate<=0 锚定兜底 runtime 漏网）。
-        if self.ensure_column("armies", "salary_rate", "REAL NOT NULL DEFAULT 0"):
-            self._backfill_salary_rate()
-        # #173：维护费列退役迁移——**必须在每个打开路径跑**。现存档只走 GameDB.__init__→
-        # init_schema、不走 seed_static_data；若只挂 seed，现存档（probe.db: maintenance INTEGER
-        # NOT NULL 无 default）永不删列 → 删列后建新军 INSERT（已不含该列）崩（cmr drop R1 codex high）。
-        # 现存档此刻维护费列在：先确保 arrears 换算读完维护费（幂等 version gate），再 drop；新档此时
-        # armies 空（CREATE TABLE 已无该列）→ 两步皆 no-op，seed 路再正常建。
-        if self.table_has_rows("armies"):
-            self._migrate_arrears_unit_to_silver(is_fresh_armies_seed=False)
-        self._drop_maintenance_column()
+        # #44 名义月饷率(两/兵·月)：建表脚本给出；ming 军 rate<=0 由 flows.army_needed
+        # 在结算唯一咽喉锚定，不再为旧档回填。
+        self.ensure_column("armies", "salary_rate", "REAL NOT NULL DEFAULT 0")
         self.ensure_column("regions", "controlled_by", "TEXT NOT NULL DEFAULT 'ming'")
         # 城市等级 0-5(静态,史实分级,将来供经济/内政)+ 城防大炮门数(城头红夷炮,上限 city_level×8)
         self.ensure_column("regions", "city_level", "INTEGER NOT NULL DEFAULT 0")
@@ -2006,9 +1996,6 @@ class GameDB:
         self.ensure_column("characters", "aliases", "TEXT NOT NULL DEFAULT '[]'")
         self.ensure_column("characters", "identity", "INTEGER NOT NULL DEFAULT 50")
         self.ensure_column("characters", "seed_guilt", "TEXT NOT NULL DEFAULT ''")
-        self._backfill_person_core_character_static_fields()
-        self._migrate_character_identity_seed()
-        self._backfill_bandit_power_split()
         self.ensure_column("event_triggers", "terminal_state", "TEXT NOT NULL DEFAULT 'triggered'")
         self.ensure_column("event_triggers", "terminal_reason", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("event_triggers", "choice_json", "TEXT NOT NULL DEFAULT ''")
@@ -2028,7 +2015,6 @@ class GameDB:
             "pending_decisions", "revision_round", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column(
             "pending_decisions", "prior_options_json", "TEXT NOT NULL DEFAULT '[]'")
-        self._backfill_event_triggers_from_event_pool_issues()
         # 步骤7：回合阶段（旧库迁移，schema 升级非 fallback）
         self.ensure_column("game_state", "turn_phase", "TEXT NOT NULL DEFAULT 'summoning'")
         # 结局：ended=1 时游戏终结；ending_status 为 context.ENDING_* 类型。
@@ -2105,10 +2091,9 @@ class GameDB:
         if "turn" in office_change_cols:
             self.conn.execute("ALTER TABLE office_change_records DROP COLUMN turn")
             self.conn.commit()
-        # #1889：decree_dossiers / decree_dossier_decisions 的列一律由案卷 store 的
-        # CREATE TABLE 给出（ADR 0151 schema 单一来源），此处不再只为旧档补列。
-        DossierStore.ensure_locality_indexes(self.conn)
-        self._backfill_proposed_appointment_break_ranks()
+        # #1889：decree_dossiers 的列与索引（含 #654/#1837 两项唯一索引）一律由案卷
+        # store 的建表脚本给出（ADR 0151 schema 单一来源），此处不再重复维护、也不再
+        # 只为旧档补写载荷。
         # #498：旧档 chat_turns 无 night_id/night_seq 列；必须先 ensure 列再建索引
         # （旧档 CREATE TABLE IF NOT EXISTS 不重建 chat_turns，索引若先建会引用缺列失败）。
         self.ensure_column("chat_turns", "night_id", "INTEGER NOT NULL DEFAULT 0")
@@ -2330,8 +2315,6 @@ class GameDB:
             self.conn.commit()
         self.init_fiscal_config()
         self._migrate_missing_fiscal_engine_from_pay_source_cutover()
-        # #1356：旧档精确 DELETE 已知 seed 全文（不动真实结算产物）
-        self._purge_fixed_opening_gazette_seed()
 
     def _migrate_legacy_office_pollution(self) -> None:
         """ADR 0009 决定9/L94 一次性数据清洗（幂等，init 时跑）：pre-0009 存档把状态词塞在
@@ -3046,48 +3029,6 @@ class GameDB:
         for rid, level in self._CITY_LEVEL_TIERS.items():
             self.conn.execute("UPDATE regions SET city_level=? WHERE id=?", (int(level), rid))
 
-    def _backfill_salary_rate(self) -> None:
-        """#44 旧档迁移（仅 salary_rate 列**首次 ADD** 时跑一次，见调用点 gate——线上 gemini high：
-        避免每次启动重扫；与 army_needed 的 rate<=0 锚定互为兜底，迁移负责持久化合理率供显示/欠饷，
-        army_needed 负责 runtime 漏网的 charge 防白嫖）。ensure_column 给 salary_rate 默认 0，但
-        army_needed 判 rate<=0 → 锚定后才算，旧存档明军若不回填则显示/欠饷口径错（cmr r1 codex high）。
-        回填 salary_rate<=0 的明军：
-          ① static 军（在 content 且率>0）→ content.armies[id].salary_rate；
-          ② 动态旧军（不在 content）且维护费列仍在 → 从 maintenance_per_turn 反推率
-             = maint×10000/manpower（保旧档应发量级/欠饷连续，线上 codex P2）；
-          ③ 维护费列已删（新档/已删档）或值不可用 → 边军史实锚点 SALARY_RATE_ANCHOR。
-        #173 cmr drop R4（codex medium）：backfill 在 _drop_maintenance_column 之前跑，**直接升级
-        老档**（salary_rate 首次 ADD 时维护费列仍在）须保留②反推保真——drop 后旧 pay 源无可恢复，
-        若一律落锚点会把 5000 兵 maint=20 的军重定价成 ceil(5000×1.5/10000)=1、20→1 腐蚀旧档预算。
-        故用 column-exists gate：列在走②反推，列不在（新档 CREATE 已无该列）走③锚点（SELECT 不读
-        维护费、不崩）。该回填仅 salary_rate 列首次 ADD 时跑一次。只补 <=0 的、不覆盖已设正值（幂等）。"""
-        has_maint = "maintenance_per_turn" in {
-            r["name"] for r in self.conn.execute("PRAGMA table_info(armies)").fetchall()
-        }
-        # 两条完整字面 SQL 二选一（不 f-string 拼列名）：列在时多取 manpower/维护费供②反推。两 query 都
-        # 无外部输入、纯字面常量（Sourcery R1 security：消除 raw-query 字符串拼接的 SQLi 告警面）。
-        if has_maint:
-            rows = self.conn.execute(
-                "SELECT id, manpower, maintenance_per_turn FROM armies "
-                "WHERE owner_power='ming' AND salary_rate <= 0"
-            ).fetchall()
-        else:
-            rows = self.conn.execute(
-                "SELECT id FROM armies WHERE owner_power='ming' AND salary_rate <= 0"
-            ).fetchall()
-        for r in rows:
-            aid = str(r["id"])
-            army = self.content.armies.get(aid)
-            if army is not None and army.salary_rate > 0:
-                rate = float(army.salary_rate)                       # ① content 史实率
-            elif has_maint:                                          # ② 直接升级老档：从维护费反推
-                manpower = int(r["manpower"] or 0)
-                maint = float(r["maintenance_per_turn"] or 0)
-                rate = (maint * 10000 / manpower) if (manpower > 0 and maint > 0) else SALARY_RATE_ANCHOR
-            else:                                                    # ③ 列已删/值不可用：锚点
-                rate = SALARY_RATE_ANCHOR
-            self.conn.execute("UPDATE armies SET salary_rate=? WHERE id=?", (rate, aid))
-
     def apply_region_cannon(self, state: "GameState", region_id: str, delta: int) -> int:
         """改某地城防大炮门数(城头红夷炮)。上限 = city_level×8；clamp [0, cap]。返回新值。
         全局严格：引用未入库地区抛错，不静默。"""
@@ -3139,40 +3080,6 @@ class GameDB:
                 if str(office_type).strip()
             }
         ) - set(PERSON_TITLE_KINDS)
-
-    def _migrate_building_logs_to_durable_audit(self) -> None:
-        """Keep building history after its live building has been removed."""
-        if not self.conn.execute("PRAGMA foreign_key_list(building_logs)").fetchall():
-            return
-        self.conn.executescript(
-            """
-            CREATE TABLE building_logs_without_live_fk (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                turn INTEGER NOT NULL,
-                year INTEGER NOT NULL,
-                period INTEGER NOT NULL,
-                building_id TEXT NOT NULL,
-                field TEXT NOT NULL,
-                old_value TEXT NOT NULL,
-                new_value TEXT NOT NULL,
-                delta INTEGER,
-                reason TEXT NOT NULL,
-                event_id TEXT,
-                edict_id INTEGER,
-                actor TEXT,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            );
-            INSERT INTO building_logs_without_live_fk
-                (id,turn,year,period,building_id,field,old_value,new_value,delta,
-                 reason,event_id,edict_id,actor,created_at)
-            SELECT id,turn,year,period,building_id,field,old_value,new_value,delta,
-                   reason,event_id,edict_id,actor,created_at
-            FROM building_logs;
-            DROP TABLE building_logs;
-            ALTER TABLE building_logs_without_live_fk RENAME TO building_logs;
-            CREATE INDEX idx_building_logs_turn ON building_logs(turn, building_id);
-            """
-        )
 
     def _ensure_office_type_parent(self, office_type: str) -> None:
         office_type = str(office_type or "").strip()
@@ -3551,7 +3458,6 @@ class GameDB:
                         building.status,
                     ),
                 )
-        self._migrate_arrears_unit_to_silver(is_fresh_armies_seed)
         self._initialize_army_pay_source_spine(is_fresh_armies_seed)
         # #173：维护费列退役 drop 已上移至 init_schema（每个打开路径都跑，含现存档的纯
         # init_schema 路径，见 cmr drop R1）；此处新档 seed INSERT 后该列本就不存在，无需再 drop。
@@ -4609,228 +4515,6 @@ class GameDB:
             raise ValueError("settle.st 非法")
         st["军饷欠"] = row_arrears_total
 
-    def _drop_maintenance_column(self) -> None:
-        """#173：物理移除退役的 armies.maintenance_per_turn 列（月饷由 army_needed 按兵力派生）。
-        幂等：列存在才 DROP（SQLite 3.35+ 支持 ALTER TABLE DROP COLUMN，本仓 3.53）。调用点保证排在
-        所有读维护费的迁移之后（见 init_schema：salary_rate backfill + arrears 换算之后）：老档此刻列
-        仍在、迁移已读完，drop 安全；新档/已删档无此列，PRAGMA 查不到 → no-op。"""
-        cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(armies)").fetchall()}
-        if "maintenance_per_turn" in cols:
-            self.conn.execute("ALTER TABLE armies DROP COLUMN maintenance_per_turn")
-            self.conn.commit()  # DDL 显式提交，保证 drop 跨打开/环境持久（Gemini PR R3；init_schema
-                                # 末尾另有 commit 兜底，此处显式化事务边界、不依赖后续步骤的提交时机）
-
-    def _migrate_arrears_unit_to_silver(self, is_fresh_armies_seed: bool) -> None:
-        """一次性迁移：armies.arrears 从 0-100 抽象分换成累计欠饷万两。
-        旧档按 arrears * maintenance_per_turn / 25 估算（粗略：旧分数 ≈ 4 倍欠饷月数）。
-
-        区分新老档：
-        - 新档（is_fresh_armies_seed=True）：armies 由本版 seed_armies 刚刚写入，arrears
-          已经是万两。直接打 version=1，跳过换算。
-        - 老档（is_fresh_armies_seed=False）：armies 表早已存在数据；若 fiscal_config 中
-          无 __arrears_unit_version 标记，说明从未跑过本迁移 → 走换算逻辑。
-        """
-        ARREARS_UNIT_VERSION = 1
-        row = self.conn.execute(
-            "SELECT value FROM fiscal_config WHERE key = '__arrears_unit_version'"
-        ).fetchone()
-        cur = int(row["value"]) if row else 0
-        if cur >= ARREARS_UNIT_VERSION:
-            return
-        if not is_fresh_armies_seed:
-            # 真老档：换算分数 → 万两。#173：换算读 maintenance_per_turn，仅在列仍在时跑（调用点排在
-            # _drop_maintenance_column 之前，老档此刻列必在；加 column-exists gate 是防御未来顺序变化/
-            # 已删档误入此路——列没了则跳过换算、只打 version，arrears 保持原值）。
-            cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(armies)").fetchall()}
-            if "maintenance_per_turn" in cols:
-                self.conn.execute(
-                    "UPDATE armies SET arrears = CAST(arrears * maintenance_per_turn / 25.0 AS INTEGER) "
-                    "WHERE maintenance_per_turn > 0"
-                )
-        # 无论新老档，都把 version 打上，下次启动直接跳过
-        self.conn.execute(
-            "INSERT INTO fiscal_config (key, value, kind, note) VALUES "
-            "('__arrears_unit_version', ?, 'meta', 'arrears 单位由 0-100 分迁至累计欠饷万两的版本号') "
-            "ON CONFLICT(key) DO UPDATE SET value = excluded.value, note = excluded.note",
-            (ARREARS_UNIT_VERSION,),
-        )
-
-    def _backfill_person_core_character_static_fields(self) -> None:
-        mao = self.content.characters.get("毛文龙")
-        if mao and mao.location:
-            self.conn.execute(
-                """
-                UPDATE characters
-                SET location = ?
-                WHERE name = '毛文龙'
-                  AND COALESCE(location, '') = ''
-                  AND COALESCE(transit_to, '') = ''
-                """,
-                (mao.location,),
-            )
-        for name in ("李自成", "张献忠"):
-            ch = self.content.characters.get(name)
-            if not ch or ch.debut_year <= 0:
-                continue
-            self.conn.execute(
-                """
-                UPDATE characters
-                SET debut_year = ?, debut_month = ?
-                WHERE name = ?
-                  AND status = 'offstage'
-                  AND COALESCE(debut_year, 0) = 0
-                  AND COALESCE(debut_month, 0) = 0
-                """,
-                (ch.debut_year, ch.debut_month, name),
-            )
-        self.conn.commit()
-
-    def _migrate_character_identity_seed(self) -> None:
-        """Bring pre-identity saves onto the approved roster without rewriting play."""
-        if not self.table_has_rows("characters"):
-            return
-        for character in self.content.characters.values():
-            office = normalize_office(character.office)
-            office_type = infer_office_type_from_office(office, character.office_type, self.llm_config, use_llm=False)
-            self.conn.execute(
-                """INSERT OR IGNORE INTO characters
-                   (name, office, office_type, faction, aliases, personal_skills, loyalty, ability, integrity, courage, style, identity, seed_guilt,
-                    birth_year, historical_death_year, historical_death_month, debut_year, debut_month, status, status_reason, reason_code, status_changed_turn,
-                    portrait_id, power_id, location, transit_to, summary)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)""",
-                (character.name, office, office_type, character.faction,
-                 json.dumps(character.aliases, ensure_ascii=False), json.dumps(character.personal_skills, ensure_ascii=False),
-                 character.loyalty, character.ability, character.integrity, character.courage, character.style,
-                 character.identity, _seed_guilt_storage_value(character.seed_guilt), character.birth_year, character.historical_death_year,
-                 character.historical_death_month, character.debut_year, character.debut_month, character.status,
-                 character.status_reason, character.reason_code,
-                 character.portrait_id, character.power_id, character.location, character.transit_to, character.summary),
-            )
-        if not self._has_meta_flag("__identity_seed_v1"):
-            for character in self.content.characters.values():
-                self.conn.execute(
-                    "UPDATE characters SET identity=?, seed_guilt=? WHERE name=? AND identity=50 AND COALESCE(seed_guilt, '')=''",
-                    (character.identity, _seed_guilt_storage_value(character.seed_guilt), character.name),
-                )
-            self._set_meta_flag("__identity_seed_v1")
-        # Retire only the shipped ambiguous alias collision from old saves and
-        # backfill approved static dismissal provenance without rewriting play.
-        for name in ("袁可立", "袁崇焕"):
-            row = self.conn.execute("SELECT aliases FROM characters WHERE name=?", (name,)).fetchone()
-            if row:
-                try:
-                    aliases = json.loads(row["aliases"] or "[]")
-                except (TypeError, ValueError):
-                    aliases = []
-                aliases = [alias for alias in aliases if alias != "袁巡抚"]
-                self.conn.execute("UPDATE characters SET aliases=? WHERE name=?",
-                                  (json.dumps(aliases, ensure_ascii=False), name))
-        hu = self.content.characters.get("胡廷宴")
-        if hu:
-            self.conn.execute(
-                "UPDATE characters SET status_reason=?, reason_code=? WHERE name=? "
-                "AND status='dismissed' AND COALESCE(status_reason,'')=''",
-                (hu.status_reason, hu.reason_code, hu.name),
-            )
-        self.conn.commit()
-
-    def _backfill_bandit_power_split(self) -> None:
-        for power_id in ("bandit_li_zicheng", "bandit_zhang_xianzhong"):
-            power = self.content.powers.get(power_id)
-            if not power:
-                continue
-            self.conn.execute(
-                """
-                INSERT OR IGNORE INTO powers
-                (id, name, kind, leader, stance, leverage, satisfaction, military_strength,
-                 cohesion, supply, agenda, status, last_action, aliases)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    power.id,
-                    power.name,
-                    power.kind,
-                    power.leader,
-                    power.stance,
-                    power.leverage,
-                    power.satisfaction,
-                    power.military_strength,
-                    power.cohesion,
-                    power.supply,
-                    power.agenda,
-                    power.status,
-                    power.last_action,
-                    json.dumps(power.aliases, ensure_ascii=False)
-                    if isinstance(power.aliases, list)
-                    else power.aliases,
-                ),
-            )
-        # Known pre-#522 stock authority: exact legacy leader only → content canonical.
-        bandits = self.content.powers.get("bandits")
-        if bandits and bandits.leader:
-            self.conn.execute(
-                """
-                UPDATE powers
-                SET leader = ?
-                WHERE id = 'bandits'
-                  AND leader = '王嘉胤等'
-                """,
-                (bandits.leader,),
-            )
-        for name in ("李自成", "张献忠"):
-            ch = self.content.characters.get(name)
-            if not ch or not ch.power_id or ch.power_id == "bandits":
-                continue
-            if self.conn.execute("SELECT 1 FROM powers WHERE id=?", (ch.power_id,)).fetchone() is None:
-                continue
-            self.conn.execute(
-                """
-                UPDATE characters
-                SET power_id = ?
-                WHERE name = ?
-                  AND COALESCE(power_id, '') IN ('', 'bandits')
-                """,
-                (ch.power_id, name),
-            )
-        self.conn.commit()
-
-    def _backfill_event_triggers_from_event_pool_issues(self) -> None:
-        pending_core_effect_ids = {
-            ev.id for ev in (*self.content.events, *self.content.seed_events)
-            if ev.auto_trigger and bool(ev.effect_on_trigger)
-        }
-        rows = self.conn.execute(
-            """
-            WITH legacy AS (
-                SELECT origin_ref AS event_id, MIN(origin_turn) AS turn
-                FROM issues
-                WHERE origin_kind = 'event_pool' AND origin_ref <> ''
-                GROUP BY origin_ref
-            )
-            SELECT
-                legacy.event_id AS event_id,
-                legacy.turn AS turn,
-                COALESCE(turn_reports.year, game_state.year, 0) AS year,
-                COALESCE(turn_reports.period, game_state.period, 0) AS period
-            FROM legacy
-            LEFT JOIN turn_reports ON turn_reports.turn = legacy.turn
-            LEFT JOIN game_state ON game_state.id = 1
-            """,
-        ).fetchall()
-        for row in rows:
-            event_id = str(row["event_id"] or "")
-            if event_id in pending_core_effect_ids:
-                continue
-            self.conn.execute(
-                """
-                INSERT OR IGNORE INTO event_triggers
-                    (event_id, turn, year, period, source, terminal_state, terminal_reason)
-                VALUES (?, ?, ?, ?, 'legacy_event_pool', 'triggered', '')
-                """,
-                (event_id, row["turn"], row["year"], row["period"]),
-            )
-        self.conn.commit()
-
     def has_state(self) -> bool:
         row = self.conn.execute("SELECT 1 FROM game_state WHERE id = 1").fetchone()
         return row is not None
@@ -4926,36 +4610,11 @@ class GameDB:
             )
         self.conn.commit()
 
-    def _known_opening_gazette_seed_text(self) -> str:
-        """#1356 已知固定开局邸报全文指纹（与历史 seed 写入一致：strip 后入库）。"""
-        try:
-            from pathlib import Path
-            from ming_sim.paths import bundled_path
-            path = Path(bundled_path("content", "opening_gazette.md"))
-            if path.is_file():
-                return path.read_text(encoding="utf-8").strip()
-        except OSError:
-            return ""
-        return ""
-
-    def _purge_fixed_opening_gazette_seed(self) -> None:
-        """#1356：旧档精确 DELETE 已知 seed 全文。
-
-        单条 SQL 等值匹配，天然幂等；不扫表、不写 meta、不按短语 substring。
-        真实结算邸报（哪怕含 seed 短语）因全文不等而不被删。
-        """
-        known = self._known_opening_gazette_seed_text()
-        if not known:
-            return
-        self.conn.execute("DELETE FROM turn_reports WHERE report = ?", (known,))
-        self.conn.commit()
-
     def seed_opening_gazette(self, state: GameState) -> None:
         """开局公共见闻（新君登基/倒魏）。
 
-        #1356/#1292：不再写入固定开局邸报文到 turn_reports（P7 禁固定模板直显）。
-        首份玩家可见邸报由第一个正常月末 LLM 结算产生；content/opening_gazette.md
-        仅作旧档 purge 指纹源，不进玩家面。
+        #1356/#1292：不写入任何固定开局邸报文（P7 禁固定模板直显）。
+        首份玩家可见邸报由第一个正常月末 LLM 结算产生。
         """
         # Keep the two opening facts addressable as public knowledge rather than
         # requiring a character to infer them from an undifferentiated gazette.
@@ -4987,28 +4646,35 @@ class GameDB:
             bar = ev.bar_value or max(20, min(60, 50 - int(ev.severity / 5)))
             inertia = ev.issue_inertia  # 默认 0=不漂；要月漂在 seed 里显式填
             try:
-                self.insert_issue(
-                    state,
-                    kind="situation",
-                    title=ev.title,
-                    origin_kind="event_pool",
-                    origin_ref=ev.id,
-                    bar_value=bar,
-                    bar_good_meaning=ev.bar_good_meaning or "已平",
-                    bar_bad_meaning=ev.bar_bad_meaning or "失控",
-                    inertia=inertia,
-                    stage_text=ev.stage_text or ev.summary[:80],
-                    severity=int(ev.severity),
-                    region_hint=ev.region_hint,
-                    faction_hint=",".join(ev.interests[:2]),
-                    tags=ev.issue_tags or [ev.kind],
-                    ongoing_effects=ev.ongoing_effects,
-                    cancellable="never",
-                    effect_on_resolve=ev.effect_on_resolve,
-                    effect_on_fail=ev.effect_on_fail,
-                    resolve_condition=ev.resolve_condition,
-                    fail_condition=ev.fail_condition,
-                )
+                with atomic(self):
+                    self.insert_issue(
+                        state,
+                        kind="situation",
+                        title=ev.title,
+                        origin_kind="event_pool",
+                        origin_ref=ev.id,
+                        bar_value=bar,
+                        bar_good_meaning=ev.bar_good_meaning or "已平",
+                        bar_bad_meaning=ev.bar_bad_meaning or "失控",
+                        inertia=ev.issue_inertia,  # 默认 0=不漂；要月漂在 seed 里显式填
+                        stage_text=ev.stage_text or ev.summary[:80],
+                        severity=int(ev.severity),
+                        region_hint=ev.region_hint,
+                        faction_hint=",".join(ev.interests[:2]),
+                        tags=ev.issue_tags or [ev.kind],
+                        ongoing_effects=ev.ongoing_effects,
+                        cancellable="never",
+                        effect_on_resolve=ev.effect_on_resolve,
+                        effect_on_fail=ev.effect_on_fail,
+                        resolve_condition=ev.resolve_condition,
+                        fail_condition=ev.fail_condition,
+                        commit=False,
+                    )
+                    # 触发起手同样是一条事件触发事实：由 mark_event_triggered 这唯一写口落
+                    # （不再靠旧档 backfill 从 event_pool issue 反推）。
+                    self.mark_event_triggered(
+                        state, ev.id, source="opening_crises", commit=False,
+                    )
             except Exception as exc:
                 print(f"[WARN] 开局危机落库失败：{exc}；跳过 {ev.title}")
 
@@ -11127,25 +10793,6 @@ class GameDB:
             self._commit_dossier_write(True)
         return report_id
 
-    def _record_general_dossier_progress(
-        self,
-        dossier_id: int,
-        turn: int,
-        band: str,
-        text: str,
-        *,
-        is_terminal: bool,
-        origin: str,
-        commit: bool,
-    ) -> int:
-        report_id = self.dossiers.upsert_reported_progress(
-            int(dossier_id), int(turn), band=band, text=text, origin=origin,
-            is_terminal=bool(is_terminal),
-        )
-        if commit:
-            self._commit_dossier_write(True)
-        return report_id
-
     def record_dossier_progress(
         self,
         dossier_id: int,
@@ -11188,10 +10835,12 @@ class GameDB:
             payload = {}
         if not has_execution_surface(dossier.get("action_type"), payload):
             raise ValueError("非执行面案卷不可挂奏报")
-        return self._record_general_dossier_progress(
-            int(dossier_id), int(turn), band, text,
-            is_terminal=bool(is_terminal), origin=origin_norm, commit=commit,
+        report_id = self.dossiers.upsert_reported_progress(
+            int(dossier_id), int(turn), band=band, text=text, origin=origin_norm,
+            is_terminal=bool(is_terminal),
         )
+        self._commit_dossier_write(commit)
+        return report_id
 
     def list_dossier_progress(self, dossier_id: int) -> List[Dict[str, object]]:
         """Unified read seam over secret private rail and general reported rail."""
@@ -12481,23 +12130,6 @@ class GameDB:
             f"实抵{int(latest['arrived_amount'])}两"
         )
         return self.merge_execution_note(int(dossier_id), fragment, commit=commit)
-
-    def _backfill_proposed_appointment_break_ranks(self) -> None:
-        """Idempotently upgrade in-flight pre-#562 appointment dossiers."""
-        from ming_sim.office_rank import appointment_break_rank
-
-        rows = self.dossiers.proposed_appointment_rows()
-        for row in rows:
-            payload = json.loads(str(row["payload_json"] or "{}"))
-            if "break_rank" in payload:
-                continue
-            payload["break_rank"] = appointment_break_rank(
-                self,
-                payload.get("name") or row["target_id"],
-                payload.get("office") or payload.get("new_office"),
-                payload.get("office_type") or payload.get("new_office_type"),
-            )
-            self.dossiers.set_raw_payload(int(row["id"]), payload)
 
     @staticmethod
     def _grant_allocation_is_monthly(payload: Optional[Dict[str, object]]) -> bool:
