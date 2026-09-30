@@ -27,8 +27,6 @@ from ming_sim.staged_commitment import (
 )
 from ming_sim.participant_roster import resolve_dossier_owner_name
 from ming_sim.supervision import (
-    COUNTERMEASURE_ORIGIN_KIND,
-    COUNTERMEASURE_PRESENCE_MONTHS,
     EMPTY_TRANSFORMATION_TENDENCY_FACTS,
     EXPOSURE_ALLOWED_COLS,
     EXPOSURE_TABLE,
@@ -331,7 +329,7 @@ def test_ac2_paired_observation_slots_and_countermeasure_hard_gate(game):
     )
 
     base_turn = int(state.turn)
-    for offset in range(COUNTERMEASURE_PRESENCE_MONTHS):
+    for offset in range(12):  # 原硬门月数门（#1895 退役）只为铺满在场事实
         db.record_monthly_supervision_facts(base_turn + offset, commit=True)
 
     hist_m = db.list_supervision_history(sub_m, as_of_turn=base_turn + 11)
@@ -359,19 +357,17 @@ def test_ac2_paired_observation_slots_and_countermeasure_hard_gate(game):
     assert inp["supervision_history"]
     assert inp["transformation_tendency_facts"]["longest_consecutive_presence_months"] >= 1
 
-    # 孤直反制硬门：满 12 月 → 涌现缝立 issue（邸报前 auto_trigger 同缝）
-    triggered = db.trigger_supervision_countermeasures(state, commit=True)
-    assert triggered, "孤直满 12 月须立反制 issue"
-    kinds = {str(item.get("countermeasure_kind") or "") for item in triggered}
-    assert kinds & {"架空", "断信息", "诬告围攻", "明升暗调"}
-    issue = db.find_active_issue_by_origin(
-        COUNTERMEASURE_ORIGIN_KIND,
-        triggered[0]["origin_ref"],
-    )
-    assert issue is not None
-    # 重跑幂等
-    again = db.trigger_supervision_countermeasures(state, commit=True)
-    assert again == []
+    # #1895：孤直反制硬门退役——代码不再按 integrity 档判定「会不会反制」，
+    # 也不再 hash 指定反制形态（架空／断信息／诬告围攻／明升暗调）。人物据其
+    # 可及事实自选是否反制、采取何种行动，归 #1861 逐旨推演／#1843 世界段 run。
+    assert not hasattr(db, "trigger_supervision_countermeasures")
+    # 抓手与事实素材照留：连续在场月数、稽核人派系操守定性仍可读可持久。
+    assert tend_u["has_upright_auditor"] is True
+    assert surface_u["supervision_history"], "监督在场事实必须仍可供料"
+    assert db.find_any_issue_by_origin(
+        "supervision_countermeasure",
+        f"auditor:{upright['name']}:dossier:{sub_u}",
+    ) is None, "代码不得凭 integrity／在场月数自动立反制局势"
 
 
 # ── AC3 同派/敌派 origin 标记 ─────────────────────────────────────

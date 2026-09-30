@@ -5,9 +5,13 @@ DB 只机械记事实（监督在场 / 空子暴露 / 任期读既有 appointmen
 - 在场连号派生（不落库）
 - 派系同/敌判定
 - #619 origin 结构化私货/同派标记
-- 孤直反制硬门（涌现缝立 issue）
 - #627 政敌检举：fork 单源谓词、真伪 origin 派生、去重键（检举人×案卷×真伪类）
   （判断权归 LLM；引擎只供事实/承接 clamp/真伪底——禁烈度门/quota/文字模板）
+
+#1895：原「孤直稽核满 12 月 → 自动立反制 issue」硬门退役——代码不再按
+characters.integrity 档判定「这位大臣会不会反制」，也不再 hash 指定反制形态。
+人物据其可及事实决定是否反制、采取何种行动（#1861 逐旨推演／#1843 世界段
+run）；监督在场行、连续月数、稽核人派系与操守定性等事实素材全部照留。
 """
 
 from __future__ import annotations
@@ -58,12 +62,10 @@ DENUNCIATION_ORIGIN_BASE = "dossier-report:faction_denunciation"
 INTEGRITY_UPRIGHT_BANDS = frozenset({"操守清正", "清介可称"})  # 孤直型
 INTEGRITY_MEDIOCRE_BANDS = frozenset({"操守多亏", "操守未稳", "操守平常"})  # 庸吏
 
-# 反制硬门：同路稽核连续在场满 12 月
-COUNTERMEASURE_PRESENCE_MONTHS = 12
-COUNTERMEASURE_KINDS = (
-    "架空", "断信息", "诬告围攻", "明升暗调",
-)
-COUNTERMEASURE_ORIGIN_KIND = "supervision_countermeasure"
+# #1895：反制硬门常量（连续在场月数门／反制形态闭集／origin kind）随
+# GameDB.trigger_supervision_countermeasures 一并退役——代码不再按 integrity 档
+# 判定人物是否反制、不再 hash 指定反制形态。监督在场事实与稽核人定性仍照留，
+# 供 #1861 逐旨推演／#1843 世界段 run 依人物可及事实自选。
 
 # #627 检举事实表列白名单（PRAGMA 验收）
 DENUNCIATION_TABLE = "faction_denunciations"
@@ -91,10 +93,6 @@ FORBIDDEN_DULLING_COL_FRAGMENTS = (
 
 def integrity_band(value: object) -> str:
     return str(qualitative_character_axis("integrity", value) or "")
-
-
-def is_upright_integrity(value: object) -> bool:
-    return integrity_band(value) in INTEGRITY_UPRIGHT_BANDS
 
 
 def faction_relation(auditor_faction: object, subject_faction: object) -> str:
@@ -296,17 +294,6 @@ def build_transformation_tendency_facts(
         "exposure_count": len(list(loophole_exposures)),
     })
     return out
-
-
-def countermeasure_origin_ref(auditor_name: str, dossier_id: int) -> str:
-    return f"auditor:{auditor_name}:dossier:{int(dossier_id)}"
-
-
-def pick_countermeasure_kind(auditor_name: str, dossier_id: int) -> str:
-    """确定性选一种反制形态（restore 可复现，无真 RNG）。"""
-    seed = f"{auditor_name}:{int(dossier_id)}"
-    idx = sum(ord(ch) for ch in seed) % len(COUNTERMEASURE_KINDS)
-    return COUNTERMEASURE_KINDS[idx]
 
 
 def character_tenure(db: Any, name: str) -> str:

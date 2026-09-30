@@ -2,7 +2,7 @@
 
 Seams:
 - trigger_commitment_backlashes（#625 形制硬门）
-- pre_settle 邸报前既有挂点（与 trigger_supervision_countermeasures 同格）
+- pre_settle 邸报前既有挂点（#1895 退役前与孤直反制硬门同格）
 - assess_foundation_tier 触发侧重算（零新列）
 - find_any_issue_by_origin 幂等
 - issue_advances.trigger_ref 溯源源承诺
@@ -764,7 +764,8 @@ def test_ac5_hook_idempotent_no_gate_table_expansion(game):
     src = inspect.getsource(pre_settle)
     assert "trigger_commitment_backlashes" in src
     assert src.count("trigger_commitment_backlashes") == 1
-    assert "trigger_supervision_countermeasures" in src  # 同格既有挂点
+    # #1895：同格的 supervision 反制硬门已退役（代码不再凭 integrity／在场月数
+    # 判定人物是否反制），故此处不再断言该挂点存在；反噬硬门自身挂点仍恰一处。
 
     # 不扩 GATE_TABLES
     assert GATE_TABLES == (
