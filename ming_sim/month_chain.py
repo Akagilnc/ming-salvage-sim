@@ -620,14 +620,14 @@ def _run_opening_levy(
     """月初旧账只消费一次，先于本月旨意改账。"""
     if chain.get("opening_levy_done"):
         return
-    from ming_sim.issues import _apply_levy_driven_transfers
+    from ming_sim.displaced_population import apply_levy_driven_transfers
     from ming_sim.applier import RejectionCollector, mirror_rejections_after_commit
     from ming_sim.decree import _collect_inline_rejections
     from ming_sim.error_pack import rejections_jsonl_path
 
     collector = RejectionCollector()
     with atomic(db):
-        _applied, rejected = _apply_levy_driven_transfers(db, commit=False)
+        _applied, rejected = apply_levy_driven_transfers(db, commit=False)
         if rejected:
             _collect_inline_rejections(
                 collector, {"population_transfers_rejections": rejected}, turn,
@@ -1565,8 +1565,8 @@ def _advance_after_gazette(
         db.mark_directives_issued(state)
         clear_return_revise_choice_anchors(db, None)
         # #652：刚结束的月份的执行判定和实付已落定；下月任何吸收前回流。
-        from ming_sim.issues import _apply_recovery_driven_transfers
-        _apply_recovery_driven_transfers(db, state, commit=False)
+        from ming_sim.displaced_population import apply_recovery_driven_transfers
+        apply_recovery_driven_transfers(db, state, commit=False)
         state.next_period()
         _carry_pending_clarification_actions(db, state, turn, content=content)
         state.turn_phase = "issued"
