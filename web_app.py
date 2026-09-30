@@ -111,8 +111,6 @@ from ming_sim.models import (
     loads_effect_dict,
     reign_period_label,
 )
-from ming_sim import steam_events
-
 logger = logging.getLogger(__name__)
 
 WEB_DIST = bundled_path("web", "dist")
@@ -3099,7 +3097,6 @@ def _settlement_player_payload(
     report: str = "",
     decisions: Optional[List[Dict[str, Any]]] = None,
     pending_action_failures: Optional[List[Dict[str, Any]]] = None,
-    steam_events: Optional[List[Dict[str, Any]]] = None,
     advanced: Optional[bool] = None,
 ) -> Dict[str, Any]:
     """One player-facing seam for every settlement SSE terminal event."""
@@ -3111,8 +3108,6 @@ def _settlement_player_payload(
         payload["decisions"] = decisions
     if pending_action_failures is not None:
         payload["pending_action_failures"] = pending_action_failures
-    if steam_events is not None:
-        payload["steam_events"] = steam_events
     if advanced is not None:
         payload["advanced"] = advanced
     return payload
@@ -4561,10 +4556,7 @@ async def api_menu_new_game() -> Dict[str, Any]:
 
                 # 响应用发布前快照；payload 未知代码错必须响亮失败（ADR 0005），
                 # 不得宽捕获后返回 ok=True 洗白成功。finally 仍 release_opening。
-                return steam_events.with_events(
-                    {"state": state_snapshot},
-                    [steam_events.add_stat(steam_events.STAT_RUNS_STARTED)],
-                )
+                return {"state": state_snapshot}
             except Exception:
                 if not published:
                     _discard_unpublished_candidate(
@@ -5607,18 +5599,12 @@ def api_advance_without_edict(
             try:
                 # #1351 A1：获锁后、推进副作用前比对令牌；不匹配 → 409（样板 finally 清展示态）。
                 _reject_stale_month_token(game, body.expected_turn, token_label="退朝")
-                # #1769：was_ended 在相位/写闸守卫之后、结算副作用之前取样——
-                # 守卫路径不得读 ended（守门夹具无此字段）；语义仍是 end_turn/refresh 前快照。
-                was_ended = bool(game.state.ended)
                 # #1274 QA J-1：无旨月与有旨月同走完整结算链（session.advance_without_decree
                 # → resolve_turn(allow_empty_decree) → pre_settle+simulator+settle）。
                 # 16ms 快路已废；decree.advance_without_edict 空壳已删；有草案时 advance 内转 resolve_turn。
                 settlement_result = game.session.advance_without_decree(
                     write_gate_already_held=True,
                 )
-                # #1769：last_decree 须在 end_turn/refresh 之前取样
-                # （refresh→begin_turn 会清 last_decree）。awaiting 不计 steam。
-                decree = game.session.last_decree
                 awaiting = bool(
                     settlement_result is not None and settlement_result.awaiting
                 )
@@ -5644,15 +5630,7 @@ def api_advance_without_edict(
                     ),
                     "pending_action_failures": failure_snapshot,
                 }
-                if awaiting:
-                    return payload
-                return steam_events.with_events(
-                    payload,
-                    _settlement_steam_events(
-                        game, decree=decree or "", was_ended=was_ended,
-                        advanced=advanced,
-                    ),
-                )
+                return payload
             except HTTPException:
                 raise
             except Exception as body_exc:
@@ -5727,29 +5705,6 @@ def _reject_stale_month_token(game, expected_turn: Optional[int], *, token_label
         )
 
 
-def _settlement_steam_events(
-    game, *,
-    decree: str = "",
-    was_ended: bool = False,
-    advanced: bool = False,
-) -> List[Dict[str, Any]]:
-    """过月 steam 计数。月份未推进（邸报未写成）不计过月。
-    #1769：仅确有成案旨时发 STAT_DECREES_ISSUED。"""
-    if not advanced:
-        return []
-    events: List[Dict[str, Any]] = [
-        steam_events.add_stat(steam_events.STAT_TURNS_PLAYED),
-        steam_events.set_stat(
-            steam_events.STAT_MAX_TURN_REACHED, int(game.state.turn),
-        ),
-    ]
-    if (decree or "").strip():
-        events.insert(0, steam_events.add_stat(steam_events.STAT_DECREES_ISSUED))
-    if not was_ended and game.state.ended:
-        events.append(steam_events.add_stat(steam_events.STAT_ENDINGS_REACHED))
-    return events
-
-
 @app.post("/api/decree/issue")
 def api_issue_decree(body: IssueDecreeRequest = IssueDecreeRequest()) -> Dict[str, Any]:
     """非流式颁诏（保留兼容）。前端默认走 /api/decree/issue/stream。
@@ -5758,7 +5713,6 @@ def api_issue_decree(body: IssueDecreeRequest = IssueDecreeRequest()) -> Dict[st
     （等在飞回话工人终态；#1353 K10a 不按 elapsed 造 409），交给 FastAPI threadpool，
     不冻结 async event loop。"""
     game = get_game()
-    was_ended = bool(game.state.ended)
     turn_before = int(getattr(game.state, "turn", 0) or 0)
     failed_before = _failed_secret_order_ids_for_turn(game, turn_before)
     from ming_sim.audience_night import AudienceNightError
@@ -5779,7 +5733,7 @@ def api_issue_decree(body: IssueDecreeRequest = IssueDecreeRequest()) -> Dict[st
                 failure_snapshot = _new_secret_order_failure_payloads_for_turn(
                     game, turn_before, failed_before)
                 if result.awaiting:
-                    # 决策点暂停：回合未结算，返回决策点让前端弹窗；不刷新、不计 steam。
+                    # 决策点暂停：回合未结算，返回决策点让前端弹窗；不刷新。
                     return {
                         **_settlement_player_payload(
                             decree=decree,
@@ -5793,16 +5747,12 @@ def api_issue_decree(body: IssueDecreeRequest = IssueDecreeRequest()) -> Dict[st
                 if advanced:
                     game.session.end_turn()
                     game.refresh_turn()
-                events = _settlement_steam_events(
-                    game, decree=decree or "", was_ended=was_ended,
-                    advanced=advanced,
-                )
-                return steam_events.with_events(_settlement_player_payload(
+                return _settlement_player_payload(
                     decree=decree,
                     report=report,
                     pending_action_failures=failure_snapshot,
                     advanced=advanced,
-                ), events)
+                )
             except HTTPException:
                 raise
             except Exception as body_exc:
@@ -5863,7 +5813,6 @@ async def api_issue_decree_stream(body: IssueDecreeRequest = IssueDecreeRequest(
         failure_snapshot: Optional[List[Dict[str, Any]]] = None
         try:
             game = get_game()
-            was_ended = bool(game.state.ended)
             turn_before = int(game.state.turn)
             failed_before = _failed_secret_order_ids_for_turn(game, turn_before)
             # #1241 S1：受理样板收 helper；stream 锁语义 = 阻塞 _game_write_gate（与 issue 同）。
@@ -5883,7 +5832,7 @@ async def api_issue_decree_stream(body: IssueDecreeRequest = IssueDecreeRequest(
                     failure_snapshot = _new_secret_order_failure_payloads_for_turn(
                         game, turn_before, failed_before)
                     if result.awaiting:
-                        # 决策点暂停：邸报已流式推完，再推 decisions 让前端弹窗；本回合未结算、不刷新、不计 steam。
+                        # 决策点暂停：邸报已流式推完，再推 decisions 让前端弹窗；本回合未结算、不刷新。
                         terminal = ("__decisions__", _settlement_player_payload(
                             decree=decree,
                             decisions=result.decisions,
@@ -5895,14 +5844,9 @@ async def api_issue_decree_stream(body: IssueDecreeRequest = IssueDecreeRequest(
                         if advanced:
                             game.session.end_turn()
                             game.refresh_turn()
-                        events = _settlement_steam_events(
-                            game, decree=decree or "", was_ended=was_ended,
-                            advanced=advanced,
-                        )
                         terminal = ("__done__", _settlement_player_payload(
                             decree=decree,
                             report=report,
-                            steam_events=events,
                             pending_action_failures=failure_snapshot,
                             advanced=advanced,
                         ))
@@ -5991,7 +5935,6 @@ async def api_resolve_decisions_stream(body: ResolveDecisionsRequest) -> Streami
         failure_snapshot: Optional[List[Dict[str, Any]]] = None
         try:
             game = get_game()
-            was_ended = bool(game.state.ended)
             turn_before = int(game.state.turn)
             failed_before = _failed_secret_order_ids_for_turn(game, turn_before)
             # #1322：相位快速预检前移到受理/抢锁前（假 200/锁排队拖成数十秒）；
@@ -6024,14 +5967,9 @@ async def api_resolve_decisions_stream(body: ResolveDecisionsRequest) -> Streami
                         if advanced:
                             game.session.end_turn()
                             game.refresh_turn()
-                    events = _settlement_steam_events(
-                        game, decree=decree or "", was_ended=was_ended,
-                        advanced=advanced,
-                    )
                     terminal = ("__done__", _settlement_player_payload(
                         decree=decree,
                         report=report,
-                        steam_events=events,
                         pending_action_failures=failure_snapshot,
                         advanced=advanced,
                     ))
@@ -6119,10 +6057,7 @@ async def api_create_save(request: SaveCreateRequest) -> Dict[str, Any]:
         info = game.save_to(request.name)
         # #1749：list_saves 读 campaign_id（DB）；响应列表在 gate 内快照。
         saves = game.list_saves()
-    return steam_events.with_events(
-        {"save": info, "saves": saves},
-        [steam_events.add_stat(steam_events.STAT_SAVES_CREATED)],
-    )
+    return {"save": info, "saves": saves}
 
 
 @app.delete("/api/saves/{name}")
