@@ -716,7 +716,7 @@ def test_legacy_pending_only_advances_to_durable_dossier_without_review_api(web_
     assert state_payload["reopen_landing"] == "audience"
     assert response.status_code == 200
     assert an.get_night(game.db, int(night["id"]))["status"] == "closed"
-    dossier = game.db.get_dossier_for_directive(directive_id)
+    dossier = game.db.dossiers.get_for_directive(directive_id)
     assert dossier is not None
     assert int(game.db.load_state().turn) == turn_before + 1
     # #1855：推进后落本月盘面（复用本案真实过月，不另造 mock 伪全链）

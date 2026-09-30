@@ -183,7 +183,7 @@ def test_rollback_purges_content_character_ghost(game, monkeypatch):
         "SELECT office,office_type,status FROM characters WHERE name=?", (new_name,)
     ).fetchone()
     assert tuple(identity) == ("待选", "未仕", "offstage")
-    dossiers = db.list_decree_dossiers(
+    dossiers = db.dossiers.list_dossiers(
         status="proposed", target_kind="character", target_id=new_name
     )
     assert len(dossiers) == 1  # 成案与未生效身份 durable；颁布前仍未授官/激活

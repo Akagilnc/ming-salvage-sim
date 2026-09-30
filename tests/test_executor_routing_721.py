@@ -106,7 +106,7 @@ def test_create_dossier_nails_roster_lead_in_canonical_insert_and_restore(env):
         db, state, category="清丈",
         participants=[{"character_id": "毕自严", "tier": "主办"}],
     )
-    row = db.get_decree_dossier(dossier_id)
+    row = db.dossiers.get(dossier_id)
     assert [e["character_id"] for e in row["participant_roster"] if e["tier"] == "主办"] == ["毕自严"]
 
     path = db.path
@@ -114,7 +114,7 @@ def test_create_dossier_nails_roster_lead_in_canonical_insert_and_restore(env):
     from ming_sim.db import GameDB
     restored = GameDB(path, content)
     try:
-        row = restored.get_decree_dossier(dossier_id)
+        row = restored.dossiers.get(dossier_id)
         assert [e["character_id"] for e in row["participant_roster"] if e["tier"] == "主办"] == ["毕自严"]
     finally:
         restored.close()
@@ -140,7 +140,7 @@ def test_existing_delegated_lead_is_preserved_not_demoted(env):
             {"character_id": "陈新甲", "tier": "主办", "delegator_id": "毕自严"},
         ],
     )
-    persisted = db.get_decree_dossier(dossier_id)["participant_roster"]
+    persisted = db.dossiers.get(dossier_id)["participant_roster"]
     by_name = {e["character_id"]: e for e in persisted}
     assert by_name["毕自严"]["tier"] == "主办"
     assert not str(by_name["毕自严"].get("delegator_id") or "").strip()
@@ -155,7 +155,7 @@ def test_existing_delegated_lead_is_preserved_not_demoted(env):
 def test_production_assignee_is_named_route(env, payload):
     db, state, _ = env
     dossier_id = _create(db, state, category=None, payload=payload)
-    dossier = db.get_decree_dossier(dossier_id)
+    dossier = db.dossiers.get(dossier_id)
     leads = [
         e["character_id"] for e in dossier["participant_roster"]
         if e["tier"] == "主办"
@@ -180,8 +180,8 @@ def test_legacy_character_executor_migrates_without_overriding_roster(env, actio
         executor_id="陈新甲", payload={},
         participants=[{"character_id": "毕自严", "tier": "主办"}],
     )
-    legacy_roster = db.get_decree_dossier(legacy_id)["participant_roster"]
-    existing_roster = db.get_decree_dossier(roster_id)["participant_roster"]
+    legacy_roster = db.dossiers.get(legacy_id)["participant_roster"]
+    existing_roster = db.dossiers.get(roster_id)["participant_roster"]
     assert [
         item["character_id"] for item in legacy_roster if item["tier"] == "主办"
     ] == ["陈新甲"]
@@ -205,7 +205,7 @@ def test_canonical_owner_precedes_legacy_with_history_fallback():
 def test_appointment_routes_to_appointee_at_creation(env):
     db, state, _ = env
     dossier_id = _create(db, state, action="appointment", category=None, target="陈新甲")
-    leads = [e["character_id"] for e in db.get_decree_dossier(dossier_id)["participant_roster"] if e["tier"] == "主办"]
+    leads = [e["character_id"] for e in db.dossiers.get(dossier_id)["participant_roster"] if e["tier"] == "主办"]
     assert leads == ["陈新甲"]
 
 
@@ -229,7 +229,7 @@ def test_new_appointee_identity_exists_before_promulgation_and_leads_dossier(env
         "SELECT id FROM decree_dossiers WHERE pending_action_id=?", (pending_id,),
     ).fetchone()
     leads = [
-        item["character_id"] for item in db.get_decree_dossier(dossier["id"])["participant_roster"]
+        item["character_id"] for item in db.dossiers.get(dossier["id"])["participant_roster"]
         if item["tier"] == "主办"
     ]
     assert leads == [name]
@@ -292,7 +292,7 @@ def test_real_assignment_stage_lead_comes_from_extract_not_summoned_minister(env
     ).fetchone()
     assert json.loads(dossier["payload_json"])["transaction_category"] == "清丈"
     leads = [
-        item["character_id"] for item in db.get_decree_dossier(dossier["id"])["participant_roster"]
+        item["character_id"] for item in db.dossiers.get(dossier["id"])["participant_roster"]
         if item["tier"] == "主办"
     ]
     assert leads == ["毕自严"]
@@ -473,7 +473,7 @@ def test_restore_malformed_durable_json_fails_loud(env, column, bad):
     dossier_id = _create(db, state, category=None, action="policy")
     db.conn.execute(f"UPDATE decree_dossiers SET {column}=? WHERE id=?", (bad, dossier_id))
     with pytest.raises(ValueError, match=column):
-        db.get_decree_dossier(dossier_id)
+        db.dossiers.get(dossier_id)
 
 
 def test_national_policy_is_one_dossier_without_province_routing(env):
@@ -495,7 +495,7 @@ def test_national_policy_is_one_dossier_without_province_routing(env):
         commit=True,
     )
     assert len(ids) == 1
-    row = db.get_decree_dossier(ids[0])
+    row = db.dossiers.get(ids[0])
     assert row["region_id"] == ""
 
     # 单省差务未点将、名单也没写 → 空 leads（钉代码不配人、无省级/中央回退）

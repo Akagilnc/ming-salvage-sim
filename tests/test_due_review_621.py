@@ -66,7 +66,7 @@ def _executing_policy_dossier(db, state, *, token: str = "due-review-621"):
         ],
     )
     db.apply_dossier_promulgation(state, dossier_id, "promulgated")
-    assert db.get_decree_dossier(dossier_id)["status"] == "executing"
+    assert db.dossiers.get(dossier_id)["status"] == "executing"
     return dossier_id
 
 
@@ -284,7 +284,7 @@ def test_dossier_branch_writes_execution_slot_via_adapter(game, monkeypatch):
     assert scenes and scenes[0]["origin_context"] == "三年火器见眉目"
 
     _settle_empty_month(db, state, content, monkeypatch)
-    dossier = db.get_decree_dossier(dossier_id)
+    dossier = db.dossiers.get(dossier_id)
     # 中段：过程态 executing，不结案
     assert dossier["execution_outcome"] == "executing"
     assert dossier["status"] == "executing"
@@ -319,7 +319,7 @@ def test_dossier_branch_negative_does_not_open_parallel_slot(game):
     apply_pending_due_reviews(db, state, commit=True)
     after_count = db.conn.execute("SELECT COUNT(*) AS c FROM decree_dossiers").fetchone()["c"]
     assert after_count == before_count
-    assert db.get_decree_dossier(dossier_id)["id"] == dossier_id
+    assert db.dossiers.get(dossier_id)["id"] == dossier_id
 
 
 def test_no_dossier_branch_only_scene_no_forged_dossier(game):
@@ -363,7 +363,7 @@ def test_no_dossier_branch_only_scene_no_forged_dossier(game):
     # 不新建案卷
     assert after_count == before_count + 1  # +1 是 origin 那条已存在的
     # 不改已结案卷执行格为第二真源
-    assert db.get_decree_dossier(did)["status"] == "closed"
+    assert db.dossiers.get(did)["status"] == "closed"
     assert db.list_next_audience_todos(status=TODO_STATUS_PENDING) == []
 
 
@@ -439,7 +439,7 @@ def test_mid_stage_no_close_no_joint_liability(game):
     db.conn.commit()
     apply_pending_due_reviews(db, state, commit=True)
 
-    dossier = db.get_decree_dossier(dossier_id)
+    dossier = db.dossiers.get(dossier_id)
     assert dossier["execution_outcome"] == "executing"
     assert dossier["status"] == "executing"
     assert _cost_events(db, dossier_id) == []
@@ -471,7 +471,7 @@ def test_final_stage_terminal_close_joint_liability_at_most_once(game):
     db.conn.commit()
     apply_pending_due_reviews(db, state, commit=True)
 
-    dossier = db.get_decree_dossier(dossier_id)
+    dossier = db.dossiers.get(dossier_id)
     assert dossier["execution_outcome"] in {"fulfilled", "degraded", "failed", "transformed"}
     assert dossier["status"] == "closed"
     # 无实账无表报 → failed ∈ 连坐触发集；整笔幂等门闩 cost_kind=liability 恰一行
@@ -538,14 +538,14 @@ def test_three_beat_timing_todo_then_scene_then_slot(game, monkeypatch):
     todos = db.list_next_audience_todos(status=TODO_STATUS_PENDING)
     assert len(todos) == 1
     # 落格尚未发生
-    assert db.get_decree_dossier(dossier_id)["execution_outcome"] in ("", None)
+    assert db.dossiers.get(dossier_id)["execution_outcome"] in ("", None)
     # beat2: 召对场面可读
     scenes = list_due_review_scenes(db, state)
     assert len(scenes) == 1
 
     # beat3: 下一过月落格 + 消费
     _settle_empty_month(db, state, content, monkeypatch)
-    assert db.get_decree_dossier(dossier_id)["execution_outcome"]
+    assert db.dossiers.get(dossier_id)["execution_outcome"]
     assert db.list_next_audience_todos(status=TODO_STATUS_PENDING) == []
 
 
@@ -623,7 +623,7 @@ def test_formal_review_blocks_extractor_second_terminal(game):
     )
     db.conn.commit()
     apply_pending_due_reviews(db, state, commit=True)
-    first = db.get_decree_dossier(dossier_id)
+    first = db.dossiers.get(dossier_id)
     assert first["execution_outcome"] in {
         "fulfilled", "degraded", "failed", "transformed", "executing",
     }
@@ -667,7 +667,7 @@ def test_formal_review_blocks_extractor_second_terminal(game):
     assert item.get("rejected") is True
 
     # 正式复核终值不被 extractor 覆盖（若仍 closed 则 outcome 不变；重开后亦拒写）
-    dossier = db.get_decree_dossier(dossier_id)
+    dossier = db.dossiers.get(dossier_id)
     if outcome_before in {"fulfilled", "degraded", "failed", "transformed"}:
         # 拒收后不应变成 extractor 的 transformed（除非本来就是）
         if outcome_before != "transformed":
@@ -694,7 +694,7 @@ def test_due_month_extractor_blocked_before_todo_write(game):
     owned = dossiers_with_pending_due_review(db, state)
     assert dossier_id in owned
 
-    before = db.get_decree_dossier(dossier_id)
+    before = db.dossiers.get(dossier_id)
     assert before["status"] == "executing"
     assert before["execution_outcome"] in ("", None)
 
@@ -713,7 +713,7 @@ def test_due_month_extractor_blocked_before_todo_write(game):
     assert item.get("rejected") is True
     assert "正式复核" in str(item.get("reason") or "")
 
-    after = db.get_decree_dossier(dossier_id)
+    after = db.dossiers.get(dossier_id)
     assert after["status"] == "executing"
     assert after["execution_outcome"] in ("", None)
 
@@ -741,7 +741,7 @@ def test_takeover_guard_fail_closed_on_ownership_error(game, monkeypatch):
             },
             content=content,
         )
-    dossier = db.get_decree_dossier(dossier_id)
+    dossier = db.dossiers.get(dossier_id)
     assert dossier["status"] == "executing"
     assert dossier["execution_outcome"] in ("", None)
 
@@ -776,7 +776,7 @@ def test_fulfilled_with_prior_durable_effect_zero_double_post(game):
     db.conn.commit()
     apply_pending_due_reviews(db, state, commit=True)
 
-    dossier = db.get_decree_dossier(dossier_id)
+    dossier = db.dossiers.get(dossier_id)
     assert dossier["execution_outcome"] == "fulfilled"
     after_moves = db.list_economy_moves_for_dossier(dossier_id)
     assert after_moves == before_moves

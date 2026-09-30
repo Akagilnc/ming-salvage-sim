@@ -28,7 +28,7 @@ def _visible_effect_refs(db: Any, turn: int, decree_payload: Mapping[str, object
 
     return {
         "affairs": [int(row.id) for row in db.affairs.list_open()],
-        "dossiers": [int(row["id"]) for row in db.list_decree_dossiers_for_simulation(turn)],
+        "dossiers": [int(row["id"]) for row in db.dossiers.list_for_simulation(turn)],
         # 唯一判法：案卷.secret_order_id；供 declaration_dispatch → secret_dossier_participants
         "secret_dossiers": sorted(secret_order_dossier_ids(db)),
     }

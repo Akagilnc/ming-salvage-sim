@@ -39,7 +39,7 @@ def _executing_policy(db, state, *, token: str):
         ],
     )
     db.apply_dossier_promulgation(state, dossier_id, "promulgated")
-    assert db.get_decree_dossier(dossier_id)["status"] == "executing"
+    assert db.dossiers.get(dossier_id)["status"] == "executing"
     return dossier_id
 
 
@@ -153,7 +153,7 @@ def test_ac1_ac2_transformed_vs_degraded_dual_rail_tracer(game, tmp_path, conten
     result_xf = _prime_and_apply_due_review(
         db, state, content, dossier_id=xf_id, title="变形对照·清丈",
     )
-    xf_dossier = db.get_decree_dossier(xf_id)
+    xf_dossier = db.dossiers.get(xf_id)
     assert xf_dossier["execution_outcome"] == "transformed"
     assert xf_dossier["status"] == "closed"
     assert result_xf["verdict"]["outcome"] == "transformed"
@@ -182,7 +182,7 @@ def test_ac1_ac2_transformed_vs_degraded_dual_rail_tracer(game, tmp_path, conten
         r_moves = restored.list_economy_moves_for_dossier(xf_id)
         assert r_moves and r_moves[0]["beyond_intent"] is True
         assert r_moves[0]["origin_ref"] == f"dossier:{xf_id}"
-        assert restored.get_decree_dossier(xf_id)["execution_outcome"] == "transformed"
+        assert restored.dossiers.get(xf_id)["execution_outcome"] == "transformed"
     finally:
         restored.close()
 
@@ -224,7 +224,7 @@ def test_ac1_ac2_transformed_vs_degraded_dual_rail_tracer(game, tmp_path, conten
     result_deg = _prime_and_apply_due_review(
         db, state, content, dossier_id=deg_id, title="打折对照·清丈",
     )
-    deg_dossier = db.get_decree_dossier(deg_id)
+    deg_dossier = db.dossiers.get(deg_id)
     assert deg_dossier["execution_outcome"] == "degraded"
     assert result_deg["verdict"]["outcome"] == "degraded"
     deg_progress = db.list_dossier_progress(deg_id)
@@ -270,8 +270,8 @@ def test_ac5_audit_fork_signal_present_only_with_audit_link(game):
     audit_order = create_test_secret_order(
         db, state, actor, "密查清丈浮收", "逐月密奏", ["稽核"], deadline_months=4,
     )
-    audit_dossier = int(db.get_dossier_for_secret_order(audit_order)["id"])
-    db.add_dossier_links(
+    audit_dossier = int(db.dossiers.get_for_secret_order(audit_order)["id"])
+    db.dossiers.add_links(
         audit_dossier,
         [{"target_dossier_id": target_id, "relation_type": "稽核", "note": "密查该路清丈"}],
     )
@@ -291,7 +291,7 @@ def test_ac5_audit_fork_signal_present_only_with_audit_link(game):
     escort_order = create_test_secret_order(
         db, state, actor, "护行辽饷", "逐月办理", ["护行"], deadline_months=4,
     )
-    escort_dossier = int(db.get_dossier_for_secret_order(escort_order)["id"])
+    escort_dossier = int(db.dossiers.get_for_secret_order(escort_order)["id"])
     nudges2 = db.list_monthly_dossier_progress_nudges()
     escort_nudge = next(n for n in nudges2 if int(n["dossier_id"]) == escort_dossier)
     assert "audit_fork_signals" not in escort_nudge

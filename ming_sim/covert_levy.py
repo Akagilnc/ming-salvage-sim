@@ -24,7 +24,7 @@ def active_prohibition_dossier(db: Any, exposed_dossier_id: int) -> Dict[str, ob
     ).fetchall()
     for row in rows:
         item = dict(row)
-        if db.dossier_authorizes_effects(int(item["id"])):
+        if db.dossiers.authorizes_effects(int(item["id"])):
             return item
     return None
 
@@ -105,7 +105,7 @@ def settle_exposure_from_canonical_actions(db: Any, state: Any, applied: Mapping
         if payload.get("decision"):
             continue
         origin = f"dossier:{did}"
-        dossier = db.get_decree_dossier(did) or {}
+        dossier = db.dossiers.get(did) or {}
         actors = {str(dossier.get("executor_id") or "").strip()}
         for participant in dossier.get("participant_roster") or []:
             if isinstance(participant, Mapping) and participant.get("tier") in {"主办", "协办"}:

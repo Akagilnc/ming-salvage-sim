@@ -259,7 +259,7 @@ def test_questions_hold_rescript_and_gazette_is_required_before_advance(game, mo
     # 历史留中回流的同一请旨仍未答，不能因案卷创建于前月越过批红。
     from ming_sim.decree_forecast import decree_ref_for_dossier
     from ming_sim.models import TurnPhase
-    dossier = next(d for d in db.list_decree_dossiers() if decree_ref_for_dossier(db, d) == ref)
+    dossier = next(d for d in db.dossiers.list_dossiers() if decree_ref_for_dossier(db, d) == ref)
     db.conn.execute(
         "UPDATE decree_dossiers SET created_turn=? WHERE id=?",
         (closed_turn - 1, int(dossier["id"])),
@@ -580,13 +580,13 @@ def test_held_dossier_settlement_failure_retry_and_reentry_isolation(game, monke
     _settle_edicts(sess, chain=chain)
     assert db.staged_declarations.is_settled(held_ref)
     assert not db.staged_declarations.is_settled(stale_ref)
-    assert db.get_decree_dossier(dossier_id)["promulgation_decision"] == "promulgated"
+    assert db.dossiers.get(dossier_id)["promulgation_decision"] == "promulgated"
 
     # 再次进入月链结算：保持 held_ref 案卷身份，旧 pending-action 不被冒名结算
     _settle_edicts(sess, chain=chain)
     assert db.staged_declarations.is_settled(held_ref)
     assert not db.staged_declarations.is_settled(stale_ref)
-    dossier = db.get_decree_dossier(dossier_id)
+    dossier = db.dossiers.get(dossier_id)
     assert decree_ref_for_dossier(db, dossier) == held_ref
 
 
@@ -675,7 +675,7 @@ def test_month_drift_settles_due_secret_and_records_inertia_rejection(game, monk
         month_chain, "run_secret_orders_supply",
         lambda *a, **k: {
             "dossier_progress_reports": [{
-                "dossier_id": int(db.get_dossier_for_secret_order(order_id)["id"]),
+                "dossier_id": int(db.dossiers.get_for_secret_order(order_id)["id"]),
                 "progress_band": "持平",
                 "memorial_text": "核验田亩中",
             }],
@@ -775,14 +775,14 @@ def test_month_chain_lands_specialized_facts_before_due_and_gazette(game, monkey
         "UPDATE secret_orders SET turn_issued=?, due_turn=? WHERE id=?",
         (int(state.turn) - 1, int(state.turn), order_id),
     )
-    dossier_id = int(db.get_dossier_for_secret_order(order_id)["id"])
+    dossier_id = int(db.dossiers.get_for_secret_order(order_id)["id"])
     grant_id = db.create_decree_dossier(
         state, action_type="grant_allocation", decree_text="赈粮在途",
         target_kind="region", target_id="henan",
         payload={"amount": 100, "grant_action": "赈灾", "account": "国库"},
     )
-    db.transition_decree_dossier(grant_id, "promulgated")
-    db.transition_decree_dossier(grant_id, "executing")
+    db.dossiers.transition(grant_id, "promulgated")
+    db.dossiers.transition(grant_id, "executing")
     db.conn.execute(
         "INSERT INTO chat_messages (minister_name, turn, role, content, knowledge_status) "
         "VALUES (?, ?, 'user', '公开奏对', 'held')",
@@ -840,7 +840,7 @@ def test_month_chain_lands_specialized_facts_before_due_and_gazette(game, monkey
         item["memorial_text"] == "本月密奏已达"
         for item in db.list_dossier_progress(dossier_id)
     )
-    recon = db.list_dossier_reconciliations(grant_id)[-1]
+    recon = db.dossiers.reconciliations(grant_id)[-1]
     assert recon["note"] == "实抵已到"
     assert recon["turn"] == int(state.turn)
     denunciations = db.list_faction_denunciations(

@@ -399,7 +399,7 @@ def test_held_rejudgments_overlap_instead_of_waiting_in_one_worker(game, monkeyp
     chain = {}
     _settle_edicts(sess, chain=chain)
     assert all(
-        db.get_decree_dossier(dossier_id)["promulgation_decision"] == "promulgated"
+        db.dossiers.get(dossier_id)["promulgation_decision"] == "promulgated"
         for dossier_id in ids
     )
     for dossier_id, pending_id in zip(ids, pending_ids):
@@ -415,7 +415,7 @@ def test_held_rejudgments_overlap_instead_of_waiting_in_one_worker(game, monkeyp
         held_ref = held_dossier_decree_ref(dossier_id)
         assert not db.staged_declarations.is_settled(stale_ref)
         assert db.staged_declarations.is_settled(held_ref)
-        dossier = db.get_decree_dossier(dossier_id)
+        dossier = db.dossiers.get(dossier_id)
         assert forecast_mod.decree_ref_for_dossier(db, dossier) == held_ref
     late = db.create_decree_dossier(
         state, action_type="policy", decree_text="预推后", target_kind="issue",

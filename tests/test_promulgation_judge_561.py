@@ -32,18 +32,18 @@ def test_promulgation_context_is_deterministic_and_excludes_satisfaction(game):
     ).fetchone()["name"]
     chat_a = db.create_chat_turn(state, minister, "promulgation-561-a", 0)
     chat_b = db.create_chat_turn(state, minister, "promulgation-561-b", 0)
-    first_id = db.add_dossier_endorsement(
+    first_id = db.dossiers.add_endorsement(
         dossier_id, form="会签", endorser_id=minister, source_chat_turn_id=chat_a,
     )
-    second_id = db.add_dossier_endorsement(
+    second_id = db.dossiers.add_endorsement(
         dossier_id, form="当面站台", endorser_id=minister, source_chat_turn_id=chat_b,
     )
     context = decree_mod.build_promulgation_judge_context(
-        db, state, db.list_decree_dossiers(status="proposed"),
+        db, state, db.dossiers.list_dossiers(status="proposed"),
     )
 
     assert context == decree_mod.build_promulgation_judge_context(
-        db, state, db.list_decree_dossiers(status="proposed"),
+        db, state, db.dossiers.list_dossiers(status="proposed"),
     )
     encoded = json.dumps(context, ensure_ascii=False, sort_keys=True)
     assert "satisfaction" not in encoded
@@ -99,7 +99,7 @@ def test_promulgation_context_projects_faction_leverage_as_qualitative_band(game
     db.conn.commit()
 
     context = decree_mod.build_promulgation_judge_context(
-        db, state, db.list_decree_dossiers(status="proposed"),
+        db, state, db.dossiers.list_dossiers(status="proposed"),
     )
     by_name = {row["name"]: row for row in context["factions"]}
 
@@ -136,7 +136,7 @@ def test_promulgation_context_routes_faction_leverage_through_power_band(
         raising=False,
     )
     context = decree_mod.build_promulgation_judge_context(
-        db, state, db.list_decree_dossiers(status="proposed"),
+        db, state, db.dossiers.list_dossiers(status="proposed"),
     )
     by_name = {row["name"]: row for row in context["factions"]}
     assert by_name["东林"]["leverage"] == "routed:42"
@@ -215,7 +215,7 @@ def test_promulgation_verdict_list_shape_has_one_canonical_authority(game):
 def test_promulgation_verdict_rejects_unknown_fields(game, decision):
     db, state, _content = game
     dossier_id = _dossier(db, state)
-    dossiers = db.list_decree_dossiers(status="proposed")
+    dossiers = db.dossiers.list_dossiers(status="proposed")
     context = decree_mod.build_promulgation_judge_context(db, state, dossiers)
     verdict = (
         {"dossier_id": dossier_id, "decision": "promulgated"}
@@ -238,7 +238,7 @@ def test_promulgated_verdict_strips_rejection_only_noise(game):
     """
     db, state, _content = game
     dossier_id = _dossier(db, state)
-    dossiers = db.list_decree_dossiers(status="proposed")
+    dossiers = db.dossiers.list_dossiers(status="proposed")
     context = decree_mod.build_promulgation_judge_context(db, state, dossiers)
     noisy = {
         "dossier_id": dossier_id,
@@ -274,7 +274,7 @@ def test_promulgated_midzhi_strips_affected_parties_with_rejection_noise(game):
     """#657 §C.8：中旨顺颁剥离打回噪声与猜派 affected_parties。"""
     db, state, _content = game
     dossier_id = _dossier(db, state, mode="midzhi")
-    dossiers = db.list_decree_dossiers(status="proposed")
+    dossiers = db.dossiers.list_dossiers(status="proposed")
     context = decree_mod.build_promulgation_judge_context(db, state, dossiers)
     parties = [
         {"kind": "faction", "key": "东林", "direction": "negative", "intensity": "weak"},
@@ -310,7 +310,7 @@ def test_promulgated_true_path_clean_verdict_passes(game):
     """#1397 钉测：干净顺颁真路径（仅 dossier_id+decision）过闸。"""
     db, state, _content = game
     dossier_id = _dossier(db, state)
-    dossiers = db.list_decree_dossiers(status="proposed")
+    dossiers = db.dossiers.list_dossiers(status="proposed")
     context = decree_mod.build_promulgation_judge_context(db, state, dossiers)
 
     assert decree_mod.validate_promulgation_verdicts(
@@ -323,7 +323,7 @@ def test_rejected_verdict_still_requires_full_rejection_contract(game):
     """#1397 负向边界：打回契约不因顺颁容错而放松。"""
     db, state, _content = game
     dossier_id = _dossier(db, state)
-    dossiers = db.list_decree_dossiers(status="proposed")
+    dossiers = db.dossiers.list_dossiers(status="proposed")
     context = decree_mod.build_promulgation_judge_context(db, state, dossiers)
 
     with pytest.raises(
@@ -342,7 +342,7 @@ def test_gate_reconsideration_removes_only_named_opponent_and_keeps_real_bench(g
     db, state, _content = game
     dossier_id = _dossier(db, state, "不经部议，清丈天下田亩并追夺士绅隐田")
     first = decree_mod.build_promulgation_judge_context(
-        db, state, db.list_decree_dossiers(status="proposed"),
+        db, state, db.dossiers.list_dossiers(status="proposed"),
     )
     original_factions = {row["name"]: row for row in first["factions"]}
 
@@ -366,7 +366,7 @@ def test_gate_reconsideration_removes_only_named_opponent_and_keeps_real_bench(g
     assert auth_ids and all(item.isdigit() for item in auth_ids)
     authority = db.get_authority(int(auth_ids[0]))
     assert authority["dossier_id"] != dossier_id
-    assert db.dossier_authorizes_effects(int(authority["dossier_id"]))
+    assert db.dossiers.authorizes_effects(int(authority["dossier_id"]))
     assert second["dossiers"][0]["held_authorities"]
     assert second["dossiers"][0]["held_authorities"][0]["privilege"] == "便宜行事"
     assert second["imperial_authority_band"] == "强盛"
@@ -382,18 +382,18 @@ def test_gate_reconsideration_resolves_missing_target_to_land_survey(game):
         (dossier_id,),
     )
     first = decree_mod.build_promulgation_judge_context(
-        db, state, db.list_decree_dossiers(status="proposed"),
+        db, state, db.dossiers.list_dossiers(status="proposed"),
     )
 
     second = _prepare_reconsideration_facts(db, state, dossier_id, first)
 
-    held = db.get_decree_dossier(dossier_id)
+    held = db.dossiers.get(dossier_id)
     assert held["target_kind"] == "issue"
     assert held["target_id"] == "清丈田亩"
     auth_ids = second["dossiers"][0]["criteria_snapshot_source"]["authorization_ids"]
     assert auth_ids and all(item.isdigit() for item in auth_ids)
     authority = db.get_authority(int(auth_ids[0]))
-    grant = db.get_decree_dossier(int(authority["dossier_id"]))
+    grant = db.dossiers.get(int(authority["dossier_id"]))
     assert authority["scope"] == "issue:清丈田亩"
     assert grant["target_kind"] == "issue"
     assert grant["target_id"] == "清丈田亩"
@@ -410,7 +410,7 @@ def test_gate_evidence_reloads_dossier_after_reconsideration_mutation(game):
         "SELECT name FROM characters WHERE status='active' AND power_id='ming' "
         "ORDER BY name LIMIT 1"
     ).fetchone()["name"]
-    stale = db.get_decree_dossier(dossier_id)
+    stale = db.dossiers.get(dossier_id)
     # Payload authorization strings must not become authorization_ids (#611).
     payload = json.loads(stale["payload_json"])
     payload["authorization_ids"] = ["fresh-authorization"]
@@ -476,7 +476,7 @@ def test_run_resolve_arm_recovers_settled_verdicts_from_history(game, monkeypatc
     )
 
     def fake_resolve(state, db, *_a, **_k):
-        dossiers = db.list_decree_dossiers(status="proposed")
+        dossiers = db.dossiers.list_dossiers(status="proposed")
         verdicts = [
             {"dossier_id": int(row["id"]), "decision": "promulgated"}
             for row in dossiers
@@ -521,7 +521,7 @@ def test_gatekeeper_successor_removes_donglin_block_posture(game):
 
     _mutate_gatekeeper_replace(db, state)
     context = decree_mod.build_promulgation_judge_context(
-        db, state, db.list_decree_dossiers(status="proposed"),
+        db, state, db.dossiers.list_dossiers(status="proposed"),
     )
     names = _gatekeeper_names(context)
     assert GATEKEEPER_SUCCESSOR in names
@@ -685,7 +685,7 @@ def test_leader_only_mutation_changes_faction_posture_not_roster(game):
     _apply_base_board(db, state, authority=100)
     _plant_dossiers(db, state, ("hostile",))
     before = decree_mod.build_promulgation_judge_context(
-        db, state, db.list_decree_dossiers(status="proposed"),
+        db, state, db.dossiers.list_dossiers(status="proposed"),
     )
     qian_before = db.conn.execute(
         "SELECT status, office FROM characters WHERE name='钱谦益'"
@@ -693,7 +693,7 @@ def test_leader_only_mutation_changes_faction_posture_not_roster(game):
 
     _mutate_leader_only(db, state)
     after = decree_mod.build_promulgation_judge_context(
-        db, state, db.list_decree_dossiers(status="proposed"),
+        db, state, db.dossiers.list_dossiers(status="proposed"),
     )
 
     # Gatekeeper bench unchanged — 安抚首领 ≠ 换把关人.
@@ -763,7 +763,7 @@ def _rejected_verdict(dossier_id, authority_band, *, midzhi=False):
 def test_promulgation_verdict_accepts_exact_keys_for_each_mode(game, mode, decision):
     db, state, _content = game
     dossier_id = _dossier(db, state, mode=mode)
-    dossiers = db.list_decree_dossiers(status="proposed")
+    dossiers = db.dossiers.list_dossiers(status="proposed")
     context = decree_mod.build_promulgation_judge_context(db, state, dossiers)
     if decision == "promulgated":
         verdict = {"dossier_id": dossier_id, "decision": decision}
@@ -788,7 +788,7 @@ def test_promulgation_verdict_accepts_exact_keys_for_each_mode(game, mode, decis
 def test_rejected_exact_keys_accept_only_empty_legal_reason_slot(game):
     db, state, _content = game
     dossier_id = _dossier(db, state)
-    dossiers = db.list_decree_dossiers(status="proposed")
+    dossiers = db.dossiers.list_dossiers(status="proposed")
     context = decree_mod.build_promulgation_judge_context(db, state, dossiers)
     verdict = _rejected_verdict(dossier_id, context["imperial_authority_band"])
     verdict["legal_reason_code"] = ""
@@ -826,7 +826,7 @@ def test_default_promulgation_judge_uses_one_batch_and_existing_validator(game, 
         ]})
 
     monkeypatch.setattr(decree_mod, "run_agent_text", canned)
-    dossiers = db.list_decree_dossiers(status="proposed")
+    dossiers = db.dossiers.list_dossiers(status="proposed")
     context = decree_mod.build_promulgation_judge_context(db, state, dossiers)
     raw = decree_mod.llm_promulgation_verdicts(
         dossiers, state, db=db, agno_db=None, llm_config=object(),
@@ -858,7 +858,7 @@ def test_rejected_snapshot_must_equal_the_prepared_judge_input(
 ):
     db, state, _content = game
     dossier_id = _dossier(db, state)
-    dossiers = db.list_decree_dossiers(status="proposed")
+    dossiers = db.dossiers.list_dossiers(status="proposed")
     context = decree_mod.build_promulgation_judge_context(db, state, dossiers)
     verdict = _rejected_verdict(dossier_id, context["imperial_authority_band"])
     verdict["criteria_snapshot"][snapshot_key] = forged
@@ -877,7 +877,7 @@ def test_appointment_tenure_is_the_rejection_snapshot_value(game):
     )
 
     context = decree_mod.build_promulgation_judge_context(
-        db, state, db.list_decree_dossiers(status="proposed"),
+        db, state, db.dossiers.list_dossiers(status="proposed"),
     )
 
     assert context["dossiers"][0]["criteria_snapshot_source"]["appointment_tenure"] == "署理"
@@ -887,7 +887,7 @@ def test_appointment_tenure_is_the_rejection_snapshot_value(game):
 def test_non_gatekeeper_character_cannot_be_named_as_gatekeeper(game):
     db, state, _content = game
     dossier_id = _dossier(db, state)
-    dossiers = db.list_decree_dossiers(status="proposed")
+    dossiers = db.dossiers.list_dossiers(status="proposed")
     context = decree_mod.build_promulgation_judge_context(db, state, dossiers)
     gatekeepers = {row["name"] for row in context["gatekeepers"]}
     outsider = next(
@@ -906,7 +906,7 @@ def test_non_gatekeeper_character_cannot_be_named_as_gatekeeper(game):
 def test_ordinary_rejection_cannot_claim_midzhi_unpromulgatable(game):
     db, state, _content = game
     dossier_id = _dossier(db, state)
-    dossiers = db.list_decree_dossiers(status="proposed")
+    dossiers = db.dossiers.list_dossiers(status="proposed")
     context = decree_mod.build_promulgation_judge_context(db, state, dossiers)
     verdict = _rejected_verdict(
         dossier_id, context["imperial_authority_band"], midzhi=True,
@@ -954,11 +954,11 @@ def test_review_exempt_actions_auto_promulgate_without_judge_contract_abort(
     session = SimpleNamespace(
         db=db, state=state, llm_config=object(), agno_db=None, content=content,
     )
-    dossier = db.get_decree_dossier(dossier_id)
+    dossier = db.dossiers.get(dossier_id)
     product = produce_forecast_product(
         session, snapshot_for_existing_dossier(session, dossier),
     )
 
     assert product["verdict"] == {"dossier_id": dossier_id, "decision": "promulgated"}
-    assert db.get_decree_dossier(dossier_id)["status"] == "proposed"
-    assert db.list_decree_dossier_decisions(dossier_id) == []
+    assert db.dossiers.get(dossier_id)["status"] == "proposed"
+    assert db.dossiers.decisions(dossier_id) == []

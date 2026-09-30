@@ -51,7 +51,7 @@ def _executing_dossier(db, state, *, token: str, roster=None):
         participants=roster,
     )
     db.apply_dossier_promulgation(state, did, "promulgated")
-    assert db.get_decree_dossier(did)["status"] == "executing"
+    assert db.dossiers.get(did)["status"] == "executing"
     return did
 
 
@@ -62,7 +62,7 @@ def _transformed_dossier(db, state, *, token: str, roster=None):
         did, "transformed", f"名实已乖·{token}", int(state.turn),
         close=True, commit=True,
     )
-    d = db.get_decree_dossier(did)
+    d = db.dossiers.get(did)
     assert d["execution_outcome"] == "transformed"
     return did
 

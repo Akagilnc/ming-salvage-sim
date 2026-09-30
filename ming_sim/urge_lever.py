@@ -266,7 +266,7 @@ def collect_urge_history(
 
     # 密令路：案卷挂 secret_order_id 时并入史源
     if dossier_id is not None:
-        dossier = db.get_decree_dossier(int(dossier_id)) if hasattr(db, "get_decree_dossier") else None
+        dossier = db.dossiers.get(int(dossier_id)) if dossier_id else None
         so_id = 0
         if isinstance(dossier, dict):
             try:
@@ -327,8 +327,8 @@ def summarize_urge_pressure(urge_history: object) -> Dict[str, int]:
 def resolve_host_character(db: Any, *, commitment_ref: int, dossier_id: Optional[int]) -> Dict[str, object]:
     """承办人：案卷主办优先，否则 issue participants 首名；缺省中性档。"""
     name = ""
-    if dossier_id is not None and hasattr(db, "get_decree_dossier"):
-        dossier = db.get_decree_dossier(int(dossier_id))
+    if dossier_id is not None:
+        dossier = db.dossiers.get(int(dossier_id))
         if isinstance(dossier, dict):
             roster = dossier.get("participant_roster") or []
             if isinstance(roster, str):
@@ -579,13 +579,9 @@ def rush_staged_commitment_stage(
     )
     archetype = person_integrity_archetype(host["integrity"])
     opp = "none"
-    if dossier_id is not None and hasattr(db, "list_dossier_durable_effects"):
+    if dossier_id is not None:
         # #1260：durable_effects 合并单源（economy+fiscal）。
         effects = list(db.list_dossier_durable_effects(int(dossier_id)))
-        opp = derive_opportunity_band(effects)
-    elif dossier_id is not None and hasattr(db, "list_economy_moves_for_dossier"):
-        # 旧夹具兜底：仅 economy 面（无单源助手时）。
-        effects = list(db.list_economy_moves_for_dossier(int(dossier_id)))
         opp = derive_opportunity_band(effects)
 
     remonstrance_written = False

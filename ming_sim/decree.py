@@ -307,7 +307,7 @@ def build_promulgation_judge_context(
         target_id = row.get("target_id")
         appointment_tenure = str(payload.get("任别") or "")
         # #612: endorsements are DB-backed spoken facts, not payload-only ids.
-        endorsements = db.list_dossier_endorsements(int(row["id"]))
+        endorsements = db.dossiers.endorsements(int(row["id"]))
         endorsement_ids = [int(item["id"]) for item in endorsements]
         # #611: authorization_ids come only from the unique applicability projection.
         # Never read payload authorization_id(s) as a parallel authority identity source.
@@ -796,7 +796,7 @@ def _requires_full_settlement(state: GameState, db: GameDB) -> bool:
     (#1274 QA J-1 / owner B-2).
     """
     executing_work = False
-    for row in db.list_decree_dossiers(status="executing"):
+    for row in db.dossiers.list_dossiers(status="executing"):
         payload = row.get("payload")
         if not isinstance(payload, dict):
             payload = json.loads(str(row.get("payload_json") or "{}"))
@@ -805,7 +805,7 @@ def _requires_full_settlement(state: GameState, db: GameDB) -> bool:
             executing_work = True
             break
     return bool(db.list_monthly_dossier_progress_nudges()) or bool(
-        db.list_decree_dossiers(status="proposed")
+        db.dossiers.list_dossiers(status="proposed")
     ) or executing_work or any(
         row.get("kind") == "directive"
         for row in db.list_pending_actions(state.turn)

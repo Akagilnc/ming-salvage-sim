@@ -29,7 +29,7 @@ def _executing_assignment(db, state, *, text="清丈畿辅田亩", target="land-
         target_id=target,
     )
     db.apply_dossier_promulgation(state, dossier_id, "promulgated")
-    row = db.get_decree_dossier(dossier_id)
+    row = db.dossiers.get(dossier_id)
     assert row["status"] == "executing"
     assert row.get("secret_order_id") in (None, 0)
     return dossier_id
@@ -128,7 +128,7 @@ def test_secret_monthly_path_unchanged_and_stays_on_private_rail(game):
     order_id = create_test_secret_order(
         db, state, actor, "护行辽饷", "逐月办理", ["护行"], deadline_months=4,
     )
-    dossier_id = int(db.get_dossier_for_secret_order(order_id)["id"])
+    dossier_id = int(db.dossiers.get_for_secret_order(order_id)["id"])
 
     db.record_monthly_dossier_progress(state.turn, [{
         "dossier_id": dossier_id,
@@ -158,7 +158,7 @@ def test_short_and_one_shot_dossiers_have_no_empty_monthly_shell(game):
     short_id = create_test_secret_order(
         db, state, actor, "护行急件", "一月即结", ["护行"], deadline_months=1,
     )
-    short_dossier = int(db.get_dossier_for_secret_order(short_id)["id"])
+    short_dossier = int(db.dossiers.get_for_secret_order(short_id)["id"])
     one_shot = _executing_assignment(db, state, text="一次性清查", target="one-shot-619")
 
     # 一月期密令仍入 0058；非密令一次性案卷不入密令月报候选
@@ -244,13 +244,13 @@ def test_production_terminal_sidepath_records_degraded_transformed_only(game):
     assert db.list_dossier_progress(failed_id) == []
 
     # Execution-slot / joint-liability semantics untouched: outcomes still land.
-    assert db.get_decree_dossier(degraded_id)["execution_outcome"] == "degraded"
-    assert db.get_decree_dossier(transformed_id)["execution_outcome"] == "transformed"
-    assert db.get_decree_dossier(fulfilled_id)["execution_outcome"] == "fulfilled"
-    assert db.get_decree_dossier(failed_id)["execution_outcome"] == "failed"
+    assert db.dossiers.get(degraded_id)["execution_outcome"] == "degraded"
+    assert db.dossiers.get(transformed_id)["execution_outcome"] == "transformed"
+    assert db.dossiers.get(fulfilled_id)["execution_outcome"] == "fulfilled"
+    assert db.dossiers.get(failed_id)["execution_outcome"] == "failed"
     # 判官真值只在执行格 note，不进奏报轨。
     assert "名实已乖" in (
-        db.get_decree_dossier(transformed_id).get("execution_note") or ""
+        db.dossiers.get(transformed_id).get("execution_note") or ""
     )
 
 

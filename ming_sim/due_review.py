@@ -14,6 +14,7 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List, Optional
 
+from ming_sim.entities.dossier import DOSSIER_REPORT_ORIGIN_VERDICT
 from ming_sim.db import GameDB
 from ming_sim.breach_plea import (
     ENTRY_KIND_BREACH_PLEA,
@@ -118,7 +119,7 @@ def resolve_due_review_branch(
     dossier_id = parse_dossier_id_from_origin(origin_ref)
     if dossier_id is None:
         return {"branch": "no_dossier", "dossier_id": None, "dossier": None}
-    dossier = db.get_decree_dossier(int(dossier_id))
+    dossier = db.dossiers.get(int(dossier_id))
     if dossier is None:
         return {"branch": "no_dossier", "dossier_id": None, "dossier": None}
     if str(dossier.get("status") or "") != "executing":
@@ -471,7 +472,7 @@ def _apply_dossier_verdict(
     close = bool(verdict["close"])
     is_terminal = bool(verdict["is_terminal"])
 
-    existing = db.get_decree_dossier(int(dossier_id))
+    existing = db.dossiers.get(int(dossier_id))
     if existing is None:
         return {"rejected": True, "reason": "案卷不存在"}
     # 已有终值且已结案：零重复落账 / 不二次连坐
@@ -504,7 +505,7 @@ def _apply_dossier_verdict(
         db.record_dossier_progress(
             int(dossier_id), int(state.turn), band, memorial,
             is_terminal=True,
-            origin=GameDB.DOSSIER_REPORT_ORIGIN_VERDICT,
+            origin=DOSSIER_REPORT_ORIGIN_VERDICT,
             commit=False,
         )
     elif not is_terminal:

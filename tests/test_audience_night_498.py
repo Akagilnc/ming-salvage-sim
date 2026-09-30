@@ -361,7 +361,7 @@ def test_close_night_crash_then_reopen_db_resumes_idempotent(content):
         assert db.conn.execute(
             "SELECT office FROM characters WHERE name=?", (minister,),
         ).fetchone()["office"] == old_office
-        assert db.list_decree_dossiers(
+        assert db.dossiers.list_dossiers(
             status="proposed", target_kind="character", target_id=minister
         )
         db.close()  # 进程崩溃：关库
@@ -382,7 +382,7 @@ def test_close_night_crash_then_reopen_db_resumes_idempotent(content):
         assert db2.conn.execute(
             "SELECT office FROM characters WHERE name=?", (minister,),
         ).fetchone()["office"] == old_office
-        assert db2.list_decree_dossiers(
+        assert db2.dossiers.list_dossiers(
             status="proposed", target_kind="character", target_id=minister
         )
         assert db2.conn.execute(
@@ -399,7 +399,7 @@ def test_close_night_crash_then_reopen_db_resumes_idempotent(content):
         assert an.get_night(db2, night["id"])["status"] == "closed"
 
         # 真实收夜只负责成案；结算判决入口消费结构化 verdict 后才物化任免。
-        dossier = db2.list_decree_dossiers(
+        dossier = db2.dossiers.list_dossiers(
             status="proposed", target_kind="character", target_id=minister
         )[0]
         db2.apply_dossier_verdicts(
@@ -486,7 +486,7 @@ def test_closing_cursor0_reopen_refuses_new_and_explicit_resume_commits(content)
         assert an.get_night(db2, night["id"])["status"] == "closed"
         assert db2.conn.execute(
             "SELECT office FROM characters WHERE name=?", (minister,)).fetchone()["office"] == old_office
-        assert db2.list_decree_dossiers(
+        assert db2.dossiers.list_dossiers(
             status="proposed", target_kind="character", target_id=minister
         )
         assert db2.conn.execute(
@@ -680,9 +680,9 @@ def test_close_night_committed_without_dossier_does_not_publish_mingfa(game):
         "SELECT committed_directive_id FROM pending_actions WHERE id=?",
         (candidate_id,),
     ).fetchone()["committed_directive_id"])
-    assert db.get_dossier_for_directive(directive_id) is None
+    assert db.dossiers.get_for_directive(directive_id) is None
     an.close_night(db, state, night_id=int(night["id"]), content=content)
-    assert db.get_dossier_for_directive(directive_id) is None
+    assert db.dossiers.get_for_directive(directive_id) is None
     entries = an.list_ledger(db, int(night["id"]))
     assert not any(TAG_MINGFA in (entry.get("tags") or []) for entry in entries)
     assert not any(

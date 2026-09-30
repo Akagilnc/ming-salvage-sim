@@ -14,7 +14,7 @@ def _promulgated_policy(db, state):
         target_kind="issue", target_id="origin-558",
     )
     db.record_dossier_decision(dossier_id, "promulgated")
-    db.transition_decree_dossier(dossier_id, "executing")
+    db.dossiers.transition(dossier_id, "executing")
     return dossier_id
 
 

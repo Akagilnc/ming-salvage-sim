@@ -181,7 +181,7 @@ def test_http_audience_one_matter_grant_with_deadline_1783(
         assert int(ledger[0]["delta"]) == -15, ledger
 
         pay_dossiers = [
-            d for d in game.db.list_decree_dossiers()
+            d for d in game.db.dossiers.list_dossiers()
             if d["action_type"] == "grant_allocation"
             and d["target_id"] == "guanning"
             and json.loads(game.db.conn.execute(
@@ -197,7 +197,7 @@ def test_http_audience_one_matter_grant_with_deadline_1783(
 
         # 无以召对记录为正文的平行交办案卷
         assignment_dossiers = [
-            d for d in game.db.list_decree_dossiers()
+            d for d in game.db.dossiers.list_dossiers()
             if d["action_type"] == "assignment"
         ]
         assert assignment_dossiers == [], assignment_dossiers
@@ -257,7 +257,7 @@ def test_http_audience_one_matter_grant_with_deadline_1783(
             content=game.content,
         )
         assert consumed.advanced is True
-        after_due = game.db.get_decree_dossier(dossier_id)
+        after_due = game.db.dossiers.get(dossier_id)
         assert after_due is not None
         # 本路 economy 实况已落、无表报 → 0076 decide 唯一终值 fulfilled
         assert after_due["execution_outcome"] == "fulfilled", after_due

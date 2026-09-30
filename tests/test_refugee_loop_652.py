@@ -299,7 +299,7 @@ def test_non_recovery_grant_no_回流(game, monkeypatch):
         },
     )
     db.apply_dossier_promulgation(state, dossier_id, "promulgated")
-    assert db.get_decree_dossier(dossier_id)["execution_outcome"] == "fulfilled"
+    assert db.dossiers.get(dossier_id)["execution_outcome"] == "fulfilled"
     assert db.list_economy_moves_for_dossier(dossier_id)
     before = _pop(db, "流民", "shaanxi")
     _advance_canned_month(db, state, content, monkeypatch)
@@ -352,7 +352,7 @@ def _in_transit_recovery_grant(db, state, *, amount=40, region_id="shaanxi", tag
         },
     )
     db.apply_dossier_promulgation(state, dossier_id, "promulgated")
-    row = db.get_decree_dossier(dossier_id)
+    row = db.dossiers.get(dossier_id)
     assert row["status"] == "executing"
     assert row["execution_outcome"] in ("", None)
     moves = db.list_economy_moves_for_dossier(dossier_id)
@@ -421,7 +421,7 @@ def _force_in_transit_recovery_grant(db, state, *, amount=40, region_id="shaanxi
     )
     db.apply_dossier_verdicts(state, [rejected_verdict(dossier_id)])
     db.apply_dossier_promulgation(state, dossier_id, "force_promulgated")
-    row = db.get_decree_dossier(dossier_id)
+    row = db.dossiers.get(dossier_id)
     assert row["status"] == "executing"
     assert str(row["execution_outcome"] or "") == ""
     assert any(int(move.get("delta") or 0) < 0 for move in db.list_economy_moves_for_dossier(dossier_id))
@@ -575,11 +575,11 @@ def test_in_transit_relief_stays_executing_before_gazette(game, monkeypatch):
     loaded = GameDB(_database_path(db), content)
     try:
         loaded_state = loaded.load_state()
-        landed = loaded.get_decree_dossier(shaanxi_id)
+        landed = loaded.dossiers.get(shaanxi_id)
         assert landed["status"] == "closed"
         assert landed["execution_outcome"] == "fulfilled"
         assert int(landed["closed_turn"] or 0) == closed_turn
-        other = loaded.get_decree_dossier(henan_id)
+        other = loaded.dossiers.get(henan_id)
         assert other["status"] == "executing"
         assert str(other["execution_outcome"] or "") == ""
         still = {int(row["id"]) for row in continuing_dossier_facts(loaded, loaded_state.turn)}
@@ -611,7 +611,7 @@ def test_month_settle_with_disaster_and_executing_relief(game, monkeypatch):
     result = make_light_session(db, state, content).advance_without_decree()
     assert result is not None and result.awaiting is False
     assert result.advanced is False
-    assert db.get_decree_dossier(dossier_id)["status"] == "executing"
+    assert db.dossiers.get(dossier_id)["status"] == "executing"
 
 
 
@@ -631,7 +631,7 @@ def test_legacy_population_unit_skips_absorption_and_recovery(game, monkeypatch)
     }, content, None)
     assert applied["bandit_absorptions"] == [] and applied["bandit_absorptions_rejections"]
 
-    assert db.get_decree_dossier(_recovery_grant(db, state, amount=10))["execution_outcome"] == "fulfilled"
+    assert db.dossiers.get(_recovery_grant(db, state, amount=10))["execution_outcome"] == "fulfilled"
     before = _pop(db, "流民", "shaanxi")
     _advance_canned_month(db, state, content, monkeypatch)
     assert _pop(db, "流民", "shaanxi") == before

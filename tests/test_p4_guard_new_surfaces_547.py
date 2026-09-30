@@ -162,7 +162,7 @@ def test_rescript_page_payload_keeps_sentinels_out_and_world_facts_in(game):
         payload={"mode": "ordinary"},
     )
     dossier = next(
-        row for row in db.list_decree_dossiers() if int(row["id"]) == dossier_id
+        row for row in db.dossiers.list_dossiers() if int(row["id"]) == dossier_id
     )
     verdict = {
         "dossier_id": dossier_id,

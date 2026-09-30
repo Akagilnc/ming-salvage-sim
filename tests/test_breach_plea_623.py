@@ -82,7 +82,7 @@ def _executing_policy_dossier(db, state, *, token: str = "breach-623", holder: s
         payload={"mode": "ordinary", "text": token},
     )
     db.apply_dossier_promulgation(state, dossier_id, "promulgated")
-    assert db.get_decree_dossier(dossier_id)["status"] == "executing"
+    assert db.dossiers.get(dossier_id)["status"] == "executing"
     return dossier_id, holder
 
 
@@ -160,7 +160,7 @@ def test_funding_cutoff_writes_plea_no_damage_same_turn(game):
     assert pleas[0]["criterion_text"] == "断供"
     assert int(pleas[0]["stage_idx"]) == int(state.turn)
     # 当回合无损
-    assert db.get_decree_dossier(did)["status"] == "executing"
+    assert db.dossiers.get(did)["status"] == "executing"
     assert db.conn.execute(
         "SELECT status FROM issues WHERE id=?", (cid,),
     ).fetchone()["status"] == "active"
@@ -263,7 +263,7 @@ def test_policy_reversal_revoke_defers_breach(game):
         content=content,
     )
     # 当回合：目标未关、无 0056、有哭谏 todo
-    assert db.get_decree_dossier(did)["status"] == "executing"
+    assert db.dossiers.get(did)["status"] == "executing"
     assert db.conn.execute(
         "SELECT status FROM issues WHERE id=?", (cid,),
     ).fetchone()["status"] == "active"
@@ -350,7 +350,7 @@ def test_regret_via_extraction_true_entry_zero_damage(game):
     assert out["breach_plea_resolutions"][0]["decision"] == "regret"
     # 两轨零落账（反悔不写撑腰边）
     assert _cost_events(db, did) == []
-    assert db.get_decree_dossier(did)["status"] == "executing"
+    assert db.dossiers.get(did)["status"] == "executing"
     assert db.conn.execute(
         "SELECT status FROM issues WHERE id=?", (cid,),
     ).fetchone()["status"] == "active"
@@ -527,7 +527,7 @@ def test_silence_keeps_pending_across_settle(game, monkeypatch):
     skipped = [r for r in results if r.get("skipped") and r.get("entry_kind") == ENTRY_KIND_BREACH_PLEA]
     assert skipped
     assert _pending_pleas(db)
-    assert db.get_decree_dossier(did)["status"] == "executing"
+    assert db.dossiers.get(did)["status"] == "executing"
 
     # 再过月一拍仍 pending 可顶出
     _settle_empty_month(db, state, content, monkeypatch)

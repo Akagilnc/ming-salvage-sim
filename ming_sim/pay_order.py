@@ -311,14 +311,14 @@ def materialize_pay_order_decree(
     if not origin.startswith("dossier:") or not origin[len("dossier:"):]:
         raise PayOrderKeyError(f"override 旨 origin_ref 须形如 dossier:<id>：{origin_ref!r}")
     dossier_id = int(origin[len("dossier:"):])
-    dossier = db.get_decree_dossier(dossier_id)
+    dossier = db.dossiers.get(dossier_id)
     if dossier is None:
         raise PayOrderKeyError(f"override 旨案卷不存在：{origin}")
     if str(dossier.get("action_type") or "") != "pay_order_override":
         raise PayOrderKeyError(
             f"override 旨案卷 action_type 非法：{dossier.get('action_type')!r}（须 pay_order_override）"
         )
-    if not db.dossier_authorizes_effects(dossier_id):
+    if not db.dossiers.authorizes_effects(dossier_id):
         raise PayOrderKeyError(
             f"override 旨案卷 {origin} 未过合法颁布门（顺颁/强颁），禁物化 config"
         )
@@ -402,13 +402,13 @@ def restore_pay_order_override(
     在位旨。禁反演上一道 override 值/前旨栈。期限伴随键一并退出。不经 materialize
     （后者只接受 pay_order_override origin），不提交事务。
     """
-    target = db.get_decree_dossier(int(target_dossier_id))
-    revoke = db.get_decree_dossier(int(revoke_dossier_id))
+    target = db.dossiers.get(int(target_dossier_id))
+    revoke = db.dossiers.get(int(revoke_dossier_id))
     if target is None or str(target.get("action_type") or "") != "pay_order_override":
         return []
     if revoke is None or str(revoke.get("action_type") or "") != "revoke_decree":
         raise PayOrderKeyError("恢复 override 须由真实 revoke_decree 案卷发起")
-    if not db.dossier_authorizes_effects(int(revoke_dossier_id)):
+    if not db.dossiers.authorizes_effects(int(revoke_dossier_id)):
         raise PayOrderKeyError(
             f"恢复 override 的 revoke 案卷 dossier:{int(revoke_dossier_id)} "
             f"未过合法颁布门（顺颁/强颁），禁删 config"

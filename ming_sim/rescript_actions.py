@@ -30,6 +30,7 @@ from ming_sim.action_clusters import validate_season_option
 from ming_sim.authority_privileges import AUTHORITY_PRIVILEGE_SET
 from ming_sim.credit_events import KIND_BETRAY, write_credit_event
 from ming_sim.decree import atomic_and_reload
+from ming_sim.entities.dossier import normalize_dossier_mode
 from ming_sim.decree_vocabulary import (
     DOSSIER_ACTION_TYPES,
     PARTICIPANT_ROSTER_KEY,
@@ -1151,7 +1152,7 @@ def _apply_deliberate(
     - 无人 → stalled + 一条 origin_ref=dossier:<id> 惯性 issue
     - 删除 rescript_deliberate:<key> 平行真源
     """
-    existing = db.find_deliberation_dossier_by_decision_key(item.decision_key)
+    existing = db.dossiers.find_by_decision_key(item.decision_key)
     if existing is not None:
         return
     candidates = list_deliberation_candidate_ids(db, content)
@@ -1186,7 +1187,7 @@ def _apply_deliberate(
         commit=False,
     ))
     for name in supporters:
-        db.add_dossier_endorsement(
+        db.dossiers.add_endorsement(
             dossier_id,
             form="当面站台",
             endorser_id=name,
@@ -1231,7 +1232,7 @@ def apply_imperial_deliberation_push(
     dkey = str(directive_identity or "").strip()
     if not dkey:
         raise ValueError("御笔强推缺 directive identity")
-    row = db.get_decree_dossier(did)
+    row = db.dossiers.get(did)
     if row is None:
         raise ValueError(f"御笔强推目标案卷不存在：{did}")
     if str(row.get("status") or "") != "proposed":
@@ -1254,11 +1255,11 @@ def apply_imperial_deliberation_push(
     new_payload["deliberation_state"] = "backed"
     if mode is not None:
         # 贯穿既有 mode 真源（payload.mode）；普通缺省 ordinary 亦显式落库
-        new_payload["mode"] = db._normalize_dossier_mode(mode)
+        new_payload["mode"] = normalize_dossier_mode(mode)
     if decree_text and not str(new_payload.get("imperial_push_note") or ""):
         new_payload["imperial_push_note"] = str(decree_text)
-    db.update_decree_dossier_payload(did, new_payload, commit=False)
-    db.add_dossier_endorsement(
+    db.dossiers.update_payload(did, new_payload, commit=False)
+    db.dossiers.add_endorsement(
         did,
         form="御笔手敕",
         endorser_id="",
@@ -1382,7 +1383,7 @@ def apply_rescript_batch(
                     # external review.  Promulgate those dossiers individually;
                     # reviewed grants stay proposed for the regular verdict batch.
                     for dossier_id in created:
-                        dossier = db.get_decree_dossier(dossier_id)
+                        dossier = db.dossiers.get(dossier_id)
                         if dossier is None:
                             raise ValueError(f"新建案卷查无记录：{dossier_id}")
                         payload = dossier["payload"]

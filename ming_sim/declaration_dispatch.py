@@ -1361,7 +1361,7 @@ def _dispatch_commissions(
             if grant_raw or appointment_fields:
                 _reject(rejected, item, "御笔强推不可与普通拨帑或任免交办并存", "invalid_shape", source)
                 continue
-            if db.get_decree_dossier(push_id) is None:
+            if db.dossiers.get(push_id) is None:
                 _reject(rejected, item, "御笔强推目标案卷不存在", "missing_ref", source)
                 continue
         text = item.get("text")
@@ -1615,7 +1615,7 @@ def _dispatch_endorsements(
                 continue
             try:
                 for d in drow:
-                    db.add_dossier_endorsement(
+                    db.dossiers.add_endorsement(
                         int(d["id"]),
                         form=form,
                         endorser_id=endorser_id,

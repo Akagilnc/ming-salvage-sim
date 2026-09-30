@@ -38,7 +38,7 @@ def _executing_policy(db, state, *, token: str):
         ],
     )
     db.apply_dossier_promulgation(state, dossier_id, "promulgated")
-    assert db.get_decree_dossier(dossier_id)["status"] == "executing"
+    assert db.dossiers.get(dossier_id)["status"] == "executing"
     return dossier_id
 
 
@@ -363,7 +363,7 @@ def test_s2_pure_fiscal_beyond_intent_transformed_fork_backlash(game, content):
         db, state, content, dossier_id=did, title="借旨新税之诺",
     )
     assert result["verdict"]["outcome"] == "transformed", result
-    dossier = db.get_decree_dossier(did)
+    dossier = db.dossiers.get(did)
     assert dossier["execution_outcome"] == "transformed"
 
     # Backlash gate: pure fiscal beyond_intent qualifies

@@ -618,7 +618,7 @@ def build_secret_covert_effect_briefs(
         oid = int(order.get("id") or 0)
         if oid <= 0:
             continue
-        dossier = db.get_dossier_for_secret_order(oid)
+        dossier = db.dossiers.get_for_secret_order(oid)
         if dossier is None:
             continue
         contract = require_covert_task_contract(dossier)
@@ -628,7 +628,7 @@ def build_secret_covert_effect_briefs(
         owner = "internal"
         if fields == ["人物变更"]:
             owner = "personnel_secret"
-        prior_units = float(db.sum_dossier_actual_progress_units(int(dossier["id"])))
+        prior_units = float(db.dossiers.actual_progress_units(int(dossier["id"])))
         target_units = contract_target_units(contract)
         remaining_units = max(0.0, target_units - prior_units)
         out.append({
@@ -783,7 +783,7 @@ def _write_fact_lanes(
         }
         for lane in lanes
     ]
-    db.update_decree_dossier_payload(int(dossier_id), payload, commit=commit)
+    db.dossiers.update_payload(int(dossier_id), payload, commit=commit)
 
 
 def seed_investigation_fact_lanes(
@@ -905,7 +905,7 @@ def find_active_investigation_order_id(db: Any, target: str) -> int:
     if not name:
         return 0
     for order in db.list_secret_orders(status="active"):
-        dossier = db.get_dossier_for_secret_order(int(order["id"]))
+        dossier = db.dossiers.get_for_secret_order(int(order["id"]))
         if dossier is None:
             continue
         contract = read_covert_task_contract(dossier)
@@ -925,7 +925,7 @@ def merge_investigation_confirmation(
     origin_chat_message_ids: Sequence[int] = (),
     commit: bool = False,
 ) -> int:
-    dossier = db.get_dossier_for_secret_order(int(order_id))
+    dossier = db.dossiers.get_for_secret_order(int(order_id))
     if dossier is None:
         raise CovertContractError("查案合流缺少案卷")
     payload = _dossier_payload_map(db, int(dossier["id"]))
@@ -938,7 +938,7 @@ def merge_investigation_confirmation(
         "turn": int(getattr(state, "turn", 0) or 0),
     })
     payload[INVESTIGATION_PROVENANCE_KEY] = sources
-    db.update_decree_dossier_payload(int(dossier["id"]), payload, commit=commit)
+    db.dossiers.update_payload(int(dossier["id"]), payload, commit=commit)
     return int(order_id)
 
 
@@ -1041,7 +1041,7 @@ def apply_monthly_covert_actual_progress(
                 "reason": "承办人不在场或非 active",
             })
             continue
-        dossier = db.get_dossier_for_secret_order(oid)
+        dossier = db.dossiers.get_for_secret_order(oid)
         if dossier is None:
             applied.append({
                 "order_id": oid, "rejected": True, "reason": "密令缺少案卷",
@@ -1084,7 +1084,7 @@ def apply_monthly_covert_actual_progress(
                 f"月度实进度：执行态{fidelity}（{units:g}）"
                 f"；origin_effects={originated}"
             )
-        row = db.record_dossier_actual_progress(
+        row = db.dossiers.record_actual_progress(
             did,
             turn,
             units=units,
@@ -1131,7 +1131,7 @@ def settle_due_secret_orders(
     results: List[Dict[str, object]] = []
     for order in list_due_secret_orders_for_settlement(db, state):
         oid = int(order["id"])
-        dossier = db.get_dossier_for_secret_order(oid)
+        dossier = db.dossiers.get_for_secret_order(oid)
         if dossier is None:
             results.append({
                 "order_id": oid, "rejected": True, "reason": "密令缺少案卷",
@@ -1141,7 +1141,7 @@ def settle_due_secret_orders(
             continue
         did = int(dossier["id"])
         contract = require_covert_task_contract(dossier)
-        actual = float(db.sum_dossier_actual_progress_units(did))
+        actual = float(db.dossiers.actual_progress_units(did))
         if _investigation_target_of(contract):
             target = target_progress_units(
                 deadline_span=int(order.get("deadline_span") or 0),

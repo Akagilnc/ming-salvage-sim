@@ -63,7 +63,7 @@ def test_predeclared_midzhi_promulgation_persists_stigma(game):
     db, state, _content = game
     dossier_id = _make_midzhi_dossier(db, state)
     db.apply_dossier_promulgation(state, dossier_id, "promulgated")
-    assert db.get_decree_dossier(dossier_id)["stigma"] == [{
+    assert db.dossiers.get(dossier_id)["stigma"] == [{
         "kind": "midzhi", "reason": "predeclared", "turn": state.turn,
         "source_action": "promulgated",
     }]
@@ -76,7 +76,7 @@ def test_missing_dossier_mode_defaults_to_ordinary(game):
         "UPDATE decree_dossiers SET payload_json='{}' WHERE id=?", (dossier_id,)
     )
 
-    assert db.get_decree_dossier(dossier_id)["mode"] == "ordinary"
+    assert db.dossiers.get(dossier_id)["mode"] == "ordinary"
 
 
 @pytest.mark.parametrize(
@@ -98,7 +98,7 @@ def test_declared_staging_uses_typed_mode_not_minister_text(
     db.commit_pending_actions(state, action_ids={candidate_id})
     db.ensure_dossiers_for_draft_directives(state)
 
-    dossiers = db.list_decree_dossiers()
+    dossiers = db.dossiers.list_dossiers()
     assert len(dossiers) == 1
     assert dossiers[0]["mode"] == expected
 
@@ -126,7 +126,7 @@ def test_presence_aware_mode_preserves_draft_until_explicit_override(game):
 
     db.commit_pending_actions(state, kind_filter="directive")
     db.ensure_dossiers_for_draft_directives(state)
-    dossiers = db.list_decree_dossiers()
+    dossiers = db.dossiers.list_dossiers()
     assert len(dossiers) == 1
     assert dossiers[0]["mode"] == "ordinary"
 
@@ -144,7 +144,7 @@ def test_held_dossier_rejection_stigma_is_idempotent_across_months(game):
         state, dossier_id, "rejected", blocked_layer="six_offices", reason="科臣再驳",
     )
 
-    stored = db.get_decree_dossier(dossier_id)
+    stored = db.dossiers.get(dossier_id)
     decisions = db.conn.execute(
         "SELECT turn,decision FROM decree_dossier_decisions "
         "WHERE dossier_id=? AND rescript_action='' ORDER BY id",
@@ -171,7 +171,7 @@ def test_rejected_midzhi_and_force_promulgation_are_idempotent(game):
     with pytest.raises(ValueError, match="强颁只可承接"):
         db.apply_dossier_promulgation(state, dossier_id, "force_promulgated")
 
-    assert db.get_decree_dossier(dossier_id)["stigma"] == [
+    assert db.dossiers.get(dossier_id)["stigma"] == [
         {"kind": "midzhi", "reason": "predeclared", "turn": state.turn,
          "source_action": "rejected"},
     ]
@@ -186,7 +186,7 @@ def test_rejected_ordinary_force_promulgation_adds_rescript_stigma(game):
     db.apply_dossier_verdicts(state, [_rejected_verdict(dossier_id)])
     db.apply_dossier_promulgation(state, dossier_id, "force_promulgated")
 
-    assert db.get_decree_dossier(dossier_id)["stigma"] == [{
+    assert db.dossiers.get(dossier_id)["stigma"] == [{
         "kind": "midzhi", "reason": "rescript", "turn": state.turn,
         "source_action": "force_promulgated",
     }]

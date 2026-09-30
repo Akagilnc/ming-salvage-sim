@@ -903,7 +903,7 @@ def test_legacy_engine_pay_order_materialize_fails_loud_not_fulfilled(game):
     with pytest.raises(ValueError, match="legacy"):
         db.apply_dossier_promulgation(state, did, "promulgated")
     assert "due_priority_军饷@shaanxi" not in db.get_fiscal_config()
-    dossier = db.get_decree_dossier(did)
+    dossier = db.dossiers.get(did)
     assert dossier["status"] != "closed"
     assert str(dossier.get("execution_outcome") or "") != "fulfilled"
 
@@ -1147,7 +1147,7 @@ def test_lifecycle_promulgated_materializes_and_next_settlement_reads(game):
     ).fetchone()
     assert row["origin_ref"] == f"dossier:{did}"
     # 案卷顺颁即终局（无执行判定面）
-    assert db.get_decree_dossier(did)["status"] == "closed"
+    assert db.dossiers.get(did)["status"] == "closed"
     # 下一次结算读取新序（同 turn 重算即读新旨＝读端按当前在位键解析）
     after = db.settle_province_tick("shaanxi")
     assert after.breakdown["实付分账"]["军饷"] < before.breakdown["实付分账"]["军饷"]
@@ -1168,7 +1168,7 @@ def test_lifecycle_rejected_decree_zero_config_write(game):
     assert db.conn.execute(
         "SELECT COUNT(*) c FROM fiscal_config_changes"
     ).fetchone()["c"] == before_rows                      # 零 provenance
-    assert db.get_decree_dossier(did)["status"] == "proposed"  # 打回持有态
+    assert db.dossiers.get(did)["status"] == "proposed"  # 打回持有态
 
 
 def test_lifecycle_force_promulgation_after_rejection(game):
@@ -1181,7 +1181,7 @@ def test_lifecycle_force_promulgation_after_rejection(game):
     assert "due_haircut_bp_宗禄" not in db.get_fiscal_config()   # 打回零写
     db.apply_dossier_promulgation(state, did, "force_promulgated")
     assert db.get_fiscal_config()["due_haircut_bp_宗禄"] == 5000  # 强颁物化
-    assert db.dossier_authorizes_effects(did)
+    assert db.dossiers.authorizes_effects(did)
 
 
 def test_stale_until_cleared_by_permanent_overwrite(game):
@@ -1637,7 +1637,7 @@ def _capture_override_decree(game, monkeypatch, text, entries):
     session.state = state
     dv = session.add_directive(text, dossier_payload=payload)
     db.ensure_dossiers_for_draft_directives(state)
-    dossier = db.get_dossier_for_directive(dv.id)
+    dossier = db.dossiers.get_for_directive(dv.id)
     assert dossier is not None
     assert dossier["action_type"] == "pay_order_override"
     return int(dossier["id"])
@@ -1647,7 +1647,7 @@ def test_manual_override_capture_stages_without_premature_materialization(game, 
     db, _state, _content = game
     entries = [{"key": "due_priority_军饷@shaanxi", "value": 40}]
     did = _capture_override_decree(game, monkeypatch, "今岁边饷居末", entries)
-    assert db.get_decree_dossier(did)["status"] == "proposed"
+    assert db.dossiers.get(did)["status"] == "proposed"
     assert "due_priority_军饷@shaanxi" not in db.get_fiscal_config()
 
 

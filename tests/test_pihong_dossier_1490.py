@@ -588,7 +588,7 @@ def test_657_p6_mapper_deliberate_preserve_free_text(game):
     will_body = '\n臣请集议。\t'
     pre = ra.PrewriteResults(deliberate_by_key={key: {'title': will_title, 'body': will_body, 'supporter_ids': []}})
     ra.apply_rescript_batch(db, state, batch, pre, content=content)
-    drow = db.find_deliberation_dossier_by_decision_key(key)
+    drow = db.dossiers.find_by_decision_key(key)
     assert drow is not None
     payload = _dossier_payload(drow)
     assert payload.get('deliberation_state') == 'stalled'
@@ -705,10 +705,10 @@ def test_657_five_actions_domain_writes(game):
     opt = _layer_a_option(assignee_name='')
     urgent, _ = _plant_urgent_desk(db, state, options=[opt, _layer_a_option(label='备', hint='b')])
     key = urgent['decision_key']
-    before = len(db.list_decree_dossiers())
+    before = len(db.dossiers.list_dossiers())
     batch = ra.validate_all([urgent], [{'decision_key': key, 'action': 'follow_draft', 'draft_capability': opt['draft_capability'], 'label': opt['label']}])
     ra.apply_rescript_batch(db, state, batch, ra.PrewriteResults(), content=content)
-    after = db.list_decree_dossiers()
+    after = db.dossiers.list_dossiers()
     assert len(after) > before
     created = after[-1]
     assert created['action_type'] == 'assignment'
@@ -716,11 +716,11 @@ def test_657_five_actions_domain_writes(game):
     db.conn.execute("DELETE FROM pending_decisions WHERE kind='rescript_draft'")
     urgent, _ = _plant_urgent_desk(db, state)
     key = urgent['decision_key']
-    before = len(db.list_decree_dossiers())
+    before = len(db.dossiers.list_dossiers())
     midzhi_choice = {'decision_key': key, 'action': 'midzhi', 'label': '中旨赈济', 'action_type': 'assignment', 'target_kind': 'region', 'target_id': 'shaanxi', 'locality_scope': 'single', 'region_id': 'shaanxi', 'transaction_category': '督赈', 'title': '中旨赈陕', 'deadline_months': 2, 'participant_roster': _roster(_ROSTER_LEAD)}
     batch = ra.validate_all([urgent], [midzhi_choice])
     ra.apply_rescript_batch(db, state, batch, ra.PrewriteResults(), content=content)
-    mids = [d for d in db.list_decree_dossiers() if d.get('mode') == 'midzhi']
+    mids = [d for d in db.dossiers.list_dossiers() if d.get('mode') == 'midzhi']
     assert mids, 'midzhi 须落 mode=midzhi 案卷'
     assert mids[-1]['status'] == 'proposed'
     mid_payload = json.loads(str(mids[-1].get('payload_json') or '{}'))
@@ -732,7 +732,7 @@ def test_657_five_actions_domain_writes(game):
     batch = ra.validate_all([urgent], [{'decision_key': key, 'action': 'deliberate', 'label': '下部议'}])
     pre = ra.PrewriteResults(deliberate_by_key={key: {'title': '廷议陕西赈济', 'body': '臣请集议赈策。', 'stance': '主赈', 'supporter_ids': []}})
     ra.apply_rescript_batch(db, state, batch, pre, content=content)
-    drow = db.find_deliberation_dossier_by_decision_key(key)
+    drow = db.dossiers.find_by_decision_key(key)
     assert drow is not None
     assert _dossier_payload(drow).get('deliberation_state') == 'stalled'
     issue = db.conn.execute('SELECT title, origin_ref FROM issues WHERE origin_ref=?', (f"dossier:{int(drow['id'])}",)).fetchone()
@@ -898,7 +898,7 @@ def test_657_return_revise_round_prior_and_clear_anchor(web_game, monkeypatch):
         hit = next((r for r in probe.list_rescript_drafts() if r['title'] == '改票急务'))
         assert hit['status'] == 'decided'
         assert (hit['choice'] or {}).get('action') == 'follow_draft'
-        assert len(probe.list_decree_dossiers()) >= 1
+        assert len(probe.dossiers.list_dossiers()) >= 1
     finally:
         probe.close()
 
@@ -964,16 +964,16 @@ def test_657_abi_mapper_matrix_a1_a12(game):
         else:
             choice = {'decision_key': key, **choice_fields}
             choice.setdefault('action', 'midzhi')
-        before = len(db.list_decree_dossiers())
+        before = len(db.dossiers.list_dossiers())
         batch = ra.validate_all([row], [choice])
         ra.apply_rescript_batch(db, state, batch, ra.PrewriteResults(), content=content)
-        after_rows = db.list_decree_dossiers()
+        after_rows = db.dossiers.list_dossiers()
         assert len(after_rows) > before, title
         created = after_rows[-1]
         if promulgate:
             verdict = {'dossier_id': int(created['id']), 'decision': 'promulgated'}
             db.apply_dossier_verdicts(state, [verdict], content=content)
-            created = next((d for d in db.list_decree_dossiers() if int(d['id']) == int(created['id'])))
+            created = next((d for d in db.dossiers.list_dossiers() if int(d['id']) == int(created['id'])))
         return created
     p = ra.map_rescript_option_or_choice({'action_type': 'assignment', 'label': '责成督赈', 'hint': 'h', 'target_kind': 'region', 'target_id': 'shaanxi', 'locality_scope': 'single', 'region_id': 'shaanxi', 'transaction_category': '督赈', 'deadline_months': 2, 'assignee_name': '', 'participant_roster': _roster(_ROSTER_LEAD)}, db=db, content=content, state=state)
     assert p['end_turn'] == int(state.turn) + 2
@@ -1152,10 +1152,10 @@ def test_657_abi_mapper_matrix_a1_a12(game):
     desk = db.list_rescript_desk(int(state.turn))
     key = next((r['decision_key'] for r in desk if r['title'] == '幂等急务'))
     choice = {'decision_key': key, 'action': 'follow_draft', 'draft_capability': opt['draft_capability'], 'label': opt['label']}
-    before = len(db.list_decree_dossiers())
+    before = len(db.dossiers.list_dossiers())
     batch = ra.validate_all([next((r for r in desk if r['decision_key'] == key))], [choice])
     ra.apply_rescript_batch(db, state, batch, ra.PrewriteResults(), content=content)
-    mid = len(db.list_decree_dossiers())
+    mid = len(db.dossiers.list_dossiers())
     assert mid > before
     row = next((r for r in db.list_rescript_drafts() if r['title'] == '幂等急务'))
     stored = dict(row['choice'] or {})
@@ -1164,7 +1164,7 @@ def test_657_abi_mapper_matrix_a1_a12(game):
     batch2 = ra.validate_all([decided_desk], [stored])
     assert batch2.items[0].already_applied
     ra.apply_rescript_batch(db, state, batch2, ra.PrewriteResults(), content=content)
-    assert len(db.list_decree_dossiers()) == mid
+    assert len(db.dossiers.list_dossiers()) == mid
 
 def test_1682_late_grants_follow_policy_without_consuming_verdict_batch(game, monkeypatch):
     """Late HITL grants auto-promulgate only canonical review-exempt dossiers."""
@@ -1179,7 +1179,7 @@ def test_1682_late_grants_follow_policy_without_consuming_verdict_batch(game, mo
     db.save_pending_promulgation_verdicts(state.turn, [pending])
     batch = ra.validate_all(desk, choices)
     ra.apply_rescript_batch(db, state, batch, ra.PrewriteResults(), content=content)
-    grants = [row for row in db.list_decree_dossiers() if row['action_type'] == 'grant_allocation' and _dossier_payload(row).get('decision_key') in {choice['decision_key'] for choice in choices}]
+    grants = [row for row in db.dossiers.list_dossiers() if row['action_type'] == 'grant_allocation' and _dossier_payload(row).get('decision_key') in {choice['decision_key'] for choice in choices}]
     assert len(grants) == 2
     by_account = {_dossier_payload(row)['account']: row for row in grants}
     inner = by_account['内库']
@@ -1195,13 +1195,13 @@ def test_1682_late_grants_follow_policy_without_consuming_verdict_batch(game, mo
     failed_rows = [row for row in db.list_rescript_desk(int(state.turn)) if row['title'] in {'先拨内帑', '后拨内帑失读'}]
     failed_choices = [{'decision_key': row['decision_key'], 'label': row['options'][0]['label']} for row in failed_rows]
     failed_batch = ra.validate_all(failed_rows, failed_choices)
-    dossiers_before = db.list_decree_dossiers()
+    dossiers_before = db.dossiers.list_dossiers()
     decisions_before = db.list_pending_decisions(int(state.turn))
     accounts_before = db.conn.execute('SELECT account, metric_key, balance, note FROM economy_accounts ORDER BY account').fetchall()
     ledger_before = db.conn.execute('SELECT * FROM economy_ledger ORDER BY id').fetchall()
     verdicts_before = db.get_pending_promulgation_verdicts(state.turn)
     metrics_before = copy.deepcopy(state.metrics)
-    original_get = db.get_decree_dossier
+    original_get = db.dossiers.get
     existing_ids = {int(row['id']) for row in dossiers_before}
     created_ids = []
     missed_ids = []
@@ -1214,12 +1214,12 @@ def test_1682_late_grants_follow_policy_without_consuming_verdict_batch(game, mo
             missed_ids.append(dossier_id)
             return None
         return original_get(dossier_id)
-    monkeypatch.setattr(db, 'get_decree_dossier', _miss_second_new_dossier)
+    monkeypatch.setattr(db.dossiers, 'get', _miss_second_new_dossier)
     with pytest.raises(ValueError):
         ra.apply_rescript_batch(db, state, failed_batch, ra.PrewriteResults(), content=content)
     assert len(created_ids) == 2
     assert missed_ids == [created_ids[1]]
-    assert db.list_decree_dossiers() == dossiers_before
+    assert db.dossiers.list_dossiers() == dossiers_before
     assert db.list_pending_decisions(int(state.turn)) == decisions_before
     assert db.conn.execute('SELECT account, metric_key, balance, note FROM economy_accounts ORDER BY account').fetchall() == accounts_before
     assert db.conn.execute('SELECT * FROM economy_ledger ORDER BY id').fetchall() == ledger_before
@@ -1362,13 +1362,13 @@ def test_657_s10_http_five_actions_and_1490_no_regress(web_game, monkeypatch):
             assert edges, "hold 须写辜负信用边"
         elif name == "follow_draft":
             assert hit["status"] == "decided"
-            dossiers = db.list_decree_dossiers()
+            dossiers = db.dossiers.list_dossiers()
             assert dossiers and dossiers[-1]["target_id"] == "liaodong"
         elif name == "midzhi":
-            mids = [d for d in db.list_decree_dossiers() if d.get("mode") == "midzhi"]
+            mids = [d for d in db.dossiers.list_dossiers() if d.get("mode") == "midzhi"]
             assert mids and mids[-1]["status"] == "proposed"
         elif name == "deliberate":
-            drow = db.find_deliberation_dossier_by_decision_key(key)
+            drow = db.dossiers.find_by_decision_key(key)
             assert drow is not None
             assert _dossier_payload(drow).get("deliberation_state") == "stalled"
             issue = db.conn.execute(
@@ -1460,7 +1460,7 @@ def test_1621_http_follow_draft_uses_catalog_army_id(web_game, monkeypatch):
     assert r.status_code == 200, r.text
     assert "event: error" not in r.text, r.text
     assert "event: done" in r.text, r.text
-    dossiers = db.list_decree_dossiers()
+    dossiers = db.dossiers.list_dossiers()
     assert dossiers and dossiers[-1]["target_id"] == "guanning"
 
 
@@ -1478,7 +1478,7 @@ def test_657_mixed_batch_follow_plus_decision_and_no_context_copy(web_game, monk
     grant_key = next((r['decision_key'] for r in decision_rows if r['title'] == '发帑件'))
     body = [{'decision_key': u_key, 'action': 'follow_draft', 'draft_capability': opt['draft_capability'], 'label': opt['label']}, {'decision_key': d_key, 'label': '打回', 'hint': '驳', 'action': 'decision'}, {'decision_key': grant_key, 'label': '发内帑'}]
     body_canon = json.dumps(body, ensure_ascii=False, separators=(',', ':'))
-    dossiers_before = len(web_game.db.list_decree_dossiers())
+    dossiers_before = len(web_game.db.dossiers.list_dossiers())
     web_game.session.close()
     r1 = _657_subprocess_resolve(db_path, body, crash='phase2')
     assert r1.get('_killed') is True or r1.get('_returncode') == 97
@@ -1497,7 +1497,7 @@ def test_657_mixed_batch_follow_plus_decision_and_no_context_copy(web_game, monk
         assert by_key[grant_key]['choice'] == {'decision_key': grant_key, 'label': '发内帑', 'hint': '', 'action': 'decision'}
         ctx = probe.get_resolve_context(int(probe.load_state().turn))
         assert ctx is None or ctx.get('extracted') is None
-        mid_dossiers = len(probe.list_decree_dossiers())
+        mid_dossiers = len(probe.dossiers.list_dossiers())
         assert mid_dossiers > dossiers_before
         choice_fp = json.dumps(decs[0]['choice'], ensure_ascii=False, sort_keys=True)
     finally:
@@ -1507,7 +1507,7 @@ def test_657_mixed_batch_follow_plus_decision_and_no_context_copy(web_game, monk
     assert r2['_body_canonical'] == body_canon
     probe = GameDB(db_path, content)
     try:
-        assert len(probe.list_decree_dossiers()) == mid_dossiers
+        assert len(probe.dossiers.list_dossiers()) == mid_dossiers
         decs = probe.list_pending_decisions(int(probe.load_state().turn))
         assert not decs or all((d.get('status') == 'decided' for d in decs))
         ctx = probe.get_resolve_context(int(probe.load_state().turn))
@@ -1529,7 +1529,7 @@ def test_1589_mixed_desk_keyless_choice_rejected_batch_zero_writes(web_game):
     opt = normalize_rescript_layer_a_option({'label': '发帑赈济', 'hint': '所安者饥民', 'action_type': 'assignment', 'assignee_name': '', 'target_kind': 'region', 'target_id': 'shaanxi', 'locality_scope': 'single', 'region_id': 'shaanxi', 'transaction_category': '督赈', 'deadline_months': 2})
     _657_plant_awaiting_web(web_game, drafts=[{'title': '混批急务', 'context': 'c', 'options': [opt, {'label': '备', 'hint': 'h', 'draft_capability': 'x'}], 'actor_name': '杨嗣昌', 'actor_office': '兵部尚书', 'actor_faction': '东林'}], decisions=[{'title': '打回件', 'context': '科臣封驳', 'options': [{'label': '打回', 'hint': '驳'}, {'label': '准', 'hint': ''}], 'event_id': ''}])
     turn_before = int(web_game.state.turn)
-    dossiers_before = len(web_game.db.list_decree_dossiers())
+    dossiers_before = len(web_game.db.dossiers.list_dossiers())
     web_game.session.close()
     body = [{'label': '打回', 'hint': '驳'}]
     r = _657_subprocess_resolve(db_path, body)
@@ -1544,7 +1544,7 @@ def test_1589_mixed_desk_keyless_choice_rejected_batch_zero_writes(web_game):
         assert len(rows) == 2, rows
         assert all((str(row.get('status')) == 'pending' for row in rows)), rows
         assert all((not row.get('choice') for row in rows)), rows
-        assert len(probe.list_decree_dossiers()) == dossiers_before
+        assert len(probe.dossiers.list_dossiers()) == dossiers_before
         ctx = probe.get_resolve_context(turn_before)
         assert ctx is None or ctx.get('extracted') is None
     finally:
@@ -1560,7 +1560,7 @@ def test_1589_pure_decision_keyless_rejected_then_keyed_same_choice_passes(web_g
     desk = web_game.db.list_rescript_desk(int(web_game.state.turn))
     d_key = str(desk[0]['decision_key'])
     turn_before = int(web_game.state.turn)
-    dossiers_before = len(web_game.db.list_decree_dossiers())
+    dossiers_before = len(web_game.db.dossiers.list_dossiers())
     web_game.session.close()
     baseline_game = web_app.WebGame(fresh=False)
     events_before = baseline_game.db.conn.execute('SELECT COUNT(*) AS c FROM event_triggers').fetchone()['c']
@@ -1575,7 +1575,7 @@ def test_1589_pure_decision_keyless_rejected_then_keyed_same_choice_passes(web_g
         decs = probe.list_pending_decisions(turn_before)
         assert decs and all((str(d.get('status')) == 'pending' for d in decs)), decs
         assert all((not d.get('choice') for d in decs)), decs
-        assert len(probe.list_decree_dossiers()) == dossiers_before
+        assert len(probe.dossiers.list_dossiers()) == dossiers_before
         events_after = probe.conn.execute('SELECT COUNT(*) AS c FROM event_triggers').fetchone()['c']
         assert events_after == events_before, (events_before, events_after)
     finally:
@@ -1753,13 +1753,13 @@ def test_1620_http_follow_draft_office_token_routes_to_person(web_game, monkeypa
     db.save_turn_report(state, '邸报')
     state.turn_phase = TurnPhase.AWAITING_DECISION.value
     db.save_state(state)
-    before = len(db.list_decree_dossiers())
+    before = len(db.dossiers.list_dossiers())
     turn_before = int(web_game.state.turn)
     r = asyncio.run(_post_resolve([{'decision_key': urgent['decision_key'], 'action': 'follow_draft', 'draft_capability': opt['draft_capability'], 'label': opt['label']}]))
     assert r.status_code == 200, r.text
     assert 'event: error' not in r.text, r.text
     assert 'event: done' in r.text, r.text
-    after = db.list_decree_dossiers()
+    after = db.dossiers.list_dossiers()
     assert len(after) == before + 1, token
     created = after[-1]
     executor = str(created.get('executor_id') or '')
@@ -1791,12 +1791,12 @@ def test_1620_http_follow_draft_grant_uses_stored_amount(web_game, monkeypatch):
     db.save_resolve_context(int(state.turn), '诏', {'candidate_events': [], 'transit_semantics': []})
     state.turn_phase = TurnPhase.AWAITING_DECISION.value
     db.save_state(state)
-    before = len(db.list_decree_dossiers())
+    before = len(db.dossiers.list_dossiers())
     r = asyncio.run(_post_resolve([{'decision_key': urgent['decision_key'], 'action': 'follow_draft', 'draft_capability': grant_opt['draft_capability'], 'label': grant_opt['label']}]))
     assert r.status_code == 200, r.text
     assert 'event: error' not in r.text, r.text
     assert 'event: done' in r.text, r.text
-    after = db.list_decree_dossiers()
+    after = db.dossiers.list_dossiers()
     assert len(after) == before + 1
     created = after[-1]
     assert str(created.get('action_type') or '') == 'grant_allocation'
@@ -1843,10 +1843,10 @@ def test_657_follow_draft_ignores_client_field_overlay(game):
     opt = _layer_a_option(label='权威票拟', target_id='shaanxi', region_id='shaanxi', transaction_category='督赈', title='权威标题')
     urgent, _ = _plant_urgent_desk(db, state, options=[opt, _layer_a_option(label='备')])
     key = urgent['decision_key']
-    before = len(db.list_decree_dossiers())
+    before = len(db.dossiers.list_dossiers())
     batch = ra.validate_all([urgent], [{'decision_key': key, 'action': 'follow_draft', 'draft_capability': opt['draft_capability'], 'label': opt['label'], 'target_id': 'henan', 'region_id': 'henan', 'title': '伪造标题', 'transaction_category': '练兵', 'assignee_name': '不存在的人'}])
     ra.apply_rescript_batch(db, state, batch, ra.PrewriteResults(), content=content)
-    after = db.list_decree_dossiers()
+    after = db.dossiers.list_dossiers()
     assert len(after) == before + 1
     created = after[-1]
     payload = json.loads(str(created.get('payload_json') or '{}'))
@@ -1868,7 +1868,7 @@ def test_657_midzhi_persists_decision_key_and_llm_label(game):
     choice = {'decision_key': key, 'action': 'midzhi', 'label': llm_label, 'action_type': 'assignment', 'target_kind': 'region', 'target_id': 'shaanxi', 'locality_scope': 'single', 'region_id': 'shaanxi', 'transaction_category': '督赈', 'deadline_months': 2, 'participant_roster': _roster(_ROSTER_LEAD)}
     batch = ra.validate_all([urgent], [choice])
     ra.apply_rescript_batch(db, state, batch, ra.PrewriteResults(), content=content)
-    mids = [d for d in db.list_decree_dossiers() if d.get('mode') == 'midzhi']
+    mids = [d for d in db.dossiers.list_dossiers() if d.get('mode') == 'midzhi']
     assert mids
     hit = mids[-1]
     payload = json.loads(str(hit.get('payload_json') or '{}'))
@@ -1887,7 +1887,7 @@ def test_657_midzhi_verdict_no_party_satisfaction(game):
     key = urgent['decision_key']
     batch = ra.validate_all([urgent], [{'decision_key': key, 'action': 'midzhi', 'label': '中旨赈陕', 'action_type': 'assignment', 'target_kind': 'region', 'target_id': 'shaanxi', 'locality_scope': 'single', 'region_id': 'shaanxi', 'transaction_category': '督赈', 'deadline_months': 1, 'participant_roster': _roster(_ROSTER_LEAD)}])
     ra.apply_rescript_batch(db, state, batch, ra.PrewriteResults(), content=content)
-    mid = next((d for d in db.list_decree_dossiers() if d.get('mode') == 'midzhi'))
+    mid = next((d for d in db.dossiers.list_dossiers() if d.get('mode') == 'midzhi'))
     before_f = _sat(db, 'factions', '东林')
     before_c = _sat(db, 'classes', '士绅')
     db.apply_dossier_verdicts(state, [{'dossier_id': int(mid['id']), 'decision': 'promulgated', 'affected_parties': [{'kind': 'faction', 'key': '东林', 'direction': 'negative', 'intensity': 'strong'}, {'kind': 'class', 'key': '士绅', 'direction': 'negative', 'intensity': 'strong'}]}], content=content)
@@ -2399,7 +2399,7 @@ def _658_plant_stalled_deliberation(db, state, content, *, title='议而不决')
     key = urgent['decision_key']
     batch = ra.validate_all([urgent], [{'decision_key': key, 'action': 'deliberate', 'label': '下部议'}])
     ra.apply_rescript_batch(db, state, batch, ra.PrewriteResults(deliberate_by_key={key: {'title': title, 'body': f'{title}正文', 'stance': '冷', 'supporter_ids': []}}), content=content)
-    stalled = db.find_deliberation_dossier_by_decision_key(key)
+    stalled = db.dossiers.find_by_decision_key(key)
     assert stalled is not None
     return (stalled, key)
 
@@ -2423,8 +2423,8 @@ def test_658_stalled_excluded_from_promulgation_validation(game, monkeypatch):
     decree_mod.resolve_directives(state, db, None, object(), [], '清核河工', content=content)
     assert stalled_id not in seen
     assert normal_id in seen
-    assert db.get_decree_dossier(stalled_id)['status'] == 'proposed'
-    assert _dossier_payload(db.get_decree_dossier(stalled_id)).get('deliberation_state') == 'stalled'
+    assert db.dossiers.get(stalled_id)['status'] == 'proposed'
+    assert _dossier_payload(db.dossiers.get(stalled_id)).get('deliberation_state') == 'stalled'
 
 def _658_session(db, state, content, *, agent=None):
     """最小真 GameSession 壳：只填 chat/add_directive 所需属性。"""
@@ -2458,10 +2458,10 @@ def test_658_deliberate_backed_and_stalled_dossier_first(game):
     before_issues = db.conn.execute('SELECT COUNT(*) AS c FROM issues').fetchone()['c']
     batch = ra.validate_all([urgent], [{'decision_key': key, 'action': 'deliberate', 'label': '下部议'}])
     ra.apply_rescript_batch(db, state, batch, ra.PrewriteResults(deliberate_by_key={key: {'title': '南迁之议', 'body': '臣请集议南迁。', 'stance': '可议', 'supporter_ids': [minister]}}), content=content)
-    drow = db.find_deliberation_dossier_by_decision_key(key)
+    drow = db.dossiers.find_by_decision_key(key)
     assert drow is not None and drow['status'] == 'proposed'
     assert _dossier_payload(drow).get('deliberation_state') == 'backed'
-    ends = db.list_dossier_endorsements(int(drow['id']))
+    ends = db.dossiers.endorsements(int(drow['id']))
     assert len(ends) == 1
     assert ends[0]['form'] == '当面站台'
     assert ends[0]['endorser_id'] == minister
@@ -2471,10 +2471,10 @@ def test_658_deliberate_backed_and_stalled_dossier_first(game):
     assert db.conn.execute('SELECT COUNT(*) AS c FROM issues').fetchone()['c'] == before_issues
     reopened = GameDB(db.path, content=content)
     try:
-        restored = reopened.find_deliberation_dossier_by_decision_key(key)
+        restored = reopened.dossiers.find_by_decision_key(key)
         assert restored is not None
         assert _dossier_payload(restored).get('deliberation_state') == 'backed'
-        assert reopened.list_dossier_endorsements(int(restored['id']))[0]['decision_key'] == key
+        assert reopened.dossiers.endorsements(int(restored['id']))[0]['decision_key'] == key
     finally:
         reopened.close()
     state.turn = int(state.turn) + 1
@@ -2483,7 +2483,7 @@ def test_658_deliberate_backed_and_stalled_dossier_first(game):
     stalled, key2 = _658_plant_stalled_deliberation(db, state, content, title='议而不决')
     assert key2 != key
     assert _dossier_payload(stalled).get('deliberation_state') == 'stalled'
-    assert db.list_dossier_endorsements(int(stalled['id'])) == []
+    assert db.dossiers.endorsements(int(stalled['id'])) == []
     issue = db.conn.execute('SELECT status FROM issues WHERE origin_ref=?', (f"dossier:{int(stalled['id'])}",)).fetchone()
     assert issue is not None and str(issue['status']) == 'active'
     state.turn = int(state.turn) + 1
@@ -2491,12 +2491,12 @@ def test_658_deliberate_backed_and_stalled_dossier_first(game):
     db.conn.execute("DELETE FROM pending_decisions WHERE kind='rescript_draft'")
     urgent3, _ = _plant_urgent_desk(db, state)
     key3 = urgent3['decision_key']
-    dossiers_before = len(db.list_decree_dossiers())
+    dossiers_before = len(db.dossiers.list_dossiers())
     batch3 = ra.validate_all([urgent3], [{'decision_key': key3, 'action': 'deliberate', 'label': '下部议'}])
     with pytest.raises(ValueError, match='非法站台身份'):
         ra.apply_rescript_batch(db, state, batch3, ra.PrewriteResults(deliberate_by_key={key3: {'title': 't', 'body': 'b', 'stance': 's', 'supporter_ids': ['不存在的大臣XYZ']}}), content=content)
-    assert len(db.list_decree_dossiers()) == dossiers_before
-    assert db.find_deliberation_dossier_by_decision_key(key3) is None
+    assert len(db.dossiers.list_dossiers()) == dossiers_before
+    assert db.dossiers.find_by_decision_key(key3) is None
 
 
 def test_658_stage_rejects_bad_backing_zero_write(game):
@@ -2510,7 +2510,7 @@ def test_658_stage_rejects_bad_backing_zero_write(game):
 
     def snapshot() -> tuple[int, int, int]:
         pending = int(db.conn.execute("SELECT COUNT(*) AS c FROM pending_actions WHERE status='pending'").fetchone()['c'])
-        dossiers = len(db.list_decree_dossiers())
+        dossiers = len(db.dossiers.list_dossiers())
         edges = int(db.conn.execute('SELECT COUNT(*) AS c FROM relation_edge_events WHERE event_kind=?', (KIND_BETRAY,)).fetchone()['c'])
         return (pending, dossiers, edges)
     before = snapshot()
@@ -2523,7 +2523,7 @@ def test_658_stage_rejects_bad_backing_zero_write(game):
     key = urgent['decision_key']
     batch = ra.validate_all([urgent], [{'decision_key': key, 'action': 'deliberate', 'label': '下部议'}])
     ra.apply_rescript_batch(db, state, batch, ra.PrewriteResults(deliberate_by_key={key: {'title': '清', 'body': 'b', 'stance': 's', 'supporter_ids': [actor]}}), content=content)
-    bid = int(db.find_deliberation_dossier_by_decision_key(key)['id'])
+    bid = int(db.dossiers.find_by_decision_key(key)['id'])
     pid = stage_punishment_candidate(db, state.turn, actor, text=f'着罚{target}俸。', target_id=target, punish_action='罚俸', amount=10, backing_dossier_id=bid)
     assert pid > 0
     staged = json.loads(db.conn.execute('SELECT payload_json FROM pending_actions WHERE id=?', (int(pid),)).fetchone()['payload_json'])
@@ -2538,17 +2538,17 @@ def test_658_endorsement_provenance_xor(game):
     minister = _summonable_name(db, content)
     did = db.create_decree_dossier(state, action_type='policy', decree_text='试', target_kind='policy', target_id='t')
     chat = db.create_chat_turn(state, minister, '658-xor', 0)
-    eid = db.add_dossier_endorsement(did, form='会签', endorser_id=minister, source_chat_turn_id=chat)
-    row = db.list_dossier_endorsements(did)[0]
+    eid = db.dossiers.add_endorsement(did, form='会签', endorser_id=minister, source_chat_turn_id=chat)
+    row = db.dossiers.endorsements(did)[0]
     assert row['source_chat_turn_id'] == chat and row['decision_key'] == ''
-    eid2 = db.add_dossier_endorsement(did, form='当面站台', endorser_id=minister, decision_key='rescript_draft:1:0')
-    rows = {e['id']: e for e in db.list_dossier_endorsements(did)}
+    eid2 = db.dossiers.add_endorsement(did, form='当面站台', endorser_id=minister, decision_key='rescript_draft:1:0')
+    rows = {e['id']: e for e in db.dossiers.endorsements(did)}
     assert rows[eid2]['decision_key'] == 'rescript_draft:1:0'
     assert rows[eid2]['source_chat_turn_id'] == 0
     with pytest.raises(ValueError, match='provenance'):
-        db.add_dossier_endorsement(did, form='会签', endorser_id=minister, source_chat_turn_id=chat, decision_key='x')
+        db.dossiers.add_endorsement(did, form='会签', endorser_id=minister, source_chat_turn_id=chat, decision_key='x')
     with pytest.raises(ValueError, match='provenance'):
-        db.add_dossier_endorsement(did, form='会签', endorser_id=minister)
+        db.dossiers.add_endorsement(did, form='会签', endorser_id=minister)
 
 def test_658_candidates_require_active_status(game):
     """#658：罢黜等非 active 不得入廷议站台候选。"""
@@ -2560,11 +2560,11 @@ def test_658_candidates_require_active_status(game):
     assert name not in ra.list_deliberation_candidate_ids(db, content)
     urgent, _ = _plant_urgent_desk(db, state)
     key = urgent['decision_key']
-    before = len(db.list_decree_dossiers())
+    before = len(db.dossiers.list_dossiers())
     batch = ra.validate_all([urgent], [{'decision_key': key, 'action': 'deliberate', 'label': '下部议'}])
     with pytest.raises(ValueError, match='非法站台身份'):
         ra.apply_rescript_batch(db, state, batch, ra.PrewriteResults(deliberate_by_key={key: {'title': 't', 'body': 'b', 'stance': 's', 'supporter_ids': [name]}}), content=content)
-    assert len(db.list_decree_dossiers()) == before
+    assert len(db.dossiers.list_dossiers()) == before
 
 def test_658_free_decree_capture_target_dossier_real_entry(game, monkeypatch):
     """#658：Web 真入口 → 真实 resolve_directives 成案/颁布/仿真/封驳三选/restore。"""
@@ -2584,7 +2584,7 @@ def test_658_free_decree_capture_target_dossier_real_entry(game, monkeypatch):
     push_declaration = {'attach': 'existing', 'affair_id': int(affair.id)}
     issue_before = db.conn.execute("SELECT id, status FROM issues WHERE origin_ref=? AND status='active'", (origin,)).fetchone()
     assert issue_before is not None
-    before = len(db.list_decree_dossiers())
+    before = len(db.dossiers.list_dossiers())
 
     def backend(prompt, *_a, **_k):
         return (json.dumps({'拟旨意图': '拟旨', '目标案卷ID': did, '颁布方式': '中旨直发', '事务声明': push_declaration}, ensure_ascii=False), 1)
@@ -2622,30 +2622,30 @@ def test_658_free_decree_capture_target_dossier_real_entry(game, monkeypatch):
     monkeypatch.setattr(decree_mod, 'llm_promulgation_verdicts', _reject_reviewed)
     monkeypatch.setattr(session_mod, 'write_decree_with_agno', lambda *a, **k: f'诏曰强推案卷{did}')
     resolve_result = session.resolve_turn()
-    assert len(db.list_decree_dossiers()) == before
-    pushed = db.get_decree_dossier(did)
+    assert len(db.dossiers.list_dossiers()) == before
+    pushed = db.dossiers.get(did)
     assert pushed is not None
     assert int(pushed.get('affair_id') or 0) == int(affair.id)
     assert _dossier_payload(pushed).get('deliberation_state') == 'backed'
     assert pushed.get('mode') == 'midzhi'
-    ends = db.list_dossier_endorsements(did)
+    ends = db.dossiers.endorsements(did)
     assert any((e['form'] == '御笔手敕' and e['imperial'] is True and (e['decision_key'] == f'directive:{dir_id}') and (int(e['source_chat_turn_id'] or 0) == 0) for e in ends))
     issue_after = db.conn.execute('SELECT status FROM issues WHERE id=?', (int(issue_before['id']),)).fetchone()
     assert str(issue_after['status']) == 'resolved'
     db.ensure_dossiers_for_draft_directives(state)
-    assert len([e for e in db.list_dossier_endorsements(did) if e['form'] == '御笔手敕']) == 1
+    assert len([e for e in db.dossiers.endorsements(did) if e['form'] == '御笔手敕']) == 1
     with pytest.raises(ValueError, match='stalled|proposed'):
         ra.apply_imperial_deliberation_push(db, state, target_dossier_id=did, directive_identity='directive:999')
     assert resolve_result.awaiting is False
     assert resolve_result.advanced is False
     reopened = GameDB(db.path, content=content)
     try:
-        restored = reopened.get_decree_dossier(did)
+        restored = reopened.dossiers.get(did)
         assert restored is not None
         assert int(restored.get('affair_id') or 0) == int(affair.id)
         assert _dossier_payload(restored).get('deliberation_state') == 'backed'
         assert restored.get('mode') == 'midzhi'
-        assert any((e['form'] == '御笔手敕' and e['decision_key'] == f'directive:{dir_id}' for e in reopened.list_dossier_endorsements(did)))
+        assert any((e['form'] == '御笔手敕' and e['decision_key'] == f'directive:{dir_id}' for e in reopened.dossiers.endorsements(did)))
         issue_r = reopened.conn.execute('SELECT status FROM issues WHERE id=?', (int(issue_before['id']),)).fetchone()
         assert str(issue_r['status']) == 'resolved'
     finally:
@@ -2662,8 +2662,8 @@ def test_658_typed_target_and_backing_reject_bad_shapes(game, monkeypatch):
     db.insert_issue(state, kind='situation', title='南迁绑定', origin_kind='decree', origin_ref=f'dossier:{bind_did}')
     bind_affair = db.affairs.open(name='南迁事务', origin='下部议', year=state.year, period=state.period, turn=state.turn)
     push_declaration = {'attach': 'existing', 'affair_id': int(bind_affair.id)}
-    before_dossiers = len(db.list_decree_dossiers())
-    before_ends = len(db.list_dossier_endorsements(did))
+    before_dossiers = len(db.dossiers.list_dossiers())
+    before_ends = len(db.dossiers.endorsements(did))
     before_dirs = db.conn.execute('SELECT COUNT(*) AS c FROM turn_directives').fetchone()['c']
     bad_shapes = (True, False, 1.9, 1.0, '1', '12', 0, -1)
     for bad in bad_shapes:
@@ -2687,8 +2687,8 @@ def test_658_typed_target_and_backing_reject_bad_shapes(game, monkeypatch):
     endorsers = [_summonable_name(db, content)]
     endorsers.append(next((n for n in content.characters if n != endorsers[0])))
     for index, endorser in enumerate(endorsers):
-        db.add_dossier_endorsement(did, form='会签', endorser_id=endorser, decision_key=f'test:658:typed:{index}')
-    projected = db.list_endorsed_dossier_candidates(state.turn)
+        db.dossiers.add_endorsement(did, form='会签', endorser_id=endorser, decision_key=f'test:658:typed:{index}')
+    projected = db.dossiers.endorsed_candidates(state.turn)
     assert [c['endorser_id'] for c in projected if c['dossier_id'] == did] == list(reversed(endorsers))
 
     def backend_multi(prompt, *_a, **_k):
@@ -2701,14 +2701,14 @@ def test_658_typed_target_and_backing_reject_bad_shapes(game, monkeypatch):
     assert push_payload.get('affair_declaration')
     push_dir = int(db.add_directive(state, None, '御笔强推', 'test-658-push-bind', dossier_payload=push_payload))
     db.ensure_dossiers_for_draft_directives(state)
-    assert int(db.get_decree_dossier(bind_did)['affair_id'] or 0) == int(bind_affair.id)
-    assert db.get_dossier_for_directive(push_dir) is not None
-    assert int(db.get_dossier_for_directive(push_dir)['id']) == bind_did
+    assert int(db.dossiers.get(bind_did)['affair_id'] or 0) == int(bind_affair.id)
+    assert db.dossiers.get_for_directive(push_dir) is not None
+    assert int(db.dossiers.get_for_directive(push_dir)['id']) == bind_did
     bad_directive = int(db.add_directive(state, None, '处分不存在之人', 'test-658-ensure', dossier_payload={'dossier_action_type': 'punishment', 'target_kind': 'character', 'target_id': '不存在的大臣XYZ', 'mode': 'ordinary'}))
     db.ensure_dossiers_for_draft_directives(state)
     status = db.conn.execute('SELECT status FROM turn_directives WHERE id=?', (bad_directive,)).fetchone()['status']
     assert status == 'draft'
-    assert all((int(row['id']) != bad_directive for row in db.list_dossiered_draft_directives(state)))
+    assert all((int(row['id']) != bad_directive for row in db.dossiers.draft_directives_with_dossier(state.turn)))
     db.mark_directives_issued(state)
     status = db.conn.execute('SELECT status FROM turn_directives WHERE id=?', (bad_directive,)).fetchone()['status']
     assert status == 'draft'
@@ -2718,10 +2718,10 @@ def test_658_typed_target_and_backing_reject_bad_shapes(game, monkeypatch):
     monkeypatch.setattr(cli_backend, '_run_backend_for_config', backend_bad)
     with pytest.raises(ValueError):
         cli_backend.capture_manual_directive_payload(f'着即强推南迁（案卷{did}）', None, db=db, content=content)
-    assert len(db.list_decree_dossiers()) == before_dossiers
-    assert len(db.list_dossier_endorsements(did)) == before_ends + 2
+    assert len(db.dossiers.list_dossiers()) == before_dossiers
+    assert len(db.dossiers.endorsements(did)) == before_ends + 2
     assert db.conn.execute('SELECT COUNT(*) AS c FROM turn_directives').fetchone()['c'] == before_dirs + 2
-    assert _dossier_payload(db.get_decree_dossier(did)).get('deliberation_state') == 'stalled'
+    assert _dossier_payload(db.dossiers.get(did)).get('deliberation_state') == 'stalled'
 
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
@@ -2819,7 +2819,7 @@ def test_658_mixed_ordinary_triad_and_target_rejected(game, monkeypatch):
     db, state, content = game
     stalled, _ = _658_plant_stalled_deliberation(db, state, content, title='混载')
     did = int(stalled['id'])
-    before_dossiers = len(db.list_decree_dossiers())
+    before_dossiers = len(db.dossiers.list_dossiers())
     before_dirs = db.conn.execute('SELECT COUNT(*) AS c FROM turn_directives').fetchone()['c']
 
     def backend_mixed(prompt, *_a, **_k):
@@ -2827,7 +2827,7 @@ def test_658_mixed_ordinary_triad_and_target_rejected(game, monkeypatch):
     monkeypatch.setattr(cli_backend, '_run_backend_for_config', backend_mixed)
     with pytest.raises(ValueError, match='不得同时'):
         cli_backend.capture_manual_directive_payload('混载旨文', None, db=db, content=content)
-    assert len(db.list_decree_dossiers()) == before_dossiers
+    assert len(db.dossiers.list_dossiers()) == before_dossiers
     assert db.conn.execute('SELECT COUNT(*) AS c FROM turn_directives').fetchone()['c'] == before_dirs
 
 
@@ -2903,12 +2903,12 @@ def _1778_plant_and_follow(web_game, monkeypatch, drafts, *, desk_action='follow
             choices.append({'decision_key': row['decision_key'], 'action': 'midzhi', 'label': head['label'], 'action_type': head['action_type'], 'assignee_name': head.get('assignee_name') or '', 'target_kind': head['target_kind'], 'target_id': head.get('target_id') or '', 'locality_scope': head['locality_scope'], 'region_id': head.get('region_id') or '', 'transaction_category': head.get('transaction_category') or '', 'deadline_months': head.get('deadline_months'), 'participant_roster': head['participant_roster']})
         else:
             choices.append({'decision_key': row['decision_key'], 'action': 'follow_draft', 'draft_capability': head['draft_capability'], 'label': head['label']})
-    before = {int(d['id']) for d in db.list_decree_dossiers()}
+    before = {int(d['id']) for d in db.dossiers.list_dossiers()}
     resp = asyncio.run(_post_resolve(choices))
     assert resp.status_code == 200, resp.text
     assert 'event: error' not in resp.text, resp.text
     assert 'event: done' in resp.text, resp.text
-    created = [d for d in web_game.db.list_decree_dossiers() if int(d['id']) not in before]
+    created = [d for d in web_game.db.dossiers.list_dossiers() if int(d['id']) not in before]
     return {str(d['decree_text'] or ''): d for d in created}
 
 def test_1778_drafted_roster_rides_to_pihong_and_nails_the_dossier(web_game, monkeypatch, tmp_path):
@@ -2990,7 +2990,7 @@ def test_1778_missing_roster_heals_then_error_pack_without_assigning_anyone(
         return json.dumps({"items": [item]}, ensure_ascii=False)
 
     monkeypatch.setattr(draft_mod, "run_agent_text", _never_heals)
-    before = len(db.list_decree_dossiers())
+    before = len(db.dossiers.list_dossiers())
     drafts = generate_rescript_draft(
         object(),
         {"active_issues": []},
@@ -3024,7 +3024,7 @@ def test_1778_missing_roster_heals_then_error_pack_without_assigning_anyone(
     assert dropped[0]["missing_fields"] == ["participant_roster"]
 
     # 不成案、不配人
-    assert len(db.list_decree_dossiers()) == before
+    assert len(db.dossiers.list_dossiers()) == before
 
 def test_1621_http_follow_draft_uses_catalog_army_id(web_game, monkeypatch):
     """合法军 id 从生成边界进 HTTP follow_draft，案卷 target_id 为真军 id。"""
@@ -3088,5 +3088,5 @@ def test_1621_http_follow_draft_uses_catalog_army_id(web_game, monkeypatch):
     assert r.status_code == 200, r.text
     assert "event: error" not in r.text, r.text
     assert "event: done" in r.text, r.text
-    dossiers = db.list_decree_dossiers()
+    dossiers = db.dossiers.list_dossiers()
     assert dossiers and dossiers[-1]["target_id"] == "guanning"

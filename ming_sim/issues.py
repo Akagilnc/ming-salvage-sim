@@ -13,6 +13,7 @@ import sqlite3
 from contextlib import contextmanager
 from typing import Any, Dict, List, Literal, Mapping, Optional, Tuple
 
+from ming_sim.entities.dossier import DOSSIER_REPORT_ORIGIN_VERDICT
 from ming_sim.applier import atomic
 from ming_sim.appointment_tenure import appointment_tenure_from
 from ming_sim.authority_privileges import AUTHORITY_PRIVILEGE_SET
@@ -107,9 +108,9 @@ def _apply_authority_change_item(
         dossier_id = _parse_sqlite_id(item.get("dossier_id"))
     except (TypeError, ValueError):
         raise ValueError("missing_dossier_source") from None
-    if dossier_id <= 0 or db.get_decree_dossier(dossier_id) is None:
+    if dossier_id <= 0 or db.dossiers.get(dossier_id) is None:
         raise ValueError("missing_dossier_source")
-    if not db.dossier_authorizes_effects(dossier_id):
+    if not db.dossiers.authorizes_effects(dossier_id):
         raise ValueError("dossier_not_effect_eligible")
     op = str(item.get("动作") or item.get("op") or "").strip()
     if op not in _AUTHORITY_GRANT_OPS | _AUTHORITY_REVOKE_OPS:
@@ -236,8 +237,8 @@ def _payload_owned_dossier_for_origin(db: GameDB, origin_ref: object) -> Optiona
         dossier_id = _parse_sqlite_id(text.split(":", 1)[1])
     except ValueError:
         return None
-    row = db.get_decree_dossier(dossier_id)
-    if row is None or not db.dossier_authorizes_effects(dossier_id):
+    row = db.dossiers.get(dossier_id)
+    if row is None or not db.dossiers.authorizes_effects(dossier_id):
         return None
     try:
         payload = row.get("payload") or json.loads(str(row.get("payload_json") or "{}"))
@@ -5586,7 +5587,7 @@ def apply_issue_tracker_output(
         linked_dossier = None
         origin_ref = str(row["origin_ref"] or "").strip()
         if re.fullmatch(r"dossier:[1-9][0-9]*", origin_ref) and db.effect_origin_rejection(origin_ref) is None:
-            linked_dossier = db.get_decree_dossier(int(origin_ref.split(":", 1)[1]))
+            linked_dossier = db.dossiers.get(int(origin_ref.split(":", 1)[1]))
         deterministic_breach = bool(
             linked_dossier
             and (
@@ -5594,7 +5595,7 @@ def apply_issue_tracker_output(
                 or (
                     linked_dossier["status"] == "closed"
                     and bool(row["commitment_kind"])
-                    and db.dossier_authorizes_effects(int(linked_dossier["id"]))
+                    and db.dossiers.authorizes_effects(int(linked_dossier["id"]))
                 )
             )
         )
@@ -6796,7 +6797,7 @@ def _apply_person_changes(
                     dossier_id = _parse_sqlite_id(str(origin_ref).split(":", 1)[1])
                 except ValueError:
                     dossier_id = 0
-                dossier = db.get_decree_dossier(dossier_id) if dossier_id else None
+                dossier = db.dossiers.get(dossier_id) if dossier_id else None
                 if dossier is not None:
                     action_type = str(dossier.get("action_type") or "").strip()
                     if (
@@ -7064,7 +7065,7 @@ def _apply_dossier_participant_items(
             }], state=state, commit=False)
             if not added:
                 # Exact durable duplicate is the only no-write success case.
-                existing = db.get_decree_dossier(dossier_id) or {}
+                existing = db.dossiers.get(dossier_id) or {}
                 if not any(
                     row.get("character_id") == character_id
                     and row.get("tier") == tier
@@ -7474,7 +7475,7 @@ def _recovery_effective_silver_wan(db: GameDB, dossier_id: int, turn: int) -> in
     本回合对账实抵优先；否则累加该案已落 economy_moves 负向出账。
     **不**回退 payload.amount（ordered 非实付，零 ledger 不得假阳性出回流）。
     """
-    history = db.list_dossier_reconciliations(int(dossier_id))
+    history = db.dossiers.reconciliations(int(dossier_id))
     arrived_this_turn = [
         int(row["arrived_amount"])
         for row in history
@@ -7556,7 +7557,7 @@ def _apply_recovery_driven_transfers(
         if cadence == "每月":
             reconciled = [
                 int(item["arrived_amount"])
-                for item in db.list_dossier_reconciliations(dossier_id)
+                for item in db.dossiers.reconciliations(dossier_id)
                 if int(item.get("turn") or 0) == turn
             ]
             if reconciled:
@@ -7784,7 +7785,7 @@ def record_secret_order_disclosure(
     ).fetchone()
     if already_disclosed is not None:
         return False
-    dossier = db.get_dossier_for_secret_order(order_id)
+    dossier = db.dossiers.get_for_secret_order(order_id)
     progress = (
         db.list_dossier_progress(int(dossier["id"]))
         if dossier is not None else []
@@ -8136,7 +8137,7 @@ def _apply_score_extraction_body(
             dossier_id = _parse_sqlite_id(item.get("dossier_id"))
             if int(dossier_id) in _due_review_owned:
                 raise ValueError("正式复核接管：extractor 不得并行写执行格终值")
-            dossier = db.get_decree_dossier(dossier_id)
+            dossier = db.dossiers.get(dossier_id)
             if dossier is None or dossier["status"] != "executing":
                 raise ValueError("案卷不存在或不在 executing")
             outcome = str(item.get("outcome") or "").strip()
@@ -8173,7 +8174,7 @@ def _apply_score_extraction_body(
                 db.record_dossier_progress(
                     dossier_id, state.turn, band, memorial,
                     is_terminal=True,
-                    origin=GameDB.DOSSIER_REPORT_ORIGIN_VERDICT,
+                    origin=DOSSIER_REPORT_ORIGIN_VERDICT,
                     commit=False,
                 )
             # 连坐挂载点＝本适配器落终值笔；禁对 execution_outcome 列事后扫描。

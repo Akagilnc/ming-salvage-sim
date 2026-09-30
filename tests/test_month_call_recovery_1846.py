@@ -203,7 +203,7 @@ def test_forecast_exhaustion_does_not_overwrite_prior_ending(game, monkeypatch, 
     assert db.staged_declarations.is_settled(first_ref)
     assert (chain.get("declaration_outcome") or {}).get("status") == "emperor_abdicate"
     assert (chain.get("call_failure") or {}).get("kind") == "model_exhausted"
-    assert db.get_decree_dossier(second_id) is not None
+    assert db.dossiers.get(second_id) is not None
 
     db.save_turn_report(state, "邸报已成")
     result = session.resolve_turn(allow_empty_decree=True)

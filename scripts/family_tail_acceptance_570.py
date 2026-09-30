@@ -307,7 +307,7 @@ def _run_sample(index: int, root: str, content: GameContent, cfg: LLMConfig) -> 
                 },
             )
             planted[key] = did
-            rows_by_id[did] = db.get_decree_dossier(did)
+            rows_by_id[did] = db.dossiers.get(did)
 
         # break_rank must be on both extreme appointments.
         for key in ("cabinet", "bare"):
@@ -336,7 +336,7 @@ def _run_sample(index: int, root: str, content: GameContent, cfg: LLMConfig) -> 
         )
         # 辞让 path needs force+execution judge; this gate records structured
         # reject as the primary anchor. execution_outcome checked if already set.
-        cabinet_row = db.get_decree_dossier(planted["cabinet"])
+        cabinet_row = db.dossiers.get(planted["cabinet"])
         cabinet_exec = str(cabinet_row.get("execution_outcome") or "")
         cabinet_resign_ok = cabinet_exec in {"degraded", "failed"}
         cabinet_ok = cabinet_reject_ok or cabinet_resign_ok
@@ -360,7 +360,7 @@ def _run_sample(index: int, root: str, content: GameContent, cfg: LLMConfig) -> 
                 )
                 bare_force_costs = {"force_error": bare_force_error}
             else:
-                bare_row = db.get_decree_dossier(planted["bare"])
+                bare_row = db.dossiers.get(planted["bare"])
                 bare_force_costs = _three_cost_legs(
                     db, planted["bare"], bare_row,
                     bare_v.get("affected_parties") or [],
@@ -394,7 +394,7 @@ def _run_sample(index: int, root: str, content: GameContent, cfg: LLMConfig) -> 
                 )
                 midzhi_force = {"force_error": midzhi_force_error}
             else:
-                midzhi_row = db.get_decree_dossier(planted["midzhi"])
+                midzhi_row = db.dossiers.get(planted["midzhi"])
                 midzhi_force = _three_cost_legs(
                     db, planted["midzhi"], midzhi_row,
                     midzhi_v.get("affected_parties") or [],

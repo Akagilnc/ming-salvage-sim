@@ -228,7 +228,7 @@ def _pending_snapshot(session: Any, pending_action_id: int, night_id: int) -> Op
 
 def _held_snapshot(session: Any, dossier_id: int) -> Optional[Dict[str, Any]]:
     db, state = session.db, session.state
-    row = db.get_decree_dossier(int(dossier_id))
+    row = db.dossiers.get(int(dossier_id))
     if row is None or not _is_held_for_rejudgment(row, int(state.turn)):
         return None
     candidate = copy.deepcopy(row)
@@ -370,7 +370,7 @@ def _forecast(
                 ):
                     return
             else:
-                current = session.db.get_decree_dossier(snapshot["dossier_id"])
+                current = session.db.dossiers.get(snapshot["dossier_id"])
                 if current is None or not _is_held_for_rejudgment(current, int(session.state.turn)):
                     return
             if session.db.staged_declarations.staged_for(str(snapshot["decree_ref"])):
@@ -558,7 +558,7 @@ def schedule_held_decree_forecasts(session: Any) -> bool:
             turn = int(session.state.turn)
 
             def snapshot_held_ids() -> list[int]:
-                rows = session.db.list_decree_dossiers_for_simulation(turn)
+                rows = session.db.dossiers.list_for_simulation(turn)
                 return [
                     int(row["id"]) for row in rows
                     if _is_held_for_rejudgment(row, turn)

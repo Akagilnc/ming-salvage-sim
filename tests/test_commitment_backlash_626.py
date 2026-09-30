@@ -82,7 +82,7 @@ def _executing_policy_dossier(db, state, *, token: str = "bl-626", holder: str =
         payload={"mode": "ordinary", "text": token},
     )
     db.apply_dossier_promulgation(state, dossier_id, "promulgated")
-    assert db.get_decree_dossier(dossier_id)["status"] == "executing"
+    assert db.dossiers.get(dossier_id)["status"] == "executing"
     return dossier_id, holder
 
 
@@ -284,7 +284,7 @@ def test_ac1_deformation_exposure_triggers_commitment_backlash(game):
         did, "transformed", "名实已乖，旨外受益", int(state.turn),
         close=True, commit=True,
     )
-    assert db.get_decree_dossier(did)["execution_outcome"] == "transformed"
+    assert db.dossiers.get(did)["execution_outcome"] == "transformed"
 
     assert db.trigger_commitment_backlashes(state, commit=True) == []
 
@@ -317,7 +317,7 @@ def test_ac1_transformed_without_beyond_intent_does_not_trigger(game):
         did, "transformed", "名实已乖（无旨外账）", int(state.turn),
         close=True, commit=True,
     )
-    assert db.get_decree_dossier(did)["execution_outcome"] == "transformed"
+    assert db.dossiers.get(did)["execution_outcome"] == "transformed"
     moves = db.list_economy_moves_for_dossier(did)
     assert not any(bool(m.get("beyond_intent")) for m in moves)
 

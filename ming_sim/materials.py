@@ -644,10 +644,7 @@ def _carryover_drafts(db: Any, state: Any) -> list[dict]:
     return [
         dict(row) for row in db.list_directives(state, statuses=("draft",))
         if int(row["turn"]) < int(state.turn)
-        and (
-            not hasattr(db, "get_dossier_for_directive")
-            or db.get_dossier_for_directive(int(row["id"])) is None
-        )
+        and db.dossiers.get_for_directive(int(row["id"])) is None
     ]
 
 
@@ -1229,10 +1226,10 @@ def world_materials_root(db: Any, state: Any) -> Path:
 
 
 def secret_order_dossier_ids(db: Any) -> set[int]:
-    """案卷关联：secret_order_id 有值的案卷。沿 list_decree_dossiers，不另查一套。"""
+    """案卷关联：secret_order_id 有值的案卷。沿 store.list_dossiers，不另查一套。"""
     return {
         int(row["id"])
-        for row in db.list_decree_dossiers()
+        for row in db.dossiers.list_dossiers()
         if row.get("secret_order_id")
     }
 
@@ -1495,7 +1492,7 @@ def continuing_dossier_facts(db: Any, turn: int) -> list[dict[str, object]]:
     真实强颁在同一次颁布里会把在途案卷转入 executing，或把终局载荷结案，
     不会带着 promulgated 进入次月。
     """
-    rows = db.list_decree_dossiers_for_simulation(int(turn))
+    rows = db.dossiers.list_for_simulation(int(turn))
     facts: list[dict[str, object]] = []
     for row in rows:
         status = str(row.get("status") or "")

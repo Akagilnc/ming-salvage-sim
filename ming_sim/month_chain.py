@@ -792,7 +792,7 @@ def _settle_edicts(
     prevalidated = set(chain.get("recommendation_prevalidated_ids") or [])
     invalid = set(chain.get("recommendation_invalid_ids") or [])
     if "recommendation_prevalidated_ids" not in chain:
-        appointments = [row for row in db.list_decree_dossiers(status="proposed")
+        appointments = [row for row in db.dossiers.list_dossiers(status="proposed")
                         if row.get("action_type") == "appointment"
                         and int(row.get("created_turn") or 0) == int(state.turn)]
         if len(appointments) > 1:
@@ -801,7 +801,7 @@ def _settle_edicts(
             chain["recommendation_prevalidated_ids"] = sorted(prevalidated)
             chain["recommendation_invalid_ids"] = sorted(invalid)
             _save_chain(db, int(state.turn), chain, source=Provenance.player_decree)
-    for dossier in db.list_decree_dossiers():
+    for dossier in db.dossiers.list_dossiers():
         if _is_stalled_deliberation(dossier):
             continue
         status = str(dossier.get("status") or "")
@@ -846,7 +846,7 @@ def _settle_edicts(
                 )
                 verdict = product["verdict"]
             if isinstance(verdict, dict) and verdict.get("decision"):
-                current = db.get_decree_dossier(int(dossier["id"])) or dossier
+                current = db.dossiers.get(int(dossier["id"])) or dossier
                 if str(current.get("status") or "") == "proposed":
                     # 失效快照只在实际顺颁时拒，不因未判/打回阻断整月。
                     if int(dossier["id"]) in invalid and verdict["decision"] in {"promulgated", "force_promulgated"}:
@@ -869,7 +869,7 @@ def _settle_edicts(
                             db._record_dossier_verdict_metadata(state, int(dossier["id"]), verdict)
                     finally:
                         db.conn._recommendation_snapshots_prevalidated = previous
-        current = db.get_decree_dossier(int(dossier["id"])) or dossier
+        current = db.dossiers.get(int(dossier["id"])) or dossier
         if str(current.get("promulgation_decision") or "") == "promulgated":
             def persist_result(_decree_ref: str, result: Any) -> None:
                 # 披露暂缓与旨意落账同事务：alongside 在 settle 的 atomic 内，
@@ -995,14 +995,14 @@ def _apply_deferred_disclosures(
 def _enrich_eligible_dossiers_for_supply(
     db: Any, candidates: List[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
-    """合资格案卷供料：复用 get_decree_dossier／typed contract 读口补齐正文与执行契约。"""
+    """合资格案卷供料：复用 store 的案卷读口／typed contract 补齐正文与执行契约。"""
     from ming_sim.covert_progress import read_covert_task_contract
 
     out: List[Dict[str, Any]] = []
     for item in candidates:
         row = dict(item)
         dossier_id = int(item.get("dossier_id") or 0)
-        dossier = db.get_decree_dossier(dossier_id) if dossier_id and hasattr(db, "get_decree_dossier") else None
+        dossier = db.dossiers.get(dossier_id) if dossier_id else None
         if dossier is not None:
             row["decree_text"] = str(dossier.get("decree_text") or "")
             payload = dossier.get("payload")
@@ -1266,7 +1266,7 @@ def _open_rescript_items(
     triad = _this_turn_rescript_dossiers(db, turn)
     decree_questions: List[tuple[str, list]] = []
     seen_refs: set[str] = set()
-    for dossier in db.list_decree_dossiers():
+    for dossier in db.dossiers.list_dossiers():
         ref = decree_ref_for_dossier(db, dossier)
         if ref in seen_refs:
             continue
@@ -1287,7 +1287,7 @@ def _open_rescript_items(
 
 def _this_turn_rescript_dossiers(db: Any, turn: int) -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = []
-    for dossier in db.list_decree_dossiers():
+    for dossier in db.dossiers.list_dossiers():
         if not dossier.get("rescript_pending"):
             continue
         if not _dossier_rejection_is_this_turn(db, dossier, turn):
@@ -1324,7 +1324,7 @@ def _materialize_rescript_desk(
     if open_items["triad"]:
         verdicts = []
         for dossier in open_items["triad"]:
-            hist = db.list_decree_dossier_decisions(int(dossier["id"]))
+            hist = db.dossiers.decisions(int(dossier["id"]))
             latest = hist[-1] if hist else {}
             verdicts.append({
                 "dossier_id": int(dossier["id"]),
@@ -1468,7 +1468,7 @@ def _apply_decided_triad(
     if not raw_id.isdigit():
         return
     dossier_id = int(raw_id)
-    dossier = db.get_decree_dossier(dossier_id)
+    dossier = db.dossiers.get(dossier_id)
     if dossier is None or not dossier.get("rescript_pending"):
         return
     decision = str(
@@ -1511,13 +1511,13 @@ def _run_world_continuation_text(
 def _dossier_for_decree_ref(db: Any, decree_ref: str) -> Optional[Dict[str, Any]]:
     from ming_sim.decree_forecast import decree_ref_for_dossier
 
-    for dossier in db.list_decree_dossiers():
+    for dossier in db.dossiers.list_dossiers():
         if decree_ref_for_dossier(db, dossier) == decree_ref:
             return dossier
     if decree_ref.startswith("dossier:"):
         raw = decree_ref.split(":", 1)[1]
         if raw.isdigit():
-            return db.get_decree_dossier(int(raw))
+            return db.dossiers.get(int(raw))
     return None
 
 

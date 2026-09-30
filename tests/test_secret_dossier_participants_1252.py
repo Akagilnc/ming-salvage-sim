@@ -29,7 +29,7 @@ def _secret(db, state, *, title="密查漕弊", body="暗访仓胥", tags=None):
         state, lead, title, body, tags or ["稽核"], deadline_months=3,
         covert_task=TYPED_COVERT_TASK,
     )
-    dossier = db.get_dossier_for_secret_order(order_id)
+    dossier = db.dossiers.get_for_secret_order(order_id)
     assert dossier is not None
     return lead, int(order_id), int(dossier["id"])
 
@@ -41,7 +41,7 @@ def test_s1_public_projection_filter_unchanged(game):
     """不动 #883 list_decree_dossiers_for_simulation 滤除。"""
     db, state, _content = game
     _lead, _order_id, dossier_id = _secret(db, state)
-    visible = db.list_decree_dossiers_for_simulation(state.turn)
+    visible = db.dossiers.list_for_simulation(state.turn)
     assert all(int(row["id"]) != dossier_id for row in visible)
     assert all(str(row.get("action_type") or "") != "secret_order" for row in visible)
 
@@ -62,11 +62,11 @@ def test_s2_tracer_613_565_readers_see_appended_roster(game):
     order_id = create_test_secret_order(db,
         state, lead, "密查仓胥", "暗访通州仓", ["稽核"], deadline_months=3,
     )
-    dossier_id = int(db.get_dossier_for_secret_order(order_id)["id"])
+    dossier_id = int(db.dossiers.get_for_secret_order(order_id)["id"])
     db.append_decree_dossier_participants(dossier_id, [{
         "character_id": lead, "tier": "主办", "role": "密访",
     }], state=state)
-    dossier_before = db.get_decree_dossier(dossier_id)
+    dossier_before = db.dossiers.get(dossier_id)
     # Grant authority to worker on this secret scope so #613 projection can hit
     # once worker is on the roster (actors = executor ∪ 主办/协办).
     auth_id = _grant(
@@ -85,7 +85,7 @@ def test_s2_tracer_613_565_readers_see_appended_roster(game):
     }, secret_dossier_ids_at_input={dossier_id})
     assert result["secret_dossier_participants"][0].get("rejected") is not True
 
-    dossier = db.get_decree_dossier(dossier_id)
+    dossier = db.dossiers.get(dossier_id)
     # #565: roster is the liability source; 主办 lead is primary.
     parties = project_execution_liability_parties(dossier["participant_roster"])
     assert any(p.get("character_id") == lead for p in parties)
@@ -110,7 +110,7 @@ def test_s2_public_dossier_participants_still_rejects_secret_id(game):
     order_id = create_test_secret_order(db,
         state, lead, "密查仓胥", "暗访通州仓", ["稽核"], deadline_months=3,
     )
-    secret_id = int(db.get_dossier_for_secret_order(order_id)["id"])
+    secret_id = int(db.dossiers.get_for_secret_order(order_id)["id"])
     public_id = db.create_decree_dossier(
         state, action_type="assignment", decree_text="命修历。",
         target_kind="issue", target_id="calendar-1252",
@@ -123,7 +123,7 @@ def test_s2_public_dossier_participants_still_rejects_secret_id(game):
         }],
     }, dossier_ids_at_input={public_id})  # frozen public set — secret not in it
     assert result["dossier_participants"][0]["rejected"] is True
-    assert len(db.get_decree_dossier(secret_id)["participant_roster"]) == 0
+    assert len(db.dossiers.get(secret_id)["participant_roster"]) == 0
 
 
 def test_s2_private_field_rejects_non_batch_and_public_ids(game):
@@ -137,7 +137,7 @@ def test_s2_private_field_rejects_non_batch_and_public_ids(game):
     _lead2, _o2, other_secret = _secret(db, state, title="他批密令")
     # seed lead on both so append shape is valid if auth were open
     for did in (batch_id, other_secret):
-        d = db.get_decree_dossier(did)
+        d = db.dossiers.get(did)
         minister = str(d["executor_id"])
         db.append_decree_dossier_participants(did, [{
             "character_id": minister, "tier": "主办", "role": "承办",
@@ -147,8 +147,8 @@ def test_s2_private_field_rejects_non_batch_and_public_ids(game):
         target_kind="issue", target_id="pub-1252",
         participants=[{"character_id": lead, "tier": "主办"}],
     )
-    batch_lead = str(db.get_decree_dossier(batch_id)["executor_id"])
-    other_lead = str(db.get_decree_dossier(other_secret)["executor_id"])
+    batch_lead = str(db.dossiers.get(batch_id)["executor_id"])
+    other_lead = str(db.dossiers.get(other_secret)["executor_id"])
     result = issue_engine.apply_score_extraction(db, state, {
         "secret_dossier_participants": [
             {
@@ -181,7 +181,7 @@ def test_month_segment_dispatch_uses_secret_order_dossier_ids_authority(game):
     order_id = create_test_secret_order(
         db, state, lead, "密查仓胥", "暗访通州仓", ["稽核"], deadline_months=3,
     )
-    dossier_id = int(db.get_dossier_for_secret_order(order_id)["id"])
+    dossier_id = int(db.dossiers.get_for_secret_order(order_id)["id"])
     db.append_decree_dossier_participants(dossier_id, [{
         "character_id": lead, "tier": "主办", "role": "密访",
     }], state=state)
@@ -232,12 +232,12 @@ def test_month_segment_dispatch_uses_secret_order_dossier_ids_authority(game):
     plain_row = next(r for r in rows if _row_dossier_id(r) == plain_id)
     assert secret_row.get("rejected") is not True, secret_row
     assert plain_row.get("rejected") is True, plain_row
-    roster = db.get_decree_dossier(dossier_id)["participant_roster"]
+    roster = db.dossiers.get(dossier_id)["participant_roster"]
     assert any(
         row.get("character_id") == worker and row.get("tier") == "协办"
         for row in roster
     )
-    plain_roster = db.get_decree_dossier(plain_id)["participant_roster"]
+    plain_roster = db.dossiers.get(plain_id)["participant_roster"]
     assert all(row.get("character_id") != worker for row in plain_roster)
 
 
@@ -259,7 +259,7 @@ def test_s2_missing_secret_authority_never_rebuilds_from_live_db(game, authority
         }],
     }, secret_dossier_ids_at_input=authority)
     assert result["secret_dossier_participants"][0]["rejected"] is True
-    assert len(db.get_decree_dossier(dossier_id)["participant_roster"]) == 1
+    assert len(db.dossiers.get(dossier_id)["participant_roster"]) == 1
 
 
 

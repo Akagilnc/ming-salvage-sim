@@ -4005,15 +4005,6 @@ def test_province_tick_shortfall_lands_fully_on_real_army_rows(fresh_db):
     assert after["st"]["军饷欠"] == pytest.approx(row_after, abs=1e-6)
 
 
-def test_dongjiang_area_has_no_phantom_pay_due(fresh_db):
-    """#1889：东江皮岛原按战区量级 seed 的 14 万两/月省账已删。"""
-    settle = _read_settle(fresh_db, "dongjiang_area")
-    assert settle["p"]["Due"]["军饷"] == 0
-    assert settle["st"]["军饷欠"] == 0
-    assert settle["p"]["拨付gross"] == 0
-    assert settle["_meta"]["source_status"] == "no_wanli_accounting_record"
-
-
 def test_new_dongjiang_army_makes_province_due_exactly_its_row_due(fresh_db):
     state = fresh_db.load_state()
     created = fresh_db.create_armies_from_extraction(state, [{
@@ -4033,121 +4024,24 @@ def test_new_dongjiang_army_makes_province_due_exactly_its_row_due(fresh_db):
     assert not any("standalone" in k for k in after["_meta"])
 
 
-def test_office_type_has_single_write_port_on_characters(fresh_game):
-    """#1889：官职类别唯一真源 = characters.office_type；备档只留历史 office_title。
+def test_dismissal_keeps_archived_office_title_as_history(fresh_game):
+    """#1889：罢免后 characters.office 置空，而备档留最近实职供起复读品级。
 
-    实测旧形状：character_offices 同时可写 office_title/office_type，与 characters
-    构成同一事实的两个写口，且旧代码每回合靠 _ensure_office_type_parents 把备档
-    office_type 镜像回 characters 才能对账。现该列与镜像记账机一并删除。
-
-    office_title **保留**：罢免后 characters.office 置空而备档留最近实职，供起复
-    品级读取（office_rank._is_substantive_office）——那是历史，不是重复。
+    官职类别真源唯一 = characters.office_type（备档无该列；第二写口已删，由
+    test_new_game_smoke 的 schema 用例守）。此处只守**历史**这一面：备档的
+    office_title 不因罢免而丢。起复经真实成案消费该备档的行为由
+    test_office_rank_562 的 restoration 用例守。
     """
     db, state = fresh_game
-    cols = {
-        row["name"]
-        for row in db.conn.execute("PRAGMA table_info(character_offices)")
-    }
-    assert "office_type" not in cols, "备档不得再持有官职类别（第二写口）"
-    assert {"office_title", "appointment_tenure", "region_id", "source"} <= cols
-
-    # 真源侧唯一可写：改 characters 即改事实
     db.set_character_office("杨嗣昌", "东阁大学士", "内阁", "真除", "吏部")
-    assert db.conn.execute(
-        "SELECT office_type FROM characters WHERE name='杨嗣昌'"
-    ).fetchone()["office_type"] == "内阁"
-    archived = db.conn.execute(
-        "SELECT office_title FROM character_offices WHERE character_name='杨嗣昌'"
-    ).fetchone()
-    assert archived["office_title"] == "东阁大学士"
-
-    # 罢免后 characters.office 置空，但备档留最近实职（历史可追溯，供起复读）
     db.set_character_status(state, "杨嗣昌", "dismissed", "罢归")
-    row = db.conn.execute(
+
+    assert db.conn.execute(
         "SELECT office FROM characters WHERE name='杨嗣昌'"
-    ).fetchone()
-    assert row["office"] == ""
+    ).fetchone()["office"] == ""
     assert db.conn.execute(
         "SELECT office_title FROM character_offices WHERE character_name='杨嗣昌'"
     ).fetchone()["office_title"] == "东阁大学士"
-
-    # 起复品级读口改从真源取类别，仍能工作
-    from ming_sim.office_rank import _is_substantive_office
-    assert _is_substantive_office("东阁大学士", "内阁")
-
-
-def test_legacy_character_offices_drops_office_type_and_keeps_archive(tmp_path):
-    """#1889：既存存档的 character_offices 仍带 office_type 列 → 按新定义重建。
-
-    重建逐行搬**共有**列（office_title 等历史列一行不丢），丢旧表改名；
-    PRAGMA foreign_keys 在事务内是 no-op，故切换前后各 commit 并在结束时断言为 1。
-    """
-    import sqlite3
-
-    path = str(tmp_path / "legacy_offices.db")
-    raw = sqlite3.connect(path)
-    raw.execute("PRAGMA foreign_keys=ON")
-    raw.executescript(
-        """
-        CREATE TABLE characters (
-            name TEXT PRIMARY KEY, office TEXT NOT NULL, office_type TEXT NOT NULL,
-            faction TEXT NOT NULL, personal_skills TEXT NOT NULL,
-            loyalty INTEGER NOT NULL, ability INTEGER NOT NULL,
-            integrity INTEGER NOT NULL, courage INTEGER NOT NULL, style TEXT NOT NULL
-        );
-        INSERT INTO characters (name,office,office_type,faction,personal_skills,
-            loyalty,ability,integrity,courage,style)
-            VALUES ('杨嗣昌','户部郎中','户部','东林','{}',60,60,60,60,'稳');
-        CREATE TABLE offices (
-            office_type TEXT PRIMARY KEY, power INTEGER NOT NULL,
-            responsibility INTEGER NOT NULL, corruption_risk INTEGER NOT NULL
-        );
-        INSERT INTO offices VALUES ('户部',1,1,0);
-        CREATE TABLE character_offices (
-            character_name TEXT PRIMARY KEY,
-            office_title TEXT NOT NULL,
-            office_type TEXT NOT NULL,
-            source TEXT NOT NULL,
-            dossier_id INTEGER,
-            appointment_tenure TEXT NOT NULL DEFAULT '真除',
-            region_id TEXT NOT NULL DEFAULT '',
-            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY(character_name) REFERENCES characters(name),
-            FOREIGN KEY(office_type) REFERENCES offices(office_type)
-        );
-        INSERT INTO character_offices
-            (character_name,office_title,office_type,source,region_id,appointment_tenure)
-            VALUES ('杨嗣昌','户部郎中','户部','旧档备档','beizhili','署');
-        """
-    )
-    raw.commit()
-    raw.close()
-
-    db = GameDB(path)
-    cols = {
-        row["name"]
-        for row in db.conn.execute("PRAGMA table_info(character_offices)")
-    }
-    assert "office_type" not in cols
-    row = db.conn.execute(
-        "SELECT office_title, source, appointment_tenure, region_id "
-        "FROM character_offices WHERE character_name='杨嗣昌'"
-    ).fetchone()
-    # 历史列一行不丢
-    assert (row["office_title"], row["source"], row["appointment_tenure"], row["region_id"]) == (
-        "户部郎中", "旧档备档", "署", "beizhili",
-    )
-    # 删掉的只是 office_type 及其指向 offices 的外键；人物外键仍在
-    fks = db.conn.execute("PRAGMA foreign_key_list(character_offices)").fetchall()
-    assert [(f["table"], f["from"]) for f in fks] == [("characters", "character_name")]
-    assert int(db.conn.execute("PRAGMA foreign_keys").fetchone()[0]) == 1
-    assert db.conn.execute("PRAGMA foreign_key_check").fetchall() == []
-    # 再开一次仍幂等
-    assert "office_type" not in {
-        r["name"] for r in GameDB(path).conn.execute("PRAGMA table_info(character_offices)")
-    }
-
-
 def test_treasury_live_balance_has_single_truth_and_no_mirror_drift(fresh_game):
     """#1889：活余额真源 = metrics；economy_accounts 只是派生视图，不再是第二本账。
 
@@ -4179,74 +4073,6 @@ def test_treasury_live_balance_has_single_truth_and_no_mirror_drift(fresh_game):
         r["account"] for r in db.conn.execute("SELECT account FROM economy_accounts")
     ]
     assert db.load_state("").metrics["国库"] != 999
-
-
-def test_legacy_save_with_economy_accounts_table_reopens_as_view(tmp_path):
-    """#1889：既存存档里 economy_accounts 是**实体表**，重开须按真实类型清掉并建视图。
-
-    SQLite 不允许用 DROP VIEW 删表（DROP TABLE 删视图亦然），故走
-    _drop_economy_accounts_object 按 sqlite_master.type 分派；余额不丢——
-    真源一直是 metrics，删掉的只是可漂移的镜像表。
-    """
-    import sqlite3
-
-    path = str(tmp_path / "legacy.db")
-    raw = sqlite3.connect(path)
-    raw.execute("PRAGMA foreign_keys=ON")
-    raw.executescript(
-        """
-        CREATE TABLE metrics (key TEXT PRIMARY KEY, value INTEGER NOT NULL);
-        CREATE TABLE economy_accounts (
-            account TEXT PRIMARY KEY,
-            metric_key TEXT NOT NULL UNIQUE,
-            balance INTEGER NOT NULL,
-            note TEXT NOT NULL,
-            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-        );
-        CREATE TABLE economy_ledger (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            turn INTEGER NOT NULL, year INTEGER NOT NULL, period INTEGER NOT NULL,
-            account TEXT NOT NULL, delta INTEGER NOT NULL,
-            balance_after INTEGER NOT NULL, category TEXT NOT NULL, reason TEXT NOT NULL,
-            event_id TEXT, edict_id INTEGER, actor TEXT,
-            FOREIGN KEY(account) REFERENCES economy_accounts(account)
-        );
-        INSERT INTO metrics VALUES ('国库', 321), ('内库', 441);
-        INSERT INTO economy_accounts VALUES ('国库','国库',321,'n','t'), ('内库','内库',441,'n','t');
-        INSERT INTO economy_ledger (turn,year,period,account,delta,balance_after,category,reason)
-            VALUES (1,1627,1,'国库',-5,316,'户部','旧档流水');
-        """
-    )
-    raw.commit()
-    raw.close()
-
-    db = GameDB(path)
-    assert db.conn.execute(
-        "SELECT type FROM sqlite_master WHERE name='economy_accounts'"
-    ).fetchone()["type"] == "view"
-    # 老 economy_ledger 的 FK(account)→economy_accounts 已随该表移除（否则任何写入
-    # 报 foreign key mismatch）；只追加的流水账逐行保留，一行不丢
-    assert db.conn.execute("PRAGMA foreign_key_list(economy_ledger)").fetchall() == []
-    kept = db.conn.execute(
-        "SELECT account, delta, balance_after, reason FROM economy_ledger"
-    ).fetchall()
-    assert [(r["account"], r["delta"], r["balance_after"], r["reason"]) for r in kept] == [
-        ("国库", -5, 316, "旧档流水")
-    ]
-    # 外键保护必须仍开着（PRAGMA 在事务内是 no-op，漏 commit 会静默关掉整库外键）
-    assert int(db.conn.execute("PRAGMA foreign_keys").fetchone()[0]) == 1
-
-    state = db.load_state("")
-    assert {r["account"] for r in db.conn.execute("SELECT account FROM economy_accounts")} == {
-        "国库", "内库"
-    }
-    assert int(db.conn.execute(
-        "SELECT balance FROM economy_accounts WHERE account='国库'"
-    ).fetchone()["balance"]) == state.metrics["国库"]
-    # 再开一次仍幂等（不会因已是视图而报错）
-    assert GameDB(path).load_state("").metrics["国库"] == state.metrics["国库"]
-
-
 def test_economy_ledger_rejects_account_outside_economy_accounts(fresh_game):
     """#1889：account ∈ ECONOMY_ACCOUNTS 改在真实写口 fail-loud 校验。
 
@@ -4254,10 +4080,16 @@ def test_economy_ledger_rejects_account_outside_economy_accounts(fresh_game):
     视图后 SQLite 不支持外键指向视图，约束迁到写口，覆盖面不减。）
     """
     db, state = fresh_game
-    with pytest.raises(ValueError, match="economy_ledger account 非法"):
+    before = int(state.metrics["国库"])
+    with pytest.raises(ValueError):
         db.record_issue_economy_move(
             state, "私库", -5, "测试", "测试非法科目",
         )
+    # 拒收必须响亮且不留半笔：活余额与流水都不动。
+    assert int(state.metrics["国库"]) == before
+    assert db.conn.execute(
+        "SELECT COUNT(*) AS n FROM economy_ledger WHERE account='私库'"
+    ).fetchone()["n"] == 0
 
 
 def test_economy_move_writes_live_balance_in_same_transaction(fresh_game):

@@ -1374,7 +1374,7 @@ def _parse_revoke_decree_target(
         # standalone / 无合法案卷来源：拒入闸，堵住 cancel_issue 免 0056 旁路
         if linked <= 0:
             return None
-        dossier = db.get_decree_dossier(linked)
+        dossier = db.dossiers.get(linked)
         if dossier is None or not _dossier_is_revocable_decree(db, dossier):
             return None
         return {
@@ -1383,7 +1383,7 @@ def _parse_revoke_decree_target(
             "issue_id": tid,
             "dossier_id": linked,
         }
-    dossier = db.get_decree_dossier(tid)
+    dossier = db.dossiers.get(tid)
     if dossier is None or not _dossier_is_revocable_decree(db, dossier):
         return None
     return {

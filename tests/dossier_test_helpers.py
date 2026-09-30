@@ -101,7 +101,7 @@ def promulgate_proposed_appointments(db, state, content):
     # #657 §C.8：midzhi 亦不附 affected_parties（不猜派）。
     verdicts = [
         {"dossier_id": row["id"], "decision": "promulgated"}
-        for row in db.list_decree_dossiers(status="proposed")
+        for row in db.dossiers.list_dossiers(status="proposed")
         if row["action_type"] == "appointment"
     ]
     db.apply_dossier_verdicts(state, verdicts, content=content)

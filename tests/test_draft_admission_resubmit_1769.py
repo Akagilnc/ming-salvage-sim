@@ -280,7 +280,7 @@ def test_draft_admission_resubmit_success_advances_month(admission_game, monkeyp
     assert resubmit_calls[1]["failure_reason"]
     assert resubmit_calls[1]["decree_text"] == _DECREE_TEXT
 
-    dossier = game.db.get_dossier_for_directive(draft_id)
+    dossier = game.db.dossiers.get_for_directive(draft_id)
     assert dossier is not None
     assert dossier["action_type"] == "grant_allocation"
     projected = json.loads(dossier["payload_json"])
@@ -321,7 +321,7 @@ def test_draft_admission_exhaust_keeps_draft_and_advances(admission_game, monkey
     assert len(resubmit_calls) == 2
     row = game.db.get_directive(did)
     assert row is not None and str(row["status"]) == "draft"
-    assert game.db.get_dossier_for_directive(did) is None
+    assert game.db.dossiers.get_for_directive(did) is None
 
     rows = _rejection_rows(game, did)
     assert len(rows) == 1
@@ -363,11 +363,11 @@ def test_draft_admission_exhaust_keeps_draft_and_advances(admission_game, monkey
         assert r_row is not None
         assert str(r_row["status"]) == "draft"
         assert int(r_row["id"]) == did
-        assert restored.db.get_dossier_for_directive(did) is None
+        assert restored.db.dossiers.get_for_directive(did) is None
         assert len(_rejection_rows(restored, did)) == 1
         assert not any(
             d.get("directive_id") == did
-            for d in restored.db.list_decree_dossiers()
+            for d in restored.db.dossiers.list_dossiers()
         )
     finally:
         try:
@@ -402,10 +402,10 @@ def test_draft_admission_mixed_good_and_bad_independent(admission_game, monkeypa
 
     _post_issue_stream(client, expected_turn=turn, step="1769 mixed")
     assert _turn_of(_get_state(client)) == turn + 1
-    assert game.db.get_dossier_for_directive(good_id) is not None
+    assert game.db.dossiers.get_for_directive(good_id) is not None
     _finish_month_after_gazette(game, turn)
     assert str(game.db.get_directive(good_id)["status"]) == "issued"
-    assert game.db.get_dossier_for_directive(bad_id) is None
+    assert game.db.dossiers.get_for_directive(bad_id) is None
     assert str(game.db.get_directive(bad_id)["status"]) == "draft"
     assert len(_rejection_rows(game, bad_id)) == 1
     assert not _rejection_rows(game, good_id)
@@ -510,7 +510,7 @@ def test_resubmit_non_intent_keeps_original_payload_no_special_decree(
         for e in (kept.get("entries") or [])
     )
     assert kept.get("target_id") != "manual-directive"
-    assert game.db.get_dossier_for_directive(did) is None
+    assert game.db.dossiers.get_for_directive(did) is None
     assert len(_rejection_rows(game, did)) == 1
 
 
@@ -555,7 +555,7 @@ def test_pending_product_error_enters_resubmit_seam_not_softlock(
     row = game.db.get_directive(did)
     assert row is not None
     assert str(row["status"]) == "draft"  # 不得 rejected / 不得卡 pending
-    assert game.db.get_dossier_for_directive(did) is None
+    assert game.db.dossiers.get_for_directive(did) is None
     assert len(_rejection_rows(game, did)) == 1
 
 
@@ -595,7 +595,7 @@ def test_exhaust_zero_dossier_system_simulation_no_steam_decree(
     )
     assert _turn_of(_get_state(client)) == turn + 1
     assert str(game.db.get_directive(did)["status"]) == "draft"
-    assert game.db.get_dossier_for_directive(did) is None
+    assert game.db.dossiers.get_for_directive(did) is None
 
     assert resolve_calls, "须进入 resolve_directives"
     call = resolve_calls[0]

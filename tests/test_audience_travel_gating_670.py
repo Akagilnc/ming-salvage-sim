@@ -1316,7 +1316,7 @@ def test_fresh_summon_same_beizhili_journey_attaches_origin_without_reapply(game
     db.mark_pending_night_approved(pids, night_id=night_id)
     an.close_night(db, state, night_id=night_id, content=content)
     dossiers = [
-        row for row in db.list_decree_dossiers(status="proposed")
+        row for row in db.dossiers.list_dossiers(status="proposed")
         if row["action_type"] == "appointment"
         and int(row.get("pending_action_id") or 0) in set(pids)
     ]

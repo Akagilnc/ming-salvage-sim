@@ -52,7 +52,7 @@ def test_manual_directive_region_assembly_writes_single_and_advances(
         tracer_client, expected_turn=turn_before, step="#1685 locality issue/stream",
     )
     assert game.state.turn == turn_before + 1
-    dossiers = game.db.list_decree_dossiers()
+    dossiers = game.db.dossiers.list_dossiers()
     assert len(dossiers) == 1
     assert dossiers[0]["region_id"] == "shaanxi"
     payload = json.loads(dossiers[0]["payload_json"])

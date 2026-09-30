@@ -115,7 +115,7 @@ def test_capture_manual_directive_drops_ministry_name_as_participant(game, monke
     )
     db.conn.commit()
     db.ensure_dossiers_for_draft_directives(state)
-    rows = db.list_decree_dossiers()
+    rows = db.dossiers.list_dossiers()
     assert rows
     for row in rows:
         roster = row.get("participant_roster") or []

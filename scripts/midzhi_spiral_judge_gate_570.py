@@ -149,7 +149,7 @@ def _run_arm(
         target_id=target_id,
         payload={"mode": "midzhi"},
     )
-    rows = [db.get_decree_dossier(test_id)]
+    rows = [db.dossiers.get(test_id)]
     context = build_promulgation_judge_context(db, state, rows)
     history_markers = [
         item.get("marker") for item in context.get("promulgation_history") or []

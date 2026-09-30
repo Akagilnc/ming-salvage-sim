@@ -80,7 +80,7 @@ def _executing_policy_dossier(db, state, *, token: str = "urge-624", host: str =
         ],
     )
     db.apply_dossier_promulgation(state, dossier_id, "promulgated")
-    assert db.get_decree_dossier(dossier_id)["status"] == "executing"
+    assert db.dossiers.get(dossier_id)["status"] == "executing"
     return dossier_id
 
 
@@ -269,7 +269,7 @@ def test_rush_staged_commitment_advances_due_and_fills_urge_history(game):
     # 宪法级：催办唯一写口=stages_json；issues.end_turn 逐位不变
     assert int(after_row["end_turn"] or 0) == end_turn_before
     # 真源唯一：stages_json；不写 decree_dossiers.due_turn 作第二源
-    dossier = db.get_decree_dossier(dossier_id)
+    dossier = db.dossiers.get(dossier_id)
     assert int(dossier.get("due_turn") or 0) == 0 or int(dossier.get("due_turn") or 0) != int(after[0]["due_turn"])
 
     hist = collect_urge_history(db, commitment_ref=issue_id, dossier_id=dossier_id)
@@ -618,10 +618,10 @@ def test_remonstrance_not_projected_applied_or_takeover(game):
     assert dossier_id not in owned
 
     # 3) apply 不消费、不落格、不连坐
-    before_outcome = db.get_decree_dossier(dossier_id)["execution_outcome"]
+    before_outcome = db.dossiers.get(dossier_id)["execution_outcome"]
     results = apply_pending_due_reviews(db, state, commit=True)
     assert results == []
-    assert db.get_decree_dossier(dossier_id)["execution_outcome"] == before_outcome
+    assert db.dossiers.get(dossier_id)["execution_outcome"] == before_outcome
     still = db.list_next_audience_todos(status=TODO_STATUS_PENDING)
     kinds = {t["entry_kind"] for t in still}
     assert ENTRY_KIND_RUSH_REMONSTRANCE in kinds

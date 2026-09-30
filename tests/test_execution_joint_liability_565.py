@@ -32,7 +32,7 @@ def _executing_dossier(db, state, *, roster=None):
         participants=roster if roster is not None else _roster(),
     )
     db.apply_dossier_promulgation(state, dossier_id, "promulgated")
-    assert db.get_decree_dossier(dossier_id)["status"] == "executing"
+    assert db.dossiers.get(dossier_id)["status"] == "executing"
     return dossier_id
 
 
@@ -130,7 +130,7 @@ def test_terminal_outcomes_charge_lead_and_downgraded_delegator(
         assert "徐光启" in targets
     assert not {"黄道周", "王承恩"} & targets
 
-    note = db.get_decree_dossier(dossier_id)["execution_note"]
+    note = db.dossiers.get(dossier_id)["execution_note"]
     assert "徐光启" in note
 
 
@@ -178,7 +178,7 @@ def test_engine_auto_failed_materialize_writes_zero_joint_liability(game):
     )
     db.apply_dossier_promulgation(state, dossier_id, "promulgated")
 
-    dossier = db.get_decree_dossier(dossier_id)
+    dossier = db.dossiers.get(dossier_id)
     assert dossier["execution_outcome"] == "failed"
     assert _cost_events(db, dossier_id) == []
     assert db.get_relation_edge_events(event_kind="连坐") == []
@@ -206,7 +206,7 @@ def test_dead_liable_party_skips_satisfaction_but_enters_note(game, caplog):
     }
     assert "倪元璐" not in edges
     assert "徐光启" in edges
-    note = db.get_decree_dossier(dossier_id)["execution_note"]
+    note = db.dossiers.get(dossier_id)["execution_note"]
     assert "倪元璐" in note
     assert "跳过已故" in caplog.text
 
@@ -230,7 +230,7 @@ def test_explicit_affected_parties_must_pass_full_key_validation(game):
         }],
     )
     assert result["dossier_executions"][0]["rejected"] is True
-    assert db.get_decree_dossier(dossier_id)["status"] == "executing"
+    assert db.dossiers.get(dossier_id)["status"] == "executing"
     assert _cost_events(db, dossier_id) == []
 
     # 全键合法但声明 roster 推不出的派系 → accept-and-ignore（不驱动机械额度）
@@ -296,7 +296,7 @@ def test_assistant_row_delegator_gets_secondary_assistant_zero_mechanical(game):
     assert edges == {"倪元璐", "徐光启"}
     assert "黄道周" not in edges
 
-    note = db.get_decree_dossier(dossier_id)["execution_note"]
+    note = db.dossiers.get(dossier_id)["execution_note"]
     assert "徐光启（委派）" in note
     assert "黄道周（" not in note
 
@@ -338,7 +338,7 @@ def test_dual_role_lead_and_delegator_primary_wins(game):
     }
     assert edges == {"倪元璐", "徐光启"}
 
-    note = db.get_decree_dossier(dossier_id)["execution_note"]
+    note = db.dossiers.get(dossier_id)["execution_note"]
     assert "徐光启（主办）" in note
     assert "徐光启（委派）" not in note
 
@@ -397,11 +397,11 @@ def test_execution_note_merge_interface_and_restore(game):
     db, state, content = game
     dossier_id = _executing_dossier(db, state)
     _close_via_adapter(db, state, content, dossier_id, "degraded", note="初注走样")
-    before = db.get_decree_dossier(dossier_id)["execution_note"]
+    before = db.dossiers.get(dossier_id)["execution_note"]
     assert "初注走样" in before
 
     merged = db.merge_execution_note(dossier_id, "对账差额：应拨十两实拨三两")
-    row = db.get_decree_dossier(dossier_id)
+    row = db.dossiers.get(dossier_id)
     assert "对账差额：应拨十两实拨三两" in row["execution_note"]
     assert before in row["execution_note"]
     assert merged == row["execution_note"]
@@ -413,7 +413,7 @@ def test_execution_note_merge_interface_and_restore(game):
     from ming_sim.db import GameDB
     restored = GameDB(path, content)
     try:
-        again = restored.get_decree_dossier(dossier_id)
+        again = restored.dossiers.get(dossier_id)
         assert again["execution_outcome"] == "degraded"
         assert again["execution_note"] == merged
         assert _cost_events(restored, dossier_id) == costs

@@ -81,7 +81,7 @@ def test_rollback_leaves_no_rows_and_no_jsonl(game, monkeypatch, tmp_path):
         },
     )
     db.apply_dossier_promulgation(state, gid, "promulgated")
-    assert db.get_decree_dossier(gid)["status"] == "executing"
+    assert db.dossiers.get(gid)["status"] == "executing"
 
     real_flush = RejectionCollector.flush_to_db
 
@@ -102,7 +102,7 @@ def test_rollback_leaves_no_rows_and_no_jsonl(game, monkeypatch, tmp_path):
 
     monkeypatch.setattr(RejectionCollector, "flush_to_db", real_flush)
     assert _rejection_rows(db, turn) == []
-    assert db.list_dossier_reconciliations(gid) == []
+    assert db.dossiers.reconciliations(gid) == []
     assert not (tmp_path / "error_packs" / "rejections.jsonl").exists()
 
 

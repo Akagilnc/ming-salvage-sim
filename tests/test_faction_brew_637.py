@@ -396,8 +396,8 @@ def _eligible_dossier(db, state, holder, *, target_kind="issue", target_id="æ¸…ä
         payload={"mode": "ordinary"},
     )
     db.record_dossier_decision(dossier_id, "promulgated")
-    assert db.dossier_authorizes_effects(dossier_id)
-    return db.get_decree_dossier(dossier_id)
+    assert db.dossiers.authorizes_effects(dossier_id)
+    return db.dossiers.get(dossier_id)
 
 
 def test_new_events_preserve_source_target_equal_to_db_rows(game):

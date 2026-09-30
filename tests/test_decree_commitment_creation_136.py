@@ -69,7 +69,7 @@ def test_until_stop_commitment_issue_is_created_with_carrier_fields(game, monkey
     assert row is not None
     assert row["origin_kind"] == "decree"
     assert row["origin_ref"].startswith("dossier:")
-    assert db.dossier_authorizes_effects(int(row["origin_ref"].split(":", 1)[1]))
+    assert db.dossiers.authorizes_effects(int(row["origin_ref"].split(":", 1)[1]))
     assert row["kind"] == "initiative"
     assert row["commitment_kind"] == "until_stop"
     assert row["inertia"] == 0

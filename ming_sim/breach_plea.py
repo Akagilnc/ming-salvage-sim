@@ -16,6 +16,7 @@ import logging
 import re
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
+from ming_sim.entities.dossier import DOSSIER_REPORT_ORIGIN_VERDICT
 from ming_sim.db import GameDB
 from ming_sim.models import loads_effect_dict
 from ming_sim.staged_commitment import (
@@ -172,7 +173,7 @@ def _sponsor_names_for_commitment(db: Any, row: Any) -> List[str]:
         origin_ref = ""
     did = parse_dossier_id(origin_ref)
     if did is not None:
-        dossier = db.get_decree_dossier(int(did))
+        dossier = db.dossiers.get(int(did))
         if dossier is not None:
             for item in dossier.get("participant_roster") or []:
                 if isinstance(item, dict) and item.get("tier") == "主办":
@@ -813,7 +814,7 @@ def finalize_persist(
 
     # 执行格：经既有适配器落格（禁裸 SQL 宽吞）
     if target_dossier_id > 0:
-        dossier = db.get_decree_dossier(int(target_dossier_id))
+        dossier = db.dossiers.get(int(target_dossier_id))
         if dossier is not None and str(dossier.get("status") or "") == "executing":
             db.record_dossier_execution(
                 int(target_dossier_id), outcome, note, int(state.turn),
@@ -823,7 +824,7 @@ def finalize_persist(
                 db.record_dossier_progress(
                     int(target_dossier_id), int(state.turn), outcome, note,
                     is_terminal=True,
-                    origin=GameDB.DOSSIER_REPORT_ORIGIN_VERDICT,
+                    origin=DOSSIER_REPORT_ORIGIN_VERDICT,
                     commit=False,
                 )
             exec_result = {

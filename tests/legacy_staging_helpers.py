@@ -52,7 +52,7 @@ def stage_punishment(db, turn, target, *, action="拿问下狱", amount=0, messa
 def close_night_dossier(db, state, content, pending_id):
     db.commit_pending_actions(state, content=content, action_ids=[pending_id])
     return next(
-        d for d in db.list_decree_dossiers()
+        d for d in db.dossiers.list_dossiers()
         if d["pending_action_id"] == pending_id
     )
 
@@ -107,14 +107,14 @@ def close_office_to_dossier(db, state, content, pending_id):
     db.conn.commit()
     audience_night.close_night(db, state, night_id=nid, content=content)
     dossiers = [
-        row for row in db.list_decree_dossiers()
+        row for row in db.dossiers.list_dossiers()
         if int(row.get("pending_action_id") or 0) == int(pending_id)
     ]
     if not dossiers:
         # fallback: commit path used by some office kinds
         db.commit_pending_actions(state, content=content, action_ids=[int(pending_id)])
         dossiers = [
-            row for row in db.list_decree_dossiers()
+            row for row in db.dossiers.list_dossiers()
             if int(row.get("pending_action_id") or 0) == int(pending_id)
         ]
     assert dossiers, f"office pending {pending_id} produced no dossier after close"

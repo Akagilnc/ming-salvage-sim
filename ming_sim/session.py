@@ -1486,7 +1486,7 @@ class GameSession:
                 actor=str(r["actor"] or ""),
             )
             for r in rows
-            if self.db.get_dossier_for_directive(int(r["id"])) is None
+            if self.db.dossiers.get_for_directive(int(r["id"])) is None
         ]
 
     @staticmethod
@@ -1614,7 +1614,7 @@ class GameSession:
                 did = int(item.get("directive_id"))
             except (TypeError, ValueError):
                 continue
-            if self.db.get_dossier_for_directive(did) is not None:
+            if self.db.dossiers.get_for_directive(did) is not None:
                 continue
             row = self.db.get_directive(did)
             if row is None or str(row["status"] or "") != "draft":
@@ -1922,7 +1922,7 @@ class GameSession:
             dossier_rejections = self.db.ensure_dossiers_for_draft_directives(
                 self.state, record_rejections=is_last,
             )
-        dossiered_directives = list(self.db.list_dossiered_draft_directives(self.state))
+        dossiered_directives = list(self.db.dossiers.draft_directives_with_dossier(self.state.turn))
         # DB owner supplies the canonical read-only default-approval projection.
         # Negative preview ids participate in stale-decree fingerprinting without
         # colliding with durable turn_directives ids.

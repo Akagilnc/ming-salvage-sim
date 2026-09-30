@@ -36,10 +36,10 @@ def _add(db, state, name, office, office_type="布衣", office_region=""):
 
 
 def _face(db, dossier_id: int) -> dict:
-    row = db.get_decree_dossier(dossier_id)
+    row = db.dossiers.get(dossier_id)
     assert row is not None
     payload = json.loads(str(row.get("payload_json") or "{}"))
-    decisions = db.list_decree_dossier_decisions(dossier_id)
+    decisions = db.dossiers.decisions(dossier_id)
     progress = db.list_dossier_progress(dossier_id)
     roster = row.get("participant_roster")
     if roster is None:
@@ -105,7 +105,7 @@ def test_mid_month_restore_keeps_dossier_four_faces(game, tmp_path, content):
             "region_id": "shaanxi",
         },
     )
-    appt_payload = json.loads(db.get_decree_dossier(appt_id)["payload_json"])
+    appt_payload = json.loads(db.dossiers.get(appt_id)["payload_json"])
     assert appt_payload["break_rank"]["is_break_rank"] is True
 
     appt_verdict = rejected_verdict(appt_id, midzhi=True)

@@ -50,7 +50,7 @@ def _stage_recommendation(db, state, recommender_name, row, office, reason, regi
 
 def _proposed_appointment_dossier_id(db, pending_id):
     return next(
-        row["id"] for row in db.list_decree_dossiers(status="proposed")
+        row["id"] for row in db.dossiers.list_dossiers(status="proposed")
         if row["action_type"] == "appointment"
         and int(row.get("pending_action_id") or 0) == int(pending_id)
     )
@@ -84,7 +84,7 @@ def test_same_batch_consecutive_appointments_keep_prebatch_recommendation_snapsh
 
     # 第一案夜里已有判决，第二案过月时补跑判官（首案已改盘面）。
     did = _proposed_appointment_dossier_id(db, id1)
-    ref = decree_ref_for_dossier(db, db.get_decree_dossier(did))
+    ref = decree_ref_for_dossier(db, db.dossiers.get(did))
     db.staged_declarations.stage(
         decree_ref=ref, declaration={}, turn=int(state.turn),
         verdict={"decision": "promulgated"}, forecast_text="",
@@ -142,7 +142,7 @@ def test_stale_recommendation_snapshot_still_rejected_outside_mutating_batch(gam
     assert result and result[0]["id"] == action_id
 
     did = _proposed_appointment_dossier_id(db, action_id)
-    ref = decree_ref_for_dossier(db, db.get_decree_dossier(did))
+    ref = decree_ref_for_dossier(db, db.dossiers.get(did))
     db.staged_declarations.stage(
         decree_ref=ref, declaration={}, turn=int(state.turn),
         verdict={"decision": "promulgated"}, forecast_text="",
@@ -150,7 +150,7 @@ def test_stale_recommendation_snapshot_still_rejected_outside_mutating_batch(gam
     session = _prepare_player_month(db, state, content, monkeypatch)
     with pytest.raises(SettlementAbort):
         session.resolve_turn(allow_empty_decree=True)
-    assert db.get_decree_dossier(did)["status"] == "proposed"
+    assert db.dossiers.get(did)["status"] == "proposed"
 
     assert db.list_recommendation_events(state, recommender.name) == []
     char = db.conn.execute(

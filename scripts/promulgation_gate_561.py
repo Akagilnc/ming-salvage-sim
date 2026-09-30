@@ -190,7 +190,7 @@ def _captured_judge_payload(records: list[dict], expected: dict) -> tuple[dict, 
 def _judge_context_for_dossier(db: GameDB, state, dossier_id: int) -> dict:
     """Build evidence from the same fresh dossier row production will consume."""
     return build_promulgation_judge_context(
-        db, state, [db.get_decree_dossier(dossier_id)],
+        db, state, [db.dossiers.get(dossier_id)],
     )
 
 
@@ -209,7 +209,7 @@ def _prepare_reconsideration_facts(
     db.conn.execute(
         "UPDATE factions SET leverage=5,agenda='失去许誉卿封驳支点，转入复议' WHERE name='东林'"
     )
-    held = db.get_decree_dossier(dossier_id)
+    held = db.dossiers.get(dossier_id)
     # #611: grant from a separate promulgated dossier through the sole
     # authority_changes owner.  The held/rejected reconsideration dossier is
     # only the eventual consumer and can never authorize its own effects.
@@ -290,7 +290,7 @@ def _resolve_arm_verdicts(
     verdicts = []
     for dossier_id in sorted(ids.values()):
         history = [
-            row for row in db.list_decree_dossier_decisions(dossier_id)
+            row for row in db.dossiers.decisions(dossier_id)
             if int(row["turn"]) == resolve_turn and not row.get("rescript_action")
         ]
         verdicts.append(_select_second_verdict(False, dossier_id, [], history))
@@ -382,7 +382,7 @@ def _run_resolve_arm(
         ids = _plant_dossiers(db, state, kinds)
         if mutation is not None:
             mutation(db, state)
-        proposed = db.list_decree_dossiers(status="proposed")
+        proposed = db.dossiers.list_dossiers(status="proposed")
         context = build_promulgation_judge_context(db, state, proposed)
         label = decree_label or name
         # Capture turn before resolve: non-awaiting settlement advances state.turn
@@ -415,7 +415,7 @@ def _run_low_hold_rail(root: str, content: GameContent, cfg: LLMConfig) -> dict:
         _apply_base_board(db, state, authority=0)
         ids = _plant_dossiers(db, state, FULL_KINDS)
         first_context = build_promulgation_judge_context(
-            db, state, db.list_decree_dossiers(status="proposed"),
+            db, state, db.dossiers.list_dossiers(status="proposed"),
         )
         first_result = resolve_directives(
             state, db, agno, cfg, [object()], "四旨并下", content=content,
@@ -428,8 +428,8 @@ def _run_low_hold_rail(root: str, content: GameContent, cfg: LLMConfig) -> dict:
             db, first_turn, ids["hostile"], ids["vital_midzhi"], ids["appointment"],
         )
         resolve_decisions_phase2(state, db, agno, cfg, content=content)
-        held = db.get_decree_dossier(ids["hostile"])
-        held_history = db.list_decree_dossier_decisions(ids["hostile"])
+        held = db.dossiers.get(ids["hostile"])
+        held_history = db.dossiers.decisions(ids["hostile"])
         text_after_hold = str(held["decree_text"])
 
         second_context = _prepare_reconsideration_facts(
@@ -441,7 +441,7 @@ def _run_low_hold_rail(root: str, content: GameContent, cfg: LLMConfig) -> dict:
         )
         second_pending = db.get_pending_promulgation_verdicts(second_turn)
         second_history = [
-            row for row in db.list_decree_dossier_decisions(ids["hostile"])
+            row for row in db.dossiers.decisions(ids["hostile"])
             if int(row["turn"]) == second_turn and not row.get("rescript_action")
         ]
         second_verdict = _select_second_verdict(

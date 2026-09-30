@@ -247,7 +247,7 @@ def test_cancel_linked_issue_breaches_only_its_origin_dossier_once(game):
     issues.apply_issue_tracker_output(db, state, {"cancels": [cancel]})
 
     assert db.conn.execute("SELECT status FROM issues WHERE id=?", (issue_id,)).fetchone()[0] == "dropped"
-    assert db.get_decree_dossier(dossier_id)["status"] == "closed"
+    assert db.dossiers.get(dossier_id)["status"] == "closed"
     assert state.metrics["皇威"] == max(0, authority - 5)
     assert state.metrics["民心"] == popular_support
     events = _cost_events(db, dossier_id)
@@ -282,8 +282,8 @@ def test_public_apply_rejects_invalid_mode_decision_reaction_shape_before_writes
     with pytest.raises(ValueError, match=message):
         db.apply_dossier_verdicts(state, [verdict])
 
-    assert db.list_decree_dossier_decisions(dossier_id) == []
-    assert db.get_decree_dossier(dossier_id)["status"] == "proposed"
+    assert db.dossiers.decisions(dossier_id) == []
+    assert db.dossiers.get(dossier_id)["status"] == "proposed"
 
 
 def test_midzhi_apply_omits_guessed_parties_and_keeps_satisfaction(game):
@@ -309,7 +309,7 @@ def test_midzhi_apply_omits_guessed_parties_and_keeps_satisfaction(game):
         assert json.loads(str(stored["affected_parties_json"] or "[]")) == []
         assert decision in {
             str(r.get("decision") or "")
-            for r in db.list_decree_dossier_decisions(dossier_id)
+            for r in db.dossiers.decisions(dossier_id)
         }
 
 
@@ -401,7 +401,7 @@ def test_force_rejects_missing_or_stale_judge_reactions_before_any_cost(game):
 
     assert state.metrics["皇威"] == authority
     assert _cost_events(db, dossier_id) == []
-    assert db.get_decree_dossier(dossier_id)["status"] == "proposed"
+    assert db.dossiers.get(dossier_id)["status"] == "proposed"
 
 
 def test_force_rejects_malformed_judge_reactions_before_any_cost(game):
@@ -420,7 +420,7 @@ def test_force_rejects_malformed_judge_reactions_before_any_cost(game):
 
     assert state.metrics["皇威"] == authority
     assert _cost_events(db, dossier_id) == []
-    assert db.get_decree_dossier(dossier_id)["status"] == "proposed"
+    assert db.dossiers.get(dossier_id)["status"] == "proposed"
 
 
 def test_force_rejects_old_only_judge_reactions_atomically(game):
@@ -438,7 +438,7 @@ def test_force_rejects_old_only_judge_reactions_atomically(game):
 
     assert state.metrics["皇威"] == authority
     assert _cost_events(db, dossier_id) == []
-    assert db.get_decree_dossier(dossier_id)["status"] == "proposed"
+    assert db.dossiers.get(dossier_id)["status"] == "proposed"
 
 
 def test_commit_false_breach_rolls_back_with_later_cancellation_failure(game, monkeypatch):
@@ -452,7 +452,7 @@ def test_commit_false_breach_rolls_back_with_later_cancellation_failure(game, mo
     with pytest.raises(RuntimeError, match="later"):
         with atomic(db):
             issues.apply_issue_tracker_output(db, state, {"cancels": [{"issue_id": issue_id}]})
-    assert db.get_decree_dossier(dossier_id)["status"] == "executing"
+    assert db.dossiers.get(dossier_id)["status"] == "executing"
     assert _cost_events(db, dossier_id) == []
     # DB truth rolled back; caller reload owns the in-memory mirror.
     assert db.conn.execute("SELECT value FROM metrics WHERE key='皇威'").fetchone()[0] == before
@@ -476,7 +476,7 @@ def test_active_commitment_can_breach_closed_issued_dossier_but_not_never_issued
         (state.turn, issued),
     )
     db.conn.commit()
-    closed_turn = db.get_decree_dossier(issued)["closed_turn"]
+    closed_turn = db.dossiers.get(issued)["closed_turn"]
     active = db.insert_issue(state, kind="initiative", title="旧诺", origin_kind="decree",
                              origin_ref=f"dossier:{issued}", cancellable="decree", commitment_kind="funding")
     never = _dossier(db, state)
@@ -496,7 +496,7 @@ def test_active_commitment_can_breach_closed_issued_dossier_but_not_never_issued
     # 坚持撤 → 0056 认领已闭但曾颁发案卷
     finalize_persist(db, state, plea, commit=True)
     assert any(x["cost_kind"] == "breach" for x in _cost_events(db, issued))
-    assert db.get_decree_dossier(issued)["closed_turn"] == closed_turn
+    assert db.dossiers.get(issued)["closed_turn"] == closed_turn
 
     # 未颁发案卷：cancel 可写挽留，但坚持时 0056 不得落（无合法颁发源）
     issues.apply_issue_tracker_output(db, state, {"cancels": [{"issue_id": excluded}]})

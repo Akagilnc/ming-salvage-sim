@@ -2658,7 +2658,7 @@ def _stalled_deliberation_push_facts(db: Any) -> str:
     if db is None:
         return ""
     try:
-        rows = db.list_decree_dossiers(status="proposed")
+        rows = db.dossiers.list_dossiers(status="proposed")
     except Exception:
         return ""
     lines: List[str] = []

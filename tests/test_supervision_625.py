@@ -116,7 +116,7 @@ def _audit_dossier(db, state, *, auditor: str, subject_id: int, token: str = "au
         participants=[{"character_id": auditor, "tier": "主办"}],
     )
     db.apply_dossier_promulgation(state, aid, "promulgated")
-    db.add_dossier_links(aid, [{
+    db.dossiers.add_links(aid, [{
         "target_dossier_id": int(subject_id),
         "relation_type": SUPERVISION_RELATION,
         "note": f"稽核案卷{subject_id}",
@@ -467,7 +467,7 @@ def test_ac4_unified_presence_gate_on_terminal_and_recon_paths(game):
         db, state, auditor=str(auditor_row["name"]), subject_id=watched_id, token="watch",
     )
     db.record_monthly_supervision_presence(turn, commit=True)
-    assert db.dossier_has_supervision_presence(watched_id, turn)
+    assert db.dossiers.has_supervision_presence(watched_id, turn)
     before = db.build_supervision_judge_surface(watched_id)
     assert before["transformation_tendency_facts"]["exposure_count"] == 0
 

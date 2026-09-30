@@ -149,7 +149,7 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
     assert committed
     order_id = int(db.conn.execute("SELECT id FROM secret_orders ORDER BY id DESC LIMIT 1").fetchone()[0])
 
-    secret_did = int(db.get_dossier_for_secret_order(order_id)["id"])
+    secret_did = int(db.dossiers.get_for_secret_order(order_id)["id"])
     db.conn.execute(
         "UPDATE decree_dossiers SET status='executing', decree_text=? WHERE id=?",
         (_SECRET_DOSSIER_TEXT, secret_did),

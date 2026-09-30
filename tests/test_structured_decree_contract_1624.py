@@ -310,7 +310,7 @@ def test_rescript_follow_draft_nails_drafted_roster(game):
         r for r in db.list_rescript_desk(int(state.turn))
         if r.get("kind") == "rescript_draft" and r.get("title") == "陕西告饥"
     )
-    before = len(db.list_decree_dossiers())
+    before = len(db.dossiers.list_dossiers())
     batch = ra.validate_all([urgent], [{
         "decision_key": urgent["decision_key"],
         "action": "follow_draft",
@@ -318,7 +318,7 @@ def test_rescript_follow_draft_nails_drafted_roster(game):
         "label": opt["label"],
     }])
     ra.apply_rescript_batch(db, state, batch, ra.PrewriteResults(), content=content)
-    after = db.list_decree_dossiers()
+    after = db.dossiers.list_dossiers()
     assert len(after) > before
     created = after[-1]
     payload = json.loads(created.get("payload_json") or "{}")
@@ -356,7 +356,7 @@ def test_manual_owner_example_seal_advances(tracer_client, monkeypatch):
         tracer_client, expected_turn=turn_before, step="#1624 owner seal",
     )
     assert game.state.turn == turn_before + 1
-    dossiers = [dict(d) for d in game.db.list_decree_dossiers()]
+    dossiers = [dict(d) for d in game.db.dossiers.list_dossiers()]
     matched = [
         d for d in dossiers
         if str(json.loads(d.get("payload_json") or "{}").get("target_id") or "")
@@ -444,7 +444,7 @@ def test_http_manual_directive_lands_beyond_fifteen_initiatives_1790(
 
     assert db.count_active_initiatives() >= 16
     matched = [
-        dict(d) for d in db.list_decree_dossiers()
+        dict(d) for d in db.dossiers.list_dossiers()
         if str(json.loads(d.get("payload_json") or "{}").get("target_id") or "")
         == region_id
         and str(json.loads(d.get("payload_json") or "{}").get("transaction_category") or "")

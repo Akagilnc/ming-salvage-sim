@@ -173,7 +173,7 @@ def write_credit_event(
 
 
 def _sponsor_names(db: Any, dossier_id: int) -> List[str]:
-    dossier = db.get_decree_dossier(int(dossier_id))
+    dossier = db.dossiers.get(int(dossier_id))
     if not isinstance(dossier, dict):
         return []
     parties = project_execution_liability_parties(dossier.get("participant_roster"))
@@ -221,7 +221,7 @@ def _fulfillment_context(db: Any, dossier_id: int, *, hint: object = "") -> str:
     text = _narrative_context(hint)
     if text:
         return text
-    dossier = db.get_decree_dossier(int(dossier_id))
+    dossier = db.dossiers.get(int(dossier_id))
     if isinstance(dossier, dict):
         return _narrative_context(dossier.get("execution_note"))
     return ""
@@ -236,7 +236,7 @@ def record_fulfillment_credit(
     """
     did = int(dossier_id)
     out: List[Dict[str, object]] = []
-    dossier = db.get_decree_dossier(did)
+    dossier = db.dossiers.get(did)
     if not isinstance(dossier, dict):
         return out
     if str(dossier.get("execution_outcome") or "").strip() != "fulfilled":
@@ -469,7 +469,7 @@ def resolve_disposition_credit_from_extraction(
 
     out: List[Dict[str, object]] = []
     for did, group in by_dossier.items():
-        dossier = db.get_decree_dossier(int(did))
+        dossier = db.dossiers.get(int(did))
         if not isinstance(dossier, dict) or not _is_exposed_transformed(dossier):
             continue
         roster = _roster_entries(dossier)

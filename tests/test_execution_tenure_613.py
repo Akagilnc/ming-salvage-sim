@@ -26,7 +26,7 @@ def _executing_policy(db, state, holder, *, target_id='清丈田亩-613', roster
     participants = roster or [{'character_id': holder, 'tier': '主办', 'role': '承办'}]
     dossier_id = db.create_decree_dossier(state, action_type='policy', decree_text='清丈畿辅田亩', target_kind='issue', target_id=target_id, executor_kind='character', executor_id=holder, participants=participants, payload={'authorization_id': 'payload-auth', 'authorization_ids': ['payload-list'], '任别': '加衔'})
     db.apply_dossier_promulgation(state, dossier_id, 'promulgated')
-    row = db.get_decree_dossier(dossier_id)
+    row = db.dossiers.get(dossier_id)
     assert row['status'] == 'executing'
     return row
 

@@ -162,15 +162,15 @@ def test_this_turn_rejection_opens_triad_on_same_desk(game, monkeypatch):
     assert result.stage == "rescript"
     desk = {row["event_id"]: row for row in session.pending_decisions()}
     dossier = next(
-        d for d in db.list_decree_dossiers()
+        d for d in db.dossiers.list_dossiers()
         if int(d.get("pending_action_id") or 0) == pending_id
     )
     key = f"dossier:{int(dossier['id'])}"
     assert key in desk
     labels = {opt["label"] for opt in desk[key]["options"]}
     assert labels >= {"强颁", "收回", "留中"}
-    assert db.get_decree_dossier(int(dossier["id"]))["rescript_pending"] is True
-    assert db.list_decree_dossier_decisions(int(dossier["id"]))[-1]["affected_parties"] == (
+    assert db.dossiers.get(int(dossier["id"]))["rescript_pending"] is True
+    assert db.dossiers.decisions(int(dossier["id"]))[-1]["affected_parties"] == (
         _rejected_verdict(db)["affected_parties"]
     )
 
@@ -206,7 +206,7 @@ def test_answering_triad_applies_and_releases_rescript_gate(game, monkeypatch, d
         write_gate=session._write_gate,
     )
 
-    dossier = db.get_decree_dossier(int(selected["dossier_id"]))
+    dossier = db.dossiers.get(int(selected["dossier_id"]))
     assert dossier["status"] == status
     assert dossier["rescript_pending"] is False
     assert session.state.turn_phase == TurnPhase.SETTLING.value
@@ -771,7 +771,7 @@ def test_decree_forecast_keeps_every_question_and_translates_prefix_once(
     assert [row["title"] for row in result.decisions] == ["问一", "问二"]
     assert segments == ["问前事实。"]
     from ming_sim.decree_forecast import decree_ref_for_dossier
-    ref = decree_ref_for_dossier(db, db.get_decree_dossier(dossier_id))
+    ref = decree_ref_for_dossier(db, db.dossiers.get(dossier_id))
     stored = db.staged_declarations.questions_for(ref)
     assert [item["title"] for item in stored] == ["问一", "问二"]
     assert db.staged_declarations.forecast_text_for(ref) == "问前事实。"
@@ -957,7 +957,7 @@ def test_fatal_midzhi_rejection_hides_force_option(game, monkeypatch):
     )
     assert all(opt.get("dossier_decision") != "force_promulgated" for opt in triad["options"])
     dossier_id = int(str(triad["event_id"]).split(":", 1)[1])
-    assert db.list_decree_dossier_decisions(dossier_id)[-1]["midzhi_unpromulgatable"] is True
+    assert db.dossiers.decisions(dossier_id)[-1]["midzhi_unpromulgatable"] is True
     with sqlite3.connect(db.path) as reopened:
         assert reopened.execute(
             "SELECT midzhi_unpromulgatable FROM decree_dossier_decisions WHERE dossier_id=?",
@@ -1172,7 +1172,7 @@ def test_step_4a_rescript_continuation_feeds_supply_run_input(game, monkeypatch)
         "UPDATE secret_orders SET turn_issued=? WHERE id=?",
         (turn - 1, order_id),
     )
-    dossier_id = int(db.get_dossier_for_secret_order(order_id)["id"])
+    dossier_id = int(db.dossiers.get_for_secret_order(order_id)["id"])
     db.conn.commit()
 
     captured_feed = {}
@@ -1250,7 +1250,7 @@ def test_step_4a_rescript_continuation_feeds_supply_run_input(game, monkeypatch)
     # Verify 0058 structured落库与实况单位（禁盯密奏正文）
     reports = db.list_dossier_progress(dossier_id)
     assert any(str(r.get("progress_band") or "") == "顺利" for r in reports)
-    actual_units = db.sum_dossier_actual_progress_units(dossier_id)
+    actual_units = db.dossiers.actual_progress_units(dossier_id)
     assert actual_units == 5.0
 
 
@@ -1266,7 +1266,7 @@ def test_step_4a_deferred_disclosure_sees_fresh_0058_progress(game, monkeypatch)
         deadline_months=2,
     )
     db.conn.execute("UPDATE secret_orders SET turn_issued=? WHERE id=?", (turn - 1, order_id))
-    dossier_id = int(db.get_dossier_for_secret_order(order_id)["id"])
+    dossier_id = int(db.dossiers.get_for_secret_order(order_id)["id"])
     db.conn.commit()
 
     # World segment sets disclosed=True for order_id
@@ -1328,8 +1328,8 @@ def test_step_4a_incomplete_0058_report_fails_loud_and_retry_restarts(game, monk
     order_1 = create_test_secret_order(db, state, minister, "密令一", "差务一", [], deadline_months=2)
     order_2 = create_test_secret_order(db, state, minister, "密令二", "差务二", [], deadline_months=2)
     db.conn.execute("UPDATE secret_orders SET turn_issued=? WHERE id IN (?, ?)", (turn - 1, order_1, order_2))
-    dossier_1 = int(db.get_dossier_for_secret_order(order_1)["id"])
-    dossier_2 = int(db.get_dossier_for_secret_order(order_2)["id"])
+    dossier_1 = int(db.dossiers.get_for_secret_order(order_1)["id"])
+    dossier_2 = int(db.dossiers.get_for_secret_order(order_2)["id"])
     db.conn.commit()
 
     call_count = 0
@@ -1398,7 +1398,7 @@ def test_step_4a_crash_recovery_resumes_without_re_running_supply(game, monkeypa
     ).fetchone()[0]
     order_id = create_test_secret_order(db, state, minister, "密令", "差务", [], deadline_months=2)
     db.conn.execute("UPDATE secret_orders SET turn_issued=? WHERE id=?", (turn - 1, order_id))
-    dossier_id = int(db.get_dossier_for_secret_order(order_id)["id"])
+    dossier_id = int(db.dossiers.get_for_secret_order(order_id)["id"])
     db.conn.commit()
 
     call_count = 0
@@ -1474,7 +1474,7 @@ def test_step_4a_missing_covert_fidelity_records_inline_rejection(game, monkeypa
         db, state, minister, "密令执行态缺失", "差务", [], deadline_months=2,
     )
     db.conn.execute("UPDATE secret_orders SET turn_issued=? WHERE id=?", (turn - 1, order_id))
-    dossier_id = int(db.get_dossier_for_secret_order(order_id)["id"])
+    dossier_id = int(db.dossiers.get_for_secret_order(order_id)["id"])
     db.conn.commit()
 
     # Supply run provides 0058 report, but omits covert_exec_selections!
@@ -1633,7 +1633,7 @@ def test_step_4a_non_validation_failure_keeps_product_on_retry(game, monkeypatch
     ).fetchone()[0]
     order_id = create_test_secret_order(db, state, minister, "密令", "差务", [], deadline_months=2)
     db.conn.execute("UPDATE secret_orders SET turn_issued=? WHERE id=?", (turn - 1, order_id))
-    dossier_id = int(db.get_dossier_for_secret_order(order_id)["id"])
+    dossier_id = int(db.dossiers.get_for_secret_order(order_id)["id"])
     db.conn.commit()
 
     call_count = 0
@@ -1705,7 +1705,7 @@ def test_step_4a_settles_due_secret_order(game, monkeypatch):
         "UPDATE secret_orders SET turn_issued=?, due_turn=? WHERE id=?",
         (turn - 1, turn, order_id),
     )
-    dossier_id = int(db.get_dossier_for_secret_order(order_id)["id"])
+    dossier_id = int(db.dossiers.get_for_secret_order(order_id)["id"])
     db.conn.commit()
 
     def translate(*_a, **_k):
@@ -1774,7 +1774,7 @@ def test_build_secret_orders_supply_feed_uses_fact_materials_not_assembled_effec
         "UPDATE secret_orders SET turn_issued=? WHERE id=?",
         (turn - 1, order_id),
     )
-    dossier_id = int(db.get_dossier_for_secret_order(order_id)["id"])
+    dossier_id = int(db.dossiers.get_for_secret_order(order_id)["id"])
     secret_decl = "密令名义声明：边材未动。"
     secret_forecast = "预推不可见:密令供料"
     unsettled_body = "未颁拟旨：不得冒充已落。"
@@ -1921,7 +1921,7 @@ def test_step_4a_rescript_path_feeds_landed_not_assembled_effects(game, monkeypa
         "UPDATE secret_orders SET turn_issued=? WHERE id=?",
         (turn - 1, order_id),
     )
-    dossier_id = int(db.get_dossier_for_secret_order(order_id)["id"])
+    dossier_id = int(db.dossiers.get_for_secret_order(order_id)["id"])
     db.conn.commit()
 
     captured_feed = {}
@@ -1990,7 +1990,7 @@ def test_step_4a_rescript_path_feeds_landed_not_assembled_effects(game, monkeypa
     )
     chain = month_chain._load_chain(db, turn)
     assert not (chain.get("segment_applied_results") or [])
-    assert db.sum_dossier_actual_progress_units(dossier_id) == 5.0
+    assert db.dossiers.actual_progress_units(dossier_id) == 5.0
 
 
 def test_pending_disclosures_share_commit_boundary_with_effects(game, monkeypatch):

@@ -232,7 +232,7 @@ def test_pending_round_approval_endorsed_before_close_or_after_month_join(
     did = int(db.conn.execute(
         "SELECT id FROM decree_dossiers WHERE pending_action_id=?", (aid,),
     ).fetchone()["id"])
-    ends = db.list_dossier_endorsements(did)
+    ends = db.dossiers.endorsements(did)
     assert len(ends) == 1
     assert ends[0]["form"] == "御笔手敕"
     assert ends[0]["source_chat_turn_id"] == ctid
@@ -503,7 +503,7 @@ def test_appointment_and_relief_through_scene_chat_then_close_and_settle(game, m
         assert appt is not None, case["label"]
 
         grant_dossiers = [
-            d for d in db.list_decree_dossiers()
+            d for d in db.dossiers.list_dossiers()
             if d["action_type"] == "grant_allocation"
             and str(d.get("target_id") or "") == case["grant_target_id"]
             and int(d.get("pending_action_id") or 0) == int(pending[0]["id"])

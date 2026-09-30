@@ -31,8 +31,8 @@ def _eligible_dossier(db, state, holder, *, target_kind="issue", target_id="清�
         payload={"mode": "ordinary"},
     )
     db.record_dossier_decision(dossier_id, "promulgated")
-    assert db.dossier_authorizes_effects(dossier_id)
-    return db.get_decree_dossier(dossier_id)
+    assert db.dossiers.authorizes_effects(dossier_id)
+    return db.dossiers.get(dossier_id)
 
 
 def _grant(db, state, content, holder, privilege, scope, dossier, **turns):
@@ -111,7 +111,7 @@ def test_production_path_grant_restore_revoke_impression_tracer(game):
     restored = GameDB(db_path, content)
     restored_state = restored.load_state()
     after_restore = decree_mod.build_promulgation_judge_context(
-        restored, restored_state, [restored.get_decree_dossier(consumer["id"])],
+        restored, restored_state, [restored.dossiers.get(consumer["id"])],
     )
     assert after_restore["dossiers"][0]["held_authorities"] == expected_held
     assert after_restore["dossiers"][0]["criteria_snapshot_source"]["authorization_ids"] == [
@@ -155,7 +155,7 @@ def test_production_path_grant_restore_revoke_impression_tracer(game):
     ] == factions_before
 
     gone = decree_mod.build_promulgation_judge_context(
-        final, final_state, [final.get_decree_dossier(consumer["id"])],
+        final, final_state, [final.dossiers.get(consumer["id"])],
     )
     assert gone["dossiers"][0]["held_authorities"] == []
     assert gone["dossiers"][0]["criteria_snapshot_source"]["authorization_ids"] == []
@@ -187,7 +187,7 @@ def test_authority_changes_rejects_ineligible_keeps_legal_peer(game):
         executor_kind="character", executor_id=holder,
     )
     db.record_dossier_decision(rejected_id, "rejected", reason="封驳")
-    assert not db.dossier_authorizes_effects(rejected_id)
+    assert not db.dossiers.authorizes_effects(rejected_id)
 
     result = issue_engine.apply_score_extraction(db, state, {
         "authority_changes": [
@@ -272,7 +272,7 @@ def test_projection_typed_domain_only_and_ignores_payload_authorization(game):
             "character_id": other,
         },
     )
-    dossier = db.get_decree_dossier(dossier_id)
+    dossier = db.dossiers.get(dossier_id)
     projected = db.project_applicable_authorities(state.turn, dossier)
     assert [row["id"] for row in projected] == [typed]
     assert bare not in {row["id"] for row in projected}

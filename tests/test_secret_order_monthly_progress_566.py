@@ -27,7 +27,7 @@ def _order(db, state, title="护行辽饷", tags=None, deadline=4):
             },
         },
     )
-    return order_id, int(db.get_dossier_for_secret_order(order_id)["id"])
+    return order_id, int(db.dossiers.get_for_secret_order(order_id)["id"])
 
 
 def _production_session(db, state, content):
@@ -187,8 +187,8 @@ def test_character_terminal_status_closes_secret_orders_through_canonical_progre
     assert orders[chained_id]["status"] == "failed"
     assert orders[unchained_id]["status"] == "failed"
     assert "人物终态：dead；途中病故" in orders[chained_id]["result"]
-    assert db.get_decree_dossier(chained_dossier)["status"] == "closed"
-    assert db.get_decree_dossier(unchained_dossier)["status"] == "closed"
+    assert db.dossiers.get(chained_dossier)["status"] == "closed"
+    assert db.dossiers.get(unchained_dossier)["status"] == "closed"
     terminal = db.list_dossier_progress(chained_dossier)[-1]
     assert terminal["is_terminal"] is True
     assert "人物终态：dead；途中病故" in terminal["memorial_text"]
@@ -208,7 +208,7 @@ def test_current_secret_order_deadline_controls_monthly_eligibility(game):
     assert row["deadline_span"] == 1
     assert [item["dossier_id"] for item in db.list_monthly_dossier_progress_nudges()] == [dossier_id]
     db.update_secret_order_by_id(state, order_id, "护行辽饷", "继续逐月办理", ["护行"], 3)
-    assert db.get_decree_dossier(dossier_id)["due_turn"] != state.turn + 3
+    assert db.dossiers.get(dossier_id)["due_turn"] != state.turn + 3
     assert [item["dossier_id"] for item in db.list_monthly_dossier_progress_nudges()] == [dossier_id]
 
 

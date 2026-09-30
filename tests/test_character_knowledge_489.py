@@ -698,7 +698,7 @@ def test_secret_order_dossier_never_leaks_through_shared_roster_projection(game)
     order_id = create_test_secret_order(db,
         state, member.name, "密核历书", "暗查历局底稿。", [], deadline_months=0,
     )
-    dossier = next(d for d in db.list_decree_dossiers() if d["secret_order_id"] == order_id)
+    dossier = next(d for d in db.dossiers.list_dossiers() if d["secret_order_id"] == order_id)
     db.conn.execute(
         "UPDATE decree_dossiers SET participant_roster=? WHERE id=?",
         (json.dumps([{"character_id": member.name, "tier": "主办"}], ensure_ascii=False), dossier["id"]),
@@ -1282,7 +1282,7 @@ def test_household_secret_ledger_keeps_amount_but_hides_case_semantics(game):
         db, state, "毕自严", "密查太仓", "不可见案卷语义", [],
         excluded_names=[clerk.name],
     )
-    dossier = next(d for d in db.list_decree_dossiers() if d["secret_order_id"] == order_id)
+    dossier = next(d for d in db.dossiers.list_dossiers() if d["secret_order_id"] == order_id)
     db.record_issue_economy_move(
         state, "国库", -1, "秘密分类", "秘密流水原因",
         origin_ref=f"dossier:{dossier['id']}",
@@ -1304,7 +1304,7 @@ def test_household_secret_ledger_hides_case_by_excluded_office(game):
         db, state, "毕自严", "密查太仓职", "职署排挤案情", [],
         excluded_offices=[clerk.office_type],
     )
-    dossier = next(d for d in db.list_decree_dossiers() if d["secret_order_id"] == order_id)
+    dossier = next(d for d in db.dossiers.list_dossiers() if d["secret_order_id"] == order_id)
     db.record_issue_economy_move(
         state, "国库", -2, "职署秘密分类", "职署秘密流水",
         origin_ref=f"dossier:{dossier['id']}",
