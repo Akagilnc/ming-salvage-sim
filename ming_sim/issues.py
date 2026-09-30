@@ -1247,15 +1247,20 @@ def _event_terminal_states(db: GameDB) -> Dict[str, str]:
 def _event_terminal_records(db: GameDB) -> Dict[str, Dict[str, str]]:
     records: Dict[str, Dict[str, str]] = {}
     for r in db.conn.execute(
-        "SELECT event_id, terminal_state, terminal_reason, turn FROM event_triggers"
+        "SELECT event_id, terminal_state, terminal_reason, choice_json, turn FROM event_triggers"
     ).fetchall():
         terminal_state = str(r["terminal_state"] or "")
         if r["event_id"] and terminal_state:
             records[str(r["event_id"])] = {
                 "terminal_state": terminal_state,
                 "terminal_reason": str(r["terminal_reason"] or ""),
-                # #1899：结局发生的 turn。供罢/复与升率「准」比先后（最后有效批语），
-                # 布尔本身丢时序——只在 applier 内读，不改既有布尔读法。
+                # #1899：choice_json 判「该结局是否皇帝亲裁」。自动落账桩
+                # （fiscal_levy_shadow / default_terminal_reason）没有 choice，
+                # 真经批红（record_event_decision_choice）才有——用它把「皇帝的复征
+                # 决定」与「自动基线桩」分开，不新增决策态字段。
+                "choice_json": str(r["choice_json"] or ""),
+                # 该结局落账的回合。仅为「这次『准』是否仍是最后一道批语」提供
+                # 时间戳（`_fiscal_levy_reinstate_abolished`），罢/复状态本身读目录。
                 "turn": str(int(r["turn"] or 0)),
             }
     return records
@@ -1265,7 +1270,7 @@ def _event_pending_choice_records(db: GameDB) -> Dict[str, Dict[str, str]]:
     records: Dict[str, Dict[str, str]] = {}
     for r in db.conn.execute(
         """
-        SELECT event_id, terminal_state, terminal_reason, source
+        SELECT event_id, terminal_state, terminal_reason, source, choice_json, turn
         FROM event_triggers
         WHERE COALESCE(terminal_state, '') = ''
           AND COALESCE(terminal_reason, '') != ''
@@ -1276,6 +1281,9 @@ def _event_pending_choice_records(db: GameDB) -> Dict[str, Dict[str, str]]:
                 "terminal_state": "",
                 "terminal_reason": str(r["terminal_reason"] or ""),
                 "source": str(r["source"] or ""),
+                # #1899：待落结局的批红 choice 已在账上，带出供晋级时判「皇帝亲裁」。
+                "choice_json": str(r["choice_json"] or ""),
+                "turn": str(int(r["turn"] or 0)),
             }
     return records
 
@@ -1393,79 +1401,41 @@ def _is_stored_number(raw: object) -> bool:
     return not isinstance(raw, bool) and isinstance(raw, (int, float))
 
 
-def _fiscal_levy_last_turn_for_keys(
-    db: GameDB,
-    keys: tuple,
-    table: str,
-    turn_column: str,
-    *,
-    new_value_predicate: Optional[str] = None,
-) -> int:
-    """某组目录键在指定账上最后一次留痕的 turn（无行=0）。
+def _fiscal_levy_catalog_in_force(db: GameDB, keys: tuple) -> bool:
+    """该组目录键当前是否**在征**——直接读目录，不重建批语时序。
 
-    `new_value_predicate` 限定 fiscal_config_changes 的计入范围：
-    - `"> 0"`：**调回正值才是复征**（调成 0 本身是一道罢批语，不能当复征计入）；
-    - `"<= 0"`：**调成 0 本身是一道罢批语**——`_write_canonical_fiscal_change`
-      调零即 `apply_dynamic_fiscal_scale(ratio=0)`，与 remove_fiscal_item 同为罢的落法，
-      且目录行早已被前一道罢删掉时，这是唯一还能记下罢时点的账。
+    #1899 根因修复：此前 applier 用「三本账各取 MAX(turn) 再比大小」**重建**罢/复时序，
+    两处缺陷都在重建本身：
+      1. **目录残值可否决有效罢征**（F1）。重建末尾拿 `fiscal_config` 现值当第二判据：
+         罢辽饷走「调零」写口时 `辽饷_rate` 已落 0，但同组 `辽饷_base` 仍是 seed 的 43，
+         「组内任一键为正 ⇒ 不算罢」把有效罢征整个否决，下月照旧征 2.1969。任一键为正
+         **不能**证明在征——罢/复的真源是批语，不是目录残值。
+      2. **同 turn 内先后不可见，被迫夹带自造优先规则**（F2）。`MAX(turn)` 把同月多道
+         批语压成一个数，代码只好补一条「同 turn 判罢赢」——票面只认「以最后一次的批语
+         为准」，没授权任何固定优先，那是越权加戏。（跨表 AUTOINCREMENT id 也不可用：
+         每表各自从 1 起，实测不可比。）
 
-    两种 predicate 合起来才构成完整的「最后批语」：罢 = max(删行罢, 调零罢)，
-    复 = max(重立, 调回正值)。任一侧漏读都会让后出的批语被旧账盖过。
-    """
-    placeholders = ",".join("?" for _ in keys)
-    clause = f" AND new_value {new_value_predicate}" if new_value_predicate else ""
-    row = db.conn.execute(
-        f"SELECT COALESCE(MAX({turn_column}), 0) AS t FROM {table} "
-        f"WHERE key IN ({placeholders}){clause}",
-        keys,
-    ).fetchone()
-    return int(row["t"] or 0)
+    现在**不重建**：罢/复各自经真写口直接改目录本身（罢 = `remove_fiscal_item` 删行 /
+    `_write_fiscal_config_change` 调零；复 = `create_fiscal_item` 重立），目录现值即是
+    最后一道批语的结果，「以最后一次批语为准」由**写口的后写覆盖先写**天然保证，不需
+    任何时序重建或 tie-break。升率「准」被消费时也走同一重立写口（见
+    `_fiscal_levy_reinstate_abolished`），故罢→准→再罢各自都落在真写口上、闭环可续。
 
-
-def _fiscal_levy_abolish_turn(db: GameDB, keys: tuple) -> int:
-    """#1899：该赋饷当前最后一道「罢」批语的 turn（无有效罢批语=0）。
-
-    决策真源是既有两本账，不另造「饷别决策态」字段（ADR 0020 决定 1）：
-    - 罢 = `remove_fiscal_item` 删掉 fiscal_config 行并写 fiscal_config_tombstones；
-    - 复 = `fiscal_config_creations` 重立，或 `fiscal_config_changes` 把值调回正。
-    以 turn 比大小定谁在位；同 turn（同一批语内先罢后复）以 creations/changes 在后为准。
-    目录行当前在册（既无罢行、值非零）= 在征。查无记录一律按未罢返回 0
-    （查无记录 = 未罢），不静默罢征。
-
-    返回 **turn 而非 bool**：票面「实际征收读最后有效皇帝批语」要求罢批语与升率
-    「准」批语**比先后**——只拿布尔会丢时序（准在前、罢在后时误判为复征）。
-    调用方须以 turn 与事件账的 terminal turn 比较，取后出者为准。
+    判据是**整组齐全且全正**，不是「任一键为正」：dynamic 赋饷的实收 ∝ base×rate，
+    罢走「调零」写口只把 rate 归零而 base 留着 seed 值——此时实收恒为 0，罢**成立**，
+    那个残留的 base 不是复征证据（这正是 F1）。整组被 `remove_fiscal_item` 删空同样
+    判罢。故在征 ⟺ 组内每个键都在册且 > 0。
     """
     keys = tuple(keys)
     if not keys:
-        return 0
-    # 罢有两道落法：删目录行（tombstone）与调回 0（changes）；取后者的最大值，
-    # 否则「先罢→复征→再罢（调零）」时后出的罢会被前一道 tombstone 的旧 turn 盖过。
-    abolish_turn = max(
-        _fiscal_levy_last_turn_for_keys(db, keys, "fiscal_config_tombstones", "removed_turn"),
-        _fiscal_levy_last_turn_for_keys(
-            db, keys, "fiscal_config_changes", "turn", new_value_predicate="<= 0",
-        ),
-    )
-    if abolish_turn <= 0:
-        return 0
-    restore_turn = max(
-        _fiscal_levy_last_turn_for_keys(db, keys, "fiscal_config_creations", "turn"),
-        _fiscal_levy_last_turn_for_keys(
-            db, keys, "fiscal_config_changes", "turn", new_value_predicate="> 0",
-        ),
-    )
-    if restore_turn > abolish_turn:
-        return 0
+        return True
     placeholders = ",".join("?" for _ in keys)
     row = db.conn.execute(
         f"SELECT COUNT(*) AS n FROM fiscal_config WHERE key IN ({placeholders}) AND value > 0",
         keys,
     ).fetchone()
-    if int(row["n"] or 0) > 0:
-        # 目录行仍在册且非零 → 罢已被后续批语覆盖（复征已落目录）。
-        return 0
-    return abolish_turn
+    # 齐全（n == 组内键数）且全正才算在征；缺键或含零值 = 罢。
+    return int(row["n"] or 0) == len(set(keys))
 
 
 def _fiscal_levy_liao_seed(meta: Dict[str, object], p: Dict[str, object], region_id: str) -> float:
@@ -1619,6 +1589,104 @@ def _jiao_levy_in_force(terminal_records: Dict[str, Dict[str, str]], state: Game
     )
 
 
+def _fiscal_levy_last_abolish_turn(db: GameDB, keys: tuple) -> int:
+    """该组键**最后一道罢批语**的 turn（从未罢过 = 0）。
+
+    罢只有两个真写口：`remove_fiscal_item`（删行 → fiscal_config_tombstones.removed_turn）
+    与 `_write_fiscal_config_change` 调零（→ fiscal_config_changes.turn 且 new_value<=0）。
+    两口都读，不重建。**不复征**：复征判据在目录本身（`_fiscal_levy_catalog_in_force`），
+    目录现值就是最后一道批语的结果，不需要拿三本账比大小。
+
+    此函数只为「这次『准』是否比最后一次罢更新」提供时间戳（票面「以您最后一次的批语
+    为准」），不承担罢/复本身的状态判定。
+    """
+    keys = tuple(keys)
+    if not keys:
+        return 0
+    placeholders = ",".join("?" for _ in keys)
+    row = db.conn.execute(
+        f"""
+        SELECT COALESCE(MAX(turn), 0) AS t FROM (
+            SELECT removed_turn AS turn FROM fiscal_config_tombstones
+             WHERE key IN ({placeholders})
+            UNION ALL
+            SELECT turn FROM fiscal_config_changes
+             WHERE key IN ({placeholders}) AND new_value <= 0
+        )
+        """,
+        (*keys, *keys),
+    ).fetchone()
+    return int(row["t"] or 0)
+
+
+def _fiscal_levy_reinstate_abolished(
+    db: GameDB,
+    state: GameState,
+    keys: tuple,
+    *,
+    approve_turn: int,
+    origin_ref: str,
+    reason: str,
+) -> bool:
+    """复征一道**已罢**的 dynamic 赋饷：经 `create_fiscal_item` 真写口重立目录行。
+
+    #1899（F4）：此前「准」只改 `settle.p`，从不重立目录行，于是罢→准→再罢时
+    `remove_fiscal_item` 与调零两条写口都 `missing_ref`（行早被前一道罢删掉），
+    后续决定**写不进去**、现役照旧征——实际复征与后续决定写口脱节。本函数让复征
+    也落在真写口上：重立后目录行在册，后续罢/调零重新有写口，闭环可续。
+
+    **只在这次「准」确实是最后一道批语时才复征**：`approve_turn` 不得早于最后一道罢。
+    否则升率结局一旦落成「已准」就会**每月重复复征**，把玩家后来下的再罢顶掉——正是
+    票面「持续罢征不因逐月重算被抹掉」所禁。同 turn 相撞时以「准」为准，与票面
+    「以您最后一次的批语为准」及 owner 裁定（准了就重新开征）一致。
+
+    幂等：已在征时直接返回 False（不重立、不重复扣征）。恢复值取 seed 目录的默认值
+    （`_seeded_fiscal_item_meta`），即「恢复该税项的常态征收额」，不臆造数。
+    """
+    if _fiscal_levy_catalog_in_force(db, keys):
+        return False
+    if int(approve_turn) < _fiscal_levy_last_abolish_turn(db, keys):
+        # 最后一道批语是更晚的罢 → 罢赢，准入不得凭空复征。
+        return False
+    stem = db._stem_of(keys[0])
+    seeded = db._seeded_fiscal_item_meta(stem) if stem else None
+    if not stem or seeded is None:
+        # 非 seed 目录内的 dynamic 赋饷无默认值可依：不臆造基线，留给「查无记录=在征」。
+        return False
+    created = db.create_fiscal_item(
+        stem,
+        str(seeded.get("account") or ""),
+        str(seeded.get("direction") or ""),
+        str(seeded.get("display") or stem),
+        int(seeded.get("value") or 0),
+        note=reason[:120],
+        origin_ref=origin_ref,
+        turn=int(state.turn),
+        commit=False,
+    )
+    return created is not None
+
+
+def _fiscal_levy_rise_approved_by_emperor(
+    terminal_records: Dict[str, Dict[str, str]],
+) -> bool:
+    """升率「准」是否是**皇帝亲裁**——即该批语真出自皇帝，而非自动桩。
+
+    #1899（F6）：`run_fiscal_levy_pass` 有一条自动落账路径，在没有请旨、没有
+    choice_json 的情况下按 `default_terminal_reason` 直接把升率事件标成「已准」
+    （source=fiscal_levy_shadow）。那不是皇帝的复征决定，只是历史基线桩（其退役
+    归 #1891），但若消费者把它当成「准」去**重新开征**一道已罢的辽饷，就等于
+    「什么时候变成自动加了？」——凭空复征。
+
+    判据用事件账已有的 `choice_json`：只有真经批红（`record_event_decision_choice`
+    写入 choice）才算皇帝亲裁；自动桩 choice_json 为空。
+    """
+    record = terminal_records.get(_LIAO_LEVY_RISE_EVENT_ID) or {}
+    if record.get("terminal_state") != "triggered" or record.get("terminal_reason") != "已准":
+        return False
+    return bool(str(record.get("choice_json") or "").strip())
+
+
 def _apply_fiscal_levy_targets(
     db: GameDB,
     state: GameState,
@@ -1627,19 +1695,25 @@ def _apply_fiscal_levy_targets(
     liao_rise_approved = _fiscal_levy_event_approved(terminal_records, _LIAO_LEVY_RISE_EVENT_ID)
     jiao_in_force = _jiao_levy_in_force(terminal_records, state)
     lian_levy_approved = _fiscal_levy_event_approved(terminal_records, _LIAN_LEVY_START_EVENT_ID)
-    # #1899：最后有效批语裁定在征。罢批语（fiscal_config 账，_fiscal_levy_abolish_turn）
-    # 与升率「准」批语（事件账 terminal turn）**比先后**，取后出者为准——
-    # 布尔会把「准在前、罢在后」误判成复征（罢饷不生效的原缺陷原样保留）。
-    #   · 罢在后 → 不征（最后批语是罢）；
-    #   · 准在后 → 按新率征（重新开征，不另要恢复旨，owner d5405bb6）；
-    #   · 同 turn → 罢赢（宁少征不虚增，且不让升率把同月罢征悄悄顶掉）。
-    # 可比口径：罢批语 turn 取 fiscal_config 账的 removed_turn/creations/changes.turn，
-    # 准批语 turn 取 event_triggers.turn（该结局落账的回合），两者同为绝对 turn。
-    liao_abolish_turn = _fiscal_levy_abolish_turn(db, _FISCAL_LEVY_LIAO_KEYS)
-    tian_abolished = _fiscal_levy_abolish_turn(db, _FISCAL_LEVY_TIAN_KEYS) > 0
-    liao_rise_turn = 0
-    if liao_rise_approved:
-        liao_rise_turn = int((terminal_records.get(_LIAO_LEVY_RISE_EVENT_ID) or {}).get("turn") or 0)
+    # #1899 最后有效批语裁定在征：**读目录现值，不重建时序**（理由见
+    # `_fiscal_levy_catalog_in_force`）。罢/复各自经真写口改目录，后写覆盖先写，
+    # 「以最后一次批语为准」由写口天然保证；不夹带任何自造的同月优先规则。
+    #   · 目录在征 → 按在征率征（升率已准则用新率，owner d5405bb6）；
+    #   · 目录已罢 → 不征，且目录残值（base 仍 43）不再能否决这道罢。
+    # 「准」若遇已罢的辽饷 = 皇帝重新开征：先经真写口重立（F4），再按新率征。
+    # 仅**皇帝亲裁**的「准」才复征（F6）；自动落账桩（无 choice_json）只给历史
+    # 费率基线，不得凭空把已罢的辽饷加回来。
+    if liao_rise_approved and _fiscal_levy_rise_approved_by_emperor(terminal_records):
+        _fiscal_levy_reinstate_abolished(
+            db, state, _FISCAL_LEVY_LIAO_KEYS,
+            approve_turn=int(
+                (terminal_records.get(_LIAO_LEVY_RISE_EVENT_ID) or {}).get("turn") or 0
+            ),
+            origin_ref=f"event:{_LIAO_LEVY_RISE_EVENT_ID}",
+            reason="升率获准，重新开征辽饷",
+        )
+    liao_in_force = _fiscal_levy_catalog_in_force(db, _FISCAL_LEVY_LIAO_KEYS)
+    tian_abolished = not _fiscal_levy_catalog_in_force(db, _FISCAL_LEVY_TIAN_KEYS)
     region_entries: List[Dict[str, object]] = []
     denominator_complete = True
     for row in db.conn.execute("SELECT id, fiscal FROM regions ORDER BY id").fetchall():
@@ -1719,17 +1793,12 @@ def _apply_fiscal_levy_targets(
             region_id,
         )
         base_transport = float(item["base_transport"])
-        # 最后有效批语定辽饷在征与否（比 turn，不叠布尔护栏）：
-        #   从无罢批语 → 在征；否则只有「准」严格晚于罢批语才算重新开征。
-        # 同 turn 判罢赢：罢是更具体的那道批示，同月撞批不得凭升率把罢征悄悄顶掉
-        # （否则「罢饷不生效」的原缺陷在同月时序下复活），且宁少征不虚增。
-        liao_levy_in_force = (
-            liao_abolish_turn == 0 or liao_rise_turn > liao_abolish_turn
-        )
-        if not liao_levy_in_force:
-            target_liao = 0.0
-        else:
+        # 辽饷在征与否直接读目录（#1899）：目录在征才征，罢后残值不再被当复征证据。
+        # 「准」的重新开征已在上方经真写口重立目录，故此处无需任何时序比较或 tie-break。
+        if liao_in_force:
             target_liao = liao_seed * (_LIAO_LEVY_RISE_FACTOR if liao_rise_approved else 1.0)
+        else:
+            target_liao = 0.0
         target_jiao = jiao_seed if jiao_in_force else 0.0
         target_lian = lian_seed if lian_levy_approved else 0.0
         # #650/0089 明渠：皇帝下旨加派逐省累积账（settle._meta「加派基线」）计入在征饷集——
@@ -1849,6 +1918,12 @@ def apply_historical_fiscal_rates(
                     terminal_records[ev.id] = {
                         "terminal_state": "triggered",
                         "terminal_reason": label,
+                        # #1899（F3）：pending choice 是**真经批红**的待落结局，其
+                        # choice_json 早在 record_event_decision_choice 就写在事件账上。
+                        # 此处必须带回，否则本 pass 刚晋级的结局在下游读成「无 choice」
+                        # = 自动桩，首次消费就丢掉「皇帝亲裁」这一事实。
+                        "choice_json": str(record.get("choice_json") or ""),
+                        "turn": str(record.get("turn") or 0),
                     }
                     applied.append({
                         "id": ev.id,

@@ -2959,20 +2959,36 @@ class GameDB:
         ).fetchone()
         if exists is not None:
             return None
-        sort_order = self.conn.execute(
-            "SELECT COALESCE(MAX(sort_order), 0) + 10 FROM fiscal_config"
-        ).fetchone()[0]
+        # #1899：重立已 seed 过的 dynamic 赋饷（田赋/辽饷/盐税/商税/皇庄）必须按其
+        # **seed 声明的 budget_role** 落行，不得一律落 fixed。dynamic 赋饷的实收走省级
+        # 公式（regions.fiscal / settle.p），account/direction 只喂 flows 的中央定额预算
+        # 行；误落 fixed 会让 iter_budget_items 把它当独立中央收入再记一条，与省级那条
+        # **同一税项两条收入**（全局硬规 #12/#14 单一机制）。seed 真源是 content/
+        # fiscal_config.json 的 budget_role，未 seed 过的 stem（真新科目）仍落 fixed。
+        seeded = self._seeded_fiscal_item_meta(stem)
+        if seeded is not None and str(seeded.get("budget_role") or "") == "dynamic":
+            budget_role = "dynamic"
+            item_account = item_direction = item_display = ""
+            item_sort_order = int(seeded.get("sort_order", 9999) or 9999)
+        else:
+            budget_role = "fixed"
+            item_account, item_direction, item_display = account, direction, display
+            item_sort_order = self.conn.execute(
+                "SELECT COALESCE(MAX(sort_order), 0) + 10 FROM fiscal_config"
+            ).fetchone()[0]
         self.conn.execute(
             "INSERT INTO fiscal_config "
             "(key, value, kind, budget_role, account, direction, display, sort_order, note, origin_ref) "
-            "VALUES (?, ?, 'base', 'fixed', ?, ?, ?, ?, ?, ?)",
-            (base_key, max(0, init_value), account, direction, display, sort_order, note, origin_ref),
+            "VALUES (?, ?, 'base', ?, ?, ?, ?, ?, ?, ?)",
+            (base_key, max(0, init_value), budget_role, item_account, item_direction,
+             item_display, item_sort_order, note, origin_ref),
         )
         self.conn.execute(
             "INSERT INTO fiscal_config "
             "(key, value, kind, budget_role, account, direction, display, sort_order, note, origin_ref) "
-            "VALUES (?, 100, 'rate', 'fixed', ?, ?, ?, ?, ?, ?)",
-            (rate_key, account, direction, display, sort_order, f"{display}实收率%", origin_ref),
+            "VALUES (?, 100, 'rate', ?, ?, ?, ?, ?, ?, ?)",
+            (rate_key, budget_role, item_account, item_direction, item_display,
+             item_sort_order, f"{display}实收率%", origin_ref),
         )
         # #1260：base+rate 两行 creations 同旗（any() 消费者安全；计数型会双计——勿据此改计数语义）。
         beyond_flag = self.coerce_beyond_intent_flag(beyond_intent)
@@ -3008,6 +3024,29 @@ class GameDB:
             if key.endswith("_base") or key.endswith("_rate"):
                 return ""
         return key
+
+    def _seeded_fiscal_item_meta(self, stem: str) -> Optional[Dict[str, object]]:
+        """seed 目录（content/fiscal_config.json）里该 stem 任一行的元数据；未 seed 过返 None。
+
+        #1899：复征 dynamic 赋饷时，budget_role 必须回到 seed 声明值（dynamic），
+        否则重立行会被 flows 当中央 fixed 收入，与省级那条叠成同一税项两条收入。
+        seed 里 dynamic 赋饷**未必有 base 行**（田赋只有 田赋_rate、辽饷/盐税/商税
+        才有 _base），故按 stem 归任一行、不挑 kind——本方法只为取回 seed 声明的
+        budget_role，不复现 base 值（重立值由调用方给）。
+        seed 是静态内容（开局加载一次不变），故按 stem 缓存整张表避免逐键重扫。
+        """
+        cache = getattr(self, "_seed_fiscal_meta_cache", None)
+        if cache is None:
+            cache = {}
+            for rec in list(self.content.fiscal_items or ()):
+                key = str(rec.get("key") or "")
+                if not key or key.startswith("__"):
+                    continue
+                rec_stem = self._stem_of(key)
+                if rec_stem and rec_stem not in cache:
+                    cache[rec_stem] = dict(rec)
+            self._seed_fiscal_meta_cache = cache
+        return cache.get(stem)
 
     def apply_dynamic_fiscal_scale(self, stem: str, ratio: float, commit: bool = True) -> int:
         """按 ratio 缩放所有省 regions.fiscal 中该 dynamic 税字段（辽饷/盐税/商税）。
