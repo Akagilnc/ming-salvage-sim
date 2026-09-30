@@ -56,6 +56,9 @@ const click = (el: Element | null | undefined) => act(() => { el?.dispatchEvent(
 const cmdByCaption = (host: HTMLElement, caption: string) =>
   Array.from(host.querySelectorAll("button")).find((b) => (b.getAttribute("aria-label") || "").startsWith(caption)) || null;
 const edictCommand = (host: HTMLElement) => cmdByCaption(host, "拟诏");
+/** #1888 J3：邸报正文是 LLM 生成的自由文本——只断言「面板在、正文非空」，不锁定文案。 */
+const gazetteReport = (host: HTMLElement | Document) =>
+  host.querySelector('[data-testid="settlement-gazette-panel"] pre.memorial-text')?.textContent?.trim() ?? "";
 const findButton = (host: HTMLElement, text: string) =>
   Array.from(host.querySelectorAll("button")).find((b) => (b.textContent || "").includes(text));
 /** #1764：有名 section/region——可访问名来自 aria-labelledby → 可见 h3 铬字。 */
@@ -1124,7 +1127,8 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
       await vi.waitFor(() => expect(reopened.querySelector(".hud2-val")?.textContent).toContain("11"));
     });
     expect(reopened.querySelector('[data-testid="settle-resume"]')).toBeNull();
-    expect(reopened.querySelector('[data-testid="settlement-gazette-panel"]')?.textContent).toContain("new month report");
+    expect(reopened.querySelector('[data-testid="settlement-gazette-panel"]')).not.toBeNull();
+    expect(gazetteReport(reopened)).not.toBe("");
   });
 
   it("#1852 写成即推进：本面邸报落位；朕知道了只关阅读；刷新不自动弹", async () => {
@@ -1192,7 +1196,7 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
       await vi.waitFor(() => expect(host.querySelector("[data-testid=settlement-gazette-panel]")).not.toBeNull());
     });
     expect(host.querySelector('[role="dialog"][aria-label="邸报"]')).toBeNull();
-    expect(host.querySelector("[data-testid=settlement-gazette-panel]")!.textContent).toContain("十月邸报·本面");
+    expect(gazetteReport(host)).not.toBe("");
     expect(host.querySelector("[data-testid=wang-settlement-slip]")).toBeNull();
 
     const dismiss = Array.from(host.querySelectorAll("button")).find((b) =>
@@ -1408,7 +1412,7 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
       await vi.waitFor(() => expect(host.querySelector("[data-testid=settlement-gazette-panel]")).not.toBeNull());
     });
     expect(stateGets).toBeGreaterThan(getsBeforeDone);
-    expect(host.querySelector("[data-testid=settlement-gazette-panel]")!.textContent).toContain("十月邸报·刷新失败仍可读");
+    expect(gazetteReport(host)).not.toBe("");
     // 主界面仍挂着，但旧月内容不可见、不可交互；提示与阅读独立可达。
     const staleFace = host.querySelector("main > div[inert]");
     expect(staleFace?.getAttribute("aria-hidden")).toBe("true");
@@ -1429,7 +1433,7 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
       await vi.waitFor(() => expect(stateGets).toBeGreaterThan(getsBeforeReadingRetry));
       await Promise.resolve();
     });
-    expect(host.querySelector("[data-testid=settlement-gazette-panel]")?.textContent).toContain("十月邸报·刷新失败仍可读");
+    expect(gazetteReport(host)).not.toBe("");
     expect(streamPosts()).toBe(streamPostsBeforeDismiss);
     const getsBeforeDismiss = stateGets;
     const dismiss = Array.from(host.querySelectorAll("button")).find((b) =>
@@ -1460,11 +1464,12 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
 
   // #1888 跨局回执隔离的真实玩家入口证明：旧局盖玺仍在流中 → 退出到主菜单 → 开始新游戏，
   // 此刻才释放旧局回执。error（失败态）与 done（邸报成功）两条出口都必须对新局无副作用。
-  // 断言全在外部可见的结构化结果上（HUD 回合数 / hud-error / 本面邸报），不读 hook 内部态。
+  // 断言全在外部可见的结构化结果上（HUD 回合数 / hud-error / 本面邸报 / 拟诏台可开），
+  // 不读 hook 内部态，也不拿回执正文当 marker 搜索——那只是本测试自己造的字。
   it.each([
-    ["error", "旧局结算失败", { message: "旧局结算失败" }],
-    ["done", "旧局邸报·迟到", { advanced: true, report: "旧局邸报·迟到" }],
-  ] as const)("#1888 跨局：旧局 %s 回执迟到不得写进新局", async (eventName, marker, payload) => {
+    ["error", { message: "旧局结算失败" }],
+    ["done", { advanced: true, report: "旧局邸报·迟到" }],
+  ] as const)("#1888 跨局：旧局 %s 回执迟到不得写进新局", async (eventName, payload) => {
     let releaseIssue!: (response: Response) => void;
     const issueGate = new Promise<Response>((resolve) => { releaseIssue = resolve; });
     let newGamePosted = false;
@@ -1553,7 +1558,6 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     expect(host.querySelector(".hud2-val")?.textContent).toContain("1");
     expect(host.querySelector('[data-testid="hud-error"]')).toBeNull();
     expect(host.querySelector("[data-testid=settlement-gazette-panel]")).toBeNull();
-    expect(host.textContent).not.toContain(marker);
     // 新局仍可用：旧局 busy 不得把新局锁死在核账面（busy==='月末结算' 即 settlementFace，
     // 拟诏入口随之收起）。只断言「旧局污染没出现」会放过这类反向缺陷。
     const reopenDesk = edictCommand(host);
@@ -2023,6 +2027,70 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     // refresh 后 recovery 仍在且仍单一 alert（error 不被空串冲掉）
     expect(host.querySelector('[data-testid="decision-recovery"]')).not.toBeNull();
     expect(host.querySelectorAll('[role="alert"]').length).toBe(1);
+  });
+
+  // #1888 J5：次级状态刷新失败不得截断结算失败呈现与收尾。
+  // 真实玩家入口：批红落印 → SSE error → 其后账本状态口持续 503。
+  // 断的是刷新，不是告警：decision-recovery 必须挂出且重试钮可点（busy 已清），
+  // modal 不卸载、批红可再落印。此前的顺序缺陷会让整条出口抛出：无告警、busy 残留、按钮 disabled。
+  it("#1888 落印失败且账本刷新同时 503：告警照落、核账面不留锁", async () => {
+    const d1 = {
+      idx: 0, title: "疏一", context: "c1",
+      options: [{ label: "甲策", hint: "h1" }, { label: "乙策", hint: "h2" }],
+    };
+    const state = settlementBaseState("awaiting_decision", { pending_decisions: [d1] });
+    let stateFail = false;
+    let failedReads = 0;
+    const resolveBodies: unknown[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      const u = new URL(String(url), "http://t.local");
+      if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
+      if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
+      if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
+      if (u.pathname.endsWith("/api/game/state")) {
+        if (stateFail) {
+          failedReads += 1;
+          return new Response(JSON.stringify({ detail: { message: "账本状态口不可用" } }), {
+            status: 503, headers: { "Content-Type": "application/json" },
+          });
+        }
+        return jsonResp(state);
+      }
+      if (u.pathname.endsWith("/api/history/turns")) return jsonResp({ turns: [] });
+      if (u.pathname.endsWith("/api/court_layout")) return jsonResp({ layout: "{}" });
+      if (u.pathname.endsWith("/api/decree/resolve_decisions/stream")) {
+        resolveBodies.push(JSON.parse(String(init?.body || "{}")));
+        // 结算本身失败；紧随其后的账本刷新也失败（次级）。
+        stateFail = true;
+        return sseResp("error", { message: "stream-fail" });
+      }
+      return jsonResp({});
+    }));
+
+    const host = await mountApp();
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[data-testid="decision-modal"]')).not.toBeNull());
+    });
+    const confirm = () =>
+      host.querySelector('[data-testid="decision-modal"] button.decision-confirm') as HTMLButtonElement | null;
+    await click(host.querySelector("button.decision-option"));
+    expect(confirm()).not.toBeNull();
+    await click(confirm());
+
+    await act(async () => {
+      await vi.waitFor(() => expect(resolveBodies.length).toBe(1));
+    });
+    await act(async () => { await vi.waitFor(() => expect(failedReads).toBeGreaterThan(0)); });
+
+    // 失败呈现：唯一 role=alert 挂出 decision-recovery（不靠文案匹配）。
+    const recovery = host.querySelector('[data-testid="decision-recovery"][role="alert"]');
+    expect(recovery).not.toBeNull();
+    expect(host.querySelectorAll('[role="alert"]').length).toBe(1);
+    // 收尾：busy 已清 → 恢复面重试钮与落印钮都可点，玩家不被锁在核账面。
+    const retry = recovery!.querySelector("button") as HTMLButtonElement;
+    expect(retry.disabled).toBe(false);
+    expect(host.querySelector('[data-testid="decision-modal"]')).not.toBeNull();
+    expect(confirm()!.disabled).toBe(false);
   });
 
   it("#1808 fail-closed 后普通 HUD 可见失败，不依赖任何 modal", async () => {

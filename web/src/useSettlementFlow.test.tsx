@@ -633,6 +633,8 @@ function sseAdvancedResponse(report = "十月邸报·流终"): Response {
 }
 
 describe("#1852 写成即推进：本面邸报阅读态，不整页 reload", () => {
+  // #1888 J3：邸报正文是生成的自由文本，不作 marker 锁定。此处只断言结构化可见结果：
+  // 过月后面板挂载、正文非空（#1852 真实 App 入口另证可读可关）。
   it.each([
     ["issueDecree", "/api/decree/issue/stream"],
     ["submitDecisions", "/api/decree/resolve_decisions/stream"],
@@ -660,9 +662,11 @@ describe("#1852 写成即推进：本面邸报阅读态，不整页 reload", () 
     expect(loadState).toHaveBeenCalledTimes(1);
     expect(reload).not.toHaveBeenCalled();
     expect(host.querySelector('[data-testid="busy"]')?.textContent).toBe("");
-    expect(hookRef.current!.settlementGazetteReading?.report).toBe("十月邸报·流终");
-    expect(hookRef.current!.settlementGazetteReading?.periodLabel).toBe("天启七年十月");
-    expect(hookRef.current!.settlementGazetteReading?.attendantMessage).toBe("奴婢呈上月邸报。");
+    const reading = hookRef.current!.settlementGazetteReading;
+    expect(reading).not.toBeNull();
+    expect(reading!.report.trim()).not.toBe("");
+    expect(reading!.periodLabel?.trim()).toBeTruthy();
+    expect(reading!.attendantMessage?.trim()).toBeTruthy();
 
     act(() => {
       hookRef.current!.dismissSettlementGazette();
@@ -695,7 +699,9 @@ describe("#1852 写成即推进：本面邸报阅读态，不整页 reload", () 
 
     expect(reload).not.toHaveBeenCalled();
     expect(loadState).toHaveBeenCalled();
-    expect(hookRef.current!.settlementGazetteReading?.report).toBe("十月邸报·已归档");
+    // 从 state 投影（fixture 自带字段），非自由文本 marker。
+    expect(hookRef.current!.settlementGazetteReading?.report)
+      .toBe((advancedMonthState as unknown as { previous_summary: string }).previous_summary);
     cleanup();
   });
 

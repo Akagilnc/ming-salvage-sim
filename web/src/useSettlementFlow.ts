@@ -223,6 +223,22 @@ export function useSettlementFlow({
     };
   }, [loadState]);
 
+  /**
+   * #1888：次级账本刷新为 best-effort。
+   *
+   * 刷新是主链之外的**次级**动作：它失败不得截断已经到手的失败呈现与收尾（清 busy）。
+   * 原失败由调用点响亮落地，次级真因在此另留痕（ADR 0005），二者不互相顶替。
+   * 根因同形：失败分支里把 `await loadState()` 放在落失败态之前，刷新一 reject 就整条
+   * 出口抛出——告警不落、busy 不清、核账面把玩家锁死。
+   */
+  const refreshBestEffort = React.useCallback(async (receipt: SettlementReceipt) => {
+    try {
+      await receipt.loadState();
+    } catch (refreshErr) {
+      console.warn("[settlement] secondary refresh failed", refreshErr);
+    }
+  }, []);
+
   // #1888：重试亦是一次回执（玩家在旧局面上点的重试，回执可能迟到）——同经 claimReceipt。
   const retryAdvanceRefresh = async () => {
     const receipt = claimReceipt();
@@ -334,12 +350,7 @@ export function useSettlementFlow({
         // main #1442：pending_action_failures 落库面优先。欠账耗尽走失败单源（#1353 fold-in），无补写 CTA。
         const errMsg = typeof outcome.data === "string" ? outcome.data : (errData.message || "颁诏失败。");
         receipt.surfaceFailure(errMsg);
-        try {
-          await receipt.loadState();
-        } catch (refreshErr) {
-          // 刷新失败不抵消已落地的 phase-1 呈现；次级真因仍落痕（ADR 0005）。
-          console.warn("[settlement] phase-1 failure refresh failed", refreshErr);
-        }
+        await refreshBestEffort(receipt);
         receipt.setBusy("");
         return;
       }
@@ -351,14 +362,16 @@ export function useSettlementFlow({
         const route = routeIssueDecisions(outcome.data.decisions || []);
         if (route.pendingDecisions !== null) receipt.setPendingDecisions(route.pendingDecisions);
         if (route.error !== null) receipt.setPausedDecisionError(route.error);
-        await receipt.loadState();
+        // #1888：成功出口的账本刷新同样 best-effort——刷新失败是次级事故，
+        // 不得冒充成一次结算失败把玩家推进告警面。
+        await refreshBestEffort(receipt);
         receipt.setBusy("");
         return;
       }
       if (outcome.data?.advanced === false) {
         // The month chain can stop at rescript/gazette without advancing.
         // Refresh its durable settling projection, not the whole page as if a new month began.
-        await receipt.loadState();
+        await refreshBestEffort(receipt);
         receipt.setBusy("");
         return;
       }
@@ -369,12 +382,7 @@ export function useSettlementFlow({
     } catch (err) {
       // #1808 B 同类：先响亮；#1700 loadState 刷新权威相位为 best-effort。
       receipt.surfaceFailure(err instanceof Error ? err.message : String(err));
-      try {
-        await receipt.loadState();
-      } catch (refreshErr) {
-        // 刷新失败不抵消已落地的 phase-1 呈现；次级真因仍落痕（ADR 0005）。
-        console.warn("[settlement] phase-1 failure refresh failed", refreshErr);
-      }
+      await refreshBestEffort(receipt);
       receipt.setBusy("");
     }
   };
@@ -399,11 +407,13 @@ export function useSettlementFlow({
       if (outcome.kind === "error") {
         // #1418 r2：同会话 phase2 失败后 loadState，使 settle-resume 续跑面可挂上。
         // #1620：loadState 刷新合法 pending 时 route 不碰 stream error；pending 保留 → picks 仍在。
-        await receipt.loadState();
+        // #1888：失败先响亮落地，收尾（清 busy）不挂在次级刷新成败上——刷新再失败也不得
+        // 把批红台锁死在核账面。次级真因由 refreshBestEffort 另留痕。
         const msg = typeof outcome.data === "string" ? outcome.data : (outcome.data.message || "结算失败。");
         receipt.setPausedDecisionError(msg);
         receipt.setError(msg);
         receipt.setBusy("");
+        await refreshBestEffort(receipt);
         return;
       }
       // 成功：清空案头态；写成即推进则本面开邸报。
@@ -411,7 +421,7 @@ export function useSettlementFlow({
       receipt.setDecisionFailures([]);
       receipt.setPausedDecisionError("");
       if (outcome.data?.advanced === false) {
-        await receipt.loadState();
+        await refreshBestEffort(receipt);
         receipt.setBusy("");
         return;
       }
@@ -419,11 +429,13 @@ export function useSettlementFlow({
       receipt.setBusy("");
       return;
     } catch (err) {
-      await receipt.loadState();
+      // #1888：同 #1808 B——响亮呈现与收尾先落地，次级刷新不得截断（此前刷新一 reject
+      // 就整条出口抛出：告警不落、busy 不清）。
       const msg = err instanceof Error ? err.message : String(err);
       receipt.setPausedDecisionError(msg);
       receipt.setError(msg);
       receipt.setBusy("");
+      await refreshBestEffort(receipt);
     }
   };
 
@@ -465,11 +477,12 @@ export function useSettlementFlow({
         const route = routeIssueDecisions(data.decisions || []);
         if (route.pendingDecisions !== null) receipt.setPendingDecisions(route.pendingDecisions);
         if (route.error !== null) receipt.setPausedDecisionError(route.error);
-        await receipt.loadState();
+        // #1888：同 issueDecree 成功出口——次级刷新失败不得冒充退朝失败。
+        await refreshBestEffort(receipt);
         return;
       }
       if (data.advanced === false) {
-        await receipt.loadState();
+        await refreshBestEffort(receipt);
         return;
       }
       // #1852：退朝写成即推进——本面阅读态，不 reload。
