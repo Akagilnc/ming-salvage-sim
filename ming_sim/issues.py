@@ -1293,6 +1293,15 @@ _SETTLE_META_LAND_DENOMINATOR_KEY = "饷率田亩分母基线"
 # #650/0089 明渠：下旨加派逐省累积账（万两/月，负额停征/蠲免、钳 ≥0）。
 # 与 #649 饷率 seed 同址（settle._meta），restore 只读 DB 无损接续（P1）。
 _SETTLE_META_JIAPIAI_KEY = "加派基线"
+# #1899：罢田赋前的正赋应征基线（罢则省税归零、复则回基线）。与上列 seed 同址，
+# restore 只读 DB 无损接续（P1）；不是「饷别决策态」——决策在 fiscal_config 目录账，
+# 此键只存被罢遮住的那一个原值，供复征幂等回填。
+_SETTLE_META_ZHENGFU_SEED_KEY = "正赋应征基线"
+# #1899：可被皇帝罢/复的 dynamic 赋饷与其 fiscal_config 目录键。罢 = 该组键被裁撤
+# （remove_fiscal_item 删行 + 写 fiscal_config_tombstones），复 = fiscal_config_creations
+# 重立或 fiscal_config_changes 调回正值——两本既有账即是最后批语的真源，不另造决策态。
+_FISCAL_LEVY_LIAO_KEYS = ("辽饷_base", "辽饷_rate")
+_FISCAL_LEVY_TIAN_KEYS = ("田赋_rate",)
 _FISCAL_LEVY_PROVISIONAL_KEYS = {
     _SETTLE_META_BASE_TRANSPORT_KEY,
     _SETTLE_META_LIAO_SEED_KEY,
@@ -1379,6 +1388,54 @@ def _as_float(raw: object, *, ctx: str) -> float:
 
 def _is_stored_number(raw: object) -> bool:
     return not isinstance(raw, bool) and isinstance(raw, (int, float))
+
+
+def _fiscal_levy_last_turn_for_keys(
+    db: GameDB,
+    keys: tuple,
+    table: str,
+    turn_column: str,
+) -> int:
+    """某组目录键在指定账上最后一次留痕的 turn（无行=0）。"""
+    placeholders = ",".join("?" for _ in keys)
+    row = db.conn.execute(
+        f"SELECT COALESCE(MAX({turn_column}), 0) AS t FROM {table} WHERE key IN ({placeholders})",
+        keys,
+    ).fetchone()
+    return int(row["t"] or 0)
+
+
+def _fiscal_levy_abolished(db: GameDB, keys: tuple) -> bool:
+    """#1899：该赋饷当前是否处于罢征态——以最后有效批语为准。
+
+    决策真源是既有两本账，不另造「饷别决策态」字段（ADR 0020 决定 1）：
+    - 罢 = `remove_fiscal_item` 删掉 fiscal_config 行并写 fiscal_config_tombstones；
+    - 复 = `fiscal_config_creations` 重立，或 `fiscal_config_changes` 把值调回正。
+    以 turn 比大小定谁在位；同 turn（同一批语内先罢后复）以 creations/changes 在后为准。
+    目录行当前在册（既无罢行、值非零）= 在征。读不到行一律按在征兜底
+    （查无记录 = 未罢），不静默罢征。
+    """
+    keys = tuple(keys)
+    if not keys:
+        return False
+    abolish_turn = _fiscal_levy_last_turn_for_keys(db, keys, "fiscal_config_tombstones", "removed_turn")
+    if abolish_turn <= 0:
+        return False
+    restore_turn = max(
+        _fiscal_levy_last_turn_for_keys(db, keys, "fiscal_config_creations", "turn"),
+        _fiscal_levy_last_turn_for_keys(db, keys, "fiscal_config_changes", "turn"),
+    )
+    if restore_turn > abolish_turn:
+        return False
+    placeholders = ",".join("?" for _ in keys)
+    row = db.conn.execute(
+        f"SELECT COUNT(*) AS n FROM fiscal_config WHERE key IN ({placeholders}) AND value > 0",
+        keys,
+    ).fetchone()
+    if int(row["n"] or 0) > 0:
+        # 目录行仍在册且非零 → 罢已被后续批语覆盖（复征已落目录）。
+        return False
+    return True
 
 
 def _fiscal_levy_liao_seed(meta: Dict[str, object], p: Dict[str, object], region_id: str) -> float:
@@ -1540,6 +1597,10 @@ def _apply_fiscal_levy_targets(
     liao_rise_approved = _fiscal_levy_event_approved(terminal_records, _LIAO_LEVY_RISE_EVENT_ID)
     jiao_in_force = _jiao_levy_in_force(terminal_records, state)
     lian_levy_approved = _fiscal_levy_event_approved(terminal_records, _LIAN_LEVY_START_EVENT_ID)
+    # #1899：最后有效批语（罢/复）优先于历史基线。罢辽饷 → 不再征；罢后又在历史升率
+    # 节点批「准」= 重新开征，按新率（升率因子）征，不另要恢复旨；未罢者驳升率仍九厘。
+    liao_abolished = _fiscal_levy_abolished(db, _FISCAL_LEVY_LIAO_KEYS)
+    tian_abolished = _fiscal_levy_abolished(db, _FISCAL_LEVY_TIAN_KEYS)
     region_entries: List[Dict[str, object]] = []
     denominator_complete = True
     for row in db.conn.execute("SELECT id, fiscal FROM regions ORDER BY id").fetchall():
@@ -1619,7 +1680,12 @@ def _apply_fiscal_levy_targets(
             region_id,
         )
         base_transport = float(item["base_transport"])
-        target_liao = liao_seed * (_LIAO_LEVY_RISE_FACTOR if liao_rise_approved else 1.0)
+        if liao_abolished:
+            # 罢辽饷：辽饷分量归零（升率已准也不复征——恢复须另有一道复征批语，
+            # 而罢后批「准」升率本身即复征，故 liao_rise_approved 为真时走新率）。
+            target_liao = liao_seed * (_LIAO_LEVY_RISE_FACTOR if liao_rise_approved else 0.0)
+        else:
+            target_liao = liao_seed * (_LIAO_LEVY_RISE_FACTOR if liao_rise_approved else 1.0)
         target_jiao = jiao_seed if jiao_in_force else 0.0
         target_lian = lian_seed if lian_levy_approved else 0.0
         # #650/0089 明渠：皇帝下旨加派逐省累积账（settle._meta「加派基线」）计入在征饷集——
@@ -1643,6 +1709,24 @@ def _apply_fiscal_levy_targets(
         next_p = dict(p)
         next_p["三饷应征"] = target_sanxiang
         next_p["起运定额"] = target_transport
+        # #1899：罢田赋作用于现役真源（settle.p.正赋应征），此前只改 legacy 字段
+        # （regions.tax_per_turn / fiscal_config），下月财政照旧征。罢时把原值存
+        # _meta 基线（P1：restore 只读 DB 即可接续），复时回填基线——不重复扣征、
+        # 不被后续罢覆盖。
+        # 越界声明：此处写正赋应征，突破 ADR 0020 落位 5「applier 仅 UPDATE
+        # {三饷应征,起运定额}、保留正赋应征不动」的保集——该保集约束的是历史饷率
+        # 通道对正赋基线的静默改写，本票由皇帝批语显式驱动，是票面授权的效果本身，
+        # 非通道副作用。无罢/复批语时逐字节不动正赋应征（保集照旧成立）。
+        zhengfu_unchanged = True
+        if tian_abolished:
+            if _SETTLE_META_ZHENGFU_SEED_KEY not in meta:
+                meta[_SETTLE_META_ZHENGFU_SEED_KEY] = p.get("正赋应征")
+            next_p["正赋应征"] = 0.0
+            zhengfu_unchanged = p.get("正赋应征") == 0.0
+        elif _SETTLE_META_ZHENGFU_SEED_KEY in meta:
+            restored = meta.pop(_SETTLE_META_ZHENGFU_SEED_KEY)
+            next_p["正赋应征"] = restored
+            zhengfu_unchanged = p.get("正赋应征") == restored
         meta[_SETTLE_META_LIAO_SEED_KEY] = liao_seed
         if has_jiao_seed or land_denominator > 0:
             meta[_SETTLE_META_JIAO_SEED_KEY] = jiao_seed
@@ -1654,6 +1738,7 @@ def _apply_fiscal_levy_targets(
         _fiscal_levy_mark_provisional(meta)
         if meta == meta_raw \
                 and current_targets_stored \
+                and zhengfu_unchanged \
                 and math.isclose(current_sanxiang, target_sanxiang, rel_tol=0, abs_tol=_FISCAL_LEVY_TARGET_ABS_TOL) \
                 and math.isclose(current_transport, target_transport, rel_tol=0, abs_tol=_FISCAL_LEVY_TARGET_ABS_TOL):
             continue
