@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import shutil
-import threading
 from types import SimpleNamespace
 
 import ming_sim.decree as decree_mod
@@ -19,6 +18,7 @@ from ming_sim.models import LLMConfig
 from ming_sim.session import GameSession
 from ming_sim.session_write_queue import get_session_write_queue
 from tests.conftest import (
+    LegRendezvous,
     note_queue_until_game_teardown,
     offline_empty_audience_translate,
     persist_and_schedule_scene,
@@ -368,9 +368,7 @@ def test_held_rejudgments_overlap_instead_of_waiting_in_one_worker(game, monkeyp
         ids.append(dossier_id)
     db.conn.commit()
     open_night(db, state)
-    entered = []
-    gate = threading.Event()
-    lock = threading.Lock()
+    rendezvous = LegRendezvous(monkeypatch)
 
     def judge(_agent, prompt, **_kwargs):
         dossier = json.loads(prompt)["dossiers"][0]
@@ -379,12 +377,10 @@ def test_held_rejudgments_overlap_instead_of_waiting_in_one_worker(game, monkeyp
         })
 
     def simulate(_agent, _prompt, **_kwargs):
-        with lock:
-            entered.append(1)
-            if len(entered) == 2:
-                gate.set()
-        # 无时限：等的是对方那条腿（含其材料树），2s 墙钟短于真实工作。
-        gate.wait()
+        # 会合：两条腿都进推演才放行；任一腿先抛错则无人能到达，如实返回
+        # False 让下方断言报红（不放宽断言、不靠墙钟收场）。
+        rendezvous.arrive()
+        assert rendezvous.wait(2), "对端腿已终结，会合未成立"
         return "预推"
 
     monkeypatch.setattr(decree_mod, "run_agent_text", judge)
@@ -396,7 +392,7 @@ def test_held_rejudgments_overlap_instead_of_waiting_in_one_worker(game, monkeyp
     sess = _sess(db, state, content, monkeypatch, lambda *_a, **_k: {})
     assert forecast_mod.schedule_held_decree_forecasts(sess) is True
     wait_pending_writes(sess)
-    assert len(entered) == 2
+    assert rendezvous.arrived == 2
     for dossier_id, pending_id in zip(ids, pending_ids):
         stale_ref = pending_action_decree_ref(pending_id, 1)
         held_ref = held_dossier_decree_ref(dossier_id)
@@ -445,19 +441,13 @@ def test_same_local_ids_on_two_saves_both_stage(game, _game_template_path, monke
     shutil.copyfile(_game_template_path, copy_path)
     other = GameDB(str(copy_path), content)
 
-    entered = []
-    started = threading.Event()
-    release = threading.Event()
-    entered_lock = threading.Lock()
+    rendezvous = LegRendezvous(monkeypatch)
 
     def judge(_agent, prompt, **_kwargs):
-        with entered_lock:
-            entered.append(1)
-            if len(entered) >= 2:
-                release.set()
-        started.set()
-        # 无时限：等的是另一档那条腿（含其材料树），2s 墙钟短于真实工作。
-        release.wait()
+        # 会合：两档各一条腿都到判官才放行；任一腿先抛错则另一腿无人可等，
+        # 如实返回 False 由断言报红（不放宽断言、不靠墙钟收场）。
+        rendezvous.arrive()
+        assert rendezvous.wait(2), "对端腿已终结，会合未成立"
         dossier = json.loads(prompt)["dossiers"][0]
         return json.dumps({
             "verdicts": [{"dossier_id": dossier["id"], "decision": "promulgated"}],
@@ -488,8 +478,8 @@ def test_same_local_ids_on_two_saves_both_stage(game, _game_template_path, monke
         assert forecast_mod.schedule_pending_decree_forecast(
             armed[0][0], armed[0][2], night_id=armed[0][3],
         ) is True
-        # 无时限：等第一条腿跑完材料树到判官，2s 墙钟短于真实工作。
-        started.wait()
+        # 第一条腿进判官再放第二条档；该腿若先抛错，会合立刻判否而非挂死。
+        assert rendezvous.wait(1), "第一条腿未及进判官即已终结"
         assert forecast_mod.schedule_pending_decree_forecast(
             armed[1][0], armed[1][2], night_id=armed[1][3],
         ) is True
@@ -499,9 +489,8 @@ def test_same_local_ids_on_two_saves_both_stage(game, _game_template_path, monke
                 pending_action_decree_ref(pending_id, 1),
             )
             assert len(stored) == 1 and stored[0].verdict["decision"] == "promulgated"
-        assert len(entered) == 2
+        assert rendezvous.arrived == 2
     finally:
-        release.set()
         for sess, *_rest in armed:
             wait_pending_writes(sess)
         other.close()
