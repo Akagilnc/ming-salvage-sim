@@ -2478,42 +2478,16 @@ def event_to_issue(db: GameDB, state: GameState, ev: Event, *, commit: bool = Tr
             return None
     # 初值由 severity 推一个偏中性的 bar
     bar = max(20, min(60, 50 - int(ev.severity / 5)))
-    # 默认 ongoing + inertia 五档（+10/+5/0/-5/-10），按 kind 取
-    ongoing: Dict[str, object] = {}
-    inertia = -5
+    # 默认 ongoing + inertia 五档（+10/+5/0/-5/-10）与终结效果，按 kind 取。
+    # 形状与消费它的每月漂移循环同处 `situation_drift`，此处只取结果落库。
+    from ming_sim.situation_drift import (
+        default_situation_shape,
+        situation_terminal_effects,
+    )
+    ongoing, inertia, polarity = default_situation_shape(ev.kind, ev.title)
     # 终结一锤子永久数值：达成（bar→100）落 effect_on_resolve，崩坏（bar→0 或 LLM 判失败）落
     # effect_on_fail。与 ongoing 过程效果区分——过程是每月漂移，终结是定局后的永久民心/皇威增减。
-    polarity = "neg"  # neg=负面危机（平息回血/崩坏重创）；pos=正面机遇（把握加成/错失轻微）
-    # 5 个原 metric（边防/民变/党争/执行/瞒报）已废除，ongoing_effects 按 kind 改用
-    # 民心/皇威 或留空让 LLM 在推进时自定。结构性影响由 region/army/external/class delta 承担。
-    if ev.kind in ("天灾", "灾情", "饥荒"):
-        ongoing = {"metrics": {"民心": -2}, "economy": [{"account": "国库", "delta": -8, "category": "赈济损耗", "reason": ev.title}]}
-        inertia = -10
-    elif ev.kind in ("人祸", "兵变", "流寇", "民变", "抗税"):
-        ongoing = {"metrics": {"民心": -2}}
-        inertia = -10
-    elif ev.kind in ("外族", "边事"):
-        ongoing = {"metrics": {"皇威": -1}}
-        inertia = -5
-    elif ev.kind in ("党争", "朝议"):
-        ongoing = {}
-        inertia = -5
-    elif ev.kind in ("丰收", "祥瑞", "民和"):
-        ongoing = {"metrics": {"民心": 2}}
-        inertia = +10
-        polarity = "pos"
-    elif ev.kind in ("友邦", "归附", "盟约"):
-        ongoing = {"metrics": {"皇威": 1}}
-        inertia = +5
-        polarity = "pos"
-    elif ev.kind in ("良策", "试点", "献宝", "科技"):
-        inertia = +5
-        polarity = "pos"
-    elif ev.kind in ("战机", "敌乱"):
-        ongoing = {"metrics": {"皇威": 1}}
-        inertia = +10
-        polarity = "pos"
-    effect_resolve, effect_fail = _situation_terminal_effects(ev.kind, int(ev.severity), polarity)
+    effect_resolve, effect_fail = situation_terminal_effects(ev.kind, int(ev.severity), polarity)
     # 精调字段优先：合并自 opening_crises 的手调危机带 bar/ongoing/effect/meaning，直接用其值；
     # 缺省（0/空）则用上面按 severity/kind 推导的默认。
     if ev.bar_value:
@@ -3024,40 +2998,6 @@ def _pending_person_changes_block_event_gate(
     return False
 
 
-# 会崩坏的局势：人为可控、有明确「彻底失败」时刻——镇压不住/边镇沦陷/朝局崩坏。
-# 它们 bar 能跌到 0、status 转 failed 终结，落 effect_on_fail 一锤子永久重创。
-# 不在此集合的（天灾/饥荒等不可控天象、正面机遇）无失败态：bar 下限 1、永不 failed、
-# effect_on_fail 留空，伤害全靠 ongoing_effects 持续累积。db.advance_issue 据 effect_on_fail
-# 是否非空来判能否崩坏，故此处「会崩坏」与「非空 fail effect」必须一致。
-_COLLAPSIBLE_KINDS = frozenset({
-    "人祸", "兵变", "流寇", "民变", "抗税", "党争", "朝议", "外族", "边事",
-})
-
-
-def _situation_terminal_effects(kind: str, severity: int, polarity: str):
-    """situation 终结一锤子永久效果。按 severity 推量级（轻 50 / 中 65 / 重 80）。
-    resolve：达成（bar→100）落永久回血/加成，所有 situation 都有。
-    fail：仅「会崩坏」局势（_COLLAPSIBLE_KINDS）有，崩坏（bar→0）落永久重创，幅度重于回血。
-    民心/皇威由 kind 倾向决定（边事/外族偏皇威，灾害/民变偏民心，余者两者兼得）。"""
-    mag = 1 if severity < 55 else (2 if severity < 70 else 3)
-    if kind in ("外族", "边事", "友邦", "归附", "盟约", "战机", "敌乱"):
-        axis = "皇威"
-    elif kind in ("天灾", "灾情", "饥荒", "人祸", "兵变", "流寇", "民变", "抗税", "丰收", "祥瑞", "民和"):
-        axis = "民心"
-    else:
-        axis = "both"
-
-    def _metrics(amount: int) -> Dict[str, int]:
-        if axis == "both":
-            half = max(1, abs(amount) // 2)
-            s = 1 if amount > 0 else -1
-            return {"民心": s * half, "皇威": s * half}
-        return {axis: amount}
-
-    resolve_amt = (3 if polarity == "neg" else 4) * mag
-    effect_resolve = {"metrics": _metrics(resolve_amt)}
-    effect_fail = {"metrics": _metrics(-5 * mag)} if kind in _COLLAPSIBLE_KINDS else {}
-    return effect_resolve, effect_fail
 
 
 def _normalize_cancellable(raw: object) -> str:

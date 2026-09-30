@@ -695,7 +695,7 @@ def test_inertia_natural_resolution_tolerated_rejection_no_crash(game):
     db.conn.commit()
 
     from ming_sim.situation_drift import apply_situation_monthly_drift
-    apply_situation_monthly_drift(db, state, touched_ids=set())  # 不抛
+    apply_situation_monthly_drift(db, state)  # 不抛
 
     row = db.conn.execute("SELECT status FROM issues WHERE id=?", (issue_id,)).fetchone()
     assert row[0] == "resolved"

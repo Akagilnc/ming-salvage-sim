@@ -9,11 +9,11 @@ import math
 
 import pytest
 
-from ming_sim.flows import (
+from ming_sim.army_pay import (
     _next_mutiny_latch,
-    apply_fixed_period_flows,
     derive_army_mutiny_state,
 )
+from ming_sim.flows import apply_fixed_period_flows
 ARMY = "guanning"
 PATHS = ("legacy", "substrate_hub")
 

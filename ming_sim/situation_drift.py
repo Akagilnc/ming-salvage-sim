@@ -55,6 +55,74 @@ from ming_sim.staged_commitment import is_stage_derived_end_turn
 from ming_sim.token_stats import tlog
 
 
+# 会崩坏的局势：人为可控、有明确「彻底失败」时刻——镇压不住/边镇沦陷/朝局崩坏。
+# 它们 bar 能跌到 0、status 转 failed 终结，落 effect_on_fail 一锤子永久重创。
+# 不在此集合的（天灾/饥荒等不可控天象、正面机遇）无失败态：bar 下限 1、永不 failed、
+# effect_on_fail 留空，伤害全靠 ongoing_effects 持续累积。db.advance_issue 据 effect_on_fail
+# 是否非空来判能否崩坏，故此处「会崩坏」与「非空 fail effect」必须一致。
+COLLAPSIBLE_SITUATION_KINDS = frozenset({
+    "人祸", "兵变", "流寇", "民变", "抗税", "党争", "朝议", "外族", "边事",
+})
+
+
+def situation_terminal_effects(kind: str, severity: int, polarity: str):
+    """situation 终结一锤子永久效果。按 severity 推量级（轻 50 / 中 65 / 重 80）。
+    resolve：达成（bar→100）落永久回血/加成，所有 situation 都有。
+    fail：仅「会崩坏」局势（COLLAPSIBLE_SITUATION_KINDS）有，崩坏（bar→0）落永久重创，幅度重于回血。
+    民心/皇威由 kind 倾向决定（边事/外族偏皇威，灾害/民变偏民心，余者两者兼得）。"""
+    mag = 1 if severity < 55 else (2 if severity < 70 else 3)
+    if kind in ("外族", "边事", "友邦", "归附", "盟约", "战机", "敌乱"):
+        axis = "皇威"
+    elif kind in ("天灾", "灾情", "饥荒", "人祸", "兵变", "流寇", "民变", "抗税", "丰收", "祥瑞", "民和"):
+        axis = "民心"
+    else:
+        axis = "both"
+
+    def _metrics(amount: int) -> Dict[str, int]:
+        if axis == "both":
+            half = max(1, abs(amount) // 2)
+            s = 1 if amount > 0 else -1
+            return {"民心": s * half, "皇威": s * half}
+        return {axis: amount}
+
+    resolve_amt = (3 if polarity == "neg" else 4) * mag
+    effect_resolve = {"metrics": _metrics(resolve_amt)}
+    effect_fail = {"metrics": _metrics(-5 * mag)} if kind in COLLAPSIBLE_SITUATION_KINDS else {}
+    return effect_resolve, effect_fail
+
+
+def default_situation_shape(kind: str, title: str):
+    """局势开局形状：kind → (ongoing 过程效果, inertia 档, polarity)。
+
+    灾害月损（天灾/灾情/饥荒的国库赈济损耗）与惯性档同属一条每月漂移结算，
+    故与消费它们的 `apply_situation_monthly_drift` 同处一地，不各持一份 kind 表。
+    polarity：neg=负面危机（平息回血/崩坏重创）；pos=正面机遇（把握加成/错失轻微）。
+    5 个原 metric（边防/民变/党争/执行/瞒报）已废除，ongoing 按 kind 改用
+    民心/皇威 或留空让 LLM 在推进时自定。结构性影响由 region/army/external/class delta 承担。
+    """
+    if kind in ("天灾", "灾情", "饥荒"):
+        return (
+            {"metrics": {"民心": -2},
+             "economy": [{"account": "国库", "delta": -8, "category": "赈济损耗", "reason": title}]},
+            -10, "neg",
+        )
+    if kind in ("人祸", "兵变", "流寇", "民变", "抗税"):
+        return {"metrics": {"民心": -2}}, -10, "neg"
+    if kind in ("外族", "边事"):
+        return {"metrics": {"皇威": -1}}, -5, "neg"
+    if kind in ("党争", "朝议"):
+        return {}, -5, "neg"
+    if kind in ("丰收", "祥瑞", "民和"):
+        return {"metrics": {"民心": 2}}, +10, "pos"
+    if kind in ("友邦", "归附", "盟约"):
+        return {"metrics": {"皇威": 1}}, +5, "pos"
+    if kind in ("良策", "试点", "献宝", "科技"):
+        return {}, +5, "pos"
+    if kind in ("战机", "敌乱"):
+        return {"metrics": {"皇威": 1}}, +10, "pos"
+    return {}, -5, "neg"
+
+
 def _commitment_bar_value(progress: Dict[str, object]) -> Optional[int]:
     if "remaining_arrears" not in progress:
         return None
@@ -279,7 +347,6 @@ def _expire_commitment_issue(
 def apply_situation_monthly_drift(
     db: GameDB,
     state: GameState,
-    touched_ids: Optional[set] = None,
     applied_person_changes: Optional[List[Dict[str, object]]] = None,
 ) -> List[Dict[str, object]]:
     """返回 inertia 自然结案路产生的容忍拒收项——settle 在 inertia 之后补收进
@@ -287,7 +354,6 @@ def apply_situation_monthly_drift(
     与 tracker-close 路同输入两判;ship-pre r1)。"""
     # inertia 是每月自然漂移基础量，对所有进行中 issue 都生效（含本月被 advance 触动的）。
     # advance 的 delta_bar 是皇帝本月实旨推动的额外量，与 inertia 叠加，互不顶替。
-    _ = touched_ids  # 保留入参不破坏调用方；inertia 漂移不再按它跳过
     inertia_rejections: List[Dict[str, object]] = []
     active = db.list_active_issues()
     commit_local = not bool(getattr(db.conn, "in_transaction", False))

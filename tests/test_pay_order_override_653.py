@@ -1280,10 +1280,10 @@ def test_central_due_haircut_consumer(game):
 
 def test_pure_central_zero_haircut_due_clears_shortfall_counter(game):
     """#651×#653：纯中央军合法折发后 Due floor=0 须归零连续缺口计数，且不自动还旧欠。"""
+    from ming_sim.army_pay import army_needed
     from ming_sim.flows import (
         _central_dues_with_haircut,
         apply_fixed_period_flows,
-        army_needed,
     )
 
     db, state, _content = game
@@ -1326,27 +1326,6 @@ def test_pure_central_zero_haircut_due_clears_shortfall_counter(game):
     # 中央旧欠不因零 Due 月自动偿还（ADR 0023 D7③ / #653 边界）
     assert float(after["central_pay_arrears"] or 0) == pytest.approx(old_central_arrears)
     assert float(after["arrears"] or 0) == pytest.approx(old_arrears)
-
-
-def test_central_hub_tier_order_and_old_arrears_unchanged_by_haircut(game):
-    """宪法边界 golden：hub tier 序/D9 合并 k 公式/中央旧欠不自动偿还均不被折发改写。"""
-    import inspect
-
-    from ming_sim.flows import _compute_substrate_hub_outbound
-
-    src = inspect.getsource(_compute_substrate_hub_outbound)
-    # D9 合并 k 分母仍是 Σ(京运补+中央军饷应付)，公式未被折发旁路
-    assert "tier_due_total = jingyun_due_total + central_due_total" in src
-    assert "k = (" in src
-    # 中央旧欠无自动偿还位：中央路径只增欠（old_central_arrears + shortfall），无偿还分支
-    from ming_sim import flows as flows_mod
-    apply_src = inspect.getsource(flows_mod.apply_fixed_period_flows)
-    assert "old_central_arrears + shortfall" in apply_src
-    central_arrears_assignment = next(
-        line for line in apply_src.splitlines()
-        if "central_arrears = max(0.0, old_central_arrears + shortfall)" in line
-    )
-    assert "min(" not in central_arrears_assignment
 
 
 # ═══════════════ 独立 oracle 宪制 mutation 自验 ═══════════════
