@@ -259,11 +259,7 @@ def build_c0_declaration_shape() -> str:
         '      "pacification": {"target_id": "自新内乱首领的具名 id", "mode": "ordinary|midzhi"},\n'
         '      "secret_order": {"title": "密令标题", "content": "密令正文", '
         '"assignee": "承办人 id", "tags": [], "deadline_months": 0, '
-        '"covert_task": {"kind": "差务类型（如 查案）", "axes": ["所据人物轴"], '
-        '"direction": 1, "delivery_target_units": 须坐实的事实条数, "effect_sign": 1, '
-        '"investigation_target": "查案时填被查者人名，非查案留空", '
-        '"investigation_fact": "查案时本道密令的来源明确指向的那条罪证标识；'
-        '来源没指明具体哪一条就留空"}},\n'
+        '"covert_task": {}},\n'
         '      "secret_order_progress": {"order_id": "往期有效密令 id", "note": "本轮具名进展"},\n'
         '      "strategy_selection": {"target_id": "已选方案的政策目标 id", '
         '"source_chat_turn_id": "本场已说的大臣陈策轮 chat_turn_id（不能填本轮）"},\n'
@@ -367,6 +363,9 @@ def build_audience_translate_prompt(
         "无该源轮不得猜造。\n"
         "- 具名秘密差事的新建走 commission.secret_order；必须含 title、content、"
         "承办人与已确定的 covert_task 冻结任务契约；无契约不得编造。"
+        "covert_task 的字段随差务类型而异，按该类契约给全（含交付单位与对应身份字段）。"
+        "查案类另可在 covert_task 里给 investigation_fact：本道密令的来源明确指向"
+        "哪一条罪证就填那一条的标识，没指明就留空——留空不是错，引擎不会替来源挑一条。\n"
         "往期密令具名进展走 commission.secret_order_progress；不凭空记进展。\n"
         "- 皇帝对已暂存交办说「准」「照办」等应允语义 → promises 里 decision=应允；"
         "「不准」「作罢」→ 拒绝；修改已有新建密令 → 修改并给完整 typed new_content，"

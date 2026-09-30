@@ -57,12 +57,17 @@ def identity_material_rel(name: object) -> str:
 def write_identity_materials(
     prepared: Any, db: Any, state: Any, names: Sequence[object],
 ) -> List[str]:
-    """把各人的身份投影写进**本次调用自己的**材料树，返回相对路径。
+    """把各人的身份投影写进**已备好的材料树**，返回相对路径。
 
-    ⚠️ 只能写进该次调用备的树（如 4a 密令供料），**不可**并进世界段／邸报作者
-    共用的世界树：身份投影含本人私务（含其在办密报正文），并进共用树等于把密报
-    内容抬进推演者／邸报作者的读取范围（#1862 用例正守这条界：密报不入邸报）。
-    同场不等于人物全知，读取范围也不该因共用一棵树而互相放宽。
+    调用方备什么树就写什么树（4a 密令供料传自己的 ``prepared``）。实情须说明白：
+    4a 目前用的是 ``prepare_world_materials(db, state)`` 的默认根
+    （``…/turn-N/世界推演``），与世界段同一路径——**不外泄靠的是生命周期而非路径**：
+    4a 调完即 ``release_material_tree`` 整树释放，邸报作者用前会重新 prepare，
+    故读不到上一场留在树里的东西（#1862 用例正守「密报不入邸报」这条界）。
+
+    ⚠️ 故本函数**不得**在别的调用还持有一棵未释放的树时被调进去：身份投影含
+    本人私务（含其在办密报正文），并进一棵**别人正在读**的树等于把密报内容
+    抬进其读取范围。同场不等于人物全知，读取范围也不该因共用一棵树而互相放宽。
     """
     from ming_sim.knowledge import build_character_knowledge, render_character_knowledge
 

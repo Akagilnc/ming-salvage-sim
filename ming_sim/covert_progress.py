@@ -1061,14 +1061,23 @@ def investigation_monthly_capacity(
 def record_investigation_source_clue(
     db: Any, dossier_id: int, *, fact_key: str = "", turn: int = 0,
 ) -> None:
-    """开案时把**本案自己的来源**记成一条真实线索（#1896 R6）。
+    """开案时把**带指针的本案来源**记成一条真实线索（#1896 R6）。
 
     汇案走 ``merge_investigation_confirmation`` 会留线索，但首次开案那条来源
     原先只在密令合同里存了个指针，案卷 ``investigation_clues`` 是空的——
     于是"开案时已带 investigation_fact 的首个来源"既不助它所指的实证、
     也和后来汇案的那条待遇不同（大理寺 R6：同一合同，先开案 clues=[]/effort=0，
-    后汇案才拿到对应 clue）。两种来源走同一条接线，差别只在有无 fact_key。
+    后汇案才拿到对应 clue）。两种来源走同一条接线。
+
+    ⚠️ **只在合同真带 investigation_fact 时才写**：无指针的开案**不造线索**。
+    ADR 0098:11 的「各源加成」与兜底路由都只作用于**真实存在的来源**（检举、
+    证词、苦主这类确实带着案情而来的消息），不是给「开案」这个动作本身记一笔。
+    凭空造一条空指针线索再让它走兜底路由，等于每道查案密令首月白送一次实投
+    （台院 F1）——那既不是真实来源，也让「敷衍＝零投入」不成立。
     """
+    key = str(fact_key or "").strip()
+    if not key:
+        return  # 无指针的开案不是一条来源线索，不造
     payload = _dossier_payload_map(db, int(dossier_id))
     clues = payload.get(INVESTIGATION_CLUES_KEY)
     if not isinstance(clues, list):
@@ -1076,7 +1085,7 @@ def record_investigation_source_clue(
     clues.append({
         "pending_action_id": 0,
         "origin_chat_message_ids": [],
-        "fact_key": str(fact_key or "").strip(),
+        "fact_key": key,
         "turn": int(turn or 0),
         "credited": False,
         "origin": "case_opening",
@@ -1167,8 +1176,9 @@ def _consume_monthly_clues(
     - 同一线索只消费一次（``credited``），重开重试不双计；
     - 线索把该条累计实投推过其难度时，同样按"达到难度即记已掌握"记查获。
 
-    **无指针的通用线索走 ADR 0098:11 的确定性兜底路由**（owner 2026-09-30 裁定
-    「维持现行已准设计」：该条路由是既有已准规则，不因本次人物行动裁决而废止）：
+    **无指针的真实来源线索走 ADR 0098:11 的确定性兜底路由**（该条路由是既有已准
+    规则，不因本次人物行动裁决而废止；⚠️ 只作用于真实存在的来源，「开案」这个动作
+    本身不是来源——无指针的开案不造线索，见 ``record_investigation_source_clue``）：
     先归 seed_guilt lane；目标无 seed_guilt lane 而案内有其他活跃 lane 时按
     fact_key 稳定序（边事件 id 升序）取首条；**全案无 lane 才丢弃**并留痕。
     路由只在既有 lane 内移动、从不造真相。

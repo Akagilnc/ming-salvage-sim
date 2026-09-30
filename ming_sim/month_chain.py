@@ -1020,8 +1020,9 @@ def _identity_materials(db: Any, state: Any, name: str) -> Dict[str, Any]:
 
     只给**材料目录里的路径**，不给正文：读取形态是「备一个地方它自己读」
     （ADR 0155:8），把渲染全文塞进调用消息正是该条明否的形态。正文由
-    ``prepare_world_materials`` 按同一 ``knowledge`` 投影写进同一棵树
-    （``人物/<人>/此刻所知.txt``），两个读口同源、restore 可复现。
+    ``materials.write_identity_materials`` 在 4a 备树之后、调用之前写进
+    ``人物/<人>/此刻所知.txt``，两个读口按同一条 ``identity_material_rel``
+    同源，restore 可复现。
     查案对象不是真人物（如「某类人」式题名）时没有身份材料，如实留空，不编。
     """
     who = str(name or "").strip()
