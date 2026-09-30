@@ -49,6 +49,22 @@ def _mark_rise(db, state, label):
     )
 
 
+def _reabolish_by_zeroing_rate(db, state):
+    """第二道罢批语：辽饷_base 目录行已删，改以 fiscal_config_changes 把
+    辽饷_rate 调回 0 表示停征（罢的另一落法），并留 changes 账供 turn 比对。"""
+    origin = f"edict:{state.turn}"
+    db.conn.execute(
+        "INSERT INTO fiscal_config(key,value,kind,note) VALUES ('辽饷_rate',0,'rate','') "
+        "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+    )
+    db.conn.execute(
+        "INSERT INTO fiscal_config_changes (turn, key, old_value, new_value, delta, origin_ref, reason) "
+        "VALUES (?, '辽饷_rate', 100, 0, -100, ?, '再罢')",
+        (state.turn, origin),
+    )
+    db.conn.commit()
+
+
 def test_abolished_liao_levy_stops_collection_next_month(game):
     """罢辽饷 → 过月后 settle.p.三饷应征 的辽饷分量归零（起运随之回落）。"""
     db, state = _at(game, 1627, 10)
@@ -92,17 +108,55 @@ def test_rejected_rise_without_abolition_keeps_nine_li_baseline(game):
 
 
 def test_abolished_liao_levy_reopened_by_later_rise_approval_uses_new_rate(game):
-    """罢辽饷后在历史升率节点批「准」= 重新开征，按新率征，不另要恢复旨。"""
+    """罢辽饷 → 后在历史升率节点批「准」= 重新开征，按新率征，不另要恢复旨。
+
+    三个时序必须分开验证（票面「怎么验」：两种决定中途恢复、互不覆盖）：
+    罢→准（复征按新率）、准→罢（罢在后 = 不征）、罢→准→再罢（最后批语是罢）。
+    """
     db, state = _at(game, 1631, 1)
+
+    # ① 罢在前、准在后 → 重新开征，按新率。
     _abolish(db, "辽饷", state.turn)
+    state.turn += 5
+    state.year, state.period = 1631, 6
+    db.save_state(state)
     _mark_rise(db, state, "已准")
+    apply_historical_fiscal_rates(state, db)
+    reopened = _settle(db)
+    assert reopened["p"]["三饷应征"] == pytest.approx(
+        reopened["_meta"]["辽饷九厘基线"] * 4.0 / 3.0
+    )
+
+    # ② 罢→准→再罢：最后有效批语是罢 → 又不征（旧复征不覆盖新罢）。
+    # 再罢走 fiscal_config_changes 把值调回 0（罢的另一种落法）：辽饷_base 目录行
+    # 早在①已被 remove_fiscal_item 删掉，无行可再 remove，故以调零表示第二道罢批语。
+    state.turn += 5
+    state.year, state.period = 1631, 11
+    db.save_state(state)
+    _reabolish_by_zeroing_rate(db, state)
+    apply_historical_fiscal_rates(state, db)
+    assert _settle(db)["p"]["三饷应征"] == 0.0
+
+
+def test_rise_approved_before_abolition_keeps_abolition_in_force(game):
+    """准升率在前、罢辽饷在后 → 最后批语是罢，下月不征（罢饷真正生效）。
+
+    这是评审指出的缺腿：布尔实现会把「准」当成永久复征，令罢在此时序下失效。
+    """
+    db, state = _at(game, 1631, 1)
+    _mark_rise(db, state, "已准")
+    apply_historical_fiscal_rates(state, db)
+    risen = _settle(db)["p"]["三饷应征"]
+    assert risen > 0
+
+    state.turn += 3
+    state.year, state.period = 1631, 4
+    db.save_state(state)
+    _abolish(db, "辽饷", state.turn)
 
     apply_historical_fiscal_rates(state, db)
 
-    settle = _settle(db)
-    assert settle["p"]["三饷应征"] == pytest.approx(
-        settle["_meta"]["辽饷九厘基线"] * 4.0 / 3.0
-    )
+    assert _settle(db)["p"]["三饷应征"] == 0.0
 
 
 def test_abolished_tian_fu_zeroes_regular_assessment_and_restores_on_recall(game):
