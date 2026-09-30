@@ -925,12 +925,7 @@ def _write_tree(
         index.append(f"{_AFFAIR_DIR}/{segment}/当前情况.txt")
 
     public_events = knowledge.get("public_events") or []
-    index.extend(_write_public_by_month(tmp, public_events))
-    index.extend(_write_gazette_index(
-        tmp,
-        _with_archived_gazette_titles(_character_gazette_rows(public_events), db),
-        prefix=_CHARACTER_GAZETTE_DIR,
-    ))
+    index.extend(_write_character_public_layer(tmp, public_events, db))
 
     secret_rel = _write_secret_order_file(tmp, db, state, character)
     if secret_rel:
@@ -1010,10 +1005,14 @@ def _is_gazette_public_event(item: dict) -> bool:
     )
 
 
-def _write_public_by_month(tmp: Path, public_events: list) -> list[str]:
-    """公开说法按月分文件（#1830 既有形态，供人物目录与推演者目录共用）。
+def _write_public_by_month(
+    tmp: Path, public_events: list, *, base: str = _PUBLIC_DIR,
+) -> list[str]:
+    """公开说法按月分文件（#1830 既有形态，人物目录／场景人物子树／推演者目录共用）。
 
-    邸报有独立目录载体，不在此再复制同一份 turn_report。
+    邸报有独立目录载体，不在此再复制同一份 turn_report。``base`` 是目录内
+    相对前缀——场景人物私有子树把同一份材料写在自己名下，准入与人读呈现
+    仍走这一个函数（#1830 共用读侧契约）。
     """
     index: list[str] = []
     public_by_month: dict[tuple[int, int], list[str]] = {}
@@ -1031,11 +1030,28 @@ def _write_public_by_month(tmp: Path, public_events: list) -> list[str]:
         public_by_month.setdefault((year, period), []).append(line)
     for (year, period), lines in sorted(public_by_month.items()):
         fname = f"{year}年{period}月.txt" if year and period else "未标年月.txt"
-        _write_text(tmp / _PUBLIC_DIR / fname, "\n".join(lines))
-        index.append(f"{_PUBLIC_DIR}/{fname}")
+        rel = f"{base}/{fname}" if base else fname
+        _write_text(tmp / rel, "\n".join(lines))
+        index.append(rel)
     return index
 
 
+def _write_character_public_layer(
+    tmp: Path, public_events: Sequence[dict], db: Any, *, base: str = "",
+) -> list[str]:
+    """一份人物可读公开层：按月公开说法 + 本人有权读取的历月邸报载体。
+
+    人物目录、场景人物私有子树共用——同一公开记录的准入与人读呈现不因走哪条
+    目录而分叉（#1830 共用读侧契约 / ADR 0155）。
+    """
+    index = _write_public_by_month(
+        tmp, list(public_events), base=f"{base}/{_PUBLIC_DIR}" if base else _PUBLIC_DIR,
+    )
+    index.extend(_write_gazette_index(
+        tmp,
+        _with_archived_gazette_titles(_character_gazette_rows(public_events), db),
+        prefix=f"{base}/{_CHARACTER_GAZETTE_DIR}" if base else _CHARACTER_GAZETTE_DIR,
+    ))
     return index
 
 
@@ -1844,22 +1860,12 @@ def _write_one_present_person(
         _write_text(tmp / rel, body)
         index.append(rel)
 
-    public_events = knowledge.get("public_events") or []
-    public_by_month: dict[tuple[int, int], list[str]] = {}
-    for item in public_events:
-        year = int(item.get("year") or 0)
-        period = int(item.get("period") or 0)
-        title = str(item.get("title") or "")
-        body = str(item.get("body") or "")
-        if not (title.strip() or body.strip()):
-            continue
-        line = f"{title}：{body}" if title and body else (title or body)
-        public_by_month.setdefault((year, period), []).append(line)
-    for (year, period), lines in sorted(public_by_month.items()):
-        fname = f"{year}年{period}月.txt" if year and period else "未标年月.txt"
-        rel = f"{base}/公开说法/{fname}"
-        _write_text(tmp / rel, "\n".join(lines))
-        index.append(rel)
+    # 公开层与单人目录同形：按月公开说法 + 本人有权读取的历月邸报载体，各写在自己
+    # 名下私有子树。#1830：准入与人读呈现走 _write_character_public_layer 这一个
+    # 入口，不在此另写一份逐条循环（原先此处无邸报门，邸报会混进公开说法）。
+    index.extend(_write_character_public_layer(
+        tmp, knowledge.get("public_events") or [], db, base=base,
+    ))
 
     return index
 
