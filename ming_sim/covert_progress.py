@@ -17,6 +17,7 @@ import json
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from ming_sim.constants import ECONOMY_ACCOUNTS, REGION_FIELD_ALIASES
+from ming_sim.centrifuge_ledger import CENTRIFUGE_AXES
 from ming_sim.materials import secret_order_origin
 from ming_sim.person_archive_contract import PERSON_ACTIONS, PERSON_LEGAL_REASON_CODES
 from ming_sim.value_matrix import (
@@ -430,6 +431,50 @@ def build_covert_task_contract(
         "direction": direction_i,
         "delivery": delivery,
     }
+
+
+# 转译 prompt 里给模型的契约样例：必须能被 build_covert_task_contract 收下，
+# 否则说明本身就在教模型交一份会被拒的载荷（tests 有断言钉住）。
+_CONTRACT_EXAMPLE: Dict[str, object] = {
+    "kind": "查案",
+    "axes": ["实务事功"],
+    "direction": 1,
+    "delivery": {
+        "unit": "人犯",
+        "target_units": 3,
+        "person_action": "处置",
+        "effect_sign": 1,
+    },
+}
+
+
+def describe_covert_task_contract() -> str:
+    """本冻结契约的可消费定义（转译 prompt 的单一真源投影）。
+
+    #1897：转译形状里只写 ``"covert_task": {}`` 等于没告诉模型要交什么，
+    真实模型交不出 ``build_covert_task_contract`` 收的字段。这里从本模块的
+    闭集常量与 identity 规则直接投影出必填字段，闭集不另抄一份。
+
+    样例取自 ``_CONTRACT_EXAMPLE``——那份样例本身必须能被
+    ``build_covert_task_contract`` 收下（tests 有断言），免得说明与实现分叉。
+    """
+    axes = "、".join(sorted(CENTRIFUGE_AXES))
+    units = "、".join(CANONICAL_UNITS)
+    actions = "、".join(PERSON_ACTIONS)
+    accounts = "、".join(ECONOMY_ACCOUNTS)
+    fields = "、".join(sorted(REGION_FIELD_ALIASES))
+    sample = json.dumps(_CONTRACT_EXAMPLE, ensure_ascii=False)
+    return (
+        f"{sample}\n"
+        f"    必填：kind（差务类型）、axes（六轴之一：{axes}）、direction（1 顺轴 / -1 逆轴）、"
+        f"delivery.unit（{units}）、delivery.target_units（正数）、delivery.effect_sign（+1 / -1）。\n"
+        f"    按 unit 另须给足交付身份：人犯 → person_action（{actions}）；"
+        f"万亩 → region / field（{fields}）/ target；"
+        f"万两 → category 与 account（{accounts}），收款（effect_sign=-1）再给 purpose（补饷/其它），"
+        "purpose=补饷 时还须 target_kind=army 与 target_id。"
+        "查 investigative_target 的暗查则给 investigation_target（可数目标）+ target_units + effect_sign。\n"
+        "    上述字段缺一即拒收该条密令；不得凭空编造闭集外的值。"
+    )
 
 
 def coerce_covert_task_contract(raw: object) -> Optional[Dict[str, object]]:

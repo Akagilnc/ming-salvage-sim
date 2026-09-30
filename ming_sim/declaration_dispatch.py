@@ -251,7 +251,7 @@ def _dispatch_declaration_sections(
     }
     commissions = _dispatch_commissions(
         db, state, declaration.get("commissions"),
-        minister_name=minister_name, source=source,
+        minister_name=minister_name, source=source, night_id=night_id,
         source_chat_turn_id=(
             int(chat_turn_id or source_chat_turn_id or 0)
             if source_turn_err is None else 0
@@ -1050,7 +1050,7 @@ def _attach_commission_affair(
 
 def _dispatch_commissions(
     db: Any, state: Any, raw: object, *, minister_name: str, source: Provenance,
-    source_chat_turn_id: int = 0,
+    source_chat_turn_id: int = 0, night_id: int = 0,
 ) -> SectionResult:
     """交办声明 → 既有 pending 暂存。
 
@@ -1059,9 +1059,15 @@ def _dispatch_commissions(
     - 有拨帑 → kind=directive，typed grant 入同一 payload；任免字段若有亦挂同一份
     - 仅任免 → kind=office（收夜成 appointment 案卷）
     - 仅正文 → kind=directive 普通拟旨
+
+    ``night_id``：本声明所属的召对夜，透传给每一条暂存（ADR 0038 后出注记的
+    迟到转译——夜已收时按「当前开着的夜」暂存会挂成 night_id=0，随后应允按
+    「不属本夜暂存清单」missing_ref，补译交办接不上源夜）。无夜（<=0）时
+    沿旧路径由 stage_pending_action 自取开夜。
     """
     items, rejected = _section_items(raw, label="交办声明", source=source)
     applied: List[Any] = []
+    staged_night = int(night_id or 0) or None
     for item in items:
         # #1837 reopen：禁摊派交办——按场面事实绑定暴露案卷，不解析自由文本。
         if _is_prohibit_covert_levy_item(item):
@@ -1117,6 +1123,7 @@ def _dispatch_commissions(
             }
             row_id = db.stage_pending_action(
                 int(state.turn), "directive", "拟旨", actor, payload,
+                night_id=staged_night,
             )
             applied.append({"id": row_id, "payload": payload, "kind": "directive"})
             continue
@@ -1147,6 +1154,7 @@ def _dispatch_commissions(
             row_id = db.stage_pending_action(
                 int(state.turn), kind="secret_order", action="记进展",
                 minister_name=actor, target_id=order_id, payload={"note": note},
+                night_id=staged_night,
             )
             applied.append({"id": row_id, "kind": "secret_order"})
             continue
@@ -1188,7 +1196,7 @@ def _dispatch_commissions(
             }
             row_id = db.stage_pending_action(
                 int(state.turn), "secret_order", "更新", actor, payload,
-                target_id=order_id,
+                target_id=order_id, night_id=staged_night,
             )
             applied.append({"id": row_id, "kind": "secret_order"})
             continue
@@ -1225,20 +1233,53 @@ def _dispatch_commissions(
             except (CovertContractError, TypeError, ValueError) as exc:
                 _reject(rejected, item, f"密令差务契约不成立：{exc}", "invalid_shape", source)
                 continue
+            # ADR 0153:5：承办人只据明确声明分派。场景标签（殿上整场轮）不是人，
+            # 缺承办人且说话人不在名册 → durable 拒收，不拿场景当人物身份。
+            assignee = str(secret.get("assignee") or "").strip()
+            if not assignee:
+                assignee = actor if _is_roster_character(db, actor) else ""
+            if not assignee:
+                _reject(
+                    rejected, item, "密令须明确具名承办人（说话人不在名册，不得以场景充当）",
+                    "invalid_state", source,
+                )
+                continue
+            # ADR 0005 决定 2：可选集合字段坏类型只拒本项，不带走同批合法交办。
+            optional_lists = {
+                key: _declared_str_list(secret.get(key))
+                for key in (
+                    "tags", "excluded_names", "excluded_offices", "dossier_links",
+                )
+            }
+            bad_key = next(
+                (key for key, value in optional_lists.items() if value is None), "",
+            )
+            if bad_key:
+                _reject(
+                    rejected, item, f"密令字段 {bad_key} 须为字符串数组", "invalid_shape", source,
+                )
+                continue
+            body = _declared_prose(secret.get("content"))
+            if body is None:
+                _reject(rejected, item, "密令正文缺自由文本", "invalid_shape", source)
+                continue
+            title = str(secret.get("title") or "").strip()
             payload = {
-                "title": str(secret.get("title") or "").strip(),
-                "content": str(secret.get("content") or "").strip(),
-                "assignee": str(secret.get("assignee") or "").strip() or actor,
-                "tags": list(secret.get("tags") or []),
+                "title": title,
+                # 自由文本零删改（CLAUDE.md P6）：判空在副本上做，存的仍是原文。
+                "content": body,
+                "assignee": assignee,
+                "tags": optional_lists["tags"],
                 "deadline_months": secret.get("deadline_months", 0),
-                "excluded_names": list(secret.get("excluded_names") or []),
-                "excluded_offices": list(secret.get("excluded_offices") or []),
-                "dossier_links": list(secret.get("dossier_links") or []),
+                "excluded_names": optional_lists["excluded_names"],
+                "excluded_offices": optional_lists["excluded_offices"],
+                "dossier_links": optional_lists["dossier_links"],
                 "covert_task": frozen_task,
                 "origin_chat_message_id": int(source_turn["user_message_id"]),
             }
             row_id = db.stage_pending_action(
                 int(state.turn), "secret_order", "新建", actor, payload,
+                night_id=staged_night,
             )
             applied.append({"id": row_id, "kind": "secret_order"})
             continue
@@ -1507,6 +1548,7 @@ def _dispatch_commissions(
                 str(office_payload["appoint_action"]),
                 minister_name,
                 office_payload,
+                night_id=staged_night,
             )
             return {"id": oid, "payload": office_payload, "kind": "office"}
 
@@ -1527,9 +1569,43 @@ def _dispatch_commissions(
             payload["actor"] = actor
         row_id = db.stage_pending_action(
             int(state.turn), "directive", "拟旨", actor, payload,
+            night_id=staged_night,
         )
         applied.append({"id": row_id, "payload": payload, "kind": "directive"})
     return SectionResult(applied=applied, rejected=rejected)
+
+
+def _is_roster_character(db: Any, name: str) -> bool:
+    """名册里是否有这个人（场景标签如「殿上」不是人物，不得当承办人）。"""
+    text = str(name or "").strip()
+    if not text:
+        return False
+    row = db.conn.execute(
+        "SELECT 1 FROM characters WHERE name=? LIMIT 1", (text,),
+    ).fetchone()
+    return row is not None
+
+
+def _declared_str_list(raw: object) -> Optional[List[str]]:
+    """声明里的可选字符串集合字段：形状错（整体非序列 / 元素非 str）返回 None，
+    由调用方逐项 durable 拒收——坏项只带走自己，不炸掉同批合法交办
+    （ADR 0005 决定 2「只拒该项、不带走整批」）。缺省 / null → 空列表。
+
+    元素不做 ``str()`` 强转：类型错是 LLM 脏数据，按 ADR 0005 拒收该项，
+    强转会把 ``[7]`` 悄悄变成 ``["7"]`` 存进案卷。
+    """
+    if raw is None:
+        return []
+    if not isinstance(raw, (list, tuple)):
+        return None
+    items: List[str] = []
+    for entry in raw:
+        if not isinstance(entry, str):
+            return None
+        text = entry.strip()
+        if text:
+            items.append(text)
+    return items
 
 
 def _commission_fallback_actor(db: Any) -> str:
@@ -2068,19 +2144,35 @@ def _dispatch_promises(
                     state, action_ids=[action_id], rejection_collector=_rc,
                 )
                 mirror_rejections_after_commit(db, _rc, rejections_jsonl_path)
+                order_id = 0
                 for c in committed or []:
                     if (
-                        c.get("kind") == "secret_order"
+                        int(c.get("id") or 0) == int(action_id)
+                        and c.get("kind") == "secret_order"
                         and str(c.get("action") or "") == "新建"
                     ):
-                        oid = c.get("secret_order_id") or c.get("target_id")
                         try:
-                            oid_i = int(oid or 0)
+                            order_id = int(
+                                c.get("secret_order_id") or c.get("target_id") or 0,
+                            )
                         except (TypeError, ValueError):
-                            oid_i = 0
-                        if oid_i > 0:
-                            applied_row["secret_order_id"] = oid_i
-                            break
+                            order_id = 0
+                        break
+                if order_id <= 0:
+                    # #1897「保留待办可重试，不当成功」：真实成案失败不是应允成功。
+                    # commit_pending_actions 已把该行标 failed——那会让原 action_id
+                    # 永远重试不到（preexisting_pending_ids / pending 查询都跳过它）。
+                    # 这里把它放回 pending 交还玩家，下一轮同一 action_id 可再应允。
+                    db.conn.execute(
+                        "UPDATE pending_actions SET status='pending' WHERE id=?",
+                        (int(action_id),),
+                    )
+                    _reject(
+                        rejected, item,
+                        "密令成案失败，原暂存已保留可重试", "invalid_state", source,
+                    )
+                    continue
+                applied_row["secret_order_id"] = order_id
             else:
                 changed = False
                 if kind == "directive" and declared_mode is not None:

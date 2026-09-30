@@ -228,6 +228,10 @@ def build_c0_declaration_shape() -> str:
 
     # target_kind 表面唯一真源 = decree_vocabulary.TARGET_KINDS，禁手抄分叉。
     target_kind_hint = "|".join(sorted(TARGET_KINDS))
+    # covert_task 冻结契约定义同样只投影 covert_progress 的真源，禁在此另抄字段表
+    # （#1897：只写 "{}" 的形状让真实模型交不出可消费的契约）。
+    from ming_sim.covert_progress import describe_covert_task_contract
+    covert_contract_shape = describe_covert_task_contract()
     effect_shape = "\n".join(
         f"    {line}" for line in json.dumps(
             {"event_id": "仅属某事件战果时填事件 id；未填即独立", **EMPTY_EXTRACTION},
@@ -257,9 +261,12 @@ def build_c0_declaration_shape() -> str:
         '"transaction_category": "事务类别（有则填）", "amount": "罚俸金额（罚俸时填）", '
         '"backing_dossier_id": "所援案卷 id（有则填）"},\n'
         '      "pacification": {"target_id": "自新内乱首领的具名 id", "mode": "ordinary|midzhi"},\n'
-        '      "secret_order": {"title": "密令标题", "content": "密令正文", '
-        '"assignee": "承办人 id", "tags": [], "deadline_months": 0, '
-        '"covert_task": {}},\n'
+        '      "secret_order": {"title": "密令标题", "content": "密令正文（原样，不删改）", '
+        '"assignee": "承办人名（名册人名，不得填场景）", "tags": [], "deadline_months": 0, '
+        '"excluded_names": [], "excluded_offices": [], "dossier_links": [],\n'
+        '        "covert_task": '
+        + covert_contract_shape
+        + '},\n'
         '      "secret_order_progress": {"order_id": "往期有效密令 id", "note": "本轮具名进展"},\n'
         '      "strategy_selection": {"target_id": "已选方案的政策目标 id", '
         '"source_chat_turn_id": "本场已说的大臣陈策轮 chat_turn_id（不能填本轮）"},\n'
@@ -361,8 +368,9 @@ def build_audience_translate_prompt(
         "- 皇帝从本场大臣陈策中点选方案时，交办正文由转译明确给出，"
         "commission.strategy_selection 指向【本场已说的话】中对应陈策轮 chat_turn_id；"
         "无该源轮不得猜造。\n"
-        "- 具名秘密差事的新建走 commission.secret_order；必须含 title、content、"
-        "承办人与已确定的 covert_task 冻结任务契约；无契约不得编造。"
+        "- 具名秘密差事的新建走 commission.secret_order；必须含 title、content（原样）、"
+        "名册里的承办人 assignee 与上面写明的 covert_task 冻结任务契约；"
+        "契约字段不全或承办人只说到场景（无具名人）时不要勉强成条。\n"
         "往期密令具名进展走 commission.secret_order_progress；不凭空记进展。\n"
         "- 皇帝对已暂存交办说「准」「照办」等应允语义 → promises 里 decision=应允；"
         "「不准」「作罢」→ 拒绝；修改已有新建密令 → 修改并给完整 typed new_content，"

@@ -5,16 +5,20 @@
 ``e2fc6369d`` 删除），一旦转译声明 ``commissions[].secret_order`` 即 ImportError，
 整轮分派炸掉、连同批合法交办一起丢。
 
-本文件只经公开入口 ``dispatch_declaration`` 验：
-- 声明新建密令 → 落一条 secret_order/新建 暂存（不是只有一条暂存交办），
-  应允后案卷真成案（secret_orders 有行、案卷挂得上）；
-- 差务契约不成立 → durable 拒收、零暂存，不当成成功、也不吞掉已受理的交办；
-- 拒收后可由下一句重新声明并真正成案（真可重试）。
+本文件只经公开入口验行为，不盯诊断措辞：
+- 声明新建密令 → 落一条 secret_order/新建 暂存，应允后案卷真成案（可读回）；
+- 差务契约不成立 / 缺具名承办人 / 可选集合字段坏类型 → durable 拒收、零暂存，
+  同批合法交办照落（坏项不带走整批）；
+- 密令正文原样落库（判空不改存储值）；
+- 补译交办承接源夜：夜收后补译暂存仍属源夜，应允照常成案；
+- 成案真失败不当成功：原 action_id 保留可重试，故障解除后同一 id 成案。
 """
 
 from __future__ import annotations
 
 import json
+
+import pytest
 
 from ming_sim import audience_night as an
 from ming_sim.declaration_dispatch import dispatch_declaration
@@ -44,17 +48,24 @@ def _covert_task(*, target_units=3.0, effect_sign=1):
     }
 
 
-def _secret_order_declaration(**overrides):
+def _secret(**overrides):
     secret = {
         "title": "查办粮科私卖",
         "content": "着即密查京师粮科私卖情弊，限三月内具实以闻。",
-        "assignee": "",
         "tags": [],
         "deadline_months": 3,
         "covert_task": _covert_task(),
     }
     secret.update(overrides)
-    return {"commissions": [{"text": "此事要密办，卿去查来。", "secret_order": secret}]}
+    return secret
+
+
+def _secret_order_declaration(**overrides):
+    return {
+        "commissions": [
+            {"text": "此事要密办，卿去查来。", "secret_order": _secret(**overrides)},
+        ],
+    }
 
 
 def _hall_turn(db, state, minister, *, night_id):
@@ -81,19 +92,34 @@ def _dispatch(db, state, minister, declaration, ctid, night_id):
     )
 
 
+def _approve(db, state, minister, ctid, night_id, action_id):
+    return _dispatch(
+        db, state, minister,
+        {"promises": [{"action_id": int(action_id), "decision": "应允"}]},
+        ctid, night_id,
+    )
+
+
+def _open_night(db, state, minister):
+    night = an.open_night(db, state, location="乾清宫", time_of_day="夜")
+    night_id = int(night["id"])
+    return night_id, _hall_turn(db, state, minister, night_id=night_id)
+
+
 def _staged_secret_order_rows(db, turn):
     return db.conn.execute(
-        "SELECT id, kind, action, minister_name, status, payload_json FROM pending_actions "
+        "SELECT id, kind, action, minister_name, status, night_id, payload_json "
+        "FROM pending_actions "
         "WHERE turn=? AND kind='secret_order' AND action='新建' ORDER BY id",
         (int(turn),),
     ).fetchall()
 
 
-def _rejection_rows(db, turn):
+def _rejection_rows(db, turn, section="commissions"):
     return db.conn.execute(
         "SELECT section, reason, category FROM rejection_reports "
-        "WHERE turn=? AND section='commissions' ORDER BY id",
-        (int(turn),),
+        "WHERE turn=? AND section=? ORDER BY id",
+        (int(turn), section),
     ).fetchall()
 
 
@@ -101,12 +127,10 @@ def test_declared_new_secret_order_lands_through_live_dispatch_and_becomes_a_cas
     """票面「怎么验」正路：声明新建密令不 ImportError，落暂存、应允成案、可读回。"""
     db, state, _ = game
     minister = _minister(db)
-    night = an.open_night(db, state, location="乾清宫", time_of_day="夜")
-    night_id = int(night["id"])
-    ctid = _hall_turn(db, state, minister, night_id=night_id)
+    night_id, ctid = _open_night(db, state, minister)
 
     result = _dispatch(
-        db, state, minister, _secret_order_declaration(), ctid, night_id,
+        db, state, minister, _secret_order_declaration(assignee=minister), ctid, night_id,
     )
     assert result.commissions.rejected == [], result.commissions.rejected
     assert len(result.commissions.applied) == 1
@@ -122,11 +146,7 @@ def test_declared_new_secret_order_lands_through_live_dispatch_and_becomes_a_cas
     assert payload["covert_task"]["kind"] == "查案"
 
     # 应允即落地（ADR 0038 夜内直写白名单）。
-    approved = _dispatch(
-        db, state, minister,
-        {"promises": [{"action_id": staged_id, "decision": "应允"}]},
-        ctid, night_id,
-    )
+    approved = _approve(db, state, minister, ctid, night_id, staged_id)
     assert approved.promises.rejected == []
     applied_row = approved.promises.applied[0]
     assert applied_row["kind"] == "secret_order" and applied_row["action"] == "新建"
@@ -137,59 +157,192 @@ def test_declared_new_secret_order_lands_through_live_dispatch_and_becomes_a_cas
     assert order is not None
     assert order["title"] == "查办粮科私卖"
     assert order["status"] == "active"
-    dossier = db.get_dossier_for_secret_order(order_id)
-    assert dossier is not None
+    assert db.get_dossier_for_secret_order(order_id) is not None
 
 
-def test_declared_secret_order_with_unbuildable_contract_is_rejected_not_staged(game):
+def test_secret_order_body_is_stored_verbatim(game):
+    """P6 零删改：判空在副本上做，暂存的正文仍是模型写的原文（含前后空白换行）。"""
+    db, state, _ = game
+    minister = _minister(db)
+    night_id, ctid = _open_night(db, state, minister)
+    raw_body = "\n  密查粮科私卖。  \n"
+
+    result = _dispatch(
+        db, state, minister,
+        _secret_order_declaration(assignee=minister, content=raw_body),
+        ctid, night_id,
+    )
+    assert result.commissions.rejected == [], result.commissions.rejected
+    staged_id = int(_staged_secret_order_rows(db, state.turn)[0]["id"])
+    _approve(db, state, minister, ctid, night_id, staged_id)
+
+    order_id = int(db.conn.execute(
+        "SELECT secret_order_id FROM decree_dossiers "
+        "WHERE pending_action_id=? AND secret_order_id IS NOT NULL",
+        (staged_id,),
+    ).fetchone()["secret_order_id"])
+    assert db.get_secret_order(order_id)["content"] == raw_body
+
+
+def test_bad_secret_order_is_rejected_without_staging_or_landing(game):
     """真失败不当成功：契约缺交付身份 → durable 拒收 + 零暂存（不留注定落不了库的交办）。"""
     db, state, _ = game
     minister = _minister(db)
-    night = an.open_night(db, state, location="乾清宫", time_of_day="夜")
-    night_id = int(night["id"])
-    ctid = _hall_turn(db, state, minister, night_id=night_id)
+    night_id, ctid = _open_night(db, state, minister)
 
     bad_task = {"kind": "查案", "axes": ["实务事功"], "direction": 1,
                 "delivery": {"unit": "人犯", "target_units": 2.0}}
     result = _dispatch(
-        db, state, minister, _secret_order_declaration(covert_task=bad_task), ctid, night_id,
+        db, state, minister,
+        _secret_order_declaration(assignee=minister, covert_task=bad_task),
+        ctid, night_id,
     )
 
     assert result.commissions.applied == []
     assert len(result.commissions.rejected) == 1
     rejections = _rejection_rows(db, state.turn)
     assert len(rejections) == 1, [dict(r) for r in rejections]
-    assert "差务契约不成立" in str(rejections[0]["reason"])
+    # 断言分类而非诊断措辞：措辞是给人看的，行为才是契约。
+    assert rejections[0]["category"] == "invalid_shape"
     assert _staged_secret_order_rows(db, state.turn) == []
     assert db.list_secret_orders() == []
 
 
-def test_rejected_secret_order_can_be_redeclared_and_lands_on_the_next_turn(game):
-    """失败保持真实可重试：拒收后由下一句重新声明，真能成案。"""
+def test_scene_speaker_without_roster_assignee_is_not_made_into_a_minister(game):
+    """ADR 0153:5：场景标签不是人物身份。整场轮无具名承办人 → 拒收，不写 order_minister=殿上。"""
+    db, state, _ = game
+    speaker = an.SCENE_CHAT_SPEAKER
+    night_id, ctid = _open_night(db, state, speaker)
+
+    result = _dispatch(
+        db, state, speaker, _secret_order_declaration(assignee=""), ctid, night_id,
+    )
+    assert result.commissions.applied == []
+    assert len(result.commissions.rejected) == 1
+    assert _rejection_rows(db, state.turn)[0]["category"] == "invalid_state"
+    assert _staged_secret_order_rows(db, state.turn) == []
+    assert db.list_secret_orders() == []
+
+
+@pytest.mark.parametrize("bad_tags", [7, [7]], ids=["whole_field", "element"])
+def test_bad_optional_list_field_rejects_only_its_own_item(game, bad_tags):
+    """ADR 0005:12：可选集合字段类型错只拒该项，同批合法交办照落（不带走整批）。
+
+    整体非序列（``tags=7``）与元素非字符串（``tags=[7]``）都是脏数据：都拒本项，
+    都不许 ``str()`` 强转蒙混过关。
+    """
     db, state, _ = game
     minister = _minister(db)
-    night = an.open_night(db, state, location="乾清宫", time_of_day="夜")
-    night_id = int(night["id"])
-    ctid = _hall_turn(db, state, minister, night_id=night_id)
+    night_id, ctid = _open_night(db, state, minister)
 
-    bad_task = {"kind": "查案", "axes": ["实务事功"], "direction": 1,
-                "delivery": {"unit": "人犯", "target_units": 2.0}}
-    first = _dispatch(
-        db, state, minister, _secret_order_declaration(covert_task=bad_task), ctid, night_id,
-    )
-    assert first.commissions.applied == []
+    declaration = {
+        "commissions": [
+            {"text": "此事要密办，卿去查来。",
+             "secret_order": _secret(assignee=minister, tags=bad_tags)},
+            {"text": "此事要密办，卿去查来。", "secret_order": _secret(assignee=minister)},
+        ],
+    }
+    result = _dispatch(db, state, minister, declaration, ctid, night_id)
 
-    second = _dispatch(
-        db, state, minister, _secret_order_declaration(), ctid, night_id,
-    )
-    assert second.commissions.rejected == []
+    assert len(result.commissions.rejected) == 1, result.commissions.rejected
+    assert result.commissions.rejected[0].category == "invalid_shape"
+    assert len(result.commissions.applied) == 1
+    # 唯一暂存的那条就是同批合法项——坏项没留下任何东西，也没带走好项。
     rows = _staged_secret_order_rows(db, state.turn)
     assert len(rows) == 1, [dict(r) for r in rows]
+    assert json.loads(rows[0]["payload_json"])["covert_task"]["kind"] == "查案"
 
-    approved = _dispatch(
-        db, state, minister,
-        {"promises": [{"action_id": int(rows[0]["id"]), "decision": "应允"}]},
-        ctid, night_id,
+
+def test_late_translation_staged_secret_order_still_lands_under_its_source_night(game):
+    """ADR 0038 后出注记：迟到的转译在过月前补齐，应允照常成案（暂存承接源夜）。"""
+    db, state, _ = game
+    minister = _minister(db)
+    night_id, ctid = _open_night(db, state, minister)
+
+    # 先把这一夜收掉——补译发生在夜收之后。
+    an.close_night(db, state, night_id=int(night_id))
+    assert an.get_open_night(db) is None
+
+    result = _dispatch(
+        db, state, minister, _secret_order_declaration(assignee=minister), ctid, night_id,
     )
+    assert result.commissions.rejected == [], result.commissions.rejected
+    rows = _staged_secret_order_rows(db, state.turn)
+    assert len(rows) == 1, [dict(r) for r in rows]
+    assert int(rows[0]["night_id"]) == int(night_id)
+
+    approved = _approve(db, state, minister, ctid, night_id, int(rows[0]["id"]))
+    assert approved.promises.rejected == [], approved.promises.rejected
     order_id = int(approved.promises.applied[0]["secret_order_id"])
+    assert db.get_secret_order(order_id)["status"] == "active"
+
+
+def test_translation_prompt_hands_the_model_a_consumable_frozen_contract():
+    """J7：生产转译 prompt 必须给出 build_covert_task_contract 真收的字段定义。
+
+    只写 ``"covert_task": {}`` 的形状不是契约——真实模型无从交出消费者要的
+    字段。这里断言 prompt 里出现的字段集与真源闭集一致，且照它填的样例
+    真能被 build_covert_task_contract 收下（单一真源，不另抄字段表）。
+    """
+    from ming_sim.audience_translate import build_audience_translate_prompt
+    from ming_sim.covert_progress import (
+        CANONICAL_UNITS, _CONTRACT_EXAMPLE, build_covert_task_contract,
+    )
+    from ming_sim.person_archive_contract import PERSON_ACTIONS
+
+    prompt = build_audience_translate_prompt(
+        emperor_message="此事要密办。", reply="臣领旨。",
+        night_said=[], pending_summaries=[],
+    )
+    for token in (
+        "covert_task", "effect_sign", "target_units", "person_action", "direction",
+        *CANONICAL_UNITS, *PERSON_ACTIONS,
+    ):
+        assert token in prompt, token
+
+    # prompt 里那份样例必须逐字就是被投影的样例，且真源收得下——
+    # 说明与实现分叉时这条先炸（教模型交一份会被拒的载荷更糟）。
+    assert json.dumps(_CONTRACT_EXAMPLE, ensure_ascii=False) in prompt
+    frozen = build_covert_task_contract(covert_task=_CONTRACT_EXAMPLE)
+    assert frozen["kind"] == "查案" and frozen["delivery"]["unit"] == "人犯"
+
+
+def test_failed_landing_keeps_the_original_pending_action_retryable(game, monkeypatch):
+    """#1897：真实成案失败不当成功，且原待办保留可重试——同一 action_id 故障解除后成案。"""
+    db, state, _ = game
+    minister = _minister(db)
+    night_id, ctid = _open_night(db, state, minister)
+
+    result = _dispatch(
+        db, state, minister, _secret_order_declaration(assignee=minister), ctid, night_id,
+    )
+    assert result.commissions.rejected == []
+    staged_id = int(_staged_secret_order_rows(db, state.turn)[0]["id"])
+
+    # 注入一次真实的成案失败：commit_pending_actions 会把该行标 failed。
+    from ming_sim.db import GameDB
+    real_apply = GameDB._apply_pending_action
+
+    def _boom(self, *args, **kwargs):
+        raise RuntimeError("injected landing failure")
+
+    monkeypatch.setattr(GameDB, "_apply_pending_action", _boom)
+    try:
+        failed = _approve(db, state, minister, ctid, night_id, staged_id)
+    finally:
+        monkeypatch.setattr(GameDB, "_apply_pending_action", real_apply)
+
+    assert failed.promises.applied == [], failed.promises.applied
+    assert len(failed.promises.rejected) == 1
+    assert _rejection_rows(db, state.turn, "promises")[-1]["category"] == "invalid_state"
+    assert db.list_secret_orders() == []
+    # 原暂存仍是 pending：不是 failed 死行，同一 id 可再应允。
+    status = db.conn.execute(
+        "SELECT status FROM pending_actions WHERE id=?", (staged_id,),
+    ).fetchone()["status"]
+    assert status == "pending", status
+
+    retried = _approve(db, state, minister, ctid, night_id, staged_id)
+    assert retried.promises.rejected == [], retried.promises.rejected
+    order_id = int(retried.promises.applied[0]["secret_order_id"])
     assert db.get_secret_order(order_id)["status"] == "active"

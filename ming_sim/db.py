@@ -17146,19 +17146,30 @@ class GameDB:
     def stage_pending_action(
         self, turn: int, kind: str, action: str, minister_name: str,
         payload: Dict[str, object], target_id: Optional[int] = None,
+        night_id: Optional[int] = None,
     ) -> int:
         """把一条结构化聊天写动作存进 pending_actions 暂存(status=pending)。返回行 id。
         颁诏时 commit_pending_actions 批量落库;颁诏前不动真实表。
 
         Secret oral provenance must be pinned by the source turn at the caller;
         another turn's held message is never a valid substitute.
+
+        ``night_id``：显式承接的源夜（ADR 0038 后出注记的迟到转译）。夜已收时
+        ``get_open_night`` 返 None 会把补译暂存挂成 night_id=0，随后应允按
+        「不属本夜暂存清单」missing_ref——补译交办因此接不上源夜。给出源夜时
+        仍走同一条 CLOSING 冻结校验，只是不再取「当前开着的夜」。
         """
         payload_data: Dict[str, object] = dict(payload or {})
         # #498：开夜期间 stage 的暂存挂 night_id；收夜只交本夜已应允 id
         # CLOSING freezes new staged actions.
         from ming_sim.audience_night import assert_night_accepts_player_input
-        open_n = assert_night_accepts_player_input(self, what="暂存")
-        night_id = int(open_n["id"]) if open_n is not None else 0
+        pinned_night = int(night_id or 0)
+        if pinned_night > 0:
+            assert_night_accepts_player_input(self, pinned_night, what="暂存")
+            night_id = pinned_night
+        else:
+            open_n = assert_night_accepts_player_input(self, what="暂存")
+            night_id = int(open_n["id"]) if open_n is not None else 0
         cur = self.conn.execute(
             """INSERT INTO pending_actions
                (turn, kind, action, target_id, minister_name, payload_json, status,
