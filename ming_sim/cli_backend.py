@@ -985,6 +985,22 @@ def _run_pi(
     )
 
 
+# #1902：runner 名 → 单次调用入口的映射表，取代手写 if/elif 分派链。
+# 各宿主的 argv 约定仍只在 _cli_runner_command 一处；此处只回答「这个 runner 调谁」。
+# agy 走自身 ladder、不消费 --model，故调用时不带 model/reasoning_strength。
+# 存函数名而非函数对象：调用点现取，monkeypatch 替换任一宿主入口仍即时生效
+# （测试与探针都靠这条缝注入）。
+_CLI_RUNNER_ENTRYPOINTS = {
+    "codex": "_run_codex",
+    "claude": "_run_claude",
+    "cursor": "_run_cursor",
+    "kimi": "_run_kimi",
+    "grok": "_run_grok",
+    "pi": "_run_pi",
+    "agy": "_run_agy",
+}
+
+
 def _dispatch_cli_runner(
     runner: str,
     prompt: str,
@@ -993,31 +1009,18 @@ def _dispatch_cli_runner(
     reasoning_strength: Optional[str] = None,
     materials_dir: Optional[str] = None,
 ) -> Tuple[str, int]:
-    """runner 名 → 该 runner 的单次调用入口。全仓唯一一处 runner 分派链
+    """runner 名 → 该 runner 的单次调用入口。全仓唯一一处 runner 分派点
     （env 分派 / config 分派 / CliChat 分派共用，禁再复制第二份）。"""
+    entry_name = _CLI_RUNNER_ENTRYPOINTS.get(runner)
+    if entry_name is None:
+        raise RuntimeError(f"未知 CLI backend：{runner}")
+    entry = globals()[entry_name]
     extra = {"materials_dir": materials_dir} if materials_dir else {}
-    if runner == "codex":
-        return _run_codex(prompt, model=model,
-                          reasoning_strength=reasoning_strength, **extra)
-    if runner == "claude":
-        return _run_claude(prompt, model=model,
-                           reasoning_strength=reasoning_strength, **extra)
-    if runner == "cursor":
-        return _run_cursor(prompt, model=model,
-                           reasoning_strength=reasoning_strength, **extra)
-    if runner == "kimi":
-        return _run_kimi(prompt, model=model,
-                         reasoning_strength=reasoning_strength, **extra)
-    if runner == "grok":
-        return _run_grok(prompt, model=model,
-                         reasoning_strength=reasoning_strength, **extra)
-    if runner == "pi":
-        return _run_pi(prompt, model=model,
-                       reasoning_strength=reasoning_strength, **extra)
     if runner == "agy":
-        # agy 忽略 --model（走自身 ladder），不给它挂不被消费的 model。
-        return _run_agy(prompt, **extra)
-    raise RuntimeError(f"未知 CLI backend：{runner}")
+        return entry(prompt, **extra)
+    return entry(
+        prompt, model=model, reasoning_strength=reasoning_strength, **extra,
+    )
 
 
 def _run_backend(prompt: str) -> Tuple[str, int]:
