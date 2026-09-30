@@ -2294,20 +2294,7 @@ class WebGame:
             "pending_count": self.session.pending_count(),
             "pending_directive_count": self.pending_directive_count(),
             "can_undo_last_chat": self.can_undo_last_chat(minister_name),
-            "pending_action_failures": self.pending_action_failures_for(minister_name),
         }
-
-    def pending_action_failures_for(self, minister_name: str) -> List[Dict[str, Any]]:
-        return [
-            _pending_action_failure_payload(action)
-            for action in self.db.list_failed_secret_order_actions(minister_name)
-        ]
-
-    def pending_action_failures(self) -> List[Dict[str, Any]]:
-        return [
-            _pending_action_failure_payload(action)
-            for action in self.db.list_failed_secret_order_actions()
-        ]
 
     def retry_interrupted_reply(self, minister_name: str, target_chat_turn_id: Optional[int] = None) -> Dict[str, Any]:
         """恢复指定中断轮，或续接已落回话的尾随阶段；旧调用默认最新中断轮。

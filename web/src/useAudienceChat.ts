@@ -1,7 +1,7 @@
 import React from "react";
 import { ApiRequestError, api, streamChat } from "./api";
 import { chatReducer } from "./mindreading";
-import type { ChatIdentity, ChatMessage, ChatResponse, PendingActionFailure, Minister, ReplyRetry, ServerChatMessage, TranslationRetry } from "./types";
+import type { ChatIdentity, ChatMessage, ChatResponse, Minister, ReplyRetry, ServerChatMessage, TranslationRetry } from "./types";
 import { audienceHistoryPath } from "./audienceScene";
 
 /**
