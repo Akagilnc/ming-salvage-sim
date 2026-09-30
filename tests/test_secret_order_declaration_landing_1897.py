@@ -24,6 +24,7 @@ import pytest
 
 from ming_sim import audience_night as an
 from ming_sim.declaration_dispatch import dispatch_declaration
+from ming_sim.audience_translation import apply_audience_round_translation
 
 
 def _minister(db) -> str:
@@ -97,6 +98,13 @@ def _dispatch(db, state, minister, declaration, ctid, night_id):
     return dispatch_declaration(
         db, state, declaration,
         minister_name=minister, night_id=int(night_id), chat_turn_id=int(ctid),
+    )
+
+
+def _translate(db, state, minister, declaration, night_id, ctid):
+    return apply_audience_round_translation(
+        db, state, declaration, minister_name=minister, night_id=night_id,
+        chat_turn_id=ctid,
     )
 
 
@@ -273,52 +281,72 @@ def test_non_roster_assignee_is_not_made_into_a_minister(game, declared_assignee
     assert db.list_secret_orders() == []
 
 
-def test_late_translated_indirect_staging_keeps_its_source_night(game):
-    """ADR 0038 后出注记：间接暂存入口（责成交办 / 惩处）同样承接源夜，且应允到底。
-
-    这两者经 ``action_materialize.stage_*_candidate`` 落到
-    ``stage_directive_candidate`` 而非直接写口——上一轮只在直接写口挂了源夜，
-    夜收后它们挂成 night_id=0，随后应允按 missing_ref 拒收，补译交办接不回源夜。
-
-    断言走**契约结果**而非暂存字段：暂存必须挂源夜、应允必须真落 night_approved
-    （收夜提交白名单），才算接上了迟到承接路径；只断言 staged.night_id 会在
-    「暂存挂对了但应允仍被封夜拒绝」时照样变绿——上一轮正是这样漏过去的。
-    """
-    db, state, _ = game
+@pytest.mark.parametrize("label", ["assignment", "punishment"])
+def test_late_translated_indirect_staging_keeps_its_source_night(game, monkeypatch, label):
+    """源夜补译新增→应允→正式成案；正文/题名连过月差务均原样读回。"""
+    db, state, content = game
     minister = _minister(db)
     night_id, ctid = _open_night(db, state, minister)
-    an.close_night(db, state, night_id=int(night_id))
+    approval_ctid = _hall_turn(db, state, minister, night_id=night_id)
+    an.close_night(db, state, night_id=night_id)
     assert an.get_open_night(db) is None
+    body = "\n  密查粮科私卖。  \n"
+    title = "\n  密查粮科  \n"
 
     cases = {
-        "assignment": {"assignment": {"title": "密查粮科", "text": "密查粮科私卖。"}},
         "punishment": {"punishment": {
             "text": "罚俸三月。", "target_id": minister,
             "punish_action": "罚俸", "amount": 3,
         }},
+        "assignment": {"assignment": {"title": title, "text": body, "assignee": minister}},
     }
-    for label, payload in cases.items():
-        result = _dispatch(
-            db, state, minister, {"commissions": [{"text": "依旨办理。", **payload}]},
-            ctid, night_id,
-        )
-        assert result.commissions.rejected == [], (label, result.commissions.rejected)
-        assert len(result.commissions.applied) == 1, label
-        staged_id = int(result.commissions.applied[0]["id"])
-        staged = db.conn.execute(
-            "SELECT id, night_id FROM pending_actions WHERE id=?",
-            (staged_id,),
-        ).fetchone()
-        # 源夜承接：不是 0（接不回源夜），是本夜。
-        assert int(staged["night_id"]) == int(night_id), (label, dict(staged))
+    payload = cases[label]
+    result = _translate(
+        db, state, minister, {"commissions": [{"text": body, **payload}]}, night_id, ctid,
+    )
+    assert result.commissions.rejected == [], (label, result.commissions.rejected)
+    assert len(result.commissions.applied) == 1, label
+    staged_id = int(result.commissions.applied[0]["id"])
+    staged = db.conn.execute(
+        "SELECT id, night_id, payload_json FROM pending_actions WHERE id=?",
+        (staged_id,),
+    ).fetchone()
+    # 源夜承接：不是 0（接不回源夜），是本夜。
+    assert int(staged["night_id"]) == int(night_id), (label, dict(staged))
+    if label == "assignment":
+        assert json.loads(staged["payload_json"])["title"] == title
 
-        # 契约结果：封夜后的补译应允不得被 night_closed 拒绝，且真落应允位。
-        approved = _approve(db, state, minister, ctid, night_id, staged_id)
-        assert approved.promises.rejected == [], (label, approved.promises.rejected)
-        row = db.conn.execute(
-            "SELECT night_approved FROM pending_actions WHERE id=?", (staged_id,),
+    approved = _translate(db, state, minister, {"promises": [{
+        "action_id": staged_id, "decision": "应允",
+    }]}, night_id, approval_ctid)
+    assert approved.promises.rejected == [], (label, approved.promises.rejected)
+    row = db.conn.execute(
+        "SELECT night_approved FROM pending_actions WHERE id=?", (staged_id,),
+    ).fetchone()
+    assert int(row["night_approved"]) == 1, (label, dict(row))
+    an.commit_late_night_approved(db, state, content=content)
+    dossier = db.conn.execute(
+        "SELECT id FROM decree_dossiers WHERE pending_action_id=?", (staged_id,),
+    ).fetchone()
+    assert dossier is not None, label
+    case = db.get_decree_dossier(int(dossier["id"]))
+    assert case is not None
+    assert case["decree_text"] == body, (label, case)
+    if label == "assignment":
+        assert case["target_id"] == title.strip()
+        assert case["payload"]["title"] == title
+        from tests.test_audience_translate_1837_reopen import _player_month
+        _player_month(db, state, content, monkeypatch, int(dossier["id"]))
+        issue = db.conn.execute(
+            "SELECT title, stage_text FROM issues WHERE origin_ref=?",
+            (f"dossier:{dossier['id']}",),
         ).fetchone()
-        assert int(row["night_approved"]) == 1, (label, dict(row))
+        assert issue is not None
+        assert issue["title"] == title
+        assert issue["stage_text"] == body
+    assert db.conn.execute(
+        "SELECT status FROM pending_actions WHERE id=?", (staged_id,),
+    ).fetchone()["status"] == "committed"
 
 
 def test_late_translated_indirect_update_keeps_its_source_night(game):
@@ -328,28 +356,31 @@ def test_late_translated_indirect_update_keeps_its_source_night(game):
     ``update_directive_candidate``，该分支原本无条件按「当前开着的夜」改归属——
     夜已收时当前开夜为 0，改草就把补译交办从源夜迁走，随后应允 missing_ref。
     """
-    db, state, _ = game
+    db, state, content = game
     minister = _minister(db)
     night_id, ctid = _open_night(db, state, minister)
 
     # 开夜期间先落一条待办责成交办，作为后续补译改草的目标。
-    first = _dispatch(
+    first = _translate(
         db, state, minister, {"commissions": [{"text": "依旨办理。", "assignment": {
-            "title": "密查粮科", "text": "密查粮科私卖。",
-        }}]}, ctid, night_id,
+            "title": "密查粮科", "text": "密查粮科私卖。", "assignee": minister,
+        }}]}, night_id, ctid,
     )
     assert first.commissions.rejected == [], first.commissions.rejected
     staged_id = int(first.commissions.applied[0]["id"])
 
+    revision_ctid = _hall_turn(db, state, minister, night_id=night_id)
+    approval_ctid = _hall_turn(db, state, minister, night_id=night_id)
     an.close_night(db, state, night_id=int(night_id))
     assert an.get_open_night(db) is None
 
     # 夜收后补译：点名改那一稿（target_candidate 命中既有待办 → 改草分支）。
-    revised = _dispatch(
-        db, state, minister, {"commissions": [{"text": "再查得细些。", "assignment": {
-            "title": "密查粮科", "text": "密查粮科私卖，并追赃银。",
+    body = "\n  再查得细些。  \n"
+    revised = _translate(
+        db, state, minister, {"commissions": [{"text": body, "assignment": {
+            "title": "密查粮科", "text": "密查粮科私卖，并追赃银。", "assignee": minister,
             "target_candidate": str(staged_id),
-        }}]}, ctid, night_id,
+        }}]}, night_id, revision_ctid,
     )
     assert revised.commissions.rejected == [], revised.commissions.rejected
     assert int(revised.commissions.applied[0]["id"]) == staged_id
@@ -359,8 +390,19 @@ def test_late_translated_indirect_update_keeps_its_source_night(game):
         (staged_id,),
     ).fetchone()
     assert int(row["night_id"]) == int(night_id), dict(row)
-    # 改草确实落到那一行（正文取交办顶层 text，与其他责成交办同口径）。
-    assert json.loads(row["payload_json"])["text"] == "再查得细些。"
+    assert json.loads(row["payload_json"])["text"] == body
+    approved = _translate(db, state, minister, {"promises": [{
+        "action_id": staged_id, "decision": "应允",
+    }]}, night_id, approval_ctid)
+    assert approved.promises.rejected == []
+    an.commit_late_night_approved(db, state, content=content)
+    dossiers = db.conn.execute(
+        "SELECT id FROM decree_dossiers WHERE pending_action_id=?", (staged_id,),
+    ).fetchall()
+    assert len(dossiers) == 1
+    case = db.get_decree_dossier(int(dossiers[0]["id"]))
+    assert case is not None
+    assert case["decree_text"] == body
 
 
 def test_secret_order_link_note_is_stored_verbatim(game):

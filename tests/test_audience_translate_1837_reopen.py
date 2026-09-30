@@ -81,7 +81,7 @@ def _bound_exposure(db, state, monkeypatch):
     return int(did), str(executor)
 
 
-def _scene_declaration(db, state, content, monkeypatch, words, declaration, *, minister_name="殿上", scene_reply=None):
+def _scene_declaration(db, state, content, monkeypatch, words, declaration, *, minister_name="殿上", scene_reply=None, close_before_translation=False):
     from tests.conftest import persist_and_schedule_scene, stub_audience_translate, stub_scene_agent
     from tests.test_audience_translation_1838 import _scene_session
 
@@ -90,11 +90,16 @@ def _scene_declaration(db, state, content, monkeypatch, words, declaration, *, m
         stub_scene_agent(monkeypatch, SimpleNamespace(
             tools=[], run=lambda message: SimpleNamespace(content=scene_reply, tools=[]),
         ))
-    stub_audience_translate(monkeypatch, lambda prompt, config: {
-        **declaration,
-        "scene_facts": [{"body": scene_reply or "殿上应对。", "role": "scene",
-                         "audibility": "殿上公开", "person_names": []}],
-    })
+    def translate(prompt, config):
+        if close_before_translation:
+            _close_offline(db, state, content, int(night["id"]))
+        return {
+            **declaration,
+            "scene_facts": [{"body": scene_reply or "殿上应对。", "role": "scene",
+                             "audibility": "殿上公开", "person_names": []}],
+        }
+
+    stub_audience_translate(monkeypatch, translate)
     night = open_night(db, state)
     ctid = db.create_chat_turn(
         state, minister_name, "s", 0, night_id=int(night["id"]), status="active",
@@ -117,7 +122,7 @@ def _close_offline(db, state, content, night_id):
 
 def _player_month(db, state, content, monkeypatch, dossier_id, *, effects=None):
     """Drive the player month entry with only model outputs supplied offline."""
-    import threading
+    from ming_sim.session_write_queue import ClassifiedWriteGate
     import ming_sim.month_chain as month_chain
     import ming_sim.month_translate as month_translate
     from ming_sim.decree_forecast import decree_ref_for_dossier, stage_declaration
@@ -132,7 +137,7 @@ def _player_month(db, state, content, monkeypatch, dossier_id, *, effects=None):
     monkeypatch.setattr(month_translate, "translate_month_segment", lambda *a, **k: {"effects": effects or {}})
     monkeypatch.setattr("ming_sim.session.write_decree_with_agno", lambda *a, **k: "诏")
     session = make_light_session(db, state, content)
-    session._write_gate = threading.Lock()
+    session._write_gate = ClassifiedWriteGate()
     before = int(state.turn)
     result = session.resolve_turn(allow_empty_decree=True)
     assert result.stage == "gazette"
@@ -142,14 +147,15 @@ def _player_month(db, state, content, monkeypatch, dossier_id, *, effects=None):
     assert result.advanced and int(state.turn) > before
 
 
-def test_prohibit_covert_levy_commission_binds_exposed_dossier(game, monkeypatch):
+@pytest.mark.parametrize("late", [False, True], ids=["open-night", "closed-night"])
+def test_prohibit_covert_levy_commission_binds_exposed_dossier(game, monkeypatch, late):
     db, state, content = game
     did, actor = _bound_exposure(db, state, monkeypatch)
     other_did, _ = _bound_exposure(db, state, monkeypatch)
     from ming_sim.due_review import list_due_review_scenes
     from ming_sim.audience_translate import build_translation_target_grounding
     exposed = {
-        scene["dossier_id"] for scene in list_due_review_scenes(db, state)
+        int(str(scene["dossier_id"])) for scene in list_due_review_scenes(db, state)
         if scene.get("kind") == "covert_levy_exposure"
     }
     assert exposed == {did, other_did}
@@ -171,7 +177,10 @@ def test_prohibit_covert_levy_commission_binds_exposed_dossier(game, monkeypatch
             "target_id": other_did,
         }],
     }
-    result = _scene_declaration(db, state, content, monkeypatch, "此等借饷扰民之举，即刻禁绝。", decl)
+    result = _scene_declaration(
+        db, state, content, monkeypatch, "此等借饷扰民之举，即刻禁绝。", decl,
+        close_before_translation=late,
+    )
     assert result.commissions.rejected == []
     assert len(result.commissions.applied) == 1
     row = db.conn.execute(
@@ -183,7 +192,12 @@ def test_prohibit_covert_levy_commission_binds_exposed_dossier(game, monkeypatch
     assert payload["dossier_action_type"] == PROHIBITION_ACTION
     assert payload["target_kind"] == "dossier" and payload["target_id"] == str(other_did)
     assert int(row["night_approved"] or 0) == 1
-    _close_offline(db, state, content, int(open_night(db, state)["id"]))
+    if late:
+        from ming_sim.audience_night import commit_late_night_approved, get_open_night
+        assert get_open_night(db) is None
+        commit_late_night_approved(db, state, content=content)
+    else:
+        _close_offline(db, state, content, int(open_night(db, state)["id"]))
     dossier = db.conn.execute(
         "SELECT id, action_type, target_id FROM decree_dossiers WHERE pending_action_id=?",
         (result.commissions.applied[0]["id"],),
@@ -201,7 +215,9 @@ def test_prohibit_covert_levy_commission_binds_exposed_dossier(game, monkeypatch
             "origin_ref": f"dossier:{other_did}", "beyond_intent": True,
         }],
     })
-    assert active_prohibition_dossier(db, other_did)["id"] == dossier["id"]
+    prohibition = active_prohibition_dossier(db, other_did)
+    assert prohibition is not None
+    assert prohibition["id"] == dossier["id"]
     assert int(state.turn) > before
     assert db.get_fiscal_config().get("禁后摊派_base") is None
     from ming_sim.due_review import list_due_review_scenes
@@ -242,7 +258,7 @@ def test_recommendation_commission_stages_office_with_reason(game, monkeypatch):
         (same_faction.name,),
     )
     db.conn.commit()
-    reason = "请予试任巡盐御史，臣敢以身家保。"
+    reason = "\n  请予试任巡盐御史，臣敢以身家保。  \n"
     words = "陛下，巡盐之事可有合适人选？"
     scene_reply = f"臣荐{same_faction.name}任巡盐御史。{reason}"
     existing_id = db.stage_pending_action(
@@ -447,8 +463,8 @@ def test_rush_commitment_stages_pending_催办(game, monkeypatch):
     stages = normalize_commitment_stages(db.conn.execute(
         "SELECT stages_json FROM issues WHERE id=?", (issue_id,)
     ).fetchone()["stages_json"])
-    assert int(stages[0]["due_turn"]) == int(state.turn) + 2
-    assert int(stages[1]["due_turn"]) == int(state.turn) + 1
+    assert int(str(stages[0]["due_turn"])) == int(state.turn) + 2
+    assert int(str(stages[1]["due_turn"])) == int(state.turn) + 1
     committed = db.conn.execute(
         "SELECT payload_json FROM pending_actions WHERE id=? AND status='committed'",
         (result.rushes.applied[0]["id"],),
