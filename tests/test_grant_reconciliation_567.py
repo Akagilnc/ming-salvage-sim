@@ -87,6 +87,13 @@ def _escort_order(db, state, grant_ids, *, tags=None):
         for gid in grant_ids
     ]
     db.add_dossier_links(escort_id, links)
+    # #1900：关联只答「谁护谁」。有护口径另须逐路落下「此趟实有护送」，
+    # 对账只读后者——未落实况的路不作有护（不凭关联顶替）。
+    for gid in grant_ids:
+        db.record_dossier_escort_result(
+            state.turn, dossier_id=int(gid), escort_source_dossier_id=escort_id,
+            escorted=True, note="护行路按月核验",
+        )
     return order_id, escort_id
 
 

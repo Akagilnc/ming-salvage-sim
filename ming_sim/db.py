@@ -1579,6 +1579,25 @@ class GameDB:
             );
             CREATE INDEX IF NOT EXISTS idx_dossier_reconciliations_dossier
                 ON decree_dossier_reconciliations(dossier_id, turn, id);
+            -- #1900 / ADR 0054：逐路此次实际护送。被护案卷×回合一行，是「这次护没护成」
+            -- 的唯一真源；关联链只答「谁护谁」，不带状态位（0054 防第三真源），密令整体
+            -- 成败／结案也不替代逐路实况。
+            CREATE TABLE IF NOT EXISTS dossier_escort_outcomes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                dossier_id INTEGER NOT NULL,
+                turn INTEGER NOT NULL,
+                escort_source_dossier_id INTEGER NOT NULL,
+                relation_type TEXT NOT NULL
+                    CHECK(relation_type IN ('护卫','稽核')),
+                escorted INTEGER NOT NULL DEFAULT 0 CHECK(escorted IN (0,1)),
+                note TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(dossier_id, turn),
+                FOREIGN KEY(dossier_id) REFERENCES decree_dossiers(id) ON DELETE CASCADE,
+                FOREIGN KEY(escort_source_dossier_id) REFERENCES decree_dossiers(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_dossier_escort_outcomes_source
+                ON dossier_escort_outcomes(escort_source_dossier_id, turn, id);
             -- ADR 0070：担名与办事名单分立；条目只能指向落条目前已存在的案卷。
             -- #658 later-wins：provenance 恰为 source_chat_turn_id>0 或 decision_key 非空之一。
             -- chat_turn 删除走显式清理（见 rollback 路径），不靠 FK CASCADE 绑死批红路径。
@@ -12118,18 +12137,131 @@ class GameDB:
             reports.append(self.list_dossier_progress(dossier_id)[-1])
         return reports
 
-    def _grant_escort_presence(
-        self, dossier_id: int,
-    ) -> Tuple[bool, Optional[int], str]:
-        """被护案卷侧查入链：护卫/稽核在场与否（0054 逐路独立）。"""
-        for link in self.list_dossier_links(int(dossier_id), direction="incoming"):
-            relation = str(link.get("relation_type") or "").strip()
-            if relation in _GRANT_ESCORT_RELATIONS:
-                return True, int(link["source_dossier_id"]), relation
-        return False, None, ""
+    def record_dossier_escort_result(
+        self, turn: int, *, dossier_id: int, escort_source_dossier_id: int,
+        escorted: bool, note: str = "", commit: bool = False,
+    ) -> Dict[str, object]:
+        """#1900：落「该路此次押解的实际护送」（逐路×回合唯一真源）。
 
-    def list_monthly_grant_reconciliation_targets(self) -> List[Dict[str, object]]:
-        """扫描面：executing 且仍在途的拨帑案卷（排除成案不足额已 failed+close）。"""
+        关联链（0054）只答「谁护谁」，本方法要求链先在，才准记逐路实况——声明
+        不得凭空虚构一条护送关系。关系类型取自链本身，不接受调用方另报。
+
+        只校验被护端是拨帑案卷；密令的整体成败、结案态与拨帑案卷自身状态一概不参与
+        判定（结案后仍可补记并对账），一令护多路时逐路各记各的。同路同回合后来者覆盖
+        先来者（分段过月会多次落同一段）。
+        """
+        did = strict_int(dossier_id, accept_numeric_strings=False)
+        sid = strict_int(escort_source_dossier_id, accept_numeric_strings=False)
+        if did <= 0 or sid <= 0:
+            raise ValueError("护送实况须含正案卷编号")
+        target = self.get_decree_dossier(did)
+        if target is None:
+            raise ValueError(f"被护案卷不存在：{did}")
+        if str(target["action_type"] or "") != "grant_allocation":
+            raise ValueError("被护案卷不是拨帑案卷")
+        source = self.get_decree_dossier(sid)
+        if source is None:
+            raise ValueError(f"护送案卷不存在：{sid}")
+        link = self.conn.execute(
+            "SELECT relation_type FROM decree_dossier_links "
+            "WHERE source_dossier_id=? AND target_dossier_id=? "
+            "AND relation_type IN ('护卫','稽核') LIMIT 1",
+            (sid, did),
+        ).fetchone()
+        if link is None:
+            raise ValueError("护送实况须先有护卫／稽核案卷关联")
+        relation = str(link["relation_type"])
+        if relation not in _GRANT_ESCORT_RELATIONS:
+            raise ValueError(f"案卷关联类型不是护送口径：{relation}")
+        self.conn.execute(
+            """
+            INSERT INTO dossier_escort_outcomes
+                (dossier_id, turn, escort_source_dossier_id, relation_type, escorted, note)
+            VALUES (?,?,?,?,?,?)
+            ON CONFLICT(dossier_id, turn) DO UPDATE SET
+                escort_source_dossier_id=excluded.escort_source_dossier_id,
+                relation_type=excluded.relation_type,
+                escorted=excluded.escorted,
+                note=excluded.note
+            """,
+            (
+                did, int(turn), sid, relation,
+                1 if escorted else 0, str(note or ""),
+            ),
+        )
+        if commit:
+            self.conn.commit()
+        return self.list_dossier_escort_outcomes(did, through_turn=int(turn))[-1]
+
+    @staticmethod
+    def _coerce_escort_outcome_row(row: Any) -> Dict[str, object]:
+        """逐路护送实况行的唯一投影形状（三个读口共用，防各口各写一份）。"""
+        return {
+            "id": int(row["id"]),
+            "dossier_id": int(row["dossier_id"]),
+            "turn": int(row["turn"]),
+            "escort_source_dossier_id": int(row["escort_source_dossier_id"]),
+            "relation_type": str(row["relation_type"] or ""),
+            "escorted": bool(row["escorted"]),
+            "note": str(row["note"] or ""),
+        }
+
+    def list_dossier_escort_outcomes(
+        self, dossier_id: int, *, through_turn: Optional[int] = None,
+    ) -> List[Dict[str, object]]:
+        """被护案卷侧逐路实况读缝（restore 同源）。"""
+        sql = "SELECT * FROM dossier_escort_outcomes WHERE dossier_id=?"
+        params: List[Any] = [int(dossier_id)]
+        if through_turn is not None:
+            sql += " AND turn<=?"
+            params.append(int(through_turn))
+        sql += " ORDER BY turn, id"
+        return [
+            self._coerce_escort_outcome_row(row)
+            for row in self.conn.execute(sql, tuple(params)).fetchall()
+        ]
+
+    def list_escort_outcomes_for_source(self, source_dossier_id: int) -> List[Dict[str, object]]:
+        """护送案卷侧读自己各路的逐路实况（整月密报汇总执行状态用）。"""
+        rows = self.conn.execute(
+            "SELECT * FROM dossier_escort_outcomes "
+            "WHERE escort_source_dossier_id=? ORDER BY turn, dossier_id, id",
+            (int(source_dossier_id),),
+        ).fetchall()
+        return [self._coerce_escort_outcome_row(row) for row in rows]
+
+    def _grant_escort_presence(
+        self, dossier_id: int, *, turn: Optional[int] = None,
+    ) -> Tuple[bool, Optional[int], str]:
+        """被护案卷侧读入链上的**逐路已落实况**（#1900），不读链是否存在。
+
+        0054 的关联是「谁护谁」的交代，不是「这趟护成了」的结果；密令整体成败／
+        结案也不顶替逐路实况——成功护送后结案仍按该路已落的有护对账，一令多路
+        有成有败各读各路，未实际护送的路不得只凭关联当作有护。
+        ``turn=None`` 时取该路最近一次已落实况（供料读侧）。
+        """
+        row = self.conn.execute(
+            "SELECT * FROM dossier_escort_outcomes WHERE dossier_id=? "
+            + ("" if turn is None else "AND turn=? ")
+            + "ORDER BY turn DESC, id DESC LIMIT 1",
+            (int(dossier_id),) if turn is None else (int(dossier_id), int(turn)),
+        ).fetchone()
+        if row is None:
+            return False, None, ""
+        return (
+            bool(row["escorted"]),
+            int(row["escort_source_dossier_id"]),
+            str(row["relation_type"] or ""),
+        )
+
+    def list_monthly_grant_reconciliation_targets(
+        self, turn: Optional[int] = None,
+    ) -> List[Dict[str, object]]:
+        """扫描面：executing 且仍在途的拨帑案卷（排除成案不足额已 failed+close）。
+
+        ``turn`` 给定时逐路只认该回合已落的实际护送；不给（供料读侧）取各路最近
+        一次已落实况。
+        """
         rows = self.conn.execute(
             """
             SELECT * FROM decree_dossiers
@@ -12159,7 +12291,9 @@ class GameDB:
             if ordered <= 0:
                 continue
             dossier_id = int(row["id"])
-            escorted, source_id, relation = self._grant_escort_presence(dossier_id)
+            escorted, source_id, relation = self._grant_escort_presence(
+                dossier_id, turn=turn,
+            )
             targets.append({
                 "dossier_id": dossier_id,
                 "ordered_amount": ordered,
@@ -12243,7 +12377,7 @@ class GameDB:
 
         targets = {
             int(item["dossier_id"]): item
-            for item in self.list_monthly_grant_reconciliation_targets()
+            for item in self.list_monthly_grant_reconciliation_targets(int(turn))
         }
         if generated is None:
             generated = []

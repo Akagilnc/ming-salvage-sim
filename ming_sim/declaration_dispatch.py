@@ -139,6 +139,8 @@ class DeclarationDispatchResult:
     inquiries: SectionResult
     rushes: SectionResult
     travel_tones: SectionResult
+    escort_links: SectionResult
+    escort_results: SectionResult
 
     def merge(self, other: "DeclarationDispatchResult") -> "DeclarationDispatchResult":
         """按 section 逐个 merge，供 :func:`settle_staged_declarations_in_decree_order`
@@ -159,6 +161,8 @@ class DeclarationDispatchResult:
             inquiries=self.inquiries.merge(other.inquiries),
             rushes=self.rushes.merge(other.rushes),
             travel_tones=self.travel_tones.merge(other.travel_tones),
+            escort_links=self.escort_links.merge(other.escort_links),
+            escort_results=self.escort_results.merge(other.escort_results),
         )
 
 
@@ -166,7 +170,7 @@ _SECTION_FIELDS: Tuple[str, ...] = (
     "commissions", "promises", "endorsements", "textual_facts", "public_sayings",
     "on_scene_facts", "presence", "scene_facts", "edge_events",
     "protagonist", "registrations", "effects",
-    "inquiries", "rushes", "travel_tones",
+    "inquiries", "rushes", "travel_tones", "escort_links", "escort_results",
 )
 _KNOWN_SECTIONS = frozenset(_SECTION_FIELDS)
 
@@ -179,6 +183,7 @@ def _empty_dispatch_result() -> DeclarationDispatchResult:
         on_scene_facts=empty, presence=empty, scene_facts=empty, edge_events=empty,
         protagonist=ProtagonistResult(validated=None, rejected=[]), registrations=empty,
         effects=empty, inquiries=empty, rushes=empty, travel_tones=empty,
+        escort_links=empty, escort_results=empty,
     )
 
 
@@ -318,9 +323,16 @@ def _dispatch_declaration_sections(
             minister_name=minister_name, source=source,
         ),
         travel_tones=_dispatch_travel_tones(
-            db, declaration.get("travel_tones"), night_id=night_id,
-            chat_turn_id=origin_ctid, source=source,
-            source_turn_error=source_turn_err, state=state,
+            db, declaration.get("travel_tones"), night_id=night_id, source=source,
+            chat_turn_id=origin_ctid, source_turn_error=source_turn_err, state=state,
+        ),
+        # #1900：护送关联（谁护谁）与逐路实况（这趟护没护成）分节声明；
+        # 月度拨帑对账只读后者，前者不作有护凭据。
+        escort_links=_dispatch_escort_links(
+            db, state, declaration.get("escort_links"), source=source,
+        ),
+        escort_results=_dispatch_escort_results(
+            db, state, declaration.get("escort_results"), source=source,
         ),
     )
     _record_unknown_sections(collector, declaration, turn, source)
@@ -1512,6 +1524,113 @@ def _dispatch_commissions(
             int(state.turn), "directive", "拟旨", actor, payload,
         )
         applied.append({"id": row_id, "payload": payload, "kind": "directive"})
+    return SectionResult(applied=applied, rejected=rejected)
+
+
+def _escort_dossier_id(db: Any, raw: object) -> Optional[int]:
+    """案卷 id 解析：只认真实存在的案卷；不存在／非整数返回 None 交调用方逐项拒收。"""
+    from ming_sim.strict_types import strict_int
+
+    try:
+        dossier_id = strict_int(raw, accept_numeric_strings=False)
+    except (TypeError, ValueError):
+        return None
+    if dossier_id <= 0 or db.get_decree_dossier(dossier_id) is None:
+        return None
+    return dossier_id
+
+
+def _dispatch_escort_links(
+    db: Any, state: Any, raw: object, *, source: Provenance,
+) -> SectionResult:
+    """#1900：护送关联声明 → 0054 案卷关联写口（新密令案卷指旧拨帑案卷）。
+
+    关联只答「谁护谁」，不带状态位（0054 防第三真源）；本票的逐路实况另有
+    ``escort_results`` 一节。逐项拒收，坏项不牵连同批合法项。
+    """
+    # 护送口径闭集取自 db 侧押解常量（0054 的「接应」不构成押解护送），不另抄一份。
+    from ming_sim.db import _GRANT_ESCORT_RELATIONS
+
+    items, rejected = _section_items(raw, label="护送关联声明", source=source)
+    applied: List[Any] = []
+    for item in items:
+        source_id = _escort_dossier_id(db, item.get("escort_source_dossier_id"))
+        target_id = _escort_dossier_id(db, item.get("target_dossier_id"))
+        if source_id is None or target_id is None:
+            _reject(rejected, item, "护送关联须含已存在的两端案卷 id", "hallucinated_id", source)
+            continue
+        relation = str(item.get("relation_type") or "").strip()
+        if relation not in _GRANT_ESCORT_RELATIONS:
+            _reject(
+                rejected, item,
+                f"护送关联类型须为 {'／'.join(sorted(_GRANT_ESCORT_RELATIONS))}：{relation}",
+                "invalid_enum", source,
+            )
+            continue
+        note = _declared_prose(item.get("note"))
+        if note is None:
+            _reject(rejected, item, "护送关联缺说明", "invalid_shape", source)
+            continue
+        try:
+            with _item_savepoint_scope(db, f"escort_link_{int(state.turn)}_{id(item)}"):
+                db.add_dossier_links(
+                    source_id,
+                    [{
+                        "target_dossier_id": target_id,
+                        "relation_type": relation,
+                        "note": note,
+                    }],
+                    commit=False,
+                )
+        except ValueError as exc:
+            _reject(rejected, item, str(exc), "invalid_state", source)
+            continue
+        applied.append({
+            "escort_source_dossier_id": source_id,
+            "target_dossier_id": target_id,
+            "relation_type": relation,
+        })
+    return SectionResult(applied=applied, rejected=rejected)
+
+
+def _dispatch_escort_results(
+    db: Any, state: Any, raw: object, *, source: Provenance,
+) -> SectionResult:
+    """#1900：逐路实际护送声明 → 该路此回合的护送实况（对账唯一读口）。
+
+    密令整体成败／结案不作数：一令护多路时逐路各读各路，成功护送后结案仍按
+    该路已落的有护对账；未实际护送的路不得只凭关联当作有护。
+    """
+    items, rejected = _section_items(raw, label="护送实况声明", source=source)
+    applied: List[Any] = []
+    for item in items:
+        dossier_id = _escort_dossier_id(db, item.get("dossier_id"))
+        source_id = _escort_dossier_id(db, item.get("escort_source_dossier_id"))
+        if dossier_id is None or source_id is None:
+            _reject(rejected, item, "护送实况须含已存在的两端案卷 id", "hallucinated_id", source)
+            continue
+        escorted = item.get("escorted")
+        if not isinstance(escorted, bool):
+            _reject(rejected, item, "护送实况须明写 escorted 布尔", "invalid_shape", source)
+            continue
+        note = item.get("note")
+        if note is not None and not isinstance(note, str):
+            _reject(rejected, item, "护送实况 note 须为原文", "invalid_shape", source)
+            continue
+        try:
+            with _item_savepoint_scope(db, f"escort_result_{int(state.turn)}_{id(item)}"):
+                row = db.record_dossier_escort_result(
+                    int(state.turn),
+                    dossier_id=dossier_id,
+                    escort_source_dossier_id=source_id,
+                    escorted=bool(escorted),
+                    note=str(note or ""),
+                    commit=False,
+                )
+        except ValueError as exc:
+            _reject(rejected, item, str(exc), "invalid_state", source)
+            continue
+        applied.append(row)
     return SectionResult(applied=applied, rejected=rejected)
 
 

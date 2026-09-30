@@ -41,6 +41,9 @@ _DECLARATION_KEYS: tuple[str, ...] = (
     "inquiries",
     "rushes",
     "travel_tones",
+    # #1900：护送关联与逐路护送实况分节——关联答「谁护谁」，实况答「这趟护没护成」。
+    "escort_links",
+    "escort_results",
 )
 _ARRAY_SECTIONS = frozenset(
     k for k in _DECLARATION_KEYS if k not in {"protagonist", "effects"}
@@ -206,6 +209,25 @@ def build_translation_target_grounding(db: Any, state: Any = None) -> str:
         "SELECT id, title FROM secret_orders WHERE status='active' ORDER BY id"
     ).fetchall():
         lines.append(f"secret_order\t{int(row['id'])}\t{str(row['title'] or '')}")
+    # #1900：在途拨帑案卷与其已立的护送关联——escort_links / escort_results 只认这里
+    # 的精确 dossier id；未在途的拨帑案卷不列，免得凭空指向。
+    for row in db.conn.execute(
+        "SELECT id, action_type, target_kind, target_id FROM decree_dossiers "
+        "WHERE status='executing' AND action_type='grant_allocation' ORDER BY id"
+    ).fetchall():
+        escorted = db._grant_escort_presence(int(row["id"]))
+        lines.append(
+            f"dossier\t{int(row['id'])}\t{str(row['target_kind'] or '')}:{str(row['target_id'] or '')}"
+            + (f"\t有护:{escorted[1]}" if escorted[1] else "")
+        )
+    for row in db.conn.execute(
+        "SELECT id, source_dossier_id, target_dossier_id, relation_type FROM decree_dossier_links "
+        "WHERE relation_type IN ('护卫','稽核') ORDER BY id"
+    ).fetchall():
+        lines.append(
+            f"escort_link\t{int(row['source_dossier_id'])}\t{int(row['target_dossier_id'])}"
+            f"\t{str(row['relation_type'])}"
+        )
     if state is not None:
         from ming_sim.due_review import list_due_review_scenes
         for scene in list_due_review_scenes(db, state):
@@ -216,7 +238,8 @@ def build_translation_target_grounding(db: Any, state: Any = None) -> str:
     body = "\n".join(lines)
     return (
         "【权威目标目录】\n"
-        "grant.target_id / appointment.region_id / rushes.target_id / 禁摊派案卷 id 必须取对应目录中的精确 id，禁止编造。\n"
+        "grant.target_id / appointment.region_id / rushes.target_id / 禁摊派案卷 id / "
+        "escort_links 与 escort_results 的案卷 id 必须取对应目录中的精确 id，禁止编造。\n"
         f"{body}\n"
     )
 
@@ -287,6 +310,14 @@ def build_c0_declaration_shape() -> str:
         '  "rushes": [{"target_kind": "commitment|secret_order", "target_id": 正整数, '
         '"stage_idx": 0, "deadline_months": 1, "reason": "催办缘由"}],\n'
         '  "travel_tones": [{"person_name": "人名", "tone": "常行|加急|星夜兼程"}],\n'
+        '  "escort_links": [\n'
+        '    {"escort_source_dossier_id": 护行密令案卷 id, "target_dossier_id": 被护拨帑案卷 id,\n'
+        '     "relation_type": "护卫|稽核", "note": "护送缘由"}\n'
+        "  ],\n"
+        '  "escort_results": [\n'
+        '    {"dossier_id": 被护拨帑案卷 id, "escort_source_dossier_id": 护行密令案卷 id,\n'
+        '     "escorted": true|false, "note": "此路此趟护送实况原文（可空）"}\n'
+        "  ],\n"
         '  "on_scene_facts": [\n'
         "    {\n"
         '      "name": "人名",\n'
@@ -379,6 +410,9 @@ def build_audience_translate_prompt(
         "- 暗渠揭破场面呈上后皇帝禁摊派 → commissions 一项 dossier_action_type=prohibit_covert_levy，target_id 填当前场面案卷 dossier_id。\n"
         "- 大臣具名举荐某人任某差并附荐词 → commissions 任命 + recommendation（荐者/荐词原句）。\n"
         "- 皇帝交代近侍查某事 → inquiries；催某件分段事或密令 → rushes；传召说明缓急 → travel_tones。\n"
+        "- 命人护行／沿途照看某笔在途拨帑 → escort_links 一条，护行密令案卷指向被护拨帑案卷"
+        "（被护数笔就写几条），只交代「谁护谁」；此路此趟究竟护没护成由 escort_results 另报，"
+        "一令护多路时逐路各报各的，别用整条密令的成败代替。\n"
         f"{grounding_block}"
         f"【本场已说的话】\n{said_block}\n"
         f"【本夜暂存清单】{pending_block}\n"
