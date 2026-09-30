@@ -1209,11 +1209,9 @@ def _dispatch_commissions(
                 _reject(rejected, item, "密令新建载荷须为独立对象", "invalid_shape", source)
                 continue
             from ming_sim.cli_backend import secret_order_can_land
-            from ming_sim.action_materialize import land_or_recover_new_secret_order
             if not secret_order_can_land(dict(secret)):
                 _reject(rejected, item, "密令缺标题、内容或冻结任务契约", "invalid_shape", source)
                 continue
-            out: Dict[str, Any] = {}
             source_turn = db.conn.execute(
                 "SELECT minister_name, user_message_id FROM chat_turns "
                 "WHERE id=? AND turn=? AND status='active'",
@@ -1222,15 +1220,37 @@ def _dispatch_commissions(
             if source_turn is None or source_turn["user_message_id"] is None:
                 _reject(rejected, item, "密令缺本轮口谕源轮", "missing_ref", source)
                 continue
-            pinned = dict(secret)
-            pinned["origin_chat_message_id"] = int(source_turn["user_message_id"])
             actor = str(minister_name or "").strip() or str(source_turn["minister_name"])
-            land_or_recover_new_secret_order(
-                db=db, turn=int(state.turn), minister_name=actor,
-                secret=pinned, player_message=str(item.get("text") or ""),
-                llm_config=None, out=out,
+            # 差务契约在此一次冻结并校验：落不成案的原因此刻即知，写一条
+            # durable 拒收让下一句戏文里的大臣自己复述/请示（ADR 0155 场中
+            # 承接），不留一条注定落不了库的暂存。
+            from ming_sim.covert_progress import (
+                CovertContractError, build_covert_task_contract,
             )
-            applied.append({"id": out["pending_action_id"], "kind": "secret_order"})
+            try:
+                frozen_task = build_covert_task_contract(covert_task=secret.get("covert_task"))
+            except (CovertContractError, TypeError, ValueError) as exc:
+                _reject(rejected, item, f"密令差务契约不成立：{exc}", "invalid_shape", source)
+                continue
+            # 落现役唯一写口（db.stage_pending_action）；应允时按 ADR 0038
+            # 夜内直写成案（_dispatch_promises 的 secret_order 分支）。
+            payload = {
+                "title": str(secret.get("title") or "").strip(),
+                "content": str(secret.get("content") or "").strip(),
+                "assignee": str(secret.get("assignee") or "").strip() or actor,
+                "tags": list(secret.get("tags") or []),
+                "deadline_months": secret.get("deadline_months", 0),
+                "excluded_names": list(secret.get("excluded_names") or []),
+                "excluded_offices": list(secret.get("excluded_offices") or []),
+                "dossier_links": list(secret.get("dossier_links") or []),
+                "covert_task": frozen_task,
+                "origin_chat_message_id": int(source_turn["user_message_id"]),
+            }
+            row_id = db.stage_pending_action(
+                int(state.turn), "secret_order", "新建", actor, payload,
+                source_chat_turn_id=source_chat_turn_id,
+            )
+            applied.append({"id": row_id, "kind": "secret_order"})
             continue
 
         assignment = item.get("assignment")

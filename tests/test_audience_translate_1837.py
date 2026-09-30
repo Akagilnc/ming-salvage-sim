@@ -224,7 +224,7 @@ def test_pending_round_approval_endorsed_before_close_or_after_month_join(
         sess.await_translations_before_month()
 
     row = db.conn.execute(
-        "SELECT status, night_approved, committed_directive_id "
+        "SELECT status, night_approved "
         "FROM pending_actions WHERE id=?", (aid,),
     ).fetchone()
     assert row["status"] == "committed"
@@ -236,8 +236,11 @@ def test_pending_round_approval_endorsed_before_close_or_after_month_join(
     assert len(ends) == 1
     assert ends[0]["form"] == "御笔手敕"
     assert ends[0]["source_chat_turn_id"] == ctid
+    directive_id = int(db.conn.execute(
+        "SELECT id FROM turn_directives WHERE source_pending_action_id=?", (aid,),
+    ).fetchone()["id"])
     pubs = engine_command_mingfa_publication_ids(list_ledger(db, nid))
-    assert int(row["committed_directive_id"]) in pubs
+    assert directive_id in pubs
 
 
 def test_translation_entry_preserves_unknown_rejection_and_source_cutoff(
@@ -590,11 +593,12 @@ def test_emperor_准_via_scene_chat_approves_no_reply_stays_unapproved(game, mon
         llm_config=sess.llm_config,
     )
     pa = db.conn.execute(
-        "SELECT status, committed_directive_id FROM pending_actions WHERE id=?",
-        (staged_id,),
+        "SELECT status FROM pending_actions WHERE id=?", (staged_id,),
     ).fetchone()
     assert pa["status"] == "committed"
-    assert int(pa["committed_directive_id"] or 0) > 0
+    assert db.conn.execute(
+        "SELECT 1 FROM turn_directives WHERE source_pending_action_id=?", (staged_id,),
+    ).fetchone() is not None
 
 
 
@@ -854,9 +858,6 @@ def test_translation_pending_create_approve_reject_undo_via_real_chat_turn(
         "SELECT COUNT(*) n FROM pending_actions WHERE id=? AND status='pending'",
         (created_id,),
     ).fetchone()["n"] == 0
-    assert created_id not in [
-        r["id"] for r in db.list_pending_actions_for_chat_turn(ctid_create)
-    ]
 
     # ── 2) 应允：night_approved 0→1 → undo 回 0 ──
     baseline = dispatch_declaration(
