@@ -60,8 +60,12 @@ _SEVERITY_MULTIPLIER = {"轻": 0.8, "中": 1.0, "重": 1.3}
 # 类目不驱动任何机械分支（判官误标类目不该改变查案难度，大理寺 R4）。
 _NETWORK_PER_EDGE = 0.05
 _NETWORK_EDGE_CAP = 10
-# 目标遮掩因子留白：ADR 0108 指定的 per-character 阴谋能力列本仓尚未建，
-# 在其落地前不拿 characters.identity（党籍认同）冒充遮掩。
+# 目标遮掩（ADR 0108 阴谋能力，已准设计「被查的人越会遮掩、关系网越深，越难查」）：
+# 同等条件下目标越会遮掩越难查。基准 50＝不乘不除（缺省/未列者即中性），
+# 乘子按参考值归一，随 playtest 校准（0011-4 D4-6 先例，不在此发明精确值）。
+# clamp 下界 1：人物无阴谋能力不是"负遮掩"，按最易查的边缘处理而非把难度压到零。
+_INTRIGUE_REFERENCE = 50.0
+_INTRIGUE_MIN = 1.0
 # 行程轴同样不落在难度里：未到差＝本月实投为零（_investigator_on_site）。
 _ABILITY_REFERENCE = 60.0
 _SPOILED_HARDER_MULTIPLIER = 1.5
@@ -910,15 +914,18 @@ def investigation_fact_difficulty(
     - 事实分档：seed_guilt 罪谱 vs 已落库 evidence 把柄边（后者更难撬）
     - 罪情轻重：seed_guilt 的 severity 档（越重越难查）
     - 关系网：目标的 evidence 边（结构化把柄越多越难查，按对手去重）
+    - 目标遮掩：ADR 0108 per-character 阴谋能力（已准设计「被查的人越会遮掩、
+      关系网越深，越难查」；#1896 一并交付该列，本轴不再延期）
     - 办案人能力：能力强则同难度所需投入更少
 
     **到差不在此轴**：未到差不是"难度更高"，而是本月实投为零（见
     ``investigation_monthly_capacity``／``_investigator_on_site``）——没到当地
     就无从查起，这是"办案人得身在当地"的硬形状，不是一段行程折扣。
 
-    目标遮掩因子待 ADR 0108 的 per-character 阴谋能力列落地后接入；在此之前
-    **不**以 characters.identity（党籍认同）冒充遮掩（ADR 0108:5,7／大理寺 R4）。
-    庇护边不按 event_kind 自由类目计（ADR 0098:15）。
+    庇护边不按 event_kind 自由类目计（ADR 0098:15）。**不**拿 characters.identity
+    （党籍认同，CONTEXT.md 孤臣轴）冒充遮掩——遮掩的真源只有 `characters.intrigue`
+    （ADR 0108:5,7／大理寺 R4）。查案对象不是真人物行（如「某类人」式题名）时
+    该轴退化不参与，与所在地缺失同款处理：不假装他会遮掩，也不假装他不会。
 
     毁证（#1896 / ADR 0100 后出修订）按 fact_key 抬难度或直接封死，且真源在
     (target, fact_key) 而非案卷——关案重开、另起新案都不恢复已毁事实。
@@ -942,10 +949,9 @@ def investigation_fact_difficulty(
     # ⚠️ 这里**不**按 event_kind 自由类目（站台/恩义/协作…）计庇护：ADR 0098:15
     # 明文「九类自由类目不驱动任何机械分支」，判官误标类目不该改变查案难度
     # （大理寺 R4：按类目改难度＝以自由类目替代真实庇护输入）。
-    # ⚠️ 这里也**不**拿 characters.identity 当目标遮掩：identity 是党籍认同
-    # （CONTEXT.md 孤臣轴），不是掩人耳目之能；ADR 0108 指定的遮掩因子是
-    # per-character 阴谋能力，该列本仓尚未建（见 ADR 0098 后出修订的前置说明），
-    # 故遮掩因子暂缺，**不**拿别的轴凑数。
+    # ⚠️ 这里**不**拿 characters.identity 当目标遮掩：identity 是党籍认同
+    # （CONTEXT.md 孤臣轴），不是掩人耳目之能。遮掩的真源只有 `characters.intrigue`
+    # （ADR 0108 per-character 阴谋能力，#1896 一并交付该列）——见下。
     edges = 0
     seen_others: set[str] = set()
     for edge in db.get_relation_edge_events(person=name, evidence=True):
@@ -956,6 +962,22 @@ def investigation_fact_difficulty(
         seen_others.add(other)
         edges += 1
     difficulty *= 1.0 + _NETWORK_PER_EDGE * min(edges, _NETWORK_EDGE_CAP)
+
+    # 目标遮掩（ADR 0108 阴谋能力）：已准设计原句「被查的人越会遮掩、关系网越深，
+    # 越难查」。读目标自己在册的阴谋能力——静态 seed 能力轴，引擎只按参考值
+    # 归一，不抽签（restore 可复现）。与办案人能力轴方向相反：那边能力强→易查
+    # （除以能力），这边遮掩高→难查（除以参考值、乘以自身）。
+    # 目标不在 characters 行里（题名式查案对象）时该轴退化不参与。
+    target_row = db.conn.execute(
+        "SELECT intrigue FROM characters WHERE name=?", (name,),
+    ).fetchone()
+    if target_row is not None:
+        try:
+            intrigue = float(target_row["intrigue"])
+        except (TypeError, ValueError):
+            intrigue = float(_INTRIGUE_REFERENCE)
+        if intrigue > 0.0:
+            difficulty *= max(intrigue, _INTRIGUE_MIN) / _INTRIGUE_REFERENCE
 
     # 办案人能力（ADR 0092 带宽①同源）：能力强 → 同难度所需投入更少。
     worker = str(investigator or "").strip()

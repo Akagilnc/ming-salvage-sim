@@ -1675,6 +1675,7 @@ def _character_projection_from_db_row(row: Any) -> Any:
         power_id=_str("power_id", "ming") or "ming",
         summary=_str("summary"),
         identity=_int("identity", 50),
+        intrigue=_int("intrigue", 50),
     )
 
 
@@ -1696,7 +1697,7 @@ def _resolve_present_character(
         row = db.conn.execute(
             """
             SELECT name, office, office_type, faction, aliases, personal_skills,
-                   loyalty, ability, integrity, courage, style, identity,
+                   loyalty, ability, integrity, courage, style, identity, intrigue,
                    summary, power_id
             FROM characters WHERE name=?
             """,

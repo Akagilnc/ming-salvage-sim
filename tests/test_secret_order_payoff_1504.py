@@ -837,6 +837,9 @@ def test_investigation_mastery_needs_effort_to_reach_fact_difficulty(game):
     ).fetchone()["name"]
     _set_axes(db, name, loyalty=90, identity=30)
     db.conn.execute("UPDATE characters SET seed_guilt=? WHERE name=?", ("侵冒", target))
+    # 本例只考"实投累计到该条难度"这条机制，不考目标遮掩——把遮掩钉在参考值，
+    # 否则"一月满强度即达门槛"会随名册 seed 校准而漂（本例断言的是机制不是 seed 值）。
+    db.conn.execute("UPDATE characters SET intrigue=50 WHERE name=?", (target,))
     _co_locate(db, name, target)
     oid = _issue(
         db, state, name, "查核辽饷侵冒", "查核辽饷侵冒",
@@ -2171,7 +2174,7 @@ def test_difficulty_reads_real_evidence_edges_only(game):
     - event_kind 自由类目边（站台/恩义…）→ **不**改难度（ADR 0098:15 九类
       自由类目不驱动任何机械分支，判官误标不该改查案难度）；
     - characters.identity（党籍认同）→ **不**当遮掩（ADR 0108:5,7／CONTEXT.md
-      孤臣轴；遮掩因子待 0108 的阴谋能力列落地，不拿别的轴凑数）。
+      孤臣轴；遮掩因子读 characters.intrigue，见 test_intrigue_concealment_1896.py）。
     """
     db, state, _ = game
     name = _minister(db)
