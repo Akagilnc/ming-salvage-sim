@@ -262,6 +262,54 @@ def test_public_saying_excluded_name_does_not_see_it_others_do(
         reopened.close()
 
 
+def test_excluded_saying_reaches_full_simulator_but_not_public_gazette(
+    game, monkeypatch,
+):
+    """#1829 F1：排除边界按调用职责落，不按有无姓名落。
+
+    世界段（ADR 0155 推演者三层全看）应读到受排除说法；同一份说法不得进
+    公共邸报作者供料。两侧都走真实入口 run_world_segment_text /
+    run_gazette_text，只替模型传输。
+    """
+    from ming_sim import month_chain
+    from ming_sim.models import LLMConfig
+
+    db, state, content = game
+    claim = "袁崇焕已死于宁远"
+    hidden = _礼部大臣(content).name
+    record_public_saying(
+        db, state, claim, involved_characters=["袁崇焕"], excluded_names=[hidden],
+    )
+    seen: dict[str, str] = {}
+
+    def model(agent, prompt, tag, **_kwargs):
+        listing, read = "", None
+        for tool in getattr(agent, "tools", []) or []:
+            entry = getattr(tool, "entrypoint", tool)
+            if getattr(entry, "__name__", "") == "list_materials":
+                listing = entry()
+            elif getattr(entry, "__name__", "") == "read_material":
+                read = entry
+        assert read is not None, f"{tag} 没有材料目录读口"
+        seen[tag] = listing + "\n" + "\n".join(
+            read(rel) for rel in listing.splitlines() if rel.endswith(".txt")
+        )
+        if tag == "gazette":
+            return json.dumps({"title": "本月邸报", "report": "本月朝局如常。"},
+                              ensure_ascii=False)
+        return "本月边事如常。"
+
+    monkeypatch.setattr("ming_sim.agents.run_agent_text", model)
+    llm_config = LLMConfig(
+        api_key="sk-test", base_url="https://example.invalid", model="test",
+    )
+    assert month_chain.run_world_segment_text(db, state, llm_config) == "本月边事如常。"
+    assert month_chain.run_gazette_text(db, state, llm_config, {})[0] == "本月邸报"
+
+    assert claim in seen["world-segment"], "全量推演者应按三层全看读到受排除说法"
+    assert claim not in seen["gazette"], "受排除说法绕过了公共邸报作者供料边界"
+
+
 def test_public_saying_survives_same_turn_archive_projection(game):
     db, state, content = game
     reader = _礼部大臣(content)

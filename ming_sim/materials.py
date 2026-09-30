@@ -1938,17 +1938,21 @@ def prepare_world_materials(
     ledger_origin_prefix_excluded: str = "",
     exclude_secret_order_dossiers: bool = False,
     exclude_secret_order_audience: bool = False,
+    public_feed: bool = False,
 ) -> PreparedMaterials:
     """过月推演者材料目录：盘面全量 + 开着的事务清单进开场最小集；人物经历、
     公开说法、历月邸报按需自读（#1834）。写入（拒收/实况回目录、下月材料）不
-    在本函数职责内——本函数只组装可读材料，不提供任何写入口。"""
+    在本函数职责内——本函数只组装可读材料，不提供任何写入口。
+
+    `public_feed=True` 只给公共供料方（公共邸报作者）：受显式排除的公开说法
+    不进其目录（#1829 C1）。世界段、逐旨预推、整月密报是全量推演者，按
+    ADR 0155 三层全看，不传该参数（#1829 F1）。"""
     from ming_sim.knowledge import build_character_knowledge
 
     # public_events 的既有投影与具体 character_name 无关（build_character_knowledge
     # 里 public_events 恒取 `_character_knowledge_events("", ...)`）——借用同一投影，
-    # 不另建一套「世界公开说法」查询。空姓名即无读者层：受显式排除的说法不投影
-    # （public_layer_events 的 for_every_reader），公共供料不会重新公开它。
-    knowledge = build_character_knowledge(db, state, "")
+    # 不另建一套「世界公开说法」查询。排除边界按调用职责落，不按有无姓名落。
+    knowledge = build_character_knowledge(db, state, "", public_feed=public_feed)
     public_events = knowledge.get("public_events") or []
     affair_lines = _world_affair_lines(db, include_fact)
     dossier_facts = continuing_dossier_facts(db, int(state.turn))

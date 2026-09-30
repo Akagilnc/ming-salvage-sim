@@ -572,7 +572,16 @@ def _issue_audience_case_events(
     return synthesized
 
 
-def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[str, object]:
+def build_character_knowledge(
+    db: Any, state: Any, character_name: str, *, public_feed: bool = False,
+) -> Dict[str, object]:
+    """个人知识投影；`public_feed=True` 时按公共供料边界投影公开说法。
+
+    公开说法的排除边界按调用职责区分（#1829 F1）：人物读者走
+    `knowledge_row_visible_to` 的按人排除；全量推演者（空姓名世界层）按
+    ADR 0155 三层全看；只有公共供料方（公共邸报作者）没有可被排除的具体
+    读者，须显式传 `public_feed=True` 落「受排除说法不进公共供料」边界。
+    """
     character = db.content.characters.get(character_name) if db.content else None
     # The content object is the seed/in-memory roster and can lag behind a
     # restored save.  The characters table is the durable current-world source.
@@ -765,7 +774,7 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
             key: (_prose(value) if key == "body" else value)
             for key, value in row.items() if key != "excluded_names"
         }
-        for row in public_layer_events(db, for_every_reader=not character_name)
+        for row in public_layer_events(db, for_public_feed=public_feed)
         if knowledge_row_visible_to(
             db,
             {**row, "office_type": office_type, "office": office_name},
