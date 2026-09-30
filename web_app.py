@@ -6048,20 +6048,8 @@ async def api_upload_portrait(name: str, file: UploadFile = File(...)) -> Dict[s
     return {"name": name, "portrait_id": f"{CUSTOM_PORTRAIT_PREFIX}{name}"}
 
 
-@app.delete("/api/consorts/{name}/portrait")
-async def api_delete_portrait(name: str) -> Dict[str, Any]:
-    game = get_game()
-    character = game.find_character(name)
-    if character is None:
-        raise HTTPException(status_code=404, detail="未找到该人物")
-    with _serialized_web_write(game):
-        old = _find_portrait_file(name)
-        if old is not None:
-            os.remove(old)
-        # 复位 portrait_id：清空 → 前端回落到池图（add/seed 时会按 office_type 再分配）。
-        game.set_custom_portrait(name, "")
-    return {"name": name, "portrait_id": ""}
-
+# #1902：DELETE /api/consorts/{name}/portrait 退役——前端零调用（立绘上传 POST 在役，
+# 「清空立绘回池图」无客户端面）。玩家可见能力面随前端一起只剩上传。
 
 @app.get("/api/court_layout")
 async def api_get_court_layout() -> Dict[str, Any]:

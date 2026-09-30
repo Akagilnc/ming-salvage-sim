@@ -143,7 +143,8 @@ def _endpoint_cases():
         ("court_layout", lambda: web_app.api_set_court_layout({"layout": "{}"})),
         ("admin_upsert", lambda: web_app.api_admin_upsert("metrics", {"key": "国库", "value": "1"})),
         ("admin_delete", lambda: web_app.api_admin_delete("metrics", {"pk_value": "国库"})),
-        ("portrait_delete", lambda: web_app.api_delete_portrait("某大臣")),
+        # #1902：立绘两端点退出写闸矩阵——DELETE 路由退役（前端零调用），上传端点在
+        # 拿闸前先校 content_type/大小（400），不属相位/闸守门路径。
         # #1902：拟诏台手写入口（create/update directive）退役，不列入写门面；
         # 删旧草稿（delete_directive）保留，守门先于 session 调用触发。
         ("delete_directive", lambda: web_app.api_delete_directive(7)),

@@ -166,3 +166,17 @@ def test_session_manual_draft_mutators_are_gone():
     assert not hasattr(GameSession, "add_directive")
     assert not hasattr(GameSession, "update_directive")
     assert hasattr(GameSession, "delete_directive"), "删旧草稿仍保留"
+
+
+def test_portrait_delete_route_is_retired():
+    """立绘清空端点前端零调用，随 #1902 退役；上传面仍在。"""
+    assert not any(
+        getattr(r, "path", None) == "/api/consorts/{name}/portrait"
+        and "DELETE" in (getattr(r, "methods", None) or set())
+        for r in web_app.app.routes
+    ), "立绘清空端点应已退役"
+    assert any(
+        getattr(r, "path", None) == "/api/consorts/{name}/portrait"
+        and "POST" in (getattr(r, "methods", None) or set())
+        for r in web_app.app.routes
+    ), "立绘上传端点必须保留"
