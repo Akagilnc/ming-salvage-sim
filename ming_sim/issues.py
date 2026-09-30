@@ -3793,10 +3793,14 @@ def _is_fiscal_levy_petition_event(ev: Event) -> bool:
     )
 
 
-def _fiscal_levy_presented_event_ids(db: GameDB) -> set[str]:
-    """本月已呈上批红页的请饷／议停事件（不论已答未答）。
+def _fiscal_levy_answered_event_ids(db: GameDB, turn: int) -> set[str]:
+    """本段（turn）已答复的请饷／议停事件真实 id——结局声明的唯一资格门。
 
-    结局声明的资格门＝确已呈请过：没呈过的没有御批可译，不接受凭空声明的结局。
+    资格＝**本段真的有御批**：该回合批红页上已答（decided，含留中）的请旨行。
+    「历史呈过」不构成授权：呈过而未答、或上一段的旧留中行，都不是本段可译的
+    御批。转译入口喂给模型的答复名单（month_translate._answered_levy_verdicts）
+    与此同源，两处不再各判一套。
+
     前缀真源 = month_chain；此处局部导入以免与月链成模块环。
     """
     from ming_sim.month_chain import _LEVY_PETITION_PREFIX
@@ -3804,7 +3808,9 @@ def _fiscal_levy_presented_event_ids(db: GameDB) -> set[str]:
     return {
         str(row["event_id"])[len(_LEVY_PETITION_PREFIX):]
         for row in db.conn.execute(
-            "SELECT DISTINCT event_id FROM pending_decisions WHERE kind='decision'"
+            "SELECT event_id FROM pending_decisions "
+            "WHERE turn = ? AND kind='decision' AND status='decided'",
+            (int(turn),),
         ).fetchall()
         if str(row["event_id"] or "").startswith(_LEVY_PETITION_PREFIX)
     }
@@ -4570,12 +4576,13 @@ def _preflight_declared_event_groups(
             continue
         if _is_fiscal_levy_petition_event(event):
             # #1891：请饷／议停请旨的结局与战略事件同一通道，只是资格门不同——
-            # 须本月已呈（批红页上有该事件的请旨行），没呈过的没有御批可译。
+            # 须**本段已答**（该回合批红页上有该事件已答的请旨行），没答过的没有
+            # 御批可译：呈过但未答、或上一段的旧留中行，都不构成本段授权。
             if db.event_terminal_state(event_id):
                 rejected[event_id] = f"饷率事件已裁定，不能再落结局：{event_id}"
                 continue
-            if event_id not in _fiscal_levy_presented_event_ids(db):
-                rejected[event_id] = f"饷率事件本月未呈请，无御批可译：{event_id}"
+            if event_id not in _fiscal_levy_answered_event_ids(db, int(state.turn)):
+                rejected[event_id] = f"饷率事件本段未答，无御批可译：{event_id}"
                 continue
             outcome = {}
             for item in group:

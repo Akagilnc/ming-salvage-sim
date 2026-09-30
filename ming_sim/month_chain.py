@@ -104,12 +104,23 @@ def _world_segment_message(db: Any, state: Any, cheat_directive: str) -> str:
 
 def _pin_world_question_identities(
     levy_petitions: List[Dict[str, Any]], questions: List[Dict[str, Any]],
+    turn: int = 0,
 ) -> List[Dict[str, Any]]:
     """#1891（ADR 0115）：交接时把请旨身份钉进问题本身，随月链持久化。
 
     绑定真源＝本月交接的那份名单快照（与世界段消息共用同一次取数），不是回显，
     也不在恢复时按实时资格重解。恢复只续用当次已存身份与奏疏。
+
+    请旨若报出一个**真实存在**的饷率事件、而该事件不在本月交接名单内，这是
+    契约违反（回显了未交接的身份，或陈旧／错写的身份），按 ADR 0115「无法绑定
+    fail-loud」响亮失败——不静默降成无主的世界段请旨。静默降格会让皇帝的亲裁
+    落在匿名案头上、原事件永无终局（正是 #345 旧 bug 之源）。此处不据疏文猜配。
+
+    未带任何 event_id 的请旨仍照旧作普通世界段请旨：那种情形与「到点请饷被漏
+    回显」在账上无从分辨，引擎不硬凑（那正是 world_question 既有行为）。此时
+    本月名单里那件请饷因无人认领而未被呈上，仍留在 due 名单内等下一月。
     """
+    from ming_sim.exceptions import SettlementAbort
     from ming_sim.issues import FISCAL_LEVY_EVENT_CATEGORY, _fiscal_levy_event_by_id
 
     offered = {
@@ -123,11 +134,12 @@ def _pin_world_question_identities(
         row = dict(question)
         event_id = str(row.get("event_id") or "").strip()
         ev = _fiscal_levy_event_by_id(event_id) if event_id else None
-        if (
-            event_id in offered
-            and ev is not None
-            and getattr(ev, "category", "") == FISCAL_LEVY_EVENT_CATEGORY
-        ):
+        if ev is not None and getattr(ev, "category", "") == FISCAL_LEVY_EVENT_CATEGORY:
+            if event_id not in offered:
+                raise SettlementAbort(
+                    f"请旨回显了本月未交接的饷率事件身份，无法绑定：{event_id}",
+                    turn=int(turn), stage="world_bind",
+                )
             row["event_id"] = f"{_LEVY_PETITION_PREFIX}{event_id}"
         pinned.append(row)
     return pinned
@@ -1021,7 +1033,7 @@ def _run_world_segment(
     prefix, questions = _split_at_question(str(chain.get("world_text") or ""))
     # 交接时钉定：请旨问题按上面那份名单快照换上稳定案头身份，随链持久化。
     chain["world_questions"] = _pin_world_question_identities(
-        chain.get("levy_petitions") or [], questions,
+        chain.get("levy_petitions") or [], questions, turn,
     )
 
     def mark(result: Any) -> None:

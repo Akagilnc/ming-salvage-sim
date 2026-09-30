@@ -160,20 +160,10 @@ def _answered_levy_verdicts(db: Any, turn: int) -> list[dict[str, object]]:
     闭集作为事实供转译参照，不替它判语义（ADR 0142 / P6）。数据真源＝批红案头
     已存行与内容表，不另立账本。
     """
-    from ming_sim.month_chain import _LEVY_PETITION_PREFIX
+    from ming_sim.issues import _fiscal_levy_answered_event_ids, _fiscal_levy_event_by_id
 
     out: list[dict[str, object]] = []
-    for row in db.conn.execute(
-        "SELECT event_id FROM pending_decisions "
-        "WHERE turn = ? AND kind='decision' AND status='decided' ORDER BY idx",
-        (int(turn),),
-    ).fetchall():
-        event_id = str(row["event_id"] or "")
-        if not event_id.startswith(_LEVY_PETITION_PREFIX):
-            continue
-        real_id = event_id[len(_LEVY_PETITION_PREFIX):]
-        from ming_sim.issues import _fiscal_levy_event_by_id
-
+    for real_id in sorted(_fiscal_levy_answered_event_ids(db, turn)):
         ev = _fiscal_levy_event_by_id(real_id)
         if ev is None:
             continue

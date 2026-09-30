@@ -71,6 +71,10 @@ def _prepare_due(db, state, content, year=1631, period=1):
 
 
 def test_petition_due_lists_liao_rise_at_historical_timepoint(game):
+    """到点请饷进petition-due 名单，且首次到点的呈请义务是名单上的权限事实。
+
+    留中后的再呈才由大臣自决——两条事实同出一份名单，一次钉住（#1891 J4）。
+    """
     db, state, content = game
     _prepare_due(db, state, content)
 
@@ -78,22 +82,10 @@ def test_petition_due_lists_liao_rise_at_historical_timepoint(game):
 
     assert [item["event_id"] for item in due] == ["liao_levy_rise_1631"]
     assert due[0]["terminal_reason_labels"] == ["已准", "已驳"]
-    # 首次到点：应呈请，不是大臣自决的再呈。
-    assert due[0]["re_presentation"] is False
-    assert "prior_petition" not in due[0]
-
-
-def test_petition_due_carries_first_presentation_duty_as_fact(game):
-    """#1891 J4：首次到点应呈请是名单上的**权限事实**，不是提示措辞。
-
-    留中后的再呈才由大臣自决。断言落在数据字段上，措辞改动不影响本判据。
-    """
-    db, state, content = game
-    _prepare_due(db, state, content)
-
-    due = list_fiscal_levy_petitions_due(state, db)
+    # 首次到点：应呈请（权限事实），不是大臣自决的再呈；不带旧疏。
     assert due[0]["presentation_due"] is True
     assert due[0]["re_presentation"] is False
+    assert "prior_petition" not in due[0]
 
 
 def test_petition_due_withdraws_presentation_duty_after_hold(game):
@@ -218,6 +210,23 @@ def test_handoff_does_not_bind_event_outside_offered_snapshot(game):
     pinned = _pin_world_question_identities(offered, questions)
 
     assert not pinned[0]["event_id"].startswith(_LEVY_PETITION_PREFIX)
+
+
+def test_handoff_fails_loud_when_question_echoes_unhanded_levy_event(game):
+    """#1891 R1：请旨回显真实饷率事件却不在本月名单＝契约违反，响亮失败。
+
+    静默降格会让皇帝亲裁落在匿名案头上、原事件永无终局（ADR 0115 fail-loud）。
+    """
+    from ming_sim.exceptions import SettlementAbort
+
+    db, state, content = game
+    _prepare_due(db, state, content)
+    offered = list_fiscal_levy_petitions_due(state, db)
+    # 名单里只有 liao_levy_rise_1631；请旨却回显另一个真实存在的饷率事件。
+    questions = parse_decision_blocks(_world_with_levy_petition("jiao_levy_stop_1640"))
+
+    with pytest.raises(SettlementAbort, match="未交接的饷率事件身份"):
+        _pin_world_question_identities(offered, questions, int(state.turn))
 
 
 def test_materialized_desk_restores_pinned_identity_after_reopen(game, tmp_path):
@@ -388,14 +397,52 @@ def test_declared_outcome_outside_closed_label_set_fails_loud(game):
     assert row["terminal_state"] == ""
 
 
-def test_outcome_cannot_be_declared_for_event_never_presented(game):
-    """没呈过的请饷事件不接受凭空声明的结局——没有御批可译。"""
-    from ming_sim.issues import _fiscal_levy_presented_event_ids
+def test_outcome_cannot_be_declared_without_this_segments_own_verdict(game):
+    """#1891 R2：本段没有御批的请饷事件，声明结局被拒收且零实账。
+
+    走真实声明入口（``preflight_declared_event_effects``）尝试那笔被禁的写入，
+    断言结构化拒收与账上零终局行——不以查询 helper 代替行为证明。两种「呈过但
+    本段无御批」都须拒收：本段呈上未答，以及上一段的旧留中行。
+    """
+    from ming_sim.issues import preflight_declared_event_effects
 
     db, state, content = game
     _prepare_due(db, state, content)
+    turn = int(state.turn)
+    effect = {"event_id": "liao_levy_rise_1631", "事件结局": {"liao_levy_rise_1631": "已准"}}
 
-    assert "liao_levy_rise_1631" not in _fiscal_levy_presented_event_ids(db)
+    # 一、本段呈上批红页但尚未答复：没有御批可译。
+    db.save_pending_decisions(turn, [{
+        "event_id": f"{_LEVY_PETITION_PREFIX}liao_levy_rise_1631",
+        "title": "辽饷升至一分二厘", "context": "边镇欠饷日深，户部请加辽饷。",
+        "options": [{"label": "准行加派", "hint": ""}],
+    }])
+    rejected = preflight_declared_event_effects(db, state, [("liao_levy_rise_1631", dict(effect))])
+    assert "liao_levy_rise_1631" in rejected
+    assert db.conn.execute(
+        "SELECT 1 FROM event_triggers WHERE event_id=? AND terminal_state='triggered'",
+        ("liao_levy_rise_1631",),
+    ).fetchone() is None
+
+    # 二、上一段的旧留中行：历史呈过不构成本段授权。
+    db.conn.execute(
+        "UPDATE pending_decisions SET status='decided', choice_json=? "
+        "WHERE turn=? AND event_id=?",
+        (json.dumps({"label": "", "note": "留中，俟户部再议"}, ensure_ascii=False),
+         turn, f"{_LEVY_PETITION_PREFIX}liao_levy_rise_1631"),
+    )
+    db.conn.execute("UPDATE game_state SET turn = ?", (turn + 1,))
+    db.conn.commit()
+    state.turn = turn + 1
+
+    rejected_next = preflight_declared_event_effects(
+        db, state, [("liao_levy_rise_1631", dict(effect))],
+    )
+    assert "liao_levy_rise_1631" in rejected_next
+    assert db.conn.execute(
+        "SELECT 1 FROM event_triggers WHERE event_id=? AND terminal_state='triggered'",
+        ("liao_levy_rise_1631",),
+    ).fetchone() is None
 
 
 def test_jiao_stop_verdict_uses_its_own_closed_label_set(game):
