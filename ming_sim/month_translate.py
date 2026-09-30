@@ -76,6 +76,19 @@ def build_month_segment_translate_prompt(request: MonthTranslationInput) -> str:
         "同类效果若已由结构化载荷表示，不得再重复声明。预推时载荷尚未物化，"
         "不能把它理解成已经落账。\n"
         "- 过月没有召对夜上下文，promises、presence、scene_facts 均留空；没有对应事实的其它 section 也留空（protagonist 无则省略或 null）。\n"
+        # #1893：候选事实已在世界材料目录里（硬门已判过），挑不挑由模型自己定；
+        # 落账仍走既有 new_issues 写口，代码不代选、不代发难。
+        "- 【本月候选】（材料目录里那份候选事实）中的某个人物事件，本段按盘面与"
+        "「历史结果 + 历史成因」判定确实发生时，在 effects.new_issues 声明 "
+        '{"origin_kind": "event_pool", "id": 事件 id, "title": 该事件题名}；'
+        "属战事的事件，其战果逐项在同一 effects 项里声明并在该项顶层 event_id 写同一事件 id，"
+        "并在 事件结局 里给出该事件 terminal_reason_labels 中的一个标签；"
+        "判定不发生、时机未到或前提已被玩家化解的候选一律不声明。\n"
+        "- 【本月候选】里的弹劾潮候选，由发难派系的立场自行决定发不发难："
+        '发难时在 effects.new_issues 声明 {"origin_kind": "impeachment_surge", '
+        '"candidate_id": 候选 id, "faction_hint": 该候选派系, '
+        '"target_roster": [标靶人名], "title": 弹章题名, "stage_text": 案情正文}；'
+        "标靶只能取该候选的 eligible_target_ids。不发难就不声明，也不另立任何 issue。\n"
         f"【旨的结构化载荷】\n{json.dumps(dict(request.decree_payload), ensure_ascii=False, indent=2)}\n"
         f"【在途办理案卷】\n{json.dumps(list(request.continuing_dossiers), ensure_ascii=False)}\n"
         f"{grounding_block}"
