@@ -173,7 +173,11 @@ def test_world_materials_isolate_invocations_and_databases(game, tmp_path, monke
     assert read_material(first.root, "INDEX.txt")
     assert read_material(second.root, "INDEX.txt")
 
-    other = GameDB(str(Path(db.path).parent / "other.db"), content)
+    # 第二档库归本用例 tmp_path 所有（固定名落共享父目录会跨运行借到别人遗留的旧 schema 库，
+    # #1888 J6）。同父不同档不互踩正是本例要钉的隔离契约，故仍在 game 库同父另开子目录。
+    saves = Path(db.path).parent / "saves"
+    saves.mkdir(parents=True, exist_ok=True)
+    other = GameDB(str(saves / "other.db"), content)
     try:
         other.seed_static_data()
         other_state = other.load_state()

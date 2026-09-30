@@ -603,9 +603,7 @@ def test_exhaust_zero_dossier_system_simulation_no_decree(
     assert call["source"] == Provenance.system_simulation
     assert call["directives_len"] == 0
     assert not (call["decree_text"] or "").strip()
-    assert (game.session.last_decree or "") != stale
-    # #1769 真实能力：邸报写成即过月（月份真推进），且不得留下陈旧拟诏稿当本月已颁。
-    assert _turn_of(_get_state(client)) == turn + 1
+    # #1769 真实能力：邸报写成即过月（上文 turn+1），且不得留下陈旧拟诏稿当本月已颁。
     assert not (game.session.last_decree or "").strip()
 
 
