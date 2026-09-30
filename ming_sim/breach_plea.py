@@ -8,9 +8,8 @@ kind 分派矩阵（法）：
 - apply_pending_due_reviews：禁当 staged 终裁；沉默保留 pending
 - dossiers_with_pending_due_review：不计入接管窗
 
-#1894：明确撤旨（撤回一道已发旨）不走本模块——照常过外廷、当月见办理结果，
-try_defer_revoke_to_breach_plea 已退役（调用即 RuntimeError）。本模块只管
-断供／挪用／撤人等非撤令的松手事实。
+#1894：明确撤旨（撤回一道已发旨）不走本模块——照常过外廷、当月见办理结果。
+本模块只管断供／挪用／撤人等非撤令的松手事实。
 """
 
 from __future__ import annotations
@@ -681,10 +680,11 @@ def apply_persist_revoke_tail(
     authority_source_dossier_id: int = 0,
     revoke_dossier_id: int = 0,
 ) -> Dict[str, object]:
-    """坚持后落地 = 立即 revoke 路径效果 − 票面明文推迟项。
+    """撤旨落地唯一收尾：0056 毁约代价 + 捆带授权收回 + 同源停 tick。
 
-    立即路径：0056 + 捆带授权收回 + 同源停 tick。
-    推迟项（当回合已做/不做）：顺颁即 breach+close 的当回合无损——此处补齐结账。
+    #1894 后只有外廷准行的立即路径调本函数（原「坚持撤后落地」同核此函数，
+    撤旨不再经挽留场分叉）。revoke_dossier_id 非零时另恢复该撤令案卷带来的
+    pay_order override（见 pay_order.restore_pay_order_override）。
 
     返回 guofu_from_0056：本调用 0056 实际写出的辜负边人名
     （供 0079 撤人边去重；跨承诺/跨案卷同人边不在此集合）。
@@ -1302,9 +1302,10 @@ def _scan_remove_sponsor(db: Any, state: Any) -> List[int]:
 def scan_and_write_breach_pleas(
     db: Any, state: Any, *, commit: bool = False,
 ) -> List[int]:
-    """结算内扫描断供/挪用/撤人（#1894：改弦不再由此路产生——明确撤旨
-    照常过外廷当月落实，不写挽留 todo；单纯松手无撤令者不在本票废止范围）。
+    """结算内扫描断供/挪用/撤人。
 
+    #1894：明确撤旨不由此路产生——照常过外廷、当月落实，不写挽留 todo；
+    单纯松手而无撤令者不在该票废止范围。
     相反新旨：无可行机械判据（需语义对立），不静默缺省——见模块说明/送修上抛。
     """
     written: List[int] = []
@@ -1314,27 +1315,6 @@ def scan_and_write_breach_pleas(
     if commit and written:
         db.conn.commit()
     return written
-
-
-def try_defer_revoke_to_breach_plea(
-    db: Any,
-    state: Any,
-    *,
-    target_dossier_id: int,
-    target_issue_id: int = 0,
-    revoke_dossier_id: int = 0,
-    reason: str = "",
-    commit: bool = False,
-) -> Optional[Dict[str, object]]:
-    """已退役（#1894）：撤令不再延后到下一次召对的挽留场。
-
-    保留函数体仅为 fail-loud：任何仍想写「改弦」挽留 todo 的调用方都是
-    复活旧路（撤旨须当月过外廷落实），不得静默无操作。
-    """
-    raise RuntimeError(
-        "try_defer_revoke_to_breach_plea 已退役（#1894）：撤旨照常过外廷，"
-        "不写挽留 todo"
-    )
 
 
 # ── 召对 extraction 真入口：反悔 / 坚持（既有键 only）──────────────────

@@ -15,8 +15,6 @@ from __future__ import annotations
 
 import json
 
-import pytest
-
 from ming_sim.breach_plea import (
     BREACH_KIND_FUNDING,
     BREACH_KIND_MISAPPROPRIATION,
@@ -31,7 +29,6 @@ from ming_sim.breach_plea import (
     expire_breach_pleas_on_due,
     finalize_persist,
     scan_and_write_breach_pleas,
-    try_defer_revoke_to_breach_plea,
     write_breach_plea_todo,
 )
 from tests.test_due_review_621 import _settle_empty_month
@@ -710,16 +707,6 @@ def test_no_decision_pause_on_breach_plea_settle(game, monkeypatch):
     result = _settle_empty_month(db, state, content, monkeypatch)
     assert result.awaiting is False
     assert state.turn_phase != TurnPhase.AWAITING_DECISION.value
-
-
-def test_defer_revoke_to_plea_is_retired(game):
-    """#1894：写「撤令→挽留 todo」这条路已退役，调用即响亮失败，不得静默复活。"""
-    db, state, content = game
-    did, _ = _executing_policy_dossier(db, state, token="retired-defer")
-    with pytest.raises(RuntimeError, match="已退役"):
-        try_defer_revoke_to_breach_plea(
-            db, state, target_dossier_id=did, reason="撤",
-        )
 
 
 # ── 修后四组新增用例 ──────────────────────────────────────────────────
