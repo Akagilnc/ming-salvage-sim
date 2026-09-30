@@ -557,8 +557,9 @@ def test_stream_post_reply_exception_preserves_phase_and_recovers_original_turn(
     )] == ["臣遵旨。"]
 
 
-@pytest.mark.parametrize("entry", ["stream", "nonstream"])
-def test_dispatch_exception_after_persist_retains_reply_recovery(web_game, monkeypatch, entry):
+def test_dispatch_exception_after_persist_retains_reply_recovery(web_game, monkeypatch):
+    """#1849 reopen：唯一入口 stream——旧「stream/nonstream」入口轴随非流式路退役
+    折叠为同路，函数本就不读该轴，故不再参数化。"""
     from ming_sim.session import ChatTurnResult
     from tests.web_audience_test_doubles import install_hall_admission
 
@@ -568,8 +569,6 @@ def test_dispatch_exception_after_persist_retains_reply_recovery(web_game, monke
     game.session.scene_chat = lambda *_a, **_k: ChatTurnResult(answer="臣遵旨。")
     game.session.schedule_pending_scene_translation = lambda *_a, **_k: (_ for _ in ()).throw(
         RuntimeError("translation dispatch failed"))
-
-    # #1849 reopen：唯一入口 stream；nonstream 参数折叠为同路。
     events = list(game.chat_stream("殿上", "边饷如何？"))
     chat_turn_id = int(next(ev for ev in events if ev["type"] == "accepted")["chat_turn_id"])
     assert [ev["type"] for ev in events][-2:] == ["error", "end"]

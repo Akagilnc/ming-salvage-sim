@@ -665,11 +665,6 @@ class ChatRequest(BaseModel):
     message: str
 
 
-class DirectiveRequest(BaseModel):
-    text: str
-    notes: str = ""
-
-
 class DirectivePatch(BaseModel):
     text: Optional[str] = None
     notes: Optional[str] = None
@@ -5487,44 +5482,7 @@ async def api_audience_chat_stream(request: ChatRequest) -> StreamingResponse:
     return _chat_stream_response(SCENE_CHAT_SPEAKER, request)
 
 
-@app.post("/api/directives")
-async def api_create_directive(request: DirectiveRequest) -> Dict[str, Any]:
-    if not request.text.strip():
-        raise HTTPException(status_code=400, detail="指令内容不能为空。")
-    game = get_game()
-    try:
-        with _serialized_web_write(game):
-            capture_turn = int(game.state.turn)
-        from ming_sim.cli_backend import capture_manual_directive_payload
-        dossier_payload = await asyncio.to_thread(
-            capture_manual_directive_payload,
-            request.text.strip(),
-            game.session.llm_config,
-            **({"db": game.db, "content": game.content}
-               if getattr(game, "content", None) is not None else {}),
-        )
-        # 会话层 _refuse_if_settling 仅查相位，守不住 pre_settle 原子块在 settling 落定前的窗口；
-        # 与直写端点同走 _serialized_web_write 抢 _write_gate（cmr Gate2 F-A 残面：会话写也要串行）。
-        # #1749：响应快照必须在临界段内完成——gate 释放后 drain 可关旧库，
-        # 门外 directive_rows 会 ProgrammingError: closed database。
-        with _serialized_web_write(game):
-            if int(game.state.turn) != capture_turn:
-                raise ValueError("旨意抽取期间回合已推进，请在当前回合重新提交。")
-            dv = game.session.add_directive(
-                request.text.strip(), notes=request.notes,
-                dossier_payload=dossier_payload,
-            )
-            return {
-                "directive": {"id": dv.id, "text": dv.text, "status": dv.status},
-                "directives": [
-                    game.directive_payload(item) for item in game.directive_rows()
-                ],
-            }
-    except ValueError as e:
-        raise HTTPException(status_code=409, detail=str(e)) from None  # 恢复窗冻结指引
-    except LLMUnavailable as e:
-        # #1274 V-1 r6 / #1452：回禀产文失败 → 结构化 400，禁裸 500 / 固定戏内模板。
-        raise HTTPException(status_code=400, detail=_llm_error_detail(e)) from None
+# 草稿的改／删接口在此（ADR 0152：新增发起口归召对，草稿层能力保留）。
 
 
 @app.patch("/api/directives/{directive_id}")
@@ -5696,7 +5654,7 @@ def api_advance_without_edict(
 
 
 # #1341/#1338：PATCH /api/decree 已删（web/src 零真实调用方；裸设总诏绕过 directives
-# 结构化违 P1）。OpenAPI 随路由消失。拟诏/改稿只走 POST|PATCH /api/directives。
+# 结构化违 P1）。OpenAPI 随路由消失。改稿只走 PATCH /api/directives/{id}。
 
 
 class IssueDecreeRequest(BaseModel):

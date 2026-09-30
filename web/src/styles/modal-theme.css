@@ -218,17 +218,15 @@
   color: #ffe4b0;
 }
 
-/* 改/删/新增：墨字宣纸底 */
-.modal-bg-edict .directive-tools button,
-.modal-bg-edict .desk-add-btn {
+/* 改/删：墨字宣纸底 */
+.modal-bg-edict .directive-tools button {
   color: #2a1c0e;
   background: rgba(252, 247, 232, 0.92);
   border: 1px solid rgba(120, 86, 42, 0.4);
   font-weight: 700;
 }
 
-.modal-bg-edict .directive-tools button:hover,
-.modal-bg-edict .desk-add-btn:hover {
+.modal-bg-edict .directive-tools button:hover {
   background: rgba(255, 240, 210, 0.96);
 }
 
@@ -246,7 +244,6 @@
 }
 
 .modal-bg-edict .directive-tools button:disabled,
-.modal-bg-edict .desk-add-btn:disabled,
 .modal-bg-edict .seal-btn-compose:disabled,
 .modal-bg-edict .seal-btn-issue:disabled {
   opacity: 0.5;
