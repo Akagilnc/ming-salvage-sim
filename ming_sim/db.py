@@ -321,6 +321,21 @@ _CENTRAL_ARMY_PAY_ARREARS_CONTAINER_KEY = "central_army_pay_arrears"
 # 原 FK(account)→economy_accounts 已随该表降级为 metrics 的派生视图移除（SQLite 不支持
 # 外键指向视图）；它守的只是 account ∈ ECONOMY_ACCOUNTS，同一约束改在真实写口
 # record_issue_economy_move / record_economy_moves 显式 fail-loud 校验，覆盖面不减。
+# #1889：character_offices 建表 DDL 的**唯一**定义（建表脚本与老档迁移共用）。
+# 不含 office_type：官职类别真源唯一是 characters.office_type。
+_CHARACTER_OFFICES_DDL = """
+CREATE TABLE IF NOT EXISTS character_offices (
+    character_name TEXT PRIMARY KEY,
+    office_title TEXT NOT NULL,
+    source TEXT NOT NULL,
+    dossier_id INTEGER,
+    appointment_tenure TEXT NOT NULL DEFAULT '真除',
+    region_id TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(character_name) REFERENCES characters(name)
+)
+"""
+
 _ECONOMY_LEDGER_DDL = """
 CREATE TABLE IF NOT EXISTS economy_ledger (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1009,7 +1024,56 @@ class GameDB:
                     "整库外键保护处于关闭状态，拒继续建表"
                 )
 
+    def _migrate_character_offices_drop_office_type(self) -> None:
+        """#1889：既存存档的 character_offices 仍带 office_type 列，按新定义重建。
+
+        该列与 characters.office_type 是同一事实的两个可写表示（且带
+        FOREIGN KEY(office_type)→offices），已删。office_title 等**历史**列全保留：
+        罢免后 characters.office 置空，备档留最近实职供起复品级读。
+
+        重建走仓库既有 idiom（_migrate_building_logs_to_durable_audit 同款）：
+        建新表 → 逐行搬共有列 → 丢旧表 → 改名。PRAGMA foreign_keys 在事务内是
+        no-op，故切换前后各 commit 一次并在结束时断言外键仍开着。
+        """
+        if not self._table_exists("character_offices"):
+            return
+        cols = {
+            str(c["name"]) for c in
+            self.conn.execute("PRAGMA table_info(character_offices)").fetchall()
+        }
+        if "office_type" not in cols:
+            return
+        keep = [
+            c for c in (
+                "character_name", "office_title", "source", "dossier_id",
+                "appointment_tenure", "region_id", "updated_at",
+            ) if c in cols
+        ]
+        rows = self.conn.execute(
+            f"SELECT {', '.join(keep)} FROM character_offices"
+        ).fetchall()
+        self.conn.commit()
+        self.conn.execute("PRAGMA foreign_keys=OFF")
+        try:
+            self.conn.execute("DROP TABLE IF EXISTS character_offices")
+            self.conn.execute(_CHARACTER_OFFICES_DDL)
+            placeholders = ", ".join("?" for _ in keep)
+            self.conn.executemany(
+                f"INSERT INTO character_offices ({', '.join(keep)}) "
+                f"VALUES ({placeholders})",
+                [tuple(r[c] for c in keep) for r in rows],
+            )
+        finally:
+            self.conn.commit()
+            self.conn.execute("PRAGMA foreign_keys=ON")
+            if int(self.conn.execute("PRAGMA foreign_keys").fetchone()[0]) != 1:
+                raise RuntimeError(
+                    "character_offices 迁移后未能恢复 foreign_keys=ON："
+                    "整库外键保护处于关闭状态，拒继续建表"
+                )
+
     def init_schema(self) -> None:
+        self._migrate_character_offices_drop_office_type()
         self._drop_economy_accounts_object()
         self.conn.executescript(
             """
@@ -1063,18 +1127,12 @@ class GameDB:
                 seed_guilt TEXT NOT NULL DEFAULT ''
             );
 
-            CREATE TABLE IF NOT EXISTS character_offices (
-                character_name TEXT PRIMARY KEY,
-                office_title TEXT NOT NULL,
-                office_type TEXT NOT NULL,
-                source TEXT NOT NULL,
-                dossier_id INTEGER,
-                appointment_tenure TEXT NOT NULL DEFAULT '真除',
-                region_id TEXT NOT NULL DEFAULT '',
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY(character_name) REFERENCES characters(name),
-                FOREIGN KEY(office_type) REFERENCES offices(office_type)
-            );
+            -- #1889：官职类别（office_type）的唯一真源 = characters.office_type。
+            -- 原 character_offices.office_type 是同一事实的第二个可写表示（旧代码还得靠
+            -- _ensure_office_type_parents 每次把它镜像回 characters 才能对账），已删。
+            -- office_title 保留：罢免后 characters.office 置空，而备档留最近实职供起复
+            -- 品级读取（office_rank._is_substantive_office）——那是**历史**，不是重复。
+            __CHARACTER_OFFICES__;
 
             CREATE TABLE IF NOT EXISTS office_change_records (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2272,6 +2330,8 @@ class GameDB:
             );
             """.replace("__AUTHORITY_PRIVILEGES__", AUTHORITY_PRIVILEGE_SQL_IN).replace(
                 "__ECONOMY_LEDGER__", _ECONOMY_LEDGER_DDL
+            ).replace(
+                "__CHARACTER_OFFICES__", _CHARACTER_OFFICES_DDL
             )
         )
         # #637 S6：老档迁移——relation_brew_pending 泛化身份列（新档建表已含，此处幂等）。
@@ -3538,36 +3598,14 @@ class GameDB:
         """Materialize every declared/referenced office type before FK-checked writes."""
         title_kinds = tuple(PERSON_TITLE_KINDS)
         placeholders = ",".join("?" for _ in title_kinds)
-        if self._table_exists("character_offices"):
-            self.conn.execute(
-                f"DELETE FROM character_offices WHERE office_type IN ({placeholders})",
-                title_kinds,
-            )
         self.conn.execute(
             f"DELETE FROM offices WHERE office_type IN ({placeholders})",
             title_kinds,
         )
         for office_type in sorted(self._canonical_office_types()):
             self._ensure_office_type_parent(office_type)
-        if self._table_exists("character_offices"):
-            self.conn.execute(
-                """
-                UPDATE character_offices
-                SET office_type = (
-                    SELECT characters.office_type FROM characters
-                    WHERE characters.name = character_offices.character_name
-                )
-                WHERE NOT EXISTS (
-                    SELECT 1 FROM offices
-                    WHERE offices.office_type = character_offices.office_type
-                )
-                  AND EXISTS (
-                    SELECT 1 FROM characters
-                    JOIN offices ON offices.office_type = characters.office_type
-                    WHERE characters.name = character_offices.character_name
-                )
-                """
-            )
+        # #1889：原此处每回合把 character_offices.office_type 镜像回 characters
+        # （第二写口的记账机），随该列删除一并去掉。
 
     def _canonical_office_types(self) -> set[str]:
         # 名分（PERSON_TITLE_KINDS）按契约不入官职体系：静态 seed 人物的 office_type 可能是名分，
@@ -3667,15 +3705,15 @@ class GameDB:
         seat = str(region_id or "").strip()
         if office_type not in self._LOCAL_ARCHIVE_OFFICE_TYPES:
             seat = ""
+        # #1889：不写 office_type —— 官职类别真源唯一是 characters.office_type。
         self.conn.execute(
             """
             INSERT INTO character_offices
-                (character_name, office_title, office_type, source, dossier_id,
+                (character_name, office_title, source, dossier_id,
                  appointment_tenure, region_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT(character_name) DO UPDATE SET
                 office_title = excluded.office_title,
-                office_type = excluded.office_type,
                 source = excluded.source,
                 dossier_id = excluded.dossier_id,
                 appointment_tenure = excluded.appointment_tenure,
@@ -3683,7 +3721,7 @@ class GameDB:
                 updated_at = CURRENT_TIMESTAMP
             """,
             (
-                name, office, office_type, source,
+                name, office, source,
                 int(getattr(self.conn, "_materializing_dossier_id", 0) or 0) or None,
                 str(getattr(self.conn, "_appointment_tenure", "真除") or "真除"),
                 seat,

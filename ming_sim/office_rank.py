@@ -195,7 +195,9 @@ def appointment_break_rank(
         )
         if may_have_history:
             archived = db.conn.execute(
-                "SELECT office_title,office_type FROM character_offices WHERE character_name=?",
+                # #1889：office_type 真源唯一是 characters.office_type（备档不再存该列）
+                "SELECT co.office_title, c.office_type FROM character_offices co "
+                "JOIN characters c ON c.name = co.character_name WHERE co.character_name=?",
                 (person,),
             ).fetchone()
             if archived is not None and _is_substantive_office(

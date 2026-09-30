@@ -454,6 +454,12 @@ _Avoid_: 驻地
 每军按饷源分账记的欠饷，是真钱，可以约数呈给皇帝。
 _Avoid_: arrears 标量、隐数
 
+**官职类别（office_type）**:
+人物官职类别的**唯一真源 = `characters.office_type`**。`character_offices` 只留历史
+`office_title`（罢免后 `characters.office` 置空，备档留最近实职供起复读品级），
+不存 `office_type`——那是同一事实的第二个可写表示，已删（#1889）。
+_Avoid_: 备档里的官职类别、每回合镜像回填
+
 **国库 / 内库余额**:
 活余额的**唯一真源 = `metrics` 表**（key=国库/内库）。`economy_accounts` 只是它的派生视图
 （读时算，#1889），不是可写的第二本账；`economy_ledger` 是只追加的收支流水（事实），

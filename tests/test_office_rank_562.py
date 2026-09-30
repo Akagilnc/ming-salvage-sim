@@ -129,9 +129,11 @@ def test_restoration_and_displaced_third_state_use_latest_historical_office(game
     db.set_character_office("候铨乙", "听用候铨", "待铨")
     db.conn.execute("UPDATE characters SET reason_code='被顶替' WHERE name='候铨乙'")
     # Recreate the archived previous office, as displacement does in production.
+    # #1889：备档只留历史 office_title；官职类别真源唯一是 characters.office_type。
     db.conn.execute(
-        "UPDATE character_offices SET office_title='兵部尚书',office_type='兵部' WHERE character_name='候铨乙'"
+        "UPDATE character_offices SET office_title='兵部尚书' WHERE character_name='候铨乙'"
     )
+    db.conn.execute("UPDATE characters SET office_type='兵部' WHERE name='候铨乙'")
     _return_id, returned = _appointment_dossier(db, state, "候铨乙", "户部尚书")
     assert returned["break_rank"]["basis"] == "historical_office"
     assert returned["break_rank"]["is_break_rank"] is False
@@ -149,9 +151,9 @@ def test_restoration_and_displaced_third_state_use_latest_historical_office(game
     assert big["break_rank"]["current_rank_band"] - big["break_rank"]["new_rank_band"] >= 2
 
     db.conn.execute(
-        "UPDATE character_offices SET office_title='翰林院编修',office_type='翰林院' "
-        "WHERE character_name='候铨乙'"
+        "UPDATE character_offices SET office_title='翰林院编修' WHERE character_name='候铨乙'"
     )
+    db.conn.execute("UPDATE characters SET office_type='翰林院' WHERE name='候铨乙'")
     _disp_jump_id, disp_jump = _appointment_dossier(db, state, "候铨乙", "兵部尚书")
     assert disp_jump["break_rank"]["basis"] == "historical_office"
     assert disp_jump["break_rank"]["is_break_rank"] is True
@@ -292,6 +294,11 @@ def test_existing_proposed_appointment_dossier_gets_one_time_break_rank_backfill
 
 
 def test_recognizable_archive_title_survives_blank_or_legacy_office_type(game):
+    """#1889：备档只存历史 office_title，官职类别真源唯一是 characters.office_type。
+
+    原实现这条覆盖的是「备档 office_type 被写成待铨/空」的历史兼容形态；该列已删，
+    同一形态改由真源侧表达：人物 office_type 落到待铨而备档仍留可识别的实职名。
+    """
     from ming_sim.office_rank import _is_substantive_office
 
     assert _is_substantive_office("翰林院编修", "")
@@ -299,9 +306,7 @@ def test_recognizable_archive_title_survives_blank_or_legacy_office_type(game):
     name = "旧档实职"
     _add(db, state, name, "翰林院编修", "翰林院")
     db.set_character_status(state, name, "retired", "致仕")
-    db.conn.execute(
-        "UPDATE character_offices SET office_type='待铨' WHERE character_name=?", (name,)
-    )
+    db.conn.execute("UPDATE characters SET office_type='待铨' WHERE name=?", (name,))
     _dossier_id, payload = _appointment_dossier(db, state, name, "兵部尚书")
     assert payload["break_rank"]["basis"] == "historical_office"
     assert payload["break_rank"]["is_break_rank"] is True

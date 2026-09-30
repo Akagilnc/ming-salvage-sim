@@ -5762,7 +5762,9 @@ def _snapshot_person_write_state(db: GameDB, content: Optional[GameContent]):
     office_rows = [
         dict(row)
         for row in db.conn.execute(
-            "SELECT character_name, office_title, office_type, source, dossier_id, "
+            # #1889：备档不再存 office_type（真源唯一是 characters.office_type），
+            # 人物写入快照按需的官职类别从 characters 侧带出。
+            "SELECT character_name, office_title, source, dossier_id, "
             "appointment_tenure, region_id, updated_at FROM character_offices"
         ).fetchall()
     ]
@@ -5855,13 +5857,12 @@ def _restore_person_write_state(
         )
     db.conn.executemany(
         "INSERT INTO character_offices "
-        "(character_name, office_title, office_type, source, dossier_id, "
-        "appointment_tenure, region_id, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        "(character_name, office_title, source, dossier_id, "
+        "appointment_tenure, region_id, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
         [
             (
                 row["character_name"],
                 row["office_title"],
-                row["office_type"],
                 row["source"],
                 row.get("dossier_id"),
                 row["appointment_tenure"],
