@@ -1328,9 +1328,16 @@ class GameDB:
                 target_id INTEGER,                        -- 操作既有实体时其 id；新建为 NULL
                 minister_name TEXT NOT NULL DEFAULT '',
                 payload_json TEXT NOT NULL DEFAULT '{}',
-                status TEXT NOT NULL DEFAULT 'pending',    -- pending | committed | failed | held_over
+                status TEXT NOT NULL DEFAULT 'pending',    -- pending | committed | failed | held_over | voided
+                -- #1890：交办暂存的来源轮。一道交办的身份就是本行 id，撤回本轮时
+                -- 按此列整轮作废，不再靠 chat_turn_rollback_items 回溯猜是哪轮写的。
+                -- 0 = 非召对来源（过月世界段 / 框架写入）。
+                source_chat_turn_id INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
+            -- #1890：idx_pending_actions_source_turn 不写在本 CREATE 块——旧档
+            -- pending_actions 已存在时 CREATE TABLE IF NOT EXISTS 不重建、不补
+            -- source_chat_turn_id，索引会引用缺列失败。索引随下面的 ensure_column 建。
 
             CREATE TABLE IF NOT EXISTS recommendation_events (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2455,6 +2462,15 @@ class GameDB:
             "pending_actions", "night_approved", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column(
             "pending_actions", "version", "INTEGER NOT NULL DEFAULT 1")
+        # #1890：交办暂存的来源轮。撤回本轮按此列整轮作废，不再回溯
+        # chat_turn_rollback_items 猜是哪轮写的（那道回溯链是本票要拆的旧同步）。
+        # 索引随本列建：CREATE 块里的索引会引用旧档缺列（同 chat_turns 注记）。
+        self.ensure_column(
+            "pending_actions", "source_chat_turn_id", "INTEGER NOT NULL DEFAULT 0")
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_pending_actions_source_turn "
+            "ON pending_actions(source_chat_turn_id, status, id)"
+        )
         # fiscal_config 科目元数据列（数据驱动预算目录）：budget_role=fixed 的 base 项靠
         # account/direction/display 由 flows.compute_budget_lines 动态生成预算行；
         # dynamic 项（田赋/辽饷/盐税/商税/皇庄）走省级公式/皇庄专路，这三列留空。
@@ -10121,6 +10137,21 @@ class GameDB:
             target_id = str(item["target_id"])
             if strategy == "delete_inserted_row":
                 if table == "pending_actions":
+                    # #1890：本轮首次落下的交办由统一身份作废（voided 墓碑），
+                    # 不在这条删行路上再写一遍同一事实——否则同一道交办既有
+                    # 「按源轮 id 作废」又有「回溯日志删行」两套处置，迟到的
+                    # 写入还能靠墓碑缺失复活。判据仍是身份那一列。
+                    owned = self.conn.execute(
+                        "SELECT source_chat_turn_id FROM pending_actions WHERE id=?",
+                        (target_id,),
+                    ).fetchone()
+                    if (
+                        owned is not None
+                        and int(owned["source_chat_turn_id"] or 0) > 0
+                        and int(owned["source_chat_turn_id"] or 0)
+                        == int(item["chat_turn_id"] or 0)
+                    ):
+                        continue
                     self._discard_deleted_directive_forecast(target_id)
                 self._delete_row_in_tx(table, target_id)
             elif strategy in {"restore_row", "restore_deleted_row"}:
@@ -10259,6 +10290,13 @@ class GameDB:
             restored_pending_action_ids = self._restore_chat_rollback_items_in_tx(
                 items, message_ids,
             )
+            # #1890：按统一身份整轮作废本轮的交办暂存。放在前像还原之后——
+            # 还原可能把本轮改动过的「前轮已存在」暂存恢复成 pending，那些行的
+            # source_chat_turn_id 是前轮的，不在本轮作废范围内（判据只有一列）。
+            # 本轮首次落下的交办则在此盖 voided 墓碑，迟到的写入/补跑不会复活它。
+            voided_pending_action_ids = self.void_pending_actions_for_chat_turn(
+                chat_turn_id,
+            )
             # 只精确删除本召对 commit 出来的 draft 行（保留同 actor 的无关 draft）。
             for draft_id in draft_ids_to_delete:
                 self.conn.execute(
@@ -10304,6 +10342,8 @@ class GameDB:
         # 原样颁出含被撤回指令的陈旧诏书。无删除则为空，普通撤回不触发上层清稿。
         turn_row["deleted_committed_draft_ids"] = list(draft_ids_to_delete)
         turn_row["restored_pending_action_ids"] = restored_pending_action_ids
+        # #1890：本轮被作废的交办暂存 id（按 source_chat_turn_id 整轮作废所得）。
+        turn_row["voided_pending_action_ids"] = list(voided_pending_action_ids)
         return turn_row
 
     def save_turn_report(
@@ -14152,16 +14192,15 @@ class GameDB:
                 return dossier_id
         source_turn_id = int(source_chat_turn_id or 0)
         if source_turn_id <= 0 and int(pending_action_id or 0) > 0:
+            # #1890：来源轮直接读交办自己的身份列，不再回溯
+            # chat_turn_rollback_items（那道「回头去找是哪句话写的」链本票拆除）。
+            # 0 = 非召对来源，participant_roster 走载荷既有口径。
             origin = self.conn.execute(
-                """
-                SELECT chat_turn_id FROM chat_turn_rollback_items
-                WHERE target_table='pending_actions' AND target_id=?
-                ORDER BY id DESC LIMIT 1
-                """,
-                (str(int(pending_action_id)),),
+                "SELECT source_chat_turn_id FROM pending_actions WHERE id=?",
+                (int(pending_action_id),),
             ).fetchone()
             if origin is not None:
-                source_turn_id = int(origin["chat_turn_id"])
+                source_turn_id = int(origin["source_chat_turn_id"] or 0)
         roster_source = participants
         if roster_source is None:
             roster_source = (
@@ -17146,9 +17185,15 @@ class GameDB:
     def stage_pending_action(
         self, turn: int, kind: str, action: str, minister_name: str,
         payload: Dict[str, object], target_id: Optional[int] = None,
+        source_chat_turn_id: int = 0,
     ) -> int:
         """把一条结构化聊天写动作存进 pending_actions 暂存(status=pending)。返回行 id。
         颁诏时 commit_pending_actions 批量落库;颁诏前不动真实表。
+
+        ``source_chat_turn_id``（#1890）：本道交办的来源对话轮。交办暂存的
+        统一身份就是本行 id + 这一列来源轮——撤回该轮时按此列整轮作废，
+        不必回溯 ``chat_turn_rollback_items`` 去猜哪条暂存出自哪一轮。
+        0 = 非召对来源（过月世界段 / 框架写入），不随任何召对轮撤回。
 
         Secret oral provenance must be pinned by the source turn at the caller;
         another turn's held message is never a valid substitute.
@@ -17162,14 +17207,15 @@ class GameDB:
         cur = self.conn.execute(
             """INSERT INTO pending_actions
                (turn, kind, action, target_id, minister_name, payload_json, status,
-                night_id, night_approved)
-               VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, 0)""",
+                night_id, night_approved, source_chat_turn_id)
+               VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, 0, ?)""",
             (
                 int(turn), str(kind), str(action),
                 None if target_id is None else int(target_id),
                 str(minister_name or ""),
                 json.dumps(payload_data, ensure_ascii=False),
                 night_id,
+                int(source_chat_turn_id or 0),
             ),
         )
         # 与历史 stage 路径一致：非 suspended/atomic 嵌套时提交。
@@ -17383,10 +17429,14 @@ class GameDB:
 
     def upsert_pending_directive(
         self, turn: int, minister_name: str, payload: Dict[str, object],
+        source_chat_turn_id: int = 0,
     ) -> int:
         """暂存或原地更新(last-write-wins)一条 kind=directive 拟旨意图(ADR 0006)。
         同一回合同一大臣至多一条 pending directive——新意图覆盖旧(补充=原地更新,非新增态)。
-        返回行 id。"""
+        返回行 id。
+
+        ``source_chat_turn_id``（#1890）只在新起一行时钉身份；命中既有行的
+        改稿分支刻意不换身份（见该分支注记）。"""
         from ming_sim.audience_night import assert_night_accepts_player_input
         assert_night_accepts_player_input(self, what="暂存")
         row = self.conn.execute(
@@ -17413,20 +17463,28 @@ class GameDB:
             )
             self.conn.commit()
             return int(row["id"])
+        # #1890：只有 INSERT 分支钉来源轮。改草分支（上方 UPDATE）刻意不动
+        # source_chat_turn_id —— 一道交办的身份是它首次被说出口的那一轮，
+        # 补充/改稿不换身份，否则撤回前一轮会连带作废后来轮的修订。
         return self.stage_pending_action(
             turn, kind="directive", action="拟旨",
             minister_name=minister_name, target_id=None, payload=payload,
+            source_chat_turn_id=source_chat_turn_id,
         )
 
     def stage_directive_candidate(
         self, turn: int, minister_name: str, payload: Dict[str, object],
+        source_chat_turn_id: int = 0,
     ) -> int:
         """多道模式（#502）：新拟一道**独立**圣旨候选——总是 INSERT 新行、不并进现有候选。
         与 upsert_pending_directive（同回合同大臣至多一条、last-write-wins）互补：本方法给
-        「一夜拟多道各自独立」用，前者给「补充/修改当前草稿」用。返回新行 id。"""
+        「一夜拟多道各自独立」用，前者给「补充/修改当前草稿」用。返回新行 id。
+
+        ``source_chat_turn_id``（#1890）：本道交办的来源轮，随新行落库。"""
         return self.stage_pending_action(
             turn, kind="directive", action="拟旨",
             minister_name=minister_name, target_id=None, payload=payload,
+            source_chat_turn_id=source_chat_turn_id,
         )
 
     def update_office_candidate_payload(
@@ -17790,16 +17848,19 @@ class GameDB:
         self, turn: int, status: str = "pending", minister_name: Optional[str] = None,
     ) -> List[Dict[str, object]]:
         """读本回合待确认动作(默认 pending),按 id 序(=操作发生序)。
-        minister_name 非空时只取该召对对象的暂存(对话确认按当前大臣过滤,不波及他人)。"""
+        minister_name 非空时只取该召对对象的暂存(对话确认按当前大臣过滤,不波及他人)。
+        ``source_chat_turn_id``（#1890）随行给出：交办身份的一半分。"""
         if minister_name is None:
             rows = self.conn.execute(
-                "SELECT id, turn, kind, action, target_id, minister_name, payload_json, status "
+                "SELECT id, turn, kind, action, target_id, minister_name, payload_json, "
+                "status, source_chat_turn_id "
                 "FROM pending_actions WHERE turn = ? AND status = ? ORDER BY id",
                 (int(turn), str(status)),
             ).fetchall()
         else:
             rows = self.conn.execute(
-                "SELECT id, turn, kind, action, target_id, minister_name, payload_json, status "
+                "SELECT id, turn, kind, action, target_id, minister_name, payload_json, "
+                "status, source_chat_turn_id "
                 "FROM pending_actions WHERE turn = ? AND status = ? AND minister_name = ? ORDER BY id",
                 (int(turn), str(status), str(minister_name)),
             ).fetchall()
@@ -17813,6 +17874,7 @@ class GameDB:
                 "minister_name": r["minister_name"],
                 "payload_json": r["payload_json"],
                 "status": r["status"],
+                "source_chat_turn_id": int(r["source_chat_turn_id"] or 0),
             }
             for r in rows
         ]
@@ -18654,6 +18716,83 @@ class GameDB:
             # 对话确认回合中落库,刷 Agent 让被罢者本回合后续不再以旧活跃态被召对(线上 gemini)。
             return {key}
         return set()
+
+    def void_pending_actions_for_chat_turn(self, chat_turn_id: int) -> List[int]:
+        """#1890：按来源轮整轮作废该轮的交办暂存，返回被作废的 id。
+
+        这是本票要的「暂存一张表存着，拿到统一的 id 就知道撤回了谁」：判据
+        只有 ``pending_actions.source_chat_turn_id``，不扫
+        ``chat_turn_rollback_items``、不比对前像、也不问是哪句话说的。
+
+        作废而非删行（ADR 0038 2026-09-29 owner 裁定）：行留着当墓碑，
+        迟到的写入或补跑读它只会看到 ``voided``，不会把已撤回的交办复活。
+        仍可应允的 ``pending`` 之外的终态（committed / failed / held_over）
+        一律不动——它们已不是「暂存」，逆转归 ``undo_chat_turn`` 的前像日志。
+
+        不 commit：调用方（撤回事务）持有边界，本方法只在其事务内写。
+        """
+        ctid = int(chat_turn_id or 0)
+        if ctid <= 0:
+            return []
+        rows = self.conn.execute(
+            "SELECT id, kind, version FROM pending_actions "
+            "WHERE source_chat_turn_id = ? AND status = 'pending' ORDER BY id",
+            (ctid,),
+        ).fetchall()
+        voided: List[int] = []
+        for row in rows:
+            action_id = int(row["id"])
+            if str(row["kind"] or "") == "directive":
+                # 该道拟旨的夜里预推产物随交办一起作废（预推生命周期归 #1816，
+                # 但它挂在这一道交办的身份下，不作废就会在过月时复活）。
+                self._discard_pending_decree_forecast(
+                    action_id, int(row["version"] or 1),
+                )
+            if str(row["kind"] or "") == "office":
+                from ming_sim.audience_night import discard_inactive_office_summon
+                discard_inactive_office_summon(self, action_id)
+            self.conn.execute(
+                "UPDATE pending_actions SET status='voided', night_approved=0 "
+                "WHERE id=? AND status='pending'",
+                (action_id,),
+            )
+            voided.append(action_id)
+        return voided
+
+    def list_pending_actions_for_chat_turn(
+        self, chat_turn_id: int, *, include_voided: bool = False,
+    ) -> List[Dict[str, object]]:
+        """#1890：按来源轮读该轮交办暂存（默认只读仍生效的）。
+
+        读口与写口同一条身份：读按 ``source_chat_turn_id`` 取，不经
+        rollback_items 回溯。``include_voided=True`` 供墓碑核对用。
+        """
+        ctid = int(chat_turn_id or 0)
+        if ctid <= 0:
+            return []
+        sql = (
+            "SELECT id, turn, kind, action, target_id, minister_name, payload_json, "
+            "status, source_chat_turn_id FROM pending_actions "
+            "WHERE source_chat_turn_id = ?"
+        )
+        params: List[object] = [ctid]
+        if not include_voided:
+            sql += " AND status != 'voided'"
+        rows = self.conn.execute(sql + " ORDER BY id", tuple(params)).fetchall()
+        return [
+            {
+                "id": int(r["id"]),
+                "turn": int(r["turn"]),
+                "kind": r["kind"],
+                "action": r["action"],
+                "target_id": None if r["target_id"] is None else int(r["target_id"]),
+                "minister_name": r["minister_name"],
+                "payload_json": r["payload_json"],
+                "status": r["status"],
+                "source_chat_turn_id": int(r["source_chat_turn_id"] or 0),
+            }
+            for r in rows
+        ]
 
     def withdraw_pending_action(self, action_id: int, turn: int) -> bool:
         """皇帝复核:撤回本回合一条尚未落库的暂存动作(删 pending 行)。返回是否删了。

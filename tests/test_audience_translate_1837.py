@@ -813,7 +813,10 @@ def test_translation_pending_create_approve_reject_undo_via_real_chat_turn(
         "ming_sim.session.create_scene_agent", lambda *a, **k: FakeAgent(),
     )
 
-    # ── 1) 新增：转译落 pending → undo 删行 ──
+    # ── 1) 新增：转译落 pending → undo 按来源轮作废 ──
+    # #1890：本轮首次落下的交办按 source_chat_turn_id 整轮作废（voided 墓碑），
+    # 不再删行——ADR 0038 的硬删除只对「已落账逆转」仍有效，暂存交办按
+    # 2026-09-29 owner 裁定改作废标记。行留着，迟到的写入读它只会看到 voided。
     ctid_create = _active_chat_turn(db, state, night_id)
     create_text = "着户部备陕西赈灾银UNIQUE-CREATE"
     sess = _sess(
@@ -843,10 +846,17 @@ def test_translation_pending_create_approve_reject_undo_via_real_chat_turn(
         (ctid_create,),
     ).fetchone()["n"] > 0
     db.undo_chat_turn(ctid_create)
+    # 墓碑在行上，但不再是活暂存：读口（pending 集 / 本轮交办读口）都看不到它。
     assert db.conn.execute(
-        "SELECT COUNT(*) n FROM pending_actions WHERE id=?",
+        "SELECT status FROM pending_actions WHERE id=?", (created_id,),
+    ).fetchone()["status"] == "voided"
+    assert db.conn.execute(
+        "SELECT COUNT(*) n FROM pending_actions WHERE id=? AND status='pending'",
         (created_id,),
     ).fetchone()["n"] == 0
+    assert created_id not in [
+        r["id"] for r in db.list_pending_actions_for_chat_turn(ctid_create)
+    ]
 
     # ── 2) 应允：night_approved 0→1 → undo 回 0 ──
     baseline = dispatch_declaration(

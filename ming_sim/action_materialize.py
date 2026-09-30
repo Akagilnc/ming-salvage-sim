@@ -222,12 +222,13 @@ def stage_pacification_candidate(
     text: str,
     target_id: str,
     extracted_mode: object = None,
+    source_chat_turn_id: object = 0,
     pend_for_minister: Optional[List[Dict[str, Any]]] = None,
 ) -> int:
     """Shared pacification candidate write: mode + same-target update.
 
     Reused by audience translation; commit resolves the target through
-    _find_pacification_target.
+    _find_pacification_target.  ``source_chat_turn_id``（#1890）随新行落库。
     """
     from ming_sim.cli_backend import resolve_directive_mode
 
@@ -275,7 +276,10 @@ def stage_pacification_candidate(
     }
     if existing_id:
         return db.update_directive_candidate(existing_id, staged)
-    return db.stage_directive_candidate(int(turn), minister_name, payload=staged)
+    return db.stage_directive_candidate(
+        int(turn), minister_name, payload=staged,
+        source_chat_turn_id=int(source_chat_turn_id or 0),
+    )
 
 
 def punish_actions_allowed() -> frozenset:
@@ -341,9 +345,13 @@ def stage_punishment_candidate(
     backing_dossier_id: object = None,
     issue_id: object = None,
     issue_disposition: object = None,
+    source_chat_turn_id: object = 0,
     pend_for_minister: Optional[List[Dict[str, Any]]] = None,
 ) -> int:
-    """Shared punishment candidate write: mode + same-target update."""
+    """Shared punishment candidate write: mode + same-target update.
+
+    ``source_chat_turn_id``（#1890）随新行落库。
+    """
     from ming_sim.cli_backend import resolve_directive_mode
 
     target = str(target_id or "").strip()
@@ -461,7 +469,10 @@ def stage_punishment_candidate(
         staged["amount"] = n
     if existing_id:
         return db.update_directive_candidate(existing_id, staged)
-    return db.stage_directive_candidate(int(turn), minister_name, payload=staged)
+    return db.stage_directive_candidate(
+        int(turn), minister_name, payload=staged,
+        source_chat_turn_id=int(source_chat_turn_id or 0),
+    )
 
 
 
@@ -777,13 +788,14 @@ def stage_grant_allocation_candidate(
     target_candidate: object = None,
     assignee: str = "",
     participant_roster: object = None,
+    source_chat_turn_id: object = 0,
     pend_for_minister: Optional[List[Dict[str, Any]]] = None,
 ) -> int:
     """Shared grant candidate write: mode + explicit-target update only.
 
     Same grant_action+target_id alone must not overwrite. Independent 另拨/再赏
     each stage a new candidate (#502 / #518); only a structured target_candidate
-    id updates the named pending grant.
+    id updates the named pending grant.  ``source_chat_turn_id``（#1890）随新行落库。
     """
     from ming_sim.cli_backend import resolve_directive_mode
 
@@ -925,7 +937,10 @@ def stage_grant_allocation_candidate(
         }]
     if existing_id:
         return db.update_directive_candidate(existing_id, staged)
-    return db.stage_directive_candidate(int(turn), minister_name, payload=staged)
+    return db.stage_directive_candidate(
+        int(turn), minister_name, payload=staged,
+        source_chat_turn_id=int(source_chat_turn_id or 0),
+    )
 
 
 
@@ -1593,7 +1608,10 @@ def stage_assignment_candidate(
             # 段派生 end_turn（max due）不写入候选/DB（#620 勿驱动 expire）
     if existing_id:
         return db.update_directive_candidate(existing_id, staged)
-    return db.stage_directive_candidate(int(turn), minister_name, payload=staged)
+    return db.stage_directive_candidate(
+        int(turn), minister_name, payload=staged,
+        source_chat_turn_id=origin_cid,
+    )
 
 def stage_authorization_candidate(
     db: Any,
