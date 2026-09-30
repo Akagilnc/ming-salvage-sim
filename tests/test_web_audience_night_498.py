@@ -394,17 +394,10 @@ def test_translation_failure_retry_and_undo_through_audience_http(web_game, monk
 
 
 def _parse_sse(text: str) -> list[dict]:
-    events: list[dict] = []
-    for block in text.strip().split("\n\n"):
-        cur: dict = {}
-        for line in block.splitlines():
-            if line.startswith("event:"):
-                cur["event"] = line[len("event:"):].strip()
-            elif line.startswith("data:"):
-                cur["data"] = line[len("data:"):].strip()
-        if cur:
-            events.append(cur)
-    return events
+    """#1902：SSE 解析真源在 tests.sse_helpers（仓内只此一份）。"""
+    from tests.sse_helpers import parse_sse_events
+
+    return parse_sse_events(text)
 
 
 async def _await_event_or_task(ev: threading.Event, task: asyncio.Task) -> None:

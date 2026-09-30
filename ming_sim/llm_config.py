@@ -370,6 +370,25 @@ def llm_config_from_runtime(
     )
 
 
+def resolve_api_key(api_key: str = "") -> str:
+    """入参/env 都没有真实 key 时当面索要一次；仍无则 SystemExit。
+
+    唯一「向人要 key」的地方（#1902）：API-only 直调路（闸脚本）与游戏 CLI 入口
+    在 API 通道缺 key 时共用此缝，禁各自再写一份 getpass。
+    """
+    key = (api_key or os.environ.get("OPENAI_API_KEY", "")).strip()
+    if not is_real_api_key(key):
+        key = ""
+    if not key:
+        key = getpass.getpass("请输入 API key（不会保存，回车取消）：").strip()
+    if not is_real_api_key(key):
+        # 手敲的也复验：占位符当真 key 同样拒掉。
+        key = ""
+    if not key:
+        raise SystemExit("未提供 API key，无法使用 LLM。")
+    return key
+
+
 def load_llm_config(
     base_url: str,
     model: str,
@@ -381,22 +400,13 @@ def load_llm_config(
     advanced_api_key: str = "",
     advanced_thinking_level: str = "",
 ) -> LLMConfig:
-    """按 OpenAI 兼容参数构一份 API 通道配置（游戏 CLI 入口与闸脚本用）。
+    """按 OpenAI 兼容参数构一份 API 通道配置（闸脚本等 API-only 直调用）。
 
-    #1902：本函数不再按 MING_SIM_LLM_BACKEND 选宿主——CLI 通道的配置一律来自
-    运行档（runtime_llm.json / llm_config_from_runtime），这里只管 API 槽，
-    所以「要真实 key、否则索要」这条老规矩回来且不再有例外分支。
+    #1902：本函数不再按 MING_SIM_LLM_BACKEND 选宿主，也不读运行档——CLI 通道的
+    配置一律走运行档投影（load_runtime_llm + llm_config_from_runtime），游戏
+    CLI 入口与 Web 建局共用那条路；这里只服务「明确只跑 API」的直调。
     """
-    api_key = (api_key or os.environ.get("OPENAI_API_KEY", "")).strip()
-    if not is_real_api_key(api_key):
-        api_key = ""
-    if not api_key:
-        api_key = getpass.getpass("请输入 API key（不会保存，回车取消）：").strip()
-    if not is_real_api_key(api_key):
-        # 手敲的也复验：占位符当真 key 同样拒掉。
-        api_key = ""
-    if not api_key:
-        raise SystemExit("未提供 API key，无法使用 LLM。")
+    api_key = resolve_api_key(api_key)
     adv_base = (advanced_base_url or "").strip()
     normalized_thinking = normalize_thinking_level(thinking_level or os.environ.get("OPENAI_THINKING_LEVEL", ""))
     legacy_reasoning = legacy_reasoning_strength({

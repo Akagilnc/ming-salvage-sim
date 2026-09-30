@@ -150,6 +150,17 @@ class MinisterView:
 
 
 @dataclass
+class AudienceChatTurn:
+    """#1902：一轮召对的入口无关句柄（建轮/快照/问话 id），两端入口共用同一生命周期。"""
+
+    chat_turn_id: int
+    accepted_turn: int
+    night_id: int
+    before_snapshot: Dict[str, Any]
+    user_message_id: int
+
+
+@dataclass
 class ChatTurnResult:
     answer: str
     court_action: str = ""   # "" | dismiss | summon | court_break | handled
@@ -1125,6 +1136,158 @@ class GameSession:
         from ming_sim.audience_translation import mark_turn_translation_done
 
         mark_turn_translation_done(self.db, chat_turn_id, commit=True)
+
+    # ── 召对话轮生命周期（#1902：Web 与 CLI 入口共核，入口不再各编排一份）────────
+    # 入口只做输入／呈现适配；建轮、快照、问话与回话落库、回滚与失败终态全在
+    # 这里。两端曾各写一份同形编排（WebGame._start_chat_turn/_fail_chat_turn_and_reload
+    # 与 cli/terminal.py 内联的同一段），那份副本随本方法落地删除。
+
+    def begin_audience_chat_turn(
+        self, speaker: str, message: str, *, agno_session_id: str = "",
+        runs_before: int = 0, ensure_summon: str = "",
+    ) -> AudienceChatTurn:
+        """建一轮召对：确保开夜 → 建 chat_turn → 落问话。返回句柄供收口/回滚。
+
+        ``speaker`` 是召对面（殿上或具名大臣）；``ensure_summon`` 非空时按
+        「宣 X」同入口补入殿账。问话原文在此落库，入口不再自行 append。
+
+        无 conn 的极薄替身（只替 LLM 缝的测试壳）走不带夜表的建轮分支——与旧
+        入口同形，禁在此 fail-open 改语义。
+        """
+        from ming_sim.applier import atomic
+        from ming_sim.audience_night import (
+            ensure_open_night_for_audience,
+            ensure_summon_enter,
+            get_open_night,
+        )
+        from ming_sim.decree_forecast import (
+            schedule_held_decree_forecasts,
+            schedule_restored_decree_forecasts,
+        )
+
+        accepted_turn = int(self.state.turn)
+        before_snapshot = self.db.capture_chat_rollback_snapshot()
+        night_id = 0
+        if not hasattr(self.db, "conn"):
+            chat_turn_id = self.db.create_chat_turn(
+                self.state, speaker, agno_session_id or f"{speaker}",
+                int(runs_before or 0),
+            )
+        else:
+            night_was_open = get_open_night(self.db) is not None
+            night = get_open_night(self.db) or ensure_open_night_for_audience(
+                self.db, self.state,
+            )
+            if not night_was_open:
+                schedule_held_decree_forecasts(self)
+            night_id = int(night["id"])
+            with atomic(self.db):
+                chat_turn_id = self.db.create_chat_turn(
+                    self.state,
+                    speaker,
+                    agno_session_id or f"{speaker}",
+                    int(runs_before or 0),
+                    night_id=night_id,
+                    status="generating",
+                )
+                if ensure_summon:
+                    ensure_summon_enter(
+                        self.db, night_id, ensure_summon,
+                        origin_chat_turn_id=chat_turn_id, commit=False,
+                    )
+        user_message_id = 0
+        try:
+            user_message_id = self.db.append_chat_message(
+                speaker, accepted_turn, "user", message,
+            )
+        except BaseException as error:
+            # 建轮成功但问话落库失败：就地终态化本轮（否则留下 status=generating 的
+            # 孤儿轮，_audience_turn_in_flight 会把本夜永久判为「上一轮仍在进行」）。
+            if chat_turn_id:
+                self.db.record_chat_turn_rollback_diffs(
+                    chat_turn_id, before_snapshot,
+                    self.db.capture_chat_rollback_snapshot(),
+                )
+                schedule_restored_decree_forecasts(
+                    self, self.db.fail_chat_turn(chat_turn_id),
+                )
+            raise error
+        if chat_turn_id:
+            self.db.update_chat_turn_messages(
+                chat_turn_id, user_message_id=user_message_id,
+            )
+        return AudienceChatTurn(
+            chat_turn_id=int(chat_turn_id or 0),
+            accepted_turn=accepted_turn,
+            night_id=night_id,
+            before_snapshot=before_snapshot,
+            user_message_id=int(user_message_id or 0),
+        )
+
+    def complete_audience_chat_turn(
+        self, turn: AudienceChatTurn, speaker: str, reply: str,
+        result: Optional["ChatTurnResult"] = None,
+    ) -> int:
+        """回话落定：persist 回话 → 记回滚差异 → 冲刷后台转译。回传回话消息 id。"""
+        minister_message_id = 0
+        if turn.chat_turn_id and hasattr(self.db, "persist_minister_reply"):
+            self.db.persist_minister_reply(
+                speaker, turn.accepted_turn, reply, turn.chat_turn_id,
+            )
+        else:
+            minister_message_id = int(self.db.append_chat_message(
+                speaker, turn.accepted_turn, "minister", reply,
+            ) or 0)
+        if turn.chat_turn_id:
+            if minister_message_id:
+                self.db.update_chat_turn_messages(
+                    turn.chat_turn_id, minister_message_id=minister_message_id,
+                )
+            self.db.record_chat_turn_rollback_diffs(
+                turn.chat_turn_id, turn.before_snapshot,
+                self.db.capture_chat_rollback_snapshot(),
+            )
+        if result is not None:
+            self.schedule_pending_scene_translation(result)
+        return minister_message_id
+
+    def fail_audience_chat_turn(
+        self, turn: AudienceChatTurn, *, replied: bool = False,
+        error: Optional[BaseException] = None,
+    ) -> None:
+        """召对未成：记回滚差异 → 终态化本轮（孤儿 generating 会永久挡住本夜后续问话）。
+
+        问话已落库时保留它并把轮标 interrupted（玩家可重试），否则整轮作废。
+        ``replied`` = 回话已可见（payload 已下发）时的后置失败。
+        """
+        from ming_sim.decree_forecast import schedule_restored_decree_forecasts
+        from ming_sim.exceptions import LLMUnavailable
+
+        if not turn.chat_turn_id:
+            return
+        self.db.record_chat_turn_rollback_diffs(
+            turn.chat_turn_id, turn.before_snapshot,
+            self.db.capture_chat_rollback_snapshot(),
+        )
+        if not turn.user_message_id and hasattr(self.db, "conn"):
+            row = self.db.conn.execute(
+                "SELECT user_message_id FROM chat_turns WHERE id = ?",
+                (turn.chat_turn_id,),
+            ).fetchone()
+            turn.user_message_id = int(row["user_message_id"] or 0) if row else 0
+        if turn.user_message_id:
+            restored_ids = self.db.restore_interrupted_after_failed_retry(turn.chat_turn_id)
+            schedule_restored_decree_forecasts(self, restored_ids)
+            if error is not None and not isinstance(error, LLMUnavailable):
+                from ming_sim.audience_night import write_audience_error_pack
+                pack = write_audience_error_pack(
+                    kind="reply", message=str(error),
+                    detail={"chat_turn_id": turn.chat_turn_id}, db=self.db, exc=error,
+                )
+                self.db.set_chat_turn_error_pack(turn.chat_turn_id, pack)
+        else:
+            restored_ids = self.db.fail_chat_turn(turn.chat_turn_id)
+            schedule_restored_decree_forecasts(self, restored_ids)
 
     def scene_chat(
         self, message: str, *, chat_turn_id: int = 0,

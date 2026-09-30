@@ -441,92 +441,58 @@ def minister_chat(session: GameSession, character: Character, *, selected: bool 
 
             return cmd
         # 非控制指令 → 场景对话，并持久记录对话轮。
-        persistent_chat = True
-        accepted_turn = int(session.state.turn)
-        user_message_id: int | None = None
-        chat_turn_id = 0
-        rollback_snapshot = None
+        # #1902：建轮/快照/问话落库/回滚终态全走会话层同一生命周期（与 Web 共核），
+        # 入口只留输入采集与呈现。
         result = None
+        chat_turn = None
+        thin_user_message_id = 0
         lifecycle_supported = all(hasattr(session.db, name) for name in (
             "capture_chat_rollback_snapshot", "create_chat_turn",
             "update_chat_turn_messages", "record_chat_turn_rollback_diffs", "fail_chat_turn",
         ))
         try:
             # #1849 reopen：CLI 也不再分密令/场外 route；前缀原文随问话进 scene 转译。
-            if persistent_chat:
-                if lifecycle_supported:
-                    rollback_snapshot = session.db.capture_chat_rollback_snapshot()
-                    # #1838 reopen：CLI 选臣 = 确保开夜 + 建轮；入殿走「宣 X」同入口。
-                    from ming_sim.audience_night import ensure_open_night_for_audience
-                    night_was_open = get_open_night(session.db) is not None
-                    night = get_open_night(session.db) or ensure_open_night_for_audience(
-                        session.db, session.state,
-                    )
-                    if not night_was_open:
-                        from ming_sim.decree_forecast import schedule_held_decree_forecasts
-                        schedule_held_decree_forecasts(session)
-                    from ming_sim.applier import atomic
-                    from ming_sim.audience_night import ensure_summon_enter
-                    with atomic(session.db):
-                        chat_turn_id = session.db.create_chat_turn(
-                            session.state,
-                            "殿上",
-                            "cli:殿上",
-                            0,
-                            night_id=int(night["id"]),
-                            status="generating",
-                        )
-                        if question == f"宣{character.name}":
-                            ensure_summon_enter(
-                                session.db, int(night["id"]), character.name,
-                                origin_chat_turn_id=chat_turn_id, commit=False,
-                            )
-                user_message_id = session.db.append_chat_message(
-                    character.name, accepted_turn, "user", question,
+            if lifecycle_supported:
+                # 走 GameSession 真方法（未绑定）：召对话轮生命周期是共核，测试壳
+                # 只替 LLM 缝即可，不必各自再抄一份建轮（#13）。
+                chat_turn = GameSession.begin_audience_chat_turn(
+                    session, character.name, question,
+                    agno_session_id="cli:殿上",
+                    ensure_summon=(
+                        character.name if question == f"宣{character.name}" else ""
+                    ),
                 )
-                if chat_turn_id:
-                    session.db.update_chat_turn_messages(
-                        chat_turn_id, user_message_id=user_message_id,
-                    )
+            else:
+                # 极薄替身（无 durable chat_turn 生命周期）只落消息，不建轮。
+                thin_user_message_id = int(session.db.append_chat_message(
+                    character.name, int(session.state.turn), "user", question,
+                ) or 0)
             # #1842：殿上走 scene_chat；显式密令仍走 session.chat（与 Web 同核）。
             # 殿上不派旧判官/尾随抽取——转译一次承接。
             result = session.scene_chat(
-                question, chat_turn_id=chat_turn_id,
+                question,
+                chat_turn_id=int(chat_turn.chat_turn_id) if chat_turn else 0,
                 minister_name="殿上",
             )
-            if persistent_chat:
-                if chat_turn_id and hasattr(session.db, "persist_minister_reply"):
-                    session.db.persist_minister_reply(
-                        character.name, accepted_turn, result.answer, chat_turn_id,
-                    )
-                    minister_message_id = 0
-                else:
-                    minister_message_id = session.db.append_chat_message(
-                        character.name, accepted_turn, "minister", result.answer,
-                    )
-                if chat_turn_id:
-                    if minister_message_id:
-                        session.db.update_chat_turn_messages(
-                            chat_turn_id, minister_message_id=minister_message_id,
-                        )
-                    session.db.record_chat_turn_rollback_diffs(
-                        chat_turn_id, rollback_snapshot or {},
-                        session.db.capture_chat_rollback_snapshot(),
-                    )
-                # #1842：回话落定后起后台转译（ADR 0155 / 0036）。
+            if chat_turn is not None:
+                GameSession.complete_audience_chat_turn(
+                    session, chat_turn, character.name, result.answer, result,
+                )
+            else:
+                session.db.append_chat_message(
+                    character.name, int(session.state.turn), "minister", result.answer,
+                )
                 session.schedule_pending_scene_translation(result)
         except BaseException as original_error:
             try:
-                if chat_turn_id:
-                    session.db.record_chat_turn_rollback_diffs(
-                        chat_turn_id, rollback_snapshot or {},
-                        session.db.capture_chat_rollback_snapshot(),
+                if chat_turn is not None:
+                    GameSession.fail_audience_chat_turn(
+                        session, chat_turn,
+                        replied=result is not None, error=original_error,
                     )
-                    restored_ids = session.db.fail_chat_turn(chat_turn_id)
-                    from ming_sim.decree_forecast import schedule_restored_decree_forecasts
-                    schedule_restored_decree_forecasts(session, restored_ids)
-                elif user_message_id is not None and result is None:
-                    session.db.delete_chat_messages([user_message_id])
+                elif result is None and thin_user_message_id:
+                    # 极薄替身无 durable 轮可终态化：按旧语义只回滚本轮 user-only 半轮。
+                    session.db.delete_chat_messages([thin_user_message_id])
             except BaseException as cleanup_error:
                 raise original_error from cleanup_error
             raise
@@ -668,19 +634,26 @@ def _adjudicate_cli_decisions(session: GameSession, result) -> str:
         # 要求实选项（"decision 选项不在当前 options" / "批红选择必须是本案提供的
         # 强颁、收回或留中选项"），入口不得代造一条核不认的留中路——那会让整批被拒。
         holdable = str(decision.get("kind") or "") == "rescript_draft"
-        hint = "回车=不另批，此件留中" if holdable else "须择定本案一条"
+        hint = "回车=不另批，此件留中" if holdable else "须择定本案一条，或朱笔批语"
         while True:
-            raw = input(f"  亲裁：输入编号择定该条（{hint}）：").strip()
+            raw = input(f"  亲裁：输入编号择定该条，或径书朱笔批语（{hint}）：").strip()
             if not raw:
                 if holdable:
                     choices.append({"decision_key": key} if key else {})
                     break
                 print("  此案须择定一条（不另批请择案上标注留中的那条）。")
                 continue
-            if raw.isdigit() and 1 <= int(raw) <= len(options):
-                choices.append(project_hitl_option(decision, int(raw) - 1))
-                break
-            print("  请输入本案列出的编号。")
+            if raw.isdigit():
+                if 1 <= int(raw) <= len(options):
+                    choices.append(project_hitl_option(decision, int(raw) - 1))
+                    break
+                print("  请输入本案列出的编号。")
+                continue
+            # #1902：请旨允许只交亲笔批语（核内 rescript_actions.validate_all 同一条
+            # note-only 通道，Web decisionModal 同样透传）。入口不判资格、不改写成
+            # 某条票拟——收不收由共享核一句话判定，入口禁复制批红规则。
+            choices.append({"decision_key": key, "note": raw} if key else {"note": raw})
+            break
     return session.submit_hitl_choices(choices, write_gate=_cli_write_gate(session))
 
 
@@ -802,21 +775,34 @@ def run_cli(
     timeout_seconds: float = API_DEFAULT_TIMEOUT_SECONDS,
 ) -> None:
     """CLI 主循环：建 GameSession，逐回合 play_turn。"""
-    from ming_sim.llm_config import load_llm_config
+    from ming_sim.llm_config import (
+        llm_config_from_runtime, load_runtime_llm, resolve_api_key,
+    )
     from ming_sim.exceptions import LLMUnavailable, LLMContractError
     from ming_sim.token_stats import print_token_summary
 
     session: Optional[GameSession] = None
     try:
-        llm_config = load_llm_config(
-            base_url,
-            model,
-            api_key=api_key,
-            advanced_model=advanced_model,
-            advanced_base_url=advanced_base_url,
-            advanced_api_key=advanced_api_key,
-            timeout_seconds=timeout_seconds,
-        )
+        # #1902：与 Web 建局同一条投影路（运行档 = 唯一运行配置），CLI 入口不再
+        # 只认 API 通道——运行档选了 CLI 宿主就直接起局，不再索要 API key。
+        runtime = load_runtime_llm()
+        entry_args = {
+            "base_url": base_url,
+            "model": model,
+            "api_key": api_key,
+            "timeout_seconds": timeout_seconds,
+            "thinking_level": "",
+            "advanced_model": advanced_model,
+            "advanced_base_url": advanced_base_url,
+            "advanced_api_key": advanced_api_key,
+            "advanced_thinking_level": "",
+        }
+        llm_config = llm_config_from_runtime(runtime, **entry_args)
+        if llm_config.channel != "cli" and not llm_config.api_key:
+            # API 通道且确无真实 key：向人要一次（唯一索要缝 llm_config.resolve_api_key）。
+            llm_config = llm_config_from_runtime(
+                runtime, **{**entry_args, "api_key": resolve_api_key(api_key)},
+            )
         import os
         os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
         session = GameSession(db_path, llm_config, start_ym=start_ym)
@@ -825,12 +811,17 @@ def run_cli(
         print("《明末力挽狂澜》文字 MVP")
         print(f"你是刚刚登基的崇祯。每回合一个{TURN_UNIT}：看奏报、召见大臣、下圣旨、听回奏。")
         print(f"手动玩法：quit/退朝 = 结束本{TURN_UNIT}进入下一{TURN_UNIT}；exit/退出游戏 = 退出程序。")
+        # #1902：横幅报实际生效的通道（运行档投影结果），不再拿入参 base_url/model 冒充。
+        if llm_config.channel == "cli":
+            current_llm = f"CLI 宿主 {llm_config.cli_runner}（{llm_config.cli_model}）"
+        else:
+            current_llm = f"{llm_config.model} @ {llm_config.base_url}"
         if (llm_config.advanced_model or "").strip():
-            adv_url = (llm_config.advanced_base_url or "").strip() or base_url
+            adv_url = (llm_config.advanced_base_url or "").strip() or llm_config.base_url
             adv_hint = f"（推演/打分用 {llm_config.advanced_model} @ {adv_url}）"
         else:
             adv_hint = ""
-        print(f"当前 LLM：{model} @ {base_url}{adv_hint}")
+        print(f"当前 LLM：{current_llm}{adv_hint}")
         print(f"数据库：{db_path}\n")
         while True:
             turn_start = int(session.state.turn)

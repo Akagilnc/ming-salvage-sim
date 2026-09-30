@@ -167,11 +167,11 @@ def test_adjudication_blank_on_ordinary_decision_reprompts(monkeypatch, capsys):
     assert out.count("此案须择定一条（不另批请择案上标注留中的那条）。") == 2
 
 
-def test_adjudication_reprompts_on_unknown_number(monkeypatch, capsys):
-    """越界编号不落choice：留在本案重问，案头与核都不动。"""
+def test_adjudication_reprompts_on_out_of_range_number(monkeypatch, capsys):
+    """越界编号不落 choice：留在本案重问，案头与核都不动（非编号输入是朱笔批语，另一条）。"""
     session = _wire_gate(monkeypatch, _AdjudicateSession([_draft_row()]))
     result = SimpleNamespace(awaiting=True, report="", decisions=session.pending_decisions())
-    answers = iter(["9", "0", "abc", "1"])
+    answers = iter(["9", "0", "3", "1"])
     monkeypatch.setattr("builtins.input", lambda _prompt="": next(answers))
 
     term._adjudicate_cli_decisions(session, result)
@@ -211,37 +211,43 @@ def test_project_hitl_option_is_the_single_projection(index, expected_label):
     assert project_hitl_option(_draft_row(), 9)["label"] == "先发半饷"
 
 
-# ── 经真核的 tracer：入口产出的 choices 必须被核内 validate_all 接受并落出可见结果 ──
+# ── 经真核的 tracer：入口产出的 choices 必须被生产 submit_hitl_choices 收下 ──
+# #1902：这组用例此前把 GameSession.submit_hitl_choices 换成测试自写的
+# validate→apply 链，生产提交入口整个坏掉也照样绿。现改为走真编排，只中和
+# 最外层 LLM 缝（与 tests/test_cli_play_turn.py 的 play_turn tracer 同一手法）。
 
-def _core_bound_session(monkeypatch, db, state, content):
-    """真 GameSession 壳 + 真核 submit_hitl_choices（phase2 外缝中和，不替核内校验）。
 
-    入口产出的 choices 直接进真 ``rescript_actions.validate_all``：核拒即抛、核收才落
-    apply_rescript_batch 的外部可见结果——测试因此不经替身，也能咬到「整批被拒」。
+def _real_submit_session(monkeypatch, db, state, content, *, candidate_ids=()):
+    """真 GameSession 壳 + 真 submit_hitl_choices；只中和外部 LLM 缝。
+
+    本回合暂存上下文照真实 phase1 形状落一份（phase2 要读它续跑）。``candidate_ids``
+    给本回合候选快照：核内 ``bind_decisions_to_candidate_events`` 只在快照非空时按
+    快照重绑 event_id，故请旨等非事件身份那几条不传（它们的身份不是 events 表事件）。
     """
-    from ming_sim import rescript_actions as ra
     from ming_sim.models import TurnPhase
     from tests.month_chain_helpers import make_light_session
 
     state.turn_phase = TurnPhase.AWAITING_DECISION.value
     db.save_state(state)
+    simulator_payload = {
+        "candidate_events": [{"id": cid, "title": ""} for cid in candidate_ids],
+        "transit_semantics": [],
+    } if candidate_ids else None
+    db.save_resolve_context(
+        int(state.turn), "测试诏书", {"simulator_payload": simulator_payload},
+    )
+    db.save_turn_report(state, "邸报已成")
     session = make_light_session(db, state, content)
-    desk_rows = db.list_rescript_desk(int(state.turn))
-    seen: list[list[dict]] = []
-
-    def _submit(choices, *, write_gate, cheat_directive=""):
-        assert write_gate is session._write_gate, "CLI 必须注入既有 write_gate"
-        batch = ra.validate_all(desk_rows, choices)  # 真核：拒则整批抛，不落任何写
-        seen.append(list(choices))
-        ra.apply_rescript_batch(db, state, batch, ra.PrewriteResults(), content=content)
-        return "邸报"
-
-    monkeypatch.setattr(session, "submit_hitl_choices", _submit)
-    return session, seen
+    # 最外层 LLM 缝：世界段推演与月链转译。中和它们，核内编排与领域写全走真逻辑。
+    monkeypatch.setattr("ming_sim.month_chain.run_world_segment_text", lambda *a, **k: "")
+    monkeypatch.setattr(
+        "ming_sim.month_translate.translate_month_segment", lambda *a, **k: {"effects": {}},
+    )
+    return session
 
 
 def test_cli_blank_pick_on_urgent_reaches_core_hold(game, monkeypatch):
-    """急务回车 → 经真核 validate_all 机械 hold，案卷落 decided（外部可见）。"""
+    """急务回车 → 经真 submit_hitl_choices 机械 hold，案卷落 decided（外部可见）。"""
     from ming_sim import rescript_actions as ra
 
     db, state, content = game
@@ -250,7 +256,7 @@ def test_cli_blank_pick_on_urgent_reaches_core_hold(game, monkeypatch):
         "options": [{"label": "发饷", "hint": "照拟", "draft_capability": "cap-1"}],
     }])
     db.conn.commit()
-    session, seen = _core_bound_session(monkeypatch, db, state, content)
+    session = _real_submit_session(monkeypatch, db, state, content)
     desk_row = db.list_rescript_desk(int(state.turn))[0]
     monkeypatch.setattr("builtins.input", lambda _prompt="": "")
 
@@ -260,11 +266,11 @@ def test_cli_blank_pick_on_urgent_reaches_core_hold(game, monkeypatch):
         ),
     )
 
-    assert seen == [[{"decision_key": desk_row["decision_key"]}]]
-    # 真核（_core_bound_session 内的 validate_all）收了这一批并机械 hold：
-    assert ra.validate_all([desk_row], seen[0]).default_hold_keys == [
-        desk_row["decision_key"],
-    ]
+    # 核侧事实：空 pick 只在急务上落机械 hold（default_hold_missing）。
+    assert ra.validate_all(
+        [desk_row], [{"decision_key": desk_row["decision_key"]}],
+    ).default_hold_keys == [desk_row["decision_key"]]
+    # 外部可见：经真编排落库即 decided + hold。
     stored = db.list_rescript_drafts()[0]
     assert stored["status"] == "decided"
     assert stored["choice"]["action"] == "hold"
@@ -286,14 +292,17 @@ def test_cli_blank_pick_on_ordinary_decision_is_rejected_by_core(game, monkeypat
 
 
 def test_cli_chosen_option_reaches_core_and_lands_decision(game, monkeypatch):
-    """按编号择定 → 真核收下并落 decided，落库 choice 就是皇帝所选那条（非首选项）。"""
+    """按编号择定 → 真编排收下并落 decided，落库 choice 就是皇帝所选那条（非首选项）。"""
     db, state, content = game
-    db.save_pending_decisions(int(state.turn), [{
+    turn_before = int(state.turn)
+    db.save_pending_decisions(turn_before, [{
         "event_id": "mao_wenlong", "title": "毛文龙裁断", "context": "东江事急",
         "options": [{"label": "斩", "hint": "严肃军纪"}, {"label": "留", "hint": "暂稳东江"}],
     }])
     db.conn.commit()
-    session, seen = _core_bound_session(monkeypatch, db, state, content)
+    session = _real_submit_session(
+        monkeypatch, db, state, content, candidate_ids=("mao_wenlong",),
+    )
     monkeypatch.setattr("builtins.input", lambda _prompt="": "2")
 
     term._adjudicate_cli_decisions(
@@ -302,10 +311,63 @@ def test_cli_chosen_option_reaches_core_and_lands_decision(game, monkeypatch):
         ),
     )
 
-    assert seen[0][0]["label"] == "留"
-    stored = db.list_pending_decisions(int(state.turn))[0]
+    # 真编排跑完了整条亲裁续推（月份已推进），断言落在本回合那一行上。
+    assert int(state.turn) > turn_before
+    stored = db.list_pending_decisions(turn_before)[0]
     assert stored["choice"]["label"] == "留"
     assert stored["status"] == "decided"
+
+
+def test_cli_imperial_note_reaches_core_for_question(game, monkeypatch):
+    """#1902：请旨只交亲笔批语 → 经真编排落库，批语不被改写成某条票拟。
+
+    资格判定只在核内（``rescript_actions.validate_all`` 的 note-only 通道，与 Web
+    decisionModal 同一口径）；入口只负责把皇帝的原话透传过去。
+    """
+    db, state, content = game
+    turn_before = int(state.turn)
+    db.save_pending_decisions(turn_before, [{
+        "event_id": "decree-question:ref-1:0", "title": "是否加赈",
+        "context": "灾民待哺",
+        "options": [{"label": "准", "hint": "出仓"}, {"label": "驳", "hint": "缓"}],
+    }])
+    db.conn.commit()
+    # 请旨身份不是 events 表事件（核内 apply 已按前缀豁免 event 账），故不给候选快照。
+    session = _real_submit_session(monkeypatch, db, state, content)
+    monkeypatch.setattr("builtins.input", lambda _prompt="": "着户部另议")
+
+    term._adjudicate_cli_decisions(
+        session, SimpleNamespace(
+            awaiting=True, report="", decisions=session.pending_decisions(),
+        ),
+    )
+
+    stored = db.list_pending_decisions(turn_before)[0]
+    assert stored["status"] == "decided"
+    assert stored["choice"]["note"] == "着户部另议"
+    assert stored["choice"].get("label", "") == ""
+
+
+def test_cli_imperial_note_on_non_question_decision_is_refused_by_core(game, monkeypatch):
+    """非请旨的普通裁断不给 note-only：核整批拒，案卷仍 pending（入口不代造票拟）。"""
+    db, state, content = game
+    db.save_pending_decisions(int(state.turn), [{
+        "event_id": "mao_wenlong", "title": "毛文龙裁断", "context": "东江事急",
+        "options": [{"label": "斩", "hint": "严肃军纪"}, {"label": "留", "hint": "暂稳东江"}],
+    }])
+    db.conn.commit()
+    session = _real_submit_session(monkeypatch, db, state, content)
+    monkeypatch.setattr("builtins.input", lambda _prompt="": "着户部另议")
+
+    with pytest.raises(ValueError, match="decision 选项不在当前 options"):
+        term._adjudicate_cli_decisions(
+            session, SimpleNamespace(
+                awaiting=True, report="", decisions=session.pending_decisions(),
+            ),
+        )
+
+    stored = db.list_pending_decisions(int(state.turn))[0]
+    assert stored["status"] == "pending"
 
 
 def test_cli_runner_forwarders_are_gone_single_dispatch():
@@ -314,5 +376,11 @@ def test_cli_runner_forwarders_are_gone_single_dispatch():
 
     for runner in ("agy", "codex", "claude", "cursor", "kimi", "grok", "pi"):
         assert not hasattr(cb, f"_run_{runner}"), f"_run_{runner} 转发应已退役"
-    assert cb._CLI_RUNNER_NAMES == {"agy", "codex", "claude", "cursor", "kimi", "grok", "pi"}
     assert hasattr(cb, "_run_cli_runner") and hasattr(cb, "_dispatch_cli_runner")
+    # 准入名单只此一份：分派点认的谓词就是 _CLI_BACKENDS 那个真源（#1902 同形第二份已删）。
+    assert not hasattr(cb, "_CLI_RUNNER_NAMES"), "准入名单副本应已删"
+    assert all(
+        cb.is_supported_cli_runner(runner)
+        for runner in ("agy", "codex", "claude", "cursor", "kimi", "grok", "pi")
+    )
+    assert not cb.is_supported_cli_runner("new-host")

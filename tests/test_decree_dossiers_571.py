@@ -948,30 +948,31 @@ def test_appointment_alias_uses_canonical_dossier_identity(game):
     assert db.get_decree_dossier(dossier["id"])["status"] == "closed"
 
 @pytest.mark.parametrize(
-    ("entry", "case", "model_fields"),
+    ("case", "model_fields"),
     (
-        ("web", "allocation", {
+        ("allocation", {
             "动作类型": "grant_allocation", "目标类型": "issue",
             "目标": "relief", "金额": "30000", "账户": "内库",
             "执行面": "immediate",
         }),
-        ("cli", "authorization", {
+        ("authorization", {
             "动作类型": "secret_authorization", "目标类型": "character",
         }),
-        ("web", "controlled_verb", {
+        ("controlled_verb", {
             "动作类型": "secret_investigation", "目标类型": "issue",
             "目标ID": "granary-corruption",
         }),
-        ("cli", "controlled_verb", {
+        ("controlled_verb", {
             "动作类型": "protection", "目标类型": "character",
         }),
-        ("cli", "dismiss", {"动作类型": "dismiss_assignment"}),
-        ("web", "dismiss", {"动作类型": "dismiss_assignment"}),
+        ("dismiss", {"动作类型": "dismiss_assignment"}),
     ),
 )
 def test_manual_directive_capture_reaches_structured_dossier(
-    game, monkeypatch, entry, case, model_fields,
+    game, monkeypatch, case, model_fields,
 ):
+    """#1902：拟诏台手写入口退役后，抽取核 → 案卷这条路只有一条（原 web/cli 两参数
+    维度已随两条入口同形而删——同一路径跑两遍不证明任何额外契约）。"""
     import ming_sim.cli_backend as cli_backend
     from ming_sim.session import GameSession
 
@@ -1004,14 +1005,13 @@ def test_manual_directive_capture_reaches_structured_dossier(
     session.state = state
     session.llm_config = None
     session.content = content
-    # #1902：拟诏台 Web 入口退役，两条入口同走共享抽取核 + 会话写入面。
+    # #1902：拟诏台 Web/CLI 手写入口退役，唯一在役路径 = 共享抽取核 + 引擎写入面。
     payload = cli_backend.capture_manual_directive_payload(
         directive_text, None, db=db, content=content,
     )
     directive_id = db.add_directive(
         state, None, directive_text, "手动新增", dossier_payload=payload,
     )
-    del entry
     account = "内库" if case == "allocation" else "国库"
     before = state.metrics[account]
 

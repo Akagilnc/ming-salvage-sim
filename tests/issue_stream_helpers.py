@@ -8,8 +8,9 @@ payload），使原来看 HTTP 状态码 + detail 的断言可以逐字迁移，
 
 from __future__ import annotations
 
-import json
 from typing import Any, Optional
+
+from tests.sse_helpers import parse_sse_events as _parse_sse
 
 
 class IssueStreamError(AssertionError):
@@ -19,20 +20,6 @@ class IssueStreamError(AssertionError):
         self.status_code = status_code
         self.payload = payload
         super().__init__(f"issue/stream error → status={status_code} payload={payload!r}")
-
-
-def _parse_sse(text: str) -> list[dict]:
-    events: list[dict] = []
-    for block in (text or "").strip().split("\n\n"):
-        cur: dict = {}
-        for line in block.splitlines():
-            if line.startswith("event:"):
-                cur["event"] = line.split(":", 1)[1].strip()
-            elif line.startswith("data:"):
-                cur["data"] = line.split(":", 1)[1].strip()
-        if cur:
-            events.append(cur)
-    return events
 
 
 def _terminal_payload(events: list[dict], *, step: str) -> dict:
@@ -55,6 +42,8 @@ def _terminal_payload(events: list[dict], *, step: str) -> dict:
 
 
 def _loads(data: Any) -> Any:
+    import json
+
     if isinstance(data, str):
         try:
             return json.loads(data)

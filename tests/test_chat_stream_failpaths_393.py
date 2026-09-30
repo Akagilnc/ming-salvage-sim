@@ -62,8 +62,10 @@ def _assert_write_path_free(runtime) -> None:
 class _FailingPrologueDB:
     def __init__(self):
         self.failed_turns: list[int] = []
+        self.created_turns: list[int] = []
 
     def create_chat_turn(self, *a, **k):
+        self.created_turns.append(7)
         return 7
 
     def capture_chat_rollback_snapshot(self):
@@ -148,7 +150,8 @@ def _base_runtime(db):
     runtime.chat_history = {character.name: []}
     runtime._persistent_chat_minister = lambda name: True
     runtime._audience_turn_in_flight = lambda name: False
-    runtime._start_chat_turn = lambda name, **_k: (7, {})
+    # #1902：不再替身 _start_chat_turn —— 建轮与问话落库已下沉会话层共核，替掉它
+    # 就等于把被测的 prologue 拿掉（DB 崩溃点也一并消失）。
     return runtime, character.name
 
 
@@ -158,8 +161,11 @@ def test_prologue_failure_fails_orphan_turn_and_releases_gate():
     gen = runtime.chat_stream("殿上", "辽东军情如何？")
     with pytest.raises(RuntimeError):
         next(gen)  # prologue 在 append_chat_message 崩 → 重新抛出
-    # 孤儿轮被失败掉（不留 active 无回复轮挡住该大臣）
-    assert db.failed_turns == [7]
+    # 孤儿轮被失败掉（不留 active 无回复轮挡住该大臣）。轮号由真共核分配，
+    # 断言「建出来的那个轮被失败掉」而不是钉死具体数字。
+    assert db.created_turns and db.failed_turns == db.created_turns, (
+        db.created_turns, db.failed_turns,
+    )
     # 写路径已释放：后续串行写与 drain 不阻塞
     _assert_write_path_free(runtime)
 
@@ -200,7 +206,9 @@ def test_prologue_finally_does_not_release_foreign_gate_holder():
     with pytest.raises(RuntimeError):
         next(gen)
 
-    assert db.failed_turns == [7]
+    assert db.created_turns and db.failed_turns == db.created_turns, (
+        db.created_turns, db.failed_turns,
+    )
     # Foreign holder must still own the serialized write path after prologue finally.
     assert other_entered.is_set()
     assert other_completed_ok == [], (

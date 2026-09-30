@@ -79,7 +79,7 @@ from ming_sim.llm_transport import (
 )
 from ming_sim.llm_contract import fail_if_llm_error
 from ming_sim.issues import _format_issue_ongoing, commitment_display_text, commitment_progress_payload, commitment_timed_bar_value
-from ming_sim.session import GameSession
+from ming_sim.session import AudienceChatTurn, GameSession
 from ming_sim.session import (
     AUTO_SAVE_PREFIX,
     AudienceAdmission,
@@ -1880,43 +1880,19 @@ class WebGame:
         self, minister_name: str, *, attach_to_hall: bool = True,
         message: str = "",
     ) -> tuple[int, Dict[str, Any]]:
+        """#1902：建轮与落问话已下沉会话层（与 CLI 共核），此处只回兼容二元组。
+
+        走 ``GameSession.begin_audience_chat_turn`` 的未绑定真方法（而非
+        ``self.session.begin_...``）：召对话轮生命周期是共核，测试壳只替 LLM 缝，
+        不必各自再抄一份建轮（#13 禁测试自建被测行为）。
+        """
         agno_session_id = self._minister_agno_session_id(minister_name)
-        runs_before = self.db.agno_runs_length(agno_session_id)
-        snapshot = self.db.capture_chat_rollback_snapshot()
-        # #498：进入召对即开夜；对话轮挂 night_id，status=generating 至回话入档。
-        # 测试替身无 conn/夜表时回退 create_chat_turn（lifecycle 双接口仍可测）。
-        # #1566：场外密疏只挂当前夜，不入殿、不启殿上 scene；route 落 chat_turns。
-        # #1838 reopen：建轮 = 确保开夜 + create_chat_turn；入殿账只由「宣 X」/批红召见写。
-        if hasattr(self.db, "conn"):
-            from ming_sim.audience_night import (
-                ensure_open_night_for_audience,
-                get_open_night,
-            )
-            night_was_open = get_open_night(self.db) is not None
-            night = get_open_night(self.db) or ensure_open_night_for_audience(
-                self.db, self.state,
-            )
-            if not night_was_open:
-                from ming_sim.decree_forecast import schedule_held_decree_forecasts
-                schedule_held_decree_forecasts(self.session)
-            chat_turn_id = self.db.create_chat_turn(
-                self.state,
-                minister_name,
-                agno_session_id,
-                runs_before,
-                night_id=int(night["id"]),
-                status="generating",
-            )
-        else:
-            agno_session_id = self._minister_agno_session_id(minister_name)
-            runs_before = self.db.agno_runs_length(agno_session_id)
-            chat_turn_id = self.db.create_chat_turn(
-                self.state,
-                minister_name,
-                agno_session_id,
-                runs_before,
-            )
-        return chat_turn_id, snapshot
+        turn = GameSession.begin_audience_chat_turn(
+            self.session, minister_name, message,
+            agno_session_id=agno_session_id,
+            runs_before=self.db.agno_runs_length(agno_session_id),
+        )
+        return turn.chat_turn_id, turn.before_snapshot
 
     def _record_chat_rollback_items(
         self,
@@ -1963,34 +1939,29 @@ class WebGame:
         self, chat_turn_id: int, before_snapshot: Dict[str, Any],
         error: Optional[BaseException] = None,
     ) -> None:
-        """召对中断/失败的统一善后：回滚副作用；有问话则保留并标 interrupted。
+        """召对中断/失败的统一善后：终态化本轮 + 重载召对历史缓存。
+
         所有「已建 chat_turn 但本轮未能正常完成」的路径都必须调用——否则留下 status=active 且
         minister_message_id 为空的孤儿轮，`_audience_turn_in_flight` 会把本夜永久判为「上一轮
         仍在进行」而拒收后续问话（cmr Gate2 F-B）。chat_turn_id=0（无持久轮）时为 no-op。
 
-        Scene abandon/drain 由调用方在 write_gate 外先完成（C9/T1/T10）；本方法只做短事务写。
+        #1902：回滚与失败终态已下沉会话层（``GameSession.fail_audience_chat_turn``，
+        与 CLI 共核）；此处只做 Web 呈现面的历史缓存重载。
+        Scene abandon/drain 由调用方在 write_gate 外先完成（C9/T1/T10）。
         """
         if not chat_turn_id:
             return
-        self._record_chat_rollback_items(chat_turn_id, before_snapshot)
-        row = self.db.conn.execute(
-            "SELECT user_message_id FROM chat_turns WHERE id = ?", (chat_turn_id,),
-        ).fetchone() if hasattr(self.db, "conn") else None
-        if row is not None and row["user_message_id"]:
-            restored_ids = self.db.restore_interrupted_after_failed_retry(chat_turn_id)
-            from ming_sim.decree_forecast import schedule_restored_decree_forecasts
-            schedule_restored_decree_forecasts(self.session, restored_ids)
-            if error is not None and not isinstance(error, LLMUnavailable):
-                from ming_sim.audience_night import write_audience_error_pack
-                pack = write_audience_error_pack(
-                    kind="reply", message=str(error),
-                    detail={"chat_turn_id": chat_turn_id}, db=self.db, exc=error,
-                )
-                self.db.set_chat_turn_error_pack(chat_turn_id, pack)
-        else:
-            restored_ids = self.db.fail_chat_turn(chat_turn_id)
-            from ming_sim.decree_forecast import schedule_restored_decree_forecasts
-            schedule_restored_decree_forecasts(self.session, restored_ids)
+        GameSession.fail_audience_chat_turn(
+            self.session,
+            AudienceChatTurn(
+                chat_turn_id=int(chat_turn_id),
+                accepted_turn=int(self.state.turn),
+                night_id=0,
+                before_snapshot=before_snapshot,
+                user_message_id=0,
+            ),
+            error=error,
+        )
         self.chat_history = {name: [] for name in self.session.content.characters}
         for name, msgs in self.db.load_all_chat_history().items():
             self.chat_history.setdefault(name, []).extend(msgs)
@@ -2774,15 +2745,14 @@ class WebGame:
                 yield {"type": "error", "message": "本夜上一轮回奏仍在进行，请稍候再问。"}
                 return
             accepted_turn = int(self.state.turn)
+            # #1902：建轮与问话落库同走会话层共核（begin_audience_chat_turn 内已落
+            # user 行并挂上 chat_turn）；入口只更自己的呈现缓存，不再重复 append。
             chat_turn_id, before_snapshot = self._start_chat_turn(
                 minister_name,
                 message=text,
                 attach_to_hall=True,
             )
             self.chat_history.setdefault(minister_name, []).append({"role": "user", "content": text})
-            message_id = self.db.append_chat_message(minister_name, accepted_turn, "user", text)
-            if chat_turn_id:
-                self.db.update_chat_turn_messages(chat_turn_id, user_message_id=message_id)
         except Exception as error:
             # Release gate before scene drain — prologue may have already started futures.
             if gate_held:
@@ -5358,6 +5328,10 @@ def _chat_stream_response(minister_name: str, request: ChatRequest) -> Streaming
             elif item_type == "error":
                 detail = item.get("detail") or {"message": item.get("message", "流式回复失败。")}
                 payload = dict(detail) if isinstance(detail, dict) else {"message": str(detail)}
+                # #1902：结构化拒收的 code 必须过 SSE 终态（前端 normalizeApiError 与
+                # 测试都按它分流；旧非流式路由把它放在 HTTP detail 里，迁流式不得丢）。
+                if item.get("code") and not payload.get("code"):
+                    payload["code"] = str(item.get("code"))
                 payload.update({
                     "campaign_id": item.get("campaign_id", ""),
                     "night_id": item.get("night_id", 0),

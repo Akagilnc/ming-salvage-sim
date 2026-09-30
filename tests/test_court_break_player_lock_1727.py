@@ -75,17 +75,21 @@ def _client() -> httpx.AsyncClient:
 
 
 def _parse_sse_chunk(buf: str) -> list[dict]:
-    events: list[dict] = []
-    for block in buf.split("\n\n"):
-        cur: dict = {}
-        for line in block.splitlines():
-            if line.startswith("event:"):
-                cur["event"] = line[len("event:"):].strip()
-            elif line.startswith("data:"):
-                cur["data"] = line[len("data:"):].strip()
-        if cur.get("event"):
-            events.append(cur)
-    return events
+    """#1902：SSE 解析真源在 tests.sse_helpers（仓内只此一份）。"""
+    from tests.sse_helpers import parse_sse_events
+
+    return parse_sse_events(buf)
+
+
+def _terminal_event(text: str) -> dict:
+    """流末尾的终态事件（error / done）连同解好的 data；无终态则断言红。"""
+    terminal = next(
+        (e for e in reversed(_parse_sse_chunk(text)) if e.get("event") in ("error", "done")),
+        None,
+    )
+    assert terminal is not None, f"流无 error/done 终态：{text!r}"
+    raw = terminal.get("data") or "{}"
+    return {"event": terminal.get("event"), "data": json.loads(raw) if isinstance(raw, str) else raw}
 
 
 def _named_scene_beats(scroll) -> list[str]:
@@ -103,6 +107,7 @@ def test_court_break_locks_player_writes_and_closes_night(web_game, monkeypatch)
 
     statuses: dict[str, int] = {}
     chat_accepted: list[int] = []
+    chat_terminal: list[dict] = []
     barrier_at_done: list[bool] = []
 
     class _DoneProbeQueue(web_app.queue.Queue):
@@ -115,9 +120,9 @@ def test_court_break_locks_player_writes_and_closes_night(web_game, monkeypatch)
                     return super().put(item, *args, **kwargs)
                 async def _probe() -> dict[str, int]:
                     # #1902：非流式召对入口退役，说话只有流式一条。屏障守的是玩家写
-                    # 入口本身：流式请求在屏障窗内照发 200（worker 随后拿不到闸，拒收
-                    # 落在 SSE 终态），故此处不消费它的流（会与主流程互等），只断言受理，
-                    # 终态在主流程跑完后单独读——undo 仍在受理期同步 409。
+                    # 入口本身：流式请求在屏障窗内照发 200，拒收落在 SSE 终态——故此处
+                    # 必须把流消费到终态并断言那条结构化拒收（#1727 承诺的
+                    # 「HTTP/SSE 外部可见拒」）；只看 200 等于什么都不证明。
                     async with _client() as client:
                         chat = await client.post(
                             "/api/audience/chat/stream",
@@ -125,6 +130,7 @@ def test_court_break_locks_player_writes_and_closes_night(web_game, monkeypatch)
                         )
                         undo = await client.post("/api/audience/chat/undo")
                         chat_accepted.append(chat.status_code)
+                        chat_terminal.append(_terminal_event(chat.text))
                         return {"undo": undo.status_code}
 
                 statuses.update(asyncio.run(_probe()))
@@ -155,6 +161,10 @@ def test_court_break_locks_player_writes_and_closes_night(web_game, monkeypatch)
     # #1902：召对只有流式一条，屏障窗内受理（200）但拒收在终态；undo 同步 409。
     assert statuses == {"undo": 409}, statuses
     assert chat_accepted == [200], chat_accepted
+    # 负向契约在终态里：屏障窗内的召对必须是那条结构化拒收，不得出现成功 done/end。
+    assert len(chat_terminal) == 1, chat_terminal
+    assert chat_terminal[0]["event"] == "error", chat_terminal
+    assert chat_terminal[0]["data"].get("code") == "night_closing", chat_terminal
     # end 后终态：夜 closed；#1838 reopen 无 closing/exit/divider 收尾旁白三拍。
     row = game.db.conn.execute(
         "SELECT status FROM audience_nights WHERE id=?", (night_id,),

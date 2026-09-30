@@ -908,7 +908,7 @@ def _run_cli_runner(
 # agy 走自身 ladder、不消费 --model，故调用时不带 model/reasoning_strength。
 # 存函数名而非函数对象：调用点现取，monkeypatch 替换任一宿主入口仍即时生效
 # （测试与探针都靠这条缝注入）。
-_CLI_RUNNER_NAMES = frozenset({"codex", "claude", "cursor", "kimi", "grok", "pi", "agy"})
+# 准入名单不在此重抄一份：唯一真源是 _CLI_BACKENDS（见 is_supported_cli_runner）。
 
 
 def _dispatch_cli_runner(
@@ -921,7 +921,7 @@ def _dispatch_cli_runner(
 ) -> Tuple[str, int]:
     """runner 名 → 该 runner 的单次调用入口。全仓唯一一处 runner 分派点
     （env 分派 / config 分派 / CliChat 分派共用，禁再复制第二份）。"""
-    if runner not in _CLI_RUNNER_NAMES:
+    if not is_supported_cli_runner(runner):
         raise RuntimeError(f"未知 CLI backend：{runner}")
     extra = {"materials_dir": materials_dir} if materials_dir else {}
     if runner == "agy":

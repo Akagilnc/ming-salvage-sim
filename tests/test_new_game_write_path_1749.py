@@ -18,10 +18,10 @@ import web_app
 from ming_sim.session import GameSession
 from tests.test_month_loop_tracer_1468 import (
     _assert_not_bare_500,
-    _parse_sse,
     _pick_active_minister,
     tracer_client,
 )
+from tests.sse_helpers import parse_sse_events as _parse_sse
 from tests.test_session_write_queue_1353 import wait_pending_writes as _wait_pending_writes
 from tests.wait_utils import wait_until
 from tests.conftest import offline_empty_audience_translate, stub_audience_translate, stub_scene_agent

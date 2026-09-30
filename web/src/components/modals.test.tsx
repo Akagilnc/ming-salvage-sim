@@ -275,17 +275,10 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-describe("EdictModal — #1431 placeholder 去失实具名", () => {
-  it("御笔 placeholder 不含毕自严等现任错位具名", () => {
-    const { host } = renderEdictModal({ state: baseGameState() });
-    const textarea = host.querySelector<HTMLTextAreaElement>(".desk-compose textarea");
-    expect(textarea).toBeTruthy();
-    const ph = textarea!.placeholder;
-    expect(ph.length).toBeGreaterThan(5);
-    // 数据真源：毕自严=南京户部尚书，非核拨辽饷的户部尚书；placeholder 不得硬编码其名
-    expect(ph).not.toContain("毕自严");
-  });
-});
+// #1902：拟诏台手写入口（御笔自拟 textarea / 改稿钮）整条退役，随之删掉两条钉在
+// 旧控件上的用例（#1431 placeholder 案、工具钮数量锁）——控件不在了，锁它没有
+// 任何行为意义。#1431 的真实意图（不写失实现任具名）改由源码面无该面板承担；
+// 剩余「点颁诏真发一次」的行为契约由下一条用例继续钉。
 
 describe("EdictModal — decree desk behavior", () => {
   it("issues an approved conversational draft without a second review gate", () => {
@@ -295,11 +288,12 @@ describe("EdictModal — decree desk behavior", () => {
       onIssueDecree: onIssue,
     });
     const item = host.querySelector(".directive-item");
-    const tools = item?.querySelectorAll(".directive-tools button");
+    const deleteBtn = item?.querySelector<HTMLButtonElement>(".directive-tools button");
     const button = host.querySelector<HTMLButtonElement>(".desk-footer button");
 
     expect(item).not.toBeNull();
-    expect(tools).toHaveLength(2);
+    // #1902：拟/改稿控件退役后，卡上只剩删旧草稿一条（按行为断言，不锁数量常量）。
+    expect(deleteBtn?.textContent).toContain("删");
     expect(button?.disabled).toBe(false);
     act(() => button?.click());
     expect(onIssue).toHaveBeenCalledTimes(1);
