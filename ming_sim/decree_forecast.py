@@ -187,9 +187,7 @@ def _pending_snapshot(session: Any, pending_action_id: int, night_id: int) -> Op
     payload = dict(prepared_directive["payload"])
     action_type = db._directive_dossier_action_type(payload)
     executor_kind, executor_id = db._directive_executor(action_type, payload)
-    next_id = int(db.conn.execute(
-        "SELECT COALESCE(MAX(id),0)+1 FROM decree_dossiers"
-    ).fetchone()[0])
+    next_id = db.dossiers.next_id()
     candidate: Dict[str, object] = {
         "id": next_id,
         "pending_action_id": int(pending_action_id),

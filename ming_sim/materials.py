@@ -367,9 +367,7 @@ def _own_affair_lines(
         return []
 
     dossier_participant_ids: set[int] = set()
-    for row in db.conn.execute(
-        "SELECT affair_id, participant_roster FROM decree_dossiers WHERE affair_id != 0",
-    ).fetchall():
+    for row in db.dossiers.rows_with_affair():
         if character_name in participant_roster_names(row["participant_roster"]):
             dossier_participant_ids.add(int(row["affair_id"]))
 

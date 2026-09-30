@@ -34,6 +34,21 @@ DOSSIER_EXECUTION_OUTCOMES = frozenset({
     "executing", "fulfilled", "degraded", "failed", "transformed",
 })
 
+# 事实表列白名单（ADR 0077 禁「钝化数值列」的 schema 契约；守门在 store 侧）。
+PRESENCE_TABLE = "dossier_supervision_presence"
+EXPOSURE_TABLE = "dossier_loophole_exposures"
+PRESENCE_ALLOWED_COLS = frozenset({
+    "id", "dossier_id", "turn", "auditor_name", "audit_dossier_id",
+    "relation_type", "present",
+})
+EXPOSURE_ALLOWED_COLS = frozenset({
+    "id", "dossier_id", "turn", "action_type", "execution_form",
+})
+# 全库禁「钝化数值」列名片段（AC1）
+FORBIDDEN_DULLING_COL_FRAGMENTS = (
+    "dull", "dulling", "钝化", "陋规", "supervision_score", "dull_rate",
+)
+
 DOSSIER_SCHEMA_SQL = """
 -- #571：旨意案卷是一等 durable truth。status 主链恰四值；封驳/留中
 -- 只落 promulgation_decision + rescript_pending 组合态，不污染主链枚举。
@@ -93,7 +108,200 @@ CREATE INDEX IF NOT EXISTS idx_decree_dossiers_status
 CREATE INDEX IF NOT EXISTS idx_decree_dossiers_target
     ON decree_dossiers(target_kind, target_id, status);
 CREATE INDEX IF NOT EXISTS idx_decree_dossiers_executor
-    ON decree_dossiers(executor_kind, executor_id, status)
+    ON decree_dossiers(executor_kind, executor_id, status);
+-- ADR 0054：只存新案卷→旧案卷；关系本身无状态位。
+CREATE TABLE IF NOT EXISTS decree_dossier_links (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_dossier_id INTEGER NOT NULL,
+    target_dossier_id INTEGER NOT NULL,
+    relation_type TEXT NOT NULL
+        CHECK(relation_type IN ('护卫','稽核','接应')),
+    note TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(source_dossier_id, target_dossier_id, relation_type),
+    FOREIGN KEY(source_dossier_id) REFERENCES decree_dossiers(id) ON DELETE CASCADE,
+    FOREIGN KEY(target_dossier_id) REFERENCES decree_dossiers(id) ON DELETE RESTRICT
+);
+CREATE INDEX IF NOT EXISTS idx_decree_dossier_links_target
+    ON decree_dossier_links(target_dossier_id, id);
+-- #567 / ADR 0054+0058：被护案卷侧机械对账（逐路×回合）；非 0058 进展容器。
+CREATE TABLE IF NOT EXISTS decree_dossier_reconciliations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    dossier_id INTEGER NOT NULL,
+    turn INTEGER NOT NULL,
+    ordered_amount INTEGER NOT NULL,
+    arrived_amount INTEGER NOT NULL,
+    loss_amount INTEGER NOT NULL,
+    escorted INTEGER NOT NULL DEFAULT 0 CHECK(escorted IN (0,1)),
+    escort_source_dossier_id INTEGER,
+    relation_type TEXT NOT NULL DEFAULT '',
+    note TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(dossier_id, turn),
+    FOREIGN KEY(dossier_id) REFERENCES decree_dossiers(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_dossier_reconciliations_dossier
+    ON decree_dossier_reconciliations(dossier_id, turn, id);
+-- ADR 0070：担名与办事名单分立；条目只能指向落条目前已存在的案卷。
+-- #658 later-wins：provenance 恰为 source_chat_turn_id>0 或 decision_key 非空之一。
+-- chat_turn 删除走显式清理（见 rollback 路径），不靠 FK CASCADE 绑死批红路径。
+CREATE TABLE IF NOT EXISTS decree_dossier_endorsements (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    dossier_id INTEGER NOT NULL,
+    form TEXT NOT NULL CHECK(form IN ('会签','当面站台','御笔手敕')),
+    endorser_id TEXT NOT NULL DEFAULT '',
+    imperial INTEGER NOT NULL DEFAULT 0 CHECK(imperial IN (0,1)),
+    source_chat_turn_id INTEGER NOT NULL DEFAULT 0,
+    decision_key TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(dossier_id, form, endorser_id, imperial, source_chat_turn_id, decision_key),
+    CHECK (
+        (source_chat_turn_id > 0 AND decision_key = '')
+        OR (source_chat_turn_id = 0 AND decision_key != '')
+    ),
+    FOREIGN KEY(dossier_id) REFERENCES decree_dossiers(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_dossier_endorsements_dossier
+    ON decree_dossier_endorsements(dossier_id, id);
+CREATE TABLE IF NOT EXISTS decree_dossier_link_rejections (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_dossier_id INTEGER NOT NULL,
+    pending_action_id INTEGER,
+    target_dossier_id INTEGER NOT NULL DEFAULT 0,
+    relation_type TEXT NOT NULL DEFAULT '',
+    note TEXT NOT NULL DEFAULT '',
+    reason TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_dossier_link_rejections_source
+    ON decree_dossier_link_rejections(source_dossier_id, id);
+CREATE TABLE IF NOT EXISTS decree_dossier_decisions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    dossier_id INTEGER NOT NULL,
+    turn INTEGER NOT NULL,
+    decision TEXT NOT NULL,
+    blocked_layer TEXT NOT NULL DEFAULT '',
+    rescript_action TEXT NOT NULL DEFAULT '',
+    reason TEXT NOT NULL DEFAULT '',
+    legal_reason_code TEXT NOT NULL DEFAULT '',
+    primary_opponents_json TEXT NOT NULL DEFAULT '[]',
+    gatekeeper_id TEXT,
+    criteria_snapshot_json TEXT NOT NULL DEFAULT '{}',
+    affected_parties_json TEXT NOT NULL DEFAULT '[]',
+    midzhi_unpromulgatable INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(dossier_id) REFERENCES decree_dossiers(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_decree_dossier_decisions_dossier
+    ON decree_dossier_decisions(dossier_id, id);
+-- #619 / ADR 0073: general reported-progress rail for non-secret
+-- execution-surface dossiers. Secret monthly rows stay on
+-- secret_orders.dossier_progress_json (#566/#883); no shared table+flag.
+CREATE TABLE IF NOT EXISTS dossier_reported_progress (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    dossier_id INTEGER NOT NULL,
+    turn INTEGER NOT NULL,
+    progress_band TEXT NOT NULL,
+    memorial_text TEXT NOT NULL,
+    is_terminal INTEGER NOT NULL DEFAULT 0 CHECK(is_terminal IN (0,1)),
+    origin TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(dossier_id) REFERENCES decree_dossiers(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_dossier_reported_progress_dossier
+    ON dossier_reported_progress(dossier_id, turn, id);
+-- #625 / ADR 0077: supervision fact bottom (no dulling numeric cols).
+-- Presence: one row per (dossier_id, turn, auditor); consecutive months derived at read.
+CREATE TABLE IF NOT EXISTS dossier_supervision_presence (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    dossier_id INTEGER NOT NULL,
+    turn INTEGER NOT NULL,
+    auditor_name TEXT NOT NULL,
+    audit_dossier_id INTEGER NOT NULL,
+    relation_type TEXT NOT NULL
+        CHECK(relation_type IN ('稽核')),
+    present INTEGER NOT NULL DEFAULT 1 CHECK(present IN (0,1)),
+    UNIQUE(dossier_id, turn, auditor_name),
+    FOREIGN KEY(dossier_id) REFERENCES decree_dossiers(id) ON DELETE CASCADE,
+    FOREIGN KEY(audit_dossier_id) REFERENCES decree_dossiers(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_supervision_presence_dossier
+    ON dossier_supervision_presence(dossier_id, turn, id);
+-- Loophole exposure: class key = action_type + execution_form (enums only).
+CREATE TABLE IF NOT EXISTS dossier_loophole_exposures (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    dossier_id INTEGER NOT NULL,
+    turn INTEGER NOT NULL,
+    action_type TEXT NOT NULL,
+    execution_form TEXT NOT NULL,
+    UNIQUE(dossier_id, turn, action_type, execution_form),
+    FOREIGN KEY(dossier_id) REFERENCES decree_dossiers(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_loophole_exposures_dossier
+    ON dossier_loophole_exposures(dossier_id, turn, id);
+-- #1504 / ADR 0073+0120: covert 实况进度容器（非 0058 奏报；origin 纪律可累加）。
+CREATE TABLE IF NOT EXISTS dossier_actual_progress (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    dossier_id INTEGER NOT NULL,
+    turn INTEGER NOT NULL,
+    units REAL NOT NULL,
+    fidelity_state TEXT NOT NULL,
+    floor_state TEXT NOT NULL,
+    note TEXT NOT NULL DEFAULT '',
+    origin_ref TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(dossier_id, turn),
+    FOREIGN KEY(dossier_id) REFERENCES decree_dossiers(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_dossier_actual_progress_dossier
+    ON dossier_actual_progress(dossier_id, turn, id);
+-- #627 / ADR 0077 ID-12: faction denunciation entries (independent carrier).
+-- Truth bottom lives in origin marks (#619 compose_report_origin); payload holds
+-- fork exposure. Never write dossier_loophole_exposures from this path.
+CREATE TABLE IF NOT EXISTS faction_denunciations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    turn INTEGER NOT NULL,
+    accuser_name TEXT NOT NULL,
+    accuser_faction TEXT NOT NULL,
+    subject_name TEXT NOT NULL,
+    subject_faction TEXT NOT NULL,
+    target_dossier_id INTEGER NOT NULL,
+    origin TEXT NOT NULL,
+    payload_json TEXT NOT NULL DEFAULT '{}',
+    memorial_text TEXT NOT NULL,
+    -- 去重键=检举人×案卷×真伪类（不含 turn）；由承接查询单源+LIMIT 1 执行。
+    -- 升级再落要求同键多行，故不加 UNIQUE（含 turn 会撞同回合升级；去 turn 会堵一切升级）。
+    FOREIGN KEY(target_dossier_id) REFERENCES decree_dossiers(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_faction_denunciations_turn
+    ON faction_denunciations(turn, id);
+CREATE INDEX IF NOT EXISTS idx_faction_denunciations_target
+    ON faction_denunciations(target_dossier_id, turn, id);
+-- ADR 0056: existence of this append-only rail is the idempotency key;
+-- stigma_json is deliberately not used as a cost guard.
+CREATE TABLE IF NOT EXISTS decree_cost_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    dossier_id INTEGER NOT NULL,
+    turn INTEGER NOT NULL,
+    cost_kind TEXT NOT NULL,
+    target_kind TEXT NOT NULL,
+    target_id TEXT NOT NULL,
+    delta INTEGER NOT NULL DEFAULT 0,
+    reason TEXT NOT NULL DEFAULT '',
+    cost_identity TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(dossier_id, cost_identity, cost_kind, target_kind, target_id),
+    FOREIGN KEY(dossier_id) REFERENCES decree_dossiers(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_decree_cost_events_dossier
+    ON decree_cost_events(dossier_id, id);
+CREATE TABLE IF NOT EXISTS pending_promulgation_verdicts (
+    turn INTEGER NOT NULL,
+    dossier_id INTEGER NOT NULL,
+    verdict_json TEXT NOT NULL,
+    PRIMARY KEY(turn, dossier_id),
+    FOREIGN KEY(dossier_id) REFERENCES decree_dossiers(id) ON DELETE CASCADE
+);
 """
 
 
@@ -169,9 +377,12 @@ class DossierStore:
     def __init__(self, conn: Any) -> None:
         self._conn = conn
 
-    @staticmethod
-    def ensure_schema(conn: Any) -> None:
-        conn.executescript(DOSSIER_SCHEMA_SQL)
+    def _commit(self, commit: bool) -> None:
+        """Commit unless an outer atomic/BEGIN owns the transaction."""
+        if commit and not bool(getattr(self._conn, "_commit_suspended", False)) and int(
+            getattr(self._conn, "_atomic_depth", 0) or 0
+        ) == 0:
+            self._conn.commit()
 
     @staticmethod
     def ensure_locality_indexes(conn: Any) -> None:
@@ -188,14 +399,6 @@ class DossierStore:
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_decree_dossiers_directive "
             "ON decree_dossiers(directive_id, region_id) WHERE directive_id > 0"
         )
-
-    def _commit(self, commit: bool) -> None:
-        if commit and not bool(getattr(self._conn, "_commit_suspended", False)) and int(
-            getattr(self._conn, "_atomic_depth", 0) or 0
-        ) == 0:
-            self._conn.commit()
-
-    # ── identity reads ────────────────────────────────────────────
 
     def get(self, dossier_id: int) -> Optional[dict[str, object]]:
         row = self._conn.execute(
@@ -974,13 +1177,6 @@ class DossierStore:
             raise KeyError(f"案卷不存在：{dossier_id}")
         return str(row["executor_id"] or ""), str(row["payload_json"] or "{}")
 
-    def payload_by_pending_action(self, pending_action_id: int) -> str:
-        row = self._conn.execute(
-            "SELECT payload_json FROM decree_dossiers WHERE pending_action_id=?",
-            (int(pending_action_id),),
-        ).fetchone()
-        return str(row["payload_json"] or "{}") if row is not None else "{}"
-
     def all_ids(self) -> list[int]:
         return [
             int(r["id"]) for r in
@@ -1003,18 +1199,6 @@ class DossierStore:
             WHERE s.status='active'
               AND d.status IN ('promulgated','executing')
             ORDER BY d.id
-            """
-        ).fetchall()
-
-    def supervision_link_rows(self) -> list[Any]:
-        return self._conn.execute(
-            """
-            SELECT l.source_dossier_id, l.target_dossier_id, l.relation_type,
-                   s.status AS source_status, t.status AS target_status
-            FROM decree_dossier_links l
-            JOIN decree_dossiers s ON s.id = l.source_dossier_id
-            JOIN decree_dossiers t ON t.id = l.target_dossier_id
-            ORDER BY l.id
             """
         ).fetchall()
 
@@ -1121,6 +1305,437 @@ class DossierStore:
             (int(dossier_id), int(turn)),
         ).fetchone()
         return row is not None
+
+    # ── satellite read seams ─────────────────────────────────────
+
+    def pending_action_dossier_ids(
+        self, pending_action_id: int, *, secret_only: bool = False,
+    ) -> list[int]:
+        sql = "SELECT id FROM decree_dossiers WHERE pending_action_id=?"
+        if secret_only:
+            sql += " AND secret_order_id IS NOT NULL"
+        return [
+            int(r["id"]) for r in self._conn.execute(sql + " ORDER BY id", (int(pending_action_id),)).fetchall()
+        ]
+
+    def has_incoming_audit_link(self, dossier_id: int) -> bool:
+        return self._conn.execute(
+            "SELECT 1 FROM decree_dossier_links "
+            "WHERE target_dossier_id=? AND relation_type='稽核' LIMIT 1",
+            (int(dossier_id),),
+        ).fetchone() is not None
+
+    def rows_with_affair(self) -> list[Any]:
+        return self._conn.execute(
+            "SELECT affair_id, participant_roster FROM decree_dossiers WHERE affair_id != 0"
+        ).fetchall()
+
+    def reported_progress_rows(
+        self, dossier_id: int, *, as_of_turn: Optional[int] = None,
+    ) -> list[Any]:
+        sql = (
+            "SELECT id, dossier_id, turn, progress_band, memorial_text, "
+            "is_terminal, origin FROM dossier_reported_progress WHERE dossier_id=?"
+        )
+        params: tuple = (int(dossier_id),)
+        if as_of_turn is not None:
+            sql += " AND turn<=?"
+            params = (int(dossier_id), int(as_of_turn))
+        return self._conn.execute(sql + " ORDER BY turn, id", params).fetchall()
+
+    def presence_rows(
+        self, dossier_id: int, *, as_of_turn: Optional[int] = None,
+    ) -> list[Any]:
+        sql = (
+            "SELECT id, dossier_id, turn, auditor_name, audit_dossier_id, "
+            "relation_type, present FROM dossier_supervision_presence WHERE dossier_id=?"
+        )
+        params: tuple = (int(dossier_id),)
+        if as_of_turn is not None:
+            sql += " AND turn<=?"
+            params = (int(dossier_id), int(as_of_turn))
+        return self._conn.execute(sql + " ORDER BY turn, id", params).fetchall()
+
+    def presence_turns_by_auditor(
+        self, *, min_months: int, as_of_turn: Optional[int] = None,
+    ) -> list[Any]:
+        sql = (
+            "SELECT auditor_name, dossier_id, turn FROM dossier_supervision_presence "
+            "WHERE present=1"
+        )
+        params: tuple = ()
+        if as_of_turn is not None:
+            sql += " AND turn<=?"
+            params = (int(as_of_turn),)
+        return self._conn.execute(
+            sql + " GROUP BY auditor_name, dossier_id, turn "
+                  "ORDER BY auditor_name, dossier_id, turn",
+            params,
+        ).fetchall()
+
+    def exposure_rows(self, dossier_id: int) -> list[Any]:
+        return self._conn.execute(
+            "SELECT * FROM dossier_loophole_exposures WHERE dossier_id=? ORDER BY turn, id",
+            (int(dossier_id),),
+        ).fetchall()
+
+    def directives_with_dossiers(self, turn: int) -> list[Any]:
+        return self._conn.execute(
+            """SELECT td.* FROM turn_directives td
+               WHERE td.turn<=? AND td.status='draft'
+                 AND EXISTS (SELECT 1 FROM decree_dossiers d WHERE d.directive_id=td.id)
+               ORDER BY td.id""",
+            (int(turn),),
+        ).fetchall()
+
+    def upsert_reconciliation(
+        self, dossier_id: int, turn: int, *, ordered: int, arrived: int,
+        escorted: bool, escort_source_dossier_id: Optional[int],
+        relation_type: str, note: str,
+    ) -> None:
+        """One reconciliation row per (dossier, turn); re-run overwrites in place."""
+        self._conn.execute(
+            """
+            INSERT INTO decree_dossier_reconciliations
+                (dossier_id, turn, ordered_amount, arrived_amount, loss_amount,
+                 escorted, escort_source_dossier_id, relation_type, note)
+            VALUES (?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(dossier_id, turn) DO UPDATE SET
+                ordered_amount=excluded.ordered_amount,
+                arrived_amount=excluded.arrived_amount,
+                loss_amount=excluded.loss_amount,
+                escorted=excluded.escorted,
+                escort_source_dossier_id=excluded.escort_source_dossier_id,
+                relation_type=excluded.relation_type,
+                note=excluded.note
+            """,
+            (
+                int(dossier_id), int(turn), int(ordered), int(arrived),
+                int(ordered) - int(arrived), 1 if escorted else 0,
+                None if escort_source_dossier_id is None else int(escort_source_dossier_id),
+                relation_type, note,
+            ),
+        )
+
+    def has_reconciliation(self, dossier_id: int, turn: int) -> bool:
+        return self._conn.execute(
+            "SELECT 1 FROM decree_dossier_reconciliations "
+            "WHERE dossier_id=? AND turn=? LIMIT 1",
+            (int(dossier_id), int(turn)),
+        ).fetchone() is not None
+
+    def upsert_presence(
+        self, dossier_id: int, turn: int, *, auditor_name: str,
+        audit_dossier_id: int, relation_type: str,
+    ) -> None:
+        """Idempotent per (dossier, turn, auditor); never double-counts a month."""
+        self._conn.execute(
+            """
+            INSERT INTO dossier_supervision_presence
+                (dossier_id, turn, auditor_name, audit_dossier_id,
+                 relation_type, present)
+            VALUES (?,?,?,?,?,1)
+            ON CONFLICT(dossier_id, turn, auditor_name) DO UPDATE SET
+                audit_dossier_id=excluded.audit_dossier_id,
+                relation_type=excluded.relation_type,
+                present=1
+            """,
+            (
+                int(dossier_id), int(turn), auditor_name,
+                int(audit_dossier_id), relation_type,
+            ),
+        )
+
+    def record_loophole_exposure(
+        self, dossier_id: int, turn: int, action_type: str, execution_form: str,
+    ) -> bool:
+        """True when this call wrote the row (existence of the rail is the key)."""
+        cur = self._conn.execute(
+            """
+            INSERT INTO dossier_loophole_exposures
+                (dossier_id, turn, action_type, execution_form)
+            VALUES (?,?,?,?)
+            ON CONFLICT(dossier_id, turn, action_type, execution_form) DO NOTHING
+            """,
+            (int(dossier_id), int(turn), action_type, execution_form),
+        )
+        return int(cur.rowcount or 0) > 0
+
+    def upsert_reported_progress(
+        self, dossier_id: int, turn: int, *, band: str, text: str, origin: str,
+        is_terminal: bool,
+    ) -> int:
+        """General reported-progress rail. Non-terminal rows upsert per turn."""
+        existing = None
+        if not is_terminal:
+            existing = self._conn.execute(
+                """
+                SELECT id FROM dossier_reported_progress
+                WHERE dossier_id=? AND turn=? AND is_terminal=0
+                ORDER BY id DESC LIMIT 1
+                """,
+                (int(dossier_id), int(turn)),
+            ).fetchone()
+        if existing is not None:
+            report_id = int(existing["id"])
+            self._conn.execute(
+                """
+                UPDATE dossier_reported_progress
+                SET progress_band=?, memorial_text=?, origin=?
+                WHERE id=?
+                """,
+                (band, text, origin, report_id),
+            )
+            return report_id
+        cur = self._conn.execute(
+            """
+            INSERT INTO dossier_reported_progress
+                (dossier_id, turn, progress_band, memorial_text, is_terminal, origin)
+            VALUES (?,?,?,?,?,?)
+            """,
+            (int(dossier_id), int(turn), band, text, 1 if is_terminal else 0, origin),
+        )
+        return int(cur.lastrowid)
+
+    def record_cost_event(
+        self, dossier_id: int, turn: int, cost_kind: str, target_kind: str,
+        target_id: str, delta: int, reason: str, cost_identity: str,
+    ) -> bool:
+        """ADR 0056: the row's existence is the idempotency key."""
+        cur = self._conn.execute(
+            """INSERT OR IGNORE INTO decree_cost_events
+               (dossier_id,turn,cost_kind,target_kind,target_id,delta,reason,cost_identity)
+               VALUES (?,?,?,?,?,?,?,?)""",
+            (int(dossier_id), int(turn), cost_kind, target_kind, str(target_id),
+             int(delta), str(reason), str(cost_identity)),
+        )
+        return int(cur.rowcount or 0) == 1
+
+    def prohibition_dossiers(self, action_type: str, target_dossier_id: int) -> list[Any]:
+        return self._conn.execute(
+            """SELECT * FROM decree_dossiers
+               WHERE action_type=? AND target_kind='dossier' AND target_id=?
+                 AND status IN ('promulgated','closed')
+               ORDER BY id""",
+            (str(action_type), str(int(target_dossier_id))),
+        ).fetchall()
+
+    def army_pay_row(self, dossier_id: int) -> Any:
+        return self._conn.execute(
+            """SELECT d.target_id army_id,a.arrears,a.consecutive_pay_shortfall_months
+               FROM decree_dossiers d JOIN armies a ON a.id=d.target_id
+               WHERE d.id=? AND d.target_kind='army'""",
+            (int(dossier_id),),
+        ).fetchone()
+
+    def rejection_this_turn(self, dossier_id: int, turn: int) -> Optional[tuple[int, str]]:
+        row = self._conn.execute(
+            "SELECT turn, rescript_action FROM decree_dossier_decisions "
+            "WHERE dossier_id=? AND decision='rejected' ORDER BY id DESC LIMIT 1",
+            (int(dossier_id),),
+        ).fetchone()
+        return None if row is None else (int(row["turn"] or 0), str(row["rescript_action"] or ""))
+
+    def rescript_history_rows(self) -> list[Any]:
+        """中旨/强颁 durable markers joined to their dossier payload mode."""
+        return self._conn.execute(
+            "SELECT d.dossier_id,d.turn,d.decision,d.rescript_action,x.payload_json "
+            "FROM decree_dossier_decisions d JOIN decree_dossiers x ON x.id=d.dossier_id "
+            "ORDER BY d.turn,d.dossier_id,d.id"
+        ).fetchall()
+
+    def transformed_rows_between(self, low_turn: int, high_turn: int) -> list[Any]:
+        return self._conn.execute(
+            "SELECT id,closed_turn,participant_roster,decree_text,execution_note,"
+            "execution_outcome FROM decree_dossiers "
+            "WHERE execution_outcome='transformed' AND closed_turn BETWEEN ? AND ? ORDER BY id",
+            (max(0, int(low_turn)), int(high_turn)),
+        ).fetchall()
+
+    def grant_allocation_rows(self) -> list[Any]:
+        return self._conn.execute(
+            "SELECT id, status, target_kind, target_id, payload_json, "
+            "execution_outcome, closed_turn FROM decree_dossiers "
+            "WHERE action_type='grant_allocation' ORDER BY id"
+        ).fetchall()
+
+    def due_grant_rows(self, turn: int) -> list[Any]:
+        return self._conn.execute(
+            "SELECT id, decree_text, payload_json, due_turn, execution_outcome, status "
+            "FROM decree_dossiers WHERE status='executing' "
+            "AND action_type='grant_allocation' AND due_turn > 0 AND due_turn <= ? "
+            "ORDER BY id",
+            (int(turn),),
+        ).fetchall()
+
+    def committed_directive_candidates(self, night_id: int) -> list[Any]:
+        return self._conn.execute(
+            """SELECT td.id AS directive_id, td.actor, td.text, MIN(d.id) AS dossier_id
+               FROM pending_actions pa
+               JOIN turn_directives td ON td.id = pa.committed_directive_id
+               JOIN decree_dossiers d ON d.pending_action_id = pa.id
+               WHERE pa.night_id = ? AND pa.kind = 'directive'
+                 AND pa.status = 'committed' AND pa.committed_directive_id > 0
+               GROUP BY td.id, td.actor, td.text ORDER BY td.id""",
+            (int(night_id),),
+        ).fetchall()
+
+    def secret_order_ids_for(self, dossier_ids: Iterable[int]) -> dict[int, int]:
+        """Batch map dossier id -> its secret_order_id (0 when not a 密令案卷)."""
+        ids = sorted({int(i) for i in dossier_ids if int(i) > 0})
+        if not ids:
+            return {}
+        placeholders = ",".join("?" for _ in ids)
+        rows = self._conn.execute(
+            f"SELECT id, secret_order_id FROM decree_dossiers WHERE id IN ({placeholders})",
+            ids,
+        ).fetchall()
+        return {int(r["id"]): int(r["secret_order_id"] or 0) for r in rows}
+
+    # ── affair pointer seam (ADR 0154：事务指针由 AffairStore 编排，列读写在此) ──
+
+    def affair_id_of(self, dossier_id: int) -> int:
+        row = self._conn.execute(
+            "SELECT affair_id FROM decree_dossiers WHERE id=?", (int(dossier_id),)
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"案卷不存在：{dossier_id}")
+        return int(row["affair_id"] or 0)
+
+    def set_affair_id_if_unbound(self, dossier_id: int, affair_id: int) -> int:
+        """Bind once; same id is idempotent; a different id fails loud."""
+        want = int(affair_id)
+        cur = self._conn.execute(
+            "UPDATE decree_dossiers SET affair_id=? WHERE id=? AND affair_id=0",
+            (want, int(dossier_id)),
+        )
+        if int(cur.rowcount or 0) == 1:
+            return want
+        current = self.affair_id_of(dossier_id)
+        if current == want:
+            return want
+        raise ValueError(f"案卷已指向事务 {current}，不能改指 {want}")
+
+    def rows_for_affair(self, affair_id: int) -> list[Any]:
+        return self._conn.execute(
+            "SELECT id, action_type, affair_id FROM decree_dossiers "
+            "WHERE affair_id=? ORDER BY id",
+            (int(affair_id),),
+        ).fetchall()
+
+    def cost_events(self, dossier_id: int) -> list[Any]:
+        return self._conn.execute(
+            "SELECT * FROM decree_cost_events WHERE dossier_id=? ORDER BY id",
+            (int(dossier_id),),
+        ).fetchall()
+
+    def set_executor_and_target(
+        self, dossier_id: int, *, executor_id: str, target_kind: str,
+        target_id: str,
+    ) -> None:
+        """Repoint an existing dossier's carrier. Used by acceptance probes only."""
+        self._conn.execute(
+            "UPDATE decree_dossiers SET executor_kind='character', executor_id=?, "
+            "target_kind=?, target_id=? WHERE id=?",
+            (executor_id, target_kind, target_id, int(dossier_id)),
+        )
+
+    def force_executing_promulgated(self, dossier_id: int) -> None:
+        """Acceptance probe fixture: promote a proposed row straight to executing."""
+        self._conn.execute(
+            "UPDATE decree_dossiers SET status='executing', "
+            "promulgation_decision='promulgated' WHERE id=?",
+            (int(dossier_id),),
+        )
+
+    def force_closed_rejected(self, dossier_id: int, turn: int) -> None:
+        """Acceptance probe fixture: a closed historical row awaiting 强颁."""
+        self._conn.execute(
+            "UPDATE decree_dossiers SET status='closed', "
+            "promulgation_decision='rejected', rescript_pending=0, closed_turn=? "
+            "WHERE id=?",
+            (int(turn), int(dossier_id)),
+        )
+
+    def append_force_promulgation_marker(
+        self, dossier_id: int, turn: int, *, reason: str = "批红强颁",
+    ) -> None:
+        self._conn.execute(
+            """INSERT INTO decree_dossier_decisions
+                   (dossier_id, turn, decision, rescript_action, reason, legal_reason_code)
+               VALUES (?, ?, 'rejected', 'force_promulgated', ?, '')""",
+            (int(dossier_id), int(turn), reason),
+        )
+
+    def recent_reported_progress(self) -> list[Any]:
+        return self._conn.execute(
+            "SELECT id, turn, memorial_text, dossier_id FROM dossier_reported_progress "
+            "ORDER BY turn DESC, id DESC"
+        ).fetchall()
+
+    def has_override_party_cost(self, dossier_id: int) -> bool:
+        """Any reaction party cost already booked for this dossier's override."""
+        return self._conn.execute(
+            "SELECT 1 FROM decree_cost_events "
+            "WHERE dossier_id=? AND cost_kind='satisfaction' AND cost_identity='override' "
+            "LIMIT 1",
+            (int(dossier_id),),
+        ).fetchone() is not None
+
+    def set_latest_decision_parties(
+        self, dossier_id: int, affected_parties_json: str, midzhi_unpromulgatable: int,
+    ) -> None:
+        self._conn.execute(
+            """UPDATE decree_dossier_decisions
+               SET affected_parties_json=?, midzhi_unpromulgatable=?
+               WHERE id=(SELECT MAX(id) FROM decree_dossier_decisions WHERE dossier_id=?)""",
+            (affected_parties_json, int(midzhi_unpromulgatable), int(dossier_id)),
+        )
+
+    def latest_judge_parties_json(self, dossier_id: int, turn: int) -> Optional[str]:
+        row = self._conn.execute(
+            """SELECT affected_parties_json FROM decree_dossier_decisions
+               WHERE dossier_id=? AND turn=? AND rescript_action=''
+               ORDER BY id DESC LIMIT 1""",
+            (int(dossier_id), int(turn)),
+        ).fetchone()
+        return None if row is None else str(row["affected_parties_json"] or "")
+
+    def delete_endorsements_for_chat_turn(self, source_chat_turn_id: int) -> None:
+        """#506 rollback: endorsements derive from a spoken turn, so undo it too."""
+        self._conn.execute(
+            "DELETE FROM decree_dossier_endorsements WHERE source_chat_turn_id = ?",
+            (int(source_chat_turn_id),),
+        )
+
+    def save_pending_promulgation_verdicts(
+        self, turn: int, verdicts: Iterable[tuple[int, str]],
+    ) -> None:
+        """Replace one turn's whole batch (delete-then-insert, same transaction)."""
+        self._conn.execute(
+            "DELETE FROM pending_promulgation_verdicts WHERE turn=?", (int(turn),)
+        )
+        for dossier_id, verdict_json in verdicts:
+            self._conn.execute(
+                "INSERT INTO pending_promulgation_verdicts"
+                "(turn,dossier_id,verdict_json) VALUES (?,?,?)",
+                (int(turn), int(dossier_id), verdict_json),
+            )
+
+    def clear_pending_promulgation_verdicts(self, turn: int) -> None:
+        self._conn.execute(
+            "DELETE FROM pending_promulgation_verdicts WHERE turn=?", (int(turn),)
+        )
+
+    def pending_promulgation_verdicts(self, turn: int) -> list[str]:
+        return [
+            str(r["verdict_json"])
+            for r in self._conn.execute(
+                "SELECT verdict_json FROM pending_promulgation_verdicts "
+                "WHERE turn=? ORDER BY dossier_id",
+                (int(turn),),
+            ).fetchall()
+        ]
 
     def record_actual_progress(
         self, dossier_id: int, turn: int, *, units: float, fidelity_state: str,

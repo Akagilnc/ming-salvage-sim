@@ -84,10 +84,7 @@ def _character(name: str, office: str, office_type: str) -> Character:
 
 
 def _cost_events(db: GameDB, dossier_id: int) -> list[dict]:
-    return [dict(row) for row in db.conn.execute(
-        "SELECT * FROM decree_cost_events WHERE dossier_id=? ORDER BY id",
-        (int(dossier_id),),
-    ).fetchall()]
+    return [dict(row) for row in db.dossiers.cost_events(int(dossier_id))]
 
 
 def _expected_satisfaction(
@@ -428,11 +425,7 @@ def _run_sample(index: int, root: str, content: GameContent, cfg: LLMConfig) -> 
             participants=[{"character_id": cabinet_name, "tier": "主办"}],
             payload={"mode": "ordinary"},
         )
-        db.conn.execute(
-            "UPDATE decree_dossiers SET status='executing', promulgation_decision='promulgated' "
-            "WHERE id=?",
-            (int(errand),),
-        )
+        db.dossiers.force_executing_promulgated(int(errand))
         db.conn.commit()
         db.record_dossier_progress(
             errand, state.turn, "在途", memorial_text,

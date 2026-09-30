@@ -73,19 +73,15 @@ DENUNCIATION_ALLOWED_COLS = frozenset({
     "origin", "payload_json", "memorial_text",
 })
 
-# PRAGMA 白名单：事实表仅 id / FK / turn / 枚举 / 布尔
-PRESENCE_TABLE = "dossier_supervision_presence"
-EXPOSURE_TABLE = "dossier_loophole_exposures"
-PRESENCE_ALLOWED_COLS = frozenset({
-    "id", "dossier_id", "turn", "auditor_name", "audit_dossier_id",
-    "relation_type", "present",
-})
-EXPOSURE_ALLOWED_COLS = frozenset({
-    "id", "dossier_id", "turn", "action_type", "execution_form",
-})
-# 全库禁「钝化数值」列名（AC1）
-FORBIDDEN_DULLING_COL_FRAGMENTS = (
-    "dull", "dulling", "钝化", "陋规", "supervision_score", "dull_rate",
+# #1889 / ADR 0151：在场与暴露两表的表名、PRAGMA 列白名单与禁钝化列片段随
+# schema 一并归案卷 store（此前的平行副本即第二份 schema 知识）。此处只作
+# 再导出，供既有 import 路径不断。
+from ming_sim.entities.dossier import (  # noqa: E402
+    EXPOSURE_ALLOWED_COLS,
+    EXPOSURE_TABLE,
+    FORBIDDEN_DULLING_COL_FRAGMENTS,
+    PRESENCE_ALLOWED_COLS,
+    PRESENCE_TABLE,
 )
 
 

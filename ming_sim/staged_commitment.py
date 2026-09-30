@@ -342,18 +342,7 @@ def list_due_grant_report_dossiers_for_scan(
     """
     import json as _json
 
-    rows = db.conn.execute(
-        """
-        SELECT id, decree_text, payload_json, due_turn, execution_outcome, status
-        FROM decree_dossiers
-        WHERE status='executing'
-          AND action_type='grant_allocation'
-          AND due_turn > 0
-          AND due_turn <= ?
-        ORDER BY id
-        """,
-        (int(turn),),
-    ).fetchall()
+    rows = db.dossiers.due_grant_rows(int(turn))
     due: List[Dict[str, object]] = []
     for row in rows:
         if str(row["execution_outcome"] or "").strip():

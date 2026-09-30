@@ -2338,12 +2338,7 @@ def gather_impeachment_surge_candidates(state: GameState, db: GameDB) -> List[Di
         if isinstance(item, dict):
             personas_by_faction.setdefault(str(item.get("faction") or ""), []).append(item)
 
-    rows = db.conn.execute(
-        "SELECT id,closed_turn,participant_roster,decree_text,execution_note,execution_outcome "
-        "FROM decree_dossiers "
-        "WHERE execution_outcome='transformed' AND closed_turn BETWEEN ? AND ? ORDER BY id",
-        (max(0, int(state.turn) - 1), int(state.turn)),
-    ).fetchall()
+    rows = db.dossiers.transformed_rows_between(int(state.turn) - 1, int(state.turn))
     candidates: List[Dict[str, object]] = []
     for row in rows:
         did = int(row["id"])
@@ -7515,15 +7510,7 @@ def _apply_recovery_driven_transfers(
 
     records: List[Dict[str, object]] = []
     remaining_by_region: Dict[str, int] = {}
-    rows = db.conn.execute(
-        """
-        SELECT id, status, target_kind, target_id, payload_json,
-               execution_outcome, closed_turn
-        FROM decree_dossiers
-        WHERE action_type='grant_allocation'
-        ORDER BY id
-        """
-    ).fetchall()
+    rows = db.dossiers.grant_allocation_rows()
     for row in rows:
         dossier_id = int(row["id"])
         if (dossier_id, turn) in seen_keys:

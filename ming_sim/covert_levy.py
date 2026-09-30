@@ -15,13 +15,7 @@ PROHIBITION_ACTION = "prohibit_covert_levy"
 
 def active_prohibition_dossier(db: Any, exposed_dossier_id: int) -> Dict[str, object] | None:
     """Return the first canonical dossier which authorizes this prohibition."""
-    rows = db.conn.execute(
-        """SELECT * FROM decree_dossiers
-           WHERE action_type=? AND target_kind='dossier' AND target_id=?
-             AND status IN ('promulgated','closed')
-           ORDER BY id""",
-        (PROHIBITION_ACTION, str(int(exposed_dossier_id))),
-    ).fetchall()
+    rows = db.dossiers.prohibition_dossiers(PROHIBITION_ACTION, int(exposed_dossier_id))
     for row in rows:
         item = dict(row)
         if db.dossiers.authorizes_effects(int(item["id"])):
@@ -72,12 +66,7 @@ def _issue_for_dossier(db: Any, dossier_id: int) -> int:
 
 def army_pay_fact_for_dossier(db: Any, dossier_id: int) -> Dict[str, object] | None:
     """把月结真值附在既有案卷判官输入，不另造 simulator payload。"""
-    row = db.conn.execute(
-        """SELECT d.target_id army_id,a.arrears,a.consecutive_pay_shortfall_months
-           FROM decree_dossiers d JOIN armies a ON a.id=d.target_id
-           WHERE d.id=? AND d.target_kind='army'""",
-        (int(dossier_id),),
-    ).fetchone()
+    row = db.dossiers.army_pay_row(int(dossier_id))
     if row is None:
         return None
     return {
@@ -179,8 +168,8 @@ def write_exposure_todos(
         if is_actual_population_transfer(item)
     ]
     written = 0
-    for row in db.conn.execute("SELECT id FROM decree_dossiers ORDER BY id").fetchall():
-        did = int(row["id"])
+    for did in db.dossiers.all_ids():
+
         fork = db.read_dossier_fork_state(did)
         # #651's covert channel is narrower than the shared #622/#627 fork:
         # report, transformed execution, and a canonical beyond-intent effect
@@ -193,10 +182,7 @@ def write_exposure_todos(
         ):
             continue
         channels: List[str] = []
-        if db.conn.execute(
-            "SELECT 1 FROM decree_dossier_links WHERE target_dossier_id=? AND relation_type='稽核' LIMIT 1",
-            (did,),
-        ).fetchone() is not None:
+        if db.dossiers.has_incoming_audit_link(did):
             channels.append("稽核")
         from ming_sim.supervision import ORIGIN_MARK_DENUNCIATION_TRUE, origin_has_mark
         denunciations = db.conn.execute(

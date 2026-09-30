@@ -415,16 +415,40 @@ def _household_ledger(db: Any, state: Any, character_name: str) -> str:
     balance = db.conn.execute(
         "SELECT balance FROM economy_accounts WHERE account='国库'"
     ).fetchone()
-    rows = db.conn.execute(
-        """SELECT e.year,e.period,e.delta,e.balance_after,e.category,e.reason,
-                  s.excluded_names, s.excluded_targets
-           FROM economy_ledger e
-           LEFT JOIN decree_dossiers d ON d.id = CASE
-             WHEN e.origin_ref LIKE 'dossier:%' THEN CAST(substr(e.origin_ref,9) AS INTEGER)
-             ELSE e.dossier_id END
-           LEFT JOIN secret_orders s ON s.id=d.secret_order_id
-           WHERE e.account='国库' ORDER BY e.id DESC"""
-    ).fetchall()
+    # #1889：案卷→密令的指向经 store 解析（ADR 0151），此模块不 JOIN 案卷表。
+    rows = [
+        dict(r) for r in db.conn.execute(
+            """SELECT e.year,e.period,e.delta,e.balance_after,e.category,e.reason,
+                      e.origin_ref,e.dossier_id
+               FROM economy_ledger e
+               WHERE e.account='国库' ORDER BY e.id DESC"""
+        ).fetchall()
+    ]
+    _dossier_ids = {
+        int(
+            r["origin_ref"].split(":", 1)[1]
+            if str(r["origin_ref"] or "").startswith("dossier:")
+            else r["dossier_id"] or 0
+        )
+        for r in rows
+    }
+    _secret_by_dossier = db.dossiers.secret_order_ids_for(_dossier_ids)
+    _secret_ids = {v for v in _secret_by_dossier.values() if v}
+    _exclusions = {
+        int(r["id"]): (r["excluded_names"], r["excluded_targets"])
+        for r in db.conn.execute(
+            "SELECT id,excluded_names,excluded_targets FROM secret_orders"
+        ).fetchall()
+    } if _secret_ids else {}
+    for r in rows:
+        _did = int(
+            r["origin_ref"].split(":", 1)[1]
+            if str(r["origin_ref"] or "").startswith("dossier:")
+            else r["dossier_id"] or 0
+        )
+        _names, _targets = _exclusions.get(_secret_by_dossier.get(_did, 0), (None, None))
+        r["excluded_names"] = _names
+        r["excluded_targets"] = _targets
     try:
         reader = db.conn.execute(
             "SELECT name, office, office_type FROM characters WHERE name=?",

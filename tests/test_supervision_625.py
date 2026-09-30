@@ -26,17 +26,19 @@ from ming_sim.staged_commitment import (
     write_due_staged_commitment_todos,
 )
 from ming_sim.participant_roster import resolve_dossier_owner_name
+from ming_sim.entities.dossier import (
+    EXPOSURE_ALLOWED_COLS,
+    EXPOSURE_TABLE,
+    FORBIDDEN_DULLING_COL_FRAGMENTS,
+    PRESENCE_ALLOWED_COLS,
+    PRESENCE_TABLE,
+)
 from ming_sim.supervision import (
     COUNTERMEASURE_ORIGIN_KIND,
     COUNTERMEASURE_PRESENCE_MONTHS,
     EMPTY_TRANSFORMATION_TENDENCY_FACTS,
-    EXPOSURE_ALLOWED_COLS,
-    EXPOSURE_TABLE,
-    FORBIDDEN_DULLING_COL_FRAGMENTS,
     ORIGIN_MARK_PRIVATE_GOODS,
     ORIGIN_MARK_SAME_FACTION_BLIND,
-    PRESENCE_ALLOWED_COLS,
-    PRESENCE_TABLE,
     SUPERVISION_RELATION,
     SUPERVISION_SURFACE_KEYS,
     compose_report_origin,

@@ -222,10 +222,9 @@ def _prepare_reconsideration_facts(
     target_kind = str(held.get("target_kind") or "").strip() or "issue"
     target_id = str(held.get("target_id") or "").strip() or "清丈田亩"
     scope = f"{target_kind}:{target_id}"
-    db.conn.execute(
-        "UPDATE decree_dossiers SET executor_kind='character', executor_id=?, "
-        "target_kind=?, target_id=? WHERE id=?",
-        (holder, target_kind, target_id, dossier_id),
+    db.dossiers.set_executor_and_target(
+        int(dossier_id), executor_id=holder,
+        target_kind=target_kind, target_id=target_id,
     )
     grant_dossier_id = db.create_decree_dossier(
         state,

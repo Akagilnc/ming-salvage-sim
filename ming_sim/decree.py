@@ -345,11 +345,7 @@ def build_promulgation_judge_context(
         ).fetchall()
     ]
     history = []
-    for item in db.conn.execute(
-        "SELECT d.dossier_id,d.turn,d.decision,d.rescript_action,x.payload_json "
-        "FROM decree_dossier_decisions d JOIN decree_dossiers x ON x.id=d.dossier_id "
-        "ORDER BY d.turn,d.dossier_id,d.id"
-    ).fetchall():
+    for item in db.dossiers.rescript_history_rows():
         payload = json.loads(str(item["payload_json"] or "{}"))
         mode = str(payload.get("mode") or "ordinary")
         rescript_action = str(item["rescript_action"] or "")

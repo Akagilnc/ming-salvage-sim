@@ -1300,17 +1300,14 @@ def _dossier_rejection_is_this_turn(db: Any, dossier: Dict[str, Any], turn: int)
     dossier_id = int(dossier["id"])
     if int(dossier.get("created_turn") or 0) == turn:
         return True
-    row = db.conn.execute(
-        "SELECT turn, rescript_action FROM decree_dossier_decisions "
-        "WHERE dossier_id=? AND decision='rejected' ORDER BY id DESC LIMIT 1",
-        (dossier_id,),
-    ).fetchone()
-    if row is None:
+    latest = db.dossiers.rejection_this_turn(dossier_id, turn)
+    if latest is None:
         return False
     # 上月已作三选（hold/withdrawn/force）的旧件即使残留 pending 也不再挡本月。
-    if str(row["rescript_action"] or "").strip():
+    rejected_turn, rescript_action = latest
+    if rescript_action.strip():
         return False
-    return int(row["turn"] or 0) == turn
+    return rejected_turn == turn
 
 
 def _materialize_rescript_desk(

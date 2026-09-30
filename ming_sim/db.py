@@ -1469,199 +1469,6 @@ class GameDB:
                 ON secret_orders(status);
 
             __DOSSIER_SCHEMA__;
-            -- ADR 0054：只存新案卷→旧案卷；关系本身无状态位。
-            CREATE TABLE IF NOT EXISTS decree_dossier_links (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                source_dossier_id INTEGER NOT NULL,
-                target_dossier_id INTEGER NOT NULL,
-                relation_type TEXT NOT NULL
-                    CHECK(relation_type IN ('护卫','稽核','接应')),
-                note TEXT NOT NULL,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(source_dossier_id, target_dossier_id, relation_type),
-                FOREIGN KEY(source_dossier_id) REFERENCES decree_dossiers(id) ON DELETE CASCADE,
-                FOREIGN KEY(target_dossier_id) REFERENCES decree_dossiers(id) ON DELETE RESTRICT
-            );
-            CREATE INDEX IF NOT EXISTS idx_decree_dossier_links_target
-                ON decree_dossier_links(target_dossier_id, id);
-            -- #567 / ADR 0054+0058：被护案卷侧机械对账（逐路×回合）；非 0058 进展容器。
-            CREATE TABLE IF NOT EXISTS decree_dossier_reconciliations (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                dossier_id INTEGER NOT NULL,
-                turn INTEGER NOT NULL,
-                ordered_amount INTEGER NOT NULL,
-                arrived_amount INTEGER NOT NULL,
-                loss_amount INTEGER NOT NULL,
-                escorted INTEGER NOT NULL DEFAULT 0 CHECK(escorted IN (0,1)),
-                escort_source_dossier_id INTEGER,
-                relation_type TEXT NOT NULL DEFAULT '',
-                note TEXT NOT NULL DEFAULT '',
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(dossier_id, turn),
-                FOREIGN KEY(dossier_id) REFERENCES decree_dossiers(id) ON DELETE CASCADE
-            );
-            CREATE INDEX IF NOT EXISTS idx_dossier_reconciliations_dossier
-                ON decree_dossier_reconciliations(dossier_id, turn, id);
-            -- ADR 0070：担名与办事名单分立；条目只能指向落条目前已存在的案卷。
-            -- #658 later-wins：provenance 恰为 source_chat_turn_id>0 或 decision_key 非空之一。
-            -- chat_turn 删除走显式清理（见 rollback 路径），不靠 FK CASCADE 绑死批红路径。
-            CREATE TABLE IF NOT EXISTS decree_dossier_endorsements (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                dossier_id INTEGER NOT NULL,
-                form TEXT NOT NULL CHECK(form IN ('会签','当面站台','御笔手敕')),
-                endorser_id TEXT NOT NULL DEFAULT '',
-                imperial INTEGER NOT NULL DEFAULT 0 CHECK(imperial IN (0,1)),
-                source_chat_turn_id INTEGER NOT NULL DEFAULT 0,
-                decision_key TEXT NOT NULL DEFAULT '',
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(dossier_id, form, endorser_id, imperial, source_chat_turn_id, decision_key),
-                CHECK (
-                    (source_chat_turn_id > 0 AND decision_key = '')
-                    OR (source_chat_turn_id = 0 AND decision_key != '')
-                ),
-                FOREIGN KEY(dossier_id) REFERENCES decree_dossiers(id) ON DELETE CASCADE
-            );
-            CREATE INDEX IF NOT EXISTS idx_dossier_endorsements_dossier
-                ON decree_dossier_endorsements(dossier_id, id);
-            CREATE TABLE IF NOT EXISTS decree_dossier_link_rejections (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                source_dossier_id INTEGER NOT NULL,
-                pending_action_id INTEGER,
-                target_dossier_id INTEGER NOT NULL DEFAULT 0,
-                relation_type TEXT NOT NULL DEFAULT '',
-                note TEXT NOT NULL DEFAULT '',
-                reason TEXT NOT NULL,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            );
-            CREATE INDEX IF NOT EXISTS idx_dossier_link_rejections_source
-                ON decree_dossier_link_rejections(source_dossier_id, id);
-            CREATE TABLE IF NOT EXISTS decree_dossier_decisions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                dossier_id INTEGER NOT NULL,
-                turn INTEGER NOT NULL,
-                decision TEXT NOT NULL,
-                blocked_layer TEXT NOT NULL DEFAULT '',
-                rescript_action TEXT NOT NULL DEFAULT '',
-                reason TEXT NOT NULL DEFAULT '',
-                legal_reason_code TEXT NOT NULL DEFAULT '',
-                primary_opponents_json TEXT NOT NULL DEFAULT '[]',
-                gatekeeper_id TEXT,
-                criteria_snapshot_json TEXT NOT NULL DEFAULT '{}',
-                affected_parties_json TEXT NOT NULL DEFAULT '[]',
-                midzhi_unpromulgatable INTEGER NOT NULL DEFAULT 0,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY(dossier_id) REFERENCES decree_dossiers(id) ON DELETE CASCADE
-            );
-            CREATE INDEX IF NOT EXISTS idx_decree_dossier_decisions_dossier
-                ON decree_dossier_decisions(dossier_id, id);
-            -- #619 / ADR 0073: general reported-progress rail for non-secret
-            -- execution-surface dossiers. Secret monthly rows stay on
-            -- secret_orders.dossier_progress_json (#566/#883); no shared table+flag.
-            CREATE TABLE IF NOT EXISTS dossier_reported_progress (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                dossier_id INTEGER NOT NULL,
-                turn INTEGER NOT NULL,
-                progress_band TEXT NOT NULL,
-                memorial_text TEXT NOT NULL,
-                is_terminal INTEGER NOT NULL DEFAULT 0 CHECK(is_terminal IN (0,1)),
-                origin TEXT NOT NULL,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY(dossier_id) REFERENCES decree_dossiers(id) ON DELETE CASCADE
-            );
-            CREATE INDEX IF NOT EXISTS idx_dossier_reported_progress_dossier
-                ON dossier_reported_progress(dossier_id, turn, id);
-            -- #625 / ADR 0077: supervision fact bottom (no dulling numeric cols).
-            -- Presence: one row per (dossier_id, turn, auditor); consecutive months derived at read.
-            CREATE TABLE IF NOT EXISTS dossier_supervision_presence (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                dossier_id INTEGER NOT NULL,
-                turn INTEGER NOT NULL,
-                auditor_name TEXT NOT NULL,
-                audit_dossier_id INTEGER NOT NULL,
-                relation_type TEXT NOT NULL
-                    CHECK(relation_type IN ('稽核')),
-                present INTEGER NOT NULL DEFAULT 1 CHECK(present IN (0,1)),
-                UNIQUE(dossier_id, turn, auditor_name),
-                FOREIGN KEY(dossier_id) REFERENCES decree_dossiers(id) ON DELETE CASCADE,
-                FOREIGN KEY(audit_dossier_id) REFERENCES decree_dossiers(id) ON DELETE CASCADE
-            );
-            CREATE INDEX IF NOT EXISTS idx_supervision_presence_dossier
-                ON dossier_supervision_presence(dossier_id, turn, id);
-            -- Loophole exposure: class key = action_type + execution_form (enums only).
-            CREATE TABLE IF NOT EXISTS dossier_loophole_exposures (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                dossier_id INTEGER NOT NULL,
-                turn INTEGER NOT NULL,
-                action_type TEXT NOT NULL,
-                execution_form TEXT NOT NULL,
-                UNIQUE(dossier_id, turn, action_type, execution_form),
-                FOREIGN KEY(dossier_id) REFERENCES decree_dossiers(id) ON DELETE CASCADE
-            );
-            CREATE INDEX IF NOT EXISTS idx_loophole_exposures_dossier
-                ON dossier_loophole_exposures(dossier_id, turn, id);
-            -- #1504 / ADR 0073+0120: covert 实况进度容器（非 0058 奏报；origin 纪律可累加）。
-            CREATE TABLE IF NOT EXISTS dossier_actual_progress (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                dossier_id INTEGER NOT NULL,
-                turn INTEGER NOT NULL,
-                units REAL NOT NULL,
-                fidelity_state TEXT NOT NULL,
-                floor_state TEXT NOT NULL,
-                note TEXT NOT NULL DEFAULT '',
-                origin_ref TEXT NOT NULL,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(dossier_id, turn),
-                FOREIGN KEY(dossier_id) REFERENCES decree_dossiers(id) ON DELETE CASCADE
-            );
-            CREATE INDEX IF NOT EXISTS idx_dossier_actual_progress_dossier
-                ON dossier_actual_progress(dossier_id, turn, id);
-            -- #627 / ADR 0077 ID-12: faction denunciation entries (independent carrier).
-            -- Truth bottom lives in origin marks (#619 compose_report_origin); payload holds
-            -- fork exposure. Never write dossier_loophole_exposures from this path.
-            CREATE TABLE IF NOT EXISTS faction_denunciations (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                turn INTEGER NOT NULL,
-                accuser_name TEXT NOT NULL,
-                accuser_faction TEXT NOT NULL,
-                subject_name TEXT NOT NULL,
-                subject_faction TEXT NOT NULL,
-                target_dossier_id INTEGER NOT NULL,
-                origin TEXT NOT NULL,
-                payload_json TEXT NOT NULL DEFAULT '{}',
-                memorial_text TEXT NOT NULL,
-                -- 去重键=检举人×案卷×真伪类（不含 turn）；由承接查询单源+LIMIT 1 执行。
-                -- 升级再落要求同键多行，故不加 UNIQUE（含 turn 会撞同回合升级；去 turn 会堵一切升级）。
-                FOREIGN KEY(target_dossier_id) REFERENCES decree_dossiers(id) ON DELETE CASCADE
-            );
-            CREATE INDEX IF NOT EXISTS idx_faction_denunciations_turn
-                ON faction_denunciations(turn, id);
-            CREATE INDEX IF NOT EXISTS idx_faction_denunciations_target
-                ON faction_denunciations(target_dossier_id, turn, id);
-            -- ADR 0056: existence of this append-only rail is the idempotency key;
-            -- stigma_json is deliberately not used as a cost guard.
-            CREATE TABLE IF NOT EXISTS decree_cost_events (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                dossier_id INTEGER NOT NULL,
-                turn INTEGER NOT NULL,
-                cost_kind TEXT NOT NULL,
-                target_kind TEXT NOT NULL,
-                target_id TEXT NOT NULL,
-                delta INTEGER NOT NULL DEFAULT 0,
-                reason TEXT NOT NULL DEFAULT '',
-                cost_identity TEXT NOT NULL DEFAULT '',
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(dossier_id, cost_identity, cost_kind, target_kind, target_id),
-                FOREIGN KEY(dossier_id) REFERENCES decree_dossiers(id) ON DELETE CASCADE
-            );
-            CREATE INDEX IF NOT EXISTS idx_decree_cost_events_dossier
-                ON decree_cost_events(dossier_id, id);
-            CREATE TABLE IF NOT EXISTS pending_promulgation_verdicts (
-                turn INTEGER NOT NULL,
-                dossier_id INTEGER NOT NULL,
-                verdict_json TEXT NOT NULL,
-                PRIMARY KEY(turn, dossier_id),
-                FOREIGN KEY(dossier_id) REFERENCES decree_dossiers(id) ON DELETE CASCADE
-            );
 
             -- ADR 0071：持有型/持续型特权的 durable 授权档。
             CREATE TABLE IF NOT EXISTS authority_records (
@@ -2227,10 +2034,9 @@ class GameDB:
         # 结局：ended=1 时游戏终结；ending_status 为 context.ENDING_* 类型。
         self.ensure_column("game_state", "ended", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column("game_state", "ending_status", "TEXT NOT NULL DEFAULT ''")
-        # 密令推演副作用列（result 留给承办人进展，sim_note 给推演写泄漏/反弹，互不覆盖）
-        self.ensure_column(
-            "decree_dossier_link_rejections", "pending_action_id", "INTEGER"
-        )
+        # 密令推演副作用列（result 留给承办人进展，sim_note 给推演写泄漏/反弹，互不覆盖）。
+        # #1889：decree_dossier_link_rejections.pending_action_id 已含在案卷 store 的
+        # 建表脚本里（ADR 0151 schema 单一来源），此处不再只为旧档补列。
         self.ensure_column("secret_orders", "sim_note", "TEXT NOT NULL DEFAULT ''")
         # 密令期限：0=无硬期限；due_turn>0 且 ≤当前回合时，settle 尾部按实进度对账派生 done/failed（#1504）。
         self.ensure_column("secret_orders", "due_turn", "INTEGER NOT NULL DEFAULT 0")
@@ -2299,41 +2105,8 @@ class GameDB:
         if "turn" in office_change_cols:
             self.conn.execute("ALTER TABLE office_change_records DROP COLUMN turn")
             self.conn.commit()
-        self.ensure_column(
-            "decree_dossiers", "execution_outcome", "TEXT NOT NULL DEFAULT ''")
-        self.ensure_column(
-            "decree_dossiers", "held_turn", "INTEGER NOT NULL DEFAULT 0")
-        self.ensure_column(
-            "decree_dossiers", "execution_note", "TEXT NOT NULL DEFAULT ''")
-        self.ensure_column(
-            "decree_dossiers", "closed_turn", "INTEGER NOT NULL DEFAULT 0")
-        self.ensure_column(
-            "decree_dossiers", "promulgation_blocked_layer", "TEXT NOT NULL DEFAULT ''")
-        self.ensure_column(
-            "decree_dossiers", "promulgation_reason", "TEXT NOT NULL DEFAULT ''")
-        self.ensure_column(
-            "decree_dossier_decisions", "blocked_layer", "TEXT NOT NULL DEFAULT ''")
-        self.ensure_column(
-            "decree_dossier_decisions", "legal_reason_code", "TEXT NOT NULL DEFAULT ''")
-        self.ensure_column(
-            "decree_dossier_decisions", "primary_opponents_json", "TEXT NOT NULL DEFAULT '[]'")
-        self.ensure_column("decree_dossier_decisions", "gatekeeper_id", "TEXT")
-        self.ensure_column(
-            "decree_dossier_decisions", "criteria_snapshot_json", "TEXT NOT NULL DEFAULT '{}'")
-        self.ensure_column(
-            "decree_dossier_decisions", "affected_parties_json", "TEXT NOT NULL DEFAULT '[]'")
-        self.ensure_column(
-            "decree_dossier_decisions", "midzhi_unpromulgatable", "INTEGER NOT NULL DEFAULT 0")
-        self._migrate_legacy_reaction_severity()
-        self.ensure_column("decree_dossiers", "executor_kind", "TEXT NOT NULL DEFAULT ''")
-        self.ensure_column("decree_dossiers", "executor_id", "TEXT NOT NULL DEFAULT ''")
-        self.ensure_column(
-            "decree_dossiers", "participant_roster", "TEXT NOT NULL DEFAULT '[]'"
-        )
-        # #654：属地列 + 复合唯一索引（旧单列索引 DROP 后重建）
-        self.ensure_column(
-            "decree_dossiers", "region_id", "TEXT NOT NULL DEFAULT ''"
-        )
+        # #1889：decree_dossiers / decree_dossier_decisions 的列一律由案卷 store 的
+        # CREATE TABLE 给出（ADR 0151 schema 单一来源），此处不再只为旧档补列。
         DossierStore.ensure_locality_indexes(self.conn)
         self._backfill_proposed_appointment_break_ranks()
         # #498：旧档 chat_turns 无 night_id/night_seq 列；必须先 ensure 列再建索引
@@ -2393,9 +2166,6 @@ class GameDB:
         self.ensure_column("fiscal_config", "sort_order", "INTEGER NOT NULL DEFAULT 9999")
         # economy_ledger 支出结构化标签：仅 extractor 抽出的 economy_moves 填这三列；
         # flows 月固定支出与所有收入留 NULL。purpose 受控枚举见 constants.ECONOMY_PURPOSES。
-        self.ensure_column(
-            "decree_dossiers", "office_archive_keys", "TEXT NOT NULL DEFAULT '[]'"
-        )
         self.ensure_column("economy_ledger", "purpose", "TEXT")
         self.ensure_column("economy_ledger", "target_kind", "TEXT")
         self.ensure_column("economy_ledger", "target_id", "TEXT")
@@ -2416,16 +2186,6 @@ class GameDB:
             self.ensure_column(
                 _fiscal_prov, "beyond_intent", "INTEGER NOT NULL DEFAULT 0"
             )
-        # Rolling upgrades may already have the column while interrupted/older
-        # migrations left individual rows blank.  Re-scan idempotently; only a
-        # real dossier is authoritative and an existing origin is never replaced.
-        self.conn.execute(
-            """UPDATE economy_ledger
-               SET origin_ref='dossier:' || dossier_id
-               WHERE origin_ref=''
-                 AND dossier_id > 0
-                 AND EXISTS (SELECT 1 FROM decree_dossiers d WHERE d.id=economy_ledger.dossier_id)"""
-        )
         self.ensure_column("fiscal_config", "origin_ref", "TEXT NOT NULL DEFAULT ''")
         for table in ("region_logs", "army_logs", "power_logs", "person_logs", "building_logs"):
             self.ensure_column(table, "origin_ref", "TEXT NOT NULL DEFAULT ''")
@@ -2494,7 +2254,7 @@ class GameDB:
         StagedDeclarationStore.ensure_schema(self.conn)
         self.staged_declarations = StagedDeclarationStore(self.conn)
         AffairStore.ensure_schema(self.conn)
-        self.ensure_column("decree_dossiers", "affair_id", "INTEGER NOT NULL DEFAULT 0")
+        # #1889：decree_dossiers.affair_id 已含在案卷 store 建表脚本里，不再只为旧档补列。
         self.ensure_column("issues", "affair_id", "INTEGER NOT NULL DEFAULT 0")
         # #1835/#1831：relation_edge_events 是整数 id 主键，直接复用 AffairStore
         # 通用指针机制（_POINTER_TABLES）；characters 主键是 name（非整数 id），
@@ -9855,10 +9615,7 @@ class GameDB:
                 (int(chat_turn_id), int(chat_turn_id)),
             )
             # 背书是该轮已说出口对话的派生事实；撤回来源轮时须同步失效。
-            self.conn.execute(
-                "DELETE FROM decree_dossier_endorsements WHERE source_chat_turn_id = ?",
-                (int(chat_turn_id),),
-            )
+            self.dossiers.delete_endorsements_for_chat_turn(int(chat_turn_id))
             restored_pending_action_ids = self._restore_chat_rollback_items_in_tx(
                 items, message_ids,
             )
@@ -11381,39 +11138,10 @@ class GameDB:
         origin: str,
         commit: bool,
     ) -> int:
-        existing = None
-        if not is_terminal:
-            existing = self.conn.execute(
-                """
-                SELECT id FROM dossier_reported_progress
-                WHERE dossier_id=? AND turn=? AND is_terminal=0
-                ORDER BY id DESC LIMIT 1
-                """,
-                (int(dossier_id), int(turn)),
-            ).fetchone()
-        if existing is not None:
-            report_id = int(existing["id"])
-            self.conn.execute(
-                """
-                UPDATE dossier_reported_progress
-                SET progress_band=?, memorial_text=?, origin=?
-                WHERE id=?
-                """,
-                (band, text, origin, report_id),
-            )
-        else:
-            cur = self.conn.execute(
-                """
-                INSERT INTO dossier_reported_progress
-                    (dossier_id, turn, progress_band, memorial_text, is_terminal, origin)
-                VALUES (?,?,?,?,?,?)
-                """,
-                (
-                    int(dossier_id), int(turn), band, text,
-                    1 if is_terminal else 0, origin,
-                ),
-            )
-            report_id = int(cur.lastrowid)
+        report_id = self.dossiers.upsert_reported_progress(
+            int(dossier_id), int(turn), band=band, text=text, origin=origin,
+            is_terminal=bool(is_terminal),
+        )
         if commit:
             self._commit_dossier_write(True)
         return report_id
@@ -11481,19 +11209,9 @@ class GameDB:
                 self._coerce_dossier_progress_row(item, dossier_id=int(dossier_id))
                 for item in json.loads(row["dossier_progress_json"] or "[]")
             ]
-        rows = self.conn.execute(
-            """
-            SELECT id, dossier_id, turn, progress_band, memorial_text,
-                   is_terminal, origin
-            FROM dossier_reported_progress
-            WHERE dossier_id=?
-            ORDER BY turn, id
-            """,
-            (int(dossier_id),),
-        ).fetchall()
         return [
             self._coerce_dossier_progress_row(dict(row), dossier_id=int(dossier_id))
-            for row in rows
+            for row in self.dossiers.reported_progress_rows(int(dossier_id))
         ]
 
     def _audit_fork_signals_for_source(self, source_dossier_id: int) -> List[Dict[str, object]]:
@@ -11824,12 +11542,7 @@ class GameDB:
                 )
             else:
                 # 分段过月会多次调本写入。本次没有提案的路已有本回合行，不得用中位覆盖先前段落下的实抵。
-                existing = self.conn.execute(
-                    "SELECT 1 FROM decree_dossier_reconciliations "
-                    "WHERE dossier_id=? AND turn=?",
-                    (int(dossier_id), int(turn)),
-                ).fetchone()
-                if existing is not None:
+                if self.dossiers.has_reconciliation(int(dossier_id), int(turn)):
                     continue
                 lo, hi = grant_arrival_bounds(ordered, escorted=escorted)
                 arrived = (lo + hi) // 2
@@ -11837,27 +11550,10 @@ class GameDB:
             loss = ordered - arrived
             source_id = target["escort_source_dossier_id"]
             relation = str(target["relation_type"] or "")
-            self.conn.execute(
-                """
-                INSERT INTO decree_dossier_reconciliations
-                    (dossier_id, turn, ordered_amount, arrived_amount, loss_amount,
-                     escorted, escort_source_dossier_id, relation_type, note)
-                VALUES (?,?,?,?,?,?,?,?,?)
-                ON CONFLICT(dossier_id, turn) DO UPDATE SET
-                    ordered_amount=excluded.ordered_amount,
-                    arrived_amount=excluded.arrived_amount,
-                    loss_amount=excluded.loss_amount,
-                    escorted=excluded.escorted,
-                    escort_source_dossier_id=excluded.escort_source_dossier_id,
-                    relation_type=excluded.relation_type,
-                    note=excluded.note
-                """,
-                (
-                    int(dossier_id), int(turn), ordered, arrived, loss,
-                    1 if escorted else 0,
-                    int(source_id) if source_id is not None else None,
-                    relation, note,
-                ),
+            self.dossiers.upsert_reconciliation(
+                int(dossier_id), int(turn), ordered=ordered, arrived=arrived,
+                escorted=bool(escorted), escort_source_dossier_id=source_id,
+                relation_type=relation, note=note,
             )
             history = self.dossiers.reconciliations(int(dossier_id))
             reports.append(history[-1])
@@ -11906,21 +11602,10 @@ class GameDB:
             auditor = resolve_dossier_owner_name(audit_dossier)
             if not auditor:
                 continue
-            self.conn.execute(
-                """
-                INSERT INTO dossier_supervision_presence
-                    (dossier_id, turn, auditor_name, audit_dossier_id,
-                     relation_type, present)
-                VALUES (?,?,?,?,?,1)
-                ON CONFLICT(dossier_id, turn, auditor_name) DO UPDATE SET
-                    audit_dossier_id=excluded.audit_dossier_id,
-                    relation_type=excluded.relation_type,
-                    present=1
-                """,
-                (
-                    int(link["target_dossier_id"]), turn_i, auditor,
-                    int(link["source_dossier_id"]), SUPERVISION_RELATION,
-                ),
+            self.dossiers.upsert_presence(
+                int(link["target_dossier_id"]), turn_i, auditor_name=auditor,
+                audit_dossier_id=int(link["source_dossier_id"]),
+                relation_type=SUPERVISION_RELATION,
             )
             presence_written += 1
 
@@ -11998,16 +11683,9 @@ class GameDB:
             raise ValueError(f"空子暴露 action_type 非法：{atype!r}")
         if self.dossiers.get(int(dossier_id)) is None:
             raise ValueError("案卷不存在")
-        cur = self.conn.execute(
-            """
-            INSERT INTO dossier_loophole_exposures
-                (dossier_id, turn, action_type, execution_form)
-            VALUES (?,?,?,?)
-            ON CONFLICT(dossier_id, turn, action_type, execution_form) DO NOTHING
-            """,
-            (int(dossier_id), int(turn), atype, form),
+        wrote = self.dossiers.record_loophole_exposure(
+            int(dossier_id), int(turn), atype, form,
         )
-        wrote = int(cur.rowcount or 0) > 0
         if commit:
             self.conn.commit()
         return wrote
@@ -12015,28 +11693,7 @@ class GameDB:
     def list_supervision_presence(
         self, dossier_id: int, *, as_of_turn: Optional[int] = None,
     ) -> List[Dict[str, object]]:
-        if as_of_turn is None:
-            rows = self.conn.execute(
-                """
-                SELECT id, dossier_id, turn, auditor_name, audit_dossier_id,
-                       relation_type, present
-                FROM dossier_supervision_presence
-                WHERE dossier_id=?
-                ORDER BY turn, id
-                """,
-                (int(dossier_id),),
-            ).fetchall()
-        else:
-            rows = self.conn.execute(
-                """
-                SELECT id, dossier_id, turn, auditor_name, audit_dossier_id,
-                       relation_type, present
-                FROM dossier_supervision_presence
-                WHERE dossier_id=? AND turn<=?
-                ORDER BY turn, id
-                """,
-                (int(dossier_id), int(as_of_turn)),
-            ).fetchall()
+        rows = self.dossiers.presence_rows(int(dossier_id), as_of_turn=as_of_turn)
         return [
             {
                 "id": int(r["id"]),
@@ -12053,26 +11710,10 @@ class GameDB:
     def list_loophole_exposures(
         self, dossier_id: int, *, as_of_turn: Optional[int] = None,
     ) -> List[Dict[str, object]]:
-        if as_of_turn is None:
-            rows = self.conn.execute(
-                """
-                SELECT id, dossier_id, turn, action_type, execution_form
-                FROM dossier_loophole_exposures
-                WHERE dossier_id=?
-                ORDER BY turn, id
-                """,
-                (int(dossier_id),),
-            ).fetchall()
-        else:
-            rows = self.conn.execute(
-                """
-                SELECT id, dossier_id, turn, action_type, execution_form
-                FROM dossier_loophole_exposures
-                WHERE dossier_id=? AND turn<=?
-                ORDER BY turn, id
-                """,
-                (int(dossier_id), int(as_of_turn)),
-            ).fetchall()
+        rows = [
+            r for r in self.dossiers.exposure_rows(int(dossier_id))
+            if as_of_turn is None or int(r["turn"]) <= int(as_of_turn)
+        ]
         return [
             {
                 "id": int(r["id"]),
@@ -12208,14 +11849,7 @@ class GameDB:
         )
 
         # 全库在场行按 (auditor, dossier) 聚合
-        rows = self.conn.execute(
-            """
-            SELECT dossier_id, auditor_name, turn
-            FROM dossier_supervision_presence
-            WHERE present=1
-            ORDER BY auditor_name, dossier_id, turn
-            """
-        ).fetchall()
+        rows = self.dossiers.presence_turns_by_auditor(min_months=0)
         grouped: Dict[Tuple[str, int], List[int]] = {}
         for row in rows:
             key = (str(row["auditor_name"]), int(row["dossier_id"]))
@@ -12351,13 +11985,7 @@ class GameDB:
         read_keys = self._memorial_read_keys()
         out: List[Dict[str, object]] = []
 
-        progress_rows = self.conn.execute(
-            """
-            SELECT id, turn, memorial_text, dossier_id
-            FROM dossier_reported_progress
-            ORDER BY turn DESC, id DESC
-            """
-        ).fetchall()
+        progress_rows = self.dossiers.recent_reported_progress()
         # 承办人按案卷解析；同案卷多次奏报共用归属缓存。
         owner_cache: Dict[int, str] = {}
         for row in progress_rows:
@@ -14600,85 +14228,24 @@ class GameDB:
     _JOINT_LIABILITY_TRIGGERS = frozenset(_EXECUTION_OUTCOME_INTENSITY)
     _INTENSITY_DOWNGRADE = {"strong": "weak", "weak": None}
 
-    @staticmethod
-    def _migrate_reaction_value(value: object) -> tuple[object, bool]:
-        """Translate only the two persisted pre-signed severity spellings."""
-        changed = False
-        if isinstance(value, dict):
-            value = dict(value)
-            severity = value.get("severity")
-            mapped = {"大怒": ("negative", "strong"), "不满": ("negative", "weak")}.get(severity)
-            if mapped is not None:
-                value.pop("severity", None)
-                value["direction"], value["intensity"] = mapped
-                changed = True
-        elif isinstance(value, list):
-            migrated = []
-            for item in value:
-                new_item, item_changed = GameDB._migrate_reaction_value(item)
-                migrated.append(new_item)
-                changed = changed or item_changed
-            value = migrated
-        return value, changed
-
-    def _migrate_legacy_reaction_severity(self) -> None:
-        """Idempotently repair persisted verdict reaction fields, never live payloads."""
-        for table, id_col, json_col in (
-            ("pending_promulgation_verdicts", "rowid", "verdict_json"),
-            ("decree_dossier_decisions", "id", "affected_parties_json"),
-        ):
-            for row in self.conn.execute(
-                f"SELECT {id_col} AS migration_id,{json_col} AS payload FROM {table}"
-            ).fetchall():
-                try:
-                    value = json.loads(str(row["payload"] or ""))
-                except ValueError as exc:
-                    logging.getLogger(__name__).warning(
-                        "跳过 %s 表迁移行 %s：%s",
-                        table, row["migration_id"], exc,
-                    )
-                    continue
-                if table == "pending_promulgation_verdicts" and isinstance(value, dict):
-                    affected, changed = self._migrate_reaction_value(value.get("affected_parties"))
-                    if changed:
-                        value = dict(value)
-                        value["affected_parties"] = affected
-                else:
-                    value, changed = self._migrate_reaction_value(value)
-                if changed:
-                    self.conn.execute(
-                        f"UPDATE {table} SET {json_col}=? WHERE {id_col}=?",
-                        (safe_json_dumps(value, ensure_ascii=False), row["migration_id"]),
-                    )
-        self.conn.commit()
-
     def _record_decree_cost(
         self, dossier_id: int, turn: int, cost_kind: str, target_kind: str,
         target_id: str, delta: int, reason: str, *, cost_identity: str,
     ) -> bool:
-        cur = self.conn.execute(
-            """INSERT OR IGNORE INTO decree_cost_events
-               (dossier_id,turn,cost_kind,target_kind,target_id,delta,reason,cost_identity)
-               VALUES (?,?,?,?,?,?,?,?)""",
-            (int(dossier_id), int(turn), cost_kind, target_kind, str(target_id),
-             int(delta), str(reason), str(cost_identity)),
+        return self.dossiers.record_cost_event(
+            int(dossier_id), int(turn), cost_kind, target_kind, target_id,
+            int(delta), reason, cost_identity,
         )
-        return cur.rowcount == 1
 
     def _current_judge_affected_parties(
         self, dossier_id: int, turn: int,
     ) -> List[Dict[str, str]]:
         """Read only this turn's latest promulgation Judge evidence."""
-        row = self.conn.execute(
-            """SELECT affected_parties_json FROM decree_dossier_decisions
-               WHERE dossier_id=? AND turn=? AND rescript_action=''
-               ORDER BY id DESC LIMIT 1""",
-            (int(dossier_id), int(turn)),
-        ).fetchone()
-        if row is None:
+        parties_json = self.dossiers.latest_judge_parties_json(int(dossier_id), int(turn))
+        if parties_json is None:
             raise ValueError("强颁缺少当前回合 Judge affected_parties")
         try:
-            value = json.loads(str(row["affected_parties_json"] or ""))
+            value = json.loads(parties_json)
         except (TypeError, ValueError) as exc:
             raise ValueError("强颁当前回合 Judge affected_parties 非法") from exc
         if not isinstance(value, list) or not value:
@@ -14717,12 +14284,7 @@ class GameDB:
             self._apply_authority_cost(
                 state, dossier_id, stigma_reason, cost_identity="override",
             )
-        parties_already_applied = self.conn.execute(
-            """SELECT 1 FROM decree_cost_events
-               WHERE dossier_id=? AND cost_kind='satisfaction' AND cost_identity='override'
-               LIMIT 1""",
-            (int(dossier_id),),
-        ).fetchone() is not None
+        parties_already_applied = self.dossiers.has_override_party_cost(int(dossier_id))
         if include_parties and not parties_already_applied:
             for party in self._current_judge_affected_parties(dossier_id, state.turn):
                 kind, key = str(party.get("kind") or ""), str(party.get("key") or "")
@@ -14995,23 +14557,19 @@ class GameDB:
         """Persist one complete turn-scoped batch before simulation starts."""
         rows = list(verdicts)
         with atomic(self):
-            self.conn.execute(
-                "DELETE FROM pending_promulgation_verdicts WHERE turn=?", (int(turn),)
+            self.dossiers.save_pending_promulgation_verdicts(
+                int(turn),
+                [
+                    (strict_int(v.get("dossier_id")),
+                     safe_json_dumps(v, ensure_ascii=False))
+                    for v in rows
+                ],
             )
-            for verdict in rows:
-                self.conn.execute(
-                    "INSERT INTO pending_promulgation_verdicts(turn,dossier_id,verdict_json) VALUES (?,?,?)",
-                    (int(turn), strict_int(verdict.get("dossier_id")),
-                     safe_json_dumps(verdict, ensure_ascii=False)),
-                )
 
     def get_pending_promulgation_verdicts(
         self, turn: int,
     ) -> List[Dict[str, object]]:
-        rows = self.conn.execute(
-            "SELECT verdict_json FROM pending_promulgation_verdicts WHERE turn=? ORDER BY dossier_id",
-            (int(turn),),
-        ).fetchall()
+        rows = [{"verdict_json": j} for j in self.dossiers.pending_promulgation_verdicts(int(turn))]
         result = []
         for row in rows:
             raw_value = row["verdict_json"]
@@ -15836,12 +15394,9 @@ class GameDB:
             "[]" if dossier and dossier.get("mode") == "midzhi"
             else safe_json_dumps(verdict.get("affected_parties") or [], ensure_ascii=False)
         )
-        self.conn.execute(
-            """UPDATE decree_dossier_decisions
-               SET affected_parties_json=?, midzhi_unpromulgatable=?
-               WHERE id=(SELECT MAX(id) FROM decree_dossier_decisions WHERE dossier_id=?)""",
-            (parties_json, 1 if verdict.get("midzhi_unpromulgatable") is True else 0,
-             dossier_id),
+        self.dossiers.set_latest_decision_parties(
+            int(dossier_id), parties_json,
+            1 if verdict.get("midzhi_unpromulgatable") is True else 0,
         )
         if (dossier and dossier.get("mode") == "midzhi"
                 and verdict.get("decision") == "promulgated"):
@@ -15933,9 +15488,7 @@ class GameDB:
                         )
                 # Consumption belongs to the same atomic unit as effect application;
                 # an outer settlement rollback restores both effects and this batch.
-                self.conn.execute(
-                    "DELETE FROM pending_promulgation_verdicts WHERE turn=?", (int(state.turn),)
-                )
+                self.dossiers.clear_pending_promulgation_verdicts(int(state.turn))
         finally:
             self.conn._recommendation_snapshots_prevalidated = previous_reco_prevalidated
             if previous_summon_nights is None:
@@ -17679,7 +17232,7 @@ class GameDB:
 
     def clear_resolve_context(self, turn: int) -> None:
         self.conn.execute("DELETE FROM pending_resolve_context WHERE turn = ?", (int(turn),))
-        self.conn.execute("DELETE FROM pending_promulgation_verdicts WHERE turn = ?", (int(turn),))
+        self.dossiers.clear_pending_promulgation_verdicts(int(turn))
         self.conn.commit()
 
     # ── #1234 月初快照（路③呈现投影）────────────────────────────────
@@ -18187,18 +17740,19 @@ class GameDB:
         self.conn.commit()
 
     def mark_directives_issued(self, state: GameState) -> None:
-        self.conn.execute(
-            """
-            UPDATE turn_directives
-            SET status = 'issued', updated_at = CURRENT_TIMESTAMP
-            WHERE turn <= ? AND status = 'draft'
-              AND EXISTS (
-                  SELECT 1 FROM decree_dossiers d
-                  WHERE d.directive_id=turn_directives.id
-              )
-            """,
-            (state.turn,),
-        )
+        # #1889：哪些 directive 已成案由案卷 store 判定（ADR 0151），此模块不再
+        # 在 turn_directives 的 UPDATE 里 EXISTS 查案卷表。
+        issued = [
+            int(r["id"]) for r in self.dossiers.directives_with_dossiers(int(state.turn))
+        ]
+        if issued:
+            placeholders = ",".join("?" for _ in issued)
+            self.conn.execute(
+                f"UPDATE turn_directives SET status='issued', "
+                f"updated_at=CURRENT_TIMESTAMP WHERE id IN ({placeholders}) "
+                f"AND status='draft'",
+                issued,
+            )
         self.conn.commit()
 
     # ----- issues (双类事项 + 双向进度条) -----
@@ -19452,12 +19006,11 @@ class GameDB:
             kind_expr = selected.get("kind") or "'assignment'"
             title_expr = selected.get("title") or "''"
             body_expr = selected.get("body") or selected.get("stage_text") or selected.get("content") or selected.get("decree_text") or "''"
-            secrecy_sql = " AND action_type <> 'secret_order'" if table == "decree_dossiers" else ""
             query = (
                 f"SELECT {turn_expr} AS turn, {year_expr} AS year, {period_expr} AS period, "
                 f"{kind_expr} AS kind, {title_expr} AS title, {body_expr} AS body, "
                 f"{source_sql} AS source_id, participant_roster "
-                f"FROM {quoted} WHERE participant_roster <> '[]'{secrecy_sql} ORDER BY turn, {id_expr}"
+                f"FROM {quoted} WHERE participant_roster <> '[]' ORDER BY turn, {id_expr}"
             )
             for row in self.conn.execute(query).fetchall():
                 source_id = str(row["source_id"])
@@ -19485,6 +19038,9 @@ class GameDB:
         result: List[tuple[str, set[str]]] = []
         for row in tables:
             table = str(row["name"])
+            # #1889：decree_dossiers 不在此通用扫描面——案卷经
+            # register_character_knowledge_source 投影进 character_knowledge_sources
+            # （含密令可见性边界），案卷表本身不作为知识来源表被直读。
             if table in {"character_knowledge_sources", "decree_dossiers"}:
                 continue
             columns = {

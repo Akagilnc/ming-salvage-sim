@@ -1200,13 +1200,13 @@ def _sponsor_transferred(db: Any, name: str, commitment_row: Any) -> bool:
             commitment_row["origin_ref"] if "origin_ref" in commitment_row.keys() else ""
         )
         if did is not None:
-            drow = db.conn.execute(
-                "SELECT executor_id, payload_json FROM decree_dossiers WHERE id=?",
-                (int(did),),
-            ).fetchone()
-            if drow is not None and str(drow["executor_id"] or "") == name:
+            try:
+                executor_id, payload_json = db.dossiers.executor_payload_of(int(did))
+            except KeyError:
+                executor_id, payload_json = "", "{}"
+            if str(executor_id or "") == name:
                 try:
-                    payload = json.loads(drow["payload_json"] or "{}")
+                    payload = json.loads(payload_json)
                 except (TypeError, ValueError):
                     payload = {}
                 if isinstance(payload, dict):

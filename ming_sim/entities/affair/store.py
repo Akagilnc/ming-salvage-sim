@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any, Mapping
 
 from ming_sim.applier import connection_owns_transaction, sanitize_sqlite_text
+from ming_sim.entities.dossier import DossierStore
 from ming_sim.strict_types import strict_int
 
 _ATTACH_NEW = "new"
@@ -281,14 +282,23 @@ class AffairStore:
         if owns:
             self._conn.commit()
 
+    def _dossiers(self) -> DossierStore:
+        """#1889 / ADR 0151：案卷表的读写一律经案卷 store，本模块只编排指针语义。"""
+        return DossierStore(self._conn)
+
     def point_dossier(self, dossier_id: int, affair_id: int) -> None:
-        self.attach_pointer("decree_dossiers", dossier_id, affair_id)
+        self.get(affair_id)
+        self._dossiers().set_affair_id_if_unbound(int(dossier_id), int(affair_id))
+        if connection_owns_transaction(self._conn):
+            self._conn.commit()
 
     def _current_pointer(self, table: str, row_id: int | str) -> int:
         label = _POINTER_TABLES.get(table)
         if label is None:
             raise ValueError(f"事务指针表非法：{table}")
         key_column = _POINTER_KEY_COLUMNS.get(table, "id")
+        if table == "decree_dossiers":
+            return self._dossiers().affair_id_of(int(row_id))
         row = self._conn.execute(
             f"SELECT affair_id FROM {table} WHERE {key_column}=?",
             (row_id if key_column != "id" else int(row_id),),
@@ -299,11 +309,7 @@ class AffairStore:
 
     def dossiers(self, affair_id: int) -> tuple[dict[str, object], ...]:
         self.get(affair_id)
-        rows = self._conn.execute(
-            "SELECT id, action_type, affair_id FROM decree_dossiers "
-            "WHERE affair_id=? ORDER BY id",
-            (int(affair_id),),
-        ).fetchall()
+        rows = self._dossiers().rows_for_affair(int(affair_id))
         return tuple(
             {
                 "id": int(row["id"]),
@@ -338,13 +344,10 @@ class AffairStore:
             return
         if kind != _ORIGIN_DOSSIER:
             return
-        row = self._conn.execute(
-            "SELECT affair_id FROM decree_dossiers WHERE id=?",
-            (int(target),),
-        ).fetchone()
-        if row is None:
+        try:
+            current = self._dossiers().affair_id_of(int(target))
+        except KeyError:
             return
-        current = int(row["affair_id"] or 0)
         if current:
             self.attach_pointer(table, row_id, current)
 

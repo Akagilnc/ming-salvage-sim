@@ -1602,10 +1602,7 @@ def _dispatch_endorsements(
                 _reject(rejected, item, str(exc), "invalid_item", source)
                 continue
         elif status == "committed":
-            drow = db.conn.execute(
-                "SELECT id FROM decree_dossiers WHERE pending_action_id=? "
-                "ORDER BY id", (action_id,),
-            ).fetchall()
+            drow = db.dossiers.pending_action_dossier_ids(action_id)
             if not drow:
                 _reject(
                     rejected, item,
@@ -1614,9 +1611,9 @@ def _dispatch_endorsements(
                 )
                 continue
             try:
-                for d in drow:
+                for d_id in drow:
                     db.dossiers.add_endorsement(
-                        int(d["id"]),
+                        int(d_id),
                         form=form,
                         endorser_id=endorser_id,
                         imperial=imperial,

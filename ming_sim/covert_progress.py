@@ -693,14 +693,8 @@ def _delivery_matches_region(row: Mapping[str, object], delivery: Mapping[str, o
 
 
 def _dossier_payload_map(db: Any, dossier_id: int) -> Dict[str, object]:
-    row = db.conn.execute(
-        "SELECT payload_json FROM decree_dossiers WHERE id=?",
-        (int(dossier_id),),
-    ).fetchone()
-    if row is None:
-        return {}
     try:
-        payload = json.loads(str(row["payload_json"] or "{}"))
+        payload = json.loads(db.dossiers.payload_of(int(dossier_id)))
     except (TypeError, ValueError):
         return {}
     return dict(payload) if isinstance(payload, Mapping) else {}
@@ -751,15 +745,12 @@ def _lanes_from_payload(payload: Mapping[str, object]) -> List[Dict[str, object]
 
 def globally_used_fact_keys(db: Any, *, except_dossier_id: int = 0) -> set[str]:
     used: set[str] = set()
-    rows = db.conn.execute(
-        "SELECT id, payload_json FROM decree_dossiers",
-    ).fetchall()
     skip = int(except_dossier_id or 0)
-    for row in rows:
-        if skip and int(row["id"] or 0) == skip:
+    for row_id, payload_json in db.dossiers.all_payloads():
+        if skip and int(row_id) == skip:
             continue
         try:
-            payload = json.loads(str(row["payload_json"] or "{}"))
+            payload = json.loads(payload_json)
         except (TypeError, ValueError):
             continue
         if not isinstance(payload, Mapping):
@@ -816,10 +807,9 @@ def read_substantiated_legal_reason_code(
     key = str(fact_key or "").strip()
     if not name or not key:
         return ""
-    rows = db.conn.execute("SELECT id, payload_json FROM decree_dossiers").fetchall()
-    for row in rows:
+    for _row_id, payload_json in db.dossiers.all_payloads():
         try:
-            payload = json.loads(str(row["payload_json"] or "{}"))
+            payload = json.loads(payload_json)
         except (TypeError, ValueError):
             continue
         if not isinstance(payload, Mapping):

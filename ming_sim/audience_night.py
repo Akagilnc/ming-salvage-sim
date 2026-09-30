@@ -1105,20 +1105,7 @@ def publish_night_directives(db: Any, night_id: int) -> None:
         str(did)
         for did in engine_command_mingfa_publication_ids(list_ledger(db, night_id))
     }
-    _mingfa_candidates = db.conn.execute(
-        """
-        SELECT td.id AS directive_id, td.actor, td.text,
-               MIN(d.id) AS dossier_id
-        FROM pending_actions pa
-        JOIN turn_directives td ON td.id = pa.committed_directive_id
-        JOIN decree_dossiers d ON d.pending_action_id = pa.id
-        WHERE pa.night_id = ? AND pa.kind = 'directive'
-          AND pa.status = 'committed' AND pa.committed_directive_id > 0
-        GROUP BY td.id, td.actor, td.text
-        ORDER BY td.id
-        """,
-        (int(night_id),),
-    ).fetchall()
+    _mingfa_candidates = db.dossiers.committed_directive_candidates(int(night_id))
     for _pd in _mingfa_candidates:
         _did_int = int(_pd["directive_id"] or 0)
         _did = str(_did_int)
