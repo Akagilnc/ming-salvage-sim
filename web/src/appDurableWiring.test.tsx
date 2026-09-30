@@ -2917,7 +2917,9 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     // 取消须在**请求确实在飞**时发生（先取消后发请求不证明任何边界）。
     let releaseDelete!: (value: Response) => void;
     const deleteGate = new Promise<Response>((resolve) => { releaseDelete = resolve; });
-    let deleteCalls = 0;
+    // #1849：数全部请求而非只数某一条 DELETE——否则取消顺带发出的任何其它
+    // 写请求（哪怕打在另一条草案上）都会被空成功响应吞掉、证明落空。
+    const requests: string[] = [];
     const draftRow = (id: number, text: string) => ({
       id, event_id: "", event_title: "", actor: "",
       text, source: "chat", status: "draft", notes: "", authority: "",
@@ -2936,12 +2938,12 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     };
     vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
       const u = new URL(String(url), "http://t.local");
+      requests.push(`${init?.method ?? "GET"} ${u.pathname}`);
       if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
       if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
       if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
       if (u.pathname.endsWith("/api/game/state")) return jsonResp(base);
       if (u.pathname.match(/\/api\/directives\/10$/) && init?.method === "DELETE") {
-        deleteCalls += 1;
         return deleteGate;
       }
       return jsonResp({});
@@ -2970,15 +2972,19 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
         expect(card?.getAttribute("aria-busy")).toBe("true");
       });
     });
-    expect(deleteCalls).toBe(1);
+    const deleteReqs = () => requests.filter((r) => r === "DELETE /api/directives/10");
+    expect(deleteReqs()).toHaveLength(1);
 
     // 在飞期间取消编辑：纯本地、零请求（取消不吃 requestLocked）。
     const cancelEdit = host.querySelector<HTMLButtonElement>('button[aria-label="取消修改"]');
     expect(cancelEdit).not.toBeNull();
     expect(cancelEdit!.disabled).toBe(false);
+    const beforeCancel = [...requests];
     await click(cancelEdit!);
     expect(host.querySelector(".directive-edit")).toBeNull();
-    expect(deleteCalls).toBe(1);
+    // 零请求 = 全部请求日志不变（任何方法、任何 URL 都算）。
+    expect(requests).toEqual(beforeCancel);
+    expect(deleteReqs()).toHaveLength(1);
 
     // 发请求类控件（改/删）在在飞时禁重复点击。
     const nineTools = Array.from(
@@ -2994,7 +3000,7 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     await act(async () => {
       await vi.waitFor(() => expect(host.querySelector('[data-directive-id="10"]')).toBeNull());
     });
-    expect(deleteCalls).toBe(1);
+    expect(deleteReqs()).toHaveLength(1);
   });
 
   it("#1764 退出主菜单清本地失败卡；再入局不残留", async () => {

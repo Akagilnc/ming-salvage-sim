@@ -2720,7 +2720,8 @@ def extract_draft_intent(
     harvest_participants: bool = False,
 ) -> Dict[str, Any]:
     """LLM 判皇帝本轮是否在口头请大臣拟旨（非显式前缀），返回拟旨意图 + 草案文本 + 目标候选。
-    失败/无 → {"draft_action": "无", "draft_text": "", "target_candidate": ""}。
+    模型答无/非拟旨 → {"draft_action": "无", "draft_text": "", "target_candidate": ""}；
+    抽取调用本身失败（LLM 终失败、代码错）一律上抛，不得降级成「无」（#1849 失败诚实）。
     has_pending_draft=True：本回合已有草案暂存，皇帝「补充/修改当前草稿」也归拟旨。
     existing_draft_text 非空时（补充模式）：LLM 输出合并草案，payload 存合并后全文；
     不能用大臣确认回话（「好的，加上…」）覆盖原草案。
@@ -2799,14 +2800,9 @@ def extract_draft_intent(
             + "【皇帝】" + (player_message or "（无）") + "\n"
             + "【大臣完整回话】" + (minister_reply or "（无）") + "\n"
         )
-        raw = ""
-        try:
-            raw, _ = _run_backend_for_config(prompt, llm_config, tag="draft_intent")
-        except Exception as exc:
-            # 纠错重试路上 LLM 挂死响亮上抛（owner：该报）；首抽仍吞掉以免挡对话。
-            if correction_block:
-                raise
-            _log(f"多旨稿抽取失败：{exc}")
+        # #1849：抽取调用失败一律上抛。失败不得降级成「无拟旨意图」——
+        # 那会让写入口把失败洗成 special_decree 冒充成功产物（失败诚实宪法）。
+        raw, _ = _run_backend_for_config(prompt, llm_config, tag="draft_intent")
         obj = _loads_lenient(raw) or {}
         values = obj.get("成品旨稿") if isinstance(obj, dict) else None
         drafts = []
@@ -3055,13 +3051,10 @@ def extract_draft_intent(
         + "【皇帝】" + (player_message or "（无）") + "\n"
         + "【大臣回话】" + (minister_reply or "（无）") + "\n"
     )
-    raw = ""
-    try:
-        raw, _ = _run_backend_for_config(prompt, llm_config, tag="draft_intent")
-    except Exception as exc:
-        if correction_block:
-            raise
-        _log(f"拟旨意图抽取失败：{exc}")
+    # #1849：同多旨稿路径——抽取调用失败一律上抛。首抽也不例外：
+    # 吞掉后这里只当「无拟旨意图」，下游 project 会把失败洗成 special_decree
+    # 冒充成功产物（失败诚实宪法）。无意图只在模型真的这样回答时成立。
+    raw, _ = _run_backend_for_config(prompt, llm_config, tag="draft_intent")
     obj = _loads_lenient(raw) or {}
     if not isinstance(obj, dict):
         obj = {}
@@ -3310,12 +3303,13 @@ def capture_manual_directive_payload(
 ) -> Dict[str, object]:
     """Web/CLI 手工下旨共用既有草稿抽取 seam；在写入边界归一人物引用。
 
-    #1327 / #1274 V-1：空载零 LLM 直落 special_decree（无正文，唯一 special_decree 直落口）。
+    #1327 / #1274 V-1：空载零 LLM 直落 special_decree（无正文）。
     #1465 切片③：外层 30s 总罩已删——长抽取不再被墙钟截断成 special_decree
     fallback（宪法 #9）；次数/空转由 transport 在 runner 侧收口。
     真不在册耗尽 → 通政司戏内回禀 ValueError（不落草案、不除名）；
     回禀产文失败 → typed LLMUnavailable（禁固定戏内模板当台词）。
-    #1849：抽取失败不再降级 special_decree 冒充成功拟旨，一律响亮上抛。
+    #1849：抽取调用失败不再降级 special_decree 冒充成功拟旨，一律响亮上抛。
+    special_decree 另有一合法来路：模型真答「无拟旨意图」（产物空，非失败）。
     """
     directive_text = str(text or "").strip()
     fallback_mode = resolve_directive_mode(existing=existing_mode)
@@ -3349,8 +3343,9 @@ def capture_manual_directive_payload(
     # 其余失败一律响亮上抛：LLM 终失败已由 transport 翻成 typed LLMUnavailable
     # （Web → 结构化 400，禁裸 500），业务 ValueError 原样上抛（CLI 留在审阅循环）。
     # #1849：此处曾用 `except Exception` 把任何失败——含 AttributeError 等代码错误
-    # ——降级成 special_decree 冒充成功拟旨（Web 更新草稿后 200 返回）。失败诚实
-    # 宪法禁此；空载短路（无正文）仍是唯一 special_decree 直落口。
+    # ——降级成 special_decree 冒充成功拟旨（Web 更新草稿后 200 返回）；真实抽取核
+    # 内部（extract_draft_intent 首抽）也曾吞错续行，同样洗成 special_decree。
+    # 两处皆已删；失败诚实宪法禁此。
 
     # heal 已 normalize+validate；投影与 #1769 补交共用同一 helper（禁双路径漂移）。
     return project_draft_extract_to_directive_payload(

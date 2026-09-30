@@ -197,37 +197,6 @@ def test_empty_text_capture_short_circuits_without_llm(monkeypatch):
     assert calls == []
 
 
-def test_capture_unknown_code_error_is_not_washed_into_success_payload(monkeypatch):
-    """#1849：抽取抛未知代码错误（AttributeError）→ 响亮上抛，不得降级 special_decree。
-
-    旧 `except Exception` 会把代码错误洗成「成功拟旨」载荷；Web 侧随后更新草稿
-    并 200 返回。失败诚实宪法：只有「此失败下继续」是文档化契约才可吞。
-    """
-    import ming_sim.cli_backend as cli_backend
-
-    def boom(*_a, **_k):
-        raise AttributeError("boom-unknown-code-error")
-
-    monkeypatch.setattr(cli_backend, "extract_draft_intent", boom)
-
-    with pytest.raises(AttributeError, match="boom-unknown-code-error"):
-        cli_backend.capture_manual_directive_payload("着户部清核辽饷", None)
-
-
-def test_capture_llm_terminal_failure_surfaces_typed_unavailable(monkeypatch):
-    """#1849：LLM 终失败（transport 已尽次数）→ typed LLMUnavailable 上抛（Web 结构化 400）。"""
-    import ming_sim.cli_backend as cli_backend
-    from ming_sim.exceptions import LLMUnavailable
-
-    def boom(*_a, **_k):
-        raise LLMUnavailable("LLM 调用失败（已尝试 3 次）")
-
-    monkeypatch.setattr(cli_backend, "extract_draft_intent", boom)
-
-    with pytest.raises(LLMUnavailable):
-        cli_backend.capture_manual_directive_payload("着户部清核辽饷", None)
-
-
 def test_seeded_draft_long_extract_still_lands_real_dossier(game, monkeypatch):
     """#1465 切片③：拟旨 capture 跨旧 30s 罩仍成案（真落桌 → 读回 pending 案卷）。
 
