@@ -488,7 +488,12 @@ class Event:
     category: str = ""  # 事件机制分类；fiscal_levy 等特化确定性通道按此识别，不硬编 id
     person_core_subjects: List[str] = field(default_factory=list)  # 人物核心事件主体：这些人永久死亡→事件作废退候选
     trigger_gate: Dict[str, str] = field(default_factory=dict)  # seed 候选门槛：{metric: 比较式}，全满足才进候选
-    auto_trigger: bool = False  # True=gate 达标即由程序硬立项，绕过 LLM 因果判定（不进候选池等 extractor 决定）
+    auto_trigger: bool = False  # True=本回合由程序硬立项，绕过 LLM 因果判定；仅 world_engine 事件可声明（见 trigger_authority），world_engine 者不进候选池
+    # 触发权归属（#1892）：world_engine=非人世界事件，按时间／阈值／ADR 0014 状态门由引擎触发并算后果；
+    # model_choice=人物事件，引擎不得代决定，只作候选交同次世界段模型选。缺省（未声明）归一为
+    # model_choice——缺省方向是引擎不代人物决定，与 CLAUDE.md P6 同向，语义唯一故不需显式声明；
+    # 反向（auto_trigger 却未声明 world_engine）load 期 fail-loud，堵「人物事件被引擎硬发」这条缝。
+    trigger_authority: str = "model_choice"
     terminal_reason_labels: List[str] = field(default_factory=list)  # 封闭结局标签集；空=无专用白名单
     default_terminal_reason: str = ""  # shadow / deterministic stub 默认结局，必须属于 terminal_reason_labels
     # 以下为可选「精调 issue 字段」：原 opening_crises 那种手调危机用，立项时 event_to_issue 优先读这些，

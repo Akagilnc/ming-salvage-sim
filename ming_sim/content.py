@@ -290,6 +290,19 @@ def load_event_content(filename: str = "events.json") -> List[Event]:
         gate_raw = item.get("trigger_gate") or {}
         if not isinstance(gate_raw, dict):
             raise SystemExit(f"{filename}[{idx}] trigger_gate 必须是对象（key→比较式）。")
+        # #1892：触发权归属。auto_trigger（引擎硬发）只许非人世界事件；人物事件若声明
+        # auto_trigger 即为「引擎代人物做决定」，load 期 fail-loud，不靠运行期静默。
+        trigger_authority = str(item.get("trigger_authority") or "model_choice").strip()
+        if trigger_authority not in ("world_engine", "model_choice"):
+            raise SystemExit(
+                f"{filename}[{idx}] trigger_authority 非法：{trigger_authority!r}"
+                "（仅 world_engine 或 model_choice）。"
+            )
+        if item.get("auto_trigger") and trigger_authority != "world_engine":
+            raise SystemExit(
+                f"{filename}[{idx}] 人物事件不得 auto_trigger：auto_trigger 只许 trigger_authority="
+                f"world_engine 的非人世界事件，当前 {trigger_authority!r}。"
+            )
         trigger_gate: Dict[str, str] = {}
         # key 形式见 issues._eval_gate_key：metric 名、region.<id>.<field>、army.<id>.<field>、
         # building.<id>.<field>、power.<id>.<field>、class.<name>[@<region>].<field>，
@@ -336,6 +349,7 @@ def load_event_content(filename: str = "events.json") -> List[Event]:
                 ),
                 trigger_gate=trigger_gate,
                 auto_trigger=bool(item.get("auto_trigger") or False),
+                trigger_authority=trigger_authority,
                 terminal_reason_labels=terminal_reason_labels,
                 default_terminal_reason=default_terminal_reason,
                 bar_value=int(item.get("bar_value") or 0),

@@ -311,6 +311,7 @@ def test_auto_trigger_seed_event_expires_after_latest_window_when_gate_unsatisfi
     ev.trigger_end_year = 1629
     ev.trigger_end_month = 2
     ev.auto_trigger = True
+    ev.trigger_authority = "world_engine"
     content.seed_events.append(ev)
     try:
         state.year = 1629
@@ -837,6 +838,7 @@ def test_auto_trigger_historical_event_to_issue_uses_outer_transaction(game, mon
     event_id = "__test_auto_trigger_atomic__"
     ev = _hist_event(event_id, {})
     ev.auto_trigger = True
+    ev.trigger_authority = "world_engine"
     calls = []
 
     def fake_event_to_issue(db_arg, state_arg, ev_arg, *, commit=True):
@@ -2107,6 +2109,7 @@ def test_historical_auto_trigger_event_expires_after_latest_window(game):
     ev.trigger_end_year = 1629
     ev.trigger_end_month = 2
     ev.auto_trigger = True
+    ev.trigger_authority = "world_engine"
     content.events.append(ev)
     try:
         state.year = 1629
@@ -2128,6 +2131,7 @@ def test_gated_auto_trigger_seed_event_can_recur_after_previous_issue_resolved(g
     issues.bind_content(content)
     ev = _hist_event("__test_recurring_auto_seed__", {"民心": "<=5"})
     ev.auto_trigger = True
+    ev.trigger_authority = "world_engine"
     ev.event_type = "situation"
     content.seed_events.append(ev)
     try:
@@ -2262,8 +2266,11 @@ def test_jingshi_plague_auto_triggers_and_weakens_capital_garrison(game):
     assert after["morale"] == before["morale"] - 16
 
 
-def test_huangtaiji_chengdi_auto_triggers_and_renames_houjin(game):
-    """#192：皇太极称帝核心事实确定性落库，后金稳定 id 展示为大清。"""
+def test_huangtaiji_chengdi_is_person_event_candidate_not_engine_hard_fire(game):
+    """#1892：皇太极称帝是人物事件——引擎不代决定，只在窗口到点时作候选交世界段模型选。
+
+    旧合同（引擎按日期硬发 + 直接立 situation）已随 09-30 第 1 项御批退役。
+    """
     db, state, content = game
     issues.bind_content(content)
     state.year = 1636
@@ -2271,9 +2278,21 @@ def test_huangtaiji_chengdi_auto_triggers_and_renames_houjin(game):
 
     triggered = issues.auto_trigger_seed_issues(state, db)
 
-    assert any(item["id"] == "huangtaiji_chengdi" for item in triggered)
-    assert db.has_event_triggered("huangtaiji_chengdi")
-    assert all(ev.id != "huangtaiji_chengdi" for ev in issues.gather_candidate_events(state, db))
+    assert all(item["id"] != "huangtaiji_chengdi" for item in triggered)
+    assert not db.has_event_triggered("huangtaiji_chengdi")
+    assert db.find_any_issue_by_origin("event_pool", "huangtaiji_chengdi") is None
+    assert "huangtaiji_chengdi" in {ev.id for ev in issues.gather_candidate_events(state, db)}
+
+
+def test_huangtaiji_chengdi_rename_core_fact_lands_by_engine_tick(game):
+    """#1892：撤硬触发不丢 P1 物理事实——改国号仍由月初 rename tick 确定性落库。"""
+    db, state, content = game
+    state.year = 1636
+    state.period = 4
+
+    changed = db.apply_historical_power_renames(state)
+
+    assert changed and changed[0]["power_id"] == "houjin"
     row = db.conn.execute(
         "SELECT name, aliases, status, last_action FROM powers WHERE id=?",
         ("houjin",),
@@ -2285,27 +2304,63 @@ def test_huangtaiji_chengdi_auto_triggers_and_renames_houjin(game):
     assert row["last_action"] == "皇太极称帝改国号大清"
 
 
-def test_huangtaiji_chengdi_keeps_diplomatic_response_axis_as_situation_issue(game):
-    """#192：称帝核心事实硬落后，承不承认伪号/联蒙抗清仍要留给软判推进。"""
+def test_person_event_with_auto_trigger_is_rejected_at_load(monkeypatch):
+    """#1892：人物事件声明 auto_trigger（引擎硬发）＝引擎代人物做决定，load 期 fail-loud。"""
+    import pytest
+    import ming_sim.content as content_mod
+    bad = [{"id": "e", "title": "t", "kind": "k", "summary": "s",
+            "urgency": 1, "severity": 1, "credibility": 1,
+            "interests": [], "audiences": [],
+            "trigger_gate": {},
+            "trigger_authority": "model_choice",
+            "auto_trigger": True}]
+    monkeypatch.setattr(content_mod, "load_json_asset", lambda *a, **k: bad)
+    with pytest.raises(SystemExit, match="人物事件不得 auto_trigger"):
+        content_mod.load_event_content("x.json")
+
+
+def test_person_event_marked_auto_trigger_is_not_engine_fired(game):
+    """#1892：运行期被改动的对象同样守门——标了 auto_trigger 的人物事件引擎也不发。"""
     db, state, content = game
     issues.bind_content(content)
-    state.year = 1636
-    state.period = 4
+    ev = _hist_event("__test_person_event_auto__", {})
+    ev.auto_trigger = True
+    ev.trigger_authority = "model_choice"
+    content.events.append(ev)
+    try:
+        state.year = 1636
+        state.period = 4
+
+        triggered = issues.auto_trigger_seed_issues(state, db)
+
+        assert all(item["id"] != "__test_person_event_auto__" for item in triggered)
+        assert not db.has_event_triggered("__test_person_event_auto__")
+        assert "__test_person_event_auto__" in {
+            e.id for e in issues.gather_candidate_events(state, db)
+        }
+    finally:
+        content.events.remove(ev)
+
+
+def test_world_engine_plagues_are_engine_fired_with_core_effect(game):
+    """#1892 互补面：大疫是非人世界事件，仍由引擎按时间窗触发并算核心后果。"""
+    db, state, content = game
+    issues.bind_content(content)
+    assert content.event_by_id["huabei_plague"].trigger_authority == "world_engine"
+    assert content.event_by_id["jingshi_plague"].trigger_authority == "world_engine"
+    state.year = 1633
+    state.period = 7
+    before = db.conn.execute(
+        "SELECT population FROM regions WHERE id=?", ("shanxi",),
+    ).fetchone()["population"]
 
     triggered = issues.auto_trigger_seed_issues(state, db)
 
-    item = next(entry for entry in triggered if entry["id"] == "huangtaiji_chengdi")
-    assert item["issue_id"] > 0
-    issue = db.conn.execute(
-        "SELECT status, kind, origin_kind, origin_ref FROM issues WHERE id=?",
-        (item["issue_id"],),
-    ).fetchone()
-    assert dict(issue) == {
-        "status": "active",
-        "kind": "situation",
-        "origin_kind": "event_pool",
-        "origin_ref": "huangtaiji_chengdi",
-    }
+    assert any(item["id"] == "huabei_plague" for item in triggered)
+    after = db.conn.execute(
+        "SELECT population FROM regions WHERE id=?", ("shanxi",),
+    ).fetchone()["population"]
+    assert after == before - 400000
 
 
 def test_historical_power_rename_tick_reads_huangtaiji_event_effect(game):
