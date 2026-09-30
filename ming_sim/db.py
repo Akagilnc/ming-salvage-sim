@@ -3048,6 +3048,28 @@ class GameDB:
             self._seed_fiscal_meta_cache = cache
         return cache.get(stem)
 
+    def _seeded_fiscal_config_value(self, key: str) -> Optional[int]:
+        """seed 目录里**该确切键**的默认值（如 `辽饷_rate`→100）；未 seed 过返 None。
+
+        与 `_seeded_fiscal_item_meta` 分工：后者按 stem 归任一行、只取 budget_role 等
+        声明字段，**其 value 属那一行的键**（stem 下先命中的通常是 `<stem>_base`）。
+        复征按键调回常态值时若拿它当 `<stem>_rate` 的默认值，会把 rate 写成 base 的数
+        （辽饷 100 误成 43）。故此处按 key 精确取，不跨键借值。
+        """
+        cache = getattr(self, "_seed_fiscal_value_cache", None)
+        if cache is None:
+            cache = {}
+            for rec in list(self.content.fiscal_items or ()):
+                key = str(rec.get("key") or "")
+                if not key or key.startswith("__"):
+                    continue
+                try:
+                    cache[key] = int(rec.get("value"))
+                except (TypeError, ValueError):
+                    continue
+            self._seed_fiscal_value_cache = cache
+        return cache.get(str(key))
+
     def apply_dynamic_fiscal_scale(self, stem: str, ratio: float, commit: bool = True) -> int:
         """按 ratio 缩放所有省 regions.fiscal 中该 dynamic 税字段（辽饷/盐税/商税）。
 
@@ -19516,22 +19538,35 @@ class GameDB:
                       AND excluded.terminal_reason <> ''
                     THEN excluded.terminal_reason
             """
+        # #1899（R3）：晋级为 **triggered** 时，已带真 choice 的待落行保留皇帝**批红
+        # 所在的回合**，不拿晋级回合覆盖它。票面「以您最后一次的批语为准」要比的正是
+        # 这个时点；此前晋级瞬间把它改写成 pre_settle 所在回合，于是同一道「准」在
+        # **首次消费**与**再次进入**读出两个不同的 turn——首次判「不是最后一道批语」
+        # 不复征，隔月重算又判「是」凭空复征，幂等 set-to-target 被自己的时序抖动打破。
+        # 作用域只限 triggered 晋级 + 已有真 choice 的行：过期/避让/作废三类确定性终态
+        # 记的是**该终态发生的时刻**（既有约定与既有用例），不是皇帝的裁断时点，
+        # 它们照旧刷新时刻，行为不变。
+        def _time_case(col: str) -> str:
+            decision_time = ""
+            if fill_triggered_reason:
+                decision_time = (
+                    "                    WHEN COALESCE(event_triggers.terminal_state, '') = ''\n"
+                    "                         AND COALESCE(event_triggers.choice_json, '') != ''\n"
+                    f"                    THEN event_triggers.{col}\n"
+                )
+            return (
+                "                CASE\n"
+                f"{decision_time}"
+                "                    WHEN COALESCE(event_triggers.terminal_state, '') = ''\n"
+                f"                    THEN excluded.{col}\n"
+                f"                    ELSE event_triggers.{col}\n"
+                "                END"
+            )
+
         return f"""
-                turn = CASE
-                    WHEN COALESCE(event_triggers.terminal_state, '') = ''
-                    THEN excluded.turn
-                    ELSE event_triggers.turn
-                END,
-                year = CASE
-                    WHEN COALESCE(event_triggers.terminal_state, '') = ''
-                    THEN excluded.year
-                    ELSE event_triggers.year
-                END,
-                period = CASE
-                    WHEN COALESCE(event_triggers.terminal_state, '') = ''
-                    THEN excluded.period
-                    ELSE event_triggers.period
-                END,
+                turn = {_time_case("turn")},
+                year = {_time_case("year")},
+                period = {_time_case("period")},
                 source = CASE
                     WHEN COALESCE(event_triggers.terminal_state, '') = ''
                     THEN excluded.source
@@ -19671,6 +19706,18 @@ class GameDB:
                     WHEN COALESCE(event_triggers.terminal_state, '') = ''
                     THEN excluded.terminal_reason
                     WHEN COALESCE(event_triggers.terminal_reason, '') = ''
+                    THEN excluded.terminal_reason
+                    -- #1899：自动基线桩（source=fiscal_levy_shadow，无 choice）落的
+                    -- 结局只是**史实默认值**，不是皇帝的裁断。此前本分支一律保留桩残值，
+                    -- 于是桩先落「已准」、皇帝随后亲批「已驳」时，事件账同时留下
+                    -- terminal_reason=已准 与 choice.label=已驳——残值冒充皇帝批准，
+                    -- 消费者照残值重新开征一道已罢的辽饷。此处把真批语**接管**该结局：
+                    -- 仅限桩基线（source 仍是 fiscal_levy_shadow 且 choice_json 此前为空）
+                    -- 且本次批语非空时生效；已有真决定的行、expired/avoided/obsolete 行、
+                    -- 空 label 一律不动，终态账不可逆的既有约定不变。
+                    WHEN event_triggers.source = 'fiscal_levy_shadow'
+                         AND COALESCE(event_triggers.choice_json, '') = ''
+                         AND COALESCE(excluded.terminal_reason, '') != ''
                     THEN excluded.terminal_reason
                     ELSE event_triggers.terminal_reason
                 END,

@@ -1628,37 +1628,70 @@ def _fiscal_levy_reinstate_abolished(
     origin_ref: str,
     reason: str,
 ) -> bool:
-    """复征一道**已罢**的 dynamic 赋饷：经 `create_fiscal_item` 真写口重立目录行。
+    """复征一道**已罢**的 dynamic 赋饷——**贯通全部两种罢征写口**（#1899 R1）。
 
-    #1899（F4）：此前「准」只改 `settle.p`，从不重立目录行，于是罢→准→再罢时
-    `remove_fiscal_item` 与调零两条写口都 `missing_ref`（行早被前一道罢删掉），
-    后续决定**写不进去**、现役照旧征——实际复征与后续决定写口脱节。本函数让复征
-    也落在真写口上：重立后目录行在册，后续罢/调零重新有写口，闭环可续。
+    罢征在本引擎有两条真写口，落法不同、目录形状也不同：
+      · `remove_fiscal_item` **删行** → 该组键在 `fiscal_config` 里整组不在册；
+      · `_write_fiscal_config_change` **调零** → 行仍在，只是被调零的那键 value=0
+        （辽饷的 rate 归零而 base 留着 seed 的 43）。
+    此前本函数只调 `create_fiscal_item`，而它对「行仍在册」直接返回 None
+    （db.py 的 base-or-rate 存在性守门）。于是**调零落法的罢征永不复征**：这道
+    「准」被静默丢弃，下月照旧征——两种罢法里有一条的复征写口根本没接上。
 
-    **复征只在最后一道罢之前发生**（G1）：`last_abolish_turn` 严格早于这道「准」的
-    turn 才复征。这不是自造的固定优先，而是**月链真实顺序**的如实反映：批红在收夜
-    记入事件账、在 `pre_settle` 被本函数消费（decree.py:1187），而罢赋罢饷的目录写口
-    在其后的世界段才落（`settle_staged_declarations_in_decree_order`）。故同一 turn 内
-    **罢必然是更后出的那道批语**——正是票面「以您最后一次的批语为准」所裁的那一道。
-    旧实现用 `approve_turn < last_abolish_turn` 的反向比较，同 turn 落入复征分支，
-    等于自造「同月准赢」，并让这道已被消费的准每个 pass 重新顶掉后出的罢。
+    故按目录实际形状分流，两口都经各自的真写口复征：
+      · 整组缺键 → `create_fiscal_item` 重立（删行落法）；
+      · 行在册但有键 value<=0 → `_write_fiscal_config_change` 把该键调回 seed 值
+        （调零落法）。这是与调零罢**同一对**写口，读写对称、不另开机制。
+    恢复值取 seed 目录的默认值（`_seeded_fiscal_item_meta` / `content/fiscal_config.json`），
+    即「恢复该税项的常态征收额」，不臆造数。
+
+    **复征只在罢更早时发生**（R2）：同一回合内月链的真实顺序是 pre_settle（消费，
+    本函数在此）→ 逐旨／世界段（罢赋罢饷的目录写口在此落）→ 批红（皇帝的「准」在
+    此记账，见 docs/SETTLEMENT_FLOW.md 第 1–2 段）。故同一 turn 内**罢先、准后**，
+    票面「以您最后一次的批语为准」裁的正是这道更后出的「准」——同 turn 复征成立，
+    不需要任何固定优先规则。此前此处写 `>=` 把同 turn 判给罢，是与月链真实顺序
+    相反的假规则：亲跑同 turn 先罢后准，下一 tick 首次应征仍为 0。
 
     复征是一次性效果：消费过后目录即最后一道批语的结果，此后更后出的罢不被顶掉
-    （票面「持续罢征不因逐月重算被抹掉」）。
+    （票面「持续罢征不因逐月重算被抹掉」）。配合 `approve_turn` 取皇帝**批红**所在
+    回合（晋级不改写，见 db.py `_event_terminal_upgrade_assignments`），同一道「准」
+    在首次消费与再次进入时读出同一个 turn——幂等 set-to-target 不再被自己的时序
+    抖动打破。
 
-    幂等：已在征时直接返回 False（不重立、不重复扣征）。恢复值取 seed 目录的默认值
-    （`_seeded_fiscal_item_meta`），即「恢复该税项的常态征收额」，不臆造数。
+    幂等：已在征时直接返回 False（不重立、不重复扣征）。
     """
+    keys = tuple(keys)
     if _fiscal_levy_catalog_in_force(db, keys):
         return False
-    if _fiscal_levy_last_abolish_turn(db, keys) >= int(approve_turn):
-        # 最后一道罢不早于这道「准」→ 罢是更后出的批语，准入不得复征。
+    if _fiscal_levy_last_abolish_turn(db, keys) > int(approve_turn):
+        # 最后一道罢比这道「准」更晚 → 罢是更后出的批语，准入不得复征。
         return False
     stem = db._stem_of(keys[0])
     seeded = db._seeded_fiscal_item_meta(stem) if stem else None
     if not stem or seeded is None:
         # 非 seed 目录内的 dynamic 赋饷无默认值可依：不臆造基线，留给「查无记录=在征」。
         return False
+    catalog = db.get_fiscal_config()
+    present = [key for key in keys if key in catalog]
+    if len(present) == len(set(keys)):
+        # 调零落法：行在册，把被调零的键调回**该键自己**的 seed 值（与调零罢同一对
+        # 写口，读写对称）。按 key 取值不按 stem——`_seeded_fiscal_item_meta` 的 value
+        # 属该 stem 先命中的那一行（辽饷下是 base=43），借给 rate 会把 rate 写成 43。
+        restored = False
+        for key in present:
+            if int(catalog.get(key) or 0) > 0:
+                continue
+            seed_value = db._seeded_fiscal_config_value(key)
+            if seed_value is None or seed_value <= 0:
+                return False
+            _write_fiscal_config_change(
+                db, turn=int(state.turn), key=key, old_value=0, new_value=seed_value,
+                origin_ref=origin_ref, reason=reason,
+            )
+            restored = True
+        return restored
+    # 删行落法：整组重立经 `create_fiscal_item`（budget_role 回 seed 声明的 dynamic，
+    # 免得重立行被 flows 当中央 fixed 收入、与省级那条叠成同一税项两条收入）。
     created = db.create_fiscal_item(
         stem,
         str(seeded.get("account") or ""),
