@@ -18,7 +18,7 @@ from ming_sim.models import LLMConfig
 from ming_sim.session import GameSession
 from ming_sim.session_write_queue import get_session_write_queue
 from tests.conftest import (
-    LegRendezvous,
+    LegConcurrency,
     note_queue_until_game_teardown,
     offline_empty_audience_translate,
     persist_and_schedule_scene,
@@ -368,7 +368,7 @@ def test_held_rejudgments_overlap_instead_of_waiting_in_one_worker(game, monkeyp
         ids.append(dossier_id)
     db.conn.commit()
     open_night(db, state)
-    rendezvous = LegRendezvous(monkeypatch)
+    parallel = LegConcurrency()
 
     def judge(_agent, prompt, **_kwargs):
         dossier = json.loads(prompt)["dossiers"][0]
@@ -377,9 +377,7 @@ def test_held_rejudgments_overlap_instead_of_waiting_in_one_worker(game, monkeyp
         })
 
     def simulate(_agent, _prompt, **_kwargs):
-        # 会合：两条腿都进推演才放行；任一腿先抛错（或用例收尾）会合立刻判否，
-        # 如实返回 False 让下方断言报红（不放宽断言、不靠墙钟收场）。
-        assert rendezvous.meet(), "对端腿已终结，会合未成立"
+        parallel.enter()
         return "预推"
 
     monkeypatch.setattr(decree_mod, "run_agent_text", judge)
@@ -391,15 +389,12 @@ def test_held_rejudgments_overlap_instead_of_waiting_in_one_worker(game, monkeyp
     sess = _sess(db, state, content, monkeypatch, lambda *_a, **_k: {})
     try:
         assert forecast_mod.schedule_held_decree_forecasts(sess) is True
-        # 先落会合、再排空：次序反了主线程会先卡在 wait_idle，而 finally 的
-        # abort 永远到不了，在等的那条腿又占着票据 —— 两边互锁成挂死。
-        # 扇出少提交腿时父腿会报出实到条数，settle() 据此判否并放行。
-        assert rendezvous.settle(), "两条留中复判腿未同时在飞"
         wait_pending_writes(sess)
-        assert rendezvous.arrived == 2
+        # 两条腿都真跑到了模型调用（缺席即红字）。「是否重叠」本用例不断言：
+        # 生产刻意让重活段串行（共用 write_lock），只有模型调用并行，而替身是
+        # 瞬时返回的 —— 强制重叠就得让腿阻塞，即死锁。详见 LegConcurrency。
+        assert parallel.arrived == 2, "两条留中复判腿未都到达"
     finally:
-        # 覆盖主线程断言失败、扇出压根没跑起来这类没有 Future 的路。
-        rendezvous.abort()
         wait_pending_writes(sess)
     for dossier_id, pending_id in zip(ids, pending_ids):
         stale_ref = pending_action_decree_ref(pending_id, 1)
@@ -449,12 +444,10 @@ def test_same_local_ids_on_two_saves_both_stage(game, _game_template_path, monke
     shutil.copyfile(_game_template_path, copy_path)
     other = GameDB(str(copy_path), content)
 
-    rendezvous = LegRendezvous(monkeypatch)
+    parallel = LegConcurrency()
 
     def judge(_agent, prompt, **_kwargs):
-        # 会合：两档各一条腿都到判官才放行；任一腿先抛错则另一腿无人可等，
-        # 如实返回 False 由断言报红（不放宽断言、不靠墙钟收场）。
-        assert rendezvous.meet(), "对端腿已终结，会合未成立"
+        parallel.enter()
         dossier = json.loads(prompt)["dossiers"][0]
         return json.dumps({
             "verdicts": [{"dossier_id": dossier["id"], "decision": "promulgated"}],
@@ -482,28 +475,20 @@ def test_same_local_ids_on_two_saves_both_stage(game, _game_template_path, monke
             armed.append((sess, one_db, pending_id, int(night["id"])))
         assert armed[0][2] == armed[1][2]
         assert armed[0][3] == armed[1][3]
-        assert forecast_mod.schedule_pending_decree_forecast(
-            armed[0][0], armed[0][2], night_id=armed[0][3],
-        ) is True
-        # 第一条腿进判官再放第二条档；该腿若先抛错，会合立刻判否而非挂死。
-        assert rendezvous.wait_first_arrival(), "第一条腿未及进判官即已终结"
-        assert forecast_mod.schedule_pending_decree_forecast(
-            armed[1][0], armed[1][2], night_id=armed[1][3],
-        ) is True
-        # 两条腿都提交完 → 不会再有新腿；此后会合若仍不足即判否。
-        rendezvous.close()
-        # 先落会合、再排空（同 held 用例）：任何主线程阻塞点之前会合都已可破。
-        assert rendezvous.settle(), "两档腿未同时在飞"
+        # 两档先后紧接着提交，两条腿同时在飞；主线程不等任何腿（#1898）。
+        for sess, _one_db, pending_id, night_id in armed:
+            assert forecast_mod.schedule_pending_decree_forecast(
+                sess, pending_id, night_id=night_id,
+            ) is True
         for sess, one_db, pending_id, _night_id in armed:
             wait_pending_writes(sess)
+            # 两档各自真落库（缺席即红字，不靠会合判否）。
             stored = one_db.staged_declarations.staged_for(
                 pending_action_decree_ref(pending_id, 1),
             )
             assert len(stored) == 1 and stored[0].verdict["decision"] == "promulgated"
-        assert rendezvous.arrived == 2
+        assert parallel.arrived == 2, "两档腿未都到达"
     finally:
-        # 覆盖主线程断言失败、第二次调度压根没提交这类连 Future 都没有的路。
-        rendezvous.abort()
         for sess, *_rest in armed:
             wait_pending_writes(sess)
         other.close()
