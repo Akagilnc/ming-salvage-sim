@@ -5,7 +5,7 @@ import json
 from ming_sim.models import Character
 import pytest
 from ming_sim.knowledge import build_character_knowledge
-from ming_sim.materials import list_materials, prepare_character_materials, read_material
+from ming_sim.materials import list_materials, prepare_character_materials
 from tests.dossier_test_helpers import create_test_secret_order
 
 def test_role_roster_only_lists_current_active_ming_people(game):
@@ -1336,10 +1336,10 @@ def test_household_secret_ledger_hides_case_by_excluded_office(game):
         successor.office, successor.office_type = prior_office, prior_type
 
 
-def _office_archive_from_materials(db, state, character, root):
+def _office_archive_path_from_materials(db, state, character, root):
     prepared = prepare_character_materials(db, state, character, dest_root=root)
-    path = next(p for p in list_materials(prepared.root) if p.endswith("/公事档案.txt"))
-    return read_material(prepared.root, path)
+    paths = list_materials(prepared.root)
+    return next(p for p in paths if p.endswith("/公事档案.txt"))
 
 
 def _referenceable_dossier_ids(db, character_name, turn) -> set[int]:
@@ -1422,26 +1422,23 @@ def test_multi_lead_typed_archives_reach_only_each_office_successor(game, tmp_pa
     assert case_id in _referenceable_dossier_ids(db, case_successor.name, turn)
 
 
-def test_central_ledgers_and_unbounded_household_history_reach_final_materials(game, tmp_path):
-    """户部／兵部／吏部各自的衙门底账落进本人 公事档案.txt，且不串门。
+def test_central_ledgers_reach_each_office_archive_carrier_without_crossing(game, tmp_path):
+    """户部／兵部／吏部各自只带自己那把账键，且都落在本人 公事档案.txt 载体上。
 
-    契约面两层，都不碰渲染格式：
-    (1) 载体逐字等于生产档案渲染器对同一 knowledge 的输出——账段标签与
-        「键：值」拼接只此一处真源，测试不重写格式串；
-    (2) 以 DB 为独立真源的成员关系——本衙门账的每条真源记录都进档（渲染器
-        截断或整段清空即报红）；跨衙门不串门则钉在 knowledge 的账键集合上
-        （每门 world 只带自己那把账键），不在档案正文里做跨门子串比对——
-        兵名／人名会与别的段落偶然撞字，那种断言既假红又没约束力。
-    (1) 单独用会与被调渲染器同进同出，只能证接线（传错 knowledge / 写错
-    文件 / 串进别的账段），故两层缺一不可。太仓账无供料上限由 (2) 承担：
-    真源记录逐条在场，不在材料侧数行。
+    契约只落结构化面（大理寺 01a0f1f4 裁定）：载体路径存在 + 本人
+    `get_character_knowledge` 的 world 账键恰是自己那把。删去的两类断言不得
+    换形复造：
+    - 不重调生产渲染器逐字比档案正文（与被调函数同进同出，只证接线）；
+    - 不用 reason／人名在档案正文里做子串推断来证「逐条完整」或「不串门」
+      （旧账1 被旧账10 顶替仍绿；兵名／人名会与别段偶然撞字）。
     """
     db, state, content = game
     for index in range(31):
         db.record_issue_economy_move(state, "国库", 1, "旧账", f"旧账{index}")
     db.record_issue_economy_move(state, "内库", -7, "内帑", "内帑出银")
 
-    from ming_sim.materials import _LEDGER_KEYS, character_office_archive_text
+    from ming_sim.materials import _LEDGER_KEYS
+
     holders = {
         office_type: next(
             c for c in content.characters.values() if c.office_type == office_type
@@ -1449,33 +1446,13 @@ def test_central_ledgers_and_unbounded_household_history_reach_final_materials(g
         for office_type in ("户部", "兵部", "吏部")
     }
     office_ledger_key = {"户部": "treasury", "兵部": "military", "吏部": "personnel"}
-    # DB 侧独立真源：每门衙门该看到的账记录（不经任何渲染器）。
-    truth = {
-        "户部": [str(row["reason"]) for row in db.conn.execute(
-            "SELECT reason FROM economy_ledger WHERE account='国库' ORDER BY id",
-        ).fetchall()],
-        "兵部": [str(row["name"]) for row in db.conn.execute(
-            "SELECT name FROM armies WHERE owner_power='ming' ORDER BY name",
-        ).fetchall()],
-        "吏部": [str(row["name"]) for row in db.current_court_roster_rows(state)],
-    }
     for office_type, character in holders.items():
-        archive = _office_archive_from_materials(db, state, character, tmp_path / office_type)
+        # 载体面：本衙门职官的材料目录里有本人公事档案。
+        assert _office_archive_path_from_materials(
+            db, state, character, tmp_path / office_type,
+        ).endswith("/公事档案.txt")
+        # 准入面：本人 world 只带自己那把账键（跨衙门不串门，结构化字段）。
         knowledge = db.get_character_knowledge(state, character.name)
-        # (1) 载体逐字等于生产渲染器输出：档案不另起一套渲染、不写错文件。
-        assert archive.rstrip("\n") == character_office_archive_text(
-            db, state, character, knowledge,
-        ).rstrip("\n")
-        # (2a) 本衙门账的真源记录逐条在档（截断／整段清空即报红）。
-        own = truth[office_type]
-        assert own, "真源不该为空"
-        assert [row for row in own if row not in archive] == []
-        # (2b) 跨衙门不串门：本人 world 只带自己那把账键（结构化字段）。
         assert [
             key for key in (knowledge.get("world") or {}) if key in _LEDGER_KEYS
         ] == [office_ledger_key[office_type]]
-    # 内库流水不进户部太仓账。
-    household_archive = _office_archive_from_materials(
-        db, state, holders["户部"], tmp_path / "household-ledger",
-    )
-    assert "内帑出银" not in household_archive

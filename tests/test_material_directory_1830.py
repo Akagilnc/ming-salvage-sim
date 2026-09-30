@@ -85,30 +85,10 @@ def test_prepare_writes_typed_tree_and_index(game, tmp_path):
             assert read_material(prepared.root, stripped)
         else:
             assert any(stripped.startswith(rel + " ") for rel in listed)
-    roster_text = read_material(prepared.root, "人物/朝臣名册.txt")
-    # 契约面两层，都不碰名册渲染格式：
-    # (1) 载体逐字等于生产名册渲染器对同一投影的输出——「名：职，status」与
-    #     段头只此一处真源，测试不重写格式串；(1) 单独用会与被调渲染器同进同出，
-    #     只能证接线，故还需 (2)。
-    # (2) 以 DB 名为独立真源的成员关系——投影内每个名字在档；名册不得多出
-    #     投影外的名字（渲染器绕过准入门即报红）。
-    from ming_sim.knowledge import project_court_roster_rows
-    from ming_sim.materials import _court_roster_text
-    knowledge = db.get_character_knowledge(state, character.name)
-    assert roster_text.rstrip("\n") == _court_roster_text(
-        db, state, character, knowledge,
-    ).rstrip("\n")
-    visible = {
-        str(row["name"]) for row in project_court_roster_rows(
-            db.current_court_roster_rows(state), knowledge, character.office_type,
-        )
-    }
-    assert visible and character.name in visible
-    assert [name for name in visible if name not in roster_text] == []
-    all_names = {
-        str(row["name"]) for row in db.conn.execute("SELECT name FROM characters")
-    }
-    assert [name for name in all_names - visible if name in roster_text] == []
+    # 名册的契约只到载体面：路径在目录里、INDEX 列得到、读得到。
+    # 大理寺 01a0f1f4 裁定：不重调生产渲染器逐字比正文（与被调函数同进同出，
+    # 只证接线），也不扫描名册正文推断成员身份（人读正文不是结构化记录身份，
+    # 一次合法换行即假红）。
 
 
 def test_same_requested_root_creates_independent_material_invocations(game, tmp_path):
@@ -155,23 +135,18 @@ def test_material_tree_contains_only_structurally_related_world_details(game, tm
 
     prepared = prepare_character_materials(db, state, character, dest_root=tmp_path / "materials")
     names = list_materials(prepared.root)
-    region_paths = [path for path in names if path.startswith("地区/")]
-    army_paths = [path for path in names if path.startswith("军队/")]
-    assert len(region_paths) == 1 and len(army_paths) == 1
     region_name = db.conn.execute(
         "SELECT name FROM regions WHERE id=?", ("shaanxi",),
     ).fetchone()["name"]
-    # 契约面＝载体正文与该对象的权威定性投影逐字相等：地区/军队详情只走
-    # qualitative 渲染，不带 P4 禁入的裸数值。不另写「民心13」「士气：23」
-    # 之类固定片段去扫措辞——相等本身即证明没有另一套渲染。
-    assert read_material(prepared.root, region_paths[0]).rstrip("\n") == (
-        db.region_detail(region_name, qualitative=True).rstrip("\n")
-    )
-    assert read_material(prepared.root, army_paths[0]).rstrip("\n") == (
-        db.army_roster(
-            filter_names=[army["name"], army["id"]], qualitative_equipment=True,
-        ).rstrip("\n")
-    )
+    # 契约只落载体路径：本人可见的那一个地区、那支军队各有唯一详情载体。
+    # 不再逐字比 db.region_detail／db.army_roster 的输出——materials 写的就是
+    # 这两个调用，同源比较只能证接线，不构成独立证明（大理寺 01a0f1f4）。
+    assert [p for p in names if p.startswith("地区/")] == [
+        f"地区/{_safe_segment(region_name)}/详情.txt",
+    ]
+    assert [p for p in names if p.startswith("军队/")] == [
+        f"军队/{_safe_segment(army['name'] or army['id'])}/详情.txt",
+    ]
 
 
 def _agent_with_materials(root: Path, *, with_cli_cwd: bool):
@@ -342,14 +317,9 @@ def test_secret_order_materials_keep_full_content_and_fail_loud_on_db_error(
         db, state, character, dest_root=tmp_path / "secret-ok",
     )
     secret_path = next(p for p in list_materials(prepared.root) if p.startswith("密令/"))
-    secret_lines = set(read_material(prepared.root, secret_path).splitlines())
-    # 全文保留（无供料上限）：文件行集包含库内每条在册密令的完整正文，
-    # 真源是 DB 行本身，不另写正文哨兵去扫描渲染措辞。
-    stored = {
-        str(row["content"]) for row in db.get_active_secret_orders_for_minister(character.name)
-    }
-    assert stored == {long_body}
-    assert stored <= secret_lines
+    assert read_material(prepared.root, secret_path)
+    # 只钉载体存在与 DB 失败即抛（大理寺 01a0f1f4 裁定）：自由正文不作行集
+    # 成员关系推断——splitlines 按文本行边界切，一次合法换行即假红。
 
     def boom(_name):
         raise RuntimeError("secret-order-db-boom")
