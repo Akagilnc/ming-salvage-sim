@@ -1556,8 +1556,9 @@ def stage_assignment_candidate(
         origin_cid = int(source_chat_turn_id or 0)
     except (TypeError, ValueError):
         origin_cid = 0
-    if origin_cid > 0:
-        staged["source_chat_turn_id"] = origin_cid
+    # #1890：来源轮不写进载荷——它只落 pending_actions.source_chat_turn_id 一列
+    # （交办的统一身份）。载荷里留副本等于同一事实两处可写，改草与迟到转译
+    # 会让两者漂移；成案侧已改读该列。
     category = str(transaction_category or "").strip()
     if category:
         staged["transaction_category"] = category
@@ -1803,12 +1804,14 @@ def stage_referral_candidate(
         origin_cid = int(source_chat_turn_id or 0)
     except (TypeError, ValueError):
         origin_cid = 0
-    if origin_cid > 0:
-        staged["source_chat_turn_id"] = origin_cid
+    # #1890：同 stage_assignment_candidate——来源轮只落身份列，不进载荷。
     # 禁个人 owner：显式不写 assignee/assignee_id
     if existing_id:
         return db.update_directive_candidate(existing_id, staged)
-    return db.stage_directive_candidate(int(turn), minister_name, payload=staged)
+    return db.stage_directive_candidate(
+        int(turn), minister_name, payload=staged,
+        source_chat_turn_id=origin_cid,
+    )
 
 def stage_revoke_authority_candidate(
     db: Any,
