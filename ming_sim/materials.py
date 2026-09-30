@@ -1268,7 +1268,11 @@ def _candidate_event_fact(ev: Any) -> dict[str, object]:
 
     战果软判需要的「历史结果 + 历史成因」锚 = summary / precondition /
     resolve_condition / fail_condition；不给 effect 载荷，代码不代模型算软判。
+    结局标签只对 strategic_foreign 的 node/ending 战事给，取既有写口的同一份
+    白名单（issues.strategic_event_outcome_labels），空集即该事件不收结局标签。
     """
+    from ming_sim.issues import strategic_event_outcome_labels
+
     return {
         "id": str(ev.id),
         "title": str(ev.title),
@@ -1283,8 +1287,7 @@ def _candidate_event_fact(ev: Any) -> dict[str, object]:
         "precondition": str(getattr(ev, "precondition", "") or ""),
         "resolve_condition": str(getattr(ev, "resolve_condition", "") or ""),
         "fail_condition": str(getattr(ev, "fail_condition", "") or ""),
-        "terminal_reason_labels": list(getattr(ev, "terminal_reason_labels", []) or []),
-        "default_terminal_reason": str(getattr(ev, "default_terminal_reason", "") or ""),
+        "outcome_labels": sorted(strategic_event_outcome_labels(str(ev.id))),
         "region_hint": str(getattr(ev, "region_hint", "") or ""),
     }
 

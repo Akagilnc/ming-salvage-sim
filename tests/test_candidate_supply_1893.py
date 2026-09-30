@@ -19,7 +19,6 @@ from __future__ import annotations
 import json
 
 from ming_sim.db import GameDB
-from ming_sim.issues import gather_impeachment_surge_candidates
 from ming_sim.materials import (
     _CANDIDATE_REL,
     candidate_supply,
@@ -111,20 +110,10 @@ def test_ineligible_and_terminal_events_stay_out_of_supply(game, tmp_path, conte
         _drop_event(content, avoided)
 
 
-def test_secret_dossier_surge_candidates_are_not_offered(game):
-    """密令案卷的弹劾潮候选不外露（经真实密令写口造出案卷，非空断言）。"""
-    from ming_sim.materials import secret_order_dossier_ids
+def _secret_surge_world(db, state, owner):
+    """造一条真密令案卷的旨外变形暴露，产出与普通案卷同口径的弹劾潮候选。"""
     from tests.dossier_test_helpers import create_test_secret_order
-    from tests.test_impeachment_surge_655 import _candidate_world
 
-    db, state, _ = game
-    did, owner, _faction = _candidate_world(db, state)
-
-    # 先证同一硬门在非密令时确实供出候选，否则下面的排除断言会空转。
-    baseline = candidate_supply(db, state)["impeachment_surge"]
-    assert any(int(item["dossier_id"]) == did for item in baseline)
-
-    # 另造一条真密令案卷：同一变形暴露口径，只多一个 secret_order_id。
     order_id = create_test_secret_order(
         db, state, owner, "密令探针", "密令正文", ["探针"],
     )
@@ -150,20 +139,46 @@ def test_secret_dossier_surge_candidates_are_not_offered(game):
         beyond_intent=True, commit=False,
     )
     db.conn.commit()
+    return secret_did
 
-    secret = secret_order_dossier_ids(db)
-    assert secret_did in secret, "探针须造出真实密令案卷，否则本用例空转"
-    assert did not in secret
-    # 对照：同一硬门本身不辨密令，密令案卷的候选确实存在——排除只发生在供料侧。
-    unfiltered = gather_impeachment_surge_candidates(state, db)
-    assert any(int(item["dossier_id"]) == secret_did for item in unfiltered), (
-        "密令案卷未被硬门排除时，本用例无对照意义"
-    )
 
-    supply = candidate_supply(db, state, exclude_dossier_ids=secret)
-    offered = {int(item["dossier_id"]) for item in supply["impeachment_surge"]}
-    assert secret_did not in offered
-    assert did in offered
+def test_surge_candidate_offered_by_world_segment_is_declared_and_lands(game):
+    """F1：世界段供到转译的候选，转译就能声明、写口就收——三处同一读侧口径。
+
+    旧断链：世界段材料目录不筛密令案卷，转译请求却无条件排除，于是模型在
+    段文里点名的候选到不了声明里。此处经真实 dispatch_month_segment 入口，
+    对密令案卷的候选走完「供到 → 声明 → 落账」全链。
+    """
+    from ming_sim.month_translate import dispatch_month_segment
+    from tests.test_impeachment_surge_655 import _candidate_world
+
+    db, state, _ = game
+    _did, owner, _faction = _candidate_world(db, state)
+    secret_did = _secret_surge_world(db, state, owner)
+
+    def _capture(request, config):
+        offered = {
+            item["id"]: item for item in request.candidates["impeachment_surge"]
+            if int(item["dossier_id"]) == secret_did
+        }
+        assert offered, "密令案卷的弹劾潮候选未随转译请求送到（供料→转译断链）"
+        candidate = next(iter(offered.values()))
+        return {"effects": {"new_issues": [{
+            "origin_kind": "impeachment_surge",
+            "candidate_id": candidate["id"],
+            "faction_hint": candidate["faction_id"],
+            "target_roster": [candidate["eligible_target_ids"][0]],
+            "title": "密令案卷弹劾潮探针",
+            "stage_text": "探针案情。",
+        }]}}
+
+    dispatch_month_segment(db, state, segment="派系发难", translate_fn=_capture)
+
+    row = db.conn.execute(
+        "SELECT origin_ref FROM issues WHERE origin_kind='impeachment_surge'",
+    ).fetchone()
+    assert row is not None, "供到的候选经声明后未落账（写口口径与供料不一致）"
+    assert row["origin_ref"] == f"commitment:{secret_did}:deformation_exposure"
 
 
 # --- 断链类：候选事实必须随转译请求送到（目录此时已释放）---
@@ -302,6 +317,40 @@ def test_non_strategic_candidate_effects_land_without_event_id_binding(game, con
         assert int(state.metrics["民心"]) == before - 3
     finally:
         _drop_event(content, ev)
+
+
+def test_supplied_outcome_labels_match_writer_whitelist(game, content):
+    """F3：候选事实里的结局标签就是写口那一份，不另立第二张标签表。
+
+    旧断链：指令让模型从 Event.terminal_reason_labels 取标签，而该字段对
+    jisi_lubian 为空、真正白名单在 issues 写口侧，模型无从取到合法标签，
+    整项被拒。此处钉「供到的标签 = 写口接受的标签」，且写口无标签集者供空集。
+    """
+    from ming_sim.issues import strategic_event_outcome_labels
+    from ming_sim.month_translate import dispatch_month_segment
+
+    db, state, _ = game
+    # 推进到有战略战事候选的时点，否则本用例无候选可验（空转）。
+    state.year, state.period = 1629, 11
+    db.save_state(state)
+    captured = {}
+
+    def _capture(request, config):
+        captured["request"] = request
+        return {"effects": {}}
+
+    dispatch_month_segment(db, state, segment="本月无事", translate_fn=_capture)
+
+    by_id = {item["id"]: item for item in captured["request"].candidates["events"]}
+    assert "jisi_lubian" in by_id, "本用例须有战略战事候选可验，否则空转"
+    assert set(by_id["jisi_lubian"]["outcome_labels"]) == set(
+        strategic_event_outcome_labels("jisi_lubian")
+    )
+    assert by_id["jisi_lubian"]["outcome_labels"], "写口有白名单却没供到标签"
+    # 写口无标签集者一律供空集，不逼模型自造标签。
+    for eid, item in by_id.items():
+        if not strategic_event_outcome_labels(eid):
+            assert item["outcome_labels"] == [], f"{eid} 无白名单却供了标签"
 
 
 def test_impeachment_surge_lands_only_when_faction_actually_impeaches(game):

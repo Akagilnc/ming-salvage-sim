@@ -2359,41 +2359,46 @@ def test_fiscal_levy_events_stay_out_of_model_candidate_pool(game):
         }
 
 
-def test_historical_power_rename_tick_reads_huangtaiji_event_effect(game):
-    """CMR：月初展示名 tick 也读事件 effect，避免同一称帝事实维护两份文案。"""
+def test_historical_power_rename_lands_only_when_model_picks_the_event(game):
+    """#1893：改国号不再是日期旁路——不选不落，选中随既有写口一次落定。
+
+    旧行为（月初 tick 按日期改名）与「由模型挑」互斥：留着则不选也发生，
+    删掉则须确认核心后果仍随选中落账，故在此钉两向。
+    """
     db, state, content = game
-    ev = content.event_by_id["huangtaiji_chengdi"]
-    rename = ev.effect_on_trigger["power_renames"][0]
-    original = dict(rename)
-    try:
-        rename.update(
-            {
-                "new_name": "测试清",
-                "aliases": "后金，测试清",
-                "reason": "测试称帝事实",
-                "status": "测试称帝状态",
-                "last_action": "测试称帝行动",
-            }
-        )
-        state.year = 1636
-        state.period = 4
+    issues.bind_content(content)
+    state.year, state.period = 1636, 4
+    db.save_state(state)
+    before = db.conn.execute(
+        "SELECT name FROM powers WHERE id='houjin'",
+    ).fetchone()["name"]
+    assert before == "后金", "本用例以未选中的后金为起点，起点已变则本用例空转"
 
-        changed = db.apply_historical_power_renames(state)
-
-        assert changed and changed[0]["new_name"] == "测试清"
-        row = db.conn.execute(
-            "SELECT name, aliases, status, last_action FROM powers WHERE id=?",
-            ("houjin",),
+    def _power_name():
+        return db.conn.execute(
+            "SELECT name, status FROM powers WHERE id='houjin'",
         ).fetchone()
-        assert dict(row) == {
-            "name": "测试清",
-            "aliases": "后金，测试清",
-            "status": "测试称帝状态",
-            "last_action": "测试称帝行动",
-        }
-    finally:
-        rename.clear()
-        rename.update(original)
+
+    # 不选：日期到了也不改国号。
+    issues.auto_trigger_seed_issues(state, db)
+    assert _power_name()["name"] == before
+    assert db.event_terminal_state("huangtaiji_chengdi") is None
+
+    # 选：经真实 dispatch_month_segment 入口落一次终态、局势与改国号。
+    from ming_sim.month_translate import dispatch_month_segment
+
+    result = dispatch_month_segment(
+        db, state, segment="皇太极称帝",
+        translate_fn=lambda rq, cfg: {"effects": {"new_issues": [{
+            "origin_kind": "event_pool", "id": "huangtaiji_chengdi",
+            "title": "皇太极称帝改国号大清",
+        }]}},
+    )
+    applied = result.effects.applied[0]["issue_summary"]["new_issues"]
+    assert [item.get("rejected") for item in applied] == [False]
+    row = _power_name()
+    assert row["name"] == "大清"
+    assert "称帝" in row["status"]
 
 
 def test_mao_wenlong_event_pool_uses_candidate_snapshot_before_advances(game):
