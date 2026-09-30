@@ -2657,10 +2657,10 @@ def _stalled_deliberation_push_facts(db: Any) -> str:
     """#658：自由下旨可强推的 stalled 廷议＋active issue 投影（候选相关切片）。"""
     if db is None:
         return ""
-    try:
-        rows = db.list_decree_dossiers(status="proposed")
-    except Exception:
-        return ""
+    # #1849：供料库读失败是代码/IO 错，一律响亮上抛（ADR 0005）。此前静默洗成
+    # 空事实块，抽取遂在缺御笔强推事实下照常出产、写入口再覆盖原草稿——
+    # 失败被消解成合法产物（失败诚实宪法）。
+    rows = db.list_decree_dossiers(status="proposed")
     lines: List[str] = []
     for row in rows or []:
         try:
@@ -2694,7 +2694,9 @@ def _stalled_deliberation_push_facts(db: Any) -> str:
             lines.append(
                 f"  案卷ID={did} issue#{int(issue['id'])} 题={title} 正文={body}"
             )
-        except (TypeError, ValueError, KeyError, json.JSONDecodeError):
+        except (TypeError, ValueError, KeyError, json.JSONDecodeError) as exc:
+            # #1849：坏项隔离留痕（ADR 0005：只拒该项、不带走整批，但必须记原因）。
+            _log(f"强推案卷事实跳过坏行（dossier={row.get('id')!r}）：{exc}")
             continue
     if not lines:
         return ""
@@ -2803,8 +2805,11 @@ def extract_draft_intent(
         # #1849：抽取调用失败一律上抛。失败不得降级成「无拟旨意图」——
         # 那会让写入口把失败洗成 special_decree 冒充成功产物（失败诚实宪法）。
         raw, _ = _run_backend_for_config(prompt, llm_config, tag="draft_intent")
-        obj = _loads_lenient(raw) or {}
-        values = obj.get("成品旨稿") if isinstance(obj, dict) else None
+        # #1849：解析失败也是抽取失败，不是「无意图」（与单条路同一根因）。
+        obj = _loads_lenient(raw)
+        if not isinstance(obj, dict):
+            raise ValueError("多旨稿抽取产物不可解析为 JSON 对象")
+        values = obj.get("成品旨稿")
         drafts = []
         draft_combo_flags: List[bool] = []
         seen_texts = set()
@@ -3055,11 +3060,17 @@ def extract_draft_intent(
     # 吞掉后这里只当「无拟旨意图」，下游 project 会把失败洗成 special_decree
     # 冒充成功产物（失败诚实宪法）。无意图只在模型真的这样回答时成立。
     raw, _ = _run_backend_for_config(prompt, llm_config, tag="draft_intent")
-    obj = _loads_lenient(raw) or {}
+    # #1849：解析失败/缺意图键/非法意图值都是抽取产物不可用，不是「无意图」；
+    # 一律响亮拒收（同 _coerce_draft_target_kind / 动作类型非法的既有契约），
+    # 禁再消解成合法无意图让写入口覆盖原草稿。
+    obj = _loads_lenient(raw)
     if not isinstance(obj, dict):
-        obj = {}
-    _raw = str(obj.get("拟旨意图") or "无").strip()
-    _action = _raw if _raw in {"无", "拟旨"} else "无"
+        raise ValueError("拟旨抽取产物不可解析为 JSON 对象")
+    if "拟旨意图" not in obj:
+        raise ValueError("拟旨抽取产物缺「拟旨意图」")
+    _action = str(obj.get("拟旨意图") or "").strip()
+    if _action not in {"无", "拟旨"}:
+        raise ValueError(f"拟旨意图非法：{_action!r}")
     # #654 H：无意图立即短路，不跑 acting/动作类型/target_kind 校验。
     # #1778：召对交办后置点将仍收承办人/名单（harvest_participants），不另造抽取器。
     if _action == "无":
@@ -3112,10 +3123,8 @@ def extract_draft_intent(
         push_mode = _directive_mode(obj.get("颁布方式"))
         if push_mode is not None:
             push_out["mode"] = push_mode
-        try:
-            push_declaration = _affair_declaration_from_draft_obj(obj)
-        except (TypeError, ValueError):
-            push_declaration = {}
+        # #1849：非法事务声明是脏产物，不得静默弃声明后照样出成功强推。
+        push_declaration = _affair_declaration_from_draft_obj(obj)
         if push_declaration:
             push_out["affair_declaration"] = _stamp_split_birth_key(
                 push_declaration["affair_declaration"]
@@ -3181,20 +3190,20 @@ def extract_draft_intent(
         mechanical["mode"] = mode
     merged = str(obj.get("合并草案") or "").strip()
     # #654 H 已在上方对 _action=="无" 短路；此处仅保留 #653 pay_order 验形。
+    # #1849：entries 非法是脏产物，响亮拒收；不得洗成「无意图」让写入口
+    # 以 special_decree 覆盖原草稿（失败诚实宪法）。
     if dossier_action == "pay_order_override" and (
         not isinstance(mechanical["entries"], list) or not mechanical["entries"]
     ):
-        return {"draft_action": "无", "draft_text": "", "target_candidate": ""}
+        raise ValueError("pay_order_override 须有非空 entries 清单")
     if not _candidates:
         # 无候选：沿用单条语义——补充模式合并、否则大臣回话即草案。
         if _supplement_mode:
             draft_text = merged if merged else _existing_draft_text
         else:
             draft_text = (minister_reply or "").strip()
-        try:
-            single_declaration = _affair_declaration_from_draft_obj(obj)
-        except (TypeError, ValueError):
-            return {"draft_action": "无", "draft_text": "", "target_candidate": ""}
+        # #1849：非法事务声明响亮拒收（禁静默弃声明后照样出成功草案）。
+        single_declaration = _affair_declaration_from_draft_obj(obj)
         if single_declaration:
             single_declaration = {
                 "affair_declaration": _stamp_split_birth_key(
@@ -3235,10 +3244,8 @@ def extract_draft_intent(
         existing = str(_by_id[int(target)].get("text") or "")
         # 补某道：优先合并全文；LLM 未合并时保留原文（避免用确认语覆盖），原文亦空则退回话。
         draft_text = merged if merged else (existing if existing else (minister_reply or "").strip())
-    try:
-        cand_declaration = _affair_declaration_from_draft_obj(obj)
-    except (TypeError, ValueError):
-        return {"draft_action": "无", "draft_text": "", "target_candidate": ""}
+    # #1849：非法事务声明响亮拒收（禁洗成「无意图」）。
+    cand_declaration = _affair_declaration_from_draft_obj(obj)
     if cand_declaration:
         cand_declaration = {
             "affair_declaration": _stamp_split_birth_key(
@@ -3437,10 +3444,10 @@ def project_draft_extract_to_directive_payload(
         classify_directive_structured_kind,
         imperial_push_target_dossier_id,
     )
-    try:
-        pre_kind = classify_directive_structured_kind(payload)
-    except ValueError:
-        pre_kind = "ordinary"
+    # #1849：互斥违规（push 与 triad 并存）此前先被 except 洗成 "ordinary" 再走
+    # 组装，报出的可能已是别的字段错；禁临时改判，直接响亮上抛（同一 classify
+    # 在下方组装后还会再判一次，掩盖只会让真因被别的字段错顶替）。
+    pre_kind = classify_directive_structured_kind(payload)
     if pre_kind not in {"push", "empty"} and payload.get("target_kind") not in (None, ""):
         regions_content = getattr(content, "regions", None) if content is not None else None
         conn = getattr(db, "conn", None) if db is not None else None
