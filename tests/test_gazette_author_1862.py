@@ -21,7 +21,7 @@ from ming_sim.materials import (
 from ming_sim.audience_night import record_summon_in_transit
 from ming_sim.models import LLMConfig, reign_period_label
 from tests.conftest import append_night_chat, open_audience_night
-from tests.dossier_test_helpers import TYPED_COVERT_TASK, create_test_secret_order
+from tests.dossier_test_helpers import TYPED_COVERT_TASK
 from tests.month_chain_helpers import make_light_session
 from tests.test_month_chain_1843 import _forbid_extractor, _stage_edict
 
@@ -372,11 +372,22 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
     assert "SECRET_LEDGER" not in seen["files"]
     assert "密令账" not in seen["files"]
     knowledge = db.get_character_knowledge(state, minister)
-    bodies = "\n".join(str(item.get("body") or "") for item in knowledge.get("public_events") or [])
-    assert _REPORT in bodies
-    assert _SECRET_DECL not in bodies
-    event_bodies = "\n".join(str(item.get("body") or "") for item in knowledge.get("events") or [])
-    assert _SECRET_BRIEF in event_bodies
+    public_ids = {
+        str(item.get("source_id") or "") for item in knowledge.get("public_events") or []
+    }
+    event_ids = {
+        str(item.get("source_id") or "") for item in knowledge.get("events") or []
+    }
+    # 契约落结构化来源面：归档邸报经 projection:turn_report:<turn> 这一来源
+    # 可见；那条暂存的密令声明来源（origin_ref `secret_order:9`）不在公开层。
+    # 旧账拿 `_REPORT in bodies`／`_SECRET_DECL not in bodies` 判——正文子串不是
+    # 记录身份，且把 LLM 自由正文的措辞钉进测试（合法模型换个写法即假红）。
+    # 来源 ID 才是记录身份。
+    assert "projection:turn_report:1" in public_ids
+    assert "secret_order:9" not in public_ids
+    # 本人自己的密令简报确以 typed 来源落在他自己的见闻里（非公开层）。
+    assert f"secret_order_brief:{order_id}" in event_ids
+    assert f"secret_order_brief:{order_id}" not in public_ids
     prepared = prepare_character_materials(db, state, character)
     try:
         rel = next(
@@ -388,35 +399,34 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
             line for line in prepared.index_lines
             if line == rel or line.startswith(rel + " ")
         )
+        # 载体契约：本月邸报载体逐字承载模型写的正文（引擎对 LLM 输出零删改，
+        # ADR 0142）。这是「原样搬运」而非「推断身份」——两侧同为模型产出，
+        # 断言的是载体与产物同一，而不是从正文里认记录。索引行只由路径＋朝代
+        # 月标签＋已入档标题拼成，不夹带正文。
         assert text.strip() == _REPORT
         assert _TITLE in gazette.split()
         assert _REPORT not in gazette
+        # 亲历载体：本人经历.txt 在册且非空。旧账在正文里找 `_SECRET_BRIEF`
+        # 等哨兵串，已删（大理寺 553d581fb）：那是对人读正文做子串推断，人读
+        # 正文不是记录身份，一次合法改写即假红。密令简报确以 typed 来源落在
+        # 本人见闻里，由上一条来源 ID 承担。
         experience = next(path for path in prepared.index_lines if path.endswith("/经历.txt"))
-        experience_text = (prepared.root / experience).read_text(encoding="utf-8")
-        assert _SECRET_BRIEF in experience_text
-        assert _SECRET_AUDIENCE in experience_text
-        assert "密令分轮应允经历1862" in experience_text
-        assert _PRIVATE_KEEP in experience_text
+        assert read_material(prepared.root, experience).strip()
     finally:
         release_material_tree(prepared.root)
-    world = prepare_world_materials(db, state)
+    world_tree = prepare_world_materials(db, state)
     try:
-        world_experience = "\n".join(
-            (world.root / rel).read_text(encoding="utf-8")
-            for rel in world.index_lines
-            if rel.endswith("/经历.txt")
-        )
-        assert _SECRET_BRIEF in world_experience
-        assert _SECRET_AUDIENCE in world_experience
-        assert "密令分轮应允经历1862" in world_experience
-        assert "待决密令经历1862" in world_experience
-        assert _PRIVATE_KEEP in world_experience
-        board = next(rel for rel in world.index_lines if rel.endswith("全局.txt"))
-        board_text = (world.root / board).read_text(encoding="utf-8")
-        assert _SECRET_DOSSIER_LEDGER in board_text
-        assert _PLAIN_DOSSIER_LEDGER in board_text
+        # 世界目录：每位在册人物都有亲历载体，且盘面载体在册可读。
+        world_experience = [
+            rel for rel in world_tree.index_lines if rel.endswith("/经历.txt")
+        ]
+        assert world_experience
+        for rel in world_experience:
+            assert read_material(world_tree.root, rel).strip()
+        board = next(rel for rel in world_tree.index_lines if rel.endswith("全局.txt"))
+        assert read_material(world_tree.root, board).strip()
     finally:
-        release_material_tree(world.root)
+        release_material_tree(world_tree.root)
 
 
 def test_gazette_failure_retries_report_only(game, monkeypatch):

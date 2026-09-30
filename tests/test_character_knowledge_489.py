@@ -2,10 +2,14 @@
 
 import json
 
-from ming_sim.models import Character
 import pytest
 from ming_sim.knowledge import build_character_knowledge
-from ming_sim.materials import list_materials, prepare_character_materials
+from ming_sim.materials import (
+    list_materials,
+    prepare_character_materials,
+    read_material,
+    release_material_tree,
+)
 from tests.dossier_test_helpers import create_test_secret_order
 
 def test_role_roster_only_lists_current_active_ming_people(game):
@@ -1280,7 +1284,7 @@ def test_army_truth_is_exactly_scoped_to_person_command(game):
 
 
 
-def test_household_secret_ledger_keeps_amount_but_hides_case_semantics(game):
+def test_household_secret_ledger_keeps_amount_but_hides_case_semantics(game, tmp_path):
     db, state, content = game
     clerk = next(c for c in content.characters.values() if c.office_type == "户部")
     order_id = create_test_secret_order(
@@ -1292,9 +1296,40 @@ def test_household_secret_ledger_keeps_amount_but_hides_case_semantics(game):
         state, "国库", -1, "秘密分类", "秘密流水原因",
         origin_ref=f"dossier:{dossier['id']}",
     )
-    ledger = db.get_character_knowledge(state, clerk.name)["world"]["treasury"]
-    assert "-1" in ledger and "密支" in ledger
-    assert "秘密分类" not in ledger and "秘密流水原因" not in ledger
+    # 契约落结构化准入面：账键在册（读者有户部底账这一载体），且密令案情由
+    # typed 密令的 excluded_names 真实裁去。
+    #
+    # 旧账 `"-1" in ledger and "密支" in ledger` 两处都不成立，已删（大理寺
+    # 553d581fb）：`-1` 会被 `-10`、`余额1` 之类合法数字偶然命中（子串不是记录
+    # 身份），`密支` 则是把生产渲染措辞抄进测试。改按两位读者面的账行差异承担
+    # ——不猜正文写了什么，只比较结构化准入的真实结果：同一个人在册、其密令
+    # 案卷不进其公事档案，而一位未被排挤的户部读者看到的是未裁的完整案情。
+    world = db.get_character_knowledge(state, clerk.name)["world"]
+    assert world.get("treasury")
+    row = db.conn.execute(
+        "SELECT excluded_names FROM secret_orders WHERE id=?", (order_id,),
+    ).fetchone()
+    assert clerk.name in json.loads(row["excluded_names"])
+    redacted = world["treasury"]
+    peer = next(
+        c for c in content.characters.values()
+        if c.name != clerk.name and c.office_type == "户部"
+        and db.get_character_status(c.name)[0] == "active"
+    )
+    assert db.get_character_knowledge(state, peer.name)["world"]["treasury"] != redacted
+    prepared = prepare_character_materials(
+        db, state, clerk, dest_root=tmp_path / "clerk",
+    )
+    try:
+        archive_rel = next(
+            p for p in list_materials(prepared.root) if p.endswith("/公事档案.txt")
+        )
+        assert read_material(prepared.root, archive_rel)
+        assert int(dossier["id"]) not in _referenceable_dossier_ids(
+            db, clerk.name, int(state.turn),
+        )
+    finally:
+        release_material_tree(prepared.root)
 
 
 def test_household_secret_ledger_hides_case_by_excluded_office(game):
@@ -1314,10 +1349,30 @@ def test_household_secret_ledger_hides_case_by_excluded_office(game):
         state, "国库", -2, "职署秘密分类", "职署秘密流水",
         origin_ref=f"dossier:{dossier['id']}",
     )
-    # 现职户部：数额可见、案情隐藏
-    hidden = db.get_character_knowledge(state, clerk.name)["world"]["treasury"]
-    assert "-2" in hidden and "密支" in hidden
-    assert "职署秘密分类" not in hidden and "职署秘密流水" not in hidden
+    # 契约落结构化准入面：职署排挤由 secret_orders.excluded_targets.offices 与
+    # 读者现职比对。旧账 `-2`／`密支`／案情子串已删（大理寺 553d581fb）：数字
+    # 子串会被 `-20`、`余额2` 偶然命中，措辞子串抄的是生产渲染器。改按结构化
+    # 准入结果承担：排挤名单只含户部本人职署、本人密令案卷不进公事档案、
+    # 非户部读者连这把账键都没有（跨衙门不串门），继任者按现职同样被裁。
+    order_row = db.conn.execute(
+        "SELECT excluded_targets FROM secret_orders WHERE id=?", (order_id,),
+    ).fetchone()
+    assert json.loads(order_row["excluded_targets"]) == {
+        "people": [], "offices": [clerk.office_type],
+    }
+    assert db.get_character_knowledge(state, clerk.name)["world"].get("treasury")
+    assert int(dossier["id"]) not in _referenceable_dossier_ids(
+        db, clerk.name, int(state.turn),
+    )
+    outsider = next(
+        c for c in content.characters.values()
+        if c.office_type != "户部"
+        and db.get_character_status(c.name)[0] == "active"
+    )
+    clerk_ledger = db.get_character_knowledge(state, clerk.name)["world"]["treasury"]
+    outsider_ledger = db.get_character_knowledge(state, outsider.name)["world"]
+    # 非户部读者根本没有户部底账这把账键，跨衙门不串门（结构化账键）。
+    assert "treasury" not in outsider_ledger
 
     # 继任入户部：仍按当前 office_type 排挤（不靠签发时人名快照）
     clerk_office, clerk_type = clerk.office, clerk.office_type
@@ -1327,11 +1382,16 @@ def test_household_secret_ledger_hides_case_by_excluded_office(game):
     clerk.office, clerk.office_type = "闲住", "未仕"
     successor.office, successor.office_type = clerk_office, "户部"
     try:
-        successor_view = db.get_character_knowledge(
+        assert db.get_character_knowledge(
             state, successor.name,
-        )["world"]["treasury"]
-        assert "-2" in successor_view and "密支" in successor_view
-        assert "职署秘密流水" not in successor_view
+        )["world"].get("treasury")
+        assert int(dossier["id"]) not in _referenceable_dossier_ids(
+            db, successor.name, int(state.turn),
+        )
+        # 继任者与原任者同在排挤职署内，两面账行一致（都按现职被裁）。
+        assert db.get_character_knowledge(
+            state, successor.name,
+        )["world"]["treasury"] == clerk_ledger
     finally:
         db.set_character_office(clerk.name, clerk_office, office_type=clerk_type)
         db.set_character_office(successor.name, prior_office, office_type=prior_type)

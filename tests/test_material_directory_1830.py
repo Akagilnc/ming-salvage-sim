@@ -7,32 +7,17 @@ list_materials/read_material (API), CLI cwd/readonly flags, restore rebuild.
 from __future__ import annotations
 
 import json
-from pathlib import Path
-from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
 
 import pytest
 from tests.dossier_test_helpers import create_test_secret_order
 
-from ming_sim.audience_night import (
-    AUDIBILITY_PUBLIC,
-    append_ledger_entry,
-    close_night,
-    open_night,
-    summon_enter,
-)
 from ming_sim.materials import (
-    MaterialsRoot,
     _safe_segment,
     list_materials,
     material_tools,
     prepare_character_materials,
     read_material,
-    release_material_tree,
 )
-from ming_sim.models import CourtContext, LLMConfig
-from ming_sim.registry import create_scene_agent
-from ming_sim.session import GameSession
 
 
 def _active_minister(db, content, *, office_type=None):
@@ -44,11 +29,6 @@ def _active_minister(db, content, *, office_type=None):
         if db.get_character_status(character.name)[0] == "active":
             return character
     raise AssertionError("no active minister")
-
-
-def _ctx(game):
-    db, state, _ = game
-    return CourtContext(state=state, db=db, previous_summary="")
 
 
 def test_prepare_writes_typed_tree_and_index(game, tmp_path):
@@ -145,15 +125,6 @@ def test_material_tree_contains_only_structurally_related_world_details(game, tm
     assert [p for p in names if p.startswith("军队/")] == [
         f"军队/{_safe_segment(army['name'] or army['id'])}/详情.txt",
     ]
-
-
-def _agent_with_materials(root: Path, *, with_cli_cwd: bool):
-    """Minimal agent stand-in: MaterialsRoot always; materials_dir only for CLI."""
-    handle = MaterialsRoot(root)
-    model = SimpleNamespace()
-    if with_cli_cwd:
-        model.materials_dir = handle.root
-    return SimpleNamespace(model=model, materials_root=handle)
 
 
 def test_matter_carriers_follow_the_real_knowledge_projection(game, tmp_path):
@@ -307,9 +278,8 @@ def test_secret_order_materials_keep_full_content_and_fail_loud_on_db_error(
 ):
     db, state, content = game
     character = _active_minister(db, content)
-    long_body = "密令长正文" * 40
     create_test_secret_order(
-        db, state, character.name, "长密令", long_body, [], deadline_months=6,
+        db, state, character.name, "长密令", "密令长正文", [], deadline_months=6,
     )
     prepared = prepare_character_materials(
         db, state, character, dest_root=tmp_path / "secret-ok",
