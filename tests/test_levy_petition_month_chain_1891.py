@@ -66,7 +66,10 @@ def _install_model_boundary(monkeypatch, *, world_text, continue_text="遵旨。
     转译 runner 按真实 prompt 里的答复事实作答：御批原话与闭集都在 prompt 里，
     这里模拟模型读懂后按闭集声明结局（生产代码只认闭集值）。
     """
-    seen: dict = {"world_messages": [], "continue_prompts": [], "gazette": 0}
+    seen: dict = {
+        "world_messages": [], "continue_prompts": [], "translate_prompts": [],
+        "gazette": 0,
+    }
 
     def _agent_text(_agent, prompt, tag="", **_kwargs):
         if tag == "world-segment":
@@ -86,11 +89,41 @@ def _install_model_boundary(monkeypatch, *, world_text, continue_text="遵旨。
     import ming_sim.month_translate as month_translate
 
     def _translate(prompt, llm_config=None, *, tag="", policy=None):
+        # 收下模型真实收到的那份 prompt：J2 的转译入口供料（事件身份＋闭集）是否
+        # 真的到达模型，由调用方按结构化字段断言，不靠本桩静默接受一切。
+        seen["translate_prompts"].append(prompt)
         # 声明取自测试给定（模拟模型按闭集声明）；未给则空声明。
         return dict(declaration or {"effects": {}})
 
     monkeypatch.setattr(month_translate, "run_declaration_translate_prompt", _translate)
     return seen
+
+
+# 转译 prompt 里那份额定 JSON 的定位按数据字段，不按句子措辞：找出含
+# terminal_reason_labels 的那个 JSON 数组。措辞改写不影响本判据，供料断开则查无此项。
+_ROSTER_KEY = "terminal_reason_labels"
+
+
+def _levy_roster(prompt: str) -> list[dict]:
+    """从转译 prompt 里取出本段答复的请饷事件名单（结构化字段，非契约文本）。
+
+    用 JSON 解码器扫出候选数组（名单内含嵌套的标签数组，不能用平铺正则）；只认真正
+    带 terminal_reason_labels 字段的那些。
+    """
+    decoder = json.JSONDecoder()
+    out: list[dict] = []
+    for index, char in enumerate(prompt or ""):
+        if char != "[":
+            continue
+        try:
+            parsed, _end = decoder.raw_decode(prompt[index:])
+        except ValueError:
+            continue
+        if isinstance(parsed, list) and any(
+            isinstance(row, dict) and _ROSTER_KEY in row for row in parsed
+        ):
+            out.extend(row for row in parsed if isinstance(row, dict))
+    return out
 
 
 def _make_session(db, state, content):
@@ -155,6 +188,14 @@ def test_emperor_approves_levy_petition_through_real_month_chain(game, monkeypat
     )
     # 答复确实经既有世界段续推（不是代码当场判的语义）。
     assert seen["continue_prompts"], "答复后续推应经既有世界段续推"
+    # J2：转译入口必须把「哪些事件有御批可译」及其闭集真的交给模型——这是模型
+    # 得知该声明什么的唯一通道。断开该供料，真实模型无从声明结局（断线必红）。
+    # 本段可能有多次转译（答复后又有下一段），按“哪一次真的带名单”定位，不认位置。
+    assert seen["translate_prompts"], "答复后的转译应经既有转译入口"
+    rosters = [r for prompt in seen["translate_prompts"] if (r := _levy_roster(prompt))]
+    assert rosters, "答复后的转译必须拿到本段请饷事件的闭集名单"
+    assert [row["event_id"] for row in rosters[0]] == ["liao_levy_rise_1631"]
+    assert rosters[0][0]["terminal_reason_labels"] == ["已准", "已驳"]
 
     ledger = _ledger(db)
     assert ledger["terminal_state"] == "triggered"
@@ -209,7 +250,7 @@ def test_emperor_rejects_levy_petition_keeps_nine_li(game, monkeypatch):
     db, state, content = game
     _prepare(db, state, content, monkeypatch)
     before = _settle_p(db)["p"]["三饷应征"]
-    _install_model_boundary(
+    seen = _install_model_boundary(
         monkeypatch,
         world_text="本月边情，户部请加辽饷。" + _petition_decision(),
         declaration={"effects": [{
@@ -226,6 +267,11 @@ def test_emperor_rejects_levy_petition_keeps_nine_li(game, monkeypatch):
         write_gate=session._write_gate,
     )
 
+    # J2：驳同样经转译入口拿到事件身份与闭集（与准同一通道，不另设一条）。
+    assert [{
+        "event_id": "liao_levy_rise_1631",
+        "terminal_reason_labels": ["已准", "已驳"],
+    }] in [_levy_roster(p) for p in seen["translate_prompts"]]
     assert _ledger_field(db, "terminal_reason") == "已驳"
 
     _install_model_boundary(monkeypatch, world_text="本月无大事。")
@@ -241,7 +287,7 @@ def test_held_levy_petition_advances_month_without_terminal_state(game, monkeypa
     before = _settle_p(db)["p"]["三饷应征"]
     closed_turn = int(state.turn)
     # 留中＝转译不声明该事件结局（代码不据批语文字补结局）。
-    _install_model_boundary(
+    seen = _install_model_boundary(
         monkeypatch, world_text="本月边情，户部请加辽饷。" + _petition_decision(),
     )
     session = _make_session(db, state, content)
@@ -255,6 +301,12 @@ def test_held_levy_petition_advances_month_without_terminal_state(game, monkeypa
         write_gate=session._write_gate,
     )
 
+    # J2 负向闸案：闭集照常交给模型（御批已答），但模型不声明结局 → 账上零终局。
+    # 这证明「无终局」出于模型不声明，而非代码拿不到闭集就无从判。
+    assert [{
+        "event_id": "liao_levy_rise_1631",
+        "terminal_reason_labels": ["已准", "已驳"],
+    }] in [_levy_roster(p) for p in seen["translate_prompts"]]
     assert _ledger_field(db, "terminal_state") == ""
     assert _ledger_field(db, "terminal_reason") == ""
     assert "留中" in _ledger_field(db, "choice_json")
