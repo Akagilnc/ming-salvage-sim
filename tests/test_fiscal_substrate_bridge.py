@@ -356,22 +356,10 @@ def _province_container_total(db):
     return total
 
 
-def _standalone_region_pay_arrears(db, region_id):
-    settle = _read_settle(db, region_id)
-    if not isinstance(settle, dict):
-        return 0.0
-    if (
-        db._primary_source_army_pay_due(settle) is None
-        and not db._is_seeded_military_pay_funnel(settle)
-    ):
-        return 0.0
-    if db._army_pay_source_rows_for_region(region_id):
-        return 0.0
-    return float(settle["st"].get("军饷欠", 0) or 0.0)
-
-
+# #1889：省级军饷欠账只有「有饷源省份额的军队」一个来源，不再有第二本账，
+# 故省级容器口径 == Σ军队省份额欠（无 standalone 分量可加）。
 def _region_pay_arrears_container_basis(db, region_id):
-    return _province_pay_arrears(db, region_id) + _standalone_region_pay_arrears(db, region_id)
+    return _province_pay_arrears(db, region_id)
 
 
 def _region_with_settle(settle):
@@ -767,7 +755,7 @@ def test_fixed_flows_substrate_hub_retires_global_central_pay_route(fresh_game):
     _province_total, central_total, army_total = _non_self_funded_pay_arrears(db)
     assert db.get_central_army_pay_arrears_container() == pytest.approx(central_total)
     assert _province_container_total(db) + db.get_central_army_pay_arrears_container() == pytest.approx(
-        army_total + db._standalone_army_pay_container_total()
+        army_total
     )
 
 
@@ -1974,7 +1962,8 @@ def test_region_army_pay_tick_treats_missing_breakdown_as_no_delta(fresh_db):
     assert after["morale"] == before["morale"]
 
 
-def test_region_army_morale_haircut_denominator_includes_standalone_funnel(fresh_game):
+def test_region_army_morale_haircut_denominator_counts_only_real_army_rows(fresh_game):
+    """#1889：省侧士气分母只由真实军队行的省份额构成，不含不属任何军的欠饷。"""
     import ming_sim.flows as flows_mod
 
     db, state = fresh_game
@@ -1983,10 +1972,7 @@ def test_region_army_morale_haircut_denominator_includes_standalone_funnel(fresh
     _set_all_settle_grants(db, 0)
     _write_settle(
         db, "liaodong", {
-            "_meta": {
-                "postures": ["纯军饷漏斗"],
-                "standalone_military_pay_due": 10,
-            },
+            "_meta": {},
             "st": {
                 "省库库银": 0, "C_地方截留": 0, "C_中饱": 0,
                 "C_漂没": 0, "C_eff损耗": 0, "民欠旧赋": 0,
@@ -1997,7 +1983,7 @@ def test_region_army_morale_haircut_denominator_includes_standalone_funnel(fresh
                 "正赋应征": 0, "三饷应征": 0, "火耗率": 0,
                 "逋赋率": 0, "起运定额": 0, "拨付gross": 0,
                 "中饱率": 0, "漂没率": 0,
-                "Due": {"军饷": 14, "官俸": 0, "宗禄": 0, "赈济": 0},
+                "Due": {"军饷": 0, "官俸": 0, "宗禄": 0, "赈济": 0},
             },
         },
     )
@@ -2030,7 +2016,8 @@ def test_region_army_morale_haircut_denominator_includes_standalone_funnel(fresh
         "FROM armies WHERE id='guanning'"
     ).fetchone()
     settle = _read_settle(db, "liaodong")
-    assert settle["st"]["军饷欠"] == pytest.approx(7)
+    # 关宁军省份额欠 2 = 省级账全部内容；无第二个余额可加
+    assert settle["st"]["军饷欠"] == pytest.approx(2)
     assert army["province_pay_arrears"] == pytest.approx(2)
     assert central["needed"] == pytest.approx(3)
     assert central["shortfall"] == pytest.approx(1)
@@ -3900,67 +3887,70 @@ def test_border_slice_raw_content_keeps_primary_source_anchors():
     assert shanxi["_meta"]["primary_source"]["田赋折银两_年"] == pytest.approx(2118341.95)
     assert shanxi["_meta"]["primary_source"]["起运米石"] == pytest.approx(640350)
 
+    # #1889：辽东/东江无军受领，content 不再 seed 省级军饷漏斗账与无军受领京运补；
+    # 卷十七史实锚点仍在（史料不被删账删掉），但已不派生任何金额。
     liaodong = _content_settle("liaodong")
-    assert liaodong["p"]["Due"]["军饷"] == pytest.approx(711391 / 10000 / 12)
-    assert liaodong["p"]["拨付gross"] == pytest.approx(409984 / 10000 / 12)
+    assert liaodong["p"]["Due"]["军饷"] == 0
+    assert liaodong["p"]["拨付gross"] == 0
+    assert liaodong["st"]["军饷欠"] == 0
     assert liaodong["_meta"]["primary_source"]["粮料原额石"] == pytest.approx(279212)
-    assert "军饷" not in liaodong["_meta"]["provisional"]
-    assert "拨付gross" not in liaodong["_meta"]["provisional"]
+    assert liaodong["_meta"]["primary_source"]["现额银两_年"] == pytest.approx(711391)
+    assert set(liaodong["_meta"]["primary_source"]["fields_refined"]) == set()
+    assert "纯军饷漏斗" not in liaodong["_meta"]["postures"]
 
     dongjiang = _content_settle("dongjiang_area")
     assert dongjiang["_meta"]["source_status"] == "no_wanli_accounting_record"
     coverage = dongjiang["_meta"]["notes"]["史料覆盖"]
     assert isinstance(coverage, str) and coverage.strip()
-    assert set(dongjiang["_meta"]["provisional"]) >= {"军饷", "拨付gross", "军饷欠", "起运定额"}
+    assert dongjiang["p"]["Due"]["军饷"] == 0
+    assert dongjiang["p"]["拨付gross"] == 0
+    assert dongjiang["st"]["军饷欠"] == 0
+    assert "纯军饷漏斗" not in dongjiang["_meta"]["postures"]
 
 
-def test_liaodong_and_dongjiang_are_pure_military_pay_funnels(fresh_db):
-    expected = {
-        "liaodong": {"grant": 409984 / 10000 / 12, "due": 711391 / 10000 / 12, "opening_arrears": 80},
-        "dongjiang_area": {"grant": 5, "due": 14, "opening_arrears": 25},
-    }
-    for region_id, e in expected.items():
+def test_liaodong_and_dongjiang_carry_no_army_less_pay_ledger(fresh_db):
+    """#1889：辽东/东江不养任何军 → 省级军饷 Due/军饷欠恒 0、无军受领京运补为 0。
+
+    真源口径（ADR 0023 D1/D2b）：每支军两个累加器，省级账只是它们的和。
+    旧实账给这两省记了不属任何军的 standalone 欠饷（辽东 80 / 东江 25 起），
+    并由国库向无军受领的漏斗每月另拨京运补；二者已随本票删除。
+    """
+    for region_id in ("liaodong", "dongjiang_area"):
         settle = _read_settle(fresh_db, region_id)
         p = settle["p"]
         st = settle["st"]
         assert p["正赋应征"] == 0
         assert p["三饷应征"] == 0
         assert p["起运定额"] == 0
-        assert p["拨付gross"] == pytest.approx(e["grant"])
-        assert p["Due"]["军饷"] == pytest.approx(e["due"])
-        assert {k: p["Due"][k] for k in ("官俸", "宗禄", "赈济")} == {"官俸": 0, "宗禄": 0, "赈济": 0}
-        assert st["军饷欠"] == pytest.approx(e["opening_arrears"])
+        # 无军受领的额外京运补：不再从国库拨给空漏斗
+        assert p["拨付gross"] == 0
+        assert p["Due"]["军饷"] == 0
+        assert {k: p["Due"][k] for k in ("官俸", "宗禄", "赈济")} == {
+            "官俸": 0, "宗禄": 0, "赈济": 0
+        }
+        assert st["军饷欠"] == 0
+        # 该省确实没有任何以它为饷源省且有省份额的军
+        assert fresh_db._army_pay_source_rows_for_region(region_id) == []
 
         res = settle_tick(st, p, [])
         assert res.breakdown["实征"] == 0
         assert res.breakdown["起运到京"] == 0
-        assert res.new_st["军饷欠"] == pytest.approx(max(0, st["军饷欠"] + p["Due"]["军饷"] - e["grant"]))
+        assert res.new_st["军饷欠"] == 0
+
+        # 过 tick 后仍为 0：不属任何军的幽灵欠饷不再自行累积
+        fresh_db.settle_province_tick(region_id, [])
+        fresh_db.conn.commit()
+        after = _read_settle(fresh_db, region_id)
+        assert after["st"]["军饷欠"] == 0
+        assert after["p"]["Due"]["军饷"] == 0
 
 
-def test_liaodong_primary_source_due_survives_fresh_db_pay_source_reconcile(fresh_db):
-    settle = _read_settle(fresh_db, "liaodong")
-    opening_arrears = settle["st"]["军饷欠"]
-    expected_due = 711391 / 10000 / 12
-    expected_grant = 409984 / 10000 / 12
-
-    assert settle["p"]["Due"]["军饷"] == pytest.approx(expected_due)
-
-    fresh_db.settle_province_tick("liaodong", [])
-    fresh_db.conn.commit()
-
-    after = _read_settle(fresh_db, "liaodong")
-    assert after["p"]["Due"]["军饷"] == pytest.approx(expected_due)
-    assert after["st"]["军饷欠"] == pytest.approx(
-        max(0, opening_arrears + expected_due - expected_grant),
-        abs=1e-6,
-    )
-
-
-def test_liaodong_pay_source_rows_add_to_standalone_military_funnel(fresh_db):
+def test_liaodong_pay_source_rows_are_the_only_pay_ledger(fresh_db):
+    """#1889：一旦该省真出现以它为饷源省、有省份额的军，省级账只从这支行派生。"""
     state = fresh_db.load_state()
     settle = _read_settle(fresh_db, "liaodong")
-    opening_arrears = settle["st"]["军饷欠"]
-    standalone_due = settle["p"]["Due"]["军饷"]
+    assert settle["st"]["军饷欠"] == 0
+    assert settle["p"]["Due"]["军饷"] == 0
 
     created = fresh_db.create_armies_from_extraction(state, [{
         "id": "liaodong_new_army",
@@ -3973,18 +3963,19 @@ def test_liaodong_pay_source_rows_add_to_standalone_military_funnel(fresh_db):
     }], commit=False)
 
     assert created and created[0].get("created") is True
+    row_due = _province_pay_due(fresh_db, "liaodong")
+    assert row_due > 0
     after = _read_settle(fresh_db, "liaodong")
+    assert after["p"]["Due"]["军饷"] == pytest.approx(row_due, abs=1e-6)
     assert after["st"]["军饷欠"] == pytest.approx(
-        opening_arrears + _province_pay_arrears(fresh_db, "liaodong"),
-        abs=1e-6,
+        _province_pay_arrears(fresh_db, "liaodong"), abs=1e-6
     )
-    assert after["p"]["Due"]["军饷"] == pytest.approx(
-        standalone_due + _province_pay_due(fresh_db, "liaodong"),
-        abs=1e-6,
-    )
+    # 无第二本账可加：settle._meta 不再有任何军饷漏斗账键
+    assert not any("standalone" in k for k in after["_meta"])
 
 
-def test_liaodong_settle_tick_keeps_standalone_funnel_deficit_out_of_pay_rows(fresh_db):
+def test_province_tick_shortfall_lands_fully_on_real_army_rows(fresh_db):
+    """#1889：省级军饷缺口全额摊回真实军队行，不留不属任何军的余额。"""
     state = fresh_db.load_state()
     created = fresh_db.create_armies_from_extraction(state, [{
         "id": "liaodong_new_army",
@@ -4000,38 +3991,30 @@ def test_liaodong_settle_tick_keeps_standalone_funnel_deficit_out_of_pay_rows(fr
     before = _read_settle(fresh_db, "liaodong")
     row_due = _province_pay_due(fresh_db, "liaodong")
     row_opening_arrears = _province_pay_arrears(fresh_db, "liaodong")
-    standalone_due = before["p"]["Due"]["军饷"] - row_due
+    assert before["p"]["Due"]["军饷"] == pytest.approx(row_due)
 
     result = fresh_db.settle_province_tick("liaodong", [])
     fresh_db.conn.commit()
 
     new_debt = result.breakdown["NewDebt"]["军饷欠"]
-    expected_row_arrears = row_opening_arrears + new_debt * row_due / (standalone_due + row_due)
     row_after = _province_pay_arrears(fresh_db, "liaodong")
     after = _read_settle(fresh_db, "liaodong")
 
-    assert row_after == pytest.approx(expected_row_arrears, abs=1e-6)
-    assert row_after < row_opening_arrears + new_debt - 1e-6
-    assert after["_meta"]["standalone_military_pay_arrears"] == pytest.approx(
-        after["st"]["军饷欠"] - row_after,
-        abs=1e-6,
-    )
-    assert after["_meta"]["standalone_military_pay_arrears"] > 0
+    # 该省唯一有省份额的军 → 缺口 100% 摊到它
+    assert row_after == pytest.approx(row_opening_arrears + new_debt, abs=1e-6)
+    assert after["st"]["军饷欠"] == pytest.approx(row_after, abs=1e-6)
 
 
-def test_dongjiang_content_pay_funnel_survives_fresh_db_pay_source_reconcile(fresh_db):
+def test_dongjiang_area_has_no_phantom_pay_due(fresh_db):
+    """#1889：东江皮岛原按战区量级 seed 的 14 万两/月省账已删。"""
     settle = _read_settle(fresh_db, "dongjiang_area")
+    assert settle["p"]["Due"]["军饷"] == 0
+    assert settle["st"]["军饷欠"] == 0
+    assert settle["p"]["拨付gross"] == 0
+    assert settle["_meta"]["source_status"] == "no_wanli_accounting_record"
 
-    assert settle["p"]["Due"]["军饷"] == pytest.approx(14)
-    assert settle["st"]["军饷欠"] == pytest.approx(25)
 
-
-def test_old_dongjiang_pay_funnel_due_backfills_before_new_pay_rows(fresh_db):
-    settle = _read_settle(fresh_db, "dongjiang_area")
-    old_due = settle["p"]["Due"]["军饷"]
-    settle["_meta"].pop("standalone_military_pay_due", None)
-    _write_settle(fresh_db, "dongjiang_area", settle)
-
+def test_new_dongjiang_army_makes_province_due_exactly_its_row_due(fresh_db):
     state = fresh_db.load_state()
     created = fresh_db.create_armies_from_extraction(state, [{
         "id": "dongjiang_new_army",
@@ -4042,22 +4025,12 @@ def test_old_dongjiang_pay_funnel_due_backfills_before_new_pay_rows(fresh_db):
         "province_pay_share": 1.0,
         "central_pay_share": 0.0,
     }], commit=False)
-
     assert created and created[0].get("created") is True
-    row_due = _province_pay_due(fresh_db, "dongjiang_area")
     after = _read_settle(fresh_db, "dongjiang_area")
-
-    assert after["_meta"]["standalone_military_pay_due"] == pytest.approx(old_due)
-    assert after["p"]["Due"]["军饷"] == pytest.approx(old_due + row_due)
-
-
-@pytest.mark.parametrize("bad_annual", [True, "711391", float("nan"), float("inf"), -1])
-def test_primary_source_army_pay_due_rejects_dirty_annual_amount(fresh_db, bad_annual):
-    settle = _read_settle(fresh_db, "liaodong")
-    settle["_meta"]["primary_source"]["现额银两_年"] = bad_annual
-
-    with pytest.raises(ValueError, match="primary_source 现额银两_年 非法"):
-        fresh_db._derive_region_army_pay_due("liaodong", settle)
+    assert after["p"]["Due"]["军饷"] == pytest.approx(
+        _province_pay_due(fresh_db, "dongjiang_area"), abs=1e-6
+    )
+    assert not any("standalone" in k for k in after["_meta"])
 
 
 @pytest.mark.parametrize(
@@ -4069,7 +4042,7 @@ def test_primary_source_army_pay_due_rejects_dirty_annual_amount(fresh_db, bad_a
         ("liaodong", lambda settle: settle.__setitem__("st", []), "settle.st 非法"),
     ],
 )
-def test_standalone_army_pay_funnel_rejects_malformed_settle_shapes(
+def test_region_pay_due_derivation_rejects_malformed_settle_shapes(
     fresh_db, region_id, mutate, match
 ):
     settle = _read_settle(fresh_db, region_id)
@@ -4079,29 +4052,17 @@ def test_standalone_army_pay_funnel_rejects_malformed_settle_shapes(
         fresh_db._derive_region_army_pay_due(region_id, settle)
 
 
-def test_standalone_army_pay_container_total_uses_grouped_arrears(fresh_db, monkeypatch):
-    def fail_single_region_lookup(region_id):
-        raise AssertionError(f"unexpected per-region army pay lookup: {region_id}")
-
-    monkeypatch.setattr(
-        fresh_db,
-        "_army_pay_source_rows_for_region",
-        fail_single_region_lookup,
-    )
-
-    assert fresh_db._standalone_army_pay_container_total() >= 0
-
-
 @pytest.mark.parametrize(
     ("mutate", "match"),
     [
-        (lambda fiscal: fiscal.__setitem__("settle", []), "region dongjiang_area settle 非法"),
+        (lambda fiscal: fiscal.__setitem__("settle", []), "region dongjiang_area settle.st 非法"),
         (lambda fiscal: fiscal["settle"].__setitem__("st", []), "region dongjiang_area settle.st 非法"),
     ],
 )
-def test_standalone_army_pay_container_total_rejects_malformed_region_shapes(
+def test_province_pay_container_total_rejects_malformed_region_shapes(
     fresh_db, mutate, match
 ):
+    """#1889：省级军饷欠容器守恒仍 fail-loud（删漏斗账不等于放宽坏态）。"""
     fiscal = _read_fiscal(fresh_db, "dongjiang_area")
     mutate(fiscal)
     fresh_db.conn.execute(
@@ -4110,7 +4071,7 @@ def test_standalone_army_pay_container_total_rejects_malformed_region_shapes(
     )
 
     with pytest.raises(ValueError, match=match):
-        fresh_db._standalone_army_pay_container_total()
+        fresh_db.assert_army_pay_source_container_conservation()
 
 
 JIANGNAN_CORE_EXPECTED = {
@@ -4248,15 +4209,16 @@ def test_settle_province_tick_persists_border_remainder_golden(fresh_db):
             "C_地方截留": 2.255631,
             "民欠旧赋": 7.144531,
         },
+        # #1889：辽东/东江不再有不属任何军的省级欠饷，两省军饷欠恒 0。
         "liaodong": {
             "C_地方截留": 0,
             "民欠旧赋": 0,
-            "军饷欠": 80 + 711391 / 10000 / 12 - 409984 / 10000 / 12,
+            "军饷欠": 0,
         },
         "dongjiang_area": {
             "C_地方截留": 0,
             "民欠旧赋": 0,
-            "军饷欠": 34,
+            "军饷欠": 0,
         },
     }
     for region_id, want in expected.items():
@@ -5184,13 +5146,15 @@ def test_all_settle_substrate_provisional_meta_covers_virtual_fields(fresh_db):
         meta = settle["_meta"]
         provisional = set(settle["_meta"].get("provisional", []))
         if p["正赋应征"] == 0 and p["起运定额"] == 0:
-            required = {"军饷", "拨付gross", "军饷欠", "起运定额"}
+            # #1889：无实征无起运的边镇不再 seed 军饷漏斗账（Due.军饷/军饷欠/
+            # 拨付gross 全为 0 且从军队派生），故只余起运定额一项虚字段待标。
+            required = {"起运定额"}
         elif region_id == "shaanxi" or "source_grain" in meta:
             required = {"隐田"}
         else:
             required = {"起运定额", "官民田", "隐田"}
         if meta.get("source_status") == "no_wanli_accounting_record" \
-                and raw_meta_defaults_by_region.get(region_id) != "military_pay_funnel":
+                and raw_meta_defaults_by_region.get(region_id) != "no_province_pay_source":
             required = set()
         refined = set((meta.get("primary_source") or {}).get("fields_refined", []))
         required -= refined
