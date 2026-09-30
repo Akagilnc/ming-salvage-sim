@@ -315,6 +315,34 @@ _FISCAL_ENGINE_KEY = "__fiscal_engine"
 _FISCAL_ENGINE_LEGACY = 0
 _FISCAL_ENGINE_SUBSTRATE_HUB = 1
 _CENTRAL_ARMY_PAY_ARREARS_CONTAINER_KEY = "central_army_pay_arrears"
+
+# #1889：economy_ledger 建表 DDL 的**唯一**定义（模块级 SQL 真源，同 AUTHORITY_PRIVILEGE_SQL_IN
+# 的做法）。init_schema 的建表脚本与老档重建路径共用它，两处不得各写一份。
+# 原 FK(account)→economy_accounts 已随该表降级为 metrics 的派生视图移除（SQLite 不支持
+# 外键指向视图）；它守的只是 account ∈ ECONOMY_ACCOUNTS，同一约束改在真实写口
+# record_issue_economy_move / record_economy_moves 显式 fail-loud 校验，覆盖面不减。
+_ECONOMY_LEDGER_DDL = """
+CREATE TABLE IF NOT EXISTS economy_ledger (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    turn INTEGER NOT NULL,
+    year INTEGER NOT NULL,
+    period INTEGER NOT NULL,
+    account TEXT NOT NULL,
+    delta INTEGER NOT NULL,
+    balance_after INTEGER NOT NULL,
+    category TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    event_id TEXT,
+    edict_id INTEGER,
+    actor TEXT,
+    purpose TEXT,
+    target_kind TEXT,
+    target_id TEXT,
+    dossier_id INTEGER,
+    origin_ref TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+)
+"""
 _STRUCTURAL_FISCAL_MINIMUMS = {
     "central_taicang_sink_loss_rate": 1,
     "central_jingyun_sink_loss_rate": 1,
@@ -910,7 +938,79 @@ class GameDB:
         """Return True when this GameDB call site should commit its own writes."""
         return connection_owns_transaction(self.conn)
 
+    def _drop_economy_accounts_object(self) -> None:
+        """#1889：economy_accounts 由实体表降级为派生视图，先按真实类型清掉旧对象。
+
+        SQLite 里 `DROP VIEW IF EXISTS x` 撞到表会报 "use DROP TABLE to delete table x"，
+        反之 `DROP TABLE` 撞视图亦然——既存存档里它是表、新档里是视图，故按
+        sqlite_master.type 分派。
+
+        直接删表不丢数据：这张表的内容按定义就等于 metrics 里那两行（它一直是
+        metrics 的镜像），真源始终是 metrics；下方的派生视图按新口径重建。
+        """
+        row = self.conn.execute(
+            "SELECT type FROM sqlite_master WHERE name = 'economy_accounts'"
+        ).fetchone()
+        if row is None:
+            return
+        kind = str(row["type"] or "").lower()
+        if kind == "view":
+            self.conn.execute("DROP VIEW IF EXISTS economy_accounts")
+            return
+
+        # 老档 economy_ledger 还**声明着** FOREIGN KEY(account)→economy_accounts。
+        # 两处都得处理，缺一即失败：
+        #   ① 该 FK 在 foreign_keys=ON 时拦住 DROP economy_accounts（IntegrityError）；
+        #   ② 即便删掉了被参照表，老 economy_ledger 的 schema 仍指向一个不存在的
+        #      父表，PRAGMA foreign_key_check / 任何写入都会报
+        #      "foreign key mismatch"（本仓在 ensure_opening_ledger 首次写流水时炸）。
+        # CREATE TABLE IF NOT EXISTS 不会改已存在表的声明，故老 economy_ledger 必须
+        # 按新定义重建：只追加的流水账逐行搬过去，一行不丢（余额在其余列原样保留）。
+        ledger_cols = [
+            str(c["name"]) for c in
+            self.conn.execute("PRAGMA table_info(economy_ledger)").fetchall()
+        ]
+        has_fk = bool(
+            self.conn.execute("PRAGMA foreign_key_list(economy_ledger)").fetchall()
+        )
+        # PRAGMA foreign_keys 是 no-op 于事务内；此处显式 commit 归零事务再切换，
+        # 否则改完 PRAGMA 仍是 0，等于把整库外键保护静默关掉（实测）。
+        self.conn.commit()
+        self.conn.execute("PRAGMA foreign_keys=OFF")
+        try:
+            self.conn.execute("DROP TABLE IF EXISTS economy_accounts")
+            if has_fk and ledger_cols:
+                legacy_rows = self.conn.execute(
+                    f"SELECT {', '.join(ledger_cols)} FROM economy_ledger"
+                ).fetchall()
+                self.conn.execute("DROP TABLE IF EXISTS economy_ledger")
+                self.conn.execute(_ECONOMY_LEDGER_DDL)
+                # 只搬新旧**共有**的列：老档可能缺新列（如 beyond_intent），也可能
+                # 多出已退役的列；按老列名直接 INSERT 会报 no such column。
+                # 新列取其 DEFAULT/缺省值，老列不丢（只追加的流水账逐行保留）。
+                new_cols = {
+                    str(c["name"]) for c in
+                    self.conn.execute("PRAGMA table_info(economy_ledger)").fetchall()
+                }
+                shared = [c for c in ledger_cols if c in new_cols]
+                if shared:
+                    placeholders = ", ".join("?" for _ in shared)
+                    self.conn.executemany(
+                        f"INSERT INTO economy_ledger ({', '.join(shared)}) "
+                        f"VALUES ({placeholders})",
+                        [tuple(r[c] for c in shared) for r in legacy_rows],
+                    )
+        finally:
+            self.conn.commit()
+            self.conn.execute("PRAGMA foreign_keys=ON")
+            if int(self.conn.execute("PRAGMA foreign_keys").fetchone()[0]) != 1:
+                raise RuntimeError(
+                    "economy_accounts 迁移后未能恢复 foreign_keys=ON："
+                    "整库外键保护处于关闭状态，拒继续建表"
+                )
+
     def init_schema(self) -> None:
+        self._drop_economy_accounts_object()
         self.conn.executescript(
             """
             CREATE TABLE IF NOT EXISTS game_state (
@@ -1228,35 +1328,29 @@ class GameDB:
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
-            CREATE TABLE IF NOT EXISTS economy_accounts (
-                account TEXT PRIMARY KEY,
-                metric_key TEXT NOT NULL UNIQUE,
-                balance INTEGER NOT NULL,
-                note TEXT NOT NULL,
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            );
+            -- #1889：国库活余额的事实真源 = metrics（key/value，见 save_state）。
+            -- economy_accounts 降级为**派生视图**（读时算），不再是可独立漂移的第二本账：
+            -- 旧实现是实体表 + sync_economy_accounts 双向同步，load_state 还用它盖回
+            -- metrics —— 实测把 metrics.国库 改成 999 会被静默改回 320，且删掉 metrics
+            -- 行后余额会从这张表「复活」。视图化后单一写口 = metrics，无同步代码。
+            -- 列契约（account/metric_key/balance/note）保持不变，读侧零改动。
+            -- 旧档里它是实体表，本建表脚本前已按 sqlite_master 的真实类型删掉
+            -- （见 _drop_economy_accounts_object：SQLite 不允许用 DROP VIEW 删表、
+            -- 反之亦然，故不能在脚本里写死任一条）。
+            CREATE VIEW IF NOT EXISTS economy_accounts AS
+            SELECT
+                m.key AS account,
+                m.key AS metric_key,
+                m.value AS balance,
+                CASE m.key
+                    WHEN '国库' THEN '朝廷公开财政，用于军饷、赈济、官俸和工程。'
+                    WHEN '内库' THEN '皇帝可直接调度的钱物，用于救急、密支和政治缓冲。'
+                    ELSE ''
+                END AS note
+            FROM metrics m
+            WHERE m.key IN ('国库', '内库');
 
-            CREATE TABLE IF NOT EXISTS economy_ledger (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                turn INTEGER NOT NULL,
-                year INTEGER NOT NULL,
-                period INTEGER NOT NULL,
-                account TEXT NOT NULL,
-                delta INTEGER NOT NULL,
-                balance_after INTEGER NOT NULL,
-                category TEXT NOT NULL,
-                reason TEXT NOT NULL,
-                event_id TEXT,
-                edict_id INTEGER,
-                actor TEXT,
-                purpose TEXT,
-                target_kind TEXT,
-                target_id TEXT,
-                dossier_id INTEGER,
-                origin_ref TEXT NOT NULL DEFAULT '',
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY(account) REFERENCES economy_accounts(account)
-            );
+            __ECONOMY_LEDGER__;
 
             CREATE TABLE IF NOT EXISTS events (
                 id TEXT PRIMARY KEY,
@@ -2176,7 +2270,9 @@ class GameDB:
                         AND base IS NOT NULL AND legitimacy_pct IS NOT NULL)
                 )
             );
-            """.replace("__AUTHORITY_PRIVILEGES__", AUTHORITY_PRIVILEGE_SQL_IN)
+            """.replace("__AUTHORITY_PRIVILEGES__", AUTHORITY_PRIVILEGE_SQL_IN).replace(
+                "__ECONOMY_LEDGER__", _ECONOMY_LEDGER_DDL
+            )
         )
         # #637 S6：老档迁移——relation_brew_pending 泛化身份列（新档建表已含，此处幂等）。
         self.ensure_column(
@@ -5210,7 +5306,6 @@ class GameDB:
                 """,
                 (key, value),
             )
-        self.sync_economy_accounts(state)
         self.conn.commit()
 
     def load_state(self, start_ym: str = "") -> GameState:
@@ -5252,33 +5347,24 @@ class GameDB:
             # 只接当前 GameState 默认 dict 里有的 key，避免旧 DB 残留废弃 metric 灌入。
             valid_keys = set(state.metrics.keys())
             state.metrics.update({k: v for k, v in metrics.items() if k in valid_keys})
-        account_rows = self.conn.execute("SELECT account, balance FROM economy_accounts").fetchall()
-        for account in account_rows:
-            account_name = str(account["account"])
-            balance = int(account["balance"])
-            state.metrics[account_name] = balance
-        self.sync_economy_accounts(state)
+        # #1889：国库/内库余额真源 = metrics（上面那一句已读入），不再从
+        # economy_accounts 回灌——那张表现在是 metrics 的派生视图（读时算），
+        # 回灌等于让镜像反向覆盖真源。
+        #
+        # 连带修一个既有隐患：decree.atomic_and_reload 的回滚恢复（reload_state_from_db
+        # → load_state）原先**只**靠上面那次 economy_accounts 回灌把国库/内库刷回 DB 值。
+        # 删掉回灌后，事务内被改脏的内存余额（record_issue_economy_move 直接写
+        # state.metrics[account]）在回滚后会留在脏值上——实测 #1490 批红整批回滚后
+        # 内库停在 433 而非 440。故此处显式按 ECONOMY_ACCOUNTS 从 metrics 真源回灌，
+        # 与 metrics 分支同源，恢复语义不减。
+        account_rows = self.conn.execute(
+            "SELECT key, value FROM metrics WHERE key IN ('国库', '内库')"
+        ).fetchall()
+        for row in account_rows:
+            state.metrics[str(row["key"])] = int(row["value"])
         self.ensure_opening_ledger(state)
         self.conn.commit()
         return state
-
-    def sync_economy_accounts(self, state: GameState) -> None:
-        notes = {
-            "国库": "朝廷公开财政，用于军饷、赈济、官俸和工程。",
-            "内库": "皇帝可直接调度的钱物，用于救急、密支和政治缓冲。",
-        }
-        for account in ECONOMY_ACCOUNTS:
-            self.conn.execute(
-                """
-                INSERT INTO economy_accounts (account, metric_key, balance, note)
-                VALUES (?, ?, ?, ?)
-                ON CONFLICT(account) DO UPDATE SET
-                    balance = excluded.balance,
-                    note = excluded.note,
-                    updated_at = CURRENT_TIMESTAMP
-                """,
-                (account, account, int(state.metrics[account]), notes[account]),
-            )
 
     def ensure_opening_ledger(self, state: GameState) -> None:
         for account in ECONOMY_ACCOUNTS:
@@ -6224,10 +6310,12 @@ class GameDB:
         moves: List[Dict[str, object]],
     ) -> None:
         if not moves:
-            self.sync_economy_accounts(state)
             self.conn.commit()
             return
         for move in moves:
+            # #1889：account 必须在 ECONOMY_ACCOUNTS 内（替代原 FK→economy_accounts）
+            if str(move["account"]) not in ECONOMY_ACCOUNTS:
+                raise ValueError(f"economy_ledger account 非法：{move['account']!r}")
             self.conn.execute(
                 """
                 INSERT INTO economy_ledger
@@ -6248,7 +6336,6 @@ class GameDB:
                     actor,
                 ),
             )
-        self.sync_economy_accounts(state)
         self.conn.commit()
 
     def treasury_budget_summary(self, state: "GameState | None" = None) -> str:
@@ -20123,6 +20210,10 @@ class GameDB:
         """
         if isinstance(delta, bool) or not isinstance(delta, int):
             raise TypeError("delta must be an integer")
+        # #1889：account 必须在 ECONOMY_ACCOUNTS 内（替代原 FK→economy_accounts）。
+        # 下面 state.metrics[account] 也会 KeyError，但那不是 fail-loud 的可读报错。
+        if account not in ECONOMY_ACCOUNTS:
+            raise ValueError(f"economy_ledger account 非法：{account!r}")
         if apply_income_modifier and category != "局势遗产":
             net_pct = int(self.legacy_modifiers(state).get(account, 0) or 0)  # type: ignore[arg-type]
             if net_pct and delta > 0:
@@ -20133,6 +20224,19 @@ class GameDB:
         if actual == 0:
             return 0
         state.metrics[account] = after
+        # #1889：活余额真源 = metrics 表。流水行与活余额必须**同一事务**落库，
+        # 否则 DB 与内存会分叉：旧实现只改内存 state.metrics，落库全靠 save_state，
+        # 而 economy_accounts 那张镜像表又由 load_state 反向盖回内存——两边各写各的。
+        # 实测（#1490 批红整批回滚）：一笔已提交的 7 万两内帑发饷，内存 433 / DB 440。
+        # 此处随流水同事务写 metrics，恢复（reload_state_from_db→load_state）与
+        # 回滚都读到同一个真值。
+        self.conn.execute(
+            """
+            INSERT INTO metrics (key, value) VALUES (?, ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+            """,
+            (account, after),
+        )
         beyond_flag = self.coerce_beyond_intent_flag(beyond_intent)
         self.conn.execute(
             """
@@ -20146,7 +20250,6 @@ class GameDB:
              category, reason, purpose, target_kind, target_id, origin_ref,
              beyond_flag),
         )
-        self.sync_economy_accounts(state)
         if commit:
             self.conn.commit()
         return actual
@@ -21860,13 +21963,8 @@ class GameDB:
             f"ON CONFLICT({pk}) {conflict_action}",
             [data[c] for c in cols],
         )
-        # 国库/内库同时落在 economy_accounts.balance，load_state 会用后者盖回 metrics。
-        # 只改 metrics 表会在下回合被覆盖，故此处同步 economy_accounts。
-        if table == "metrics" and data.get("key") in ("国库", "内库") and "value" in data:
-            self.conn.execute(
-                "UPDATE economy_accounts SET balance = ? WHERE account = ?",
-                (int(data["value"]), data["key"]),
-            )
+        # #1889：economy_accounts 已降级为 metrics 的派生视图，无需（也不能）再同步；
+        # 改 metrics 即改真源。
         self.conn.commit()
         row = self.conn.execute(f"SELECT * FROM {table} WHERE {pk}=?", (data[pk],)).fetchone()
         return dict(row) if row else {}

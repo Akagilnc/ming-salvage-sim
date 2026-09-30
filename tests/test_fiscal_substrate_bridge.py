@@ -4033,6 +4033,148 @@ def test_new_dongjiang_army_makes_province_due_exactly_its_row_due(fresh_db):
     assert not any("standalone" in k for k in after["_meta"])
 
 
+def test_treasury_live_balance_has_single_truth_and_no_mirror_drift(fresh_game):
+    """#1889：活余额真源 = metrics；economy_accounts 只是派生视图，不再是第二本账。
+
+    旧实现是实体表 + sync_economy_accounts 双向同步，load_state 还用该表反向盖回
+    metrics：实测把 metrics.国库 直接改成 999 会被静默改回 320（镜像赢），
+    且删掉 metrics 行后余额会从镜像「复活」。视图化后单一写口 = metrics。
+    """
+    db, state = fresh_game
+    view_rows = db.conn.execute(
+        "SELECT account, balance FROM economy_accounts ORDER BY account"
+    ).fetchall()
+    assert db.conn.execute(
+        "SELECT type FROM sqlite_master WHERE name='economy_accounts'"
+    ).fetchone()["type"] == "view", "economy_accounts 必须是派生视图而非实体表"
+
+    # 改真源 → 视图立即跟随，不再被任何镜像盖回
+    db.conn.execute("UPDATE metrics SET value=999 WHERE key='国库'")
+    db.conn.commit()
+    assert db.load_state("").metrics["国库"] == 999
+    assert dict(
+        (r["account"], r["balance"]) for r in
+        db.conn.execute("SELECT account, balance FROM economy_accounts")
+    )["国库"] == 999
+
+    # 删掉真源行 → 视图同步少一行，余额回落默认，绝不从镜像「复活」
+    db.conn.execute("DELETE FROM metrics WHERE key='国库'")
+    db.conn.commit()
+    assert "国库" not in [
+        r["account"] for r in db.conn.execute("SELECT account FROM economy_accounts")
+    ]
+    assert db.load_state("").metrics["国库"] != 999
+
+
+def test_legacy_save_with_economy_accounts_table_reopens_as_view(tmp_path):
+    """#1889：既存存档里 economy_accounts 是**实体表**，重开须按真实类型清掉并建视图。
+
+    SQLite 不允许用 DROP VIEW 删表（DROP TABLE 删视图亦然），故走
+    _drop_economy_accounts_object 按 sqlite_master.type 分派；余额不丢——
+    真源一直是 metrics，删掉的只是可漂移的镜像表。
+    """
+    import sqlite3
+
+    path = str(tmp_path / "legacy.db")
+    raw = sqlite3.connect(path)
+    raw.execute("PRAGMA foreign_keys=ON")
+    raw.executescript(
+        """
+        CREATE TABLE metrics (key TEXT PRIMARY KEY, value INTEGER NOT NULL);
+        CREATE TABLE economy_accounts (
+            account TEXT PRIMARY KEY,
+            metric_key TEXT NOT NULL UNIQUE,
+            balance INTEGER NOT NULL,
+            note TEXT NOT NULL,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE TABLE economy_ledger (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            turn INTEGER NOT NULL, year INTEGER NOT NULL, period INTEGER NOT NULL,
+            account TEXT NOT NULL, delta INTEGER NOT NULL,
+            balance_after INTEGER NOT NULL, category TEXT NOT NULL, reason TEXT NOT NULL,
+            event_id TEXT, edict_id INTEGER, actor TEXT,
+            FOREIGN KEY(account) REFERENCES economy_accounts(account)
+        );
+        INSERT INTO metrics VALUES ('国库', 321), ('内库', 441);
+        INSERT INTO economy_accounts VALUES ('国库','国库',321,'n','t'), ('内库','内库',441,'n','t');
+        INSERT INTO economy_ledger (turn,year,period,account,delta,balance_after,category,reason)
+            VALUES (1,1627,1,'国库',-5,316,'户部','旧档流水');
+        """
+    )
+    raw.commit()
+    raw.close()
+
+    db = GameDB(path)
+    assert db.conn.execute(
+        "SELECT type FROM sqlite_master WHERE name='economy_accounts'"
+    ).fetchone()["type"] == "view"
+    # 老 economy_ledger 的 FK(account)→economy_accounts 已随该表移除（否则任何写入
+    # 报 foreign key mismatch）；只追加的流水账逐行保留，一行不丢
+    assert db.conn.execute("PRAGMA foreign_key_list(economy_ledger)").fetchall() == []
+    kept = db.conn.execute(
+        "SELECT account, delta, balance_after, reason FROM economy_ledger"
+    ).fetchall()
+    assert [(r["account"], r["delta"], r["balance_after"], r["reason"]) for r in kept] == [
+        ("国库", -5, 316, "旧档流水")
+    ]
+    # 外键保护必须仍开着（PRAGMA 在事务内是 no-op，漏 commit 会静默关掉整库外键）
+    assert int(db.conn.execute("PRAGMA foreign_keys").fetchone()[0]) == 1
+
+    state = db.load_state("")
+    assert {r["account"] for r in db.conn.execute("SELECT account FROM economy_accounts")} == {
+        "国库", "内库"
+    }
+    assert int(db.conn.execute(
+        "SELECT balance FROM economy_accounts WHERE account='国库'"
+    ).fetchone()["balance"]) == state.metrics["国库"]
+    # 再开一次仍幂等（不会因已是视图而报错）
+    assert GameDB(path).load_state("").metrics["国库"] == state.metrics["国库"]
+
+
+def test_economy_ledger_rejects_account_outside_economy_accounts(fresh_game):
+    """#1889：account ∈ ECONOMY_ACCOUNTS 改在真实写口 fail-loud 校验。
+
+    （原为 economy_ledger 的 FOREIGN KEY(account)→economy_accounts；该表降级为
+    视图后 SQLite 不支持外键指向视图，约束迁到写口，覆盖面不减。）
+    """
+    db, state = fresh_game
+    with pytest.raises(ValueError, match="economy_ledger account 非法"):
+        db.record_issue_economy_move(
+            state, "私库", -5, "测试", "测试非法科目",
+        )
+
+
+def test_economy_move_writes_live_balance_in_same_transaction(fresh_game):
+    """#1889：流水行与活余额同事务落库，DB 与内存不分叉。
+
+    实测（#1490 批红整批回滚）：一笔已提交的内帑发饷，内存 433 / DB 440 ——
+    旧实现只改内存 state.metrics，落库全靠 save_state，镜像表又反向盖回内存，
+    两边各写各的。此处断言记完一笔后三者（内存 / metrics 表 / 视图）同值。
+    """
+    db, state = fresh_game
+    opening = int(state.metrics["内库"])
+    db.record_issue_economy_move(
+        state, "内库", -7, "户部", "发内帑协饷",
+    )
+    db.conn.commit()
+    expected = opening - 7
+    assert state.metrics["内库"] == expected
+    assert int(db.conn.execute(
+        "SELECT value FROM metrics WHERE key='内库'"
+    ).fetchone()["value"]) == expected
+    assert int(db.conn.execute(
+        "SELECT balance FROM economy_accounts WHERE account='内库'"
+    ).fetchone()["balance"]) == expected
+    last = db.conn.execute(
+        "SELECT balance_after FROM economy_ledger WHERE account='内库' ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    assert int(last["balance_after"]) == expected
+    # 关档重开后仍是同一个真值
+    db.conn.commit()
+    assert GameDB(db.path).load_state("").metrics["内库"] == expected
+
+
 @pytest.mark.parametrize(
     ("region_id", "mutate", "match"),
     [
