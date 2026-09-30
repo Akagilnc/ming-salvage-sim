@@ -11,8 +11,6 @@
 
 from __future__ import annotations
 
-import time
-
 import pytest
 
 import web_app
@@ -79,13 +77,6 @@ def test_closing_restore_path_still_catches_up(game):
     assert db.get_story_extract_status(ctid) == "done"
 
 
-def _drain(queue) -> None:
-    deadline = time.monotonic() + 20.0
-    while time.monotonic() < deadline and queue.inflight_count() > 0:
-        time.sleep(0.05)
-    assert queue.inflight_count() == 0, "重开补跑票据未排空"
-
-
 def _ledger_rows(game, nid, ctid) -> int:
     return int(game.db.conn.execute(
         "SELECT COUNT(*) AS c FROM story_ledger_entries "
@@ -127,7 +118,8 @@ def test_reopen_webgame_catches_up_pending_translation(tmp_path, monkeypatch):
 
     reopened = web_app.WebGame(fresh=False)
     try:
-        _drain(reopened._runtime_write_queue())
+        # 排空走队列唯一真源 wait_idle（禁另造轮询/sleep 排空）。
+        assert reopened._runtime_write_queue().wait_idle(), "重开补跑票据未排空"
         assert reopened.db.get_story_extract_status(ctid) == "done"
         assert _ledger_rows(reopened, nid, ctid) >= 1
         reopened.session.close()
@@ -137,7 +129,7 @@ def test_reopen_webgame_catches_up_pending_translation(tmp_path, monkeypatch):
     # 再次重开不增副本（恢复是补跑，不是重复落账）。
     again = web_app.WebGame(fresh=False)
     try:
-        _drain(again._runtime_write_queue())
+        assert again._runtime_write_queue().wait_idle(), "重开补跑票据未排空"
         assert _ledger_rows(again, nid, ctid) == 1
     finally:
         again.session.close()

@@ -18,7 +18,14 @@ from ming_sim.exceptions import LLMUnavailable
 from ming_sim.models import LLMConfig
 from ming_sim.session import GameSession
 from ming_sim.session_write_queue import get_session_write_queue
-from tests.conftest import offline_empty_audience_translate, persist_and_schedule_scene, stub_audience_translate, stub_scene_agent
+from tests.conftest import (
+    note_queue_until_game_teardown,
+    offline_empty_audience_translate,
+    persist_and_schedule_scene,
+    stub_audience_translate,
+    stub_scene_agent,
+)
+from tests.test_session_write_queue_1353 import wait_pending_writes
 
 
 def _sess(db, state, content, monkeypatch, translate_fn):
@@ -35,6 +42,8 @@ def _sess(db, state, content, monkeypatch, translate_fn):
     sess._beat_generator = None
     sess._scene_registry = None
     sess._write_gate = get_session_write_queue(sess).write_gate
+    # 断言失败时预推仍在跑；登记后夹具在关库前先排空，任务不越过清理边界。
+    note_queue_until_game_teardown(db, get_session_write_queue(sess))
     stub_audience_translate(monkeypatch, translate_fn)
     stub_scene_agent(monkeypatch, SimpleNamespace(
         run=lambda _message: SimpleNamespace(content="臣领旨。", tools=[]),
@@ -128,7 +137,9 @@ def test_scene_chat_approval_forecasts_each_decree_without_visible_effect(game, 
     ctid = db.create_chat_turn(state, "殿上", "scene", 0, night_id=int(night["id"]))
     result = sess.scene_chat("两道都准", chat_turn_id=ctid)
     persist_and_schedule_scene(sess, db, result)
-    assert get_session_write_queue(sess).wait_idle(timeout_s=5)
+    # 预推每腿真做材料树（数百文件），5s 墙钟短于工作本身：按 ADR 0149
+    # 「无 elapsed 熔断」走无时限排空（CI job 终线承接挂死）。
+    wait_pending_writes(sess)
 
     assert db.conn.execute(
         "SELECT 1 FROM staged_declarations WHERE decree_ref=?",
@@ -235,7 +246,7 @@ def test_scene_chat_rejection_is_staged_for_later_rescript_not_shown_at_night(
     ctid = db.create_chat_turn(state, "殿上", "scene", 0, night_id=int(night["id"]))
     result = sess.scene_chat("准这道", chat_turn_id=ctid)
     persist_and_schedule_scene(sess, db, result)
-    assert get_session_write_queue(sess).wait_idle(timeout_s=5)
+    wait_pending_writes(sess)
 
     stored = db.staged_declarations.staged_for(pending_action_decree_ref(pending_id, 1))
     assert len(stored) == 1
@@ -286,7 +297,7 @@ def test_repeat_scene_approval_does_not_rerun_exhausted_forecast(game, monkeypat
         ctid = db.create_chat_turn(state, "殿上", "scene", 0, night_id=int(night["id"]))
         result = sess.scene_chat(message, chat_turn_id=ctid)
         persist_and_schedule_scene(sess, db, result)
-        assert get_session_write_queue(sess).wait_idle(timeout_s=5)
+        wait_pending_writes(sess)
         assert calls == [1]
         assert db.staged_declarations.staged_for(pending_action_decree_ref(pending_id, 1)) == ()
     assert calls == [1]
@@ -372,7 +383,8 @@ def test_held_rejudgments_overlap_instead_of_waiting_in_one_worker(game, monkeyp
             entered.append(1)
             if len(entered) == 2:
                 gate.set()
-        assert gate.wait(2)
+        # 无时限：等的是对方那条腿（含其材料树），2s 墙钟短于真实工作。
+        gate.wait()
         return "预推"
 
     monkeypatch.setattr(decree_mod, "run_agent_text", judge)
@@ -383,7 +395,7 @@ def test_held_rejudgments_overlap_instead_of_waiting_in_one_worker(game, monkeyp
     )
     sess = _sess(db, state, content, monkeypatch, lambda *_a, **_k: {})
     assert forecast_mod.schedule_held_decree_forecasts(sess) is True
-    assert get_session_write_queue(sess).wait_idle(timeout_s=5)
+    wait_pending_writes(sess)
     assert len(entered) == 2
     for dossier_id, pending_id in zip(ids, pending_ids):
         stale_ref = pending_action_decree_ref(pending_id, 1)
@@ -444,7 +456,8 @@ def test_same_local_ids_on_two_saves_both_stage(game, _game_template_path, monke
             if len(entered) >= 2:
                 release.set()
         started.set()
-        assert release.wait(2)
+        # 无时限：等的是另一档那条腿（含其材料树），2s 墙钟短于真实工作。
+        release.wait()
         dossier = json.loads(prompt)["dossiers"][0]
         return json.dumps({
             "verdicts": [{"dossier_id": dossier["id"], "decision": "promulgated"}],
@@ -475,12 +488,13 @@ def test_same_local_ids_on_two_saves_both_stage(game, _game_template_path, monke
         assert forecast_mod.schedule_pending_decree_forecast(
             armed[0][0], armed[0][2], night_id=armed[0][3],
         ) is True
-        assert started.wait(2)
+        # 无时限：等第一条腿跑完材料树到判官，2s 墙钟短于真实工作。
+        started.wait()
         assert forecast_mod.schedule_pending_decree_forecast(
             armed[1][0], armed[1][2], night_id=armed[1][3],
         ) is True
         for sess, one_db, pending_id, _night_id in armed:
-            assert get_session_write_queue(sess).wait_idle(timeout_s=5)
+            wait_pending_writes(sess)
             stored = one_db.staged_declarations.staged_for(
                 pending_action_decree_ref(pending_id, 1),
             )
@@ -489,5 +503,5 @@ def test_same_local_ids_on_two_saves_both_stage(game, _game_template_path, monke
     finally:
         release.set()
         for sess, *_rest in armed:
-            get_session_write_queue(sess).wait_idle(timeout_s=5)
+            wait_pending_writes(sess)
         other.close()
