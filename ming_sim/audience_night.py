@@ -1175,10 +1175,15 @@ def _drain_pending_translations_or_fail_closed(
     game_state: Any = None,
     write_queue: Any = None,
 ) -> None:
-    """收夜提交前：转译已在 OPEN 期 join；此处再 catch-up 待补转译。
+    """收夜提交前的 catch-up 入口（#1898：同次收夜只跑一次）。
 
     ADR 0036 后出注记 / #1842：待补不再 fail-closed 中止收夜。join/补跑后仍
     pending 的留给过月 join / 原地重试（0157）。
+
+    #1898：同次收夜只在 OPEN 分支跑一次补跑；本函数只服务「进来时已是 CLOSING」
+    的崩溃恢复口（那是另一次收夜尝试，不是同次第二处重复调用）。首次补跑耗尽
+    时该轮保持待补，**不由本函数或任何同次收夜路径再自动调一次模型**——补跑权
+    归 #1846 的玩家重试与过月 join。
 
     ``extract_status`` 由转译通路独占；未完成的轮次留给过月 join /
     原地重试，不再保留旧故事抽取通路。
@@ -1255,6 +1260,7 @@ def close_night(
     if night["status"] == NIGHT_STATUS_CLOSED:
         return {"closed": True, "night_id": int(night_id), "already": True}
 
+    caught_up_here = False
     if night["status"] == NIGHT_STATUS_OPEN:
         wait_in_flight_clear(
             db, night_id, write_gate=write_gate,
@@ -1269,6 +1275,7 @@ def close_night(
                 write_gate=write_gate,
                 write_queue=write_queue,
             )
+            caught_up_here = True
         with gate:
             _set_night_fields(
                 db, night_id, status=NIGHT_STATUS_CLOSING,
@@ -1298,10 +1305,14 @@ def close_night(
                 detail={"night_id": int(night_id), "step": int(step)},
             )
 
-    _drain_pending_translations_or_fail_closed(
-        db, int(night_id), llm_config=llm_config, write_gate=write_gate,
-        game_state=state, translate_fn=translate_fn, write_queue=write_queue,
-    )
+    # #1898：同次收夜只补跑一次。OPEN 分支已补跑过则此处不再自动调模型
+    # （耗尽的那轮保持待补，交 #1846 玩家重试 / 过月 join）；只有「进来时
+    # 已是 CLOSING」的崩溃恢复口才在此补跑——那是另一次收夜尝试。
+    if not caught_up_here:
+        _drain_pending_translations_or_fail_closed(
+            db, int(night_id), llm_config=llm_config, write_gate=write_gate,
+            game_state=state, translate_fn=translate_fn, write_queue=write_queue,
+        )
 
     # ── Phase 1: short writes for draft-dossier prerequisites only ─────────
     with gate:
