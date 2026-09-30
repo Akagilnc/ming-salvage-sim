@@ -27,7 +27,7 @@ from ming_sim.context import bind_content
 from ming_sim.db import GameDB
 from ming_sim.exceptions import SettlementAbort
 from ming_sim.fiscal_tick import settle_tick
-from ming_sim.flows import army_needed
+from ming_sim.army_pay import army_needed
 from ming_sim.issues import sync_opening_legacies
 from ming_sim.models import TurnPhase
 from tests.fiscal_test_utils import zero_non_meta_fiscal_config
@@ -2467,7 +2467,7 @@ def test_tusi_self_funded_army_skips_pay_morale_channel(fresh_db):
 
 
 def test_army_pay_morale_formula_clamps_shortfall_and_old_arrears_gate():
-    from ming_sim.flows import army_pay_morale_delta
+    from ming_sim.army_pay import army_pay_morale_delta
 
     assert army_pay_morale_delta(0, 5, 0) == 0
     assert army_pay_morale_delta(10, 12, 0) == -8

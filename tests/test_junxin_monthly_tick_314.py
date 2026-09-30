@@ -17,7 +17,8 @@ from __future__ import annotations
 
 import pytest
 
-from ming_sim.flows import army_loyalty_tick_delta, apply_fixed_period_flows
+from ming_sim.army_pay import army_loyalty_tick_delta
+from ming_sim.flows import apply_fixed_period_flows
 
 KEG = "guanning"    # 火药桶/主测军（content 军，needed 可控）
 ELITE = "jingying"  # 精锐对照军

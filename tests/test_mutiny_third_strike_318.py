@@ -10,7 +10,8 @@ from types import SimpleNamespace
 import pytest
 
 from ming_sim.db import GameDB
-from ming_sim.flows import apply_fixed_period_flows, derive_army_mutiny_state
+from ming_sim.army_pay import derive_army_mutiny_state
+from ming_sim.flows import apply_fixed_period_flows
 
 ARMY = "guanning"
 PATHS = ("legacy", "substrate_hub")
@@ -580,15 +581,23 @@ def test_single_production_zero_manpower_clear_callsite():
 
 
 def test_single_production_owner_power_updater_exists():
-    """仓内生产 UPDATE owner_power 只经 transition_army_owner_power 一处。"""
+    """仓内生产 UPDATE owner_power 只经 transition_army_owner_power 一处。
+
+    #1901：第三振计算搬到 ming_sim.army_pay（军饷腿），本护栏随写口改查
+    army_pay，并同时守住 flows 不再直写 owner——两处都不得手写 SET owner_power。
+    """
     import inspect
+    import ming_sim.army_pay as army_pay_mod
     import ming_sim.db as db_mod
     import ming_sim.flows as flows_mod
 
     src_db = inspect.getsource(db_mod.GameDB)
     # 生产方法体之外不应再手写 SET owner_power（seed/migration 除外，它们在其他方法）
     assert "def transition_army_owner_power" in src_db
-    # flows 第三振必须调用 adapter，不直写 owner
+    # army_pay 第三振必须调用 adapter，不直写 owner
+    src_pay = inspect.getsource(army_pay_mod)
+    assert "transition_army_owner_power" in src_pay
+    assert "SET owner_power" not in src_pay
+    # 旧大块 flows 同样不得直写 owner
     src_flows = inspect.getsource(flows_mod)
-    assert "transition_army_owner_power" in src_flows
     assert "SET owner_power" not in src_flows

@@ -1248,7 +1248,8 @@ def test_materialize_requires_real_promulgated_dossier(game):
 
 def test_central_due_haircut_consumer(game):
     """中央份额 Due 折发读端：floor 折算、余数免除、地域/饷源精确、无折恒等。"""
-    from ming_sim.flows import _central_dues_with_haircut, army_needed
+    from ming_sim.army_pay import army_needed
+    from ming_sim.flows import _central_dues_with_haircut
 
     db, state, _content = game
     rows = db.conn.execute(
@@ -1404,7 +1405,7 @@ def test_oracle_independent_of_debt_mapping(monkeypatch):
 def test_fact_brief_per_source_windows_and_region_attribution(game):
     """分源欠饷月数＝ceil(分源现欠/月需)，province/central 各自独立成窗；
     army 级事实带属地 region（=station_region，#659）；零分母短路不计。"""
-    from ming_sim.flows import army_needed
+    from ming_sim.army_pay import army_needed
 
     db, _state, _content = game
     # xuan_da：need=ceil(65000×1.5/10000)=10；两源现欠钉成不同值 → 窗口必然不同
@@ -1445,7 +1446,7 @@ def test_fact_brief_zero_need_army_region_attribution_not_gated(game):
     """零需残军（manpower=0 携历史欠，0023 D6/D11）属地归因不被 need 门误删：
     月需=0 只短路欠饷月数计算（不做除法），army 仍入 region_of_army 册——
     其省源偿欠受益事实照常带 station_region 归因（#659），不落成无属地。"""
-    from ming_sim.flows import army_needed
+    from ming_sim.army_pay import army_needed
 
     db, state, _content = game
     turn = db._current_settle_turn()

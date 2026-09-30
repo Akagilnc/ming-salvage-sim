@@ -11,7 +11,7 @@
 
 import pytest
 
-from ming_sim.flows import army_needed
+from ming_sim.army_pay import army_needed
 
 
 def _pseudo(title="测试"):

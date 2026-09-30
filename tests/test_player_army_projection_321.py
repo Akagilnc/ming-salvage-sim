@@ -16,7 +16,8 @@ from ming_sim.db import (
     _qualitative_army_stat,
     mutiny_loyalty_cap,
 )
-from ming_sim.flows import apply_fixed_period_flows, derive_army_mutiny_state
+from ming_sim.army_pay import derive_army_mutiny_state
+from ming_sim.flows import apply_fixed_period_flows
 from ming_sim.knowledge import build_character_knowledge
 from ming_sim.report import print_header
 from ming_sim.materials import list_materials, prepare_character_materials, read_material

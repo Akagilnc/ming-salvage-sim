@@ -13,11 +13,11 @@ import re
 
 import pytest
 
-from ming_sim.flows import army_needed
+from ming_sim.army_pay import army_needed
 
 
 def test_army_payload_exposes_army_needed(read_game):
-    """army_payload 须暴露引擎实扣应发 army_needed（供 web/LLM 呈现「月饷」），与 flows.army_needed 一致。"""
+    """army_payload 须暴露引擎实扣应发 army_needed（供 web/LLM 呈现「月饷」），与 army_pay.army_needed 一致。"""
     db, _state, _ = read_game
     payload = db.army_payload()
     assert payload, "应有军队"

@@ -52,15 +52,15 @@ def test_loads_effect_dict_coerces_non_dict():
 
 
 def test_inertia_ongoing_non_dict_no_crash(game):
-    """apply_issue_inertia_and_ongoing（结算链 ongoing_effects 第三读取者）读到已存的真值非 dict
+    """apply_situation_monthly_drift（结算链 ongoing_effects 第三读取者）读到已存的真值非 dict
     ongoing_effects 不崩——与 _issue_auto_economy / _format_issue_ongoing 同口径外层守（#117 R2 Claude+codex）。"""
-    from ming_sim.issues import apply_issue_inertia_and_ongoing
+    from ming_sim.situation_drift import apply_situation_monthly_drift
     db, state, _content = game
     iid = db.insert_issue(state, kind="situation", title="畸形ongoing测试", bar_value=50, inertia=1)
     for bad in ('"oops"', "5", "true", "[1,2]"):
         db.conn.execute("UPDATE issues SET ongoing_effects=? WHERE id=?", (bad, iid))
         db.conn.commit()
-        apply_issue_inertia_and_ongoing(db, state)  # 不抛 AttributeError/TypeError
+        apply_situation_monthly_drift(db, state)  # 不抛 AttributeError/TypeError
 
 
 def test_apply_economy_list_skips_non_dict_items(game):

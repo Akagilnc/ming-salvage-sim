@@ -4,11 +4,11 @@ import pytest
 
 from tests.test_due_review_621 import _settle_empty_month as _player_month
 from ming_sim.issues import (
-    apply_issue_inertia_and_ongoing,
     apply_score_extraction,
     commitment_progress_payload,
     show_active_issues,
 )
+from ming_sim.situation_drift import apply_situation_monthly_drift
 
 
 def _promulgated_commitment_origin(db, state, token: str) -> str:
@@ -312,7 +312,7 @@ def test_commitment_stop_gate_resolve_respects_outer_transaction_rollback(game):
     db.conn.commit()
 
     db.conn.execute("BEGIN")
-    apply_issue_inertia_and_ongoing(db, state)
+    apply_situation_monthly_drift(db, state)
     db.conn.rollback()
 
     row = _issue_row(db, issue_id)
@@ -342,7 +342,7 @@ def test_commitment_expiry_respects_outer_transaction_rollback(game):
     db.conn.commit()
 
     db.conn.execute("BEGIN")
-    apply_issue_inertia_and_ongoing(db, state)
+    apply_situation_monthly_drift(db, state)
     db.conn.rollback()
 
     row = _issue_row(db, issue_id)
@@ -371,7 +371,7 @@ def test_commitment_monthly_ongoing_respects_outer_transaction_rollback(game):
     db.conn.commit()
 
     db.conn.execute("BEGIN")
-    apply_issue_inertia_and_ongoing(db, state)
+    apply_situation_monthly_drift(db, state)
     db.conn.rollback()
 
     assert db.conn.execute(

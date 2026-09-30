@@ -7,7 +7,7 @@ import math
 
 import pytest
 
-from ming_sim.flows import army_needed
+from ming_sim.army_pay import army_needed
 
 
 def _army_row(db, army_id):
@@ -222,7 +222,7 @@ def test_manpower_true_noop_no_log(game):
 def test_auto_pay_reaches_salary_army_via_arrears_filter(game):
     # #44 受饷资格用 arrears>0（不再 maintenance>0）；#173 删 maintenance 列后，受饷 filter 唯一
     # 依据 arrears>0。验证：salary_rate>0 累 arrears 的军被纳入受饷候选、且兜底拨饷真能花到（spent>0）。
-    from ming_sim.flows import _auto_pay_arrears_by_priority
+    from ming_sim.army_pay import _auto_pay_arrears_by_priority
     db, state, _ = game
     aid = str(db.conn.execute(
         "SELECT id FROM armies WHERE owner_power='ming' LIMIT 1").fetchone()["id"])
@@ -239,7 +239,7 @@ def test_auto_pay_reaches_salary_army_via_arrears_filter(game):
 
 def test_auto_pay_empty_allowed_ids_pays_no_armies(game):
     # #287 PR R2：空 scope 是「不允许任何军」，不能被 truthiness 当成「不限制」而回落全局池。
-    from ming_sim.flows import _auto_pay_arrears_by_priority
+    from ming_sim.army_pay import _auto_pay_arrears_by_priority
     db, state, _ = game
     aid = str(db.conn.execute(
         "SELECT id FROM armies WHERE owner_power='ming' LIMIT 1").fetchone()["id"])
@@ -255,7 +255,7 @@ def test_auto_pay_empty_allowed_ids_pays_no_armies(game):
 
 
 def test_auto_pay_strips_allowed_army_ids_before_filtering(game):
-    from ming_sim.flows import _auto_pay_arrears_by_priority
+    from ming_sim.army_pay import _auto_pay_arrears_by_priority
     db, state, _ = game
     aid = str(db.conn.execute(
         "SELECT id FROM armies WHERE owner_power='ming' LIMIT 1").fetchone()["id"])
@@ -324,7 +324,7 @@ def test_non_finite_salary_rate_anchored_not_crash():
     须落锚点、不得崩。inf>0 为真会漏过 coerce、经 army_needed 的 ceil(manpower×inf/10000) 抛
     OverflowError 崩整月结算。两道防线：_coerce_new_salary_rate（建军入口）+ army_needed（结算咽喉）。"""
     from ming_sim.db import _coerce_new_salary_rate
-    from ming_sim.flows import army_needed
+    from ming_sim.army_pay import army_needed
 
     assert _coerce_new_salary_rate(float("inf")) == 1.5, "inf→锚点"
     assert _coerce_new_salary_rate(float("-inf")) == 1.5, "-inf→锚点"

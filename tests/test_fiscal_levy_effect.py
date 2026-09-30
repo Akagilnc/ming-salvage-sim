@@ -5,7 +5,7 @@ import pytest
 
 from ming_sim.decree import pre_settle
 from ming_sim.exceptions import SettlementAbort
-from ming_sim.flows import army_needed
+from ming_sim.army_pay import army_needed
 from ming_sim.issues import apply_historical_fiscal_rates
 import ming_sim.issues as issues
 from ming_sim.models import Event

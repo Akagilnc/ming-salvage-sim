@@ -18,7 +18,8 @@ from ming_sim.due_review import (
     decide_due_review_verdict,
 )
 from ming_sim.flows import _apply_economy_list
-from ming_sim.issues import apply_issue_inertia_and_ongoing, apply_score_extraction
+from ming_sim.issues import apply_score_extraction
+from ming_sim.situation_drift import apply_situation_monthly_drift
 from ming_sim.staged_commitment import write_due_staged_commitment_todos
 from tests.test_dossier_reported_progress_619 import _world_fingerprint
 
@@ -484,7 +485,7 @@ def test_commitment_pooled_pay_arrears_inherits_beyond_intent(game):
         cancellable="decree",
     )
 
-    apply_issue_inertia_and_ongoing(db, state)
+    apply_situation_monthly_drift(db, state)
 
     rows = db.conn.execute(
         "SELECT beyond_intent, purpose, target_kind, target_id, delta "

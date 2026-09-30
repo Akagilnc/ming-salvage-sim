@@ -122,7 +122,8 @@ def test_same_issue_row_inertia_and_ongoing_reuse_parent_canonical_origin(game):
         },
     )
 
-    issue_engine.apply_issue_inertia_and_ongoing(db, state)
+    from ming_sim.situation_drift import apply_situation_monthly_drift
+    apply_situation_monthly_drift(db, state)
 
     row = db.conn.execute("SELECT bar_value, status FROM issues WHERE id=?", (issue_id,)).fetchone()
     assert (row["bar_value"], row["status"]) == (51, "active")

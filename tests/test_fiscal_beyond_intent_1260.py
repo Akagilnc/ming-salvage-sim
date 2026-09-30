@@ -18,7 +18,8 @@ from ming_sim.due_review import (
     apply_pending_due_reviews,
     decide_due_review_verdict,
 )
-from ming_sim.issues import apply_issue_inertia_and_ongoing, apply_score_extraction
+from ming_sim.issues import apply_score_extraction
+from ming_sim.situation_drift import apply_situation_monthly_drift
 from ming_sim.staged_commitment import write_due_staged_commitment_todos
 
 
@@ -521,7 +522,7 @@ def test_s3_nested_ongoing_economy_alias_旨外恶果_lands_ledger(game):
         cancellable="decree",
     )
 
-    apply_issue_inertia_and_ongoing(db, state)
+    apply_situation_monthly_drift(db, state)
 
     rows = db.conn.execute(
         "SELECT beyond_intent, reason, delta FROM economy_ledger "
