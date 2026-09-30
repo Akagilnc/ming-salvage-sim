@@ -1,5 +1,5 @@
 import React from "react";
-import { Loader2, Trash2 } from "lucide-react";
+import { Loader2, Trash2, X } from "lucide-react";
 import type { CasedDirective, Directive, GameState, LocalDirectiveItem } from "../types";
 
 /** #1764：source/actor 结构化字段直接并列（P7/0142；非角色台词模板）。 */
