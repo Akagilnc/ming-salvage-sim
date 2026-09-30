@@ -184,10 +184,10 @@ def test_public_saying_excluded_name_does_not_see_it_others_do(
     before_turn = int(state.turn)
     plain_claim = "边情已定，漕运如常"
     record_public_saying(db, state, plain_claim)
-    author_seen: dict = {}
+    seen_materials: dict[str, str] = {}
 
-    def author_model(agent, prompt, tag, **_kwargs):
-        assert tag == "gazette", f"unexpected agent tag: {tag!r}"
+    def model(agent, prompt, tag, **_kwargs):
+        assert tag in {"world-segment", "gazette"}, f"unexpected agent tag: {tag!r}"
         listing, read = "", None
         for tool in getattr(agent, "tools", []) or []:
             entry = getattr(tool, "entrypoint", tool)
@@ -195,19 +195,29 @@ def test_public_saying_excluded_name_does_not_see_it_others_do(
                 listing = entry()
             elif getattr(entry, "__name__", "") == "read_material":
                 read = entry
-        assert read is not None, "邸报作者没有材料目录读口"
-        author_seen["materials"] = listing + "\n" + "\n".join(
+        assert read is not None, f"{tag} 没有材料目录读口"
+        seen_materials[tag] = listing + "\n" + "\n".join(
             read(rel) for rel in listing.splitlines() if rel.endswith(".txt")
         )
-        return json.dumps(
-            {"title": "本月邸报", "report": "本月朝局如常。"}, ensure_ascii=False,
-        )
+        if tag == "gazette":
+            return json.dumps(
+                {"title": "本月邸报", "report": "本月朝局如常。"}, ensure_ascii=False,
+            )
+        return "本月边事如常。"
 
-    monkeypatch.setattr("ming_sim.agents.run_agent_text", author_model)
+    monkeypatch.setattr("ming_sim.agents.run_agent_text", model)
     monkeypatch.setattr(
         "ming_sim.mechanical_tail._run_tail_body", lambda *_a, **_k: "done",
     )
-    session = _prepare_player_month(db, state, content, monkeypatch)
+    # 世界段（ADR 0155 推演者三层全看）与邸报作者走同一次真实过月：
+    # 排除边界按调用职责分两侧，不另起第二套同根夹具。
+    from ming_sim import month_chain
+
+    real_world = month_chain.run_world_segment_text
+    session = _prepare_player_month(
+        db, state, content, monkeypatch,
+        world=lambda *a, **k: real_world(*a, **k),
+    )
     session.llm_config = LLMConfig(
         api_key="sk-test", base_url="https://example.invalid", model="test",
     )
@@ -229,11 +239,12 @@ def test_public_saying_excluded_name_does_not_see_it_others_do(
         "WHERE character_name='' AND source_id=?", (source_id,),
     ).fetchone() is None
 
-    # #1829 C1 根因：受排除的公开说法不得进入公共邸报作者的供料目录。
-    # 判据看作者真读到的材料，不看它写什么措辞。
-    author_materials = author_seen["materials"]
-    assert claim not in author_materials, "受排除说法绕过了邸报作者供料边界"
-    assert plain_claim in author_materials, "无排除的公开说法应照常供料"
+    # #1829 C1/F1 根因：排除边界按调用职责落，不按有无姓名落。
+    # 判据看两侧角色真读到的材料，不看它们写什么措辞：
+    # 全量推演者（ADR 0155 三层全看）应读到受排除说法；公共邸报作者不得读到。
+    assert claim in seen_materials["world-segment"], "全量推演者应按三层全看读到受排除说法"
+    assert claim not in seen_materials["gazette"], "受排除说法绕过了邸报作者供料边界"
+    assert plain_claim in seen_materials["gazette"], "无排除的公开说法应照常供料"
 
     # 票面「过月、重开、再召见」的重开腿：换库重读，排除边界与「只读一次」都还在。
     shutil.copy(db.path, tmp_path / "reopen.db")
@@ -260,54 +271,6 @@ def test_public_saying_excluded_name_does_not_see_it_others_do(
         ).fetchone() is None
     finally:
         reopened.close()
-
-
-def test_excluded_saying_reaches_full_simulator_but_not_public_gazette(
-    game, monkeypatch,
-):
-    """#1829 F1：排除边界按调用职责落，不按有无姓名落。
-
-    世界段（ADR 0155 推演者三层全看）应读到受排除说法；同一份说法不得进
-    公共邸报作者供料。两侧都走真实入口 run_world_segment_text /
-    run_gazette_text，只替模型传输。
-    """
-    from ming_sim import month_chain
-    from ming_sim.models import LLMConfig
-
-    db, state, content = game
-    claim = "袁崇焕已死于宁远"
-    hidden = _礼部大臣(content).name
-    record_public_saying(
-        db, state, claim, involved_characters=["袁崇焕"], excluded_names=[hidden],
-    )
-    seen: dict[str, str] = {}
-
-    def model(agent, prompt, tag, **_kwargs):
-        listing, read = "", None
-        for tool in getattr(agent, "tools", []) or []:
-            entry = getattr(tool, "entrypoint", tool)
-            if getattr(entry, "__name__", "") == "list_materials":
-                listing = entry()
-            elif getattr(entry, "__name__", "") == "read_material":
-                read = entry
-        assert read is not None, f"{tag} 没有材料目录读口"
-        seen[tag] = listing + "\n" + "\n".join(
-            read(rel) for rel in listing.splitlines() if rel.endswith(".txt")
-        )
-        if tag == "gazette":
-            return json.dumps({"title": "本月邸报", "report": "本月朝局如常。"},
-                              ensure_ascii=False)
-        return "本月边事如常。"
-
-    monkeypatch.setattr("ming_sim.agents.run_agent_text", model)
-    llm_config = LLMConfig(
-        api_key="sk-test", base_url="https://example.invalid", model="test",
-    )
-    assert month_chain.run_world_segment_text(db, state, llm_config) == "本月边事如常。"
-    assert month_chain.run_gazette_text(db, state, llm_config, {})[0] == "本月邸报"
-
-    assert claim in seen["world-segment"], "全量推演者应按三层全看读到受排除说法"
-    assert claim not in seen["gazette"], "受排除说法绕过了公共邸报作者供料边界"
 
 
 def test_public_saying_survives_same_turn_archive_projection(game):
