@@ -160,16 +160,6 @@ def test_abolished_liao_levy_rejected_rise_stays_stopped(game):
     assert _settle(db)["p"]["三饷应征"] == 0.0
 
 
-def test_rejected_rise_without_abolition_keeps_nine_li_baseline(game):
-    """未罢辽饷而驳升率 → 仍用九厘基线征（不误停征）。"""
-    db, state = _at(game, 1631, 1, 10)
-    seed = _settle(db)["p"]["三饷应征"]
-    _emperor_rates_rise(db, state, 12, label="已驳")
-    db, state = _settle_month(game, 13)
-
-    assert _settle(db)["p"]["三饷应征"] == pytest.approx(seed)
-
-
 # ── 复征贯通全部两种罢征写口（R1）─────────────────────────────────────────
 
 @pytest.mark.parametrize("zeroing", [False, True], ids=["abolish_by_removal", "abolish_by_zeroing"])
@@ -479,15 +469,9 @@ def test_abolition_moves_real_persisted_treasury_ledger(game):
         db, state = _settle_month(game, turn)
         return month_remittance(db, turn)
 
-    def month_ledger_rows(db, turn):
-        return db.conn.execute(
-            "SELECT COUNT(*) AS n FROM economy_ledger WHERE turn = ?", (turn,),
-        ).fetchone()["n"]
-
     db, state = _at(game, 1627, 10, 1)
     baseline = settle_for_turn(game, 1)
     assert baseline > 0, "未罢时起运入京应有流水"
-    baseline_rows = month_ledger_rows(db, 1)
 
     _abolish(db, state, 2, stem="辽饷")
     _abolish(db, state, 2, stem="田赋")
@@ -507,7 +491,214 @@ def test_abolition_moves_real_persisted_treasury_ledger(game):
     restored = settle_for_turn(game, 3)
     assert restored > 0, "复征后国库应重新入账"
     assert restored == pytest.approx(baseline, rel=0.2)
-    # 一条月链只落一次财政：若在 `pre_settle` 之外再调一次 apply_fixed_period_flows，
-    # 同月固定流水会整批落两遍。这里钉住**不翻倍**这一侧（逐月笔数本身随欠账结清
-    # 会有自然增减，故取单侧断言而非相等）。
-    assert month_ledger_rows(db, 3) <= baseline_rows, "复征当月流水笔数不得多于未罢基线（重复落账会翻倍）"
+    # 「一条月链只落一次财政」由上面的**实账金额**承担：若在 `pre_settle` 之外再调
+    # 一次 apply_fixed_period_flows，同月固定流水整批落两遍，`restored` 即约为
+    # `baseline` 的两倍。逐月**笔数**不作断言——笔数随欠账结清自然增减，与重复落账
+    # 无稳定对应关系，票面亦未规定该跨月笔数不变式（#1899 R5：测试向外部行为契约
+    # 负责，不保护内部代理关系）。
+
+
+# ── 真实批红的委托接缝：案头批红 → 事件账 → 财政消费（R1）──────────────────
+
+def test_real_rescript_ruling_reaches_event_ledger_and_fiscal_consumption(game):
+    """R1：走**真实案头批红**（案头物化 → 校验 → 批红）批「准」，复征真被消费。
+
+    本票此前的验收全部直接调 `record_event_decision_choice` 这个**底层写口**，
+    从未经过 Web 真实批红链路。而真实链路上这道批语**到不了**那个写口：请旨机标
+    （`<<DECISION>>`，#1891 交来）自带的 `event_id` 事件绑定在 `_question_as_decision`
+    物化时被丢掉，案头行只剩 `world-question:` 身份；`apply_rescript_batch` 又按该
+    前缀明确跳过 `record_event_decision_choice`——皇帝真批了「准」，事件账仍无
+    choice、目录仍罢，下月三饷应征 0（judge 独立复现 188bf9）。
+
+    本例补上这条已委托的接缝证据：批红经案头真入口，断言落在外部可见结构上
+    （`event_triggers.choice_json` / `fiscal_config` 目录 / 下月 `settle.p`）。
+    """
+    from ming_sim.month_chain import _WORLD_QUESTION_PREFIX, _question_as_decision
+    from ming_sim import rescript_actions as ra
+
+    db, state = _at(game, 1631, 1, 15)
+    _abolish(db, state, 15)
+    assert _rate_row(db, "辽饷_rate") is None, "本用例前提：辽饷目录已罢"
+
+    # 世界段请旨机标（#1891 交接形状：块内显式带 event_id 绑定，不从疏文猜配）。
+    question = {
+        "title": "辽饷加派",
+        "context": "户部请加辽饷",
+        "event_id": RISE_EVENT_ID,
+        "options": [{"label": "已准", "hint": ""}, {"label": "已驳", "hint": ""}],
+    }
+    decision = _question_as_decision(question, event_id=f"{_WORLD_QUESTION_PREFIX}15:0")
+    assert decision["bound_event_id"] == RISE_EVENT_ID, "事件绑定不得在物化时丢失"
+
+    db.save_pending_decisions(15, [decision])
+    desk = db.list_rescript_desk(15)
+    batch = ra.validate_all(desk, [{"decision_key": desk[0]["decision_key"], "label": "已准"}])
+    ra.apply_rescript_batch(db, state, batch, ra.PrewriteResults(), content=game[2])
+    db.conn.commit()
+
+    row = db.conn.execute(
+        "SELECT choice_json FROM event_triggers WHERE event_id = ?", (RISE_EVENT_ID,),
+    ).fetchone()
+    assert row is not None, "真实批红未落进事件账"
+    assert json.loads(row["choice_json"])["label"] == "已准"
+
+    db, state = _settle_month(game, 16)
+    reopened = _settle(db)
+    assert reopened["p"]["三饷应征"] == pytest.approx(
+        reopened["_meta"]["辽饷九厘基线"] * 4.0 / 3.0
+    ), "真实批红的「准」应复征，下月按新率征"
+
+
+def test_ruling_without_event_binding_leaves_event_ledger_untouched(game):
+    """反向契约：无绑定的普通请旨**不得**被猜配进任何事件账（ADR 0142）。
+
+    绑定只认机标显式带来的那一个。没有绑定就没有事件可落——否则等于从疏文猜
+    哪个事件，替 LLM 决定事件归属。
+    """
+    from ming_sim.month_chain import _WORLD_QUESTION_PREFIX, _question_as_decision
+
+    db, state = _at(game, 1631, 1, 15)
+    question = {
+        "title": "寻常请旨",
+        "context": "无事件绑定",
+        "options": [{"label": "已准", "hint": ""}, {"label": "已驳", "hint": ""}],
+    }
+    decision = _question_as_decision(question, event_id=f"{_WORLD_QUESTION_PREFIX}15:0")
+    assert "bound_event_id" not in decision
+
+    db.save_pending_decisions(15, [decision])
+    row = db.conn.execute(
+        "SELECT 1 FROM event_triggers WHERE event_id = ?", (RISE_EVENT_ID,),
+    ).fetchone()
+    assert row is None, "无绑定的请旨不得凭空造出事件账行"
+
+
+# ── 更晚的批语取代更早的「准」：目录须与事件账一致（R2）────────────────────
+
+@pytest.mark.parametrize("zeroing", [False, True], ids=["abolish_by_removal", "abolish_by_zeroing"])
+def test_later_rejection_withdraws_earlier_approval_on_same_pending_event(game, zeroing):
+    """R2：同一未终态事件上「先准 → 后驳」→ 撤回归因，目录与事件账一致。
+
+    事件在未终态阶段可被重交批语（`record_event_decision_choice` 覆盖 choice_json），
+    事件账以最后一条批语为准记成「已驳」；但先前那道「准」已经经真写口把目录重立，
+    驳回对目录不作任何变更——事件账说驳、目录说在征，下月照旧征 2.1969
+    （judge 独立复现 188bf9）。「以最后一次批语为准」（owner 裁定 2026-10-01）
+    对「罢」成立，对「准」也必须成立。
+
+    撤回严格限定本事件自己写下的那几笔：别处（皇帝罢征、fiscal_creates 复征）不碰。
+    """
+    db, state = _at(game, 1631, 1, 15)
+    _abolish(db, state, 15, zeroing=zeroing)
+    _emperor_rates_rise(db, state, 15, label="已准")
+    assert _rate_row(db, "辽饷_rate") is not None, "本用例前提：准已重立目录"
+
+    _emperor_rates_rise(db, state, 16, label="已驳")
+    row = db.conn.execute(
+        "SELECT terminal_reason, choice_json FROM event_triggers WHERE event_id = ?",
+        (RISE_EVENT_ID,),
+    ).fetchone()
+    assert json.loads(row["choice_json"])["label"] == "已驳"
+    assert row["terminal_reason"] == "已驳"
+
+    db, state = _settle_month(game, 17)
+
+    assert _settle(db)["p"]["三饷应征"] == 0.0, (
+        "更晚的驳回应撤回归因，下月不得复征（目录与事件账必须一致）"
+    )
+
+
+def test_rejection_without_prior_approval_does_not_abolish(game):
+    """反向契约：驳回面对一道**从未准过**的辽饷，不得凭空罢征。
+
+    撤回只撤本事件自己造成的效果；无「准」可撤时目录不动，票面「驳不自行恢复
+    罢征」照旧成立，驳也从不自行**罢**征（不发明「所有驳回都罢征」的新政策）。
+    """
+    db, state = _at(game, 1631, 1, 10)
+    seed = _settle(db)["p"]["三饷应征"]
+
+    _emperor_rates_rise(db, state, 12, label="已驳")
+    db, state = _settle_month(game, 13)
+
+    assert _settle(db)["p"]["三饷应征"] == pytest.approx(seed), (
+        "一道驳回不得凭空罢征"
+    )
+
+
+# ── 共享 dynamic 科目重立须恢复省级收入源（R3）──────────────────────────────
+
+def test_recreated_salt_tax_restores_province_revenue_source(game):
+    """R3：重立盐税后实收真回来（目录行只是系数，省级字段才是实收源）。
+
+    盐税／商税的实收走 `regions.fiscal.salt_tax` / `commerce_tax`（flows 盐商旁路
+    直接汇总该字段），目录 `盐税_base` / `盐税_rate` 只是系数。`remove_fiscal_item`
+    罢征时把省份字段一并清零，但 `create_fiscal_item` 重立只补目录行——复征被接收、
+    目录齐全，实收却恒 0（judge 独立复现：重立 23、7 均被接收，实际月收入均为 0）。
+
+    读写对称：罢 = 删目录 + 清零省级字段，复 = 重立目录 + 恢复省级字段。
+    """
+    from ming_sim.flows import _substrate_hub_salt_commerce_income_split
+
+    db, state, content = game
+
+    def salt_side_channel():
+        return _substrate_hub_salt_commerce_income_split(db)[0]
+
+    baseline = salt_side_channel()
+    assert baseline > 0, "本用例前提：开局盐税旁路有收入"
+
+    _abolish(db, state, 10, stem="盐税")
+    assert salt_side_channel() == 0.0, "罢盐税后省级收入源应清零"
+
+    dispatch_declaration(db, state, {"effects": [{"fiscal_creates": [{
+        "key": "盐税", "account": "国库", "direction": "income", "init_value": 23,
+        "display": "盐税", "origin_ref": "盘面自发", "reason": "复征",
+    }]}]})
+    db.conn.commit()
+
+    assert salt_side_channel() == pytest.approx(baseline), (
+        "重立盐税必须同时恢复省级收入源，否则复征被接收却实收恒 0"
+    )
+    # 仍只有**一条**收入路径：重立行按 seed 声明落 dynamic，不得进中央定额预算
+    # 目录与省级那条叠成同一税项两条收入（全局硬规 #12/#14）。
+    assert all(
+        db._stem_of(str(item["key"])) != "盐税" for item in db.iter_budget_items()
+    ), "重立的 dynamic 赋税不得进入中央 fixed 预算目录"
+
+
+@pytest.mark.parametrize(
+    ("stem", "category", "init_value"),
+    [("盐税", "盐税", 23), ("商税", "商税", 7)],
+    ids=["salt_tax", "commerce_tax"],
+)
+def test_recreated_dynamic_tax_moves_real_persisted_ledger(game, stem, category, init_value):
+    """R3 实账面：罢 → 复征后**持久化的国库流水**真回来（票面「怎么验」口径）。
+
+    上一例核的是省级收入源本身；本例走 `pre_settle` 真落 `economy_ledger`，按结构化
+    `category` 取数（盐／商税在 flows 里各走自己那一路，不混入 `起运`），验的是复征
+    当月国库**实收**不再停在罢征时的水平——HEAD 上复征当月与罢征当月同值（该
+    category 整月无行），即复征白写。
+    """
+    def side_channel_remittance(db, turn):
+        row = db.conn.execute(
+            "SELECT COALESCE(SUM(delta), 0) AS total FROM economy_ledger "
+            "WHERE account = '国库' AND purpose IS NULL AND category = ? AND turn = ?",
+            (category, turn),
+        ).fetchone()
+        return float(row["total"] or 0)
+
+    db, state, content = game
+    _abolish(db, state, 10, stem=stem)
+    db, state = _settle_month(game, 11)
+    abolished_month = side_channel_remittance(db, 11)
+    assert abolished_month == 0.0, f"罢{stem}当月国库不应有该路入账"
+
+    dispatch_declaration(db, state, {"effects": [{"fiscal_creates": [{
+        "key": stem, "account": "国库", "direction": "income", "init_value": init_value,
+        "display": stem, "origin_ref": "盘面自发", "reason": "复征",
+    }]}]})
+    db.conn.commit()
+    db, state = _settle_month(game, 12)
+
+    assert side_channel_remittance(db, 12) > 0.0, (
+        f"复征{stem}后国库实收应真回来，不得停在罢征水平（复征白写）"
+    )

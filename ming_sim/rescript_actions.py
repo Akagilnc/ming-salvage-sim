@@ -1410,6 +1410,18 @@ def apply_rescript_batch(
                     db.record_event_decision_choice(
                         state, event_id, item.choice, commit=False,
                     )
+                # #1899：请旨机标带来的**事件绑定**（#1891 交接）。案头身份按前缀被
+                # 排除在事件账之外，但绑定指向的是一个真事件——这道批语须落进它的
+                # 事件账，其机械后果（升率「准」= 重新开征）才会在下月 tick 被消费。
+                # 此前绑定在 `_question_as_decision` 物化时就丢了，皇帝真批「准」，
+                # 事件账仍空、目录仍罢，下月三饷应征 0（judge 188bf9）。
+                # 绑定只取机标显式带来的那一个，不从疏文猜配（ADR 0142）；案头身份
+                # 仍管续推路由，两者分列（见 pending_decisions.bound_event_id）。
+                bound_event_id = str(item.row.get("bound_event_id") or "").strip()
+                if bound_event_id:
+                    db.record_event_decision_choice(
+                        state, bound_event_id, item.choice, commit=False,
+                    )
                 result.applied_keys.append(item.decision_key)
                 continue
 

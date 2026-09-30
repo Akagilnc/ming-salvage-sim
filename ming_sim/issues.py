@@ -1674,6 +1674,65 @@ def _fiscal_levy_reinstate_abolished(
     return created is not None
 
 
+def _fiscal_levy_withdraw_emperor_ruling(
+    db: GameDB,
+    state: GameState,
+    event_id: str,
+) -> bool:
+    """撤回**本事件自己**先前那道「准」写进目录的复征（#1899 R2）。
+
+    事件在**未终态**阶段可被重交批语（`record_event_decision_choice` 覆盖 choice_json），
+    于是出现「先准 → 后驳」：持久结局以最后一条批语为准记成「已驳」，但先前那道
+    「准」已经经真写口把目录重立了——事件账说驳、目录说在征，下月照旧征
+    2.1969（judge 独立复现 188bf9）。此前本函数只处理「已准」单向，驳回对目录不
+    作任何变更，两边就此不一致。
+
+    撤回范围严格限定为**本事件 origin 写下的那几笔**（`fiscal_config_creations` /
+    `fiscal_config_changes` 里 `origin_ref = event:<id>` 的行），按各自的旧值回退：
+      · 重立（creations：该键此前不在册）→ 删键，回到罢；
+      · 调回（changes：old_value 是调零前的值）→ 写回 old_value。
+    别的 origin（皇帝罢征的「盘面自发」、fiscal_creates 复征）一律不碰。
+
+    这**不是**「所有驳回都罢征」的新政策：只在「本事件的准被同事件更晚的批语取代」
+    时撤回它自己造成的效果；一道驳回面对一道从未准过的辽饷，本函数无笔可撤、目录
+    不动（票面「驳不自行恢复罢征」照旧成立，驳也从不自行**罢**征）。
+    """
+    origin_ref = f"event:{event_id}"
+    reverted = False
+    for row in db.conn.execute(
+        "SELECT key, old_value FROM fiscal_config_changes "
+        "WHERE origin_ref = ? AND new_value > 0 AND old_value <= 0",
+        (origin_ref,),
+    ).fetchall():
+        key = str(row["key"])
+        current = db.conn.execute(
+            "SELECT value FROM fiscal_config WHERE key = ?", (key,)
+        ).fetchone()
+        if current is None or int(current["value"] or 0) <= 0:
+            continue
+        _write_fiscal_config_change(
+            db, turn=int(state.turn), key=key,
+            old_value=int(current["value"] or 0), new_value=int(row["old_value"] or 0),
+            origin_ref=origin_ref, reason="升率批语被更晚的批语取代，撤回复征",
+        )
+        reverted = True
+    for row in db.conn.execute(
+        "SELECT DISTINCT key FROM fiscal_config_creations WHERE origin_ref = ?",
+        (origin_ref,),
+    ).fetchall():
+        key = str(row["key"])
+        if db.conn.execute(
+            "SELECT 1 FROM fiscal_config WHERE key = ?", (key,)
+        ).fetchone() is None:
+            continue
+        if db.remove_fiscal_item(
+            key, commit=False, origin_ref=origin_ref,
+            reason="升率批语被更晚的批语取代，撤回复征", turn=int(state.turn),
+        ) is not None:
+            reverted = True
+    return reverted
+
+
 def _fiscal_levy_apply_emperor_ruling(
     db: GameDB,
     state: GameState,
@@ -1694,8 +1753,11 @@ def _fiscal_levy_apply_emperor_ruling(
     按 `default_terminal_reason` 落的史实默认值）从不经过它，故「什么时候变成
     自动加了？」在结构上不可能发生——不再需要在消费端回头猜 choice_json。
 
-    非升率事件、或非「已准」的亲批（如驳回、留中），本函数不动目录：驳不自行
-    恢复罢征（票面）。
+    非升率事件的亲批不动目录。升率事件的「已准」= 重新开征；**非「已准」的亲批
+    （驳回、留中）撤回本事件更早那道「准」写下的复征**（`_fiscal_levy_withdraw_emperor_ruling`），
+    使目录与事件账的最终结局一致——「以最后一次批语为准」（owner 裁定 2026-10-01）
+    对两道效果都要成立，不能只对「罢」成立。驳**不**凭空罢征：从无「准」可撤时
+    本函数不动目录，票面「驳不自行恢复罢征」照旧。
     """
     if str(event_id or "").strip() != _LIAO_LEVY_RISE_EVENT_ID:
         return False
@@ -1703,7 +1765,7 @@ def _fiscal_levy_apply_emperor_ruling(
     if ev is None:
         return False
     if _normalize_event_terminal_reason(ev, label) != "已准":
-        return False
+        return _fiscal_levy_withdraw_emperor_ruling(db, state, _LIAO_LEVY_RISE_EVENT_ID)
     return _fiscal_levy_reinstate_abolished(
         db, state, _FISCAL_LEVY_LIAO_KEYS,
         origin_ref=f"event:{_LIAO_LEVY_RISE_EVENT_ID}",

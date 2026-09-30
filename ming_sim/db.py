@@ -2293,6 +2293,11 @@ class GameDB:
             "pending_decisions", "revision_round", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column(
             "pending_decisions", "prior_options_json", "TEXT NOT NULL DEFAULT '[]'")
+        # #1899：请旨机标带来的**事件绑定**（#1891 交接）与案头身份分列：案头身份
+        # （world-question: / decree-question:）管续推路由，事件绑定管这道批红落哪个
+        # 事件账。两者混在一列会让绑定在物化时丢失、或反过来污染续推路由。
+        self.ensure_column(
+            "pending_decisions", "bound_event_id", "TEXT NOT NULL DEFAULT ''")
         self._backfill_event_triggers_from_event_pool_issues()
         # 步骤7：回合阶段（旧库迁移，schema 升级非 fallback）
         self.ensure_column("game_state", "turn_phase", "TEXT NOT NULL DEFAULT 'summoning'")
@@ -3001,9 +3006,49 @@ class GameDB:
                 (int(turn), rate_key, 100, "rate", origin_ref, note[:240], beyond_flag),
             ],
         )
+        # #1899：重立 dynamic 赋税必须同时恢复**省级收入源**，与 `remove_fiscal_item`
+        # 罢征时的 `apply_dynamic_fiscal_scale(stem, 0.0)` 读写对称。盐税／商税的实收
+        # 走 `regions.fiscal.salt_tax` / `commerce_tax`（flows 的盐商旁路直接汇总该字段），
+        # 目录行只是系数：只重立目录而省份字段仍为 0，复征被接收却实收恒 0——同一道
+        # 已落账的复征白写。辽饷／田赋另有饷率通道按 seed 重算 settle.p，但它们的省份
+        # 字段同样被罢征清零过，一并恢复才与罢征对称（`scale_tian_fu` 的三税残差口径
+        # 依赖这些字段非零）。
+        # 恢复值取 seed 真源（`content/regions.json` 的各省 fiscal 字段），与目录侧
+        # `_seeded_fiscal_config_value` 同一口径：恢复该税项的常态征收额，不臆造数。
+        if budget_role == "dynamic" and stem in self._DYNAMIC_REGION_FIELD:
+            self._restore_dynamic_region_field(stem)
         if commit:
             self.conn.commit()
         return base_key
+
+    def _restore_dynamic_region_field(self, stem: str) -> int:
+        """把某 dynamic 税的**省级收入源**恢复回 seed 值（`create_fiscal_item` 的对称侧）。
+
+        与 `apply_dynamic_fiscal_scale` 同一字段映射、同一批省份，故与罢征写口
+        （`remove_fiscal_item` 罢 → 本方法复）严格读写对称。只在 seed 有正值的省份
+        恢复：seed 本身为 0 的省份（不产盐／无商路）保持 0。
+        """
+        field = self._DYNAMIC_REGION_FIELD.get(stem)
+        if field is None:
+            return 0
+        touched = 0
+        for row in self.conn.execute("SELECT id, fiscal FROM regions").fetchall():
+            region_def = self.content.regions.get(str(row["id"]))
+            seed_value = int((region_def.fiscal or {}).get(field, 0) or 0) if region_def else 0
+            if seed_value <= 0:
+                continue
+            fiscal: dict = json.loads(str(row["fiscal"] or "{}"))
+            if not isinstance(fiscal, dict):
+                continue
+            if int(fiscal.get(field, 0) or 0) == seed_value:
+                continue
+            fiscal[field] = seed_value
+            self.conn.execute(
+                "UPDATE regions SET fiscal = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (json.dumps(fiscal, ensure_ascii=False), str(row["id"])),
+            )
+            touched += 1
+        return touched
 
     # dynamic 税科目 → regions.fiscal 子字段映射。dynamic 税实收走 calc_province_fiscal
     # 读 region.fiscal（不读 fiscal_config 的 base），故对这些 key 做裁撤/调额必须同步改
@@ -10868,12 +10913,13 @@ class GameDB:
         for idx, d in enumerate(decisions):
             self.conn.execute(
                 """INSERT INTO pending_decisions
-                   (turn, idx, event_id, title, context, rejection_reason, opposition,
-                    options_json, choice_json, status, kind)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', 'pending', 'decision')""",
+                   (turn, idx, event_id, bound_event_id, title, context, rejection_reason,
+                    opposition, options_json, choice_json, status, kind)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '', 'pending', 'decision')""",
                 (
                     turn, idx,
                     str(d.get("event_id") or ""),
+                    str(d.get("bound_event_id") or ""),
                     str(d.get("title") or ""),
                     str(d.get("context") or ""),
                     str(d.get("rejection_reason") or ""),
@@ -10898,9 +10944,9 @@ class GameDB:
         #657：补 revision_round / prior_options_json 投影。
         """
         rows = self.conn.execute(
-            "SELECT idx, event_id, title, context, rejection_reason, opposition, "
-            "options_json, choice_json, status, kind, actor_name, actor_office, actor_faction, "
-            "turn, revision_round, prior_options_json "
+            "SELECT idx, event_id, bound_event_id, title, context, rejection_reason, "
+            "opposition, options_json, choice_json, status, kind, actor_name, actor_office, "
+            "actor_faction, turn, revision_round, prior_options_json "
             "FROM pending_decisions WHERE turn = ? AND kind = 'decision' ORDER BY idx",
             (int(turn),),
         ).fetchall()
@@ -10931,6 +10977,7 @@ class GameDB:
                 "source_turn": source_turn,
                 "turn": source_turn,
                 "event_id": r["event_id"],
+                "bound_event_id": r["bound_event_id"],
                 "title": r["title"],
                 "context": r["context"],
                 "rejection_reason": r["rejection_reason"],
@@ -11069,8 +11116,8 @@ class GameDB:
         turn = int(turn)
         rows = self.conn.execute(
             """
-            SELECT turn, idx, event_id, title, context, rejection_reason, opposition,
-                   options_json, choice_json, status, kind,
+            SELECT turn, idx, event_id, bound_event_id, title, context, rejection_reason,
+                   opposition, options_json, choice_json, status, kind,
                    actor_name, actor_office, actor_faction,
                    revision_round, prior_options_json
             FROM pending_decisions
@@ -11117,6 +11164,7 @@ class GameDB:
             "turn": source_turn,
             "idx": idx,
             "event_id": r["event_id"],
+            "bound_event_id": r["bound_event_id"] if "bound_event_id" in r.keys() else "",
             "title": r["title"],
             "context": r["context"],
             "rejection_reason": r["rejection_reason"] if "rejection_reason" in r.keys() else "",
@@ -11153,8 +11201,8 @@ class GameDB:
                 continue
             r = self.conn.execute(
                 """
-                SELECT turn, idx, event_id, title, context, rejection_reason, opposition,
-                       options_json, choice_json, status, kind,
+                SELECT turn, idx, event_id, bound_event_id, title, context, rejection_reason,
+                       opposition, options_json, choice_json, status, kind,
                        actor_name, actor_office, actor_faction,
                        revision_round, prior_options_json
                 FROM pending_decisions
@@ -19538,35 +19586,22 @@ class GameDB:
                       AND excluded.terminal_reason <> ''
                     THEN excluded.terminal_reason
             """
-        # #1899（R3）：晋级为 **triggered** 时，已带真 choice 的待落行保留皇帝**批红
-        # 所在的回合**，不拿晋级回合覆盖它。票面「以您最后一次的批语为准」要比的正是
-        # 这个时点；此前晋级瞬间把它改写成 pre_settle 所在回合，于是同一道「准」在
-        # **首次消费**与**再次进入**读出两个不同的 turn——首次判「不是最后一道批语」
-        # 不复征，隔月重算又判「是」凭空复征，幂等 set-to-target 被自己的时序抖动打破。
-        # 作用域只限 triggered 晋级 + 已有真 choice 的行：过期/避让/作废三类确定性终态
-        # 记的是**该终态发生的时刻**（既有约定与既有用例），不是皇帝的裁断时点，
-        # 它们照旧刷新时刻，行为不变。
-        def _time_case(col: str) -> str:
-            decision_time = ""
-            if fill_triggered_reason:
-                decision_time = (
-                    "                    WHEN COALESCE(event_triggers.terminal_state, '') = ''\n"
-                    "                         AND COALESCE(event_triggers.choice_json, '') != ''\n"
-                    f"                    THEN event_triggers.{col}\n"
-                )
-            return (
-                "                CASE\n"
-                f"{decision_time}"
-                "                    WHEN COALESCE(event_triggers.terminal_state, '') = ''\n"
-                f"                    THEN excluded.{col}\n"
-                f"                    ELSE event_triggers.{col}\n"
-                "                END"
-            )
-
         return f"""
-                turn = {_time_case("turn")},
-                year = {_time_case("year")},
-                period = {_time_case("period")},
+                turn = CASE
+                    WHEN COALESCE(event_triggers.terminal_state, '') = ''
+                    THEN excluded.turn
+                    ELSE event_triggers.turn
+                END,
+                year = CASE
+                    WHEN COALESCE(event_triggers.terminal_state, '') = ''
+                    THEN excluded.year
+                    ELSE event_triggers.year
+                END,
+                period = CASE
+                    WHEN COALESCE(event_triggers.terminal_state, '') = ''
+                    THEN excluded.period
+                    ELSE event_triggers.period
+                END,
                 source = CASE
                     WHEN COALESCE(event_triggers.terminal_state, '') = ''
                     THEN excluded.source
@@ -19721,20 +19756,7 @@ class GameDB:
                     THEN excluded.terminal_reason
                     ELSE event_triggers.terminal_reason
                 END,
-                choice_json = excluded.choice_json,
-                -- #1899：行上**首次**落下真 choice（此前 choice_json 为空）时，把 turn
-                -- 校正为本次批红所在的回合。自动落账桩（fiscal_levy_shadow /
-                -- default_terminal_reason）会先按 default 标好终态、turn 记成桩那一回合；
-                -- 皇帝随后亲批时若沿用旧 turn，这道真决定的时点就丢了——#1899「以您
-                -- 最后一次的批语为准」要比的正是这个时点，桩的 turn 不是皇帝的批语。
-                -- 仅在「首次由空变为有 choice」时校正，不覆盖已有的真决定时点，
-                -- 终态本身（terminal_state / terminal_reason）仍不可逆。
-                turn = CASE
-                    WHEN COALESCE(event_triggers.choice_json, '') = ''
-                         AND COALESCE(excluded.choice_json, '') != ''
-                    THEN excluded.turn
-                    ELSE event_triggers.turn
-                END
+                choice_json = excluded.choice_json
             """,
             (eid, state.turn, state.year, state.period, source, label, payload),
         )

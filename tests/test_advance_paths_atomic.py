@@ -353,15 +353,14 @@ def test_record_event_decision_choice_inserts_fresh_without_terminal_state(game)
 def test_mark_event_triggered_upgrades_pending_choice_row(game):
     """phase2 正常触发事件时，空终态 choice 行升级为 triggered 且保留亲裁选择。
 
-    #1899（R3）：时刻列**保留皇帝批红所在的回合**，不刷新成晋级回合。票面「以您
-    最后一次的批语为准」要比的正是这个时点；晋级瞬间改写它，会让同一道决定在首次
-    消费与再次进入读出两个不同的时刻（重入改判 + 重放旧决定）。终态本身照旧晋级，
-    source 照旧记晋级来源，choice 与 reason 照旧保留。
+    终态本身照旧晋级，source 照旧记晋级来源，choice 与 reason 照旧保留。
+    #1899（R4）：此前此用例还断言时刻列保留批红回合，那是**已删**的时序比较补丁的
+    配套断言（比较本身已删，时刻保留失去依据）；按「被改动作废的旧物随同改动删除」，
+    时刻断言一并删除，此处只留仍然成立的终态／来源／choice 契约。
     """
     import json
     db, state, content = game
     eid = content.events[0].id
-    decision_turn, decision_year, decision_period = state.turn, state.year, state.period
     db.record_event_decision_choice(state, eid, {"label": "留"})
     state.turn = state.turn + 1
     state.year = state.year + 1
@@ -370,12 +369,9 @@ def test_mark_event_triggered_upgrades_pending_choice_row(game):
     db.mark_event_triggered(state, eid, source="event_pool")
 
     row = db.conn.execute(
-        "SELECT turn, year, period, terminal_state, source, terminal_reason, choice_json FROM event_triggers WHERE event_id=?",
+        "SELECT terminal_state, source, terminal_reason, choice_json FROM event_triggers WHERE event_id=?",
         (eid,),
     ).fetchone()
-    assert row["turn"] == decision_turn
-    assert row["year"] == decision_year
-    assert row["period"] == decision_period
     assert row["terminal_state"] == "triggered"
     assert row["source"] == "event_pool"
     assert row["terminal_reason"] == "留"
