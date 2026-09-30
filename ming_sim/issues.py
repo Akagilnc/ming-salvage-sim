@@ -980,8 +980,6 @@ def _unsupported_monthly_ongoing_fields(effect: Dict[str, object]) -> List[str]:
     for key in (
         "buildings",
         "new_armies",
-        "character_status_changes",
-        "character_power_changes",
         "power_renames",
         "legacy",
     ):
@@ -2938,7 +2936,6 @@ def _pending_person_changes_block_event_gate(
     pending_person_changes: List[Dict[str, object]],
     db: GameDB,
     *,
-    allow_legacy_partial_power: bool = False,
     content: Optional[GameContent] = None,
     shadow_rows: Optional[Dict[str, Dict[str, str]]] = None,
     power_shadow_rows: Optional[Dict[str, Dict[str, int]]] = None,
@@ -3080,8 +3077,6 @@ def _pending_person_changes_block_event_gate(
                     continue
             if status not in PERSON_STATUSES:
                 continue
-            if item.get("legacy_gate") and cur_status != "active":
-                continue
             transition = resolve_person_transition(
                 cur_status,
                 action,
@@ -3103,10 +3098,9 @@ def _pending_person_changes_block_event_gate(
         elif action == "易主":
             way = str(item.get("方式") or item.get("way") or "").strip()
             backlash = item.get("反噬", item.get("backlash"))
-            legacy_partial = allow_legacy_partial_power and bool(item.get("legacy_partial"))
             if not way:
                 continue
-            if way not in PERSON_ALLEGIANCE_CHANGE_WAYS and not legacy_partial:
+            if way not in PERSON_ALLEGIANCE_CHANGE_WAYS:
                 continue
             if not isinstance(backlash, dict):
                 continue
@@ -3456,6 +3450,33 @@ def _content_population_effect_for_save(
     return scaled
 
 
+def _issue_effect_legacy_person_changes(
+    effect: Dict[str, object],
+) -> List[Dict[str, object]]:
+    """国策 effect 里存量旧人物键 → 人物变更项（#1835 F1 的存量数据兼容口）。
+
+    只吃 ``character_status_changes``（国策结案唯一实际使用过的旧人物键，见
+    issue 表 effect_on_resolve / ongoing_effects）。刻意只保 status 处置一面：
+    其余旧键在国策效果面从未有真实存量数据，凭空翻译等于新造能力
+    （ADR 0009 决定 11）。非 dict 项不在此静默丢——由调用方的全局严格校验
+    （:func:`_apply_issue_entities` 的 raise 口径）负责。
+    """
+    changes: List[Dict[str, object]] = []
+    for index, raw in enumerate(effect.get("character_status_changes") or []):
+        if not isinstance(raw, dict):
+            # 全局严格（不静默）：非 dict 项直接抛错，不无声丢（CMR F7）。
+            raise ValueError(f"character_status_changes 含非法非 dict 项：{raw!r}（第 {index} 项）")
+        changes.append({
+            "name": raw.get("name", ""),
+            # 旧键的 status 是「迁入的状态」，动作恒为 处置（ADR 0009 决定：
+            # character_status_changes 只有存殁去向一个意图）。
+            "动作": "处置",
+            "status": raw.get("status", ""),
+            **{key: raw[key] for key in ("reason_code", "reason", "origin_ref") if key in raw},
+        })
+    return changes
+
+
 def _apply_issue_entities(
     db: GameDB,
     state: GameState,
@@ -3547,31 +3568,29 @@ def _apply_issue_entities(
             if not isinstance(it, dict):
                 raise ValueError(f"{label} 人物变更 非法（全局严格，不静默）：第 {idx} 项非 dict")
     person_changes = normalize_person_changes({"人物变更": raw_person_changes or []})
-    csc = effect.get("character_status_changes")
-    if not person_changes and isinstance(csc, list) and csc:
-        for it in csc:
-            if not isinstance(it, dict):
-                # 全局严格（不静默）：非 dict 项直接抛错，不无声丢（CMR F7）。
-                raise ValueError(f"{label} character_status_changes 含非法非 dict 项：{it!r}")
-        status_person_changes = normalize_person_changes({"character_status_changes": csc})
-        for item in status_person_changes:
-            if isinstance(item, dict):
-                item.pop("legacy_gate", None)
-        results = _apply_person_changes(
-            db,
-            state,
-            status_person_changes,
-            content=effective_content(),
-            llm_config=llm_config,
-            source="system_simulation",
-            derived_from=label,
-            external_transaction=not commit,
-            origin_ref=origin_ref,
-            require_origin=True,
-        )
-        _raise_on_rejected(results, "character_status_changes")
-        if applied_person_changes is not None:
-            applied_person_changes.extend(results)
+    if not person_changes:
+        # #1835 F1：声明 delta 侧的旧四人物键已退役，但国策 effect（issue 表里持久化
+        # 的 effect_on_resolve / ongoing_effects，来自更早的存档与 enrich 产出）不
+        # 经 sanitize_delta_shape，仍可能带旧键。这条读取是国策效果面的存量数据
+        # 兼容，不是声明契约的平行写路——翻译后同样只经 _apply_person_changes 一个
+        # 人物核算核。此处不做 legacy_gate 注记（那是旧 delta 月末闸的产物）。
+        status_person_changes = _issue_effect_legacy_person_changes(effect)
+        if status_person_changes:
+            results = _apply_person_changes(
+                db,
+                state,
+                status_person_changes,
+                content=effective_content(),
+                llm_config=llm_config,
+                source="system_simulation",
+                derived_from=label,
+                external_transaction=not commit,
+                origin_ref=origin_ref,
+                require_origin=True,
+            )
+            _raise_on_rejected(results, "人物变更")
+            if applied_person_changes is not None:
+                applied_person_changes.extend(results)
     if person_changes:
         results = _apply_person_changes(
             db,
@@ -4265,7 +4284,6 @@ def _strategic_event_result_preflight_error(
                 person_changes,
                 content=content,
                 llm_config=llm_config,
-                allow_legacy_partial_power=False,
                 external_transaction=True,
             )
         finally:
@@ -4529,13 +4547,10 @@ def _initiative_resolve_pairing_warnings(
     needs_army = any(p in blob for p in _MILITARY_RAISE_PHRASES)
     needs_office = any(p in blob for p in _MILITARY_MOVE_PHRASES)
     if needs_army or needs_office:
-        # 形对：_apply_issue_entities 只落 list 的 new_armies/人物变更/character_status_changes、
-        # dict 的 army_delta；畸形容器（字符串/错类型）不算真配对，不该消音告警（PR#107 codex）。
+        # 形对：_apply_issue_entities 只落 list 的 new_armies/人物变更、dict 的
+        # army_delta；畸形容器（字符串/错类型）不算真配对，不该消音告警（PR#107 codex）。
         has_army = _nonempty_list(effect.get("new_armies")) or _nonempty_dict(effect.get("army_delta"))
-        has_office = (
-            _nonempty_list(effect.get("人物变更"))
-            or _nonempty_list(effect.get("character_status_changes"))
-        )
+        has_office = _nonempty_list(effect.get("人物变更"))
         if needs_army and not has_army:
             warns.append(
                 f"军事国策「{str(title)[:16]}」结案无 new_armies 配对（练军/募营疑未建军籍，#46）"
@@ -4595,7 +4610,6 @@ def apply_issue_tracker_output(
     llm_config: Any = None,
     content=None,
     pending_person_changes_for_gates: Optional[List[Dict[str, object]]] = None,
-    allow_legacy_partial_power_for_gates: bool = False,
     candidate_event_ids_at_input: Optional[set[str]] = None,
     candidate_event_ids_authoritative: bool = False,
     impeachment_surge_candidates_at_input: Optional[List[Dict[str, object]]] = None,
@@ -4924,7 +4938,6 @@ def apply_issue_tracker_output(
                 ev,
                 pending_person_changes_for_gates or [],
                 db,
-                allow_legacy_partial_power=allow_legacy_partial_power_for_gates,
                 content=runtime_content,
                 shadow_rows=shared_shadow_rows,
                 power_shadow_rows=shared_power_shadow_rows,
@@ -6201,7 +6214,6 @@ def _apply_person_changes(
     llm_config: Any = None,
     source: str = "system_simulation",
     derived_from: str = "",
-    allow_legacy_partial_power: bool = False,
     external_transaction: bool | None = None,
     origin_ref: str = "",
     require_origin: bool = False,
@@ -6459,19 +6471,6 @@ def _apply_person_changes(
                 applied.append(rejected(item, "非既有人物", "hallucinated_id", status=status))
                 continue
             cur_status, _ = db.get_character_status(name)
-            if item.get("legacy_gate") and cur_status != "active":
-                reject_reason = f"当前非 active（{cur_status}）"
-                if cur_status == "dead" and status != "dead":
-                    reject_reason = "dead 无 status 出边"
-                applied.append(
-                    rejected(
-                        item,
-                        reject_reason,
-                        "invalid_transition",
-                        status=status,
-                    )
-                )
-                continue
             reason_code = normalize_reason_code(item.get("reason_code"))
             transition = resolve_person_transition(
                 cur_status,
@@ -6726,11 +6725,10 @@ def _apply_person_changes(
         if action == "易主":
             way = str(item.get("方式") or item.get("way") or "").strip()
             backlash = item.get("反噬", item.get("backlash"))
-            legacy_partial = allow_legacy_partial_power and bool(item.get("legacy_partial"))
             if not way:
                 applied.append(rejected(item, "易主 缺 方式", "missing_field"))
                 continue
-            if way not in PERSON_ALLEGIANCE_CHANGE_WAYS and not legacy_partial:
+            if way not in PERSON_ALLEGIANCE_CHANGE_WAYS:
                 applied.append(rejected(item, "易主 方式非白名单", "invalid_enum"))
                 continue
             if not isinstance(backlash, dict):
@@ -7001,21 +6999,6 @@ def _apply_person_changes(
     if needs_person_change_commit and commit_person_change:
         db.conn.commit()
     return applied
-
-
-def _legacy_person_report_section(result: Dict[str, object]) -> str:
-    item = result.get("item")
-    source = item if isinstance(item, dict) else result
-    action = str(source.get("动作") or source.get("action") or result.get("动作") or "").strip()
-    if source.get("legacy_gate"):
-        return "character_status_changes"
-    if source.get("legacy_partial"):
-        return "character_power_changes"
-    if source.get("legacy_spillover"):
-        return "office_changes"
-    if action in {"任命", "调任"}:
-        return "office_changes"
-    return ""
 
 
 def _apply_dossier_participant_items(
@@ -8044,10 +8027,7 @@ def _apply_score_extraction_body(
         }
         return {**item, "affair_declaration": stamped}, None
 
-    stamp_fields = (
-        "economy_moves", "new_issues", "人物变更",
-        "office_changes", "character_status_changes", "appointments",
-    )
+    stamp_fields = ("economy_moves", "new_issues", "人物变更")
     # Steps share these objects with the merged lists, except 人物变更
     # clones made above to attach _effect_event_id. Stamp the merged object
     # once and project that result back. A second stamp repeats the rejection
@@ -8224,15 +8204,12 @@ def _apply_score_extraction_body(
         candidate_event_ids_at_input = {candidate.id for candidate in gather_candidate_events(state, db)}
     else:
         candidate_event_ids_at_input = set(candidate_event_ids_at_input)
-    new_person_changes = normalize_person_changes({"人物变更": extracted.get("人物变更") or []})
-    legacy_person_changes = [] if new_person_changes else normalize_person_changes({
-        "appointments": extracted.get("appointments") or [],
-        "character_status_changes": extracted.get("character_status_changes") or [],
-        "character_power_changes": extracted.get("character_power_changes") or [],
-        "office_changes": extracted.get("office_changes") or [],
-    })
+    # #1835 F1：人物只走 人物变更 一条流。旧四键（appointments /
+    # character_status_changes / character_power_changes / office_changes）已随
+    # C0 声明契约退役——由 sanitize_delta_shape 按 ADR 0015 逐段拒收留痕，不再
+    # 静默翻成人物变更（平行写路 + 死别名）。
     person_changes = _canonicalize_person_change_names(
-        new_person_changes or legacy_person_changes,
+        normalize_person_changes({"人物变更": extracted.get("人物变更") or []}),
         runtime_content,
         db,
     )
@@ -8245,8 +8222,6 @@ def _apply_score_extraction_body(
         id(item): army_ids[index] if index < len(army_ids) else ""
         for index, item in enumerate(extracted.get("new_armies") or [])
     }
-    use_legacy_person_keys = not person_changes
-    legacy_person_mode = bool(legacy_person_changes)
     strategic_event_pool_ids = _event_pool_ids_for_strategic_foreign_nodes(extracted, runtime_content)
     strategic_event_result_delta_event_ids = _event_result_delta_event_ids(
         set(_STRATEGIC_FOREIGN_NODE_OUTCOME_TARGETS),
@@ -8345,24 +8320,11 @@ def _apply_score_extraction_body(
 
     amnesty_conflict_power_ids = _amnesty_conflict_power_ids(person_changes)
 
-    def _annotate_legacy_person_rejections(results: List[Dict[str, object]]) -> None:
-        for result in results:
-            if isinstance(result, dict) and result.get("rejected"):
-                report_section = _legacy_person_report_section(result)
-                if report_section:
-                    result["report_section"] = report_section
-                    if (
-                        report_section == "character_power_changes"
-                        and result.get("category") == "hallucinated_id"
-                    ):
-                        result["report_category"] = "missing_ref"
-
     applied_person_changes: List[Dict[str, object]] = []
 
     def _apply_normalized_person_changes(
         changes: List[Dict[str, object]],
         *,
-        legacy: bool,
         origin_ref: str = "",
         require_origin: bool = True,
     ) -> List[Dict[str, object]]:
@@ -8374,13 +8336,10 @@ def _apply_score_extraction_body(
             changes,
             content=content,
             llm_config=llm_config,
-            allow_legacy_partial_power=legacy,
             external_transaction=db.conn.in_transaction,
             origin_ref=origin_ref,
             require_origin=require_origin,
         )
-        if legacy:
-            _annotate_legacy_person_rejections(results)
         if origin_ref:
             for result in results:
                 result.setdefault("origin_ref", origin_ref)
@@ -8397,7 +8356,7 @@ def _apply_score_extraction_body(
             try:
                 origin_ref = _origin_ref_from_result_item(person_change)
                 results = _apply_normalized_person_changes(
-                    [dict(person_change)], legacy=legacy_person_mode, origin_ref=origin_ref,
+                    [dict(person_change)], origin_ref=origin_ref,
                 )
                 if not results or all(result.get("rejected") for result in results):
                     db.conn.execute(f"ROLLBACK TO {savepoint}")
@@ -8739,7 +8698,6 @@ def _apply_score_extraction_body(
         "cancels": extracted.get("cancels") or [],
     }, llm_config=llm_config, content=content,
         pending_person_changes_for_gates=post_issue_person_changes,
-        allow_legacy_partial_power_for_gates=legacy_person_mode,
         candidate_event_ids_at_input=candidate_event_ids_at_input,
         candidate_event_ids_authoritative=candidate_event_ids_authoritative,
         impeachment_surge_candidates_at_input=impeachment_surge_candidates_at_input,
@@ -8933,7 +8891,7 @@ def _apply_score_extraction_body(
                 continue
             clean_item = dict(item)
             event_person_results.extend(_apply_normalized_person_changes(
-                [clean_item], legacy=legacy_person_mode, origin_ref=origin_ref, require_origin=True,
+                [clean_item], origin_ref=origin_ref, require_origin=True,
             ))
         for power_id, raw_changes in event_power_items:
             origin_ref = str(raw_changes.get("origin_ref") or "").strip()
@@ -9307,13 +9265,8 @@ def _apply_score_extraction_body(
     ):
         db.conn.commit()
 
-    # ADR0009 legacy aliases are canonicalized above and written only through
-    # the canonical person-change applier.  Keep response keys for compatibility,
-    # but do not retain a second set of direct writers here.
-    applied_appointments: List[Dict[str, object]] = []
-    applied_status_changes: List[Dict[str, object]] = []
-    applied_power_changes: List[Dict[str, object]] = []
-    applied_office_changes: List[Dict[str, object]] = []
+    # #1835 F1：旧四人物键的恒空响应键随声明契约退役——ADR 0150「无恒空兼容键」。
+    # 人物结果唯一出口是 applied_person_changes。
 
     # 11) secret_order_updates：推演写 active 密令副作用（泄漏/反弹）到 sim_note。结案不走这里。
     applied_secret_orders: List[Dict[str, object]] = []
@@ -9496,11 +9449,7 @@ def _apply_score_extraction_body(
         "fiscal_changes": applied_fiscal,
         "fiscal_creates": applied_fiscal_creates,
         "fiscal_removes": applied_fiscal_removes,
-        "appointments": applied_appointments,
         "applied_person_changes": applied_person_changes,
-        "character_status_changes": applied_status_changes,
-        "character_power_changes": applied_power_changes,
-        "office_changes": applied_office_changes,
         "secret_order_updates": applied_secret_orders,
     }
     victory = _resolve_victory(db, state, extracted)

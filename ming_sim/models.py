@@ -219,30 +219,6 @@ def _character_effect_has_work(raw: object) -> bool:
     return False
 
 
-def _character_status_effect_has_work(raw: object) -> bool:
-    if not isinstance(raw, list):
-        return False
-    for item in raw:
-        if not isinstance(item, dict):
-            continue
-        if _nonempty_text(item.get("name")) and _nonempty_text(item.get("status")):
-            return True
-    return False
-
-
-def _character_power_effect_has_work(raw: object) -> bool:
-    if not isinstance(raw, list):
-        return False
-    for item in raw:
-        if not isinstance(item, dict):
-            continue
-        if _nonempty_text(item.get("name")) and (
-            _nonempty_text(item.get("new_power")) or _nonempty_text(item.get("power_id"))
-        ):
-            return True
-    return False
-
-
 def _power_renames_effect_has_work(raw: object) -> bool:
     if not isinstance(raw, list):
         return False
@@ -311,8 +287,6 @@ def effect_dict_has_work(raw: object) -> bool:
         _person_effect_has_work(effect.get("人物变更")),
         _person_effect_has_work(effect.get("person_changes")),
         _character_effect_has_work(effect.get("character")),
-        _character_status_effect_has_work(effect.get("character_status_changes")),
-        _character_power_effect_has_work(effect.get("character_power_changes")),
         _power_renames_effect_has_work(effect.get("power_renames")),
         _legacy_effect_has_work(effect.get("legacy")),
     )

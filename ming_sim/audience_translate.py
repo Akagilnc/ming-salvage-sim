@@ -259,7 +259,7 @@ def build_c0_declaration_shape() -> str:
         '      "pacification": {"target_id": "自新内乱首领的具名 id", "mode": "ordinary|midzhi"},\n'
         '      "secret_order": {"title": "密令标题", "content": "密令正文", '
         '"assignee": "承办人 id", "tags": [], "deadline_months": 0, '
-        '"covert_task": {}},\n'
+        '"covert_task": {}, "excluded_names": [], "excluded_offices": []},\n'
         '      "secret_order_progress": {"order_id": "往期有效密令 id", "note": "本轮具名进展"},\n'
         '      "strategy_selection": {"target_id": "已选方案的政策目标 id", '
         '"source_chat_turn_id": "本场已说的大臣陈策轮 chat_turn_id（不能填本轮）"},\n'

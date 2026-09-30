@@ -1,110 +1,39 @@
-"""Normalize ADR 0009 person deltas into the single 人物变更 stream."""
+"""人物变更流的单一规范化口（#1835 F1：旧四键兼容层随声明契约收敛退出）。
+
+ADR 0009 决定 11 保留的旧键翻译层（appointments / character_status_changes /
+character_power_changes / office_changes → 人物变更）曾只为「历史 delta 与
+ready=1 重试真源」服务；#1846 起不再持久化 ready=1 extractor delta、恢复真源是
+暂存声明与落账相位，那层兼容失去存在理由，已随 C0 声明契约退役：声明层与领域
+核算层都只认 ``人物变更`` 一条流，旧键由 ``sanitize_delta_shape`` 按 ADR 0015
+逐段拒收留痕，不再静默翻译。
+"""
 
 from __future__ import annotations
 
-from typing import Mapping
+from typing import List, Mapping
 
 
 PERSON_CHANGE_KEY = "人物变更"
 ACTION_KEY = "动作"
-LEGACY_SPILLOVER = "appointments（朝臣 spillover）"
 
 
-def _copy_with_action_key(item: Mapping[str, object]) -> dict[str, object]:
-    normalized = dict(item)
-    if "action" in normalized and ACTION_KEY not in normalized:
-        normalized[ACTION_KEY] = normalized.pop("action")
-    return normalized
+def normalize_person_changes(extracted: Mapping[str, object]) -> List[dict]:
+    """把声明/载荷里的 ``人物变更`` 归一成 ADR 0009 的人物变更项。
 
-
-def _dict_items(raw: object) -> list[Mapping[str, object]]:
-    if not isinstance(raw, list):
-        return []
-    return [item for item in raw if isinstance(item, Mapping)]
-
-
-def _copy_present(item: Mapping[str, object], *keys: str) -> dict[str, object]:
-    return {key: item[key] for key in keys if key in item}
-
-
-def _appointment_to_person_change(
-    item: Mapping[str, object],
-) -> dict[str, object]:
-    return {
-        "name": item.get("name", ""),
-        ACTION_KEY: "任命",
-        "office": item.get("office", ""),
-        **_copy_present(
-            item, "office_type", "faction", "reason", "origin_ref",
-            "region_id", "任所", "辖区",
-        ),
-        "legacy_spillover": LEGACY_SPILLOVER,
-    }
-
-
-def _status_to_person_change(item: Mapping[str, object]) -> dict[str, object]:
-    return {
-        "name": item.get("name", ""),
-        ACTION_KEY: "处置",
-        **_copy_present(item, "status", "reason_code", "reason", "origin_ref"),
-        "legacy_gate": True,
-    }
-
-
-def _power_to_person_change(item: Mapping[str, object]) -> dict[str, object]:
-    return {
-        "name": item.get("name", ""),
-        ACTION_KEY: "易主",
-        "new_power": item.get("new_power", ""),
-        "方式": "不明",
-        "反噬": {},
-        **_copy_present(item, "reason", "origin_ref"),
-        "legacy_partial": True,
-    }
-
-
-def _office_to_person_change(item: Mapping[str, object]) -> dict[str, object]:
-    translated = {
-        "name": item.get("name", ""),
-        ACTION_KEY: "任命",
-        "office": item.get("new_office", ""),
-        **_copy_present(
-            item, "faction", "reason", "origin_ref",
-            "region_id", "任所", "辖区",
-        ),
-    }
-    if "new_office_type" in item:
-        translated["office_type"] = item["new_office_type"]
-    return translated
-
-
-def normalize_person_changes(extracted: Mapping[str, object]) -> list[dict[str, object]]:
-    """Return ADR 0009 person changes from new or legacy person delta keys."""
+    - ``action`` 是 ``动作`` 的输入侧别名，同一项内二者同时在场时以显式
+      ``动作`` 为准（不新增能力，只是同一闭集的两种写法归一）。
+    - 非 Mapping 项不静默丢形状：调用方各自的 ADR 0015 逐项拒收口径负责留痕，
+      本函数只负责「能进核算核的项」。
+    """
     raw_items = extracted.get(PERSON_CHANGE_KEY)
-    if isinstance(raw_items, list) and raw_items:
-        return [
-            _copy_with_action_key(item)
-            for item in raw_items
-            if isinstance(item, Mapping)
-        ]
-
-    changes: list[dict[str, object]] = []
-    appointment_spillover: list[dict[str, object]] = []
-    for item in _dict_items(extracted.get("appointments")):
-        if str(item.get("office_type") or "").strip() != "后宫":
-            appointment_spillover.append(_appointment_to_person_change(item))
-
-    changes.extend(
-        _status_to_person_change(item)
-        for item in _dict_items(extracted.get("character_status_changes"))
-    )
-    changes.extend(
-        _power_to_person_change(item)
-        for item in _dict_items(extracted.get("character_power_changes"))
-    )
-    changes.extend(
-        _office_to_person_change(item)
-        for item in _dict_items(extracted.get("office_changes"))
-    )
-    changes.extend(appointment_spillover)
-    return changes
+    if not isinstance(raw_items, list) or not raw_items:
+        return []
+    normalized: List[dict] = []
+    for item in raw_items:
+        if not isinstance(item, Mapping):
+            continue
+        entry = dict(item)
+        if "action" in entry and ACTION_KEY not in entry:
+            entry[ACTION_KEY] = entry.pop("action")
+        normalized.append(entry)
+    return normalized

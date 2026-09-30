@@ -436,7 +436,6 @@ def _dispatch_effects(
     from ming_sim.simulation import EMPTY_EXTRACTION
     from ming_sim.issues import apply_score_extraction, preflight_declared_event_effects, sanitize_delta_shape
     from ming_sim.decree import _collect_inline_rejections
-    from ming_sim.person_delta_adapter import normalize_person_changes
 
     shape_rejections = []
     rejected = []
@@ -450,15 +449,10 @@ def _dispatch_effects(
             ))
             continue
         has_effect = True
-        # 归属是效果 envelope 的声明，不属于旧 extractor delta 的字段。
+        # 归属是效果 envelope 的声明，不属于 delta 的字段。
         event_id = str(item.get("event_id") or "").strip()
         clean, invalid = sanitize_delta_shape({k: v for k, v in item.items() if k != "event_id"})
         shape_rejections.extend(invalid)
-        person_changes = normalize_person_changes(clean)
-        if person_changes:
-            clean["人物变更"] = person_changes
-            for field in ("appointments", "character_status_changes", "character_power_changes", "office_changes"):
-                clean[field] = []
         clean_items.append((item, event_id, clean))
     if not has_effect:
         return SectionResult(applied=[], rejected=rejected)
@@ -1050,13 +1044,19 @@ def _attach_commission_affair(
 
 def _secret_order_pending_payload(
     secret: Mapping[str, object], actor: str, *, origin_chat_message_id: int,
+    excluded_names: Sequence[str], excluded_offices: Sequence[str],
+    covert_task: Mapping[str, object], affair_declaration: Optional[Mapping[str, object]],
 ) -> Dict[str, Any]:
     """密令新建的 typed 暂存载荷——只搬声明自带字段，不合成或裁剪玩家可感文案
     （ADR 0142 / P6：标题与正文逐字过手）。
 
     落库语义仍归既有写核 ``GameDB._apply_pending_action``（kind=secret_order、
-    action=新建）：本函数只把冻结差务契约与口谕源轮钉交给它，真实密令表要等
+    action=新建）：本函数只把冻结差务契约与口谕源轮交给它，真实密令表要等
     批红（``commit_pending_actions``）才成案。
+
+    结构化保密边界（ADR 0028 决定 2：排除名单／知情圈）与事务归属
+    （ADR 0154）同样只搬运声明自带字段——不从标题正文反推排除对象
+    （``canonical_secret_order_exclusions`` 才是那个闸）。
     """
     payload: Dict[str, Any] = {
         "title": str(secret.get("title") or ""),
@@ -1064,10 +1064,12 @@ def _secret_order_pending_payload(
         "assignee": str(secret.get("assignee") or actor),
         "tags": list(secret["tags"]) if isinstance(secret.get("tags"), list) else [],
         "deadline_months": secret.get("deadline_months", 0),
+        "covert_task": dict(covert_task),
+        "excluded_names": list(excluded_names),
+        "excluded_offices": list(excluded_offices),
     }
-    covert_task = secret.get("covert_task")
-    if isinstance(covert_task, Mapping):
-        payload["covert_task"] = dict(covert_task)
+    if affair_declaration is not None:
+        payload["affair_declaration"] = dict(affair_declaration)
     payload["origin_chat_message_id"] = int(origin_chat_message_id)
     return payload
 
@@ -1229,6 +1231,42 @@ def _dispatch_commissions(
             if not secret_order_can_land(dict(secret)):
                 _reject(rejected, item, "密令缺标题、内容或冻结任务契约", "invalid_shape", source)
                 continue
+            # 冻结差务契约在声明入口就真冻一次（ADR 1504 确认闸同款）：空壳
+            # covert_task={} 只过「有键」检查、到批红才炸，会把整条密令静默标
+            # failed 且不留拒收记录。坏合同逐项拒收，同批兄弟项照落。
+            from ming_sim.covert_progress import (
+                CovertContractError,
+                build_covert_task_contract,
+            )
+            try:
+                build_covert_task_contract(covert_task=secret.get("covert_task"))
+            except (CovertContractError, TypeError, ValueError) as exc:
+                _reject(rejected, item, str(exc), "invalid_shape", source)
+                continue
+            # ADR 0028 决定 2：捕获字段含排除名单（黑名单）／知情圈。声明未给即
+            # 空名单（不猜），给了必须是纯字符串数组，否则逐项拒收。
+            excluded_names = _string_array_field(secret, "excluded_names")
+            if excluded_names is None:
+                _reject(rejected, item, "密令排除人物须为字符串数组", "invalid_shape", source)
+                continue
+            excluded_offices = _string_array_field(secret, "excluded_offices")
+            if excluded_offices is None:
+                _reject(rejected, item, "密令排除职位须为字符串数组", "invalid_shape", source)
+                continue
+            assignee = str(secret.get("assignee") or "").strip()
+            if assignee:
+                try:
+                    _assert_characters_exist(db, [assignee])
+                except KeyError as exc:
+                    _reject(rejected, item, str(exc), "hallucinated_id", source)
+                    continue
+            # 各自所属事务（ADR 0154）：与同批 directive 交办同一校验口，
+            # 事务声明随暂存载荷进确认闸，成案时由既有绑定核落 pointer。
+            secret_payload: Dict[str, Any] = {}
+            if not _attach_commission_affair(
+                db, item, secret_payload, rejected=rejected, source=source,
+            ):
+                continue
             source_turn = db.conn.execute(
                 "SELECT minister_name, user_message_id FROM chat_turns "
                 "WHERE id=? AND turn=? AND status='active'",
@@ -1244,6 +1282,10 @@ def _dispatch_commissions(
                 _secret_order_pending_payload(
                     secret, actor,
                     origin_chat_message_id=int(source_turn["user_message_id"]),
+                    excluded_names=excluded_names,
+                    excluded_offices=excluded_offices,
+                    covert_task=dict(secret["covert_task"]),
+                    affair_declaration=secret_payload.get("affair_declaration"),
                 ),
             )
             applied.append({"id": row_id, "kind": "secret_order"})

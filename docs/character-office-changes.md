@@ -24,7 +24,7 @@
     → ADR 0009 人物 applier
 ```
 
-旧 `appointments` / `office_changes` / `character_status_changes` / `character_power_changes` 只为历史 delta 重放保留，由 sanitize 层翻译；新内容只写 `人物变更`，字段与动作见 ADR 0009 和 `docs/DELTA_SCHEMA.md`。
+旧 `appointments` / `office_changes` / `character_status_changes` / `character_power_changes` 已随 C0 声明契约退役（#1835 F1）：内容只写 `人物变更`，旧键按 ADR 0015 逐段拒收留痕；字段与动作见 ADR 0009 和 `docs/DELTA_SCHEMA.md`。
 
 ## 二、召对任免
 

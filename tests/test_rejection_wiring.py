@@ -37,7 +37,7 @@ def test_rejected_item_lands_in_reports_and_jsonl(game, monkeypatch, tmp_path):
     turn = state.turn
 
     run_settle(db, state, content, {
-        "character_status_changes": [{"name": "查无此人甲", "status": "dead", "reason": "测试"}],
+        "人物变更": [{"name": "查无此人甲", "动作": "处置", "status": "dead", "reason": "测试"}],
     }, narrative="x", decree_text="y")
 
     rows = _rejection_rows(db, turn)
@@ -93,7 +93,7 @@ def test_rollback_leaves_no_rows_and_no_jsonl(game, monkeypatch, tmp_path):
 
     with pytest.raises(RuntimeError, match="crash after flush"):
         run_settle(db, state, content, {
-            "character_status_changes": [{"name": "查无此人乙", "status": "dead", "reason": "测试"}],
+            "人物变更": [{"name": "查无此人乙", "动作": "处置", "status": "dead", "reason": "测试"}],
             "dossier_reconciliations": [
                 {"dossier_id": gid, "arrived_amount": 16},
                 {"dossier_id": 88888, "arrived_amount": 5},

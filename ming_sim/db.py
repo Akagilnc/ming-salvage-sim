@@ -6084,7 +6084,7 @@ class GameDB:
             if not name or not new_power:
                 applied.append({
                     "rejected": True, "category": "invalid_enum",
-                    "reason": "character_power_changes 缺 name/new_power",
+                    "reason": "易主项缺 name/new_power",
                     "item": raw,
                 })
                 continue
@@ -6092,7 +6092,7 @@ class GameDB:
                 applied.append({
                     "name": name, "new_power": new_power, "rejected": True,
                     "category": "hallucinated_id",
-                    "reason": f"character_power_changes new_power '{new_power}' 未在 powers",
+                    "reason": f"易主 new_power '{new_power}' 未在 powers",
                     "item": raw,
                 })
                 continue
@@ -6103,7 +6103,7 @@ class GameDB:
                 applied.append({
                     "name": name, "new_power": new_power, "rejected": True,
                     "category": "missing_ref",
-                    "reason": f"character_power_changes 人物 '{name}' 未入库",
+                    "reason": f"易主 人物 '{name}' 未入库",
                     "item": raw,
                 })
                 continue
@@ -18151,10 +18151,11 @@ class GameDB:
         if pa["kind"] == "secret_order":
             oid = pa["target_id"]
             if pa["action"] == "新建":
-                title = str(payload.get("title") or "").strip()
+                # P6 零删改：模型写的标题原值入库；空白只在副本上判空（#1835 F5）。
+                title = str(payload.get("title") or "")
                 content_text = str(payload.get("content") or "")
                 assignee = str(payload.get("assignee") or pa["minister_name"] or "").strip()
-                if not title or not content_text.strip() or not assignee:
+                if not title.strip() or not content_text.strip() or not assignee:
                     return False
                 tags_raw = payload.get("tags") or []
                 tags = [str(t).strip() for t in tags_raw if str(t).strip()] if isinstance(tags_raw, list) else []
@@ -18184,6 +18185,14 @@ class GameDB:
                     origin_chat_message_ids=[] if origin_mid is None else None,
                     pending_action_id=int(pa["id"]),
                     covert_task=frozen_task,
+                    # 各自所属事务（ADR 0154）：声明的事务归属随暂存载荷进成案
+                    # payload，由既有绑定核（_resolve_affair_id_from_payload）落
+                    # pointer——不在密令路上另实现一份绑定。
+                    affair_declaration=(
+                        payload.get("affair_declaration")
+                        if isinstance(payload.get("affair_declaration"), Mapping)
+                        else None
+                    ),
                 )
                 if order_id is not None and payload.get("dossier_links") is not None:
                     links = payload.get("dossier_links")
@@ -21352,6 +21361,7 @@ class GameDB:
         origin_chat_message_ids: Optional[Iterable[int]] = None,
         pending_action_id: int = 0,
         covert_task: Optional[Mapping[str, object]] = None,
+        affair_declaration: Optional[Mapping[str, object]] = None,
     ) -> int:
         # 宗藩/外藩 非朝堂命官，不可受密令——密令创建的唯一 DB 写口，集中守此一处即覆盖
         # API / 大臣工具 / CLI 自然语言 / upsert 回落 create 全路（cmr R6 cross-section）。
@@ -21468,6 +21478,9 @@ class GameDB:
                 "excluded_offices": list(excluded_offices),
             }
             payload[CONTRACT_KEY] = covert_contract
+            if affair_declaration is not None:
+                # 事务归属由成案核 _resolve_affair_id_from_payload 消费并落 pointer。
+                payload["affair_declaration"] = dict(affair_declaration)
             from ming_sim.covert_progress import (
                 live_investigation_fact_keys,
                 FACT_LANES_KEY,

@@ -164,10 +164,11 @@ EMPTY_EXTRACTION: Dict[str, object] = {
     "fiscal_changes": [],
     "fiscal_creates": [],
     "fiscal_removes": [],
-    "office_changes": [],
-    "appointments": [],
-    "character_status_changes": [],
-    "character_power_changes": [],
+    # #1835 F1：旧四人物键（appointments / office_changes / character_status_changes /
+    # character_power_changes）随 C0 声明契约收敛退出——人物只走 人物变更 一条流
+    # （ADR 0009 决定 11 的兼容翻译层随 #1846「不再持久化 ready=1 extractor delta、
+    # 恢复真源是暂存声明与落账相位」失去存在理由）。声明若仍带旧键，由
+    # sanitize_delta_shape 按 ADR 0015 逐段拒收留痕，不再静默兼容。
     "人物变更": [],
     "secret_order_updates": [],
     "covert_exec_selections": [],
