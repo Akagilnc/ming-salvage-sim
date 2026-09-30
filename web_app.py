@@ -1888,7 +1888,7 @@ class WebGame:
         """
         agno_session_id = self._minister_agno_session_id(minister_name)
         turn = GameSession.begin_audience_chat_turn(
-            self.session, minister_name, message,
+            self.session, message,
             agno_session_id=agno_session_id,
             runs_before=self.db.agno_runs_length(agno_session_id),
         )

@@ -652,9 +652,16 @@ def test_cli_minister_chat_anchors_turn_to_night(game, monkeypatch):
     open_n = an.get_open_night(db)
     assert open_n is not None
     turns = an.list_chat_turns_for_night(db, int(open_n["id"]))
-    # #1838 reopen：CLI 殿上建轮以「殿上」为 speaker
-    assert turns and turns[-1]["minister_name"] in {character.name, "殿上"}
+    assert turns
     assert int(turns[-1]["night_id"]) == int(open_n["id"]) > 0
+    # #1902 T1：建轮归属恒为「殿上」——殿上历史投影/撤回只按它取
+    # （db.list_hall_chat_turns 硬取 minister_name='殿上'）。写成大臣名会让 CLI
+    # 这一轮对 list_hall_chat_turns 及依赖它的 can_undo_last_chat / 撤回不可见，
+    # 同库换 Web 打开即丢出殿上历史，两端事实不一致。
+    assert turns[-1]["minister_name"] == "殿上", turns[-1]
+    assert db.list_hall_chat_turns(int(open_n["id"])), (
+        "CLI 召对轮须能被殿上轮读取侧看到"
+    )
 
 
 def test_close_night_committed_without_dossier_does_not_publish_mingfa(game):

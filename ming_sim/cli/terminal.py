@@ -456,7 +456,10 @@ def minister_chat(session: GameSession, character: Character, *, selected: bool 
                 # 走 GameSession 真方法（未绑定）：召对话轮生命周期是共核，测试壳
                 # 只替 LLM 缝即可，不必各自再抄一份建轮（#13）。
                 chat_turn = GameSession.begin_audience_chat_turn(
-                    session, character.name, question,
+                    session, question,
+                    # 建轮归「殿上」（与 Web 同、殿上历史读得到）；问话/回话挂大臣名
+                    # （与修前 CLI 语义同）。
+                    message_speaker=character.name,
                     agno_session_id="cli:殿上",
                     ensure_summon=(
                         character.name if question == f"宣{character.name}" else ""

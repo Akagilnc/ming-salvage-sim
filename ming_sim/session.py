@@ -1143,19 +1143,28 @@ class GameSession:
     # 与 cli/terminal.py 内联的同一段），那份副本随本方法落地删除。
 
     def begin_audience_chat_turn(
-        self, speaker: str, message: str, *, agno_session_id: str = "",
-        runs_before: int = 0, ensure_summon: str = "",
+        self, message: str, *, message_speaker: str = "",
+        agno_session_id: str = "", runs_before: int = 0, ensure_summon: str = "",
     ) -> AudienceChatTurn:
         """建一轮召对：确保开夜 → 建 chat_turn → 落问话。返回句柄供收口/回滚。
 
-        ``speaker`` 是召对面（殿上或具名大臣）；``ensure_summon`` 非空时按
-        「宣 X」同入口补入殿账。问话原文在此落库，入口不再自行 append。
+        **两个身份不是一回事，禁再压成一个参数**（#1902 T1）：
+        - 建轮归属恒为 ``SCENE_CHAT_SPEAKER``「殿上」——Web 与 CLI 都写「殿上」。
+          读取侧 ``list_hall_chat_turns`` 只按「殿上」取本夜轮，写成大臣名会让
+          该轮对殿上历史投影、撤回与 ``can_undo_last_chat`` 全部不可见（同库换
+          Web 打开即丢出殿上历史），两端事实也就不一致了。
+        - ``message_speaker`` 是 chat_messages 的归属（CLI 挂被召大臣名，与
+          修前语义同）；Web 留空 = 与建轮同为「殿上」。
+
+        ``ensure_summon`` 非空时按「宣 X」同入口补入殿账。问话原文在此落库，
+        入口不再自行 append。
 
         无 conn 的极薄替身（只替 LLM 缝的测试壳）走不带夜表的建轮分支——与旧
         入口同形，禁在此 fail-open 改语义。
         """
         from ming_sim.applier import atomic
         from ming_sim.audience_night import (
+            SCENE_CHAT_SPEAKER,
             ensure_open_night_for_audience,
             ensure_summon_enter,
             get_open_night,
@@ -1165,12 +1174,14 @@ class GameSession:
             schedule_restored_decree_forecasts,
         )
 
+        owner = SCENE_CHAT_SPEAKER
+        speaker = str(message_speaker or "").strip() or owner
         accepted_turn = int(self.state.turn)
         before_snapshot = self.db.capture_chat_rollback_snapshot()
         night_id = 0
         if not hasattr(self.db, "conn"):
             chat_turn_id = self.db.create_chat_turn(
-                self.state, speaker, agno_session_id or f"{speaker}",
+                self.state, owner, agno_session_id or owner,
                 int(runs_before or 0),
             )
         else:
@@ -1184,8 +1195,8 @@ class GameSession:
             with atomic(self.db):
                 chat_turn_id = self.db.create_chat_turn(
                     self.state,
-                    speaker,
-                    agno_session_id or f"{speaker}",
+                    owner,
+                    agno_session_id or owner,
                     int(runs_before or 0),
                     night_id=night_id,
                     status="generating",
@@ -1225,18 +1236,23 @@ class GameSession:
         )
 
     def complete_audience_chat_turn(
-        self, turn: AudienceChatTurn, speaker: str, reply: str,
+        self, turn: AudienceChatTurn, message_speaker: str, reply: str,
         result: Optional["ChatTurnResult"] = None,
     ) -> int:
-        """回话落定：persist 回话 → 记回滚差异 → 冲刷后台转译。回传回话消息 id。"""
+        """回话落定：persist 回话 → 记回滚差异 → 冲刷后台转译。回传回话消息 id。
+
+        ``message_speaker`` 是 chat_messages 的归属（与建轮的「殿上」身份分开，
+        见 begin_audience_chat_turn 的 T1 说明）；chat_turn 本身靠 turn 句柄定位，
+        不按名字反查。
+        """
         minister_message_id = 0
         if turn.chat_turn_id and hasattr(self.db, "persist_minister_reply"):
             self.db.persist_minister_reply(
-                speaker, turn.accepted_turn, reply, turn.chat_turn_id,
+                message_speaker, turn.accepted_turn, reply, turn.chat_turn_id,
             )
         else:
             minister_message_id = int(self.db.append_chat_message(
-                speaker, turn.accepted_turn, "minister", reply,
+                message_speaker, turn.accepted_turn, "minister", reply,
             ) or 0)
         if turn.chat_turn_id:
             if minister_message_id:
