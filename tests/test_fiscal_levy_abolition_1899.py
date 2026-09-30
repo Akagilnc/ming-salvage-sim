@@ -6,18 +6,20 @@
 `settle.p`：辽饷分量归零、正赋应征归零；罢后又在历史升率节点批「准」= 重新开征
 按新率征，不另要恢复旨；未罢者驳升率仍九厘基线。
 
-**入口纪律**（#1899 R5）：一律走真实生产入口，不手工 INSERT 目录／决定账、不调
+**入口纪律**（#1899 R5）：一律走真实生产入口，不手工INSERT 目录／决定账、不调
 applier 私有写口、不手补终态——
   · 罢 → `dispatch_declaration`（applier 真通道，走 delta 契约的 `fiscal_removes`
     删项 / `fiscal_changes` 调零两条真写口，origin 用契约收的「盘面自发」）；
   · 批红 → `record_event_decision_choice`（案头真写口，只写 choice；**晋级与终态
     交由 `pre_settle` 的真实 pass**，不手工 mark_event_triggered 绕过晋级）；
-  · 消费 → `pre_settle`（月链前半段，内含 `apply_historical_fiscal_rates`），
-    与生产同一入口、同一事务形状。
-实账断言落在**持久化的 economy_ledger**（过月 `apply_fixed_period_flows` 真落库后
-的国库流水），不只核 `settle_tick` 的纯函数分解。断言在外部可见的结构化结果上
-（`regions.fiscal.settle.p` / `economy_ledger` / `event_triggers`），不盯显示名与
-reason 措辞。
+  · 消费 → `pre_settle`（月链前半段，内含 `apply_historical_fiscal_rates` 与固定
+    财政 tick），与生产同一入口、同一事务形状。
+罢与复**各自在自己的批语落下的当场**经真写口改目录，故物理写入顺序即批语先后，
+「以最后一次批语为准」（owner 裁定 2026-10-01「相反批语按最后一条算」）不靠比较
+月份、也不靠任何固定优先规则；消费端只读目录现值。
+实账断言落在**持久化的 economy_ledger**（过月真落库后的国库流水，按结构化
+`category` 取，不盯 reason 措辞），不只核 `settle_tick` 的纯函数分解。断言在外部
+可见的结构化结果上（`regions.fiscal.settle.p` / `economy_ledger` / `event_triggers`）。
 """
 import json
 import math
@@ -195,28 +197,60 @@ def test_rise_approval_reinstates_through_every_abolition_write_port(game, zeroi
     assert _rate_row(db, "辽饷_rate")["value"] == 100
 
 
-# ── 批语先后：真实月链顺序，非固定优先（R2）───────────────────────────────
+# ── 批语先后：最后一条批语胜，两种真实顺序各钉一次（R2）────────────────────
 
-def test_same_turn_abolition_then_approval_reinstates(game):
-    """R2：同 turn 先罢后准 → **复征**（票面「以您最后一次的批语为准」）。
+@pytest.mark.parametrize("zeroing", [False, True], ids=["abolish_by_removal", "abolish_by_zeroing"])
+def test_same_turn_abolition_then_approval_reinstates(game, zeroing):
+    """R2 正序：同 turn 先罢后准 → **复征**，且重入不改判。
 
-    月链真实顺序是 pre_settle → 逐旨／世界段 → 批红（docs/SETTLEMENT_FLOW.md
-    第 1–2 段）：罢的目录写口在同一 turn 的**更前**一段落，批红在其后，故同 turn
-    内罢先准后，「准」才是更后出的那道批语。此前代码写 `>=` 把同 turn 判给罢，
-    是与月链顺序相反的假规则——亲跑同 turn 先罢后准，下一 tick 首次应征仍为 0。
+    「准」的复征在**批红落账当场**经真写口写入目录（罢与复都在各自批语落下的
+    那一刻改目录），故物理写入顺序就是批语先后，不需要任何固定优先规则，也不需要
+    拿月份比大小——同月两种先后各由自己的写口自然定胜负（owner 裁定
+    2026-10-01「相反批语按最后一条算」）。消费端只读目录现值，故首次消费与再次
+    进入必读出同一结论（票面「持续罢征不因逐月重算被抹掉」）。
     """
     db, state = _at(game, 1631, 1, 15)
-    _abolish(db, state, 15)
+    _abolish(db, state, 15, zeroing=zeroing)
     _emperor_rates_rise(db, state, 15)
     db, state = _settle_month(game, 16)
 
-    assert _settle(db)["p"]["三饷应征"] > 0, "同 turn 更后出的「准」应复征"
+    first = _settle(db)["p"]["三饷应征"]
+    assert first > 0, "同 turn 更后出的「准」应复征"
+    assert first == pytest.approx(
+        _settle(db)["_meta"]["辽饷九厘基线"] * 4.0 / 3.0
+    ), "复征后按新率（一分二厘）征"
+
+    db, state = _settle_month(game, 17)
+    assert _settle(db)["p"]["三饷应征"] == pytest.approx(first), "重入不得改判"
+
+
+@pytest.mark.parametrize("zeroing", [False, True], ids=["abolish_by_removal", "abolish_by_zeroing"])
+def test_same_turn_approval_then_abolition_stays_abolished(game, zeroing):
+    """R2 反序（judge 反例）：同 turn **先准后罢** → 停征，不得复征。
+
+    这是上一轮反复切换「同 turn 谁赢」比较符时一直漏掉的那条腿：HEAD 上同月一律
+    「准赢」，于是这道更后出的罢征被更早的准覆盖，下月照旧征 2.9292015。真实写口
+    顺序（准在先、罢在后）本已足够定胜负，代码却跳过罢的目录写口、拿 turn 比月份，
+    把同月压成一个数再自造优先——两种真实顺序里必有一种被判反。
+
+    断言落在外部可见结构上：下月与隔月的 `settle.p.三饷应征`（生产入口 pre_settle
+    的真实消费结果），以及目录本身确已被罢。
+    """
+    db, state = _at(game, 1631, 1, 15)
+    _emperor_rates_rise(db, state, 15)
+    _abolish(db, state, 15, zeroing=zeroing)
+
+    db, state = _settle_month(game, 16)
+    assert _settle(db)["p"]["三饷应征"] == 0.0, "更后出的罢征应胜出，下月不得复征"
+
+    db, state = _settle_month(game, 17)
+    assert _settle(db)["p"]["三饷应征"] == 0.0, "隔月重算不得被旧准顶掉后出的罢"
 
 
 def test_later_turn_abolition_after_approval_keeps_abolition(game):
-    """准在前、罢辽饷在**更晚的回合** → 最后批语是罢，下月不征（罢饷真正生效）。
+    """跨月对照：准在前、罢辽饷在**更晚的回合** → 最后批语是罢，下月不征。
 
-    这是评审指出的缺腿：布尔实现会把「准」当成永久复征，令罢在此时序下失效。
+    跨月先后本来就由 turn 表达；此例钉住它没被同月修复带坏（罢饷真正生效）。
     """
     db, state = _at(game, 1631, 1, 10)
     _emperor_rates_rise(db, state, 10)
@@ -228,43 +262,6 @@ def test_later_turn_abolition_after_approval_keeps_abolition(game):
     db, state = _settle_month(game, 14)
 
     assert _settle(db)["p"]["三饷应征"] == 0.0
-
-
-# ── 首次消费与再次进入一致，不重放旧准（R3）───────────────────────────────
-
-def test_first_consumption_matches_reentry_after_abolition_then_approval(game):
-    """R3：罢→准后，**首次消费**与**再次进入**结果必须一致（幂等 set-to-target）。
-
-    事件的待落行晋级为 triggered 时曾被改写成晋级回合，于是同一道「准」在首次消费
-    与隔月重算读出两个不同的 turn：首次判「不是最后一道批语」不复征，隔月又判
-    「是」凭空复征——重入不一致 + 重放旧准。
-    """
-    db, state = _at(game, 1631, 1, 15)
-    _abolish(db, state, 15)
-    _emperor_rates_rise(db, state, 15)
-
-    db, state = _settle_month(game, 16)
-    first = _settle(db)["p"]["三饷应征"]
-    db, state = _settle_month(game, 17)
-    second = _settle(db)["p"]["三饷应征"]
-    db, state = _settle_month(game, 18)
-    third = _settle(db)["p"]["三饷应征"]
-
-    assert first > 0, "罢→准后首次消费即应复征"
-    assert first == second == third, "重入不得改判（更不能凭空复征）"
-
-
-def test_approval_then_later_abolition_is_not_resurrected_by_reentry(game):
-    """R3 反向：同 turn 准→后罢，下月与隔月都保持不征（旧准不重放）。"""
-    db, state = _at(game, 1631, 1, 15)
-    _emperor_rates_rise(db, state, 15)
-    db, state = _settle_month(game, 16)
-
-    _abolish(db, state, 16)
-    db, state = _settle_month(game, 17)
-    assert _settle(db)["p"]["三饷应征"] == 0.0
-    db, state = _settle_month(game, 18)
-    assert _settle(db)["p"]["三饷应征"] == 0.0, "隔月重算不得被旧准顶掉后出的罢"
 
 
 def test_reabolition_after_reinstatement_keeps_both_write_ports_working(game):
@@ -356,8 +353,6 @@ def test_automatic_stub_without_choice_does_not_reinstate(game):
 
 def test_abolished_tian_fu_zeroes_regular_assessment(game):
     """罢田赋 → 正赋应征归零；复征（真重立写口）→ 回原基线，不重复扣征。"""
-    from ming_sim.flows import compute_budget_lines
-
     db, state = _at(game, 1627, 10, 1)
     before = _settle(db)["p"]["正赋应征"]
     assert before > 0
@@ -385,19 +380,11 @@ def test_abolished_tian_fu_zeroes_regular_assessment(game):
 
     # 复征同一税项**不叠加第二条收入**：目录行回 seed 声明的 dynamic 角色，
     # 不得成为中央 fixed 收入行被预算遍历再记一条（全局硬规 #12/#14 单一机制）。
-    rows = db.conn.execute(
-        "SELECT key, budget_role, account, direction FROM fiscal_config WHERE key LIKE '田赋%'"
-    ).fetchall()
-    assert rows, "复征应重立目录行"
-    for r in rows:
-        assert r["budget_role"] == "dynamic", dict(r)
-        assert not str(r["account"] or ""), dict(r)
-        assert not str(r["direction"] or ""), dict(r)
-
-    budget = compute_budget_lines(db, state)
-    for account in ("国库", "内库"):
-        for item in budget[account]["income"]:
-            assert not str(item["name"]).startswith("田赋"), f"重复收入行 {account}/{item['name']}"
+    # 断言走结构化契约——`iter_budget_items`（唯一定额预算源遍历的目录视图）不含
+    # 该 stem，故预算遍历不会为它再记一条中央收入；不按显示名/措辞盯文。
+    assert all(
+        db._stem_of(str(item["key"])) != "田赋" for item in db.iter_budget_items()
+    ), "复征的 dynamic 赋税不得进入中央 fixed 预算目录（会叠成同一税项两条收入）"
 
 
 def test_abolition_handles_land_derived_regular_assessment(game):
@@ -470,31 +457,37 @@ def test_no_abolition_leaves_regular_assessment_untouched(game):
 def test_abolition_moves_real_persisted_treasury_ledger(game):
     """真实过月落账：罢征后国库**持久化流水**真回落（不只核 settle_tick 纯函数）。
 
-    走 `pre_settle` + `apply_fixed_period_flows` 真落 economy_ledger，断言新档
-    （substrate_hub）下省级正赋＋三饷经「月省级起运入京」入国库的流水真随罢征塌陷、
-    复征后重新入账——写入／读取／恢复闭环（ship-pre DoD）。开局初始账册按 turn 排除，
+    走 `pre_settle`（月链前半段，内含固定财政 tick）真落 economy_ledger，断言新档
+    （substrate_hub）下省级正赋＋三饷经省级起运入国库的流水真随罢征塌陷、复征后
+    重新入账——写入／读取／恢复闭环（ship-pre DoD）。开局初始账册按 turn 排除，
     只看月度流水。
-    """
-    from ming_sim.flows import apply_fixed_period_flows
 
+    流水按结构化 `category='起运'` 取（flows 落账时即按科目分类），不按 reason
+    措辞匹配——盯显示文本不是行为契约。
+    """
     def month_remittance(db, turn):
         row = db.conn.execute(
             "SELECT COALESCE(SUM(delta), 0) AS total FROM economy_ledger "
-            "WHERE account = '国库' AND purpose IS NULL AND turn = ? "
-            "AND reason LIKE '%起运入京%'",
+            "WHERE account = '国库' AND purpose IS NULL AND category = '起运' AND turn = ?",
             (turn,),
         ).fetchone()
         return float(row["total"] or 0)
 
     def settle_for_turn(game, turn):
+        # `pre_settle` 内已含 apply_fixed_period_flows（ADR 0008 前半段单一事务）；
+        # 此处**不得**再调一次——重复执行会把同月财政落两遍（流水翻倍）而测试仍绿。
         db, state = _settle_month(game, turn)
-        db.save_state(state)
-        apply_fixed_period_flows(db, state)
         return month_remittance(db, turn)
+
+    def month_ledger_rows(db, turn):
+        return db.conn.execute(
+            "SELECT COUNT(*) AS n FROM economy_ledger WHERE turn = ?", (turn,),
+        ).fetchone()["n"]
 
     db, state = _at(game, 1627, 10, 1)
     baseline = settle_for_turn(game, 1)
     assert baseline > 0, "未罢时起运入京应有流水"
+    baseline_rows = month_ledger_rows(db, 1)
 
     _abolish(db, state, 2, stem="辽饷")
     _abolish(db, state, 2, stem="田赋")
@@ -514,3 +507,7 @@ def test_abolition_moves_real_persisted_treasury_ledger(game):
     restored = settle_for_turn(game, 3)
     assert restored > 0, "复征后国库应重新入账"
     assert restored == pytest.approx(baseline, rel=0.2)
+    # 一条月链只落一次财政：若在 `pre_settle` 之外再调一次 apply_fixed_period_flows，
+    # 同月固定流水会整批落两遍。这里钉住**不翻倍**这一侧（逐月笔数本身随欠账结清
+    # 会有自然增减，故取单侧断言而非相等）。
+    assert month_ledger_rows(db, 3) <= baseline_rows, "复征当月流水笔数不得多于未罢基线（重复落账会翻倍）"

@@ -19738,6 +19738,16 @@ class GameDB:
             """,
             (eid, state.turn, state.year, state.period, source, label, payload),
         )
+        # #1899：皇帝亲批的饷率结局，其机械后果在**批红落账的同一刻**经真写口落到
+        # 目录（罢后再准 = 重新开征，owner d5405bb6），而不是推迟到月链消费那一刻
+        # 再补——推迟后同月内两种批语先后被压成同一个 turn，代码只能自造固定优先
+        # 规则判反一种（owner 裁定 2026-10-01「相反批语按最后一条算」）。在批红
+        # 当场写，写入顺序即批语先后，罢与复都由后写者胜。放在此处亦使自动基线桩
+        # （`mark_event_triggered(source=fiscal_levy_shadow)`，无 choice）在结构上
+        # 永远到不了复征路径。局部 import 避 db↔issues 顶层环（同本文件既有先例）。
+        if label:
+            from ming_sim.issues import _fiscal_levy_apply_emperor_ruling
+            _fiscal_levy_apply_emperor_ruling(self, state, eid, label)
         if commit:
             self.conn.commit()
 
