@@ -1312,15 +1312,24 @@ _PURE_AUTHORITY_DOSSIER_ACTIONS = frozenset({
 def _dossier_is_revocable_decree(db: Any, dossier: Dict[str, Any]) -> bool:
     """可撤成命：已颁/执行中的承诺·旨意；纯授权归收权·罢差。
 
+    另：已结案但**实效仍在**的偿还序旨仍可撤（#1894）——closed 只说明那道案卷
+    的办理有终局，不等于它压住的祖制默认序/系数已退出格律。判据读既有账本
+    （pay_order.dossier_override_still_in_force），不全面放开 closed 案卷，也不
+    反演旧账。
+
     直接 dossier、initiative 回指、含糊候选三入口共用本资格。
     """
     status = str(dossier.get("status") or "").strip()
-    if status not in {"promulgated", "executing"}:
-        return False
     action = str(dossier.get("action_type") or "").strip()
     if action in _PURE_AUTHORITY_DOSSIER_ACTIONS:
         return False
-    return True
+    if status in {"promulgated", "executing"}:
+        return True
+    if status == "closed" and action == "pay_order_override":
+        from ming_sim.pay_order import dossier_override_still_in_force
+
+        return dossier_override_still_in_force(db, int(dossier["id"]))
+    return False
 
 def _parse_revoke_decree_target(
     db: Any, *,
@@ -1883,11 +1892,14 @@ def stage_revoke_decree_candidate(
     target_kind: object = "",
     extracted_mode: object = None,
     target_candidate: object = None,
+    affair_declaration: Optional[Mapping[str, object]] = None,
     pend_for_minister: Optional[List[Dict[str, Any]]] = None,
 ) -> int:
     """Shared revoke_decree candidate write (#523 / ADR 0041).
 
     有代价的新命令入闸；目标仅承诺/旨意。非 undo、不删旧账。
+    ``affair_declaration`` 是既有事务关联接缝（#1894 / ADR 0154）：原旨与撤令
+    沿同一事务，缺席即无关联，代码不据正文推断。
     """
     from ming_sim.cli_backend import resolve_directive_mode
 
@@ -1942,6 +1954,8 @@ def stage_revoke_decree_candidate(
         "revoke_target_issue_id": int(resolved.get("issue_id") or 0),
         "mode": mode,
     }
+    if affair_declaration:
+        staged["affair_declaration"] = dict(affair_declaration)
     if existing_id:
         return db.update_directive_candidate(existing_id, staged)
     return db.stage_directive_candidate(int(turn), minister_name, payload=staged)

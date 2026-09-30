@@ -16432,42 +16432,45 @@ class GameDB:
             reason = str(item.get("reason") or "收权被拒")
             raise ValueError(reason)
 
-    def _apply_revoke_decree_verdict_effect(
-        self, state, row, payload, dossier_id,
-    ) -> None:
-        """#523：撤回成命顺颁后终结目标承诺/旨意；捆带授权走 authority_changes。
+    def resolve_revoke_decree_target_ids(
+        self, payload: object, row: object = None,
+    ) -> tuple[int, int]:
+        """撤令目标解析唯一实现：(dossier_id, issue_id)。
 
-        非 undo、不删旧账。代价归 ADR 0056（breach_decree_dossier）。
+        撤令的三处读者共用本函数——判后物化（#523）、判前供料
+        （materials.revoke_target_facts）。读同一组结构化身份字段
+        ``revoke_target_dossier_id`` / ``revoke_target_issue_id``；两者皆无
+        时才按案卷行 ``target_kind``/``target_id`` 解析（接受 ``dossier:``/
+        ``issue:`` 前缀），issue 再经 ``origin_ref`` 回指案卷。两个字段可同时
+        在场（撤的是某道旨下出的承诺），**不得**读到其一即止。
+
+        无合法案卷来源时响亮拒绝；只读供料方按「无原旨可读」捕获。
         """
-        from ming_sim.issues import apply_score_extraction
         from ming_sim.strict_types import strict_int
 
-        try:
-            target_dossier_id = strict_int(
-                payload.get("revoke_target_dossier_id"),
-                accept_numeric_strings=True,
-            )
-        except (TypeError, ValueError):
-            target_dossier_id = 0
-        try:
-            target_issue_id = strict_int(
-                payload.get("revoke_target_issue_id"),
-                accept_numeric_strings=True,
-            )
-        except (TypeError, ValueError):
-            target_issue_id = 0
+        source = payload if isinstance(payload, Mapping) else {}
+        fields = source if isinstance(row, Mapping) else {}
+
+        def _id(key: str) -> int:
+            try:
+                return strict_int(source.get(key), accept_numeric_strings=True)
+            except (TypeError, ValueError):
+                return 0
+
+        target_dossier_id = _id("revoke_target_dossier_id")
+        target_issue_id = _id("revoke_target_issue_id")
 
         if target_dossier_id <= 0 and target_issue_id <= 0:
-            raw = str(payload.get("target_id") or row.get("target_id") or "").strip()
+            raw = str(
+                source.get("target_id") or fields.get("target_id") or ""
+            ).strip()
             kind = str(
-                payload.get("target_kind") or row.get("target_kind") or ""
+                source.get("target_kind") or fields.get("target_kind") or ""
             ).strip()
             if raw.startswith("dossier:"):
-                kind = "dossier"
-                raw = raw.split(":", 1)[1].strip()
+                kind, raw = "dossier", raw.split(":", 1)[1].strip()
             elif raw.startswith("issue:"):
-                kind = "issue"
-                raw = raw.split(":", 1)[1].strip()
+                kind, raw = "issue", raw.split(":", 1)[1].strip()
             try:
                 tid = strict_int(raw, accept_numeric_strings=True) if raw else 0
             except (TypeError, ValueError):
@@ -16483,7 +16486,7 @@ class GameDB:
         if target_dossier_id <= 0 and target_issue_id > 0:
             issue_row = self.conn.execute(
                 "SELECT kind, status, origin_ref FROM issues WHERE id=?",
-                (target_issue_id,),
+                (int(target_issue_id),),
             ).fetchone()
             if issue_row is None:
                 raise ValueError("撤回成命目标事项不存在")
@@ -16499,6 +16502,20 @@ class GameDB:
         if target_dossier_id <= 0:
             # 删除 standalone issue 免代价旁路（dossier_id=0 仍 cancel_issue）
             raise ValueError("撤回成命目标无合法案卷来源，不得免代价终结")
+        return int(target_dossier_id), int(target_issue_id)
+
+    def _apply_revoke_decree_verdict_effect(
+        self, state, row, payload, dossier_id,
+    ) -> None:
+        """#523：撤回成命顺颁后终结目标承诺/旨意；捆带授权走 authority_changes。
+
+        非 undo、不删旧账。代价归 ADR 0056（breach_decree_dossier）。
+        """
+        from ming_sim.issues import apply_score_extraction
+
+        target_dossier_id, target_issue_id = self.resolve_revoke_decree_target_ids(
+            payload, row,
+        )
 
         reason = str(
             payload.get("text") or row.get("decree_text") or "撤回成命"

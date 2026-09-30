@@ -24,6 +24,7 @@ from ming_sim.declaration_dispatch import (
 from ming_sim.exceptions import LLMUnavailable
 from ming_sim.llm_transport import audience_transport_policy
 from ming_sim.materials import (
+    continuing_dossier_facts,
     prepare_world_materials,
     release_material_tree,
     world_materials_root,
@@ -330,11 +331,17 @@ def produce_forecast_product(session: Any, snapshot: Dict[str, Any]) -> Dict[str
             prefix, questions = _split_at_question(str(narrative or ""))
             forecast_text = prefix
             if prefix.strip():
+                # #1894：在途案卷清单同世界段一份读口（materials.continuing_
+                # dossier_facts）——撤令的办理结果由执行格判官在本段声明
+                # dossier_executions，清单不给它就无从落原案卷的执行格。
                 declaration = translate_month_segment(
                     segment=prefix,
                     target_grounding=str(snapshot["target_grounding"]),
                     decree_payload=payload,
                     llm_config=session.llm_config,
+                    continuing_dossiers=continuing_dossier_facts(
+                        session.db, int(snapshot["turn"]),
+                    ),
                 )
         return {
             "verdict": verdict,

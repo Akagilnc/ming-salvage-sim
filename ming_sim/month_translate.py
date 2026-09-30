@@ -153,9 +153,14 @@ def stage_month_segment(
     translate_fn: Optional[MonthTranslateFn] = None,
 ) -> int:
     """预推段转译一次，只暂存声明；持久化、作废、按旨序结算沿 C0 原入口。"""
+    from ming_sim.materials import continuing_dossier_facts
+
+    # 与 dispatch_month_segment 同一读口：在途案卷清单须进转译输入，
+    # 否则本段的 dossier_executions 无从落执行格。
     declaration, refs = _translate_month_segment_front(
         db, segment=segment, turn=turn, decree_payload=decree_payload,
         llm_config=llm_config, translate_fn=translate_fn,
+        continuing_dossiers=continuing_dossier_facts(db, turn),
     )
     return stage_declaration(
         db, decree_ref=decree_ref, declaration=declaration, turn=turn,

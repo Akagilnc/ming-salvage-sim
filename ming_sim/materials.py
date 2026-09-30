@@ -1494,55 +1494,14 @@ def revoke_target_facts(db: Any, payload: object) -> dict[str, object]:
 
     供料接缝，不新增模型调用：撤令案卷的颁布判官（0055）与逐旨推演都据这份
     事实判断准行/劝回/拖延，以及准行后原案卷的办理结果怎么落。只读 DB 真源；
-    目标非案卷、或查无此事时返回空 dict（调用方按「无原旨可读」处理，不猜）。
+    目标身份解析复用 ``db.resolve_revoke_decree_target_ids``（判后物化同一实现，
+    禁平行口径）；查无此事时返回空 dict（调用方按「无原旨可读」处理，不猜）。
     """
     if not isinstance(payload, Mapping):
         return {}
-    from ming_sim.strict_types import strict_int
-
-    target_dossier_id = 0
-    target_issue_id = 0
-    for key, bucket in (
-        ("revoke_target_dossier_id", "dossier"),
-        ("revoke_target_issue_id", "issue"),
-    ):
-        try:
-            value = strict_int(payload.get(key), accept_numeric_strings=True)
-        except (TypeError, ValueError):
-            value = 0
-        if value > 0:
-            if bucket == "dossier":
-                target_dossier_id = value
-            else:
-                target_issue_id = value
-            break
-    if target_dossier_id <= 0 and target_issue_id <= 0:
-        raw = str(payload.get("target_id") or "").strip()
-        kind = str(payload.get("target_kind") or "").strip()
-        if raw.startswith("dossier:"):
-            kind, raw = "dossier", raw.split(":", 1)[1].strip()
-        elif raw.startswith("issue:"):
-            kind, raw = "issue", raw.split(":", 1)[1].strip()
-        try:
-            tid = strict_int(raw, accept_numeric_strings=True) if raw else 0
-        except (TypeError, ValueError):
-            tid = 0
-        if tid > 0:
-            if kind == "issue":
-                target_issue_id = tid
-            else:
-                target_dossier_id = tid
-    if target_dossier_id <= 0 and target_issue_id > 0:
-        row = db.conn.execute(
-            "SELECT origin_ref FROM issues WHERE id=?", (int(target_issue_id),),
-        ).fetchone()
-        origin = str(row["origin_ref"] or "").strip() if row is not None else ""
-        if origin.startswith("dossier:"):
-            try:
-                target_dossier_id = int(origin.split(":", 1)[1])
-            except (TypeError, ValueError):
-                target_dossier_id = 0
-    if target_dossier_id <= 0:
+    try:
+        target_dossier_id, target_issue_id = db.resolve_revoke_decree_target_ids(payload)
+    except (AttributeError, TypeError, ValueError):
         return {}
     dossier = db.get_decree_dossier(int(target_dossier_id))
     if dossier is None:

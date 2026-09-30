@@ -1290,6 +1290,12 @@ def _dispatch_commissions(
                 continue
             from ming_sim.action_materialize import stage_revoke_decree_candidate
             actor = str(minister_name or "").strip() or _commission_fallback_actor(db)
+            # 与其它交办载荷同缝：原旨与撤令沿同一事务关联（ADR 0154）。
+            payload: Dict[str, Any] = {}
+            if not _attach_commission_affair(
+                db, item, payload, rejected=rejected, source=source,
+            ):
+                continue
             row_id = stage_revoke_decree_candidate(
                 db, int(state.turn), actor,
                 text=body,
@@ -1297,6 +1303,7 @@ def _dispatch_commissions(
                 target_kind=revoke.get("target_kind", ""),
                 target_candidate=revoke.get("target_candidate"),
                 extracted_mode=revoke.get("mode", item.get("mode")),
+                affair_declaration=payload.get("affair_declaration"),
             )
             if row_id:
                 applied.append({"id": row_id, "kind": "directive"})
