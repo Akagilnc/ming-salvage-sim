@@ -1458,6 +1458,104 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     expect(host.querySelector("[data-testid=settlement-gazette-panel]")).toBeNull();
   });
 
+  // #1888 跨局回执隔离的真实玩家入口证明：旧局盖玺仍在流中 → 退出到主菜单 → 开始新游戏，
+  // 此刻才释放旧局回执。error（失败态）与 done（邸报成功）两条出口都必须对新局无副作用。
+  // 断言全在外部可见的结构化结果上（HUD 回合数 / hud-error / 本面邸报），不读 hook 内部态。
+  it.each([
+    ["error", "旧局结算失败", { message: "旧局结算失败" }],
+    ["done", "旧局邸报·迟到", { advanced: true, report: "旧局邸报·迟到" }],
+  ] as const)("#1888 跨局：旧局 %s 回执迟到不得写进新局", async (eventName, marker, payload) => {
+    let releaseIssue!: (response: Response) => void;
+    const issueGate = new Promise<Response>((resolve) => { releaseIssue = resolve; });
+    let newGamePosted = false;
+    const oldGameState = {
+      ...settlementBaseState("player"),
+      turn: { year: 1627, period: 10, turn: 5, phase: "player", settlement_display: false },
+      previous_summary: "",
+      pending_decisions: [],
+      directives: [{ id: 1, text: "拨辽饷", status: "draft" }],
+    };
+    const newGameState = {
+      ...settlementBaseState("player"),
+      turn: { year: 1627, period: 10, turn: 1, phase: "player", settlement_display: false },
+      previous_summary: "",
+      pending_decisions: [],
+      directives: [],
+      settlement_recovery: null,
+    };
+    let liveState: Record<string, unknown> = oldGameState;
+    vi.stubGlobal("confirm", () => true);
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      const u = new URL(String(url), "http://t.local");
+      if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
+      if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
+      if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
+      if (u.pathname.endsWith("/api/game/state")) return jsonResp(liveState);
+      if (u.pathname.endsWith("/api/history/turns")) return jsonResp({ turns: [] });
+      if (u.pathname.endsWith("/api/court_layout")) return jsonResp({ layout: "{}" });
+      if (u.pathname.endsWith("/api/menu/exit_to_menu")) return jsonResp({});
+      if (u.pathname.endsWith("/api/menu/new_game") && init?.method === "POST") {
+        newGamePosted = true;
+        liveState = newGameState;
+        return jsonResp({});
+      }
+      if (u.pathname.endsWith("/api/decree/issue/stream") && init?.method === "POST") {
+        // 回执整体挂起：盖玺后立刻退局换局，直到新局落位才把旧局回执放出来。
+        return issueGate;
+      }
+      return jsonResp({});
+    }));
+
+    const host = await mountApp();
+    // 旧局：开拟诏台 → 盖玺，流挂起不回。
+    await click(edictCommand(host));
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="诏书草案"]')).not.toBeNull());
+    });
+    await click(findButton(host, "盖玺颁诏过月"));
+    await tick();
+
+    // 退出到主菜单 → 开始新游戏（真实按钮链；新局覆盖主进度走就地确认卡）。
+    await click(host.querySelector('[aria-label="游戏菜单"]'));
+    await tick();
+    await click(findButton(host, "回到主菜单"));
+    await tick();
+    await click(host.querySelector(".menu-btn.primary"));
+    await tick();
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector(".hud2-stage")).toBeNull());
+    });
+    await click(findButton(host, "开始新游戏"));
+    await tick();
+    await act(async () => {
+      await vi.waitFor(() => expect(
+        host.querySelector('[role="group"][aria-label="覆盖主进度确认"]'),
+      ).not.toBeNull());
+    });
+    await click(findButton(host, "继续"));
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector(".hud2-stage")).not.toBeNull());
+    });
+    expect(newGamePosted).toBe(true);
+    // 新局已落位：回合回到 1，无旧局残留告警。
+    expect(host.querySelector(".hud2-val")?.textContent).toContain("1");
+
+    // 旧局回执此刻才到——不得污染新局。
+    await act(async () => {
+      releaseIssue(new Response(
+        `event: ${eventName}\ndata: ${JSON.stringify(payload)}\n\n`,
+        { status: 200, headers: { "Content-Type": "text/event-stream" } },
+      ));
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    await tick();
+
+    expect(host.querySelector(".hud2-val")?.textContent).toContain("1");
+    expect(host.querySelector('[data-testid="hud-error"]')).toBeNull();
+    expect(host.querySelector("[data-testid=settlement-gazette-panel]")).toBeNull();
+    expect(host.textContent).not.toContain(marker);
+  });
+
   it("#1852 写成即推进：本面邸报阅读中不弹 closed/密令/结局；朕知道了后仍按既有规则弹", async () => {
     vi.useFakeTimers();
     try {
@@ -1702,7 +1800,6 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
 
   it("#1796 无草案退朝失败后从原入口重试，不误走颁诏", async () => {
     let advancePosts = 0;
-    let issuePosts = 0;
     let releaseAdvance!: (value: Response) => void;
     const advanceGate = new Promise<Response>((resolve) => { releaseAdvance = resolve; });
     let liveState: Record<string, unknown> = {
@@ -1717,6 +1814,7 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
       pending_secret_order_count: 0,
       pending_non_directive_action_count: 0,
     };
+    let issuePosts = 0;
     vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
       const u = new URL(String(url), "http://t.local");
       if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);

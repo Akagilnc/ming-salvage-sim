@@ -714,23 +714,7 @@ describe("#1852 写成即推进：本面邸报阅读态，不整页 reload", () 
     cleanup();
   });
 
-  // #1888：代次在「回执到达」时读即为自比，闸门恒不生效——退局后才到的旧局回执会写进新局。
-  // 归属必须在请求发起时取；此处让代次先推进、回执后到，复现跨局污染。
-  it("退局后才到的旧局回执不得写进新局", async () => {
-    let release!: (response: Response) => void;
-    const loadState = vi.fn(async () => advancedMonthState);
-    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>((resolve) => { release = resolve; })));
-    const { hookRef, cleanup } = mountHarness({ loadState });
-
-    let issuing!: Promise<void>;
-    await act(async () => { issuing = hookRef.current!.issueDecree(); });
-    // 旧局盖玺仍在流中：此刻退局并再入局（接缝推进会话代次）。
-    await act(async () => { hookRef.current!.clearSettlementHudError(); });
-    await act(async () => { release(sseAdvancedResponse("旧局邸报")); await issuing; });
-
-    expect(hookRef.current!.settlementGazetteReading).toBeNull();
-    expect(hookRef.current!.suppressPostAdvanceOverlays).toBe(false);
-    cleanup();
-  });
+  // #1888：跨局回执隔离由真实 App 玩家入口证明（appDurableWiring.test.tsx：
+  // 盖玺 → 退出 → 开始新游戏 → 释放旧局 error/done），此处不再另立内部生命周期案。
 
 });
