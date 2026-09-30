@@ -354,11 +354,17 @@ def assert_night_accepts_player_input(
     night_id: Optional[int] = None,
     *,
     what: str = "写入",
+    source_chat_turn_id: int = 0,
 ) -> Optional[Dict[str, Any]]:
     """Freeze new dialogue / story / stage / approve while status=CLOSING.
 
     Close-owned short writes and close-owned story drain are not player input;
     they do not call this seam. Failure reopens OPEN so retries may proceed.
+
+    ``source_chat_turn_id``：ADR 0038 后出注记的迟到转译源轮。收夜持闸窗口里仍在
+    补译的同月原回话不是新玩家输入，由 :func:`is_pending_source_round` 这一个
+    判据放行——与 append_ledger_entry / mark_pending_night_approved 同源，不在
+    各消费者各自复写「迟到」规则，也不放宽封夜本身。
     """
     if night_id is not None and int(night_id) > 0:
         night = get_night(db, int(night_id))
@@ -367,6 +373,10 @@ def assert_night_accepts_player_input(
     if night is None:
         return None
     if str(night.get("status") or "") == NIGHT_STATUS_CLOSING:
+        if int(source_chat_turn_id or 0) > 0 and is_pending_source_round(
+            db, int(night["id"]), int(source_chat_turn_id), int(night["turn"]),
+        ):
+            return night
         # #1301：玩家面文案去裸 night_id（结构化 detail 已有）；diegetic 可读。
         raise AudienceNightError(
             f"本夜收夜中，暂不能{what}。",
@@ -2486,14 +2496,26 @@ def find_prior_speaker_still_present(db: Any, night_id: int, exclude_name: str =
 
 def mark_actions_night_approved(
     db: Any, action_ids: Sequence[int], *, night_id: Optional[int] = None,
+    source_chat_turn_id: int = 0,
 ) -> int:
-    """对话应允时：把暂存标为本夜已应允，收夜再提交（密令除外，调用方分流）。"""
+    """对话应允时：把暂存标为本夜已应允，收夜再提交（密令除外，调用方分流）。
+
+    ``source_chat_turn_id``：与 :func:`assert_night_accepts_player_input` 同义，
+    透传给 ``mark_pending_night_approved``。自动应允的消费者（禁摊派等）此前
+    只传 night_id，迟到转译在封夜后拿不到源轮、按 night_closed 拒绝，补译
+    应允接不回源夜（ADR 0038 后出注记）。
+    """
     if not hasattr(db, "mark_pending_night_approved"):
         return 0
+    ctid = int(source_chat_turn_id or 0)
     nid = night_id
     if nid is None:
         open_n = assert_night_accepts_player_input(db, what="应允暂存")
         nid = int(open_n["id"]) if open_n else None
     else:
-        assert_night_accepts_player_input(db, int(nid), what="应允暂存")
-    return int(db.mark_pending_night_approved(action_ids, night_id=nid) or 0)
+        assert_night_accepts_player_input(
+            db, int(nid), what="应允暂存", source_chat_turn_id=ctid,
+        )
+    return int(db.mark_pending_night_approved(
+        action_ids, night_id=nid, source_chat_turn_id=ctid,
+    ) or 0)

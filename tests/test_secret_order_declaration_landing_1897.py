@@ -84,6 +84,12 @@ def _hall_turn(db, state, minister, *, night_id):
     ).lastrowid
     db.conn.commit()
     db.update_chat_turn_messages(ctid, user_message_id=int(uid), minister_message_id=int(mid))
+    # 真实前置：源轮尚未转译承接（extract_status=pending）。迟到转译之所以发生，
+    # 正是因为这一轮还待补——is_pending_source_round 以此为判据。
+    db.conn.execute(
+        "UPDATE chat_turns SET extract_status='pending' WHERE id=?", (ctid,),
+    )
+    db.conn.commit()
     return ctid
 
 
@@ -160,6 +166,8 @@ def test_declared_new_secret_order_lands_through_live_dispatch_and_becomes_a_cas
     assert order["title"] == "查办粮科私卖"
     assert order["status"] == "active"
     assert db.get_dossier_for_secret_order(order_id) is not None
+    # 反向：名册里的具名承办人照常成案（身份闸不得把真承办人也拒掉）。
+    assert order["minister_name"] == minister
 
 
 def test_secret_order_free_text_is_stored_verbatim(game):
@@ -265,30 +273,16 @@ def test_non_roster_assignee_is_not_made_into_a_minister(game, declared_assignee
     assert db.list_secret_orders() == []
 
 
-def test_declared_roster_assignee_still_lands(game):
-    """反向：名册里的具名承办人照常暂存成案（身份闸不得把真承办人也拒掉）。"""
-    db, state, _ = game
-    minister = _minister(db)
-    night_id, ctid = _open_night(db, state, minister)
-
-    result = _dispatch(
-        db, state, minister, _secret_order_declaration(assignee=minister), ctid, night_id,
-    )
-    assert result.commissions.rejected == [], result.commissions.rejected
-    order_id = int(
-        _approve(db, state, minister, ctid, night_id,
-                 int(_staged_secret_order_rows(db, state.turn)[0]["id"]))
-        .promises.applied[0]["secret_order_id"]
-    )
-    assert db.get_secret_order(order_id)["minister_name"] == minister
-
-
 def test_late_translated_indirect_staging_keeps_its_source_night(game):
-    """ADR 0038 后出注记：间接暂存入口（责成交办 / 惩处）同样承接源夜。
+    """ADR 0038 后出注记：间接暂存入口（责成交办 / 惩处）同样承接源夜，且应允到底。
 
     这两者经 ``action_materialize.stage_*_candidate`` 落到
     ``stage_directive_candidate`` 而非直接写口——上一轮只在直接写口挂了源夜，
     夜收后它们挂成 night_id=0，随后应允按 missing_ref 拒收，补译交办接不回源夜。
+
+    断言走**契约结果**而非暂存字段：暂存必须挂源夜、应允必须真落 night_approved
+    （收夜提交白名单），才算接上了迟到承接路径；只断言 staged.night_id 会在
+    「暂存挂对了但应允仍被封夜拒绝」时照样变绿——上一轮正是这样漏过去的。
     """
     db, state, _ = game
     minister = _minister(db)
@@ -310,12 +304,21 @@ def test_late_translated_indirect_staging_keeps_its_source_night(game):
         )
         assert result.commissions.rejected == [], (label, result.commissions.rejected)
         assert len(result.commissions.applied) == 1, label
+        staged_id = int(result.commissions.applied[0]["id"])
         staged = db.conn.execute(
             "SELECT id, night_id FROM pending_actions WHERE id=?",
-            (int(result.commissions.applied[0]["id"]),),
+            (staged_id,),
         ).fetchone()
         # 源夜承接：不是 0（接不回源夜），是本夜。
         assert int(staged["night_id"]) == int(night_id), (label, dict(staged))
+
+        # 契约结果：封夜后的补译应允不得被 night_closed 拒绝，且真落应允位。
+        approved = _approve(db, state, minister, ctid, night_id, staged_id)
+        assert approved.promises.rejected == [], (label, approved.promises.rejected)
+        row = db.conn.execute(
+            "SELECT night_approved FROM pending_actions WHERE id=?", (staged_id,),
+        ).fetchone()
+        assert int(row["night_approved"]) == 1, (label, dict(row))
 
 
 def test_late_translated_indirect_update_keeps_its_source_night(game):
@@ -399,6 +402,9 @@ def test_secret_order_link_note_is_stored_verbatim(game):
     new_dossier_id = int(db.get_dossier_for_secret_order(order_id)["id"])
     stored = db.list_dossier_links(new_dossier_id)
     assert [link["note"] for link in stored] == [raw_note]
+    # R2：合法关联保持可消费——不被当脏数据整条拒收，关系型别丢。
+    assert [(int(link["target_dossier_id"]), link["relation_type"])
+            for link in stored] == [(old_dossier_id, "稽核")]
 
 
 @pytest.mark.parametrize("bad_tags", [7, [7]], ids=["whole_field", "element"])
@@ -535,42 +541,6 @@ def test_approved_rush_reports_success_and_is_not_repeated(game):
     # 已成功落库的催办不再执行一遍：同一 id 不在 pending 清单里。
     again = _approve(db, state, minister, ctid, night_id, staged_id)
     assert again.promises.applied == [], again.promises.applied
-
-
-def test_declared_secret_order_keeps_legal_dossier_links(game):
-    """R2：合法案卷关联保持可消费——成案后关联真落库，不被当脏数据整条拒收。"""
-    db, state, _ = game
-    minister = _minister(db)
-    night_id, ctid = _open_night(db, state, minister)
-
-    # 先立一个旧案卷供新案卷指向。
-    _dispatch(db, state, minister, _secret_order_declaration(assignee=minister),
-              ctid, night_id)
-    old_order_id = int(
-        _approve(db, state, minister, ctid, night_id,
-                 int(_staged_secret_order_rows(db, state.turn)[0]["id"]))
-        .promises.applied[0]["secret_order_id"]
-    )
-    old_dossier_id = int(db.get_dossier_for_secret_order(old_order_id)["id"])
-
-    result = _dispatch(db, state, minister, _secret_order_declaration(
-        assignee=minister, title="再查一桩", dossier_links=[{
-            "target_dossier_id": old_dossier_id,
-            "relation_type": "稽核", "note": "并案同查",
-        }],
-    ), ctid, night_id)
-    assert result.commissions.rejected == [], result.commissions.rejected
-
-    staged_id = int(_staged_secret_order_rows(db, state.turn)[-1]["id"])
-    order_id = int(
-        _approve(db, state, minister, ctid, night_id, staged_id)
-        .promises.applied[0]["secret_order_id"]
-    )
-    new_dossier_id = int(db.get_dossier_for_secret_order(order_id)["id"])
-    assert [(int(link["target_dossier_id"]), link["relation_type"])
-            for link in db.list_dossier_links(new_dossier_id)] == [
-        (old_dossier_id, "稽核"),
-    ]
 
 
 @pytest.mark.parametrize("bad_links", [7, [7]], ids=["whole_field", "element"])

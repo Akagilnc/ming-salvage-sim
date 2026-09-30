@@ -224,6 +224,7 @@ def stage_pacification_candidate(
     extracted_mode: object = None,
     pend_for_minister: Optional[List[Dict[str, Any]]] = None,
     night_id: Optional[int] = None,
+    source_chat_turn_id: int = 0,
 ) -> int:
     """Shared pacification candidate write: mode + same-target update.
 
@@ -235,8 +236,9 @@ def stage_pacification_candidate(
     target = str(target_id or "").strip()
     if not target:
         return 0
-    body = str(text or "").strip()
-    if not body:
+    # P6 零删改：正文是 LLM 自由文本，判空在副本上做，存的仍是原文。
+    body = str(text or "")
+    if not body.strip():
         return 0
 
     pending_rows = list(pend_for_minister or [])
@@ -275,9 +277,9 @@ def stage_pacification_candidate(
         "mode": mode,
     }
     if existing_id:
-        return db.update_directive_candidate(existing_id, staged, night_id=night_id)
+        return db.update_directive_candidate(existing_id, staged, night_id=night_id, source_chat_turn_id=source_chat_turn_id)
     return db.stage_directive_candidate(
-        int(turn), minister_name, payload=staged, night_id=night_id,
+        int(turn), minister_name, payload=staged, night_id=night_id, source_chat_turn_id=source_chat_turn_id,
     )
 
 
@@ -346,6 +348,7 @@ def stage_punishment_candidate(
     issue_disposition: object = None,
     pend_for_minister: Optional[List[Dict[str, Any]]] = None,
     night_id: Optional[int] = None,
+    source_chat_turn_id: int = 0,
 ) -> int:
     """Shared punishment candidate write: mode + same-target update."""
     from ming_sim.cli_backend import resolve_directive_mode
@@ -388,8 +391,9 @@ def stage_punishment_candidate(
         action not in punish_actions_effective() and disposition != "压下"
     ):
         return 0
-    body = str(text or "").strip()
-    if not body:
+    # P6 零删改：正文是 LLM 自由文本，判空在副本上做，存的仍是原文。
+    body = str(text or "")
+    if not body.strip():
         return 0
 
     pending_rows = list(pend_for_minister or [])
@@ -464,9 +468,9 @@ def stage_punishment_candidate(
     elif n > 0:
         staged["amount"] = n
     if existing_id:
-        return db.update_directive_candidate(existing_id, staged, night_id=night_id)
+        return db.update_directive_candidate(existing_id, staged, night_id=night_id, source_chat_turn_id=source_chat_turn_id)
     return db.stage_directive_candidate(
-        int(turn), minister_name, payload=staged, night_id=night_id,
+        int(turn), minister_name, payload=staged, night_id=night_id, source_chat_turn_id=source_chat_turn_id,
     )
 
 
@@ -785,6 +789,7 @@ def stage_grant_allocation_candidate(
     participant_roster: object = None,
     pend_for_minister: Optional[List[Dict[str, Any]]] = None,
     night_id: Optional[int] = None,
+    source_chat_turn_id: int = 0,
 ) -> int:
     """Shared grant candidate write: mode + explicit-target update only.
 
@@ -797,7 +802,8 @@ def stage_grant_allocation_candidate(
     action = str(grant_action or "").strip()
     target = str(target_id or "").strip()
     kind = str(target_kind or "").strip()
-    body = str(text or "").strip()
+    # P6 零删改：判空在副本上做，存的仍是原文（与 body 同口径）。
+    body = str(text or "")
     if action not in (GRANT_ACTIONS - {"无"}):
         return 0
     # #1503：协饷完整写入前置由同一权威缝收集；此处不补值。
@@ -822,7 +828,7 @@ def stage_grant_allocation_candidate(
     else:
         if not target or not kind:
             return 0
-        if not body:
+        if not body.strip():
             return 0
         # #1620：非协饷写 pending 前消费 shape 唯一权威；删宽松 int(amount or 0)
         # #1730：物化缝把 shape 族裸 ValueError 转为 typed 拒收（权威函数语义不动）。
@@ -931,9 +937,9 @@ def stage_grant_allocation_candidate(
             "character_id": lead, "tier": "主办", "role": "", "delegator_id": None,
         }]
     if existing_id:
-        return db.update_directive_candidate(existing_id, staged, night_id=night_id)
+        return db.update_directive_candidate(existing_id, staged, night_id=night_id, source_chat_turn_id=source_chat_turn_id)
     return db.stage_directive_candidate(
-        int(turn), minister_name, payload=staged, night_id=night_id,
+        int(turn), minister_name, payload=staged, night_id=night_id, source_chat_turn_id=source_chat_turn_id,
     )
 
 
@@ -1490,19 +1496,24 @@ def stage_assignment_candidate(
     """
     from ming_sim.cli_backend import resolve_directive_mode
 
-    body = str(text or "").strip()
-    if not body:
+    # P6 零删改：正文是 LLM 自由文本，判空在副本上做，存的仍是原文。
+    body = str(text or "")
+    if not body.strip():
         raise DecreeMaterializationValidationError(
             "交办旨意缺少正文", failed_fields=("text",),
         )
-    # 题名只认结构化锚；不得从正文/皇帝散文截取
-    matter_title = str(title or "").strip() or str(target_id or "").strip()
+    # 题名只认结构化锚；不得从正文/皇帝散文截取。
+    # P6 零删改：title 是 LLM 自由文本，判空在副本上做，存的仍是原文；
+    # target_id 是结构化身份键，仍按原口径规范化（身份键不在零删改之列）。
+    matter_title = str(title or "")
+    if not matter_title.strip():
+        matter_title = str(target_id or "").strip()
     if not matter_title:
         raise DecreeMaterializationValidationError(
             "交办旨意缺少结构化题名（title 或 target_id）",
             failed_fields=("title",),
         )
-    matter_id = str(target_id or "").strip() or matter_title
+    matter_id = str(target_id or "").strip() or matter_title.strip()
     actor = str(minister_name or "").strip()
     if not actor:
         return 0
@@ -1602,9 +1613,9 @@ def stage_assignment_candidate(
             staged["commitment_kind"] = staged.get("commitment_kind") or "until_stop"
             # 段派生 end_turn（max due）不写入候选/DB（#620 勿驱动 expire）
     if existing_id:
-        return db.update_directive_candidate(existing_id, staged, night_id=night_id)
+        return db.update_directive_candidate(existing_id, staged, night_id=night_id, source_chat_turn_id=source_chat_turn_id)
     return db.stage_directive_candidate(
-        int(turn), minister_name, payload=staged, night_id=night_id,
+        int(turn), minister_name, payload=staged, night_id=night_id, source_chat_turn_id=source_chat_turn_id,
     )
 
 def stage_authorization_candidate(
@@ -1621,6 +1632,7 @@ def stage_authorization_candidate(
     target_candidate: object = None,
     pend_for_minister: Optional[List[Dict[str, Any]]] = None,
     night_id: Optional[int] = None,
+    source_chat_turn_id: int = 0,
 ) -> int:
     """Shared authorization candidate write (#528 / #611).
 
@@ -1631,8 +1643,9 @@ def stage_authorization_candidate(
 
     if str(target_candidate or "").strip() == "含糊":
         return 0
-    body = str(text or "").strip()
-    if not body:
+    # P6 零删改：正文是 LLM 自由文本，判空在副本上做，存的仍是原文。
+    body = str(text or "")
+    if not body.strip():
         return 0
     holder = str(minister_name or "").strip()
     if not holder:
@@ -1691,9 +1704,9 @@ def stage_authorization_candidate(
     # 不属三入口 structured_decree 契约；仅缺省补全，非覆盖已给 locality。
     staged["locality_scope"] = write_locality_scope_for_target_kind(kind)
     if existing_id:
-        return db.update_directive_candidate(existing_id, staged, night_id=night_id)
+        return db.update_directive_candidate(existing_id, staged, night_id=night_id, source_chat_turn_id=source_chat_turn_id)
     return db.stage_directive_candidate(
-        int(turn), minister_name, payload=staged, night_id=night_id,
+        int(turn), minister_name, payload=staged, night_id=night_id, source_chat_turn_id=source_chat_turn_id,
     )
 
 
@@ -1723,18 +1736,23 @@ def stage_referral_candidate(
     """
     from ming_sim.cli_backend import resolve_directive_mode
 
-    body = str(text or "").strip()
-    if not body:
+    # P6 零删改：正文是 LLM 自由文本，判空在副本上做，存的仍是原文。
+    body = str(text or "")
+    if not body.strip():
         raise DecreeMaterializationValidationError(
             "下议旨意缺少正文", failed_fields=("text",),
         )
-    matter_title = str(title or "").strip() or str(target_id or "").strip()
+    # P6 零删改：同 stage_assignment_candidate——title 存原文、判空在副本上，
+    # target_id 身份键仍规范化。
+    matter_title = str(title or "")
+    if not matter_title.strip():
+        matter_title = str(target_id or "").strip()
     if not matter_title:
         raise DecreeMaterializationValidationError(
             "下议旨意缺少结构化题名（title 或 target_id）",
             failed_fields=("title",),
         )
-    matter_id = str(target_id or "").strip() or matter_title
+    matter_id = str(target_id or "").strip() or matter_title.strip()
 
     try:
         months = int(deadline_months or 0)
@@ -1805,9 +1823,9 @@ def stage_referral_candidate(
         staged["source_chat_turn_id"] = origin_cid
     # 禁个人 owner：显式不写 assignee/assignee_id
     if existing_id:
-        return db.update_directive_candidate(existing_id, staged, night_id=night_id)
+        return db.update_directive_candidate(existing_id, staged, night_id=night_id, source_chat_turn_id=source_chat_turn_id)
     return db.stage_directive_candidate(
-        int(turn), minister_name, payload=staged, night_id=night_id,
+        int(turn), minister_name, payload=staged, night_id=night_id, source_chat_turn_id=source_chat_turn_id,
     )
 
 def stage_revoke_authority_candidate(
@@ -1823,6 +1841,7 @@ def stage_revoke_authority_candidate(
     target_candidate: object = None,
     pend_for_minister: Optional[List[Dict[str, Any]]] = None,
     night_id: Optional[int] = None,
+    source_chat_turn_id: int = 0,
 ) -> int:
     """Shared revoke_authority candidate write (#523 / #611).
 
@@ -1833,8 +1852,9 @@ def stage_revoke_authority_candidate(
 
     if str(target_candidate or "").strip() == "含糊":
         return 0
-    body = str(text or "").strip()
-    if not body:
+    # P6 零删改：正文是 LLM 自由文本，判空在副本上做，存的仍是原文。
+    body = str(text or "")
+    if not body.strip():
         return 0
     rec = _resolve_unique_active_authority(
         db, int(turn),
@@ -1889,9 +1909,9 @@ def stage_revoke_authority_candidate(
         "mode": mode,
     }
     if existing_id:
-        return db.update_directive_candidate(existing_id, staged, night_id=night_id)
+        return db.update_directive_candidate(existing_id, staged, night_id=night_id, source_chat_turn_id=source_chat_turn_id)
     return db.stage_directive_candidate(
-        int(turn), minister_name, payload=staged, night_id=night_id,
+        int(turn), minister_name, payload=staged, night_id=night_id, source_chat_turn_id=source_chat_turn_id,
     )
 
 def stage_revoke_decree_candidate(
@@ -1906,6 +1926,7 @@ def stage_revoke_decree_candidate(
     target_candidate: object = None,
     pend_for_minister: Optional[List[Dict[str, Any]]] = None,
     night_id: Optional[int] = None,
+    source_chat_turn_id: int = 0,
 ) -> int:
     """Shared revoke_decree candidate write (#523 / ADR 0041).
 
@@ -1915,8 +1936,9 @@ def stage_revoke_decree_candidate(
 
     if str(target_candidate or "").strip() == "含糊":
         return 0
-    body = str(text or "").strip()
-    if not body:
+    # P6 零删改：正文是 LLM 自由文本，判空在副本上做，存的仍是原文。
+    body = str(text or "")
+    if not body.strip():
         return 0
     resolved = _parse_revoke_decree_target(
         db,
@@ -1965,9 +1987,9 @@ def stage_revoke_decree_candidate(
         "mode": mode,
     }
     if existing_id:
-        return db.update_directive_candidate(existing_id, staged, night_id=night_id)
+        return db.update_directive_candidate(existing_id, staged, night_id=night_id, source_chat_turn_id=source_chat_turn_id)
     return db.stage_directive_candidate(
-        int(turn), minister_name, payload=staged, night_id=night_id,
+        int(turn), minister_name, payload=staged, night_id=night_id, source_chat_turn_id=source_chat_turn_id,
     )
 
 def _build_catalog() -> Tuple[ActionCluster, ...]:

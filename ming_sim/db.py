@@ -17148,7 +17148,7 @@ class GameDB:
     def stage_pending_action(
         self, turn: int, kind: str, action: str, minister_name: str,
         payload: Dict[str, object], target_id: Optional[int] = None,
-        night_id: Optional[int] = None,
+        night_id: Optional[int] = None, source_chat_turn_id: int = 0,
     ) -> int:
         """把一条结构化聊天写动作存进 pending_actions 暂存(status=pending)。返回行 id。
         颁诏时 commit_pending_actions 批量落库;颁诏前不动真实表。
@@ -17160,6 +17160,8 @@ class GameDB:
         ``get_open_night`` 返 None 会把补译暂存挂成 night_id=0，随后应允按
         「不属本夜暂存清单」missing_ref——补译交办因此接不上源夜。给出源夜时
         仍走同一条 CLOSING 冻结校验，只是不再取「当前开着的夜」。
+        ``source_chat_turn_id``：迟到转译的源轮，随之放行收夜持闸窗口（判据
+        唯一真源见 :func:`assert_night_accepts_player_input`）。
         """
         payload_data: Dict[str, object] = dict(payload or {})
         # #498：开夜期间 stage 的暂存挂 night_id；收夜只交本夜已应允 id
@@ -17167,7 +17169,10 @@ class GameDB:
         from ming_sim.audience_night import assert_night_accepts_player_input
         pinned_night = int(night_id or 0)
         if pinned_night > 0:
-            assert_night_accepts_player_input(self, pinned_night, what="暂存")
+            assert_night_accepts_player_input(
+                self, pinned_night, what="暂存",
+                source_chat_turn_id=int(source_chat_turn_id or 0),
+            )
             night_id = pinned_night
         else:
             open_n = assert_night_accepts_player_input(self, what="暂存")
@@ -17433,7 +17438,7 @@ class GameDB:
 
     def stage_directive_candidate(
         self, turn: int, minister_name: str, payload: Dict[str, object],
-        *, night_id: Optional[int] = None,
+        *, night_id: Optional[int] = None, source_chat_turn_id: int = 0,
     ) -> int:
         """多道模式（#502）：新拟一道**独立**圣旨候选——总是 INSERT 新行、不并进现有候选。
         与 upsert_pending_directive（同回合同大臣至多一条、last-write-wins）互补：本方法给
@@ -17441,12 +17446,13 @@ class GameDB:
 
         ``night_id``：与 :meth:`stage_pending_action` 同义——显式承接的源夜，供
         间接暂存入口（``action_materialize.stage_*_candidate``）把 ADR 0038
-        迟到转译的归属夜传下去，不再退回「当前开着的夜」。
+        迟到转译的归属夜传下去，不再退回「当前开着的夜」。``source_chat_turn_id``
+        同义：迟到转译的源轮，放行收夜持闸窗口。
         """
         return self.stage_pending_action(
             turn, kind="directive", action="拟旨",
             minister_name=minister_name, target_id=None, payload=payload,
-            night_id=night_id,
+            night_id=night_id, source_chat_turn_id=source_chat_turn_id,
         )
 
     def update_office_candidate_payload(
@@ -17483,7 +17489,7 @@ class GameDB:
 
     def update_directive_candidate(
         self, candidate_id: int, payload: Dict[str, object],
-        *, night_id: Optional[int] = None,
+        *, night_id: Optional[int] = None, source_chat_turn_id: int = 0,
     ) -> int:
         """多道模式（#502）：原地更新某一道 pending directive 候选正文（补充/改草，不冻结）。
         与 upsert_pending_directive 更新分支同纪律——把归属迁到本夜（默认当前开着
@@ -17493,11 +17499,15 @@ class GameDB:
         静默抹掉待澄清/夜内态闸（#502 L5，与 flag_directive_needs_clarification 同纪律）。
         #612：player-facing draft mutation 统一走 assert_night_accepts_player_input，CLOSING 拒。
         ``night_id``：ADR 0038 迟到转译的源夜——夜已收时按「当前开着的夜」改归属会
-        把行迁到 night_id=0，随后应允按 missing_ref 拒收，补译交办接不回源夜。"""
+        把行迁到 night_id=0，随后应允按 missing_ref 拒收，补译交办接不回源夜。
+        ``source_chat_turn_id``：迟到转译的源轮，放行收夜持闸窗口（同暂存缝）。"""
         from ming_sim.audience_night import assert_night_accepts_player_input
         pinned_night = int(night_id or 0)
         if pinned_night > 0:
-            assert_night_accepts_player_input(self, pinned_night, what="改草")
+            assert_night_accepts_player_input(
+                self, pinned_night, what="改草",
+                source_chat_turn_id=int(source_chat_turn_id or 0),
+            )
             next_night = pinned_night
         else:
             assert_night_accepts_player_input(self, what="改草")

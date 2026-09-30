@@ -318,6 +318,7 @@ def _dispatch_declaration_sections(
         rushes=_dispatch_rushes(
             db, state, declaration.get("rushes"),
             minister_name=minister_name, source=source, night_id=night_id,
+            chat_turn_id=origin_ctid,
         ),
         travel_tones=_dispatch_travel_tones(
             db, declaration.get("travel_tones"), night_id=night_id,
@@ -1078,6 +1079,7 @@ def _dispatch_commissions(
                     _stage_prohibit_covert_levy(
                         db, state, item, minister_name=minister_name,
                         night_id=int(night_id or 0),
+                        source_chat_turn_id=int(source_chat_turn_id or 0),
                     )
                 )
             except KeyError as exc:
@@ -1127,6 +1129,7 @@ def _dispatch_commissions(
             row_id = db.stage_pending_action(
                 int(state.turn), "directive", "拟旨", actor, payload,
                 night_id=staged_night,
+                source_chat_turn_id=source_chat_turn_id,
             )
             applied.append({"id": row_id, "payload": payload, "kind": "directive"})
             continue
@@ -1158,6 +1161,7 @@ def _dispatch_commissions(
                 int(state.turn), kind="secret_order", action="记进展",
                 minister_name=actor, target_id=order_id, payload={"note": note},
                 night_id=staged_night,
+                source_chat_turn_id=source_chat_turn_id,
             )
             applied.append({"id": row_id, "kind": "secret_order"})
             continue
@@ -1200,6 +1204,7 @@ def _dispatch_commissions(
             row_id = db.stage_pending_action(
                 int(state.turn), "secret_order", "更新", actor, payload,
                 target_id=order_id, night_id=staged_night,
+                source_chat_turn_id=source_chat_turn_id,
             )
             applied.append({"id": row_id, "kind": "secret_order"})
             continue
@@ -1299,6 +1304,7 @@ def _dispatch_commissions(
             row_id = db.stage_pending_action(
                 int(state.turn), "secret_order", "新建", actor, payload,
                 night_id=staged_night,
+                source_chat_turn_id=source_chat_turn_id,
             )
             applied.append({"id": row_id, "kind": "secret_order"})
             continue
@@ -1373,6 +1379,7 @@ def _dispatch_commissions(
                 issue_id=punishment.get("issue_id"),
                 issue_disposition=punishment.get("issue_disposition"),
                 night_id=staged_night,
+                source_chat_turn_id=source_chat_turn_id,
             )
             if row_id:
                 applied.append({"id": row_id, "kind": "directive"})
@@ -1407,6 +1414,7 @@ def _dispatch_commissions(
                 db, int(state.turn), actor, text=body,
                 target_id=canonical, extracted_mode=pacification.get("mode"),
                 night_id=staged_night,
+                source_chat_turn_id=source_chat_turn_id,
             )
             applied.append({"id": row_id, "kind": "directive"})
             continue
@@ -1571,6 +1579,7 @@ def _dispatch_commissions(
                 minister_name,
                 office_payload,
                 night_id=staged_night,
+                source_chat_turn_id=source_chat_turn_id,
             )
             return {"id": oid, "payload": office_payload, "kind": "office"}
 
@@ -1591,7 +1600,7 @@ def _dispatch_commissions(
             payload["actor"] = actor
         row_id = db.stage_pending_action(
             int(state.turn), "directive", "拟旨", actor, payload,
-            night_id=staged_night,
+            night_id=staged_night, source_chat_turn_id=source_chat_turn_id,
         )
         applied.append({"id": row_id, "payload": payload, "kind": "directive"})
     return SectionResult(applied=applied, rejected=rejected)
@@ -1788,12 +1797,14 @@ def _is_prohibit_covert_levy_item(item: Mapping[str, object]) -> bool:
 
 def _stage_prohibit_covert_levy(
     db: Any, state: Any, item: Mapping[str, object], *, minister_name: str,
-    night_id: int = 0,
+    night_id: int = 0, source_chat_turn_id: int = 0,
 ) -> Dict[str, Any]:
     """禁摊派交办：绑定当前暴露案卷 → 既有 directive 暂存并标夜应允。
 
     ``night_id``：与 :func:`_dispatch_commissions` 其余分支同义，暂存与夜应允
     一并挂源夜，夜收后补译的禁摊派仍接得上（ADR 0038 后出注记）。
+    ``source_chat_turn_id``：同义的源轮。自动应允是本函数独有的消费者——没有它
+    迟到转译在封夜后拿不到源轮，暂存被拒或应允按 night_closed 拒绝。
     """
     from ming_sim.audience_night import mark_actions_night_approved
     from ming_sim.covert_levy import PROHIBITION_ACTION
@@ -1825,9 +1836,12 @@ def _stage_prohibit_covert_levy(
     staged_night = int(night_id or 0) or None
     row_id = db.stage_pending_action(
         int(state.turn), "directive", "拟旨", actor, payload,
-        night_id=staged_night,
+        night_id=staged_night, source_chat_turn_id=int(source_chat_turn_id or 0),
     )
-    mark_actions_night_approved(db, [row_id], night_id=staged_night)
+    mark_actions_night_approved(
+        db, [row_id], night_id=staged_night,
+        source_chat_turn_id=int(source_chat_turn_id or 0),
+    )
     return {"id": row_id, "payload": payload, "kind": "directive"}
 
 
@@ -1952,12 +1966,14 @@ def _dispatch_rushes(
     minister_name: str,
     source: Provenance,
     night_id: int = 0,
+    chat_turn_id: int = 0,
 ) -> SectionResult:
     """催办声明 → 既有 pending 催办写口（密令 / 分段承诺，ADR 0078）。
 
     ``night_id`` 与 :func:`_dispatch_commissions` 同义：透传给每一条暂存，夜收
     后补译的催办仍挂源夜，随后应允接得上（ADR 0038 后出注记）。漏传即退回
     「取当前开着的夜」，夜已收时挂成 night_id=0 → 应允 missing_ref。
+    ``chat_turn_id``：同义的源轮，放行收夜持闸窗口。
     """
     items, rejected = _section_items(raw, label="催办声明", source=source)
     staged_night = int(night_id or 0) or None
@@ -2015,6 +2031,7 @@ def _dispatch_rushes(
             row_id = db.stage_pending_action(
                 int(state.turn), "commitment", "催办", actor, payload,
                 target_id=target_id, night_id=staged_night,
+                source_chat_turn_id=chat_turn_id,
             )
             applied.append({
                 "id": row_id, "kind": "commitment", "target_id": target_id,
@@ -2037,6 +2054,7 @@ def _dispatch_rushes(
         row_id = db.stage_pending_action(
             int(state.turn), "secret_order", "催办", actor, payload,
             target_id=target_id, night_id=staged_night,
+            source_chat_turn_id=chat_turn_id,
         )
         applied.append({
             "id": row_id, "kind": "secret_order", "target_id": target_id,
