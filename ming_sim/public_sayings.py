@@ -90,8 +90,13 @@ def record_public_saying(
     return saying_id
 
 
-def public_layer_events(db: Any) -> list[dict[str, object]]:
-    """投影进 0034 公开层的条目：人人读到「有此说法」，不是实况。"""
+def public_layer_events(db: Any, *, for_every_reader: bool = False) -> list[dict[str, object]]:
+    """投影进 0034 公开层的条目：人人读到「有此说法」，不是实况。
+
+    `for_every_reader=True` 是无读者的世界层投影（人物名为空）。带显式排除
+    名单的说法不是「人人可读」，无读者层没有可被排除的读者，故不投影——
+    否则公共供料会把受排除材料重新公开（#1829 C1）。
+    """
     return [
         {
             "turn": row["turn"],
@@ -104,6 +109,10 @@ def public_layer_events(db: Any) -> list[dict[str, object]]:
         }
         for row in list_public_sayings(db)
         if row.get("source_id")
+        and not (
+            for_every_reader
+            and (row["excluded_names"] or row["excluded_targets"])
+        )
     ]
 
 

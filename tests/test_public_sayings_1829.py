@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import shutil
 import threading
 
-import ming_sim.month_chain as month_chain
 from ming_sim.audience_night import open_night
 from types import SimpleNamespace
 
@@ -178,12 +178,32 @@ def test_public_saying_excluded_name_does_not_see_it_others_do(
     assert saying["body"] == claim
     assert excluded_name in saying["excluded_names"]
 
-    # 现役玩家过月主链（resolve_directives → run_player_month_chain）；只替 LLM 缝。
+    # 现役玩家过月主链（resolve_directives → run_player_month_chain）。
+    # #1829 C2：只替不可真跑的模型传输缝——run_gazette_text 本体、作者供料
+    # （prepare_world_materials）与作者可读目录都真跑，否则绿灯证明不了跨月瞒报边界。
     before_turn = int(state.turn)
-    monkeypatch.setattr(
-        month_chain, "run_gazette_text",
-        lambda *_a, **_k: ("邸报", "本月朝局如常"),
-    )
+    plain_claim = "边情已定，漕运如常"
+    record_public_saying(db, state, plain_claim)
+    author_seen: dict = {}
+
+    def author_model(agent, prompt, tag, **_kwargs):
+        assert tag == "gazette", f"unexpected agent tag: {tag!r}"
+        listing, read = "", None
+        for tool in getattr(agent, "tools", []) or []:
+            entry = getattr(tool, "entrypoint", tool)
+            if getattr(entry, "__name__", "") == "list_materials":
+                listing = entry()
+            elif getattr(entry, "__name__", "") == "read_material":
+                read = entry
+        assert read is not None, "邸报作者没有材料目录读口"
+        author_seen["materials"] = listing + "\n" + "\n".join(
+            read(rel) for rel in listing.splitlines() if rel.endswith(".txt")
+        )
+        return json.dumps(
+            {"title": "本月邸报", "report": "本月朝局如常。"}, ensure_ascii=False,
+        )
+
+    monkeypatch.setattr("ming_sim.agents.run_agent_text", author_model)
     monkeypatch.setattr(
         "ming_sim.mechanical_tail._run_tail_body", lambda *_a, **_k: "done",
     )
@@ -209,6 +229,12 @@ def test_public_saying_excluded_name_does_not_see_it_others_do(
         "WHERE character_name='' AND source_id=?", (source_id,),
     ).fetchone() is None
 
+    # #1829 C1 根因：受排除的公开说法不得进入公共邸报作者的供料目录。
+    # 判据看作者真读到的材料，不看它写什么措辞。
+    author_materials = author_seen["materials"]
+    assert claim not in author_materials, "受排除说法绕过了邸报作者供料边界"
+    assert plain_claim in author_materials, "无排除的公开说法应照常供料"
+
     # 票面「过月、重开、再召见」的重开腿：换库重读，排除边界与「只读一次」都还在。
     shutil.copy(db.path, tmp_path / "reopen.db")
     reopened = GameDB(str(tmp_path / "reopen.db"), content)
@@ -224,7 +250,11 @@ def test_public_saying_excluded_name_does_not_see_it_others_do(
         assert reopened_hits[0]["body"] == claim
         status, _ = reopened.get_character_status("袁崇焕")
         assert status != "dead"
-        assert [row["id"] for row in list_public_sayings(reopened)] == [saying_id]
+        # 「单份记录」按本条说法核，不按全表行数——同表另有无排除的普通说法。
+        assert [
+            row["id"] for row in list_public_sayings(reopened)
+            if row["body"] == claim
+        ] == [saying_id]
         assert reopened.conn.execute(
             "SELECT 1 FROM character_knowledge_sources WHERE source_id=?", (source_id,),
         ).fetchone() is None

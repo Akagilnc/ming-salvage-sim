@@ -1946,7 +1946,8 @@ def prepare_world_materials(
 
     # public_events 的既有投影与具体 character_name 无关（build_character_knowledge
     # 里 public_events 恒取 `_character_knowledge_events("", ...)`）——借用同一投影，
-    # 不另建一套「世界公开说法」查询。
+    # 不另建一套「世界公开说法」查询。空姓名即无读者层：受显式排除的说法不投影
+    # （public_layer_events 的 for_every_reader），公共供料不会重新公开它。
     knowledge = build_character_knowledge(db, state, "")
     public_events = knowledge.get("public_events") or []
     affair_lines = _world_affair_lines(db, include_fact)

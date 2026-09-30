@@ -765,7 +765,7 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
             key: (_prose(value) if key == "body" else value)
             for key, value in row.items() if key != "excluded_names"
         }
-        for row in public_layer_events(db)
+        for row in public_layer_events(db, for_every_reader=not character_name)
         if knowledge_row_visible_to(
             db,
             {**row, "office_type": office_type, "office": office_name},
