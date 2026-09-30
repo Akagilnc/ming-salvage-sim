@@ -500,6 +500,52 @@ def test_revoke_forecast_translation_input_carries_original_and_continuing_dossi
     assert db.resolve_revoke_decree_target_ids(payload) == (did, int(cid))
 
 
+def test_revoke_target_identity_falls_back_to_dossier_row(game):
+    """载荷缺 ``revoke_target_*`` 时，目标身份仍从案卷行的 target_id/target_kind 解析。
+
+    归一实现有两条来源：结构化身份字段优先，皆无才读案卷行。行回退不是死代码
+    ——撤令案卷的目标身份本就同时存在行上；漏读会让这类撤令在判后物化时
+    抛「缺少目标」，原案卷与承诺均不落终局。
+    """
+    from ming_sim.materials import revoke_target_facts
+
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.commit()
+    did, holder = _executing_policy_dossier(db, state, token="row-fallback")
+    cid, _ = _insert_commitment(
+        db, state, title="行回退之诺", origin_ref=f"dossier:{did}",
+        bar_value=20, end_turn=state.turn + 30,
+        participants=[{"character_id": holder, "tier": "主办", "role": "承办"}],
+    )
+
+    # 解析：带前缀、裸 id、以及行上 issue 身份（经 origin_ref 回指案卷）
+    assert db.resolve_revoke_decree_target_ids({}, {
+        "target_id": f"dossier:{did}", "target_kind": "dossier",
+    }) == (did, 0)
+    assert db.resolve_revoke_decree_target_ids(None, {"target_id": str(did)}) == (did, 0)
+    assert db.resolve_revoke_decree_target_ids(
+        {}, {"target_id": f"issue:{cid}", "target_kind": "issue"},
+    ) == (did, int(cid))
+    # 判前供料同一实现：只有行上身份时也读得到原旨
+    assert int(revoke_target_facts(db, {"target_id": f"dossier:{did}"})["dossier_id"]) == did
+
+    # 判后物化：撤令案卷不给 revoke_target_*，仍按行解析并落账
+    revoke_id = db.create_decree_dossier(
+        state, action_type="revoke_decree", decree_text="撤回前旨",
+        target_kind="issue", target_id=str(cid),
+        payload={"text": "撤回前旨"},
+    )
+    db.apply_dossier_verdicts(
+        state, [{"dossier_id": revoke_id, "decision": "promulgated"}], content=content,
+    )
+    assert _cost_events(db, did, identity="breach"), "0056 名声账应照落"
+    assert db.conn.execute(
+        "SELECT status FROM issues WHERE id=?", (cid,),
+    ).fetchone()["status"] == "dropped"
+    assert str(db.get_decree_dossier(did)["status"]) == "executing"
+
+
 def test_policy_reversal_revoke_rejected_leaves_everything_untouched(game):
     """#1894：外庭劝回/打回则撤令未生效——原案卷与承诺零变化，不伪报已撤。"""
     from dossier_test_helpers import rejected_verdict

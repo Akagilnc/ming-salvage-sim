@@ -16449,7 +16449,7 @@ class GameDB:
         from ming_sim.strict_types import strict_int
 
         source = payload if isinstance(payload, Mapping) else {}
-        fields = source if isinstance(row, Mapping) else {}
+        fields = row if isinstance(row, Mapping) else {}
 
         def _id(key: str) -> int:
             try:
