@@ -825,17 +825,6 @@ _LEDGER_KEYS = (
 )
 
 
-def character_hearing_records(knowledge: dict) -> list[dict[str, str]]:
-    """可见经历与公开说法的同一批投影，不裁条数。"""
-    records: list[dict[str, str]] = []
-    for item in [*(knowledge.get("public_events") or []), *(knowledge.get("events") or [])]:
-        title = str(item.get("title") or "")
-        body = str(item.get("body") or "")
-        if title or body:
-            records.append({"title": title, "body": body})
-    return records
-
-
 def character_office_archive_text(db: Any, state: Any, character: Any, knowledge: dict) -> str:
     """本衙门公事档案：职位底账 + 可见案卷。与目录 公事档案.txt 同一份。"""
     from ming_sim.decree_vocabulary import render_referenceable_dossier_brief
@@ -1033,9 +1022,6 @@ def _write_public_by_month(tmp: Path, public_events: list) -> list[str]:
         fname = f"{year}年{period}月.txt" if year and period else "未标年月.txt"
         _write_text(tmp / _PUBLIC_DIR / fname, "\n".join(lines))
         index.append(f"{_PUBLIC_DIR}/{fname}")
-    return index
-
-
     return index
 
 

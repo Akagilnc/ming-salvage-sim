@@ -107,7 +107,18 @@ def test_absent_minister_reads_saying_not_actual_status(game):
     )
 
 
-def test_public_saying_excluded_name_does_not_see_it_others_do(game, monkeypatch):
+def _saying_hits_on(db, state, name: str, source_id: str) -> list[dict]:
+    """按 typed source_id 回读公开层，不按输出措辞断言。"""
+    view = db.get_character_knowledge(state, name)
+    return [
+        item for item in view["public_events"]
+        if str(item.get("source_id") or "") == source_id
+    ]
+
+
+def test_public_saying_excluded_name_does_not_see_it_others_do(
+    game, monkeypatch, tmp_path,
+):
     """#1829 reopen：召对转译落账 + 玩家过月主链后，被瞒者零条、其余恰一条。"""
     db, state, content = game
     excluded_name = _礼部大臣(content).name
@@ -186,11 +197,7 @@ def test_public_saying_excluded_name_does_not_see_it_others_do(game, monkeypatch
     assert int(state.turn) == before_turn + 1
 
     def _saying_hits(name: str):
-        view = db.get_character_knowledge(state, name)
-        return [
-            item for item in view["public_events"]
-            if str(item.get("source_id") or "") == source_id
-        ]
+        return _saying_hits_on(db, state, name, source_id)
 
     assert _saying_hits(excluded_name) == []
     other_hits = _saying_hits(other_name)
@@ -201,6 +208,28 @@ def test_public_saying_excluded_name_does_not_see_it_others_do(game, monkeypatch
         "SELECT 1 FROM character_knowledge_events "
         "WHERE character_name='' AND source_id=?", (source_id,),
     ).fetchone() is None
+
+    # 票面「过月、重开、再召见」的重开腿：换库重读，排除边界与「只读一次」都还在。
+    shutil.copy(db.path, tmp_path / "reopen.db")
+    reopened = GameDB(str(tmp_path / "reopen.db"), content)
+    try:
+        reopened_state = reopened.load_state()
+        assert int(reopened_state.turn) == int(state.turn)
+        assert _saying_hits_on(reopened, reopened_state, excluded_name, source_id) == []
+        reopened_hits = _saying_hits_on(
+            reopened, reopened_state, other_name, source_id,
+        )
+        assert len(reopened_hits) == 1
+        assert reopened_hits[0]["title"] == "有此说法"
+        assert reopened_hits[0]["body"] == claim
+        status, _ = reopened.get_character_status("袁崇焕")
+        assert status != "dead"
+        assert [row["id"] for row in list_public_sayings(reopened)] == [saying_id]
+        assert reopened.conn.execute(
+            "SELECT 1 FROM character_knowledge_sources WHERE source_id=?", (source_id,),
+        ).fetchone() is None
+    finally:
+        reopened.close()
 
 
 def test_public_saying_survives_same_turn_archive_projection(game):
