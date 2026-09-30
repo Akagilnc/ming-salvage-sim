@@ -35,6 +35,12 @@ DOSSIER_EXECUTION_OUTCOMES = frozenset({
 })
 
 # 事实表列白名单（ADR 0077 禁「钝化数值列」的 schema 契约；守门在 store 侧）。
+DENUNCIATION_TABLE = "faction_denunciations"
+DENUNCIATION_ALLOWED_COLS = frozenset({
+    "id", "turn", "accuser_name", "accuser_faction",
+    "subject_name", "subject_faction", "target_dossier_id",
+    "origin", "payload_json", "memorial_text",
+})
 PRESENCE_TABLE = "dossier_supervision_presence"
 EXPOSURE_TABLE = "dossier_loophole_exposures"
 PRESENCE_ALLOWED_COLS = frozenset({
@@ -1591,6 +1597,85 @@ class DossierStore:
             ids,
         ).fetchall()
         return {int(r["id"]): int(r["secret_order_id"] or 0) for r in rows}
+
+    # ── 稽核链连接读（links × 两端案卷状态） ─────────────────────
+
+    def audit_link_rows(self, relation_type: str) -> list[Any]:
+        """稽核/护卫链两端案卷的状态，供在场扫描判定双方仍在执行面。"""
+        return self._conn.execute(
+            """
+            SELECT l.source_dossier_id, l.target_dossier_id, l.relation_type,
+                   s.status AS source_status, t.status AS target_status
+            FROM decree_dossier_links l
+            JOIN decree_dossiers s ON s.id = l.source_dossier_id
+            JOIN decree_dossiers t ON t.id = l.target_dossier_id
+            WHERE l.relation_type = ?
+            ORDER BY l.id
+            """,
+            (str(relation_type),),
+        ).fetchall()
+
+    # ── 派系检举（ADR 0077 ID-12：独立载体，真伪在 origin mark） ────
+
+    def denunciations(
+        self, *, turn: Optional[int] = None,
+        target_dossier_id: Optional[int] = None,
+    ) -> list[Any]:
+        clauses: list[str] = []
+        params: list[object] = []
+        if turn is not None:
+            clauses.append("turn=?")
+            params.append(int(turn))
+        if target_dossier_id is not None:
+            clauses.append("target_dossier_id=?")
+            params.append(int(target_dossier_id))
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        return self._conn.execute(
+            f"""SELECT id, turn, accuser_name, accuser_faction, subject_name,
+                       subject_faction, target_dossier_id, origin, payload_json,
+                       memorial_text
+                FROM {DENUNCIATION_TABLE} {where}
+                ORDER BY turn, id""",
+            tuple(params),
+        ).fetchall()
+
+    def latest_denunciation_for(
+        self, *, accuser_name: str, target_dossier_id: int, origin: str,
+    ) -> Any:
+        """去重键=检举人×案卷×真伪类（origin 含真伪 mark，不含 turn）。"""
+        return self._conn.execute(
+            f"""SELECT id, turn, payload_json FROM {DENUNCIATION_TABLE}
+                WHERE accuser_name=? AND target_dossier_id=? AND origin=?
+                ORDER BY id DESC LIMIT 1""",
+            (str(accuser_name), int(target_dossier_id), str(origin)),
+        ).fetchone()
+
+    def insert_denunciation(
+        self, *, turn: int, accuser_name: str, accuser_faction: str,
+        subject_name: str, subject_faction: str, target_dossier_id: int,
+        origin: str, payload: Mapping[str, object], memorial_text: str,
+    ) -> int:
+        cur = self._conn.execute(
+            f"""INSERT INTO {DENUNCIATION_TABLE}
+                    (turn, accuser_name, accuser_faction, subject_name,
+                     subject_faction, target_dossier_id, origin,
+                     payload_json, memorial_text)
+                VALUES (?,?,?,?,?,?,?,?,?)""",
+            (
+                int(turn), accuser_name, accuser_faction, subject_name,
+                subject_faction, int(target_dossier_id), origin,
+                json.dumps(dict(payload), ensure_ascii=False), memorial_text,
+            ),
+        )
+        return int(cur.lastrowid)
+
+    def denunciation_origins(self, target_dossier_id: int) -> list[str]:
+        return [
+            str(r["origin"]) for r in self._conn.execute(
+                f"SELECT origin FROM {DENUNCIATION_TABLE} WHERE target_dossier_id=?",
+                (int(target_dossier_id),),
+            ).fetchall()
+        ]
 
     # ── affair pointer seam (ADR 0154：事务指针由 AffairStore 编排，列读写在此) ──
 

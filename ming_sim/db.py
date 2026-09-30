@@ -11576,18 +11576,7 @@ class GameDB:
         turn_i = int(turn)
         presence_written = 0
         # 入链：source=稽核方案卷，target=被稽案卷
-        link_rows = self.conn.execute(
-            """
-            SELECT l.source_dossier_id, l.target_dossier_id, l.relation_type,
-                   s.status AS source_status, t.status AS target_status
-            FROM decree_dossier_links l
-            JOIN decree_dossiers s ON s.id = l.source_dossier_id
-            JOIN decree_dossiers t ON t.id = l.target_dossier_id
-            WHERE l.relation_type = ?
-            ORDER BY l.id
-            """,
-            (SUPERVISION_RELATION,),
-        ).fetchall()
+        link_rows = self.dossiers.audit_link_rows(SUPERVISION_RELATION)
         for link in link_rows:
             source_status = str(link["source_status"] or "")
             target_status = str(link["target_status"] or "")
@@ -11909,26 +11898,9 @@ class GameDB:
         target_dossier_id: Optional[int] = None,
     ) -> List[Dict[str, object]]:
         """#627 检举条目读端（含引擎侧 origin/payload；玩家面只取 memorial_text）。"""
-        clauses: List[str] = []
-        params: List[object] = []
-        if turn is not None:
-            clauses.append("turn=?")
-            params.append(int(turn))
-        if target_dossier_id is not None:
-            clauses.append("target_dossier_id=?")
-            params.append(int(target_dossier_id))
-        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-        rows = self.conn.execute(
-            f"""
-            SELECT id, turn, accuser_name, accuser_faction, subject_name,
-                   subject_faction, target_dossier_id, origin, payload_json,
-                   memorial_text
-            FROM faction_denunciations
-            {where}
-            ORDER BY turn, id
-            """,
-            tuple(params),
-        ).fetchall()
+        rows = self.dossiers.denunciations(
+            turn=turn, target_dossier_id=target_dossier_id,
+        )
         out: List[Dict[str, object]] = []
         for row in rows:
             try:
@@ -12273,15 +12245,9 @@ class GameDB:
 
             # 去重键=检举人×案卷×真伪类（origin 含真伪 mark；不含 turn）
             # 单源 LIMIT 1：升级再落允许多行，无 UNIQUE 约束
-            prior_row = self.conn.execute(
-                """
-                SELECT id, turn, payload_json FROM faction_denunciations
-                WHERE accuser_name=? AND target_dossier_id=? AND origin=?
-                ORDER BY id DESC
-                LIMIT 1
-                """,
-                (accuser, dossier_id, origin),
-            ).fetchone()
+            prior_row = self.dossiers.latest_denunciation_for(
+                accuser_name=accuser, target_dossier_id=int(dossier_id), origin=origin,
+            )
             if prior_row is not None:
                 try:
                     prev_payload = json.loads(prior_row["payload_json"] or "{}")
@@ -12312,27 +12278,12 @@ class GameDB:
                     "fork": True,
                 }
 
-            cur = self.conn.execute(
-                """
-                INSERT INTO faction_denunciations
-                    (turn, accuser_name, accuser_faction, subject_name,
-                     subject_faction, target_dossier_id, origin,
-                     payload_json, memorial_text)
-                VALUES (?,?,?,?,?,?,?,?,?)
-                """,
-                (
-                    turn,
-                    accuser,
-                    accuser_faction,
-                    subject_name,
-                    subject_faction,
-                    dossier_id,
-                    origin,
-                    json.dumps(entry_payload, ensure_ascii=False),
-                    memorial,
-                ),
+            entry_id = self.dossiers.insert_denunciation(
+                turn=turn, accuser_name=accuser, accuser_faction=accuser_faction,
+                subject_name=subject_name, subject_faction=subject_faction,
+                target_dossier_id=int(dossier_id), origin=origin,
+                payload=entry_payload, memorial_text=memorial,
             )
-            entry_id = int(cur.lastrowid)
             accepted.append({
                 "id": entry_id,
                 "turn": turn,

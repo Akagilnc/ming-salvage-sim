@@ -1,6 +1,8 @@
 """Dossier store: durable truth of one decree under adjudication (ADR 0151)."""
 
 from ming_sim.entities.dossier.store import (
+    DENUNCIATION_ALLOWED_COLS,
+    DENUNCIATION_TABLE,
     DOSSIER_EXECUTION_OUTCOMES,
     EXPOSURE_ALLOWED_COLS,
     EXPOSURE_TABLE,
@@ -22,6 +24,8 @@ from ming_sim.entities.dossier.store import (
 )
 
 __all__ = [
+    "DENUNCIATION_ALLOWED_COLS",
+    "DENUNCIATION_TABLE",
     "DOSSIER_EXECUTION_OUTCOMES",
     "EXPOSURE_ALLOWED_COLS",
     "EXPOSURE_TABLE",

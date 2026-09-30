@@ -65,18 +65,12 @@ COUNTERMEASURE_KINDS = (
 )
 COUNTERMEASURE_ORIGIN_KIND = "supervision_countermeasure"
 
-# #627 检举事实表列白名单（PRAGMA 验收）
-DENUNCIATION_TABLE = "faction_denunciations"
-DENUNCIATION_ALLOWED_COLS = frozenset({
-    "id", "turn", "accuser_name", "accuser_faction",
-    "subject_name", "subject_faction", "target_dossier_id",
-    "origin", "payload_json", "memorial_text",
-})
-
-# #1889 / ADR 0151：在场与暴露两表的表名、PRAGMA 列白名单与禁钝化列片段随
-# schema 一并归案卷 store（此前的平行副本即第二份 schema 知识）。此处只作
-# 再导出，供既有 import 路径不断。
+# #1889 / ADR 0151：检举、在场、暴露三表的表名、PRAGMA 列白名单与禁钝化列
+# 片段随 schema 一并归案卷 store（此处的平行副本即第二份 schema 知识）。
+# 此处只作再导出，供既有 import 路径不断。
 from ming_sim.entities.dossier import (  # noqa: E402
+    DENUNCIATION_ALLOWED_COLS,
+    DENUNCIATION_TABLE,
     EXPOSURE_ALLOWED_COLS,
     EXPOSURE_TABLE,
     FORBIDDEN_DULLING_COL_FRAGMENTS,

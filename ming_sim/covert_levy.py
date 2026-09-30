@@ -185,10 +185,10 @@ def write_exposure_todos(
         if db.dossiers.has_incoming_audit_link(did):
             channels.append("稽核")
         from ming_sim.supervision import ORIGIN_MARK_DENUNCIATION_TRUE, origin_has_mark
-        denunciations = db.conn.execute(
-            "SELECT origin FROM faction_denunciations WHERE target_dossier_id=?", (did,)
-        ).fetchall()
-        if any(origin_has_mark(row["origin"], ORIGIN_MARK_DENUNCIATION_TRUE) for row in denunciations):
+        if any(
+            origin_has_mark(o, ORIGIN_MARK_DENUNCIATION_TRUE)
+            for o in db.dossiers.denunciation_origins(did)
+        ):
             channels.append("检举")
         origin = f"dossier:{did}"
         if any(
