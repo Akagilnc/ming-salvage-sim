@@ -224,12 +224,19 @@ export function useSettlementFlow({
   }, [loadState]);
 
   /**
-   * #1888：次级账本刷新为 best-effort。
+   * #1888：**已呈失败之后**的账本刷新为 best-effort。
    *
-   * 刷新是主链之外的**次级**动作：它失败不得截断已经到手的失败呈现与收尾（清 busy）。
-   * 原失败由调用点响亮落地，次级真因在此另留痕（ADR 0005），二者不互相顶替。
+   * 此刻原失败已经响亮落地，刷新纯属主链之外的**次级**动作：它失败不得截断已到手的
+   * 失败呈现与收尾（清 busy）。原失败与次级真因分别留痕（ADR 0005），二者不互相顶替。
    * 根因同形：失败分支里把 `await loadState()` 放在落失败态之前，刷新一 reject 就整条
    * 出口抛出——告警不落、busy 不清、核账面把玩家锁死。
+   *
+   * 边界（#1888 J5）：本口**只**许用于已有失败在先的调用点。失败尚未呈出的成功出口
+   * （停批、批红待裁、未推进、写入即推进）里，那次状态读取是接续玩家面所必需的一步——
+   * 玩家下一面全靠它投影。把它当可省旁路，读取一失败就只剩 busy 被清空：既无告警、
+   * 也无恢复入口（无新局拟诏台可开、拟诏钮仍灰），玩家被留在旧面上。此类调用点一律
+   * 直接 `await receipt.loadState()`，让 reject 落进本函数既有的 catch／失败出口，
+   * 复用既有告警与重试契约——不另造重试层、状态机或恢复旁路。
    */
   const refreshBestEffort = React.useCallback(async (receipt: SettlementReceipt) => {
     try {
@@ -362,16 +369,19 @@ export function useSettlementFlow({
         const route = routeIssueDecisions(outcome.data.decisions || []);
         if (route.pendingDecisions !== null) receipt.setPendingDecisions(route.pendingDecisions);
         if (route.error !== null) receipt.setPausedDecisionError(route.error);
-        // #1888：成功出口的账本刷新同样 best-effort——刷新失败是次级事故，
-        // 不得冒充成一次结算失败把玩家推进告警面。
-        await refreshBestEffort(receipt);
+        // #1888 J5：停批成功、失败尚未呈出——这次状态读取是接续玩家面所必需的一步
+        // （settling 续跑面、快照叠影四键都靠它投影），不得当可省旁路。读取失败
+        // 落进本函数既有 catch：响亮告警 + 既有重试入口，玩家据此再核账。
+        await receipt.loadState();
         receipt.setBusy("");
         return;
       }
       if (outcome.data?.advanced === false) {
         // The month chain can stop at rescript/gazette without advancing.
         // Refresh its durable settling projection, not the whole page as if a new month began.
-        await refreshBestEffort(receipt);
+        // #1888 J5：未推进成功、失败尚未呈出——该投影是玩家下一面的唯一来源，
+        // 读取失败须走既有 catch 的可见告警与恢复入口，不得只 console.warn。
+        await receipt.loadState();
         receipt.setBusy("");
         return;
       }
@@ -421,7 +431,10 @@ export function useSettlementFlow({
       receipt.setDecisionFailures([]);
       receipt.setPausedDecisionError("");
       if (outcome.data?.advanced === false) {
-        await refreshBestEffort(receipt);
+        // #1888 J5：清案头后未推进，失败尚未呈出——该状态读取是玩家下一面的唯一来源，
+        // 读取失败须落进本函数既有 catch（可见告警 + 清 busy + 既有重试入口），
+        // 不得降级为可吞的旁路刷新：否则玩家既无告警也无恢复入口。
+        await receipt.loadState();
         receipt.setBusy("");
         return;
       }
@@ -477,12 +490,14 @@ export function useSettlementFlow({
         const route = routeIssueDecisions(data.decisions || []);
         if (route.pendingDecisions !== null) receipt.setPendingDecisions(route.pendingDecisions);
         if (route.error !== null) receipt.setPausedDecisionError(route.error);
-        // #1888：同 issueDecree 成功出口——次级刷新失败不得冒充退朝失败。
-        await refreshBestEffort(receipt);
+        // #1888 J5：同 issueDecree 停批出口——批红面经状态口投影，读取失败必须响亮。
+        await receipt.loadState();
         return;
       }
       if (data.advanced === false) {
-        await refreshBestEffort(receipt);
+        // #1888 J5：同 issueDecree 未推进出口——该刷新是玩家下一面的唯一来源，
+        // 失败落进本函数既有 catch（可见告警 + finally 清 busy + 既有重试入口）。
+        await receipt.loadState();
         return;
       }
       // #1852：退朝写成即推进——本面阅读态，不 reload。

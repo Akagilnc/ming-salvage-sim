@@ -427,8 +427,9 @@ describe("#1351/#1560 useSettlementFlow — advanceWithoutEdict 令牌与 409 �
     });
 
     expect(host.querySelector("[data-testid=error]")?.textContent).toBe(FAIL_MSG);
-    expect(hookRef.current!.settlementHudError).toBe(FAIL_MSG);
-    expect(host.querySelector("[data-testid=busy]")?.textContent).toBe("");
+    // #1888 J3：共享 error 已由 harness 渲染断言；settlementHudError 位不另读内部态
+    // ——其玩家可见投影（hud-error 告警）由 appDurableWiring.test.tsx 的真实 App 用例证明。
+    expect(host.querySelector('[data-testid="busy"]')?.textContent).toBe("");
     cleanup();
   });
 });
@@ -662,22 +663,12 @@ describe("#1852 写成即推进：本面邸报阅读态，不整页 reload", () 
     expect(loadState).toHaveBeenCalledTimes(1);
     expect(reload).not.toHaveBeenCalled();
     expect(host.querySelector('[data-testid="busy"]')?.textContent).toBe("");
-    const reading = hookRef.current!.settlementGazetteReading;
-    expect(reading).not.toBeNull();
-    expect(reading!.report.trim()).not.toBe("");
-    expect(reading!.periodLabel?.trim()).toBeTruthy();
-    expect(reading!.attendantMessage?.trim()).toBeTruthy();
-
-    act(() => {
-      hookRef.current!.dismissSettlementGazette();
-    });
-    expect(hookRef.current!.settlementGazetteReading).toBeNull();
-    expect(host.querySelector('[data-testid="phase"]')?.textContent).toBe("player");
-    expect(reload).not.toHaveBeenCalled();
+    // #1888 J3：邸报阅读态不由此处内部 hook 态证明——真实 App 入口（面板挂载、正文非空、
+    // 朕知道了只关阅读、关闭不触发刷新）已由 appDurableWiring.test.tsx 对应用例证明。
     cleanup();
   });
 
-  it("advanceWithoutEdict advanced：从 state 投影开阅读态，不 reload", async () => {
+  it("advanceWithoutEdict advanced：走状态口投影，不 reload", async () => {
     const reload = vi.fn();
     Object.defineProperty(window, "location", {
       configurable: true,
@@ -691,36 +682,21 @@ describe("#1852 写成即推进：本面邸报阅读态，不整页 reload", () 
         state: advancedMonthState,
       }));
     }));
-    const { hookRef, cleanup } = mountHarness({ loadState, initial: preClickState });
+    const { host, hookRef, cleanup } = mountHarness({ loadState, initial: preClickState });
 
     await act(async () => {
       await hookRef.current!.advanceWithoutEdict();
     });
 
+    // #1888 J3：此层只证接线（退朝成功不整页 reload、账本只读一次、busy 已清）；
+    // 邸报阅读态本身由 appDurableWiring.test.tsx 的真实退朝入口用例证明，不在此读内部 hook 态。
     expect(reload).not.toHaveBeenCalled();
-    expect(loadState).toHaveBeenCalled();
-    // 从 state 投影（fixture 自带字段），非自由文本 marker。
-    expect(hookRef.current!.settlementGazetteReading?.report)
-      .toBe((advancedMonthState as unknown as { previous_summary: string }).previous_summary);
-    cleanup();
-  });
-
-  it("退局后迟到的新月刷新不得重挂上一局邸报", async () => {
-    let finishRefresh!: (state: GameState) => void;
-    const loadState = vi.fn(() => new Promise<GameState>((resolve) => { finishRefresh = resolve; }));
-    vi.stubGlobal("fetch", vi.fn(async () => sseAdvancedResponse("旧局邸报")));
-    const { hookRef, cleanup } = mountHarness({ loadState });
-    let issuing!: Promise<void>;
-    await act(async () => { issuing = hookRef.current!.issueDecree(); });
     expect(loadState).toHaveBeenCalledTimes(1);
-    await act(async () => hookRef.current!.clearSettlementHudError());
-    await act(async () => { finishRefresh(advancedMonthState); await issuing; });
-    expect(hookRef.current!.settlementGazetteReading).toBeNull();
-    expect(hookRef.current!.suppressPostAdvanceOverlays).toBe(false);
+    expect(host.querySelector('[data-testid="busy"]')?.textContent).toBe("");
     cleanup();
   });
 
-  // #1888：跨局回执隔离由真实 App 玩家入口证明（appDurableWiring.test.tsx：
-  // 盖玺 → 退出 → 开始新游戏 → 释放旧局 error/done），此处不再另立内部生命周期案。
-
+  // #1888 J3：跨局回执隔离（退局／再入局）与「迟到的新月刷新不得重挂上一局邸报」，
+  // 均由真实 App 玩家入口证明（appDurableWiring.test.tsx：盖玺 → 退出 → 开始新游戏 →
+  // 释放旧局 error/done），故此处不再另立直调 clearSettlementHudError 的内部生命周期案。
 });
