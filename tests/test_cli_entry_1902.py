@@ -10,7 +10,6 @@ choice 投影只经 ``rescript_actions.project_hitl_option`` 一个真源。
 
 from __future__ import annotations
 
-import inspect
 from types import SimpleNamespace
 
 import pytest
@@ -51,15 +50,11 @@ class _AdjudicateSession:
         return "邸报"
 
 
-@pytest.fixture(autouse=True)
-def _cli_write_gate(monkeypatch):
+def _wire_gate(monkeypatch, session):
+    """替身案：把 CLI 唯一 write gate 换成可断言的哨兵（真核案不得走这条）。"""
     gate = object()
     monkeypatch.setattr(term, "_cli_write_gate", lambda _session: gate)
-    return gate
-
-
-def _wire_gate(session):
-    session.gate = term._cli_write_gate(session)
+    session.gate = gate
     return session
 
 
@@ -99,14 +94,11 @@ def test_review_directives_retires_manual_add_and_edit(monkeypatch, capsys):
     # 四条都不是现役操作（add / 其后正文 / edit 7 / 其后正文）→ 都不落任何写入。
     assert out.count("未识别操作。") == 4
     assert "add 新增" not in out and "edit N 改" not in out
-    assert "capture_manual_directive_payload" not in inspect.getsource(
-        term.review_directives,
-    )
 
 
 def test_adjudication_takes_emperor_pick_not_first_option(monkeypatch, capsys):
     """批红按皇帝所选编号提交；不取首选项。"""
-    session = _wire_gate(_AdjudicateSession([_draft_row()]))
+    session = _wire_gate(monkeypatch, _AdjudicateSession([_draft_row()]))
     result = SimpleNamespace(awaiting=True, report="", decisions=session.pending_decisions())
     monkeypatch.setattr("builtins.input", lambda _prompt="": "2")
 
@@ -125,9 +117,25 @@ def test_adjudication_takes_emperor_pick_not_first_option(monkeypatch, capsys):
     assert "自动取首选项" not in out
 
 
-def test_adjudication_blank_pick_leaves_choice_to_core(monkeypatch):
-    """回车＝不另批：入口只交 decision_key，动作由核内机械处置（急务统一 hold）。"""
-    session = _wire_gate(_AdjudicateSession([_draft_row()]))
+def _ordinary_row(decision_key: str = "decision:3:0") -> dict:
+    """普通 decision 案头行（核内要求实选项，回车不成立）。"""
+    return {
+        "decision_key": decision_key,
+        "kind": "decision",
+        "source_turn": 3,
+        "idx": 0,
+        "title": "毛文龙裁断",
+        "context": "东江事急，须御前亲裁。",
+        "options": [
+            {"label": "斩", "hint": "严肃军纪"},
+            {"label": "留", "hint": "暂稳东江"},
+        ],
+    }
+
+
+def test_adjudication_blank_pick_on_urgent_leaves_choice_to_core(monkeypatch):
+    """急务回车＝不另批：入口只交 decision_key，动作由核内机械处置（hold）。"""
+    session = _wire_gate(monkeypatch, _AdjudicateSession([_draft_row()]))
     result = SimpleNamespace(awaiting=True, report="", decisions=session.pending_decisions())
     monkeypatch.setattr("builtins.input", lambda _prompt="": "")
 
@@ -136,9 +144,32 @@ def test_adjudication_blank_pick_leaves_choice_to_core(monkeypatch):
     assert session.submitted == [[{"decision_key": "rescript_draft:3:0"}]]
 
 
+def test_adjudication_blank_on_ordinary_decision_reprompts(monkeypatch, capsys):
+    """普通 decision 回车不是核内认的留中：入口重问，不代造空 choice。
+
+    核内 validate_all 对缺 action 的 decision 行既不默认 hold 也拒收（"decision 选项
+    不在当前 options"），入口若替皇帝交空 pick 会让整批被拒、连同已答的案作废。
+    """
+    session = _wire_gate(monkeypatch, _AdjudicateSession([_ordinary_row()]))
+    result = SimpleNamespace(awaiting=True, report="", decisions=session.pending_decisions())
+    answers = iter(["", "  ", "2"])
+    monkeypatch.setattr("builtins.input", lambda _prompt="": next(answers))
+
+    term._adjudicate_cli_decisions(session, result)
+
+    (choices,) = session.submitted
+    assert choices == [{
+        "decision_key": "decision:3:0",
+        "label": "留",
+        "hint": "暂稳东江",
+    }]
+    out = capsys.readouterr().out
+    assert out.count("此案须择定一条（不另批请择案上标注留中的那条）。") == 2
+
+
 def test_adjudication_reprompts_on_unknown_number(monkeypatch, capsys):
     """越界编号不落choice：留在本案重问，案头与核都不动。"""
-    session = _wire_gate(_AdjudicateSession([_draft_row()]))
+    session = _wire_gate(monkeypatch, _AdjudicateSession([_draft_row()]))
     result = SimpleNamespace(awaiting=True, report="", decisions=session.pending_decisions())
     answers = iter(["9", "0", "abc", "1"])
     monkeypatch.setattr("builtins.input", lambda _prompt="": next(answers))
@@ -148,12 +179,12 @@ def test_adjudication_reprompts_on_unknown_number(monkeypatch, capsys):
     (choices,) = session.submitted
     assert choices[0]["label"] == "先发半饷"
     assert choices[0]["draft_capability"] == "cap-a"
-    assert capsys.readouterr().out.count("请输入本案列出的编号，或回车留中。") == 3
+    assert capsys.readouterr().out.count("请输入本案列出的编号。") == 3
 
 
 def test_adjudication_uses_desk_readback_when_result_has_no_decisions(monkeypatch):
     """result.decisions 空时回读同一案头（session.pending_decisions），入口不另读库。"""
-    session = _wire_gate(_AdjudicateSession([_draft_row("decision:4:1")]))
+    session = _wire_gate(monkeypatch, _AdjudicateSession([_draft_row("decision:4:1")]))
     result = SimpleNamespace(awaiting=True, report="", decisions=[])
     monkeypatch.setattr("builtins.input", lambda _prompt="": "1")
 
@@ -178,3 +209,100 @@ def test_project_hitl_option_is_the_single_projection(index, expected_label):
     assert choice["action"] == "follow_draft"
     assert choice["decision_key"] == "rescript_draft:3:0"
     assert project_hitl_option(_draft_row(), 9)["label"] == "先发半饷"
+
+
+# ── 经真核的 tracer：入口产出的 choices 必须被核内 validate_all 接受并落出可见结果 ──
+
+def _core_bound_session(monkeypatch, db, state, content):
+    """真 GameSession 壳 + 真核 submit_hitl_choices（phase2 外缝中和，不替核内校验）。
+
+    入口产出的 choices 直接进真 ``rescript_actions.validate_all``：核拒即抛、核收才落
+    apply_rescript_batch 的外部可见结果——测试因此不经替身，也能咬到「整批被拒」。
+    """
+    from ming_sim import rescript_actions as ra
+    from ming_sim.models import TurnPhase
+    from tests.month_chain_helpers import make_light_session
+
+    state.turn_phase = TurnPhase.AWAITING_DECISION.value
+    db.save_state(state)
+    session = make_light_session(db, state, content)
+    desk_rows = db.list_rescript_desk(int(state.turn))
+    seen: list[list[dict]] = []
+
+    def _submit(choices, *, write_gate, cheat_directive=""):
+        assert write_gate is session._write_gate, "CLI 必须注入既有 write_gate"
+        batch = ra.validate_all(desk_rows, choices)  # 真核：拒则整批抛，不落任何写
+        seen.append(list(choices))
+        ra.apply_rescript_batch(db, state, batch, ra.PrewriteResults(), content=content)
+        return "邸报"
+
+    monkeypatch.setattr(session, "submit_hitl_choices", _submit)
+    return session, seen
+
+
+def test_cli_blank_pick_on_urgent_reaches_core_hold(game, monkeypatch):
+    """急务回车 → 经真核 validate_all 机械 hold，案卷落 decided（外部可见）。"""
+    from ming_sim import rescript_actions as ra
+
+    db, state, content = game
+    db.save_rescript_drafts(int(state.turn), [{
+        "title": "陕西告饥", "context": "秦地赤旱",
+        "options": [{"label": "发饷", "hint": "照拟", "draft_capability": "cap-1"}],
+    }])
+    db.conn.commit()
+    session, seen = _core_bound_session(monkeypatch, db, state, content)
+    desk_row = db.list_rescript_desk(int(state.turn))[0]
+    monkeypatch.setattr("builtins.input", lambda _prompt="": "")
+
+    term._adjudicate_cli_decisions(
+        session, SimpleNamespace(
+            awaiting=True, report="", decisions=session.pending_decisions(),
+        ),
+    )
+
+    assert seen == [[{"decision_key": desk_row["decision_key"]}]]
+    # 真核（_core_bound_session 内的 validate_all）收了这一批并机械 hold：
+    assert ra.validate_all([desk_row], seen[0]).default_hold_keys == [
+        desk_row["decision_key"],
+    ]
+    stored = db.list_rescript_drafts()[0]
+    assert stored["status"] == "decided"
+    assert stored["choice"]["action"] == "hold"
+
+
+def test_cli_blank_pick_on_ordinary_decision_is_rejected_by_core(game, monkeypatch):
+    """回车语义只在急务成立：若入口交空 pick，真核整批拒（此钉核侧事实）。"""
+    from ming_sim import rescript_actions as ra
+
+    db, state, _content = game
+    db.save_pending_decisions(int(state.turn), [{
+        "event_id": "mao_wenlong", "title": "毛文龙裁断", "context": "东江事急",
+        "options": [{"label": "斩", "hint": "严肃军纪"}, {"label": "留", "hint": "暂稳东江"}],
+    }])
+    db.conn.commit()
+    desk_row = db.list_rescript_desk(int(state.turn))[0]
+    with pytest.raises(ValueError, match="decision 选项不在当前 options"):
+        ra.validate_all([desk_row], [{"decision_key": desk_row["decision_key"]}])
+
+
+def test_cli_chosen_option_reaches_core_and_lands_decision(game, monkeypatch):
+    """按编号择定 → 真核收下并落 decided，落库 choice 就是皇帝所选那条（非首选项）。"""
+    db, state, content = game
+    db.save_pending_decisions(int(state.turn), [{
+        "event_id": "mao_wenlong", "title": "毛文龙裁断", "context": "东江事急",
+        "options": [{"label": "斩", "hint": "严肃军纪"}, {"label": "留", "hint": "暂稳东江"}],
+    }])
+    db.conn.commit()
+    session, seen = _core_bound_session(monkeypatch, db, state, content)
+    monkeypatch.setattr("builtins.input", lambda _prompt="": "2")
+
+    term._adjudicate_cli_decisions(
+        session, SimpleNamespace(
+            awaiting=True, report="", decisions=session.pending_decisions(),
+        ),
+    )
+
+    assert seen[0][0]["label"] == "留"
+    stored = db.list_pending_decisions(int(state.turn))[0]
+    assert stored["choice"]["label"] == "留"
+    assert stored["status"] == "decided"

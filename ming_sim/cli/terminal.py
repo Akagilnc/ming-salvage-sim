@@ -663,16 +663,24 @@ def _adjudicate_cli_decisions(session: GameSession, result) -> str:
         for idx, option in enumerate(options, 1):
             print(f"  {idx}. {_option_label(option)}")
         key = str(decision.get("decision_key") or "").strip()
+        # #1902 r2：回车留中只对核内真会机械 hold 的急务成立（validate_all 的
+        # rescript_draft 缺 action → hold）。普通 decision 与 dossier 批红行核内
+        # 要求实选项（"decision 选项不在当前 options" / "批红选择必须是本案提供的
+        # 强颁、收回或留中选项"），入口不得代造一条核不认的留中路——那会让整批被拒。
+        holdable = str(decision.get("kind") or "") == "rescript_draft"
+        hint = "回车=不另批，此件留中" if holdable else "须择定本案一条"
         while True:
-            raw = input("  亲裁：输入编号择定该条（回车=不另批，此件留中）：").strip()
+            raw = input(f"  亲裁：输入编号择定该条（{hint}）：").strip()
             if not raw:
-                # 空 pick 交核内机械处置（急务统一 hold），入口不代写动作。
-                choices.append({"decision_key": key} if key else {})
-                break
+                if holdable:
+                    choices.append({"decision_key": key} if key else {})
+                    break
+                print("  此案须择定一条（不另批请择案上标注留中的那条）。")
+                continue
             if raw.isdigit() and 1 <= int(raw) <= len(options):
                 choices.append(project_hitl_option(decision, int(raw) - 1))
                 break
-            print("  请输入本案列出的编号，或回车留中。")
+            print("  请输入本案列出的编号。")
     return session.submit_hitl_choices(choices, write_gate=_cli_write_gate(session))
 
 
