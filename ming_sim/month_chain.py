@@ -1015,6 +1015,67 @@ def _enrich_eligible_dossiers_for_supply(
     return out
 
 
+def _attach_investigation_facts(
+    db: Any, orders: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """#1896 给 4a 逐证清单：每条实有罪证的键、已投入多少、还差多少、是否已被毁。
+
+    供料是人物"能接触到的材料"（ADR 0034）：只列真相底 live 集里的实有罪证，
+    不塞机制说明以外的判定口径；空 lane 集照列空清单（清白目标也照开案，
+    不因无证而拒开——那会变成免费清白神谕）。
+    """
+    from ming_sim.covert_progress import (
+        investigation_fact_difficulty,
+        live_investigation_fact_keys,
+        read_covert_task_contract,
+        _investigation_target_of,
+        _dossier_payload_map,
+        _lanes_from_payload,
+    )
+
+    out: List[Dict[str, Any]] = []
+    for raw in orders:
+        order = dict(raw)
+        dossier = db.get_dossier_for_secret_order(int(order.get("id") or 0))
+        if dossier is None:
+            out.append(order)
+            continue
+        contract = read_covert_task_contract(dossier)
+        target = _investigation_target_of(contract) if contract else ""
+        if not target:
+            out.append(order)
+            continue
+        investigator = str(order.get("minister_name") or "")
+        lanes = {
+            str(lane["fact_key"]): lane
+            for lane in _lanes_from_payload(
+                _dossier_payload_map(db, int(dossier["id"]))
+            )
+        }
+        facts: List[Dict[str, Any]] = []
+        for key in live_investigation_fact_keys(db, target):
+            difficulty = investigation_fact_difficulty(
+                db, target=target, fact_key=key, investigator=investigator,
+            )
+            lane = lanes.get(key, {})
+            if difficulty == float("inf"):
+                state = "已被毁证湮灭"
+            elif bool(lane.get("mastered")):
+                state = "已掌握"
+            else:
+                state = "在查"
+            facts.append({
+                "fact_key": key,
+                "difficulty": None if difficulty == float("inf") else round(difficulty, 3),
+                "effort_so_far": round(float(lane.get("effort") or 0.0), 3),
+                "state": state,
+            })
+        order["investigation_target"] = target
+        order["investigation_facts"] = facts
+        out.append(order)
+    return out
+
+
 def build_secret_orders_supply_feed(
     db: Any, state: Any, chain: Dict[str, Any],
 ) -> Dict[str, Any]:
@@ -1028,10 +1089,10 @@ def build_secret_orders_supply_feed(
     turn = int(state.turn)
     candidates = db.list_monthly_dossier_progress_nudges(turn)
     eligible = _enrich_eligible_dossiers_for_supply(db, candidates)
-    active_orders = [
+    active_orders = _attach_investigation_facts(db, [
         dict(o) for o in db.list_secret_orders(status="active")
         if not _is_issuance_turn(o, turn)
-    ]
+    ])
     materials = _month_fact_materials(db, state, chain, include_secret_sources=True)
     return {
         "instruction": "为本月所有在办密令产出密奏和执行态声明。据实况自行判断办理与拒收。",

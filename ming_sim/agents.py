@@ -940,7 +940,12 @@ def create_relation_brew_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agen
 
 
 def create_secret_order_supply_agent(llm_config: LLMConfig, prepared: Any = None) -> Agent:
-    """整月密令供料推演者（步骤 4a）：为合资格长差案卷产出密奏，为在办密令产出执行态。"""
+    """整月密令供料推演者（步骤 4a）：为合资格长差案卷产出密奏，为在办密令产出执行态。
+
+    #1896：查案密令不再用"执行态档位"折进度，改由模型按其所读材料声明本月**实际投入**
+    与**所查事实**；被查者经关系网知情后的毁证选择也在同一次 run 内按其视角声明。
+    引擎只据声明核算累计投入与逐证难度（P6：呈现层零改字，此处只改输入）。
+    """
     from ming_sim.materials import material_tools
 
     cfg = _llm_for_role(llm_config, "simulator")
@@ -955,7 +960,7 @@ def create_secret_order_supply_agent(llm_config: LLMConfig, prepared: Any = None
         _ctx().game_world_prompt,
         "你是整月密令供料推演者（步骤 4a）。",
         "根据本月事实材料（名义声明、实入流水、拒收、预推文、世界段、请旨答复、盘面）"
-        "及合资格长差案卷、在办密令，自行据实判断办理与拒收，产出密奏和执行态声明。"
+        "及合资格长差案卷、在办密令，自行据实判断办理与拒收，产出密奏和执行态声明。",
         "不得把未落或被拒收的意向当成已生效事实。盘面与文字事实可按需自读当前目录。",
         "必须返回 JSON 对象，包含两个字段：",
         "1. `dossier_progress_reports`: 列表，每个合资格长差案卷一条。每项包含：",
@@ -966,6 +971,19 @@ def create_secret_order_supply_agent(llm_config: LLMConfig, prepared: Any = None
         "   - order_id: 整数，对应 active_secret_orders 中的 id",
         "   - fidelity: 字符串，执行态，必须为 '忠实'、'打折'、'阳奉阴违'、'反噬' 之一",
         "   - note: 字符串，执行态备注",
+        "查案密令（active_secret_orders 里带 investigation_facts 的那些）改用下列字段"
+        "表态，不要用 fidelity 折算查案进度：",
+        "   - effort: 数字，本月实际投入查案的力气。深挖给大数，敷衍或停办给 0。"
+        "引擎按每条罪证各自的难易累计核算你的投入，累计不到那条的难易就查不出来——"
+        "少投入不会更快出结果，如实给数。",
+        "   - fact_key: 字符串，本月实际下手的罪证标识，取自 investigation_facts。"
+        "只填你真正去查的那条；本月无从下手则省略此字段。",
+        "   - spoliation: 对象，仅在被查者经真实关系网得知自己被查、且你决定毁证时给出："
+        "{effect: 'harder' 或 'gone', fact_key: 被毁的那条罪证标识, "
+        "knowledge_source: 递话给他的人}。开案本身他不会知道——须真有人经关系网"
+        "把话递到，才算知情；无此来源引擎不代其毁证。毁证只作用于所指的那一条罪证，"
+        "不牵连其他；是否毁、毁到何种程度由你按人物决定。",
+        "   - note: 字符串，密奏正文。奏报写得好听与否与上面声明的实际投入无关。",
         str(getattr(prepared, "opening", "") or ""),
     ]
     if is_minimax_base_url(cfg.base_url):

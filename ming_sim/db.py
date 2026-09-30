@@ -1692,6 +1692,21 @@ class GameDB:
             );
             CREATE INDEX IF NOT EXISTS idx_dossier_actual_progress_dossier
                 ON dossier_actual_progress(dossier_id, turn, id);
+            -- #1896：毁证按事实（fact_key）记账，不是按差务。关案重开、另起新案都
+            -- 不恢复已毁事实——故本表真源在 (target_name, fact_key)，不在案卷 payload。
+            -- 真相底（seed_guilt/把柄边）本身不动，这里只记"该事实的可查性被毁/被抬难"。
+            CREATE TABLE IF NOT EXISTS investigation_spoiled_facts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                target_name TEXT NOT NULL,
+                fact_key TEXT NOT NULL,
+                turn INTEGER NOT NULL,
+                year INTEGER NOT NULL DEFAULT 0,
+                period INTEGER NOT NULL DEFAULT 0,
+                effect TEXT NOT NULL CHECK(effect IN ('harder', 'gone')),
+                origin_ref TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(target_name, fact_key, effect)
+            );
             -- #627 / ADR 0077 ID-12: faction denunciation entries (independent carrier).
             -- Truth bottom lives in origin marks (#619 compose_report_origin); payload holds
             -- fork exposure. Never write dossier_loophole_exposures from this path.
@@ -20488,6 +20503,72 @@ class GameDB:
             (int(dossier_id),),
         ).fetchone()
         return float(row["total"] if row is not None else 0.0)
+
+    def record_investigation_spoiled_fact(
+        self,
+        *,
+        target_name: str,
+        fact_key: str,
+        turn: Optional[int] = None,
+        year: Optional[int] = None,
+        period: Optional[int] = None,
+        effect: str = "harder",
+        origin_ref: str = "",
+        commit: bool = True,
+    ) -> Dict[str, object]:
+        """#1896 毁证落账：按 (target, fact_key, effect) 幂等。
+
+        真相底不动（seed_guilt/把柄边照旧），这里只记该事实可查性被毁/被抬难。
+        重复毁同一事实同一效力返回原行，不叠第二次——毁证不因重开案而可重放。
+        """
+        target = str(target_name or "").strip()
+        key = str(fact_key or "").strip()
+        if not target or not key:
+            raise ValueError("毁证记账缺少调查对象或事实键")
+        eff = str(effect or "").strip()
+        if eff not in ("harder", "gone"):
+            raise ValueError("毁证效力须为 harder 或 gone")
+        if turn is None or year is None or period is None:
+            state_row = self.conn.execute(
+                "SELECT turn, year, period FROM game_state WHERE id=1"
+            ).fetchone()
+            if state_row is not None:
+                turn = int(state_row["turn"]) if turn is None else turn
+                year = int(state_row["year"]) if year is None else year
+                period = int(state_row["period"]) if period is None else period
+        self.conn.execute(
+            """
+            INSERT INTO investigation_spoiled_facts
+                (target_name, fact_key, turn, year, period, effect, origin_ref)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(target_name, fact_key, effect) DO NOTHING
+            """,
+            (
+                target, key, int(turn or 0), int(year or 0), int(period or 0),
+                eff, str(origin_ref or "")[:120],
+            ),
+        )
+        if commit and int(getattr(self.conn, "_atomic_depth", 0) or 0) == 0:
+            self.conn.commit()
+        row = self.conn.execute(
+            "SELECT * FROM investigation_spoiled_facts "
+            "WHERE target_name=? AND fact_key=? AND effect=?",
+            (target, key, eff),
+        ).fetchone()
+        return dict(row) if row is not None else {}
+
+    def list_investigation_spoiled_facts(
+        self, target_name: str,
+    ) -> List[Dict[str, object]]:
+        target = str(target_name or "").strip()
+        if not target:
+            return []
+        rows = self.conn.execute(
+            "SELECT * FROM investigation_spoiled_facts WHERE target_name=? "
+            "ORDER BY fact_key, id",
+            (target,),
+        ).fetchall()
+        return [dict(r) for r in rows]
 
     def list_dossier_actual_rail(self, dossier_id: int) -> List[Dict[str, object]]:
         """实况合并读：durable_effects + actual_progress（due_review 形参数化共用）。
