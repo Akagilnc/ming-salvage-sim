@@ -5282,43 +5282,7 @@ async def api_audience_chat_history() -> Dict[str, Any]:
 
 
 
-@app.post("/api/audience/chat")
-async def api_audience_chat(request: ChatRequest) -> Dict[str, Any]:
-    """#1849 reopen：殿上唯一入口的非流式形态——drain stream，回 done 载荷。"""
-    from ming_sim.audience_night import SCENE_CHAT_SPEAKER, AudienceNightError
-
-    def _run() -> Dict[str, Any]:
-        done: Optional[Dict[str, Any]] = None
-        error_detail: Optional[Dict[str, Any]] = None
-        for item in get_game().chat_stream(SCENE_CHAT_SPEAKER, request.message):
-            kind = str(item.get("type") or "")
-            if kind == "done":
-                done = dict(item.get("payload") or {})
-            elif kind == "error":
-                if isinstance(item.get("detail"), dict):
-                    error_detail = dict(item["detail"])
-                else:
-                    error_detail = {
-                        "message": item.get("message") or "召对失败。",
-                    }
-                    if item.get("code"):
-                        error_detail["code"] = item.get("code")
-        if error_detail is not None:
-            message = str(error_detail.get("message") or "召对失败。")
-            code = str(error_detail.get("code") or "")
-            status = 409 if code == "night_closing" else 400
-            raise HTTPException(status_code=status, detail=error_detail if code else message)
-        if done is None:
-            raise HTTPException(status_code=500, detail="召对流未完成。")
-        return done
-
-    try:
-        return await run_in_threadpool(_run)
-    except AudienceNightError as exc:
-        raise _retryable_audience_close_http(exc) from None
-    except LLMUnavailable as exc:
-        raise HTTPException(status_code=400, detail=_llm_error_detail(exc)) from None
-
+# #1902：非流式 POST /api/audience/chat 退役——说话只有流式一条入口（/api/audience/chat/stream）；前端自 #1842 起零调用此路，两条同源入口会把同一编排复制两份。GET /api/audience/chat（召对历史读面）不受影响。
 
 @app.post("/api/audience/reply/retry")
 async def api_retry_audience_reply(chat_turn_id: int = Body(0, embed=True)) -> Dict[str, Any]:

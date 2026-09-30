@@ -309,59 +309,7 @@ def test_chat_stream_sse_waits_for_sync_generator_in_executor(monkeypatch):
     assert "event: done" in first
 
 
-def test_nonstream_api_chat_keeps_game_state_responsive_while_chat_blocks(monkeypatch):
-    """#1291+#1322: 非流式 chat 同步慢 LLM 在飞时，并发 GET /api/game/state 须在阈内响应。
-
-    根因：async api_audience_chat 在事件循环上直调全同步 get_game().chat()（→ subprocess.run），
-    整站 loop 卡死。对照流式端点 run_in_executor / directives to_thread——本测咬死卸载后
-    的可观测序：state 探针先于阻塞 chat 完成。
-    """
-    events: list[str] = []
-    chat_entered = threading.Event()
-    allow_finish = threading.Event()
-
-    class _SlowLLMGame:
-        """离线慢 LLM 替身：chat_stream 进入后保持阻塞，直至 state 探针完成。"""
-
-        def chat_stream(self, minister_name: str, message: str):
-            chat_entered.set()
-            allow_finish.wait()
-            events.append("chat")
-            yield {"type": "done", "payload": {"answer": "臣已知悉。"}}
-
-        def state_payload(self):
-            events.append("state")
-            return {"ok": True, "turn": 1}
-
-    monkeypatch.setattr(web_app, "get_game", lambda: _SlowLLMGame())
-
-    async def drive_concurrent_state_probe():
-        async def state_probe():
-            await asyncio.to_thread(chat_entered.wait)
-            try:
-                payload = await web_app.api_state()
-                # 先落成功标记再放行：set() 先执行则 chat 线程可先记 "chat"，
-                # 与外部断言的严格顺序无 happens-before（#1722 判牒）。
-                events.append("state_done")
-            finally:
-                # api_state 抛错也须放行 chat worker，否则 threadpool 永久阻塞。
-                allow_finish.set()
-            return payload
-
-        chat_result, state_payload = await asyncio.gather(
-            web_app.api_audience_chat(web_app.ChatRequest(message="边饷如何？")),
-            state_probe(),
-        )
-        return chat_result, state_payload
-
-    chat_result, state_payload = asyncio.run(drive_concurrent_state_probe())
-
-    assert events == ["state", "state_done", "chat"], (
-        f"event loop 被非流式 chat 冻结（events={events}）；"
-        "期望 state 探针在 chat 完成前响应"
-    )
-    assert state_payload == {"ok": True, "turn": 1}
-    assert chat_result["answer"] == "臣已知悉。"
+# #1902：非流式召对路由（POST /api/audience/chat）退役，其「不冻结事件循环」用例的被测对象随之不存在，随路由同退；同一性质的流式端点用例在本文件上方（test_stream_first_event_does_not_freeze_loop 一族）继续咬着。
 
 
 def test_nonstream_chat_rejects_when_session_draining():

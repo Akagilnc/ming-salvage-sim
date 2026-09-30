@@ -107,3 +107,23 @@ def test_runtime_config_projection_has_single_source():
     web_src = inspect.getsource(web_app)
     assert "def _llm_config_from_runtime(" not in web_src, "web 侧不得再留同名实现"
     assert "def apply_llm_config(" not in web_src, "零调用方 apply_llm_config 应已退役"
+
+
+@pytest.mark.parametrize("method", ["POST"])
+def test_nonstream_audience_chat_route_is_retired(method):
+    """说话只有流式一条入口（#1902）：非流式 POST 不再注册，历史 GET 不受影响。"""
+    assert not any(
+        getattr(r, "path", None) == "/api/audience/chat"
+        and method in (getattr(r, "methods", None) or set())
+        for r in web_app.app.routes
+    )
+    assert any(
+        getattr(r, "path", None) == "/api/audience/chat/stream"
+        and "POST" in (getattr(r, "methods", None) or set())
+        for r in web_app.app.routes
+    ), "流式召对入口必须保留"
+    assert any(
+        getattr(r, "path", None) == "/api/audience/chat"
+        and "GET" in (getattr(r, "methods", None) or set())
+        for r in web_app.app.routes
+    ), "召对历史读面（GET）必须保留"
