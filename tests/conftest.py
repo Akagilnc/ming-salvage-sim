@@ -409,42 +409,157 @@ def offline_empty_audience_translate(prompt, llm_config):
     ]}
 
 
-class LegConcurrency:
-    """并行腿的**到场计数**：只数「有几条腿真跑到了模型调用」，不等待（#1898）。
+class LegOverlap:
+    """并行腿的重叠证明：首腿停在模型替身里等同伙，且**缺席不挂死**（#1898）。
 
-    两轮返工的共同根因是把「证明并行」做成会合：一条腿停在会合上等对端，
-    而对端缺席时它永远停着 —— 它还占着写队列票据，于是主线程的排空
-    （``wait_idle``）也永久阻塞。会合两侧互等，判否从哪一侧下都太晚：腿侧
-    下判时腿已卡在会合里，主线程侧下判时它已卡在排空里。前两轮分别把死锁点
-    从排空挪到 ``settle``、又挪回会合，正是这一点的证据。
+    契约（用例名所指）：留中复判两条腿要能同时在飞，而不是在单 worker 里排队。
+    故首条到达的腿**停在替身里**直到同伙到场——这正是重叠的可失败证据：若生产
+    退回串行，第二条腿永远到不了，:attr:`peak` 停在 1，用例红。
 
-    故本类不做会合、不等待、不判否，只在模型替身入口做一次计数。
-    **没有任何腿会等另一条腿**，故缺席、抛错、取消、压根没提交——任何一种都
-    不可能挂死：主线程照常 ``wait_pending_writes`` 排空，随后断言计数。
+    前几轮把会合做成「无出口的阻塞」，是挂死的根源。出口只用真实事实，不用墙钟：
 
-    关于「两条腿是否重叠」：本仓生产**刻意**让它们不重叠——留中复判两条腿共用
-    一个 ``write_lock``（``decree_forecast.py`` 的 ``scan_and_fanout`` 建锁、
-    ``_submit_snapshot_job`` 持锁跑 snapshot），重活段是串行的，只有模型调用
-    并行（P5）。而测试替身是瞬时返回的，两次调用不会恰好同时。故「重叠」在
-    本用例里既不能靠计数稳定观测、也不能靠会合强制（强制即死锁，见上）。
-    本类因此只断言可确定的事实：**每条腿都真跑到了模型调用**（:attr:`arrived`），
-    缺席即红字；并行的结构性保证由生产的 4 腿执行池与共用写锁承担。
+    * **同伙到场**：第二/第 N 条腿抵达即放闸（成功路径）。
+    * **在飞腿集合空**：每条腿提交即入 :attr:`_inflight`（存其 Future），
+      跑到终态即出—— Future 自身的真实终态，不从执行器缝反推任务生命周期、
+      不数父子腿。主线程 ``settle()`` 先等扇出腿的 Future 跑完（扇出结束），
+      随后只要还有在飞腿就继续等（它仍可能抵达）；集合空了就说明再无人会到，
+      此时 arrived 仍不足 :attr:`parties` 即判否放闸。缺席、抛错、取消、压根
+      没提交，都落在这条上。
+    * **用例收尾**：:meth:`release_all` 幂等，finally 里再兜一次。
+
+    ``settle()`` 是主线程排空前的落点：会合成立或已判否即返回，故
+    ``settle()`` → ``wait_pending_writes()`` 的次序本身不可能挂死。
     """
 
-    def __init__(self) -> None:
-        self._lock = threading.Lock()
-        self._arrived = 0
+    def __init__(self, monkeypatch, parties: int = 2) -> None:
+        import ming_sim.audience_translation as audience_translation
+        import ming_sim.decree_forecast as forecast_mod
 
-    def enter(self) -> None:
-        """一条腿到达模型调用（用例的模型替身入口调用）。"""
-        with self._lock:
+        pool = audience_translation._executor
+        workers = getattr(pool, "_max_workers", 1)
+        assert int(workers) >= parties, (
+            f"执行器只有 {workers} 个 worker，容不下 {parties} 条并行腿；"
+            "「不排在单 worker 里」这条契约无从成立"
+        )
+
+        self._parties = parties
+        self._cond = threading.Condition()
+        # 在飞腿的 Future 集合（提交即入、跑到终态即出）。集合为空即「再无
+        # 腿能抵达」——这是 Future 自身的真实终态，不从别处反推。
+        self._inflight = set()     # 在飞腿的 Future；空即再无腿能抵达
+        self._arrived = 0          # 抵达模型替身的腿数
+        self._resident = 0         # 当前停在替身里的腿数
+        self._peak = 0
+        self._parked = 0
+        self._released = False
+        self._gate = threading.Semaphore(0)
+        self._top_futures = []     # 主线程提交的那几条腿（扇出腿本身）
+        self._main = threading.main_thread()
+
+        real_executor_submit = pool.submit
+
+        def executor_submit(fn, *args, **kwargs):
+            is_top = threading.current_thread() is self._main
+            box = {}
+
+            def leg(*a, **k):
+                try:
+                    return fn(*a, **k)
+                finally:
+                    fut = box.get("future")
+                    if fut is not None:
+                        with self._cond:      # 这条腿到终态：不再可能抵达
+                            self._inflight.discard(fut)
+                            self._cond.notify_all()
+
+            future = real_executor_submit(leg, *args, **kwargs)
+            box["future"] = future
+            with self._cond:
+                self._inflight.add(future)      # 在飞 ⇒ 仍可能抵达
+                self._cond.notify_all()
+            if is_top:
+                self._top_futures.append(future)   # 扇出腿：跑完即扇出结束
+            return future
+
+        monkeypatch.setattr(audience_translation, "_executor",
+                            _ProxyExecutor(pool, executor_submit))
+
+    def arrive(self) -> None:
+        """本腿抵达模型替身；先到者等到同伙到场（或被放闸）才返回。
+
+        到齐 parties 条时由最后到者放闸同伴——故成功路径无需外部干预。
+        """
+        with self._cond:
             self._arrived += 1
+            self._resident += 1
+            self._parked += 1
+            self._peak = max(self._peak, self._resident)
+            self._cond.notify_all()
+            crowded = self._resident >= self._parties
+            if crowded:
+                permits = self._parked - 1     # 放行仍在等的同伴
+        if crowded:
+            if permits > 0:
+                self._gate.release(permits)
+        else:
+            self._gate.acquire()      # 无时限但必有出口，见类文档
+        with self._cond:
+            self._resident -= 1
+            self._parked -= 1
+
+    def settle(self) -> bool:
+        """主线程在**排空之前**的落点：会合成立 True / 已判否 False。"""
+        for future in list(self._top_futures):
+            future.result()            # 真实事实：扇出腿跑完，无墙钟
+        with self._cond:
+            # 出口只认「在飞腿集合」：仍有在飞腿时它仍可能抵达，故等；集合
+            # 空了（全部到终态，含抛错/取消）而 arrived 仍不足 parties，即
+            # 「再无人会到」→ 判否放闸。停在会合里的腿尚未到终态，故不会被
+            # 误算成「跑完」而自锁。不看墙钟、不从别处反推。
+            while self._arrived < self._parties and self._inflight:
+                self._cond.wait()
+            met = self._arrived >= self._parties
+            parked = self._parked
+        if met:
+            # 成立路径：放闸仍在等的腿，否则它们不跑完、排空会挂死。
+            if parked > 0:
+                self._gate.release(parked)
+        else:
+            self.release_all()
+        return met
+
+    def release_all(self) -> None:
+        """放闸所有等待腿。幂等。"""
+        with self._cond:
+            if self._released:
+                return
+            self._released = True
+            self._cond.notify_all()
+        self._gate.release(self._parties * 4)
 
     @property
     def arrived(self) -> int:
-        """到达过模型调用的腿数（用例断言用）。"""
-        with self._lock:
+        with self._cond:
             return self._arrived
+
+    @property
+    def peak(self) -> int:
+        with self._cond:
+            return self._peak
+
+
+class _ProxyExecutor:
+    """只透传 submit（记扇出腿 Future），其余属性转真执行器。"""
+
+    def __init__(self, real, submit):
+        self._real = real
+        self._submit = submit
+
+    def submit(self, fn, *args, **kwargs):
+        return self._submit(fn, *args, **kwargs)
+
+    def __getattr__(self, name):
+        return getattr(self._real, name)
 
 
 

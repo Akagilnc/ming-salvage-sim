@@ -18,7 +18,7 @@ from ming_sim.models import LLMConfig
 from ming_sim.session import GameSession
 from ming_sim.session_write_queue import get_session_write_queue
 from tests.conftest import (
-    LegConcurrency,
+    LegOverlap,
     note_queue_until_game_teardown,
     offline_empty_audience_translate,
     persist_and_schedule_scene,
@@ -368,7 +368,7 @@ def test_held_rejudgments_overlap_instead_of_waiting_in_one_worker(game, monkeyp
         ids.append(dossier_id)
     db.conn.commit()
     open_night(db, state)
-    parallel = LegConcurrency()
+    parallel = LegOverlap(monkeypatch)
 
     def judge(_agent, prompt, **_kwargs):
         dossier = json.loads(prompt)["dossiers"][0]
@@ -377,7 +377,9 @@ def test_held_rejudgments_overlap_instead_of_waiting_in_one_worker(game, monkeyp
         })
 
     def simulate(_agent, _prompt, **_kwargs):
-        parallel.enter()
+        # 重叠证据：首腿停在替身里等同伙。生产若退回单 worker 串行，
+        # 第二条腿永远到不了 → peak 停在 1 → 本用例红。
+        parallel.arrive()
         return "预推"
 
     monkeypatch.setattr(decree_mod, "run_agent_text", judge)
@@ -389,12 +391,13 @@ def test_held_rejudgments_overlap_instead_of_waiting_in_one_worker(game, monkeyp
     sess = _sess(db, state, content, monkeypatch, lambda *_a, **_k: {})
     try:
         assert forecast_mod.schedule_held_decree_forecasts(sess) is True
+        # 先落会合、再排空：缺席腿由 settle 放闸，否则腿与排空互锁成挂死。
+        assert parallel.settle(), "两条留中复判腿未都到达"
         wait_pending_writes(sess)
-        # 两条腿都真跑到了模型调用（缺席即红字）。「是否重叠」本用例不断言：
-        # 生产刻意让重活段串行（共用 write_lock），只有模型调用并行，而替身是
-        # 瞬时返回的 —— 强制重叠就得让腿阻塞，即死锁。详见 LegConcurrency。
-        assert parallel.arrived == 2, "两条留中复判腿未都到达"
+        # 契约：两条腿确实同时在飞（不在单 worker 里排队）。
+        assert parallel.peak == 2, "两条留中复判腿未重叠"
     finally:
+        parallel.release_all()
         wait_pending_writes(sess)
     for dossier_id, pending_id in zip(ids, pending_ids):
         stale_ref = pending_action_decree_ref(pending_id, 1)
@@ -444,10 +447,10 @@ def test_same_local_ids_on_two_saves_both_stage(game, _game_template_path, monke
     shutil.copyfile(_game_template_path, copy_path)
     other = GameDB(str(copy_path), content)
 
-    parallel = LegConcurrency()
+    parallel = LegOverlap(monkeypatch)
 
     def judge(_agent, prompt, **_kwargs):
-        parallel.enter()
+        parallel.arrive()
         dossier = json.loads(prompt)["dossiers"][0]
         return json.dumps({
             "verdicts": [{"dossier_id": dossier["id"], "decision": "promulgated"}],
@@ -487,8 +490,11 @@ def test_same_local_ids_on_two_saves_both_stage(game, _game_template_path, monke
                 pending_action_decree_ref(pending_id, 1),
             )
             assert len(stored) == 1 and stored[0].verdict["decision"] == "promulgated"
-        assert parallel.arrived == 2, "两档腿未都到达"
+        assert parallel.settle(), "两档腿未都到达"
+        # 契约：两档的腿确实同时在飞。
+        assert parallel.peak == 2, "两档腿未重叠"
     finally:
+        parallel.release_all()
         for sess, *_rest in armed:
             wait_pending_writes(sess)
         other.close()
