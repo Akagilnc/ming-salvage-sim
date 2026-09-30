@@ -12,8 +12,6 @@ tests/test_material_directory_1830.py 的同一泛化入口覆盖，不在此重
 from __future__ import annotations
 
 import json
-from pathlib import Path
-
 from ming_sim.db import GameDB
 from ming_sim.materials import (
     list_materials, prepare_world_materials, read_material,
@@ -173,7 +171,12 @@ def test_world_materials_isolate_invocations_and_databases(game, tmp_path, monke
     assert read_material(first.root, "INDEX.txt")
     assert read_material(second.root, "INDEX.txt")
 
-    other = GameDB(str(Path(db.path).parent / "other.db"), content)
+    # #1892 J6：隔离本次夹具——game 档的父目录是 tempfile 共享父目录，往里写
+    # other.db 会踩到别的会话/工作树留下的既存同名文件。只在本次 tmp_path 下
+    # 另开一档，不删不覆盖共享目录里的既存 other.db。
+    other_dir = tmp_path / "other-db"
+    other_dir.mkdir()
+    other = GameDB(str(other_dir / "other.db"), content)
     try:
         other.seed_static_data()
         other_state = other.load_state()
@@ -288,12 +291,61 @@ def test_world_materials_carry_eligible_person_event_candidates(game, tmp_path):
 
     candidate_paths = [
         p for p in list_materials(prepared.root)
-        if p.startswith("候选事件/") and p.endswith(".txt")
+        if p.startswith("候选事件/") and p.endswith(".txt") and not p.endswith("/INDEX.txt")
     ]
-    assert any("huangtaiji_chengdi" in p for p in candidate_paths), candidate_paths
-    body = "\n".join(read_material(prepared.root, p) for p in candidate_paths)
-    assert "皇太极称帝" in body
-    assert "可解条件" in body and "崩坏条件" in body
-    # 三饷是皇帝亲裁，不作为人物候选进目录。
-    assert "liao_levy_rise_1631" not in body
-    assert "候选事件/INDEX.txt" in list_materials(prepared.root)
+    assert candidate_paths
+    # 目录读口契约：INDEX 每一条都指向真实存在的文件（#1892 J3 曾按原始 id 写
+    # INDEX、写盘却用安全名，整目录索引不可读）。结构化断言，不拼正文。
+    index_lines = [
+        line.strip()
+        for line in read_material(prepared.root, "候选事件/INDEX.txt").splitlines()
+        if line.strip()
+    ]
+    listed = {p.split("/", 1)[1] for p in candidate_paths}
+    assert index_lines, "候选 INDEX 不得为空"
+    assert set(index_lines) == listed, (index_lines, candidate_paths)
+    for rel in candidate_paths:
+        assert read_material(prepared.root, rel)
+    # 候选集合＝权威快照逐条可达；快照为空则本例无意义，故先钉非空。
+    eligible = {ev.id for ev in issues.gather_candidate_events(state, db)}
+    assert eligible, "fixture 需当期有合资格人物事件"
+    assert "huangtaiji_chengdi" in eligible
+    assert len(candidate_paths) == len(eligible)
+
+
+def test_world_materials_carry_due_fiscal_levy_petitions(game, tmp_path):
+    """#1892 J5：三饷到点须皇帝亲裁，故走「请旨事项」目录交世界段上疏。
+
+    契约＝目录读口（INDEX 每条指向真实文件）与权威快照一致；不盯人读正文。
+    """
+    from ming_sim import issues
+
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1631
+    state.period = 1
+    db.save_state(state)
+
+    due = {ev.id for ev in issues.gather_fiscal_levy_petitions(state, db)}
+    assert "liao_levy_rise_1631" in due
+
+    prepared = prepare_world_materials(db, state, dest_root=tmp_path / "levy")
+    index_lines = [
+        line.strip()
+        for line in read_material(prepared.root, "请旨事项/INDEX.txt").splitlines()
+        if line.strip()
+    ]
+    paths = [
+        p for p in list_materials(prepared.root)
+        if p.startswith("请旨事项/") and p.endswith(".txt") and not p.endswith("/INDEX.txt")
+    ]
+    assert paths
+    assert {p.split("/", 1)[1] for p in paths} == set(index_lines)
+    for rel in paths:
+        assert read_material(prepared.root, rel)
+
+    # 已落终态者不再呈请；亲裁一次后同一事件不再顶回批红。
+    db.mark_event_triggered(state, "liao_levy_rise_1631", terminal_reason="已准")
+    assert "liao_levy_rise_1631" not in {
+        ev.id for ev in issues.gather_fiscal_levy_petitions(state, db)
+    }

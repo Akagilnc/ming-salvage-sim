@@ -1247,3 +1247,73 @@ def test_fiscal_levy_gate_waits_until_1631_and_generic_terminal_pass_skips_it(ga
         "SELECT COUNT(*) FROM event_triggers WHERE event_id=?",
         ("liao_levy_rise_1631",),
     ).fetchone()[0] == 1
+
+
+def test_fiscal_levy_petition_reaches_emperor_desk_and_lands_only_after_choice(game, monkeypatch):
+    """#1892 J5 闭环：到点三饷经世界段上疏 → 案头事件身份＝该事件 → 批红落终态。
+
+    世界段外缝打掉（返回一段带 event_id 回显的请旨），其余（材料目录、请旨解析、
+    案头物化、批红写口、饷率通道）全走真实实现。
+    """
+    import ming_sim.month_chain as month_chain
+    import ming_sim.month_translate as month_translate
+    from ming_sim import issues as issues_mod
+    from tests.month_chain_helpers import make_light_session
+    from tests.test_month_chain_1843 import _forbid_extractor
+
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1631
+    state.period = 1
+    db.save_state(state)
+    before = _settle_payload(db, "shaanxi")["p"]
+
+    world_text = (
+        "户部奏辽饷加派。"
+        "<<DECISION>>"
+        '{"title":"辽饷加派","event_id":"liao_levy_rise_1631","context":"边饷急迫",'
+        '"options":[{"label":"已准","hint":"加派"},{"label":"已驳","hint":"不加"}]}'
+        "<<END>>"
+    )
+    _forbid_extractor(monkeypatch)
+    monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: world_text)
+    monkeypatch.setattr(
+        month_translate, "translate_month_segment", lambda *a, **k: {"effects": {}},
+    )
+
+    session = make_light_session(db, state, content)
+    result = session.resolve_turn(allow_empty_decree=True)
+
+    assert result.awaiting is True
+    desk = session.pending_decisions()
+    row = next(r for r in desk if str(r.get("event_id") or "") == "liao_levy_rise_1631")
+    approved = next(opt for opt in row["options"] if opt["label"] == "已准")
+
+    # 未批红前：事件无终态、征收额不变（引擎不代批）。
+    assert db.conn.execute(
+        "SELECT 1 FROM event_triggers WHERE event_id=? AND COALESCE(terminal_state,'')<>''",
+        ("liao_levy_rise_1631",),
+    ).fetchone() is None
+    assert _settle_payload(db, "shaanxi")["p"] == before
+
+    session.submit_hitl_choices(
+        [{
+            "decision_key": row["decision_key"],
+            "label": approved["label"],
+            "hint": approved.get("hint") or "",
+        }],
+        write_gate=session._write_gate,
+    )
+
+    apply_historical_fiscal_rates(state, db)
+    led = db.conn.execute(
+        "SELECT terminal_state, terminal_reason FROM event_triggers WHERE event_id=?",
+        ("liao_levy_rise_1631",),
+    ).fetchone()
+    assert dict(led) == {"terminal_state": "triggered", "terminal_reason": "已准"}
+    assert math.isclose(
+        _settle_payload(db, "shaanxi")["p"]["三饷应征"],
+        before["三饷应征"] * 4.0 / 3.0,
+        rel_tol=1e-9, abs_tol=1e-9,
+    )
+    del issues_mod

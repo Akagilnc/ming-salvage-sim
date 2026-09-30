@@ -1351,7 +1351,8 @@ def _materialize_rescript_desk(
             ))
     for idx, question in enumerate(open_items["world_questions"]):
         decisions.append(_question_as_decision(
-            question, event_id=f"{_WORLD_QUESTION_PREFIX}{turn}:{idx}",
+            question,
+            event_id=_world_question_event_id(question, db=db, state=state, turn=turn, idx=idx),
         ))
     if decisions:
         db.save_pending_decisions(turn, decisions)
@@ -1368,6 +1369,26 @@ def _materialize_rescript_desk(
     chain["stage"] = "rescript"
     _save_chain(db, turn, chain, source=Provenance.system_simulation)
     return desk
+
+
+def _world_question_event_id(
+    question: Dict[str, object], *, db: Any, state: Any, turn: int, idx: int,
+) -> str:
+    """世界段请旨的 event 身份：回显的请旨事项 id 经**权威快照**核对后才认。
+
+    #1892 J5：三饷是皇帝亲裁——世界段据请旨事项目录上疏陈情，问块回显该事件 id；
+    核对通过则请旨身份即该事件本身，批红经record_event_decision_choice 落事件账，
+    下一月由 apply_historical_fiscal_rates 归一结局标签。只认本回合到期快照内的
+    请旨事项（gather_fiscal_levy_petitions），其余一律仍走world-question: 前缀
+    案头身份，不写事件账——不从疏文猜配、不给幻觉 id 记账（ADR 0115 fail-safe）。
+    """
+    echoed = str(question.get("event_id") or question.get("origin_ref") or "").strip()
+    if echoed:
+        from ming_sim.issues import gather_fiscal_levy_petitions
+
+        if echoed in {ev.id for ev in gather_fiscal_levy_petitions(state, db)}:
+            return echoed
+    return f"{_WORLD_QUESTION_PREFIX}{turn}:{idx}"
 
 
 def _question_as_decision(question: Dict[str, object], *, event_id: str) -> Dict[str, object]:

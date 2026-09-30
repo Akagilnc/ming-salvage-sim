@@ -2461,6 +2461,31 @@ def gather_candidate_events(state: GameState, db: GameDB) -> List[Event]:
     return candidates
 
 
+def gather_fiscal_levy_petitions(state: GameState, db: GameDB) -> List[Event]:
+    """#1892 J5：三饷（category=fiscal_levy）到点请旨的候选——交既有世界段成陈情。
+
+    亲裁权在皇帝，故这些事件**不进** gather_candidate_events（那里是交模型代选
+    「是否发生」的人物事件池）。本函数只判「该不该呈皇帝」，判门与人物候选同一
+    真源（窗口/前提门/已落终态或已呈未决）；不写终态、不代批。奏疏由世界段模型
+    以事件绑定请旨产出，批红经 record_event_decision_choice 落事件账，下一月由
+    apply_historical_fiscal_rates 归一封闭结局标签。
+    """
+    c = _ctx()
+    spawned = _spawned_event_refs(db)
+    petitions: List[Event] = []
+    for ev in c.events:
+        if getattr(ev, "category", "") != FISCAL_LEVY_EVENT_CATEGORY:
+            continue
+        if ev.id in spawned or ev.trigger_year <= 0:
+            continue
+        if _event_window_expired(ev, state) or not _event_window_open(ev, state):
+            continue
+        if not _gate_passed(ev.trigger_gate, state.metrics, db):
+            continue
+        petitions.append(ev)
+    return petitions
+
+
 def apply_event_terminal_states(
     state: GameState,
     db: GameDB,

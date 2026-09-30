@@ -33,6 +33,7 @@ _RECOMMEND_DIR = "荐人"
 _FACT_DIR = "事实"
 _BOARD_DIR = "盘面"
 _CANDIDATE_DIR = "候选事件"
+_PETITION_DIR = "请旨事项"
 _WORLD_GAZETTE_DIR = "邸报"
 _CHARACTER_GAZETTE_DIR = f"{_PUBLIC_DIR}/邸报"
 _COURT_ROSTER_REL = f"{_PERSON_DIR}/朝臣名册.txt"
@@ -1405,8 +1406,33 @@ def _world_candidate_events(db: Any, state: Any) -> list:
             "trigger_gate": dict(ev.trigger_gate),
             "resolve_condition": ev.resolve_condition,
             "fail_condition": ev.fail_condition,
+            # ADR 0014 §2：战斗/对抗类软判须喂「历史结果 + 历史成因」作锚。该锚
+            # 在既有 precondition 字段里（事件自带的三档结果与判定依据），不回显
+            # 等于把锚抽掉。
+            "precondition": ev.precondition,
         }
         for ev in gather_candidate_events(state, db)
+    ]
+
+
+def _world_fiscal_levy_petitions(db: Any, state: Any) -> list:
+    """#1892 J5：三饷到点请旨事项——交世界段成陈情与拟旨，皇帝亲裁，不由模型代批。
+
+    资格单一真源＝issues.gather_fiscal_levy_petitions；本函数只投影事件自身既有
+    字段（不另设判门、不写终态）。军费实况仍走盘面既有段落，本目录不重造。
+    """
+    from ming_sim.issues import gather_fiscal_levy_petitions
+
+    return [
+        {
+            "id": ev.id,
+            "title": ev.title,
+            "summary": ev.summary,
+            # 封闭结局标签＝玩家批红可落的白名单；模型只可在此集内给选项标签，
+            # 否则 apply_historical_fiscal_rates 的归一器会 fail-loud。
+            "verdict_labels": list(getattr(ev, "terminal_reason_labels", []) or []),
+        }
+        for ev in gather_fiscal_levy_petitions(state, db)
     ]
 
 
@@ -1414,13 +1440,13 @@ def _write_candidate_event_files(tmp: Path, db: Any, state: Any) -> list[str]:
     index: list[str] = []
     candidates = _world_candidate_events(db, state)
     index_rel = f"{_CANDIDATE_DIR}/INDEX.txt"
-    _write_text(
-        tmp / index_rel,
-        "\n".join(f"{item['id']}.txt" for item in candidates),
-    )
+    # 索引与文件名同一真源：写盘用 _safe_segment，索引也必须用它拼，否则目录里
+    # 每一条索引都指向不存在的文件（按原始 id 拼时两者不一致）。
+    entries = [f"{_safe_segment(item['id'])}.txt" for item in candidates]
+    _write_text(tmp / index_rel, "\n".join(entries))
     index.append(index_rel)
-    for item in candidates:
-        rel = f"{_CANDIDATE_DIR}/{_safe_segment(item['id'])}.txt"
+    for item, entry in zip(candidates, entries):
+        rel = f"{_CANDIDATE_DIR}/{entry}"
         body = "\n".join(
             f"{label}：{value}"
             for label, value in (
@@ -1433,6 +1459,35 @@ def _write_candidate_event_files(tmp: Path, db: Any, state: Any) -> list[str]:
                 ("前提门", json.dumps(item["trigger_gate"], ensure_ascii=False)),
                 ("可解条件", item["resolve_condition"]),
                 ("崩坏条件", item["fail_condition"]),
+                ("历史前情与结果", item["precondition"]),
+            )
+        )
+        _write_text(tmp / rel, body)
+        index.append(rel)
+    return index
+
+
+def _write_fiscal_levy_petition_files(tmp: Path, db: Any, state: Any) -> list[str]:
+    """#1892 J5：到点三饷写成「请旨事项」目录，供世界段据以上疏请旨（皇帝亲裁）。
+
+    与「候选事件」分开：那里是交模型代选是否发生的人物事件；这里的事件发生权在
+    皇帝，模型只负责陈情与拟旨，批红后才落终态。
+    """
+    index: list[str] = []
+    petitions = _world_fiscal_levy_petitions(db, state)
+    index_rel = f"{_PETITION_DIR}/INDEX.txt"
+    entries = [f"{_safe_segment(item['id'])}.txt" for item in petitions]
+    _write_text(tmp / index_rel, "\n".join(entries))
+    index.append(index_rel)
+    for item, entry in zip(petitions, entries):
+        rel = f"{_PETITION_DIR}/{entry}"
+        body = "\n".join(
+            f"{label}：{value}"
+            for label, value in (
+                ("id", item["id"]),
+                ("事项", item["title"]),
+                ("事由", item["summary"]),
+                ("可批结局标签", "、".join(item["verdict_labels"])),
             )
         )
         _write_text(tmp / rel, body)
@@ -1514,6 +1569,7 @@ def _write_world_tree(
         index.append(rel)
 
     index.extend(_write_candidate_event_files(tmp, db, state))
+    index.extend(_write_fiscal_levy_petition_files(tmp, db, state))
     index.extend(_write_world_textual_fact_files(tmp, db, include_fact=include_fact))
     index.extend(_write_public_by_month(tmp, public_events))
     index.extend(_write_gazette_index(
@@ -1600,6 +1656,11 @@ def _world_opening_text(
     parts.append(
         "可能发生的人物事件在「候选事件」目录（按 INDEX 自读）；是否发生、怎么发生由你判断，"
         "发生与否及实况经转译写口落账，不选即不发生。"
+    )
+    parts.append(
+        "到点须皇帝亲裁的事项在「请旨事项」目录（按 INDEX 自读）：这些不由你决定成败，"
+        "你只据盘面与军费实况上疏陈情、拟出请旨，请旨块的 event_id 写该事项 id，"
+        "选项标签只取该事项列出的可批结局标签；皇帝批红后结局才落账。"
     )
     parts.append("人物经历、公开说法、历月邸报在当前目录，按需自读。根目录 INDEX 一行一项。")
     return "\n".join(parts)
