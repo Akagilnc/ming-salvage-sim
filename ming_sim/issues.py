@@ -1311,23 +1311,6 @@ def _normalize_event_terminal_reason(ev: Event, raw: object) -> str:
     return ""
 
 
-def _fiscal_levy_default_terminal_reason(ev: Event, state: GameState) -> str:
-    if not getattr(ev, "terminal_reason_labels", None):
-        raise SettlementAbort(
-            f"饷率事件 {ev.id} 缺 terminal_reason_labels 白名单",
-            turn=state.turn,
-            stage="fiscal_levy_config",
-        )
-    label = _normalize_event_terminal_reason(ev, getattr(ev, "default_terminal_reason", ""))
-    if not label:
-        raise SettlementAbort(
-            f"饷率事件 {ev.id} default_terminal_reason 不可归一",
-            turn=state.turn,
-            stage="fiscal_levy_config",
-        )
-    return label
-
-
 def _fiscal_levy_normalized_terminal_reason_or_abort(
     ev: Event,
     raw: object,
@@ -1713,7 +1696,7 @@ def apply_historical_fiscal_rates(
                     db.mark_event_triggered(
                         state,
                         ev.id,
-                        source=record.get("source") or "fiscal_levy_shadow",
+                        source=record.get("source") or "hitl_decision",
                         terminal_reason=label,
                         commit=False,
                     )
@@ -1727,37 +1710,16 @@ def apply_historical_fiscal_rates(
                         "terminal_state": "triggered",
                         "terminal_reason": label,
                     })
-            if ev.id not in terminal_records:
-                if _event_window_expired(ev, state):
-                    db.mark_event_expired(state, ev.id, commit=False)
-                    terminal_records[ev.id] = {
-                        "terminal_state": "expired",
-                        "terminal_reason": "过最晚触发时点仍未达成触发门",
-                    }
-                    applied.append({"id": ev.id, "title": ev.title, "terminal_state": "expired"})
-                    continue
-                if not _event_window_open(ev, state):
-                    continue
-                if not _gate_passed(ev.trigger_gate, state.metrics, db):
-                    continue
-                label = _fiscal_levy_default_terminal_reason(ev, state)
-                db.mark_event_triggered(
-                    state,
-                    ev.id,
-                    source="fiscal_levy_shadow",
-                    terminal_reason=label,
-                    commit=False,
-                )
+            # #1892：三饷是皇帝亲裁，无裁决不置结局。旧 shadow 桩按事件默认结局自动记
+            # 「已准／已停」＝引擎代皇帝批红，已退役；此处只把过窗口者落过期终态，
+            # 其余留待亲裁选择（pending_choice_records）落定。
+            if ev.id not in terminal_records and _event_window_expired(ev, state):
+                db.mark_event_expired(state, ev.id, commit=False)
                 terminal_records[ev.id] = {
-                    "terminal_state": "triggered",
-                    "terminal_reason": label,
+                    "terminal_state": "expired",
+                    "terminal_reason": "过最晚触发时点仍未达成触发门",
                 }
-                applied.append({
-                    "id": ev.id,
-                    "title": ev.title,
-                    "terminal_state": "triggered",
-                    "terminal_reason": label,
-                })
+                applied.append({"id": ev.id, "title": ev.title, "terminal_state": "expired"})
         _apply_fiscal_levy_targets(db, state, terminal_records)
 
     if should_commit:
@@ -2452,13 +2414,19 @@ def gather_impeachment_surge_candidates(state: GameState, db: GameDB) -> List[Di
 
 def gather_candidate_events(state: GameState, db: GameDB) -> List[Event]:
     """程序筛选：历史锚定事件按 trigger 时间到点、seed 情势按 trigger_gate 达标，
-    都排除已触发过的。返回的候选清单交推演 agent 因果判定是否真触发。"""
+    都排除已触发过的。返回的候选清单交推演 agent 因果判定是否真触发。
+
+    #1892：三饷（category=fiscal_levy）是皇帝亲裁，不在人物候选里交模型代批——
+    它的发生权归 #1891 亲裁接缝，不归世界段模型。
+    """
     c = _ctx()
     spawned = _spawned_event_refs(db)
     candidates: List[Event] = []
     # 历史锚定 EVENTS：到点（含错过补出）即进候选
     for ev in c.events:
         if ev.id in spawned or ev.trigger_year <= 0:
+            continue
+        if getattr(ev, "category", "") == FISCAL_LEVY_EVENT_CATEGORY:
             continue
         if _event_window_expired(ev, state):
             continue
@@ -2568,7 +2536,9 @@ def _auto_trigger_seed_issues_in_atomic(state: GameState, db: GameDB) -> List[Di
         if not ev.auto_trigger:
             continue
         terminal_state = terminal_states.get(ev.id)
-        if terminal_state and (historical_event or terminal_state == "expired"):
+        # #1892：任何已落终态（已发/避过/过期/作废）都不再重发——结案后复发等于
+        # 同一世界事件被发两次，违「读已落终态不再重发」。
+        if terminal_state:
             continue
         if _event_window_expired(ev, state):
             db.mark_event_expired(state, ev.id, commit=False)
@@ -2599,6 +2569,8 @@ def _auto_trigger_seed_issues_in_atomic(state: GameState, db: GameDB) -> List[Di
         issue_id = event_to_issue(db, state, ev, commit=False)
         created_issue = issue_id is not None
         if historical_event and issue_id is None:
+            # 同源软 issue 已在（存档迁移残留）而事件终态未落：event_to_issue 早退未消费
+            # 核心事实，此处补落一次并记终态（#1892 终态与实况同落、只落一次）。
             row = (
                 db.find_active_issue_by_origin("event_pool", ev.id)
                 if ev.trigger_gate
@@ -2607,7 +2579,6 @@ def _auto_trigger_seed_issues_in_atomic(state: GameState, db: GameDB) -> List[Di
             if row is None:
                 raise RuntimeError(f"历史事件 {ev.id} 未建局势且无法找到同源 issue")
             issue_id = int(row["id"])
-        if historical_event:
             if ev.effect_on_trigger:
                 _apply_issue_entities(
                     db,
@@ -2616,7 +2587,7 @@ def _auto_trigger_seed_issues_in_atomic(state: GameState, db: GameDB) -> List[Di
                     f"事件#{ev.id}触发",
                     content=c,
                 )
-            db.mark_event_triggered(state, ev.id)
+            db.mark_event_triggered(state, ev.id, commit=False)
         if issue_id is not None:
             triggered.append({"id": ev.id, "title": ev.title, "issue_id": issue_id})
             action = "硬立项" if created_issue else "补记"
@@ -2784,6 +2755,16 @@ def event_to_issue(db: GameDB, state: GameState, ev: Event, *, commit: bool = Tr
         fail_condition=ev.fail_condition,
         commit=False,
     )
+    # #1892：核心物理事实（改国号等）随终态一次落库，不另设日期旁路——事件未触发
+    # 即无核心事实，触发时只此一处消费 effect_on_trigger。
+    if ev.effect_on_trigger:
+        _apply_issue_entities(
+            db,
+            state,
+            _content_population_effect_for_save(db, ev.effect_on_trigger),
+            f"事件#{ev.id}触发",
+            content=_ctx(),
+        )
     db.mark_event_triggered(state, ev.id, source="event_pool", commit=False)
     apply_event_cascading_invalidations(state, db, commit=False)
     if commit:

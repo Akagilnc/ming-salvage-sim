@@ -82,9 +82,8 @@
     "open_window": true,
     "trigger_gate": {},
     "terminal_reason_labels": ["已准", "已驳"],
-    "default_terminal_reason": "已准",
     "event_type": "node",
-    "precondition": "历史既定：崇祯四年正月，辽饷由九厘旧额升至一分二厘；#259 shadow 阶段用史实默认「已准」，#260 落地后改由圣旨置结局。"
+    "precondition": "历史既定：崇祯四年正月，辽饷由九厘旧额升至一分二厘。加不加由皇帝亲裁（#1891 呈批、#1893/#1892 不交世界段模型代批），引擎不自动置结局。"
   },
   {
     "id": "kong_youde",
@@ -214,9 +213,8 @@
     "open_window": true,
     "trigger_gate": {},
     "terminal_reason_labels": ["已准", "已驳"],
-    "default_terminal_reason": "已准",
     "event_type": "node",
-    "precondition": "历史既定：崇祯十年剿饷开征；#259 shadow 阶段用史实默认「已准」，#260 落地后改由圣旨置结局。"
+    "precondition": "历史既定：崇祯十年剿饷开征。开不开由皇帝亲裁（#1891 呈批、#1892 不交世界段模型代批），引擎不自动置结局。"
   },
   {
     "id": "lian_levy_start_1639",
@@ -236,9 +234,8 @@
     "open_window": true,
     "trigger_gate": {},
     "terminal_reason_labels": ["已准", "已驳"],
-    "default_terminal_reason": "已准",
     "event_type": "node",
-    "precondition": "历史既定：崇祯十二年练饷开征；#259 shadow 阶段用史实默认「已准」，#260 落地后改由圣旨置结局。练饷无议停事件，在征谓词只读本事件结局。"
+    "precondition": "历史既定：崇祯十二年练饷开征。开不开由皇帝亲裁（#1891 呈批、#1892 不交世界段模型代批），引擎不自动置结局。练饷无议停事件，在征谓词只读本事件结局。"
   },
   {
     "id": "jiao_levy_stop_1640",
@@ -258,9 +255,8 @@
     "open_window": true,
     "trigger_gate": {"event.jiao_levy_start_1637.terminal_reason": "==已准"},
     "terminal_reason_labels": ["已停", "仍征"],
-    "default_terminal_reason": "已停",
     "event_type": "node",
-    "precondition": "历史既定：崇祯十三年议停剿饷；仅在剿饷开征已准后出现，是否仍征由事件结局承载，不在 trigger_gate 自指。"
+    "precondition": "历史既定：崇祯十三年议停剿饷；仅在剿饷开征已准后出现，停不停由皇帝亲裁（#1891 呈批），不在 trigger_gate 自指。"
   },
   {
     "id": "zhangxianzhong_zaifan",

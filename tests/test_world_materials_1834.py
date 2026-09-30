@@ -267,3 +267,33 @@ def test_world_materials_include_textual_facts_once_and_gazette_not_duplicated(g
     # past 月路径不存在；gate 失效后该路径会出现（结构化路径契约，不盯正文）。
     assert f"公开说法/{past_year}年{past_period}月.txt" not in names
     assert f"邸报/{past_year}年{past_period}月.txt" in names
+
+
+def test_world_materials_carry_eligible_person_event_candidates(game, tmp_path):
+    """#1892 J3：世界段起调时材料目录按当前实况给出合资格人物事件候选及结构化事实。
+
+    候选资格单一真源＝issues.gather_candidate_events；本例只钉「供料接缝接通」，
+    不另设判门。已落终态者不入候选（引擎硬触发的大疫不在其中）。
+    """
+    from ming_sim import issues
+
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1636
+    state.period = 4
+    db.save_state(state)
+
+    dest = tmp_path / "world-materials"
+    prepared = prepare_world_materials(db, state, dest_root=dest)
+
+    candidate_paths = [
+        p for p in list_materials(prepared.root)
+        if p.startswith("候选事件/") and p.endswith(".txt")
+    ]
+    assert any("huangtaiji_chengdi" in p for p in candidate_paths), candidate_paths
+    body = "\n".join(read_material(prepared.root, p) for p in candidate_paths)
+    assert "皇太极称帝" in body
+    assert "可解条件" in body and "崩坏条件" in body
+    # 三饷是皇帝亲裁，不作为人物候选进目录。
+    assert "liao_levy_rise_1631" not in body
+    assert "候选事件/INDEX.txt" in list_materials(prepared.root)

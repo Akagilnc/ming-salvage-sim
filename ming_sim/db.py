@@ -6259,36 +6259,6 @@ class GameDB:
             })
         return debuted
 
-    def apply_historical_power_renames(self, state: GameState) -> List[Dict[str, object]]:
-        """月初 tick：历史国号/称谓变化。稳定 id 不变，只改展示名与别名。"""
-        changes: List[Dict[str, object]] = []
-        if state.year > 1636 or (state.year == 1636 and state.period >= 4):
-            ev = self.content.event_by_id.get("huangtaiji_chengdi")
-            if ev is None or not isinstance(ev.effect_on_trigger, dict):
-                raise ValueError("历史改国号缺少事件真源 huangtaiji_chengdi.effect_on_trigger")
-            power_renames = ev.effect_on_trigger.get("power_renames")
-            if not isinstance(power_renames, list):
-                raise ValueError("历史改国号缺少 power_renames 列表")
-            for idx, item in enumerate(power_renames):
-                if not isinstance(item, dict):
-                    raise ValueError(f"历史改国号 power_renames[{idx}] 非 dict")
-                power_id = str(item.get("power_id") or "").strip()
-                new_name = str(item.get("new_name") or "").strip()
-                if not power_id or not new_name:
-                    raise ValueError(f"历史改国号 power_renames[{idx}] 缺少 power_id/new_name")
-                changed = self.apply_power_rename(
-                    state,
-                    power_id,
-                    new_name,
-                    aliases=str(item.get("aliases") or ""),
-                    reason=str(item.get("reason") or ""),
-                    status=str(item.get("status") or ""),
-                    last_action=str(item.get("last_action") or ""),
-                )
-                if changed:
-                    changes.append(changed)
-        return changes
-
     def next_pool_portrait_id(self, prefix: str = "minister_pool_") -> str:
         """分配下一个预设头像 ID（顺序递增，不循环）。
         minister_pool: 60 个槽；consort_pool: 20 个槽。

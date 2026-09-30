@@ -493,7 +493,6 @@ class Event:
     # 硬触发开关、也是「这是世界事件」的唯一权威标记，不另开第二个归属字段。
     auto_trigger: bool = False
     terminal_reason_labels: List[str] = field(default_factory=list)  # 封闭结局标签集；空=无专用白名单
-    default_terminal_reason: str = ""  # shadow / deterministic stub 默认结局，必须属于 terminal_reason_labels
     # 以下为可选「精调 issue 字段」：原 opening_crises 那种手调危机用，立项时 event_to_issue 优先读这些，
     # 缺省（0/空）则按 severity/kind 自动推导。合并 opening_crises → seed_events 后承接其手调值。
     bar_value: int = 0                                            # 0=自动推导

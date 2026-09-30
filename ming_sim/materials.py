@@ -32,6 +32,7 @@ _SECRET_DIR = "密令"
 _RECOMMEND_DIR = "荐人"
 _FACT_DIR = "事实"
 _BOARD_DIR = "盘面"
+_CANDIDATE_DIR = "候选事件"
 _WORLD_GAZETTE_DIR = "邸报"
 _CHARACTER_GAZETTE_DIR = f"{_PUBLIC_DIR}/邸报"
 _COURT_ROSTER_REL = f"{_PERSON_DIR}/朝臣名册.txt"
@@ -1385,6 +1386,60 @@ def _textual_facts_text(
     return "\n".join(f"{fact.occurred_month}：{fact.body}" for fact in facts)
 
 
+def _world_candidate_events(db: Any, state: Any) -> list:
+    """#1892：合资格且尚无终态的人物事件候选，连同结构化事实交世界段模型自读。
+
+    候选资格与结构化事实由 gather_candidate_events 单一真源判（窗口/前提门/已发
+    终态/三饷亲裁排除）；本函数只把该结果写成材料，不另设判门、不替模型选。
+    """
+    from ming_sim.issues import gather_candidate_events
+
+    return [
+        {
+            "id": ev.id,
+            "title": ev.title,
+            "kind": ev.kind,
+            "event_type": ev.event_type,
+            "summary": ev.summary,
+            "interests": list(ev.interests),
+            "trigger_gate": dict(ev.trigger_gate),
+            "resolve_condition": ev.resolve_condition,
+            "fail_condition": ev.fail_condition,
+        }
+        for ev in gather_candidate_events(state, db)
+    ]
+
+
+def _write_candidate_event_files(tmp: Path, db: Any, state: Any) -> list[str]:
+    index: list[str] = []
+    candidates = _world_candidate_events(db, state)
+    index_rel = f"{_CANDIDATE_DIR}/INDEX.txt"
+    _write_text(
+        tmp / index_rel,
+        "\n".join(f"{item['id']}.txt" for item in candidates),
+    )
+    index.append(index_rel)
+    for item in candidates:
+        rel = f"{_CANDIDATE_DIR}/{_safe_segment(item['id'])}.txt"
+        body = "\n".join(
+            f"{label}：{value}"
+            for label, value in (
+                ("id", item["id"]),
+                ("标题", item["title"]),
+                ("类别", item["kind"]),
+                ("事件类型", item["event_type"]),
+                ("事由", item["summary"]),
+                ("相关", "、".join(item["interests"])),
+                ("前提门", json.dumps(item["trigger_gate"], ensure_ascii=False)),
+                ("可解条件", item["resolve_condition"]),
+                ("崩坏条件", item["fail_condition"]),
+            )
+        )
+        _write_text(tmp / rel, body)
+        index.append(rel)
+    return index
+
+
 def _write_world_tree(
     tmp: Path,
     db: Any,
@@ -1458,6 +1513,7 @@ def _write_world_tree(
         _write_text(tmp / rel, body)
         index.append(rel)
 
+    index.extend(_write_candidate_event_files(tmp, db, state))
     index.extend(_write_world_textual_fact_files(tmp, db, include_fact=include_fact))
     index.extend(_write_public_by_month(tmp, public_events))
     index.extend(_write_gazette_index(
@@ -1541,6 +1597,10 @@ def _world_opening_text(
             f"目标：{fact['target_kind']}:{fact['target_id']}；"
             f"拨款：{fact['grant_action']}；实付：{fact['paid']}万两"
         )
+    parts.append(
+        "可能发生的人物事件在「候选事件」目录（按 INDEX 自读）；是否发生、怎么发生由你判断，"
+        "发生与否及实况经转译写口落账，不选即不发生。"
+    )
     parts.append("人物经历、公开说法、历月邸报在当前目录，按需自读。根目录 INDEX 一行一项。")
     return "\n".join(parts)
 
