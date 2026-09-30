@@ -1226,17 +1226,20 @@ def close_night(
     translate_fn: Any = None,
     write_queue: Any = None,
 ) -> Dict[str, Any]:
-    """收夜：短写前提 → 无锁待补转译 → 短写终局（#1842：背书随转译，无夜级批）。
+    """收夜：待补转译 → 短写前提 → 短写终局（#1842：背书随转译，无夜级批）。
 
     #1838 reopen：不再有收夜旁白 LLM 调用与收夜账；收讫只看 audience_nights.status。
-    背书批仍由 #1842 路径承接（本函数仍调 endorsement batch）。
 
     分相：
-    1. OPEN 期：等在飞回话清；补跑转译；持 write_gate 冻结 CLOSING、提交 draft 前提。
-    2. endorsement-only LLM（无 DB transaction / 无 runtime write gate）。
-    3. 重取 gate：原子落背书水位；consort/明发/CLOSED。
+    1. 待补转译（无 DB transaction）：OPEN 期在冻结 CLOSING **之前**补跑；
+       进来时已是 CLOSING 的崩溃恢复口在 on_closing **之后**补跑。两条分支
+       互斥，同一次收夜不会补跑第二轮。
+    2. 短写持 write_gate：提交 draft 前提（office → directive）。
+    3. 短写持 write_gate：终局效果、明发、CLOSED。
 
-    背书失败 → OPEN、cursor=0、draft identity 保留。成功前不得判官/公开明发/终局效果/CLOSED。
+    待补转译失败不阻断收夜：该轮保持待补（status/diagnostic 仍可查），由 #1846
+    玩家重试或过月 join 承接，同次收夜不再自动调模型。成功前不得判官/明发/
+    终局效果/CLOSED。
     """
     # #1353 r7：共享 conn 读一律短持 runtime gate（禁闸外裸 SELECT）。
     gate = _gate_cm(write_gate)

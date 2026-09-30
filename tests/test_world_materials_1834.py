@@ -12,7 +12,6 @@ tests/test_material_directory_1830.py 的同一泛化入口覆盖，不在此重
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 from ming_sim.db import GameDB
 from ming_sim.materials import (
@@ -173,7 +172,9 @@ def test_world_materials_isolate_invocations_and_databases(game, tmp_path, monke
     assert read_material(first.root, "INDEX.txt")
     assert read_material(second.root, "INDEX.txt")
 
-    other = GameDB(str(Path(db.path).parent / "other.db"), content)
+    # 第二档库开在本用例自己的 tmp_path 里，不借 db.path.parent——后者是夹具的
+    # 临时目录，兄弟文件放在那里等于把「派生文件归谁」这件事留给目录布局。
+    other = GameDB(str(tmp_path / "other.db"), content)
     try:
         other.seed_static_data()
         other_state = other.load_state()

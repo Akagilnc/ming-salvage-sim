@@ -28,6 +28,19 @@ from tests.conftest import (
 from tests.test_session_write_queue_1353 import wait_pending_writes
 
 
+# 两个时限各管一件事，量纲不同，不可合并：
+#
+# 1. 会合窗口（ModelCallRendezvous._MEET_TIMEOUT_S）——**快速定位**用。它只跨
+#    「两条腿的线程启动错峰」，不跨任何真实工作量，故可以卡得很紧：生产真把腿
+#    排成串行时，第一条腿等满即放行，用例在数秒内红，并拿到会合的原始观测。
+# 2. 排空上限（_DRAIN_TIMEOUT_S）——**挂死探测器**用，**不作通过条件**。它要跨
+#    腿的全部真实工作量（DB 落账、转译、暂存），因此必须留足余量：实测在
+#    10 核共享机、load average 44 时单次排空要 6–8s，5s 会在忙机上稳定假红
+#    （实测 3/3 次误报）。宁可用例在真挂死时多等一会儿，也不接受把机器忙
+#    写成回归。代价只在本已失败的用例上支付，且此时会合观测已一并打印。
+_DRAIN_TIMEOUT_S = 60
+
+
 class ModelCallRendezvous:
     """模型替身入口的会合：证明两条腿的**模型调用段**真的同时在飞。
 
@@ -35,39 +48,45 @@ class ModelCallRendezvous:
     单 worker 里排队。替身在入口会合——只有两条腿都到齐才一起放行，故「会合
     达成」本身就是并行的可失败证据。
 
-    与前几轮被推翻的做法相比，这里**不让腿无限期等对端**：
+    与前几轮被推翻的做法相比：
 
-    * 时限只作**失败上限**，不作通过条件。生产串行时第一条腿等满
-      ``_MEET_TIMEOUT_S`` 即抛 :class:`AssertionError`，该腿 Future 转终态、
-      票据归还，主线程照常排空——挂死在结构上不存在，不靠 CI 杀进程收场。
+    * **失败归因只陈述观测到的事实**。「没同时在飞」至少有两种成因——生产把
+      腿排成串行，或对端腿在到达模型调用段之前就抛错退出；两者的会合表象
+      完全一样。故本会合器不把任何一种写成断言消息里的结论，只报原始计数
+      （:meth:`report`），成因由判读者结合 executor 日志里的腿内异常判读。
+    * **不无限期等对端**：等不到即记超时并放行本腿，票据照常归还，主线程排空
+      照常进行——挂死在结构上不存在，不靠 CI 杀进程收场。
     * 不 sleep 扩窗，不用「elapsed 造失败」，成功路径零墙钟依赖：两条腿都
       到达时不论先后多久都会合上。
     * :attr:`arrived` 数的是真进入模型调用段的腿数，缺席即红字，不靠会合
       顺便推断。
     """
 
-    # 只防「生产串行 → 永久挂死」，不作通过条件：实测单腿 ~1.3s，本值远高于
-    # 真实耗时（机器慢不误杀），又让真挂死在一分钟内报红、不拖到 CI 终线。
-    _MEET_TIMEOUT_S = 60.0
+    # 只跨线程启动错峰、不跨真实工作量 → 保持紧档（见 _DRAIN_TIMEOUT_S 的分工）。
+    _MEET_TIMEOUT_S = 5.0
 
     def __init__(self, parties: int = 2) -> None:
         self._parties = parties
-        self._barrier = threading.Barrier(parties, timeout=self._MEET_TIMEOUT_S)
-        self._arrived = 0
+        self._all_in = threading.Event()
         self._lock = threading.Lock()
+        self._arrived = 0
+        self._overlapped = False
+        self._timed_out = False
 
     def meet(self) -> None:
-        """一条腿进入模型调用段：等对端到齐；到不齐即报红并放行本腿。"""
+        """一条腿进入模型调用段：等对端到齐；到不齐记超时并放行本腿。"""
         with self._lock:
             self._arrived += 1
-        try:
-            self._barrier.wait()
-        except threading.BrokenBarrierError:
-            # 生产把腿排成串行：对端永远不来，在此报红而不是挂住整个用例。
-            raise AssertionError(
-                f"模型调用段未同时在飞：{self._parties} 腿未在 "
-                f"{self._MEET_TIMEOUT_S}s 内到齐（生产串行）",
-            ) from None
+            quorum = self._arrived >= self._parties
+            if quorum and not self._timed_out:
+                self._overlapped = True
+                self._all_in.set()
+            judged_failed = self._timed_out
+        if quorum or judged_failed:
+            return
+        if not self._all_in.wait(self._MEET_TIMEOUT_S):
+            with self._lock:
+                self._timed_out = True
 
     @property
     def arrived(self) -> int:
@@ -77,8 +96,34 @@ class ModelCallRendezvous:
 
     @property
     def overlapped(self) -> bool:
-        """两条腿的模型调用段确实同时在飞（会合已达成且未破裂）。"""
-        return not self._barrier.broken
+        """两条腿的模型调用段确实同时在飞（到齐那一刻起为真，不因事后超时翻案）。"""
+        with self._lock:
+            return self._overlapped
+
+    def report(self) -> str:
+        """会合的原始观测（不含归因结论）：到达腿数 / 是否同时在飞 / 有无腿等超时。"""
+        with self._lock:
+            return (
+                f"{self._arrived}/{self._parties} 腿到达模型调用段；"
+                f"同时在飞={self._overlapped}；有腿等不到对端超时={self._timed_out}"
+                f"（等对端上限 {self._MEET_TIMEOUT_S}s）。未同时在飞的成因至少两种："
+                "生产把腿排成串行，或对端腿在到达前抛错退出——"
+                "腿内异常见 executor 的 'decree forecast: future failed' 日志。"
+            )
+
+
+def _drain_legs(sess, in_flight: "ModelCallRendezvous") -> None:
+    """排空并发用例的两条腿；排空不成功时把会合的原始观测一并带进消息。
+
+    排空超时与会合未达成是同一处故障的两个面，缺一面就会把「腿在会合前就
+    炸了」读成「生产串行」。两条事实一起报，归因留给判读者。
+    """
+    queue = get_session_write_queue(sess)
+    ok = queue.wait_idle(timeout_s=_DRAIN_TIMEOUT_S)
+    assert ok, (
+        f"pending writes did not drain in {_DRAIN_TIMEOUT_S}s; "
+        f"count={queue.inflight_count()}；会合观测：{in_flight.report()}"
+    )
 
 
 def _sess(db, state, content, monkeypatch, translate_fn):
@@ -190,9 +235,8 @@ def test_scene_chat_approval_forecasts_each_decree_without_visible_effect(game, 
     ctid = db.create_chat_turn(state, "殿上", "scene", 0, night_id=int(night["id"]))
     result = sess.scene_chat("两道都准", chat_turn_id=ctid)
     persist_and_schedule_scene(sess, db, result)
-    # 有限时排空：真挂死在此报红，不靠 CI job 终线兜底（实测单腿 ~1.3s，
-    # 30s 远高于真实耗时，只防挂死、不作通过条件）。
-    wait_pending_writes(sess, timeout_s=30)
+    # 有限时排空：真挂死在此报红，不靠 CI job 终线兜底（见 _DRAIN_TIMEOUT_S）。
+    wait_pending_writes(sess, timeout_s=_DRAIN_TIMEOUT_S)
 
     assert db.conn.execute(
         "SELECT 1 FROM staged_declarations WHERE decree_ref=?",
@@ -350,7 +394,7 @@ def test_repeat_scene_approval_does_not_rerun_exhausted_forecast(game, monkeypat
         ctid = db.create_chat_turn(state, "殿上", "scene", 0, night_id=int(night["id"]))
         result = sess.scene_chat(message, chat_turn_id=ctid)
         persist_and_schedule_scene(sess, db, result)
-        wait_pending_writes(sess, timeout_s=30)
+        wait_pending_writes(sess, timeout_s=_DRAIN_TIMEOUT_S)
         assert calls == [1]
         assert db.staged_declarations.staged_for(pending_action_decree_ref(pending_id, 1)) == ()
     assert calls == [1]
@@ -443,11 +487,11 @@ def test_held_rejudgments_overlap_instead_of_waiting_in_one_worker(game, monkeyp
     )
     sess = _sess(db, state, content, monkeypatch, lambda *_a, **_k: {})
     assert forecast_mod.schedule_held_decree_forecasts(sess) is True
-    wait_pending_writes(sess, timeout_s=30)
+    _drain_legs(sess, in_flight)
     # 两条腿都真跑到了模型调用（缺席即红字），且确实同时在飞——会合在替身
     # 入口达成，生产若把两条腿排进单 worker，替身会合会先到时限报红。
-    assert in_flight.arrived == 2, "两条留中复判腿未都到达"
-    assert in_flight.overlapped, "两条留中复判腿未重叠（生产串行）"
+    assert in_flight.arrived == 2, f"两条留中复判腿未都到达：{in_flight.report()}"
+    assert in_flight.overlapped, f"两条留中复判腿未重叠：{in_flight.report()}"
     for dossier_id, pending_id in zip(ids, pending_ids):
         stale_ref = pending_action_decree_ref(pending_id, 1)
         held_ref = held_dossier_decree_ref(dossier_id)
@@ -534,16 +578,18 @@ def test_same_local_ids_on_two_saves_both_stage(game, _game_template_path, monke
                 sess, pending_id, night_id=night_id,
             ) is True
         for sess, one_db, pending_id, _night_id in armed:
-            wait_pending_writes(sess, timeout_s=30)
+            _drain_legs(sess, in_flight)
             # 两档各自真落库（缺席即红字，不靠会合判否）。
             stored = one_db.staged_declarations.staged_for(
                 pending_action_decree_ref(pending_id, 1),
             )
             assert len(stored) == 1 and stored[0].verdict["decision"] == "promulgated"
-        assert in_flight.arrived == 2, "两档腿未都到达"
-        # 契约：两档腿的模型调用段应同时在飞；替身会合先到时限即报红。
-        assert in_flight.overlapped, "两档腿未重叠（生产串行）"
+        assert in_flight.arrived == 2, f"两档腿未都到达：{in_flight.report()}"
+        # 契约：两档腿的模型调用段应同时在飞（原始观测见 report，不在此归因）。
+        assert in_flight.overlapped, f"两档腿未重叠：{in_flight.report()}"
     finally:
+        # 清理也有限时：正文已红时不得再让排空无限期等（判官 #1898 封驳项）。
+        # 清理不追加断言——正文红字才是结论，清理只保证有界返回。
         for sess, *_rest in armed:
-            wait_pending_writes(sess)
+            get_session_write_queue(sess).wait_idle(timeout_s=_DRAIN_TIMEOUT_S)
         other.close()
