@@ -41,6 +41,7 @@ from ming_sim.covert_progress import (
     settle_due_secret_orders,
 )
 from ming_sim.applier import Provenance
+from ming_sim.exceptions import SettlementAbort
 from ming_sim.db import GameDB
 from ming_sim.issues import apply_score_extraction
 from ming_sim.models import TurnPhase
@@ -146,11 +147,16 @@ def _run_supply_4a(db, state, selections):
             "covert_exec_selections": list(selections),
         },
     }
-    month_chain._step_4a_secret_order_supply(
-        db, state, chain,
-        turn=turn, decree_text="", source=Provenance.secret_order, llm_config=None,
-    )
-    return chain
+    try:
+        month_chain._step_4a_secret_order_supply(
+            db, state, chain,
+            turn=turn, decree_text="", source=Provenance.secret_order, llm_config=None,
+        )
+    except SettlementAbort:
+        pass  # 停续：回读已持久化的月链相位（call_failure / invalid 标记）
+    else:
+        return chain
+    return month_chain._load_chain(db, turn)
 
 
 def _declare_tip(db, state, oid, source):
@@ -1505,6 +1511,90 @@ def test_invalid_investigation_declaration_is_rejected_not_zero_effort(game):
     assert "rejected" not in row
     assert row["units"] == 0.0
     assert len(db.list_dossier_actual_progress(did)) == 1
+
+
+@pytest.mark.parametrize("bad", [{}, {"effort": "尽力"}, {"fidelity": "忠实"}])
+def test_invalid_declaration_stops_month_chain_and_marks_invalid(game, bad):
+    """#1896 月链层：无效查案声明不冒充合法完成——4a 停续并走 #1846 失效重起。
+
+    走真实入口（``_run_supply_4a`` → month_chain._step_4a_secret_order_supply）：
+    本段回滚、置 invalid、写 call_failure、重试弃产物重来；合法零投入不受影响。
+    """
+    db, state, _ = game
+    name = _minister(db)
+    target = next(
+        row["name"] for row in db.conn.execute(
+            "SELECT name FROM characters WHERE status='active' AND name<>? ORDER BY name",
+            (name,),
+        ).fetchall()
+        if live_investigation_fact_keys(db, row["name"])
+    )
+    _set_axes(db, name, loyalty=90, identity=30)
+    key = live_investigation_fact_keys(db, target)[0]
+    oid = _issue(
+        db, state, name, "查核", "查核", months=6, target=1,
+        kind="查核", axes=["既得利益"], investigation_target=target,
+    )
+    did = int(db.get_dossier_for_secret_order(oid)["id"])
+    _next_month(db, state)
+
+    chain = _run_supply_4a(db, state, [{"order_id": oid, **bad}])
+    assert chain.get("covert_progress_done") is not True
+    assert chain.get("secret_orders_supply_done") is not True
+    assert chain.get("secret_orders_supply_invalid") is True
+    assert (chain.get("call_failure") or {}).get("step") == "secret_orders_supply"
+    # 本段不留半截实况行、不改实证
+    assert db.list_dossier_actual_progress(did) == []
+    assert _lanes(db, oid)[key]["effort"] == 0.0
+    assert investigation_lane_actual_units(db, did) == 0.0
+
+    # 重试：#1846 契约弃掉无效产物，本月重新声明合法后照常核算
+    retry = _run_supply_4a(db, state, [{"order_id": oid, "fact_key": key, "effort": 1.0}])
+    assert retry.get("covert_progress_done") is True
+    assert retry.get("secret_orders_supply_done") is True
+    assert _lanes(db, oid)[key]["effort"] > 0.0
+
+
+def test_clue_without_pointer_assists_nothing(game):
+    """#1896：没指明助哪条实证的线索不助任何一条——代码不替线索挑事实（J4 同例）。"""
+    db, state, _ = game
+    name = _minister(db)
+    target = db.conn.execute(
+        "SELECT name FROM characters WHERE name<>? AND status='active' LIMIT 1",
+        (name,),
+    ).fetchone()["name"]
+    _set_axes(db, name, loyalty=90, identity=30)
+    db.conn.execute("UPDATE characters SET seed_guilt=? WHERE name=?", ("侵冒", target))
+    db.conn.commit()
+    edge_id = db.record_relation_edge_event(
+        source=name, target=target, event_kind="把柄",
+        context="另指一条", origin="test:1896-nopointer", evidence=True,
+    )
+    oid = _issue(
+        db, state, name, "查核", "查核", months=6, target=1,
+        kind="查核", axes=["既得利益"], investigation_target=target,
+    )
+    did = int(db.get_dossier_for_secret_order(oid)["id"])
+    # 另一来源并案但不指明具体罪证
+    merged = db.create_secret_order(
+        state, name, "并案泛指", "有人泛泛告发一端",
+        [], deadline_months=3,
+        covert_task={
+            "kind": "查核", "axes": ["既得利益"], "direction": 1,
+            "investigation_target": target,
+            "delivery": {"target_units": 1.0, "effect_sign": 1,
+                         "investigation_target": target},
+        },
+    )
+    assert merged == oid
+    assert investigation_clue_records(db, did)[-1]["fact_key"] == ""
+
+    _next_month(db, state)
+    _run_supply_4a(db, state, [{"order_id": oid, "fact_key": target, "effort": 0.0}])
+    lanes = _lanes(db, oid)
+    assert lanes[target]["effort"] == 0.0
+    assert lanes[str(edge_id)]["effort"] == 0.0
+    assert investigation_clue_records(db, did)[-1]["unassigned"] is True
 
 
 def test_merged_clue_assists_the_fact_it_points_at(game):

@@ -1126,23 +1126,13 @@ def _consume_monthly_clues(
 ) -> float:
     """线索只助其所指实有实证：把并入本案的真实线索按所指 fact_key 记成实投。
 
+    - **不替线索挑事实**：没有 fact_key 指针的线索不助任何实证（记 ``unassigned``，
+      确定性不助），所指由人物/转译声明给出——代码不代选（J4 同例）；
     - 指向不存在/已被别案查获的罪 → 确定性丢弃（不造罪、不重复查获）；
     - 同一线索只消费一次（``credited``），重开重试不双计；
-    - 并入来源不带 fact_key 时，按 ADR 0098 轨级口径确定性兜底：优先 seed_guilt
-      lane，否则取 fact_key 稳定序首条在查 lane——只在既有 lane 内移动，无从造真相；
     - 线索把该条累计实投推过其难度时，同样按"达到难度即记已掌握"记查获。
     """
     by_key = {str(lane["fact_key"]): lane for lane in lanes}
-    available = [
-        key for key, lane in by_key.items()
-        if key in live and key not in blocked and not lane.get("mastered")
-    ]
-    fallback = None
-    if _is_seed_guilt_fact_key(target, target) and target in available:
-        fallback = target
-    elif available:
-        fallback = sorted(available)[0]
-
     clues = investigation_clue_records(db, dossier_id)
     if not clues:
         return 0.0
@@ -1150,15 +1140,16 @@ def _consume_monthly_clues(
     for clue in clues:
         if bool(clue.get("credited")):
             continue
-        key = str(clue.get("fact_key") or "").strip() or (fallback or "")
+        key = str(clue.get("fact_key") or "").strip()
+        clue["credited"] = True
+        if not key:
+            clue["unassigned"] = True  # 没指明助哪条 → 不助，不代选
+            continue
         lane = by_key.get(key)
         if lane is None or key not in live or key in blocked:
-            clue["credited"] = True
             clue["dropped_fact_key"] = key
             continue
         lane["effort"] = float(lane.get("effort") or 0.0) + _CLUE_ASSIST_EFFORT
-        clue["credited"] = True
-        clue["fact_key"] = key
         credited += _CLUE_ASSIST_EFFORT
         difficulty = investigation_fact_difficulty(
             db, target=target, fact_key=key, investigator=investigator,

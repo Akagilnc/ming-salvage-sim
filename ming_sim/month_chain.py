@@ -1279,6 +1279,11 @@ def _step_4a_secret_order_supply(
                 )
                 rejections = [r for r in rows if r.get("rejected")]
                 invalid_declarations = any(bool(r.get("invalid")) for r in rejections)
+                if invalid_declarations:
+                    # 无效声明不冒充合法完成：本段整体回滚（不留半截实况行），
+                    # 随后按 #1846 失效重起契约标 invalid 并中止本月 run，
+                    # 重试时弃掉本月 4a 产物重新调用；已落的前段成果不动。
+                    raise ValueError("查案密令声明无效，本月 4a 产物须重来")
                 if rejections:
                     _collect_inline_rejections(
                         collector, {"covert_exec_selections": rows}, turn, source,
@@ -1289,8 +1294,6 @@ def _step_4a_secret_order_supply(
                 mirror_rejections_after_commit(db, collector, rejections_jsonl_path)
         except Exception as exc:
             if invalid_declarations:
-                # 无效声明不冒充合法完成：标 invalid，重试按 #1846 契约丢掉本月
-                # 4a 产物重来一次（已落的投入/毁证/查获不动、不双计）。
                 chain["secret_orders_supply_invalid"] = True
                 _save_chain(db, turn, chain, decree_text=decree_text, source=source)
             _abort_4a(exc)

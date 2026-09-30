@@ -448,7 +448,7 @@ personnel_secret 模块产出；settle 内经 `record_monthly_dossier_progress` 
 
 | 字段 | 形状 | 语义与约束 |
 | --- | --- | --- |
-| `effort` | 数字 0..1（中文键 `投入`） | **必填**：本月投入强度。引擎按承办人真实处境（能力／是否到差／0092 owner 未结差务带宽）折算本月实投并累计；累计实投 ≥ 该条罪证难度即记已掌握。**缺字段或非数字＝无效声明**（拒收、不写实况行、月链把本月 4a 产物标 invalid 重来），不是合法的零投入——合法零投入只有显式 `effort: 0`。无单月硬顶、无最低在查月数 floor（ADR 0098 后出修订已退役）。 |
+| `effort` | 数字 0..1（中文键 `投入`） | **必填**：本月投入强度。引擎按承办人真实处境（能力／是否到差／0092 owner 未结差务带宽）折算本月实投并累计；累计实投 ≥ 该条罪证难度即记已掌握。**缺字段或非数字＝无效声明**：该段实况整体回滚、月链置 `secret_orders_supply_invalid` 并中止本月 run，重试按 #1846 弃产物重来（见下）。合法零投入只有显式 `effort: 0`。无单月硬顶、无最低在查月数 floor（ADR 0098 后出修订已退役）。 |
 | `fact_key` | str（中文键 `所查事实`） | 本月实际下手的罪证键，取自供料 `investigation_facts`。本月无从下手则省略——引擎**不替人物挑**一条（CLAUDE.md P6）。 |
 | `method` | str（中文键 `查法`） | 本月查法，原样落账为案卷事实。 |
 | `tip_off` | `{source}`（中文键 `通风报信`） | 真实通风报信声明：确有人经关系网把话递到被查者手里。被查者知情的**唯一**来源；关系边存在 ≠ 话递到了。开案本身不算知情。 |
@@ -456,7 +456,7 @@ personnel_secret 模块产出；settle 内经 `record_monthly_dossier_progress` 
 | `suppression` | `{form}`（中文键 `压案`） | 被查者知情后的压案声明（行贿说项之类），落账为事实。 |
 | `note` | str | 密奏正文（可谎）。奏报不入实况轨：谎奏不造罪、不抹证。 |
 
-- 查案密令的合同另可带 `investigation_fact`（中文键 `调查事实`）：该来源线索所指的罪证键。同目标汇案时按它把真实线索绑到对应实证（一次性助一次实投）；不带指针则按 ADR 0098 轨级口径确定性兜底（优先 seed_guilt lane，否则稳定序首条在查 lane），指向不存在／已被别案查获的罪确定性丢弃。
+- 查案密令的合同另可带 `investigation_fact`（中文键 `调查事实`，由密令抽取提示词正向产出）：该来源线索所指的罪证键。同目标汇案时按它把真实线索绑到对应实证（一次性助一次实投，助的权重 `_CLUE_ASSIST_EFFORT` 是引擎侧首版常数，同逐证难度常数随 playtest 调）。**没有指针的线索不助任何实证**（记 `unassigned`）——代码不替线索挑事实；指向不存在／已被别案查获的罪确定性丢弃（记 `dropped_fact_key`）。
 - 上述声明统一落在同一案卷 `payload_json`：`fact_lanes`（投入/难度/已掌握，无 `used`/`reason_code`——掌握证据≠依法清算）、`investigation_tips`、`investigation_clues`、`investigation_actions`。唯一写口是 `update_decree_dossier_payload`，无第二轨。
 - 到期结案读 `investigation_lane_actual_units`（真实掌握条数），不看奏报自称成功。
 
