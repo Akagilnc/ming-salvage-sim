@@ -112,7 +112,7 @@ def test_cli_does_not_end_unadvanced_turn(monkeypatch, action):
     monkeypatch.setattr(term, "review_directives", lambda _s: next(actions))
     monkeypatch.setattr(term, "_print_header", lambda _s: None)
     monkeypatch.setattr(issues_mod, "show_active_issues", lambda _db: None)
-    monkeypatch.setattr(term, "_submit_first_cli_decisions", lambda *_a: "")
+    monkeypatch.setattr(term, "_adjudicate_cli_decisions", lambda *_a: "")
 
     term.play_turn(sess)
 
@@ -685,6 +685,8 @@ def test_play_turn_hitl_advancement_ends_turn(game, monkeypatch, action):
     monkeypatch.setattr(term, "review_directives", lambda _s: next(actions))
     monkeypatch.setattr(term, "_print_header", lambda _s: None)
     monkeypatch.setattr(issues_mod, "show_active_issues", lambda _db: None)
+    # #1902：批红不再代选第一项，CLI 逐案问皇帝——本案只有一条票拟，回「1」即依拟。
+    monkeypatch.setattr("builtins.input", lambda _prompt="": "1")
 
     term.play_turn(session)
 

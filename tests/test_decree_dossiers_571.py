@@ -1065,8 +1065,6 @@ def test_manual_directive_capture_reaches_structured_dossier(
 
 @pytest.mark.parametrize(("entry", "bad_roster"), [
     ("web", ["韩阁老"]),
-    ("cli", [{"tier": "主办"}]),
-    ("cli", {"character_id": "韩阁老", "tier": "主办"}),
 ])
 def test_manual_directive_capture_rejects_malformed_roster(
     game, monkeypatch, capsys, entry, bad_roster,
@@ -1111,13 +1109,6 @@ def test_manual_directive_capture_rejects_malformed_roster(
             ))
         assert exc_info.value.status_code == 409
         assert "参与人" in str(exc_info.value.detail)
-    else:
-        import ming_sim.cli.terminal as terminal
-
-        answers = iter(["add", "手工旨意", "back"])
-        monkeypatch.setattr("builtins.input", lambda _prompt="": next(answers))
-        assert terminal.review_directives(session) == "back"
-        assert "参与人" in capsys.readouterr().out
 
     assert db.list_pending_actions(state.turn) == []
     assert db.list_directives(state) == []
@@ -1223,6 +1214,7 @@ def test_final_decree_edit_path_removed_no_bypass(game):
 def test_cli_dossiered_directive_is_not_listed_editable_or_deletable(
     game, monkeypatch, capsys,
 ):
+    """#1902：CLI 拟诏台手写入口退役后，成案草案只剩「不可见、不可删」一条护栏。"""
     import ming_sim.cli.terminal as terminal
     from ming_sim.session import GameSession
 
@@ -1240,12 +1232,12 @@ def test_cli_dossiered_directive_is_not_listed_editable_or_deletable(
     session.state = state
     session.enter_review = lambda: None
     session.back_to_summoning = lambda: None
-    answers = iter([f"edit {directive_id}", f"del {directive_id}", "back"])
+    answers = iter([f"del {directive_id}", "back"])
     monkeypatch.setattr("builtins.input", lambda _prompt="": next(answers))
 
     assert session.list_directives() == []
     assert terminal.review_directives(session) == "back"
-    assert capsys.readouterr().out.count("没有这条草案。") == 2
+    assert capsys.readouterr().out.count("没有这条草案。") == 1
     assert db.get_dossier_for_directive(directive_id) is not None
     assert db.list_directives(state)[0]["text"] == "着修河工"
 
@@ -1268,8 +1260,8 @@ def test_cli_no_edict_route_rejudges_held_proposed_dossier(game):
 
     assert called == ["resolve"]
 
-def test_cli_edit_replaces_text_and_mechanics_before_promulgation(game, monkeypatch):
-    import ming_sim.cli.terminal as terminal
+def test_web_edit_replaces_text_and_mechanics_before_promulgation(game, monkeypatch):
+    """#1902：CLI 手写改稿入口退役后，「改稿重抽结构」能力由 Web PATCH 承继（#1826 撤页）。"""
     import ming_sim.cli_backend as cli_backend
     from ming_sim.session import GameSession
 
@@ -1278,6 +1270,7 @@ def test_cli_edit_replaces_text_and_mechanics_before_promulgation(game, monkeypa
     session.db = db
     session.state = state
     session.llm_config = None
+    session.content = content
     directive = session.add_directive(
         "拨十两赈济",
         dossier_payload={
@@ -1311,12 +1304,20 @@ def test_cli_edit_replaces_text_and_mechanics_before_promulgation(game, monkeypa
         return (json.dumps(response, ensure_ascii=False), 1)
 
     monkeypatch.setattr(cli_backend, "_run_backend_for_config", prompt_faithful_backend)
-    monkeypatch.setattr(session, "write_decree", lambda: revised_text)
-    answers = iter([f"edit {directive.id}", revised_text, "issue", "yes"])
-    monkeypatch.setattr("builtins.input", lambda _prompt="": next(answers))
+    import web_app
+
+    web_game = types.SimpleNamespace(
+        _write_gate=threading.Lock(),
+        db=db, state=state, content=content, session=session,
+        directive_rows=lambda: db.list_directives(state, statuses=("pending", "draft")),
+        directive_payload=lambda row: dict(row),
+    )
+    monkeypatch.setattr(web_app, "get_game", lambda: web_game)
     before = state.metrics["国库"]
 
-    assert terminal.review_directives(session) == "issue"
+    asyncio.run(web_app.api_update_directive(
+        directive.id, web_app.DirectivePatch(text=revised_text),
+    ))
     assert len(prompts) == 1
 
     db.ensure_dossiers_for_draft_directives(state)

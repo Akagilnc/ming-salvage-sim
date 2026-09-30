@@ -573,8 +573,10 @@ def review_directives(session: GameSession) -> str:
                 print(f"{idx}. #{d.id}")
                 print(f"   {wrap(d.text)}")
         elif not pending and not staged_directives:
-            print("（暂无指令。back 继续召见，或 add 新增。）")
-        print("\n操作：issue 结束回合 | back 继续召见 | add 新增 | edit N 改 | del N 删 | exit 退出")
+            print("（暂无指令。back 继续召见，或 issue 结束本回合。）")
+        # #1902 / #1812 待拍第 6 项：拟诏台手写新旨入口退役，CLI 只审阅与颁布；
+        # 旨意只从召对来（#1772）。旧草稿仍可见、可删（#1826 承接草稿去向）。
+        print("\n操作：issue 结束回合 | back 继续召见 | del N 删 | exit 退出")
         raw = input("诏书草案> ").strip()
         if not raw:
             continue
@@ -607,51 +609,10 @@ def review_directives(session: GameSession) -> str:
         # 变更器统一接 ValueError（FRONT_HALF_DONE 冻结期的指引消息）：打印后留在
         # 审阅循环，不崩出进程（ship-pre r2，与 write_decree 既有 try 同款）。
         try:
-            if lowered == "add" or raw == "新增":
-                text = input("指令内容：").strip()
-                if text:
-                    from ming_sim.cli_backend import capture_manual_directive_payload
-                    dv = session.add_directive(
-                        text,
-                        dossier_payload=capture_manual_directive_payload(
-                            text, session.llm_config,
-                            **({"db": session.db, "content": session.content}
-                               if getattr(session, "content", None) is not None else {}),
-                        ),
-                    )
-                    print(f"已新增草案 #{dv.id}。")
-                else:
-                    print("指令为空，已取消。")
-                continue
             parts = raw.split(maxsplit=1)
             verb = parts[0].lower()
             if len(parts) == 2 and parts[1].lstrip("#").isdigit():
                 target_id = int(parts[1].lstrip("#"))
-                if verb in {"edit", "改", "修改"}:
-                    if not any(d.id == target_id for d in drafts):
-                        print("没有这条草案。")
-                        continue
-                    new_text = input("新的指令内容：").strip()
-                    if new_text:
-                        from ming_sim.cli_backend import capture_manual_directive_payload
-                        row = next(
-                            r for r in session.db.list_directives(
-                                session.state, statuses=("draft",),
-                            ) if int(r["id"]) == target_id
-                        )
-                        existing_payload = session.db.read_directive_dossier_payload(row)
-                        session.update_directive(
-                            target_id,
-                            new_text,
-                            dossier_payload=capture_manual_directive_payload(
-                                new_text, session.llm_config,
-                                existing_mode=existing_payload.get("mode"),
-                                **({"db": session.db, "content": session.content}
-                                   if getattr(session, "content", None) is not None else {}),
-                            ),
-                        )
-                        print("已修改。")
-                    continue
                 if verb in {"del", "delete", "删", "删除"}:
                     if any(d.id == target_id for d in drafts):
                         session.delete_directive(target_id)
@@ -667,24 +628,51 @@ def review_directives(session: GameSession) -> str:
         print("未识别操作。")
 
 
-def _submit_first_cli_decisions(session: GameSession, result) -> str:
-    """CLI 暂无亲裁 UI：所有结算入口共用同一首选项续跑策略。
+def _option_label(option: object) -> str:
+    """案头 option → 一行可读标签（label + hint），非 dict 回字符串本身。"""
+    if not isinstance(option, dict):
+        return str(option or "")
+    label = str(option.get("label") or "")
+    hint = str(option.get("hint") or "").strip()
+    return f"{label}（{hint}）" if hint else label
 
-    #657：经 session.submit_hitl_choices 唯一编排；注入既有 `_cli_write_gate`。
-    首选项投影走 ``project_preferred_hitl_choice`` 唯一真源（急务=follow_draft+capability）。
+
+def _adjudicate_cli_decisions(session: GameSession, result) -> str:
+    """#1902：CLI 批红等皇帝亲裁，不代选第一项（#1812 待拍第 9 项）。
+
+    与 Web 同走 ``session.submit_hitl_choices`` 唯一编排（注入既有 `_cli_write_gate`）；
+    choice 投影走 ``rescript_actions.project_hitl_option`` 唯一真源——CLI 只读案头、
+    只接皇帝的输入，案头规则、键绑定与校验全在 session 核内，不在入口复制。
     """
     if result is None or not result.awaiting:
         return "" if result is None else result.report
-    from ming_sim.rescript_actions import project_preferred_hitl_choice
+    from ming_sim.rescript_actions import project_hitl_option
 
-    print("\n【月末重大抉择】（CLI 暂自动取首选项；交互式裁决见网页版）")
+    print("\n【月末重大抉择】（逐案亲裁）")
     # result.decisions 已是合并 desk；若空则回读 session.pending_decisions
     decisions = list(result.decisions or []) or list(session.pending_decisions())
     choices = []
     for decision in decisions:
-        item = project_preferred_hitl_choice(decision)
-        print(f"  · {decision.get('title')} → {item.get('label', '（无）')}")
-        choices.append(item)
+        title = str(decision.get("title") or "").strip() or "（无题）"
+        context = str(decision.get("context") or "").strip()
+        print(f"\n· {wrap(title)}")
+        if context:
+            print(f"  {wrap(context)}")
+        raw_options = decision.get("options")
+        options = list(raw_options) if isinstance(raw_options, (list, tuple)) else []
+        for idx, option in enumerate(options, 1):
+            print(f"  {idx}. {_option_label(option)}")
+        key = str(decision.get("decision_key") or "").strip()
+        while True:
+            raw = input("  亲裁：输入编号择定该条（回车=不另批，此件留中）：").strip()
+            if not raw:
+                # 空 pick 交核内机械处置（急务统一 hold），入口不代写动作。
+                choices.append({"decision_key": key} if key else {})
+                break
+            if raw.isdigit() and 1 <= int(raw) <= len(options):
+                choices.append(project_hitl_option(decision, int(raw) - 1))
+                break
+            print("  请输入本案列出的编号，或回车留中。")
     return session.submit_hitl_choices(choices, write_gate=_cli_write_gate(session))
 
 
@@ -729,7 +717,7 @@ def play_turn(session: GameSession) -> None:
                 # #1353 fold-in r8：颁诏/退朝前挂唯一 write_gate，使 resolve 收夜 drain 同流。
                 _cli_write_gate(session)
                 result = session.advance_without_decree()
-                report = _submit_first_cli_decisions(session, result)
+                report = _adjudicate_cli_decisions(session, result)
             except (ValueError, SettlementAbort, LLMUnavailable, LLMContractError) as error:
                 # 跳过与颁诏共享可恢复结算语义：失败后留在本回合循环，允许重试。
                 # #1353 fold-in r8：统一重试耗尽的 LLMUnavailable 不退出 CLI。
@@ -759,7 +747,7 @@ def play_turn(session: GameSession) -> None:
                 # #1353 fold-in r8：颁诏/退朝前挂唯一 write_gate，使 resolve 收夜 drain 同流。
                 _cli_write_gate(session)
                 result = session.resolve_turn()
-                report = _submit_first_cli_decisions(session, result)
+                report = _adjudicate_cli_decisions(session, result)
             except (ValueError, SettlementAbort, LLMUnavailable, LLMContractError) as error:
                 # 恢复态守门 / 结算中止 / 欠账耗尽（#1353 r8）/ 契约失败（#1700）：打印指引后留在
                 # 本回合交互循环——玩家重按 issue/skip 即重试整段，CLI 不退出。
