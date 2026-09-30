@@ -21,6 +21,31 @@ import ming_sim.cli_backend as cb
 from ming_sim.models import LLMConfig
 
 
+# #1902：七条一行转发（cb._run_agy/_run_codex/…）已删，注入点统一在 _run_cli_runner
+# （分派点唯一）。本文件按 runner 名注入：单 runner 直接绑，多 runner 走路由表。
+def _patch_runner(monkeypatch, runner: str, fake) -> None:
+    """把某个 runner 的调用绑到 fake（fake 收 prompt + kwargs，同旧转发签名）。"""
+
+    def _wrapped(_runner, prompt, **kwargs):
+        assert _runner == runner, f"注入错宿主：{_runner} != {runner}"
+        return fake(prompt, **kwargs)
+
+    monkeypatch.setattr(cb, "_run_cli_runner", _wrapped)
+
+
+def _patch_runners(monkeypatch, fakes: dict) -> None:
+    """多 runner 路由：{runner: fake}，未列者原样放行到真实实现。"""
+    real = cb._run_cli_runner
+
+    def _router(runner, prompt, **kwargs):
+        fake = fakes.get(runner)
+        if fake is None:
+            return real(runner, prompt, **kwargs)
+        return fake(prompt, **kwargs)
+
+    monkeypatch.setattr(cb, "_run_cli_runner", _router)
+
+
 def _cli_codex_cfg() -> LLMConfig:
     return LLMConfig(
         api_key="cli-backend", base_url="", model="api-fallback",
@@ -168,7 +193,7 @@ def test_enrich_army_parsed_and_normalized(monkeypatch):
         },
         "ongoing_effects": {}, "effect_on_fail": {},
     }, ensure_ascii=False)
-    monkeypatch.setattr(cb, "_run_agy", lambda prompt, **kw: (canned, 1))
+    _patch_runner(monkeypatch, "agy", lambda prompt, **kw: (canned, 1))
     out = cb.enrich_initiative_effects("孙传庭练秦兵", "陕西督练新军")
     armies = out["effect_on_resolve"]["new_armies"]
     assert armies[0]["id"] == "qinjun"
@@ -180,7 +205,7 @@ def test_enrich_building_region_floor(monkeypatch):
         "effect_on_resolve": {"buildings": [{"action": "create", "name": "格致局", "category": "科技"}]},
         "ongoing_effects": {}, "effect_on_fail": {},
     }, ensure_ascii=False)
-    monkeypatch.setattr(cb, "_run_agy", lambda prompt, **kw: (canned, 1))
+    _patch_runner(monkeypatch, "agy", lambda prompt, **kw: (canned, 1))
     out = cb.enrich_initiative_effects("设格致局", "")
     assert out["effect_on_resolve"]["buildings"][0]["region_id"] == "beizhili"
 
@@ -226,19 +251,19 @@ def test_backend_env_claude(monkeypatch):
 
 
 @pytest.mark.parametrize(
-    "env,attr,out",
+    "env,runner,out",
     [
-        ("claude", "_run_claude", "CLAUDE_OUT"),
-        (None, "_run_agy", "AGY_DEFAULT_OUT"),
-        ("codex", "_run_codex", "CODEX_OUT"),
+        ("claude", "claude", "CLAUDE_OUT"),
+        (None, "agy", "AGY_DEFAULT_OUT"),
+        ("codex", "codex", "CODEX_OUT"),
     ],
 )
-def test_run_backend_dispatch(monkeypatch, env, attr, out):
+def test_run_backend_dispatch(monkeypatch, env, runner, out):
     if env is None:
         monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
     else:
         monkeypatch.setenv("MING_SIM_LLM_BACKEND", env)
-    monkeypatch.setattr(cb, attr, lambda p, **kw: (out, 1))
+    _patch_runner(monkeypatch, runner, lambda p, **kw: (out, 1))
     assert cb._run_backend("x") == (out, 1)
 
 
@@ -281,7 +306,7 @@ def _capture_run(monkeypatch, proc=None):
 def test_run_claude_stdout_only(monkeypatch):
     body = "STDOUT_BODY"
     captured = _capture_run(monkeypatch, _P(stdout=body, stderr="LOG_NOISE"))
-    out, attempts = cb._run_claude("PROMPT")
+    out, attempts = cb._dispatch_cli_runner("claude", "PROMPT")
     assert out == body and attempts == 1
     assert "-p" in captured["cmd"] and "--model" in captured["cmd"]
     assert "--output-format" in captured["cmd"] and "text" in captured["cmd"]
@@ -293,7 +318,7 @@ def test_materials_dir_reaches_popen_cwd_and_readonly_argv(monkeypatch, tmp_path
     root = str((tmp_path / "materials").resolve())
     tmp_path.joinpath("materials").mkdir()
     captured = _capture_run(monkeypatch, _P(stdout="ok"))
-    out, n = cb._run_claude("p", materials_dir=root)
+    out, n = cb._dispatch_cli_runner("claude", "p", materials_dir=root)
     assert out == "ok" and n == 1
     assert captured["kw"].get("cwd") == root
     assert "--restricted" in captured["cmd"]
@@ -315,7 +340,7 @@ def test_codex_materials_dir_reaches_popen_cwd_and_readonly_argv(monkeypatch, tm
     tmp_path.joinpath("materials").mkdir()
     monkeypatch.delenv("MING_SIM_CODEX_REASONING", raising=False)
     captured = _capture_run(monkeypatch, _P(stdout="ok"))
-    out, n = cb._run_codex("p", materials_dir=root)
+    out, n = cb._dispatch_cli_runner("codex", "p", materials_dir=root)
     assert out == "ok" and n == 1
     assert captured["kw"].get("cwd") == root
     assert "--ignore-user-config" in captured["cmd"]
@@ -330,7 +355,7 @@ def test_agy_materials_mode_uses_material_cwd_and_print_argument(monkeypatch, tm
     root = str((tmp_path / "materials").resolve())
     tmp_path.joinpath("materials").mkdir()
     captured = _capture_run(monkeypatch, _P(stdout="ok"))
-    out, n = cb._run_agy("PROMPT", materials_dir=root)
+    out, n = cb._dispatch_cli_runner("agy", "PROMPT", materials_dir=root)
     assert out == "ok" and n == 1
     assert captured["kw"].get("cwd") == root
     assert captured["cmd"][-1] == "--print=PROMPT"
@@ -342,7 +367,7 @@ def test_run_codex_flags_and_stdout(monkeypatch):
     body = '{"k": []}'
     monkeypatch.delenv("MING_SIM_CODEX_REASONING", raising=False)
     captured = _capture_run(monkeypatch, _P(stdout=body, stderr="OpenAI Codex v0\nlogs"))
-    out, n = cb._run_codex("p")
+    out, n = cb._dispatch_cli_runner("codex", "p")
     assert out == body and n == 1
     assert "--skip-git-repo-check" in captured["cmd"]
     assert "--ephemeral" in captured["cmd"]
@@ -480,8 +505,8 @@ def test_codex_final_text_handles_item_completed_shape():
 @pytest.mark.parametrize(
     "runner,kwargs,model_flag",
     [
-        ("_run_codex", {"model": "gpt-configured"}, "gpt-configured"),
-        ("_run_claude", {"model": "claude-configured"}, "claude-configured"),
+        ("codex", {"model": "gpt-configured"}, "gpt-configured"),
+        ("claude", {"model": "claude-configured"}, "claude-configured"),
     ],
 )
 def test_run_runner_accepts_config_model(monkeypatch, runner, kwargs, model_flag):
@@ -489,7 +514,7 @@ def test_run_runner_accepts_config_model(monkeypatch, runner, kwargs, model_flag
     （Popen 无 timeout kwarg；跨墙不杀由 test_cli_transport_1465 真入口证明）。"""
     monkeypatch.delenv("MING_SIM_CODEX_REASONING", raising=False)
     captured = _capture_run(monkeypatch, _P(stdout="STDOUT_BODY"))
-    out, n = getattr(cb, runner)("p", **kwargs)
+    out, n = cb._dispatch_cli_runner(runner, "p", **kwargs)
     assert out == "STDOUT_BODY" and n == 1
     assert captured["cmd"][captured["cmd"].index("--model") + 1] == model_flag
     assert "timeout" not in captured["kw"]
@@ -498,7 +523,7 @@ def test_run_runner_accepts_config_model(monkeypatch, runner, kwargs, model_flag
 def test_run_codex_reasoning_env_optional(monkeypatch):
     monkeypatch.setenv("MING_SIM_CODEX_REASONING", "medium")
     captured = _capture_run(monkeypatch)
-    cb._run_codex("p")
+    cb._dispatch_cli_runner("codex", "p")
     joined = " ".join(captured["cmd"])
     assert "-c" in captured["cmd"]
     assert "model_reasoning_effort" in joined and "medium" in joined
@@ -507,7 +532,7 @@ def test_run_codex_reasoning_env_optional(monkeypatch):
 def test_run_codex_maps_reasoning_strength_to_native_effort(monkeypatch):
     monkeypatch.setenv("MING_SIM_CODEX_REASONING", "medium")
     captured = _capture_run(monkeypatch)
-    cb._run_codex("p", reasoning_strength="high")
+    cb._dispatch_cli_runner("codex", "p", reasoning_strength="high")
     joined = " ".join(captured["cmd"])
     assert 'model_reasoning_effort="xhigh"' in joined
     assert 'model_reasoning_effort="medium"' not in joined
@@ -519,14 +544,14 @@ def test_run_codex_stdout_empty_fallback(monkeypatch):
         monkeypatch,
         _P(stdout="", stderr="STDOUT_BODY\nOpenAI Codex v0.125.0\nlogs"),
     )
-    out, n = cb._run_codex("p")
+    out, n = cb._dispatch_cli_runner("codex", "p")
     assert out == "STDOUT_BODY"
 
 
 def test_run_claude_maps_reasoning_strength_to_thinking_tokens(monkeypatch):
     monkeypatch.setenv("MAX_THINKING_TOKENS", "32000")
     captured = _capture_run(monkeypatch)
-    out, n = cb._run_claude("p", reasoning_strength="medium")
+    out, n = cb._dispatch_cli_runner("claude", "p", reasoning_strength="medium")
     assert out == "STDOUT_BODY"
     assert captured["kw"]["env"]["MAX_THINKING_TOKENS"] == "10000"
 
@@ -534,7 +559,7 @@ def test_run_claude_maps_reasoning_strength_to_thinking_tokens(monkeypatch):
 def test_run_claude_off_reasoning_uses_explicit_minimum_tokens(monkeypatch):
     monkeypatch.setenv("MAX_THINKING_TOKENS", "32000")
     captured = _capture_run(monkeypatch)
-    out, n = cb._run_claude("p", reasoning_strength="off")
+    out, n = cb._dispatch_cli_runner("claude", "p", reasoning_strength="off")
     assert out == "STDOUT_BODY"
     assert captured["kw"]["env"]["MAX_THINKING_TOKENS"] == "2000"
 
@@ -673,9 +698,9 @@ def test_resolve_cli_bin_absolutizes_relative_result(monkeypatch):
 @pytest.mark.parametrize(
     "runner,resolved",
     [
-        ("_run_codex", "/Users/x/.local/bin/codex"),
-        ("_run_claude", "/opt/homebrew/bin/claude"),
-        ("_run_agy", "/Users/x/.local/bin/agy"),
+        ("codex", "/Users/x/.local/bin/codex"),
+        ("claude", "/opt/homebrew/bin/claude"),
+        ("agy", "/Users/x/.local/bin/agy"),
     ],
 )
 def test_run_runner_execs_resolved_abspath(monkeypatch, runner, resolved):
@@ -684,7 +709,7 @@ def test_run_runner_execs_resolved_abspath(monkeypatch, runner, resolved):
     monkeypatch.setattr(cb, "_warm_keychain", lambda: None)
     monkeypatch.delenv("MING_SIM_CODEX_REASONING", raising=False)
     captured = _capture_run(monkeypatch, _P(stdout="STDOUT_BODY"))
-    getattr(cb, runner)("p")
+    cb._dispatch_cli_runner(runner, "p")
     assert captured["cmd"][0] == resolved
 
 
@@ -808,9 +833,9 @@ def test_clichat_call_cli_dispatch(monkeypatch):
         seen["agy"] = "called"
         return ("AGY", 1)
 
-    monkeypatch.setattr(cb, "_run_codex", fake_codex)
-    monkeypatch.setattr(cb, "_run_claude", fake_claude)
-    monkeypatch.setattr(cb, "_run_agy", fake_agy)
+    _patch_runners(monkeypatch, {
+        "codex": fake_codex, "claude": fake_claude, "agy": fake_agy,
+    })
     assert cb.CliChat(id="m-codex", backend="codex", timeout=111)._call_cli("p") == ("CODEX", 1)
     assert cb.CliChat(id="m-claude", backend="claude", timeout=222)._call_cli("p") == ("CLAUDE", 1)
     assert cb.CliChat(id="m-agy", backend="agy", timeout=333)._call_cli("p") == ("AGY", 1)
@@ -855,7 +880,7 @@ def _agy_popen(monkeypatch, script):
 
 def test_run_agy_success_single_subprocess(monkeypatch):
     state = _agy_popen(monkeypatch, [("STDOUT_BODY", 0)])
-    out, attempts = cb._run_agy("PROMPT")
+    out, attempts = cb._dispatch_cli_runner("agy", "PROMPT")
     assert out == "STDOUT_BODY" and attempts == 1
     assert state["agy"] == 1
     assert state["warm"] >= 1  # 暖 keychain 是操作步骤，不是重试策略
@@ -871,7 +896,7 @@ def test_run_agy_auth_race_is_retryable_typed_without_private_loop(monkeypatch, 
 
     state = _agy_popen(monkeypatch, [(banner, 0)])
     with pytest.raises(LLMUnavailable) as ei:
-        cb._run_agy("p")
+        cb._dispatch_cli_runner("agy", "p")
     assert ei.value.code == "llm_connection_error"
     assert state["agy"] == 1
 
@@ -880,7 +905,7 @@ def test_run_agy_nonzero_exit_is_terminal_and_runs_once(monkeypatch):
     """未知非零退出（无 typed status）= 确定性失败：不洗成瞬断、不私有重试。"""
     state = _agy_popen(monkeypatch, [("", 1)])
     with pytest.raises(RuntimeError):
-        cb._run_agy("p")
+        cb._dispatch_cli_runner("agy", "p")
     assert state["agy"] == 1
 
 
@@ -892,15 +917,15 @@ class _RcProc:
 @pytest.mark.parametrize(
     "runner,proc",
     [
-        ("_run_codex", lambda: _RcProc(stderr="error: auth failed", returncode=1)),
-        ("_run_claude", lambda: _RcProc(stderr="auth required", returncode=1)),
+        ("codex", lambda: _RcProc(stderr="error: auth failed", returncode=1)),
+        ("claude", lambda: _RcProc(stderr="auth required", returncode=1)),
     ],
 )
 def test_run_runner_fail_loud_on_bad_exit(monkeypatch, runner, proc):
     monkeypatch.delenv("MING_SIM_CODEX_REASONING", raising=False)
     _capture_run(monkeypatch, lambda cmd, **kw: proc())
     with pytest.raises(RuntimeError):
-        getattr(cb, runner)("p")
+        cb._dispatch_cli_runner(runner, "p")
 
 
 def test_run_runner_empty_output_is_retryable_typed(monkeypatch):
@@ -910,7 +935,7 @@ def test_run_runner_empty_output_is_retryable_typed(monkeypatch):
     monkeypatch.delenv("MING_SIM_CODEX_REASONING", raising=False)
     _capture_run(monkeypatch, _P(stdout="", stderr="", returncode=0))
     with pytest.raises(LLMUnavailable) as ei:
-        cb._run_codex("p")
+        cb._dispatch_cli_runner("codex", "p")
     assert ei.value.code == "llm_empty_output"
 
 
@@ -938,10 +963,7 @@ def test_run_backend_infers_trace_tag_from_prompt(monkeypatch, prompt, expect_ta
     """公共咽喉 _run_backend_for_config：tag 空时从 prompt 推断 trace.tag（不直测 helper）。"""
     recs = []
     monkeypatch.setattr(cb, "_trace", lambda rec: recs.append(rec))
-    monkeypatch.setattr(
-        cb, "_run_codex",
-        lambda prompt, model=None, **kwargs: ("ok", 1),
-    )
+    _patch_runner(monkeypatch, "codex", lambda prompt, model=None, **kwargs: ("ok", 1))
     cb._run_backend_for_config(prompt, _cli_codex_cfg())  # no explicit tag
     assert len(recs) == 1
     assert recs[0]["tag"] == expect_tag
@@ -950,7 +972,7 @@ def test_run_backend_infers_trace_tag_from_prompt(monkeypatch, prompt, expect_ta
 def test_run_backend_for_config_traces_every_call(monkeypatch):
     recs = []
     monkeypatch.setattr(cb, "_trace", lambda rec: recs.append(rec))
-    monkeypatch.setattr(cb, "_run_codex", lambda prompt, model=None, **kwargs: ("外臣", 1))
+    _patch_runner(monkeypatch, "codex", lambda prompt, model=None, **kwargs: ("外臣", 1))
     out, attempts = cb._run_backend_for_config("判官名：后金汗", _cli_codex_cfg(), tag="office_infer")
     assert out == "外臣" and attempts == 1
     assert len(recs) == 1
@@ -968,7 +990,7 @@ def test_run_backend_for_config_passes_reasoning_strength_to_codex(monkeypatch):
         return "外臣", 1
 
     monkeypatch.setattr(cb, "_trace", lambda rec: None)
-    monkeypatch.setattr(cb, "_run_codex", fake_codex)
+    _patch_runner(monkeypatch, "codex", fake_codex)
     cfg = SimpleNamespace(
         channel="cli", cli_runner="codex", cli_model="gpt-5.5",
         cli_timeout_seconds=240, reasoning_strength="low",
@@ -984,7 +1006,7 @@ def test_run_backend_for_config_traces_on_backend_error(monkeypatch):
     def boom(prompt, model=None, **kwargs):
         raise RuntimeError("codex 挂了")
 
-    monkeypatch.setattr(cb, "_run_codex", boom)
+    _patch_runner(monkeypatch, "codex", boom)
     with pytest.raises(RuntimeError):
         cb._run_backend_for_config("任意提示", _cli_codex_cfg(), tag="probe")
     assert len(recs) == 1
@@ -996,7 +1018,7 @@ def test_office_inference_llm_call_is_traced(monkeypatch):
     dbmod._OFFICE_TYPE_LLM_CACHE.clear()
     recs = []
     monkeypatch.setattr(cb, "_trace", lambda rec: recs.append(rec))
-    monkeypatch.setattr(cb, "_run_codex", lambda prompt, model=None, **kwargs: ("边镇", 1))
+    _patch_runner(monkeypatch, "codex", lambda prompt, model=None, **kwargs: ("边镇", 1))
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
     got = dbmod.infer_office_type_from_office("绝无此名的杜撰怪衔甲", llm_config=_cli_codex_cfg())
     assert got == "边镇"
@@ -1007,7 +1029,7 @@ def test_secret_extract_traces_exactly_once(monkeypatch):
     recs = []
     monkeypatch.setattr(cb, "_trace", lambda rec: recs.append(rec))
     canned = '{"标题":"密查","内容":"查关宁军饷","承办人":"骆养性","期限月数":3,"标签":["关宁"]}'
-    monkeypatch.setattr(cb, "_run_agy", lambda prompt, **kw: (canned, 1))
+    _patch_runner(monkeypatch, "agy", lambda prompt, **kw: (canned, 1))
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
     cb._extract_secret_order("密查关宁军饷", "臣遵旨", "骆养性")
     assert len(recs) == 1, f"密令提取应恰好 1 条 trace，实 {len(recs)}"
@@ -1070,7 +1092,7 @@ def test_material_runner_uses_cwd_and_read_only_tool_surface(monkeypatch, tmp_pa
 def test_run_cursor_flags_and_stdout(monkeypatch):
     body = "CURSOR_OK"
     captured = _capture_run(monkeypatch, _P(stdout=body, stderr="noise"))
-    out, n = cb._run_cursor("PROMPT_BODY", model="auto")
+    out, n = cb._dispatch_cli_runner("cursor", "PROMPT_BODY", model="auto")
     assert out == body and n == 1
     cmd = captured["cmd"]
     assert "-p" in cmd
@@ -1084,7 +1106,7 @@ def test_run_cursor_flags_and_stdout(monkeypatch):
 def test_run_kimi_prompt_flag_no_yolo_stdout_only(monkeypatch):
     body = "KIMI_OK"
     captured = _capture_run(monkeypatch, _P(stdout=body, stderr="kimi version 0.36.1\nTo resume..."))
-    out, n = cb._run_kimi("PROMPT_BODY", model="kimi-k2")
+    out, n = cb._dispatch_cli_runner("kimi", "PROMPT_BODY", model="kimi-k2")
     assert out == body and n == 1
     cmd = captured["cmd"]
     assert "-p" in cmd and cmd[cmd.index("-p") + 1] == "PROMPT_BODY"
@@ -1097,7 +1119,7 @@ def test_run_kimi_prompt_flag_no_yolo_stdout_only(monkeypatch):
 def test_run_grok_flags_effort_and_plain(monkeypatch):
     body = "GROK_OK"
     captured = _capture_run(monkeypatch, _P(stdout=body, stderr=""))
-    out, n = cb._run_grok("PROMPT_BODY", model="grok-4.5", reasoning_strength="medium")
+    out, n = cb._dispatch_cli_runner("grok", "PROMPT_BODY", model="grok-4.5", reasoning_strength="medium")
     assert out == body and n == 1
     cmd = captured["cmd"]
     assert "-p" in cmd and cmd[cmd.index("-p") + 1] == "PROMPT_BODY"
@@ -1111,7 +1133,7 @@ def test_run_pi_flags_thinking_and_stdout(monkeypatch):
     """#1274-qa-y1：pi -p 非交互；stdout 取文；reasoning → --thinking；model 透传。"""
     body = "PI_OK"
     captured = _capture_run(monkeypatch, _P(stdout=body, stderr="pi log noise"))
-    out, n = cb._run_pi(
+    out, n = cb._dispatch_cli_runner("pi", 
         "PROMPT_BODY", model="openai/gpt-4o", reasoning_strength="medium",
     )
     assert out == body and n == 1
@@ -1127,17 +1149,17 @@ def test_run_pi_flags_thinking_and_stdout(monkeypatch):
 
 
 @pytest.mark.parametrize(
-    "env,attr,out",
+    "env,out",
     [
-        ("cursor", "_run_cursor", "CURSOR_OUT"),
-        ("kimi", "_run_kimi", "KIMI_OUT"),
-        ("grok", "_run_grok", "GROK_OUT"),
-        ("pi", "_run_pi", "PI_OUT"),
+        ("cursor", "CURSOR_OUT"),
+        ("kimi", "KIMI_OUT"),
+        ("grok", "GROK_OUT"),
+        ("pi", "PI_OUT"),
     ],
 )
-def test_run_backend_dispatch_new_runners(monkeypatch, env, attr, out):
+def test_run_backend_dispatch_new_runners(monkeypatch, env, out):
     monkeypatch.setenv("MING_SIM_LLM_BACKEND", env)
-    monkeypatch.setattr(cb, attr, lambda p, **kw: (out, 1))
+    _patch_runner(monkeypatch, env, lambda p, **kw: (out, 1))
     assert cb._run_backend("x") == (out, 1)
 
 
@@ -1151,7 +1173,7 @@ def test_run_backend_for_config_dispatches_new_runners(monkeypatch, runner):
         seen["args"] = (prompt, model, reasoning_strength)
         return (f"{runner}-ok", 1)
 
-    monkeypatch.setattr(cb, f"_run_{runner}", fake)
+    _patch_runner(monkeypatch, runner, fake)
     cfg = LLMConfig(
         api_key="", base_url="", model="m", channel="cli",
         cli_runner=runner, cli_model="mdl-x", cli_timeout_seconds=12.0,
@@ -1174,7 +1196,7 @@ def test_clichat_call_cli_dispatches_new_runners(monkeypatch, runner):
         seen["model"] = model
         return ("OK", 1)
 
-    monkeypatch.setattr(cb, f"_run_{runner}", fake)
+    _patch_runner(monkeypatch, runner, fake)
     chat = cb.CliChat(id="mdl", backend=runner, timeout=99)
     assert chat._call_cli("p") == ("OK", 1)
     # cli_model 仍透传；model.timeout 不再下发给 runner（等多久算死归 transport 策略）
@@ -1192,11 +1214,11 @@ def test_describe_effective_model_includes_new_runners(runner):
     assert cb.describe_effective_model(cfg) == f"{runner}/live-model"
 
 
-@pytest.mark.parametrize("runner", ["_run_cursor", "_run_kimi", "_run_grok", "_run_pi"])
+@pytest.mark.parametrize("runner", ["cursor", "kimi", "grok", "pi"])
 def test_new_runner_fail_loud_on_bad_exit(monkeypatch, runner):
     _capture_run(monkeypatch, _RcProc(stderr="auth failed", returncode=1))
     with pytest.raises(RuntimeError):
-        getattr(cb, runner)("p")
+        cb._dispatch_cli_runner(runner, "p")
 
 
 # ── #1256 S2 gate LLM args / config / evidence ──

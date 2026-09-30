@@ -306,3 +306,13 @@ def test_cli_chosen_option_reaches_core_and_lands_decision(game, monkeypatch):
     stored = db.list_pending_decisions(int(state.turn))[0]
     assert stored["choice"]["label"] == "留"
     assert stored["status"] == "decided"
+
+
+def test_cli_runner_forwarders_are_gone_single_dispatch():
+    """#1902：七条一行转发退役，分派点唯一落在 _run_cli_runner。"""
+    from ming_sim import cli_backend as cb
+
+    for runner in ("agy", "codex", "claude", "cursor", "kimi", "grok", "pi"):
+        assert not hasattr(cb, f"_run_{runner}"), f"_run_{runner} 转发应已退役"
+    assert cb._CLI_RUNNER_NAMES == {"agy", "codex", "claude", "cursor", "kimi", "grok", "pi"}
+    assert hasattr(cb, "_run_cli_runner") and hasattr(cb, "_dispatch_cli_runner")

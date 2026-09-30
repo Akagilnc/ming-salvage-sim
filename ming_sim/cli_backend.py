@@ -208,7 +208,7 @@ _EXTRA_BIN_DIRS = [
 _BIN_CACHE: Dict[str, str] = {}               # runner 名 → 解析后的可执行路径（进程内缓存）
 _DISCOVERED_LOGIN_PATH: Optional[str] = None  # 登录 shell PATH，懒发现一次
 # 登录 shell 探测走「import 时捕获的原始 run」，不受测试 monkeypatch cb.subprocess.run
-# 影响，也就不会污染 _run_agy 等的 mock 调用计数。
+# 影响，也就不会污染 runner 分派（_run_cli_runner）的 mock 调用计数。
 _RAW_RUN = subprocess.run
 
 
@@ -898,91 +898,8 @@ def _run_cli_runner(
     return text.strip(), 1
 
 
-def _run_agy(prompt: str, *, materials_dir: Optional[str] = None) -> Tuple[str, int]:
-    """调 agy --print=<prompt> 一次（warm keychain 仍做；重试归 transport）。"""
-    return _run_cli_runner("agy", prompt, materials_dir=materials_dir)
-
-
-def _run_codex(
-    prompt: str,
-    model: Optional[str] = None,
-    reasoning_strength: Optional[str] = None,
-    *,
-    materials_dir: Optional[str] = None,
-) -> Tuple[str, int]:
-    """调 codex exec - 一次；干净最终回话在 stdout（不合并 stderr 日志）。"""
-    return _run_cli_runner(
-        "codex", prompt, model=model,
-        reasoning_strength=reasoning_strength,
-        materials_dir=materials_dir,
-    )
-
-
-def _run_claude(
-    prompt: str,
-    model: Optional[str] = None,
-    reasoning_strength: Optional[str] = None,
-    *,
-    materials_dir: Optional[str] = None,
-) -> Tuple[str, int]:
-    """调 claude -p 一次；干净回话在 stdout，thinking 预算经 env 显式设置。"""
-    return _run_cli_runner(
-        "claude", prompt, model=model,
-        reasoning_strength=reasoning_strength,
-        materials_dir=materials_dir,
-    )
-
-
-def _run_cursor(
-    prompt: str,
-    model: Optional[str] = None,
-    reasoning_strength: Optional[str] = None,  # noqa: ARG001 — 签名对齐；cursor 无 effort 档
-    *,
-    materials_dir: Optional[str] = None,
-) -> Tuple[str, int]:
-    """调 cursor-agent -p 一次（#1256）。"""
-    return _run_cli_runner("cursor", prompt, model=model, materials_dir=materials_dir)
-
-
-def _run_kimi(
-    prompt: str,
-    model: Optional[str] = None,
-    reasoning_strength: Optional[str] = None,  # noqa: ARG001 — 签名对齐；kimi -p 无 effort 档
-    *,
-    materials_dir: Optional[str] = None,
-) -> Tuple[str, int]:
-    """调 kimi -p 一次（#1256）。"""
-    return _run_cli_runner("kimi", prompt, model=model, materials_dir=materials_dir)
-
-
-def _run_grok(
-    prompt: str,
-    model: Optional[str] = None,
-    reasoning_strength: Optional[str] = None,
-    *,
-    materials_dir: Optional[str] = None,
-) -> Tuple[str, int]:
-    """调 Grok Build CLI 一次（#1256；--effort 仅 low/med/high）。"""
-    return _run_cli_runner(
-        "grok", prompt, model=model,
-        reasoning_strength=reasoning_strength,
-        materials_dir=materials_dir,
-    )
-
-
-def _run_pi(
-    prompt: str,
-    model: Optional[str] = None,
-    reasoning_strength: Optional[str] = None,
-    *,
-    materials_dir: Optional[str] = None,
-) -> Tuple[str, int]:
-    """调本机 pi CLI 一次性非交互出文（#1274-qa-y1）。"""
-    return _run_cli_runner(
-        "pi", prompt, model=model,
-        reasoning_strength=reasoning_strength,
-        materials_dir=materials_dir,
-    )
+# #1902：七条一行转发（_run_agy/_run_codex/…）退役——它们既不改 argv 也不改行为，
+# 只是把同一调用形状抄了七遍。分派点直接落到 _run_cli_runner。
 
 
 # #1902：runner 名 → 单次调用入口的映射表，取代手写 if/elif 分派链。
@@ -990,15 +907,7 @@ def _run_pi(
 # agy 走自身 ladder、不消费 --model，故调用时不带 model/reasoning_strength。
 # 存函数名而非函数对象：调用点现取，monkeypatch 替换任一宿主入口仍即时生效
 # （测试与探针都靠这条缝注入）。
-_CLI_RUNNER_ENTRYPOINTS = {
-    "codex": "_run_codex",
-    "claude": "_run_claude",
-    "cursor": "_run_cursor",
-    "kimi": "_run_kimi",
-    "grok": "_run_grok",
-    "pi": "_run_pi",
-    "agy": "_run_agy",
-}
+_CLI_RUNNER_NAMES = frozenset({"codex", "claude", "cursor", "kimi", "grok", "pi", "agy"})
 
 
 def _dispatch_cli_runner(
@@ -1011,15 +920,13 @@ def _dispatch_cli_runner(
 ) -> Tuple[str, int]:
     """runner 名 → 该 runner 的单次调用入口。全仓唯一一处 runner 分派点
     （env 分派 / config 分派 / CliChat 分派共用，禁再复制第二份）。"""
-    entry_name = _CLI_RUNNER_ENTRYPOINTS.get(runner)
-    if entry_name is None:
+    if runner not in _CLI_RUNNER_NAMES:
         raise RuntimeError(f"未知 CLI backend：{runner}")
-    entry = globals()[entry_name]
     extra = {"materials_dir": materials_dir} if materials_dir else {}
     if runner == "agy":
-        return entry(prompt, **extra)
-    return entry(
-        prompt, model=model, reasoning_strength=reasoning_strength, **extra,
+        return _run_cli_runner(runner, prompt, **extra)
+    return _run_cli_runner(
+        runner, prompt, model=model, reasoning_strength=reasoning_strength, **extra,
     )
 
 
@@ -1170,7 +1077,7 @@ def describe_effective_model(llm_config: Any = None) -> str:
     """日志用：返回该 config **实际调用**的「runner/model」可读串，而非 CLI 通道下的 API-fallback
     占位 `cfg.model`（如 gpt-4o-mini）——后者误导排查（#84）。runner 解析与 create_chat_model 同口径：
     api 通道→cfg.model；cli/legacy-env→真实 runner + 解析后的 cli_model（如 codex/gpt-5.3-codex-spark）。
-    注：legacy-env 默认模型下，CliChat.id 留空（_run_codex 再回落 _CODEX_MODEL），故 trace 的 model_id
+    注：legacy-env 默认模型下，CliChat.id 留空（codex 分派再回落 _CODEX_MODEL），故 trace 的 model_id
     可能是空串而本函数已解析出真实默认——本函数是更准的可读标签，不与 trace 的未解析 id 逐字对齐。"""
     channel = _llm_channel(llm_config)
     if channel == "cli":
