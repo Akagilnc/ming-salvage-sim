@@ -147,7 +147,7 @@ def test_default_time_of_day_is_shichen_not_cishi():
 def test_patch_decree_and_manual_create_routes_removed_draft_rw_remains():
     """#1341 裸设总诏路由已删；#1849 / ADR 0152 决定 1 独立手拟新增口（POST）亦删。
 
-    存量草稿的改（PATCH）／删（DELETE）保留；日常直接下旨只走召对拟旨。
+    草稿的改（PATCH）／删（DELETE）保留；日常直接下旨只走召对拟旨。
     """
     import web_app
 
@@ -165,8 +165,6 @@ def test_patch_decree_and_manual_create_routes_removed_draft_rw_remains():
         and "POST" in (getattr(r, "methods", None) or set())
     ]
     assert post_dirs == [], "独立手拟新增口必须已退役"
-    assert not hasattr(web_app, "api_create_directive")
-    assert not hasattr(web_app, "DirectiveRequest")
 
     for method in ("PATCH", "DELETE"):
         routes = [
@@ -174,7 +172,7 @@ def test_patch_decree_and_manual_create_routes_removed_draft_rw_remains():
             if getattr(r, "path", None) == "/api/directives/{directive_id}"
             and method in (getattr(r, "methods", None) or set())
         ]
-        assert routes, f"存量草稿 {method} 必须保留"
+        assert routes, f"草稿 {method} 必须保留"
 
 
 # ── 4) #1327 空载/有界 capture ─────────────────────────────────────

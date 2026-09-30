@@ -5,9 +5,7 @@ import type { Directive, GameState, LocalDirectiveItem } from "./types";
 // 诏书台动作群：草案登记/编辑/存改/删除。
 // #1341：裸 PATCH /api/decree 与 /api/decree/write 前端死码已删；改稿只走 /api/directives。
 // 共享 error 写入与 latest-wins 代次推进（beginDurableMutation 防旧 done 覆盖）。
-// #1764：create/save/delete 进行态与失败真因绑所属卡；本地会话态随游戏归属代次，进出局清零。
-// #1849 / ADR 0152：独立手拟新增口（御笔自拟 + POST /api/directives）已退役；
-// 本 hook 只剩存量草稿的改（PATCH）／删（DELETE）与本地在飞/失败会话态。
+// #1764：save/delete 进行态与失败真因绑所属卡；本地会话态随游戏归属代次，进出局清零。
 export function useEdictActions({
   setError,
   setState,
@@ -32,7 +30,7 @@ export function useEdictActions({
     setEditingDirectiveText("");
   }, []);
 
-  // 同卡新请求顶掉旧行（save/delete 两路都带 directiveId；#1849 后无 create 卡）。
+  // 同卡新请求顶掉旧行（save/delete 两路都带 directiveId）。
   const beginCardRequest = (item: LocalDirectiveItem) => {
     setLocalDirectives((prev) => [
       ...prev.filter((row) => row.directiveId !== item.directiveId),

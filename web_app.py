@@ -665,10 +665,6 @@ class ChatRequest(BaseModel):
     message: str
 
 
-# #1849 / ADR 0152 决定 1：DirectiveRequest（独立手拟新增口请求体）随 POST 一并退役；
-# 改稿仍走 DirectivePatch。
-
-
 class DirectivePatch(BaseModel):
     text: Optional[str] = None
     notes: Optional[str] = None
@@ -5486,9 +5482,7 @@ async def api_audience_chat_stream(request: ChatRequest) -> StreamingResponse:
     return _chat_stream_response(SCENE_CHAT_SPEAKER, request)
 
 
-# #1849 / ADR 0152 决定 1：独立手拟新增口（Web 拟诏台「御笔自拟」+ POST /api/directives）
-# 随控件一并退出；直接下旨只走召对拟旨（scene_chat 落桌）。
-# 存量草稿的读（state 投影）／改（PATCH）／删（DELETE）保留，不把新增手拟草案伪装成草稿修改。
+# 草稿的改／删接口在此（ADR 0152：新增发起口归召对，草稿层能力保留）。
 
 
 @app.patch("/api/directives/{directive_id}")
@@ -5660,7 +5654,7 @@ def api_advance_without_edict(
 
 
 # #1341/#1338：PATCH /api/decree 已删（web/src 零真实调用方；裸设总诏绕过 directives
-# 结构化违 P1）。OpenAPI 随路由消失。拟诏/改稿只走 POST|PATCH /api/directives。
+# 结构化违 P1）。OpenAPI 随路由消失。改稿只走 PATCH /api/directives/{id}。
 
 
 class IssueDecreeRequest(BaseModel):

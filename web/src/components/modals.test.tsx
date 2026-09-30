@@ -294,7 +294,7 @@ describe("EdictModal — decree desk behavior", () => {
     expect(host.querySelector(".desk-add-btn")).toBeNull();
     expect(host.textContent).not.toContain("御笔自拟");
     expect(host.textContent).not.toContain("新增草案");
-    // 存量草稿仍可改可删。
+    // 草稿仍可改可删。
     expect(host.querySelectorAll(".directive-tools button")).toHaveLength(2);
   });
 

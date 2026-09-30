@@ -183,8 +183,7 @@ export function App() {
     currentNightId,
   });
 
-  // 诏书台动作群（useEdictActions.ts）：存量草案 save/delete 与本地会话态归属。
-  // #1849 / ADR 0152：create（独立手拟新增）已随入口退役移除。
+  // 诏书台动作群（useEdictActions.ts）：草案 save/delete 与本地会话态归属。
   const {
     editingDirectiveId,
     editingDirectiveText,

@@ -1235,7 +1235,7 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
   });
 
   it("#1852 写成即推进：成功过月清旧月本地拟诏态（failed 卡 / 编辑残留不挂新局）", async () => {
-    // #1849：独立手拟新增口已退役，本地拟诏态只由存量草稿的改（PATCH）产生；
+    // #1849：本地拟诏态只由草稿的改（PATCH）产生；
     // 本例以 save 失败卡 + 恢复的编辑内容作旧月残留，过月后须清零。
     let streamController!: ReadableStreamDefaultController<Uint8Array>;
     const encoder = new TextEncoder();
@@ -2822,7 +2822,7 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
 
   // #1764：真实 App 入口——在飞/成功/失败回填/成案只读；断言结构化 phase，不锁 chip 措辞。
   it("#1764 改稿：PATCH 在飞绑所属草案卡；拒绝 → 卡 failed + 恢复编辑内容", async () => {
-    // #1849：独立手拟新增口已退役，本地拟诏态只由存量草稿的改（PATCH）／删（DELETE）产生。
+    // #1849：本地拟诏态只由草稿的改（PATCH）／删（DELETE）产生。
     let releaseSave!: (value: Response) => void;
     const saveGate = new Promise<Response>((resolve) => { releaseSave = resolve; });
     let savePatches = 0;
@@ -2913,7 +2913,7 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
 
   it("#1764 取消修改为纯本地：不吃 requestLocked、零请求；发请求类控件在在飞时禁用", async () => {
     // #1849：原「在飞 create 期间取消修改」一例随独立手拟新增口退役改写——
-    // 并发在飞请求改由存量草稿的 DELETE 承担，取消仍是零请求的纯本地动作。
+    // 并发在飞请求由另一张草稿的 DELETE 承担，取消仍是零请求的纯本地动作。
     let releaseDelete!: (value: Response) => void;
     const deleteGate = new Promise<Response>((resolve) => { releaseDelete = resolve; });
     let deleteCalls = 0;

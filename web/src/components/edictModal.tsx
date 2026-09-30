@@ -98,7 +98,7 @@ export function EdictModal({
   // Historical `pending` labels are therefore ordinary drafts here, never a second review gate.
   const draftDirectives = state.directives;
   const casedDirectives: CasedDirective[] = state.cased_directives ?? [];
-  // save/delete 绑在既有草案卡，不另占席。#1849：本地 create 卡随独立手拟入口退役。
+  // save/delete 绑在既有草案卡，不另占席。
   const requestByDirectiveId = new Map(
     localDirectives.map((item) => [item.directiveId, item]),
   );
@@ -142,8 +142,6 @@ export function EdictModal({
     ) : null;
 
   // 御案两区：草稿（可改删）/ 已发的旨意（成案只读，0048 无准驳）。
-  // #1849 / ADR 0152 决定 1：独立手拟新增控件（「御笔自拟」+「新增草案」）退出，
-  // 直接下旨只走召对拟旨；草稿区的读／改／删与已发区查阅不受影响。
   const showDraftZone = draftDirectives.length > 0;
   const showIssuedZone = casedDirectives.length > 0;
   const draftHeadingId = "edict-zone-draft-title";
