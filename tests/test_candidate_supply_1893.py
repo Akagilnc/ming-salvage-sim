@@ -142,12 +142,13 @@ def _secret_surge_world(db, state, owner):
     return secret_did
 
 
-def test_surge_candidate_offered_by_world_segment_is_declared_and_lands(game):
-    """F1：世界段供到转译的候选，转译就能声明、写口就收——三处同一读侧口径。
+def test_surge_candidate_offered_by_world_segment_is_declared_and_lands(game, tmp_path):
+    """F1：世界段目录里供到的候选，转译就能声明、写口就收——三处同一读侧口径。
 
     旧断链：世界段材料目录不筛密令案卷，转译请求却无条件排除，于是模型在
-    段文里点名的候选到不了声明里。此处经真实 dispatch_month_segment 入口，
-    对密令案卷的候选走完「供到 → 声明 → 落账」全链。
+    段文里点名的候选到不了声明里。此处走真实世界段目录（prepare_world_materials
+    落盘、read_material 读回），再经真实 dispatch_month_segment 入口，对密令
+    案卷的候选走完「供到 → 声明 → 落账」全链，三处候选 id 必须同一。
     """
     from ming_sim.month_translate import dispatch_month_segment
     from tests.test_impeachment_surge_655 import _candidate_world
@@ -156,12 +157,22 @@ def test_surge_candidate_offered_by_world_segment_is_declared_and_lands(game):
     _did, owner, _faction = _candidate_world(db, state)
     secret_did = _secret_surge_world(db, state, owner)
 
+    # 世界段目录：模型在同一次世界段里自读挑选的就是这一份。
+    prepared = prepare_world_materials(db, state, dest_root=tmp_path / "world")
+    world_surge = {
+        item["id"]: item
+        for item in json.loads(read_material(prepared.root, CANDIDATE_REL))["impeachment_surge"]
+        if int(item["dossier_id"]) == secret_did
+    }
+    assert world_surge, "密令案卷的弹劾潮候选未进世界段材料目录（供料侧断链）"
+
     def _capture(request, config):
         offered = {
             item["id"]: item for item in request.candidates["impeachment_surge"]
             if int(item["dossier_id"]) == secret_did
         }
-        assert offered, "密令案卷的弹劾潮候选未随转译请求送到（供料→转译断链）"
+        assert offered, "世界段供到的候选未随转译请求送到（供料→转译断链）"
+        assert set(offered) == set(world_surge), "世界目录与转译请求的候选集不是同一份"
         candidate = next(iter(offered.values()))
         return {"effects": {"new_issues": [{
             "origin_kind": "impeachment_surge",

@@ -173,7 +173,11 @@ def test_world_materials_isolate_invocations_and_databases(game, tmp_path, monke
     assert read_material(first.root, "INDEX.txt")
     assert read_material(second.root, "INDEX.txt")
 
-    other = GameDB(str(Path(db.path).parent / "other.db"), content)
+    # 第二档库与夹具库同父目录（材料树按 db stem 隔层正是为同父多档互不互踩），
+    # 但文件名带本用例的 tmp_path 唯一名并在 finally 删净：夹具的 db 落在共享
+    # 临时根，写固定名会跨用例/跨轮次残留同名异构库，被后续读取当成自己的输入。
+    other_path = Path(db.path).parent / f"other-{tmp_path.name}.db"
+    other = GameDB(str(other_path), content)
     try:
         other.seed_static_data()
         other_state = other.load_state()
@@ -188,6 +192,9 @@ def test_world_materials_isolate_invocations_and_databases(game, tmp_path, monke
         assert same_db != other_db
     finally:
         other.close()
+        for leftover in (other_path, Path(f"{other_path}_agno.db")):
+            if leftover.exists():
+                leftover.unlink()
 
 
 def test_world_materials_include_textual_facts_once_and_gazette_not_duplicated(game, tmp_path):
