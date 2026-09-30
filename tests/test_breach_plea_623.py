@@ -232,20 +232,20 @@ def test_remove_sponsor_writes_plea(game):
     assert _cost_events(db, did) == []
 
 
-def test_policy_reversal_revoke_defers_breach(game):
+def test_policy_reversal_revoke_takes_effect_same_month(game):
+    """#1894：撤旨照常过外廷——外庭准行当月落实，不写挽留 todo、不等下一场召对。"""
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.commit()
     did, holder = _executing_policy_dossier(db, state, token="revoke-defer")
     origin = f"dossier:{did}"
     cid, _ = _insert_commitment(
-        db, state, title="改弦可挽之诺", origin_ref=origin,
+        db, state, title="改弦可撤之诺", origin_ref=origin,
         bar_value=20, end_turn=state.turn + 30,
         participants=[{"character_id": holder, "tier": "主办", "role": "承办"}],
     )
-    auth_before = int(state.metrics.get("皇威", 0) or 0)
 
-    # 走真实 revoke verdict 物化缝
+    # 走真实 revoke verdict 物化缝（外廷颁布判决）
     revoke_id = db.create_decree_dossier(
         state,
         action_type="revoke_decree",
@@ -262,20 +262,46 @@ def test_policy_reversal_revoke_defers_breach(game):
         [{"dossier_id": revoke_id, "decision": "promulgated"}],
         content=content,
     )
-    # 当回合：目标未关、无 0056、有哭谏 todo
+    # 当月即落：0056 代价已写、同源承诺已停 tick
+    assert _cost_events(db, did, identity="breach")
+    assert db.conn.execute(
+        "SELECT status FROM issues WHERE id=?", (cid,),
+    ).fetchone()["status"] == "dropped"
+    # 不写挽留 todo：没有「等下一次召对坚持撤」这道前置
+    assert _pending_pleas(db) == []
+    assert not any(
+        s.get("kind") == "breach_plea" for s in list_due_review_scenes(db, state)
+    )
+
+
+def test_policy_reversal_revoke_rejected_leaves_everything_untouched(game):
+    """#1894：外庭劝回/打回则撤令未生效——原案卷与承诺零变化，不伪报已撤。"""
+    from dossier_test_helpers import rejected_verdict
+
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.commit()
+    did, holder = _executing_policy_dossier(db, state, token="revoke-rejected")
+    cid, _ = _insert_commitment(
+        db, state, title="劝回则不撤之诺", origin_ref=f"dossier:{did}",
+        bar_value=20, end_turn=state.turn + 30,
+        participants=[{"character_id": holder, "tier": "主办", "role": "承办"}],
+    )
+    revoke_id = db.create_decree_dossier(
+        state,
+        action_type="revoke_decree",
+        decree_text="前旨作废",
+        target_kind="dossier",
+        target_id=str(did),
+        payload={"revoke_target_dossier_id": did, "text": "前旨作废"},
+    )
+    db.apply_dossier_verdicts(state, [rejected_verdict(revoke_id)], content=content)
     assert db.get_decree_dossier(did)["status"] == "executing"
     assert db.conn.execute(
         "SELECT status FROM issues WHERE id=?", (cid,),
     ).fetchone()["status"] == "active"
     assert _cost_events(db, did) == []
-    assert int(state.metrics.get("皇威", 0) or 0) == auth_before
-    pleas = _pending_pleas(db)
-    assert len(pleas) == 1
-    assert pleas[0]["criterion_text"] == "改弦"
-    assert int(pleas[0]["stage_idx"]) == int(state.turn)
-
-    scenes = list_due_review_scenes(db, state)
-    assert any(s.get("kind") == "breach_plea" for s in scenes)
+    assert _pending_pleas(db) == []
 
 
 # ── 同承诺两次松手各有独立条 ──────────────────────────────────────────
@@ -686,20 +712,14 @@ def test_no_decision_pause_on_breach_plea_settle(game, monkeypatch):
     assert state.turn_phase != TurnPhase.AWAITING_DECISION.value
 
 
-def test_try_defer_only_for_commitment_kind(game):
-    """非承诺 initiative 不 defer——#523 锚形仍即时 breach。"""
+def test_defer_revoke_to_plea_is_retired(game):
+    """#1894：写「撤令→挽留 todo」这条路已退役，调用即响亮失败，不得静默复活。"""
     db, state, content = game
-    did, holder = _executing_policy_dossier(db, state, token="non-commit")
-    # 无 commitment_kind
-    issue_id = db.insert_issue(
-        state, kind="initiative", title="非承诺initiative",
-        origin_kind="decree", origin_ref=f"dossier:{did}",
-        cancellable="decree",
-    )
-    deferred = try_defer_revoke_to_breach_plea(
-        db, state, target_dossier_id=did, target_issue_id=issue_id, reason="撤",
-    )
-    assert deferred is None
+    did, _ = _executing_policy_dossier(db, state, token="retired-defer")
+    with pytest.raises(RuntimeError, match="已退役"):
+        try_defer_revoke_to_breach_plea(
+            db, state, target_dossier_id=did, reason="撤",
+        )
 
 
 # ── 修后四组新增用例 ──────────────────────────────────────────────────
@@ -738,12 +758,7 @@ def test_same_turn_dual_breach_kinds_merge_not_swallowed(game):
     assert meta.get("breach_kind") == BREACH_KIND_FUNDING
     absorbed = meta.get("absorbed_breach_kinds") or []
     assert BREACH_KIND_POLICY_REVERSAL in absorbed
-    # try_defer 不得返空 todo_ids
-    deferred = try_defer_revoke_to_breach_plea(
-        db, state, target_dossier_id=did, reason="再撤", commit=True,
-    )
-    assert deferred and deferred.get("deferred")
-    assert deferred.get("todo_ids"), "try_defer 不得返空 todo_ids 掩蔽"
+    # #1894：再撤一道不会另起挽留条（同回合已并入的那条也不因撤令而复活等待）
 
 
 def test_persist_reclaims_bundled_authority(game):

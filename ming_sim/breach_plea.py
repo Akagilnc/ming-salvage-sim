@@ -7,6 +7,10 @@ kind 分派矩阵（法）：
 - list_due_review_scenes：投影哭谏场面
 - apply_pending_due_reviews：禁当 staged 终裁；沉默保留 pending
 - dossiers_with_pending_due_review：不计入接管窗
+
+#1894：明确撤旨（撤回一道已发旨）不走本模块——照常过外廷、当月见办理结果，
+try_defer_revoke_to_breach_plea 已退役（调用即 RuntimeError）。本模块只管
+断供／挪用／撤人等非撤令的松手事实。
 """
 
 from __future__ import annotations
@@ -775,7 +779,6 @@ def finalize_persist(
     title = str(row["title"] if row is not None else meta.get("commitment_title") or "")
     origin_ref = str(row["origin_ref"] if row is not None else "")
     target_dossier_id = int(meta.get("target_dossier_id") or 0)
-    revoke_dossier_id = int(meta.get("revoke_dossier_id") or 0)
     if target_dossier_id <= 0:
         parsed = parse_dossier_id(origin_ref)
         target_dossier_id = int(parsed or 0)
@@ -807,7 +810,6 @@ def finalize_persist(
         reason=reason,
         apply_0056=apply_0056,
         commitment_ref=commitment_ref,
-        revoke_dossier_id=revoke_dossier_id,
     )
     breach_applied = bool(tail.get("breach_0056"))
 
@@ -1300,7 +1302,8 @@ def _scan_remove_sponsor(db: Any, state: Any) -> List[int]:
 def scan_and_write_breach_pleas(
     db: Any, state: Any, *, commit: bool = False,
 ) -> List[int]:
-    """结算内扫描断供/挪用/撤人（改弦由 revoke/cancel 拦截缝直写）。
+    """结算内扫描断供/挪用/撤人（#1894：改弦不再由此路产生——明确撤旨
+    照常过外廷当月落实，不写挽留 todo；单纯松手无撤令者不在本票废止范围）。
 
     相反新旨：无可行机械判据（需语义对立），不静默缺省——见模块说明/送修上抛。
     """
@@ -1323,57 +1326,15 @@ def try_defer_revoke_to_breach_plea(
     reason: str = "",
     commit: bool = False,
 ) -> Optional[Dict[str, object]]:
-    """改弦拦截：目标若挂 active 承诺，只写挽留 todo，返回 defer 信息；否则 None。"""
-    commitment_ids: List[int] = []
-    if target_dossier_id > 0:
-        origin_ref = f"dossier:{int(target_dossier_id)}"
-        for iss in db.conn.execute(
-            """
-            SELECT id FROM issues
-            WHERE origin_ref=? AND status='active' AND commitment_kind != ''
-            """,
-            (origin_ref,),
-        ).fetchall():
-            commitment_ids.append(int(iss["id"]))
-    if target_issue_id > 0:
-        row = db.conn.execute(
-            "SELECT id, status, commitment_kind FROM issues WHERE id=?",
-            (int(target_issue_id),),
-        ).fetchone()
-        if (
-            row is not None
-            and str(row["status"] or "") == "active"
-            and str(row["commitment_kind"] or "").strip()
-        ):
-            if int(row["id"]) not in commitment_ids:
-                commitment_ids.append(int(row["id"]))
-    if not commitment_ids:
-        return None
-    written: List[int] = []
-    for cid in commitment_ids:
-        tid = write_breach_plea_todo(
-            db, state,
-            commitment_ref=cid,
-            breach_kind=BREACH_KIND_POLICY_REVERSAL,
-            reason=str(reason or "撤回成命")[:400],
-            target_dossier_id=int(target_dossier_id or 0),
-            extra={
-                "deferred_revoke": True,
-                "revoke_dossier_id": int(revoke_dossier_id or 0),
-            },
-        )
-        if tid:
-            written.append(tid)
-    if not written:
-        # 不应再出现：write 并入后必返 id；仍空则非 deferred
-        return None
-    if commit:
-        db.conn.commit()
-    return {
-        "deferred": True,
-        "commitment_ids": commitment_ids,
-        "todo_ids": written,
-    }
+    """已退役（#1894）：撤令不再延后到下一次召对的挽留场。
+
+    保留函数体仅为 fail-loud：任何仍想写「改弦」挽留 todo 的调用方都是
+    复活旧路（撤旨须当月过外廷落实），不得静默无操作。
+    """
+    raise RuntimeError(
+        "try_defer_revoke_to_breach_plea 已退役（#1894）：撤旨照常过外廷，"
+        "不写挽留 todo"
+    )
 
 
 # ── 召对 extraction 真入口：反悔 / 坚持（既有键 only）──────────────────

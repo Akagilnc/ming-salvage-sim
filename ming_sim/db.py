@@ -16492,24 +16492,13 @@ class GameDB:
             payload.get("text") or row.get("decree_text") or "撤回成命"
         )[:400]
 
-        # #623 / ADR 0075：目标挂 active 承诺 → 当回合只写挽留 todo，
-        # 0056 名声笔与事轴结账延迟到坚持后（不顺颁即 breach+close）。
-        from ming_sim.breach_plea import (
-            apply_persist_revoke_tail,
-            try_defer_revoke_to_breach_plea,
-        )
-        deferred = try_defer_revoke_to_breach_plea(
-            self, state,
-            target_dossier_id=int(target_dossier_id),
-            target_issue_id=int(target_issue_id or 0),
-            revoke_dossier_id=int(dossier_id),
-            reason=reason,
-            commit=False,
-        )
-        if deferred and deferred.get("deferred"):
-            return
+        # #1894：撤旨照常过外廷。外廷（0055 颁布判决）准行即当月落实，
+        # 不再把撤令延后到下一次召对等一场挽留——旧 ADR 0075「先顶哭谏、
+        # 坚持撤才落账」的等待已退役（撤令/原旨/已落实况由既有材料目录供
+        # 外廷人物读，是否求情归模型，不设代码求情探测）。
+        from ming_sim.breach_plea import apply_persist_revoke_tail
 
-        # 立即路径收尾：0056 + 捆带授权收回 + 同源停 tick（与坚持落地共享）
+        # 立即路径收尾：0056 + 捆带授权收回 + 同源停 tick
         apply_persist_revoke_tail(
             self, state,
             target_dossier_id=int(target_dossier_id),
