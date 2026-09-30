@@ -16,6 +16,7 @@ from types import SimpleNamespace
 import pytest
 
 from ming_sim.covert_progress import (
+    _CLUE_ASSIST_EFFORT,
     FACT_LANES_KEY,
     INVESTIGATION_TIPS_KEY,
     INVESTIGATION_ACTS_KEY,
@@ -41,6 +42,7 @@ from ming_sim.covert_progress import (
     settle_due_secret_orders,
 )
 from ming_sim.applier import Provenance
+from ming_sim.month_chain import build_secret_orders_supply_feed
 from ming_sim.exceptions import SettlementAbort
 from ming_sim.db import GameDB
 from ming_sim.issues import apply_score_extraction
@@ -113,6 +115,38 @@ def _set_axes(db, name, *, loyalty, identity, faction=None, seed_guilt=""):
         db.conn.execute(
             "UPDATE factions SET satisfaction=? WHERE name=?",
             (60, faction),
+        )
+    db.conn.commit()
+
+
+def _clue_assist(db, oid):
+    """本案已消费的真实线索助过的实投合计（ADR 0098:11 各源加成）。
+
+    线索助力与办案人本月投入是**两笔**：前者来自来源（开案/汇案），后者来自
+    人物声明。断言"投入为零"时须把已落的来源加成扣掉，否则测的就不是投入。
+    """
+    from ming_sim.covert_progress import _CLUE_ASSIST_EFFORT
+
+    credited = [
+        c for c in investigation_clue_records(
+            db, int(db.get_dossier_for_secret_order(oid)["id"])
+        )
+        if c.get("credited") and not c.get("dropped_fact_key")
+        and not c.get("dropped_no_lane")
+    ]
+    return _CLUE_ASSIST_EFFORT * len(credited)
+
+
+def _co_locate(db, *names, place="beizhili"):
+    """把相关人物放在同一处（#1896「办案人得身在当地」的前置）。
+
+    查案逐证核算要求承办人身在目标当地才投得进力，故断言"深挖即查获"的
+    用例须先把人放到一地；这不是给引擎放水，是把用例的前提摆明。
+    """
+    for name in names:
+        db.conn.execute(
+            "UPDATE characters SET location=?, transit_to='' WHERE name=?",
+            (place, str(name)),
         )
     db.conn.commit()
 
@@ -747,7 +781,7 @@ def test_unlimited_investigation_due_now_reads_real_acquisitions(game, due_actio
     ).fetchone()["name"]
     _set_axes(db, name, loyalty=90, identity=30)
     db.conn.execute("UPDATE characters SET seed_guilt=? WHERE name=?", ("侵冒", target))
-    db.conn.commit()
+    _co_locate(db, name, target)
     oid = _issue(
         db, state, name, "无期查核", "查核侵冒",
         months=0, target=1, kind="查核侵冒", axes=["既得利益"],
@@ -822,7 +856,7 @@ def test_investigation_mastery_needs_effort_to_reach_fact_difficulty(game):
     ).fetchone()["name"]
     _set_axes(db, name, loyalty=90, identity=30)
     db.conn.execute("UPDATE characters SET seed_guilt=? WHERE name=?", ("侵冒", target))
-    db.conn.commit()
+    _co_locate(db, name, target)
     oid = _issue(
         db, state, name, "查核辽饷侵冒", "查核辽饷侵冒",
         months=6, target=1, kind="查核辽饷侵冒", axes=["既得利益"],
@@ -842,7 +876,8 @@ def test_investigation_mastery_needs_effort_to_reach_fact_difficulty(game):
     row = next(r for r in out if r["order_id"] == oid)
     assert row["effort_applied"] == 0.0
     assert investigation_lane_actual_units(db, did) == 0.0
-    assert _lanes(db, oid)[target]["effort"] == 0.0
+    # 人物本月投入为零；lane 上只可能剩来源线索的加成（ADR 0098:11），不是投入
+    assert _lanes(db, oid)[target]["effort"] == pytest.approx(_clue_assist(db, oid))
     assert _lanes(db, oid)[target]["mastered"] is False
 
     # 代码不替人物挑本月下手的罪：没给 fact_key → 无下手处，零投入
@@ -853,14 +888,17 @@ def test_investigation_mastery_needs_effort_to_reach_fact_difficulty(game):
     row = next(r for r in out if r["order_id"] == oid)
     assert row["effort_applied"] == 0.0
     assert row["fact_key"] == ""
-    assert _lanes(db, oid)[target]["effort"] == 0.0
+    # 人物没下手处 → 本月投入零（来源加成另计，代码不替人物挑活）
+    assert _lanes(db, oid)[target]["effort"] == pytest.approx(_clue_assist(db, oid))
 
     # 投入未达难度：累计但不查获（实投＝强度×承办人真实处境，非模型直采）
     capacity = investigation_monthly_capacity(db, name, dossier_id=did)
     apply_investigation_monthly_effort(
         db, did, target, name, fact_key=target, intensity=0.2, commit=True,
     )
-    assert _lanes(db, oid)[target]["effort"] == pytest.approx(0.2 * capacity)
+    assert _lanes(db, oid)[target]["effort"] == pytest.approx(
+        0.2 * capacity + _clue_assist(db, oid)
+    )
     assert _lanes(db, oid)[target]["mastered"] is False
     assert investigation_lane_actual_units(db, did) == 0.0
 
@@ -903,8 +941,237 @@ def test_investigation_mastery_needs_effort_to_reach_fact_difficulty(game):
     assert investigation_lane_actual_units(db, did) == 2.0
 
 
-def test_difficulty_varies_by_ability_and_travel(game):
-    """#1896：办案人能力与实际到差行程都进难度——不同人不同差走查案不同难。"""
+def test_non_finite_effort_is_invalid_not_full_investment(game):
+    """#1896 R2：非有限数值不是"下了死力"，是坏产物——拒收，不洗成满额投入。
+
+    float("NaN")/float("inf") 都成功，而 clamp 遇 NaN 原样返回：曾把 "NaN"
+    洗成 1.0 的满额投入当月坐实。这里钉住：整段 4a 产物判 invalid 重来。
+    """
+    db, state, _ = game
+    name = _minister(db)
+    target = next(
+        row["name"] for row in db.conn.execute(
+            "SELECT name FROM characters WHERE status='active' AND name<>? ORDER BY name",
+            (name,),
+        ).fetchall()
+        if live_investigation_fact_keys(db, row["name"])
+    )
+    _set_axes(db, name, loyalty=90, identity=30)
+    _co_locate(db, name, target)
+    key = live_investigation_fact_keys(db, target)[0]
+    oid = _issue(
+        db, state, name, "查核", "查核", months=6, target=1,
+        kind="查核", axes=["既得利益"], investigation_target=target,
+    )
+    did = int(db.get_dossier_for_secret_order(oid)["id"])
+
+    for bad in ("NaN", "nan", "inf", "-inf", "Infinity"):
+        _next_month(db, state)
+        chain = _run_supply_4a(
+            db, state, [{"order_id": oid, "fact_key": key, "effort": bad}],
+        )
+        assert chain.get("secret_orders_supply_invalid") is True, bad
+        # 无效声明不落实况、不动 lane：没有"洗成满额投入"的合法完成
+        assert investigation_lane_actual_units(db, did) == 0.0, bad
+        assert _lanes(db, oid)[key]["effort"] == 0.0, bad
+
+    # 对照：合法的显式 0 是零投入（不是无效），显式 1 才是真下功夫
+    _next_month(db, state)
+    chain = _run_supply_4a(
+        db, state, [{"order_id": oid, "fact_key": key, "effort": 0}],
+    )
+    assert chain.get("secret_orders_supply_invalid") is not True
+    assert _lanes(db, oid)[key]["effort"] == pytest.approx(_clue_assist(db, oid))
+
+
+def test_investigator_away_from_target_cannot_acquire_evidence(game):
+    """#1896 R3：未到当地仍不能查获——不在目标当地，本月实投为零。
+
+    已准设计原句「办案人得身在当地」。只查 transit_to 会漏掉"人根本不在
+    那一省"这种形状：大理寺反例里承办人在云南、目标在北直隶，照样首月坐实。
+    """
+    db, state, _ = game
+    name = _minister(db)
+    target = next(
+        row["name"] for row in db.conn.execute(
+            "SELECT name FROM characters WHERE status='active' AND name<>? ORDER BY name",
+            (name,),
+        ).fetchall()
+        if live_investigation_fact_keys(db, row["name"])
+    )
+    _set_axes(db, name, loyalty=90, identity=30)
+    db.conn.execute("UPDATE characters SET location='yunnan' WHERE name=?", (name,))
+    db.conn.execute("UPDATE characters SET location='beizhili' WHERE name=?", (target,))
+    db.conn.commit()
+    key = live_investigation_fact_keys(db, target)[0]
+    oid = _issue(
+        db, state, name, "查核", "查核", months=6, target=1,
+        kind="查核", axes=["既得利益"], investigation_target=target,
+    )
+    did = int(db.get_dossier_for_secret_order(oid)["id"])
+
+    # 人在远地、真下死力（声明 1.2）→ 仍查不动
+    _next_month(db, state)
+    _run_supply_4a(db, state, [{"order_id": oid, "fact_key": key, "effort": 1.2}])
+    # 未到差 → 人物投入零（来源加成另计），且查不动
+    assert _lanes(db, oid)[key]["effort"] == pytest.approx(_clue_assist(db, oid))
+    assert investigation_lane_actual_units(db, did) == 0.0
+
+    # 在途（人尚在路上）→ 同样查不动（0097：人未到差，差没开张）
+    db.conn.execute(
+        "UPDATE characters SET location='beizhili', transit_to='yunnan' WHERE name=?", (name,),
+    )
+    db.conn.commit()
+    _next_month(db, state)
+    _run_supply_4a(db, state, [{"order_id": oid, "fact_key": key, "effort": 1.2}])
+    assert investigation_lane_actual_units(db, did) == 0.0
+
+    # 真到当地 → 同一份投入照常生效（该闸不是一刀切封死查案）
+    db.conn.execute("UPDATE characters SET transit_to='' WHERE name=?", (name,))
+    db.conn.commit()
+    _next_month(db, state)
+    _run_supply_4a(db, state, [{"order_id": oid, "fact_key": key, "effort": 1.2}])
+    assert _lanes(db, oid)[key]["effort"] > 0.0
+
+
+def test_reaction_declarations_need_real_knowledge_across_months(game):
+    """#1896 R5：知情是跨月持续的事实——上月真递到的话，本月照样承接毁证/压案。
+
+    旧实现只取本次声明附带的来源，于是"先报信、次月毁证"落空（报信真实、
+    毁证声明合法，spoiled 却仍是 []）。同时未知情时压案不得落账。
+    """
+    db, state, _ = game
+    name = _minister(db)
+    target = next(
+        row["name"] for row in db.conn.execute(
+            "SELECT name FROM characters WHERE status='active' AND name<>? ORDER BY name",
+            (name,),
+        ).fetchall()
+        if live_investigation_fact_keys(db, row["name"])
+    )
+    _set_axes(db, name, loyalty=90, identity=30)
+    _co_locate(db, name, target)
+    informer = _relation_informer(db, name, target)
+    key = live_investigation_fact_keys(db, target)[0]
+    oid = _issue(
+        db, state, name, "查核", "查核", months=6, target=1,
+        kind="查核", axes=["既得利益"], investigation_target=target,
+    )
+    did = int(db.get_dossier_for_secret_order(oid)["id"])
+
+    # 未知情时声明压案 → 不落这项事实（引擎不替不知情的人记下他压了案）
+    _next_month(db, state)
+    _run_supply_4a(db, state, [
+        {"order_id": oid, "effort": 0.0, "suppression": {"form": "行贿说项"}},
+    ])
+    payload = json.loads(db.get_dossier_for_secret_order(oid)["payload_json"])
+    assert not any(
+        "suppression" in a for a in payload.get(INVESTIGATION_ACTS_KEY, [])
+    )
+
+    # 本月真实报信
+    _next_month(db, state)
+    _run_supply_4a(db, state, [
+        {"order_id": oid, "effort": 0.0, "tip_off": {"source": informer}},
+    ])
+    # 次月只声明毁证、不重复附来源（知情已由案卷已落的传话记录承接）
+    _next_month(db, state)
+    _run_supply_4a(db, state, [
+        {"order_id": oid, "effort": 0.0,
+         "spoliation": {"effect": "harder", "fact_key": key},
+         "suppression": {"form": "托人斡旋"}},
+    ])
+    spoiled = db.list_investigation_spoiled_facts(target)
+    assert [s["fact_key"] for s in spoiled] == [key]
+    payload = json.loads(db.get_dossier_for_secret_order(oid)["payload_json"])
+    acts = payload.get(INVESTIGATION_ACTS_KEY, [])
+    assert acts[-1]["suppression"]["form"] == "托人斡旋"
+
+
+def test_case_opening_source_clue_assists_its_fact(game):
+    """#1896 R6：开案这条来源自身就是真实线索，与汇案来源同一条接线。
+
+    旧实现只在汇案分支递交线索，首次开案的来源指针躺在合同里没人消费
+    （同一合同：先开案 clues=[]，后汇案才拿到对应 clue）。
+    """
+    db, state, _ = game
+    name = _minister(db)
+    target = next(
+        row["name"] for row in db.conn.execute(
+            "SELECT name FROM characters WHERE status='active' AND name<>? ORDER BY name",
+            (name,),
+        ).fetchall()
+        if live_investigation_fact_keys(db, row["name"])
+    )
+    _set_axes(db, name, loyalty=90, identity=30)
+    _co_locate(db, name, target)
+    key = live_investigation_fact_keys(db, target)[0]
+    task = {
+        "kind": "查案", "axes": ["实务事功"], "direction": 1,
+        "investigation_target": target,
+        "investigation_fact": key,
+        "delivery": {"target_units": 1.0, "effect_sign": 1,
+                     "investigation_target": target},
+    }
+    oid = db.create_secret_order(
+        state, name, "查核", "查核", [], deadline_months=6, covert_task=task,
+    )
+    did = int(db.get_dossier_for_secret_order(oid)["id"])
+    clues = investigation_clue_records(db, did)
+    assert [c["fact_key"] for c in clues] == [key]
+    # 真实助一次：线索把该条累计实投推上去（不替人物挑本月下手的对象）
+    _next_month(db, state)
+    _run_supply_4a(db, state, [{"order_id": oid, "effort": 0.0}])
+    assert _lanes(db, oid)[key]["effort"] > 0.0
+    # 一次性消费：重开不双计
+    credited = investigation_clue_records(db, did)[0]["credited"]
+    assert credited is True
+
+
+def test_investigation_history_is_not_truncated(game):
+    """#1896 R7：案卷里的行动／报信历史不截尾，供料给完整历史。
+
+    ADR 0155:8 撤除硬历史上限；尾取 200／最后 6 条会让跨月的知情与因果承接
+    读不到上月记录（也就是 R5 的一半病根）。
+    """
+    db, state, _ = game
+    name = _minister(db)
+    target = next(
+        row["name"] for row in db.conn.execute(
+            "SELECT name FROM characters WHERE status='active' AND name<>? ORDER BY name",
+            (name,),
+        ).fetchall()
+        if live_investigation_fact_keys(db, row["name"])
+    )
+    _set_axes(db, name, loyalty=90, identity=30)
+    _co_locate(db, name, target)
+    informer = _relation_informer(db, name, target)
+    oid = _issue(
+        db, state, name, "查核", "查核", months=30, target=1,
+        kind="查核", axes=["既得利益"], investigation_target=target,
+    )
+    did = int(db.get_dossier_for_secret_order(oid)["id"])
+    months = 9
+    for i in range(months):
+        _next_month(db, state)
+        _run_supply_4a(db, state, [{
+            "order_id": oid, "effort": 0.0, "method": f"第{i}月查法",
+        }])
+    payload = json.loads(db.get_dossier_for_secret_order(oid)["payload_json"])
+    assert len(payload[INVESTIGATION_ACTS_KEY]) == months
+    feed = build_secret_orders_supply_feed(db, state, {})
+    order = next(o for o in feed["active_secret_orders"] if int(o["id"]) == oid)
+    assert len(order["investigation_actions"]) == months
+    assert order["investigation_actions"][0]["method"] == "第0月查法"
+
+
+def test_difficulty_varies_by_ability_and_on_site_gate(game):
+    """#1896：办案人能力进难度；到差不是"难度更高"，而是投不进力（零）。
+
+    撤回以行程距离当难度乘子的那套做法（owner 2026-09-30「维持现行已准设计」）
+    后，"办案人得身在当地"落成硬闸：不在当地 → 本月实投为零（capacity 0），
+    而不是给一条"远，所以更难"的折扣。异地之人照样能查获才是大理寺 R3 的反例。
+    """
     db, state, _ = game
     name = _minister(db)
     target = db.conn.execute(
@@ -912,38 +1179,38 @@ def test_difficulty_varies_by_ability_and_travel(game):
         (name,),
     ).fetchone()["name"]
     db.conn.execute("UPDATE characters SET seed_guilt=? WHERE name=?", ("侵冒", target))
-    db.conn.execute("UPDATE characters SET location='beizhili' WHERE name=?", (target,))
-    db.conn.execute(
-        "UPDATE characters SET ability=88, location='beizhili', transit_to='' WHERE name=?",
-        (name,),
-    )
+    _co_locate(db, name, target)
+    db.conn.execute("UPDATE characters SET ability=88 WHERE name=?", (name,))
     db.conn.commit()
     able_here = investigation_fact_difficulty(
         db, target=target, fact_key=target, investigator=name,
     )
-    # 同人在远地办差 → 行程更远 → 更难
-    db.conn.execute(
-        "UPDATE characters SET location='yunnan' WHERE name=?", (name,),
-    )
-    db.conn.commit()
-    able_far = investigation_fact_difficulty(
-        db, target=target, fact_key=target, investigator=name,
-    )
-    assert able_far > able_here
-    # 换弱能力承办人 → 更难
+    # 换弱能力承办人 → 同条罪证更难查（能力进难度）
     weak = db.conn.execute(
         "SELECT name FROM characters WHERE name NOT IN (?,?) AND status='active' LIMIT 1",
         (name, target),
     ).fetchone()["name"]
-    db.conn.execute(
-        "UPDATE characters SET ability=30, location='beizhili' WHERE name=?", (weak,),
-    )
-    db.conn.commit()
+    db.conn.execute("UPDATE characters SET ability=30 WHERE name=?", (weak,))
+    _co_locate(db, weak, target)
     weak_here = investigation_fact_difficulty(
         db, target=target, fact_key=target, investigator=weak,
     )
     assert weak_here > able_here
 
+    # 人在远地（不在目标当地）→ 本月能投的力为零，不是打折
+    db.conn.execute("UPDATE characters SET location='yunnan' WHERE name=?", (name,))
+    db.conn.commit()
+    assert investigation_monthly_capacity(db, name, target=target) == _CAPACITY_MIN
+    # 在途（人尚在路上）→ 同样为零（ADR 0097：人未到差，差没开张）
+    db.conn.execute(
+        "UPDATE characters SET location='beizhili', transit_to='yunnan' WHERE name=?", (name,),
+    )
+    db.conn.commit()
+    assert investigation_monthly_capacity(db, name, target=target) == _CAPACITY_MIN
+    # 回到当地且已到差 → 恢复按能力折算
+    db.conn.execute("UPDATE characters SET transit_to='' WHERE name=?", (name,))
+    db.conn.commit()
+    assert investigation_monthly_capacity(db, name, target=target) > _CAPACITY_MIN
 
 def test_no_evidence_case_opens_and_stays_empty(game):
     """#1896：无证可开案（空 lane 集合法）——不造罪，也不是免费清白神谕。
@@ -1019,8 +1286,9 @@ def test_spoliation_requires_real_knowledge_source(game):
     out = apply_investigation_spoliation(
         db, target=target, fact_key=key, effect="gone", commit=True,
     )
+    # 断言行为（未毁、实证不动），不锁诊断散文的措辞
     assert out["applied"] is False
-    assert "知情" in out["reason"]
+    assert out["reason"]
     assert db.list_investigation_spoiled_facts(target) == []
     assert investigation_fact_difficulty(
         db, target=target, fact_key=key, investigator=name,
@@ -1085,6 +1353,7 @@ def test_4a_unknown_target_declaring_spoliation_is_rejected(game):
         if live_investigation_fact_keys(db, row["name"])
     )
     _set_axes(db, name, loyalty=90, identity=30)
+    _co_locate(db, name, target)
     key = live_investigation_fact_keys(db, target)[0]
     oid = _issue(
         db, state, name, "查核无从下手", "查核无从下手",
@@ -1198,7 +1467,7 @@ def test_clue_pointing_at_absent_fact_is_dropped_not_credited(game):
     ).fetchone()["name"]
     _set_axes(db, name, loyalty=90, identity=30)
     db.conn.execute("UPDATE characters SET seed_guilt=? WHERE name=?", ("侵冒", target))
-    db.conn.commit()
+    _co_locate(db, name, target)
     oid = _issue(
         db, state, name, "查核辽饷", "查核辽饷",
         months=3, target=1, kind="查核", axes=["既得利益"],
@@ -1224,7 +1493,7 @@ def test_false_memorial_does_not_create_or_erase_evidence(game):
     ).fetchone()["name"]
     _set_axes(db, name, loyalty=90, identity=30)
     db.conn.execute("UPDATE characters SET seed_guilt=? WHERE name=?", ("侵冒", target))
-    db.conn.commit()
+    _co_locate(db, name, target)
     oid = _issue(
         db, state, name, "谎报密查", "谎报密查",
         months=1, target=1, kind="查核", axes=["既得利益"],
@@ -1354,6 +1623,7 @@ def test_deep_dig_lands_through_month_chain_entry(game):
         if live_investigation_fact_keys(db, row["name"])
     )
     _set_axes(db, name, loyalty=90, identity=30)
+    _co_locate(db, name, target)
     key = live_investigation_fact_keys(db, target)[0]
     oid = _issue(
         db, state, name, "查核", "查核", months=6, target=1,
@@ -1373,8 +1643,9 @@ def test_deep_dig_lands_through_month_chain_entry(game):
     assert chain.get("secret_orders_supply_invalid") is not True
     lane = _lanes(db, oid)[key]
     capacity = investigation_monthly_capacity(db, name, dossier_id=did)
-    assert lane["effort"] == pytest.approx(capacity)
-    assert lane["mastered"] is (capacity >= difficulty)
+    assist = _clue_assist(db, oid)
+    assert lane["effort"] == pytest.approx(capacity + assist)
+    assert lane["mastered"] is (capacity + assist >= difficulty)
     assert investigation_lane_actual_units(db, did) == float(lane["mastered"])
 
     # 敷衍（显式 0）下月零投入：不增投入、不重复计数
@@ -1446,6 +1717,7 @@ def test_deep_dig_and_perfunctory_differ_but_stay_within_capacity(game):
         if live_investigation_fact_keys(db, row["name"])
     ][:3]
     _set_axes(db, name, loyalty=90, identity=30)
+    _co_locate(db, name, *targets)
     cases = []
     for target in targets:
         key = live_investigation_fact_keys(db, target)[0]
@@ -1462,7 +1734,8 @@ def test_deep_dig_and_perfunctory_differ_but_stay_within_capacity(game):
         )
         seen[intensity] = float(_lanes(db, oid)[key]["effort"])
 
-    idle, deep, over = seen[0.0], seen[1.0], seen[100.0]
+    # 扣除各来源线索的加成（ADR 0098:11），剩下的才是人物当月投入
+    idle, deep, over = (seen[i] - _clue_assist(db, oid) for i in (0.0, 1.0, 100.0))
     assert idle == 0.0                    # 敷衍／停办＝本月零投入
     assert deep > idle                    # 深挖确实多下了功夫
     assert over == deep                   # 超范围声明被 clamp，与满强度无异
@@ -1484,6 +1757,7 @@ def test_invalid_investigation_declaration_is_rejected_not_zero_effort(game):
         if live_investigation_fact_keys(db, row["name"])
     )
     _set_axes(db, name, loyalty=90, identity=30)
+    _co_locate(db, name, target)
     key = live_investigation_fact_keys(db, target)[0]
     oid = _issue(
         db, state, name, "查核", "查核", months=6, target=1,
@@ -1530,6 +1804,7 @@ def test_invalid_declaration_stops_month_chain_and_marks_invalid(game, bad):
         if live_investigation_fact_keys(db, row["name"])
     )
     _set_axes(db, name, loyalty=90, identity=30)
+    _co_locate(db, name, target)
     key = live_investigation_fact_keys(db, target)[0]
     oid = _issue(
         db, state, name, "查核", "查核", months=6, target=1,
@@ -1548,15 +1823,61 @@ def test_invalid_declaration_stops_month_chain_and_marks_invalid(game, bad):
     assert _lanes(db, oid)[key]["effort"] == 0.0
     assert investigation_lane_actual_units(db, did) == 0.0
 
-    # 重试：#1846 契约弃掉无效产物，本月重新声明合法后照常核算
-    retry = _run_supply_4a(db, state, [{"order_id": oid, "fact_key": key, "effort": 1.0}])
-    assert retry.get("covert_progress_done") is True
-    assert retry.get("secret_orders_supply_done") is True
+    # 重试走**真实**的 #1846 失效重起接缝：玩家点重试 → _consume_call_failure_for_retry
+    # 弃掉无效产物与 invalid 标记 → 再入主链续未成相位。（此前此用例每次都新建
+    # chain，等于绕过了真正的重试口，证明不了失效重起真的接得上。）
+    import ming_sim.month_chain as month_chain
+
+    month_chain._consume_call_failure_for_retry(
+        db, chain, int(state.turn), decree_text="", source=Provenance.secret_order,
+    )
+    resumed = month_chain._load_chain(db, int(state.turn))
+    assert "secret_orders_supply_product" not in resumed
+    assert "secret_orders_supply_invalid" not in resumed
+    assert "call_failure" not in resumed
+    # 重入主链会**真的重调** 4a（这正是失效重起）：桩掉外部模型边界，返回一份
+    # 合法产物。桩只代模型调用本身，不代月链相位。
+    calls = []
+
+    def _fake_supply(db_, state_, llm_config_, chain_):
+        calls.append(True)
+        return {
+            "dossier_progress_reports": [
+                {"dossier_id": int(r["dossier_id"]), "progress_band": "持平",
+                 "memorial_text": "据实以奏"}
+                for r in db_.list_monthly_dossier_progress_nudges(int(state_.turn))
+            ],
+            "covert_exec_selections": [
+                {"order_id": oid, "fact_key": key, "effort": 1.0},
+            ],
+        }
+
+    monkey = pytest.MonkeyPatch()
+    monkey.setattr(month_chain, "run_secret_orders_supply", _fake_supply)
+    try:
+        month_chain._step_4a_secret_order_supply(
+            db, state, resumed,
+            turn=int(state.turn), decree_text="", source=Provenance.secret_order,
+            llm_config=object(),
+        )
+    except SettlementAbort as exc:  # pragma: no cover - 只在桩之外失败时出现
+        raise AssertionError(f"失效重起后不该再停续：{exc}")
+    finally:
+        monkey.undo()
+    assert calls, "重试未真正重调 4a——说明仍在复用被废弃的无效产物"
+    assert resumed.get("covert_progress_done") is True
+    assert resumed.get("secret_orders_supply_done") is True
     assert _lanes(db, oid)[key]["effort"] > 0.0
 
 
-def test_clue_without_pointer_assists_nothing(game):
-    """#1896：没指明助哪条实证的线索不助任何一条——代码不替线索挑事实（J4 同例）。"""
+def test_clue_without_pointer_routes_deterministically(game):
+    """#1896：通用线索无指针时走 ADR 0098:11 的确定性兜底路由——不 abol 既有已准规则。
+
+    owner 2026-09-30 裁定「维持现行已准设计」：ADR 0098:11 保留的确定性通用线索
+    路由是既有规则，不因本次「人物行动不代选」（J4）而废止——两者对象不同：
+    这里路由的是**来源线索该助哪条既有实证**，不是替人物挑本月下手的活。
+    路由只在既有 lane 内移动（先 seed_guilt lane，无则边事件 id 升序首条）。
+    """
     db, state, _ = game
     name = _minister(db)
     target = db.conn.execute(
@@ -1565,7 +1886,7 @@ def test_clue_without_pointer_assists_nothing(game):
     ).fetchone()["name"]
     _set_axes(db, name, loyalty=90, identity=30)
     db.conn.execute("UPDATE characters SET seed_guilt=? WHERE name=?", ("侵冒", target))
-    db.conn.commit()
+    _co_locate(db, name, target)
     edge_id = db.record_relation_edge_event(
         source=name, target=target, event_kind="把柄",
         context="另指一条", origin="test:1896-nopointer", evidence=True,
@@ -1592,9 +1913,47 @@ def test_clue_without_pointer_assists_nothing(game):
     _next_month(db, state)
     _run_supply_4a(db, state, [{"order_id": oid, "fact_key": target, "effort": 0.0}])
     lanes = _lanes(db, oid)
-    assert lanes[target]["effort"] == 0.0
+    clue = investigation_clue_records(db, did)[-1]
+    # 目标有 seed_guilt lane → 归该条（确定性），不按边事件那条
+    assert clue["routed_fact_key"] == target
+    assert lanes[target]["effort"] > 0.0
     assert lanes[str(edge_id)]["effort"] == 0.0
-    assert investigation_clue_records(db, did)[-1]["unassigned"] is True
+    # 一次性消费：重开不双计
+    assert clue["credited"] is True
+
+    # 全案无 lane（清白目标）→ 确定性丢弃，不造罪
+    clean = next(
+        row["name"] for row in db.conn.execute(
+            "SELECT name FROM characters WHERE status='active' AND name NOT IN (?,?) ORDER BY name",
+            (name, target),
+        ).fetchall()
+        if not live_investigation_fact_keys(db, row["name"])
+    )
+    _co_locate(db, name, clean)
+    clean_oid = _issue(
+        db, state, name, "查核清白", "查核清白", months=3, target=1,
+        kind="查核", axes=["既得利益"], investigation_target=clean,
+    )
+    clean_did = int(db.get_dossier_for_secret_order(clean_oid)["id"])
+    db.create_secret_order(
+        state, name, "并案泛指", "有人泛泛告发一端", [], deadline_months=3,
+        covert_task={
+            "kind": "查核", "axes": ["既得利益"], "direction": 1,
+            "investigation_target": clean,
+            "delivery": {"target_units": 1.0, "effect_sign": 1,
+                         "investigation_target": clean},
+        },
+    )
+    _next_month(db, state)
+    # 前案仍在办，本月一并给它合法声明（空选择会被判无效并回滚整段）
+    _run_supply_4a(db, state, [
+        {"order_id": oid, "fact_key": target, "effort": 0.0},
+        {"order_id": clean_oid, "effort": 0.0},
+    ])
+    assert investigation_lane_actual_units(db, clean_did) == 0.0
+    # 全案无 lane → 开案来源与并案来源都确定性丢弃，不造罪
+    records = investigation_clue_records(db, clean_did)
+    assert records and all(r.get("dropped_no_lane") is True for r in records)
 
 
 def test_merged_clue_assists_the_fact_it_points_at(game):
@@ -1607,7 +1966,7 @@ def test_merged_clue_assists_the_fact_it_points_at(game):
     ).fetchone()["name"]
     _set_axes(db, name, loyalty=90, identity=30)
     db.conn.execute("UPDATE characters SET seed_guilt=? WHERE name=?", ("侵冒", target))
-    db.conn.commit()
+    _co_locate(db, name, target)
     edge_id = db.record_relation_edge_event(
         source=name, target=target, event_kind="把柄",
         context="另指一条", origin="test:1896-clue", evidence=True,
@@ -1638,8 +1997,15 @@ def test_merged_clue_assists_the_fact_it_points_at(game):
     _run_supply_4a(db, state, [{"order_id": oid, "fact_key": target, "effort": 0.0}])
     lanes = _lanes(db, oid)
     assert lanes[str(edge_id)]["effort"] > 0.0      # 线索助了它所指的那条
-    assert lanes[target]["effort"] == 0.0           # 没助别的罪
     assert investigation_clue_records(db, did)[-1]["credited"] is True
+    # 带指针的那条线索不曾越界：seed_guilt lane 上只留开案来源自己那份加成
+    records = investigation_clue_records(db, did)
+    opening_assist = [
+        _CLUE_ASSIST_EFFORT for c in records
+        if c.get("origin") == "case_opening" and c.get("credited")
+    ]
+    assert len(opening_assist) == 1
+    assert lanes[target]["effort"] == pytest.approx(opening_assist[0])
 
     # 同一线索不再二次消费
     consumed = float(lanes[str(edge_id)]["effort"])
@@ -1678,68 +2044,78 @@ def test_merged_clue_assists_the_fact_it_points_at(game):
     assert "查无此证" not in _lanes(db, oid)
 
 
-def test_difficulty_rises_with_concealment_and_protection(game):
-    """#1896：难度读目标遮掩与庇护关系——庇护边不是证据边，也不能互相顶替。"""
+def test_difficulty_reads_real_evidence_edges_only(game):
+    """#1896：难度只读**真实结构化输入**——把柄 evidence 边算数，其余不算。
+
+    撤回台院那套以错误字段与自由类目替代真实输入的处方（owner 2026-09-30
+    裁定「维持现行已准设计」）后，本用例钉住撤回后的口径：
+    - 结构化 evidence 边（把柄）→ 难度升（ADR 0098 机读判据）；
+    - event_kind 自由类目边（站台/恩义…）→ **不**改难度（ADR 0098:15 九类
+      自由类目不驱动任何机械分支，判官误标不该改查案难度）；
+    - characters.identity（党籍认同）→ **不**当遮掩（ADR 0108:5,7／CONTEXT.md
+      孤臣轴；遮掩因子待 0108 的阴谋能力列落地，不拿别的轴凑数）。
+    """
     db, state, _ = game
     name = _minister(db)
     target = db.conn.execute(
         "SELECT name FROM characters WHERE name<>? AND status='active' LIMIT 1",
         (name,),
     ).fetchall()[0]["name"]
-    protector = db.conn.execute(
+    peer = db.conn.execute(
         "SELECT name FROM characters WHERE name NOT IN (?,?) AND status='active' LIMIT 1",
         (name, target),
     ).fetchall()[0]["name"]
     _set_axes(db, name, loyalty=90, identity=30)
     db.conn.execute("UPDATE characters SET seed_guilt=? WHERE name=?", ("侵冒", target))
-    db.conn.execute("UPDATE characters SET identity=20 WHERE name=?", (target,))
+    db.conn.execute("UPDATE characters SET seed_guilt=? WHERE name=?", ("侵冒", peer))
+    _co_locate(db, name, target, peer)
     db.conn.commit()
     base = investigation_fact_difficulty(
         db, target=target, fact_key=target, investigator=name,
     )
 
-    # 真实非证据庇护边（站台）→ 难度升，且与同数量的证据边不是同一因子
-    peer = db.conn.execute(
-        "SELECT name FROM characters WHERE name NOT IN (?,?,?) AND status='active' LIMIT 1",
-        (name, target, protector),
-    ).fetchall()[0]["name"]
-    db.conn.execute("UPDATE characters SET seed_guilt=? WHERE name=?", ("侵冒", peer))
-    db.conn.execute("UPDATE characters SET identity=20 WHERE name=?", (peer,))
-    db.conn.commit()
-    peer_base = investigation_fact_difficulty(
-        db, target=peer, fact_key=peer, investigator=name,
-    )
+    # 自由类目边（站台，非 evidence）→ 难度**不动**（撤回的替代输入）
     db.record_relation_edge_event(
-        source=protector, target=target, event_kind="站台",
-        context="护短", origin="test:1896-protect", evidence=False,
+        source=peer, target=target, event_kind="站台",
+        context="廷上替他说话", origin="test:1896-category", evidence=False,
     )
-    db.record_relation_edge_event(
-        source=protector, target=peer, event_kind="把柄",
-        context="一条把柄", origin="test:1896-evidence", evidence=True,
-    )
-    db.conn.commit()
-    protected = investigation_fact_difficulty(
-        db, target=target, fact_key=target, investigator=name,
-    )
-    levered = investigation_fact_difficulty(
-        db, target=peer, fact_key=peer, investigator=name,
-    )
-    assert protected > base
-    assert levered > peer_base
-    # 庇护边按人计权、且权重高于把柄边：庇护不是"证据边多"的另一种写法
-    assert (protected / base) > (levered / peer_base)
-
-    # 目标自己更能掩饰 → 更难查
-    db.conn.execute("UPDATE characters SET identity=90 WHERE name=?", (target,))
     db.conn.commit()
     assert investigation_fact_difficulty(
         db, target=target, fact_key=target, investigator=name,
-    ) > base
+    ) == base
+
+    # 结构化 evidence 边（把柄）→ 难度**升**（真实关系网输入）
+    db.record_relation_edge_event(
+        source=peer, target=target, event_kind="把柄",
+        context="一条实据", origin="test:1896-evidence", evidence=True,
+    )
+    db.conn.commit()
+    levered = investigation_fact_difficulty(
+        db, target=target, fact_key=target, investigator=name,
+    )
+    assert levered > base
+
+    # 党籍认同（identity）高低 → 难度**不动**（它不是遮掩，ADR 0108:5,7）
+    db.conn.execute("UPDATE characters SET identity=95 WHERE name=?", (target,))
+    db.conn.execute("UPDATE characters SET identity=5 WHERE name=?", (target,))
+    db.conn.commit()
+    assert investigation_fact_difficulty(
+        db, target=target, fact_key=target, investigator=name,
+    ) == levered
 
 
 def test_supply_feed_carries_identity_materials_for_both_sides(game):
-    """#1896：4a 供料按身份接入办案人与被查者的可及材料（#1814/ADR 0034、0155）。"""
-    from ming_sim.month_chain import build_secret_orders_supply_feed
+    """#1896：4a 供料按身份接入办案人与被查者的可及材料（#1814/ADR 0034、0155）。
+
+    读取形态按 ADR 0155:8：供料只给**材料目录里的路径**，正文备在目录里由模型
+    自读——把渲染全文塞进调用消息是该条明否的形态。故此处断言「路径可解析到
+    一份真实正文」，而不是断言消息里带着全文。
+    """
+    from ming_sim.materials import (
+        prepare_world_materials, read_material, release_material_tree,
+        write_identity_materials,
+    )
+    from ming_sim.month_chain import build_secret_orders_supply_feed, _feed_identity_names
 
     db, state, _ = game
     name = _minister(db)
@@ -1751,6 +2127,7 @@ def test_supply_feed_carries_identity_materials_for_both_sides(game):
         if live_investigation_fact_keys(db, row["name"])
     )
     _set_axes(db, name, loyalty=90, identity=30)
+    _co_locate(db, name, target)
     oid = _issue(
         db, state, name, "密查有罪者", "密查有罪者",
         months=3, target=1, kind="查核", axes=["既得利益"],
@@ -1769,8 +2146,24 @@ def test_supply_feed_carries_identity_materials_for_both_sides(game):
     order = next(o for o in feed["active_secret_orders"] if int(o["id"]) == oid)
     assert order["investigator_identity_materials"]["name"] == name
     assert order["investigation_target_identity_materials"]["name"] == target
-    assert order["investigation_target_identity_materials"]["materials"]
-    # 已声明的真实行动与传话回喂给下月，人物据实接着办
+    # 供料里不带正文，只有目录路径（ADR 0155:8）
+    for side in ("investigator_identity_materials", "investigation_target_identity_materials"):
+        assert "materials" not in order[side]
+        assert order[side]["materials_path"]
+    # 路径在**本次调用自己**的树里能读到真实正文（非空、且只见本人见闻）
+    prepared = prepare_world_materials(db, state)
+    try:
+        write_identity_materials(prepared, db, state, _feed_identity_names(feed))
+        for side, who in (
+            ("investigator_identity_materials", name),
+            ("investigation_target_identity_materials", target),
+        ):
+            body = read_material(prepared.root, order[side]["materials_path"])
+            assert body.strip()
+            assert who in body
+    finally:
+        release_material_tree(prepared.root)
+    # 已声明的真实行动与传话回喂给下月，人物据实接着办（完整历史，不截尾）
     assert order["investigation_tips"][-1]["source"] == informer
     assert order["investigation_actions"][-1]["method"] == "访查旧账"
     assert did
@@ -1795,9 +2188,7 @@ def test_supply_feed_identity_material_is_empty_for_topic_target(game):
         if o.get("investigation_target") == topic
     )
     assert order["investigation_facts"] == []
-    assert order["investigation_target_identity_materials"] == {
-        "name": topic, "materials": "",
-    }
+    assert order["investigation_target_identity_materials"] == {"name": topic}
     assert order["investigator_identity_materials"]["name"] == name
 
 

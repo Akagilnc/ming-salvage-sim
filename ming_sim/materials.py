@@ -44,6 +44,58 @@ class PreparedMaterials:
     index_lines: tuple[str, ...]
 
 
+def identity_material_rel(name: object) -> str:
+    """某人「此刻所知」的天下」在材料目录里的相对路径（ADR 0155 读取形态）。
+
+    查案 4a 要按身份给办案人与被查者各一份可及材料（#1814／ADR 0034），
+    但读取形态是**备目录、按需自读**，不是把全文塞进调用消息（ADR 0155:8），
+    故此处只给路径，正文由 ``write_identity_materials`` 写进该次调用自己的树。
+    """
+    return f"{_PERSON_DIR}/{_safe_segment(name)}/此刻所知.txt"
+
+
+def write_identity_materials(
+    prepared: Any, db: Any, state: Any, names: Sequence[object],
+) -> List[str]:
+    """把各人的身份投影写进**本次调用自己的**材料树，返回相对路径。
+
+    ⚠️ 只能写进该次调用备的树（如 4a 密令供料），**不可**并进世界段／邸报作者
+    共用的世界树：身份投影含本人私务（含其在办密报正文），并进共用树等于把密报
+    内容抬进推演者／邸报作者的读取范围（#1862 用例正守这条界：密报不入邸报）。
+    同场不等于人物全知，读取范围也不该因共用一棵树而互相放宽。
+    """
+    from ming_sim.knowledge import build_character_knowledge, render_character_knowledge
+
+    root = Path(prepared.root)
+    index = list(getattr(prepared, "index_lines", ()) or ())
+    written: List[str] = []
+    for raw in names:
+        name = str(raw or "").strip()
+        if not name or not db.conn.execute(
+            "SELECT 1 FROM characters WHERE name=?", (name,),
+        ).fetchone():
+            continue  # 不是真人物（如「某类人」式题名）：没有身份材料，不编
+        knowledge = (
+            db.get_character_knowledge(state, name) if hasattr(db, "get_character_knowledge")
+            else build_character_knowledge(db, state, name)
+        )
+        rel = identity_material_rel(name)
+        _write_text(
+            root / rel,
+            render_character_knowledge(knowledge, name, db=db, state=state),
+        )
+        index.append(rel)
+        written.append(rel)
+    if written:
+        index_path = root / _INDEX_NAME
+        existing = index_path.read_text(encoding="utf-8") if index_path.is_file() else ""
+        merged = [line for line in existing.splitlines() if line]
+        merged.extend(rel for rel in written if rel not in merged)
+        _write_text(index_path, "\n".join(merged))
+        object.__setattr__(prepared, "index_lines", tuple(index))
+    return written
+
+
 def _safe_segment(name: object) -> str:
     """Readable, path-safe text identity with a collision-resistant suffix."""
     text = str(name or "").strip() or "未名"

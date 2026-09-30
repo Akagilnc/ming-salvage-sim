@@ -21592,11 +21592,21 @@ class GameDB:
                 # #1896：开案即铺 lane 集并冻结逐证难度——唯一开 lane 的口在
                 # covert_progress.seed_investigation_fact_lanes，案卷 payload 不再
                 # 另写一份（曾在此手写旧 progress 形状，成了第二个 lane 写口）。
-                from ming_sim.covert_progress import seed_investigation_fact_lanes
+                # 开案这条来源自身也是一条真实线索，与汇案来源同一条接线（R6）。
+                from ming_sim.covert_progress import (
+                    record_investigation_source_clue,
+                    seed_investigation_fact_lanes,
+                    _investigation_fact_of,
+                )
 
                 seed_investigation_fact_lanes(
                     self, int(dossier_id), inv_target,
                     investigator=str(minister_name), commit=False,
+                )
+                record_investigation_source_clue(
+                    self, int(dossier_id),
+                    fact_key=_investigation_fact_of(covert_contract or {}),
+                    turn=int(state.turn),
                 )
         tlog(f"[secret_order] create id={order_id} minister={minister_name} title={title[:20]}")
         return order_id

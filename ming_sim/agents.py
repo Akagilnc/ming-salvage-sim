@@ -991,6 +991,9 @@ def create_secret_order_supply_agent(llm_config: LLMConfig, prepared: Any = None
         "   - suppression: 对象，仅在被查者已经知情、且你决定压案（行贿说项之类）时"
         "给出：{form: 他怎么压的}。压不压得住不由你填表决定，写下他做了什么即可。",
         "   - note: 字符串，密奏正文。奏报写得好听与否与上面声明的实际投入无关。",
+        "active_secret_orders 里每位人物的 investigator_identity_materials / "
+        "investigation_target_identity_materials 指向材料目录中他自己那份「此刻所知」，"
+        "按需自读即可了解他眼下能打听到什么；同场不等于谁都知道对方的底细。",
         str(getattr(prepared, "opening", "") or ""),
     ]
     if is_minimax_base_url(cfg.base_url):

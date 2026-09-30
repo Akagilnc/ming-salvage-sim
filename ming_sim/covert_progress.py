@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import copy
 import json
+import math
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from ming_sim.constants import ECONOMY_ACCOUNTS, REGION_FIELD_ALIASES
@@ -54,19 +55,14 @@ INVESTIGATION_ACTS_KEY = "investigation_acts"
 _FACT_DIFFICULTY_SEED_GUILT = 1.0
 _FACT_DIFFICULTY_EVIDENCE_EDGE = 1.4
 _SEVERITY_MULTIPLIER = {"轻": 0.8, "中": 1.0, "重": 1.3}
-# 关系网读全部真实边（0081 有向边）：庇护类边（站台/撑腰/恩义/协作/荐引…）
-# 与把柄类边分别计权——掩护来自"有人替他挡"，不来自"罪证条数"（J6）。
+# 关系网只读 0081 有向边里结构化 evidence 标记的把柄边（ADR 0098 机读判据），
+# 按对手去重计。**不**按 event_kind 自由类目计庇护——ADR 0098:15 明文九类自由
+# 类目不驱动任何机械分支（判官误标类目不该改变查案难度，大理寺 R4）。
 _NETWORK_PER_EDGE = 0.05
 _NETWORK_EDGE_CAP = 10
-_PROTECTIVE_EDGE_KINDS = frozenset({"站台", "撑腰", "恩义", "协作", "荐引"})
-_PROTECTION_PER_EDGE = 0.08
-_PROTECTION_EDGE_CAP = 6
-# 目标自身遮掩：无 per-character 阴谋底座（ADR 0098 所指字段未落地），故按
-# characters.identity（身份掩饰）在参考值附近归一，不凭空新增数值轴。
-_CONCEALMENT_IDENTITY_REFERENCE = 50.0
-_CONCEALMENT_IDENTITY_CAP = 40.0
-_TRAVEL_PER_UNIT = 0.08
-_TRAVEL_TIME_CAP = 12.0
+# 目标遮掩因子留白：ADR 0108 指定的 per-character 阴谋能力列本仓尚未建，
+# 在其落地前不拿 characters.identity（党籍认同）冒充遮掩。
+# 行程轴同样不落在难度里：未到差＝本月实投为零（_investigator_on_site）。
 _ABILITY_REFERENCE = 60.0
 _SPOILED_HARDER_MULTIPLIER = 1.5
 _MIN_DIFFICULTY = 0.1
@@ -85,22 +81,6 @@ _BANDWIDTH_ERRAND_CAP = 3
 # 真实线索（各源汇案）对所指实证的助力：只助它所指的那一条，一次性消费。
 # 首版随 playtest（同逐证难度常数口径），不给整案加成。
 _CLUE_ASSIST_EFFORT = 0.3
-
-_DISTANCE_MATRIX: Any = None
-
-
-def _distance_matrix() -> Any:
-    """烘焙行程矩阵只读一次（进程内缓存）：难度按 lane 逐条核算，别每条重读文件。"""
-    global _DISTANCE_MATRIX
-    if _DISTANCE_MATRIX is None:
-        from ming_sim.distance import DistanceMatrix
-        from ming_sim.paths import bundled_path
-
-        _DISTANCE_MATRIX = DistanceMatrix.from_file(
-            bundled_path("content", "distance_matrix.json")
-        )
-    return _DISTANCE_MATRIX
-
 
 _FIELD_FOR_UNIT = {
     "万两": ["economy_moves"],
@@ -901,17 +881,19 @@ def _write_fact_lanes(
 
 
 def _append_investigation_log(
-    db: Any, dossier_id: int, key: str, entry: Mapping[str, object], *, limit: int = 200,
+    db: Any, dossier_id: int, key: str, entry: Mapping[str, object],
 ) -> None:
     """把 4a 声明的真实行动／线索追加进案卷 payload（同一写口，无第二轨）。
 
     只追加已发生的声明事实，不由此派生任何机制后果——人物怎么办归人物（P6）。
+    **不截断**：ADR 0155:8 撤除硬历史上限，#1896 要求完整历史实况供料；
+    截尾会让跨月的知情／因果承接读不到上月记录（也是 R5 的一半病根）。
     """
     payload = _dossier_payload_map(db, dossier_id)
     raw = payload.get(key)
     items = list(raw) if isinstance(raw, list) else []
     items.append(dict(entry))
-    payload[key] = items[-int(limit):]
+    payload[key] = items
     db.update_decree_dossier_payload(int(dossier_id), payload)
 
 
@@ -924,13 +906,19 @@ def investigation_fact_difficulty(
 ) -> float:
     """#1896 逐证难度：引擎从实账核算"这条罪证有多难查"。
 
-    五修正因子（ADR 0098 后出修订口径，全部读既有 substrate，不新立轴）：
+    修正因子（ADR 0098 后出修订口径，全部读既有 substrate，不新立轴）：
     - 事实分档：seed_guilt 罪谱 vs 已落库 evidence 把柄边（后者更难撬）
     - 罪情轻重：seed_guilt 的 severity 档（越重越难查）
-    - 目标遮掩：characters.identity（身份掩饰越强，越难被撬开）
-    - 关系网：目标的 evidence 边（把柄越多越难查）与庇护边（有人替他挡，
-      按对手人数计，不按证据条数）
-    - 实际到差行程：承办人当前所在地 → 目标所在地 的烘焙行程时间
+    - 关系网：目标的 evidence 边（结构化把柄越多越难查，按对手去重）
+    - 办案人能力：能力强则同难度所需投入更少
+
+    **到差不在此轴**：未到差不是"难度更高"，而是本月实投为零（见
+    ``investigation_monthly_capacity``／``_investigator_on_site``）——没到当地
+    就无从查起，这是"办案人得身在当地"的硬形状，不是一段行程折扣。
+
+    目标遮掩因子待 ADR 0108 的 per-character 阴谋能力列落地后接入；在此之前
+    **不**以 characters.identity（党籍认同）冒充遮掩（ADR 0108:5,7／大理寺 R4）。
+    庇护边不按 event_kind 自由类目计（ADR 0098:15）。
 
     毁证（#1896 / ADR 0100 后出修订）按 fact_key 抬难度或直接封死，且真源在
     (target, fact_key) 而非案卷——关案重开、另起新案都不恢复已毁事实。
@@ -947,71 +935,42 @@ def investigation_fact_difficulty(
     else:
         difficulty = _FACT_DIFFICULTY_EVIDENCE_EDGE
 
-    # 目标遮掩与关系网掩护（#1896「目标遮掩、关系网」）：全部读真实账——
-    # 0081 有向边事件（庇护类与把柄类分开计权）＋ characters.identity（身份掩饰）。
-    # 边按人去重计（同一对手多条边只算一人），不拿证据条数冒充庇护。
-    protectors: set[str] = set()
+    # 关系网（#1896「关系网」）：读 0081 有向边里**结构化 evidence 标记**的边
+    # （ADR 0098 机读判据：只有结构化产出方才落 evidence，把柄越多越难查）。
+    # 边按人去重计，不拿边数冒充庇护人数。
+    #
+    # ⚠️ 这里**不**按 event_kind 自由类目（站台/恩义/协作…）计庇护：ADR 0098:15
+    # 明文「九类自由类目不驱动任何机械分支」，判官误标类目不该改变查案难度
+    # （大理寺 R4：按类目改难度＝以自由类目替代真实庇护输入）。
+    # ⚠️ 这里也**不**拿 characters.identity 当目标遮掩：identity 是党籍认同
+    # （CONTEXT.md 孤臣轴），不是掩人耳目之能；ADR 0108 指定的遮掩因子是
+    # per-character 阴谋能力，该列本仓尚未建（见 ADR 0098 后出修订的前置说明），
+    # 故遮掩因子暂缺，**不**拿别的轴凑数。
     edges = 0
-    for edge in db.get_relation_edge_events(person=name):
+    seen_others: set[str] = set()
+    for edge in db.get_relation_edge_events(person=name, evidence=True):
         other = str(edge["target"]) if str(edge["source"]) == name else str(edge["source"])
         other = str(other or "").strip()
-        if not other or other == name:
+        if not other or other == name or other in seen_others:
             continue
-        if str(edge["event_kind"]) in _PROTECTIVE_EDGE_KINDS:
-            protectors.add(other)
-        elif bool(edge.get("evidence")):
-            edges += 1
+        seen_others.add(other)
+        edges += 1
     difficulty *= 1.0 + _NETWORK_PER_EDGE * min(edges, _NETWORK_EDGE_CAP)
-    difficulty *= 1.0 + _PROTECTION_PER_EDGE * min(
-        len(protectors), _PROTECTION_EDGE_CAP,
-    )
-    target_row = db.conn.execute(
-        "SELECT identity, location FROM characters WHERE name=?", (name,),
-    ).fetchone()
-    if target_row is not None:
-        try:
-            conceal = float(target_row["identity"])
-        except (TypeError, ValueError):
-            conceal = _CONCEALMENT_IDENTITY_REFERENCE
-        delta = max(
-            -_CONCEALMENT_IDENTITY_CAP,
-            min(_CONCEALMENT_IDENTITY_CAP, conceal - _CONCEALMENT_IDENTITY_REFERENCE),
-        )
-        difficulty *= 1.0 + delta / _CONCEALMENT_IDENTITY_REFERENCE
 
+    # 办案人能力（ADR 0092 带宽①同源）：能力强 → 同难度所需投入更少。
     worker = str(investigator or "").strip()
     if worker:
-        row = db.conn.execute(
-            "SELECT location, transit_to FROM characters WHERE name=?",
-            (worker,),
+        ability_row = db.conn.execute(
+            "SELECT ability FROM characters WHERE name=?", (worker,),
         ).fetchone()
-        if row is not None:
-            here = str(row["location"] or "").strip()
-            there = str(
-                target_row["location"] if target_row is not None else ""
-            ).strip()
-            # 在途（transit_to 非空）＝人未到差，行程按目的地计，难度更重。
-            origin = here or there
-            destination = str(row["transit_to"] or "").strip() or there
-            if origin and destination:
-                try:
-                    travel = float(_distance_matrix().travel_time(origin, destination))
-                except (KeyError, OSError, ValueError):
-                    travel = 0.0
-                difficulty *= 1.0 + _TRAVEL_PER_UNIT * min(
-                    max(0.0, travel), _TRAVEL_TIME_CAP
-                )
-            ability_row = db.conn.execute(
-                "SELECT ability FROM characters WHERE name=?", (worker,),
-            ).fetchone()
-            if ability_row is not None:
-                try:
-                    ability = float(ability_row["ability"])
-                except (TypeError, ValueError):
-                    ability = _ABILITY_REFERENCE
-                if ability > 0.0:
-                    # 办案人能力强 → 同样难度所需投入更少（难度按参考能力归一）。
-                    difficulty *= _ABILITY_REFERENCE / ability
+        if ability_row is not None:
+            try:
+                ability = float(ability_row["ability"])
+            except (TypeError, ValueError):
+                ability = _ABILITY_REFERENCE
+            if ability > 0.0:
+                # 办案人能力强 → 同样难度所需投入更少（难度按参考能力归一）。
+                difficulty *= _ABILITY_REFERENCE / ability
 
     for spoiled in db.list_investigation_spoiled_facts(name):
         if str(spoiled.get("fact_key") or "") != key:
@@ -1022,16 +981,48 @@ def investigation_fact_difficulty(
     return max(_MIN_DIFFICULTY, float(difficulty))
 
 
+def _investigator_on_site(db: Any, worker_row: Any, target: str) -> bool:
+    """承办人本月是否身在查案当地（已准设计「办案人得身在当地」）。
+
+    两种"未到差"是同一类缺陷的两种形状，必须一并判：
+    - 在途（transit_to 非空）：0097 明文，人在路上、差没开张；
+    - **根本不在目标那一省**：只查 transit_to 会把它漏过去，于是异地之人
+      照样把当地罪证查获——大理寺 R3 的反例正是这一形状。
+
+    所在地缺失时按 0092/0097 同款退化：轴不参与（放行），不假装到差也不
+    假装出差——人物无 location 是内容表稀疏，不是"他在外地"的证据。
+    """
+    if str(worker_row["transit_to"] or "").strip():
+        return False
+    who = str(worker_row["location"] or "").strip()
+    name = str(target or "").strip()
+    if not who or not name:
+        return True  # 该轴不参与（退化）
+    # 查案对象不是真人物（如「某类人」式题名）时无当地可核，按退化放行。
+    target_row = db.conn.execute(
+        "SELECT location FROM characters WHERE name=?", (name,),
+    ).fetchone()
+    if target_row is None:
+        return True
+    there = str(target_row["location"] or "").strip()
+    if not there:
+        return True  # 目标所在地未知：该轴不参与（退化），不假装出差
+    return who == there
+
+
 def investigation_monthly_capacity(
-    db: Any, investigator: str, *, dossier_id: int = 0,
+    db: Any, investigator: str, *, dossier_id: int = 0, target: str = "",
 ) -> float:
     """#1896 承办人本月能投多少查案的力气（引擎按实况折算，不采模型裸数）。
 
     0092 带宽①「在办差务数×能力」＋实际到差：人物只声明"下了多大劲"
     （0..1 强度，是人心的选择），能投多少由他的真实处境决定——
     - 能力：强能吏跑得动更多（按参考能力归一）
-    - 到差：在途（transit_to 非空）＝人不在差上，本月查不动当地罪证 → 零
-      （已准设计 e6120b66「办案人得身在当地」；不是打折，是没到差就无从查）
+    - 到差：**须身在目标当地**才查得动当地的罪证。已准设计原句「办案人得
+      身在当地」（ADR 0155 后出：人物只见自己身份下可及的材料——不在当地就
+      拿不到那条罪证的实物）。判据按 0097：location 是最后已知地，在途
+      （transit_to 非空）＝人未到差；两者皆空时该轴不参与（退化，不假装到差）。
+      只查 transit_to 会漏掉「人根本不在这一省」这种形状，故所在地必须比。
     - 带宽：owner 绑定的未结差务（decree_dossiers 主办案卷，在办态）越多，
       本案分到的越少——真源是案卷主办人，不是密令表
     返回值恒在 [_CAPACITY_MIN, _CAPACITY_MAX] 内，且不含任何模型输入。
@@ -1040,9 +1031,10 @@ def investigation_monthly_capacity(
     if not worker:
         return _CAPACITY_MIN
     row = db.conn.execute(
-        "SELECT ability, transit_to FROM characters WHERE name=?", (worker,),
+        "SELECT ability, location, transit_to FROM characters WHERE name=?",
+        (worker,),
     ).fetchone()
-    if row is not None and str(row["transit_to"] or "").strip():
+    if row is not None and not _investigator_on_site(db, row, target):
         return _CAPACITY_MIN  # 未到差：无差可查，投入为零
     capacity = 1.0
     if row is not None:
@@ -1064,6 +1056,33 @@ def investigation_monthly_capacity(
         int(open_errands["n"] or 0), _BANDWIDTH_ERRAND_CAP,
     )
     return max(_CAPACITY_MIN, min(_CAPACITY_MAX, float(capacity)))
+
+
+def record_investigation_source_clue(
+    db: Any, dossier_id: int, *, fact_key: str = "", turn: int = 0,
+) -> None:
+    """开案时把**本案自己的来源**记成一条真实线索（#1896 R6）。
+
+    汇案走 ``merge_investigation_confirmation`` 会留线索，但首次开案那条来源
+    原先只在密令合同里存了个指针，案卷 ``investigation_clues`` 是空的——
+    于是"开案时已带 investigation_fact 的首个来源"既不助它所指的实证、
+    也和后来汇案的那条待遇不同（大理寺 R6：同一合同，先开案 clues=[]/effort=0，
+    后汇案才拿到对应 clue）。两种来源走同一条接线，差别只在有无 fact_key。
+    """
+    payload = _dossier_payload_map(db, int(dossier_id))
+    clues = payload.get(INVESTIGATION_CLUES_KEY)
+    if not isinstance(clues, list):
+        clues = []
+    clues.append({
+        "pending_action_id": 0,
+        "origin_chat_message_ids": [],
+        "fact_key": str(fact_key or "").strip(),
+        "turn": int(turn or 0),
+        "credited": False,
+        "origin": "case_opening",
+    })
+    payload[INVESTIGATION_CLUES_KEY] = clues
+    db.update_decree_dossier_payload(int(dossier_id), payload, commit=False)
 
 
 def seed_investigation_fact_lanes(
@@ -1114,6 +1133,24 @@ def investigation_clue_records(db: Any, dossier_id: int) -> List[Dict[str, objec
     return [dict(x) for x in raw if isinstance(x, Mapping)] if isinstance(raw, list) else []
 
 
+def _route_pointerless_clue(lanes: List[Dict[str, object]], target: str) -> str:
+    """无指针的通用线索该助哪条既有实证（ADR 0098:11 确定性兜底路由）。
+
+    先归 seed_guilt lane；无 seed_guilt lane 而案内有其他活跃 lane（运行期把柄
+    边）时按 fact_key 稳定序（边事件 id 升序）取首条；全案无 lane 返回空串。
+    只在**既有 lane 内**移动，无从造真相，选序确定可复现（restore 同结果）。
+    """
+    if not lanes:
+        return ""
+    for lane in lanes:
+        if _is_seed_guilt_fact_key(target, str(lane["fact_key"])):
+            return str(lane["fact_key"])
+    def _stable(lane: Dict[str, object]) -> tuple[int, int, str]:
+        key = str(lane["fact_key"])
+        return (0, int(key), "") if key.isdigit() else (1, 0, key)
+    return str(min(lanes, key=_stable)["fact_key"])
+
+
 def _consume_monthly_clues(
     db: Any,
     dossier_id: int,
@@ -1126,11 +1163,19 @@ def _consume_monthly_clues(
 ) -> float:
     """线索只助其所指实有实证：把并入本案的真实线索按所指 fact_key 记成实投。
 
-    - **不替线索挑事实**：没有 fact_key 指针的线索不助任何实证（记 ``unassigned``，
-      确定性不助），所指由人物/转译声明给出——代码不代选（J4 同例）；
     - 指向不存在/已被别案查获的罪 → 确定性丢弃（不造罪、不重复查获）；
     - 同一线索只消费一次（``credited``），重开重试不双计；
     - 线索把该条累计实投推过其难度时，同样按"达到难度即记已掌握"记查获。
+
+    **无指针的通用线索走 ADR 0098:11 的确定性兜底路由**（owner 2026-09-30 裁定
+    「维持现行已准设计」：该条路由是既有已准规则，不因本次人物行动裁决而废止）：
+    先归 seed_guilt lane；目标无 seed_guilt lane 而案内有其他活跃 lane 时按
+    fact_key 稳定序（边事件 id 升序）取首条；**全案无 lane 才丢弃**并留痕。
+    路由只在既有 lane 内移动、从不造真相。
+
+    ⚠️ 这与「人物本月下手」是两件事：本月 ``fact_key`` 省略是**人物没下手处**
+    → 零投入、代码不代选（J4，大理寺已结清）；此处路由的是**来源线索该助哪条
+    既有实证**，不替人物挑活干。
     """
     by_key = {str(lane["fact_key"]): lane for lane in lanes}
     clues = investigation_clue_records(db, dossier_id)
@@ -1143,8 +1188,12 @@ def _consume_monthly_clues(
         key = str(clue.get("fact_key") or "").strip()
         clue["credited"] = True
         if not key:
-            clue["unassigned"] = True  # 没指明助哪条 → 不助，不代选
-            continue
+            key = _route_pointerless_clue(lanes, target)
+            if key:
+                clue["routed_fact_key"] = key  # ADR 0098:11 确定性兜底路由
+            else:
+                clue["dropped_no_lane"] = True  # 全案无 lane → 确定性丢弃
+                continue
         lane = by_key.get(key)
         if lane is None or key not in live or key in blocked:
             clue["dropped_fact_key"] = key
@@ -1190,15 +1239,15 @@ def apply_investigation_monthly_effort(
     lanes = seed_investigation_fact_lanes(
         db, dossier_id, target, investigator=investigator, commit=False,
     )
-    try:
-        declared = float(intensity or 0.0)
-    except (TypeError, ValueError):
+    declared = _declared_intensity(intensity)
+    if declared is None:
+        # 非有限／非数值不是"零投入"：调用方（4a 声明读口）已先拒收无效声明，
+        # 这里再守一道，避免任何直调把 NaN/inf 当合法强度折算成实投。
         declared = 0.0
-    declared = max(0.0, min(1.0, declared))
     live = set(live_investigation_fact_keys(db, target))
     blocked = globally_used_fact_keys(db, except_dossier_id=int(dossier_id))
     capacity = investigation_monthly_capacity(
-        db, investigator, dossier_id=int(dossier_id),
+        db, investigator, dossier_id=int(dossier_id), target=target,
     )
     amount = declared * capacity
 
@@ -1277,6 +1326,31 @@ def apply_investigation_monthly_effort(
         "mastered": mastered_now,
         "units": investigation_lane_actual_units(db, int(dossier_id)),
     }
+
+
+def _resolve_investigation_knowledge(
+    db: Any, target: str, declared_source: str = "", *, dossier_id: int = 0,
+) -> str:
+    """解出被查者的知情来源（真实传话声明 ∩ 真实关系边），解不出返回空串。
+
+    判据沿 ``_investigation_knowledge_known``：须有案卷已声明的真实传话，且
+    递话人在账本里确与该目标有 0081 关系边。声明里带了 knowledge_source 就
+    优先按它核（人物指名了谁递的话）；没带则回本案已声明的传话记录里找——
+    知情是**跨月持续**的事实，上月真递到的话本月照样成立，不该因为本次
+    声明没重复附上来源就当作不知情。
+    """
+    who = str(declared_source or "").strip()
+    if who and _investigation_knowledge_known(
+        db, target, who, dossier_id=int(dossier_id or 0),
+    ):
+        return who
+    for tip in _investigation_tips(db, int(dossier_id or 0), str(target or "").strip()):
+        source = str(tip.get("source") or "").strip()
+        if source and _investigation_knowledge_known(
+            db, target, source, dossier_id=int(dossier_id or 0),
+        ):
+            return source
+    return ""
 
 
 def _investigation_knowledge_known(
@@ -1455,7 +1529,7 @@ def merge_investigation_confirmation(
         "turn": turn,
         "credited": False,
     })
-    payload[INVESTIGATION_CLUES_KEY] = clues[-200:]
+    payload[INVESTIGATION_CLUES_KEY] = clues
     db.update_decree_dossier_payload(did, payload, commit=commit)
     return int(order_id)
 
@@ -1528,6 +1602,26 @@ def _selection_map(raw_selections: object) -> Dict[int, Dict[str, object]]:
     return mapping
 
 
+def _declared_intensity(raw: object) -> Optional[float]:
+    """把人物声明的投入强度读成 0..1 的有限数字；读不出即 None（=无效声明）。
+
+    合同是 DELTA_SCHEMA 的 0..1 有限数。``float()`` 单独不够：``float("NaN")``
+    与 ``float("inf")`` 都成功，而 clamp 对 NaN 不动（min/max 遇 NaN 返回原值），
+    于是 "NaN" 会被洗成满额投入、``inf`` 会被 clamp 成 1.0——两者都不是人物
+    的声明，只是坏产物。故先验有限性再 clamp；越界仍按旧口径夹到 0..1
+    （人物写 1.2 是"下了死力"，不是无效声明）。
+    """
+    if isinstance(raw, bool):
+        return None
+    try:
+        value = float(raw)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(value):
+        return None
+    return max(0.0, min(1.0, value))
+
+
 def _investigation_declaration(
     sel: Mapping[str, object] | None,
 ) -> Dict[str, object]:
@@ -1552,10 +1646,11 @@ def _investigation_declaration(
     if raw_effort is None:
         out["invalid"] = "查案密令缺少 effort 声明（敷衍/停办请显式给 0）"
     else:
-        try:
-            out["intensity"] = max(0.0, min(1.0, float(raw_effort)))
-        except (TypeError, ValueError):
-            out["invalid"] = "查案密令的 effort 不是数字"
+        intensity = _declared_intensity(raw_effort)
+        if intensity is None:
+            out["invalid"] = "查案密令的 effort 不是 0..1 的有限数字"
+        else:
+            out["intensity"] = intensity
     fact = str(item.get("fact_key", item.get("所查事实")) or "").strip()
     if fact:
         out["fact_key"] = fact
@@ -1702,11 +1797,16 @@ def _apply_investigation_selection(
 ) -> Dict[str, object]:
     """查案密令的逐证落账（#1896）。幂等键＝(dossier, turn)，重开只续未成核算。
 
-    无效声明（缺 effort／effort 非数字／只给了旧执行态）不是合法的零投入：拒收、
-    不写实况行，由月链把本月 4a 产物标成 invalid 重来一次（#1846 失效与重起契约）。
+    无效声明（缺 effort／effort 非数字或非有限／只给了旧执行态）不是合法的
+    零投入：拒收、不写实况行，由月链把本月 4a 产物标成 invalid 重来一次
+    （#1846 失效与重起契约）。
+
+    人物知情与反应按真实因果承接：知情来源解自案卷已落的传话记录（跨月持续），
+    毁证与压案共用该判定，未知情不替其落账（见 ``_resolve_investigation_knowledge``）。
     """
     did = int(dossier["id"])
     oid = int(order["id"])
+    rejected_reactions: List[Dict[str, object]] = []
     # 同月重入不重复施加投入：实况轨已有本月行即说明本月已核算过。lane 累加本身
     # 不带幂等键，若不在此拦一道，同一 turn 内被扫两次就会把力气算两遍。
     existing = db.conn.execute(
@@ -1746,10 +1846,34 @@ def _apply_investigation_selection(
         _append_investigation_log(db, did, INVESTIGATION_TIPS_KEY, {
             "source": tip_source, "turn": int(turn), "target": target,
         })
+    # 知情核算走案卷**已落**的真实传话记录（本月新落的也在内），而不是只取本次
+    # 附带的那一个 source：知情是跨月持续的事实——上月真递到的话，本月照样知情。
+    # 只读本次附带字段会让「先报信、次月毁证」这种真实因果承接落空
+    # （大理寺 R5：报信真实、毁证声明合法，却因取不到来源而 spoiled=[]）。
+    knowledge_source = _resolve_investigation_knowledge(
+        db, target,
+        str(
+            (declaration["spoliation"].get("knowledge_source") or "")
+            if isinstance(declaration.get("spoliation"), Mapping) else ""
+        ),
+        dossier_id=did,
+    )
+    known = bool(knowledge_source)
     acts = {
-        key: declaration[key] for key in ("method", "suppression")
+        key: declaration[key] for key in ("method",)
         if declaration.get(key)
     }
+    suppression = declaration.get("suppression")
+    if isinstance(suppression, Mapping) and suppression.get("form"):
+        if known:
+            acts["suppression"] = dict(suppression)
+        else:
+            # 未知情不替其压案：不落这项事实，也不改任何实证（P6 人物决定归人物，
+            # 但引擎不替一个不知情的人记下他"压了案"）。
+            rejected_reactions.append({
+                "reaction": "suppression", "form": str(suppression.get("form") or ""),
+                "reason": "无真实关系网知情来源，不承接压案声明",
+            })
     if acts:
         _append_investigation_log(db, did, INVESTIGATION_ACTS_KEY, {
             "turn": int(turn), "investigator": investigator, **acts,
@@ -1765,12 +1889,12 @@ def _apply_investigation_selection(
     if isinstance(spoliation, Mapping):
         spoil_key = str(spoliation.get("fact_key") or "").strip()
         if spoil_key:
+            # 知情来源用上面解出的（跨月承接的）那个，不再只取本次附带字段：
+            # 上月真报的信本月仍然成立，无须重复声明。
             spoiled_result = apply_investigation_spoliation(
                 db, target=target, fact_key=spoil_key,
                 effect=str(spoliation.get("effect") or "harder"),
-                knowledge_source=str(
-                    spoliation.get("knowledge_source") or tip_source
-                ),
+                knowledge_source=knowledge_source,
                 dossier_id=did,
                 origin_ref=f"dossier:{did}", turn=turn, commit=False,
             )
@@ -1795,6 +1919,8 @@ def _apply_investigation_selection(
     }
     if result.get("dropped_fact_key"):
         applied["dropped_fact_key"] = str(result["dropped_fact_key"])
+    if rejected_reactions:
+        applied["rejected_reactions"] = rejected_reactions
     if spoiled_result:
         applied["spoliation"] = spoiled_result
     return applied

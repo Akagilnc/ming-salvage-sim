@@ -13,7 +13,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Mapping, Optional
 
 from ming_sim.applier import Provenance, atomic
 
@@ -1016,26 +1016,31 @@ def _enrich_eligible_dossiers_for_supply(
 
 
 def _identity_materials(db: Any, state: Any, name: str) -> Dict[str, Any]:
-    """按身份投影某人此刻可见的材料（ADR 0034 非全知 / 0155 身份隔离 / #1814）。
+    """按身份指给某人一份可及材料（ADR 0034 非全知 / 0155 身份隔离 / #1814）。
 
-    走既有 knowledge 读口：只见本人见闻，不给全局实况。同场不等于人物全知。
-    查案对象不是真人物（如"某类人"式题名）时没有身份材料，如实留空，不编。
+    只给**材料目录里的路径**，不给正文：读取形态是「备一个地方它自己读」
+    （ADR 0155:8），把渲染全文塞进调用消息正是该条明否的形态。正文由
+    ``prepare_world_materials`` 按同一 ``knowledge`` 投影写进同一棵树
+    （``人物/<人>/此刻所知.txt``），两个读口同源、restore 可复现。
+    查案对象不是真人物（如「某类人」式题名）时没有身份材料，如实留空，不编。
     """
     who = str(name or "").strip()
     if not who:
         return {}
-    row = db.conn.execute(
-        "SELECT name FROM characters WHERE name=?", (who,),
-    ).fetchone()
-    if row is None:
-        return {"name": who, "materials": ""}
-    from ming_sim.knowledge import build_character_knowledge, render_character_knowledge
+    if not db.conn.execute(
+        "SELECT 1 FROM characters WHERE name=?", (who,),
+    ).fetchone():
+        # 不是真人物（如「某类人」式题名）：没有身份材料，如实留空，不编。
+        return {"name": who}
+    from ming_sim.knowledge import build_character_knowledge
 
     knowledge = build_character_knowledge(db, state, who)
+    from ming_sim.materials import identity_material_rel
+
     return {
         "name": who,
         "office": str(knowledge.get("office") or ""),
-        "materials": render_character_knowledge(knowledge, who, db=db, state=state),
+        "materials_path": identity_material_rel(who),
     }
 
 
@@ -1110,9 +1115,28 @@ def _attach_investigation_facts(
             db, state, target,
         )
         order["investigation_tips"] = investigation_tip_records(db, did)
-        order["investigation_actions"] = investigation_action_records(db, did)[-6:]
+        # 完整历史实况供料（ADR 0155:8 撤除硬上限）：不取"最后 6 条"——尾取
+        # 会让跨月的知情与因果承接读不到上月记录。
+        order["investigation_actions"] = investigation_action_records(db, did)
         out.append(order)
     return out
+
+
+def _feed_identity_names(feed: Mapping[str, Any]) -> List[str]:
+    """从 4a 供料里取出该备身份材料的人名（承办人与被查者，去重保序）。
+
+    供料与材料树两处都以这里为准：供料给路径、材料树写正文，名单不同源就会
+    出现"给了路径却读不到"或"备了没人指"的对不上。
+    """
+    names: List[str] = []
+    for order in feed.get("active_secret_orders") or []:
+        if not isinstance(order, Mapping):
+            continue
+        for side in ("investigator_identity_materials", "investigation_target_identity_materials"):
+            who = str((order.get(side) or {}).get("name") or "").strip()
+            if who and who not in names:
+                names.append(who)
+    return names
 
 
 def build_secret_orders_supply_feed(
@@ -1161,6 +1185,12 @@ def run_secret_orders_supply(
     message = json.dumps(feed, ensure_ascii=False)
     # 与邸报作者同目录读口；密报侧不滤密令来源（默认 prepare 全量可读）。
     prepared = prepare_world_materials(db, state)
+    # #1896：供料里只给身份材料路径，正文写进**本次调用自己**的树（ADR 0155:8
+    # 目录读取形态／#1814 身份隔离）。不并进世界段与邸报作者共用的世界树——那份
+    # 树的读者不该因共用而读到某人的私务（含其在办密报正文）。
+    from ming_sim.materials import write_identity_materials
+
+    write_identity_materials(prepared, db, state, _feed_identity_names(feed))
     try:
         agent = create_secret_order_supply_agent(llm_config, prepared)
         raw = run_agent_text(
