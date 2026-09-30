@@ -638,10 +638,8 @@ def _cli_load(session: GameSession, name: str) -> Optional[GameSession]:
     返回**读档后的新会话**（调用方须换掉自己持有的那个），失败返回 None——
     此时共享核已还原替换前的库与 runtime，玩家留在原菜单。成功时旧会话已关闭。
     """
-    import sqlite3
-
     from ming_sim.paths import UnsafeSaveNameError, save_slot_path
-    from ming_sim.save_slots import replace_database
+    from ming_sim.save_slots import copy_sqlite_file, replace_database
 
     label = (name or "").strip()
     if not label:
@@ -660,17 +658,13 @@ def _cli_load(session: GameSession, name: str) -> Optional[GameSession]:
 
     runtime = _CliRuntime(session)
 
-    def _replace_from_save() -> None:
-        src_conn = sqlite3.connect(source)
-        dst_conn = sqlite3.connect(runtime.db_path)
-        try:
-            src_conn.backup(dst_conn)
-        finally:
-            src_conn.close()
-            dst_conn.close()
-
+    # #1902：覆盖拷贝走共享核唯一实现（此前此处与 WebGame.load_save 各带一份
+    # 逐行相同的 sqlite backup 闭包——两份已删）。
     try:
-        replace_database(runtime, _CliSaveSlotHost(), _replace_from_save)
+        replace_database(
+            runtime, _CliSaveSlotHost(),
+            lambda: copy_sqlite_file(source, runtime.db_path),
+        )
     except Exception as err:
         print(f"\n读档失败，已恢复原局：{err}\n")
         return None

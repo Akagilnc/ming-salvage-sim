@@ -311,7 +311,9 @@ def _api_runtime_value(runtime: Dict[str, object], key: str, fallback: str) -> s
     value = runtime.get(key)
     if value is None:
         return fallback
-    text = "" if value is str else str(value)
+    # 原写 `"" if value is str else str(value)`：那是拿实例与类型对象比，恒为 False，
+    # 空串由下一行兜住——死分支且误导读者（#1902 判词）。此处只做字符串化。
+    text = str(value)
     if not text:
         return fallback
     # 占位符 / 保留 sentinel 不当真实 key：stale cli-backend 或 __keep__ 不得

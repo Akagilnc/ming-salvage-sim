@@ -51,6 +51,11 @@ from ming_sim.paths import (
     user_data_path,
     user_data_dir,
 )
+from ming_sim.save_slots import (
+    SaveSlotCleanupError,
+    copy_sqlite_file,
+    delete_sqlite_db_files_or_raise,
+)
 from ming_sim.exceptions import DependencyMismatch, ExitGame, LLMUnavailable, SettlementAbort
 from ming_sim.llm_config import (
     CLI_DEFAULT_TIMEOUT_SECONDS,
@@ -363,35 +368,24 @@ def _humanize_legacy_effect(modifiers: Dict[str, Any], content: Any) -> str:
     return "、".join(parts)
 
 
-def _delete_sqlite_db_files_or_raise(db_path: str) -> None:
-    """删除 SQLite 主库及 WAL/SHM；失败时阻断重开，避免误读旧档。"""
-    for suffix in ("", "-wal", "-shm"):
-        target = db_path + suffix
-        if not os.path.exists(target):
-            continue
-        if not os.path.isfile(target):
-            raise HTTPException(
-                status_code=500,
-                detail=f"重开失败：无法清理主库文件 {target}，它不是普通文件。请检查该路径后再重试。",
-            )
-        try:
-            os.remove(target)
-        except PermissionError as exc:
-            raise HTTPException(
-                status_code=500,
-                detail=(
-                    f"重开失败：权限不足，无法删除主库文件 {target}。"
-                    "请关闭占用该文件的程序，或用管理员权限运行游戏后重试。"
-                ),
-            ) from exc
-        except OSError as exc:
-            raise HTTPException(
-                status_code=500,
-                detail=(
-                    f"重开失败：无法删除主库文件 {target}。系统返回：{exc}。"
-                    "请确认没有其他游戏进程占用该文件；若是权限问题，请用管理员权限运行游戏后重试。"
-                ),
-            ) from exc
+def _cleanup_failure_detail(err: SaveSlotCleanupError) -> str:
+    """删主库失败的玩家指引文案（#1902：判定与归类在共享核，文案归 Web 入口）。
+
+    文案与迁移前那份 web 私有实现逐句一致，只是失败原因改读核的 ``reason`` 归类，
+    不再各自判一遍 ``isfile`` / ``PermissionError``。
+    """
+    target = err.target
+    if err.reason == "not_a_file":
+        return f"重开失败：无法清理主库文件 {target}，它不是普通文件。请检查该路径后再重试。"
+    if err.reason == "permission":
+        return (
+            f"重开失败：权限不足，无法删除主库文件 {target}。"
+            "请关闭占用该文件的程序，或用管理员权限运行游戏后重试。"
+        )
+    return (
+        f"重开失败：无法删除主库文件 {target}。系统返回：{err.cause}。"
+        "请确认没有其他游戏进程占用该文件；若是权限问题，请用管理员权限运行游戏后重试。"
+    )
 
 
 def _advanced_llm_config_for_verify(config: LLMConfig) -> LLMConfig:
@@ -778,7 +772,16 @@ class WebGame:
         # #1195：阶段标签紧贴既有分段（GameSession / begin_turn / 召对恢复）；
         # #1228：载入路径零 verify 调用——连通性 smoke 已拆除，报错落到玩家真实 LLM 动作。
         if fresh:
-            _delete_sqlite_db_files_or_raise(db_path)
+            # #1902：删库实现唯一在共享核 save_slots（此前 web_app 另有一份同构的
+            # _delete_sqlite_db_files_or_raise，两份只差异常形态——那份已删）。
+            # 此处只把核的归类翻成 Web 的 500 与玩家指引文案。
+            try:
+                delete_sqlite_db_files_or_raise(db_path)
+            except SaveSlotCleanupError as err:
+                raise HTTPException(
+                    status_code=500,
+                    detail=_cleanup_failure_detail(err),
+                ) from err
         _stage("载入上次进度...")
         # #1749：GameSession 建立后任一后续步骤失败须 close，禁泄漏 db/agno 连接。
         self.session = None  # type: ignore[assignment]
@@ -945,16 +948,11 @@ class WebGame:
         if not os.path.isfile(source):
             raise HTTPException(status_code=404, detail="存档不存在。")
 
-        def replace_from_save() -> None:
-            src_conn = sqlite3.connect(source)
-            dst_conn = sqlite3.connect(self.db_path)
-            try:
-                src_conn.backup(dst_conn)
-            finally:
-                src_conn.close()
-                dst_conn.close()
-
-        self._replace_database(replace_from_save)
+        # #1902：覆盖拷贝走共享核唯一实现（此前此处与 cli._cli_load 各带一份
+        # 逐行相同的 sqlite backup 闭包——两份已删）。
+        self._replace_database(
+            lambda: copy_sqlite_file(source, self.db_path),
+        )
 
     def _rebuild_session(self, llm_config: LLMConfig) -> None:
         """Fully initialize a candidate before publishing it as the active session."""
