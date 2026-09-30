@@ -167,14 +167,19 @@ export function useSettlementFlow({
   };
 
   // #1808 C：退局/再入局清 HUD 残留——接缝归既有 exitToMenu / enterGameAfterMenu。
+  // #1888：同接缝一并清 busy。busy 是本会话的核账面闸（main.tsx: busy==='月末结算' 即
+  // settlementFace，且重试钮 disabled={!!busy}），属会话态却曾不随代次重置——旧局发起时
+  // 写下的 busy 便会留在新局里，把新局永久锁在核账面。busy 由**推进代次处**清理，
+  // 不靠陈旧回执收尾：闸口因此得以保持「陈旧一律不写」，新局也不带旧局 busy。
   const clearSettlementHudError = React.useCallback(() => {
     setSettlementHudError("");
     setFailedEntryWasRetreat(false);
     setSettlementGazetteReading(null);
     setPostAdvanceOverlayHold(false);
     setAdvanceRefreshFailed(false);
+    setBusy("");
     sessionGeneration.current += 1;
-  }, []);
+  }, [setBusy]);
 
   /**
    * #1888：回执归属的唯一闸口。发起结算请求时调用一次，封存当时的会话代次；
@@ -500,10 +505,11 @@ export function useSettlementFlow({
   };
 
   // #1888：失败重拉亦是一次回执，同经 claimReceipt；否则退局后到达的旧局重拉
-  // 会把上一局的批红/续跑态与告警写进新局。
+  // 会把上一局的批红/续跑态与告警写进新局。busy 亦同此理——陈旧重试的收尾若裸清，
+  // 会误清新局正在进行的月末结算，故一并走写权。
   const retryPendingDecisions = async () => {
     const receipt = claimReceipt();
-    setBusy("重新拉取批红");
+    receipt.setBusy("重新拉取批红");
     receipt.setPausedDecisionError("");
     try {
       const freshState = await receipt.loadState();
@@ -524,7 +530,7 @@ export function useSettlementFlow({
           freshState.resume_phase2,
         )
       ) {
-        setBusy("");
+        receipt.setBusy("");
         await resumePhase2();
         return;
       }
@@ -533,7 +539,7 @@ export function useSettlementFlow({
     } catch (err) {
       receipt.setPausedDecisionError(`重新拉取待批决策失败：${err instanceof Error ? err.message : String(err)}`);
     } finally {
-      setBusy("");
+      receipt.setBusy("");
     }
   };
 

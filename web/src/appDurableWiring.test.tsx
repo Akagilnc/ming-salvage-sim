@@ -1554,6 +1554,14 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     expect(host.querySelector('[data-testid="hud-error"]')).toBeNull();
     expect(host.querySelector("[data-testid=settlement-gazette-panel]")).toBeNull();
     expect(host.textContent).not.toContain(marker);
+    // 新局仍可用：旧局 busy 不得把新局锁死在核账面（busy==='月末结算' 即 settlementFace，
+    // 拟诏入口随之收起）。只断言「旧局污染没出现」会放过这类反向缺陷。
+    const reopenDesk = edictCommand(host);
+    expect(reopenDesk).toBeTruthy();
+    await click(reopenDesk);
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="诏书草案"]')).not.toBeNull());
+    });
   });
 
   it("#1852 写成即推进：本面邸报阅读中不弹 closed/密令/结局；朕知道了后仍按既有规则弹", async () => {
