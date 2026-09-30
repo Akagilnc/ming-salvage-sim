@@ -18162,10 +18162,11 @@ class GameDB:
         if pa["kind"] == "secret_order":
             oid = pa["target_id"]
             if pa["action"] == "新建":
-                title = str(payload.get("title") or "").strip()
+                # 自由文本零删改（CLAUDE.md P6）：判空在副本上做，存的仍是原文。
+                title = str(payload.get("title") or "")
                 content_text = str(payload.get("content") or "")
                 assignee = str(payload.get("assignee") or pa["minister_name"] or "").strip()
-                if not title or not content_text.strip() or not assignee:
+                if not title.strip() or not content_text.strip() or not assignee:
                     return False
                 tags_raw = payload.get("tags") or []
                 tags = [str(t).strip() for t in tags_raw if str(t).strip()] if isinstance(tags_raw, list) else []

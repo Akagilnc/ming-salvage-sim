@@ -1263,10 +1263,14 @@ def _dispatch_commissions(
             if body is None:
                 _reject(rejected, item, "密令正文缺自由文本", "invalid_shape", source)
                 continue
-            title = str(secret.get("title") or "").strip()
+            # 标题与正文同为 LLM 自由文本，P6 零删改一视同仁：判空在副本上做，
+            # 存的仍是原文（判词 J5 同类：上一轮只保住了 content）。
+            title = _declared_prose(secret.get("title"))
+            if title is None:
+                _reject(rejected, item, "密令标题缺自由文本", "invalid_shape", source)
+                continue
             payload = {
                 "title": title,
-                # 自由文本零删改（CLAUDE.md P6）：判空在副本上做，存的仍是原文。
                 "content": body,
                 "assignee": assignee,
                 "tags": optional_lists["tags"],

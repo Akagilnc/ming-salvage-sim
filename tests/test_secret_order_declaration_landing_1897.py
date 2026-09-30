@@ -160,28 +160,61 @@ def test_declared_new_secret_order_lands_through_live_dispatch_and_becomes_a_cas
     assert db.get_dossier_for_secret_order(order_id) is not None
 
 
-def test_secret_order_body_is_stored_verbatim(game):
-    """P6 零删改：判空在副本上做，暂存的正文仍是模型写的原文（含前后空白换行）。"""
+def test_secret_order_free_text_is_stored_verbatim(game):
+    """P6 零删改：标题与正文一视同仁，暂存与成案都存原文（含前后空白换行）。
+
+    判空在副本上做，存储值不被改动——上一轮只保住了 content，标题在暂存
+    与 ``_apply_pending_action`` 两处各被 strip 一次，本轮一并修净。
+    """
     db, state, _ = game
     minister = _minister(db)
     night_id, ctid = _open_night(db, state, minister)
+    raw_title = "  查办粮科私卖  "
     raw_body = "\n  密查粮科私卖。  \n"
 
     result = _dispatch(
         db, state, minister,
-        _secret_order_declaration(assignee=minister, content=raw_body),
+        _secret_order_declaration(
+            assignee=minister, title=raw_title, content=raw_body,
+        ),
         ctid, night_id,
     )
     assert result.commissions.rejected == [], result.commissions.rejected
-    staged_id = int(_staged_secret_order_rows(db, state.turn)[0]["id"])
-    _approve(db, state, minister, ctid, night_id, staged_id)
+    rows = _staged_secret_order_rows(db, state.turn)
+    staged_id = int(rows[0]["id"])
+    staged = json.loads(rows[0]["payload_json"])
+    # 暂存即原文（未暂存前就被裁）。
+    assert staged["title"] == raw_title
+    assert staged["content"] == raw_body
 
+    _approve(db, state, minister, ctid, night_id, staged_id)
     order_id = int(db.conn.execute(
         "SELECT secret_order_id FROM decree_dossiers "
         "WHERE pending_action_id=? AND secret_order_id IS NOT NULL",
         (staged_id,),
     ).fetchone()["secret_order_id"])
-    assert db.get_secret_order(order_id)["content"] == raw_body
+    order = db.get_secret_order(order_id)
+    # 成案仍是原文（apply 路径不再二次 strip）。
+    assert order["title"] == raw_title
+    assert order["content"] == raw_body
+
+
+def test_blank_secret_order_title_is_rejected_not_staged(game):
+    """判空仍按副本做：纯空白标题拒收，不暂存、不成案。"""
+    db, state, _ = game
+    minister = _minister(db)
+    night_id, ctid = _open_night(db, state, minister)
+
+    result = _dispatch(
+        db, state, minister,
+        _secret_order_declaration(assignee=minister, title="   \n  "),
+        ctid, night_id,
+    )
+    assert result.commissions.applied == []
+    assert len(result.commissions.rejected) == 1
+    assert _rejection_rows(db, state.turn)[0]["category"] == "invalid_shape"
+    assert _staged_secret_order_rows(db, state.turn) == []
+    assert db.list_secret_orders() == []
 
 
 def test_bad_secret_order_is_rejected_without_staging_or_landing(game):
@@ -286,7 +319,7 @@ def test_translation_prompt_hands_the_model_a_consumable_frozen_contract():
     """
     from ming_sim.audience_translate import build_audience_translate_prompt
     from ming_sim.covert_progress import (
-        CANONICAL_UNITS, _CONTRACT_EXAMPLE, build_covert_task_contract,
+        CANONICAL_UNITS, _CONTRACT_EXAMPLES, build_covert_task_contract,
     )
     from ming_sim.person_archive_contract import PERSON_ACTIONS
 
@@ -300,11 +333,25 @@ def test_translation_prompt_hands_the_model_a_consumable_frozen_contract():
     ):
         assert token in prompt, token
 
-    # prompt 里那份样例必须逐字就是被投影的样例，且真源收得下——
+    # prompt 里每份样例必须逐字就是被投影的样例，且真源都收得下——
     # 说明与实现分叉时这条先炸（教模型交一份会被拒的载荷更糟）。
-    assert json.dumps(_CONTRACT_EXAMPLE, ensure_ascii=False) in prompt
-    frozen = build_covert_task_contract(covert_task=_CONTRACT_EXAMPLE)
-    assert frozen["kind"] == "查案" and frozen["delivery"]["unit"] == "人犯"
+    for sample in _CONTRACT_EXAMPLES:
+        assert json.dumps(sample, ensure_ascii=False) in prompt
+        build_covert_task_contract(covert_task=sample)
+
+    # 钱粮定向语义（J7 判词实错）：+1 是收入、-1 是支出。说明里若把符号写反，
+    # 模型照着填就会被 build_covert_task_contract 拒（收入写补饷直接抛错）。
+    assert "+1 是收入" in prompt and "-1 是支出" in prompt
+    assert "收款（effect_sign=-1）" not in prompt
+    # 支出（-1）必须给 purpose：照说明少给即拒收，钉住这条真语义。
+    with pytest.raises(Exception):
+        build_covert_task_contract(covert_task={
+            "kind": "查赃", "axes": ["礼法名节"], "direction": -1,
+            "delivery": {
+                "unit": "万两", "target_units": 5, "effect_sign": -1,
+                "category": "追赃", "account": "内库",
+            },
+        })
 
 
 def test_failed_landing_keeps_the_original_pending_action_retryable(game, monkeypatch):

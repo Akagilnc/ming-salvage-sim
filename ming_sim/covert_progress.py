@@ -433,19 +433,48 @@ def build_covert_task_contract(
     }
 
 
-# 转译 prompt 里给模型的契约样例：必须能被 build_covert_task_contract 收下，
-# 否则说明本身就在教模型交一份会被拒的载荷（tests 有断言钉住）。
-_CONTRACT_EXAMPLE: Dict[str, object] = {
-    "kind": "查案",
-    "axes": ["实务事功"],
-    "direction": 1,
-    "delivery": {
-        "unit": "人犯",
-        "target_units": 3,
-        "person_action": "处置",
-        "effect_sign": 1,
+# 转译 prompt 里给模型的契约样例：每份都必须能被 build_covert_task_contract
+# 收下，否则说明本身就在教模型交一份会被拒的载荷（tests 有断言钉住）。
+# 钱粮两种定向各给一份：符号语义（+1 收入 / -1 支出）正是手写说明曾写反之处，
+# 光给人犯样例盖不住。
+_CONTRACT_EXAMPLES: tuple[Dict[str, object], ...] = (
+    {
+        "kind": "查案",
+        "axes": ["实务事功"],
+        "direction": 1,
+        "delivery": {
+            "unit": "人犯",
+            "target_units": 3,
+            "person_action": "处置",
+            "effect_sign": 1,
+        },
     },
-}
+    {
+        "kind": "查赃",
+        "axes": ["礼法名节"],
+        "direction": -1,
+        "delivery": {
+            "unit": "万两",
+            "target_units": 5,
+            "effect_sign": -1,
+            "purpose": "其它",
+            "category": "追赃",
+            "account": "内库",
+        },
+    },
+    {
+        "kind": "查军饷",
+        "axes": ["实务事功"],
+        "direction": 1,
+        "delivery": {
+            "unit": "万两",
+            "target_units": 8,
+            "effect_sign": 1,
+            "category": "军费",
+            "account": "国库",
+        },
+    },
+)
 
 
 def describe_covert_task_contract() -> str:
@@ -455,7 +484,12 @@ def describe_covert_task_contract() -> str:
     真实模型交不出 ``build_covert_task_contract`` 收的字段。这里从本模块的
     闭集常量与 identity 规则直接投影出必填字段，闭集不另抄一份。
 
-    样例取自 ``_CONTRACT_EXAMPLE``——那份样例本身必须能被
+    钱粮那段的「收款 / 支出」措辞与必需字段**由** ``_identity_keys_for_unit``
+    投影（``effect_sign>0`` 即收入，只要 category/account；``<=0`` 即支出，
+    另须 purpose，补饷再须 target_kind/target_id）——不再手写第二份规则：
+    手写那份曾把符号写反，教模型交一份必被拒的载荷。
+
+    样例取自 ``_CONTRACT_EXAMPLES``——每份样例本身必须能被
     ``build_covert_task_contract`` 收下（tests 有断言），免得说明与实现分叉。
     """
     axes = "、".join(sorted(CENTRIFUGE_AXES))
@@ -463,16 +497,31 @@ def describe_covert_task_contract() -> str:
     actions = "、".join(PERSON_ACTIONS)
     accounts = "、".join(ECONOMY_ACCOUNTS)
     fields = "、".join(sorted(REGION_FIELD_ALIASES))
-    sample = json.dumps(_CONTRACT_EXAMPLE, ensure_ascii=False)
+    income_keys = "、".join(
+        _identity_keys_for_unit("万两", effect_sign=1),
+    )
+    spend_keys = "、".join(
+        _identity_keys_for_unit("万两", effect_sign=-1, purpose="其它"),
+    )
+    subsidy_keys = "、".join(
+        _identity_keys_for_unit("万两", effect_sign=-1, purpose="补饷"),
+    )
+    samples = "\n".join(
+        f"    {json.dumps(sample, ensure_ascii=False)}"
+        for sample in _CONTRACT_EXAMPLES
+    )
     return (
-        f"{sample}\n"
+        f"{samples}\n"
         f"    必填：kind（差务类型）、axes（六轴之一：{axes}）、direction（1 顺轴 / -1 逆轴）、"
         f"delivery.unit（{units}）、delivery.target_units（正数）、delivery.effect_sign（+1 / -1）。\n"
         f"    按 unit 另须给足交付身份：人犯 → person_action（{actions}）；"
-        f"万亩 → region / field（{fields}）/ target；"
-        f"万两 → category 与 account（{accounts}），收款（effect_sign=-1）再给 purpose（补饷/其它），"
-        "purpose=补饷 时还须 target_kind=army 与 target_id。"
-        "查 investigative_target 的暗查则给 investigation_target（可数目标）+ target_units + effect_sign。\n"
+        f"万亩 → region / field（{fields}）/ target。\n"
+        f"    万两的 effect_sign 定向钱：+1 是收入（臣上交），只要 {income_keys}"
+        f"（account 取 {accounts}）；"
+        f"-1 是支出（皇帝拨出），须另给 {spend_keys}；"
+        f"purpose=补饷 时还须 {subsidy_keys}（target_id 取军额 id）。"
+        f"收入不得写 purpose=补饷。\n"
+        "    查 investigative_target 的暗查则给 investigation_target（可数目标）+ target_units + effect_sign。\n"
         "    上述字段缺一即拒收该条密令；不得凭空编造闭集外的值。"
     )
 
