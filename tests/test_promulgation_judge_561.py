@@ -320,20 +320,26 @@ def test_promulgated_true_path_clean_verdict_passes(game):
 
 
 def test_rejected_verdict_still_requires_full_rejection_contract(game):
-    """#1397 负向边界：打回契约不因顺颁容错而放松。"""
+    """#1397 负向边界：打回契约不因顺颁容错而放松。
+
+    只给缘由、不给完整打回契约（受影响方 + typed 判据快照）的判决必须被拒，
+    且一条 verdict 都不落账——区分度是**拒收后颁布格与判决表仍为空**这条
+    结构化事实，不靠报错措辞（#1889）。
+    """
     db, state, _content = game
     dossier_id = _dossier(db, state)
     dossiers = db.dossiers.list_dossiers(status="proposed")
     context = decree_mod.build_promulgation_judge_context(db, state, dossiers)
 
-    with pytest.raises(
-        decree_mod.LLMContractError,
-        match=r"affected_parties 必须为非空|完整 typed 判据快照|未知字段",
-    ):
+    with pytest.raises(decree_mod.LLMContractError):
         decree_mod.validate_promulgation_verdicts(
             [{"dossier_id": dossier_id, "decision": "rejected", "reason": "仅有缘由"}],
             dossiers, db, prepared_context=context,
         )
+
+    after = db.dossiers.get(dossier_id)
+    assert after["promulgation_decision"] == "", after["promulgation_decision"]
+    assert db.dossiers.decisions(dossier_id) == []
 
 
 def test_gate_reconsideration_removes_only_named_opponent_and_keeps_real_bench(game):

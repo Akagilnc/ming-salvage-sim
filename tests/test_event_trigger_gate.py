@@ -553,7 +553,11 @@ def test_load_event_rejects_non_boolean_open_window(monkeypatch):
 
 
 def test_load_event_rejects_strategic_foreign_situation(monkeypatch):
-    """战略/外敌分类只允许 node/ending，不能被 situation 静默吞掉。"""
+    """战略/外敌分类只允许 node/ending，不能被 situation 静默吞掉。
+
+    区分度是**入参本身**（trigger_class=strategic_foreign 配 event_type=situation
+    这一对矛盾组合），不在报错措辞（#1889）。
+    """
     import pytest
     import ming_sim.content as content_mod
     bad = [{"id": "e", "title": "t", "kind": "k", "summary": "s",
@@ -562,7 +566,7 @@ def test_load_event_rejects_strategic_foreign_situation(monkeypatch):
             "event_type": "situation",
             "trigger_class": "strategic_foreign"}]
     monkeypatch.setattr(content_mod, "load_json_asset", lambda *a, **k: bad)
-    with pytest.raises(SystemExit, match=r"strategic_foreign.*situation|node/ending"):
+    with pytest.raises(SystemExit):
         content_mod.load_event_content("x.json")
 
 
@@ -588,6 +592,8 @@ def test_load_event_rejects_latest_before_earliest(monkeypatch):
     ("trigger_end_month", -1),
 ])
 def test_load_event_rejects_month_out_of_range(monkeypatch, field, value):
+    """月份越界整份拒收。区分度是参数化的 (field, value) 本身（13 / -1 各跑一遍），
+    不在报错措辞（#1889）。"""
     import pytest
     import ming_sim.content as content_mod
     bad = [{"id": "e", "title": "t", "kind": "k", "summary": "s",
@@ -598,7 +604,7 @@ def test_load_event_rejects_month_out_of_range(monkeypatch, field, value):
             "trigger_gate": {"民心": "<=5"}}]
     bad[0][field] = value
     monkeypatch.setattr(content_mod, "load_json_asset", lambda *a, **k: bad)
-    with pytest.raises(SystemExit, match=f"{field}.*0.*12"):
+    with pytest.raises(SystemExit):
         content_mod.load_event_content("x.json")
 
 
@@ -1851,12 +1857,16 @@ def test_issue_194_strategic_foreign_events_are_explicitly_classified_and_gated(
 
 
 def test_strategic_foreign_classification_requires_outcome_targets(content, monkeypatch):
-    """PR R3：trigger_class 是内容真源，消费者 target map 漏项必须启动期 fail-loud。"""
+    """PR R3：trigger_class 是内容真源，消费者 target map 漏项必须启动期 fail-loud。
+
+    区分度是**被挖掉的那一项**（从 target map 里 pop 掉 luoyang_fallen 再 bind），
+    不在报错措辞（#1889）。
+    """
     targets = dict(issues._STRATEGIC_FOREIGN_NODE_OUTCOME_TARGETS)
     targets.pop("luoyang_fallen")
     monkeypatch.setattr(issues, "_STRATEGIC_FOREIGN_NODE_OUTCOME_TARGETS", targets)
 
-    with pytest.raises(SystemExit, match="luoyang_fallen.*outcome target"):
+    with pytest.raises(SystemExit):
         issues.bind_content(content)
 
 

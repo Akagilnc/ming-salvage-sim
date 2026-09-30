@@ -342,7 +342,8 @@ def test_connection_rollback_attempts_all_runtime_callbacks(game):
     db.conn.execute("BEGIN")
     db.conn._runtime_rollback_callbacks = [first, broken, last]
 
-    with pytest.raises(RuntimeError, match="runtime rollback callback"):
+    # 区分度是紧随其后的 calls 顺序断言（三个 callback 全部被尝试），不是报错措辞（#1889）。
+    with pytest.raises(RuntimeError):
         db.conn.rollback()
 
     assert calls == ["last", "broken", "first"]
@@ -366,7 +367,7 @@ def test_connection_commit_attempts_all_runtime_callbacks(game):
     db.conn.execute("BEGIN")
     db.conn._runtime_commit_callbacks = [first, broken, last]
 
-    with pytest.raises(RuntimeError, match="runtime commit callback failed"):
+    with pytest.raises(RuntimeError):
         db.conn.commit()
 
     assert calls == ["first", "broken", "last"]

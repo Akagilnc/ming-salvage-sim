@@ -516,9 +516,9 @@ def test_startup_catchup_uses_ticketed_gate_not_bare(web_game, monkeypatch):
 
 
 def test_ticketed_write_gate_rejects_none(web_game):
-    """无票不得回落裸 runtime write_gate。"""
+    """无票不得回落裸 runtime write_gate。区分度是**传进去的就是 None**，不是报错措辞（#1889）。"""
     game = web_game
-    with pytest.raises(RuntimeError, match="live WriteTicket"):
+    with pytest.raises(RuntimeError):
         game._ticketed_write_gate(None)  # type: ignore[arg-type]
 
 

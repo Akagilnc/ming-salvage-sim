@@ -71,6 +71,23 @@ hermes proxy 当 OpenAI 兼容后端：`hermes proxy start --provider nous|xai`�
 
 正向口径：切片只跑聚焦；全量在最终待合并状态跑到绿（失败/修复后重跑）。同构于仓外 `ak-pi-workflow-roles` 司天家族测试策略（该仓 #215 provenance）；worker prompt / reviewer 验收面属外部编排器仓，由其维护，本仓不改。
 
+### 断言行为，不锁文案（#1889，全局硬规 #13 /《质量法·测试对行为负责》）
+
+**禁**：对生产代码自己拼装的**自由文本报错**做 `match=` 依赖——措辞一改就假红，且测不到真行为。判据是「这句文案会不会被人改」：会，就不能进断言。
+
+**正确区分度从哪来**（择一即可，优先级由高到低）：
+
+1. **异常类型**本身（`pytest.raises(ValueError)`）——多数「这条输入必须被拒」够用。
+2. **结构化后置断言**：拒收后零落库 / 名册原样 / 颁布格仍为空 / 紧随其后的 `assert calls == [...]` 调用顺序。
+3. **用例自身的入参形状**：参数化的 `(field, value)`、monkeypatch 换掉的对象、矛盾组合。区分度写在 docstring 里，指明「区分度来自 X」。
+
+**允许保留 `match=` 的两类**（契约负向案，删掉反而测不到东西）：
+
+- **测试自注入的失败哨兵**：`monkeypatch` 自己抛出该异常，用 `match=` 匹配它就是证明「注入的失败真的传播到了这一层」。判别方法：**去掉 `match=` 那一行后，该 token 仍出现在测试文件里**（即测试自己写的）。
+- **机器记号**：字段名、枚举值、SQL 关键字、CLI flag、错误码（`decision_key`、`executing`、`--runner`、`BEGIN`）。这类不是自由文本，不随人改。
+
+判别可疑项的机械办法：`grep -v 'match='` 后 token 若仍在测试里 → 哨兵；token 无空格且是标识符/枚举 → 机器记号；两者皆否 → 是生产文案绑定，须改掉。
+
 ## ship-pre DoD 全闭环点检（#911 自项目 CLAUDE.md 迁出 → DEV_WORKFLOW；PR #1193 迁回）
 
 进 ship-pre / CMR 评审循环前必须确认 feature 全闭环完成，不是「核心写路径接通」就进。Definition of Done = 所有闭环面都齐——**写入端 + 读取端 + 恢复端 + 真实 extractor 输出 + UI/呈现端 + 文档契约**，缺一面都不算 ship-ready。
