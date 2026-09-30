@@ -1211,8 +1211,16 @@ class GameSession:
             user_message_id = self.db.append_chat_message(
                 speaker, accepted_turn, "user", message,
             )
+            if chat_turn_id:
+                # 关联问话与 append 同在保护内：这一写失败时句柄尚未返回，调用方
+                # 无从终态化本轮——留 status=generating、user_message_id=null 的
+                # 孤儿轮，_audience_turn_in_flight 会把本夜永久判为「上一轮仍在
+                # 进行」，下一次问话直接被拒（#1902 F2）。
+                self.db.update_chat_turn_messages(
+                    chat_turn_id, user_message_id=user_message_id,
+                )
         except BaseException as error:
-            # 建轮成功但问话落库失败：就地终态化本轮（否则留下 status=generating 的
+            # 建轮成功但问话落库/关联失败：就地终态化本轮（否则留下 status=generating 的
             # 孤儿轮，_audience_turn_in_flight 会把本夜永久判为「上一轮仍在进行」）。
             if chat_turn_id:
                 self.db.record_chat_turn_rollback_diffs(
@@ -1223,10 +1231,6 @@ class GameSession:
                     self, self.db.fail_chat_turn(chat_turn_id),
                 )
             raise error
-        if chat_turn_id:
-            self.db.update_chat_turn_messages(
-                chat_turn_id, user_message_id=user_message_id,
-            )
         return AudienceChatTurn(
             chat_turn_id=int(chat_turn_id or 0),
             accepted_turn=accepted_turn,
@@ -1238,18 +1242,25 @@ class GameSession:
     def complete_audience_chat_turn(
         self, turn: AudienceChatTurn, message_speaker: str, reply: str,
         result: Optional["ChatTurnResult"] = None,
+        *, schedule_translation: bool = True,
     ) -> int:
         """回话落定：persist 回话 → 记回滚差异 → 冲刷后台转译。回传回话消息 id。
 
         ``message_speaker`` 是 chat_messages 的归属（与建轮的「殿上」身份分开，
         见 begin_audience_chat_turn 的 T1 说明）；chat_turn 本身靠 turn 句柄定位，
         不按名字反查。
+
+        #1902 F2：落回话与记回滚差异这两步是**共核**——Web 与 CLI 都经本方法，
+        不再各自 persist 一遍。此前 Web 的 ``_chat_payload`` 自建 persist + 自建
+        ``_record_chat_rollback_items``，与 CLI 那份同形不同源。
+        ``schedule_translation=False`` 给在闸内、须自行安排转译时机的调用方
+        （Web 流式/重试：转译要挂在闸外），落库与回滚差异仍同一条路。
         """
         minister_message_id = 0
         if turn.chat_turn_id and hasattr(self.db, "persist_minister_reply"):
-            self.db.persist_minister_reply(
+            minister_message_id = int(self.db.persist_minister_reply(
                 message_speaker, turn.accepted_turn, reply, turn.chat_turn_id,
-            )
+            ) or 0)
         else:
             minister_message_id = int(self.db.append_chat_message(
                 message_speaker, turn.accepted_turn, "minister", reply,
@@ -1263,9 +1274,54 @@ class GameSession:
                 turn.chat_turn_id, turn.before_snapshot,
                 self.db.capture_chat_rollback_snapshot(),
             )
-        if result is not None:
+        if result is not None and schedule_translation:
             self.schedule_pending_scene_translation(result)
         return minister_message_id
+
+    def pending_audience_reply_retries(self) -> List[Dict[str, Any]]:
+        """本夜召对轮里待重试的中断回话（问话已落、回话未落）——两端共核取数。
+
+        #1902 F2：建轮归属恒为「殿上」（见 begin_audience_chat_turn 的 T1 说明），
+        而问话/回话挂被召大臣名。此前 CLI 拿大臣名去查 ``get_interrupted_reply_retries``
+        ——按 ``chat_turns.minister_name`` 过滤永远查不到殿上建的轮，实际中断问话
+        不可重试（探针：hall 1 / selected_minister 0）。
+
+        取数与归属判定的落差只此一处：按建轮归属在本夜轮里取，并给回话带回原问话的
+        归属（``message_speaker``），供重试时把回话挂回同一位大臣。入口只读。
+        """
+        from ming_sim.audience_night import SCENE_CHAT_SPEAKER, get_open_night
+
+        if not hasattr(self.db, "get_interrupted_reply_retries"):
+            return []
+        night = get_open_night(self.db) if hasattr(self.db, "conn") else None
+        if night is None:
+            return []
+        hall_ids = {
+            int(row["id"]) for row in self.db.list_hall_chat_turns(int(night["id"]))
+        }
+        if not hall_ids:
+            return []
+        retries = [
+            row for row in self.db.get_interrupted_reply_retries(SCENE_CHAT_SPEAKER)
+            if int(row["chat_turn_id"]) in hall_ids
+        ]
+        out: List[Dict[str, Any]] = []
+        for row in retries:
+            item = dict(row)
+            item["message_speaker"] = self._chat_message_speaker(
+                int(row.get("user_message_id") or 0),
+            ) or SCENE_CHAT_SPEAKER
+            out.append(item)
+        return sorted(out, key=lambda item: int(item["chat_turn_id"]))
+
+    def _chat_message_speaker(self, message_id: int) -> str:
+        """chat_messages 某行的归属大臣名；无此行/无 conn 时返回空串。"""
+        if not message_id or not hasattr(self.db, "conn"):
+            return ""
+        row = self.db.conn.execute(
+            "SELECT minister_name FROM chat_messages WHERE id = ?", (int(message_id),),
+        ).fetchone()
+        return str(row["minister_name"] or "") if row else ""
 
     def fail_audience_chat_turn(
         self, turn: AudienceChatTurn, *, replied: bool = False,
@@ -2675,6 +2731,23 @@ class GameSession:
             return target
         except Exception:
             return None
+
+    # #1902 F2：CLI 读档成功后把读档得到的新会话挂在这里，由 play_turn 取走交还
+    # run_cli（活会话换了）。非 CLI 入口不用此槽。
+    pending_loaded_session: Optional["GameSession"] = None
+
+    def save_to(self, name: str) -> Dict[str, object]:
+        """手动存档到 ``saves/<name>.db``（#1902：两端共用；入口只管取名与呈现）。
+
+        存档名清洗与路径拼装真源在 ``paths.save_slot_path``，Web 菜单、CLI 入口与
+        会话层同用一份（Web 对外仍把自己的非法名翻成 400）。
+        """
+        from ming_sim.paths import safe_save_name, save_slot_path
+
+        safe = safe_save_name(str(name or "").strip())
+        target = save_slot_path(safe)
+        self.db.backup_to(target)
+        return {"name": safe, "path": target}
 
     def close(self, *, write_gate_already_held: bool = False) -> None:
         """排空本会话已受理工作，再关闭全部数据库资源。"""

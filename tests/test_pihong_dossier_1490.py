@@ -2594,7 +2594,7 @@ def test_658_free_decree_capture_target_dossier_real_entry(game, monkeypatch):
     from ming_sim.session_write_queue import get_session_write_queue
     web_game = types.SimpleNamespace(db=db, state=state, content=content, session=session, directive_rows=lambda: db.list_directives(state, statuses=('pending', 'draft')), directive_payload=lambda row: dict(row))
     web_game._write_gate = get_session_write_queue(web_game).write_gate
-    # #1902：拟诏台 Web 入口退役，改经共享抽取核 + 会话写入面落同一条 draft。
+    # #1902：摆一条 draft 作**测试数据准备**（拟诏台入口已退役，玩家拟旨只从召对来）。
     from tests.directive_entry_helpers import stage_draft_directive
 
     dir_id = stage_draft_directive(session, text_in).id

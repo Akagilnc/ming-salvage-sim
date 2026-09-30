@@ -201,7 +201,7 @@ def _finish_month_after_gazette(game, turn: int) -> None:
 
 
 def _post_directive(game, text: str) -> None:
-    """#1902：拟诏台 Web 入口退役，改经共享抽取核 + 会话写入面落同一条 draft。"""
+    """#1902：摆一条 draft 作**测试数据准备**（拟诏台入口已退役，玩家拟旨只从召对来）。"""
     from tests.directive_entry_helpers import stage_draft_directive
 
     stage_draft_directive(game.session, text)

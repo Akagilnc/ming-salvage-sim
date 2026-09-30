@@ -346,7 +346,7 @@ def test_manual_owner_example_seal_advances(tracer_client, monkeypatch):
 
     monkeypatch.setattr(cli_backend, "capture_manual_directive_payload", _real_capture)
     monkeypatch.setattr(cli_backend, "_run_backend_for_config", backend)
-    # #1902：拟诏台 Web 入口退役，改经共享抽取核 + 会话写入面落同一条 draft。
+    # #1902：摆一条 draft 作**测试数据准备**（拟诏台入口已退役，玩家拟旨只从召对来）。
     from tests.directive_entry_helpers import stage_draft_directive
 
     stage_draft_directive(game.session, "着户部继续核查陕西赈务，按月具报。")
@@ -426,7 +426,7 @@ def test_http_manual_directive_lands_beyond_fifteen_initiatives_1790(
 
     monkeypatch.setattr(cli_backend, "capture_manual_directive_payload", _real_capture)
     monkeypatch.setattr(cli_backend, "_run_backend_for_config", backend)
-    # #1902：拟诏台 Web 入口退役，改经共享抽取核 + 会话写入面落同一条 draft。
+    # #1902：摆一条 draft 作**测试数据准备**（拟诏台入口已退役，玩家拟旨只从召对来）。
     from tests.directive_entry_helpers import stage_draft_directive
 
     stage_draft_directive(game.session, "着户部继续核查陕西赈务，按月具报。")

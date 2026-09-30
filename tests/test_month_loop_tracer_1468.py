@@ -317,7 +317,7 @@ def _play_one_month(
     # 顺序 tracer 只验证真实入口和结构化月推进结果。
     _wait_pending_writes(game)
 
-    # #1902：拟诏台 Web 入口退役，改经共享抽取核 + 会话写入面落同一条 draft。
+    # #1902：摆一条 draft 作**测试数据准备**（拟诏台入口已退役，玩家拟旨只从召对来）。
     from tests.directive_entry_helpers import stage_draft_directive
 
     stage_draft_directive(game.session, f"着户部清核辽饷（{month_label}）。")

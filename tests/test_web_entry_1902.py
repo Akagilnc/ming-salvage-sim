@@ -49,9 +49,14 @@ def test_save_name_guard_is_single_source(name):
 
 
 def test_game_save_name_shares_module_guard_behaviour():
-    """WebGame._safe_save_name 与菜单页同一份规则：同拒同放（行为面断言）。"""
+    """WebGame._safe_save_name 与菜单页同一份规则：同拒同放（行为面断言）。
+
+    经 WebGame 实例这个**入口面**调，不碰模块私有函数本身（#1902 F4：原用例直接
+    调 ``web_app._safe_save_name`` 再拿 WebGame 转发比一遍，是 helper-only）。
+    """
     game = object.__new__(web_app.WebGame)
-    assert game._safe_save_name(" 关宁 1629 ") == web_app._safe_save_name(" 关宁 1629 ")
+    # 清洗规则：只留字母/数字/._-，两端空格与内部空格都被剔除（真源同一份）。
+    assert game._safe_save_name(" 关宁 1629 ") == "关宁1629"
     for bad in ("../x", ".hidden"):
         with pytest.raises(HTTPException) as exc:
             game._safe_save_name(bad)
@@ -94,11 +99,12 @@ def test_manual_directive_routes_are_retired(method):
 def test_runtime_config_projection_has_single_source():
     """runtime json → LLMConfig 只在 llm_config 一处实现（#1902）。
 
-    行为面：web 入口建的配置就是核内那个投影的产物（同一对象身份 + 同一投影语义）。
+    行为面：投影函数的**行为**对两端一致——同一份运行档，经 Web 建局那条与直接调
+    共核投影得到同一执行事实。（不再断言 ``web_app._llm_config_from_runtime is
+    llm_config_from_runtime`` 这种对象身份：换了层转发就红，而行为没变。）
     """
     from ming_sim.llm_config import llm_config_from_runtime
 
-    assert web_app._llm_config_from_runtime is llm_config_from_runtime
     runtime = {
         "channel": "cli",
         "cli": {"runner": "codex", "model": "m-x", "timeout_seconds": 240},
@@ -108,8 +114,16 @@ def test_runtime_config_projection_has_single_source():
         thinking_level="", advanced_model="", advanced_base_url="",
         advanced_api_key="", advanced_thinking_level="",
     )
-    assert built.channel == "cli" and built.cli_runner == "codex"
-    assert built.api_key == "", "CLI 通道不留 API key"
+    # Web 侧那层薄转发与直接调共核投影，同档同参 → 同结果。
+    direct = llm_config_from_runtime(
+        runtime, base_url="", model="api-fallback", api_key="", timeout_seconds=180,
+        thinking_level="", advanced_model="", advanced_base_url="",
+        advanced_api_key="", advanced_thinking_level="",
+    )
+    assert built.channel == direct.channel == "cli"
+    assert built.cli_runner == direct.cli_runner == "codex"
+    assert built.cli_model == direct.cli_model == "m-x"
+    assert built.api_key == direct.api_key == "", "CLI 通道不留 API key"
 
 
 @pytest.mark.parametrize("method", ["POST"])
@@ -163,11 +177,13 @@ def test_settlement_abort_sse_carries_typed_keys_not_deadlock_409():
 
 
 def test_session_manual_draft_mutators_are_gone():
-    """#1902：会话层 add/update_directive 随手写入口退役而删（拟诏台只余删旧草稿）。"""
+    """#1902：会话层 add/update_directive 随手写入口退役而删（拟诏台只余删旧草稿）。
+
+    退役的**外部可见面**是路由不注册（见 ``test_manual_directive_routes_are_retired``）；
+    此处只补一句「删旧草稿仍在」——它是玩家现役能力，缺了就红。
+    """
     from ming_sim.session import GameSession
 
-    assert not hasattr(GameSession, "add_directive")
-    assert not hasattr(GameSession, "update_directive")
     assert hasattr(GameSession, "delete_directive"), "删旧草稿仍保留"
 
 

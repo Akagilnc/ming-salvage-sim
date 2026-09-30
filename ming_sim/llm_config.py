@@ -301,6 +301,26 @@ def _runtime_float(value: object, default: float) -> float:
         return default
 
 
+def _api_runtime_value(runtime: Dict[str, object], key: str, fallback: str) -> str:
+    """运行档 API 槽取该字段（按字符串读）；档里没有才回落入口入参/env。
+
+    ``load_runtime_llm`` 已把 api 槽同时铺成顶层 alias，故顶层读即为槽读；
+    这里只做「档内取值 + 回落」这一件事，落差由本函数一处决定。数值槽
+    （timeout_seconds）由调用方另走数值解析，不受这里的字符串化影响。
+    """
+    value = runtime.get(key)
+    if value is None:
+        return fallback
+    text = "" if value is str else str(value)
+    if not text:
+        return fallback
+    # 占位符 / 保留 sentinel 不当真实 key：stale cli-backend 或 __keep__ 不得
+    # 覆盖入口带来的真实 env key（否则 api 通道启动被清空报「未配 API key」）。
+    if key.endswith("api_key") and not is_real_api_key(text):
+        return fallback
+    return text
+
+
 def llm_config_from_runtime(
     runtime: Dict[str, Any],
     *,
@@ -318,6 +338,12 @@ def llm_config_from_runtime(
 
     WebGame 建局与 CLI 建局共用；web 侧不再留第二份同名实现。
     宿主只由运行档声明：channel + cli.runner；环境变量旧路（#1902 已退役）不参与。
+
+    **入参只是回落值，运行档优先**（#1902 F1）：地址、模型、key、超时、思考档与
+    advanced 槽一律先取运行档，档里没有才用入口传入/env 的值。此前这段「档覆盖入参」
+    的落差只写在 WebGame 里、游戏 CLI 直接把入参当最终值——同一份运行档经两端建局
+    得到不同执行事实（CLI 跑默认地址/默认模型/API 超时，Web 跑保存值）。落差归本
+    函数一处，两端入口不再各自拼档。
     """
     channel = str(runtime.get("channel") or "").strip().lower()
     if channel not in VALID_CHANNELS:
@@ -328,6 +354,18 @@ def llm_config_from_runtime(
     cli_slot = runtime.get("cli") if isinstance(runtime.get("cli"), dict) else {}
     cli_runner = str(cli_slot.get("runner") or ("agy" if channel == "cli" else "")).strip().lower()
     cli_model = str(cli_slot.get("model") or cli_model_from_env(cli_runner, model)).strip()
+    base_url = _api_runtime_value(runtime, "base_url", base_url)
+    model = _api_runtime_value(runtime, "model", model)
+    api_key = _api_runtime_value(runtime, "api_key", api_key)
+    # 超时是数值槽：档内有值就用档值（两端同一口径），否则回落入口/env 入参。
+    timeout_seconds = _runtime_float(
+        runtime.get("timeout_seconds"),
+        _runtime_float(timeout_seconds, API_DEFAULT_TIMEOUT_SECONDS),
+    )
+    thinking_level = _api_runtime_value(runtime, "thinking_level", thinking_level)
+    advanced_model = _api_runtime_value(runtime, "advanced_model", advanced_model)
+    advanced_base_url = _api_runtime_value(runtime, "advanced_base_url", advanced_base_url)
+    advanced_api_key = _api_runtime_value(runtime, "advanced_api_key", advanced_api_key)
     legacy_reasoning = (
         legacy_reasoning_strength({
             "advanced_model": advanced_model,

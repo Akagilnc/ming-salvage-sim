@@ -643,6 +643,9 @@ def test_cli_minister_chat_anchors_turn_to_night(game, monkeypatch):
         chat=chat, scene_chat=scene_chat,
         # #1842：persist 尾必调；轻壳无 pending 时 no-op。
         schedule_pending_scene_translation=lambda result: None,
+        # #1902 F2：中断重试取数已下沉会话层，入口不再自带查询；真会话方法在
+        # 轻壳上按「无中断可重试」返回空（与无夜/无 conn 同形）。
+        pending_audience_reply_retries=lambda: [],
     )
     answers = iter(["朕问卿边事如何？", "done"])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))

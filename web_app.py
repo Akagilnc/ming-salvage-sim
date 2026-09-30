@@ -45,7 +45,12 @@ from starlette.concurrency import run_in_threadpool
 
 from ming_sim.applier import atomic
 from ming_sim.constants import ROOT_DIR
-from ming_sim.paths import bundled_path, user_data_path, user_data_dir
+from ming_sim.paths import (
+    UnsafeSaveNameError,
+    bundled_path,
+    user_data_path,
+    user_data_dir,
+)
 from ming_sim.exceptions import DependencyMismatch, ExitGame, LLMUnavailable, SettlementAbort
 from ming_sim.llm_config import (
     CLI_DEFAULT_TIMEOUT_SECONDS,
@@ -673,11 +678,49 @@ def in_talent_pool(character: Character, db, current_year: int, current_period: 
 
 
 def _safe_save_name(name: str) -> str:
-    """存档名清洗唯一真源（#1902）：菜单页与 WebGame 同名校验曾各写一份。"""
-    cleaned = "".join(c for c in name.strip() if c.isalnum() or c in "._-")
-    if not cleaned or cleaned.startswith("."):
-        raise HTTPException(status_code=400, detail="存档名非法。仅允许字母/数字/._- ")
-    return cleaned
+    """存档名清洗真源在 ``paths.safe_save_name``（#1902：菜单页 / WebGame / CLI 共用）。
+
+    对外仍抛 HTTPException 400（Web 入口的形态）；非法名本身由共享核判定。
+    """
+    from ming_sim.paths import UnsafeSaveNameError, safe_save_name
+
+    try:
+        return safe_save_name(name)
+    except UnsafeSaveNameError as err:
+        raise HTTPException(status_code=400, detail=str(err))
+
+
+class _WebSaveSlotHost:
+    """#1902 F2：把 WebGame 的换库宿主能力适配给共享核 ``save_slots``。
+
+    编排（备份/热替换/失败恢复）在共享核；此处只答「Web 侧怎么拿写队列、结算准入
+    锁、在飞计数、怎么重建候选、怎么处置失败候选」，并把独占区里的结算在飞拒收
+    翻成 Web 的 409（共享核抛 RuntimeError 带同一文案）。
+    """
+
+    def __init__(self, game: "WebGame") -> None:
+        self.game = game
+
+    def write_queue(self, runtime: Any):
+        return get_session_write_queue(runtime)
+
+    def entry_lock(self, runtime: Any):
+        return runtime._settlement_entry_lock
+
+    def settlement_inflight(self, runtime: Any) -> int:
+        return int(runtime._settlement_entry_inflight or 0)
+
+    def rebuild(self, runtime: Any, llm_config: LLMConfig) -> None:
+        runtime._rebuild_session(llm_config)
+
+    def dispose_residual(self, runtime: Any, residual: Any) -> bool:
+        if residual is None:
+            return True
+        runtime._rebuild_residual_runtime = residual
+        return runtime._dispose_rebuild_residual()
+
+    def busy_detail(self) -> str:
+        return "月末结算或上一步写入进行中，请稍候再操作。"
 
 
 class WebGame:
@@ -711,20 +754,10 @@ class WebGame:
         thinking_level = os.environ.get("OPENAI_THINKING_LEVEL", "")
         advanced_thinking_level = os.environ.get("OPENAI_ADVANCED_THINKING_LEVEL", "")
         timeout_seconds = float(os.environ.get("OPENAI_TIMEOUT_SECONDS") or API_DEFAULT_TIMEOUT_SECONDS)
-        # 菜单写的 runtime_llm.json 优先于 env，让"在网页里改的配置"重启后仍生效。
+        # #1902 F1：「运行档优先、env/入参回落」的落差只在 llm_config_from_runtime
+        # 一处决定——两端入口不再各自把运行档拼一遍（此前只有 Web 做，CLI 直接把
+        # 入参当最终值，同一份档经两端建局得到不同执行事实）。
         runtime = load_runtime_llm()
-        base_url = runtime.get("base_url") or base_url
-        model = runtime.get("model") or model
-        # 占位符不当真 key：stale cli-backend 不该覆盖真实 env key（否则 api 通道
-        # 启动被清空报「未配 API key」，而 menu 用 env key 判 ready，二者矛盾）。
-        _rt_api_key = runtime.get("api_key")
-        api_key = _rt_api_key if is_real_api_key(_rt_api_key) else api_key
-        thinking_level = runtime.get("thinking_level") or thinking_level
-        advanced_model = runtime.get("advanced_model") or advanced_model
-        advanced_base_url = runtime.get("advanced_base_url") or advanced_base_url
-        advanced_api_key = real_api_key_or_empty(runtime.get("advanced_api_key")) or advanced_api_key
-        advanced_thinking_level = runtime.get("advanced_thinking_level") or advanced_thinking_level
-        timeout_seconds = float(runtime.get("timeout_seconds") or timeout_seconds)
         random.seed(int(os.environ.get("MING_SIM_SEED", "7")))
         os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
         self.db_path = db_path
@@ -834,10 +867,12 @@ class WebGame:
         return _safe_save_name(name)
 
     def save_to(self, name: str) -> Dict[str, Any]:
-        safe = self._safe_save_name(name)
-        target = os.path.join(self.saves_dir(), f"{safe}.db")
-        self.db.backup_to(target)
-        return {"name": safe, "path": target}
+        # #1902 F2：存档真源在会话层（CLI 与 Web 同一条），此处只把 Web 的
+        # 400 形态接上；名非法由共享核判。
+        try:
+            return dict(self.session.save_to(name))
+        except UnsafeSaveNameError as err:
+            raise HTTPException(status_code=400, detail=str(err))
 
     def delete_save(self, name: str) -> None:
         safe = self._safe_save_name(name)
@@ -889,68 +924,19 @@ class WebGame:
         return ok
 
     def _replace_database(self, destructive_replace: Callable[[], None]) -> None:
-        """Drain admitted work, then replace the main DB under one exclusive barrier."""
-        backup_fd, backup_path = tempfile.mkstemp(prefix="ming-hot-replace-", suffix=".db")
-        os.close(backup_fd)
-        old_session = self.session
-        old_config = old_session.llm_config
-        backup_complete = False
-        q = get_session_write_queue(self)
-        entry_lock = self._settlement_entry_lock
-        q.seal()
+        """Drain admitted work, then replace the main DB under one exclusive barrier.
 
-        def _replace() -> None:
-            nonlocal backup_complete
-            gate = q.write_gate
-            gate.acquire()
-            entry_lock.acquire()
-            try:
-                # 全局锁序固定为 gate → entry_lock（失败清理亦同序）。HTTP
-                # 预检不是安全边界；必须在此最终独占区拒绝预检后新进入的结算。
-                if int(self._settlement_entry_inflight or 0) > 0:
-                    raise HTTPException(
-                        status_code=409,
-                        detail="月末结算或上一步写入进行中，请稍候再操作。",
-                    )
-                # Backup and close share the same exclusive span: an admitted writer
-                # cannot change the snapshot between prepare and destructive replace.
-                self.db.backup_to(backup_path)
-                backup_complete = True
-                old_session.close(write_gate_already_held=True)
-                destructive_replace()
-                self._rebuild_session(old_config)
-            except Exception as replace_exc:
-                if not backup_complete:
-                    raise
-                try:
-                    # 恢复重建前必须处置失败候选；仍活则禁止改文件/二次 rebuild。
-                    if not self._dispose_rebuild_residual():
-                        logger.error(
-                            "hot replace recovery blocked: rebuild residual still live path=%s",
-                            self.db_path,
-                        )
-                        raise replace_exc
-                    _delete_sqlite_db_files_or_raise(self.db_path)
-                    shutil.copy2(backup_path, self.db_path)
-                    self._rebuild_session(old_config)
-                except Exception as recovery_exc:
-                    if recovery_exc is replace_exc:
-                        raise
-                    logger.exception("hot replace recovery failed")
-                    raise replace_exc from recovery_exc
-                raise
-            finally:
-                entry_lock.release()
-                gate.release()
+        #1902 F2：编排本身在共享核 ``ming_sim.save_slots.replace_database``（CLI 读档
+        与新档走同一条），此处只提供 Web 侧宿主能力：写队列、结算准入锁与在飞计数、
+        候选重建与失败候选处置。
+        """
+        from ming_sim.save_slots import SaveSlotBusyError, replace_database
 
         try:
-            q.barrier(_replace)
-        finally:
-            q.unseal()
-            try:
-                os.remove(backup_path)
-            except OSError:
-                logger.exception("failed to remove hot replace backup %s", backup_path)
+            replace_database(self, _WebSaveSlotHost(self), destructive_replace)
+        except SaveSlotBusyError as busy:
+            # 独占区里的结算在飞拒收：对外仍是 Web 的 409（前端与 tracer 据此分流）。
+            raise HTTPException(status_code=409, detail=busy.detail)
 
     def load_save(self, name: str) -> None:
         """从存档热替换主 DB；失败时恢复替换前的数据库与 runtime。"""
@@ -2059,6 +2045,7 @@ class WebGame:
         pending_action_id: int = 0,
         chat_turn_id: int = 0,
         accepted_turn: Optional[int] = None,
+        before_snapshot: Optional[Dict[str, Any]] = None,
         directive_confirmation_ambiguous: Optional[Dict[str, Any]] = None,
         decree_validation_failure: Optional[Dict[str, Any]] = None,
         secret_order_landing_recovery: Optional[Dict[str, Any]] = None,
@@ -2069,24 +2056,24 @@ class WebGame:
         # reply while can_undo_last_chat_turn is still false (#976 hold path
         # lengthens append_chat_message; background stream + early assert flaked
         # and tore down the shared DB under the worker → SIGSEGV).
-        minister_message_id = 0
+        # #1902 F2：落回话 + 记回滚差异经会话层共核方法（与 CLI 同一段），此处不再
+        # 自建一份 persist。单一事务插入回话、链接 turn 并升为 active，失败须上抛，
+        # 禁 catch 后仍返回成功。转译由调用方在闸外安排（schedule_translation=False）。
         turn = int(self.state.turn if accepted_turn is None else accepted_turn)
-        if chat_turn_id:
-            # 单一事务插入回话、链接 turn 并升为 active，避免提交后出现未链接回话。
-            # 失败须上抛，禁 catch 后仍返回成功。
-            minister_message_id = int(
-                self.db.persist_minister_reply(
-                    minister_name,
-                    turn,
-                    answer,
-                    chat_turn_id,
-                )
-            )
-        else:
-            # 无持久 chat_turn（如临时召见路径异常）：仅落消息，无可链接的任务。
-            minister_message_id = int(
-                self.db.append_chat_message(minister_name, turn, "minister", answer)
-            )
+        minister_message_id = GameSession.complete_audience_chat_turn(
+            self.session,
+            AudienceChatTurn(
+                chat_turn_id=int(chat_turn_id or 0),
+                accepted_turn=turn,
+                night_id=0,
+                before_snapshot=before_snapshot or {},
+                user_message_id=0,
+            ),
+            minister_name,
+            answer,
+            None,
+            schedule_translation=False,
+        )
         self.chat_history.setdefault(minister_name, []).append({"role": "minister", "content": answer})
         open_night = None
         if hasattr(self.db, "conn"):
@@ -2302,6 +2289,8 @@ class WebGame:
                         pending_action_id=getattr(result, "pending_action_id", 0),
                         chat_turn_id=chat_turn_id,
                         accepted_turn=accepted_turn,
+                        # #1902 F2：回滚差异由共核方法随落回话一起记，调用方不再另记一份。
+                        before_snapshot=before_snapshot,
                         directive_confirmation_ambiguous=getattr(
                             result, "directive_confirmation_ambiguous", None),
                         decree_validation_failure=getattr(
@@ -2309,8 +2298,6 @@ class WebGame:
                         secret_order_landing_recovery=getattr(
                             result, "secret_order_landing_recovery", None),
                     )
-                    # #505 finding1：与 chat 成功尾声同缝，记本次重试落下的副作用 diff，供日后撤回还原。
-                    self._record_chat_rollback_items(chat_turn_id, before_snapshot)
                 # #1842：回话落定后起后台转译（ADR 0155 / 0036）。
                 result._admitted_write_ticket = pending_ticket
                 self.session.schedule_pending_scene_translation(result)
@@ -2441,6 +2428,8 @@ class WebGame:
                     pending_action_id=int(getattr(result, "pending_action_id", 0) or 0),
                     chat_turn_id=chat_turn_id,
                     accepted_turn=accepted_turn,
+                    # #1902 F2：回滚差异由共核方法随落回话一起记，调用方不再另记一份。
+                    before_snapshot=before_snapshot,
                     directive_confirmation_ambiguous=getattr(
                         result, "directive_confirmation_ambiguous", None),
                     decree_validation_failure=getattr(
@@ -2448,7 +2437,6 @@ class WebGame:
                     secret_order_landing_recovery=getattr(
                         result, "secret_order_landing_recovery", None),
                 )
-                self._record_chat_rollback_items(chat_turn_id, before_snapshot)
         # #1842：回话落定后起后台转译（ADR 0155 / 0036）。
         result._admitted_write_ticket = admitted_ticket
         self.session.schedule_pending_scene_translation(result)
@@ -3964,35 +3952,12 @@ def _drop_live_pointer_if_unrecoverable(
 def _runtime_restorable(game: Any) -> bool:
     """#1749：失败 close 后可否恢复为活局——db 与 agno 都必须仍可用，且未进入 close 半态。
 
-    探测异常必 logger.exception（ADR 0005）；不得宽 catch 静默 False。
+    判定真源在共享核 ``save_slots.runtime_restorable``（#1902 F2：CLI 读档失败恢复
+    走同一条判据）；此处只做 Web 侧转发，探测异常的真因日志也归共享核（ADR 0005）。
     """
-    session = getattr(game, "session", None)
-    if session is None:
-        return False
-    if int(getattr(session, "_close_epoch", 0) or 0) > 0:
-        return False
-    db = getattr(session, "db", None)
-    conn = getattr(db, "conn", None) if db is not None else None
-    if conn is None:
-        return False
-    try:
-        conn.execute("SELECT 1")
-    except Exception:
-        logger.exception("runtime restorable probe: db.conn failed")
-        return False
-    agno = getattr(session, "agno_db", None)
-    if agno is None:
-        return False
-    engine = getattr(agno, "db_engine", None)
-    if engine is None:
-        return False
-    try:
-        with engine.connect() as c:
-            c.exec_driver_sql("SELECT 1")
-    except Exception:
-        logger.exception("runtime restorable probe: agno engine failed")
-        return False
-    return True
+    from ming_sim.save_slots import runtime_restorable
+
+    return runtime_restorable(game)
 
 
 def _archive_move_db_files(old_db_path: str) -> bool:

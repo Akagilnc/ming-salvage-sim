@@ -16,7 +16,8 @@ from fastapi.testclient import TestClient
 import ming_sim.cli_backend as cb
 import web_app
 from tests.cli_process_doubles import SilentUntilKilled, install_fake_cli_runner
-from tests.test_chat_stream_failpaths_393 import _parse_sse, _post_chat_stream
+from tests.sse_helpers import parse_sse_event_pairs as _parse_sse
+from tests.test_chat_stream_failpaths_393 import _post_chat_stream
 from tests.test_cli_transport_1465 import _cli_web_game
 
 # 受控时钟：每读一次表推进阈值的 1/4——判死落在第 4 次空转核查，时点确定不看真墙钟。

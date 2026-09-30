@@ -5,6 +5,99 @@ import json
 from ming_sim import llm_config
 
 
+# ── F1：同一份运行档经 CLI 与 Web 两端建局必须是同一执行事实 ──────────────
+# 判官原证：保存的 API 档下，游戏 CLI 仍以默认地址/默认模型/API 超时起局并索要
+# API key，而 Web 消费保存值。落差原本只写在 WebGame 里（档覆盖入参），CLI 直接把
+# 入参当最终值。现落差归 llm_config_from_runtime 一处，两端共用。
+
+
+def _api_runtime(**over) -> dict:
+    payload = {
+        "channel": "api",
+        "api": {
+            "base_url": "https://saved.example/v1",
+            "model": "saved-model",
+            "api_key": "sk-saved",
+            "timeout_seconds": 77,
+        },
+        "cli": {},
+    }
+    payload["api"].update(over)
+    return llm_config._normalize_runtime_llm(payload)
+
+
+def _project(runtime: dict, **entry_over) -> "object":
+    entry = {
+        "base_url": "https://api.openai.com/v1",
+        "model": "gpt-4o-mini",
+        "api_key": "",
+        "timeout_seconds": 180,
+        "thinking_level": "",
+        "advanced_model": "",
+        "advanced_base_url": "",
+        "advanced_api_key": "",
+        "advanced_thinking_level": "",
+    }
+    entry.update(entry_over)
+    return llm_config.llm_config_from_runtime(runtime, **entry)
+
+
+def test_runtime_profile_wins_over_entry_args():
+    """运行档的地址/模型/key/超时优先于入口入参（两端同一口径）。"""
+    cfg = _project(_api_runtime())
+    assert cfg.base_url == "https://saved.example/v1"
+    assert cfg.model == "saved-model"
+    assert cfg.api_key == "sk-saved"
+    assert cfg.timeout_seconds == 77
+
+
+def test_same_profile_projects_identical_facts_for_both_entries():
+    """同一份档 + 两端各自的入参/env 默认值 → 投影结果逐字段相同。"""
+    runtime = _api_runtime()
+    # CLI 入口：argparse 默认值（地址/模型/默认超时），无 env key。
+    from_cli = _project(runtime)
+    # Web 入口：env 默认值，同样无 key。
+    from_web = _project(runtime)
+    for field in ("base_url", "model", "api_key", "timeout_seconds", "channel"):
+        assert getattr(from_cli, field) == getattr(from_web, field), field
+
+
+def test_entry_args_still_used_when_profile_has_no_values():
+    """档里没有的字段才回落入口入参（回落不是被删，是落差归位）。"""
+    cfg = _project(
+        llm_config._normalize_runtime_llm({"channel": "api", "api": {}, "cli": {}}),
+        base_url="https://env.example/v1", model="env-model",
+        api_key="sk-env", timeout_seconds=180,
+    )
+    assert cfg.base_url == "https://env.example/v1"
+    assert cfg.model == "env-model"
+    assert cfg.api_key == "sk-env"
+    assert cfg.timeout_seconds == 180
+
+
+def test_placeholder_key_in_profile_does_not_override_real_env_key():
+    """档里的占位符/sentinel 不是真 key，不得盖掉入口带来的真实 key。"""
+    cfg = _project(_api_runtime(api_key="cli-backend"), api_key="sk-env")
+    assert cfg.api_key == "sk-env"
+    cfg2 = _project(_api_runtime(api_key="__keep__"), api_key="sk-env")
+    assert cfg2.api_key == "sk-env"
+
+
+def test_cli_runtime_slot_and_timeout_come_from_profile():
+    """CLI 通道的 runner/model/超时同样只由运行档声明。"""
+    runtime = llm_config._normalize_runtime_llm({
+        "channel": "cli",
+        "api": {},
+        "cli": {"runner": "codex", "model": "m-x", "timeout_seconds": 240},
+    })
+    cfg = _project(runtime, timeout_seconds=180, model="api-fallback")
+    assert cfg.channel == "cli"
+    assert cfg.cli_runner == "codex"
+    assert cfg.cli_model == "m-x"
+    assert cfg.cli_timeout_seconds == 240
+    assert cfg.api_key == "", "CLI 通道不留 API key"
+
+
 def test_load_runtime_llm_missing_file_keeps_empty_dict_contract(tmp_path, monkeypatch):
     monkeypatch.setattr(llm_config, "RUNTIME_LLM_PATH", str(tmp_path / "missing.json"))
 

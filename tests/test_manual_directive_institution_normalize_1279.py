@@ -10,11 +10,9 @@
 """
 
 from __future__ import annotations
-import threading
 
 import asyncio
 import json
-import types
 
 import pytest
 
@@ -48,8 +46,13 @@ def _mock_draft_intent(monkeypatch, *, text: str, roster):
     monkeypatch.setattr(cli_backend, "_run_backend_for_config", backend)
 
 
-def _web_create(game_tuple, monkeypatch, text: str):
-    import web_app
+def _stage_draft_and_read_back(game_tuple, monkeypatch, text: str):
+    """摆一条 draft 并回读库里的 draft/pending 行——**旧草稿场景的数据准备**。
+
+    #1902 F4：原名 `_web_create` 且在测试内自行拼装旧 Web 回执（`{"directive":…}`），
+    读起来像玩家现役入口仍在。拟诏台 Web 入口已退役，玩家拟旨只从召对来；此处
+    只为测抽取结构／属地归一，直接经共享抽取核 + 引擎写入面落库后读回真实行。
+    """
     from ming_sim.session import GameSession
 
     db, state, content = game_tuple
@@ -58,24 +61,16 @@ def _web_create(game_tuple, monkeypatch, text: str):
     session.state = state
     session.llm_config = None
     session.content = content
-    web_game = types.SimpleNamespace(
-        _write_gate=threading.Lock(),
-        db=db, state=state, content=content, session=session,
-        directive_rows=lambda: db.list_directives(
-            state, statuses=("pending", "draft"),
-        ),
-        directive_payload=lambda row: dict(row),
-    )
-    monkeypatch.setattr(web_app, "get_game", lambda: web_game)
-    # #1902：拟诏台 Web 入口退役，改经共享抽取核 + 会话写入面落同一条 draft。
     from tests.directive_entry_helpers import stage_draft_directive
 
     staged = stage_draft_directive(session, text)
-    return {"directive": {"id": staged.id, "text": staged.text, "status": staged.status},
-            "directives": [
-                {"id": int(r["id"]), "text": str(r["text"]), "status": str(r["status"])}
-                for r in db.list_directives(state, statuses=("pending", "draft"))
-            ]}
+    return {
+        "directive": {"id": staged.id, "text": staged.text, "status": staged.status},
+        "directives": [
+            {"id": int(r["id"]), "text": str(r["text"]), "status": str(r["status"])}
+            for r in db.list_directives(state, statuses=("pending", "draft"))
+        ],
+    }
 
 
 def _capture_ids(game, monkeypatch, *, text: str, roster):
@@ -136,8 +131,8 @@ def test_capture_manual_directive_drops_ministry_name_as_participant(game, monke
         assert "户部" not in ids
 
 
-def test_web_create_directive_accepts_ministry_subject_without_409(game, monkeypatch):
-    """拟旨落稿面（#1902 后经会话写入面）：着户部… 不得「参与人物不存在：户部」。"""
+def test_staged_draft_accepts_ministry_subject_without_rejection(game, monkeypatch):
+    """抽取+落库面：着户部… 不得「参与人物不存在：户部」。"""
     db, _state, _content = game
     text = "着户部核清太仓实存，边饷优先"
     _mock_draft_intent(
@@ -145,7 +140,7 @@ def test_web_create_directive_accepts_ministry_subject_without_409(game, monkeyp
         roster=[{"character_id": "户部", "tier": "主办"}],
     )
 
-    result = _web_create(game, monkeypatch, text)
+    result = _stage_draft_and_read_back(game, monkeypatch, text)
     assert result["directive"]["id"] > 0
     assert result["directive"]["text"] == text
     # ADR 0053 缝仍在：未知真名仍应拒——此处仅断言部院名不撞墙。

@@ -1,10 +1,16 @@
-"""#1902：拟诏台手写入口（CLI add/edit、Web POST|PATCH /api/directives）退役后的拟旨夹具。
+"""#1902：拟诏台手写入口（CLI add/edit、Web POST|PATCH /api/directives）退役后的**测试数据准备**。
 
-旧入口做的事只有两件：走共享抽取核 ``cli_backend.capture_manual_directive_payload``
-拿结构，再落一条 draft。两端入口退役后，会话层的 ``GameSession.add_directive`` /
-``update_directive`` 也随之零生产调用方而删，落库改走引擎面 ``db.add_directive``
-（成案准入补交 ``session._resubmit_draft_admission_failures`` 仍用同一抽取核）。
-本夹具即这两步的现役路径，被测契约（抽取结构／属地／参与人／准入补交）一条不少。
+**这不是玩家现役入口。** 两端手拟新旨入口已退役，玩家拟旨只从召对来（#1772）；
+仓内已无任何生产调用方走「手拟抽取 → 直接落 draft」这条链（`GameSession.add_directive`
+/ `update_directive` 随之删，落库走引擎面 `db.add_directive`）。
+
+仍在用的共享抽取核是 **成案准入补交** 那条：`session._resubmit_draft_admission_failures`
+→ `cli_backend.resubmit_draft_admission_payload`（按旧代码名整删会打断现役准入补交，
+故 `capture_manual_directive_payload` 作为其共用归一逻辑保留，非退役物）。
+
+因此本模块只提供**旧草稿场景的直接数据库准备**：把一条 draft 摆到库里，好让测
+抽取结构／属地／参与人／成案准入补交。调用点须自己说明是在准备旧稿数据，
+禁把这里的准备动作当成玩家入口来宣称。
 """
 
 from __future__ import annotations
@@ -22,7 +28,11 @@ def stage_draft_directive(
     llm_config: Any = None,
     notes: str = "",
 ):
-    """共享抽取核 → 会话写入面，落一条 draft 旨意（等价旧 Web POST /api/directives）。"""
+    """**测试数据准备**：经共享抽取核取结构，再落一条 draft。
+
+    这是旧草稿场景的摆库动作，不是玩家入口（旧入口退役前等价 Web POST
+    /api/directives）。要验玩家拟旨行为，须走召对话轮的真实落库路径。
+    """
     from ming_sim.cli_backend import capture_manual_directive_payload
 
     target_db = db if db is not None else getattr(session, "db", None)
@@ -40,8 +50,5 @@ def stage_draft_directive(
 
 
 def stage_draft_directive_or_raise(session: Any, text: str, **kwargs) -> Optional[int]:
-    """同 stage_draft_directive，但业务拒收（参与人不在册等）以 ValueError 上抛。
-
-    旧入口把它包成 HTTP 409；入口退役后调用方直接接 ValueError。
-    """
+    """同 stage_draft_directive，但落库拒收（参与人不在册等）以 ValueError 上抛。"""
     return stage_draft_directive(session, text, **kwargs).id

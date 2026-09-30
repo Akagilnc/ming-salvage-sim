@@ -7,7 +7,9 @@ play_turn 状态机搬入此处；GameSession 持游戏状态，terminal 只做 
 from __future__ import annotations
 
 import logging
+import os
 import re
+import threading
 from typing import List, Optional
 
 from ming_sim.constants import (
@@ -21,6 +23,7 @@ from ming_sim.context import match_minister_from_text
 from ming_sim.exceptions import ExitGame, LLMContractError, LLMUnavailable, SettlementAbort
 from ming_sim.models import API_DEFAULT_TIMEOUT_SECONDS, Character, GameState
 from ming_sim.session import (
+    AudienceChatTurn,
     GameSession,
     TurnPhase,
     _is_summonable_court_minister,
@@ -267,12 +270,13 @@ def _confirm_pending_directive(session: GameSession, draft, minister_name: str) 
     print(f"此旨已候结束本{TURN_UNIT}成案。\n")
 
 
-def _print_interrupted_reply_retry_hint(session: GameSession, minister_name: str) -> None:
-    """#505：CLI 系统层恢复提示——崩溃后问话保留，可输入「重试回话」重新生成。"""
-    db = getattr(session, "db", None)
-    if db is None or not hasattr(db, "get_interrupted_reply_retries"):
-        return
-    retries = db.get_interrupted_reply_retries(minister_name) or []
+def _print_interrupted_reply_retry_hint(session: GameSession) -> None:
+    """#505：CLI 系统层恢复提示——崩溃后问话保留，可输入「重试回话」重新生成。
+
+    取数走会话层 ``pending_audience_reply_retries``（#1902 F2）：建轮归「殿上」，
+    按大臣名反查中断轮永远查不到——入口不自己拼查询。
+    """
+    retries = session.pending_audience_reply_retries()
     if not retries:
         return
     last = retries[-1]
@@ -284,61 +288,59 @@ def _print_interrupted_reply_retry_hint(session: GameSession, minister_name: str
     )
 
 
-
 def _retry_interrupted_reply_cli(session: GameSession, minister_name: str) -> Optional[str]:
     """#505 CLI：复用已持久问话重新生成回话（与 web retry 同核语义：不重记问话）。
+
+    #1902 F2：轮身份按建轮归属（殿上）取，问话/回话仍挂大臣名；建轮、reopen、回话
+    落库、终态化与转译编排全走会话层共核方法，入口只接玩家输入与呈现
+    （不再自带一份 reopen→scene→persist→回滚 编排）。
 
     成功且 court_action 为 court_break 时返回 typed 'court_break'，供 minister_chat
     退出对话进入 play_turn 审阅；收夜失败仍返回 None，留在原对话。
     """
-    db = getattr(session, "db", None)
-    if db is None or not hasattr(db, "get_interrupted_reply_retries"):
-        print("当前会话不支持回话重试。\n")
-        return
-    retries = db.get_interrupted_reply_retries(minister_name) or []
+    from ming_sim.audience_night import SCENE_CHAT_SPEAKER
+
+    retries = session.pending_audience_reply_retries()
     if not retries:
         print(f"{minister_name}没有待重试的中断回话。\n")
-        return
+        return None
     target = retries[-1]
     chat_turn_id = int(target["chat_turn_id"])
     question = str(target["question"])
-    accepted_turn = int(target.get("turn") or session.state.turn)
+    # 回话挂回原问话的那位大臣（CLI 召对语义），不是建轮的殿上。
+    message_speaker = str(target.get("message_speaker") or "") or minister_name
+    db = session.db
+    if not db.reopen_interrupted_chat_turn_for_retry(chat_turn_id):
+        print(f"{minister_name}上一轮回奏仍在进行，请稍候再问。\n")
+        return None
     before_snapshot = (
         db.capture_chat_rollback_snapshot()
         if hasattr(db, "capture_chat_rollback_snapshot") else {}
     )
-    if not db.reopen_interrupted_chat_turn_for_retry(chat_turn_id):
-        print(f"{minister_name}上一轮回奏仍在进行，请稍候再问。\n")
-        return
+    turn = AudienceChatTurn(
+        chat_turn_id=chat_turn_id,
+        accepted_turn=int(target.get("turn") or session.state.turn),
+        night_id=0,
+        before_snapshot=before_snapshot,
+        user_message_id=int(target.get("user_message_id") or 0),
+    )
+    result = None
     try:
         result = session.scene_chat(
             question, chat_turn_id=chat_turn_id,
-            minister_name=minister_name,
+            minister_name=SCENE_CHAT_SPEAKER,
         )
-        answer = str(getattr(result, "answer", "") or "")
-        if hasattr(db, "persist_minister_reply"):
-            db.persist_minister_reply(minister_name, accepted_turn, answer, chat_turn_id)
-        else:
-            mid = db.append_chat_message(minister_name, accepted_turn, "minister", answer)
-            db.update_chat_turn_messages(chat_turn_id, minister_message_id=int(mid))
-        # #1842：回话落定后起后台转译（ADR 0155 / 0036）。
-        session.schedule_pending_scene_translation(result)
-        if hasattr(db, "record_chat_turn_rollback_diffs") and before_snapshot is not None:
-            db.record_chat_turn_rollback_diffs(
-                chat_turn_id, before_snapshot, db.capture_chat_rollback_snapshot(),
-            )
-        print(f"\n{minister_name}：{wrap(answer)}\n")
+        # 收口（回话落库 + 记回滚差异 + 冲刷后台转译）走共核方法，与 Web 同一段。
+        GameSession.complete_audience_chat_turn(
+            session, turn, message_speaker, str(getattr(result, "answer", "") or ""), result,
+        )
+        print(f"\n{message_speaker}：{wrap(str(getattr(result, 'answer', '') or ''))}\n")
     except Exception as exc:
-        # 失败翻回 interrupted 保持可再重试（与 web restore_interrupted_after_failed_retry 同语义）。
+        # 失败翻回 interrupted 保持可再重试（与 web 同语义）：终态化亦走共核方法。
         try:
-            if hasattr(db, "record_chat_turn_rollback_diffs") and before_snapshot is not None:
-                db.record_chat_turn_rollback_diffs(
-                    chat_turn_id, before_snapshot, db.capture_chat_rollback_snapshot(),
-                )
-            if hasattr(db, "restore_interrupted_after_failed_retry"):
-                restored_ids = db.restore_interrupted_after_failed_retry(chat_turn_id)
-                from ming_sim.decree_forecast import schedule_restored_decree_forecasts
-                schedule_restored_decree_forecasts(session, restored_ids)
+            GameSession.fail_audience_chat_turn(
+                session, turn, replied=result is not None, error=exc,
+            )
         except Exception:
             logger.exception(
                 "CLI retry rollback/forecast recovery failed chat_turn_id=%s", chat_turn_id,
@@ -386,7 +388,7 @@ def minister_chat(session: GameSession, character: Character, *, selected: bool 
     print("提示：陛下示意采纳后（如“准奏”），大臣会拟旨呈陛下核定。\n")
     # #505：入殿时显眼提示回话中断恢复入口（与 web ChatModal 同语义）。
     # #1353：欠账抽取无玩家手动补写面——过月内部 drain 唯一处理路。
-    _print_interrupted_reply_retry_hint(session, character.name)
+    _print_interrupted_reply_retry_hint(session)
     from ming_sim.audience_night import get_open_night, present_names_at
     night = get_open_night(session.db) if selected else None
     pending_xuan = selected and (
@@ -519,8 +521,171 @@ def minister_chat(session: GameSession, character: Character, *, selected: bool 
             return f"{'summon-temp' if is_temporary else 'summon'}:{result.next_minister}"
 
 
+def _cli_save(session: GameSession, name: str) -> None:
+    """CLI 存档：经会话层共享核落 saves/<name>.db（与 Web 同一条），入口只呈现。
+
+    名非法由共享核判（``paths.UnsafeSaveNameError``）；CLI 形态是打印一行提示，
+    不像 Web 那样抛 400——玩家在这里只是输错了一个名字，留在菜单里改就是了。
+    """
+    from ming_sim.paths import UnsafeSaveNameError
+
+    label = (name or "").strip()
+    if not label:
+        label = input("存档名> ").strip()
+    if not label:
+        print("未给存档名，已取消。\n")
+        return
+    try:
+        saved = session.save_to(label)
+    except UnsafeSaveNameError as err:
+        print(f"{err}\n")
+        return
+    print(f"已存档：{saved['name']}\n")
+
+
+class _CliRuntime:
+    """CLI 换库运行时容器（#1902 F2）。
+
+    共享核 ``save_slots.replace_database`` 认的是「持有 session / db_path 的宿主
+    包装」——Web 侧是 ``WebGame``，CLI 侧是它。读档成功后本容器与内层会话都被换成
+    读档后的新会话，故 :func:`_cli_load` 返回时要把新会话交还给调用方的持有变量。
+    """
+
+    def __init__(self, session: GameSession) -> None:
+        self.session = session
+        # GameSession 不自持 db_path 字段（换库目标就是它）；从主库连接反查真实路径。
+        self.db_path = str(session.db.path)
+
+    @property
+    def db(self):
+        """共享核读 ``runtime.db`` 做备份——活会话换了，主库连接也跟着换。"""
+        return self.session.db
+
+
+class _CliSaveSlotHost:
+    """#1902 F2：CLI 侧换库宿主能力（与 Web 共用 ``save_slots`` 编排）。
+
+    CLI 没有 Web 的结算准入在飞计数（召对/过月同步跑），故该计数恒 0；锁序与
+    Web 相同（write_gate → entry_lock），换库同样经会话写队列的 seal/barrier。
+    """
+
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+
+    def write_queue(self, runtime):
+        from ming_sim.session_write_queue import get_session_write_queue
+
+        return get_session_write_queue(runtime)
+
+    def entry_lock(self, runtime):
+        return self.lock
+
+    def settlement_inflight(self, runtime) -> int:
+        return 0
+
+    def rebuild(self, runtime, llm_config) -> None:
+        runtime.session = _cli_rebuild_session(runtime, llm_config)
+
+    def dispose_residual(self, runtime, residual) -> bool:
+        if residual is None:
+            return True
+        try:
+            residual.close()
+        except Exception:
+            logger.exception("CLI dispose rebuild residual close failed")
+            return False
+        return True
+
+    def busy_detail(self) -> str:
+        return "本夜收夜/过月进行中，暂不能换档。"
+
+
+def _cli_rebuild_session(runtime: "_CliRuntime", llm_config) -> GameSession:
+    """换库后重建活会话（与 Web ``_rebuild_session`` 同一形状，只不做网页呈现态）。
+
+    候选完整初始化后才发布；失败即关候选并照原错上抛。返回新会话交还持有方。
+
+    注意：共享核已在同一独占区里 ``old_session.close(write_gate_already_held=True)``
+    关过旧会话，**此处不得再 close 一次**——那会在已 seal 的队列上再进 barrier，
+    与正持有的 gate 自锁（实测挂死在 ``wait_prior``）。
+    """
+    from ming_sim.content import GameContent
+    from ming_sim.session_write_queue import get_session_write_queue
+
+    candidate = None
+    try:
+        candidate = GameSession(runtime.db_path, llm_config, content=GameContent.load())
+    except Exception:
+        if candidate is not None:
+            try:
+                candidate.close()
+            except Exception:
+                logger.exception("CLI rebuild candidate close failed")
+        raise
+    runtime.session = candidate
+    try:
+        candidate.begin_turn()
+    except Exception:
+        logger.exception("CLI rebuild: begin_turn on new session failed")
+        raise
+    _cli_write_gate(candidate)
+    return candidate
+
+
+def _cli_load(session: GameSession, name: str) -> Optional[GameSession]:
+    """CLI 读档：热替换主库（共享核 ``save_slots.replace_database``，与 Web 同一条）。
+
+    返回**读档后的新会话**（调用方须换掉自己持有的那个），失败返回 None——
+    此时共享核已还原替换前的库与 runtime，玩家留在原菜单。成功时旧会话已关闭。
+    """
+    import sqlite3
+
+    from ming_sim.paths import UnsafeSaveNameError, save_slot_path
+    from ming_sim.save_slots import replace_database
+
+    label = (name or "").strip()
+    if not label:
+        label = input("读档名> ").strip()
+    if not label:
+        print("未给读档名，已取消。\n")
+        return None
+    try:
+        source = save_slot_path(label)
+    except UnsafeSaveNameError as err:
+        print(f"{err}\n")
+        return None
+    if not os.path.isfile(source):
+        print(f"没有存档「{label}」。\n")
+        return None
+
+    runtime = _CliRuntime(session)
+
+    def _replace_from_save() -> None:
+        src_conn = sqlite3.connect(source)
+        dst_conn = sqlite3.connect(runtime.db_path)
+        try:
+            src_conn.backup(dst_conn)
+        finally:
+            src_conn.close()
+            dst_conn.close()
+
+    try:
+        replace_database(runtime, _CliSaveSlotHost(), _replace_from_save)
+    except Exception as err:
+        print(f"\n读档失败，已恢复原局：{err}\n")
+        return None
+    loaded = runtime.session
+    print(f"\n已读档：{label}（第 {int(loaded.state.turn)}{TURN_UNIT}）\n")
+    return loaded
+
+
 def review_directives(session: GameSession) -> str:
-    """诏书草案审阅界面。返回 'issue' | 'back' | 'skip'。"""
+    """诏书草案审阅界面。返回 'issue' | 'back' | 'skip' | 'loaded'。
+
+    #1902 F2：读档成功时把读档后的新会话挂到 ``session.pending_loaded_session``
+    （会话层的「换了活会话」槽），并返回 'loaded' 让调用方退出本回合交互——
+    旧回合的相位与候选全部作废。入口签名保持单参（测试与既有调用方不变）。
+    """
     session.enter_review()
     while True:
         directives = session.list_directives(include_pending=True)
@@ -545,13 +710,25 @@ def review_directives(session: GameSession) -> str:
             print("（暂无指令。back 继续召见，或 issue 结束本回合。）")
         # #1902 / #1812 待拍第 6 项：拟诏台手写新旨入口退役，CLI 只审阅与颁布；
         # 旨意只从召对来（#1772）。旧草稿仍可见、可删（#1826 承接草稿去向）。
-        print("\n操作：issue 结束回合 | back 继续召见 | del N 删 | exit 退出")
+        # #1902 F2：存读档也接共享核（与 Web 同一条），入口只取名与呈现。
+        print("\n操作：issue 结束回合 | back 继续召见 | del N 删 | save 名 存档 | load 名 读档 | exit 退出")
         raw = input("诏书草案> ").strip()
         if not raw:
             continue
         lowered = raw.lower()
         if lowered in EXIT_COMMANDS:
             raise ExitGame
+        if lowered in {"save", "存档"} or lowered.startswith("save "):
+            _cli_save(session, raw.split(maxsplit=1)[1] if " " in raw else "")
+            continue
+        if lowered in {"load", "读档"} or lowered.startswith("load "):
+            label = raw.split(maxsplit=1)[1] if " " in raw else ""
+            loaded = _cli_load(session, label)
+            if loaded is not None:
+                # 活会话换了：把新会话挂到旧会话的槽上，由 play_turn 取走。
+                session.pending_loaded_session = loaded
+                return "loaded"
+            continue
         if lowered in COURT_BREAK_COMMANDS:
             if drafts or pending or staged_directives:
                 print(f"本{TURN_UNIT}尚有候选旨意；退朝将按结束回合规则成案。请输入 issue。")
@@ -660,8 +837,12 @@ def _adjudicate_cli_decisions(session: GameSession, result) -> str:
     return session.submit_hitl_choices(choices, write_gate=_cli_write_gate(session))
 
 
-def play_turn(session: GameSession) -> None:
-    """一回合 CLI 驱动：召见 → 审阅 → 颁诏推演。"""
+def play_turn(session: GameSession) -> Optional[GameSession]:
+    """一回合 CLI 驱动：召见 → 审阅 → 颁诏推演。
+
+    #1902 F2：读档成功时返回**读档后的新会话**（活会话已换，旧回合上下文作废），
+    调用方 ``run_cli`` 据此换掉自己持有的会话；正常打完一回合返回 None。
+    """
     snap = session.begin_turn()
     _print_header(session)
     if session.previous_summary:
@@ -674,12 +855,16 @@ def play_turn(session: GameSession) -> None:
     show_active_issues(session.db)
 
     pending_character: Optional[Character] = None
+    def _review(sess: GameSession) -> str:
+        """走模块级 review_directives（测试可 monkeypatch 它，签名保持单参）。"""
+        return review_directives(sess)
+
     while True:
         if session.current_phase() == TurnPhase.SUMMONING:
             character = pending_character or choose_minister(session)
             pending_character = None
             if character is None:
-                action = review_directives(session)
+                action = _review(session)
             else:
                 chat_action = minister_chat(session, character, selected=True)
                 if chat_action == "dismiss":
@@ -688,12 +873,16 @@ def play_turn(session: GameSession) -> None:
                     pending_character = session.content.characters[chat_action.split(":", 1)[1]]
                     continue
                 # court_break 或对话结束 → 审阅
-                action = review_directives(session)
+                action = _review(session)
         else:
-            action = review_directives(session)
+            action = _review(session)
 
         if action == "back":
             continue
+        if action == "loaded":
+            # 读档已热替换主库并重建会话 → 本回合交互上下文全部作废，把新会话交还
+            # run_cli 后退出（它会重印引导、进入新局的第一回合）。
+            return getattr(session, "pending_loaded_session", None)
         if action == "skip":
             turn_before = int(session.state.turn)
             failed_before = _failed_secret_order_ids(session, turn_before)
@@ -788,6 +977,9 @@ def run_cli(
     try:
         # #1902：与 Web 建局同一条投影路（运行档 = 唯一运行配置），CLI 入口不再
         # 只认 API 通道——运行档选了 CLI 宿主就直接起局，不再索要 API key。
+        # F1：入参在此只是**回落值**；地址/模型/key/超时/思考档一律先取运行档
+        # （落差在 llm_config_from_runtime 一处决定），故同一份档经 Web 与 CLI
+        # 建局得到同一执行事实，不再是「CLI 跑默认地址+默认模型+API 超时」。
         runtime = load_runtime_llm()
         entry_args = {
             "base_url": base_url,
@@ -806,7 +998,6 @@ def run_cli(
             llm_config = llm_config_from_runtime(
                 runtime, **{**entry_args, "api_key": resolve_api_key(api_key)},
             )
-        import os
         os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
         session = GameSession(db_path, llm_config, start_ym=start_ym)
         # #1353 fold-in r8：建 session 即挂唯一 write_gate，trail/收夜/颁诏同穿。
@@ -828,7 +1019,12 @@ def run_cli(
         print(f"数据库：{db_path}\n")
         while True:
             turn_start = int(session.state.turn)
-            play_turn(session)
+            # #1902 F2：读档成功时 play_turn 交还读档后的新会话——活会话换了，
+            # 换掉本循环持有的引用（旧的已由读档路径关闭），继续玩新局面。
+            loaded = play_turn(session)
+            if loaded is not None:
+                session = loaded
+                continue
             if session.state.ended:
                 from ming_sim.context import ENDING_LABELS
                 label = ENDING_LABELS.get(session.state.ending_status, "结局")

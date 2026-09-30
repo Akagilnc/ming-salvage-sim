@@ -149,232 +149,192 @@ def test_review_issue_reaches_staged_directive_default_approval(monkeypatch):
     assert session.calls == ["enter_review"]
 
 
-def test_terminal_minister_chat_persists_messages_before_session_chat(monkeypatch):
+# #1902 F4：CLI 召对话轮此前用自写 Session/Db 薄壳重演一遍建轮/落库/回滚，
+# 既复刻了已迁会话层的实现，又让入口新增能力（如中断重试取数）无从生效——
+# 薄壳没有那个方法，测试直接 AttributeError。此处一律改走真 GameSession +
+# 真 GameDB（``game`` 夹具），只中和最外层 LLM 缝；断言落在独立读库的真实事实上。
+
+def _hall_session(game):
+    """真 GameSession 壳（真 db/state/content），供 CLI minister_chat 真跑。"""
+    from tests.month_chain_helpers import make_light_session
+
+    db, state, content = game
+    return make_light_session(db, state, content)
+
+
+def _chat_rows(db) -> list:
+    return [
+        (str(r["minister_name"]), int(r["turn"]), str(r["role"]), str(r["content"]))
+        for r in db.conn.execute(
+            "SELECT minister_name, turn, role, content FROM chat_messages ORDER BY id",
+        ).fetchall()
+    ]
+
+
+def _turn_statuses(db) -> list:
+    return [
+        str(r["status"]) for r in db.conn.execute(
+            "SELECT status FROM chat_turns ORDER BY id",
+        ).fetchall()
+    ]
+
+
+def _seed_prior_question(db, state, minister_name: str, text: str) -> None:
+    mid = db.append_chat_message(minister_name, int(state.turn) - 1, "user", text)
+    assert mid
+
+
+def test_terminal_minister_chat_persists_messages_before_session_chat(game, monkeypatch):
     """#407: CLI terminal 召对也要落 chat_messages。
 
     #1842：殿上走 scene_chat；user 行必须在调用前已落库，minister 行在回话后补上。
+    # 建轮归殿上、问话/回话挂被召大臣名——经真库读回验证，不盯入口内部编排。
     """
+    db, state, content = game
+    session = _hall_session(game)
+    minister_name = next(iter(content.characters))
+    question = "交给洪承畴督办陕西赈灾，东厂暗助护赈银。"
+    seen: dict = {}
 
-    class Db:
-        def __init__(self):
-            self.messages = []
+    def _scene_chat(message, *, chat_turn_id=0, stream_emit=None, minister_name=""):
+        # user 行必须此刻已在库里（回话生成前就落）。
+        seen["rows_before_reply"] = _chat_rows(db)
+        seen["chat_turn_id"] = chat_turn_id
+        return SimpleNamespace(
+            answer="臣领密旨，当令东厂暗中护送赈银。",
+            proposed_directive=None,
+            appointed_minister="",
+            registered_minister="",
+            displaced_minister="",
+            court_action="",
+            next_minister="",
+        )
 
-        def append_chat_message(self, minister_name, turn, role, content):
-            self.messages.append((minister_name, turn, role, content))
-            return len(self.messages)
-
-    class Session:
-        def __init__(self):
-            self.db = Db()
-            self.state = SimpleNamespace(turn=7)
-            self.content = SimpleNamespace(characters={"魏忠贤": object(), "韩爌": object()})
-
-
-        def scene_chat(self, question, *, chat_turn_id=0, stream_emit=None, minister_name=""):
-            assert self.db.messages == [
-                ("魏忠贤", 7, "user", "交给洪承畴督办陕西赈灾，东厂暗助护赈银。")
-            ]
-            return SimpleNamespace(
-                answer="臣领密旨，当令东厂暗中护送赈银。",
-                proposed_directive=None,
-                appointed_minister="",
-                registered_minister="",
-                displaced_minister="",
-                court_action="",
-                next_minister="",
-            )
-
-        def schedule_pending_scene_translation(self, result):
-            return _cli_schedule_pending_noop(self, result)
-
-    answers = iter(["交给洪承畴督办陕西赈灾，东厂暗助护赈银。", "done"])
+    session.scene_chat = _scene_chat  # type: ignore[method-assign]
+    session.schedule_pending_scene_translation = lambda result: None  # type: ignore[method-assign]
+    answers = iter([question, "done"])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
-    session = Session()
 
-    assert term.minister_chat(session, SimpleNamespace(name="魏忠贤")) == "dismiss"
-    assert session.db.messages == [
-        ("魏忠贤", 7, "user", "交给洪承畴督办陕西赈灾，东厂暗助护赈银。"),
-        ("魏忠贤", 7, "minister", "臣领密旨，当令东厂暗中护送赈银。"),
+    assert term.minister_chat(session, SimpleNamespace(name=minister_name)) == "dismiss"
+
+    assert seen["chat_turn_id"] >= 1
+    assert seen["rows_before_reply"] == [(minister_name, int(state.turn), "user", question)]
+    assert _chat_rows(db) == [
+        (minister_name, int(state.turn), "user", question),
+        (minister_name, int(state.turn), "minister", "臣领密旨，当令东厂暗中护送赈银。"),
     ]
 
 
-def test_terminal_minister_chat_removes_user_message_when_session_chat_fails(monkeypatch):
+def test_terminal_minister_chat_removes_user_message_when_session_chat_fails(game, monkeypatch):
     """失败的 CLI 召对只回滚本轮 user-only 半轮，不清历史。"""
+    db, state, content = game
+    session = _hall_session(game)
+    minister_name = next(iter(content.characters))
+    _seed_prior_question(db, state, minister_name, "前一轮召对内容")
+    question = "命洪承畴督办陕西赈灾，东厂暗助护赈银。"
 
-    class Db:
-        def __init__(self):
-            self.messages = [
-                ("魏忠贤", 6, "user", "前一轮召对内容"),
-            ]
+    def _scene_chat(message, *, chat_turn_id=0, stream_emit=None, minister_name=""):
+        raise RuntimeError("LLM down")
 
-        def append_chat_message(self, minister_name, turn, role, content):
-            self.messages.append((minister_name, turn, role, content))
-            return len(self.messages)
-
-        def delete_chat_messages(self, message_ids):
-            doomed = {int(mid) for mid in message_ids}
-            self.messages = [
-                msg for idx, msg in enumerate(self.messages, 1)
-                if idx not in doomed
-            ]
-
-    class Session:
-        def __init__(self):
-            self.db = Db()
-            self.state = SimpleNamespace(turn=7)
-            self.content = SimpleNamespace(characters={"魏忠贤": object(), "韩爌": object()})
-
-
-        def scene_chat(self, question, *, chat_turn_id=0, stream_emit=None, minister_name=""):
-            assert self.db.messages == [
-                ("魏忠贤", 6, "user", "前一轮召对内容"),
-                ("魏忠贤", 7, "user", "命洪承畴督办陕西赈灾，东厂暗助护赈银。"),
-            ]
-            raise RuntimeError("LLM down")
-
-        def schedule_pending_scene_translation(self, result):
-            return _cli_schedule_pending_noop(self, result)
-
-    answers = iter(["命洪承畴督办陕西赈灾，东厂暗助护赈银。"])
+    session.scene_chat = _scene_chat  # type: ignore[method-assign]
+    answers = iter([question])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
-    session = Session()
 
     with pytest.raises(RuntimeError, match="LLM down"):
-        term.minister_chat(session, SimpleNamespace(name="魏忠贤"))
+        term.minister_chat(session, SimpleNamespace(name=minister_name))
 
-    assert session.db.messages == [
-        ("魏忠贤", 6, "user", "前一轮召对内容"),
+    # 问话保留、本轮可重试（ADR 0036 中断恢复语义），且不留孤儿 generating 轮。
+    assert _chat_rows(db) == [
+        (minister_name, int(state.turn) - 1, "user", "前一轮召对内容"),
+        (minister_name, int(state.turn), "user", question),
     ]
+    assert db.list_in_flight_chat_turns() == []
+    assert _turn_statuses(db) == ["interrupted"]
 
 
-def test_terminal_minister_chat_removes_user_message_when_session_chat_interrupted(monkeypatch):
-    """Ctrl-C 中断中的 CLI 召对也不能留下 user-only 半轮。"""
+def test_terminal_minister_chat_removes_user_message_when_session_chat_interrupted(game, monkeypatch):
+    """Ctrl-C 中断中的 CLI 召对同样不得留下 user-only 孤儿轮。"""
+    db, state, content = game
+    session = _hall_session(game)
+    minister_name = next(iter(content.characters))
+    _seed_prior_question(db, state, minister_name, "前一轮召对内容")
+    question = "命洪承畴督办陕西赈灾，东厂暗助护赈银。"
 
-    class Db:
-        def __init__(self):
-            self.messages = [
-                ("魏忠贤", 6, "user", "前一轮召对内容"),
-            ]
+    def _scene_chat(message, *, chat_turn_id=0, stream_emit=None, minister_name=""):
+        raise KeyboardInterrupt()
 
-        def append_chat_message(self, minister_name, turn, role, content):
-            self.messages.append((minister_name, turn, role, content))
-            return len(self.messages)
-
-        def delete_chat_messages(self, message_ids):
-            doomed = {int(mid) for mid in message_ids}
-            self.messages = [
-                msg for idx, msg in enumerate(self.messages, 1)
-                if idx not in doomed
-            ]
-
-    class Session:
-        def __init__(self):
-            self.db = Db()
-            self.state = SimpleNamespace(turn=7)
-            self.content = SimpleNamespace(characters={"魏忠贤": object(), "韩爌": object()})
-
-
-        def scene_chat(self, question, *, chat_turn_id=0, stream_emit=None, minister_name=""):
-            assert self.db.messages == [
-                ("魏忠贤", 6, "user", "前一轮召对内容"),
-                ("魏忠贤", 7, "user", "命洪承畴督办陕西赈灾，东厂暗助护赈银。"),
-            ]
-            raise KeyboardInterrupt()
-
-        def schedule_pending_scene_translation(self, result):
-            return _cli_schedule_pending_noop(self, result)
-
-    answers = iter(["命洪承畴督办陕西赈灾，东厂暗助护赈银。"])
+    session.scene_chat = _scene_chat  # type: ignore[method-assign]
+    answers = iter([question])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
-    session = Session()
 
     with pytest.raises(KeyboardInterrupt):
-        term.minister_chat(session, SimpleNamespace(name="魏忠贤"))
+        term.minister_chat(session, SimpleNamespace(name=minister_name))
 
-    assert session.db.messages == [
-        ("魏忠贤", 6, "user", "前一轮召对内容"),
+    assert _chat_rows(db) == [
+        (minister_name, int(state.turn) - 1, "user", "前一轮召对内容"),
+        (minister_name, int(state.turn), "user", question),
     ]
+    assert db.list_in_flight_chat_turns() == []
+    assert _turn_statuses(db) == ["interrupted"]
 
 
-def test_terminal_minister_chat_preserves_chat_error_when_rollback_fails(monkeypatch):
-    """回滚删除失败不能盖掉原始 scene_chat/chat 异常。"""
+def test_terminal_minister_chat_preserves_chat_error_when_rollback_fails(game, monkeypatch):
+    """回滚终态化失败不能盖掉原始 scene_chat 异常。"""
+    db, state, content = game
+    session = _hall_session(game)
+    minister_name = next(iter(content.characters))
 
-    class Db:
-        def append_chat_message(self, minister_name, turn, role, content):
-            return 1
+    def _scene_chat(message, *, chat_turn_id=0, stream_emit=None, minister_name=""):
+        raise RuntimeError("LLM down")
 
-        def delete_chat_messages(self, message_ids):
-            raise RuntimeError("rollback failed")
+    def _boom_fail_chat_turn(_id):
+        raise RuntimeError("rollback failed")
 
-    class Session:
-        def __init__(self):
-            self.db = Db()
-            self.state = SimpleNamespace(turn=7)
-            self.content = SimpleNamespace(characters={"魏忠贤": object(), "韩爌": object()})
-
-
-        def scene_chat(self, question, *, chat_turn_id=0, stream_emit=None, minister_name=""):
-            raise RuntimeError("LLM down")
-
-        def schedule_pending_scene_translation(self, result):
-            return _cli_schedule_pending_noop(self, result)
-
+    session.scene_chat = _scene_chat  # type: ignore[method-assign]
+    monkeypatch.setattr(session.db, "fail_chat_turn", _boom_fail_chat_turn)
     answers = iter(["命洪承畴督办陕西赈灾，东厂暗助护赈银。"])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
 
     with pytest.raises(RuntimeError, match="LLM down"):
-        term.minister_chat(Session(), SimpleNamespace(name="魏忠贤"))
+        term.minister_chat(session, SimpleNamespace(name=minister_name))
 
 
-def test_terminal_minister_chat_reply_persist_failure_keeps_user_message(monkeypatch):
+def test_terminal_minister_chat_reply_persist_failure_keeps_user_message(game, monkeypatch):
     """大臣已回话后，minister 行落库失败不误删已落 user 行。"""
+    db, state, content = game
+    session = _hall_session(game)
+    minister_name = next(iter(content.characters))
+    question = "命洪承畴督办陕西赈灾，东厂暗助护赈银。"
+    deleted: list = []
 
-    class Db:
-        def __init__(self):
-            self.messages = []
-            self.deleted = False
+    def _scene_chat(message, *, chat_turn_id=0, stream_emit=None, minister_name=""):
+        return SimpleNamespace(
+            answer="臣领密旨，当令东厂暗中护送赈银。",
+            proposed_directive=None,
+            appointed_minister="",
+            registered_minister="",
+            displaced_minister="",
+            court_action="",
+            next_minister="",
+        )
 
-        def append_chat_message(self, minister_name, turn, role, content):
-            if role == "minister":
-                raise RuntimeError("reply persist failed")
-            self.messages.append((minister_name, turn, role, content))
-            return len(self.messages)
+    def _boom_persist(*_a, **_kw):
+        raise RuntimeError("reply persist failed")
 
-        def delete_chat_messages(self, message_ids):
-            self.deleted = True
-
-    class Session:
-        def __init__(self):
-            self.db = Db()
-            self.state = SimpleNamespace(turn=7)
-            self.content = SimpleNamespace(characters={"魏忠贤": object(), "韩爌": object()})
-
-
-        def scene_chat(self, question, *, chat_turn_id=0, stream_emit=None, minister_name=""):
-            return SimpleNamespace(
-                answer="臣领密旨，当令东厂暗中护送赈银。",
-                proposed_directive=None,
-                appointed_minister="",
-                registered_minister="",
-                displaced_minister="",
-                court_action="",
-                next_minister="",
-            )
-
-        def schedule_pending_scene_translation(self, result):
-            return _cli_schedule_pending_noop(self, result)
-
-    answers = iter(["命洪承畴督办陕西赈灾，东厂暗助护赈银。"])
+    session.scene_chat = _scene_chat  # type: ignore[method-assign]
+    session.schedule_pending_scene_translation = lambda result: None  # type: ignore[method-assign]
+    monkeypatch.setattr(session.db, "persist_minister_reply", _boom_persist)
+    monkeypatch.setattr(
+        session.db, "delete_chat_messages", lambda ids: deleted.append(list(ids)),
+    )
+    answers = iter([question])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
-    session = Session()
 
     with pytest.raises(RuntimeError, match="reply persist failed"):
-        term.minister_chat(session, SimpleNamespace(name="魏忠贤"))
+        term.minister_chat(session, SimpleNamespace(name=minister_name))
 
-    assert session.db.deleted is False
-    assert session.db.messages == [
-        ("魏忠贤", 7, "user", "命洪承畴督办陕西赈灾，东厂暗助护赈银。"),
-    ]
+    assert deleted == []
+    assert _chat_rows(db) == [(minister_name, int(state.turn), "user", question)]
 
 
 
@@ -578,19 +538,23 @@ def test_terminal_minister_chat_accepts_retry_reply_command(game, monkeypatch):
     night_id = int(night["id"])
     # 中断轮问话为收夜口令——retry 再生后 court_action=court_break。
     question = "退朝"
-    ct = db.create_chat_turn(
-        state, character.name, f"cli:{character.name}", 0,
-        night_id=night_id, status="generating",
-    )
-    mid = db.append_chat_message(character.name, state.turn, "user", question)
-    db.update_chat_turn_messages(ct, user_message_id=mid)
-    db.conn.execute("UPDATE chat_turns SET status='interrupted' WHERE id=?", (ct,))
-    db.conn.commit()
-
+    # #1902 F2/T1：中断轮按现役形状建——建轮归「殿上」、问话挂大臣名。
+    # （此前这里按大臣名建轮，CLI 重试正好按大臣名反查，两处错配互相掩盖：
+    #  真实入口建的轮归殿上，CLI 却永远查不到。）
     sess = GameSession.__new__(GameSession)
     sess.db = db
     sess.state = state
     sess.content = content
+    turn = GameSession.begin_audience_chat_turn(
+        sess, question,
+        message_speaker=character.name, agno_session_id=f"cli:{character.name}",
+    )
+    ct = int(turn.chat_turn_id)
+    assert db.list_hall_chat_turns(night_id)[0]["id"] == ct
+    # 崩溃形态：问话已落、回话未落 → interrupted（可重试终态，ADR 0036）。
+    db.conn.execute("UPDATE chat_turns SET status='interrupted' WHERE id=?", (ct,))
+    db.conn.commit()
+
     sess.llm_config = SimpleNamespace(channel="api")
 
     sess.registry = SimpleNamespace(

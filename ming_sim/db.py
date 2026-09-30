@@ -9379,7 +9379,8 @@ class GameDB:
         where = " AND ".join(clauses)
         rows = self.conn.execute(
             f"""
-            SELECT t.id, t.minister_name, t.turn, t.error_pack_path, m.content AS question
+            SELECT t.id, t.minister_name, t.turn, t.user_message_id, t.error_pack_path,
+                   m.content AS question
             FROM chat_turns t
             JOIN chat_messages m ON m.id = t.user_message_id
             WHERE {where}
@@ -9392,6 +9393,9 @@ class GameDB:
                 "chat_turn_id": int(r["id"]),
                 "minister_name": str(r["minister_name"]),
                 "turn": int(r["turn"]),
+                # 建轮归属与问话归属是两个身份（#1902 T1/F2）：重试取数方据此把回话
+                # 挂回原问话的那位大臣，而不是挂到建轮的「殿上」上。
+                "user_message_id": int(r["user_message_id"] or 0),
                 "question": str(r["question"]),
                 "error_pack_path": str(r["error_pack_path"] or ""),
             }

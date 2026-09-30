@@ -161,10 +161,11 @@ def _install_canned_scene_double(game, monkeypatch) -> None:
 
 
 def _directive(text: str) -> None:
-    """#1902：拟诏台 Web 入口退役，改经共享抽取核 + 会话写入面落同一条 draft。
+    """#1902：摆一条 draft 作**测试数据准备**（拟诏台入口已退役，玩家拟旨只从召对来）。
 
-    入口撤掉后不再有 HTTP 回执可依，游戏实例一律取当前 web_app.web_game（与
-    「玩家在活局里拟旨」同一条缝）。
+    旧 Web 拟诏台入口撤掉后不再有 HTTP 回执可依；此处直接经共享抽取核 + 引擎写入面
+    把一条 draft 摆进当前活局（web_app.web_game），供存档/归档/读档 tracer 核对其去向。
+    它是旧草稿场景的数据准备，**不是**玩家现役拟旨入口。
     """
     import web_app
     from tests.directive_entry_helpers import stage_draft_directive
@@ -172,6 +173,26 @@ def _directive(text: str) -> None:
     game = web_app.web_game
     assert game is not None
     stage_draft_directive(game.session, text)
+
+
+def _player_write_via_chat(client: TestClient, label: str) -> dict:
+    """经**玩家现役写入口**（POST /api/audience/chat/stream）真写一轮召对。
+
+    #1902 F5：恢复可写此前用 ``_directive``（夹具直接写库）来证明——那绕开了玩家
+    写入口，把「玩家真能写」替换成了「夹具能写」：令 _serialized_web_write 对所有
+    玩家写入抛 409，两条恢复可写测试照样 2 passed（PLAYER_WRITE_GATE_CALLS 0）。
+    此处走真实 SSE 入口，故玩家写路径真被堵时该用例必红。
+    """
+    st = client.get("/api/game/state")
+    minister = _pick_active_minister(st.json())
+    return _chat_stream(client, minister, f"边饷如何？{label}")
+
+
+def _assert_player_write_accepted(chat: dict) -> None:
+    """召对真落库：accepted 带夜/轮身份，done 带回话消息 id。"""
+    assert int(chat["night_id"]) >= 1
+    assert int(chat["chat_turn_id"]) >= 1
+    assert int(chat["minister_message_id"]) >= 1
 
 
 def _chat_stream(client: TestClient, minister: str, msg: str) -> dict:
@@ -412,7 +433,10 @@ def test_new_game_write_path_direct_and_via_exit(tracer_client, monkeypatch):
 
 
 def test_new_game_construct_failure_keeps_old_writable(tracer_client, monkeypatch):
-    """真实 new_game 入口：构造失败恢复旧指针与主库路径，旧局仍可写。"""
+    """真实 new_game 入口：构造失败恢复旧指针与主库路径，旧局仍可写。
+
+    「仍可写」经玩家现役写入口（chat/stream）验，不经夹具直接写库（#1902 F5）。
+    """
     client = tracer_client
     _install_canned_minister_factory(monkeypatch)
 
@@ -420,9 +444,10 @@ def test_new_game_construct_failure_keeps_old_writable(tracer_client, monkeypatc
     assert seed.status_code == 200
     g0 = web_app.web_game
     assert g0 is not None
+    _install_canned_scene_double(g0, monkeypatch)
     p0 = g0.db_path
     c0 = _campaign(g0)
-    _directive("着户部清核辽饷（pre-fail）。")
+    _player_write_via_chat(client, "pre-fail")
     _wait_pending_writes(g0)
     main_before = web_app._get_main_db_path()
 
@@ -443,12 +468,12 @@ def test_new_game_construct_failure_keeps_old_writable(tracer_client, monkeypatc
     assert web_app._same_db_path(web_app._get_main_db_path(), main_before)
     assert web_app._same_db_path(g0.db_path, p0)
     assert _campaign(g0) == c0
-    after = "着户部清核辽饷（after-fail）。"
-    _directive(after)
+    # 恢复后的旧局：玩家写入口真能写（轮/夜/回话身份齐备）。
+    _assert_player_write_accepted(_player_write_via_chat(client, "after-fail"))
     _wait_pending_writes(g0)
     snap = _db_snapshot(p0)
     assert snap["campaign_id"] == c0
-    assert after in snap["directive_texts"]
+    assert len(snap["chat_turns"]) >= 2
 
 
 def test_gamesession_load_state_failure_closes_partial_resources(tmp_path, monkeypatch):
@@ -482,13 +507,17 @@ def test_gamesession_load_state_failure_closes_partial_resources(tmp_path, monke
 
 
 def test_load_save_close_fail_restores_writable_old_game(tracer_client, monkeypatch):
-    """真实 load_save 入口：关旧局失败 → 409、恢复指针且拟旨面仍可写；不搬活库。"""
+    """真实 load_save 入口：关旧局失败 → 409、恢复指针且玩家写面仍可写；不搬活库。
+
+    「仍可写」经玩家现役写入口（chat/stream）验，不经夹具直接写库（#1902 F5）。
+    """
     client = tracer_client
     _install_canned_minister_factory(monkeypatch)
     seed = client.post("/api/menu/new_game")
     assert seed.status_code == 200
     g0 = web_app.web_game
     assert g0 is not None
+    _install_canned_scene_double(g0, monkeypatch)
     old_path = g0.db_path
     c0 = _campaign(g0)
     g0.save_to("snap1749")
@@ -510,12 +539,12 @@ def test_load_save_close_fail_restores_writable_old_game(tracer_client, monkeypa
         web_app._path_request_archive(old_path)
         assert os.path.isfile(old_path)
         assert _drained(Path(web_app.user_data_path())) == []
-        marker = "着户部清核辽饷（load-save-close-fail）。"
-        _directive(marker)
+        # 恢复后的旧局：玩家写入口真能写（轮/夜/回话身份齐备）。
+        _assert_player_write_accepted(_player_write_via_chat(client, "load-save-close-fail"))
         _wait_pending_writes(g0)
         snap = _db_snapshot(old_path)
         assert snap["campaign_id"] == c0
-        assert marker in snap["directive_texts"]
+        assert snap["chat_turns"]
     finally:
         g0.session.close = real_close  # type: ignore[method-assign]
 

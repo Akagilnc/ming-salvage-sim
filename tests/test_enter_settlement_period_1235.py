@@ -23,6 +23,7 @@ import pytest
 
 import web_app
 import ming_sim.agents as agents_mod
+from tests.sse_helpers import parse_sse_event_pairs
 import ming_sim.decree as decree_mod
 import ming_sim.session as session_mod
 from ming_sim import audience_night as an
@@ -113,12 +114,13 @@ def _click_before(state) -> dict[str, int]:
 
 
 def _terminal_sse(response: httpx.Response) -> tuple[str, dict]:
-    blocks = [block for block in response.text.split("\n\n") if block.strip()]
-    assert blocks
-    lines = blocks[-1].splitlines()
-    event = next(line[7:] for line in lines if line.startswith("event: "))
-    data = next(line[6:] for line in lines if line.startswith("data: "))
-    return event, json.loads(data)
+    """末个 SSE 事件的 (name, payload)。
+
+    #1902 F7：解析真源在 tests.sse_helpers（仓内只此一份），此处不再自带一份。
+    """
+    pairs = parse_sse_event_pairs(response.text)
+    assert pairs
+    return pairs[-1]
 
 
 def _open_night_with_unextracted_reply(game, minister, reply="臣愿肩起此事。"):

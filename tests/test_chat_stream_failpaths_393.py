@@ -25,6 +25,7 @@ from ming_sim.llm_model import CLI_RUNNER_PLAYER_MESSAGE
 from ming_sim.llm_transport import default_transport_policy
 from tests.web_audience_test_doubles import install_hall_admission, minister_double
 from tests.conftest import stub_audience_translate, stub_scene_agent
+from tests.sse_helpers import parse_sse_event_pairs
 
 
 def _assert_write_path_free(runtime) -> None:
@@ -441,21 +442,9 @@ def test_worker_postprocess_exception_emits_error_end():
     _assert_write_path_free(runtime)
 
 
-def _parse_sse(text: str) -> list[tuple[str, dict]]:
-    events: list[tuple[str, dict]] = []
-    for block in text.strip().split("\n\n"):
-        if not block.strip():
-            continue
-        ev_name = ""
-        data_raw = ""
-        for line in block.splitlines():
-            if line.startswith("event: "):
-                ev_name = line[7:].strip()
-            elif line.startswith("data: "):
-                data_raw += line[6:]
-        if ev_name and data_raw:
-            events.append((ev_name, json.loads(data_raw)))
-    return events
+# #1902 F7：SSE 解析真源在 tests.sse_helpers（仓内只此一份，含 tuple 投影）。
+# 本文件不再自带第二份实现。
+_parse_sse = parse_sse_event_pairs
 
 
 def _assert_structured_llm_http(response) -> dict:

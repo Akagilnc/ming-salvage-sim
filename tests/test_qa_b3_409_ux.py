@@ -6,7 +6,6 @@ ADR 0036/0006 机制零动。
 from __future__ import annotations
 
 import asyncio
-import json
 import threading
 from types import SimpleNamespace
 
@@ -17,6 +16,7 @@ import web_app
 from ming_sim import audience_night as an
 from ming_sim.session_write_queue import ClassifiedWriteGate
 from ming_sim.models import FRONT_HALF_DONE_PHASES, TurnPhase
+from tests.sse_helpers import parse_sse_event_pairs
 
 
 # ── #1301 玩家面 409 去裸 night_id ──────────────────────────────────────────
@@ -166,7 +166,10 @@ class _ResolveGame:
 
 
 async def _consume_resolve_sse() -> list[tuple[str, object]]:
-    """Drain the whole SSE; return [(event, payload), ...] in order."""
+    """Drain the whole SSE; return [(event, payload), ...] in order.
+
+    #1902 F7：解析真源在 tests.sse_helpers（仓内只此一份），此处不再自带一份。
+    """
     response = await web_app.api_resolve_decisions_stream(
         web_app.ResolveDecisionsRequest(choices=[{"label": "发帑"}])
     )
@@ -174,22 +177,7 @@ async def _consume_resolve_sse() -> list[tuple[str, object]]:
         chunk.decode() if isinstance(chunk, bytes) else chunk
         async for chunk in response.body_iterator
     ]
-    serialized = "".join(chunks)
-    events: list[tuple[str, object]] = []
-    for block in serialized.strip().split("\n\n"):
-        if not block.strip():
-            continue
-        ev_name = ""
-        data_raw = ""
-        for line in block.splitlines():
-            if line.startswith("event: "):
-                ev_name = line[len("event: "):].strip()
-            elif line.startswith("data: "):
-                data_raw += line[len("data: "):]
-        if not ev_name or not data_raw:
-            continue
-        events.append((ev_name, json.loads(data_raw)))
-    return events
+    return parse_sse_event_pairs("".join(chunks))
 
 
 def test_resolve_decisions_stream_phase_precheck_before_lock(monkeypatch):
