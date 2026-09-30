@@ -1,5 +1,5 @@
 import React from "react";
-import { Check, Edit3, Loader2, Trash2, X } from "lucide-react";
+import { Loader2, Trash2 } from "lucide-react";
 import type { CasedDirective, Directive, GameState, LocalDirectiveItem } from "../types";
 
 /** #1764：source/actor 结构化字段直接并列（P7/0142；非角色台词模板）。 */
@@ -60,40 +60,22 @@ function cardStateA11y(
 
 export function EdictModal({
   state,
-  directiveText,
-  editingDirectiveId,
-  editingDirectiveText,
   decree,
   report,
   busy,
   error,
   localDirectives = [],
-  onDirectiveTextChange,
-  onEditingTextChange,
-  onCreateDirective,
-  onStartEdit,
-  onCancelEdit,
-  onSaveDirective,
   onDeleteDirective,
   onIssueDecree,
   onAdvanceWithoutEdict,
 }: {
   state: GameState;
-  directiveText: string;
-  editingDirectiveId: number | null;
-  editingDirectiveText: string;
   decree: string;
   report: string;
   busy: string;
   error: string;
   /** #1764：本地在飞/失败项（会话态）。 */
   localDirectives?: LocalDirectiveItem[];
-  onDirectiveTextChange: (value: string) => void;
-  onEditingTextChange: (value: string) => void;
-  onCreateDirective: () => void;
-  onStartEdit: (directive: Directive) => void;
-  onCancelEdit: () => void;
-  onSaveDirective: (directive: Directive) => void;
   onDeleteDirective: (directiveId: number) => void;
   /** #1277/#1560：有可结算工作（草案或 resolve_turn 可消费 pending）时主钮走盖玺颁诏；真空禁用。 */
   onIssueDecree: () => void;
@@ -170,7 +152,6 @@ export function EdictModal({
                   const req = requestByDirectiveId.get(directive.id);
                   const phase = req?.phase ?? "draft";
                   const minister = isMinisterSourced(directive.source);
-                  const editing = editingDirectiveId === directive.id;
                   const inflight = req?.phase === "inflight";
                   const bodyId = `edict-body-${directive.id}`;
                   const errorId = `edict-err-${directive.id}`;
@@ -192,53 +173,15 @@ export function EdictModal({
                         <span data-role="source-label">{sourceLabel(directive.source, directive.actor)}</span>
                         {req ? <PhaseChip phase={req.phase} /> : null}
                       </div>
-                      {editing && !inflight ? (
-                        <div className="directive-edit">
-                          <textarea
-                            id={bodyId}
-                            value={editingDirectiveText}
-                            onChange={(event) => onEditingTextChange(event.target.value)}
-                          />
-                          <div>
-                            <button
-                              className="icon-button"
-                              onClick={() => onSaveDirective(directive)}
-                              aria-label="保存草案"
-                              disabled={requestLocked}
-                            >
-                              <Check size={15} />
-                            </button>
-                            {/* 纯本地取消：只清编辑态，不发请求，不吃 requestLocked。 */}
-                            <button
-                              className="icon-button"
-                              onClick={onCancelEdit}
-                              aria-label="取消修改"
-                            >
-                              <X size={15} />
-                            </button>
-                          </div>
-                        </div>
-                      ) : (
-                        <>
-                          {renderBody(
-                            req?.op === "save" && req.text ? req.text : directive.text,
-                            bodyId,
-                            directive.notes,
-                          )}
-                          {renderFailNote(failMsg, errorId)}
-                          {!inflight ? (
-                            <div className="directive-tools">
-                              <button onClick={() => onStartEdit(directive)} disabled={requestLocked}>
-                                <Edit3 size={14} />改
-                              </button>
-                              <button onClick={() => onDeleteDirective(directive.id)} disabled={requestLocked}>
-                                <Trash2 size={14} />删
-                              </button>
-                            </div>
-                          ) : null}
-                        </>
-                      )}
-                      {editing && !inflight ? renderFailNote(failMsg, errorId) : null}
+                      {renderBody(directive.text, bodyId, directive.notes)}
+                  {renderFailNote(failMsg, errorId)}
+                  {!inflight ? (
+                    <div className="directive-tools">
+                      <button onClick={() => onDeleteDirective(directive.id)} disabled={requestLocked}>
+                        <Trash2 size={14} />删
+                      </button>
+                    </div>
+                  ) : null}
                     </div>
                   );
                 })}
@@ -300,21 +243,7 @@ export function EdictModal({
           </div>
         </section>
 
-        <section className="desk-pane desk-compose">
-          <h2>御笔自拟</h2>
-          <textarea
-            value={directiveText}
-            onChange={(event) => onDirectiveTextChange(event.target.value)}
-            placeholder="例如：命户部核拨关宁、山海关、蓟镇辽饷一百五十二万两..."
-          />
-          <button
-            className="desk-add-btn"
-            onClick={onCreateDirective}
-            disabled={requestLocked || !directiveText.trim()}
-          >
-            <Edit3 size={14} />新增草案
-          </button>
-        </section>
+        {/* #1902：御笔自拟面板（拟新旨/改稿）随拟诏台手写入口退役；旨意只从召对来。 */}
       </div>
 
       {error && <div className="error-line" role="alert">{error}</div>}

@@ -1004,29 +1004,14 @@ def test_manual_directive_capture_reaches_structured_dossier(
     session.state = state
     session.llm_config = None
     session.content = content
-    if entry == "web":
-        import web_app
-
-        web_game = types.SimpleNamespace(
-            _write_gate=threading.Lock(),
-            db=db, state=state, content=content, session=session,
-            directive_rows=lambda: db.list_directives(
-                state, statuses=("pending", "draft"),
-            ),
-            directive_payload=lambda row: dict(row),
-        )
-        monkeypatch.setattr(web_app, "get_game", lambda: web_game)
-        result = asyncio.run(web_app.api_create_directive(
-            web_app.DirectiveRequest(text=directive_text),
-        ))
-        directive_id = int(result["directive"]["id"])
-    else:
-        payload = cli_backend.capture_manual_directive_payload(
-            directive_text, None, db=db, content=content,
-        )
-        directive_id = session.add_directive(
-            directive_text, dossier_payload=payload,
-        ).id
+    # #1902：拟诏台 Web 入口退役，两条入口同走共享抽取核 + 会话写入面。
+    payload = cli_backend.capture_manual_directive_payload(
+        directive_text, None, db=db, content=content,
+    )
+    directive_id = session.add_directive(
+        directive_text, dossier_payload=payload,
+    ).id
+    del entry
     account = "内库" if case == "allocation" else "国库"
     before = state.metrics[account]
 
@@ -1090,25 +1075,12 @@ def test_manual_directive_capture_rejects_malformed_roster(
     session.llm_config = None
     session.content = content
 
-    if entry == "web":
-        import web_app
-        from fastapi import HTTPException
-
-        web_game = types.SimpleNamespace(
-            _write_gate=threading.Lock(),
-            db=db, state=state, content=content, session=session,
-            directive_rows=lambda: db.list_directives(
-                state, statuses=("pending", "draft"),
-            ),
-            directive_payload=lambda row: dict(row),
+    # #1902：Web 手写入口退役，业务拒收直接以 ValueError 上抛（旧路由包成 409）。
+    with pytest.raises(ValueError, match="参与人"):
+        cli_backend.capture_manual_directive_payload(
+            "手工旨意", None, db=db, content=content,
         )
-        monkeypatch.setattr(web_app, "get_game", lambda: web_game)
-        with pytest.raises(HTTPException) as exc_info:
-            asyncio.run(web_app.api_create_directive(
-                web_app.DirectiveRequest(text="手工旨意"),
-            ))
-        assert exc_info.value.status_code == 409
-        assert "参与人" in str(exc_info.value.detail)
+        session.add_directive("手工旨意", dossier_payload={})
 
     assert db.list_pending_actions(state.turn) == []
     assert db.list_directives(state) == []
@@ -1147,31 +1119,12 @@ def test_manual_directive_capture_rejects_missing_empty_or_invalid_tier_without_
     session.llm_config = None
     session.content = content
 
-    if entry == "web":
-        import web_app
-        from fastapi import HTTPException
-
-        web_game = types.SimpleNamespace(
-            _write_gate=threading.Lock(),
-            db=db, state=state, content=content, session=session,
-            directive_rows=lambda: db.list_directives(
-                state, statuses=("pending", "draft"),
-            ),
-            directive_payload=lambda row: dict(row),
+    # #1902：两条手写入口同退役，业务拒收只剩共享抽取核这一条路径。
+    with pytest.raises(ValueError, match="参与人"):
+        payload = cli_backend.capture_manual_directive_payload(
+            "手工旨意", None, db=db, content=content,
         )
-        monkeypatch.setattr(web_app, "get_game", lambda: web_game)
-        with pytest.raises(HTTPException) as exc_info:
-            asyncio.run(web_app.api_create_directive(
-                web_app.DirectiveRequest(text="手工旨意"),
-            ))
-        assert exc_info.value.status_code == 409
-        assert "参与人" in str(exc_info.value.detail)
-    else:
-        with pytest.raises(ValueError, match="参与人"):
-            payload = cli_backend.capture_manual_directive_payload(
-                "手工旨意", None, db=db, content=content,
-            )
-            session.add_directive("手工旨意", dossier_payload=payload)
+        session.add_directive("手工旨意", dossier_payload=payload)
 
     assert db.list_pending_actions(state.turn) == []
     assert db.list_directives(state) == []
@@ -1260,79 +1213,10 @@ def test_cli_no_edict_route_rejudges_held_proposed_dossier(game):
 
     assert called == ["resolve"]
 
-def test_web_edit_replaces_text_and_mechanics_before_promulgation(game, monkeypatch):
-    """#1902：CLI 手写改稿入口退役后，「改稿重抽结构」能力由 Web PATCH 承继（#1826 撤页）。"""
-    import ming_sim.cli_backend as cli_backend
-    from ming_sim.session import GameSession
+# #1902：拟诏台手写改稿（Web PATCH /api/directives、CLI edit）随整条入口退役，
+# 「手改旨文并重抽 mechanics」这条能力不再存在，本用例随之退役；改稿入口不再
+# 注册的回归由 tests/test_web_entry_1902.py 钉。
 
-    db, state, content = game
-    session = GameSession.__new__(GameSession)
-    session.db = db
-    session.state = state
-    session.llm_config = None
-    session.content = content
-    directive = session.add_directive(
-        "拨十两赈济",
-        dossier_payload={
-            "dossier_action_type": "grant_allocation",
-            "target_kind": "issue",
-            "target_id": "relief",
-            "amount": 10,
-            "account": "国库",
-            "execution_surface": "immediate",
-            "mode": "midzhi",
-        },
-    )
-    revised_text = "改拨二十五两赈济"
-    response = {
-        "拟旨意图": "拟旨",
-        "动作类型": "grant_allocation",
-        "目标类型": "issue",
-        "目标": "relief",
-        "金额": 25,
-        "账户": "国库",
-        "执行面": "immediate",
-        "颁布方式": "ordinary",
-    }
-    prompts = []
-
-    def prompt_faithful_backend(prompt, *_args, **_kwargs):
-        prompts.append(prompt)
-        emperor = prompt.split("【皇帝】", 1)[1].split("【大臣回话】", 1)[0]
-        if "请据此拟旨" not in emperor or revised_text not in emperor:
-            return (json.dumps({"拟旨意图": "无"}, ensure_ascii=False), 1)
-        return (json.dumps(response, ensure_ascii=False), 1)
-
-    monkeypatch.setattr(cli_backend, "_run_backend_for_config", prompt_faithful_backend)
-    import web_app
-
-    web_game = types.SimpleNamespace(
-        _write_gate=threading.Lock(),
-        db=db, state=state, content=content, session=session,
-        directive_rows=lambda: db.list_directives(state, statuses=("pending", "draft")),
-        directive_payload=lambda row: dict(row),
-    )
-    monkeypatch.setattr(web_app, "get_game", lambda: web_game)
-    before = state.metrics["国库"]
-
-    asyncio.run(web_app.api_update_directive(
-        directive.id, web_app.DirectivePatch(text=revised_text),
-    ))
-    assert len(prompts) == 1
-
-    db.ensure_dossiers_for_draft_directives(state)
-    dossier = db.get_dossier_for_directive(directive.id)
-    payload = json.loads(dossier["payload_json"])
-    assert dossier["decree_text"] == revised_text
-    assert dossier["action_type"] == "grant_allocation"
-    assert (payload["amount"], payload["account"], payload["mode"]) == (
-        25, "国库", "ordinary",
-    )
-    db.apply_dossier_promulgation(
-        state, dossier["id"], "promulgated", content=content,
-    )
-    assert state.metrics["国库"] == before - 25
-    assert db.list_economy_moves_for_dossier(dossier["id"])[0]["delta"] == -25
 
 def test_secret_order_progress_persists_executing_until_terminal(game):
     from ming_sim.db import GameDB

@@ -665,16 +665,6 @@ class ChatRequest(BaseModel):
     message: str
 
 
-class DirectiveRequest(BaseModel):
-    text: str
-    notes: str = ""
-
-
-class DirectivePatch(BaseModel):
-    text: Optional[str] = None
-    notes: Optional[str] = None
-
-
 class AdvanceWithoutEdictRequest(BaseModel):
     """#1351 A1：可选回合令牌；缺省兼容无令牌旧客户端。"""
     expected_turn: Optional[int] = None
@@ -5485,89 +5475,10 @@ async def api_audience_chat_stream(request: ChatRequest) -> StreamingResponse:
     return _chat_stream_response(SCENE_CHAT_SPEAKER, request)
 
 
-@app.post("/api/directives")
-async def api_create_directive(request: DirectiveRequest) -> Dict[str, Any]:
-    if not request.text.strip():
-        raise HTTPException(status_code=400, detail="指令内容不能为空。")
-    game = get_game()
-    try:
-        with _serialized_web_write(game):
-            capture_turn = int(game.state.turn)
-        from ming_sim.cli_backend import capture_manual_directive_payload
-        dossier_payload = await asyncio.to_thread(
-            capture_manual_directive_payload,
-            request.text.strip(),
-            game.session.llm_config,
-            **({"db": game.db, "content": game.content}
-               if getattr(game, "content", None) is not None else {}),
-        )
-        # 会话层 _refuse_if_settling 仅查相位，守不住 pre_settle 原子块在 settling 落定前的窗口；
-        # 与直写端点同走 _serialized_web_write 抢 _write_gate（cmr Gate2 F-A 残面：会话写也要串行）。
-        # #1749：响应快照必须在临界段内完成——gate 释放后 drain 可关旧库，
-        # 门外 directive_rows 会 ProgrammingError: closed database。
-        with _serialized_web_write(game):
-            if int(game.state.turn) != capture_turn:
-                raise ValueError("旨意抽取期间回合已推进，请在当前回合重新提交。")
-            dv = game.session.add_directive(
-                request.text.strip(), notes=request.notes,
-                dossier_payload=dossier_payload,
-            )
-            return {
-                "directive": {"id": dv.id, "text": dv.text, "status": dv.status},
-                "directives": [
-                    game.directive_payload(item) for item in game.directive_rows()
-                ],
-            }
-    except ValueError as e:
-        raise HTTPException(status_code=409, detail=str(e)) from None  # 恢复窗冻结指引
-    except LLMUnavailable as e:
-        # #1274 V-1 r6 / #1452：回禀产文失败 → 结构化 400，禁裸 500 / 固定戏内模板。
-        raise HTTPException(status_code=400, detail=_llm_error_detail(e)) from None
-
-
-@app.patch("/api/directives/{directive_id}")
-async def api_update_directive(directive_id: int, request: DirectivePatch) -> Dict[str, Any]:
-    game = get_game()
-    try:
-        with _serialized_web_write(game):
-            row = next(
-                (item for item in game.directive_rows() if int(item["id"]) == directive_id),
-                None,
-            )
-            if row is None:
-                raise HTTPException(status_code=404, detail="未找到草案。")
-            text = request.text if request.text is not None else str(row["text"])
-            if not text.strip():
-                raise HTTPException(status_code=400, detail="指令内容不能为空。")
-            capture_turn = int(game.state.turn)
-            existing_mode = game.db.read_directive_dossier_payload(row).get("mode")
-        from ming_sim.cli_backend import capture_manual_directive_payload
-        dossier_payload = await asyncio.to_thread(
-            capture_manual_directive_payload,
-            text.strip(),
-            game.session.llm_config,
-            existing_mode=existing_mode,
-            **({"db": game.db, "content": game.content}
-               if getattr(game, "content", None) is not None else {}),
-        )
-        # #1749：同 create——响应列表在 gate 内快照，禁门后读退休连接。
-        with _serialized_web_write(game):
-            if int(game.state.turn) != capture_turn:
-                raise ValueError("旨意抽取期间回合已推进，请在当前回合重新提交。")
-            game.session.update_directive(
-                directive_id, text.strip(), dossier_payload=dossier_payload,
-            )
-            return {
-                "directives": [
-                    game.directive_payload(item) for item in game.directive_rows()
-                ],
-            }
-    except ValueError as e:
-        raise HTTPException(status_code=409, detail=str(e)) from None
-    except LLMUnavailable as e:
-        # #1274 V-1 r6 / #1452：回禀产文失败 → 结构化 400，禁裸 500 / 固定戏内模板。
-        raise HTTPException(status_code=400, detail=_llm_error_detail(e)) from None
-
+# #1902 / #1812 待拍第 6 项：拟诏台手写入口全退——POST|PATCH /api/directives 不再注册。
+# 旨意只从召对来（#1772）；草稿可见、已发追溯与删旧草稿（DELETE）保留，旧草稿去向
+# 由 #1826 的草稿与已发记录承接。共享抽取核未删：成案准入补交
+# （session._resubmit_draft_admission_failures）仍是它的现役消费者。
 
 @app.delete("/api/directives/{directive_id}")
 async def api_delete_directive(directive_id: int) -> Dict[str, Any]:

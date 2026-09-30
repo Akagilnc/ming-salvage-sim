@@ -530,6 +530,13 @@ def test_asgi_dossiered_directive_has_no_retired_review_surface(web_game):
 
     registered_paths = {route.path for route in web_app.app.routes}
     assert "/api/decree/write" not in registered_paths
+    # #1902：拟诏台手写入口整条退役——拟旨/改稿路由不再注册，删旧草稿保留。
+    assert not any(
+        getattr(r, "path", None) == "/api/directives"
+        and ("POST" in (getattr(r, "methods", None) or set())
+             or "PATCH" in (getattr(r, "methods", None) or set()))
+        for r in web_app.app.routes
+    )
 
     async def scenario():
         async with _client() as client:
@@ -542,7 +549,8 @@ def test_asgi_dossiered_directive_has_no_retired_review_surface(web_game):
             )
 
     edit, delete, state = asyncio.run(scenario())
-    assert edit.status_code == 404
+    # #1902：改稿路由已不存在（404/405 皆可），不再是「路由在、草案不可改」的语义。
+    assert edit.status_code in (404, 405)
     assert delete.status_code == 409
     body = state.json()
     # 候选列表仍滤掉已成案（list_directives 语义不变）

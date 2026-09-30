@@ -66,9 +66,15 @@ def _web_create(game_tuple, monkeypatch, text: str):
         directive_payload=lambda row: dict(row),
     )
     monkeypatch.setattr(web_app, "get_game", lambda: web_game)
-    return asyncio.run(web_app.api_create_directive(
-        web_app.DirectiveRequest(text=text),
-    ))
+    # #1902：拟诏台 Web 入口退役，改经共享抽取核 + 会话写入面落同一条 draft。
+    from tests.directive_entry_helpers import stage_draft_directive
+
+    staged = stage_draft_directive(session, text)
+    return {"directive": {"id": staged.id, "text": staged.text, "status": staged.status},
+            "directives": [
+                {"id": int(r["id"]), "text": str(r["text"]), "status": str(r["status"])}
+                for r in db.list_directives(state, statuses=("pending", "draft"))
+            ]}
 
 
 def _capture_ids(game, monkeypatch, *, text: str, roster):
@@ -127,7 +133,7 @@ def test_capture_manual_directive_drops_ministry_name_as_participant(game, monke
 
 
 def test_web_create_directive_accepts_ministry_subject_without_409(game, monkeypatch):
-    """Web POST /api/directives：着户部… 不得 409「参与人物不存在：户部」。"""
+    """拟旨落稿面（#1902 后经会话写入面）：着户部… 不得「参与人物不存在：户部」。"""
     db, _state, _content = game
     text = "着户部核清太仓实存，边饷优先"
     _mock_draft_intent(

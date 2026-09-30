@@ -332,7 +332,7 @@ def test_rescript_follow_draft_nails_drafted_roster(game):
 
 
 def test_manual_owner_example_seal_advances(tracer_client, monkeypatch):
-    """真实 Web 手工拟诏：Owner 例 → 盖玺；持久化 canonical + 大臣所拟名单。"""
+    """真实拟旨落稿 → 盖玺（#1902 起经会话写入面，不再经拟诏台 Web 路由）。"""
     import ming_sim.cli_backend as cli_backend
     import web_app
 
@@ -346,11 +346,10 @@ def test_manual_owner_example_seal_advances(tracer_client, monkeypatch):
 
     monkeypatch.setattr(cli_backend, "capture_manual_directive_payload", _real_capture)
     monkeypatch.setattr(cli_backend, "_run_backend_for_config", backend)
-    response = tracer_client.post(
-        "/api/directives",
-        json={"text": "着户部继续核查陕西赈务，按月具报。", "notes": ""},
-    )
-    assert response.status_code == 200, response.text
+    # #1902：拟诏台 Web 入口退役，改经共享抽取核 + 会话写入面落同一条 draft。
+    from tests.directive_entry_helpers import stage_draft_directive
+
+    stage_draft_directive(game.session, "着户部继续核查陕西赈务，按月具报。")
     turn_before = game.state.turn
     _post_issue_stream(
         tracer_client, expected_turn=turn_before, step="#1624 owner seal",
@@ -394,7 +393,7 @@ def test_http_manual_directive_lands_beyond_fifteen_initiatives_1790(
     """#1790 验收：≥15 件 initiative 在办时票拟再下一旨 → 第 16 成案、executing 差务、
     turn+1 不中止；该主办/属地在办案卷数 +1。
 
-    入口＝既有票拟 /api/directives（#1624 seal 同形），非 apply 层 helper、非 1565 交办、
+    入口＝既有票拟落稿面（#1902 后经会话写入面；#1624 seal 同形），非 apply 层 helper、非 1565 交办、
     非 #1783 拨帑 tracer。填帽 insert_issue 直落；观察面为持久化案卷。
     """
     import ming_sim.cli_backend as cli_backend
@@ -427,11 +426,10 @@ def test_http_manual_directive_lands_beyond_fifteen_initiatives_1790(
 
     monkeypatch.setattr(cli_backend, "capture_manual_directive_payload", _real_capture)
     monkeypatch.setattr(cli_backend, "_run_backend_for_config", backend)
-    response = tracer_client.post(
-        "/api/directives",
-        json={"text": "着户部继续核查陕西赈务，按月具报。", "notes": ""},
-    )
-    assert response.status_code == 200, response.text
+    # #1902：拟诏台 Web 入口退役，改经共享抽取核 + 会话写入面落同一条 draft。
+    from tests.directive_entry_helpers import stage_draft_directive
+
+    stage_draft_directive(game.session, "着户部继续核查陕西赈务，按月具报。")
 
     turn_before = int(state.turn)
     body = _post_issue_stream(

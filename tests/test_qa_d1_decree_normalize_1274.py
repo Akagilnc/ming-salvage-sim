@@ -145,8 +145,8 @@ def test_default_time_of_day_is_shichen_not_cishi():
 # ── 3) #1341/#1338 PATCH 死契约拆除 ────────────────────────────────
 
 
-def test_patch_decree_route_removed_and_directives_remain():
-    """调用方扫描结论：web/src 零真实调用 → 删路由；directives 入口仍在。"""
+def test_patch_decree_and_manual_directive_routes_removed():
+    """#1341 删 PATCH /api/decree；#1902 再删拟诏台手写拟旨/改稿路由，只留删旧草稿。"""
     import web_app
 
     patch_decree = [
@@ -157,12 +157,17 @@ def test_patch_decree_route_removed_and_directives_remain():
     assert patch_decree == []
     assert not hasattr(web_app, "api_edit_decree")
 
-    post_dirs = [
+    manual_writes = [
         r for r in web_app.app.routes
         if getattr(r, "path", None) == "/api/directives"
-        and "POST" in (getattr(r, "methods", None) or set())
+        and ({"POST", "PATCH"} & (getattr(r, "methods", None) or set()))
     ]
-    assert post_dirs, "逐道旨意入口必须保留"
+    assert manual_writes == [], "拟诏台手写拟旨/改稿路由必须已退役"
+    assert [
+        r for r in web_app.app.routes
+        if getattr(r, "path", None) == "/api/directives/{directive_id}"
+        and "DELETE" in (getattr(r, "methods", None) or set())
+    ], "删旧草稿入口保留"
 
 
 # ── 4) #1327 空载/有界 capture ─────────────────────────────────────
@@ -190,7 +195,7 @@ def test_empty_text_capture_short_circuits_without_llm(monkeypatch):
 def test_web_create_directive_long_extract_still_lands_real_draft(game, monkeypatch):
     """#1465 切片③：拟旨 capture 跨旧 30s 罩仍成案（真实入口 → 读回 pending 案卷）。
 
-    真实入口 POST /api/directives；抽取把注入时钟推过 120s（旧外层 30s 总罩下
+    真实抽取核入口（#1902 后经会话写入面）；抽取把注入时钟推过 120s（旧外层 30s 总罩下
     remaining 会扣穿 → 抽取被饿死、落 special_decree 或 LLMUnavailable）。罩既已
     删，长抽取仍须落**真**草案：结构字段照 LLM 结果走，且读回 pending/案卷可见。
     确定性、无线程、不跑真墙钟。
@@ -236,20 +241,14 @@ def test_web_create_directive_long_extract_still_lands_real_draft(game, monkeypa
         ),
         directive_payload=lambda row: dict(row),
     )
-    monkeypatch.setattr(web_app, "get_game", lambda: web_game)
+    # #1902：拟诏台 Web 入口退役，改经共享抽取核 + 会话写入面落同一条 draft。
+    from tests.directive_entry_helpers import stage_draft_directive
 
-    response = TestClient(web_app.app).post(
-        "/api/directives", json={"text": text, "notes": ""},
-    )
-    assert response.status_code == 200, response.text
+    staged = stage_draft_directive(session, text)
     assert clock["t"] - 1000.0 > 30.0, clock  # 确实跨过旧罩
-    body = response.json()
-    directive_id = int(body["directive"]["id"])
+    directive_id = int(staged.id)
     assert directive_id > 0
-    assert body["directive"]["text"] == text
-    # 读回 pending/案卷：入口回执与库内草案同一条，且案卷结构字段是 LLM 抽取结果，
-    # 不是罩饿死后的 special_decree 兜底。
-    assert directive_id in [int(item["id"]) for item in body["directives"]]
+    assert staged.text == text
     rows = db.list_directives(state, statuses=("pending", "draft"))
     row = next(item for item in rows if int(item["id"]) == directive_id)
     payload = db.read_directive_dossier_payload(row)

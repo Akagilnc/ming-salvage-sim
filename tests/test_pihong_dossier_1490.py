@@ -2594,9 +2594,10 @@ def test_658_free_decree_capture_target_dossier_real_entry(game, monkeypatch):
     from ming_sim.session_write_queue import get_session_write_queue
     web_game = types.SimpleNamespace(db=db, state=state, content=content, session=session, directive_rows=lambda: db.list_directives(state, statuses=('pending', 'draft')), directive_payload=lambda row: dict(row))
     web_game._write_gate = get_session_write_queue(web_game).write_gate
-    monkeypatch.setattr(web_app, 'get_game', lambda: web_game)
-    result = asyncio.run(web_app.api_create_directive(web_app.DirectiveRequest(text=text_in)))
-    dir_id = int(result['directive']['id'])
+    # #1902：拟诏台 Web 入口退役，改经共享抽取核 + 会话写入面落同一条 draft。
+    from tests.directive_entry_helpers import stage_draft_directive
+
+    dir_id = stage_draft_directive(session, text_in).id
     row = db.conn.execute('SELECT dossier_payload_json FROM turn_directives WHERE id=?', (dir_id,)).fetchone()
     payload = json.loads(str(row['dossier_payload_json'] or '{}'))
     assert int(payload.get('target_dossier_id') or 0) == did

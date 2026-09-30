@@ -66,3 +66,32 @@ def test_menu_delete_route_uses_shared_guard(monkeypatch, tmp_path):
     assert exc.value.status_code == 400
     # 只许留下模块导入期建的 user_data 目录；不得落任何 .db 存档。
     assert [p for p in os.listdir(tmp_path) if p.endswith(".db")] == []
+
+
+@pytest.mark.parametrize("method", ["POST", "PATCH"])
+def test_manual_directive_routes_are_retired(method):
+    """拟诏台手写拟旨/改稿路由整条退役；删旧草稿（DELETE）保留。"""
+    assert not any(
+        getattr(r, "path", None) == "/api/directives"
+        and method in (getattr(r, "methods", None) or set())
+        for r in web_app.app.routes
+    ), f"{method} /api/directives 应已退役"
+    assert "/api/directives" not in web_app.app.openapi()["paths"] or method != "POST"
+    assert [
+        r for r in web_app.app.routes
+        if getattr(r, "path", None) == "/api/directives/{directive_id}"
+        and "DELETE" in (getattr(r, "methods", None) or set())
+    ], "删旧草稿入口必须保留"
+
+
+def test_manual_directive_entry_is_gone_from_frontend_sources():
+    """前端御笔自拟面板与拟/改稿动作随入口同退（源码级，防复活）。"""
+    import pathlib
+
+    web_src = pathlib.Path(web_app.__file__).resolve().parent / "web" / "src"
+    for rel in ("components/edictModal.tsx", "useEdictActions.ts", "main.tsx"):
+        text = (web_src / rel).read_text(encoding="utf-8")
+        for token in ("onCreateDirective", "onSaveDirective", "onStartEdit",
+                      "directiveText", "editingDirectiveText", "desk-compose",
+                      "desk-add-btn", "新增草案"):
+            assert token not in text, f"{rel} 仍引用已退役的拟诏台面：{token}"

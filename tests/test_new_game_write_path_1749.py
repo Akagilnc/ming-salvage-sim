@@ -160,10 +160,18 @@ def _install_canned_scene_double(game, monkeypatch) -> None:
     stub_audience_translate(monkeypatch, _empty_translate_fn)
 
 
-def _directive(client: TestClient, text: str) -> None:
-    r = client.post("/api/directives", json={"text": text, "notes": ""})
-    _assert_not_bare_500(r, step="directives")
-    assert r.status_code == 200, r.text
+def _directive(text: str) -> None:
+    """#1902：拟诏台 Web 入口退役，改经共享抽取核 + 会话写入面落同一条 draft。
+
+    入口撤掉后不再有 HTTP 回执可依，游戏实例一律取当前 web_app.web_game（与
+    「玩家在活局里拟旨」同一条缝）。
+    """
+    import web_app
+    from tests.directive_entry_helpers import stage_draft_directive
+
+    game = web_app.web_game
+    assert game is not None
+    stage_draft_directive(game.session, text)
 
 
 def _chat_stream(client: TestClient, minister: str, msg: str) -> dict:
@@ -221,7 +229,7 @@ def _write_and_verify_live(
     """经真实 directives + chat/stream 写入，独立 DB 核对 campaign/回话终态。"""
     _install_canned_scene_double(game, monkeypatch)
     d_text = f"着户部清核辽饷（{label}）。"
-    _directive(client, d_text)
+    _directive(d_text)
     _wait_pending_writes(game)
     st = client.get("/api/game/state")
     minister = _pick_active_minister(st.json())
@@ -314,7 +322,7 @@ def test_new_game_write_path_direct_and_via_exit(tracer_client, monkeypatch):
 
     # ── 路二：exit → new_game（确定性；真实 exit 并发交错留临时真跑，不进永久案）──
     pre_exit = "着户部清核辽饷（pre-exit）。"
-    _directive(client, pre_exit)
+    _directive(pre_exit)
     _wait_pending_writes(g1)
     n_exit = len(spawns)
     assert client.post("/api/menu/exit_to_menu").status_code == 200
@@ -377,7 +385,7 @@ def test_new_game_write_path_direct_and_via_exit(tracer_client, monkeypatch):
         minister_message_id=rec2["minister_message_id"],
     )
     cont_more = "着再拨饷银（续）。"
-    _directive(client, cont_more)
+    _directive(cont_more)
     _wait_pending_writes(g3)
     assert cont_more in _db_snapshot(g3.db_path)["directive_texts"]
 
@@ -414,7 +422,7 @@ def test_new_game_construct_failure_keeps_old_writable(tracer_client, monkeypatc
     assert g0 is not None
     p0 = g0.db_path
     c0 = _campaign(g0)
-    _directive(client, "着户部清核辽饷（pre-fail）。")
+    _directive("着户部清核辽饷（pre-fail）。")
     _wait_pending_writes(g0)
     main_before = web_app._get_main_db_path()
 
@@ -436,7 +444,7 @@ def test_new_game_construct_failure_keeps_old_writable(tracer_client, monkeypatc
     assert web_app._same_db_path(g0.db_path, p0)
     assert _campaign(g0) == c0
     after = "着户部清核辽饷（after-fail）。"
-    _directive(client, after)
+    _directive(after)
     _wait_pending_writes(g0)
     snap = _db_snapshot(p0)
     assert snap["campaign_id"] == c0
@@ -474,7 +482,7 @@ def test_gamesession_load_state_failure_closes_partial_resources(tmp_path, monke
 
 
 def test_load_save_close_fail_restores_writable_old_game(tracer_client, monkeypatch):
-    """真实 load_save 入口：关旧局失败 → 409、恢复指针且 /api/directives 仍可写；不搬活库。"""
+    """真实 load_save 入口：关旧局失败 → 409、恢复指针且拟旨面仍可写；不搬活库。"""
     client = tracer_client
     _install_canned_minister_factory(monkeypatch)
     seed = client.post("/api/menu/new_game")
@@ -503,7 +511,7 @@ def test_load_save_close_fail_restores_writable_old_game(tracer_client, monkeypa
         assert os.path.isfile(old_path)
         assert _drained(Path(web_app.user_data_path())) == []
         marker = "着户部清核辽饷（load-save-close-fail）。"
-        _directive(client, marker)
+        _directive(marker)
         _wait_pending_writes(g0)
         snap = _db_snapshot(old_path)
         assert snap["campaign_id"] == c0
@@ -524,7 +532,7 @@ def test_exit_close_fail_blocks_archive_on_real_new_game(tracer_client, monkeypa
     old_path = g0.db_path
     c0 = _campaign(g0)
     marker = "着户部清核辽饷（exit-close-fail）。"
-    _directive(client, marker)
+    _directive(marker)
     _wait_pending_writes(g0)
 
     real_close = g0.session.close

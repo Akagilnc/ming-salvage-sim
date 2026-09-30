@@ -244,19 +244,10 @@ function renderEdictModal(props: {
     root.render(
       <EdictModal
         state={props.state}
-        directiveText=""
-        editingDirectiveId={null}
-        editingDirectiveText=""
         decree=""
         report=""
         busy=""
         error={props.error ?? ""}
-        onDirectiveTextChange={() => {}}
-        onEditingTextChange={() => {}}
-        onCreateDirective={() => {}}
-        onStartEdit={() => {}}
-        onCancelEdit={() => {}}
-        onSaveDirective={() => {}}
         onDeleteDirective={() => {}}
         onIssueDecree={props.onIssueDecree ?? (() => {})}
         onAdvanceWithoutEdict={props.onAdvanceWithoutEdict ?? (() => {})}

@@ -331,16 +331,12 @@ def _play_one_month(
     # 顺序 tracer 只验证真实入口和结构化月推进结果。
     _wait_pending_writes(game)
 
-    directive = client.post(
-        "/api/directives",
-        json={"text": f"着户部清核辽饷（{month_label}）。", "notes": ""},
-    )
-    _assert_not_bare_500(directive, step=f"{month_label} 拟旨")
-    assert directive.status_code == 200, (
-        f"{month_label} 拟旨 → {directive.status_code}: {directive.text}"
-    )
-    dirs = (directive.json() or {}).get("directives") or []
-    assert dirs, f"{month_label}: directive list empty after POST"
+    # #1902：拟诏台 Web 入口退役，改经共享抽取核 + 会话写入面落同一条 draft。
+    from tests.directive_entry_helpers import stage_draft_directive
+
+    stage_draft_directive(game.session, f"着户部清核辽饷（{month_label}）。")
+    dirs = game.session.list_directives()
+    assert dirs, f"{month_label}: directive list empty after staging"
 
     _wait_pending_writes(game)
 

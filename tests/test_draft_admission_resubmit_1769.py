@@ -1,6 +1,6 @@
 """#1769 draft 成案拒收 → 结算路补交 / 耗尽留到下月。
 
-真实入口：POST /api/directives → POST /api/decree/issue/stream；
+真实入口：拟旨入档（#1902 后经会话写入面）→ POST /api/decree/issue/stream；
 下月供料经 session.write_decree → write_decree_with_agno 真实投影。
 断言 SSE 终态与 turn_directives / rejection_reports / dossier 结构化字段。
 
@@ -200,9 +200,11 @@ def _finish_month_after_gazette(game, turn: int) -> None:
     assert int(game.state.turn) == int(turn) + 1
 
 
-def _post_directive(client, text: str) -> None:
-    resp = client.post("/api/directives", json={"text": text, "notes": ""})
-    assert resp.status_code == 200, resp.text
+def _post_directive(game, text: str) -> None:
+    """#1902：拟诏台 Web 入口退役，改经共享抽取核 + 会话写入面落同一条 draft。"""
+    from tests.directive_entry_helpers import stage_draft_directive
+
+    stage_draft_directive(game.session, text)
 
 
 def _latest_directive_id(game) -> int:
@@ -254,7 +256,7 @@ def test_draft_admission_resubmit_success_advances_month(admission_game, monkeyp
     client = TestClient(web_app.app)
     turn = int(game.state.turn)
 
-    _post_directive(client, _DECREE_TEXT)
+    _post_directive(game, _DECREE_TEXT)
     wait_pending_writes(game)
     draft_id = _latest_directive_id(game)
     first_row = game.db.get_directive(draft_id)
@@ -311,7 +313,7 @@ def test_draft_admission_exhaust_keeps_draft_and_advances(admission_game, monkey
     client = TestClient(web_app.app)
     turn = int(game.state.turn)
 
-    _post_directive(client, _DECREE_TEXT)
+    _post_directive(game, _DECREE_TEXT)
     wait_pending_writes(game)
     did = _latest_directive_id(game)
     source_turn = int(game.db.get_directive(did)["turn"])
@@ -392,10 +394,10 @@ def test_draft_admission_mixed_good_and_bad_independent(admission_game, monkeypa
     client = TestClient(web_app.app)
     turn = int(game.state.turn)
 
-    _post_directive(client, "准从国库见银拨关宁军饷十五万两即发。")
+    _post_directive(game, "准从国库见银拨关宁军饷十五万两即发。")
     wait_pending_writes(game)
     good_id = _latest_directive_id(game)
-    _post_directive(client, _DECREE_TEXT)
+    _post_directive(game, _DECREE_TEXT)
     wait_pending_writes(game)
     bad_id = _latest_directive_id(game)
     assert bad_id != good_id
@@ -427,7 +429,7 @@ def test_draft_admission_code_fault_aborts_with_error_pack(admission_game, monke
     client = TestClient(web_app.app)
     turn = int(game.state.turn)
 
-    _post_directive(client, "准从国库见银拨关宁军饷十五万两即发。")
+    _post_directive(game, "准从国库见银拨关宁军饷十五万两即发。")
     wait_pending_writes(game)
 
     def boom(*_a, **_k):
@@ -451,7 +453,7 @@ def test_draft_admission_resubmit_code_fault_aborts_with_error_pack(
     client = TestClient(web_app.app)
     turn = int(game.state.turn)
 
-    _post_directive(client, _DECREE_TEXT)
+    _post_directive(game, _DECREE_TEXT)
     wait_pending_writes(game)
 
     def boom(*_a, **_k):
@@ -491,7 +493,7 @@ def test_resubmit_non_intent_keeps_original_payload_no_special_decree(
     client = TestClient(web_app.app)
     turn = int(game.state.turn)
 
-    _post_directive(client, _DECREE_TEXT)
+    _post_directive(game, _DECREE_TEXT)
     wait_pending_writes(game)
     did = _latest_directive_id(game)
     first = game.db.read_directive_dossier_payload(game.db.get_directive(did))
@@ -568,7 +570,7 @@ def test_exhaust_zero_dossier_system_simulation_no_steam_decree(
     client = TestClient(web_app.app)
     turn = int(game.state.turn)
 
-    _post_directive(client, _DECREE_TEXT)
+    _post_directive(game, _DECREE_TEXT)
     wait_pending_writes(game)
     did = _latest_directive_id(game)
 

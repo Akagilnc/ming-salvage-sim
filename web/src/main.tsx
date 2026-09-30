@@ -183,19 +183,10 @@ export function App() {
     currentNightId,
   });
 
-  // 诏书台动作群（useEdictActions.ts）：草案 create/save/delete 与本地会话态归属。
+  // 诏书台动作群（useEdictActions.ts）：#1902 后只剩删旧草稿与本地会话态归属。
   const {
-    directiveText,
-    editingDirectiveId,
-    editingDirectiveText,
-    setDirectiveText,
-    setEditingDirectiveText,
     localDirectives,
     resetLocalEdictState,
-    createDirective,
-    startEditDirective,
-    cancelEditDirective,
-    saveDirective,
     deleteDirective,
   } = useEdictActions({ setError, setState, beginDurableMutation });
 
@@ -776,20 +767,11 @@ export function App() {
         >
           <EdictModal
             state={state}
-            directiveText={directiveText}
-            editingDirectiveId={editingDirectiveId}
-            editingDirectiveText={editingDirectiveText}
             decree={decree}
             report={report}
             busy={busy}
             error={error}
             localDirectives={localDirectives}
-            onDirectiveTextChange={setDirectiveText}
-            onEditingTextChange={setEditingDirectiveText}
-            onCreateDirective={createDirective}
-            onStartEdit={startEditDirective}
-            onCancelEdit={cancelEditDirective}
-            onSaveDirective={saveDirective}
             onDeleteDirective={deleteDirective}
             onIssueDecree={issueDecree}
             onAdvanceWithoutEdict={() => { setActiveModal("none"); void advanceWithoutEdict(); }}
