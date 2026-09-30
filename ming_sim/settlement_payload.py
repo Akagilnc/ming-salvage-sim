@@ -22,9 +22,6 @@ RESCRIPT_CAPABILITY_DECISIONS = frozenset({
 # 只匹配显式机标本体；邻接 whitespace 属原文，不得一并消费（P6 / #671 / ADR 0142）
 _DECISION_RE = re.compile(r"<<DECISION>>\s*(\{.*?\})\s*<<END>>", re.DOTALL)
 MAX_DECISIONS_PER_TURN = 5
-# #1891：请饷／议停请旨的结局类型键。label/hint 仍是大臣／拟旨者写的自由文，
-# 只用于呈现；事件结局取本键的白名单值，不解析 label 文字（ADR 0142 / P6）。
-LEVY_TERMINAL_REASON_KEY = "levy_terminal_reason"
 
 
 def bind_decision_options(options: object) -> Dict[str, Dict[str, object]]:
@@ -78,10 +75,6 @@ def parse_decision_blocks(text: str) -> List[Dict[str, object]]:
                 "label": label,
                 "hint": str(o.get("hint") or "").strip(),
             }
-            # #1891：请饷／议停请旨的结局类型键随 option 原样透传（呈现仍只读
-            # label/hint）。归一与白名单校验在月链绑定处按该事件的标签闭集做。
-            if LEVY_TERMINAL_REASON_KEY in o:
-                option[LEVY_TERMINAL_REASON_KEY] = o[LEVY_TERMINAL_REASON_KEY]
             # Deterministic financial options carry their executable payload;
             # label/hint remain presentation only.
             for key in season_option_fields(action_type):

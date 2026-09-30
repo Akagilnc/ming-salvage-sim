@@ -19602,14 +19602,24 @@ class GameDB:
         *,
         source: str = "hitl_decision",
         commit: bool = True,
+        terminal_reason: Optional[str] = None,
     ) -> None:
-        """Persist the player's HITL choice for an event-backed decision in the event ledger."""
+        """Persist the player's HITL choice for an event-backed decision in the event ledger.
+
+        ``terminal_reason`` 默认沿用旧语义：把 choice 的 label 当作「已选待落终局」
+        暂存，供 phase2 归一。传 ``""`` 则显式声明本批选择**不**充当结局标签——
+        请饷／议停请旨走这条：亲笔批语与拟批措辞都是自由文，只是「本次答复」这一
+        事实，结局等 #1815 转译理解后才经唯一写口置定（ADR 0142 / P6）。
+        """
         eid = str(event_id or "").strip()
         if not eid:
             return
         self._ensure_event_parent(eid)
         payload = json.dumps(choice if isinstance(choice, dict) else {}, ensure_ascii=False)
-        label = str((choice or {}).get("label") or "")[:200] if isinstance(choice, dict) else ""
+        if terminal_reason is None:
+            label = str((choice or {}).get("label") or "")[:200] if isinstance(choice, dict) else ""
+        else:
+            label = str(terminal_reason or "")[:200]
         self.conn.execute(
             """
             INSERT INTO event_triggers

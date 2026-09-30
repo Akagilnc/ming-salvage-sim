@@ -1336,51 +1336,24 @@ def _cas_decided(db: Any, item: ValidatedItem) -> None:
         raise ValueError(f"行级 CAS 失败（非 pending）：{item.decision_key}")
 
 
-def _apply_levy_petition_verdict(
-    db: Any, state: Any, *, event_id: str,
-    choice: Dict[str, object], execution_option: Optional[Dict[str, object]],
-    commit: bool = True,
-) -> str:
-    """#1891：请饷／议停请旨的答复落账。返回 'approved_or_rejected' / 'held'。
+def _record_levy_petition_answer(
+    db: Any, state: Any, *, event_id: str, choice: Dict[str, object], commit: bool = True,
+) -> None:
+    """#1891：请饷／议停请旨的答复只按事实落账，结局不由这条路径判定。
 
-    准驳：结局标签只从命中 option 的 levy_terminal_reason 类型键取，经该事件
-    terminal_reason_labels 白名单归一（不可归一即响亮失败，不写脏串），再经
-    mark_event_triggered 唯一写口置终局。**不解析 label 文字**（ADR 0142）。
-
-    留中：本次奏疏已答、事件不置终局。只在事件账留 choice（terminal_state 仍空），
-    下月世界段 run 据此自行决定是否再上疏。
+    皇帝点没点拟批、批语是什么，都只是「本次答复」这一事实（ADR 0115 留中只记
+    本次答复）。**不**在这里置终局，也**不**据批语文字或选项载荷猜结局
+    （ADR 0142 / P6）：批红答复先经既有世界段续推与 #1815 转译理解，落成结构化
+    声明，再由事件账唯一写口置定结局。此处只把亲笔批语原样持久化。
     """
-    from ming_sim.issues import (
-        FISCAL_LEVY_RESCRIPT_SOURCE, _fiscal_levy_event_by_id,
-        _fiscal_levy_normalized_terminal_reason_or_abort,
-    )
-    from ming_sim.settlement_payload import LEVY_TERMINAL_REASON_KEY
+    from ming_sim.issues import FISCAL_LEVY_RESCRIPT_SOURCE
 
-    ev = _fiscal_levy_event_by_id(event_id)
-    if ev is None:
-        raise ValueError(f"请饷请旨指向不存在的事件：{event_id}")
-    raw = (execution_option or {}).get(LEVY_TERMINAL_REASON_KEY)
-    if raw is None or not str(raw).strip():
-        # 点了拟批却缺执行类型键不是留中；拒绝并让外层事务回滚，不能把自由文
-        # label 写入旧「已选未终态」通道的 terminal_reason（下月会被当结局读）。
-        if execution_option is not None or str(choice.get("label") or "").strip():
-            raise ValueError(
-                f"请饷请旨 {event_id} 的拟批缺少非空 {LEVY_TERMINAL_REASON_KEY}"
-            )
-        # 留中仅限朱笔答复不点拟批：label 为空，terminal_reason 也保持空。
-        db.record_event_decision_choice(
-            state, event_id, choice, source=FISCAL_LEVY_RESCRIPT_SOURCE, commit=commit,
-        )
-        return "held"
-    label = _fiscal_levy_normalized_terminal_reason_or_abort(ev, raw, state)
-    db.mark_event_triggered(
-        state, event_id, source=FISCAL_LEVY_RESCRIPT_SOURCE,
-        terminal_reason=label, commit=commit,
-    )
+    # terminal_reason 显式留空：亲笔批语／拟批措辞是自由文，只是「本次答复」，
+    # 不充当结局标签。结局由既有续推经 #1815 转译理解后落唯一写口（ADR 0142 / P6）。
     db.record_event_decision_choice(
-        state, event_id, choice, source=FISCAL_LEVY_RESCRIPT_SOURCE, commit=commit,
+        state, event_id, choice, source=FISCAL_LEVY_RESCRIPT_SOURCE,
+        commit=commit, terminal_reason="",
     )
-    return "approved_or_rejected"
 
 
 def apply_rescript_batch(
@@ -1450,15 +1423,14 @@ def apply_rescript_batch(
                 from ming_sim.month_chain import (
                     _DECREE_QUESTION_PREFIX, _LEVY_PETITION_PREFIX, _WORLD_QUESTION_PREFIX,
                 )
-                # #1891：请饷／议停请旨——案头身份剥前缀还原真实事件，结局只经
-                # 事件账唯一写口置定（白名单归一）。留中（无 label 的朱笔答复）
-                # 不置终局，只留本次已答的 choice 事实。
+                # #1891：请饷／议停请旨——案头身份剥前缀还原真实事件。答复只按
+                # 事实落账（亲笔批语原样持久化），不置终局、不猜结局：结局由既有
+                # 世界段续推经 #1815 转译理解后，落事件账唯一写口。
                 if event_id.startswith(_LEVY_PETITION_PREFIX):
-                    _apply_levy_petition_verdict(
+                    _record_levy_petition_answer(
                         db, state,
                         event_id=event_id[len(_LEVY_PETITION_PREFIX):],
                         choice=item.choice,
-                        execution_option=item.execution_option,
                         commit=False,
                     )
                     result.applied_keys.append(item.decision_key)

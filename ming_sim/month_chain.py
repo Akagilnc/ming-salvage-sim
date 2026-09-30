@@ -71,13 +71,13 @@ def run_world_segment_text(
 def _world_segment_message(db: Any, state: Any, cheat_directive: str) -> str:
     """#1891：本月可呈的请饷／议停事件随世界段消息交接（材料＋军费实况已在目录）。
 
-    只是供料：是否上疏、怎么陈情、拟什么旨，由过月模型自己判断（ADR 0153 /
-    P6）。不给判定指令、不代它写疏文——P7 下疏文必须由模型长出。
+    只是供料：怎么陈情、拟什么旨，由过月模型自己判断（ADR 0153 / P6）。不给判定
+    指令、不代它写疏文——P7 下疏文必须由模型长出。是否上疏的权限按 #1891 分两层：
+    本月到点、尚未呈过的应呈请；已留中过的（re_presentation）由大臣自决是否再上。
     """
     import json
 
     from ming_sim.issues import list_fiscal_levy_petitions_due
-    from ming_sim.settlement_payload import LEVY_TERMINAL_REASON_KEY
 
     petitions = list_fiscal_levy_petitions_due(state, db)
     message = "推演本月世界段。"
@@ -89,19 +89,44 @@ def _world_segment_message(db: Any, state: Any, cheat_directive: str) -> str:
         "instruction": message,
         "levy_petitions": petitions,
         "levy_petitions_contract": (
-            "levy_petitions 是本月到点、尚未呈请的三饷请饷／议停事件，"
-            "各带其终局标签闭集。就其中你据实判断当上疏的事件，按标准 DECISION "
-            "结构陈情拟旨、停在问处，并把 event_id 原样写成本事件的 event_id 值，"
-            "由皇帝亲裁。不必上疏的就不必上；已留中过的（re_presentation）由你自决"
-            "是否再上疏，本月不重上旧疏。"
-        ),
-        "levy_petitions_option_contract": (
-            "上疏的每一项 options，除 label（拟批措辞）与 hint 外，另带 "
-            f"{LEVY_TERMINAL_REASON_KEY} 字段，取该事件 terminal_reason_labels "
-            "闭集里的一个值（已准／已驳，或议停的已停／仍征），"
-            "表示皇帝点这一项时该事件落到哪个结局。措辞归你写，结局归闭集。"
+            "levy_petitions 是本月到点的三饷请饷／议停事件，各带其终局标签闭集。"
+            "presentation_due 为 true 的（本月到点、尚未呈过）本月上疏陈情拟旨，"
+            "按标准 DECISION 结构停在问处，并把 event_id 原样写成本事件的 "
+            "event_id 值，由皇帝亲裁。presentation_due 为 false 的（已呈过、被留中）"
+            "是否再上疏由你自决，本月不重上旧疏。"
         ),
     }, ensure_ascii=False)
+
+
+def _pin_world_question_identities(
+    levy_petitions: List[Dict[str, Any]], questions: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """#1891（ADR 0115）：交接时把请旨身份钉进问题本身，随月链持久化。
+
+    绑定真源＝本月交接的那份名单快照（与世界段消息共用同一次取数），不是回显，
+    也不在恢复时按实时资格重解。恢复只续用当次已存身份与奏疏。
+    """
+    from ming_sim.issues import FISCAL_LEVY_EVENT_CATEGORY, _fiscal_levy_event_by_id
+
+    offered = {
+        str(item.get("event_id") or "") for item in levy_petitions
+        if str(item.get("event_id") or "")
+    }
+    pinned: List[Dict[str, Any]] = []
+    for question in questions:
+        if not isinstance(question, dict):
+            continue
+        row = dict(question)
+        event_id = str(row.get("event_id") or "").strip()
+        ev = _fiscal_levy_event_by_id(event_id) if event_id else None
+        if (
+            event_id in offered
+            and ev is not None
+            and getattr(ev, "category", "") == FISCAL_LEVY_EVENT_CATEGORY
+        ):
+            row["event_id"] = f"{_LEVY_PETITION_PREFIX}{event_id}"
+        pinned.append(row)
+    return pinned
 
 
 def _gazette_public_fact(fact: Any, secret_dossier_ids: Optional[set[int]] = None) -> bool:
@@ -706,6 +731,8 @@ def _discard_segment_for_escape(
         chain.pop("world_text", None)
         chain["world_text_ready"] = False
         chain.pop("world_questions", None)
+        # 逃生口重掷的是世界段本身，交接名单随之一并作废，下次重新取定。
+        chain.pop("levy_petitions", None)
 
 
 def _abort_month_call(
@@ -967,6 +994,12 @@ def _run_world_segment(
     db, state = session.db, session.state
     turn = int(state.turn)
     if not chain.get("world_text_ready"):
+        # #1891：交接名单只取一次，随链持久化。世界段消息与下面的身份钉定读同一份
+        # 快照；恢复时读链上已存身份与奏疏，不按实时资格重解（ADR 0115）。
+        from ming_sim.issues import list_fiscal_levy_petitions_due
+
+        chain["levy_petitions"] = list_fiscal_levy_petitions_due(state, db)
+
         def _push() -> str:
             return run_world_segment_text(
                 db, state, session.llm_config, session.agno_db,
@@ -982,7 +1015,10 @@ def _run_world_segment(
     if chain.get("world_committed"):
         return chain.get("declaration_outcome")
     prefix, questions = _split_at_question(str(chain.get("world_text") or ""))
-    chain["world_questions"] = questions
+    # 交接时钉定：请旨问题按上面那份名单快照换上稳定案头身份，随链持久化。
+    chain["world_questions"] = _pin_world_question_identities(
+        chain.get("levy_petitions") or [], questions,
+    )
 
     def mark(result: Any) -> None:
         # 完成标记与世界效果同一事务；调用方链要等提交成功后再采纳。
@@ -1358,11 +1394,6 @@ def _materialize_rescript_desk(
 
     open_items = _open_rescript_items(db, state, chain)
     turn = int(state.turn)
-    from ming_sim.issues import list_fiscal_levy_petitions_due
-
-    levy_due_ids = {
-        str(item["event_id"]) for item in list_fiscal_levy_petitions_due(state, db)
-    }
     decisions: List[Dict[str, object]] = []
     if open_items["triad"]:
         verdicts = []
@@ -1393,13 +1424,12 @@ def _materialize_rescript_desk(
                 question, event_id=f"{_DECREE_QUESTION_PREFIX}{ref}:{idx}",
             ))
     for idx, question in enumerate(open_items["world_questions"]):
-        # #1891：世界段为请饷／议停事件上疏时，DECISION 回显该事件 id → 案头身份
-        # 换成 levy-petition:<event_id>。回显的 id 只在本月请旨名单内才认（权威
-        # 快照绑定，不从疏文猜配）；名单外的回显按普通世界段请旨处理。
-        petition_event = _levy_petition_event_id(question, levy_due_ids)
-        if petition_event is not None:
+        # #1891：请旨身份在交接时已钉进问题本身（ADR 0115），此处只消前缀还原
+        # 真实事件；不是本月请旨的问题照旧走普通世界段案头身份。
+        event_id = str(question.get("event_id") or "")
+        if event_id.startswith(_LEVY_PETITION_PREFIX):
             decisions.append(_question_as_decision(
-                question, event_id=f"{_LEVY_PETITION_PREFIX}{petition_event}",
+                question, event_id=event_id,
             ))
             continue
         decisions.append(_question_as_decision(
@@ -1420,20 +1450,6 @@ def _materialize_rescript_desk(
     chain["stage"] = "rescript"
     _save_chain(db, turn, chain, source=Provenance.system_simulation)
     return desk
-
-
-def _levy_petition_event_id(
-    question: Dict[str, object], levy_due_ids: set[str],
-) -> Optional[str]:
-    """#1891：世界段请旨是否绑定到某个本月请饷／议停事件。
-
-    只认 DECISION 结构里 event_id 字段与本月请旨名单的精确同值（权威快照绑定，
-    ADR 0115）——不从 title／context 猜配，名单外的 id 一律不绑。
-    """
-    if not levy_due_ids:
-        return None
-    event_id = str(question.get("event_id") or "").strip()
-    return event_id if event_id in levy_due_ids else None
 
 
 def _question_as_decision(question: Dict[str, object], *, event_id: str) -> Dict[str, object]:
@@ -1477,12 +1493,17 @@ def _consume_rescript_answers(
 
     def _answer_from_row(row: Dict[str, object]) -> Dict[str, object]:
         choice = row.get("choice") if isinstance(row.get("choice"), dict) else {}
+        event_id = str(row.get("event_id") or "")
+        # #1891：请饷／议停请旨交续推的是真实事件身份——案头前缀只是批红页身份，
+        # 不该让推演方看到（ADR 0115）。御批原话（label/hint/note）原样带出。
+        if event_id.startswith(_LEVY_PETITION_PREFIX):
+            event_id = event_id[len(_LEVY_PETITION_PREFIX):]
         return {
             "label": str(choice.get("label") or "").strip(),
             "hint": str(choice.get("hint") or "").strip(),
             "note": str(choice.get("note") or "").strip(),
             "context": str(row.get("context") or "").strip(),
-            "event_id": str(row.get("event_id") or ""),
+            "event_id": event_id,
             "title": str(row.get("title") or ""),
         }
 

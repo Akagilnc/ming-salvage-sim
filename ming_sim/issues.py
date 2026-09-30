@@ -1766,13 +1766,16 @@ def list_fiscal_levy_petitions_due(
 
     资格门与 apply_historical_fiscal_rates 的请旨判定同源：窗口开、门过、未过期、
     未终态。已呈待批（批红页上仍有该事件请旨行）不再重触发为首次事件。
-    留中过的原事件带 re_presentation=True 回来——由大臣自己决定是否再上疏，
+
+    ``presentation_due`` 是**权限事实**而非措辞：首次到点、尚未呈过的应呈请
+    （True）；已呈过、被留中的由大臣自决是否再上疏（False）。原事件、原疏与亲笔
+    批语随 ``prior_petition`` 带回，供后续世界段读同一持久事实（#1891 读端闭环），
     代码不代它再顶一次旧疏。
     """
     c = _ctx()
     terminal_states = _event_terminal_states(db)
     awaiting = _fiscal_levy_petitions_awaiting_verdict(db)
-    held = _fiscal_levy_held_event_ids(db)
+    answered = _fiscal_levy_answered_petitions(db)
     due: List[Dict[str, object]] = []
     for ev in c.events:
         if getattr(ev, "category", "") != FISCAL_LEVY_EVENT_CATEGORY:
@@ -1784,13 +1787,16 @@ def list_fiscal_levy_petitions_due(
         if not _gate_passed(ev.trigger_gate, state.metrics, db):
             continue
         _fiscal_levy_require_labels(ev, state)
+        held = ev.id in answered
         due.append({
             "event_id": ev.id,
             "title": ev.title,
             "summary": ev.summary,
             "audiences": list(getattr(ev, "audiences", []) or []),
             "terminal_reason_labels": list(getattr(ev, "terminal_reason_labels", []) or []),
-            "re_presentation": ev.id in held,
+            "re_presentation": held,
+            "presentation_due": not held,
+            **({"prior_petition": answered[ev.id]} if held else {}),
         })
     return due
 
@@ -1814,13 +1820,16 @@ def _fiscal_levy_petitions_awaiting_verdict(db: GameDB) -> set[str]:
     return awaiting
 
 
-def _fiscal_levy_held_event_ids(db: GameDB) -> set[str]:
-    """已呈过且已留中（本次已答、事件未裁定）的饷率事件。
+def _fiscal_levy_answered_petitions(db: GameDB) -> Dict[str, Dict[str, object]]:
+    """已呈且已答、事件尚未裁定的请饷／议停：原疏与亲笔批语（#1891 读端闭环）。
 
-    留中只在事件账留 choice（terminal_state 仍空），据此识别「已呈未决」，
-    供下月世界段 run 读这些事实自行决定是否再上疏。
+    留中只是「本次奏疏已答、事件未裁定」，事实真源仍是同一份持久记录——原疏在
+    已答的请旨行（pending_decisions），亲笔批语在事件账 choice_json。不另立
+    平行账本；此处只把既有两处按事件身份读出来，供后续世界段读同一事实。
     """
-    return {
+    from ming_sim.month_chain import _LEVY_PETITION_PREFIX
+
+    unresolved = {
         str(row["event_id"])
         for row in db.conn.execute(
             "SELECT event_id FROM event_triggers "
@@ -1828,6 +1837,27 @@ def _fiscal_levy_held_event_ids(db: GameDB) -> set[str]:
         ).fetchall()
         if str(row["event_id"] or "").strip()
     }
+    answered: Dict[str, Dict[str, object]] = {}
+    for row in db.conn.execute(
+        "SELECT event_id, title, context, choice_json FROM pending_decisions "
+        "WHERE kind='decision' AND status='decided' ORDER BY turn, idx"
+    ).fetchall():
+        event_id = str(row["event_id"] or "").strip()
+        if not event_id.startswith(_LEVY_PETITION_PREFIX):
+            continue
+        real_id = event_id[len(_LEVY_PETITION_PREFIX):]
+        if real_id not in unresolved:
+            continue
+        try:
+            choice = json.loads(str(row["choice_json"] or "{}"))
+        except (TypeError, ValueError):
+            choice = {}
+        answered[real_id] = {
+            "title": str(row["title"] or ""),
+            "context": str(row["context"] or ""),
+            "rescript": choice if isinstance(choice, dict) else {},
+        }
+    return answered
 
 
 _EVENT_GATE_KEY_RE = re.compile(r"^event\.([^.]+)\.(triggered|terminal_state|terminal_reason)$")
@@ -3750,6 +3780,84 @@ def _is_strategic_foreign_node_event(ev: Event) -> bool:
     )
 
 
+def _is_fiscal_levy_petition_event(ev: Event) -> bool:
+    """#1891：交 #1847 请旨、结局由御批经转译置定的三饷请饷／议停事件。
+
+    与战略事件同一结局声明通道（事件结局 + 事件账唯一写口），只是资格门不同：
+    战略事件走 event_pool 候选与 trigger_gate；请饷／议停走本月交接的 petition-due
+    名单，且此刻必须「已呈待裁或已答未裁」——没呈过的没有御批可译。
+    """
+    return (
+        getattr(ev, "category", "") == FISCAL_LEVY_EVENT_CATEGORY
+        and bool(getattr(ev, "terminal_reason_labels", None))
+    )
+
+
+def _fiscal_levy_presented_event_ids(db: GameDB) -> set[str]:
+    """本月已呈上批红页的请饷／议停事件（不论已答未答）。
+
+    结局声明的资格门＝确已呈请过：没呈过的没有御批可译，不接受凭空声明的结局。
+    前缀真源 = month_chain；此处局部导入以免与月链成模块环。
+    """
+    from ming_sim.month_chain import _LEVY_PETITION_PREFIX
+
+    return {
+        str(row["event_id"])[len(_LEVY_PETITION_PREFIX):]
+        for row in db.conn.execute(
+            "SELECT DISTINCT event_id FROM pending_decisions WHERE kind='decision'"
+        ).fetchall()
+        if str(row["event_id"] or "").startswith(_LEVY_PETITION_PREFIX)
+    }
+
+
+def _fiscal_levy_declared_outcome_label_or_error(
+    db: GameDB, state: GameState, ev: Event, outcome: Dict[str, object],
+) -> tuple[str, str]:
+    """请饷／议停事件声明结局 → 闭集标签。缺声明不报错（留中即不声明结局）。
+
+    声明了却不在该事件 terminal_reason_labels 闭集内＝响亮失败，不写脏串
+    （ADR 0020 落位 1）。与 applier 落账走同一归一器，两处不各判一套。
+    """
+    del db
+    label = _event_outcome_label(outcome, ev.id)
+    if not label:
+        return "", ""
+    return _fiscal_levy_normalized_terminal_reason_or_abort(ev, label, state), ""
+
+
+def _apply_fiscal_levy_declared_outcomes(
+    db: GameDB, state: GameState, content: GameContent,
+    extracted: Dict[str, object], *, commit: bool,
+) -> List[Dict[str, object]]:
+    """请饷／议停事件在本段声明的结局 → 事件账唯一写口（#1891）。
+
+    唯一触发源是同一段 C0 转译产出的 ``事件结局``（与战略事件同一字段、同一写口）。
+    已在 preflight 判过的资格与闭集这里不再重判，只做归一后落账；未声明的事件不在
+    此出现——留中就是留中，代码不据批语文字补一个结局（ADR 0142 / P6）。
+    """
+    outcomes = extracted.get("事件结局")
+    if not isinstance(outcomes, dict) or not outcomes:
+        return []
+    applied: List[Dict[str, object]] = []
+    for event_id in sorted(str(k) for k in outcomes):
+        ev = content.event_by_id.get(event_id)
+        if ev is None or not _is_fiscal_levy_petition_event(ev):
+            continue
+        raw_label = _event_outcome_label(outcomes, event_id)
+        if not raw_label:
+            continue
+        label = _fiscal_levy_normalized_terminal_reason_or_abort(ev, raw_label, state)
+        db.mark_event_triggered(
+            state, event_id, source=FISCAL_LEVY_RESCRIPT_SOURCE,
+            terminal_reason=label, commit=commit,
+        )
+        applied.append({
+            "id": event_id, "title": ev.title,
+            "terminal_state": "triggered", "terminal_reason": label,
+        })
+    return applied
+
+
 def _validate_strategic_foreign_node_outcome_targets(content: GameContent) -> None:
     strategic_event_ids = {
         event_id
@@ -4457,7 +4565,28 @@ def _preflight_declared_event_groups(
                          urgency=0, severity=0, credibility=100, interests=[], audiences=[])
     for event_id, group in groups.items():
         event = content.event_by_id.get(event_id)
-        if event is None or not _is_strategic_foreign_node_event(event):
+        if event is None:
+            rejected[event_id] = f"效果归属的事件不存在：{event_id}"
+            continue
+        if _is_fiscal_levy_petition_event(event):
+            # #1891：请饷／议停请旨的结局与战略事件同一通道，只是资格门不同——
+            # 须本月已呈（批红页上有该事件的请旨行），没呈过的没有御批可译。
+            if db.event_terminal_state(event_id):
+                rejected[event_id] = f"饷率事件已裁定，不能再落结局：{event_id}"
+                continue
+            if event_id not in _fiscal_levy_presented_event_ids(db):
+                rejected[event_id] = f"饷率事件本月未呈请，无御批可译：{event_id}"
+                continue
+            outcome = {}
+            for item in group:
+                outcome.update(item.get("事件结局") or {})
+            label, error = _fiscal_levy_declared_outcome_label_or_error(
+                db, state, event, outcome,
+            )
+            if error:
+                rejected[event_id] = error
+            continue
+        if not _is_strategic_foreign_node_event(event):
             rejected[event_id] = f"效果归属的战略事件不存在：{event_id}"
             continue
         if event_id not in candidates or db.event_terminal_state(event_id) or event.auto_trigger:
@@ -8928,6 +9057,13 @@ def _apply_score_extraction_body(
     for event_id in sorted(strategic_event_delta_ids - strategic_event_issue_ids_seen):
         ev = runtime_content.event_by_id.get(event_id)
         _reject_suppressed_strategic_results(event_id, ev.title if ev is not None else event_id)
+
+    # #1891：请饷／议停请旨的结局在此落事件账唯一写口。声明来自同一段 C0 转译
+    # （#1815）——即世界段续推读懂御批后写出的事件结局，代码只按该事件闭集归一，
+    # 不解析批语文字（ADR 0142 / P6）。未声明＝留中，本次答复只留 choice 事实。
+    _apply_fiscal_levy_declared_outcomes(
+        db, state, runtime_content, extracted, commit=commit_now,
+    )
 
     for new_issue in (issue_summary.get("new_issues") or []):
         if not (

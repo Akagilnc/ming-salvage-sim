@@ -48,6 +48,8 @@ class MonthTranslationInput:
     target_grounding: str
     decree_payload: Mapping[str, object]
     continuing_dossiers: tuple[Mapping[str, object], ...] = ()
+    # #1891：本段答复涉及的三饷请旨事件（真实 id + 结局闭集），供转译按闭集声明结局。
+    answered_verdicts: tuple[Mapping[str, object], ...] = ()
 
 
 MonthTranslateFn = Callable[[MonthTranslationInput, Any], Mapping[str, object]]
@@ -76,10 +78,40 @@ def build_month_segment_translate_prompt(request: MonthTranslationInput) -> str:
         "同类效果若已由结构化载荷表示，不得再重复声明。预推时载荷尚未物化，"
         "不能把它理解成已经落账。\n"
         "- 过月没有召对夜上下文，promises、presence、scene_facts 均留空；没有对应事实的其它 section 也留空（protagonist 无则省略或 null）。\n"
+        f"{_build_levy_verdict_rule(request)}"
         f"【旨的结构化载荷】\n{json.dumps(dict(request.decree_payload), ensure_ascii=False, indent=2)}\n"
         f"【在途办理案卷】\n{json.dumps(list(request.continuing_dossiers), ensure_ascii=False)}\n"
         f"{grounding_block}"
         f"【完整段文】\n{request.segment}"
+    )
+
+
+def _build_levy_verdict_rule(request: MonthTranslationInput) -> str:
+    """#1891：请饷／议停请旨经御批裁定的结局，按本段答复的闭集声明。
+
+    段文已带皇帝对本事件请旨的答复（label/hint/note 即御批原话）与该事件的
+    ``terminal_reason_labels`` 闭集。批红答复已由世界段续推写成段文，这里只把
+    结局按闭集落进 ``事件结局``——代码只认闭集值，不解析御批文字（ADR 0142 / P6）。
+    """
+    verdicts = [
+        answer for answer in (request.answered_verdicts or ())
+        if isinstance(answer, dict) and str(answer.get("event_id") or "").strip()
+    ]
+    if not verdicts:
+        return ""
+    roster = [
+        {
+            "event_id": str(answer.get("event_id") or ""),
+            "terminal_reason_labels": list(answer.get("terminal_reason_labels") or []),
+        }
+        for answer in verdicts
+    ]
+    return (
+        "- 【本段答复的三饷请旨事件】皇帝已在上列事件上批红答复。"
+        + json.dumps(roster, ensure_ascii=False)
+        + "。段文交代了皇帝准或驳（而非留中）时，在该事件的效果项里用 "
+        "\"事件结局\" 写 {事件 id: 闭集标签} 声明它的结局；留中不声明。"
+        "御批原话以段文为准，闭集之外的值一律不写。\n"
     )
 
 
@@ -104,6 +136,7 @@ def translate_month_segment(
     llm_config: Any = None,
     translate_fn: Optional[MonthTranslateFn] = None,
     continuing_dossiers: tuple[Mapping[str, object], ...] | list[Mapping[str, object]] = (),
+    answered_verdicts: tuple[Mapping[str, object], ...] | list[Mapping[str, object]] = (),
 ) -> dict[str, object]:
     """一次完整段转译为 C0 声明；调用失败原样上抛，不伪装成空声明。"""
     request = MonthTranslationInput(
@@ -111,12 +144,44 @@ def translate_month_segment(
         target_grounding=target_grounding,
         decree_payload=decree_payload,
         continuing_dossiers=tuple(continuing_dossiers),
+        answered_verdicts=tuple(answered_verdicts),
     )
     runner = translate_fn or _default_month_translate_runner
     declaration = runner(request, llm_config)
     if not isinstance(declaration, Mapping):
         raise AudienceTranslateError("转译输出须为 JSON 对象")
     return normalize_audience_declaration(declaration)
+
+
+def _answered_levy_verdicts(db: Any, turn: int) -> list[dict[str, object]]:
+    """本段待译的三饷请旨事件：已答的批红行 → 真实事件 id + 结局闭集（#1891）。
+
+    答复（御批原话）由世界段续推写进段文；此处只把「哪些事件本段有御批可译」与其
+    闭集作为事实供转译参照，不替它判语义（ADR 0142 / P6）。数据真源＝批红案头
+    已存行与内容表，不另立账本。
+    """
+    from ming_sim.month_chain import _LEVY_PETITION_PREFIX
+
+    out: list[dict[str, object]] = []
+    for row in db.conn.execute(
+        "SELECT event_id FROM pending_decisions "
+        "WHERE turn = ? AND kind='decision' AND status='decided' ORDER BY idx",
+        (int(turn),),
+    ).fetchall():
+        event_id = str(row["event_id"] or "")
+        if not event_id.startswith(_LEVY_PETITION_PREFIX):
+            continue
+        real_id = event_id[len(_LEVY_PETITION_PREFIX):]
+        from ming_sim.issues import _fiscal_levy_event_by_id
+
+        ev = _fiscal_levy_event_by_id(real_id)
+        if ev is None:
+            continue
+        out.append({
+            "event_id": real_id,
+            "terminal_reason_labels": list(getattr(ev, "terminal_reason_labels", []) or []),
+        })
+    return out
 
 
 def _translate_month_segment_front(
@@ -128,7 +193,8 @@ def _translate_month_segment_front(
     llm_config: Any = None,
     translate_fn: Optional[MonthTranslateFn] = None,
     continuing_dossiers: tuple[Mapping[str, object], ...] | list[Mapping[str, object]] = (),
-) -> tuple[dict[str, object], dict[str, list[int]]]:
+    answered_verdicts: tuple[Mapping[str, object], ...] | list[Mapping[str, object]] = (),
+) -> tuple[dict[str, object], dict[str, list[str]]]:
     """过月段转译前半：冻结可见引用、拼 grounding、一次转出 C0 声明。"""
     refs = _visible_effect_refs(db, turn, decree_payload)
     declaration = translate_month_segment(
@@ -138,6 +204,7 @@ def _translate_month_segment_front(
         llm_config=llm_config,
         translate_fn=translate_fn,
         continuing_dossiers=continuing_dossiers,
+        answered_verdicts=answered_verdicts,
     )
     return declaration, refs
 
@@ -175,7 +242,12 @@ def dispatch_month_segment(
     source: Provenance = Provenance.system_simulation,
     alongside: Optional[Callable[[DeclarationDispatchResult], None]] = None,
 ) -> DeclarationDispatchResult:
-    """世界段转译一次，整份声明沿 C0 唯一原子分派入口提交。"""
+    """世界段转译一次，整份声明沿 C0 唯一原子分派入口提交。
+
+    本段答复到的三饷请旨事件（#1891）由 ``_translate_month_segment_front`` 从批红
+    案头既有行读出（答复与闭集都是已存事实），不另设调用参数——转译输入的组装
+    只有这一处。
+    """
     from ming_sim.materials import continuing_dossier_facts
 
     payload = decree_payload or {}
@@ -184,6 +256,7 @@ def dispatch_month_segment(
         db, segment=segment, turn=turn, decree_payload=payload,
         llm_config=llm_config, translate_fn=translate_fn,
         continuing_dossiers=continuing_dossier_facts(db, turn),
+        answered_verdicts=_answered_levy_verdicts(db, turn),
     )
     return dispatch_declaration(
         db, state, declaration,

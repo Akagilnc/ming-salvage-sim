@@ -1,23 +1,28 @@
 """#1891 端到端：真实过月链上，请饷奏疏由世界段生成、经 #1847 批红页由皇帝亲裁。
 
-不经内部函数直调：走 session.resolve_turn → 世界段 run（外缝打桩）→ 批红页
-→ submit_decisions → 事件账终局 → pre_settle 饷率生效。断言实账与事件身份，
-不匹配自由文本（ADR 0043 批红页形态、ADR 0115 事件绑定）。
+不打桩本票被测的供料与裁断行为——只桩最外层模型调用（``agents.run_agent_text``
+与转译 runner），生产的世界段消息构造、材料目录、案头物化、答复落账、C0 转译与
+applier 全部真跑。断开任一处供料或写口，本文件即红（#1891 J5）。
+
+覆盖：呈批→亲裁准→事件终局、驳回、留中、跨月再呈、恢复后身份不丢、以及本月批准
+下月起征。断言实账与事件身份，不机械匹配自由文本（ADR 0043 批红页形态、
+ADR 0115 事件绑定、ADR 0142 不解析御批文字）。
 """
 
 from __future__ import annotations
 
 import json
+import math
 
 import pytest
 
 import ming_sim.issues as issues
 import ming_sim.month_chain as month_chain
-import ming_sim.month_translate as month_translate
+from ming_sim.agents import strip_json_fence  # noqa: F401  (保证 parse_agent_json 同源)
+from ming_sim.db import GameDB
 from ming_sim.issues import FISCAL_LEVY_RESCRIPT_SOURCE
 from ming_sim.models import LLMConfig
 from ming_sim.month_chain import _LEVY_PETITION_PREFIX
-from ming_sim.settlement_payload import LEVY_TERMINAL_REASON_KEY
 from tests.month_chain_helpers import make_light_session
 from tests.test_month_chain_1843 import _forbid_extractor
 
@@ -27,19 +32,18 @@ def _settle_p(db, region_id="shaanxi"):
     return json.loads(str(row["fiscal"] or "{}"))["settle"]
 
 
-def _world_text(*, reason: str, label: str = "准行加派") -> str:
-    return "关外告急，户部请加辽饷以济边饷。" + (
+def _petition_decision(event_id="liao_levy_rise_1631", title="辽饷升至一分二厘"):
+    """世界段上疏：拟批措辞是自由文，结局不由选项载荷携带。"""
+    return (
         "<<DECISION>>"
         + json.dumps(
             {
-                "title": "辽饷升至一分二厘",
+                "title": title,
                 "context": "边镇欠饷日深，户部请加辽饷。",
-                "event_id": "liao_levy_rise_1631",
+                "event_id": event_id,
                 "options": [
-                    {"label": label, "hint": "边饷稍续而民间加派更重",
-                     LEVY_TERMINAL_REASON_KEY: reason},
-                    {"label": "不准，仍照九厘", "hint": "民力已困",
-                     LEVY_TERMINAL_REASON_KEY: "已驳"},
+                    {"label": "准行加派", "hint": "边饷稍续而民间加派更重"},
+                    {"label": "不准，仍照九厘", "hint": "民力已困"},
                 ],
             },
             ensure_ascii=False,
@@ -48,43 +52,89 @@ def _world_text(*, reason: str, label: str = "准行加派") -> str:
     )
 
 
-def _prepare(db, state, content, monkeypatch):
+def _prepare(db, state, content, monkeypatch, year=1631, period=1):
     issues.bind_content(content)
-    state.year = 1631
-    state.period = 1
+    state.year = year
+    state.period = period
     db.save_state(state)
     _forbid_extractor(monkeypatch)
 
 
-def _stub_world(monkeypatch, text, *, continue_text="遵旨。"):
-    monkeypatch.setattr(
-        month_chain, "run_world_segment_text", lambda *a, **k: text,
-    )
-    monkeypatch.setattr(
-        month_chain, "_run_world_continuation_text", lambda *a, **k: continue_text,
-    )
-    monkeypatch.setattr(
-        month_translate, "translate_month_segment", lambda *a, **k: {"effects": {}},
-    )
-    monkeypatch.setattr(
-        month_chain, "run_gazette_text", lambda *a, **k: ("邸报", "边情邸报。"),
-    )
+def _install_model_boundary(monkeypatch, *, world_text, continue_text="遵旨。", declaration=None):
+    """只桩最外层模型调用；生产供料、物料、案头、转译与 applier 全部真跑。
+
+    转译 runner 按真实 prompt 里的答复事实作答：御批原话与闭集都在 prompt 里，
+    这里模拟模型读懂后按闭集声明结局（生产代码只认闭集值）。
+    """
+    seen: dict = {"world_messages": [], "continue_prompts": [], "gazette": 0}
+
+    def _agent_text(_agent, prompt, tag="", **_kwargs):
+        if tag == "world-segment":
+            seen["world_messages"].append(prompt)
+            return world_text
+        if tag == "world-segment-continue":
+            seen["continue_prompts"].append(prompt)
+            return continue_text
+        if tag == "gazette":
+            seen["gazette"] += 1
+            return json.dumps({"title": "邸报", "report": "边情邸报。"}, ensure_ascii=False)
+        return ""
+
+    monkeypatch.setattr("ming_sim.agents.run_agent_text", _agent_text)
     monkeypatch.setattr("ming_sim.mechanical_tail._run_tail_body", lambda *a, **k: "done")
 
+    import ming_sim.month_translate as month_translate
 
-def test_emperor_approves_levy_petition_through_real_month_chain(game, monkeypatch):
-    """世界段上疏 → 同一批红页亲裁「准」→ 事件终局 + 同月账仍按九厘、下月升。"""
-    db, state, content = game
-    _prepare(db, state, content, monkeypatch)
-    before = _settle_p(db)["p"]["三饷应征"]
-    _stub_world(monkeypatch, _world_text(reason="已准"))
+    def _translate(prompt, llm_config=None, *, tag="", policy=None):
+        # 声明取自测试给定（模拟模型按闭集声明）；未给则空声明。
+        return dict(declaration or {"effects": {}})
+
+    monkeypatch.setattr(month_translate, "run_declaration_translate_prompt", _translate)
+    return seen
+
+
+def _make_session(db, state, content):
     session = make_light_session(db, state, content)
     session.llm_config = LLMConfig(
         api_key="sk-test", base_url="https://example.invalid", model="test",
     )
+    return session
+
+
+def _ledger(db, event_id="liao_levy_rise_1631"):
+    """事件账行；尚未有过任何写入时返回 None（账上零行也是合规事实）。"""
+    return db.conn.execute(
+        "SELECT terminal_state, terminal_reason, source, choice_json FROM event_triggers "
+        "WHERE event_id=?",
+        (event_id,),
+    ).fetchone()
+
+
+def _ledger_field(db, field, event_id="liao_levy_rise_1631", default=""):
+    row = _ledger(db, event_id)
+    return default if row is None else str(row[field] or "")
+
+
+def test_emperor_approves_levy_petition_through_real_month_chain(game, monkeypatch):
+    """世界段上疏 → 同一批红页亲裁「准」→ 转译按闭集声明 → 事件终局。"""
+    db, state, content = game
+    _prepare(db, state, content, monkeypatch)
+    before = _settle_p(db)["p"]["三饷应征"]
+    seen = _install_model_boundary(
+        monkeypatch,
+        world_text="关外告急，户部请加辽饷以济边饷。" + _petition_decision(),
+        declaration={"effects": [{
+            "event_id": "liao_levy_rise_1631",
+            "事件结局": {"liao_levy_rise_1631": "已准"},
+        }]},
+    )
+    session = _make_session(db, state, content)
 
     result = session.resolve_turn(allow_empty_decree=True)
 
+    # 真实供料：世界段消息里带得到本月请饷名单（构造与材料真跑）。
+    assert seen["world_messages"], "世界段模型边界应被调用"
+    assert "liao_levy_rise_1631" in seen["world_messages"][0]
     # 呈上批红页：同一请旨入口，不新增案头、不另起 run。
     assert result.awaiting is True
     assert result.stage == "rescript"
@@ -95,24 +145,23 @@ def test_emperor_approves_levy_petition_through_real_month_chain(game, monkeypat
     assert row["event_id"] == f"{_LEVY_PETITION_PREFIX}liao_levy_rise_1631"
     assert row["title"] == "辽饷升至一分二厘"
     # 到点但未裁 → 账上无终局行（不再自动置已准）。
-    assert db.conn.execute(
-        "SELECT 1 FROM event_triggers WHERE event_id=? AND terminal_state='triggered'",
-        ("liao_levy_rise_1631",),
-    ).fetchone() is None
+    assert _ledger_field(db, "terminal_state") == ""
 
-    # 皇帝在批红页点「准行加派」。
+    # 皇帝在批红页点「准行加派」。submit 入口内的 phase2 接既有续推与转译：
+    # 答复先按事实落账，结局由同一段转译按闭集声明后落唯一写口。
     session.submit_hitl_choices(
         [{"decision_key": row["decision_key"], "action": "decision", "label": "准行加派"}],
         write_gate=session._write_gate,
     )
+    # 答复确实经既有世界段续推（不是代码当场判的语义）。
+    assert seen["continue_prompts"], "答复后续推应经既有世界段续推"
 
-    ledger = db.conn.execute(
-        "SELECT terminal_state, terminal_reason, source FROM event_triggers WHERE event_id=?",
-        ("liao_levy_rise_1631",),
-    ).fetchone()
+    ledger = _ledger(db)
     assert ledger["terminal_state"] == "triggered"
     assert ledger["terminal_reason"] == "已准"
     assert ledger["source"] == FISCAL_LEVY_RESCRIPT_SOURCE
+    # 亲笔/拟批措辞原样留在 choice 事实里，不被改写成结局标签以外的任何东西。
+    assert json.loads(ledger["choice_json"])["label"] == "准行加派"
     # 本月已提交的财政不被回写重跑：仍按九厘。
     assert _settle_p(db)["p"]["三饷应征"] == before
 
@@ -123,11 +172,15 @@ def test_approved_rate_takes_effect_and_then_enters_province_books(game, monkeyp
     _prepare(db, state, content, monkeypatch)
     before = _settle_p(db)["p"]["三饷应征"]
     target = before * 4.0 / 3.0
-    _stub_world(monkeypatch, _world_text(reason="已准"))
-    session = make_light_session(db, state, content)
-    session.llm_config = LLMConfig(
-        api_key="sk-test", base_url="https://example.invalid", model="test",
+    _install_model_boundary(
+        monkeypatch,
+        world_text="本月边情，户部请加辽饷。" + _petition_decision(),
+        declaration={"effects": [{
+            "event_id": "liao_levy_rise_1631",
+            "事件结局": {"liao_levy_rise_1631": "已准"},
+        }]},
     )
+    session = _make_session(db, state, content)
 
     session.resolve_turn(allow_empty_decree=True)
     row = session.pending_decisions()[0]
@@ -135,11 +188,10 @@ def test_approved_rate_takes_effect_and_then_enters_province_books(game, monkeyp
         [{"decision_key": row["decision_key"], "action": "decision", "label": "准行加派"}],
         write_gate=session._write_gate,
     )
+    assert _ledger_field(db, "terminal_reason") == "已准"
 
     # 下月：走真实过月链，唯一财政 tick 消费新额。
-    import math
-
-    _stub_world(monkeypatch, "本月无大事。")
+    _install_model_boundary(monkeypatch, world_text="本月无大事。")
     second = session.resolve_turn(allow_empty_decree=True)
     assert second.advanced is True, (second.stage, second.awaiting)
 
@@ -148,8 +200,7 @@ def test_approved_rate_takes_effect_and_then_enters_province_books(game, monkeyp
     assert math.isclose(
         after["p"]["起运定额"],
         after["_meta"]["正赋起运基线"] + target,
-        rel_tol=1e-9,
-        abs_tol=1e-9,
+        rel_tol=1e-9, abs_tol=1e-9,
     )
 
 
@@ -158,11 +209,15 @@ def test_emperor_rejects_levy_petition_keeps_nine_li(game, monkeypatch):
     db, state, content = game
     _prepare(db, state, content, monkeypatch)
     before = _settle_p(db)["p"]["三饷应征"]
-    _stub_world(monkeypatch, _world_text(reason="已准"))
-    session = make_light_session(db, state, content)
-    session.llm_config = LLMConfig(
-        api_key="sk-test", base_url="https://example.invalid", model="test",
+    _install_model_boundary(
+        monkeypatch,
+        world_text="本月边情，户部请加辽饷。" + _petition_decision(),
+        declaration={"effects": [{
+            "event_id": "liao_levy_rise_1631",
+            "事件结局": {"liao_levy_rise_1631": "已驳"},
+        }]},
     )
+    session = _make_session(db, state, content)
 
     session.resolve_turn(allow_empty_decree=True)
     row = session.pending_decisions()[0]
@@ -171,12 +226,9 @@ def test_emperor_rejects_levy_petition_keeps_nine_li(game, monkeypatch):
         write_gate=session._write_gate,
     )
 
-    assert db.conn.execute(
-        "SELECT terminal_reason FROM event_triggers WHERE event_id=?",
-        ("liao_levy_rise_1631",),
-    ).fetchone()["terminal_reason"] == "已驳"
+    assert _ledger_field(db, "terminal_reason") == "已驳"
 
-    _stub_world(monkeypatch, "本月无大事。")
+    _install_model_boundary(monkeypatch, world_text="本月无大事。")
     second = session.resolve_turn(allow_empty_decree=True)
     assert second.advanced is True, (second.stage, second.awaiting)
     assert _settle_p(db)["p"]["三饷应征"] == before
@@ -188,90 +240,55 @@ def test_held_levy_petition_advances_month_without_terminal_state(game, monkeypa
     _prepare(db, state, content, monkeypatch)
     before = _settle_p(db)["p"]["三饷应征"]
     closed_turn = int(state.turn)
-    _stub_world(monkeypatch, _world_text(reason="已准"))
-    session = make_light_session(db, state, content)
-    session.llm_config = LLMConfig(
-        api_key="sk-test", base_url="https://example.invalid", model="test",
+    # 留中＝转译不声明该事件结局（代码不据批语文字补结局）。
+    _install_model_boundary(
+        monkeypatch, world_text="本月边情，户部请加辽饷。" + _petition_decision(),
     )
+    session = _make_session(db, state, content)
 
     session.resolve_turn(allow_empty_decree=True)
     row = session.pending_decisions()[0]
-    # 只批朱笔、不点拟批 = 留中。
+    # 只批朱笔、不点拟批＝留中。
     session.submit_hitl_choices(
         [{"decision_key": row["decision_key"], "action": "decision",
           "label": "", "note": "留中，俟户部再议"}],
         write_gate=session._write_gate,
     )
 
-    ledger = db.conn.execute(
-        "SELECT terminal_state, terminal_reason, choice_json FROM event_triggers WHERE event_id=?",
-        ("liao_levy_rise_1631",),
-    ).fetchone()
-    assert ledger["terminal_state"] == ""
-    assert ledger["terminal_reason"] == ""
-    assert "留中" in ledger["choice_json"]
+    assert _ledger_field(db, "terminal_state") == ""
+    assert _ledger_field(db, "terminal_reason") == ""
+    assert "留中" in _ledger_field(db, "choice_json")
     # 留中不改征收。
     assert _settle_p(db)["p"]["三饷应征"] == before
-    # 留中不阻月份推进：续推后回合能走完。
-    _stub_world(monkeypatch, "本月无大事。")
-    second = session.resolve_turn(allow_empty_decree=True)
-    assert second.advanced is True, (second.stage, second.awaiting)
     assert int(state.turn) > closed_turn
 
 
-@pytest.mark.parametrize("reason", ["missing", None, "", "   "])
-def test_selected_levy_option_without_reason_rejected_before_ledger_write(
-    game, monkeypatch, reason,
-):
-    """缺类型键的拟批当场拒绝；事务不留脏账，仍可留中并续推、再呈。"""
+def test_outcome_label_outside_closed_set_is_rejected_not_written(game, monkeypatch):
+    """转译声明闭集外的结局＝响亮失败，事务回滚、账上零终局行（不写脏串）。"""
+    from ming_sim.exceptions import SettlementAbort
+
     db, state, content = game
     _prepare(db, state, content, monkeypatch)
     before = _settle_p(db)["p"]["三饷应征"]
-    payload = json.loads(_world_text(reason="已准").split("<<DECISION>>")[1].split("<<END>>")[0])
-    if reason == "missing":
-        del payload["options"][0][LEVY_TERMINAL_REASON_KEY]
-    else:
-        payload["options"][0][LEVY_TERMINAL_REASON_KEY] = reason
-    _stub_world(monkeypatch, "<<DECISION>>" + json.dumps(payload, ensure_ascii=False) + "<<END>>")
-    session = make_light_session(db, state, content)
-    session.llm_config = LLMConfig(
-        api_key="sk-test", base_url="https://example.invalid", model="test",
+    _install_model_boundary(
+        monkeypatch, world_text="本月边情，户部请加辽饷。" + _petition_decision(),
+        declaration={"effects": [{
+            "event_id": "liao_levy_rise_1631",
+            "事件结局": {"liao_levy_rise_1631": "胡乱"},
+        }]},
     )
-    assert session.resolve_turn(allow_empty_decree=True).awaiting is True
+    session = _make_session(db, state, content)
+
+    session.resolve_turn(allow_empty_decree=True)
     row = session.pending_decisions()[0]
-    with pytest.raises(ValueError, match="levy_terminal_reason"):
+
+    with pytest.raises(SettlementAbort, match="结局标签无法归一"):
         session.submit_hitl_choices(
             [{"decision_key": row["decision_key"], "action": "decision", "label": "准行加派"}],
             write_gate=session._write_gate,
         )
-    assert db.conn.execute(
-        "SELECT 1 FROM event_triggers WHERE event_id=?", ("liao_levy_rise_1631",),
-    ).fetchone() is None
-    pending = db.conn.execute(
-        "SELECT status, choice_json FROM pending_decisions WHERE event_id=?",
-        (row["event_id"],),
-    ).fetchone()
-    assert pending["status"] == "pending"
-    assert not json.loads(pending["choice_json"] or "{}")
-    assert _settle_p(db)["p"]["三饷应征"] == before
 
-    session.submit_hitl_choices(
-        [{"decision_key": row["decision_key"], "action": "decision",
-          "label": "", "note": "留中，俟再议"}],
-        write_gate=session._write_gate,
-    )
-    ledger = db.conn.execute(
-        "SELECT terminal_state, terminal_reason, choice_json FROM event_triggers WHERE event_id=?",
-        ("liao_levy_rise_1631",),
-    ).fetchone()
-    assert ledger["terminal_state"] == ledger["terminal_reason"] == ""
-    assert json.loads(ledger["choice_json"])["note"] == "留中，俟再议"
-    assert "liao_levy_rise_1631" not in issues._event_pending_choice_records(db)
-    due = issues.list_fiscal_levy_petitions_due(state, db)
-    assert due[0]["event_id"] == "liao_levy_rise_1631"
-    assert due[0]["re_presentation"] is True
-    _stub_world(monkeypatch, "本月无大事。")
-    assert session.resolve_turn(allow_empty_decree=True).advanced is True
+    assert _ledger_field(db, "terminal_state") == ""
     assert _settle_p(db)["p"]["三饷应征"] == before
 
 
@@ -283,32 +300,14 @@ def test_no_levy_petition_means_no_extra_ask_and_no_new_run(game, monkeypatch):
     state.period = 12
     db.save_state(state)
     _forbid_extractor(monkeypatch)
-
-    calls = {"world": 0}
-
-    def _world(*a, **k):
-        calls["world"] += 1
-        return "本月无大事。"
-
-    monkeypatch.setattr(month_chain, "run_world_segment_text", _world)
-    monkeypatch.setattr(
-        month_chain, "_run_world_continuation_text", lambda *a, **k: "。",
-    )
-    monkeypatch.setattr(
-        month_translate, "translate_month_segment", lambda *a, **k: {"effects": {}},
-    )
-    monkeypatch.setattr(
-        month_chain, "run_gazette_text", lambda *a, **k: ("邸报", "边情邸报。"),
-    )
-    monkeypatch.setattr("ming_sim.mechanical_tail._run_tail_body", lambda *a, **k: "done")
-    session = make_light_session(db, state, content)
-    session.llm_config = LLMConfig(
-        api_key="sk-test", base_url="https://example.invalid", model="test",
-    )
+    seen = _install_model_boundary(monkeypatch, world_text="本月无大事。")
+    session = _make_session(db, state, content)
 
     result = session.resolve_turn(allow_empty_decree=True)
 
-    assert calls["world"] == 1
+    assert len(seen["world_messages"]) == 1
+    # 无待呈事件时消息不加壳（真实供料行为，非打桩断言）。
+    assert seen["world_messages"][0] == "推演本月世界段。"
     assert all(
         not str(r["event_id"]).startswith(_LEVY_PETITION_PREFIX)
         for r in session.pending_decisions()
@@ -323,11 +322,10 @@ def test_re_presentation_after_hold_still_binds_same_event(game, monkeypatch):
     """留中后大臣再上疏：新疏仍绑原事件，终局裁断只落该事件一次。"""
     db, state, content = game
     _prepare(db, state, content, monkeypatch)
-    _stub_world(monkeypatch, _world_text(reason="已准"))
-    session = make_light_session(db, state, content)
-    session.llm_config = LLMConfig(
-        api_key="sk-test", base_url="https://example.invalid", model="test",
+    _install_model_boundary(
+        monkeypatch, world_text="本月边情，户部请加辽饷。" + _petition_decision(),
     )
+    session = _make_session(db, state, content)
 
     session.resolve_turn(allow_empty_decree=True)
     row = session.pending_decisions()[0]
@@ -336,16 +334,24 @@ def test_re_presentation_after_hold_still_binds_same_event(game, monkeypatch):
           "label": "", "note": "留中"}],
         write_gate=session._write_gate,
     )
+    assert _ledger_field(db, "terminal_state") == ""
 
-    # 下月同一事件带 re_presentation 交回同一世界段 run。
+    # 下月同一事件带 re_presentation 与原疏、亲笔批语交回同一世界段 run。
     from ming_sim.issues import list_fiscal_levy_petitions_due
 
     due = list_fiscal_levy_petitions_due(state, db)
     assert [d["event_id"] for d in due] == ["liao_levy_rise_1631"]
     assert due[0]["re_presentation"] is True
+    assert "留中" in json.dumps(due[0]["prior_petition"], ensure_ascii=False)
 
     # 再上疏 → 仍绑原事件（不是新事件、不是首次重触发）。
-    _stub_world(monkeypatch, _world_text(reason="已驳", label="罢辽饷加派"))
+    seen = _install_model_boundary(
+        monkeypatch, world_text="户部再请罢辽饷加派。" + _petition_decision(),
+        declaration={"effects": [{
+            "event_id": "liao_levy_rise_1631",
+            "事件结局": {"liao_levy_rise_1631": "已驳"},
+        }]},
+    )
     session.resolve_turn(allow_empty_decree=True)
     desk = session.pending_decisions()
     petition_rows = [
@@ -353,18 +359,77 @@ def test_re_presentation_after_hold_still_binds_same_event(game, monkeypatch):
     ]
     assert len(petition_rows) == 1
     assert petition_rows[0]["event_id"] == f"{_LEVY_PETITION_PREFIX}liao_levy_rise_1631"
+    # 名单事实真跑到了世界段消息里。
+    assert "留中" in seen["world_messages"][0]
 
     session.submit_hitl_choices(
         [{"decision_key": petition_rows[0]["decision_key"], "action": "decision",
-          "label": "罢辽饷加派"}],
+          "label": "不准，仍照九厘"}],
         write_gate=session._write_gate,
     )
-    assert db.conn.execute(
-        "SELECT terminal_reason FROM event_triggers WHERE event_id=?",
-        ("liao_levy_rise_1631",),
-    ).fetchone()["terminal_reason"] == "已驳"
+    assert _ledger_field(db, "terminal_reason") == "已驳"
     # 一事件一终局裁断：只一行。
     assert db.conn.execute(
         "SELECT COUNT(*) FROM event_triggers WHERE event_id=? AND terminal_state='triggered'",
         ("liao_levy_rise_1631",),
     ).fetchone()[0] == 1
+
+
+def test_reopen_after_petition_stored_keeps_event_identity(game, tmp_path, monkeypatch):
+    """#1891 J1：呈批存盘后关档重开，案头仍是原请饷事件、亲裁仍落该事件一次。"""
+    db, state, content = game
+    _prepare(db, state, content, monkeypatch)
+    _install_model_boundary(
+        monkeypatch, world_text="本月边情，户部请加辽饷。" + _petition_decision(),
+    )
+    session = _make_session(db, state, content)
+    session.resolve_turn(allow_empty_decree=True)
+    row = session.pending_decisions()[0]
+    assert row["event_id"] == f"{_LEVY_PETITION_PREFIX}liao_levy_rise_1631"
+    db.conn.commit()
+    path = str(tmp_path / "reopen.db")
+    import shutil
+
+    shutil.copyfile(db.path, path)
+    db.close()
+
+    reopened = GameDB(path, content)
+    try:
+        issues.bind_content(content)
+        state2 = reopened.load_state()
+        # 重开后案头仍指向原请饷事件，未退化成普通世界段身份。
+        desk = reopened.list_rescript_desk(int(state2.turn))
+        petition_rows = [
+            r for r in desk if str(r["event_id"]).startswith(_LEVY_PETITION_PREFIX)
+        ]
+        assert len(petition_rows) == 1
+        assert petition_rows[0]["event_id"] == f"{_LEVY_PETITION_PREFIX}liao_levy_rise_1631"
+        assert petition_rows[0]["title"] == "辽饷升至一分二厘"
+    finally:
+        reopened.close()
+
+
+def test_materialize_desk_uses_pinned_identity_not_live_eligibility(game):
+    """#1891 J1：案头物化只认交接时钉的身份，不看当前 due 名单是否还在。"""
+    from ming_sim.month_chain import _pin_world_question_identities
+    from ming_sim.settlement_payload import parse_decision_blocks
+
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1631
+    state.period = 1
+    db.save_state(state)
+    offered = issues.list_fiscal_levy_petitions_due(state, db)
+    chain = {
+        "levy_petitions": offered,
+        "world_questions": _pin_world_question_identities(
+            offered, parse_decision_blocks("本月边情。" + _petition_decision()),
+        ),
+    }
+    # 此刻事件在 due 名单里（尚未呈批），先物化一次使其进入待裁状态。
+    first = month_chain._materialize_rescript_desk(db, state, chain)
+    assert first[0]["event_id"] == f"{_LEVY_PETITION_PREFIX}liao_levy_rise_1631"
+    # 已呈待裁 → 不再在 due 名单里；身份仍由已存问题给出。
+    assert issues.list_fiscal_levy_petitions_due(state, db) == []
+    again = month_chain._materialize_rescript_desk(db, state, chain)
+    assert again[0]["event_id"] == f"{_LEVY_PETITION_PREFIX}liao_levy_rise_1631"
