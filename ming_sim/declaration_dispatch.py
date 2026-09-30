@@ -989,7 +989,42 @@ def _commission_grant_payload(
     purpose = str(grant.get("purpose") or "").strip()
     if purpose:
         payload["purpose"] = purpose
+    _attach_commission_escort(db, grant, payload)
     return payload
+
+
+def _attach_commission_escort(
+    db: Any, grant: Mapping[str, object], payload: Dict[str, Any],
+) -> None:
+    """#1900：押解随拨银旨——护送安排写在**同一道拨银交办**里即成。
+
+    owner 2026-09-30 裁定：平常「拨银三十万去宁远，着某某押解护送」，押解人
+    就记在这道拨银旨里，不另立密令、不另挂关联。真正单一口径＝交办显式给出的
+    ``escort.escortees``（人物须真实存在）；未给即无押解，代码不猜。
+    """
+    escort = grant.get("escort")
+    if escort is None or not isinstance(escort, Mapping):
+        return
+    escortees = escort.get("escortees")
+    if not isinstance(escortees, Sequence) or isinstance(escortees, (str, bytes)):
+        raise DecreeMaterializationValidationError(
+            "押解声明 escort.escortees 须为人物名列表",
+            failed_fields=("escort",),
+        )
+    names = [str(name or "").strip() for name in escortees]
+    names = [name for name in names if name]
+    if not names:
+        return
+    _assert_characters_exist(db, names)
+    record: Dict[str, Any] = {"escortees": names}
+    note = escort.get("note")
+    if note is not None:
+        if not isinstance(note, str):
+            raise DecreeMaterializationValidationError(
+                "押解声明 escort.note 须为原文", failed_fields=("escort",),
+            )
+        record["note"] = note
+    payload["escort"] = record
 
 
 def _attach_commission_staging_fields(
@@ -1535,10 +1570,22 @@ def _escort_dossier_id(db: Any, raw: object) -> Optional[int]:
     return dossier_id
 
 
-def _escort_source_dossier_id(db: Any, raw: object) -> Optional[int]:
-    """护行主体：只认由密令立起的案卷（0054 单向新指旧的护送密令那一端）。"""
+def _escort_source_dossier_id(
+    db: Any, raw: object, *, escorted_dossier_id: Optional[int] = None,
+) -> Optional[int]:
+    """护行主体解析（#1900 两口径）。
+
+    - 省略/等于被护案卷自身 → 押解随拨银旨（常态，owner 2026-09-30 裁定）。
+    - 给了别的案卷 id → 只认由密令立起的案卷（0054 单向新指旧的暗护那一端）。
+    """
+    if raw in (None, ""):
+        return int(escorted_dossier_id) if escorted_dossier_id else None
     dossier_id = _escort_dossier_id(db, raw)
-    if dossier_id is None or not db.is_secret_order_dossier(dossier_id):
+    if dossier_id is None:
+        return None
+    if escorted_dossier_id and dossier_id == int(escorted_dossier_id):
+        return dossier_id
+    if not db.is_secret_order_dossier(dossier_id):
         return None
     return dossier_id
 
@@ -1611,11 +1658,19 @@ def _dispatch_escort_results(
     applied: List[Any] = []
     for item in items:
         dossier_id = _escort_dossier_id(db, item.get("dossier_id"))
-        source_id = _escort_source_dossier_id(db, item.get("escort_source_dossier_id"))
-        if dossier_id is None or source_id is None:
+        if dossier_id is None:
+            _reject(
+                rejected, item, "护送实况须含已存在的被护拨帑案卷 id",
+                "hallucinated_id", source,
+            )
+            continue
+        source_id = _escort_source_dossier_id(
+            db, item.get("escort_source_dossier_id"), escorted_dossier_id=dossier_id,
+        )
+        if source_id is None:
             _reject(
                 rejected, item,
-                "护送实况须含已存在的护行密令案卷与被护拨帑案卷 id",
+                "护送实况的护行人须为该道拨银旨自身（押解随旨）或一道已存在的护行密令案卷",
                 "hallucinated_id", source,
             )
             continue

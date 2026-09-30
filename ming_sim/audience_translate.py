@@ -227,8 +227,12 @@ def build_translation_target_grounding(db: Any, state: Any = None) -> str:
         "WHERE status='executing' AND action_type='grant_allocation' ORDER BY id"
     ).fetchall():
         escorted = db._grant_escort_presence(int(row["id"]))
+        # 该道拨银旨自带押解（#1900 常态）时标出来：这一路报实况不必填
+        # escort_source_dossier_id；没有这行、LLM 会误以为只能走密令暗护。
+        declared = db.dossier_declares_escort(int(row["id"]))
         lines.append(
             f"dossier\t{int(row['id'])}\t{str(row['target_kind'] or '')}:{str(row['target_id'] or '')}"
+            + ("\t自带押解" if declared else "")
             + (f"\t有护:{escorted[1]}" if escorted[1] else "")
         )
     for row in db.conn.execute(
@@ -285,7 +289,8 @@ def build_c0_declaration_shape() -> str:
         '        "amount": 正整数万两, "account": "国库|内库",\n'
         '        "purpose": "补饷（仅协饷）",\n'
         f'        "target_kind": "{target_kind_hint}",\n'
-        '        "target_id": "目标 id", "cadence": "一次性|每月"\n'
+        '        "target_id": "目标 id", "cadence": "一次性|每月",\n'
+        '        "escort": {"escortees": ["押解人名"], "note": "押解护送缘由原句"}\n'
         "      },\n"
         '      "punishment": {"target_id": "处置人名（压下时可空）", '
         '"punish_action": "惩处动作（压下时为无）", "issue_id": "弹劾事项 id（有则填）", '
@@ -328,8 +333,8 @@ def build_c0_declaration_shape() -> str:
         '     "relation_type": "护卫|稽核", "note": "护送缘由"}\n'
         "  ],\n"
         '  "escort_results": [\n'
-        '    {"dossier_id": 被护拨帑案卷 id, "escort_source_dossier_id": 护行密令案卷 id,\n'
-        '     "escorted": true|false, "note": "此路此趟护送实况原文（可空）"}\n'
+        '    {"dossier_id": 被护拨帑案卷 id, "escorted": true|false, "note": "此路此趟护送实况原文（可空）",\n'
+        '     "escort_source_dossier_id": 护行密令案卷 id（仅暗护时填；押解随旨则省略）}\n'
         "  ],\n"
         '  "on_scene_facts": [\n'
         "    {\n"
@@ -423,10 +428,13 @@ def build_audience_translate_prompt(
         "- 暗渠揭破场面呈上后皇帝禁摊派 → commissions 一项 dossier_action_type=prohibit_covert_levy，target_id 填当前场面案卷 dossier_id。\n"
         "- 大臣具名举荐某人任某差并附荐词 → commissions 任命 + recommendation（荐者/荐词原句）。\n"
         "- 皇帝交代近侍查某事 → inquiries；催某件分段事或密令 → rushes；传召说明缓急 → travel_tones。\n"
-        "- 命人护行／沿途照看某笔在途拨帑 → escort_links 一条，escort_source_dossier_id 填【权威目标目录】"
+        "- 命人护行／沿途照看某笔**在途拨帑** → escort_links 一条，escort_source_dossier_id 填【权威目标目录】"
         "escort_dossier 行里那道密令的案卷 id，target_dossier_id 填 dossier 行里被护的拨帑案卷 id，"
         "被护数笔就写几条；只交代「谁护谁」，此路此趟究竟护没护成由 escort_results 另报，"
         "一令护多路时逐路各报各的，别用整条密令的成败代替。\n"
+        "- **本场新交办的拨银自带押解**（「着某人押解护送」）→ 不另立密令、不另挂 escort_links，"
+        "在该 commissions 项的 grant.escort.escortees 写押解人名即可；此路此趟护没护成"
+        "同样由 escort_results 另报，escort_source_dossier_id 留空。\n"
         f"{grounding_block}"
         f"【本场已说的话】\n{said_block}\n"
         f"【本夜暂存清单】{pending_block}\n"

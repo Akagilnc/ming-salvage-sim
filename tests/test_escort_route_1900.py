@@ -33,15 +33,19 @@ def _actor(db) -> str:
     ).fetchone()["name"])
 
 
-def _in_transit_grant(db, state, *, amount=ORDERED, text="拨银押解", target_id="shaanxi"):
+def _in_transit_grant(db, state, *, amount=ORDERED, text="拨银押解", target_id="shaanxi",
+                      escort=None):
     state.metrics["内库"] = max(int(state.metrics.get("内库") or 0), amount * 3 + 50)
+    payload = {"account": "内库", "amount": amount, "execution_surface": "in_transit"}
+    if escort is not None:
+        payload["escort"] = escort
     dossier_id = db.create_decree_dossier(
         state,
         action_type="grant_allocation",
         decree_text=text,
         target_kind="region",
         target_id=target_id,
-        payload={"account": "内库", "amount": amount, "execution_surface": "in_transit"},
+        payload=payload,
     )
     db.apply_dossier_promulgation(state, dossier_id, "promulgated")
     assert db.get_decree_dossier(dossier_id)["status"] == "executing"
@@ -436,3 +440,233 @@ def test_escort_outcome_is_per_turn_not_cumulative(game):
     assert db._grant_escort_presence(grant, turn=state.turn)[:2] == (False, escort_dossier)
     assert db._grant_escort_presence(grant, turn=state.turn - 1)[:2] == (True, escort_dossier)
     assert len(db.list_dossier_escort_outcomes(grant)) == 2
+
+
+# ── 押解默认随拨银旨（owner 2026-09-30 裁定的常态口径） ──────────────────────────
+# 平常「拨银三十万去宁远，着某某押解护送」：押解人记在这道拨银旨里，不另立密令、
+# 不另挂关联。密令只管另行暗中加派的护送。
+
+
+def test_same_decree_escort_needs_no_secret_order_and_no_link(game):
+    """押解随拨银旨：只报实况即落有护，全库无密令案卷、无案卷关联。"""
+    db, state, _content = game
+    grant = _in_transit_grant(db, state, escort={"escortees": [_actor(db)], "note": "押解护送"})
+    assert db.dossier_declares_escort(grant)
+
+    result = _declare(db, state, {"escort_results": [
+        {"dossier_id": grant, "escorted": True, "note": "押解人随饷同到"},
+    ]})
+    assert result.escort_results.rejected == []
+    landed = db.list_dossier_escort_outcomes(grant)
+    assert len(landed) == 1
+    assert landed[0]["escorted"] is True
+    assert landed[0]["escort_source_dossier_id"] == grant  # 主体＝这道旨自己
+    assert landed[0]["relation_type"] == "押解"
+
+    # 没有为这趟护送另立密令，也没有把两条记录互相挂上
+    assert db.list_dossier_links(grant) == []
+    assert db.list_dossier_links(grant, direction="incoming") == []
+    assert db.conn.execute(
+        "SELECT COUNT(*) AS n FROM decree_dossiers WHERE secret_order_id IS NOT NULL",
+    ).fetchone()["n"] == 0
+
+    _record_monthly(db, state.turn)
+    row = db.list_dossier_reconciliations(grant)[-1]
+    lo, hi = grant_arrival_bounds(ORDERED, escorted=True)
+    assert row["escorted"] is True
+    assert lo <= row["arrived_amount"] <= hi
+    assert row["arrived_amount"] > grant_arrival_bounds(ORDERED, escorted=False)[1]
+    assert row["loss_amount"] == ORDERED - row["arrived_amount"]
+
+
+def test_escort_result_rejected_when_decree_declares_no_escort(game):
+    """该道拨银旨没声明押解 → 不得凭空虚构有护实况（逐项拒收）。"""
+    db, state, _content = game
+    grant = _in_transit_grant(db, state)
+    assert not db.dossier_declares_escort(grant)
+    result = _declare(db, state, {"escort_results": [
+        {"dossier_id": grant, "escorted": True, "note": "凭空护送"},
+    ]})
+    assert result.escort_results.applied == []
+    assert [r.reason for r in result.escort_results.rejected] == [
+        "该道拨银旨未声明押解护送，不得记有护实况",
+    ]
+    assert db.list_dossier_escort_outcomes(grant) == []
+
+
+def test_undeclared_escort_route_reconciles_bare(game):
+    """对照：没安排护送的拨银即便报了实况也不作有护，按无护口径核账。"""
+    db, state, _content = game
+    grant = _in_transit_grant(db, state)
+    _declare(db, state, {"escort_results": [
+        {"dossier_id": grant, "escorted": False, "note": "此路无人护送"},
+    ]})
+    assert db.list_dossier_escort_outcomes(grant) == []
+    targets = db.list_monthly_grant_reconciliation_targets(state.turn)
+    assert targets[0]["escorted"] is False
+    _record_monthly(db, state.turn)
+    row = db.list_dossier_reconciliations(grant)[-1]
+    bare_lo, bare_hi = grant_arrival_bounds(ORDERED, escorted=False)
+    assert row["escorted"] is False
+    assert bare_lo <= row["arrived_amount"] <= bare_hi
+
+
+def test_other_dossier_cannot_pose_as_escort_source(game):
+    """拿别的事务案卷充这道拨银旨的护行人仍拒收（自身以外只认密令案卷）。"""
+    db, state, _content = game
+    grant = _in_transit_grant(db, state, escort={"escortees": [_actor(db)]})
+    stranger = _in_transit_grant(db, state, text="另一笔在途", target_id="liaodong")
+    result = _declare(db, state, {"escort_results": [
+        {"dossier_id": grant, "escort_source_dossier_id": stranger,
+         "escorted": True, "note": "拿别的事务充护行人"},
+    ]})
+    assert result.escort_results.applied == []
+    assert [r.category for r in result.escort_results.rejected] == ["hallucinated_id"]
+    assert db.list_dossier_escort_outcomes(grant) == []
+
+
+def test_commission_declares_escort_inside_same_grant_decree(game):
+    """真实入口：同一道拨银交办里写押解人 → 暂存载荷带上它，不另立密令。"""
+    db, state, _content = game
+    actor = _actor(db)
+    state.metrics["内库"] = max(int(state.metrics.get("内库") or 0), ORDERED * 3 + 50)
+    result = _declare(db, state, {"commissions": [{
+        "text": f"拨银三十万两往陕西，着{actor}押解护送，沿途照关防。",
+        "grant": {
+            "grant_action": "赈灾", "amount": ORDERED, "account": "内库",
+            "target_kind": "region", "target_id": "shaanxi",
+            "escort": {"escortees": [actor], "note": "沿途照关防"},
+        },
+    }]})
+    assert result.commissions.rejected == []
+    staged = result.commissions.applied[0]["payload"]
+    assert staged["escort"]["escortees"] == [actor]
+    assert staged["escort"]["note"] == "沿途照关防"
+
+    # 押解人须是真实人物：不存在的人名逐项拒收，不静默丢押解
+    bad = _declare(db, state, {"commissions": [{
+        "text": "拨银三十万两往陕西，着查无此人押解。",
+        "grant": {
+            "grant_action": "赈灾", "amount": ORDERED, "account": "内库",
+            "target_kind": "region", "target_id": "shaanxi",
+            "escort": {"escortees": ["查无此人"]},
+        },
+    }]})
+    assert bad.commissions.applied == []
+    assert [r.category for r in bad.commissions.rejected] == ["hallucinated_id"]
+
+
+def test_commission_without_escort_declares_none(game):
+    """没写押解的拨银交办不夹带押解（代码不猜）。"""
+    db, state, _content = game
+    state.metrics["内库"] = max(int(state.metrics.get("内库") or 0), ORDERED * 3 + 50)
+    result = _declare(db, state, {"commissions": [{
+        "text": "拨银三十万两往陕西赈灾。",
+        "grant": {
+            "grant_action": "赈灾", "amount": ORDERED, "account": "内库",
+            "target_kind": "region", "target_id": "shaanxi",
+        },
+    }]})
+    assert result.commissions.rejected == []
+    assert "escort" not in result.commissions.applied[0]["payload"]
+
+
+def test_covert_escort_still_goes_through_secret_order_link(game):
+    """另行暗中加派：仍走密令案卷 + 0054 单向关联，与押解随旨两路并存。"""
+    db, state, _content = game
+    grant = _in_transit_grant(db, state, escort={"escortees": [_actor(db)]})
+    _order_id, escort_dossier = _escort_order(db, state)
+    result = _declare(db, state, {
+        "escort_links": [{
+            "escort_source_dossier_id": escort_dossier, "target_dossier_id": grant,
+            "relation_type": "护卫", "note": "暗中加派护送",
+        }],
+        "escort_results": [{
+            "dossier_id": grant, "escort_source_dossier_id": escort_dossier,
+            "escorted": True, "note": "暗护接应同到",
+        }],
+    })
+    assert result.escort_links.rejected == [] and result.escort_results.rejected == []
+    landed = db.list_dossier_escort_outcomes(grant)
+    assert landed[0]["escort_source_dossier_id"] == escort_dossier
+    assert landed[0]["relation_type"] == "护卫"  # 类型取自链，不因该道旨自带押解而改
+
+
+def test_same_decree_escort_survives_restore(game):
+    """重开关档读同一实账：押解随旨的逐路实况与对账行无损。"""
+    db, state, content = game
+    grant = _in_transit_grant(db, state, escort={"escortees": [_actor(db)]})
+    _declare(db, state, {"escort_results": [
+        {"dossier_id": grant, "escorted": True, "note": "押解人随饷同到"},
+    ]})
+    _record_monthly(db, state.turn)
+    outcomes = db.list_dossier_escort_outcomes(grant)
+    row = db.list_dossier_reconciliations(grant)[-1]
+
+    path = db.path
+    db.close()
+    reopened = GameDB(path, content=content)
+    assert reopened.dossier_declares_escort(grant) is True
+    assert reopened.list_dossier_escort_outcomes(grant) == outcomes
+    assert reopened.list_dossier_reconciliations(grant) == [row]
+    assert reopened._grant_escort_presence(grant, turn=state.turn)[:2] == (True, grant)
+    reopened.close()
+
+
+def test_retract_reverses_escort_records_of_that_round(game):
+    """召对撤回本轮：该轮新建与覆盖的押解／暗护记录全部逆转，前轮无损。"""
+    from tests.conftest import open_hall_turn
+
+    db, state, _content = game
+    grant = _in_transit_grant(db, state, escort={"escortees": [_actor(db)]})
+    _order_id, escort_dossier = _escort_order(db, state)
+    _declare(db, state, {"escort_links": [{
+        "escort_source_dossier_id": escort_dossier, "target_dossier_id": grant,
+        "relation_type": "护卫", "note": "暗中加派",
+    }]})
+    # 前一轮的实况：撤回后必须原样还在
+    _declare(db, state, {"escort_results": [
+        {"dossier_id": grant, "escorted": True, "note": "首趟押解护成"},
+    ]})
+    keeper = db.list_dossier_escort_outcomes(grant)
+
+    minister = _actor(db)
+    night_id, chat_id = open_hall_turn(db, state, minister)
+    uid = db.conn.execute(
+        "INSERT INTO chat_messages (minister_name, turn, role, content) "
+        "VALUES (?, ?, 'emperor', ?)",
+        (minister, state.turn, "着即押解护送。"),
+    ).lastrowid
+    mid = db.conn.execute(
+        "INSERT INTO chat_messages (minister_name, turn, role, content) "
+        "VALUES (?, ?, 'minister', ?)",
+        (minister, state.turn, "臣遵旨。"),
+    ).lastrowid
+    db.conn.commit()
+    db.update_chat_turn_messages(
+        int(chat_id), user_message_id=int(uid), minister_message_id=int(mid),
+    )
+    before = db.capture_chat_rollback_snapshot()
+    # 本轮：另起一道自带押解的拨银 + 覆盖前一轮该路的实况 + 一条新关联
+    new_grant = _in_transit_grant(
+        db, state, text="另拨一道自带押解", target_id="liaodong",
+        escort={"escortees": [minister]},
+    )
+    _declare(db, state, {"escort_results": [
+        {"dossier_id": grant, "escort_source_dossier_id": escort_dossier,
+         "escorted": False, "note": "本轮改判失护"},
+        {"dossier_id": new_grant, "escorted": True, "note": "本轮新报有护"},
+    ]})
+    db.record_chat_turn_rollback_diffs(
+        int(chat_id), before, db.capture_chat_rollback_snapshot(),
+    )
+    assert len(db.list_dossier_escort_outcomes(grant)) == 1
+    assert db.list_dossier_escort_outcomes(grant)[0]["note"] == "本轮改判失护"
+    assert db.list_dossier_escort_outcomes(new_grant)
+
+    db.undo_chat_turn(int(chat_id))
+
+    # 本轮效果全逆转：覆盖回前一轮的值，新报的那道路与新关联一并消失
+    assert db.list_dossier_escort_outcomes(grant) == keeper
+    assert db.list_dossier_escort_outcomes(new_grant) == []
+    assert [link["note"] for link in db.list_dossier_links(escort_dossier)] == ["暗中加派"]

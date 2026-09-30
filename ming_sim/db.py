@@ -1575,7 +1575,7 @@ class GameDB:
                 turn INTEGER NOT NULL,
                 escort_source_dossier_id INTEGER NOT NULL,
                 relation_type TEXT NOT NULL
-                    CHECK(relation_type IN ('护卫','稽核')),
+                    CHECK(relation_type IN ('护卫','稽核','押解')),
                 escorted INTEGER NOT NULL DEFAULT 0 CHECK(escorted IN (0,1)),
                 note TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -9204,6 +9204,11 @@ class GameDB:
         "textual_facts": "id",
         "public_sayings": "id",
         "relation_edge_events": "id",
+        # #1900：护送关联与逐路实况都是本轮召对当场写下的安排/事实。ADR 0038
+        # 撤回须逆转本轮新建与覆盖的押解／暗护记录，不保留已撤回效果——不入
+        # 快照则召对撤回了、账上还留着这道护送，密报与对账仍按它读。
+        "decree_dossier_links": "id",
+        "dossier_escort_outcomes": "id",
     }
 
     def _delete_turn_scoped_knowledge_sources_in_tx(self, chat_turn_id: int) -> None:
@@ -12124,28 +12129,70 @@ class GameDB:
             reports.append(self.list_dossier_progress(dossier_id)[-1])
         return reports
 
+    def dossier_declares_escort(self, dossier_id: int) -> bool:
+        """该道拨银旨自身是否声明了押解护送（#1900 押解默认随拨银旨）。
+
+        押解人、随行护卫写在**同一道拨银交办**里即成安排，不另立密令、不另挂
+        关联——这是 owner 2026-09-30 裁定的常态口径。真正单一口径＝案卷自身
+        ``payload_json.escort`` 里的显式声明（``escortees`` 非空），代码不猜。
+        """
+        row = self.conn.execute(
+            "SELECT payload_json FROM decree_dossiers WHERE id=?",
+            (int(dossier_id),),
+        ).fetchone()
+        if row is None:
+            return False
+        try:
+            payload = json.loads(str(row["payload_json"] or "{}"))
+        except (TypeError, ValueError):
+            return False
+        if not isinstance(payload, dict):
+            return False
+        escort = payload.get("escort")
+        if not isinstance(escort, dict):
+            return False
+        escortees = escort.get("escortees")
+        return isinstance(escortees, list) and any(
+            str(name or "").strip() for name in escortees
+        )
+
     def record_dossier_escort_result(
-        self, turn: int, *, dossier_id: int, escort_source_dossier_id: int,
+        self, turn: int, *, dossier_id: int, escort_source_dossier_id: int = 0,
         escorted: bool, note: str = "", commit: bool = False,
     ) -> Dict[str, object]:
         """#1900：落「该路此次押解的实际护送」（逐路×回合唯一真源）。
 
-        关联链（0054）只答「谁护谁」，本方法要求链先在，才准记逐路实况——声明
-        不得凭空虚构一条护送关系。关系类型取自链本身，不接受调用方另报。
+        护行主体有两种合法来源，都由既有真源判别，声明不得凭空虚构：
+
+        - **押解随拨银旨**（常态）：该道拨帑案卷自身声明了押解护送
+          （``dossier_declares_escort``），护行主体就是这道案卷自己
+          （``escort_source_dossier_id`` 省略或等于它），关系类型记「押解」。
+        - **密令暗护**（另行加派）：由密令立起的案卷单向指向本路（0054
+          关联），关系类型取自链本身，不接受调用方另报。
 
         只校验被护端是拨帑案卷；密令的整体成败、结案态与拨帑案卷自身状态一概不参与
         判定（结案后仍可补记并对账），一令护多路时逐路各记各的。同路同回合后来者覆盖
         先来者（分段过月会多次落同一段）。
         """
         did = strict_int(dossier_id, accept_numeric_strings=False)
-        sid = strict_int(escort_source_dossier_id, accept_numeric_strings=False)
-        if did <= 0 or sid <= 0:
-            raise ValueError("护送实况须含正案卷编号")
         target = self.get_decree_dossier(did)
         if target is None:
             raise ValueError(f"被护案卷不存在：{did}")
         if str(target["action_type"] or "") != "grant_allocation":
             raise ValueError("被护案卷不是拨帑案卷")
+        raw_sid = escort_source_dossier_id
+        sid = 0 if raw_sid in (None, "", 0) else strict_int(
+            raw_sid, accept_numeric_strings=False,
+        )
+        if did > 0 and (raw_sid in (None, "", 0) or sid == did):
+            # 押解随拨银旨：主体是这道案卷自己，但安排须是它自己声明的。
+            if not self.dossier_declares_escort(did):
+                raise ValueError("该道拨银旨未声明押解护送，不得记有护实况")
+            return self._insert_escort_outcome(
+                turn, did, did, "押解", escorted, note, commit,
+            )
+        if sid <= 0:
+            raise ValueError("护送实况须含正案卷编号")
         source = self.get_decree_dossier(sid)
         if source is None:
             raise ValueError(f"护送案卷不存在：{sid}")
@@ -12160,6 +12207,14 @@ class GameDB:
         relation = str(link["relation_type"])
         if relation not in _GRANT_ESCORT_RELATIONS:
             raise ValueError(f"案卷关联类型不是护送口径：{relation}")
+        return self._insert_escort_outcome(
+            turn, did, sid, relation, escorted, note, commit,
+        )
+
+    def _insert_escort_outcome(
+        self, turn: int, did: int, sid: int, relation: str,
+        escorted: bool, note: str, commit: bool,
+    ) -> Dict[str, object]:
         self.conn.execute(
             """
             INSERT INTO dossier_escort_outcomes
