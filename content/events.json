@@ -161,7 +161,6 @@
     "trigger_month": 4,
     "open_window": true,
     "trigger_gate": {},
-    "auto_trigger": true,
     "effect_on_trigger": {
       "power_renames": [
         {
@@ -174,7 +173,7 @@
         }
       ]
     },
-    "precondition": "触发门：无条件/近天定。理由：皇太极称帝改国号是后金内部核心事实，不由明廷取消；明廷承不承认伪号、联蒙或保朝鲜的外交与意识形态响应仍走软判。",
+    "precondition": "触发门：无条件/近天定。理由：皇太极称帝改国号是后金内部核心事实，不由明廷取消；明廷承不承认伪号、联蒙或保朝鲜的外交与意识形态响应仍走软判。#1893：本事件不再 auto_trigger，改由同一次月末世界段的模型从候选清单挑选后落账。",
     "event_type": "situation"
   },
   {

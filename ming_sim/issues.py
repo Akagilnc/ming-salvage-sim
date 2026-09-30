@@ -2452,7 +2452,12 @@ def gather_impeachment_surge_candidates(state: GameState, db: GameDB) -> List[Di
 
 def gather_candidate_events(state: GameState, db: GameDB) -> List[Event]:
     """程序筛选：历史锚定事件按 trigger 时间到点、seed 情势按 trigger_gate 达标，
-    都排除已触发过的。返回的候选清单交推演 agent 因果判定是否真触发。"""
+    都排除已触发过的。返回的候选清单交推演 agent 因果判定是否真触发。
+
+    #1892/#1893 分工：进本清单 = 交模型在月末世界段里挑的人物事件。三饷
+    （``fiscal_levy``）是皇帝亲裁的加派决策，由批红时的圣旨／``record_event_decision_choice``
+    落 ``事件结局``，其加不加不是模型能代批的事，故永不入人物候选（ADR 0020）。
+    """
     c = _ctx()
     spawned = _spawned_event_refs(db)
     candidates: List[Event] = []
@@ -2463,6 +2468,8 @@ def gather_candidate_events(state: GameState, db: GameDB) -> List[Event]:
         if _event_window_expired(ev, state):
             continue
         if ev.auto_trigger:
+            continue
+        if getattr(ev, "category", "") == FISCAL_LEVY_EVENT_CATEGORY:
             continue
         dead_subjects = _dead_person_core_subjects(ev, db)
         if dead_subjects:

@@ -2262,43 +2262,74 @@ def test_jingshi_plague_auto_triggers_and_weakens_capital_garrison(game):
     assert after["morale"] == before["morale"] - 16
 
 
-def test_huangtaiji_chengdi_auto_triggers_and_renames_houjin(game):
-    """#192：皇太极称帝核心事实确定性落库，后金稳定 id 展示为大清。"""
+def test_huangtaiji_chengdi_is_model_picked_candidate_not_hard_triggered(game):
+    """#1893：称帝不再走旧硬触发，改由模型在月末世界段从候选清单挑选。
+
+    硬触发缺席（程序不代选），到点即进候选池（模型可挑），选中后既有写口
+    落一次终态与局势，重跑不重发。
+    """
+    from ming_sim.month_translate import dispatch_month_segment
+
     db, state, content = game
     issues.bind_content(content)
     state.year = 1636
     state.period = 4
+    db.save_state(state)
 
     triggered = issues.auto_trigger_seed_issues(state, db)
 
-    assert any(item["id"] == "huangtaiji_chengdi" for item in triggered)
-    assert db.has_event_triggered("huangtaiji_chengdi")
-    assert all(ev.id != "huangtaiji_chengdi" for ev in issues.gather_candidate_events(state, db))
-    row = db.conn.execute(
-        "SELECT name, aliases, status, last_action FROM powers WHERE id=?",
-        ("houjin",),
-    ).fetchone()
-    assert row["name"] == "大清"
-    assert "后金" in row["aliases"]
-    assert "大清" in row["aliases"]
-    assert "称帝" in row["status"]
-    assert row["last_action"] == "皇太极称帝改国号大清"
+    assert all(item["id"] != "huangtaiji_chengdi" for item in triggered)
+    assert db.event_terminal_state("huangtaiji_chengdi") is None
+    assert any(
+        ev.id == "huangtaiji_chengdi" for ev in issues.gather_candidate_events(state, db)
+    )
+
+    declaration = {"effects": {"new_issues": [{
+        "origin_kind": "event_pool", "id": "huangtaiji_chengdi",
+        "title": "皇太极称帝改国号大清",
+    }]}}
+    result = dispatch_month_segment(
+        db, state, segment="皇太极称帝", translate_fn=lambda request, config: declaration,
+    )
+    applied = result.effects.applied[0]["issue_summary"]["new_issues"]
+    assert [item.get("rejected") for item in applied] == [False]
+    assert db.event_terminal_state("huangtaiji_chengdi") == "triggered"
+
+    # 读档续跑不重发：终态已在候选硬门里排掉。
+    again = dispatch_month_segment(
+        db, state, segment="再说称帝", translate_fn=lambda request, config: declaration,
+    )
+    assert [
+        item.get("rejected")
+        for item in again.effects.applied[0]["issue_summary"]["new_issues"]
+    ] == [True]
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM issues WHERE origin_kind='event_pool' AND origin_ref=?",
+        ("huangtaiji_chengdi",),
+    ).fetchone()[0] == 1
 
 
 def test_huangtaiji_chengdi_keeps_diplomatic_response_axis_as_situation_issue(game):
-    """#192：称帝核心事实硬落后，承不承认伪号/联蒙抗清仍要留给软判推进。"""
+    """#192/#1893：模型选中落幕后，承不承认伪号/联蒙抗清仍是要软判推进的局势。"""
+    from ming_sim.month_translate import dispatch_month_segment
+
     db, state, content = game
     issues.bind_content(content)
     state.year = 1636
     state.period = 4
+    db.save_state(state)
 
-    triggered = issues.auto_trigger_seed_issues(state, db)
+    dispatch_month_segment(
+        db, state, segment="皇太极称帝",
+        translate_fn=lambda request, config: {"effects": {"new_issues": [{
+            "origin_kind": "event_pool", "id": "huangtaiji_chengdi",
+            "title": "皇太极称帝改国号大清",
+        }]}},
+    )
 
-    item = next(entry for entry in triggered if entry["id"] == "huangtaiji_chengdi")
-    assert item["issue_id"] > 0
     issue = db.conn.execute(
-        "SELECT status, kind, origin_kind, origin_ref FROM issues WHERE id=?",
-        (item["issue_id"],),
+        "SELECT status, kind, origin_kind, origin_ref FROM issues WHERE origin_ref=?",
+        ("huangtaiji_chengdi",),
     ).fetchone()
     assert dict(issue) == {
         "status": "active",
@@ -2306,6 +2337,26 @@ def test_huangtaiji_chengdi_keeps_diplomatic_response_axis_as_situation_issue(ga
         "origin_kind": "event_pool",
         "origin_ref": "huangtaiji_chengdi",
     }
+
+
+def test_fiscal_levy_events_stay_out_of_model_candidate_pool(game):
+    """#1892/#1893：三饷是皇帝亲裁，不进人物候选交模型代批（ADR 0020）。"""
+    from ming_sim.issues import FISCAL_LEVY_EVENT_CATEGORY
+
+    db, state, content = game
+    issues.bind_content(content)
+    levy_ids = {
+        ev.id for ev in content.events
+        if getattr(ev, "category", "") == FISCAL_LEVY_EVENT_CATEGORY
+    }
+    assert levy_ids, "content 里应至少有一个三饷事件"
+
+    for year in (1631, 1637, 1639, 1640):
+        state.year, state.period = year, 1
+        db.save_state(state)
+        assert not levy_ids & {
+            ev.id for ev in issues.gather_candidate_events(state, db)
+        }
 
 
 def test_historical_power_rename_tick_reads_huangtaiji_event_effect(game):

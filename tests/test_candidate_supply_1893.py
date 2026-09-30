@@ -1,13 +1,15 @@
-"""#1893 人物事件与弹劾潮候选进入过月供料目录（现行材料写手断链的补回）。
+"""#1893 人物事件与弹劾潮候选：供料 → 世界段挑选 → 既有写口落账的真入口行为。
 
-真源断链：月末世界段经 ``prepare_world_materials`` 起调，而修前该目录不写任何
-候选——历史大事件与弹劾潮在现行流程里模型一次也读不到（ADR 0014 / 0091 的
-候选供给无写侧）。本文件钉：
+三个根因类各钉一条行为（不复检内部结构、不锁措辞）：
 
-- 供料侧：合格候选进 ``盘面/候选事件与弹劾潮.txt``，资格门不合格 / 已有终态者
-  不进（硬门仍只由既有 gather 判，代码不代选）；
-- 落账侧：模型在 C0 effects 里声明 event_pool / impeachment_surge 后，仍走既有
-  ``new_issues`` 写口，只落一次；不选则无终态、读档续跑不重发。
+- **供料到转译不断链**：转译发生在世界段材料目录释放之后，故候选事实必须随
+  转译请求送到；本文件经真实 ``dispatch_month_segment`` 入口断言转译请求里
+  带着当月合格候选的事实（id 与软判锚）。
+- **候选分类合乎分工**：三饷是皇帝亲裁，不进人物候选（该负向契约在
+  ``test_event_trigger_gate.py`` 钉）；此处钉合格候选可达、资格门不合格与
+  已有终态者不可达。
+- **落账只走既有写口**：选中经既有 ``new_issues`` 落一次终态与局势；不选无
+  终态；读档续跑不重发。弹劾潮发难才立项、不发难不立。
 
 不替模型判断「该不该发生 / 该不该发难」——那属 P6，只断言供给可达与写口幂等。
 """
@@ -16,9 +18,8 @@ from __future__ import annotations
 
 import json
 
-import pytest
-
 from ming_sim.db import GameDB
+from ming_sim.issues import gather_impeachment_surge_candidates
 from ming_sim.materials import (
     _CANDIDATE_REL,
     candidate_supply,
@@ -110,36 +111,116 @@ def test_ineligible_and_terminal_events_stay_out_of_supply(game, tmp_path, conte
         _drop_event(content, avoided)
 
 
-def test_supply_excludes_impeachment_candidates_of_secret_dossiers(game):
-    """密令案卷不向供料侧露弹劾潮候选（读侧既有 secret_order_dossier_ids 口径）。"""
-    db, state, _ = game
+def test_secret_dossier_surge_candidates_are_not_offered(game):
+    """密令案卷的弹劾潮候选不外露（经真实密令写口造出案卷，非空断言）。"""
     from ming_sim.materials import secret_order_dossier_ids
+    from tests.dossier_test_helpers import create_test_secret_order
+    from tests.test_impeachment_surge_655 import _candidate_world
+
+    db, state, _ = game
+    did, owner, _faction = _candidate_world(db, state)
+
+    # 先证同一硬门在非密令时确实供出候选，否则下面的排除断言会空转。
+    baseline = candidate_supply(db, state)["impeachment_surge"]
+    assert any(int(item["dossier_id"]) == did for item in baseline)
+
+    # 另造一条真密令案卷：同一变形暴露口径，只多一个 secret_order_id。
+    order_id = create_test_secret_order(
+        db, state, owner, "密令探针", "密令正文", ["探针"],
+    )
+    secret_did = db.create_decree_dossier(
+        state, action_type="secret_order", decree_text="密查", target_kind="issue",
+        target_id="land", executor_kind="character", executor_id=owner,
+        secret_order_id=order_id,
+        participants=[{"character_id": owner, "tier": "主办"}],
+    )
+    db.conn.execute(
+        "UPDATE decree_dossiers SET status='closed',execution_outcome='transformed',"
+        "execution_note='名实已乖，旨外受益',closed_turn=?,"
+        "participant_roster=? WHERE id=?",
+        (
+            state.turn,
+            json.dumps([{"character_id": owner, "tier": "主办"}], ensure_ascii=False),
+            secret_did,
+        ),
+    )
+    db.record_issue_economy_move(
+        state, account="国库", delta=8, category="地方浮收",
+        reason="借密查之名额外加派", origin_ref=f"dossier:{secret_did}",
+        beyond_intent=True, commit=False,
+    )
+    db.conn.commit()
 
     secret = secret_order_dossier_ids(db)
-    for item in candidate_supply(db, state)["impeachment_surge"]:
-        assert int(item.get("dossier_id") or 0) not in secret
+    assert secret_did in secret, "探针须造出真实密令案卷，否则本用例空转"
+    assert did not in secret
+    # 对照：同一硬门本身不辨密令，密令案卷的候选确实存在——排除只发生在供料侧。
+    unfiltered = gather_impeachment_surge_candidates(state, db)
+    assert any(int(item["dossier_id"]) == secret_did for item in unfiltered), (
+        "密令案卷未被硬门排除时，本用例无对照意义"
+    )
+
+    supply = candidate_supply(db, state, exclude_dossier_ids=secret)
+    offered = {int(item["dossier_id"]) for item in supply["impeachment_surge"]}
+    assert secret_did not in offered
+    assert did in offered
 
 
-def test_supply_is_frozen_once_per_prepare(game, monkeypatch):
-    """一次 prepare 只取一次候选：目录写入与 opening 共用同一份冻结结果。"""
-    db, state, content = game
-    from ming_sim import materials as materials_mod
+# --- 断链类：候选事实必须随转译请求送到（目录此时已释放）---
 
-    calls = {"n": 0}
-    real = materials_mod.candidate_supply
 
-    def counting(*args, **kwargs):
-        calls["n"] += 1
-        return real(*args, **kwargs)
+def test_translate_request_carries_current_candidate_facts(game, content):
+    """经真实 dispatch_month_segment 入口：转译请求里带着当月合格候选事实。"""
+    from ming_sim.month_translate import dispatch_month_segment
 
-    monkeypatch.setattr(materials_mod, "candidate_supply", counting)
-    prepared = prepare_world_materials(db, state)
-    assert calls["n"] == 1
-    index = read_material(prepared.root, "INDEX.txt")
-    assert CANDIDATE_REL in index
-    # 开场只报条数并指路，不复制候选正文（P7：不为模型拼装第二份真源）。
-    assert CANDIDATE_REL in prepared.opening
-    assert "人物事件" in prepared.opening
+    db, state, _ = game
+    ev = _open_window_event(content, "__issue_1893_translate_supply__")
+    captured = {}
+    try:
+
+        def _capture(request, config):
+            captured["request"] = request
+            return {"effects": {}}
+
+        dispatch_month_segment(db, state, segment="本月无事", translate_fn=_capture)
+
+        request = captured["request"]
+        facts = {item["id"]: item for item in request.candidates["events"]}
+        assert ev.id in facts, "合格候选未随转译请求送到（供料→转译断链）"
+        assert facts[ev.id]["summary"] == ev.summary
+        assert "impeachment_surge" in request.candidates
+    finally:
+        _drop_event(content, ev)
+
+
+def test_translate_request_omits_ineligible_candidate(game, content):
+    """资格门不合格者既不进供料目录，也不进转译请求（同一读侧硬门两处一致）。"""
+    from ming_sim.month_translate import dispatch_month_segment
+    from ming_sim.models import Event
+
+    db, state, _ = game
+    later = Event(
+        id="__issue_1893_unreachable__", title="远年事件", kind="测试",
+        summary="窗口未开", urgency=50, severity=50, credibility=50,
+        interests=[], audiences=[], trigger_year=int(state.year) + 50,
+        trigger_month=1, open_window=False, trigger_gate={}, event_type="situation",
+    )
+    content.events.append(later)
+    content.event_by_id[later.id] = later
+    captured = {}
+    try:
+
+        def _capture(request, config):
+            captured["request"] = request
+            return {"effects": {}}
+
+        dispatch_month_segment(db, state, segment="本月无事", translate_fn=_capture)
+
+        assert later.id not in {
+            item["id"] for item in captured["request"].candidates["events"]
+        }
+    finally:
+        _drop_event(content, later)
 
 
 # --- 落账侧：模型选了就只落一次，不选 / 读档续跑不重发 ---
@@ -191,6 +272,34 @@ def test_not_selected_candidate_leaves_no_terminal_state(game, content):
         )
         assert db.event_terminal_state(ev.id) is None
         assert ev.id in {item["id"] for item in candidate_supply(db, state)["events"]}
+    finally:
+        _drop_event(content, ev)
+
+
+def test_non_strategic_candidate_effects_land_without_event_id_binding(game, content):
+    """F3：非 strategic_foreign 的人物候选不绑 event_id，其效果照样落账。
+
+    战果声明的 event_id 归属只属 strategic_foreign 的 node/ending 既有契约；
+    人物候选若照绑会被既有写口整项拒收，故此处钉「不绑也落」。
+    """
+    from ming_sim.month_translate import dispatch_month_segment
+
+    db, state, _ = game
+    ev = _open_window_event(content, "__issue_1893_plain_person_event__")
+    try:
+        before = int(state.metrics["民心"])
+        declaration = {"effects": {
+            "new_issues": [{"origin_kind": "event_pool", "id": ev.id, "title": ev.title}],
+            "metric_delta": {"民心": -3},
+        }}
+        result = dispatch_month_segment(
+            db, state, segment="探针段文", translate_fn=lambda rq, cfg: declaration,
+        )
+        assert [
+            item.get("rejected")
+            for item in result.effects.applied[0]["issue_summary"]["new_issues"]
+        ] == [False]
+        assert int(state.metrics["民心"]) == before - 3
     finally:
         _drop_event(content, ev)
 
@@ -286,48 +395,3 @@ def test_impeachment_surge_candidate_survives_restore(game, content):
         ).fetchone()[0] == 1
     finally:
         restored.close()
-
-
-def test_translate_prompt_names_the_candidate_contract():
-    """转译契约须写清两条声明形状（代码不代选，形状由 prompt 交给模型）。"""
-    from ming_sim.month_translate import build_month_segment_translate_prompt, MonthTranslationInput
-
-    prompt = build_month_segment_translate_prompt(MonthTranslationInput(
-        segment="段文", target_grounding="", decree_payload={},
-    ))
-    assert '"origin_kind": "event_pool"' in prompt
-    assert '"origin_kind": "impeachment_surge"' in prompt
-    assert "eligible_target_ids" in prompt
-
-
-@pytest.mark.parametrize("turn_unit", ["月", "回合"])
-def test_world_segment_agent_instructions_point_at_candidate_file(turn_unit):
-    """世界段 agent 指令须指向候选文件（正向表述，不塞固定叙事文本）。"""
-    from ming_sim.agents import create_world_segment_agent
-
-    class _Model:
-        materials_dir = ""
-
-    captured = {}
-
-    def _fake_agent(**kwargs):
-        captured.update(kwargs)
-        return kwargs
-
-    import ming_sim.agents as agents_mod
-
-    class _Cfg:
-        base_url = "http://localhost:1"
-        model = "x"
-
-    monkey = pytest.MonkeyPatch()
-    try:
-        monkey.setattr(agents_mod, "create_chat_model", lambda *a, **k: _Model())
-        monkey.setattr(agents_mod, "_llm_for_role", lambda *a, **k: _Cfg())
-        monkey.setattr(agents_mod, "Agent", _fake_agent)
-        monkey.setattr(agents_mod, "material_tools", lambda root: [], raising=False)
-        create_world_segment_agent(_Cfg(), type("P", (), {"root": "", "opening": ""})())
-    finally:
-        monkey.undo()
-    joined = "\n".join(str(line) for line in captured["instructions"])
-    assert CANDIDATE_REL in joined

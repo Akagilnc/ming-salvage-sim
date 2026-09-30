@@ -228,11 +228,14 @@ canonical 段形＝list，每项落一道加派旨：逐省累积账当回合落
 | `origin_kind` | 可选 |
 
 ### `new_issues` — 新立 issue ⚠️ **最容易踩的字段**
-**两种来源（必选其一）**：
+**三种来源（必选其一）**：
 1. `origin_kind: "decree"` — 玩家诏书强推的新政/工程/改革
 2. `origin_kind: "event_pool"` + `id: "<候选事件 id>"` — 触发预设候选事件
+3. `origin_kind: "impeachment_surge"` + `candidate_id: "<弹劾潮候选 id>"` — 派系发难（ADR 0091）
 
 **其它来源一律拒**（这是我第一次踩的坑：`origin_kind=''` 直接被丢）。
+
+`origin_kind="impeachment_surge"` 另需 `faction_hint`（须等于该候选的 `faction_id`）、非空 `target_roster`（人物身份列表，且是 `eligible_target_ids` 的子集）、`title` 与 `stage_text`。候选本身由既有硬门（旨外 durable 变形暴露 × 派系 leverage）从 DB 现算，只收本次输入快照里存在的；同一候选同一次调用内只消费一次。发难与否由派系角色在同一次月末世界段自行决定——不发难就不写这一项，代码不代发难（#1893 / ADR 0091）。
 
 `origin_kind="event_pool"` 只收当前候选池中的未终态事件。若事件已因超过显式最晚时点进入 `expired` 终态，立项会明确拒收为“事件已过期终态”，不可用后续 delta 让它晚弹或重入。
 
@@ -459,7 +462,7 @@ personnel_secret 模块产出；settle 内经 `record_monthly_dossier_progress` 
 
 | 字段 | 我犯过的错 | 真相 |
 |---|---|---|
-| `new_issues[].origin_kind` | 不填 | **必填** `decree` 或 `event_pool` |
+| `new_issues[].origin_kind` | 不填 | **必填** `decree` / `event_pool` / `impeachment_surge` |
 | `new_issues[].kind` | 写 `reform` | 白名单 `situation` / `initiative`；改革/试点都用 `initiative` |
 | `new_issues[].title` | — | ≤60 字 |
 | `close_issues[].reason` | 填了 `result` 没填 `reason` | close_issues 要 **`reason`** 字段（不是 result），空则整条被跳过。注：若同时用 `issue_advances` 把 bar 推满（≥100），issue 会**自动 resolved**，不依赖 close_issues |

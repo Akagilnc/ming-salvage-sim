@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from dataclasses import field as dataclasses_field
 from typing import Any, Callable, Mapping, Optional
 
 from ming_sim.applier import Provenance
@@ -42,12 +43,18 @@ def _effect_ref_grounding(refs: Mapping[str, object]) -> str:
 
 @dataclass(frozen=True)
 class MonthTranslationInput:
-    """供月段转译器使用的完整结构化输入；预推旨载荷在过月前尚未物化。"""
+    """供月段转译器使用的完整结构化输入；预推旨载荷在过月前尚未物化。
+
+    ``candidates`` 是 #1893 的世界段候选事实（人物事件 + 弹劾潮）。世界段的
+    材料目录随推演调用结束即释放，转译发生在其之后，故候选事实必须随本请求
+    一并送到转译器，不能靠它回读已释放的目录。
+    """
 
     segment: str
     target_grounding: str
     decree_payload: Mapping[str, object]
     continuing_dossiers: tuple[Mapping[str, object], ...] = ()
+    candidates: Mapping[str, object] = dataclasses_field(default_factory=dict)
 
 
 MonthTranslateFn = Callable[[MonthTranslationInput, Any], Mapping[str, object]]
@@ -57,6 +64,7 @@ def build_month_segment_translate_prompt(request: MonthTranslationInput) -> str:
     """一段一份 C0 声明；不套召对轮次语义，也不按 section 拆多次调用。"""
     grounding = str(request.target_grounding or "").strip()
     grounding_block = f"{grounding}\n" if grounding else ""
+    candidates = request.candidates or {}
     return (
         "你是过月段转译器。读完一整段已经落定的推演，一次声明其中所有可由 C0 "
         "契约承接的交代、实况、事务与文字记录。只输出一个 JSON 对象，无代码围栏、无多余字。\n"
@@ -76,23 +84,47 @@ def build_month_segment_translate_prompt(request: MonthTranslationInput) -> str:
         "同类效果若已由结构化载荷表示，不得再重复声明。预推时载荷尚未物化，"
         "不能把它理解成已经落账。\n"
         "- 过月没有召对夜上下文，promises、presence、scene_facts 均留空；没有对应事实的其它 section 也留空（protagonist 无则省略或 null）。\n"
-        # #1893：候选事实已在世界材料目录里（硬门已判过），挑不挑由模型自己定；
-        # 落账仍走既有 new_issues 写口，代码不代选、不代发难。
-        "- 【本月候选】（材料目录里那份候选事实）中的某个人物事件，本段按盘面与"
-        "「历史结果 + 历史成因」判定确实发生时，在 effects.new_issues 声明 "
-        '{"origin_kind": "event_pool", "id": 事件 id, "title": 该事件题名}；'
-        "属战事的事件，其战果逐项在同一 effects 项里声明并在该项顶层 event_id 写同一事件 id，"
-        "并在 事件结局 里给出该事件 terminal_reason_labels 中的一个标签；"
-        "判定不发生、时机未到或前提已被玩家化解的候选一律不声明。\n"
+        # #1893：候选事实随本请求送到（世界段材料目录已释放），硬门已判过；挑不挑、
+        # 发不发难由模型自己定，落账仍走既有 new_issues 写口，代码不代选、不代发难。
+        f"{_candidate_contract_block(candidates)}"
+        f"【旨的结构化载荷】\n{json.dumps(dict(request.decree_payload), ensure_ascii=False, indent=2)}\n"
+        f"【在途办理案卷】\n{json.dumps(list(request.continuing_dossiers), ensure_ascii=False)}\n"
+        f"{grounding_block}"
+        f"【完整段文】\n{request.segment}"
+    )
+
+
+def _candidate_lists(candidates: Any) -> tuple[list, list]:
+    if not isinstance(candidates, Mapping):
+        return [], []
+    events = candidates.get("events")
+    surge = candidates.get("impeachment_surge")
+    return (
+        list(events) if isinstance(events, list) else [],
+        list(surge) if isinstance(surge, list) else [],
+    )
+
+
+def _candidate_contract_block(candidates: Mapping[str, object]) -> str:
+    """候选事实与两条声明契约；无候选时只留契约，段文为空即无候选可声明。"""
+    events, surge = _candidate_lists(candidates)
+    return (
+        "- 【本月候选】里的人物事件，本段按盘面与「历史结果 + 历史成因」判定确实发生时，"
+        '在 effects.new_issues 声明 {"origin_kind": "event_pool", "id": 事件 id, '
+        '"title": 该事件题名}。判定不发生、时机未到或前提已被玩家化解的候选一律不声明。\n'
+        # #1893 + ADR 0014：只有 strategic_foreign 的 node/ending 战事有「世界状态主账
+        # ＋事件结局」这条既有归属契约（issues._preflight_declared_event_groups 只接这
+        # 一类）。其余人物事件不绑 event_id，其战果按普通效果写，否则整份声明被拒。
+        "- 候选事件里 event_type 不是 situation 且 trigger_class 是 strategic_foreign 的"
+        "战事，其世界状态主账效果逐项在同一 effects 项里声明，并在该项顶层 event_id "
+        "写同一事件 id、在 事件结局 里给出该事件 terminal_reason_labels 中的一个标签；"
+        "其余候选事件的效果不写 event_id，按各自独立效果声明。\n"
         "- 【本月候选】里的弹劾潮候选，由发难派系的立场自行决定发不发难："
         '发难时在 effects.new_issues 声明 {"origin_kind": "impeachment_surge", '
         '"candidate_id": 候选 id, "faction_hint": 该候选派系, '
         '"target_roster": [标靶人名], "title": 弹章题名, "stage_text": 案情正文}；'
         "标靶只能取该候选的 eligible_target_ids。不发难就不声明，也不另立任何 issue。\n"
-        f"【旨的结构化载荷】\n{json.dumps(dict(request.decree_payload), ensure_ascii=False, indent=2)}\n"
-        f"【在途办理案卷】\n{json.dumps(list(request.continuing_dossiers), ensure_ascii=False)}\n"
-        f"{grounding_block}"
-        f"【完整段文】\n{request.segment}"
+        f"【本月候选】\n{json.dumps({'events': events, 'impeachment_surge': surge}, ensure_ascii=False)}\n"
     )
 
 
@@ -117,6 +149,7 @@ def translate_month_segment(
     llm_config: Any = None,
     translate_fn: Optional[MonthTranslateFn] = None,
     continuing_dossiers: tuple[Mapping[str, object], ...] | list[Mapping[str, object]] = (),
+    candidates: Optional[Mapping[str, object]] = None,
 ) -> dict[str, object]:
     """一次完整段转译为 C0 声明；调用失败原样上抛，不伪装成空声明。"""
     request = MonthTranslationInput(
@@ -124,6 +157,7 @@ def translate_month_segment(
         target_grounding=target_grounding,
         decree_payload=decree_payload,
         continuing_dossiers=tuple(continuing_dossiers),
+        candidates=dict(candidates or {}),
     )
     runner = translate_fn or _default_month_translate_runner
     declaration = runner(request, llm_config)
@@ -141,6 +175,7 @@ def _translate_month_segment_front(
     llm_config: Any = None,
     translate_fn: Optional[MonthTranslateFn] = None,
     continuing_dossiers: tuple[Mapping[str, object], ...] | list[Mapping[str, object]] = (),
+    candidates: Optional[Mapping[str, object]] = None,
 ) -> tuple[dict[str, object], dict[str, list[int]]]:
     """过月段转译前半：冻结可见引用、拼 grounding、一次转出 C0 声明。"""
     refs = _visible_effect_refs(db, turn, decree_payload)
@@ -151,6 +186,7 @@ def _translate_month_segment_front(
         llm_config=llm_config,
         translate_fn=translate_fn,
         continuing_dossiers=continuing_dossiers,
+        candidates=candidates,
     )
     return declaration, refs
 
@@ -189,14 +225,19 @@ def dispatch_month_segment(
     alongside: Optional[Callable[[DeclarationDispatchResult], None]] = None,
 ) -> DeclarationDispatchResult:
     """世界段转译一次，整份声明沿 C0 唯一原子分派入口提交。"""
-    from ming_sim.materials import continuing_dossier_facts
+    from ming_sim.materials import candidate_supply, continuing_dossier_facts, secret_order_dossier_ids
 
     payload = decree_payload or {}
     turn = int(state.turn)
+    # #1893：转译发生在世界段材料目录释放之后，故此刻按同一读侧硬门重取一次候选事实
+    # 随请求送给转译器——写口仍会在落库时按同一硬门重验，此处只补事实供料。
     declaration, refs = _translate_month_segment_front(
         db, segment=segment, turn=turn, decree_payload=payload,
         llm_config=llm_config, translate_fn=translate_fn,
         continuing_dossiers=continuing_dossier_facts(db, turn),
+        candidates=candidate_supply(
+            db, state, exclude_dossier_ids=secret_order_dossier_ids(db) or None,
+        ),
     )
     return dispatch_declaration(
         db, state, declaration,
