@@ -180,3 +180,17 @@ def test_portrait_delete_route_is_retired():
         and "POST" in (getattr(r, "methods", None) or set())
         for r in web_app.app.routes
     ), "立绘上传端点必须保留"
+
+
+def test_transport_segment_retired_from_runtime_config():
+    """#1902：runtime 档不再读写 transport 段；策略恒为 ADR 0157 那套固定预算。"""
+    import inspect
+
+    from ming_sim import llm_config as lc
+    from ming_sim import llm_transport as lt
+
+    assert not hasattr(lc, "transport_runtime_slot")
+    assert "transport" not in inspect.signature(lc.save_runtime_llm).parameters
+    assert not hasattr(lt, "transport_policy_from_mapping")
+    assert lt.resolve_transport_policy({"transport": {"max_attempts": 9}}) == lt.default_transport_policy()
+    assert lt.audience_transport_policy().retry_429 is False

@@ -93,12 +93,14 @@ def _pin_transport_policy(
     max_attempts: int = 3,
     attempt_timeout_seconds: float = 30.0,
 ) -> None:
-    """把预算钉在临时 runtime 档，免受本机 runtime_llm.json 漂移影响。
+    """把预算钉死，免受本机 runtime_llm.json 漂移影响。
 
-    静默判死阈值走设置页那一格（cli.timeout_seconds）——与设置 API 同一落盘入口
-    （save_runtime_llm），不另写一份档格式。
+    #1902：transport 段退役后预算不再走档位——静默判死阈值仍写设置页那一格
+    （cli.timeout_seconds），次数/阻塞预算改为直接钉住 transport 层：
+    需要模拟「预算被抬到 N」时传 max_attempts（用来证明玩家动作仍被票面上限收紧）。
     """
     from ming_sim import llm_config as llm_config_mod
+    from ming_sim import llm_transport as transport_mod
 
     path = tmp_path / "runtime_llm.json"
     monkeypatch.setattr(llm_config_mod, "RUNTIME_LLM_PATH", str(path))
@@ -108,9 +110,19 @@ def _pin_transport_policy(
         cli_runner="claude",
         cli_model="cli-model-test",
         cli_timeout_seconds=idle_timeout_seconds,
-        transport_max_attempts=max_attempts,
-        transport_attempt_timeout_seconds=attempt_timeout_seconds,
     )
+
+    base = transport_mod.default_transport_policy()
+    policy = transport_mod.TransportPolicy(
+        max_attempts=max_attempts,
+        attempt_timeout_seconds=attempt_timeout_seconds,
+        idle_timeout_seconds=base.idle_timeout_seconds,
+    )
+    monkeypatch.setattr(transport_mod, "resolve_transport_policy", lambda _s=None: policy)
+    # agents 在模块层 import 了 resolve_transport_policy，同步钉住该别名。
+    import ming_sim.agents as agents_mod
+
+    monkeypatch.setattr(agents_mod, "resolve_transport_policy", lambda _s=None: policy)
 
 
 def _cli_web_game(game, monkeypatch, *, backend: str = "claude"):

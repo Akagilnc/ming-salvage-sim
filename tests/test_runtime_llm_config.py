@@ -494,101 +494,42 @@ def test_load_llm_config_api_mode_clears_placeholder(monkeypatch):
         llm_config.load_llm_config(base_url="https://api.x/v1", model="m", api_key="cli-backend")
 
 
-def test_runtime_llm_transport_slot_defaults_and_preserve(tmp_path, monkeypatch):
-    """#1465 / #1792：transport 与 api/cli 平级；旧档无段填默认；保存通道时保留 transport。"""
-    from ming_sim.models import (
-        TRANSPORT_DEFAULT_ATTEMPT_TIMEOUT_SECONDS,
-        TRANSPORT_DEFAULT_MAX_ATTEMPTS,
-        TRANSPORT_DEFAULT_RETRY_INTERVAL_SECONDS,
+def test_runtime_llm_transport_segment_is_retired(tmp_path, monkeypatch):
+    """#1902：transport 段退役——策略不再从 runtime 档读，保存也不再写该段。
+
+    旧档里残留的 transport 段被忽略（load 不炸、不生效），策略恒为 ADR 0157 那套。
+    """
+    from ming_sim.llm_transport import (
+        audience_transport_policy,
+        default_transport_policy,
+        resolve_transport_policy,
     )
 
     path = tmp_path / "runtime_llm.json"
     path.write_text(json.dumps({
         "channel": "api",
         "api": {"base_url": "https://x/v1", "model": "m", "api_key": "sk-x"},
+        # 旧档残留的 transport 段：#1902 后不再被读
+        "transport": {"max_attempts": 9, "attempt_timeout_seconds": 999.0,
+                      "retry_interval_seconds": 42.0},
     }, ensure_ascii=False), encoding="utf-8")
     monkeypatch.setattr(llm_config, "RUNTIME_LLM_PATH", str(path))
+
     out = llm_config.load_runtime_llm()
-    assert out["transport"]["max_attempts"] == TRANSPORT_DEFAULT_MAX_ATTEMPTS
-    assert out["transport"]["attempt_timeout_seconds"] == TRANSPORT_DEFAULT_ATTEMPT_TIMEOUT_SECONDS
-    assert out["transport"]["retry_interval_seconds"] == TRANSPORT_DEFAULT_RETRY_INTERVAL_SECONDS
-    # 静默判死阈值不在 transport 段：真源是设置页那一格（cli.timeout_seconds）
-    assert "idle_timeout_seconds" not in out["transport"]
+    assert "transport" not in out
+    assert resolve_transport_policy(out) == default_transport_policy()
+    assert resolve_transport_policy() == default_transport_policy()
+    # 召对/过月那套（429 一次终止）在固定策略上只做收紧
+    audience = audience_transport_policy()
+    assert audience.max_attempts == default_transport_policy().max_attempts
+    assert audience.retry_429 is False
 
     llm_config.save_runtime_llm(
-        base_url="https://x/v1",
-        model="m",
-        api_key="sk-x",
-        channel="api",
-        transport_max_attempts=5,
-        transport_attempt_timeout_seconds=12.5,
-        transport_retry_interval_seconds=7.0,
+        base_url="https://x/v1", model="m", api_key="sk-x", channel="api",
     )
     saved = json.loads(path.read_text(encoding="utf-8"))
-    assert saved["transport"] == {
-        "max_attempts": 5,
-        "attempt_timeout_seconds": 12.5,
-        "retry_interval_seconds": 7.0,
-    }
-    # 再存 API 不显式传 transport → 保留既有段（ADR 0001 平级不擦）
-    llm_config.save_runtime_llm(
-        base_url="https://x/v1", model="m2", api_key="sk-y", channel="api",
-    )
-    saved2 = json.loads(path.read_text(encoding="utf-8"))
-    assert saved2["api"]["model"] == "m2"
-    assert saved2["transport"]["max_attempts"] == 5
-    assert saved2["transport"]["retry_interval_seconds"] == 7.0
-
-
-def test_runtime_llm_transport_nonpositive_falls_back_to_defaults(tmp_path, monkeypatch):
-    """#1465 fo2Nb / #1792：预算非正数（0/负）回落 typed 默认，不进空 range/即死预算。
-
-    静默判死阈值同理，且它的真源是设置页那一格（cli.timeout_seconds）——坏值回落
-    CLI_DEFAULT_TIMEOUT_SECONDS。
-    """
-    from ming_sim.llm_transport import transport_policy_from_mapping
-    from ming_sim.models import (
-        CLI_DEFAULT_TIMEOUT_SECONDS,
-        TRANSPORT_DEFAULT_ATTEMPT_TIMEOUT_SECONDS,
-        TRANSPORT_DEFAULT_MAX_ATTEMPTS,
-        TRANSPORT_DEFAULT_RETRY_INTERVAL_SECONDS,
-    )
-
-    path = tmp_path / "runtime_llm.json"
-    path.write_text(json.dumps({
-        "channel": "cli",
-        "api": {"base_url": "https://x/v1", "model": "m", "api_key": "sk-x"},
-        "cli": {"runner": "codex", "model": "gpt-5.5", "timeout_seconds": 0},
-        "transport": {
-            "max_attempts": 0,
-            "attempt_timeout_seconds": -1,
-            "retry_interval_seconds": 0,
-        },
-    }, ensure_ascii=False), encoding="utf-8")
-    monkeypatch.setattr(llm_config, "RUNTIME_LLM_PATH", str(path))
-    out = llm_config.load_runtime_llm()
-    assert out["transport"]["max_attempts"] == TRANSPORT_DEFAULT_MAX_ATTEMPTS
-    assert out["transport"]["attempt_timeout_seconds"] == TRANSPORT_DEFAULT_ATTEMPT_TIMEOUT_SECONDS
-    assert out["transport"]["retry_interval_seconds"] == TRANSPORT_DEFAULT_RETRY_INTERVAL_SECONDS
-    policy = transport_policy_from_mapping(out)
-    assert policy.max_attempts == TRANSPORT_DEFAULT_MAX_ATTEMPTS
-    assert policy.attempt_timeout_seconds == TRANSPORT_DEFAULT_ATTEMPT_TIMEOUT_SECONDS
-    assert policy.retry_interval_seconds == TRANSPORT_DEFAULT_RETRY_INTERVAL_SECONDS
-    assert policy.idle_timeout_seconds == CLI_DEFAULT_TIMEOUT_SECONDS
-    # 保存路径同样经单权威：显式 0 不得落盘为 0
-    llm_config.save_runtime_llm(
-        base_url="https://x/v1",
-        model="m",
-        api_key="sk-x",
-        channel="api",
-        transport_max_attempts=0,
-        transport_attempt_timeout_seconds=0.0,
-        transport_retry_interval_seconds=0.0,
-    )
-    saved = json.loads(path.read_text(encoding="utf-8"))
-    assert saved["transport"]["max_attempts"] == TRANSPORT_DEFAULT_MAX_ATTEMPTS
-    assert saved["transport"]["attempt_timeout_seconds"] == TRANSPORT_DEFAULT_ATTEMPT_TIMEOUT_SECONDS
-    assert saved["transport"]["retry_interval_seconds"] == TRANSPORT_DEFAULT_RETRY_INTERVAL_SECONDS
+    assert "transport" not in saved
+    assert saved["api"]["model"] == "m"
 
 
 def test_runtime_llm_default_headers_roundtrip_and_empty_is_status_quo(tmp_path, monkeypatch):

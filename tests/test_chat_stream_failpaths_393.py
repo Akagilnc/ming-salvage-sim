@@ -883,8 +883,13 @@ def test_chat_stream_typed_429_preserved(monkeypatch, game):
     assert attempts[0].get("outcome") == "terminal_fail"
 
 
-def test_chat_stream_config_max_attempts_override(monkeypatch, tmp_path, game):
-    """#1465 ①：runtime transport 改次数 → 真实召对入口行为随之变。"""
+def test_chat_stream_policy_max_attempts_override(monkeypatch, tmp_path, game):
+    """#1902：次数预算只来自 transport 层——档位（transport 段）退役后仍是这条路。
+
+    真实召对入口按 transport 策略给的次数跑，并在 typed attempts 里逐条记账。
+    """
+    import ming_sim.agents as agents_mod
+    import ming_sim.llm_transport as transport_mod
     from ming_sim import llm_config as llm_config_mod
 
     path = tmp_path / "runtime_llm.json"
@@ -892,12 +897,17 @@ def test_chat_stream_config_max_attempts_override(monkeypatch, tmp_path, game):
         "channel": "api",
         "api": {"base_url": "https://x/v1", "model": "m", "api_key": "sk-x"},
         "cli": {"timeout_seconds": 30},
-        "transport": {
-            "max_attempts": 1,
-            "attempt_timeout_seconds": 30,
-        },
+        # 旧档残留的 transport 段必须被忽略（不再让入口改次数）
+        "transport": {"max_attempts": 9, "attempt_timeout_seconds": 999.0},
     }, ensure_ascii=False), encoding="utf-8")
     monkeypatch.setattr(llm_config_mod, "RUNTIME_LLM_PATH", str(path))
+    one_attempt = transport_mod.TransportPolicy(
+        max_attempts=1,
+        attempt_timeout_seconds=transport_mod.default_transport_policy().attempt_timeout_seconds,
+        idle_timeout_seconds=30.0,
+    )
+    monkeypatch.setattr(transport_mod, "resolve_transport_policy", lambda _s=None: one_attempt)
+    monkeypatch.setattr(agents_mod, "resolve_transport_policy", lambda _s=None: one_attempt)
 
     def _conn_err(_n):
         return LLMUnavailable(
@@ -932,16 +942,22 @@ def test_chat_stream_idle_budget_independent_per_attempt(monkeypatch, tmp_path, 
     idle_timeout = 10.0
     path = tmp_path / "runtime_llm.json"
     # 静默判死阈值 = 设置页那一格（cli.timeout_seconds）；API 通道同吃这一个权威
+    # #1902：静默阈值仍取设置页那一格（cli.timeout_seconds）；次数预算改由 transport 层给。
     path.write_text(json.dumps({
         "channel": "api",
         "api": {"base_url": "https://x/v1", "model": "m", "api_key": "sk-x"},
         "cli": {"timeout_seconds": idle_timeout},
-        "transport": {
-            "max_attempts": 2,
-            "attempt_timeout_seconds": 100.0,
-        },
     }, ensure_ascii=False), encoding="utf-8")
     monkeypatch.setattr(llm_config_mod, "RUNTIME_LLM_PATH", str(path))
+    import ming_sim.agents as _agents_mod
+
+    _two_attempts = transport_mod.TransportPolicy(
+        max_attempts=2,
+        attempt_timeout_seconds=100.0,
+        idle_timeout_seconds=idle_timeout,
+    )
+    monkeypatch.setattr(transport_mod, "resolve_transport_policy", lambda _s=None: _two_attempts)
+    monkeypatch.setattr(_agents_mod, "resolve_transport_policy", lambda _s=None: _two_attempts)
 
     clock = {"t": 1000.0}
     burns = {"n": 0}

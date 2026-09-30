@@ -111,46 +111,16 @@ def transport_attempts_public(attempts: List[TransportAttempt]) -> List[dict]:
     ]
 
 
-def transport_policy_from_mapping(data: object) -> TransportPolicy:
-    """从 runtime 映射归一策略。数值解析单权威在 llm_config：
-
-    - 次数 / SDK 阻塞预算 → transport 段（transport_runtime_slot）
-    - 静默判死阈值 → 设置页那一格 cli.timeout_seconds（cli_idle_timeout_seconds）
-
-    只给 transport 段（无 cli 槽）时静默阈值取默认——设置页写过的值经整份 runtime
-    映射进来。
-    """
-    from ming_sim.llm_config import cli_idle_timeout_seconds, transport_runtime_slot
-
-    if not isinstance(data, dict):
-        return default_transport_policy()
-    src = data.get("transport") if isinstance(data.get("transport"), dict) else data
-    if not isinstance(src, dict):
-        return default_transport_policy()
-    slot = transport_runtime_slot(src)
-    return TransportPolicy(
-        max_attempts=int(slot["max_attempts"]),
-        attempt_timeout_seconds=float(slot["attempt_timeout_seconds"]),
-        retry_interval_seconds=float(slot["retry_interval_seconds"]),
-        idle_timeout_seconds=cli_idle_timeout_seconds(data),
-    )
-
-
 def resolve_transport_policy(source: object = None) -> TransportPolicy:
-    """解析策略：TransportPolicy / mapping → runtime_llm.json transport 段 → 默认。
+    """解析策略：显式 TransportPolicy 透传，其余一律 ADR 0157 的固定一套。
 
-    不认 getattr 对象旁路（无执行消费者；配置经 runtime 文件或显式 mapping 进入）。
-    load_runtime_llm 自身已对缺/坏档回空 dict；此处不再 except Exception。
+    #1902：runtime_llm.json 的 transport 段退役——它没有任何生产者（设置页不写），
+    却让「每次调用同一套重试」可被旧档里的数字悄悄改写（429 自愈次数、间隔、阻塞
+    预算各一处）。策略现由本模块 + audience_transport_policy 的收紧关系唯一定义；
+    静默判死阈值仍取设置页那一格（cli.timeout_seconds，见 cli_idle_timeout_seconds）。
     """
     if isinstance(source, TransportPolicy):
         return source
-    if isinstance(source, dict):
-        return transport_policy_from_mapping(source)
-    from ming_sim.llm_config import load_runtime_llm
-
-    runtime = load_runtime_llm()
-    if runtime:
-        return transport_policy_from_mapping(runtime)
     return default_transport_policy()
 
 
