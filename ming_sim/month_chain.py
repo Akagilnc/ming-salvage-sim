@@ -116,9 +116,13 @@ def _pin_world_question_identities(
     fail-loud」响亮失败——不静默降成无主的世界段请旨。静默降格会让皇帝的亲裁
     落在匿名案头上、原事件永无终局（正是 #345 旧 bug 之源）。此处不据疏文猜配。
 
-    未带任何 event_id 的请旨仍照旧作普通世界段请旨：那种情形与「到点请饷被漏
-    回显」在账上无从分辨，引擎不硬凑（那正是 world_question 既有行为）。此时
-    本月名单里那件请饷因无人认领而未被呈上，仍留在 due 名单内等下一月。
+    反向同理：交接名单里 ``presentation_due`` 为真的请饷，本段世界请旨中**没有
+    任何一条绑到它**，也是契约违反——名单是本月到点应呈的权限事实，交接消息已
+    写明本月上疏陈情拟旨，故「一件都没被认领」本身即可判定，不必分辨哪条疏文
+    属于哪件请饷。同样 fail-loud，不静默放过等下一月再当首次事件重呈。
+
+    ``presentation_due`` 为假（已呈过、被留中）的不受此约束：是否再上疏由大臣
+    自决，本段无人认领是合法结果，照旧作普通世界段请旨放行。
     """
     from ming_sim.exceptions import SettlementAbort
     from ming_sim.issues import FISCAL_LEVY_EVENT_CATEGORY, _fiscal_levy_event_by_id
@@ -127,6 +131,7 @@ def _pin_world_question_identities(
         str(item.get("event_id") or "") for item in levy_petitions
         if str(item.get("event_id") or "")
     }
+    bound: set[str] = set()
     pinned: List[Dict[str, Any]] = []
     for question in questions:
         if not isinstance(question, dict):
@@ -141,7 +146,18 @@ def _pin_world_question_identities(
                     turn=int(turn), stage="world_bind",
                 )
             row["event_id"] = f"{_LEVY_PETITION_PREFIX}{event_id}"
+            bound.add(event_id)
         pinned.append(row)
+    unclaimed = [
+        str(item.get("event_id") or "") for item in levy_petitions
+        if item.get("presentation_due")
+        and str(item.get("event_id") or "") not in bound
+    ]
+    if unclaimed:
+        raise SettlementAbort(
+            f"本月到点应呈的请饷事件无任何请旨绑到：{'、'.join(unclaimed)}",
+            turn=int(turn), stage="world_bind",
+        )
     return pinned
 
 

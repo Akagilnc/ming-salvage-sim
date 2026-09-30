@@ -201,15 +201,21 @@ def test_world_petition_binds_to_real_event_identity_at_handoff(game):
 
 
 def test_handoff_does_not_bind_event_outside_offered_snapshot(game):
-    """不在本月交接名单内的回显 id 不绑：照旧走普通世界段案头身份。"""
+    """不在本月交接名单内的**非饷率**回显 id 不绑：照旧走普通世界段案头身份。"""
     db, state, content = game
     _prepare_due(db, state, content)
     offered = list_fiscal_levy_petitions_due(state, db)
-    questions = parse_decision_blocks(_world_with_levy_petition("some_other_event"))
+    # 本月应呈的请饷已由另一条请旨认领，剩下这条无关请旨照旧放行。
+    claimed = parse_decision_blocks(_world_with_levy_petition())
+    unrelated = parse_decision_blocks(_world_with_levy_petition("some_other_event"))
+    unrelated[0]["title"] = "是否增援宁远"
 
-    pinned = _pin_world_question_identities(offered, questions)
+    pinned = _pin_world_question_identities(
+        offered, claimed + unrelated, int(state.turn),
+    )
 
-    assert not pinned[0]["event_id"].startswith(_LEVY_PETITION_PREFIX)
+    assert pinned[1]["event_id"] == "some_other_event"
+    assert not pinned[1]["event_id"].startswith(_LEVY_PETITION_PREFIX)
 
 
 def test_handoff_fails_loud_when_question_echoes_unhanded_levy_event(game):
@@ -267,11 +273,20 @@ def test_materialized_desk_restores_pinned_identity_after_reopen(game, tmp_path)
         reopened.close()
 
 
-def test_world_question_without_event_id_stays_world_question(game):
-    """未回显事件 id 的世界段请旨不受影响（既有行为不变）。"""
+def test_due_levy_petition_left_unclaimed_by_any_question_fails_loud(game):
+    """#1891 R1 残项：到点应呈的请饷无任何请旨绑到＝契约违反，响亮失败。
+
+    名单里 ``presentation_due`` 为真是本月应呈的权限事实，交接消息已写明本月上疏
+    陈情拟旨，故「一件都没被认领」本身即可判定——不必分辨哪条疏文属于哪件请饷。
+    静默放过会让皇帝无从亲裁、原事件下月再当首次事件重呈一遍。
+    """
+    from ming_sim.exceptions import SettlementAbort
+
     db, state, content = game
     _prepare_due(db, state, content)
     offered = list_fiscal_levy_petitions_due(state, db)
+    assert offered[0]["presentation_due"] is True
+    # 模型只呈了另一件无关的事，本月应呈的辽饷请饷无人认领。
     text = (
         "<<DECISION>>"
         + json.dumps(
@@ -282,16 +297,45 @@ def test_world_question_without_event_id_stays_world_question(game):
         )
         + "<<END>>"
     )
+
+    with pytest.raises(SettlementAbort, match="无任何请旨绑到"):
+        _pin_world_question_identities(
+            offered, parse_decision_blocks(text), int(state.turn),
+        )
+
+
+def test_held_petition_may_go_unpresented_by_ministers_own_choice(game):
+    """#1891 J4：``presentation_due`` 为假（已留中）时，是否再上疏由大臣自决。
+
+    无人认领是合法结果，照旧作普通世界段请旨放行——此门只卡「应呈而未呈」。
+    """
+    db, state, content = game
+    _prepare_due(db, state, content)
+    _record_levy_petition_answer(
+        db, state, event_id="liao_levy_rise_1631",
+        choice={"label": "", "note": "留中，俟再议"},
+    )
+    db.save_pending_decisions(int(state.turn), [{
+        "event_id": f"{_LEVY_PETITION_PREFIX}liao_levy_rise_1631",
+        "title": "辽饷升至一分二厘", "context": "边镇欠饷日深，户部请加辽饷。",
+        "options": [{"label": "准行加派", "hint": ""}],
+    }])
+    db.conn.execute(
+        "UPDATE pending_decisions SET status='decided' WHERE turn=? AND event_id=?",
+        (int(state.turn), f"{_LEVY_PETITION_PREFIX}liao_levy_rise_1631"),
+    )
+    db.conn.commit()
+    offered = list_fiscal_levy_petitions_due(state, db)
+    assert offered[0]["presentation_due"] is False
+
     chain = {
         "levy_petitions": offered,
         "world_questions": _pin_world_question_identities(
-            offered, parse_decision_blocks(text),
+            offered, parse_decision_blocks("本月无请旨。"), int(state.turn),
         ),
     }
 
-    desk = _materialize_rescript_desk(db, state, chain)
-
-    assert desk[0]["event_id"].startswith(month_chain._WORLD_QUESTION_PREFIX)
+    assert chain["world_questions"] == []
 
 
 # ---------------------------------------------------------------- 答复落账
