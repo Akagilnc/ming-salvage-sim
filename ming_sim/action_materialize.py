@@ -12,6 +12,7 @@ import re
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 from ming_sim.decree_vocabulary import TARGET_KINDS
+from ming_sim.entities.dossier import DOSSIER_MODES
 from ming_sim.execution_pressure import write_locality_scope_for_target_kind
 from ming_sim.executor_routing import duty_route_categories
 
@@ -1978,7 +1979,7 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                 FieldSpec("target_id", "目标", None, "", max_len=80),
                 FieldSpec(
                     "mode", "颁布方式",
-                    frozenset({"ordinary", "midzhi"}), "",
+                    DOSSIER_MODES, "",
                 ),
             ),
         ),
@@ -2005,7 +2006,7 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                 FieldSpec("stages", "分段里程碑", None, "", max_len=2000),
                 FieldSpec(
                     "mode", "颁布方式",
-                    frozenset({"ordinary", "midzhi"}), "",
+                    DOSSIER_MODES, "",
                 ),
                 # 明确改草指向：分类归一化须保留，供 stage 只更新点名候选
                 FieldSpec("target_candidate", "目标候选", None, "", max_len=40),
@@ -2048,7 +2049,7 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                 ),
                 FieldSpec(
                     "mode", "颁布方式",
-                    frozenset({"ordinary", "midzhi"}), "",
+                    DOSSIER_MODES, "",
                 ),
                 # #1624：执行面仅 grant 可选；prompt/投影由此单轨派生，禁通用透传。
                 FieldSpec(
@@ -2076,7 +2077,7 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                 FieldSpec("target_candidate", "目标候选", None, "", max_len=40),
                 FieldSpec(
                     "mode", "颁布方式",
-                    frozenset({"ordinary", "midzhi"}), "",
+                    DOSSIER_MODES, "",
                 ),
             ),
         ),
@@ -2108,7 +2109,7 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                 ),
                 FieldSpec(
                     "mode", "颁布方式",
-                    frozenset({"ordinary", "midzhi"}), "",
+                    DOSSIER_MODES, "",
                 ),
                 # #658：处置指向哪次站台；optional positive int（as_int+default None+int_lo=1），禁 generic clamp
                 FieldSpec(
@@ -2147,7 +2148,7 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                 FieldSpec("target_candidate", "目标候选", None, "", max_len=40),
                 FieldSpec(
                     "mode", "颁布方式",
-                    frozenset({"ordinary", "midzhi"}), "",
+                    DOSSIER_MODES, "",
                 ),
             ),
         ),
@@ -2167,7 +2168,7 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                 FieldSpec("target_candidate", "目标候选", None, "", max_len=40),
                 FieldSpec(
                     "mode", "颁布方式",
-                    frozenset({"ordinary", "midzhi"}), "",
+                    DOSSIER_MODES, "",
                 ),
             ),
         ),
@@ -2181,7 +2182,7 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                 FieldSpec("target_candidate", "目标候选", None, "", max_len=40),
                 FieldSpec(
                     "mode", "颁布方式",
-                    frozenset({"ordinary", "midzhi"}), "",
+                    DOSSIER_MODES, "",
                 ),
             ),
         ),
@@ -2201,7 +2202,7 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                 ),
                 FieldSpec(
                     "mode", "颁布方式",
-                    frozenset({"ordinary", "midzhi"}), "",
+                    DOSSIER_MODES, "",
                 ),
                 FieldSpec("target_candidate", "目标候选", None, "", max_len=40),
             ),
@@ -2223,7 +2224,7 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                 ),
                 FieldSpec(
                     "mode", "颁布方式",
-                    frozenset({"ordinary", "midzhi"}), "",
+                    DOSSIER_MODES, "",
                 ),
                 # #529 / 0064：任别轴；路径应答署理只写此字段
                 FieldSpec(

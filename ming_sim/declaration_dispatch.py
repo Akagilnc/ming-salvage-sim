@@ -83,6 +83,7 @@ from ming_sim.audience_night import (
     append_ledger_entry,
 )
 from ming_sim.entities.affair import ATTACH_BIRTH, ATTACH_EXPERIENCE, declaration_from_payload
+from ming_sim.entities.dossier import DOSSIER_MODES
 from ming_sim.error_pack import rejections_jsonl_path
 from ming_sim.relations import summon_edge_origin
 from ming_sim.issues import _ORDERED_DELTA_FIELDS, apply_person_changes_only
@@ -845,7 +846,7 @@ def _commission_appointment_fields(
     payload: Dict[str, Any] = {"name": name, "office": office, "appoint_action": action}
     mode = appointment.get("mode")
     if mode is not None:
-        if not isinstance(mode, str) or mode not in {"ordinary", "midzhi"}:
+        if not isinstance(mode, str) or mode not in DOSSIER_MODES:
             return None, RejectedItem(
                 item=dict(appointment), reason=f"任免模式非法：{mode}",
                 category="invalid_enum", source=source,
@@ -1348,7 +1349,7 @@ def _dispatch_commissions(
             )
 
         mode = item.get("mode", "ordinary")
-        if not isinstance(mode, str) or mode not in {"ordinary", "midzhi"}:
+        if not isinstance(mode, str) or mode not in DOSSIER_MODES:
             _reject(rejected, item, "交办模式非法", "invalid_enum", source)
             continue
         from ming_sim.db import imperial_push_target_dossier_id
@@ -2005,7 +2006,7 @@ def _dispatch_promises(
         if declared_mode is not None and (
             kind != "directive" or decision != "应允"
             or not isinstance(declared_mode, str)
-            or declared_mode not in {"ordinary", "midzhi"}
+            or declared_mode not in DOSSIER_MODES
         ):
             _reject(rejected, item, "应允模式仅可指定普通/中旨拟旨", "invalid_shape", source)
             continue

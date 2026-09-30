@@ -39,11 +39,6 @@ EMPTY_TRANSFORMATION_TENDENCY_FACTS: Dict[str, object] = {
     "exposure_count": 0,
 }
 
-# 执行格形态闭集（与 GameDB._DOSSIER_EXECUTION_OUTCOMES 对齐）
-EXECUTION_FORMS = frozenset({
-    "executing", "fulfilled", "degraded", "failed", "transformed",
-})
-
 # #619 origin 结构化标记（扩 origin 字符串，不加列）
 ORIGIN_MARK_PRIVATE_GOODS = "private_goods"
 ORIGIN_MARK_SAME_FACTION_BLIND = "same_faction_blind"

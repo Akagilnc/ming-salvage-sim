@@ -11659,10 +11659,8 @@ class GameDB:
         commit: bool = True,
     ) -> bool:
         """逐次暴露一行；同 (dossier,turn,action_type,execution_form) 幂等。"""
-        from ming_sim.supervision import EXECUTION_FORMS
-
         form = str(execution_form or "").strip()
-        if form not in EXECUTION_FORMS:
+        if form not in DOSSIER_EXECUTION_OUTCOMES:
             raise ValueError(f"空子暴露执行格形态非法：{form!r}")
         atype = str(action_type or "").strip()
         if not atype:
