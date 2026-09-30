@@ -5,7 +5,7 @@ Seams:
 - 转译声明 ``escort_results`` → ``GameDB.record_dossier_escort_result``（逐路实况）
 - ``_grant_escort_presence`` / ``list_monthly_grant_reconciliation_targets``
   （对账只读逐路实况，不凭关联、不凭密令整体成败）
-- ``grant_arrival_bounds`` / ``clamp_grant_arrival_amount``（引擎既有押解折损范围）
+- ``grant_arrival_bounds``（引擎既有押解折损范围；0054 的 clamp 口已随 #1900 退役）
 - 重开（restore）逐路无损；不新增目的地现金账户、不二次扣库
 
 验收对照票面「怎么验」：

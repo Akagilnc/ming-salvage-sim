@@ -12364,28 +12364,6 @@ class GameDB:
         if not targets:
             return []
 
-        def _reject(raw_item: object, reason: str, category: str) -> None:
-            # 无外层归属不得无痕继续（0150-D2/D3；#1745 删自有 collector 旁路）。
-            if rejection_collector is None:
-                from ming_sim.applier import RejectionCollectorRequired
-                raise RejectionCollectorRequired(
-                    "dossier_reconciliations 拒收须由外层 RejectionCollector 归属"
-                )
-            # ADR 0015 F1：RejectedItem.item 恒 dict；非 dict 包装 raw_value。
-            # 域级拒收的 item 已是 dict；形状级（非 list/非 dict 项）归 sanitize_delta_shape
-            # 独家（0015-D6/F1，#1745 删双 producer）。
-            if isinstance(raw_item, dict):
-                payload = dict(raw_item)
-            else:
-                payload = {"raw_value": raw_item}
-            rejection_collector.record(
-                "dossier_reconciliations",
-                RejectedItem(
-                    item=payload, reason=reason, category=category, source=source,
-                ),
-                int(turn),
-            )
-
         reports: List[Dict[str, object]] = []
         for dossier_id, target in targets.items():
             ordered = int(target["ordered_amount"])
