@@ -56,6 +56,20 @@ def _expected_land_share_levy(settle, national_monthly, total_land):
     return national_monthly * land / total_land
 
 
+def _emperor_verdict(db, state, event_id, label):
+    """#1891：皇帝在批红页亲裁的结局，作为饷率通道的输入。
+
+    走事件账 choice 行（= 已答待落终局），由 apply_historical_fiscal_rates 的
+    pending-choice 分支经唯一写口落终局。旧 shadow 桩在史实时点自行置已准／已停，
+    本文件不再依赖它——那正是本票退役的行为。
+    """
+    from ming_sim.issues import FISCAL_LEVY_RESCRIPT_SOURCE
+
+    db.record_event_decision_choice(
+        state, event_id, {"label": label}, source=FISCAL_LEVY_RESCRIPT_SOURCE,
+    )
+
+
 def test_shaanxi_primary_source_liao_seed_keeps_opening_transport_cap(game):
     db, state, content = game
     issues.bind_content(content)
@@ -80,7 +94,30 @@ def test_shaanxi_primary_source_liao_seed_keeps_opening_transport_cap(game):
     )
 
 
-def test_liao_levy_rise_triggers_and_updates_shadow_settle_before_fiscal_tick(game):
+def test_liao_levy_rise_is_not_auto_approved_and_awaits_emperor_verdict(game):
+    """#1891：到点不再自动置已准——事件进 petition-due，账上无终局行，征收按九厘。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1631
+    state.period = 1
+    db.save_state(state)
+
+    before = _settle_payload(db, "shaanxi")
+    seed_liao = before["p"]["三饷应征"]
+
+    applied = apply_historical_fiscal_rates(state, db)
+
+    assert {"id": "liao_levy_rise_1631", "title": "辽饷升至一分二厘", "terminal_state": "petition_due"} in applied
+    assert db.conn.execute(
+        "SELECT 1 FROM event_triggers WHERE event_id=?",
+        ("liao_levy_rise_1631",),
+    ).fetchone() is None
+    after = _settle_payload(db, "shaanxi")
+    assert math.isclose(after["p"]["三饷应征"], seed_liao, rel_tol=1e-9, abs_tol=1e-9)
+
+
+def test_liao_levy_rise_applies_after_emperor_approves_before_fiscal_tick(game):
+    """#1891：皇帝批「准」→ 唯一写口落终局 → 同 tick 饷率目标升到一分二厘。"""
     db, state, content = game
     issues.bind_content(content)
     state.year = 1631
@@ -92,6 +129,7 @@ def test_liao_levy_rise_triggers_and_updates_shadow_settle_before_fiscal_tick(ga
     seed_transport = before["p"]["起运定额"]
     base_transport = max(0.0, seed_transport - seed_liao)
     target_liao = seed_liao * 4.0 / 3.0
+    _emperor_verdict(db, state, "liao_levy_rise_1631", "已准")
 
     pre_settle(state, db, content=content)
 
@@ -99,11 +137,9 @@ def test_liao_levy_rise_triggers_and_updates_shadow_settle_before_fiscal_tick(ga
         "SELECT terminal_state, terminal_reason, source FROM event_triggers WHERE event_id=?",
         ("liao_levy_rise_1631",),
     ).fetchone()
-    assert dict(row) == {
-        "terminal_state": "triggered",
-        "terminal_reason": "已准",
-        "source": "fiscal_levy_shadow",
-    }
+    assert row["terminal_state"] == "triggered"
+    assert row["terminal_reason"] == "已准"
+    assert row["source"] == "fiscal_levy_rescript"
 
     after = _settle_payload(db, "shaanxi")
     assert math.isclose(after["p"]["三饷应征"], target_liao, rel_tol=1e-9, abs_tol=1e-9)
@@ -123,8 +159,8 @@ def test_liao_levy_rise_triggers_and_updates_shadow_settle_before_fiscal_tick(ga
     )
 
 
-def test_liao_levy_rise_triggers_on_no_edict_advance_before_fiscal_tick(game, monkeypatch):
-    """#1274：无旨完整结算 pre_settle 内历史饷率事件仍在 fiscal tick 前触发。"""
+def test_liao_levy_rise_applies_on_no_edict_advance_after_emperor_verdict(game, monkeypatch):
+    """#1274：无旨完整结算 pre_settle 内皇帝已裁的饷率事件仍在 fiscal tick 前生效。"""
     import ming_sim.month_chain as month_chain
     from ming_sim.session import GameSession
 
@@ -136,6 +172,7 @@ def test_liao_levy_rise_triggers_on_no_edict_advance_before_fiscal_tick(game, mo
     before = _settle_payload(db, "shaanxi")
     seed_liao = before["p"]["三饷应征"]
     target_liao = seed_liao * 4.0 / 3.0
+    _emperor_verdict(db, state, "liao_levy_rise_1631", "已准")
 
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
 
@@ -153,11 +190,9 @@ def test_liao_levy_rise_triggers_on_no_edict_advance_before_fiscal_tick(game, mo
         "SELECT terminal_state, terminal_reason, source FROM event_triggers WHERE event_id=?",
         ("liao_levy_rise_1631",),
     ).fetchone()
-    assert dict(row) == {
-        "terminal_state": "triggered",
-        "terminal_reason": "已准",
-        "source": "fiscal_levy_shadow",
-    }
+    assert row["terminal_state"] == "triggered"
+    assert row["terminal_reason"] == "已准"
+    assert row["source"] == "fiscal_levy_rescript"
     after = _settle_payload(db, "shaanxi")
     assert math.isclose(after["p"]["三饷应征"], target_liao, rel_tol=1e-9, abs_tol=1e-9)
     assert math.isclose(
@@ -189,9 +224,14 @@ def test_liao_levy_rise_triggers_on_no_edict_advance_before_fiscal_tick(game, mo
         ),
     ],
 )
-def test_fiscal_levy_shadow_capstone_golden_all_seeded_provinces(
+def test_fiscal_levy_rescript_golden_all_seeded_provinces(
     game, year, expected_event_ids, expect_jiao_in_force, expect_lian_in_force
 ):
+    """#1891：各省饷率目标 = 皇帝亲裁的结局读数（不再是引擎自动置的史实默认）。
+
+    开征／升率批「准」、剿饷议停批「已停」；每个事件的裁断都在 pre_settle 前
+    由批红页落进事件账。
+    """
     db, state, content = game
     issues.bind_content(content)
     state.year = year
@@ -200,13 +240,16 @@ def test_fiscal_levy_shadow_capstone_golden_all_seeded_provinces(
     region_ids = _settled_region_ids(db)
     assert len(region_ids) == 17
 
+    for event_id in expected_event_ids:
+        label = "已停" if event_id == "jiao_levy_stop_1640" else "已准"
+        _emperor_verdict(db, state, event_id, label)
+
     pre_settle(state, db, content=content)
 
     triggered_ids = {
         str(row["event_id"])
         for row in db.conn.execute(
-            "SELECT event_id FROM event_triggers WHERE turn=? AND terminal_state='triggered'",
-            (state.turn,),
+            "SELECT event_id FROM event_triggers WHERE terminal_state='triggered'",
         ).fetchall()
     }
     assert expected_event_ids <= triggered_ids
@@ -247,12 +290,13 @@ def test_fiscal_levy_shadow_capstone_golden_all_seeded_provinces(
 
 
 
-def test_fiscal_levy_shadow_skips_malformed_region_fiscal_without_blocking_fiscal_levy_pass(game, monkeypatch):
+def test_fiscal_levy_skips_malformed_region_fiscal_without_blocking_fiscal_levy_pass(game, monkeypatch):
     db, state, content = game
     issues.bind_content(content)
     state.year = 1631
     state.period = 1
     db.save_state(state)
+    _emperor_verdict(db, state, "liao_levy_rise_1631", "已准")
     before_huguang = _settle_payload(db, "huguang")["p"]["三饷应征"]
     msgs = []
     monkeypatch.setattr(issues, "tlog", lambda msg: msgs.append(msg))
@@ -273,7 +317,7 @@ def test_fiscal_levy_shadow_skips_malformed_region_fiscal_without_blocking_fisca
         ("land", "shaanxi.settle.st.官民田 非数值"),
     ],
 )
-def test_fiscal_levy_shadow_skips_bad_settle_shape_without_blocking_other_regions(
+def test_fiscal_levy_skips_bad_settle_shape_without_blocking_other_regions(
     game, monkeypatch, bad_field, expected_log
 ):
     db, state, content = game
@@ -281,6 +325,7 @@ def test_fiscal_levy_shadow_skips_bad_settle_shape_without_blocking_other_region
     state.year = 1631
     state.period = 1
     db.save_state(state)
+    _emperor_verdict(db, state, "liao_levy_rise_1631", "已准")
     before_huguang = _settle_payload(db, "huguang")["p"]["三饷应征"]
     fiscal = json.loads(
         str(db.conn.execute("SELECT fiscal FROM regions WHERE id = ?", ("shaanxi",)).fetchone()["fiscal"])
@@ -310,6 +355,7 @@ def test_fiscal_levy_rewrites_nonnumeric_current_targets_from_meta(game):
     state.year = 1631
     state.period = 1
     db.save_state(state)
+    _emperor_verdict(db, state, "liao_levy_rise_1631", "已准")
     fiscal = json.loads(
         str(db.conn.execute("SELECT fiscal FROM regions WHERE id = ?", ("shaanxi",)).fetchone()["fiscal"])
     )
@@ -340,6 +386,8 @@ def test_fiscal_levy_bad_region_does_not_redistribute_jiao_lian_targets(game, mo
     state.year = 1637
     state.period = 1
     db.save_state(state)
+    _emperor_verdict(db, state, "liao_levy_rise_1631", "已准")
+    _emperor_verdict(db, state, "jiao_levy_start_1637", "已准")
 
     total_land = _settle_land_sum(db)
     huguang_before = _settle_payload(db, "huguang")
@@ -351,6 +399,7 @@ def test_fiscal_levy_bad_region_does_not_redistribute_jiao_lian_targets(game, mo
     state.year = 1639
     state.period = 1
     db.save_state(state)
+    _emperor_verdict(db, state, "lian_levy_start_1639", "已准")
 
     fiscal = json.loads(
         str(db.conn.execute("SELECT fiscal FROM regions WHERE id = ?", ("shaanxi",)).fetchone()["fiscal"])
@@ -389,6 +438,8 @@ def test_fiscal_levy_incomplete_first_pass_does_not_freeze_zero_share_seed(
     state.year = 1637
     state.period = 1
     db.save_state(state)
+    _emperor_verdict(db, state, "liao_levy_rise_1631", "已准")
+    _emperor_verdict(db, state, "jiao_levy_start_1637", "已准")
 
     total_land = _settle_land_sum(db)
     huguang_before = _settle_payload(db, "huguang")
@@ -442,6 +493,8 @@ def test_fiscal_levy_bad_share_meta_does_not_crash_or_redistribute_first_pass(
     state.year = 1637
     state.period = 1
     db.save_state(state)
+    _emperor_verdict(db, state, "liao_levy_rise_1631", "已准")
+    _emperor_verdict(db, state, "jiao_levy_start_1637", "已准")
     huguang_before = _settle_payload(db, "huguang")
     expected_liao = huguang_before["p"]["三饷应征"] * 4.0 / 3.0
     original_shaanxi_fiscal = str(
@@ -502,7 +555,6 @@ def test_fiscal_levy_expired_pending_choice_is_terminalized(game):
         trigger_end_year=1637,
         trigger_end_month=1,
         terminal_reason_labels=["已准", "已驳"],
-        default_terminal_reason="已准",
     )
     content.events.append(ev)
     try:
@@ -528,12 +580,15 @@ def test_fiscal_levy_expired_pending_choice_is_terminalized(game):
         content.events.remove(ev)
 
 
-def test_lian_levy_start_triggers_and_updates_shadow_settle_before_fiscal_tick(game):
+def test_lian_levy_start_applies_after_emperor_approves_before_fiscal_tick(game):
     db, state, content = game
     issues.bind_content(content)
     state.year = 1639
     state.period = 1
     db.save_state(state)
+    _emperor_verdict(db, state, "liao_levy_rise_1631", "已准")
+    _emperor_verdict(db, state, "jiao_levy_start_1637", "已准")
+    _emperor_verdict(db, state, "lian_levy_start_1639", "已准")
 
     before = _settle_payload(db, "shaanxi")
     seed_liao = before["p"]["三饷应征"]
@@ -551,11 +606,9 @@ def test_lian_levy_start_triggers_and_updates_shadow_settle_before_fiscal_tick(g
         "SELECT terminal_state, terminal_reason, source FROM event_triggers WHERE event_id=?",
         ("lian_levy_start_1639",),
     ).fetchone()
-    assert dict(row) == {
-        "terminal_state": "triggered",
-        "terminal_reason": "已准",
-        "source": "fiscal_levy_shadow",
-    }
+    assert row["terminal_state"] == "triggered"
+    assert row["terminal_reason"] == "已准"
+    assert row["source"] == "fiscal_levy_rescript"
 
     after = _settle_payload(db, "shaanxi")
     assert math.isclose(after["p"]["三饷应征"], target_sanxiang, rel_tol=1e-9, abs_tol=1e-9)
@@ -661,6 +714,8 @@ def test_fiscal_levy_pending_stop_choice_keeps_jiao_in_force_same_tick(game):
     state.period = 1
     db.save_state(state)
     db.mark_event_triggered(state, "jiao_levy_start_1637", source="test", terminal_reason="已准")
+    _emperor_verdict(db, state, "liao_levy_rise_1631", "已准")
+    _emperor_verdict(db, state, "lian_levy_start_1639", "已准")
     db.record_event_decision_choice(
         state,
         "jiao_levy_stop_1640",
@@ -693,11 +748,9 @@ def test_fiscal_levy_pending_choice_waits_for_event_window(game):
     state.period = 12
     db.save_state(state)
     before = _settle_payload(db, "shaanxi")
-    db.record_event_decision_choice(
-        state,
-        "lian_levy_start_1639",
-        {"label": "已准"},
-    )
+    _emperor_verdict(db, state, "liao_levy_rise_1631", "已准")
+    _emperor_verdict(db, state, "jiao_levy_start_1637", "已准")
+    _emperor_verdict(db, state, "lian_levy_start_1639", "已准")
 
     apply_historical_fiscal_rates(state, db)
 
@@ -733,6 +786,7 @@ def test_liao_levy_targets_all_seeded_settles_without_compounding_or_clobbering_
     state.year = 1631
     state.period = 1
     db.save_state(state)
+    _emperor_verdict(db, state, "liao_levy_rise_1631", "已准")
 
     before_by_region = {}
     for row in db.conn.execute("SELECT id, fiscal FROM regions ORDER BY id").fetchall():
@@ -770,6 +824,7 @@ def test_liao_levy_rewrites_numeric_string_targets_to_canonical_numbers(game):
     state.year = 1631
     state.period = 1
     db.save_state(state)
+    _emperor_verdict(db, state, "liao_levy_rise_1631", "已准")
 
     apply_historical_fiscal_rates(state, db)
     stale = _settle_payload(db, "shaanxi")
@@ -811,6 +866,8 @@ def test_jiao_levy_rises_then_stops_and_keeps_base_transport(game):
     state.year = 1637
     state.period = 1
     db.save_state(state)
+    _emperor_verdict(db, state, "liao_levy_rise_1631", "已准")
+    _emperor_verdict(db, state, "jiao_levy_start_1637", "已准")
 
     before = _settle_payload(db, "shaanxi")
     seed_liao = before["p"]["三饷应征"]
@@ -833,6 +890,8 @@ def test_jiao_levy_rises_then_stops_and_keeps_base_transport(game):
     state.year = 1640
     state.period = 1
     db.save_state(state)
+    _emperor_verdict(db, state, "lian_levy_start_1639", "已准")
+    _emperor_verdict(db, state, "jiao_levy_stop_1640", "已停")
     apply_historical_fiscal_rates(state, db)
 
     after_stop = _settle_payload(db, "shaanxi")
@@ -885,7 +944,9 @@ def test_jiao_levy_stop_rejected_keeps_levy_in_force(game):
     state.year = 1640
     state.period = 1
     db.save_state(state)
-    db.mark_event_triggered(state, "jiao_levy_start_1637", source="test", terminal_reason="已准", commit=False)
+    _emperor_verdict(db, state, "liao_levy_rise_1631", "已准")
+    _emperor_verdict(db, state, "jiao_levy_start_1637", "已准")
+    _emperor_verdict(db, state, "lian_levy_start_1639", "已准")
     db.mark_event_triggered(state, "jiao_levy_stop_1640", source="test", terminal_reason="仍征", commit=False)
     db.conn.commit()
 
@@ -936,6 +997,9 @@ def test_lian_levy_targets_all_seeded_settles_without_compounding_or_clobbering_
     state.year = 1639
     state.period = 1
     db.save_state(state)
+    _emperor_verdict(db, state, "liao_levy_rise_1631", "已准")
+    _emperor_verdict(db, state, "jiao_levy_start_1637", "已准")
+    _emperor_verdict(db, state, "lian_levy_start_1639", "已准")
 
     before_by_region = {}
     for row in db.conn.execute("SELECT id, fiscal FROM regions ORDER BY id").fetchall():
@@ -975,6 +1039,9 @@ def test_fiscal_levy_components_are_land_share_calibrated_and_marked_provisional
     state.year = 1639
     state.period = 1
     db.save_state(state)
+    _emperor_verdict(db, state, "liao_levy_rise_1631", "已准")
+    _emperor_verdict(db, state, "jiao_levy_start_1637", "已准")
+    _emperor_verdict(db, state, "lian_levy_start_1639", "已准")
     total_land = _settle_land_sum(db)
 
     apply_historical_fiscal_rates(state, db)
@@ -1010,6 +1077,9 @@ def test_lost_seeded_province_keeps_current_levy_rate_and_uses_it_on_restore(gam
     state.year = 1639
     state.period = 1
     db.save_state(state)
+    _emperor_verdict(db, state, "liao_levy_rise_1631", "已准")
+    _emperor_verdict(db, state, "jiao_levy_start_1637", "已准")
+    _emperor_verdict(db, state, "lian_levy_start_1639", "已准")
 
     lost_before = _settle_payload(db, region_id)
     lost_opening_st = dict(lost_before["st"])
@@ -1065,6 +1135,8 @@ def test_lian_levy_gate_waits_until_1639_and_needs_no_stop_event(game):
     state.year = 1638
     state.period = 12
     db.save_state(state)
+    _emperor_verdict(db, state, "liao_levy_rise_1631", "已准")
+    _emperor_verdict(db, state, "jiao_levy_start_1637", "已准")
 
     apply_historical_fiscal_rates(state, db)
     assert db.conn.execute(
@@ -1080,18 +1152,29 @@ def test_lian_levy_gate_waits_until_1639_and_needs_no_stop_event(game):
         abs_tol=1e-9,
     )
 
+    # #1891：到点但皇帝未裁 → petition-due，不落终局，不进 generic 终态通道。
     state.year = 1639
     state.period = 1
     db.save_state(state)
     applied = apply_historical_fiscal_rates(state, db)
     assert [item["id"] for item in applied] == ["lian_levy_start_1639"]
+    assert applied[0]["terminal_state"] == "petition_due"
 
     terminalized = issues.apply_event_terminal_states(state, db)
     assert all(item["id"] != "lian_levy_start_1639" for item in terminalized)
     assert db.conn.execute(
         "SELECT COUNT(*) FROM event_triggers WHERE event_id=?",
         ("lian_levy_start_1639",),
-    ).fetchone()[0] == 1
+    ).fetchone()[0] == 0
+
+    # 皇帝裁「准」后同月落终局。
+    _emperor_verdict(db, state, "lian_levy_start_1639", "已准")
+    apply_historical_fiscal_rates(state, db)
+    row = db.conn.execute(
+        "SELECT terminal_state, terminal_reason FROM event_triggers WHERE event_id=?",
+        ("lian_levy_start_1639",),
+    ).fetchone()
+    assert dict(row) == {"terminal_state": "triggered", "terminal_reason": "已准"}
 
 
 def test_fiscal_levy_gate_waits_until_1631_and_generic_terminal_pass_skips_it(game):
@@ -1109,15 +1192,17 @@ def test_fiscal_levy_gate_waits_until_1631_and_generic_terminal_pass_skips_it(ga
     ).fetchone() is None
     assert _settle_payload(db, "shaanxi")["p"] == before["p"]
 
+    # #1891：到点未裁 → petition-due，账上零行，generic 终态通道不碰它。
     state.year = 1631
     state.period = 1
     db.save_state(state)
     applied = apply_historical_fiscal_rates(state, db)
     assert [item["id"] for item in applied] == ["liao_levy_rise_1631"]
+    assert applied[0]["terminal_state"] == "petition_due"
 
     terminalized = issues.apply_event_terminal_states(state, db)
     assert all(item["id"] != "liao_levy_rise_1631" for item in terminalized)
     assert db.conn.execute(
         "SELECT COUNT(*) FROM event_triggers WHERE event_id=?",
         ("liao_levy_rise_1631",),
-    ).fetchone()[0] == 1
+    ).fetchone()[0] == 0

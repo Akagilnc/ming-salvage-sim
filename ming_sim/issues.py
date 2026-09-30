@@ -1278,6 +1278,9 @@ def _event_pending_choice_records(db: GameDB) -> Dict[str, Dict[str, str]]:
 
 
 FISCAL_LEVY_EVENT_CATEGORY = "fiscal_levy"
+# #1891：请旨答复经 #1847 批红页落账时的唯一写口来源标记。旧 "fiscal_levy_shadow"
+# 自动置结局桩退役——饷率结局只由皇帝批红产生。
+FISCAL_LEVY_RESCRIPT_SOURCE = "fiscal_levy_rescript"
 _LIAO_LEVY_RISE_EVENT_ID = "liao_levy_rise_1631"
 _LIAN_LEVY_START_EVENT_ID = "lian_levy_start_1639"
 _LIAO_LEVY_RISE_FACTOR = 4.0 / 3.0
@@ -1311,21 +1314,14 @@ def _normalize_event_terminal_reason(ev: Event, raw: object) -> str:
     return ""
 
 
-def _fiscal_levy_default_terminal_reason(ev: Event, state: GameState) -> str:
+def _fiscal_levy_require_labels(ev: Event, state: GameState) -> None:
+    """#1891：结局标签集是请旨闭集的前提；缺则配置错，响亮失败不兜底。"""
     if not getattr(ev, "terminal_reason_labels", None):
         raise SettlementAbort(
             f"饷率事件 {ev.id} 缺 terminal_reason_labels 白名单",
             turn=state.turn,
             stage="fiscal_levy_config",
         )
-    label = _normalize_event_terminal_reason(ev, getattr(ev, "default_terminal_reason", ""))
-    if not label:
-        raise SettlementAbort(
-            f"饷率事件 {ev.id} default_terminal_reason 不可归一",
-            turn=state.turn,
-            stage="fiscal_levy_config",
-        )
-    return label
 
 
 def _fiscal_levy_normalized_terminal_reason_or_abort(
@@ -1713,7 +1709,7 @@ def apply_historical_fiscal_rates(
                     db.mark_event_triggered(
                         state,
                         ev.id,
-                        source=record.get("source") or "fiscal_levy_shadow",
+                        source=record.get("source") or FISCAL_LEVY_RESCRIPT_SOURCE,
                         terminal_reason=label,
                         commit=False,
                     )
@@ -1740,23 +1736,15 @@ def apply_historical_fiscal_rates(
                     continue
                 if not _gate_passed(ev.trigger_gate, state.metrics, db):
                     continue
-                label = _fiscal_levy_default_terminal_reason(ev, state)
-                db.mark_event_triggered(
-                    state,
-                    ev.id,
-                    source="fiscal_levy_shadow",
-                    terminal_reason=label,
-                    commit=False,
-                )
-                terminal_records[ev.id] = {
-                    "terminal_state": "triggered",
-                    "terminal_reason": label,
-                }
+                # #1891：具资格、尚未呈过的请饷／议停事件在此**不置结局**。
+                # 旧 shadow 桩在此直接写已准／已停，使皇帝永无从亲裁；现只交
+                # petition-due 名单给月末世界段 run（#1843），由过月模型成陈情与
+                # 拟旨，走同一请旨入口进 #1847 批红页。引擎不代答（P6）。
+                _fiscal_levy_require_labels(ev, state)
                 applied.append({
                     "id": ev.id,
                     "title": ev.title,
-                    "terminal_state": "triggered",
-                    "terminal_reason": label,
+                    "terminal_state": "petition_due",
                 })
         _apply_fiscal_levy_targets(db, state, terminal_records)
 
@@ -1766,6 +1754,80 @@ def apply_historical_fiscal_rates(
     else:
         run_fiscal_levy_pass()
     return applied
+
+
+def list_fiscal_levy_petitions_due(
+    state: GameState, db: GameDB,
+) -> List[Dict[str, object]]:
+    """#1891：本月可呈的请饷／议停事件（纯读，不写账）。
+
+    交付对象是 #1843 既有月末世界段 run：过月模型读这份名单与当月军费材料，自行
+    决定成不成陈情、要不要上疏。引擎只供事实，不代答（P6）。
+
+    资格门与 apply_historical_fiscal_rates 的请旨判定同源：窗口开、门过、未过期、
+    未终态。已呈待批（批红页上仍有该事件请旨行）不再重触发为首次事件。
+    留中过的原事件带 re_presentation=True 回来——由大臣自己决定是否再上疏，
+    代码不代它再顶一次旧疏。
+    """
+    c = _ctx()
+    terminal_states = _event_terminal_states(db)
+    awaiting = _fiscal_levy_petitions_awaiting_verdict(db)
+    held = _fiscal_levy_held_event_ids(db)
+    due: List[Dict[str, object]] = []
+    for ev in c.events:
+        if getattr(ev, "category", "") != FISCAL_LEVY_EVENT_CATEGORY:
+            continue
+        if ev.id in terminal_states or ev.id in awaiting:
+            continue
+        if _event_window_expired(ev, state) or not _event_window_open(ev, state):
+            continue
+        if not _gate_passed(ev.trigger_gate, state.metrics, db):
+            continue
+        _fiscal_levy_require_labels(ev, state)
+        due.append({
+            "event_id": ev.id,
+            "title": ev.title,
+            "summary": ev.summary,
+            "audiences": list(getattr(ev, "audiences", []) or []),
+            "terminal_reason_labels": list(getattr(ev, "terminal_reason_labels", []) or []),
+            "re_presentation": ev.id in held,
+        })
+    return due
+
+
+def _fiscal_levy_petitions_awaiting_verdict(db: GameDB) -> set[str]:
+    """已呈上批红页、尚未裁定的饷率事件：其请旨行仍是 pending。
+
+    请旨身份前缀真源 = month_chain；此处局部导入以免与月链成模块环。
+    已答（decided，含留中）的行本回合留在盘面上作答复留痕，不算「待裁」——
+    否则留中后该事件永不再回名单，大臣就再没有上疏的机会。
+    """
+    from ming_sim.month_chain import _LEVY_PETITION_PREFIX
+
+    awaiting: set[str] = set()
+    for row in db.conn.execute(
+        "SELECT event_id FROM pending_decisions WHERE kind='decision' AND status='pending'"
+    ).fetchall():
+        event_id = str(row["event_id"] or "").strip()
+        if event_id.startswith(_LEVY_PETITION_PREFIX):
+            awaiting.add(event_id[len(_LEVY_PETITION_PREFIX):])
+    return awaiting
+
+
+def _fiscal_levy_held_event_ids(db: GameDB) -> set[str]:
+    """已呈过且已留中（本次已答、事件未裁定）的饷率事件。
+
+    留中只在事件账留 choice（terminal_state 仍空），据此识别「已呈未决」，
+    供下月世界段 run 读这些事实自行决定是否再上疏。
+    """
+    return {
+        str(row["event_id"])
+        for row in db.conn.execute(
+            "SELECT event_id FROM event_triggers "
+            "WHERE COALESCE(terminal_state, '') = '' AND COALESCE(choice_json, '') != ''"
+        ).fetchall()
+        if str(row["event_id"] or "").strip()
+    }
 
 
 _EVENT_GATE_KEY_RE = re.compile(r"^event\.([^.]+)\.(triggered|terminal_state|terminal_reason)$")

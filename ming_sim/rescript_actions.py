@@ -465,7 +465,7 @@ def validate_all(
         # 不把批语改写成某条票拟。
         if kind == "decision":
             from ming_sim.month_chain import (
-                _DECREE_QUESTION_PREFIX, _WORLD_QUESTION_PREFIX,
+                _DECREE_QUESTION_PREFIX, _LEVY_PETITION_PREFIX, _WORLD_QUESTION_PREFIX,
             )
 
             event_id = str(row.get("event_id") or "")
@@ -477,6 +477,9 @@ def validate_all(
                 and (
                     event_id.startswith(_DECREE_QUESTION_PREFIX)
                     or event_id.startswith(_WORLD_QUESTION_PREFIX)
+                    # #1891：请饷／议停请旨同属请旨——只批朱笔不点拟批即留中：
+                    # 本次奏疏已答、事件不置终局，由大臣日后自决是否再上疏。
+                    or event_id.startswith(_LEVY_PETITION_PREFIX)
                 )
             ):
                 batch.items.append(ValidatedItem(
@@ -1333,6 +1336,47 @@ def _cas_decided(db: Any, item: ValidatedItem) -> None:
         raise ValueError(f"行级 CAS 失败（非 pending）：{item.decision_key}")
 
 
+def _apply_levy_petition_verdict(
+    db: Any, state: Any, *, event_id: str,
+    choice: Dict[str, object], execution_option: Optional[Dict[str, object]],
+    commit: bool = True,
+) -> str:
+    """#1891：请饷／议停请旨的答复落账。返回 'approved_or_rejected' / 'held'。
+
+    准驳：结局标签只从命中 option 的 levy_terminal_reason 类型键取，经该事件
+    terminal_reason_labels 白名单归一（不可归一即响亮失败，不写脏串），再经
+    mark_event_triggered 唯一写口置终局。**不解析 label 文字**（ADR 0142）。
+
+    留中：本次奏疏已答、事件不置终局。只在事件账留 choice（terminal_state 仍空），
+    下月世界段 run 据此自行决定是否再上疏。
+    """
+    from ming_sim.issues import (
+        FISCAL_LEVY_RESCRIPT_SOURCE, _fiscal_levy_event_by_id,
+        _fiscal_levy_normalized_terminal_reason_or_abort,
+    )
+    from ming_sim.settlement_payload import LEVY_TERMINAL_REASON_KEY
+
+    ev = _fiscal_levy_event_by_id(event_id)
+    if ev is None:
+        raise ValueError(f"请饷请旨指向不存在的事件：{event_id}")
+    raw = (execution_option or {}).get(LEVY_TERMINAL_REASON_KEY)
+    if raw is None or not str(raw).strip():
+        # 留中：朱笔答复不点拟批。事件未裁定，征收不变。
+        db.record_event_decision_choice(
+            state, event_id, choice, source=FISCAL_LEVY_RESCRIPT_SOURCE, commit=commit,
+        )
+        return "held"
+    label = _fiscal_levy_normalized_terminal_reason_or_abort(ev, raw, state)
+    db.mark_event_triggered(
+        state, event_id, source=FISCAL_LEVY_RESCRIPT_SOURCE,
+        terminal_reason=label, commit=commit,
+    )
+    db.record_event_decision_choice(
+        state, event_id, choice, source=FISCAL_LEVY_RESCRIPT_SOURCE, commit=commit,
+    )
+    return "approved_or_rejected"
+
+
 def apply_rescript_batch(
     db: Any,
     state: Any,
@@ -1398,8 +1442,21 @@ def apply_rescript_batch(
                 event_id = str(item.row.get("event_id") or "").strip()
                 # 请旨身份前缀真源 = month_chain；此处局部导入以免与月链形成模块环。
                 from ming_sim.month_chain import (
-                    _DECREE_QUESTION_PREFIX, _WORLD_QUESTION_PREFIX,
+                    _DECREE_QUESTION_PREFIX, _LEVY_PETITION_PREFIX, _WORLD_QUESTION_PREFIX,
                 )
+                # #1891：请饷／议停请旨——案头身份剥前缀还原真实事件，结局只经
+                # 事件账唯一写口置定（白名单归一）。留中（无 label 的朱笔答复）
+                # 不置终局，只留本次已答的 choice 事实。
+                if event_id.startswith(_LEVY_PETITION_PREFIX):
+                    _apply_levy_petition_verdict(
+                        db, state,
+                        event_id=event_id[len(_LEVY_PETITION_PREFIX):],
+                        choice=item.choice,
+                        execution_option=item.execution_option,
+                        commit=False,
+                    )
+                    result.applied_keys.append(item.decision_key)
+                    continue
                 # 请旨身份不是 events 表事件；与 dossier: 同属案头身份前缀，不得进 event_triggers。
                 if (
                     event_id

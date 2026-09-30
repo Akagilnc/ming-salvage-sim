@@ -508,19 +508,25 @@ def test_load_event_fail_loud_on_bad_gate_key(monkeypatch):
         content_mod.load_event_content("x.json")
 
 
-def test_load_event_rejects_default_terminal_reason_outside_labels(monkeypatch):
-    """default_terminal_reason 必须来自 terminal_reason_labels 白名单。"""
-    import pytest
+def test_load_event_drops_retired_default_terminal_reason(monkeypatch):
+    """#1891：default_terminal_reason 随 shadow 自动置结局桩退役。
+
+    旧档里残留该键不得再被读成程序默认结局——饷率结局只由皇帝批红置定，
+    加载器必须忽略它（不校验、不落字段），否则等于给自动结局留后门。
+    """
     import ming_sim.content as content_mod
-    bad = [{"id": "e", "title": "t", "kind": "k", "summary": "s",
+    raw = [{"id": "e", "title": "t", "kind": "k", "summary": "s",
             "urgency": 1, "severity": 1, "credibility": 1,
             "interests": [], "audiences": [],
             "open_window": True,
-            "terminal_reason_labels": ["已准"],
+            "terminal_reason_labels": ["已准", "已驳"],
             "default_terminal_reason": "已驳"}]
-    monkeypatch.setattr(content_mod, "load_json_asset", lambda *a, **k: bad)
-    with pytest.raises(SystemExit, match="default_terminal_reason"):
-        content_mod.load_event_content("x.json")
+    monkeypatch.setattr(content_mod, "load_json_asset", lambda *a, **k: raw)
+
+    events = content_mod.load_event_content("x.json")
+
+    assert not hasattr(events[0], "default_terminal_reason")
+    assert events[0].terminal_reason_labels == ["已准", "已驳"]
 
 
 def test_load_event_requires_latest_or_open_window(monkeypatch):

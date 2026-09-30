@@ -490,7 +490,8 @@ class Event:
     trigger_gate: Dict[str, str] = field(default_factory=dict)  # seed 候选门槛：{metric: 比较式}，全满足才进候选
     auto_trigger: bool = False  # True=gate 达标即由程序硬立项，绕过 LLM 因果判定（不进候选池等 extractor 决定）
     terminal_reason_labels: List[str] = field(default_factory=list)  # 封闭结局标签集；空=无专用白名单
-    default_terminal_reason: str = ""  # shadow / deterministic stub 默认结局，必须属于 terminal_reason_labels
+    # #1891：default_terminal_reason（shadow 自动置结局）随旧桩退役删除。饷率结局只由
+    # 皇帝批红经同一写口置定（mark_event_triggered），无程序默认档。
     # 以下为可选「精调 issue 字段」：原 opening_crises 那种手调危机用，立项时 event_to_issue 优先读这些，
     # 缺省（0/空）则按 severity/kind 自动推导。合并 opening_crises → seed_events 后承接其手调值。
     bar_value: int = 0                                            # 0=自动推导
