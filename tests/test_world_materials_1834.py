@@ -12,6 +12,8 @@ tests/test_material_directory_1830.py 的同一泛化入口覆盖，不在此重
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 from pathlib import Path
 
 from ming_sim.db import GameDB
@@ -174,9 +176,12 @@ def test_world_materials_isolate_invocations_and_databases(game, tmp_path, monke
     assert read_material(second.root, "INDEX.txt")
 
     # 第二档库与夹具库同父目录（材料树按 db stem 隔层正是为同父多档互不互踩），
-    # 但文件名带本用例的 tmp_path 唯一名并在 finally 删净：夹具的 db 落在共享
-    # 临时根，写固定名会跨用例/跨轮次残留同名异构库，被后续读取当成自己的输入。
-    other_path = Path(db.path).parent / f"other-{tmp_path.name}.db"
+    # 但资源归属归本用例：在该父目录里用 mkstemp 原子占一个唯一名（不是拼一个
+    # basename——basename 跨运行会撞，撞上时 GameDB 打开的是别人的库）。finally
+    # 只删自己 mkstemp 出来的那两个文件，不按名字去动目录里的其它残留。
+    fd, other_name = tempfile.mkstemp(dir=str(Path(db.path).parent), suffix=".db")
+    os.close(fd)
+    other_path = Path(other_name)
     other = GameDB(str(other_path), content)
     try:
         other.seed_static_data()
