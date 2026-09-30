@@ -6,7 +6,8 @@
 交回 agno 原生 _parse_provider_response 解析。agno 全套（解析/流式回退/
 消息格式）原样复用，零 function-calling（工具不传，大臣退化成纯文本进谏）。
 
-启用：环境变量 MING_SIM_LLM_BACKEND=<runner>。
+启用：运行配置声明 channel=cli + cli.runner（设置页或 runtime_llm.json）。
+#1902：MING_SIM_LLM_BACKEND 选宿主的旧路已退役——宿主只由运行配置决定。
 机器依赖：本机已安装并登录所选 runner。不兼容别的机器——
 这是探针的预期，不是缺陷。
 
@@ -930,10 +931,14 @@ def _dispatch_cli_runner(
     )
 
 
+#: 无 llm_config 的直调路径（探针/闸脚本 enrich、secret 等）的历史默认 runner。
+#: #1902：宿主只由运行配置选，这条只是「没配置时用哪个」的兜底常量，不再读环境变量。
+_DEFAULT_RUNNER = "agy"
+
+
 def _run_backend(prompt: str) -> Tuple[str, int]:
-    """按 MING_SIM_LLM_BACKEND 分派到对应 CLI（enrich/secret 等非 CliChat 路径用）。
-    未设或非法时沿用默认 Agy。"""
-    return _dispatch_cli_runner(cli_backend_from_env() or "agy", prompt)
+    """无运行配置时的直调默认路（#1902：不再按 MING_SIM_LLM_BACKEND 分派）。"""
+    return _dispatch_cli_runner(_DEFAULT_RUNNER, prompt)
 
 
 def _llm_channel(llm_config: Any = None) -> str:
@@ -949,7 +954,7 @@ def _cli_config_parts(llm_config: Any = None) -> Optional[Tuple[str, str, str]]:
     channel = _llm_channel(llm_config)
     if channel != "cli":
         return None
-    runner = (getattr(llm_config, "cli_runner", "") or cli_backend_from_env() or "agy").strip().lower()
+    runner = (getattr(llm_config, "cli_runner", "") or _DEFAULT_RUNNER).strip().lower()
     if runner not in _CLI_BACKENDS:
         raise RuntimeError(f"未知 CLI backend：{runner}")
     model = (getattr(llm_config, "cli_model", "") or "").strip()
@@ -1069,8 +1074,8 @@ def _backend_label(llm_config: Any = None) -> str:
     except RuntimeError:
         parts = None  # 不支持的 runner：trace 标签回落，不让构造崩
     if parts is not None:
-        return parts[0] or "agy"
-    return cli_backend_from_env() or "agy"
+        return parts[0] or _DEFAULT_RUNNER
+    return _DEFAULT_RUNNER
 
 
 def describe_effective_model(llm_config: Any = None) -> str:
@@ -1080,12 +1085,11 @@ def describe_effective_model(llm_config: Any = None) -> str:
     注：legacy-env 默认模型下，CliChat.id 留空（codex 分派再回落 _CODEX_MODEL），故 trace 的 model_id
     可能是空串而本函数已解析出真实默认——本函数是更准的可读标签，不与 trace 的未解析 id 逐字对齐。"""
     channel = _llm_channel(llm_config)
-    if channel == "cli":
-        runner = (getattr(llm_config, "cli_runner", "") or cli_backend_from_env() or "agy").strip().lower()
-    elif channel != "api":
-        runner = cli_backend_from_env()  # 空 channel：legacy env 回落
-    else:
-        runner = None
+    # #1902：宿主只由运行配置选——空 channel 不再回落环境变量，按 API 通道读 cfg.model。
+    runner = (
+        (getattr(llm_config, "cli_runner", "") or _DEFAULT_RUNNER).strip().lower()
+        if channel == "cli" else None
+    )
     if not runner:  # api 通道 / 形态1（空 channel 无 env）：用 cfg.model
         return str(getattr(llm_config, "model", "") or "?")
     # 只有实际吃 --model 的 runner 才追加 /model；agy 忽略 model、走自身 Gemini ladder，
@@ -1109,7 +1113,7 @@ def cli_backend_active(llm_config: Any = None) -> bool:
             return _cli_config_parts(llm_config) is not None
         except RuntimeError:
             return False
-    return cli_backend_from_env() is not None
+    return False  # #1902：无显式 channel 即无 CLI 路径（env 选宿主已退役）
 
 
 def _messages_to_prompt(
@@ -4477,13 +4481,6 @@ class CliChat(OpenAIChat):
             compression_manager=compression_manager, **kwargs,
         ):
             yield response
-
-
-def cli_backend_from_env() -> Optional[str]:
-    """读 MING_SIM_LLM_BACKEND，返回受支持 runner 名或 None（走原 api 路径）。
-    名单单一真源 = _CLI_BACKENDS（#1256 收敛，禁再硬编码枚举）。"""
-    val = (os.environ.get("MING_SIM_LLM_BACKEND") or "").strip().lower()
-    return val if val in _CLI_BACKENDS else None
 
 
 # ── 闸脚本 LLM 参数/配置（#1256）：四脚本共用，禁各自复制 choices/_config ──

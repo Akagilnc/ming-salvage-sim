@@ -102,6 +102,7 @@ def test_court_break_locks_player_writes_and_closes_night(web_game, monkeypatch)
     stub_scene_agent(monkeypatch, agent)
 
     statuses: dict[str, int] = {}
+    chat_accepted: list[int] = []
     barrier_at_done: list[bool] = []
 
     class _DoneProbeQueue(web_app.queue.Queue):
@@ -113,18 +114,18 @@ def test_court_break_locks_player_writes_and_closes_night(web_game, monkeypatch)
                 if not barrier_at_done[-1]:
                     return super().put(item, *args, **kwargs)
                 async def _probe() -> dict[str, int]:
+                    # #1902：非流式召对入口退役，说话只有流式一条。屏障守的是玩家写
+                    # 入口本身：流式请求在屏障窗内照发 200（worker 随后拿不到闸，拒收
+                    # 落在 SSE 终态），故此处不消费它的流（会与主流程互等），只断言受理，
+                    # 终态在主流程跑完后单独读——undo 仍在受理期同步 409。
                     async with _client() as client:
-                        requests = {
-                            "chat": client.post(
-                                "/api/audience/chat",
-                                json={"message": "再问边饷？"},
-                            ),
-                            "undo": client.post("/api/audience/chat/undo"),
-                        }
-                        return {
-                            name: (await request).status_code
-                            for name, request in requests.items()
-                        }
+                        chat = await client.post(
+                            "/api/audience/chat/stream",
+                            json={"message": "再问边饷？"},
+                        )
+                        undo = await client.post("/api/audience/chat/undo")
+                        chat_accepted.append(chat.status_code)
+                        return {"undo": undo.status_code}
 
                 statuses.update(asyncio.run(_probe()))
             return super().put(item, *args, **kwargs)
@@ -151,10 +152,9 @@ def test_court_break_locks_player_writes_and_closes_night(web_game, monkeypatch)
     assert isinstance(done_payload, dict), done_payload
     assert done_payload.get("court_action") == "court_break", done_payload
     assert barrier_at_done == [True]
-    assert statuses == {
-        "chat": 409,
-        "undo": 409,
-    }
+    # #1902：召对只有流式一条，屏障窗内受理（200）但拒收在终态；undo 同步 409。
+    assert statuses == {"undo": 409}, statuses
+    assert chat_accepted == [200], chat_accepted
     # end 后终态：夜 closed；#1838 reopen 无 closing/exit/divider 收尾旁白三拍。
     row = game.db.conn.execute(
         "SELECT status FROM audience_nights WHERE id=?", (night_id,),

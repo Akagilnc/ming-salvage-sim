@@ -112,16 +112,22 @@ def transport_attempts_public(attempts: List[TransportAttempt]) -> List[dict]:
 
 
 def resolve_transport_policy(source: object = None) -> TransportPolicy:
-    """解析策略：显式 TransportPolicy 透传，其余一律 ADR 0157 的固定一套。
+    """解析策略：显式 TransportPolicy 透传，其余回 ADR 0157 的固定一套。
 
     #1902：runtime_llm.json 的 transport 段退役——它没有任何生产者（设置页不写），
     却让「每次调用同一套重试」可被旧档里的数字悄悄改写（429 自愈次数、间隔、阻塞
-    预算各一处）。策略现由本模块 + audience_transport_policy 的收紧关系唯一定义；
-    静默判死阈值仍取设置页那一格（cli.timeout_seconds，见 cli_idle_timeout_seconds）。
+    预算）。次数/间隔/阻塞预算现由本模块唯一定义；**静默判死阈值不同**——它是设置页
+    那一格（cli.timeout_seconds，#1792 owner 拍），仍从运行档读。
     """
     if isinstance(source, TransportPolicy):
         return source
-    return default_transport_policy()
+    from ming_sim.llm_config import cli_idle_timeout_seconds, load_runtime_llm
+
+    base = default_transport_policy()
+    runtime = load_runtime_llm()
+    if not runtime:
+        return base
+    return replace(base, idle_timeout_seconds=cli_idle_timeout_seconds(runtime))
 
 
 def audience_transport_policy(source: object = None) -> TransportPolicy:

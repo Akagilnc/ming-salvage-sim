@@ -422,15 +422,20 @@ def test_new_issue_nondict_effect_fields_do_not_crash(game, monkeypatch):
 
 
 def test_initiative_floor_applies_when_enrich_empty(game, monkeypatch):
-    """CLI 后端国策 enrich 没补出 resolve（或抛错）时，floor 兜最小回报，绝不入空壳（codexB）。"""
+    """CLI 通道国策 enrich 没补出 resolve（或抛错）时，floor 兜最小回报，绝不入空壳（codexB）。
+
+    #1902：触发改由运行配置（channel=cli）声明，不再设 MING_SIM_LLM_BACKEND。
+    """
+    from ming_sim.models import LLMConfig
     import ming_sim.cli_backend as _cb
     db, state, _ = game
-    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
     monkeypatch.setattr(_cb, "enrich_initiative_effects",
                         lambda *a, **k: {"effect_on_resolve": {}, "ongoing_effects": {}, "effect_on_fail": {}})
     I.apply_issue_tracker_output(db, state, {
         "new_issues": [{"origin_kind": "decree", "origin_ref": _decree_origin(db, state), "title": "空回报国策", "kind": "initiative"}],
-    })
+    }, llm_config=LLMConfig(
+        api_key="", base_url="", model="m", channel="cli", cli_runner="agy",
+    ))
     row = db.conn.execute(
         "SELECT effect_on_resolve FROM issues WHERE title='空回报国策'").fetchone()
     assert row is not None                         # 国策入库了

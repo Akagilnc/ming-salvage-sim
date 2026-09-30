@@ -228,43 +228,50 @@ def test_enrich_nondict_subfields_guarded(monkeypatch):
 
 
 def test_enrich_trace_records_actual_backend(monkeypatch):
-    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "codex")
+    """trace 里的 backend 记实际调用的 runner（#1902：取自运行配置，不来自 env）。"""
+    from ming_sim.models import LLMConfig
+
     monkeypatch.setattr(cb, "_run_backend", lambda p: ('{"effect_on_resolve":{}}', 1))
     rec = {}
     monkeypatch.setattr(cb, "_trace", lambda r: rec.update(r))
-    cb.enrich_initiative_effects("设局", "")
+    cb.enrich_initiative_effects(
+        "设局", "",
+        llm_config=LLMConfig(
+            api_key="", base_url="", model="m", channel="cli", cli_runner="codex",
+        ),
+    )
     assert rec.get("backend") == "codex"
 
 
 # ── cli_backend_from_env / backend dispatch ──
 
-def test_backend_env(monkeypatch):
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-    assert cb.cli_backend_from_env() is None
-    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
-    assert cb.cli_backend_from_env() == "agy"
-
-
-def test_backend_env_claude(monkeypatch):
-    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "claude")
-    assert cb.cli_backend_from_env() == "claude"
+# #1902：cli_backend_from_env（MING_SIM_LLM_BACKEND 选宿主）退役——下列
+# env 分派用例随之删除；无配置的直调路固定走默认 runner，
+# 选宿主只认运行配置（channel + cli_runner）。
 
 
 @pytest.mark.parametrize(
-    "env,runner,out",
+    "runner,out",
     [
-        ("claude", "claude", "CLAUDE_OUT"),
-        (None, "agy", "AGY_DEFAULT_OUT"),
-        ("codex", "codex", "CODEX_OUT"),
+        ("claude", "CLAUDE_OUT"),
+        ("agy", "AGY_DEFAULT_OUT"),
+        ("codex", "CODEX_OUT"),
     ],
 )
-def test_run_backend_dispatch(monkeypatch, env, runner, out):
-    if env is None:
-        monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-    else:
-        monkeypatch.setenv("MING_SIM_LLM_BACKEND", env)
+def test_run_backend_dispatch(monkeypatch, runner, out):
+    """#1902：宿主只由运行配置选（channel=cli + cli_runner），不再读环境变量。"""
+    cfg = LLMConfig(
+        api_key="", base_url="", model="m", channel="cli", cli_runner=runner,
+    )
     _patch_runner(monkeypatch, runner, lambda p, **kw: (out, 1))
-    assert cb._run_backend("x") == (out, 1)
+    assert cb._run_backend_for_config("x", cfg) == (out, 1)
+
+
+def test_run_backend_default_runner_without_config(monkeypatch):
+    """无运行配置的直调路固定走默认 runner（agy），不读环境变量。"""
+    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "codex")  # #1902：应被无视
+    _patch_runner(monkeypatch, "agy", lambda p, **kw: ("AGY_DEFAULT_OUT", 1))
+    assert cb._run_backend("x") == ("AGY_DEFAULT_OUT", 1)
 
 
 # ── secret extract keep family ──
@@ -1045,8 +1052,8 @@ def test_public_cli_support_restores_existing_runners(monkeypatch):
     assert set(cb.cli_model_choices()) == set(cb._CLI_BACKENDS)
     for name in ("opencode",):
         assert not cb.is_supported_cli_runner(name)
-        monkeypatch.setenv("MING_SIM_LLM_BACKEND", name)
-        assert cb.cli_backend_from_env() is None
+    # #1902：MING_SIM_LLM_BACKEND 选宿主的旧路已退役（cli_backend_from_env 不复现）
+    assert not hasattr(cb, "cli_backend_from_env")
 
 
 @pytest.mark.parametrize("runner", ["cursor", "kimi", "grok", "pi"])
@@ -1149,7 +1156,7 @@ def test_run_pi_flags_thinking_and_stdout(monkeypatch):
 
 
 @pytest.mark.parametrize(
-    "env,out",
+    "runner,out",
     [
         ("cursor", "CURSOR_OUT"),
         ("kimi", "KIMI_OUT"),
@@ -1157,10 +1164,15 @@ def test_run_pi_flags_thinking_and_stdout(monkeypatch):
         ("pi", "PI_OUT"),
     ],
 )
-def test_run_backend_dispatch_new_runners(monkeypatch, env, out):
-    monkeypatch.setenv("MING_SIM_LLM_BACKEND", env)
-    _patch_runner(monkeypatch, env, lambda p, **kw: (out, 1))
-    assert cb._run_backend("x") == (out, 1)
+def test_run_backend_dispatch_new_runners(monkeypatch, runner, out):
+    """#1902：四个未跑过的宿主同样只经运行配置选，不再靠 env。"""
+    from ming_sim.models import LLMConfig
+
+    cfg = LLMConfig(
+        api_key="", base_url="", model="m", channel="cli", cli_runner=runner,
+    )
+    _patch_runner(monkeypatch, runner, lambda p, **kw: (out, 1))
+    assert cb._run_backend_for_config("x", cfg) == (out, 1)
 
 
 @pytest.mark.parametrize("runner", ["cursor", "kimi", "grok", "pi"])

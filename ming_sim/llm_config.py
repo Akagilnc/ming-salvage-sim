@@ -314,18 +314,19 @@ def llm_config_from_runtime(
     advanced_api_key: str,
     advanced_thinking_level: str,
 ) -> LLMConfig:
-    from ming_sim.cli_backend import cli_backend_from_env
-
     """runtime json + 命令行/API 入参 → LLMConfig（#1902 单一投影真源）。
 
     WebGame 建局与 CLI 建局共用；web 侧不再留第二份同名实现。
+    宿主只由运行档声明：channel + cli.runner；环境变量旧路（#1902 已退役）不参与。
     """
     channel = str(runtime.get("channel") or "").strip().lower()
-    env_runner = cli_backend_from_env()
     if channel not in VALID_CHANNELS:
-        channel = "cli" if env_runner else "api"
+        # #1902：档里没写通道时按是否已配真实 API key 判；旧 env 选宿主的路已退役。
+        channel = "cli" if isinstance(runtime.get("cli"), dict) and str(
+            (runtime.get("cli") or {}).get("runner") or ""
+        ).strip() else "api"
     cli_slot = runtime.get("cli") if isinstance(runtime.get("cli"), dict) else {}
-    cli_runner = str(cli_slot.get("runner") or env_runner or ("agy" if channel == "cli" else "")).strip().lower()
+    cli_runner = str(cli_slot.get("runner") or ("agy" if channel == "cli" else "")).strip().lower()
     cli_model = str(cli_slot.get("model") or cli_model_from_env(cli_runner, model)).strip()
     legacy_reasoning = (
         legacy_reasoning_strength({
@@ -380,25 +381,22 @@ def load_llm_config(
     advanced_api_key: str = "",
     advanced_thinking_level: str = "",
 ) -> LLMConfig:
+    """按 OpenAI 兼容参数构一份 API 通道配置（游戏 CLI 入口与闸脚本用）。
+
+    #1902：本函数不再按 MING_SIM_LLM_BACKEND 选宿主——CLI 通道的配置一律来自
+    运行档（runtime_llm.json / llm_config_from_runtime），这里只管 API 槽，
+    所以「要真实 key、否则索要」这条老规矩回来且不再有例外分支。
+    """
     api_key = (api_key or os.environ.get("OPENAI_API_KEY", "")).strip()
-    # 探针：MING_SIM_LLM_BACKEND=codex|claude 时走本地 CLI，无需 api key。
-    # CLI 通道下 api_key 留空——占位符只在 create_chat_model 构造 CliChat 时注入，
-    # 不让 magic-string 进 LLMConfig.api_key、不流经任何 key 路径。
-    from ming_sim.cli_backend import cli_backend_from_env
-    cli_runner = cli_backend_from_env()
-    if cli_runner is not None:
-        api_key = ""  # CLI 模式不要 API key
-    else:
-        # API 模式才要真实 key：占位符不算，空则索要/报错，别拿假 key 探 OpenAI。
-        if not is_real_api_key(api_key):
-            api_key = ""
-        if not api_key:
-            api_key = getpass.getpass("请输入 API key（不会保存，回车取消）：").strip()
-        if not is_real_api_key(api_key):
-            # 手敲的也复验：占位符当真 key 同样拒掉。
-            api_key = ""
-        if not api_key:
-            raise SystemExit("未提供 API key，无法使用 LLM。")
+    if not is_real_api_key(api_key):
+        api_key = ""
+    if not api_key:
+        api_key = getpass.getpass("请输入 API key（不会保存，回车取消）：").strip()
+    if not is_real_api_key(api_key):
+        # 手敲的也复验：占位符当真 key 同样拒掉。
+        api_key = ""
+    if not api_key:
+        raise SystemExit("未提供 API key，无法使用 LLM。")
     adv_base = (advanced_base_url or "").strip()
     normalized_thinking = normalize_thinking_level(thinking_level or os.environ.get("OPENAI_THINKING_LEVEL", ""))
     legacy_reasoning = legacy_reasoning_strength({
@@ -421,9 +419,9 @@ def load_llm_config(
         advanced_api_key=real_api_key_or_empty(advanced_api_key),
         advanced_thinking_level="",
         reasoning_strength=reasoning_strength,
-        channel="cli" if cli_runner else "api",
-        cli_runner=cli_runner or "",
-        cli_model=cli_model_from_env(cli_runner or "", model),
+        channel="api",
+        cli_runner="",
+        cli_model=cli_model_from_env("", model),
         # 静默判死阈值用 CLI 槽默认，不沿用 API 的 timeout_seconds（codex R1 #2）。
         cli_timeout_seconds=CLI_DEFAULT_TIMEOUT_SECONDS,
     )

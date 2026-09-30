@@ -194,16 +194,15 @@ def create_chat_model(
     # CliChat 继承 OpenAIChat，吃同一套 kwargs；reasoning_effort 等 CLI 无关字段被忽略。
     from ming_sim.cli_backend import (
         CliChat,
-        cli_backend_from_env,
         is_supported_cli_runner,
         supported_cli_runners_text,
     )
     channel = (getattr(llm_config, "channel", "") or "").strip().lower()
-    backend = None
-    if channel == "cli":
-        backend = (getattr(llm_config, "cli_runner", "") or cli_backend_from_env() or "agy").strip().lower()
-    elif channel != "api":
-        backend = cli_backend_from_env()
+    # #1902：宿主只由运行配置选（channel=cli + cli_runner）；不再读 MING_SIM_LLM_BACKEND。
+    backend = (
+        (getattr(llm_config, "cli_runner", "") or "agy").strip().lower()
+        if channel == "cli" else None
+    )
     if backend is not None and not is_supported_cli_runner(backend):
         # 显式不支持的 runner 在构造期优雅失败，而非首次 invoke 才抛 raw RuntimeError。
         # 支持名单文案单一真源 = supported_cli_runners_text()（#1256）。
@@ -346,7 +345,7 @@ def verify_llm_available(llm_config: LLMConfig, *, stage: str = "smoke-main") ->
     # 仅服务配置校验入口；启动/新开/继续/重置路径不再调用本函数。
     # #884：API 烟走统一 transport 钟（attempt timeout + 瞬断重试）；CLI 已在
     # _run_backend_for_config 入口包 run_with_transport。失败账面带阶段名。
-    from ming_sim.cli_backend import _run_backend_for_config, cli_backend_from_env
+    from ming_sim.cli_backend import _run_backend_for_config
     from ming_sim.llm_transport import (
         bind_transport_sdk_budget,
         resolve_transport_policy,
@@ -354,7 +353,7 @@ def verify_llm_available(llm_config: LLMConfig, *, stage: str = "smoke-main") ->
     )
 
     channel = (getattr(llm_config, "channel", "") or "").strip().lower()
-    if channel == "cli" or (channel != "api" and cli_backend_from_env() is not None):
+    if channel == "cli":  # #1902：通道只由运行配置声明（env 选宿主已退役）
         try:
             raw, _ = _run_backend_for_config("输出 ok", llm_config, tag="verify")
             fail_if_llm_error(str(raw), "LLM 连通性检查")

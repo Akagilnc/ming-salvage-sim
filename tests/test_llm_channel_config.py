@@ -52,16 +52,8 @@ def test_create_chat_model_uses_cli_channel_without_backend_env(monkeypatch):
     assert model.api_key == "cli-backend"
 
 
-def test_load_llm_config_records_backend_env_as_cli_channel(monkeypatch):
-    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "codex")
-    monkeypatch.setenv("MING_SIM_CODEX_MODEL", "gpt-codex-test")
-
-    cfg = load_llm_config("https://api.example.com", "api-fallback", api_key="")
-
-    assert cfg.channel == "cli"
-    assert cfg.cli_runner == "codex"
-    assert cfg.cli_model == "gpt-codex-test"
-    assert cfg.api_key == ""
+# #1902：MING_SIM_LLM_BACKEND 选宿主的旧路已退役，下列 env 用例随之删除；
+# 选宿主只认运行配置（channel + cli_runner）。
 
 
 def test_loaded_api_config_is_not_rerouted_by_later_backend_env(monkeypatch):
@@ -422,31 +414,8 @@ def test_minimax_reasoning_strength_overrides_stale_thinking_level(monkeypatch):
     assert model.extra_body == {"thinking": {"type": "adaptive"}, "reasoning_split": True}
 
 
-def test_legacy_backend_env_uses_runner_default_model_not_api_model(monkeypatch):
-    captured = {}
-
-    from tests.cli_process_doubles import FakeCliProcess
-
-    def fake_popen(cmd, **kwargs):
-        captured["cmd"] = list(cmd)
-        return FakeCliProcess(cmd, stdout_script=("臣领旨。\n",), returncode=0,
-                              popen_kwargs=kwargs)
-
-    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "codex")
-    monkeypatch.delenv("MING_SIM_CODEX_REASONING", raising=False)
-    monkeypatch.setattr(cli_backend, "_resolve_cli_bin", lambda name, configured: f"/fake/{name}")
-    monkeypatch.setattr(cli_backend.subprocess, "Popen", fake_popen)
-    cfg = LLMConfig(
-        api_key="sk-test",
-        base_url="https://api.example.com/v1",
-        model="deepseek-v4-flash",
-    )
-
-    model = create_chat_model(cfg)
-    model._call_cli("p")
-
-    assert isinstance(model, CliChat)
-    assert captured["cmd"][captured["cmd"].index("--model") + 1] == cli_backend._CODEX_MODEL
+# #1902：MING_SIM_LLM_BACKEND 选宿主的旧路已退役，下列 env 用例随之删除；
+# 选宿主只认运行配置（channel + cli_runner）。
 
 
 def test_verify_llm_available_respects_api_channel_over_backend_env(monkeypatch):
@@ -523,21 +492,8 @@ def test_verify_llm_available_cli_channel_failure_raises(monkeypatch):
         verify_llm_available(cfg)
 
 
-def test_verify_llm_available_smokes_legacy_env_only_backend(monkeypatch):
-    """legacy env-only 路径（无显式 channel + MING_SIM_LLM_BACKEND 设置）现在也真实 smoke
-    （旧版直接 return 跳过）：触发 _run_backend_for_config，失败抛 LLMUnavailable，
-    避免 fresh-start 在 runner 缺失时先删主库。"""
-    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
-    seen = {}
-
-    def fake_run(prompt, llm_config=None, tag="", *, policy=None):
-        seen["prompt"] = prompt
-        return "ok", 1
-
-    monkeypatch.setattr(cli_backend, "_run_backend_for_config", fake_run)
-    cfg = LLMConfig(api_key="cli-backend", base_url="", model="api-fallback", channel="")
-    verify_llm_available(cfg)
-    assert seen["prompt"] == "输出 ok"
+# #1902：MING_SIM_LLM_BACKEND 选宿主的旧路已退役，下列 env 用例随之删除；
+# 选宿主只认运行配置（channel + cli_runner）。
 
 
 def test_verify_llm_available_legacy_env_only_failure_raises(monkeypatch):
@@ -719,15 +675,8 @@ def test_config_constants_single_source_in_models():
     assert cfg.cli_timeout_seconds == m.CLI_DEFAULT_TIMEOUT_SECONDS
 
 
-def test_load_llm_config_cli_env_uses_cli_default_timeout_not_api(monkeypatch):
-    """codex R1 #2：legacy env CLI（MING_SIM_LLM_BACKEND 设）时 cli_timeout_seconds 必须用
-    CLI 槽默认（静默判死 60），不沿用 API 的 timeout_seconds（180）。"""
-    from ming_sim.llm_config import load_llm_config, CLI_DEFAULT_TIMEOUT_SECONDS
-    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "codex")
-    cfg = load_llm_config(base_url="", model="m", api_key="", timeout_seconds=180.0)
-    assert cfg.channel == "cli"
-    assert cfg.cli_timeout_seconds == CLI_DEFAULT_TIMEOUT_SECONDS == 60.0
-    assert cfg.cli_timeout_seconds != 180.0
+# #1902：MING_SIM_LLM_BACKEND 选宿主的旧路已退役，下列 env 用例随之删除；
+# 选宿主只认运行配置（channel + cli_runner）。
 
 
 def test_web_runtime_cli_no_saved_timeout_uses_cli_default(monkeypatch):

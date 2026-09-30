@@ -194,3 +194,34 @@ def test_transport_segment_retired_from_runtime_config():
     assert not hasattr(lt, "transport_policy_from_mapping")
     assert lt.resolve_transport_policy({"transport": {"max_attempts": 9}}) == lt.default_transport_policy()
     assert lt.audience_transport_policy().retry_429 is False
+
+
+def test_env_runner_selection_is_retired():
+    """#1902：MING_SIM_LLM_BACKEND 选宿主退役——宿主只由运行配置声明。"""
+    import inspect
+
+    from ming_sim import cli_backend as cb
+    from ming_sim import llm_config as lc
+
+    assert not hasattr(cb, "cli_backend_from_env")
+    import os as _os
+    from ming_sim.models import LLMConfig
+
+    _os.environ["MING_SIM_LLM_BACKEND"] = "codex"  # 旧路若复活，这行会生效
+    try:
+        for module in (cb, lc):
+            code = "\n".join(
+                line for line in inspect.getsource(module).splitlines()
+                if not line.lstrip().startswith(("#", '"', "'"))
+            )
+            assert "MING_SIM_LLM_BACKEND" not in code, (
+                f"{module.__name__} 仍按环境变量选宿主"
+            )
+        assert cb.cli_backend_active(
+            LLMConfig(api_key="", base_url="", model="m", channel=""),
+        ) is False
+        assert cb.cli_backend_active(
+            LLMConfig(api_key="", base_url="", model="m", channel="cli", cli_runner="codex"),
+        ) is True
+    finally:
+        _os.environ.pop("MING_SIM_LLM_BACKEND", None)

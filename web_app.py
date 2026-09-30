@@ -4326,18 +4326,18 @@ async def api_menu_status() -> Dict[str, Any]:
     runtime = load_runtime_llm()
     from ming_sim.cli_backend import (
         CLI_REASONING_STRENGTH_RUNNERS,
-        cli_backend_from_env,
         cli_model_choices,
         cli_runner_choices,
         is_supported_cli_runner,
     )
-    env_runner = cli_backend_from_env()
+    # #1902：宿主只由运行档声明（channel + cli.runner）；env 选宿主的旧路已退役，
+    # 通道判定与 llm_config.llm_config_from_runtime 同一口径。
     channel = str(runtime.get("channel") or "").strip().lower()
-    if channel not in VALID_CHANNELS:
-        channel = "cli" if env_runner else "api"
     cli_slot = runtime.get("cli") if isinstance(runtime.get("cli"), dict) else {}
     api_slot = runtime.get("api") if isinstance(runtime.get("api"), dict) else {}
-    cli_runner = str(cli_slot.get("runner") or env_runner or ("agy" if channel == "cli" else "")).strip().lower()
+    if channel not in VALID_CHANNELS:
+        channel = "cli" if str(cli_slot.get("runner") or "").strip() else "api"
+    cli_runner = str(cli_slot.get("runner") or ("agy" if channel == "cli" else "")).strip().lower()
     # cli_model_saved = 原样存盘值（空=用户选「默认」档）；cli_model = 兜底成默认名的 resolved 值。
     # 表单（CliModelField 下拉）须读 raw，否则空保存被 resolved 成默认名 → 下拉误判「其他(手填)」
     # 并把字面量钉死（CMR R1 Claude+Gemini concur）。resolved 仅供「当前后端」展示行。
