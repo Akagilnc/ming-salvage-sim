@@ -392,11 +392,6 @@ def _persist_specialized_extraction(
     denunciations = extraction.get("faction_denunciations") or []
     if isinstance(denunciations, list) and denunciations:
         db.accept_faction_denunciations(state, denunciations, commit=False)
-    proposals = extraction.get("dossier_reconciliations") or []
-    if isinstance(proposals, list) and proposals:
-        db.record_monthly_grant_reconciliations(
-            int(turn), proposals, rejection_collector=collector, source=source,
-        )
     if not defer_monthly_secret_supply:
         selections = extraction.get("covert_exec_selections") or []
         if isinstance(selections, list) and selections:
@@ -1540,6 +1535,14 @@ def _escort_dossier_id(db: Any, raw: object) -> Optional[int]:
     return dossier_id
 
 
+def _escort_source_dossier_id(db: Any, raw: object) -> Optional[int]:
+    """护行主体：只认由密令立起的案卷（0054 单向新指旧的护送密令那一端）。"""
+    dossier_id = _escort_dossier_id(db, raw)
+    if dossier_id is None or not db.is_secret_order_dossier(dossier_id):
+        return None
+    return dossier_id
+
+
 def _dispatch_escort_links(
     db: Any, state: Any, raw: object, *, source: Provenance,
 ) -> SectionResult:
@@ -1554,10 +1557,13 @@ def _dispatch_escort_links(
     items, rejected = _section_items(raw, label="护送关联声明", source=source)
     applied: List[Any] = []
     for item in items:
-        source_id = _escort_dossier_id(db, item.get("escort_source_dossier_id"))
+        source_id = _escort_source_dossier_id(db, item.get("escort_source_dossier_id"))
         target_id = _escort_dossier_id(db, item.get("target_dossier_id"))
         if source_id is None or target_id is None:
-            _reject(rejected, item, "护送关联须含已存在的两端案卷 id", "hallucinated_id", source)
+            _reject(
+                rejected, item,
+                "护送关联须含已存在的护行密令案卷与被护拨帑案卷 id", "hallucinated_id", source,
+            )
             continue
         relation = str(item.get("relation_type") or "").strip()
         if relation not in _GRANT_ESCORT_RELATIONS:
@@ -1605,9 +1611,13 @@ def _dispatch_escort_results(
     applied: List[Any] = []
     for item in items:
         dossier_id = _escort_dossier_id(db, item.get("dossier_id"))
-        source_id = _escort_dossier_id(db, item.get("escort_source_dossier_id"))
+        source_id = _escort_source_dossier_id(db, item.get("escort_source_dossier_id"))
         if dossier_id is None or source_id is None:
-            _reject(rejected, item, "护送实况须含已存在的两端案卷 id", "hallucinated_id", source)
+            _reject(
+                rejected, item,
+                "护送实况须含已存在的护行密令案卷与被护拨帑案卷 id",
+                "hallucinated_id", source,
+            )
             continue
         escorted = item.get("escorted")
         if not isinstance(escorted, bool):

@@ -209,6 +209,17 @@ def build_translation_target_grounding(db: Any, state: Any = None) -> str:
         "SELECT id, title FROM secret_orders WHERE status='active' ORDER BY id"
     ).fetchall():
         lines.append(f"secret_order\t{int(row['id'])}\t{str(row['title'] or '')}")
+    # #1900：护行主体是**密令案卷**，其 id 与 secret_orders.id 是两个值，转译要填的是
+    # 前者。不列这一行，escort_links 在真实流程里第一次根本无从指向。
+    for row in db.conn.execute(
+        "SELECT d.id AS dossier_id, d.secret_order_id, s.title "
+        "FROM decree_dossiers d JOIN secret_orders s ON s.id = d.secret_order_id "
+        "ORDER BY d.id"
+    ).fetchall():
+        lines.append(
+            f"escort_dossier\t{int(row['dossier_id'])}\t{int(row['secret_order_id'])}"
+            f"\t{str(row['title'] or '')}"
+        )
     # #1900：在途拨帑案卷与其已立的护送关联——escort_links / escort_results 只认这里
     # 的精确 dossier id；未在途的拨帑案卷不列，免得凭空指向。
     for row in db.conn.execute(
@@ -240,6 +251,8 @@ def build_translation_target_grounding(db: Any, state: Any = None) -> str:
         "【权威目标目录】\n"
         "grant.target_id / appointment.region_id / rushes.target_id / 禁摊派案卷 id / "
         "escort_links 与 escort_results 的案卷 id 必须取对应目录中的精确 id，禁止编造。\n"
+        "其中护行主体填 escort_dossier 行的第一个数（密令案卷 id，区别于 secret_order 行的密令 id），"
+        "被护拨帑案卷填 dossier 行。\n"
         f"{body}\n"
     )
 
@@ -410,8 +423,9 @@ def build_audience_translate_prompt(
         "- 暗渠揭破场面呈上后皇帝禁摊派 → commissions 一项 dossier_action_type=prohibit_covert_levy，target_id 填当前场面案卷 dossier_id。\n"
         "- 大臣具名举荐某人任某差并附荐词 → commissions 任命 + recommendation（荐者/荐词原句）。\n"
         "- 皇帝交代近侍查某事 → inquiries；催某件分段事或密令 → rushes；传召说明缓急 → travel_tones。\n"
-        "- 命人护行／沿途照看某笔在途拨帑 → escort_links 一条，护行密令案卷指向被护拨帑案卷"
-        "（被护数笔就写几条），只交代「谁护谁」；此路此趟究竟护没护成由 escort_results 另报，"
+        "- 命人护行／沿途照看某笔在途拨帑 → escort_links 一条，escort_source_dossier_id 填【权威目标目录】"
+        "escort_dossier 行里那道密令的案卷 id，target_dossier_id 填 dossier 行里被护的拨帑案卷 id，"
+        "被护数笔就写几条；只交代「谁护谁」，此路此趟究竟护没护成由 escort_results 另报，"
         "一令护多路时逐路各报各的，别用整条密令的成败代替。\n"
         f"{grounding_block}"
         f"【本场已说的话】\n{said_block}\n"

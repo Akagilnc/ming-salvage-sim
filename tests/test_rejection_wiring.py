@@ -94,11 +94,7 @@ def test_rollback_leaves_no_rows_and_no_jsonl(game, monkeypatch, tmp_path):
     with pytest.raises(RuntimeError, match="crash after flush"):
         run_settle(db, state, content, {
             "character_status_changes": [{"name": "查无此人乙", "status": "dead", "reason": "测试"}],
-            "dossier_reconciliations": [
-                {"dossier_id": gid, "arrived_amount": 16},
-                {"dossier_id": 88888, "arrived_amount": 5},
-            ],
-        }, narrative="x", decree_text="y")
+            }, narrative="x", decree_text="y")
 
     monkeypatch.setattr(RejectionCollector, "flush_to_db", real_flush)
     assert _rejection_rows(db, turn) == []

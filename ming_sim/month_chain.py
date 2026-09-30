@@ -1220,9 +1220,7 @@ def _run_month_drift(
     collector = RejectionCollector()
     with atomic(db):
         db.record_monthly_supervision_presence(turn, commit=False)
-        db.record_monthly_grant_reconciliations(
-            turn, [], rejection_collector=collector, source=source,
-        )
+        db.record_monthly_grant_reconciliations(turn)
         db.record_monthly_loophole_exposures_from_reconciliations(turn, commit=False)
         retire_unsettled_summons_for_inactive(db)
         # #651：漂移只承接不依赖本段 applied 的持久态（已决「禁摊派」欠饷是否再开口）。

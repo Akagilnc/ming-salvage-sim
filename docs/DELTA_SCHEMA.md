@@ -44,7 +44,7 @@
   "dossier_participants": [], // 月末新出场的案卷参与人（S2，append-only）
   "secret_dossier_participants": [], // #1252 密令案卷参与人追加（personnel_secret 私字段）
   "authority_changes": [], // 授予/收回持有型特权（ADR 0071 / #611）
-  "dossier_reconciliations": [], // 在途拨帑对账提案（#567 / ADR 0054）
+  // #1900：dossier_reconciliations 已退役（沿途损耗归引擎），不再列入本形状。
   "faction_denunciations": [], // 政敌检举条目（#627 / ADR 0077 ID-12）
 
   // ── personnel_secret 模块 ──
@@ -371,26 +371,24 @@ personnel_secret 模块产出；与公共 `dossier_participants` **分立**（�
 
 引擎行为：真伪底由 fork 单源读端机械派生（分叉→真检举 origin mark；无分叉→私货 mark）；去重键=检举人×案卷×真伪类（**不含 turn**），案情升级可同键再落；暴露载体=检举条目自身的结构化 origin/payload，**不**写 `dossier_loophole_exposures`、**不**回注 `character_knowledge_events`、不改世界状态、不自动转案。弹章对玩家的呈现由 simulator 事件章/探子回报承担。
 
-### `dossier_reconciliations` — 在途拨帑月度对账（#567 / ADR 0054）
-别名 `拨帑对账`。issues 模块产出；settle 内经 `record_monthly_grant_reconciliations` 消费。
+### ~~`dossier_reconciliations`~~ — 已退役（#1900）
 
-| 字段 | 约束 |
-|---|---|
-| `dossier_id`（别名 `案卷编号`） | **必填**正整数；须落在本月在途拨帑扫描面（`list_monthly_grant_reconciliation_targets`）内 |
-| `arrived_amount`（别名 `实抵` / `到银`） | 与 `loss_amount` **二选一**；整数，单位两 |
-| `loss_amount`（别名 `折损`） | 与 `arrived_amount` **二选一**；整数，单位两；引擎换算 `arrived = ordered - loss` |
-| `note` | 可选文本 |
+**#1900：沿途损耗归引擎**（#1820 后出，取代 0054 的「LLM 软判实抵＋代码只 clamp」）。
+本 section 已从 `EMPTY_EXTRACTION` 与分派器消费口一并删除，不再有任何产出方或消费方；
+连同 `clamp_grant_arrival_amount` 及其坏提案拒收一族一并退役。
 
-引擎行为：只按护行/稽核在场口径 **clamp** 实抵上下界；**不二次扣库**、不改原 `economy_move`、**不写 0058 进展**（密奏仍走 personnel_secret / #566）。无提案时对扫描面内每路按口径中位机械落账（有/无护行同一存储、逐路键控）。
-
-> #1745 / ADR 0015-D6/D7：可拆项坏引用（未知/非在途/已结清/已撤回案卷、缺量字段、量值非法、重复）由 `record_monthly_grant_reconciliations` **逐项域级拒收留痕**；section 值非 list / 非 dict 列表项的**形状拒收**归 `sanitize_delta_shape` 独家（`invalid_shape`，item 恒 `{raw_value:…}`，含 dict 坏容器），一次归属 `dossier_reconciliations`，**不整月 abort、不双记**。拒收经外层 `RejectionCollector`（RejectedItem 四字段 item/reason/category/source）；好项与未提案目标的中位落账仍在同一 atomic。空提案（缺省/`[]`）合法——程序用中位默认；无在途目标却收到提案 → 逐项 `missing_ref`，不落假对账行。
+现行口径：月度对账口 `record_monthly_grant_reconciliations(turn)` **不接提案**——实抵与损耗由
+引擎给出：`arrived = (grant_arrival_bounds(ordered, escorted=该路已落实际护送) 的中位)`，
+`loss = ordered - arrived`。「该路是否实有护送」只认逐路已落实况（`dossier_escort_outcomes`，
+由转译 `escort_results` 节落账），不凭案卷关联存在、不凭密令整体成败或结案。仍**不二次扣库**、
+不改原 `economy_move`、不写 0058 进展。
 
 ### `dossier_progress_reports` — 长差密令逐月密奏（#566 / ADR 0058）
 personnel_secret 模块产出；settle 内经 `record_monthly_dossier_progress` 消费。
 - 每项必须带 `dossier_id`、`progress_band`、`memorial_text`；三者皆非空。
 - 合资格集 = `decree_dossiers.status` 为 `promulgated` / `executing` 且所关联 `secret_orders.status='active'` 的案卷（读缝 `monthly_dossier_reports` / `list_monthly_dossier_progress_nudges`；#1504：不限 tag、不限期限月数）。
 - **必须完整覆盖**合资格集：不得漏项、不得重复、不得指向未知案卷；无合资格却收到提案亦拒。
-- 非法/不全 → fail-loud 整月中止，不走逐项拒收留痕（与 #1745 后的 `dossier_reconciliations` 分轨）。
+- 非法/不全 → fail-loud 整月中止，不走逐项拒收留痕（#1745 的逐项拒收族随 `dossier_reconciliations` 一并于 #1900 退役）。
 
 ### 颁布 verdict 契约（非 delta 字段）
 打回 verdict 的 `blocked_layer` 只收 `cabinet_drafting` / `palace_rescript` / `six_offices`；`primary_opponents` 是非空 typed 派系清单，每项须且仅含 `kind="faction"` 与在册派系 `key`；`gatekeeper_id` 只可为 null 或在册人物 id。`criteria_snapshot` 须且仅含 `imperial_authority_band`、`appointment_tenure`、`authorization_ids`、`endorsement_entry_ids`。前三类字符串值不得混入数字；阻力数值字段均非法。合法 typed 数值/布尔位仅包括正整数 `dossier_id`、正整数 `endorsement_entry_ids`（拒绝 bool/float/数字串），以及 bool `midzhi_unpromulgatable`。

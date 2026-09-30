@@ -808,9 +808,7 @@ def test_month_chain_lands_specialized_facts_before_due_and_gazette(game, monkey
             }],
             "covert_exec_selections": [{"order_id": order_id, "fidelity": "忠实"}],
             "dossier_progress_reports": reports,
-            "dossier_reconciliations": [{
-                "dossier_id": grant_id, "arrived_amount": 100, "note": "实抵已到",
-            }],
+            # #1900：沿途损耗归引擎，对账不再由声明提案驱动，故此处不带对账提案。
             "faction_denunciations": [{
                 "accuser_name": accuser,
                 "target_dossier_id": dossier_id,
@@ -841,7 +839,10 @@ def test_month_chain_lands_specialized_facts_before_due_and_gazette(game, monkey
         for item in db.list_dossier_progress(dossier_id)
     )
     recon = db.list_dossier_reconciliations(grant_id)[-1]
-    assert recon["note"] == "实抵已到"
+    from ming_sim.db import grant_arrival_bounds
+    lo, hi = grant_arrival_bounds(int(recon["ordered_amount"]), escorted=False)
+    assert recon["arrived_amount"] == (lo + hi) // 2
+    assert recon["loss_amount"] == int(recon["ordered_amount"]) - recon["arrived_amount"]
     assert recon["turn"] == int(state.turn)
     denunciations = db.list_faction_denunciations(
         turn=int(state.turn), target_dossier_id=dossier_id,

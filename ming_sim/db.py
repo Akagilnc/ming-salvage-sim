@@ -857,19 +857,6 @@ def grant_arrival_bounds(ordered_amount: int, *, escorted: bool) -> Tuple[int, i
     return (lo, hi)
 
 
-def clamp_grant_arrival_amount(
-    ordered_amount: int, proposed_arrived: int, *, escorted: bool,
-) -> int:
-    """P2：软判提案 → 代码只 clamp 到护行口径界内。
-
-    提案须已由调用方解析为 int；非法量字段在 record 侧逐项拒收，不入本函数。
-    合法无提案中位默认仅经 record_monthly_grant_reconciliations 内联路径。
-    """
-    lo, hi = grant_arrival_bounds(int(ordered_amount), escorted=escorted)
-    proposed = int(proposed_arrived)
-    return max(lo, min(hi, proposed))
-
-
 class GameDB:
     def __init__(self, path: str, content: Optional[GameContent] = None, llm_config: Any = None):
         self.path = path
@@ -12359,34 +12346,23 @@ class GameDB:
         return snapshots
 
     def record_monthly_grant_reconciliations(
-        self, turn: int, generated: object = None, *,
-        rejection_collector=None,
-        source: object = None,
+        self, turn: int, *, commit: bool = False,
     ) -> List[Dict[str, object]]:
-        """月度节拍：逐路软判实抵 → clamp → 落被护侧对账记录。
+        """月度节拍：逐路由引擎按既有押解折损范围定实抵与损耗 → 落被护侧对账记录。
 
-        无提案时用护行口径中位（无护行亦可机械落账，供 S10 结案合并）。
+        #1900：沿途损耗归引擎（#1820 后出，取代 0054 的「LLM 软判实抵＋clamp」）。
+        本方法不再接任何提案——实抵取该路护行口径区间的中位，护行与否取逐路已落
+        实际护送（``_grant_escort_presence``），二者皆引擎定，代码无软判可 clamp。
         不写 0058 进展、不二次扣库、不改原 economy_move。
 
-        #1745 / ADR 0015-D6/D7：域级坏项逐项拒收；形状（非 list/非 dict 项）归
-        sanitize_delta_shape 独家，本方法不平行净化。好项与未提案目标的中位落账
-        仍在同一 atomic。拒收归属外层 RejectionCollector（flush/commit/mirror/
-        rollback 由 settle 编排所有者负责；本方法不自建 collector）。
+        分段过月会多次调本写入：已有本回合行的路不再覆盖（不拿后段中位盖前段实抵）。
         """
-        from ming_sim.applier import Provenance, RejectedItem
-
         targets = {
             int(item["dossier_id"]): item
             for item in self.list_monthly_grant_reconciliation_targets(int(turn))
         }
-        if generated is None:
-            generated = []
-        if not targets and generated in (None, []):
+        if not targets:
             return []
-
-        # source 走 collector 归一；None 取 typed 默认 unknown（0008-D5）。
-        if source is None:
-            source = Provenance.unknown
 
         def _reject(raw_item: object, reason: str, category: str) -> None:
             # 无外层归属不得无痕继续（0150-D2/D3；#1745 删自有 collector 旁路）。
@@ -12410,89 +12386,22 @@ class GameDB:
                 int(turn),
             )
 
-        # 形状净化归 sanitize_delta_shape 独家（0015-D6；#1745 删本段平行形状拒收）。
-        # 非 list / 非 dict 项此处跳过域逻辑；settle 后半段 sanitize→collector 一次拒收。
-        if not isinstance(generated, list):
-            generated = []
-
-        supplied: Dict[int, Tuple[object, str]] = {}
-        for item in generated:
-            if not isinstance(item, dict):
-                continue
-            try:
-                dossier_id = strict_int(item.get("dossier_id", 0))
-                if dossier_id <= 0:
-                    raise ValueError("not positive")
-            except (TypeError, ValueError):
-                _reject(item, "对账提案案卷编号无效", "invalid_enum")
-                continue
-            if dossier_id not in targets:
-                _reject(
-                    item,
-                    f"对账提案指向非在途拨帑案卷：{dossier_id}",
-                    "missing_ref",
-                )
-                continue
-            if dossier_id in supplied:
-                _reject(item, "对账提案存在重复案卷", "invalid_enum")
-                continue
-            has_arrived = "arrived_amount" in item
-            has_loss = "loss_amount" in item
-            if has_arrived and has_loss:
-                # DELTA_SCHEMA 二选一：两字段同在不猜优先，逐项拒收（0015-D4 不猜）
-                _reject(
-                    item,
-                    "对账提案 arrived_amount 与 loss_amount 须二选一",
-                    "invalid_enum",
-                )
-                continue
-            if has_arrived:
-                raw_amount = item.get("arrived_amount")
-                amount_label = "实抵"
-            elif has_loss:
-                raw_amount = item.get("loss_amount")
-                amount_label = "折损"
-            else:
-                _reject(item, "对账提案须含 arrived_amount 或 loss_amount", "missing_field")
-                continue
-            try:
-                amount = strict_int(raw_amount)
-            except (TypeError, ValueError):
-                _reject(item, f"对账{amount_label}值无效", "invalid_enum")
-                continue
-            if amount_label == "实抵":
-                proposed = amount
-            else:
-                proposed = int(targets[dossier_id]["ordered_amount"]) - amount
-            note = str(item.get("note") or "").strip()
-            supplied[dossier_id] = (proposed, note)
-
-        # 无在途目标：坏提案已逐项拒收，不落假对账行。
-        if not targets:
-            return []
-
         reports: List[Dict[str, object]] = []
         for dossier_id, target in targets.items():
             ordered = int(target["ordered_amount"])
             escorted = bool(target["escorted"])
-            if dossier_id in supplied:
-                proposed, note = supplied[dossier_id]
-                arrived = clamp_grant_arrival_amount(
-                    ordered, proposed, escorted=escorted,
-                )
-            else:
-                # 分段过月会多次调本写入。本次没有提案的路已有本回合行，不得用中位覆盖先前段落下的实抵。
-                existing = self.conn.execute(
-                    "SELECT 1 FROM decree_dossier_reconciliations "
-                    "WHERE dossier_id=? AND turn=?",
-                    (int(dossier_id), int(turn)),
-                ).fetchone()
-                if existing is not None:
-                    continue
-                lo, hi = grant_arrival_bounds(ordered, escorted=escorted)
-                arrived = (lo + hi) // 2
-                note = ""
+            # 分段过月会多次调本写入：已有本回合行的路不覆盖。
+            existing = self.conn.execute(
+                "SELECT 1 FROM decree_dossier_reconciliations "
+                "WHERE dossier_id=? AND turn=?",
+                (int(dossier_id), int(turn)),
+            ).fetchone()
+            if existing is not None:
+                continue
+            lo, hi = grant_arrival_bounds(ordered, escorted=escorted)
+            arrived = (lo + hi) // 2
             loss = ordered - arrived
+            note = ""
             source_id = target["escort_source_dossier_id"]
             relation = str(target["relation_type"] or "")
             self.conn.execute(
@@ -12519,6 +12428,8 @@ class GameDB:
             )
             history = self.list_dossier_reconciliations(int(dossier_id))
             reports.append(history[-1])
+        if commit:
+            self.conn.commit()
         return reports
 
     # ── #625 / ADR 0077 supervision fact bottom ─────────────────────────
@@ -14737,6 +14648,15 @@ class GameDB:
             (int(directive_id),),
         ).fetchall()
         return [self._dossier_row(r) for r in rows]
+
+    def is_secret_order_dossier(self, dossier_id: int) -> bool:
+        """案卷是否由密令立起（护行主体）。护送关联与护送实况的来源端只认这种案卷，
+        免得拿别的事务案卷充护行人。单一判据 = 案卷自身的 secret_order_id。"""
+        row = self.conn.execute(
+            "SELECT secret_order_id FROM decree_dossiers WHERE id=?",
+            (int(dossier_id),),
+        ).fetchone()
+        return row is not None and row["secret_order_id"] is not None
 
     def get_dossier_for_secret_order(self, secret_order_id: int) -> Optional[Dict[str, object]]:
         row = self.conn.execute(

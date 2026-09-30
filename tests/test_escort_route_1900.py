@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import pytest
 
-from ming_sim.applier import Provenance, RejectionCollector
+from ming_sim.applier import Provenance
 from ming_sim.db import GameDB, grant_arrival_bounds
 from ming_sim.declaration_dispatch import dispatch_declaration
 from tests.dossier_test_helpers import create_test_secret_order
@@ -64,13 +64,24 @@ def _declare(db, state, declaration):
     )
 
 
-def _record_monthly(db, turn, generated=None):
-    collector = RejectionCollector()
-    rows = db.record_monthly_grant_reconciliations(
-        turn, generated or [], rejection_collector=collector,
-        source=Provenance.player_decree,
-    )
-    collector.flush_to_db(db)
+def _catalog(db):
+    """转译真拿到的权威目标目录：escort_dossier 行的首个 id 即护行密令案卷 id，
+    dossier 行的首个 id 即在途拨帑案卷 id。测试据此取 id，不手填。"""
+    from ming_sim.audience_translate import build_translation_target_grounding
+
+    escort_dossiers, grants = [], []
+    for line in build_translation_target_grounding(db).splitlines():
+        parts = line.split("\t")
+        if parts[0] == "escort_dossier":
+            escort_dossiers.append(int(parts[1]))
+        elif parts[0] == "dossier":
+            grants.append(int(parts[1]))
+    return escort_dossiers, grants
+
+
+def _record_monthly(db, turn):
+    """月度对账真入口：沿途损耗归引擎，本口不接提案。"""
+    rows = db.record_monthly_grant_reconciliations(turn)
     db.conn.commit()
     return rows
 
@@ -96,21 +107,33 @@ def test_declaration_lands_escort_link_and_forbids_reverse_direction(game):
     }]
     assert db.list_dossier_links(grant, direction="incoming")[0]["source_dossier_id"] == escort_dossier
 
-    # 反向（新指旧纪律）与坏类型逐项拒收，不牵连已落的合法项
+    # 坏类型／幻影案卷逐项拒收，不牵连已落的合法项
     bad = _declare(db, state, {"escort_links": [
-        {"escort_source_dossier_id": grant, "target_dossier_id": escort_dossier,
-         "relation_type": "护卫", "note": "倒指"},
         {"escort_source_dossier_id": escort_dossier, "target_dossier_id": grant,
          "relation_type": "接应", "note": "非护送口径"},
         {"escort_source_dossier_id": escort_dossier, "target_dossier_id": 999999,
          "relation_type": "护卫", "note": "幻影案卷"},
+        {"escort_source_dossier_id": grant, "target_dossier_id": escort_dossier,
+         "relation_type": "护卫", "note": "拿拨帑案卷当护行人"},
     ]})
     assert [r.reason for r in bad.escort_links.rejected] == [
-        "案卷关联只允许新案卷指向旧案卷",
         "护送关联类型须为 护卫／稽核：接应",
-        "护送关联须含已存在的两端案卷 id",
+        "护送关联须含已存在的护行密令案卷与被护拨帑案卷 id",
+        "护送关联须含已存在的护行密令案卷与被护拨帑案卷 id",
     ]
     assert len(db.list_dossier_links(escort_dossier)) == 1
+    assert db.list_dossier_links(grant) == []
+
+    # 0054 单向新指旧仍由写口本身把守（旧案卷指新案卷整批拒收并留痕）
+    with pytest.raises(ValueError, match="案卷关联只允许新案卷指向旧案卷"):
+        db.add_dossier_links(grant, [{
+            "target_dossier_id": escort_dossier, "relation_type": "护卫", "note": "倒指",
+        }])
+    assert [link["source_dossier_id"] for link in
+            db.list_dossier_links(grant, direction="incoming")] == [escort_dossier]
+    assert [r["reason"] for r in db.list_dossier_link_rejections(grant)] == [
+        "案卷关联只允许新案卷指向旧案卷",
+    ]
 
 
 def test_link_alone_is_not_escort(game):
@@ -282,6 +305,110 @@ def test_escort_result_requires_real_boolean(game, bad):
     assert result.escort_results.applied == []
     assert [r.category for r in result.escort_results.rejected] == ["invalid_shape"]
     assert db.list_dossier_escort_outcomes(grant) == []
+
+
+def test_ids_come_from_real_catalog_and_land_through_dispatch(game):
+    """真实入口：id 取自权威目标目录（不是手填），经分派落库并影响在途实抵。"""
+    db, state, _content = game
+    grant = _in_transit_grant(db, state)
+    _order_id, _dossier = _escort_order(db, state)
+
+    escort_dossiers, grants = _catalog(db)
+    assert grant in grants, "在途拨帑案卷须在目录里，否则转译无从指向"
+    assert _dossier in escort_dossiers, "护行密令案卷须在目录里（区别于 secret_order id）"
+    # 护行主体行的第二个数是 secret_orders.id，与案卷 id 不是同一个值
+    from ming_sim.audience_translate import build_translation_target_grounding
+    row = next(l for l in build_translation_target_grounding(db).splitlines()
+               if l.startswith("escort_dossier") and l.split("\t")[1] == str(_dossier))
+    assert int(row.split("\t")[2]) != _dossier
+
+    result = _declare(db, state, {
+        "escort_links": [{
+            "escort_source_dossier_id": escort_dossiers[0],
+            "target_dossier_id": grants[0],
+            "relation_type": "护卫", "note": "沿路护送该笔拨帑",
+        }],
+        "escort_results": [{
+            "dossier_id": grants[0],
+            "escort_source_dossier_id": escort_dossiers[0],
+            "escorted": True, "note": "此路此趟实有护送",
+        }],
+    })
+    assert result.escort_links.rejected == [] and result.escort_results.rejected == []
+    assert db.list_dossier_links(escort_dossiers[0])[0]["target_dossier_id"] == grant
+    _record_monthly(db, state.turn)
+    lo, hi = grant_arrival_bounds(ORDERED, escorted=True)
+    row = db.list_dossier_reconciliations(grant)[-1]
+    assert row["escorted"] is True
+    assert lo <= row["arrived_amount"] <= hi
+
+
+def test_non_secret_order_dossier_cannot_be_escort_source(game):
+    """护行主体必须是密令案卷：拿别的事务案卷充护行人逐项拒收。"""
+    db, state, _content = game
+    grant = _in_transit_grant(db, state)
+    stranger = _in_transit_grant(db, state, text="另一笔在途", target_id="liaodong")
+    assert not db.is_secret_order_dossier(grant)
+    result = _declare(db, state, {
+        "escort_links": [{
+            "escort_source_dossier_id": grant, "target_dossier_id": stranger,
+            "relation_type": "护卫", "note": "拿拨帑案卷充护行人",
+        }],
+        "escort_results": [{
+            "dossier_id": stranger, "escort_source_dossier_id": grant,
+            "escorted": True, "note": "无关联",
+        }],
+    })
+    assert result.escort_links.applied == [] and result.escort_results.applied == []
+    assert [r.category for r in result.escort_links.rejected] == ["hallucinated_id"]
+    assert [r.category for r in result.escort_results.rejected] == ["hallucinated_id"]
+    assert db.list_dossier_links(grant) == []
+
+
+def test_cross_month_route_reads_own_turn_only(game):
+    """跨月口径：上月报的护送实况不替本月顶账；本月无实况即按无护对账。"""
+    db, state, _content = game
+    grant = _in_transit_grant(db, state)
+    _order_id, escort_dossier = _escort_order(db, state)
+    _declare(db, state, {
+        "escort_links": [{
+            "escort_source_dossier_id": escort_dossier, "target_dossier_id": grant,
+            "relation_type": "护卫", "note": "沿路护送",
+        }],
+        "escort_results": [{
+            "dossier_id": grant, "escort_source_dossier_id": escort_dossier,
+            "escorted": True, "note": "首月实有护送",
+        }],
+    })
+    first = state.turn
+    _record_monthly(db, first)
+    first_row = db.list_dossier_reconciliations(grant)[-1]
+    escort_lo, escort_hi = grant_arrival_bounds(ORDERED, escorted=True)
+    assert first_row["escorted"] is True
+    assert escort_lo <= first_row["arrived_amount"] <= escort_hi
+
+    # 次月世界段未报该路 → 该月无实况，按无护口径（不拿上月顶账）
+    state.turn = first + 1
+    _record_monthly(db, state.turn)
+    second_row = db.list_dossier_reconciliations(grant)[-1]
+    bare_lo, bare_hi = grant_arrival_bounds(ORDERED, escorted=False)
+    assert second_row["turn"] == first + 1
+    assert second_row["escorted"] is False
+    assert bare_lo <= second_row["arrived_amount"] <= bare_hi
+    # 逐路历史两行都在，重开无损
+    assert len(db.list_dossier_escort_outcomes(grant)) == 1
+
+    # 次月补报 → 该月按有护对账，两月各读各的
+    state.turn = first + 2
+    _declare(db, state, {"escort_results": [{
+        "dossier_id": grant, "escort_source_dossier_id": escort_dossier,
+        "escorted": True, "note": "第三月又有护送",
+    }]})
+    _record_monthly(db, state.turn)
+    third_row = db.list_dossier_reconciliations(grant)[-1]
+    assert third_row["escorted"] is True
+    assert escort_lo <= third_row["arrived_amount"] <= escort_hi
+    assert [r["turn"] for r in db.list_dossier_escort_outcomes(grant)] == [first, first + 2]
 
 
 def test_escort_outcome_is_per_turn_not_cumulative(game):
