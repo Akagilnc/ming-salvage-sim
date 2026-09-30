@@ -16819,13 +16819,12 @@ class GameDB:
         if isinstance(ongoing, dict) and ongoing:
             ni["ongoing_effects"] = ongoing
         # #620 扩展面：分段里程碑（#520 本体字段语义不动）
-        from ming_sim.staged_commitment import capture_commitment_stages
-        stages_norm = capture_commitment_stages(
+        from ming_sim.staged_commitment import stages_to_json
+        # 分段承诺是机械事实，只认显式结构化 stages：非 JSON 散文串响亮 ValueError。
+        # 引擎不再从已归一正文（stage_text）里正则抠年份（ADR 0142 / 御批 2026-09-30）。
+        stages_norm = json.loads(stages_to_json(
             payload.get("stages") or payload.get("stages_json"),
-            # #1565：叙事只取已归一正文（text/decree_text），不把题名当任务叙事。
-            narrative_text=stage_text,
-            origin_turn=int(getattr(state, "turn", 0) or 0),
-        )
+        ))
         if stages_norm:
             ni["stages"] = stages_norm
             if not commitment_kind:

@@ -5097,14 +5097,15 @@ def apply_issue_tracker_output(
                         + ", ".join(unsupported_ongoing_fields)
                     )
                 from ming_sim.staged_commitment import (
-                    capture_commitment_stages,
                     stages_source_from_issue_item,
+                    stages_to_json,
                 )
-                stages_for_commitment = capture_commitment_stages(
+                # 分段承诺只认显式结构化 stages：走库层严格串行面，非 JSON 散文串
+                # 响亮 ValueError（由本段既有 except 收成 durable 拒收）。引擎不再
+                # 从 stage_text/title 的散文里正则抠年份（ADR 0142 / 御批 2026-09-30）。
+                stages_for_commitment = json.loads(stages_to_json(
                     stages_source_from_issue_item(ni),
-                    narrative_text=str(ni.get("stage_text") or ni.get("title") or ""),
-                    origin_turn=int(state.turn),
-                )
+                ))
                 has_stages = bool(stages_for_commitment)
                 if not ongoing_has_work and end_turn_for_commitment <= 0 and not has_stages:
                     raise ValueError("ongoing_effects、end_turn 或 stages 至少一项必填")
@@ -5269,15 +5270,11 @@ def apply_issue_tracker_output(
                 })
                 continue
         from ming_sim.staged_commitment import (
-            capture_commitment_stages,
             stages_source_from_issue_item,
+            stages_to_json,
         )
         stages_norm = (
-            capture_commitment_stages(
-                stages_source_from_issue_item(ni),
-                narrative_text=str(ni.get("stage_text") or ni.get("title") or ""),
-                origin_turn=int(state.turn),
-            )
+            json.loads(stages_to_json(stages_source_from_issue_item(ni)))
             if is_commitment
             else []
         )

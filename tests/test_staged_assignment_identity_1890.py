@@ -22,32 +22,27 @@ import json
 import pytest
 
 from ming_sim.declaration_dispatch import dispatch_declaration
-from tests.conftest import open_hall_turn
+from ming_sim.issues import apply_score_extraction
+from ming_sim.staged_commitment import normalize_commitment_stages
+from tests.conftest import active_ming_character, open_hall_turn
 from tests.dossier_test_helpers import TYPED_COVERT_TASK
 
 
-def _minister(db) -> str:
-    row = db.conn.execute(
-        "SELECT name FROM characters WHERE status='active' ORDER BY name LIMIT 1"
-    ).fetchone()
-    assert row is not None
-    return str(row["name"])
-
-
 def _pacification_target(db) -> str:
-    """从库里取一个真合格的内乱首领（敌对/潜伏、power.leader 指名）。
+    """取一个生产准入自己认的合格内乱首领名。
 
-    招抚准入很挑（_find_pacification_target），所以按库里的实际合格条件找，
-    不硬编一个名字——内容数据一改名字就废。
+    招抚准入很挑（``_find_pacification_target``：敌对/潜伏、power.leader 指名）。
+    这里**不复制那份准入规则**到测试 SQL——同一规则两份实现，本身就是本票要删的
+    重复，且内容数据一变就会与生产悄悄走偏。改为按内容枚举候选名，逐个交给生产
+    判定函数问「你认不认」，测试与生产共用同一份真源。
     """
-    row = db.conn.execute(
-        "SELECT p.leader FROM powers p "
-        "JOIN characters c ON c.name = p.leader AND c.status='active' "
-        "WHERE p.kind='内乱' AND p.stance IN ('敌对','潜伏') AND c.power_id != 'ming' "
-        "ORDER BY p.leader LIMIT 1"
-    ).fetchone()
-    assert row is not None, "开局内容里没有可招抚的内乱首领"
-    return str(row["leader"])
+    for row in db.conn.execute(
+        "SELECT leader FROM powers WHERE kind='内乱' ORDER BY leader"
+    ).fetchall():
+        name = str(row["leader"] or "")
+        if name and db._find_pacification_target(db.content, name):
+            return name
+    raise AssertionError("开局内容里没有可招抚的内乱首领")
 
 
 def _payload(db, action_id: int) -> dict:
@@ -81,19 +76,12 @@ def _dispatch(db, state, declaration, *, minister, night_id, ctid):
     )
 
 
-def _stage_directive(db, state, minister: str, text: str, source_chat_turn_id: int) -> int:
-    return db.stage_pending_action(
-        int(state.turn), "directive", "拟旨", minister, {"text": text},
-        source_chat_turn_id=int(source_chat_turn_id),
-    )
-
-
 # ── 身份：来源轮随交办落库 ────────────────────────────────────────────
 
 
 def test_dispatch_stamps_source_turn_on_each_staged_assignment(game):
-    db, state, _ = game
-    minister = _minister(db)
+    db, state, content = game
+    minister = active_ming_character(db, content)
     night_id, ctid = open_hall_turn(db, state, minister)
     _finish_turn(db, state, minister, ctid, "卿以为如何办")
 
@@ -120,7 +108,7 @@ def test_pacification_commission_keeps_its_own_mode_and_gets_source_turn(game):
     ``pacification["mode"]``——载荷读错键不会静默通过。
     """
     db, state, content = game
-    minister = _minister(db)
+    minister = active_ming_character(db, content)
     night_id, ctid = open_hall_turn(db, state, minister)
     _finish_turn(db, state, minister, ctid, "招抚之事如何")
 
@@ -148,8 +136,8 @@ def test_pacification_commission_keeps_its_own_mode_and_gets_source_turn(game):
 
 def test_month_chain_staging_has_no_source_turn(game):
     """过月世界段没有对话轮：来源轮落 0，不伪挂到任何召对轮上。"""
-    db, state, _ = game
-    minister = _minister(db)
+    db, state, content = game
+    minister = active_ming_character(db, content)
 
     dispatch_declaration(
         db, state, {"commissions": [{"text": "劝饷输运"}]},
@@ -172,11 +160,15 @@ def test_undo_voids_this_turns_assignments_without_rollback_log(game):
     关键在于把本轮的 ``chat_turn_rollback_items`` 全删掉之后作废照样发生——
     证明判据是统一身份那一列，不是「回头去找哪句话写的」那条回溯链。
     """
-    db, state, _ = game
-    minister = _minister(db)
+    db, state, content = game
+    minister = active_ming_character(db, content)
     night_id, earlier_ctid = open_hall_turn(db, state, minister)
     _finish_turn(db, state, minister, earlier_ctid, "先议边饷")
-    earlier_action = _stage_directive(db, state, minister, "前轮交办", earlier_ctid)
+    earlier = _dispatch(
+        db, state, {"commissions": [{"text": "前轮交办"}]},
+        minister=minister, night_id=night_id, ctid=earlier_ctid,
+    )
+    earlier_action = int(earlier.commissions.applied[0]["id"])
 
     _, ctid = open_hall_turn(db, state, minister)
     _finish_turn(db, state, minister, ctid, "再办一件")
@@ -220,8 +212,8 @@ def test_undo_voids_this_turns_assignments_without_rollback_log(game):
 
 def test_voided_assignment_cannot_be_approved_after_retraction(game):
     """已撤回的交办不得再被应允（墓碑挡住迟到写入）。"""
-    db, state, _ = game
-    minister = _minister(db)
+    db, state, content = game
+    minister = active_ming_character(db, content)
     night_id, ctid = open_hall_turn(db, state, minister)
     _finish_turn(db, state, minister, ctid, "臣有一事请旨")
     result = _dispatch(
@@ -247,8 +239,8 @@ def test_revision_keeps_original_source_turn_and_undo_restores_it(game):
     ``target_candidate``）不把身份搬走，否则撤前轮会连带作废后来轮的修订。
     三读钉住行为：前像 → 改后（确实变了）→ 撤回后（回到前像、仍属前轮、仍生效）。
     """
-    db, state, _ = game
-    minister = _minister(db)
+    db, state, content = game
+    minister = active_ming_character(db, content)
     night_id, first_ctid = open_hall_turn(db, state, minister)
     _finish_turn(db, state, minister, first_ctid, "先议边饷")
     first = _dispatch(
@@ -306,8 +298,8 @@ def test_void_discards_that_directive_night_forecast(game):
     走真实撤回入口（不是直接调 void helper）：预推挂在交办身份下，
     预推生命周期归 #1816，但不同步作废就会在过月时借预推复活。
     """
-    db, state, _ = game
-    minister = _minister(db)
+    db, state, content = game
+    minister = active_ming_character(db, content)
     night_id, ctid = open_hall_turn(db, state, minister)
     _finish_turn(db, state, minister, ctid, "拟一道旨")
     _dispatch(
@@ -348,7 +340,7 @@ def test_declared_new_secret_order_lands_and_undo_removes_all_records(game):
     （ADR 0038 夜内直写），即玩家真实会走的那条路。
     """
     db, state, content = game
-    minister = _minister(db)
+    minister = active_ming_character(db, content)
     night_id, ctid = open_hall_turn(db, state, minister)
     _finish_turn(db, state, minister, ctid, "密议一事")
 
@@ -416,8 +408,8 @@ def test_failed_turn_cleanup_removes_this_turn_staged_assignment(game):
     失败/重试善后与撤回共用回滚核，但那不是撤回：作废是终态，会让可重试的
     轮永久出局。
     """
-    db, state, _ = game
-    minister = _minister(db)
+    db, state, content = game
+    minister = active_ming_character(db, content)
     night_id, ctid = open_hall_turn(db, state, minister)
     _finish_turn(db, state, minister, ctid, "试一件事")
     _dispatch(
@@ -444,8 +436,8 @@ def test_failed_turn_cleanup_removes_this_turn_staged_assignment(game):
 
 def test_retry_restore_removes_this_turn_staged_assignment(game):
     """重试再失败的善后同样删暂存，并把轮放回可再试的 interrupted。"""
-    db, state, _ = game
-    minister = _minister(db)
+    db, state, content = game
+    minister = active_ming_character(db, content)
     night_id, ctid = open_hall_turn(db, state, minister)
     _dispatch(
         db, state, {"commissions": [{"text": "本轮交办：会重试失败"}]},
@@ -481,7 +473,7 @@ def test_retry_restore_removes_this_turn_staged_assignment(game):
 def test_undo_all_or_nothing_when_void_step_raises(game, monkeypatch):
     """在 void 步注入故障：作废与前像还原必须整体回滚，不留半撤回态。"""
     db, state, content = game
-    minister = _minister(db)
+    minister = active_ming_character(db, content)
     night_id, ctid = open_hall_turn(db, state, minister)
     _finish_turn(db, state, minister, ctid, "试撤回")
     _dispatch(
@@ -528,14 +520,12 @@ def test_undo_all_or_nothing_when_void_step_raises(game, monkeypatch):
     ).fetchone()["status"] == "undone"
 
 
-def test_undo_still_works_after_reopen(game, tmp_path):
+def test_undo_still_works_after_reopen(game):
     """关档重开后仍可撤回：判据是落库的列，不是内存态。"""
-    import shutil
-
     from ming_sim.db import GameDB
 
     db, state, content = game
-    night_id, ctid = open_hall_turn(db, state, minister := _minister(db))
+    night_id, ctid = open_hall_turn(db, state, minister := active_ming_character(db, content))
     _finish_turn(db, state, minister, ctid, "关档前之议")
     result = _dispatch(
         db, state, {"commissions": [{"text": "关档前的交办"}]},
@@ -543,17 +533,17 @@ def test_undo_still_works_after_reopen(game, tmp_path):
     )
     staged_id = int(result.commissions.applied[0]["id"])
 
-    # 关档：把已落库的库复制成独立存档，再关连接。
-    live = tmp_path / "reopen1890.db"
-    shutil.copyfile(_fixture_db_path(db), live)
+    # 关档：关旧句柄，按同 path 重开（game 夹具给的库本身就是独立存档文件）。
+    path = db.path
     db.close()
 
-    db2 = GameDB(str(live), content)
+    db2 = GameDB(path, content)
     try:
         state2 = db2.load_state()
         db2.undo_chat_turn(ctid)
         assert db2.conn.execute(
-            "SELECT status FROM pending_actions WHERE id=?", (staged_id,),
+            "SELECT status FROM pending_actions WHERE id=?",
+            (staged_id,),
         ).fetchone()["status"] == "voided"
         assert db2.conn.execute(
             "SELECT status FROM chat_turns WHERE id=?", (ctid,),
@@ -561,14 +551,6 @@ def test_undo_still_works_after_reopen(game, tmp_path):
         assert state2.turn == state.turn
     finally:
         db2.close()
-
-
-def _fixture_db_path(db) -> str:
-    for r in db.conn.execute("PRAGMA database_list").fetchall():
-        if r[1] == "main" and r[2]:
-            return str(r[2])
-    raise AssertionError("no file-backed main database")
-
 
 def test_undo_deletes_only_this_turns_committed_draft_directive(game):
     """本轮 commit 出来的拟旨 draft 行随撤回消失，同回合别人的 draft 留着。
@@ -578,7 +560,7 @@ def test_undo_deletes_only_this_turns_committed_draft_directive(game):
     本轮自产的那几条——旧实现按 (turn, actor) 删会误伤同 actor 的无关 draft。
     """
     db, state, content = game
-    minister = _minister(db)
+    minister = active_ming_character(db, content)
     night_id, ctid = open_hall_turn(db, state, minister)
     _finish_turn(db, state, minister, ctid, "拟一道旨")
 
@@ -619,6 +601,24 @@ def test_undo_deletes_only_this_turns_committed_draft_directive(game):
     ).fetchone()["status"] == "draft"
 
 
+def _promulgated_policy_origin(db, state, *, token: str) -> str:
+    """已颁布案卷的 origin_ref（``new_issues`` 承诺项须有合法 decree 来源）。
+
+    案卷只用作来源锚，本组用例不依赖它的执行面，故只颁布不推进。
+    """
+    dossier_id = db.create_decree_dossier(
+        state,
+        action_type="policy",
+        decree_text=f"分段承诺：{token}",
+        target_kind="issue",
+        target_id=token,
+        payload={"token": token},
+    )
+    assert dossier_id > 0
+    db.record_dossier_decision(dossier_id, "promulgated")
+    return f"dossier:{dossier_id}"
+
+
 # ── ADR 0142：交办机械事实不从自由散文反推 ────────────────────────────
 
 
@@ -627,8 +627,8 @@ def test_assignment_prose_year_promise_does_not_become_commitment_stages(game):
 
     分段承诺是机械事实（到期判账），只认显式结构化 ``stages`` 字段。
     """
-    db, state, _ = game
-    minister = _minister(db)
+    db, state, content = game
+    minister = active_ming_character(db, content)
     night_id, ctid = open_hall_turn(db, state, minister)
     _finish_turn(db, state, minister, ctid, "清丈之事")
 
@@ -657,8 +657,8 @@ def test_assignment_stages_prose_string_is_rejected_not_parsed(game):
     旧实现对它跑中文数词正则，落出两段带 due_turn 的承诺——机械事实来自散文。
     现在只承接显式结构化：JSON 数组串或已结构化列表。
     """
-    db, state, _ = game
-    minister = _minister(db)
+    db, state, content = game
+    minister = active_ming_character(db, content)
     night_id, ctid = open_hall_turn(db, state, minister)
     _finish_turn(db, state, minister, ctid, "修渠之事")
 
@@ -688,8 +688,8 @@ def test_assignment_stages_prose_string_is_rejected_not_parsed(game):
 
 def test_assignment_structured_stages_json_still_lands_commitment(game):
     """显式结构化 stages（JSON 数组串）照常落段——修的不是能力，是散文入口。"""
-    db, state, _ = game
-    minister = _minister(db)
+    db, state, content = game
+    minister = active_ming_character(db, content)
     night_id, ctid = open_hall_turn(db, state, minister)
     _finish_turn(db, state, minister, ctid, "修渠之事")
 
@@ -713,3 +713,69 @@ def test_assignment_structured_stages_json_still_lands_commitment(game):
     payload = _payload(db, int(result.commissions.applied[0]["id"]))
     assert [s["due_turn"] for s in payload["stages"]] == [46, 70]
     assert payload["commitment_kind"] == "until_stop"
+
+
+def test_new_issues_prose_year_promise_does_not_become_commitment_stages(game):
+    """邸报 / ``new_issues`` 接缝同样不从散文反推年诺（ADR 0142 全仓口径）。
+
+    上一案只钉交办接缝；本票把散文捕获从整条链上删净，这条钉住另一端：
+    真实 ``apply_score_extraction`` 收到只有「三年/五年」正文、没有任何结构化
+    期限的承诺项时，不得凭空把它当成机械事实。判据取既有契约口：承诺项至少要
+    有 ongoing_effects 月度动作 / end_turn / stages 之一——散文年诺不算数，故该项
+    落 durable 拒收，而不是被反推出两段带 ``due_turn`` 的段表蒙混过关。
+    结构化 ``stages`` 仍照常落（见 ``test_new_issues_structured_stages_still_land``）。
+    """
+    db, state, content = game
+    origin_ref = _promulgated_policy_origin(db, state, token="prose-1890")
+
+    out = apply_score_extraction(
+        db, state,
+        {"new_issues": [{
+            "origin_kind": "decree",
+            "origin_ref": origin_ref,
+            "kind": "initiative",
+            "title": "徐光启分段之诺",
+            "stage_text": "三年火器见眉目，五年新历成。",
+            "commitment_kind": "until_stop",
+        }]},
+        content=content,
+    )
+
+    created = out["issue_summary"]["new_issues"][0]
+    assert created.get("rejected") is True, created
+    assert "至少一项必填" in str(created.get("reason"))
+    # 库层没有因此长出承诺行（更没有带 due_turn 的段表）。
+    assert db.conn.execute(
+        "SELECT COUNT(*) c FROM issues WHERE origin_ref=?", (origin_ref,),
+    ).fetchone()["c"] == 0
+
+
+def test_new_issues_structured_stages_still_land(game):
+    """同一入口下显式结构化 ``stages`` 照常落段——删的是散文入口，不是能力。"""
+    db, state, content = game
+    origin_ref = _promulgated_policy_origin(db, state, token="structured-1890")
+
+    out = apply_score_extraction(
+        db, state,
+        {"new_issues": [{
+            "origin_kind": "decree",
+            "origin_ref": origin_ref,
+            "kind": "initiative",
+            "title": "徐光启分段之诺",
+            "stage_text": "在办",
+            "commitment_kind": "until_stop",
+            "ongoing_effects": {"民心": 1},
+            "stages": [
+                {"stage_idx": 0, "due_turn": 46, "criterion_text": "火器见眉目"},
+                {"stage_idx": 1, "due_turn": 70, "criterion_text": "新历成"},
+            ],
+        }]},
+        content=content,
+    )
+
+    created = out["issue_summary"]["new_issues"][0]
+    assert created.get("rejected") is False, created
+    stages = normalize_commitment_stages(db.conn.execute(
+        "SELECT stages_json FROM issues WHERE id=?", (int(created["issue_id"]),),
+    ).fetchone()["stages_json"])
+    assert [s["due_turn"] for s in stages] == [46, 70]
