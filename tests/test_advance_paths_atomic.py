@@ -444,13 +444,10 @@ def test_skip_refused_at_front_half_done(game):
     FRONT_HALF_DONE 恢复/亲裁由 session.resolve_turn 真缝承担（settling 恢复 /
     awaiting 幂等返回决策），不再经独立退朝壳拒绝。
     """
-    import inspect
-
     import ming_sim.decree as decree_mod
     from ming_sim.decree import pre_settle
 
     assert not hasattr(decree_mod, "advance_without_edict")
-    assert "def advance_without_edict" not in inspect.getsource(decree_mod)
 
     db, state, content = game
     turn = state.turn

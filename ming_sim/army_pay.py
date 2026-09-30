@@ -458,15 +458,13 @@ def settle_hub_army_loyalty_tick(db: "GameDB", state: "GameState") -> None:
         old_mutiny_probation_val = int(lr["mutiny_probation"])
         old_is_mutinied_val = int(lr["is_mutinied"])
         new_arrears_loyalty = float(lr["arrears"] or 0)
-        # 防御：若 arrears 列滞后，以两源合计为准
-        try:
-            prov = float(lr["province_pay_arrears"] or 0)
-            cent = float(lr["central_pay_arrears"] or 0)
-            combined = prov + cent
-            if abs(combined - new_arrears_loyalty) > 1e-6:
-                new_arrears_loyalty = max(0.0, combined)
-        except Exception:
-            pass
+        # 若 arrears 列滞后，以两源合计为准。两源为持久账本列，腐值必须响亮失败
+        # 交外层事务回滚——不得静默沿用滞后 arrears 继续算军心。
+        prov = float(lr["province_pay_arrears"] or 0)
+        cent = float(lr["central_pay_arrears"] or 0)
+        combined = prov + cent
+        if abs(combined - new_arrears_loyalty) > 1e-6:
+            new_arrears_loyalty = max(0.0, combined)
         loyalty_delta_unified = army_loyalty_tick_delta(new_arrears_loyalty, full_needed_loyalty)
         new_loyalty_val = max(0, min(100, old_loyalty_val + loyalty_delta_unified))
         (

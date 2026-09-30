@@ -48,18 +48,12 @@ def test_hitl_quota_mechanism_fully_deleted():
     assert not hasattr(llm_config, "RUNTIME_GAME_PATH")
     assert not hasattr(simulation, "_load_hitl_min_decisions")
 
-    # payload 组装源不再含配额字段
-    src = inspect.getsource(simulation)
-    assert "hitl_min_decisions" not in src
-    assert "_load_hitl_min_decisions" not in src
-
     # API 面
     assert not hasattr(web_app, "GameSettingsRequest")
     assert not hasattr(web_app, "api_menu_game_settings")
     assert not hasattr(web_app, "api_menu_save_game_settings")
-    web_src = inspect.getsource(web_app)
-    assert "hitl_min_decisions" not in web_src
-    assert "/api/menu/game_settings" not in web_src
+    paths = {getattr(route, "path", None) for route in web_app.app.routes}
+    assert "/api/menu/game_settings" not in paths
 
     # UI 选择器与 game_settings 字段
     menu = (_REPO / "web/src/components/menuPage.tsx").read_text(encoding="utf-8")

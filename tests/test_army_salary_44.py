@@ -271,6 +271,37 @@ def test_auto_pay_strips_allowed_army_ids_before_filtering(game):
     assert row["arrears"] < 10
 
 
+def test_legacy_full_pay_grants_morale_bonus_unless_old_arrears_remain(game):
+    """#44 军饷物质后果（legacy 结算咽喉）：本月足额且无旧欠 → 士气 +2；
+    本月足额但旧欠仍在账 → 不加不减（旧欠只阻止足额无欠奖励）。经真实 tick 断言落库。"""
+    from ming_sim.flows import apply_fixed_period_flows
+
+    db, state, _ = game
+    _use_legacy_fiscal_engine(db)
+    aid = "guanning"
+    db.conn.execute("UPDATE armies SET manpower=0, arrears=0 WHERE owner_power='ming'")
+    db.conn.execute(
+        """UPDATE armies
+           SET owner_power='ming', manpower=10000, salary_rate=10.0,
+               arrears=0, morale=50
+           WHERE id=?""",
+        (aid,),
+    )
+    db.conn.commit()
+
+    state.metrics["国库"] = 10 ** 9
+    apply_fixed_period_flows(db, state)
+    assert _army_row(db, aid)["morale"] == 52, "足额无欠月应 +2"
+
+    db.conn.execute("UPDATE armies SET arrears=3, morale=50 WHERE id=?", (aid,))
+    db.conn.commit()
+    state.metrics["国库"] = 10 ** 9
+    apply_fixed_period_flows(db, state)
+    row = _army_row(db, aid)
+    assert row["morale"] == 50, "旧欠在账的足额月不得拿无欠奖励"
+    assert row["arrears"] == pytest.approx(3), "月固定军饷只发当月、不动旧欠"
+
+
 def test_legacy_salary_tick_preserves_fractional_opening_arrears(game):
     from ming_sim.flows import apply_fixed_period_flows
     db, state, _ = game

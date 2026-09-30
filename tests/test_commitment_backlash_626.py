@@ -12,7 +12,6 @@ Seams:
 
 from __future__ import annotations
 
-import inspect
 import json
 from pathlib import Path
 
@@ -755,25 +754,15 @@ def test_ac4_backlash_survives_restore_both_states(game, tmp_path, content):
 
 
 def test_ac5_hook_idempotent_no_gate_table_expansion(game):
-    """硬门挂邸报前既有挂点；幂等；调用侧无第二扫描；GATE_TABLES 不动。"""
+    """硬门经 pre_settle 真实跑只产一条、幂等；GATE_TABLES 不扩。"""
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.commit()
-
-    # 挂点：pre_settle 源码恰一处调用
-    src = inspect.getsource(pre_settle)
-    assert "trigger_commitment_backlashes" in src
-    assert src.count("trigger_commitment_backlashes") == 1
-    assert "trigger_supervision_countermeasures" in src  # 同格既有挂点
 
     # 不扩 GATE_TABLES
     assert GATE_TABLES == (
         "region", "army", "building", "power", "class", "faction", "character", "event",
     )
-    # 硬门实现不引用 trigger_gate 求值
-    gate_src = inspect.getsource(GameDB.trigger_commitment_backlashes)
-    assert "evaluate_trigger_gate" not in gate_src
-    assert "GATE_TABLES" not in gate_src
 
     did, holder = _executing_policy_dossier(db, state, token="idemp")
     bar = _seed_halfway(db, state, did=did)

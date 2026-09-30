@@ -9,10 +9,7 @@ import math
 
 import pytest
 
-from ming_sim.army_pay import (
-    _next_mutiny_latch,
-    derive_army_mutiny_state,
-)
+from ming_sim.army_pay import derive_army_mutiny_state
 from ming_sim.flows import apply_fixed_period_flows
 ARMY = "guanning"
 PATHS = ("legacy", "substrate_hub")
@@ -149,11 +146,34 @@ def test_exempt_armies_preserve_mutiny_latch(
     assert _tick(db, state)[1] == latched, exemption
 
 
-def test_mutiny_latch_uses_strict_four_month_arrears_boundary():
+@pytest.mark.parametrize("fiscal_path", PATHS)
+def test_mutiny_latch_enters_only_beyond_four_months_arrears(game, fiscal_path):
+    """入闩侧：欠饷恰好四月不入闩，逾四月即入闩——经真实 tick 落库断言。"""
+    db, state, _ = game
     four_months = 4.0
-    over_four_months = math.nextafter(four_months, math.inf)
 
-    assert _next_mutiny_latch(loyalty=19, arrears=four_months, needed=1, current=0) == 0
-    assert _next_mutiny_latch(loyalty=19, arrears=over_four_months, needed=1, current=0) == 1
-    assert _next_mutiny_latch(loyalty=40, arrears=four_months, needed=1, current=1) == 0
-    assert _next_mutiny_latch(loyalty=40, arrears=over_four_months, needed=1, current=1) == 1
+    _setup(db, fiscal_path, loyalty=19, arrears=four_months, latched=0)
+    assert _tick(db, state)[1] == 0
+
+    _set_arrears(db, fiscal_path, math.nextafter(four_months, math.inf))
+    assert _tick(db, state)[1] == 1
+
+
+@pytest.mark.parametrize("fiscal_path", PATHS)
+def test_mutiny_latch_exits_only_within_four_months_arrears(game, fiscal_path):
+    """解闩侧：欠饷退到四月内即解闩，逾四月仍闩——经真实 tick 落库断言。"""
+    db, state, _ = game
+    four_months = 4.0
+
+    _setup(db, fiscal_path, loyalty=45, arrears=four_months, latched=1)
+    assert _tick(db, state)[1] == 0
+
+
+@pytest.mark.parametrize("fiscal_path", PATHS)
+def test_mutiny_latch_holds_beyond_four_months_arrears(game, fiscal_path):
+    """解闩侧负例：已闩军欠饷逾四月，即便 loyalty 回到 40 也不解闩。"""
+    db, state, _ = game
+    four_months = 4.0
+
+    _setup(db, fiscal_path, loyalty=45, arrears=math.nextafter(four_months, math.inf), latched=1)
+    assert _tick(db, state)[1] == 1

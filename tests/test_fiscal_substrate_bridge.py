@@ -2466,15 +2466,6 @@ def test_tusi_self_funded_army_skips_pay_morale_channel(fresh_db):
     assert row["morale"] == 80
 
 
-def test_army_pay_morale_formula_clamps_shortfall_and_old_arrears_gate():
-    from ming_sim.army_pay import army_pay_morale_delta
-
-    assert army_pay_morale_delta(0, 5, 0) == 0
-    assert army_pay_morale_delta(10, 12, 0) == -8
-    assert army_pay_morale_delta(10, 0, 0) == 2
-    assert army_pay_morale_delta(10, 0, 3) == 0
-
-
 def test_fixed_flows_cutover_uses_total_source_shortfall_for_mixed_army_morale(fresh_game):
     import ming_sim.flows as flows_mod
 

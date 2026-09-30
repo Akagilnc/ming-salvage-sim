@@ -190,23 +190,6 @@ def test_fork_predicate_pure_and_single_source_expression():
         reported_bands=[], beyond_intent=True, execution_outcome="transformed",
     ) is False
 
-    # 结构断言：fork 判据表达式全库仅一处（supervision.py）
-    needle = 'outcome not in {"", "fulfilled", "executing"}'
-    hits: list[Path] = []
-    for path in (_REPO / "ming_sim").rglob("*.py"):
-        text = path.read_text(encoding="utf-8")
-        if needle in text:
-            hits.append(path.relative_to(_REPO))
-    assert hits == [Path("ming_sim/supervision.py")], hits
-
-    src = (_REPO / "ming_sim" / "supervision.py").read_text(encoding="utf-8")
-    tree = ast.parse(src)
-    defs = [
-        n.name for n in tree.body
-        if isinstance(n, ast.FunctionDef) and n.name == "is_reported_actual_fork"
-    ]
-    assert defs == ["is_reported_actual_fork"]
-
 
 def test_veracity_derivation_mechanical_and_origin_marks():
     """真伪底派生：分叉→真；无分叉→私货；origin 单源 mark。"""

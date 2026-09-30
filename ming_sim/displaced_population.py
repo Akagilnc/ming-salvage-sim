@@ -135,10 +135,9 @@ def _recovery_effective_silver_wan(db: GameDB, dossier_id: int, turn: int) -> in
         return max(0, sum(arrived_this_turn))
     paid = 0
     for move in db.list_economy_moves_for_dossier(int(dossier_id)):
-        try:
-            delta = int(move.get("delta") or 0)
-        except (TypeError, ValueError):
-            continue
+        # economy_ledger.delta 是持久账本列，腐值必须响亮失败交外层事务回滚——
+        # 静默跳过会把实付证据算少、凭空缩掉回流人口转移。
+        delta = int(move.get("delta") or 0)
         if delta < 0:
             paid += -delta
     return max(0, paid)
@@ -178,10 +177,14 @@ def apply_recovery_driven_transfers(
         dossier_id = int(row["id"])
         if (dossier_id, turn) in seen_keys:
             continue
+        # payload_json 是引擎自己写的持久列，解析失败＝账本腐值，必须响亮失败
+        # 交外层事务回滚；静默 continue 会让这案赈济回流无声消失。
         try:
             payload = json.loads(str(row["payload_json"] or "{}"))
-        except (TypeError, ValueError):
-            continue
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"dossier {dossier_id}.payload_json 持久 JSON 损坏，无法结算回流"
+            ) from exc
         if not isinstance(payload, dict):
             continue
         grant_action = str(payload.get("grant_action") or "").strip()

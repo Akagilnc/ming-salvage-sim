@@ -127,10 +127,9 @@ def _commitment_bar_value(progress: Dict[str, object]) -> Optional[int]:
     if "remaining_arrears" not in progress:
         return None
     paid = max(0, int(progress.get("paid_total") or 0))
-    try:
-        remaining = max(0.0, float(progress.get("remaining_arrears") or 0))
-    except (TypeError, ValueError):
-        remaining = 0.0
+    # remaining_arrears 由 commitment_progress_payload 从持久账本派生，非自由文本；
+    # 腐值响亮失败，不得静默当作「零欠」把履约进度顶到 100。
+    remaining = max(0.0, float(progress.get("remaining_arrears") or 0))
     total = paid + remaining
     if total <= 0:
         return 100

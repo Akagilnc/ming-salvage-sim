@@ -476,7 +476,6 @@ def test_write_turn_still_blocks_on_open_barrier():
 def test_no_elapsed_timeout_api_on_barrier():
     """队列层已删 elapsed 熔断分类：barrier/wait_prior/run 无 timeout_s 形参。"""
     import inspect
-    from pathlib import Path
 
     import ming_sim.session_write_queue as swq
 
@@ -485,9 +484,6 @@ def test_no_elapsed_timeout_api_on_barrier():
     assert "timeout_s" not in inspect.signature(q.wait_prior).parameters
     assert "timeout_s" not in inspect.signature(q.run).parameters
     assert "timeout_s" not in inspect.signature(q.ticketed_gate).parameters
-    text = Path(swq.__file__).read_text(encoding="utf-8")
-    assert "TicketBarrierTimeout" not in text
-    assert "DEFAULT_TICKET_WAIT_S" not in text
     assert not hasattr(swq, "TicketBarrierTimeout")
 
 

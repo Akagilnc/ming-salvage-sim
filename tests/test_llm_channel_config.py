@@ -817,17 +817,10 @@ def test_cli_supports_reasoning_strength_matrix(runner, expected):
 
 
 def test_cli_reasoning_strength_runners_single_source_in_cli_backend():
-    """#1271：能力名单单源在 cli_backend（与 effort/thinking 表同缝），禁第二处手写。"""
+    """#1271：能力名单单源在 cli_backend（与 effort/thinking 表同缝）。"""
     from ming_sim.cli_backend import CLI_REASONING_STRENGTH_RUNNERS
 
     assert CLI_REASONING_STRENGTH_RUNNERS == frozenset({"codex", "claude", "grok", "pi"})
-    # 谓词委派同一 frozenset，不是 llm_config 内另写字面量集合
-    from ming_sim.llm_config import cli_supports_reasoning_strength
-    import inspect
-
-    src = inspect.getsource(cli_supports_reasoning_strength)
-    assert "CLI_REASONING_STRENGTH_RUNNERS" in src
-    assert '{"codex"' not in src and "{'codex'" not in src
 
 
 
