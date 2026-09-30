@@ -9,17 +9,17 @@
 - 密令：声明新建的密令走真实分派入口落暂存并应允成案，撤回后密令本体与
   briefs 一并消失。
 - 失败善后：失败/重试轮走同一回滚核但不是撤回——那里的暂存必须删掉，轮才可再试。
-- 承诺段：正文里的年诺不再被正则反推成分段承诺（ADR 0142）。
+- 承诺段：正文里的年诺不再被正则反推成分段承诺（ADR 0142）——判据取完整交办
+  链顺颁后 ``issues`` 那行的最终落库结构，不停在暂存 payload。
 
 墓碑内部形状（voided 行、source_chat_turn_id 列）只在与真实行为同一断言里
-顺带核，不另立只测内部形状的用例。
+顺带核，不另立只测内部形状的用例。撤回事务的原子性与 kill+重开仍可撤两面由
+``tests/test_audience_undo_506.py`` 在同一接缝上证明，本文件不另建平行证明。
 """
 
 from __future__ import annotations
 
 import json
-
-import pytest
 
 from ming_sim.declaration_dispatch import dispatch_declaration
 from ming_sim.issues import apply_score_extraction
@@ -467,90 +467,12 @@ def test_retry_restore_removes_this_turn_staged_assignment(game):
     ).fetchone()["status"] == "interrupted"
 
 
-# ── 撤回的原子性与重开可撤 ────────────────────────────────────────────
+# ── 撤回收口：只删本轮自产的 committed draft，同回合别人的留着 ────────────
+#
+# 撤回的原子性（void 写入后崩溃整体回滚）与 kill+重开仍可撤这两面，已由
+# tests/test_audience_undo_506.py 在同一 ``undo_chat_turn`` 接缝上证明
+# （AC9 中途崩溃全有或全无、AC6 重开后完整逆转），本组不另建平行证明。
 
-
-def test_undo_all_or_nothing_when_void_step_raises(game, monkeypatch):
-    """在 void 步注入故障：作废与前像还原必须整体回滚，不留半撤回态。"""
-    db, state, content = game
-    minister = active_ming_character(db, content)
-    night_id, ctid = open_hall_turn(db, state, minister)
-    _finish_turn(db, state, minister, ctid, "试撤回")
-    _dispatch(
-        db, state, {"commissions": [{"text": "本轮交办：待撤回"}]},
-        minister=minister, night_id=night_id, ctid=ctid,
-    )
-    staged_id = int(db.conn.execute(
-        "SELECT id FROM pending_actions WHERE source_chat_turn_id=? ORDER BY id LIMIT 1",
-        (ctid,),
-    ).fetchone()["id"])
-
-    # 真故障形态：作废写了一半再抛——不是「还没写就抛」。半写才是「半撤回态」
-    # 的真实来源（只抛不写的话，回滚 trivially 地全回，测不出任何东西）。
-    boom = RuntimeError("injected void failure")
-    real_void = db.void_pending_actions_for_chat_turn
-
-    def _half_void(*_a, **_k):
-        real_void(*_a, **_k)          # 真的作废全部（写进事务）
-        raise boom                     # 然后炸
-
-    monkeypatch.setattr(db, "void_pending_actions_for_chat_turn", _half_void)
-    with pytest.raises(RuntimeError, match="injected void failure"):
-        db.undo_chat_turn(ctid)
-    monkeypatch.setattr(db, "void_pending_actions_for_chat_turn", real_void)
-
-    # 半撤回态不许留下：交办仍 pending（未作废）、轮仍 active（未撤）、对话仍在。
-    assert db.conn.execute(
-        "SELECT status FROM pending_actions WHERE id=?", (staged_id,),
-    ).fetchone()["status"] == "pending"
-    assert db.conn.execute(
-        "SELECT status FROM chat_turns WHERE id=?", (ctid,),
-    ).fetchone()["status"] == "active"
-    assert db.conn.execute(
-        "SELECT COUNT(*) c FROM chat_messages WHERE turn=?", (int(state.turn),),
-    ).fetchone()["c"] >= 2
-
-    # 撤掉故障后重试可正常撤回（幂等入口，不是卡死）。
-    db.undo_chat_turn(ctid)
-    assert db.conn.execute(
-        "SELECT status FROM pending_actions WHERE id=?", (staged_id,),
-    ).fetchone()["status"] == "voided"
-    assert db.conn.execute(
-        "SELECT status FROM chat_turns WHERE id=?", (ctid,),
-    ).fetchone()["status"] == "undone"
-
-
-def test_undo_still_works_after_reopen(game):
-    """关档重开后仍可撤回：判据是落库的列，不是内存态。"""
-    from ming_sim.db import GameDB
-
-    db, state, content = game
-    night_id, ctid = open_hall_turn(db, state, minister := active_ming_character(db, content))
-    _finish_turn(db, state, minister, ctid, "关档前之议")
-    result = _dispatch(
-        db, state, {"commissions": [{"text": "关档前的交办"}]},
-        minister=minister, night_id=night_id, ctid=ctid,
-    )
-    staged_id = int(result.commissions.applied[0]["id"])
-
-    # 关档：关旧句柄，按同 path 重开（game 夹具给的库本身就是独立存档文件）。
-    path = db.path
-    db.close()
-
-    db2 = GameDB(path, content)
-    try:
-        state2 = db2.load_state()
-        db2.undo_chat_turn(ctid)
-        assert db2.conn.execute(
-            "SELECT status FROM pending_actions WHERE id=?",
-            (staged_id,),
-        ).fetchone()["status"] == "voided"
-        assert db2.conn.execute(
-            "SELECT status FROM chat_turns WHERE id=?", (ctid,),
-        ).fetchone()["status"] == "undone"
-        assert state2.turn == state.turn
-    finally:
-        db2.close()
 
 def test_undo_deletes_only_this_turns_committed_draft_directive(game):
     """本轮 commit 出来的拟旨 draft 行随撤回消失，同回合别人的 draft 留着。
@@ -620,48 +542,100 @@ def _promulgated_policy_origin(db, state, *, token: str) -> str:
 
 
 # ── ADR 0142：交办机械事实不从自由散文反推 ────────────────────────────
+#
+# 判据一律取**最终持久化的结构化结果**（``issues`` 表那行），不停在暂存 payload：
+# 分段承诺是到期判账的机械事实，只有走完 交办 → 应允 → 收夜 → 顺颁 落进
+# ``issues.stages_json`` 才算数。暂存里有没有 ``stages`` 键证明不了任何东西——
+# 反推若真存在，它是在顺颁物化那一刻才把段表写进承诺行的。
 
 
-def test_assignment_prose_year_promise_does_not_become_commitment_stages(game):
-    """正文里的「三年…五年…」年诺不得被正则反推成分段承诺。
+def _promulgate_assignment(game, label: str, *, text: str, **assignment_fields):
+    """走完整交办链：交办 → 应允 → 收夜 → 顺颁，返回 (案卷 id, 承诺行 or None)。
 
-    分段承诺是机械事实（到期判账），只认显式结构化 ``stages`` 字段。
+    真实入口一步不跳：``dispatch_declaration`` 落暂存、``promises`` 应允、
+    ``commit_pending_actions`` 收夜成案、``apply_dossier_verdicts`` 顺颁物化。
+    承诺行按案卷 origin_ref 读——那就是承诺最终落库的那张表。主办取当值在场
+    的大臣，测试不必为此各自解一次夹具。
     """
     db, state, content = game
     minister = active_ming_character(db, content)
+    assignment = {
+        "title": label, "target_id": label, "assignee": minister,
+        **assignment_fields,
+    }
     night_id, ctid = open_hall_turn(db, state, minister)
     _finish_turn(db, state, minister, ctid, "清丈之事")
 
-    result = _dispatch(
+    staged = _dispatch(
         db, state,
-        {"commissions": [{
-            "text": "清丈河南田亩，三年竣事，五年复验其数。",
-            "assignment": {
-                "title": "清丈田亩", "target_id": "清丈田亩",
-                "assignee": minister,
-            },
-        }]},
+        {"commissions": [{"text": text, "assignment": assignment}]},
         minister=minister, night_id=night_id, ctid=ctid,
     )
+    if not staged.commissions.applied:
+        return None, None, staged
+    action_id = int(staged.commissions.applied[0]["id"])
 
-    assert result.commissions.rejected == []
-    payload = _payload(db, int(result.commissions.applied[0]["id"]))
-    assert "stages" not in payload
-    assert "commitment_kind" not in payload
+    _, ctid2 = open_hall_turn(db, state, minister)
+    _finish_turn(db, state, minister, ctid2, "准。")
+    _dispatch(
+        db, state, {"promises": [{"action_id": action_id, "decision": "应允"}]},
+        minister=minister, night_id=night_id, ctid=ctid2,
+    )
+    db.commit_pending_actions(state, content=content)
+    directive = db.conn.execute(
+        "SELECT id FROM turn_directives WHERE source_pending_action_id=?",
+        (action_id,),
+    ).fetchone()
+    assert directive is not None, "交办收夜后没成拟旨行"
+    db.ensure_dossiers_for_draft_directives(state)
+    dossier = db.get_dossier_for_directive(int(directive["id"]))
+    assert dossier is not None, "拟旨没成案卷"
+    db.apply_dossier_verdicts(
+        state, [{"dossier_id": dossier["id"], "decision": "promulgated"}],
+        content=content,
+    )
+    issue = db.conn.execute(
+        "SELECT id, commitment_kind, stages_json, end_turn FROM issues WHERE origin_ref=?",
+        (f"dossier:{int(dossier['id'])}",),
+    ).fetchone()
+    return int(dossier["id"]), issue, staged
 
 
-def test_assignment_stages_prose_string_is_rejected_not_parsed(game):
-    """``assignment.stages`` 给非 JSON 散文串：按坏形拒收，不正则反推成段表。
+def test_assignment_prose_year_promise_lands_no_staged_commitment(game):
+    """正文「三年竣事，五年复验」经完整交办链落库时不得生出段表。
 
-    同一类的第二条路：stages 字段本身是 LLM 自由文本时（「三年修渠五年通航」），
-    旧实现对它跑中文数词正则，落出两段带 due_turn 的承诺——机械事实来自散文。
-    现在只承接显式结构化：JSON 数组串或已结构化列表。
+    旧实现对已归一正文跑中文数词正则，落出两段带 ``due_turn`` 的机械事实。
+    段表只认显式结构化 ``stages``；本条钉最终那行：``stages_json`` 空、无承诺
+    marker、也没有派生期限、段派生待办为零——散文年诺到不了 ``issues`` 表。
+    """
+    db, _state, _content = game
+    dossier_id, issue, staged = _promulgate_assignment(
+        game, "清丈田亩", text="清丈河南田亩，三年竣事，五年复验其数。",
+    )
+
+    assert dossier_id is not None, staged.commissions.rejected
+    assert issue is not None, "交办顺颁没落 initiative"
+    assert normalize_commitment_stages(issue["stages_json"]) == []
+    assert str(issue["commitment_kind"] or "") == ""
+    assert int(issue["end_turn"] or 0) == 0
+    # 段派生待办一个都不许有（到期判账面同样干净）。
+    assert db.conn.execute(
+        "SELECT COUNT(*) c FROM next_audience_todos WHERE commitment_ref=?",
+        (int(issue["id"]),),
+    ).fetchone()["c"] == 0
+
+
+def test_assignment_stages_prose_string_never_reaches_promulgation(game):
+    """``assignment.stages`` 给非 JSON 散文串：分派即 durable 坏形拒收。
+
+    另一条路是字段本身就是 LLM 自由文本（「三年修渠五年通航」）。这里不盯拒收
+    措辞，只钉结构化契约面：该项落 ``invalid_shape`` 拒收、零暂存、零案卷——
+    散文段表没有任何路径能走到顺颁物化。
     """
     db, state, content = game
     minister = active_ming_character(db, content)
     night_id, ctid = open_hall_turn(db, state, minister)
     _finish_turn(db, state, minister, ctid, "修渠之事")
-
     result = _dispatch(
         db, state,
         {"commissions": [{
@@ -675,55 +649,43 @@ def test_assignment_stages_prose_string_is_rejected_not_parsed(game):
         minister=minister, night_id=night_id, ctid=ctid,
     )
 
-    # 拒收落成 durable 拒收（不是静默 []，也不是当成成功）。
     assert result.commissions.applied == []
-    assert len(result.commissions.rejected) == 1
-    assert "JSON" in str(result.commissions.rejected[0].reason)
-    # 库层没有因此落下一条承诺暂存。
+    assert [r.category for r in result.commissions.rejected] == ["invalid_shape"]
+    # 库层零暂存、零案卷：拒收发生在成案之前，散文无处可生段表。
     assert db.conn.execute(
-        "SELECT COUNT(*) c FROM pending_actions WHERE kind='directive' "
-        "AND source_chat_turn_id=?", (ctid,),
+        "SELECT COUNT(*) c FROM pending_actions WHERE kind='directive'",
+    ).fetchone()["c"] == 0
+    assert db.conn.execute(
+        "SELECT COUNT(*) c FROM decree_dossiers",
     ).fetchone()["c"] == 0
 
 
-def test_assignment_structured_stages_json_still_lands_commitment(game):
-    """显式结构化 stages（JSON 数组串）照常落段——修的不是能力，是散文入口。"""
-    db, state, content = game
-    minister = active_ming_character(db, content)
-    night_id, ctid = open_hall_turn(db, state, minister)
-    _finish_turn(db, state, minister, ctid, "修渠之事")
+def test_assignment_structured_stages_land_through_full_chain(game):
+    """显式结构化 stages 走完整交办链，最终 ``issues.stages_json`` 落两段。
 
-    result = _dispatch(
-        db, state,
-        {"commissions": [{
-            "text": "修渠之事",
-            "assignment": {
-                "title": "修渠", "target_id": "修渠",
-                "assignee": minister,
-                "stages": json.dumps([
-                    {"stage_idx": 0, "due_turn": 46, "criterion_text": "修渠"},
-                    {"stage_idx": 1, "due_turn": 70, "criterion_text": "通航"},
-                ], ensure_ascii=False),
-            },
-        }]},
-        minister=minister, night_id=night_id, ctid=ctid,
+    修掉的是散文入口，不是能力：模型按结构化字段交代的期限照常成为机械事实。
+    """
+    _db, _state, _content = game
+    dossier_id, issue, staged = _promulgate_assignment(
+        game, "修渠", text="修渠之事",
+        stages=[
+            {"stage_idx": 0, "due_turn": 46, "criterion_text": "修渠"},
+            {"stage_idx": 1, "due_turn": 70, "criterion_text": "通航"},
+        ],
     )
 
-    assert result.commissions.rejected == []
-    payload = _payload(db, int(result.commissions.applied[0]["id"]))
-    assert [s["due_turn"] for s in payload["stages"]] == [46, 70]
-    assert payload["commitment_kind"] == "until_stop"
+    assert dossier_id is not None, staged.commissions.rejected
+    assert issue is not None, "交办顺颁没落 initiative"
+    assert str(issue["commitment_kind"] or "") == "until_stop"
+    assert [s["due_turn"] for s in normalize_commitment_stages(issue["stages_json"])] == [46, 70]
 
 
 def test_new_issues_prose_year_promise_does_not_become_commitment_stages(game):
     """邸报 / ``new_issues`` 接缝同样不从散文反推年诺（ADR 0142 全仓口径）。
 
-    上一案只钉交办接缝；本票把散文捕获从整条链上删净，这条钉住另一端：
-    真实 ``apply_score_extraction`` 收到只有「三年/五年」正文、没有任何结构化
-    期限的承诺项时，不得凭空把它当成机械事实。判据取既有契约口：承诺项至少要
-    有 ongoing_effects 月度动作 / end_turn / stages 之一——散文年诺不算数，故该项
-    落 durable 拒收，而不是被反推出两段带 ``due_turn`` 的段表蒙混过关。
-    结构化 ``stages`` 仍照常落（见 ``test_new_issues_structured_stages_still_land``）。
+    交办接缝那条走的是顺颁物化；这里钉另一端：真实 ``apply_score_extraction``
+    收到只有「三年/五年」正文、无任何结构化期限的承诺项时，不得凭空把它当成
+    机械事实。判据取既有契约口与库层零行，不盯拒收措辞。
     """
     db, state, content = game
     origin_ref = _promulgated_policy_origin(db, state, token="prose-1890")
@@ -743,7 +705,7 @@ def test_new_issues_prose_year_promise_does_not_become_commitment_stages(game):
 
     created = out["issue_summary"]["new_issues"][0]
     assert created.get("rejected") is True, created
-    assert "至少一项必填" in str(created.get("reason"))
+    assert str(created.get("category")) == "invalid_enum"
     # 库层没有因此长出承诺行（更没有带 due_turn 的段表）。
     assert db.conn.execute(
         "SELECT COUNT(*) c FROM issues WHERE origin_ref=?", (origin_ref,),

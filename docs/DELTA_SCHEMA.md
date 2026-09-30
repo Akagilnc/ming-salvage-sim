@@ -288,7 +288,7 @@ canonical 段形＝list，每项落一道加派旨：逐省累积账当回合落
 "stages": [
   {
     "stage_idx": 0,
-    "due_turn": 37,                 // 绝对回合；捕获侧亦可以 scripted「三年X五年Y」换算 origin_turn+N*12
+    "due_turn": 37,                 // 绝对回合；期限只由模型按本字段交代，引擎不从散文换算
     "criterion_text": "火器见眉目",
     "origin_context": "三年火器见眉目"  // 原诺语境，持久可查（Story 5 回声底）
   }
