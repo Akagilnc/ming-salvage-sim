@@ -13286,12 +13286,12 @@ class GameDB:
         find_any_issue_by_origin 幂等；不碰 trigger_gate 求值器、不扩门表白名单。
         分档触发侧重算 assess_foundation_tier（零新列）；唯 halfway 触发。
         一拍差：判决 closed_turn < 当前 turn 才扫（判决在 delta、扫描在次回合前括号）。
-        与 #623 立即倒退去重：本片只立承诺所系 issue＋本片具名 metrics 一锤子，不重放
-        breach_halfway_setback / 民心-3·皇威-2 直击；不写 ongoing_effects.metrics 镜像。
+        与 #1894 前的 #623 立即倒退去重：那条代码生成的全国余波已删，本片只
+        立承诺所系 issue＋本片具名 metrics 一锤子；不写 ongoing_effects.metrics 镜像。
 
         事废读源：todo.payload_json.verdict=='persist'（#623 finalize_persist 既判痕迹；
-        consumed 有三源不可区分，单独不得作既判证据；常经 0056 先关案卷时
-        execution_outcome 可能空，故不以执行格为事废唯一源）。
+        consumed 有三源不可区分，单独不得作既判证据；#1894 后 0056 不再抢先关案卷，
+        execution_outcome 在模型判决落地前本就为空，故不以执行格为事废唯一源）。
         烂尾：读执行格终值 failed（#621）。
         变形：execution_outcome==transformed 仅作候选；须经 #622 公开读端
         list_economy_moves_for_dossier + beyond_intent 确认分叉事实后才立案。
@@ -15902,9 +15902,15 @@ class GameDB:
 
     def breach_decree_dossier(
         self, state: GameState, dossier_id: int, *, reason: str = "撤回成命",
-        commit: bool = True,
+        commit: bool = True, close_target: bool = True,
     ) -> bool:
-        """Withdraw an issued promise; commit=False belongs wholly to its caller."""
+        """Withdraw an issued promise; commit=False belongs wholly to its caller.
+
+        #1894：``close_target=False`` 只落 0056 名声代价（毁约判定、皇威、当事
+        大臣观感、派系），**不**代模型把目标案卷结案——案卷的终局由执行格
+        判官的 ``dossier_executions`` 声明落（撤令当月见办理结果）。早于此处
+        关案会让那份声明被「案卷不在 executing」拒收。
+        """
         if commit:
             from ming_sim.decree import atomic_and_reload
             transaction = atomic_and_reload(self, state)
@@ -15977,10 +15983,16 @@ class GameDB:
                     "UPDATE decree_dossiers SET interruption_reason=CASE WHEN interruption_reason='' THEN ? ELSE interruption_reason END WHERE id=?",
                     (reason, int(dossier_id)),
                 )
-            else:
+            elif close_target:
                 self.conn.execute(
                     "UPDATE decree_dossiers SET status='closed',closed_turn=?,interruption_reason=?,closed_at=CURRENT_TIMESTAMP WHERE id=?",
                     (state.turn, reason, int(dossier_id)),
+                )
+            else:
+                # 撤令路径只记毁约账；结案留给执行格判官的声明。
+                logger.info(
+                    "breach recorded without closing dossier=%s reason=%s",
+                    int(dossier_id), reason,
                 )
         return True
 
@@ -16498,12 +16510,16 @@ class GameDB:
         # 外廷人物读，是否求情归模型，不设代码求情探测）。
         from ming_sim.breach_plea import apply_persist_revoke_tail
 
-        # 立即路径收尾：0056 + 捆带授权收回 + 同源停 tick
+        # 立即路径收尾：0056 + 捆带授权收回 + 同源停 tick。
+        # close_target=False：0056 只落名声账；原案卷的结案（执行格终值与
+        # 半途后果）由执行格判官在本月声明 dossier_executions 落——代码不
+        # 抢在模型声明前关案（#1894 F2）。
         apply_persist_revoke_tail(
             self, state,
             target_dossier_id=int(target_dossier_id),
             reason=reason,
             apply_0056=True,
+            close_target=False,
             commitment_ref=int(target_issue_id or 0),
             authority_source_dossier_id=int(dossier_id),
             revoke_dossier_id=int(dossier_id),

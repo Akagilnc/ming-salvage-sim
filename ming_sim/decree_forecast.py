@@ -86,11 +86,11 @@ def _this_decree_fact(
     已有案卷的 paid 从账本实付投影（materials.dossier_paid_amount）；
     夜里尚未成案的拟旨 id 无动账，投影为 0。
     """
-    from ming_sim.materials import dossier_paid_amount
+    from ming_sim.materials import dossier_paid_amount, revoke_target_facts
 
     payload = _payload_dict(candidate)
     paid = dossier_paid_amount(db, candidate.get("id")) if db is not None else 0
-    return {
+    fact: Dict[str, object] = {
         "id": candidate.get("id"),
         "status": "promulgated",
         "decree_text": decree_text,
@@ -102,6 +102,12 @@ def _this_decree_fact(
         "mode": str(candidate.get("mode") or payload.get("mode") or "ordinary"),
         "paid": paid,
     }
+    # #1894：撤令连同原旨、已投入与实际办理进度一起进推演输入（ADR 0155 本旨
+    # 事实走随调用消息，不进材料目录）。同一 run 内既有准行/劝回的判，也有
+    # 准行后原案卷办理结果的推演——不新增调用。
+    if str(candidate.get("action_type") or "") == "revoke_decree" and db is not None:
+        fact["revoke_target"] = revoke_target_facts(db, payload)
+    return fact
 
 
 def release_forecast_materials(snapshot: Optional[Dict[str, Any]]) -> None:

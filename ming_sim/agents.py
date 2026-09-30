@@ -629,6 +629,11 @@ def create_promulgation_judge_agent(
             "命门类可打回并置 midzhi_unpromulgatable=true，普通中旨无前科时从严但不得机械地"
             "一概打回；有 promulgation_history 批红强颁前科时与无前科差分，优先打回。",
             "顺颁不得虚构卡点。只输出 JSON，不写解释。",
+            "action_type=revoke_decree 的案卷是撤回一道已发旨：其 revoke_target "
+            "给出那道原旨的正文、已投入（paid）、实际办理进度（progress）与"
+            "参与者。撤令与别的旨一样本月由外廷反应：你可以准行，也可以劝回、"
+            "或以拖延（打回/留中）不使其生效——按原旨办到几分、已花掉多少、"
+            "谁在承办自行判断，代码不预设你必须准行。",
         ],
     )
 

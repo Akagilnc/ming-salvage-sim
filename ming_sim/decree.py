@@ -313,7 +313,7 @@ def build_promulgation_judge_context(
         # Never read payload authorization_id(s) as a parallel authority identity source.
         held_authorities = db.project_applicable_authorities(state.turn, row)
         authorization_ids = [str(item["id"]) for item in held_authorities]
-        dossier_rows.append({
+        entry = {
             "id": int(row["id"]),
             "action_type": str(row.get("action_type") or ""),
             "decree_text": str(row.get("decree_text") or ""),
@@ -330,7 +330,14 @@ def build_promulgation_judge_context(
                 "authorization_ids": authorization_ids,
                 "endorsement_entry_ids": sorted(set(endorsement_ids)),
             },
-        })
+        }
+        # #1894：撤令案卷须带原旨、已投入与办理进度给外廷判官——撤的是哪道
+        # 已发旨、办到几分、钱花掉多少，本就在既有账里（materials 单一读口）。
+        # 只是供料，不新增调用、不新增判官；判官据此自定准行/劝回/拖延。
+        if str(row.get("action_type") or "") == "revoke_decree":
+            from ming_sim.materials import revoke_target_facts
+            entry["revoke_target"] = revoke_target_facts(db, payload)
+        dossier_rows.append(entry)
     gatekeepers = [
         {
             **dict(row),

@@ -8,7 +8,10 @@ kind 分派矩阵（法）：
 - apply_pending_due_reviews：禁当 staged 终裁；沉默保留 pending
 - dossiers_with_pending_due_review：不计入接管窗
 
-#1894：明确撤旨（撤回一道已发旨）不走本模块——照常过外廷、当月见办理结果。
+#1894：明确撤旨（撤回一道已发旨）不走本模块的挽留场——照常过外廷、当月见
+办理结果。外廷准行的撤令落地由 ``apply_persist_revoke_tail`` 承（0056 名声
+代价、捆带授权收回、同源**承诺**停 tick；不代模型结案，案卷终局由执行格
+判官的 ``dossier_executions`` 判决落）。
 本模块只管断供／挪用／撤人等非撤令的松手事实。
 """
 
@@ -19,7 +22,6 @@ import logging
 import re
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
-from ming_sim.db import GameDB
 from ming_sim.models import loads_effect_dict
 from ming_sim.staged_commitment import (
     ENTRY_KIND_STAGED,
@@ -68,10 +70,6 @@ _SPENT_AMOUNT_HALFWAY = 1  # 已投入金额达此即有资格入中档（与进
 
 # 断供：当月实拨低于承诺月供的此比例 → 欠额达阈
 _FUNDING_ARREARS_RATIO = 0.5
-
-# 办到一半国势倒退：0014 涌现缝 seed 事件 id
-HALFWAY_SETBACK_EVENT_ID = "breach_halfway_setback"
-_HALFWAY_METRICS_HIT = {"民心": -3, "皇威": -2}
 
 _DOSSIER_REF_RE = re.compile(r"^dossier:([1-9][0-9]*)$")
 _ISSUE_REF_RE = re.compile(r"^issue:([1-9][0-9]*)$")
@@ -532,65 +530,6 @@ def assess_foundation_tier(db: Any, commitment_ref: int) -> str:
     return FOUNDATION_JUST_STARTED
 
 
-def _apply_halfway_national_setback(
-    db: Any, state: Any, *, title: str, reason: str, origin_ref: str,
-) -> Dict[str, object]:
-    """办到一半：国势倒退走 0014/auto_trigger 涌现缝（seed+event_to_issue+event_triggers）。
-
-    禁平行 insert_issue 直写。
-    """
-    from ming_sim.issues import event_to_issue
-
-    # 一锤子国势（SCORE_METRICS 内）
-    metrics_hit = dict(_HALFWAY_METRICS_HIT)
-    for key, delta in metrics_hit.items():
-        cur = int(state.metrics.get(key, 0) or 0)
-        state.metrics[key] = max(0, cur + int(delta))
-
-    ev = None
-    content = getattr(db, "content", None)
-    if content is not None:
-        by_id = getattr(content, "event_by_id", None) or {}
-        ev = by_id.get(HALFWAY_SETBACK_EVENT_ID)
-
-    issue_id = 0
-    if ev is not None:
-        # event_to_issue：写 situation + event_triggers 终态账（与 auto_trigger 同核）
-        created = event_to_issue(db, state, ev, commit=False)
-        if created is not None:
-            issue_id = int(created)
-            # 把承诺溯源记进 stage（可查）
-            db.advance_issue(
-                state,
-                issue_id,
-                trigger_kind="breach_plea_setback",
-                trigger_ref=origin_ref or f"breach:{title}",
-                delta_bar=0,
-                stage_text="国势倒退",
-                narrative=str(reason or "办到一半撤诺，沉没投入化为负累")[:400],
-                metric_delta={},
-                commit=False,
-            )
-        else:
-            # 已有 active 同源：仍记 metrics；issue 回指 active
-            existing = db.find_active_issue_by_origin(
-                "event_pool", HALFWAY_SETBACK_EVENT_ID,
-            )
-            if existing is not None:
-                issue_id = int(existing["id"])
-    else:
-        logger.warning(
-            "halfway setback seed missing id=%s; metrics applied only",
-            HALFWAY_SETBACK_EVENT_ID,
-        )
-
-    return {
-        "setback_issue_id": int(issue_id),
-        "metrics_delta": metrics_hit,
-        "event_id": HALFWAY_SETBACK_EVENT_ID if ev is not None else "",
-    }
-
-
 def reclaim_bundled_authorities(
     db: Any,
     state: Any,
@@ -642,12 +581,18 @@ def stop_origin_commitment_ticks(
     reason: str,
     extra_issue_ids: Optional[Sequence[int]] = None,
 ) -> List[int]:
-    """同源 active initiative 停 tick（与立即 revoke 路径同核）。"""
+    """同源承诺停 tick（与立即 revoke 路径同核）。
+
+    #1894：只停**承诺**（initiative）。撤令不是把该案卷下长出的世界局势一并
+    终结——局势的存废归世界段模型声明，代码不得无差别取消（0154 撤案不等于
+    事务自动了结）。
+    """
     stopped: List[int] = []
     if int(target_dossier_id or 0) > 0:
         origin_ref = f"dossier:{int(target_dossier_id)}"
         for iss in db.conn.execute(
-            "SELECT id FROM issues WHERE origin_ref=? AND status='active'",
+            "SELECT id FROM issues WHERE origin_ref=? AND status='active' "
+            "AND kind='initiative'",
             (origin_ref,),
         ).fetchall():
             iid = int(iss["id"])
@@ -661,9 +606,13 @@ def stop_origin_commitment_ticks(
         if iid <= 0 or iid in stopped:
             continue
         row_i = db.conn.execute(
-            "SELECT status FROM issues WHERE id=?", (iid,),
+            "SELECT status, kind FROM issues WHERE id=?", (iid,),
         ).fetchone()
-        if row_i is not None and str(row_i["status"]) == "active":
+        if (
+            row_i is not None
+            and str(row_i["status"]) == "active"
+            and str(row_i["kind"] or "") == "initiative"
+        ):
             db.cancel_issue(state, iid, narrative=reason, commit=False)
             stopped.append(iid)
     return stopped
@@ -676,15 +625,17 @@ def apply_persist_revoke_tail(
     target_dossier_id: int,
     reason: str,
     apply_0056: bool,
+    close_target: bool = True,
     commitment_ref: int = 0,
     authority_source_dossier_id: int = 0,
     revoke_dossier_id: int = 0,
 ) -> Dict[str, object]:
-    """撤旨落地唯一收尾：0056 毁约代价 + 捆带授权收回 + 同源停 tick。
+    """撤旨落地唯一收尾：0056 毁约代价 + 捆带授权收回 + 同源承诺停 tick。
 
-    #1894 后只有外廷准行的立即路径调本函数（原「坚持撤后落地」同核此函数，
-    撤旨不再经挽留场分叉）。revoke_dossier_id 非零时另恢复该撤令案卷带来的
-    pay_order override（见 pay_order.restore_pay_order_override）。
+    两个调用方（#1894）都传 ``close_target=False``：0056 只落名声账，案卷
+    结案留给执行格判官本月的 ``dossier_executions`` 判决——撤令与坚持撤都
+    不抢在模型声明前关案。``revoke_dossier_id`` 非零时另恢复该撤令案卷
+    带来的 pay_order override（见 pay_order.restore_pay_order_override）。
 
     返回 guofu_from_0056：本调用 0056 实际写出的辜负边人名
     （供 0079 撤人边去重；跨承诺/跨案卷同人边不在此集合）。
@@ -706,6 +657,7 @@ def apply_persist_revoke_tail(
         breach_applied = bool(
             db.breach_decree_dossier(
                 state, did, reason=reason, commit=False,
+                close_target=close_target,
             )
         )
         if breach_applied:
@@ -764,7 +716,15 @@ def finalize_persist(
     *,
     commit: bool = False,
 ) -> Dict[str, object]:
-    """坚持撤：根基分档落执行格 + 共享 revoke 收尾 + 条件触发 0056 + 消费 todo。"""
+    """坚持撤：落 0056 毁约代价 + 捆带授权收回 + 同源承诺停 tick + 消费 todo。
+
+    #1894 / ADR 0075:15：**不**由代码判根基档、生成执行格终值或造剧情后果。
+    「根基成了几分」由执行格判官（0057）按已投入与实际进度软判，其判决经
+    既有 ``dossier_executions`` 落账适配器进 ``apply_score_extraction`` 的
+    执行格段；本函数只做代码该做的账（0056 名声轨、授权收回、停 tick、
+    0079 信用边、消费 todo）。故 0056 传 ``close_target=False``：案卷留在
+    executing，等模型本月判决落地结案——代码不抢在模型声明前关案。
+    """
     meta = decode_plea_meta(todo.get("origin_context"))
     breach_kind = str(meta.get("breach_kind") or "")
     # merged meta 账目（#623 r2/r3）：
@@ -776,32 +736,11 @@ def finalize_persist(
     reason = str(meta.get("reason") or todo.get("criterion_text") or "坚持撤诺")[:400]
     commitment_ref = int(todo["commitment_ref"])
     row = _issue_row(db, commitment_ref)
-    title = str(row["title"] if row is not None else meta.get("commitment_title") or "")
     origin_ref = str(row["origin_ref"] if row is not None else "")
     target_dossier_id = int(meta.get("target_dossier_id") or 0)
     if target_dossier_id <= 0:
         parsed = parse_dossier_id(origin_ref)
         target_dossier_id = int(parsed or 0)
-
-    tier = assess_foundation_tier(db, commitment_ref)
-    setback: Dict[str, object] = {}
-    exec_result: Dict[str, object] = {}
-
-    if tier == FOUNDATION_ROOTED:
-        outcome = "degraded"
-        note = f"根基已成而撤后续之诺，只失未兑现红利（{reason}）"[:200]
-        close = True
-    elif tier == FOUNDATION_HALFWAY:
-        outcome = "failed"
-        note = f"事废：办到一半松手，沉没投入与国势倒退（{reason}）"[:200]
-        close = True
-        setback = _apply_halfway_national_setback(
-            db, state, title=title, reason=reason, origin_ref=origin_ref,
-        )
-    else:
-        outcome = "failed"
-        note = f"刚起头撤，所费付诸东流（{reason}）"[:200]
-        close = True
 
     apply_0056 = bool(kinds & _BREACH_KINDS_TRIGGER_0056)
     tail = apply_persist_revoke_tail(
@@ -809,49 +748,10 @@ def finalize_persist(
         target_dossier_id=target_dossier_id,
         reason=reason,
         apply_0056=apply_0056,
+        close_target=False,
         commitment_ref=commitment_ref,
     )
     breach_applied = bool(tail.get("breach_0056"))
-
-    # 执行格：经既有适配器落格（禁裸 SQL 宽吞）
-    if target_dossier_id > 0:
-        dossier = db.get_decree_dossier(int(target_dossier_id))
-        if dossier is not None and str(dossier.get("status") or "") == "executing":
-            db.record_dossier_execution(
-                int(target_dossier_id), outcome, note, int(state.turn),
-                close=close, commit=False,
-            )
-            if outcome in {"degraded", "failed", "transformed"}:
-                db.record_dossier_progress(
-                    int(target_dossier_id), int(state.turn), outcome, note,
-                    is_terminal=True,
-                    origin=GameDB.DOSSIER_REPORT_ORIGIN_VERDICT,
-                    commit=False,
-                )
-            exec_result = {
-                "dossier_id": int(target_dossier_id),
-                "outcome": outcome,
-                "close": close,
-            }
-        elif dossier is not None:
-            exec_result = {
-                "dossier_id": int(target_dossier_id),
-                "outcome": str(dossier.get("execution_outcome") or outcome),
-                "already_closed": True,
-            }
-            if not str(dossier.get("execution_outcome") or "").strip():
-                try:
-                    db.record_dossier_execution(
-                        int(target_dossier_id), outcome, note, int(state.turn),
-                        close=False, commit=False,
-                    )
-                    exec_result["outcome"] = outcome
-                except (TypeError, ValueError, KeyError) as exc:
-                    logger.warning(
-                        "record_dossier_execution backfill failed dossier=%s: %s",
-                        target_dossier_id, exc,
-                    )
-
     # 0079 信用事件：坚持=回绝哭谏
     # 所载含撤人 → 按主办集合落辜负；仅跳过本 finalize 0056 已实写同人
     # （不重复）；其它承诺/案卷同人边不在 already，不得吞（不遗漏）
@@ -889,13 +789,12 @@ def finalize_persist(
         "todo_id": int(todo["id"]),
         "commitment_ref": commitment_ref,
         "breach_kind": breach_kind,
-        "foundation_tier": tier,
-        "outcome": outcome,
-        "note": note,
         "breach_0056": breach_applied,
-        "setback": setback,
-        "execution": exec_result,
+        # 案卷终局（执行格 outcome/note、半途后果）不在此返回：那是执行格判官
+        # 本月的 dossier_executions 判决，经 apply_score_extraction 落账。
+        "target_dossier_id": int(target_dossier_id),
         "authority_reclaims": tail.get("authority_reclaims") or [],
+        "stopped_issue_ids": tail.get("stopped_issue_ids") or [],
         "consumed": bool(consumed),
     }
 
