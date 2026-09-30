@@ -12,6 +12,9 @@ tests/test_material_directory_1830.py 的同一泛化入口覆盖，不在此重
 from __future__ import annotations
 
 import json
+import os
+import tempfile
+from pathlib import Path
 
 from ming_sim.db import GameDB
 from ming_sim.materials import (
@@ -172,12 +175,14 @@ def test_world_materials_isolate_invocations_and_databases(game, tmp_path, monke
     assert read_material(first.root, "INDEX.txt")
     assert read_material(second.root, "INDEX.txt")
 
-    # 第二档库放本案自有临时父目录：`game` 夹具的库来自系统临时目录，把自建库
-    # 放它旁边会命中跨案共享的固定 other.db（残留旧 schema → 建库即炸），
-    # 且只关连接不清理。归属明确、结束即随 tmp_path 消失。
-    saves = tmp_path / "saves"
-    saves.mkdir()
-    other = GameDB(str(saves / "other.db"), content)
+    # 第二档库与夹具库同父目录（材料树按 db stem 隔层正是为同父多档互不互踩），
+    # 但资源归属归本用例：在该父目录里用 mkstemp 原子占一个唯一名（不是拼一个
+    # basename——basename 跨运行会撞，撞上时 GameDB 打开的是别人的库）。finally
+    # 只删自己 mkstemp 出来的那两个文件，不按名字去动目录里的其它残留。
+    fd, other_name = tempfile.mkstemp(dir=str(Path(db.path).parent), suffix=".db")
+    os.close(fd)
+    other_path = Path(other_name)
+    other = GameDB(str(other_path), content)
     try:
         other.seed_static_data()
         other_state = other.load_state()
@@ -192,6 +197,9 @@ def test_world_materials_isolate_invocations_and_databases(game, tmp_path, monke
         assert same_db != other_db
     finally:
         other.close()
+        for leftover in (other_path, Path(f"{other_path}_agno.db")):
+            if leftover.exists():
+                leftover.unlink()
 
 
 def test_world_materials_include_textual_facts_once_and_gazette_not_duplicated(game, tmp_path):

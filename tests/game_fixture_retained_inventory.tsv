@@ -210,9 +210,7 @@ tests/test_event_trigger_gate.py	test_huabei_plague_keeps_soft_degree_axis_as_si
 tests/test_event_trigger_gate.py	test_historical_situation_auto_trigger_rolls_back_soft_issue_when_core_effect_fails	3443	writable isolation required at line 3449: in-memory state/content mutation: state.year
 tests/test_event_trigger_gate.py	test_historical_situation_auto_trigger_backfills_core_effect_for_existing_soft_issue	3467	writable isolation required: line 3473 invokes insert_issue
 tests/test_event_trigger_gate.py	test_jingshi_plague_auto_triggers_and_weakens_capital_garrison	3510	writable isolation required at line 3514: in-memory state/content mutation: state.year
-tests/test_event_trigger_gate.py	test_huangtaiji_chengdi_auto_triggers_and_renames_houjin	3534	writable isolation required at line 3538: in-memory state/content mutation: state.year
-tests/test_event_trigger_gate.py	test_huangtaiji_chengdi_keeps_diplomatic_response_axis_as_situation_issue	3557	writable isolation required at line 3561: in-memory state/content mutation: state.year
-tests/test_event_trigger_gate.py	test_historical_power_rename_tick_reads_huangtaiji_event_effect	3580	writable isolation required: line 3599 invokes apply_historical_power_renames
+tests/test_event_trigger_gate.py	test_huangtaiji_chengdi_lands_only_when_model_picks_it	2265	writable isolation required at line 2279: in-memory state/content mutation: state.year
 tests/test_event_trigger_gate.py	test_mao_wenlong_event_pool_uses_candidate_snapshot_before_advances	3617	writable isolation required: line 3622 invokes insert_issue
 tests/test_event_trigger_gate.py	test_event_pool_uses_candidate_snapshot_before_top_level_metric_delta	3668	writable isolation required: mutates shared event/GameState data or verifies rollback restoration
 tests/test_event_trigger_gate.py	test_event_pool_rechecks_after_advances_close_gate	3710	writable isolation required: line 3715 invokes insert_issue

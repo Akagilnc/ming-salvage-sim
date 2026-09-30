@@ -2452,7 +2452,12 @@ def gather_impeachment_surge_candidates(state: GameState, db: GameDB) -> List[Di
 
 def gather_candidate_events(state: GameState, db: GameDB) -> List[Event]:
     """程序筛选：历史锚定事件按 trigger 时间到点、seed 情势按 trigger_gate 达标，
-    都排除已触发过的。返回的候选清单交推演 agent 因果判定是否真触发。"""
+    都排除已触发过的。返回的候选清单交推演 agent 因果判定是否真触发。
+
+    #1892/#1893 分工：进本清单 = 交模型在月末世界段里挑的人物事件。三饷
+    （``fiscal_levy``）是皇帝亲裁的加派决策，由批红时的圣旨／``record_event_decision_choice``
+    落 ``事件结局``，其加不加不是模型能代批的事，故永不入人物候选（ADR 0020）。
+    """
     c = _ctx()
     spawned = _spawned_event_refs(db)
     candidates: List[Event] = []
@@ -2463,6 +2468,8 @@ def gather_candidate_events(state: GameState, db: GameDB) -> List[Event]:
         if _event_window_expired(ev, state):
             continue
         if ev.auto_trigger:
+            continue
+        if getattr(ev, "category", "") == FISCAL_LEVY_EVENT_CATEGORY:
             continue
         dead_subjects = _dead_person_core_subjects(ev, db)
         if dead_subjects:
@@ -3688,6 +3695,14 @@ def _is_strategic_foreign_node_event(ev: Event) -> bool:
     )
 
 
+def strategic_event_outcome_labels(event_id: str) -> frozenset[str]:
+    """某战略事件在既有写口接受的闭合结局标签；空集 = 该事件不收 事件结局。
+
+    供料侧（materials 候选事实）与落库侧共用这一份，读侧不另立标签表（#1893）。
+    """
+    return _STRATEGIC_EVENT_OUTCOME_LABELS.get(event_id, frozenset())
+
+
 def _validate_strategic_foreign_node_outcome_targets(content: GameContent) -> None:
     strategic_event_ids = {
         event_id
@@ -3859,7 +3874,7 @@ def _strategic_event_outcome_label_or_error(
     extracted: Dict[str, object],
     content: GameContent,
 ) -> tuple[str, str]:
-    allowed = _STRATEGIC_EVENT_OUTCOME_LABELS.get(event_id, frozenset())
+    allowed = strategic_event_outcome_labels(event_id)
     if not allowed:
         return "", ""
     label = _event_outcome_label(extracted.get("事件结局") or {}, event_id)
@@ -4984,6 +4999,24 @@ def apply_issue_tracker_output(
                 applied_new.append({"id": ev.id, "title": ev.title, "rejected": False, "reason": f"event_type={ev.event_type} 已记为触发"})
                 continue
             issue_id = event_to_issue(db, state, ev, commit=not external_transaction)
+            if issue_id is not None and ev.effect_on_trigger:
+                # #1893：模型选中即触发——事件自带的核心后果（如 huangtaiji_chengdi 的
+                # 改国号）随这一次写口落定，不另按日期旁路补。situation 类事件的
+                # effect_on_trigger 历来只在 auto_trigger 硬触发路应用（见
+                # _auto_trigger_seed_issues_in_atomic），模型选中路原缺这一步，属改
+                # 触发方式后漏接的既有核心后果。
+                entity_rejections.extend(
+                    _apply_issue_entities(
+                        db,
+                        state,
+                        _content_population_effect_for_save(db, ev.effect_on_trigger),
+                        f"事件#{ev.id}触发",
+                        content=runtime_content,
+                        llm_config=llm_config,
+                        applied_person_changes=issue_person_changes,
+                        commit=commit_now,
+                    )
+                )
             if issue_id is None:
                 # event_to_issue 移除 broad except 后，返回 None 只剩一种语义：同源 issue 已存在的
                 # 幂等去重跳过（在其 insert try 之外 early-return）；insert 的真代码/DB 异常现已上抛、

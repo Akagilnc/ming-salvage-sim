@@ -2081,7 +2081,6 @@ def _complete_session(game):
     session.state = state
     session.deaths_this_turn = []
     session.debuts_this_turn = []
-    session.power_renames_this_turn = []
     session.previous_summary = ""
     session.registry = None
     session.temporary_characters = {}

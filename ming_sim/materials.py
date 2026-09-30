@@ -35,6 +35,8 @@ _BOARD_DIR = "盘面"
 _WORLD_GAZETTE_DIR = "邸报"
 _CHARACTER_GAZETTE_DIR = f"{_PUBLIC_DIR}/邸报"
 _COURT_ROSTER_REL = f"{_PERSON_DIR}/朝臣名册.txt"
+# #1893：本月候选事实（人物事件 + 弹劾潮）单一真源路径，目录与 opening 共用。
+_CANDIDATE_REL = f"{_BOARD_DIR}/候选事件与弹劾潮.txt"
 
 
 @dataclass(frozen=True)
@@ -1247,6 +1249,61 @@ def dossier_id_in_origin(origin: object) -> Optional[int]:
     return int(raw)
 
 
+def _candidate_event_fact(ev: Any) -> dict[str, object]:
+    """一个候选事件的结构化事实（ADR 0014 触发门已由 gather 判过，这里只转述事实）。
+
+    战果软判需要的「历史结果 + 历史成因」锚 = summary / precondition /
+    resolve_condition / fail_condition；不给 effect 载荷，代码不代模型算软判。
+    结局标签只对 strategic_foreign 的 node/ending 战事给，取既有写口的同一份
+    白名单（issues.strategic_event_outcome_labels），空集即该事件不收结局标签。
+    """
+    from ming_sim.issues import strategic_event_outcome_labels
+
+    return {
+        "id": str(ev.id),
+        "title": str(ev.title),
+        "kind": str(ev.kind),
+        "summary": str(ev.summary),
+        "event_type": str(ev.event_type),
+        "trigger_class": str(getattr(ev, "trigger_class", "") or ""),
+        "category": str(getattr(ev, "category", "") or ""),
+        "urgency": int(getattr(ev, "urgency", 0) or 0),
+        "severity": int(getattr(ev, "severity", 0) or 0),
+        "person_core_subjects": list(getattr(ev, "person_core_subjects", []) or []),
+        "precondition": str(getattr(ev, "precondition", "") or ""),
+        "resolve_condition": str(getattr(ev, "resolve_condition", "") or ""),
+        "fail_condition": str(getattr(ev, "fail_condition", "") or ""),
+        "outcome_labels": sorted(strategic_event_outcome_labels(str(ev.id))),
+        "region_hint": str(getattr(ev, "region_hint", "") or ""),
+    }
+
+
+def candidate_supply(
+    db: Any, state: Any, *, exclude_dossier_ids: Optional[set[int]] = None,
+) -> dict[str, list]:
+    """#1893：本月可供模型挑选的人物事件与弹劾潮候选（只供事实，不代选）。
+
+    人物事件候选走既有 ``gather_candidate_events`` 硬门（时间窗 / 状态门 /
+    已发·避过·过期终态 / auto_trigger 均已在读侧排除），弹劾潮候选走既有
+    ``gather_impeachment_surge_candidates`` 硬门（旨外变形暴露 × 派系 leverage）。
+    两条门只给资格与结构化事实；选不选、发不发难仍由同一次月末世界段里的
+    模型决定（ADR 0014 / 0091 / P6）。
+    """
+    from ming_sim.issues import (
+        gather_candidate_events,
+        gather_impeachment_surge_candidates,
+    )
+
+    events = [_candidate_event_fact(ev) for ev in gather_candidate_events(state, db)]
+    excluded = set(exclude_dossier_ids or ())
+    surge = [
+        dict(item)
+        for item in gather_impeachment_surge_candidates(state, db)
+        if int(item.get("dossier_id") or 0) not in excluded  # type: ignore[arg-type]
+    ]
+    return {"events": events, "impeachment_surge": surge}
+
+
 def _world_board_text(
     db: Any, state: Any, *,
     ledger_origin_prefix_excluded: str = "",
@@ -1379,6 +1436,7 @@ def _write_world_tree(
     affair_lines: list[tuple[str, str, str, str]],
     board_text: str,
     denunciation_facts: dict[str, object],
+    candidates: dict[str, list],
     include_fact: Any = None,
     include_event: Any = None,
     secret_turn_ids: set[int] | None = None,
@@ -1395,6 +1453,11 @@ def _write_world_tree(
     denunciation_rel = f"{_BOARD_DIR}/派系检举事实.txt"
     _write_text(tmp / denunciation_rel, json.dumps(denunciation_facts, ensure_ascii=False))
     index.append(denunciation_rel)
+
+    # #1893：人物事件与弹劾潮候选进同一份世界目录（硬门已在读侧判过），
+    # 供同一次月末世界段里的模型自读挑选；不在此代选、不代发难。
+    _write_text(tmp / _CANDIDATE_REL, json.dumps(candidates, ensure_ascii=False))
+    index.append(_CANDIDATE_REL)
 
     _write_text(tmp / _COURT_ROSTER_REL, _world_roster_text(db, state))
     index.append(_COURT_ROSTER_REL)
@@ -1509,6 +1572,9 @@ def _world_opening_text(
     board_text: str,
     affair_lines: list[tuple[str, str, str, str]],
     dossier_facts: list[dict[str, object]],
+    *,
+    events: int = 0,
+    surges: int = 0,
 ) -> str:
     from ming_sim.models import reign_period_label
 
@@ -1527,6 +1593,11 @@ def _world_opening_text(
             f"目标：{fact['target_kind']}:{fact['target_id']}；"
             f"拨款：{fact['grant_action']}；实付：{fact['paid']}万两"
         )
+    # #1893：候选事实在目录里（硬门已判过），本段自行读、自行挑；开场只报条数。
+    parts.append(
+        f"本月候选：人物事件 {events} 项，弹劾潮 {surges} 项，"
+        f"在 {_CANDIDATE_REL}，按需自读。"
+    )
     parts.append("人物经历、公开说法、历月邸报在当前目录，按需自读。根目录 INDEX 一行一项。")
     return "\n".join(parts)
 
@@ -1971,16 +2042,22 @@ def prepare_world_materials(
     denunciation_facts = db.build_faction_denunciation_facts(
         exclude_dossier_ids=secret_dossiers,
     )
+    # #1893：候选只在世界段起调时取一次，目录写入与 opening 共用同一份冻结结果。
+    candidates = candidate_supply(db, state, exclude_dossier_ids=secret_dossiers or None)
 
     dest, index = _publish_material_tree(
         dest_root,
         world_materials_root(db, state),
         lambda tmp: _write_world_tree(
             tmp, db, state, public_events, affair_lines, board_text,
-            denunciation_facts, include_fact, include_event,
+            denunciation_facts, candidates, include_fact, include_event,
             _secret_order_chat_turn_ids(db) if exclude_secret_order_audience else None,
         ),
     )
 
-    opening = _world_opening_text(state, board_text, affair_lines, dossier_facts)
+    opening = _world_opening_text(
+        state, board_text, affair_lines, dossier_facts,
+        events=len(candidates["events"]),
+        surges=len(candidates["impeachment_surge"]),
+    )
     return PreparedMaterials(root=dest, opening=opening, index_lines=tuple(index))

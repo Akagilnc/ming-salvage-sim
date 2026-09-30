@@ -719,6 +719,11 @@ def create_world_segment_agent(llm_config: LLMConfig, prepared: Any) -> Agent:
         "本段只写推演结果。",
         "若需要皇帝裁决，请在问处给出标准 DECISION 结构并停在问处；问后内容不属于本段。",
         "开场只有最小集。其余材料在当前目录，按需自读。",
+        # #1893：候选事实在世界目录里（盘面/候选事件与弹劾潮.txt），本段自读、
+        # 自行判定本月哪些真发生、哪个派系是否发难；不选的照实不写。
+        "本段自行取阅本月候选的人物事件与弹劾潮（盘面/候选事件与弹劾潮.txt），"
+        "按盘面与史实成因判断哪些本月真的发生、是否有人借机发难；"
+        "确实发生的写进本段正文，不选中的不必提及。",
         str(getattr(prepared, "opening", "") or ""),
     ]
     if is_minimax_base_url(cfg.base_url):
