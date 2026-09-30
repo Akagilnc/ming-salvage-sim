@@ -2,6 +2,14 @@
 
 Status: Accepted（承母 ADR `0011-edict-resistance-and-centrifuge-ledger.md` 决定1（敏感度天花板查表）+ 决定4（议题敏感度 = 阻力天花板），由 design-dig `dig-9`（ceiling）+ `dig-7`（seed 名册）fold 而成。**评审收敛**——本地 ship-pre cmr R1–R8 4/4 concur（2026-06-15）+ 线上 PR #123 R1–R3 评审收敛；PR #123 已 merge（`847dc3da5`，2026-06-15）转 Accepted。实现属编码活、spawn 隔壁。）
 
+## 后出设计修订（#1895，待票庭重审）
+
+法源同母 ADR 0011 修订段（assistant `694be3db-1790-4ac2-9858-2a36c9ba1b74`「代码替人算心思的，一律废掉，世界因果照留」；owner `6049ebf8-df48-420e-bcaa-f65d10a7759d`「可以」）。票面已由事中收敛并获署；本段待票庭重审后才取代旧文，不冒充已生效法或已施工。
+
+**相抵部分**：D4-3 的命门合法性 floor 不再作为「模型不可低于的人物阻力底」——代码不再用 floor 替人物定下最小抵抗。**保留**：ceiling 分级表与目标 tag modifier（动作本身有多敏感是世界事实）、命门分级作为议题分类标签、seed 名册（74 人罪谱／identity 静态底账）、出处恒可达作为破局设计的可达性论证。**注**：0102 identity 的事件派生设计未获整类废止授权，其建设仍由 #701 承接；seed 身份回填不等于已建派生，本票不把 seed 底账当现役派生事实。世界与身份底账不一并废除。
+
+---
+
 承 GitHub #112 tracker。本 ADR 收口两块第一刀 substrate：① **敏感度天花板 ceiling 表 + 目标 tag modifier + 命门 = 合法性 floor + 出路恒可达机理**（dig-9）；② **seed 名册数据 spec**（dig-7：开局朝堂 74 人 seed-guilt / identity），它是失称度（0011-2 失称度公式的 `crime_weight`）与认同度（0011-2 kinship 的 `k_id`）的真源，并入本 ADR 一并收口（substrate 同批、少一个独立评审周期）。
 
 > **⚠️ ceiling 批准状态（诚实标，本轮须复核）**：`dig-9` 自身尾部仍写「待用户拍」，但那是更早标记——**dig-8「✅ 用户拍板」节明载「ceiling 表 ✅ 跟矩阵 42 格一起拍（co-依赖）、出路杠杆恒可达硬不变式先锁」**，且 STATE.md 里程碑同步「决定 1–9 全用户拍板」。故本 ADR 据 dig-8 ✅ + STATE 视 **ceiling 的三项硬不变式（分级结构 + 命门=合法性 floor + 出路恒可达）已批准**；**精确 base / modifier 值是 dig-8 自承的「随矩阵 sub-spec 一起填」项、随 playtest 标定**（D4-6，非待拍设计点）。本轮评审 / 用户复核请确认此判断。
