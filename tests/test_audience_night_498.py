@@ -677,9 +677,9 @@ def test_close_night_committed_without_dossier_does_not_publish_mingfa(game):
         directive_status="pending",
     )
     directive_id = int(db.conn.execute(
-        "SELECT committed_directive_id FROM pending_actions WHERE id=?",
+        "SELECT id FROM turn_directives WHERE source_pending_action_id=?",
         (candidate_id,),
-    ).fetchone()["committed_directive_id"])
+    ).fetchone()["id"])
     assert db.get_dossier_for_directive(directive_id) is None
     an.close_night(db, state, night_id=int(night["id"]), content=content)
     assert db.get_dossier_for_directive(directive_id) is None

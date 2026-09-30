@@ -222,12 +222,13 @@ def stage_pacification_candidate(
     text: str,
     target_id: str,
     extracted_mode: object = None,
+    source_chat_turn_id: object = 0,
     pend_for_minister: Optional[List[Dict[str, Any]]] = None,
 ) -> int:
     """Shared pacification candidate write: mode + same-target update.
 
     Reused by audience translation; commit resolves the target through
-    _find_pacification_target.
+    _find_pacification_target.  ``source_chat_turn_id``（#1890）随新行落库。
     """
     from ming_sim.cli_backend import resolve_directive_mode
 
@@ -275,7 +276,10 @@ def stage_pacification_candidate(
     }
     if existing_id:
         return db.update_directive_candidate(existing_id, staged)
-    return db.stage_directive_candidate(int(turn), minister_name, payload=staged)
+    return db.stage_directive_candidate(
+        int(turn), minister_name, payload=staged,
+        source_chat_turn_id=int(source_chat_turn_id or 0),
+    )
 
 
 def punish_actions_allowed() -> frozenset:
@@ -341,9 +345,13 @@ def stage_punishment_candidate(
     backing_dossier_id: object = None,
     issue_id: object = None,
     issue_disposition: object = None,
+    source_chat_turn_id: object = 0,
     pend_for_minister: Optional[List[Dict[str, Any]]] = None,
 ) -> int:
-    """Shared punishment candidate write: mode + same-target update."""
+    """Shared punishment candidate write: mode + same-target update.
+
+    ``source_chat_turn_id``（#1890）随新行落库。
+    """
     from ming_sim.cli_backend import resolve_directive_mode
 
     target = str(target_id or "").strip()
@@ -461,7 +469,10 @@ def stage_punishment_candidate(
         staged["amount"] = n
     if existing_id:
         return db.update_directive_candidate(existing_id, staged)
-    return db.stage_directive_candidate(int(turn), minister_name, payload=staged)
+    return db.stage_directive_candidate(
+        int(turn), minister_name, payload=staged,
+        source_chat_turn_id=int(source_chat_turn_id or 0),
+    )
 
 
 
@@ -777,13 +788,14 @@ def stage_grant_allocation_candidate(
     target_candidate: object = None,
     assignee: str = "",
     participant_roster: object = None,
+    source_chat_turn_id: object = 0,
     pend_for_minister: Optional[List[Dict[str, Any]]] = None,
 ) -> int:
     """Shared grant candidate write: mode + explicit-target update only.
 
     Same grant_action+target_id alone must not overwrite. Independent 另拨/再赏
     each stage a new candidate (#502 / #518); only a structured target_candidate
-    id updates the named pending grant.
+    id updates the named pending grant.  ``source_chat_turn_id``（#1890）随新行落库。
     """
     from ming_sim.cli_backend import resolve_directive_mode
 
@@ -925,7 +937,10 @@ def stage_grant_allocation_candidate(
         }]
     if existing_id:
         return db.update_directive_candidate(existing_id, staged)
-    return db.stage_directive_candidate(int(turn), minister_name, payload=staged)
+    return db.stage_directive_candidate(
+        int(turn), minister_name, payload=staged,
+        source_chat_turn_id=int(source_chat_turn_id or 0),
+    )
 
 
 
@@ -1550,8 +1565,9 @@ def stage_assignment_candidate(
         origin_cid = int(source_chat_turn_id or 0)
     except (TypeError, ValueError):
         origin_cid = 0
-    if origin_cid > 0:
-        staged["source_chat_turn_id"] = origin_cid
+    # #1890：来源轮不写进载荷——它只落 pending_actions.source_chat_turn_id 一列
+    # （交办的统一身份）。载荷里留副本等于同一事实两处可写，改草与迟到转译
+    # 会让两者漂移；成案侧已改读该列。
     category = str(transaction_category or "").strip()
     if category:
         staged["transaction_category"] = category
@@ -1573,22 +1589,12 @@ def stage_assignment_candidate(
     has_ongoing = isinstance(parsed_ongoing, dict) and bool(parsed_ongoing)
     if kind_raw == "until_stop":
         staged["commitment_kind"] = "until_stop"
-    # #620 AC2：生产捕获——结构化 stages / JSON 串 / 正文「三年X五年Y」→ 绝对 due 段表
-    # 分层：召对入口对分类器坏形 stages 容错（回落正文年诺）；库层 capture/stages_to_json 仍响亮 ValueError
-    from ming_sim.staged_commitment import capture_commitment_stages
-    stages_raw = stages if stages not in (None, "") else None
-    try:
-        stages_norm = capture_commitment_stages(
-            stages_raw,
-            narrative_text=body,
-            origin_turn=int(turn),
-        )
-    except ValueError:
-        stages_norm = capture_commitment_stages(
-            None,
-            narrative_text=body,
-            origin_turn=int(turn),
-        )
+    # #620 AC2 / #1890 / ADR 0142：分段里程碑是机械事实（到期判账），只承接
+    # **显式结构化** stages——JSON 数组串或已结构化列表，一律走库层
+    # stages_to_json 的严格串行面：非 JSON 字符串响亮 ValueError（由交办分派
+    # 的既有 except 收成 durable 拒收）。全仓已无任何接缝从散文正则反推年诺。
+    from ming_sim.staged_commitment import stages_to_json
+    stages_norm = json.loads(stages_to_json(stages))
     if kind_raw == "until_stop" or has_stop or absolute_end > 0 or has_ongoing or stages_norm:
         if has_stop:
             staged["stop_condition"] = parsed_stop
@@ -1602,7 +1608,10 @@ def stage_assignment_candidate(
             # 段派生 end_turn（max due）不写入候选/DB（#620 勿驱动 expire）
     if existing_id:
         return db.update_directive_candidate(existing_id, staged)
-    return db.stage_directive_candidate(int(turn), minister_name, payload=staged)
+    return db.stage_directive_candidate(
+        int(turn), minister_name, payload=staged,
+        source_chat_turn_id=origin_cid,
+    )
 
 def stage_authorization_candidate(
     db: Any,
@@ -1794,12 +1803,14 @@ def stage_referral_candidate(
         origin_cid = int(source_chat_turn_id or 0)
     except (TypeError, ValueError):
         origin_cid = 0
-    if origin_cid > 0:
-        staged["source_chat_turn_id"] = origin_cid
+    # #1890：同 stage_assignment_candidate——来源轮只落身份列，不进载荷。
     # 禁个人 owner：显式不写 assignee/assignee_id
     if existing_id:
         return db.update_directive_candidate(existing_id, staged)
-    return db.stage_directive_candidate(int(turn), minister_name, payload=staged)
+    return db.stage_directive_candidate(
+        int(turn), minister_name, payload=staged,
+        source_chat_turn_id=origin_cid,
+    )
 
 def stage_revoke_authority_candidate(
     db: Any,

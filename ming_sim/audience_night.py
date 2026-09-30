@@ -1110,10 +1110,10 @@ def publish_night_directives(db: Any, night_id: int) -> None:
         SELECT td.id AS directive_id, td.actor, td.text,
                MIN(d.id) AS dossier_id
         FROM pending_actions pa
-        JOIN turn_directives td ON td.id = pa.committed_directive_id
+        JOIN turn_directives td ON td.source_pending_action_id = pa.id
         JOIN decree_dossiers d ON d.pending_action_id = pa.id
         WHERE pa.night_id = ? AND pa.kind = 'directive'
-          AND pa.status = 'committed' AND pa.committed_directive_id > 0
+          AND pa.status = 'committed'
         GROUP BY td.id, td.actor, td.text
         ORDER BY td.id
         """,

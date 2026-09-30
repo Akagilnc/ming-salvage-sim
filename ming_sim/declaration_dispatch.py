@@ -316,6 +316,10 @@ def _dispatch_declaration_sections(
         rushes=_dispatch_rushes(
             db, state, declaration.get("rushes"),
             minister_name=minister_name, source=source,
+            source_chat_turn_id=(
+                int(chat_turn_id or source_chat_turn_id or 0)
+                if source_turn_err is None else 0
+            ),
         ),
         travel_tones=_dispatch_travel_tones(
             db, declaration.get("travel_tones"), night_id=night_id,
@@ -1069,6 +1073,7 @@ def _dispatch_commissions(
                 applied.append(
                     _stage_prohibit_covert_levy(
                         db, state, item, minister_name=minister_name,
+                        source_chat_turn_id=source_chat_turn_id,
                     )
                 )
             except KeyError as exc:
@@ -1117,6 +1122,7 @@ def _dispatch_commissions(
             }
             row_id = db.stage_pending_action(
                 int(state.turn), "directive", "拟旨", actor, payload,
+                source_chat_turn_id=source_chat_turn_id,
             )
             applied.append({"id": row_id, "payload": payload, "kind": "directive"})
             continue
@@ -1147,6 +1153,7 @@ def _dispatch_commissions(
             row_id = db.stage_pending_action(
                 int(state.turn), kind="secret_order", action="记进展",
                 minister_name=actor, target_id=order_id, payload={"note": note},
+                source_chat_turn_id=source_chat_turn_id,
             )
             applied.append({"id": row_id, "kind": "secret_order"})
             continue
@@ -1188,7 +1195,7 @@ def _dispatch_commissions(
             }
             row_id = db.stage_pending_action(
                 int(state.turn), "secret_order", "更新", actor, payload,
-                target_id=order_id,
+                target_id=order_id, source_chat_turn_id=source_chat_turn_id,
             )
             applied.append({"id": row_id, "kind": "secret_order"})
             continue
@@ -1202,11 +1209,9 @@ def _dispatch_commissions(
                 _reject(rejected, item, "密令新建载荷须为独立对象", "invalid_shape", source)
                 continue
             from ming_sim.cli_backend import secret_order_can_land
-            from ming_sim.action_materialize import land_or_recover_new_secret_order
             if not secret_order_can_land(dict(secret)):
                 _reject(rejected, item, "密令缺标题、内容或冻结任务契约", "invalid_shape", source)
                 continue
-            out: Dict[str, Any] = {}
             source_turn = db.conn.execute(
                 "SELECT minister_name, user_message_id FROM chat_turns "
                 "WHERE id=? AND turn=? AND status='active'",
@@ -1215,15 +1220,37 @@ def _dispatch_commissions(
             if source_turn is None or source_turn["user_message_id"] is None:
                 _reject(rejected, item, "密令缺本轮口谕源轮", "missing_ref", source)
                 continue
-            pinned = dict(secret)
-            pinned["origin_chat_message_id"] = int(source_turn["user_message_id"])
             actor = str(minister_name or "").strip() or str(source_turn["minister_name"])
-            land_or_recover_new_secret_order(
-                db=db, turn=int(state.turn), minister_name=actor,
-                secret=pinned, player_message=str(item.get("text") or ""),
-                llm_config=None, out=out,
+            # 差务契约在此一次冻结并校验：落不成案的原因此刻即知，写一条
+            # durable 拒收让下一句戏文里的大臣自己复述/请示（ADR 0155 场中
+            # 承接），不留一条注定落不了库的暂存。
+            from ming_sim.covert_progress import (
+                CovertContractError, build_covert_task_contract,
             )
-            applied.append({"id": out["pending_action_id"], "kind": "secret_order"})
+            try:
+                frozen_task = build_covert_task_contract(covert_task=secret.get("covert_task"))
+            except (CovertContractError, TypeError, ValueError) as exc:
+                _reject(rejected, item, f"密令差务契约不成立：{exc}", "invalid_shape", source)
+                continue
+            # 落现役唯一写口（db.stage_pending_action）；应允时按 ADR 0038
+            # 夜内直写成案（_dispatch_promises 的 secret_order 分支）。
+            payload = {
+                "title": str(secret.get("title") or "").strip(),
+                "content": str(secret.get("content") or "").strip(),
+                "assignee": str(secret.get("assignee") or "").strip() or actor,
+                "tags": list(secret.get("tags") or []),
+                "deadline_months": secret.get("deadline_months", 0),
+                "excluded_names": list(secret.get("excluded_names") or []),
+                "excluded_offices": list(secret.get("excluded_offices") or []),
+                "dossier_links": list(secret.get("dossier_links") or []),
+                "covert_task": frozen_task,
+                "origin_chat_message_id": int(source_turn["user_message_id"]),
+            }
+            row_id = db.stage_pending_action(
+                int(state.turn), "secret_order", "新建", actor, payload,
+                source_chat_turn_id=source_chat_turn_id,
+            )
+            applied.append({"id": row_id, "kind": "secret_order"})
             continue
 
         assignment = item.get("assignment")
@@ -1338,6 +1365,7 @@ def _dispatch_commissions(
                 backing_dossier_id=punishment.get("backing_dossier_id"),
                 issue_id=punishment.get("issue_id"),
                 issue_disposition=punishment.get("issue_disposition"),
+                source_chat_turn_id=source_chat_turn_id,
             )
             if row_id:
                 applied.append({"id": row_id, "kind": "directive"})
@@ -1371,6 +1399,7 @@ def _dispatch_commissions(
             row_id = stage_pacification_candidate(
                 db, int(state.turn), actor, text=body,
                 target_id=canonical, extracted_mode=pacification.get("mode"),
+                source_chat_turn_id=source_chat_turn_id,
             )
             applied.append({"id": row_id, "kind": "directive"})
             continue
@@ -1534,6 +1563,7 @@ def _dispatch_commissions(
                 str(office_payload["appoint_action"]),
                 minister_name,
                 office_payload,
+                source_chat_turn_id=source_chat_turn_id,
             )
             return {"id": oid, "payload": office_payload, "kind": "office"}
 
@@ -1554,6 +1584,7 @@ def _dispatch_commissions(
             payload["actor"] = actor
         row_id = db.stage_pending_action(
             int(state.turn), "directive", "拟旨", actor, payload,
+            source_chat_turn_id=source_chat_turn_id,
         )
         applied.append({"id": row_id, "payload": payload, "kind": "directive"})
     return SectionResult(applied=applied, rejected=rejected)
@@ -1695,6 +1726,7 @@ def _is_prohibit_covert_levy_item(item: Mapping[str, object]) -> bool:
 
 def _stage_prohibit_covert_levy(
     db: Any, state: Any, item: Mapping[str, object], *, minister_name: str,
+    source_chat_turn_id: int = 0,
 ) -> Dict[str, Any]:
     """禁摊派交办：绑定当前暴露案卷 → 既有 directive 暂存并标夜应允。"""
     from ming_sim.audience_night import mark_actions_night_approved
@@ -1726,6 +1758,7 @@ def _stage_prohibit_covert_levy(
     }
     row_id = db.stage_pending_action(
         int(state.turn), "directive", "拟旨", actor, payload,
+        source_chat_turn_id=source_chat_turn_id,
     )
     mark_actions_night_approved(db, [row_id])
     return {"id": row_id, "payload": payload, "kind": "directive"}
@@ -1851,8 +1884,11 @@ def _dispatch_rushes(
     *,
     minister_name: str,
     source: Provenance,
+    source_chat_turn_id: int = 0,
 ) -> SectionResult:
-    """催办声明 → 既有 pending 催办写口（密令 / 分段承诺，ADR 0078）。"""
+    """催办声明 → 既有 pending 催办写口（密令 / 分段承诺，ADR 0078）。
+
+    ``source_chat_turn_id``（#1890）：暂存行的来源轮，随交办身份落库。"""
     items, rejected = _section_items(raw, label="催办声明", source=source)
     applied: List[Any] = []
     for item in items:
@@ -1907,7 +1943,7 @@ def _dispatch_rushes(
             }
             row_id = db.stage_pending_action(
                 int(state.turn), "commitment", "催办", actor, payload,
-                target_id=target_id,
+                target_id=target_id, source_chat_turn_id=source_chat_turn_id,
             )
             applied.append({
                 "id": row_id, "kind": "commitment", "target_id": target_id,
@@ -1929,7 +1965,7 @@ def _dispatch_rushes(
         payload = {"deadline_months": deadline, "reason": reason}
         row_id = db.stage_pending_action(
             int(state.turn), "secret_order", "催办", actor, payload,
-            target_id=target_id,
+            target_id=target_id, source_chat_turn_id=source_chat_turn_id,
         )
         applied.append({
             "id": row_id, "kind": "secret_order", "target_id": target_id,
