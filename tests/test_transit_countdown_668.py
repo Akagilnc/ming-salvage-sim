@@ -118,7 +118,7 @@ def test_pre_settle_tick_before_seed_auto_trigger_reads_new_location(game):
     t0 = state.turn
     r0 = _put_in_transit(db, content, name, origin='henan', dest='beizhili', speed_factor=1.0, start_turn=t0)
     assert _oracle_n(r0, 1.0) == 1
-    ev = Event(id='__test_transit_seed_gate_668__', title='测试在途 seed 门控', kind='situation', summary='x', urgency=50, severity=50, credibility=50, interests=[], audiences=[], auto_trigger=True, trigger_authority='world_engine', trigger_gate={f'character.{name}.location': '==beizhili', f'character.{name}.status': '==active'}, person_core_subjects=[name])
+    ev = Event(id='__test_transit_seed_gate_668__', title='测试在途 seed 门控', kind='situation', summary='x', urgency=50, severity=50, credibility=50, interests=[], audiences=[], auto_trigger=True, trigger_gate={f'character.{name}.location': '==beizhili', f'character.{name}.status': '==active'}, person_core_subjects=[name])
     content.seed_events.append(ev)
     try:
         state.turn = t0 + 1

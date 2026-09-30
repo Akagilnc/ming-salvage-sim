@@ -21,7 +21,6 @@
     "resolve_condition": "月度财政转正——国库每月税收入足以覆盖宗禄+官俸+辽饷+京营各军军饷等刚性月支、不再月月赤字挪借即可结案；无论靠裁冗节流、开源加征、清丈盐课商税还是抄没新财源，只要月入≥月支、收支转正即视为达成",
     "fail_condition": "国库见底致刚性支出违约——欠饷哗变、官俸断发或宗禄拖欠激成宗藩闹事",
     "trigger_gate": {},
-    "trigger_authority": "world_engine",
     "auto_trigger": true,
     "bar_value": 28,
     "bar_good_meaning": "财用渐丰",
@@ -81,7 +80,6 @@
     "resolve_condition": "关宁军欠饷补齐过半、军心稳住不再鼓噪即可结案；不要求宁锦整训全部完成或主帅到任，只要哗变之危解除、防线暂稳即视为达成",
     "fail_condition": "关宁军欠饷激成兵变或将领私下勾结后金；宁锦防线丢失锦州/宁远任一要隘",
     "trigger_gate": {},
-    "trigger_authority": "world_engine",
     "auto_trigger": true,
     "bar_value": 25,
     "bar_good_meaning": "宁锦稳固",
@@ -151,7 +149,6 @@
     "trigger_gate": {
       "民心": "<=44"
     },
-    "trigger_authority": "world_engine",
     "auto_trigger": true
   },
   {
@@ -176,7 +173,6 @@
     "resolve_condition": "陕西 public_support（地方民心）>60 且 unrest（动乱值）<30，且驻陕官军/边军已能压制叛军（流寇被剿散、就抚或赶出陕西，不再成股攻州县）即可结案",
     "fail_condition": "陕西流寇成股（万人以上）攻破州县；与晋豫流寇合流；驿卒大批投寇",
     "trigger_gate": {},
-    "trigger_authority": "world_engine",
     "auto_trigger": true,
     "bar_value": 30,
     "bar_good_meaning": "饥民就抚",
@@ -237,7 +233,6 @@
     "trigger_gate": {
       "power.houjin.leverage": ">=75"
     },
-    "trigger_authority": "world_engine",
     "auto_trigger": true
   },
   {
@@ -268,7 +263,6 @@
       "region.huguang.grain_security": ">=80",
       "民心": ">=42"
     },
-    "trigger_authority": "world_engine",
     "auto_trigger": true
   },
   {
@@ -295,7 +289,6 @@
     "trigger_gate": {
       "power.houjin.cohesion": "<=55"
     },
-    "trigger_authority": "world_engine",
     "auto_trigger": true
   },
   {
@@ -324,7 +317,6 @@
     "trigger_gate": {
       "region.shaanxi|shanxi|henan.unrest.min": ">=65"
     },
-    "trigger_authority": "world_engine",
     "auto_trigger": true
   },
   {
@@ -351,7 +343,6 @@
     "trigger_gate": {
       "class.士绅@nanzhili|zhejiang|fujian.satisfaction.max": "<=30"
     },
-    "trigger_authority": "world_engine",
     "auto_trigger": true
   },
   {
@@ -372,7 +363,6 @@
     "trigger_gate": {
       "民心": "<=-1"
     },
-    "trigger_authority": "world_engine",
     "auto_trigger": true,
     "bar_value": 35,
     "bar_good_meaning": "余波已平",

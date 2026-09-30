@@ -311,7 +311,6 @@ def test_auto_trigger_seed_event_expires_after_latest_window_when_gate_unsatisfi
     ev.trigger_end_year = 1629
     ev.trigger_end_month = 2
     ev.auto_trigger = True
-    ev.trigger_authority = "world_engine"
     content.seed_events.append(ev)
     try:
         state.year = 1629
@@ -838,7 +837,6 @@ def test_auto_trigger_historical_event_to_issue_uses_outer_transaction(game, mon
     event_id = "__test_auto_trigger_atomic__"
     ev = _hist_event(event_id, {})
     ev.auto_trigger = True
-    ev.trigger_authority = "world_engine"
     calls = []
 
     def fake_event_to_issue(db_arg, state_arg, ev_arg, *, commit=True):
@@ -2109,7 +2107,6 @@ def test_historical_auto_trigger_event_expires_after_latest_window(game):
     ev.trigger_end_year = 1629
     ev.trigger_end_month = 2
     ev.auto_trigger = True
-    ev.trigger_authority = "world_engine"
     content.events.append(ev)
     try:
         state.year = 1629
@@ -2131,7 +2128,6 @@ def test_gated_auto_trigger_seed_event_can_recur_after_previous_issue_resolved(g
     issues.bind_content(content)
     ev = _hist_event("__test_recurring_auto_seed__", {"民心": "<=5"})
     ev.auto_trigger = True
-    ev.trigger_authority = "world_engine"
     ev.event_type = "situation"
     content.seed_events.append(ev)
     try:
@@ -2302,65 +2298,6 @@ def test_huangtaiji_chengdi_rename_core_fact_lands_by_engine_tick(game):
     assert "大清" in row["aliases"]
     assert "称帝" in row["status"]
     assert row["last_action"] == "皇太极称帝改国号大清"
-
-
-def test_person_event_with_auto_trigger_is_rejected_at_load(monkeypatch):
-    """#1892：人物事件声明 auto_trigger（引擎硬发）＝引擎代人物做决定，load 期 fail-loud。"""
-    import pytest
-    import ming_sim.content as content_mod
-    bad = [{"id": "e", "title": "t", "kind": "k", "summary": "s",
-            "urgency": 1, "severity": 1, "credibility": 1,
-            "interests": [], "audiences": [],
-            "trigger_gate": {},
-            "trigger_authority": "model_choice",
-            "auto_trigger": True}]
-    monkeypatch.setattr(content_mod, "load_json_asset", lambda *a, **k: bad)
-    with pytest.raises(SystemExit, match="人物事件不得 auto_trigger"):
-        content_mod.load_event_content("x.json")
-
-
-def test_person_event_marked_auto_trigger_is_not_engine_fired(game):
-    """#1892：运行期被改动的对象同样守门——标了 auto_trigger 的人物事件引擎也不发。"""
-    db, state, content = game
-    issues.bind_content(content)
-    ev = _hist_event("__test_person_event_auto__", {})
-    ev.auto_trigger = True
-    ev.trigger_authority = "model_choice"
-    content.events.append(ev)
-    try:
-        state.year = 1636
-        state.period = 4
-
-        triggered = issues.auto_trigger_seed_issues(state, db)
-
-        assert all(item["id"] != "__test_person_event_auto__" for item in triggered)
-        assert not db.has_event_triggered("__test_person_event_auto__")
-        assert "__test_person_event_auto__" in {
-            e.id for e in issues.gather_candidate_events(state, db)
-        }
-    finally:
-        content.events.remove(ev)
-
-
-def test_world_engine_plagues_are_engine_fired_with_core_effect(game):
-    """#1892 互补面：大疫是非人世界事件，仍由引擎按时间窗触发并算核心后果。"""
-    db, state, content = game
-    issues.bind_content(content)
-    assert content.event_by_id["huabei_plague"].trigger_authority == "world_engine"
-    assert content.event_by_id["jingshi_plague"].trigger_authority == "world_engine"
-    state.year = 1633
-    state.period = 7
-    before = db.conn.execute(
-        "SELECT population FROM regions WHERE id=?", ("shanxi",),
-    ).fetchone()["population"]
-
-    triggered = issues.auto_trigger_seed_issues(state, db)
-
-    assert any(item["id"] == "huabei_plague" for item in triggered)
-    after = db.conn.execute(
-        "SELECT population FROM regions WHERE id=?", ("shanxi",),
-    ).fetchone()["population"]
-    assert after == before - 400000
 
 
 def test_historical_power_rename_tick_reads_huangtaiji_event_effect(game):

@@ -161,7 +161,6 @@
     "trigger_month": 4,
     "open_window": true,
     "trigger_gate": {},
-    "trigger_authority": "model_choice",
     "effect_on_trigger": {
       "power_renames": [
         {
@@ -299,7 +298,6 @@
     "trigger_month": 7,
     "open_window": true,
     "trigger_gate": {},
-    "trigger_authority": "world_engine",
     "auto_trigger": true,
     "event_type": "situation",
     "effect_on_trigger": {
@@ -408,7 +406,6 @@
     "trigger_month": 3,
     "open_window": true,
     "trigger_gate": {},
-    "trigger_authority": "world_engine",
     "auto_trigger": true,
     "event_type": "situation",
     "effect_on_trigger": {

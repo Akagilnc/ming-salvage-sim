@@ -5370,11 +5370,9 @@ class GameDB:
         self.conn.commit()
 
     def _backfill_event_triggers_from_event_pool_issues(self) -> None:
-        # #1892：只有非人世界事件的引擎硬触发才作「核心后果仍待补」，故不回填已发终态；
-        # 人物事件的核心事实由既有确定性通道（月初 rename tick 等）落，不靠引擎硬发。
         pending_core_effect_ids = {
             ev.id for ev in (*self.content.events, *self.content.seed_events)
-            if ev.auto_trigger and ev.trigger_authority == "world_engine" and bool(ev.effect_on_trigger)
+            if ev.auto_trigger and bool(ev.effect_on_trigger)
         }
         rows = self.conn.execute(
             """
@@ -5575,7 +5573,7 @@ class GameDB:
         if not getattr(self, "content", None):
             return
         for ev in self.content.seed_events:
-            if not ev.auto_trigger or ev.trigger_gate or ev.trigger_authority != "world_engine":
+            if not ev.auto_trigger or ev.trigger_gate:
                 continue
             if ev.event_type != "situation":
                 continue

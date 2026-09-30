@@ -2462,9 +2462,7 @@ def gather_candidate_events(state: GameState, db: GameDB) -> List[Event]:
             continue
         if _event_window_expired(ev, state):
             continue
-        # #1892：只有非人世界事件（引擎自己发）才退出候选池；人物事件即便被误标
-        # auto_trigger 也仍须能作为候选交世界段模型选，不因标记被吞。
-        if ev.auto_trigger and ev.trigger_authority == "world_engine":
+        if ev.auto_trigger:
             continue
         dead_subjects = _dead_person_core_subjects(ev, db)
         if dead_subjects:
@@ -2485,8 +2483,8 @@ def gather_candidate_events(state: GameState, db: GameDB) -> List[Event]:
             continue
         if _event_window_expired(ev, state):
             continue
-        # 非人世界 auto_trigger 事件由程序硬触发，绝不进 LLM 候选池（#1892 同 world_engine 口径）
-        if ev.auto_trigger and ev.trigger_authority == "world_engine":
+        # auto_trigger 事件只能由程序硬触发，绝不进 LLM 候选池
+        if ev.auto_trigger:
             continue
         if not _event_window_open(ev, state):
             continue
@@ -2568,11 +2566,6 @@ def _auto_trigger_seed_issues_in_atomic(state: GameState, db: GameDB) -> List[Di
     for ev in [*c.events, *c.seed_events]:
         historical_event = any(ev is item for item in c.events)
         if not ev.auto_trigger:
-            continue
-        # #1892：引擎硬触发只走非人世界事件。人物事件即便被标了 auto_trigger 也不在此发——
-        # 那属引擎代人物做决定（CLAUDE.md P6）。静态错配已在 content.load_event_content
-        # fail-loud；此处守运行期被改动的对象，不静默发人物事件。
-        if ev.trigger_authority != "world_engine":
             continue
         terminal_state = terminal_states.get(ev.id)
         if terminal_state and (historical_event or terminal_state == "expired"):
@@ -4405,11 +4398,7 @@ def _preflight_declared_event_groups(
         if event is None or not _is_strategic_foreign_node_event(event):
             rejected[event_id] = f"效果归属的战略事件不存在：{event_id}"
             continue
-        if (
-            event_id not in candidates
-            or db.event_terminal_state(event_id)
-            or (event.auto_trigger and event.trigger_authority == "world_engine")
-        ):
+        if event_id not in candidates or db.event_terminal_state(event_id) or event.auto_trigger:
             rejected[event_id] = f"战略事件当前不能触发：{event_id}"
             continue
         if not any(
@@ -4881,10 +4870,10 @@ def apply_issue_tracker_output(
                 print(f"[INFO] new_issue 已拒：event_pool id={event_id!r} 非预设事件，疑似臆造。")
                 applied_new.append({"id": event_id, "title": title or event_id, "rejected": True, "reason": "event_pool id 非预设事件"})
                 continue
-            if getattr(ev, "auto_trigger", False) and ev.trigger_authority == "world_engine":
-                # 非人世界事件由程序硬触发，模型不准从候选池立项（#1892 同 world_engine 口径）
-                print(f"[INFO] new_issue 已拒：event {event_id} 是 world_engine 事件，只能程序硬触发。")
-                applied_new.append({"id": ev.id, "title": ev.title, "rejected": True, "reason": "world_engine 事件仅程序可触发"})
+            if getattr(ev, "auto_trigger", False):
+                # auto_trigger 事件只能程序硬触发，LLM 不准从候选池立项
+                print(f"[INFO] new_issue 已拒：event {event_id} 标了 auto_trigger，只能程序硬触发。")
+                applied_new.append({"id": ev.id, "title": ev.title, "rejected": True, "reason": "auto_trigger 事件仅程序可触发"})
                 continue
             if db.event_terminal_state(ev.id) == "expired":
                 print(f"[INFO] new_issue 已拒：event {event_id} 已过期终态，不再从 event_pool 立项。")
