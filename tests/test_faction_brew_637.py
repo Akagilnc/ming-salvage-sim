@@ -644,23 +644,10 @@ def test_faction_brew_prompt_retry_month_does_not_label_old_events_as_current_mo
     assert payload["new_events"][0]["period"] == old_period
     assert payload["year"] != payload["new_events"][0]["year"] or payload["period"] != payload["new_events"][0]["period"]
 
-    # prompt 措辞断言：不把旧事件称作本月，且为正向表述
-    prompt_path = Path("content/prompts/faction_brew.md")
-    prompt = prompt_path.read_text(encoding="utf-8")
-    # 禁止旧措辞
-    assert "本月新落" not in prompt
-    assert "本月新事" not in prompt
-    # 必须含新措辞（正向）
-    assert "本批待酿的涉派事件" in prompt
-    assert "水位之上未消化的新事件" in prompt or "未消化的新事件" in prompt
-    assert "以其自带年月为据" in prompt
-    assert "has_pending_failure为真时包含此前失败月的遗留事件" in prompt
-    assert "source_faction" in prompt and "target_faction" in prompt
-    assert "都须由本批新事件撑起" in prompt
-    assert "以事件自带年月定夺新旧与跨度" in prompt
-    # 宪法 P6 禁负向句：不得出现“不要当作本月发生/不要把旧事件当本月”
-    assert "不要当作本月发生" not in prompt
-    assert "不要把旧事件当本月" not in prompt
-    assert "不要把" not in prompt or "不要把旧事件当本月" not in prompt  # 宽松：确保无负向时间语义
-    # 正向表述校验：提示按自带时序判断（不通过否定达到）
-    assert "依各事件自带时序判断" in prompt or "以事件自带年月定夺" in prompt or "以其自带年月为据" in prompt
+    # 负向闸案（唯一保留的 prompt 面断言）：提示词不得把水位之上的旧月事件
+    # 称作本月，也不得用「不要…」式负向句下达时间语义——这两类都是被明令
+    # 禁掉的坏形状，任何改写都不得把它们请回来。正向表述的**具体措辞**
+    # 属内容真源自由域，不作机械契约（否则换个说法就假红）。
+    prompt = Path("content/prompts/faction_brew.md").read_text(encoding="utf-8")
+    for banned in ("本月新落", "本月新事", "不要当作本月发生", "不要把旧事件当本月"):
+        assert banned not in prompt, banned

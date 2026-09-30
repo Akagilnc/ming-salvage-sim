@@ -45,8 +45,10 @@ def test_single_pay_order_capture_grounds_relative_deadline_at_current_turn(game
     assert staged_entries == result["entries"]
     assert all("duration_months" not in entry for entry in staged_entries)
 
+    # 接地事实段的结构化内容（canonical id / 字段名 / 默认优先级取值）是契约；
+    # 指令句的措辞不是，不锁句式。
     assert "陕西=@shaanxi" in prompts[0]
-    assert "相对期限只填 duration_months=N" in prompts[0]
+    assert "duration_months" in prompts[0]
     assert "until_turn=当前 turn+N-1" not in prompts[0]
     assert '"duration_months":3' in prompts[0]
     assert "默认军饷/官俸/宗禄/赈济=10/20/30/40" in prompts[0]
