@@ -1361,7 +1361,13 @@ def _apply_levy_petition_verdict(
         raise ValueError(f"请饷请旨指向不存在的事件：{event_id}")
     raw = (execution_option or {}).get(LEVY_TERMINAL_REASON_KEY)
     if raw is None or not str(raw).strip():
-        # 留中：朱笔答复不点拟批。事件未裁定，征收不变。
+        # 点了拟批却缺执行类型键不是留中；拒绝并让外层事务回滚，不能把自由文
+        # label 写入旧「已选未终态」通道的 terminal_reason（下月会被当结局读）。
+        if execution_option is not None or str(choice.get("label") or "").strip():
+            raise ValueError(
+                f"请饷请旨 {event_id} 的拟批缺少非空 {LEVY_TERMINAL_REASON_KEY}"
+            )
+        # 留中仅限朱笔答复不点拟批：label 为空，terminal_reason 也保持空。
         db.record_event_decision_choice(
             state, event_id, choice, source=FISCAL_LEVY_RESCRIPT_SOURCE, commit=commit,
         )

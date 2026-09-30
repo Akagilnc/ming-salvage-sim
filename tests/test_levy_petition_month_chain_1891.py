@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 import ming_sim.issues as issues
 import ming_sim.month_chain as month_chain
 import ming_sim.month_translate as month_translate
@@ -215,6 +217,62 @@ def test_held_levy_petition_advances_month_without_terminal_state(game, monkeypa
     second = session.resolve_turn(allow_empty_decree=True)
     assert second.advanced is True, (second.stage, second.awaiting)
     assert int(state.turn) > closed_turn
+
+
+@pytest.mark.parametrize("reason", ["missing", None, "", "   "])
+def test_selected_levy_option_without_reason_rejected_before_ledger_write(
+    game, monkeypatch, reason,
+):
+    """缺类型键的拟批当场拒绝；事务不留脏账，仍可留中并续推、再呈。"""
+    db, state, content = game
+    _prepare(db, state, content, monkeypatch)
+    before = _settle_p(db)["p"]["三饷应征"]
+    payload = json.loads(_world_text(reason="已准").split("<<DECISION>>")[1].split("<<END>>")[0])
+    if reason == "missing":
+        del payload["options"][0][LEVY_TERMINAL_REASON_KEY]
+    else:
+        payload["options"][0][LEVY_TERMINAL_REASON_KEY] = reason
+    _stub_world(monkeypatch, "<<DECISION>>" + json.dumps(payload, ensure_ascii=False) + "<<END>>")
+    session = make_light_session(db, state, content)
+    session.llm_config = LLMConfig(
+        api_key="sk-test", base_url="https://example.invalid", model="test",
+    )
+    assert session.resolve_turn(allow_empty_decree=True).awaiting is True
+    row = session.pending_decisions()[0]
+    with pytest.raises(ValueError, match="levy_terminal_reason"):
+        session.submit_hitl_choices(
+            [{"decision_key": row["decision_key"], "action": "decision", "label": "准行加派"}],
+            write_gate=session._write_gate,
+        )
+    assert db.conn.execute(
+        "SELECT 1 FROM event_triggers WHERE event_id=?", ("liao_levy_rise_1631",),
+    ).fetchone() is None
+    pending = db.conn.execute(
+        "SELECT status, choice_json FROM pending_decisions WHERE event_id=?",
+        (row["event_id"],),
+    ).fetchone()
+    assert pending["status"] == "pending"
+    assert not json.loads(pending["choice_json"] or "{}")
+    assert _settle_p(db)["p"]["三饷应征"] == before
+
+    session.submit_hitl_choices(
+        [{"decision_key": row["decision_key"], "action": "decision",
+          "label": "", "note": "留中，俟再议"}],
+        write_gate=session._write_gate,
+    )
+    ledger = db.conn.execute(
+        "SELECT terminal_state, terminal_reason, choice_json FROM event_triggers WHERE event_id=?",
+        ("liao_levy_rise_1631",),
+    ).fetchone()
+    assert ledger["terminal_state"] == ledger["terminal_reason"] == ""
+    assert json.loads(ledger["choice_json"])["note"] == "留中，俟再议"
+    assert "liao_levy_rise_1631" not in issues._event_pending_choice_records(db)
+    due = issues.list_fiscal_levy_petitions_due(state, db)
+    assert due[0]["event_id"] == "liao_levy_rise_1631"
+    assert due[0]["re_presentation"] is True
+    _stub_world(monkeypatch, "本月无大事。")
+    assert session.resolve_turn(allow_empty_decree=True).advanced is True
+    assert _settle_p(db)["p"]["三饷应征"] == before
 
 
 def test_no_levy_petition_means_no_extra_ask_and_no_new_run(game, monkeypatch):
