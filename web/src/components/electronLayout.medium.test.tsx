@@ -54,10 +54,10 @@ describe.sequential("medium: shared Electron geometry", () => {
         onClose={noop}
       >
         <EdictModal
-          state={edictState} directiveText="" editingDirectiveId={null} editingDirectiveText=""
+          state={edictState} editingDirectiveId={null} editingDirectiveText=""
           decree="" report="" busy=""
           error={`结算中止，请重试。\n错误包：/${"long-directory/".repeat(18)}error-pack\n请将整个目录发给作者。`}
-          onDirectiveTextChange={noop} onEditingTextChange={noop} onCreateDirective={noop}
+          onEditingTextChange={noop}
           onStartEdit={noop} onCancelEdit={noop} onSaveDirective={noop} onDeleteDirective={noop}
           onAdvanceWithoutEdict={noop} onIssueDecree={noop}
         />
@@ -73,12 +73,12 @@ describe.sequential("medium: shared Electron geometry", () => {
       startReachable: boolean;
       endReachable: boolean;
       alertFooterDisjoint: boolean;
-      alertTaDisjoint: boolean;
-      taFooterDisjoint: boolean;
-      taButtonDisjoint: boolean;
+      alertContentDisjoint: boolean;
+      contentFooterDisjoint: boolean;
+      contentButtonDisjoint: boolean;
       buttonEnabled: boolean;
       buttonHit: boolean;
-      textareaHit: boolean;
+      contentHit: boolean;
     }>(page, css("base", "court", "modals", "chat", "edict", "modal-theme", "situation"), [
       { width: 1280, height: 720 },
       { width: 1100, height: 720 },
@@ -87,10 +87,11 @@ describe.sequential("medium: shared Electron geometry", () => {
       const modal = document.querySelector('.fullscreen-modal');
       const alert = document.querySelector('[role="alert"]');
       const cols = document.querySelector('.desk-columns');
-      const textarea = document.querySelector('.desk-compose textarea');
+      // #1849：独立手拟栏已退役，御案内容区＝草稿/已发两区滚动列表（非拟诏文本框）。
+      const content = document.querySelector('.directive-list');
       const footer = document.querySelector('.desk-footer');
       const button = document.querySelector('.desk-footer button');
-      if (!modal || !alert || !cols || !textarea || !footer || !button) {
+      if (!modal || !alert || !cols || !content || !footer || !button) {
         return { error: 'missing edict fixture element' };
       }
       const overlaps = (a, b) => a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
@@ -114,13 +115,13 @@ describe.sequential("medium: shared Electron geometry", () => {
 
       // Resting geometry first — before any scrollIntoView / scrollTop mutation.
       const alertRect0 = alert.getBoundingClientRect();
-      const taRect0 = textarea.getBoundingClientRect();
-      const taVis = clipVisibleRect(textarea, cols);
-      const taVisH = Math.max(0, taVis.bottom - taVis.top);
-      const hitEl = taVisH > 0
-        ? document.elementFromPoint((taVis.left + taVis.right) / 2, (taVis.top + taVis.bottom) / 2)
+      const contentRect0 = content.getBoundingClientRect();
+      const contentVis = clipVisibleRect(content, cols);
+      const contentVisH = Math.max(0, contentVis.bottom - contentVis.top);
+      const hitEl = contentVisH > 0
+        ? document.elementFromPoint((contentVis.left + contentVis.right) / 2, (contentVis.top + contentVis.bottom) / 2)
         : null;
-      const textareaHit = !!hitEl && (hitEl === textarea || textarea.contains(hitEl));
+      const contentHit = !!hitEl && (hitEl === content || content.contains(hitEl));
 
       const buttonHit = document.elementFromPoint(
         buttonRect.left + buttonRect.width / 2,
@@ -146,12 +147,12 @@ describe.sequential("medium: shared Electron geometry", () => {
         startReachable,
         endReachable,
         alertFooterDisjoint: !overlaps(alertRect0, footerRect),
-        alertTaDisjoint: !overlaps(alertRect0, taVis),
-        taFooterDisjoint: !overlaps(taRect0, footerRect),
-        taButtonDisjoint: !overlaps(taRect0, buttonRect),
+        alertContentDisjoint: !overlaps(alertRect0, contentVis),
+        contentFooterDisjoint: !overlaps(contentRect0, footerRect),
+        contentButtonDisjoint: !overlaps(contentRect0, buttonRect),
         buttonEnabled: !button.disabled,
         buttonHit,
-        textareaHit,
+        contentHit,
       };
     })()`);
 
@@ -168,12 +169,12 @@ describe.sequential("medium: shared Electron geometry", () => {
       expect(result.startReachable, `${result.viewportWidth}x${result.viewportHeight} startReachable`).toBe(true);
       expect(result.endReachable, `${result.viewportWidth}x${result.viewportHeight} endReachable`).toBe(true);
       expect(result.alertFooterDisjoint, `${result.viewportWidth}x${result.viewportHeight} alertFooterDisjoint`).toBe(true);
-      expect(result.alertTaDisjoint, `${result.viewportWidth}x${result.viewportHeight} alertTaDisjoint`).toBe(true);
-      expect(result.taFooterDisjoint, `${result.viewportWidth}x${result.viewportHeight} taFooterDisjoint`).toBe(true);
-      expect(result.taButtonDisjoint, `${result.viewportWidth}x${result.viewportHeight} taButtonDisjoint`).toBe(true);
+      expect(result.alertContentDisjoint, `${result.viewportWidth}x${result.viewportHeight} alertContentDisjoint`).toBe(true);
+      expect(result.contentFooterDisjoint, `${result.viewportWidth}x${result.viewportHeight} contentFooterDisjoint`).toBe(true);
+      expect(result.contentButtonDisjoint, `${result.viewportWidth}x${result.viewportHeight} contentButtonDisjoint`).toBe(true);
       expect(result.buttonEnabled, `${result.viewportWidth}x${result.viewportHeight} buttonEnabled`).toBe(true);
       expect(result.buttonHit, `${result.viewportWidth}x${result.viewportHeight} buttonHit`).toBe(true);
-      expect(result.textareaHit, `${result.viewportWidth}x${result.viewportHeight} textareaHit`).toBe(true);
+      expect(result.contentHit, `${result.viewportWidth}x${result.viewportHeight} contentHit`).toBe(true);
     }
   });
 });

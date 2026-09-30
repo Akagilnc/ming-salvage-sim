@@ -1,7 +1,4 @@
-import asyncio
 import json
-import types
-import threading
 
 import pytest
 import ming_sim.cli_backend as cli_backend
@@ -947,10 +944,12 @@ def test_appointment_alias_uses_canonical_dossier_identity(game):
     )
     assert db.get_decree_dossier(dossier["id"])["status"] == "closed"
 
+# #1849 / ADR 0152 决定 1：Web 独立手拟新增口（POST /api/directives）已退役，
+# 原 web 参数组改走 CLI 手拟路（同一 capture 核 + session.add_directive），覆盖面不减。
 @pytest.mark.parametrize(
     ("entry", "case", "model_fields"),
     (
-        ("web", "allocation", {
+        ("cli", "allocation", {
             "动作类型": "grant_allocation", "目标类型": "issue",
             "目标": "relief", "金额": "30000", "账户": "内库",
             "执行面": "immediate",
@@ -958,7 +957,7 @@ def test_appointment_alias_uses_canonical_dossier_identity(game):
         ("cli", "authorization", {
             "动作类型": "secret_authorization", "目标类型": "character",
         }),
-        ("web", "controlled_verb", {
+        ("cli", "controlled_verb", {
             "动作类型": "secret_investigation", "目标类型": "issue",
             "目标ID": "granary-corruption",
         }),
@@ -966,7 +965,6 @@ def test_appointment_alias_uses_canonical_dossier_identity(game):
             "动作类型": "protection", "目标类型": "character",
         }),
         ("cli", "dismiss", {"动作类型": "dismiss_assignment"}),
-        ("web", "dismiss", {"动作类型": "dismiss_assignment"}),
     ),
 )
 def test_manual_directive_capture_reaches_structured_dossier(
@@ -1004,29 +1002,12 @@ def test_manual_directive_capture_reaches_structured_dossier(
     session.state = state
     session.llm_config = None
     session.content = content
-    if entry == "web":
-        import web_app
-
-        web_game = types.SimpleNamespace(
-            _write_gate=threading.Lock(),
-            db=db, state=state, content=content, session=session,
-            directive_rows=lambda: db.list_directives(
-                state, statuses=("pending", "draft"),
-            ),
-            directive_payload=lambda row: dict(row),
-        )
-        monkeypatch.setattr(web_app, "get_game", lambda: web_game)
-        result = asyncio.run(web_app.api_create_directive(
-            web_app.DirectiveRequest(text=directive_text),
-        ))
-        directive_id = int(result["directive"]["id"])
-    else:
-        payload = cli_backend.capture_manual_directive_payload(
-            directive_text, None, db=db, content=content,
-        )
-        directive_id = session.add_directive(
-            directive_text, dossier_payload=payload,
-        ).id
+    payload = cli_backend.capture_manual_directive_payload(
+        directive_text, None, db=db, content=content,
+    )
+    directive_id = session.add_directive(
+        directive_text, dossier_payload=payload,
+    ).id
     account = "内库" if case == "allocation" else "国库"
     before = state.metrics[account]
 
@@ -1064,7 +1045,7 @@ def test_manual_directive_capture_reaches_structured_dossier(
         assert "authorization_id" not in json.loads(dossier["payload_json"])
 
 @pytest.mark.parametrize(("entry", "bad_roster"), [
-    ("web", ["韩阁老"]),
+    ("cli", ["韩阁老"]),
     ("cli", [{"tier": "主办"}]),
     ("cli", {"character_id": "韩阁老", "tier": "主办"}),
 ])
@@ -1092,41 +1073,21 @@ def test_manual_directive_capture_rejects_malformed_roster(
     session.llm_config = None
     session.content = content
 
-    if entry == "web":
-        import web_app
-        from fastapi import HTTPException
+    import ming_sim.cli.terminal as terminal
 
-        web_game = types.SimpleNamespace(
-            _write_gate=threading.Lock(),
-            db=db, state=state, content=content, session=session,
-            directive_rows=lambda: db.list_directives(
-                state, statuses=("pending", "draft"),
-            ),
-            directive_payload=lambda row: dict(row),
-        )
-        monkeypatch.setattr(web_app, "get_game", lambda: web_game)
-        with pytest.raises(HTTPException) as exc_info:
-            asyncio.run(web_app.api_create_directive(
-                web_app.DirectiveRequest(text="手工旨意"),
-            ))
-        assert exc_info.value.status_code == 409
-        assert "参与人" in str(exc_info.value.detail)
-    else:
-        import ming_sim.cli.terminal as terminal
-
-        answers = iter(["add", "手工旨意", "back"])
-        monkeypatch.setattr("builtins.input", lambda _prompt="": next(answers))
-        assert terminal.review_directives(session) == "back"
-        assert "参与人" in capsys.readouterr().out
+    answers = iter(["add", "手工旨意", "back"])
+    monkeypatch.setattr("builtins.input", lambda _prompt="": next(answers))
+    assert terminal.review_directives(session) == "back"
+    assert "参与人" in capsys.readouterr().out
 
     assert db.list_pending_actions(state.turn) == []
     assert db.list_directives(state) == []
     assert db.list_decree_dossiers() == []
 
 @pytest.mark.parametrize(("entry", "tier"), [
-    ("web", None),
+    ("cli", None),
     ("cli", ""),
-    ("web", "旁听"),
+    ("cli", "旁听"),
 ])
 def test_manual_directive_capture_rejects_missing_empty_or_invalid_tier_without_writes(
     game, monkeypatch, entry, tier,
@@ -1156,31 +1117,11 @@ def test_manual_directive_capture_rejects_missing_empty_or_invalid_tier_without_
     session.llm_config = None
     session.content = content
 
-    if entry == "web":
-        import web_app
-        from fastapi import HTTPException
-
-        web_game = types.SimpleNamespace(
-            _write_gate=threading.Lock(),
-            db=db, state=state, content=content, session=session,
-            directive_rows=lambda: db.list_directives(
-                state, statuses=("pending", "draft"),
-            ),
-            directive_payload=lambda row: dict(row),
+    with pytest.raises(ValueError, match="参与人"):
+        payload = cli_backend.capture_manual_directive_payload(
+            "手工旨意", None, db=db, content=content,
         )
-        monkeypatch.setattr(web_app, "get_game", lambda: web_game)
-        with pytest.raises(HTTPException) as exc_info:
-            asyncio.run(web_app.api_create_directive(
-                web_app.DirectiveRequest(text="手工旨意"),
-            ))
-        assert exc_info.value.status_code == 409
-        assert "参与人" in str(exc_info.value.detail)
-    else:
-        with pytest.raises(ValueError, match="参与人"):
-            payload = cli_backend.capture_manual_directive_payload(
-                "手工旨意", None, db=db, content=content,
-            )
-            session.add_directive("手工旨意", dossier_payload=payload)
+        session.add_directive("手工旨意", dossier_payload=payload)
 
     assert db.list_pending_actions(state.turn) == []
     assert db.list_directives(state) == []

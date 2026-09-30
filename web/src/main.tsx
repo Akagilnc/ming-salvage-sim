@@ -183,16 +183,14 @@ export function App() {
     currentNightId,
   });
 
-  // 诏书台动作群（useEdictActions.ts）：草案 create/save/delete 与本地会话态归属。
+  // 诏书台动作群（useEdictActions.ts）：存量草案 save/delete 与本地会话态归属。
+  // #1849 / ADR 0152：create（独立手拟新增）已随入口退役移除。
   const {
-    directiveText,
     editingDirectiveId,
     editingDirectiveText,
-    setDirectiveText,
     setEditingDirectiveText,
     localDirectives,
     resetLocalEdictState,
-    createDirective,
     startEditDirective,
     cancelEditDirective,
     saveDirective,
@@ -776,7 +774,6 @@ export function App() {
         >
           <EdictModal
             state={state}
-            directiveText={directiveText}
             editingDirectiveId={editingDirectiveId}
             editingDirectiveText={editingDirectiveText}
             decree={decree}
@@ -784,9 +781,7 @@ export function App() {
             busy={busy}
             error={error}
             localDirectives={localDirectives}
-            onDirectiveTextChange={setDirectiveText}
             onEditingTextChange={setEditingDirectiveText}
-            onCreateDirective={createDirective}
             onStartEdit={startEditDirective}
             onCancelEdit={cancelEditDirective}
             onSaveDirective={saveDirective}

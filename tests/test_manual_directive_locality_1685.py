@@ -1,4 +1,8 @@
-"""#1685 manual directive region locality via assembly write + real HTTP tracer."""
+"""#1685 manual directive region locality via assembly write + real HTTP tracer.
+
+#1849：独立手拟新增 Web 入口（POST /api/directives）已随拟诏台「御笔自拟」控件退役；
+草稿改经现行 capture 核 + session 落桌（召对拟旨同一写入），下游封存/案卷断言不变。
+"""
 
 from __future__ import annotations
 
@@ -41,11 +45,11 @@ def test_manual_directive_region_assembly_writes_single_and_advances(
 
     monkeypatch.setattr(cli_backend, "capture_manual_directive_payload", _real_capture)
     monkeypatch.setattr(cli_backend, "_run_backend_for_config", backend)
-    response = tracer_client.post(
-        "/api/directives", json={"text": "着依旨施行。", "notes": ""},
-    )
+    # #1849：独立手拟新增 Web 口已退役；经现行 capture 核 + session 落草案
+    # （召对拟旨同一条 turn_directives 写入）。
+    from tests.directive_seed_helpers import seed_manual_draft
 
-    assert response.status_code == 200
+    assert seed_manual_draft(game.session, "着依旨施行。") > 0
     assert len(calls) == 1
     turn_before = game.state.turn
     _post_issue_stream(

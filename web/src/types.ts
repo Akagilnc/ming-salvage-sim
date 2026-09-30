@@ -179,8 +179,10 @@ export type LocalDirectiveItem = {
   text: string;
   phase: "inflight" | "failed";
   error?: string;
-  directiveId?: number;
-  op?: "create" | "save" | "delete";
+  /** #1849：本地卡只由存量草稿的改／删产生，故必有归属草案。 */
+  directiveId: number;
+  /** #1849：「create」随独立手拟新增口退役。 */
+  op?: "save" | "delete";
 };
 
 export type Issue = {

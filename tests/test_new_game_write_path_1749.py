@@ -161,9 +161,15 @@ def _install_canned_scene_double(game, monkeypatch) -> None:
 
 
 def _directive(client: TestClient, text: str) -> None:
-    r = client.post("/api/directives", json={"text": text, "notes": ""})
-    _assert_not_bare_500(r, step="directives")
-    assert r.status_code == 200, r.text
+    """#1849：独立手拟新增口已退役，改经现行 capture 核 + session 落一条草稿
+    （召对拟旨同一条 turn_directives 写入）。本文件被测的是落桌之后的写路径。"""
+    from tests.directive_seed_helpers import seed_manual_draft
+
+    game = web_app.web_game
+    assert game is not None
+    _wait_pending_writes(game)
+    seed_manual_draft(game.session, text)
+    _wait_pending_writes(game)
 
 
 def _chat_stream(client: TestClient, minister: str, msg: str) -> dict:
@@ -474,7 +480,7 @@ def test_gamesession_load_state_failure_closes_partial_resources(tmp_path, monke
 
 
 def test_load_save_close_fail_restores_writable_old_game(tracer_client, monkeypatch):
-    """真实 load_save 入口：关旧局失败 → 409、恢复指针且 /api/directives 仍可写；不搬活库。"""
+    """真实 load_save 入口：关旧局失败 → 409、恢复指针且草稿写入仍可落；不搬活库。"""
     client = tracer_client
     _install_canned_minister_factory(monkeypatch)
     seed = client.post("/api/menu/new_game")

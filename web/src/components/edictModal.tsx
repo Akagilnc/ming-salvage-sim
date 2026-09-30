@@ -60,7 +60,6 @@ function cardStateA11y(
 
 export function EdictModal({
   state,
-  directiveText,
   editingDirectiveId,
   editingDirectiveText,
   decree,
@@ -68,9 +67,7 @@ export function EdictModal({
   busy,
   error,
   localDirectives = [],
-  onDirectiveTextChange,
   onEditingTextChange,
-  onCreateDirective,
   onStartEdit,
   onCancelEdit,
   onSaveDirective,
@@ -79,7 +76,6 @@ export function EdictModal({
   onAdvanceWithoutEdict,
 }: {
   state: GameState;
-  directiveText: string;
   editingDirectiveId: number | null;
   editingDirectiveText: string;
   decree: string;
@@ -88,9 +84,7 @@ export function EdictModal({
   error: string;
   /** #1764：本地在飞/失败项（会话态）。 */
   localDirectives?: LocalDirectiveItem[];
-  onDirectiveTextChange: (value: string) => void;
   onEditingTextChange: (value: string) => void;
-  onCreateDirective: () => void;
   onStartEdit: (directive: Directive) => void;
   onCancelEdit: () => void;
   onSaveDirective: (directive: Directive) => void;
@@ -104,15 +98,12 @@ export function EdictModal({
   // Historical `pending` labels are therefore ordinary drafts here, never a second review gate.
   const draftDirectives = state.directives;
   const casedDirectives: CasedDirective[] = state.cased_directives ?? [];
-  // save/delete 绑在既有草案卡，不另占席；仅 create 会话卡计入桌面条数。
-  const createLocals = localDirectives.filter((item) => item.directiveId == null);
+  // save/delete 绑在既有草案卡，不另占席。#1849：本地 create 卡随独立手拟入口退役。
   const requestByDirectiveId = new Map(
-    localDirectives
-      .filter((item) => item.directiveId != null)
-      .map((item) => [item.directiveId as number, item]),
+    localDirectives.map((item) => [item.directiveId, item]),
   );
-  // deskCount 仅呈现条数（含本地 create 卡）；动作/恢复门控不得依赖它（#1764）。
-  const deskCount = draftDirectives.length + casedDirectives.length + createLocals.length;
+  // deskCount 仅呈现条数；动作/恢复门控不得依赖它（#1764）。
+  const deskCount = draftDirectives.length + casedDirectives.length;
   const hasDrafts = draftDirectives.length > 0;
   const hasCased = casedDirectives.length > 0;
   const hasPendingConversationalDraft = (state.pending_directive_count ?? 0) > 0;
@@ -150,9 +141,10 @@ export function EdictModal({
       <small id={errorId} className="local-fail-note" data-role="local-error" role="alert">{message}</small>
     ) : null;
 
-  // 御案两区：草稿（可改删 + 本地 create）/ 已发的旨意（成案只读，0048 无准驳）。
-  const showDraftZone =
-    draftDirectives.length > 0 || createLocals.length > 0;
+  // 御案两区：草稿（可改删）/ 已发的旨意（成案只读，0048 无准驳）。
+  // #1849 / ADR 0152 决定 1：独立手拟新增控件（「御笔自拟」+「新增草案」）退出，
+  // 直接下旨只走召对拟旨；草稿区的读／改／删与已发区查阅不受影响。
+  const showDraftZone = draftDirectives.length > 0;
   const showIssuedZone = casedDirectives.length > 0;
   const draftHeadingId = "edict-zone-draft-title";
   const issuedHeadingId = "edict-zone-issued-title";
@@ -242,29 +234,6 @@ export function EdictModal({
                     </div>
                   );
                 })}
-
-                {createLocals.map((local) => {
-                  const bodyId = `edict-body-local-${local.localKey}`;
-                  const errorId = `edict-err-local-${local.localKey}`;
-                  const failMsg = local.phase === "failed" ? local.error : undefined;
-                  return (
-                    <div
-                      className={cardClassName({ phase: local.phase })}
-                      key={local.localKey}
-                      data-directive-phase={local.phase}
-                      data-local-key={local.localKey}
-                      {...cardStateA11y(local.phase, bodyId, { id: errorId, message: failMsg })}
-                    >
-                      <div className="directive-head">
-                        <b data-role="local-mark" />
-                        <PhaseChip phase={local.phase} />
-                      </div>
-                      {renderBody(local.text, bodyId)}
-                      {renderFailNote(failMsg, errorId)}
-                    </div>
-                  );
-                })}
-
               </section>
             ) : null}
 
@@ -300,21 +269,6 @@ export function EdictModal({
           </div>
         </section>
 
-        <section className="desk-pane desk-compose">
-          <h2>御笔自拟</h2>
-          <textarea
-            value={directiveText}
-            onChange={(event) => onDirectiveTextChange(event.target.value)}
-            placeholder="例如：命户部核拨关宁、山海关、蓟镇辽饷一百五十二万两..."
-          />
-          <button
-            className="desk-add-btn"
-            onClick={onCreateDirective}
-            disabled={requestLocked || !directiveText.trim()}
-          >
-            <Edit3 size={14} />新增草案
-          </button>
-        </section>
       </div>
 
       {error && <div className="error-line" role="alert">{error}</div>}

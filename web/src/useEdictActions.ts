@@ -6,6 +6,8 @@ import type { Directive, GameState, LocalDirectiveItem } from "./types";
 // #1341：裸 PATCH /api/decree 与 /api/decree/write 前端死码已删；改稿只走 /api/directives。
 // 共享 error 写入与 latest-wins 代次推进（beginDurableMutation 防旧 done 覆盖）。
 // #1764：create/save/delete 进行态与失败真因绑所属卡；本地会话态随游戏归属代次，进出局清零。
+// #1849 / ADR 0152：独立手拟新增口（御笔自拟 + POST /api/directives）已退役；
+// 本 hook 只剩存量草稿的改（PATCH）／删（DELETE）与本地在飞/失败会话态。
 export function useEdictActions({
   setError,
   setState,
@@ -15,7 +17,6 @@ export function useEdictActions({
   setState: React.Dispatch<React.SetStateAction<GameState | null>>;
   beginDurableMutation: () => void;
 }) {
-  const [directiveText, setDirectiveText] = React.useState("");
   const [editingDirectiveId, setEditingDirectiveId] = React.useState<number | null>(null);
   const [editingDirectiveText, setEditingDirectiveText] = React.useState("");
   const [localDirectives, setLocalDirectives] = React.useState<LocalDirectiveItem[]>([]);
@@ -27,17 +28,14 @@ export function useEdictActions({
     ownershipRef.current += 1;
     localSeq.current = 0;
     setLocalDirectives([]);
-    setDirectiveText("");
     setEditingDirectiveId(null);
     setEditingDirectiveText("");
   }, []);
 
+  // 同卡新请求顶掉旧行（save/delete 两路都带 directiveId；#1849 后无 create 卡）。
   const beginCardRequest = (item: LocalDirectiveItem) => {
     setLocalDirectives((prev) => [
-      ...prev.filter((row) => {
-        if (item.directiveId != null) return row.directiveId !== item.directiveId;
-        return row.phase !== "failed" || row.directiveId != null;
-      }),
+      ...prev.filter((row) => row.directiveId !== item.directiveId),
       item,
     ]);
   };
@@ -55,36 +53,6 @@ export function useEdictActions({
   };
 
   const stillOwns = (ownership: number) => ownershipRef.current === ownership;
-
-  const createDirective = async () => {
-    if (!directiveText.trim()) return;
-    const text = directiveText.trim();
-    const ownership = ownershipRef.current;
-    localSeq.current += 1;
-    const localKey = `local-${localSeq.current}`;
-    beginCardRequest({ localKey, text, phase: "inflight", op: "create" });
-    // 清空 compose；失败时仅在玩家未另写时回填，不覆写等待期间新内容。
-    setDirectiveText("");
-    setError("");
-    try {
-      const data = await api<{ directives: Directive[] }>("/api/directives", {
-        method: "POST",
-        body: JSON.stringify({
-          text,
-        }),
-      });
-      if (!stillOwns(ownership)) return;
-      clearCardRequest(localKey);
-      beginDurableMutation(); // 应用本变更响应前推进代次，作废在飞旧刷新（防旧 done 覆盖）
-      setState((current) => (current ? { ...current, directives: data.directives } : current));
-    } catch (err) {
-      if (!stillOwns(ownership)) return;
-      const message = err instanceof Error ? err.message : String(err);
-      failCardRequest(localKey, message);
-      setDirectiveText((current) => (current.trim() === "" ? text : current));
-      setError(message);
-    }
-  };
 
   const startEditDirective = (directive: Directive) => {
     setLocalDirectives((prev) => prev.filter((item) => item.directiveId !== directive.id));
@@ -160,14 +128,11 @@ export function useEdictActions({
   };
 
   return {
-    directiveText,
-    setDirectiveText,
     editingDirectiveId,
     editingDirectiveText,
     setEditingDirectiveText,
     localDirectives,
     resetLocalEdictState,
-    createDirective,
     startEditDirective,
     cancelEditDirective,
     saveDirective,
