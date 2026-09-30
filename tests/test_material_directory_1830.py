@@ -85,25 +85,30 @@ def test_prepare_writes_typed_tree_and_index(game, tmp_path):
             assert read_material(prepared.root, stripped)
         else:
             assert any(stripped.startswith(rel + " ") for rel in listed)
-    roster_lines = set(read_material(prepared.root, "人物/朝臣名册.txt").splitlines())
-    # 名册载体的数据行逐行等于该角色可见名册行的结构化投影（首行是段头，
-    # 段头本身是渲染细节，不入契约）；不扫「无现任官职」之类措辞。
+    roster_text = read_material(prepared.root, "人物/朝臣名册.txt")
+    # 契约面两层，都不碰名册渲染格式：
+    # (1) 载体逐字等于生产名册渲染器对同一投影的输出——「名：职，status」与
+    #     段头只此一处真源，测试不重写格式串；(1) 单独用会与被调渲染器同进同出，
+    #     只能证接线，故还需 (2)。
+    # (2) 以 DB 名为独立真源的成员关系——投影内每个名字在档；名册不得多出
+    #     投影外的名字（渲染器绕过准入门即报红）。
     from ming_sim.knowledge import project_court_roster_rows
-    status, _reason = db.get_character_status(character.name)
-    projected = project_court_roster_rows(
-        db.current_court_roster_rows(state),
-        db.get_character_knowledge(state, character.name),
-        character.office_type,
-    )
-    assert projected
-    row_lines = {
-        f"{row['name']}：{row['office'] or '无现任官职'}，{row['status']}" for row in projected
+    from ming_sim.materials import _court_roster_text
+    knowledge = db.get_character_knowledge(state, character.name)
+    assert roster_text.rstrip("\n") == _court_roster_text(
+        db, state, character, knowledge,
+    ).rstrip("\n")
+    visible = {
+        str(row["name"]) for row in project_court_roster_rows(
+            db.current_court_roster_rows(state), knowledge, character.office_type,
+        )
     }
-    # 载体 = 投影行集 + 一行段头；只按行数与成员关系证明，不认段头措辞。
-    assert row_lines <= roster_lines
-    assert len(roster_lines) == len(row_lines) + 1
-    assert any(line.startswith(f"{character.name}：") for line in roster_lines)
-    assert status in {row["status"] for row in projected}
+    assert visible and character.name in visible
+    assert [name for name in visible if name not in roster_text] == []
+    all_names = {
+        str(row["name"]) for row in db.conn.execute("SELECT name FROM characters")
+    }
+    assert [name for name in all_names - visible if name in roster_text] == []
 
 
 def test_same_requested_root_creates_independent_material_invocations(game, tmp_path):
@@ -178,14 +183,16 @@ def _agent_with_materials(root: Path, *, with_cli_cwd: bool):
     return SimpleNamespace(model=model, materials_root=handle)
 
 
-def test_opening_handled_matters_are_filtered_within_authorized_knowledge(game, tmp_path):
-    """开场最小集只列本官经手事务，且该筛选走真实权限投影。
+def test_matter_carriers_follow_the_real_knowledge_projection(game, tmp_path):
+    """事务载体路径集合恰等于该角色真实可见投影内每条事务的唯一载体。
 
-    契约面：INDEX 事务载体路径集合（可见投影里每条事务各有唯一载体），以及
-    开场「正经手事务」只出现本官经手的那一条、不出现只是可见的那一条。
     经手关系经 `issues.participant_roster` + `record_character_participation`
-    两条真实写口建立，可见性经 `db.get_character_knowledge` 真实投影得出；
+    两条真实写口建立，可见性取自 `db.get_character_knowledge` 真实投影；
     不替换知识输入，也不另调内部 helper 把投影重算一遍当证据。
+
+    开场「正经手事务」只列经手事务这半条不在本文件承担：`PreparedMaterials`
+    只导出 root/opening/index_lines，开场里没有事务号的结构化出口，而解析
+    开场正文去认段头措辞正是本类禁止的盯文。按票面不为此新增生产测试钩子。
     """
     db, state, content = game
     character = _active_minister(db, content)
@@ -206,18 +213,13 @@ def test_opening_handled_matters_are_filtered_within_authorized_knowledge(game, 
     prepared = prepare_character_materials(
         db, state, character, dest_root=tmp_path / "materials",
     )
-    # 真实投影：经手的那条与只是可见的那条都在可见集合内，各有唯一载体路径。
+    # 经手的那条与只是可见的那条都在真实可见投影内，各有唯一载体路径。
     visible_ids = {
         int(row["id"]) for row in db.get_character_knowledge(state, character.name)["issues"]
     }
     assert {handled_id, visible_id} <= visible_ids
     issue_paths = {line for line in prepared.index_lines if line.startswith("事务/issue-")}
     assert issue_paths == {f"事务/issue-{i}/当前情况.txt" for i in visible_ids}
-
-    # 开场最小集只列经手的那一条；只是可见的那一条不上开场。
-    handled_block = prepared.opening.split("正经手事务：", 1)[1].split("本场已说的话", 1)[0]
-    assert f"#{handled_id} " in handled_block
-    assert f"#{visible_id} " not in handled_block
 
 
 def test_prepare_fails_loud_when_dossier_read_breaks(game, tmp_path):
