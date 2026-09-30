@@ -13,6 +13,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from ming_sim.session_write_queue import get_session_write_queue
 
 from contextlib import contextmanager
@@ -346,8 +348,16 @@ def test_web_issue_entry_exposes_settlement_display(game, monkeypatch):
     monkeypatch.setattr(web_app, "_failed_secret_order_ids_for_turn", lambda *_a, **_k: set())
     monkeypatch.setattr(web_app, "_new_secret_order_failure_payloads_for_turn", lambda *_a, **_k: [])
 
-    result = web_app.api_issue_decree(web_app.IssueDecreeRequest())
+    # #1902：非流式颁诏入口退役，改走唯一流式入口（decisions 终态）。
+    from tests.issue_stream_helpers import consume_issue_stream_response
+
+    async def _issue():
+        response = await web_app.api_issue_decree_stream(web_app.IssueDecreeRequest())
+        return await consume_issue_stream_response(response, step="#1234 issue/stream")
+
+    result = asyncio.run(_issue())
     assert result["awaiting_decision"] is True
+    assert result["decisions"]
 
     payload = runtime.state_payload()
     assert payload["turn"]["settlement_display"] is True

@@ -8,6 +8,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from ming_sim.session_write_queue import ClassifiedWriteGate
 
 import threading
@@ -72,6 +74,14 @@ def _body(expected_turn: int | None, *, cheat: str = ""):
     return web_app.IssueDecreeRequest(cheat=cheat, expected_turn=expected_turn)
 
 
+async def _issue(body):
+    """#1902：非流式颁诏入口退役，唯一入口是流式；typed 失败仍带 status_code/turn。"""
+    from tests.issue_stream_helpers import consume_issue_stream_response
+
+    response = await web_app.api_issue_decree_stream(body)
+    return await consume_issue_stream_response(response)
+
+
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_double_issue_same_token_second_is_409_turn_plus_one(game, monkeypatch):
     """同 expected_turn 连发两次：第二次 409，月份只进一格；resolve 不二次执行。"""
@@ -93,16 +103,18 @@ def test_double_issue_same_token_second_is_409_turn_plus_one(game, monkeypatch):
 
     runtime.session.resolve_turn = _fake_resolve
 
-    first = web_app.api_issue_decree(_body(start))
+    first = asyncio.run(_issue(_body(start)))
     assert first.get("report") == "邸报测"
     assert int(state.turn) == start + 1
     assert calls["n"] == 1
 
-    with pytest.raises(HTTPException) as ei:
-        web_app.api_issue_decree(_body(start))
+    from tests.issue_stream_helpers import IssueStreamError
+
+    with pytest.raises(IssueStreamError) as ei:
+        asyncio.run(_issue(_body(start)))
 
     assert ei.value.status_code == 409
-    detail = ei.value.detail
+    detail = ei.value.payload
     assert isinstance(detail, dict)
     assert int(detail["turn"]) == start + 1
     assert str(detail.get("message") or "")

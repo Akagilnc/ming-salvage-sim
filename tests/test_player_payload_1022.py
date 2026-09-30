@@ -158,10 +158,10 @@ def test_issue_terminals_keep_unadvanced_month_visible(monkeypatch):
     monkeypatch.setattr(web_app, "get_game", lambda: game)
 
     event, streamed = asyncio.run(_serialized_terminal_event("issue"))
-    synced = web_app.api_issue_decree()
 
     assert event == "done"
     assert streamed["advanced"] is False
-    assert synced["advanced"] is False
+    # #1902：非流式颁诏入口退役——「未推进的月仍可见」如今只由流式一条入口保证，
+    # 同性质断言在上面 _serialized_terminal_event("issue") 已咬住。
     assert game.state.turn == 9
     assert game.session.actions == []

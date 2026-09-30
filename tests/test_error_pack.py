@@ -7,6 +7,8 @@ attempt 从目录文件数推导，中止提示自带路径指引。
 
 from __future__ import annotations
 
+import asyncio
+
 import json
 import threading
 import sqlite3
@@ -134,12 +136,20 @@ def test_web_issue_endpoint_returns_structured_abort(monkeypatch):
 
     monkeypatch.setattr(web_app, "get_game", lambda: _StubGame())
 
-    with pytest.raises(HTTPException) as ei:
-        web_app.api_issue_decree()
+    # #1902：非流式颁诏入口退役，唯一入口流式；SettlementAbort 的可重试文案与错误包
+    # 路径仍由终态 error 载荷原样下发（禁 str() 化丢结构）。
+    from tests.issue_stream_helpers import IssueStreamError, consume_issue_stream_response
+
+    async def _run():
+        response = await web_app.api_issue_decree_stream(web_app.IssueDecreeRequest())
+        return await consume_issue_stream_response(response, step="error_pack issue/stream")
+
+    with pytest.raises(IssueStreamError) as ei:
+        asyncio.run(_run())
 
     assert ei.value.status_code != 500
-    assert "可重试" in str(ei.value.detail)
-    assert "错误包" in str(ei.value.detail)
+    assert "可重试" in str(ei.value.payload)
+    assert "错误包" in str(ei.value.payload)
 
 def test_next_attempt_skips_malformed_and_foreign_entries(game, monkeypatch, tmp_path):
     """attempt 推导跳过畸形后缀/他 turn/非目录项，取本 turn 数字后缀 max+1

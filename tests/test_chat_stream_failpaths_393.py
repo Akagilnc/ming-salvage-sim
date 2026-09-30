@@ -502,8 +502,15 @@ def test_nonstream_api_issue_decree_llm_unavailable_is_structured_not_500(
     monkeypatch.setattr(web_app, "_failed_secret_order_ids_for_turn", lambda *_a, **_k: set())
     monkeypatch.setattr(web_app, "_new_secret_order_failure_payloads_for_turn", lambda *_a, **_k: [])
 
-    response = TestClient(web_app.app).post("/api/decree/issue", json={})
-    detail = _assert_structured_llm_http(response)
+    # #1902：非流式颁诏入口退役，唯一入口流式；LLM 死的 typed 键（code/message/
+    # provider_message/status_code）仍原样下发。
+    from tests.issue_stream_helpers import IssueStreamError, post_issue_stream
+
+    client = TestClient(web_app.app)
+    with pytest.raises(IssueStreamError) as exc_info:
+        post_issue_stream(client, step="#1452 issue/stream")
+    detail = exc_info.value.payload
+    assert isinstance(detail, dict), detail
     assert detail["code"] == "llm_error"
     assert detail["message"] == CLI_RUNNER_PLAYER_MESSAGE
     assert detail["provider_message"] == provider

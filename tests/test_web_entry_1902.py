@@ -127,3 +127,33 @@ def test_nonstream_audience_chat_route_is_retired(method):
         and "GET" in (getattr(r, "methods", None) or set())
         for r in web_app.app.routes
     ), "召对历史读面（GET）必须保留"
+
+
+def test_nonstream_issue_route_is_retired():
+    """颁布只有流式一条入口（#1902）：非流式 POST 不再注册，流式保留。"""
+    assert not any(
+        getattr(r, "path", None) == "/api/decree/issue"
+        and "POST" in (getattr(r, "methods", None) or set())
+        for r in web_app.app.routes
+    ), "非流式颁诏入口应已退役"
+    assert any(
+        getattr(r, "path", None) == "/api/decree/issue/stream"
+        and "POST" in (getattr(r, "methods", None) or set())
+        for r in web_app.app.routes
+    ), "流式颁诏入口必须保留"
+
+
+def test_settlement_abort_sse_carries_typed_keys_not_deadlock_409():
+    """#1902：中止在 SSE 上带 typed stage/error_pack，且不冒充 409。
+
+    issue/stream 的 409 是「月份令牌失效/死锁」专用信号（前端与 tracer 据此分流），
+    结算中止若也报 409 会被误判成死锁。
+    """
+    from ming_sim.exceptions import SettlementAbort
+
+    payload = web_app._settlement_sse_error_data(
+        SettlementAbort("中止", turn=3, stage="extract", error_pack_path="/tmp/x"),
+    )
+    assert "status_code" not in payload
+    assert payload["stage"] == "extract"
+    assert payload["error_pack_path"] == "/tmp/x"

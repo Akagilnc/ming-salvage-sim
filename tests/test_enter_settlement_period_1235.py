@@ -315,14 +315,19 @@ def test_true_failure_issue_exits_display(web_game, monkeypatch, tmp_path):
 
     monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", _close_observing)
 
+    # #1842 + #1902：转译耗尽 → SettlementAbort；非流式入口退役后唯一入口流式，
+    # 终态仍带 typed status_code=409 + stage（issue 与 advance 同形）。
+    from tests.issue_stream_helpers import IssueStreamError, apost_issue_stream
+
     async def go():
         async with _client() as client:
-            return await client.post("/api/decree/issue", json={})
+            return await apost_issue_stream(client, step="#1235 issue/stream")
 
-    resp = asyncio.run(go())
-    # #1842：转译耗尽 → SettlementAbort（HTTP 409 + typed stage）；issue 与 advance 同形。
-    assert resp.status_code == 409, resp.text
-    detail = resp.json().get("detail")
+    with pytest.raises(IssueStreamError) as exc_info:
+        asyncio.run(go())
+    # #1902：中止不带 status_code（409 专表令牌失效/死锁），可重试语义看 typed 键。
+    assert exc_info.value.status_code is None, exc_info.value.payload
+    detail = exc_info.value.payload
     assert isinstance(detail, dict), detail
     assert detail.get("stage") == "audience_translation_exhausted", detail
     assert detail.get("error_pack_path"), detail
@@ -557,11 +562,9 @@ def test_exit_settlement_display_acquires_write_gate(web_game):
     assert game.db.get_month_open_snapshot(turn) is None
 
 
-@pytest.mark.parametrize("entry", [
-    pytest.param("issue", id="issue"),
-    pytest.param("stream", id="stream"),
-])
-def test_session_reaccept_orphan_exits_after_owner_release(web_game, monkeypatch, entry):
+# #1902：非流式颁诏入口（entry="issue"）退役，两入口对照只剩流式一条；
+# 孤儿快照回收契约由本用例的流式臂继续咬着。
+def test_session_reaccept_orphan_exits_after_owner_release(web_game, monkeypatch):
     """#1235 r3 / #1241 S5：session-reaccept-orphan-after-web-noncreator（issue/stream 同根）。
 
     A web-accept 真新建并持 gate；B web-accept 得 False 后堵在阻塞 gate；
@@ -598,7 +601,7 @@ def test_session_reaccept_orphan_exits_after_owner_release(web_game, monkeypatch
         # 模拟 session.resolve_turn 内二次 accept 后 ValueError（无 session exit 臂）
         created = accept_settlement_period(game.db, game.state)
         saw["session_reaccept"] = created
-        raise ValueError(f"推演失败·{entry} session再创建后注入")
+        raise ValueError("推演失败·stream session再创建后注入")
 
     monkeypatch.setattr(game.session, "resolve_turn", _boom_resolve)
 
@@ -612,9 +615,6 @@ def test_session_reaccept_orphan_exits_after_owner_release(web_game, monkeypatch
         try:
             async def go():
                 async with _client() as client:
-                    if entry == "issue":
-                        resp = await client.post("/api/decree/issue", json={})
-                        return resp.status_code, resp.text
                     async with client.stream(
                         "POST", "/api/decree/issue/stream", json={},
                     ) as resp:
@@ -637,7 +637,7 @@ def test_session_reaccept_orphan_exits_after_owner_release(web_game, monkeypatch
     while saw["web_created"] is None:
         time.sleep(0.01)  # backoff only
     assert saw["web_created"] is False, "B 须为 web 非创建者"
-    assert not b_done.is_set(), f"B 不得在 A 持锁时完成 {entry}"
+    assert not b_done.is_set(), "B 不得在 A 持锁时完成 issue/stream"
     assert game.db.get_month_open_snapshot(turn) == before
 
     # A 失败 exit 清快照后再放锁（判词序：清后放锁，逼出 B session 再创建）
@@ -649,20 +649,14 @@ def test_session_reaccept_orphan_exits_after_owner_release(web_game, monkeypatch
     b_done.wait()
     t.join()
     assert "err" not in b_result, b_result.get("err")
-    if entry == "issue":
-        assert b_result.get("status") == 400, b_result
-    else:
-        assert b_result.get("status") == 200, b_result
-        assert "error" in (b_result.get("body") or "")
+    assert b_result.get("status") == 200, b_result
+    assert "error" in (b_result.get("body") or "")
     # B 进 resolve 后 session 再创建了孤儿快照
     assert saw["session_reaccept"] is True
     # B finally 须清掉该孤儿（created_display=False 不得再跳过 exit）
     assert game.db.get_month_open_snapshot(turn) is None
     assert game.state_payload()["turn"]["settlement_display"] is False
-    if entry == "issue":
-        assert game.state.turn_phase not in (
-            TurnPhase.SETTLING.value, TurnPhase.AWAITING_DECISION.value,
-        )
+
 
 
 def test_noncreator_exit_must_not_clear_owner_during_gatefree(web_game, monkeypatch):

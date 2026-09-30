@@ -426,13 +426,19 @@ def test_issue_extraction_llm_dead_single_source_not_cta(tracer_client, monkeypa
 
     stub_audience_translate(monkeypatch, _boom_translate)
 
-    issue = client.post("/api/decree/issue", json={"expected_turn": turn0})
-    _assert_not_bare_500(issue, step="dead-llm issue")
-    # #1842：转译耗尽 → SettlementAbort → 409 + typed stage（非玩家补写 CTA）。
-    assert issue.status_code == 409, (
-        f"expected translation-exhaustion 409, got {issue.status_code}: {issue.text}"
-    )
-    detail = issue.json().get("detail")
+    # #1902：非流式颁诏入口退役，唯一入口流式；SettlementAbort 终态带 typed
+    # status_code=409 与 stage（禁退化成裸文案）。
+    from tests.issue_stream_helpers import IssueStreamError, post_issue_stream
+
+    try:
+        post_issue_stream(client, expected_turn=turn0, step="dead-llm issue")
+    except IssueStreamError as exc:
+        # 结算中止在 issue/stream 上不带 status_code（409 专表令牌失效/死锁），
+        # 可重试语义由 typed stage / error_pack_path 承担。
+        assert exc.status_code is None, f"中止不该冒充 409：{exc.payload}"
+        detail = exc.payload
+    else:
+        raise AssertionError("dead-llm issue/stream 应以 SettlementAbort 终态收场")
     assert isinstance(detail, dict), detail
     assert detail.get("stage") == "audience_translation_exhausted", detail
     assert detail.get("error_pack_path"), detail
