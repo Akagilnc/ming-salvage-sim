@@ -2914,6 +2914,7 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
   it("#1764 取消修改为纯本地：不吃 requestLocked、零请求；发请求类控件在在飞时禁用", async () => {
     // #1849：原「在飞 create 期间取消修改」一例随独立手拟新增口退役改写——
     // 并发在飞请求由另一张草稿的 DELETE 承担，取消仍是零请求的纯本地动作。
+    // 取消须在**请求确实在飞**时发生（先取消后发请求不证明任何边界）。
     let releaseDelete!: (value: Response) => void;
     const deleteGate = new Promise<Response>((resolve) => { releaseDelete = resolve; });
     let deleteCalls = 0;
@@ -2951,19 +2952,13 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
       await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="诏书草案"]')).not.toBeNull());
     });
 
-    // 草案 9 进入编辑 → 取消：纯本地、零请求。
+    // 草案 9 进入编辑（此刻无在飞请求）。
     const nineCard = host.querySelector('[data-directive-phase="draft"][data-directive-id="9"]');
     const nineEdit = Array.from(nineCard!.querySelectorAll("button")).find((b) => (b.textContent || "").includes("改"));
     await click(nineEdit as HTMLButtonElement);
     expect(host.querySelector(".directive-edit")).not.toBeNull();
-    const cancelEdit = host.querySelector<HTMLButtonElement>('button[aria-label="取消修改"]');
-    expect(cancelEdit).not.toBeNull();
-    expect(cancelEdit!.disabled).toBe(false);
-    await click(cancelEdit!);
-    expect(host.querySelector(".directive-edit")).toBeNull();
-    expect(deleteCalls).toBe(0);
 
-    // 草案 10 发起删除并在飞：发请求类控件禁重复点击。
+    // 草案 10 发起删除并保持在飞。
     const tenCard = host.querySelector('[data-directive-phase="draft"][data-directive-id="10"]');
     const tenDel = Array.from(tenCard!.querySelectorAll("button")).find((b) => (b.textContent || "").includes("删"));
     await click(tenDel as HTMLButtonElement);
@@ -2976,9 +2971,20 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
       });
     });
     expect(deleteCalls).toBe(1);
+
+    // 在飞期间取消编辑：纯本地、零请求（取消不吃 requestLocked）。
+    const cancelEdit = host.querySelector<HTMLButtonElement>('button[aria-label="取消修改"]');
+    expect(cancelEdit).not.toBeNull();
+    expect(cancelEdit!.disabled).toBe(false);
+    await click(cancelEdit!);
+    expect(host.querySelector(".directive-edit")).toBeNull();
+    expect(deleteCalls).toBe(1);
+
+    // 发请求类控件（改/删）在在飞时禁重复点击。
     const nineTools = Array.from(
       host.querySelectorAll('[data-directive-id="9"] .directive-tools button'),
     ) as HTMLButtonElement[];
+    expect(nineTools.length).toBeGreaterThan(0);
     expect(nineTools.every((b) => b.disabled)).toBe(true);
     await act(async () => {
       releaseDelete(jsonResp({ directives: [draftRow(9, "解太仓备用")] }));

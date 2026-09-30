@@ -3310,11 +3310,12 @@ def capture_manual_directive_payload(
 ) -> Dict[str, object]:
     """Web/CLI 手工下旨共用既有草稿抽取 seam；在写入边界归一人物引用。
 
-    #1327 / #1274 V-1：空载零 LLM 直落 special_decree。
+    #1327 / #1274 V-1：空载零 LLM 直落 special_decree（无正文，唯一 special_decree 直落口）。
     #1465 切片③：外层 30s 总罩已删——长抽取不再被墙钟截断成 special_decree
     fallback（宪法 #9）；次数/空转由 transport 在 runner 侧收口。
     真不在册耗尽 → 通政司戏内回禀 ValueError（不落草案、不除名）；
     回禀产文失败 → typed LLMUnavailable（禁固定戏内模板当台词）。
+    #1849：抽取失败不再降级 special_decree 冒充成功拟旨，一律响亮上抛。
     """
     directive_text = str(text or "").strip()
     fallback_mode = resolve_directive_mode(existing=existing_mode)
@@ -3344,14 +3345,12 @@ def capture_manual_directive_payload(
             llm_config=llm_config,
         )
         raise ValueError(report) from exc
-    except ValueError:
-        # 其它业务 ValueError 原样上抛；禁吞成 special_decree。
-        raise
-    except Exception as exc:
-        # 纠错路上 LLM 终失败（transport 已尽次数）→ special_decree 原文照落
-        # （零改参与人）。此处只接 transport 已判终的失败，不再自设墙钟。
-        _log(f"手工拟诏 capture 降级 special_decree：{exc}")
-        return _manual_special_decree_payload(fallback_mode)
+
+    # 其余失败一律响亮上抛：LLM 终失败已由 transport 翻成 typed LLMUnavailable
+    # （Web → 结构化 400，禁裸 500），业务 ValueError 原样上抛（CLI 留在审阅循环）。
+    # #1849：此处曾用 `except Exception` 把任何失败——含 AttributeError 等代码错误
+    # ——降级成 special_decree 冒充成功拟旨（Web 更新草稿后 200 返回）。失败诚实
+    # 宪法禁此；空载短路（无正文）仍是唯一 special_decree 直落口。
 
     # heal 已 normalize+validate；投影与 #1769 补交共用同一 helper（禁双路径漂移）。
     return project_draft_extract_to_directive_payload(

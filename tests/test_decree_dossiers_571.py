@@ -945,30 +945,31 @@ def test_appointment_alias_uses_canonical_dossier_identity(game):
     assert db.get_decree_dossier(dossier["id"])["status"] == "closed"
 
 # #1849 / ADR 0152 决定 1：Web 独立手拟新增口（POST /api/directives）已退役，
-# 原 web 参数组改走 CLI 手拟路（同一 capture 核 + session.add_directive），覆盖面不减。
+# 拟旨落桌走 CLI 手拟同款 capture 核 + session.add_directive，覆盖面不减。
+# 旧「web/cli」入口轴已随之失去用途（函数不再读它），只留行为维度。
 @pytest.mark.parametrize(
-    ("entry", "case", "model_fields"),
+    ("case", "model_fields"),
     (
-        ("cli", "allocation", {
+        ("allocation", {
             "动作类型": "grant_allocation", "目标类型": "issue",
             "目标": "relief", "金额": "30000", "账户": "内库",
             "执行面": "immediate",
         }),
-        ("cli", "authorization", {
+        ("authorization", {
             "动作类型": "secret_authorization", "目标类型": "character",
         }),
-        ("cli", "controlled_verb", {
+        ("controlled_verb", {
             "动作类型": "secret_investigation", "目标类型": "issue",
             "目标ID": "granary-corruption",
         }),
-        ("cli", "controlled_verb", {
+        ("controlled_verb", {
             "动作类型": "protection", "目标类型": "character",
         }),
-        ("cli", "dismiss", {"动作类型": "dismiss_assignment"}),
+        ("dismiss", {"动作类型": "dismiss_assignment"}),
     ),
 )
 def test_manual_directive_capture_reaches_structured_dossier(
-    game, monkeypatch, entry, case, model_fields,
+    game, monkeypatch, case, model_fields,
 ):
     import ming_sim.cli_backend as cli_backend
     from ming_sim.session import GameSession
@@ -1044,13 +1045,13 @@ def test_manual_directive_capture_reaches_structured_dossier(
     else:
         assert "authorization_id" not in json.loads(dossier["payload_json"])
 
-@pytest.mark.parametrize(("entry", "bad_roster"), [
-    ("cli", ["韩阁老"]),
-    ("cli", [{"tier": "主办"}]),
-    ("cli", {"character_id": "韩阁老", "tier": "主办"}),
+@pytest.mark.parametrize("bad_roster", [
+    ["韩阁老"],
+    [{"tier": "主办"}],
+    {"character_id": "韩阁老", "tier": "主办"},
 ])
 def test_manual_directive_capture_rejects_malformed_roster(
-    game, monkeypatch, capsys, entry, bad_roster,
+    game, monkeypatch, capsys, bad_roster,
 ):
     import ming_sim.cli_backend as cli_backend
     from ming_sim.session import GameSession
@@ -1084,13 +1085,9 @@ def test_manual_directive_capture_rejects_malformed_roster(
     assert db.list_directives(state) == []
     assert db.list_decree_dossiers() == []
 
-@pytest.mark.parametrize(("entry", "tier"), [
-    ("cli", None),
-    ("cli", ""),
-    ("cli", "旁听"),
-])
+@pytest.mark.parametrize("tier", [None, "", "旁听"])
 def test_manual_directive_capture_rejects_missing_empty_or_invalid_tier_without_writes(
-    game, monkeypatch, entry, tier,
+    game, monkeypatch, tier,
 ):
     import ming_sim.cli_backend as cli_backend
     from ming_sim.session import GameSession
