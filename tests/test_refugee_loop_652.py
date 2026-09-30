@@ -569,9 +569,6 @@ def test_in_transit_relief_stays_executing_before_gazette(game, monkeypatch):
     assert result.advanced is True
     assert int(state.turn) == closed_turn + 1
 
-    expected = int(round(
-        amount * RECOVERY_PERSONS_PER_WAN * RECOVERY_OUTCOME_FACTORS["fulfilled"]
-    ))
     loaded = GameDB(_database_path(db), content)
     try:
         loaded_state = loaded.load_state()
@@ -584,6 +581,15 @@ def test_in_transit_relief_stays_executing_before_gazette(game, monkeypatch):
         assert str(other["execution_outcome"] or "") == ""
         still = {int(row["id"]) for row in continuing_dossier_facts(loaded, loaded_state.turn)}
         assert henan_id in still and shaanxi_id not in still
+        # 回流基线＝**实抵**（652 既定口径）：这道拨帑本回合正常结案，#1900 要求
+        # 照常核账，故实抵取引擎沿途折损后的账行，而非出库面额。
+        recon = loaded.list_dossier_reconciliations(shaanxi_id)
+        assert [int(r["turn"]) for r in recon] == [closed_turn]
+        arrived = int(recon[-1]["arrived_amount"])
+        assert 0 < arrived < amount
+        expected = int(round(
+            arrived * RECOVERY_PERSONS_PER_WAN * RECOVERY_OUTCOME_FACTORS["fulfilled"]
+        ))
         assert _pop(loaded, "流民", "shaanxi") == displaced_before - expected
         assert _pop(loaded, "农民", "shaanxi") == farmer_before + expected
     finally:

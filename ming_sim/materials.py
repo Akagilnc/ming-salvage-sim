@@ -1494,6 +1494,9 @@ def continuing_dossier_facts(db: Any, turn: int) -> list[dict[str, object]]:
 
     真实强颁在同一次颁布里会把在途案卷转入 executing，或把终局载荷结案，
     不会带着 promulgated 进入次月。
+
+    #1900：逐路带该回合**实际**护送实况（账本事实），世界段照实况交代各路
+    护没护成，不拿案卷关联或密令整体成败反推。
     """
     rows = db.list_decree_dossiers_for_simulation(int(turn))
     facts: list[dict[str, object]] = []
@@ -1505,6 +1508,9 @@ def continuing_dossier_facts(db: Any, turn: int) -> list[dict[str, object]]:
         payload = row.get("payload") or {}
         if not isinstance(payload, dict):
             payload = {}
+        escorted, escort_source_id, escort_relation = db._grant_escort_presence(
+            dossier_id, turn=int(turn),
+        )
         facts.append({
             "id": dossier_id,
             "status": status,
@@ -1514,6 +1520,9 @@ def continuing_dossier_facts(db: Any, turn: int) -> list[dict[str, object]]:
             "target_id": str(row.get("target_id") or ""),
             "grant_action": str(payload.get("grant_action") or ""),
             "paid": dossier_paid_amount(db, dossier_id),
+            "escorted": bool(escorted),
+            "escort_source_dossier_id": escort_source_id,
+            "escort_relation_type": str(escort_relation or ""),
         })
     return facts
 

@@ -251,17 +251,22 @@ def test_close_merges_recon_note_without_second_treasury_debit(game):
 
 def test_engine_gives_band_midpoint_with_no_proposal_port(game):
     """沿途损耗归引擎：0054 提案口确已退役，逐路仍机械落中位（供 S10 结案读）。"""
-    import inspect
     from ming_sim.db import grant_arrival_bounds
 
     db, state, content = game
     bare = _in_transit_grant(db, state)
-    assert list(inspect.signature(
-        db.record_monthly_grant_reconciliations).parameters) == ["turn", "commit"]
     _record_monthly(db, state)
     row = db.list_dossier_reconciliations(bare)[-1]
     lo, hi = grant_arrival_bounds(ORDERED, escorted=False)
     assert row["arrived_amount"] == (lo + hi) // 2
+    # 提案口确已退役：声明里给实抵提案无人消费，行仍由引擎中位落账
+    issue_engine.apply_score_extraction(
+        db, state,
+        {"dossier_reconciliations": [{"dossier_id": bare, "arrived_amount": 99}]},
+        content=content,
+    )
+    assert _recon_rejections(db) == []
+    assert db.list_dossier_reconciliations(bare)[-1]["arrived_amount"] == (lo + hi) // 2
 
 
 def test_underfunded_closed_grants_excluded_from_monthly_targets(game):
@@ -326,17 +331,37 @@ def test_empty_targets_no_recon_rows(game):
     assert _recon_rejections(db) == []
 
 
-def test_legally_closed_target_not_overwritten(game):
-    """合法结清后不在扫描面 → 引擎不新写对账行（结案不被回写）。"""
+def test_normal_close_same_turn_still_reconciles(game):
+    """拨帑正常结案不免除该次核账（#1900）：同回合结案仍按逐路实况落账。"""
     db, state, _content = game
-    transit = _in_transit_grant(db, state, text="在途后结清", target_id="shaanxi")
+    transit = _in_transit_grant(db, state, text="本回合押解到达", target_id="shaanxi")
     db.record_dossier_execution(
         transit, "fulfilled", "押解已达", int(state.turn), close=True,
     )
     assert db.get_decree_dossier(transit)["status"] == "closed"
+    assert [t["dossier_id"] for t in
+            db.list_monthly_grant_reconciliation_targets(int(state.turn))] == [transit]
+    rows = _record_recon(db, state.turn)
+    assert [r["dossier_id"] for r in rows] == [transit]
+    from ming_sim.db import grant_arrival_bounds
+    lo, hi = grant_arrival_bounds(ORDERED, escorted=False)
+    assert lo <= rows[0]["arrived_amount"] <= hi
+    assert rows[0]["loss_amount"] == ORDERED - rows[0]["arrived_amount"]
+
+
+def test_prior_turn_close_is_not_re_reconciled(game):
+    """只补本回合那笔核账，不翻历史结案（不重开全部历史案卷）。"""
+    db, state, _content = game
+    transit = _in_transit_grant(db, state, text="上月押解到达", target_id="shaanxi")
+    db.record_dossier_execution(
+        transit, "fulfilled", "押解已达", int(state.turn), close=True,
+    )
+    assert _record_recon(db, int(state.turn))          # 本回合该核的核了
+    state.turn = int(state.turn) + 1
+    assert _record_recon(db, int(state.turn)) == []      # 次月不回头重核
+    assert len(db.list_dossier_reconciliations(transit)) == 1
+    # 供料读侧（不带 turn）只看在途，不翻历史结案
     assert db.list_monthly_grant_reconciliation_targets() == []
-    assert _record_recon(db, state.turn) == []
-    assert db.list_dossier_reconciliations(transit) == []
 
 
 def test_1745_full_chain_player_state_no_fake_awaiting(game, monkeypatch):
@@ -359,10 +384,10 @@ def test_1745_full_chain_player_state_no_fake_awaiting(game, monkeypatch):
     assert _recon_rejections(db) == []
 
 
-def test_1745_web_state_payload_after_bad_recon_settle(
+def test_web_state_payload_after_settle(
     tmp_path, monkeypatch, content, _offline_scene_beat_generator,
 ):
-    """#1745 C：坏 recon 经 settle 后 WebGame.state_payload 结构化玩家态。
+    """全链 canned 结算入口后的 WebGame.state_payload 结构化玩家态。
 
     自有 WebGame；只咬 phase / pending_decisions / resume_phase2 / settlement_recovery。
     """

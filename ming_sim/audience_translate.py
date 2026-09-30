@@ -233,7 +233,9 @@ def build_translation_target_grounding(db: Any, state: Any = None) -> str:
         lines.append(
             f"dossier\t{int(row['id'])}\t{str(row['target_kind'] or '')}:{str(row['target_id'] or '')}"
             + ("\t自带押解" if declared else "")
-            + (f"\t有护:{escorted[1]}" if escorted[1] else "")
+            # 实况与安排分离（ADR 0153）：来源案卷存在 ≠ 这趟护成了。只认已落的
+            # 逐路布尔实况，不拿来源 id 冒充有护。
+            + (f"\t有护:{escorted[1]}" if escorted[0] else "")
         )
     for row in db.conn.execute(
         "SELECT id, source_dossier_id, target_dossier_id, relation_type FROM decree_dossier_links "
@@ -290,7 +292,9 @@ def build_c0_declaration_shape() -> str:
         '        "purpose": "补饷（仅协饷）",\n'
         f'        "target_kind": "{target_kind_hint}",\n'
         '        "target_id": "目标 id", "cadence": "一次性|每月",\n'
-        '        "escort": {"escortees": ["押解人名"], "note": "押解护送缘由原句"}\n'
+        '        "escort": {"escortees": [{"character_id": "押解人名", '
+        '"tier": "主办|协办|知情", "role": "职分文字", '
+        '"delegator_id": "委派人名或空"}], "note": "押解护送缘由原句"}\n'
         "      },\n"
         '      "punishment": {"target_id": "处置人名（压下时可空）", '
         '"punish_action": "惩处动作（压下时为无）", "issue_id": "弹劾事项 id（有则填）", '
@@ -300,7 +304,9 @@ def build_c0_declaration_shape() -> str:
         '      "pacification": {"target_id": "自新内乱首领的具名 id", "mode": "ordinary|midzhi"},\n'
         '      "secret_order": {"title": "密令标题", "content": "密令正文", '
         '"assignee": "承办人 id", "tags": [], "deadline_months": 0, '
-        '"covert_task": {}},\n'
+        '"covert_task": {}, '
+        '"escort_pending_targets": [{"pending_action_id": "被暗护的拨银交办在本夜暂存清单里的 id", '
+        '"relation_type": "护卫|稽核", "note": "暗护缘由原句"}]},\n'
         '      "secret_order_progress": {"order_id": "往期有效密令 id", "note": "本轮具名进展"},\n'
         '      "strategy_selection": {"target_id": "已选方案的政策目标 id", '
         '"source_chat_turn_id": "本场已说的大臣陈策轮 chat_turn_id（不能填本轮）"},\n'
@@ -432,8 +438,13 @@ def build_audience_translate_prompt(
         "escort_dossier 行里那道密令的案卷 id，target_dossier_id 填 dossier 行里被护的拨帑案卷 id，"
         "被护数笔就写几条；只交代「谁护谁」，此路此趟究竟护没护成由 escort_results 另报，"
         "一令护多路时逐路各报各的，别用整条密令的成败代替。\n"
+        "- **同夜刚下拨银又另行暗中加派护送** → 该 secret_order 项的 "
+        "escort_pending_targets 按【本夜暂存清单】里那道拨银交办的 id 指过去（暗护的案卷"
+        "此刻还没成案，指不到 dossier 行）；已成案的旧拨银仍走上面的 escort_links。\n"
         "- **本场新交办的拨银自带押解**（「着某人押解护送」）→ 不另立密令、不另挂 escort_links，"
-        "在该 commissions 项的 grant.escort.escortees 写押解人名即可；此路此趟护没护成"
+        "在该 commissions 项的 grant.escort.escortees 按 ADR 0053 参与人条目写押解人"
+        "（character_id／tier 机械档／role 职分／delegator_id 委派人，无委派留空），"
+        "此人即进本案参与人名单；此路此趟护没护成"
         "同样由 escort_results 另报，escort_source_dossier_id 留空。\n"
         f"{grounding_block}"
         f"【本场已说的话】\n{said_block}\n"

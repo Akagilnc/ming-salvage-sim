@@ -378,8 +378,9 @@ def _persist_specialized_extraction(
 ) -> None:
     """转译契约仍收的专属案卷字段，交既有写入口，不在通用 applier 里再写一份。
 
-    密奏须先有本回合稽核在场扫描，origin 才带得上同派标记。对账只落本段提案，
-    未提案目标的中位默认留到月末一次补，避免后段中位覆盖前段实抵。
+    密奏须先有本回合稽核在场扫描，origin 才带得上同派标记。逐路护送实况与
+    月度拨帑核账各有自己的真源与节拍（``dossier_escort_outcomes`` ＋
+    ``record_monthly_grant_reconciliations``，#1900），本口不碰。
 
     过月主链（ADR 0157 步骤 4a）整月密奏与执行态由独立供料 run 落账；
     ``defer_monthly_secret_supply`` 时不把逐段字段拼成整月义务。
@@ -999,30 +1000,59 @@ def _attach_commission_escort(
     """#1900：押解随拨银旨——护送安排写在**同一道拨银交办**里即成。
 
     owner 2026-09-30 裁定：平常「拨银三十万去宁远，着某某押解护送」，押解人
-    就记在这道拨银旨里，不另立密令、不另挂关联。真正单一口径＝交办显式给出的
-    ``escort.escortees``（人物须真实存在）；未给即无押解，代码不猜。
+    就记在这道拨银旨里，不另立密令、不另挂关联。押解人不另走一份名单：声明按
+    ADR 0053 参与人接缝给条目（人物 id／机械档／职分／委派人），代码只 normalize
+    与校验，**不猜机械档**（#1900 / 全局规则 #12）；名单落进 payload 的
+    ``participant_roster`` 单一真源。合法缺省＝没给 ``escort``；已声明却不是
+    ADR 0053 条目形状 → 逐项拒收，不静默丢弃（ADR 0005 失败诚实 / ADR 0015）。
     """
     escort = grant.get("escort")
-    if escort is None or not isinstance(escort, Mapping):
+    if escort is None:          # 合法缺省＝没安排押解
         return
-    escortees = escort.get("escortees")
-    if not isinstance(escortees, Sequence) or isinstance(escortees, (str, bytes)):
+    if not isinstance(escort, Mapping):
         raise DecreeMaterializationValidationError(
-            "押解声明 escort.escortees 须为人物名列表",
+            "押解声明 escort 须为 ADR 0053 参与人条目对象", failed_fields=("escort",),
+        )
+    entries = escort.get("escortees")
+    if not isinstance(entries, Sequence) or isinstance(entries, (str, bytes)):
+        raise DecreeMaterializationValidationError(
+            "押解声明 escort.escortees 须为 ADR 0053 参与人条目列表",
             failed_fields=("escort",),
         )
-    names = [str(name or "").strip() for name in escortees]
-    names = [name for name in names if name]
-    if not names:
-        return
-    _assert_characters_exist(db, names)
-    record: Dict[str, Any] = {"escortees": names}
     note = escort.get("note")
+    if note is not None and not isinstance(note, str):
+        raise DecreeMaterializationValidationError(
+            "押解声明 escort.note 须为原文", failed_fields=("escort",),
+        )
+    from ming_sim.cli_backend import normalize_draft_person_roster
+
+    # 形状闸（ADR 0053 条目结构）→ 存在性闸（既有 KeyError 缝 → hallucinated_id）
+    # → canon/非人归一。三件事各走各的既有接缝，不靠嗅错误文案分类。
+    try:
+        shaped = db._normalize_participant_roster(list(entries), strict_structured=True)
+    except ValueError as exc:
+        raise DecreeMaterializationValidationError(
+            f"押解参与人名单非法：{exc}", failed_fields=("escort",),
+        ) from exc
+    if not shaped:
+        return
+    _assert_characters_exist(
+        db, [str(entry["character_id"]) for entry in shaped],
+    )
+    roster = normalize_draft_person_roster(
+        list(entries), db=db, content=getattr(db, "content", None),
+    )
+    # 单一真源：参与人名单只存 participant_roster；escort 记录是它的押解投影。
+    existing = payload.get("participant_roster")
+    merged = list(existing) if isinstance(existing, list) else []
+    for entry in roster:
+        if entry not in merged:
+            merged.append(entry)
+    payload["participant_roster"] = merged
+    record: Dict[str, Any] = {
+        "escortees": [str(entry["character_id"]) for entry in roster],
+    }
     if note is not None:
-        if not isinstance(note, str):
-            raise DecreeMaterializationValidationError(
-                "押解声明 escort.note 须为原文", failed_fields=("escort",),
-            )
         record["note"] = note
     payload["escort"] = record
 
@@ -1244,11 +1274,9 @@ def _dispatch_commissions(
                 _reject(rejected, item, "密令新建载荷须为独立对象", "invalid_shape", source)
                 continue
             from ming_sim.cli_backend import secret_order_can_land
-            from ming_sim.action_materialize import land_or_recover_new_secret_order
             if not secret_order_can_land(dict(secret)):
                 _reject(rejected, item, "密令缺标题、内容或冻结任务契约", "invalid_shape", source)
                 continue
-            out: Dict[str, Any] = {}
             source_turn = db.conn.execute(
                 "SELECT minister_name, user_message_id FROM chat_turns "
                 "WHERE id=? AND turn=? AND status='active'",
@@ -1257,15 +1285,19 @@ def _dispatch_commissions(
             if source_turn is None or source_turn["user_message_id"] is None:
                 _reject(rejected, item, "密令缺本轮口谕源轮", "missing_ref", source)
                 continue
-            pinned = dict(secret)
-            pinned["origin_chat_message_id"] = int(source_turn["user_message_id"])
             actor = str(minister_name or "").strip() or str(source_turn["minister_name"])
-            land_or_recover_new_secret_order(
-                db=db, turn=int(state.turn), minister_name=actor,
-                secret=pinned, player_message=str(item.get("text") or ""),
-                llm_config=None, out=out,
+            # #1900 暗护入口：沿既有密令暂存接缝 stage_pending_action（成案落
+            # _apply_pending_action 的「新建」核）。已记录的旧拨银由 dossier_links
+            # 直挂；同夜暂存的拨银交办由 escort_pending_targets 承接。
+            row_id = db.stage_pending_action(
+                int(state.turn), "secret_order", "新建", actor,
+                _secret_order_staged_payload(
+                    secret, actor,
+                    origin_chat_message_id=int(source_turn["user_message_id"]),
+                ),
+                target_id=None,
             )
-            applied.append({"id": out["pending_action_id"], "kind": "secret_order"})
+            applied.append({"id": row_id, "kind": "secret_order"})
             continue
 
         assignment = item.get("assignment")
@@ -1568,6 +1600,38 @@ def _escort_dossier_id(db: Any, raw: object) -> Optional[int]:
     if dossier_id <= 0 or db.get_decree_dossier(dossier_id) is None:
         return None
     return dossier_id
+
+
+def _secret_order_staged_payload(
+    secret: Mapping[str, object], actor: str, *, origin_chat_message_id: int,
+) -> Dict[str, Any]:
+    """密令新建声明 → 暂存载荷（收夜成案核 ``_apply_pending_action`` 唯一消费）。
+
+    只搬 typed 字段，一个字都不生成（CLAUDE.md P7 / ADR 0142）：标题、正文、
+    差务合同原样透传。``dossier_links`` 是 #1900 暗护指向（0054 单向新指旧），
+    由成案核在密令案卷 id 出来后补挂。
+    """
+    payload: Dict[str, Any] = {
+        "title": str(secret.get("title") or ""),
+        "content": str(secret.get("content") or ""),
+        "assignee": str(secret.get("assignee") or actor or ""),
+        "tags": list(secret.get("tags") or []),
+        "deadline_months": secret.get("deadline_months", 0),
+        "excluded_names": list(secret.get("excluded_names") or []),
+        "excluded_offices": list(secret.get("excluded_offices") or []),
+        "origin_chat_message_id": int(origin_chat_message_id),
+    }
+    if isinstance(secret.get("covert_task"), Mapping):
+        payload["covert_task"] = dict(secret["covert_task"])
+    links = secret.get("dossier_links")
+    if isinstance(links, list):
+        payload["dossier_links"] = links
+    # #1900 同夜暗护：被护的拨银交办此刻还只是本夜暂存，声明按暂存清单里的
+    # action id 指过去；成案核记进密令案卷载荷，该拨银收夜成案时承接挂链。
+    staged = secret.get("escort_pending_targets")
+    if isinstance(staged, list):
+        payload["escort_pending_targets"] = list(staged)
+    return payload
 
 
 def _escort_source_dossier_id(

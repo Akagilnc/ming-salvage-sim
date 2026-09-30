@@ -382,6 +382,25 @@ personnel_secret 模块产出；与公共 `dossier_participants` **分立**（�
 `loss = ordered - arrived`。「该路是否实有护送」只认逐路已落实况（`dossier_escort_outcomes`，
 由转译 `escort_results` 节落账），不凭案卷关联存在、不凭密令整体成败或结案。仍**不二次扣库**、
 不改原 `economy_move`、不写 0058 进展。
+扫描面带 `turn` 时含**本回合正常结案**的拨帑案卷（`status='closed' AND closed_turn=turn
+AND execution_outcome<>'failed'`）：拨帑正常结案不免除该次核账；成案即不足额（failed）
+者钱粮未出库，仍不进扫描面。不带 `turn` 的供料读侧只看在途，不翻历史结案。
+
+### `commissions[].grant.escort` — 押解随拨银旨（#1900）
+
+owner 2026-09-30 裁定：平常「拨银三十万去宁远，着某某押解护送」的押解人记在**同一道拨银
+交办**里，不另立密令、不另挂本案卷关联槽。`escort.escortees` 每项照 ADR 0053 参与人形状
+（`character_id`／`tier`∈{主办,协办,知情}／`role`／`delegator_id`），normalize 与引用校验
+后落进本案卷 `participant_roster` 单一真源；`escort.note` 为原文，零删改（ADR 0142）。
+没给 `escort` 即无押解，代码不猜；已声明却不是 ADR 0053 条目形状 → 逐项拒收，不静默丢弃。
+
+### `commissions[].secret_order.escort_pending_targets` — 同夜暗护指向（#1900）
+
+另行暗中加派护送走既有密令声明接缝。被护的拨银交办**同夜**下达时还只是暂存、没有案卷，
+故此项按本夜暂存清单里的 action id 指过去：每项 `{pending_action_id, relation_type∈{护卫,稽核},
+note}`。密令成案时把指向持久化在密令案卷载荷，该拨银成案有 id 后由
+`GameDB._resolve_covert_escort_links` 挂 0054 关联（两侧各解析一次，谁先成案都成立）。
+非拨帑暂存、非法关系类型、空说明逐项拒收不挂链。已记录的旧拨银仍走 `escort_links`。
 
 ### `dossier_progress_reports` — 长差密令逐月密奏（#566 / ADR 0058）
 personnel_secret 模块产出；settle 内经 `record_monthly_dossier_progress` 消费。
