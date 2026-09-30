@@ -968,16 +968,15 @@ def investigation_fact_difficulty(
     # 归一，不抽签（restore 可复现）。与办案人能力轴方向相反：那边能力强→易查
     # （除以能力），这边遮掩高→难查（除以参考值、乘以自身）。
     # 目标不在 characters 行里（题名式查案对象）时该轴退化不参与。
+    #
+    # 该列 NOT NULL INTEGER（content 侧 0–100 校验），故 int 直取、不设解析兜底；
+    # 0 是合法值（0–100 闭集下端）且**必须**走 clamp——早前的 `if intrigue > 0`
+    # 守卫会让最不会遮掩的人跳过乘子、落回参考值同难度，凭空造出一道非单调的台阶。
     target_row = db.conn.execute(
         "SELECT intrigue FROM characters WHERE name=?", (name,),
     ).fetchone()
     if target_row is not None:
-        try:
-            intrigue = float(target_row["intrigue"])
-        except (TypeError, ValueError):
-            intrigue = float(_INTRIGUE_REFERENCE)
-        if intrigue > 0.0:
-            difficulty *= max(intrigue, _INTRIGUE_MIN) / _INTRIGUE_REFERENCE
+        difficulty *= max(int(target_row["intrigue"]), _INTRIGUE_MIN) / _INTRIGUE_REFERENCE
 
     # 办案人能力（ADR 0092 带宽①同源）：能力强 → 同难度所需投入更少。
     worker = str(investigator or "").strip()

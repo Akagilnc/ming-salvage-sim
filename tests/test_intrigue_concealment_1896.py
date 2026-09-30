@@ -189,6 +189,16 @@ def test_only_target_intrigue_moves_the_difficulty(game):
         db, target="魏忠贤", fact_key=key, investigator="黄道周")
 
     assert bottom < low, "遮掩低者更易查；单向轴不是常数偏移"
+
+    # 0 是闭集下端的合法值（content 侧 0–100），且必须与 1 同落最易查的边缘——
+    # 跳过乘子会让"最不会遮掩的人"与参考值同难度，在单调轴上凭空造一道台阶。
+    db.conn.execute("UPDATE characters SET intrigue=0 WHERE name=?", ("魏忠贤",))
+    db.conn.commit()
+    zero = investigation_fact_difficulty(
+        db, target="魏忠贤", fact_key=key, investigator="黄道周")
+    assert zero <= bottom, "0 不得比 1 更难查"
+    assert zero < low, "最不会遮掩者不得与常人同难度"
+
     # 参考值 50 是中性点：50/50 不乘不除。
     db.conn.execute("UPDATE characters SET intrigue=50 WHERE name=?", ("魏忠贤",))
     db.conn.commit()
