@@ -95,3 +95,15 @@ def test_manual_directive_entry_is_gone_from_frontend_sources():
                       "directiveText", "editingDirectiveText", "desk-compose",
                       "desk-add-btn", "新增草案"):
             assert token not in text, f"{rel} 仍引用已退役的拟诏台面：{token}"
+
+
+def test_runtime_config_projection_has_single_source():
+    """runtime json → LLMConfig 只在 llm_config 一处实现（#1902）。"""
+    import inspect
+
+    from ming_sim.llm_config import llm_config_from_runtime
+
+    assert web_app._llm_config_from_runtime is llm_config_from_runtime
+    web_src = inspect.getsource(web_app)
+    assert "def _llm_config_from_runtime(" not in web_src, "web 侧不得再留同名实现"
+    assert "def apply_llm_config(" not in web_src, "零调用方 apply_llm_config 应已退役"

@@ -573,80 +573,16 @@ def _settlement_sse_error_data(
     return payload
 
 
-def _runtime_float(value: object, default: float) -> float:
-    try:
-        return float(value) if value not in (None, "") else default
-    except (TypeError, ValueError):
-        return default
+# #1902：数值槽宽容取值与「是否真 key」判定都只在 llm_config 一处实现，
+# web 侧这两个名字保留为薄转发（多处读档投影沿用），不再各写一份规则。
+from ming_sim.llm_config import _runtime_float  # noqa: E402  （读档投影沿用名）
+
+_has_real_api_key = is_real_api_key
 
 
-def _has_real_api_key(value: object) -> bool:
-    # 单一真源在 llm_config.is_real_api_key；此处只做 web 层薄包装。
-    return is_real_api_key(value)
-
-
-def _llm_config_from_runtime(
-    runtime: Dict[str, Any],
-    *,
-    base_url: str,
-    model: str,
-    api_key: str,
-    timeout_seconds: float,
-    thinking_level: str,
-    advanced_model: str,
-    advanced_base_url: str,
-    advanced_api_key: str,
-    advanced_thinking_level: str,
-) -> LLMConfig:
-    from ming_sim.cli_backend import cli_backend_from_env
-
-    channel = str(runtime.get("channel") or "").strip().lower()
-    env_runner = cli_backend_from_env()
-    if channel not in VALID_CHANNELS:
-        channel = "cli" if env_runner else "api"
-    cli_slot = runtime.get("cli") if isinstance(runtime.get("cli"), dict) else {}
-    cli_runner = str(cli_slot.get("runner") or env_runner or ("agy" if channel == "cli" else "")).strip().lower()
-    cli_model = str(cli_slot.get("model") or cli_model_from_env(cli_runner, model)).strip()
-    legacy_reasoning = (
-        legacy_reasoning_strength({
-            "advanced_model": advanced_model,
-            "advanced_thinking_level": advanced_thinking_level,
-            "thinking_level": thinking_level,
-        })
-        if channel != "cli"
-        else ""
-    )
-    reasoning_strength = normalize_reasoning_strength(
-        (cli_slot.get("reasoning_strength") if channel == "cli" else runtime.get("reasoning_strength"))
-        or runtime.get("reasoning_strength", "")
-    ) or legacy_reasoning
-    # 无 saved CLI timeout 时回落 CLI 默认（300），不回落 API request timeout（codex R1 #3）。
-    cli_timeout = _runtime_float(cli_slot.get("timeout_seconds"), CLI_DEFAULT_TIMEOUT_SECONDS)
-    if channel == "cli":
-        api_key = ""  # CLI 通道不要 API key；占位符在 create_chat_model 构造 CliChat 时注入
-    elif not is_real_api_key(api_key):
-        # 占位符不当真 key：清空让下游空检查报「未配 API key」，
-        # 而不是拿假 key 去探 OpenAI（误导性 412）。
-        api_key = ""
-    # #1794：附加头只属 API 槽；load_runtime_llm 已归一并顶层 alias，扁平单读。
-    default_headers = dict(runtime.get("default_headers") or {})
-    return LLMConfig(
-        api_key=api_key,
-        base_url=normalize_openai_base_url(base_url),
-        model=model,
-        timeout_seconds=timeout_seconds,
-        thinking_level=normalize_thinking_level(thinking_level),
-        advanced_model=(advanced_model or "").strip(),
-        advanced_base_url=normalize_openai_base_url(advanced_base_url) if advanced_base_url else "",
-        advanced_api_key=real_api_key_or_empty(advanced_api_key),
-        advanced_thinking_level="",
-        reasoning_strength=reasoning_strength,
-        channel=channel,
-        cli_runner=cli_runner,
-        cli_model=cli_model,
-        cli_timeout_seconds=cli_timeout,
-        default_headers=default_headers,
-    )
+# #1902：runtime json → LLMConfig 的投影下沉到 llm_config.llm_config_from_runtime
+# （唯一真源）；此处只调用，不再在 web 侧留一份同名实现。
+from ming_sim.llm_config import llm_config_from_runtime as _llm_config_from_runtime
 
 
 def _api_reasoning_supported_for_effective_model(
@@ -1241,11 +1177,8 @@ class WebGame:
         self.session.begin_turn()
         return new_config
 
-    def apply_llm_config(self, *args, **kwargs) -> LLMConfig:
-        """同步:build → verify → commit。异步端点 api_set_llm_config 改为分步以 offload verify。"""
-        new_config = self.build_llm_config(*args, **kwargs)
-        _verify_llm_configs_or_raise(new_config)
-        return self.commit_llm_config(new_config)
+# #1902：apply_llm_config（同步 build→verify→commit 包装）零调用方，随之退役；
+# 现役设置入口 api_set_llm_config 分步做 build/verify/commit，禁再包同步壳。
 
     # ── 便捷属性 ──────────────────────────────────────────────────────────
     @property

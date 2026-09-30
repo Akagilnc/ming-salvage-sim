@@ -328,6 +328,82 @@ def cli_model_from_env(runner: str, fallback: str = "") -> str:
     return fallback
 
 
+def _runtime_float(value: object, default: float) -> float:
+    """runtime json 数值槽的宽容取值（缺/空/坏值回默认，不抛）。"""
+    try:
+        return float(value) if value not in (None, "") else default
+    except (TypeError, ValueError):
+        return default
+
+
+def llm_config_from_runtime(
+    runtime: Dict[str, Any],
+    *,
+    base_url: str,
+    model: str,
+    api_key: str,
+    timeout_seconds: float,
+    thinking_level: str,
+    advanced_model: str,
+    advanced_base_url: str,
+    advanced_api_key: str,
+    advanced_thinking_level: str,
+) -> LLMConfig:
+    from ming_sim.cli_backend import cli_backend_from_env
+
+    """runtime json + 命令行/API 入参 → LLMConfig（#1902 单一投影真源）。
+
+    WebGame 建局与 CLI 建局共用；web 侧不再留第二份同名实现。
+    """
+    channel = str(runtime.get("channel") or "").strip().lower()
+    env_runner = cli_backend_from_env()
+    if channel not in VALID_CHANNELS:
+        channel = "cli" if env_runner else "api"
+    cli_slot = runtime.get("cli") if isinstance(runtime.get("cli"), dict) else {}
+    cli_runner = str(cli_slot.get("runner") or env_runner or ("agy" if channel == "cli" else "")).strip().lower()
+    cli_model = str(cli_slot.get("model") or cli_model_from_env(cli_runner, model)).strip()
+    legacy_reasoning = (
+        legacy_reasoning_strength({
+            "advanced_model": advanced_model,
+            "advanced_thinking_level": advanced_thinking_level,
+            "thinking_level": thinking_level,
+        })
+        if channel != "cli"
+        else ""
+    )
+    reasoning_strength = normalize_reasoning_strength(
+        (cli_slot.get("reasoning_strength") if channel == "cli" else runtime.get("reasoning_strength"))
+        or runtime.get("reasoning_strength", "")
+    ) or legacy_reasoning
+    # 无 saved CLI timeout 时回落 CLI 默认（300），不回落 API request timeout（codex R1 #3）。
+    cli_timeout = _runtime_float(cli_slot.get("timeout_seconds"), CLI_DEFAULT_TIMEOUT_SECONDS)
+    if channel == "cli":
+        api_key = ""  # CLI 通道不要 API key；占位符在 create_chat_model 构造 CliChat 时注入
+    elif not is_real_api_key(api_key):
+        # 占位符不当真 key：清空让下游空检查报「未配 API key」，
+        # 而不是拿假 key 去探 OpenAI（误导性 412）。
+        api_key = ""
+    # #1794：附加头只属 API 槽；load_runtime_llm 已归一并顶层 alias，扁平单读。
+    default_headers = dict(runtime.get("default_headers") or {})
+    return LLMConfig(
+        api_key=api_key,
+        base_url=normalize_openai_base_url(base_url),
+        model=model,
+        timeout_seconds=timeout_seconds,
+        thinking_level=normalize_thinking_level(thinking_level),
+        advanced_model=(advanced_model or "").strip(),
+        advanced_base_url=normalize_openai_base_url(advanced_base_url) if advanced_base_url else "",
+        advanced_api_key=real_api_key_or_empty(advanced_api_key),
+        advanced_thinking_level="",
+        reasoning_strength=reasoning_strength,
+        channel=channel,
+        cli_runner=cli_runner,
+        cli_model=cli_model,
+        cli_timeout_seconds=cli_timeout,
+        default_headers=default_headers,
+    )
+
+
 def load_llm_config(
     base_url: str,
     model: str,
