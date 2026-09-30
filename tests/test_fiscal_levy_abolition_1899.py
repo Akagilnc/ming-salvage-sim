@@ -194,6 +194,50 @@ def test_abolished_liao_levy_reopened_by_later_rise_approval_uses_new_rate(game)
     assert _settle(db)["p"]["三饷应征"] == 0.0
 
 
+def test_same_turn_approval_then_abolition_keeps_abolition_in_force(game):
+    """G1：**同 turn** 先批「准」再罢 → 最后批语是罢，不征（无固定优先规则）。
+
+    旧实现拿 approve_turn 与最后一道罢比 turn，同 turn 判「准赢」，且这道准每个 pass
+    都被重新拿来与罢比——于是更后出的罢被先出的准顶掉，下月照旧征 2.9292。判词要求
+    「以最后一次批语为准」，同 turn 相撞也该由**实际写入顺序**决定，不由规则裁断。
+    """
+    db, state = _at(game, 1631, 1, 15)
+    _emperor_approves_rise(db, state)
+    apply_historical_fiscal_rates(state, db)
+    assert _settle(db)["p"]["三饷应征"] > 0, "准后应先恢复征收"
+
+    # 同一个 turn 内再罢：真写口删行。
+    _abolish(db, "辽饷", 15)
+    apply_historical_fiscal_rates(state, db)
+
+    assert _settle(db)["p"]["三饷应征"] == 0.0, "同 turn 后出的罢应赢"
+
+    # 持续罢征不被下一月的重算抹掉（这道准已被消费过，不再顶掉罢）。
+    db, state = _at(game, 1631, 2, 16)
+    apply_historical_fiscal_rates(state, db)
+    assert _settle(db)["p"]["三饷应征"] == 0.0
+
+
+def test_abolition_then_later_turn_approval_reinstates(game):
+    """罢辽饷 → **下一回合**批「准」→ 复征按新率（票面：下月按新率重新征）。
+
+    时序口径：罢的目录写口在**世界段**落，批红在**收夜**记账。故同一 turn 内
+    罢总是更后出的那道批语（罢赢）；要复征，「准」必须发生在更晚的回合。这是月链
+    真实顺序的如实反映，不是自造的固定优先规则——上一例（同 turn 准后罢）与本例
+    （跨 turn 罢后准）合看，两个方向各自服从「谁更晚谁在位」。
+    """
+    db, state = _at(game, 1631, 1, 10)
+    _abolish(db, "辽饷", 10)
+    db, state = _at(game, 1631, 6, 15)
+    _emperor_approves_rise(db, state)
+    apply_historical_fiscal_rates(state, db)
+
+    reopened = _settle(db)
+    assert reopened["p"]["三饷应征"] == pytest.approx(
+        reopened["_meta"]["辽饷九厘基线"] * 4.0 / 3.0
+    )
+
+
 def test_rise_approved_before_abolition_keeps_abolition_in_force(game):
     """准升率在前、罢辽饷在后 → 最后批语是罢，下月不征（罢饷真正生效）。
 

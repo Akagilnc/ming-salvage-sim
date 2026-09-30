@@ -19674,7 +19674,20 @@ class GameDB:
                     THEN excluded.terminal_reason
                     ELSE event_triggers.terminal_reason
                 END,
-                choice_json = excluded.choice_json
+                choice_json = excluded.choice_json,
+                -- #1899：行上**首次**落下真 choice（此前 choice_json 为空）时，把 turn
+                -- 校正为本次批红所在的回合。自动落账桩（fiscal_levy_shadow /
+                -- default_terminal_reason）会先按 default 标好终态、turn 记成桩那一回合；
+                -- 皇帝随后亲批时若沿用旧 turn，这道真决定的时点就丢了——#1899「以您
+                -- 最后一次的批语为准」要比的正是这个时点，桩的 turn 不是皇帝的批语。
+                -- 仅在「首次由空变为有 choice」时校正，不覆盖已有的真决定时点，
+                -- 终态本身（terminal_state / terminal_reason）仍不可逆。
+                turn = CASE
+                    WHEN COALESCE(event_triggers.choice_json, '') = ''
+                         AND COALESCE(excluded.choice_json, '') != ''
+                    THEN excluded.turn
+                    ELSE event_triggers.turn
+                END
             """,
             (eid, state.turn, state.year, state.period, source, label, payload),
         )

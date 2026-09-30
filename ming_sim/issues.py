@@ -1597,8 +1597,8 @@ def _fiscal_levy_last_abolish_turn(db: GameDB, keys: tuple) -> int:
     两口都读，不重建。**不复征**：复征判据在目录本身（`_fiscal_levy_catalog_in_force`），
     目录现值就是最后一道批语的结果，不需要拿三本账比大小。
 
-    此函数只为「这次『准』是否比最后一次罢更新」提供时间戳（票面「以您最后一次的批语
-    为准」），不承担罢/复本身的状态判定。
+    此函数只为「这道『准』是否仍比最后一次罢更早」提供时间戳（票面「以您最后一次的
+    批语为准」），不承担罢/复本身的状态判定。
     """
     keys = tuple(keys)
     if not keys:
@@ -1635,18 +1635,24 @@ def _fiscal_levy_reinstate_abolished(
     后续决定**写不进去**、现役照旧征——实际复征与后续决定写口脱节。本函数让复征
     也落在真写口上：重立后目录行在册，后续罢/调零重新有写口，闭环可续。
 
-    **只在这次「准」确实是最后一道批语时才复征**：`approve_turn` 不得早于最后一道罢。
-    否则升率结局一旦落成「已准」就会**每月重复复征**，把玩家后来下的再罢顶掉——正是
-    票面「持续罢征不因逐月重算被抹掉」所禁。同 turn 相撞时以「准」为准，与票面
-    「以您最后一次的批语为准」及 owner 裁定（准了就重新开征）一致。
+    **复征只在最后一道罢之前发生**（G1）：`last_abolish_turn` 严格早于这道「准」的
+    turn 才复征。这不是自造的固定优先，而是**月链真实顺序**的如实反映：批红在收夜
+    记入事件账、在 `pre_settle` 被本函数消费（decree.py:1187），而罢赋罢饷的目录写口
+    在其后的世界段才落（`settle_staged_declarations_in_decree_order`）。故同一 turn 内
+    **罢必然是更后出的那道批语**——正是票面「以您最后一次的批语为准」所裁的那一道。
+    旧实现用 `approve_turn < last_abolish_turn` 的反向比较，同 turn 落入复征分支，
+    等于自造「同月准赢」，并让这道已被消费的准每个 pass 重新顶掉后出的罢。
+
+    复征是一次性效果：消费过后目录即最后一道批语的结果，此后更后出的罢不被顶掉
+    （票面「持续罢征不因逐月重算被抹掉」）。
 
     幂等：已在征时直接返回 False（不重立、不重复扣征）。恢复值取 seed 目录的默认值
     （`_seeded_fiscal_item_meta`），即「恢复该税项的常态征收额」，不臆造数。
     """
     if _fiscal_levy_catalog_in_force(db, keys):
         return False
-    if int(approve_turn) < _fiscal_levy_last_abolish_turn(db, keys):
-        # 最后一道批语是更晚的罢 → 罢赢，准入不得凭空复征。
+    if _fiscal_levy_last_abolish_turn(db, keys) >= int(approve_turn):
+        # 最后一道罢不早于这道「准」→ 罢是更后出的批语，准入不得复征。
         return False
     stem = db._stem_of(keys[0])
     seeded = db._seeded_fiscal_item_meta(stem) if stem else None
@@ -1695,12 +1701,15 @@ def _apply_fiscal_levy_targets(
     liao_rise_approved = _fiscal_levy_event_approved(terminal_records, _LIAO_LEVY_RISE_EVENT_ID)
     jiao_in_force = _jiao_levy_in_force(terminal_records, state)
     lian_levy_approved = _fiscal_levy_event_approved(terminal_records, _LIAN_LEVY_START_EVENT_ID)
-    # #1899 最后有效批语裁定在征：**读目录现值，不重建时序**（理由见
-    # `_fiscal_levy_catalog_in_force`）。罢/复各自经真写口改目录，后写覆盖先写，
-    # 「以最后一次批语为准」由写口天然保证；不夹带任何自造的同月优先规则。
+    # #1899 最后有效批语裁定在征：**读目录现值**（理由见
+    # `_fiscal_levy_catalog_in_force`）。罢/复各自经真写口直接改目录，后写覆盖先写，
+    # 「以最后一次批语为准」由**月链真实写入顺序**保证——不夹带任何自造的固定优先
+    # 规则（既不「同月罢赢」也不「同月准赢」）：批红在收夜记账、pre_settle 消费，
+    # 罢赋罢饷的目录写口在其后世界段才落，故同 turn 内罢总是更后出的那道批语。
     #   · 目录在征 → 按在征率征（升率已准则用新率，owner d5405bb6）；
     #   · 目录已罢 → 不征，且目录残值（base 仍 43）不再能否决这道罢。
-    # 「准」若遇已罢的辽饷 = 皇帝重新开征：先经真写口重立（F4），再按新率征。
+    # 「准」若遇已罢的辽饷 = 皇帝重新开征：经真写口重立（F4）；仅当最后一道罢更早
+    # 才复征（G1），此后更后出的罢不被这道旧准顶掉。
     # 仅**皇帝亲裁**的「准」才复征（F6）；自动落账桩（无 choice_json）只给历史
     # 费率基线，不得凭空把已罢的辽饷加回来。
     if liao_rise_approved and _fiscal_levy_rise_approved_by_emperor(terminal_records):
