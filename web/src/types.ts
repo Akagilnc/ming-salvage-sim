@@ -640,7 +640,8 @@ export type ReplyRetry = {
   turn: number;
   question: string;
   error_pack_path?: string;
-  recovery_phase?: "after_reply" | "court_break";
+  /** #1853：decree_forecast = 夜里预推未成，重试只补该轮未成的预推。 */
+  recovery_phase?: "after_reply" | "court_break" | "decree_forecast";
 };
 
 export type TranslationRetry = {

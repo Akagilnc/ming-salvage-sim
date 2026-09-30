@@ -9,6 +9,7 @@ import type {
   ChatDisplayMessage,
   ChatMessage,
   Minister,
+  ReplyRetry,
   RetryReadFailure,
   TranslationRetry,
 } from "../types";
@@ -70,8 +71,8 @@ export function ChatModal({
   input: string;
   busy: string;
   error: string;
-  /** #505：系统层回话重试（崩溃后问话保留）。 */
-  replyRetries?: { chat_turn_id: number; question: string; error_pack_path?: string; recovery_phase?: "after_reply" | "court_break" }[];
+  /** #505：系统层回话重试（崩溃后问话保留）。#1853 增夜里预推未成相位。 */
+  replyRetries?: Pick<ReplyRetry, "chat_turn_id" | "question" | "error_pack_path" | "recovery_phase">[];
   translationRetries?: TranslationRetry[];
   retryReadFailure?: RetryReadFailure | null;
   onInput: (value: string) => void;

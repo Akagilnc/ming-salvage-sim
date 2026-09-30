@@ -398,6 +398,9 @@ def _forecast(
                 forecast_text=forecast_text,
                 visible_refs=snapshot.get("visible_refs"),
             )
+            # #1853：暂存落成即该旨夜里预推已成——清来源轮下的预推失败行，
+            # 免得补成后玩家还看见一条重试。
+            clear_forecast_failure(session.db, _forecast_source_turn(session.db, snapshot))
 
         def stage() -> None:
             get_session_write_queue(session).run(snapshot["ticket"], stage_if_current)
@@ -438,6 +441,16 @@ def _submit_snapshot_job(
             try:
                 _forecast(session, snapshot, write_lock=write_lock)
             except Exception as exc:
+                # #1853：耗尽与非耗尽都要在来源轮下留持久失败行 + 重试钮，
+                # 不得只留日志。记录在写闸内，之后按原相位语义收尾。
+                # 记录本身失败不夺走原异常——那才是本轮真正的病因。
+                try:
+                    queue.run(
+                        ticket,
+                        lambda: record_forecast_failure(session, snapshot, exc),
+                    )
+                except Exception:
+                    logger.exception("[decree-forecast] 预推失败相位记录未落")
                 if _call_exhausted(exc):
                     return
                 raise
@@ -461,6 +474,126 @@ def _submit_snapshot_job(
 def _forecast_configured(session: Any) -> bool:
     cfg = getattr(session, "llm_config", None)
     return cfg is not None and hasattr(cfg, "advanced_model") and hasattr(cfg, "model")
+
+
+# #1853：夜里预推未成的持久失败相位。复用召对既有 post_reply 恢复行（源轮下一行一钮），
+# 不新造前端重试器。相位名进 chat_turns.post_reply_recovery，与 after_reply / court_break 同列。
+FORECAST_RECOVERY_PHASE = "decree_forecast"
+
+
+def _forecast_source_turn(db: Any, snapshot: Optional[Dict[str, Any]]) -> int:
+    """本预推的来源对话轮（拟旨暂存的 source_chat_turn_id，#1890）；无来源轮返 0。"""
+    action_id = int((snapshot or {}).get("pending_action_id") or 0)
+    if action_id <= 0 or not hasattr(db, "conn"):
+        return 0
+    row = db.conn.execute(
+        "SELECT source_chat_turn_id FROM pending_actions WHERE id=?",
+        (action_id,),
+    ).fetchone()
+    return int(row["source_chat_turn_id"] or 0) if row is not None else 0
+
+
+def record_forecast_failure(
+    session: Any, snapshot: Optional[Dict[str, Any]], exc: BaseException,
+) -> int:
+    """把夜里预推未成记到来源轮：durable 相位 + 错误包。返回来源轮 id（0=无来源轮）。
+
+    耗尽（LLMUnavailable / 429）与代码异常同记：两者都是「这一旨夜里没推成」，
+    玩家在源轮下看到失败行与重试钮，点击只补未成的那一旨预推。
+    """
+    db = session.db
+    ctid = _forecast_source_turn(db, snapshot)
+    if ctid <= 0:
+        return 0
+    pack_path = ""
+    if not isinstance(exc, LLMUnavailable):
+        from ming_sim.audience_night import write_audience_error_pack
+
+        pack_path = write_audience_error_pack(
+            kind=FORECAST_RECOVERY_PHASE, message=str(exc),
+            detail={
+                "chat_turn_id": ctid,
+                "pending_action_id": int((snapshot or {}).get("pending_action_id") or 0),
+                "decree_ref": str((snapshot or {}).get("decree_ref") or ""),
+            },
+            db=db, exc=exc,
+        )
+    db.mark_post_reply_failure(ctid, FORECAST_RECOVERY_PHASE, pack_path)
+    return ctid
+
+
+def clear_forecast_failure(db: Any, chat_turn_id: int) -> None:
+    """预推补成后清相位。只清本相位，不动 after_reply / court_break 的失败行。"""
+    ctid = int(chat_turn_id or 0)
+    if ctid <= 0 or not hasattr(db, "conn"):
+        return
+    db.conn.execute(
+        "UPDATE chat_turns SET post_reply_recovery='', post_reply_error_pack_path='' "
+        "WHERE id=? AND post_reply_recovery=?",
+        (ctid, FORECAST_RECOVERY_PHASE),
+    )
+    db.conn.commit()
+
+
+def _unfinished_forecast_actions(db: Any, chat_turn_id: int) -> list[int]:
+    """该轮已应允、仍 pending、且尚无暂存产物的拟旨 id（已成不重落）。"""
+    rows = db.conn.execute(
+        "SELECT id, version FROM pending_actions "
+        "WHERE source_chat_turn_id=? AND kind='directive' AND action='拟旨' "
+        "AND status='pending' AND night_approved=1 ORDER BY id",
+        (int(chat_turn_id),),
+    ).fetchall()
+    out: list[int] = []
+    for row in rows:
+        ref = pending_action_decree_ref(int(row["id"]), int(row["version"] or 1))
+        if not db.staged_declarations.staged_for(ref):
+            out.append(int(row["id"]))
+    return out
+
+
+def retry_forecast_for_turn(session: Any, chat_turn_id: int) -> Dict[str, int]:
+    """#1853 原位重试：只补该轮未成的那几旨预推，不重落已暂存、不重说玩家的话。
+
+    每旨补成即由 :func:`_forecast` 的暂存落成处清掉该轮失败相位（源轮下的失败行
+    随之消失）；仍失败则相位与错误包原样保留，可再试。
+    """
+    from ming_sim.session_write_queue import get_session_write_queue
+
+    db, ctid = session.db, int(chat_turn_id or 0)
+    if ctid <= 0:
+        return {"forecasted": 0, "pending": 0}
+    bind_forecast_owner(session)
+    queue = get_session_write_queue(session)
+    action_ids = _unfinished_forecast_actions(db, ctid)
+    forecasted = 0
+    pending = 0
+    for action_id in action_ids:
+        night_id = int(db.conn.execute(
+            "SELECT night_id FROM pending_actions WHERE id=?", (action_id,),
+        ).fetchone()["night_id"] or 0)
+        ticket = queue.claim_if_absent(
+            [("decree_forecast", action_id, 0, night_id)],
+        )[0]
+        if ticket is None:
+            pending += 1
+            continue
+        snapshot: Optional[Dict[str, Any]] = None
+        try:
+            snapshot = queue.run(ticket, lambda: _pending_snapshot(
+                session, action_id, night_id,
+            ))
+            if snapshot is None:
+                continue
+            snapshot["ticket"] = ticket
+            _forecast(session, snapshot)
+            forecasted += 1
+        except Exception as exc:
+            record_forecast_failure(session, snapshot, exc)
+            pending += 1
+        finally:
+            release_forecast_materials(snapshot)
+            queue.complete(ticket)
+    return {"forecasted": forecasted, "pending": pending}
 
 
 def schedule_pending_decree_forecast(

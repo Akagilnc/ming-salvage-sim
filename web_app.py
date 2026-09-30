@@ -2276,6 +2276,16 @@ class WebGame:
                 self.session.close_night_after_chat_if_needed(
                     "court_break", write_gate=self._runtime_write_gate(),
                 )
+            elif phase == "decree_forecast":
+                # #1853：夜里预推未成——只补该轮未成的预推，不重落已暂存。
+                from ming_sim.decree_forecast import retry_forecast_for_turn
+
+                summary = retry_forecast_for_turn(self.session, chat_turn_id)
+                if int(summary.get("pending") or 0) > 0:
+                    raise HTTPException(
+                        status_code=503,
+                        detail="夜里推演仍未成，可稍后再试。",
+                    )
             else:
                 self._trail_highlight_judge_after_reply(
                     str(target["answer"]), message_id=int(target["minister_message_id"]),

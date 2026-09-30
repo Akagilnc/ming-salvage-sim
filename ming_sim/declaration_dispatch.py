@@ -2129,6 +2129,11 @@ def _dispatch_promises(
                 _rc = RejectionCollector()
                 committed = db.commit_pending_actions(
                     state, action_ids=[action_id], rejection_collector=_rc,
+                    # #1853：应允即落是本轮转译的一部分，落库真异常不得吞成
+                    # failed——否则本轮标 done 而密令未落（假成功）。上抛由
+                    # apply_audience_round_translation 的 atomic 回滚本轮，
+                    # 召对侧既有失败行 + 错误包 + 重试接手。
+                    loud_apply_error=True,
                 )
                 mirror_rejections_after_commit(db, _rc, rejections_jsonl_path)
                 for c in committed or []:

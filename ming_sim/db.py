@@ -17988,7 +17988,7 @@ class GameDB:
         self, state: GameState, *, content=None, minister_name=None,
         kind_filter: Optional[str] = None, kind_filter_exclude: Optional[str] = None,
         directive_status: str = "draft", action_ids: Optional[Iterable[int]] = None,
-        rejection_collector=None,
+        rejection_collector=None, loud_apply_error: bool = False,
     ) -> List[Dict[str, object]]:
         """颁诏:把本回合 pending 暂存的结构化写动作批量落到真实表(不拒绝即允许),
         按 id 序(=操作发生序)apply。落得了标 committed、落不了标 failed(都不留 pending,
@@ -18001,6 +18001,11 @@ class GameDB:
         默认 None=颁诏批量落全回合。
         kind_filter 非空=只 commit 指定 kind(如 'directive')的暂存,跳过其余 kind。
         kind_filter_exclude 非空=只 commit 该 kind 以外的暂存(召对确认应允放过 directive,BUG 1)。
+        loud_apply_error（#1853）：apply 抛真异常时**不**洗成终态 failed，改为回滚本行动
+        作后原样上抛。召对应允直写（夜内白名单）传 True——那一轮的转译结果整体成败由
+        调用方裁决，吞掉异常会让转译标 done 而密令未落（假成功）。颁诏批量与收夜
+        提交留默认 False：那里逐条隔离是既有契约（CMR P0），失败由 pending_action_failures
+        渠道上报。
         directive_status controls how kind=directive candidates enter turn_directives:
         "draft" for decree-checkpoint default approval, "pending" for chat-approved
         candidates that must still pass the later准/驳 interface.
@@ -18046,7 +18051,8 @@ class GameDB:
                 committed = self._commit_conversational_draft(
                     state, pa, payload, content=content,
                     directive_status=directive_status,
-                    rejection_collector=rejection_collector)
+                    rejection_collector=rejection_collector,
+                    loud_apply_error=loud_apply_error)
                 if committed is not None:
                     applied.append(committed)
                 continue
@@ -18103,11 +18109,17 @@ class GameDB:
                         raise
                     rejection = getattr(exc, "dossier_link_rejection", None)
                     if rejection is not None:
+                        # 业务拒收（模型指向不存在案卷）：durable 审计 + 终态 failed，
+                        # 不是代码故障，不上抛。
                         self._record_dossier_link_rejection(
                             *rejection, pending_action_id=int(pa["id"]),
                         )
                     tlog(f"[pending_actions] 落库失败 id={pa['id']} {pa['kind']}/{pa['action']}：{exc}")
                     ok = False
+                    if loud_apply_error and rejection is None:
+                        # #1853：真异常不是业务拒收。留 pending（不洗终态 failed，
+                        # 原动作 id 与来源轮仍可核可重试），把成败交还调用方裁决。
+                        raise
                     self.conn.execute(
                         "UPDATE pending_actions SET status='failed' WHERE id=?", (int(pa["id"]),))
                 finally:
@@ -18166,7 +18178,7 @@ class GameDB:
     def _commit_conversational_draft(
         self, state: GameState, pa: Dict[str, object], payload: Dict[str, object],
         *, content=None, directive_status: str = "draft",
-        rejection_collector=None,
+        rejection_collector=None, loud_apply_error: bool = False,
     ) -> Optional[Dict[str, object]]:
         """提交一条对话式拟旨暂存，并让 draft 行与 pending 状态同事务落定。"""
         owns_transaction = not (
@@ -18204,6 +18216,13 @@ class GameDB:
                     # 0150-D2 / #1745：typed 归属缺口不得吞成 pending failed。
                     from ming_sim.applier import RejectionCollectorRequired
                     if isinstance(exc, RejectionCollectorRequired):
+                        raise
+                    if loud_apply_error:
+                        # #1853：同 commit_pending_actions——真异常不洗终态 failed。
+                        tlog(
+                            f"[pending_actions] 落库失败上抛 id={pa['id']} "
+                            f"{pa['kind']}/{pa['action']}：{exc}"
+                        )
                         raise
                     self.conn.execute(
                         "UPDATE pending_actions SET status='failed' WHERE id=?",
