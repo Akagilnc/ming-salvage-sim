@@ -1401,6 +1401,8 @@ def apply_rescript_batch(
                     _DECREE_QUESTION_PREFIX, _WORLD_QUESTION_PREFIX,
                 )
                 # 请旨身份不是 events 表事件；与 dossier: 同属案头身份前缀，不得进 event_triggers。
+                # 绑定了到期事件的请旨（三饷亲裁）也走此前缀，其事件账由 month_chain 的
+                # world_question_event_bindings 单一写口落，不在此按行反推（#1892 K1）。
                 if (
                     event_id
                     and not event_id.startswith("dossier:")

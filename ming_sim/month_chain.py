@@ -1351,8 +1351,7 @@ def _materialize_rescript_desk(
             ))
     for idx, question in enumerate(open_items["world_questions"]):
         decisions.append(_question_as_decision(
-            question,
-            event_id=_world_question_event_id(question, db=db, state=state, turn=turn, idx=idx),
+            question, event_id=f"{_WORLD_QUESTION_PREFIX}{turn}:{idx}",
         ))
     if decisions:
         db.save_pending_decisions(turn, decisions)
@@ -1371,24 +1370,32 @@ def _materialize_rescript_desk(
     return desk
 
 
-def _world_question_event_id(
-    question: Dict[str, object], *, db: Any, state: Any, turn: int, idx: int,
-) -> str:
-    """世界段请旨的 event 身份：回显的请旨事项 id 经**权威快照**核对后才认。
+def world_question_event_bindings(
+    chain: Dict[str, Any], *, db: Any, state: Any, turn: int,
+) -> Dict[str, str]:
+    """本回合世界段请旨的「案头行身份 → 事件身份」绑定表（#1892 J5/K1 单一真源）。
 
-    #1892 J5：三饷是皇帝亲裁——世界段据请旨事项目录上疏陈情，问块回显该事件 id；
-    核对通过则请旨身份即该事件本身，批红经record_event_decision_choice 落事件账，
-    下一月由 apply_historical_fiscal_rates 归一结局标签。只认本回合到期快照内的
-    请旨事项（gather_fiscal_levy_petitions），其余一律仍走world-question: 前缀
-    案头身份，不写事件账——不从疏文猜配、不给幻觉 id 记账（ADR 0115 fail-safe）。
+    请旨行的**案头身份恒为** `world-question:{turn}:{idx}`——全月链与批红轨按此前缀
+    判归属（续推筛选、仅亲笔 note 的答复、案头清理），不因回显了哪个事件 id 而改。
+    事件身份是另一层：世界段回显的 id 经**当回合到期快照**（issues.
+    gather_fiscal_levy_petitions）核对才认，认下即由 _consume_rescript_answers 把皇帝
+    的批红经 db.record_event_decision_choice 写进事件账。
+
+    两层分家的缘由：把事件 id 写进案头行 event_id 会让「这行属不属于世界问块」在两处
+    （身份改写处、按前缀判归属处）各判一次而不同步——批红后世界续推不触发、请旨反复
+    重物化、月链卡死在 rescript（K1）。案头身份与事件身份本就是两回事，故不再混用。
     """
-    echoed = str(question.get("event_id") or question.get("origin_ref") or "").strip()
-    if echoed:
-        from ming_sim.issues import gather_fiscal_levy_petitions
+    from ming_sim.issues import gather_fiscal_levy_petitions
 
-        if echoed in {ev.id for ev in gather_fiscal_levy_petitions(state, db)}:
-            return echoed
-    return f"{_WORLD_QUESTION_PREFIX}{turn}:{idx}"
+    due = {ev.id for ev in gather_fiscal_levy_petitions(state, db)}
+    bindings: Dict[str, str] = {}
+    for idx, question in enumerate(chain.get("world_questions") or []):
+        if not isinstance(question, dict):
+            continue
+        echoed = str(question.get("event_id") or question.get("origin_ref") or "").strip()
+        if echoed and echoed in due:
+            bindings[f"{_WORLD_QUESTION_PREFIX}{turn}:{idx}"] = echoed
+    return bindings
 
 
 def _question_as_decision(question: Dict[str, object], *, event_id: str) -> Dict[str, object]:
@@ -1414,6 +1421,30 @@ def _question_as_decision(question: Dict[str, object], *, event_id: str) -> Dict
         "context": str(question.get("context") or "").strip(),
         "options": cleaned,
     }
+
+
+def _record_world_question_event_choices(
+    db: Any, state: Any, chain: Dict[str, Any], world_rows: List[Dict[str, object]], *,
+    turn: int,
+) -> None:
+    """世界段请旨里绑定了到期事件的那些行：把皇帝批红写进事件账（#1892 J5/K1）。
+
+    案头身份恒为 world-question: 前缀，故此处按绑定表（world_question_event_bindings，
+    单一真源）取事件身份，而不是从行上的 event_id 反推——那正是 K1 里两处判断不同步
+    的病根。写入走既有 db.record_event_decision_choice：只暂存 choice，结局标签由下
+    一月 apply_historical_fiscal_rates 归一，此处不代批、不写终态。
+    """
+    bindings = world_question_event_bindings(chain, db=db, state=state, turn=turn)
+    if not bindings:
+        return
+    with atomic(db):
+        for row in world_rows:
+            event_id = bindings.get(str(row.get("event_id") or ""))
+            if not event_id:
+                continue
+            raw_choice = row.get("choice")
+            choice: Dict[str, object] = dict(raw_choice) if isinstance(raw_choice, dict) else {}
+            db.record_event_decision_choice(state, event_id, choice, commit=False)
 
 
 def _consume_rescript_answers(
@@ -1457,6 +1488,7 @@ def _consume_rescript_answers(
         and all(str(r.get("status") or "") == "decided" for r in world_rows)
         and chain.get("world_questions")
     ):
+        _record_world_question_event_choices(db, state, chain, world_rows, turn=turn)
         continue_world_after_answers(
             session, chain,
             answers=[_answer_from_row(r) for r in world_rows],

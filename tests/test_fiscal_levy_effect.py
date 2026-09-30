@@ -1280,13 +1280,24 @@ def test_fiscal_levy_petition_reaches_emperor_desk_and_lands_only_after_choice(g
     monkeypatch.setattr(
         month_translate, "translate_month_segment", lambda *a, **k: {"effects": {}},
     )
+    monkeypatch.setattr(
+        month_chain, "run_gazette_text", lambda *a, **k: ("邸报", "辽饷已批。"),
+    )
+    continuation_calls = []
+    monkeypatch.setattr(
+        month_chain,
+        "_run_world_continuation_text",
+        lambda session, chain, answers: continuation_calls.append(list(answers)) or "奉旨加派辽饷。",
+    )
 
     session = make_light_session(db, state, content)
+    session.llm_config = object()
     result = session.resolve_turn(allow_empty_decree=True)
 
     assert result.awaiting is True
     desk = session.pending_decisions()
-    row = next(r for r in desk if str(r.get("event_id") or "") == "liao_levy_rise_1631")
+    # 案头身份恒为 world-question: 前缀（K1：身份与归属判断不同源会把月链卡死）。
+    row = next(r for r in desk if str(r.get("event_id") or "").startswith("world-question:"))
     approved = next(opt for opt in row["options"] if opt["label"] == "已准")
 
     # 未批红前：事件无终态、征收额不变（引擎不代批）。
@@ -1305,6 +1316,26 @@ def test_fiscal_levy_petition_reaches_emperor_desk_and_lands_only_after_choice(g
         write_gate=session._write_gate,
     )
 
+    # 批红后走真实月链入口续跑：世界续推恰一次、请旨清空、不再重物化、本月可过。
+    assert len(continuation_calls) == 1
+    assert continuation_calls[0][0]["label"] == "已准"
+    chain = month_chain._load_chain(db, int(state.turn))
+    assert chain.get("world_questions") in (None, [], ())
+    assert chain.get("world_continued") is True
+    resumed = session.resolve_turn(allow_empty_decree=True)
+    assert resumed.awaiting is False
+    assert resumed.stage == "gazette"
+    assert all(
+        str(r.get("status") or "") != "pending" for r in session.pending_decisions()
+    )
+
+    # 事件账写入的是皇帝批红，结局标签由饷率通道归一（下一月 tick 消费）。
+    pending = db.conn.execute(
+        "SELECT terminal_state, terminal_reason, source FROM event_triggers WHERE event_id=?",
+        ("liao_levy_rise_1631",),
+    ).fetchone()
+    assert pending["terminal_state"] == ""
+    assert pending["terminal_reason"] == "已准"
     apply_historical_fiscal_rates(state, db)
     led = db.conn.execute(
         "SELECT terminal_state, terminal_reason FROM event_triggers WHERE event_id=?",
