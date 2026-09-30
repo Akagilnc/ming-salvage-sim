@@ -4,8 +4,9 @@
 真加速写口按对象类唯一：
 - 密令：secret_orders.due_turn（既有 rush_secret_order）
 - 分段承诺：issues.stages_json[].due_turn（本模块 rush_staged_commitment_stage）
-失真倾向＝读时派生定性档（零新持久数值列）。
 反催谏/求宽限走 next_audience_todos 新 entry_kind，真伪底仅 payload_json。
+#1895：原「失真倾向」读时派生定性档（按 integrity＋催办压力算肯不肯歪办）连同
+其对到期复核判词的只准更重改写一并退役——人物肯不肯办归模型按可及事实自选。
 """
 
 from __future__ import annotations
@@ -40,8 +41,6 @@ _DARE_SPEAK_FLOOR = 35
 
 # 可乘之利：流水绝对额合计
 _OPPORTUNITY_HIGH_ABS = 4000
-
-_DISTORTION_RANK = ("不歪", "微歪", "易歪", "必歪")
 
 
 def person_integrity_archetype(integrity: object) -> str:
@@ -87,77 +86,6 @@ def derive_opportunity_band(durable_effects: object) -> str:
     if total_abs >= _OPPORTUNITY_HIGH_ABS:
         return "high"
     return "low"
-
-
-def _clamp_band_index(idx: int) -> int:
-    return max(0, min(int(idx), len(_DISTORTION_RANK) - 1))
-
-
-def derive_distortion_tendency(
-    *,
-    integrity: object = 50,
-    urge_count: int = 0,
-    urge_tightness: int = 0,
-    supervision_history: object = None,
-    opportunity_band: str = "none",
-) -> Dict[str, object]:
-    """读时派生失真定性档。零持久数值；纯函数可复现。"""
-    archetype = person_integrity_archetype(integrity)
-    try:
-        count = max(0, int(urge_count or 0))
-    except (TypeError, ValueError):
-        count = 0
-    try:
-        tightness = max(0, int(urge_tightness or 0))
-    except (TypeError, ValueError):
-        tightness = 0
-    supervision = list(supervision_history or [])
-    opp = str(opportunity_band or "none")
-
-    if count <= 0 and tightness <= 0:
-        return {
-            "band": "不歪",
-            "archetype": archetype,
-            "note": "未催",
-            "urge_count": 0,
-            "urge_tightness": 0,
-        }
-
-    # 基础压力：次数 + 催紧月数
-    pressure = count + (1 if tightness >= 6 else 0) + (1 if tightness >= 18 else 0)
-
-    if archetype == "孤直":
-        # 催孤直不歪——宁抗命
-        idx = 0 if pressure < 4 else 1
-        note = "孤直承催，宁抗不歪"
-    elif archetype == "附势":
-        # 附势必歪倾向：压力抬一档，可乘之利再抬（避免未触顶前被 clamp 抹平差分）
-        idx = min(1 + pressure, 2)  # 微 / 易
-        if opp == "high":
-            idx += 1  # → 必歪
-        elif opp == "low" and pressure >= 3:
-            idx = min(idx + 1, 3)
-        note = "附势承催，失真易涨"
-    else:
-        # 庸吏：看监督
-        idx = min(pressure, 2)
-        idx = max(1, idx) if pressure else 0
-        if supervision:
-            idx = max(0, idx - 1)
-            note = "庸吏有监督在场，歪办受制"
-        else:
-            if opp == "high":
-                idx += 1
-            note = "庸吏无监督，承催易歪"
-
-    idx = _clamp_band_index(idx)
-    return {
-        "band": _DISTORTION_RANK[idx],
-        "archetype": archetype,
-        "note": note,
-        "urge_count": count,
-        "urge_tightness": tightness,
-    }
 
 
 def dare_speak_score(courage: object, imperial_prestige: object) -> int:
@@ -307,23 +235,6 @@ def collect_urge_history(
     return out
 
 
-def summarize_urge_pressure(urge_history: object) -> Dict[str, int]:
-    rows = list(urge_history or [])
-    count = len(rows)
-    tightness = 0
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        t = int(row.get("tightness") or 0)
-        if t <= 0:
-            old_d = int(row.get("old_due") or 0)
-            new_d = int(row.get("new_due") or 0)
-            if old_d > 0 and new_d > 0 and old_d > new_d:
-                t = old_d - new_d
-        tightness += max(0, t)
-    return {"urge_count": count, "urge_tightness": tightness}
-
-
 def resolve_host_character(db: Any, *, commitment_ref: int, dossier_id: Optional[int]) -> Dict[str, object]:
     """承办人：案卷主办优先，否则 issue participants 首名；缺省中性档。"""
     name = ""
@@ -380,45 +291,6 @@ def resolve_host_character(db: Any, *, commitment_ref: int, dossier_id: Optional
             except (TypeError, ValueError):
                 courage = 50
     return {"name": name, "integrity": integrity, "courage": courage}
-
-
-def apply_distortion_to_verdict(
-    verdict: Dict[str, object],
-    distortion: Dict[str, object],
-    *,
-    has_effects: bool,
-    has_reports: bool,
-) -> Dict[str, object]:
-    """失真档对确定性判词的可观察调制（不增 LLM 步）。"""
-    if bool(verdict.get("mid_stage")):
-        return verdict
-    band = str((distortion or {}).get("band") or "不歪")
-    outcome = str(verdict.get("outcome") or "")
-    note = str(verdict.get("note") or "")
-    out = dict(verdict)
-
-    if band == "不歪":
-        return out
-
-    if outcome == "fulfilled":
-        if band == "必歪":
-            out["outcome"] = "transformed"
-            out["note"] = (note + "；催办失真，事已变形")[:200]
-        elif band in {"易歪", "微歪"}:
-            out["outcome"] = "degraded"
-            out["note"] = (note + "；催紧之下，实绩打折")[:200]
-    elif outcome == "degraded":
-        if band == "必歪":
-            out["outcome"] = "failed" if not has_effects else "transformed"
-            out["note"] = (note + "；催之愈急，愈见走样")[:200]
-        elif band == "易歪" and not has_effects:
-            out["outcome"] = "failed"
-            out["note"] = (note + "；表报难掩亏空")[:200]
-    elif outcome == "failed":
-        # 已是最重终值；附注失真
-        if band in {"易歪", "必歪"}:
-            out["note"] = (note + "；催办之下终无实绩")[:200]
-    return out
 
 
 def _record_commitment_urge(

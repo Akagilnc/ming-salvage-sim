@@ -3,8 +3,8 @@
 Seams:
 - rush_staged_commitment_stage → issues.stages_json[].due_turn（真加速唯一写口）
 - pending_actions(action=催办, status=committed) → urge_history 史源
-- build_due_review_input.urge_history / distortion_tendency（读时派生）
-- decide_due_review_verdict 受失真档可观察调制
+- build_due_review_input.urge_history（读时派生事实）
+- decide_due_review_verdict 只按实况账判（#1895 退役失真档调制）
 - ENTRY_KIND_RUSH_REMONSTRANCE / ENTRY_KIND_GRACE_PLEA + payload_json 真伪底
 - 四缝单一白名单（仅 ENTRY_KIND_STAGED）
 """
@@ -37,7 +37,6 @@ from ming_sim.urge_lever import (
     collect_urge_history,
     consume_pending_urge_audience_todos,
     dare_speak_passes,
-    derive_distortion_tendency,
     derive_grace_truth,
     derive_opportunity_band,
     is_deadline_unreasonable,
@@ -145,59 +144,13 @@ def _seed_stages(state, *, due0: int | None = None, due1: int | None = None):
     ]
 
 
-# ── 纯函数：人身 / 可乘之利 / 失真 / 敢言 / 期限 ─────────────────────
+# ── 纯函数：人身 / 可乘之利 / 敢言 / 期限 ──────────────────────────
 
 
 def test_person_integrity_archetype_three_way():
     assert person_integrity_archetype(90) == "孤直"
     assert person_integrity_archetype(55) == "庸吏"
     assert person_integrity_archetype(20) == "附势"
-
-
-def test_distortion_modulated_by_integrity_ac2():
-    base = dict(
-        urge_count=2,
-        urge_tightness=24,
-        supervision_history=[],
-        opportunity_band="low",
-    )
-    g = derive_distortion_tendency(integrity=90, **base)
-    m = derive_distortion_tendency(integrity=55, **base)
-    b = derive_distortion_tendency(integrity=20, **base)
-    rank = {"不歪": 0, "微歪": 1, "易歪": 2, "必歪": 3}
-    assert rank[g["band"]] < rank[m["band"]] < rank[b["band"]]
-    assert g["archetype"] == "孤直"
-    assert b["archetype"] == "附势"
-
-
-def test_distortion_modulated_by_supervision_consume_only_ac3():
-    """AC3：仅消费侧——fixture 注入 supervision_history，庸吏歪办倾向差分。"""
-    base = dict(
-        urge_count=2,
-        urge_tightness=18,
-        integrity=55,
-        opportunity_band="low",
-    )
-    bare = derive_distortion_tendency(supervision_history=[], **base)
-    watched = derive_distortion_tendency(
-        supervision_history=[{"kind": "audit", "months_present": 6}],
-        **base,
-    )
-    rank = {"不歪": 0, "微歪": 1, "易歪": 2, "必歪": 3}
-    assert rank[watched["band"]] < rank[bare["band"]]
-
-
-def test_distortion_modulated_by_opportunity_ac4():
-    base = dict(
-        urge_count=1,
-        urge_tightness=6,
-        integrity=30,
-        supervision_history=[],
-    )
-    low = derive_distortion_tendency(opportunity_band="low", **base)
-    high = derive_distortion_tendency(opportunity_band="high", **base)
-    rank = {"不歪": 0, "微歪": 1, "易歪": 2, "必歪": 3}
-    assert rank[high["band"]] > rank[low["band"]]
 
 
 def test_opportunity_band_from_durable_effects():
@@ -294,18 +247,24 @@ def test_rush_staged_commitment_advances_due_and_fills_urge_history(game):
     todo = db.list_next_audience_todos(commitment_ref=issue_id)[0]
     inp = build_due_review_input(db, todo)
     assert inp["urge_history"]
-    assert inp["distortion_tendency"]["band"] in {"微歪", "易歪", "必歪", "不歪"}
-    assert inp["distortion_tendency"]["archetype"] == "附势"
+    # #1895：输入闭集不再带按 integrity 派生的意愿底档。
+    assert "distortion_tendency" not in inp
 
 
-def test_urge_raises_distortion_and_shifts_verdict_ac1(game):
-    """同承诺：无催 vs 催紧 → 失真档升高且确定性判词可观察差分。"""
+def test_urge_no_longer_rewrites_verdict_ac1_1895(game):
+    """#1895：同一实况下，催办压力与 integrity 都不再改写到期复核判词。
+
+    旧契约是 derive_distortion_tendency 按 integrity＋催办压力算出失真档，
+    apply_distortion_to_verdict 再把判词只往更重方向推（fulfilled→degraded→
+    failed/transformed）。此测试钉相反行为：人物肯不肯办归模型自选，代码只按
+    实况账（旨外标记／durable_effects／progress_reports）判终值。
+    """
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.commit()
     dossier_id = _executing_policy_dossier(db, state, host="倪元璐")
     _set_integrity(db, "倪元璐", 25)
-    # 单段末段终裁面（多段会走 mid_stage=executing，遮住失真调制）
+    # 单段末段终裁面（多段会走 mid_stage=executing）
     stages = [{
         "stage_idx": 0,
         "due_turn": state.turn + 24,
@@ -316,7 +275,7 @@ def test_urge_raises_distortion_and_shifts_verdict_ac1(game):
         db, state, content, stages=stages, origin_ref=f"dossier:{dossier_id}",
         title="失真对照之诺",
     )
-    # 有表报无实账 → 基线 degraded；催紧 + 附势 可推到更重
+    # 有表报无实账 → 基线 degraded
     db.record_dossier_progress(
         dossier_id, state.turn, "在办", "表报已陈，实绩未充",
         is_terminal=False, commit=True,
@@ -335,12 +294,13 @@ def test_urge_raises_distortion_and_shifts_verdict_ac1(game):
     todo = [t for t in db.list_next_audience_todos() if int(t["id"]) == tid][0]
     base_inp = build_due_review_input(db, todo)
     base_verdict = decide_due_review_verdict(base_inp)
+    assert base_verdict["outcome"] == "degraded"
+    assert "distortion_band" not in base_verdict
 
     rush_staged_commitment_stage(
         db, state, commitment_ref=issue_id, stage_idx=0,
         deadline_months=1, reason="即日复命",
     )
-    # second rush for higher urge_count
     rush_staged_commitment_stage(
         db, state, commitment_ref=issue_id, stage_idx=0,
         deadline_months=0, reason="再催",
@@ -348,21 +308,15 @@ def test_urge_raises_distortion_and_shifts_verdict_ac1(game):
     rushed_inp = build_due_review_input(db, todo)
     rushed_verdict = decide_due_review_verdict(rushed_inp)
 
-    rank = {"不歪": 0, "微歪": 1, "易歪": 2, "必歪": 3}
-    assert rank[rushed_inp["distortion_tendency"]["band"]] > rank[
-        base_inp["distortion_tendency"]["band"]
-    ]
-    # 可观察：失真升高后判词至少不更宽；附势重催可将 degraded→failed/transformed
-    order = {"fulfilled": 0, "executing": 1, "degraded": 2, "transformed": 3, "failed": 4}
-    assert order[str(rushed_verdict["outcome"])] >= order[str(base_verdict["outcome"])]
-    assert rushed_verdict["outcome"] in {"degraded", "transformed", "failed"}
-    assert rushed_inp["distortion_tendency"]["band"] in {"易歪", "必歪"}
-    assert base_verdict["outcome"] == "degraded"
-    assert rushed_verdict["outcome"] in {"failed", "transformed"}
+    # 催办史仍作事实素材落进输入（世界因果保留）……
+    assert len(rushed_inp["urge_history"]) > len(base_inp["urge_history"])
+    # ……但判词不再被它压重：同一实况、同一终值。
+    assert rushed_verdict["outcome"] == base_verdict["outcome"] == "degraded"
 
-
-# ── AC5 操之过急谏幂等 + 敢言对照 ───────────────────────────────────
-
+    # 落库路径同样只认实况：重催不把执行格改写成 failed/transformed。
+    applied = apply_due_review_for_todo(db, state, todo, commit=True)
+    assert applied["verdict"]["outcome"] == "degraded"
+    assert db.get_decree_dossier(dossier_id)["execution_outcome"] == "degraded"
 
 def test_rush_remonstrance_first_unreasonable_idempotent_ac5(game):
     db, state, content = game
@@ -483,7 +437,6 @@ def test_grace_plea_payload_truth_hidden_from_player_ac6(game):
             "truth": "pretextual",
             "grace_fake": True,
             "genuine": False,
-            "distortion_band": "必歪",
             "urge_tightness": 99,
         },
     )
@@ -528,8 +481,8 @@ def test_missing_urge_and_supervision_fail_closed_ac7(game):
     inp = build_due_review_input(db, todo)
     assert inp["urge_history"] == []
     assert inp["supervision_history"] == []
-    # 不 fail-open 成「有催/有监督」
-    assert inp["distortion_tendency"]["band"] == "不歪"
+    # #1895：无催/无监督缺源仍是空事实，且不再派生任何意愿底档。
+    assert "distortion_tendency" not in inp
 
 
 def test_urge_history_restore_from_committed_pending_ac7(game):
