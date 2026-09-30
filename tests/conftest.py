@@ -11,8 +11,6 @@ from contextlib import contextmanager
 import os
 import shutil
 import tempfile
-import threading
-import time
 
 import pytest
 
@@ -408,103 +406,6 @@ def offline_empty_audience_translate(prompt, llm_config):
     return {"commissions": [], "promises": [], "scene_facts": [
         {"body": reply, "role": "scene", "audibility": "殿上公开", "person_names": []},
     ]}
-
-
-class LegOverlap:
-    """并行腿的**重叠取证**：记录各腿跑模型调用的时间区间，事后判重叠（#1898）。
-
-    契约（用例名所指）：留中复判两条腿要能同时在飞，而不是在单 worker 里排队。
-
-    前四轮都在「让腿停在会合里等同伙」上打转，根因是同一个：**阻塞式等对端
-    与主线程排空不可兼得**。腿一旦停在会合上，它就占着写队列票据 open 槽，
-    主线程的 ``wait_idle`` 随之阻塞；而要证明重叠又必须让腿停住——故判否从
-    腿侧下（腿已卡在会合里）或从主线程侧下（它已卡在排空里）都太晚。换过
-    settle、Barrier、Future 集合三轮，每轮只是把同一个死锁挪了位置。
-
-    故本轮取判词指的方向：**不让腿等对端，改为事后用已记录的区间判重叠**。
-    用例的模型替身在 :meth:`enter`/:meth:`leave` 之间包住真正的工作段，每条腿
-    留下一段 ``[入, 出]``；:meth:`peak_overlap` 事后扫这些区间，算出「任意时刻
-    同时在区间内的腿数」峰值。峰值达到 parties 即证明它们确实重叠过。
-
-    这样**没有任何腿会阻塞**：缺席、抛错、取消、压根没提交——任何一种都不可能
-    挂死，因为主线程只需照常 ``wait_pending_writes`` 排空（票都跑完了），
-    再断言峰值。挂死在结构上被消除，而不是靠给等待补出口。
-
-    时间用 ``time.monotonic``（单调钟），且只用于**比较区间先后**，不用作
-    任何时限/超时/正确性 deadline：没有 sleep 扩窗，没有 Barrier timeout。
-    """
-
-    def __init__(self, parties: int = 2) -> None:
-        self._parties = parties
-        self._lock = threading.Lock()
-        self._spans = []            # 已完成腿的 (入, 出) 区间
-        self._open = {}             # 线程 -> 入场时刻（正在跑的那条腿）
-
-    def enter(self) -> None:
-        """一条腿进入模型调用段（用例的模型替身入口调用）。"""
-        now = time.monotonic()
-        with self._lock:
-            self._open[threading.get_ident()] = now
-
-    def leave(self) -> None:
-        """一条腿离开模型调用段，区间落定。"""
-        now = time.monotonic()
-        with self._lock:
-            began = self._open.pop(threading.get_ident(), now)
-            self._spans.append((began, now))
-
-    def finish_pending(self) -> None:
-        """排空后调用：把仍开着的区间按此刻收尾（腿已跑完，只是没走 leave）。"""
-        now = time.monotonic()
-        with self._lock:
-            for ident, began in list(self._open.items()):
-                self._spans.append((began, now))
-                self._open.pop(ident, None)
-
-    @property
-    def arrived(self) -> int:
-        """留下区间的腿数（缺席即不足，用例断言用）。"""
-        self.finish_pending()
-        with self._lock:
-            return len(self._spans)
-
-    @property
-    def peak(self) -> int:
-        """任意时刻同时处于模型调用段的腿数峰值（重叠的可失败证据）。"""
-        self.finish_pending()
-        with self._lock:
-            spans = sorted(self._spans)
-            events = []
-            for began, ended in spans:
-                events.append((began, 1))     # 入场
-                events.append((ended, -1))    # 出场
-            # 同一时刻先算出场再算入场：区间端点相接不算重叠。
-            events.sort(key=lambda item: (item[0], item[1]))
-            peak = active = 0
-            for _when, delta in events:
-                active += delta
-                peak = max(peak, active)
-            return peak
-
-    @property
-    def parties(self) -> int:
-        return self._parties
-
-
-
-class _ProxyExecutor:
-    """只透传 submit（记扇出腿 Future），其余属性转真执行器。"""
-
-    def __init__(self, real, submit):
-        self._real = real
-        self._submit = submit
-
-    def submit(self, fn, *args, **kwargs):
-        return self._submit(fn, *args, **kwargs)
-
-    def __getattr__(self, name):
-        return getattr(self._real, name)
-
 
 
 @pytest.fixture(scope="session", autouse=True)
