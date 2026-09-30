@@ -137,8 +137,8 @@ def test_scene_chat_approval_forecasts_each_decree_without_visible_effect(game, 
     ctid = db.create_chat_turn(state, "殿上", "scene", 0, night_id=int(night["id"]))
     result = sess.scene_chat("两道都准", chat_turn_id=ctid)
     persist_and_schedule_scene(sess, db, result)
-    # 预推每腿真做材料树（数百文件），5s 墙钟短于工作本身：按 ADR 0149
-    # 「无 elapsed 熔断」走无时限排空（CI job 终线承接挂死）。
+    # 预推每腿真做材料树（数百文件），5s 墙钟短于工作本身：按 #1353 K10a
+    # 「无 elapsed 熔断」走无时限排空（永久挂死由 CI job 终线承接）。
     wait_pending_writes(sess)
 
     assert db.conn.execute(
@@ -377,10 +377,9 @@ def test_held_rejudgments_overlap_instead_of_waiting_in_one_worker(game, monkeyp
         })
 
     def simulate(_agent, _prompt, **_kwargs):
-        # 会合：两条腿都进推演才放行；任一腿先抛错则无人能到达，如实返回
-        # False 让下方断言报红（不放宽断言、不靠墙钟收场）。
-        rendezvous.arrive()
-        assert rendezvous.wait(2), "对端腿已终结，会合未成立"
+        # 会合：两条腿都进推演才放行；任一腿先抛错（或用例收尾）会合立刻判否，
+        # 如实返回 False 让下方断言报红（不放宽断言、不靠墙钟收场）。
+        assert rendezvous.meet(), "对端腿已终结，会合未成立"
         return "预推"
 
     monkeypatch.setattr(decree_mod, "run_agent_text", judge)
@@ -390,9 +389,15 @@ def test_held_rejudgments_overlap_instead_of_waiting_in_one_worker(game, monkeyp
         lambda *_a, **_k: {"commissions": []},
     )
     sess = _sess(db, state, content, monkeypatch, lambda *_a, **_k: {})
-    assert forecast_mod.schedule_held_decree_forecasts(sess) is True
-    wait_pending_writes(sess)
-    assert rendezvous.arrived == 2
+    try:
+        assert forecast_mod.schedule_held_decree_forecasts(sess) is True
+        wait_pending_writes(sess)
+        assert rendezvous.arrived == 2
+    finally:
+        # 主线程断言失败时第二条腿可能压根没提交（没有 Future，观测缝看不见）：
+        # 打破会合，在等的那条腿才能自行退出并归还票据，本用例的排空才有着落。
+        rendezvous.abort()
+        wait_pending_writes(sess)
     for dossier_id, pending_id in zip(ids, pending_ids):
         stale_ref = pending_action_decree_ref(pending_id, 1)
         held_ref = held_dossier_decree_ref(dossier_id)
@@ -446,8 +451,7 @@ def test_same_local_ids_on_two_saves_both_stage(game, _game_template_path, monke
     def judge(_agent, prompt, **_kwargs):
         # 会合：两档各一条腿都到判官才放行；任一腿先抛错则另一腿无人可等，
         # 如实返回 False 由断言报红（不放宽断言、不靠墙钟收场）。
-        rendezvous.arrive()
-        assert rendezvous.wait(2), "对端腿已终结，会合未成立"
+        assert rendezvous.meet(), "对端腿已终结，会合未成立"
         dossier = json.loads(prompt)["dossiers"][0]
         return json.dumps({
             "verdicts": [{"dossier_id": dossier["id"], "decision": "promulgated"}],
@@ -479,7 +483,7 @@ def test_same_local_ids_on_two_saves_both_stage(game, _game_template_path, monke
             armed[0][0], armed[0][2], night_id=armed[0][3],
         ) is True
         # 第一条腿进判官再放第二条档；该腿若先抛错，会合立刻判否而非挂死。
-        assert rendezvous.wait(1), "第一条腿未及进判官即已终结"
+        assert rendezvous.wait_first_arrival(), "第一条腿未及进判官即已终结"
         assert forecast_mod.schedule_pending_decree_forecast(
             armed[1][0], armed[1][2], night_id=armed[1][3],
         ) is True
@@ -491,6 +495,9 @@ def test_same_local_ids_on_two_saves_both_stage(game, _game_template_path, monke
             assert len(stored) == 1 and stored[0].verdict["decision"] == "promulgated"
         assert rendezvous.arrived == 2
     finally:
+        # 第二次调度可能压根没提交（没有 Future，观测缝看不见）：主线程断言失败时
+        # 先打破会合，在等的那条腿才能自行退出并归还票据，排空才有着落。
+        rendezvous.abort()
         for sess, *_rest in armed:
             wait_pending_writes(sess)
         other.close()
