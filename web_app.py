@@ -742,6 +742,14 @@ def in_talent_pool(character: Character, db, current_year: int, current_period: 
 
 
 
+def _safe_save_name(name: str) -> str:
+    """存档名清洗唯一真源（#1902）：菜单页与 WebGame 同名校验曾各写一份。"""
+    cleaned = "".join(c for c in name.strip() if c.isalnum() or c in "._-")
+    if not cleaned or cleaned.startswith("."):
+        raise HTTPException(status_code=400, detail="存档名非法。仅允许字母/数字/._- ")
+    return cleaned
+
+
 class WebGame:
     """Web 端会话包装：持一个 GameSession + 网页专属态（聊天历史、收藏）。"""
 
@@ -892,10 +900,8 @@ class WebGame:
         return out
 
     def _safe_save_name(self, name: str) -> str:
-        cleaned = "".join(c for c in name.strip() if c.isalnum() or c in "._-")
-        if not cleaned or cleaned.startswith("."):
-            raise HTTPException(status_code=400, detail="存档名非法。仅允许字母/数字/._- ")
-        return cleaned
+        # #1902：存档名校验唯一真源在模块级 _safe_save_name（菜单页无 WebGame 实例时同用）。
+        return _safe_save_name(name)
 
     def save_to(self, name: str) -> Dict[str, Any]:
         safe = self._safe_save_name(name)
@@ -4823,10 +4829,8 @@ async def api_menu_load_save(name: str) -> Dict[str, Any]:
 @app.delete("/api/menu/saves/{name}")
 async def api_menu_delete_save(name: str) -> Dict[str, Any]:
     """菜单页删存档：不依赖 WebGame 实例，直接删文件系统里的 <name>.db。
-    与 WebGame.delete_save 同名校验，返回刷新后的 campaigns。"""
-    cleaned = "".join(c for c in name.strip() if c.isalnum() or c in "._-")
-    if not cleaned or cleaned.startswith("."):
-        raise HTTPException(status_code=400, detail="存档名非法。仅允许字母/数字/._- ")
+    与 WebGame.delete_save 共用模块级 _safe_save_name（#1902 单一真源），返回刷新后的 campaigns。"""
+    cleaned = _safe_save_name(name)
     target = os.path.join(user_data_path("saves"), f"{cleaned}.db")
     if not os.path.isfile(target):
         raise HTTPException(status_code=404, detail="存档不存在。")
@@ -5247,14 +5251,8 @@ async def api_history_turn(turn: int) -> Dict[str, Any]:
     }
 
 
-@app.get("/api/map")
-async def api_map() -> Dict[str, Any]:
-    return {"nodes": get_game().map_nodes()}
-
-
-@app.get("/api/buildings")
-async def api_buildings(region_id: str = "") -> Dict[str, Any]:
-    return {"buildings": get_game().db.building_payload(region_id)}
+# #1902：GET /api/map 与 GET /api/buildings 退役——前端零调用；地图节点随
+# state_payload.map_nodes 下发（1851），省份建筑随 state_payload.buildings（1489）。
 
 
 @app.post("/api/favorites/{minister_name}")
