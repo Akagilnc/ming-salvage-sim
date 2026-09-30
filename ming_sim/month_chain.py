@@ -74,6 +74,10 @@ def _world_segment_message(db: Any, state: Any, cheat_directive: str) -> str:
     只是供料：怎么陈情、拟什么旨，由过月模型自己判断（ADR 0153 / P6）。不给判定
     指令、不代它写疏文——P7 下疏文必须由模型长出。是否上疏的权限按 #1891 分两层：
     本月到点、尚未呈过的应呈请；已留中过的（re_presentation）由大臣自决是否再上。
+
+    这份名单与月链 ``chain["levy_petitions"]`` 取自同一次交接：月链在推演前取定并存
+    链，推演时账本尚未变动（纯读函数），身份钉定再读链上那份快照。
+    tests/test_levy_petition_month_chain_1891.py 以实账断言这份一致性，不靠本注释。
     """
     import json
 

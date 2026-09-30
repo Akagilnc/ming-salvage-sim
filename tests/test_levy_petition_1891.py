@@ -174,14 +174,21 @@ def test_world_segment_message_hands_petitions_to_existing_run(game):
 
 
 def test_world_segment_message_is_plain_when_no_petition_due(game):
-    """无待呈事件时消息保持原样（不加壳、不改既有世界段契约）。"""
+    """无待呈事件时消息不加壳、不夹带请饷载荷（既有世界段契约不变）。
+
+    判据是行为（没有 petition 壳、没有名单），不是指令原句——措辞是呈现层自由。
+    """
     db, state, content = game
     issues.bind_content(content)
     state.year = 1630
     state.period = 12
     db.save_state(state)
 
-    assert month_chain._world_segment_message(db, state, "") == "推演本月世界段。"
+    message = month_chain._world_segment_message(db, state, "")
+
+    assert "levy_petitions" not in message
+    with pytest.raises(json.JSONDecodeError):
+        json.loads(message)
 
 
 # ---------------------------------------------------------------- 绑定面

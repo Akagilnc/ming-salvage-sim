@@ -306,8 +306,8 @@ def test_no_levy_petition_means_no_extra_ask_and_no_new_run(game, monkeypatch):
     result = session.resolve_turn(allow_empty_decree=True)
 
     assert len(seen["world_messages"]) == 1
-    # 无待呈事件时消息不加壳（真实供料行为，非打桩断言）。
-    assert seen["world_messages"][0] == "推演本月世界段。"
+    # 无待呈事件时消息不加壳（真实供料行为，非打桩断言）：不夹带请饷载荷。
+    assert "levy_petitions" not in seen["world_messages"][0]
     assert all(
         not str(r["event_id"]).startswith(_LEVY_PETITION_PREFIX)
         for r in session.pending_decisions()
@@ -433,3 +433,34 @@ def test_materialize_desk_uses_pinned_identity_not_live_eligibility(game):
     assert issues.list_fiscal_levy_petitions_due(state, db) == []
     again = month_chain._materialize_rescript_desk(db, state, chain)
     assert again[0]["event_id"] == f"{_LEVY_PETITION_PREFIX}liao_levy_rise_1631"
+
+
+def test_model_sees_exactly_the_roster_that_pins_the_identities(game, monkeypatch):
+    """#1891 J1：模型看见的名单 ≡ 钉进问题身份的那份 ≡ 案头行的事件。
+
+    交接只有一份名单快照。若供料与身份钉定按各自时机各查一次实时资格，账本在
+    两者之间一变，模型就会看到与实际被绑定的不一致——本断言直接以实账比较三者。
+    """
+    db, state, content = game
+    _prepare(db, state, content, monkeypatch)
+    seen = _install_model_boundary(
+        monkeypatch, world_text="本月边情，户部请加辽饷。" + _petition_decision(),
+    )
+    session = _make_session(db, state, content)
+
+    session.resolve_turn(allow_empty_decree=True)
+
+    # 模型真实收到的名单（世界段消息是本票供料面，真跑）。
+    payload = json.loads(seen["world_messages"][0])
+    offered = [p["event_id"] for p in payload["levy_petitions"]]
+    # 月链上持久化的交接快照（读真实存库相位，非测试自造）。
+    chain = month_chain._load_chain(db, int(state.turn))
+    snapshotted = [p["event_id"] for p in chain["levy_petitions"]]
+    # 案头行的身份 = 依那份快照钉定的。
+    desk = [
+        r["event_id"] for r in session.pending_decisions()
+        if str(r["event_id"]).startswith(_LEVY_PETITION_PREFIX)
+    ]
+
+    assert offered == snapshotted == ["liao_levy_rise_1631"]
+    assert desk == [f"{_LEVY_PETITION_PREFIX}liao_levy_rise_1631"]
