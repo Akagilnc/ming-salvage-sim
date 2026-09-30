@@ -825,17 +825,6 @@ _LEDGER_KEYS = (
 )
 
 
-def character_hearing_records(knowledge: dict) -> list[dict[str, str]]:
-    """可见经历与公开说法的同一批投影，不裁条数。"""
-    records: list[dict[str, str]] = []
-    for item in [*(knowledge.get("public_events") or []), *(knowledge.get("events") or [])]:
-        title = str(item.get("title") or "")
-        body = str(item.get("body") or "")
-        if title or body:
-            records.append({"title": title, "body": body})
-    return records
-
-
 def character_office_archive_text(db: Any, state: Any, character: Any, knowledge: dict) -> str:
     """本衙门公事档案：职位底账 + 可见案卷。与目录 公事档案.txt 同一份。"""
     from ming_sim.decree_vocabulary import render_referenceable_dossier_brief
@@ -882,8 +871,6 @@ def _write_tree(
     tmp: Path, db: Any, state: Any, character: Any, knowledge: dict,
     issue_materials: Sequence[dict[str, object]],
 ) -> list[str]:
-    from ming_sim.knowledge import render_character_knowledge
-
     name = str(getattr(character, "name", "") or "")
     index: list[str] = []
 
@@ -900,15 +887,12 @@ def _write_tree(
     )
     index.append(f"{_PERSON_DIR}/{_safe_segment(name)}/公事档案.txt")
 
-
-    # Keep a full processed projection in the directory for on-demand read;
-    # this is mediation output, not a raw world-library dump.
-    rendered = render_character_knowledge(
-        knowledge, name, db=db, state=state,
-    )
-    if rendered:
-        _write_text(person_dir / "见闻.txt", rendered)
-        index.append(f"{_PERSON_DIR}/{_safe_segment(name)}/见闻.txt")
+    # #1830：不再另写一份综合见闻。角色知识此前在这里被 render_character_knowledge
+    # 整体重渲成 人物/<名>/见闻.txt，于是同一条公开记录同时存在于按月公开说法与
+    # 邸报载体（world.public 把公开层正文再拼一遍，public_events/events 又逐条重
+    # 述），邸报因而不止一处可读。每一段都已有既定载体：公开层走
+    # _write_character_public_layer（公开说法/ 与 公开说法/邸报/），亲历走 经历.txt，
+    # 职门底账走 公事档案.txt，人事走 _court_roster_text。删掉重复投影，不另造新载体。
 
     for item in issue_materials:
         segment = f"issue-{int(item['id'])}"

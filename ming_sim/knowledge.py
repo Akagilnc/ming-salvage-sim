@@ -247,44 +247,6 @@ def project_issue_materials(
     return list(projected.values())
 
 
-def render_character_knowledge(
-    knowledge: Dict[str, object],
-    character_name: str,
-    *,
-    db: Any = None,
-    state: Any = None,
-) -> str:
-    """Render one character's projected knowledge for an audience prompt.
-
-    The projection has already enforced access control; this function only
-    de-duplicates and orders durable knowledge rows without a feed cap.
-    Issue case material is projected separately by ``project_issue_materials``
-    for the directory.
-    """
-    lines = [f"【{character_name}此刻所知的天下（仅此人物见闻）】"]
-    for key, value in (knowledge.get("world") or {}).items():
-        if value:
-            lines.append(f"{key}：{value}")
-    event_items = [*(knowledge.get("public_events") or []), *(knowledge.get("events") or [])]
-    by_source = {}
-    for item in event_items:
-        source_id = str(item.get("source_id") or "")
-        key = (source_id, item.get("title") or "", item.get("body") or "") if source_id else (
-            int(item.get("turn") or 0), item.get("title") or "", item.get("body") or ""
-        )
-        by_source[key] = item
-    items = sorted(
-        by_source.values(),
-        key=lambda item: (int(item.get("turn") or 0), str(item.get("source_id") or "")),
-    )
-    for item in items:
-        title = str(item.get("title") or "旧闻")
-        body = str(item.get("body") or "")
-        if body:
-            lines.append(f"- {title}：{body}")
-    return "\n".join(lines) if len(lines) > 1 else ""
-
-
 def project_court_roster_rows(
     rows: list[Any], knowledge: Dict[str, object], office_type: str,
 ) -> list[Any]:
