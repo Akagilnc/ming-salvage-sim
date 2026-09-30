@@ -1,14 +1,15 @@
 """#1902：拟诏台手写入口（CLI add/edit、Web POST|PATCH /api/directives）退役后的拟旨夹具。
 
 旧入口做的事只有两件：走共享抽取核 ``cli_backend.capture_manual_directive_payload``
-拿结构，再经 ``GameSession.add_directive`` 落一条 draft。入口退役后这两步仍是引擎面
-（成案准入补交 ``session._resubmit_draft_admission_failures`` 仍在用同一抽取核），
-故测试改经本夹具落拟旨，被测契约（抽取结构／属地／参与人／准入补交）一条不少，
-只是不再借 HTTP 路由搭车。
+拿结构，再落一条 draft。两端入口退役后，会话层的 ``GameSession.add_directive`` /
+``update_directive`` 也随之零生产调用方而删，落库改走引擎面 ``db.add_directive``
+（成案准入补交 ``session._resubmit_draft_admission_failures`` 仍用同一抽取核）。
+本夹具即这两步的现役路径，被测契约（抽取结构／属地／参与人／准入补交）一条不少。
 """
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any, Optional
 
 
@@ -32,7 +33,10 @@ def stage_draft_directive(
         config,
         **({"db": target_db, "content": target_content} if target_content is not None else {}),
     )
-    return session.add_directive(text, notes=notes, dossier_payload=payload)
+    directive_id = target_db.add_directive(
+        session.state, None, text, "手动新增", notes=notes, dossier_payload=payload,
+    )
+    return SimpleNamespace(id=directive_id, text=text, status="draft")
 
 
 def stage_draft_directive_or_raise(session: Any, text: str, **kwargs) -> Optional[int]:

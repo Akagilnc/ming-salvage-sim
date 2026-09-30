@@ -2772,7 +2772,8 @@ def test_658_routing_rejected_draft_retries_across_real_turn_boundaries(
     assert mirror_row['source'] == 'player_decree'
     assert json.loads(mirror_row['item_json'])['directive_id'] == bad
     assert [d.id for d in session.list_directives()] == [bad]
-    session.update_directive(bad, '补账重拟', dossier_payload={'dossier_action_type': 'grant_allocation', 'target_kind': 'issue', 'target_id': 'route-缺账-retry', 'amount': 100, 'account': '国库'})
+    # #1902：会话层 update_directive 随拟诏台手写改稿入口退役而删，落库改走引擎面。
+    session.db.update_directive_text(bad, '补账重拟', dossier_payload={'dossier_action_type': 'grant_allocation', 'target_kind': 'issue', 'target_id': 'route-缺账-retry', 'amount': 100, 'account': '国库'})
     second = session.resolve_turn()
     assert second.awaiting is False
     assert int(state.turn) == original_turn + 1

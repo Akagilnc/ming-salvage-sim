@@ -38,9 +38,11 @@ def test_single_pay_order_capture_grounds_relative_deadline_at_current_turn(game
     session = GameSession.__new__(GameSession)
     session.db = db
     session.state = db.load_state("")
-    directive = session.add_directive("陕西饷序三个月", dossier_payload=result)
+    directive_id = db.add_directive(
+        session.state, None, "陕西饷序三个月", "手动新增", dossier_payload=result,
+    )
     db.ensure_dossiers_for_draft_directives(session.state)
-    dossier = db.get_dossier_for_directive(directive.id)
+    dossier = db.get_dossier_for_directive(directive_id)
     staged_entries = json.loads(dossier["payload_json"])["entries"]
     assert staged_entries == result["entries"]
     assert all("duration_months" not in entry for entry in staged_entries)

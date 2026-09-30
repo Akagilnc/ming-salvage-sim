@@ -36,7 +36,6 @@ from ming_sim.context import (
 )
 from ming_sim.db import (
     GameDB,
-    directive_payload_admits_structured_write,
     infer_office_type_from_office,
     normalize_office,
     resolve_office_type_preserving_title,
@@ -1502,29 +1501,10 @@ class GameSession:
         if self.state.turn_phase in FRONT_HALF_DONE_PHASES:
             raise ValueError("月末结算进行中（恢复态），请先完成结算再改诏稿。")
 
-    def add_directive(
-        self, text: str, notes: str = "",
-        dossier_payload: Optional[Dict[str, object]] = None,
-    ) -> DirectiveView:
-        self._refuse_if_settling()
-        payload = dict(dossier_payload or {})
-        if not directive_payload_admits_structured_write(payload):
-            raise ValueError("新增旨意须由上游提供完整结构化动作与目标")
-        directive_id = self.db.add_directive(
-            self.state, None, text, "手动新增", notes=notes,
-            dossier_payload=payload,
-        )
-        return DirectiveView(id=directive_id, text=text, status="draft",
-                             source="手动新增", notes=notes)
-
-    def update_directive(
-        self, directive_id: int, text: str, *,
-        dossier_payload: Optional[Dict[str, object]] = None,
-    ) -> None:
-        self._refuse_if_settling()
-        self.db.update_directive_text(
-            directive_id, text, dossier_payload=dossier_payload,
-        )
+    # #1902：add_directive / update_directive 随拟诏台手写入口（CLI add/edit、
+    # Web POST|PATCH /api/directives）一并退役——旨意只从召对来（#1772）。
+    # 落库与改稿的引擎面仍是 db.add_directive / db.update_directive_text；
+    # 共享抽取核（成案准入补交）未动。
 
     def delete_directive(self, directive_id: int) -> None:
         self._refuse_if_settling()

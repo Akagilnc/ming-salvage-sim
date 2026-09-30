@@ -31,6 +31,7 @@ from ming_sim.pay_order import (
 )
 
 
+from types import SimpleNamespace
 def _override_dossier(db, state, entries, *, text="偿还序/折发旨") -> int:
     """成案一道 pay_order_override 案卷（F1.2：旨意不是面板、每道旨一张案卷）。"""
     return db.create_decree_dossier(
@@ -1635,7 +1636,10 @@ def _capture_override_decree(game, monkeypatch, text, entries):
     session = GameSession.__new__(GameSession)
     session.db = db
     session.state = state
-    dv = session.add_directive(text, dossier_payload=payload)
+    dv = SimpleNamespace(
+        id=db.add_directive(state, None, text, "手动新增", dossier_payload=payload),
+        text=text, status="draft",
+    )
     db.ensure_dossiers_for_draft_directives(state)
     dossier = db.get_dossier_for_directive(dv.id)
     assert dossier is not None

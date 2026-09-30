@@ -157,3 +157,12 @@ def test_settlement_abort_sse_carries_typed_keys_not_deadlock_409():
     assert "status_code" not in payload
     assert payload["stage"] == "extract"
     assert payload["error_pack_path"] == "/tmp/x"
+
+
+def test_session_manual_draft_mutators_are_gone():
+    """#1902：会话层 add/update_directive 随手写入口退役而删（拟诏台只余删旧草稿）。"""
+    from ming_sim.session import GameSession
+
+    assert not hasattr(GameSession, "add_directive")
+    assert not hasattr(GameSession, "update_directive")
+    assert hasattr(GameSession, "delete_directive"), "删旧草稿仍保留"

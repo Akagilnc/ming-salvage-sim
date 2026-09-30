@@ -19,6 +19,7 @@ import types
 import pytest
 
 
+from types import SimpleNamespace
 def _mock_draft_intent(monkeypatch, *, text: str, roster):
     import ming_sim.cli_backend as cli_backend
 
@@ -111,7 +112,10 @@ def test_capture_manual_directive_drops_ministry_name_as_participant(game, monke
     session.state = state
     session.llm_config = None
     session.content = content
-    dv = session.add_directive(text, dossier_payload=payload)
+    dv = SimpleNamespace(
+        id=db.add_directive(state, None, text, "手动新增", dossier_payload=payload),
+        text=text, status="draft",
+    )
     assert dv.id > 0
     assert db.list_directives(state)
     payload["assignee"] = "户部"

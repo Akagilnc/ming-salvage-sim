@@ -471,9 +471,11 @@ def test_draft_mutators_frozen_at_front_half_done(game, monkeypatch):
     state.turn_phase = "settling"
 
     sess = _recovery_session(db, state, content, monkeypatch)
+    # #1902：拟诏台手写入口（add/update directive）退役，会话层两个变更器随之删除；
+    # 冻结面保留仍在役的删草案与 write_decree。
+    assert not hasattr(sess, "add_directive")
+    assert not hasattr(sess, "update_directive")
     for call in (
-        lambda: sess.add_directive("新草案"),
-        lambda: sess.update_directive(1, "改"),
         lambda: sess.delete_directive(1),
         # #1341：set_decree 已删；冻结面只覆盖逐道草案变更器 + write_decree
         lambda: sess.write_decree(),

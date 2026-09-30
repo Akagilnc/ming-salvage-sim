@@ -1008,9 +1008,9 @@ def test_manual_directive_capture_reaches_structured_dossier(
     payload = cli_backend.capture_manual_directive_payload(
         directive_text, None, db=db, content=content,
     )
-    directive_id = session.add_directive(
-        directive_text, dossier_payload=payload,
-    ).id
+    directive_id = db.add_directive(
+        state, None, directive_text, "手动新增", dossier_payload=payload,
+    )
     del entry
     account = "内库" if case == "allocation" else "国库"
     before = state.metrics[account]
@@ -1080,7 +1080,7 @@ def test_manual_directive_capture_rejects_malformed_roster(
         cli_backend.capture_manual_directive_payload(
             "手工旨意", None, db=db, content=content,
         )
-        session.add_directive("手工旨意", dossier_payload={})
+        db.add_directive(state, None, "手工旨意", "手动新增", dossier_payload={})
 
     assert db.list_pending_actions(state.turn) == []
     assert db.list_directives(state) == []
@@ -1124,7 +1124,7 @@ def test_manual_directive_capture_rejects_missing_empty_or_invalid_tier_without_
         payload = cli_backend.capture_manual_directive_payload(
             "手工旨意", None, db=db, content=content,
         )
-        session.add_directive("手工旨意", dossier_payload=payload)
+        db.add_directive(state, None, "手工旨意", "手动新增", dossier_payload=payload)
 
     assert db.list_pending_actions(state.turn) == []
     assert db.list_directives(state) == []
@@ -1397,7 +1397,7 @@ def test_session_manual_directive_keeps_structured_action_at_submission(
     monkeypatch.setattr(
         cli_backend, "_run_backend_for_config",
         lambda *_a, **_k: (_ for _ in ()).throw(
-            AssertionError("add_directive 不得触发 backend")
+            AssertionError("落草案不得触发 backend")
         ),
     )
     session = GameSession(
@@ -1408,8 +1408,8 @@ def test_session_manual_directive_keeps_structured_action_at_submission(
         content=content,
     )
     try:
-        directive = session.add_directive(
-            "着查河南河工",
+        directive_id = session.db.add_directive(
+            session.state, None, "着查河南河工", "手动新增",
             dossier_payload={
                 "dossier_action_type": "assignment",
                 "target_kind": "region",
@@ -1418,16 +1418,16 @@ def test_session_manual_directive_keeps_structured_action_at_submission(
                 "assignee": _active_minister(session.db),
             },
         )
-        assert session.db.get_dossier_for_directive(directive.id) is None
+        assert session.db.get_dossier_for_directive(directive_id) is None
 
         session.db.ensure_dossiers_for_draft_directives(session.state)
         reopened = GameDB(db.path, content=content)
         try:
-            dossier = reopened.get_dossier_for_directive(directive.id)
+            dossier = reopened.get_dossier_for_directive(directive_id)
             assert dossier["action_type"] == "assignment"
             assert dossier["target_kind"] == "region"
             assert dossier["target_id"] == "河南"
-            assert dossier["directive_id"] == directive.id
+            assert dossier["directive_id"] == directive_id
         finally:
             reopened.close()
     finally:

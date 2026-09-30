@@ -18,6 +18,7 @@ import pytest
 # ── 1) #1391 泛称闭集 ──────────────────────────────────────────────
 
 
+from types import SimpleNamespace
 def test_capture_drops_dachen_generic_no_409(game, monkeypatch):
     """#1391：参与人「大臣」不进 roster、零 409，草案可落库。"""
     import ming_sim.cli_backend as cli_backend
@@ -52,7 +53,10 @@ def test_capture_drops_dachen_generic_no_409(game, monkeypatch):
     session.state = state
     session.llm_config = None
     session.content = content
-    dv = session.add_directive(text, dossier_payload=payload)
+    dv = SimpleNamespace(
+        id=db.add_directive(state, None, text, "手动新增", dossier_payload=payload),
+        text=text, status="draft",
+    )
     assert dv.id > 0
     assert any(int(r["id"]) == int(dv.id) for r in db.list_directives(state))
 
