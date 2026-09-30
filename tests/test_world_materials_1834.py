@@ -173,11 +173,11 @@ def test_world_materials_isolate_invocations_and_databases(game, tmp_path, monke
     assert read_material(first.root, "INDEX.txt")
     assert read_material(second.root, "INDEX.txt")
 
-    # 第二档库归本用例 tmp_path 所有（固定名落共享父目录会跨运行借到别人遗留的旧 schema 库，
-    # #1888 J6）。同父不同档不互踩正是本例要钉的隔离契约，故仍在 game 库同父另开子目录。
-    saves = Path(db.path).parent / "saves"
-    saves.mkdir(parents=True, exist_ok=True)
-    other = GameDB(str(saves / "other.db"), content)
+    # 第二档与第一档同父不同档——这正是本例要钉的隔离契约，不得挪进子目录：
+    # 挪走后两库父目录不同，按档隔离的断言就再也覆盖不到「同父互踩」了
+    # （#1888 J7）。跨运行借到旧 schema 库的问题已由共同夹具把整个 game 目录
+    # 收进本用例 tmp_path 解决，此处固定名 other.db 只与本用例第一档同父。
+    other = GameDB(str(Path(db.path).parent / "other.db"), content)
     try:
         other.seed_static_data()
         other_state = other.load_state()
