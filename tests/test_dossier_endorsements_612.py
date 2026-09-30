@@ -123,6 +123,10 @@ def test_endorsement_forms_persist_restore_and_judge_without_roster_join(game):
 
 
 def test_endorsement_write_boundary_rejects_unknown_or_illegal_forms(game):
+    """背书写口对每种非法输入都必须**整条拒收**。
+
+    契约是行为——抛出 + 一条都没落库；报错措辞不是契约，故不逐条锁字（#1889）。
+    """
     db, state, _content = game
     minister = _minister(db)
     dossier_id = db.create_decree_dossier(
@@ -131,42 +135,35 @@ def test_endorsement_write_boundary_rejects_unknown_or_illegal_forms(game):
     )
     _night_id, chat_turn_id, _seq = _night_reply(db, state, minister)
 
-    with pytest.raises(ValueError, match="案卷不存在"):
-        db.dossiers.add_endorsement(
-            999999, form="会签", endorser_id=minister,
-            source_chat_turn_id=chat_turn_id,
-        )
-    with pytest.raises(ValueError, match="背书形式非法"):
-        db.dossiers.add_endorsement(
-            dossier_id, form="联名", endorser_id=minister,
-            source_chat_turn_id=chat_turn_id,
-        )
-    with pytest.raises(ValueError, match="会签/当面站台必须具名背书人"):
-        db.dossiers.add_endorsement(
-            dossier_id, form="会签", endorser_id="",
-            source_chat_turn_id=chat_turn_id,
-        )
-    with pytest.raises(ValueError, match="御笔手敕必须使用御笔标记且不得具名大臣"):
-        db.dossiers.add_endorsement(
-            dossier_id, form="御笔手敕", endorser_id=minister, imperial=True,
-            source_chat_turn_id=chat_turn_id,
-        )
-    # imperial=False 负例：御笔手敕不得假借非御笔标记。
-    with pytest.raises(ValueError, match="御笔手敕必须使用御笔标记且不得具名大臣"):
-        db.dossiers.add_endorsement(
-            dossier_id, form="御笔手敕", endorser_id="", imperial=False,
-            source_chat_turn_id=chat_turn_id,
-        )
-    with pytest.raises(ValueError, match="背书人物不存在"):
-        db.dossiers.add_endorsement(
-            dossier_id, form="当面站台", endorser_id="不存在的人",
-            source_chat_turn_id=chat_turn_id,
-        )
-    for bad_imperial in ("false", 1, 0, None):
-        with pytest.raises(ValueError, match="御笔标记须为布尔"):
+    illegal = [
+        # 指向不存在的案卷
+        {"dossier_id": 999999, "form": "会签", "endorser_id": minister},
+        # 未定义的背书形式
+        {"dossier_id": dossier_id, "form": "联名", "endorser_id": minister},
+        # 须具名的形式却没具名
+        {"dossier_id": dossier_id, "form": "会签", "endorser_id": ""},
+        {"dossier_id": dossier_id, "form": "当面站台", "endorser_id": ""},
+        # 御笔手敕：必须带御笔标记，且不得具名大臣
+        {"dossier_id": dossier_id, "form": "御笔手敕", "endorser_id": minister,
+         "imperial": True},
+        {"dossier_id": dossier_id, "form": "御笔手敕", "endorser_id": "",
+         "imperial": False},
+        # 背书人不在人物表
+        {"dossier_id": dossier_id, "form": "当面站台", "endorser_id": "不存在的人"},
+    ]
+    # 御笔标记必须是真布尔，字符串/数字/None 一律拒收。
+    illegal += [
+        {"dossier_id": dossier_id, "form": "会签", "endorser_id": minister,
+         "imperial": bad}
+        for bad in ("false", 1, 0, None)
+    ]
+    for case in illegal:
+        with pytest.raises(ValueError):
             db.dossiers.add_endorsement(
-                dossier_id, form="会签", endorser_id=minister,
-                imperial=bad_imperial,  # type: ignore[arg-type]
+                case["dossier_id"],
+                form=case["form"],
+                endorser_id=case["endorser_id"],
+                imperial=case.get("imperial", False),
                 source_chat_turn_id=chat_turn_id,
             )
     assert db.conn.execute("SELECT COUNT(*) FROM decree_dossier_endorsements").fetchone()[0] == 0

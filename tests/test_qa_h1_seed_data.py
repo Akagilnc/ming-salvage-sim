@@ -33,10 +33,11 @@ def _army_by_id(aid: str) -> dict:
 
 
 def _bajiu_names(characters: dict) -> set[str]:
+    """非在任（罢居/罢免）人物。#1889：判据是 status，不再是 office 串里的「罢居」标记。"""
     return {
         name
         for name, ch in characters.items()
-        if "罢居" in (ch.office or "")
+        if ch.status in {"offstage", "dismissed"}
     }
 
 
@@ -54,7 +55,8 @@ def test_guanning_commander_not_bajiu_offstage_yuan():
     controller（A-3 已改）与 commander 同落分统名，禁再写袁崇焕。
     """
     _, characters = load_character_content()
-    assert "罢居" in (characters["袁崇焕"].office or "")
+    # #1889：袁崇焕非在任（seed 即 status=offstage），现任 office 因此为空。
+    assert characters["袁崇焕"].status == "offstage", characters["袁崇焕"].status
     army = _army_by_id("guanning")
     commander = army["commander"]
     controller = army["controller"]
@@ -67,8 +69,8 @@ def test_guanning_commander_not_bajiu_offstage_yuan():
     # 若 commander 点到名册人物，不得是罢居串
     named = set(re.findall(r"[\u4e00-\u9fff]{2,4}", commander)) & set(characters)
     for name in named:
-        assert "罢居" not in (characters[name].office or ""), (
-            f"关宁 commander 点名罢居者 {name}"
+        assert characters[name].status == "active", (
+            f"关宁 commander 点名非在任人物 {name}"
         )
 
 

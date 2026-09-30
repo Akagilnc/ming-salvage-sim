@@ -37,9 +37,10 @@ def test_liaodong_stage_text_does_not_name_bajiu_offstage_as_active_petitioners(
     bajiu_names = {
         name
         for name, ch in characters.items()
-        if "罢居" in (ch.office or "")
+        if ch.status in {"offstage", "dismissed"}
     }
-    # 开局清洗后进人才池的两位，必须在 seed office 串里带罢居标记
+    # 进人才池的两位，seed 即须是非在任状态（#1889：真值写在 status/historical_office，
+    # 不再把「罢居」塞进 office 串靠 init 清洗反推）。
     assert {"袁崇焕", "孙承宗"} <= bajiu_names
 
     stage = _liaodong_seed().stage_text
@@ -62,8 +63,9 @@ def test_liaodong_stage_text_does_not_name_bajiu_offstage_as_active_petitioners(
         "stage_text 既未点名册人物，也未保留将领/边情叙事质感"
     )
     for name in named:
-        office = characters[name].office or ""
-        assert "罢居" not in office, f"点名 {name} 仍是罢居串: {office!r}"
+        assert characters[name].status == "active", (
+            f"stage_text 点名的 {name} 须是在任人物，实为 {characters[name].status!r}"
+        )
 
 
 def test_liaodong_stage_text_arrears_months_match_opening_gazette():
@@ -175,13 +177,15 @@ def test_zhang_fengyi_office_strips_future_title():
 
 
 def test_qian_qianyi_seed_office_records_bajiu_dismissal():
-    """#1308 残余：钱谦益 seed office 须记削籍罢居（非空）；运行时空 office 是 ADR 0009 清洗。
+    """#1308 残余 + #1889：钱谦益的削籍罢居须在 seed 就成型，不靠 init 清洗。
 
 仓内 raw/minister/portrait 一致：前礼部右侍郎，罢居常熟（天启科场案削籍在野）。
+现任官职因此为空（他无现任），史实归 status/status_reason/historical_office 三处。
 """
     _, characters = load_character_content()
     ch = characters["钱谦益"]
-    office = ch.office or ""
-    assert office.strip(), "seed office 不得空——运行时 dismissed 清空是 migration，不是 seed 缺史实"
-    assert "罢居" in office, office
-    assert "礼部" in office and "侍郎" in office, office
+    assert ch.status == "dismissed", f"钱谦益 seed 状态应为 dismissed：{ch.status!r}"
+    assert ch.reason_code == "获罪削籍", ch.reason_code
+    assert "罢居" in (ch.status_reason or ""), ch.status_reason
+    assert ch.office == "", f"无现任者 office 应为空：{ch.office!r}"
+    assert "礼部" in ch.historical_office and "侍郎" in ch.historical_office, ch.historical_office

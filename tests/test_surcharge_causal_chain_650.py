@@ -421,11 +421,14 @@ def legacy_game(content, tmp_path):
 
 
 def test_unmarked_cutover_save_rejects_and_never_consumes_surcharge(game, monkeypatch):
-    """旧档即使迁移到 substrate fiscal，也不冒充 persons 池消费历史账。"""
+    """无人口单位标记的档不冒充 persons 池消费历史账。
+
+    契约：拒收 + 一个都不消费。拒收类别随当前 fiscal_engine 而定（__fiscal_engine
+    是建库 seed 产物，不再由打开旧档补写——#1889），故只断言「确有一条拒收」，
+    不锁死是哪一类；缺失引用那一支由 legacy_game 用例单独钉住。
+    """
     db, state, content = game
     db.conn.execute("DELETE FROM save_meta WHERE key='population_unit'")
-    db.conn.execute("DELETE FROM fiscal_config WHERE key='__fiscal_engine'")
-    db.conn.execute("UPDATE fiscal_config SET value=1 WHERE key='__army_pay_source_cutover'")
     fiscal = json.loads(db.conn.execute(
         "SELECT fiscal FROM regions WHERE id='shaanxi'"
     ).fetchone()[0])
@@ -445,7 +448,7 @@ def test_unmarked_cutover_save_rejects_and_never_consumes_surcharge(game, monkey
         "surcharge_decrees": [_decree(db, state, monthly_amount=10.0)],
     }, content, None)
     assert not applied["surcharge_decrees"]
-    assert applied["surcharge_decrees_rejections"][0]["category"] == "missing_ref"
+    assert len(applied["surcharge_decrees_rejections"]) == 1, applied["surcharge_decrees_rejections"]
 
     from tests.test_due_review_621 import _settle_empty_month
     _settle_empty_month(db, state, content, monkeypatch)

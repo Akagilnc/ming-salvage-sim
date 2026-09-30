@@ -958,11 +958,9 @@ def originated_quantity_this_turn(
                 continue
     if "人物变更" in fields:
         action = str(delivery.get("person_action") or "").strip()
-        rows = db.conn.execute(
-            "SELECT id FROM person_logs WHERE origin_ref=? AND turn=? AND action=?",
-            (origin, current, action),
-        ).fetchall()
-        qty += float(len(rows))
+        qty += float(db.person_logs.count_by_origin(
+            origin, turn=current, action=action,
+        ))
     if "region_delta" in fields:
         rows = db.conn.execute(
             "SELECT region_id, field, new_value, delta FROM region_logs "

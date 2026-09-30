@@ -7,8 +7,11 @@
 覆盖的回退形状：
   - `list_pending_decisions`：options_json 损坏 → 回 []（默认回退）；choice_json 损坏 → 回 None（崩溃路修复）；
   - `legacy_modifiers`：损坏 → 跳过该 legacy（`continue` 变体）；
-  - `get_resolve_context`：simulator_payload 等损坏 → 回退默认。
+  - `get_resolve_context`：**不在此列**。#1889 起它是恢复用的权威记录，损坏即拒绝
+    恢复（见 test_resolve_context_corrupt_payload_refuses_restore），不再回退默认。
 """
+
+import pytest
 
 import ming_sim.db as db_mod
 
@@ -56,7 +59,12 @@ def test_pending_decisions_corrupt_choice_json_returns_none_and_surfaces(game, m
     assert out[0]["choice"] is None  # 行为：损坏 choice 回退 None，不再崩
     assert any("choice_json 损坏" in m for m in msgs), msgs
 
-def test_resolve_context_corrupt_payload_falls_back_and_surfaces(game, monkeypatch):
+def test_resolve_context_corrupt_payload_refuses_restore(game, monkeypatch):
+    """恢复材料读不出来就必须拒绝恢复，不许回退空对象继续（#1889 / 失败诚实宪法）。
+
+    原实现打印 WARN 后返回 ``simulator_payload={}`` —— 把「记录已损」伪装成
+    「本月没有过月上下文」照常恢复，玩家看不出恢复丢了整段事实。
+    """
     db, _state, _content = game
     db.save_resolve_context(
         500, decree_text="旨", simulator_payload={"a": 1},
@@ -67,12 +75,9 @@ def test_resolve_context_corrupt_payload_falls_back_and_surfaces(game, monkeypat
     )
     db.conn.commit()
 
-    msgs = _capture_tlog(monkeypatch)
-    ctx = db.get_resolve_context(500)
-
-    assert ctx is not None
-    assert ctx["simulator_payload"] == {}  # 行为：损坏回退默认 {}，不抛
-    assert any("simulator_payload JSON 损坏" in m for m in msgs), msgs
+    _capture_tlog(monkeypatch)
+    with pytest.raises(ValueError, match="simulator_payload"):
+        db.get_resolve_context(500)
 
 
 def test_legacy_modifiers_corrupt_json_skips_and_surfaces(game, monkeypatch):

@@ -531,7 +531,7 @@ def test_open_night_atomic_on_dead_roster_injection(game, monkeypatch):
 
 
 def test_old_save_migration_night_id_index_order(content):
-    """旧档无 night_id 列：ensure_column 后再建索引，重开不炸。"""
+    """无 night_id 列的 chat_turns：ensure_column 后再建索引，重开不炸。"""
     fd, path = tempfile.mkstemp(suffix=".db")
     os.close(fd)
     try:
@@ -557,7 +557,9 @@ def test_old_save_migration_night_id_index_order(content):
                 year INTEGER NOT NULL,
                 period INTEGER NOT NULL,
                 turn INTEGER NOT NULL,
-                turn_phase TEXT NOT NULL DEFAULT 'summoning'
+                turn_phase TEXT NOT NULL DEFAULT 'summoning',
+                ended INTEGER NOT NULL DEFAULT 0,
+                ending_status TEXT NOT NULL DEFAULT ''
             );
             INSERT INTO game_state (id, year, period, turn) VALUES (1, 1628, 1, 1);
             """

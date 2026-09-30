@@ -112,7 +112,10 @@ def load_character_content() -> Tuple[Dict[str, Faction], Dict[str, Character]]:
             raise SystemExit(f"characters.json 不得存在重复人物名：{name}")
         characters[name] = Character(
             name=name,
-            office=str_field(item, "office", f"characters.json.characters[{idx}]"),
+            # #1889：现任官职**可为空**——罢居/罢免者在 content 里即无现任，历史实职归
+            # historical_office。运行时（罢居清洗后）这些行 office 本就是空串，故此处
+            # 不再要求非空：要求非空等于强迫 content 用污染串把状态词塞回 office。
+            office=str(item.get("office") or "").strip(),
             office_type=str_field(item, "office_type", f"characters.json.characters[{idx}]"),
             faction=str_field(item, "faction", f"characters.json.characters[{idx}]"),
             aliases=string_list(item.get("aliases", []), f"characters.json.characters[{idx}].aliases"),
@@ -134,6 +137,7 @@ def load_character_content() -> Tuple[Dict[str, Faction], Dict[str, Character]]:
             status=str(item.get("status") or "active"),
             status_reason=str(item.get("status_reason") or "").strip(),
             reason_code=str(item.get("reason_code") or "").strip(),
+            historical_office=str(item.get("historical_office") or "").strip(),
             summary=str(item.get("summary") or ""),
             portrait_id=str(item.get("portrait_id") or ""),
             identity=identity,

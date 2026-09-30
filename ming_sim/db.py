@@ -47,6 +47,7 @@ from ming_sim.entities.dossier import (
     normalize_dossier_mode,
 )
 from ming_sim.matching import match_army_id_from_text, match_region_id_from_text
+from ming_sim.office_rank import canonical_office_title
 from ming_sim.exceptions import LLMContractError, OfficeAppointmentRejection
 from ming_sim.intelligence import OFFICE_SLOTS
 from ming_sim.models import (
@@ -759,14 +760,18 @@ def infer_office_type_from_office(
     if kind == "后宫":
         return kind
     text = normalize_office(office)
+    if not use_llm and kind:
+        # Seed/sync callers carry a declared, durable office type, and that
+        # declaration is authoritative even when there is no current office
+        # string to match against — a 罢居/罢免 person has office='' yet still
+        # belongs to a court knowledge domain (content states it outright).
+        # A compound title such as “司礼监秉笔太监、东厂提督” can match more
+        # than one table keyword; letting the first match overwrite the
+        # declaration silently projects the person through the wrong knowledge
+        # domain.
+        return kind
     if not text:
         return "待铨" if kind in COURT_OFFICE_TYPES or not kind else kind
-    if not use_llm and kind:
-        # Seed/sync callers carry a declared, durable office type.  A compound
-        # title such as “司礼监秉笔太监、东厂提督” can match more than one
-        # table keyword; letting the first match overwrite the declaration
-        # silently projects the person through the wrong knowledge domain.
-        return kind
     t = _office_type_from_table(text)
     if t:
         return t
@@ -875,20 +880,16 @@ class GameDB:
         return connection_owns_transaction(self.conn)
 
     def init_schema(self) -> None:
+        # game_state（朝局头）与 metrics（余额真源）的建表与写读口归 reign_state store
+        # （#1889 按职责拆出）。放在最前：下方任何 ensure_column / 标记读写都要先有这两张表。
+        from ming_sim.entities.reign_state import ReignStateStore
+        ReignStateStore.ensure_schema(self.conn)
+        self.reign = ReignStateStore(self.conn)
         self.conn.executescript(
             """
-            CREATE TABLE IF NOT EXISTS game_state (
-                id INTEGER PRIMARY KEY CHECK (id = 1),
-                year INTEGER NOT NULL,
-                period INTEGER NOT NULL,
-                turn INTEGER NOT NULL,
-                turn_phase TEXT NOT NULL DEFAULT 'summoning'
-            );
-
-            CREATE TABLE IF NOT EXISTS metrics (
-                key TEXT PRIMARY KEY,
-                value INTEGER NOT NULL
-            );
+            -- game_state（朝局头）与 metrics（余额真源）的建表归
+            -- ming_sim/entities/reign_state（#1889 按职责拆出）
+            -- ；本文件不再持第二份定义。
 
             CREATE TABLE IF NOT EXISTS offices (
                 office_type TEXT PRIMARY KEY,
@@ -985,21 +986,8 @@ class GameDB:
                  replace(replace(c.office, '（署理）', ''), '署理', '') = s.office_title
              );
 
-            CREATE TABLE IF NOT EXISTS person_logs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                turn INTEGER NOT NULL,
-                year INTEGER NOT NULL,
-                period INTEGER NOT NULL,
-                person_name TEXT NOT NULL,
-                action TEXT NOT NULL,
-                payload_summary TEXT NOT NULL DEFAULT '',
-                derived_from TEXT NOT NULL DEFAULT '',
-                normalized TEXT NOT NULL DEFAULT '',
-                source TEXT NOT NULL DEFAULT '',
-                origin_ref TEXT NOT NULL DEFAULT '',
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY(person_name) REFERENCES characters(name)
-            );
+            -- person_logs 的建表与索引归 ming_sim/entities/person_log
+            -- （#1889 按职责拆出）；本文件不再持第二份定义。
 
             CREATE TABLE IF NOT EXISTS factions (
                 name TEXT PRIMARY KEY,
@@ -1583,9 +1571,6 @@ class GameDB:
             CREATE INDEX IF NOT EXISTS idx_power_logs_turn
             ON power_logs(turn, power_id);
 
-            CREATE INDEX IF NOT EXISTS idx_person_logs_turn
-            ON person_logs(turn, person_name);
-
             CREATE TABLE IF NOT EXISTS issues (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 kind TEXT NOT NULL,
@@ -1976,11 +1961,9 @@ class GameDB:
         self.ensure_column("issues", "stop_condition", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("issues", "commitment_kind", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("issues", "stages_json", "TEXT NOT NULL DEFAULT '[]'")
-        # #624 / ADR 0078：next_audience_todos 引擎侧真伪底（方案 A）；老档迁移
+        # #624 / ADR 0078：next_audience_todos 引擎侧真伪底（方案 A）
         self.ensure_column(
             "next_audience_todos", "payload_json", "TEXT NOT NULL DEFAULT '{}'")
-        # #1783：老档去掉 issues FK，允许 commitment_ref=0 的案卷 due todo
-        self._migrate_next_audience_todos_drop_issue_fk()
         self.ensure_column("characters", "birth_year", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column("characters", "historical_death_year", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column("characters", "historical_death_month", "INTEGER NOT NULL DEFAULT 0")
@@ -2015,11 +1998,8 @@ class GameDB:
             "pending_decisions", "revision_round", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column(
             "pending_decisions", "prior_options_json", "TEXT NOT NULL DEFAULT '[]'")
-        # 步骤7：回合阶段（旧库迁移，schema 升级非 fallback）
-        self.ensure_column("game_state", "turn_phase", "TEXT NOT NULL DEFAULT 'summoning'")
-        # 结局：ended=1 时游戏终结；ending_status 为 context.ENDING_* 类型。
-        self.ensure_column("game_state", "ended", "INTEGER NOT NULL DEFAULT 0")
-        self.ensure_column("game_state", "ending_status", "TEXT NOT NULL DEFAULT ''")
+        # 回合阶段 / 结局列：turn_phase、ended、ending_status 均已含在
+        # ming_sim/entities/reign_state 的 game_state 建表脚本里（#1889），不再在此补列。
         # 密令推演副作用列（result 留给承办人进展，sim_note 给推演写泄漏/反弹，互不覆盖）。
         # #1889：decree_dossier_link_rejections.pending_action_id 已含在案卷 store 的
         # 建表脚本里（ADR 0151 schema 单一来源），此处不再只为旧档补列。
@@ -2172,7 +2152,12 @@ class GameDB:
                 _fiscal_prov, "beyond_intent", "INTEGER NOT NULL DEFAULT 0"
             )
         self.ensure_column("fiscal_config", "origin_ref", "TEXT NOT NULL DEFAULT ''")
-        for table in ("region_logs", "army_logs", "power_logs", "person_logs", "building_logs"):
+        # person_logs 的建表与写读口归 person_log store（#1889 按职责拆出）。必须早于
+        # 任何触及该表的动作——表还不存在时，下面的旧列清理会直接失败。
+        from ming_sim.entities.person_log import PersonLogStore
+        PersonLogStore.ensure_schema(self.conn)
+        self.person_logs = PersonLogStore(self.conn)
+        for table in ("region_logs", "army_logs", "power_logs", "building_logs"):
             self.ensure_column(table, "origin_ref", "TEXT NOT NULL DEFAULT ''")
         # 开局负面帝国修正：clear_gate(机器消除条件)、legacy_key(对应 opening_legacies.key，开局修正去重用)
         self.ensure_column("legacies", "clear_gate", "TEXT NOT NULL DEFAULT '{}'")
@@ -2232,10 +2217,10 @@ class GameDB:
         )
         from ming_sim.entities.textual_fact import TextualFactStore
         from ming_sim.entities.affair import AffairStore
-        from ming_sim.entities.staged_declaration import StagedDeclarationStore
         TextualFactStore.ensure_schema(self.conn)
         self.ensure_column("textual_facts", "origin_ref", "TEXT NOT NULL DEFAULT ''")
         self.textual_facts = TextualFactStore(self.conn)
+        from ming_sim.entities.staged_declaration import StagedDeclarationStore
         StagedDeclarationStore.ensure_schema(self.conn)
         self.staged_declarations = StagedDeclarationStore(self.conn)
         AffairStore.ensure_schema(self.conn)
@@ -2261,14 +2246,11 @@ class GameDB:
         )
         self.affairs = AffairStore(self.conn)
         self.conn.commit()
-        self._migrate_legacy_office_pollution()
-        # #9 R1 finding#1 [P1]：老档迁移校准须放在新档 seed 与现存档打开都经过的点。
+        # #9 R1 finding#1 [P1]：offset 校准须放在新档 seed 与现存档打开都经过的点。
         # 现存档只 GameDB()（→ init_schema）+ load_state、不调 seed_static_data，故若校准仅在 seed 末尾，
-        # 老档的 offset 永远停在默认 0 → leverage=0+权重和（未锚定钦定基线、错值）。
-        # 因此：leverage_offset 列**本次刚 ADD**且 factions 表已有行（=老档，characters 此刻亦已持久化、
-        # 权重和可算）时，在此立即一次性反推校准（offset_col_added=True 走老档分支：offset=当前 DB
-        # leverage − 权重和）。放在 _migrate_legacy_office_pollution 之后，使权重和按【已清洗】的 office
-        # 算（与 seed 路 _migrate→_calibrate 同序；pre-0009 污染 office 在迁移前会算错权重和）。
+        # 首次开档的 offset 永远停在默认 0 → leverage=0+权重和（未锚定钦定基线、错值）。
+        # 因此：leverage_offset 列**本次刚 ADD**且 factions 表已有行时，在此立即一次性反推校准
+        # （offset_col_added=True：offset=当前 DB leverage − 权重和）。
         # 校准后 flag 被消费置 False（见 _calibrate_faction_offsets），seed 路再调时直接 return、不重锚。
         # fresh 新档此时 factions 表空（行在 seed_static_data 才 INSERT）→ 这里跳过，仍走 seed 末尾的
         # fresh 校准（从 content.factions 取钦定基线）。
@@ -2290,128 +2272,18 @@ class GameDB:
                 self._leverage_offsets_calibrated = True
                 self._leverage_offset_col_added = False
             self.conn.commit()
-        # #177 R1 finding#1（codex P2）：一次性 v2 迁移——旧版 #9 校准 round 了 offset（存整数），
-        # R4 只修新校准、已 marked 老档 early-return 照漂。本迁移把整数 offset 重算成精确 float
-        # （current_leverage − weight_sum），保持当前 leverage 不变、仅修存储精度防未来漂。
-        # 只对 leverage 与 round(offset+权重和) 一致的 faction 跑（未手动 clamp/改），防把 clamp
-        # 后的脏 leverage 烙进 offset（腐蚀基线）。幂等：v2 标记一旦落库就不再跑。
-        if (
-            self.table_has_rows("factions")
-            and getattr(self, "_leverage_offsets_calibrated", False)
-            and not self._has_meta_flag("__leverage_offsets_float_v2")
-        ):
-            self._migrate_offsets_to_float_precision()
-            self._set_meta_flag("__leverage_offsets_float_v2")
-            self.conn.commit()
-        # #562 expanded rank_rules changes the derived office-weight sum. Re-anchor
-        # existing offsets exactly once so opening a save cannot change leverage
-        # without a character change. The marker makes repeated opens idempotent.
-        if (
-            self.table_has_rows("factions")
-            and not self._has_meta_flag("__leverage_offsets_rank_rules_562")
-        ):
-            self._reanchor_offsets_for_rank_rules_562()
-            self._set_meta_flag("__leverage_offsets_rank_rules_562")
-            self.conn.commit()
         self.init_fiscal_config()
-        self._migrate_missing_fiscal_engine_from_pay_source_cutover()
-
-    def _migrate_legacy_office_pollution(self) -> None:
-        """ADR 0009 决定9/L94 一次性数据清洗（幂等，init 时跑）：pre-0009 存档把状态词塞在
-        office 串里（「前X，罢居Y」「…(在途)」），归位到 status/reason_code/location/transit_to，
-        使其正确进人才池（G1）。**条件触发**（office 含污染标记才动）——不误降已被玩家起复的
-        active 旧臣（其 office 已是真职、无标记，跳过）；幂等（清洗后再跑无标记可清）。"""
-        import re
-        # location 是 region_id；罢居地名（松江/高阳等府名）多非 region_id，只在解析出合法 region_id
-        # 才写 location（同下方在途循环口径，不把府名硬塞进 region_id 列）；罢居地信息留在 status_reason。
-        region_ids = {row["id"] for row in self.conn.execute("SELECT id FROM regions").fetchall()}
-        # 罢居=居家可起复：钱谦益 天启科场案削籍 → dismissed（→昭雪，B 口径）；其余罢居 → offstage（→起复）。
-        DISMISSED_OVERRIDE = {"钱谦益": "获罪削籍"}
-        from ming_sim.office_rank import canonical_office_title
-
-        for r in self.conn.execute(
-            "SELECT name, office FROM characters WHERE office LIKE '%罢居%' AND status='active'"
-        ).fetchall():
-            name = r["name"]
-            office = str(r["office"] or "")
-            m = re.search(r"罢居([^，,]+)", office)
-            loc = m.group(1).strip() if m else ""
-            loc_region = loc if loc in region_ids else ""
-            if name in DISMISSED_OVERRIDE:
-                status, rc = "dismissed", DISMISSED_OVERRIDE[name]
-            else:
-                status, rc = "offstage", "自请"
-            self.conn.execute(
-                "UPDATE characters SET status=?, reason_code=?, status_reason=?, office='', "
-                "location=CASE WHEN COALESCE(location,'')='' THEN ? ELSE location END, transit_to='' "
-                "WHERE name=?",
-                (status, rc, office, loc_region, name),
-            )
-            # #562：character_offices 保留最近实职备档供起复品级读取，去掉「前/罢居」污染尾。
-            historical = canonical_office_title(office)
-            if historical:
-                self.conn.execute(
-                    "UPDATE character_offices SET office_title=? WHERE character_name=?",
-                    (historical, name),
-                )
-        # #562：凡 character_offices 仍带「前/原/革职候勘/罢居」污染的备档一律洗净。
-        # 覆盖 seed 已是 dismissed 的革职候勘者（如胡廷宴），不只 罢居→offstage 那一支。
-        for r in self.conn.execute(
-            "SELECT character_name, office_title FROM character_offices"
-        ).fetchall():
-            raw_title = str(r["office_title"] or "")
-            cleaned = canonical_office_title(raw_title)
-            if cleaned and cleaned != raw_title:
-                self.conn.execute(
-                    "UPDATE character_offices SET office_title=? WHERE character_name=?",
-                    (cleaned, r["character_name"]),
-                )
-        # office 带「(在途)」→ 清串保留 active；transit_to 仅当解析出合法 region_id 才落（保守，不瞎猜目的地）。
-        for r in self.conn.execute(
-            "SELECT name, office FROM characters WHERE office LIKE '%在途%'"
-        ).fetchall():
-            name = r["name"]
-            office = str(r["office"] or "")
-            cleaned = office.replace("（在途）", "").replace("(在途)", "").strip().rstrip(",，")
-            # 目的地是中文地名（辽东/陕西），region_id 是英文（liaodong/shaanxi）——直接
-            # `in region_ids` 恒 False、transit_to 永不落（死分支，5b r6 Gemini high）。用
-            # match_region_id_from_text 把中文解析成 region_id（同 db.py:2626 口径），解析得到才落。
-            dest = ""
-            for kw in ("督师", "镇守", "赴", "之任"):
-                mm = re.search(kw + r"([一-龥]{2,4})", office)
-                if mm:
-                    rid = match_region_id_from_text(mm.group(1), self.content.regions)
-                    if rid:
-                        dest = rid
-                        break
-            if dest:
-                self.conn.execute(
-                    "UPDATE characters SET office=?, transit_to=? WHERE name=?", (cleaned, dest, name)
-                )
-            else:
-                self.conn.execute(
-                    "UPDATE characters SET office=? WHERE name=?", (cleaned, name)
-                )
-        self.conn.commit()
 
     def init_fiscal_config(self) -> None:
         """从 content/fiscal_config.json（self.content.fiscal_items）seed 财政科目目录。
 
         base/rate 单位为【月度】万两/%。科目目录与元数据全走 JSON 设定（铁律：设定走 JSON）；
-        新档加税源只改 JSON；若老档也要补新 key，必须登记对应 schema_version 的差量迁移。
+        新档加税源只改 JSON。
 
-        ── 版本迁移策略（铁律：fiscal_config 只在建库时整体 seed 一次）──
-        每个库带 `__schema_version`。本函数按它与 JSON schema_version 比对，分三种走法：
-
-        - `cur == 0`（全新库，无版本行）：整体 seed JSON 全表 → 版本号置 JSON 版。仅此一次。
-        - `cur < json`（老档升版）：逐版跑 `_FISCAL_MIGRATIONS[cur+1 .. json]` 的差量动作。
-          新 schema 若要给老档补 key，必须在对应版本登记；未声明的 key 一律不碰
-          （玩家削减/裁撤全保留）。未登记版本不再按当前 JSON 全表补缺；新 schema 正常迁移
-          必须登记显式版本步。
-        - `cur >= json`：**啥都不做**。已是最新，玩家状态神圣。
-
-        ⇒ 玩家裁撤的科目读档后保持删除（不再被旧 INSERT OR IGNORE 复活）。
-           JSON 加新税种【必须】同步升 schema_version，否则老档拿不到（CLAUDE.md 已要求）。
+        #1889：只做**建库时整体 seed 一次**。已有 `__schema_version` 行的库一律不碰——
+        玩家裁撤/裁改过的科目读档后保持原样（不被 JSON 复活），同版本存读档照常。
+        旧档逐版差量升级（`_FISCAL_MIGRATIONS` 阶梯）已随旧形状兼容拆除：owner 明确
+        不考虑旧存档兼容，也不得删除既存存档——既有存档仍可打开读用，只是不再被改写。
         """
         items = list(self.content.fiscal_items)
         if not items or "__schema_version" not in items[0]:
@@ -2429,51 +2301,19 @@ class GameDB:
 
         cols = "(key, value, kind, note, budget_role, account, direction, display, sort_order)"
 
-        def _seed_missing() -> None:
-            """未登记版本步不补当前 JSON 全表；新增 key 必须走显式版本迁移。"""
-            return None
+        if self.conn.execute(
+            "SELECT 1 FROM fiscal_config WHERE key = '__schema_version'"
+        ).fetchone() is not None:
+            return  # 已 seed 过：玩家状态神圣，碰都不碰
 
-        def _seed_keys(keys: "tuple[str, ...]") -> None:
-            wanted = set(keys)
-            self.conn.executemany(
-                f"INSERT OR IGNORE INTO fiscal_config {cols} VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                [_meta(rec) for rec in rows if str(rec["key"]) in wanted],
-            )
-
-        # 每版迁移：从 N-1 → N，只动那版真正变的东西。键＝目标版本号 N。
-        # 将来要改某 key 默认 / 删某 key / 加新 key，就在这里登记一条 lambda，只动那一项，
-        # 别动其它——这样玩家改过的全保住。未登记版本只保留旧兼容兜底，不作为正常迁移路径。
-        _FISCAL_MIGRATIONS: "Dict[int, Any]" = {
-            8: lambda: _seed_keys((
-                "central_taicang_human_loss_rate",
-                "central_taicang_sink_loss_rate",
-                "central_jingyun_human_loss_rate",
-                "central_jingyun_sink_loss_rate",
-            )),
-        }
-
-        cur_ver_row = self.conn.execute(
-            "SELECT value FROM fiscal_config WHERE key = '__schema_version'"
-        ).fetchone()
-        cur_ver = int(cur_ver_row["value"]) if cur_ver_row else 0
-
-        if cur_ver >= schema_version:
-            return  # 已最新，玩家状态神圣，碰都不碰
-
-        if cur_ver == 0:
-            # 全新库：整体 seed 一次。
-            self.conn.executemany(
-                f"INSERT INTO fiscal_config {cols} VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                [_meta(rec) for rec in rows],
-            )
-        else:
-            # 老档升版：逐版跑差量；未登记的版本步只补缺 key。
-            for v in range(cur_ver + 1, schema_version + 1):
-                (_FISCAL_MIGRATIONS.get(v) or _seed_missing)()
-
+        # 全新库：整体 seed 一次。
+        self.conn.executemany(
+            f"INSERT INTO fiscal_config {cols} VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [_meta(rec) for rec in rows],
+        )
         self.conn.execute(
             "INSERT INTO fiscal_config (key, value, kind, note) VALUES "
-            "('__schema_version', ?, 'meta', '财政默认值大版本号；老档升版逐版迁移，只动差量') "
+            "('__schema_version', ?, 'meta', '财政默认值大版本号；建库时整体 seed 一次') "
             "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
             (schema_version,),
         )
@@ -2947,60 +2787,6 @@ class GameDB:
             self.conn.commit()
         return base_key
 
-    def _migrate_next_audience_todos_drop_issue_fk(self) -> None:
-        """#1783：next_audience_todos 去 issues FK，允案卷 due 直挂 commitment_ref=0。"""
-        try:
-            fks = self.conn.execute(
-                "PRAGMA foreign_key_list(next_audience_todos)"
-            ).fetchall()
-        except Exception:
-            return
-        if not fks:
-            return
-        self.conn.execute("PRAGMA foreign_keys=OFF")
-        try:
-            self.conn.execute(
-                """
-                CREATE TABLE next_audience_todos__1783 (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    commitment_ref INTEGER NOT NULL,
-                    stage_idx INTEGER NOT NULL,
-                    due_turn INTEGER NOT NULL,
-                    criterion_text TEXT NOT NULL DEFAULT '',
-                    origin_context TEXT NOT NULL DEFAULT '',
-                    status TEXT NOT NULL DEFAULT 'pending',
-                    entry_kind TEXT NOT NULL DEFAULT 'staged_commitment',
-                    created_turn INTEGER NOT NULL DEFAULT 0,
-                    payload_json TEXT NOT NULL DEFAULT '{}',
-                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    UNIQUE(commitment_ref, stage_idx, entry_kind)
-                )
-                """
-            )
-            self.conn.execute(
-                """
-                INSERT INTO next_audience_todos__1783 (
-                    id, commitment_ref, stage_idx, due_turn, criterion_text,
-                    origin_context, status, entry_kind, created_turn,
-                    payload_json, created_at
-                )
-                SELECT id, commitment_ref, stage_idx, due_turn, criterion_text,
-                       origin_context, status, entry_kind, created_turn,
-                       payload_json, created_at
-                FROM next_audience_todos
-                """
-            )
-            self.conn.execute("DROP TABLE next_audience_todos")
-            self.conn.execute(
-                "ALTER TABLE next_audience_todos__1783 RENAME TO next_audience_todos"
-            )
-            self.conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_next_audience_todos_status "
-                "ON next_audience_todos(status, due_turn)"
-            )
-            self.conn.commit()
-        finally:
-            self.conn.execute("PRAGMA foreign_keys=ON")
 
     def ensure_column(self, table: str, column: str, definition: str) -> bool:
         """确保 table.column 存在。返回 True=本次新增了该列（真·一次性迁移），
@@ -3308,9 +3094,18 @@ class GameDB:
                     if getattr(self, "content", None) is not None else None
                 )
                 seat = str(getattr(ch, "office_region", "") or "").strip() if ch else ""
+                # #1889：无现任（罢居/罢免）者 characters.office 为空，备档取 content 的
+                # historical_office（历史实职）——历史与现任各归各字段，不再靠 init 时
+                # 清洗 office 串里的状态词来反推。备档标题统一走 canonical_office_title：
+                # 备档只存实职职衔，「原…革职候勘」这类状态尾属人事状态、不进官职体系。
+                archived = str(row["office"] or "") or (
+                    str(getattr(ch, "historical_office", "") or "") if ch else ""
+                )
+                if not archived:
+                    continue
                 self._record_character_office(
-                    row["name"], row["office"], row["office_type"], "存档迁移",
-                    region_id=seat,
+                    row["name"], canonical_office_title(archived), row["office_type"],
+                    "开局 seed", region_id=seat,
                 )
 
         is_fresh_factions_seed = not self.table_has_rows("factions")
@@ -3462,13 +3257,8 @@ class GameDB:
         # #173：维护费列退役 drop 已上移至 init_schema（每个打开路径都跑，含现存档的纯
         # init_schema 路径，见 cmr drop R1）；此处新档 seed INSERT 后该列本就不存在，无需再 drop。
         self._apply_region_city_levels()  # 新档 region 此时才 INSERT 完，按史实补 city_level
-        # 新档罢居/在途 office 污染清洗：init_schema 路径在空表上 no-op（构造在 seed 前），
-        # 故 seed 后须再跑一次才对新档生效（决定9/L94 一次性清洗；幂等，老档由 init_schema
-        # 路径已处理）。此刻 characters + regions 均已 INSERT，location region_id 校验可用。
-        # 5b r4（Claude + codex-b concur, P1）：漏此调用则新档 7 名罢居旧臣留 active+污染、不进人才池。
-        self._migrate_legacy_office_pollution()
-        # #9：派系势力 offset 校准。此刻 factions + characters 均已 INSERT、office 污染已洗。
-        # cmr R3：传 offset 列「本次是否刚 ADD」——老档反推只在迁移那次跑，常规 load 不碰 offset。
+        # #9：派系势力 offset 校准。此刻 factions + characters 均已 INSERT。
+        # cmr R3：传 offset 列「本次是否刚 ADD」——首次校准只在建库那次跑，常规 load 不碰 offset。
         self._calibrate_faction_offsets(
             is_fresh_factions_seed, getattr(self, "_leverage_offset_col_added", False)
         )
@@ -3503,17 +3293,6 @@ class GameDB:
 
     def is_substrate_hub_fiscal_engine_enabled(self) -> bool:
         return self.fiscal_engine() == "substrate_hub"
-
-    def _migrate_missing_fiscal_engine_from_pay_source_cutover(self) -> None:
-        if self.conn.execute(
-            "SELECT 1 FROM fiscal_config WHERE key = ?",
-            (_FISCAL_ENGINE_KEY,),
-        ).fetchone():
-            return
-        if not self.is_army_pay_source_cutover_enabled():
-            return
-        self._mark_substrate_hub_fiscal_engine_enabled()
-        self.conn.commit()
 
     def _mark_army_pay_source_cutover_enabled(self) -> None:
         self.conn.execute(
@@ -4516,39 +4295,23 @@ class GameDB:
         st["军饷欠"] = row_arrears_total
 
     def has_state(self) -> bool:
-        row = self.conn.execute("SELECT 1 FROM game_state WHERE id = 1").fetchone()
-        return row is not None
+        return self.reign.exists()
 
     def save_state(self, state: GameState) -> None:
-        self.conn.execute(
-            """
-            INSERT INTO game_state (id, year, period, turn, turn_phase, ended, ending_status)
-            VALUES (1, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(id) DO UPDATE SET year = excluded.year, period = excluded.period,
-                turn = excluded.turn, turn_phase = excluded.turn_phase,
-                ended = excluded.ended, ending_status = excluded.ending_status
-            """,
-            (
-                state.year, state.period, state.turn, state.turn_phase,
-                1 if state.ended else 0, state.ending_status,
-            ),
+        """Write the reign header and balances. 持久写口归 reign_state store（#1889）。"""
+        self.reign.save(
+            year=state.year,
+            period=state.period,
+            turn=state.turn,
+            turn_phase=state.turn_phase,
+            ended=state.ended,
+            ending_status=state.ending_status,
+            metrics=state.metrics,
         )
-        for key, value in state.metrics.items():
-            self.conn.execute(
-                """
-                INSERT INTO metrics (key, value)
-                VALUES (?, ?)
-                ON CONFLICT(key) DO UPDATE SET value = excluded.value
-                """,
-                (key, value),
-            )
-        self.conn.commit()
 
     def load_state(self, start_ym: str = "") -> GameState:
-        row = self.conn.execute(
-            "SELECT year, period, turn, turn_phase, ended, ending_status FROM game_state WHERE id = 1"
-        ).fetchone()
-        if row is None:
+        header = self.reign.read()
+        if header is None:
             state = GameState()
             if start_ym:
                 try:
@@ -4564,21 +4327,17 @@ class GameDB:
                 )
                 state.year, state.period = y, m
                 print(f"[调试] 跳到 {y}年{m}月起手（turn={state.turn}）。")
-            self.save_state(state)
-            self.ensure_opening_ledger(state)
-            self.seed_opening_crises(state)
-            self.seed_opening_gazette(state)
+            # #1889：新档初始化是一个整体——期初账册、开局危机、开局见闻任一写不进去，
+            # 这次初始化就不算成功（异常上抛，事务回滚）。否则 game_state 已落库而开局
+            # 事实缺失，下次重开 has_state() 为真、再也不会补 seed，得到一份永久残缺的新档。
+            with atomic(self):
+                self.save_state(state)
+                self.ensure_opening_ledger(state)
+                self.seed_opening_crises(state)
+                self.seed_opening_gazette(state)
             return state
-        metrics = {
-            metric["key"]: int(metric["value"])
-            for metric in self.conn.execute("SELECT key, value FROM metrics").fetchall()
-        }
-        state = GameState(
-            year=int(row["year"]), period=int(row["period"]), turn=int(row["turn"]),
-            turn_phase=str(row["turn_phase"] or "summoning"),
-            ended=bool(row["ended"]) if "ended" in row.keys() else False,
-            ending_status=str(row["ending_status"] or "") if "ending_status" in row.keys() else "",
-        )
+        metrics = self.reign.read_metrics()
+        state = GameState(**header)
         if metrics:
             # #1889：国库/内库余额真源就是 metrics，上面这一次 SELECT 已全部读入；
             # economy_accounts 是它的派生视图（读时算），回灌等于让镜像反向盖真源。
@@ -4632,51 +4391,54 @@ class GameDB:
         """新档首次进入时塞 1627 即位即面对的危机为 active situation issue。
         数据源已并入 seed_events.json：取标了 auto_trigger 且 trigger_gate 为空（开局盘面无条件
         即达标）的 situation 事件，开局直接立项，使玩家召见前就看到三大危机。
-        其余带 gate 的 seed 事件靠 auto_trigger_seed_issues 在 gate 达标的回合再硬立。"""
+        其余带 gate 的 seed 事件靠 auto_trigger_seed_issues 在 gate 达标的回合再硬立。
+
+        #1889：整段开局危机立为**一个**事务，且任何一条写不进去就让初始化失败上抛
+        （不再逐条 print WARN 后继续）。否则 load_state 照常返回一份「初始化成功」的盘面，
+        而三件开局危机实际一条没落库——引擎声称记住的开局事实并不存在。"""
         if not getattr(self, "content", None):
             return
-        for ev in self.content.seed_events:
-            if not ev.auto_trigger or ev.trigger_gate:
-                continue
-            if ev.event_type != "situation":
-                continue
-            if self.find_any_issue_by_origin("event_pool", ev.id) is not None:
-                continue
-            # 推导默认 bar / inertia / ongoing / effect，与 event_to_issue 同口径；精调字段优先
-            bar = ev.bar_value or max(20, min(60, 50 - int(ev.severity / 5)))
-            inertia = ev.issue_inertia  # 默认 0=不漂；要月漂在 seed 里显式填
-            try:
-                with atomic(self):
-                    self.insert_issue(
-                        state,
-                        kind="situation",
-                        title=ev.title,
-                        origin_kind="event_pool",
-                        origin_ref=ev.id,
-                        bar_value=bar,
-                        bar_good_meaning=ev.bar_good_meaning or "已平",
-                        bar_bad_meaning=ev.bar_bad_meaning or "失控",
-                        inertia=ev.issue_inertia,  # 默认 0=不漂；要月漂在 seed 里显式填
-                        stage_text=ev.stage_text or ev.summary[:80],
-                        severity=int(ev.severity),
-                        region_hint=ev.region_hint,
-                        faction_hint=",".join(ev.interests[:2]),
-                        tags=ev.issue_tags or [ev.kind],
-                        ongoing_effects=ev.ongoing_effects,
-                        cancellable="never",
-                        effect_on_resolve=ev.effect_on_resolve,
-                        effect_on_fail=ev.effect_on_fail,
-                        resolve_condition=ev.resolve_condition,
-                        fail_condition=ev.fail_condition,
-                        commit=False,
-                    )
-                    # 触发起手同样是一条事件触发事实：由 mark_event_triggered 这唯一写口落
-                    # （不再靠旧档 backfill 从 event_pool issue 反推）。
-                    self.mark_event_triggered(
-                        state, ev.id, source="opening_crises", commit=False,
-                    )
-            except Exception as exc:
-                print(f"[WARN] 开局危机落库失败：{exc}；跳过 {ev.title}")
+        pending = [
+            ev for ev in self.content.seed_events
+            if ev.auto_trigger
+            and not ev.trigger_gate
+            and ev.event_type == "situation"
+            and self.find_any_issue_by_origin("event_pool", ev.id) is None
+        ]
+        if not pending:
+            return
+        with atomic(self):
+            for ev in pending:
+                # 推导默认 bar / inertia / ongoing / effect，与 event_to_issue 同口径；精调字段优先
+                bar = ev.bar_value or max(20, min(60, 50 - int(ev.severity / 5)))
+                self.insert_issue(
+                    state,
+                    kind="situation",
+                    title=ev.title,
+                    origin_kind="event_pool",
+                    origin_ref=ev.id,
+                    bar_value=bar,
+                    bar_good_meaning=ev.bar_good_meaning or "已平",
+                    bar_bad_meaning=ev.bar_bad_meaning or "失控",
+                    inertia=ev.issue_inertia,  # 默认 0=不漂；要月漂在 seed 里显式填
+                    stage_text=ev.stage_text or ev.summary[:80],
+                    severity=int(ev.severity),
+                    region_hint=ev.region_hint,
+                    faction_hint=",".join(ev.interests[:2]),
+                    tags=ev.issue_tags or [ev.kind],
+                    ongoing_effects=ev.ongoing_effects,
+                    cancellable="never",
+                    effect_on_resolve=ev.effect_on_resolve,
+                    effect_on_fail=ev.effect_on_fail,
+                    resolve_condition=ev.resolve_condition,
+                    fail_condition=ev.fail_condition,
+                    commit=False,
+                )
+                # 触发起手同样是一条事件触发事实：由 mark_event_triggered 这唯一写口落
+                # （不再靠旧档 backfill 从 event_pool issue 反推）。
+                self.mark_event_triggered(
+                    state, ev.id, source="opening_crises", commit=False,
+                )
 
     def _canonicalize_character_location(self, raw: object) -> str:
         """#654 G：location 唯一写缝归一——精确 compact 等值；未知非空 fail-loud。"""
@@ -4947,99 +4709,6 @@ class GameDB:
         # 崩在校准中途则标记一并未落、下次开档重做（原子：offset+标记 全有或全无）。
         self._set_meta_flag("__leverage_offsets_calibrated")
         self._leverage_offsets_calibrated = True
-        # #177 R1 finding#1（codex P2）：当前校准已存精确 float offset → 同时落 v2 标记，
-        # 使 init_schema 的 v2 迁移跳过（免对已正确存 float 的档重复扫）。
-        self._set_meta_flag("__leverage_offsets_float_v2")
-        # Fresh/current-rule calibration already uses the expanded #562 table;
-        # do not mistake it for an old save that needs the one-time re-anchor.
-        self._set_meta_flag("__leverage_offsets_rank_rules_562")
-
-    def _migrate_offsets_to_float_precision(self) -> None:
-        """#177 R1 finding#1（codex P2）：一次性 v2 迁移——旧版 #9 校准 round 了 offset（存整数），
-        R4 修了新校准、但已 marked 老档 early-return 照漂。本方法把 offset 重算成精确 float
-        （current_leverage − weight_sum），**保持当前 leverage 不变**、仅修存储精度防未来漂移。
-        只对 leverage 与 round(offset+权重和) 一致的 faction 跑——不一致 = leverage 被手动
-        clamp/改过，不碰 offset（保 baseline 信息、防腐蚀，同 _calibrate_faction_offsets 安全论证）。"""
-        for faction in _LEVERAGE_FACTIONS:
-            row = self.conn.execute(
-                "SELECT leverage, leverage_offset FROM factions WHERE name=?", (faction,)
-            ).fetchone()
-            if row is None:
-                continue
-            current_lev = int(row["leverage"])
-            weight_sum = self._faction_office_weight_sum(faction)
-            current_offset = float(row["leverage_offset"] or 0)
-            # 只在 raw 公式值未越界 [0,100] 且 leverage 与之一致时重算——否则跳过保 baseline。
-            # 先判 raw 越界（不 clamp）：raw 越界时 clamp 后的 expected_lev 可能巧合等于
-            # current_lev（一个本身被 clamp 的脏值），被误判「一致」而错误迁移——但 clamped
-            # 脏值反推不出真实 offset、不该碰（cmr R2 CodeRabbit 精修）。
-            raw_lev = current_offset + weight_sum
-            if raw_lev < 0 or raw_lev > 100:
-                continue
-            expected_lev = round(raw_lev)
-            if expected_lev != current_lev:
-                continue
-            new_offset = current_lev - weight_sum
-            self.conn.execute(
-                "UPDATE factions SET leverage_offset=? WHERE name=?", (new_offset, faction)
-            )
-
-    def _rank_rules_562_legacy_weight_sum(self, faction: str) -> float:
-        """Return the pre-#562 weight sum solely for the one-time save migration.
-
-        This frozen compatibility table is deliberately not wired into live rank or
-        leverage evaluation; current rules remain exclusively in offices.json.
-        """
-        legacy_tiers = (
-            (1.0, ("尚书", "掌印", "秉笔", "提督", "首辅", "督师", "总督", "巡抚",
-                   "总兵", "都督", "都指挥使", "都御史")),
-            (0.5, ("侍郎", "次辅", "大学士", "副总兵", "参政", "佥都御史", "少卿",
-                   "副都御史", "同知", "佥事")),
-            (0.25, ("郎中", "主事", "职方", "司属", "编修", "检讨", "游击", "守备",
-                    "候补", "候用", "随堂", "信邸内官")),
-        )
-
-        def legacy_multiplier(office: str) -> float:
-            best: Optional[float] = None
-            for part in (p.strip() for p in normalize_office(office).split(",") if p.strip()):
-                matched = [mult for mult, stems in legacy_tiers if any(stem in part for stem in stems)]
-                if matched:
-                    part_multiplier = min(matched)
-                    best = part_multiplier if best is None else max(best, part_multiplier)
-            return best if best is not None else 1.0
-
-        rows = self.conn.execute(
-            "SELECT office_type, office FROM characters "
-            "WHERE faction=? AND status='active' AND power_id='ming'",
-            (faction,),
-        ).fetchall()
-        total = 0.0
-        for row in rows:
-            office = str(row["office"] or "")
-            office_n = normalize_office(office)
-            if not office_n:
-                continue
-            domain = _OFFICE_LEVERAGE_WEIGHT.get(str(row["office_type"] or ""), 0)
-            for part in (p.strip() for p in office_n.split(",") if p.strip()):
-                domain = max(domain, _OFFICE_LEVERAGE_WEIGHT.get(_office_type_from_table(part), 0))
-            total += domain * legacy_multiplier(office_n)
-        return total
-
-    def _reanchor_offsets_for_rank_rules_562(self) -> None:
-        """Translate old offsets to current rules without consulting persisted leverage."""
-        for faction in _LEVERAGE_FACTIONS:
-            row = self.conn.execute(
-                "SELECT leverage_offset FROM factions WHERE name=?", (faction,)
-            ).fetchone()
-            if row is None:
-                continue
-            old_offset = float(row["leverage_offset"] or 0)
-            old_weight_sum = self._rank_rules_562_legacy_weight_sum(faction)
-            new_weight_sum = self._faction_office_weight_sum(faction)
-            offset = old_offset + old_weight_sum - new_weight_sum
-            self.conn.execute(
-                "UPDATE factions SET leverage_offset=? WHERE name=?", (offset, faction)
-            )
 
     def _has_meta_flag(self, key: str) -> bool:
         """查 metrics 表里某持久标记是否存在（#9 R3 crash-safe 迁移标记用）。metrics 在 init_schema
@@ -5070,31 +4739,20 @@ class GameDB:
         commit: bool = True,
         origin_ref: str = "",
     ) -> None:
-        if isinstance(normalized, dict):
-            normalized_text = json.dumps(normalized, ensure_ascii=False, sort_keys=True)
-        else:
-            normalized_text = str(normalized or "")
-        self.conn.execute(
-            """
-            INSERT INTO person_logs
-            (turn, year, period, person_name, action, payload_summary, derived_from, normalized, source, origin_ref)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                state.turn,
-                state.year,
-                state.period,
-                person_name,
-                action,
-                str(payload_summary or "")[:200],
-                str(derived_from or "")[:120],
-                normalized_text,  # 全量存：normalized 是结构化审计 JSON，[:500] 会从中间切断成不可解析（PR #106 CodeRabbit）
-                str(source or "")[:80],
-                str(origin_ref or ""),
-            ),
+        """Append one person event. 持久写口归 person_log store（#1889）。"""
+        self.person_logs.append(
+            turn=state.turn,
+            year=state.year,
+            period=state.period,
+            person_name=person_name,
+            action=action,
+            payload_summary=payload_summary,
+            derived_from=derived_from,
+            normalized=normalized,
+            source=source,
+            origin_ref=origin_ref,
+            commit=commit,
         )
-        if commit:
-            self.conn.commit()
 
     def get_character_status(self, name: str) -> Tuple[str, str]:
         row = self.conn.execute(
@@ -10826,14 +10484,9 @@ class GameDB:
                 int(dossier_id), int(secret_order_id), int(turn), band, text,
                 is_terminal=bool(is_terminal), origin=origin_norm, commit=commit,
             )
-        payload = {}
-        try:
-            loaded = json.loads(str(dossier.get("payload_json") or "{}"))
-            if isinstance(loaded, dict):
-                payload = loaded
-        except (TypeError, ValueError):
-            payload = {}
-        if not has_execution_surface(dossier.get("action_type"), payload):
+        # dossiers.get 已按 hydrate_dossier_row 解析并 fail-loud 校验过 payload，直接复用，
+        # 不在此对同一载荷二次解析或静默回退空对象。
+        if not has_execution_surface(dossier.get("action_type"), dossier["payload"]):
             raise ValueError("非执行面案卷不可挂奏报")
         report_id = self.dossiers.upsert_reported_progress(
             int(dossier_id), int(turn), band=band, text=text, origin=origin_norm,
@@ -13361,10 +13014,7 @@ class GameDB:
             raise ValueError("executing 是非终态，必须以 close=False 记录")
         immediate = (
             row["status"] == "promulgated"
-            and not has_execution_surface(
-                row["action_type"],
-                json.loads(str(row.get("payload_json") or "{}")),
-            )
+            and not has_execution_surface(row["action_type"], row["payload"])
         )
         if row["status"] != "executing" and not immediate:
             raise ValueError("执行格只能写入 executing 或无判定面已颁案卷")
@@ -16797,16 +16447,24 @@ class GameDB:
         ).fetchone()
         if row is None:
             return None
-        def _load(text: str, default, label: str):
+
+        def _load(text: str, label: str) -> object:
+            # #1889：这是恢复用的权威记录，不是可降级的呈现材料。载荷读不出来就是
+            # 恢复材料已损，fail-loud 上抛（ADR 0005）——不再回退空对象把「读失败」
+            # 伪装成「本月本就没有过月上下文」照常恢复。
+            if not text:
+                return {}
             try:
-                return json.loads(text) if text else default
-            except Exception as exc:
-                tlog(f"[db] resolve_context {label} JSON 损坏，回退默认、恢复将丢该段（turn={turn}）：{exc}")  # #14 surface
-                return default
+                return json.loads(text)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"过月上下文 {label} 损坏，本月无法恢复（turn={turn}）：{exc}"
+                ) from exc
+
         attendant_message = str(row["attendant_message"] or "")
         return {
             "decree_text": row["decree_text"],
-            "simulator_payload": _load(row["simulator_payload_json"], {}, "simulator_payload"),
+            "simulator_payload": _load(row["simulator_payload_json"], "simulator_payload"),
             "source": row["source"] or "system_simulation",
             "attendant_message": attendant_message,  # #671 王承恩独立递话
         }

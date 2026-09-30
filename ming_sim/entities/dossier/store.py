@@ -326,9 +326,14 @@ def has_execution_surface(
     }
 
 
-def hydrate_dossier_row(row: Any) -> dict[str, object]:
-    """One fail-loud hydration contract for every dossier read (ADR 0005)."""
-    out = dict(row)
+def hydrate_dossier_row(row: Any) -> dict[str, Any]:
+    """One fail-loud hydration contract for every dossier read (ADR 0005).
+
+    Columns come from ``SELECT *`` over a wide table, so the hydrated shape is
+    genuinely dynamic; the typed contract is the fail-loud parsing below, not a
+    closed key set.
+    """
+    out: dict[str, Any] = dict(row)
     out["id"] = int(out["id"])
     out["region_id"] = str(out.get("region_id") or "")
     for key in (
@@ -390,13 +395,13 @@ class DossierStore:
         ) == 0:
             self._conn.commit()
 
-    def get(self, dossier_id: int) -> Optional[dict[str, object]]:
+    def get(self, dossier_id: int) -> Optional[dict[str, Any]]:
         row = self._conn.execute(
             "SELECT * FROM decree_dossiers WHERE id=?", (int(dossier_id),)
         ).fetchone()
         return None if row is None else hydrate_dossier_row(row)
 
-    def get_for_directive(self, directive_id: int) -> Optional[dict[str, object]]:
+    def get_for_directive(self, directive_id: int) -> Optional[dict[str, Any]]:
         """存在性哨兵：确定序取首行（#654 fan-out 下 N 行时勿当唯一读面）。"""
         row = self._conn.execute(
             "SELECT * FROM decree_dossiers WHERE directive_id=? "
@@ -405,7 +410,7 @@ class DossierStore:
         ).fetchone()
         return None if row is None else hydrate_dossier_row(row)
 
-    def list_for_directive(self, directive_id: int) -> list[dict[str, object]]:
+    def list_for_directive(self, directive_id: int) -> list[dict[str, Any]]:
         """#654：directive 名下全部子差务，ORDER BY region_id, id。"""
         rows = self._conn.execute(
             "SELECT * FROM decree_dossiers WHERE directive_id=? "
@@ -414,7 +419,7 @@ class DossierStore:
         ).fetchall()
         return [hydrate_dossier_row(r) for r in rows]
 
-    def get_for_secret_order(self, secret_order_id: int) -> Optional[dict[str, object]]:
+    def get_for_secret_order(self, secret_order_id: int) -> Optional[dict[str, Any]]:
         row = self._conn.execute(
             "SELECT * FROM decree_dossiers WHERE secret_order_id=?",
             (int(secret_order_id),),
@@ -424,7 +429,7 @@ class DossierStore:
     def list_dossiers(
         self, *, status: Optional[str] = None, target_kind: Optional[str] = None,
         target_id: Optional[object] = None,
-    ) -> list[dict[str, object]]:
+    ) -> list[dict[str, Any]]:
         clauses: list[str] = []
         params: list[object] = []
         if status is not None:
@@ -446,7 +451,7 @@ class DossierStore:
 
     def find_by_decision_key(
         self, decision_key: str,
-    ) -> Optional[dict[str, object]]:
+    ) -> Optional[dict[str, Any]]:
         """按批红 decision_key 取廷议案卷（payload.decision_key + deliberation_state）。"""
         key = str(decision_key or "").strip()
         if not key:
@@ -526,8 +531,8 @@ class DossierStore:
             raise KeyError(f"案卷不存在：{dossier_id}")
         if row["status"] == "proposed":
             raise ValueError("待判案卷不能绕过颁布格直接结案")
-        payload = json.loads(str(row.get("payload_json") or "{}"))
-        immediate = not has_execution_surface(row["action_type"], payload)
+        # get() 已按 hydrate_dossier_row 解析并 fail-loud 校验过 payload，直接复用。
+        immediate = not has_execution_surface(row["action_type"], row["payload"])
         if row["status"] == "promulgated" and not immediate:
             raise ValueError("带执行判定面的案卷必须先进入 executing 并填写执行格")
         if row["status"] == "executing" and not str(row.get("execution_outcome") or ""):
@@ -713,7 +718,7 @@ class DossierStore:
             decisions.append(item)
         return decisions
 
-    def list_for_simulation(self, turn: int) -> list[dict[str, object]]:
+    def list_for_simulation(self, turn: int) -> list[dict[str, Any]]:
         """本月新生/重判案卷及所有未结案执行中案卷。
 
         #658：旧案本回合刚获 pending 颁布 verdict（如 stalled→backed 后顺颁）
@@ -771,18 +776,19 @@ class DossierStore:
         ).fetchall()
         visible = []
         for row in rows:
-            payload = json.loads(str(row["payload_json"] or "{}"))
-            policy = dossier_action_policy(row["action_type"], payload)
-            # Admission-owned effects never run through the simulator again.
+            if str(row["action_type"]) == "secret_order":
+                # Admission-owned effects never run through the simulator again.
+                continue
+            # 单一解析口：hydrate 出 payload 后同一份结果既判策略又供下游，载荷只解一次。
+            item = hydrate_dossier_row(row)
+            policy = dossier_action_policy(item["action_type"], item["payload"])
             # An in-transit dossier remains visible as execution context until
             # its execution verdict closes it, however.
-            if str(row["action_type"]) == "secret_order":
-                continue
             if (
                 policy["effect_owner"] != "immediate"
-                or str(row["status"]) == "executing"
+                or str(item["status"]) == "executing"
             ):
-                visible.append(hydrate_dossier_row(row))
+                visible.append(item)
         return visible
 
     # ── write port ───────────────────────────────────────────────
