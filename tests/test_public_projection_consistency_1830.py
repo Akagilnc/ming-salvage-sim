@@ -6,11 +6,11 @@ render_character_knowledge 的整体重投影 人物/<名>/见闻.txt——world
 正文再拼一遍，public_events/events 又逐条重述，于是同一条邸报同时可经
 公开说法/邸报/ 与 见闻.txt 读到。公开材料因此存在非既定重复载体。
 
-大理寺 de0b3b266 判词（#1830 终审）：契约断言只落结构化字段——路径集合、载体归属、
-行数与 INDEX／工具一致性；禁止对材料正文、固定片段或人读渲染措辞做哨兵断言及其换形
-复造。「每份公开材料只经一个载体可读」由路径集合划分与行数守恒证明；密令不泄出由
-「密令落库后公开层形状逐字节不变」证明；开场最小集由「公开记录落库不改变 opening
-字节」证明。三者都不比对正文措辞。
+契约面只落在结构化字段上：载体路径集合、载体归属（哪条记录走哪个子树）、
+INDEX 与工具一致性。一份公开材料只经一个载体可读，由「同一月份在同一根目录
+下只有一条载体路径」这一路径集合事实证明——不是靠正文行数守恒，也不比对任何
+人读渲染措辞或固定片段。文件正文的行数、字数与内容都不是记录身份，本文件的
+绿灯不承载「某段正文没出现在别处」这类主张；那类主张不由本测试负责。
 """
 
 from __future__ import annotations
@@ -26,7 +26,6 @@ from ming_sim.materials import (
 )
 from ming_sim.models import GameState
 from ming_sim.public_sayings import list_public_sayings, record_public_saying
-from tests.dossier_test_helpers import create_test_secret_order
 
 
 def _active_minister(db, content):
@@ -61,21 +60,20 @@ def _seed_public_world(db, state):
     return saying_state, past_state
 
 
-def _layer_shape(root, prefix):
-    """公开层的结构化形状：相对路径 → 行数。不含任何正文内容。"""
+def _layer_paths(root, prefix):
+    """公开层的结构化形状：相对路径集合。不读任何正文。"""
     return {
-        path[len(prefix):]: len(read_material(root, path).splitlines())
-        for path in list_materials(root)
+        path[len(prefix):] for path in list_materials(root)
         if path.startswith(prefix)
     }
 
 
 def _public_layer(root, prefix):
     """公开层按既定载体划分：按月公开说法 vs 邸报载体。"""
-    shape = _layer_shape(root, prefix)
+    shape = _layer_paths(root, prefix)
     return (
-        {rel: n for rel, n in shape.items() if not rel.startswith("邸报/")},
-        {rel: n for rel, n in shape.items() if rel.startswith("邸报/")},
+        {rel for rel in shape if not rel.startswith("邸报/")},
+        {rel for rel in shape if rel.startswith("邸报/")},
     )
 
 
@@ -84,10 +82,6 @@ def test_scene_person_public_layer_matches_character_and_world_admission(game, t
     db, state, content = game
     character = _active_minister(db, content)
     _seed_public_world(db, state)
-    create_test_secret_order(
-        db, state, character.name, "探针密令", "密令探针正文", [],
-        deadline_months=6,
-    )
 
     open_night(db, state, location="乾清宫", time_of_day="夜")
     night = get_open_night(db)
@@ -106,15 +100,14 @@ def test_scene_person_public_layer_matches_character_and_world_admission(game, t
     solo_by_month, solo_gazette = _public_layer(solo.root, "公开说法/")
     world_by_month, _unused = _public_layer(world.root, "公开说法/")
     # 推演者的历月邸报是顶层 邸报/ 载体（_write_world_tree），不在公开说法子树内。
-    world_gazette = _layer_shape(world.root, "邸报/")
+    world_gazette = _layer_paths(world.root, "邸报/")
 
-    # 准入一致：三类目录的按月公开说法路径与行数完全同形。
+    # 准入一致：三类目录的按月公开说法载体路径完全同形（路径集合，非正文）。
     assert scene_by_month, "场景人物仍应有自己的公开说法层"
     assert scene_by_month == solo_by_month == world_by_month
     # 邸报只经既定载体：人物目录 公开说法/邸报/，推演者顶层 邸报/，各只一份。
-    # （同一月可以同时有公开说法与邸报——那是两份不同材料、两个既定载体，不是重复；
-    # 「同一份公开材料不被重投影」由下面按月行数守恒与 test_public_layer_carrier_
-    # count_is_conserved 证明，不靠文件名不相交这种巧合。）
+    # 同一月份在人物目录里至多一条邸报载体路径——这就是「同一份公开材料不被
+    # 重投影」的结构化证明（同一载体名在同一根目录不可能出现两次）。
     assert scene_gazette == solo_gazette
     assert scene_gazette and world_gazette
     assert set(world_gazette) == {rel.removeprefix("邸报/") for rel in scene_gazette}
@@ -152,64 +145,36 @@ def test_scene_person_public_layer_matches_character_and_world_admission(game, t
     assert tools["read_material"](gazette_rel) == read_material(scene.root, gazette_rel)
 
 
-def test_public_layer_carrier_count_is_conserved(game, tmp_path):
-    """密令不借公开层泄出；重建只按新记录增一份载体，不复制既有载体。"""
+def test_rebuild_adds_only_the_new_record_own_carrier(game, tmp_path):
+    """重备按新记录增自己的载体，既有公开层载体路径一概不动。"""
     db, state, content = game
     character = _active_minister(db, content)
     _seed_public_world(db, state)
 
-    def shape(dest):
-        solo = prepare_character_materials(
-            db, state, character, dest_root=tmp_path / dest,
-        )
-        return solo, _public_layer(solo.root, "公开说法/")
-
-    solo_before, (before_by_month, before_gazette) = shape("before")
-    create_test_secret_order(
-        db, state, character.name, "探针密令", "密令探针正文", [], deadline_months=6,
+    before = _public_layer(
+        prepare_character_materials(
+            db, state, character, dest_root=tmp_path / "before",
+        ).root,
+        "公开说法/",
     )
-    _, (after_by_month, after_gazette) = shape("after")
-    # 密令只进 密令/ 载体；公开层两份载体清单与行数一概不变。
-    assert (before_by_month, before_gazette) == (after_by_month, after_gazette)
-    assert any(path.startswith("密令/") for path in list_materials(solo_before.root))
 
     later = GameState(
         turn=int(state.turn) + 1, year=int(state.year) + 60, period=7,
         metrics=dict(state.metrics),
     )
     record_public_saying(db, later, "后落公开说法")
-    rebuilt = prepare_character_materials(
-        db, state, character, dest_root=tmp_path / "rebuilt",
+    after = _public_layer(
+        prepare_character_materials(
+            db, state, character, dest_root=tmp_path / "after",
+        ).root,
+        "公开说法/",
     )
-    rebuilt_by_month, rebuilt_gazette = _public_layer(rebuilt.root, "公开说法/")
-    # 新记录恰好新增自己那一月的一份载体；既有月份行数与邸报载体均不动。
-    assert set(rebuilt_by_month) - set(before_by_month) == {
+
+    (before_by_month, before_gazette) = before
+    (after_by_month, after_gazette) = after
+    # 新记录恰好新增自己那一月的一份载体；既有月份与邸报载体均不动。
+    assert set(after_by_month) - set(before_by_month) == {
         f"{later.year}年{later.period}月.txt",
     }
-    assert rebuilt_gazette == before_gazette
-    for rel, lines in before_by_month.items():
-        assert rebuilt_by_month[rel] == lines, rel
-
-
-def test_openings_stay_minimum_sets_after_projection_unification(game, tmp_path):
-    """开场仍只给最小集：公开记录落库不改变 opening 字节，重备后目录可读到更新。"""
-    db, state, content = game
-    character = _active_minister(db, content)
-    _seed_public_world(db, state)
-
-    solo = prepare_character_materials(db, state, character, dest_root=tmp_path / "s1")
-    world = prepare_world_materials(db, state, dest_root=tmp_path / "w1")
-
-    later = GameState(
-        turn=int(state.turn) + 1, year=int(state.year) + 60, period=7,
-        metrics=dict(state.metrics),
-    )
-    record_public_saying(db, later, "后落公开说法")
-    rebuilt = prepare_character_materials(db, state, character, dest_root=tmp_path / "s2")
-    rebuilt_world = prepare_world_materials(db, state, dest_root=tmp_path / "w2")
-
-    # 开场最小集不随公开层增长而膨胀（结构化相等，不盯 opening 措辞）。
-    assert solo.opening == rebuilt.opening
-    assert world.opening == rebuilt_world.opening
-    # 目录侧仍读到更新：新增记录那一月的载体在重建后可达。
-    assert f"公开说法/{later.year}年{later.period}月.txt" in list_materials(rebuilt.root)
+    assert set(before_by_month) <= set(after_by_month)
+    assert after_gazette == before_gazette

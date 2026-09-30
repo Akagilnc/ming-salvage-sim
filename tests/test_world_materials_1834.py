@@ -70,9 +70,8 @@ def test_prepare_writes_typed_tree_with_board_affairs_and_gazette_index(game, tm
         line for line in index.splitlines()
         if line.strip() == gazette_rel or line.strip().startswith(gazette_rel + " ")
     )
-    assert reign_period_label(past_year, past_period) in gazette_line.split()
-    assert "辽东告急" in gazette_line.split()
-    assert "历月邸报正文" not in gazette_line
+    # 索引行恰为 路径 + 朝代月标签 + 已入档标题三段，不夹带邸报正文。
+    assert set(gazette_line.split()) == {gazette_rel, reign_period_label(past_year, past_period), "辽东告急"}
 
     # 无裸副本：不得直接倒出世界库/JSON。
     assert not any(n.lower().endswith((".db", ".sqlite", ".sqlite3", ".json")) for n in names)

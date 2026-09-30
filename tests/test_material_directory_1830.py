@@ -251,15 +251,16 @@ def test_character_materials_exclude_legacy_raw_turn_report_and_keep_public_gaze
 ):
     """#883/#1832: raw turn_reports do not authorize person gazette files.
 
-    Typed public counterparts still land under 公开说法/邸报/.
+    Typed public counterparts still land under 公开说法/邸报/。契约只落结构化
+    字段：载体路径集合（数量与所属月份）、INDEX 行只由路径＋朝代月标签＋已入档
+    标题拼成。不扫描合并正文找固定片段——载体归属与准入由路径集合承担。
     """
     db, state, content = game
     character = _active_minister(db, content)
-    legacy_marker = "LEGACY_RAW_GAZETTE_SHOULD_NOT_LEAK"
     db.conn.execute(
         "INSERT INTO turn_reports (turn, year, period, report, attendant_message) "
         "VALUES (?, ?, ?, ?, '')",
-        (max(1, int(state.turn) + 7), 1628, 1, legacy_marker),
+        (max(1, int(state.turn) + 7), 1628, 1, "raw turn report body"),
     )
     db.conn.commit()
 
@@ -269,14 +270,13 @@ def test_character_materials_exclude_legacy_raw_turn_report_and_keep_public_gaze
         past = GameState(
             turn=month, year=1627, period=month, metrics=dict(state.metrics),
         )
-        body = f"PUBLIC_GAZETTE_MONTH_{month}"
         db.record_public_knowledge_event(
-            past, "邸报", body, source_id=f"turn_report:{month}:public",
+            past, "邸报", f"gazette body {month}", source_id=f"turn_report:{month}:public",
         )
         db.conn.execute(
             "INSERT OR REPLACE INTO turn_reports (turn, year, period, report, attendant_message) "
             "VALUES (?, ?, ?, ?, '')",
-            (month, 1627, month, body),
+            (month, 1627, month, f"gazette body {month}"),
         )
     db.conn.execute(
         "UPDATE turn_reports SET title=? WHERE turn=?",
@@ -289,23 +289,20 @@ def test_character_materials_exclude_legacy_raw_turn_report_and_keep_public_gaze
     )
     names = list_materials(prepared.root)
     gazette_paths = [p for p in names if p.startswith("公开说法/邸报/")]
-    assert len(gazette_paths) == 7
-    blob = "\n".join(read_material(prepared.root, p) for p in names if p != "INDEX.txt")
-    assert legacy_marker not in blob
-    assert not any(p.startswith("邸报/") and not p.startswith("公开说法/") for p in names)
-    for month in range(1, 8):
-        assert any(f"1627年{month}月.txt" in p for p in gazette_paths)
-        assert f"PUBLIC_GAZETTE_MONTH_{month}" in blob
+    # 载体路径集合恰是七份已入档 typed 公开邸报；那份只有 raw report 的 1628 年
+    # 记录不产生任何人物邸报载体。
+    assert gazette_paths == [
+        f"公开说法/邸报/1627年{month}月.txt" for month in range(1, 8)
+    ]
+    assert not any(p.startswith("邸报/") for p in names)
     index_lines = read_material(prepared.root, "INDEX.txt").splitlines()
     rel = next(p for p in gazette_paths if p.endswith("1627年1月.txt"))
     titled = next(
         line for line in index_lines
         if line.strip() == rel or line.strip().startswith(rel + " ")
     )
-    assert rel.startswith("公开说法/邸报/")
-    assert reign_period_label(1627, 1) in titled.split()
-    assert "辽东标题" in titled.split()
-    assert "PUBLIC_GAZETTE_MONTH_1" not in titled
+    # 索引行 = 路径 + 朝代月标签 + 已入档标题；不夹带报告正文。
+    assert set(titled.split()) == {rel, reign_period_label(1627, 1), "辽东标题"}
 
 
 def test_secret_order_materials_keep_full_content_and_fail_loud_on_db_error(
