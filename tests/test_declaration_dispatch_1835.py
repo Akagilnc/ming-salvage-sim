@@ -806,3 +806,108 @@ def test_staging_onto_already_settled_decree_ref_is_rejected_not_stranded(game):
     assert row["c"] == 0
     facts_after = db.textual_facts.readable_materials(subject_kind="character", subject_id=minister)
     assert [f.body for f in facts_after] == ["旨三：首次暂存"]
+
+
+def _emperor_turn(db, state, minister: str, text: str) -> int:
+    """本轮口谕源轮（真表形）：用户消息先落，chat_turns 再绑 user_message_id。"""
+    mid = db.append_chat_message(minister, int(state.turn), "user", text)
+    ctid = db.create_chat_turn(state, minister, "test-sess", 0, status="active")
+    db.update_chat_turn_messages(ctid, user_message_id=int(mid))
+    db.conn.commit()
+    return int(ctid)
+
+
+def _covert_task() -> dict:
+    from tests.dossier_test_helpers import TYPED_COVERT_TASK
+    return dict(TYPED_COVERT_TASK)
+
+
+def test_new_secret_order_declaration_lands_through_the_single_write_mouth(game):
+    """#1835 D-flow：声明里的密令新建走统一分派入口，不导入已删除的落地函数。
+
+    真实分派→暂存确认闸→颁诏 commit_pending_actions 成案，密令按原文可读。
+    """
+    db, state, _ = game
+    minister = _minister(db)
+    ctid = _emperor_turn(db, state, minister, "密查辽饷侵冒")
+    body = "  密查辽东军饷侵冒，具册以闻。  "
+    declaration = {
+        "commissions": [{
+            "secret_order": {
+                "title": "暗查辽饷",
+                "content": body,
+                "assignee": minister,
+                "tags": ["辽饷"],
+                "deadline_months": 3,
+                "covert_task": _covert_task(),
+            },
+            "text": body,
+        }],
+    }
+
+    result = dispatch_declaration(
+        db, state, declaration, minister_name=minister, source_chat_turn_id=ctid,
+    )
+
+    assert result.commissions.rejected == []
+    assert len(result.commissions.applied) == 1
+    staged_id = int(result.commissions.applied[0]["id"])
+
+    row = db.conn.execute(
+        "SELECT kind, action, payload_json FROM pending_actions WHERE id=?", (staged_id,),
+    ).fetchone()
+    assert row["kind"] == "secret_order" and row["action"] == "新建"
+    payload = json.loads(row["payload_json"])
+    assert payload["content"] == body  # 正文原样落暂存，代码不 strip（P6）
+    assert int(payload["origin_chat_message_id"]) > 0  # 密言溯源钉在口谕源轮
+
+    # 确认闸：未批红前不进真实密令表。
+    assert db.list_secret_orders() == []
+
+    committed = db.commit_pending_actions(state, content=db.content, minister_name=minister)
+    assert [(c["kind"], c["action"]) for c in committed] == [("secret_order", "新建")]
+    orders = db.get_active_secret_orders_for_minister(minister)
+    assert len(orders) == 1
+    assert orders[0]["content"] == body
+    # 批红后暂存行落定，且真实密令挂上本条暂存（#1376 回传同一 id）。
+    assert int(committed[0]["secret_order_id"]) == int(orders[0]["id"])
+    status = db.conn.execute(
+        "SELECT status FROM pending_actions WHERE id=?", (staged_id,),
+    ).fetchone()
+    assert status["status"] == "committed"
+
+
+def test_secret_order_missing_frozen_task_is_rejected_per_item_without_killing_sibling(game):
+    """缺冻结差务契约的密令逐项拒收，同批另一件交办照落（ADR 0015）。"""
+    db, state, _ = game
+    minister = _minister(db)
+    ctid = _emperor_turn(db, state, minister, "密查辽饷，另遣使赈济陕西")
+
+    declaration = {
+        "commissions": [
+            {
+                "secret_order": {"title": "缺差务", "content": "无契约的密令"},
+                "text": "无契约的密令",
+            },
+            {"text": "遣使赈济陕西"},
+        ],
+    }
+
+    result = dispatch_declaration(
+        db, state, declaration, minister_name=minister, source_chat_turn_id=ctid,
+    )
+
+    assert len(result.commissions.applied) == 1
+    assert result.commissions.applied[0]["kind"] == "directive"
+    assert len(result.commissions.rejected) == 1
+    assert result.commissions.rejected[0].category == "invalid_shape"
+    assert result.commissions.rejected[0].item["secret_order"]["title"] == "缺差务"
+    # 拒收是逐项的：另一件交办的暂存行没有跟着被回滚。
+    rows = db.conn.execute(
+        "SELECT COUNT(*) c FROM pending_actions WHERE kind='directive' AND status='pending'",
+    ).fetchone()
+    assert rows["c"] == 1
+    reports = db.conn.execute(
+        "SELECT COUNT(*) c FROM rejection_reports WHERE turn=?", (int(state.turn),),
+    ).fetchone()
+    assert reports["c"] == 1

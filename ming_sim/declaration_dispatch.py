@@ -1048,6 +1048,30 @@ def _attach_commission_affair(
     return True
 
 
+def _secret_order_pending_payload(
+    secret: Mapping[str, object], actor: str, *, origin_chat_message_id: int,
+) -> Dict[str, Any]:
+    """密令新建的 typed 暂存载荷——只搬声明自带字段，不合成或裁剪玩家可感文案
+    （ADR 0142 / P6：标题与正文逐字过手）。
+
+    落库语义仍归既有写核 ``GameDB._apply_pending_action``（kind=secret_order、
+    action=新建）：本函数只把冻结差务契约与口谕源轮钉交给它，真实密令表要等
+    批红（``commit_pending_actions``）才成案。
+    """
+    payload: Dict[str, Any] = {
+        "title": str(secret.get("title") or ""),
+        "content": str(secret.get("content") or ""),
+        "assignee": str(secret.get("assignee") or actor),
+        "tags": list(secret["tags"]) if isinstance(secret.get("tags"), list) else [],
+        "deadline_months": secret.get("deadline_months", 0),
+    }
+    covert_task = secret.get("covert_task")
+    if isinstance(covert_task, Mapping):
+        payload["covert_task"] = dict(covert_task)
+    payload["origin_chat_message_id"] = int(origin_chat_message_id)
+    return payload
+
+
 def _dispatch_commissions(
     db: Any, state: Any, raw: object, *, minister_name: str, source: Provenance,
     source_chat_turn_id: int = 0,
@@ -1202,11 +1226,9 @@ def _dispatch_commissions(
                 _reject(rejected, item, "密令新建载荷须为独立对象", "invalid_shape", source)
                 continue
             from ming_sim.cli_backend import secret_order_can_land
-            from ming_sim.action_materialize import land_or_recover_new_secret_order
             if not secret_order_can_land(dict(secret)):
                 _reject(rejected, item, "密令缺标题、内容或冻结任务契约", "invalid_shape", source)
                 continue
-            out: Dict[str, Any] = {}
             source_turn = db.conn.execute(
                 "SELECT minister_name, user_message_id FROM chat_turns "
                 "WHERE id=? AND turn=? AND status='active'",
@@ -1215,15 +1237,16 @@ def _dispatch_commissions(
             if source_turn is None or source_turn["user_message_id"] is None:
                 _reject(rejected, item, "密令缺本轮口谕源轮", "missing_ref", source)
                 continue
-            pinned = dict(secret)
-            pinned["origin_chat_message_id"] = int(source_turn["user_message_id"])
             actor = str(minister_name or "").strip() or str(source_turn["minister_name"])
-            land_or_recover_new_secret_order(
-                db=db, turn=int(state.turn), minister_name=actor,
-                secret=pinned, player_message=str(item.get("text") or ""),
-                llm_config=None, out=out,
+            # 与同段的密令修改/催办同写核：暂存进确认闸，批红才成案。
+            row_id = db.stage_pending_action(
+                int(state.turn), "secret_order", "新建", actor,
+                _secret_order_pending_payload(
+                    secret, actor,
+                    origin_chat_message_id=int(source_turn["user_message_id"]),
+                ),
             )
-            applied.append({"id": out["pending_action_id"], "kind": "secret_order"})
+            applied.append({"id": row_id, "kind": "secret_order"})
             continue
 
         assignment = item.get("assignment")
