@@ -8,7 +8,6 @@ import {
   routeRefreshDecisions,
   routeRetryDecisions,
 } from "./decisionRouting";
-import { forwardSteamEvents } from "./steamEvents";
 import type {
   DecisionChoice, GameState, PendingActionFailure, PendingDecision,
 } from "./types";
@@ -177,7 +176,6 @@ export function useSettlementFlow({
   const openGazetteAfterAdvance = async (payload: Record<string, unknown> | null | undefined) => {
     const data = payload || {};
     const generation = sessionGeneration.current;
-    await forwardSteamEvents(data);
     if (generation !== sessionGeneration.current) return;
     // 新月盘面：立刻离开同会话核账面，避免 busy 残留把拟诏等关掉。
     setBusy("");

@@ -1,11 +1,9 @@
 import React, { act } from "react";
-import { readFileSync } from "node:fs";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "./main";
 import { SETTLEMENT_CLOSED_REASON } from "./settlementPresentation";
-import { measureElectronLayout } from "./testSupport/electronLayout";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 // jsdom 无布局：给 stage 非零尺寸，使 GameHud ready=true（地图/局势框/上月已结入口可挂）。
@@ -1821,28 +1819,18 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     expect(retry).not.toBeNull();
     expect(retry!.disabled).toBe(false);
 
-    // Measure the actual App-mounted banner, not a replacement component fixture.
-    const geometry = await measureElectronLayout<{ visible: boolean; hit: boolean; fits: boolean; messageFits: boolean }>(
-      host.outerHTML,
-      ["base", "hud2", "decision"].map((name) => readFileSync(`${process.cwd()}/src/styles/${name}.css`, "utf8")).join("\n"),
-      [{ width: 800, height: 600 }, { width: 360, height: 640 }],
-      `(() => {
-        const banner = document.querySelector('.recovery-banner');
-        const button = banner?.querySelector('button');
-        const message = banner?.querySelector('.recovery-banner-message');
-        if (!banner || !button || !message) return { error: 'missing mounted recovery action' };
-        const b = button.getBoundingClientRect();
-        const r = banner.getBoundingClientRect();
-        const x = b.left + b.width / 2, y = b.top + b.height / 2;
-        return {
-          visible: b.width > 0 && b.height > 0 && b.left >= 0 && b.right <= innerWidth && b.top >= 0 && b.bottom <= innerHeight,
-          hit: document.elementFromPoint(x, y) === button && !button.disabled,
-          fits: r.left >= 0 && r.right <= innerWidth,
-          messageFits: message.scrollWidth <= message.clientWidth,
-        };
-      })()`,
-    );
-    for (const result of geometry) expect(result).toEqual({ visible: true, hit: true, fits: true, messageFits: true });
+    // #1888：Electron 壳退役后，真实 Chromium 量几何的临时工装（testSupport/electronLayout）
+    // 只为该壳服务，随之退役。此处保留 jsdom 层的可达性断言：横幅、按钮与长错误包消息在
+    // App 实际挂载面上可取、按钮可点。像素/命中几何改由真实桌面包装（PyInstaller + pywebview）
+    // 走一次召对／过月人工核，票面「核的是启动与能力，不锁 UI 字句或像素」。
+    const banner = host.querySelector(".recovery-banner");
+    expect(banner).not.toBeNull();
+    const bannerButton = banner!.querySelector("button") as HTMLButtonElement;
+    expect(bannerButton).not.toBeNull();
+    expect(bannerButton.disabled).toBe(false);
+    const bannerMessage = banner!.querySelector(".recovery-banner-message");
+    expect(bannerMessage).not.toBeNull();
+    expect(bannerMessage!.textContent).toContain(errorPackPath);
 
     unmountTrackedRoots();
     const host2 = await mountApp();
