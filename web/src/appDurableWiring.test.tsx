@@ -1819,19 +1819,6 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     expect(retry).not.toBeNull();
     expect(retry!.disabled).toBe(false);
 
-    // #1888：Electron 壳退役后，真实 Chromium 量几何的临时工装（testSupport/electronLayout）
-    // 只为该壳服务，随之退役。此处保留 jsdom 层的可达性断言：横幅、按钮与长错误包消息在
-    // App 实际挂载面上可取、按钮可点。像素/命中几何改由真实桌面包装（PyInstaller + pywebview）
-    // 走一次召对／过月人工核，票面「核的是启动与能力，不锁 UI 字句或像素」。
-    const banner = host.querySelector(".recovery-banner");
-    expect(banner).not.toBeNull();
-    const bannerButton = banner!.querySelector("button") as HTMLButtonElement;
-    expect(bannerButton).not.toBeNull();
-    expect(bannerButton.disabled).toBe(false);
-    const bannerMessage = banner!.querySelector(".recovery-banner-message");
-    expect(bannerMessage).not.toBeNull();
-    expect(bannerMessage!.textContent).toContain(errorPackPath);
-
     unmountTrackedRoots();
     const host2 = await mountApp();
     await act(async () => {

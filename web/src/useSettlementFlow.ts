@@ -172,10 +172,18 @@ export function useSettlementFlow({
     if (!advanceRefreshFailed) setPostAdvanceOverlayHold(false);
   }, [advanceRefreshFailed]);
 
-  /** #1852：月份已推进 → 刷账本 + 本面开阅读态（不 reload）。 */
-  const openGazetteAfterAdvance = async (payload: Record<string, unknown> | null | undefined) => {
+  /**
+   * #1852：月份已推进 → 刷账本 + 本面开阅读态（不 reload）。
+   *
+   * #1888：回执归属必须由**发起时**的会话代次判定。`generation` 取自入口（请求发起处），
+   * 不是在此现读——现读即拿自己跟自己比，闸门恒开，退局后才到的旧局回执会写进新局。
+   * 推进代次的接缝仍是既有 clearSettlementHudError（退局／再入局），不另造状态机。
+   */
+  const openGazetteAfterAdvance = async (
+    payload: Record<string, unknown> | null | undefined,
+    generation: number,
+  ) => {
     const data = payload || {};
-    const generation = sessionGeneration.current;
     if (generation !== sessionGeneration.current) return;
     // 新月盘面：立刻离开同会话核账面，避免 busy 残留把拟诏等关掉。
     setBusy("");
@@ -222,6 +230,8 @@ export function useSettlementFlow({
   };
 
   const issueDecree = async () => {
+    // #1888：发起即取会话代次，回执据此判归属（见 openGazetteAfterAdvance）。
+    const generation = sessionGeneration.current;
     beginSettlementWait();
     setError("");
     // #1277/#1351：携客户端所见 turn 作令牌；409 且服务端已更大 → 视作已推进刷新，不报假错。
@@ -290,7 +300,7 @@ export function useSettlementFlow({
         return;
       }
       // #1852：写成即推进——loadState + 本面阅读态；不整页 reload。
-      await openGazetteAfterAdvance(outcome.data || {});
+      await openGazetteAfterAdvance(outcome.data || {}, generation);
       setBusy("");
       return;
     } catch (err) {
@@ -311,6 +321,8 @@ export function useSettlementFlow({
   // dossier 批红 choice 须带回 dossier_id / dossier_decision（#1490）；勿收窄剥字段。
   // #1620：成功前不清 pendingDecisions——失败时 DecisionModal 不卸载，已选批语自然保留。
   const submitDecisions = async (choices: DecisionChoice[]) => {
+    // #1888：发起即取会话代次，回执据此判归属。
+    const generation = sessionGeneration.current;
     setBusy("月末结算");
     setError("");
     setPausedDecisionError("");
@@ -340,7 +352,7 @@ export function useSettlementFlow({
         setBusy("");
         return;
       }
-      await openGazetteAfterAdvance(outcome.data || {});
+      await openGazetteAfterAdvance(outcome.data || {}, generation);
       setBusy("");
       return;
     } catch (err) {
@@ -359,6 +371,8 @@ export function useSettlementFlow({
   // 真空仍禁用；draft/pending 走 issueDecree，不经此路。
   // #1796：与盖玺同 busy 标——同会话立即收拟诏台 + 切核账期面。
   const advanceWithoutEdict = async () => {
+    // #1888：发起即取会话代次，回执据此判归属。
+    const generation = sessionGeneration.current;
     beginSettlementWait(true);
     setError("");
     // #1351 A1：携客户端所见 turn 作令牌；409 且服务端已更大 → 视作已推进刷新，不报假错。
@@ -400,7 +414,7 @@ export function useSettlementFlow({
       await openGazetteAfterAdvance({
         ...data,
         report: data.state?.previous_summary,
-      });
+      }, generation);
     } catch (err: any) {
       const detail = err instanceof ApiRequestError
         ? err.detail

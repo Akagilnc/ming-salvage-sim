@@ -1,8 +1,9 @@
 # Steam Auth Server
 
 This is the trusted backend endpoint for Steam login. #1888 retired the Electron
-client shell, so no shipped client calls it today; it is kept for a future
-Steam release.
+client shell, so no shipped client calls it today. Its transport/auth residue is
+owned by #1816, which retires the login seam server-side; this file documents
+what still exists until that work lands, and makes no retention decision.
 
 Do not bundle this server or `STEAM_PUBLISHER_WEB_API_KEY` with the game client.
 
@@ -28,8 +29,8 @@ uvicorn server.steam_auth_server:app --host 127.0.0.1 --port 8080
 ```
 
 #1888：Electron 客户端壳已退役，客户端调用方（`window.steam` 与 `web/electron/`）
-已撤下；本文件描述的 Steam 登录认证服务端暂留以备后按需接回，正式桌面包装是
-PyInstaller + pywebview（见 `scripts/build_release.sh`）。
+已撤下；正式桌面包装是 PyInstaller + pywebview（见 `scripts/build_release.sh`）。
+本服务端本身归 #1816 处置，本票不代删、也不代其决定去留。
 
 ## Client Payload
 
