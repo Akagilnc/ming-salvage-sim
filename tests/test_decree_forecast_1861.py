@@ -368,7 +368,7 @@ def test_held_rejudgments_overlap_instead_of_waiting_in_one_worker(game, monkeyp
         ids.append(dossier_id)
     db.conn.commit()
     open_night(db, state)
-    parallel = LegOverlap(monkeypatch)
+    parallel = LegOverlap()
 
     def judge(_agent, prompt, **_kwargs):
         dossier = json.loads(prompt)["dossiers"][0]
@@ -377,10 +377,12 @@ def test_held_rejudgments_overlap_instead_of_waiting_in_one_worker(game, monkeyp
         })
 
     def simulate(_agent, _prompt, **_kwargs):
-        # 重叠证据：首腿停在替身里等同伙。生产若退回单 worker 串行，
-        # 第二条腿永远到不了 → peak 停在 1 → 本用例红。
-        parallel.arrive()
-        return "预推"
+        # 记录本腿跑推演的区间；事后由 peak 判两条腿是否真的重叠（#1898）。
+        parallel.enter()
+        try:
+            return "预推"
+        finally:
+            parallel.leave()
 
     monkeypatch.setattr(decree_mod, "run_agent_text", judge)
     monkeypatch.setattr(forecast_mod.agents, "run_agent_text", simulate)
@@ -389,16 +391,16 @@ def test_held_rejudgments_overlap_instead_of_waiting_in_one_worker(game, monkeyp
         lambda *_a, **_k: {"commissions": []},
     )
     sess = _sess(db, state, content, monkeypatch, lambda *_a, **_k: {})
-    try:
-        assert forecast_mod.schedule_held_decree_forecasts(sess) is True
-        # 先落会合、再排空：缺席腿由 settle 放闸，否则腿与排空互锁成挂死。
-        assert parallel.settle(), "两条留中复判腿未都到达"
-        wait_pending_writes(sess)
-        # 契约：两条腿确实同时在飞（不在单 worker 里排队）。
-        assert parallel.peak == 2, "两条留中复判腿未重叠"
-    finally:
-        parallel.release_all()
-        wait_pending_writes(sess)
+    assert forecast_mod.schedule_held_decree_forecasts(sess) is True
+    wait_pending_writes(sess)
+    # 两条腿都真跑到了模型调用（缺席即红字），且确实重叠（不在单 worker 里排队）。
+    assert parallel.arrived == 2, "两条留中复判腿未都到达"
+    # 契约（用例名所指）：两条腿的模型调用应重叠，而不是在单 worker 里排队。
+    # 实测当前生产不满足：两条腿共用一把 write_lock（decree_forecast.py 的
+    # scan_and_fanout 建锁、_submit_snapshot_job 持锁跑 snapshot），模型调用段
+    # 实测间隔 0.2s、零重叠 —— 属 P5「可并行的 LLM 调用被串起来」的生产缺陷，
+    # 已上呈 owner。故本断言现为红，是它在如实报告该缺陷，不是误报。
+    assert parallel.peak == 2, "两条留中复判腿未重叠（生产串行：共用 write_lock）"
     for dossier_id, pending_id in zip(ids, pending_ids):
         stale_ref = pending_action_decree_ref(pending_id, 1)
         held_ref = held_dossier_decree_ref(dossier_id)
@@ -447,11 +449,17 @@ def test_same_local_ids_on_two_saves_both_stage(game, _game_template_path, monke
     shutil.copyfile(_game_template_path, copy_path)
     other = GameDB(str(copy_path), content)
 
-    parallel = LegOverlap(monkeypatch)
+    parallel = LegOverlap()
 
     def judge(_agent, prompt, **_kwargs):
-        parallel.arrive()
-        dossier = json.loads(prompt)["dossiers"][0]
+        parallel.enter()
+        try:
+            dossier = json.loads(prompt)["dossiers"][0]
+            return json.dumps({
+                "verdicts": [{"dossier_id": dossier["id"], "decision": "promulgated"}],
+            })
+        finally:
+            parallel.leave()
         return json.dumps({
             "verdicts": [{"dossier_id": dossier["id"], "decision": "promulgated"}],
         })
@@ -490,11 +498,11 @@ def test_same_local_ids_on_two_saves_both_stage(game, _game_template_path, monke
                 pending_action_decree_ref(pending_id, 1),
             )
             assert len(stored) == 1 and stored[0].verdict["decision"] == "promulgated"
-        assert parallel.settle(), "两档腿未都到达"
-        # 契约：两档的腿确实同时在飞。
-        assert parallel.peak == 2, "两档腿未重叠"
+        assert parallel.arrived == 2, "两档腿未都到达"
+        # 契约：两档腿的模型调用应重叠。实测当前生产为零重叠（同 held 用例，
+        # 串行根因为共用 write_lock），属 P5 生产缺陷，已上呈 owner。
+        assert parallel.peak == 2, "两档腿未重叠（生产串行）"
     finally:
-        parallel.release_all()
         for sess, *_rest in armed:
             wait_pending_writes(sess)
         other.close()
