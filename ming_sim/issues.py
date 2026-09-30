@@ -3450,33 +3450,6 @@ def _content_population_effect_for_save(
     return scaled
 
 
-def _issue_effect_legacy_person_changes(
-    effect: Dict[str, object],
-) -> List[Dict[str, object]]:
-    """国策 effect 里存量旧人物键 → 人物变更项（#1835 F1 的存量数据兼容口）。
-
-    只吃 ``character_status_changes``（国策结案唯一实际使用过的旧人物键，见
-    issue 表 effect_on_resolve / ongoing_effects）。刻意只保 status 处置一面：
-    其余旧键在国策效果面从未有真实存量数据，凭空翻译等于新造能力
-    （ADR 0009 决定 11）。非 dict 项不在此静默丢——由调用方的全局严格校验
-    （:func:`_apply_issue_entities` 的 raise 口径）负责。
-    """
-    changes: List[Dict[str, object]] = []
-    for index, raw in enumerate(effect.get("character_status_changes") or []):
-        if not isinstance(raw, dict):
-            # 全局严格（不静默）：非 dict 项直接抛错，不无声丢（CMR F7）。
-            raise ValueError(f"character_status_changes 含非法非 dict 项：{raw!r}（第 {index} 项）")
-        changes.append({
-            "name": raw.get("name", ""),
-            # 旧键的 status 是「迁入的状态」，动作恒为 处置（ADR 0009 决定：
-            # character_status_changes 只有存殁去向一个意图）。
-            "动作": "处置",
-            "status": raw.get("status", ""),
-            **{key: raw[key] for key in ("reason_code", "reason", "origin_ref") if key in raw},
-        })
-    return changes
-
-
 def _apply_issue_entities(
     db: GameDB,
     state: GameState,
@@ -3568,29 +3541,10 @@ def _apply_issue_entities(
             if not isinstance(it, dict):
                 raise ValueError(f"{label} 人物变更 非法（全局严格，不静默）：第 {idx} 项非 dict")
     person_changes = normalize_person_changes({"人物变更": raw_person_changes or []})
-    if not person_changes:
-        # #1835 F1：声明 delta 侧的旧四人物键已退役，但国策 effect（issue 表里持久化
-        # 的 effect_on_resolve / ongoing_effects，来自更早的存档与 enrich 产出）不
-        # 经 sanitize_delta_shape，仍可能带旧键。这条读取是国策效果面的存量数据
-        # 兼容，不是声明契约的平行写路——翻译后同样只经 _apply_person_changes 一个
-        # 人物核算核。此处不做 legacy_gate 注记（那是旧 delta 月末闸的产物）。
-        status_person_changes = _issue_effect_legacy_person_changes(effect)
-        if status_person_changes:
-            results = _apply_person_changes(
-                db,
-                state,
-                status_person_changes,
-                content=effective_content(),
-                llm_config=llm_config,
-                source="system_simulation",
-                derived_from=label,
-                external_transaction=not commit,
-                origin_ref=origin_ref,
-                require_origin=True,
-            )
-            _raise_on_rejected(results, "人物变更")
-            if applied_person_changes is not None:
-                applied_person_changes.extend(results)
+    # #1835 F1：国策 effect 只认 人物变更 一条人物流。旧四人物键在声明 delta 侧
+    # 已随 C0 声明契约退役，这里曾为「旧存档 issue 表里仍存 character_status_changes」
+    # 留过一条翻译支路——它只为旧档服务，且凭空虚构了 issue 效果面从未有存量数据的
+    # 旧键能力，故随替代一并退出。旧键现由上层 effect 校验与逐项拒收负责，不静默翻写。
     if person_changes:
         results = _apply_person_changes(
             db,
@@ -5932,7 +5886,9 @@ def sanitize_delta_shape(extracted: dict) -> tuple[dict, list[tuple[str, dict, s
     返回拒收记录。Flat faction integers remain legal; flat class items reach the
     class adapter and are rejected per item as ``invalid_enum`` under the #564 contract.
     """
-    from ming_sim.simulation import EMPTY_EXTRACTION  # 懒 import 避 issues↔simulation 循环
+    from ming_sim.simulation import (  # 懒 import 避 issues↔simulation 循环
+        DECLARATION_EFFECT_FIELDS,
+    )
 
     if not isinstance(extracted, dict):
         raise ValueError(f"delta 必须是 object(dict)，实得 {type(extracted).__name__}")
@@ -5941,7 +5897,7 @@ def sanitize_delta_shape(extracted: dict) -> tuple[dict, list[tuple[str, dict, s
     for key, value in list(extracted.items()):
         if key == "_module_rejections":
             continue
-        if key not in EMPTY_EXTRACTION:
+        if key not in DECLARATION_EFFECT_FIELDS:
             # ADR 0015 r4：未知顶层 key＝可拆 section，拒该段留痕、其余段照落，不整份退。
             cleaned.pop(key, None)
             rejections.append(
@@ -5952,7 +5908,7 @@ def sanitize_delta_shape(extracted: dict) -> tuple[dict, list[tuple[str, dict, s
             continue
         if value is None:
             continue
-        expected = EMPTY_EXTRACTION[key]
+        expected = DECLARATION_EFFECT_FIELDS[key]
         if isinstance(expected, dict):
             if not isinstance(value, dict):
                 cleaned[key] = {}

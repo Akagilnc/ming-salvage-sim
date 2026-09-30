@@ -1174,3 +1174,30 @@ def test_secret_order_title_lands_verbatim_through_the_real_write_mouth(game):
     db.commit_pending_actions(state, content=db.content, minister_name=minister)
     order = db.get_active_secret_orders_for_minister(minister)[0]
     assert order["title"] == title  # 含首尾空白与换行，未被 strip 篡改
+
+def test_effects_reach_accounting_mouth_without_preseeded_empty_shell(game, monkeypatch):
+    """#1835 F1b（Owner 裁定 2026-09-30 授权拆旧五模块包装）：声明 effects 只把
+    **自己带的字段**送到既有核算口，不再预置一整份 ``EMPTY_EXTRACTION`` 空壳
+    （30+ 恒空容器）。此断言按真实失败形状钉：核算口收到的键集必须等于声明所带
+    字段集，且不含任何未声明的 effects 键。
+    """
+    import ming_sim.issues as issues
+
+    db, state, _ = game
+    captured: list[dict] = []
+    real = issues.apply_score_extraction
+
+    def spy(db_, state_, extracted, **kwargs):
+        captured.append(dict(extracted))
+        return real(db_, state_, extracted, **kwargs)
+
+    monkeypatch.setattr(issues, "apply_score_extraction", spy)
+    declaration = {"effects": {"metric_delta": {"民心": 1}}}
+    result = dispatch_declaration(db, state, declaration)
+
+    assert result.effects.rejected == []
+    assert len(captured) == 1
+    payload = captured[0]
+    # 键集恰为声明所带字段：其余 30+ effects 字段一个都没被预置成恒空容器。
+    assert set(payload) == {"metric_delta"}
+    assert payload["metric_delta"] == {"民心": 1}

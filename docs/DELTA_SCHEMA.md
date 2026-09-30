@@ -1,9 +1,9 @@
 # Delta Schema
 
-**真相源**：`ming_sim/simulation.py`（`EMPTY_EXTRACTION`、`ITEM_FIELD_ALIASES`、`_canonical_item_fields`、`read_beyond_intent_raw`）+ `ming_sim/issues.py`（落库守门）+ `ming_sim/constants.py`（白名单）。
+**真相源**：`ming_sim/simulation.py`（`DECLARATION_EFFECT_FIELDS`、`ITEM_FIELD_ALIASES`、`_canonical_item_fields`、`read_beyond_intent_raw`）+ `ming_sim/issues.py`（落库守门）+ `ming_sim/constants.py`（白名单）。
 
 用途：过月逐段声明由 `declaration_dispatch` 交 `apply_score_extraction` 落库；下文记录效果字段约束。**分层校验（ADR 0015 r4 终态）**：顶层非 dict（连 section 都拆不出）才整份重产；未知顶层 key＝可拆 section → 按段拒收留痕，其余 section 照落，**不整份退**；已知 section 内值/项不合法逐项拒收留痕。必须查表，不要凭"我以为"。
-产出前自查顶层字段集（与 `EMPTY_EXTRACTION` 对齐）：未知 key 不再响亮中止，但会被整段拒收留痕、白产一段——别指望守门人帮忙猜拼写。
+产出前自查顶层字段集（与 `DECLARATION_EFFECT_FIELDS` 对齐）：未知 key 不再响亮中止，但会被整段拒收留痕、白产一段——别指望守门人帮忙猜拼写。
 
 ## ADR 0055 效果分工线与 origin 槽
 
@@ -11,7 +11,7 @@
 - **叙事性政令**（新政 / 工程 / 改革等无结构化 payload 者）：效果经推演-extractor 链涌现；顺颁当月进推演正文，批红强颁自次月进（T+1）；打回受硬约束零效果。两路效果记录均带 origin 回指。
 - **origin 槽**：各 section 的 `origin_ref` / `dossier_id` / `origin_kind` 即回指锚（见下表各字段）；`盘面自发` 仅用于非旨意自然演化。dedup 只辖结构化类，不得误杀叙事政令的合法抽取。
 
-## 顶层字段（容器类型固定；与 EMPTY_EXTRACTION 对齐）
+## 顶层字段（容器类型固定；与 DECLARATION_EFFECT_FIELDS 对齐）
 
 ```jsonc
 {
@@ -59,7 +59,7 @@
 }
 ```
 
-C0 效果字段须用 `EMPTY_EXTRACTION` 中的键；条目字段别名由 `ITEM_FIELD_ALIASES` 规范化。未知字段按段拒收留痕，其余照落。
+C0 效果字段须用 `DECLARATION_EFFECT_FIELDS` 中的键；条目字段别名由 `ITEM_FIELD_ALIASES` 规范化。未知字段按段拒收留痕，其余照落。
 
 ---
 
@@ -436,7 +436,7 @@ personnel_secret 模块产出；settle 内经 `record_monthly_dossier_progress` 
 
 #190 流寇招安：`易主(new_power:"ming", 方式:"主动归附")` 的 `反噬` 若写势力削弱，只能指向该人物当前原势力股；写到其它流寇股会整条拒收，防「招张献忠却削李自成」。头目已死时不能 `易主`，其遗留孤儿股只能走 `power_updates` 剿股。
 
-> **旧四 key（appointments / character_status_changes / character_power_changes / office_changes）已退役（#1835 F1）**：C0 声明契约只写 `人物变更` 一条人物流。ADR 0009 决定 11 的旧 key 兼容翻译层曾只为「历史 delta / ready=1 重试真源」服务；#1846 起不再持久化 ready=1 extractor delta、恢复真源是暂存声明与落账相位，那层失去存在理由并已删除（`EMPTY_EXTRACTION` 不再列旧四键；`ming_sim/person_delta_adapter.py` 只做 `action`→`动作` 归一）。声明若仍带旧 key，由 `sanitize_delta_shape` 按 ADR 0015 逐段拒收留痕——不是静默无效。
+> **旧四 key（appointments / character_status_changes / character_power_changes / office_changes）已退役（#1835 F1）**：C0 声明契约只写 `人物变更` 一条人物流。ADR 0009 决定 11 的旧 key 兼容翻译层曾只为「历史 delta / ready=1 重试真源」服务；#1846 起不再持久化 ready=1 extractor delta、恢复真源是暂存声明与落账相位，那层失去存在理由并已删除（`DECLARATION_EFFECT_FIELDS` 不再列旧四键；`ming_sim/person_delta_adapter.py` 只做 `action`→`动作` 归一）。声明若仍带旧 key，由 `sanitize_delta_shape` 按 ADR 0015 逐段拒收留痕——不是静默无效。
 
 ### `secret_order_updates` / `covert_exec_selections`
 - updates：`order_id` int + `sim_note`（本月推进实况）+ 可选 `impact` + 可选布尔 `disclosed`（中文键 `泄漏结论`；可省略）。`disclosed`/`泄漏结论`：密令情节已**实际公开**才为 true（被目击、闹至公堂、承办人被拿获、目标公开反击、明发上谕、科道公开参劾等）；为 true 时触发 `secret_order_disclosure:` 公开知识事件（简报升公共面的唯一闸）。风声/警觉/暴露风险仍为不填或 false。
@@ -473,7 +473,7 @@ personnel_secret 模块产出；settle 内经 `record_monthly_dossier_progress` 
 
 | 文件 | 看什么 |
 |---|---|
-| `ming_sim/simulation.py` | `EMPTY_EXTRACTION` / `ITEM_FIELD_ALIASES` / `_canonical_item_fields` / `read_beyond_intent_raw` |
+| `ming_sim/simulation.py` | `DECLARATION_EFFECT_FIELDS` / `ITEM_FIELD_ALIASES` / `_canonical_item_fields` / `read_beyond_intent_raw` |
 | `ming_sim/issues.py` | `apply_score_extraction()` 里各 issue/new_issue 校验、`origin_kind`/`kind` 白名单 |
 | `ming_sim/db.py` | `set_character_status()` 状态白名单、各 `apply_*_deltas` 字段守门 |
 | `ming_sim/constants.py` | `REGION_*` / `ARMY_*` / `POWER_*` / `BUILDING_*` / `ECONOMY_ACCOUNTS` / `SCORE_METRICS` |

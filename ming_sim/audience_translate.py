@@ -223,14 +223,14 @@ def build_translation_target_grounding(db: Any, state: Any = None) -> str:
 
 def build_c0_declaration_shape() -> str:
     """C0 唯一输出形状，召对与过月转译共用。"""
-    # 效果 delta 的形状真源是 simulation.EMPTY_EXTRACTION；声明层不另维护字段表。
-    from ming_sim.simulation import EMPTY_EXTRACTION
+    # 效果字段真源是 simulation.DECLARATION_EFFECT_FIELDS；声明层不另维护字段表。
+    from ming_sim.simulation import DECLARATION_EFFECT_FIELDS
 
     # target_kind 表面唯一真源 = decree_vocabulary.TARGET_KINDS，禁手抄分叉。
     target_kind_hint = "|".join(sorted(TARGET_KINDS))
     effect_shape = "\n".join(
         f"    {line}" for line in json.dumps(
-            {"event_id": "仅属某事件战果时填事件 id；未填即独立", **EMPTY_EXTRACTION},
+            {"event_id": "仅属某事件战果时填事件 id；未填即独立", **DECLARATION_EFFECT_FIELDS},
             ensure_ascii=False, indent=2,
         ).splitlines()
     )

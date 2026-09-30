@@ -1,4 +1,4 @@
-"""声明形状与字段契约：EMPTY_EXTRACTION / aliases / sanitize helpers。L7。"""
+"""声明字段契约与条目别名：DECLARATION_EFFECT_FIELDS / aliases / sanitize helpers。L7。"""
 
 from __future__ import annotations
 
@@ -143,7 +143,13 @@ ITEM_FIELD_ALIASES = {
     "loyalty": "loyalty", "忠诚": "loyalty",
 }
 
-EMPTY_EXTRACTION: Dict[str, object] = {
+# C0 声明效果字段契约（#1835 F1）：键集 + 各键容器类型。它是**声明字段真源**
+# （供 sanitize_delta_shape 白名单与转译形状用），不是 extractor 时代的空壳模板：
+# 旧五模块 ``EMPTY_EXTRACTION`` 曾被声明接缝 deepcopy 成整份空提取再逐字段填
+# （旧包装），该用法随 C0 声明契约退役——声明只把**自己带的字段**直接送到领域
+# 核算口，不再预置一整份空壳。ADR 0150 决定 4 的有序登记表将来承接本契约的
+# 真源职责，届时本表改为派生视图，不双写。
+DECLARATION_EFFECT_FIELDS: Dict[str, object] = {
     "metric_delta": {},
     "economy_moves": [],
     "faction_delta": {},

@@ -38,8 +38,8 @@
 
 ## 关键技术事实（已挖过，省得重来）
 - **启动脱 key**：`GameSession` 构造即不连 LLM（连通校验只在设置页主动提交配置时跑），CLI 无 api key 能起。
-- **delta 落库单一入口**：`apply_score_extraction(db, state, extracted, …)`（经 `declaration_dispatch` 由月链调用），内部分发到 region/army/building/economy/issue 各 apply。
-- **schema 契约**（#1843 reopen 后）：`EMPTY_EXTRACTION`（C0 声明形状真源）、`ITEM_FIELD_ALIASES` / `_canonical_item_fields`（条目字段规范化）、`read_beyond_intent_raw`（超出旨意读取）。五模块 extractor 别名/MODULE_FIELDS/清洗函数已删。
+- **delta 落库单一入口**：`apply_score_extraction(db, state, extracted, …)`（经 `declaration_dispatch` 由月链调用），内部分发到 region/army/building/economy/issue 各 apply。声明只把**自己带的字段**直接送到该口，不再预置旧五模块 `EMPTY_EXTRACTION` 空壳包装（#1835 F1，Owner 裁定 2026-09-30 授权拆除）；该核算核本体整体退役（换 `settle_delta`）属 ADR 0150 决定 6 / #1572 的固定点工程，不在本票。
+- **schema 契约**（#1843 reopen 后）：`DECLARATION_EFFECT_FIELDS`（C0 声明效果字段真源：键集 + 各键容器类型）、`ITEM_FIELD_ALIASES` / `_canonical_item_fields`（条目字段规范化）、`read_beyond_intent_raw`（超出旨意读取）。五模块 extractor 别名/MODULE_FIELDS/清洗函数已删；旧 `EMPTY_EXTRACTION` 空壳随 #1835 F1 退役。
 - **接口层（确定性↔LLM，别让 LLM 自己数数）**：材料目录（#1834）与月链供料；逐旨预推与世界段按需读取同一材料目录，不再拼装旧 simulator 盘面。
 - **结算编排骨架**：玩家颁诏与退朝共用 `decree.resolve_directives → month_chain.run_player_month_chain`（ADR 0157）：收夜与 `pre_settle` 后，按旨序消费夜里暂存声明，推演／转译／提交世界段；未完成请旨先停批红，邸报归档后才判结局、推进月份。恢复从暂存声明及落账状态续跑；章节记忆退役。对话探针 `driver.py` 与旧核 `settle_with_delta` 已删（#1843 reopen）；CLI 沉浸版将来直接接新月链。调用顺序与边界见 `docs/SETTLEMENT_FLOW.md`，规则真源见 ADR 0157。
 - **运行形态（web 第一，CLI 沉浸版后续）**：**目前 web 版本是第一个尝试方向**，走真实 LLM 后端（codex / agy / hermes，见下）。**「agent session 直接当后端」属后续的 CLI 文字沉浸版**——session 串行（一次一个 LLM 调用）使它在 web 月末并发轰多个 extractor 时会死锁，故那条路留给 CLI 沉浸版、不用在 web。⚠️ 别再凭「探针走 CLI」判 web 路 bug「够不着玩家」：web 是当前真实运行形态，web 路的问题就是真问题。

@@ -21,9 +21,6 @@ from ming_sim.relations import (
     settlement_edge_origin,
 )
 import pytest
-from ming_sim.simulation import (
-    EMPTY_EXTRACTION,
-)
 
 
 def _edge_rows(db, **kw):

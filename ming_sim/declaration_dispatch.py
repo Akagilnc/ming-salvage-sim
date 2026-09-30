@@ -53,7 +53,6 @@ textual_facts / public_sayings / presence / scene_facts（原生 `origin_ref`
 from __future__ import annotations
 
 import contextlib
-import copy
 import hashlib
 import json
 from dataclasses import dataclass
@@ -328,29 +327,54 @@ def _dispatch_declaration_sections(
     return result
 
 
+def _merge_effect_field(
+    extraction: dict[str, object],
+    field: str,
+    value: object,
+) -> None:
+    """把一条效果 envelope 的一个字段并进本旨 effects 载荷（只并声明带来的字段）。
+
+    旧五模块包装时代这里先 deepcopy 一整份 ``EMPTY_EXTRACTION`` 空壳再逐字段填，
+    于是每个 envelope 都拖着 30+ 个恒空容器进核算口；那份空壳不携带任何归属或
+    顺序信息，纯属旧包装遗留，随 C0 声明契约退役（#1835 F1）。
+    """
+    if isinstance(value, list):
+        current = extraction.get(field)
+        if isinstance(current, list):
+            current.extend(value)
+        else:
+            extraction[field] = list(value)
+    elif isinstance(value, dict):
+        current = extraction.get(field)
+        if isinstance(current, dict):
+            current.update(value)
+        else:
+            extraction[field] = dict(value)
+    elif value is not None:
+        extraction[field] = value
+
+
 def _effect_extraction_from_clean(
     clean: Mapping[str, object],
     event_id: str,
-    *,
-    empty_extraction: Mapping[str, object],
 ) -> tuple[dict[str, object], dict[str, list[tuple[str, object]]], dict[str, list[str]]]:
-    """Build one apply_score_extraction payload from a single effect envelope."""
-    extraction = copy.deepcopy(dict(empty_extraction))
-    ordered_deltas = {field: [] for field in _ORDERED_DELTA_FIELDS}
-    ordered_effect_event_ids = {field: [] for field in empty_extraction}
+    """从一条已 sanitize 的效果 envelope 取出本笔载荷与其字段级事件归属。
+
+    只取声明实际带来的字段；未知字段已由 :func:`sanitize_delta_shape` 按 ADR 0015
+    逐段拒收留痕，此处不再静默丢弃。
+    """
+    extraction: dict[str, object] = {}
+    ordered_deltas: dict[str, list[tuple[str, object]]] = {field: [] for field in _ORDERED_DELTA_FIELDS}
+    ordered_effect_event_ids: dict[str, list[str]] = {}
     for field, value in clean.items():
-        if field not in empty_extraction:
+        if value is None:
             continue
+        _merge_effect_field(extraction, field, value)
         if isinstance(value, list):
-            extraction[field].extend(value)
-            ordered_effect_event_ids[field].extend([event_id] * len(value))
-        elif isinstance(value, dict):
-            extraction[field].update(value)
-            if field in ordered_deltas:
-                ordered_deltas[field].extend(value.items())
-                ordered_effect_event_ids[field].extend([event_id] * len(value))
-        elif value is not None:
-            extraction[field] = value
+            ordered_effect_event_ids.setdefault(field, []).extend([event_id] * len(value))
+        elif isinstance(value, dict) and field in ordered_deltas:
+            ordered_deltas[field].extend(value.items())
+            ordered_effect_event_ids.setdefault(field, []).extend([event_id] * len(value))
     return extraction, ordered_deltas, ordered_effect_event_ids
 
 
@@ -433,7 +457,6 @@ def _dispatch_effects(
             category="invalid_shape", source=source,
         )])
 
-    from ming_sim.simulation import EMPTY_EXTRACTION
     from ming_sim.issues import apply_score_extraction, preflight_declared_event_effects, sanitize_delta_shape
     from ming_sim.decree import _collect_inline_rejections
 
@@ -462,9 +485,9 @@ def _dispatch_effects(
         db, state, [(event_id, clean) for _, event_id, clean in clean_items],
         open_affair_ids=set(refs.get("affairs", ())),
     )
-    extraction = copy.deepcopy(EMPTY_EXTRACTION)
-    ordered_deltas = {field: [] for field in _ORDERED_DELTA_FIELDS}
-    ordered_effect_event_ids = {field: [] for field in EMPTY_EXTRACTION}
+    extraction: dict[str, object] = {}
+    ordered_deltas: dict[str, list[tuple[str, object]]] = {field: [] for field in _ORDERED_DELTA_FIELDS}
+    ordered_effect_event_ids: dict[str, list[str]] = {}
     effect_sequence: list[tuple[dict[str, object], dict[str, list[tuple[str, object]]], dict[str, list[str]]]] = []
     accepted_effect = False
     for item, event_id, clean in clean_items:
@@ -476,21 +499,15 @@ def _dispatch_effects(
             continue
         accepted_effect = True
         step_extraction, step_ordered, step_event_ids = _effect_extraction_from_clean(
-            clean, event_id, empty_extraction=EMPTY_EXTRACTION,
+            clean, event_id,
         )
         effect_sequence.append((step_extraction, step_ordered, step_event_ids))
         for field, value in step_extraction.items():
-            current = extraction[field]
-            if isinstance(value, list) and isinstance(current, list):
-                current.extend(value)
-            elif isinstance(value, dict) and isinstance(current, dict):
-                current.update(value)
-            elif value is not None and not isinstance(value, (list, dict)):
-                extraction[field] = value
+            _merge_effect_field(extraction, field, value)
         for field, pairs in step_ordered.items():
             ordered_deltas[field].extend(pairs)
         for field, event_ids in step_event_ids.items():
-            ordered_effect_event_ids[field].extend(event_ids)
+            ordered_effect_event_ids.setdefault(field, []).extend(event_ids)
     if not accepted_effect:
         return SectionResult(applied=[], rejected=rejected)
     report = apply_score_extraction(
@@ -1231,7 +1248,7 @@ def _dispatch_commissions(
             if not secret_order_can_land(dict(secret)):
                 _reject(rejected, item, "密令缺标题、内容或冻结任务契约", "invalid_shape", source)
                 continue
-            # 冻结差务契约在声明入口就真冻一次（ADR 1504 确认闸同款）：空壳
+            # 冻结差务契约在声明入口就真冻一次（#1504 确认闸同款）：空壳
             # covert_task={} 只过「有键」检查、到批红才炸，会把整条密令静默标
             # failed 且不留拒收记录。坏合同逐项拒收，同批兄弟项照落。
             from ming_sim.covert_progress import (

@@ -51,7 +51,7 @@ def test_resolve_changes_character_status(game):
     name = active_ming_character(db, content)
     before_logs = db.conn.execute("SELECT COUNT(*) FROM person_logs").fetchone()[0]
     I._apply_issue_entities(db, state, {
-        "character_status_changes": [{"name": name, "status": "exiled", "reason": "国策清算"}],
+        "人物变更": [{"name": name, "动作": "处置", "status": "exiled", "reason": "国策清算"}],
     }, "局势#测试结案")
     assert db.get_character_status(name)[0] == "exiled"
     assert db.conn.execute("SELECT COUNT(*) FROM person_logs").fetchone()[0] == before_logs + 1
@@ -68,7 +68,7 @@ def test_resolve_changes_character_status(game):
     }
 
 
-def test_legacy_issue_status_change_uses_person_transition_matrix(game):
+def test_issue_status_change_uses_person_transition_matrix(game):
     db, state, content = game
     name = active_ming_character(db, content)
     db.set_character_status(state, name, "dead", "前置死亡")
@@ -79,8 +79,8 @@ def test_legacy_issue_status_change_uses_person_transition_matrix(game):
             db,
             state,
             {
-                "character_status_changes": [
-                    {"name": name, "status": "dismissed", "reason": "旧键误写罢黜"}
+                "人物变更": [
+                    {"name": name, "动作": "处置", "status": "dismissed", "reason": "误写罢黜"}
                 ]
             },
             "局势#测试结案",
@@ -91,7 +91,7 @@ def test_legacy_issue_status_change_uses_person_transition_matrix(game):
     assert content.characters[name].status == "dead"
 
 
-def test_legacy_issue_status_change_does_not_use_month_end_active_gate(game):
+def test_issue_status_change_does_not_use_month_end_active_gate(game):
     db, state, content = game
     name = active_ming_character(db, content)
     ch = content.characters[name]
@@ -109,8 +109,8 @@ def test_legacy_issue_status_change_does_not_use_month_end_active_gate(game):
             db,
             state,
             {
-                "character_status_changes": [
-                    {"name": name, "status": "dead", "reason": "结案赐死"}
+                "人物变更": [
+                    {"name": name, "动作": "处置", "status": "dead", "reason": "结案赐死"}
                 ]
             },
             "局势#测试结案",
@@ -144,8 +144,8 @@ def test_resolve_character_status_syncs_content_travel_state(game):
             db,
             state,
             {
-                "character_status_changes": [
-                    {"name": name, "status": "dismissed", "reason": "局势失败问责"}
+                "人物变更": [
+                    {"name": name, "动作": "处置", "status": "dismissed", "reason": "局势失败问责"}
                 ]
             },
             "局势#测试结案",
@@ -197,7 +197,9 @@ def test_resolve_applies_unified_person_change_effect(game):
         content.characters[name].transit_to = old_transit_to
 
 
-def test_issue_unified_person_change_shadows_legacy_person_effects(game):
+def test_issue_effect_legacy_person_key_is_retired_and_never_lands(game):
+    """#1835 F1：只为旧档服务的 character_status_changes 翻译支路已退出。国策 effect
+    只认 人物变更；旧键既不被翻译成人物变更落库，也不遮蔽同批 人物变更。"""
     db, state, content = game
     name = active_ming_character(db, content)
     old_status = content.characters[name].status
@@ -215,7 +217,7 @@ def test_issue_unified_person_change_shadows_legacy_person_effects(game):
                         "name": name,
                         "status": "imprisoned",
                         "reason_code": "陷虏",
-                        "reason": "旧键应被新键遮蔽",
+                        "reason": "旧键应已退役",
                     }
                 ],
                 "人物变更": [
@@ -246,6 +248,28 @@ def test_issue_unified_person_change_shadows_legacy_person_effects(game):
         content.characters[name].status = old_status
         content.characters[name].office = old_office
         content.characters[name].office_type = old_office_type
+
+
+def test_issue_effect_with_only_retired_person_key_lands_nothing(game):
+    """只剩旧键的 effect 不再有任何人物写口（无兼容翻译、无半落库）。"""
+    db, state, content = game
+    name = active_ming_character(db, content)
+    before = db.conn.execute(
+        "SELECT status, office FROM characters WHERE name=?", (name,)
+    ).fetchone()
+
+    I._apply_issue_entities(
+        db,
+        state,
+        {"character_status_changes": [{"name": name, "status": "imprisoned"}]},
+        "局势#测试结案",
+        content=content,
+    )
+
+    row = db.conn.execute(
+        "SELECT status, office FROM characters WHERE name=?", (name,)
+    ).fetchone()
+    assert (row["status"], row["office"]) == (before["status"], before["office"])
 
 
 def test_resolve_rejects_bad_unified_person_change_effect(read_game):
@@ -291,7 +315,7 @@ def test_unknown_character_raises(read_game):
     db, state, _ = read_game
     with pytest.raises(ValueError):
         I._apply_issue_entities(db, state, {
-            "character_status_changes": [{"name": "查无此人张三", "status": "dead"}],
+            "人物变更": [{"name": "查无此人张三", "动作": "处置", "status": "dead"}],
         }, "局势#测试")
 
 
@@ -300,7 +324,7 @@ def test_bad_status_raises(read_game):
     name = active_ming_character(db, content)
     with pytest.raises(ValueError):
         I._apply_issue_entities(db, state, {
-            "character_status_changes": [{"name": name, "status": "升仙"}],
+            "人物变更": [{"name": name, "动作": "处置", "status": "升仙"}],
         }, "局势#测试")
 
 
@@ -392,12 +416,12 @@ def test_army_delta_unknown_army_raises(read_game):
         }, "局势#测试")
 
 
-def test_non_dict_character_status_item_raises(read_game):
-    """character_status_changes 含非 dict 项 → 抛错，不静默丢（docstring 称全局严格，CMR F7）。"""
+def test_non_dict_character_change_item_raises(read_game):
+    """人物变更 含非 dict 项 → 抛错，不静默丢（docstring 称全局严格，CMR F7）。"""
     db, state, _ = read_game
     with pytest.raises(ValueError):
         I._apply_issue_entities(db, state, {
-            "character_status_changes": ["这不是dict"],
+            "人物变更": ["这不是dict"],
         }, "局势#测试")
 
 
@@ -562,7 +586,7 @@ def test_inertia_natural_fail_applies_entities(game):
     db.insert_issue(
         state, kind="situation", title="自然失败人物测试",
         bar_value=1, inertia=-1,
-        effect_on_fail={"character_status_changes": [{"name": name, "status": "dismissed", "reason": "局势失控问责"}]},
+        effect_on_fail={"人物变更": [{"name": name, "动作": "处置", "status": "dismissed", "reason": "局势失控问责"}]},
     )
     apply_issue_inertia_and_ongoing(db, state)   # inertia -1 把 bar 1→0 → failed
     assert db.get_character_status(name)[0] == "dismissed"
