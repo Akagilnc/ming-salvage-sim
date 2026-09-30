@@ -1951,12 +1951,24 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
       pending_decisions: [d1, d2],
     });
     const resolveBodies: unknown[] = [];
+    // #1888 J5：结算失败之后，账本状态口（次级刷新）一并不可用。断的是刷新，不是告警：
+    // 失败呈现与收尾（busy 清、重试钮可点、可再落印）都不得挂在这次刷新成败上。
+    let stateFail = false;
+    let failedReads = 0;
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
       const u = new URL(String(url), "http://t.local");
       if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
       if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
       if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
-      if (u.pathname.endsWith("/api/game/state")) return jsonResp(state);
+      if (u.pathname.endsWith("/api/game/state")) {
+        if (stateFail) {
+          failedReads += 1;
+          return new Response(JSON.stringify({ detail: { message: "账本状态口不可用" } }), {
+            status: 503, headers: { "Content-Type": "application/json" },
+          });
+        }
+        return jsonResp(state);
+      }
       if (u.pathname.endsWith("/api/history/turns")) return jsonResp({
         turns: [{ kind: "month", turn: 4, year: 1627, period: 9, has_report: true, has_attendant: false, has_directive: true }],
       });
@@ -1966,6 +1978,7 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
       if (u.pathname.endsWith("/api/court_layout")) return jsonResp({ layout: "{}" });
       if (u.pathname.endsWith("/api/decree/resolve_decisions/stream")) {
         resolveBodies.push(JSON.parse(String(init?.body || "{}")));
+        stateFail = true;
         return sseResp("error", { message: "stream-fail" });
       }
       return jsonResp({});
@@ -2001,12 +2014,22 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
         expect(resolveBodies.length).toBe(1);
       });
     });
+    // 账本状态口确实已被打掉（故障条件本身成立，非摆设）
+    await act(async () => {
+      await vi.waitFor(() => expect(failedReads).toBeGreaterThan(0));
+    });
     // 单一 role=alert：只经 decision-recovery，不与 modal 双播
     const alerts = host.querySelectorAll('[role="alert"]');
     expect(alerts.length).toBe(1);
     expect(
       host.querySelector('[data-testid="decision-recovery"][role="alert"]'),
     ).toBe(alerts[0]);
+
+    // 次级刷新 503 也不得锁住玩家：恢复面重试钮可点
+    const retry = alerts[0].querySelector("button") as HTMLButtonElement;
+    expect(retry.disabled).toBe(false);
+    // 两因分别留痕（ADR 0005）：告警说的是**结算**失败，不得被随后那次刷新失败顶替。
+    expect(alerts[0].textContent).toContain("stream-fail");
 
     // modal 不卸载；已选态仍在；可再落印
     expect(host.querySelector('[data-testid="decision-modal"]')).not.toBeNull();
@@ -2027,70 +2050,6 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     // refresh 后 recovery 仍在且仍单一 alert（error 不被空串冲掉）
     expect(host.querySelector('[data-testid="decision-recovery"]')).not.toBeNull();
     expect(host.querySelectorAll('[role="alert"]').length).toBe(1);
-  });
-
-  // #1888 J5：次级状态刷新失败不得截断结算失败呈现与收尾。
-  // 真实玩家入口：批红落印 → SSE error → 其后账本状态口持续 503。
-  // 断的是刷新，不是告警：decision-recovery 必须挂出且重试钮可点（busy 已清），
-  // modal 不卸载、批红可再落印。此前的顺序缺陷会让整条出口抛出：无告警、busy 残留、按钮 disabled。
-  it("#1888 落印失败且账本刷新同时 503：告警照落、核账面不留锁", async () => {
-    const d1 = {
-      idx: 0, title: "疏一", context: "c1",
-      options: [{ label: "甲策", hint: "h1" }, { label: "乙策", hint: "h2" }],
-    };
-    const state = settlementBaseState("awaiting_decision", { pending_decisions: [d1] });
-    let stateFail = false;
-    let failedReads = 0;
-    const resolveBodies: unknown[] = [];
-    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
-      const u = new URL(String(url), "http://t.local");
-      if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
-      if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
-      if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
-      if (u.pathname.endsWith("/api/game/state")) {
-        if (stateFail) {
-          failedReads += 1;
-          return new Response(JSON.stringify({ detail: { message: "账本状态口不可用" } }), {
-            status: 503, headers: { "Content-Type": "application/json" },
-          });
-        }
-        return jsonResp(state);
-      }
-      if (u.pathname.endsWith("/api/history/turns")) return jsonResp({ turns: [] });
-      if (u.pathname.endsWith("/api/court_layout")) return jsonResp({ layout: "{}" });
-      if (u.pathname.endsWith("/api/decree/resolve_decisions/stream")) {
-        resolveBodies.push(JSON.parse(String(init?.body || "{}")));
-        // 结算本身失败；紧随其后的账本刷新也失败（次级）。
-        stateFail = true;
-        return sseResp("error", { message: "stream-fail" });
-      }
-      return jsonResp({});
-    }));
-
-    const host = await mountApp();
-    await act(async () => {
-      await vi.waitFor(() => expect(host.querySelector('[data-testid="decision-modal"]')).not.toBeNull());
-    });
-    const confirm = () =>
-      host.querySelector('[data-testid="decision-modal"] button.decision-confirm') as HTMLButtonElement | null;
-    await click(host.querySelector("button.decision-option"));
-    expect(confirm()).not.toBeNull();
-    await click(confirm());
-
-    await act(async () => {
-      await vi.waitFor(() => expect(resolveBodies.length).toBe(1));
-    });
-    await act(async () => { await vi.waitFor(() => expect(failedReads).toBeGreaterThan(0)); });
-
-    // 失败呈现：唯一 role=alert 挂出 decision-recovery（不靠文案匹配）。
-    const recovery = host.querySelector('[data-testid="decision-recovery"][role="alert"]');
-    expect(recovery).not.toBeNull();
-    expect(host.querySelectorAll('[role="alert"]').length).toBe(1);
-    // 收尾：busy 已清 → 恢复面重试钮与落印钮都可点，玩家不被锁在核账面。
-    const retry = recovery!.querySelector("button") as HTMLButtonElement;
-    expect(retry.disabled).toBe(false);
-    expect(host.querySelector('[data-testid="decision-modal"]')).not.toBeNull();
-    expect(confirm()!.disabled).toBe(false);
   });
 
   it("#1808 fail-closed 后普通 HUD 可见失败，不依赖任何 modal", async () => {
