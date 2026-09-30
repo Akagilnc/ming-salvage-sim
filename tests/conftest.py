@@ -410,74 +410,184 @@ def offline_empty_audience_translate(prompt, llm_config):
 
 
 class LegRendezvous:
-    """并行腿的会合：N 条腿同时在飞才算成立，任一腿终结即全体放行（#1898）。
+    """并行腿的会合：N 条腿同时在飞才算成立，且**永不把主线程挂死**（#1898）。
 
-    会合只回答一件事——「这些腿真的并行跑了吗」，因此实现只用标准库
-    ``threading.Barrier``（腿侧）+ 一个 ``Event``（主线程侧等首条到达）。
-    真实入口、并行与隔离契约都不动。
+    会合只回答一件事——「这些腿真的并行跑了吗」，故腿侧只用标准库
+    ``threading.Barrier``；真实入口、并行与隔离契约都不动。
 
-    释放由两个真实来源负责，不再从执行器 ``submit`` 缝反推任务生命周期：
+    上一轮漏掉的是**次序**：主线程若先卡在 ``wait_idle``，``finally`` 里的
+    abort 永远到不了，而在等的那条腿正占着票据 —— 两边互锁，只能等 CI 杀进程。
+    故本轮把「判否」提前到排空**之前**，判据只用一条真实事实（均不靠墙钟）：
 
-    * **腿终结**：生产既有的 Future 终态观测缝
-      ``audience_translation._observe_finished_future``（每条预推腿注册
-      ``add_done_callback`` 时都会调它）在此包一层：腿带异常或被取消即
-      :meth:`abort`。在等的那条腿立刻拿到 ``BrokenBarrierError`` 自行退出，
-      归还写队列票据，主线程的 ``wait_idle`` 因此不被人工等待卡死。
-    * **腿压根没提交**：没有 Future，观测缝看不见（例如第二次调度直接返回
-      False）。用例在 ``finally`` 里 :meth:`abort`，覆盖主线程断言失败这条路。
+    * **再无可能抵达的腿，且已不再有腿要提交**：只有「已开跑但还没抵达
+      会合点」的腿才可能补上缺口，故 :attr:`_pending` 归零即「再无人会到」；
+      同时 :meth:`close` 标记「不会再有新腿被提交」。两者同时成立且
+      ``arrived < parties`` 时，需求确定不可满足 → :meth:`abort`。
+      两条判据缺一不可：只判 ``_pending == 0`` 会在「主线程先提交一条、
+      等它到达后再提交下一条」的两档用例里误杀（第一条抵达的瞬间
+      ``_pending`` 短暂归零，但第二条还没提交）。这一条同时盖住：扇出正常
+      返回但少提交一条腿、某腿抛错或被取消、参与方压根没提交、提交本身失败。
+    * **用例收尾**：:meth:`abort` 公开，用例 ``finally`` 仍调一次，覆盖主线程
+      断言失败、第二次调度直接返回 False 这类连 Future 都没有的路。
 
-    扇出腿（自己提交了子腿的腿，如开夜扫描）本就不该到达会合点，但它失败
-    一样带异常、一样 abort，所以无需再区分父子腿。
+    :meth:`settle` 是主线程排空前的落点：会合成立或已判否即返回，故
+    ``settle()`` → ``wait_pending_writes()`` 的次序本身就不可能挂死。
+    用例提交完所有腿后调一次 :meth:`close`（扇出型用例由父腿自动 close）。
     """
 
     def __init__(self, monkeypatch, parties: int = 2) -> None:
+        self._parties = parties
         self._barrier = threading.Barrier(parties)
-        self._first = threading.Event()
+        self._first = threading.Event()      # 首条腿到达
+        self._settled = threading.Event()    # 会合成立或已判否
         self._lock = threading.Lock()
         self._arrived = 0
+        # 已开跑、尚未抵达会合点的腿数（抵达/跑完任一即退出此计数）。
+        self._pending = 0
+        self._closed = False                  # 已声明「不会再有新腿被提交」
+        self._local = threading.local()   # 本腿的 arrived 标记
         self._install(monkeypatch)
 
+    # ── 观测缝 ────────────────────────────────────────────────────────
     def _install(self, monkeypatch) -> None:
         import ming_sim.audience_translation as audience_translation
 
-        observe = audience_translation._observe_finished_future
+        real_executor = audience_translation._executor
         rendezvous = self
 
-        def _observe_then_abort(fut, **fields) -> None:
-            observe(fut, **fields)
-            if fut.cancelled() or (fut.done() and fut.exception() is not None):
-                rendezvous.abort()
+        class _CountingExecutor:
+            """只旁听每条腿的「是否还可能抵达会合点」，其余透传真执行器。
+
+            必须在执行器**实例**上替换整个对象：``submit`` 是只读槽描述符，
+            monkeypatch 直接改实例属性会 AttributeError。
+
+            腿内再提交子腿者即扇出父腿（开夜扫描）：它跑完时子腿已全部提交，
+            故自动 close —— 此后不会再有新腿，判否条件成立。
+            """
+
+            def submit(self, fn, *args, **kwargs):
+                leg_state = {"arrived": False, "fanout": False}
+                is_fanout = getattr(rendezvous._local, "state", None) is not None
+                leg_state["fanout"] = is_fanout
+                rendezvous._arm(leg_state)
+
+                def leg(*a, **k):
+                    rendezvous._local.state = leg_state
+                    try:
+                        return fn(*a, **k)
+                    finally:
+                        rendezvous._local.state = None
+                        rendezvous._disarm(leg_state)
+                        if is_fanout:
+                            rendezvous.close()
+
+                try:
+                    return real_executor.submit(leg, *args, **kwargs)
+                except BaseException:
+                    # 提交本身失败：这条腿永远不会抵达，计数须当场归还，
+                    # 否则 _pending 永不归零、判否永不触发（#1898 扇出失败路）。
+                    rendezvous._disarm(leg_state)
+                    if is_fanout:
+                        rendezvous.close()
+                    raise
+
+            def __getattr__(self, name):
+                return getattr(real_executor, name)
 
         monkeypatch.setattr(
-            audience_translation, "_observe_finished_future", _observe_then_abort,
+            audience_translation, "_executor", _CountingExecutor(),
         )
 
+    def _unsatisfiable(self) -> bool:
+        """已关闭提交 + 无可能再抵达的腿 + 仍不足 parties → 需求不可满足。"""
+        with self._lock:
+            return self._closed and self._pending <= 0 and self._arrived < self._parties
+
+    def close(self) -> None:
+        """声明「不会再有新腿被提交」（用例提交完所有腿后调；幂等）。
+
+        扇出型用例无需显式调：父腿在腿内提交子腿，父腿跑完即自动 close。
+        """
+        with self._lock:
+            self._closed = True
+        if self._unsatisfiable():
+            self.abort()
+
+    def _arm(self, leg_state: dict) -> None:
+        """一条腿开跑：计入「仍可能抵达」（提交成功与否都先记，失败即归还）。"""
+        with self._lock:
+            self._pending += 1
+
+    def _disarm(self, leg_state: dict) -> None:
+        """这条腿不再可能抵达（已抵达过 / 已跑完 / 提交失败）：只计一次。"""
+        with self._lock:
+            if leg_state["arrived"]:
+                return                      # 已在 _arrive 归还过，不重复
+            self._pending -= 1
+        if self._unsatisfiable():
+            self.abort()
+
+    def _arrive(self, leg_state: dict) -> int:
+        """本腿抵达会合点：计入到达数并退出「可能抵达」计数（只减一次）。
+
+        抵达后当场复判：此刻本腿即将卡在 ``barrier.wait()`` 上（它自己不会再让
+        ``_pending`` 变化），故判否必须在这里下，否则就没人再下判断。
+        """
+        with self._lock:
+            if not leg_state["arrived"]:
+                leg_state["arrived"] = True
+                self._pending -= 1
+            self._arrived += 1
+            arrived = self._arrived
+        if self._unsatisfiable():
+            self.abort()
+        return arrived
+
+    # ── 放闸 ──────────────────────────────────────────────────────────
     def abort(self) -> None:
-        """打破会合：在等的腿立刻退出。幂等（用例 finally 与腿终结可各调一次）。"""
-        self._first.set()
+        """打破会合：在等的腿立刻拿 BrokenBarrierError 退出并归还票据。幂等。"""
         self._barrier.abort()
+        self._first.set()
+        self._settled.set()
+
+    @property
+    def _current(self) -> dict:
+        """当前线程所处那条腿的 arrived 标记（不在腿内则给一次性空标记）。"""
+        state = getattr(self._local, "state", None)
+        if state is None:
+            state = {"arrived": False}
+            self._local.state = state
+        return state
 
     def meet(self) -> bool:
-        """本腿到达会合点并等同伙腿。False = 已有腿终结或用例收尾，需求不可满足。"""
-        with self._lock:
-            self._arrived += 1
+        """本腿到达会合点并等同伙腿。False = 需求已不可满足（有腿终结/缺席）。"""
+        arrived = self._arrive(self._current)
+        parties = self._parties
         self._first.set()
         try:
             self._barrier.wait()
         except threading.BrokenBarrierError:
             return False
+        if arrived >= parties:
+            self._settled.set()
         return True
+
+    def settle(self) -> bool:
+        """主线程在**排空之前**的落点：会合成立或已判否即返回（不靠墙钟）。"""
+        self._settled.wait()
+        return self.arrived >= self._parties
 
     def wait_first_arrival(self) -> bool:
         """主线程等第一条腿到达。False = 会合已破（无人会再到达）。"""
         self._first.wait()
-        return self._arrived >= 1
+        return self.arrived >= 1
 
     @property
     def arrived(self) -> int:
         """已到达会合点的腿数（用例断言用）。"""
         with self._lock:
             return self._arrived
+
 
 
 @pytest.fixture(scope="session", autouse=True)

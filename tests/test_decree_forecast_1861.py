@@ -391,11 +391,14 @@ def test_held_rejudgments_overlap_instead_of_waiting_in_one_worker(game, monkeyp
     sess = _sess(db, state, content, monkeypatch, lambda *_a, **_k: {})
     try:
         assert forecast_mod.schedule_held_decree_forecasts(sess) is True
+        # 先落会合、再排空：次序反了主线程会先卡在 wait_idle，而 finally 的
+        # abort 永远到不了，在等的那条腿又占着票据 —— 两边互锁成挂死。
+        # 扇出少提交腿时父腿会报出实到条数，settle() 据此判否并放行。
+        assert rendezvous.settle(), "两条留中复判腿未同时在飞"
         wait_pending_writes(sess)
         assert rendezvous.arrived == 2
     finally:
-        # 主线程断言失败时第二条腿可能压根没提交（没有 Future，观测缝看不见）：
-        # 打破会合，在等的那条腿才能自行退出并归还票据，本用例的排空才有着落。
+        # 覆盖主线程断言失败、扇出压根没跑起来这类没有 Future 的路。
         rendezvous.abort()
         wait_pending_writes(sess)
     for dossier_id, pending_id in zip(ids, pending_ids):
@@ -487,6 +490,10 @@ def test_same_local_ids_on_two_saves_both_stage(game, _game_template_path, monke
         assert forecast_mod.schedule_pending_decree_forecast(
             armed[1][0], armed[1][2], night_id=armed[1][3],
         ) is True
+        # 两条腿都提交完 → 不会再有新腿；此后会合若仍不足即判否。
+        rendezvous.close()
+        # 先落会合、再排空（同 held 用例）：任何主线程阻塞点之前会合都已可破。
+        assert rendezvous.settle(), "两档腿未同时在飞"
         for sess, one_db, pending_id, _night_id in armed:
             wait_pending_writes(sess)
             stored = one_db.staged_declarations.staged_for(
@@ -495,8 +502,7 @@ def test_same_local_ids_on_two_saves_both_stage(game, _game_template_path, monke
             assert len(stored) == 1 and stored[0].verdict["decision"] == "promulgated"
         assert rendezvous.arrived == 2
     finally:
-        # 第二次调度可能压根没提交（没有 Future，观测缝看不见）：主线程断言失败时
-        # 先打破会合，在等的那条腿才能自行退出并归还票据，排空才有着落。
+        # 覆盖主线程断言失败、第二次调度压根没提交这类连 Future 都没有的路。
         rendezvous.abort()
         for sess, *_rest in armed:
             wait_pending_writes(sess)
