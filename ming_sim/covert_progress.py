@@ -56,6 +56,20 @@ _ABILITY_REFERENCE = 60.0
 _SPOILED_HARDER_MULTIPLIER = 1.5
 _MIN_DIFFICULTY = 0.1
 
+# #1896 月度投入的引擎侧边界：人物只声明"下了多大劲"（0..1 的强度，人心的选择），
+# 引擎按其真实状态折算本月实投并 clamp——P6「代码只做供事实、clamp、记账」。
+# 模型不得直采一个裸浮点当月坐实任意罪证（深挖也不是无限深挖）。
+_MONTHLY_EFFORT_CAP = 0.6
+_CAPACITY_MIN = 0.3
+_CAPACITY_MAX = 1.2
+_ABILITY_CAPACITY_WEIGHT = 0.5
+_ABILITY_CAPACITY_REFERENCE = 60.0
+_TRANSIT_CAPACITY_PENALTY = 0.5   # 在途未到差
+_BANDWIDTH_PER_ERRAND = 0.15      # 0092 带宽①：未结差务越多，本案可分到的越少
+_BANDWIDTH_ERRAND_CAP = 3
+# 坐实最低在查月数：堵"一月速坐实"，并保住 0100 毁证／惊蛇窗口（0098 轨级口径 iii）。
+_MIN_MONTHS_UNDER_INVESTIGATION = 2
+
 _DISTANCE_MATRIX: Any = None
 
 
@@ -785,22 +799,24 @@ def _lanes_from_payload(payload: Mapping[str, object]) -> List[Dict[str, object]
                 continue
             seen.add(key)
             try:
-                # #1896：累计"实际投入"取代固定月进度 progress。旧档 progress 按
-                # 同一语义读回（它就是已投入的力气），不静默清零丢账。
-                effort = item.get("effort", item.get("progress"))
-                effort = float(effort or 0.0)
+                effort = float(item.get("effort") or 0.0)
             except (TypeError, ValueError):
                 effort = 0.0
             try:
                 difficulty = float(item.get("difficulty") or 0.0)
             except (TypeError, ValueError):
                 difficulty = 0.0
+            try:
+                months = int(item.get("months") or 0)
+            except (TypeError, ValueError):
+                months = 0
             reason = str(item.get("reason_code") or "").strip()
             legal = reason in PERSON_LEGAL_REASON_CODES
             lanes.append({
                 "fact_key": key,
                 "effort": max(0.0, effort),
                 "difficulty": max(0.0, difficulty),
+                "months": max(0, months),
                 "mastered": bool(item.get("mastered")),
                 "used": bool(item.get("used")) and legal,
                 "reason_code": reason if legal else "",
@@ -844,6 +860,7 @@ def _write_fact_lanes(
             "fact_key": str(lane["fact_key"]),
             "effort": float(lane.get("effort") or 0.0),
             "difficulty": float(lane.get("difficulty") or 0.0),
+            "months": int(lane.get("months") or 0),
             "mastered": bool(lane.get("mastered")),
             "used": bool(lane.get("used")),
             "reason_code": str(lane.get("reason_code") or ""),
@@ -930,6 +947,49 @@ def investigation_fact_difficulty(
             return float("inf")
         difficulty *= _SPOILED_HARDER_MULTIPLIER
     return max(_MIN_DIFFICULTY, float(difficulty))
+
+
+def investigation_monthly_capacity(
+    db: Any, investigator: str, *, dossier_id: int = 0,
+) -> float:
+    """#1896 承办人本月能投多少查案的力气（引擎按实况折算，不采模型裸数）。
+
+    0092 带宽①「在办差务数×能力」＋实际到差行程：人物只声明"下了多大劲"
+    （0..1 强度，是人心的选择），能投多少由他的真实处境决定——
+    - 能力：强能吏跑得动更多（按参考能力归一）
+    - 在途（transit_to 非空）＝人尚未到差，投入打折
+    - 带宽：手上未结差务越多，本案分到的越少
+    返回值恒在 [_CAPACITY_MIN, _CAPACITY_MAX] 内，且不含任何模型输入。
+    """
+    worker = str(investigator or "").strip()
+    if not worker:
+        return _CAPACITY_MIN
+    row = db.conn.execute(
+        "SELECT ability, transit_to FROM characters WHERE name=?", (worker,),
+    ).fetchone()
+    capacity = 1.0
+    if row is not None:
+        try:
+            ability = float(row["ability"])
+        except (TypeError, ValueError):
+            ability = _ABILITY_CAPACITY_REFERENCE
+        if ability > 0.0:
+            capacity *= 1.0 + _ABILITY_CAPACITY_WEIGHT * (
+                (ability - _ABILITY_CAPACITY_REFERENCE) / _ABILITY_CAPACITY_REFERENCE
+            )
+        if str(row["transit_to"] or "").strip():
+            capacity *= _TRANSIT_CAPACITY_PENALTY
+    open_errands = 0
+    for order in db.list_secret_orders(status="active"):
+        if int(order.get("id") or 0) == int(dossier_id or 0):
+            continue
+        if str(order.get("minister_name") or "") == worker:
+            open_errands += 1
+    capacity *= max(
+        _CAPACITY_MIN,
+        1.0 - _BANDWIDTH_PER_ERRAND * min(open_errands, _BANDWIDTH_ERRAND_CAP),
+    )
+    return max(_CAPACITY_MIN, min(_CAPACITY_MAX, float(capacity)))
 
 
 def seed_investigation_fact_lanes(
@@ -1050,29 +1110,41 @@ def apply_investigation_monthly_effort(
     investigator: str,
     *,
     fact_key: str = "",
-    effort: float = 0.0,
+    intensity: float = 0.0,
     commit: bool = False,
 ) -> Dict[str, object]:
-    """#1896 逐证核算：把 4a 声明的"本月实际投入"记到指定事实上。
+    """#1896 逐证核算：人物声明"下了多大劲"，引擎核出本月实投再记到该条事实上。
 
     与旧轨的分别（ADR 0098 后出修订取代项）：
-    - 投入来自人物当月真实办了多少事（引擎按声明折算的力气），不是执行态档位
-    折成的固定增量；
-    - 每条事实有自己的难度（investigation_fact_difficulty），累计投入达到该条
-      难度才记 mastered——无统一阈值；
-    - 敷衍／停办（effort<=0）就是本月零投入，不产查获、也不改实证；
+    - 投入不是模型直采的裸浮点：声明值只作**强度**（0..1，clamp），本月实投由
+      引擎按承办人真实状态折算（investigation_monthly_capacity：能力／在途／
+      0092 带宽）并硬顶 _MONTHLY_EFFORT_CAP——深挖也不是无限深挖（P6 clamp）；
+    - 每条事实有自己的难度（investigation_fact_difficulty），累计实投达到该条
+      难度、且该条已在查满 _MIN_MONTHS_UNDER_INVESTIGATION 个月，才记 mastered
+      ——既无统一阈值，也不许"一月速坐实"（并保住 0100 毁证／惊蛇窗口）；
+    - 敷衍／停办（intensity<=0）就是本月零投入，不产查获、也不改实证；
     - 奏报自称成功不入本函数（P6：呈现层与实况分轨，谎奏不造罪不抹证）。
     """
     lanes = seed_investigation_fact_lanes(
         db, dossier_id, target, investigator=investigator, commit=False,
     )
+    try:
+        declared = float(intensity or 0.0)
+    except (TypeError, ValueError):
+        declared = 0.0
+    # clamp：声明只是强度，负归零、超 1 归 1；实投另由引擎按实况折算并硬顶。
+    declared = max(0.0, min(1.0, declared))
+    if declared <= 0.0:
+        # 敷衍／停办：确定零投入，不必去算他的带宽与行程。
+        _write_fact_lanes(db, dossier_id, lanes, commit=commit)
+        return {"bound_fact_key": "", "effort_applied": 0.0, "declared_intensity": 0.0,
+                "capacity": 0.0, "mastered": [], "units": 0.0}
     live = set(live_investigation_fact_keys(db, target))
     blocked = globally_used_fact_keys(db, except_dossier_id=int(dossier_id))
-    try:
-        amount = float(effort or 0.0)
-    except (TypeError, ValueError):
-        amount = 0.0
-    amount = max(0.0, amount)
+    capacity = investigation_monthly_capacity(
+        db, investigator, dossier_id=int(dossier_id),
+    )
+    amount = min(_MONTHLY_EFFORT_CAP, declared * capacity)
 
     if not lanes or amount <= 0.0:
         _write_fact_lanes(db, dossier_id, lanes, commit=commit)
@@ -1126,7 +1198,12 @@ def apply_investigation_monthly_effort(
                     "units": 0.0, "dropped_fact_key": key,
                 }
             lane["effort"] = float(lane.get("effort") or 0.0) + amount
-            if not lane.get("mastered") and float(lane["effort"]) >= float(difficulty):
+            lane["months"] = int(lane.get("months") or 0) + 1
+            if (
+                not lane.get("mastered")
+                and float(lane["effort"]) >= float(difficulty)
+                and int(lane["months"]) >= _MIN_MONTHS_UNDER_INVESTIGATION
+            ):
                 _master_lane(lane)
             if lane.get("mastered"):
                 mastered_now.append(key)
@@ -1135,6 +1212,8 @@ def apply_investigation_monthly_effort(
     return {
         "bound_fact_key": bound,
         "effort_applied": amount,
+        "declared_intensity": declared,
+        "capacity": capacity,
         "mastered": mastered_now,
         "units": investigation_lane_actual_units(db, int(dossier_id)),
     }
@@ -1321,12 +1400,14 @@ def _selection_map(raw_selections: object) -> Dict[int, Dict[str, object]]:
 
 
 def _investigation_declaration(sel: Mapping[str, object]) -> Dict[str, object]:
-    """#1896 4a 对查案密令的声明读口：查法/实际投入/所查事实/知情反应。
+    """#1896 4a 对查案密令的声明读口：查法/投入强度/所查事实/知情反应。
 
     形状（ADR 0120 后出查案修订）——按人物当月真实办事声明，不读自由文本：
-    - effort:   float，本月实际投入的力气（敷衍/停办 → 0 或缺省）
+    - effort:   0..1 的**投入强度**（敷衍/停办 → 0）。只是"下了多大劲"，
+                引擎另按承办人真实状态折算本月实投并硬顶，故此值填多大都
+                不会当月坐实任意罪证。
     - fact_key: str，本月下手的罪证（缺省 → 引擎按稳定序兜底路由）
-    - spoliation: {effect: 'harder'|'gone', fact_key: str}，被查者知情后的毁证选择
+    - spoliation: {effect, fact_key, knowledge_source}，被查者知情后的毁证选择
 
     奏报（memorial_text）不在此读口内：谎奏不造罪、不抹证（P6 实况/奏报分轨）。
     """
@@ -1334,7 +1415,7 @@ def _investigation_declaration(sel: Mapping[str, object]) -> Dict[str, object]:
     raw_effort = sel.get("effort", sel.get("投入"))
     if raw_effort is not None:
         try:
-            out["effort"] = max(0.0, float(raw_effort))
+            out["intensity"] = max(0.0, min(1.0, float(raw_effort)))
         except (TypeError, ValueError):
             pass
     fact = str(sel.get("fact_key", sel.get("所查事实")) or "").strip()
@@ -1471,11 +1552,30 @@ def _apply_investigation_selection(
     """查案密令的逐证落账（#1896）。幂等键＝(dossier, turn)，重开只续未成核算。"""
     did = int(dossier["id"])
     oid = int(order["id"])
+    # 同月重入不重复施加投入：实况轨已有本月行即说明本月已核算过。lane 累加本身
+    # 不带幂等键，若不在此拦一道，同一 turn 内被扫两次就会把力气算两遍。
+    existing = db.conn.execute(
+        "SELECT id, units FROM dossier_actual_progress "
+        "WHERE dossier_id=? AND turn=? LIMIT 1",
+        (did, int(turn)),
+    ).fetchone()
+    if existing is not None:
+        return {
+            "order_id": oid,
+            "dossier_id": did,
+            "units": float(existing["units"] or 0.0),
+            "row_id": existing["id"],
+            "fact_key": "",
+            "effort_applied": 0.0,
+            "mastered_facts": [],
+            "originated_quantity": 0.0,
+            "already_applied": True,
+        }
     declaration = _investigation_declaration(sel)
     result = apply_investigation_monthly_effort(
         db, did, target, investigator,
         fact_key=str(declaration.get("fact_key") or ""),
-        effort=float(declaration.get("effort") or 0.0),
+        intensity=float(declaration.get("intensity") or 0.0),
         commit=False,
     )
     spoliation = declaration.get("spoliation")

@@ -21549,15 +21549,6 @@ class GameDB:
                 "excluded_offices": list(excluded_offices),
             }
             payload[CONTRACT_KEY] = covert_contract
-            from ming_sim.covert_progress import (
-                live_investigation_fact_keys,
-                FACT_LANES_KEY,
-            )
-            if inv_target:
-                payload[FACT_LANES_KEY] = [
-                    {"fact_key": key, "progress": 0.0, "used": False}
-                    for key in live_investigation_fact_keys(self, inv_target)
-                ]
             dossier_id = self.create_decree_dossier(
                 state,
                 action_type="secret_order",
@@ -21595,6 +21586,16 @@ class GameDB:
                 """,
                 (int(dossier_id), int(state.turn)),
             )
+            if inv_target:
+                # #1896：开案即铺 lane 集并冻结逐证难度——唯一开 lane 的口在
+                # covert_progress.seed_investigation_fact_lanes，案卷 payload 不再
+                # 另写一份（曾在此手写旧 progress 形状，成了第二个 lane 写口）。
+                from ming_sim.covert_progress import seed_investigation_fact_lanes
+
+                seed_investigation_fact_lanes(
+                    self, int(dossier_id), inv_target,
+                    investigator=str(minister_name), commit=False,
+                )
         tlog(f"[secret_order] create id={order_id} minister={minister_name} title={title[:20]}")
         return order_id
 

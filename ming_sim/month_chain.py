@@ -1064,9 +1064,11 @@ def _attach_investigation_facts(
                 state = "已掌握"
             else:
                 state = "在查"
+            # 不把 difficulty 数值递给模型：那是引擎的账，给了等于递答案，
+            # 模型会照着填一个"刚好够"的值。人物只据实说自己下了多大劲。
             facts.append({
                 "fact_key": key,
-                "difficulty": None if difficulty == float("inf") else round(difficulty, 3),
+                "months_under_investigation": int(lane.get("months") or 0),
                 "effort_so_far": round(float(lane.get("effort") or 0.0), 3),
                 "state": state,
             })
