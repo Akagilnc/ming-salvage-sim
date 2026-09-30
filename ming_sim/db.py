@@ -14866,14 +14866,16 @@ class GameDB:
             except (AttributeError, ValueError):
                 target_id = 0
             relation = str(item.get("relation_type") or "") if isinstance(item, dict) else ""
-            note = str(item.get("note") or "").strip() if isinstance(item, dict) else ""
+            # P6 零删改：关联说明是 LLM 产出的自由文本，判空在副本上做，存的
+            # 仍是原文（#1897 J5：暂存侧已保真，消费者这里仍 strip 一次）。
+            note = str(item.get("note") or "") if isinstance(item, dict) else ""
             if self.get_decree_dossier(target_id) is None:
                 rejection = (target_id, relation, note, "关联指向不存在案卷")
             elif target_id >= source_id:
                 rejection = (target_id, relation, note, "案卷关联只允许新案卷指向旧案卷")
             elif relation not in DOSSIER_LINK_TYPES:
                 rejection = (target_id, relation, note, "案卷关联类型非法")
-            elif not note:
+            elif not note.strip():
                 rejection = (target_id, relation, note, "案卷关联说明不能为空")
             if rejection is not None:
                 break
@@ -17431,13 +17433,20 @@ class GameDB:
 
     def stage_directive_candidate(
         self, turn: int, minister_name: str, payload: Dict[str, object],
+        *, night_id: Optional[int] = None,
     ) -> int:
         """多道模式（#502）：新拟一道**独立**圣旨候选——总是 INSERT 新行、不并进现有候选。
         与 upsert_pending_directive（同回合同大臣至多一条、last-write-wins）互补：本方法给
-        「一夜拟多道各自独立」用，前者给「补充/修改当前草稿」用。返回新行 id。"""
+        「一夜拟多道各自独立」用，前者给「补充/修改当前草稿」用。返回新行 id。
+
+        ``night_id``：与 :meth:`stage_pending_action` 同义——显式承接的源夜，供
+        间接暂存入口（``action_materialize.stage_*_candidate``）把 ADR 0038
+        迟到转译的归属夜传下去，不再退回「当前开着的夜」。
+        """
         return self.stage_pending_action(
             turn, kind="directive", action="拟旨",
             minister_name=minister_name, target_id=None, payload=payload,
+            night_id=night_id,
         )
 
     def update_office_candidate_payload(
@@ -17474,15 +17483,25 @@ class GameDB:
 
     def update_directive_candidate(
         self, candidate_id: int, payload: Dict[str, object],
+        *, night_id: Optional[int] = None,
     ) -> int:
         """多道模式（#502）：原地更新某一道 pending directive 候选正文（补充/改草，不冻结）。
-        与 upsert_pending_directive 更新分支同纪律——把归属迁到当前开着的夜并清 night_approved，
-        使本夜应允（WHERE night_id=当前夜）命中、收夜不漏交。返回该行 id（不存在/非 pending 则 0）。
+        与 upsert_pending_directive 更新分支同纪律——把归属迁到本夜（默认当前开着
+        的夜；给出 ``night_id`` 则迁到该源夜）并清 night_approved，使本夜应允
+        （WHERE night_id=当前夜）命中、收夜不漏交。返回该行 id（不存在/非 pending 则 0）。
         **合并保留下划线控制键**（_needs_clarification / _directive_status 等）——正文改草不得
         静默抹掉待澄清/夜内态闸（#502 L5，与 flag_directive_needs_clarification 同纪律）。
-        #612：player-facing draft mutation 统一走 assert_night_accepts_player_input，CLOSING 拒。"""
+        #612：player-facing draft mutation 统一走 assert_night_accepts_player_input，CLOSING 拒。
+        ``night_id``：ADR 0038 迟到转译的源夜——夜已收时按「当前开着的夜」改归属会
+        把行迁到 night_id=0，随后应允按 missing_ref 拒收，补译交办接不回源夜。"""
         from ming_sim.audience_night import assert_night_accepts_player_input
-        assert_night_accepts_player_input(self, what="改草")
+        pinned_night = int(night_id or 0)
+        if pinned_night > 0:
+            assert_night_accepts_player_input(self, pinned_night, what="改草")
+            next_night = pinned_night
+        else:
+            assert_night_accepts_player_input(self, what="改草")
+            next_night = self._current_open_night_id()
         row = self.conn.execute(
             "SELECT id,payload_json,status,version FROM pending_actions "
             "WHERE id=? AND kind='directive'",
@@ -17498,7 +17517,7 @@ class GameDB:
             "UPDATE pending_actions SET payload_json=?, night_id=?, night_approved=0, "
             "version=version+1 WHERE id=?",
             (json.dumps(merged, ensure_ascii=False),
-             self._current_open_night_id(), int(candidate_id)),
+             next_night, int(candidate_id)),
         )
         self.conn.commit()
         return int(candidate_id)

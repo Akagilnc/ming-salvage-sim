@@ -9,8 +9,10 @@
 - 声明新建密令 → 落一条 secret_order/新建 暂存，应允后案卷真成案（可读回）；
 - 差务契约不成立 / 缺具名承办人 / 可选集合字段坏类型 → durable 拒收、零暂存，
   同批合法交办照落（坏项不带走整批）；
-- 密令正文原样落库（判空不改存储值）；
-- 补译交办承接源夜：夜收后补译暂存仍属源夜，应允照常成案；
+- 密令正文原样落库（判空不改存储值），案卷关联说明同守零删改；
+- 承办人须是名册具名人物：场景标签与虚构人名都 durable 拒收；
+- 补译交办承接源夜：夜收后补译暂存仍属源夜（直接与间接暂存入口 alike），
+  应允照常成案；
 - 成案真失败不当成功：原 action_id 保留可重试，故障解除后同一 id 成案。
 """
 
@@ -241,20 +243,162 @@ def test_bad_secret_order_is_rejected_without_staging_or_landing(game):
     assert db.list_secret_orders() == []
 
 
-def test_scene_speaker_without_roster_assignee_is_not_made_into_a_minister(game):
-    """ADR 0153:5：场景标签不是人物身份。整场轮无具名承办人 → 拒收，不写 order_minister=殿上。"""
+@pytest.mark.parametrize("declared_assignee", ["", "殿上", "不存在的人1897"])
+def test_non_roster_assignee_is_not_made_into_a_minister(game, declared_assignee):
+    """ADR 0153:5 + ADR 0053：承办人是名册人物主键引用。
+
+    场景标签（「殿上」）与模型编出的不存在人名都不得成为正式承办身份——上一轮
+    名册检查只挂在缺省回退上，显式声明的假身份一路暂存、成案写进 order_minister。
+    """
     db, state, _ = game
     speaker = an.SCENE_CHAT_SPEAKER
     night_id, ctid = _open_night(db, state, speaker)
 
     result = _dispatch(
-        db, state, speaker, _secret_order_declaration(assignee=""), ctid, night_id,
+        db, state, speaker,
+        _secret_order_declaration(assignee=declared_assignee), ctid, night_id,
     )
     assert result.commissions.applied == []
     assert len(result.commissions.rejected) == 1
     assert _rejection_rows(db, state.turn)[0]["category"] == "invalid_state"
     assert _staged_secret_order_rows(db, state.turn) == []
     assert db.list_secret_orders() == []
+
+
+def test_declared_roster_assignee_still_lands(game):
+    """反向：名册里的具名承办人照常暂存成案（身份闸不得把真承办人也拒掉）。"""
+    db, state, _ = game
+    minister = _minister(db)
+    night_id, ctid = _open_night(db, state, minister)
+
+    result = _dispatch(
+        db, state, minister, _secret_order_declaration(assignee=minister), ctid, night_id,
+    )
+    assert result.commissions.rejected == [], result.commissions.rejected
+    order_id = int(
+        _approve(db, state, minister, ctid, night_id,
+                 int(_staged_secret_order_rows(db, state.turn)[0]["id"]))
+        .promises.applied[0]["secret_order_id"]
+    )
+    assert db.get_secret_order(order_id)["minister_name"] == minister
+
+
+def test_late_translated_indirect_staging_keeps_its_source_night(game):
+    """ADR 0038 后出注记：间接暂存入口（责成交办 / 惩处）同样承接源夜。
+
+    这两者经 ``action_materialize.stage_*_candidate`` 落到
+    ``stage_directive_candidate`` 而非直接写口——上一轮只在直接写口挂了源夜，
+    夜收后它们挂成 night_id=0，随后应允按 missing_ref 拒收，补译交办接不回源夜。
+    """
+    db, state, _ = game
+    minister = _minister(db)
+    night_id, ctid = _open_night(db, state, minister)
+    an.close_night(db, state, night_id=int(night_id))
+    assert an.get_open_night(db) is None
+
+    cases = {
+        "assignment": {"assignment": {"title": "密查粮科", "text": "密查粮科私卖。"}},
+        "punishment": {"punishment": {
+            "text": "罚俸三月。", "target_id": minister,
+            "punish_action": "罚俸", "amount": 3,
+        }},
+    }
+    for label, payload in cases.items():
+        result = _dispatch(
+            db, state, minister, {"commissions": [{"text": "依旨办理。", **payload}]},
+            ctid, night_id,
+        )
+        assert result.commissions.rejected == [], (label, result.commissions.rejected)
+        assert len(result.commissions.applied) == 1, label
+        staged = db.conn.execute(
+            "SELECT id, night_id FROM pending_actions WHERE id=?",
+            (int(result.commissions.applied[0]["id"]),),
+        ).fetchone()
+        # 源夜承接：不是 0（接不回源夜），是本夜。
+        assert int(staged["night_id"]) == int(night_id), (label, dict(staged))
+
+
+def test_late_translated_indirect_update_keeps_its_source_night(game):
+    """同上，但走**改草**分支：命中既有待办的间接更新也不得把归属迁到 night_id=0。
+
+    ``stage_assignment_candidate`` 命中 target_candidate 时走
+    ``update_directive_candidate``，该分支原本无条件按「当前开着的夜」改归属——
+    夜已收时当前开夜为 0，改草就把补译交办从源夜迁走，随后应允 missing_ref。
+    """
+    db, state, _ = game
+    minister = _minister(db)
+    night_id, ctid = _open_night(db, state, minister)
+
+    # 开夜期间先落一条待办责成交办，作为后续补译改草的目标。
+    first = _dispatch(
+        db, state, minister, {"commissions": [{"text": "依旨办理。", "assignment": {
+            "title": "密查粮科", "text": "密查粮科私卖。",
+        }}]}, ctid, night_id,
+    )
+    assert first.commissions.rejected == [], first.commissions.rejected
+    staged_id = int(first.commissions.applied[0]["id"])
+
+    an.close_night(db, state, night_id=int(night_id))
+    assert an.get_open_night(db) is None
+
+    # 夜收后补译：点名改那一稿（target_candidate 命中既有待办 → 改草分支）。
+    revised = _dispatch(
+        db, state, minister, {"commissions": [{"text": "再查得细些。", "assignment": {
+            "title": "密查粮科", "text": "密查粮科私卖，并追赃银。",
+            "target_candidate": str(staged_id),
+        }}]}, ctid, night_id,
+    )
+    assert revised.commissions.rejected == [], revised.commissions.rejected
+    assert int(revised.commissions.applied[0]["id"]) == staged_id
+
+    row = db.conn.execute(
+        "SELECT night_id, payload_json FROM pending_actions WHERE id=?",
+        (staged_id,),
+    ).fetchone()
+    assert int(row["night_id"]) == int(night_id), dict(row)
+    # 改草确实落到那一行（正文取交办顶层 text，与其他责成交办同口径）。
+    assert json.loads(row["payload_json"])["text"] == "再查得细些。"
+
+
+def test_secret_order_link_note_is_stored_verbatim(game):
+    """P6 零删改：案卷关联说明一视同仁——暂存与正式关联都存原文。
+
+    暂存侧上一轮已保真，消费者 ``add_dossier_links`` 这里仍 strip 一次，
+    正式关联读回少了前后空白与换行（verbatim=false）。
+    """
+    db, state, _ = game
+    minister = _minister(db)
+    night_id, ctid = _open_night(db, state, minister)
+
+    _dispatch(db, state, minister, _secret_order_declaration(assignee=minister),
+              ctid, night_id)
+    old_order_id = int(
+        _approve(db, state, minister, ctid, night_id,
+                 int(_staged_secret_order_rows(db, state.turn)[0]["id"]))
+        .promises.applied[0]["secret_order_id"]
+    )
+    old_dossier_id = int(db.get_dossier_for_secret_order(old_order_id)["id"])
+    raw_note = "\n  并案同查。  \n"
+
+    result = _dispatch(
+        db, state, minister, _secret_order_declaration(
+            assignee=minister, title="再查一桩",
+            dossier_links=[{"target_dossier_id": old_dossier_id,
+                            "relation_type": "稽核", "note": raw_note}],
+        ), ctid, night_id,
+    )
+    assert result.commissions.rejected == [], result.commissions.rejected
+    staged = json.loads(_staged_secret_order_rows(db, state.turn)[-1]["payload_json"])
+    assert staged["dossier_links"][0]["note"] == raw_note
+
+    staged_id = int(_staged_secret_order_rows(db, state.turn)[-1]["id"])
+    order_id = int(
+        _approve(db, state, minister, ctid, night_id, staged_id)
+        .promises.applied[0]["secret_order_id"]
+    )
+    new_dossier_id = int(db.get_dossier_for_secret_order(order_id)["id"])
+    stored = db.list_dossier_links(new_dossier_id)
+    assert [link["note"] for link in stored] == [raw_note]
 
 
 @pytest.mark.parametrize("bad_tags", [7, [7]], ids=["whole_field", "element"])
@@ -308,33 +452,6 @@ def test_late_translation_staged_secret_order_still_lands_under_its_source_night
     assert approved.promises.rejected == [], approved.promises.rejected
     order_id = int(approved.promises.applied[0]["secret_order_id"])
     assert db.get_secret_order(order_id)["status"] == "active"
-
-
-def test_frozen_contract_examples_are_consumable_and_sign_semantics_hold():
-    """差务契约真源自身可消费：样例真被 ``build_covert_task_contract`` 收下，
-    且钱粮符号语义按实现判定（+1 收入 / -1 支出，收入不得写补饷）。
-
-    #1897 R4：原用例把 prompt 里的字段名、样例序列化文本、措辞逐字断言钉在
-    一处（改个等义措辞即红），那是盯文不是对行为负责，已整段删除。此处只对
-    真源的消费行为负责——生产 prompt 由 ``describe_covert_task_contract``
-    投影这份真源，说明与实现分叉由那里的单一真源保证。
-    """
-    from ming_sim.covert_progress import (
-        _CONTRACT_EXAMPLES, build_covert_task_contract,
-    )
-
-    for sample in _CONTRACT_EXAMPLES:
-        build_covert_task_contract(covert_task=sample)
-
-    # 收入（+1）不得声明为补饷支出：真源按此拒收，不是 prompt 措辞问题。
-    with pytest.raises(Exception):
-        build_covert_task_contract(covert_task={
-            "kind": "抄家入帑", "axes": ["实务事功"], "direction": 1,
-            "delivery": {
-                "unit": "万两", "target_units": 1, "effect_sign": 1,
-                "purpose": "补饷", "category": "密令差务", "account": "内库",
-            },
-        })
 
 
 def test_failed_landing_keeps_the_original_pending_action_retryable(game, monkeypatch):

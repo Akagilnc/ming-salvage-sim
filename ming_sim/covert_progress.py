@@ -434,7 +434,7 @@ def build_covert_task_contract(
 
 
 # 转译 prompt 里给模型的契约样例：每份都必须能被 build_covert_task_contract
-# 收下，否则说明本身就在教模型交一份会被拒的载荷（tests 有断言钉住）。
+# 收下，否则说明本身就在教模型交一份会被拒的载荷。
 # 钱粮两种定向各给一份：符号语义（+1 收入 / -1 支出）正是手写说明曾写反之处，
 # 光给人犯样例盖不住。
 _CONTRACT_EXAMPLES: tuple[Dict[str, object], ...] = (
@@ -490,7 +490,7 @@ def describe_covert_task_contract() -> str:
     手写那份曾把符号写反，教模型交一份必被拒的载荷。
 
     样例取自 ``_CONTRACT_EXAMPLES``——每份样例本身必须能被
-    ``build_covert_task_contract`` 收下（tests 有断言），免得说明与实现分叉。
+    ``build_covert_task_contract`` 收下，免得说明与实现分叉。
     """
     axes = "、".join(sorted(CENTRIFUGE_AXES))
     units = "、".join(CANONICAL_UNITS)

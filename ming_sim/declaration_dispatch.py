@@ -1238,12 +1238,16 @@ def _dispatch_commissions(
                 continue
             # ADR 0153:5：承办人只据明确声明分派。场景标签（殿上整场轮）不是人，
             # 缺承办人且说话人不在名册 → durable 拒收，不拿场景当人物身份。
+            # ADR 0053：人物 id 是主键引用——**显式声明**的承办人同样要过名册，
+            # 否则模型写「殿上」或编一个人名即可把场景/虚构身份写成正式承办人
+            # （#1897 J4：上一轮只在缺省回退上查名册，管不到显式值）。
             assignee = str(secret.get("assignee") or "").strip()
             if not assignee:
-                assignee = actor if _is_roster_character(db, actor) else ""
-            if not assignee:
+                assignee = actor
+            if not _is_roster_character(db, assignee):
                 _reject(
-                    rejected, item, "密令须明确具名承办人（说话人不在名册，不得以场景充当）",
+                    rejected, item,
+                    "密令承办人须是名册里的具名人物（场景或虚构人名不得充当承办人）",
                     "invalid_state", source,
                 )
                 continue
@@ -1335,6 +1339,7 @@ def _dispatch_commissions(
                     target_candidate=assignment.get("target_candidate"),
                     transaction_category=assignment.get("transaction_category", ""),
                     source_chat_turn_id=source_chat_turn_id,
+                    night_id=staged_night,
                 )
             except (DecreeMaterializationValidationError, TypeError, ValueError) as exc:
                 _reject(rejected, item, str(exc), "invalid_shape", source)
@@ -1367,6 +1372,7 @@ def _dispatch_commissions(
                 backing_dossier_id=punishment.get("backing_dossier_id"),
                 issue_id=punishment.get("issue_id"),
                 issue_disposition=punishment.get("issue_disposition"),
+                night_id=staged_night,
             )
             if row_id:
                 applied.append({"id": row_id, "kind": "directive"})
@@ -1400,6 +1406,7 @@ def _dispatch_commissions(
             row_id = stage_pacification_candidate(
                 db, int(state.turn), actor, text=body,
                 target_id=canonical, extracted_mode=pacification.get("mode"),
+                night_id=staged_night,
             )
             applied.append({"id": row_id, "kind": "directive"})
             continue
