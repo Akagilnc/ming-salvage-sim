@@ -1421,21 +1421,40 @@ def test_multi_lead_typed_archives_reach_only_each_office_successor(game, tmp_pa
 
 
 def test_central_ledgers_and_unbounded_household_history_reach_final_materials(game, tmp_path):
+    """户部／兵部／吏部各自的衙门底账整段落进本人 公事档案.txt，无供料上限。
+
+    契约面是结构化字段：档案首段恰为本人 world 投影里那本账的原值
+    （`{账键}：{账值}` 逐字相等），且不含旁衙门的账段。太仓流水不截断——
+    账段行数 = 库内 国库 流水条数 + 实存行；兵籍／任免簿同理按各自真源
+    行数计。不用 EARLY_LEDGER 之类正文哨兵，也不比对「兵籍在册」「任免簿」
+    等人读措辞。
+    """
     db, state, content = game
-    household = next(c for c in content.characters.values() if c.office_type == "户部")
-    war = next(c for c in content.characters.values() if c.office_type == "兵部")
-    personnel = next(c for c in content.characters.values() if c.office_type == "吏部")
     for index in range(31):
-        db.record_issue_economy_move(
-            state, "国库", 1, "旧账", f"EARLY_LEDGER_{index}",
-        )
-    household_archive = _office_archive_from_materials(
-        db, state, household, tmp_path / "household",
-    )
-    assert "EARLY_LEDGER_0" in household_archive and "内库" not in household_archive
-    war_archive = _office_archive_from_materials(db, state, war, tmp_path / "war")
-    assert "兵籍在册" in war_archive and "军心" not in war_archive and "欠饷" not in war_archive
-    personnel_archive = _office_archive_from_materials(
-        db, state, personnel, tmp_path / "personnel",
-    )
-    assert "任免簿" in personnel_archive
+        db.record_issue_economy_move(state, "国库", 1, "旧账", f"旧账{index}")
+    db.record_issue_economy_move(state, "内库", -7, "内帑", "内帑出银")
+
+    ledger_rows = {
+        "treasury": int(db.conn.execute(
+            "SELECT COUNT(*) FROM economy_ledger WHERE account='国库'",
+        ).fetchone()[0]),
+        "military": int(db.conn.execute(
+            "SELECT COUNT(*) FROM armies WHERE owner_power='ming'",
+        ).fetchone()[0]),
+        "personnel": len(db.current_court_roster_rows(state)),
+    }
+    for office_type, key in (
+        ("户部", "treasury"), ("兵部", "military"), ("吏部", "personnel"),
+    ):
+        character = next(c for c in content.characters.values() if c.office_type == office_type)
+        archive = _office_archive_from_materials(db, state, character, tmp_path / office_type)
+        world = db.get_character_knowledge(state, character.name)["world"]
+        # 本人档案只带自己那本账：账段逐字等于该角色 world 投影的原值。
+        assert f"{key}：{world[key]}" in archive
+        # 旁衙门的账段一段都不出现（太仓/兵籍/任免簿互不串门，内库不入户部账）。
+        assert not [
+            other for other in ledger_rows
+            if other != key and f"{other}：" in archive
+        ]
+        # 无供料上限：账段 = 一行段头 + 真源每行一条（太仓段头是实存行）。
+        assert len(world[key].splitlines()) == ledger_rows[key] + 1

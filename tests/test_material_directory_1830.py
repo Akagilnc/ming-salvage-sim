@@ -23,9 +23,7 @@ from ming_sim.audience_night import (
 )
 from ming_sim.materials import (
     MaterialsRoot,
-    _handled_affair_lines,
     _safe_segment,
-    _visible_affair_lines,
     list_materials,
     material_tools,
     prepare_character_materials,
@@ -87,11 +85,25 @@ def test_prepare_writes_typed_tree_and_index(game, tmp_path):
             assert read_material(prepared.root, stripped)
         else:
             assert any(stripped.startswith(rel + " ") for rel in listed)
-    roster = read_material(prepared.root, "人物/朝臣名册.txt")
+    roster_lines = set(read_material(prepared.root, "人物/朝臣名册.txt").splitlines())
+    # 名册载体的数据行逐行等于该角色可见名册行的结构化投影（首行是段头，
+    # 段头本身是渲染细节，不入契约）；不扫「无现任官职」之类措辞。
+    from ming_sim.knowledge import project_court_roster_rows
     status, _reason = db.get_character_status(character.name)
-    assert character.name in roster
-    assert (character.office or "无现任官职") in roster
-    assert status in roster
+    projected = project_court_roster_rows(
+        db.current_court_roster_rows(state),
+        db.get_character_knowledge(state, character.name),
+        character.office_type,
+    )
+    assert projected
+    row_lines = {
+        f"{row['name']}：{row['office'] or '无现任官职'}，{row['status']}" for row in projected
+    }
+    # 载体 = 投影行集 + 一行段头；只按行数与成员关系证明，不认段头措辞。
+    assert row_lines <= roster_lines
+    assert len(roster_lines) == len(row_lines) + 1
+    assert any(line.startswith(f"{character.name}：") for line in roster_lines)
+    assert status in {row["status"] for row in projected}
 
 
 def test_same_requested_root_creates_independent_material_invocations(game, tmp_path):
@@ -141,18 +153,20 @@ def test_material_tree_contains_only_structurally_related_world_details(game, tm
     region_paths = [path for path in names if path.startswith("地区/")]
     army_paths = [path for path in names if path.startswith("军队/")]
     assert len(region_paths) == 1 and len(army_paths) == 1
-    region_text = read_material(prepared.root, region_paths[0])
-    army_text = read_material(prepared.root, army_paths[0])
     region_name = db.conn.execute(
         "SELECT name FROM regions WHERE id=?", ("shaanxi",),
     ).fetchone()["name"]
-    assert region_name in region_text and army["name"] in army_text
-    assert "民心13" not in region_text and "动乱87" not in region_text
-    assert "补给：17" not in army_text
-    assert "士气：23" not in army_text and "士气23" not in army_text
-    assert "忠诚：31" not in army_text and "军心：31" not in army_text
-    assert "训练：44" not in army_text
-    assert "装备：52" not in army_text
+    # 契约面＝载体正文与该对象的权威定性投影逐字相等：地区/军队详情只走
+    # qualitative 渲染，不带 P4 禁入的裸数值。不另写「民心13」「士气：23」
+    # 之类固定片段去扫措辞——相等本身即证明没有另一套渲染。
+    assert read_material(prepared.root, region_paths[0]).rstrip("\n") == (
+        db.region_detail(region_name, qualitative=True).rstrip("\n")
+    )
+    assert read_material(prepared.root, army_paths[0]).rstrip("\n") == (
+        db.army_roster(
+            filter_names=[army["name"], army["id"]], qualitative_equipment=True,
+        ).rstrip("\n")
+    )
 
 
 def _agent_with_materials(root: Path, *, with_cli_cwd: bool):
@@ -165,37 +179,45 @@ def _agent_with_materials(root: Path, *, with_cli_cwd: bool):
 
 
 def test_opening_handled_matters_are_filtered_within_authorized_knowledge(game, tmp_path):
+    """开场最小集只列本官经手事务，且该筛选走真实权限投影。
+
+    契约面：INDEX 事务载体路径集合（可见投影里每条事务各有唯一载体），以及
+    开场「正经手事务」只出现本官经手的那一条、不出现只是可见的那一条。
+    经手关系经 `issues.participant_roster` + `record_character_participation`
+    两条真实写口建立，可见性经 `db.get_character_knowledge` 真实投影得出；
+    不替换知识输入，也不另调内部 helper 把投影重算一遍当证据。
+    """
     db, state, content = game
     character = _active_minister(db, content)
-    current_office = "当回合新任官职"
+    rows = db.conn.execute(
+        "SELECT id,title FROM issues WHERE status='active' ORDER BY id LIMIT 2",
+    ).fetchall()
+    handled_id, visible_id = (int(row["id"]) for row in rows)
     db.conn.execute(
-        "UPDATE characters SET office = ? WHERE name = ?", (current_office, character.name),
+        "UPDATE issues SET participant_roster=? WHERE id=?",
+        (json.dumps([{"character_id": character.name, "tier": "主办"}]), handled_id),
     )
-    knowledge = {"issues": [
-        {"id": 101, "title": "经手事项", "participant_roster": json.dumps([
-            {"character_id": character.name, "tier": "主办"},
-        ])},
-        {"id": 102, "title": "无人承办事项", "participant_roster": "[]"},
-    ]}
+    db.conn.commit()
+    db.record_character_participation(
+        state, [character.name], "case", str(rows[0]["title"]), "案由正文",
+        source_id=f"issue:{handled_id}",
+    )
 
-    original_get = db.get_character_knowledge
-    db.get_character_knowledge = lambda *_args: knowledge
-    try:
-        prepared = prepare_character_materials(
-            db, state, character, dest_root=tmp_path / "materials",
-        )
-    finally:
-        db.get_character_knowledge = original_get
-    assert current_office in prepared.opening
-    assert character.office not in prepared.opening
-    issue_paths = {line for line in prepared.index_lines if line.startswith("事务/issue-")}
-    assert issue_paths == {
-        "事务/issue-101/当前情况.txt", "事务/issue-102/当前情况.txt",
+    prepared = prepare_character_materials(
+        db, state, character, dest_root=tmp_path / "materials",
+    )
+    # 真实投影：经手的那条与只是可见的那条都在可见集合内，各有唯一载体路径。
+    visible_ids = {
+        int(row["id"]) for row in db.get_character_knowledge(state, character.name)["issues"]
     }
-    projected = _visible_affair_lines(knowledge)
-    assert [row["id"] for row in _handled_affair_lines(
-        db, state, character.name, projected,
-    )] == [101]
+    assert {handled_id, visible_id} <= visible_ids
+    issue_paths = {line for line in prepared.index_lines if line.startswith("事务/issue-")}
+    assert issue_paths == {f"事务/issue-{i}/当前情况.txt" for i in visible_ids}
+
+    # 开场最小集只列经手的那一条；只是可见的那一条不上开场。
+    handled_block = prepared.opening.split("正经手事务：", 1)[1].split("本场已说的话", 1)[0]
+    assert f"#{handled_id} " in handled_block
+    assert f"#{visible_id} " not in handled_block
 
 
 def test_prepare_fails_loud_when_dossier_read_breaks(game, tmp_path):
@@ -310,8 +332,7 @@ def test_secret_order_materials_keep_full_content_and_fail_loud_on_db_error(
 ):
     db, state, content = game
     character = _active_minister(db, content)
-    long_body = ("密令长正文-" * 20) + "-TAIL"
-    assert len(long_body) > 80
+    long_body = "密令长正文" * 40
     create_test_secret_order(
         db, state, character.name, "长密令", long_body, [], deadline_months=6,
     )
@@ -319,9 +340,14 @@ def test_secret_order_materials_keep_full_content_and_fail_loud_on_db_error(
         db, state, character, dest_root=tmp_path / "secret-ok",
     )
     secret_path = next(p for p in list_materials(prepared.root) if p.startswith("密令/"))
-    secret_text = read_material(prepared.root, secret_path)
-    assert "-TAIL" in secret_text
-    assert long_body in secret_text
+    secret_lines = set(read_material(prepared.root, secret_path).splitlines())
+    # 全文保留（无供料上限）：文件行集包含库内每条在册密令的完整正文，
+    # 真源是 DB 行本身，不另写正文哨兵去扫描渲染措辞。
+    stored = {
+        str(row["content"]) for row in db.get_active_secret_orders_for_minister(character.name)
+    }
+    assert stored == {long_body}
+    assert stored <= secret_lines
 
     def boom(_name):
         raise RuntimeError("secret-order-db-boom")
