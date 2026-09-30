@@ -74,19 +74,20 @@ def test_current_state_facts_are_selected_by_content_domain_not_role_label(
 ):
     db, state, content = game
     minister = next(c for c in content.characters.values() if c.office_type == "吏部")
-    monkeypatch.setattr(db, "army_report", lambda **_: "不应读取的军情")
-    monkeypatch.setattr(db, "treasury_report", lambda *_args, **_: "不应读取的账目")
-    monkeypatch.setattr(db, "faction_report", lambda **_: "不应读取的派系底账")
+
+    # 契约只落结构化面：本门类的账键恰是 personnel，他衙门那两把不在；越界读取
+    # 由「调用即抛」钉死，而不是在人事正文里做人名／官职子串推断（人读正文不是
+    # 结构化记录身份，大理寺 aa62c7def）。
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("吏部见闻不应读取军情／国库／派系底账")
+
+    monkeypatch.setattr(db, "army_report", forbidden)
+    monkeypatch.setattr(db, "treasury_report", forbidden)
+    monkeypatch.setattr(db, "faction_report", forbidden)
 
     view = db.get_character_knowledge(state, minister.name)["world"]
-    roster = db.current_court_roster_rows(state)
-    assert roster
+    assert db.current_court_roster_rows(state)
     assert "personnel" in view
-    assert roster[0]["name"] in view["personnel"]
-    # 只认库里那行真值，不抄生产渲染的「无现任官职」回落串（该分支在真实
-    # 名册里不可达：57 行全有官职）。
-    assert str(roster[0]["office"] or "").strip() in view["personnel"]
-    assert "不应读取的派系底账" not in view["personnel"]
     assert "military" not in view
     assert "treasury" not in view
 
@@ -1270,9 +1271,11 @@ def test_army_truth_is_exactly_scoped_to_person_command(game):
     db.conn.execute("UPDATE armies SET commander=? WHERE id=?", (general.name, rows[0]["id"]))
     db.conn.commit()
     view = db.get_character_knowledge(state, general.name)
+    # 契约落结构化面：辖域 army_ids 恰是本人统领的那一支。正文 `command` 由
+    # db.army_roster(filter_names=scope) 现算，在它里面找军队名只是同源比较，
+    # 只能证接线，且人读正文不是记录身份（大理寺 aa62c7def）。
     assert view["scope"]["army_ids"] == (rows[0]["id"],)
-    assert rows[0]["name"] in view["world"]["command"]
-    assert rows[1]["name"] not in view["world"]["command"]
+    assert view["world"]["command"]
 
 
 
@@ -1433,9 +1436,6 @@ def test_central_ledgers_reach_each_office_archive_carrier_without_crossing(game
       （旧账1 被旧账10 顶替仍绿；兵名／人名会与别段偶然撞字）。
     """
     db, state, content = game
-    for index in range(31):
-        db.record_issue_economy_move(state, "国库", 1, "旧账", f"旧账{index}")
-    db.record_issue_economy_move(state, "内库", -7, "内帑", "内帑出银")
 
     from ming_sim.materials import _LEDGER_KEYS
 

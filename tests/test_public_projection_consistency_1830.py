@@ -118,13 +118,20 @@ def test_scene_person_public_layer_matches_character_and_world_admission(game, t
 
     # 单人目录的人物子树只有既定载体：朝臣名册 + 本人经历 + 本人公事档案。
     # 修前这里多一份 人物/<名>/见闻.txt，把公开层正文整体重渲一遍。
+    # 契约落结构：恰一棵人物子树、以读者本人命名、其下恰两个既定载体。
+    # 不钉 _safe_segment 的摘要后缀——那是内部表示，与本契约无关（大理寺
+    # aa62c7def：换任一合法在职读者都应同样成立）。
     person_paths = {
         path for path in list_materials(solo.root) if path.startswith("人物/")
     }
+    person_dirs = {path.split("/")[1] for path in person_paths if path.count("/") == 2}
+    assert len(person_dirs) == 1, person_paths
+    person_dir = person_dirs.pop()
+    assert person_dir.startswith(f"{character.name}-"), person_dir
     assert person_paths == {
         "人物/朝臣名册.txt",
-        f"人物/{character.name}-51448653368b/经历.txt",
-        f"人物/{character.name}-51448653368b/公事档案.txt",
+        f"人物/{person_dir}/经历.txt",
+        f"人物/{person_dir}/公事档案.txt",
     }
 
     # 场景每份材料都在 INDEX 里，API 列目录／读文件读到同一内容。

@@ -123,13 +123,11 @@ def test_material_tree_contains_only_structurally_related_world_details(game, tm
         content=content,
     )["applied_person_changes"]
     assert applied and not applied[0].get("rejected"), applied
+    # 只造「本人统领该军」这一结构关系；军政／地区各项数值与载体路径断言无关，
+    # 属原措辞检查的失效夹具，一并删去（大理寺 aa62c7def，硬规 #12）。
     db.conn.execute("UPDATE armies SET commander='' WHERE commander=?", (character.name,))
     db.conn.execute(
-        "UPDATE armies SET commander=?,supply=17,morale=23,loyalty=31,training=44,equipment=52 "
-        "WHERE id=?", (character.name, army["id"]),
-    )
-    db.conn.execute(
-        "UPDATE regions SET public_support=13,unrest=87 WHERE id=?", ("shaanxi",),
+        "UPDATE armies SET commander=? WHERE id=?", (character.name, army["id"]),
     )
     db.conn.commit()
 
