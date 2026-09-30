@@ -1580,15 +1580,14 @@ def stage_assignment_candidate(
     has_ongoing = isinstance(parsed_ongoing, dict) and bool(parsed_ongoing)
     if kind_raw == "until_stop":
         staged["commitment_kind"] = "until_stop"
-    # #620 AC2：分段里程碑只承接显式结构化 stages 字段（ADR 0142：机械事实
-    # 不从 LLM 自由散文反推）。交办正文里的「三年…五年…」年诺不再被正则
-    # 捕获成分段承诺——没有 typed stages 就没有 commitment 段表。
-    from ming_sim.staged_commitment import capture_commitment_stages
-    stages_raw = stages if stages not in (None, "") else None
-    stages_norm = capture_commitment_stages(
-        stages_raw,
-        origin_turn=int(turn),
-    )
+    # #620 AC2 / #1890 / ADR 0142：分段里程碑是机械事实（到期判账），交办接缝
+    # 只承接**显式结构化** stages——JSON 数组串或已结构化列表，一律走库层
+    # stages_to_json 的严格串行面：非 JSON 字符串响亮 ValueError（由交办分派
+    # 的既有 except 收成 durable 拒收），禁再落 parse_staged_year_promise 把
+    # 中文数词年诺（「三年修渠五年通航」）正则反推成 due_turn 段表。
+    # 召对 materializer 不再是 capture_commitment_stages 的调用者。
+    from ming_sim.staged_commitment import stages_to_json
+    stages_norm = json.loads(stages_to_json(stages))
     if kind_raw == "until_stop" or has_stop or absolute_end > 0 or has_ongoing or stages_norm:
         if has_stop:
             staged["stop_condition"] = parsed_stop

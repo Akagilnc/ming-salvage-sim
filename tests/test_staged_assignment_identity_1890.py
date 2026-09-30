@@ -648,3 +648,68 @@ def test_assignment_prose_year_promise_does_not_become_commitment_stages(game):
     payload = _payload(db, int(result.commissions.applied[0]["id"]))
     assert "stages" not in payload
     assert "commitment_kind" not in payload
+
+
+def test_assignment_stages_prose_string_is_rejected_not_parsed(game):
+    """``assignment.stages`` 给非 JSON 散文串：按坏形拒收，不正则反推成段表。
+
+    同一类的第二条路：stages 字段本身是 LLM 自由文本时（「三年修渠五年通航」），
+    旧实现对它跑中文数词正则，落出两段带 due_turn 的承诺——机械事实来自散文。
+    现在只承接显式结构化：JSON 数组串或已结构化列表。
+    """
+    db, state, _ = game
+    minister = _minister(db)
+    night_id, ctid = open_hall_turn(db, state, minister)
+    _finish_turn(db, state, minister, ctid, "修渠之事")
+
+    result = _dispatch(
+        db, state,
+        {"commissions": [{
+            "text": "修渠之事",
+            "assignment": {
+                "title": "修渠", "target_id": "修渠",
+                "assignee": minister,
+                "stages": "三年修渠五年通航",
+            },
+        }]},
+        minister=minister, night_id=night_id, ctid=ctid,
+    )
+
+    # 拒收落成 durable 拒收（不是静默 []，也不是当成成功）。
+    assert result.commissions.applied == []
+    assert len(result.commissions.rejected) == 1
+    assert "JSON" in str(result.commissions.rejected[0].reason)
+    # 库层没有因此落下一条承诺暂存。
+    assert db.conn.execute(
+        "SELECT COUNT(*) c FROM pending_actions WHERE kind='directive' "
+        "AND source_chat_turn_id=?", (ctid,),
+    ).fetchone()["c"] == 0
+
+
+def test_assignment_structured_stages_json_still_lands_commitment(game):
+    """显式结构化 stages（JSON 数组串）照常落段——修的不是能力，是散文入口。"""
+    db, state, _ = game
+    minister = _minister(db)
+    night_id, ctid = open_hall_turn(db, state, minister)
+    _finish_turn(db, state, minister, ctid, "修渠之事")
+
+    result = _dispatch(
+        db, state,
+        {"commissions": [{
+            "text": "修渠之事",
+            "assignment": {
+                "title": "修渠", "target_id": "修渠",
+                "assignee": minister,
+                "stages": json.dumps([
+                    {"stage_idx": 0, "due_turn": 46, "criterion_text": "修渠"},
+                    {"stage_idx": 1, "due_turn": 70, "criterion_text": "通航"},
+                ], ensure_ascii=False),
+            },
+        }]},
+        minister=minister, night_id=night_id, ctid=ctid,
+    )
+
+    assert result.commissions.rejected == []
+    payload = _payload(db, int(result.commissions.applied[0]["id"]))
+    assert [s["due_turn"] for s in payload["stages"]] == [46, 70]
+    assert payload["commitment_kind"] == "until_stop"

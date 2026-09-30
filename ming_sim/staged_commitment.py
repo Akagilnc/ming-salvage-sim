@@ -196,10 +196,13 @@ def capture_commitment_stages(
 ) -> List[Dict[str, object]]:
     """生产捕获：结构化 stages / JSON 字符串 / 「三年X五年Y」文案 → 绝对 due 段表。
 
-    召对 materializer 与邸报/score new_issues 共用此入口，避免 CN year 解析只停在测试。
+    邸报 / score ``new_issues`` 共用此入口（``issues.py``、``db.py`` 的世界段
+    落账）。召对交办接缝**不是**调用者：那条路上机械承诺只认显式结构化
+    ``stages``，走 ``stages_to_json`` 的严格串行面（ADR 0142：引擎不得从 LLM
+    自由散文正则反推语义）。
     - 显式 stages 字段：JSON 数组优先；否则对字段文本跑 scripted 年诺解析
     - 显式 stages 字符串若 JSON-ish 坏形 → ValueError（与 stages_to_json 同响亮口径，禁静默 []）
-    - 无显式 stages：对 narrative（召对正文 / stage_text）解析；≥2 段才自动落
+    - 无显式 stages：对 narrative（邸报 stage_text / title）解析；≥2 段才自动落
       （对齐 AC2「三年X五年Y」，避免单次「三年后复试」误收成分段）
     """
     if raw not in (None, "", [], (), {}):

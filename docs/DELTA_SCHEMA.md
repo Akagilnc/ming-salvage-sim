@@ -298,7 +298,7 @@ canonical 段形＝list，每项落一道加派旨：逐省累积账当回合落
 - **段到期扫描独立**（与 form③ 共享「active 承诺 + 到期」谓词语义，不共用其 SQL 结果集）；**待裁载体改道** `next_audience_todos`——段派生的展示 `end_turn` **不**进 form③ `due_commitments` 待核议通道；**独立** `end_turn`（≠ max 段 due）仍可走 form③。结算**不**置 `TurnPhase.AWAITING_DECISION` / `<<DECISION>>` 停轮（0074/0076）
 - 去重键：`(commitment_ref, stage_idx, entry_kind)`，不得只按 issue_id 抹段
 - 段间自动续，无需玩家 ACK；消费/复命场面归 #621，本片只 own 写端
-- 捕获：召对/邸报「三年X五年Y」经生产 `capture_commitment_stages`（scripted 年诺解析）落段；禁 live-LLM 作唯一验收
+- 捕获：**召对交办接缝不捕获散文**——`stages` 只承接显式结构化（JSON 数组串或已结构化列表），非 JSON 字符串按坏形响亮拒绝（ADR 0142：引擎不得用正则从 LLM 自由散文反推结构化事实）。**邸报 / `new_issues`**（`issues.py`、`db.py` 世界段落账）仍经生产 `capture_commitment_stages`（scripted 年诺解析）落段；禁 live-LLM 作唯一验收
 
 **`next_audience_todos` 最小字段（P2）**：
 | 字段 | 约束 |
