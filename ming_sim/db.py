@@ -17457,14 +17457,29 @@ class GameDB:
 
     def update_office_candidate_payload(
         self, candidate_id: int, payload: Dict[str, object],
+        *, night_id: Optional[int] = None, source_chat_turn_id: int = 0,
     ) -> int:
         """#529：原地更新某一道 pending office（任免）候选 payload（特旨/署理路径应答）。
 
-        与 directive 改草同纪律——归属迁到当前开夜并清 night_approved；
+        与 directive 改草同纪律——归属迁到源夜（缺省当前开夜）并清 night_approved；
         合并保留下划线控制键。返回该行 id（不存在/非 pending office 则 0）。
+
+        ``night_id``：ADR 0038 迟到转译的源夜，语义同 :meth:`update_directive_candidate`
+        ——夜已收时按「当前开着的夜」改归属会把行迁到 night_id=0，随后应允按
+        missing_ref 拒收，补译交办接不回源夜。
+        ``source_chat_turn_id``：迟到转译的源轮，放行收夜持闸窗口（同暂存缝）。
         """
         from ming_sim.audience_night import assert_night_accepts_player_input
-        assert_night_accepts_player_input(self, what="任免路径应答")
+        pinned_night = int(night_id or 0)
+        if pinned_night > 0:
+            assert_night_accepts_player_input(
+                self, pinned_night, what="任免路径应答",
+                source_chat_turn_id=int(source_chat_turn_id or 0),
+            )
+            next_night = pinned_night
+        else:
+            assert_night_accepts_player_input(self, what="任免路径应答")
+            next_night = self._current_open_night_id()
         row = self.conn.execute(
             "SELECT id,payload_json,status FROM pending_actions "
             "WHERE id=? AND kind='office'",
@@ -17478,7 +17493,7 @@ class GameDB:
         self.conn.execute(
             "UPDATE pending_actions SET payload_json=?, night_id=?, night_approved=0 WHERE id=?",
             (json.dumps(merged, ensure_ascii=False),
-             self._current_open_night_id(), int(candidate_id)),
+             next_night, int(candidate_id)),
         )
         if (
             not bool(getattr(self.conn, "_commit_suspended", False))
@@ -21812,6 +21827,7 @@ class GameDB:
         """#1504：大臣自认办结 → 缩 due_turn 至当月，月末机械对账。
 
         claim 按月戳追加进 result（奏报/陈词轨），不入实况对账真源。仅 active 可提交。
+        claim 是 LLM 自由文本：原样入列，判空在副本上做（同 :meth:`_append_secret_order_line`）。
         """
         row = self.conn.execute(
             "SELECT status, turn_issued FROM secret_orders WHERE id = ?", (int(order_id),)
@@ -21820,13 +21836,12 @@ class GameDB:
             return False
         turn_row = self.conn.execute("SELECT turn FROM game_state WHERE id=1").fetchone()
         current_turn = int(turn_row["turn"]) if turn_row is not None else int(row["turn_issued"] or 0)
-        stamp = f"〔{period_label(year, period)}〕[提交核议] "
-        note = (claim or "").strip()
+        claim_text = str(claim or "")
         prev = self.conn.execute(
             "SELECT result FROM secret_orders WHERE id = ?", (int(order_id),)
         ).fetchone()["result"] or ""
-        lines = [ln for ln in prev.split("\n") if ln.strip()]
-        lines.append(f"{stamp}{note}")
+        entries = self._secret_order_timeline_entries(prev)
+        entries.append((f"〔{period_label(year, period)}〕", f"[提交核议] {claim_text}"))
         with atomic(self):
             self.conn.execute(
                 """
@@ -21834,21 +21849,53 @@ class GameDB:
                 SET due_turn = ?, result = ?, updated_at = CURRENT_TIMESTAMP
                 WHERE id = ? AND status = 'active'
                 """,
-                (current_turn, "\n".join(lines), int(order_id)),
+                (current_turn, self._serialize_secret_order_timeline(entries), int(order_id)),
             )
             self.mark_secret_order_in_progress(int(order_id), commit=False)
-        tlog(f"[secret_order] submit_for_review id={order_id} due_now claim={note[:60]!r}")
+        tlog(f"[secret_order] submit_for_review id={order_id} due_now claim={claim_text[:60]!r}")
         return True
 
     def _has_secret_order_period_line(self, order_id: int, column: str, year: int, period: int) -> bool:
-        """本年月该列是否已有一行（用于一回合一步闸门）。"""
+        """本年月该列是否已有一条（用于一回合一步闸门）。按条目判，不按行判。"""
         stamp = f"〔{period_label(year, period)}〕"
         row = self.conn.execute(
             f"SELECT {column} AS v FROM secret_orders WHERE id = ?", (int(order_id),)
         ).fetchone()
         if row is None:
             return False
-        return any(ln.startswith(stamp) for ln in str(row["v"] or "").split("\n"))
+        return any(s == stamp for s, _ in self._secret_order_timeline_entries(row["v"]))
+
+    #: 时间线每条的月戳头。条目边界只由它决定，正文里的换行不算新条目。
+    _SECRET_ORDER_STAMP_RE = re.compile(r"^〔(\d+)年(\d+)月〕")
+
+    @classmethod
+    def _secret_order_timeline_entries(cls, value: object) -> List[Tuple[str, str]]:
+        """把 result/sim_note 时间线拆成 ``[(月戳, 该条正文), ...]``。
+
+        一条 = 一行以〔年月〕开头的行，加上其后所有不带动戳的续行。进展正文是
+        LLM 自由文本、自带换行（P6 零删改），按行拆会把一条正文切成多条，同月
+        替换就只吃掉半条，剩下的残行还会被当独立条目排到时间线别处。
+        首个〔月戳〕之前的行不是任何条目的一部分，丢弃。
+        """
+        entries: List[Tuple[str, str]] = []
+        for line in str(value or "").split("\n"):
+            m = cls._SECRET_ORDER_STAMP_RE.match(line)
+            if m:
+                entries.append((m.group(0), line[m.end():]))
+            elif entries:
+                stamp, body = entries[-1]
+                entries[-1] = (stamp, f"{body}\n{line}")
+        return entries
+
+    @classmethod
+    def _serialize_secret_order_timeline(cls, entries: Iterable[Tuple[str, str]]) -> str:
+        """把条目还原成列里的时间线文本（:meth:`_secret_order_timeline_entries` 的逆）。"""
+        return "\n".join(f"{stamp}{body}" for stamp, body in entries)
+
+    @staticmethod
+    def _secret_order_stamp_sort_key(entry: Tuple[str, str]) -> Tuple[int, int]:
+        m = re.match(r"〔(\d+)年(\d+)月〕", entry[0])
+        return (int(m.group(1)), int(m.group(2))) if m else (0, 0)
 
     def _append_secret_order_line(
         self, order_id: int, column: str, note: str, year: int, period: int,
@@ -21857,7 +21904,11 @@ class GameDB:
     ) -> bool:
         """把一条带年月戳的进展/副作用追加进密令的 result/sim_note，存成历史时间线。
         reject_if_same_period=True 时，本年月已有行则拒写（返回 False，用于一回合一步）；
-        否则同年月再写替换当月行。不同年月一律新增。返回是否实际写入。"""
+        否则同年月再写替换当月行。不同年月一律新增。返回是否实际写入。
+
+        月戳是结构化记账，正文是 LLM 自由文本：``note`` 原样入列，判空由调用方
+        在副本上做（ADR 0142 / P6 零删改）——日期戳不授权裁剪正文。
+        """
         assert column in ("result", "sim_note")
         stamp = f"〔{period_label(year, period)}〕"
         row = self.conn.execute(
@@ -21866,20 +21917,16 @@ class GameDB:
         ).fetchone()
         if row is None:
             return False  # 已结案或不存在，不追加
-        lines = [ln for ln in str(row["v"] or "").split("\n") if ln.strip()]
-        if reject_if_same_period and any(ln.startswith(stamp) for ln in lines):
+        entries = self._secret_order_timeline_entries(row["v"])
+        if reject_if_same_period and any(s == stamp for s, _ in entries):
             return False  # 本回合已推过一步，拒
-        lines = [ln for ln in lines if not ln.startswith(stamp)]  # 去掉当月旧行
-        lines.append(f"{stamp}{note.strip()}")
+        entries = [(s, b) for s, b in entries if s != stamp]  # 去掉当月旧条
+        entries.append((stamp, str(note)))
         # 按〔年月〕戳排序，保证时间线顺序（同月替换后不致错位）
-        def _stamp_key(ln: str):
-            import re as _re
-            m = _re.match(r"〔(\d+)年(\d+)月〕", ln)
-            return (int(m.group(1)), int(m.group(2))) if m else (0, 0)
-        lines.sort(key=_stamp_key)
+        entries.sort(key=self._secret_order_stamp_sort_key)
         self.conn.execute(
             f"UPDATE secret_orders SET {column} = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-            ("\n".join(lines), int(order_id)),
+            (self._serialize_secret_order_timeline(entries), int(order_id)),
         )
         if commit:
             self.conn.commit()
@@ -21980,12 +22027,13 @@ class GameDB:
         target_turn = int(state.turn) + months
         old_due = int(row["due_turn"] or 0)
         stamp = f"〔{period_label(state.year, state.period)}〕"
-        why = reason if str(reason or "").strip() else "奉旨加急"
+        # 催办缘由是 LLM 自由文本：判空在副本上做，入列用原文。
+        why = str(reason) if str(reason or "").strip() else "奉旨加急"
         prev = row["result"] or ""
-        lines = [ln for ln in prev.split("\n") if ln.strip()]
+        entries = self._secret_order_timeline_entries(prev)
         with atomic(self):
             if months <= 0:
-                lines.append(f"{stamp}[奉旨即核] {why}；本月到期按实进度对账。")
+                entries.append((stamp, f"[奉旨即核] {why}；本月到期按实进度对账。"))
                 self.conn.execute(
                     """
                     UPDATE secret_orders
@@ -21993,13 +22041,13 @@ class GameDB:
                         result = ?, updated_at=CURRENT_TIMESTAMP
                     WHERE id = ?
                     """,
-                    (int(state.turn), "\n".join(lines), int(order_id)),
+                    (int(state.turn), self._serialize_secret_order_timeline(entries), int(order_id)),
                 )
                 status = "active"
                 due_turn = int(state.turn)
             else:
                 due_turn = target_turn if old_due <= 0 else min(old_due, target_turn)
-                lines.append(f"{stamp}[奉旨加急] {why}；御限改为 {months} 个月内核议。")
+                entries.append((stamp, f"[奉旨加急] {why}；御限改为 {months} 个月内核议。"))
                 self.conn.execute(
                     """
                     UPDATE secret_orders
@@ -22009,7 +22057,7 @@ class GameDB:
                     (
                         due_turn,
                         max(int(due_turn) - int(state.turn), 0),
-                        "\n".join(lines),
+                        self._serialize_secret_order_timeline(entries),
                         int(order_id),
                     ),
                 )

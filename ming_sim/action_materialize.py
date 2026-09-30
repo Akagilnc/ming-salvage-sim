@@ -163,12 +163,17 @@ def _apply_existing_appointment_hit(
     origin_chat_turn_id: int = 0,
     annotate: bool = False,
     recommendation_fields: Optional[Dict[str, Any]] = None,
+    night_id: int = 0,
+    source_chat_turn_id: int = 0,
 ) -> int:
     """既有命中唯一合并点：原地更新（mode 可升可降、字段可补）→ 同一 id。
 
     mode 唯一规则 resolve_directive_mode(extracted→existing→ordinary)；
     调用方只传原始 extracted_mode，禁止各出口自行预过滤/只升不降。
     tenure / region_id 等字段标记原样补写。summon_after 与 annotate 同原子。
+
+    ``night_id`` / ``source_chat_turn_id``：ADR 0038 迟到转译的源夜与源轮，一路
+    传到既有候选更新写口。既有候选的归属同样按源夜承接，不退回「当前开着的夜」。
     """
     from ming_sim.applier import atomic
     from ming_sim.cli_backend import resolve_directive_mode
@@ -188,6 +193,8 @@ def _apply_existing_appointment_hit(
                 region_id=region_id,
                 minister_name=minister_name,
                 turn=turn,
+                night_id=int(night_id or 0),
+                source_chat_turn_id=int(source_chat_turn_id or 0),
             )
             if pending_id:
                 resolved = int(pending_id)
@@ -1165,12 +1172,18 @@ def _annotate_office_pending_path(
     region_id: str = "",
     minister_name: str = "",
     turn: int = 0,
+    night_id: int = 0,
+    source_chat_turn_id: int = 0,
 ) -> int:
     """原地改写 office pending：typed mode 可升可降；署理只写 任别；任所可后补。
 
     mode 唯一规则同 resolve_directive_mode：调用方传入已 resolve 的
     midzhi|ordinary；此处负责落到 payload（含既有 midzhi 被显式 ordinary 降级）。
     region_id 后补：命中既有候选后把后来的 typed 任所写入，不得吞掉。
+
+    ``night_id`` / ``source_chat_turn_id``：ADR 0038 迟到转译的源夜与源轮，原样
+    传给 :meth:`GameDB.update_office_candidate_payload`——既有候选更新同样不得把
+    归属迁到「当前开着的夜」（夜已收时为 0，随后应允 missing_ref）。
     """
     seat = str(region_id or "").strip()
     if not mode_mark and not tenure_mark and not seat:
@@ -1210,7 +1223,11 @@ def _annotate_office_pending_path(
     if not changed:
         return pending_id
 
-    updated = db.update_office_candidate_payload(pending_id, payload)
+    updated = db.update_office_candidate_payload(
+        pending_id, payload,
+        night_id=int(night_id or 0) or None,
+        source_chat_turn_id=int(source_chat_turn_id or 0),
+    )
     if updated:
         _write_path_nature_ledger(
             db,

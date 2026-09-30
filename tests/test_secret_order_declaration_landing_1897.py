@@ -131,6 +131,17 @@ def _staged_secret_order_rows(db, turn):
     ).fetchall()
 
 
+def _summonable_name(db, content) -> str:
+    """任免候选要一个名册里的具名人物（场景标签/虚构人名会被 durable 拒收）。"""
+    row = db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' AND power_id='ming' "
+        "AND office_type NOT IN ('后宫','宗藩','未仕') AND name<>? ORDER BY name LIMIT 1",
+        (_minister(db),),
+    ).fetchone()
+    assert row is not None
+    return str(row["name"])
+
+
 def _rejection_rows(db, turn, section="commissions"):
     return db.conn.execute(
         "SELECT section, reason, category FROM rejection_reports "
@@ -637,3 +648,100 @@ def test_late_translated_rush_lands_under_its_source_night(game):
     approved = _approve(db, state, minister, ctid, night_id, int(staged["id"]))
     assert approved.promises.rejected == [], approved.promises.rejected
     assert len(approved.promises.applied) == 1
+
+
+def test_late_translated_appointment_hit_keeps_its_source_night(game):
+    """P1 补译承接：命中**既有任免候选**的更新同样按源夜归属，夜已收不迁到 0。
+
+    上一轮只补了 directive 改草与直接/间接暂存。任免既有候选走
+    ``_apply_existing_appointment_hit`` → ``update_office_candidate_payload``，
+    该写口无条件按「当前开着的夜」改归属：夜已收时开夜为 0，行被迁到
+    night_id=0，随后应允按 missing_ref 拒收；收夜持闸窗口里更直接抛
+    AudienceNightError/night_closing——补译交办就此被异常吞掉。
+    """
+    db, state, content = game
+    minister = _minister(db)
+    night_id, ctid = _open_night(db, state, minister)
+    appointee = _summonable_name(db, content)
+
+    # 开夜期间先落一条同向任免候选，作为后续补译更新的目标。
+    first = _translate(db, state, minister, {"commissions": [{
+        "text": "着即擢用。",
+        "appointment": {"name": appointee, "office": "巡抚", "action": "任命"},
+    }]}, night_id, ctid)
+    assert first.commissions.rejected == [], first.commissions.rejected
+    staged_id = int(db.conn.execute(
+        "SELECT id FROM pending_actions WHERE turn=? AND kind='office' ORDER BY id",
+        (int(state.turn),),
+    ).fetchone()["id"])
+
+    revision_ctid = _hall_turn(db, state, minister, night_id=night_id)
+    approval_ctid = _hall_turn(db, state, minister, night_id=night_id)
+    an.close_night(db, state, night_id=int(night_id))
+    assert an.get_open_night(db) is None
+
+    # 夜收后补译：同向再声明一次，命中既有候选（annotate 既有命中分支）。
+    revised = _translate(db, state, minister, {"commissions": [{
+        "text": "改中旨径发。",
+        "appointment": {
+            "name": appointee, "office": "巡抚", "action": "任命", "mode": "midzhi",
+        },
+    }]}, night_id, revision_ctid)
+    assert revised.commissions.rejected == [], revised.commissions.rejected
+    assert int(revised.commissions.applied[0]["id"]) == staged_id
+
+    row = db.conn.execute(
+        "SELECT night_id, night_approved FROM pending_actions WHERE id=?",
+        (staged_id,),
+    ).fetchone()
+    # 承接源夜，且改草后须重新应允（与 directive 改草同纪律）。
+    assert int(row["night_id"]) == int(night_id), dict(row)
+    assert int(row["night_approved"] or 0) == 0, dict(row)
+
+    approved = _translate(db, state, minister, {"promises": [{
+        "action_id": staged_id, "decision": "应允",
+    }]}, night_id, approval_ctid)
+    assert approved.promises.rejected == [], approved.promises.rejected
+
+
+def test_secret_order_progress_is_stored_verbatim(game):
+    """P6 零删改：密令**进展**正文与标题/关联说明同守原文，日期戳不授权裁剪。
+
+    ``_append_secret_order_line`` 此前把 note strip 后再入列，正文自带的前后
+    空白与换行被裁掉；且时间线按行拆，同一条正文里的换行会被当独立条目，
+    同月替换只吃掉半条。判空在副本上做，存储值不被改动。
+    """
+    db, state, _ = game
+    minister = _minister(db)
+    night_id, ctid = _open_night(db, state, minister)
+
+    _dispatch(db, state, minister, _secret_order_declaration(assignee=minister),
+              ctid, night_id)
+    order_id = int(
+        _approve(db, state, minister, ctid, night_id,
+                 int(_staged_secret_order_rows(db, state.turn)[0]["id"]))
+        .promises.applied[0]["secret_order_id"]
+    )
+    # 进展只认「往期」密令（当回合新下的不得自查），故先把月份推进一回合。
+    state.turn = int(state.turn) + 1
+    db.conn.execute("UPDATE game_state SET turn=? WHERE id=1", (int(state.turn),))
+    db.conn.commit()
+    raw_note = "\n  已查得线索，仍须密访。  \n"
+
+    progressed = _dispatch(db, state, minister, {"commissions": [{
+        "text": "据实以闻。", "secret_order_progress": {"order_id": order_id, "note": raw_note},
+    }]}, ctid, night_id)
+    assert progressed.commissions.rejected == [], progressed.commissions.rejected
+    assert _approve(
+        db, state, minister, ctid, night_id,
+        int(progressed.commissions.applied[0]["id"]),
+    ).promises.rejected == []
+
+    stored = str(db.get_secret_order(order_id)["result"] or "")
+    assert raw_note in stored, repr(stored)
+    # 条目仍按月戳可判（一回合一步闸门读的就是它），正文换行没被当新条目。
+    assert db._has_secret_order_period_line(
+        order_id, "result", state.year, state.period,
+    ) is True
+    entries = db._secret_order_timeline_entries(stored)
+    assert [body for _, body in entries] == [raw_note], entries

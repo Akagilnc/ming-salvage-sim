@@ -1554,6 +1554,9 @@ def _dispatch_commissions(
                         for key in ("reason", "recommendation", "faction")
                         if payload.get("recommendation") and key in payload
                     },
+                    # ADR 0038：既有候选更新也按源夜承接，夜已收时不退回开夜（=0）。
+                    night_id=int(staged_night or 0),
+                    source_chat_turn_id=int(source_chat_turn_id or 0),
                 )
                 return {"id": oid, "kind": "office"}
             if appointment_fields["appoint_action"] == "任命":

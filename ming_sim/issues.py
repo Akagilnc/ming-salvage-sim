@@ -9321,9 +9321,10 @@ def _apply_score_extraction_body(
         if not isinstance(item, dict):
             continue
         raw_id = item.get("order_id")
-        sim_note = str(item.get("sim_note") or item.get("result") or "").strip()
+        # P6 零删改：sim_note 是 LLM 自由文本，判空在副本上做，存的仍是原文。
+        sim_note = str(item.get("sim_note") or item.get("result") or "")
         disclosed = item.get("disclosed") is True
-        if raw_id is None or not sim_note:
+        if raw_id is None or not sim_note.strip():
             applied_secret_orders.append({"order_id": raw_id, "rejected": True,
                                           "category": "invalid_enum",
                                           "reason": "order_id 或 sim_note 缺失"})
