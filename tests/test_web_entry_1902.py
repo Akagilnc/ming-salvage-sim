@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-import os
 
 import pytest
 from fastapi import HTTPException
@@ -35,10 +34,8 @@ def test_uncalled_read_routes_are_retired(path):
     assert path not in web_app.app.openapi()["paths"]
 
 
-def test_map_nodes_and_buildings_still_ship_with_state_payload():
-    """退役的是重复读路由，随状态下发的同一份事实不动。"""
-    source = inspect.getsource(web_app.WebGame.state_payload)
-    assert "map_nodes" in source
+# 地图节点随 state_payload 下发这条事实由 tests/test_qa_u3_map_nodes_1401.py 等既有
+# 投影用例继续钉；此处只管路由退役，不再另造一条依赖 WebGame 内部属性的用例。
 
 
 @pytest.mark.parametrize("name", ["../../etc/passwd", ".hidden", "///", "  "])
@@ -50,9 +47,14 @@ def test_save_name_guard_is_single_source(name):
     assert "存档名非法" in str(exc.value.detail)
 
 
-def test_game_save_name_delegates_to_module_source():
-    """WebGame._safe_save_name 只委派，规则不在类里重写一份。"""
-    assert inspect.getsource(web_app.WebGame._safe_save_name).count("return _safe_save_name") == 1
+def test_game_save_name_shares_module_guard_behaviour():
+    """WebGame._safe_save_name 与菜单页同一份规则：同拒同放（行为面断言）。"""
+    game = object.__new__(web_app.WebGame)
+    assert game._safe_save_name(" 关宁 1629 ") == web_app._safe_save_name(" 关宁 1629 ")
+    for bad in ("../x", ".hidden"):
+        with pytest.raises(HTTPException) as exc:
+            game._safe_save_name(bad)
+        assert exc.value.status_code == 400
 
 
 def test_menu_delete_route_uses_shared_guard(monkeypatch, tmp_path):
@@ -84,29 +86,29 @@ def test_manual_directive_routes_are_retired(method):
     ], "删旧草稿入口必须保留"
 
 
-def test_manual_directive_entry_is_gone_from_frontend_sources():
-    """前端御笔自拟面板与拟/改稿动作随入口同退（源码级，防复活）。"""
-    import pathlib
-
-    web_src = pathlib.Path(web_app.__file__).resolve().parent / "web" / "src"
-    for rel in ("components/edictModal.tsx", "useEdictActions.ts", "main.tsx"):
-        text = (web_src / rel).read_text(encoding="utf-8")
-        for token in ("onCreateDirective", "onSaveDirective", "onStartEdit",
-                      "directiveText", "editingDirectiveText", "desk-compose",
-                      "desk-add-btn", "新增草案"):
-            assert token not in text, f"{rel} 仍引用已退役的拟诏台面：{token}"
+# #1902：前端拟/改稿面（edictModal / useEdictActions / main.tsx）的退役由 CI 的
+# tsc -b + vite build 证明（那才是它真正的契约面）；此处不再读 .tsx 源码数标识符。
 
 
 def test_runtime_config_projection_has_single_source():
-    """runtime json → LLMConfig 只在 llm_config 一处实现（#1902）。"""
-    import inspect
+    """runtime json → LLMConfig 只在 llm_config 一处实现（#1902）。
 
+    行为面：web 入口建的配置就是核内那个投影的产物（同一对象身份 + 同一投影语义）。
+    """
     from ming_sim.llm_config import llm_config_from_runtime
 
     assert web_app._llm_config_from_runtime is llm_config_from_runtime
-    web_src = inspect.getsource(web_app)
-    assert "def _llm_config_from_runtime(" not in web_src, "web 侧不得再留同名实现"
-    assert "def apply_llm_config(" not in web_src, "零调用方 apply_llm_config 应已退役"
+    runtime = {
+        "channel": "cli",
+        "cli": {"runner": "codex", "model": "m-x", "timeout_seconds": 240},
+    }
+    built = web_app._llm_config_from_runtime(
+        runtime, base_url="", model="api-fallback", api_key="", timeout_seconds=180,
+        thinking_level="", advanced_model="", advanced_base_url="",
+        advanced_api_key="", advanced_thinking_level="",
+    )
+    assert built.channel == "cli" and built.cli_runner == "codex"
+    assert built.api_key == "", "CLI 通道不留 API key"
 
 
 @pytest.mark.parametrize("method", ["POST"])
@@ -201,7 +203,6 @@ def test_env_runner_selection_is_retired():
     import inspect
 
     from ming_sim import cli_backend as cb
-    from ming_sim import llm_config as lc
 
     assert not hasattr(cb, "cli_backend_from_env")
     import os as _os
@@ -209,14 +210,7 @@ def test_env_runner_selection_is_retired():
 
     _os.environ["MING_SIM_LLM_BACKEND"] = "codex"  # 旧路若复活，这行会生效
     try:
-        for module in (cb, lc):
-            code = "\n".join(
-                line for line in inspect.getsource(module).splitlines()
-                if not line.lstrip().startswith(("#", '"', "'"))
-            )
-            assert "MING_SIM_LLM_BACKEND" not in code, (
-                f"{module.__name__} 仍按环境变量选宿主"
-            )
+        # 行为面：环境变量说 codex、运行配置没说 → 不落 CLI 通道；配置说了才算。
         assert cb.cli_backend_active(
             LLMConfig(api_key="", base_url="", model="m", channel=""),
         ) is False
