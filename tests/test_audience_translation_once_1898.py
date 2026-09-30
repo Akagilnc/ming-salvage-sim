@@ -3,16 +3,22 @@
 钉：
 1. 首次补跑耗尽 → 同次收夜**无第二处自动调用**（模型调用次数 == 待补轮数），
    收夜仍成案（CLOSED），该轮保持待补、不阻断退朝。
-2. 首次补跑成功 → 该轮标 done，收夜成案；不因删第二处而漏补。
-3. 恢复口不删：进来时已是 CLOSING（收夜中断后重开）的收夜仍走补跑。
-4. 补跑权仍在别处：#1846 的按轮重试入口（catch_up 按 chat_turn_id 收窄）
-   照旧能把待补轮补成 done——本切片只删同次收夜的重复调用。
+2. 恢复口不删：进来时已是 CLOSING（收夜中断后重开）的收夜仍走补跑。
+
+成功补跑与玩家重试另有既有行为案覆盖（tests/test_audience_extraction_501.py
+的收夜 drain、tests/test_web_audience_night_498.py 的真实 HTTP 重试），此处不复制。
 """
 
 from __future__ import annotations
 
+import time
+
+import pytest
+
+import web_app
 from ming_sim import audience_night as an
 from ming_sim.session_write_queue import SessionWriteQueue
+from tests.conftest import stub_audience_translate
 from tests.test_audience_extraction_501 import (
     _minister,
     _open_night_with_persisted_reply,
@@ -50,34 +56,6 @@ def test_exhausted_catch_up_runs_once_per_night_close(game):
     assert [int(p["chat_turn_id"]) for p in list_pending_translations(db)] == [ctid]
 
 
-def test_successful_catch_up_still_marks_done(game):
-    """删第二处不得漏补：首次补跑成功即 done，成案有账。"""
-    db, state, content = game
-    minister = _minister(db, content)
-    nid, ctid = _open_night_with_persisted_reply(db, state, minister, reply="臣作保。")
-    calls: list[int] = []
-
-    def translate_fn(prompt, llm_config):
-        calls.append(1)
-        return {
-            "scene_facts": [{
-                "body": "臣作保。", "role": "minister",
-                "audibility": "殿上公开", "person_names": [minister], "tags": [],
-            }],
-        }
-
-    result = _close(db, state, night_id=nid, translate_fn=translate_fn)
-
-    assert len(calls) == 1, calls
-    assert result["closed"] is True
-    assert db.get_story_extract_status(ctid) == "done"
-    assert db.conn.execute(
-        "SELECT COUNT(*) AS c FROM story_ledger_entries "
-        "WHERE night_id=? AND source_chat_turn_id=?",
-        (nid, ctid),
-    ).fetchone()["c"] >= 1
-
-
 def test_closing_restore_path_still_catches_up(game):
     """恢复口保留：进来时已是 CLOSING（收夜中断后重开）仍补跑待补轮。"""
     db, state, content = game
@@ -101,32 +79,65 @@ def test_closing_restore_path_still_catches_up(game):
     assert db.get_story_extract_status(ctid) == "done"
 
 
-def test_player_retry_still_heals_pending_after_close(game):
-    """耗尽后玩家重试（#1846 按轮入口）仍能把该轮补成 done。"""
-    from ming_sim.audience_translation import catch_up_pending_translations
+def _drain(queue) -> None:
+    deadline = time.monotonic() + 20.0
+    while time.monotonic() < deadline and queue.inflight_count() > 0:
+        time.sleep(0.05)
+    assert queue.inflight_count() == 0, "重开补跑票据未排空"
 
-    db, state, content = game
-    minister = _minister(db, content)
-    nid, ctid = _open_night_with_persisted_reply(db, state, minister, reply="臣愿承办。")
 
-    def boom(prompt, llm_config):
-        raise RuntimeError("translate exhausted")
+def _ledger_rows(game, nid, ctid) -> int:
+    return int(game.db.conn.execute(
+        "SELECT COUNT(*) AS c FROM story_ledger_entries "
+        "WHERE night_id=? AND source_chat_turn_id=?",
+        (nid, ctid),
+    ).fetchone()["c"])
 
-    _close(db, state, night_id=nid, translate_fn=boom)
-    assert str(db.get_story_extract_status(ctid) or "") in ("", "pending")
 
-    def heal(prompt, llm_config):
-        return {
-            "scene_facts": [{
-                "body": "臣愿承办。", "role": "minister",
-                "audibility": "殿上公开", "person_names": [minister], "tags": [],
-            }],
-        }
+def test_reopen_webgame_catches_up_pending_translation(tmp_path, monkeypatch):
+    """恢复接缝真源：关档重开经真实 WebGame 入口补跑待补转译（ADR 0036）。
 
-    q = SessionWriteQueue()
-    summary = catch_up_pending_translations(
-        db, state, chat_turn_id=ctid, llm_config=object(),
-        translate_fn=heal, write_gate=q.write_gate, write_queue=q,
-    )
-    assert int(summary["extracted"]) == 1
-    assert db.get_story_extract_status(ctid) == "done"
+    旧码把 TicketedWriteGate 传给只收 ClassifiedWriteGate 的 catch_up，
+    重开补跑整体哑掉（待补永不转 done）而日志只留一行。
+    """
+    monkeypatch.setenv("MING_SIM_DB", str(tmp_path / "ming.db"))
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
+    monkeypatch.setattr(web_app, "run_highlight_judge", lambda **_k: [])
+
+    first = web_app.WebGame(fresh=True)
+    minister = _minister(first.db, first.content)
+    stub_audience_translate(monkeypatch, lambda *_a, **_k: {
+        "scene_facts": [{
+            "body": "臣领旨。", "role": "minister",
+            "audibility": "殿上公开", "person_names": [minister], "tags": [],
+        }],
+    })
+    night = an.open_night(first.db, first.state, location="乾清宫", time_of_day="夜")
+    nid = int(night["id"])
+    ctid = first.db.create_chat_turn(first.state, minister, "sess", 0, night_id=nid)
+    first.db.persist_minister_reply(minister, int(first.state.turn), "臣领旨。", ctid)
+    first.db.mark_story_extraction_pending(ctid)
+    an._set_night_fields(first.db, nid, status=an.NIGHT_STATUS_CLOSING)
+    first.db.conn.commit()
+    first.session.close()
+    del first
+
+    reopened = web_app.WebGame(fresh=False)
+    try:
+        _drain(reopened._runtime_write_queue())
+        assert reopened.db.get_story_extract_status(ctid) == "done"
+        assert _ledger_rows(reopened, nid, ctid) >= 1
+        reopened.session.close()
+    finally:
+        del reopened
+
+    # 再次重开不增副本（恢复是补跑，不是重复落账）。
+    again = web_app.WebGame(fresh=False)
+    try:
+        _drain(again._runtime_write_queue())
+        assert _ledger_rows(again, nid, ctid) == 1
+    finally:
+        again.session.close()

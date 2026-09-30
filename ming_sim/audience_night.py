@@ -1169,19 +1169,17 @@ def commit_late_night_approved(
             publish_night_directives(db, nid)
 
 
-def _drain_pending_translations_or_fail_closed(
+def _catch_up_night_translations(
     db: Any, night_id: int, *, llm_config: Any, write_gate: Any,
-    translate_fn: Any = None,
-    game_state: Any = None,
-    write_queue: Any = None,
+    game_state: GameState, translate_fn: Any = None, write_queue: Any = None,
 ) -> None:
-    """收夜提交前的 catch-up 入口（#1898：同次收夜只跑一次）。
+    """收夜补跑转译待补（#1898：单次收夜只跑一次的唯一实现）。
 
     ADR 0036 后出注记 / #1842：待补不再 fail-closed 中止收夜。join/补跑后仍
     pending 的留给过月 join / 原地重试（0157）。
 
-    #1898：同次收夜只在 OPEN 分支跑一次补跑；本函数只服务「进来时已是 CLOSING」
-    的崩溃恢复口（那是另一次收夜尝试，不是同次第二处重复调用）。首次补跑耗尽
+    #1898：调用方只跑一次——OPEN 冻结前那次；「进来时已是 CLOSING」的崩溃
+    恢复口是另一次收夜尝试（那是恢复，不是同次第二处重复调用）。首次补跑耗尽
     时该轮保持待补，**不由本函数或任何同次收夜路径再自动调一次模型**——补跑权
     归 #1846 的玩家重试与过月 join。
 
@@ -1190,23 +1188,19 @@ def _drain_pending_translations_or_fail_closed(
 
     write_gate 必须是调用方原始锁（或 None）——禁传入 _gate_cm(nullcontext)。
     """
-    nid = int(night_id)
-    # OPEN 期已 join；CLOSING restore 再 join 一次（崩溃恢复口，空则秒回）。
-    # 屏障未清空不得 catch-up / 推进——timeout 仅单次轮询上限，复用 0157 等待语义。
-    from ming_sim.audience_translation import catch_up_pending_translations
-    if game_state is None:
-        return
     # catch_up 契约：单轮失败标 pending、不抛；代码异常按 ADR 0005 上抛。
     # translate_fn=None 走默认 runner（#1842：收夜补跑不因缺注入而跳过）。
-    if llm_config is not None and write_gate is not None and write_queue is not None:
-        catch_up_pending_translations(
-            db, game_state,
-            night_id=nid,
-            llm_config=llm_config,
-            translate_fn=translate_fn,
-            write_gate=write_gate,
-            write_queue=write_queue,
-        )
+    if llm_config is None or write_gate is None or write_queue is None:
+        return
+    from ming_sim.audience_translation import catch_up_pending_translations
+    catch_up_pending_translations(
+        db, game_state,
+        night_id=int(night_id),
+        llm_config=llm_config,
+        translate_fn=translate_fn,
+        write_gate=write_gate,
+        write_queue=write_queue,
+    )
 
 
 def _gate_cm(write_gate: Any):
@@ -1260,22 +1254,18 @@ def close_night(
     if night["status"] == NIGHT_STATUS_CLOSED:
         return {"closed": True, "night_id": int(night_id), "already": True}
 
-    caught_up_here = False
+    # #1898：同次收夜只补跑一次。OPEN 分支在冻结 CLOSING 前补跑；进来时已是
+    # CLOSING 的崩溃恢复口在 on_closing 后补跑（那是另一次收夜尝试）。两条分支
+    # 互斥，收尾处不再有第二处调用——耗尽的那轮保持待补，交 #1846 玩家重试 /
+    # 过月 join，不由同次收夜再自动调一次模型。
     if night["status"] == NIGHT_STATUS_OPEN:
         wait_in_flight_clear(
             db, night_id, write_gate=write_gate,
         )
-        from ming_sim.audience_translation import catch_up_pending_translations
-        if llm_config is not None and write_gate is not None and write_queue is not None:
-            catch_up_pending_translations(
-                db, state,
-                night_id=int(night_id),
-                llm_config=llm_config,
-                translate_fn=translate_fn,
-                write_gate=write_gate,
-                write_queue=write_queue,
-            )
-            caught_up_here = True
+        _catch_up_night_translations(
+            db, int(night_id), llm_config=llm_config, write_gate=write_gate,
+            game_state=state, translate_fn=translate_fn, write_queue=write_queue,
+        )
         with gate:
             _set_night_fields(
                 db, night_id, status=NIGHT_STATUS_CLOSING,
@@ -1289,6 +1279,10 @@ def close_night(
             if on_closing is not None:
                 on_closing()
             night = get_night(db, night_id) or night
+        _catch_up_night_translations(
+            db, int(night_id), llm_config=llm_config, write_gate=write_gate,
+            game_state=state, translate_fn=translate_fn, write_queue=write_queue,
+        )
 
     cursor = int(night["close_commit_cursor"] or 0)
 
@@ -1304,15 +1298,6 @@ def close_night(
                 code="close_crash",
                 detail={"night_id": int(night_id), "step": int(step)},
             )
-
-    # #1898：同次收夜只补跑一次。OPEN 分支已补跑过则此处不再自动调模型
-    # （耗尽的那轮保持待补，交 #1846 玩家重试 / 过月 join）；只有「进来时
-    # 已是 CLOSING」的崩溃恢复口才在此补跑——那是另一次收夜尝试。
-    if not caught_up_here:
-        _drain_pending_translations_or_fail_closed(
-            db, int(night_id), llm_config=llm_config, write_gate=write_gate,
-            game_state=state, translate_fn=translate_fn, write_queue=write_queue,
-        )
 
     # ── Phase 1: short writes for draft-dossier prerequisites only ─────────
     with gate:
