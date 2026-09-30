@@ -1489,18 +1489,19 @@ def dossier_paid_amount(db: Any, dossier_id: object) -> int:
     )
 
 
-def revoke_target_facts(db: Any, payload: object) -> dict[str, object]:
+def revoke_target_facts(db: Any, payload: object, row: object = None) -> dict[str, object]:
     """#1894：撤令所指那道**原旨**的事实（原旨、已投入、办理进度、参与者）。
 
     供料接缝，不新增模型调用：撤令案卷的颁布判官（0055）与逐旨推演都据这份
     事实判断准行/劝回/拖延，以及准行后原案卷的办理结果怎么落。只读 DB 真源；
     目标身份解析复用 ``db.resolve_revoke_decree_target_ids``（判后物化同一实现，
-    禁平行口径）；查无此事时返回空 dict（调用方按「无原旨可读」处理，不猜）。
+    禁平行口径），身份取自载荷与案卷行（与判后物化同一读口，缺行即漏回退）；
+    查无此事时返回空 dict（调用方按「无原旨可读」处理，不猜）。
     """
-    if not isinstance(payload, Mapping):
+    if not isinstance(payload, Mapping) and not isinstance(row, Mapping):
         return {}
     try:
-        target_dossier_id, target_issue_id = db.resolve_revoke_decree_target_ids(payload)
+        target_dossier_id, target_issue_id = db.resolve_revoke_decree_target_ids(payload, row)
     except (AttributeError, TypeError, ValueError):
         return {}
     dossier = db.get_decree_dossier(int(target_dossier_id))

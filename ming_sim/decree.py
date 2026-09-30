@@ -336,7 +336,7 @@ def build_promulgation_judge_context(
         # 只是供料，不新增调用、不新增判官；判官据此自定准行/劝回/拖延。
         if str(row.get("action_type") or "") == "revoke_decree":
             from ming_sim.materials import revoke_target_facts
-            entry["revoke_target"] = revoke_target_facts(db, payload)
+            entry["revoke_target"] = revoke_target_facts(db, payload, row)
         dossier_rows.append(entry)
     gatekeepers = [
         {

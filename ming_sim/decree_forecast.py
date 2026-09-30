@@ -107,7 +107,7 @@ def _this_decree_fact(
     # 事实走随调用消息，不进材料目录）。同一 run 内既有准行/劝回的判，也有
     # 准行后原案卷办理结果的推演——不新增调用。
     if str(candidate.get("action_type") or "") == "revoke_decree" and db is not None:
-        fact["revoke_target"] = revoke_target_facts(db, payload)
+        fact["revoke_target"] = revoke_target_facts(db, payload, candidate)
     return fact
 
 

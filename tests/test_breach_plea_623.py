@@ -473,14 +473,14 @@ def test_revoke_forecast_translation_input_carries_original_and_continuing_dossi
             "verdicts": [{"dossier_id": entry["id"], "decision": "promulgated"}],
         })
 
-    def translate(_prompt, _llm_config, **kwargs):
-        # 预推段转译把 request 拼成一段 prompt；清单与 id 都在这段文本里
-        captured["prompt"] = _prompt
+    def capture_request(request, _llm_config):
+        # 段文转译的结构化输入接缝（MonthTranslationInput），不解析 prompt 文本
+        captured["request"] = request
         return {}
 
     monkeypatch.setattr(decree_mod, "run_agent_text", judge)
     monkeypatch.setattr(forecast_mod.agents, "run_agent_text", forecast_text)
-    monkeypatch.setattr(month_translate, "run_declaration_translate_prompt", translate)
+    monkeypatch.setattr(month_translate, "_default_month_translate_runner", capture_request)
     snapshot = forecast_snapshot(
         sess, {"id": did, "action_type": "revoke_decree", "payload": payload,
                "decree_text": "前旨作废，撤回成命"},
@@ -489,25 +489,30 @@ def test_revoke_forecast_translation_input_carries_original_and_continuing_dossi
     product = produce_forecast_product(sess, snapshot)
 
     assert product["verdict"]["decision"] == "promulgated"
-    prompt = captured["prompt"]
-    assert "【在途办理案卷】" in prompt
-    continuing = json.loads(prompt.split("【在途办理案卷】\n", 1)[1].split("\n", 1)[0])
-    rows = {int(row["id"]): row for row in continuing}
+    # 推演本旨事实里带着原旨身份（逐旨推演判官与转译同一份供料）
+    forecast_target = snapshot["this_decree"]["revoke_target"]
+    assert int(forecast_target["dossier_id"]) == did
+    assert int(forecast_target["issue_id"]) == int(cid)
+    # 在途案卷清单进转译输入：撤令的办理结果由执行格判官在本段声明
+    request = captured["request"]
+    rows = {int(row["id"]): row for row in request.continuing_dossiers}
     assert did in rows, "撤令须在转译输入里看见原案卷，否则执行格无从落"
     assert rows[did]["status"] == "executing"
     assert int(rows[did]["paid"]) == 30
-    # 目标身份：原案与承诺同时在场，两个都读到
-    assert db.resolve_revoke_decree_target_ids(payload) == (did, int(cid))
+    assert dict(request.decree_payload)["revoke_target_issue_id"] == int(cid)
 
 
-def test_revoke_target_identity_falls_back_to_dossier_row(game):
-    """载荷缺 ``revoke_target_*`` 时，目标身份仍从案卷行的 target_id/target_kind 解析。
+def test_revoke_target_identity_falls_back_to_dossier_row(game, monkeypatch):
+    """载荷缺 ``revoke_target_*`` 时，撤令的目标身份取自案卷行本身。
 
-    归一实现有两条来源：结构化身份字段优先，皆无才读案卷行。行回退不是死代码
-    ——撤令案卷的目标身份本就同时存在行上；漏读会让这类撤令在判后物化时
-    抛「缺少目标」，原案卷与承诺均不落终局。
+    撤令案卷的目标身份本就同时存在行上：漏读行，判前供料交不出原旨事实、
+    判后物化抛「缺少目标」，原案卷与承诺均不落终局。此处走三个真实入口——
+    颁布判官上下文、逐旨推演本旨事实（判前）与颁布判决（判后）——
+    不锁内部解析实现。
     """
-    from ming_sim.materials import revoke_target_facts
+    from ming_sim import decree as decree_mod
+    from ming_sim.decree_forecast import forecast_snapshot, release_forecast_materials
+    from tests.test_decree_forecast_1861 import _sess
 
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
@@ -518,24 +523,35 @@ def test_revoke_target_identity_falls_back_to_dossier_row(game):
         bar_value=20, end_turn=state.turn + 30,
         participants=[{"character_id": holder, "tier": "主办", "role": "承办"}],
     )
+    db.record_dossier_progress(did, state.turn, "在办", "过半", commit=True)
 
-    # 解析：带前缀、裸 id、以及行上 issue 身份（经 origin_ref 回指案卷）
-    assert db.resolve_revoke_decree_target_ids({}, {
-        "target_id": f"dossier:{did}", "target_kind": "dossier",
-    }) == (did, 0)
-    assert db.resolve_revoke_decree_target_ids(None, {"target_id": str(did)}) == (did, 0)
-    assert db.resolve_revoke_decree_target_ids(
-        {}, {"target_id": f"issue:{cid}", "target_kind": "issue"},
-    ) == (did, int(cid))
-    # 判前供料同一实现：只有行上身份时也读得到原旨
-    assert int(revoke_target_facts(db, {"target_id": f"dossier:{did}"})["dossier_id"]) == did
-
-    # 判后物化：撤令案卷不给 revoke_target_*，仍按行解析并落账
     revoke_id = db.create_decree_dossier(
         state, action_type="revoke_decree", decree_text="撤回前旨",
         target_kind="issue", target_id=str(cid),
         payload={"text": "撤回前旨"},
     )
+
+    # 判前（颁布判官）：确定性上下文带着原旨事实（原案 + 承诺两个身份都在）
+    row = db.get_decree_dossier(revoke_id)
+    context = decree_mod.build_promulgation_judge_context(db, state, [row])
+    entry = context["dossiers"][0]  # type: ignore[index]
+    target = entry["revoke_target"]
+    assert int(target["dossier_id"]) == did
+    assert int(target["issue_id"]) == int(cid)
+    assert int(target["paid"]) == 0
+    assert [item["progress_band"] for item in target["progress"]] == ["在办"]
+
+    # 判前（逐旨推演）：本旨事实同一读口，行身份也进推演输入
+    sess = _sess(db, state, content, monkeypatch, lambda request, config: {})
+    snapshot = forecast_snapshot(sess, row, decree_ref="forecast:row-fallback")
+    try:
+        forecast_target = snapshot["this_decree"]["revoke_target"]
+    finally:
+        release_forecast_materials(snapshot)
+    assert int(forecast_target["dossier_id"]) == did
+    assert int(forecast_target["issue_id"]) == int(cid)
+
+    # 判后物化：撤令案卷不给 revoke_target_*，仍按行解析并落账
     db.apply_dossier_verdicts(
         state, [{"dossier_id": revoke_id, "decision": "promulgated"}], content=content,
     )
