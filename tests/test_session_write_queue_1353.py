@@ -488,24 +488,12 @@ def test_no_elapsed_timeout_api_on_barrier():
 
 
 def test_get_session_write_queue_wiring_fail_loud_no_broad_swallow():
-    """#1353 r7 / ADR 0005：接线赋值禁宽吞；WebGame/session 必共享同一 queue/gate。"""
-    import re
-    from pathlib import Path
+    """#1353 r7 / ADR 0005：WebGame/session 必共享同一 queue/gate（接线实测）。
 
-    import ming_sim.session_write_queue as swq
+    宽吞禁律由 #1353 r7 的真实异常注入用例承担（见本文件 queue 抛错用例），
+    此处不再正则截函数体盯源码形状。
+    """
     from ming_sim.session_write_queue import get_session_write_queue
-
-    text = Path(swq.__file__).read_text(encoding="utf-8")
-    # 定位 get_session_write_queue 函数体，禁 except Exception + pass 宽吞。
-    m = re.search(
-        r"def get_session_write_queue\(.*?(?=\ndef |\Z)",
-        text,
-        flags=re.S,
-    )
-    assert m is not None
-    body = m.group(0)
-    assert "except Exception" not in body
-    assert re.search(r"except\s+Exception\s*:\s*\n\s*pass", body) is None
 
     class _Sess:
         pass

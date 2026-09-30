@@ -475,10 +475,9 @@ def apply_situation_monthly_drift(
             for k, v in (_om if isinstance(_om, dict) else {}).items():
                 if k not in ISSUE_METRIC_KEYS:
                     continue
-                try:
-                    raw = int(v)
-                except (TypeError, ValueError):
-                    continue
+                # 持久 ongoing_effects.metrics 的数值腐坏必须响亮失败交外层事务回滚；
+                # 静默跳过会让 bar 照涨而该项世界后果无声消失（#1901 J5）。
+                raw = int(v)
                 scaled = int(round(raw * metric_scale))
                 if scaled == 0:
                     continue
