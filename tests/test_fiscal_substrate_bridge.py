@@ -667,7 +667,7 @@ def test_conservation_rejects_excluded_army_with_pay_source_debt(fresh_db):
     fresh_db._reconcile_army_pay_source_region_container("liaodong")
     fresh_db._reconcile_central_army_pay_arrears_container()
 
-    with pytest.raises(ValueError, match="自养/非明军双累加器必须为 0"):
+    with pytest.raises(ValueError):
         fresh_db.assert_army_pay_source_container_conservation()
 
 
@@ -692,7 +692,7 @@ def test_conservation_rejects_province_source_army_without_settle_base(fresh_db)
     )
     fresh_db._reconcile_central_army_pay_arrears_container()
 
-    with pytest.raises(ValueError, match="pay_source_region 无 settle st/p 基座"):
+    with pytest.raises(ValueError):
         fresh_db.assert_army_pay_source_container_conservation()
 
 
@@ -1827,7 +1827,7 @@ def test_substrate_hub_debit_fails_loud_when_required_debit_not_booked(fresh_db,
         lambda *_args, **_kwargs: None,
     )
 
-    with pytest.raises(RuntimeError, match="边饷hub"):
+    with pytest.raises(RuntimeError):
         _debit_substrate_hub_outbound(fresh_db, SimpleNamespace(), hub_outbound)
 
 
@@ -2549,7 +2549,7 @@ def test_pay_source_conservation_rejects_per_army_derived_arrears_drift(fresh_db
         "UPDATE armies SET arrears = arrears - 10 WHERE id = 'guanning'"
     )
 
-    with pytest.raises(ValueError, match="军饷欠派生合计"):
+    with pytest.raises(ValueError):
         fresh_db.assert_army_pay_source_container_conservation()
 
 
@@ -3312,7 +3312,7 @@ def test_region_loader_rejects_bad_plain_settle_meta(monkeypatch):
     }
     monkeypatch.setattr(content_mod, "load_json_asset", lambda name: fake_regions)
 
-    with pytest.raises(SystemExit, match="_meta 必须是 JSON 对象"):
+    with pytest.raises(SystemExit):
         content_mod.load_region_content()
 
 

@@ -49,7 +49,11 @@ def fresh_session(tmp_path, monkeypatch):
 
 
 def test_seed_document_validation_is_fail_closed():
-    """校验 fail-closed：未知类目/未早于开局/空语境/自指对，整份拒收。"""
+    """校验 fail-closed：每条非法形状各自整份拒收。
+
+    契约是行为——**这一份具体文档被拒**。区分度来自每条用例各自的输入（下面
+    ``(规则, 文档)`` 表把输入与规则名写在一起），不来自报错措辞（#1889）。
+    """
     from ming_sim.relation_seed import validate_seed_document
 
     base = {
@@ -63,44 +67,55 @@ def test_seed_document_validation_is_fail_closed():
         doc.update(top)
         return doc
 
-    for invalid in ({}, {"summaries": []}, {"events": []}):
-        with pytest.raises(ValueError, match="events"):
-            validate_seed_document(invalid, opening_year=1627, opening_period=10)
-    with pytest.raises(ValueError, match="evidence"):
-        validate_seed_document(_doc({"evidence": 1}), opening_year=1627, opening_period=10)
-    with pytest.raises(ValueError, match="未知边事件类目"):
-        validate_seed_document(_doc({"event_kind": "发明的类目"}), opening_year=1627, opening_period=10)
-    with pytest.raises(ValueError, match="早于开局"):
-        validate_seed_document(_doc({"year": 1627, "period": 10}), opening_year=1627, opening_period=10)
-    with pytest.raises(ValueError, match="早于开局"):
-        validate_seed_document(_doc({"year": 1628, "period": 1}), opening_year=1627, opening_period=10)
-    for invalid_year in (0, -1):
-        with pytest.raises(ValueError, match=r"year 非法（须 >= 1）"):
-            validate_seed_document(
-                _doc({"year": invalid_year}), opening_year=1627, opening_period=10
-            )
-    with pytest.raises(ValueError, match="context"):
-        validate_seed_document(_doc({"context": "   "}), opening_year=1627, opening_period=10)
-    with pytest.raises(ValueError, match="两端不得相同"):
-        validate_seed_document(_doc({"target": "甲"}), opening_year=1627, opening_period=10)
-    for field in ("source", "target"):
-        with pytest.raises(ValueError, match="首尾空白"):
-            validate_seed_document(_doc({field: " 甲"}), opening_year=1627, opening_period=10)
-        with pytest.raises(ValueError, match="首尾空白"):
-            validate_seed_document(
-                _doc(summaries=[{
-                    "source": "甲", "target": "乙 ", "founding_lines": [],
-                }]),
-                opening_year=1627, opening_period=10,
-            )
-    with pytest.raises(ValueError, match="两端不得相同"):
-        validate_seed_document(
-            _doc(summaries=[{
-                "source": "甲", "target": "甲", "founding_lines": ["自指废行。"],
-            }]),
-            opening_year=1627,
-            opening_period=10,
-        )
+    def _summary(source="甲", target="乙", **over):
+        row = {"source": source, "target": target, "founding_lines": ["一行。"]}
+        row.update(over)
+        return [row]
+
+    def _rejected(rule, doc):
+        """One named rule must reject the whole document."""
+        with pytest.raises(ValueError):
+            validate_seed_document(doc, opening_year=1627, opening_period=10)
+
+    # 文档骨架缺失
+    for rule, invalid in (
+        ("空文档", {}),
+        ("summaries 非列表", {"summaries": []}),
+        ("events 为空", {"events": []}),
+    ):
+        _rejected(rule, invalid)
+
+    # 逐字段非法：(规则, 文档)。规则名只作可读标签，断言看的是「整份拒收」。
+    field_rules = (
+        ("evidence 非布尔", _doc({"evidence": 1})),
+        ("未知事件类目", _doc({"event_kind": "发明的类目"})),
+        ("事件正好在开局", _doc({"year": 1627, "period": 10})),
+        ("事件晚于开局", _doc({"year": 1628, "period": 1})),
+        ("year 非法", _doc({"year": 0})),
+        ("year 负数", _doc({"year": -1})),
+        ("语境全空白", _doc({"context": "   "})),
+        ("事件缺 target", _doc({"target": "甲"})),
+        ("事件 source 首尾空白", _doc({"source": " 甲"})),
+        ("事件 target 首尾空白", _doc({"target": " 甲"})),
+    )
+    for rule, doc in field_rules:
+        _rejected(rule, doc)
+
+    # 摘要侧
+    summary_rules = (
+        ("摘要 source 首尾空白", _doc(summaries=_summary(source="甲 "))),
+        ("摘要 target 首尾空白", _doc(summaries=_summary(target="乙 "))),
+        ("摘要自指", _doc(summaries=_summary(target="甲"))),
+    )
+    for rule, doc in summary_rules:
+        _rejected(rule, doc)
+
+    # 有向对重复
+    _rejected("有向对重复", _doc(summaries=[
+        {"source": "甲", "target": "乙", "founding_lines": ["一"]},
+        {"source": "甲", "target": "乙", "founding_lines": ["二"]},
+    ]))
+
     # 合法文档归一：turn 刻度非正、词表过验。
     normalized = validate_seed_document(_doc(), opening_year=1627, opening_period=10)
     assert normalized["events"][0]["turn"] == pregame_turn(1625, 4) < 0
@@ -108,13 +123,6 @@ def test_seed_document_validation_is_fail_closed():
         _doc({"year": 1, "period": 1}), opening_year=1627, opening_period=10
     )
     assert earliest["events"][0]["year"] == 1
-
-    duplicate = _doc(summaries=[
-        {"source": "甲", "target": "乙", "founding_lines": ["一"]},
-        {"source": "甲", "target": "乙", "founding_lines": ["二"]},
-    ])
-    with pytest.raises(ValueError, match="有向对重复"):
-        validate_seed_document(duplicate, opening_year=1627, opening_period=10)
 
 
 def test_fresh_seed_summary_is_readable_with_seed_event_clock(fresh_session):

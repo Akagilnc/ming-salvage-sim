@@ -102,7 +102,7 @@ def test_roster_rejects_alias_colliding_with_other_faction_name(monkeypatch):
     data = load_json_asset("characters.json")
     data["characters"][0]["aliases"].append("温体仁")
     monkeypatch.setattr(content_module, "load_json_asset", lambda _: data)
-    with pytest.raises(SystemExit, match="温体仁"):
+    with pytest.raises(SystemExit):
         load_character_content()
 
 

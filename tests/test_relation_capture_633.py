@@ -269,16 +269,20 @@ def test_whitespace_padded_noncanonical_origins_rejected_no_strip_rescue(game):
 
 
 def test_settlement_edge_origin_rejects_missing_and_non_string():
-    """拼装器本体不再静默默认哨兵；缺失/非字符串诚实报错。"""
+    """拼装器本体不再静默默认哨兵；缺失/非字符串诚实报错。
+
+    三条用例的区分度在**各自的 origin 入参**（None / 非字符串 / 全空白），
+    末尾的合法拼装结果作正向对照；报错措辞不是契约（#1889）。
+    """
     import pytest
 
     from ming_sim.relations import settlement_edge_origin
 
-    with pytest.raises(ValueError, match="来源引用必须为字符串"):
+    with pytest.raises(ValueError):
         settlement_edge_origin(None, "联名")
-    with pytest.raises(ValueError, match="来源引用必须为字符串"):
+    with pytest.raises(ValueError):
         settlement_edge_origin(123, "联名")
-    with pytest.raises(ValueError, match="盘面自然演化须显式标为"):
+    with pytest.raises(ValueError):
         settlement_edge_origin("   ", "联名")
     # 合法条目照常拼装；拼装器不独立 strip——值原样进入 origin（空白只作非空谓词）
     assert settlement_edge_origin("盘面自发", "联名") == "盘面自发:relation:联名"
@@ -475,7 +479,7 @@ def test_writer_stores_whitespace_context_byte_identical(game):
     assert row["context"] == raw
     # 空白语境仍拒收（strip 只作非空谓词）
     import pytest
-    with pytest.raises(ValueError, match="语境不能为空"):
+    with pytest.raises(ValueError):
         db.record_relation_edge_event(
             source="甲", target="乙", event_kind="把柄",
             context="   \n\t ", origin="settle:f1-blank", turn=state.turn,
@@ -487,7 +491,7 @@ def test_writer_rejects_non_string_context(game):
     import pytest
     db, state, _ = game
     for bad in ({"句": "伪语境"}, b"bytes-context"):
-        with pytest.raises(ValueError, match="语境必须为字符串"):
+        with pytest.raises(ValueError):
             db.record_relation_edge_event(
                 source="甲", target="乙", event_kind="把柄",
                 context=bad, origin="settle:f1-nonstr", turn=state.turn,

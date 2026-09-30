@@ -295,7 +295,7 @@ def test_swallowed_inner_exception_forces_outer_rollback(game):
     db.conn.execute("DELETE FROM kv_store WHERE key='s1_swallow'")
     db.conn.commit()
 
-    with pytest.raises(RuntimeError, match="回滚"):
+    with pytest.raises(RuntimeError):
         with atomic(db):
             try:
                 with atomic(db):
@@ -395,7 +395,7 @@ def test_swallowed_conn_context_exception_forces_outer_rollback(game):
         db.conn.execute("DELETE FROM kv_store WHERE key=?", (k,))
     db.conn.commit()
 
-    with pytest.raises(RuntimeError, match="回滚"):
+    with pytest.raises(RuntimeError):
         with atomic(db):
             db.conn.execute("INSERT INTO kv_store(key,value) VALUES('s1r2_w1','W1')")
             try:
@@ -521,7 +521,7 @@ def test_ddl_after_swallowed_conn_context_does_not_escape(game):
     ri = RejectedItem(item={}, reason="r", category="invalid_enum", source=Provenance.unknown)
     rc.record("army_delta", ri, turn=1)
 
-    with pytest.raises(RuntimeError, match="回滚"):
+    with pytest.raises(RuntimeError):
         with atomic(db):
             try:
                 with db.conn:

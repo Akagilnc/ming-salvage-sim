@@ -7765,12 +7765,7 @@ def record_secret_order_disclosure(
         .replace("%", "\\%")
         .replace("_", "\\_")
     )
-    already_disclosed = db.conn.execute(
-        "SELECT 1 FROM character_knowledge_events "
-        "WHERE character_name='' AND source_id LIKE ? ESCAPE '\\' LIMIT 1",
-        (f"{like_prefix}%",),
-    ).fetchone()
-    if already_disclosed is not None:
+    if db.character_knowledge.has_public_event_with_prefix(f"{like_prefix}%"):
         return False
     dossier = db.dossiers.get_for_secret_order(order_id)
     progress = (

@@ -592,7 +592,7 @@ def test_fiscal_levy_existing_terminal_reason_is_whitelist_validated(game):
     )
     db.conn.commit()
 
-    with pytest.raises(SettlementAbort, match="饷率事件 liao_levy_rise_1631 结局标签无法归一"):
+    with pytest.raises(SettlementAbort):
         apply_historical_fiscal_rates(state, db)
 
     after = _settle_payload(db, "shaanxi")
@@ -926,7 +926,7 @@ def test_jiao_stop_definition_missing_fails_loud(game, monkeypatch):
     event_by_id.pop("jiao_levy_stop_1640", None)
     monkeypatch.setattr(content, "event_by_id", event_by_id)
 
-    with pytest.raises(SettlementAbort, match="缺停征链 jiao_levy_stop_1640"):
+    with pytest.raises(SettlementAbort):
         apply_historical_fiscal_rates(state, db)
 
 

@@ -180,10 +180,7 @@ def knowledge_row_visible_to(
     # snapshot.  Enforce it at read time so characters created after archival
     # cannot inherit old participant-private material.
     try:
-        source = db.conn.execute(
-            "SELECT kind, participant_roster FROM character_knowledge_sources WHERE source_id=?",
-            (str(row["source_id"] or ""),),
-        ).fetchone()
+        source = db.character_knowledge.source_by_id(str(row["source_id"] or ""))
     except (AttributeError, KeyError, IndexError, TypeError):
         source = None
     # A public event is a new disclosure capability even when it deliberately
@@ -360,12 +357,7 @@ def _source_archive_rows(db: Any, character_name: str, upto_turn: int) -> list[D
     """
     if not hasattr(db, "conn"):
         return []
-    rows = db.conn.execute(
-        "SELECT turn, year, period, kind, title, body, source_id, "
-        "participant_roster, excluded_names FROM character_knowledge_sources "
-        "WHERE turn <= ? ORDER BY turn, id",
-        (int(upto_turn),),
-    ).fetchall()
+    rows = db.character_knowledge.sources_upto_turn(int(upto_turn))
     projected: list[Dict[str, object]] = []
     for row in rows:
         source_id = str(row["source_id"] or "")

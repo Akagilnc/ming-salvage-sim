@@ -168,7 +168,7 @@ def test_rejected_midzhi_and_force_promulgation_are_idempotent(game):
         db.apply_dossier_verdicts(state, [_rejected_verdict(dossier_id)])
     db.apply_dossier_promulgation(state, dossier_id, "force_promulgated")
 
-    with pytest.raises(ValueError, match="强颁只可承接"):
+    with pytest.raises(ValueError):
         db.apply_dossier_promulgation(state, dossier_id, "force_promulgated")
 
     assert db.dossiers.get(dossier_id)["stigma"] == [

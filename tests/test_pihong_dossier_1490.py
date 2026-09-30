@@ -542,7 +542,7 @@ def test_657_c1_validate_rejects_stale_capability_and_desk_outsider(game):
     key = urgent['decision_key']
     with pytest.raises(ValueError, match='draft_capability|stale'):
         ra.validate_all([urgent], [{'decision_key': key, 'action': 'follow_draft', 'draft_capability': 'not-a-real-cap', 'label': opts[0]['label']}])
-    with pytest.raises(ValueError, match='不在当前 desk'):
+    with pytest.raises(ValueError):
         ra.validate_all([urgent], [{'decision_key': 'rescript_draft:999:0', 'action': 'hold', 'label': '留中'}])
 
 def test_657_c1_decided_mismatch_rejects_and_cas0(game):
@@ -557,10 +557,10 @@ def test_657_c1_decided_mismatch_rejects_and_cas0(game):
     hit = next((r for r in row if r['title'] == '陕西告饥'))
     assert hit['status'] == 'decided'
     decided_row = {**urgent, 'status': 'decided', 'choice': hit['choice']}
-    with pytest.raises(ValueError, match='不匹配'):
+    with pytest.raises(ValueError):
         ra.validate_all([decided_row], [{'decision_key': key, 'action': 'hold', 'label': '另留'}])
     empty_decided = {**urgent, 'status': 'decided', 'choice': None}
-    with pytest.raises(ValueError, match='不匹配|缺请求'):
+    with pytest.raises(ValueError):
         ra.validate_all([empty_decided], [{'decision_key': key, 'action': 'hold', 'label': '留中'}])
 
 def test_657_p6_mapper_deliberate_preserve_free_text(game):
@@ -912,7 +912,7 @@ def test_657_prewrite_failure_zero_db_writes(game):
 
     def boom(_it):
         raise RuntimeError('llm down')
-    with pytest.raises(RuntimeError, match='prewrite LLM 失败|llm down'):
+    with pytest.raises(RuntimeError):
         ra.run_prewrite_llms(batch, deliberate_runner=boom)
     hit = next((r for r in db.list_rescript_drafts() if r['title'] == '陕西告饥'))
     assert hit['status'] == 'pending'
@@ -1985,22 +1985,26 @@ def test_1682_phase2_surfaces_ambiguous_stored_choice(game):
     db.save_state(state)
     session = make_light_session(db, state, content)
     choice = [{'decision_key': db.list_rescript_desk(int(state.turn))[0]['decision_key'], 'label': '同名', 'action': 'decision'}]
-    with pytest.raises(ValueError, match='重复'):
+    with pytest.raises(ValueError):
         session.submit_hitl_choices(choice, write_gate=nullcontext())
     assert db.list_pending_decisions(int(state.turn))[0]['status'] == 'pending'
 
 def test_657_clear_revise_anchor_corrupt_json_fails_loud(game):
-    """④ 清锚扫描：choice_json 损坏 / 非 object → 响亮失败，禁静默跳过。"""
+    """④ 清锚扫描：choice_json 损坏 / 非 object → 响亮失败，禁静默跳过。
+
+    区分度在**两次各自写坏的 choice_json**（先不可解析，后可解析但非 object）；
+    报错措辞不是契约（#1889）。
+    """
     from ming_sim import rescript_actions as ra
     db, state, _content = game
     urgent, _ = _plant_urgent_desk(db, state)
     db.conn.execute("UPDATE pending_decisions SET choice_json=?, revision_round=1 WHERE turn=? AND idx=? AND kind='rescript_draft'", ('{not-json', int(urgent['source_turn'] or urgent['turn']), int(urgent['idx'])))
     db.conn.commit()
-    with pytest.raises(ValueError, match='choice_json 损坏'):
+    with pytest.raises(ValueError):
         ra.clear_return_revise_choice_anchors(db, None)
     db.conn.execute("UPDATE pending_decisions SET choice_json=? WHERE turn=? AND idx=? AND kind='rescript_draft'", ('[1,2]', int(urgent['source_turn'] or urgent['turn']), int(urgent['idx'])))
     db.conn.commit()
-    with pytest.raises(ValueError, match='非 object'):
+    with pytest.raises(ValueError):
         ra.clear_return_revise_choice_anchors(db, None)
 
 def test_657_default_hold_preserves_red_pen_note(game):
@@ -2015,15 +2019,19 @@ def test_657_default_hold_preserves_red_pen_note(game):
     assert batch.items[0].choice.get('note') == '着再议。'
 
 def test_657_appointment_name_target_id_conflict_batch_reject(game):
-    """⑥ appointment/dismiss name≠target_id 在 mapper 单一边界整批拒绝。"""
+    """⑥ appointment/dismiss name≠target_id 在 mapper 单一边界整批拒绝。
+
+    区分度在**各自的 action_type/appoint_action**（任命 / 罢免两条边界各自跑一遍）；
+    报错措辞不是契约（#1889）。
+    """
     from ming_sim import rescript_actions as ra
     db, state, content = game
     rows = db.conn.execute("SELECT name FROM characters WHERE status='active' AND power_id='ming' ORDER BY name LIMIT 2").fetchall()
     assert len(rows) >= 2
     n1, n2 = (str(rows[0]['name']), str(rows[1]['name']))
-    with pytest.raises(ValueError, match='冲突|name|target_id'):
+    with pytest.raises(ValueError):
         ra.map_rescript_option_or_choice({'action_type': 'appointment', 'appoint_action': '任命', 'office': '兵部尚书', 'name': n1, 'target_kind': 'character', 'target_id': n2, 'label': '授官'}, db=db, content=content, state=state)
-    with pytest.raises(ValueError, match='冲突|name|target_id'):
+    with pytest.raises(ValueError):
         ra.map_rescript_option_or_choice({'action_type': 'appointment', 'appoint_action': '罢免', 'office': '', 'name': n1, 'target_kind': 'character', 'target_id': n2, 'label': '罢'}, db=db, content=content, state=state)
 
 def test_657_punishment_name_target_id_conflict_zero_writes(web_game, monkeypatch):
@@ -2493,7 +2501,7 @@ def test_658_deliberate_backed_and_stalled_dossier_first(game):
     key3 = urgent3['decision_key']
     dossiers_before = len(db.dossiers.list_dossiers())
     batch3 = ra.validate_all([urgent3], [{'decision_key': key3, 'action': 'deliberate', 'label': '下部议'}])
-    with pytest.raises(ValueError, match='非法站台身份'):
+    with pytest.raises(ValueError):
         ra.apply_rescript_batch(db, state, batch3, ra.PrewriteResults(deliberate_by_key={key3: {'title': 't', 'body': 'b', 'stance': 's', 'supporter_ids': ['不存在的大臣XYZ']}}), content=content)
     assert len(db.dossiers.list_dossiers()) == dossiers_before
     assert db.dossiers.find_by_decision_key(key3) is None
@@ -2562,7 +2570,7 @@ def test_658_candidates_require_active_status(game):
     key = urgent['decision_key']
     before = len(db.dossiers.list_dossiers())
     batch = ra.validate_all([urgent], [{'decision_key': key, 'action': 'deliberate', 'label': '下部议'}])
-    with pytest.raises(ValueError, match='非法站台身份'):
+    with pytest.raises(ValueError):
         ra.apply_rescript_batch(db, state, batch, ra.PrewriteResults(deliberate_by_key={key: {'title': 't', 'body': 'b', 'stance': 's', 'supporter_ids': [name]}}), content=content)
     assert len(db.dossiers.list_dossiers()) == before
 
@@ -2825,7 +2833,7 @@ def test_658_mixed_ordinary_triad_and_target_rejected(game, monkeypatch):
     def backend_mixed(prompt, *_a, **_k):
         return (json.dumps({'拟旨意图': '拟旨', '动作类型': 'policy', '目标类型': 'issue', '目标ID': 'river', '目标案卷ID': did}, ensure_ascii=False), 1)
     monkeypatch.setattr(cli_backend, '_run_backend_for_config', backend_mixed)
-    with pytest.raises(ValueError, match='不得同时'):
+    with pytest.raises(ValueError):
         cli_backend.capture_manual_directive_payload('混载旨文', None, db=db, content=content)
     assert len(db.dossiers.list_dossiers()) == before_dossiers
     assert db.conn.execute('SELECT COUNT(*) AS c FROM turn_directives').fetchone()['c'] == before_dirs

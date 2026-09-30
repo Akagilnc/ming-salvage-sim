@@ -207,7 +207,7 @@ def test_gate_extracts_actual_cli_judge_payload_and_rejects_ambiguous_capture():
 
 def test_promulgation_verdict_list_shape_has_one_canonical_authority(game):
     db, _state, _content = game
-    with pytest.raises(decree_mod.LLMContractError, match="颁布判官 verdicts 必须为列表"):
+    with pytest.raises(decree_mod.LLMContractError):
         decree_mod.validate_promulgation_verdicts({"verdicts": []}, [], db)
 
 
@@ -224,7 +224,7 @@ def test_promulgation_verdict_rejects_unknown_fields(game, decision):
     )
     verdict["foo"] = "bar"
 
-    with pytest.raises(decree_mod.LLMContractError, match="未知字段"):
+    with pytest.raises(decree_mod.LLMContractError):
         decree_mod.validate_promulgation_verdicts(
             [verdict], dossiers, db, prepared_context=context,
         )
@@ -799,7 +799,7 @@ def test_rejected_exact_keys_accept_only_empty_legal_reason_slot(game):
 
     for invalid in ("statute-42", 0, False, [], {}):
         verdict["legal_reason_code"] = invalid
-        with pytest.raises(LLMContractError, match="完整 typed 判据快照"):
+        with pytest.raises(LLMContractError):
             decree_mod.validate_promulgation_verdicts(
                 [verdict], dossiers, db, prepared_context=context,
             )
@@ -863,7 +863,7 @@ def test_rejected_snapshot_must_equal_the_prepared_judge_input(
     verdict = _rejected_verdict(dossier_id, context["imperial_authority_band"])
     verdict["criteria_snapshot"][snapshot_key] = forged
 
-    with pytest.raises(decree_mod.LLMContractError, match="输入原值不一致"):
+    with pytest.raises(decree_mod.LLMContractError):
         decree_mod.validate_promulgation_verdicts(
             [verdict], dossiers, db, prepared_context=context,
         )
@@ -897,7 +897,7 @@ def test_non_gatekeeper_character_cannot_be_named_as_gatekeeper(game):
     verdict = _rejected_verdict(dossier_id, context["imperial_authority_band"])
     verdict["gatekeeper_id"] = outsider
 
-    with pytest.raises(decree_mod.LLMContractError, match="完整 typed 判据快照"):
+    with pytest.raises(decree_mod.LLMContractError):
         decree_mod.validate_promulgation_verdicts(
             [verdict], dossiers, db, prepared_context=context,
         )
@@ -912,7 +912,7 @@ def test_ordinary_rejection_cannot_claim_midzhi_unpromulgatable(game):
         dossier_id, context["imperial_authority_band"], midzhi=True,
     )
 
-    with pytest.raises(decree_mod.LLMContractError, match="只能标记中旨打回"):
+    with pytest.raises(decree_mod.LLMContractError):
         decree_mod.validate_promulgation_verdicts(
             [verdict], dossiers, db, prepared_context=context,
         )

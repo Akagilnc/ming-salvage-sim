@@ -48,6 +48,7 @@ from ming_sim.entities.dossier import (
 )
 from ming_sim.matching import match_army_id_from_text, match_region_id_from_text
 from ming_sim.office_rank import canonical_office_title
+from ming_sim.schema import ensure_core_schema
 from ming_sim.exceptions import LLMContractError, OfficeAppointmentRejection
 from ming_sim.intelligence import OFFICE_SLOTS
 from ming_sim.models import (
@@ -882,1020 +883,18 @@ class GameDB:
     def init_schema(self) -> None:
         # game_state（朝局头）与 metrics（余额真源）的建表与写读口归 reign_state store
         # （#1889 按职责拆出）。放在最前：下方任何 ensure_column / 标记读写都要先有这两张表。
+        # 人物公私经历与知识来源两张账的建表与写读口归 character_knowledge store
+        # （#1889 按职责拆出）。同样放最前：init 早段就会把带参与人的 issues 投影成
+        # 共享知识来源，那时这两张表必须已在。
+        from ming_sim.entities.character_knowledge import CharacterKnowledgeStore
+        CharacterKnowledgeStore.ensure_schema(self.conn)
+        self.character_knowledge = CharacterKnowledgeStore(self.conn)
         from ming_sim.entities.reign_state import ReignStateStore
         ReignStateStore.ensure_schema(self.conn)
         self.reign = ReignStateStore(self.conn)
-        self.conn.executescript(
-            """
-            -- game_state（朝局头）与 metrics（余额真源）的建表归
-            -- ming_sim/entities/reign_state（#1889 按职责拆出）
-            -- ；本文件不再持第二份定义。
-
-            CREATE TABLE IF NOT EXISTS offices (
-                office_type TEXT PRIMARY KEY,
-                power INTEGER NOT NULL,
-                responsibility INTEGER NOT NULL,
-                corruption_risk INTEGER NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS characters (
-                name TEXT PRIMARY KEY,
-                office TEXT NOT NULL,
-                office_type TEXT NOT NULL,
-                faction TEXT NOT NULL,
-                personal_skills TEXT NOT NULL,
-                loyalty INTEGER NOT NULL,
-                ability INTEGER NOT NULL,
-                integrity INTEGER NOT NULL,
-                courage INTEGER NOT NULL,
-                style TEXT NOT NULL,
-                birth_year INTEGER NOT NULL DEFAULT 0,
-                historical_death_year INTEGER NOT NULL DEFAULT 0,
-                historical_death_month INTEGER NOT NULL DEFAULT 0,
-                debut_year INTEGER NOT NULL DEFAULT 0,
-                debut_month INTEGER NOT NULL DEFAULT 0,
-                status TEXT NOT NULL DEFAULT 'active',
-                status_reason TEXT NOT NULL DEFAULT '',
-                reason_code TEXT NOT NULL DEFAULT '',
-                status_changed_turn INTEGER NOT NULL DEFAULT 0,
-                power_id TEXT NOT NULL DEFAULT 'ming',
-                location TEXT NOT NULL DEFAULT '',
-                transit_to TEXT NOT NULL DEFAULT '',
-                transit_distance_remaining REAL,
-                transit_speed_factor REAL,
-                transit_start_turn INTEGER NOT NULL DEFAULT 0,
-                identity INTEGER NOT NULL DEFAULT 50,
-                seed_guilt TEXT NOT NULL DEFAULT ''
-            );
-
-            -- #1889：官职类别（office_type）的唯一真源 = characters.office_type。
-            -- 原 character_offices.office_type 是同一事实的第二个可写表示（旧代码还得靠
-            -- _ensure_office_type_parents 每次把它镜像回 characters 才能对账），已删。
-            -- office_title 保留：罢免后 characters.office 置空，而备档留最近实职供起复
-            -- 品级读取（office_rank._is_substantive_office）——那是**历史**，不是重复。
-            CREATE TABLE IF NOT EXISTS character_offices (
-                character_name TEXT PRIMARY KEY,
-                office_title TEXT NOT NULL,
-                source TEXT NOT NULL,
-                dossier_id INTEGER,
-                appointment_tenure TEXT NOT NULL DEFAULT '真除',
-                region_id TEXT NOT NULL DEFAULT '',
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY(character_name) REFERENCES characters(name)
-            );
-
-            CREATE TABLE IF NOT EXISTS office_change_records (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                character_name TEXT NOT NULL,
-                office_title TEXT NOT NULL,
-                office_type TEXT NOT NULL,
-                source TEXT NOT NULL,
-                dossier_id INTEGER,
-                appointment_tenure TEXT NOT NULL DEFAULT '真除',
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY(dossier_id) REFERENCES decree_dossiers(id)
-            );
-            CREATE INDEX IF NOT EXISTS idx_office_change_records_dossier
-                ON office_change_records(dossier_id, id);
-
-            CREATE TABLE IF NOT EXISTS office_slots (
-                office_title TEXT PRIMARY KEY,
-                office_type TEXT NOT NULL,
-                region_id TEXT NOT NULL DEFAULT '',
-                jurisdiction TEXT NOT NULL DEFAULT '',
-                sort_order INTEGER NOT NULL DEFAULT 0
-            );
-
-            -- Local appointment jurisdiction lives only on character_offices.region_id
-            -- (一次任职). No parallel seat catalog.
-
-            CREATE VIEW IF NOT EXISTS office_vacancies AS
-            SELECT
-                s.office_title,
-                s.office_type,
-                s.region_id,
-                s.jurisdiction,
-                s.sort_order,
-                c.name AS holder_name,
-                c.office AS holder_office,
-                c.status AS holder_status
-            FROM office_slots AS s
-            LEFT JOIN characters AS c
-              ON c.status = 'active'
-             AND (
-                 replace(replace(c.office, '（署理）', ''), '署理', '') = s.office_title
-             );
-
-            -- person_logs 的建表与索引归 ming_sim/entities/person_log
-            -- （#1889 按职责拆出）；本文件不再持第二份定义。
-
-            CREATE TABLE IF NOT EXISTS factions (
-                name TEXT PRIMARY KEY,
-                satisfaction INTEGER NOT NULL,
-                leverage INTEGER NOT NULL,
-                agenda TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS powers (
-                id TEXT PRIMARY KEY,
-                name TEXT NOT NULL UNIQUE,
-                kind TEXT NOT NULL,
-                leader TEXT NOT NULL,
-                stance TEXT NOT NULL,
-                leverage INTEGER NOT NULL,
-                satisfaction INTEGER NOT NULL,
-                military_strength INTEGER NOT NULL,
-                cohesion INTEGER NOT NULL,
-                supply INTEGER NOT NULL,
-                agenda TEXT NOT NULL,
-                status TEXT NOT NULL,
-                last_action TEXT NOT NULL DEFAULT '',
-                aliases TEXT NOT NULL DEFAULT '',
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            );
-
-            CREATE TABLE IF NOT EXISTS power_logs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                turn INTEGER NOT NULL,
-                year INTEGER NOT NULL,
-                period INTEGER NOT NULL,
-                power_id TEXT NOT NULL,
-                field TEXT NOT NULL,
-                old_value TEXT NOT NULL,
-                new_value TEXT NOT NULL,
-                delta INTEGER,
-                reason TEXT NOT NULL,
-                origin_ref TEXT NOT NULL DEFAULT '',
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY(power_id) REFERENCES powers(id)
-            );
-
-            CREATE TABLE IF NOT EXISTS power_name_logs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                turn INTEGER NOT NULL,
-                year INTEGER NOT NULL,
-                period INTEGER NOT NULL,
-                power_id TEXT NOT NULL,
-                old_name TEXT NOT NULL,
-                new_name TEXT NOT NULL,
-                old_aliases TEXT NOT NULL DEFAULT '',
-                new_aliases TEXT NOT NULL DEFAULT '',
-                reason TEXT NOT NULL,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY(power_id) REFERENCES powers(id)
-            );
-
-            CREATE TABLE IF NOT EXISTS regions (
-                id TEXT PRIMARY KEY,
-                name TEXT NOT NULL UNIQUE,
-                kind TEXT NOT NULL,
-                population INTEGER NOT NULL,
-                public_support INTEGER NOT NULL,
-                unrest INTEGER NOT NULL,
-                natural_disaster TEXT NOT NULL,
-                human_disaster TEXT NOT NULL,
-                registered_land INTEGER NOT NULL,
-                hidden_land INTEGER NOT NULL,
-                tax_per_turn INTEGER NOT NULL,
-                grain_security INTEGER NOT NULL,
-                gentry_resistance INTEGER NOT NULL,
-                military_pressure INTEGER NOT NULL,
-                status TEXT NOT NULL,
-                controlled_by TEXT NOT NULL DEFAULT 'ming',
-                city_level INTEGER NOT NULL DEFAULT 0,
-                cannon INTEGER NOT NULL DEFAULT 0,
-                fiscal TEXT NOT NULL DEFAULT '{}',
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY(controlled_by) REFERENCES powers(id)
-            );
-
-            CREATE TABLE IF NOT EXISTS region_logs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                turn INTEGER NOT NULL,
-                year INTEGER NOT NULL,
-                period INTEGER NOT NULL,
-                region_id TEXT NOT NULL,
-                field TEXT NOT NULL,
-                old_value TEXT NOT NULL,
-                new_value TEXT NOT NULL,
-                delta INTEGER,
-                reason TEXT NOT NULL,
-                event_id TEXT,
-                edict_id INTEGER,
-                actor TEXT,
-                origin_ref TEXT NOT NULL DEFAULT '',
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY(region_id) REFERENCES regions(id)
-            );
-
-            CREATE TABLE IF NOT EXISTS armies (
-                id TEXT PRIMARY KEY,
-                name TEXT NOT NULL UNIQUE,
-                station TEXT NOT NULL,
-                station_region TEXT NOT NULL DEFAULT '',
-                theater TEXT NOT NULL,
-                commander TEXT NOT NULL,
-                controller TEXT NOT NULL,
-                troop_type TEXT NOT NULL,
-                manpower INTEGER NOT NULL,
-                supply INTEGER NOT NULL,
-                morale INTEGER NOT NULL,
-                training INTEGER NOT NULL,
-                equipment INTEGER NOT NULL,
-                arrears INTEGER NOT NULL,
-                province_pay_arrears REAL NOT NULL DEFAULT 0,
-                central_pay_arrears REAL NOT NULL DEFAULT 0,
-                consecutive_pay_shortfall_months INTEGER NOT NULL DEFAULT 0,
-                pay_source_region TEXT NOT NULL DEFAULT '',
-                province_pay_share REAL NOT NULL DEFAULT 0,
-                central_pay_share REAL NOT NULL DEFAULT 0,
-                is_tusi INTEGER NOT NULL DEFAULT 0,
-                self_funded_pay INTEGER NOT NULL DEFAULT 0,
-                mutiny_status TEXT NOT NULL DEFAULT '',
-                is_mutinied INTEGER NOT NULL DEFAULT 0 CHECK(is_mutinied IN (0, 1)),
-                mutiny_count INTEGER NOT NULL DEFAULT 0,
-                mutiny_probation INTEGER NOT NULL DEFAULT 0,
-                full_pay_streak INTEGER NOT NULL DEFAULT 0,
-                redemption_count INTEGER NOT NULL DEFAULT 0,
-                mobility INTEGER NOT NULL,
-                loyalty INTEGER NOT NULL,
-                firearm_equipment INTEGER NOT NULL DEFAULT 0,
-                cannon_equipment INTEGER NOT NULL DEFAULT 0,
-                salary_rate REAL NOT NULL DEFAULT 0,
-                status TEXT NOT NULL,
-                owner_power TEXT NOT NULL DEFAULT 'ming',
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY(owner_power) REFERENCES powers(id)
-            );
-
-            CREATE TABLE IF NOT EXISTS army_logs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                turn INTEGER NOT NULL,
-                year INTEGER NOT NULL,
-                period INTEGER NOT NULL,
-                army_id TEXT NOT NULL,
-                field TEXT NOT NULL,
-                old_value TEXT NOT NULL,
-                new_value TEXT NOT NULL,
-                delta INTEGER,
-                reason TEXT NOT NULL,
-                event_id TEXT,
-                edict_id INTEGER,
-                actor TEXT,
-                origin_ref TEXT NOT NULL DEFAULT '',
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY(army_id) REFERENCES armies(id)
-            );
-
-            CREATE TABLE IF NOT EXISTS buildings (
-                id TEXT PRIMARY KEY,
-                region_id TEXT NOT NULL,
-                name TEXT NOT NULL,
-                category TEXT NOT NULL,
-                level INTEGER NOT NULL,
-                condition INTEGER NOT NULL,
-                maintenance INTEGER NOT NULL,
-                risk INTEGER NOT NULL,
-                output_metric TEXT NOT NULL DEFAULT '',
-                output_amount INTEGER NOT NULL DEFAULT 0,
-                status TEXT NOT NULL,
-                origin TEXT NOT NULL DEFAULT 'preset',
-                created_turn INTEGER NOT NULL DEFAULT 0,
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY(region_id) REFERENCES regions(id)
-            );
-
-            CREATE TABLE IF NOT EXISTS building_logs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                turn INTEGER NOT NULL,
-                year INTEGER NOT NULL,
-                period INTEGER NOT NULL,
-                building_id TEXT NOT NULL,
-                field TEXT NOT NULL,
-                old_value TEXT NOT NULL,
-                new_value TEXT NOT NULL,
-                delta INTEGER,
-                reason TEXT NOT NULL,
-                event_id TEXT,
-                edict_id INTEGER,
-                actor TEXT,
-                origin_ref TEXT NOT NULL DEFAULT '',
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            );
-
-            -- #1889：国库活余额的事实真源 = metrics（key/value，见 save_state）。
-            -- economy_accounts 降级为**派生视图**（读时算），不再是可独立漂移的第二本账：
-            -- 旧实现是实体表 + sync_economy_accounts 双向同步，load_state 还用它盖回
-            -- metrics —— 实测把 metrics.国库 改成 999 会被静默改回 320，且删掉 metrics
-            -- 行后余额会从这张表「复活」。视图化后单一写口 = metrics，无同步代码。
-            -- 列契约（account/metric_key/balance/note）保持不变，读侧零改动。
-            CREATE VIEW IF NOT EXISTS economy_accounts AS
-            SELECT
-                m.key AS account,
-                m.key AS metric_key,
-                m.value AS balance,
-                CASE m.key
-                    WHEN '国库' THEN '朝廷公开财政，用于军饷、赈济、官俸和工程。'
-                    WHEN '内库' THEN '皇帝可直接调度的钱物，用于救急、密支和政治缓冲。'
-                    ELSE ''
-                END AS note
-            FROM metrics m
-            WHERE m.key IN ('国库', '内库');
-
-            -- #1889：account ∈ ECONOMY_ACCOUNTS 的原 FK(account)→economy_accounts 已随
-            -- 该表降级为 metrics 的派生视图移除（SQLite 不支持外键指向视图）；同一约束
-            -- 改在真实写口 record_issue_economy_move 显式 fail-loud 校验，覆盖面不减。
-            CREATE TABLE IF NOT EXISTS economy_ledger (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                turn INTEGER NOT NULL,
-                year INTEGER NOT NULL,
-                period INTEGER NOT NULL,
-                account TEXT NOT NULL,
-                delta INTEGER NOT NULL,
-                balance_after INTEGER NOT NULL,
-                category TEXT NOT NULL,
-                reason TEXT NOT NULL,
-                event_id TEXT,
-                edict_id INTEGER,
-                actor TEXT,
-                purpose TEXT,
-                target_kind TEXT,
-                target_id TEXT,
-                dossier_id INTEGER,
-                origin_ref TEXT NOT NULL DEFAULT '',
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            );
-
-            CREATE TABLE IF NOT EXISTS events (
-                id TEXT PRIMARY KEY,
-                title TEXT NOT NULL,
-                kind TEXT NOT NULL,
-                summary TEXT NOT NULL,
-                urgency INTEGER NOT NULL,
-                severity INTEGER NOT NULL,
-                credibility INTEGER NOT NULL,
-                interests TEXT NOT NULL,
-                audiences TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS event_triggers (
-                event_id TEXT PRIMARY KEY,
-                turn INTEGER NOT NULL,
-                year INTEGER NOT NULL,
-                period INTEGER NOT NULL,
-                source TEXT NOT NULL DEFAULT 'simulation',
-                terminal_state TEXT NOT NULL DEFAULT 'triggered',
-                terminal_reason TEXT NOT NULL DEFAULT '',
-                choice_json TEXT NOT NULL DEFAULT '',
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY(event_id) REFERENCES events(id)
-            );
-
-            CREATE TABLE IF NOT EXISTS turn_reports (
-                turn INTEGER PRIMARY KEY,
-                year INTEGER NOT NULL,
-                period INTEGER NOT NULL,
-                report TEXT NOT NULL,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            );
-
-            -- HITL 重大决策点：世界段请旨机标产出的待皇帝亲裁抉择。每回合 ≤5 条。
-            CREATE TABLE IF NOT EXISTS pending_decisions (
-                turn INTEGER NOT NULL,
-                idx INTEGER NOT NULL,
-                event_id TEXT NOT NULL DEFAULT '',
-                title TEXT NOT NULL DEFAULT '',
-                context TEXT NOT NULL DEFAULT '',
-                options_json TEXT NOT NULL DEFAULT '[]',
-                choice_json TEXT NOT NULL DEFAULT '',
-                status TEXT NOT NULL DEFAULT 'pending',
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (turn, idx)
-            );
-
-            -- 过月上下文：存阶段进度与原诏，供暂停后续跑。
-            -- 每回合至多一行（turn 主键），phase2 跑完即删。
-            CREATE TABLE IF NOT EXISTS pending_resolve_context (
-                turn INTEGER PRIMARY KEY,
-                decree_text TEXT NOT NULL DEFAULT '',
-                simulator_payload_json TEXT NOT NULL DEFAULT '{}',
-                source TEXT NOT NULL DEFAULT 'system_simulation',
-                attendant_message TEXT NOT NULL DEFAULT '',
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            );
-
-            -- 动作闸门(ADR 0006)：结构化聊天交办(密令/任命/拟旨)召对期进此暂存表，
-            -- 不动真实表；颁诏时 commit_pending_actions 在结算最前批量落库(不拒绝即允许)。
-            -- 撤回 = 删本表对应行(任意一条、免快照)。restore 仍可无损接续(P1)。
-            CREATE TABLE IF NOT EXISTS pending_actions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                turn INTEGER NOT NULL,
-                kind TEXT NOT NULL,                       -- secret_order | office | directive
-                action TEXT NOT NULL,                     -- 更新 | 催办 | 提交核议 | 记进展 | 创建 …
-                target_id INTEGER,                        -- 操作既有实体时其 id；新建为 NULL
-                minister_name TEXT NOT NULL DEFAULT '',
-                payload_json TEXT NOT NULL DEFAULT '{}',
-                status TEXT NOT NULL DEFAULT 'pending',    -- pending | committed | failed | held_over
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            );
-
-            CREATE TABLE IF NOT EXISTS recommendation_events (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                turn INTEGER NOT NULL,
-                year INTEGER NOT NULL,
-                period INTEGER NOT NULL,
-                recommender TEXT NOT NULL,
-                candidate TEXT NOT NULL,
-                candidate_kind TEXT NOT NULL,
-                target_office TEXT NOT NULL DEFAULT '',
-                basis TEXT NOT NULL DEFAULT '',
-                reason TEXT NOT NULL DEFAULT '',
-                status TEXT NOT NULL DEFAULT 'adopted',
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            );
-            CREATE INDEX IF NOT EXISTS idx_recommendation_events_recommender
-                ON recommendation_events(recommender, turn, id);
-
-            -- 召对聊天记录持久化，每条消息一行，进程重启不丢。
-            CREATE TABLE IF NOT EXISTS chat_messages (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                minister_name TEXT NOT NULL,
-                turn INTEGER NOT NULL,
-                role TEXT NOT NULL,
-                content TEXT NOT NULL,
-                -- #976: held|released|withheld|private (audience knowledge dual-track)
-                knowledge_status TEXT NOT NULL DEFAULT 'held',
-                -- #544 / ADR 0045：高亮判官短语清单（JSON 数组）；空=无高亮/降级
-                highlights_json TEXT NOT NULL DEFAULT '[]',
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            );
-            CREATE INDEX IF NOT EXISTS idx_chat_messages_minister
-                ON chat_messages(minister_name, id);
-            CREATE INDEX IF NOT EXISTS idx_chat_messages_turn
-                ON chat_messages(turn);
-
-            CREATE TABLE IF NOT EXISTS chat_turns (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                minister_name TEXT NOT NULL,
-                turn INTEGER NOT NULL,
-                year INTEGER NOT NULL,
-                period INTEGER NOT NULL,
-                user_message_id INTEGER,
-                minister_message_id INTEGER,
-                agno_session_id TEXT NOT NULL DEFAULT '',
-                agno_runs_before INTEGER NOT NULL DEFAULT 0,
-                status TEXT NOT NULL DEFAULT 'active',
-                -- #498：对话轮锚定夜容器；0=未挂夜（旧档/无夜路径）
-                -- night_id 列可能由 ensure_column 后补；索引不得写在本 CREATE 块
-                -- （旧档 chat_turns 已存在时 CREATE TABLE IF NOT EXISTS 不重建，索引会引用缺列失败）
-                night_id INTEGER NOT NULL DEFAULT 0,
-                -- 与 story_ledger_entries.seq 共用夜内单调序（allocate_night_seq）
-                night_seq INTEGER NOT NULL DEFAULT 0,
-                -- #501 叙事抽取水位（确定性可判、补跑不重复/不漏）：
-                --   ''=未抽 / 'done'=已抽落账 / 'pending'=待补（抽取失败，给玩家原地重试）
-                extract_status TEXT NOT NULL DEFAULT '',
-                error_pack_path TEXT NOT NULL DEFAULT '',
-                post_reply_recovery TEXT NOT NULL DEFAULT '',
-                post_reply_error_pack_path TEXT NOT NULL DEFAULT '',
-                -- #1838：本轮转译声明的御前主角（按源轮；空=本轮未声明）
-                protagonist_name TEXT NOT NULL DEFAULT '',
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                undone_at TEXT
-            );
-            CREATE INDEX IF NOT EXISTS idx_chat_turns_minister_turn
-                ON chat_turns(minister_name, turn, status, id);
-            CREATE INDEX IF NOT EXISTS idx_chat_turns_status_id
-                ON chat_turns(status, id);
-
-            -- #498 召对夜一等容器 + 故事账本（ADR 0035）
-            CREATE TABLE IF NOT EXISTS audience_nights (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                turn INTEGER NOT NULL,
-                year INTEGER NOT NULL,
-                period INTEGER NOT NULL,
-                time_of_day TEXT NOT NULL DEFAULT '',
-                location TEXT NOT NULL DEFAULT '',
-                status TEXT NOT NULL DEFAULT 'open',
-                -- 收夜提交幂等游标：0=未开始；已完成步序号；见 audience_night.CLOSE_STEPS
-                -- endorsement-bound 是 CLOSE_STEPS 中的一步，不另设平行列
-                close_commit_cursor INTEGER NOT NULL DEFAULT 0,
-                -- 夜内事件单调序源：账本 seq 与 chat night_seq 同桶递增
-                next_event_seq INTEGER NOT NULL DEFAULT 0,
-                -- #1838：本夜当前御前主角（转译判；宣 X 当场先切）
-                protagonist_name TEXT NOT NULL DEFAULT '',
-                opened_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                closed_at TEXT
-            );
-            CREATE INDEX IF NOT EXISTS idx_audience_nights_turn_status
-                ON audience_nights(turn, status, id);
-
-            CREATE TABLE IF NOT EXISTS story_ledger_entries (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                night_id INTEGER NOT NULL,
-                seq INTEGER NOT NULL,
-                person_names TEXT NOT NULL DEFAULT '[]',
-                audibility TEXT NOT NULL DEFAULT '殿上公开',
-                body TEXT NOT NULL DEFAULT '',
-                tags TEXT NOT NULL DEFAULT '[]',
-                -- #501 抽取账溯源：0=口令/框架账；>0=由该对话轮叙事抽取而来
-                source_chat_turn_id INTEGER NOT NULL DEFAULT 0,
-                -- #506 轮级撤销绑定：口令账由某轮 attach 创建时绑该轮；0=框架账不随轮撤
-                origin_chat_turn_id INTEGER NOT NULL DEFAULT 0,
-                -- #501 机器可读在场效果（ADR 0035 线上 R2）：''=无 / 'enter'=进 / 'exit'=出
-                presence_effect TEXT NOT NULL DEFAULT '',
-                -- #501 时序键（ADR 0036 cmr R7）：口令账=自身 seq；抽取账=源对话轮原始时序，
-                -- 使补跑落回原时间位、不因补跑时刻错位。NULL 时读取端 COALESCE 回退 seq。
-                order_key REAL,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(night_id, seq),
-                FOREIGN KEY(night_id) REFERENCES audience_nights(id)
-            );
-            CREATE INDEX IF NOT EXISTS idx_story_ledger_night_seq
-                ON story_ledger_entries(night_id, seq);
-
-            CREATE TABLE IF NOT EXISTS chat_turn_rollback_items (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                chat_turn_id INTEGER NOT NULL,
-                kind TEXT NOT NULL,
-                target_table TEXT NOT NULL,
-                target_id TEXT NOT NULL,
-                before_json TEXT NOT NULL DEFAULT '',
-                after_json TEXT NOT NULL DEFAULT '',
-                rollback_strategy TEXT NOT NULL,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY(chat_turn_id) REFERENCES chat_turns(id)
-            );
-            CREATE INDEX IF NOT EXISTS idx_chat_turn_rollback_items_turn
-                ON chat_turn_rollback_items(chat_turn_id, id);
-
-            CREATE TABLE IF NOT EXISTS secret_orders (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                turn_issued INTEGER NOT NULL,
-                due_turn INTEGER NOT NULL DEFAULT 0,
-                deadline_span INTEGER NOT NULL DEFAULT 0,
-                year_issued INTEGER NOT NULL,
-                period_issued INTEGER NOT NULL,
-                minister_name TEXT NOT NULL,
-                title TEXT NOT NULL,
-                content TEXT NOT NULL DEFAULT '',
-                tags TEXT NOT NULL DEFAULT '[]',
-                importance INTEGER NOT NULL DEFAULT 4,
-                status TEXT NOT NULL DEFAULT 'active',
-                result TEXT NOT NULL DEFAULT '',
-                sim_note TEXT NOT NULL DEFAULT '',
-                excluded_names TEXT NOT NULL DEFAULT '[]',
-                dossier_progress_json TEXT NOT NULL DEFAULT '[]',
-                turn_closed INTEGER,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            );
-            CREATE INDEX IF NOT EXISTS idx_secret_orders_minister
-                ON secret_orders(minister_name, status);
-            CREATE INDEX IF NOT EXISTS idx_secret_orders_turn
-                ON secret_orders(turn_issued, status);
-            CREATE INDEX IF NOT EXISTS idx_secret_orders_status
-                ON secret_orders(status);
-
-            __DOSSIER_SCHEMA__;
-
-            -- ADR 0071：持有型/持续型特权的 durable 授权档。
-            CREATE TABLE IF NOT EXISTS authority_records (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                holder_id TEXT NOT NULL,
-                privilege TEXT NOT NULL CHECK(privilege IN (
-                    __AUTHORITY_PRIVILEGES__
-                )),
-                scope TEXT NOT NULL,
-                effective_turn INTEGER NOT NULL,
-                expires_turn INTEGER,
-                revoked INTEGER NOT NULL DEFAULT 0 CHECK(revoked IN (0,1)),
-                revoked_turn INTEGER,
-                dossier_id INTEGER,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY(holder_id) REFERENCES characters(name),
-                FOREIGN KEY(dossier_id) REFERENCES decree_dossiers(id)
-            );
-            CREATE INDEX IF NOT EXISTS idx_authority_records_holder
-                ON authority_records(holder_id, revoked, effective_turn);
-
-            CREATE TABLE IF NOT EXISTS turn_directives (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                turn INTEGER NOT NULL,
-                year INTEGER NOT NULL,
-                period INTEGER NOT NULL,
-                event_id TEXT,
-                actor TEXT,
-                text TEXT NOT NULL,
-                source TEXT NOT NULL,
-                status TEXT NOT NULL DEFAULT 'draft',
-                notes TEXT NOT NULL DEFAULT '',
-                dossier_payload_json TEXT NOT NULL DEFAULT '{}',
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY(event_id) REFERENCES events(id),
-                FOREIGN KEY(actor) REFERENCES characters(name)
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_economy_ledger_turn
-            ON economy_ledger(turn, account);
-
-            CREATE TABLE IF NOT EXISTS fiscal_config_tombstones (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                removed_turn INTEGER NOT NULL DEFAULT 0,
-                key TEXT NOT NULL,
-                value INTEGER NOT NULL,
-                kind TEXT NOT NULL,
-                origin_ref TEXT NOT NULL,
-                reason TEXT NOT NULL DEFAULT '',
-                removed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_fiscal_config_tombstones_origin
-            ON fiscal_config_tombstones(origin_ref, removed_turn);
-
-            CREATE TABLE IF NOT EXISTS fiscal_config_creations (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                turn INTEGER NOT NULL DEFAULT 0,
-                key TEXT NOT NULL,
-                value INTEGER NOT NULL,
-                kind TEXT NOT NULL,
-                origin_ref TEXT NOT NULL,
-                reason TEXT NOT NULL DEFAULT '',
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_fiscal_config_creations_origin
-            ON fiscal_config_creations(origin_ref, turn, id);
-
-            CREATE TABLE IF NOT EXISTS fiscal_config_changes (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                turn INTEGER NOT NULL DEFAULT 0,
-                key TEXT NOT NULL,
-                old_value INTEGER NOT NULL,
-                new_value INTEGER NOT NULL,
-                delta INTEGER NOT NULL,
-                origin_ref TEXT NOT NULL,
-                reason TEXT NOT NULL DEFAULT '',
-                changed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_fiscal_config_changes_origin
-            ON fiscal_config_changes(origin_ref, turn, id);
-
-            CREATE TABLE IF NOT EXISTS fiscal_config (
-                key   TEXT PRIMARY KEY,
-                value INTEGER NOT NULL,
-                kind  TEXT NOT NULL,
-                note  TEXT NOT NULL DEFAULT ''
-            );
-
-            CREATE TABLE IF NOT EXISTS fiscal_containers (
-                key   TEXT PRIMARY KEY,
-                value REAL NOT NULL,
-                note  TEXT NOT NULL DEFAULT '',
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_turn_directives_turn
-            ON turn_directives(turn, status);
-
-            CREATE INDEX IF NOT EXISTS idx_region_logs_turn
-            ON region_logs(turn, region_id);
-
-            CREATE INDEX IF NOT EXISTS idx_army_logs_turn
-            ON army_logs(turn, army_id);
-
-            CREATE INDEX IF NOT EXISTS idx_building_logs_turn
-            ON building_logs(turn, building_id);
-
-            CREATE INDEX IF NOT EXISTS idx_power_logs_turn
-            ON power_logs(turn, power_id);
-
-            CREATE TABLE IF NOT EXISTS issues (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                kind TEXT NOT NULL,
-                title TEXT NOT NULL,
-                origin_kind TEXT NOT NULL DEFAULT '',
-                origin_ref TEXT NOT NULL DEFAULT '',
-                origin_turn INTEGER NOT NULL,
-                bar_value INTEGER NOT NULL DEFAULT 40,
-                bar_good_meaning TEXT NOT NULL DEFAULT '已平',
-                bar_bad_meaning TEXT NOT NULL DEFAULT '失控',
-                inertia INTEGER NOT NULL DEFAULT 0,
-                phase TEXT NOT NULL DEFAULT '起',
-                stage_text TEXT NOT NULL DEFAULT '',
-                status TEXT NOT NULL DEFAULT 'active',
-                severity INTEGER NOT NULL DEFAULT 50,
-                region_hint TEXT NOT NULL DEFAULT '',
-                faction_hint TEXT NOT NULL DEFAULT '',
-                tags TEXT NOT NULL DEFAULT '[]',
-                participants TEXT NOT NULL DEFAULT '[]',
-                participant_roster TEXT NOT NULL DEFAULT '[]',
-                target_roster TEXT NOT NULL DEFAULT '[]',
-                ongoing_effects TEXT NOT NULL DEFAULT '{}',
-                cancellable TEXT NOT NULL DEFAULT 'never',
-                cancel_cost TEXT NOT NULL DEFAULT '{}',
-                effect_on_resolve TEXT NOT NULL DEFAULT '{}',
-                effect_on_fail TEXT NOT NULL DEFAULT '{}',
-                resolve_condition TEXT NOT NULL DEFAULT '',
-                fail_condition TEXT NOT NULL DEFAULT '',
-                end_turn INTEGER NOT NULL DEFAULT 0,
-                stop_condition TEXT NOT NULL DEFAULT '',
-                commitment_kind TEXT NOT NULL DEFAULT '',
-                stages_json TEXT NOT NULL DEFAULT '[]',
-                resolution_summary TEXT NOT NULL DEFAULT '',
-                last_advance_turn INTEGER NOT NULL DEFAULT 0,
-                closed_turn INTEGER,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                affair_id INTEGER NOT NULL DEFAULT 0
-            );
-
-            -- #620 / ADR 0074：次回合召对待办（分段到期等）；结算内确定性写入、不停轮。
-            -- #624 / ADR 0078：payload_json 引擎侧列（真伪底）；玩家投影路径不读。
-            -- #1783：commitment_ref 可为 0（案卷 due 直挂 todo，不另立 issue）；
-            -- 有承诺时仍写 issues.id。禁 FK 以免 0 被拒。
-            CREATE TABLE IF NOT EXISTS next_audience_todos (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                commitment_ref INTEGER NOT NULL,
-                stage_idx INTEGER NOT NULL,
-                due_turn INTEGER NOT NULL,
-                criterion_text TEXT NOT NULL DEFAULT '',
-                origin_context TEXT NOT NULL DEFAULT '',
-                status TEXT NOT NULL DEFAULT 'pending',
-                entry_kind TEXT NOT NULL DEFAULT 'staged_commitment',
-                created_turn INTEGER NOT NULL DEFAULT 0,
-                payload_json TEXT NOT NULL DEFAULT '{}',
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(commitment_ref, stage_idx, entry_kind)
-            );
-            CREATE INDEX IF NOT EXISTS idx_next_audience_todos_status
-                ON next_audience_todos(status, due_turn);
-
-            CREATE TABLE IF NOT EXISTS issue_advances (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                issue_id INTEGER NOT NULL,
-                turn INTEGER NOT NULL,
-                trigger_kind TEXT NOT NULL,
-                trigger_ref TEXT NOT NULL DEFAULT '',
-                delta_bar INTEGER NOT NULL DEFAULT 0,
-                from_value INTEGER NOT NULL DEFAULT 0,
-                to_value INTEGER NOT NULL DEFAULT 0,
-                from_stage_text TEXT NOT NULL DEFAULT '',
-                to_stage_text TEXT NOT NULL DEFAULT '',
-                narrative TEXT NOT NULL DEFAULT '',
-                metric_delta TEXT NOT NULL DEFAULT '{}',
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY(issue_id) REFERENCES issues(id)
-            );
-
-            CREATE TABLE IF NOT EXISTS legacies (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                source_issue_id INTEGER,                    -- 产生它的 issue（可空）
-                modifiers TEXT NOT NULL DEFAULT '{}',  -- 各维度带符号百分比修正符 {"国库":10,"regions":{...},"armies":{...}}
-                narrative_hint TEXT NOT NULL DEFAULT '',    -- 一句话说明（仅展示用，不喂 simulator）
-                start_month INTEGER NOT NULL,               -- 绝对月 = year*12+period
-                duration_months INTEGER NOT NULL DEFAULT 24,-- 时长；-1=永久
-                status TEXT NOT NULL DEFAULT 'active',      -- active / expired / cleared
-                clear_gate TEXT NOT NULL DEFAULT '{}',      -- 机器消除条件（同 _gate_passed 语法）；非空=靠程序判定消除而非时长
-                legacy_key TEXT NOT NULL DEFAULT '',        -- 开局负面修正对应 opening_legacies.key，去重用
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_legacies_active
-            ON legacies(status);
-
-            CREATE INDEX IF NOT EXISTS idx_issues_active
-            ON issues(kind, status, severity DESC);
-
-            CREATE INDEX IF NOT EXISTS idx_issue_advances_issue
-            ON issue_advances(issue_id, turn);
-
-            CREATE TABLE IF NOT EXISTS classes (
-                name TEXT NOT NULL,
-                region_id TEXT NOT NULL DEFAULT '',
-                population INTEGER NOT NULL,
-                satisfaction INTEGER NOT NULL,
-                leverage INTEGER NOT NULL,
-                agenda TEXT NOT NULL,
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (name, region_id)
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_classes_region
-            ON classes(region_id, name);
-
-            CREATE TABLE IF NOT EXISTS population_transfer_ledger (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                turn INTEGER NOT NULL,
-                source TEXT NOT NULL,
-                target TEXT NOT NULL,
-                amount INTEGER NOT NULL,
-                reason TEXT NOT NULL,
-                origin_ref TEXT NOT NULL
-            );
-            CREATE INDEX IF NOT EXISTS idx_population_transfer_turn
-            ON population_transfer_ledger(turn);
-
-            CREATE TABLE IF NOT EXISTS character_knowledge_events (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                turn INTEGER NOT NULL,
-                year INTEGER NOT NULL,
-                period INTEGER NOT NULL,
-                character_name TEXT NOT NULL DEFAULT '',
-                kind TEXT NOT NULL,
-                title TEXT NOT NULL,
-                body TEXT NOT NULL DEFAULT '',
-                source_id TEXT NOT NULL,
-                excluded_names TEXT NOT NULL DEFAULT '[]',
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(character_name, kind, source_id)
-            );
-            CREATE INDEX IF NOT EXISTS idx_character_knowledge_events_character
-                ON character_knowledge_events(character_name, turn, id);
-
-            -- #1829 公开说法：独立记录，投影进公开层；不改人物实况。
-            -- 排除名单与正文同表（#1829 reopen），不另抄见闻来源。
-            CREATE TABLE IF NOT EXISTS public_sayings (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                turn INTEGER NOT NULL,
-                year INTEGER NOT NULL,
-                period INTEGER NOT NULL,
-                body TEXT NOT NULL,
-                involved_characters TEXT NOT NULL DEFAULT '[]',
-                affair_ref TEXT NOT NULL DEFAULT '',
-                source_id TEXT NOT NULL UNIQUE,
-                excluded_names TEXT NOT NULL DEFAULT '[]',
-                excluded_targets TEXT NOT NULL DEFAULT '{}',
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            );
-            CREATE INDEX IF NOT EXISTS idx_public_sayings_affair
-                ON public_sayings(affair_ref, id);
-
-            CREATE TABLE IF NOT EXISTS character_knowledge_sources (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                turn INTEGER NOT NULL,
-                year INTEGER NOT NULL,
-                period INTEGER NOT NULL,
-                kind TEXT NOT NULL,
-                title TEXT NOT NULL,
-                body TEXT NOT NULL DEFAULT '',
-                source_id TEXT NOT NULL UNIQUE,
-                participant_roster TEXT NOT NULL DEFAULT '[]',
-                excluded_names TEXT NOT NULL DEFAULT '[]',
-                excluded_targets TEXT NOT NULL DEFAULT '{}',
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            );
-            CREATE INDEX IF NOT EXISTS idx_character_knowledge_sources_turn
-                ON character_knowledge_sources(turn, id);
-
-            -- #883: secret orders never enter the shared knowledge ledger.
-            -- origin_chat_message_ids: message-level oral-decree provenance (#976).
-            CREATE TABLE IF NOT EXISTS secret_order_briefs (
-                order_id INTEGER PRIMARY KEY,
-                turn INTEGER NOT NULL,
-                year INTEGER NOT NULL,
-                period INTEGER NOT NULL,
-                minister_name TEXT NOT NULL,
-                title TEXT NOT NULL,
-                body TEXT NOT NULL DEFAULT '',
-                origin_chat_message_ids TEXT NOT NULL DEFAULT '[]',
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY(order_id) REFERENCES secret_orders(id) ON DELETE CASCADE
-            );
-
-            CREATE TABLE IF NOT EXISTS kv_store (
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL DEFAULT '',
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            );
-
-            -- #1234 / ADR 0148 路③：月初快照呈现投影（点击前四键 + 所属回合）。
-            -- 当前回合未过期行存在 ⇔ 核账展示态；非结算/恢复权威，引擎控制流不读。
-            CREATE TABLE IF NOT EXISTS month_open_snapshot (
-                turn INTEGER PRIMARY KEY,
-                treasury INTEGER NOT NULL,
-                inner_treasury INTEGER NOT NULL,
-                public_support INTEGER NOT NULL,
-                imperial_prestige INTEGER NOT NULL
-            );
-
-            -- #632 关系账 S1：append-only 有向边事件流水。0079 信用事件只在读侧适配，
-            -- 不迁移、不双写；evidence 仅允许结构化产出方置真。
-            CREATE TABLE IF NOT EXISTS relation_edge_events (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                source TEXT NOT NULL,
-                target TEXT NOT NULL,
-                event_kind TEXT NOT NULL,
-                context TEXT NOT NULL,
-                origin TEXT NOT NULL,
-                origin_round INTEGER NOT NULL,
-                turn INTEGER NOT NULL,
-                year INTEGER NOT NULL,
-                period INTEGER NOT NULL,
-                evidence INTEGER NOT NULL DEFAULT 0 CHECK (evidence IN (0, 1)),
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(source, target, event_kind, context, origin)
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_relation_edges_pair
-            ON relation_edge_events(source, target, turn, id);
-
-            CREATE INDEX IF NOT EXISTS idx_relation_edges_person
-            ON relation_edge_events(source, target, event_kind, id);
-
-            -- #636 关系摘要层 S5：两段式摘要（奠基段机械只增不改＋近况段整段重酿，ID-9）。
-            -- 零数值强度字段（P4/ADR 0083）；结构字段首发集＝有向关系对、维度标记、
-            -- 奠基段、近况段、最近事件回指（last_event_id 水位）、最后重酿回合。
-            CREATE TABLE IF NOT EXISTS relation_summaries (
-                source TEXT NOT NULL,
-                target TEXT NOT NULL,
-                dimension TEXT NOT NULL CHECK (dimension IN ('君臣', '大臣')),
-                founding_segment TEXT NOT NULL DEFAULT '',
-                recent_segment TEXT NOT NULL DEFAULT '',
-                last_event_id INTEGER NOT NULL DEFAULT 0,
-                last_brewed_turn INTEGER NOT NULL DEFAULT 0,
-                last_brewed_year INTEGER NOT NULL DEFAULT 0,
-                last_brewed_period INTEGER NOT NULL DEFAULT 0,
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (source, target)
-            );
-
-            -- #636 S5（庭裁 r1 F1＋r2/r3 F1）：relation_brew_pending 双角色——
-            -- ① settled 年月入选关系的 durable claim（认领先行，酿造前落盘提交，
-            -- 与本月边事件同结算事务生死）；② 酿制失败月的持久 pending-backlog。
-            -- 成功路径＝摘要写入与 pending 清除同一 DB 事务原子落定（庭裁 r2 F1，ADR 0008 一脉）。
-            -- #637 S6（庭裁 r1 F2）：最小泛化既有 durable brew-claim 身份——item_kind
-            -- 区分关系对与派系工作项，使两者共用同一 claim/watermark/apply+clear 所有者；
-            -- 不旁建第二套 faction_pending 表。派系行＝item_kind='派系'、source=''、
-            -- target=派系名（不把派系名伪装成关系对——身份由 item_kind 显式钉死）。
-            CREATE TABLE IF NOT EXISTS relation_brew_pending (
-                source TEXT NOT NULL,
-                target TEXT NOT NULL,
-                year INTEGER NOT NULL,
-                period INTEGER NOT NULL,
-                reason TEXT NOT NULL DEFAULT '',
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                item_kind TEXT NOT NULL DEFAULT '关系',
-                PRIMARY KEY (source, target)
-            );
-
-            -- #637 S6（ADR 0084）：派系态势摘要——边流之上的派系级定性聚合视图。
-            -- 三不碰：不写 factions 真源数值、不动满意度/影响力、不建认同度；
-            -- 零数值强度字段（P4/ADR 0083 一脉）。粒度＝per-派系一份（内含对他派
-            -- 与对帝的态势描述），派系对级细分不首发（ID-10）。水位语义与
-            -- relation_summaries.last_event_id 同构（F2 稳定性判据共用接缝）。
-            CREATE TABLE IF NOT EXISTS faction_stance_summaries (
-                faction TEXT PRIMARY KEY,
-                stance_segment TEXT NOT NULL DEFAULT '',
-                last_event_id INTEGER NOT NULL DEFAULT 0,
-                last_brewed_turn INTEGER NOT NULL DEFAULT 0,
-                last_brewed_year INTEGER NOT NULL DEFAULT 0,
-                last_brewed_period INTEGER NOT NULL DEFAULT 0,
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            );
-
-            -- #690 / ADR 0011-2：血债棘轮 substrate（log 真源 + sparse 缓存）
-            CREATE TABLE IF NOT EXISTS faction_axis_debt (
-                faction TEXT NOT NULL REFERENCES factions(name),
-                axis TEXT NOT NULL CHECK (axis IN (
-                    '礼法名节','既得利益','实务事功','皇权依附','华夷战和','民本恤民'
-                )),
-                blood_debt INTEGER NOT NULL DEFAULT 0 CHECK (blood_debt >= 0),
-                wariness INTEGER NOT NULL DEFAULT 0 CHECK (wariness >= 0),
-                PRIMARY KEY (faction, axis)
-            );
-
-            CREATE TABLE IF NOT EXISTS centrifuge_log (
-                id INTEGER PRIMARY KEY,
-                turn INTEGER NOT NULL,
-                faction TEXT NOT NULL REFERENCES factions(name),
-                axis TEXT CHECK (
-                    axis IS NULL OR axis IN (
-                        '礼法名节','既得利益','实务事功','皇权依附','华夷战和','民本恤民'
-                    )
-                ),
-                kind TEXT NOT NULL CHECK (kind IN ('direct','kinship','overdraw')),
-                base INTEGER,
-                legitimacy_pct INTEGER,
-                amount INTEGER NOT NULL CHECK (amount > 0),
-                source_name TEXT,
-                reason_code TEXT,
-                source TEXT,
-                idem_key TEXT NOT NULL UNIQUE,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                CHECK (
-                    (kind = 'overdraw' AND axis IS NULL AND base IS NULL
-                     AND legitimacy_pct IS NULL)
-                    OR (kind IN ('direct','kinship') AND axis IS NOT NULL
-                        AND base IS NOT NULL AND legitimacy_pct IS NOT NULL)
-                )
-            );
-            """.replace("__AUTHORITY_PRIVILEGES__", AUTHORITY_PRIVILEGE_SQL_IN).replace(
-                "__DOSSIER_SCHEMA__", DOSSIER_SCHEMA_SQL
-            )
-        )
+        # 引擎自有的建表（表/视图/索引）归 ming_sim.schema（#1889 按职责拆出）；
+        # 上面两个 store 各自的 DDL 由 store 自己带，这里不持第二份定义。
+        ensure_core_schema(self.conn)
         # 案卷 store 的 schema 刚随上面脚本建好；此处即构造，后续 init_schema 的
         # 任何回填/校验都走它（ADR 0151：GameDB 侧不留转发 facade）。
         self.dossiers = DossierStore(self.conn)
@@ -2020,10 +1019,8 @@ class GameDB:
         self.ensure_column(
             "secret_orders", "dossier_progress_json", "TEXT NOT NULL DEFAULT '[]'")
         self.conn.execute("DROP TABLE IF EXISTS dossier_progress_reports")
-        # #489：character_knowledge_events 在早期存档中已存在但没有黑名单列；
-        # ensure_column 必须覆盖「表已存在」的迁移路径，不能只依赖 CREATE TABLE。
-        self.ensure_column(
-            "character_knowledge_events", "excluded_names", "TEXT NOT NULL DEFAULT '[]'")
+        # character_knowledge_events.excluded_names 已含在 store 的建表脚本里
+        # （#1889），不再在此只为「表已存在」补列。
         self.ensure_column("issues", "participants", "TEXT NOT NULL DEFAULT '[]'")
         self.ensure_column("issues", "participant_roster", "TEXT NOT NULL DEFAULT '[]'")
         self.ensure_column("issues", "target_roster", "TEXT NOT NULL DEFAULT '[]'")
@@ -2038,14 +1035,9 @@ class GameDB:
         # #976 message-level origin provenance on assignee briefs (durable bloodline).
         self.ensure_column(
             "secret_order_briefs", "origin_chat_message_ids", "TEXT NOT NULL DEFAULT '[]'")
-        # Read-side projection is registry-driven.  Only issue rows are shared
-        # knowledge sources; #883 deliberately keeps secret orders out of it.
-        self.conn.execute(
-            "INSERT OR IGNORE INTO character_knowledge_sources "
-            "(turn,year,period,kind,title,body,source_id,participant_roster) "
-            "SELECT origin_turn, 0, 0, 'assignment', title, stage_text, "
-            "'issue:' || id, participant_roster FROM issues WHERE participant_roster <> '[]'"
-        )
+        # Read-side projection is registry-driven（写口见 character_knowledge store）：
+        # 只有 issue 行是共享知识来源，#883 有意把密令排除在外。
+        self.character_knowledge.register_issue_sources()
         # BUG 3：directive 暂存 commit 成 turn_directives draft 时回填该 draft 行 id，
         # 使 undo_chat_turn 能精确删本轮自产的那条 draft（旧实现按 (turn,actor) 删，
         # 会连带删掉同 actor 同回合的无关 draft）。0=未 commit / 非 directive。
@@ -3027,242 +2019,10 @@ class GameDB:
         return value // 10000
 
     def seed_static_data(self) -> None:
-        self._ensure_office_type_parents()
+        """Seed the opening world from content（#1889：实现归 ming_sim/opening_seed）。"""
+        from ming_sim.opening_seed import seed_opening_world
 
-        if not self.table_has_rows("office_slots"):
-            self.conn.executemany(
-                """
-                INSERT INTO office_slots
-                    (office_title, office_type, region_id, jurisdiction, sort_order)
-                VALUES (?, ?, ?, ?, ?)
-                """,
-                [(*slot, index) for index, slot in enumerate(OFFICE_SLOTS)],
-            )
-
-        if not self.table_has_rows("characters"):
-            for character in self.content.characters.values():
-                office = normalize_office(character.office)
-                # 静态名册接档：content 已写好 office_type，表查不中也不逐人现拉 codex
-                # （开局 LLM 风暴根因，~28 外藩/宗藩/平民官名 × 串行 codex ≈ 5 分钟）。
-                office_type = infer_office_type_from_office(
-                    office, character.office_type, self.llm_config, use_llm=False
-                )
-                self.conn.execute(
-                    """
-                    INSERT INTO characters
-                    (name, office, office_type, faction, aliases, personal_skills, loyalty, ability, integrity, courage, style, identity, seed_guilt,
-                     birth_year, historical_death_year, historical_death_month, debut_year, debut_month,
-                     status, status_reason, reason_code, status_changed_turn, portrait_id, power_id, location, transit_to, summary)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        character.name,
-                        office,
-                        office_type,
-                        character.faction,
-                        json.dumps(character.aliases, ensure_ascii=False),
-                        json.dumps(character.personal_skills, ensure_ascii=False),
-                        character.loyalty,
-                        character.ability,
-                        character.integrity,
-                        character.courage,
-                        character.style,
-                        character.identity,
-                        _seed_guilt_storage_value(character.seed_guilt),
-                        character.birth_year,
-                        character.historical_death_year,
-                        character.historical_death_month,
-                        character.debut_year,
-                        character.debut_month,
-                        character.status,
-                        character.status_reason,
-                        character.reason_code,
-                        0,
-                        character.portrait_id,
-                        character.power_id,
-                        character.location,
-                        character.transit_to,
-                        character.summary,
-                    ),
-                )
-        if not self.table_has_rows("character_offices"):
-            for row in self.conn.execute("SELECT name, office, office_type FROM characters").fetchall():
-                # 同 add_character/set_character_office 走 person-title 守卫接缝：名分不写脏行。
-                # Jurisdiction only from explicit content office_region — never location.
-                ch = (
-                    self.content.characters.get(row["name"])
-                    if getattr(self, "content", None) is not None else None
-                )
-                seat = str(getattr(ch, "office_region", "") or "").strip() if ch else ""
-                # #1889：无现任（罢居/罢免）者 characters.office 为空，备档取 content 的
-                # historical_office（历史实职）——历史与现任各归各字段，不再靠 init 时
-                # 清洗 office 串里的状态词来反推。备档标题统一走 canonical_office_title：
-                # 备档只存实职职衔，「原…革职候勘」这类状态尾属人事状态、不进官职体系。
-                archived = str(row["office"] or "") or (
-                    str(getattr(ch, "historical_office", "") or "") if ch else ""
-                )
-                if not archived:
-                    continue
-                self._record_character_office(
-                    row["name"], canonical_office_title(archived), row["office_type"],
-                    "开局 seed", region_id=seat,
-                )
-
-        is_fresh_factions_seed = not self.table_has_rows("factions")
-        if is_fresh_factions_seed:
-            for faction in self.content.factions.values():
-                self.conn.execute(
-                    """
-                    INSERT INTO factions (name, satisfaction, leverage, agenda)
-                    VALUES (?, ?, ?, ?)
-                    """,
-                    (faction.name, faction.satisfaction, faction.leverage, faction.agenda),
-                )
-        if not self.table_has_rows("classes"):
-            # ADR 0088/#648：classes 首次 seed = 新档 cutover 点，落持久人口单位标「人」。
-            # 旧档表已有行（万人口径）不重 seed、不落标 → population_unit 恒判「万人」legacy。
-            self._mark_population_unit_persons()
-            for cls in self.content.classes.values():
-                self.conn.execute(
-                    """
-                    INSERT INTO classes (name, region_id, population, satisfaction, leverage, agenda)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                    """,
-                    (cls.name, cls.region_id, cls.population, cls.satisfaction, cls.leverage, cls.agenda),
-                )
-        for power in self.content.powers.values():
-            self.conn.execute(
-                """
-                INSERT OR IGNORE INTO powers
-                (id, name, kind, leader, stance, leverage, satisfaction, military_strength,
-                 cohesion, supply, agenda, status, last_action, aliases)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    power.id,
-                    power.name,
-                    power.kind,
-                    power.leader,
-                    power.stance,
-                    power.leverage,
-                    power.satisfaction,
-                    power.military_strength,
-                    power.cohesion,
-                    power.supply,
-                    power.agenda,
-                    power.status,
-                    power.last_action,
-                    json.dumps(power.aliases, ensure_ascii=False)
-                    if isinstance(power.aliases, list)
-                    else power.aliases,
-                ),
-            )
-        for region in self.content.regions.values():
-            self.conn.execute(
-                """
-                INSERT OR IGNORE INTO regions
-                (id, name, kind, population, public_support, unrest, natural_disaster, human_disaster,
-                 registered_land, hidden_land, tax_per_turn, grain_security, gentry_resistance,
-                 military_pressure, status, controlled_by, fiscal)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    region.id,
-                    region.name,
-                    region.kind,
-                    region.population,
-                    region.public_support,
-                    region.unrest,
-                    region.natural_disaster,
-                    region.human_disaster,
-                    region.registered_land,
-                    region.hidden_land,
-                    region.tax_per_turn,
-                    region.grain_security,
-                    region.gentry_resistance,
-                    region.military_pressure,
-                    region.status,
-                    region.controlled_by,
-                    json.dumps(region.fiscal, ensure_ascii=False),
-                ),
-            )
-        is_fresh_armies_seed = not self.table_has_rows("armies")
-        if is_fresh_armies_seed:
-            for army in self.content.armies.values():
-                self.conn.execute(
-                    """
-                    INSERT INTO armies
-                    (id, name, station, station_region, theater, commander, controller, troop_type, manpower,
-                     supply, morale, training, equipment, arrears,
-                     province_pay_arrears, central_pay_arrears, pay_source_region,
-                     province_pay_share, central_pay_share, is_tusi, self_funded_pay,
-                     mobility, loyalty, firearm_equipment, cannon_equipment, salary_rate, status, owner_power)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        army.id,
-                        army.name,
-                        army.station,
-                        army.station_region,
-                        army.theater,
-                        army.commander,
-                        army.controller,
-                        army.troop_type,
-                        army.manpower,
-                        army.supply,
-                        army.morale,
-                        army.training,
-                        army.equipment,
-                        army.arrears,
-                        army.province_pay_arrears,
-                        army.central_pay_arrears,
-                        army.pay_source_region,
-                        army.province_pay_share,
-                        army.central_pay_share,
-                        army.is_tusi,
-                        army.self_funded_pay,
-                        army.mobility,
-                        army.loyalty,
-                        army.firearm_equipment,   # 新档贯通火器/随军大炮（CMR codexB）
-                        army.cannon_equipment,
-                        army.salary_rate,         # #44 名义月饷率(两/兵·月)
-                        army.status,
-                        army.owner_power,
-                    ),
-                )
-        if not self.table_has_rows("buildings"):
-            for building in self.content.buildings.values():
-                self.conn.execute(
-                    """
-                    INSERT INTO buildings
-                    (id, region_id, name, category, level, condition, maintenance, risk,
-                     output_metric, output_amount, status, origin, created_turn)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'preset', 0)
-                    """,
-                    (
-                        building.id,
-                        building.region_id,
-                        building.name,
-                        building.category,
-                        building.level,
-                        building.condition,
-                        building.maintenance,
-                        building.risk,
-                        building.output_metric,
-                        building.output_amount,
-                        building.status,
-                    ),
-                )
-        self._initialize_army_pay_source_spine(is_fresh_armies_seed)
-        # #173：维护费列退役 drop 已上移至 init_schema（每个打开路径都跑，含现存档的纯
-        # init_schema 路径，见 cmr drop R1）；此处新档 seed INSERT 后该列本就不存在，无需再 drop。
-        self._apply_region_city_levels()  # 新档 region 此时才 INSERT 完，按史实补 city_level
-        # #9：派系势力 offset 校准。此刻 factions + characters 均已 INSERT。
-        # cmr R3：传 offset 列「本次是否刚 ADD」——首次校准只在建库那次跑，常规 load 不碰 offset。
-        self._calibrate_faction_offsets(
-            is_fresh_factions_seed, getattr(self, "_leverage_offset_col_added", False)
-        )
-        self.conn.commit()
+        seed_opening_world(self)
 
     def list_office_vacancies(self) -> List[Dict[str, object]]:
         """Return the static督抚职位 view with current holders from characters."""
@@ -7779,13 +6539,8 @@ class GameDB:
                 "DELETE FROM chat_messages WHERE id = ?",
                 [(mid,) for mid in ids],
             )
-            self.conn.executemany(
-                "DELETE FROM character_knowledge_events WHERE source_id = ?",
-                [(f"chat_message:{mid}",) for mid in ids],
-            )
-            self.conn.executemany(
-                "DELETE FROM character_knowledge_sources WHERE source_id = ?",
-                [(f"chat_message:{mid}",) for mid in ids],
+            self.character_knowledge.delete_by_source_ids(
+                [f"chat_message:{mid}" for mid in ids], commit=False,
             )
 
     def load_all_chat_history(self) -> Dict[str, List[Dict[str, str]]]:
@@ -7893,9 +6648,8 @@ class GameDB:
     }
 
     def _delete_turn_scoped_knowledge_sources_in_tx(self, chat_turn_id: int) -> None:
-        self.conn.execute(
-            "DELETE FROM character_knowledge_sources WHERE source_id LIKE ?",
-            (f"%:chat_turn:{int(chat_turn_id)}",),
+        self.character_knowledge.delete_sources_matching(
+            f"%:chat_turn:{int(chat_turn_id)}", commit=False,
         )
 
     def _row_dict(self, row: sqlite3.Row) -> Dict[str, Any]:
@@ -8342,14 +7096,8 @@ class GameDB:
                     f"DELETE FROM chat_messages WHERE id IN ({placeholders})",
                     message_ids,
                 )
-                knowledge_source_ids = [f"chat_message:{message_id}" for message_id in message_ids]
-                self.conn.executemany(
-                    "DELETE FROM character_knowledge_events WHERE source_id = ?",
-                    [(source_id,) for source_id in knowledge_source_ids],
-                )
-                self.conn.executemany(
-                    "DELETE FROM character_knowledge_sources WHERE source_id = ?",
-                    [(source_id,) for source_id in knowledge_source_ids],
+                self.character_knowledge.delete_by_source_ids(
+                    [f"chat_message:{mid}" for mid in message_ids], commit=False,
                 )
             self.conn.execute(
                 "UPDATE chat_turns SET status = 'failed' WHERE id = ?",
@@ -8955,14 +7703,8 @@ class GameDB:
                     f"DELETE FROM chat_messages WHERE id IN ({placeholders})",
                     message_ids,
                 )
-                knowledge_source_ids = [f"chat_message:{message_id}" for message_id in message_ids]
-                self.conn.executemany(
-                    "DELETE FROM character_knowledge_events WHERE source_id = ?",
-                    [(source_id,) for source_id in knowledge_source_ids],
-                )
-                self.conn.executemany(
-                    "DELETE FROM character_knowledge_sources WHERE source_id = ?",
-                    [(source_id,) for source_id in knowledge_source_ids],
+                self.character_knowledge.delete_by_source_ids(
+                    [f"chat_message:{mid}" for mid in message_ids], commit=False,
                 )
             self.conn.execute(
                 """
@@ -9137,15 +7879,11 @@ class GameDB:
             items = self.knowledge_items_for_turn(state.turn)
         for item in items:
             source_id = str(item.get("source_id") or "")
-            existing = self.conn.execute(
-                "SELECT kind FROM character_knowledge_events "
-                "WHERE character_name='' AND source_id=?",
-                (source_id,),
-            ).fetchone()
+            existing_kind = self.character_knowledge.public_kind_for_source(source_id)
             # An explicit disclosure is the authoritative event for this
             # provenance.  Archive materialization may fill a missing ledger
             # row, but must never downgrade public back to roster-scoped.
-            if existing is not None and str(existing["kind"] or "") == "public":
+            if existing_kind == "public":
                 continue
             self.record_public_knowledge_event(
                 state,
@@ -9167,12 +7905,7 @@ class GameDB:
         the report is rendered, and the archive write must
         not lose that item's access boundary.
         """
-        rows = self.conn.execute(
-            "SELECT turn, year, period, title, body, source_id, excluded_names "
-            "FROM character_knowledge_events WHERE character_name='' AND turn=? "
-            "ORDER BY id",
-            (int(turn),),
-        ).fetchall()
+        rows = self.character_knowledge.public_events_for_turn(turn)
         by_source: Dict[str, Dict[str, object]] = {}
         for row in rows:
             try:
@@ -9187,12 +7920,7 @@ class GameDB:
             }
             by_source[str(row["source_id"] or "")] = item
 
-        source_rows = self.conn.execute(
-            "SELECT title, body, source_id, participant_roster, excluded_names, "
-            "excluded_targets FROM character_knowledge_sources WHERE turn=? "
-            "ORDER BY id",
-            (int(turn),),
-        ).fetchall()
+        source_rows = self.character_knowledge.sources_for_turn(turn)
         characters = self.conn.execute(
             "SELECT name, office, office_type FROM characters"
         ).fetchall()
@@ -18172,23 +16900,16 @@ class GameDB:
                 raise _roster_ref_error("委派人", delegator_id)
 
     def _character_knowledge_events(self, character_name: str, *, include_exclusions: bool = False) -> List[Dict[str, object]]:
-        rows = self.conn.execute(
-            "SELECT turn, year, period, kind, title, body, source_id, excluded_names "
-            "FROM character_knowledge_events WHERE character_name=? ORDER BY turn, id",
-            (str(character_name or ""),),
-        ).fetchall()
         result = []
-        for row in rows:
-            source_id = str(row["source_id"] or "")
+        for item in self.character_knowledge.events_for(
+            character_name, include_exclusions=include_exclusions,
+        ):
+            source_id = str(item["source_id"] or "")
             if (not character_name and (
                 (source_id.startswith("turn_report:") and not source_id.endswith(":public"))
                 or re.fullmatch(r"settlement:narrative:\d+", source_id)
             )):
                 continue
-            item = {"turn": int(row["turn"]), "year": int(row["year"]), "period": int(row["period"]),
-                    "kind": row["kind"], "title": row["title"], "body": row["body"], "source_id": row["source_id"]}
-            if include_exclusions:
-                item["excluded_names"] = row["excluded_names"] or "[]"
             result.append(item)
         known_sources = {str(item["source_id"]) for item in result}
         # #883 contract: this is the sole private read seam for secret orders.
@@ -18212,10 +16933,7 @@ class GameDB:
                     )} if include_exclusions else {}),
                 })
                 known_sources.add(source_id)
-        for row in self.conn.execute(
-            "SELECT turn, year, period, kind, title, body, source_id, participant_roster, excluded_names "
-            "FROM character_knowledge_sources ORDER BY turn, id"
-        ).fetchall():
+        for row in self.character_knowledge.all_sources():
             names = participant_roster_names(row["participant_roster"])
             if str(row["source_id"]) in known_sources or str(character_name) not in names:
                 continue
@@ -18295,15 +17013,8 @@ class GameDB:
     def knowledge_exclusions_for_source(self, source_id: str) -> List[str]:
         """Return the durable secrecy boundary attached to a source record."""
         source = str(source_id or "")
-        row = self.conn.execute(
-            "SELECT excluded_names FROM character_knowledge_events WHERE source_id=? "
-            "ORDER BY id LIMIT 1", (source,)
-        ).fetchone()
-        if row is not None:
-            try:
-                return [str(name) for name in json.loads(row["excluded_names"] or "[]")]
-            except (TypeError, ValueError):
-                return []
+        if self.character_knowledge.has_event_for_source(source):
+            return self.character_knowledge.exclusions_for_source(source)
         # #883 CR R1 S2: bare ``secret_order:`` shared *sources* are no longer
         # produced (create/update → private briefs; production disclosure →
         # ``secret_order_disclosure:``; register gate rejects the prefix).
@@ -18313,9 +17024,8 @@ class GameDB:
         # test_minister_context / test_web_chat_serialization_393). Without
         # this branch those writes lose the blacklist. session.py only DELETEs
         # legacy sources with this prefix; no live production producer.
-        match = re.fullmatch(r"secret_order(?:_brief)?:(\d+)", source)
-        if match:
-            order_id = int(match.group(1))
+        order_id = self.character_knowledge.secret_order_id_in(source)
+        if order_id is not None:
             order = self.conn.execute(
                 "SELECT excluded_names FROM secret_orders WHERE id=?", (order_id,)
             ).fetchone()
@@ -18325,11 +17035,11 @@ class GameDB:
                 except (TypeError, ValueError):
                     return []
         # #1829 reopen：公开说法排除名单与正文同表，按 public_saying:<id> 回查。
-        match = re.fullmatch(r"public_saying:(\d+)", source)
-        if match:
+        saying_id = self.character_knowledge.public_saying_id_in(source)
+        if saying_id is not None:
             saying = self.conn.execute(
                 "SELECT excluded_names FROM public_sayings WHERE id=?",
-                (int(match.group(1)),),
+                (saying_id,),
             ).fetchone()
             if saying is not None:
                 try:
@@ -18337,25 +17047,17 @@ class GameDB:
                 except (TypeError, ValueError):
                     return []
             return []
-        row = self.conn.execute(
-            "SELECT excluded_names FROM character_knowledge_sources WHERE source_id=?", (source,)
-        ).fetchone()
-        if row is not None:
-            try:
-                return [str(name) for name in json.loads(row["excluded_names"] or "[]")]
-            except (TypeError, ValueError):
-                return []
-        return []
+        return self.character_knowledge.exclusions_for_source(source)
 
     def knowledge_exclusion_targets_for_source(self, source_id: str) -> Dict[str, List[str]]:
         source = str(source_id or "")
         # Private briefs and retained bare secret-order sources share the
         # canonical exclusions persisted on secret_orders.
-        match = re.fullmatch(r"secret_order(?:_brief)?:(\d+)", source)
-        if match:
+        order_id = self.character_knowledge.secret_order_id_in(source)
+        if order_id is not None:
             row = self.conn.execute(
                 "SELECT excluded_targets FROM secret_orders WHERE id=?",
-                (int(match.group(1)),),
+                (order_id,),
             ).fetchone()
             try:
                 payload = json.loads((row["excluded_targets"] if row else "{}") or "{}")
@@ -18364,11 +17066,11 @@ class GameDB:
             return {"people": [str(x) for x in payload.get("people", [])],
                     "offices": [str(x) for x in payload.get("offices", [])]}
         # #1829 reopen：公开说法排除目标与正文同表。
-        match = re.fullmatch(r"public_saying:(\d+)", source)
-        if match:
+        saying_id = self.character_knowledge.public_saying_id_in(source)
+        if saying_id is not None:
             row = self.conn.execute(
                 "SELECT excluded_targets FROM public_sayings WHERE id=?",
-                (int(match.group(1)),),
+                (saying_id,),
             ).fetchone()
             try:
                 payload = json.loads((row["excluded_targets"] if row else "{}") or "{}")
@@ -18376,17 +17078,8 @@ class GameDB:
                 payload = {}
             return {"people": [str(x) for x in payload.get("people", [])],
                     "offices": [str(x) for x in payload.get("offices", [])]}
-        row = self.conn.execute(
-            "SELECT excluded_targets FROM character_knowledge_sources WHERE source_id=?", (source,)
-        ).fetchone()
-        if row is None:
-            return {"people": [], "offices": []}
-        try:
-            payload = json.loads(row["excluded_targets"] or "{}")
-        except (TypeError, ValueError):
-            payload = {}
-        return {"people": [str(x) for x in payload.get("people", [])],
-                "offices": [str(x) for x in payload.get("offices", [])]}
+        payload = self.character_knowledge.exclusion_targets_for_source(source)
+        return {"people": payload.get("people", []), "offices": payload.get("offices", [])}
 
     def record_participation_record(
         self, state: GameState, record: Mapping[str, object], *, kind: str,
@@ -18456,18 +17149,7 @@ class GameDB:
         self, source_ids: Iterable[str], *, commit: bool = True,
     ) -> None:
         """Delete shared ledger rows by source_id (events + sources)."""
-        ids = list(dict.fromkeys(str(sid) for sid in source_ids if str(sid or "").strip()))
-        if not ids:
-            return
-        for sid in ids:
-            self.conn.execute(
-                "DELETE FROM character_knowledge_events WHERE source_id = ?", (sid,),
-            )
-            self.conn.execute(
-                "DELETE FROM character_knowledge_sources WHERE source_id = ?", (sid,),
-            )
-        if commit:
-            self.conn.commit()
+        self.character_knowledge.delete_by_source_ids(source_ids, commit=commit)
 
     def _coerce_positive_message_ids(
         self, message_ids: Optional[Iterable[Any]] = None,
@@ -18742,21 +17424,12 @@ class GameDB:
             dict(item) for item in participant_roster
             if item.get("character_id") or item.get("name")
         ]
-        if not source_id:
-            source_id = f"{kind}:{state.turn}:{title}"
-        self.conn.execute(
-            "INSERT OR REPLACE INTO character_knowledge_sources "
-            "(turn,year,period,kind,title,body,source_id,participant_roster,excluded_names,excluded_targets) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?)",
-            (state.turn, state.year, state.period, sanitize_sqlite_text(kind),
-             sanitize_sqlite_text(title), sanitize_sqlite_text(body),
-             sanitize_sqlite_text(source_id),
-             safe_json_dumps(roster, ensure_ascii=False),
-             safe_json_dumps(list(dict.fromkeys(str(x).strip() for x in (excluded_names or []) if str(x).strip())), ensure_ascii=False),
-             safe_json_dumps({k: list(dict.fromkeys(str(x).strip() for x in values if str(x).strip())) for k, values in (excluded_targets or {}).items()}, ensure_ascii=False)),
+        self.character_knowledge.register_source(
+            turn=state.turn, year=state.year, period=state.period, kind=kind,
+            title=title, body=body, source_id=source_id,
+            participant_roster=roster, excluded_names=excluded_names,
+            excluded_targets=excluded_targets, commit=commit,
         )
-        if commit:
-            self.conn.commit()
 
     def _has_restricted_source_gate(self, has_shared_exclusions: bool) -> bool:
         """Whether public-archive writers must use source-scoped aggregation only.
@@ -18823,18 +17496,11 @@ class GameDB:
         # #883: secret_order shape never becomes a participation event.
         if kind_text == "secret_order" or is_secret_order_origin(source_text):
             return
-        source_id = source_id or f"{kind}:{state.turn}:{title}"
-        excluded_json = json.dumps(
-            list(dict.fromkeys(str(p).strip() for p in (excluded_names or []) if str(p).strip())),
-            ensure_ascii=False,
+        self.character_knowledge.record_participation(
+            turn=state.turn, year=state.year, period=state.period,
+            participants=participants, kind=kind, title=title, body=body,
+            source_id=source_id, excluded_names=excluded_names, commit=commit,
         )
-        for name in dict.fromkeys(str(p).strip() for p in participants if str(p).strip()):
-            self.conn.execute(
-                "INSERT OR REPLACE INTO character_knowledge_events (turn,year,period,character_name,kind,title,body,source_id,excluded_names) VALUES (?,?,?,?,?,?,?,?,?)",
-                (state.turn, state.year, state.period, name, kind, title, body, source_id, excluded_json),
-            )
-        if commit:
-            self.conn.commit()
 
     def record_public_knowledge_event(
         self,
@@ -18852,12 +17518,11 @@ class GameDB:
         merged_exclusions = list(dict.fromkeys(
             [*inherited, *(str(name).strip() for name in (excluded_names or []) if str(name).strip())]
         ))
-        self.conn.execute(
-            "INSERT OR REPLACE INTO character_knowledge_events (turn,year,period,character_name,kind,title,body,source_id,excluded_names) VALUES (?,?,?,?,?,?,?,?,?)",
-            (state.turn, state.year, state.period, "", sanitize_sqlite_text(kind), title, body, source_id, json.dumps(merged_exclusions, ensure_ascii=False)),
+        self.character_knowledge.record_public_event(
+            turn=state.turn, year=state.year, period=state.period, title=title,
+            body=body, source_id=source_id, excluded_names=merged_exclusions,
+            kind=kind, commit=commit,
         )
-        if commit:
-            self.conn.commit()
 
     def get_character_knowledge(self, state: GameState, character_name: str) -> Dict[str, object]:
         from ming_sim.knowledge import build_character_knowledge

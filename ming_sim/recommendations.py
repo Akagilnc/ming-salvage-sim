@@ -39,36 +39,23 @@ def _known_names(db: Any, recommender: str) -> set[str]:
 
 def _visible_sources(db: Any, recommender: str) -> Iterable[tuple[Any, Any]]:
     """Yield sources the recommender may read, with their participation event."""
-    conn = db.conn
-    rows = conn.execute(
-        "SELECT source_id, excluded_names FROM character_knowledge_events WHERE character_name=?",
-        (recommender,),
-    ).fetchall()
-    for row in rows:
-        source = conn.execute(
-            "SELECT source_id, participant_roster, excluded_names, excluded_targets "
-            "FROM character_knowledge_sources WHERE source_id=?",
-            (row["source_id"],),
-        ).fetchone()
-        yield source, row
+    store = db.character_knowledge
+    for row in store.event_sources_for(recommender):
+        source = store.source_by_id(row["source_id"])
+        if source is not None:
+            yield source, row
 
     # A durable source is sufficient evidence of direct participation.  The
     # audience event mirror may not have been materialized yet (for example,
     # immediately after a source is written), and recommendations must not
     # lose an otherwise reachable candidate in that interval.
-    for source in conn.execute(
-        "SELECT source_id, participant_roster, excluded_names, excluded_targets "
-        "FROM character_knowledge_sources"
-    ).fetchall():
-        if recommender in participant_roster_names(source["participant_roster"]):
+    for source in store.all_sources():
+        if recommender in store.roster_names(source["participant_roster"]):
             yield source, None
 
     # Public sources are visible without a direct participation row.  Their
     # structured roster is the public-event side of the #459 read projection.
-    for source in conn.execute(
-        "SELECT source_id, participant_roster, excluded_names, excluded_targets "
-        "FROM character_knowledge_sources WHERE kind='public'"
-    ).fetchall():
+    for source in store.sources_of_kind("public"):
         yield source, None
 
 

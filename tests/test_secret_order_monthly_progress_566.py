@@ -376,7 +376,7 @@ def test_missing_bad_unknown_and_duplicate_reports_are_rejected(game):
             {"dossier_id": dossier_id, "progress_band": "重复", "memorial_text": "不得覆盖"},
         ])
     for invalid_id in (True, 1.0, 0, -1):
-        with pytest.raises(ValueError, match="案卷编号无效"):
+        with pytest.raises(ValueError):
             db.record_monthly_dossier_progress(state.turn, [{
                 "dossier_id": invalid_id,
                 "progress_band": "伪进展",

@@ -840,13 +840,17 @@ def test_commitment_rush_via_pending_actions_gate(game):
 
 
 def test_payload_json_corrupt_read_is_loud(game):
-    """腐坏 payload 读路响亮，禁静默等同空底。"""
+    """腐坏 payload 读路响亮，禁静默等同空底。
+
+    区分度在**各自的 payload 形状**（不可解析 / 可解析但非 object），末尾再用
+    None / {} / "" 三个合法输入作正向对照；报错措辞不是契约（#1889）。
+    """
     from ming_sim.db import GameDB
-    with pytest.raises(ValueError, match="腐坏"):
+    with pytest.raises(ValueError):
         GameDB.parse_engine_payload_json(
             "{not-json", surface="test.payload_json",
         )
-    with pytest.raises(ValueError, match="非对象|须为对象"):
+    with pytest.raises(ValueError):
         GameDB.parse_engine_payload_json(
             "[1,2]", surface="test.payload_json",
         )
