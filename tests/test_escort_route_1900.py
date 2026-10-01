@@ -4,8 +4,9 @@ Seams:
 - 转译声明 ``commissions[].grant.escort`` → ADR 0053 ``participant_roster``＋押解投影
   （押解随拨银旨；代码只 normalize 与校验，不猜机械档）
 - 转译声明 ``commissions[].secret_order`` → 密令暂存／成案核；``escort_pending_targets``
-  把同夜暗护指向本夜暂存的拨银交办，该拨银成案时由 ``_resolve_covert_escort_links``
-  承接挂 0054 关联（不提前拨银成案、不双向互写、不放宽新指旧）
+  把同夜暗护指向本夜暂存的拨银交办；该拨银收夜成案后由 ``_resolve_covert_escort_carry``
+  承接，记在拨银案卷载荷 ``escort_sources``（真实入口里密令先成案、id 更小，关联槽的
+  新指旧装不下这个方向；故由后成案者指先成案者，仍单向、不提前成案、不放宽通用校验）
 - 转译声明 ``escort_links`` → ``GameDB.add_dossier_links``（关联真源，单向新指旧）
 - 转译声明 ``escort_results`` → ``GameDB.record_dossier_escort_result``（逐路实况）
 - ``_grant_escort_presence`` / ``list_monthly_grant_reconciliation_targets``
@@ -17,7 +18,8 @@ Seams:
 
 验收对照票面「怎么验」：
 - 关联真实落库（现役声明能立链）
-- 同夜暗护指向同夜暂存拨银，收夜成案后承接上链
+- 同夜暗护指向同夜暂存拨银（真实顺序：密令应允即先成案、拨银收夜才成案），
+  收夜成案后承接落定
 - 一令护多路而结果不同 → 各读各路
 - 成功护送后结案仍按该路实际有护对账；正常结案仍核本次账
 - 关联存在但该路未实际获护 → 不作有护
@@ -798,20 +800,25 @@ def test_same_night_covert_escort_carries_onto_grant_dossier(game):
     db.mark_pending_night_approved(
         [staged_id, secret_action_id], night_id=night_id, source_chat_turn_id=chat_id,
     )
-    db.commit_pending_actions(state, action_ids=[staged_id, secret_action_id])
+    # 真实顺序（ADR 0038 白名单①＋收夜提交）：密令应允即落地，拨银拟旨只标
+    # night_approved、收夜才成案 → **密令案卷必然先落、id 必然更小**。
+    db.commit_pending_actions(state, action_ids=[secret_action_id])
     order = db.list_secret_orders()[0]
     escort_dossier = int(db.get_dossier_for_secret_order(int(order["id"]))["id"])
+    assert db.get_decree_dossier(escort_dossier) is not None
+    assert db.get_decree_dossier(escort_dossier)["status"] == "promulgated"
 
     grant_dossier = _dossier_for_pending(db, state, staged_id)
     assert db.get_decree_dossier(grant_dossier)["action_type"] == "grant_allocation"
+    assert escort_dossier < grant_dossier, "真实顺序下暗护密令案卷必然更旧"
 
-    links = db.list_dossier_links(escort_dossier)
-    assert [(link["target_dossier_id"], link["relation_type"]) for link in links] == [
-        (grant_dossier, "护卫"),
+    # 承接：谁护谁落定，且是单向新指旧（新成案的拨银案卷指先落地的密令案卷）。
+    assert db.escort_source_dossiers_of(grant_dossier) == [
+        {"secret_order_dossier_id": escort_dossier, "relation_type": "护卫",
+         "note": "暗中加派护送该笔赈银"},
     ]
-    # 原文零删改（CLAUDE.md P6 / ADR 0142）：声明什么就是什么
-    assert links[0]["note"] == "暗中加派护送该笔赈银"
-    # 不双向互写：被护那端不反写一条
+    # 不双向互写：暗护那端不反写一条关联
+    assert db.list_dossier_links(escort_dossier) == []
     assert db.list_dossier_links(grant_dossier) == []
 
     # 承接后逐路实况与对账照常读这条链
@@ -826,7 +833,7 @@ def test_same_night_covert_escort_carries_onto_grant_dossier(game):
 
 
 def test_covert_escort_rejects_non_grant_pending_target(game):
-    """指向的不是本夜拨帑暂存（幻影 id／非拨帑交办）→ 不挂链，逐项不留假关联。"""
+    """指向的不是本夜拨帑暂存（幻影 id／非拨帑交办）→ 不承接，不留假关联。"""
     db, state, _content = game
     actor = _actor(db)
     night_id, chat_id = _night_turn(db, state, actor, "另下一道不是拨银的交办，另密令暗护。")

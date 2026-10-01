@@ -398,9 +398,16 @@ owner 2026-09-30 裁定：平常「拨银三十万去宁远，着某某押解护
 
 另行暗中加派护送走既有密令声明接缝。被护的拨银交办**同夜**下达时还只是暂存、没有案卷，
 故此项按本夜暂存清单里的 action id 指过去：每项 `{pending_action_id, relation_type∈{护卫,稽核},
-note}`。密令成案时把指向持久化在密令案卷载荷，该拨银成案有 id 后由
-`GameDB._resolve_covert_escort_links` 挂 0054 关联（两侧各解析一次，谁先成案都成立）。
-非拨帑暂存、非法关系类型、空说明逐项拒收不挂链。已记录的旧拨银仍走 `escort_links`。
+note}`。密令成案时把指向持久化到密令案卷载荷；该拨银收夜成案后由
+`GameDB._resolve_covert_escort_carry` 承接。非拨帑暂存、非法关系类型、空说明逐项拒收不承接。
+
+承接落点是**拨银案卷**载荷的 `escort_sources`（每项 `{secret_order_dossier_id, relation_type, note}`），
+不是 0054 关联槽：真实入口里密令应允即先成案（ADR 0038 白名单①）、拨银收夜才成案，
+暗护密令案卷 id 必然更小，关联槽的「新案卷指向旧案卷」装不下这个方向；票面同时禁
+「提前拨银成案」与「双向互写」，故由后成案的拨银案卷记这条单向回指
+（新案卷指旧案卷），通用新指旧校验不受影响。读缝 `GameDB.escort_source_dossiers_of`。
+护行主体凭据由 `_escort_source_relation` 按「关联槽那条链 ∪ 承接落点那条记录」合取。
+已记录的旧拨银仍走 `escort_links` 关联槽，不进 `escort_sources`。
 
 ### `dossier_progress_reports` — 长差密令逐月密奏（#566 / ADR 0058）
 personnel_secret 模块产出；settle 内经 `record_monthly_dossier_progress` 消费。

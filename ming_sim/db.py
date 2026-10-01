@@ -12197,20 +12197,38 @@ class GameDB:
         source = self.get_decree_dossier(sid)
         if source is None:
             raise ValueError(f"护送案卷不存在：{sid}")
+        if not self.is_secret_order_dossier(sid):
+            raise ValueError("护行主体只认密令案卷")
+        relation = self._escort_source_relation(did, sid)
+        if relation is None:
+            raise ValueError("护送实况须先有护卫／稽核案卷关联")
+        return self._insert_escort_outcome(
+            turn, did, sid, relation, escorted, note, commit,
+        )
+
+    def _escort_source_relation(self, grant_dossier_id: int, source_dossier_id: int) -> Optional[str]:
+        """「这道拨帑由那道密令护着」的关系类型；无凭据返回 None。
+
+        两种合法凭据（同一事实的两种物理时序）：
+        - **旧拨银**：0054 关联槽，密令案卷指向已存在的拨银案卷。
+        - **同夜拨银**：暗护密令应允即先成案，0054 的新指旧装不下，改由后成案的
+          拨银案卷在载荷 ``escort_sources`` 里记这条单向回指。
+
+        关系类型一律取自既有真源（关联槽那条链／承接落点那条记录），不接受调用方另报。
+        """
         link = self.conn.execute(
             "SELECT relation_type FROM decree_dossier_links "
             "WHERE source_dossier_id=? AND target_dossier_id=? "
             "AND relation_type IN ('护卫','稽核') LIMIT 1",
-            (sid, did),
+            (int(source_dossier_id), int(grant_dossier_id)),
         ).fetchone()
-        if link is None:
-            raise ValueError("护送实况须先有护卫／稽核案卷关联")
-        relation = str(link["relation_type"])
-        if relation not in _GRANT_ESCORT_RELATIONS:
-            raise ValueError(f"案卷关联类型不是护送口径：{relation}")
-        return self._insert_escort_outcome(
-            turn, did, sid, relation, escorted, note, commit,
-        )
+        if link is not None:
+            return str(link["relation_type"])
+        for entry in self.escort_source_dossiers_of(int(grant_dossier_id)):
+            if int(entry.get("secret_order_dossier_id") or 0) == int(source_dossier_id):
+                relation = str(entry.get("relation_type") or "")
+                return relation if relation in _GRANT_ESCORT_RELATIONS else None
+        return None
 
     def _insert_escort_outcome(
         self, turn: int, did: int, sid: int, relation: str,
@@ -12301,11 +12319,9 @@ class GameDB:
     ) -> None:
         """密令成案：记下它暗护的**同夜暂存拨银交办**，等那道拨银成案时承接。
 
-        #1900：暗护密令与拨银同夜一道交办下达时，拨银此刻只有暂存、没有案卷，
-        0054 的关联无从挂。此处只把指向（暂存 action id）持久化到密令案卷载荷，
-        真挂链由 :meth:`_resolve_covert_escort_links` 立刻尝试一次，并在该拨银成案时
-        再试一次（两种下达/应允顺序都成立）——那时拨银案卷 id 更小，天然满足
-        单向新指旧，不提前拨银成案、不双向互写。
+        #1900：暗护密令与拨银同夜一道交办下达时，拨银此刻只有暂存、没有案卷。
+        此处只把指向（暂存 action id）持久化到密令案卷载荷（撤回快照内，ADR 0038），
+        真承接由 :meth:`_resolve_covert_escort_carry` 在该拨银成案时做。
         """
         raw = payload.get("escort_pending_targets")
         if not isinstance(raw, list) or not raw:
@@ -12336,97 +12352,104 @@ class GameDB:
             })
         if not resolved:
             return
-        row = self.conn.execute(
-            "SELECT payload_json FROM decree_dossiers WHERE id=?",
-            (int(dossier["id"]),),
-        ).fetchone()
-        try:
-            dossier_payload = json.loads(str(row["payload_json"] or "{}")) if row else {}
-        except (TypeError, ValueError):
-            dossier_payload = {}
-        if not isinstance(dossier_payload, dict):
-            dossier_payload = {}
-        dossier_payload["escort_pending_targets"] = resolved
-        self.conn.execute(
-            "UPDATE decree_dossiers SET payload_json=?, updated_at=CURRENT_TIMESTAMP "
-            "WHERE id=?",
-            (json.dumps(dossier_payload, ensure_ascii=False), int(dossier["id"])),
-        )
-        # 拨银可能先于密令成案（已应允的先提交），此刻即可挂链。
-        for item in resolved:
-            self._resolve_covert_escort_links(int(item["pending_action_id"]), commit=False)
-        self._commit_dossier_write(commit)
+        self._write_dossier_payload_key(int(dossier["id"]), "escort_pending_targets", resolved)
+        self._resolve_covert_escort_carry(commit=commit)
 
-    def _resolve_covert_escort_links(
-        self, staged_action_id: int, *, commit: bool = False,
-    ) -> None:
-        """某道拨银暂存一旦成案有 id，把指向它的同夜暗护密令挂上 0054 关联。
+    def _resolve_covert_escort_carry(self, *, commit: bool = False) -> None:
+        """同夜暗护承接：拨银成案有 id 后，把它记成「本趟由哪道密令暗护」。
 
-        由两侧各调一次（密令成案时、拨银成案时），故对「谁先成案」两种顺序
-        都成立，且天然满足单向新指旧——拨银案卷此时必然比先落的密令案卷旧，
-        不提前拨银成案、不双向互写。拒收沿 ``add_dossier_links`` 既有纪律
-        （它负责新指旧校验与拒收留痕）。
+        方向说明（ADR 0054 单向新指旧）：真实入口里**密令先成案**——应允即落地是
+        夜内直写白名单①，而拨银拟旨只标已应允、收夜才成案，所以暗护密令案卷的 id
+        必然更小。既然「谁护谁」要由后成案者指先成案者，这一条就记在**拨银案卷**
+        载荷的 ``escort_sources`` 上：新案卷指旧案卷，单向、不双向互写，也不碰
+        0054 关联槽的通用新指旧校验（旧拨银那一路仍照旧走关联槽）。
         """
-        if not self._is_staged_grant_commission(int(staged_action_id)):
-            return
-        targets = self.conn.execute(
-            "SELECT id FROM decree_dossiers WHERE action_type='grant_allocation' "
-            "AND pending_action_id=? ORDER BY id",
-            (int(staged_action_id),),
-        ).fetchall()
-        if not targets:
-            return
         rows = self.conn.execute(
-            "SELECT id, payload_json FROM decree_dossiers "
+            "SELECT id FROM decree_dossiers "
             "WHERE action_type='secret_order' AND secret_order_id IS NOT NULL ORDER BY id",
         ).fetchall()
         for row in rows:
-            try:
-                payload = json.loads(str(row["payload_json"] or "{}"))
-            except (TypeError, ValueError):
+            escort_dossier_id = int(row["id"])
+            staged_targets = self._dossier_payload_dict(
+                escort_dossier_id,
+            ).get("escort_pending_targets")
+            if not isinstance(staged_targets, list) or not staged_targets:
                 continue
-            if not isinstance(payload, dict):
-                continue
-            staged_targets = payload.get("escort_pending_targets")
-            if not isinstance(staged_targets, list):
-                continue
-            matched = [
-                item for item in staged_targets
-                if isinstance(item, Mapping)
-                and int(item.get("pending_action_id") or 0) == int(staged_action_id)
-            ]
-            if not matched:
-                continue
-            linked = False
-            for target in targets:
-                links = [
-                    {
-                        "target_dossier_id": int(target["id"]),
+            remaining: List[Dict[str, object]] = []
+            carried = False
+            for item in staged_targets:
+                if not isinstance(item, Mapping):
+                    continue
+                try:
+                    staged_id = strict_int(
+                        item.get("pending_action_id"), accept_numeric_strings=False,
+                    )
+                except (AttributeError, TypeError, ValueError):
+                    continue
+                targets = self.conn.execute(
+                    "SELECT id FROM decree_dossiers WHERE action_type='grant_allocation' "
+                    "AND pending_action_id=? ORDER BY id",
+                    (staged_id,),
+                ).fetchall()
+                if not targets:
+                    remaining.append(dict(item))   # 拨银还没成案：指向留着，下次再承接
+                    continue
+                for target in targets:
+                    grant_dossier_id = int(target["id"])
+                    payload = self._dossier_payload_dict(grant_dossier_id)
+                    sources = payload.get("escort_sources")
+                    sources = list(sources) if isinstance(sources, list) else []
+                    entry = {
+                        "secret_order_dossier_id": escort_dossier_id,
                         "relation_type": str(item.get("relation_type") or ""),
                         "note": str(item.get("note") or ""),
                     }
-                    for item in matched
-                ]
-                try:
-                    self.add_dossier_links(int(row["id"]), links, commit=False)
-                    linked = True
-                except ValueError:
-                    # 拒收已由 add_dossier_links 留痕（decree_dossier_link_rejections）。
-                    continue
-            if not linked:
-                continue
-            payload["escort_pending_targets"] = [
-                item for item in staged_targets
-                if not (
-                    isinstance(item, Mapping)
-                    and int(item.get("pending_action_id") or 0) == int(staged_action_id)
+                    if entry not in sources:
+                        sources.append(entry)
+                        self._write_dossier_payload_key(
+                            grant_dossier_id, "escort_sources", sources,
+                        )
+                carried = True
+            if carried:
+                self._write_dossier_payload_key(
+                    escort_dossier_id, "escort_pending_targets", remaining,
                 )
-            ]
-            self.conn.execute(
-                "UPDATE decree_dossiers SET payload_json=?, updated_at=CURRENT_TIMESTAMP "
-                "WHERE id=?",
-                (json.dumps(payload, ensure_ascii=False), int(row["id"])),
-            )
+        self._commit_dossier_write(commit)
+
+    def escort_source_dossiers_of(self, dossier_id: int) -> List[Dict[str, object]]:
+        """该道拨帑案卷记着的暗护护行（同夜承接落点；空＝没有密令暗护）。
+
+        与 0054 关联槽并存的第二种「谁护谁」载体，只用于**同夜**暗护：那种情形下
+        暗护密令必然先成案，0054 的新指旧方向装不下，由后成案的拨银案卷记这条
+        单向回指。已记录的旧拨银仍走关联槽，不进这里。
+        """
+        payload = self._dossier_payload_dict(int(dossier_id))
+        sources = payload.get("escort_sources")
+        if not isinstance(sources, list):
+            return []
+        return [dict(item) for item in sources if isinstance(item, Mapping)]
+
+    def _dossier_payload_dict(self, dossier_id: int) -> Dict[str, object]:
+        row = self.conn.execute(
+            "SELECT payload_json FROM decree_dossiers WHERE id=?", (int(dossier_id),),
+        ).fetchone()
+        try:
+            payload = json.loads(str(row["payload_json"] or "{}")) if row else {}
+        except (TypeError, ValueError):
+            return {}
+        return payload if isinstance(payload, dict) else {}
+
+    def _write_dossier_payload_key(
+        self, dossier_id: int, key: str, value: object, *,
+        commit: bool = False,
+    ) -> None:
+        payload = self._dossier_payload_dict(int(dossier_id))
+        payload[key] = value
+        self.conn.execute(
+            "UPDATE decree_dossiers SET payload_json=?, updated_at=CURRENT_TIMESTAMP "
+            "WHERE id=?",
+            (json.dumps(payload, ensure_ascii=False), int(dossier_id)),
+        )
         self._commit_dossier_write(commit)
 
     def _grant_escort_presence(
@@ -18462,8 +18485,8 @@ class GameDB:
                 if order_id is not None:
                     # #1900 同夜暗护：密令声明时同夜拨银交办还只是暂存（无案卷）。
                     # 把指向存进密令案卷载荷，收夜该拨银成案时由
-                    # ``_carry_covert_escort_links`` 承接挂链——不提前拨银成案、
-                    # 不双向互写（ADR 0054 单向新指旧）。
+                    # ``_resolve_covert_escort_carry`` 承接——不提前拨银成案、
+                    # 不双向互写，方向记在拨银案卷（新案卷指旧案卷）。
                     self._carry_pending_covert_escort_targets(
                         int(order_id), payload, commit=False,
                     )
@@ -19420,10 +19443,9 @@ class GameDB:
             due_turn=int(structured.get("due_turn") or 0),
             commit=commit,
         )
-        # #1900 收夜成案承接：同夜暗护密令指向这道拨银的暂存交办，此刻案卷
-        # 已有 id，0054 单向新指旧才成立。
-        if action_type == "grant_allocation" and pending_action_id > 0:
-            self._resolve_covert_escort_links(pending_action_id, commit=commit)
+        # #1900 收夜成案承接：同夜暗护密令指向这道拨银的暂存交办，此刻它成案有 id。
+        if action_type == "grant_allocation":
+            self._resolve_covert_escort_carry(commit=commit)
         return dossier_ids
 
     def list_directives(

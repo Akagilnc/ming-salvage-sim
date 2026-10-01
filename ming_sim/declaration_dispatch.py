@@ -1627,7 +1627,7 @@ def _secret_order_staged_payload(
     if isinstance(links, list):
         payload["dossier_links"] = links
     # #1900 同夜暗护：被护的拨银交办此刻还只是本夜暂存，声明按暂存清单里的
-    # action id 指过去；成案核记进密令案卷载荷，该拨银收夜成案时承接挂链。
+    # action id 指过去；成案核记进密令案卷载荷，该拨银收夜成案时承接落定。
     staged = secret.get("escort_pending_targets")
     if isinstance(staged, list):
         payload["escort_pending_targets"] = list(staged)
