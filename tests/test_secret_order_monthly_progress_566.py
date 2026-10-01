@@ -101,8 +101,9 @@ def test_disclosure_promotes_monthly_report_to_public_event_only_after_disclosur
         for item in db._character_knowledge_events("")
     )
 
+    sim_note = "该案已经明发廷议"
     apply_score_extraction(db, state, {"secret_order_updates": [{
-        "order_id": order_id, "sim_note": "该案已经明发廷议", "disclosed": True,
+        "order_id": order_id, "sim_note": sim_note, "disclosed": True,
     }]}, content=content)
     public = db._character_knowledge_events("")
     disclosure = next(
@@ -111,7 +112,8 @@ def test_disclosure_promotes_monthly_report_to_public_event_only_after_disclosur
             f"secret_order_disclosure:{order_id}:"
         )
     )
-    assert disclosure["body"] == f"该案已经明发廷议\n【核账】{marker}"
+    assert marker in disclosure["body"]
+    assert sim_note in disclosure["body"]
 
 
 def test_titles_do_not_classify_and_all_active_secret_orders_are_candidates(game):

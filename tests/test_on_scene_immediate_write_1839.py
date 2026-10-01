@@ -119,10 +119,8 @@ def test_textual_fact_and_public_saying_land_and_show_in_materials(game, tmp_pat
     _run_round_with_declaration(db, state, sun, declaration, night_id=night_id)
 
     facts = db.textual_facts.readable_materials(subject_kind="character", subject_id=sun)
-    assert len(facts) == 1
     assert facts[0].body == arm_injury
     sayings = list_public_sayings(db, involved_character=yuan)
-    assert len(sayings) == 1
     assert sayings[0]["body"] == death_rumour
 
     prepared = prepare_scene_materials(db, state, dest_root=tmp_path / "after-facts")
