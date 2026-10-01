@@ -1013,7 +1013,7 @@ class GameSession:
     @staticmethod
     def _ensure_close_night_confirm_cue(answer: str) -> str:
         """含糊收夜：大臣戏内确认（不出戏），不直接收夜。"""
-        text = (answer or "").strip()
+        text = answer or ""
         ask = "陛下是要退朝么？"
         if ask in text:
             return text or ask
@@ -1865,7 +1865,7 @@ class GameSession:
             ctx = self.db.get_resolve_context(self.state.turn)
             if ctx is not None:
                 recovered_source = _provenance_from_stored(ctx.get("source"))
-                stored = str(ctx.get("decree_text") or "").strip()
+                stored = str(ctx.get("decree_text") or "")
                 if stored:
                     self.last_decree = stored
                     decree = stored
@@ -2184,8 +2184,8 @@ class GameSession:
             obj = _parse_rescript_json_strict(str(raw or ""))
             if not isinstance(obj, dict):
                 raise ValueError("deliberate LLM 意愿须为 object")
-            title = str(obj.get("title") or "").strip()
-            body = str(obj.get("body") or "").strip()
+            title = str(obj.get("title") or "")
+            body = str(obj.get("body") or "")
             stance = str(obj.get("stance") or "").strip()
             if not (title and body and stance):
                 raise ValueError("deliberate LLM 意愿缺 title/body/stance")
@@ -2309,16 +2309,10 @@ class GameSession:
             if ctx0 is not None:
                 self.last_decree = str(ctx0.get("decree_text") or "")
 
-        before_turn = int(self.state.turn)
         report = resolve_decisions_phase2(
             self.state, self.db, self.agno_db, self.llm_config,
             content=self.content,
             cheat_directive=cheat_directive,
-        )
-        self.state.turn_phase = (
-            TurnPhase.ISSUED.value
-            if int(self.state.turn) != before_turn or self.state.ended
-            else TurnPhase.SETTLING.value
         )
         self.db.save_state(self.state)
         return report
@@ -2459,16 +2453,10 @@ class GameSession:
             ctx0 = self.db.get_resolve_context(self.state.turn)
             if ctx0 is not None:
                 self.last_decree = str(ctx0.get("decree_text") or "")
-        before_turn = int(self.state.turn)
         report = resolve_decisions_phase2(
             self.state, self.db, self.agno_db, self.llm_config,
             content=self.content,
             cheat_directive=cheat_directive,
-        )
-        self.state.turn_phase = (
-            TurnPhase.ISSUED.value
-            if int(self.state.turn) != before_turn or self.state.ended
-            else TurnPhase.SETTLING.value
         )
         self.db.save_state(self.state)
         return report

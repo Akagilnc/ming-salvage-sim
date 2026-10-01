@@ -680,7 +680,7 @@ def _rescript_decisions(
             "event_id": f"dossier:{dossier_id}",
             "title": "批红待裁",
             "context": str(dossier.get("decree_text") or ""),
-            "rejection_reason": str(verdict.get("reason") or "").strip(),
+            "rejection_reason": str(verdict.get("reason") or ""),
             "opposition": opposition,
             # hint（非 note）：前端 isPendingDecision / DecisionOption 认 hint；
             # dossier_id/dossier_decision 是批红能力字段，点选必须原样回传（#1490）。
@@ -789,7 +789,7 @@ def write_decree_with_agno(
         raise llm_unavailable_from_error(error, "拟诏") from error
     if not text.strip():
         raise LLMContractError("拟诏输出为空。")
-    return text.strip()
+    return text
 
 
 def _requires_full_settlement(state: GameState, db: GameDB) -> bool:
@@ -1310,7 +1310,6 @@ def resolve_decisions_phase2(
     ctx = db.get_resolve_context(state.turn)
     if ctx is None:
         raise LLMContractError("无待决推演上下文，无法续跑结算（phase1 未暂停或已结算）。")
-    before_turn = state.turn
     from ming_sim.month_chain import run_player_month_chain
     result = run_player_month_chain(
         state, db, agno_db, llm_config,
@@ -1318,5 +1317,10 @@ def resolve_decisions_phase2(
         content=content,
         source=_provenance_from_stored(ctx.get("source")),
         cheat_directive=cheat_directive,
+    )
+    state.turn_phase = (
+        TurnPhase.AWAITING_DECISION.value if result.awaiting
+        else TurnPhase.ISSUED.value if result.advanced or state.ended
+        else TurnPhase.SETTLING.value
     )
     return result.report

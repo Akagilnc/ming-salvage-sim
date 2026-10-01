@@ -100,7 +100,7 @@ def _world_segment_message(db: Any, state: Any, cheat_directive: str) -> str:
     petitions = list_fiscal_levy_petitions_due(state, db)
     message = "推演本月世界段。"
     if str(cheat_directive or "").strip():
-        message = str(cheat_directive).strip() + "\n" + message
+        message = str(cheat_directive) + "\n" + message
     if not petitions:
         return message
     return json.dumps({
@@ -537,7 +537,6 @@ def continue_world_after_answers(
         operation=lambda: _continue_world_after_answers(
             session, chain, answers=answers, source=source,
         ),
-        home_foreign_abort=True,
     )
 
 
@@ -571,13 +570,19 @@ def _continue_world_after_answers(
             chain["declaration_outcome"] = candidate
             outcome = candidate
         _collect_disclosures_from_result(chain, result)
-        chain["world_questions"] = []
-        chain["world_continued"] = True
+        chain["world_questions"] = questions
+        chain["world_continued"] = not questions
+        if questions:
+            chain["world_text"] = str(chain.get("world_text") or "") + "\n" + text
+            chain.pop("world_continuation_ready", None)
+            chain.pop("world_continuation_text", None)
         _save_chain(db, turn, chain, source=source)
 
-    # 续推若再吐 DECISION / LEVY 机标，只落问前缀文，勿把机标喂进转译。
-    # 原批语只在这一次世界答后转译里解释；前缀为空不能把原批语挡在入口外。
-    prefix, _extra = _split_at_question(text)
+    # 新问沿原批红入口持久化；仅问前缀交转译，不把新问当已答。
+    prefix, questions = _split_at_question(text)
+    questions = _number_followup_questions(
+        db, turn, questions, f"{_WORLD_QUESTION_PREFIX}{turn}:",
+    )
     verdicts = _answered_levy_verdicts(db, turn)
     if prefix.strip() or verdicts:
         result = dispatch_month_segment(
@@ -603,7 +608,7 @@ def continue_decree_after_answers(
     同一 decree_ref 问前声明可能已 settled，续推声明直接分派，不另造平行暂存身份。
     幂等：questions 已清则视为已续，同回合重入零新增效果。
     消费事实（清问）与落账同事务——先跑续推 LLM，失败保留 questions 可重试；
-    有声明则 clear_questions 走既有段分派的 alongside（ADR 0157）。
+    问题及续推原文随声明走既有段分派的 alongside（ADR 0157）。
     失败登记与世界段续推同一条诊断，步骤名 decree_continue，不丢已提交段文。
     尚未落在 decree_continue 上的 SettlementAbort 收进这一步，不退回内层阶段。
     """
@@ -615,7 +620,6 @@ def continue_decree_after_answers(
         operation=lambda: _continue_decree_after_answers(
             session, decree_ref=decree_ref, answers=answers, chain=chain, source=source,
         ),
-        home_foreign_abort=True,
     )
 
 
@@ -651,11 +655,10 @@ def _continue_decree_after_answers(
         if dossier is None:
             return
     text = str(saved.get(decree_ref) or "")
-    prefix, _extra = _split_at_question(text)
-    if not prefix.strip():
-        # LLM 已成功且无问后文：空后果终态，方可清问。
-        db.staged_declarations.clear_questions(decree_ref)
-        return
+    prefix, questions = _split_at_question(text)
+    questions = _number_followup_questions(
+        db, turn, questions, f"{_DECREE_QUESTION_PREFIX}{decree_ref}:",
+    )
     payload = dossier.get("payload") if isinstance(dossier.get("payload"), dict) else {}
 
     def consume(result: Any) -> None:
@@ -663,10 +666,15 @@ def _continue_decree_after_answers(
         if candidate is not None and chain is not None:
             chain["declaration_outcome"] = candidate
         _collect_disclosures_from_result(chain, result)
-        if chain is not None:
-            _save_chain(db, int(state.turn), chain, source=source)
-        db.staged_declarations.clear_questions(decree_ref)
+        if questions:
+            saved.pop(decree_ref, None)
+        db.staged_declarations.replace_questions(decree_ref, questions, forecast_text=text)
+        _save_chain(db, int(state.turn), chain, source=source)
 
+    if not prefix.strip():
+        with atomic(db):
+            consume(None)
+        return
     dispatch_month_segment(
         db, state, segment=prefix,
         decree_payload=payload if isinstance(payload, dict) else {},
@@ -731,7 +739,9 @@ def run_player_month_chain(
     chain = _load_chain(db, turn)
 
     def abort_from(exc: BaseException) -> None:
-        if isinstance(exc, (KeyboardInterrupt, SystemExit, SettlementAbort)):
+        if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+            raise exc
+        if isinstance(exc, SettlementAbort) and _load_chain(db, turn).get("call_failure"):
             raise exc
         _abort_month_call(
             db, state, chain, decree_text=decree_text, source=source,
@@ -742,7 +752,7 @@ def run_player_month_chain(
 
     try:
         if str(cheat_directive or "").strip() and not chain.get("cheat_directive"):
-            chain["cheat_directive"] = str(cheat_directive).strip()
+            chain["cheat_directive"] = str(cheat_directive)
             _save_chain(db, turn, chain, decree_text=decree_text, source=source)
         _consume_call_failure_for_retry(db, chain, turn, decree_text, source)
     except Exception as exc:
@@ -993,13 +1003,11 @@ def _guard_month_call(
     operation: Any,
     decree_ref: str = "",
     code_step: Optional[str] = None,
-    home_foreign_abort: bool = False,
 ) -> Any:
     """模型用尽 → 停住可重试；其它代码异常 → 错误包后停住；中断类原样上浮。
 
-    ``home_foreign_abort`` 只给续推用：尚未落在 ``step`` 上的 SettlementAbort
-    收成这一步的 call_failure，已是这一步的原样上浮。缺省保持既有阶段，
-    不把世界段、预推的 SettlementAbort 改写成别的步骤。
+    只有已经登记 call_failure 的 SettlementAbort 原样上浮；未登记的中止
+    仍属本次调用失败，必须接同一诊断与恢复通道。
     """
     from ming_sim.exceptions import LLMUnavailable, SettlementAbort
 
@@ -1013,7 +1021,7 @@ def _guard_month_call(
     except (KeyboardInterrupt, SystemExit):
         raise
     except SettlementAbort as exc:
-        if not home_foreign_abort or str(getattr(exc, "stage", "") or "") == step:
+        if _load_chain(db, int(state.turn)).get("call_failure"):
             raise
         _abort_month_call(
             db, state, chain, decree_text=decree_text, source=source,
@@ -1223,9 +1231,8 @@ def _run_world_segment(
         # 快照；恢复时读链上已存身份与奏疏，不按实时资格重解（ADR 0115）。
         from ming_sim.issues import list_fiscal_levy_petitions_due
 
-        chain["levy_petitions"] = list_fiscal_levy_petitions_due(state, db)
-
         def _push() -> str:
+            chain["levy_petitions"] = list_fiscal_levy_petitions_due(state, db)
             return run_world_segment_text(
                 db, state, session.llm_config, session.agno_db,
                 cheat_directive=str(chain.get("cheat_directive") or ""),
@@ -1832,7 +1839,7 @@ def _materialize_rescript_desk(
             if not isinstance(question, dict):
                 continue
             _remember(_question_as_decision(
-                question, event_id=f"{_DECREE_QUESTION_PREFIX}{ref}:{idx}",
+                question, event_id=f"{_DECREE_QUESTION_PREFIX}{ref}:{question.get('idx', idx)}",
             ))
     for idx, question in enumerate(open_items["world_questions"]):
         # #1891：请旨身份在交接时已钉进问题本身（ADR 0115），此处只消前缀还原
@@ -1844,7 +1851,7 @@ def _materialize_rescript_desk(
             ))
             continue
         _remember(_question_as_decision(
-            question, event_id=f"{_WORLD_QUESTION_PREFIX}{turn}:{idx}",
+            question, event_id=f"{_WORLD_QUESTION_PREFIX}{turn}:{question.get('idx', idx)}",
         ))
     if decisions:
         db.save_pending_decisions(turn, decisions)
@@ -1863,18 +1870,35 @@ def _materialize_rescript_desk(
     return desk
 
 
+def _number_followup_questions(
+    db: Any, turn: int, questions: List[dict], prefix: str,
+) -> List[dict]:
+    """续问沿现有案头序号接排，不复用已答身份，也不信模型回显身份。"""
+    indices = [
+        int(str(row.get("event_id"))[len(prefix):])
+        for row in db.list_pending_decisions(turn)
+        if str(row.get("event_id") or "").startswith(prefix)
+        and str(row.get("event_id"))[len(prefix):].isdigit()
+    ]
+    start = max(indices, default=-1) + 1
+    return [
+        dict(q, idx=start + idx, event_id=f"{prefix}{start + idx}")
+        for idx, q in enumerate(questions)
+    ]
+
+
 def _question_as_decision(question: Dict[str, object], *, event_id: str) -> Dict[str, object]:
     options = question.get("options") if isinstance(question.get("options"), list) else []
     cleaned = []
     for opt in options:
         if not isinstance(opt, dict):
             continue
-        label = str(opt.get("label") or "").strip()
-        if not label:
+        label = str(opt.get("label") or "")
+        if not label.strip():
             continue
         cleaned.append({
             "label": label,
-            "hint": str(opt.get("hint") or "").strip(),
+            "hint": str(opt.get("hint") or ""),
             **{
                 key: opt[key] for key in opt
                 if key not in {"label", "hint"} and opt[key] is not None
@@ -1882,8 +1906,8 @@ def _question_as_decision(question: Dict[str, object], *, event_id: str) -> Dict
         })
     return {
         "event_id": event_id,
-        "title": str(question.get("title") or "").strip() or "请旨",
-        "context": str(question.get("context") or "").strip(),
+        "title": str(question.get("title") or "") or "请旨",
+        "context": str(question.get("context") or ""),
         "options": cleaned,
     }
 
@@ -1910,10 +1934,10 @@ def _consume_rescript_answers(
         if event_id.startswith(_LEVY_PETITION_PREFIX):
             event_id = event_id[len(_LEVY_PETITION_PREFIX):]
         return {
-            "label": str(choice.get("label") or "").strip(),
-            "hint": str(choice.get("hint") or "").strip(),
-            "note": str(choice.get("note") or "").strip(),
-            "context": str(row.get("context") or "").strip(),
+            "label": str(choice.get("label") or ""),
+            "hint": str(choice.get("hint") or ""),
+            "note": str(choice.get("note") or ""),
+            "context": str(row.get("context") or ""),
             "event_id": event_id,
             "title": str(row.get("title") or ""),
         }
@@ -1927,14 +1951,16 @@ def _consume_rescript_answers(
 
     # #1891：请饷／议停请旨与世界段请旨同源（都由世界段 run 发出），答复后走同一次
     # 问后续推——不单开一条续推路径，也不因它是事件身份就漏掉续推。
-    world_rows = [
-        r for r in rows
-        if str(r.get("event_id") or "").startswith(
-            (_WORLD_QUESTION_PREFIX, _LEVY_PETITION_PREFIX)
-        )
-    ]
+    world_ids = {
+        str(q["event_id"])
+        if str(q.get("event_id") or "").startswith(_LEVY_PETITION_PREFIX)
+        else f"{_WORLD_QUESTION_PREFIX}{turn}:{q.get('idx', idx)}"
+        for idx, q in enumerate(chain.get("world_questions") or [])
+    }
+    world_rows = [r for r in rows if r.get("event_id") in world_ids]
     if (
         world_rows
+        and len(world_rows) == len(world_ids)
         and all(str(r.get("status") or "") == "decided" for r in world_rows)
         and chain.get("world_questions")
     ):
@@ -1953,6 +1979,13 @@ def _consume_rescript_answers(
         ref = body.rsplit(":", 1)[0] if ":" in body else body
         decree_rows_by_ref.setdefault(ref, []).append(row)
     for ref, ref_rows in decree_rows_by_ref.items():
+        question_ids = {
+            f"{_DECREE_QUESTION_PREFIX}{ref}:{q.get('idx', idx)}"
+            for idx, q in enumerate(db.staged_declarations.questions_for(ref))
+        }
+        ref_rows = [r for r in ref_rows if r.get("event_id") in question_ids]
+        if not question_ids or len(ref_rows) != len(question_ids):
+            continue
         if not all(str(r.get("status") or "") == "decided" for r in ref_rows):
             continue
         continue_decree_after_answers(

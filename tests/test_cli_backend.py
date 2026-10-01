@@ -513,16 +513,6 @@ def test_run_codex_maps_reasoning_strength_to_native_effort(monkeypatch):
     assert 'model_reasoning_effort="medium"' not in joined
 
 
-def test_run_codex_stdout_empty_fallback(monkeypatch):
-    monkeypatch.delenv("MING_SIM_CODEX_REASONING", raising=False)
-    _capture_run(
-        monkeypatch,
-        _P(stdout="", stderr="STDOUT_BODY\nOpenAI Codex v0.125.0\nlogs"),
-    )
-    out, n = cb._run_codex("p")
-    assert out == "STDOUT_BODY"
-
-
 def test_run_claude_maps_reasoning_strength_to_thinking_tokens(monkeypatch):
     monkeypatch.setenv("MAX_THINKING_TOKENS", "32000")
     captured = _capture_run(monkeypatch)

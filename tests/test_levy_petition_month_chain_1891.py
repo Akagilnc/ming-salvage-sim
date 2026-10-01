@@ -78,15 +78,15 @@ def _install_model_boundary(
 ):
     """只桩最外层模型调用；生产供料、物料、案头、转译与 applier 全部真跑。
 
-    转译 runner 按真实 prompt 里的答复事实作答：御批原话与闭集都在 prompt 里，
-    这里模拟模型读懂后按闭集声明结局（生产代码只认闭集值）。
+    转译 runner 返回给定结构化声明，只证明声明至实账的行为；不证明模型
+    已读取批语或闭集，真实模型供料不以此桩作证。
 
     ``world_log`` 是跨多次安装累积的世界段调用记录——重试是否真的重跑了世界段，
     靠它证明，而不是靠「重试没报错」。
     """
     seen: dict = {
         "world_messages": world_log if world_log is not None else [],
-        "continue_prompts": [], "translate_prompts": [], "verdict_rosters": [],
+        "continue_prompts": [], "translate_prompts": [],
         "segments": [], "gazette": 0,
     }
 
@@ -106,14 +106,6 @@ def _install_model_boundary(
     monkeypatch.setattr("ming_sim.mechanical_tail._run_tail_body", lambda *a, **k: "done")
 
     import ming_sim.month_translate as month_translate
-
-    build_prompt = month_translate.build_month_segment_translate_prompt
-
-    def _build_prompt(request):
-        seen["verdict_rosters"].append(list(request.answered_verdicts))
-        return build_prompt(request)
-
-    monkeypatch.setattr(month_translate, "build_month_segment_translate_prompt", _build_prompt)
 
     def _translate(prompt, llm_config=None, *, tag="", policy=None):
         seen["translate_prompts"].append(prompt)
@@ -161,19 +153,6 @@ def _ledger(db, event_id="liao_levy_rise_1631"):
 def _ledger_field(db, field, event_id="liao_levy_rise_1631", default=""):
     row = _ledger(db, event_id)
     return default if row is None else str(row[field] or "")
-
-
-def _rescript(decision_key: str, label: str, note: str | None = None) -> dict:
-    """批红页已落的原批语形状：键、动作、朱批、缺省 hint；留中另带 note。"""
-    choice = {
-        "decision_key": decision_key,
-        "action": "decision",
-        "label": label,
-        "hint": "",
-    }
-    if note is not None:
-        choice["note"] = note
-    return choice
 
 
 def test_emperor_approves_levy_petition_through_real_month_chain(game, monkeypatch):
@@ -226,17 +205,6 @@ def test_emperor_approves_levy_petition_through_real_month_chain(game, monkeypat
     )
     # 答复确实经既有世界段续推（不是代码当场判的语义）。
     assert seen["continue_prompts"], "答复后续推应经既有世界段续推"
-    # J2：转译入口必须把「哪些事件有御批可译」及其闭集真的交给模型——这是模型
-    # 得知该声明什么的唯一通道。断开该供料，真实模型无从声明结局（断线必红）。
-    # 原批语只送所属答后转译一次，问前与随后段均无该授权名单。
-    assert seen["translate_prompts"], "答复后的转译应经既有转译入口"
-    rosters = [roster for roster in seen["verdict_rosters"] if roster]
-    assert rosters == [[{
-        "event_id": "liao_levy_rise_1631",
-        "terminal_reason_labels": ["已准", "已驳"],
-        "rescript": _rescript(row["decision_key"], "准行加派"),
-    }]]
-
     ledger = _ledger(db)
     assert ledger["terminal_state"] == "triggered"
     assert ledger["terminal_reason"] == "已准"
@@ -307,12 +275,6 @@ def test_emperor_rejects_levy_petition_keeps_nine_li(game, monkeypatch):
         write_gate=session._write_gate,
     )
 
-    # J2：驳同样经转译入口拿到事件身份与闭集（与准同一通道，不另设一条）。
-    assert [{
-        "event_id": "liao_levy_rise_1631",
-        "terminal_reason_labels": ["已准", "已驳"],
-        "rescript": _rescript(row["decision_key"], "不准，仍照九厘"),
-    }] in seen["verdict_rosters"]
     assert _ledger_field(db, "terminal_reason") == "已驳"
 
     _install_model_boundary(monkeypatch, world_text="本月无大事。")
@@ -342,13 +304,6 @@ def test_held_levy_petition_advances_month_without_terminal_state(game, monkeypa
         write_gate=session._write_gate,
     )
 
-    # J2 负向闸案：闭集照常交给模型（御批已答），但模型不声明结局 → 账上零终局。
-    # 这证明「无终局」出于模型不声明，而非代码拿不到闭集就无从判。
-    assert [{
-        "event_id": "liao_levy_rise_1631",
-        "terminal_reason_labels": ["已准", "已驳"],
-        "rescript": _rescript(row["decision_key"], "", note="留中，俟户部再议"),
-    }] in seen["verdict_rosters"]
     assert _ledger_field(db, "terminal_state") == ""
     assert _ledger_field(db, "terminal_reason") == ""
     held_choice = json.loads(_ledger_field(db, "choice_json"))

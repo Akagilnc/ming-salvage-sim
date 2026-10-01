@@ -65,7 +65,7 @@ export function useEdictActions({
 
   const saveDirective = async (directive: Directive) => {
     if (!editingDirectiveText.trim()) return;
-    const text = editingDirectiveText.trim();
+    const text = editingDirectiveText;
     const ownership = ownershipRef.current;
     const localKey = `save-${directive.id}-${++localSeq.current}`;
     beginCardRequest({

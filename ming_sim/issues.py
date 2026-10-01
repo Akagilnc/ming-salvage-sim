@@ -1773,19 +1773,11 @@ def list_fiscal_levy_petitions_due(
     代码不代它再顶一次旧疏。名单顺序就是交接键：世界段按这个顺序写请旨块，
     不回显事件 id（ADR 0115）。
     """
-    c = _ctx()
-    terminal_states = _event_terminal_states(db)
     awaiting = _fiscal_levy_petitions_awaiting_verdict(db)
     answered = _fiscal_levy_answered_petitions(db)
     due: List[Dict[str, object]] = []
-    for ev in c.events:
-        if getattr(ev, "category", "") != FISCAL_LEVY_EVENT_CATEGORY:
-            continue
-        if ev.id in terminal_states or ev.id in awaiting:
-            continue
-        if _event_window_expired(ev, state) or not _event_window_open(ev, state):
-            continue
-        if not _gate_passed(ev.trigger_gate, state.metrics, db):
+    for ev in gather_fiscal_levy_petitions(state, db):
+        if ev.id in awaiting:
             continue
         _fiscal_levy_require_labels(ev, state)
         held = ev.id in answered
@@ -2509,8 +2501,8 @@ def gather_impeachment_surge_candidates(state: GameState, db: GameDB) -> List[Di
                 "responsible_person_ids": responsible_ids,
                 "responsible_faction_ids": responsible_factions,
                 "dossier_id": did,
-                "decree_text": str(row["decree_text"] or "").strip(),
-                "execution_note": str(row["execution_note"] or "").strip(),
+                "decree_text": str(row["decree_text"] or ""),
+                "execution_note": str(row["execution_note"] or ""),
                 "execution_outcome": str(row["execution_outcome"] or "").strip(),
                 "beyond_intent": True,
                 "reported_bands": list(fork_state.get("reported_bands") or []),
@@ -2890,7 +2882,7 @@ def event_to_issue(db: GameDB, state: GameState, ev: Event, *, commit: bool = Tr
         bar_good_meaning=ev.bar_good_meaning or "已平",
         bar_bad_meaning=ev.bar_bad_meaning or "失控",
         inertia=inertia,
-        stage_text=ev.stage_text or ev.summary[:80],
+        stage_text=ev.stage_text or ev.summary,
         severity=int(ev.severity),
         region_hint=ev.region_hint,
         faction_hint=",".join(ev.interests[:2]),
@@ -3219,7 +3211,7 @@ def _pending_person_changes_block_event_gate(
             if transition.startswith("reject:"):
                 continue
             overlay(name, "status", status)
-            overlay(name, "status_reason", reason_text[:200])
+            overlay(name, "status_reason", reason_text)
             overlay(name, "reason_code", reason_code if reason_code else "")
             overlay(name, "office", "")
             overlay(name, "transit_to", "")
@@ -3539,7 +3531,7 @@ def _spawn_legacy_from_effect(
         state,
         name=name,
         modifiers=modifiers,
-        narrative_hint=str(legacy.get("narrative_hint") or "")[:200],
+        narrative_hint=str(legacy.get("narrative_hint") or ""),
         duration_months=duration,
         source_issue_id=issue_id,
         commit=commit,
@@ -4990,8 +4982,8 @@ def apply_issue_tracker_output(
                 "item": adv,
             })
             continue
-        stage_text = str(adv.get("stage_text") or "")[:120]
-        narrative = str(adv.get("narrative") or "")[:400]
+        stage_text = str(adv.get("stage_text") or "")
+        narrative = str(adv.get("narrative") or "")
         # 先验 issue 存在且 active（与 db.advance_issue 的 None 条件 row is None / status!=active 一致）：
         # 未找到/已非 active → missing_ref 逐项拒收留痕（陈旧/幻觉引用，同 close_issues None 归类，#63），
         # 不裸 continue 静默丢。**必须先验、再应用 metric**：原序先 _apply_metric_dict（就地 mutate
@@ -5611,14 +5603,14 @@ def apply_issue_tracker_output(
         # issue+affair 成对写由 GameDB 拥有（ADR 0150-D3）；本段不自包事务生命周期。
         _issue_fields = dict(
             kind=kind,
-            title=title[:60] or "无名事项",
+            title=title or "无名事项",
             origin_kind="decree",
             origin_ref=origin_ref,
             bar_value=bar_value,
             bar_good_meaning=str(ni.get("bar_good_meaning") or "已成"),
             bar_bad_meaning=str(ni.get("bar_bad_meaning") or "废止"),
             inertia=inertia,
-            stage_text=str(ni.get("stage_text") or "")[:120],
+            stage_text=str(ni.get("stage_text") or ""),
             severity=severity,
             region_hint=str(ni.get("region_hint") or ""),
             faction_hint=str(ni.get("faction_hint") or ""),
@@ -7532,7 +7524,7 @@ def _apply_surcharge_decrees(
         if claim in claimed_origins:
             _reject("invalid_enum", "surcharge_decrees 同批同一旨意与省份只能成功一次")
             continue
-        reason = str(item.get("reason") or "").strip()
+        reason = str(item.get("reason") or "")
         if len(reason) > 120:
             _reject("invalid_enum", f"surcharge_decrees reason 超 120 字：{reason!r}")
             continue
@@ -8472,8 +8464,8 @@ def _apply_score_extraction_body(
                 raise ValueError(
                     "执行结果必须为 fulfilled/degraded/failed/transformed"
                 )
-            note = str(item.get("note") or "").strip()
-            if not note:
+            note = str(item.get("note") or "")
+            if not note.strip():
                 raise ValueError("执行说明不能为空")
             # #565：显式 affected_parties 仅校验门闩（契约§5），不驱动机械写路。
             raw_parties = (
@@ -9502,7 +9494,7 @@ def _apply_score_extraction_body(
                 )
         new_key = db.create_fiscal_item(
             key, account, direction, display, init_value,
-            note=str(create.get("reason") or "")[:120],
+            note=str(create.get("reason") or ""),
             origin_ref=origin_ref,
             turn=state.turn,
             beyond_intent=create.get("beyond_intent"),

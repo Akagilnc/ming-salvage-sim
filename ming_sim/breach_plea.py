@@ -92,7 +92,7 @@ def encode_plea_meta(meta: Dict[str, object]) -> str:
 
 
 def decode_plea_meta(origin_context: object) -> Dict[str, object]:
-    text = str(origin_context or "").strip()
+    text = str(origin_context or "")
     if not text.startswith(_META_PREFIX):
         return {}
     raw = text[len(_META_PREFIX):]
@@ -378,16 +378,16 @@ def write_breach_plea_todo(
         return _merge_plea_kind_into_todo(
             db, existing,
             breach_kind=kind,
-            reason=str(reason or label)[:400],
+            reason=str(reason or label),
             target_dossier_id=int(target_dossier_id or 0),
             extra=extra,
         )
 
     meta: Dict[str, object] = {
         "breach_kind": kind,
-        "reason": str(reason or label)[:400],
+        "reason": str(reason or label),
         "target_dossier_id": int(target_dossier_id or 0),
-        "commitment_title": title[:120],
+        "commitment_title": title,
         "absorbed_breach_kinds": [],
     }
     if extra:
@@ -412,7 +412,7 @@ def write_breach_plea_todo(
             return _merge_plea_kind_into_todo(
                 db, existing,
                 breach_kind=kind,
-                reason=str(reason or label)[:400],
+                reason=str(reason or label),
                 target_dossier_id=int(target_dossier_id or 0),
                 extra=extra,
             )
@@ -733,7 +733,7 @@ def finalize_persist(
     #   实写同人去重（tail.guofu_from_0056；origin 前缀 dossier:{id}:breach）。
     #   跨承诺/跨案卷同人边各落各账，UNIQUE 键含 origin 本就允许。
     kinds = plea_kind_set(meta)
-    reason = str(meta.get("reason") or todo.get("criterion_text") or "坚持撤诺")[:400]
+    reason = str(meta.get("reason") or todo.get("criterion_text") or "坚持撤诺")
     commitment_ref = int(todo["commitment_ref"])
     row = _issue_row(db, commitment_ref)
     origin_ref = str(row["origin_ref"] if row is not None else "")

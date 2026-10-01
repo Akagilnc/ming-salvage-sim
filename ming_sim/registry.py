@@ -49,8 +49,8 @@ def create_scene_agent(
     )
     if hasattr(chat_model, "materials_dir"):
         chat_model.materials_dir = str(prepared.root)
-    scene_prompt = str(getattr(content, "scene_agent_prompt", "") or "").strip()
-    if not scene_prompt:
+    scene_prompt = str(getattr(content, "scene_agent_prompt", "") or "")
+    if not scene_prompt.strip():
         # 无 bundled prompt 时的最低特征化底（真源仍是 content/prompts/scene_agent.md）。
         scene_prompt = (
             "你演一场御前召对整场戏。以整段自由戏文回应；可含多人答话、插话与递话人低语。"

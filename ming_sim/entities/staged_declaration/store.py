@@ -216,22 +216,25 @@ class StagedDeclarationStore:
             (ref,),
         ).fetchall()
         parts = [
-            str(row["forecast_text"]).strip()
+            str(row["forecast_text"])
             for row in rows
             if str(row["forecast_text"] or "").strip()
         ]
         return "\n".join(parts)
 
-    def clear_questions(self, decree_ref: str) -> int:
-        """批红答复已持久化后清请旨；问前声明与结算标记不动。"""
+    def replace_questions(self, decree_ref: str, questions: list, *, forecast_text: str) -> int:
+        """已答问替换为续问；段文原串累积，声明与结算标记不动。"""
         ref = str(decree_ref or "").strip()
         if not ref:
             return 0
         owns = connection_owns_transaction(self._conn)
         cur = self._conn.execute(
-            "UPDATE staged_declarations SET questions_json=NULL "
-            "WHERE decree_ref=? AND status!='discarded' AND questions_json IS NOT NULL",
-            (ref,),
+            "UPDATE staged_declarations SET questions_json=CASE WHEN id=("
+            "SELECT MAX(id) FROM staged_declarations WHERE decree_ref=? AND status!='discarded'"
+            ") THEN ? ELSE NULL END, forecast_text=COALESCE(forecast_text, '') || ? "
+            "WHERE decree_ref=? AND status!='discarded'",
+            (ref, json.dumps(questions, ensure_ascii=False) if questions else None,
+             "\n" + forecast_text, ref),
         )
         if owns:
             self._conn.commit()

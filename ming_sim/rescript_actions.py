@@ -26,7 +26,6 @@ from ming_sim.action_materialize import (
     punish_actions_effective,
     require_grant_allocation_shape,
 )
-from ming_sim.action_clusters import validate_season_option
 from ming_sim.authority_privileges import AUTHORITY_PRIVILEGE_SET
 from ming_sim.credit_events import KIND_BETRAY, write_credit_event
 from ming_sim.decree import atomic_and_reload
@@ -36,7 +35,6 @@ from ming_sim.decree_vocabulary import (
     RESCRIPT_EMITTED_DOSSIER_ACTION_TYPES,
     TARGET_KINDS,
     derive_draft_capability,
-    dossier_action_policy,
 )
 from ming_sim.settlement_payload import (
     bind_decision_options,
@@ -244,7 +242,6 @@ class ValidatedItem:
     idx: int
     row: Dict[str, object]
     choice: Dict[str, object]
-    execution_option: Optional[Dict[str, object]] = None
     already_applied: bool = False
     needs_revise_llm: bool = False
     needs_deliberate_llm: bool = False
@@ -494,10 +491,7 @@ def validate_all(
             labels = bind_decision_options(row.get("options") or [])
             if label not in labels:
                 raise ValueError(f"decision 选项不在当前 options：{key}")
-            matched = labels[label]
-            validate_season_option(matched)
-            # Persist only the canonical request identity.  The stored option is
-            # batch-local execution authority and never changes retry identity.
+            # 请旨选项只供拟批；亲笔批语由续推与单一转译写口解释。
             batch.items.append(ValidatedItem(
                 decision_key=key,
                 kind=kind,
@@ -505,12 +499,6 @@ def validate_all(
                 idx=int(row.get("idx") or 0),
                 row=row,
                 choice=req,
-                execution_option={
-                    **matched,
-                    "decision_key": key,
-                    "note": req.get("note"),
-                    "action": action or "decision",
-                },
             ))
             continue
 
@@ -1173,7 +1161,7 @@ def _apply_deliberate(
         "decision_key": item.decision_key,
         "deliberation_state": deliberation_state,
         "title": title,
-        "body": body,  # P6 原文；decree_text 经成案内核 strip
+        "body": body,  # P6 原文
         "target_kind": "policy",
         "target_id": f"deliberation:{item.decision_key}",
         "locality_scope": "none",
@@ -1367,34 +1355,6 @@ def apply_rescript_batch(
             kind = item.kind
 
             if kind == "decision":
-                # A financial choice is itself the legal origin of the grant.
-                # Its canonical payload came from the server-stored option.
-                execution = item.execution_option
-                if execution is not None and str(execution.get("action_type") or "") == "grant_allocation":
-                    mapped = map_rescript_option_or_choice(
-                        execution, mode="ordinary", db=db, content=content, state=state,
-                    )
-                    created = _create_from_mapped(
-                        db, state, content, mapped, status="proposed", mode="ordinary",
-                        )
-                    if not created:
-                        raise ValueError(
-                            f"decision grant 成案零行：{item.decision_key}"
-                        )
-                    # Canonical policy exempts only inner-treasury grants from
-                    # external review.  Promulgate those dossiers individually;
-                    # reviewed grants stay proposed for the regular verdict batch.
-                    for dossier_id in created:
-                        dossier = db.get_decree_dossier(dossier_id)
-                        if dossier is None:
-                            raise ValueError(f"新建案卷查无记录：{dossier_id}")
-                        payload = dossier["payload"]
-                        if not dossier_action_policy(
-                            "grant_allocation", payload,
-                        )["external_review"]:
-                            db.apply_dossier_promulgation(
-                                state, dossier_id, "promulgated", content=content,
-                            )
                 # decision 行：写 choice + decided（#1490 / 普通 HITL）
                 # 事件账失败必须穿透 atomic → 整批回滚（§B.1）；禁 swallow。
                 _cas_decided(db, item)

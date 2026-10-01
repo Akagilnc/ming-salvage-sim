@@ -167,7 +167,7 @@ def credit_event_to_edge(record: Mapping[str, Any]) -> dict[str, Any]:
     ).strip()
     if not person:
         raise ValueError("信用事件缺少当事人")
-    context = str(record.get("context") or record.get("sentence") or "").strip()
+    context = str(record.get("context") or record.get("sentence") or "")
     if not context:
         raise ValueError("信用事件语境不能为空")
     direction = CREDIT_DIRECTION[kind]
