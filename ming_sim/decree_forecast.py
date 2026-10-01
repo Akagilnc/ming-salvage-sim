@@ -129,6 +129,15 @@ def forecast_snapshot(
     db, state = session.db, session.state
     body = copy.deepcopy(candidate)
     payload = _payload_dict(body)
+    # 同夜暗护：密令已成案、这道拨银还是暂存。预推副本带上指向本暂存的护行，
+    # 不把拨银提前成案，也不写回暂存载荷。
+    pending_action_id = body.get("pending_action_id")
+    covert_sources: list = []
+    if pending_action_id and hasattr(db, "list_covert_escorts_aimed_at_pending"):
+        covert_sources = db.list_covert_escorts_aimed_at_pending(int(pending_action_id))
+        if covert_sources:
+            payload = dict(payload)
+            payload["escort_sources"] = list(covert_sources)
     body["payload"] = payload
     text = (
         str(decree_text)
@@ -145,6 +154,10 @@ def forecast_snapshot(
     prepared = prepare_world_materials(db, state, dest_root=dest_parent)
     try:
         grounding, refs = _frozen_effect_refs(db, turn, payload)
+        if covert_sources and body.get("id"):
+            grounding = _append_this_decree_escort_grounding(
+                grounding, body, covert_sources,
+            )
         this_decree = _this_decree_fact(body, decree_text=text, db=db)
     except BaseException:
         release_material_tree(prepared.root)
@@ -238,6 +251,33 @@ def _held_snapshot(session: Any, dossier_id: int) -> Optional[Dict[str, Any]]:
     )
     snapshot["dossier_id"] = int(dossier_id)
     return snapshot
+
+
+def _append_this_decree_escort_grounding(
+    grounding: str, candidate: Dict[str, Any], sources: list,
+) -> str:
+    """本旨尚未成案，全局目录没有它的行。只在这份预推目录末尾补上预测 id。"""
+    predicted = int(candidate["id"])
+    kind = str(candidate.get("target_kind") or "")
+    target_id = str(candidate.get("target_id") or "")
+    payload = candidate.get("payload") if isinstance(candidate.get("payload"), dict) else {}
+    escort = payload.get("escort") if isinstance(payload.get("escort"), dict) else {}
+    escortees = escort.get("escortees") if isinstance(escort.get("escortees"), list) else []
+    declared = any(str(name or "").strip() for name in escortees)
+    lines = [
+        f"dossier\t{predicted}\t{kind}:{target_id}\t本旨"
+        + ("\t自带押解" if declared else ""),
+    ]
+    for source in sources:
+        lines.append(
+            f"escort_link\t{int(source['secret_order_dossier_id'])}\t{predicted}"
+            f"\t{source['relation_type']}"
+        )
+    body = grounding.rstrip("\n")
+    extra = "\n".join(lines)
+    if not body:
+        return extra + "\n"
+    return body + "\n" + extra + "\n"
 
 
 def _frozen_effect_refs(

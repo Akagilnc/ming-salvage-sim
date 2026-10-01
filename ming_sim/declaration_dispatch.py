@@ -1035,7 +1035,10 @@ def _attach_commission_escort(
             f"押解参与人名单非法：{exc}", failed_fields=("escort",),
         ) from exc
     if not shaped:
-        return
+        raise DecreeMaterializationValidationError(
+            "押解声明 escort.escortees 须含 ADR 0053 参与人条目",
+            failed_fields=("escort",),
+        )
     _assert_characters_exist(
         db, [str(entry["character_id"]) for entry in shaped],
     )
@@ -1080,7 +1083,11 @@ def _attach_commission_staging_fields(
     if not isinstance(roster, list) and grant:
         roster = grant.get("participant_roster")
     if isinstance(roster, list) and roster:
-        payload["participant_roster"] = list(roster)
+        # 押解名单已先写入 participant_roster。此处再给一份名单时合并，
+        # 不整表替换——否则押解人的职责与机械档从真源消失，只剩投影。
+        payload["participant_roster"] = _merge_participant_rosters(
+            payload.get("participant_roster"), roster,
+        )
     elif lead and not isinstance(payload.get("participant_roster"), list):
         payload["participant_roster"] = [{
             "character_id": lead, "tier": "主办", "role": "", "delegator_id": None,
@@ -1098,6 +1105,83 @@ def _attach_commission_staging_fields(
     )
     if absolute_due > int(turn):
         payload["due_turn"] = absolute_due
+
+
+def _merge_participant_rosters(existing: object, incoming: list) -> list:
+    """两份参与人名单按人物 id 合并；已在册的条目保留，不猜机械档。"""
+    merged = list(existing) if isinstance(existing, list) else []
+    seen = {
+        str(entry.get("character_id") or "")
+        for entry in merged
+        if isinstance(entry, Mapping) and str(entry.get("character_id") or "")
+    }
+    for entry in incoming:
+        character_id = (
+            str(entry.get("character_id") or "") if isinstance(entry, Mapping) else ""
+        )
+        if character_id and character_id in seen:
+            continue
+        merged.append(entry)
+        if character_id:
+            seen.add(character_id)
+    return merged
+
+
+def _covert_pending_targets(
+    db: Any, secret: Mapping[str, object],
+) -> tuple[Optional[List[Dict[str, object]]], List[tuple[str, str]]]:
+    """同夜暗护指向：缺省合法；已声明却不可用则逐项拒收，不静默丢掉。
+
+    返回 (保留条目或 None=没声明, [(reason, category), ...])。密令本身仍可落地，
+    坏指向不进暂存。
+    """
+    if "escort_pending_targets" not in secret:
+        return None, []
+    raw = secret.get("escort_pending_targets")
+    if not isinstance(raw, list):
+        return [], [("暗护指向须为条目列表", "invalid_shape")]
+    from ming_sim.db import _GRANT_ESCORT_RELATIONS
+    from ming_sim.strict_types import strict_int
+
+    kept: List[Dict[str, object]] = []
+    errors: List[tuple[str, str]] = []
+    for item in raw:
+        if not isinstance(item, Mapping):
+            errors.append(("暗护指向条目须为对象", "invalid_shape"))
+            continue
+        try:
+            staged_id = strict_int(
+                item.get("pending_action_id"), accept_numeric_strings=False,
+            )
+        except (TypeError, ValueError):
+            errors.append(("暗护指向的暂存交办不存在", "hallucinated_id"))
+            continue
+        if not db._is_staged_grant_commission(staged_id):
+            exists = db.conn.execute(
+                "SELECT 1 FROM pending_actions WHERE id=?", (staged_id,),
+            ).fetchone()
+            errors.append((
+                "暗护指向的暂存交办不存在" if exists is None else "暗护指向须为本夜拨帑暂存",
+                "hallucinated_id" if exists is None else "invalid_state",
+            ))
+            continue
+        relation = item.get("relation_type")
+        if not isinstance(relation, str) or relation not in _GRANT_ESCORT_RELATIONS:
+            errors.append((f"暗护关系类型非法：{relation}", "invalid_enum"))
+            continue
+        note = item.get("note")
+        if not isinstance(note, str):
+            errors.append(("暗护说明须为原文", "invalid_shape"))
+            continue
+        if not note.strip():
+            errors.append(("暗护说明不能为空", "invalid_shape"))
+            continue
+        kept.append({
+            "pending_action_id": staged_id,
+            "relation_type": relation,
+            "note": note,
+        })
+    return kept, errors
 
 
 def _attach_commission_affair(
@@ -1289,12 +1373,19 @@ def _dispatch_commissions(
             # #1900 暗护入口：沿既有密令暂存接缝 stage_pending_action（成案落
             # _apply_pending_action 的「新建」核）。已记录的旧拨银由 dossier_links
             # 直挂；同夜暂存的拨银交办由 escort_pending_targets 承接。
+            # 指向在入暂存前校验：缺省合法，已声明却不可用逐项拒收，不静默丢掉。
+            kept_targets, target_errors = _covert_pending_targets(db, secret)
+            for reason, category in target_errors:
+                _reject(rejected, item, reason, category, source)
+            staged_secret = _secret_order_staged_payload(
+                secret, actor,
+                origin_chat_message_id=int(source_turn["user_message_id"]),
+            )
+            if kept_targets:
+                staged_secret["escort_pending_targets"] = kept_targets
             row_id = db.stage_pending_action(
                 int(state.turn), "secret_order", "新建", actor,
-                _secret_order_staged_payload(
-                    secret, actor,
-                    origin_chat_message_id=int(source_turn["user_message_id"]),
-                ),
+                staged_secret,
                 target_id=None,
             )
             applied.append({"id": row_id, "kind": "secret_order"})
@@ -1608,8 +1699,8 @@ def _secret_order_staged_payload(
     """密令新建声明 → 暂存载荷（收夜成案核 ``_apply_pending_action`` 唯一消费）。
 
     只搬 typed 字段，一个字都不生成（CLAUDE.md P7 / ADR 0142）：标题、正文、
-    差务合同原样透传。``dossier_links`` 是 #1900 暗护指向（0054 单向新指旧），
-    由成案核在密令案卷 id 出来后补挂。
+    差务合同原样透传。已记录的旧拨银走 ``dossier_links``（0054 单向新指旧）；
+    同夜暂存拨银的暗护指向由调用方放入已校验的 ``escort_pending_targets``。
     """
     payload: Dict[str, Any] = {
         "title": str(secret.get("title") or ""),
@@ -1626,11 +1717,6 @@ def _secret_order_staged_payload(
     links = secret.get("dossier_links")
     if isinstance(links, list):
         payload["dossier_links"] = links
-    # #1900 同夜暗护：被护的拨银交办此刻还只是本夜暂存，声明按暂存清单里的
-    # action id 指过去；成案核记进密令案卷载荷，该拨银收夜成案时承接落定。
-    staged = secret.get("escort_pending_targets")
-    if isinstance(staged, list):
-        payload["escort_pending_targets"] = list(staged)
     return payload
 
 

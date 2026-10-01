@@ -1049,6 +1049,11 @@ def build_secret_orders_supply_feed(
         dict(o) for o in db.list_secret_orders(status="active")
         if not _is_issuance_turn(o, turn)
     ]
+    for order in active_orders:
+        dossier = db.get_dossier_for_secret_order(int(order["id"]))
+        if dossier is None:
+            continue
+        order.update(_escort_route_facts(db, int(dossier["id"])))
     materials = _month_fact_materials(db, state, chain, include_secret_sources=True)
     return {
         "instruction": (

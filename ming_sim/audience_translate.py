@@ -237,13 +237,12 @@ def build_translation_target_grounding(db: Any, state: Any = None) -> str:
             # 逐路布尔实况，不拿来源 id 冒充有护。
             + (f"\t有护:{escorted[1]}" if escorted[0] else "")
         )
-    for row in db.conn.execute(
-        "SELECT id, source_dossier_id, target_dossier_id, relation_type FROM decree_dossier_links "
-        "WHERE relation_type IN ('护卫','稽核') ORDER BY id"
-    ).fetchall():
+    # #1900：「谁护谁」的配对行。单一读口 list_escort_link_pairs 出 0054 槽的链
+    # 与同夜承接记录；escort_links / escort_results 只认这里的精确案卷 id。
+    for pair in db.list_escort_link_pairs():
         lines.append(
-            f"escort_link\t{int(row['source_dossier_id'])}\t{int(row['target_dossier_id'])}"
-            f"\t{str(row['relation_type'])}"
+            f"escort_link\t{int(pair['source_dossier_id'])}\t{int(pair['target_dossier_id'])}"
+            f"\t{str(pair['relation_type'])}"
         )
     if state is not None:
         from ming_sim.due_review import list_due_review_scenes

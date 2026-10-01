@@ -388,8 +388,8 @@ AND execution_outcome<>'failed'`）：拨帑正常结案不免除该次核账；
 
 ### `commissions[].grant.escort` — 押解随拨银旨（#1900）
 
-owner 2026-09-30 裁定：平常「拨银三十万去宁远，着某某押解护送」的押解人记在**同一道拨银
-交办**里，不另立密令、不另挂本案卷关联槽。`escort.escortees` 每项照 ADR 0053 参与人形状
+平常押解人记在**同一道拨银交办**里，不另立密令、不另挂本案卷关联槽
+（#1900 修订；逐字批准见 ADR 0054，不把方案摘要当成御批原文）。`escort.escortees` 每项照 ADR 0053 参与人形状
 （`character_id`／`tier`∈{主办,协办,知情}／`role`／`delegator_id`），normalize 与引用校验
 后落进本案卷 `participant_roster` 单一真源；`escort.note` 为原文，零删改（ADR 0142）。
 没给 `escort` 即无押解，代码不猜；已声明却不是 ADR 0053 条目形状 → 逐项拒收，不静默丢弃。
@@ -408,6 +408,8 @@ note}`。密令成案时把指向持久化到密令案卷载荷；该拨银收�
 （新案卷指旧案卷），通用新指旧校验不受影响。读缝 `GameDB.escort_source_dossiers_of`。
 护行主体凭据由 `_escort_source_relation` 按「关联槽那条链 ∪ 承接落点那条记录」合取。
 已记录的旧拨银仍走 `escort_links` 关联槽，不进 `escort_sources`。
+「谁护谁」的配对由**单一读口** `GameDB.list_escort_link_pairs()` 出（两处载体取并集，同一对重复时以 0054 槽为准）；权威目标目录的 `escort_link` 行与 `record_monthly_supervision_presence`
+的稽核在场都读它，不让目录、在场与校验闸各读各的。
 
 ### `dossier_progress_reports` — 长差密令逐月密奏（#566 / ADR 0058）
 personnel_secret 模块产出；settle 内经 `record_monthly_dossier_progress` 消费。

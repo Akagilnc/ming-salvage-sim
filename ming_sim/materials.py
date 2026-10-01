@@ -848,12 +848,98 @@ def character_office_archive_text(db: Any, state: Any, character: Any, knowledge
         if key in _LEDGER_KEYS and str(value or "").strip()
     ]
     if hasattr(db, "list_referenceable_dossiers"):
-        brief = render_referenceable_dossier_brief(
-            db.list_referenceable_dossiers(name, state.turn),
-        )
+        dossiers = db.list_referenceable_dossiers(name, state.turn)
+        brief = render_referenceable_dossier_brief(dossiers)
         if brief:
             office_lines.append(brief)
+        route_lines = _escort_identity_lines(db, name, dossiers)
+        if route_lines:
+            office_lines.append(route_lines)
     return "\n".join(office_lines) or "（无）"
+
+
+def _reader_sees_route_actual(db: Any, name: str, dossier: dict) -> bool:
+    """押解参与人、本案衙门底账、暗护承办人读逐路实况；其余只读奏报。"""
+    if not name:
+        return False
+    roster = dossier.get("participant_roster") or []
+    if isinstance(roster, list) and any(
+        isinstance(item, dict) and str(item.get("character_id") or "") == name
+        for item in roster
+    ):
+        return True
+    payload = dossier.get("payload") if isinstance(dossier.get("payload"), dict) else {}
+    escort = payload.get("escort") if isinstance(payload.get("escort"), dict) else {}
+    escortees = escort.get("escortees") if isinstance(escort.get("escortees"), list) else []
+    escortee_ids = set()
+    for item in escortees:
+        if isinstance(item, dict):
+            escortee_ids.add(str(item.get("character_id") or ""))
+        else:
+            escortee_ids.add(str(item))
+    if name in escortee_ids:
+        return True
+    if hasattr(db, "_office_archive_key"):
+        office_row = db.conn.execute(
+            "SELECT office,office_type,location FROM characters WHERE name=?", (name,),
+        ).fetchone()
+        reader_key = (
+            db._office_archive_key(
+                office_row["office"], office_row["office_type"],
+                location=office_row["location"] if office_row is not None and "location" in office_row.keys() else "",
+                character_name=name,
+            )
+            if office_row is not None else ""
+        )
+        keys = dossier.get("office_archive_keys") or []
+        if reader_key and isinstance(keys, list) and reader_key in {str(key) for key in keys}:
+            return True
+    if hasattr(db, "list_escort_link_pairs"):
+        for pair in db.list_escort_link_pairs():
+            if int(pair["target_dossier_id"]) != int(dossier["id"]):
+                continue
+            source = db.get_decree_dossier(int(pair["source_dossier_id"]))
+            if source is None:
+                continue
+            source_payload = source.get("payload") if isinstance(source.get("payload"), dict) else {}
+            assignee = str(source.get("assignee") or source_payload.get("assignee") or "")
+            if assignee == name:
+                return True
+    return False
+
+
+def _escort_identity_lines(db: Any, name: str, dossiers: list) -> str:
+    """按身份供料：账本读者看逐路实况与本次核账，外人只看奏报原文。"""
+    if not hasattr(db, "_grant_escort_presence"):
+        return ""
+    lines: list[str] = []
+    for dossier in dossiers:
+        if not isinstance(dossier, dict):
+            continue
+        if str(dossier.get("action_type") or "") != "grant_allocation":
+            continue
+        dossier_id = int(dossier["id"])
+        if _reader_sees_route_actual(db, name, dossier):
+            escorted, source_id, _relation = db._grant_escort_presence(dossier_id)
+            line = f"- [内部键 {dossier_id}] 护送实况：{'有护' if escorted else '无护'}"
+            if source_id is not None:
+                line += f"；来源案卷 {int(source_id)}"
+            history = db.list_dossier_reconciliations(dossier_id)
+            if history:
+                latest = history[-1]
+                line += (
+                    f"；实抵 {int(latest['arrived_amount'])}"
+                    f"；损耗 {int(latest['loss_amount'])}"
+                )
+            lines.append(line)
+            continue
+        progress = db.list_dossier_progress(dossier_id) if hasattr(db, "list_dossier_progress") else []
+        memorial = str(progress[-1].get("memorial_text") or "") if progress else ""
+        if memorial:
+            lines.append(f"- [内部键 {dossier_id}] 奏报：{memorial}")
+    if not lines:
+        return ""
+    return "【拨帑护行（按身份）】\n" + "\n".join(lines)
 
 
 def _court_roster_text(db: Any, state: Any, character: Any, knowledge: dict) -> str:
@@ -1283,6 +1369,12 @@ def _world_board_text(
         ("阶级", db.class_report(audience=True)),
     )
     parts = [f"{title}：\n{body}" for title, body in sections if str(body or "").strip()]
+    escort_ledger = (
+        db.escort_route_ledger_text()
+        if hasattr(db, "escort_route_ledger_text") else ""
+    )
+    if str(escort_ledger or "").strip():
+        parts.append(escort_ledger)
     return "\n\n".join(parts) or "（无）"
 
 

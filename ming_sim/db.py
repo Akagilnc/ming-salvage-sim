@@ -12214,20 +12214,17 @@ class GameDB:
         - **同夜拨银**：暗护密令应允即先成案，0054 的新指旧装不下，改由后成案的
           拨银案卷在载荷 ``escort_sources`` 里记这条单向回指。
 
-        关系类型一律取自既有真源（关联槽那条链／承接落点那条记录），不接受调用方另报。
+        关系类型一律取自既有真源，经 :meth:`list_escort_link_pairs` 单一读口，
+        不接受调用方另报，也不另写一套关联槽／承接记录查询。
         """
-        link = self.conn.execute(
-            "SELECT relation_type FROM decree_dossier_links "
-            "WHERE source_dossier_id=? AND target_dossier_id=? "
-            "AND relation_type IN ('护卫','稽核') LIMIT 1",
-            (int(source_dossier_id), int(grant_dossier_id)),
-        ).fetchone()
-        if link is not None:
-            return str(link["relation_type"])
-        for entry in self.escort_source_dossiers_of(int(grant_dossier_id)):
-            if int(entry.get("secret_order_dossier_id") or 0) == int(source_dossier_id):
-                relation = str(entry.get("relation_type") or "")
-                return relation if relation in _GRANT_ESCORT_RELATIONS else None
+        source_id = int(source_dossier_id)
+        grant_id = int(grant_dossier_id)
+        for pair in self.list_escort_link_pairs():
+            if (
+                int(pair["source_dossier_id"]) == source_id
+                and int(pair["target_dossier_id"]) == grant_id
+            ):
+                return str(pair["relation_type"])
         return None
 
     def _insert_escort_outcome(
@@ -12428,6 +12425,100 @@ class GameDB:
         if not isinstance(sources, list):
             return []
         return [dict(item) for item in sources if isinstance(item, Mapping)]
+
+    def list_covert_escorts_aimed_at_pending(
+        self, pending_action_id: int,
+    ) -> List[Dict[str, object]]:
+        """同夜已成案的暗护密令里，指向这道尚未成案拨银暂存的记录。
+
+        供逐旨预推在拨银成案前看见「谁会护这道旨」。不写库、不成案。
+        只读密令案卷载荷上已经校验过的 ``escort_pending_targets``。
+        """
+        aimed = int(pending_action_id)
+        found: List[Dict[str, object]] = []
+        rows = self.conn.execute(
+            "SELECT id FROM decree_dossiers WHERE action_type='secret_order' ORDER BY id",
+        ).fetchall()
+        for row in rows:
+            dossier_id = int(row["id"])
+            targets = self._dossier_payload_dict(dossier_id).get("escort_pending_targets")
+            if not isinstance(targets, list):
+                continue
+            for item in targets:
+                if not isinstance(item, Mapping):
+                    continue
+                try:
+                    staged_id = strict_int(
+                        item.get("pending_action_id"), accept_numeric_strings=False,
+                    )
+                except (AttributeError, TypeError, ValueError):
+                    continue
+                if staged_id != aimed:
+                    continue
+                relation = str(item.get("relation_type") or "")
+                if relation not in _GRANT_ESCORT_RELATIONS:
+                    continue
+                note = item.get("note")
+                found.append({
+                    "secret_order_dossier_id": dossier_id,
+                    "relation_type": relation,
+                    "note": note if isinstance(note, str) else "",
+                })
+        return found
+
+    def escort_route_ledger_text(self) -> str:
+        """在途拨帑各路护送实况（推演者账本，不是奏报）。无在途拨帑时为空。"""
+        lines: List[str] = []
+        for target in self.list_monthly_grant_reconciliation_targets():
+            dossier_id = int(target["dossier_id"])
+            escorted = bool(target["escorted"])
+            source = target["escort_source_dossier_id"]
+            history = self.list_dossier_reconciliations(dossier_id)
+            latest = history[-1] if history else None
+            line = f"dossier:{dossier_id} {'有护' if escorted else '无护'}"
+            if source is not None:
+                line += f" 来源:{int(source)}"
+            if latest is not None:
+                line += (
+                    f" 实抵:{int(latest['arrived_amount'])}"
+                    f" 损耗:{int(latest['loss_amount'])}"
+                )
+            lines.append(line)
+        if not lines:
+            return ""
+        return "护送实况：\n" + "\n".join(lines)
+
+    def list_escort_link_pairs(self) -> List[Dict[str, object]]:
+        """「谁护谁」的**单一配对读口**：0054 关联槽 ∪ 同夜承接记录（#1900）。
+
+        同一事实两处载体：旧拨银走 0054 关联槽；同夜暗护走 ``escort_sources`` 承接
+        记录（密令应允即先成案、关联槽装不下那个方向，见 ADR 0054 #1900 修订段）。
+        权威目标目录的 ``escort_link`` 行与转译的护送配对都从这里出——一处读口出配对，
+        不让目录与校验闸各读各的（同一事实单一真源）。同一对重复时以 0054 槽为准。
+        """
+        pairs: Dict[Tuple[int, int], str] = {}
+        for row in self.conn.execute(
+            "SELECT source_dossier_id, target_dossier_id, relation_type "
+            "FROM decree_dossier_links WHERE relation_type IN ('护卫','稽核') ORDER BY id",
+        ).fetchall():
+            pairs[
+                (int(row["source_dossier_id"]), int(row["target_dossier_id"]))
+            ] = str(row["relation_type"])
+        for row in self.conn.execute(
+            "SELECT id FROM decree_dossiers "
+            "WHERE action_type='grant_allocation' ORDER BY id",
+        ).fetchall():
+            for entry in self.escort_source_dossiers_of(int(row["id"])):
+                source_id = int(entry.get("secret_order_dossier_id") or 0)
+                relation = str(entry.get("relation_type") or "")
+                if source_id <= 0 or relation not in _GRANT_ESCORT_RELATIONS:
+                    continue
+                pairs.setdefault((source_id, int(row["id"])), relation)
+        return [
+            {"source_dossier_id": source_id, "target_dossier_id": target_id,
+             "relation_type": relation}
+            for (source_id, target_id), relation in sorted(pairs.items())
+        ]
 
     def _dossier_payload_dict(self, dossier_id: int) -> Dict[str, object]:
         row = self.conn.execute(
@@ -12692,19 +12783,37 @@ class GameDB:
 
         turn_i = int(turn)
         presence_written = 0
-        # 入链：source=稽核方案卷，target=被稽案卷
-        link_rows = self.conn.execute(
-            """
-            SELECT l.source_dossier_id, l.target_dossier_id, l.relation_type,
-                   s.status AS source_status, t.status AS target_status
-            FROM decree_dossier_links l
-            JOIN decree_dossiers s ON s.id = l.source_dossier_id
-            JOIN decree_dossiers t ON t.id = l.target_dossier_id
-            WHERE l.relation_type = ?
-            ORDER BY l.id
-            """,
-            (SUPERVISION_RELATION,),
-        ).fetchall()
+        # 稽核配对只走单一读口（0054 槽 ∪ 同夜承接），不另查一张链。
+        pairs = [
+            pair for pair in self.list_escort_link_pairs()
+            if str(pair["relation_type"]) == SUPERVISION_RELATION
+        ]
+        status_ids = {
+            dossier_id
+            for pair in pairs
+            for dossier_id in (
+                int(pair["source_dossier_id"]), int(pair["target_dossier_id"]),
+            )
+        }
+        by_id: Dict[int, str] = {}
+        if status_ids:
+            statuses = self.conn.execute(
+                "SELECT id, status FROM decree_dossiers WHERE id IN ({})".format(
+                    ",".join("?" * len(status_ids)),
+                ),
+                tuple(status_ids),
+            ).fetchall()
+            by_id = {int(row["id"]): str(row["status"] or "") for row in statuses}
+        link_rows = [
+            {
+                "source_dossier_id": int(pair["source_dossier_id"]),
+                "target_dossier_id": int(pair["target_dossier_id"]),
+                "relation_type": SUPERVISION_RELATION,
+                "source_status": by_id.get(int(pair["source_dossier_id"]), ""),
+                "target_status": by_id.get(int(pair["target_dossier_id"]), ""),
+            }
+            for pair in pairs
+        ]
         for link in link_rows:
             source_status = str(link["source_status"] or "")
             target_status = str(link["target_status"] or "")
