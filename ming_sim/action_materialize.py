@@ -82,11 +82,15 @@ def _persist_appointment_summon(
     *,
     promote_payload: bool,
     origin_chat_turn_id: int = 0,
+    night_id: int = 0,
+    source_chat_turn_id: int = 0,
 ) -> None:
     """Persist the dossier flag and its inactive origin as one staging unit.
 
     Shared success tail for new stage, same-person dedupe, and mode/tenure merge.
     Ledger person_names use the same roster/alias canonical key as 0009 applier.
+
+    迟到转译已经带了源夜与源轮时，传召账用这一对，不再改问当前开夜。
     """
     from ming_sim.applier import atomic
     from ming_sim.audience_night import ensure_inactive_office_summon
@@ -97,6 +101,10 @@ def _persist_appointment_summon(
     person_name = _canonical_minister_key(
         getattr(session, "content", None), str(person_name or "").strip(), session.db,
     )
+    pinned_night = int(night_id or 0)
+    source = int(source_chat_turn_id or 0)
+    origin = source if source > 0 else int(origin_chat_turn_id or 0)
+    target_night = pinned_night if pinned_night > 0 else int(session.db._current_open_night_id())
     with atomic(session.db):
         if promote_payload:
             row = session.db.conn.execute(
@@ -113,8 +121,10 @@ def _persist_appointment_summon(
             )
         ensure_inactive_office_summon(
             session.db, pending_id, person_name,
-            night_id=int(session.db._current_open_night_id()),
-            origin_chat_turn_id=int(origin_chat_turn_id or 0),
+            night_id=target_night,
+            origin_chat_turn_id=origin,
+            source_chat_turn_id=source,
+            order_key=_chat_turn_night_seq(session.db, source),
         )
 
 
@@ -215,6 +225,8 @@ def _apply_existing_appointment_hit(
                 person_name,
                 promote_payload=True,
                 origin_chat_turn_id=int(origin_chat_turn_id or 0),
+                night_id=int(night_id or 0),
+                source_chat_turn_id=int(source_chat_turn_id or 0),
             )
         return resolved
 
@@ -1218,6 +1230,8 @@ def _annotate_office_pending_path(
             tenure_mark=tenure_mark,
             minister_name=minister_name,
             turn=turn,
+            night_id=int(night_id or 0),
+            source_chat_turn_id=int(source_chat_turn_id or 0),
         )
         return pending_id
     if not changed:
@@ -1237,8 +1251,23 @@ def _annotate_office_pending_path(
             tenure_mark=tenure_mark,
             minister_name=minister_name,
             turn=turn,
+            night_id=int(night_id or 0),
+            source_chat_turn_id=int(source_chat_turn_id or 0),
         )
     return int(updated or pending_id)
+
+
+def _chat_turn_night_seq(db: Any, chat_turn_id: int) -> Optional[float]:
+    """源轮在本夜事件序上的位置。补账用它落回原位，不另排到后写的轮次。"""
+    if int(chat_turn_id or 0) <= 0:
+        return None
+    row = db.conn.execute(
+        "SELECT night_seq FROM chat_turns WHERE id=?",
+        (int(chat_turn_id),),
+    ).fetchone()
+    if row is None:
+        return None
+    return float(int(row["night_seq"] or 0))
 
 
 def _write_path_nature_ledger(
@@ -1250,13 +1279,32 @@ def _write_path_nature_ledger(
     tenure_mark: Optional[str],
     minister_name: str,
     turn: int,
+    night_id: int = 0,
+    source_chat_turn_id: int = 0,
 ) -> None:
-    """0035 故事账开放标签：关联候选 id / 本轮 origin；撤回走 0038 按 source 删。"""
+    """0035 故事账开放标签。源夜源轮已给出时照写；撤回按该源轮删除。
+
+    未带源夜的开夜路径仍挂当前开夜。带了源夜就不再改问当前夜或最后一轮。
+    """
     from ming_sim.audience_night import append_ledger_entry, get_open_night
 
-    open_n = get_open_night(db)
-    if open_n is None:
-        return
+    pinned_night = int(night_id or 0)
+    pinned_source = int(source_chat_turn_id or 0)
+    if pinned_night > 0:
+        target_night = pinned_night
+        source_cid = pinned_source
+    else:
+        open_n = get_open_night(db)
+        if open_n is None:
+            return
+        target_night = int(open_n["id"])
+        source_cid = 0
+        try:
+            last = db.get_last_active_chat_turn(str(minister_name or ""), int(turn))
+        except Exception:
+            last = None
+        if last is not None:
+            source_cid = int(last.get("id") or 0)
     tags: List[str] = [f"pending:{int(pending_id)}"]
     labels: List[str] = []
     if mode_mark == "midzhi":
@@ -1275,21 +1323,17 @@ def _write_path_nature_ledger(
         + (f"/{office}" if office else "")
         + f" · pending:{int(pending_id)}"
     )
-    source_cid = 0
-    try:
-        last = db.get_last_active_chat_turn(str(minister_name or ""), int(turn))
-    except Exception:
-        last = None
-    if last is not None:
-        source_cid = int(last.get("id") or 0)
     persons = [name] if name else ([minister_name] if minister_name else [])
+    origin = pinned_source if pinned_night > 0 and pinned_source > 0 else 0
     append_ledger_entry(
         db,
-        int(open_n["id"]),
+        target_night,
         person_names=persons,
         body=body,
         tags=tags,
         source_chat_turn_id=source_cid,
+        origin_chat_turn_id=origin,
+        order_key=_chat_turn_night_seq(db, source_cid) if origin else None,
         check_dead=False,
     )
 

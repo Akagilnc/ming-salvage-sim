@@ -696,8 +696,13 @@ def _write_secret_order_file(tmp: Path, db: Any, state: Any, character: Any) -> 
             "在册密令：",
         ]
         for o in orders:
-            advanced = db._has_secret_order_period_line(
-                int(o["id"]), "result", state.year, state.period,
+            monthly = str(getattr(db, "DOSSIER_REPORT_ORIGIN_MONTHLY", "dossier-report:monthly_errand"))
+            turn = int(state.turn)
+            advanced = any(
+                not item.get("is_terminal")
+                and int(item.get("turn") or 0) == turn
+                and str(item.get("origin") or "").startswith(monthly)
+                for item in (o.get("dossier_progress") or [])
             )
             tag = "✅ 本月已推进" if advanced else "⚠️ 本月尚未推进"
             due_turn = int(o.get("due_turn") or 0)

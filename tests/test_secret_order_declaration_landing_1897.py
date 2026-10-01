@@ -19,12 +19,17 @@
 from __future__ import annotations
 
 import json
+import linecache
+import sqlite3
+import traceback
 
 import pytest
 
 from ming_sim import audience_night as an
+from ming_sim.db import GameDB
 from ming_sim.declaration_dispatch import dispatch_declaration
 from ming_sim.audience_translation import apply_audience_round_translation
+from ming_sim.materials import prepare_character_materials
 
 
 def _minister(db) -> str:
@@ -513,7 +518,7 @@ def test_late_translation_staged_secret_order_still_lands_under_its_source_night
     assert db.get_secret_order(order_id)["status"] == "active"
 
 
-def test_failed_landing_keeps_the_original_pending_action_retryable(game, monkeypatch):
+def test_failed_landing_keeps_the_original_pending_action_retryable(game):
     """#1897：真实成案失败不当成功，且原待办保留可重试——同一 action_id 故障解除后成案。"""
     db, state, _ = game
     minister = _minister(db)
@@ -525,18 +530,35 @@ def test_failed_landing_keeps_the_original_pending_action_retryable(game, monkey
     assert result.commissions.rejected == []
     staged_id = int(_staged_secret_order_rows(db, state.turn)[0]["id"])
 
-    # 注入一次真实的成案失败：commit_pending_actions 会把该行标 failed。
-    from ming_sim.db import GameDB
-    real_apply = GameDB._apply_pending_action
+    # 成案上限查询被库本身拒绝一次。解除授权后再走同一暂存。
+    cap_sql = "SELECT COUNT(*) FROM secret_orders WHERE status='active'"
+    gate = {"open": True}
 
-    def _boom(self, *args, **kwargs):
-        raise RuntimeError("injected landing failure")
+    def _authorizer(action, arg1, arg2, _db_name, _source):
+        if (
+            gate["open"]
+            and action == sqlite3.SQLITE_READ
+            and arg1 == "secret_orders"
+            and arg2 == "status"
+        ):
+            for frame in traceback.extract_stack():
+                if not str(frame.filename).endswith("db.py"):
+                    continue
+                window = "".join(
+                    linecache.getline(frame.filename, frame.lineno + delta)
+                    for delta in range(0, 3)
+                )
+                if cap_sql in window:
+                    gate["open"] = False
+                    return sqlite3.SQLITE_DENY
+        return sqlite3.SQLITE_OK
 
-    monkeypatch.setattr(GameDB, "_apply_pending_action", _boom)
+    db.conn.set_authorizer(_authorizer)
     try:
         failed = _approve(db, state, minister, ctid, night_id, staged_id)
     finally:
-        monkeypatch.setattr(GameDB, "_apply_pending_action", real_apply)
+        db.conn.set_authorizer(None)
+    assert gate["open"] is False
 
     assert failed.promises.applied == [], failed.promises.applied
     assert len(failed.promises.rejected) == 1
@@ -583,6 +605,7 @@ def test_approved_rush_reports_success_and_is_not_repeated(game):
     assert rushed.rushes.rejected == [], rushed.rushes.rejected
     staged_id = int(rushed.rushes.applied[0]["id"])
 
+    before_due = int(db.get_secret_order(order_id)["due_turn"] or 0)
     approved = _approve(db, state, minister, ctid, night_id, staged_id)
     assert approved.promises.rejected == [], approved.promises.rejected
     assert len(approved.promises.applied) == 1
@@ -590,6 +613,16 @@ def test_approved_rush_reports_success_and_is_not_repeated(game):
         "SELECT status FROM pending_actions WHERE id=?", (staged_id,),
     ).fetchone()["status"]
     assert status == "committed", status
+    after = db.get_secret_order(order_id)
+    assert int(after["due_turn"] or 0) == int(state.turn) + 1
+    assert int(after["due_turn"] or 0) < before_due
+    assert str(after["result"] or "") == ""
+    dossier_id = int(db.get_dossier_for_secret_order(order_id)["id"])
+    rush_rows = [
+        row for row in db.list_dossier_progress(dossier_id)
+        if str(row["origin"]) == db.DOSSIER_REPORT_ORIGIN_RUSH
+    ]
+    assert [row["memorial_text"] for row in rush_rows] == ["着即催办"]
 
     # 已成功落库的催办不再执行一遍：同一 id 不在 pending 清单里。
     again = _approve(db, state, minister, ctid, night_id, staged_id)
@@ -650,21 +683,14 @@ def test_late_translated_rush_lands_under_its_source_night(game):
     assert len(approved.promises.applied) == 1
 
 
-def test_late_translated_appointment_hit_keeps_its_source_night(game):
-    """P1 补译承接：命中**既有任免候选**的更新同样按源夜归属，夜已收不迁到 0。
-
-    上一轮只补了 directive 改草与直接/间接暂存。任免既有候选走
-    ``_apply_existing_appointment_hit`` → ``update_office_candidate_payload``，
-    该写口无条件按「当前开着的夜」改归属：夜已收时开夜为 0，行被迁到
-    night_id=0，随后应允按 missing_ref 拒收；收夜持闸窗口里更直接抛
-    AudienceNightError/night_closing——补译交办就此被异常吞掉。
-    """
+@pytest.mark.parametrize("seal", ["closing", "closed"])
+def test_late_translated_appointment_hit_keeps_its_source_night(game, seal):
+    """补译既有任免：收夜窗口与已封夜都落在源夜源轮，应允后成案，撤回不复活。"""
     db, state, content = game
     minister = _minister(db)
     night_id, ctid = _open_night(db, state, minister)
     appointee = _summonable_name(db, content)
 
-    # 开夜期间先落一条同向任免候选，作为后续补译更新的目标。
     first = _translate(db, state, minister, {"commissions": [{
         "text": "着即擢用。",
         "appointment": {"name": appointee, "office": "巡抚", "action": "任命"},
@@ -677,41 +703,82 @@ def test_late_translated_appointment_hit_keeps_its_source_night(game):
 
     revision_ctid = _hall_turn(db, state, minister, night_id=night_id)
     approval_ctid = _hall_turn(db, state, minister, night_id=night_id)
-    an.close_night(db, state, night_id=int(night_id))
-    assert an.get_open_night(db) is None
-
-    # 夜收后补译：同向再声明一次，命中既有候选（annotate 既有命中分支）。
-    revised = _translate(db, state, minister, {"commissions": [{
+    revision = {"commissions": [{
         "text": "改中旨径发。",
         "appointment": {
             "name": appointee, "office": "巡抚", "action": "任命", "mode": "midzhi",
         },
-    }]}, night_id, revision_ctid)
-    assert revised.commissions.rejected == [], revised.commissions.rejected
-    assert int(revised.commissions.applied[0]["id"]) == staged_id
+    }]}
+
+    def _revise():
+        return _translate(db, state, minister, revision, night_id, revision_ctid)
+
+    if seal == "closing":
+        an.close_night(
+            db, state, night_id=int(night_id), content=content, on_closing=_revise,
+        )
+    else:
+        an.close_night(db, state, night_id=int(night_id), content=content)
+        assert _revise().commissions.rejected == []
+    assert an.get_open_night(db) is None
 
     row = db.conn.execute(
         "SELECT night_id, night_approved FROM pending_actions WHERE id=?",
         (staged_id,),
     ).fetchone()
-    # 承接源夜，且改草后须重新应允（与 directive 改草同纪律）。
     assert int(row["night_id"]) == int(night_id), dict(row)
     assert int(row["night_approved"] or 0) == 0, dict(row)
+
+    revision_seq = int(db.conn.execute(
+        "SELECT night_seq FROM chat_turns WHERE id=?", (revision_ctid,),
+    ).fetchone()["night_seq"])
+    approval_seq = int(db.conn.execute(
+        "SELECT night_seq FROM chat_turns WHERE id=?", (approval_ctid,),
+    ).fetchone()["night_seq"])
+    ledger = db.conn.execute(
+        "SELECT night_id, source_chat_turn_id, origin_chat_turn_id, order_key "
+        "FROM story_ledger_entries WHERE origin_chat_turn_id=?",
+        (revision_ctid,),
+    ).fetchall()
+    assert len(ledger) == 1, [dict(item) for item in ledger]
+    entry = ledger[0]
+    assert int(entry["night_id"]) == int(night_id)
+    assert int(entry["source_chat_turn_id"]) == revision_ctid
+    assert int(entry["origin_chat_turn_id"]) == revision_ctid
+    assert float(entry["order_key"]) == float(revision_seq)
+    assert revision_seq != approval_seq
 
     approved = _translate(db, state, minister, {"promises": [{
         "action_id": staged_id, "decision": "应允",
     }]}, night_id, approval_ctid)
     assert approved.promises.rejected == [], approved.promises.rejected
+    an.commit_late_night_approved(db, state, content=content)
+    cases = db.conn.execute(
+        "SELECT id FROM decree_dossiers WHERE pending_action_id=?",
+        (staged_id,),
+    ).fetchall()
+    assert len(cases) == 1
+
+    db.fail_chat_turn(revision_ctid)
+    gone = db.conn.execute(
+        "SELECT COUNT(*) AS n FROM story_ledger_entries "
+        "WHERE source_chat_turn_id=? OR origin_chat_turn_id=?",
+        (revision_ctid, revision_ctid),
+    ).fetchone()["n"]
+    assert int(gone) == 0
+    with pytest.raises(an.AudienceNightError):
+        _revise()
+    still_gone = db.conn.execute(
+        "SELECT COUNT(*) AS n FROM story_ledger_entries "
+        "WHERE source_chat_turn_id=? OR origin_chat_turn_id=?",
+        (revision_ctid, revision_ctid),
+    ).fetchone()["n"]
+    assert int(still_gone) == 0
 
 
 def test_secret_order_progress_is_stored_verbatim(game):
-    """P6 零删改：密令**进展**正文与标题/关联说明同守原文，日期戳不授权裁剪。
-
-    ``_append_secret_order_line`` 此前把 note strip 后再入列，正文自带的前后
-    空白与换行被裁掉；且时间线按行拆，同一条正文里的换行会被当独立条目，
-    同月替换只吃掉半条。判空在副本上做，存储值不被改动。
-    """
-    db, state, _ = game
+    """进展与月度密奏共用奏报轨：原文、空白、换行原样留下，正文日期不另立月份。"""
+    db, state, content = game
     minister = _minister(db)
     night_id, ctid = _open_night(db, state, minister)
 
@@ -722,11 +789,11 @@ def test_secret_order_progress_is_stored_verbatim(game):
                  int(_staged_secret_order_rows(db, state.turn)[0]["id"]))
         .promises.applied[0]["secret_order_id"]
     )
-    # 进展只认「往期」密令（当回合新下的不得自查），故先把月份推进一回合。
+    dossier_id = int(db.get_dossier_for_secret_order(order_id)["id"])
     state.turn = int(state.turn) + 1
-    db.conn.execute("UPDATE game_state SET turn=? WHERE id=1", (int(state.turn),))
-    db.conn.commit()
-    raw_note = "\n  已查得线索，仍须密访。  \n"
+    state.period = 4
+    db.save_state(state)
+    raw_note = f"\n  已查得线索，仍须密访。  \n〔{int(state.year)}年1月〕旧报未结。\n"
 
     progressed = _dispatch(db, state, minister, {"commissions": [{
         "text": "据实以闻。", "secret_order_progress": {"order_id": order_id, "note": raw_note},
@@ -737,11 +804,52 @@ def test_secret_order_progress_is_stored_verbatim(game):
         int(progressed.commissions.applied[0]["id"]),
     ).promises.rejected == []
 
-    stored = str(db.get_secret_order(order_id)["result"] or "")
-    assert raw_note in stored, repr(stored)
-    # 条目仍按月戳可判（一回合一步闸门读的就是它），正文换行没被当新条目。
-    assert db._has_secret_order_period_line(
-        order_id, "result", state.year, state.period,
-    ) is True
-    entries = db._secret_order_timeline_entries(stored)
-    assert [body for _, body in entries] == [raw_note], entries
+    def _open_reports(conn_db):
+        return [
+            row for row in conn_db.list_dossier_progress(dossier_id)
+            if not row["is_terminal"]
+        ]
+
+    first = _open_reports(db)
+    assert len(first) == 1, first
+    assert first[0]["memorial_text"] == raw_note
+    assert int(first[0]["turn"]) == int(state.turn)
+    assert str(db.get_secret_order(order_id)["result"] or "") == ""
+    assert db.sum_dossier_actual_progress_units(dossier_id) == 0
+
+    corrected = "\n  同月更正：线索有误，仍须密访。  \n"
+    monthly = dispatch_declaration(
+        db, state,
+        {"effects": {"dossier_progress_reports": [{
+            "dossier_id": dossier_id,
+            "progress_band": "在办",
+            "memorial_text": corrected,
+        }]}},
+        minister_name=minister,
+        night_id=0,
+    )
+    assert monthly.effects.rejected == [], monthly.effects.rejected
+    live = _open_reports(db)
+    assert len(live) == 1, live
+    assert live[0]["memorial_text"] == corrected
+    assert raw_note not in str(live[0]["memorial_text"])
+    assert int(live[0]["turn"]) == int(state.turn)
+    assert str(db.get_secret_order(order_id)["result"] or "") == ""
+    assert db.sum_dossier_actual_progress_units(dossier_id) == 0
+
+    character = content.characters.get(minister)
+    assert character is not None
+    prepared = prepare_character_materials(db, state, character)
+    feed = (prepared.root / "密令" / "进行中.txt").read_text(encoding="utf-8")
+    assert "本月已推进" in feed
+    assert f"#{order_id}" in feed
+
+    reopened = GameDB(db.path, content)
+    try:
+        reread = _open_reports(reopened)
+        assert len(reread) == 1
+        assert reread[0]["memorial_text"] == corrected
+        assert int(reread[0]["turn"]) == int(state.turn)
+        assert str(reopened.get_secret_order(order_id)["result"] or "") == ""
+    finally:
+        reopened.close()

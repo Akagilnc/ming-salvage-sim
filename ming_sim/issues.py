@@ -9335,7 +9335,7 @@ def _apply_score_extraction_body(
             applied_secret_orders.append({"order_id": raw_id, "rejected": True,
                                           "category": "invalid_enum", "reason": "order_id 非整数或超界"})
             continue
-        # 未知/非 active 密令的副作用写不进（_append_secret_order_line 静默返 False）→ 须显式拒收，
+        # 未知/非 active 密令的副作用写不进（update 对非 active 直接返回）→ 须显式拒收，
         # 否则未知 id 被无脑 append 成功 = 静默报「已应用」（cmr secret-order r1 codex，#14）。
         order = db.get_secret_order(real_id)
         if order is None:

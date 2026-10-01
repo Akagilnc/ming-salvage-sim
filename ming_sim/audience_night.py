@@ -1769,11 +1769,14 @@ def update_summon_travel_tone(
 def ensure_inactive_office_summon(
     db: Any, pending_id: int, person_name: str, *, night_id: int,
     origin_chat_turn_id: int = 0,
+    source_chat_turn_id: int = 0,
+    order_key: Optional[float] = None,
 ) -> int:
     """Ensure the pre-close, inactive half of an appointment-plus-summon intent.
 
     Binds origin_chat_turn_id so #506 undo of the staging turn erases this row;
     still-inactive origins are also discarded on pending reject/withdraw.
+    封夜后的补账须同时带上同一源轮（source 与 origin 相等）和该轮的夜序。
     """
     origin = f"office:{int(pending_id)}"
     existing = _ledger_by_origin_ref(db, origin)
@@ -1784,7 +1787,9 @@ def ensure_inactive_office_summon(
     return append_ledger_entry(
         db, int(night_id), person_names=[str(person_name).strip()],
         tags=[METHOD_CHUANZHAO, _summon_origin_tag(origin)], origin_ref=origin,
+        source_chat_turn_id=int(source_chat_turn_id or 0),
         origin_chat_turn_id=int(origin_chat_turn_id or 0),
+        order_key=order_key,
     )
 
 
