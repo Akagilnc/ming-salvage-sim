@@ -72,39 +72,6 @@ def _is_provider_rate_limit(exc: BaseException) -> bool:
         return False
 
 
-def _progress_key(decree_ref: str) -> str:
-    return f"forecast-progress:{decree_ref}"
-
-
-def load_forecast_progress(db: Any, decree_ref: str) -> Dict[str, Any]:
-    raw = db.kv_get(_progress_key(str(decree_ref or ""))) if decree_ref else None
-    if not raw:
-        return {}
-    try:
-        loaded = json.loads(raw)
-    except (ValueError, TypeError):
-        return {}
-    return loaded if isinstance(loaded, dict) else {}
-
-
-def save_forecast_progress(db: Any, decree_ref: str, progress: Dict[str, Any]) -> None:
-    if not decree_ref:
-        return
-    db.kv_set(_progress_key(str(decree_ref)), json.dumps(progress, ensure_ascii=False))
-
-
-def discard_forecast_progress(db: Any, decree_ref: str) -> None:
-    ref = str(decree_ref or "")
-    if not ref or not hasattr(db, "conn"):
-        return
-    db.conn.execute("DELETE FROM kv_store WHERE key=?", (_progress_key(ref),))
-    if (
-        not bool(getattr(db.conn, "_commit_suspended", False))
-        and int(getattr(db.conn, "_atomic_depth", 0) or 0) == 0
-    ):
-        db.conn.commit()
-
-
 def _payload_dict(candidate: Dict[str, Any]) -> Dict[str, Any]:
     payload = candidate.get("payload")
     if isinstance(payload, dict):
@@ -327,88 +294,60 @@ def snapshot_for_existing_dossier(session: Any, dossier: Dict[str, Any]) -> Dict
 
 
 def produce_forecast_product(session: Any, snapshot: Dict[str, Any]) -> Dict[str, Any]:
-    """判官、逐旨推演、过月段转译三步。只产出暂存物，不落账。
-
-    已完成的子步记在既有 kv（forecast-progress:{decree_ref}）。重入跳过已成调用，
-    不另建断点表，也不把半成品声明写进 staged。
-    """
-    decree_ref = str(snapshot.get("decree_ref") or "")
-    progress = load_forecast_progress(session.db, decree_ref)
+    """判官、逐旨推演、过月段转译三步。只产出暂存物，不落账。"""
     try:
         candidate = snapshot["candidate"]
         payload = _payload_dict(candidate)
-        saved_verdict = progress.get("verdict")
-        if isinstance(saved_verdict, dict):
-            verdict = dict(saved_verdict)
-        else:
-            if decree.dossier_action_policy(
-                candidate.get("action_type"), payload,
-            )["external_review"]:
-                raw = decree.llm_promulgation_verdicts(
-                    [candidate], session.state, db=session.db,
-                    agno_db=getattr(session, "agno_db", None),
-                    llm_config=session.llm_config,
-                    prepared_context=snapshot["context"],
-                    transport_policy=audience_transport_policy(),
-                )
-            else:
-                raw = decree.stub_promulgation_verdicts([candidate], session.state)
-            verdicts = decree.validate_promulgation_verdicts(
-                raw, [candidate], session.db, prepared_context=snapshot["context"],
+        if decree.dossier_action_policy(
+            candidate.get("action_type"), payload,
+        )["external_review"]:
+            raw = decree.llm_promulgation_verdicts(
+                [candidate], session.state, db=session.db,
+                agno_db=getattr(session, "agno_db", None),
+                llm_config=session.llm_config,
+                prepared_context=snapshot["context"],
+                transport_policy=audience_transport_policy(),
             )
-            verdict = dict(verdicts[0])
-            progress = {**progress, "verdict": verdict}
-            save_forecast_progress(session.db, decree_ref, progress)
+        else:
+            raw = decree.stub_promulgation_verdicts([candidate], session.state)
+        verdicts = decree.validate_promulgation_verdicts(
+            raw, [candidate], session.db, prepared_context=snapshot["context"],
+        )
+        verdict = dict(verdicts[0])
         declaration: Dict[str, object] = {}
-        questions = progress.get("questions") if progress.get("narrative_done") else None
-        forecast_text = progress.get("forecast_text") if progress.get("narrative_done") else None
+        questions = None
+        forecast_text = None
         if str(verdict.get("decision") or "") == "promulgated":
-            if not progress.get("narrative_done"):
-                agent = agents.create_decree_forecast_agent(
-                    session.llm_config, snapshot["prepared"],
-                )
-                narrative = agents.run_agent_text(
-                    agent,
-                    json.dumps({
-                        "instruction": "推演这一道旨在当前盘面上的可能后果。",
-                        "this_decree": snapshot["this_decree"],
-                    }, ensure_ascii=False),
-                    tag="decree-forecast",
-                    transport_policy=audience_transport_policy(),
-                )
-                from ming_sim.month_chain import _split_at_question
+            agent = agents.create_decree_forecast_agent(
+                session.llm_config, snapshot["prepared"],
+            )
+            narrative = agents.run_agent_text(
+                agent,
+                json.dumps({
+                    "instruction": "推演这一道旨在当前盘面上的可能后果。",
+                    "this_decree": snapshot["this_decree"],
+                }, ensure_ascii=False),
+                tag="decree-forecast",
+                transport_policy=audience_transport_policy(),
+            )
+            from ming_sim.month_chain import _split_at_question
 
-                # 与世界段同一解析：问前段文只转译一次，同段合法请旨全部暂存。
-                forecast_text, questions = _split_at_question(str(narrative or ""))
-                progress = {
-                    **progress,
-                    "narrative_done": True,
-                    "forecast_text": forecast_text,
-                    "questions": questions,
-                }
-                save_forecast_progress(session.db, decree_ref, progress)
-            saved_declaration = progress.get("declaration") if "declaration" in progress else None
-            if isinstance(saved_declaration, dict):
-                declaration = saved_declaration
-            else:
-                prefix = str(forecast_text or "")
-                if prefix.strip():
-                    # #1894：在途案卷清单同世界段一份读口（materials.continuing_
-                    # dossier_facts）——撤令的办理结果由执行格判官在本段声明
-                    # dossier_executions，清单不给它就无从落原案卷的执行格。
-                    declaration = translate_month_segment(
-                        segment=prefix,
-                        target_grounding=str(snapshot["target_grounding"]),
-                        decree_payload=payload,
-                        llm_config=session.llm_config,
-                        continuing_dossiers=continuing_dossier_facts(
-                            session.db, int(snapshot["turn"]),
-                        ),
-                    )
-                else:
-                    declaration = {}
-                progress = {**progress, "declaration": declaration}
-                save_forecast_progress(session.db, decree_ref, progress)
+            # 与世界段同一解析：问前段文只转译一次，同段合法请旨全部暂存。
+            prefix, questions = _split_at_question(str(narrative or ""))
+            forecast_text = prefix
+            if prefix.strip():
+                # #1894：在途案卷清单同世界段一份读口（materials.continuing_
+                # dossier_facts）——撤令的办理结果由执行格判官在本段声明
+                # dossier_executions，清单不给它就无从落原案卷的执行格。
+                declaration = translate_month_segment(
+                    segment=prefix,
+                    target_grounding=str(snapshot["target_grounding"]),
+                    decree_payload=payload,
+                    llm_config=session.llm_config,
+                    continuing_dossiers=continuing_dossier_facts(
+                        session.db, int(snapshot["turn"]),
+                    ),
+                )
         return {
             "verdict": verdict,
             "declaration": declaration,
@@ -451,7 +390,6 @@ def _forecast(
                     or int(row["night_id"] or 0) != snapshot["night_id"]
                     or int(row["version"] or 0) != snapshot["version"]
                 ):
-                    discard_forecast_progress(session.db, str(snapshot["decree_ref"]))
                     release_forecast_failure_if_idle(
                         session.db, _forecast_source_turn(session.db, snapshot),
                     )
@@ -572,14 +510,51 @@ def _forecast_source_turn(db: Any, snapshot: Optional[Dict[str, Any]]) -> int:
 
 
 def _snapshot_for_failure(ticket: Any) -> Dict[str, Any]:
-    """快照还没准备出来时，用票据上的动作号记相位。"""
+    """快照还没准备出来时，用票据上的动作、版本与夜记相位。"""
     key = getattr(ticket, "key", None)
-    if isinstance(key, tuple) and len(key) >= 2 and key[0] == "decree_forecast":
+    if isinstance(key, tuple) and len(key) >= 4 and key[0] == "decree_forecast":
         try:
-            return {"pending_action_id": int(key[1])}
+            return {
+                "pending_action_id": int(key[1]),
+                "version": int(key[2]),
+                "night_id": int(key[3]),
+            }
         except (TypeError, ValueError):
             return {"pending_action_id": 0}
     return {"pending_action_id": 0}
+
+
+def _forecast_failure_current(db: Any, snapshot: Optional[Dict[str, Any]]) -> bool:
+    """迟到失败只认仍有效的同一版本：未作废、未改版、尚未暂存或落账。"""
+    snap = snapshot or {}
+    if "night_id" not in snap or "version" not in snap:
+        return False
+    action_id = int(snap.get("pending_action_id") or 0)
+    if action_id <= 0 or not hasattr(db, "conn"):
+        return False
+    row = db.conn.execute(
+        "SELECT status, kind, action, night_approved, night_id, version "
+        "FROM pending_actions WHERE id=?",
+        (action_id,),
+    ).fetchone()
+    if row is None:
+        return False
+    if str(row["status"] or "") not in {"pending", "committed"}:
+        return False
+    if str(row["kind"] or "") != "directive" or str(row["action"] or "") != "拟旨":
+        return False
+    if int(row["night_approved"] or 0) != 1:
+        return False
+    if int(row["night_id"] or 0) != int(snap["night_id"]):
+        return False
+    if int(row["version"] or 0) != int(snap["version"]):
+        return False
+    ref = str(snap.get("decree_ref") or "") or pending_action_decree_ref(
+        action_id, int(row["version"] or 1),
+    )
+    if db.staged_declarations.staged_for(ref) or db.staged_declarations.is_settled(ref):
+        return False
+    return True
 
 
 def _persist_forecast_failure(
@@ -601,29 +576,34 @@ def _persist_forecast_failure(
 def record_forecast_failure(
     session: Any, snapshot: Optional[Dict[str, Any]], exc: BaseException,
 ) -> int:
-    """把夜里预推未成记到来源轮。429 不记。非 429 的模型耗尽只留相位，代码异常另附错误包。"""
+    """把夜里预推未成记到来源轮。429 不记。作废、改版或已暂存的迟到失败不记。"""
     if _is_provider_rate_limit(exc):
         return 0
     db = session.db
+    if not _forecast_failure_current(db, snapshot):
+        return 0
     ctid = _forecast_source_turn(db, snapshot)
     if ctid <= 0:
         return 0
+    failure_class = (
+        "model_exhausted" if isinstance(exc, LLMUnavailable) else "code_exception"
+    )
     pack_path = ""
-    if not isinstance(exc, LLMUnavailable):
-        from ming_sim.audience_night import write_audience_error_pack
+    from ming_sim.audience_night import write_audience_error_pack
 
-        try:
-            pack_path = write_audience_error_pack(
-                kind=FORECAST_RECOVERY_PHASE, message=str(exc),
-                detail={
-                    "chat_turn_id": ctid,
-                    "pending_action_id": int((snapshot or {}).get("pending_action_id") or 0),
-                    "decree_ref": str((snapshot or {}).get("decree_ref") or ""),
-                },
-                db=db, exc=exc,
-            )
-        except Exception:
-            logger.exception("[decree-forecast] 预推错误包未落")
+    try:
+        pack_path = write_audience_error_pack(
+            kind=FORECAST_RECOVERY_PHASE, message=str(exc),
+            detail={
+                "failure_class": failure_class,
+                "chat_turn_id": ctid,
+                "pending_action_id": int((snapshot or {}).get("pending_action_id") or 0),
+                "decree_ref": str((snapshot or {}).get("decree_ref") or ""),
+            },
+            db=db, exc=exc,
+        )
+    except Exception:
+        logger.exception("[decree-forecast] 预推错误包未落")
     db.mark_post_reply_failure(ctid, FORECAST_RECOVERY_PHASE, pack_path)
     return ctid
 
@@ -631,8 +611,8 @@ def record_forecast_failure(
 def note_forecast_staged(
     db: Any, decree_ref: str, *, pending_action_id: int = 0, chat_turn_id: int = 0,
 ) -> None:
-    """暂存落成后丢掉续跑进度。来源轮已没有未成拟旨时才清失败相位。"""
-    discard_forecast_progress(db, decree_ref)
+    """暂存落成后，来源轮已没有未成拟旨时才清失败相位。"""
+    del decree_ref
     ctid = int(chat_turn_id or 0)
     if ctid <= 0 and int(pending_action_id or 0) > 0:
         ctid = _forecast_source_turn(db, {"pending_action_id": int(pending_action_id)})
@@ -663,19 +643,82 @@ def clear_forecast_failure(db: Any, chat_turn_id: int) -> None:
 
 
 def _unfinished_forecast_actions(db: Any, chat_turn_id: int) -> list[int]:
-    """该轮已应允、仍 pending、且尚无暂存产物的拟旨 id（已成不重落）。"""
+    """该轮已应允、尚未暂存也未落账的拟旨。物化之后仍算未预成。"""
     rows = db.conn.execute(
         "SELECT id, version FROM pending_actions "
         "WHERE source_chat_turn_id=? AND kind='directive' AND action='拟旨' "
-        "AND status='pending' AND night_approved=1 ORDER BY id",
+        "AND status IN ('pending', 'committed') AND night_approved=1 ORDER BY id",
         (int(chat_turn_id),),
     ).fetchall()
     out: list[int] = []
     for row in rows:
         ref = pending_action_decree_ref(int(row["id"]), int(row["version"] or 1))
-        if not db.staged_declarations.staged_for(ref):
-            out.append(int(row["id"]))
+        if db.staged_declarations.staged_for(ref) or db.staged_declarations.is_settled(ref):
+            continue
+        out.append(int(row["id"]))
     return out
+
+
+def _audience_pack_facts(pack_path: str) -> tuple[str, str]:
+    """读既有夜域错误包上的真因与失败类别。包缺失时类别按代码异常。"""
+    message = ""
+    failure_class = "code_exception"
+    path = str(pack_path or "")
+    if not path:
+        return message, failure_class
+    try:
+        payload = json.loads((Path(path) / "manifest.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return message, failure_class
+    if not isinstance(payload, dict):
+        return message, failure_class
+    message = str(payload.get("message") or "")
+    detail = payload.get("detail")
+    klass = str(detail.get("failure_class") or "") if isinstance(detail, dict) else ""
+    if klass in {"model_exhausted", "code_exception"}:
+        failure_class = klass
+    return message, failure_class
+
+
+def hand_forecast_failure_to_month(db: Any, dossier: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """来源轮仍挂着未处理的非 429 预推失败时，把真因交给当前过月。不在这里清相位。"""
+    pending_id = int((dossier or {}).get("pending_action_id") or 0)
+    if pending_id <= 0 or not hasattr(db, "conn"):
+        return None
+    row = db.conn.execute(
+        "SELECT source_chat_turn_id FROM pending_actions WHERE id=?",
+        (pending_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    ctid = int(row["source_chat_turn_id"] or 0)
+    if ctid <= 0:
+        return None
+    ref = decree_ref_for_dossier(db, dossier)
+    if db.staged_declarations.staged_for(ref) or db.staged_declarations.is_settled(ref):
+        return None
+    turn = db.conn.execute(
+        "SELECT post_reply_recovery, post_reply_error_pack_path FROM chat_turns WHERE id=?",
+        (ctid,),
+    ).fetchone()
+    if turn is None:
+        return None
+    phase = str(turn["post_reply_recovery"] or "")
+    if phase not in {FORECAST_RECOVERY_PHASE, f"recovering:{FORECAST_RECOVERY_PHASE}"}:
+        return None
+    message, failure_class = _audience_pack_facts(str(turn["post_reply_error_pack_path"] or ""))
+    if not message:
+        message = FORECAST_RECOVERY_PHASE
+    if failure_class == "model_exhausted":
+        exc: BaseException = LLMUnavailable(message, stage="edict_forecast")
+    else:
+        exc = RuntimeError(message)
+    return {
+        "chat_turn_id": ctid,
+        "kind": failure_class,
+        "exc": exc,
+        "decree_ref": ref,
+    }
 
 
 def schedule_unfinished_forecasts(session: Any, chat_turn_id: int) -> bool:

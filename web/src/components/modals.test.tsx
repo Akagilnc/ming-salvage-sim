@@ -69,7 +69,11 @@ function renderModal(props: {
   streamingMinisterMessage?: string;
   onCancel?: () => void;
   replyRetries?: React.ComponentProps<typeof ChatModal>["replyRetries"];
-  onRetryReply?: (ministerName: string) => void;
+  onRetryReply?: (
+    ministerName: string,
+    chatTurnId: number,
+    recoveryPhase?: "after_reply" | "court_break" | "decree_forecast",
+  ) => void;
   translationRetries?: React.ComponentProps<typeof ChatModal>["translationRetries"];
   onRetryTranslation?: React.ComponentProps<typeof ChatModal>["onRetryTranslation"];
   pendingUserMessage?: string;
@@ -544,13 +548,14 @@ describe("ChatModal — placeholder switches on character type", () => {
     expect(note?.textContent).toContain("剿抚孰先？");
     expect(document.querySelector('[data-testid="reply-retry-13"]')?.textContent).toContain("回话已保存，后续处理失败");
     expect(document.querySelector('[data-testid="reply-retry-13"]')?.textContent).toContain("/tmp/post-reply-pack");
-    const button = Array.from(document.querySelectorAll("button")).find(
+    const retryButtons = Array.from(document.querySelectorAll("button")).filter(
       (node) => node.textContent === "重试",
     );
-    expect(button).toBeTruthy();
-    act(() => button?.click());
-    expect(retry).toHaveBeenCalledTimes(1);
-    expect(retry).toHaveBeenCalledWith("殿上", 12);
+    expect(retryButtons).toHaveLength(2);
+    act(() => retryButtons[0]?.click());
+    expect(retry).toHaveBeenCalledWith("殿上", 12, undefined);
+    act(() => retryButtons[1]?.click());
+    expect(retry).toHaveBeenLastCalledWith("殿上", 13, "court_break");
   });
 
 });
@@ -658,7 +663,7 @@ describe("ChatModal — soft scenes and selected-minister lens (#543 / #1511)", 
     clickButton("继续撤回");
     act(() => host.querySelector<HTMLButtonElement>('[data-testid="reply-retry-12"] button')?.click());
     expect(undo).toHaveBeenCalledWith("洪承畴");
-    expect(retryReply).toHaveBeenCalledWith("殿上", 12);
+    expect(retryReply).toHaveBeenCalledWith("殿上", 12, undefined);
     const replyFailure = host.querySelector('[data-testid="reply-retry-12"]');
     expect(replyFailure?.closest('[data-audience-turn-id="12"]')).not.toBeNull();
     const translationFailure = host.querySelector('[data-testid="translation-retry-1"]');

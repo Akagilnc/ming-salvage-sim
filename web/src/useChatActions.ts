@@ -325,10 +325,10 @@ export function useChatActions({
     recoveryPhase?: ReplyRetry["recovery_phase"],
   ) => {
     // #505：系统层重试——复用已持久问话，不造重复句。
-    // 夜卷是活权威：钮可以只活在卷上，不必先出现在本 hook 的副本里。
+    // 夜卷是活权威：有轮号就发既有重试，不要求 hook 里另有一份历史副本。
+    if (busy || !Number.isInteger(chatTurnId) || chatTurnId <= 0) return;
     const retry = replyRetries.find((entry) => entry.chat_turn_id === chatTurnId);
     const phase = recoveryPhase ?? retry?.recovery_phase;
-    if (busy || (!retry && !phase)) return;
     const initiatingPanelName = selectedMinisterRef.current;
     setBusy(phase ? "恢复本轮后续处理" : "重新生成回话");
     setError("");

@@ -10107,6 +10107,7 @@ class GameDB:
             strategy = str(item["rollback_strategy"])
             target_id = str(item["target_id"])
             if strategy == "delete_inserted_row":
+                forecast_source = None
                 if table == "pending_actions":
                     # #1890：只在**撤回**上下文里，本轮首次落下的交办改由统一
                     # 身份作废（voided 墓碑），不在这条删行路上再写一遍同一事实。
@@ -10122,8 +10123,17 @@ class GameDB:
                         target_id, int(item["chat_turn_id"] or 0),
                     ):
                         continue
+                    forecast_source = self.conn.execute(
+                        "SELECT source_chat_turn_id FROM pending_actions WHERE id=?",
+                        (int(target_id),),
+                    ).fetchone()
                     self._discard_deleted_directive_forecast(target_id)
                 self._delete_row_in_tx(table, target_id)
+                if forecast_source is not None:
+                    from ming_sim.decree_forecast import release_forecast_failure_if_idle
+                    release_forecast_failure_if_idle(
+                        self, int(forecast_source["source_chat_turn_id"] or 0),
+                    )
             elif strategy in {"restore_row", "restore_deleted_row"}:
                 before_row = self._json_load_row(item["before_json"])
                 if table == "pending_actions" and before_row.get("kind") == "directive":
@@ -17667,11 +17677,18 @@ class GameDB:
         from ming_sim.declaration_dispatch import (
             discard_staged_declaration, pending_action_decree_ref,
         )
-        from ming_sim.decree_forecast import discard_forecast_progress
+        from ming_sim.decree_forecast import release_forecast_failure_if_idle
 
         ref = pending_action_decree_ref(int(candidate_id), int(version))
-        discard_forecast_progress(self, ref)
-        return discard_staged_declaration(self, ref)
+        discarded = discard_staged_declaration(self, ref)
+        source = self.conn.execute(
+            "SELECT source_chat_turn_id FROM pending_actions WHERE id=?",
+            (int(candidate_id),),
+        ).fetchone()
+        release_forecast_failure_if_idle(
+            self, int(source["source_chat_turn_id"] or 0) if source is not None else 0,
+        )
+        return discarded
 
     @staticmethod
     def _merge_underscore_control_keys(
@@ -18396,11 +18413,7 @@ class GameDB:
                         )
                     dossier = self.get_dossier_for_secret_order(int(order_id))
                     if dossier is None:
-                        raise PendingActionRefusal(
-                            "密令成案后未找到案卷",
-                            category="missing_dossier",
-                            item={"pending_action_id": int(pa["id"]), "order_id": int(order_id)},
-                        )
+                        raise ValueError("密令成案后未找到案卷")
                     self.add_dossier_links(
                         int(dossier["id"]), links, commit=False,
                     )
@@ -18903,6 +18916,7 @@ class GameDB:
                 "WHERE id=? AND status='pending'",
                 (action_id,),
             )
+            self._release_source_forecast(action_id)
             voided.append(action_id)
         return voided
 
@@ -18949,6 +18963,10 @@ class GameDB:
         ).fetchone()
         if row is None:
             return False
+        source = self.conn.execute(
+            "SELECT source_chat_turn_id FROM pending_actions WHERE id=?",
+            (int(action_id),),
+        ).fetchone()
         if str(row["kind"] or "") == "directive":
             self._discard_pending_decree_forecast(
                 int(action_id), int(row["version"] or 1),
@@ -18960,6 +18978,11 @@ class GameDB:
         if cur.rowcount > 0 and str(row["kind"] or "") == "office":
             from ming_sim.audience_night import discard_inactive_office_summon
             discard_inactive_office_summon(self, int(action_id))
+        if cur.rowcount > 0 and source is not None:
+            from ming_sim.decree_forecast import release_forecast_failure_if_idle
+            release_forecast_failure_if_idle(
+                self, int(source["source_chat_turn_id"] or 0),
+            )
         if owns_transaction:
             self.conn.commit()
         return cur.rowcount > 0
@@ -22211,21 +22234,13 @@ class GameDB:
         """任何首次实际办理入口共用：密令轴在办时，案卷轴幂等进入 executing。"""
         dossier = self.get_dossier_for_secret_order(order_id)
         if dossier is None:
-            raise PendingActionRefusal(
-                "密令进展缺少对应案卷",
-                category="missing_dossier",
-                item={"order_id": int(order_id)},
-            )
+            raise ValueError("密令进展缺少对应案卷")
         if dossier["status"] == "promulgated":
             self.transition_decree_dossier(
                 int(dossier["id"]), "executing", commit=False,
             )
         elif dossier["status"] != "executing":
-            raise PendingActionRefusal(
-                "在办密令的案卷不处于可执行状态",
-                category="dossier_not_executable",
-                item={"order_id": int(order_id), "dossier_status": dossier["status"]},
-            )
+            raise ValueError("在办密令的案卷不处于可执行状态")
         self._commit_dossier_write(commit)
 
     def rush_secret_order(

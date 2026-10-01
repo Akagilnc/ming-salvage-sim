@@ -780,7 +780,9 @@ def _settle_edicts(
     from ming_sim.decree import _is_stalled_deliberation
     from ming_sim.decree_forecast import (
         _is_held_for_rejudgment,
+        clear_forecast_failure,
         decree_ref_for_dossier,
+        hand_forecast_failure_to_month,
         note_forecast_staged,
         produce_forecast_product,
         snapshot_for_existing_dossier,
@@ -828,6 +830,15 @@ def _settle_edicts(
             staged = db.staged_declarations.staged_for(ref)
             verdict = staged[0].verdict if staged else None
             if verdict is None and session.llm_config is not None:
+                handed = hand_forecast_failure_to_month(db, dossier)
+                if handed is not None:
+                    clear_forecast_failure(db, int(handed["chat_turn_id"]))
+                    _abort_month_call(
+                        db, state, chain, decree_text="", source=Provenance.player_decree,
+                        step="edict_forecast", exc=handed["exc"],
+                        kind=str(handed["kind"]), decree_ref=ref,
+                    )
+                    raise AssertionError("forecast handoff must stop the month")
                 snapshot = snapshot_for_existing_dossier(session, dossier)
 
                 def _produce() -> Dict[str, Any]:

@@ -290,8 +290,9 @@ def test_closed_secret_order_rush_fails_one_item_and_commits_the_rest(game):
     assert db.get_secret_order(closed)["status"] == "done"
 
 
-def test_night_forecast_exhaustion_resumes_from_real_consumer(game, monkeypatch):
-    """非 429 耗尽留相位且不带错误包。真实恢复入口只续未成的转译，版本用账上的。"""
+def test_night_forecast_exhaustion_resumes_from_real_consumer(game, monkeypatch, tmp_path):
+    """非 429 耗尽留下相位和错误包。重试后同一交办只暂存一次，相位清掉。"""
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
     db, state, content = game
     night = open_night(db, state)
     minister = _active_minister(content)
@@ -308,6 +309,7 @@ def test_night_forecast_exhaustion_resumes_from_real_consumer(game, monkeypatch)
     version = int(db.conn.execute(
         "SELECT version FROM pending_actions WHERE id=?", (pending_id,),
     ).fetchone()["version"])
+    cause = "预推用尽（受控注入）"
 
     def translate_fn(prompt, llm_config):
         return {
@@ -315,29 +317,22 @@ def test_night_forecast_exhaustion_resumes_from_real_consumer(game, monkeypatch)
             "promises": [{"action_id": pending_id, "decision": "应允"}],
         }
 
-    judges = {"n": 0}
-    narratives = {"n": 0}
-    translates = {"n": 0}
-
     def judge(_agent, prompt, **_kwargs):
-        judges["n"] += 1
         dossier = json.loads(prompt)["dossiers"][0]
         return json.dumps({
             "verdicts": [{"dossier_id": dossier["id"], "decision": "promulgated"}],
         })
 
-    def narrative(*_a, **_k):
-        narratives["n"] += 1
-        return "预演如此。"
+    translates = {"n": 0}
 
     def segment(*_a, **_k):
         translates["n"] += 1
         if translates["n"] == 1:
-            raise LLMUnavailable("预推用尽（受控注入）", stage="decree_forecast")
+            raise LLMUnavailable(cause, stage="decree_forecast")
         return {"effects": {}}
 
     monkeypatch.setattr(decree_mod, "run_agent_text", judge)
-    monkeypatch.setattr(forecast_mod.agents, "run_agent_text", narrative)
+    monkeypatch.setattr(forecast_mod.agents, "run_agent_text", lambda *_a, **_k: "预演如此。")
     monkeypatch.setattr(month_translate, "run_declaration_translate_prompt", segment)
     sess = _sess(db, state, content, monkeypatch, translate_fn)
     result = sess.scene_chat("准这道", chat_turn_id=ctid)
@@ -351,44 +346,56 @@ def test_night_forecast_exhaustion_resumes_from_real_consumer(game, monkeypatch)
         (ctid,),
     ).fetchone()
     assert turn["post_reply_recovery"] == forecast_mod.FORECAST_RECOVERY_PHASE
-    assert str(turn["post_reply_error_pack_path"] or "") == ""
-    assert (judges["n"], narratives["n"], translates["n"]) == (1, 1, 1)
+    pack = Path(str(turn["post_reply_error_pack_path"] or ""))
+    manifest = json.loads((pack / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["message"] == cause
+    assert manifest["detail"]["failure_class"] == "model_exhausted"
 
-    keys = []
-    queue = get_session_write_queue(sess)
-    real_claim = queue.claim_if_absent
-
-    def record_claim(claimed):
-        keys.extend(claimed)
-        return real_claim(claimed)
-
-    monkeypatch.setattr(queue, "claim_if_absent", record_claim)
     _consumer(sess).retry_interrupted_reply("殿上", ctid)
     _drain(sess)
 
-    assert (judges["n"], narratives["n"], translates["n"]) == (1, 1, 2)
     stored = db.staged_declarations.staged_for(ref)
     assert len(stored) == 1 and stored[0].verdict["decision"] == "promulgated"
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM decree_dossiers WHERE pending_action_id=?",
+        (pending_id,),
+    ).fetchone()[0] == 0
+    assert int(db.conn.execute(
+        "SELECT id FROM pending_actions WHERE id=?", (pending_id,),
+    ).fetchone()["id"]) == pending_id
     turn = db.conn.execute(
         "SELECT post_reply_recovery FROM chat_turns WHERE id=?", (ctid,),
     ).fetchone()
     assert turn["post_reply_recovery"] == ""
-    forecast_keys = [key for key in keys if isinstance(key, tuple) and key and key[0] == "decree_forecast"]
-    assert forecast_keys
-    assert all(int(key[2]) == version for key in forecast_keys)
-    assert all(int(key[2]) != 0 for key in forecast_keys)
 
 
-def test_forecast_rate_limit_stays_unprepared(game, monkeypatch):
-    """429 仍只算未预成：不记相位、不给重试、不留错误包。"""
+def test_unhandled_forecast_failure_stops_month_without_replay(game, monkeypatch, tmp_path):
+    """夜里非 429 耗尽未点重试时，过月停在该旨，不再自动补算。"""
+    from ming_sim.audience_night import close_night
+    from ming_sim.exceptions import SettlementAbort
+    from tests.month_chain_helpers import make_light_session
+
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
     db, state, content = game
     night = open_night(db, state)
     minister = _active_minister(content)
     ctid = db.create_chat_turn(
         state, "殿上", "s", 0, night_id=int(night["id"]), status="active",
     )
-    db.append_chat_message("殿上", int(state.turn), "user", "拟一道核实辽饷的旨。")
+    uid = db.append_chat_message("殿上", int(state.turn), "user", "拟一道核实辽饷的旨。")
+    db.conn.execute(
+        "UPDATE chat_turns SET user_message_id=? WHERE id=?",
+        (uid, ctid),
+    )
+    db.conn.commit()
     pending_id = _approved_directive(db, state, night, ctid, minister, "着户部核辽饷。")
+    cause = "预推用尽（受控注入）"
+    produces = {"n": 0}
+    real_produce = forecast_mod.produce_forecast_product
+
+    def counting(session, snapshot):
+        produces["n"] += 1
+        return real_produce(session, snapshot)
 
     def translate_fn(prompt, llm_config):
         return {
@@ -396,22 +403,106 @@ def test_forecast_rate_limit_stays_unprepared(game, monkeypatch):
             "promises": [{"action_id": pending_id, "decision": "应允"}],
         }
 
-    def judge(*_a, **_k):
-        raise LLMUnavailable("限流", status_code=429, stage="decree_forecast")
+    def judge(_agent, prompt, **_kwargs):
+        dossier = json.loads(prompt)["dossiers"][0]
+        return json.dumps({
+            "verdicts": [{"dossier_id": dossier["id"], "decision": "promulgated"}],
+        })
 
+    def segment(*_a, **_k):
+        raise LLMUnavailable(cause, stage="decree_forecast")
+
+    monkeypatch.setattr(forecast_mod, "produce_forecast_product", counting)
     monkeypatch.setattr(decree_mod, "run_agent_text", judge)
+    monkeypatch.setattr(forecast_mod.agents, "run_agent_text", lambda *_a, **_k: "预演如此。")
+    monkeypatch.setattr(month_translate, "run_declaration_translate_prompt", segment)
     sess = _sess(db, state, content, monkeypatch, translate_fn)
     result = sess.scene_chat("准这道", chat_turn_id=ctid)
     persist_and_schedule_scene(sess, db, result)
     _drain(sess)
+    night_produces = produces["n"]
+    assert night_produces >= 1
 
+    close_night(db, state, night_id=int(night["id"]), content=content)
     turn = db.conn.execute(
-        "SELECT post_reply_recovery, post_reply_error_pack_path FROM chat_turns WHERE id=?",
-        (ctid,),
+        "SELECT post_reply_recovery FROM chat_turns WHERE id=?", (ctid,),
+    ).fetchone()
+    assert turn["post_reply_recovery"] == forecast_mod.FORECAST_RECOVERY_PHASE
+
+    def blocked(*_a, **_k):
+        produces["n"] += 1
+        raise AssertionError("未点重试不得补算预推")
+
+    monkeypatch.setattr(forecast_mod, "produce_forecast_product", blocked)
+    monkeypatch.setattr("ming_sim.session.write_decree_with_agno", lambda *_a, **_k: "诏")
+    month = make_light_session(db, state, content)
+    month.llm_config = sess.llm_config
+    with pytest.raises(SettlementAbort):
+        month.resolve_turn(allow_empty_decree=True)
+
+    assert produces["n"] == night_produces
+    chain = (db.get_resolve_context(int(state.turn)) or {}).get(
+        "simulator_payload", {},
+    ).get("month_chain", {})
+    failure = chain.get("call_failure") or {}
+    assert failure.get("step") == "edict_forecast"
+    assert failure.get("message") == cause
+    assert failure.get("kind") == "model_exhausted"
+    turn = db.conn.execute(
+        "SELECT post_reply_recovery FROM chat_turns WHERE id=?", (ctid,),
     ).fetchone()
     assert turn["post_reply_recovery"] == ""
-    assert str(turn["post_reply_error_pack_path"] or "") == ""
-    assert db.staged_declarations.staged_for(pending_action_decree_ref(pending_id, 1)) == ()
+
+
+def test_late_forecast_failure_ignores_replaced_or_voided_decree(game, monkeypatch, tmp_path):
+    """改版已暂存、或原旨已撤回后，迟到失败不再写回原轮相位。"""
+    from ming_sim.declaration_dispatch import stage_declaration
+
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    db, state, content = game
+    night = open_night(db, state)
+    minister = _active_minister(content)
+    ctid = db.create_chat_turn(
+        state, "殿上", "s", 0, night_id=int(night["id"]), status="active",
+    )
+    uid = db.append_chat_message("殿上", int(state.turn), "user", "拟旨。")
+    mid = db.append_chat_message("殿上", int(state.turn), "minister", "臣拟旨在此。")
+    db.conn.execute(
+        "UPDATE chat_turns SET user_message_id=?, minister_message_id=? WHERE id=?",
+        (uid, mid, ctid),
+    )
+    pending_id = _approved_directive(db, state, night, ctid, minister, "着户部核辽饷。")
+    db.conn.execute(
+        "UPDATE pending_actions SET night_approved=1, night_id=?, version=2 WHERE id=?",
+        (int(night["id"]), pending_id),
+    )
+    db.conn.commit()
+    stage_declaration(
+        db, decree_ref=pending_action_decree_ref(pending_id, 2),
+        declaration={"effects": {}}, turn=int(state.turn),
+        verdict={"decision": "promulgated"},
+    )
+    sess = _sess(db, state, content, monkeypatch, lambda *_a, **_k: {})
+    forecast_mod.record_forecast_failure(
+        sess,
+        {"pending_action_id": pending_id, "version": 1, "night_id": int(night["id"])},
+        RuntimeError("迟到的旧版"),
+    )
+    phase = db.conn.execute(
+        "SELECT post_reply_recovery FROM chat_turns WHERE id=?", (ctid,),
+    ).fetchone()["post_reply_recovery"]
+    assert phase == ""
+
+    db.void_pending_actions_for_chat_turn(ctid)
+    forecast_mod.record_forecast_failure(
+        sess,
+        {"pending_action_id": pending_id, "version": 2, "night_id": int(night["id"])},
+        RuntimeError("撤回后的迟到失败"),
+    )
+    phase = db.conn.execute(
+        "SELECT post_reply_recovery FROM chat_turns WHERE id=?", (ctid,),
+    ).fetchone()["post_reply_recovery"]
+    assert phase == ""
 
 
 def test_forecast_snapshot_and_pack_failures_still_mark_phase(game, monkeypatch):
@@ -450,7 +541,9 @@ def test_forecast_snapshot_and_pack_failures_still_mark_phase(game, monkeypatch)
     ).fetchone()
     assert turn["post_reply_recovery"] == forecast_mod.FORECAST_RECOVERY_PHASE
     pack = str(turn["post_reply_error_pack_path"] or "")
-    assert pack and (Path(pack) / "message.txt").exists()
+    manifest = json.loads((Path(pack) / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["message"] == "快照准备故障"
+    assert manifest["detail"]["failure_class"] == "code_exception"
 
     db.clear_post_reply_failure(ctid)
     monkeypatch.undo()
