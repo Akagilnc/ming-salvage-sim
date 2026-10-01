@@ -585,9 +585,7 @@ def test_single_production_owner_power_updater_exists():
     import ming_sim.db as db_mod
     import ming_sim.flows as flows_mod
 
-    src_db = inspect.getsource(db_mod.GameDB)
-    # 生产方法体之外不应再手写 SET owner_power（seed/migration 除外，它们在其他方法）
-    assert "def transition_army_owner_power" in src_db
+    assert hasattr(db_mod.GameDB, "transition_army_owner_power")
     # flows 第三振必须调用 adapter，不直写 owner
     src_flows = inspect.getsource(flows_mod)
     assert "transition_army_owner_power" in src_flows
