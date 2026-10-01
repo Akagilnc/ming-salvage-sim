@@ -12466,24 +12466,62 @@ class GameDB:
                 })
         return found
 
+    def _escort_route_ledger_line(
+        self, dossier_id: int, *, escorted: bool, source: object,
+    ) -> str:
+        history = self.list_dossier_reconciliations(int(dossier_id))
+        latest = history[-1] if history else None
+        line = f"dossier:{int(dossier_id)} {'有护' if escorted else '无护'}"
+        if source is not None:
+            line += f" 来源:{int(source)}"
+        if latest is not None:
+            line += (
+                f" 实抵:{int(latest['arrived_amount'])}"
+                f" 损耗:{int(latest['loss_amount'])}"
+            )
+        return line
+
     def escort_route_ledger_text(self) -> str:
-        """在途拨帑各路护送实况（推演者账本，不是奏报）。无在途拨帑时为空。"""
+        """推演者账本上的逐路护送实况（不是奏报）。
+
+        在途拨帑照月度扫描面；已经写下的逐路实况或核账，结案后仍留在这份账上。
+        不改「不带 turn 的对账扫描只看在途」——那是核账写入面，不是事后读账。
+        """
         lines: List[str] = []
+        seen: set[int] = set()
         for target in self.list_monthly_grant_reconciliation_targets():
             dossier_id = int(target["dossier_id"])
-            escorted = bool(target["escorted"])
-            source = target["escort_source_dossier_id"]
-            history = self.list_dossier_reconciliations(dossier_id)
-            latest = history[-1] if history else None
-            line = f"dossier:{dossier_id} {'有护' if escorted else '无护'}"
-            if source is not None:
-                line += f" 来源:{int(source)}"
-            if latest is not None:
-                line += (
-                    f" 实抵:{int(latest['arrived_amount'])}"
-                    f" 损耗:{int(latest['loss_amount'])}"
-                )
-            lines.append(line)
+            seen.add(dossier_id)
+            lines.append(self._escort_route_ledger_line(
+                dossier_id,
+                escorted=bool(target["escorted"]),
+                source=target["escort_source_dossier_id"],
+            ))
+        persisted = self.conn.execute(
+            """
+            SELECT dossier_id FROM (
+                SELECT dossier_id FROM dossier_escort_outcomes
+                UNION
+                SELECT dossier_id FROM decree_dossier_reconciliations
+            )
+            ORDER BY dossier_id
+            """
+        ).fetchall()
+        for row in persisted:
+            dossier_id = int(row["dossier_id"])
+            if dossier_id in seen:
+                continue
+            grant = self.conn.execute(
+                "SELECT action_type FROM decree_dossiers WHERE id=?",
+                (dossier_id,),
+            ).fetchone()
+            if grant is None or str(grant["action_type"] or "") != "grant_allocation":
+                continue
+            escorted, source, _relation = self._grant_escort_presence(dossier_id)
+            lines.append(self._escort_route_ledger_line(
+                dossier_id, escorted=escorted, source=source,
+            ))
+            seen.add(dossier_id)
         if not lines:
             return ""
         return "护送实况：\n" + "\n".join(lines)
@@ -18547,10 +18585,10 @@ class GameDB:
         if pa["kind"] == "secret_order":
             oid = pa["target_id"]
             if pa["action"] == "新建":
-                title = str(payload.get("title") or "").strip()
+                title = str(payload.get("title") or "")
                 content_text = str(payload.get("content") or "")
                 assignee = str(payload.get("assignee") or pa["minister_name"] or "").strip()
-                if not title or not content_text.strip() or not assignee:
+                if not title.strip() or not content_text.strip() or not assignee:
                     return False
                 tags_raw = payload.get("tags") or []
                 tags = [str(t).strip() for t in tags_raw if str(t).strip()] if isinstance(tags_raw, list) else []

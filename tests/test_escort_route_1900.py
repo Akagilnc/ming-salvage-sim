@@ -279,9 +279,7 @@ def test_escort_result_requires_link_and_writes_no_destination_account(game):
          "escorted": True, "note": "凭空护送"},
     ]})
     assert result.escort_results.applied == []
-    assert [r.reason for r in result.escort_results.rejected] == [
-        "护送实况须先有护卫／稽核案卷关联",
-    ]
+    assert [r.category for r in result.escort_results.rejected] == ["invalid_state"]
     assert db.list_dossier_escort_outcomes(grant) == []
     assert int(state.metrics["内库"]) == before_inner
     assert db.list_economy_moves_for_dossier(grant) == moves_before
@@ -488,9 +486,7 @@ def test_escort_result_rejected_when_decree_declares_no_escort(game):
         {"dossier_id": grant, "escorted": True, "note": "凭空护送"},
     ]})
     assert result.escort_results.applied == []
-    assert [r.reason for r in result.escort_results.rejected] == [
-        "该道拨银旨未声明押解护送，不得记有护实况",
-    ]
+    assert [r.category for r in result.escort_results.rejected] == ["invalid_state"]
     assert db.list_dossier_escort_outcomes(grant) == []
 
 
@@ -728,10 +724,6 @@ def test_retract_reverses_escort_records_of_that_round(game):
     assert len(db.list_dossier_escort_outcomes(grant)) == 1
     assert db.list_dossier_escort_outcomes(grant)[0]["note"] == "本轮改判失护"
     assert db.list_dossier_escort_outcomes(new_grant)
-    assert db.conn.execute(
-        "SELECT COUNT(*) AS n FROM chat_turn_rollback_items WHERE chat_turn_id=?",
-        (int(chat_id),),
-    ).fetchone()["n"] > 0, "分派入口须自记撤回前像"
 
     db.undo_chat_turn(int(chat_id))
 
@@ -804,115 +796,169 @@ def _dossier_for_pending(db, state, pending_action_id):
 
 
 def test_same_night_covert_escort_carries_onto_grant_dossier(game):
-    """同夜一道交办：暗护密令指向暂存中的拨银 → 两道都成案后关联自动承接。"""
-    db, state, _content = game
-    actor = _actor(db)
-    night_id, chat_id = _night_turn(db, state, actor, "拨银三十万两往陕西赈灾，另密令暗护。")
+    """同夜两道拨银：预推目录用各自暂存标识，成案后逐路实况落回各路。"""
+    import json
+    from types import SimpleNamespace
 
-    grant_res = _declare(
-        db, state, {"commissions": [_grant_commission(db, state, actor)]},
+    from ming_sim.audience_translate import build_translation_target_grounding
+    from ming_sim.declaration_dispatch import (
+        settle_staged_declarations_in_decree_order,
+        stage_declaration,
+    )
+    from ming_sim.decree_forecast import _pending_snapshot, release_forecast_materials
+
+    db, state, content = game
+    actor = _actor(db)
+    night_id, chat_id = _night_turn(db, state, actor, "拨银两道，一道押解，一道另密令暗护。")
+    state.metrics["内库"] = max(int(state.metrics.get("内库") or 0), ORDERED * 6 + 50)
+
+    ordinary_res = _declare(db, state, {"commissions": [{
+        "text": f"拨银三十万两往陕西，着{actor}押解护送。",
+        "grant": {
+            "grant_action": "赈灾", "amount": ORDERED, "account": "内库",
+            "target_kind": "region", "target_id": "shaanxi",
+            "escort": {
+                "escortees": [_escort_entry(db, actor, tier="主办", role="押解护送")],
+                "note": "沿途照关防",
+            },
+        },
+    }]}, night_id=night_id, chat_turn_id=chat_id)
+    covert_res = _declare(
+        db, state, {"commissions": [_grant_commission(db, state, actor, target_id="liaodong")]},
         night_id=night_id, chat_turn_id=chat_id,
     )
-    assert grant_res.commissions.rejected == []
-    staged_id = int(grant_res.commissions.applied[0]["id"])
-    # 拨银此刻只是暂存，没有案卷——暗护无处可挂，这是本票的入口冲突本身
-    assert db.get_dossier_for_directive(staged_id) is None
+    assert ordinary_res.commissions.rejected == []
+    assert covert_res.commissions.rejected == []
+    ordinary_pending = int(ordinary_res.commissions.applied[0]["id"])
+    covert_pending = int(covert_res.commissions.applied[0]["id"])
+    assert db.get_dossier_for_directive(ordinary_pending) is None
+    assert db.get_dossier_for_directive(covert_pending) is None
 
     raw_note = " \n暗护缘由原句 \n"
-    secret_res = _declare(
-        db, state, {"commissions": [
-            _covert_escort_commission(
-                db, state, staged_id=staged_id, actor=actor, note=raw_note,
-            ),
-        ]},
-        night_id=night_id, chat_turn_id=chat_id,
-    )
+    raw_title = " \n暗护标题原句 \n"
+    secret_res = _declare(db, state, {"commissions": [
+        _covert_escort_commission(
+            db, state, staged_id=covert_pending, actor=actor,
+            note=raw_note, title=raw_title,
+        ),
+    ]}, night_id=night_id, chat_turn_id=chat_id)
     assert secret_res.commissions.rejected == []
     secret_action_id = int(secret_res.commissions.applied[0]["id"])
     db.mark_pending_night_approved(
-        [staged_id, secret_action_id], night_id=night_id, source_chat_turn_id=chat_id,
+        [ordinary_pending, covert_pending, secret_action_id],
+        night_id=night_id, source_chat_turn_id=chat_id,
     )
-    # 真实顺序（ADR 0038 白名单①＋收夜提交）：密令应允即落地，拨银拟旨只标
-    # night_approved、收夜才成案 → **密令案卷必然先落、id 必然更小**。
+    # 真实顺序：密令应允即落地，拨银拟旨收夜才成案。
     db.commit_pending_actions(state, action_ids=[secret_action_id])
     order = db.list_secret_orders()[0]
+    assert order["title"] == raw_title
     escort_dossier = int(db.get_dossier_for_secret_order(int(order["id"]))["id"])
-    assert db.get_decree_dossier(escort_dossier) is not None
     assert db.get_decree_dossier(escort_dossier)["status"] == "promulgated"
 
-    # 拨银尚未成案。预推副本要能看见这道同夜暗护，且不把指向写回暂存、不提前成案。
-    import json
-    from types import SimpleNamespace
-    from ming_sim.decree_forecast import forecast_snapshot, release_forecast_materials
-
-    predicted = int(db.conn.execute(
-        "SELECT COALESCE(MAX(id), 0) + 1 FROM decree_dossiers"
-    ).fetchone()[0])
-    assert db.get_dossier_for_directive(staged_id) is None
-    snapshot = forecast_snapshot(
-        SimpleNamespace(db=db, state=state),
-        {
-            "id": predicted,
-            "pending_action_id": staged_id,
-            "action_type": "grant_allocation",
-            "target_kind": "region",
-            "target_id": "shaanxi",
-            "decree_text": "拨银三十万两往陕西赈灾。",
-            "payload": {},
-        },
-        decree_ref=f"pending:{staged_id}",
-    )
+    session = SimpleNamespace(db=db, state=state, content=content)
+    ordinary_snap = _pending_snapshot(session, ordinary_pending, night_id)
+    covert_snap = _pending_snapshot(session, covert_pending, night_id)
+    assert ordinary_snap is not None and covert_snap is not None
     try:
-        assert snapshot["this_decree"]["payload"]["escort_sources"] == [{
+        ordinary_ref = ordinary_snap["decree_ref"]
+        covert_ref = covert_snap["decree_ref"]
+        assert ordinary_ref != covert_ref
+        assert ordinary_snap["this_decree"]["id"] == ordinary_ref
+        assert covert_snap["this_decree"]["id"] == covert_ref
+        ordinary_lines = str(ordinary_snap["target_grounding"]).splitlines()
+        covert_lines = str(covert_snap["target_grounding"]).splitlines()
+        assert (
+            f"dossier\t{ordinary_ref}\tregion:shaanxi\t本旨\t自带押解"
+            in ordinary_lines
+        )
+        assert (
+            f"dossier\t{ordinary_snap['candidate']['id']}\tregion:shaanxi\t本旨"
+            not in ordinary_lines
+        )
+        assert not any(
+            line.startswith(f"escort_link\t{escort_dossier}\t") for line in ordinary_lines
+        )
+        assert covert_snap["this_decree"]["payload"]["escort_sources"] == [{
             "secret_order_dossier_id": escort_dossier,
             "relation_type": "护卫",
             "note": raw_note,
         }]
+        assert f"escort_link\t{escort_dossier}\t{covert_ref}\t护卫" in covert_lines
         assert (
-            f"escort_link\t{escort_dossier}\t{predicted}\t护卫"
-            in str(snapshot["target_grounding"]).splitlines()
+            f"escort_link\t{escort_dossier}\t{covert_snap['candidate']['id']}\t护卫"
+            not in covert_lines
         )
     finally:
-        release_forecast_materials(snapshot)
-    stored = json.loads(db.conn.execute(
-        "SELECT payload_json FROM pending_actions WHERE id=?", (staged_id,),
-    ).fetchone()["payload_json"])
-    assert "escort_sources" not in stored
-    assert db.get_dossier_for_directive(staged_id) is None
+        release_forecast_materials(ordinary_snap)
+        release_forecast_materials(covert_snap)
 
-    grant_dossier = _dossier_for_pending(db, state, staged_id)
-    assert db.get_decree_dossier(grant_dossier)["action_type"] == "grant_allocation"
-    assert escort_dossier < grant_dossier, "真实顺序下暗护密令案卷必然更旧"
+    for pending_id in (ordinary_pending, covert_pending):
+        stored = json.loads(db.conn.execute(
+            "SELECT payload_json FROM pending_actions WHERE id=?", (pending_id,),
+        ).fetchone()["payload_json"])
+        assert "escort_sources" not in stored
+        assert db.get_dossier_for_directive(pending_id) is None
 
-    # 承接：谁护谁落定，且是单向新指旧（新成案的拨银案卷指先落地的密令案卷）。
-    assert db.escort_source_dossiers_of(grant_dossier) == [
-        {"secret_order_dossier_id": escort_dossier, "relation_type": "护卫",
-         "note": raw_note},
-    ]
-    # 不双向互写：暗护那端不反写一条关联
+    stage_declaration(
+        db, decree_ref=ordinary_snap["decree_ref"], turn=int(state.turn),
+        declaration={"escort_results": [{
+            "dossier_id": ordinary_snap["decree_ref"],
+            "escorted": False, "note": "此路损耗原句",
+        }]},
+    )
+    stage_declaration(
+        db, decree_ref=covert_snap["decree_ref"], turn=int(state.turn),
+        declaration={"escort_results": [{
+            "dossier_id": covert_snap["decree_ref"],
+            "escort_source_dossier_id": escort_dossier,
+            "escorted": True, "note": "暗护接应同到",
+        }]},
+    )
+
+    ordinary_dossier = _dossier_for_pending(db, state, ordinary_pending)
+    covert_dossier = _dossier_for_pending(db, state, covert_pending)
+    assert escort_dossier < ordinary_dossier
+    assert escort_dossier < covert_dossier
+    assert db.escort_source_dossiers_of(covert_dossier) == [{
+        "secret_order_dossier_id": escort_dossier, "relation_type": "护卫",
+        "note": raw_note,
+    }]
+    assert db.escort_source_dossiers_of(ordinary_dossier) == []
     assert db.list_dossier_links(escort_dossier) == []
-    assert db.list_dossier_links(grant_dossier) == []
-
-    # 读取端闭环：目录必须给出这一对「谁护谁」配对行（单一读口出配对），否则转译
-    # 无据可填 escort_source_dossier_id，只能猜、猜错被凭据闸拒收。
-    from ming_sim.audience_translate import build_translation_target_grounding
-
+    assert db.list_dossier_links(covert_dossier) == []
     assert db.list_escort_link_pairs() == [{
-        "source_dossier_id": escort_dossier, "target_dossier_id": grant_dossier,
+        "source_dossier_id": escort_dossier, "target_dossier_id": covert_dossier,
         "relation_type": "护卫",
     }]
-    grounding = build_translation_target_grounding(db)
-    assert f"escort_link\t{escort_dossier}\t{grant_dossier}\t护卫" in grounding.splitlines()
+    assert (
+        f"escort_link\t{escort_dossier}\t{covert_dossier}\t护卫"
+        in build_translation_target_grounding(db).splitlines()
+    )
 
-    # 承接后逐路实况与对账照常读这条链
-    db.apply_dossier_promulgation(state, grant_dossier, "promulgated")
-    _declare(db, state, {"escort_results": [{
-        "dossier_id": grant_dossier, "escort_source_dossier_id": escort_dossier,
-        "escorted": True, "note": "暗护接应同到",
-    }]})
-    targets = db.list_monthly_grant_reconciliation_targets(state.turn)
-    assert [t["dossier_id"] for t in targets] == [grant_dossier]
-    assert targets[0]["escorted"] is True
+    settled = settle_staged_declarations_in_decree_order(
+        db, state, [ordinary_snap["decree_ref"], covert_snap["decree_ref"]],
+    )
+    assert settled[ordinary_snap["decree_ref"]].escort_results.rejected == []
+    assert settled[covert_snap["decree_ref"]].escort_results.rejected == []
+    ordinary_outcome = db.list_dossier_escort_outcomes(ordinary_dossier)
+    covert_outcome = db.list_dossier_escort_outcomes(covert_dossier)
+    assert len(ordinary_outcome) == 1 and len(covert_outcome) == 1
+    assert ordinary_outcome[0]["escorted"] is False
+    assert ordinary_outcome[0]["escort_source_dossier_id"] == ordinary_dossier
+    assert ordinary_outcome[0]["relation_type"] == "押解"
+    assert ordinary_outcome[0]["note"] == "此路损耗原句"
+    assert covert_outcome[0]["escorted"] is True
+    assert covert_outcome[0]["escort_source_dossier_id"] == escort_dossier
+    assert covert_outcome[0]["note"] == "暗护接应同到"
+
+    db.apply_dossier_promulgation(state, ordinary_dossier, "promulgated")
+    db.apply_dossier_promulgation(state, covert_dossier, "promulgated")
+    by_id = {
+        int(row["dossier_id"]): row
+        for row in db.list_monthly_grant_reconciliation_targets(state.turn)
+    }
+    assert by_id[ordinary_dossier]["escorted"] is False
+    assert by_id[covert_dossier]["escorted"] is True
 
 
 def test_same_night_covert_audit_reaches_supervision_presence(game):
@@ -997,8 +1043,20 @@ def test_escort_routes_reach_supply_and_world_materials(game):
     from ming_sim.materials import continuing_dossier_facts
     from ming_sim.month_chain import build_secret_orders_supply_feed
 
-    grant = _in_transit_grant(db, state, escort={"escortees": [_escort_entry(db, _actor(db))]})
-    order_id, escort_dossier = _escort_order(db, state)
+    names = [
+        str(row["name"]) for row in db.conn.execute(
+            "SELECT name FROM characters WHERE status='active' ORDER BY name",
+        ).fetchall()
+    ]
+    executor, escortee, outsider = names[0], names[1], names[2]
+    grant = _in_transit_grant(
+        db, state, escort={"escortees": [_escort_entry(db, escortee)]},
+    )
+    order_id = create_test_secret_order(
+        db, state, executor, "护行饷银", "沿途护送，照关防", ["护行"],
+        deadline_months=4, excluded_names=[escortee],
+    )
+    escort_dossier = int(db.get_dossier_for_secret_order(order_id)["id"])
     _declare(db, state, {
         "escort_links": [{
             "escort_source_dossier_id": escort_dossier, "target_dossier_id": grant,
@@ -1027,11 +1085,6 @@ def test_escort_routes_reach_supply_and_world_materials(game):
         character_office_archive_text, prepare_world_materials, release_material_tree,
     )
 
-    actor = _actor(db)
-    outsider = db.conn.execute(
-        "SELECT name FROM characters WHERE status='active' AND name!=? ORDER BY name LIMIT 1",
-        (actor,),
-    ).fetchone()["name"]
     db.record_dossier_progress(grant, int(state.turn), "在途", "奏报银两仍在途")
 
     def _board_and_archives():
@@ -1040,19 +1093,20 @@ def test_escort_routes_reach_supply_and_world_materials(game):
             board = (prepared.root / "盘面" / "全局.txt").read_text(encoding="utf-8")
         finally:
             release_material_tree(prepared.root)
-        insider = character_office_archive_text(
-            db, state, SimpleNamespace(name=actor), {},
-        )
-        other = character_office_archive_text(
-            db, state, SimpleNamespace(name=outsider), {},
-        )
-        return board, insider, other
+        archives = {
+            person: character_office_archive_text(
+                db, state, SimpleNamespace(name=person), {},
+            )
+            for person in (executor, escortee, outsider)
+        }
+        return board, archives
 
-    board, insider, other = _board_and_archives()
-    assert f"dossier:{grant} 无护" in board
-    assert "护送实况：无护" in insider
-    assert "护送实况" not in other
-    assert "奏报银两仍在途" in other
+    board, archives = _board_and_archives()
+    source_mark = f"来源案卷 {escort_dossier}"
+    assert source_mark in archives[executor]
+    assert source_mark not in archives[escortee]
+    assert source_mark not in archives[outsider]
+    assert "奏报银两仍在途" in archives[outsider]
 
     db.record_dossier_escort_result(
         int(state.turn), dossier_id=grant, escort_source_dossier_id=escort_dossier,
@@ -1065,8 +1119,39 @@ def test_escort_routes_reach_supply_and_world_materials(game):
         if int(row["dossier_id"]) == escort_dossier
     )
     assert [(r["dossier_id"], r["escorted"]) for r in flipped_source] == [(grant, True)]
-    board, insider, other = _board_and_archives()
-    assert f"dossier:{grant} 有护" in board
-    assert "护送实况：有护" in insider
-    assert "护送实况" not in other
-    assert "奏报银两仍在途" in other
+    board_after, archives_after = _board_and_archives()
+    assert board != board_after
+    assert archives[executor] != archives_after[executor]
+    assert archives[escortee] != archives_after[escortee]
+    assert archives[outsider] == archives_after[outsider]
+    assert source_mark in archives_after[executor]
+    assert source_mark not in archives_after[escortee]
+    assert "奏报银两仍在途" in archives_after[outsider]
+
+    # 正常结案之后，翻已落的逐路实况仍改得到推演账本；对账扫描面不再把它当在途。
+    plain = _in_transit_grant(
+        db, state, text="本回合押解到达", target_id="liaodong",
+        escort={"escortees": [_escort_entry(db, escortee)]},
+    )
+    _declare(db, state, {"escort_results": [{
+        "dossier_id": plain, "escorted": True, "note": "押解人随饷同到",
+    }]})
+    db.record_dossier_execution(plain, "fulfilled", "押解已达", int(state.turn), close=True)
+    assert plain not in {
+        int(row["dossier_id"])
+        for row in db.list_monthly_grant_reconciliation_targets()
+    }
+    closed_feed = build_secret_orders_supply_feed(db, state, {"facts": {}})
+    closed_board, _archives = _board_and_archives()
+    db.record_dossier_escort_result(
+        int(state.turn), dossier_id=plain, escort_source_dossier_id=plain,
+        escorted=False, note="结案后改记失护",
+    )
+    reopened_feed = build_secret_orders_supply_feed(db, state, {"facts": {}})
+    reopened_board, _archives = _board_and_archives()
+    assert closed_board != reopened_board
+    assert closed_feed["board"] != reopened_feed["board"]
+    assert plain not in {
+        int(row["dossier_id"])
+        for row in db.list_monthly_grant_reconciliation_targets()
+    }

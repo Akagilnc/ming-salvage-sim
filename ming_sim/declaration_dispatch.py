@@ -656,6 +656,58 @@ def discard_staged_declaration(db: Any, decree_ref: str) -> int:
     return db.staged_declarations.discard(decree_ref)
 
 
+def _grant_dossier_ids_for_pending(db: Any, pending_action_id: int) -> List[int]:
+    rows = db.conn.execute(
+        "SELECT id FROM decree_dossiers "
+        "WHERE action_type='grant_allocation' AND pending_action_id=? ORDER BY id",
+        (int(pending_action_id),),
+    ).fetchall()
+    return [int(row["id"]) for row in rows]
+
+
+def _pending_action_identity(decree_ref: str) -> Optional[int]:
+    """``pending-action:{id}:v{version}`` → 暂存主键。对不上就不是这道交办。"""
+    prefix = "pending-action:"
+    if not str(decree_ref).startswith(prefix) or ":v" not in decree_ref:
+        return None
+    action_text, version_text = decree_ref[len(prefix):].split(":v", 1)
+    if not action_text.isdigit() or not version_text.isdigit():
+        return None
+    action_id, version = int(action_text), int(version_text)
+    if action_id <= 0 or version <= 0:
+        return None
+    return action_id
+
+
+def _bind_pending_grant_escort_identity(
+    db: Any, decree_ref: str, declaration: object,
+) -> object:
+    """成案之后，把本旨目录里的暂存标识换成这一道拨银自己的案卷。
+
+    只替换与本 decree_ref 逐字相同的被护端。零个或多个拨银案卷都不猜，
+    留下原标识，让通用案卷校验按幻影拒收。不改护行来源，不改其它数字。
+    """
+    pending_action_id = _pending_action_identity(decree_ref)
+    if pending_action_id is None or not isinstance(declaration, dict):
+        return declaration
+    grant_ids = _grant_dossier_ids_for_pending(db, pending_action_id)
+    if len(grant_ids) != 1:
+        return declaration
+    grant_id = grant_ids[0]
+    cloned = copy.deepcopy(declaration)
+    for section, field in (
+        ("escort_results", "dossier_id"),
+        ("escort_links", "target_dossier_id"),
+    ):
+        items = cloned.get(section)
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if isinstance(item, dict) and item.get(field) == decree_ref:
+                item[field] = grant_id
+    return cloned
+
+
 def settle_staged_declarations_in_decree_order(
     db: Any,
     state: Any,
@@ -695,7 +747,10 @@ def settle_staged_declarations_in_decree_order(
                     merged = _empty_dispatch_result()
                     for item in staged:
                         merged = merged.merge(_dispatch_declaration_sections(
-                            db, state, item.declaration,
+                            db, state,
+                            _bind_pending_grant_escort_identity(
+                                db, decree_ref, item.declaration,
+                            ),
                             minister_name=minister_name, night_id=night_id, source=source,
                             collector=collector,
                             visible_refs=item.visible_refs,

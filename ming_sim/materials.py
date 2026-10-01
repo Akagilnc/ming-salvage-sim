@@ -858,8 +858,77 @@ def character_office_archive_text(db: Any, state: Any, character: Any, knowledge
     return "\n".join(office_lines) or "（无）"
 
 
+def _covert_participant_names(dossier: dict) -> set[str]:
+    """暗护案卷上已经在册的人：主办归属（含承办人）与名册里的参与人。"""
+    from ming_sim.participant_roster import resolve_dossier_owner_name
+
+    names: set[str] = set()
+    owner = resolve_dossier_owner_name(dossier)
+    if owner:
+        names.add(owner)
+    roster = dossier.get("participant_roster") or []
+    if isinstance(roster, list):
+        for item in roster:
+            if not isinstance(item, dict):
+                continue
+            person = str(item.get("character_id") or item.get("name") or "").strip()
+            if person:
+                names.add(person)
+    return names
+
+
+def _reader_excluded_from_secret_source(db: Any, name: str, source: dict) -> bool:
+    """明示排除压过参与。排除名单读密令行上既有的两列，不另做一套。"""
+    secret_order_id = source.get("secret_order_id")
+    if not secret_order_id:
+        return False
+    try:
+        row = db.conn.execute(
+            "SELECT excluded_names, excluded_targets FROM secret_orders WHERE id=?",
+            (int(secret_order_id),),
+        ).fetchone()
+    except (AttributeError, TypeError, ValueError):
+        return False
+    if row is None:
+        return False
+    from ming_sim.knowledge import _exclusion_lists_from_row, _subject_matches_exclusion
+
+    excluded_names, people, offices = _exclusion_lists_from_row(row)
+    reader = None
+    try:
+        reader = db.conn.execute(
+            "SELECT name, office, office_type FROM characters WHERE name=?",
+            (name,),
+        ).fetchone()
+    except (AttributeError, TypeError):
+        reader = None
+    return _subject_matches_exclusion(
+        reader, name,
+        excluded_names=excluded_names, people=people, offices=offices,
+    )
+
+
+def _reader_may_cite_escort_source(
+    db: Any, name: str, grant_id: int, source_id: object,
+) -> bool:
+    """物理实况和密令来源分开。来源案卷号只给看得见这道密令、且没被排除的人。
+
+    押解主体就是这道拨银自己，不是密令来源。
+    """
+    if source_id is None:
+        return False
+    if int(source_id) == int(grant_id):
+        return True
+    if not hasattr(db, "is_secret_order_dossier") or not db.is_secret_order_dossier(int(source_id)):
+        return False
+    source = db.get_decree_dossier(int(source_id)) if hasattr(db, "get_decree_dossier") else None
+    if source is None or name not in _covert_participant_names(source):
+        return False
+    return not _reader_excluded_from_secret_source(db, name, source)
+
+
 def _reader_sees_route_actual(db: Any, name: str, dossier: dict) -> bool:
-    """押解参与人、本案衙门底账、暗护承办人读逐路实况；其余只读奏报。"""
+    """押解参与人、本案衙门底账、未被排除的暗护参与人读逐路实况；其余只读奏报。"""
     if not name:
         return False
     roster = dossier.get("participant_roster") or []
@@ -899,12 +968,11 @@ def _reader_sees_route_actual(db: Any, name: str, dossier: dict) -> bool:
             if int(pair["target_dossier_id"]) != int(dossier["id"]):
                 continue
             source = db.get_decree_dossier(int(pair["source_dossier_id"]))
-            if source is None:
+            if source is None or name not in _covert_participant_names(source):
                 continue
-            source_payload = source.get("payload") if isinstance(source.get("payload"), dict) else {}
-            assignee = str(source.get("assignee") or source_payload.get("assignee") or "")
-            if assignee == name:
-                return True
+            if _reader_excluded_from_secret_source(db, name, source):
+                continue
+            return True
     return False
 
 
@@ -922,7 +990,7 @@ def _escort_identity_lines(db: Any, name: str, dossiers: list) -> str:
         if _reader_sees_route_actual(db, name, dossier):
             escorted, source_id, _relation = db._grant_escort_presence(dossier_id)
             line = f"- [内部键 {dossier_id}] 护送实况：{'有护' if escorted else '无护'}"
-            if source_id is not None:
+            if _reader_may_cite_escort_source(db, name, dossier_id, source_id):
                 line += f"；来源案卷 {int(source_id)}"
             history = db.list_dossier_reconciliations(dossier_id)
             if history:

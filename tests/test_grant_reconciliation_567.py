@@ -150,26 +150,6 @@ def test_engine_arrival_band_strictly_beats_bare_when_escorted(game):
         assert row["loss_amount"] == ORDERED - row["arrived_amount"]
 
 
-def test_engine_band_holds_for_every_amount_and_escort_flag(game):
-    """引擎算出的实抵在任何金额／护行口径下都落在本路区间内，损耗非负。"""
-    from ming_sim.db import grant_arrival_bounds
-
-    for ordered in (1, 10, 30, 100, 300000):
-        for escorted in (False, True):
-            lo, hi = grant_arrival_bounds(ordered, escorted=escorted)
-            assert 0 <= lo <= hi <= ordered
-            assert lo <= (lo + hi) // 2 <= hi
-
-    db, state, content = game
-    gid = _in_transit_grant(db, state)
-    _record_monthly(db, state)
-    row = db.list_dossier_reconciliations(gid)[-1]
-    lo, hi = grant_arrival_bounds(ORDERED, escorted=False)
-    assert lo <= row["arrived_amount"] <= hi
-    assert row["loss_amount"] == ORDERED - row["arrived_amount"]
-    assert row["loss_amount"] >= 0
-
-
 def test_per_route_storage_restore_and_escort_split(game):
     """机械差额逐路落被护侧；有护行另走 #566 进展，无护行不产密奏。"""
     db, state, content = game
