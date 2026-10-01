@@ -24,6 +24,7 @@ def apply_person_changes(
 ) -> List[Dict[str, object]]:
     import json
 
+    import ming_sim.entities.character.appointment as office_appointment
     from ming_sim.appointment_tenure import appointment_tenure_from
     from ming_sim.person_archive_contract import (
         PERSON_ALLEGIANCE_CHANGE_WAYS,
@@ -31,7 +32,6 @@ def apply_person_changes(
         normalize_reason_code,
         resolve_person_transition,
     )
-    from ming_sim.entities.character.appointment import apply_office_appointment
     from ming_sim.issues import (
         _admit_transit_departure,
         _load_pending_gate_valid_regions,
@@ -360,7 +360,7 @@ def apply_person_changes(
                     continue
                 result = project_appointment_result(
                         item,
-                        apply_office_appointment(
+                        office_appointment.apply_office_appointment(
                             db,
                             state,
                             content,
@@ -439,7 +439,7 @@ def apply_person_changes(
                 }
             result = project_appointment_result(
                 item,
-                apply_office_appointment(
+                office_appointment.apply_office_appointment(
                     db,
                     state,
                     content,

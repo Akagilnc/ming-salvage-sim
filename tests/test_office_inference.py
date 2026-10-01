@@ -277,7 +277,7 @@ def test_sync_restores_office_region_from_character_offices(tmp_path):
 
 def test_appointment_seat_identity_reuses_local_and_strips_central(game):
     """一次任职 resolved seat：地方同职省略 region 续任不跨省挤位；中央夹带 region 归一空。"""
-    from ming_sim.issues import _canonical_appointment_fields
+    from ming_sim.entities.character.appointment import _canonical_appointment_fields
 
     db, state, content = game
     rows = db.conn.execute(

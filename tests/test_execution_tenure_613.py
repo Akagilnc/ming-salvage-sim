@@ -13,7 +13,7 @@ def _ministers(db, n=4):
 
 def _set_tenure(db, name, tenure, office=None):
     """Write character_offices.appointment_tenure via the production scope helper."""
-    from ming_sim.issues import _appointment_tenure_scope
+    from ming_sim.entities.character.appointment import _appointment_tenure_scope
     row = db.conn.execute('SELECT office, office_type FROM characters WHERE name=?', (name,)).fetchone()
     target_office = office or str(row['office'] or name)
     with _appointment_tenure_scope(db, tenure):

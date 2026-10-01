@@ -283,63 +283,6 @@ def _payload_owned_dossier_for_origin(db: GameDB, origin_ref: object) -> Optiona
     return {**row, "payload": payload}
 
 
-def _appointment_region_id(payload: Dict[str, object]) -> str:
-    """Typed 任所 from appointment payload keys; never inferred from title/location."""
-    return str(
-        payload.get("region_id")
-        or payload.get("任所")
-        or payload.get("辖区")
-        or payload.get("office_region")
-        or ""
-    ).strip()
-
-
-def _canonical_appointment_fields(
-    payload: Dict[str, object], *, current_office_type: str = "", llm_config=None,
-) -> tuple[str, str, str, str]:
-    """Canonical fields consumed by both appointment apply and payload dedup.
-
-    Fourth element is typed region_id before seat resolve. Non-local office
-    types always normalize to empty — caller-stuffed region must not mint a
-    central seat identity. Local bare titles still carry raw region here;
-    :func:`_resolve_appointment_seat` turns that into the once-per-appointment
-    resolved seat for write / dedup / displace.
-    """
-    office = normalize_office(str(payload.get("office") or payload.get("new_office") or ""))
-    office_type = resolve_office_type_preserving_title(
-        office,
-        str(payload.get("office_type") or payload.get("new_office_type") or ""),
-        current_office_type,
-        llm_config,
-    )
-    raw_region = _appointment_region_id(payload)
-    if office_type not in GameDB._LOCAL_ARCHIVE_OFFICE_TYPES:
-        return office, office_type, appointment_tenure_from(payload), ""
-    return office, office_type, appointment_tenure_from(payload), raw_region
-
-
-def _resolve_appointment_seat(
-    db: GameDB,
-    *,
-    name: object = "",
-    office: object,
-    office_type: object,
-    region_id: object = "",
-) -> str:
-    """Once-per-appointment resolved seat via existing typed 任所 helper.
-
-    Local same-office continuation reuses character_offices.region_id when the
-    caller omits region; central / non-local always empty; unknown or missing
-    local seat still raises OfficeAppointmentRejection from the helper.
-    """
-    return db._require_local_office_region(
-        name=name,
-        office=office,
-        office_type=office_type,
-        region_id=region_id,
-    )
-
-
 def _payload_owned_person_duplicate(
     db: GameDB,
     item: Dict[str, object],
@@ -347,6 +290,10 @@ def _payload_owned_person_duplicate(
     current_office_type: str = "",
     llm_config=None,
 ) -> bool:
+    from ming_sim.entities.character.appointment import (
+        _canonical_appointment_fields,
+        _resolve_appointment_seat,
+    )
     dossier = _payload_owned_dossier_for_origin(db, item.get("origin_ref") or item.get("来源引用"))
     if dossier is None or dossier.get("action_type") not in {"appointment", "dismiss_assignment"}:
         return False
@@ -2983,6 +2930,7 @@ def _pending_person_changes_block_event_gate(
     """
     if not pending_person_changes or not ev.trigger_gate:
         return False
+    from ming_sim.entities.character.appointment import _is_exclusive_office
     pending_fields: Dict[str, Dict[str, str]] = {}
     pending_power_fields: Dict[str, Dict[str, int]] = {}
     shadow_rows = (
@@ -4595,122 +4543,6 @@ def _emit_pairing_warnings(new_row, effect: object, sink: Optional[List[str]] = 
             sink.append(w)
 
 
-# 独占实职关键词：office 分项以此结尾者视为「一人一缺」，须顶替去重。
-# 群体职（大学士/侍郎/郎中/主事/御史/翰林等）不在内，可多员并存。
-_EXCLUSIVE_OFFICE_SUFFIXES = (
-    "首辅", "次辅", "尚书", "总督", "巡抚", "总兵", "督师", "经略", "提督",
-)
-
-
-def _is_exclusive_office(part: str) -> bool:
-    """office 单个分项是否独占实职。南京XX为留都缺，与京职互不冲突，单独算一缺。"""
-    return any(part.endswith(suf) for suf in _EXCLUSIVE_OFFICE_SUFFIXES)
-
-
-def _displace_duplicate_offices(
-    db: GameDB,
-    content: Optional[GameContent],
-    new_holder: str,
-    new_office: str,
-    *,
-    region_id: str = "",
-    commit: bool = True,
-) -> List[str]:
-    """新任者 new_holder 拿到 new_office 后，把其中每个独占实职分项从其他 active 官员
-    office 里剔除，避免双缺官。返回被腾出的 (旧任者:职) 描述列表。
-
-    ``region_id`` 必须是一次任职的 resolved seat（经 _resolve_appointment_seat /
-    character_offices），不是调用方原始字符串。中央 resolved 为空 → 按 office
-    文字挤位；地方 resolved 非空 → 仅同 seat 互挤（同名巡抚跨省不顶替）。
-    """
-    new_parts = [p for p in normalize_office(new_office).split(",") if _is_exclusive_office(p)]
-    if not new_parts:
-        return []
-    new_seat = str(region_id or "").strip()
-    displaced: List[str] = []
-    displaced_names: set[str] = set()  # #9 cmr R1：被顶替者去重，循环后逐派系重算 leverage。
-    rows = db.conn.execute(
-        "SELECT name, office FROM characters WHERE status='active' AND power_id='ming' AND name!=?",
-        (new_holder,),
-    ).fetchall()
-    for row in rows:
-        holder_parts = [p.strip() for p in str(row["office"]).split(",") if p.strip()]
-        # Seat-aware exclusive collision: resolved local seat only bumps the
-        # same seat; empty resolved seat is central identity (title-only).
-        if new_seat:
-            holder_seat = db.character_office_region(row["name"])
-            if holder_seat != new_seat:
-                continue
-        conflicting = [p for p in holder_parts if p in new_parts]
-        if not conflicting:
-            continue  # 此人不占同名独缺
-        kept = [p for p in holder_parts if p not in conflicting]
-        displaced_names.add(row["name"])
-        for lost in conflicting:
-            displaced.append(f"{row['name']}:{lost}")
-        fully_displaced = not kept
-        new_holder_office = "听用候铨" if fully_displaced else ",".join(kept)
-        # 剔掉一个分项后,保留官职对应的 office_type 可能变了(如剔「兵部尚书」后只剩「左都御史」=都察院)。
-        # 若独占实职被完全腾空,旧任仍 active,但其名分必须落入人才池的「听用候铨」,
-        # 不能留下 active + 空 office 的半身份（ADR 0009 S5）。
-        old_type_row = db.conn.execute(
-            "SELECT office_type FROM characters WHERE name=?", (row["name"],)).fetchone()
-        old_type = old_type_row["office_type"] if old_type_row else ""
-        new_type = (
-            "身名分"
-            if fully_displaced
-            else infer_office_type_from_office(new_holder_office, old_type, db.llm_config)
-        )
-        # 排挤后 character_offices / 内存 office_region 与 characters 同事务同步：
-        # 全顶替 → 名分，备档删除、任所清空；部分保留 → 余职 + 原 seat 入 record。
-        # 内存 seat 必须以备档真源对齐（record 后可能因非地方 office_type 钳空）。
-        retained_seat = "" if fully_displaced else str(
-            db.character_office_region(row["name"]) or ""
-        ).strip()
-        if fully_displaced:
-            db.conn.execute(
-                "UPDATE characters SET office=?, office_type=?, status_reason=?, reason_code=? WHERE name=?",
-                (new_holder_office, new_type, "被顶替", "被顶替", row["name"]),
-            )
-            db.set_character_transit(str(row["name"]), content=content, commit=False)
-        else:
-            db.conn.execute(
-                "UPDATE characters SET office=?, office_type=? WHERE name=?",
-                (new_holder_office, new_type, row["name"]),
-            )
-        db._record_character_office(
-            row["name"], new_holder_office, new_type, "被顶替", region_id=retained_seat,
-        )
-        archived_seat = str(db.character_office_region(row["name"]) or "").strip()
-        if content is not None and row["name"] in content.characters:
-            ch = content.characters[row["name"]]
-            ch.office = new_holder_office
-            ch.office_type = new_type
-            ch.office_region = archived_seat
-            if fully_displaced:
-                ch.status_reason = "被顶替"
-                ch.reason_code = "被顶替"
-    # #9 cmr R1：被顶替者的 office_type 经上方裸 UPDATE 改了（全顶替→身名分=0 权重），绕过了
-    # set_character_office 钩子，故其所属派系（常与新任者异派系）的 leverage 须在此补重算，否则
-    # 残留偏高、违 #9 不变式。新任者自身派系已由 set_character_office 钩子重算，这里只补被顶替者。
-    # commit 前调用——recompute 读当前在朝成员、不内部 commit，正反映刚改完的 office_type；
-    # 绝对幂等（非白名单 return、重复无害）。去重后逐派系各调一次。
-    displaced_factions = set()
-    for dn in displaced_names:
-        frow = db.conn.execute(
-            "SELECT faction FROM characters WHERE name=?", (dn,)
-        ).fetchone()
-        # 空/None faction 提前滤掉（recompute_faction_leverage("") 虽被白名单校验 no-op，
-        # 但提前过滤免去无意义调用，集合也不残留空串。线上 R5 gemini medium。
-        if frow is not None and frow["faction"]:
-            displaced_factions.add(str(frow["faction"]))
-    for fac in displaced_factions:
-        db.recompute_faction_leverage(fac)
-    if commit:
-        db.conn.commit()
-    return displaced
-
-
 def _snapshot_person_write_state(db: GameDB, content: Optional[GameContent]):
     character_rows = [
         dict(row)
@@ -4933,38 +4765,6 @@ def sanitize_delta_shape(extracted: dict) -> tuple[dict, list[tuple[str, dict, s
 def validate_delta_shape(extracted: dict) -> None:
     """Validate unsplittable delta shape; split-capable bad items are ADR0015 rejections."""
     sanitize_delta_shape(extracted)
-
-
-@contextmanager
-def _appointment_tenure_scope(db: GameDB, appointment_tenure: str):
-    previous_tenure = getattr(db.conn, "_appointment_tenure", "真除")
-    db.conn._appointment_tenure = appointment_tenure
-    try:
-        yield
-    finally:
-        db.conn._appointment_tenure = previous_tenure
-
-
-def _office_appointment_failure(
-    name: str,
-    new_office: str,
-    exc: BaseException,
-    *,
-    kind: str = "",
-    reason_suffix: str = "",
-    source: Provenance = Provenance.system_simulation,
-) -> Dict[str, object]:
-    """Map known appointment write failures to typed rejection categories.
-
-    Category comes only from typed exception attributes — never from message text.
-    """
-    return RejectedItem(
-        item={"name": name, "new_office": new_office, **({"kind": kind} if kind else {})},
-        reason=f"落库失败：{exc}{reason_suffix}",
-        category=getattr(exc, "category", None) or "invalid_transition",
-        source=source,
-    )
-
 
 
 def _apply_levy_driven_transfers(

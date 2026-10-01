@@ -930,7 +930,7 @@ def test_derived_release_restores_when_post_office_helper_raises(game, monkeypat
         content.characters[name].status = "imprisoned"
         content.characters[name].office = ""
         before_logs = db.conn.execute("SELECT COUNT(*) FROM person_logs").fetchone()[0]
-        monkeypatch.setattr(issues, "_displace_duplicate_offices", fail_after_office_write)
+        monkeypatch.setattr(office_appointment, "_displace_duplicate_offices", fail_after_office_write)
 
         with pytest.raises(RuntimeError, match="simulated post-office failure"):
             settle_delta(state, db, {'人物变更': [{'name': name, 'origin_ref': '盘面自发', '动作': '任命', 'office': '陕西总督', 'office_type': '地方', 'region_id': 'shaanxi', 'reason': '查明旧案后起用'}]}, SettlementContext(content=content))
@@ -1731,7 +1731,7 @@ def test_reappoint_rollback_restores_character_reason(game, monkeypatch):
     # 收敛点，#1059），失败注入点随之——set_character_office 的 DB 写与 read-back 已在其前跑完。
     def boom(*_a, **_k):
         raise RuntimeError("post-readback failure")
-    monkeypatch.setattr(issues, "resolve_office_type_preserving_title", boom)
+    monkeypatch.setattr(office_appointment, "resolve_office_type_preserving_title", boom)
 
     with pytest.raises(RuntimeError, match="post-readback failure"):
         settle_delta(state, db, {'人物变更': [{'name': name, 'origin_ref': '盘面自发', '动作': '任命', 'office': '陕西总督', 'office_type': '地方', 'region_id': 'shaanxi', 'reason': '起用'}]}, SettlementContext(content=content))
@@ -1874,7 +1874,7 @@ def test_legacy_office_pollution_resolves_transit_to_region_id(game):
 def test_displaced_holder_transit_to_cleared(game):
     """5b r7（codex-b R1）：顶替全腾缺时，被挤下来的旧任若正在赴任途中，transit_to 须清——
     否则人才池里「听用候铨」的他还挂着去老职位的路线（三面同步 stale）。"""
-    from ming_sim.issues import _displace_duplicate_offices
+    from ming_sim.entities.character.appointment import _displace_duplicate_offices
     db, state, content = game
     names = [
         r["name"] for r in db.conn.execute(

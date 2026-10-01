@@ -3,6 +3,7 @@ import json
 import pytest
 
 from ming_sim import issues as issue_engine
+import ming_sim.entities.character.appointment as office_appointment
 from ming_sim.settlement import SettlementContext, settle_delta
 from ming_sim.settlement.views import rejected_view, view
 
@@ -135,14 +136,14 @@ def test_failed_dossier_reappointment_rolls_back_audit_and_sequence(game, monkey
         raise RuntimeError("simulated post-office-write failure")
 
     monkeypatch.setattr(
-        issue_engine, "_displace_duplicate_offices", fail_after_office_write
+        office_appointment, "_displace_duplicate_offices", fail_after_office_write
     )
     try:
         db.apply_dossier_promulgation(
             state, dossier_id, "promulgated", content=content,
         )
-    except ValueError as exc:
-        assert str(exc) == "任免案卷载荷物化失败"
+    except RuntimeError as exc:
+        assert str(exc) == "simulated post-office-write failure"
     else:
         raise AssertionError("dossier materialization failure did not propagate")
 
