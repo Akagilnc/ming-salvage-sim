@@ -473,6 +473,7 @@ def _dispatch_effects(
     ordered_effect_event_ids = {field: [] for field in EMPTY_EXTRACTION}
     effect_sequence: list[tuple[dict[str, object], dict[str, list[tuple[str, object]]], dict[str, list[str]]]] = []
     accepted_effect = False
+    accepted_event_ids: list[str] = []
     for item, event_id, clean in clean_items:
         if event_id in rejected_events:
             rejected.append(RejectedItem(
@@ -481,6 +482,8 @@ def _dispatch_effects(
             ))
             continue
         accepted_effect = True
+        if event_id:
+            accepted_event_ids.append(event_id)
         step_extraction, step_ordered, step_event_ids = _effect_extraction_from_clean(
             clean, event_id, empty_extraction=EMPTY_EXTRACTION,
         )
@@ -500,11 +503,11 @@ def _dispatch_effects(
     if not accepted_effect:
         return SectionResult(applied=[], rejected=rejected)
     # 归一器按字段登记信封归属，只声明「事件结局」这类单个字典字段时不登记该键；
-    # 事件身份由**信封自身**的 event_id 决定，故把信封 id 一并交落账层（同一权威
-    # 声明，非第二来源），供按事件归属结局的写口使用。
+    # 事件身份由**已被接受的信封**自身的 event_id 决定。被预检拒收的信封已经
+    # 退出本批效果，其身份不得再交给亲裁写口。
     report = apply_score_extraction(
         db, state, extraction, content=db.content,
-        declared_effect_event_ids=[event_id for _, event_id, _ in clean_items],
+        declared_effect_event_ids=accepted_event_ids,
         open_affair_ids_at_input=set(refs.get("affairs", ())),
         dossier_ids_at_input=set(refs.get("dossiers", ())),
         secret_dossier_ids_at_input=set(refs.get("secret_dossiers", ())),

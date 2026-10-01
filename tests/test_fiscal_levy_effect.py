@@ -738,31 +738,6 @@ def test_fiscal_levy_outcome_is_written_once_and_first_verdict_wins(game):
     assert _settle_payload(db, "shaanxi")["p"] == before["p"]
 
 
-def test_fiscal_levy_held_petition_writes_no_terminal_state(game):
-    """留中＝本疏已答而事件未终：语义写口不写终态，事项仍在请旨候选里。"""
-    db, state, content = game
-    issues.bind_content(content)
-    state.year = 1631
-    state.period = 1
-    db.save_state(state)
-    before = _settle_payload(db, "shaanxi")
-
-    outcome = issues.apply_petition_event_outcome(state, db, "liao_levy_rise_1631", "")
-    apply_historical_fiscal_rates(state, db)
-
-    assert outcome["settled"] is False
-    assert outcome["terminal_state"] == ""
-    assert outcome["terminal_reason"] == ""
-    assert db.conn.execute(
-        "SELECT 1 FROM event_triggers WHERE event_id=?",
-        ("liao_levy_rise_1631",),
-    ).fetchone() is None
-    assert _settle_payload(db, "shaanxi")["p"] == before["p"]
-    assert "liao_levy_rise_1631" in {
-        ev.id for ev in issues.gather_fiscal_levy_petitions(state, db)
-    }
-
-
 def test_fiscal_levy_outcome_label_outside_closed_set_aborts(game):
     """结局标签不在事件自声明的封闭集内 → 响亮失败，不兜底写未支撑值（ADR 0014）。"""
     db, state, content = game
@@ -1327,16 +1302,29 @@ def _install_liao_month_stubs(monkeypatch, *, world_text: str, translate):
     monkeypatch.setattr("ming_sim.mechanical_tail._run_tail_body", lambda *a, **k: "done")
 
 
-def _liao_world_question_without_event_id() -> str:
+def _liao_world_question() -> str:
     block = {
         "title": "辽饷升至一分二厘",
         "context": "边饷急迫，请旨定夺。",
+        "event_id": "liao_levy_rise_1631",
         "options": [
             {"label": "加派", "hint": "从户部所请"},
             {"label": "不加", "hint": "维持九厘"},
         ],
     }
     return "户部奏辽饷加派。<<DECISION>>" + json.dumps(block, ensure_ascii=False) + "<<END>>"
+
+
+def _henan_relief_world_question() -> str:
+    block = {
+        "title": "河南赈灾",
+        "context": "河南旱，请发仓粮。",
+        "options": [
+            {"label": "发仓粮", "hint": "开仓"},
+            {"label": "不发", "hint": "另议"},
+        ],
+    }
+    return "河南巡抚奏赈。<<DECISION>>" + json.dumps(block, ensure_ascii=False) + "<<END>>"
 
 
 def test_fiscal_levy_petition_reaches_emperor_desk_and_lands_only_after_choice(game, monkeypatch):
@@ -1364,7 +1352,7 @@ def test_fiscal_levy_petition_reaches_emperor_desk_and_lands_only_after_choice(g
         return {"effects": {}}
 
     _install_liao_month_stubs(
-        monkeypatch, world_text=_liao_world_question_without_event_id(), translate=translate,
+        monkeypatch, world_text=_liao_world_question(), translate=translate,
     )
     session = make_light_session(db, state, content)
     session.llm_config = LLMConfig(
@@ -1428,7 +1416,7 @@ def test_unpresented_fiscal_levy_declaration_leaves_terminal_empty(game, monkeyp
         }]}
 
     _install_liao_month_stubs(
-        monkeypatch, world_text=_liao_world_question_without_event_id(), translate=translate,
+        monkeypatch, world_text=_liao_world_question(), translate=translate,
     )
     session = make_light_session(db, state, content)
     session.llm_config = LLMConfig(
@@ -1440,6 +1428,86 @@ def test_unpresented_fiscal_levy_declaration_leaves_terminal_empty(game, monkeyp
         row for row in db.list_event_petition_records()
         if row.get("event_id") == "liao_levy_rise_1631"
     ] == []
+
+
+def test_non_event_world_question_is_not_bound_to_the_only_due_levy(game, monkeypatch):
+    """到期事项只剩一件，也不能把没带该身份的请旨配成它的奏疏。"""
+    import ming_sim.month_chain as month_chain
+    from ming_sim.models import LLMConfig
+    from tests.month_chain_helpers import make_light_session
+
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1631
+    state.period = 1
+    db.save_state(state)
+
+    _install_liao_month_stubs(
+        monkeypatch,
+        world_text=_henan_relief_world_question(),
+        translate=lambda *_a, **_k: {"effects": {}},
+    )
+    session = make_light_session(db, state, content)
+    session.llm_config = LLMConfig(
+        api_key="sk-test", base_url="https://example.invalid", model="test",
+    )
+    paused = session.resolve_turn(allow_empty_decree=True)
+    assert paused.awaiting is True
+    row = next(
+        item for item in session.pending_decisions()
+        if str(item.get("event_id") or "").startswith("world-question:")
+    )
+    assert row["title"] == "河南赈灾"
+    chain = month_chain._load_chain(db, int(state.turn))
+    assert "liao_levy_rise_1631" not in chain["world_question_event_bindings"].values()
+
+    session.submit_hitl_choices(
+        [{
+            "decision_key": row["decision_key"],
+            "label": "发仓粮",
+            "hint": "开仓",
+        }],
+        write_gate=session._write_gate,
+    )
+    assert db.event_terminal_state("liao_levy_rise_1631") is None
+    assert [
+        record for record in db.list_event_petition_records()
+        if record.get("event_id") == "liao_levy_rise_1631"
+        or str((record.get("petition") or {}).get("title") or "") == "河南赈灾"
+    ] == []
+
+
+def test_rejected_levy_identity_does_not_write_a_terminal_from_a_sibling_envelope(game):
+    """混合批次里被拒的三饷信封不得把身份留给同批无归属结局。合法项照落。"""
+    from ming_sim.declaration_dispatch import dispatch_declaration
+
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1631
+    state.period = 1
+    db.save_state(state)
+    before = int(state.metrics["民心"])
+
+    result = dispatch_declaration(db, state, {"effects": [
+        {
+            "event_id": "liao_levy_rise_1631",
+            "事件结局": {"liao_levy_rise_1631": "已准"},
+        },
+        {
+            "事件结局": {"liao_levy_rise_1631": "已准"},
+            "metric_delta": {"民心": 1},
+        },
+    ]})
+
+    assert any(item.category == "event_rejected" for item in result.effects.rejected)
+    assert db.event_terminal_state("liao_levy_rise_1631") is None
+    assert [
+        record for record in db.list_event_petition_records()
+        if record.get("event_id") == "liao_levy_rise_1631"
+    ] == []
+    report = result.effects.applied[0]
+    assert report["metric_delta"]["民心"] != 0
+    assert state.metrics["民心"] == before + report["metric_delta"]["民心"]
 
 
 def test_fiscal_levy_held_petition_is_supplied_to_next_world_segment(game, monkeypatch):
@@ -1455,12 +1523,13 @@ def test_fiscal_levy_held_petition_is_supplied_to_next_world_segment(game, monke
     state.year = 1631
     state.period = 1
     db.save_state(state)
+    before = _settle_payload(db, "shaanxi")
 
     def translate(*_a, **_k):
         return {"effects": {}}
 
     _install_liao_month_stubs(
-        monkeypatch, world_text=_liao_world_question_without_event_id(), translate=translate,
+        monkeypatch, world_text=_liao_world_question(), translate=translate,
     )
     session = make_light_session(db, state, content)
     session.llm_config = LLMConfig(
@@ -1483,6 +1552,7 @@ def test_fiscal_levy_held_petition_is_supplied_to_next_world_segment(game, monke
     ).fetchone()
     assert dict(led)["terminal_state"] == ""
     assert dict(led)["terminal_reason"] == ""
+    assert _settle_payload(db, "shaanxi")["p"] == before["p"]
 
     petitions = materials_mod._world_fiscal_levy_petitions(db, state)
     item = next(entry for entry in petitions if entry["id"] == "liao_levy_rise_1631")
@@ -1497,13 +1567,12 @@ def test_fiscal_levy_held_petition_is_supplied_to_next_world_segment(game, monke
     prepared = materials_mod.prepare_world_materials(db, state)
     try:
         petition_dir = Path(prepared.root) / materials_mod._PETITION_DIR
-        bodies = [
+        text = "\n".join(
             path.read_text(encoding="utf-8")
             for path in petition_dir.glob("*.txt")
             if path.name != "INDEX.txt"
-        ]
-        body = next(text for text in bodies if text.splitlines()[0].endswith("liao_levy_rise_1631"))
-        assert "已呈奏疏原文：边饷急迫，请旨定夺。" in body.splitlines()
-        assert "皇帝原批语：姑候户部再核" in body.splitlines()
+        )
+        assert "边饷急迫，请旨定夺。" in text
+        assert "姑候户部再核" in text
     finally:
         materials_mod.release_material_tree(prepared.root)

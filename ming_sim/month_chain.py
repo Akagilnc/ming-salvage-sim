@@ -1436,28 +1436,25 @@ def _pin_world_question_event_bindings(
     """推送案头时把事件身份钉进月链（ADR 0115）。
 
     案头行身份保持 ``world-question:{turn}:{idx}``，不把事件 id 写进那一列。
-    事件身份只来自当回合 ``gather_fiscal_levy_petitions`` 的 id 快照：请旨块自带且
-    属于该快照的 event_id 直接钉上。只从 origin_ref 填进来的 id 不是快照回显。
-    缺 id 且只剩一件未绑定的到期事项、也只剩一条未绑定的请旨时，钉这一对。
-    两边都还剩则 fail-loud，不按标题、不静默跳过。钉完之后快照再变也不改这张表。
+    事件身份只来自交接时请旨块自带、且属于当回合
+    ``gather_fiscal_levy_petitions`` 快照的 event_id。只从 origin_ref 填进来的
+    id 不是这份快照。没有这份身份的请旨保持非事件身份：剩余数量不能证明它属于
+    某一到期事项，也不按标题猜配。钉完之后快照再变也不改这张表。
     """
     if isinstance(chain.get("world_question_event_bindings"), dict):
         return
-    from ming_sim.exceptions import SettlementAbort
     from ming_sim.issues import gather_fiscal_levy_petitions
 
     questions = [
         q for q in (chain.get("world_questions") or []) if isinstance(q, dict)
     ]
-    due: List[str] = []
+    due_set: set[str] = set()
     for ev in gather_fiscal_levy_petitions(state, db):
         event_id = str(ev.id or "").strip()
-        if event_id and event_id not in due:
-            due.append(event_id)
-    due_set = set(due)
+        if event_id:
+            due_set.add(event_id)
     bindings: Dict[str, str] = {}
     used: set[str] = set()
-    unbound: List[int] = []
     for idx, question in enumerate(questions):
         desk_key = f"{_WORLD_QUESTION_PREFIX}{turn}:{idx}"
         echoed = str(question.get("event_id") or "").strip()
@@ -1467,19 +1464,6 @@ def _pin_world_question_event_bindings(
         if echoed in due_set and echoed not in used:
             bindings[desk_key] = echoed
             used.add(echoed)
-        else:
-            unbound.append(idx)
-    remaining = [event_id for event_id in due if event_id not in used]
-    if len(unbound) == 1 and len(remaining) == 1:
-        bindings[f"{_WORLD_QUESTION_PREFIX}{turn}:{unbound[0]}"] = remaining[0]
-        unbound = []
-        remaining = []
-    if unbound and remaining:
-        raise SettlementAbort(
-            "世界请旨无法绑定事件身份：到期事项不唯一，且请旨未带该快照内的事件 id",
-            turn=turn,
-            stage="rescript",
-        )
     chain["world_question_event_bindings"] = bindings
 
 

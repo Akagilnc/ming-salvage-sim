@@ -8338,9 +8338,9 @@ def _apply_score_extraction_body(
     # #1892：本批声明显式声明归属（event_id）到三饷事项的效果信封——亲裁结局的写口
     # 候选。集合只由「声明显式 event_id + 该事件确属 fiscal_levy」构成，不含任何
     # 代码推断的事件。来源是 ordered_effect_event_ids（按字段登记的归属）并上
-    # declared_effect_event_ids（各效果信封自带的 event_id）——后者必要，因为归一器
-    # 只在信封含列表/字典字段时登记归属，仅声明「事件结局」时前者为空。两者同出
-    # 一份权威声明，不是第二来源。
+    # declared_effect_event_ids（已被接受的效果信封自带的 event_id）——后者必要，
+    # 因为归一器只在信封含列表/字典字段时登记归属，仅声明「事件结局」时前者为空。
+    # 两者同出一份权威声明，不是第二来源。预检已拒收的信封不在这份名单里。
     petition_declared_ids = {
         event_id
         for declared in (ordered_effect_event_ids or {}).values()

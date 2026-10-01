@@ -417,11 +417,14 @@ _Avoid_: 开放结局、叙事标签
 _Avoid_: 未触发
 
 **触发权归属**:
-一个事件由谁决定发生。非人世界事件（大疫、越阈民变等无人物拍板者）按时间／阈值／触发门由引擎触发并算后果；人物事件（有当事人选择者）引擎不代决定，只作候选交同次世界段模型选。由事件自身的 `auto_trigger` 标记表达——声明它即宣告本事件无人物拍板者。三饷（category=fiscal_levy）是皇帝亲裁，既不由引擎硬触发，也不进人物候选交模型代批；它到点后进世界材料的「请旨事项」目录，由过月模型上疏陈情。事件身份的绑定见 [0115](docs/adr/0115-event-decision-binding-contract.md)。
+一个历史事件由谁决定发生。非人世界事件由引擎按触发门判定，人物事件由当事人决定，三饷由皇帝亲裁。
+_Avoid_: 引擎代人拍板
+机制见 [ADR 0014](docs/adr/0014-historical-event-trigger-and-effect-model.md)、[ADR 0115](docs/adr/0115-event-decision-binding-contract.md)。
 
 **核心事实随终态落**:
-事件的核心物理事实（改国号、疫区人口等 `effect_on_trigger`）只在事件真正触发时落一次库，与终态同事务；没有无条件按日期旁路落账的机制——事件未触发即无此事实。
+事件真正发生时才入账的核心物理事实；未发生则没有这笔事实。
 _Avoid_: 未选择即改国号、按日期旁路
+机制见 [ADR 0014](docs/adr/0014-historical-event-trigger-and-effect-model.md)。
 
 ### Fiscal Substrate
 
