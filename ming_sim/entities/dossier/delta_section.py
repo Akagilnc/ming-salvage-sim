@@ -9,34 +9,36 @@ from __future__ import annotations
 
 from typing import List
 
-from ming_sim.applier import SectionResult
+from ming_sim.applier import section_from_rows
 
 
-def apply_participants(run) -> SectionResult:
+def apply_participants(run):
     from ming_sim.issues import _apply_dossier_participant_items
 
-    run.dossier_participant_results = _apply_dossier_participant_items(
+    rows = _apply_dossier_participant_items(
         run.db, run.state, run.current_extracted,
         items_key="dossier_participants",
         authority_set=run.ctx.dossier_ids_at_input,
         not_in_batch_msg="案卷不在本批可见输入",
     )
-    return SectionResult(applied=[], rejected=[])
+    return section_from_rows(rows, run.ctx.source, category="dossier_participants")
 
 
-def apply_secret_dossier_participants(run) -> SectionResult:
+def apply_secret_dossier_participants(run):
     from ming_sim.issues import _apply_dossier_participant_items
 
-    run.secret_dossier_participant_results = _apply_dossier_participant_items(
+    rows = _apply_dossier_participant_items(
         run.db, run.state, run.current_extracted,
         items_key="secret_dossier_participants",
         authority_set=run.ctx.secret_dossier_ids_at_input,
         not_in_batch_msg="密令案卷不在本批可见输入",
     )
-    return SectionResult(applied=[], rejected=[])
+    return section_from_rows(
+        rows, run.ctx.source, category="secret_dossier_participants",
+    )
 
 
-def apply_executions(run) -> SectionResult:
+def apply_executions(run):
     """执行格终值。
 
     #621 接管窗：正式复核所辖案卷禁并行终值（防第二真源）；所有权查询失败须
@@ -64,38 +66,39 @@ def apply_executions(run) -> SectionResult:
             outcome = str(item.get("outcome") or "").strip()
             if outcome not in {"fulfilled", "degraded", "failed", "transformed"}:
                 raise ValueError("执行结果必须为 fulfilled/degraded/failed/transformed")
-            note = str(item.get("note") or "").strip()
-            if not note:
+            note = item.get("note")
+            note = note if isinstance(note, str) else str(note or "")
+            if not note.strip():
                 raise ValueError("执行说明不能为空")
             # #565：显式 affected_parties 仅校验门闩（契约§5），不驱动机械写路。
             raw_parties = item["affected_parties"] if "affected_parties" in item else None
             if raw_parties is not None and outcome in GameDB._JOINT_LIABILITY_TRIGGERS:
                 run.db.validate_joint_liability_affected_parties(raw_parties, outcome)
-            run.db.record_dossier_execution(
-                dossier_id, outcome, note, run.state.turn, close=True, commit=False,
-            )
-            # #567：S10 结案同源读被护侧对账，经 merge_execution_note 增补（单写口）。
-            run.db.merge_grant_reconciliation_into_execution_note(dossier_id, commit=False)
-            # #619/#622：表报终值旁路——仅 degraded/transformed 挂奏报行；
-            # 变形案载承办人假象（不得回填判官真值）。
-            if outcome in {"degraded", "transformed"}:
-                prior = list(run.db.list_dossier_progress(int(dossier_id)))
-                band, memorial = terminal_report_facade(outcome, prior_reports=prior)
-                run.db.record_dossier_progress(
-                    dossier_id, run.state.turn, band, memorial,
-                    is_terminal=True,
-                    origin=GameDB.DOSSIER_REPORT_ORIGIN_VERDICT,
-                    commit=False,
-                )
-            # 连坐挂载点＝本段落终值笔；禁对 execution_outcome 列事后扫描。
-            run.db.apply_execution_joint_liability(
-                run.state, dossier_id, outcome, reason=note, commit=False,
-            )
-            results.append({"dossier_id": dossier_id, "outcome": outcome})
         except (TypeError, ValueError, KeyError) as exc:
             results.append({
                 "rejected": True, "category": "invalid_transition",
                 "reason": str(exc), "item": item,
             })
-    run.dossier_execution_results = results
-    return SectionResult(applied=[], rejected=[])
+            continue
+        run.db.record_dossier_execution(
+            dossier_id, outcome, note, run.state.turn, close=True, commit=False,
+        )
+        # #567：S10 结案同源读被护侧对账，经 merge_execution_note 增补（单写口）。
+        run.db.merge_grant_reconciliation_into_execution_note(dossier_id, commit=False)
+        # #619/#622：表报终值旁路——仅 degraded/transformed 挂奏报行；
+        # 变形案载承办人假象（不得回填判官真值）。
+        if outcome in {"degraded", "transformed"}:
+            prior = list(run.db.list_dossier_progress(int(dossier_id)))
+            band, memorial = terminal_report_facade(outcome, prior_reports=prior)
+            run.db.record_dossier_progress(
+                dossier_id, run.state.turn, band, memorial,
+                is_terminal=True,
+                origin=GameDB.DOSSIER_REPORT_ORIGIN_VERDICT,
+                commit=False,
+            )
+        # 连坐挂载点＝本段落终值笔；禁对 execution_outcome 列事后扫描。
+        run.db.apply_execution_joint_liability(
+            run.state, dossier_id, outcome, reason=note, commit=False,
+        )
+        results.append({"dossier_id": dossier_id, "outcome": outcome})
+    return section_from_rows(results, run.ctx.source, category="dossier_executions")

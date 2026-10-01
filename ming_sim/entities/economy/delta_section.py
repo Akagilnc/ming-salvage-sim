@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import List
 
-from ming_sim.applier import SectionResult
+from ming_sim.applier import SectionResult, section_from_rows
 
 
 def apply(run, moves: List[object] | None = None, *, index_base: int = 0) -> SectionResult:
@@ -25,6 +25,7 @@ def apply(run, moves: List[object] | None = None, *, index_base: int = 0) -> Sec
     if moves is None:
         moves = list(run.current_extracted.get("economy_moves") or [])
 
+    rows: List[object] = []
     for offset, raw_move in enumerate(moves):
         savepoint = f"economy_affair_{index_base + offset}"
         run.db.conn.execute(f"SAVEPOINT {savepoint}")
@@ -50,14 +51,14 @@ def apply(run, moves: List[object] | None = None, *, index_base: int = 0) -> Sec
             rejected = [row for row in results if row.get("rejected")]
             if rejected:
                 run.db.conn.execute(f"ROLLBACK TO {savepoint}")
-                run.economy_rejections.extend(rejected)
+                rows.extend(rejected)
             else:
-                run.applied_economy.extend(results)
+                rows.extend(results)
             run.db.conn.execute(f"RELEASE {savepoint}")
         except UnauthorizedAffairOriginRef as exc:
             run.db.conn.execute(f"ROLLBACK TO {savepoint}")
             run.db.conn.execute(f"RELEASE {savepoint}")
-            run.economy_rejections.append({
+            rows.append({
                 "rejected": True, "category": "invalid_enum",
                 "reason": str(exc), "item": raw_move,
             })
@@ -65,4 +66,4 @@ def apply(run, moves: List[object] | None = None, *, index_base: int = 0) -> Sec
             run.db.conn.execute(f"ROLLBACK TO {savepoint}")
             run.db.conn.execute(f"RELEASE {savepoint}")
             raise
-    return SectionResult(applied=[], rejected=[])
+    return section_from_rows(rows, run.ctx.source, category="economy_moves")

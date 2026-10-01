@@ -15655,7 +15655,7 @@ class GameDB:
                         payload.get("text") or row.get("decree_text") or "受抚归明"
                     ),
                 }
-                from ming_sim.issues import _apply_person_changes
+                from ming_sim.entities.character.apply import apply_person_changes as _apply_person_changes
                 results = _apply_person_changes(
                     self,
                     state,
@@ -16293,7 +16293,7 @@ class GameDB:
                 office_items.append(office_item)
         if not office_items:
             return
-        from ming_sim.issues import _apply_person_changes
+        from ming_sim.entities.character.apply import apply_person_changes as _apply_person_changes
         prepared: List[Dict[str, object]] = []
         for item in office_items:
             entry = dict(item)
@@ -16846,7 +16846,7 @@ class GameDB:
             if punish_action == "削籍":
                 item["reason_code"] = "获罪削籍"
                 item["reason"] = "获罪削籍"
-            from ming_sim.issues import _apply_person_changes
+            from ming_sim.entities.character.apply import apply_person_changes as _apply_person_changes
             results = _apply_person_changes(
                 self,
                 state,
@@ -21841,7 +21841,7 @@ class GameDB:
         if reject_if_same_period and any(ln.startswith(stamp) for ln in lines):
             return False  # 本回合已推过一步，拒
         lines = [ln for ln in lines if not ln.startswith(stamp)]  # 去掉当月旧行
-        lines.append(f"{stamp}{note.strip()}")
+        lines.append(f"{stamp}{note}")
         # 按〔年月〕戳排序，保证时间线顺序（同月替换后不致错位）
         def _stamp_key(ln: str):
             import re as _re

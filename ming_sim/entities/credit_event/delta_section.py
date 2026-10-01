@@ -12,17 +12,23 @@ from __future__ import annotations
 
 from typing import Dict, List
 
-from ming_sim.applier import SectionResult
+from ming_sim.applier import SectionResult, section_from_rows
 
 
-def _source_minus_rejections(
-    originals: object, rejections: object,
-) -> List[Dict[str, object]]:
+def _placed(run, *names: str) -> SectionResult:
+    acc = SectionResult(applied=[], rejected=[])
+    for name in names:
+        found = run.outcomes.get(name)
+        if found is not None:
+            acc = acc.merge(found)
+    return acc
+
+
+def _source_minus_rejections(originals: object, rejected) -> List[Dict[str, object]]:
     """源项减去被拒项（按对象同一性，非字段相等）。"""
     rejected_obj_ids = {
-        id(r.get("item"))
-        for r in (rejections or [])
-        if isinstance(r, dict) and isinstance(r.get("item"), dict)
+        id(item.item) for item in rejected
+        if isinstance(getattr(item, "item", None), dict)
     }
     out: List[Dict[str, object]] = []
     for item in originals or []:
@@ -32,41 +38,49 @@ def _source_minus_rejections(
     return out
 
 
-def apply(run) -> SectionResult:
+def _resolution_rows(resolutions) -> List[Dict[str, object]]:
+    if isinstance(resolutions, dict):
+        rows: List[Dict[str, object]] = []
+        for key in ("fulfillment", "dispositions", "urge"):
+            for row in resolutions.get(key) or []:
+                if isinstance(row, dict):
+                    rows.append(row)
+        return rows
+    return [row for row in (resolutions or []) if isinstance(row, dict)]
+
+
+def apply(run):
     from ming_sim.credit_events import resolve_credit_events_from_extraction
 
-    issue_sum = run.issue_summary if isinstance(run.issue_summary, dict) else {}
+    person = _placed(run, "person_pre", "person_issue", "person_post")
+    issue = run.issue_result
     credit_applied: Dict[str, object] = {
-        # 返回契约仅 {dossier_id, outcome}；兑付语境承接 extracted 源项（含 note）
-        # minus 被拒项，与 economy_moves 同形，禁外溢返回契约。
         "dossier_executions": _source_minus_rejections(
-            run.current_extracted.get("dossier_executions"), run.dossier_execution_results,
+            run.current_extracted.get("dossier_executions"),
+            _placed(run, "dossier_executions").rejected,
         ),
-        # cascade_echo：合成级联回声（放归/被顶替等）在生产点打标，此处唯一滤除；
-        # 禁在 credit_events 另设第二闸或盯 derived_from 文本。
         "人物变更": [
-            r for r in run.applied_person_changes
-            if isinstance(r, dict) and not r.get("rejected") and not r.get("cascade_echo")
+            row for row in person.applied
+            if isinstance(row, dict) and not row.get("rejected") and not row.get("cascade_echo")
         ],
         "economy_moves": _source_minus_rejections(
-            run.current_extracted.get("economy_moves"), run.economy_rejections,
+            run.current_extracted.get("economy_moves"),
+            _placed(run, "economy").rejected,
         ),
         "fiscal_creates": _source_minus_rejections(
             run.current_extracted.get("fiscal_creates"),
-            [r for r in run.applied_fiscal_creates
-             if isinstance(r, dict) and r.get("rejected")],
+            _placed(run, "fiscal_creates").rejected,
         ),
         "fiscal_changes": _source_minus_rejections(
             run.current_extracted.get("fiscal_changes"),
-            [r for r in run.applied_fiscal
-             if isinstance(r, dict) and r.get("rejected")],
+            _placed(run, "fiscal_changes").rejected,
         ),
-        "cancels": [
-            r for r in (issue_sum.get("cancels") or [])
-            if isinstance(r, dict) and not r.get("rejected")
-        ],
+        "cancels": list(issue.cancels) if issue is not None else [],
     }
-    run.credit_event_resolutions = resolve_credit_events_from_extraction(
+    resolutions = resolve_credit_events_from_extraction(
         run.db, run.state, credit_applied, commit=False,
     )
-    return SectionResult(applied=[], rejected=[])
+    return section_from_rows(
+        _resolution_rows(resolutions), run.ctx.source,
+        category="credit_event_resolutions",
+    )

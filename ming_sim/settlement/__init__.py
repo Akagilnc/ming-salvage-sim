@@ -25,7 +25,6 @@ from ming_sim.settlement.run import (
     SettlementContext,
     SettlementRun,
     settle_delta,
-    to_rejected_items,
 )
 
 __all__ = [
@@ -38,5 +37,4 @@ __all__ = [
     "ordered_sections",
     "section_specs",
     "settle_delta",
-    "to_rejected_items",
 ]

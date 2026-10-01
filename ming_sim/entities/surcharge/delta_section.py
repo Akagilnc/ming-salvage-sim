@@ -7,20 +7,21 @@
 
 from __future__ import annotations
 
-from ming_sim.applier import SectionResult
+from ming_sim.applier import section_from_rows
 
 
-def apply(run) -> SectionResult:
+def apply(run):
     from ming_sim.issues import _apply_surcharge_decrees
 
     applied_surcharges, surcharge_rejections = _apply_surcharge_decrees(
         run.db, run.current_extracted.get("surcharge_decrees") or [],
-        commit=run.commit_now,
+        commit=False,
     )
-    run.applied_surcharges.extend(applied_surcharges)
-    run.surcharge_rejections.extend(surcharge_rejections)
     run.surcharge_claims = {
         (str(item.get("origin_ref") or ""), str(item.get("region_id") or ""))
         for item in applied_surcharges
     }
-    return SectionResult(applied=[], rejected=[])
+    return section_from_rows(
+        [*applied_surcharges, *surcharge_rejections],
+        run.ctx.source, category="surcharge_decrees",
+    )

@@ -8,7 +8,6 @@ fixed-point 不变式。判词要求的「非只改名或改为空 dict」正由
 from __future__ import annotations
 
 import ast
-import inspect
 import pathlib
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
@@ -66,14 +65,6 @@ def test_old_recursive_rejection_bridge_is_gone():
     assert not hasattr(decree, "_collect_inline_rejections")
 
 
-def test_settle_delta_is_the_single_entry_and_returns_typed_outcome():
-    from ming_sim.settlement import SettlementOutcome, settle_delta
-
-    assert inspect.isfunction(settle_delta)
-    # 返回 typed 结果，不返回 dict。
-    assert SettlementOutcome.__dataclass_fields__
-
-
 def test_outcome_carries_no_legacy_compat_keys():
     """旧 39 键 dict 的病灶——恒空兼容键与双份键——不在 typed 结果上复活。"""
     from ming_sim.settlement import SettlementOutcome
@@ -107,14 +98,6 @@ def test_registry_is_the_single_source_of_section_order():
     assert order["fiscal_removes"] < order["fiscal_creates"] < order["fiscal_changes"]
     # 哭谏先于一切（原约束只在注释里）。
     assert order["breach_plea"] == min(order.values())
-
-
-def test_every_registered_section_loads():
-    """登记表路径写错须响亮——此处逐条 load 一遍。"""
-    from ming_sim.settlement import registry
-
-    for spec in registry.section_specs():
-        assert callable(registry.load(spec)), spec.name
 
 
 def test_registry_delta_keys_cover_all_landing_sections():

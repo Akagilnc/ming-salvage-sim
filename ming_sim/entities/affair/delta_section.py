@@ -9,20 +9,36 @@
 
 from __future__ import annotations
 
-from ming_sim.applier import SectionResult
+from ming_sim.applier import section_from_rows
+from ming_sim.entities.affair import UnauthorizedAffairOriginRef
 
 
-def apply(run) -> SectionResult:
+def apply(run):
+    applied = []
+    rejected = []
     for raw in run.current_extracted.get("affair_declarations") or []:
         try:
             if not isinstance(raw, dict):
                 raise ValueError("事务声明须为对象")
-            run.db.affairs.close_from_declaration(
+            affair_id = run.db.affairs.close_from_declaration(
                 raw, turn=int(run.state.turn),
                 authorized_ids=run.frozen_open_affairs,
             )
+            applied.append({"affair_id": affair_id, "declaration": raw})
+        except UnauthorizedAffairOriginRef as exc:
+            rejected.append({
+                "rejected": True,
+                "category": "unauthorized_affair_origin",
+                "reason": str(exc),
+                "item": {"raw_value": raw},
+            })
         except (TypeError, ValueError, KeyError) as exc:
-            run.shape_rejections.append(
-                ("affair_declarations", {"raw_value": raw}, str(exc)),
-            )
-    return SectionResult(applied=[], rejected=[])
+            rejected.append({
+                "rejected": True,
+                "category": "invalid_shape",
+                "reason": str(exc),
+                "item": {"raw_value": raw},
+            })
+    return section_from_rows(
+        [*applied, *rejected], run.ctx.source, category="affair_declarations",
+    )

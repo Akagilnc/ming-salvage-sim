@@ -12,10 +12,10 @@
 
 from __future__ import annotations
 
-from ming_sim.applier import SectionResult
+from ming_sim.applier import section_from_rows
 
 
-def apply(run) -> SectionResult:
+def apply(run):
     from ming_sim.relations import resolve_relation_edge_events_from_extraction
 
     resolutions = resolve_relation_edge_events_from_extraction(
@@ -25,5 +25,6 @@ def apply(run) -> SectionResult:
             row["name"] for row in run.db.current_court_roster_rows(run.state)
         },
     )
-    run.relation_edge_resolutions = resolutions
-    return SectionResult(applied=[], rejected=[])
+    return section_from_rows(
+        resolutions or [], run.ctx.source, category="relation_edge_event_resolutions",
+    )

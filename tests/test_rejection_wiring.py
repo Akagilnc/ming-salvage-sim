@@ -195,16 +195,15 @@ def test_noncancellable_cancel_rejection_carries_reason(game, monkeypatch, tmp_p
 
 def test_canonicalization_synthesizes_reason_when_producer_omits(game):
     """拒收 canonical 化集中守 ADR「拒收行必带原因」不变式：任何段漏给 reason，
-    落库前合成非空兜底——规则写一处（``to_rejected_items``），新段免疫同类缺陷
+    落库前合成非空兜底——规则写一处（``section_from_rows``），新段免疫同类缺陷
     （ADR 0150 决定 2；fix-coverage drift 处方：集中化，cmr S0 r3）。"""
-    from ming_sim.applier import Provenance, RejectionCollector
-    from ming_sim.settlement.run import to_rejected_items
+    from ming_sim.applier import Provenance, RejectionCollector, section_from_rows
 
     db, state, content = game
     collector = RejectionCollector()
-    for item in to_rejected_items(
-        [{"rejected": True}], Provenance.unknown, report_category="some_section",
-    ):
+    for item in section_from_rows(
+        [{"rejected": True}], Provenance.unknown, category="some_section",
+    ).rejected:
         collector.record("some_section", item, 1)
     collector.flush_to_db(db)
     db.conn.commit()

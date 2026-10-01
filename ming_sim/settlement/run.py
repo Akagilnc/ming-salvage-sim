@@ -4,16 +4,14 @@
 编排器独占事务边界与顺序：段不 commit、不判事务、不自包事务、不做内存态快照
 （ADR 0150 决定 3）。段序真源是 :mod:`ming_sim.settlement.registry`。
 
-拒收形状单一：段把已落项与被拒项交回编排器，编排器在本模块内一处转换成
-canonical :class:`~ming_sim.applier.RejectedItem`——旧 ``decree._collect_inline_rejections``
-递归桥接（含其 ``issue_summary.closes.applied_person_changes`` 硬编码特例）随旧桥
-删除，不复现。
+拒收形状单一：段自己把写口行收成 :class:`~ming_sim.applier.SectionResult`。
+编排器只按登记名摆放这些结果，不再拆混装字典。旧递归桥接不复现。
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Set, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Set, Tuple
 
 from ming_sim.applier import Provenance, RejectedItem, SectionResult
 from ming_sim.settlement import registry
@@ -103,37 +101,9 @@ class SettlementRun:
     current_ordered: Dict[str, List[Tuple[str, object]]] = field(default_factory=dict)
     current_event_ids: Dict[str, List[str]] = field(default_factory=dict)
 
-    # ── 段累加器 ────────────────────────────────────────────────────────
-    applied_metric: Dict[str, int] = field(default_factory=dict)
-    applied_economy: List[Dict[str, object]] = field(default_factory=list)
-    economy_rejections: List[Dict[str, object]] = field(default_factory=list)
-    applied_factions: Dict[str, object] = field(default_factory=dict)
-    faction_rejections: List[Dict[str, object]] = field(default_factory=list)
-    applied_classes: Dict[str, object] = field(default_factory=dict)
-    class_rejections: List[Dict[str, object]] = field(default_factory=list)
-    applied_surcharges: List[Dict[str, object]] = field(default_factory=list)
-    surcharge_rejections: List[Dict[str, object]] = field(default_factory=list)
-    applied_transfers: List[Dict[str, object]] = field(default_factory=list)
-    transfer_rejections: List[Dict[str, object]] = field(default_factory=list)
-    created_armies: List[Dict[str, object]] = field(default_factory=list)
-    region_changes: List[Dict[str, object]] = field(default_factory=list)
-    army_changes: List[Dict[str, object]] = field(default_factory=list)
-    power_changes: List[Dict[str, object]] = field(default_factory=list)
-    applied_absorptions: List[Dict[str, object]] = field(default_factory=list)
-    absorption_rejections: List[Dict[str, object]] = field(default_factory=list)
-    applied_person_changes: List[Dict[str, object]] = field(default_factory=list)
-    applied_fiscal_removes: List[Dict[str, object]] = field(default_factory=list)
-    applied_fiscal_creates: List[Dict[str, object]] = field(default_factory=list)
-    applied_fiscal: List[Dict[str, object]] = field(default_factory=list)
-    applied_secret_orders: List[Dict[str, object]] = field(default_factory=list)
-    dossier_execution_results: List[Dict[str, object]] = field(default_factory=list)
-    dossier_participant_results: List[Dict[str, object]] = field(default_factory=list)
-    secret_dossier_participant_results: List[Dict[str, object]] = field(default_factory=list)
-    authority_change_results: List[Dict[str, object]] = field(default_factory=list)
-    breach_plea_resolutions: List[Dict[str, object]] = field(default_factory=list)
-    issue_summary: Dict[str, object] = field(default_factory=dict)
-    credit_event_resolutions: List[Dict[str, object]] = field(default_factory=list)
-    relation_edge_resolutions: List[Dict[str, object]] = field(default_factory=list)
+    # 段交回的结果，按登记名存放。编排器不另持一份平行账。
+    outcomes: Dict[str, SectionResult] = field(default_factory=dict)
+    issue_result: Optional[IssueSectionResult] = None
 
     # ── 段间共享工具（迁自旧单体入口的同名内联件） ──────────────────────
     def origin_ref_from_result_item(self, item: Optional[Mapping[str, object]]) -> str:
@@ -144,81 +114,6 @@ class SettlementRun:
             turn=int(self.state.turn),
             authorized_ids=self.authorized_open_affairs,
         )
-
-    def apply_normalized_person_changes(
-        self,
-        changes: List[Dict[str, object]],
-        *,
-        origin_ref: str = "",
-        require_origin: bool = True,
-    ) -> List[Dict[str, object]]:
-        from ming_sim.issues import _apply_person_changes
-
-        if not changes:
-            return []
-        results = _apply_person_changes(
-            self.db, self.state, changes,
-            content=self.ctx.content,
-            llm_config=self.ctx.llm_config,
-            external_transaction=self.db.conn.in_transaction,
-            origin_ref=origin_ref,
-            require_origin=require_origin,
-        )
-        if origin_ref:
-            for result in results:
-                result.setdefault("origin_ref", origin_ref)
-        self.applied_person_changes.extend(results)
-        return results
-
-    def apply_person_changes_itemwise(
-        self, changes: List[Dict[str, object]], *, phase: str,
-    ) -> None:
-        """人物项逐条原子落账：坏项只回滚自己那条 savepoint，同批合法项照落。
-
-        代码异常（writer/DB 故障）响亮上抛，不与 LLM 脏项同流（ADR 0005）。
-        """
-        from ming_sim.entities.affair import UnauthorizedAffairOriginRef
-
-        for index, person_change in enumerate(changes):
-            savepoint = f"person_affair_{phase}_{index}"
-            self.db.conn.execute(f"SAVEPOINT {savepoint}")
-            try:
-                origin_ref = self.origin_ref_from_result_item(person_change)
-                results = self.apply_normalized_person_changes(
-                    [dict(person_change)], origin_ref=origin_ref,
-                )
-                if not results or all(result.get("rejected") for result in results):
-                    self.db.conn.execute(f"ROLLBACK TO {savepoint}")
-                self.db.conn.execute(f"RELEASE {savepoint}")
-            except UnauthorizedAffairOriginRef as exc:
-                self.db.conn.execute(f"ROLLBACK TO {savepoint}")
-                self.db.conn.execute(f"RELEASE {savepoint}")
-                self.applied_person_changes.append({
-                    "name": str(person_change.get("name") or "").strip(),
-                    "动作": str(person_change.get("动作") or "").strip(),
-                    "rejected": True, "category": "unauthorized_affair_origin",
-                    "reason": str(exc), "item": dict(person_change),
-                })
-            except Exception:
-                self.db.conn.execute(f"ROLLBACK TO {savepoint}")
-                self.db.conn.execute(f"RELEASE {savepoint}")
-                raise
-
-    def merge_applied_deltas(self, total: dict, applied: dict) -> None:
-        for key, delta in applied.items():
-            if isinstance(delta, dict):
-                previous = total.get(key, {})
-                if not isinstance(previous, dict):
-                    previous = {"satisfaction": previous}
-                for fld, amount in delta.items():
-                    previous[fld] = previous.get(fld, 0) + amount
-                total[key] = previous
-            else:
-                previous = total.get(key, 0)
-                if isinstance(previous, dict):
-                    previous["satisfaction"] = previous.get("satisfaction", 0) + delta
-                else:
-                    total[key] = previous + delta
 
     def ordered_strategic_items(self, field_name: str, event_id: str) -> List[Tuple[str, object]]:
         from ming_sim.issues import _effect_event_ids
@@ -242,98 +137,6 @@ class SettlementRun:
             item for item in self.strategic_new_armies_raw
             if self.declared_new_army_event_by_item.get(id(item), "") == event_id
         ]
-
-    def reject_suppressed_strategic_results(
-        self, event_id: str, event_title: str, reason: str = "",
-    ) -> None:
-        """未触发的战略/外敌事件，其从属战果整组不落主账（逐项留痕）。
-
-        逐项拒收而非整批丢弃：同批独立好项不受牵连（ADR 0015 逐项拒收）。
-        """
-        reason = reason or f"战略/外敌事件「{event_title or event_id}」未触发，战果不落主账"
-        for region_id, raw_changes in self.ordered_strategic_items("region_delta", event_id):
-            self.region_changes.append({
-                "region_id": region_id, "rejected": True,
-                "category": "event_rejected", "reason": reason,
-                "item": {"event_id": event_id, "region_id": region_id, "changes": raw_changes},
-            })
-        for army_id, raw_changes in self.ordered_strategic_items("army_delta", event_id):
-            self.army_changes.append({
-                "army_id": army_id, "rejected": True,
-                "category": "event_rejected", "reason": reason,
-                "item": {"event_id": event_id, "army_id": army_id, "changes": raw_changes},
-            })
-        for power_id, raw_changes in self.ordered_strategic_items("power_updates", event_id):
-            self.power_changes.append({
-                "power_id": power_id, "rejected": True,
-                "category": "event_rejected", "reason": reason,
-                "item": {"event_id": event_id, "power_id": power_id, "changes": raw_changes},
-            })
-        for item in self.event_person_changes(event_id):
-            self.applied_person_changes.append({
-                "name": str(item.get("name") or "").strip(),
-                "动作": str(item.get("动作") or item.get("action") or "").strip(),
-                "rejected": True, "category": "event_rejected",
-                "reason": reason, "item": dict(item),
-            })
-        for item in self.event_new_armies(event_id):
-            raw_item = dict(item) if isinstance(item, dict) else item
-            self.created_armies.append({
-                "id": str(item.get("id") or "").strip() if isinstance(item, dict) else "",
-                "rejected": True, "category": "event_rejected", "reason": reason,
-                "item": {"event_id": event_id, "new_army": raw_item},
-            })
-
-
-# ── 拒收 canonical 化：旧递归桥接的替代（ADR 0150 决定 2） ────────────────────
-
-def to_rejected_items(
-    rows: Sequence[object], source: Provenance, *,
-    report_category: str = "legacy_inline",
-) -> List[RejectedItem]:
-    """把段交回的混形状行拆成 (已落项, canonical 拒收项)。
-
-    段仍可交回含 ``{"rejected": True, ...}`` 的行（旧写口的行形状），但拒收的
-    **归一与留痕**只在这里发生一次：``turn``/``section`` 由框架在报告投影时补，
-    段不携带（ADR 0150 决定 2 项级四字段）。
-    """
-    rejected: List[RejectedItem] = []
-    for row in rows:
-        if not isinstance(row, dict) or not row.get("rejected"):
-            continue
-        reason = str(row.get("reason") or "")
-        rejected.append(RejectedItem(
-            # item_json = 原始 delta 项：producer 带 'item' 键则解包，否则兜底存
-            # 行回显。按 key **存在性**解包（非值类型），覆盖标量/null 原件。
-            item=row["item"] if "item" in row else row,
-            reason=reason or "拒收（段未注明原因）",
-            category=str(row.get("report_category") or row.get("category") or report_category),
-            source=source,
-        ))
-    return rejected
-
-
-# 人物行的**已声明**嵌套拒收面。ADR 0150 决定 2 删掉递归桥接后，嵌套拒收必须由
-# 知道该形状的段落自己交出——这里是显式声明，不是「凡 dict 里带 rejected 就捞」。
-# 键集新增嵌套面时必须在此登记，否则该面的拒收会脱离拒收报告（漏报而非误报）。
-_NESTED_REJECTION_FIELDS = ("backlash_results",)
-
-
-def nested_rejections(
-    rows: Sequence[object], source: Provenance, *,
-    report_category: str = "legacy_inline",
-) -> List[RejectedItem]:
-    """已落项内嵌的拒收面（当前只有易主反噬 ``backlash_results``）。"""
-    out: List[RejectedItem] = []
-    for row in rows:
-        if not isinstance(row, dict) or row.get("rejected"):
-            continue
-        for field_name in _NESTED_REJECTION_FIELDS:
-            nested = row.get(field_name)
-            if isinstance(nested, list):
-                out.extend(to_rejected_items(nested, source, report_category=report_category))
-    return out
-
 
 # ── 编排器 ──────────────────────────────────────────────────────────────────
 
@@ -561,17 +364,65 @@ def split_pre_issue_person_changes(
     return pre, post
 
 
+def _empty() -> SectionResult:
+    return SectionResult(applied=[], rejected=[])
+
+
+def _store(run, name: str, result: SectionResult) -> None:
+    """按登记名收下段结果。指标同键相加；其余段拼接。"""
+    if not isinstance(result, SectionResult):
+        raise RuntimeError(f"{name} 段未返回 SectionResult")
+    previous = run.outcomes.get(name)
+    if previous is None:
+        run.outcomes[name] = result
+        return
+    if name == "metric":
+        totals = dict(previous.applied)
+        for key, delta in result.applied:
+            totals[key] = int(totals.get(key, 0)) + int(delta)
+        run.outcomes[name] = SectionResult(
+            list(totals.items()), previous.rejected + result.rejected,
+        )
+        return
+    run.outcomes[name] = previous.merge(result)
+
+
+def _capture(run, name: str, result) -> None:
+    """登记表一格的返回值落进运行态。局势段额外交回战果物化。"""
+    if name == "issue":
+        from ming_sim.entities.issue.delta_section import IssueApplyBundle
+
+        if not isinstance(result, IssueApplyBundle):
+            raise RuntimeError("局势段未返回 IssueApplyBundle")
+        run.issue_result = result.issue
+        for extra_name, extra in result.extras.items():
+            _store(run, extra_name, extra)
+        return
+    _store(run, name, result)
+
+
+def _stored(run, *names: str) -> SectionResult:
+    found = [_empty()]
+    for name in names:
+        if name in run.outcomes:
+            found.append(run.outcomes[name])
+    merged = found[0]
+    for item in found[1:]:
+        merged = merged.merge(item)
+    return merged
+
+
 def _run_registry(run) -> None:
     """按登记表顺序跑一遍全部段（整批路径）。"""
     for spec in registry.section_specs():
-        registry.load(spec)(run)
+        _capture(run, spec.name, registry.load(spec)(run))
 
 
 def _run_effect_sequence(run) -> None:
     """C0 effects 数组按交代先后逐笔落账（#1844）。
 
     后交代的效果读到先交代的实际落账存量——不按实体段固定类别顺序重排跨类因果。
-    同一笔内**先实体后钱**：同笔的欠饷加额须先于补饷拨款可见。
+    同一笔内先实体后钱：同笔的欠饷加额须先于补饷拨款可见。
     """
     from ming_sim.entities.army import delta_section as army_section
     from ming_sim.entities.economy import delta_section as economy_section
@@ -584,32 +435,20 @@ def _run_effect_sequence(run) -> None:
         run.current_extracted = step_extracted
         run.current_ordered = step_ordered
         run.current_event_ids = step_event_ids
-        metric_section.apply(run)
-        army_section.apply_new_armies(run, list(step_extracted.get("new_armies") or []))
-        region_section.apply(run)
-        army_section.apply_deltas(run)
+        _capture(run, "metric", metric_section.apply(run))
+        _capture(run, "new_armies", army_section.apply_new_armies(
+            run, list(step_extracted.get("new_armies") or []),
+        ))
+        _capture(run, "region_changes", region_section.apply(run))
+        _capture(run, "army_changes", army_section.apply_deltas(run))
         step_moves = list(step_extracted.get("economy_moves") or [])
-        economy_section.apply(run, step_moves, index_base=economy_index_base)
+        _capture(run, "economy", economy_section.apply(
+            run, step_moves, index_base=economy_index_base,
+        ))
         economy_index_base += len(step_moves)
     run.current_extracted = run.extracted
     run.current_ordered = run.ordered_deltas
     run.current_event_ids = run.ordered_effect_event_ids
-
-
-def _commit_if_needed(run) -> None:
-    """段不 commit——事务边界归编排器独占（ADR 0150 决定 3）。
-
-    仅当调用方无外层事务、且本批真有财政/授权落定（这三段内部按各自 commit_now
-    落过）时补一次提交，行为与旧单体入口一致。
-    """
-    if not run.commit_now:
-        return
-    successful_authority = [
-        item for item in run.authority_change_results
-        if isinstance(item, dict) and item.get("rejected") is not True
-    ]
-    if run.applied_fiscal or run.applied_fiscal_removes or successful_authority:
-        run.db.conn.commit()
 
 
 def _resolve_victory(run) -> Optional[Dict[str, object]]:
@@ -630,34 +469,9 @@ def _resolve_victory(run) -> Optional[Dict[str, object]]:
     return victory_status(run.db, run.state)
 
 
-def _credit_resolution_rows(resolutions) -> List[Dict[str, object]]:
-    """信用核交回 ``{fulfillment, dispositions, urge}`` 三表，段结果要的是行。"""
-    if isinstance(resolutions, dict):
-        rows: List[Dict[str, object]] = []
-        for key in ("fulfillment", "dispositions", "urge"):
-            for row in resolutions.get(key) or []:
-                if isinstance(row, dict):
-                    rows.append(row)
-        return rows
-    return [row for row in (resolutions or []) if isinstance(row, dict)]
-
-
 def _build_outcome(run) -> SettlementOutcome:
-    """把段累加器折成 typed 结果；拒收在此一处 canonical 化。"""
+    """把各段已交回的结果摆上 typed 结果。不再拆写口行。"""
     src = run.ctx.source
-
-    def sr(rows, category: str) -> SectionResult:
-        """段累加器 → SectionResult：applied 只留真正落账的行，拒收走 RejectedItem。
-
-        全系统一处 split 口径（ADR 0150 决定 2）。行内的 ``rejected`` 标记不再
-        外泄到 applied 侧——消费端判「落了没有」不再读标记，而是读列表本身。
-        """
-        return SectionResult(
-            applied=[r for r in rows
-                     if not (isinstance(r, dict) and r.get("rejected"))],
-            rejected=to_rejected_items(rows, src, report_category=category),
-        )
-
     shape_sections: List[str] = []
     shape: List[RejectedItem] = []
     for section, item, reason in run.shape_rejections:
@@ -672,106 +486,41 @@ def _build_outcome(run) -> SettlementOutcome:
             source=src,
         ))
 
-    # 局势段同样 canonical 化：applied 子表只留真正落账的行，拒收行进
-    # RejectedItem —— 行内的 ``rejected`` 标记不再外泄（ADR 0150 决定 2）。
-    issue_sum = run.issue_summary if isinstance(run.issue_summary, dict) else {}
-    issue_rows_all = [
-        r for key in ("advances", "new_issues", "closes", "cancels")
-        for r in (issue_sum.get(key) or [])
-    ]
-    # 局势段结案/推进时物化的人物变更，其内嵌反噬拒收同样要进报告——这条面
-    # 过去靠旧递归桥接捞到（section 名带 dotted 后缀），现由知道该形状的编排器
-    # 在此显式交出。
-    issue_rejected = [
-        *to_rejected_items(issue_rows_all, src, report_category="issue"),
-        *nested_rejections(issue_rows_all, src, report_category="issue"),
-        # 局势路自己物化的人物变更（含结案详情内的易主反噬）——旧递归桥接
-        # 从这里捞到，现按已声明的面显式交出。
-        *nested_rejections(
-            issue_sum.get("applied_person_changes") or [], src,
-            report_category="issue",
-        ),
-        # 局势路的实体副作用拒收（经济/派系/实体核算的容忍拒收）。
-        *to_rejected_items(
-            issue_sum.get("entity_rejections") or [], src, report_category="issue",
-        ),
-    ]
-
-    def issue_applied(key: str) -> List[dict]:
-        return [
-            r for r in (issue_sum.get(key) or [])
-            if not (isinstance(r, dict) and r.get("rejected"))
-        ]
+    def placed(name: str) -> SectionResult:
+        return run.outcomes.get(name) or _empty()
 
     outcome = SettlementOutcome(
         shape_rejections=shape,
         shape_sections=shape_sections,
-        metric=SectionResult(list(run.applied_metric.items()), []),
-        economy=sr([*run.applied_economy, *run.economy_rejections], "economy_moves"),
-        faction=SectionResult(
-            list(run.applied_factions.items()),
-            to_rejected_items(run.faction_rejections, src, report_category="faction_delta"),
-        ),
-        social_class=SectionResult(
-            list(run.applied_classes.items()),
-            to_rejected_items(run.class_rejections, src, report_category="class_delta"),
-        ),
-        surcharge=sr(
-            [*run.applied_surcharges, *run.surcharge_rejections], "surcharge_decrees"),
-        population=sr(
-            [*run.applied_transfers, *run.transfer_rejections], "population_transfers"),
-        region=sr(run.region_changes, "region_changes"),
-        army=sr([*run.created_armies, *run.army_changes], "army_changes"),
-        power=sr(
-            [*run.applied_absorptions, *run.power_changes, *run.absorption_rejections],
-            "power_changes"),
-        person=SectionResult(
-            applied=[
-                r for r in run.applied_person_changes
-                if not (isinstance(r, dict) and r.get("rejected"))
-            ],
-            rejected=[
-                *to_rejected_items(run.applied_person_changes, src,
-                                   report_category="applied_person_changes"),
-                # 易主反噬的拒收落在已落项内嵌面，不在上层行——段自己交出。
-                *nested_rejections(run.applied_person_changes, src,
-                                   report_category="applied_person_changes"),
-            ],
-        ),
+        metric=placed("metric"),
+        economy=placed("economy"),
+        faction=placed("faction"),
+        social_class=placed("class"),
+        surcharge=placed("surcharge"),
+        population=placed("population"),
+        region=placed("region_changes"),
+        army=_stored(run, "new_armies", "army_changes"),
+        power=placed("power"),
+        person=_stored(run, "person_pre", "person_issue", "person_post"),
         fiscal=FiscalSectionResult(
-            removes=sr(run.applied_fiscal_removes, "fiscal_removes"),
-            creates=sr(run.applied_fiscal_creates, "fiscal_creates"),
-            changes=sr(run.applied_fiscal, "fiscal_changes"),
+            removes=placed("fiscal_removes"),
+            creates=placed("fiscal_creates"),
+            changes=placed("fiscal_changes"),
         ),
-        issue=IssueSectionResult(
-            advances=issue_applied("advances"),
-            new_issues=issue_applied("new_issues"),
-            closes=issue_applied("closes"),
-            cancels=issue_applied("cancels"),
-            applied_person_changes=list(
-                issue_sum.get("applied_person_changes") or []),
-            rejected=issue_rejected,
-            pairing_warnings=list(issue_sum.get("pairing_warnings") or []),
-        ),
-        dossier_participants=sr(run.dossier_participant_results, "dossier_participants"),
-        dossier_executions=sr(run.dossier_execution_results, "dossier_executions"),
-        secret_dossier_participants=sr(
-            run.secret_dossier_participant_results, "secret_dossier_participants"),
-        authority=sr(run.authority_change_results, "authority_changes"),
-        secret_order=sr(run.applied_secret_orders, "secret_order_updates"),
-        breach_plea=sr(run.breach_plea_resolutions, "breach_plea_resolutions"),
-        credit_event=sr(
-            _credit_resolution_rows(run.credit_event_resolutions),
-            "credit_event_resolutions",
-        ),
-        relation_edge=sr(run.relation_edge_resolutions, "relation_edge_event_resolutions"),
-        affair=SectionResult(applied=[], rejected=[]),
+        issue=run.issue_result or IssueSectionResult(),
+        dossier_participants=placed("dossier_participants"),
+        dossier_executions=placed("dossier_executions"),
+        secret_dossier_participants=placed("secret_dossier_participants"),
+        authority=placed("authority"),
+        secret_order=placed("secret_order"),
+        breach_plea=placed("breach_plea"),
+        credit_event=placed("credit_event"),
+        relation_edge=placed("relation_edge"),
+        affair=placed("affair"),
     )
     run.state.clamp()
-    # 结局判定后置：clamp 之后的终值才是结局读数。ongoing 不入结果（旧报告
-    # 同此——只有非 ongoing 才带 victory_status，判官据此决定要不要收口）。
     victory = _resolve_victory(run)
-    if str(victory.get("status") or "") != "ongoing":
+    if victory is not None and str(victory.get("status") or "") != "ongoing":
         outcome = replace(outcome, victory_status=victory)
     return outcome
 
@@ -812,26 +561,32 @@ def settle_delta(
     db._batch_authorized_open_affair_ids = run.authorized_open_affairs
     db._batch_frozen_open_affair_ids = run.frozen_open_affairs
     try:
-        if run.caller_transaction:
-            from ming_sim.issues import _register_runtime_rollback_snapshot
+        from ming_sim.issues import _register_runtime_rollback_snapshot
 
+        def _execute() -> SettlementOutcome:
             _register_runtime_rollback_snapshot(db, state, ctx.content)
-        if run.effect_sequence is not None:
-            # 逐笔交错路径：实体/经济/指标三段按交代先后逐笔跑，其余额外段序。
-            _run_effect_sequence(run)
-            _run_registry_after_interleave(run)
-        else:
-            _run_registry(run)
-        _commit_if_needed(run)
-        return _build_outcome(run)
+            if run.effect_sequence is not None:
+                _run_effect_sequence(run)
+                _run_registry_after_interleave(run)
+            else:
+                _run_registry(run)
+            return _build_outcome(run)
+
+        # commit_now 在进入事务前已读走。本调用是事务主人时，整批一次提交；
+        # 调用方已持有事务时不另开、不提交（ADR 0150 决定 3）。
+        if run.commit_now:
+            from ming_sim.applier import atomic
+
+            with atomic(db):
+                return _execute()
+        return _execute()
     finally:
         db._batch_authorized_open_affair_ids = prev_authorized
         db._batch_frozen_open_affair_ids = prev_frozen
 
 
 def _run_registry_after_interleave(run) -> None:
-    """逐笔交错跑完后，跑余额外段（人物 pre / 局势 / 事务 / 人物 post / 财政三段 /
-    案卷 / 授权 / 密令副作用 / 信用 / 关系边）。
+    """逐笔交错跑完后，跑余额外段。
 
     指标、经济、实体三段已在逐笔路径里跑过——此处不得重跑，否则同笔效果双落。
     """
@@ -842,4 +597,4 @@ def _run_registry_after_interleave(run) -> None:
     for spec in registry.section_specs():
         if spec.name in already_run:
             continue
-        registry.load(spec)(run)
+        _capture(run, spec.name, registry.load(spec)(run))

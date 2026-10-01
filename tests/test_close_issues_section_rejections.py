@@ -118,11 +118,10 @@ def test_close_failed_on_uncollapsible_rejected_invalid_enum(game):
 def test_close_rejection_reaches_rejection_reports(game):
     """端到端 plumbing：close 段拒收真落 rejection_reports 表。
 
-    ADR 0150 决定 2 删掉旧递归桥接后，拒收由编排器在 ``_build_outcome`` 一处
-    canonical 化并按登记表给出的具名段入库（不再靠桥接猜 ``issue_summary.closes``）。
+    ADR 0150 决定 2 删掉旧递归桥接后，拒收由知道行形状的段收成 RejectedItem，
+    再按登记表给出的具名段入库。
     """
-    from ming_sim.applier import Provenance, RejectionCollector
-    from ming_sim.settlement.run import to_rejected_items
+    from ming_sim.applier import Provenance, RejectionCollector, section_from_rows
 
     db, state, _ = game
     close_rows = [{
@@ -130,8 +129,9 @@ def test_close_rejection_reaches_rejection_reports(game):
         "reason": "close 测试拒收", "item": {"issue_id": 999999, "reason": "resolved"},
     }]
     collector = RejectionCollector()
-    for item in to_rejected_items(close_rows, Provenance.unknown,
-                                  report_category="issue"):
+    for item in section_from_rows(
+        close_rows, Provenance.unknown, category="issue",
+    ).rejected:
         collector.record("issue_summary", item, 7)
     collector.flush_to_db(db)
 
@@ -148,16 +148,16 @@ def test_scalar_item_rejection_preserves_original_in_reports(game):
     不是整个 rejected wrapper——canonical 化按 'item' 键**存在性**解包、覆盖标量
     原件（cmr r5 codex）。"""
     import json
-    from ming_sim.applier import Provenance, RejectionCollector
-    from ming_sim.settlement.run import to_rejected_items
+    from ming_sim.applier import Provenance, RejectionCollector, section_from_rows
 
     close_rows = [
         {"rejected": True, "category": "invalid_enum", "reason": "条目非对象", "item": 42},
         {"rejected": True, "category": "invalid_enum", "reason": "条目非对象", "item": None},
     ]
     collector = RejectionCollector()
-    for item in to_rejected_items(close_rows, Provenance.unknown,
-                                  report_category="issue"):
+    for item in section_from_rows(
+        close_rows, Provenance.unknown, category="issue",
+    ).rejected:
         collector.record("issue_summary", item, 8)
     db = game[0]
     collector.flush_to_db(db)

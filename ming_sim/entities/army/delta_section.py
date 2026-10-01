@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import List
 
-from ming_sim.applier import SectionResult
+from ming_sim.applier import section_from_rows
 from ming_sim.issues import (
     ARMY_FIELD_ALIASES,
     _effect_event_ids,
@@ -17,26 +17,28 @@ from ming_sim.issues import (
 )
 
 
-def apply_new_armies(run, items: List[object] | None = None) -> SectionResult:
-    """建军。归属战略事件的项不在此落——由编排器在事件段统一物化。"""
+def apply_new_armies(run, items: List[object] | None = None):
+    """建军。归属战略事件的项不在此落——由局势段在事件触发时物化。"""
     if items is None:
         items = list(run.current_extracted.get("new_armies") or [])
+    rows = []
     for item in items:
         if not isinstance(item, dict):
             continue
         if run.declared_new_army_event_by_item.get(id(item), "") in run.strategic_event_referenced_ids:
             continue
         origin_ref = str(item.get("origin_ref") or "").strip()
-        run.created_armies.extend(run.db.create_armies_from_extraction(
-            run.state, [item], actor="档房", commit=run.commit_now,
+        rows.extend(run.db.create_armies_from_extraction(
+            run.state, [item], actor="档房", commit=False,
             origin_ref=origin_ref, require_origin=True,
         ))
-    return SectionResult(applied=[], rejected=[])
+    return section_from_rows(rows, run.ctx.source, category="army_changes")
 
 
-def apply_deltas(run) -> SectionResult:
+def apply_deltas(run):
     """既有军字段变动。随军炮转移是双边写，故走同模块的
     :func:`apply_army_delta_with_cannon_transfer`。"""
+    rows = []
     for index, (army_id, raw_changes) in enumerate(
         run.current_ordered.get("army_delta") or []
     ):
@@ -45,15 +47,14 @@ def apply_deltas(run) -> SectionResult:
             run.current_event_ids,
         ):
             continue
-        run.army_changes.extend(apply_army_delta_with_cannon_transfer(
+        rows.extend(apply_army_delta_with_cannon_transfer(
             run.db, run.state, run.pseudo_event, army_id, raw_changes,
-            commit_now=run.commit_now,
         ))
-    return SectionResult(applied=[], rejected=[])
+    return section_from_rows(rows, run.ctx.source, category="army_changes")
 
 def apply_army_delta_with_cannon_transfer(
     db: GameDB, state: GameState, pseudo_event: Event, army_id: str,
-    raw_changes: Dict[str, object], *, commit_now: bool,
+    raw_changes: Dict[str, object],
 ) -> List[Dict[str, object]]:
     """Apply one extracted army item, including an explicit paired cannon transfer."""
     army_changes: List[Dict[str, object]] = []
@@ -115,8 +116,6 @@ def apply_army_delta_with_cannon_transfer(
                 db.conn.execute("RELEASE SAVEPOINT cannon_transfer")
                 raise
             army_changes.extend(transfer_changes)
-            if commit_now:
-                db.conn.commit()
         else:
             for leg_id in (army_id, target_id):
                 army_changes.append({
@@ -124,7 +123,7 @@ def apply_army_delta_with_cannon_transfer(
                     "delta": 0, "applied": False, "reason": raw_changes.get("reason"),
                 })
     army_changes.extend(db.apply_army_deltas(
-        state, pseudo_event, None, "档房", {army_id: payload}, commit=commit_now, origin_ref=origin_ref, require_origin=True,
+        state, pseudo_event, None, "档房", {army_id: payload}, commit=False, origin_ref=origin_ref, require_origin=True,
     ))
 
     return army_changes

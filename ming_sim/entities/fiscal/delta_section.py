@@ -88,7 +88,7 @@ def apply_removes(run) -> SectionResult:
             })
             continue
         removed_key = run.db.remove_fiscal_item(
-            key, commit=run.commit_now, origin_ref=origin_ref,
+            key, commit=False, origin_ref=origin_ref,
             reason=str(remove.get("reason") or ""), turn=run.state.turn,
             beyond_intent=remove.get("beyond_intent"),
         )
@@ -103,8 +103,9 @@ def apply_removes(run) -> SectionResult:
             run.db, remove, applied=True, key=removed_key,
             reason=str(remove.get("reason") or ""),
         ))
-    run.applied_fiscal_removes.extend(applied)
-    return SectionResult(applied=[], rejected=[])
+    from ming_sim.applier import section_from_rows
+
+    return section_from_rows(applied, run.ctx.source, category="fiscal_removes")
 
 
 def apply_creates(run) -> SectionResult:
@@ -189,9 +190,9 @@ def apply_creates(run) -> SectionResult:
                 )
         new_key = run.db.create_fiscal_item(
             key, account, direction, display, init_value,
-            note=str(create.get("reason") or "")[:120],
+            note=str(create.get("reason") or ""),
             origin_ref=origin_ref, turn=run.state.turn,
-            beyond_intent=create.get("beyond_intent"), commit=run.commit_now,
+            beyond_intent=create.get("beyond_intent"), commit=False,
         )
         if new_key is None:
             # 已存在 / db 拒＝正常业务拒绝，逐项留痕。
@@ -206,8 +207,9 @@ def apply_creates(run) -> SectionResult:
             direction=direction, display=display, init_value=max(0, init_value),
             reason=str(create.get("reason") or ""),
         ))
-    run.applied_fiscal_creates.extend(applied)
-    return SectionResult(applied=[], rejected=[])
+    from ming_sim.applier import section_from_rows
+
+    return section_from_rows(applied, run.ctx.source, category="fiscal_creates")
 
 
 def apply_changes(run) -> SectionResult:
@@ -350,5 +352,6 @@ def apply_changes(run) -> SectionResult:
                 delta=change["delta"], reason=change["reason"],
             ))
 
-    run.applied_fiscal.extend(applied)
-    return SectionResult(applied=[], rejected=[])
+    from ming_sim.applier import section_from_rows
+
+    return section_from_rows(applied, run.ctx.source, category="fiscal_changes")

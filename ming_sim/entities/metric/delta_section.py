@@ -11,10 +11,11 @@ from ming_sim.applier import SectionResult
 
 
 def apply(run) -> SectionResult:
-    """把本笔（整批或 effects 单笔）的 metric_delta 累加进 ``run.applied_metric``。"""
+    """把本笔（整批或 effects 单笔）的 metric_delta 收成净增减。"""
     from ming_sim.issues import _apply_metric_dict
 
+    totals: dict = {}
     for key, value in run.current_ordered.get("metric_delta") or []:
         for metric, delta in _apply_metric_dict(run.state, {key: value}, db=run.db).items():
-            run.applied_metric[metric] = run.applied_metric.get(metric, 0) + delta
-    return SectionResult(applied=[], rejected=[])
+            totals[metric] = totals.get(metric, 0) + delta
+    return SectionResult(applied=list(totals.items()), rejected=[])

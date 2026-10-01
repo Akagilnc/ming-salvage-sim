@@ -943,7 +943,7 @@ def test_waiting_inactive_retires_on_month(game, monkeypatch):
 
 def test_waiting_active_departure_settles_and_does_not_revive(game):
     """#670：候见中 canonical 行止离京 → origin 结清；抵非京不再续赴京。"""
-    from ming_sim.issues import _apply_person_changes
+    from ming_sim.entities.character.apply import apply_person_changes as _apply_person_changes
 
     db, state, content = game
     person = _set_place(game, "洪承畴", location="beizhili")
@@ -987,7 +987,7 @@ def test_waiting_active_departure_settle_failure_rolls_back_all_four_sides(
 ):
     """#670：无外层事务时结清抛错 → 行止/person_log/故事账/内存镜像均恢复前像。"""
     from ming_sim import audience_night as an_mod
-    from ming_sim.issues import _apply_person_changes
+    from ming_sim.entities.character.apply import apply_person_changes as _apply_person_changes
 
     db, state, content = game
     person = _set_place(game, "洪承畴", location="beizhili")
@@ -1062,7 +1062,7 @@ def test_waiting_active_departure_settle_failure_rolls_back_all_four_sides(
 
 def test_waiting_active_departure_commits_transit_log_settle_and_mirror(game):
     """#670：无外层事务正常离京 → transit/person_log/结清 tags/内存镜像一并提交。"""
-    from ming_sim.issues import _apply_person_changes
+    from ming_sim.entities.character.apply import apply_person_changes as _apply_person_changes
 
     db, state, content = game
     person = _set_place(game, "洪承畴", location="beizhili")
@@ -1118,7 +1118,7 @@ def test_waiting_active_departure_commits_transit_log_settle_and_mirror(game):
 
 def test_waiting_active_departure_respects_strategic_preflight_savepoint(game):
     """#670：战略人物预检 SAVEPOINT 内离京不报错；ROLLBACK 后行止与召旨均原样。"""
-    from ming_sim.issues import _apply_person_changes
+    from ming_sim.entities.character.apply import apply_person_changes as _apply_person_changes
 
     db, state, content = game
     person = _set_place(game, "洪承畴", location="beizhili")
@@ -1168,7 +1168,7 @@ def test_waiting_active_departure_respects_strategic_preflight_savepoint(game):
 
 def test_waiting_active_departure_external_rollback_reverts_transit_and_settle(game):
     """#670：显式外层事务 rollback 同时撤销行止与召旨结清。"""
-    from ming_sim.issues import _apply_person_changes
+    from ming_sim.entities.character.apply import apply_person_changes as _apply_person_changes
 
     db, state, content = game
     person = _set_place(game, "洪承畴", location="beizhili")

@@ -10,10 +10,10 @@ from __future__ import annotations
 
 from typing import Dict, List
 
-from ming_sim.applier import SectionResult
+from ming_sim.applier import section_from_rows
 
 
-def apply(run) -> SectionResult:
+def apply(run):
     from ming_sim.issues import _apply_population_transfers
 
     transfer_items: List[object] = []
@@ -41,9 +41,9 @@ def apply(run) -> SectionResult:
             transfer_items.append(item)
 
     applied_transfers, primitive_rejections = _apply_population_transfers(
-        run.db, transfer_items, commit=run.commit_now,
+        run.db, transfer_items, commit=False,
     )
-    run.applied_transfers.extend(applied_transfers)
-    run.transfer_rejections.extend(transfer_rejections)
-    run.transfer_rejections.extend(primitive_rejections)
-    return SectionResult(applied=[], rejected=[])
+    return section_from_rows(
+        [*applied_transfers, *transfer_rejections, *primitive_rejections],
+        run.ctx.source, category="population_transfers",
+    )

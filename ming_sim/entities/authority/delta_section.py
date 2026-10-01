@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Dict, List
 
-from ming_sim.applier import SectionResult
+from ming_sim.applier import section_from_rows
 
 # 与落地核同义的失败原因 → 拒收类别（供机读聚合；其余归 invalid_authority_change）。
 _KNOWN_CATEGORIES = frozenset({
@@ -21,7 +21,7 @@ _KNOWN_CATEGORIES = frozenset({
 })
 
 
-def apply(run) -> SectionResult:
+def apply(run):
     from ming_sim.issues import _apply_authority_change_item
 
     results: List[Dict[str, object]] = []
@@ -34,7 +34,7 @@ def apply(run) -> SectionResult:
             continue
         try:
             results.append(_apply_authority_change_item(run.db, run.state, item))
-        except (TypeError, ValueError, KeyError) as exc:
+        except ValueError as exc:
             reason = str(exc)
             results.append({
                 "rejected": True,
@@ -42,5 +42,4 @@ def apply(run) -> SectionResult:
                 else "invalid_authority_change",
                 "reason": reason, "item": item,
             })
-    run.authority_change_results = results
-    return SectionResult(applied=[], rejected=[])
+    return section_from_rows(results, run.ctx.source, category="authority_changes")

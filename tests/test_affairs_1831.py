@@ -141,7 +141,7 @@ def test_same_name_affairs_are_not_merged_and_birth_close_is_rejected(game):
             row.category == "invalid_shape"
             and isinstance(row.item, dict)
             and row.item.get("raw_value") == {"attach": "close", "affair_id": bad_id}
-            for row in shape_rejections(closed)
+            for row in closed.affair.rejected
         )
 
 
@@ -167,7 +167,7 @@ def test_typed_affair_new_issues_share_provenance_and_close_final_state(game):
         and isinstance(row.item.get("raw_value"), dict)
         and row.item["raw_value"].get("attach") == "close"
         and row.item["raw_value"].get("affair_id") == existing.id
-        for row in shape_rejections(result)
+        for row in result.affair.rejected
     )
 
 

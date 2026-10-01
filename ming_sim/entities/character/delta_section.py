@@ -14,19 +14,69 @@ from __future__ import annotations
 
 from typing import Dict, List, Set
 
-from ming_sim.applier import SectionResult
+from ming_sim.applier import section_from_rows
 
 
-def apply_pre_issue(run) -> SectionResult:
+def apply_declared_person_changes(run, changes, *, phase: str):
+    """人物项逐条原子落账：坏项只回滚自己那条 savepoint，同批合法项照落。
+
+    代码异常响亮上抛，不与脏项同流（ADR 0005）。落库核在本实体，不经编排器中转。
+    """
+    from ming_sim.entities.affair import UnauthorizedAffairOriginRef
+    from ming_sim.entities.character.apply import apply_person_changes
+
+    rows = []
+    for index, person_change in enumerate(changes):
+        savepoint = f"person_affair_{phase}_{index}"
+        run.db.conn.execute(f"SAVEPOINT {savepoint}")
+        try:
+            origin_ref = run.origin_ref_from_result_item(person_change)
+            results = apply_person_changes(
+                run.db, run.state, [dict(person_change)],
+                content=run.ctx.content,
+                llm_config=run.ctx.llm_config,
+                external_transaction=True,
+                origin_ref=origin_ref,
+                require_origin=True,
+            )
+            if origin_ref:
+                for result in results:
+                    result.setdefault("origin_ref", origin_ref)
+            if not results or all(result.get("rejected") for result in results):
+                run.db.conn.execute(f"ROLLBACK TO {savepoint}")
+            run.db.conn.execute(f"RELEASE {savepoint}")
+            rows.extend(results)
+        except UnauthorizedAffairOriginRef as exc:
+            run.db.conn.execute(f"ROLLBACK TO {savepoint}")
+            run.db.conn.execute(f"RELEASE {savepoint}")
+            rows.append({
+                "name": str(person_change.get("name") or "").strip(),
+                "动作": str(person_change.get("动作") or "").strip(),
+                "rejected": True, "category": "unauthorized_affair_origin",
+                "reason": str(exc), "item": dict(person_change),
+            })
+        except Exception:
+            run.db.conn.execute(f"ROLLBACK TO {savepoint}")
+            run.db.conn.execute(f"RELEASE {savepoint}")
+            raise
+    return section_from_rows(
+        rows, run.ctx.source, category="applied_person_changes",
+        nested=("backlash_results",),
+    )
+
+
+def apply_pre_issue(run):
     """局势段之前落的「评定」等前置人物变更。"""
-    run.apply_person_changes_itemwise(run.pre_issue_person_changes, phase="pre")
-    return SectionResult(applied=[], rejected=[])
+    return apply_declared_person_changes(
+        run, run.pre_issue_person_changes, phase="pre",
+    )
 
 
-def apply_post_issue(run) -> SectionResult:
+def apply_post_issue(run):
     """局势段之后落的其余人物变更。"""
-    run.apply_person_changes_itemwise(run.post_issue_person_changes, phase="post")
-    return SectionResult(applied=[], rejected=[])
+    return apply_declared_person_changes(
+        run, run.post_issue_person_changes, phase="post",
+    )
 
 
 def amnesty_conflict_power_ids(

@@ -39,6 +39,7 @@ _VIEW_TO_SECTION = {
     "fiscal_removes": "fiscal_removes",
     "fiscal_creates": "fiscal_creates",
     "fiscal_changes": "fiscal_changes",
+    "affair_declarations": "affair_declarations",
 }
 
 

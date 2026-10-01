@@ -257,7 +257,8 @@ def test_apply_score_extraction_loyalty_assessment_does_not_commit_inside_batch(
     ).fetchone()["loyalty"]
 
     db.conn.execute("BEGIN")
-    issues._apply_person_changes(
+    from ming_sim.entities.character.apply import apply_person_changes
+    apply_person_changes(
         db,
         state,
         [
@@ -295,7 +296,8 @@ def test_apply_person_changes_disposition_does_not_commit_inside_batch(game):
 
     try:
         db.conn.execute("BEGIN")
-        issues._apply_person_changes(
+        from ming_sim.entities.character.apply import apply_person_changes
+        apply_person_changes(
             db,
             state,
             [

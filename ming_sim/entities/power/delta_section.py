@@ -10,22 +10,22 @@ from __future__ import annotations
 
 from typing import Dict, List
 
-from ming_sim.applier import SectionResult
+from ming_sim.applier import section_from_rows
 from ming_sim.issues import POWER_FIELD_ALIASES, _effect_event_ids, _is_bandit_power_id
 
 
-def apply(run) -> SectionResult:
+def apply(run):
     from ming_sim.issues import _apply_bandit_absorptions
 
     applied_absorptions, absorption_rejections, absorption_power_changes = (
         _apply_bandit_absorptions(
             run.db, run.state, run.current_extracted.get("bandit_absorptions") or [],
-            commit=run.commit_now,
+            commit=False,
         )
     )
-    run.applied_absorptions.extend(applied_absorptions)
-    run.absorption_rejections.extend(absorption_rejections)
-    power_changes: List[Dict[str, object]] = list(absorption_power_changes)
+    power_changes: List[Dict[str, object]] = [
+        *applied_absorptions, *absorption_rejections, *absorption_power_changes,
+    ]
 
     power_items = (
         (power_id, changes) for index, (power_id, changes) in enumerate(
@@ -81,9 +81,8 @@ def apply(run) -> SectionResult:
         origin_ref = str(raw_changes.get("origin_ref") or "").strip()
         payload = {k: v for k, v in raw_changes.items() if k != "origin_ref"}
         power_changes.extend(run.db.apply_power_deltas(
-            run.state, {power_id: payload}, commit=run.commit_now,
+            run.state, {power_id: payload}, commit=False,
             origin_ref=origin_ref, require_origin=True,
         ))
 
-    run.power_changes.extend(power_changes)
-    return SectionResult(applied=[], rejected=[])
+    return section_from_rows(power_changes, run.ctx.source, category="power_changes")

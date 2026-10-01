@@ -414,12 +414,14 @@ def _persist_specialized_extraction(
         selections = extraction.get("covert_exec_selections") or []
         if isinstance(selections, list) and selections:
             from ming_sim.covert_progress import apply_monthly_covert_actual_progress
-            from ming_sim.settlement.run import to_rejected_items
+            from ming_sim.applier import section_from_rows
 
             rows = apply_monthly_covert_actual_progress(
                 db, state, selections=selections, only_supplied=True, commit=False,
             )
-            for item in to_rejected_items(rows, source):
+            for item in section_from_rows(
+                rows, source, category="covert_exec_selections",
+            ).rejected:
                 collector.record("covert_exec_selections", item, int(turn))
 
 

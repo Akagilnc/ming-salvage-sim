@@ -7,13 +7,15 @@ persist 先结账，cancels 环看到已非 active 而跳过——防同一反�
 
 from __future__ import annotations
 
-from ming_sim.applier import SectionResult
+from ming_sim.applier import section_from_rows
 
 
-def apply(run) -> SectionResult:
+def apply(run):
     from ming_sim.breach_plea import resolve_breach_pleas_from_extraction
 
-    run.breach_plea_resolutions = resolve_breach_pleas_from_extraction(
+    resolutions = resolve_breach_pleas_from_extraction(
         run.db, run.state, run.current_extracted, commit=False,
     )
-    return SectionResult(applied=[], rejected=[])
+    return section_from_rows(
+        resolutions or [], run.ctx.source, category="breach_plea_resolutions",
+    )

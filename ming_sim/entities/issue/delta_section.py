@@ -10,12 +10,22 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from typing import Dict, List
 
-from ming_sim.applier import SectionResult
+from ming_sim.applier import SectionResult, section_from_rows
+from ming_sim.settlement.outcome import IssueSectionResult
 
 
-def apply(run) -> SectionResult:
+@dataclass
+class IssueApplyBundle:
+    """局势段的返回：局势结果，加上战果物化要并进已跑过的实体段。"""
+
+    issue: IssueSectionResult
+    extras: Dict[str, SectionResult] = field(default_factory=dict)
+
+
+def apply(run) -> IssueApplyBundle:
     from ming_sim.issues import (
         _monthly_economy_items,
         _strategic_event_outcome_label_or_error,
@@ -53,8 +63,6 @@ def apply(run) -> SectionResult:
         defer_event_trigger_ids=run.strategic_event_pool_ids,
         open_affair_ids_at_input=run.authorized_open_affairs,
     )
-    run.issue_summary = issue_summary
-
     # 承诺月支载体：同批新建的承诺局势其 ongoing 月支被财政段用作 dedup 依据
     # （ADR 0027 承诺是主载体）。
     carriers: List[Dict[str, object]] = []
@@ -74,11 +82,96 @@ def apply(run) -> SectionResult:
         carriers.extend(_monthly_economy_items(loads_effect_dict(row["ongoing_effects"])))
     run.commitment_economy_carriers = carriers
 
-    _resolve_strategic_events(run)
-    return SectionResult(applied=[], rejected=[])
+    extras = _resolve_strategic_events(run, issue_summary)
+    return IssueApplyBundle(issue=_issue_section(run, issue_summary), extras=extras)
 
 
-def _resolve_strategic_events(run) -> None:
+def _kept(rows) -> List[dict]:
+    return [
+        row for row in (rows or [])
+        if not (isinstance(row, dict) and row.get("rejected"))
+    ]
+
+
+def _issue_section(run, summary: Dict[str, object]) -> IssueSectionResult:
+    """局势段知道自己的行形状，在这里收成 RejectedItem。"""
+    source = run.ctx.source
+    tables = [
+        row for key in ("advances", "new_issues", "closes", "cancels")
+        for row in (summary.get(key) or [])
+    ]
+    rejected = section_from_rows(
+        tables, source, category="issue", nested=("backlash_results",),
+    ).rejected
+    landed_people = [
+        row for row in (summary.get("applied_person_changes") or [])
+        if isinstance(row, dict) and not row.get("rejected")
+    ]
+    rejected.extend(section_from_rows(
+        landed_people, source, category="issue", nested=("backlash_results",),
+    ).rejected)
+    rejected.extend(section_from_rows(
+        summary.get("entity_rejections") or [], source, category="issue",
+    ).rejected)
+    return IssueSectionResult(
+        advances=_kept(summary.get("advances")),
+        new_issues=_kept(summary.get("new_issues")),
+        closes=_kept(summary.get("closes")),
+        cancels=_kept(summary.get("cancels")),
+        applied_person_changes=list(summary.get("applied_person_changes") or []),
+        rejected=rejected,
+        pairing_warnings=list(summary.get("pairing_warnings") or []),
+    )
+
+
+def _suppressed_rows(run, event_id: str, event_title: str, reason: str = "") -> Dict[str, list]:
+    """未触发事件的从属战果逐项留痕，不落主账。"""
+    reason = reason or f"战略/外敌事件「{event_title or event_id}」未触发，战果不落主账"
+    rows: Dict[str, list] = {
+        "region_changes": [], "army_changes": [], "power": [],
+        "person_issue": [], "new_armies": [],
+    }
+    for region_id, raw_changes in run.ordered_strategic_items("region_delta", event_id):
+        rows["region_changes"].append({
+            "region_id": region_id, "rejected": True,
+            "category": "event_rejected", "reason": reason,
+            "item": {"event_id": event_id, "region_id": region_id, "changes": raw_changes},
+        })
+    for army_id, raw_changes in run.ordered_strategic_items("army_delta", event_id):
+        rows["army_changes"].append({
+            "army_id": army_id, "rejected": True,
+            "category": "event_rejected", "reason": reason,
+            "item": {"event_id": event_id, "army_id": army_id, "changes": raw_changes},
+        })
+    for power_id, raw_changes in run.ordered_strategic_items("power_updates", event_id):
+        rows["power"].append({
+            "power_id": power_id, "rejected": True,
+            "category": "event_rejected", "reason": reason,
+            "item": {"event_id": event_id, "power_id": power_id, "changes": raw_changes},
+        })
+    for item in run.event_person_changes(event_id):
+        rows["person_issue"].append({
+            "name": str(item.get("name") or "").strip(),
+            "动作": str(item.get("动作") or item.get("action") or "").strip(),
+            "rejected": True, "category": "event_rejected",
+            "reason": reason, "item": dict(item),
+        })
+    for item in run.event_new_armies(event_id):
+        raw_item = dict(item) if isinstance(item, dict) else item
+        rows["new_armies"].append({
+            "id": str(item.get("id") or "").strip() if isinstance(item, dict) else "",
+            "rejected": True, "category": "event_rejected", "reason": reason,
+            "item": {"event_id": event_id, "new_army": raw_item},
+        })
+    return rows
+
+
+def _extend_bucket(bucket: Dict[str, list], extra: Dict[str, list]) -> None:
+    for key, rows in extra.items():
+        bucket.setdefault(key, []).extend(rows)
+
+
+def _resolve_strategic_events(run, issue_summary) -> Dict[str, SectionResult]:
     """已触发事件物化战果；未触发者其从属战果整组不落主账。
 
     归属与信封预检已由 ``preflight_declared_event_effects`` 在写入前判定一次，
@@ -88,13 +181,18 @@ def _resolve_strategic_events(run) -> None:
         apply_army_delta_with_cannon_transfer,
     )
     from ming_sim.entities.affair import UnauthorizedAffairOriginRef
+    from ming_sim.entities.character.apply import apply_person_changes
     from ming_sim.issues import (
         _person_change_name,
         _strategic_event_outcome_label_or_error,
         apply_event_cascading_invalidations,
     )
 
-    new_issues = run.issue_summary.get("new_issues") or []
+    bucket: Dict[str, list] = {
+        "region_changes": [], "army_changes": [], "power": [],
+        "person_issue": [], "new_armies": [],
+    }
+    new_issues = issue_summary.get("new_issues") or []
     seen: set[str] = set()
     for new_issue in new_issues:
         if isinstance(new_issue, dict):
@@ -106,15 +204,15 @@ def _resolve_strategic_events(run) -> None:
         event_id = str(new_issue.get("id") or "").strip()
         if event_id not in run.strategic_event_referenced_ids:
             continue
-        run.reject_suppressed_strategic_results(
-            event_id, str(new_issue.get("title") or ""),
-        )
+        _extend_bucket(bucket, _suppressed_rows(
+            run, event_id, str(new_issue.get("title") or ""),
+        ))
 
     for event_id in sorted(run.strategic_event_delta_ids - seen):
         ev = run.runtime_content.event_by_id.get(event_id)
-        run.reject_suppressed_strategic_results(
-            event_id, ev.title if ev is not None else event_id,
-        )
+        _extend_bucket(bucket, _suppressed_rows(
+            run, event_id, ev.title if ev is not None else event_id,
+        ))
 
     for new_issue in new_issues:
         if not (
@@ -133,60 +231,68 @@ def _resolve_strategic_events(run) -> None:
             new_issue["rejected"] = True
             new_issue["category"] = "missing_event_outcome"
             new_issue["reason"] = outcome_error
-            run.reject_suppressed_strategic_results(
-                event_id, str(new_issue.get("title") or ""),
-            )
+            _extend_bucket(bucket, _suppressed_rows(
+                run, event_id, str(new_issue.get("title") or ""),
+            ))
             continue
         for item in run.event_new_armies(event_id):
             origin_ref = str(item.get("origin_ref") or "").strip()
-            run.created_armies.extend(run.db.create_armies_from_extraction(
-                run.state, [item], actor="档房", commit=run.commit_now,
+            bucket["new_armies"].extend(run.db.create_armies_from_extraction(
+                run.state, [item], actor="档房", commit=False,
                 origin_ref=origin_ref, require_origin=True,
             ))
         for region_id, raw_changes in run.ordered_strategic_items("region_delta", event_id):
             origin_ref = str(raw_changes.get("origin_ref") or "").strip()
             payload = {k: v for k, v in raw_changes.items() if k != "origin_ref"}
-            run.region_changes.extend(run.db.apply_region_deltas(
+            bucket["region_changes"].extend(run.db.apply_region_deltas(
                 run.state, run.pseudo_event, None, "档房", {region_id: payload},
-                commit=run.commit_now, origin_ref=origin_ref, require_origin=True,
+                commit=False, origin_ref=origin_ref, require_origin=True,
             ))
         for army_id, raw_changes in run.ordered_strategic_items("army_delta", event_id):
-            run.army_changes.extend(apply_army_delta_with_cannon_transfer(
+            bucket["army_changes"].extend(apply_army_delta_with_cannon_transfer(
                 run.db, run.state, run.pseudo_event, army_id, raw_changes,
-                commit_now=run.commit_now,
             ))
-        event_person_results: List[Dict[str, object]] = []
         for item in run.event_person_changes(event_id):
             try:
                 origin_ref = run.origin_ref_from_result_item(item)
             except UnauthorizedAffairOriginRef as exc:
-                # 与逐项人物/经济路同一个窄授权失败信号，不与代码故障同流。
-                event_person_results.append({
+                bucket["person_issue"].append({
                     "name": _person_change_name(item),
                     "动作": str(item.get("动作") or item.get("action") or "").strip(),
                     "rejected": True, "category": "unauthorized_affair_origin",
                     "reason": str(exc), "item": dict(item),
                 })
                 continue
-            event_person_results.extend(run.apply_normalized_person_changes(
-                [dict(item)], origin_ref=origin_ref, require_origin=True,
-            ))
+            results = apply_person_changes(
+                run.db, run.state, [dict(item)],
+                content=run.ctx.content,
+                llm_config=run.ctx.llm_config,
+                external_transaction=True,
+                origin_ref=origin_ref,
+                require_origin=True,
+            )
+            if origin_ref:
+                for result in results:
+                    result.setdefault("origin_ref", origin_ref)
+            bucket["person_issue"].extend(results)
         for power_id, raw_changes in run.ordered_strategic_items("power_updates", event_id):
             origin_ref = str(raw_changes.get("origin_ref") or "").strip()
             payload = {k: v for k, v in raw_changes.items() if k != "origin_ref"}
-            run.power_changes.extend(run.db.apply_power_deltas(
-                run.state, {power_id: payload}, commit=run.commit_now,
+            bucket["power"].extend(run.db.apply_power_deltas(
+                run.state, {power_id: payload}, commit=False,
                 origin_ref=origin_ref, require_origin=True,
             ))
         run.db.mark_event_triggered(
-            run.state, event_id, terminal_reason=outcome_label, commit=run.commit_now,
+            run.state, event_id, terminal_reason=outcome_label, commit=False,
         )
-        apply_event_cascading_invalidations(run.state, run.db, commit=run.commit_now)
+        apply_event_cascading_invalidations(run.state, run.db, commit=False)
         new_issue["reason"] = "事件已记为触发，软判结果已落主账"
-        # 成功的人物落账已由 apply_normalized_person_changes 并入
-        # applied_person_changes；只有授权拒收活在 event_person_results ——
-        # 提一次，免得物质兄弟把结构化痕迹抹掉。
-        present = {id(row) for row in run.applied_person_changes}
-        for row in event_person_results:
-            if row.get("rejected") and id(row) not in present:
-                run.applied_person_changes.append(row)
+    return {
+        name: section_from_rows(
+            rows, run.ctx.source,
+            category="applied_person_changes" if name == "person_issue" else name,
+            nested=("backlash_results",) if name == "person_issue" else (),
+        )
+        for name, rows in bucket.items()
+        if rows
+    }

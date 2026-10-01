@@ -265,6 +265,65 @@ class SectionResult:
         )
 
 
+def section_from_rows(
+    rows: Sequence[object],
+    source: Provenance,
+    *,
+    category: str,
+    nested: Sequence[str] = (),
+) -> SectionResult:
+    """段把写口交回的行收成 SectionResult。
+
+    拒收行（``rejected`` 为真）变成项级 :class:`RejectedItem`；已落行留在
+    ``applied``。嵌套拒收面（如易主反噬）由知道该形状的段点名交出，编排器不再
+    扫字典。``item`` 键按存在性解包，保留调用方放进去的原对象。
+    """
+    applied: List[Any] = []
+    rejected: List[RejectedItem] = []
+
+    def _one(row: object, report_category: str) -> None:
+        if not isinstance(row, dict) or not row.get("rejected"):
+            return
+        reason = str(row.get("reason") or "")
+        rejected.append(RejectedItem(
+            item=row["item"] if "item" in row else row,
+            reason=reason or "拒收（段未注明原因）",
+            category=str(row.get("report_category") or row.get("category") or report_category),
+            source=source,
+        ))
+
+    for row in rows:
+        if isinstance(row, dict) and row.get("rejected"):
+            _one(row, category)
+            continue
+        applied.append(row)
+        if isinstance(row, dict):
+            for field_name in nested:
+                nested_rows = row.get(field_name)
+                if isinstance(nested_rows, list):
+                    for nested_row in nested_rows:
+                        _one(nested_row, category)
+    return SectionResult(applied=applied, rejected=rejected)
+
+
+def merge_delta_maps(total: dict, applied: dict) -> None:
+    """把一笔派系/阶级增量并进同批累计（同键同字段相加）。"""
+    for key, delta in applied.items():
+        if isinstance(delta, dict):
+            previous = total.get(key, {})
+            if not isinstance(previous, dict):
+                previous = {"satisfaction": previous}
+            for fld, amount in delta.items():
+                previous[fld] = previous.get(fld, 0) + amount
+            total[key] = previous
+        else:
+            previous = total.get(key, 0)
+            if isinstance(previous, dict):
+                previous["satisfaction"] = previous.get("satisfaction", 0) + delta
+            else:
+                total[key] = previous + delta
+
+
 # ---------------------------------------------------------------------------
 # 决定 1：适配器入参上下文
 # ---------------------------------------------------------------------------
