@@ -911,15 +911,18 @@ def test_supply_call_writes_identity_materials_into_its_own_tree(game, monkeypat
 
     走真实 ``run_secret_orders_supply``，只桩掉外部模型边界（agent 构造与
     ``run_agent_text``）：在 agent 构造那一刻抓下 ``prepared``，断言供料给出的
-    ``materials_path`` 在**模型将要读的那棵树**里能读到本人见闻正文，且调用
-    消息里没有正文（ADR 0155:8 目录读取形态）。撤掉生产里那行
+    ``materials_path`` 在**模型将要读的那棵树**里指向可读索引；用列目录工具
+    取阅分列载体，核身份事务边界，不解析人读索引。调用消息不带正文。
+    身份备料失败须传播并清理本树。撤掉生产里那行
     ``write_identity_materials(...)`` 调用，本用例即报红。
     """
     import json as _json
 
     import ming_sim.agents as agents_mod
     import ming_sim.month_chain as month_chain
-    from ming_sim.materials import read_material
+    from pathlib import Path
+    import ming_sim.materials as materials_mod
+    from ming_sim.materials import list_materials, material_tools, read_material
     from ming_sim.models import LLMConfig
 
     db, state, _ = game
@@ -940,11 +943,33 @@ def test_supply_call_writes_identity_materials_into_its_own_tree(game, monkeypat
     # 下月才进在办密令（开案当月属 issuance-turn，会被在办清单滤掉）
     _next_month(db, state)
 
+    # 两条真实事务分别只授予本人，显式排除另一个同场人物。
+    issue_rows = db.conn.execute(
+        "SELECT id,title FROM issues WHERE status='active' ORDER BY id LIMIT 2",
+    ).fetchall()
+    for row, who, other in zip(issue_rows, (name, target), (target, name)):
+        db.conn.execute(
+            "UPDATE issues SET participant_roster=? WHERE id=?",
+            (_json.dumps([{"character_id": who, "tier": "主办"}]), row["id"]),
+        )
+        db.record_character_participation(
+            state, [who], "case", row["title"], "本人的办案经历",
+            source_id=f"issue:{row['id']}", excluded_names=[other],
+        )
+    db.conn.commit()
     captured = {}
+    roots = []
+    real_prepare = materials_mod.prepare_world_materials
+
+    def prepare(*args, **kwargs):
+        prepared = real_prepare(*args, **kwargs)
+        roots.append(prepared.root)
+        return prepared
+
+    monkeypatch.setattr(materials_mod, "prepare_world_materials", prepare)
 
     def _fake_agent(llm_config, prepared=None):
         captured["root"] = getattr(prepared, "root", None)
-        captured["index"] = list(getattr(prepared, "index_lines", ()) or ())
         return object()
 
     def _fake_run_text(agent, prompt, tag, **_kwargs):
@@ -952,6 +977,8 @@ def test_supply_call_writes_identity_materials_into_its_own_tree(game, monkeypat
         captured["prompt"] = prompt
         feed = _json.loads(prompt)
         bodies = {}
+        paths = {}
+        tools = {tool.__name__: tool for tool in material_tools(captured["root"])}
         for entry in feed.get("active_secret_orders") or []:
             for side in ("investigator_identity_materials",
                          "investigation_target_identity_materials"):
@@ -959,7 +986,15 @@ def test_supply_call_writes_identity_materials_into_its_own_tree(game, monkeypat
                 rel = str((entry.get(side) or {}).get("materials_path") or "")
                 if who and rel:
                     bodies[(who, rel)] = read_material(captured["root"], rel)
+                    base = Path(rel).parent.as_posix()
+                    listed = list_materials(captured["root"], base)
+                    assert set(tools["list_materials"](base).splitlines()) == set(listed)
+                    for path in listed:
+                        assert tools["read_material"](path) == read_material(captured["root"], path)
+                        assert read_material(captured["root"], path).strip()
+                    paths[who] = {Path(path).relative_to(base).as_posix() for path in listed}
         captured["bodies"] = bodies
+        captured["paths"] = paths
         return _json.dumps({"dossier_progress_reports": [], "covert_exec_selections": []})
 
     monkeypatch.setattr(agents_mod, "create_secret_order_supply_agent", _fake_agent)
@@ -980,6 +1015,30 @@ def test_supply_call_writes_identity_materials_into_its_own_tree(game, monkeypat
         assert "materials" not in order[side]
         body = bodies[(who, rel)]
         assert body.strip()
+        visible = {int(row["id"]) for row in db.get_character_knowledge(state, who)["issues"]}
+        paths = captured["paths"][who]
+        assert {path for path in paths if path.startswith("事务/issue-")} == {
+            f"事务/issue-{i}/当前情况.txt" for i in visible
+        }
+        assert any(path.endswith("/经历.txt") for path in paths)
+        assert any(path.endswith("/公事档案.txt") for path in paths)
+        assert not any(path.startswith("盘面/") for path in paths)
+    assert f"事务/issue-{issue_rows[0]['id']}/当前情况.txt" in captured["paths"][name]
+    assert f"事务/issue-{issue_rows[0]['id']}/当前情况.txt" not in captured["paths"][target]
+    assert f"事务/issue-{issue_rows[1]['id']}/当前情况.txt" in captured["paths"][target]
+    assert f"事务/issue-{issue_rows[1]['id']}/当前情况.txt" not in captured["paths"][name]
+    assert not roots[-1].exists()
+
+    # 在身份写手读取公事档案时注入失败，仍走真实 4a 生命周期。
+    error = RuntimeError("identity archive unavailable")
+    def broken_archive(*args, **kwargs):
+        raise error
+    monkeypatch.setattr(db, "list_referenceable_dossiers", broken_archive)
+    with pytest.raises(RuntimeError) as failed:
+        month_chain.run_secret_orders_supply(db, state, cfg, {})
+    assert failed.value is error
+    assert len(roots) == 2
+    assert not roots[-1].exists()
 
 
 def test_non_investigation_contract_keeps_its_delivery_account(game):

@@ -362,11 +362,11 @@ def test_inquiry_declaration_preserves_assignment_in_attendant_materials(game, m
     summon_enter(db, int(night["id"]), attendant.name)
     prepared = prepare_scene_materials(db, state)
     try:
-        from pathlib import Path
+        from ming_sim.materials import list_materials, read_material
         carrier = f"人物/{attendant.name}/经历.txt"
-        assert carrier in prepared.index_lines
-        experience = (Path(prepared.root) / carrier).read_text(encoding="utf-8")
-        assert all(event["body"] in experience for event in report_events)
+        assert carrier in list_materials(prepared.root)
+        # 原话是这次交办写入的正文，经历载体须原样带上它。
+        assert query in read_material(prepared.root, carrier)
     finally:
         release_material_tree(prepared.root)
 

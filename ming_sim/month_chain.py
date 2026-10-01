@@ -296,21 +296,14 @@ def _persisted_transit_arrivals(db: Any, turn: int) -> list:
     return []
 
 
-def run_gazette_text(
-    db: Any, state: Any, llm_config: Any, chain: Dict[str, Any],
-) -> tuple[str, str]:
-    """批红与全部效果落定后的一次邸报写作。返回作者自写的 (title, report)。"""
-    import json
+def prepare_gazette_author_materials(db: Any, state: Any):
+    """邸报作者可读目录。五道筛是这一次准备的内容，不是另一套材料账。"""
+    from ming_sim.materials import (
+        SECRET_ORDER_ORIGIN_PREFIX,
+        prepare_world_materials,
+        secret_order_dossier_ids,
+    )
 
-    from ming_sim.agents import create_gazette_author_agent, parse_agent_json, run_agent_text
-    from ming_sim.exceptions import LLMUnavailable
-    from ming_sim.llm_transport import audience_transport_policy
-    from ming_sim.materials import prepare_world_materials, release_material_tree
-
-    from ming_sim.materials import SECRET_ORDER_ORIGIN_PREFIX, secret_order_dossier_ids
-
-    if llm_config is None:
-        raise LLMUnavailable("邸报缺少模型配置", stage="gazette")
     secret_dossiers = secret_order_dossier_ids(db)
 
     def include_fact(fact: Any) -> bool:
@@ -321,7 +314,7 @@ def run_gazette_text(
             return False
         return not _item_is_secret_dossier(event, secret_dossiers)
 
-    prepared = prepare_world_materials(
+    return prepare_world_materials(
         db, state,
         include_fact=include_fact,
         include_event=include_event,
@@ -330,6 +323,22 @@ def run_gazette_text(
         exclude_secret_order_dossiers=True,
         public_feed=True,
     )
+
+
+def run_gazette_text(
+    db: Any, state: Any, llm_config: Any, chain: Dict[str, Any],
+) -> tuple[str, str]:
+    """批红与全部效果落定后的一次邸报写作。返回作者自写的 (title, report)。"""
+    import json
+
+    from ming_sim.agents import create_gazette_author_agent, parse_agent_json, run_agent_text
+    from ming_sim.exceptions import LLMUnavailable
+    from ming_sim.llm_transport import audience_transport_policy
+    from ming_sim.materials import release_material_tree
+
+    if llm_config is None:
+        raise LLMUnavailable("邸报缺少模型配置", stage="gazette")
+    prepared = prepare_gazette_author_materials(db, state)
     message = json.dumps(_gazette_feed(db, state, chain), ensure_ascii=False)
     try:
         agent = create_gazette_author_agent(llm_config, prepared)
@@ -1061,10 +1070,9 @@ def _identity_materials(db: Any, state: Any, name: str) -> Dict[str, Any]:
     """按身份指给某人一份可及材料（ADR 0034 非全知 / 0155 身份隔离 / #1814）。
 
     只给**材料目录里的路径**，不给正文：读取形态是「备一个地方它自己读」
-    （ADR 0155:8），把渲染全文塞进调用消息正是该条明否的形态。正文由
-    ``materials.write_identity_materials`` 在 4a 备树之后、调用之前写进
-    ``人物/<人>/此刻所知.txt``，两个读口按同一条 ``identity_material_rel``
-    同源，restore 可复现。
+    （ADR 0155:8）。``materials.write_identity_materials`` 在 4a 备树之后、
+    调用之前复用人物材料写手，按身份分列正文，``identity_material_rel``
+    指向本人子目录的人读索引；不保留综合正文副本，restore 可复现。
     查案对象不是真人物（如「某类人」式题名）时没有身份材料，如实留空，不编。
     """
     who = str(name or "").strip()

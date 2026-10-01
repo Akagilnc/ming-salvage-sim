@@ -1960,7 +1960,7 @@ def test_build_secret_orders_supply_feed_uses_fact_materials_not_assembled_effec
     secret_decl = "密令名义声明：边材未动。"
     secret_forecast = "预推不可见:密令供料"
     unsettled_body = "未颁拟旨：不得冒充已落。"
-    fact_body = "文字事实正文：边材已动。"
+    fact_body = "文字事实正文：边材已动。\r\n同一条事实的第二行。  \r"
     db.conn.execute(
         "INSERT INTO staged_declarations "
         "(decree_ref, declaration_json, visible_refs_json, status, created_turn, forecast_text) "
@@ -2038,14 +2038,16 @@ def test_build_secret_orders_supply_feed_uses_fact_materials_not_assembled_effec
     assert "segment_applied_results" not in feed
     assert feed.get("world_segment") == "世界段原文·密报可读。"
     assert secret_forecast in (feed.get("forecasts") or [])
-    nominal_bodies = [
-        (item.get("declaration") or {}).get("body")
-        for item in (feed.get("nominal") or [])
-        if isinstance(item, dict)
-    ]
-    assert secret_decl in nominal_bodies
-    # 未 settled 的拟旨不得进入名义／实入冒充已落。
-    assert unsettled_body not in nominal_bodies
+    assert any(
+        row.get("decree_ref") == f"secret_order:{order_id}"
+        and (row.get("declaration") or {}).get("body") == secret_decl
+        for row in (feed.get("nominal") or [])
+    )
+    # 未 settled 的拟旨不得进入名义。身份是 decree_ref，不是正文是否撞车。
+    assert all(
+        row.get("decree_ref") != "pending-action:1847-unpromulgated:1"
+        for row in (feed.get("nominal") or [])
+    )
     assert not any(int(row.get("delta") or 0) == -99 for row in (feed.get("landed") or []))
     assert any(
         str(row.get("origin_ref") or "") == f"dossier:{dossier_id}"
@@ -2053,11 +2055,14 @@ def test_build_secret_orders_supply_feed_uses_fact_materials_not_assembled_effec
         for row in (feed.get("landed") or [])
     )
     assert any(
-        (row.get("item") or {}).get("note") == "密令拒收探针"
+        isinstance(row.get("item"), dict)
+        and str(row["item"].get("origin_ref") or "") == f"secret_order:{order_id}"
+        and row.get("section") == "密令"
         for row in (feed.get("rejections") or [])
     )
     assert any(
-        (row.get("item") or {}).get("section_probe") == "unknown-section-1847"
+        isinstance(row.get("item"), dict)
+        and row["item"].get("section_probe") == "unknown-section-1847"
         for row in (feed.get("rejections") or [])
     )
     assert any(
@@ -2066,16 +2071,15 @@ def test_build_secret_orders_supply_feed_uses_fact_materials_not_assembled_effec
     )
     assert str(feed.get("board") or "").strip()
 
-    from ming_sim.materials import prepare_world_materials, release_material_tree
+    from ming_sim.materials import (
+        _safe_segment, list_materials, prepare_world_materials, read_material, release_material_tree,
+    )
     prepared = prepare_world_materials(db, state)
     try:
-        listing = "\n".join(prepared.index_lines)
-        bodies = []
-        for rel in prepared.index_lines:
-            path = prepared.root / rel
-            if path.is_file():
-                bodies.append(path.read_text(encoding="utf-8"))
-        assert fact_body in "\n".join(bodies), listing
+        rel = f"事实/character-{_safe_segment(minister)}.txt"
+        assert rel in list_materials(prepared.root)
+        carrier = read_material(prepared.root, rel)
+        assert fact_body in carrier
     finally:
         release_material_tree(prepared.root)
 
@@ -2084,14 +2088,12 @@ def test_build_secret_orders_supply_feed_uses_fact_materials_not_assembled_effec
         str(row.get("origin_ref") or "") != f"dossier:{dossier_id}"
         for row in (gazette.get("landed") or [])
     )
-    gazette_bodies = [
-        (item.get("declaration") or {}).get("body")
-        for item in (gazette.get("nominal") or [])
-        if isinstance(item, dict)
-    ]
-    assert secret_decl not in gazette_bodies
     assert all(
-        (row.get("item") or {}).get("note") != "密令拒收探针"
+        row.get("decree_ref") != f"secret_order:{order_id}"
+        for row in (gazette.get("nominal") or [])
+    )
+    assert all(
+        str((row.get("item") or {}).get("origin_ref") or "") != f"secret_order:{order_id}"
         for row in (gazette.get("rejections") or [])
     )
 
@@ -2188,7 +2190,8 @@ def test_step_4a_rescript_path_feeds_landed_not_assembled_effects(game, monkeypa
         for row in (captured_feed.get("landed") or [])
     )
     assert any(
-        "no-such-army-1847-feed" in str(row)
+        isinstance(row.get("item"), dict)
+        and row["item"].get("target_id") == "no-such-army-1847-feed"
         for row in (captured_feed.get("rejections") or [])
     )
     chain = month_chain._load_chain(db, turn)

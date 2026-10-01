@@ -699,12 +699,22 @@ def test_world_segment_reads_material_directory(game, monkeypatch):
     from pathlib import Path
 
     import ming_sim.agents as agents_mod
+    import ming_sim.materials as materials_mod
     from ming_sim.agents import bind_content
     from ming_sim.models import LLMConfig
 
     db, state, content = game
     bind_content(content)
     seen = []
+    openings = []
+    real_prepare = materials_mod.prepare_world_materials
+
+    def prepare(db_, state_, *args, **kwargs):
+        prepared = real_prepare(db_, state_, *args, **kwargs)
+        openings.append(prepared.opening)
+        return prepared
+
+    monkeypatch.setattr(materials_mod, "prepare_world_materials", prepare)
 
     def capture(agent, _message, **_kwargs):
         tools = {tool.__name__: tool for tool in agent.tools}
@@ -717,7 +727,7 @@ def test_world_segment_reads_material_directory(game, monkeypatch):
             "index": index,
             "board": board,
             "dir_has_index": bool(materials_dir) and (Path(materials_dir) / "INDEX.txt").is_file(),
-            "opening": next(part for part in agent.instructions if board and board in str(part)),
+            "instructions": [str(part) for part in agent.instructions],
         })
         return "静"
 
@@ -727,16 +737,15 @@ def test_world_segment_reads_material_directory(game, monkeypatch):
         model="gpt-test", channel="api",
     )
     assert month_chain.run_world_segment_text(db, state, api) == "静"
-    assert "INDEX.txt" in seen[0]["listing"].splitlines()
+    catalog = [line for line in seen[0]["listing"].splitlines() if line]
+    assert "INDEX.txt" in catalog
+    assert any(line != "INDEX.txt" for line in catalog)
     assert seen[0]["index"].strip()
     assert seen[0]["board"].strip()
-    assert seen[0]["board"] in seen[0]["opening"]
-    # 目录里至少有一份不在开场最小集里的材料。
-    extra = next(
-        line for line in seen[0]["listing"].splitlines()
-        if line and line != "INDEX.txt" and line not in seen[0]["opening"]
-    )
-    assert extra
+    assert seen[0]["dir_has_index"] is False
+    # 开场通道＝prepare 交回的那一份，不靠栏目名从 instructions 里认。
+    assert openings[0]
+    assert openings[0] in seen[0]["instructions"]
 
     cli = LLMConfig(api_key="", base_url="", model="", channel="cli", cli_runner="agy")
     assert month_chain.run_world_segment_text(db, state, cli) == "静"
