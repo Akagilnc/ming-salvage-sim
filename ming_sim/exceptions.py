@@ -62,6 +62,14 @@ class LLMContractError(Exception):
         self.heal_evidence = heal_evidence
 
 
+class DeclarationDataError(ValueError):
+    """A declaration's data is invalid; not an incidental read/write failure."""
+
+
+class DeclarationReferenceError(KeyError):
+    """A declaration references a missing entity, not a broken persistence read."""
+
+
 class OfficeAppointmentRejection(ValueError):
     """Local office appointment write rejection with ADR 0015 category.
 

@@ -10,22 +10,18 @@
 
 from __future__ import annotations
 
-from ming_sim.applier import RejectedItem, Provenance
+from ming_sim.applier import RejectedItem
 
 from typing import Dict, List
 
 from ming_sim.applier import SectionResult
-from ming_sim.settlement.outcome import IssueSectionResult
 
 
 def apply(run) -> SectionResult:
     from ming_sim.entities.issue.tracker import apply_issue_tracker_output
-    from ming_sim.issues import (
-        _monthly_economy_items,
-        _strategic_event_outcome_label_or_error,
-        apply_event_cascading_invalidations,
-        loads_effect_dict,
-    )
+    from ming_sim.models import loads_effect_dict
+    from ming_sim.entities.issue.effects import _monthly_economy_items
+    from ming_sim.settlement.preflight import _strategic_event_outcome_label_or_error
 
     # 静态门闩先响亮筛：只有真能过候选/结果闸的事件结局标签才 fail-loud，
     # 非候选幻觉留给后面的 event_pool 逐项拒收（免不相干 delta 一并被带走）。
@@ -59,7 +55,7 @@ def apply(run) -> SectionResult:
     # 承诺月支载体：同批新建的承诺局势其 ongoing 月支被财政段用作 dedup 依据
     # （ADR 0027 承诺是主载体）。
     carriers: List[Dict[str, object]] = []
-    for item in issue_summary.get("new_issues") or []:
+    for item in issue_summary.new_issues:
         if not (
             isinstance(item, dict)
             and str(item.get("commitment_kind") or "").strip()
@@ -75,24 +71,10 @@ def apply(run) -> SectionResult:
     run.commitment_economy_carriers = carriers
 
     extras = _resolve_strategic_events(run, issue_summary)
-    issue = _issue_section(run, issue_summary)
-    run.issue_result = issue
     from ming_sim.settlement.run import _store
     for extra_name, extra in extras.items():
         _store(run, extra_name, extra)
-    return SectionResult(applied=list(issue.applied), rejected=list(issue.rejected))
-
-
-def _issue_section(run, summary: Dict[str, object]) -> IssueSectionResult:
-    return IssueSectionResult(
-        advances=list(summary.get("advances") or []),
-        new_issues=list(summary.get("new_issues") or []),
-        closes=list(summary.get("closes") or []),
-        cancels=list(summary.get("cancels") or []),
-        applied_person_changes=list(summary.get("applied_person_changes") or []),
-        rejected=list(summary.get("rejected") or []),
-        pairing_warnings=list(summary.get("pairing_warnings") or []),
-    )
+    return issue_summary
 
 
 def _suppressed_rows(run, event_id: str, event_title: str, reason: str = "") -> Dict[str, list]:
@@ -132,19 +114,17 @@ def _resolve_strategic_events(run, issue_summary) -> Dict[str, SectionResult]:
     )
     from ming_sim.entities.affair import UnauthorizedAffairOriginRef
     from ming_sim.entities.character.apply import apply_person_changes
-    from ming_sim.issues import (
-        _strategic_event_outcome_label_or_error,
-        apply_event_cascading_invalidations,
-    )
+    from ming_sim.issues import apply_event_cascading_invalidations
+    from ming_sim.settlement.preflight import _strategic_event_outcome_label_or_error
 
     bucket: Dict[str, list] = {
         "region_changes": [], "army_changes": [], "power": [],
         "person_issue": [], "new_armies": [],
     }
     reject_bucket = {name: [] for name in bucket}
-    new_issues = issue_summary.get("new_issues") or []
+    new_issues = issue_summary.new_issues
     seen = {str(row.get("id") or "").strip() for row in new_issues}
-    for refusal in issue_summary.get("rejected") or []:
+    for refusal in issue_summary.rejected:
         original = refusal.item
         if not isinstance(original, dict):
             continue

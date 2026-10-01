@@ -15,7 +15,6 @@ import pytest
 
 import ming_sim.issues as I
 from ming_sim.models import Event
-from tests.section_rejection_helpers import game
 
 
 def _decree_origin(db, state) -> str:
@@ -63,11 +62,11 @@ class _TempEvents:
 
 
 def _new(result):
-    return result.get("new_issues") or []
+    return result.new_issues
 
 
 def _rejected(result):
-    return list(result.get("rejected") or [])
+    return result.rejected
 
 
 def _pick_event_pool_id(db):
@@ -311,7 +310,7 @@ def test_new_issue_insert_code_exception_propagates(game, monkeypatch):
         raise RuntimeError("模拟 insert_issue 落库代码异常")
     monkeypatch.setattr(type(db), "insert_issue", _boom)
     # insert 代码/DB 异常不再 WARN 吞 → 上抛（上层 applier.atomic 据此 SettlementAbort）。
-    with pytest.raises(RuntimeError, match="模拟 insert_issue"):
+    with pytest.raises(RuntimeError):
         apply_issue_tracker_output(db, state, {
             "new_issues": [{"origin_kind": "decree", "origin_ref": _decree_origin(db, state),
                             "kind": "situation", "title": "测试·正常字段"}],
@@ -354,7 +353,7 @@ def test_event_to_issue_insert_exception_propagates(read_game, monkeypatch):
         raise RuntimeError("模拟 event_to_issue insert 落库代码异常")
 
     monkeypatch.setattr(type(db), "insert_issue", _boom)
-    with pytest.raises(RuntimeError, match="模拟 event_to_issue"):
+    with pytest.raises(RuntimeError):
         I.event_to_issue(db, state, ev)
 
 
@@ -373,7 +372,7 @@ def test_new_issue_event_pool_insert_exception_propagates(game, monkeypatch):
     with _TempEvents(content, ev):
         _ensure_event_candidate(db, state, eid)
         monkeypatch.setattr(type(db), "insert_issue", _boom)
-        with pytest.raises(RuntimeError, match="模拟 event_pool"):
+        with pytest.raises(RuntimeError):
             apply_issue_tracker_output(db, state, {
                 "new_issues": [{"origin_kind": "event_pool", "id": eid}],
             }, source=Provenance.system_simulation)

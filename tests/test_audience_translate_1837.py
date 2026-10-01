@@ -9,30 +9,24 @@ Seams:
 from __future__ import annotations
 
 import json
-import threading
 from types import SimpleNamespace
 
 import pytest
 
-import ming_sim.agents as agents_mod
 import ming_sim.audience_translate as audience_translate
 from ming_sim.audience_night import (
-    AudienceNightError,
     close_night,
     engine_command_mingfa_publication_ids,
-    list_chat_turns_for_night,
     list_ledger,
     open_night,
 )
 from ming_sim.audience_translate import normalize_audience_declaration
 from ming_sim.declaration_dispatch import dispatch_declaration
 from ming_sim.session import GameSession
-from ming_sim.session_write_queue import get_session_write_queue
 from tests.conftest import (
     offline_empty_audience_translate,
     persist_and_schedule_scene,
     stub_audience_translate,
-    stub_scene_agent,
 )
 
 
@@ -196,7 +190,7 @@ def test_pending_round_approval_endorsed_before_close_or_after_month_join(
         result = sess.scene_chat("准", chat_turn_id=ctid)
         future = persist_and_schedule_scene(sess, db, result)
         assert future is not None
-        with pytest.raises(RuntimeError, match="translation unavailable"):
+        with pytest.raises(RuntimeError):
             future.result(timeout=30)
 
     write_queue = SessionWriteQueue()

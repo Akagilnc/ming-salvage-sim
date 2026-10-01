@@ -6,10 +6,8 @@ from ming_sim.entities.issue.tracker import apply_issue_tracker_output
 from ming_sim.applier import Provenance
 import json
 
-import ming_sim.agents as agents_mod
 from ming_sim.db import GameDB
 from ming_sim.issues import gather_impeachment_surge_candidates
-from ming_sim.models import LLMConfig
 
 
 def _candidate_world(db, state, *, participants=None, execution_note="名实已乖，旨外受益"):
@@ -157,15 +155,15 @@ def test_apply_accepts_only_current_candidate_closed_target_and_free_text(game):
         "title": "  自由题名  ", "stage_text": "原样案情。",
     }]}
     result = apply_issue_tracker_output(db, state, output, source=Provenance.system_simulation)
-    accepted = result["new_issues"][0]
+    accepted = result.new_issues[0]
     row = db.conn.execute("SELECT * FROM issues WHERE id=?", (accepted["issue_id"],)).fetchone()
     assert row["origin_ref"] == f"commitment:{did}:deformation_exposure"
     assert row["title"] == "  自由题名  "
     assert row["stage_text"] == "原样案情。"
 
     duplicate = apply_issue_tracker_output(db, state, output, source=Provenance.system_simulation)
-    assert duplicate["new_issues"] == []
-    assert duplicate["rejected"]
+    assert duplicate.new_issues == []
+    assert duplicate.rejected
 
 
 def test_dynamic_apply_rejects_blank_title_wrong_faction_and_outside_target(game):
@@ -179,8 +177,8 @@ def test_dynamic_apply_rejects_blank_title_wrong_faction_and_outside_target(game
     bad = [dict(base, title="  "), dict(base, faction_hint="伪派"),
            dict(base, target_roster=["不存在"])]
     result = apply_issue_tracker_output(db, state, {"new_issues": bad}, source=Provenance.system_simulation)
-    assert result["new_issues"] == []
-    assert len(result["rejected"]) == 3
+    assert result.new_issues == []
+    assert len(result.rejected) == 3
     assert db.conn.execute("SELECT COUNT(*) FROM issues WHERE origin_kind='impeachment_surge'").fetchone()[0] == 0
 
 
@@ -196,9 +194,9 @@ def test_dynamic_targets_are_roleless_deduplicated_without_participant_roles(gam
         dict(base, target_roster=[owner, owner]),
     ]}, source=Provenance.system_simulation)
 
-    assert len(result["rejected"]) == 1
-    assert len(result["new_issues"]) == 1
-    applied = result["new_issues"][0]
+    assert len(result.rejected) == 1
+    assert len(result.new_issues) == 1
+    applied = result.new_issues[0]
     row = db.conn.execute(
         "SELECT participants,participant_roster,target_roster FROM issues WHERE origin_kind='impeachment_surge'"
     ).fetchone()
@@ -225,8 +223,8 @@ def test_dynamic_apply_deduplicates_same_candidate_within_input_snapshot(game):
         impeachment_surge_candidates_at_input=[candidate],
     source=Provenance.system_simulation)
 
-    assert len(result["new_issues"]) == 1
-    assert len(result["rejected"]) == 1
+    assert len(result.new_issues) == 1
+    assert len(result.rejected) == 1
     assert db.conn.execute(
         "SELECT COUNT(*) FROM issues WHERE origin_kind='impeachment_surge'"
     ).fetchone()[0] == 1
@@ -242,7 +240,7 @@ def test_target_roster_survives_generic_issue_restore(game, content):
     issue_id = apply_issue_tracker_output(
         db, state, {"new_issues": [item]},
         impeachment_surge_candidates_at_input=[candidate],
-    source=Provenance.system_simulation)["new_issues"][0]["issue_id"]
+    source=Provenance.system_simulation).new_issues[0]["issue_id"]
     path = db.conn.execute("PRAGMA database_list").fetchone()[2]
     db.conn.commit()
     db.close()
@@ -271,8 +269,8 @@ def test_dynamic_apply_rejects_non_text_free_fields_without_coercion(game):
         dict(base, stage_text=["bad"]),
     ]}, source=Provenance.system_simulation)
 
-    assert result["new_issues"] == []
-    assert len(result["rejected"]) == 2
+    assert result.new_issues == []
+    assert len(result.rejected) == 2
     assert db.conn.execute(
         "SELECT COUNT(*) FROM issues WHERE origin_kind='impeachment_surge'"
     ).fetchone()[0] == 0
@@ -296,15 +294,15 @@ def test_leverage_boundary_and_authoritative_input_snapshot(game):
         candidate_event_ids_authoritative=True,
         impeachment_surge_candidates_at_input=[],
     source=Provenance.system_simulation)
-    assert rejected["new_issues"] == []
-    assert "输入快照" in rejected["rejected"][0].reason
+    assert rejected.new_issues == []
+    assert rejected.rejected[0].category == "issue"
 
     accepted = apply_issue_tracker_output(
         db, state, {"new_issues": [item]}, candidate_event_ids_at_input=set(),
         candidate_event_ids_authoritative=True,
         impeachment_surge_candidates_at_input=[candidate],
     source=Provenance.system_simulation)
-    assert accepted["new_issues"] and accepted["new_issues"][0].get("issue_id")
+    assert accepted.new_issues and accepted.new_issues[0].get("issue_id")
 
 
 def test_transformed_candidate_fails_closed_outside_window_or_without_liability(game):

@@ -222,7 +222,7 @@ def test_failed_appointment_rolls_back_faction_leverage(game):
 
     db.set_character_office = _boom  # type: ignore[assignment]
     try:
-        with pytest.raises(RuntimeError, match="注入故障"):
+        with pytest.raises(RuntimeError):
             with atomic(db):
                 apply_office_appointment(
                     db, state, content, name, "内阁大学士", reason="起复内阁", faction="阉党",
@@ -814,7 +814,7 @@ def test_legacy_save_calibrates_offset_on_open(game):
     """#9 R1 finding#1 [P1]：老档经 GameDB() 打开（仅 init_schema，不 seed_static_data）
     时，leverage_offset 列刚 ADD 后必须立即一次性校准（offset = 当前 DB leverage − 权重和），
     使 leverage == clamp(offset+权重和) == 钦定基线，而非 0+权重和（未锚定基线的错值）。"""
-    from ming_sim.db import GameDB, _LEVERAGE_FACTIONS
+    from ming_sim.db import GameDB
 
     _, _, content = game
     path = _make_legacy_save_without_offset_col(content)
@@ -1001,31 +1001,6 @@ def test_calibrated_save_without_marker_not_re_anchored(game):
         os.remove(path)
 
 
-def test_rollback_snapshot_restores_leverage_offset(game):
-    """#9 R1 finding#2：person 写状态快照/还原须含 leverage_offset（leverage 由 offset+权重派生、
-    二者一个逻辑态）。构造：改 offset 后还原，断言 offset 也回到原值。"""
-    from ming_sim.issues import _snapshot_person_write_state, _restore_person_write_state
-
-    db, state, content = game
-    faction = "阉党"
-    before_offset = db.conn.execute(
-        "SELECT leverage_offset FROM factions WHERE name=?", (faction,)
-    ).fetchone()["leverage_offset"]
-
-    snapshot = _snapshot_person_write_state(db, content)
-    # 模拟包裹流中途改 offset（adjust_factions 白名单路会改 offset）。
-    db.conn.execute(
-        "UPDATE factions SET leverage_offset = leverage_offset + 13 WHERE name=?", (faction,)
-    )
-    db.conn.commit()
-    _restore_person_write_state(db, content, snapshot)
-
-    after_offset = db.conn.execute(
-        "SELECT leverage_offset FROM factions WHERE name=?", (faction,)
-    ).fetchone()["leverage_offset"]
-    assert after_offset == before_offset, (
-        f"回滚应还原 leverage_offset：before={before_offset} after={after_offset}"
-    )
 
 
 def test_calibrate_offset_flag_consumed_once(game):

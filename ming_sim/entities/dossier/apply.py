@@ -18,7 +18,7 @@ def apply_dossier_participant_items(
     not_in_batch_msg: str,
 ) -> Tuple[List[Dict[str, object]], List[RejectedItem]]:
     """追加参与人。权威集合缺省即空闭集，不从活库回推，两路集合不并。"""
-    from ming_sim.issues import _parse_sqlite_id
+    from ming_sim.strict_types import _parse_sqlite_id
 
     results: List[Dict[str, object]] = []
     rejections: List[RejectedItem] = []

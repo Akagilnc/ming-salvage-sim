@@ -9,22 +9,17 @@ import json
 import math
 import os
 import re
-import textwrap
 from typing import Dict, List
 
-from ming_sim.constants import CONTENT_DIR, MONEY_UNIT, TURN_UNIT, WRAP
+from ming_sim.constants import CONTENT_DIR, MONEY_UNIT, TURN_UNIT
 from ming_sim.person_archive_contract import format_person_actions
-
-
-def wrap(text: str) -> str:
-    return "\n".join(textwrap.wrap(text, width=WRAP, replace_whitespace=False))
 
 
 def load_text_asset(relative_path: str) -> str:
     path = os.path.join(CONTENT_DIR, relative_path)
     try:
         with open(path, "r", encoding="utf-8") as file:
-            text = file.read().strip()
+            text = file.read()
     except OSError as error:
         raise SystemExit(f"设定文件缺失或不可读：{path} ({error})") from error
     return (

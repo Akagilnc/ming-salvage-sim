@@ -9,6 +9,8 @@
 
 from __future__ import annotations
 
+from ming_sim.exceptions import DeclarationDataError, DeclarationReferenceError
+
 from ming_sim.applier import Provenance
 
 import contextlib
@@ -125,12 +127,12 @@ _SUMMON_TRAVEL_TONE_PREFIX = "行程语气:"
 
 
 def _travel_tone_tag(value: object) -> str:
-    from ming_sim.issues import normalize_travel_tone
+    from ming_sim.settlement.preflight import normalize_travel_tone
     return f"{_SUMMON_TRAVEL_TONE_PREFIX}{normalize_travel_tone(value)}"
 
 
 def _travel_tone_from_tags(tags: Sequence[Any]) -> str:
-    from ming_sim.issues import TRAVEL_SPEED_BY_TONE, normalize_travel_tone
+    from ming_sim.settlement.preflight import TRAVEL_SPEED_BY_TONE, normalize_travel_tone
     tones = [
         normalize_travel_tone(str(tag)[len(_SUMMON_TRAVEL_TONE_PREFIX):])
         for tag in tags if str(tag).startswith(_SUMMON_TRAVEL_TONE_PREFIX)
@@ -964,7 +966,7 @@ def open_night(
             db.conn.execute(f"ROLLBACK TO SAVEPOINT {sp}")
             db.conn.execute(f"RELEASE SAVEPOINT {sp}")
         except Exception:
-            pass
+            logger.exception("open_night rollback failed")
         raise
 
     night = get_night(db, night_id)
@@ -1718,8 +1720,8 @@ def update_summon_travel_tone(
     """
     name = str(person_name or "").strip()
     if not name:
-        raise ValueError("传召人名不能为空")
-    from ming_sim.issues import normalize_travel_tone
+        raise DeclarationDataError("传召人名不能为空")
+    from ming_sim.settlement.preflight import normalize_travel_tone
     tone = normalize_travel_tone(travel_tone)
     target = None
     for item in list_unsettled_summons(db):
@@ -1736,14 +1738,14 @@ def update_summon_travel_tone(
         target = item
         break
     if target is None:
-        raise KeyError(f"本夜无此人未结传召：{name}")
+        raise DeclarationReferenceError(f"本夜无此人未结传召：{name}")
     entry_id = int(target["entry_id"])
     row = db.conn.execute(
         "SELECT tags FROM story_ledger_entries WHERE id=?",
         (entry_id,),
     ).fetchone()
     if row is None:
-        raise KeyError(f"传召账不存在：{entry_id}")
+        raise DeclarationReferenceError(f"传召账不存在：{entry_id}")
     tags = [str(t) for t in json.loads(row["tags"] or "[]")]
     tags = [t for t in tags if not str(t).startswith(_SUMMON_TRAVEL_TONE_PREFIX)]
     tags.append(_travel_tone_tag(tone))
@@ -1844,7 +1846,7 @@ def commit_fresh_summons_for_night(
     if not pending:
         return []
     from ming_sim.decree import atomic_and_reload
-    from ming_sim.issues import apply_person_changes_only
+    from ming_sim.settlement.run import apply_person_changes_only
 
     # 历史多 origin 未结账：按人分组，apply 一次后全部标在途（兼容重试）。
     by_person: Dict[str, List[Dict[str, Any]]] = {}
@@ -1884,7 +1886,7 @@ def commit_fresh_summons_for_night(
                 for item in items:
                     origins.append(str(item["origin_id"]))
                 continue
-            from ming_sim.issues import TRAVEL_SPEED_BY_TONE, normalize_travel_tone
+            from ming_sim.settlement.preflight import TRAVEL_SPEED_BY_TONE, normalize_travel_tone
             travel_tone = max(
                 (normalize_travel_tone(item.get("travel_tone")) for item in items),
                 key=TRAVEL_SPEED_BY_TONE.__getitem__,
@@ -1903,8 +1905,8 @@ def commit_fresh_summons_for_night(
                 }],
                 content=content,
             source=Provenance.system_simulation)
-            results = list(applied.get("applied_person_changes") or [])
-            if not results or (applied.get("rejected") or []):
+            results = list(applied.applied)
+            if not results or applied.rejected:
                 raise AudienceNightError(
                     f"传召启程未落定：{person_name}",
                     code="summon_departure_rejected",
@@ -2262,7 +2264,7 @@ def audience_scene_recap(
         nid = int(open_n["id"])
     bodies: List[str] = []
     for entry in audible_entries_for(db, int(nid), name):
-        body = str(entry.get("body") or "").strip()
+        body = str(entry.get("body") or "")
         if body:
             bodies.append(body)
     if not bodies:

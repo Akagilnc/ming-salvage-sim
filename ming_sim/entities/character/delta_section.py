@@ -79,7 +79,7 @@ def amnesty_conflict_power_ids(
     削弱；此时顶层申报被拒，削弱只认反噬那一处。合法易主的识别复用既有
     ``resolve_person_transition`` 守门，不在本段另立政策。
     """
-    from ming_sim.issues import PERSON_IDENTITY_TITLES, resolve_person_transition
+    from ming_sim.person_archive_contract import PERSON_IDENTITY_TITLES, resolve_person_transition
 
     power_ids: Set[str] = set()
     for item in person_changes:

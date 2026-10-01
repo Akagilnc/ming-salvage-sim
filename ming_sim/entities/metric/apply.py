@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Dict, List, Optional, Tuple
 
 from ming_sim.models import GameState
+from ming_sim.strict_types import strict_int
 
 ISSUE_METRIC_KEYS = {"民心", "皇威"}
 
@@ -27,7 +28,7 @@ def apply_metric_dict(
         if key not in ISSUE_METRIC_KEYS:
             continue
         try:
-            amount = int(val)
+            amount = strict_int(val)
         except (TypeError, ValueError):
             continue
         net_pct = int(mods.get(key, 0) or 0)
@@ -59,7 +60,7 @@ def declare_metric_pairs(
             refused.append((key, val, f"未知指标：{key!r}", "invalid_enum"))
             continue
         try:
-            int(val)
+            strict_int(val)
         except (TypeError, ValueError):
             refused.append((key, val, f"「{key}」值非整数：{val!r}", "invalid_enum"))
             continue

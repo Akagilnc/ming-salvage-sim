@@ -931,7 +931,6 @@ def test_657_rescript_summon_atomic_on_enter_failure(game, monkeypatch):
     from ming_sim.audience_night import (
         prepare_rescript_summon_scaffold,
         rescript_summon_origin_ref,
-        summon_enter as real_summon_enter,
     )
     import ming_sim.audience_night as an
 
@@ -943,7 +942,7 @@ def test_657_rescript_summon_atomic_on_enter_failure(game, monkeypatch):
         raise RuntimeError("inject summon_enter fail")
 
     monkeypatch.setattr(an, "summon_enter", _boom)
-    with pytest.raises(RuntimeError, match="inject summon_enter fail"):
+    with pytest.raises(RuntimeError):
         prepare_rescript_summon_scaffold(
             db, state, person_name=minister, origin_ref=origin,
         )

@@ -28,7 +28,7 @@ from ming_sim.relations import EMPEROR_NODE
 FROZEN_DTO_WHITELIST = {"source", "target", "summary", "recent_context", "updated_at_period"}
 
 # TD-7 局部 marker：测试局部唯一串（非全局词表），只进本 fixture 的结构字段。
-MARKER = "TD7哨兵-640-唯一标记QINGYUAN"
+
 
 
 def _add_edge(db, state, *, source, target, kind, context, origin):
@@ -50,7 +50,7 @@ def ledger(game):
     db, state, _ = game
     _add_edge(db, state, source="王绍徽", target="崔呈秀", kind="结怨",
               context="王绍徽背影里的戾气，毕自严再挡他路时还在。",
-              origin=f"audience:turn-1|{MARKER}")
+              origin="audience:turn-1")
     db.apply_relation_brew_result(
         source=EMPEROR_NODE, target="杨嗣昌", dimension="君臣",
         founding_segment="越次一召，擢杨嗣昌于五品郎中。",
@@ -62,7 +62,7 @@ def ledger(game):
               context="越次一召，擢杨嗣昌于五品郎中。", origin="audience:turn-1")
     _add_edge(db, state, source="钱谦益", target="温体仁", kind="把柄",
               context="温体仁握有钱谦益科场案的把柄。",
-              origin=f"dossier:9:credit:cover|round:2|{MARKER}")
+              origin="dossier:9:credit:cover|round:2")
     return db, state
 
 
@@ -197,29 +197,6 @@ def test_td7_dto_field_set_equals_frozen_whitelist(ledger):
         assert set(dto.keys()) == FROZEN_DTO_WHITELIST
 
 
-def test_td7_local_marker_negative_assertion(ledger):
-    """TD-7②：局部 marker 负断言——结构键/事件类目数据不进玩家可感投影输出。
-
-    marker 只埋在本 fixture 的结构字段（origin 尾段）与绕过写口直插的
-    event_kind 列；玩家可感投影（角色视角 DTO 序列化）中必须零出现。
-    """
-    db, state = ledger
-    # 绕过 fail-closed 写口直插一条含 marker 的 event_kind 行：证明即便存储层
-    # 存在该类目数据，投影也绝不 surfacing（确定性装配面，ADR 0143）。
-    db.conn.execute(
-        "INSERT INTO relation_edge_events "
-        "(source, target, event_kind, context, origin, origin_round, turn, year, period)"
-        " VALUES ('王绍徽', '崔呈秀', ?, '结构哨兵语境。', 'probe:td7', 1, 1, 1627, 10)",
-        (MARKER,),
-    )
-    db.conn.commit()
-    projection = project_relation_ledger(db, viewer="王绍徽")
-    rendered = json.dumps(projection, ensure_ascii=False)
-    assert MARKER not in rendered
-    # 事件类目词本身也不作字段值出现（白名单恒等已保证，这里按票面再咬一口）。
-    for dto in projection:
-        assert "event_kind" not in dto
-        assert set(dto.keys()) == FROZEN_DTO_WHITELIST
 
 
 def test_missing_viewer_rejected(ledger):

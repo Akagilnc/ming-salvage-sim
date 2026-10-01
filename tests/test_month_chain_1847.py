@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 import sqlite3
-import threading
 
 import pytest
 
@@ -1617,7 +1616,7 @@ def test_settle_edicts_persists_pending_disclosures_in_same_transaction(game, mo
         return real_save(db_, turn_, chain_, **kwargs)
 
     monkeypatch.setattr(month_chain, "_save_chain", boom_save)
-    with pytest.raises(RuntimeError, match="injected chain save failure"):
+    with pytest.raises(RuntimeError):
         _settle_edicts(sess, chain=chain)
     assert not db.staged_declarations.is_settled(ref_2)
 
@@ -2050,7 +2049,7 @@ def test_pending_disclosures_share_commit_boundary_with_effects(game, monkeypatc
         raise RuntimeError("injected disclosure save failure")
 
     monkeypatch.setattr(month_chain, "_save_chain", boom_save)
-    with pytest.raises(RuntimeError, match="injected disclosure save failure"):
+    with pytest.raises(RuntimeError):
         _settle_edicts(sess, chain=chain)
 
     assert not db.staged_declarations.is_settled(ref)

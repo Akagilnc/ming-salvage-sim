@@ -166,9 +166,9 @@ def parse_json_dict(raw: str) -> Dict[str, int]:
     try:
         data = json.loads(raw)
     except json.JSONDecodeError as error:
-        raise LLMContractError(f"数据库中的数值变化 JSON 已损坏：{raw[:200]}") from error
+        raise LLMContractError(f"数据库中的数值变化 JSON 已损坏：{raw}") from error
     if not isinstance(data, dict):
-        raise LLMContractError(f"数据库中的数值变化不是 object：{raw[:200]}")
+        raise LLMContractError(f"数据库中的数值变化不是 object：{raw}")
     parsed: Dict[str, int] = {}
     for key, value in data.items():
         try:
@@ -213,7 +213,8 @@ def minister_dossier(character: Character) -> str:
     # 存在性用 strip 探测；选用时传原串（禁把裁剪值当正文，P6 / ADR 0142）。
     style_present = bool(raw_style.strip())
     if dossier is None:
-        identity = (character.summary or "").strip() or "未有专门 dossier，以官职、性情和任事处作通用特征化"
+        raw_identity = character.summary or ""
+        identity = raw_identity if raw_identity.strip() else "未有专门 dossier，以官职、性情和任事处作通用特征化"
         temperament = raw_style if style_present else "以官职与任事处推知其处世分寸"
         skills = "、".join(character.personal_skills) or "未留专长档案"
         motivation = f"在{character.office or '所任官署'}任事并完成本分"

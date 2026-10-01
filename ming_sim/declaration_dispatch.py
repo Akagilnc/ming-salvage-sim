@@ -51,6 +51,7 @@ textual_facts / public_sayings / presence / scene_facts（原生 `origin_ref`
 """
 
 from __future__ import annotations
+from ming_sim.exceptions import DeclarationDataError, DeclarationReferenceError
 
 from ming_sim.applier import Provenance
 
@@ -87,7 +88,8 @@ from ming_sim.audience_night import (
 from ming_sim.entities.affair import ATTACH_BIRTH, ATTACH_EXPERIENCE, declaration_from_payload
 from ming_sim.error_pack import rejections_jsonl_path
 from ming_sim.relations import summon_edge_origin
-from ming_sim.issues import _ORDERED_DELTA_FIELDS, apply_person_changes_only
+from ming_sim.settlement.run import apply_person_changes_only
+from ming_sim.settlement.preflight import _ORDERED_DELTA_FIELDS
 from ming_sim.public_sayings import record_public_saying
 from ming_sim.relations import validate_edge_kind
 
@@ -458,7 +460,7 @@ def _dispatch_effects(
             category="invalid_shape", source=source,
         )])
 
-    from ming_sim.issues import preflight_declared_event_effects, sanitize_delta_shape
+    from ming_sim.settlement.preflight import preflight_declared_event_effects, sanitize_delta_shape
 
     shape_rejections = []
     rejected = []
@@ -799,7 +801,7 @@ def _item_savepoint_scope(db: Any, savepoint: str) -> Iterator[None]:
     else contextlib.nullcontext()` + SAVEPOINT，同一机制不重复发明）。
 
     跨层回滚：`apply_person_changes_only` 等既有生产口在有外层事务时会调用
-    `issues.py::_register_runtime_rollback_snapshot`，把恢复 `state.metrics`
+    `settlement/run.py::_register_runtime_rollback_snapshot`，把恢复 `state.metrics`
     / `content.characters` 等运行时内存态的闭包追加进
     `conn._runtime_rollback_callbacks`——但那些闭包只在连接级真
     `conn.rollback()`（`_SuspendableConnection.rollback`）时才会被执行；
@@ -895,7 +897,7 @@ def _assert_commission_grant_target_exists(
     if kind == "region":
         row = db.conn.execute("SELECT 1 FROM regions WHERE id=?", (tid,)).fetchone()
         if row is None:
-            raise KeyError(f"地区不存在：{tid}")
+            raise DeclarationReferenceError(f"地区不存在：{tid}")
         return
     if kind == "character":
         _assert_characters_exist(db, [tid])
@@ -903,16 +905,16 @@ def _assert_commission_grant_target_exists(
     if kind == "army":
         row = db.conn.execute("SELECT 1 FROM armies WHERE id=?", (tid,)).fetchone()
         if row is None:
-            raise KeyError(f"军队不存在：{tid}")
+            raise DeclarationReferenceError(f"军队不存在：{tid}")
         return
     if kind == "issue":
         try:
             iid = int(tid)
         except (TypeError, ValueError) as exc:
-            raise KeyError(f"事项不存在：{tid}") from exc
+            raise DeclarationReferenceError(f"事项不存在：{tid}") from exc
         row = db.conn.execute("SELECT 1 FROM issues WHERE id=?", (iid,)).fetchone()
         if row is None:
-            raise KeyError(f"事项不存在：{tid}")
+            raise DeclarationReferenceError(f"事项不存在：{tid}")
         return
     # 未知 kind 留给成案/物化缝；此处不放行空目标（调用方已要求非空）。
 
@@ -1059,10 +1061,10 @@ def _attach_commission_affair(
         return True
     try:
         db.affairs.peek_declared_id(raw_affair, allowed=ATTACH_BIRTH)
-    except KeyError as exc:
+    except DeclarationReferenceError as exc:
         _reject(rejected, item, str(exc), "hallucinated_id", source)
         return False
-    except ValueError as exc:
+    except DeclarationDataError as exc:
         _reject(rejected, item, str(exc), "invalid_shape", source)
         return False
     payload["affair_declaration"] = raw_affair
@@ -1124,9 +1126,9 @@ def _dispatch_commissions(
                         db, state, item, minister_name=minister_name,
                     )
                 )
-            except KeyError as exc:
+            except DeclarationReferenceError as exc:
                 _reject(rejected, item, str(exc), "invalid_state", source)
-            except (TypeError, ValueError) as exc:
+            except DeclarationDataError as exc:
                 _reject(rejected, item, str(exc), "invalid_shape", source)
             continue
 
@@ -1284,7 +1286,7 @@ def _dispatch_commissions(
             if assignee:
                 try:
                     _assert_characters_exist(db, [assignee])
-                except KeyError as exc:
+                except DeclarationReferenceError as exc:
                     _reject(rejected, item, str(exc), "hallucinated_id", source)
                     continue
             # 各自所属事务（ADR 0154）：与同批 directive 交办同一校验口，
@@ -1355,7 +1357,7 @@ def _dispatch_commissions(
                     transaction_category=assignment.get("transaction_category", ""),
                     source_chat_turn_id=source_chat_turn_id,
                 )
-            except (DecreeMaterializationValidationError, TypeError, ValueError) as exc:
+            except DecreeMaterializationValidationError as exc:
                 _reject(rejected, item, str(exc), "invalid_shape", source)
                 continue
             if row_id:
@@ -1483,7 +1485,7 @@ def _dispatch_commissions(
                         "locality_scope": "none",
                         "mode": mode,
                     }
-        except KeyError as exc:
+        except DeclarationReferenceError as exc:
             _reject(rejected, item, str(exc), "hallucinated_id", source)
             continue
         except DecreeMaterializationValidationError as exc:
@@ -1497,7 +1499,7 @@ def _dispatch_commissions(
         if appointment_fields:
             try:
                 _assert_characters_exist(db, [str(appointment_fields["name"])])
-            except KeyError as exc:
+            except DeclarationReferenceError as exc:
                 _reject(rejected, item, str(exc), "hallucinated_id", source)
                 continue
             payload.update(appointment_fields)
@@ -1690,7 +1692,7 @@ def _dispatch_endorsements(
                 db.attach_pending_action_endorsement(
                     action_id, entry, commit=False,
                 )
-            except (TypeError, ValueError, KeyError) as exc:
+            except (DeclarationDataError, DeclarationReferenceError) as exc:
                 _reject(rejected, item, str(exc), "invalid_item", source)
                 continue
         elif status == "committed":
@@ -1715,7 +1717,7 @@ def _dispatch_endorsements(
                         source_chat_turn_id=ctid,
                         commit=False,
                     )
-            except (TypeError, ValueError) as exc:
+            except DeclarationDataError as exc:
                 _reject(rejected, item, str(exc), "invalid_item", source)
                 continue
         else:
@@ -1752,17 +1754,17 @@ def _stage_prohibit_covert_levy(
     try:
         dossier_id = int(item["target_id"])
     except (KeyError, TypeError, ValueError):
-        raise KeyError("禁摊派交办缺场面案卷 id") from None
+        raise DeclarationReferenceError("禁摊派交办缺场面案卷 id") from None
     if not any(
         scene.get("kind") == "covert_levy_exposure"
         and not scene.get("decision")
         and int(scene.get("dossier_id") or 0) == dossier_id
         for scene in list_due_review_scenes(db, state)
     ):
-        raise KeyError(f"当前无待裁的暗渠摊派暴露案卷：{dossier_id}")
+        raise DeclarationReferenceError(f"当前无待裁的暗渠摊派暴露案卷：{dossier_id}")
     body = _declared_prose(item.get("text"))
     if body is None:
-        raise ValueError("禁摊派交办缺正文")
+        raise DeclarationDataError("禁摊派交办缺正文")
     actor = str(minister_name or "").strip() or _commission_fallback_actor(db)
     payload = {
         "text": body,
@@ -1867,7 +1869,7 @@ def _dispatch_inquiries(
             continue
         try:
             _assert_characters_exist(db, [attendant])
-        except KeyError as exc:
+        except DeclarationReferenceError as exc:
             _reject(rejected, item, str(exc), "hallucinated_id", source)
             continue
         from ming_sim.audience_night import is_inner_court_attendant
@@ -1998,7 +2000,7 @@ def _dispatch_travel_tones(
 ) -> SectionResult:
     """传召行程语气声明 → 本轮传召账；已有口令账则更新它。"""
     from ming_sim.audience_night import record_summon_fresh, update_summon_travel_tone
-    from ming_sim.issues import normalize_travel_tone
+    from ming_sim.settlement.preflight import normalize_travel_tone
 
     items, rejected = _section_items(raw, label="行程语气声明", source=source)
     if int(night_id or 0) <= 0 or source_turn_error:
@@ -2021,7 +2023,7 @@ def _dispatch_travel_tones(
                 db, night_id=int(night_id), person_name=person, travel_tone=tone,
                 origin_chat_turn_id=chat_turn_id,
             )
-        except KeyError:
+        except DeclarationReferenceError:
             # A non-command-shaped summons (e.g. an urgent summons) has no
             # deterministic command ledger. The translator supplies the person;
             # only an offsite, eligible person can acquire a fresh summons here.
@@ -2043,7 +2045,7 @@ def _dispatch_travel_tones(
                 origin_id=f"scene:xuan:{chat_turn_id}:{person}",
                 origin_chat_turn_id=chat_turn_id, travel_tone=tone,
             )
-        except ValueError as exc:
+        except DeclarationDataError as exc:
             _reject(rejected, item, str(exc), "invalid_state", source)
             continue
         applied.append({
@@ -2190,11 +2192,13 @@ def _dispatch_promises(
 
 
 def _assert_textual_fact_subject_exists(db: Any, subject_kind: str, subject_id: str) -> None:
-    """不存在的引用 → KeyError（分类 hallucinated_id）；格式坏的 id（如非数字的
-    affair id）留给调用方的 ``int()``/``ValueError`` 走 invalid_shape，两类不
-    混同一个异常类型。"""
+    """格式及缺失引用为类型化数据错误；持久读取异常不转译。"""
     if subject_kind == "affair":
-        db.affairs.get(int(subject_id))  # 不存在 → 既有 KeyError；非数字 id → ValueError
+        try:
+            affair_id = int(subject_id)
+        except (TypeError, ValueError) as exc:
+            raise DeclarationDataError("事务引用须为整数") from exc
+        db.affairs.get(affair_id)
         return
     table_column = _TEXTUAL_FACT_EXISTENCE_TABLES.get(subject_kind)
     if table_column is None:
@@ -2204,7 +2208,7 @@ def _assert_textual_fact_subject_exists(db: Any, subject_kind: str, subject_id: 
         f"SELECT 1 FROM {table} WHERE {column}=?", (subject_id,),
     ).fetchone()
     if row is None:
-        raise KeyError(f"{subject_kind} 不存在：{subject_id}")
+        raise DeclarationReferenceError(f"{subject_kind} 不存在：{subject_id}")
 
 
 def _xiexang_reject_category(exc: DecreeMaterializationValidationError) -> str:
@@ -2248,9 +2252,9 @@ def _peek_affair_id(db: Any, item: Mapping[str, object]) -> Tuple[int | None, st
         return None, None
     try:
         affair_id = db.affairs.peek_declared_id(raw_affair, allowed=ATTACH_EXPERIENCE)
-    except KeyError:
+    except DeclarationReferenceError:
         return None, "hallucinated_id"
-    except ValueError:
+    except DeclarationDataError:
         return None, "invalid_shape"
     return affair_id, None
 
@@ -2289,10 +2293,10 @@ def _dispatch_textual_facts(
         subject_id = str(item.get("subject_id") or "").strip()
         try:
             _assert_textual_fact_subject_exists(db, subject_kind, subject_id)
-        except KeyError as exc:
+        except DeclarationReferenceError as exc:
             _reject(rejected, item, str(exc), "hallucinated_id", source)
             continue
-        except ValueError as exc:
+        except DeclarationDataError as exc:
             _reject(rejected, item, str(exc), "invalid_shape", source)
             continue
         origin_ref, error_category = _resolve_affair_origin_ref(db, item)
@@ -2305,7 +2309,7 @@ def _dispatch_textual_facts(
                 body=item.get("body"), year=state.year, period=state.period,
                 turn=state.turn, origin_ref=origin_ref,
             )
-        except ValueError as exc:
+        except DeclarationDataError as exc:
             _reject(rejected, item, str(exc), "invalid_shape", source)
             continue
         applied.append({
@@ -2318,7 +2322,7 @@ def _assert_characters_exist(db: Any, names: Sequence[str]) -> None:
     for name in names:
         row = db.conn.execute("SELECT 1 FROM characters WHERE name=?", (name,)).fetchone()
         if row is None:
-            raise KeyError(f"人物不存在：{name}")
+            raise DeclarationReferenceError(f"人物不存在：{name}")
 
 
 def _string_array_field(item: Mapping[str, object], key: str) -> Optional[List[str]]:
@@ -2356,7 +2360,7 @@ def _dispatch_public_sayings(
             continue
         try:
             _assert_characters_exist(db, involved)
-        except KeyError as exc:
+        except DeclarationReferenceError as exc:
             _reject(rejected, item, str(exc), "hallucinated_id", source)
             continue
         excluded_names = _string_array_field(item, "excluded_names")
@@ -2378,7 +2382,7 @@ def _dispatch_public_sayings(
                 excluded_names=excluded_names,
                 excluded_targets={"offices": excluded_offices} if excluded_offices else None,
             )
-        except ValueError as exc:
+        except DeclarationDataError as exc:
             _reject(rejected, item, str(exc), "invalid_shape", source)
             continue
         applied.append({"id": saying_id})
@@ -2423,10 +2427,10 @@ def _dispatch_on_scene_facts(
                 outcome = apply_person_changes_only(
                     db, state, [item], content=db.content, origin_ref=origin_ref,
                 source=source)
-                refusals = outcome.get("rejected") or []
+                refusals = outcome.rejected
                 if refusals:
                     raise _ItemAtomicReject(refusals[0].reason, refusals[0].category)
-                results = list(outcome.get("applied_person_changes") or ())
+                results = list(outcome.applied)
                 if not results:
                     raise _ItemAtomicReject("人物变更未产生结果", "invalid_shape")
                 result = results[0]
@@ -2434,7 +2438,7 @@ def _dispatch_on_scene_facts(
                     name = str(result.get("name") or "").strip()
                     try:
                         _attach_character_affair_pointer(db, name, affair_id)
-                    except (ValueError, KeyError) as exc:
+                    except (DeclarationDataError, DeclarationReferenceError) as exc:
                         category = "hallucinated_id" if isinstance(exc, KeyError) else "invalid_state"
                         raise _ItemAtomicReject(str(exc), category) from exc
         except _ItemAtomicReject as exc:
@@ -2509,7 +2513,7 @@ def _dispatch_presence(
             continue
         try:
             _assert_characters_exist(db, [name])
-        except KeyError as exc:
+        except DeclarationReferenceError as exc:
             _reject(rejected, item, str(exc), "hallucinated_id", source)
             continue
         origin_ref, error_category = _resolve_affair_origin_ref(db, item)
@@ -2578,7 +2582,7 @@ def _dispatch_scene_facts(
         if speaker_names:
             try:
                 _assert_characters_exist(db, speaker_names)
-            except KeyError as exc:
+            except DeclarationReferenceError as exc:
                 _reject(rejected, item, str(exc), "hallucinated_id", source)
                 continue
         origin_ref, error_category = _resolve_affair_origin_ref(db, item)
@@ -2643,12 +2647,12 @@ def _dispatch_edge_events(
             continue
         try:
             event_kind = validate_edge_kind(item.get("event_kind"))
-        except ValueError as exc:
+        except DeclarationDataError as exc:
             _reject(rejected, item, str(exc), "invalid_enum", source)
             continue
         try:
             _assert_characters_exist(db, [source_name, target_name])
-        except KeyError as exc:
+        except DeclarationReferenceError as exc:
             _reject(rejected, item, str(exc), "hallucinated_id", source)
             continue
         affair_id, error_category = _peek_affair_id(db, item)
@@ -2663,12 +2667,12 @@ def _dispatch_edge_events(
                         context=context, origin=origin,
                         turn=int(state.turn), year=int(state.year), period=int(state.period),
                     )
-                except ValueError as exc:
+                except DeclarationDataError as exc:
                     raise _ItemAtomicReject(str(exc), "invalid_shape") from exc
                 if affair_id is not None:
                     try:
                         db.affairs.attach_pointer("relation_edge_events", event_id, affair_id)
-                    except (ValueError, KeyError) as exc:
+                    except (DeclarationDataError, DeclarationReferenceError) as exc:
                         category = "hallucinated_id" if isinstance(exc, KeyError) else "invalid_state"
                         raise _ItemAtomicReject(str(exc), category) from exc
         except _ItemAtomicReject as exc:
@@ -2699,7 +2703,7 @@ def _dispatch_protagonist(db: Any, raw: object, *, source: Provenance) -> Protag
         )])
     try:
         _assert_characters_exist(db, [name])
-    except KeyError as exc:
+    except DeclarationReferenceError as exc:
         return ProtagonistResult(validated=None, rejected=[RejectedItem(
             item=dict(raw), reason=str(exc), category="hallucinated_id", source=source,
         )])

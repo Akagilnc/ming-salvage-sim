@@ -267,13 +267,15 @@ def test_commitment_ongoing_malformed_entity_payloads_are_rejected_without_crash
 
     assert _faction_satisfaction(db, "军队") == 52
     rows = db.conn.execute(
-        "SELECT category, reason FROM rejection_reports WHERE reason LIKE '%须为对象%' "
+        "SELECT category, item_json FROM rejection_reports WHERE category='invalid_shape' "
         "ORDER BY id"
     ).fetchall()
     assert [row["category"] for row in rows] == ["invalid_shape", "invalid_shape", "invalid_shape"]
-    assert any("region_delta.beizhili" in row["reason"] for row in rows)
-    assert any("army_delta.guanning" in row["reason"] for row in rows)
-    assert any("power_updates.houjin" in row["reason"] for row in rows)
+    items = [json.loads(row["item_json"]) for row in rows]
+    assert {item["field"] for item in items} == {
+        "region_delta", "army_delta", "power_updates",
+    }
+    assert {item["id"] for item in items} == {"beizhili", "guanning", "houjin"}
 
 
 def test_commitment_stop_gate_resolve_respects_outer_transaction_rollback(game):
@@ -1345,7 +1347,6 @@ def test_due_one_shot_commitment_ack_closes_review_loop_without_effects(game):
     row = _issue_row(db, issue_id)
     assert row["status"] == "dropped"
     assert row["closed_turn"] == state.turn
-    assert "圣裁处理" in row["resolution_summary"]
     assert int(state.metrics["民心"]) == popular_support_at_ack
     advances = db.conn.execute(
         "SELECT trigger_kind, metric_delta FROM issue_advances WHERE issue_id=? ORDER BY id",

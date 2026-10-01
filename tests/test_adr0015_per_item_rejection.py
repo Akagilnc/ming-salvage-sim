@@ -2,15 +2,6 @@ import json
 
 import pytest
 
-from tests.section_rejection_helpers import game
-
-def _reports(db):
-    return [dict(r) for r in db.conn.execute("SELECT turn, section, item_json, reason, category, source, attempt FROM rejection_reports ORDER BY id")]
-
-
-
-
-
 
 def test_utf8_safe_serialization_preserves_chinese_and_escapes_lone_surrogate(game):
     from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
@@ -24,44 +15,32 @@ def test_utf8_safe_serialization_preserves_chinese_and_escapes_lone_surrogate(ga
     )
     collector.flush_to_db(db)
     row = db.conn.execute("SELECT item_json FROM rejection_reports").fetchone()
-    assert "中文" in row["item_json"]
-    assert "\\ud800" in row["item_json"]
+    assert json.loads(row["item_json"]) == {"title": "中文\ud800"}
 
 
 
 
 
 
-def test_sqlite_text_sanitization_covers_issue_rows_and_advances(game):
+def test_sqlite_text_encoding_fault_aborts_dispatch_without_refusal(game):
+    from ming_sim.applier import Provenance
+    from ming_sim.declaration_dispatch import dispatch_declaration
+
     db, state, _ = game
-    bad_text = "中文\ud800"
-
-    issue_id = db.insert_issue(
-        state,
-        kind="situation",
-        title=bad_text,
-        bar_good_meaning=bad_text,
-        bar_bad_meaning=bad_text,
-        stage_text=bad_text,
-        region_hint=bad_text,
-        faction_hint=bad_text,
-        tags=[bad_text],
-        ongoing_effects={"note": bad_text},
-        cancel_cost={"note": bad_text},
-        effect_on_resolve={"note": bad_text},
-        effect_on_fail={"metrics": {"民心": -1}, "note": bad_text},
-        resolve_condition=bad_text,
-        fail_condition=bad_text,
+    dispatch_declaration(db, state, {"effects": []}, source=Provenance.system_simulation)
+    dossier_id = db.create_decree_dossier(
+        state, action_type="policy", decree_text="新立局势", target_kind="issue",
+        target_id="encoding-fault",
     )
-    issue_row = db.conn.execute("SELECT title, tags, ongoing_effects, effect_on_fail FROM issues WHERE id=?", (issue_id,)).fetchone()
-    assert "\\ud800" in issue_row["title"]
-    assert "\\ud800" in issue_row["tags"]
-    assert "中文" in issue_row["effect_on_fail"]
-
-    db.advance_issue(state, issue_id, trigger_kind=bad_text, trigger_ref=bad_text, stage_text=bad_text, narrative=bad_text, metric_delta={"note": bad_text})
-    adv_row = db.conn.execute("SELECT trigger_kind, trigger_ref, to_stage_text, narrative, metric_delta FROM issue_advances WHERE issue_id=? ORDER BY id DESC", (issue_id,)).fetchone()
-    assert all("中文" in adv_row[col] and "\\ud800" in adv_row[col] for col in adv_row.keys() if isinstance(adv_row[col], str))
-
-    db.close_issue(state, issue_id, reason="failed", narrative=bad_text)
-    close_row = db.conn.execute("SELECT narrative FROM issue_advances WHERE issue_id=? ORDER BY id DESC", (issue_id,)).fetchone()
-    assert "中文" in close_row["narrative"] and "\\ud800" in close_row["narrative"]
+    db.record_dossier_decision(dossier_id, "promulgated")
+    before_metrics = dict(state.metrics)
+    before_issues = db.conn.execute("SELECT COUNT(*) FROM issues").fetchone()[0]
+    with pytest.raises(UnicodeEncodeError):
+        dispatch_declaration(db, state, {"effects": [{
+            "metric_delta": {"民心": 2},
+            "new_issues": [{"kind": "situation", "title": "中文\ud800",
+                            "origin_kind": "decree", "origin_ref": f"dossier:{dossier_id}"}],
+        }]}, source=Provenance.system_simulation)
+    assert state.metrics == before_metrics
+    assert db.conn.execute("SELECT COUNT(*) FROM issues").fetchone()[0] == before_issues
+    assert db.conn.execute("SELECT COUNT(*) FROM rejection_reports").fetchone()[0] == 0

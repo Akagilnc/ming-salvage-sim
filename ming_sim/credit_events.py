@@ -640,8 +640,8 @@ def resolve_fulfillment_credit_from_extraction(
 ) -> List[Dict[str, object]]:
     """dossier_executions outcome=fulfilled → 兑付/撑完。
 
-    消费调用方已滤 rejected 的落格项；本轴不再二次闸（单一保护点在
-    apply_score_extraction 的 minus-rejections）。fulfilled 仍以 DB 终值为门。
+    只消费成功回执关联的源项（credit_event 段的 source_item），不对输入
+    做拒收求差；fulfilled 仍以 DB 终值为门。
     """
     if not isinstance(extracted, dict):
         return []

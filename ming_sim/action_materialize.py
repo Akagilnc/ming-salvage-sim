@@ -6,6 +6,7 @@
 """
 
 from __future__ import annotations
+from ming_sim.exceptions import DeclarationDataError
 
 import json
 import re
@@ -234,8 +235,8 @@ def stage_pacification_candidate(
     target = str(target_id or "").strip()
     if not target:
         return 0
-    body = str(text or "").strip()
-    if not body:
+    body = str(text or "")
+    if not body.strip():
         return 0
 
     pending_rows = list(pend_for_minister or [])
@@ -250,12 +251,9 @@ def stage_pacification_candidate(
     for row in pending_rows:
         if row.get("kind") != "directive":
             continue
-        try:
-            payload = json.loads(str(row.get("payload_json") or "{}"))
-        except (TypeError, ValueError):
-            continue
+        payload = json.loads(str(row.get("payload_json") or "{}"))
         if not isinstance(payload, dict):
-            continue
+            raise ValueError("持久行动载荷须为对象")
         if str(payload.get("dossier_action_type") or "").strip() != "pacification":
             continue
         if str(payload.get("target_id") or "").strip() != target:
@@ -367,11 +365,10 @@ def stage_punishment_candidate(
             return 0
         if disposition not in issue_dispositions_allowed():
             return 0
-        try:
-            roster = json.loads(str(issue["target_roster"] or "[]"))
-        except (TypeError, ValueError):
-            return 0
-        if not isinstance(roster, list) or not roster:
+        roster = json.loads(str(issue["target_roster"] or "[]"))
+        if not isinstance(roster, list):
+            raise ValueError("持久弹劾名册须为数组")
+        if not roster:
             return 0
         if disposition == "办人":
             if target not in roster:
@@ -384,8 +381,8 @@ def stage_punishment_candidate(
         action not in punish_actions_effective() and disposition != "压下"
     ):
         return 0
-    body = str(text or "").strip()
-    if not body:
+    body = str(text or "")
+    if not body.strip():
         return 0
 
     pending_rows = list(pend_for_minister or [])
@@ -400,20 +397,14 @@ def stage_punishment_candidate(
     for row in pending_rows:
         if row.get("kind") != "directive":
             continue
-        try:
-            payload = json.loads(str(row.get("payload_json") or "{}"))
-        except (TypeError, ValueError):
-            continue
+        payload = json.loads(str(row.get("payload_json") or "{}"))
         if not isinstance(payload, dict):
-            continue
+            raise ValueError("持久行动载荷须为对象")
         if str(payload.get("dossier_action_type") or "").strip() != "punishment":
             continue
         if str(payload.get("target_id") or "").strip() != target:
             continue
-        try:
-            stored_issue_id = int(payload.get("issue_id") or 0)
-        except (TypeError, ValueError):
-            stored_issue_id = 0
+        stored_issue_id = int(payload.get("issue_id") or 0)
         if stored_issue_id != linked_issue_id:
             continue
         existing_id = int(row["id"])
@@ -480,9 +471,9 @@ def _grant_shape_value_error(
     field: str,
     current: object = None,
     expected: object = None,
-) -> ValueError:
-    """ValueError carrying failed shape field + structured fact; callers catching ValueError unchanged."""
-    exc = ValueError(message)
+) -> DeclarationDataError:
+    """Declaration shape failure carrying the failed field and original values."""
+    exc = DeclarationDataError(message)
     exc.field = field  # type: ignore[attr-defined]
     exc.current = current  # type: ignore[attr-defined]
     exc.expected = expected  # type: ignore[attr-defined]
@@ -637,7 +628,7 @@ def canonicalize_xiexang_army_target(db: Any, raw_target: object) -> str:
     return army_id
 
 
-class DecreeMaterializationValidationError(ValueError):
+class DecreeMaterializationValidationError(DeclarationDataError):
     """Typed rejection raised before a decree candidate can be recorded."""
 
     def __init__(self, message: str, *, failed_fields: tuple[str, ...] = ()) -> None:
@@ -790,7 +781,7 @@ def stage_grant_allocation_candidate(
     action = str(grant_action or "").strip()
     target = str(target_id or "").strip()
     kind = str(target_kind or "").strip()
-    body = str(text or "").strip()
+    body = str(text or "")
     if action not in (GRANT_ACTIONS - {"无"}):
         return 0
     # #1503：协饷完整写入前置由同一权威缝收集；此处不补值。
@@ -912,7 +903,7 @@ def stage_grant_allocation_candidate(
         if not str(staged.get("title") or "").strip():
             label = purpose or action
             if label:
-                staged["title"] = str(label).strip()
+                staged["title"] = str(label)
     # #1783+#1778：承办人/名单来自分类器或后置抽取，挂本案；不把当前大臣填成主办。
     lead = str(assignee or "").strip()
     if lead:
@@ -1244,10 +1235,7 @@ def _write_path_nature_ledger(
         + f" · pending:{int(pending_id)}"
     )
     source_cid = 0
-    try:
-        last = db.get_last_active_chat_turn(str(minister_name or ""), int(turn))
-    except Exception:
-        last = None
+    last = db.get_last_active_chat_turn(str(minister_name or ""), int(turn))
     if last is not None:
         source_cid = int(last.get("id") or 0)
     persons = [name] if name else ([minister_name] if minister_name else [])
@@ -1480,13 +1468,14 @@ def stage_assignment_candidate(
     """
     from ming_sim.cli_backend import resolve_directive_mode
 
-    body = str(text or "").strip()
-    if not body:
+    body = str(text or "")
+    if not body.strip():
         raise DecreeMaterializationValidationError(
             "交办旨意缺少正文", failed_fields=("text",),
         )
     # 题名只认结构化锚；不得从正文/皇帝散文截取
-    matter_title = str(title or "").strip() or str(target_id or "").strip()
+    raw_title = str(title or "")
+    matter_title = raw_title if raw_title.strip() else str(target_id or "").strip()
     if not matter_title:
         raise DecreeMaterializationValidationError(
             "交办旨意缺少结构化题名（title 或 target_id）",
@@ -1618,8 +1607,8 @@ def stage_authorization_candidate(
 
     if str(target_candidate or "").strip() == "含糊":
         return 0
-    body = str(text or "").strip()
-    if not body:
+    body = str(text or "")
+    if not body.strip():
         return 0
     holder = str(minister_name or "").strip()
     if not holder:
@@ -1707,12 +1696,13 @@ def stage_referral_candidate(
     """
     from ming_sim.cli_backend import resolve_directive_mode
 
-    body = str(text or "").strip()
-    if not body:
+    body = str(text or "")
+    if not body.strip():
         raise DecreeMaterializationValidationError(
             "下议旨意缺少正文", failed_fields=("text",),
         )
-    matter_title = str(title or "").strip() or str(target_id or "").strip()
+    raw_title = str(title or "")
+    matter_title = raw_title if raw_title.strip() else str(target_id or "").strip()
     if not matter_title:
         raise DecreeMaterializationValidationError(
             "下议旨意缺少结构化题名（title 或 target_id）",
@@ -1814,8 +1804,8 @@ def stage_revoke_authority_candidate(
 
     if str(target_candidate or "").strip() == "含糊":
         return 0
-    body = str(text or "").strip()
-    if not body:
+    body = str(text or "")
+    if not body.strip():
         return 0
     rec = _resolve_unique_active_authority(
         db, int(turn),
@@ -1893,8 +1883,8 @@ def stage_revoke_decree_candidate(
 
     if str(target_candidate or "").strip() == "含糊":
         return 0
-    body = str(text or "").strip()
-    if not body:
+    body = str(text or "")
+    if not body.strip():
         return 0
     resolved = _parse_revoke_decree_target(
         db,

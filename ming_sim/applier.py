@@ -1,7 +1,7 @@
 """结算落库统一拒收契约与事务边界（ADR 0008 S0 骨架）。
 
 契约住此模块；各 section 适配器将原地迁入（PR2）。
-公开类型：Provenance / RejectedItem / SectionResult / ApplyContext / RejectionCollector。
+公开类型：Provenance / RejectedItem / SectionResult / RejectionCollector。
 """
 
 from __future__ import annotations
@@ -14,30 +14,9 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Iterator, List, Tuple
 
 
-def sanitize_sqlite_text(value: Any) -> Any:
-    """Return value with strings safe to bind into SQLite UTF-8 TEXT.
-
-    Python can hold lone surrogate codepoints produced by permissive JSON
-    parsing, but sqlite3 refuses to UTF-8 encode them at bind time. Preserve
-    normal text (including Chinese) and escape only unencodable codepoints.
-    """
-    if isinstance(value, str):
-        return value.encode("utf-8", "backslashreplace").decode("utf-8")
-    if isinstance(value, list):
-        return [sanitize_sqlite_text(item) for item in value]
-    if isinstance(value, tuple):
-        return tuple(sanitize_sqlite_text(item) for item in value)
-    if isinstance(value, dict):
-        return {
-            sanitize_sqlite_text(key): sanitize_sqlite_text(val)
-            for key, val in value.items()
-        }
-    return value
-
-
 def safe_json_dumps(value: Any, **kwargs: Any) -> str:
     """json.dumps that preserves readable UTF-8 while escaping bad codepoints."""
-    return json.dumps(sanitize_sqlite_text(value), **kwargs)
+    return json.dumps(value, **kwargs).encode("utf-8", "backslashreplace").decode("utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -241,11 +220,6 @@ class RejectedItem:
     category: str               # 机读类别，供聚合
     source: Provenance          # 来源
 
-    def __post_init__(self) -> None:
-        if not self.reason:
-            self.reason = "拒收（段未注明原因）"
-
-
 # ---------------------------------------------------------------------------
 # 决定 1：段适配器返回值
 # ---------------------------------------------------------------------------
@@ -285,23 +259,6 @@ def merge_delta_maps(total: dict, applied: dict) -> None:
                 previous["satisfaction"] = previous.get("satisfaction", 0) + delta
             else:
                 total[key] = previous + delta
-
-
-# ---------------------------------------------------------------------------
-# 决定 1：适配器入参上下文
-# ---------------------------------------------------------------------------
-
-@dataclass
-class ApplyContext:
-    """适配器入参，持结算所需的全部外部依赖。
-
-    source 由调用方在调用前传入。
-    """
-
-    db: Any          # GameDB（不在 applier 层导入 GameDB 避免循环）
-    state: Any       # GameState
-    content: Any     # GameContent
-    source: Provenance
 
 
 # ---------------------------------------------------------------------------

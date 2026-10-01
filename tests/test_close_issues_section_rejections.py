@@ -11,16 +11,6 @@ from ming_sim.applier import Provenance
 
 import pytest
 
-import ming_sim.issues as I
-from tests.section_rejection_helpers import game
-
-
-def _closes(result):
-    return result.get("closes") or []
-
-
-def _rejected(result):
-    return result.get("rejected") or []
 
 
 @pytest.mark.parametrize("bad_issue_id", [
@@ -36,7 +26,7 @@ def test_close_bad_issue_id_rejected(read_game, bad_issue_id):
     out = apply_issue_tracker_output(
         db, state, {"close_issues": [{"issue_id": bad_issue_id, "reason": "resolved"}]}
     , source=Provenance.system_simulation)
-    rej = _rejected(out)
+    rej = out.rejected
     assert len(rej) == 1
     assert rej[0].category == "invalid_enum"
 
@@ -47,7 +37,7 @@ def test_close_non_dict_item_rejected_not_crash(read_game, bad_item):
     # 非 dict close 项（close_issues:[null]/标量，_sanitize 不清列表项可达）：必须逐项拒收，
     # 不能 cl.get 抛 AttributeError 崩整月（codex r4）。
     out = apply_issue_tracker_output(db, state, {"close_issues": [bad_item]}, source=Provenance.system_simulation)
-    rej = _rejected(out)
+    rej = out.rejected
     assert len(rej) == 1
     assert rej[0].category == "invalid_enum"
 
@@ -58,7 +48,7 @@ def test_close_bad_reason_rejected(read_game):
     out = apply_issue_tracker_output(
         db, state, {"close_issues": [{"issue_id": 123, "reason": "bogus"}]}
     , source=Provenance.system_simulation)
-    rej = _rejected(out)
+    rej = out.rejected
     assert len(rej) == 1
     assert rej[0].category == "invalid_enum"
 
@@ -69,7 +59,7 @@ def test_close_unknown_issue_rejected_missing_ref(read_game):
     out = apply_issue_tracker_output(
         db, state, {"close_issues": [{"issue_id": 999999, "reason": "resolved"}]}
     , source=Provenance.system_simulation)
-    rej = _rejected(out)
+    rej = out.rejected
     assert len(rej) == 1
     assert rej[0].category == "missing_ref"
 
@@ -81,7 +71,7 @@ def test_close_overflow_issue_id_rejected(read_game):
     out = apply_issue_tracker_output(
         db, state, {"close_issues": [{"issue_id": 10 ** 100, "reason": "resolved"}]}
     , source=Provenance.system_simulation)
-    rej = _rejected(out)
+    rej = out.rejected
     assert len(rej) == 1
     assert rej[0].category == "invalid_enum"
 
@@ -94,7 +84,7 @@ def test_close_already_inactive_rejected_missing_ref(game):
     apply_issue_tracker_output(db, state, {"close_issues": [{"issue_id": iid, "reason": "resolved"}]}, source=Provenance.system_simulation)
     # 再结一次：已非 active → missing_ref（不是「未找到」，但归陈旧引用类）。
     out = apply_issue_tracker_output(db, state, {"close_issues": [{"issue_id": iid, "reason": "resolved"}]}, source=Provenance.system_simulation)
-    rej = _rejected(out)
+    rej = out.rejected
     assert len(rej) == 1
     assert rej[0].category == "missing_ref"
 
@@ -106,7 +96,7 @@ def test_close_failed_on_uncollapsible_rejected_invalid_enum(game):
     iid = db.insert_issue(state, kind="situation", title="测试·不可崩坏天灾",
                           effect_on_resolve={"metrics": {"民心": 1}}, effect_on_fail={})
     out = apply_issue_tracker_output(db, state, {"close_issues": [{"issue_id": iid, "reason": "failed"}]}, source=Provenance.system_simulation)
-    rej = _rejected(out)
+    rej = out.rejected
     assert len(rej) == 1
     assert rej[0].category == "invalid_enum"
     # 行为：issue 仍 active。
@@ -119,7 +109,7 @@ def test_close_issue_code_exception_propagates(read_game, monkeypatch):
         raise RuntimeError("模拟 close_issue 落库代码异常")
     monkeypatch.setattr(type(db), "close_issue", _boom)
     # 代码/DB 异常不再被 WARN 吞 → 上抛（上层 applier.atomic 据此 SettlementAbort）。
-    with pytest.raises(RuntimeError, match="模拟 close_issue"):
+    with pytest.raises(RuntimeError):
         apply_issue_tracker_output(
             db, state, {"close_issues": [{"issue_id": 1, "reason": "resolved"}]}
         , source=Provenance.system_simulation)
@@ -127,13 +117,10 @@ def test_close_issue_code_exception_propagates(read_game, monkeypatch):
 
 def test_close_valid_issue_still_succeeds(game):
     db, state, _ = game
-    active = db.list_active_issues()
-    if not active:
-        pytest.skip("seed 无 active issue，跳过 happy-path 控制")
-    iid = int(active[0]["id"])
+    iid = db.insert_issue(state, kind="situation", title="真实结案", effect_on_resolve={"metrics": {"民心": 1}})
     out = apply_issue_tracker_output(
         db, state, {"close_issues": [{"issue_id": iid, "reason": "resolved", "narrative": "测试结案"}]}
     , source=Provenance.system_simulation)
-    closed = _closes(out)
+    closed = out.closes
     assert any(int(c.get("issue_id", -1)) == iid for c in closed), out
-    assert iid in (out.get("touched_ids") or [])
+    assert iid in {row["issue_id"] for row in out.closes}

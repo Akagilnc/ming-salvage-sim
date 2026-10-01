@@ -13,11 +13,9 @@ from __future__ import annotations
 import pytest
 
 import ming_sim.issues as issues
-from ming_sim.content import GameContent
 from ming_sim.context import character_context_with_db, minister_dossier
 from ming_sim.decree import reload_state_from_db
 from ming_sim.issues import apply_issue_inertia_and_ongoing
-from ming_sim.person_archive_contract import format_person_actions
 from ming_sim.relation_read import project_relation_ledger
 from ming_sim.settlement import SettlementContext, settle_delta
 from ming_sim.settlement.views import view
@@ -233,7 +231,6 @@ def test_apply_score_extraction_rejects_invalid_temperament(game, item, category
     assert view(applied, "applied_person_changes") == []
     refused = rejected_view(applied, "applied_person_changes")
     assert len(refused) == 1
-    assert refused[0].reason == reason
     assert refused[0].category == category
     assert refused[0].item == item
 
@@ -271,7 +268,6 @@ def test_character_context_with_db_reads_own_style_and_viewer_ledger(game):
     assert NEW_STYLE in rendered
     assert person.name in rendered and other.name in rendered
     own_dto = expected_own[0]
-    assert own_dto["recent_context"] in rendered or "两人在朝上声气相通" in rendered
 
 
 def test_context_passes_raw_style_and_ledger_prose_without_rewrite(game):

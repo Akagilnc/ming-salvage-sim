@@ -8,9 +8,22 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, List, Optional
 
-from ming_sim.applier import Provenance, RejectedItem
+from ming_sim.applier import Provenance, RejectedItem, SectionResult
 from ming_sim.db import GameDB
+from ming_sim.constants import REGION_SCORE_FIELDS, FISCAL_SCORE_FIELDS, REGION_FIELD_ALIASES, ARMY_SCORE_FIELDS, ARMY_FIELD_ALIASES
 from ming_sim.models import Event, GameState
+
+_ISSUE_PSEUDO_EVENT = Event(
+    id="issue_resolution", title="局势结案", kind="月末", summary="",
+    urgency=0, severity=0, credibility=100, interests=[], audiences=[],
+)
+_ISSUE_ENTITY_FIELDS = {
+    "region_delta": dict, "army_delta": dict, "new_armies": list,
+    "power_renames": list, "人物变更": list,
+}
+_RETIRED_NESTED_PERSON_KEYS = (
+    "character_status_changes", "character_power_changes", "office_changes", "appointments",
+)
 
 
 
@@ -47,37 +60,46 @@ def _apply_issue_buildings(
             continue
         action = str(op.get("action") or "").lower()
         if action == "create":
-            bid = db.add_building(
+            from ming_sim.strict_types import strict_int
+            from ming_sim.exceptions import DeclarationDataError
+            try:
+                values = {key: strict_int(op.get(key, default), accept_numeric_strings=True)
+                          for key, default in (("level", 1), ("condition", 60), ("maintenance", 0), ("risk", 30), ("output_amount", 0))}
+            except (TypeError, ValueError):
+                rejected.append(RejectedItem(item=op, reason="建筑数值非整数", category="invalid_enum", source=source))
+                continue
+            try:
+                bid = db.add_building(
                 state,
                 region_id=str(op.get("region_id") or ""),
                 name=str(op.get("name") or ""),
                 category=str(op.get("category") or ""),
-                level=int(op.get("level", 1)),
-                condition=int(op.get("condition", 60)),
-                maintenance=int(op.get("maintenance", 0)),
-                risk=int(op.get("risk", 30)),
+                level=values["level"],
+                condition=values["condition"],
+                maintenance=values["maintenance"],
+                risk=values["risk"],
                 output_metric=str(op.get("output_metric") or ""),
-                output_amount=int(op.get("output_amount", 0)),
+                output_amount=values["output_amount"],
                 status=str(op.get("status") or ""),
                 origin="issue",
                 commit=False,
                 origin_ref=origin_ref,
-            )
+                )
+            except DeclarationDataError as exc:
+                rejected.append(RejectedItem(item=op, reason=str(exc), category="invalid_enum", source=source))
+                continue
             applied.append({"action": "create", "building_id": bid, "name": str(op.get("name") or "")})
         elif action == "modify":
             bid = str(op.get("building_id") or "")
             fields = {k: v for k, v in op.items() if k not in ("action", "building_id", "origin_ref")}
             fields.setdefault("reason", reason)
-            changes = db.apply_building_deltas(
+            changes, refused = db.apply_building_deltas(
                 state, pseudo_event, None, "档房", {bid: fields},
-                commit=False, origin_ref=origin_ref,
+                commit=False, origin_ref=origin_ref, source=source,
             )
+            rejected.extend(refused)
             if changes:
                 applied.append({"action": "modify", "building_id": bid, "changes": changes})
-            else:
-                rejected.append(RejectedItem(
-                    item=op, reason="建筑变更未落地", category="missing_ref", source=source,
-                ))
         elif action == "remove":
             bid = str(op.get("building_id") or "")
             removed = db.remove_building(
@@ -97,6 +119,15 @@ def _apply_issue_buildings(
                 source=source,
             ))
     return applied, rejected
+
+def _monthly_economy_items(effect: Dict[str, object]) -> List[Dict[str, object]]:
+    items: List[Dict[str, object]] = []
+    for key in ("economy",):
+        raw = effect.get(key)
+        if isinstance(raw, list):
+            items.extend(item for item in raw if isinstance(item, dict))
+    return items
+
 
 def _format_issue_ongoing(ongoing_raw: str) -> str:
     """简短描述每月固定影响。"""
@@ -127,26 +158,50 @@ def _apply_issue_entities(
     content=None,
     llm_config: Any = None,
     applied_person_changes: Optional[List[Dict[str, object]]] = None,
+    applied_buildings: Optional[List[Dict[str, object]]] = None,
+    issue_id: Optional[int] = None,
+    issue_title: str = "",
     origin_ref: str = "盘面自发",
     source: Provenance = Provenance.system_simulation,
-) -> List[Dict[str, object]]:
-    """国策结案的实体后果：建军 / 补兵改属性 / 人物状态(死/流放/下狱/罢/致仕)。
-    全局严格、不静默——非法 delta 直接抛错中断当回合，绝不无声丢失。
-    （effect_on_resolve 原本只支持 metrics/economy/buildings/legacy，这里补 army/人事两线。）"""
-    # ADR 0008 决定 1（PR2-S2）后,底层 db 方法对 LLM 脏项改「逐项拒收留痕」而非
-    # raise——国策结案路（本函数）把拒收项升级回 ValueError 中断当回合，**仅限历史上
-    # 本就 raise 的类别**（查无此军/owner 幻觉/缺必填等）。历史上 print-skip 或静默
-    # 走默认的案（army 非法字段/重复无 manpower/重复非整/可选脏值/非 dict 项）带
-    # issue_strict=False 标——容忍不升级,否则历史可活的脏数据变成新的崩月路
-    # （cmr S2 r1）。两类都留拒收记录,不无声丢。
+) -> List[RejectedItem]:
+    """落地结案后果；数据逐项拒收，代码及持久故障上抛。"""
     from ming_sim.issues import _ctx
-    from ming_sim.person_delta_adapter import normalize_person_changes
+    from ming_sim.entities.character.normalize import normalize_person_changes
 
-    tolerated: List[Dict[str, object]] = []
+    from ming_sim.entities.metric.apply import declare_metric_pairs
+    from ming_sim.entities.economy.apply import _apply_economy_list
+    from ming_sim.entities.faction.apply import _apply_faction_dict
+
+    tolerated: List[RejectedItem] = []
+    unknown = effect.keys() - (_ISSUE_ENTITY_FIELDS.keys() | set(_RETIRED_NESTED_PERSON_KEYS) | {"metrics", "economy", "factions", "buildings", "legacy"})
+    for key in unknown:
+        tolerated.append(RejectedItem(item={"field": key, "raw_value": effect[key]}, reason="局势效果字段不可执行", category="invalid_shape", source=source))
+    building_rows, building_rejections = _apply_issue_buildings(db, state, effect.get("buildings"), _ISSUE_PSEUDO_EVENT, label, origin_ref=origin_ref, source=source)
+    tolerated.extend(building_rejections)
+    if applied_buildings is not None:
+        applied_buildings.extend(building_rows)
+    _, legacy_rejections = _spawn_legacy_from_effect(db, state, effect, issue_id, issue_title or label, source=source)
+    tolerated.extend(legacy_rejections)
+    metrics = {} if effect.get("metrics") is None else effect["metrics"]
+    if isinstance(metrics, dict):
+        _, refused = declare_metric_pairs(state, list(metrics.items()), db=db)
+        tolerated.extend(RejectedItem(item={"field": key, "raw_value": value}, reason=reason,
+                                      category=category, source=source)
+                         for key, value, reason, category in refused)
+    else:
+        tolerated.append(RejectedItem(item={"field": "metrics", "raw_value": metrics}, reason="指标效果须为对象", category="invalid_shape", source=source))
+    tolerated.extend(_apply_economy_list(db, state, [] if effect.get("economy") is None else effect["economy"], origin_ref=origin_ref, source=source)[1])
+    tolerated.extend(_apply_faction_dict(db, {} if effect.get("factions") is None else effect["factions"], source=source)[1])
+    for key, container in _ISSUE_ENTITY_FIELDS.items():
+        if key in effect and effect[key] is not None and not isinstance(effect[key], container):
+            tolerated.append(RejectedItem(
+                item={"field": key, "raw_value": effect[key]},
+                reason=f"局势效果 {key} 容器类型非法", category="invalid_shape", source=source,
+            ))
     def effective_content():
         return content if content is not None else _ctx()
 
-    def _collect_result(result, what: str) -> None:
+    def _collect_result(result) -> None:
         _landed, refused = result
         tolerated.extend(refused)
 
@@ -156,34 +211,35 @@ def _apply_issue_entities(
         pseudo = type("E", (), {"id": "issue", "title": label})()
         _collect_result(
             db.apply_region_deltas(state, pseudo, None, label, region_delta, commit=False,
-                                   origin_ref=origin_ref, require_origin=True, strict_effect=True, source=source), "地区变化"
+                                   origin_ref=origin_ref, require_origin=True, source=source)
         )
     new_armies = effect.get("new_armies")
     if isinstance(new_armies, list) and new_armies:
         _collect_result(
             db.create_armies_from_extraction(state, new_armies, actor=label, commit=False,
-                                              origin_ref=origin_ref, require_origin=True, strict_effect=True, source=source), "建军"
+                                              origin_ref=origin_ref, require_origin=True, source=source)
         )
     army_delta = effect.get("army_delta")
     if isinstance(army_delta, dict) and army_delta:
         pseudo = type("E", (), {"id": "issue", "title": label})()
         _collect_result(
             db.apply_army_deltas(state, pseudo, None, label, army_delta, commit=False,
-                                 origin_ref=origin_ref, require_origin=True, strict_effect=True, source=source), "补兵/改属性"
+                                 origin_ref=origin_ref, require_origin=True, source=source)
         )
     power_renames = effect.get("power_renames")
-    if power_renames is not None:
-        if not isinstance(power_renames, list):
-            raise ValueError(f"{label} power_renames 非法（全局严格，不静默）：必须是 list")
-        for idx, item in enumerate(power_renames):
+    if isinstance(power_renames, list):
+        for item in power_renames:
             if not isinstance(item, dict):
-                raise ValueError(f"{label} power_renames 非法（全局严格，不静默）：第 {idx} 项非 dict")
+                tolerated.append(RejectedItem(item={"raw_value": item}, reason="势力更名项须为对象", category="invalid_shape", source=source))
+                continue
             power_id = str(item.get("power_id") or "").strip()
-            new_name = str(item.get("new_name") or "").strip()
-            if not power_id or not new_name:
-                raise ValueError(f"{label} power_renames 非法（全局严格，不静默）：power_id/new_name 缺失")
+            new_name = str(item.get("new_name") or "")
+            if not power_id or not new_name.strip():
+                tolerated.append(RejectedItem(item=item, reason="势力更名缺 power_id/new_name", category="missing_field", source=source))
+                continue
             if db.conn.execute("SELECT 1 FROM powers WHERE id=?", (power_id,)).fetchone() is None:
-                raise ValueError(f"{label} power_renames 引用未入库势力 '{power_id}'")
+                tolerated.append(RejectedItem(item=item, reason="势力更名目标未入库", category="missing_ref", source=source))
+                continue
             db.apply_power_rename(
                 state,
                 power_id,
@@ -194,12 +250,6 @@ def _apply_issue_entities(
                 last_action=str(item.get("last_action") or ""),
                 commit=False,
             )
-    _RETIRED_NESTED_PERSON_KEYS = (
-        "character_status_changes",
-        "character_power_changes",
-        "office_changes",
-        "appointments",
-    )
     for retired_key in _RETIRED_NESTED_PERSON_KEYS:
         raw_retired = effect.get(retired_key)
         if raw_retired is None or raw_retired == [] or raw_retired == {}:
@@ -220,13 +270,14 @@ def _apply_issue_entities(
                 source=source,
             ))
     raw_person_changes = effect.get("人物变更")
-    if raw_person_changes is not None:
-        if not isinstance(raw_person_changes, list):
-            raise ValueError(f"{label} 人物变更 非法（全局严格，不静默）：必须是 list")
-        for idx, it in enumerate(raw_person_changes):
+    person_items = []
+    if isinstance(raw_person_changes, list):
+        for it in raw_person_changes:
             if not isinstance(it, dict):
-                raise ValueError(f"{label} 人物变更 非法（全局严格，不静默）：第 {idx} 项非 dict")
-    person_changes = normalize_person_changes({"人物变更": raw_person_changes or []})
+                tolerated.append(RejectedItem(item={"raw_value": it}, reason="人物变更项须为对象", category="invalid_shape", source=source))
+            else:
+                person_items.append(it)
+    person_changes = normalize_person_changes({"人物变更": person_items})
     if person_changes:
         from ming_sim.entities.character.apply import apply_person_changes
         results, results_rejections = apply_person_changes(
@@ -235,13 +286,12 @@ def _apply_issue_entities(
             person_changes,
             content=effective_content(),
             llm_config=llm_config,
-            source="system_simulation",
+            source=source,
             derived_from=label,
             origin_ref=origin_ref,
             require_origin=True,
         )
-        if results_rejections:
-            raise ValueError(f"{label} 人物变更 非法（全局严格，不静默）：" + "；".join(r.reason for r in results_rejections))
+        tolerated.extend(results_rejections)
         for result in results:
             tolerated.extend(result.pop("backlash_results", None) or [])
         if applied_person_changes is not None:
@@ -317,11 +367,11 @@ def _initiative_resolve_pairing_warnings(
         has_office = _nonempty_list(effect.get("人物变更"))
         if needs_army and not has_army:
             warns.append(
-                f"军事国策「{str(title)[:16]}」结案无 new_armies 配对（练军/募营疑未建军籍，#46）"
+                f"军事国策「{str(title)}」结案无 new_armies 配对（练军/募营疑未建军籍，#46）"
             )
         if needs_office and not has_office:
             warns.append(
-                f"军事国策「{str(title)[:16]}」结案无人物变更配对（调将疑未落主将调任，#46）"
+                f"军事国策「{str(title)}」结案无人物变更配对（调将疑未落主将调任，#46）"
             )
 
     if any(p in blob for p in _FISCAL_RECURRING_PHRASES):
@@ -329,7 +379,7 @@ def _initiative_resolve_pairing_warnings(
         # 故告警文案不声称查了它——若另经 fiscal_creates 立账可忽略本提示（CMR claude）。
         if not _has_economy_entry(effect) and not _has_economy_entry(ongoing_effects):
             warns.append(
-                f"经制国策「{str(title)[:16]}」结案无月度 economy 配对"
+                f"经制国策「{str(title)}」结案无月度 economy 配对"
                 "（疑月经费/俸饷未立常设月支；若已另经 fiscal_creates 立账可忽略，#45）"
             )
     return warns
@@ -338,11 +388,11 @@ def _initiative_resolve_pairing_warnings(
 def _emit_pairing_warnings(new_row, effect: object, sink: Optional[List[str]] = None) -> None:
     """在 initiative 结案处调配对守门：tlog 响亮告警（#14/#27 风格）；sink 给定时再收进供
     程序 surface（inertia 自然结案路只 tlog、不收 sink）。仅对 kind=initiative 生效；
-    row 字段缺失/JSON 畸形一律安全降级、不阻断结算。"""
+    可缺省的行字段取缺省值；持久 JSON 损坏上抛。"""
     def _g(key, default):
         try:
             return new_row[key]
-        except (KeyError, IndexError, TypeError):
+        except (KeyError, IndexError):
             return default
     if str(_g("kind", "") or "") != "initiative":
         return
@@ -354,12 +404,10 @@ def _emit_pairing_warnings(new_row, effect: object, sink: Optional[List[str]] = 
     if isinstance(raw_tags, (list, tuple)):
         tags = list(raw_tags)
     else:
-        try:
-            tags = json.loads(raw_tags or "[]")
-        except (TypeError, ValueError):
-            tags = []
-    # ongoing_effects 经统一守门 loads_effect_dict（已解析 dict 原样 / JSON 串解析 / 非 dict→{}，
-    # 含调用方预解析容器的兼容，#117 R5 chokepoint 一致）。
+        tags = json.loads(raw_tags or "[]")
+        if not isinstance(tags, list):
+            raise ValueError("持久化局势 tags 须为列表")
+    # ongoing_effects 经统一守门 loads_effect_dict；损坏不冒作无效果。
     from ming_sim.models import loads_effect_dict
     from ming_sim.token_stats import tlog
 
@@ -368,4 +416,288 @@ def _emit_pairing_warnings(new_row, effect: object, sink: Optional[List[str]] = 
         tlog(f"[pairing] {w}")
         if sink is not None:
             sink.append(w)
+
+
+_LEGACY_PCT_CAP = 5
+
+
+_LEGACY_ACCOUNT_KEYS = ("国库", "内库", "民心", "皇威")
+
+
+_LEGACY_DURATION_MONTHS = {"1年": 12, "2年": 24, "永久": -1}
+
+
+def _clamp_pct(v: object) -> Optional[int]:
+    from ming_sim.strict_types import strict_int
+    pct = strict_int(v, accept_numeric_strings=True)
+    if pct == 0:
+        return None
+    return max(-_LEGACY_PCT_CAP, min(_LEGACY_PCT_CAP, pct))
+
+
+
+def _spawn_legacy_from_effect(
+    db: GameDB,
+    state: GameState,
+    effect: Dict[str, object],
+    issue_id: Optional[int],
+    issue_title: str,
+    *,
+    source: Provenance,
+) -> tuple[Optional[Dict[str, object]], List[RejectedItem]]:
+    """结案 effect 里若带 legacy（帝国修正）段，落 legacies 表。返回落地摘要供日志。
+    legacy schema:
+      {"name": str,
+       "duration": "1年"|"2年"|"永久",
+       "modifiers": {                         # 各维度带符号百分比修正符
+         "国库": +10, "内库": -5,                    # 账户增量
+         "regions": {"shaanxi": {"unrest": -20}},   # 地区分数字段（仅 REGION_SCORE_FIELDS）
+         "armies":  {"jizhou": {"morale": 15}}      # 军队分数字段（仅 ARMY_SCORE_FIELDS）
+       },
+       "narrative_hint": str}
+    各 pct 带符号整数；落账时同维度累加，base>=0 ×(1+net/100)、base<0 ×(1-net/100)。
+    不可执行字段逐项拒收，合法同批字段仍落地；本核不提交事务。
+    """
+    legacy = effect.get("legacy")
+    rejected: List[RejectedItem] = []
+    if legacy is None:
+        return None, rejected
+    if not isinstance(legacy, dict):
+        return None, [RejectedItem(item={"field": "legacy", "raw_value": legacy}, reason="帝国修正须为对象", category="invalid_shape", source=source)]
+
+    def refuse(item: dict, reason: str, category: str = "invalid_enum") -> None:
+        rejected.append(RejectedItem(item=item, reason=reason, category=category, source=source))
+    for key in legacy.keys() - {"name", "duration", "modifiers", "narrative_hint"}:
+        refuse({"field": key, "raw_value": legacy[key]}, "帝国修正字段不可执行")
+    for field in ("name", "narrative_hint"):
+        if legacy.get(field) is not None and not isinstance(legacy[field], str):
+            refuse(legacy, "帝国修正文段须为字符串", "invalid_shape")
+            return None, rejected
+    raw_legacy_name = legacy.get("name")
+    name = (
+        str(raw_legacy_name)
+        if raw_legacy_name is not None and str(raw_legacy_name).strip()
+        else f"{issue_title}遗留"
+    )
+    dur_key = str(legacy.get("duration") or "2年").strip()
+    duration = _LEGACY_DURATION_MONTHS.get(dur_key)
+    if duration is None:
+        refuse(legacy, "帝国修正时长非法")
+        return None, rejected
+    raw_eff = {} if legacy.get("modifiers") is None else legacy["modifiers"]
+    if not isinstance(raw_eff, dict):
+        refuse({"field": "modifiers", "raw_value": raw_eff}, "帝国修正 modifiers 须为对象", "invalid_shape")
+        return None, rejected
+    for key in raw_eff.keys() - {*_LEGACY_ACCOUNT_KEYS, "regions", "armies"}:
+        refuse({"field": key, "raw_value": raw_eff[key]}, "帝国修正字段不可执行")
+    modifiers: Dict[str, object] = {}
+    for key in _LEGACY_ACCOUNT_KEYS:
+        if key not in raw_eff:
+            continue
+        try:
+            pct = _clamp_pct(raw_eff[key])
+        except (TypeError, ValueError):
+            refuse({"field": key, "raw_value": raw_eff[key]}, "帝国修正百分比须为整数")
+            continue
+        if pct is not None:
+            modifiers[key] = pct
+    for scope, allowed, aliases in (
+        ("regions", REGION_SCORE_FIELDS + FISCAL_SCORE_FIELDS, REGION_FIELD_ALIASES),
+        ("armies", ARMY_SCORE_FIELDS, ARMY_FIELD_ALIASES),
+    ):
+        if scope not in raw_eff:
+            continue
+        block = raw_eff[scope]
+        if not isinstance(block, dict):
+            refuse({"field": scope, "raw_value": block}, "帝国修正实体容器须为对象", "invalid_shape")
+            continue
+        scope_out: Dict[str, Dict[str, int]] = {}
+        for entity_id, fields in block.items():
+            item = {"entity_id": entity_id, "field": scope, "raw_value": fields}
+            if not isinstance(fields, dict):
+                refuse(item, "帝国修正实体项须为对象", "invalid_shape")
+                continue
+            if db.conn.execute(f"SELECT 1 FROM {scope} WHERE id=?", (entity_id,)).fetchone() is None:
+                refuse(item, "帝国修正实体未入库", "missing_ref")
+                continue
+            fields_out: Dict[str, int] = {}
+            for raw_field, value in fields.items():
+                field = aliases.get(str(raw_field).strip(), str(raw_field).strip())
+                item = {"entity_id": entity_id, "field": raw_field, "raw_value": value}
+                if field not in allowed:
+                    refuse(item, "帝国修正实体字段不可执行")
+                    continue
+                try:
+                    pct = _clamp_pct(value)
+                except (TypeError, ValueError):
+                    refuse(item, "帝国修正百分比须为整数")
+                    continue
+                if pct is not None:
+                    fields_out[field] = pct
+            if fields_out:
+                scope_out[str(entity_id)] = fields_out
+        if scope_out:
+            modifiers[scope] = scope_out
+    if not modifiers:
+        return None, rejected
+    new_id = db.insert_legacy(
+        state,
+        name=name,
+        modifiers=modifiers,
+        narrative_hint=str(legacy.get("narrative_hint") or ""),
+        duration_months=duration,
+        source_issue_id=issue_id,
+        commit=False,
+    )
+    summary = {
+        "legacy_id": new_id, "name": name,
+        "duration_months": duration, "modifiers": modifiers,
+    }
+    dur_label = "永久" if duration < 0 else f"{duration}月"
+    print(f"[帝国修正] 局势#{issue_id}「{issue_title}」落「{name}」({dur_label}) {modifiers}")
+    return summary, rejected
+
+
+
+def _invalid_monthly_mapping_shape(
+    field: str,
+    entity_id: object,
+    raw_value: object,
+    source: Provenance = Provenance.system_simulation,
+) -> RejectedItem:
+    return RejectedItem(item={"field": field, "id": entity_id, "value": raw_value}, reason=f"{field}.{entity_id} 须为对象(dict)", category="invalid_shape", source=source)
+
+
+def _monthly_mapping_effect(
+    effect: Dict[str, object],
+    *keys: str,
+    source: Provenance = Provenance.system_simulation,
+) -> tuple[Dict[str, Dict[str, object]], List[RejectedItem]]:
+    merged: Dict[str, Dict[str, object]] = {}
+    rejections: List[RejectedItem] = []
+    for key in keys:
+        raw = effect.get(key)
+        if raw is None:
+            continue
+        if not isinstance(raw, dict):
+            rejections.append(RejectedItem(item={"field": key, "raw_value": raw}, reason="月度实体容器须为对象", category="invalid_shape", source=source))
+            continue
+        for entity_id, raw_changes in raw.items():
+            if isinstance(raw_changes, dict):
+                merged[entity_id] = raw_changes
+                continue
+            rejections.append(_invalid_monthly_mapping_shape(key, entity_id, raw_changes, source=source))
+    return merged, rejections
+
+
+def _apply_monthly_ongoing_entities(
+    db: GameDB,
+    state: GameState,
+    effect: Dict[str, object],
+    label: str,
+    *,
+    content=None,
+    llm_config: Any = None,
+    applied_person_changes: Optional[List[Dict[str, object]]] = None,
+    origin_ref: str = "盘面自发",
+    source: Provenance = Provenance.system_simulation,
+) -> SectionResult:
+    from ming_sim.entities.social_class.apply import _apply_class_dict
+    from ming_sim.entities.faction.apply import _apply_faction_dict
+    from ming_sim.entities.character.normalize import normalize_person_changes
+    from ming_sim.issues import _ctx
+    applied: List[dict] = []
+    rejections: List[RejectedItem] = []
+    for key in effect.keys() - {"metrics", "economy", "factions", "class_delta", "region_delta", "army_delta", "power_updates", "人物变更"}:
+        rejections.append(RejectedItem(item={"field": key, "raw_value": effect[key]}, reason="月度效果字段不可执行", category="invalid_shape", source=source))
+
+    factions, faction_shape_rejections = _monthly_mapping_effect(effect, "factions", source=source)
+    classes, class_shape_rejections = _monthly_mapping_effect(effect, "class_delta", source=source)
+    region_delta, region_shape_rejections = _monthly_mapping_effect(effect, "region_delta", source=source)
+    army_delta, army_shape_rejections = _monthly_mapping_effect(effect, "army_delta", source=source)
+    power_updates, power_shape_rejections = _monthly_mapping_effect(effect, "power_updates", source=source)
+    rejections.extend(
+        faction_shape_rejections
+        + class_shape_rejections
+        + region_shape_rejections
+        + army_shape_rejections
+        + power_shape_rejections
+    )
+
+    if factions:
+        faction_applied, faction_rejections = _apply_faction_dict(db, factions, source=source)
+        if faction_applied:
+            applied.append({"factions": faction_applied})
+        rejections.extend(faction_rejections)
+
+    if classes:
+        class_applied, class_rejections = _apply_class_dict(db, classes, source=source)
+        if class_applied:
+            applied.append({"class_delta": class_applied})
+        rejections.extend(class_rejections)
+
+    if region_delta:
+        region_changes, region_changes_rejections = db.apply_region_deltas(
+            state, _ISSUE_PSEUDO_EVENT, None, label, region_delta,
+            origin_ref=origin_ref, source=source, commit=False,
+        )
+        applied_region = region_changes
+        if applied_region:
+            applied.append({"region_delta": applied_region})
+        rejections.extend(region_changes_rejections)
+
+    if army_delta:
+        army_changes, army_changes_rejections = db.apply_army_deltas(
+            state, _ISSUE_PSEUDO_EVENT, None, label, army_delta,
+            origin_ref=origin_ref, source=source, commit=False,
+        )
+        applied_army = army_changes
+        if applied_army:
+            applied.append({"army_delta": applied_army})
+        rejections.extend(army_changes_rejections)
+
+    if power_updates:
+        power_changes, power_changes_rejections = db.apply_power_deltas(state, power_updates, origin_ref=origin_ref, source=source, commit=False)
+        applied_power = power_changes
+        if applied_power:
+            applied.append({"power_updates": applied_power})
+        rejections.extend(power_changes_rejections)
+
+    raw_people = effect.get("人物变更")
+    people = []
+    if raw_people is not None and not isinstance(raw_people, list):
+        rejections.append(RejectedItem(item={"field": "人物变更", "raw_value": raw_people}, reason="月度人物效果须为列表", category="invalid_shape", source=source))
+    for item in raw_people if isinstance(raw_people, list) else []:
+        if not isinstance(item, dict):
+            rejections.append(RejectedItem(item={"raw_value": item}, reason="月度人物项须为对象", category="invalid_shape", source=source))
+        elif str(item.get("动作") or item.get("action") or "").strip() != "评定" or not isinstance(item.get("loyalty"), int) or isinstance(item.get("loyalty"), bool) or item["loyalty"] == 0:
+            rejections.append(RejectedItem(item=item, reason="月度人物效果仅支持非零整数忠诚评定", category="invalid_enum", source=source))
+        elif not str(item.get("name") or item.get("人物") or "").strip():
+            rejections.append(RejectedItem(item=item, reason="月度人物效果缺姓名", category="missing_field", source=source))
+        else:
+            people.append(item)
+    person_changes = normalize_person_changes({"人物变更": people})
+    if person_changes:
+        effective_content = content if content is not None else _ctx()
+        from ming_sim.entities.character.apply import apply_person_changes
+        results, results_rejections = apply_person_changes(
+            db,
+            state,
+            person_changes,
+            content=effective_content,
+            llm_config=llm_config,
+            source="system_simulation",
+            derived_from=label,
+            origin_ref=origin_ref,
+        )
+        applied_people = results
+        if applied_people:
+            applied.append({"人物变更": applied_people})
+        rejections.extend(results_rejections)
+        for result in results:
+            rejections.extend(result.pop("backlash_results", None) or [])
+        if applied_person_changes is not None:
+            applied_person_changes.extend(results)
+
+    return SectionResult(applied=applied, rejected=rejections)
 

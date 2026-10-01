@@ -37,14 +37,15 @@ class FiscalSectionResult:
     changes: SectionResult
 
 
-@dataclass(frozen=True)
-class IssueSectionResult:
+@dataclass
+class IssueSectionResult(SectionResult):
     """局势段。四个分子表即旧 ``issue_summary`` 的四段 applied；拒收单一形状。
 
     旧 ``issue_summary`` 的 ``touched_ids`` 子键无消费者（编排器自 advances
     派生），不入本类型。``pairing_warnings`` 只在本段作附加字段，不上浮顶层。
     """
 
+    applied: List[dict] = field(init=False)
     advances: List[dict] = field(default_factory=list)
     new_issues: List[dict] = field(default_factory=list)
     closes: List[dict] = field(default_factory=list)
@@ -53,12 +54,21 @@ class IssueSectionResult:
     # 分列，两者不是同一批：人物段是本批声明的人物变更，此处是局势效果带出的。
     applied_person_changes: List[dict] = field(default_factory=list)
     rejected: List[RejectedItem] = field(default_factory=list)
-    pairing_warnings: List[dict] = field(default_factory=list)
+    pairing_warnings: List[str] = field(default_factory=list)
 
-    @property
-    def applied(self) -> List[dict]:
-        """四段已落项的合看，供只读「落了哪些局势效果」的消费端使用。"""
-        return [*self.advances, *self.new_issues, *self.closes, *self.cancels]
+    def __post_init__(self) -> None:
+        self.applied = [*self.advances, *self.new_issues, *self.closes, *self.cancels]
+
+    def merge(self, other: IssueSectionResult) -> IssueSectionResult:
+        return IssueSectionResult(
+            advances=self.advances + other.advances,
+            new_issues=self.new_issues + other.new_issues,
+            closes=self.closes + other.closes,
+            cancels=self.cancels + other.cancels,
+            applied_person_changes=self.applied_person_changes + other.applied_person_changes,
+            rejected=self.rejected + other.rejected,
+            pairing_warnings=self.pairing_warnings + other.pairing_warnings,
+        )
 
 
 @dataclass(frozen=True)
@@ -138,5 +148,5 @@ class SettlementOutcome:
             flat["fiscal_creates"] = self.fiscal.creates
             flat["fiscal_changes"] = self.fiscal.changes
         if self.issue is not None:
-            flat["issue_summary"] = SectionResult(self.issue.applied, self.issue.rejected)
+            flat["issue_summary"] = self.issue
         return flat

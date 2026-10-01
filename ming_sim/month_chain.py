@@ -55,7 +55,7 @@ def run_world_segment_text(
     prepared = prepare_world_materials(db, state)
     message = "推演本月世界段。"
     if str(cheat_directive or "").strip():
-        message = str(cheat_directive).strip() + "\n" + message
+        message = str(cheat_directive) + "\n" + message
     try:
         agent = create_world_segment_agent(llm_config, prepared)
         return run_agent_text(
@@ -1087,6 +1087,7 @@ def _step_4a_secret_order_supply(
         return
 
     from ming_sim.covert_progress import _is_issuance_turn
+    from ming_sim.exceptions import DeclarationDataError
 
     candidates = db.list_monthly_dossier_progress_nudges(turn)
     active_orders = [
@@ -1125,7 +1126,7 @@ def _step_4a_secret_order_supply(
                 db.record_monthly_supervision_presence(turn, commit=False)
                 try:
                     db.record_monthly_dossier_progress(turn, reports)
-                except ValueError:
+                except DeclarationDataError:
                     # 仅 0058 完整性校验失败标 invalid；其它异常保留产物供重试接续。
                     validation_failed = True
                     raise
@@ -1367,12 +1368,12 @@ def _question_as_decision(question: Dict[str, object], *, event_id: str) -> Dict
     for opt in options:
         if not isinstance(opt, dict):
             continue
-        label = str(opt.get("label") or "").strip()
-        if not label:
+        label = str(opt.get("label") or "")
+        if not label.strip():
             continue
         cleaned.append({
             "label": label,
-            "hint": str(opt.get("hint") or "").strip(),
+            "hint": str(opt.get("hint") or ""),
             **{
                 key: opt[key] for key in opt
                 if key not in {"label", "hint"} and opt[key] is not None
@@ -1380,8 +1381,8 @@ def _question_as_decision(question: Dict[str, object], *, event_id: str) -> Dict
         })
     return {
         "event_id": event_id,
-        "title": str(question.get("title") or "").strip() or "请旨",
-        "context": str(question.get("context") or "").strip(),
+        "title": str(question.get("title") or "") if str(question.get("title") or "").strip() else "请旨",
+        "context": str(question.get("context") or ""),
         "options": cleaned,
     }
 
@@ -1403,10 +1404,10 @@ def _consume_rescript_answers(
     def _answer_from_row(row: Dict[str, object]) -> Dict[str, object]:
         choice = row.get("choice") if isinstance(row.get("choice"), dict) else {}
         return {
-            "label": str(choice.get("label") or "").strip(),
-            "hint": str(choice.get("hint") or "").strip(),
-            "note": str(choice.get("note") or "").strip(),
-            "context": str(row.get("context") or "").strip(),
+            "label": str(choice.get("label") or ""),
+            "hint": str(choice.get("hint") or ""),
+            "note": str(choice.get("note") or ""),
+            "context": str(row.get("context") or ""),
             "event_id": str(row.get("event_id") or ""),
             "title": str(row.get("title") or ""),
         }
@@ -1556,8 +1557,8 @@ def _advance_after_gazette(
         db.mark_directives_issued(state)
         clear_return_revise_choice_anchors(db, None)
         # #652：刚结束的月份的执行判定和实付已落定；下月任何吸收前回流。
-        from ming_sim.issues import _apply_recovery_driven_transfers
-        _apply_recovery_driven_transfers(db, state, commit=False)
+        from ming_sim.entities.population.recovery import _apply_recovery_driven_transfers
+        _apply_recovery_driven_transfers(db, state)
         state.next_period()
         _carry_pending_clarification_actions(db, state, turn, content=content)
         state.turn_phase = "issued"

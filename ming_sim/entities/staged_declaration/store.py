@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any, Mapping
 
-from ming_sim.applier import atomic, connection_owns_transaction, sanitize_sqlite_text
+from ming_sim.applier import atomic, connection_owns_transaction
 
 _STATUS_STAGED = "staged"
 _STATUS_DISCARDED = "discarded"
@@ -105,16 +105,12 @@ class StagedDeclarationStore:
                 "VALUES (?, ?, ?, 'staged', ?, ?, ?, ?)",
                 (
                     ref,
-                    sanitize_sqlite_text(json.dumps(declaration, ensure_ascii=False)),
+                    json.dumps(declaration, ensure_ascii=False),
                     json.dumps(visible_refs or {}, ensure_ascii=False),
                     int(turn),
-                    None if verdict is None else sanitize_sqlite_text(
-                        json.dumps(dict(verdict), ensure_ascii=False),
-                    ),
-                    None if questions is None else sanitize_sqlite_text(
-                        json.dumps(list(questions), ensure_ascii=False),
-                    ),
-                    None if forecast_text is None else sanitize_sqlite_text(forecast_text),
+                    None if verdict is None else json.dumps(dict(verdict), ensure_ascii=False),
+                    None if questions is None else json.dumps(list(questions), ensure_ascii=False),
+                    None if forecast_text is None else forecast_text,
                 ),
             )
             return int(cur.lastrowid)
@@ -216,7 +212,7 @@ class StagedDeclarationStore:
             (ref,),
         ).fetchall()
         parts = [
-            str(row["forecast_text"]).strip()
+            str(row["forecast_text"])
             for row in rows
             if str(row["forecast_text"] or "").strip()
         ]

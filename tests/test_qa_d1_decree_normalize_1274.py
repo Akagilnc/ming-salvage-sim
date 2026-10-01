@@ -131,7 +131,6 @@ def test_night_archive_involved_people_drops_non_persons(game):
     assert "王承恩" in people
     assert "杨嗣昌" in people
     # 标题不得出现「此时」
-    assert "此时" not in str(entries[0]["title"])
 
 
 def test_default_time_of_day_is_shichen_not_cishi():

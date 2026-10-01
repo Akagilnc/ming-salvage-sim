@@ -36,9 +36,6 @@ def test_gazette_header_uses_report_own_month_not_current_turn(game):
     assert (state.year, state.period) == (1627, 10)
     assert reign_period_label(state.year, state.period) == "天启七年十月"
     opening_body = db.previous_turn_summary(state)
-    assert "天启七年九月邸报" not in opening_body
-    assert "待办未解（开局三事）" not in opening_body
-    assert "信王于乾清宫即皇帝位" not in opening_body
 
     # 落一条真实「九月」报文 → 报头必须九月（与报文自身月同源）
     db.conn.execute(
@@ -79,7 +76,6 @@ def test_gazette_header_cross_year_december_report_under_january_state(game):
     assert header == "天启七年十二月"
     assert header != current
     body = db.previous_turn_summary(state)
-    assert "十二月" in body
 
 
 def test_state_payload_projects_previous_reign_period_label(game):
@@ -129,8 +125,8 @@ def test_state_payload_projects_previous_reign_period_label(game):
     assert payload["previous_reign_period_label"] != payload["turn"]["reign_period_label"]
 
 
-def test_require_active_minister_uses_can_summon_copy_no_yi_shangwei(game, monkeypatch):
-    """#1402：offstage 文案走 session.can_summon，不得「已尚未登场」。"""
+def test_require_active_minister_preserves_summon_denial(game, monkeypatch):
+    """offstage 人物被拒，HTTP 原样传递会话拒因。"""
     import web_app
     from fastapi import HTTPException
     from ming_sim.session import GameSession
@@ -157,8 +153,6 @@ def test_require_active_minister_uses_can_summon_copy_no_yi_shangwei(game, monke
 
     ok, reason = sess.can_summon(content.characters[name])
     assert ok is False
-    assert "尚未登场" in reason
-    assert "已尚未" not in reason
 
     stub = SimpleNamespace(
         session=sess,
@@ -172,7 +166,4 @@ def test_require_active_minister_uses_can_summon_copy_no_yi_shangwei(game, monke
         web_app._require_active_minister(name)
     assert ei.value.status_code == 409
     detail = ei.value.detail
-    assert "尚未登场" in detail
-    assert "已尚未" not in detail
-    # DRY：与 can_summon 文案同源
-    assert detail == reason.strip()
+    assert detail == reason

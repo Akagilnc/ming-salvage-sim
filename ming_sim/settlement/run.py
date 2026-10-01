@@ -11,7 +11,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from typing import Any, Dict, List, Mapping, Optional, Set, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Set, Tuple
+
+if TYPE_CHECKING:
+    from ming_sim.db import GameDB
+    from ming_sim.models import GameState
+    from ming_sim.content import GameContent
 
 from ming_sim.applier import Provenance, RejectedItem, SectionResult
 from ming_sim.settlement import registry
@@ -103,7 +108,6 @@ class SettlementRun:
 
     # 段交回的结果，按登记名存放。编排器不另持一份平行账。
     outcomes: Dict[str, SectionResult] = field(default_factory=dict)
-    issue_result: Optional[IssueSectionResult] = None
 
     # ── 段间共享工具（迁自旧单体入口的同名内联件） ──────────────────────
     def origin_ref_from_result_item(self, item: Optional[Mapping[str, object]]) -> str:
@@ -116,7 +120,7 @@ class SettlementRun:
         )
 
     def ordered_strategic_items(self, field_name: str, event_id: str) -> List[Tuple[str, object]]:
-        from ming_sim.issues import _effect_event_ids
+        from ming_sim.settlement.preflight import _effect_event_ids
 
         items = self.ordered_deltas.get(field_name) or []
         return [
@@ -160,17 +164,9 @@ def _preflight(
 
     from ming_sim.entities.affair import ATTACH_BIRTH, declaration_from_payload
     from ming_sim.entities.character.names import _canonicalize_person_change_names
-    from ming_sim.issues import (
-        _STRATEGIC_FOREIGN_NODE_OUTCOME_TARGETS,
-        _ctx as content_context,
-        _derive_ordered_deltas,
-        _event_pool_ids_for_strategic_foreign_nodes,
-        _event_result_delta_event_ids,
-        _split_strategic_person_result_changes,
-        gather_candidate_events,
-        normalize_person_changes,
-        sanitize_delta_shape,
-    )
+    from ming_sim.issues import _ctx as content_context, gather_candidate_events
+    from ming_sim.entities.character.normalize import normalize_person_changes
+    from ming_sim.settlement.preflight import _STRATEGIC_FOREIGN_NODE_OUTCOME_TARGETS, _derive_ordered_deltas, _event_pool_ids_for_strategic_foreign_nodes, _event_result_delta_event_ids, _split_strategic_person_result_changes, sanitize_delta_shape
     from ming_sim.models import Event
 
     clean, validate_rejections = sanitize_delta_shape(extracted)
@@ -444,7 +440,7 @@ def _run_effect_sequence(run) -> None:
 
 def _resolve_victory(run) -> Optional[Dict[str, object]]:
     """结局判定：叙事型（退位/自尽）优先于数值型（京畿失守）。"""
-    from ming_sim.issues import victory_status
+    from ming_sim.context import victory_status
 
     fate = run.current_extracted.get("emperor_fate")
     if fate in ("abdicate", "suicide"):
@@ -499,7 +495,7 @@ def _build_outcome(run) -> SettlementOutcome:
             creates=placed("fiscal_creates"),
             changes=placed("fiscal_changes"),
         ),
-        issue=run.issue_result or IssueSectionResult(),
+        issue=run.outcomes.get("issue", IssueSectionResult()),
         dossier_participants=placed("dossier_participants"),
         dossier_executions=placed("dossier_executions"),
         secret_dossier_participants=placed("secret_dossier_participants"),
@@ -553,7 +549,6 @@ def settle_delta(
     db._batch_authorized_open_affair_ids = run.authorized_open_affairs
     db._batch_frozen_open_affair_ids = run.frozen_open_affairs
     try:
-        from ming_sim.issues import _register_runtime_rollback_snapshot
 
         def _execute() -> SettlementOutcome:
             _register_runtime_rollback_snapshot(db, state, ctx.content)
@@ -590,3 +585,90 @@ def _run_registry_after_interleave(run) -> None:
         if spec.name in already_run:
             continue
         _capture(run, spec.name, registry.load(spec)(run))
+
+
+def _register_runtime_rollback_snapshot(
+    db: GameDB,
+    state: GameState,
+    content: Optional[GameContent],
+) -> None:
+    """Restore process memory if the caller rolls back the surrounding DB transaction."""
+    conn = db.conn
+    callbacks = getattr(conn, "_runtime_rollback_callbacks", None)
+    if callbacks is None:
+        callbacks = []
+        conn._runtime_rollback_callbacks = callbacks
+    metrics_snapshot = dict(state.metrics)
+    character_objects = dict(content.characters) if content is not None else {}
+    character_attrs: Dict[str, Dict[str, object]] = {}
+    for name, character in character_objects.items():
+        character_attrs[name] = dict(vars(character))
+    def restore_runtime() -> None:
+        state.metrics.clear()
+        state.metrics.update(metrics_snapshot)
+        if content is not None:
+            for name in list(content.characters):
+                if name not in character_objects:
+                    del content.characters[name]
+            for name, character in character_objects.items():
+                content.characters[name] = character
+                for attr in list(vars(character)):
+                    if attr not in character_attrs[name]:
+                        delattr(character, attr)
+                for attr, value in character_attrs.get(name, {}).items():
+                    setattr(character, attr, value)
+
+    callbacks.append(restore_runtime)
+
+
+
+def apply_person_changes_only(
+    db: GameDB,
+    state: GameState,
+    person_changes: List[Dict[str, object]],
+    *,
+    content=None,
+    llm_config: Any = None,
+    origin_ref: str = "盘面自发",
+    require_origin: bool = False,
+    source: Provenance = Provenance.system_simulation,
+) -> SectionResult:
+    """人物单笔编排入口：不附带 full settlement 的确定性消费。
+
+    任命授官、传召启程等单人物动作共用此口；禁止借落库编排器附带
+    #652 recovery / bandit 等结算核。返回形状与 full applier 的 applied_person_changes 对齐。
+    """
+    from ming_sim.entities.character import names as character_names
+    from ming_sim.entities.character.normalize import normalize_person_changes
+
+    runtime_content = content if content is not None else getattr(db, "content", None)
+    caller_transaction = db.conn.in_transaction
+    # 本入口是人物单笔的事务主人：外层已开事务时只登记回滚快照；
+    # 否则快照 + atomic，成功提交、失败整笔回滚（含候见离京四侧）。
+    changes = character_names._canonicalize_person_change_names(
+        normalize_person_changes({"人物变更": list(person_changes or [])}),
+        runtime_content,
+        db,
+    )
+    from ming_sim.entities.character.apply import apply_person_changes
+
+    def _write():
+        _register_runtime_rollback_snapshot(db, state, runtime_content)
+        return apply_person_changes(
+            db,
+            state,
+            changes,
+            content=runtime_content,
+            llm_config=llm_config,
+            origin_ref=origin_ref,
+            require_origin=require_origin,
+        source=source)
+
+    if caller_transaction:
+        results, results_rejections = _write()
+    else:
+        from ming_sim.applier import atomic
+
+        with atomic(db):
+            results, results_rejections = _write()
+    return SectionResult(applied=results, rejected=results_rejections)

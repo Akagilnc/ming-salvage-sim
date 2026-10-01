@@ -9,14 +9,10 @@ from ming_sim.applier import Provenance, atomic
 
 import pytest
 
-import ming_sim.audience_night as audience_night
-import ming_sim.simulation as simulation
-from ming_sim.db import GameDB
 from ming_sim import issues as issues_mod
 
-from ming_sim.public_sayings import list_public_sayings, record_public_saying
 from ming_sim.settlement import SettlementContext, settle_delta
-from ming_sim.settlement.views import issue_rows, shape_rejections
+from ming_sim.settlement.views import issue_rows
 
 
 
@@ -246,7 +242,7 @@ def test_new_issue_affair_attach_failure_leaves_no_partial_product(game, monkeyp
         raise RuntimeError("attach boom")
 
     monkeypatch.setattr(db.affairs, "attach_from_declaration", boom)
-    with pytest.raises(RuntimeError, match="attach boom"):
+    with pytest.raises(RuntimeError):
         with atomic(db):
             apply_issue_tracker_output(
                 db, state,

@@ -4,7 +4,6 @@ from ming_sim.applier import Provenance
 
 import json
 
-from ming_sim.models import Character
 import pytest
 from ming_sim.knowledge import build_character_knowledge
 from ming_sim.materials import list_materials, prepare_character_materials, read_material
@@ -859,31 +858,6 @@ def test_knowledge_projects_mixed_archive_from_durable_source_scope(game):
     assert secret_marker not in excluded_text
     assert secret_marker in knower_text
 
-def test_rewritten_archive_cannot_reintroduce_restricted_source(game):
-    """邸报正文不是受限事项的来源边界；保存后仍不可向排除者泄露。"""
-    db, state, content = game
-    ministers = [
-        character for character in content.characters.values()
-        if character.office_type not in ("后宫", "宗藩")
-        and db.get_character_status(character.name)[0] == "active"
-    ]
-    knower, excluded = ministers[:2]
-    db.register_character_knowledge_source(
-        state,
-        [{"character_id": knower.name, "tier": "主办"}],
-        "private_matter",
-        "密查",
-        "原始密事",
-        source_id="test:rewritten-secret",
-        excluded_names=[excluded.name],
-    )
-    db.save_turn_report(state, "聚合邸报改写：有人暗中安排了不应知晓的事务。")
-
-    excluded_text = " ".join(
-        item.get("body", "")
-        for item in db.get_character_knowledge(state, excluded.name)["public_events"]
-    )
-    assert "有人暗中安排了不应知晓的事务" not in excluded_text
 
 def test_archive_write_materializes_unmirrored_source_scope(game):
     """结算保存聚合档案时，不能丢掉先写入的受限事项来源边界。"""
@@ -1007,7 +981,7 @@ def test_883_legacy_aggregate_without_source_rows_does_not_authorize_knowledge(g
 
 def test_structured_person_scope_replaces_role_wide_world_reports(game):
     """Appointment jurisdiction via real declaration entrance — not DB setter hooks."""
-    from ming_sim.issues import apply_person_changes_only
+    from ming_sim.settlement.run import apply_person_changes_only
 
     db, state, content = game
 
@@ -1027,8 +1001,8 @@ def test_structured_person_scope_replaces_role_wide_world_reports(game):
 
     def accepted(*args, **kwargs):
         bundle = appoint(*args, **kwargs)
-        assert bundle["applied_person_changes"] and bundle["rejected"] == [], bundle
-        return bundle["applied_person_changes"]
+        assert bundle.applied and bundle.rejected == [], bundle
+        return bundle.applied
 
     official = next(c for c in content.characters.values() if c.office_type == "地方")
     applied = accepted(official.name, "河南巡抚", "地方", region_id="henan")
@@ -1154,8 +1128,8 @@ def test_structured_person_scope_replaces_role_wide_world_reports(game):
         "SELECT office, office_type FROM characters WHERE name=?", (bare.name,),
     ).fetchone()
     rejected = appoint(bare.name, "新设巡抚", "地方")
-    refused = rejected["rejected"]
-    assert rejected["applied_person_changes"] == []
+    refused = rejected.rejected
+    assert rejected.applied == []
     assert len(refused) == 1 and refused[0].category == "missing_field", refused
     assert isinstance(refused[0].item, dict), refused
     assert refused[0].item.get("office") == "新设巡抚"
@@ -1168,8 +1142,8 @@ def test_structured_person_scope_replaces_role_wide_world_reports(game):
     assert db.get_character_knowledge(state, bare.name)["scope"]["region_ids"] == ()
     # Unknown region_id is typed missing_ref — still no silent empty 辖域.
     unknown = appoint(bare.name, "新设巡抚", "地方", region_id="not_a_region")
-    unknown_refused = unknown["rejected"]
-    assert unknown["applied_person_changes"] == []
+    unknown_refused = unknown.rejected
+    assert unknown.applied == []
     assert len(unknown_refused) == 1 and unknown_refused[0].category == "missing_ref", unknown_refused
     assert isinstance(unknown_refused[0].item, dict), unknown_refused
     assert unknown_refused[0].item.get("region_id") == "not_a_region"

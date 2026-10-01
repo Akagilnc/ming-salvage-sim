@@ -6,9 +6,12 @@
 
 from __future__ import annotations
 
-from ming_sim.applier import RejectedItem, Provenance
+from ming_sim.applier import RejectedItem
 
-from typing import Any, Dict, List
+from typing import TYPE_CHECKING, Any, Dict, List
+if TYPE_CHECKING:
+    from ming_sim.db import GameDB
+    from ming_sim.models import GameState
 
 
 def apply_person_changes(
@@ -22,7 +25,7 @@ def apply_person_changes(
     origin_ref: str = "",
     require_origin: bool = False,
 ) -> List[Dict[str, object]]:
-    import json
+    pass
 
     import ming_sim.entities.character.appointment as office_appointment
     from ming_sim.appointment_tenure import appointment_tenure_from
@@ -32,12 +35,9 @@ def apply_person_changes(
         normalize_reason_code,
         resolve_person_transition,
     )
-    from ming_sim.issues import (
-        _admit_transit_departure,
-        _load_pending_gate_valid_regions,
-        _parse_sqlite_id,
-        _payload_owned_person_duplicate,
-    )
+    from ming_sim.strict_types import _parse_sqlite_id
+    from ming_sim.entities.character.appointment import _payload_owned_person_duplicate
+    from ming_sim.settlement.preflight import _admit_transit_departure, _load_pending_gate_valid_regions
 
     def rejected(item, reason, category, *, status=None) -> RejectedItem:
         return RejectedItem(item=item, reason=reason, category=category, source=source)
@@ -593,14 +593,7 @@ def apply_person_changes(
                         )
                         continue
                     if action_type == "pacification":
-                        try:
-                            payload = dossier.get("payload") or json.loads(
-                                str(dossier.get("payload_json") or "{}")
-                            )
-                        except (TypeError, ValueError):
-                            payload = {}
-                        if not isinstance(payload, dict):
-                            payload = {}
+                        payload = dossier["payload"]  # 使用已校验的持久读取，不洗成空底。
                         bound_target = str(
                             payload.get("target_id") or dossier.get("target_id") or ""
                         ).strip()

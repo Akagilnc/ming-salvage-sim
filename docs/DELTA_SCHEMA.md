@@ -436,7 +436,7 @@ personnel_secret 模块产出；settle 内经 `record_monthly_dossier_progress` 
 
 #190 流寇招安：`易主(new_power:"ming", 方式:"主动归附")` 的 `反噬` 若写势力削弱，只能指向该人物当前原势力股；写到其它流寇股会整条拒收，防「招张献忠却削李自成」。头目已死时不能 `易主`，其遗留孤儿股只能走 `power_updates` 剿股。
 
-> **旧四 key（appointments / character_status_changes / character_power_changes / office_changes）已退役（#1835 F1）**：C0 声明契约只写 `人物变更` 一条人物流。ADR 0009 决定 11 的旧 key 兼容翻译层曾只为「历史 delta / ready=1 重试真源」服务；#1846 起不再持久化 ready=1 extractor delta、恢复真源是暂存声明与落账相位，那层失去存在理由并已删除（`DECLARATION_EFFECT_FIELDS` 不再列旧四键；`ming_sim/person_delta_adapter.py` 只做 `action`→`动作` 归一）。声明若仍带旧 key，由 `sanitize_delta_shape` 按 ADR 0015 逐段拒收留痕——不是静默无效。
+> **旧四 key（appointments / character_status_changes / character_power_changes / office_changes）已退役（#1835 F1）**：C0 声明契约只写 `人物变更` 一条人物流。ADR 0009 决定 11 的旧 key 兼容翻译层曾只为「历史 delta / ready=1 重试真源」服务；#1846 起不再持久化 ready=1 extractor delta、恢复真源是暂存声明与落账相位，那层失去存在理由并已删除（`DECLARATION_EFFECT_FIELDS` 不再列旧四键；`ming_sim/entities/character/normalize.py` 只做 `action`→`动作` 归一）。声明若仍带旧 key，由 `sanitize_delta_shape` 按 ADR 0015 逐段拒收留痕——不是静默无效。
 
 ### `secret_order_updates` / `covert_exec_selections`
 - updates：`order_id` int + `sim_note`（本月推进实况）+ 可选 `impact` + 可选布尔 `disclosed`（中文键 `泄漏结论`；可省略）。`disclosed`/`泄漏结论`：密令情节已**实际公开**才为 true（被目击、闹至公堂、承办人被拿获、目标公开反击、明发上谕、科道公开参劾等）；为 true 时触发 `secret_order_disclosure:` 公开知识事件（简报升公共面的唯一闸）。风声/警觉/暴露风险仍为不填或 false。

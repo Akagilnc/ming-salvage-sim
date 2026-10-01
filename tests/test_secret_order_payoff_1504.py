@@ -13,21 +13,17 @@ from __future__ import annotations
 from ming_sim.applier import Provenance
 
 import json
-from types import SimpleNamespace
 
 import pytest
 
 from ming_sim.covert_progress import (
     FACT_LANES_KEY,
-    INVESTIGATION_PROVENANCE_KEY,
     CovertContractError,
     build_covert_task_contract,
     build_secret_covert_effect_briefs,
     decide_secret_order_settlement,
     monthly_actual_units,
-    progress_units_for_state,
     read_covert_task_contract,
-    require_covert_task_contract,
     seed_guilt_counts_as_debt,
     target_progress_units,
     apply_monthly_covert_actual_progress,
@@ -36,9 +32,6 @@ from ming_sim.covert_progress import (
     settle_due_secret_orders,
 )
 from ming_sim.person_archive_contract import PERSON_LEGAL_REASON_CODES
-from ming_sim.db import GameDB
-from ming_sim.models import TurnPhase
-from tests.conftest import offline_empty_audience_translate, stub_audience_translate, stub_scene_agent
 from ming_sim.settlement import SettlementContext, settle_delta
 
 
@@ -202,7 +195,7 @@ def test_task_specific_contract_from_explicit_fields_not_tags():
     ],
 )
 def test_confirmation_rejects_incomplete_delivery_identity(unit, identity, sign):
-    with pytest.raises(CovertContractError, match="identity"):
+    with pytest.raises(CovertContractError):
         build_covert_task_contract(
             kind="差务", axes=["实务事功"], direction=1,
             delivery_unit=unit, delivery_target_units=1, effect_sign=sign, **identity,

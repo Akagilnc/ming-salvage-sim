@@ -6,10 +6,15 @@ issues 加载人物段时再进入本模块形成的环。
 
 from __future__ import annotations
 
+import ming_sim.strict_types as strict_types
+from ming_sim.exceptions import DeclarationDataError, DeclarationReferenceError
+import ming_sim.settlement.preflight as settlement_preflight
+
 import re
 from typing import Any, Dict, List, Optional
 
 from ming_sim.applier import Provenance, RejectedItem
+from ming_sim.settlement.outcome import IssueSectionResult
 from ming_sim.db import GameDB
 from ming_sim.entities.metric.apply import apply_metric_dict as _apply_metric_dict
 from ming_sim.flows import _strict_int
@@ -29,22 +34,18 @@ def apply_issue_tracker_output(
     defer_event_trigger_ids: Optional[set[str]] = None,
     open_affair_ids_at_input: Optional[set[int]] = None,
     source: Provenance = Provenance.system_simulation,
-) -> Dict[str, object]:
+) -> IssueSectionResult:
     import ming_sim.issues as issues
     import ming_sim.entities.issue.effects as issue_effects
     # Do not re-copy open_affair_ids_at_input: settle path already hands the single
     # internal working set from the settlement orchestrator; a second copy would drop
     # same-batch new_issues births from later carriers (close / durable origin).
-    from ming_sim.entities.economy.apply import _apply_economy_list
-    from ming_sim.entities.faction.apply import _apply_faction_dict
-    touched_ids: set = set()
     applied_advances: List[Dict[str, object]] = []
     pairing_warnings: List[str] = []  # #45/#46 国策结案实体后果强制配对告警（warn-only）
     applied_new: List[Dict[str, object]] = []
     applied_cancels: List[Dict[str, object]] = []
-    # issue 实体后果的容忍拒收项（issue_strict=False）——挂进返回 summary,
-    # S0 桥接一层下探自动收进 rejection_reports（留痕不蒸发,cmr S2 r2）。
-    entity_rejections: List[Dict[str, object]] = []
+    # 与成功回执并列的真实拒收通道，由编排器统一耐久化。
+    entity_rejections: List[RejectedItem] = []
     issue_person_changes: List[Dict[str, object]] = []
     runtime_content = content if content is not None else issues._ctx()
     event_by_id = runtime_content.event_by_id
@@ -70,9 +71,9 @@ def apply_issue_tracker_output(
         for item in (tracker_output.get("new_issues", []) or [])
     )
     if pending_person_changes_for_gates and has_event_pool_new_issue:
-        shared_shadow_rows = issues._load_pending_gate_shadow_rows(db)
-        shared_power_shadow_rows = issues._load_pending_gate_power_shadow_rows(db)
-        shared_valid_regions = issues._load_pending_gate_valid_regions(db)
+        shared_shadow_rows = settlement_preflight._load_pending_gate_shadow_rows(db)
+        shared_power_shadow_rows = settlement_preflight._load_pending_gate_power_shadow_rows(db)
+        shared_valid_regions = settlement_preflight._load_pending_gate_valid_regions(db)
 
     # 1) advances（ADR 0008 决定1：LLM 脏数据逐项拒收留痕，不裸 continue 静默丢；db.advance_issue
     #    的代码/DB 异常上抛 SettlementAbort，同 close_issues / new_issues 段，#63）
@@ -90,7 +91,7 @@ def apply_issue_tracker_output(
         try:
             # _parse_sqlite_id：非整数/bool/float/超 SQLite 64-bit → ValueError（含 10**100 这类
             # int() 过得了但绑定 SQLite 抛 OverflowError 的脏 id，避免上抛崩整月，同 close_issues）。
-            issue_id = issues._parse_sqlite_id(adv.get("issue_id"))
+            issue_id = strict_types._parse_sqlite_id(adv.get("issue_id"))
         except (TypeError, ValueError):
             entity_rejections.append(RejectedItem(item=adv, reason=f"advances issue_id 非法（非整数或超 SQLite 范围）：{adv.get('issue_id')!r}", category="invalid_enum", source=source))
             continue
@@ -129,23 +130,11 @@ def apply_issue_tracker_output(
             inertia_delta=inertia_delta,
             commit=False,
         )
-        touched_ids.add(issue_id)
         # 终结结算：bar 自然推到 100/0 触发的 resolved/failed，与 close_issues 一样落终结效果（含建筑）
         if new_row["status"] == "resolved":
             effect = loads_effect_dict(new_row["effect_on_resolve"])
             issue_effects._emit_pairing_warnings(new_row, effect, pairing_warnings)
             parent_origin_ref = issues._canonical_issue_origin(db, new_row)
-            _apply_metric_dict(state, effect.get("metrics") or {}, db=db)
-            entity_rejections.extend(_apply_economy_list(
-                db, state, effect.get("economy") or [],
-                origin_ref=parent_origin_ref,
-            source=source)[1])
-            entity_rejections.extend(_apply_faction_dict(db, effect.get("factions") or {}, source=source)[1])
-            _b_ops, _b_rej = issue_effects._apply_issue_buildings(
-                db, state, effect.get("buildings"), issues._ISSUE_PSEUDO_EVENT,
-                f"局势#{issue_id}结案", origin_ref=parent_origin_ref, source=source,
-            )
-            entity_rejections.extend(_b_rej)
             entity_rejections.extend(
                 issue_effects._apply_issue_entities(
                     db,
@@ -155,23 +144,12 @@ def apply_issue_tracker_output(
                     content=runtime_content,
                     llm_config=llm_config,
                     applied_person_changes=issue_person_changes,
-                    origin_ref=parent_origin_ref,
+                    issue_id=issue_id, issue_title=str(new_row["title"]),
+                origin_ref=parent_origin_ref,
                 source=source))
-            issues._spawn_legacy_from_effect(db, state, effect, issue_id, str(new_row["title"]), commit=False)
         elif new_row["status"] == "failed":
             effect = loads_effect_dict(new_row["effect_on_fail"])
             parent_origin_ref = issues._canonical_issue_origin(db, new_row)
-            _apply_metric_dict(state, effect.get("metrics") or {}, db=db)
-            entity_rejections.extend(_apply_economy_list(
-                db, state, effect.get("economy") or [],
-                origin_ref=parent_origin_ref,
-            source=source)[1])
-            entity_rejections.extend(_apply_faction_dict(db, effect.get("factions") or {}, source=source)[1])
-            _b_ops, _b_rej = issue_effects._apply_issue_buildings(
-                db, state, effect.get("buildings"), issues._ISSUE_PSEUDO_EVENT,
-                f"局势#{issue_id}失败", origin_ref=parent_origin_ref, source=source,
-            )
-            entity_rejections.extend(_b_rej)
             entity_rejections.extend(
                 issue_effects._apply_issue_entities(
                     db,
@@ -183,7 +161,6 @@ def apply_issue_tracker_output(
                     applied_person_changes=issue_person_changes,
                     origin_ref=parent_origin_ref,
                 source=source))
-            issues._spawn_legacy_from_effect(db, state, effect, issue_id, str(new_row["title"]), commit=False)
         applied_advances.append({
             "issue_id": issue_id,
             "title": new_row["title"],
@@ -321,7 +298,7 @@ def apply_issue_tracker_output(
                 print(f"[INFO] new_issue 已拒：事件 {event_id} 当前未进 event_pool 候选池。")
                 entity_rejections.append(RejectedItem(item={"id": ev.id, "title": ev.title}, reason="事件当前未进候选池（窗口/前提门/已触发不满足）", category="issue", source=source))
                 continue
-            if issues._pending_person_changes_block_event_gate(
+            if settlement_preflight._pending_person_changes_block_event_gate(
                 ev,
                 pending_person_changes_for_gates or [],
                 db,
@@ -334,7 +311,7 @@ def apply_issue_tracker_output(
                 entity_rejections.append(RejectedItem(item={"id": ev.id, "title": ev.title}, reason="事件当前未进候选池（同回合人物变更后前提门不满足）", category="issue", source=source))
                 continue
             if (
-                issues._is_strategic_foreign_node_event(ev)
+                settlement_preflight._is_strategic_foreign_node_event(ev)
                 and ev.id not in event_result_delta_event_ids
             ):
                 print(f"[INFO] new_issue 已拒：战略/外敌事件 {event_id} 缺世界状态主账结果。")
@@ -391,21 +368,23 @@ def apply_issue_tracker_output(
             # （与 4 个脏强转同口径，cmr ni r1 Claude+codex concur）。
             entity_rejections.append(RejectedItem(item=ni, reason=f"new_issue kind 非法 '{kind}'（须 situation/initiative）", category="invalid_enum", source=source))
             continue
-        # LLM 可能把效果字段给成非 dict（字符串/数组）；isinstance 守门归 {}，
-        # 不让 dict("乱填") 抛 ValueError 越过单条拒绝、崩整月落库（codexB-P1）。
-        def _eff_dict(v):
-            return v if isinstance(v, dict) else {}
-        ongoing_eff = _eff_dict(ni.get("ongoing_effects"))
-        resolve_eff = _eff_dict(ni.get("effect_on_resolve"))
-        fail_eff = _eff_dict(ni.get("effect_on_fail"))
+        def _eff_dict(v, field):
+            if isinstance(v, dict):
+                return v
+            if v is not None and v != "":
+                entity_rejections.append(RejectedItem(
+                    item={"field": field, "raw_value": v, "title": title},
+                    reason="局势效果须为对象", category="invalid_shape", source=source,
+                ))
+            return {}
+        ongoing_eff = _eff_dict(ni.get("ongoing_effects"), "ongoing_effects")
+        resolve_eff = _eff_dict(ni.get("effect_on_resolve"), "effect_on_resolve")
+        fail_eff = _eff_dict(ni.get("effect_on_fail"), "effect_on_fail")
         semantic_ongoing_has_work = effect_dict_has_work(ongoing_eff)
         ongoing_has_work = issues._monthly_ongoing_effects_has_work(ongoing_eff)
         unsupported_ongoing_fields = issues._unsupported_monthly_ongoing_fields(ongoing_eff)
-        # cancel_cost 同属 dict 字段，与上 3 个统一走 _eff_dict 容忍归 {}（cmr ni r9 codex medium）：
-        # 旧 `dict(ni.get("cancel_cost") or {})` 对 list-of-pairs 静默 garble（dict([["民心",-5]])=
-        # {'民心':-5}、dict(["ab"])={'a':'b'}）、对标量串 raise 拒整项——而 cancel_cost 是次要字段，
-        # 脏不该丢掉整个 issue 决策后果（违 P1 落库铁律）。容忍归 {} 既不 garble、又保 issue 主体。
-        cancel_cost = _eff_dict(ni.get("cancel_cost"))
+        # 坏子项留痕，不牵连可构造的局势主体。
+        cancel_cost = _eff_dict(ni.get("cancel_cost"), "cancel_cost")
         origin_ref = str(ni.get("origin_ref") or "").strip()
         stop_condition_raw = ni.get("stop_condition")
         stop_condition = issues._issue_condition_text(stop_condition_raw)
@@ -417,7 +396,7 @@ def apply_issue_tracker_output(
         except (TypeError, ValueError, OverflowError):
             end_turn_marker_shape = False
         legacy_resolve_text = issues._issue_condition_text(ni.get("resolve_condition"))
-        if not legacy_resolve_text and isinstance(stop_condition_raw, str):
+        if not legacy_resolve_text.strip() and isinstance(stop_condition_raw, str):
             legacy_resolve_text = stop_condition
         legacy_resolve_commitment_shape = (
             issues.commitment_condition_role(legacy_resolve_text).get("condition_role")
@@ -485,34 +464,36 @@ def apply_issue_tracker_output(
                     if end_turn_for_commitment <= 0 and not ongoing_has_work and not has_stages:
                         raise ValueError("stop_condition 须为非空 dict，除非承诺带 end_turn 或 stages")
                     stop_condition = ""
-                else:
+            except (TypeError, ValueError, OverflowError) as exc:
+                entity_rejections.append(RejectedItem(item=ni, reason=f"new_issue commitment 字段非法（origin_ref/ongoing_effects/stop_condition）：{exc}", category="invalid_enum", source=source))
+                continue
+            try:
+                if stop_condition_raw not in (None, "", {}):
                     stop_condition = issues._validate_commitment_stop_condition(stop_condition_raw, state, db)
                 origin_ref = db.resolve_commitment_origin_ref(
                     state, origin_ref, origin_kind=str(ni.get("origin_kind") or ""),
                 )
-                origin_error = db.effect_origin_rejection(origin_ref)
-                if origin_error:
-                    raise ValueError(str(origin_error["reason"]))
-            except (TypeError, ValueError, OverflowError) as exc:
-                entity_rejections.append(RejectedItem(item=ni, reason=f"new_issue commitment 字段非法（origin_ref/ongoing_effects/stop_condition）：{exc}", category="invalid_enum", source=source))
+            except DeclarationDataError as exc:
+                entity_rejections.append(RejectedItem(item=ni, reason=str(exc), category="invalid_enum", source=source))
+                continue
+            origin_error = db.effect_origin_rejection(origin_ref)
+            if origin_error:
+                entity_rejections.append(RejectedItem(item=ni, reason=origin_error["reason"], category=origin_error["category"], source=source))
                 continue
         # 校验：国策必须有「办成回报」。CLI 后端(agy)一贯不填效果字段（实测 0/4），
         # 空则聚焦补全，保证「国策跑完有实质后果」(A 方案)；floor 兜底，绝不入空壳。
         if kind == "initiative" and not resolve_eff and not is_commitment:
             from ming_sim.cli_backend import cli_backend_active, enrich_initiative_effects
             if cli_backend_active(llm_config):
-                try:
-                    enr = enrich_initiative_effects(
-                        title,
-                        str(ni.get("stage_text") or ""),
-                        llm_config=llm_config,
-                    )
-                    resolve_eff = enr.get("effect_on_resolve") or resolve_eff
-                    ongoing_eff = enr.get("ongoing_effects") or ongoing_eff
-                    fail_eff = enr.get("effect_on_fail") or fail_eff
-                    print(f"[issue/enrich] 国策「{title[:16]}」补效果 resolve={bool(resolve_eff)} ongoing={bool(ongoing_eff)}")
-                except Exception as exc:
-                    print(f"[issue/enrich] 补全失败，沿用空效果：{exc}")
+                enr = enrich_initiative_effects(
+                    title,
+                    str(ni.get("stage_text") or ""),
+                    llm_config=llm_config,
+                )
+                resolve_eff = _eff_dict(enr.get("effect_on_resolve"), "effect_on_resolve") or resolve_eff
+                ongoing_eff = _eff_dict(enr.get("ongoing_effects"), "ongoing_effects") or ongoing_eff
+                fail_eff = _eff_dict(enr.get("effect_on_fail"), "effect_on_fail") or fail_eff
+                print(f"[issue/enrich] 国策「{title}」补效果 resolve={bool(resolve_eff)} ongoing={bool(ongoing_eff)}")
                 # floor 在 try 外：即便 enrich 抛错或没补上，CLI 后端国策也绝不入空壳（codexB）。
                 if not resolve_eff:
                     resolve_eff = {"metrics": {"民心": 1}}
@@ -556,7 +537,7 @@ def apply_issue_tracker_output(
             continue
         raw_resolve = ni.get("resolve_condition")
         resolve_condition = issues._issue_condition_text(raw_resolve)
-        if not resolve_condition and isinstance(ni.get("stop_condition"), str):
+        if not resolve_condition.strip() and isinstance(ni.get("stop_condition"), str):
             resolve_condition = stop_condition
             resolve_stored = (
                 ni.get("stop_condition")
@@ -597,8 +578,8 @@ def apply_issue_tracker_output(
         # insert_issue 不再裹 broad except：代码/DB 异常上抛 → SettlementAbort（ADR 0005 fail-loud），
         # 不再当 WARN 吞（那会半落库 + 丢决策，违 P1 铁律）。
         # 注：字符串字段含孤代理（JSON 解析出的 "\\ud800"）会在 SQLite bind 抛 UnicodeEncodeError。
-        # #63 已在 SQLite-bind 序列化点统一用「保中文、净孤代理」helper 治理；本段不局部吞
-        # UnicodeEncodeError，仍让非编码类代码/DB 异常按 ADR 0005 fail-loud 上抛。
+        # 原文不在 SQLite bind 前改写；包括 UnicodeEncodeError 在内的持久写故障
+        # 上抛并回滚，JSON 序列化只在编码层转义、不改变载荷的 codepoints。
         # Validate typed affair authority before any write. A decree issue may be
         # grounded either by a promulgated dossier or by its typed affair declaration.
         from ming_sim.entities.affair import ATTACH_BIRTH, declaration_from_payload
@@ -625,7 +606,7 @@ def apply_issue_tracker_output(
         if issue_affair is not None and dossier_origin:
             try:
                 db.affairs.assert_origin_matches_declaration(origin_ref, issue_affair)
-            except (KeyError, TypeError, ValueError) as exc:
+            except (DeclarationReferenceError, DeclarationDataError) as exc:
                 entity_rejections.append(RejectedItem(item=ni, reason=str(exc), category="invalid_enum", source=source))
                 continue
         from ming_sim.staged_commitment import (
@@ -706,7 +687,7 @@ def apply_issue_tracker_output(
         try:
             # _parse_sqlite_id：非整数/bool/float/超 SQLite 64-bit 范围 → ValueError（含 10**100
             # 这类 int() 过得了但绑定 SQLite 抛 OverflowError 的脏 id，避免上抛崩整月，codex r1）。
-            issue_id = issues._parse_sqlite_id(cl.get("issue_id"))
+            issue_id = strict_types._parse_sqlite_id(cl.get("issue_id"))
         except (TypeError, ValueError):
             entity_rejections.append(RejectedItem(item=cl, reason=f"close_issues issue_id 非法（非整数或超 SQLite 范围）：{cl.get('issue_id')!r}", category="invalid_enum", source=source))
             continue
@@ -743,7 +724,6 @@ def apply_issue_tracker_output(
                     narrative=narrative,
                     commit=False,
                 )
-                touched_ids.add(issue_id)
                 applied_closes.append({"issue_id": issue_id, "title": new_row["title"], "reason": reason, "narrative": narrative})
                 continue
             entity_rejections.append(RejectedItem(item=cl, reason=why, category=category, source=source))
@@ -790,7 +770,6 @@ def apply_issue_tracker_output(
                 category, why = "invalid_enum", f"close_issues 结案被拒、issue {issue_id} 保持 active"
             entity_rejections.append(RejectedItem(item=cl, reason=why, category=category, source=source))
             continue
-        touched_ids.add(issue_id)
         # 终结效果：以 issue 立项时预设的 effect 为底，叠加 LLM 在本次结案项 cl 里现给的 effect。
         # 现给优先——event_pool 预设 issue（如阉党之祸）立项时 effect 多为空，帝国修正只能结案当下给。
         if reason == "resolved":
@@ -805,18 +784,7 @@ def apply_issue_tracker_output(
         if reason == "resolved":
             issue_effects._emit_pairing_warnings(new_row, effect, pairing_warnings)
         parent_origin_ref = issues._canonical_issue_origin(db, new_row)
-        _apply_metric_dict(state, effect.get("metrics") or {}, db=db)
-        entity_rejections.extend(_apply_economy_list(
-            db, state, effect.get("economy") or [],
-            origin_ref=parent_origin_ref,
-        source=source)[1])
-        entity_rejections.extend(_apply_faction_dict(db, effect.get("factions") or {}, source=source)[1])
-        building_ops, building_rejections = issue_effects._apply_issue_buildings(
-            db, state, effect.get("buildings"),
-            issues._ISSUE_PSEUDO_EVENT, f"局势#{issue_id}{'结案' if reason == 'resolved' else '失败'}",
-            origin_ref=parent_origin_ref, source=source,
-        )
-        entity_rejections.extend(building_rejections)
+        building_ops: List[Dict[str, object]] = []
         close_person_changes: List[Dict[str, object]] = []
         entity_rejections.extend(issue_effects._apply_issue_entities(
             db,
@@ -825,11 +793,11 @@ def apply_issue_tracker_output(
             f"局势#{issue_id}{'结案' if reason == 'resolved' else '失败'}",
             content=runtime_content,
             llm_config=llm_config,
-            applied_person_changes=close_person_changes,
-            origin_ref=parent_origin_ref,
+            applied_person_changes=close_person_changes, applied_buildings=building_ops,
+            issue_id=issue_id, issue_title=str(new_row["title"]),
+                                 origin_ref=parent_origin_ref,
         source=source))
         issue_person_changes.extend(close_person_changes)
-        issues._spawn_legacy_from_effect(db, state, effect, issue_id, str(new_row["title"]), commit=False)
         close_record = {
             "issue_id": issue_id,
             "title": new_row["title"],
@@ -862,7 +830,6 @@ def apply_issue_tracker_output(
                 commit=False,
             )
             state.metrics["皇威"] = max(0, int(state.metrics.get("皇威", 0)) - 2)
-            touched_ids.add(issue_id)
             entity_rejections.append(RejectedItem(item={"issue_id": issue_id, "title": row["title"]}, reason="此事非诏可消（不可撤国策），已转强行推进并损皇威 2 点。", category="non_cancellable_converted", source=source))
             continue
         # #623 / ADR 0075：active 承诺松手不得顺 cancel 即 breach+close——
@@ -884,7 +851,6 @@ def apply_issue_tracker_output(
             if plea_todo is not None:
                 finalize_persist(db, state, plea_todo, commit=False)
                 applied_cancels.append({"issue_id": issue_id, "title": row["title"], "breach_plea_decision": "persist"})
-                touched_ids.add(issue_id)
                 continue
             # 无改弦 pending：写/并入改弦挽留条（同回合他类松手走 merge，不静默吞）
             write_breach_plea_todo(
@@ -895,7 +861,6 @@ def apply_issue_tracker_output(
                 target_dossier_id=int(parse_dossier_id(origin_ref_c) or 0),
             )
             applied_cancels.append({"issue_id": issue_id, "title": row["title"], "deferred_breach_plea": True})
-            touched_ids.add(issue_id)
             continue
         # 可撤成命：若事项来自已颁案卷，ADR 0056 的确定性毁约轨取代
         # extractor/default by_progress cancel_cost，防同一次撤旨双罚。
@@ -919,32 +884,38 @@ def apply_issue_tracker_output(
                 state, int(linked_dossier["id"]),
                 reason=str(cn.get("narrative") or "撤回成命"), commit=False,
             )
-        cost = {} if deterministic_breach else (cn.get("applied_cost") or {})
-        if isinstance(cost, dict):
-            _apply_metric_dict(state, cost.get("metrics") or {}, db=db)
-            parent_origin_ref = issues._canonical_issue_origin(db, row)
-            entity_rejections.extend(_apply_economy_list(
-                db, state, cost.get("economy") or [],
-                origin_ref=parent_origin_ref, require_origin=True,
-            source=source)[1])
-            entity_rejections.extend(_apply_faction_dict(db, cost.get("factions") or {}, source=source)[1])
+        raw_cost = cn.get("applied_cost")
+        cost = {} if raw_cost is None or deterministic_breach else raw_cost
+        if deterministic_breach and raw_cost:
+            entity_rejections.append(RejectedItem(
+                item={"field": "applied_cost", "raw_value": raw_cost},
+                reason="撤旨后果由案卷执行格拥有", category="invalid_transition", source=source,
+            ))
+        if not isinstance(cost, dict):
+            entity_rejections.append(RejectedItem(
+                item={"field": "applied_cost", "raw_value": cost},
+                reason="撤回后果须为对象", category="invalid_shape", source=source,
+            ))
+            cost = {}
+        parent_origin_ref = issues._canonical_issue_origin(db, row)
+        entity_rejections.extend(issue_effects._apply_issue_entities(
+            db, state, cost, f"局势#{issue_id}撤回", content=runtime_content,
+            llm_config=llm_config, applied_person_changes=issue_person_changes,
+            issue_id=issue_id, issue_title=str(row["title"]),
+            origin_ref=parent_origin_ref, source=source,
+        ))
         db.cancel_issue(
             state, issue_id,
             narrative=str(cn.get("narrative") or ""),
             applied_cost=cost if isinstance(cost, dict) else {},
             commit=False,
         )
-        touched_ids.add(issue_id)
         applied_cancels.append({"issue_id": issue_id, "title": row["title"]})
 
     state.clamp()
-    return {
-        "advances": applied_advances,
-        "new_issues": applied_new,
-        "closes": applied_closes,
-        "cancels": applied_cancels,
-        "rejected": entity_rejections,
-        "applied_person_changes": issue_person_changes,
-        "touched_ids": sorted(touched_ids),
-        "pairing_warnings": pairing_warnings,
-    }
+    return IssueSectionResult(
+        advances=applied_advances, new_issues=applied_new,
+        closes=applied_closes, cancels=applied_cancels,
+        rejected=entity_rejections, applied_person_changes=issue_person_changes,
+        pairing_warnings=pairing_warnings,
+    )

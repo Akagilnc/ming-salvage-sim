@@ -51,20 +51,20 @@ def parse_decision_blocks(text: str) -> List[Dict[str, object]]:
             break
         try:
             obj = json.loads(m.group(1))
-        except Exception:
+        except json.JSONDecodeError:
             continue
         if not isinstance(obj, dict):
             continue
-        title = str(obj.get("title") or "").strip()
+        title = str(obj.get("title") or "")
         raw_opts = obj.get("options")
-        if not title or not isinstance(raw_opts, list):
+        if not title.strip() or not isinstance(raw_opts, list):
             continue
         options: List[Dict[str, object]] = []
         for o in raw_opts:
             if not isinstance(o, dict):
                 continue
-            label = str(o.get("label") or "").strip()
-            if not label:
+            label = str(o.get("label") or "")
+            if not label.strip():
                 continue
             try:
                 action_type = validate_season_option(o)
@@ -73,7 +73,7 @@ def parse_decision_blocks(text: str) -> List[Dict[str, object]]:
                 break
             option: Dict[str, object] = {
                 "label": label,
-                "hint": str(o.get("hint") or "").strip(),
+                "hint": str(o.get("hint") or ""),
             }
             # Deterministic financial options carry their executable payload;
             # label/hint remain presentation only.
@@ -89,8 +89,8 @@ def parse_decision_blocks(text: str) -> List[Dict[str, object]]:
             continue
         decision = {
             "title": title,
-            "context": str(obj.get("context") or "").strip(),
-            "options": options[:3],
+            "context": str(obj.get("context") or ""),
+            "options": options,
         }
         event_id = str(obj.get("event_id") or obj.get("origin_ref") or "").strip()
         if event_id:

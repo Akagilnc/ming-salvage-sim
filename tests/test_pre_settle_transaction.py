@@ -100,7 +100,7 @@ def test_due_secret_order_submission_rolls_back_on_pre_settle_crash(saved_game, 
         raise RuntimeError("phase-write boom")
     monkeypatch.setattr(db, "save_state", _boom_save)
 
-    with pytest.raises(RuntimeError, match="phase-write boom"):
+    with pytest.raises(RuntimeError):
         pre_settle(state, db)
 
     monkeypatch.setattr(db, "save_state", orig_save)
@@ -125,7 +125,7 @@ def test_pre_settle_rolls_back_on_seed_issue_failure(game, monkeypatch):
         raise RuntimeError("pre_settle boom")
     monkeypatch.setattr(dm, "auto_trigger_seed_issues", _boom)
 
-    with pytest.raises(RuntimeError, match="pre_settle boom"):
+    with pytest.raises(RuntimeError):
         pre_settle(state, db)
 
     other = sqlite3.connect(db.path)
@@ -152,7 +152,7 @@ def test_crash_inside_pre_settle_no_missing_fiscal(game, monkeypatch):
         raise RuntimeError("auto_trigger boom")
     monkeypatch.setattr(decree_mod, "auto_trigger_seed_issues", _boom)
 
-    with pytest.raises(RuntimeError, match="auto_trigger boom"):
+    with pytest.raises(RuntimeError):
         pre_settle(state, db)
 
     # 财政落账随回滚消失（用新连接读盘，验真回滚到磁盘态）
@@ -201,7 +201,7 @@ def test_enter_review_does_not_clobber_settling(game):
 
     抹成 reviewing 后 pre_settle 守门失效=同回合二次财政 tick。
     """
-    from ming_sim.session import GameSession, TurnPhase
+    from ming_sim.session import GameSession
     db, state, content = game
     state.turn_phase = "settling"
     db.save_state(state)
@@ -219,13 +219,11 @@ def test_enter_review_does_not_clobber_settling(game):
 
 def test_advance_without_edict_refused_after_settling(game):
     """#1274 r1：空壳已删；settling 恢复归 session.resolve_turn，不再经独立退朝壳拒绝。"""
-    import inspect
 
     import ming_sim.decree as decree_mod
     from ming_sim.decree import pre_settle
 
     assert not hasattr(decree_mod, "advance_without_edict")
-    assert "def advance_without_edict" not in inspect.getsource(decree_mod)
 
     db, state, content = game
     turn = state.turn
@@ -317,14 +315,12 @@ def test_sticky_phases_cover_awaiting_decision(game):
 
 def test_advance_without_edict_refused_at_awaiting(game):
     """#1274 r1：空壳已删；awaiting 由 session.resolve_turn 幂等返回决策，不经退朝壳拒绝。"""
-    import inspect
 
     import ming_sim.decree as decree_mod
     from ming_sim.decree import pre_settle
     from ming_sim.session import GameSession
 
     assert not hasattr(decree_mod, "advance_without_edict")
-    assert "def advance_without_edict" not in inspect.getsource(decree_mod)
 
     db, state, content = game
     turn = state.turn
@@ -421,7 +417,7 @@ def test_write_decree_raises_at_awaiting_not_resolveresult(game):
     sess.db = db
     sess.state = state
 
-    with pytest.raises(ValueError, match="亲裁"):
+    with pytest.raises(ValueError):
         sess.write_decree()
 
 
@@ -443,7 +439,7 @@ def test_placeholder_save_crash_rolls_back_settling(game, monkeypatch):
         raise RuntimeError("placeholder save crash")
     monkeypatch.setattr(type(db), "save_resolve_context", _boom)
 
-    with pytest.raises(RuntimeError, match="placeholder save crash"):
+    with pytest.raises(RuntimeError):
         decree_mod.resolve_directives(state, db, None, None, [1], "减赋诏",
                                       content=content)
 

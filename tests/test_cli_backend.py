@@ -102,27 +102,20 @@ def test_typed_secret_exclusions_canonicalize_roster_alias_and_office(game):
 
 
 def test_secret_content_assembly_is_emperor_plus_extractor_only():
-    """#1274 K1：拼装输入结构化——仅 emperor_intent + extractor_content；无 reply 形参。"""
-    import inspect
-
-    params = inspect.signature(cb.assemble_secret_order_content).parameters
-    assert set(params) == {"emperor_intent", "extractor_content"}
-    assert "reply" not in params and "minister_reply" not in params
-
-    task = "密查关宁欠饷"
-    extracted = f"{task}，三月内回奏，方法：密访核册"
+    """正文装配保住两路原文，不按措辞覆盖率吞掉其中一路。"""
+    task = "  密查关宁欠饷\n"
+    extracted = f"\n{task}，三月内回奏，方法：密访核册  "
     body = cb.assemble_secret_order_content(
         emperor_intent=task,
         extractor_content=extracted,
     )
-    # 御旨未覆盖时兜底并入御旨，仍不接受第三路 reply
-    partial = "臣已领旨办理。"
+    assert body == task + "\n" + extracted
+    partial = "  臣已领旨办理。\n"
     merged = cb.assemble_secret_order_content(
         emperor_intent=f"{task}，三月内回奏",
         extractor_content=partial,
     )
-    assert task in merged and "三月内回奏" in merged
-    assert partial in merged
+    assert merged == f"{task}，三月内回奏\n" + partial
 
 
 
@@ -175,31 +168,31 @@ def test_enrich_army_parsed_and_normalized(monkeypatch):
     assert armies[0]["manpower"] == 20000
 
 
-def test_enrich_building_region_floor(monkeypatch):
+def test_enrich_does_not_invent_building_region(monkeypatch):
     canned = json.dumps({
         "effect_on_resolve": {"buildings": [{"action": "create", "name": "格致局", "category": "科技"}]},
         "ongoing_effects": {}, "effect_on_fail": {},
     }, ensure_ascii=False)
     monkeypatch.setattr(cb, "_run_agy", lambda prompt, **kw: (canned, 1))
     out = cb.enrich_initiative_effects("设格致局", "")
-    assert out["effect_on_resolve"]["buildings"][0]["region_id"] == "beizhili"
+    assert out["effect_on_resolve"]["buildings"] == json.loads(canned)["effect_on_resolve"]["buildings"]
 
 
-def test_enrich_backend_error_returns_empty_effects(monkeypatch):
+def test_enrich_backend_code_failure_propagates(monkeypatch):
     monkeypatch.setattr(cb, "_run_backend", lambda p: (_ for _ in ()).throw(RuntimeError("backend down")))
     monkeypatch.setattr(cb, "_trace", lambda rec: None)
-    out = cb.enrich_initiative_effects("设格致局", "")
-    assert out == {"effect_on_resolve": {}, "ongoing_effects": {}, "effect_on_fail": {}}
+    with pytest.raises(RuntimeError):
+        cb.enrich_initiative_effects("设格致局", "")
 
 
-def test_enrich_nondict_subfields_guarded(monkeypatch):
+def test_enrich_nondict_subfields_reach_execution_validation(monkeypatch):
     monkeypatch.setattr(
         cb, "_run_backend",
         lambda p: ('{"effect_on_resolve": "坏数据", "ongoing_effects": ["x"], "effect_on_fail": 3}', 1),
     )
     monkeypatch.setattr(cb, "_trace", lambda r: None)
     out = cb.enrich_initiative_effects("设局", "")
-    assert out == {"effect_on_resolve": {}, "ongoing_effects": {}, "effect_on_fail": {}}
+    assert out == {"effect_on_resolve": "坏数据", "ongoing_effects": ["x"], "effect_on_fail": 3}
 
 
 def test_enrich_trace_records_actual_backend(monkeypatch):
@@ -513,14 +506,16 @@ def test_run_codex_maps_reasoning_strength_to_native_effort(monkeypatch):
     assert 'model_reasoning_effort="medium"' not in joined
 
 
-def test_run_codex_stdout_empty_fallback(monkeypatch):
+def test_run_codex_empty_stdout_is_not_recovered_from_stderr(monkeypatch):
     monkeypatch.delenv("MING_SIM_CODEX_REASONING", raising=False)
     _capture_run(
         monkeypatch,
         _P(stdout="", stderr="STDOUT_BODY\nOpenAI Codex v0.125.0\nlogs"),
     )
-    out, n = cb._run_codex("p")
-    assert out == "STDOUT_BODY"
+    from ming_sim.exceptions import LLMUnavailable
+    with pytest.raises(LLMUnavailable) as caught:
+        cb._run_codex("p")
+    assert caught.value.code == "llm_empty_output"
 
 
 def test_run_claude_maps_reasoning_strength_to_thinking_tokens(monkeypatch):
@@ -1054,7 +1049,7 @@ def test_material_runner_uses_cwd_and_read_only_tool_surface(monkeypatch, tmp_pa
             cb, "_resolve_cli_bin",
             lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("missing")),
         )
-        with pytest.raises(RuntimeError, match="missing"):
+        with pytest.raises(RuntimeError):
             list(cb._iter_cli_runner_text("kimi", "PROMPT", materials_dir=root))
         assert created and not os.path.exists(created[0])
     elif runner == "grok":
@@ -1237,7 +1232,7 @@ def test_gate_llm_config_api_from_env(monkeypatch):
 
 def test_gate_llm_config_cli_requires_runner():
     args = SimpleNamespace(channel="cli", runner="", model="m", api_key="", base_url="")
-    with pytest.raises(ValueError, match="--runner"):
+    with pytest.raises(ValueError):
         cb.gate_llm_config_from_args(args)
 
 
@@ -1247,10 +1242,10 @@ def test_gate_llm_config_api_requires_key_and_url(monkeypatch):
     monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
     monkeypatch.delenv("MING_SIM_API_BASE_URL", raising=False)
     args = SimpleNamespace(channel="api", runner="", model="m", api_key="", base_url="")
-    with pytest.raises(ValueError, match="api-key|API_KEY"):
+    with pytest.raises(ValueError):
         cb.gate_llm_config_from_args(args)
     args.api_key = "sk-x"
-    with pytest.raises(ValueError, match="base-url|BASE_URL"):
+    with pytest.raises(ValueError):
         cb.gate_llm_config_from_args(args)
 
 

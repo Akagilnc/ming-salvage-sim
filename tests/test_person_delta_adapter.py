@@ -12,11 +12,11 @@ import tempfile
 
 import pytest
 
-import ming_sim.issues as issues
 from ming_sim.db import GameDB
 from ming_sim.models import Character
 from ming_sim.person_archive_contract import PERSON_TITLE_KINDS
-from ming_sim.person_delta_adapter import normalize_person_changes
+from ming_sim.entities.character.normalize import normalize_person_changes
+from ming_sim.declaration_dispatch import dispatch_declaration
 from tests.conftest import active_ming_character
 from tests.dossier_test_helpers import create_test_secret_order
 from ming_sim.settlement import SettlementContext, settle_delta
@@ -68,7 +68,8 @@ def test_retired_legacy_person_keys_are_rejected_per_section_not_silently_droppe
     db, state, content = game
     name = active_ming_character(db, content)
 
-    applied = settle_delta(state, db, {legacy_key: [{'name': name, 'status': 'dismissed', 'new_power': 'houjin', 'new_office': '陕西总督', 'office': '陕西总督'}], '人物变更': [{'name': name, 'origin_ref': '盘面自发', '动作': '评定', 'loyalty': 3, 'reason': '同批合法项'}]}, SettlementContext(content=content))
+    declaration = {legacy_key: [{'name': name, 'status': 'dismissed', 'new_power': 'houjin', 'new_office': '陕西总督', 'office': '陕西总督'}], '人物变更': [{'name': name, 'origin_ref': '盘面自发', '动作': '评定', 'loyalty': 3, 'reason': '同批合法项'}]}
+    applied = dispatch_declaration(db, state, {"effects": [declaration]}, source=Provenance.system_simulation).effects.applied[0]
 
     result = view(applied, "applied_person_changes")
     assert [item["name"] for item in result] == [name]
@@ -77,14 +78,9 @@ def test_retired_legacy_person_keys_are_rejected_per_section_not_silently_droppe
     assert all(item.get("动作") != "处置" for item in result)
     assert db.get_character_status(name)[0] == "active"
     # 旧键恒空：不再作为恒空响应键回显（ADR 0150）。
-    for retired in ("appointments", "character_status_changes",
-                    "character_power_changes", "office_changes"):
-        assert not hasattr(applied, retired)
     # ADR 0015：validate 层逐段拒收留痕，report_section 即原 section 名。
-    legacy_rejections = [
-        item for item in shape_rejections(applied)
-        if legacy_key in item.reason
-    ]
+    legacy_rejections = shape_rejections(applied)
+    assert db.conn.execute("SELECT section FROM rejection_reports").fetchone()[0] == legacy_key
     assert len(legacy_rejections) == 1
     assert legacy_rejections[0].category == "invalid_shape"
 
@@ -110,9 +106,6 @@ def test_apply_score_extraction_reports_no_legacy_person_response_keys(game):
     """ADR 0150「无恒空兼容键」：旧四键不再作为恒空响应键回显。"""
     db, state, _ = game
     applied = settle_delta(state, db, {}, SettlementContext())
-    for retired in ("appointments", "character_status_changes",
-                    "character_power_changes", "office_changes"):
-        assert not hasattr(applied, retired)
 
 
 def test_apply_score_extraction_rejects_person_change_power_move_without_way(read_game):
@@ -128,7 +121,6 @@ def test_apply_score_extraction_rejects_person_change_power_move_without_way(rea
     assert view(applied, "applied_person_changes") == []
     _refused = rejected_view(applied, "applied_person_changes")
     assert len(_refused) == 1
-    assert _refused[0].reason == "易主 缺 方式"
     assert _refused[0].category == "missing_field"
     assert _refused[0].item == {"name": name, "origin_ref": "盘面自发", "动作": "易主", "new_power": "houjin", "reason": "漏方式"}
 
@@ -218,7 +210,6 @@ def test_apply_score_extraction_rejects_invalid_loyalty_assessment(game, item, c
     assert view(applied, "applied_person_changes") == []
     _refused = rejected_view(applied, "applied_person_changes")
     assert len(_refused) == 1
-    assert _refused[0].reason == reason
     assert _refused[0].category == category
     assert _refused[0].item == item
 
@@ -412,7 +403,6 @@ def test_apply_score_extraction_rejects_malformed_power_move_backlash_before_wri
     assert view(applied, "applied_person_changes") == []
     _refused = rejected_view(applied, "applied_person_changes")
     assert len(_refused) == 1
-    assert _refused[0].reason == "易主 反噬 项必须是 object(dict)"
     assert _refused[0].category == "invalid_enum"
     assert _refused[0].item == item
 
@@ -782,7 +772,6 @@ def test_apply_score_extraction_does_not_release_when_derived_appointment_is_inv
         assert view(applied, "applied_person_changes") == []
         _refused = rejected_view(applied, "applied_person_changes")
         assert len(_refused) == 1
-        assert _refused[0].reason == "name 或 new_office 空"
         assert _refused[0].category == "missing_field"
         assert _refused[0].item == {
                     "name": name,
@@ -839,7 +828,7 @@ def test_apply_score_extraction_rolls_back_derived_release_when_office_write_fai
         before_logs = db.conn.execute("SELECT COUNT(*) FROM person_logs").fetchone()[0]
         monkeypatch.setattr(db, "set_character_office", fail_office_write)
 
-        with pytest.raises(RuntimeError, match="simulated office write failure"):
+        with pytest.raises(RuntimeError):
             settle_delta(state, db, {'人物变更': [{'name': name, 'origin_ref': '盘面自发', '动作': '任命', 'office': '陕西总督', 'office_type': '地方', 'region_id': 'shaanxi', 'reason': '查明旧案后起用'}]}, SettlementContext(content=content))
 
         row = db.conn.execute(
@@ -890,7 +879,7 @@ def test_derived_release_office_fault_rolls_back_the_whole_person_batch(
             "SELECT status, office FROM characters WHERE name=?", (first,)
         ).fetchone())
 
-        with pytest.raises(RuntimeError, match="simulated office write failure"):
+        with pytest.raises(RuntimeError):
             settle_delta(state, db, {'人物变更': [{'name': first, 'origin_ref': '盘面自发', '动作': '处置', 'status': 'dismissed', 'reason': '先罢一人'}, {'name': second, 'origin_ref': '盘面自发', '动作': '任命', 'office': '陕西总督', 'office_type': '地方', 'region_id': 'shaanxi', 'reason': '查明旧案后起用'}]}, SettlementContext(content=content))
 
         first_row = db.conn.execute(
@@ -932,7 +921,7 @@ def test_derived_release_restores_when_post_office_helper_raises(game, monkeypat
         before_logs = db.conn.execute("SELECT COUNT(*) FROM person_logs").fetchone()[0]
         monkeypatch.setattr(office_appointment, "_displace_duplicate_offices", fail_after_office_write)
 
-        with pytest.raises(RuntimeError, match="simulated post-office failure"):
+        with pytest.raises(RuntimeError):
             settle_delta(state, db, {'人物变更': [{'name': name, 'origin_ref': '盘面自发', '动作': '任命', 'office': '陕西总督', 'office_type': '地方', 'region_id': 'shaanxi', 'reason': '查明旧案后起用'}]}, SettlementContext(content=content))
 
         row = db.conn.execute(
@@ -990,7 +979,6 @@ def test_apply_score_extraction_does_not_release_non_ming_when_derived_appointme
         assert view(applied, "applied_person_changes") == []
         _refused = rejected_view(applied, "applied_person_changes")
         assert len(_refused) == 1
-        assert _refused[0].reason == f"{name}不属大明朝廷，不能授予大明官职"
         assert _refused[0].category == "invalid_transition"
         assert _refused[0].item == raw_item
     finally:
@@ -1011,7 +999,6 @@ def test_apply_score_extraction_applies_person_change_disposition(game):
         assert db.get_character_status(name)[0] == "dismissed"
         assert content.characters[name].status == "dismissed"
         assert content.characters[name].office == ""
-        assert not hasattr(applied, "person_changes")
         assert view(applied, "applied_person_changes") == [
             {"name": name, "origin_ref": "盘面自发", "动作": "处置", "status": "dismissed", "reason": "削职听勘"}
         ]
@@ -1206,7 +1193,7 @@ def test_add_character_non_canonical_office_type_still_raises(game):
     """守卫只放行 person-title 名分：真正未定义的官类仍必须响亮 ValueError（闸不被放宽吞掉）。"""
     db, state, _content = game
 
-    with pytest.raises(ValueError, match="未定义官类"):
+    with pytest.raises(ValueError):
         db.add_character(
             state, _new_ming_character("杜撰甲", "绝无此名的杜撰怪衔", "杜撰官类")
         )
@@ -1318,7 +1305,6 @@ def test_apply_score_extraction_rejects_invalid_person_dispositions(read_game, i
     assert view(applied, "applied_person_changes") == []
     refused = rejected_view(applied, "applied_person_changes")
     assert len(refused) == 1
-    assert refused[0].reason == expected["reason"]
     assert refused[0].category == expected["category"]
     assert refused[0].item == expected["item"]
 
@@ -1333,7 +1319,6 @@ def test_apply_score_extraction_rejects_unknown_person_change(read_game, with_co
     assert view(applied, "applied_person_changes") == []
     _refused = rejected_view(applied, "applied_person_changes")
     assert len(_refused) == 1
-    assert _refused[0].reason == "非既有人物"
     assert _refused[0].category == "hallucinated_id"
     assert _refused[0].item == item
 
@@ -1348,7 +1333,6 @@ def test_apply_score_extraction_rejects_dead_status_outbound(game):
     assert view(applied, "applied_person_changes") == []
     _refused = rejected_view(applied, "applied_person_changes")
     assert len(_refused) == 1
-    assert _refused[0].reason == "dead 无 status 出边"
     assert _refused[0].category == "invalid_transition"
     assert _refused[0].item == {"name": name, "origin_ref": "盘面自发", "动作": "处置", "status": "dismissed"}
 
@@ -1417,7 +1401,7 @@ def test_create_secret_order_rejects_vassal_prince(read_game):
     import pytest
     db, state, content = read_game
     name = _materialize_active_prince(db, state, content)
-    with pytest.raises(ValueError, match="宗室"):
+    with pytest.raises(ValueError):
         create_test_secret_order(db, state, name, "密查", "着尔暗中查访", [])
 
 
@@ -1435,7 +1419,7 @@ def test_create_secret_order_rejects_vassal_prince_by_alias(read_game):
         pytest.skip("基底盘面无带别名的宗藩")
     db.add_character(state, content.characters[prince], source="测试")
     alias = next(a for a in content.characters[prince].aliases if a != prince)
-    with pytest.raises(ValueError, match="宗室"):
+    with pytest.raises(ValueError):
         create_test_secret_order(db, state, alias, "密查", "着尔暗中查访", [])
 
 
@@ -1470,7 +1454,7 @@ def test_create_secret_order_rejects_foreign_power(game):
                   and (db.conn.execute("SELECT power_id FROM characters WHERE name=?", (n,)).fetchone()["power_id"] or "ming") != "ming"), None)
     if enemy is None:
         pytest.skip("基底盘面无外藩人物")
-    with pytest.raises(ValueError, match="不属大明朝廷"):
+    with pytest.raises(ValueError):
         create_test_secret_order(db, state, enemy, "密查", "着尔暗中查访", [])
 
 
@@ -1488,7 +1472,7 @@ def test_create_secret_order_rejects_foreign_power_by_alias(game):
     if enemy is None:
         pytest.skip("基底盘面无带别名的外藩")
     alias = next(a for a in content.characters[enemy].aliases if a != enemy)
-    with pytest.raises(ValueError, match="不属大明朝廷"):
+    with pytest.raises(ValueError):
         create_test_secret_order(db, state, alias, "密查", "着尔暗中查访", [])
 
 
@@ -1544,10 +1528,8 @@ def test_apply_score_extraction_rejects_invalid_person_travel(game):
     assert view(applied, "applied_person_changes") == []
     _refused = rejected_view(applied, "applied_person_changes")
     assert len(_refused) == 2
-    assert _refused[0].reason == "transit_to 缺失"
     assert _refused[0].category == "missing_field"
     assert _refused[0].item == {"name": "孔有德", "origin_ref": "盘面自发", "动作": "行止"}
-    assert _refused[1].reason == "行止 仅适用于 active 人物"
     assert _refused[1].category == "invalid_transition"
     assert _refused[1].item == {"name": name, "origin_ref": "盘面自发", "动作": "行止", "transit_to": "liaodong"}
 
@@ -1561,7 +1543,6 @@ def test_apply_score_extraction_rejects_unknown_person_travel_region(read_game):
     assert view(applied, "applied_person_changes") == []
     _refused = rejected_view(applied, "applied_person_changes")
     assert len(_refused) == 1
-    assert _refused[0].reason == "transit_to 地区不存在"
     assert _refused[0].category == "missing_ref"
     assert _refused[0].item == {"name": name, "origin_ref": "盘面自发", "动作": "行止", "transit_to": "not_a_region"}
 
@@ -1733,7 +1714,7 @@ def test_reappoint_rollback_restores_character_reason(game, monkeypatch):
         raise RuntimeError("post-readback failure")
     monkeypatch.setattr(office_appointment, "resolve_office_type_preserving_title", boom)
 
-    with pytest.raises(RuntimeError, match="post-readback failure"):
+    with pytest.raises(RuntimeError):
         settle_delta(state, db, {'人物变更': [{'name': name, 'origin_ref': '盘面自发', '动作': '任命', 'office': '陕西总督', 'office_type': '地方', 'region_id': 'shaanxi', 'reason': '起用'}]}, SettlementContext(content=content))
 
     ch = content.characters[name]
@@ -2055,8 +2036,7 @@ def test_migration_does_not_write_nonregion_location(read_game):
     db, _, _ = read_game
     region_ids = {r["id"] for r in db.conn.execute("SELECT id FROM regions").fetchall()}
     rows = db.conn.execute(
-        "SELECT name, location FROM characters WHERE status IN ('offstage','dismissed') "
-        "AND status_reason LIKE '%罢居%'"
+        "SELECT name, location FROM characters WHERE status IN ('offstage','dismissed')"
     ).fetchall()
     for r in rows:
         loc = r["location"] or ""

@@ -33,20 +33,15 @@ from ming_sim.person_archive_contract import PERSON_ACTIONS
 
 
 def loads_effect_dict(raw: object) -> Dict[str, object]:
-    """读 effect_on_resolve / effect_on_fail / ongoing_effects 等存库 effect-JSON 的单一入口（#117）：
-    - 已是 dict（调用方传解析过的对象）→ 原样返回；
-    - JSON 字符串 → 解析；解析失败或真值非 dict（脏库/历史写路径/标量）→ {}。
-    所有 effect-列读取统一经此，下游 .get/.items 永不在非 dict 上崩回合。放 models（leaf，只依赖 json）
-    避免 db↔issues 循环——db / issues / simulation / web_app 都从这里取（cmr #117 R4）。"""
+    """读取持久效果对象；空缺为无效果，坏 JSON/存库形状是故障，不洗为空对象。"""
     if isinstance(raw, dict):
         return raw
-    if not raw:  # None / 空串等常见空值：快速返 {}，免 json.loads 解析开销（gemini PR#127 R2）
+    if raw is None or raw == "":
         return {}
-    try:
-        v = json.loads(raw)
-    except (ValueError, TypeError):
-        return {}
-    return v if isinstance(v, dict) else {}
+    value = json.loads(raw)
+    if not isinstance(value, dict):
+        raise ValueError("持久化局势效果须为对象")
+    return value
 
 
 def _nonzero_int(raw: object) -> bool:

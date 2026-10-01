@@ -9,7 +9,7 @@ id 被无脑报成「已应用」。
 
 from __future__ import annotations
 
-from ming_sim.applier import RejectedItem, Provenance
+from ming_sim.applier import RejectedItem
 
 from typing import Dict, List
 
@@ -17,7 +17,8 @@ from ming_sim.applier import SectionResult
 
 
 def apply(run):
-    from ming_sim.issues import _parse_sqlite_id, record_secret_order_disclosure
+    from ming_sim.strict_types import _parse_sqlite_id
+    from ming_sim.issues import record_secret_order_disclosure
 
     applied: List[Dict[str, object]] = []
     rejections: List[RejectedItem] = []
@@ -53,7 +54,7 @@ def apply(run):
             record_secret_order_disclosure(
                 run.db, run.state, real_id, sim_note, commit=False,
             )
-        print(f"[secret_order] 推演副作用 id={real_id} note={sim_note[:60]!r}")
+        print(f"[secret_order] 推演副作用 id={real_id} note={sim_note!r}")
         applied.append({
             "order_id": real_id, "sim_note": sim_note, "disclosed": disclosed,
         })

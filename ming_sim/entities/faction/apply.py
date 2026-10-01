@@ -1,6 +1,8 @@
 """实体记账原语。"""
 from __future__ import annotations
-from typing import Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Dict, List, Tuple
+if TYPE_CHECKING:
+    from ming_sim.db import GameDB
 from ming_sim.applier import RejectedItem, Provenance
 from ming_sim.strict_types import strict_int as _strict_int
 
@@ -23,9 +25,12 @@ def _apply_faction_dict(
     """
     cleaned: Dict[str, object] = {}
     rejected: List[RejectedItem] = []
-    faction_delta = faction_delta if isinstance(faction_delta, dict) else {}  # #117 同类：真值非 dict 守卫
+    if not isinstance(faction_delta, dict):
+        return {}, [RejectedItem(item={"raw_value": faction_delta}, reason="派系效果须为对象", category="invalid_shape", source=source)]
     for key, val in faction_delta.items():
         if isinstance(val, dict):
+            for field in val.keys() - {"satisfaction", "leverage"}:
+                rejected.append(RejectedItem(item={"entity_id": str(key), "field": field, "raw_value": val[field]}, reason="派系效果字段不可执行", category="invalid_enum", source=source))
             entry: Dict[str, int] = {}
             for fname in ("satisfaction", "leverage"):
                 raw = val.get(fname)

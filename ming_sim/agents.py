@@ -37,7 +37,6 @@ from ming_sim.models import GameState, LLMConfig
 from ming_sim.token_stats import record_stream_metrics, tlog
 
 _content: Optional[GameContent] = None
-_THINKING_STREAM_CHAR_LIMIT = max(0, int(os.environ.get("MING_SIM_THINKING_STREAM_LIMIT", "600") or "0"))
 _MINIMAX_SHORT_THINKING_PROMPT = (
     "【MiniMax 推演思考约束】\n"
     "若启用 thinking/reasoning，请极短思考：只列必要因果链，不复述题目、盘面、系统规则或历史常识；"
@@ -399,7 +398,6 @@ def run_agent_stream_text(
     reasoning_buf: List[str] = []
     reasoning_chars_since_flush = 0
     reasoning_last_print = time.monotonic()
-    reasoning_streamed_chars = 0
     tool_calls = 0
     for event in stream:
         ev_type = type(event).__name__
@@ -414,7 +412,7 @@ def run_agent_stream_text(
             continue
         if ev_type == "ToolCallCompletedEvent":
             tool_res = getattr(event, "tool", None)
-            tres = str(getattr(tool_res, "result", "") or "")[:200] if tool_res else ""
+            tres = str(getattr(tool_res, "result", "") or "") if tool_res else ""
             if tres:
                 tlog(f"[{tag}/工具结果] {tres!r}")
             continue
@@ -425,15 +423,9 @@ def run_agent_stream_text(
             now = time.monotonic()
             if reasoning_chars_since_flush >= 120 or (now - reasoning_last_print) >= 1.5:
                 merged = "".join(reasoning_buf)
-                tlog(f"[{tag}/思考] {merged.replace(chr(10), ' ⏎ ')[-200:]}")
-                if on_thinking and reasoning_streamed_chars < _THINKING_STREAM_CHAR_LIMIT:
-                    remaining = _THINKING_STREAM_CHAR_LIMIT - reasoning_streamed_chars
-                    chunk = merged[:remaining]
-                    if chunk:
-                        on_thinking(chunk)
-                        reasoning_streamed_chars += len(chunk)
-                    if reasoning_streamed_chars >= _THINKING_STREAM_CHAR_LIMIT:
-                        on_thinking("\n〔思考已截断，继续推演中〕\n")
+                tlog(f"[{tag}/思考] {merged}")
+                if on_thinking:
+                    on_thinking(merged)
                 reasoning_buf.clear()
                 reasoning_chars_since_flush = 0
                 reasoning_last_print = now
@@ -456,26 +448,20 @@ def run_agent_stream_text(
                 on_text(delta)
             now = time.monotonic()
             if chars_since_flush >= 80 or (now - last_print) >= 1.0:
-                merged = "".join(chunk_buf).replace("\n", " ⏎ ")
-                tlog(f"[{tag}] …{merged[-160:]}")
+                merged = "".join(chunk_buf)
+                tlog(f"[{tag}] …{merged}")
                 chunk_buf.clear()
                 chars_since_flush = 0
                 last_print = now
 
     if reasoning_buf:
         merged = "".join(reasoning_buf)
-        tlog(f"[{tag}/思考] {merged.replace(chr(10), ' ⏎ ')[-200:]}")
-        if on_thinking and reasoning_streamed_chars < _THINKING_STREAM_CHAR_LIMIT:
-            remaining = _THINKING_STREAM_CHAR_LIMIT - reasoning_streamed_chars
-            chunk = merged[:remaining]
-            if chunk:
-                on_thinking(chunk)
-                reasoning_streamed_chars += len(chunk)
-            if reasoning_streamed_chars >= _THINKING_STREAM_CHAR_LIMIT:
-                on_thinking("\n〔思考已截断，继续推演中〕\n")
+        tlog(f"[{tag}/思考] {merged}")
+        if on_thinking:
+            on_thinking(merged)
     if chunk_buf:
-        merged = "".join(chunk_buf).replace("\n", " ⏎ ")
-        tlog(f"[{tag}] …{merged[-160:]}")
+        merged = "".join(chunk_buf)
+        tlog(f"[{tag}] …{merged}")
 
     streamed = "".join(pieces)
     if streamed.strip():
@@ -553,12 +539,12 @@ def parse_agent_json(raw: str, stage: str) -> Dict[str, Any]:
                     data = json.loads(first_block)
                 except json.JSONDecodeError as error:
                     raise LLMContractError(
-                        f"{stage} 输出不是合法 JSON：{error}\n原始输出：{raw[:800]}",
+                        f"{stage} 输出不是合法 JSON：{error}\n原始输出：{raw}",
                         raw_value=raw,
                     ) from error
             else:
                 raise LLMContractError(
-                    f"{stage} 输出不是合法 JSON\n原始输出：{raw[:800]}",
+                    f"{stage} 输出不是合法 JSON\n原始输出：{raw}",
                     raw_value=raw,
                 )
     if not isinstance(data, dict):

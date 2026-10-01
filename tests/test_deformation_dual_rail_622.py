@@ -564,7 +564,7 @@ def test_apply_economy_list_four_exit_effective_origin_receipt_matrix(game):
             pooled[0], expect_origin=expect_origin, expect_beyond=expect_beyond, applied=True,
         )
         assert pooled[0]["delta"] == -10, pooled[0]
-        pooled_rows = [r for r in _ledger_after(before) if pooled_reason in str(r["reason"] or "")]
+        pooled_rows = _ledger_after(before)
         _assert_ledger_matches(pooled_rows, expect_origin=expect_origin, expect_beyond=expect_beyond)
         assert sum(int(r["delta"]) for r in pooled_rows) == -10
 

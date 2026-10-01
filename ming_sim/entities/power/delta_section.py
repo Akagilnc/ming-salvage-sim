@@ -8,21 +8,23 @@
 
 from __future__ import annotations
 
-from ming_sim.applier import RejectedItem, Provenance
+from ming_sim.applier import RejectedItem
 
 from typing import Dict, List
 
 from ming_sim.applier import SectionResult
-from ming_sim.issues import POWER_FIELD_ALIASES, _effect_event_ids, _is_bandit_power_id
+from ming_sim.constants import POWER_FIELD_ALIASES
+from ming_sim.entities.power.apply import _is_bandit_power_id
+from ming_sim.settlement.preflight import _effect_event_ids
 
 
 def apply(run) -> SectionResult:
-    from ming_sim.issues import _apply_bandit_absorptions
+    from ming_sim.entities.power.apply import _apply_bandit_absorptions
 
     applied_absorptions, absorption_rejections, absorption_power_changes = (
         _apply_bandit_absorptions(
             run.db, run.state, run.current_extracted.get("bandit_absorptions") or [],
-            commit=False, source=run.ctx.source,
+            source=run.ctx.source,
         )
     )
     bandit_rows = applied_absorptions

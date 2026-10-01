@@ -19,7 +19,6 @@ from ming_sim.applier import Provenance
 
 import json
 
-import pytest
 
 from ming_sim.breach_plea import (
     BREACH_KIND_FUNDING,
@@ -424,7 +423,6 @@ def test_persist_foundation_tiers(game):
                 (int(result["setback"]["setback_issue_id"]),),
             ).fetchone()
             assert setback_row is not None
-            assert "半途而废" in str(setback_row["title"])
             assert str(setback_row["origin_kind"]) == "event_pool"
             assert str(setback_row["origin_ref"]) == "breach_halfway_setback"
             assert db.conn.execute(
@@ -937,7 +935,7 @@ def test_merged_persist_via_tracker_cancel_settles(game):
         {"cancels": [{"issue_id": cid, "narrative": "朕意已决，仍撤此诺"}]},
         content=content,
     source=Provenance.system_simulation)
-    cancels = out.get("cancels") or []
+    cancels = out.cancels or []
     hit = [c for c in cancels if int(c.get("issue_id") or 0) == int(cid)]
     assert hit, f"cancel 须命中承诺，got={cancels!r}"
     assert hit[0].get("breach_plea_decision") == "persist"

@@ -6,13 +6,12 @@
 
 from __future__ import annotations
 
-import json
 from typing import Dict, Optional
 
 from ming_sim.authority_privileges import AUTHORITY_PRIVILEGE_SET
 from ming_sim.db import GameDB
 from ming_sim.decree_vocabulary import dossier_action_policy
-from ming_sim.issues import _parse_sqlite_id
+from ming_sim.strict_types import _parse_sqlite_id
 from ming_sim.models import GameState
 from ming_sim.relations import EMPEROR_NODE
 
@@ -203,12 +202,7 @@ def _payload_owned_dossier_for_origin(db: GameDB, origin_ref: object) -> Optiona
     row = db.get_decree_dossier(dossier_id)
     if row is None or not db.dossier_authorizes_effects(dossier_id):
         return None
-    try:
-        payload = row.get("payload") or json.loads(str(row.get("payload_json") or "{}"))
-    except (TypeError, ValueError):
-        return None
-    if not isinstance(payload, dict):
-        return None
+    payload = row["payload"]  # GameDB.get_decree_dossier 已校验持久 JSON。
     if dossier_action_policy(row.get("action_type"), payload)["effect_owner"] != "payload":
         return None
     return {**row, "payload": payload}

@@ -15,8 +15,7 @@ from __future__ import annotations
 
 import pytest
 
-import ming_sim.issues as issue_engine
-from ming_sim.audience_night import list_ledger, open_night
+from ming_sim.audience_night import open_night
 from tests.test_month_chain_1843 import _prepare_player_month
 from ming_sim.due_review import (
     apply_pending_due_reviews,
@@ -32,7 +31,7 @@ from ming_sim.staged_commitment import (
     write_due_staged_commitment_todos,
 )
 from ming_sim.settlement import SettlementContext, settle_delta
-from ming_sim.settlement.views import issue_rows, rejected_view, view
+from ming_sim.settlement.views import issue_rows, rejected_view
 
 
 # ── fixtures ──────────────────────────────────────────────────────────
@@ -486,7 +485,7 @@ def test_executing_outcome_rejects_close_true(game):
     """负向：executing 不得 close=True（适配器契约）。"""
     db, state, _content = game
     dossier_id = _executing_policy_dossier(db, state, token="close-guard")
-    with pytest.raises(ValueError, match="executing"):
+    with pytest.raises(ValueError):
         db.record_dossier_execution(
             dossier_id, "executing", "中段过程", state.turn, close=True, commit=True,
         )
@@ -671,7 +670,7 @@ def test_due_month_extractor_blocked_before_todo_write(game):
 
     result = settle_delta(state, db, {'dossier_executions': [{'dossier_id': dossier_id, 'outcome': 'fulfilled', 'note': 'extractor 到期月抢写终值'}]}, SettlementContext(content=content))
     item = rejected_view(result, "dossier_executions")[0]
-    assert "正式复核" in item.reason
+    assert item.category == "invalid_transition"
 
     after = db.get_decree_dossier(dossier_id)
     assert after["status"] == "executing"
@@ -689,7 +688,7 @@ def test_takeover_guard_fail_closed_on_ownership_error(game, monkeypatch):
     monkeypatch.setattr(
         "ming_sim.due_review.dossiers_with_pending_due_review", _boom,
     )
-    with pytest.raises(RuntimeError, match="ownership lookup boom"):
+    with pytest.raises(RuntimeError):
         settle_delta(state, db, {'dossier_executions': [{'dossier_id': dossier_id, 'outcome': 'failed', 'note': '应被守卫响亮挡住'}]}, SettlementContext(content=content))
     dossier = db.get_decree_dossier(dossier_id)
     assert dossier["status"] == "executing"

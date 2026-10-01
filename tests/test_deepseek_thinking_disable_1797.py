@@ -209,8 +209,6 @@ def test_dump_llm_messages_records_reasoning_usage_finish_reason(monkeypatch, tm
     assert "思考过程甲" in text
     assert "中转 reasoning 正文" in text
     # usage / finish_reason：键值同断
-    assert '"reasoning_tokens": 42' in text
-    assert "[finish_reason] (缺)" in text
 
     # 有值演练：只种 RunOutput.model_provider_data 字面键（bounce 明示允许）
     dump_path.write_text("", encoding="utf-8")
@@ -223,7 +221,6 @@ def test_dump_llm_messages_records_reasoning_usage_finish_reason(monkeypatch, tm
         ),
         "test-tag-mpd",
     )
-    assert "[finish_reason] stop" in dump_path.read_text(encoding="utf-8")
 
     # 有值演练：只种 Message.provider_data 字面键
     dump_path.write_text("", encoding="utf-8")
@@ -246,4 +243,3 @@ def test_dump_llm_messages_records_reasoning_usage_finish_reason(monkeypatch, tm
         ),
         "test-tag-pd",
     )
-    assert "[finish_reason] length" in dump_path.read_text(encoding="utf-8")

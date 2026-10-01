@@ -155,7 +155,7 @@ def stages_to_json(stages: object) -> str:
             data = json.loads(text)
         except (TypeError, ValueError) as exc:
             raise ValueError(
-                f"stages_json 须为 JSON 数组字符串，解析失败：{text[:80]!r}"
+                f"stages_json 须为 JSON 数组字符串，解析失败：{text!r}"
             ) from exc
         if not isinstance(data, (list, tuple)):
             raise ValueError(
@@ -228,7 +228,7 @@ def capture_commitment_stages(
                     return parsed
                 if text[:1] in "[{":
                     raise ValueError(
-                        f"stages 须为 JSON 数组字符串，解析失败：{text[:80]!r}"
+                        f"stages 须为 JSON 数组字符串，解析失败：{text!r}"
                     )
         else:
             # 非 str 正式面（list/dict）：与 str 支同响亮口径，勿静默 []

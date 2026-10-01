@@ -46,7 +46,7 @@ from starlette.concurrency import run_in_threadpool
 from ming_sim.applier import atomic
 from ming_sim.constants import ROOT_DIR
 from ming_sim.paths import bundled_path, user_data_path, user_data_dir
-from ming_sim.exceptions import DependencyMismatch, ExitGame, LLMUnavailable, SettlementAbort
+from ming_sim.exceptions import DeclarationDataError, DependencyMismatch, ExitGame, LLMUnavailable, SettlementAbort
 from ming_sim.llm_config import (
     CLI_DEFAULT_TIMEOUT_SECONDS,
     VALID_CHANNELS,
@@ -2106,7 +2106,7 @@ class WebGame:
         )
         try:
             undone = self.db.undo_chat_turn(turn_id)
-        except ValueError as exc:
+        except DeclarationDataError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from None
         # P1-2：撤回若删了已 commit 的对话草案，作废已生成的诏书正文（last_decree），
         # 不让玩家原样颁出含被撤回指令的陈旧诏书。
@@ -2778,8 +2778,8 @@ class WebGame:
         if minister_name != SCENE_CHAT_SPEAKER:
             yield {"type": "error", "message": "召对只从殿上入口进行。"}
             return
-        text = message.strip()
-        if not text:
+        text = message
+        if not text.strip():
             yield {"type": "error", "message": "问话不能为空。"}
             return
         # #498：结算/亲裁相位不得召对（夜不跨月）。锁前查仅快速失败；权威判定在持 gate 后复查
@@ -5298,7 +5298,7 @@ def _require_active_minister(minister_name: str) -> None:
     # （不拒 office_type=后宫，嫔妃 chat 复用本端点）。
     ok, reason = get_game().session.can_summon(character)
     if not ok:
-        raise HTTPException(status_code=409, detail=(reason or "").strip())
+        raise HTTPException(status_code=409, detail=(reason or ""))
 
 
 @app.get("/api/audience/scroll")
@@ -5503,7 +5503,7 @@ async def api_create_directive(request: DirectiveRequest) -> Dict[str, Any]:
         from ming_sim.cli_backend import capture_manual_directive_payload
         dossier_payload = await asyncio.to_thread(
             capture_manual_directive_payload,
-            request.text.strip(),
+            request.text,
             game.session.llm_config,
             **({"db": game.db, "content": game.content}
                if getattr(game, "content", None) is not None else {}),
@@ -5514,9 +5514,9 @@ async def api_create_directive(request: DirectiveRequest) -> Dict[str, Any]:
         # 门外 directive_rows 会 ProgrammingError: closed database。
         with _serialized_web_write(game):
             if int(game.state.turn) != capture_turn:
-                raise ValueError("旨意抽取期间回合已推进，请在当前回合重新提交。")
+                raise DeclarationDataError("旨意抽取期间回合已推进，请在当前回合重新提交。")
             dv = game.session.add_directive(
-                request.text.strip(), notes=request.notes,
+                request.text, notes=request.notes,
                 dossier_payload=dossier_payload,
             )
             return {
@@ -5525,7 +5525,7 @@ async def api_create_directive(request: DirectiveRequest) -> Dict[str, Any]:
                     game.directive_payload(item) for item in game.directive_rows()
                 ],
             }
-    except ValueError as e:
+    except DeclarationDataError as e:
         raise HTTPException(status_code=409, detail=str(e)) from None  # 恢复窗冻结指引
     except LLMUnavailable as e:
         # #1274 V-1 r6 / #1452：回禀产文失败 → 结构化 400，禁裸 500 / 固定戏内模板。
@@ -5560,7 +5560,7 @@ async def api_update_directive(directive_id: int, request: DirectivePatch) -> Di
         # #1749：同 create——响应列表在 gate 内快照，禁门后读退休连接。
         with _serialized_web_write(game):
             if int(game.state.turn) != capture_turn:
-                raise ValueError("旨意抽取期间回合已推进，请在当前回合重新提交。")
+                raise DeclarationDataError("旨意抽取期间回合已推进，请在当前回合重新提交。")
             game.session.update_directive(
                 directive_id, text.strip(), dossier_payload=dossier_payload,
             )
@@ -5569,7 +5569,7 @@ async def api_update_directive(directive_id: int, request: DirectivePatch) -> Di
                     game.directive_payload(item) for item in game.directive_rows()
                 ],
             }
-    except ValueError as e:
+    except DeclarationDataError as e:
         raise HTTPException(status_code=409, detail=str(e)) from None
     except LLMUnavailable as e:
         # #1274 V-1 r6 / #1452：回禀产文失败 → 结构化 400，禁裸 500 / 固定戏内模板。
@@ -5588,7 +5588,7 @@ async def api_delete_directive(directive_id: int) -> Dict[str, Any]:
                     game.directive_payload(item) for item in game.directive_rows()
                 ],
             }
-    except ValueError as e:
+    except DeclarationDataError as e:
         raise HTTPException(status_code=409, detail=str(e)) from None
 
 
@@ -5670,7 +5670,7 @@ def api_advance_without_edict(
     except HTTPException:
         # 令牌/相位/锁门 409 等既有 HTTP 面原样上抛，禁被下方 Exception 改包。
         raise
-    except ValueError as e:
+    except DeclarationDataError as e:
         detail: Any = (
             {"message": str(e), "pending_action_failures": failure_snapshot}
             if failure_snapshot else str(e)
@@ -5819,7 +5819,7 @@ def api_issue_decree(body: IssueDecreeRequest = IssueDecreeRequest()) -> Dict[st
     except HTTPException:
         # §5.2：非流式 catch-all 前保留 HTTP 身份；status/detail/headers 不改包。
         raise
-    except ValueError as e:
+    except DeclarationDataError as e:
         detail = (
             {"message": str(e), "pending_action_failures": failure_snapshot}
             if failure_snapshot else str(e)
@@ -5921,7 +5921,7 @@ async def api_issue_decree_stream(body: IssueDecreeRequest = IssueDecreeRequest(
                     raise
             if terminal is not None:
                 ev_queue.put(terminal)
-        except ValueError as e:
+        except DeclarationDataError as e:
             # exit/end 已由 _settlement_period_entry 在异常路径完成（若已 begin）。
             ev_queue.put((
                 "__error__",
@@ -6002,7 +6002,7 @@ async def api_resolve_decisions_stream(body: ResolveDecisionsRequest) -> Streami
             # #1322：相位快速预检前移到受理/抢锁前（假 200/锁排队拖成数十秒）；
             # 锁内 submit_decisions 仍做权威复查——与既有 TOCTOU 双查同款。
             if game.session.current_phase() != TurnPhase.AWAITING_DECISION:
-                raise ValueError("当前不在待裁决策阶段，无法提交亲裁。")
+                raise DeclarationDataError("当前不在待裁决策阶段，无法提交亲裁。")
             # #657 / ADR 0149：展示态走 _settlement_period_entry；hold_write_for_body=False
             # 使 PREWRITE/② join 在 write_gate 外，①/③ 由 submit_hitl_choices 短持同一 gate。
             # 终态 __done__ 须在 entry（含 clear）成功后才入队——与 settled_ok 同核。
@@ -6049,7 +6049,7 @@ async def api_resolve_decisions_stream(body: ResolveDecisionsRequest) -> Streami
                     raise
             if terminal is not None:
                 ev_queue.put(terminal)
-        except ValueError as e:
+        except DeclarationDataError as e:
             # exit/end 已由 _settlement_period_entry 在异常路径完成（若已 begin）。
             # 相位预检在 entry 前抛时 failure_snapshot 仍为 None → 不附键（无结算副作用可读）。
             ev_queue.put((
@@ -6387,7 +6387,7 @@ async def api_admin_table(table: str) -> Dict[str, Any]:
             "columns": db.admin_columns(table),
             "rows": db.admin_rows(table),
         }
-    except ValueError as e:
+    except DeclarationDataError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 
@@ -6404,7 +6404,7 @@ async def api_admin_upsert(table: str, payload: Dict[str, Any]) -> Dict[str, Any
                 st.metrics[row["key"]] = int(row["value"])
             elif table == "game_state":
                 st.year, st.period, st.turn = int(row["year"]), int(row["period"]), int(row["turn"])
-    except ValueError as e:
+    except DeclarationDataError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return {"row": row}
 
@@ -6418,7 +6418,7 @@ async def api_admin_delete(table: str, payload: Dict[str, Any]) -> Dict[str, Any
     try:
         with _serialized_web_write(game):
             return {"deleted": game.db.admin_delete(table, pk_value)}
-    except ValueError as e:
+    except DeclarationDataError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 

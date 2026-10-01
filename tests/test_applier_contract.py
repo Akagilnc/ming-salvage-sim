@@ -1,8 +1,4 @@
-"""S0 — ming_sim/applier.py 契约类型骨架测试。
-
-覆盖：Provenance 枚举 / RejectedItem / SectionResult 聚合 / ApplyContext /
-RejectionCollector 缓冲→flush_to_db / mirror_to_jsonl。
-"""
+"""RejectionCollector 缓冲、耐久写入及镜像生命周期契约。"""
 
 from __future__ import annotations
 
@@ -12,52 +8,6 @@ import pytest
 
 from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
 
-
-def test_provenance_enum_values():
-    """五个成员值与字符串标识一致（ADR 0008 决定 5）。"""
-    assert Provenance.player_decree.value == "player_decree"
-    assert Provenance.hitl_decision.value == "hitl_decision"
-    assert Provenance.secret_order.value == "secret_order"
-    assert Provenance.system_simulation.value == "system_simulation"
-    assert Provenance.unknown.value == "unknown"
-
-
-def test_provenance_from_string():
-    """可按字符串反查成员。"""
-    assert Provenance("player_decree") is Provenance.player_decree
-    assert Provenance("system_simulation") is Provenance.system_simulation
-
-
-# ---------------------------------------------------------------------------
-# RejectedItem
-# ---------------------------------------------------------------------------
-
-def test_rejected_item_fields():
-    """RejectedItem 持 item/reason/category/source 四字段。"""
-    raw = {"id": "fake_army", "manpower": 5000}
-    ri = RejectedItem(
-        item=raw,
-        reason="id 不在军队表",
-        category="hallucinated_id",
-        source=Provenance.system_simulation,
-    )
-    assert ri.item is raw
-    assert ri.reason == "id 不在军队表"
-    assert ri.category == "hallucinated_id"
-    assert ri.source is Provenance.system_simulation
-
-
-def test_rejected_item_constructs_with_fields():
-    """四字段按名构造可读（非 frozen，可变性不在契约内）。"""
-    ri = RejectedItem(
-        item={}, reason="test", category="invalid_enum", source=Provenance.unknown
-    )
-    assert ri.category == "invalid_enum"
-
-
-# ---------------------------------------------------------------------------
-# SectionResult
-# ---------------------------------------------------------------------------
 
 def _make_ri(category="hallucinated_id") -> RejectedItem:
     return RejectedItem(item={}, reason="x", category=category, source=Provenance.unknown)

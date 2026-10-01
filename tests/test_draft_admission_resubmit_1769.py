@@ -154,12 +154,16 @@ def _spy_resubmit_kwargs(monkeypatch) -> list[dict]:
             "bad_payload": dict(bad_payload or {}),
             "decree_text": str(decree_text or ""),
         })
-        return real(
-            decree_text,
-            bad_payload=bad_payload,
-            failure_reason=failure_reason,
-            **kwargs,
-        )
+        try:
+            return real(
+                decree_text,
+                bad_payload=bad_payload,
+                failure_reason=failure_reason,
+                **kwargs,
+            )
+        except Exception as error:
+            calls[-1]["raised_error"] = error
+            raise
 
     monkeypatch.setattr(cb, "resubmit_draft_admission_payload", wrapper)
     return calls
@@ -413,8 +417,10 @@ def test_draft_admission_mixed_good_and_bad_independent(admission_game, monkeypa
     assert not latest_error_pack_for_turn(game.db.path, turn)
     # 首轮拒因来自原产物；第二次重写听见的是第一次重写自己的失败事实
     assert len(resubmit_calls) == 2
-    assert _UNKNOWN_NAME not in resubmit_calls[0]["failure_reason"]
-    assert _UNKNOWN_NAME in resubmit_calls[1]["failure_reason"]
+    assert resubmit_calls[0]["failure_reason"]
+    assert resubmit_calls[1]["failure_reason"]
+    assert resubmit_calls[1]["failure_reason"] == str(resubmit_calls[0]["raised_error"])
+    assert resubmit_calls[1]["bad_payload"] == resubmit_calls[0]["bad_payload"]
 
 
 def test_draft_admission_code_fault_aborts_with_error_pack(admission_game, monkeypatch):

@@ -6,6 +6,7 @@
 """
 
 from __future__ import annotations
+from ming_sim.exceptions import DeclarationDataError
 
 from typing import List
 
@@ -46,7 +47,8 @@ def apply_executions(run):
     """
     from ming_sim.db import GameDB
     from ming_sim.due_review import dossiers_with_pending_due_review
-    from ming_sim.issues import _parse_sqlite_id, terminal_report_facade
+    from ming_sim.strict_types import _parse_sqlite_id
+    from ming_sim.decree_vocabulary import terminal_report_facade
 
     applied: List[object] = []
     rejected: List[RejectedItem] = []
@@ -89,7 +91,7 @@ def apply_executions(run):
         if raw_parties is not None and outcome in GameDB._JOINT_LIABILITY_TRIGGERS:
             try:
                 run.db.validate_joint_liability_affected_parties(raw_parties, outcome)
-            except ValueError as exc:
+            except DeclarationDataError as exc:
                 _refuse(item, str(exc))
                 continue
         run.db.record_dossier_execution(

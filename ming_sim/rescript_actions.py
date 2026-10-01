@@ -469,8 +469,8 @@ def validate_all(
             )
 
             event_id = str(row.get("event_id") or "")
-            label = str(req.get("label") or "").strip()
-            note = str(req.get("note") or "").strip()
+            label = str(req.get("label") or "")
+            note = str(req.get("note") or "")
             if (
                 not label
                 and note

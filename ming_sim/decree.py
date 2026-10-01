@@ -44,17 +44,8 @@ from ming_sim.exceptions import (
 )
 from ming_sim.faction_brew import VIEW_FACTION_STANCE
 from ming_sim.flows import apply_fixed_period_flows, raise_fixed_period_flow_abort_if_needed
-from ming_sim.issues import (
-    apply_event_terminal_states,
-    apply_historical_fiscal_rates,
-    apply_issue_inertia_and_ongoing,
-    _apply_levy_driven_transfers,
-    auto_trigger_seed_issues,
-    clear_gated_legacies,
-    gather_impeachment_surge_candidates,
-    sanitize_delta_shape,
-    validate_delta_shape,
-)
+from ming_sim.issues import apply_event_terminal_states, apply_historical_fiscal_rates, apply_issue_inertia_and_ongoing, _apply_levy_driven_transfers, auto_trigger_seed_issues, clear_gated_legacies, gather_impeachment_surge_candidates
+from ming_sim.settlement.preflight import sanitize_delta_shape, validate_delta_shape
 from ming_sim.llm_model import extract_agent_text, llm_unavailable_from_error
 from ming_sim.models import FRONT_HALF_DONE_PHASES, GameState, LLMConfig, TurnPhase
 from ming_sim.qualitative import imperial_authority_band, power_band, qualitative_character_axis
@@ -674,7 +665,7 @@ def _rescript_decisions(
             "event_id": f"dossier:{dossier_id}",
             "title": "批红待裁",
             "context": str(dossier.get("decree_text") or ""),
-            "rejection_reason": str(verdict.get("reason") or "").strip(),
+            "rejection_reason": str(verdict.get("reason") or ""),
             "opposition": opposition,
             # hint（非 note）：前端 isPendingDecision / DecisionOption 认 hint；
             # dossier_id/dossier_decision 是批红能力字段，点选必须原样回传（#1490）。
@@ -747,15 +738,12 @@ def write_decree_with_agno(
     # 已办结密令的 result 作为实质证据清单注入——皇帝下旨拿人/定罪时可引为依据。
     closed_evidence: List[Dict[str, object]] = []
     if db is not None:
-        try:
-            for o in db.list_secret_orders(status="done"):
-                if o.get("result"):
-                    closed_evidence.append({
-                        "id": int(o["id"]), "title": o["title"],
-                        "assignee": o["minister_name"], "evidence": o["result"],
-                    })
-        except Exception:
-            closed_evidence = []
+        for o in db.list_secret_orders(status="done"):
+            if o.get("result"):
+                closed_evidence.append({
+                    "id": int(o["id"]), "title": o["title"],
+                    "assignee": o["minister_name"], "evidence": o["result"],
+                })
     # #1769：跨月未成案 draft 在既有 directives 投影上标 admission_status（输入侧；
     # 不新建通知；不另抽 helper）。
     current_turn = int(state.turn)
@@ -783,7 +771,7 @@ def write_decree_with_agno(
         raise llm_unavailable_from_error(error, "拟诏") from error
     if not text.strip():
         raise LLMContractError("拟诏输出为空。")
-    return text.strip()
+    return text
 
 
 def _requires_full_settlement(state: GameState, db: GameDB) -> bool:

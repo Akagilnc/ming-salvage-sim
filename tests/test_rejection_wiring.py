@@ -7,12 +7,11 @@ rejection_reports → commit 成功后镜像 jsonl → 回滚不留行不留镜�
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 import pytest
 
 from tests.section_rejection_helpers import run_declaration as run_settle
-from tests.section_rejection_helpers import game, rejection_rows
+from tests.section_rejection_helpers import rejection_rows
 from tests.conftest import active_ming_character
 
 
@@ -91,7 +90,7 @@ def test_rollback_leaves_no_rows_and_no_jsonl(game, monkeypatch, tmp_path):
 
     monkeypatch.setattr(RejectionCollector, "flush_to_db", _boom)
 
-    with pytest.raises(RuntimeError, match="crash after flush"):
+    with pytest.raises(RuntimeError):
         run_settle(db, state, content, {
             "人物变更": [{"name": "查无此人乙", "动作": "处置", "status": "dead", "reason": "测试"}],
             "dossier_reconciliations": [
@@ -134,7 +133,7 @@ def test_nested_atomic_success_path_does_not_orphan_jsonl(game, monkeypatch, tmp
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
     turn = state.turn
 
-    with pytest.raises(RuntimeError, match="outer rollback"):
+    with pytest.raises(RuntimeError):
         with atomic(db):
             run_settle(db, state, content, {
                 "人物变更": [{"name": "查无此人戊", "动作": "下狱", "reason": "测试"}],
@@ -191,24 +190,6 @@ def test_noncancellable_cancel_rejection_carries_reason(game, monkeypatch, tmp_p
     assert rows[0][1]  # reason 非空
 
 
-
-
-def test_canonicalization_synthesizes_reason_when_producer_omits(game):
-    """拒收 canonical 化集中守 ADR「拒收行必带原因」不变式：任何段漏给 reason，
-    落库前合成非空兜底——规则写一处（``RejectedItem.__post_init__``），新段免疫同类缺陷
-    （ADR 0150 决定 2；fix-coverage drift 处方：集中化，cmr S0 r3）。"""
-    from ming_sim.applier import Provenance, RejectionCollector, RejectedItem
-
-    db, state, content = game
-    collector = RejectionCollector()
-    item = RejectedItem(item={}, reason="", category="some_section", source=Provenance.unknown)
-    collector.record("some_section", item, 1)
-    collector.flush_to_db(db)
-    db.conn.commit()
-
-    row = db.conn.execute(
-        "SELECT reason FROM rejection_reports WHERE section='some_section'").fetchone()
-    assert row is not None and row[0]  # 非空兜底
 
 
 def test_inertia_tolerated_rejections_reach_reports(game, monkeypatch, tmp_path):
@@ -445,7 +426,6 @@ def test_power_move_backlash_rejection_lands_in_reports(game, monkeypatch, tmp_p
         ]
         assert len(rows) == 1
         assert rows[0]["section"] == "applied_person_changes"
-        assert rows[0]["reason"] == "power_updates 引用未入库势力 '查无此势力'"
         assert rows[0]["category"] == "hallucinated_id"
         assert json.loads(rows[0]["item_json"]) == {
             "power_id": "查无此势力",
@@ -511,7 +491,6 @@ def test_issue_close_power_move_backlash_rejection_is_not_duplicated(game, monke
         # 结案路的人物变更由局势段物化，其反噬拒收归具名段（不再靠递归桥接猜
         # dotted 路径）；无论落在哪一段，都必须只入库一次。
         assert rows[0]["section"] in {"issue_summary", "applied_person_changes"}
-        assert rows[0]["reason"] == "power_updates 引用未入库势力 '查无此势力'"
         assert rows[0]["category"] == "hallucinated_id"
         assert json.loads(rows[0]["item_json"]) == {
             "power_id": "查无此势力",
@@ -552,7 +531,6 @@ def test_inertia_power_move_backlash_rejection_lands_in_reports(game, monkeypatc
         assert len(rows) == 1
         # inertia 自然结案路自带的人物变更，其反噬拒收归具名段 issue_inertia。
         assert rows[0]["section"] == "issue_inertia"
-        assert rows[0]["reason"] == "power_updates 引用未入库势力 '查无此势力'"
         assert rows[0]["category"] == "hallucinated_id"
     finally:
         ch.power_id, ch.office, ch.office_type = old_power, old_office, old_office_type

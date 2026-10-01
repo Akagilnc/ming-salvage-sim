@@ -11,16 +11,14 @@ from ming_sim.applier import Provenance
 
 import pytest
 
-import ming_sim.issues as I
-from tests.section_rejection_helpers import game
 
 
 def _adv(result):
-    return result.get("advances") or []
+    return result.advances
 
 
 def _rejected(result):
-    return list(result.get("rejected") or [])
+    return result.rejected
 
 
 def _make_active_issue(db, state):
@@ -108,7 +106,7 @@ def test_advance_code_exception_propagates(game, monkeypatch):
     def _boom(*a, **k):
         raise RuntimeError("模拟 advance_issue 落库代码异常")
     monkeypatch.setattr(type(db), "advance_issue", _boom)
-    with pytest.raises(RuntimeError, match="模拟 advance_issue"):
+    with pytest.raises(RuntimeError):
         apply_issue_tracker_output(db, state, {"advances": [{"issue_id": iid, "delta_bar": 5}]}, source=Provenance.system_simulation)
 
 

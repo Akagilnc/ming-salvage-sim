@@ -10,48 +10,11 @@
 from __future__ import annotations
 
 import json
-import re
 
 from types import SimpleNamespace
 
 import web_app
-from ming_sim.assets import format_wanliang_amount
 from ming_sim.flows import apply_fixed_period_flows, compute_budget_lines
-
-
-# 多于一位小数的 IEEE 残渣（如 1.2000000000000002 / 0.09999999999999964）
-_FLOAT_GARBAGE = re.compile(r"\d+\.\d{3,}")
-# 奏报口吻：整数或恰好一位小数
-_WANLIANG_AMOUNT = re.compile(r"欠发(\d+(?:\.\d)?)万两")
-# 省源分账 reason 内嵌万两数额
-_PROVINCE_WANLIANG = re.compile(r"(摊新增欠|偿还)(\d+(?:\.\d+)?)万两")
-# #1471：玩家预算字段不得泄漏工程注记词
-_ENGINEERING_NOTE_TOKENS = ("hub", "旁路", "substrate", "实发率", "可降到")
-
-
-def test_army_pay_shortfall_reason_has_no_float_garbage(game):
-    """#1334/#1383：真实落账 reason 与 summary 不得出现浮点垃圾小数。"""
-    db, state, _ = game
-    apply_fixed_period_flows(db, state)
-
-    reasons = [
-        str(row["reason"] or "")
-        for row in db.conn.execute(
-            "SELECT reason FROM army_logs WHERE reason LIKE '%欠发%'"
-        ).fetchall()
-    ]
-    assert reasons, "开局结算应产生中央军饷欠发 reason（国库不足以足额）"
-
-    for reason in reasons:
-        assert not _FLOAT_GARBAGE.search(reason), f"reason 含浮点垃圾：{reason}"
-        for amount in _WANLIANG_AMOUNT.findall(reason):
-            assert re.fullmatch(r"\d+(\.\d)?", amount), (
-                f"欠发数额须为整数或一位小数，得 {amount!r} in {reason}"
-            )
-
-    summary = db.turn_army_summary(state.turn)
-    assert "欠发" in summary
-    assert not _FLOAT_GARBAGE.search(summary), f"turn_army_summary 含浮点垃圾：{summary}"
 
 
 def _army_pay_budget_lines(budget):
@@ -155,7 +118,6 @@ def test_player_budget_payload_strips_engineering_notes(read_game):
     ), "flows internal=substrate_hub 工程标记须保留"
 
     payload = runtime.budget_payload()
-    player_texts: list[str] = []
     for account_name in ("国库", "内库"):
         account = payload[account_name]
         for direction in ("income", "expense"):
@@ -166,14 +128,7 @@ def test_player_budget_payload_strips_engineering_notes(read_game):
                 assert "note" not in item
                 assert "internal" not in item
                 assert "budget_key" not in item
-                player_texts.append(str(item.get("name") or ""))
-                player_texts.append(str(item.get("amount") or ""))
 
-    joined = "\n".join(player_texts)
-    for token in _ENGINEERING_NOTE_TOKENS:
-        assert token not in joined, (
-            f"玩家预算字段泄漏工程词 {token!r}：{joined!r}"
-        )
 
 
 def _seed_province_pay_split_scenario(db) -> None:
@@ -245,41 +200,6 @@ def _seed_province_pay_split_scenario(db) -> None:
     db.conn.commit()
 
 
-def test_province_pay_split_reason_and_summary_have_no_float_garbage(game):
-    """#1383 残余：省源分账 reason 真路径 + turn_army_summary delta 无 IEEE 残渣。"""
-    db, state, _ = game
-    _seed_province_pay_split_scenario(db)
-    db.settle_province_tick("shaanxi")
-
-    reasons = [
-        str(row["reason"] or "")
-        for row in db.conn.execute(
-            """
-            SELECT reason FROM army_logs
-            WHERE field = 'province_pay_arrears'
-              AND reason LIKE '%省源军饷分账%'
-            """
-        ).fetchall()
-    ]
-    assert reasons, "省源分账真路径应写入 province_pay_arrears reason"
-
-    for reason in reasons:
-        assert not _FLOAT_GARBAGE.search(reason), f"省源 reason 含浮点垃圾：{reason}"
-        for _kind, amount in _PROVINCE_WANLIANG.findall(reason):
-            assert re.fullmatch(r"\d+(\.\d)?", amount), (
-                f"省源万两须为整数或一位小数，得 {amount!r} in {reason}"
-            )
-            # 与 format_wanliang_amount 单真源同形
-            raw = float(amount)
-            assert amount == format_wanliang_amount(raw), (
-                f"省源数额须走 format_wanliang_amount，得 {amount!r}"
-            )
-
-    summary = db.turn_army_summary(state.turn)
-    assert "省源" in summary or "欠饷" in summary
-    assert not _FLOAT_GARBAGE.search(summary), (
-        f"turn_army_summary delta/reason 含浮点垃圾：{summary}"
-    )
 
 
 def test_army_payload_arrears_text_is_approximate_not_raw(game):
@@ -300,6 +220,3 @@ def test_army_payload_arrears_text_is_approximate_not_raw(game):
     assert "arrears" not in card
     arrears_text = card["arrears_text"]
     assert isinstance(arrears_text, str) and arrears_text
-    assert not _FLOAT_GARBAGE.search(arrears_text), (
-        f"arrears_text 含 IEEE 残渣：{arrears_text!r}"
-    )

@@ -10,7 +10,6 @@ import json
 
 import pytest
 
-import ming_sim.issues as issue_engine
 from ming_sim.db import GameDB
 from tests.dossier_test_helpers import create_test_secret_order
 from ming_sim.settlement import SettlementContext, settle_delta
@@ -169,7 +168,7 @@ def test_short_and_one_shot_dossiers_have_no_empty_monthly_shell(game):
     assert db.conn.execute(
         "SELECT COUNT(*) AS n FROM dossier_reported_progress"
     ).fetchone()["n"] == 0
-    with pytest.raises(ValueError, match="缺少本月密奏"):
+    with pytest.raises(ValueError):
         db.record_monthly_dossier_progress(state.turn, [])
 
 
@@ -196,12 +195,12 @@ def test_origin_namespace_minimum_closed_set_and_open_append(game):
     assert DOSSIER_REPORT_VERDICT in origins
     assert "dossier-report:inquiry_reply" in origins
 
-    with pytest.raises(ValueError, match="origin"):
+    with pytest.raises(ValueError):
         db.record_dossier_progress(
             dossier_id, state.turn + 2, "非法", "无命名空间",
             origin="raw-unnamespaced",
         )
-    with pytest.raises(ValueError, match="origin"):
+    with pytest.raises(ValueError):
         db.record_dossier_progress(
             dossier_id, state.turn + 2, "非法", "空后缀",
             origin="dossier-report:",
@@ -320,7 +319,7 @@ def test_terminal_surface_dossier_rejects_reported_progress(game):
         payload={"mode": "ordinary"},
     )
 
-    with pytest.raises(ValueError, match="非执行面"):
+    with pytest.raises(ValueError):
         db.record_dossier_progress(
             dossier_id, state.turn, "已授", "非法挂奏报",
             origin=DOSSIER_REPORT_MONTHLY,

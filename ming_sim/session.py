@@ -6,6 +6,7 @@ CLI 和 Web 各自只做 I/O 包装。
 """
 
 from __future__ import annotations
+from ming_sim.exceptions import DeclarationDataError
 
 import json
 import logging
@@ -1013,7 +1014,7 @@ class GameSession:
     @staticmethod
     def _ensure_close_night_confirm_cue(answer: str) -> str:
         """含糊收夜：大臣戏内确认（不出戏），不直接收夜。"""
-        text = (answer or "").strip()
+        text = answer or ""
         ask = "陛下是要退朝么？"
         if ask in text:
             return text or ask
@@ -1158,8 +1159,8 @@ class GameSession:
         )
         from ming_sim.llm_model import extract_agent_text
 
-        message_text = str(message or "").strip()
-        if not message_text:
+        message_text = str(message or "")
+        if not message_text.strip():
             raise ValueError("问话不能为空。")
         from ming_sim.decree_forecast import bind_forecast_owner
         bind_forecast_owner(self)
@@ -1500,7 +1501,7 @@ class GameSession:
         """FRONT_HALF_DONE 冻结诏稿变更：恢复窗口新增/确认的 draft 会被 settle 的
         mark_directives_issued 连带标 issued，而重放 delta 不含它们=幽灵颁布（ship-pre r1）。"""
         if self.state.turn_phase in FRONT_HALF_DONE_PHASES:
-            raise ValueError("月末结算进行中（恢复态），请先完成结算再改诏稿。")
+            raise DeclarationDataError("月末结算进行中（恢复态），请先完成结算再改诏稿。")
 
     def add_directive(
         self, text: str, notes: str = "",
@@ -1509,7 +1510,7 @@ class GameSession:
         self._refuse_if_settling()
         payload = dict(dossier_payload or {})
         if not directive_payload_admits_structured_write(payload):
-            raise ValueError("新增旨意须由上游提供完整结构化动作与目标")
+            raise DeclarationDataError("新增旨意须由上游提供完整结构化动作与目标")
         directive_id = self.db.add_directive(
             self.state, None, text, "手动新增", notes=notes,
             dossier_payload=payload,
@@ -1564,7 +1565,7 @@ class GameSession:
         if self.state.turn_phase == TurnPhase.AWAITING_DECISION.value:
             # -> str 契约：亲裁期不能拟诏，响亮拒绝走既有 ValueError 错误路径
             # （web 映射 400 / terminal 打印拟诏失败）。幂等返回决策点的守门在 resolve_turn。
-            raise ValueError("当前在月末亲裁阶段，请先裁决已存决策点，不能拟诏。")
+            raise DeclarationDataError("当前在月末亲裁阶段，请先裁决已存决策点，不能拟诏。")
         self._refuse_if_settling()
         # #498 AC8：拟诏（write_decree）不是收夜触发器——收夜只在真实颁诏/过回合边界
         # （resolve_turn / advance_without_decree）发生。夜内可拟多道旨并继续斟酌（#497/#502）。
@@ -1575,7 +1576,7 @@ class GameSession:
         # 无 draft 可预览 → 响亮拒绝，不为 preview 造持久态。
         directives = self.db.list_directives(self.state, statuses=("draft",))
         if not directives:
-            raise ValueError("无草案不能拟诏（未表态拟旨须先准驳，或于颁诏时默认同意）。")
+            raise DeclarationDataError("无草案不能拟诏（未表态拟旨须先准驳，或于颁诏时默认同意）。")
         decree = write_decree_with_agno(self.llm_config, self.agno_db, self.state, directives, db=self.db)
         self.last_decree = decree
         # P1-1：记下本份生成稿覆盖的 draft 集指纹。颁诏时若 draft 集已变（玩家拟诏后又新建
@@ -1619,10 +1620,7 @@ class GameSession:
             row = self.db.get_directive(did)
             if row is None or str(row["status"] or "") != "draft":
                 continue
-            try:
-                bad_payload = self.db.read_directive_dossier_payload(row)
-            except ValueError:
-                continue
+            bad_payload = self.db.read_directive_dossier_payload(row)
             reason = str(item.get("reason") or "")
             prior = carried.get(did)
             if prior is not None:
@@ -1676,7 +1674,7 @@ class GameSession:
         for job, new_payload, exc in outcomes:
             did = int(job["directive_id"])
             if exc is not None:
-                if isinstance(exc, ValueError):
+                if isinstance(exc, DeclarationDataError):
                     # 本轮重写自身的产物错（含名册 escalate 归一）：DB 载荷未动，
                     # 光靠下一轮 ensure 重探只会拿回旧拒因——把本轮失败事实带过去，
                     # 否则同一句话问三遍（0150-D5-b：告诉 LLM 事实）。
@@ -1706,7 +1704,7 @@ class GameSession:
                     dossier_payload=new_payload,
                     replace_payload=True,
                 )
-            except ValueError as write_exc:
+            except DeclarationDataError as write_exc:
                 # 写回被拒也是产物错：本次产物 + 本次写回拒因带进下一次重写，
                 # 否则下一轮只能拿 DB 里的旧载荷/旧拒因重问同一遍。
                 logger.warning(
@@ -1848,7 +1846,7 @@ class GameSession:
                 for row in self.db.list_pending_actions(self.state.turn)
             )
         ):
-            raise ValueError("月末结算恢复期新增拟旨须先核定，不能并入已冻结的结算")
+            raise DeclarationDataError("月末结算恢复期新增拟旨须先核定，不能并入已冻结的结算")
         if self.state.turn_phase == TurnPhase.AWAITING_DECISION.value:
             # HITL 暂停期重发 issue：幂等返回已存决策点，不二跑 simulator——二跑会覆盖
             # pending_decisions，或第二次输出无决策块时绕过亲裁直接结算（cmr S4 r3 F3）。
@@ -1865,8 +1863,8 @@ class GameSession:
             ctx = self.db.get_resolve_context(self.state.turn)
             if ctx is not None:
                 recovered_source = _provenance_from_stored(ctx.get("source"))
-                stored = str(ctx.get("decree_text") or "").strip()
-                if stored:
+                stored = str(ctx.get("decree_text") or "")
+                if stored.strip():
                     self.last_decree = stored
                     decree = stored
         # #1234/#1235：点击受理即独立提交月初快照（不进 pre_settle 事务）。
@@ -1961,7 +1959,7 @@ class GameSession:
                 # #1769：补交耗尽仍无成案旨 — 月照过，draft 跨月保留。
                 pass
             else:
-                raise ValueError("网页/CLI 端不允许跳过回合：至少一条草案才能颁诏。")
+                raise DeclarationDataError("网页/CLI 端不允许跳过回合：至少一条草案才能颁诏。")
         # P1-1（不变式：不许颁发早于尚未纳入草案的生成稿）：玩家拟诏后又回对话新建草案时，
         # last_decree 只覆盖旧 draft 集，会把新 draft 标记为已颁却不进诏书正文。此处比对
         # 当前 draft 集与 last_decree 覆盖的指纹——不一致则作废陈旧生成稿，强制下方重生成
@@ -2033,7 +2031,7 @@ class GameSession:
 
     def _assert_awaiting_decision_submit(self) -> None:
         if self.current_phase() != TurnPhase.AWAITING_DECISION:
-            raise ValueError("当前不在待裁决策阶段，无法提交亲裁。")
+            raise DeclarationDataError("当前不在待裁决策阶段，无法提交亲裁。")
 
     def prepare_rescript_prewrite(
         self, choices: List[Dict[str, object]],
@@ -2184,10 +2182,10 @@ class GameSession:
             obj = _parse_rescript_json_strict(str(raw or ""))
             if not isinstance(obj, dict):
                 raise ValueError("deliberate LLM 意愿须为 object")
-            title = str(obj.get("title") or "").strip()
-            body = str(obj.get("body") or "").strip()
+            title = str(obj.get("title") or "")
+            body = str(obj.get("body") or "")
             stance = str(obj.get("stance") or "").strip()
-            if not (title and body and stance):
+            if not (title.strip() and body.strip() and stance):
                 raise ValueError("deliberate LLM 意愿缺 title/body/stance")
             # shape 初检；身份合法性在 apply 事务内再核（整批零写）
             supporters = obj.get("supporter_ids", [])
@@ -2414,7 +2412,7 @@ class GameSession:
         scaffold/registry），不得直 submit_decisions 越过召见。
         """
         if write_gate is None:
-            raise ValueError("submit_hitl_choices 须注入既有 write_gate")
+            raise DeclarationDataError("submit_hitl_choices 须注入既有 write_gate")
         from ming_sim.rescript_actions import row_is_applied_return_revise
 
         desk = [
@@ -2497,7 +2495,7 @@ class GameSession:
     def auto_save(self, tag: str) -> Optional[str]:
         """每回合 begin/end 自动热备一份。每个 campaign 保留最近 AUTO_SAVE_KEEP_TURNS 个回合，旧的删。
         文件名 auto_<campaign_id>_<year>_<period>_<turn>_<tag>.db；prune 只动同 campaign 的自动档，
-        不碰用户手动存档。失败静默（自动存档不应阻断游戏）。"""
+        不碰用户手动存档。备份失败留痕但不阻断游戏。"""
         try:
             import os as _os
             saves_dir = user_data_path("saves", "_keep")  # 确保父目录建好
@@ -2515,6 +2513,7 @@ class GameSession:
             prune_auto_saves(saves_dir, campaign_id)
             return target
         except Exception:
+            logger.exception("automatic backup failed")
             return None
 
     def close(self, *, write_gate_already_held: bool = False) -> None:

@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 from ming_sim.applier import SectionResult
-from ming_sim.issues import _effect_event_ids
+from ming_sim.settlement.preflight import _effect_event_ids
 
 
 def apply(run):

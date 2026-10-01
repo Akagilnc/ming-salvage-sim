@@ -1148,7 +1148,7 @@ def _parse_rescript_json_strict(raw: str) -> Dict[str, Any]:
         after = raw[match.end() :]
         if before.strip() or after.strip():
             raise LLMContractError(
-                f"急务票拟生成 输出含围栏外文字（整批 shape 错，F2.5）：围栏外含 prose，按票面应走整批降级\n原始输出：{raw[:800]}"
+                f"急务票拟生成 输出含围栏外文字（整批 shape 错，F2.5）：围栏外含 prose，按票面应走整批降级\n原始输出：{raw}"
             )
         text = match.group(1).strip()
     else:
@@ -1157,11 +1157,11 @@ def _parse_rescript_json_strict(raw: str) -> Dict[str, Any]:
         data = json.loads(text)
     except json.JSONDecodeError as exc:
         raise LLMContractError(
-            f"急务票拟生成 输出不是合法 JSON：{exc}\n原始输出：{raw[:800]}"
+            f"急务票拟生成 输出不是合法 JSON：{exc}\n原始输出：{raw}"
         ) from exc
     if not isinstance(data, dict):
         raise LLMContractError(
-            f"急务票拟生成 输出不是合法 JSON：顶层必须是 JSON object\n原始输出：{raw[:800]}"
+            f"急务票拟生成 输出不是合法 JSON：顶层必须是 JSON object\n原始输出：{raw}"
         )
     return data
 
@@ -1363,14 +1363,14 @@ def _contract_exc_to_top_failure(
     return _top_failure(
         kind="unformed",
         exhaust=_EXHAUST_DEGRADE_MONTH,
-        raw={"error": type(exc).__name__, "detail": str(exc)[:500], "raw_summary": (raw or "")[:500]},
+        raw={"error": type(exc).__name__, "detail": str(exc), "raw_summary": (raw or "")},
         field_failures=[
             _field_failure(
                 "items",
                 current={
                     "error": type(exc).__name__,
-                    "detail": str(exc)[:500],
-                    "raw_summary": (raw or "")[:500],
+                    "detail": str(exc),
+                    "raw_summary": (raw or ""),
                 },
                 expected={"type": "object", "keys": ["items"], "items_type": "list"},
             )
@@ -2119,8 +2119,8 @@ def _with_heal_response_contract_failure(
         "field": "heal_response",
         "current": {
             "error": type(exc).__name__,
-            "detail": str(exc)[:500],
-            "raw_summary": (raw or "")[:500],
+            "detail": str(exc),
+            "raw_summary": (raw or ""),
         },
         "expected": {
             "type": "object",
@@ -2249,7 +2249,7 @@ def generate_rescript_draft(
         if tag == "rescript-draft-heal":
             entry = {
                 "attempt": heal_attempt,
-                "raw_summary": raw[:800],
+                "raw_summary": raw,
                 "failures": _failure_log_rows(pending_missing or ()),
             }
             heal_trace.append(entry)

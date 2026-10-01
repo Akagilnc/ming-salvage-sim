@@ -1,6 +1,8 @@
 """实体记账原语。"""
 from __future__ import annotations
-from typing import Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Dict, List, Tuple
+if TYPE_CHECKING:
+    from ming_sim.db import GameDB
 from ming_sim.applier import RejectedItem, Provenance
 from ming_sim.strict_types import strict_int as _strict_int
 

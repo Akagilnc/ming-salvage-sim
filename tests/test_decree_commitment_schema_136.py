@@ -7,7 +7,6 @@ import pytest
 
 from ming_sim.db import GameDB
 from ming_sim.models import effect_dict_has_work
-import ming_sim.issues as I
 
 
 def _promulgated_commitment_origin(db, state) -> str:
@@ -107,7 +106,7 @@ def test_issue_resolution_removes_building_and_keeps_remove_audit_log(game):
         (building["id"],),
     ).fetchone()
     assert dict(log) == {"old_value": building["name"], "field": "remove"}
-    assert result["closes"][0]["building_ops"][0]["removed"] is True
+    assert result.closes[0]["building_ops"][0]["removed"] is True
 
 
 @pytest.mark.parametrize(
@@ -179,7 +178,7 @@ def test_new_issue_persists_commitment_columns_from_tracker_output(game):
         }],
     }, source=Provenance.system_simulation)
 
-    created = [item for item in out["new_issues"] if item.get("issue_id")]
+    created = [item for item in out.new_issues if item.get("issue_id")]
     assert len(created) == 1, out
     row = db.conn.execute(
         "SELECT end_turn, stop_condition, resolve_condition, commitment_kind FROM issues WHERE id=?",
@@ -207,7 +206,7 @@ def test_decree_commitment_shape_with_string_stop_condition_requires_marker(read
         }],
     }, source=Provenance.system_simulation)
 
-    rejected = out.get("rejected") or []
+    rejected = out.rejected or []
     assert len(rejected) == 1, out
     assert rejected[0].category == "invalid_enum"
     row = db.conn.execute(

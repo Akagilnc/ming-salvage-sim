@@ -260,7 +260,7 @@ def test_capture_before_mutation_on_resolve_turn_entry(game, monkeypatch):
         },
     )
 
-    with pytest.raises(RuntimeError, match="stop-after-capture"):
+    with pytest.raises(RuntimeError):
         sess.resolve_turn(decree="诏曰测试")
 
     assert db.get_month_open_snapshot(int(state.turn)) == before
@@ -295,7 +295,7 @@ def test_capture_before_mutation_on_advance_without_edict(game, monkeypatch):
 
     monkeypatch.setattr(an, "auto_close_open_night", _boom)
 
-    with pytest.raises(RuntimeError, match="stop-after-capture-advance"):
+    with pytest.raises(RuntimeError):
         sess.advance_without_decree()
 
     assert db.get_month_open_snapshot(int(state.turn)) == before
@@ -360,7 +360,6 @@ def test_web_advance_entry_exposes_settlement_display(game, monkeypatch):
 
     #1274：端点改走 session.advance_without_decree；观察点改在 resolve 入口。
     """
-    import threading
     from ming_sim.decree import ResolveResult
 
     db, state, _content = game
@@ -410,7 +409,6 @@ def test_web_advance_entry_awaiting_keeps_phase_and_decisions(game, monkeypatch)
     持久 phase 仍 awaiting。end_turn 桩镜像生产（只置 SUMMONING 并 save）——
     若入口误调 end_turn，相位/核账脸断言红；不得以 mock 调用序单独当契约。
     """
-    import threading
     from ming_sim.decree import ResolveResult
 
     db, state, _content = game

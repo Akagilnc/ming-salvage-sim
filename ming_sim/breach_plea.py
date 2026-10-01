@@ -806,23 +806,15 @@ def finalize_persist(
         close = True
 
     apply_0056 = bool(kinds & _BREACH_KINDS_TRIGGER_0056)
-    tail = apply_persist_revoke_tail(
-        db, state,
-        target_dossier_id=target_dossier_id,
-        reason=reason,
-        apply_0056=apply_0056,
-        commitment_ref=commitment_ref,
-        revoke_dossier_id=revoke_dossier_id,
-    )
-    breach_applied = bool(tail.get("breach_0056"))
-
+    # 执行格先记在仍 executing 的案卷上；0056 收尾负责撤诺终态，
+    # 不能先撤诺再将非法 backfill 的异常吞掉。
     # 执行格：经既有适配器落格（禁裸 SQL 宽吞）
     if target_dossier_id > 0:
         dossier = db.get_decree_dossier(int(target_dossier_id))
         if dossier is not None and str(dossier.get("status") or "") == "executing":
             db.record_dossier_execution(
                 int(target_dossier_id), outcome, note, int(state.turn),
-                close=close, commit=False,
+                close=close and not apply_0056, commit=False,
             )
             if outcome in {"degraded", "failed", "transformed"}:
                 db.record_dossier_progress(
@@ -834,26 +826,24 @@ def finalize_persist(
             exec_result = {
                 "dossier_id": int(target_dossier_id),
                 "outcome": outcome,
-                "close": close,
+                "close": close and not apply_0056,
             }
         elif dossier is not None:
             exec_result = {
                 "dossier_id": int(target_dossier_id),
-                "outcome": str(dossier.get("execution_outcome") or outcome),
+                "outcome": str(dossier.get("execution_outcome") or ""),
                 "already_closed": True,
             }
-            if not str(dossier.get("execution_outcome") or "").strip():
-                try:
-                    db.record_dossier_execution(
-                        int(target_dossier_id), outcome, note, int(state.turn),
-                        close=False, commit=False,
-                    )
-                    exec_result["outcome"] = outcome
-                except (TypeError, ValueError, KeyError) as exc:
-                    logger.warning(
-                        "record_dossier_execution backfill failed dossier=%s: %s",
-                        target_dossier_id, exc,
-                    )
+
+    tail = apply_persist_revoke_tail(
+        db, state,
+        target_dossier_id=target_dossier_id,
+        reason=reason,
+        apply_0056=apply_0056,
+        commitment_ref=commitment_ref,
+        revoke_dossier_id=revoke_dossier_id,
+    )
+    breach_applied = bool(tail.get("breach_0056"))
 
     # 0079 信用事件：坚持=回绝哭谏
     # 所载含撤人 → 按主办集合落辜负；仅跳过本 finalize 0056 已实写同人

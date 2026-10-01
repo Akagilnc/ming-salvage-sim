@@ -33,11 +33,8 @@ def _issue_audience_names(db: Any, issue: Any) -> set[str] | None:
     propagate unchanged.  Content fallback applies only when the events query
     succeeds with no row.
     """
-    try:
-        origin_kind = str(issue["origin_kind"] or "")
-        origin_ref = str(issue["origin_ref"] or "").strip()
-    except (KeyError, IndexError, TypeError):
-        return None
+    origin_kind = str(issue["origin_kind"] or "")
+    origin_ref = str(issue["origin_ref"] or "").strip()
     if origin_kind != "event_pool":
         return None
     if not origin_ref:
@@ -81,26 +78,22 @@ def _issue_audience_names(db: Any, issue: Any) -> set[str] | None:
 
 def _exclusion_lists_from_row(row: Any) -> tuple[set[str], set[str], set[str]]:
     """Parse excluded_names and excluded_targets.people/offices from one row."""
-    try:
-        excluded_names = {
-            str(name) for name in json.loads(row["excluded_names"] or "[]")
-        }
-    except (TypeError, ValueError, KeyError, IndexError):
-        excluded_names = set()
-    targets: object = {}
-    try:
-        raw_targets = row["excluded_targets"]
-    except (KeyError, IndexError, TypeError):
-        raw_targets = None
-    if raw_targets:
-        try:
-            targets = json.loads(raw_targets or "{}")
-        except (TypeError, ValueError):
-            targets = {}
+    raw_names = row["excluded_names"] if "excluded_names" in row.keys() else None
+    names = json.loads(raw_names or "[]")
+    if not isinstance(names, list) or any(not isinstance(name, str) for name in names):
+        raise ValueError("持久排除人物须为字符串列表")
+    excluded_names = set(names)
+    raw_targets = row["excluded_targets"] if "excluded_targets" in row.keys() else None
+    targets = json.loads(raw_targets) if raw_targets else {}
     if not isinstance(targets, dict):
-        targets = {}
-    people = {str(name) for name in (targets.get("people") or [])}
-    offices = {str(name) for name in (targets.get("offices") or [])}
+        raise ValueError("持久排除目标须为对象")
+    people_raw = targets.get("people", [])
+    offices_raw = targets.get("offices", [])
+    for values in (people_raw, offices_raw):
+        if not isinstance(values, list) or any(not isinstance(value, str) for value in values):
+            raise ValueError("持久排除目标成员须为字符串列表")
+    people = set(people_raw)
+    offices = set(offices_raw)
     return excluded_names, people, offices
 
 
@@ -116,12 +109,9 @@ def _subject_matches_exclusion(
     if subject is None:
         name, office_type, office = fallback_name, "", ""
     else:
-        try:
-            name = str(subject["name"] or fallback_name)
-            office_type = str(subject["office_type"] or "")
-            office = str(subject["office"] or "")
-        except (KeyError, IndexError, TypeError):
-            name, office_type, office = fallback_name, "", ""
+        name = str(subject["name"] or fallback_name) if "name" in subject.keys() else fallback_name
+        office_type = str(subject["office_type"] or "") if "office_type" in subject.keys() else ""
+        office = str(subject["office"] or "") if "office" in subject.keys() else ""
     if name in excluded_names or name in people:
         return True
     return bool(office_type and office_type in offices) or bool(
@@ -139,19 +129,12 @@ def knowledge_row_visible_to(
     Recommendation reads pass each roster candidate explicitly so an excluded
     office cannot be reintroduced by a name-only roster projection.
     """
-    reader = None
-    try:
-        reader = db.conn.execute(
-            "SELECT name, office, office_type FROM characters WHERE name=?", (character_name,)
-        ).fetchone()
-    except (AttributeError, TypeError):
-        reader = None
+    reader = db.conn.execute(
+        "SELECT name, office, office_type FROM characters WHERE name=?", (character_name,)
+    ).fetchone()
     target = target or reader or row
     def target_value(key: str) -> object:
-        try:
-            return target[key]
-        except (KeyError, IndexError, TypeError):
-            return None
+        return target[key] if key in target.keys() else None
 
     target_name = str(target_value("name") or target_value("character_id") or character_name)
     excluded_names, people, offices = _exclusion_lists_from_row(row)
@@ -179,20 +162,15 @@ def knowledge_row_visible_to(
     # A private source's roster is a positive capability, not a deny-list
     # snapshot.  Enforce it at read time so characters created after archival
     # cannot inherit old participant-private material.
-    try:
-        source = db.conn.execute(
-            "SELECT kind, participant_roster FROM character_knowledge_sources WHERE source_id=?",
-            (str(row["source_id"] or ""),),
-        ).fetchone()
-    except (AttributeError, KeyError, IndexError, TypeError):
-        source = None
+    source_id = str(row["source_id"] or "") if "source_id" in row.keys() else ""
+    source = db.conn.execute(
+        "SELECT kind, participant_roster FROM character_knowledge_sources WHERE source_id=?",
+        (source_id,),
+    ).fetchone()
     # A public event is a new disclosure capability even when it deliberately
     # retains the private source id for provenance.  It keeps its own explicit
     # people/office exclusions above, but must not inherit the source roster.
-    try:
-        event_is_public = str(row["kind"] or "") == "public"
-    except (KeyError, IndexError, TypeError):
-        event_is_public = False
+    event_is_public = "kind" in row.keys() and str(row["kind"] or "") == "public"
     if not event_is_public and source is not None and str(source["kind"] or "") != "public":
         participants = participant_roster_names(source["participant_roster"])
         if participants and character_name not in participants:
@@ -376,12 +354,9 @@ def _source_archive_rows(db: Any, character_name: str, upto_turn: int) -> list[D
                 or re.fullmatch(r"settlement:narrative:\d+", source_id)):
             continue
         participants = participant_roster_names(row["participant_roster"])
-        try:
-            excluded = json.loads(row["excluded_names"] or "[]")
-        except (TypeError, ValueError):
-            excluded = []
-        if not isinstance(excluded, list):
-            excluded = []
+        excluded = json.loads(row["excluded_names"] or "[]")
+        if not isinstance(excluded, list) or any(not isinstance(name, str) for name in excluded):
+            raise ValueError("持久排除人物须为字符串列表")
         # A participant-rostered source is private to its participants unless
         # an explicit exclusion says otherwise.  Empty rosters are not added
         # here: public events already have their own projection path.
@@ -425,13 +400,10 @@ def _household_ledger(db: Any, state: Any, character_name: str) -> str:
            LEFT JOIN secret_orders s ON s.id=d.secret_order_id
            WHERE e.account='国库' ORDER BY e.id DESC"""
     ).fetchall()
-    try:
-        reader = db.conn.execute(
-            "SELECT name, office, office_type FROM characters WHERE name=?",
-            (character_name,),
-        ).fetchone()
-    except (AttributeError, TypeError):
-        reader = None
+    reader = db.conn.execute(
+        "SELECT name, office, office_type FROM characters WHERE name=?",
+        (character_name,),
+    ).fetchone()
     lines = [f"太仓实存：{int(balance['balance'] if balance else state.metrics['国库'])}"]
     for row in reversed(rows):
         hide = _household_secret_case_hidden(row, character_name, reader)
@@ -537,16 +509,10 @@ def _issue_audience_case_events(
         db.list_active_issues() if hasattr(db, "list_active_issues") else []
     )
     for issue in active_issues:
-        try:
-            source_id = f"issue:{int(issue['id'])}"
-        except (KeyError, IndexError, TypeError, ValueError):
-            continue
+        source_id = f"issue:{int(issue['id'])}"
         if source_id in known:
             continue
-        try:
-            stage = _prose(issue["stage_text"]).strip()
-        except (KeyError, IndexError, TypeError):
-            stage = ""
+        stage = _prose(issue["stage_text"])
         if not stage or character_name not in _issue_audience_names(db, issue):
             continue
         if not knowledge_row_visible_to(
@@ -555,10 +521,7 @@ def _issue_audience_case_events(
             character_name,
         ):
             continue
-        try:
-            origin_turn = int(issue["origin_turn"] or state.turn)
-        except (KeyError, IndexError, TypeError, ValueError):
-            origin_turn = int(state.turn)
+        origin_turn = int(issue["origin_turn"] or state.turn)
         synthesized.append({
             "turn": origin_turn,
             "year": int(state.year) if origin_turn == int(state.turn) else 0,
@@ -798,10 +761,7 @@ def build_character_knowledge(
     visible_issues = []
     for issue in db.list_active_issues() if hasattr(db, "list_active_issues") else []:
         source_id = f"issue:{issue['id']}"
-        try:
-            participants = participant_roster_names(issue["participant_roster"])
-        except (KeyError, IndexError, TypeError):
-            participants = set()
+        participants = participant_roster_names(issue["participant_roster"])
         # Unassigned issues are public; assigned issues are visible only when
         # this character entered the durable source projection.
         if participants:
@@ -813,11 +773,10 @@ def build_character_knowledge(
             character_name,
         ):
             continue
-        try:
-            target_roster = json.loads(str(issue["target_roster"] or "[]"))
-        except (KeyError, TypeError, ValueError):
-            target_roster = []
-        if issue["origin_kind"] != "impeachment_surge" or not isinstance(target_roster, list):
+        target_roster = json.loads(str(issue["target_roster"] or "[]"))
+        if not isinstance(target_roster, list) or any(not isinstance(target, str) for target in target_roster):
+            raise ValueError("持久局势目标须为字符串列表")
+        if issue["origin_kind"] != "impeachment_surge":
             target_roster = []
         target_roster = [str(target).strip() for target in target_roster if str(target).strip()]
         visible_issues.append({

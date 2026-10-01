@@ -5,11 +5,12 @@
 """
 
 from __future__ import annotations
+from ming_sim.exceptions import DeclarationDataError, DeclarationReferenceError
 
 import json
 from typing import Any, Iterable, Mapping
 
-from ming_sim.applier import connection_owns_transaction, sanitize_sqlite_text
+from ming_sim.applier import connection_owns_transaction
 
 SOURCE_PREFIX = "public_saying:"
 LAYER_TITLE = "有此说法"
@@ -48,11 +49,11 @@ def record_public_saying(
     一票否决压过公开层。正文与排除名单只存在公开说法记录一处（#1829 reopen）；
     读口经 `public_saying:<id>` 回查本表，不另抄见闻来源、不月末物化。"""
     if not isinstance(body, str) or not body.strip():
-        raise ValueError("公开说法正文不能为空")
+        raise DeclarationDataError("公开说法正文不能为空")
     if not isinstance(affair_ref, str):
-        raise ValueError("事务引用必须为字符串")
-    text = sanitize_sqlite_text(body)
-    affair = sanitize_sqlite_text(affair_ref.strip())
+        raise DeclarationDataError("事务引用必须为字符串")
+    text = body
+    affair = affair_ref.strip()
     people = _character_names(involved_characters)
     people_json = json.dumps(people, ensure_ascii=False)
     names = _character_names(excluded_names)

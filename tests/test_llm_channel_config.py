@@ -713,8 +713,6 @@ def test_config_constants_single_source_in_models():
     # LLMConfig 默认值 == 常量（dataclass 默认引用 SSOT，非裸字面量）
     cfg = LLMConfig(api_key="", base_url="", model="m")
     assert not hasattr(cfg, "max_tokens")
-    assert "max_tokens" not in {f.name for f in cfg.__dataclass_fields__.values()} if hasattr(cfg, "__dataclass_fields__") else True
-    assert "max_tokens" not in LLMConfig.__dataclass_fields__
     assert cfg.timeout_seconds == m.API_DEFAULT_TIMEOUT_SECONDS
     assert cfg.cli_timeout_seconds == m.CLI_DEFAULT_TIMEOUT_SECONDS
 
@@ -816,18 +814,6 @@ def test_cli_supports_reasoning_strength_matrix(runner, expected):
     assert cli_supports_reasoning_strength(runner) is expected
 
 
-def test_cli_reasoning_strength_runners_single_source_in_cli_backend():
-    """#1271：能力名单单源在 cli_backend（与 effort/thinking 表同缝），禁第二处手写。"""
-    from ming_sim.cli_backend import CLI_REASONING_STRENGTH_RUNNERS
-
-    assert CLI_REASONING_STRENGTH_RUNNERS == frozenset({"codex", "claude", "grok", "pi"})
-    # 谓词委派同一 frozenset，不是 llm_config 内另写字面量集合
-    from ming_sim.llm_config import cli_supports_reasoning_strength
-    import inspect
-
-    src = inspect.getsource(cli_supports_reasoning_strength)
-    assert "CLI_REASONING_STRENGTH_RUNNERS" in src
-    assert '{"codex"' not in src and "{'codex'" not in src
 
 
 

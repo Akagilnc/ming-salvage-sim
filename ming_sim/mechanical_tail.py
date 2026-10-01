@@ -98,7 +98,7 @@ def generate_ending_summary_for_tail(
                 turn = int(row.get("turn") or 0)
                 if turn > int(closed_state.turn):
                     continue
-                body = str(row.get("report") or row.get("body") or "").strip()
+                body = str(row.get("report") or row.get("body") or "")
                 if not body:
                     continue
                 # 模型输入每期只保留一个正文键 body（与 ending_summary prompt 一致）。
@@ -303,14 +303,14 @@ def _submit_tail(
             logger.exception("[mechanical-tail] turn=%s 后台执行失败，等待玩家重试", closed_turn)
             from ming_sim.error_pack import write_error_pack
 
-            def record_failure() -> None:
+            def record_failure(error: Exception = exc) -> None:
                 pack_path = write_error_pack(
-                    session.db, session.state, exc=exc,
+                    session.db, session.state, exc=error,
                     extracted=None, resolve_ctx=None,
                 )
                 from ming_sim import month_chain
                 chain = month_chain._load_chain(session.db, closed_turn)
-                chain["mechanical_tail"]["error"] = str(exc)
+                chain["mechanical_tail"]["error"] = str(error)
                 month_chain._save_chain(session.db, closed_turn, chain, source=source)
                 _set_tail_status(
                     session.db, closed_turn, _TAIL_STATUS_FAILED,

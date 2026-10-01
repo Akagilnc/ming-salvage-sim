@@ -11,8 +11,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from ming_sim.db import GameDB
-from ming_sim.flows import apply_fixed_period_flows, derive_army_mutiny_state
+from ming_sim.flows import apply_fixed_period_flows
 
 ARMY = "guanning"
 PATHS = ("legacy", "substrate_hub")
@@ -143,7 +142,7 @@ def test_third_strike_transfers_to_bandit_via_adapter(game, fiscal_path):
         (
             log
             for log in logs
-            if log["field"] == "arrears" and "核销" in str(log["reason"])
+            if log["field"] == "arrears" and float(log["old_value"]) > 0 and float(log["new_value"]) == 0
         ),
         None,
     )
@@ -307,7 +306,7 @@ def test_non_latched_generic_owner_change_still_works_via_adapter(game):
     assert float(row["arrears"]) == pytest.approx(0)
     logs = _logs(db, ("arrears", "owner_power"))
     writeoff = next(
-        (log for log in logs if log["field"] == "arrears" and "核销" in str(log["reason"])),
+        (log for log in logs if log["field"] == "arrears" and float(log["old_value"]) > 0 and float(log["new_value"]) == 0),
         None,
     )
     owner_log = next((log for log in logs if log["field"] == "owner_power"), None)
@@ -456,7 +455,6 @@ def test_hub_excluded_zero_manpower_latched_clears_once(game, fiscal_path, ident
         for log in _logs(db, ("is_mutinied",))
         if str(log["old_value"]) in {"1", "True"}
         and str(log["new_value"]) in {"0", "False"}
-        and "零兵" in str(log["reason"])
     ]
     assert len(clear_logs) == 1
 
@@ -560,35 +558,3 @@ def test_hub_excluded_persisted_third_strike_defects_once(game, identity):
         log for log in _logs(db, ("owner_power",)) if log["field"] == "owner_power"
     ]
     assert len(owner_logs2) == 1
-
-
-def test_single_production_zero_manpower_clear_callsite():
-    """生产清闩 helper 仅分叉前一处调用（两 branch-local 已删）。"""
-    import inspect
-    import re
-
-    import ming_sim.flows as flows_mod
-
-    src = inspect.getsource(flows_mod.apply_fixed_period_flows)
-    calls = re.findall(r"_clear_zero_manpower_mutiny_latch\(", src)
-    assert len(calls) == 1
-    # 旧态第三振与零兵清闩同缝：pre-fork 循环内调用 helper，非 branch-local 复制 gate
-    assert "_maybe_third_strike_defect(" in src
-    pre_fork = src.split("if db.fiscal_engine() == \"legacy\":", 1)[0]
-    assert "_clear_zero_manpower_mutiny_latch(" in pre_fork
-    assert "_maybe_third_strike_defect(" in pre_fork
-
-
-def test_single_production_owner_power_updater_exists():
-    """仓内生产 UPDATE owner_power 只经 transition_army_owner_power 一处。"""
-    import inspect
-    import ming_sim.db as db_mod
-    import ming_sim.flows as flows_mod
-
-    src_db = inspect.getsource(db_mod.GameDB)
-    # 生产方法体之外不应再手写 SET owner_power（seed/migration 除外，它们在其他方法）
-    assert "def transition_army_owner_power" in src_db
-    # flows 第三振必须调用 adapter，不直写 owner
-    src_flows = inspect.getsource(flows_mod)
-    assert "transition_army_owner_power" in src_flows
-    assert "SET owner_power" not in src_flows

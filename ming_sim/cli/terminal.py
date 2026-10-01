@@ -5,6 +5,7 @@ play_turn 状态机搬入此处；GameSession 持游戏状态，terminal 只做 
 """
 
 from __future__ import annotations
+from ming_sim.exceptions import DeclarationDataError
 
 import logging
 import re
@@ -16,7 +17,6 @@ from ming_sim.constants import (
     STAY_ATTEND_COMMANDS,
     TURN_UNIT,
 )
-from ming_sim.assets import wrap
 from ming_sim.context import match_minister_from_text
 from ming_sim.exceptions import ExitGame, LLMContractError, LLMUnavailable, SettlementAbort
 from ming_sim.models import API_DEFAULT_TIMEOUT_SECONDS, Character, GameState
@@ -80,7 +80,7 @@ def _print_pending_action_failures(failures: List[dict]) -> None:
         except (TypeError, ValueError):
             failure_id = None
         suffix = f" #{failure_id}" if failure_id is not None else ""
-        print(f"【密令落库失败{suffix}】{wrap(message)}\n")
+        print(f"【密令落库失败{suffix}】{message}\n")
 
 
 def _print_header(session: GameSession) -> None:
@@ -327,7 +327,7 @@ def _retry_interrupted_reply_cli(session: GameSession, minister_name: str) -> Op
             db.record_chat_turn_rollback_diffs(
                 chat_turn_id, before_snapshot, db.capture_chat_rollback_snapshot(),
             )
-        print(f"\n{minister_name}：{wrap(answer)}\n")
+        print(f"\n{minister_name}：{answer}\n")
     except Exception as exc:
         # 失败翻回 interrupted 保持可再重试（与 web restore_interrupted_after_failed_retry 同语义）。
         try:
@@ -394,9 +394,9 @@ def minister_chat(session: GameSession, character: Character, *, selected: bool 
     )
     while True:
         # A selection is its own scene turn; the first question remains the player's text.
-        question = f"宣{character.name}" if pending_xuan else input("朕问：").strip()
+        question = f"宣{character.name}" if pending_xuan else input("朕问：")
         pending_xuan = False
-        if not question:
+        if not question.strip():
             print("可继续问话；若要让其退下，请输入 done。")
             continue
         # #505 系统层恢复命令（非皇帝内容选项）。禁抽取手动补写平行面（#1353）。
@@ -530,7 +530,7 @@ def minister_chat(session: GameSession, character: Character, *, selected: bool 
             except BaseException as cleanup_error:
                 raise original_error from cleanup_error
             raise
-        print(wrap(result.answer))
+        print(result.answer)
         print()
         _print_pending_action_failures(getattr(result, "pending_action_failures", []) or [])
         if result.proposed_directive is not None:
@@ -565,13 +565,13 @@ def review_directives(session: GameSession) -> str:
         if pending:
             print(f"  · {len(pending)} 道历史拟旨候结束回合成案：")
             for d in pending:
-                print(f"  [待核定] #{d.id}  {wrap(d.text)}")
+                print(f"  [待核定] #{d.id}  {d.text}")
         if staged_directives:
             print(f"  · {len(staged_directives)} 道对话拟旨待颁诏默认同意。")
         if drafts:
             for idx, d in enumerate(drafts, 1):
                 print(f"{idx}. #{d.id}")
-                print(f"   {wrap(d.text)}")
+                print(f"   {d.text}")
         elif not pending and not staged_directives:
             print("（暂无指令。back 继续召见，或 add 新增。）")
         print("\n操作：issue 结束回合 | back 继续召见 | add 新增 | edit N 改 | del N 删 | exit 退出")
@@ -608,8 +608,8 @@ def review_directives(session: GameSession) -> str:
         # 审阅循环，不崩出进程（ship-pre r2，与 write_decree 既有 try 同款）。
         try:
             if lowered == "add" or raw == "新增":
-                text = input("指令内容：").strip()
-                if text:
+                text = input("指令内容：")
+                if text.strip():
                     from ming_sim.cli_backend import capture_manual_directive_payload
                     dv = session.add_directive(
                         text,
@@ -631,8 +631,8 @@ def review_directives(session: GameSession) -> str:
                     if not any(d.id == target_id for d in drafts):
                         print("没有这条草案。")
                         continue
-                    new_text = input("新的指令内容：").strip()
-                    if new_text:
+                    new_text = input("新的指令内容：")
+                    if new_text.strip():
                         from ming_sim.cli_backend import capture_manual_directive_payload
                         row = next(
                             r for r in session.db.list_directives(
@@ -661,7 +661,7 @@ def review_directives(session: GameSession) -> str:
                     else:
                         print("没有这条草案。")
                     continue
-        except ValueError as error:
+        except DeclarationDataError as error:
             print(f"\n{error}")
             continue
         print("未识别操作。")

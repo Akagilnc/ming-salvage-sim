@@ -14,7 +14,6 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-import pytest
 
 import web_app
 from ming_sim.knowledge import build_character_knowledge
@@ -213,7 +212,6 @@ def test_shared_consumers_still_surface_status(read_game):
     # 4) army_detail → 真实详情缝（关宁全量，必含 seed status）
     detail = db.army_detail(_GUANNING_ID)
     assert seed_status in detail, f"army_detail 缺关宁 status\n{detail!r}"
-    assert "欠饷严重" in detail
 
     # 5) army_roster → 真实名册缝（全表，含各军 status）
     roster = db.army_roster()

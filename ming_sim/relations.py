@@ -4,12 +4,13 @@
 """
 
 from __future__ import annotations
+from ming_sim.exceptions import DeclarationDataError, DeclarationReferenceError
 
 from ming_sim.applier import RejectedItem, Provenance
 
 import re
 from collections.abc import Mapping
-from typing import Any, Iterable
+from typing import Any, Iterable, List
 
 EMPEROR_NODE = "皇帝"
 
@@ -59,9 +60,9 @@ def settlement_edge_origin(origin_ref: object, kind: str) -> str:
     ``|round:N``（N=当前回合），TD-1 的 origin 回指由既有绑定机制承担，此处
     不重复拼 round。禁在调用侧另拼第二套 origin。"""
     if not isinstance(origin_ref, str):
-        raise ValueError(f"来源引用必须为字符串，得 {type(origin_ref).__name__}")
+        raise DeclarationDataError(f"来源引用必须为字符串，得 {type(origin_ref).__name__}")
     if not origin_ref.strip():
-        raise ValueError("效果缺 origin_ref；盘面自然演化须显式标为「盘面自发」")
+        raise DeclarationDataError("效果缺 origin_ref；盘面自然演化须显式标为「盘面自发」")
     return f"{origin_ref}:relation:{validate_edge_kind(kind)}"
 
 
@@ -82,12 +83,12 @@ def _validated_settlement_origin(
     回合同步绑定，TD-1 不容伪造）；案卷授权核验复用
     GameDB.effect_origin_rejection 既有 API，不另立平行守门。"""
     if not isinstance(origin_ref, str):
-        raise ValueError(f"来源引用必须为字符串，得 {type(origin_ref).__name__}")
+        raise DeclarationDataError(f"来源引用必须为字符串，得 {type(origin_ref).__name__}")
     if origin_ref == SETTLEMENT_ORIGIN_SENTINEL:
         return origin_ref
     match = _DOSSIER_ORIGIN_RE.fullmatch(origin_ref)
     if match is None:
-        raise ValueError(
+        raise DeclarationDataError(
             f"来源引用非法（只收精确「{SETTLEMENT_ORIGIN_SENTINEL}」或已授权"
             f" dossier:<id>，不归一首尾空白）：{origin_ref!r}"
         )
@@ -96,11 +97,11 @@ def _validated_settlement_origin(
         if isinstance(allowed_dossier_ids, (set, frozenset)) else set()
     )
     if int(match.group("id")) not in frozen_ids:
-        raise ValueError(
+        raise DeclarationDataError(
             f"来源案卷不在本批冻结输入（dossier 闭集拒收）：{origin_ref}"
         )
     if db.effect_origin_rejection(origin_ref) is not None:
-        raise ValueError(f"origin_ref 非法：{origin_ref}")
+        raise DeclarationDataError(f"origin_ref 非法：{origin_ref}")
     return origin_ref
 
 
@@ -124,7 +125,7 @@ def _validated_settlement_endpoints(
     wanted = [source, *targets]
     illegal = [name for name in wanted if name not in allowed_endpoint_names]
     if illegal:
-        raise ValueError(
+        raise DeclarationDataError(
             "边端点须为当前在朝合格大臣（皇帝节点与不在名册者逐项拒收）："
             f"{illegal!r}"
         )
@@ -133,7 +134,7 @@ def _validated_settlement_endpoints(
 def validate_edge_kind(event_kind: Any) -> str:
     kind = str(event_kind or "").strip()
     if kind not in EDGE_KINDS:
-        raise ValueError(f"未知边事件类目: {kind!r}")
+        raise DeclarationDataError(f"未知边事件类目: {kind!r}")
     return kind
 
 
@@ -210,18 +211,18 @@ def _prepare_one_interaction(
 ) -> dict[str, Any]:
     kind = validate_edge_kind(item.get("类目") or item.get("kind"))
     if kind not in MINISTER_EDGE_KINDS:
-        raise ValueError(f"结算口只收大臣侧类目，得 {kind!r}（君臣类目归 0079 写端）")
+        raise DeclarationDataError(f"结算口只收大臣侧类目，得 {kind!r}（君臣类目归 0079 写端）")
     raw_source = (
         item["施动者"] if item.get("施动者") is not None else item.get("source")
     )
     if not isinstance(raw_source, str):
-        raise ValueError(
+        raise DeclarationDataError(
             "施动者不能为空" if raw_source is None
             else f"施动者必须为字符串，得 {type(raw_source).__name__}"
         )
     source = raw_source.strip()
     if not source:
-        raise ValueError("施动者不能为空")
+        raise DeclarationDataError("施动者不能为空")
     raw_targets = (
         item["受动者"] if item.get("受动者") is not None else item.get("target")
     )
@@ -231,7 +232,7 @@ def _prepare_one_interaction(
     elif isinstance(raw_targets, list) and all(isinstance(t, str) for t in raw_targets):
         candidates = list(raw_targets)
     else:
-        raise ValueError("受动者必须为字符串或字符串列表")
+        raise DeclarationDataError("受动者必须为字符串或字符串列表")
     # V9：成员合法性校验先于过滤/去重/写入——空白或自指成员使整条互动
     # fail-closed 拒收（与端点守门同语义），不静默丢弃坏成员保留其余落边。
     seen: set[str] = set()
@@ -239,27 +240,27 @@ def _prepare_one_interaction(
     for candidate in candidates:
         name = candidate.strip()
         if not name:
-            raise ValueError("受动者不能为空")
+            raise DeclarationDataError("受动者不能为空")
         if name == source:
-            raise ValueError(f"受动者不能为施动者自身：{source!r}")
+            raise DeclarationDataError(f"受动者不能为施动者自身：{source!r}")
         if name not in seen:
             seen.add(name)
             targets.append(name)
     # V10：空受动者列表（或全无效成员被拒后为空的等价情形）整项 fail-closed
     # 拒收——shape 垃圾按既有 extractor 契约拒收，不得静默零写冒充成功。
     if not targets:
-        raise ValueError("受动者不能为空")
+        raise DeclarationDataError("受动者不能为空")
     raw_context = (
         item["语境"] if item.get("语境") is not None else item.get("context")
     )
     if not isinstance(raw_context, str):
-        raise ValueError(
+        raise DeclarationDataError(
             "边事件语境不能为空" if raw_context is None
             else f"语境必须为字符串，得 {type(raw_context).__name__}"
         )
     # F1：strip 只作非空谓词；存储值原样交写口（字节相等验收靠这条不加工）。
     if not raw_context.strip():
-        raise ValueError("边事件语境不能为空")
+        raise DeclarationDataError("边事件语境不能为空")
     context = raw_context
     origin = settlement_edge_origin(
         _validated_settlement_origin(
@@ -354,7 +355,7 @@ def resolve_relation_edge_events_from_extraction(
                 allowed_endpoint_names=allowed_endpoint_names,
                 allowed_dossier_ids=dossier_ids_at_input,
             )
-        except (TypeError, ValueError) as exc:
+        except DeclarationDataError as exc:
             rejections.append(RejectedItem(item=dict(item), reason=str(exc), category="invalid_relation_event", source=source))
             continue
         results.extend(_write_one_interaction(db, state, prepared, turn))

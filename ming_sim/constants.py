@@ -14,6 +14,7 @@ ROOT_DIR = str(bundled_root())
 CONTENT_DIR = bundled_path("content")
 WRAP = 88
 MONEY_UNIT = "万两"
+_SETTLE_META_JIAPIAI_KEY = "加派基线"
 ECONOMY_ACCOUNTS = ("国库", "内库")
 SCORE_METRICS = ("民心", "皇威")
 

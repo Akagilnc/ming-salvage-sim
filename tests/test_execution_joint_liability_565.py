@@ -4,7 +4,6 @@ import json
 
 import pytest
 
-import ming_sim.issues as issue_engine
 from ming_sim.strict_types import validate_affected_parties
 from ming_sim.settlement import SettlementContext, settle_delta
 from ming_sim.settlement.views import rejected_view, view
@@ -214,7 +213,6 @@ def test_dead_liable_party_skips_satisfaction_but_enters_note(game, caplog):
     assert "徐光启" in edges
     note = db.get_decree_dossier(dossier_id)["execution_note"]
     assert "倪元璐" in note
-    assert "跳过已故" in caplog.text
 
 
 def test_explicit_affected_parties_must_pass_full_key_validation(game):

@@ -4,7 +4,9 @@ from __future__ import annotations
 import json
 import math
 import re
-from typing import Dict, List, Tuple
+from typing import TYPE_CHECKING, Dict, List, Tuple
+if TYPE_CHECKING:
+    from ming_sim.db import GameDB
 
 from ming_sim.applier import Provenance, RejectedItem
 from ming_sim.db import POPULATION_UNIT_PERSONS
@@ -43,7 +45,7 @@ def _apply_surcharge_decrees(
     origin_ref 缺失/伪前缀/未颁案卷（复用 effect_origin_rejection 单一真源）；
     白名单外字段。坏项留痕、好项照落；数据拒收不中止事务。
     """
-    from ming_sim.issues import _SETTLE_META_JIAPIAI_KEY
+    from ming_sim.constants import _SETTLE_META_JIAPIAI_KEY
     applied: List[Dict[str, object]] = []
     rejected: List[Dict[str, object]] = []
     if not db.is_substrate_hub_fiscal_engine_enabled():

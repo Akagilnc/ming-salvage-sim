@@ -133,7 +133,7 @@ def test_resolve_surfaces_pairing_warning_in_result(game):
         {"close_issues": [{"issue_id": issue_id, "reason": "resolved", "narrative": "练成"}]},
         content=content,
     source=Provenance.system_simulation)
-    warns = out.get("pairing_warnings") or []
+    warns = out.pairing_warnings or []
     assert any("new_armies" in w for w in warns), f"军事国策结案应 surface 配对告警：{warns}"
 
 
@@ -156,7 +156,7 @@ def test_resolve_with_new_armies_no_warning_in_result(game):
         {"close_issues": [{"issue_id": issue_id, "reason": "resolved", "narrative": "练成"}]},
         content=content,
     source=Provenance.system_simulation)
-    assert (out.get("pairing_warnings") or []) == [], f"带 new_armies 不应告警：{out.get('pairing_warnings')}"
+    assert (out.pairing_warnings or []) == [], f"带 new_armies 不应告警：{out.pairing_warnings}"
 
 
 def test_emit_preparsed_list_tags_still_warns():

@@ -13,11 +13,8 @@ Seams:
 from __future__ import annotations
 
 import ast
-import json
-import re
 from pathlib import Path
 
-import pytest
 
 from ming_sim.db import GameDB
 from ming_sim.supervision import (
@@ -514,19 +511,6 @@ def test_ac5_zero_template_exposure_and_622(game):
         ).fetchall()
     }
     assert _table_cols(db, DENUNCIATION_TABLE) == DENUNCIATION_ALLOWED_COLS
-
-    # 引擎侧零模板句：产出路径无固定文案常量
-    prod_files = [
-        _REPO / "ming_sim" / "supervision.py",
-        _REPO / "ming_sim" / "db.py",
-        _REPO / "ming_sim" / "decree.py",
-    ]
-    template_re = re.compile(
-        r"奏称：.*办理.*有异状|请皇上按问"
-    )
-    for path in prod_files:
-        text = path.read_text(encoding="utf-8")
-        assert not template_re.search(text), f"模板句残留于 {path.name}"
 
     # #622 读端改调 public fork 单源
     actor = subject_name

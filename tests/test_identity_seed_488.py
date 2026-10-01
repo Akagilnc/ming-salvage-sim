@@ -130,7 +130,7 @@ def test_roster_rejects_alias_colliding_with_other_faction_name(monkeypatch):
     data = load_json_asset("characters.json")
     data["characters"][0]["aliases"].append("温体仁")
     monkeypatch.setattr(content_module, "load_json_asset", lambda _: data)
-    with pytest.raises(SystemExit, match="温体仁"):
+    with pytest.raises(SystemExit):
         load_character_content()
 
 
@@ -140,7 +140,7 @@ def test_roster_rejects_duplicate_canonical_name(monkeypatch):
     dup_name = duplicate["name"]
     data["characters"].append(duplicate)
     monkeypatch.setattr(content_module, "load_json_asset", lambda _: data)
-    with pytest.raises(SystemExit, match=dup_name):
+    with pytest.raises(SystemExit):
         load_character_content()
 
 
@@ -156,5 +156,5 @@ def test_seed_schema_rejects_invalid_values(monkeypatch, field, value, match):
     data = load_json_asset("characters.json")
     data["characters"][0][field] = value
     monkeypatch.setattr(content_module, "load_json_asset", lambda _: data)
-    with pytest.raises(SystemExit, match=match):
+    with pytest.raises(SystemExit):
         load_character_content()

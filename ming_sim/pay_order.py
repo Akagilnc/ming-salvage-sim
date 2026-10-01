@@ -25,6 +25,7 @@
 provenance、origin_ref=dossier:<id>），禁第二份旨意真源或新表（F1.2）。
 """
 from __future__ import annotations
+from ming_sim.exceptions import DeclarationDataError
 
 import math
 from dataclasses import dataclass, field
@@ -46,7 +47,7 @@ _UNTIL_SUFFIX = "_until_turn"
 _PRIORITY_FAMILIES = (DUE_PRIORITY_FAMILY, ARREARS_PRIORITY_FAMILY)
 
 
-class PayOrderKeyError(ValueError):
+class PayOrderKeyError(DeclarationDataError):
     """override 键形状/值域非法（fail-loud，非法旨不得物化 config）。"""
 
 

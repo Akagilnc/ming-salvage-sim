@@ -8,15 +8,17 @@ from __future__ import annotations
 
 from ming_sim.applier import RejectedItem, Provenance
 
-from typing import List
+from typing import TYPE_CHECKING, Dict, List
+
+if TYPE_CHECKING:
+    from ming_sim.db import GameDB
+    from ming_sim.models import GameState, Event
 
 from ming_sim.applier import SectionResult
-from ming_sim.issues import (
-    ARMY_FIELD_ALIASES,
-    _effect_event_ids,
-    _strict_int,
-    latched_army_field_effect_permitted,
-)
+from ming_sim.constants import ARMY_FIELD_ALIASES
+from ming_sim.flows import _strict_int
+from ming_sim.db import latched_army_field_effect_permitted
+from ming_sim.settlement.preflight import _effect_event_ids
 
 
 def apply_new_armies(run, items: List[object] | None = None):

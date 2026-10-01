@@ -7,6 +7,7 @@
 """
 
 from __future__ import annotations
+from ming_sim.exceptions import DeclarationDataError
 
 import json
 from dataclasses import dataclass
@@ -258,7 +259,7 @@ def cluster_effect(kind: str) -> str:
     return c.effect if c else EFFECT_NOOP
 
 
-class ActionCandidateShapeError(ValueError):
+class ActionCandidateShapeError(DeclarationDataError):
     pass
 
 

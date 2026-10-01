@@ -86,12 +86,6 @@ PERSON_WRITE_POINT_INVENTORY = (
         "reason": "Slice 6 处置 tracer bullet 的过渡写点，后续随 C1 applier 收口。",
     },
     {
-        "location": "ming_sim/issues.py:_restore_person_write_state",
-        "owner": "adr0009_tracer_person_path",
-        "disposition": "migrate_to_person_applier",
-        "reason": "任官失败局部恢复的过渡写点，后续随 C1 applier 收口。",
-    },
-    {
         "location": "ming_sim/decree.py:tick_transit_arrivals",
         "owner": "deterministic_settle_path",
         "disposition": "adr0009_exempt",

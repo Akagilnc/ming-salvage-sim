@@ -4,7 +4,6 @@ from ming_sim.applier import Provenance
 import json
 from pathlib import Path
 
-import ming_sim.issues as I
 from ming_sim.db import _has_stop_condition
 from ming_sim.settlement import SettlementContext, settle_delta
 from ming_sim.settlement.views import issue_rows, rejected_view, view
@@ -363,8 +362,8 @@ def test_until_stop_commitment_rejects_direct_resolved_close(game, monkeypatch):
         {"close_issues": [{"issue_id": row["id"], "reason": "resolved", "narrative": "误按承诺完成结案"}]},
     source=Provenance.system_simulation)
 
-    assert out["closes"] == []
-    close = out["rejected"][0]
+    assert out.closes == []
+    close = out.rejected[0]
     assert close.category == "invalid_enum"
     after = db.conn.execute("SELECT status FROM issues WHERE id=?", (row["id"],)).fetchone()
     assert after["status"] == "active"
@@ -384,8 +383,8 @@ def test_until_stop_commitment_rejects_direct_failed_close_without_effects(game,
         {"close_issues": [{"issue_id": row["id"], "reason": "failed", "narrative": "误按承诺失败结案"}]},
     source=Provenance.system_simulation)
 
-    assert out["closes"] == []
-    close = out["rejected"][0]
+    assert out.closes == []
+    close = out.rejected[0]
     assert close.category == "invalid_enum"
     after = db.conn.execute("SELECT status FROM issues WHERE id=?", (row["id"],)).fetchone()
     assert after["status"] == "active"

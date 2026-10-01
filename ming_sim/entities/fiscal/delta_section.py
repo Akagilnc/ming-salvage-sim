@@ -10,11 +10,88 @@
 
 from __future__ import annotations
 
-from ming_sim.applier import RejectedItem, Provenance
+from ming_sim.applier import RejectedItem
 
-from typing import Any, Dict, List, Tuple
+import re
+from typing import TYPE_CHECKING, Any, Dict, List, Tuple
+from ming_sim.flows import _strict_int
+from ming_sim.token_stats import tlog
+if TYPE_CHECKING:
+    from ming_sim.db import GameDB
 
 from ming_sim.applier import SectionResult
+from ming_sim.exceptions import DeclarationDataError
+
+
+_FISCAL_ACCOUNTS = ("国库", "内库")
+_FISCAL_DIRECTIONS = ("income", "expense")
+_DIRECTION_NORMALIZE = {
+    "income": "income", "收": "income", "收入": "income", "进账": "income",
+    "expense": "expense", "支": "expense", "支出": "expense", "出账": "expense",
+}
+
+
+def _recurring_funding_label_tokens(*values: object) -> set[str]:
+    tokens: set[str] = set()
+    for value in values:
+        raw = str(value or "").strip()
+        if not raw:
+            continue
+        key_stem = raw
+        if key_stem.endswith("_base") or key_stem.endswith("_rate"):
+            key_stem = key_stem.rsplit("_", 1)[0]
+        normalized = re.sub(r"[\s，。、“”‘’：:；;,.·_\-（）()\[\]【】]+", "", key_stem)
+        for word in (
+            "同批extractor误产的重复", "同批误产的重复", "每月", "按月", "月度", "月支",
+            "拨给", "拨付", "拨银", "拨", "给", "支给", "支出", "开支", "费用",
+            "经费", "月", "万两", "银两", "银",
+        ):
+            normalized = normalized.replace(word, "")
+        if normalized:
+            tokens.add(normalized)
+    return tokens
+
+
+def _commitment_fiscal_create_duplicate_reason(
+    create: Dict[str, object], commitment_economy: List[Dict[str, object]], db: GameDB,
+) -> str:
+    account = str(create.get("account") or "").strip()
+    display = str(create.get("display") or "").strip() or (db._stem_of(str(create.get("key") or "")) or str(create.get("key") or ""))
+    create_tokens = _recurring_funding_label_tokens(display, create.get("key"), create.get("reason"))
+    if not account or not create_tokens:
+        return ""
+    for item in commitment_economy:
+        if str(item.get("account") or "").strip() != account:
+            continue
+        try:
+            delta = _strict_int(item.get("delta"))
+        except (TypeError, ValueError):
+            continue
+        if delta >= 0:
+            continue
+        item_tokens = _recurring_funding_label_tokens(item.get("category"), item.get("reason"), item.get("purpose"))
+        if create_tokens & item_tokens:
+            return "同批已有承诺 issue ongoing_effects.economy 承载该经常性拨款，fiscal_create 已去重"
+    return ""
+
+
+def _commitment_carrier_same_account_unmatched(
+    create: Dict[str, object], commitment_economy: List[Dict[str, object]],
+) -> str:
+    """同批同账户却未按科目名匹配的承诺月支，仅作观测、不改落库行为。"""
+    account = str(create.get("account") or "").strip()
+    if not account:
+        return ""
+    for item in commitment_economy:
+        if str(item.get("account") or "").strip() != account:
+            continue
+        try:
+            delta = _strict_int(item.get("delta"))
+        except (TypeError, ValueError):
+            continue
+        if delta < 0:
+            return account
+    return ""
 
 
 def _norm_int_leaf(value: Any) -> Any:
@@ -33,7 +110,6 @@ def _norm_int_leaf(value: Any) -> Any:
 def apply_removes(run) -> SectionResult:
     """推演彻底裁撤月固定收支项（罢税/裁俸）。优先级最高，先于 creates/changes。"""
     from ming_sim.covert_levy import canonical_fiscal_result, stopped_covert_effect
-    from ming_sim.issues import _FISCAL_ACCOUNTS  # noqa: F401  (形状真源在本段下方)
 
     applied: List[Dict[str, object]] = []
     rejections: List[RejectedItem] = []
@@ -91,7 +167,6 @@ def apply_removes(run) -> SectionResult:
 def apply_creates(run) -> SectionResult:
     """推演凭空新立月固定收支项（税只是其中一种）。先于 changes。"""
     from ming_sim.covert_levy import canonical_fiscal_result, stopped_covert_effect
-    from ming_sim.issues import _DIRECTION_NORMALIZE, _FISCAL_ACCOUNTS, _FISCAL_DIRECTIONS, tlog
 
     applied: List[Dict[str, object]] = []
     rejections: List[RejectedItem] = []
@@ -133,11 +208,6 @@ def apply_creates(run) -> SectionResult:
         # Dedup 是业务规则不是授权闸：只看形状合法且已授权的载体，否则会把缺失
         # 或伪造的归属藏在 deduped_commitment_carrier 后面。
         if direction == "expense":
-            from ming_sim.issues import (
-                _commitment_carrier_same_account_unmatched,
-                _commitment_fiscal_create_duplicate_reason,
-            )
-
             dedup_reason = _commitment_fiscal_create_duplicate_reason(
                 create, run.commitment_economy_carriers, run.db,
             )
@@ -249,7 +319,7 @@ def apply_changes(run) -> SectionResult:
         new_val = max(0, current + delta)
         try:
             run.db.validate_fiscal_config_value(key, new_val)
-        except ValueError as exc:
+        except DeclarationDataError as exc:
             rejections.append(RejectedItem(item=change, reason=f"调率目标「{key}」非法：{exc}", category="invalid_enum", source=run.ctx.source))
             continue
         _write_fiscal_config_change(
@@ -271,7 +341,7 @@ def apply_changes(run) -> SectionResult:
         ]
         try:
             run.db.validate_fiscal_config_values(final_values)
-        except ValueError as exc:
+        except DeclarationDataError as exc:
             for change in pair_changes:
                 rejections.append(RejectedItem(item=change["item"], reason=f"调率目标「{change['key']}」非法：{exc}", category="invalid_enum", source=run.ctx.source))
             continue

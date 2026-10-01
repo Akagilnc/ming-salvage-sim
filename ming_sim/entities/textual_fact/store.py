@@ -1,11 +1,12 @@
 """Append-only textual facts on world-record subjects (ADR 0156)."""
 
 from __future__ import annotations
+from ming_sim.exceptions import DeclarationDataError
 
 from dataclasses import dataclass
 from typing import Any, Iterable
 
-from ming_sim.applier import connection_owns_transaction, sanitize_sqlite_text
+from ming_sim.applier import connection_owns_transaction
 from ming_sim.models import reign_period_label
 
 TEXTUAL_FACT_SUBJECT_KINDS = frozenset({"character", "army", "region", "affair"})
@@ -70,14 +71,14 @@ class TextualFactStore:
     ) -> TextualFact:
         kind, target = _parse_subject(subject_kind, subject_id)
         if not isinstance(body, str) or not body.strip():
-            raise ValueError("textual fact body cannot be empty")
+            raise DeclarationDataError("textual fact body cannot be empty")
         month = int(period)
         if not 1 <= month <= 12:
-            raise ValueError(f"textual fact period must be 1..12, got {period}")
+            raise DeclarationDataError(f"textual fact period must be 1..12, got {period}")
         year_n = int(year)
         turn_n = int(turn)
-        stored = sanitize_sqlite_text(body)
-        origin = sanitize_sqlite_text(str(origin_ref or "").strip())
+        stored = body
+        origin = str(origin_ref or "").strip()
         owns = connection_owns_transaction(self._conn)
         cur = self._conn.execute(
             "INSERT INTO textual_facts "
@@ -153,10 +154,10 @@ def _row_to_fact(row: Any) -> TextualFact:
 def _parse_subject(subject_kind: object, subject_id: object) -> tuple[str, str]:
     kind = str(subject_kind or "").strip()
     if kind not in TEXTUAL_FACT_SUBJECT_KINDS:
-        raise ValueError(
+        raise DeclarationDataError(
             f"textual fact subject_kind must be one of {sorted(TEXTUAL_FACT_SUBJECT_KINDS)}"
         )
     target = str(subject_id or "").strip()
     if not target:
-        raise ValueError("textual fact subject_id cannot be empty")
+        raise DeclarationDataError("textual fact subject_id cannot be empty")
     return kind, target

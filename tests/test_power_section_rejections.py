@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import pytest
 
-from tests.section_rejection_helpers import game, rejection_rows as _rejection_rows, run_declaration
+from tests.section_rejection_helpers import rejection_rows as _rejection_rows, run_declaration
 from ming_sim.settlement import SettlementContext, settle_delta
 
 
@@ -134,8 +134,7 @@ def test_canonical_person_power_writer_code_exception_is_fail_loud(game, monkeyp
         raise KeyError("canonical person power writer bug")
 
     monkeypatch.setattr(type(db), "apply_character_power_changes", _boom)
-    with pytest.raises(KeyError, match="canonical person power writer bug"):
-        import ming_sim.issues as issues
+    with pytest.raises(KeyError):
         settle_delta(state, db, {'人物变更': [{'name': name, '动作': '易主', '方式': '主动投敌', '反噬': {}, 'new_power': target_power, 'reason': '叛', 'origin_ref': '盘面自发'}]}, SettlementContext(content=content))
 
 

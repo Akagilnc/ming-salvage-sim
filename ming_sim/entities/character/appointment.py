@@ -43,6 +43,10 @@ def _canonical_appointment_fields(
     :func:`_resolve_appointment_seat` turns that into the once-per-appointment
     resolved seat for write / dedup / displace.
     """
+    try:
+        tenure = appointment_tenure_from(payload)
+    except ValueError as exc:
+        raise OfficeAppointmentRejection(str(exc), category="invalid_enum") from exc
     office = normalize_office(str(payload.get("office") or payload.get("new_office") or ""))
     office_type = resolve_office_type_preserving_title(
         office,
@@ -52,8 +56,8 @@ def _canonical_appointment_fields(
     )
     raw_region = _appointment_region_id(payload)
     if office_type not in GameDB._LOCAL_ARCHIVE_OFFICE_TYPES:
-        return office, office_type, appointment_tenure_from(payload), ""
-    return office, office_type, appointment_tenure_from(payload), raw_region
+        return office, office_type, tenure, ""
+    return office, office_type, tenure, raw_region
 
 
 def _resolve_appointment_seat(
@@ -267,7 +271,7 @@ def apply_office_appointment(
             llm_config=llm_config or db.llm_config,
         )
         if office_type == "后宫":
-            raise ValueError("后宫任命已退役")
+            raise OfficeAppointmentRejection("后宫任命已退役", category="invalid_enum")
         seat = _resolve_appointment_seat(
             db,
             name=name,
@@ -288,7 +292,7 @@ def apply_office_appointment(
             new_office, new_office_type, appointment_tenure, seat = _fields_before_write(
                 current_office_type=current_office_type,
             )
-        except ValueError as exc:
+        except OfficeAppointmentRejection as exc:
             return _office_appointment_failure(name, new_office, exc, source=source)
         if cur_status != "active":
             db.set_character_status(
@@ -334,7 +338,7 @@ def apply_office_appointment(
         new_office, new_office_type, appointment_tenure, seat = _fields_before_write(
             current_office_type="",
         )
-    except ValueError as exc:
+    except OfficeAppointmentRejection as exc:
         return _office_appointment_failure(
             name, new_office, exc, kind="appoint",
             reason_suffix=f"；原 status={cur_status or '不在册'}",
@@ -359,3 +363,53 @@ def apply_office_appointment(
         "name": appointed, "new_office": new_office, "kind": "appoint", "reason": reason,
         **({"displaced": displaced_parts} if displaced_parts else {}),
     }
+
+
+def _payload_owned_person_duplicate(
+    db: GameDB,
+    item: Dict[str, object],
+    *,
+    current_office_type: str = "",
+    llm_config=None,
+) -> bool:
+    from ming_sim.entities.authority.apply import _payload_owned_dossier_for_origin
+    dossier = _payload_owned_dossier_for_origin(db, item.get("origin_ref") or item.get("来源引用"))
+    if dossier is None or dossier.get("action_type") not in {"appointment", "dismiss_assignment"}:
+        return False
+    payload = dossier["payload"]
+    person = str(item.get("name") or item.get("人物") or "").strip()
+    target = str(payload.get("_minister_name") or payload.get("minister_name") or dossier.get("target_id") or "").strip()
+    payload_action = str(payload.get("_office_action") or "").strip()
+    item_action = str(item.get("动作") or item.get("action") or "").strip()
+    if not person or person != target:
+        return False
+    if payload_action == "罢免":
+        return item_action in {"罢黜", "罢免"}
+    if payload_action != "任命" or item_action not in {"任命", "调任"}:
+        return False
+    canonical_kwargs = {
+        "current_office_type": current_office_type,
+        "llm_config": llm_config,
+    }
+
+    def _fields(src: Dict[str, object]) -> tuple[str, str, str, str]:
+        office, office_type, tenure, raw_seat = _canonical_appointment_fields(
+            src, **canonical_kwargs,
+        )
+        if not office:
+            return office, office_type, tenure, raw_seat
+        try:
+            seat = _resolve_appointment_seat(
+                db,
+                name=person,
+                office=office,
+                office_type=office_type,
+                region_id=raw_seat,
+            )
+        except OfficeAppointmentRejection:
+            # Typed seat reject only: missing/unknown region keeps raw for identity compare.
+            seat = raw_seat
+        return office, office_type, tenure, seat
+
+    payload_fields = _fields(payload)
+    return bool(payload_fields[0]) and payload_fields == _fields(item)

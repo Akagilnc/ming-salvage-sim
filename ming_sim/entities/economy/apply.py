@@ -1,6 +1,9 @@
 """实体记账原语。"""
 from __future__ import annotations
-from typing import Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Dict, List, Optional
+if TYPE_CHECKING:
+    from ming_sim.db import GameDB
+    from ming_sim.models import GameState
 from ming_sim.applier import RejectedItem, Provenance
 from ming_sim.strict_types import strict_int as _strict_int
 
@@ -32,13 +35,16 @@ def _apply_economy_list(
     rejections: List[RejectedItem] = []
     from ming_sim.flows import _auto_pay_arrears_by_priority, _payable_army_arrears_cap, _pay_single_army_arrears
     from ming_sim.assets import format_wanliang_amount
-    from ming_sim.constants import ECONOMY_PURPOSES, ECONOMY_TARGET_KINDS, TURN_UNIT as _TU
+    from ming_sim.constants import ECONOMY_PURPOSES, ECONOMY_TARGET_KINDS
     applied: List[Dict[str, object]] = []
     # isinstance 守卫：issue-effect 的 economy（来自 enrich，未经 schema 清洗）可能被 LLM 给成真值
     # 非 list（true/数字/字符串），`economy or []` 兜不住→`for move in 它`抛 TypeError 崩结算（#117
     # 同 bug 类，与 _apply_issue_buildings 的 list 守卫一致）。此处是 economy 应用 choke，护全部调用点。
-    for move in (economy if isinstance(economy, list) else []):
-        if not isinstance(move, dict):  # list 内混非 dict 项（[1,"x"]）也守，免 move.get 抛 AttributeError（#117 codex）
+    if not isinstance(economy, list):
+        return [], [RejectedItem(item={"raw_value": economy}, reason="经济效果须为数组", category="invalid_shape", source=source)]
+    for move in economy:
+        if not isinstance(move, dict):
+            rejections.append(RejectedItem(item={"raw_value": move}, reason="经济效果项须为对象", category="invalid_shape", source=source))
             continue
         # 先解析 delta：None/"" = 缺额 → 0 no-op；bool/float/坏串 → bad_delta（_strict_int 拒
         # bool/float，与 faction/region/army 同约）。no-op（可解析的 0/缺额）行无钱动 → 静默跳，

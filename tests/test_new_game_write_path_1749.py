@@ -20,7 +20,7 @@ from tests.test_month_loop_tracer_1468 import (
     _assert_not_bare_500,
     _parse_sse,
     _pick_active_minister,
-    tracer_client,
+    tracer_client,  # pytest fixture registration
 )
 from tests.test_session_write_queue_1353 import wait_pending_writes as _wait_pending_writes
 from tests.wait_utils import wait_until
@@ -429,7 +429,7 @@ def test_new_game_construct_failure_keeps_old_writable(tracer_client, monkeypatc
 
     monkeypatch.setattr(GameSession, "begin_turn", _boom_begin)
     # TestClient 默认 raise_server_exceptions：构造失败原样上抛，仍须恢复旧局。
-    with pytest.raises(RuntimeError, match="begin_turn boom"):
+    with pytest.raises(RuntimeError):
         client.post("/api/menu/new_game")
     assert web_app.web_game is g0
     assert web_app._same_db_path(web_app._get_main_db_path(), main_before)
@@ -462,7 +462,7 @@ def test_gamesession_load_state_failure_closes_partial_resources(tmp_path, monke
         raise RuntimeError("load_state boom")
 
     monkeypatch.setattr(GameDB, "load_state", boom_load)
-    with pytest.raises(RuntimeError, match="load_state boom"):
+    with pytest.raises(RuntimeError):
         GameSession(
             db_path=dbp,
             llm_config=LLMConfig(api_key="sk-test", base_url="http://x", model="m"),

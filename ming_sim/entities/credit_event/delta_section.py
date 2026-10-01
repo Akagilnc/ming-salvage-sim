@@ -54,7 +54,7 @@ def apply(run):
     from ming_sim.credit_events import resolve_credit_events_from_extraction
 
     person = _placed(run, "person_pre", "person_issue", "person_post")
-    issue = run.issue_result
+    issue = run.outcomes.get("issue")
     credit_applied: Dict[str, object] = {
         "dossier_executions": _landed_sources(_placed(run, "dossier_executions")),
         "人物变更": [
