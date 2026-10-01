@@ -911,6 +911,14 @@ def test_secret_order_progress_is_stored_verbatim(game):
         f"{live[0]['memorial_text']}"
     )
     assert block in feed
+    other_character = content.characters.get(other)
+    assert other_character is not None and other != minister
+    other_prepared = prepare_character_materials(db, state, other_character)
+    leaked = [
+        path for path in list_materials(other_prepared.root)
+        if block in read_material(other_prepared.root, path)
+    ]
+    assert leaked == []
     archive_path = next(
         path for path in list_materials(prepared.root) if path.endswith("/公事档案.txt")
     )
