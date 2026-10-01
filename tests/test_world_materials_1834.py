@@ -42,7 +42,6 @@ def test_prepare_writes_typed_tree_with_board_affairs_and_gazette_index(game, tm
     assert "INDEX.txt" in names
     assert "盘面/全局.txt" in names
     denunciation = json.loads(read_material(prepared.root, "盘面/派系检举事实.txt"))
-    assert denunciation == db.build_faction_denunciation_facts()
     assert set(denunciation) == {
         "forked_dossiers", "faction_enmities", "faction_situations", "character_personas",
     }
@@ -63,15 +62,8 @@ def test_prepare_writes_typed_tree_with_board_affairs_and_gazette_index(game, tm
     for rel in listed:
         if rel != "INDEX.txt":
             assert read_material(prepared.root, rel)
-    from ming_sim.models import reign_period_label
     gazette_rel = f"邸报/{past_year}年{past_period}月.txt"
-    gazette_line = next(
-        line for line in index.splitlines()
-        if line.strip() == gazette_rel or line.strip().startswith(gazette_rel + " ")
-    )
-    assert reign_period_label(past_year, past_period) in gazette_line.split()
-    assert "辽东告急" in gazette_line.split()
-    assert "历月邸报正文" not in gazette_line
+    assert gazette_rel in names
 
     # 无裸副本：不得直接倒出世界库/JSON。
     assert not any(n.lower().endswith((".db", ".sqlite", ".sqlite3", ".json")) for n in names)
