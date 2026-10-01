@@ -1416,24 +1416,60 @@ def _world_candidate_events(db: Any, state: Any) -> list:
 
 
 def _world_fiscal_levy_petitions(db: Any, state: Any) -> list:
-    """#1892 J5：三饷到点请旨事项——交世界段成陈情与拟旨，皇帝亲裁，不由模型代批。
+    """#1892：三饷到点请旨事项——交世界段成陈情与拟旨，皇帝亲裁，不由模型代批。
 
     资格单一真源＝issues.gather_fiscal_levy_petitions；本函数只投影事件自身既有
     字段（不另设判门、不写终态）。军费实况仍走盘面既有段落，本目录不重造。
+
+    另投影**已呈未决**事项的既有事实（#1891 后续世界段供料契约）：该事项此前已上疏
+    皇帝、皇帝已批「留中」或尚未答复。推演者据此可另上疏续请，也可不再上疏；引擎
+    不新增自动重呈机制，也不改判门（资格仍由 gather_fiscal_levy_petitions 判）。
     """
     from ming_sim.issues import gather_fiscal_levy_petitions
 
-    return [
-        {
+    presented = {}
+    for row in db.list_event_petition_records():
+        event_id = str(row.get("event_id") or "")
+        record = row.get("petition")
+        if not event_id or not isinstance(record, dict):
+            continue
+        # 答案字段（label/hint/note）与呈疏字段同在 choice_json 顶层，petition 段
+        # 只放「何时呈、呈的什么」——两处都读，别只读一层。
+        presented[event_id] = {
+            **record,
+            "emperor_label": str(row.get("label") or ""),
+            "emperor_hint": str(row.get("hint") or ""),
+            "emperor_note": str(row.get("note") or ""),
+            # 留中＝已有请旨答复且终态仍空。不另记标记、不解析批语用词。
+            "held": not str(row.get("terminal_state") or "").strip(),
+        }
+    items = []
+    for ev in gather_fiscal_levy_petitions(state, db):
+        record = presented.get(ev.id)
+        item: dict = {
             "id": ev.id,
             "title": ev.title,
             "summary": ev.summary,
             # 封闭结局标签＝玩家批红可落的白名单；模型只可在此集内给选项标签，
-            # 否则 apply_historical_fiscal_rates 的归一器会 fail-loud。
+            # 否则语义写口的归一器会 fail-loud。
             "verdict_labels": list(getattr(ev, "terminal_reason_labels", []) or []),
         }
-        for ev in gather_fiscal_levy_petitions(state, db)
-    ]
+        if record is not None:
+            # 逐字供给已呈奏疏原文与皇帝原批语（ADR 0142：不删改、不摘要成模板）。
+            item["presented"] = {
+                "presented_title": str(record.get("title") or ""),
+                "presented_context": str(record.get("context") or ""),
+                "emperor_label": record["emperor_label"],
+                "emperor_hint": record["emperor_hint"],
+                "emperor_note": record["emperor_note"],
+                "held": record["held"],
+                "presented_turn": record.get("presented_turn"),
+                "presented_year": record.get("presented_year"),
+                "presented_period": record.get("presented_period"),
+                "held_turn": record.get("held_turn"),
+            }
+        items.append(item)
+    return items
 
 
 def _write_candidate_event_files(tmp: Path, db: Any, state: Any) -> list[str]:
@@ -1481,6 +1517,21 @@ def _write_fiscal_levy_petition_files(tmp: Path, db: Any, state: Any) -> list[st
     index.append(index_rel)
     for item, entry in zip(petitions, entries):
         rel = f"{_PETITION_DIR}/{entry}"
+        presented = item.get("presented")
+        prior_lines = ""
+        if isinstance(presented, dict):
+            # 已呈未决的既有事实逐字供给（ADR 0142）：旧疏原文与皇帝原批语都原样写出，
+            # 由推演者自行决定是否另上疏；引擎不加自动重呈。
+            prior_lines = "\n".join((
+                "",
+                f"此前已呈：{presented.get('presented_title') or ''}",
+                f"呈疏年份：{presented.get('presented_year')}",
+                f"呈疏期：{presented.get('presented_period')}",
+                f"已呈奏疏原文：{presented.get('presented_context') or ''}",
+                f"皇帝原批语标签：{presented.get('emperor_label') or ''}",
+                f"皇帝原批语提示：{presented.get('emperor_hint') or ''}",
+                f"皇帝原批语：{presented.get('emperor_note') or ''}",
+            ))
         body = "\n".join(
             f"{label}：{value}"
             for label, value in (
@@ -1489,7 +1540,7 @@ def _write_fiscal_levy_petition_files(tmp: Path, db: Any, state: Any) -> list[st
                 ("事由", item["summary"]),
                 ("可批结局标签", "、".join(item["verdict_labels"])),
             )
-        )
+        ) + prior_lines
         _write_text(tmp / rel, body)
         index.append(rel)
     return index

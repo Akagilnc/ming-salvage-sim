@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 import re
-from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
+from typing import (
+    TYPE_CHECKING, Dict, List, Mapping, Optional, Sequence, Tuple,
+)
 
 from ming_sim.action_clusters import season_option_fields, validate_season_option
 from ming_sim.models import effect_dict_has_work
@@ -92,9 +94,16 @@ def parse_decision_blocks(text: str) -> List[Dict[str, object]]:
             "context": str(obj.get("context") or "").strip(),
             "options": options[:3],
         }
-        event_id = str(obj.get("event_id") or obj.get("origin_ref") or "").strip()
-        if event_id:
-            decision["event_id"] = event_id
+        # 事件身份只认请旨块自己的 event_id。origin_ref 是另一条来源，不得冒充
+        # 已核对的事件 id（ADR 0115：不从旁路键猜配）。dossier 旧块仍把 origin_ref
+        # 填进 event_id，但带上来源标记，世界请旨绑定不把它当快照回显。
+        explicit_event_id = str(obj.get("event_id") or "").strip()
+        origin_ref = str(obj.get("origin_ref") or "").strip()
+        if explicit_event_id:
+            decision["event_id"] = explicit_event_id
+        elif origin_ref:
+            decision["event_id"] = origin_ref
+            decision["event_id_from_origin_ref"] = True
         decisions.append(decision)
     return decisions
 
@@ -145,6 +154,50 @@ def decision_has_rescript_capability(decision: object) -> bool:
     return False
 
 
+def bind_decisions_to_authoritative_snapshot(
+    decisions: List[Dict[str, object]],
+    snapshot: Sequence[Mapping[str, object]],
+) -> List[Dict[str, object]]:
+    """Bind each decision's event_id against an AUTHORITATIVE id/title snapshot.
+
+    ADR 0115:5 — 绑定真源＝推送期分配的稳定键（权威快照），绑定由构造与核对保证，
+    不靠事后从自由文里捞 id：
+
+    - 回显 id **只在确属本快照时**才认（正常正确回显路径行为不变）。
+    - 缺 id 或回显 id 不在快照里：按快照内**唯一同名标题**绑（重），不被回显牵着走。
+    - 仍绑不上：解绑（``event_id`` 移除）。该选择仍留在 pending_decisions.choice_json，
+      不写事件终态账；绑不上的请旨由供料侧续呈，不在此猜配。
+
+    任何调用方都只应把本函数的输出当作绑定结果，不得再从原文重推。
+    """
+    bound: List[Dict[str, object]] = []
+    snapshot_ids: set[str] = set()
+    title_to_ids: Dict[str, List[str]] = {}
+    for item in snapshot:
+        event_id = str(item.get("id") or "").strip()
+        title = str(item.get("title") or "").strip()
+        if not event_id:
+            continue
+        snapshot_ids.add(event_id)
+        if title:
+            title_to_ids.setdefault(title, []).append(event_id)
+
+    for decision in decisions:
+        out = dict(decision)
+        explicit = str(out.get("event_id") or "").strip()
+        if explicit and explicit in snapshot_ids:
+            bound.append(out)
+            continue
+        title = str(out.get("title") or "").strip()
+        ids = {event_id for event_id in (title_to_ids.get(title) or []) if event_id}
+        if len(ids) == 1:
+            out["event_id"] = next(iter(ids))
+        elif explicit:
+            out.pop("event_id", None)
+        bound.append(out)
+    return bound
+
+
 def bind_decisions_to_candidate_events(
     decisions: List[Dict[str, object]],
     simulator_payload: object,
@@ -152,19 +205,13 @@ def bind_decisions_to_candidate_events(
     """Bind decision event_id to the AUTHORITATIVE candidate snapshot (#389).
 
     The candidate snapshot — not the simulator's free-text echo — is the source of
-    truth (#389 裁决：用权威候选快照确定性绑定，不依赖 simulator 回显 event_id）:
-    - A simulator-echoed event_id is trusted ONLY if it actually belongs to this
-      turn's candidate snapshot (the normal correct-echo path → 行为不变).
-    - A missing id, OR an echoed id that is NOT in the snapshot (omitted→misfilled /
-      hallucinated), binds on a unique exact title match inside
-      simulator_payload.candidate_events. We do not let an off-snapshot id win over
-      the snapshot just because the LLM wrote it.
-    - Non-event HITL decisions keep no event_id (nothing to bind). An echoed
-      off-snapshot id with no unique title match is UNBOUND (event_id removed) — the
-      snapshot gives no basis to trust it, and leaving it would let submit_decisions
-      write a non-candidate id into the event ledger as 'triggered' (see the inline
-      comment on the `elif explicit` branch below). A genuinely absent id with no
-      title match simply stays unbound.
+    truth (#389 裁决：用权威候选快照确定性绑定，不依赖 simulator 回显 event_id)：
+
+    - 回显 id 确属本回合候选快照 → 采信（正常路径行为不变）。
+    - ``dossier:`` 前缀只在 options 带齐 dossier_id+dossier_decision（真批红待裁）时
+      保留；裸 origin_ref 回填 / 幻觉行照旧解绑，否则 due-commitment 同形会空对空过
+      先验 → phase2 批红卡死（#1490/#1492 A）。
+    - 其余按 :func:`bind_decisions_to_authoritative_snapshot` 的唯一标题规则处理。
     """
     if not decisions:
         return []
@@ -173,47 +220,17 @@ def bind_decisions_to_candidate_events(
     raw_candidates = simulator_payload.get("candidate_events")
     if not isinstance(raw_candidates, list):
         return [dict(d) for d in decisions]
-
-    candidate_ids: set[str] = set()
-    title_to_ids: Dict[str, List[str]] = {}
-    for item in raw_candidates:
-        if not isinstance(item, dict):
-            continue
-        event_id = str(item.get("id") or "").strip()
-        title = str(item.get("title") or "").strip()
-        if not event_id:
-            continue
-        candidate_ids.add(event_id)
-        if title:
-            title_to_ids.setdefault(title, []).append(event_id)
-
-    bound: List[Dict[str, object]] = []
-    for decision in decisions:
-        out = dict(decision)
-        explicit = str(out.get("event_id") or "").strip()
-        if explicit and explicit in candidate_ids:
-            bound.append(out)  # 回显 id 确属本回合候选 → 采信（正常路径行为不变）
-            continue
-        # #1490/#1492 A：仅当 options 带齐 dossier_id+dossier_decision 时保留
-        # dossier: 前缀（真批红待裁）。裸 origin_ref 回填 / LLM 幻觉行照旧解绑，
-        # 否则 due-commitment 同形会空对空过先验 → phase2 批红卡死。
-        if explicit.startswith("dossier:") and decision_has_rescript_capability(out):
-            bound.append(out)
-            continue
-        # 缺 id，或回显 id 不在权威候选快照里：以快照唯一标题为准（重）绑，不被 LLM 回显牵着走。
-        title = str(out.get("title") or "").strip()
-        ids = title_to_ids.get(title) or []
-        unique_ids = {event_id for event_id in ids if event_id}
-        if len(unique_ids) == 1:
-            out["event_id"] = next(iter(unique_ids))
-        elif explicit:
-            # off-snapshot 回显 id 且无唯一标题可绑 → 解绑，不保留这个非候选 id（codex
-            # correctness）：留着它会被 submit_decisions 当 'triggered' 写进事件账，若它其实是
-            # 一个真实的未来事件 id，就被永久标成已触发、再也进不了候选池（gather_candidate_events
-            # 跳过 spawned）。解绑后该选择仍在
-            # pending_decisions.choice_json，不污染终态账。正常含【候选内】id 的路径不受影响。
-            out.pop("event_id", None)
-        bound.append(out)
+    snapshot = [item for item in raw_candidates if isinstance(item, Mapping)]
+    kept_dossier = {
+        index for index, decision in enumerate(decisions)
+        if isinstance(decision, Mapping)
+        and str(decision.get("event_id") or "").strip().startswith("dossier:")
+        and decision_has_rescript_capability(decision)
+    }
+    bound = bind_decisions_to_authoritative_snapshot(decisions, snapshot)
+    for index, decision in enumerate(decisions):
+        if index in kept_dossier:
+            bound[index]["event_id"] = str(decision.get("event_id") or "").strip()
     return bound
 
 

@@ -499,8 +499,12 @@ def _dispatch_effects(
             ordered_effect_event_ids[field].extend(event_ids)
     if not accepted_effect:
         return SectionResult(applied=[], rejected=rejected)
+    # 归一器按字段登记信封归属，只声明「事件结局」这类单个字典字段时不登记该键；
+    # 事件身份由**信封自身**的 event_id 决定，故把信封 id 一并交落账层（同一权威
+    # 声明，非第二来源），供按事件归属结局的写口使用。
     report = apply_score_extraction(
         db, state, extraction, content=db.content,
+        declared_effect_event_ids=[event_id for _, event_id, _ in clean_items],
         open_affair_ids_at_input=set(refs.get("affairs", ())),
         dossier_ids_at_input=set(refs.get("dossiers", ())),
         secret_dossier_ids_at_input=set(refs.get("secret_dossiers", ())),

@@ -2318,11 +2318,10 @@ def test_huangtaiji_chengdi_selected_lands_core_fact_and_terminal_exactly_once(g
         "SELECT name, aliases, status, last_action FROM powers WHERE id=?",
         ("houjin",),
     ).fetchone()
+    # 核心事实（国号改称）落在结构化字段上；status/last_action 是模型写的叙事
+    # 散文，按 ADR 0142 零删改，不对其措辞做契约断言。
     assert row["name"] == "大清"
-    assert "后金" in row["aliases"]
-    assert "大清" in row["aliases"]
-    assert "称帝" in row["status"]
-    assert row["last_action"] == "皇太极称帝改国号大清"
+    assert "后金" in row["aliases"] and "大清" in row["aliases"]
 
     # 续跑／重开下月都不重发、不重落（已落终态即退候选）。
     issues.auto_trigger_seed_issues(state, db)

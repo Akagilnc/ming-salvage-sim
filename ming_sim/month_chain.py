@@ -570,6 +570,9 @@ def _run_loaded_month_chain(
     declaration_outcome = _settle_edicts(
         session, chain=chain, on_outcome=persist_declaration_outcome,
     )
+    _consume_event_gates_after_edicts(
+        session, chain, decree_text=decree_text, source=source,
+    )
     world_outcome = _run_world_segment(session, chain, source=source)
     declaration_outcome = world_outcome or declaration_outcome
     desk = _materialize_rescript_desk(db, state, chain)
@@ -919,6 +922,46 @@ def _collect_disclosures_from_result(chain: Optional[Dict[str, Any]], result: An
                 }
                 if item not in pending:
                     pending.append(item)
+
+
+def _consume_event_gates_after_edicts(
+    session: Any, chain: Dict[str, Any], *, decree_text: str, source: Provenance,
+) -> None:
+    """#1892：世界段从**当月实账**起调——逐旨落账后重跑既有判门，再开世界段。
+
+    修复「世界触发未消费逐旨落账后的当月实况」：``pre_settle`` 的判门
+    （apply_event_terminal_states + auto_trigger_seed_issues）在**旨意结算之前**跑，
+    那时本月旨意的机械后果尚未入账，依赖这些后果才达成的判门本月必然漏发
+    （诊断反例：unrest 由旨意抬到 80、gate 已 true，事件仍无终态）。
+
+    这里**复用同一对既有判门**在世界段起调前再跑一次，不新增平行判门、不新增
+    触发机制：两条路径读的都是同一批 ``event_triggers`` 终态账，天然幂等
+    （已落终态／已触发者在各自函数内被跳过），因此重跑只会把「本月新达成的
+    判门」补上，不会二次触发或翻转既有终态。
+    """
+    from ming_sim.issues import apply_event_terminal_states, auto_trigger_seed_issues
+    from ming_sim.token_stats import tlog
+
+    db, state = session.db, session.state
+    turn = int(state.turn)
+    if chain.get("event_gates_after_edicts_done"):
+        return
+    with atomic(db):
+        terminalized = apply_event_terminal_states(state, db, commit=False)
+        triggered = auto_trigger_seed_issues(state, db)
+    if terminalized:
+        tlog(
+            f"[event-gate] 逐旨后补判终态 {len(terminalized)} 条："
+            f"{[(t['id'], t['terminal_state']) for t in terminalized]}"
+        )
+    if triggered:
+        tlog(
+            f"[event-gate] 逐旨后补判硬触发 {len(triggered)} 条："
+            f"{[t.get('title') for t in triggered]}"
+        )
+    with atomic(db):
+        chain["event_gates_after_edicts_done"] = True
+        _save_chain(db, turn, chain, decree_text=decree_text, source=source)
 
 
 def _run_world_segment(
@@ -1353,6 +1396,8 @@ def _materialize_rescript_desk(
         decisions.append(_question_as_decision(
             question, event_id=f"{_WORLD_QUESTION_PREFIX}{turn}:{idx}",
         ))
+    if open_items["world_questions"]:
+        _pin_world_question_event_bindings(chain, db=db, state=state, turn=turn)
     if decisions:
         db.save_pending_decisions(turn, decisions)
     # 已应用 return_revise 仍 pending，但是本批已办，不是新待裁。
@@ -1373,29 +1418,68 @@ def _materialize_rescript_desk(
 def world_question_event_bindings(
     chain: Dict[str, Any], *, db: Any, state: Any, turn: int,
 ) -> Dict[str, str]:
-    """本回合世界段请旨的「案头行身份 → 事件身份」绑定表（#1892 J5/K1 单一真源）。
+    """读推送时钉死的「案头行身份 → 事件身份」。缺表时补钉一次，已钉的不再重算。"""
+    pinned = chain.get("world_question_event_bindings")
+    if not isinstance(pinned, dict):
+        _pin_world_question_event_bindings(chain, db=db, state=state, turn=turn)
+        pinned = chain.get("world_question_event_bindings") or {}
+    return {
+        str(key): str(value)
+        for key, value in pinned.items()
+        if str(value or "").strip()
+    }
 
-    请旨行的**案头身份恒为** `world-question:{turn}:{idx}`——全月链与批红轨按此前缀
-    判归属（续推筛选、仅亲笔 note 的答复、案头清理），不因回显了哪个事件 id 而改。
-    事件身份是另一层：世界段回显的 id 经**当回合到期快照**（issues.
-    gather_fiscal_levy_petitions）核对才认，认下即由 _consume_rescript_answers 把皇帝
-    的批红经 db.record_event_decision_choice 写进事件账。
 
-    两层分家的缘由：把事件 id 写进案头行 event_id 会让「这行属不属于世界问块」在两处
-    （身份改写处、按前缀判归属处）各判一次而不同步——批红后世界续推不触发、请旨反复
-    重物化、月链卡死在 rescript（K1）。案头身份与事件身份本就是两回事，故不再混用。
+def _pin_world_question_event_bindings(
+    chain: Dict[str, Any], *, db: Any, state: Any, turn: int,
+) -> None:
+    """推送案头时把事件身份钉进月链（ADR 0115）。
+
+    案头行身份保持 ``world-question:{turn}:{idx}``，不把事件 id 写进那一列。
+    事件身份只来自当回合 ``gather_fiscal_levy_petitions`` 的 id 快照：请旨块自带且
+    属于该快照的 event_id 直接钉上；缺 id 且只剩一件未绑定的到期事项、也只剩一条
+    未绑定的请旨时，钉这一对。两边都还剩则 fail-loud，不按标题、不按 origin_ref、
+    不静默跳过。钉完之后快照再变也不改这张表。
     """
+    if isinstance(chain.get("world_question_event_bindings"), dict):
+        return
+    from ming_sim.exceptions import SettlementAbort
     from ming_sim.issues import gather_fiscal_levy_petitions
 
-    due = {ev.id for ev in gather_fiscal_levy_petitions(state, db)}
+    questions = [
+        q for q in (chain.get("world_questions") or []) if isinstance(q, dict)
+    ]
+    due: List[str] = []
+    for ev in gather_fiscal_levy_petitions(state, db):
+        event_id = str(ev.id or "").strip()
+        if event_id and event_id not in due:
+            due.append(event_id)
+    due_set = set(due)
     bindings: Dict[str, str] = {}
-    for idx, question in enumerate(chain.get("world_questions") or []):
-        if not isinstance(question, dict):
-            continue
-        echoed = str(question.get("event_id") or question.get("origin_ref") or "").strip()
-        if echoed and echoed in due:
-            bindings[f"{_WORLD_QUESTION_PREFIX}{turn}:{idx}"] = echoed
-    return bindings
+    used: set[str] = set()
+    unbound: List[int] = []
+    for idx, question in enumerate(questions):
+        desk_key = f"{_WORLD_QUESTION_PREFIX}{turn}:{idx}"
+        echoed = ""
+        if not question.get("event_id_from_origin_ref"):
+            echoed = str(question.get("event_id") or "").strip()
+        if echoed in due_set and echoed not in used:
+            bindings[desk_key] = echoed
+            used.add(echoed)
+        else:
+            unbound.append(idx)
+    remaining = [event_id for event_id in due if event_id not in used]
+    if len(unbound) == 1 and len(remaining) == 1:
+        bindings[f"{_WORLD_QUESTION_PREFIX}{turn}:{unbound[0]}"] = remaining[0]
+        unbound = []
+        remaining = []
+    if unbound and remaining:
+        raise SettlementAbort(
+            "世界请旨无法绑定事件身份：到期事项不唯一，且请旨未带该快照内的事件 id",
+            turn=turn,
+            stage="rescript",
+        )
+    chain["world_question_event_bindings"] = bindings
 
 
 def _question_as_decision(question: Dict[str, object], *, event_id: str) -> Dict[str, object]:
@@ -1427,12 +1511,16 @@ def _record_world_question_event_choices(
     db: Any, state: Any, chain: Dict[str, Any], world_rows: List[Dict[str, object]], *,
     turn: int,
 ) -> None:
-    """世界段请旨里绑定了到期事件的那些行：把皇帝批红写进事件账（#1892 J5/K1）。
+    """绑定了三饷事项的请旨行：把「已呈奏疏 + 皇帝原批语」整份落进事件账（#1892）。
 
     案头身份恒为 world-question: 前缀，故此处按绑定表（world_question_event_bindings，
     单一真源）取事件身份，而不是从行上的 event_id 反推——那正是 K1 里两处判断不同步
-    的病根。写入走既有 db.record_event_decision_choice：只暂存 choice，结局标签由下
-    一月 apply_historical_fiscal_rates 归一，此处不代批、不写终态。
+    的病根。写入走 :meth:`db.record_event_petition_answer`：**只记账，不置结局**。
+
+    结局标签不在这儿落：亲笔准驳须经 #1815 单一语义写口
+    （:func:`ming_sim.issues.apply_petition_event_outcome`，由世界段续推的语义转译
+    声明驱动）置定事件结局。把原始选项标签直接写成 terminal_reason 就是以标签旁路
+    替代亲裁语义转译（ADR 0153:5），也是留中标签污染终局标签集的根因。
     """
     bindings = world_question_event_bindings(chain, db=db, state=state, turn=turn)
     if not bindings:
@@ -1444,7 +1532,18 @@ def _record_world_question_event_choices(
                 continue
             raw_choice = row.get("choice")
             choice: Dict[str, object] = dict(raw_choice) if isinstance(raw_choice, dict) else {}
-            db.record_event_decision_choice(state, event_id, choice, commit=False)
+            db.record_event_petition_answer(
+                state, event_id, choice,
+                {
+                    "title": str(row.get("title") or ""),
+                    "context": str(row.get("context") or ""),
+                    "options": [
+                        str(opt.get("label") or "")
+                        for opt in (row.get("options") or []) if isinstance(opt, dict)
+                    ],
+                },
+                commit=False,
+            )
 
 
 def _consume_rescript_answers(

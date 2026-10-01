@@ -34,6 +34,57 @@ def _visible_effect_refs(db: Any, turn: int, decree_payload: Mapping[str, object
     }
 
 
+def petition_verdict_grounding(db: Any, state: Any) -> list[dict[str, object]]:
+    """已呈皇帝、待亲裁落定结局的三饷事项及其封闭标签集（#1892 / ADR 0143 输入侧）。
+
+    转译器据这段**已有事实**把皇帝的准驳语义落到该事项的封闭结局标签上；不声明
+    结局即「本疏已答而事件未终」（留中），引擎据此不写终态。只供事实，不代模型判断。
+    """
+    from ming_sim.issues import gather_fiscal_levy_petitions, petition_outcome_is_admissible
+
+    out: list[dict[str, object]] = []
+    for ev in gather_fiscal_levy_petitions(state, db):
+        if not petition_outcome_is_admissible(state, db, ev.id, None):
+            continue
+        out.append({
+            "event_id": ev.id,
+            "title": ev.title,
+            "verdict_labels": list(getattr(ev, "terminal_reason_labels", []) or []),
+        })
+    for row in db.list_event_petition_records():
+        event_id = str(row.get("event_id") or "")
+        if not event_id or any(item["event_id"] == event_id for item in out):
+            continue
+        if not petition_outcome_is_admissible(state, db, event_id, None):
+            continue
+        from ming_sim.issues import _fiscal_levy_event_by_id
+
+        ev = _fiscal_levy_event_by_id(event_id)
+        if ev is None:
+            continue
+        out.append({
+            "event_id": event_id,
+            "title": ev.title,
+            "verdict_labels": list(getattr(ev, "terminal_reason_labels", []) or []),
+        })
+    return out
+
+
+def _petition_verdict_block(
+    db: Any, state: Any, decree_payload: Mapping[str, object],
+) -> str:
+    del decree_payload
+    if state is None:
+        return ""
+    items = petition_verdict_grounding(db, state)
+    if not items:
+        return ""
+    return (
+        "【已呈皇帝、待亲裁落定结局的三饷事项】\n"
+        + json.dumps(items, ensure_ascii=False, indent=2)
+    )
+
+
 def _effect_ref_grounding(refs: Mapping[str, object]) -> str:
     return "【本段效果可回指的记录 ID】\n" + "\n".join(
         f"{kind}: {json.dumps(ids, ensure_ascii=False)}" for kind, ids in refs.items()
@@ -76,6 +127,9 @@ def build_month_segment_translate_prompt(request: MonthTranslationInput) -> str:
         "同类效果若已由结构化载荷表示，不得再重复声明。预推时载荷尚未物化，"
         "不能把它理解成已经落账。\n"
         "- 过月没有召对夜上下文，promises、presence、scene_facts 均留空；没有对应事实的其它 section 也留空（protagonist 无则省略或 null）。\n"
+        "- 段文若交代了皇帝对某个已呈三饷事项的亲裁准驳，在该事项的效果信封顶层 event_id 明写其 id，"
+        "并在该信封的「事件结局」里按该事项给出的封闭标签集声明结局标签；"
+        "皇帝留中或本段未交代该事项结局时不声明——留中不是结局标签。\n"
         f"【旨的结构化载荷】\n{json.dumps(dict(request.decree_payload), ensure_ascii=False, indent=2)}\n"
         f"【在途办理案卷】\n{json.dumps(list(request.continuing_dossiers), ensure_ascii=False)}\n"
         f"{grounding_block}"
@@ -124,16 +178,21 @@ def _translate_month_segment_front(
     *,
     segment: str,
     turn: int,
+    state: Any = None,
     decree_payload: Mapping[str, object],
     llm_config: Any = None,
     translate_fn: Optional[MonthTranslateFn] = None,
-    continuing_dossiers: tuple[Mapping[str, object], ...] | list[Mapping[str, object]] = (),
-) -> tuple[dict[str, object], dict[str, list[int]]]:
+    continuing_dossiers: tuple[Mapping[str, object], ...] = (),
+) -> tuple[dict[str, object], dict[str, list[str]]]:
     """过月段转译前半：冻结可见引用、拼 grounding、一次转出 C0 声明。"""
     refs = _visible_effect_refs(db, turn, decree_payload)
     declaration = translate_month_segment(
         segment=segment,
-        target_grounding=build_translation_target_grounding(db) + _effect_ref_grounding(refs),
+        target_grounding=(
+            build_translation_target_grounding(db, state)
+            + _effect_ref_grounding(refs)
+            + _petition_verdict_block(db, state, decree_payload)
+        ),
         decree_payload=decree_payload,
         llm_config=llm_config,
         translate_fn=translate_fn,
@@ -148,13 +207,14 @@ def stage_month_segment(
     decree_ref: str,
     segment: str,
     turn: int,
+    state: Any = None,
     decree_payload: Mapping[str, object],
     llm_config: Any = None,
     translate_fn: Optional[MonthTranslateFn] = None,
 ) -> int:
     """预推段转译一次，只暂存声明；持久化、作废、按旨序结算沿 C0 原入口。"""
     declaration, refs = _translate_month_segment_front(
-        db, segment=segment, turn=turn, decree_payload=decree_payload,
+        db, segment=segment, turn=turn, state=state, decree_payload=decree_payload,
         llm_config=llm_config, translate_fn=translate_fn,
     )
     return stage_declaration(
@@ -181,7 +241,7 @@ def dispatch_month_segment(
     payload = decree_payload or {}
     turn = int(state.turn)
     declaration, refs = _translate_month_segment_front(
-        db, segment=segment, turn=turn, decree_payload=payload,
+        db, segment=segment, turn=turn, state=state, decree_payload=payload,
         llm_config=llm_config, translate_fn=translate_fn,
         continuing_dossiers=continuing_dossier_facts(db, turn),
     )
