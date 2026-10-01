@@ -5,6 +5,8 @@ seam = 月末确定性结算 tick（apply_fixed_period_flows）
 """
 from __future__ import annotations
 
+from ming_sim.applier import Provenance
+
 from types import SimpleNamespace
 
 import pytest
@@ -252,14 +254,14 @@ def test_empty_source_delta_cannot_defect_latched_first_or_second_strike(
             (ARMY,),
         ).fetchone()
 
-        changes = db.apply_army_deltas(
+        changes, changes_rejections = db.apply_army_deltas(
             state,
             SimpleNamespace(id="season", title="空来源归属"),
             None,
             "测试",
             {ARMY: {"owner_power": "houjin", "reason": "投敌"}},
             commit=False,
-        )
+        source=Provenance.system_simulation)
 
         after = db.conn.execute(
             "SELECT owner_power,is_mutinied,arrears,mutiny_count FROM armies WHERE id=?",
@@ -291,14 +293,14 @@ def test_non_latched_generic_owner_change_still_works_via_adapter(game):
     )
     db.conn.commit()
 
-    changes = db.apply_army_deltas(
+    changes, changes_rejections = db.apply_army_deltas(
         state,
         SimpleNamespace(id="season", title="陷没"),
         None,
         "测试",
         {ARMY: {"owner_power": "houjin", "reason": "城破易主"}},
         commit=False,
-    )
+    source=Provenance.system_simulation)
 
     row = db.conn.execute("SELECT * FROM armies WHERE id=?", (ARMY,)).fetchone()
     assert not any(c.get("rejected") for c in changes)
@@ -333,7 +335,7 @@ def test_transfer_to_ming_rejects_mutiny_count_ge_3(game, cutover):
     )
     db.conn.commit()
 
-    changes = db.apply_army_deltas(
+    changes, changes_rejections = db.apply_army_deltas(
         state,
         SimpleNamespace(id="season", title="招安"),
         None,
@@ -348,7 +350,7 @@ def test_transfer_to_ming_rejects_mutiny_count_ge_3(game, cutover):
             }
         },
         commit=False,
-    )
+    source=Provenance.system_simulation)
 
     row = db.conn.execute(
         "SELECT owner_power,mutiny_count FROM armies WHERE id=?", (ARMY,)
@@ -377,14 +379,14 @@ def test_transfer_to_ming_requires_d6_pay_source(game, cutover):
     )
     db.conn.commit()
 
-    rejected = db.apply_army_deltas(
+    rejected, rejected_rejections = db.apply_army_deltas(
         state,
         SimpleNamespace(id="season", title="招安缺饷源"),
         None,
         "测试",
         {ARMY: {"owner_power": "ming", "reason": "招安"}},
         commit=False,
-    )
+    source=Provenance.system_simulation)
     assert any(c.get("rejected") for c in rejected)
     assert (
         db.conn.execute(
@@ -393,7 +395,7 @@ def test_transfer_to_ming_requires_d6_pay_source(game, cutover):
         == "houjin"
     )
 
-    ok = db.apply_army_deltas(
+    ok, ok_rejections = db.apply_army_deltas(
         state,
         SimpleNamespace(id="season", title="招安"),
         None,
@@ -408,7 +410,7 @@ def test_transfer_to_ming_requires_d6_pay_source(game, cutover):
             }
         },
         commit=False,
-    )
+    source=Provenance.system_simulation)
     row = db.conn.execute("SELECT * FROM armies WHERE id=?", (ARMY,)).fetchone()
     assert not any(c.get("rejected") for c in ok)
     assert row["owner_power"] == "ming"

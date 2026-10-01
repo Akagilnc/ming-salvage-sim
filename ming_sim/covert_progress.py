@@ -12,6 +12,8 @@
 
 from __future__ import annotations
 
+from ming_sim.applier import RejectedItem, Provenance
+
 import copy
 import json
 from typing import Any, Dict, List, Mapping, Optional, Sequence
@@ -1017,12 +1019,14 @@ def apply_monthly_covert_actual_progress(
     selections: object = None,
     commit: bool = False,
     only_supplied: bool = False,
+    source: Provenance = Provenance.system_simulation,
 ) -> List[Dict[str, object]]:
     """当月实况轨落笔：推演者执行态 + 当月 origin 真实效果 → dossier_actual_progress。
 
     不发明人物/钱粮/地区固定套餐；奏报永不入 apply。
     ``only_supplied``：过月分段只落本段交代的执行态，不把其余未提及的在办密令误判为缺执行态。
     """
+    rejections: List[RejectedItem] = []
     orders = list(db.list_secret_orders(status="active"))
     by_sel = _selection_map(selections)
     applied: List[Dict[str, object]] = []
@@ -1043,9 +1047,7 @@ def apply_monthly_covert_actual_progress(
             continue
         dossier = db.get_dossier_for_secret_order(oid)
         if dossier is None:
-            applied.append({
-                "order_id": oid, "rejected": True, "reason": "密令缺少案卷",
-            })
+            rejections.append(RejectedItem(item={"order_id": oid}, reason="密令缺少案卷", category="missing_ref", source=source))
             continue
         if str(dossier.get("status") or "") == "closed":
             continue
@@ -1055,14 +1057,7 @@ def apply_monthly_covert_actual_progress(
         selected = sel.get("fidelity", sel.get("执行态", sel.get("state")))
         fidelity = normalize_fidelity_state(selected)
         if fidelity is None:
-            applied.append({
-                "order_id": oid,
-                "rejected": True,
-                "category": "invalid_enum",
-                "report_section": "covert_exec_selections",
-                "reason": f"密令 {oid} 缺少有效执行态",
-                "item": sel or {"order_id": oid},
-            })
+            rejections.append(RejectedItem(item=sel or {"order_id": oid}, reason=f"密令 {oid} 缺少有效执行态", category="invalid_enum", source=source))
             continue
         inv_target = _investigation_target_of(contract)
         bound_key = ""
@@ -1114,7 +1109,7 @@ def apply_monthly_covert_actual_progress(
         })
     if commit and int(getattr(db.conn, "_atomic_depth", 0) or 0) == 0:
         db.conn.commit()
-    return applied
+    return applied, rejections
 
 
 def list_due_secret_orders_for_settlement(db: Any, state: Any) -> List[Dict[str, object]]:
@@ -1133,15 +1128,15 @@ def settle_due_secret_orders(
     state: Any,
     *,
     commit: bool = False,
-) -> List[Dict[str, object]]:
+    source: Provenance = Provenance.system_simulation,
+) -> tuple[List[Dict[str, object]], List[RejectedItem]]:
     results: List[Dict[str, object]] = []
+    rejections: List[RejectedItem] = []
     for order in list_due_secret_orders_for_settlement(db, state):
         oid = int(order["id"])
         dossier = db.get_dossier_for_secret_order(oid)
         if dossier is None:
-            results.append({
-                "order_id": oid, "rejected": True, "reason": "密令缺少案卷",
-            })
+            rejections.append(RejectedItem(item={"order_id": oid}, reason="密令缺少案卷", category="missing_ref", source=source))
             continue
         if str(order.get("status") or "") in {"done", "failed"}:
             continue
@@ -1184,7 +1179,7 @@ def settle_due_secret_orders(
         })
     if commit and int(getattr(db.conn, "_atomic_depth", 0) or 0) == 0:
         db.conn.commit()
-    return results
+    return results, rejections
 
 
 def parse_covert_exec_selections(extracted: Mapping[str, object] | None) -> List[Dict[str, object]]:

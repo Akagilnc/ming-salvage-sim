@@ -3,6 +3,8 @@
 0 兵 → 0 饷（消解白嫖扩军上界 + 零兵吃饷下界）。扩军只落 manpower、应发自动随兵涨。
 """
 
+from ming_sim.applier import Provenance
+
 import math
 
 import pytest
@@ -195,7 +197,7 @@ def test_manpower_clamp_to_zero_leaves_army_log(game):
     pseudo = type("E", (), {"id": "test", "title": "裁军"})()
     before = db.conn.execute(
         "SELECT COUNT(*) FROM army_logs WHERE army_id=? AND field='manpower'", (aid,)).fetchone()[0]
-    db.apply_army_deltas(state, pseudo, None, "裁撤", {aid: {"manpower": -5}})  # 0 再减 → clamp 0、请求非 0
+    db.apply_army_deltas(state, pseudo, None, "裁撤", {aid: {"manpower": -5}}, source=Provenance.system_simulation)  # 0 再减 → clamp 0、请求非 0
     after = db.conn.execute(
         "SELECT COUNT(*) FROM army_logs WHERE army_id=? AND field='manpower'", (aid,)).fetchone()[0]
     assert after == before + 1, "0 兵再减(请求非 0 经 clamp 净 0)应留 army_log（不静默）"
@@ -213,7 +215,7 @@ def test_manpower_true_noop_no_log(game):
     pseudo = type("E", (), {"id": "test", "title": "无变"})()
     before = db.conn.execute(
         "SELECT COUNT(*) FROM army_logs WHERE army_id=? AND field='manpower'", (aid,)).fetchone()[0]
-    db.apply_army_deltas(state, pseudo, None, "无变", {aid: {"manpower": 0}})
+    db.apply_army_deltas(state, pseudo, None, "无变", {aid: {"manpower": 0}}, source=Provenance.system_simulation)
     after = db.conn.execute(
         "SELECT COUNT(*) FROM army_logs WHERE army_id=? AND field='manpower'", (aid,)).fetchone()[0]
     assert after == before, "真 no-op(delta==0)不留痕"

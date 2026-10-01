@@ -624,15 +624,12 @@ def _run_opening_levy(
     from ming_sim.issues import _apply_levy_driven_transfers
     from ming_sim.applier import RejectionCollector, mirror_rejections_after_commit
     from ming_sim.error_pack import rejections_jsonl_path
-    from ming_sim.applier import section_from_rows
 
     collector = RejectionCollector()
     with atomic(db):
-        _applied, rejected = _apply_levy_driven_transfers(db, commit=False)
+        _applied, rejected = _apply_levy_driven_transfers(db, commit=False, source=source)
         if rejected:
-            for item in section_from_rows(
-                rejected, source, category="population_transfers",
-            ).rejected:
+            for item in rejected:
                 collector.record("population_transfers", item, turn)
             collector.flush_to_db(db)
         chain["opening_levy_done"] = True
@@ -1168,20 +1165,17 @@ def _step_4a_secret_order_supply(
         from ming_sim.applier import RejectionCollector, mirror_rejections_after_commit
         from ming_sim.covert_progress import apply_monthly_covert_actual_progress
         from ming_sim.error_pack import rejections_jsonl_path
-        from ming_sim.applier import section_from_rows
-
+    
         try:
             collector = RejectionCollector()
             selections = product.get("covert_exec_selections") or []
             with atomic(db):
-                rows = apply_monthly_covert_actual_progress(
+                rows, rows_rejections = apply_monthly_covert_actual_progress(
                     db, state, selections=selections, only_supplied=False, commit=False,
-                )
-                rejections = [r for r in rows if r.get("rejected")]
+                source=source)
+                rejections = rows_rejections
                 if rejections:
-                    for item in section_from_rows(
-                        rows, source, category="covert_exec_selections",
-                    ).rejected:
+                    for item in rejections:
                         collector.record("covert_exec_selections", item, turn)
                     collector.flush_to_db(db)
                 chain["covert_progress_done"] = True
@@ -1217,7 +1211,6 @@ def _run_month_drift(
     from ming_sim.audience_night import retire_unsettled_summons_for_inactive
     from ming_sim.applier import RejectionCollector, mirror_rejections_after_commit
     from ming_sim.error_pack import rejections_jsonl_path
-    from ming_sim.applier import section_from_rows
 
     collector = RejectionCollector()
     with atomic(db):
@@ -1235,20 +1228,8 @@ def _run_month_drift(
         person_changes: list[dict[str, object]] = []
         rejections = apply_issue_inertia_and_ongoing(
             db, state, applied_person_changes=person_changes,
-        )
-        for item in section_from_rows(
-            rejections, source, category="issue_inertia",
-        ).rejected:
-            collector.record("issue_inertia", item, turn)
-        # inertia 自然结案物化的人物变更，其内嵌反噬拒收同样要进报告。
-        landed_people = [
-            row for row in person_changes
-            if not (isinstance(row, dict) and row.get("rejected"))
-        ]
-        for item in section_from_rows(
-            landed_people, source, category="issue_inertia",
-            nested=("backlash_results",),
-        ).rejected:
+        source=source)
+        for item in rejections:
             collector.record("issue_inertia", item, turn)
         collector.flush_to_db(db)
         db.recompute_all_faction_leverage()

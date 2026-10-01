@@ -8,10 +8,12 @@
 
 from __future__ import annotations
 
+from ming_sim.applier import RejectedItem, Provenance
+
 from dataclasses import dataclass
 from typing import Dict, List
 
-from ming_sim.applier import SectionResult, section_from_rows
+from ming_sim.applier import SectionResult
 from ming_sim.issues import POWER_FIELD_ALIASES, _effect_event_ids, _is_bandit_power_id
 
 
@@ -29,12 +31,11 @@ def apply(run):
     applied_absorptions, absorption_rejections, absorption_power_changes = (
         _apply_bandit_absorptions(
             run.db, run.state, run.current_extracted.get("bandit_absorptions") or [],
-            commit=False,
+            commit=False, source=run.ctx.source,
         )
     )
-    bandit_rows: List[Dict[str, object]] = [
-        *applied_absorptions, *absorption_rejections,
-    ]
+    bandit_rows = applied_absorptions
+    rejections: List[RejectedItem] = []
     power_changes: List[Dict[str, object]] = list(absorption_power_changes)
 
     power_items = (
@@ -48,12 +49,7 @@ def apply(run):
     )
     for power_id, raw_changes in power_items:
         if power_id in run.amnesty_conflict_power_ids:
-            power_changes.append({
-                "power_id": power_id, "rejected": True,
-                "category": "invalid_transition",
-                "reason": "同一股同一时段已有招安易主，拒绝顶层 power_updates 剿股；削股须随易主反噬一处落账",
-                "item": {"power_id": power_id, "changes": raw_changes},
-            })
+            rejections.append(RejectedItem(item={"power_id": power_id, "changes": raw_changes}, reason="同一股同一时段已有招安易主，拒绝顶层 power_updates 剿股；削股须随易主反噬一处落账", category="invalid_transition", source=run.ctx.source))
             continue
         if not isinstance(raw_changes, dict):
             continue
@@ -79,24 +75,21 @@ def apply(run):
                 else:
                     stripped[k] = v
             if positive_ms_rejected:
-                power_changes.append({
-                    "power_id": power_id, "rejected": True,
-                    "category": "invalid_enum",
-                    "reason": "流寇实力正增须走 bandit_absorptions 吃池顶，禁止自由 power_updates 正实力",
-                    "item": ms_item or {"power_id": power_id, "changes": raw_changes},
-                })
+                rejections.append(RejectedItem(item=ms_item or {"power_id": power_id, "changes": raw_changes}, reason="流寇实力正增须走 bandit_absorptions 吃池顶，禁止自由 power_updates 正实力", category="invalid_enum", source=run.ctx.source))
             if not stripped:
                 continue
             raw_changes = stripped
         origin_ref = str(raw_changes.get("origin_ref") or "").strip()
         payload = {k: v for k, v in raw_changes.items() if k != "origin_ref"}
-        power_changes.extend(run.db.apply_power_deltas(
+        landed, refused = run.db.apply_power_deltas(
             run.state, {power_id: payload}, commit=False,
             origin_ref=origin_ref, require_origin=True,
-        ))
+        source=run.ctx.source)
+        power_changes.extend(landed)
+        rejections.extend(refused)
 
     source = run.ctx.source
     return PowerApplyBundle(
-        power=section_from_rows(power_changes, source, category="power_changes"),
-        bandit=section_from_rows(bandit_rows, source, category="bandit_absorptions"),
+        power=SectionResult(applied=power_changes, rejected=rejections),
+        bandit=SectionResult(applied=bandit_rows, rejected=absorption_rejections),
     )

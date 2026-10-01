@@ -52,6 +52,8 @@ textual_facts / public_sayings / presence / scene_facts（原生 `origin_ref`
 
 from __future__ import annotations
 
+from ming_sim.applier import Provenance
+
 import contextlib
 import hashlib
 import json
@@ -414,14 +416,11 @@ def _persist_specialized_extraction(
         selections = extraction.get("covert_exec_selections") or []
         if isinstance(selections, list) and selections:
             from ming_sim.covert_progress import apply_monthly_covert_actual_progress
-            from ming_sim.applier import section_from_rows
 
-            rows = apply_monthly_covert_actual_progress(
+            rows, rows_rejections = apply_monthly_covert_actual_progress(
                 db, state, selections=selections, only_supplied=True, commit=False,
-            )
-            for item in section_from_rows(
-                rows, source, category="covert_exec_selections",
-            ).rejected:
+            source=source)
+            for item in rows_rejections:
                 collector.record("covert_exec_selections", item, int(turn))
 
 
@@ -2423,16 +2422,14 @@ def _dispatch_on_scene_facts(
             with _item_savepoint_scope(db, f"on_scene_fact_{int(state.turn)}_{id(item)}"):
                 outcome = apply_person_changes_only(
                     db, state, [item], content=db.content, origin_ref=origin_ref,
-                )
+                source=source)
+                refusals = outcome.get("rejected") or []
+                if refusals:
+                    raise _ItemAtomicReject(refusals[0].reason, refusals[0].category)
                 results = list(outcome.get("applied_person_changes") or ())
                 if not results:
                     raise _ItemAtomicReject("人物变更未产生结果", "invalid_shape")
                 result = results[0]
-                if result.get("rejected"):
-                    raise _ItemAtomicReject(
-                        str(result.get("reason") or ""),
-                        str(result.get("category") or "invalid_enum"),
-                    )
                 if affair_id is not None:
                     name = str(result.get("name") or "").strip()
                     try:

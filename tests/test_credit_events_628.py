@@ -9,6 +9,8 @@
 
 from __future__ import annotations
 
+from ming_sim.applier import Provenance
+
 from ming_sim.breach_plea import (
     BREACH_KIND_REMOVE_SPONSOR,
     finalize_persist,
@@ -165,7 +167,7 @@ def test_ac1_breach_plea_guofu_not_reimplemented(game):
     assert len(edges) == before + 1
     assert any("breach_plea" in str(e["origin"]) for e in edges)
     # 本片 resolve 不吞、不重写该 origin
-    resolve_credit_events_from_extraction(db, state, {}, commit=True)
+    resolve_credit_events_from_extraction(db, state, {}, commit=True, source=Provenance.system_simulation)
     edges2 = _credit_edges(db, event_kind="辜负", target=holder)
     assert len(edges2) == len(edges)
 

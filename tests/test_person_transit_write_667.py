@@ -1,3 +1,5 @@
+
+from ming_sim.applier import Provenance
 import shutil
 import sys
 
@@ -217,7 +219,7 @@ def test_office_appointment_keeps_status_reason_mirrored(
 
     result = apply_office_appointment(
         db, state, content, name, "兵部尚书", reason=appointment_reason,
-    )
+    source=Provenance.system_simulation)
 
     assert not result.get("rejected")
     row = db.conn.execute(

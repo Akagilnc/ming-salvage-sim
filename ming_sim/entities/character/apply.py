@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from ming_sim.applier import RejectedItem, Provenance
+
 from typing import Any, Dict, List
 
 
@@ -37,40 +39,13 @@ def apply_person_changes(
         apply_office_appointment,
     )
 
-    def rejected(
-        item: Dict[str, object],
-        reason: str,
-        category: str,
-        *,
-        status: str | None = None,
-    ) -> Dict[str, object]:
-        result: Dict[str, object] = {
-            "name": str(item.get("name") or "").strip(),
-            "动作": str(item.get("动作") or "").strip(),
-            "rejected": True,
-            "reason": reason,
-            "category": category,
-            "item": dict(item),
-        }
-        if status is not None:
-            result["status"] = status
-        return result
+    def rejected(item, reason, category, *, status=None) -> RejectedItem:
+        return RejectedItem(item=item, reason=reason, category=category, source=source)
 
-    def project_appointment_result(
-        item: Dict[str, object],
-        result: Dict[str, object],
-    ) -> Dict[str, object]:
-        """Project typed appointment rejections onto ADR 0015 item/category shape."""
-        if not result.get("rejected"):
-            return result
-        category = str(result.get("category") or "")
-        if not category:
-            return result
-        shaped = rejected(item, str(result.get("reason") or ""), category)
-        for key, value in result.items():
-            if key not in shaped:
-                shaped[key] = value
-        return shaped
+    def project_appointment_result(item, result):
+        if isinstance(result, RejectedItem):
+            result.item = item
+        return result
 
     def origin_rejected(item: Dict[str, object]) -> Dict[str, object] | None:
         error = db.effect_origin_rejection(origin_ref) if require_origin else None
@@ -91,7 +66,7 @@ def apply_person_changes(
         *,
         commit: bool | None = None,
     ) -> None:
-        if result.get("rejected"):
+        if isinstance(result, RejectedItem):
             return
         name = str(result.get("name") or "").strip()
         action = str(result.get("动作") or result.get("action") or "").strip()
@@ -107,7 +82,7 @@ def apply_person_changes(
         normalized = {
             key: value
             for key, value in result.items()
-            if key not in {"rejected", "category", "item"}
+            if key not in {"rejected", "category", "item", "backlash_results"}
         }
         db.record_person_log(
             state,
@@ -160,6 +135,7 @@ def apply_person_changes(
         return results
 
     applied: List[Dict[str, object]] = []
+    rejections: List[RejectedItem] = []
     person_statuses = {
         "active",
         "offstage",
@@ -174,7 +150,7 @@ def apply_person_changes(
         name = str(item.get("name") or "").strip()
         action = str(item.get("动作") or "").strip()
         if not name or not action:
-            applied.append(rejected(item, "name 或 动作 缺失", "missing_field"))
+            rejections.append(rejected(item, "name 或 动作 缺失", "missing_field"))
             continue
         if content is not None:
             from ming_sim.session import _find_existing_minister
@@ -184,23 +160,23 @@ def apply_person_changes(
 
         if action == "评定":
             if content is not None and name not in content.characters:
-                applied.append(rejected(item, "非既有人物", "hallucinated_id"))
+                rejections.append(rejected(item, "非既有人物", "hallucinated_id"))
                 continue
             row = db.conn.execute(
                 "SELECT name, loyalty FROM characters WHERE name=?", (name,)
             ).fetchone()
             if row is None:
-                applied.append(rejected(item, "非既有人物", "hallucinated_id"))
+                rejections.append(rejected(item, "非既有人物", "hallucinated_id"))
                 continue
             raw_delta = item.get("loyalty")
             if isinstance(raw_delta, bool) or not isinstance(raw_delta, int) or raw_delta == 0:
-                applied.append(rejected(item, "评定 loyalty 须为非零整数增量", "invalid_enum"))
+                rejections.append(rejected(item, "评定 loyalty 须为非零整数增量", "invalid_enum"))
                 continue
             old_loyalty = int(row["loyalty"])
             new_loyalty = max(0, min(100, old_loyalty + raw_delta))
             origin_error = origin_rejected(item)
             if origin_error:
-                applied.append(origin_error)
+                rejections.append(origin_error)
                 continue
             db.conn.execute(
                 "UPDATE characters SET loyalty=? WHERE name=?",
@@ -222,24 +198,24 @@ def apply_person_changes(
 
         if action == "性情":
             if content is not None and name not in content.characters:
-                applied.append(rejected(item, "非既有人物", "hallucinated_id"))
+                rejections.append(rejected(item, "非既有人物", "hallucinated_id"))
                 continue
             row = db.conn.execute(
                 "SELECT name, style FROM characters WHERE name=?", (name,)
             ).fetchone()
             if row is None:
-                applied.append(rejected(item, "非既有人物", "hallucinated_id"))
+                rejections.append(rejected(item, "非既有人物", "hallucinated_id"))
                 continue
             raw_style = item.get("style")
             if not isinstance(raw_style, str) or not raw_style.strip():
-                applied.append(rejected(item, "性情 style 须为非空字符串", "invalid_enum"))
+                rejections.append(rejected(item, "性情 style 须为非空字符串", "invalid_enum"))
                 continue
             # 空白探测仅作拒收；自由文本正文按原串字节透传（P6 / ADR 0142）。
             new_style = raw_style
             old_style = str(row["style"] or "")
             origin_error = origin_rejected(item)
             if origin_error:
-                applied.append(origin_error)
+                rejections.append(origin_error)
                 continue
             db.conn.execute(
                 "UPDATE characters SET style=? WHERE name=?",
@@ -263,10 +239,10 @@ def apply_person_changes(
             status = "dismissed" if action == "罢黜" else str(item.get("status") or "").strip()
             reason_text = str(item.get("reason") or item.get("status_reason") or "")
             if status not in person_statuses:
-                applied.append(rejected(item, "status 非白名单", "invalid_enum", status=status))
+                rejections.append(rejected(item, "status 非白名单", "invalid_enum", status=status))
                 continue
             if status not in disposition_statuses:
-                applied.append(
+                rejections.append(
                     rejected(
                         item,
                         "处置 不直接迁入 active，走任命级联",
@@ -276,11 +252,11 @@ def apply_person_changes(
                 )
                 continue
             if content is not None and name not in content.characters:
-                applied.append(rejected(item, "非既有人物", "hallucinated_id", status=status))
+                rejections.append(rejected(item, "非既有人物", "hallucinated_id", status=status))
                 continue
             row = db.conn.execute("SELECT name FROM characters WHERE name=?", (name,)).fetchone()
             if row is None:
-                applied.append(rejected(item, "非既有人物", "hallucinated_id", status=status))
+                rejections.append(rejected(item, "非既有人物", "hallucinated_id", status=status))
                 continue
             cur_status, _ = db.get_character_status(name)
             reason_code = normalize_reason_code(item.get("reason_code"))
@@ -293,7 +269,7 @@ def apply_person_changes(
                 reject_reason = f"{cur_status} 无 {action} 出边"
                 if cur_status == "dead" and status != "dead":
                     reject_reason = "dead 无 status 出边"
-                applied.append(
+                rejections.append(
                     rejected(
                         item,
                         reject_reason,
@@ -304,7 +280,7 @@ def apply_person_changes(
                 continue
             origin_error = origin_rejected(item)
             if origin_error:
-                applied.append(origin_error)
+                rejections.append(origin_error)
                 continue
             if action == "罢黜" and _payload_owned_person_duplicate(db, item):
                 continue
@@ -334,14 +310,14 @@ def apply_person_changes(
             try:
                 appointment_tenure = appointment_tenure_from(item)
             except ValueError:
-                applied.append(rejected(item, "任别非白名单", "invalid_enum"))
+                rejections.append(rejected(item, "任别非白名单", "invalid_enum"))
                 continue
             if content is not None and name not in content.characters:
-                applied.append(rejected(item, "非既有人物", "hallucinated_id"))
+                rejections.append(rejected(item, "非既有人物", "hallucinated_id"))
                 continue
             row = character_row(name)
             if row is None:
-                applied.append(rejected(item, "非既有人物", "hallucinated_id"))
+                rejections.append(rejected(item, "非既有人物", "hallucinated_id"))
                 continue
             current_office = str(row["office"] or "").strip()
             current_office_type = str(row["office_type"] or "").strip()
@@ -359,7 +335,7 @@ def apply_person_changes(
                 current_title_kind=current_title_kind,
             )
             if transition.startswith("reject:"):
-                applied.append(
+                rejections.append(
                     rejected(
                         item,
                         f"{row['status']} 无 {action} 出边",
@@ -372,10 +348,7 @@ def apply_person_changes(
             new_office = str(item.get("office") or item.get("new_office") or "")
             if not new_office.strip():
                 result = rejected(item, "name 或 new_office 空", "missing_field")
-                result["new_office"] = new_office
-                if transition.startswith("normalize:"):
-                    result["normalized"] = f"{action}->{effective_action}"
-                applied.append(result)
+                rejections.append(result)
                 continue
             if content is None:
                 if _payload_owned_person_duplicate(
@@ -385,9 +358,7 @@ def apply_person_changes(
                     llm_config=llm_config or db.llm_config,
                 ):
                     continue
-                result = {
-                    "动作": effective_action,
-                    **project_appointment_result(
+                result = project_appointment_result(
                         item,
                         apply_office_appointment(
                             db,
@@ -406,10 +377,13 @@ def apply_person_changes(
                                 or ""
                             ).strip(),
                             llm_config=llm_config,
-                            commit=False,
+                            commit=False, source=source,
                         ),
-                    ),
-                }
+                    )
+                if isinstance(result, RejectedItem):
+                    rejections.append(result)
+                    continue
+                result = {"动作": effective_action, **result}
                 if transition.startswith("normalize:"):
                     result["normalized"] = f"{action}->{effective_action}"
                 applied.append(result)
@@ -425,14 +399,11 @@ def apply_person_changes(
                     f"{name}不属大明朝廷，不能授予大明官职",
                     "invalid_transition",
                 )
-                result["new_office"] = new_office.strip()
-                if transition.startswith("normalize:"):
-                    result["normalized"] = f"{action}->{effective_action}"
-                applied.append(result)
+                rejections.append(result)
                 continue
             origin_error = origin_rejected(item)
             if origin_error:
-                applied.append(origin_error)
+                rejections.append(origin_error)
                 continue
             if _payload_owned_person_duplicate(
                 db,
@@ -485,13 +456,14 @@ def apply_person_changes(
                         or ""
                     ).strip(),
                     llm_config=llm_config,
-                    commit=False,
+                    commit=False, source=source,
                 ),
             )
-            wrapped = {"动作": effective_action, **result}
+            wrapped = result if isinstance(result, RejectedItem) else {"动作": effective_action, **result}
             if derive_label:
-                wrapped["derived_from"] = derive_label
-                if wrapped.get("rejected"):
+                if isinstance(wrapped, dict):
+                    wrapped["derived_from"] = derive_label
+                if isinstance(wrapped, RejectedItem):
                     # transit_start_turn 与 transit_to 成对回滚：派生任命前置 set_character_status
                     # （放归/赦还→offstage 属 ousted）现会清 transit_start_turn=0，回滚须对称还原，
                     # 否则留「transit_to 非空 + start=0」被兜底当 legacy-overdue 误判（CMR r2 防御）。
@@ -523,8 +495,11 @@ def apply_person_changes(
                 else:
                     applied.append(release_result)
                     log_applied(release_result, item, commit=False)
-            elif transition.startswith("normalize:"):
+            elif isinstance(wrapped, dict) and transition.startswith("normalize:"):
                 wrapped["normalized"] = f"{action}->{effective_action}"
+            if isinstance(wrapped, RejectedItem):
+                rejections.append(wrapped)
+                continue
             applied.append(wrapped)
             log_applied(wrapped, item, commit=False if derive_label else None)
             for displacement_result in displaced_talent_pool_results(wrapped.get("displaced")):
@@ -536,20 +511,20 @@ def apply_person_changes(
             way = str(item.get("方式") or item.get("way") or "").strip()
             backlash = item.get("反噬", item.get("backlash"))
             if not way:
-                applied.append(rejected(item, "易主 缺 方式", "missing_field"))
+                rejections.append(rejected(item, "易主 缺 方式", "missing_field"))
                 continue
             if way not in PERSON_ALLEGIANCE_CHANGE_WAYS:
-                applied.append(rejected(item, "易主 方式非白名单", "invalid_enum"))
+                rejections.append(rejected(item, "易主 方式非白名单", "invalid_enum"))
                 continue
             if not isinstance(backlash, dict):
-                applied.append(rejected(item, "易主 缺 反噬", "missing_field"))
+                rejections.append(rejected(item, "易主 缺 反噬", "missing_field"))
                 continue
             if any(not isinstance(raw_changes, dict) for raw_changes in backlash.values()):
-                applied.append(rejected(item, "易主 反噬 项必须是 object(dict)", "invalid_enum"))
+                rejections.append(rejected(item, "易主 反噬 项必须是 object(dict)", "invalid_enum"))
                 continue
             row = character_row(name)
             if row is None:
-                applied.append(rejected(item, "非既有人物", "hallucinated_id"))
+                rejections.append(rejected(item, "非既有人物", "hallucinated_id"))
                 continue
             transition = resolve_person_transition(
                 str(row["status"] or "active"),
@@ -557,7 +532,7 @@ def apply_person_changes(
                 reason_code=str(row["reason_code"] or item.get("reason_code") or ""),
             )
             if transition.startswith("reject:"):
-                applied.append(
+                rejections.append(
                     rejected(
                         item,
                         f"{row['status']} 无 {action} 出边",
@@ -574,7 +549,7 @@ def apply_person_changes(
                     if str(power_id).strip()
                 }
                 if any(power_id != old_power for power_id in backlash_power_ids):
-                    applied.append(
+                    rejections.append(
                         rejected(
                             item,
                             f"主动归附反噬只能指向原势力股 {old_power}",
@@ -584,7 +559,7 @@ def apply_person_changes(
                     continue
             new_title = identity_title_for_allegiance(item, requested_new_power)
             if not new_title:
-                applied.append(
+                rejections.append(
                     rejected(
                         item,
                         "易主 new_title 非身名分白名单",
@@ -594,7 +569,7 @@ def apply_person_changes(
                 continue
             origin_error = origin_rejected(item)
             if origin_error:
-                applied.append(origin_error)
+                rejections.append(origin_error)
                 continue
             # #522：招抚案卷效果绑定 canonical target；generic special_decree
             # 不得授权招抚式易主。其它 dossier/盘面自发路径保持既有授权。
@@ -611,7 +586,7 @@ def apply_person_changes(
                         and way == "主动归附"
                         and requested_new_power == "ming"
                     ):
-                        applied.append(
+                        rejections.append(
                             rejected(
                                 item,
                                 "special_decree 不得授权招抚易主",
@@ -632,7 +607,7 @@ def apply_person_changes(
                             payload.get("target_id") or dossier.get("target_id") or ""
                         ).strip()
                         if not bound_target or name != bound_target:
-                            applied.append(
+                            rejections.append(
                                 rejected(
                                     item,
                                     f"招抚案卷仅可易主 {bound_target or '案卷目标'}，不得易主 {name}",
@@ -640,7 +615,7 @@ def apply_person_changes(
                                 )
                             )
                             continue
-            power_results = db.apply_character_power_changes(
+            power_results, power_rejections = db.apply_character_power_changes(
                 [
                     {
                         "name": name,
@@ -648,31 +623,25 @@ def apply_person_changes(
                         "reason": str(item.get("reason") or ""),
                     }
                 ],
-                commit=False,
+                commit=False, source=source,
             )
+            rejections.extend(rejected(item, refusal.reason, refusal.category) for refusal in power_rejections)
             if not power_results:
-                applied.append(rejected(item, "易主 未产生变更", "noop"))
+                if not power_rejections:
+                    rejections.append(rejected(item, "易主 未产生变更", "noop"))
                 continue
-            accepted_power_results = [r for r in power_results if not r.get("rejected")]
-            if not accepted_power_results:
-                for result in power_results:
-                    wrapped = {"动作": action, "方式": way, "反噬": backlash, **result}
-                    if wrapped.get("rejected"):
-                        wrapped["item"] = dict(item)
-                    applied.append(wrapped)
-                continue
-            backlash_results = db.apply_power_deltas(
+            backlash_results, backlash_rejections = db.apply_power_deltas(
                 state,
                 backlash,
                 commit=False,
                 origin_ref=origin_ref,
                 require_origin=True,
-            ) if backlash else []
+                source=source,
+            ) if backlash else ([], [])
             for result in power_results:
                 new_power = str(result.get("new_power") or "")
                 if (
-                    not result.get("rejected")
-                    and content is not None
+                    content is not None
                     and result.get("name") in content.characters
                 ):
                     ch = content.characters[str(result["name"])]
@@ -693,15 +662,15 @@ def apply_person_changes(
                 db.set_character_transit(name, content=content, commit=False)
                 wrapped = {"动作": action, "方式": way, "反噬": backlash, **result}
                 wrapped["new_title"] = new_title
-                if any(r.get("rejected") for r in backlash_results if isinstance(r, dict)):
-                    wrapped["backlash_results"] = backlash_results
+                if backlash_rejections:
+                    wrapped["backlash_results"] = backlash_rejections
                 applied.append(wrapped)
                 log_applied(wrapped, item)
             continue
 
         if action == "行止":
             if content is not None and name not in content.characters:
-                applied.append(rejected(item, "非既有人物", "hallucinated_id"))
+                rejections.append(rejected(item, "非既有人物", "hallucinated_id"))
                 continue
             row = db.conn.execute(
                 "SELECT status, location, transit_to, transit_distance_remaining, "
@@ -709,7 +678,7 @@ def apply_person_changes(
                 (name,),
             ).fetchone()
             if row is None:
-                applied.append(rejected(item, "非既有人物", "hallucinated_id"))
+                rejections.append(rejected(item, "非既有人物", "hallucinated_id"))
                 continue
             from ming_sim.matching import is_capital_location
 
@@ -725,7 +694,7 @@ def apply_person_changes(
             valid_regions = _load_pending_gate_valid_regions(db)
             departure, error = _admit_transit_departure(item, dict(row), valid_regions)
             if error is not None:
-                applied.append(rejected(item, error[0], error[1]))
+                rejections.append(rejected(item, error[0], error[1]))
                 continue
             if departure is None:
                 continue
@@ -737,7 +706,7 @@ def apply_person_changes(
                 continue
             origin_error = origin_rejected(item)
             if origin_error:
-                applied.append(origin_error)
+                rejections.append(origin_error)
                 continue
             new_transit_start_turn = state.turn if transit_to else 0
             result = {
@@ -753,38 +722,27 @@ def apply_person_changes(
                 or not is_capital_location(location)
             )
             if leave_waiting:
-                # 行止 + 行迹 + 召旨结清是同一笔。无外层事务时用 atomic 包住，
-                # 结清失败整笔回滚；外层已持有事务时不另起、不提交。
-                from ming_sim.applier import atomic
-                from ming_sim.issues import _register_runtime_rollback_snapshot
+                # 行止 + 行迹 + 召旨结清是同一笔写。事务、快照与提交归调用方
+                # （编排器或 apply_person_changes_only），本核只写。
+                db.set_character_transit(
+                    name,
+                    location=location,
+                    transit_to=transit_to,
+                    distance_remaining=distance,
+                    speed_factor=speed,
+                    start_turn=new_transit_start_turn,
+                    content=content,
+                    commit=False,
+                )
+                applied.append(result)
+                log_applied(result, item, commit=False)
+                from ming_sim.audience_night import (
+                    settle_unsettled_summons_for_person,
+                )
 
-                def _write_leave_waiting() -> None:
-                    db.set_character_transit(
-                        name,
-                        location=location,
-                        transit_to=transit_to,
-                        distance_remaining=distance,
-                        speed_factor=speed,
-                        start_turn=new_transit_start_turn,
-                        content=content,
-                        commit=False,
-                    )
-                    applied.append(result)
-                    log_applied(result, item, commit=False)
-                    from ming_sim.audience_night import (
-                        settle_unsettled_summons_for_person,
-                    )
-
-                    settle_unsettled_summons_for_person(
-                        db, name, commit=False,
-                    )
-
-                if db.conn.in_transaction:
-                    _write_leave_waiting()
-                else:
-                    _register_runtime_rollback_snapshot(db, state, content)
-                    with atomic(db):
-                        _write_leave_waiting()
+                settle_unsettled_summons_for_person(
+                    db, name, commit=False,
+                )
             else:
                 db.set_character_transit(
                     name,
@@ -800,8 +758,8 @@ def apply_person_changes(
                 log_applied(result, item)
             continue
 
-        applied.append(
+        rejections.append(
             rejected(item, "人物变更动作写路径未接", "invalid_transition")
         )
-    return applied
+    return applied, rejections
 

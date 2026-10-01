@@ -10,6 +10,8 @@
 空 action 跑一 tick 应进入欠账螺旋。月末 shadow spine 按 controlled_by==ming 且有 settle
 动态推进，失地/无基座省自然出列。
 """
+
+from ming_sim.applier import Provenance
 import json
 import math
 import sqlite3
@@ -2565,10 +2567,10 @@ def test_army_delta_arrears_splits_positive_and_rejects_negative_under_cutover(f
         "SELECT * FROM armies WHERE id = 'shaanxi_army'"
     ).fetchone()
 
-    changes = fresh_db.apply_army_deltas(
+    changes, changes_rejections = fresh_db.apply_army_deltas(
         state, event, None, "测试", {"shaanxi_army": {"arrears": 10, "reason": "剧情加欠"}},
         commit=False,
-    )
+    source=Provenance.system_simulation)
 
     after = fresh_db.conn.execute(
         "SELECT * FROM armies WHERE id = 'shaanxi_army'"
@@ -2578,10 +2580,10 @@ def test_army_delta_arrears_splits_positive_and_rejects_negative_under_cutover(f
     assert after["central_pay_arrears"] == pytest.approx(before["central_pay_arrears"] + 3.5)
     assert after["arrears"] == pytest.approx(after["province_pay_arrears"] + after["central_pay_arrears"])
 
-    rejected = fresh_db.apply_army_deltas(
+    rejected, rejected_rejections = fresh_db.apply_army_deltas(
         state, event, None, "测试", {"shaanxi_army": {"arrears": -1, "reason": "无现金减欠"}},
         commit=False,
-    )
+    source=Provenance.system_simulation)
     assert rejected and rejected[0]["rejected"] is True
     again = fresh_db.conn.execute(
         "SELECT * FROM armies WHERE id = 'shaanxi_army'"
@@ -2596,14 +2598,14 @@ def test_army_delta_arrears_rejects_exempt_army_under_cutover(fresh_db):
         "SELECT arrears FROM armies WHERE id = 'southwest_tusi'"
     ).fetchone()
 
-    changes = fresh_db.apply_army_deltas(
+    changes, changes_rejections = fresh_db.apply_army_deltas(
         state,
         event,
         None,
         "测试",
         {"southwest_tusi": {"arrears": 10, "reason": "误记欠饷"}},
         commit=False,
-    )
+    source=Provenance.system_simulation)
 
     after = fresh_db.conn.execute(
         "SELECT arrears FROM armies WHERE id = 'southwest_tusi'"
@@ -2628,7 +2630,7 @@ def test_army_delta_arrears_reconciles_pay_source_container_immediately(fresh_db
     fresh_db.apply_army_deltas(
         state, event, None, "测试", {"shaanxi_army": {"arrears": 10, "reason": "剧情加欠"}},
         commit=False,
-    )
+    source=Provenance.system_simulation)
 
     assert _read_settle(fresh_db, "shaanxi")["st"]["军饷欠"] == pytest.approx(
         _province_pay_arrears(fresh_db, "shaanxi"), abs=1e-6
@@ -2656,7 +2658,7 @@ def test_army_delta_manpower_reconciles_pay_source_due_immediately(fresh_db):
     fresh_db.apply_army_deltas(
         state, event, None, "测试", {"shaanxi_army": {"manpower": 10000, "reason": "募兵"}},
         commit=False,
-    )
+    source=Provenance.system_simulation)
 
     settle = _read_settle(fresh_db, "shaanxi")
     assert settle["p"]["Due"]["军饷"] == pytest.approx(_province_pay_due(fresh_db, "shaanxi"))
@@ -2677,17 +2679,17 @@ def test_army_delta_owner_power_to_ming_requires_same_delta_pay_source(fresh_db)
     )
     fresh_db.conn.commit()
 
-    rejected = fresh_db.apply_army_deltas(
+    rejected, rejected_rejections = fresh_db.apply_army_deltas(
         state, event, None, "测试", {"shaanxi_army": {"owner_power": "ming"}},
         commit=False,
-    )
+    source=Provenance.system_simulation)
 
     row = fresh_db.conn.execute("SELECT * FROM armies WHERE id = 'shaanxi_army'").fetchone()
     assert rejected and rejected[0]["rejected"] is True
     assert "pay_source_region" in rejected[0]["reason"]
     assert row["owner_power"] == "houjin"
 
-    changes = fresh_db.apply_army_deltas(
+    changes, changes_rejections = fresh_db.apply_army_deltas(
         state,
         event,
         None,
@@ -2701,7 +2703,7 @@ def test_army_delta_owner_power_to_ming_requires_same_delta_pay_source(fresh_db)
             }
         },
         commit=False,
-    )
+    source=Provenance.system_simulation)
 
     row = fresh_db.conn.execute("SELECT * FROM armies WHERE id = 'shaanxi_army'").fetchone()
     assert not any(c.get("rejected") for c in changes)
@@ -2726,14 +2728,14 @@ def test_army_delta_rejects_unknown_owner_power_without_clearing_arrears(fresh_d
         """
     ).fetchone()
 
-    rejected = fresh_db.apply_army_deltas(
+    rejected, rejected_rejections = fresh_db.apply_army_deltas(
         state,
         event,
         None,
         "测试",
         {"shaanxi_army": {"owner_power": "__missing_power__"}},
         commit=False,
-    )
+    source=Provenance.system_simulation)
 
     after = fresh_db.conn.execute(
         """
@@ -2756,7 +2758,7 @@ def test_army_delta_rejects_pay_source_without_ming_settle_substrate(fresh_db):
     )
     fresh_db.conn.commit()
 
-    rejected = fresh_db.apply_army_deltas(
+    rejected, rejected_rejections = fresh_db.apply_army_deltas(
         state,
         event,
         None,
@@ -2769,7 +2771,7 @@ def test_army_delta_rejects_pay_source_without_ming_settle_substrate(fresh_db):
             }
         },
         commit=False,
-    )
+    source=Provenance.system_simulation)
 
     row = fresh_db.conn.execute(
         "SELECT pay_source_region FROM armies WHERE id = 'shaanxi_army'"
@@ -2787,10 +2789,10 @@ def test_army_delta_owner_power_from_ming_clears_pay_source_arrears(fresh_db):
     assert before > 0
     assert before_due > 0
 
-    changes = fresh_db.apply_army_deltas(
+    changes, changes_rejections = fresh_db.apply_army_deltas(
         state, event, None, "测试", {"shaanxi_army": {"owner_power": "houjin"}},
         commit=False,
-    )
+    source=Provenance.system_simulation)
 
     row = fresh_db.conn.execute("SELECT * FROM armies WHERE id = 'shaanxi_army'").fetchone()
     assert not any(c.get("rejected") for c in changes)
@@ -2850,14 +2852,14 @@ def test_army_delta_rejects_ming_exempt_flag_before_pay_arrears_writeoff(fresh_d
     assert before["owner_power"] == "ming"
     assert before["arrears"] > 0
 
-    rejected = fresh_db.apply_army_deltas(
+    rejected, rejected_rejections = fresh_db.apply_army_deltas(
         state,
         event,
         None,
         "测试",
         {"shaanxi_army": {field: 1}},
         commit=False,
-    )
+    source=Provenance.system_simulation)
 
     after = fresh_db.conn.execute(
         """
@@ -2880,7 +2882,7 @@ def test_army_delta_rejects_ming_exempt_flag_before_pay_arrears_writeoff(fresh_d
 
 
 def test_economy_pay_arrears_from_central_account_splits_by_current_debt_ratio(fresh_db):
-    from ming_sim.flows import _apply_economy_list
+    from ming_sim.entities.economy.apply import _apply_economy_list
 
     state = fresh_db.load_state()
     before_province = _province_pay_arrears(fresh_db, "shaanxi")
@@ -2900,7 +2902,7 @@ def test_economy_pay_arrears_from_central_account_splits_by_current_debt_ratio(f
     expected_province_pay = 5 * before_army["province_pay_arrears"] / before_total
     expected_central_pay = 5 * before_army["central_pay_arrears"] / before_total
 
-    applied = _apply_economy_list(
+    applied, applied_rejections = _apply_economy_list(
         fresh_db,
         state,
         [{
@@ -2913,7 +2915,7 @@ def test_economy_pay_arrears_from_central_account_splits_by_current_debt_ratio(f
             "target_id": "shaanxi_army",
         }],
         commit=False,
-    )
+    source=Provenance.system_simulation)
 
     after_army = fresh_db.conn.execute(
         """
@@ -2948,7 +2950,7 @@ def test_economy_pay_arrears_from_central_account_splits_by_current_debt_ratio(f
 
 
 def test_economy_pay_arrears_from_central_account_can_repay_pure_province_source_army(fresh_db):
-    from ming_sim.flows import _apply_economy_list
+    from ming_sim.entities.economy.apply import _apply_economy_list
 
     state = fresh_db.load_state()
     before_province = _province_pay_arrears(fresh_db, "fujian")
@@ -2962,7 +2964,7 @@ def test_economy_pay_arrears_from_central_account_can_repay_pure_province_source
     assert before_army["province_pay_arrears"] > 3
     assert before_army["central_pay_arrears"] == pytest.approx(0)
 
-    applied = _apply_economy_list(
+    applied, applied_rejections = _apply_economy_list(
         fresh_db,
         state,
         [{
@@ -2975,7 +2977,7 @@ def test_economy_pay_arrears_from_central_account_can_repay_pure_province_source
             "target_id": "fujian_navy",
         }],
         commit=False,
-    )
+    source=Provenance.system_simulation)
 
     after_army = fresh_db.conn.execute(
         """
@@ -3003,7 +3005,7 @@ def test_economy_pay_arrears_from_central_account_can_repay_pure_province_source
 
 
 def test_economy_pay_arrears_preserves_fractional_pay_source_tail(fresh_db):
-    from ming_sim.flows import _apply_economy_list
+    from ming_sim.entities.economy.apply import _apply_economy_list
 
     state = fresh_db.load_state()
     fresh_db.conn.execute(
@@ -3017,7 +3019,7 @@ def test_economy_pay_arrears_preserves_fractional_pay_source_tail(fresh_db):
     )
     fresh_db._reconcile_army_pay_source_region_container("shaanxi")
 
-    applied = _apply_economy_list(
+    applied, applied_rejections = _apply_economy_list(
         fresh_db,
         state,
         [{
@@ -3030,7 +3032,7 @@ def test_economy_pay_arrears_preserves_fractional_pay_source_tail(fresh_db):
             "target_id": "shaanxi_army",
         }],
         commit=False,
-    )
+    source=Provenance.system_simulation)
 
     row = fresh_db.conn.execute(
         """
@@ -3063,7 +3065,7 @@ def test_economy_pay_arrears_preserves_fractional_pay_source_tail(fresh_db):
 
 
 def test_economy_pay_arrears_clamps_integer_spend_and_preserves_tail(fresh_db):
-    from ming_sim.flows import _apply_economy_list
+    from ming_sim.entities.economy.apply import _apply_economy_list
 
     state = fresh_db.load_state()
     fresh_db.conn.execute(
@@ -3077,7 +3079,7 @@ def test_economy_pay_arrears_clamps_integer_spend_and_preserves_tail(fresh_db):
     )
     fresh_db._reconcile_army_pay_source_region_container("shaanxi")
 
-    applied = _apply_economy_list(
+    applied, applied_rejections = _apply_economy_list(
         fresh_db,
         state,
         [{
@@ -3090,7 +3092,7 @@ def test_economy_pay_arrears_clamps_integer_spend_and_preserves_tail(fresh_db):
             "target_id": "shaanxi_army",
         }],
         commit=False,
-    )
+    source=Provenance.system_simulation)
 
     row = fresh_db.conn.execute(
         """
@@ -3146,7 +3148,7 @@ def test_economy_pay_arrears_clamps_integer_spend_and_preserves_tail(fresh_db):
 def test_economy_pay_arrears_rejects_missing_or_unknown_target_without_repaying_other_armies(
     fresh_db, move
 ):
-    from ming_sim.flows import _apply_economy_list
+    from ming_sim.entities.economy.apply import _apply_economy_list
 
     state = fresh_db.load_state()
     before_treasury = state.metrics["国库"]
@@ -3159,7 +3161,7 @@ def test_economy_pay_arrears_rejects_missing_or_unknown_target_without_repaying_
     ).fetchone()
     before_province = _province_pay_arrears(fresh_db, "shaanxi")
 
-    applied = _apply_economy_list(fresh_db, state, [move], commit=False)
+    applied, applied_rejections = _apply_economy_list(fresh_db, state, [move], commit=False, source=Provenance.system_simulation)
 
     after_army = fresh_db.conn.execute(
         """
@@ -3200,14 +3202,14 @@ def test_manpower_zero_writeoffs_pay_source_arrears_before_retiring_army(fresh_d
     fresh_db._reconcile_army_pay_source_region_container("shaanxi")
     fresh_db._reconcile_central_army_pay_arrears_container()
 
-    changes = fresh_db.apply_army_deltas(
+    changes, changes_rejections = fresh_db.apply_army_deltas(
         state,
         event,
         None,
         "测试",
         {"shaanxi_army": {"manpower": -9999, "reason": "全军覆没"}},
         commit=False,
-    )
+    source=Provenance.system_simulation)
 
     row = fresh_db.conn.execute(
         """
@@ -3261,14 +3263,14 @@ def test_manpower_zero_then_arrears_delta_does_not_resurrect_writeoff_debt(fresh
     fresh_db._reconcile_army_pay_source_region_container("shaanxi")
     fresh_db._reconcile_central_army_pay_arrears_container()
 
-    changes = fresh_db.apply_army_deltas(
+    changes, changes_rejections = fresh_db.apply_army_deltas(
         state,
         event,
         None,
         "测试",
         {"shaanxi_army": {"manpower": -9999, "arrears": 10, "reason": "全军覆没后误加欠饷"}},
         commit=False,
-    )
+    source=Provenance.system_simulation)
 
     row = fresh_db.conn.execute(
         """
@@ -3291,12 +3293,12 @@ def test_manpower_zero_then_arrears_delta_does_not_resurrect_writeoff_debt(fresh
 def test_new_ming_army_requires_valid_pay_source_under_cutover(fresh_db):
     state = fresh_db.load_state()
 
-    rejected = fresh_db.create_armies_from_extraction(state, [{
+    rejected, rejected_rejections = fresh_db.create_armies_from_extraction(state, [{
         "id": "no_pay_source",
         "name": "无饷源新军",
         "manpower": 1000,
         "owner_power": "ming",
-    }], commit=False)
+    }], commit=False, source=Provenance.system_simulation)
 
     assert rejected and rejected[0]["rejected"] is True
     assert "pay_source_region" in rejected[0]["reason"]
@@ -3315,7 +3317,7 @@ def test_new_ming_army_rejects_non_ming_pay_source_region(fresh_db):
     )
     fresh_db.conn.commit()
 
-    rejected = fresh_db.create_armies_from_extraction(state, [{
+    rejected, rejected_rejections = fresh_db.create_armies_from_extraction(state, [{
         "id": "rebel_source_army",
         "name": "逆境索饷军",
         "manpower": 1000,
@@ -3323,7 +3325,7 @@ def test_new_ming_army_rejects_non_ming_pay_source_region(fresh_db):
         "pay_source_region": "shaanxi",
         "province_pay_share": 1.0,
         "central_pay_share": 0.0,
-    }], commit=False)
+    }], commit=False, source=Provenance.system_simulation)
 
     assert rejected and rejected[0]["rejected"] is True
     assert "pay_source_region" in rejected[0]["reason"]
@@ -3336,7 +3338,7 @@ def test_new_ming_army_stores_pay_source_columns_under_cutover(fresh_db):
     state = fresh_db.load_state()
     before_due = _read_settle(fresh_db, "shaanxi")["p"]["Due"]["军饷"]
 
-    created = fresh_db.create_armies_from_extraction(state, [{
+    created, created_rejections = fresh_db.create_armies_from_extraction(state, [{
         "id": "valid_pay_source",
         "name": "有饷源新军",
         "manpower": 1000,
@@ -3344,7 +3346,7 @@ def test_new_ming_army_stores_pay_source_columns_under_cutover(fresh_db):
         "pay_source_region": "shaanxi",
         "province_pay_share": 0.65,
         "central_pay_share": 0.35,
-    }], commit=False)
+    }], commit=False, source=Provenance.system_simulation)
 
     assert created and created[0].get("created") is True
     row = fresh_db.conn.execute(
@@ -3371,7 +3373,7 @@ def test_new_ming_army_stores_pay_source_columns_under_cutover(fresh_db):
 def test_new_ming_army_rejects_initial_arrears_under_cutover(fresh_db):
     state = fresh_db.load_state()
 
-    rejected = fresh_db.create_armies_from_extraction(state, [{
+    rejected, rejected_rejections = fresh_db.create_armies_from_extraction(state, [{
         "id": "arrears_new_army",
         "name": "带欠饷新军",
         "manpower": 1000,
@@ -3380,7 +3382,7 @@ def test_new_ming_army_rejects_initial_arrears_under_cutover(fresh_db):
         "province_pay_share": 0.65,
         "central_pay_share": 0.35,
         "arrears": 10,
-    }], commit=False)
+    }], commit=False, source=Provenance.system_simulation)
 
     assert rejected and rejected[0]["rejected"] is True
     assert rejected[0].get("category") == "invalid_enum"
@@ -3962,7 +3964,7 @@ def test_liaodong_pay_source_rows_add_to_standalone_military_funnel(fresh_db):
     opening_arrears = settle["st"]["军饷欠"]
     standalone_due = settle["p"]["Due"]["军饷"]
 
-    created = fresh_db.create_armies_from_extraction(state, [{
+    created, created_rejections = fresh_db.create_armies_from_extraction(state, [{
         "id": "liaodong_new_army",
         "name": "辽东新增营",
         "manpower": 1000,
@@ -3970,7 +3972,7 @@ def test_liaodong_pay_source_rows_add_to_standalone_military_funnel(fresh_db):
         "pay_source_region": "liaodong",
         "province_pay_share": 1.0,
         "central_pay_share": 0.0,
-    }], commit=False)
+    }], commit=False, source=Provenance.system_simulation)
 
     assert created and created[0].get("created") is True
     after = _read_settle(fresh_db, "liaodong")
@@ -3986,7 +3988,7 @@ def test_liaodong_pay_source_rows_add_to_standalone_military_funnel(fresh_db):
 
 def test_liaodong_settle_tick_keeps_standalone_funnel_deficit_out_of_pay_rows(fresh_db):
     state = fresh_db.load_state()
-    created = fresh_db.create_armies_from_extraction(state, [{
+    created, created_rejections = fresh_db.create_armies_from_extraction(state, [{
         "id": "liaodong_new_army",
         "name": "辽东新增营",
         "manpower": 1000,
@@ -3994,7 +3996,7 @@ def test_liaodong_settle_tick_keeps_standalone_funnel_deficit_out_of_pay_rows(fr
         "pay_source_region": "liaodong",
         "province_pay_share": 1.0,
         "central_pay_share": 0.0,
-    }], commit=False)
+    }], commit=False, source=Provenance.system_simulation)
     assert created and created[0].get("created") is True
 
     before = _read_settle(fresh_db, "liaodong")
@@ -4033,7 +4035,7 @@ def test_old_dongjiang_pay_funnel_due_backfills_before_new_pay_rows(fresh_db):
     _write_settle(fresh_db, "dongjiang_area", settle)
 
     state = fresh_db.load_state()
-    created = fresh_db.create_armies_from_extraction(state, [{
+    created, created_rejections = fresh_db.create_armies_from_extraction(state, [{
         "id": "dongjiang_new_army",
         "name": "东江新增营",
         "manpower": 1000,
@@ -4041,7 +4043,7 @@ def test_old_dongjiang_pay_funnel_due_backfills_before_new_pay_rows(fresh_db):
         "pay_source_region": "dongjiang_area",
         "province_pay_share": 1.0,
         "central_pay_share": 0.0,
-    }], commit=False)
+    }], commit=False, source=Provenance.system_simulation)
 
     assert created and created[0].get("created") is True
     row_due = _province_pay_due(fresh_db, "dongjiang_area")

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from ming_sim.applier import Provenance
+
 
 import pytest
 
@@ -251,7 +253,7 @@ def test_new_issue_affair_attach_failure_leaves_no_partial_product(game, monkeyp
                 "title": "原子落库",
                 "affair_declaration": _declaration(identity="atomic-issue"),
             }]},
-        )
+        source=Provenance.system_simulation)
     assert db.conn.execute("SELECT COUNT(*) AS n FROM issues").fetchone()["n"] == issues_before
     assert db.conn.execute("SELECT COUNT(*) AS n FROM affairs").fetchone()["n"] == affairs_before
     assert db.conn.execute(

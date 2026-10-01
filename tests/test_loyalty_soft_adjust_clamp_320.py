@@ -9,6 +9,8 @@
 """
 from __future__ import annotations
 
+from ming_sim.applier import Provenance
+
 import pytest
 
 from ming_sim.flows import apply_fixed_period_flows
@@ -43,7 +45,7 @@ def _apply(db, state, delta: dict, *, event=None, origin_ref: str = ""):
         "测试",
         {ARMY: delta},
         origin_ref=origin_ref,
-    )
+    source=Provenance.system_simulation)
 
 
 def test_positive_large_delta_clamped_to_plus_15(game):

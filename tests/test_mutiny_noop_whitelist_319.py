@@ -6,11 +6,14 @@ seam = apply_army_deltas 内字段效果门（与 #318 owner adapter 同缝）�
 """
 from __future__ import annotations
 
+from ming_sim.applier import Provenance
+
 from types import SimpleNamespace
 
 import pytest
 
-from ming_sim.flows import _apply_economy_list, apply_fixed_period_flows
+from ming_sim.flows import apply_fixed_period_flows
+from ming_sim.entities.economy.apply import _apply_economy_list
 from ming_sim import issues as issue_engine
 from ming_sim.settlement import SettlementContext, settle_delta
 
@@ -151,7 +154,7 @@ def test_latched_denies_dispatch_armament_status_and_positive_manpower(game):
                 "manpower": 100,
             }
         },
-    )
+    source=Provenance.system_simulation)
 
     after = _snapshot(db)
     assert after == before
@@ -166,17 +169,17 @@ def test_latched_manpower_strict_negative_applies_zero_and_positive_noop(game):
 
     db.apply_army_deltas(
         state, _event(), None, "测试", {ARMY: {"manpower": -300}}
-    )
+    , source=Provenance.system_simulation)
     assert _row(db, "manpower")["manpower"] == 9700
 
     db.apply_army_deltas(
         state, _event(), None, "测试", {ARMY: {"manpower": 0}}
-    )
+    , source=Provenance.system_simulation)
     assert _row(db, "manpower")["manpower"] == 9700
 
     db.apply_army_deltas(
         state, _event(), None, "测试", {ARMY: {"manpower": 200}}
-    )
+    , source=Provenance.system_simulation)
     assert _row(db, "manpower")["manpower"] == 9700
 
 
@@ -188,12 +191,12 @@ def test_latched_loyalty_positive_applies_negative_noop(game):
 
     db.apply_army_deltas(
         state, _event(), None, "测试", {ARMY: {"loyalty": 15}}
-    )
+    , source=Provenance.system_simulation)
     assert _row(db, "loyalty")["loyalty"] == 45
 
     db.apply_army_deltas(
         state, _event(), None, "测试", {ARMY: {"loyalty": -10}}
-    )
+    , source=Provenance.system_simulation)
     assert _row(db, "loyalty")["loyalty"] == 45
 
 
@@ -212,7 +215,7 @@ def test_latched_loyalty_raw_positive_noop_when_legacy_flips_effect_sign(game):
 
     db.apply_army_deltas(
         state, _event(), None, "测试", {ARMY: {"loyalty": 20}}
-    )
+    , source=Provenance.system_simulation)
 
     assert _row(db, "loyalty")["loyalty"] == 30
     assert db.conn.execute(
@@ -324,7 +327,7 @@ def test_latched_mixed_item_allows_and_denies_per_field(game):
                 "loyalty": 5,
             }
         },
-    )
+    source=Provenance.system_simulation)
 
     after = _row(db, "station", "status", "manpower", "loyalty")
     assert after["manpower"] == before["manpower"] - 100
@@ -354,7 +357,7 @@ def test_latched_chinese_aliases_same_rules(game):
                 "军心": 5,
             }
         },
-    )
+    source=Provenance.system_simulation)
 
     after = _row(db, "station", "status", "manpower", "loyalty")
     assert after["manpower"] == before["manpower"] - 100
@@ -388,7 +391,7 @@ def test_non_latched_army_writes_all_legal_fields(game):
                 "training": 2,
             }
         },
-    )
+    source=Provenance.system_simulation)
 
     after = _row(
         db, "station", "status", "manpower", "loyalty", "equipment", "training"
@@ -410,7 +413,7 @@ def test_pay_clear_via_economy_moves_next_tick_loyalty_plus_5(game, fiscal_path)
     assert float(_row(db, "arrears")["arrears"]) > 0
 
     state.metrics["国库"] = 10**9
-    applied = _apply_economy_list(
+    applied, applied_rejections = _apply_economy_list(
         db,
         state,
         [{
@@ -423,7 +426,7 @@ def test_pay_clear_via_economy_moves_next_tick_loyalty_plus_5(game, fiscal_path)
             "target_id": ARMY,
         }],
         commit=True,
-    )
+    source=Provenance.system_simulation)
     assert any(m.get("applied") for m in applied if isinstance(m, dict))
 
     mid = _row(db, "arrears", "loyalty", "is_mutinied")
@@ -466,7 +469,7 @@ def test_latched_cutover_denies_pay_source_fields(game, pay_delta):
 
     db.apply_army_deltas(
         state, _event(), None, "测试", {ARMY: dict(pay_delta)}
-    )
+    , source=Provenance.system_simulation)
 
     after = _snapshot(db, PAY_SOURCE_DENY_FIELDS)
     assert after == before
@@ -480,9 +483,9 @@ def test_latched_cutover_rejects_invalid_pay_source_share(game):
     before = _snapshot(db, PAY_SOURCE_DENY_FIELDS)
     bad = {"province_pay_share": 0.3, "central_pay_share": 0.3}
 
-    changes = db.apply_army_deltas(
+    changes, changes_rejections = db.apply_army_deltas(
         state, _event(), None, "测试", {ARMY: dict(bad)}
-    )
+    , source=Provenance.system_simulation)
 
     rejected = [
         c for c in changes
@@ -501,9 +504,9 @@ def test_latched_cutover_rejects_unknown_pay_source_region(game):
     before = _snapshot(db, PAY_SOURCE_DENY_FIELDS)
     bad = {"pay_source_region": "no_such_region_319"}
 
-    changes = db.apply_army_deltas(
+    changes, changes_rejections = db.apply_army_deltas(
         state, _event(), None, "测试", {ARMY: dict(bad)}
-    )
+    , source=Provenance.system_simulation)
 
     rejected = [
         c for c in changes
@@ -543,7 +546,7 @@ def test_latched_cutover_mixed_item_pay_source_deny_whitelist_apply(game, pay_de
                 "loyalty": 5,
             }
         },
-    )
+    source=Provenance.system_simulation)
 
     after_pay = _snapshot(db, PAY_SOURCE_DENY_FIELDS)
     after_mp = _row(db, "manpower", "loyalty")
@@ -573,7 +576,7 @@ def test_non_latched_cutover_pay_source_fields_still_write(game, pay_delta):
         None,
         "测试",
         {ARMY: dict(pay_delta)},
-    )
+    source=Provenance.system_simulation)
 
     after = _row(db, *PAY_SOURCE_DENY_FIELDS)
     for key, expected in pay_delta.items():

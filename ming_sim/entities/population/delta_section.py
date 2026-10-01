@@ -8,13 +8,15 @@
 
 from __future__ import annotations
 
+from ming_sim.applier import RejectedItem, Provenance
+
 from typing import Dict, List
 
-from ming_sim.applier import section_from_rows
+from ming_sim.applier import SectionResult
 
 
 def apply(run):
-    from ming_sim.issues import _apply_population_transfers
+    from ming_sim.entities.population.apply import _apply_population_transfers
 
     transfer_items: List[object] = []
     transfer_rejections: List[Dict[str, object]] = []
@@ -26,24 +28,16 @@ def apply(run):
             else ("", "")
         )
         if isinstance(item, dict) and str(item.get("reason") or "").strip() == "回流":
-            transfer_rejections.append({
-                "rejected": True, "category": "invalid_enum",
-                "reason": "回流仅由赈济/招抚屯田 recovery 单核写入，extractor 不得自由申报",
-                "item": item,
-            })
+            transfer_rejections.append(RejectedItem(item=item, reason="回流仅由赈济/招抚屯田 recovery 单核写入，extractor 不得自由申报", category="invalid_enum", source=run.ctx.source))
         elif isinstance(item, dict) and item.get("reason") == "加派" and claim in run.surcharge_claims:
-            transfer_rejections.append({
-                "rejected": True, "category": "invalid_enum",
-                "reason": "同一道加派旨的人口后果已由加派账唯一拥有",
-                "item": item,
-            })
+            transfer_rejections.append(RejectedItem(item=item, reason="同一道加派旨的人口后果已由加派账唯一拥有", category="invalid_enum", source=run.ctx.source))
         else:
             transfer_items.append(item)
 
     applied_transfers, primitive_rejections = _apply_population_transfers(
-        run.db, transfer_items, commit=False,
+        run.db, transfer_items, commit=False, source=run.ctx.source,
     )
-    return section_from_rows(
-        [*applied_transfers, *transfer_rejections, *primitive_rejections],
-        run.ctx.source, category="population_transfers",
+    return SectionResult(
+        applied=applied_transfers,
+        rejected=transfer_rejections + primitive_rejections,
     )

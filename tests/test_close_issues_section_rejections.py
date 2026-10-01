@@ -6,6 +6,8 @@ continue、未找到（None）静默 continue——LLM 脏数据/陈旧引用无
 db.close_issue 的代码/DB 异常上抛（ADR 0005 fail-loud）。
 """
 
+from ming_sim.applier import Provenance
+
 import pytest
 
 import ming_sim.issues as I
@@ -17,7 +19,7 @@ def _closes(result):
 
 
 def _rejected(result):
-    return [c for c in _closes(result) if c.get("rejected")]
+    return result.get("rejected") or []
 
 
 @pytest.mark.parametrize("bad_issue_id", [
@@ -32,11 +34,11 @@ def test_close_bad_issue_id_rejected(read_game, bad_issue_id):
     # _parse_sqlite_id 拒非整数/bool/float/超 64-bit → 全数逐项拒收 invalid_enum，不泄漏/不崩。
     out = I.apply_issue_tracker_output(
         db, state, {"close_issues": [{"issue_id": bad_issue_id, "reason": "resolved"}]}
-    )
+    , source=Provenance.system_simulation)
     rej = _rejected(out)
     assert len(rej) == 1
-    assert rej[0]["category"] == "invalid_enum"
-    assert "issue_id" in rej[0]["reason"]
+    assert rej[0].category == "invalid_enum"
+    assert "issue_id" in rej[0].reason
 
 
 @pytest.mark.parametrize("bad_item", [None, 42, "字符串", ["列表"]])
@@ -44,11 +46,11 @@ def test_close_non_dict_item_rejected_not_crash(read_game, bad_item):
     db, state, _ = read_game
     # 非 dict close 项（close_issues:[null]/标量，_sanitize 不清列表项可达）：必须逐项拒收，
     # 不能 cl.get 抛 AttributeError 崩整月（codex r4）。
-    out = I.apply_issue_tracker_output(db, state, {"close_issues": [bad_item]})
+    out = I.apply_issue_tracker_output(db, state, {"close_issues": [bad_item]}, source=Provenance.system_simulation)
     rej = _rejected(out)
     assert len(rej) == 1
-    assert rej[0]["category"] == "invalid_enum"
-    assert "非对象" in rej[0]["reason"]
+    assert rej[0].category == "invalid_enum"
+    assert "非对象" in rej[0].reason
 
 
 def test_close_bad_reason_rejected(read_game):
@@ -56,11 +58,11 @@ def test_close_bad_reason_rejected(read_game):
     # reason 在调用 close_issue 前先验，故任意 id 都会先因坏 reason 被拒。
     out = I.apply_issue_tracker_output(
         db, state, {"close_issues": [{"issue_id": 123, "reason": "bogus"}]}
-    )
+    , source=Provenance.system_simulation)
     rej = _rejected(out)
     assert len(rej) == 1
-    assert rej[0]["category"] == "invalid_enum"
-    assert "reason" in rej[0]["reason"]
+    assert rej[0].category == "invalid_enum"
+    assert "reason" in rej[0].reason
 
 
 def test_close_unknown_issue_rejected_missing_ref(read_game):
@@ -68,10 +70,10 @@ def test_close_unknown_issue_rejected_missing_ref(read_game):
     # 合法 reason + 不存在的 issue_id → close_issue 回 None → missing_ref 拒收（不再静默 continue）。
     out = I.apply_issue_tracker_output(
         db, state, {"close_issues": [{"issue_id": 999999, "reason": "resolved"}]}
-    )
+    , source=Provenance.system_simulation)
     rej = _rejected(out)
     assert len(rej) == 1
-    assert rej[0]["category"] == "missing_ref"
+    assert rej[0].category == "missing_ref"
 
 
 def test_close_overflow_issue_id_rejected(read_game):
@@ -80,10 +82,10 @@ def test_close_overflow_issue_id_rejected(read_game):
     # 不能让 OverflowError 上抛崩整月（codex r1，复用 _parse_sqlite_id 64-bit 守门）。
     out = I.apply_issue_tracker_output(
         db, state, {"close_issues": [{"issue_id": 10 ** 100, "reason": "resolved"}]}
-    )
+    , source=Provenance.system_simulation)
     rej = _rejected(out)
     assert len(rej) == 1
-    assert rej[0]["category"] == "invalid_enum"
+    assert rej[0].category == "invalid_enum"
 
 
 def test_close_already_inactive_rejected_missing_ref(game):
@@ -91,13 +93,13 @@ def test_close_already_inactive_rejected_missing_ref(game):
     iid = db.insert_issue(state, kind="situation", title="测试·先结再结",
                           effect_on_resolve={"metrics": {"民心": 1}})
     # 先合法结案一次（resolved），issue → status!=active。
-    I.apply_issue_tracker_output(db, state, {"close_issues": [{"issue_id": iid, "reason": "resolved"}]})
+    I.apply_issue_tracker_output(db, state, {"close_issues": [{"issue_id": iid, "reason": "resolved"}]}, source=Provenance.system_simulation)
     # 再结一次：已非 active → missing_ref（不是「未找到」，但归陈旧引用类）。
-    out = I.apply_issue_tracker_output(db, state, {"close_issues": [{"issue_id": iid, "reason": "resolved"}]})
+    out = I.apply_issue_tracker_output(db, state, {"close_issues": [{"issue_id": iid, "reason": "resolved"}]}, source=Provenance.system_simulation)
     rej = _rejected(out)
     assert len(rej) == 1
-    assert rej[0]["category"] == "missing_ref"
-    assert "active" in rej[0]["reason"]
+    assert rej[0].category == "missing_ref"
+    assert "active" in rej[0].reason
 
 
 def test_close_failed_on_uncollapsible_rejected_invalid_enum(game):
@@ -106,11 +108,11 @@ def test_close_failed_on_uncollapsible_rejected_invalid_enum(game):
     # 这是「找到且 active 却被拒」的第三种 None——应归 invalid_enum（语义误判），非 missing_ref。
     iid = db.insert_issue(state, kind="situation", title="测试·不可崩坏天灾",
                           effect_on_resolve={"metrics": {"民心": 1}}, effect_on_fail={})
-    out = I.apply_issue_tracker_output(db, state, {"close_issues": [{"issue_id": iid, "reason": "failed"}]})
+    out = I.apply_issue_tracker_output(db, state, {"close_issues": [{"issue_id": iid, "reason": "failed"}]}, source=Provenance.system_simulation)
     rej = _rejected(out)
     assert len(rej) == 1
-    assert rej[0]["category"] == "invalid_enum"
-    assert "不可崩坏" in rej[0]["reason"]
+    assert rej[0].category == "invalid_enum"
+    assert "不可崩坏" in rej[0].reason
     # 行为：issue 仍 active（拒结案，不被误标 missing_ref 也未被结案）。
     assert db.conn.execute("SELECT status FROM issues WHERE id=?", (iid,)).fetchone()["status"] == "active"
 
@@ -121,18 +123,12 @@ def test_close_rejection_reaches_rejection_reports(game):
     ADR 0150 决定 2 删掉旧递归桥接后，拒收由知道行形状的段收成 RejectedItem，
     再按登记表给出的具名段入库。
     """
-    from ming_sim.applier import Provenance, RejectionCollector, section_from_rows
+    from ming_sim.applier import Provenance, RejectionCollector, RejectedItem
 
     db, state, _ = game
-    close_rows = [{
-        "rejected": True, "category": "missing_ref",
-        "reason": "close 测试拒收", "item": {"issue_id": 999999, "reason": "resolved"},
-    }]
+    item = RejectedItem(item={"issue_id": 999999, "reason": "resolved"}, reason="close 测试拒收", category="missing_ref", source=Provenance.unknown)
     collector = RejectionCollector()
-    for item in section_from_rows(
-        close_rows, Provenance.unknown, category="issue",
-    ).rejected:
-        collector.record("issue_summary", item, 7)
+    collector.record("issue_summary", item, 7)
     collector.flush_to_db(db)
 
     row = db.conn.execute(
@@ -148,16 +144,14 @@ def test_scalar_item_rejection_preserves_original_in_reports(game):
     不是整个 rejected wrapper——canonical 化按 'item' 键**存在性**解包、覆盖标量
     原件（cmr r5 codex）。"""
     import json
-    from ming_sim.applier import Provenance, RejectionCollector, section_from_rows
+    from ming_sim.applier import Provenance, RejectionCollector, RejectedItem
 
     close_rows = [
-        {"rejected": True, "category": "invalid_enum", "reason": "条目非对象", "item": 42},
-        {"rejected": True, "category": "invalid_enum", "reason": "条目非对象", "item": None},
+        RejectedItem(item=42, reason="条目非对象", category="invalid_enum", source=Provenance.unknown),
+        RejectedItem(item=None, reason="条目非对象", category="invalid_enum", source=Provenance.unknown),
     ]
     collector = RejectionCollector()
-    for item in section_from_rows(
-        close_rows, Provenance.unknown, category="issue",
-    ).rejected:
+    for item in close_rows:
         collector.record("issue_summary", item, 8)
     db = game[0]
     collector.flush_to_db(db)
@@ -178,7 +172,7 @@ def test_close_issue_code_exception_propagates(read_game, monkeypatch):
     with pytest.raises(RuntimeError, match="模拟 close_issue"):
         I.apply_issue_tracker_output(
             db, state, {"close_issues": [{"issue_id": 1, "reason": "resolved"}]}
-        )
+        , source=Provenance.system_simulation)
 
 
 def test_close_valid_issue_still_succeeds(game):
@@ -189,7 +183,7 @@ def test_close_valid_issue_still_succeeds(game):
     iid = int(active[0]["id"])
     out = I.apply_issue_tracker_output(
         db, state, {"close_issues": [{"issue_id": iid, "reason": "resolved", "narrative": "测试结案"}]}
-    )
-    closed = [c for c in _closes(out) if not c.get("rejected")]
+    , source=Provenance.system_simulation)
+    closed = _closes(out)
     assert any(int(c.get("issue_id", -1)) == iid for c in closed), out
     assert iid in (out.get("touched_ids") or [])

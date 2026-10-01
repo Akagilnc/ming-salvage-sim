@@ -9,33 +9,33 @@ from __future__ import annotations
 
 from typing import List
 
-from ming_sim.applier import RejectedItem, SectionResult, section_from_rows
+from ming_sim.applier import RejectedItem, SectionResult
 
 
 def apply_participants(run):
-    from ming_sim.issues import _apply_dossier_participant_items
+    from ming_sim.entities.dossier.apply import apply_dossier_participant_items
 
-    rows = _apply_dossier_participant_items(
+    rows, rejections = apply_dossier_participant_items(
         run.db, run.state, run.current_extracted,
+        source=run.ctx.source,
         items_key="dossier_participants",
         authority_set=run.ctx.dossier_ids_at_input,
         not_in_batch_msg="案卷不在本批可见输入",
     )
-    return section_from_rows(rows, run.ctx.source, category="dossier_participants")
+    return SectionResult(applied=rows, rejected=rejections)
 
 
 def apply_secret_dossier_participants(run):
-    from ming_sim.issues import _apply_dossier_participant_items
+    from ming_sim.entities.dossier.apply import apply_dossier_participant_items
 
-    rows = _apply_dossier_participant_items(
+    rows, rejections = apply_dossier_participant_items(
         run.db, run.state, run.current_extracted,
+        source=run.ctx.source,
         items_key="secret_dossier_participants",
         authority_set=run.ctx.secret_dossier_ids_at_input,
         not_in_batch_msg="密令案卷不在本批可见输入",
     )
-    return section_from_rows(
-        rows, run.ctx.source, category="secret_dossier_participants",
-    )
+    return SectionResult(applied=rows, rejected=rejections)
 
 
 def apply_executions(run):

@@ -7,6 +7,8 @@ issue #104 原提议的 `c.status != "offstage"` 会把「DB 已 active 但内�
 """
 from __future__ import annotations
 
+from ming_sim.applier import Provenance
+
 from types import SimpleNamespace
 
 import web_app
@@ -497,7 +499,7 @@ def test_identity_resolves_weishi_and_vassal_aliases_no_duplicate_file(game):
     res = issues.apply_office_appointment(
         db, state, content, "史宪之", "兵部职方司主事",
         reason="#1317 r2 别名入仕", new_office_type="兵部",
-    )
+    source=Provenance.system_simulation)
     assert not res.get("rejected"), res
     assert res.get("name") == "史可法"
     after = {
@@ -525,7 +527,7 @@ def test_identity_resolves_weishi_and_vassal_aliases_no_duplicate_file(game):
     }
     res_p = issues.apply_office_appointment(
         db, state, content, "福王", "兵部尚书", reason="幻觉授宗藩",
-    )
+    source=Provenance.system_simulation)
     assert res_p.get("rejected") is True
     assert "宗藩" in str(res_p.get("reason") or "")
     after_p = {

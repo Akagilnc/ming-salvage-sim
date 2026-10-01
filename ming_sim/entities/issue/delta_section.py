@@ -10,10 +10,12 @@
 
 from __future__ import annotations
 
+from ming_sim.applier import RejectedItem, Provenance
+
 from dataclasses import dataclass, field
 from typing import Dict, List
 
-from ming_sim.applier import SectionResult, section_from_rows
+from ming_sim.applier import SectionResult
 from ming_sim.settlement.outcome import IssueSectionResult
 
 
@@ -62,14 +64,13 @@ def apply(run) -> IssueApplyBundle:
         event_result_delta_event_ids=run.strategic_event_result_delta_event_ids,
         defer_event_trigger_ids=run.strategic_event_pool_ids,
         open_affair_ids_at_input=run.authorized_open_affairs,
-    )
+    source=run.ctx.source)
     # 承诺月支载体：同批新建的承诺局势其 ongoing 月支被财政段用作 dedup 依据
     # （ADR 0027 承诺是主载体）。
     carriers: List[Dict[str, object]] = []
     for item in issue_summary.get("new_issues") or []:
         if not (
             isinstance(item, dict)
-            and not item.get("rejected")
             and str(item.get("commitment_kind") or "").strip()
             and item.get("issue_id") is not None
         ):
@@ -86,40 +87,14 @@ def apply(run) -> IssueApplyBundle:
     return IssueApplyBundle(issue=_issue_section(run, issue_summary), extras=extras)
 
 
-def _kept(rows) -> List[dict]:
-    return [
-        row for row in (rows or [])
-        if not (isinstance(row, dict) and row.get("rejected"))
-    ]
-
-
 def _issue_section(run, summary: Dict[str, object]) -> IssueSectionResult:
-    """局势段知道自己的行形状，在这里收成 RejectedItem。"""
-    source = run.ctx.source
-    tables = [
-        row for key in ("advances", "new_issues", "closes", "cancels")
-        for row in (summary.get(key) or [])
-    ]
-    rejected = section_from_rows(
-        tables, source, category="issue", nested=("backlash_results",),
-    ).rejected
-    landed_people = [
-        row for row in (summary.get("applied_person_changes") or [])
-        if isinstance(row, dict) and not row.get("rejected")
-    ]
-    rejected.extend(section_from_rows(
-        landed_people, source, category="issue", nested=("backlash_results",),
-    ).rejected)
-    rejected.extend(section_from_rows(
-        summary.get("entity_rejections") or [], source, category="issue",
-    ).rejected)
     return IssueSectionResult(
-        advances=_kept(summary.get("advances")),
-        new_issues=_kept(summary.get("new_issues")),
-        closes=_kept(summary.get("closes")),
-        cancels=_kept(summary.get("cancels")),
+        advances=list(summary.get("advances") or []),
+        new_issues=list(summary.get("new_issues") or []),
+        closes=list(summary.get("closes") or []),
+        cancels=list(summary.get("cancels") or []),
         applied_person_changes=list(summary.get("applied_person_changes") or []),
-        rejected=rejected,
+        rejected=list(summary.get("rejected") or []),
         pairing_warnings=list(summary.get("pairing_warnings") or []),
     )
 
@@ -132,37 +107,16 @@ def _suppressed_rows(run, event_id: str, event_title: str, reason: str = "") -> 
         "person_issue": [], "new_armies": [],
     }
     for region_id, raw_changes in run.ordered_strategic_items("region_delta", event_id):
-        rows["region_changes"].append({
-            "region_id": region_id, "rejected": True,
-            "category": "event_rejected", "reason": reason,
-            "item": {"event_id": event_id, "region_id": region_id, "changes": raw_changes},
-        })
+        rows["region_changes"].append(RejectedItem(item={"event_id": event_id, "region_id": region_id, "changes": raw_changes}, reason=reason, category="event_rejected", source=run.ctx.source))
     for army_id, raw_changes in run.ordered_strategic_items("army_delta", event_id):
-        rows["army_changes"].append({
-            "army_id": army_id, "rejected": True,
-            "category": "event_rejected", "reason": reason,
-            "item": {"event_id": event_id, "army_id": army_id, "changes": raw_changes},
-        })
+        rows["army_changes"].append(RejectedItem(item={"event_id": event_id, "army_id": army_id, "changes": raw_changes}, reason=reason, category="event_rejected", source=run.ctx.source))
     for power_id, raw_changes in run.ordered_strategic_items("power_updates", event_id):
-        rows["power"].append({
-            "power_id": power_id, "rejected": True,
-            "category": "event_rejected", "reason": reason,
-            "item": {"event_id": event_id, "power_id": power_id, "changes": raw_changes},
-        })
+        rows["power"].append(RejectedItem(item={"event_id": event_id, "power_id": power_id, "changes": raw_changes}, reason=reason, category="event_rejected", source=run.ctx.source))
     for item in run.event_person_changes(event_id):
-        rows["person_issue"].append({
-            "name": str(item.get("name") or "").strip(),
-            "动作": str(item.get("动作") or item.get("action") or "").strip(),
-            "rejected": True, "category": "event_rejected",
-            "reason": reason, "item": dict(item),
-        })
+        rows["person_issue"].append(RejectedItem(item=dict(item), reason=reason, category="event_rejected", source=run.ctx.source))
     for item in run.event_new_armies(event_id):
         raw_item = dict(item) if isinstance(item, dict) else item
-        rows["new_armies"].append({
-            "id": str(item.get("id") or "").strip() if isinstance(item, dict) else "",
-            "rejected": True, "category": "event_rejected", "reason": reason,
-            "item": {"event_id": event_id, "new_army": raw_item},
-        })
+        rows["new_armies"].append(RejectedItem(item={"event_id": event_id, "new_army": raw_item}, reason=reason, category="event_rejected", source=run.ctx.source))
     return rows
 
 
@@ -192,33 +146,31 @@ def _resolve_strategic_events(run, issue_summary) -> Dict[str, SectionResult]:
         "region_changes": [], "army_changes": [], "power": [],
         "person_issue": [], "new_armies": [],
     }
+    reject_bucket = {name: [] for name in bucket}
     new_issues = issue_summary.get("new_issues") or []
-    seen: set[str] = set()
-    for new_issue in new_issues:
-        if isinstance(new_issue, dict):
-            event_id = str(new_issue.get("id") or "").strip()
-            if event_id in run.strategic_event_referenced_ids:
-                seen.add(event_id)
-        if not isinstance(new_issue, dict) or not new_issue.get("rejected"):
+    seen = {str(row.get("id") or "").strip() for row in new_issues}
+    for refusal in issue_summary.get("rejected") or []:
+        original = refusal.item
+        if not isinstance(original, dict):
             continue
-        event_id = str(new_issue.get("id") or "").strip()
+        event_id = str(original.get("id") or original.get("origin_ref") or "").strip()
         if event_id not in run.strategic_event_referenced_ids:
             continue
-        _extend_bucket(bucket, _suppressed_rows(
-            run, event_id, str(new_issue.get("title") or ""),
+        seen.add(event_id)
+        _extend_bucket(reject_bucket, _suppressed_rows(
+            run, event_id, str(original.get("title") or ""),
         ))
 
     for event_id in sorted(run.strategic_event_delta_ids - seen):
         ev = run.runtime_content.event_by_id.get(event_id)
-        _extend_bucket(bucket, _suppressed_rows(
+        _extend_bucket(reject_bucket, _suppressed_rows(
             run, event_id, ev.title if ev is not None else event_id,
         ))
 
-    for new_issue in new_issues:
+    for new_issue in list(new_issues):
         if not (
             isinstance(new_issue, dict)
             and new_issue.get("deferred_trigger")
-            and not new_issue.get("rejected")
         ):
             continue
         event_id = str(new_issue.get("id") or "").strip()
@@ -228,70 +180,71 @@ def _resolve_strategic_events(run, issue_summary) -> Dict[str, SectionResult]:
             event_id, run.extracted, run.runtime_content,
         )
         if outcome_error:
-            new_issue["rejected"] = True
-            new_issue["category"] = "missing_event_outcome"
-            new_issue["reason"] = outcome_error
-            _extend_bucket(bucket, _suppressed_rows(
+            issue_summary["rejected"].append(RejectedItem(item=new_issue, reason=outcome_error, category="missing_event_outcome", source=run.ctx.source))
+            new_issues.remove(new_issue)
+            _extend_bucket(reject_bucket, _suppressed_rows(
                 run, event_id, str(new_issue.get("title") or ""),
             ))
             continue
         for item in run.event_new_armies(event_id):
             origin_ref = str(item.get("origin_ref") or "").strip()
-            bucket["new_armies"].extend(run.db.create_armies_from_extraction(
+            landed, refused = run.db.create_armies_from_extraction(
                 run.state, [item], actor="档房", commit=False,
                 origin_ref=origin_ref, require_origin=True,
-            ))
+            source=run.ctx.source)
+            bucket["new_armies"].extend(landed)
+            reject_bucket["new_armies"].extend(refused)
         for region_id, raw_changes in run.ordered_strategic_items("region_delta", event_id):
             origin_ref = str(raw_changes.get("origin_ref") or "").strip()
             payload = {k: v for k, v in raw_changes.items() if k != "origin_ref"}
-            bucket["region_changes"].extend(run.db.apply_region_deltas(
+            landed, refused = run.db.apply_region_deltas(
                 run.state, run.pseudo_event, None, "档房", {region_id: payload},
                 commit=False, origin_ref=origin_ref, require_origin=True,
-            ))
+            source=run.ctx.source)
+            bucket["region_changes"].extend(landed)
+            reject_bucket["region_changes"].extend(refused)
         for army_id, raw_changes in run.ordered_strategic_items("army_delta", event_id):
-            bucket["army_changes"].extend(apply_army_delta_with_cannon_transfer(
+            landed, refused = apply_army_delta_with_cannon_transfer(
                 run.db, run.state, run.pseudo_event, army_id, raw_changes,
-            ))
+            source=run.ctx.source)
+            bucket["army_changes"].extend(landed)
+            reject_bucket["army_changes"].extend(refused)
         for item in run.event_person_changes(event_id):
             try:
                 origin_ref = run.origin_ref_from_result_item(item)
             except UnauthorizedAffairOriginRef as exc:
-                bucket["person_issue"].append({
-                    "name": _person_change_name(item),
-                    "动作": str(item.get("动作") or item.get("action") or "").strip(),
-                    "rejected": True, "category": "unauthorized_affair_origin",
-                    "reason": str(exc), "item": dict(item),
-                })
+                reject_bucket["person_issue"].append(RejectedItem(item=dict(item), reason=str(exc), category="unauthorized_affair_origin", source=run.ctx.source))
                 continue
-            results = apply_person_changes(
+            results, refused = apply_person_changes(
                 run.db, run.state, [dict(item)],
                 content=run.ctx.content,
                 llm_config=run.ctx.llm_config,
                 origin_ref=origin_ref,
                 require_origin=True,
-            )
+            source=run.ctx.source)
             if origin_ref:
                 for result in results:
                     result.setdefault("origin_ref", origin_ref)
             bucket["person_issue"].extend(results)
+            reject_bucket["person_issue"].extend(refused)
+            for result in results:
+                reject_bucket["person_issue"].extend(result.pop("backlash_results", None) or [])
         for power_id, raw_changes in run.ordered_strategic_items("power_updates", event_id):
             origin_ref = str(raw_changes.get("origin_ref") or "").strip()
             payload = {k: v for k, v in raw_changes.items() if k != "origin_ref"}
-            bucket["power"].extend(run.db.apply_power_deltas(
+            landed, refused = run.db.apply_power_deltas(
                 run.state, {power_id: payload}, commit=False,
                 origin_ref=origin_ref, require_origin=True,
-            ))
+            source=run.ctx.source)
+            bucket["power"].extend(landed)
+            reject_bucket["power"].extend(refused)
         run.db.mark_event_triggered(
             run.state, event_id, terminal_reason=outcome_label, commit=False,
         )
         apply_event_cascading_invalidations(run.state, run.db, commit=False)
         new_issue["reason"] = "事件已记为触发，软判结果已落主账"
     return {
-        name: section_from_rows(
-            rows, run.ctx.source,
-            category="applied_person_changes" if name == "person_issue" else name,
-            nested=("backlash_results",) if name == "person_issue" else (),
-        )
+        name: SectionResult(applied=rows, rejected=reject_bucket[name])
         for name, rows in bucket.items()
-        if rows
+        if rows or reject_bucket[name]
     }

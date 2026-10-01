@@ -1,3 +1,5 @@
+
+from ming_sim.applier import Provenance
 import json
 
 from ming_sim.covert_levy import (
@@ -411,22 +413,22 @@ def test_prohibition_removes_live_covert_creation_without_rewriting_history(game
 
 
 def test_zero_pay_receipts_are_not_durable_tacit_effects(game, monkeypatch):
-    from ming_sim.flows import _apply_economy_list
+    from ming_sim.entities.economy.apply import _apply_economy_list
 
     db, state, _ = game
     did, _, army_id, _ = _bound_case(db, state)
     _exposed_todo(db, state, monkeypatch, did)
     db.conn.execute("UPDATE armies SET arrears=0")
     origin = f"dossier:{did}"
-    directed = _apply_economy_list(db, state, [{
+    directed, directed_rejections = _apply_economy_list(db, state, [{
         "account": "国库", "delta": -2, "purpose": "补饷",
         "target_kind": "army", "target_id": army_id,
         "origin_ref": origin, "beyond_intent": True,
-    }], commit=False, require_origin=True)
-    pooled = _apply_economy_list(db, state, [{
+    }], commit=False, require_origin=True, source=Provenance.system_simulation)
+    pooled, pooled_rejections = _apply_economy_list(db, state, [{
         "account": "国库", "delta": -2, "purpose": "补饷",
         "origin_ref": origin, "beyond_intent": True,
-    }], commit=False, allow_pay_arrears_pool=True, require_origin=True)
+    }], commit=False, allow_pay_arrears_pool=True, require_origin=True, source=Provenance.system_simulation)
     assert directed[0]["applied"] is False and pooled[0]["applied"] is False
     assert settle_exposure_from_canonical_actions(db, state, {
         "economy_moves": directed + pooled,

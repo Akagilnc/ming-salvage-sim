@@ -6,21 +6,18 @@
 
 from __future__ import annotations
 
-from ming_sim.applier import SectionResult, merge_delta_maps, section_from_rows
+from ming_sim.applier import SectionResult, merge_delta_maps
 
 
 def apply(run) -> SectionResult:
-    from ming_sim.issues import _apply_class_dict
+    from ming_sim.entities.social_class.apply import _apply_class_dict
 
     totals: dict = {}
     rejected_rows = []
     for key, value in run.current_ordered.get("class_delta") or []:
         applied, rejected = _apply_class_dict(
-            run.db, {key: value}, commit=False,
+            run.db, {key: value}, commit=False, source=run.ctx.source,
         )
         merge_delta_maps(totals, applied)
         rejected_rows.extend(rejected)
-    refused = section_from_rows(
-        rejected_rows, run.ctx.source, category="class_delta",
-    )
-    return SectionResult(applied=list(totals.items()), rejected=refused.rejected)
+    return SectionResult(applied=list(totals.items()), rejected=rejected_rows)

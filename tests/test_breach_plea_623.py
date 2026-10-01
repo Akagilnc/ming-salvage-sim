@@ -13,6 +13,8 @@ Seams:
 
 from __future__ import annotations
 
+from ming_sim.applier import Provenance
+
 import json
 
 import pytest
@@ -932,7 +934,7 @@ def test_merged_persist_via_tracker_cancel_settles(game):
         db, state,
         {"cancels": [{"issue_id": cid, "narrative": "朕意已决，仍撤此诺"}]},
         content=content,
-    )
+    source=Provenance.system_simulation)
     cancels = out.get("cancels") or []
     hit = [c for c in cancels if int(c.get("issue_id") or 0) == int(cid)]
     assert hit, f"cancel 须命中承诺，got={cancels!r}"

@@ -13,6 +13,8 @@
 
 from __future__ import annotations
 
+from ming_sim.applier import Provenance
+
 import pytest
 
 from ming_sim.issues import apply_office_appointment
@@ -147,13 +149,13 @@ def test_restore_uses_new_office_weight_not_old(game):
     result_lo = apply_office_appointment(
         db, state, content, name_lo, "某府知府",
         reason="起复地方", faction="阉党", region_id="henan",
-    )
+    source=Provenance.system_simulation)
     after_low = db.faction_leverage("阉党")
 
     # name_hi 起复到内阁(高权)
     result_hi = apply_office_appointment(
         db, state, content, name_hi, "内阁大学士", reason="起复内阁", faction="阉党"
-    )
+    , source=Provenance.system_simulation)
     after_high = db.faction_leverage("阉党")
 
     # cmr R3 finding#3 防假绿：两次任命都必须真落库（未被拒）——若低职任命被拒(inc_low=0)，
@@ -222,7 +224,7 @@ def test_failed_appointment_rolls_back_faction_leverage(game):
     try:
         result = apply_office_appointment(
             db, state, content, name, "内阁大学士", reason="起复内阁", faction="阉党"
-        )
+        , source=Provenance.system_simulation)
     finally:
         db.set_character_office = orig  # type: ignore[assignment]
 
@@ -259,7 +261,7 @@ def test_displaced_minister_faction_leverage_recomputed(game):
     before = db.faction_leverage("阉党")
     result = apply_office_appointment(
         db, state, content, "孙承宗", "兵部尚书", reason="起复掌兵部", faction="东林"
-    )
+    , source=Provenance.system_simulation)
     assert not result.get("rejected"), f"任命不应被拒：{result}"
     assert result.get("displaced"), f"应顶替崔呈秀的兵部尚书：{result}"
     after = db.faction_leverage("阉党")
@@ -347,7 +349,7 @@ def test_add_character_appointment_lifts_faction_leverage(game):
     before_ws = db._faction_office_weight_sum(faction)
     result = apply_office_appointment(
         db, state, content, new_name, "翰林院侍读学士", reason="新科入翰林", faction=faction
-    )
+    , source=Provenance.system_simulation)
     assert not result.get("rejected"), f"新大臣任命不应被拒：{result}"
     assert result.get("kind") == "appoint", f"应走新建档(appoint)路：{result}"
     # 新成员确入册且 active/ming（add_character 落库成功），权重和随之上升。
@@ -1100,7 +1102,7 @@ def test_power_id_defection_drops_faction_leverage_immediately(game):
     # 直接调 apply_character_power_changes（power_id 翻转落库入口），不走结算路
     db.apply_character_power_changes(
         [{"name": name, "new_power": "houjin", "reason": "通虏投敌"}]
-    )
+    , source=Provenance.system_simulation)
     after = db.faction_leverage("阉党")
     assert after < before, (
         f"投敌后原派系 leverage 应即时下跌（不等 reconcile）：before={before} after={after}"

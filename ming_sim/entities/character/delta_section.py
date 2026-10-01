@@ -12,9 +12,11 @@
 
 from __future__ import annotations
 
+from ming_sim.applier import RejectedItem, Provenance
+
 from typing import Dict, List, Set
 
-from ming_sim.applier import section_from_rows
+from ming_sim.applier import SectionResult
 
 
 def apply_declared_person_changes(run, changes, *, phase: str):
@@ -26,13 +28,15 @@ def apply_declared_person_changes(run, changes, *, phase: str):
     from ming_sim.entities.character.apply import apply_person_changes
 
     rows = []
+    rejections = []
     for index, person_change in enumerate(changes):
         savepoint = f"person_affair_{phase}_{index}"
         run.db.conn.execute(f"SAVEPOINT {savepoint}")
         try:
             origin_ref = run.origin_ref_from_result_item(person_change)
-            results = apply_person_changes(
+            results, refused = apply_person_changes(
                 run.db, run.state, [dict(person_change)],
+                source=run.ctx.source,
                 content=run.ctx.content,
                 llm_config=run.ctx.llm_config,
                 origin_ref=origin_ref,
@@ -41,28 +45,22 @@ def apply_declared_person_changes(run, changes, *, phase: str):
             if origin_ref:
                 for result in results:
                     result.setdefault("origin_ref", origin_ref)
-            if not results or all(result.get("rejected") for result in results):
+            if not results:
                 run.db.conn.execute(f"ROLLBACK TO {savepoint}")
             run.db.conn.execute(f"RELEASE {savepoint}")
             rows.extend(results)
+            rejections.extend(refused)
+            for result in results:
+                rejections.extend(result.pop("backlash_results", None) or [])
         except UnauthorizedAffairOriginRef as exc:
             run.db.conn.execute(f"ROLLBACK TO {savepoint}")
             run.db.conn.execute(f"RELEASE {savepoint}")
-            rows.append({
-                "name": str(person_change.get("name") or "").strip(),
-                "动作": str(person_change.get("动作") or "").strip(),
-                "rejected": True, "category": "unauthorized_affair_origin",
-                "reason": str(exc), "item": dict(person_change),
-            })
+            rejections.append(RejectedItem(item=dict(person_change), reason=str(exc), category="unauthorized_affair_origin", source=run.ctx.source))
         except Exception:
             run.db.conn.execute(f"ROLLBACK TO {savepoint}")
             run.db.conn.execute(f"RELEASE {savepoint}")
             raise
-    return section_from_rows(
-        rows, run.ctx.source, category="applied_person_changes",
-        nested=("backlash_results",),
-    )
-
+    return SectionResult(applied=rows, rejected=rejections)
 
 def apply_pre_issue(run):
     """局势段之前落的「评定」等前置人物变更。"""

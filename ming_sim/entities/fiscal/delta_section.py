@@ -10,6 +10,8 @@
 
 from __future__ import annotations
 
+from ming_sim.applier import RejectedItem, Provenance
+
 from typing import Any, Dict, List, Tuple
 
 from ming_sim.applier import SectionResult
@@ -34,58 +36,39 @@ def apply_removes(run) -> SectionResult:
     from ming_sim.issues import _FISCAL_ACCOUNTS  # noqa: F401  (形状真源在本段下方)
 
     applied: List[Dict[str, object]] = []
+    rejections: List[RejectedItem] = []
     for remove in run.current_extracted.get("fiscal_removes") or []:
         key = str(remove.get("key") or "").strip()
         if not key:
-            applied.append({
-                "rejected": True, "reason": "fiscal_removes 缺 key,无法定位裁撤目标。",
-                "category": "invalid_enum", "item": remove,
-            })
+            rejections.append(RejectedItem(item=remove, reason="fiscal_removes 缺 key,无法定位裁撤目标。", category="invalid_enum", source=run.ctx.source))
             continue
         if run.db._stem_of(key) == "":
             # 多重后缀垃圾 key＝非法，与 create 段同口径 invalid_enum——误标
             # missing_ref「不存在」会让机读聚合失真。
-            applied.append({
-                "rejected": True, "reason": f"裁撤 key「{key}」非法（多重 _base/_rate 后缀）。",
-                "category": "invalid_enum", "item": remove,
-            })
+            rejections.append(RejectedItem(item=remove, reason=f"裁撤 key「{key}」非法（多重 _base/_rate 后缀）。", category="invalid_enum", source=run.ctx.source))
             continue
         if run.db.fiscal_config_loss_rate_pair(key) is not None:
-            applied.append({
-                "rejected": True,
-                "reason": f"裁撤目标「{key}」是中央损耗率成对配置，不可裁撤。",
-                "category": "invalid_enum", "item": remove,
-            })
+            rejections.append(RejectedItem(item=remove, reason=f"裁撤目标「{key}」是中央损耗率成对配置，不可裁撤。", category="invalid_enum", source=run.ctx.source))
             continue
         if run.db.is_structural_fiscal_config_key(key):
-            applied.append({
-                "rejected": True,
-                "reason": f"裁撤目标「{key}」是结构性财政地板，不可裁撤。",
-                "category": "invalid_enum", "item": remove,
-            })
+            rejections.append(RejectedItem(item=remove, reason=f"裁撤目标「{key}」是结构性财政地板，不可裁撤。", category="invalid_enum", source=run.ctx.source))
             continue
         fiscal_config = run.db.get_fiscal_config()
         stem = run.db._stem_of(key)
         if key not in fiscal_config and not any(
             candidate in fiscal_config for candidate in (f"{stem}_base", f"{stem}_rate")
         ):
-            applied.append({
-                "rejected": True, "reason": f"裁撤目标「{key}」不存在,跳过。",
-                "category": "missing_ref", "item": remove,
-            })
+            rejections.append(RejectedItem(item=remove, reason=f"裁撤目标「{key}」不存在,跳过。", category="missing_ref", source=run.ctx.source))
             continue
         origin_ref = str(remove.get("origin_ref") or "").strip()
         origin_error = run.db.effect_origin_rejection(origin_ref)
         if origin_error:
-            applied.append({**origin_error, "item": remove})
+            rejections.append(RejectedItem(item=remove, reason=origin_error["reason"], category=origin_error["category"], source=run.ctx.source))
             continue
         if stopped_covert_effect(
             run.db, origin_ref=origin_ref, beyond_intent=remove.get("beyond_intent"),
         ):
-            applied.append({
-                "rejected": True, "category": "forbidden_effect",
-                "reason": "该旧案暗渠摊派已奉旨禁绝", "item": remove,
-            })
+            rejections.append(RejectedItem(item=remove, reason="该旧案暗渠摊派已奉旨禁绝", category="forbidden_effect", source=run.ctx.source))
             continue
         removed_key = run.db.remove_fiscal_item(
             key, commit=False, origin_ref=origin_ref,
@@ -94,18 +77,15 @@ def apply_removes(run) -> SectionResult:
         )
         if removed_key is None:
             # 查无此项＝正常业务拒绝，逐项留痕。
-            applied.append({
-                "rejected": True, "reason": f"裁撤目标「{key}」不存在,跳过。",
-                "category": "missing_ref", "item": remove,
-            })
+            rejections.append(RejectedItem(item=remove, reason=f"裁撤目标「{key}」不存在,跳过。", category="missing_ref", source=run.ctx.source))
             continue
         applied.append(canonical_fiscal_result(
             run.db, remove, applied=True, key=removed_key,
             reason=str(remove.get("reason") or ""),
         ))
-    from ming_sim.applier import section_from_rows
+    from ming_sim.applier import SectionResult
 
-    return section_from_rows(applied, run.ctx.source, category="fiscal_removes")
+    return SectionResult(applied=applied, rejected=rejections)
 
 
 def apply_creates(run) -> SectionResult:
@@ -114,6 +94,7 @@ def apply_creates(run) -> SectionResult:
     from ming_sim.issues import _DIRECTION_NORMALIZE, _FISCAL_ACCOUNTS, _FISCAL_DIRECTIONS, tlog
 
     applied: List[Dict[str, object]] = []
+    rejections: List[RejectedItem] = []
     for create in run.current_extracted.get("fiscal_creates") or []:
         # direction 同义词在唯一守门人处归一：表与清洗层共用同一张表（懒 import
         # 避循环）。先归一再去重——ADR 0027 的承诺载体都是月度【支出】(delta<0)，
@@ -123,11 +104,7 @@ def apply_creates(run) -> SectionResult:
         key = str(create.get("key") or "").strip()
         account = str(create.get("account") or "").strip()
         if not key or account not in _FISCAL_ACCOUNTS or direction not in _FISCAL_DIRECTIONS:
-            applied.append({
-                "rejected": True,
-                "reason": f"新立项枚举非法（key={key!r} account={account!r} direction={direction!r}）。",
-                "category": "invalid_enum", "item": create,
-            })
+            rejections.append(RejectedItem(item=create, reason=f"新立项枚举非法（key={key!r} account={account!r} direction={direction!r}）。", category="invalid_enum", source=run.ctx.source))
             continue
         # init_value 缺省/null＝0 合法；在场脏值（字符串/float/bool/负值）显式拒，
         # 不静默归 0（凭空建零值项）。bool 是 int 子类，先于 int 判。
@@ -135,11 +112,7 @@ def apply_creates(run) -> SectionResult:
         if init_raw is None:
             init_value = 0
         elif isinstance(init_raw, bool) or not isinstance(init_raw, int) or init_raw < 0:
-            applied.append({
-                "rejected": True,
-                "reason": f"新立项「{key}」初值 init_value 非法（{init_raw!r}，须非负整数），不静默归 0。",
-                "category": "invalid_enum", "item": create,
-            })
+            rejections.append(RejectedItem(item=create, reason=f"新立项「{key}」初值 init_value 非法（{init_raw!r}，须非负整数），不静默归 0。", category="invalid_enum", source=run.ctx.source))
             continue
         else:
             init_value = init_raw
@@ -149,15 +122,12 @@ def apply_creates(run) -> SectionResult:
         origin_ref = str(create.get("origin_ref") or "").strip()
         origin_error = run.db.effect_origin_rejection(origin_ref)
         if origin_error:
-            applied.append({**origin_error, "item": create})
+            rejections.append(RejectedItem(item=create, reason=origin_error["reason"], category=origin_error["category"], source=run.ctx.source))
             continue
         if stopped_covert_effect(
             run.db, origin_ref=origin_ref, beyond_intent=create.get("beyond_intent"),
         ):
-            applied.append({
-                "rejected": True, "category": "forbidden_effect",
-                "reason": "该旧案暗渠摊派已奉旨禁绝", "item": create,
-            })
+            rejections.append(RejectedItem(item=create, reason="该旧案暗渠摊派已奉旨禁绝", category="forbidden_effect", source=run.ctx.source))
             continue
         # Dedup 是业务规则不是授权闸：只看形状合法且已授权的载体，否则会把缺失
         # 或伪造的归属藏在 deduped_commitment_carrier 后面。
@@ -171,10 +141,7 @@ def apply_creates(run) -> SectionResult:
                 create, run.commitment_economy_carriers, run.db,
             )
             if dedup_reason:
-                applied.append({
-                    "rejected": True, "reason": dedup_reason,
-                    "category": "deduped_commitment_carrier", "item": create,
-                })
+                rejections.append(RejectedItem(item=create, reason=dedup_reason, category="deduped_commitment_carrier", source=run.ctx.source))
                 continue
             residual_account = _commitment_carrier_same_account_unmatched(
                 create, run.commitment_economy_carriers,
@@ -196,20 +163,16 @@ def apply_creates(run) -> SectionResult:
         )
         if new_key is None:
             # 已存在 / db 拒＝正常业务拒绝，逐项留痕。
-            applied.append({
-                "rejected": True,
-                "reason": f"新立项「{key}」已存在或被落库拒绝,跳过。",
-                "category": "invalid_enum", "item": create,
-            })
+            rejections.append(RejectedItem(item=create, reason=f"新立项「{key}」已存在或被落库拒绝,跳过。", category="invalid_enum", source=run.ctx.source))
             continue
         applied.append(canonical_fiscal_result(
             run.db, create, applied=True, key=new_key, account=account,
             direction=direction, display=display, init_value=max(0, init_value),
             reason=str(create.get("reason") or ""),
         ))
-    from ming_sim.applier import section_from_rows
+    from ming_sim.applier import SectionResult
 
-    return section_from_rows(applied, run.ctx.source, category="fiscal_creates")
+    return SectionResult(applied=applied, rejected=rejections)
 
 
 def apply_changes(run) -> SectionResult:
@@ -218,6 +181,7 @@ def apply_changes(run) -> SectionResult:
     from ming_sim.issues import _write_fiscal_config_change
 
     applied: List[Dict[str, object]] = []
+    rejections: List[RejectedItem] = []
     fiscal_config_snapshot = run.db.get_fiscal_config()
     deferred_loss_pair_changes: List[Dict[str, object]] = []
     loss_pair_running: Dict[str, int] = {}
@@ -228,17 +192,10 @@ def apply_changes(run) -> SectionResult:
         if not key:
             # 空 key＝脏项，先于一切无操作短路记拒——否则 delta 0/null 的空 key
             # 项会被短路吞掉无痕。
-            applied.append({
-                "rejected": True, "reason": "调率项缺 key,无法定位科目。",
-                "category": "invalid_enum", "item": change,
-            })
+            rejections.append(RejectedItem(item=change, reason="调率项缺 key,无法定位科目。", category="invalid_enum", source=run.ctx.source))
             continue
         if run.db._stem_of(key) == "":
-            applied.append({
-                "rejected": True,
-                "reason": f"调率 key「{key}」非法（多重 _base/_rate 后缀）。",
-                "category": "invalid_enum", "item": change,
-            })
+            rejections.append(RejectedItem(item=change, reason=f"调率 key「{key}」非法（多重 _base/_rate 后缀）。", category="invalid_enum", source=run.ctx.source))
             continue
         delta_raw = _norm_int_leaf(change.get("delta"))
         # delta 缺省＝无操作，静默放过不记拒（免得每月刷无意义拒收行）。
@@ -247,10 +204,7 @@ def apply_changes(run) -> SectionResult:
         # 脏值判定必须先于「==0 无操作」短路——False==0 / 0.0==0 为真，放后面会
         # 把脏 bool/float 静默吞掉。
         if isinstance(delta_raw, bool) or not isinstance(delta_raw, int):
-            applied.append({
-                "rejected": True, "reason": f"调率 delta 非整数（{delta_raw!r}），不静默吞。",
-                "category": "invalid_enum", "item": change,
-            })
+            rejections.append(RejectedItem(item=change, reason=f"调率 delta 非整数（{delta_raw!r}），不静默吞。", category="invalid_enum", source=run.ctx.source))
             continue
         if delta_raw == 0:
             continue
@@ -258,23 +212,17 @@ def apply_changes(run) -> SectionResult:
         current = run.db.get_fiscal_config().get(key)
         if current is None:
             # 未知 key＝正常业务拒绝，逐项留痕。
-            applied.append({
-                "rejected": True, "reason": f"调率目标「{key}」不存在,跳过。",
-                "category": "missing_ref", "item": change,
-            })
+            rejections.append(RejectedItem(item=change, reason=f"调率目标「{key}」不存在,跳过。", category="missing_ref", source=run.ctx.source))
             continue
         origin_ref = str(change.get("origin_ref") or "").strip()
         if stopped_covert_effect(
             run.db, origin_ref=origin_ref, beyond_intent=change.get("beyond_intent"),
         ):
-            applied.append({
-                "rejected": True, "category": "forbidden_effect",
-                "reason": "该旧案暗渠摊派已奉旨禁绝", "item": change,
-            })
+            rejections.append(RejectedItem(item=change, reason="该旧案暗渠摊派已奉旨禁绝", category="forbidden_effect", source=run.ctx.source))
             continue
         origin_error = run.db.effect_origin_rejection(origin_ref)
         if origin_error:
-            applied.append({**origin_error, "item": change})
+            rejections.append(RejectedItem(item=change, reason=origin_error["reason"], category=origin_error["category"], source=run.ctx.source))
             continue
         loss_pair = run.db.fiscal_config_loss_rate_pair(key)
         if loss_pair is not None:
@@ -301,10 +249,7 @@ def apply_changes(run) -> SectionResult:
         try:
             run.db.validate_fiscal_config_value(key, new_val)
         except ValueError as exc:
-            applied.append({
-                "rejected": True, "reason": f"调率目标「{key}」非法：{exc}",
-                "category": "invalid_enum", "item": change,
-            })
+            rejections.append(RejectedItem(item=change, reason=f"调率目标「{key}」非法：{exc}", category="invalid_enum", source=run.ctx.source))
             continue
         _write_fiscal_config_change(
             run.db, turn=run.state.turn, key=key, old_value=current,
@@ -327,11 +272,7 @@ def apply_changes(run) -> SectionResult:
             run.db.set_fiscal_config_batch(final_values, commit=False)
         except ValueError as exc:
             for change in pair_changes:
-                applied.append({
-                    "rejected": True,
-                    "reason": f"调率目标「{change['key']}」非法：{exc}",
-                    "category": "invalid_enum", "item": change["item"],
-                })
+                rejections.append(RejectedItem(item=change["item"], reason=f"调率目标「{change['key']}」非法：{exc}", category="invalid_enum", source=run.ctx.source))
             continue
         for change in pair_changes:
             run.db.conn.execute(
@@ -352,6 +293,6 @@ def apply_changes(run) -> SectionResult:
                 delta=change["delta"], reason=change["reason"],
             ))
 
-    from ming_sim.applier import section_from_rows
+    from ming_sim.applier import SectionResult
 
-    return section_from_rows(applied, run.ctx.source, category="fiscal_changes")
+    return SectionResult(applied=applied, rejected=rejections)

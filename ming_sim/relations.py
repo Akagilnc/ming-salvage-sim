@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+from ming_sim.applier import RejectedItem, Provenance
+
 import re
 from collections.abc import Mapping
 from typing import Any, Iterable
@@ -296,6 +298,7 @@ def resolve_relation_edge_events_from_extraction(
     db: Any, state: Any, extracted: Any,
     allowed_endpoint_names: Any,
     dossier_ids_at_input: Any = None,
+    source: Provenance = Provenance.system_simulation,
 ) -> list[dict[str, Any]]:
     """#633 结算口真入口（resolve_credit_events_from_extraction 先例）。
 
@@ -307,19 +310,17 @@ def resolve_relation_edge_events_from_extraction(
     单一契约，无缺省 fallback，缺参即 TypeError 显式失败）。类目 fail-closed 限大臣侧九类；坏项逐条拒收留痕（category=invalid_relation_event），
     不猜测修正；捕获为空时零事件零副作用。重复项由表 UNIQUE
     (source,target,event_kind,context,origin) 幂等吸收，重放不双记。"""
+    rejections: List[RejectedItem] = []
     results: list[dict[str, Any]] = []
     if not isinstance(extracted, Mapping):
-        return results
+        return results, rejections
     items = extracted.get("relation_edge_events")
     if not isinstance(items, list):
-        return results
+        return results, rejections
     turn = int(getattr(state, "turn", 0) or 0)
     for item in items:
         if not isinstance(item, Mapping):
-            results.append({
-                "rejected": True, "category": "invalid_shape", "item": item,
-                "reason": "大臣互动项必须为对象",
-            })
+            rejections.append(RejectedItem(item=item, reason="大臣互动项必须为对象", category="invalid_shape", source=source))
             continue
         try:
             results.extend(_capture_one_interaction(
@@ -328,8 +329,5 @@ def resolve_relation_edge_events_from_extraction(
                 allowed_dossier_ids=dossier_ids_at_input,
             ))
         except (TypeError, ValueError) as exc:
-            results.append({
-                "rejected": True, "category": "invalid_relation_event",
-                "reason": str(exc), "item": dict(item),
-            })
-    return results
+            rejections.append(RejectedItem(item=dict(item), reason=str(exc), category="invalid_relation_event", source=source))
+    return results, rejections

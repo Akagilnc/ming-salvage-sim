@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Dict, List
 
-from ming_sim.applier import SectionResult, section_from_rows
+from ming_sim.applier import SectionResult
 
 
 def _placed(run, *names: str) -> SectionResult:
@@ -61,7 +61,7 @@ def apply(run):
         ),
         "人物变更": [
             row for row in person.applied
-            if isinstance(row, dict) and not row.get("rejected") and not row.get("cascade_echo")
+            if isinstance(row, dict) and not row.get("cascade_echo")
         ],
         "economy_moves": _source_minus_rejections(
             run.current_extracted.get("economy_moves"),
@@ -77,10 +77,7 @@ def apply(run):
         ),
         "cancels": list(issue.cancels) if issue is not None else [],
     }
-    resolutions = resolve_credit_events_from_extraction(
-        run.db, run.state, credit_applied, commit=False,
+    resolutions, rejections = resolve_credit_events_from_extraction(
+        run.db, run.state, credit_applied, source=run.ctx.source, commit=False,
     )
-    return section_from_rows(
-        _resolution_rows(resolutions), run.ctx.source,
-        category="credit_event_resolutions",
-    )
+    return SectionResult(applied=_resolution_rows(resolutions), rejected=rejections)

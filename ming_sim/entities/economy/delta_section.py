@@ -8,9 +8,11 @@
 
 from __future__ import annotations
 
+from ming_sim.applier import RejectedItem, Provenance
+
 from typing import List
 
-from ming_sim.applier import SectionResult, section_from_rows
+from ming_sim.applier import SectionResult
 
 
 def apply(run, moves: List[object] | None = None, *, index_base: int = 0) -> SectionResult:
@@ -20,12 +22,14 @@ def apply(run, moves: List[object] | None = None, *, index_base: int = 0) -> Sec
     交错时 savepoint 名不撞（同名 savepoint 会互相覆盖回滚范围）。
     """
     from ming_sim.entities.affair import UnauthorizedAffairOriginRef
-    from ming_sim.issues import _apply_economy_list, _payload_owned_dossier_for_origin
+    from ming_sim.entities.economy.apply import _apply_economy_list
+    from ming_sim.issues import _payload_owned_dossier_for_origin
 
     if moves is None:
         moves = list(run.current_extracted.get("economy_moves") or [])
 
     rows: List[object] = []
+    rejections: List[RejectedItem] = []
     for offset, raw_move in enumerate(moves):
         savepoint = f"economy_affair_{index_base + offset}"
         run.db.conn.execute(f"SAVEPOINT {savepoint}")
@@ -45,25 +49,21 @@ def apply(run, moves: List[object] | None = None, *, index_base: int = 0) -> Sec
                         # 拨款单轨已有唯一承载（#1503），重复申报不认。
                         run.db.conn.execute(f"RELEASE {savepoint}")
                         continue
-            results = _apply_economy_list(
-                run.db, run.state, [move], commit=False, require_origin=True,
+            results, refused = _apply_economy_list(
+                run.db, run.state, [move], commit=False, require_origin=True, source=run.ctx.source,
             )
-            rejected = [row for row in results if row.get("rejected")]
-            if rejected:
+            if refused:
                 run.db.conn.execute(f"ROLLBACK TO {savepoint}")
-                rows.extend(rejected)
+                rejections.extend(refused)
             else:
                 rows.extend(results)
             run.db.conn.execute(f"RELEASE {savepoint}")
         except UnauthorizedAffairOriginRef as exc:
             run.db.conn.execute(f"ROLLBACK TO {savepoint}")
             run.db.conn.execute(f"RELEASE {savepoint}")
-            rows.append({
-                "rejected": True, "category": "invalid_enum",
-                "reason": str(exc), "item": raw_move,
-            })
+            rejections.append(RejectedItem(item=raw_move, reason=str(exc), category="invalid_enum", source=run.ctx.source))
         except Exception:
             run.db.conn.execute(f"ROLLBACK TO {savepoint}")
             run.db.conn.execute(f"RELEASE {savepoint}")
             raise
-    return section_from_rows(rows, run.ctx.source, category="economy_moves")
+    return SectionResult(applied=rows, rejected=rejections)

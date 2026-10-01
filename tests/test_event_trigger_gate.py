@@ -5,6 +5,8 @@ seed 情势，历史 `events` 分支只过纯日历窗口 `_event_window_open` �
 年月误触发（毛文龙已安抚/效顺仍被弹出的机制半）。把门接进历史分支：带 gate 的历史事件须达标
 才进候选；无 gate（空 dict）= 纯日历锚定，行为不变。
 """
+
+from ming_sim.applier import Provenance
 import json
 from contextlib import contextmanager
 from pathlib import Path
@@ -410,9 +412,9 @@ def test_event_pool_apply_uses_pushed_candidate_snapshot_not_fresh_recompute(gam
             content=content,
             candidate_event_ids_at_input={ev.id},
             candidate_event_ids_authoritative=True,
-        )
+        source=Provenance.system_simulation)
 
-        assert out["new_issues"][0]["rejected"] is False
+        assert "rejected" not in out["new_issues"][0]
         assert db.conn.execute(
             "SELECT 1 FROM issues WHERE origin_kind='event_pool' AND origin_ref=?",
             (ev.id,),
@@ -984,9 +986,9 @@ def test_mao_wenlong_event_trigger_lands_character_status(game):
             state,
             {"new_issues": [{"origin_kind": "event_pool", "id": "mao_wenlong"}]},
             content=content,
-        )
+        source=Provenance.system_simulation)
 
-        assert out["new_issues"][0]["rejected"] is False
+        assert "rejected" not in out["new_issues"][0]
         assert db.get_character_status("毛文龙")[0] == "dead"
         assert content.characters["毛文龙"].status == "dead"
         assert db.conn.execute(
@@ -1051,10 +1053,10 @@ def test_direct_issue_tracker_rejects_strategic_event_without_world_state_delta(
         state,
         {"new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}]},
         content=content,
-    )
+    source=Provenance.system_simulation)
 
-    assert out["new_issues"][0]["rejected"] is True
-    assert "主账" in out["new_issues"][0]["reason"]
+    assert out["new_issues"] == []
+    assert "主账" in out["rejected"][0].reason
     assert not db.has_event_triggered("jisi_lubian")
 
 
@@ -1474,13 +1476,14 @@ def test_mao_wenlong_event_trigger_respects_outer_transaction_rollback(game):
         ).fetchone()[0]
 
         db.conn.execute("BEGIN")
+        issues._register_runtime_rollback_snapshot(db, state, content)
         out = issues.apply_issue_tracker_output(
             db,
             state,
             {"new_issues": [{"origin_kind": "event_pool", "id": "mao_wenlong"}]},
             content=content,
-        )
-        assert out["new_issues"][0]["rejected"] is False
+        source=Provenance.system_simulation)
+        assert "rejected" not in out["new_issues"][0]
         db.conn.rollback()
 
         assert db.get_character_status("毛文龙")[0] == "active"
@@ -1504,12 +1507,13 @@ def test_issue_tracker_rollback_restores_bound_content_when_content_omitted(game
         db.conn.commit()
 
         db.conn.execute("BEGIN")
+        issues._register_runtime_rollback_snapshot(db, state, content)
         out = issues.apply_issue_tracker_output(
             db,
             state,
             {"new_issues": [{"origin_kind": "event_pool", "id": "mao_wenlong"}]},
-        )
-        assert out["new_issues"][0]["rejected"] is False
+        source=Provenance.system_simulation)
+        assert "rejected" not in out["new_issues"][0]
         assert content.characters["毛文龙"].status == "dead"
         db.conn.rollback()
 
@@ -1527,7 +1531,8 @@ def test_issue_tracker_rollback_removes_dynamic_character_attrs(game):
     db.conn.commit()
 
     db.conn.execute("BEGIN")
-    issues.apply_issue_tracker_output(db, state, {"advances": []}, content=content)
+    issues._register_runtime_rollback_snapshot(db, state, content)
+    issues.apply_issue_tracker_output(db, state, {"advances": []}, content=content, source=Provenance.system_simulation)
     character._test_runtime_ghost_attr = "ghost"
     db.conn.rollback()
 
@@ -1581,8 +1586,8 @@ def test_event_pool_situation_insert_respects_outer_transaction_rollback(game):
             state,
             {"new_issues": [{"origin_kind": "event_pool", "id": ev.id}]},
             content=content,
-        )
-        assert out["new_issues"][0]["rejected"] is False
+        source=Provenance.system_simulation)
+        assert "rejected" not in out["new_issues"][0]
         db.conn.rollback()
 
         row = db.conn.execute(
@@ -1609,10 +1614,10 @@ def test_mao_wenlong_event_pool_rechecks_gate_before_effect(game):
         state,
         {"new_issues": [{"origin_kind": "event_pool", "id": "mao_wenlong"}]},
         content=content,
-    )
+    source=Provenance.system_simulation)
 
-    assert out["new_issues"][0]["rejected"] is True
-    assert "候选" in out["new_issues"][0]["reason"]
+    assert out["new_issues"] == []
+    assert "候选" in out["rejected"][0].reason
     assert db.get_character_status("毛文龙")[0] == "active"
     assert content.characters["毛文龙"].status == "active"
     assert not db.has_event_triggered("mao_wenlong")
@@ -2404,11 +2409,11 @@ def test_mao_wenlong_event_pool_uses_candidate_snapshot_before_advances(game):
                 "new_issues": [{"origin_kind": "event_pool", "id": ev.id}],
             },
             content=content,
-        )
+        source=Provenance.system_simulation)
 
         assert state.metrics["民心"] == 5
-        assert out["new_issues"][0]["rejected"] is True
-        assert "候选" in out["new_issues"][0]["reason"]
+        assert out["new_issues"] == []
+        assert "候选" in out["rejected"][0].reason
         assert not db.has_event_triggered(ev.id)
     finally:
         content.seed_events.remove(ev)
@@ -2497,11 +2502,11 @@ def test_event_pool_rechecks_after_advances_close_gate(game):
                 "new_issues": [{"origin_kind": "event_pool", "id": ev.id}],
             },
             content=content,
-        )
+        source=Provenance.system_simulation)
 
         assert state.metrics["民心"] == 5
-        assert out["new_issues"][0]["rejected"] is True
-        assert "候选" in out["new_issues"][0]["reason"]
+        assert out["new_issues"] == []
+        assert "候选" in out["rejected"][0].reason
         assert not db.has_event_triggered(ev.id)
     finally:
         content.seed_events.remove(ev)
@@ -2561,12 +2566,12 @@ def test_event_pool_rechecks_after_prior_event_effect_closes_gate(game):
                 ]
             },
             content=content,
-        )
+        source=Provenance.system_simulation)
 
-        assert out["new_issues"][0]["rejected"] is False
+        assert "rejected" not in out["new_issues"][0]
         assert db.get_character_status("袁崇焕")[0] == "dismissed"
-        assert out["new_issues"][1]["rejected"] is True
-        assert "候选" in out["new_issues"][1]["reason"]
+        assert len(out["new_issues"]) == 1
+        assert "候选" in out["rejected"][0].reason
         assert db.conn.execute(
             "SELECT id FROM issues WHERE origin_kind='event_pool' AND origin_ref=?",
             (second.id,),
@@ -2601,8 +2606,8 @@ def test_issue_tracker_decree_new_issue_respects_outer_transaction_rollback(game
                 }
             ]
         },
-    )
-    assert out["new_issues"][0]["rejected"] is False
+    source=Provenance.system_simulation)
+    assert "rejected" not in out["new_issues"][0]
     issue_id = out["new_issues"][0]["issue_id"]
     db.conn.rollback()
 
@@ -2632,7 +2637,7 @@ def test_issue_tracker_advance_respects_outer_transaction_rollback(game):
         db,
         state,
         {"advances": [{"issue_id": issue_id, "delta_bar": 7, "stage_text": "推进后"}]},
-    )
+    source=Provenance.system_simulation)
     assert out["advances"][0]["status"] == "active"
     db.conn.rollback()
 
@@ -2668,7 +2673,7 @@ def test_issue_tracker_advance_effects_respect_outer_transaction_rollback(game):
         db,
         state,
         {"advances": [{"issue_id": issue_id, "delta_bar": 10, "stage_text": "办成"}]},
-    )
+    source=Provenance.system_simulation)
     assert out["advances"][0]["status"] == "resolved"
     db.conn.rollback()
 
@@ -2708,7 +2713,7 @@ def test_issue_tracker_close_respects_outer_transaction_rollback(game):
         db,
         state,
         {"close_issues": [{"issue_id": issue_id, "reason": "resolved", "narrative": "结案"}]},
-    )
+    source=Provenance.system_simulation)
     assert out["closes"][0]["reason"] == "resolved"
     db.conn.rollback()
 
@@ -2756,7 +2761,7 @@ def test_issue_tracker_close_effects_respect_outer_transaction_rollback(game):
         db,
         state,
         {"close_issues": [{"issue_id": issue_id, "reason": "resolved", "narrative": "结案"}]},
-    )
+    source=Provenance.system_simulation)
     assert out["closes"][0]["reason"] == "resolved"
     db.conn.rollback()
 
@@ -2810,7 +2815,7 @@ def test_issue_tracker_close_entity_effects_respect_outer_transaction_rollback(g
         db,
         state,
         {"close_issues": [{"issue_id": issue_id, "reason": "resolved", "narrative": "结案"}]},
-    )
+    source=Provenance.system_simulation)
     assert out["closes"][0]["reason"] == "resolved"
     db.conn.rollback()
 
@@ -2852,7 +2857,7 @@ def test_issue_tracker_close_legacy_expiry_respects_outer_transaction_rollback(g
         db,
         state,
         {"close_issues": [{"issue_id": issue_id, "reason": "resolved", "narrative": "结案"}]},
-    )
+    source=Provenance.system_simulation)
     assert out["closes"][0]["reason"] == "resolved"
     db.conn.rollback()
 
@@ -3128,7 +3133,7 @@ def test_event_pool_pending_invalid_location_does_not_block_gate(game):
         )
 
         new_issue = issue_rows(out, "new_issues")[0]
-        assert new_issue["rejected"] is False
+        assert "rejected" not in new_issue
         assert rejected_view(out, "applied_person_changes")[0].category == "invalid_transition"
         assert db.conn.execute(
             "SELECT id FROM issues WHERE origin_kind='event_pool' AND origin_ref=?",
@@ -3331,7 +3336,7 @@ def test_event_pool_pending_invalid_location_does_not_clear_transit_gate(game):
         )
 
         new_issue = issue_rows(out, "new_issues")[0]
-        assert new_issue["rejected"] is False
+        assert "rejected" not in new_issue
         assert rejected_view(out, "applied_person_changes")[0].category == "invalid_transition"
         assert db.conn.execute(
             "SELECT id FROM issues WHERE origin_kind='event_pool' AND origin_ref=?",
@@ -3834,7 +3839,7 @@ def test_event_pool_pending_gate_reuses_shadow_prefetch_across_new_issues(game, 
                 {"name": "袁崇焕", "动作": "处置", "status": "dismissed", "reason": "测试共享快照"}
             ],
             candidate_event_ids_at_input={ev1.id, ev2.id},
-        )
+        source=Provenance.system_simulation)
     finally:
         db.conn.set_trace_callback(None)
         content.seed_events.remove(ev1)
@@ -3842,7 +3847,8 @@ def test_event_pool_pending_gate_reuses_shadow_prefetch_across_new_issues(game, 
         content.event_by_id.pop(ev1.id, None)
         content.event_by_id.pop(ev2.id, None)
 
-    assert [item["rejected"] for item in out["new_issues"]] == [True, True]
+    assert out["new_issues"] == []
+    assert len(out["rejected"]) == 2
     assert full_character_selects == 1
 
 
@@ -4144,8 +4150,8 @@ def test_issue_tracker_cancel_respects_outer_transaction_rollback(game):
         db,
         state,
         {"cancels": [{"issue_id": issue_id, "narrative": "撤办"}]},
-    )
-    assert out["cancels"][0]["rejected"] is False
+    source=Provenance.system_simulation)
+    assert "rejected" not in out["cancels"][0]
     db.conn.rollback()
 
     row = db.conn.execute("SELECT bar_value, stage_text, status FROM issues WHERE id=?", (issue_id,)).fetchone()
@@ -4187,8 +4193,8 @@ def test_issue_tracker_cancel_cost_respects_outer_transaction_rollback(game):
                 }
             ]
         },
-    )
-    assert out["cancels"][0]["rejected"] is False
+    source=Provenance.system_simulation)
+    assert "rejected" not in out["cancels"][0]
     db.conn.rollback()
 
     row = db.conn.execute("SELECT status FROM issues WHERE id=?", (issue_id,)).fetchone()
@@ -4298,10 +4304,10 @@ def test_mao_wenlong_event_obsolete_when_core_subject_already_dead(game):
         state,
         {"new_issues": [{"origin_kind": "event_pool", "id": "mao_wenlong"}]},
         content=content,
-    )
+    source=Provenance.system_simulation)
 
-    assert out["new_issues"][0]["rejected"] is True
-    assert "候选" in out["new_issues"][0]["reason"]
+    assert out["new_issues"] == []
+    assert "候选" in out["rejected"][0].reason
     assert db.get_character_status("毛文龙")[0] == "dead"
     row = db.conn.execute(
         "SELECT terminal_state, source FROM event_triggers WHERE event_id=?",
@@ -4340,10 +4346,10 @@ def test_mao_wenlong_event_excluded_when_yuan_unavailable(game):
             state,
             {"new_issues": [{"origin_kind": "event_pool", "id": "mao_wenlong"}]},
             content=content,
-        )
+        source=Provenance.system_simulation)
 
-        assert out["new_issues"][0]["rejected"] is True
-        assert "候选" in out["new_issues"][0]["reason"]
+        assert out["new_issues"] == []
+        assert "候选" in out["rejected"][0].reason
         assert db.get_character_status("毛文龙")[0] == "active"
         assert content.characters["毛文龙"].status == "active"
         assert not db.has_event_triggered("mao_wenlong")
@@ -4403,14 +4409,15 @@ def test_event_pool_current_candidate_recheck_cached_until_state_changes(game, m
             },
             content=content,
             candidate_event_ids_at_input={ev1.id, ev2.id},
-        )
+        source=Provenance.system_simulation)
     finally:
         content.seed_events.remove(ev1)
         content.seed_events.remove(ev2)
         content.event_by_id.pop(ev1.id, None)
         content.event_by_id.pop(ev2.id, None)
 
-    assert [item["rejected"] for item in out["new_issues"]] == [True, True]
+    assert out["new_issues"] == []
+    assert len(out["rejected"]) == 2
     assert calls == 1
 
 
@@ -4433,11 +4440,11 @@ def test_mao_wenlong_event_pool_duplicate_emit_is_idempotent(game):
                 {"origin_kind": "event_pool", "id": "mao_wenlong"},
             ]},
             content=content,
-        )
+        source=Provenance.system_simulation)
 
-        assert out["new_issues"][0]["rejected"] is False
-        assert out["new_issues"][1]["rejected"] is True
-        assert "候选" in out["new_issues"][1]["reason"]
+        assert "rejected" not in out["new_issues"][0]
+        assert len(out["new_issues"]) == 1
+        assert "候选" in out["rejected"][0].reason
         assert db.get_character_status("毛文龙")[0] == "dead"
         assert content.characters["毛文龙"].status == "dead"
         assert db.has_event_triggered("mao_wenlong")

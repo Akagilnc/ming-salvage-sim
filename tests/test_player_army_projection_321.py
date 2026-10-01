@@ -1,6 +1,8 @@
 """#321 — 玩家军心/士气/欠饷投影：复用 derive + qualitative/arrears helper，四链去 raw。"""
 from __future__ import annotations
 
+from ming_sim.applier import Provenance
+
 import contextlib
 import io
 import sqlite3
@@ -420,9 +422,9 @@ def test_apply_army_deltas_rejects_five_persistent_mutiny_columns(game, field):
         f"SELECT {field} FROM armies WHERE id=?", (ARMY,)
     ).fetchone()[field]
     event = SimpleNamespace(id="test-321", title="非法写哗变列")
-    changes = db.apply_army_deltas(
+    changes, changes_rejections = db.apply_army_deltas(
         state, event, None, "测试", {ARMY: {field: 1, "reason": "probe"}}
-    )
+    , source=Provenance.system_simulation)
     rejected = [c for c in changes if c.get("rejected")]
     assert rejected, f"{field} 应被拒收"
     assert all(c.get("category") == "invalid_enum" for c in rejected)

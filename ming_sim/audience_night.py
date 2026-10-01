@@ -9,6 +9,8 @@
 
 from __future__ import annotations
 
+from ming_sim.applier import Provenance
+
 import contextlib
 import json
 import logging
@@ -1556,7 +1558,7 @@ def settle_applied_arrived_summons(
         str(item.get("name") or item.get("人物") or "").strip()
         for item in view(outcome, "applied_person_changes")
         if isinstance(item, dict)
-        and not item.get("rejected")
+       
         and str(item.get("transit_to") or item.get("去向") or "").strip() == "beizhili"
     }
     accepted.discard("")
@@ -1900,9 +1902,9 @@ def commit_fresh_summons_for_night(
                     "origin_ref": "盘面自发",
                 }],
                 content=content,
-            )
+            source=Provenance.system_simulation)
             results = list(applied.get("applied_person_changes") or [])
-            if not results or any(result.get("rejected") for result in results):
+            if not results or (applied.get("rejected") or []):
                 raise AudienceNightError(
                     f"传召启程未落定：{person_name}",
                     code="summon_departure_rejected",

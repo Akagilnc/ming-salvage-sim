@@ -48,7 +48,7 @@ def _insert_final_stage(db, state, content, *, dossier_id: int, title: str):
     origin = f"dossier:{int(dossier_id)}"
     out = settle_delta(state, db, {'new_issues': [{'origin_kind': 'decree', 'origin_ref': origin, 'kind': 'initiative', 'title': title, 'stage_text': '所约之事依限办结。', 'commitment_kind': 'until_stop', 'ongoing_effects': {}, 'stages': [{'stage_idx': 0, 'due_turn': state.turn, 'criterion_text': '所约财政见成数', 'origin_context': '借旨加派/新立税目'}]}]}, SettlementContext(content=content))
     created = issue_rows(out, "new_issues")[0]
-    assert created.get("rejected") is False, created
+    assert "rejected" not in created, created
     return int(created["issue_id"])
 
 

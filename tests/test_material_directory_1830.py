@@ -6,6 +6,8 @@ list_materials/read_material (API), CLI cwd/readonly flags, restore rebuild.
 
 from __future__ import annotations
 
+from ming_sim.applier import Provenance
+
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -124,7 +126,7 @@ def test_material_tree_contains_only_structurally_related_world_details(game, tm
             "reason": "test-materials-posting",
         }],
         content=content,
-    )["applied_person_changes"]
+    source=Provenance.system_simulation)["applied_person_changes"]
     assert applied and not applied[0].get("rejected"), applied
     db.conn.execute("UPDATE armies SET commander='' WHERE commander=?", (character.name,))
     db.conn.execute(

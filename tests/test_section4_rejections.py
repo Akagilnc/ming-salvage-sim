@@ -12,6 +12,8 @@ cannon cap 12、firearm 0-100)保持——clamp 不是拒收,clamp 后照落。
 
 from __future__ import annotations
 
+from ming_sim.applier import Provenance
+
 import pytest
 
 from tests.section_rejection_helpers import game, rejection_rows as _rejection_rows, run_declaration
@@ -621,7 +623,7 @@ def test_nondict_new_army_item_recorded_not_silent(read_game):
     """new_armies 非 dict 项不再静默 continue——留拒收记录(issue 路容忍不升级,
     历史即静默;season 路本就被 validate_delta_shape 挡在 S6)(cmr S2 r1 P3)。"""
     db, state, _ = read_game
-    created = db.create_armies_from_extraction(state, ["不是dict的项"], actor="测试")
+    created, created_rejections = db.create_armies_from_extraction(state, ["不是dict的项"], actor="测试", source=Provenance.system_simulation)
     rej = [c for c in created if c.get("rejected")]
     assert len(rej) == 1
     assert rej[0]["category"] == "invalid_enum"

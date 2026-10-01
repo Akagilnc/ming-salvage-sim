@@ -6,12 +6,13 @@
 
 from __future__ import annotations
 
-from ming_sim.applier import section_from_rows
+from ming_sim.applier import SectionResult
 from ming_sim.issues import _effect_event_ids
 
 
 def apply(run):
     rows = []
+    rejections = []
     for index, (region_id, raw_changes) in enumerate(
         run.current_ordered.get("region_delta") or []
     ):
@@ -22,8 +23,10 @@ def apply(run):
             continue
         origin_ref = str(raw_changes.get("origin_ref") or "").strip()
         payload = {k: v for k, v in raw_changes.items() if k != "origin_ref"}
-        rows.extend(run.db.apply_region_deltas(
+        landed, refused = run.db.apply_region_deltas(
             run.state, run.pseudo_event, None, "档房", {region_id: payload},
-            commit=False, origin_ref=origin_ref, require_origin=True,
-        ))
-    return section_from_rows(rows, run.ctx.source, category="region_changes")
+            commit=False, origin_ref=origin_ref, require_origin=True, source=run.ctx.source,
+        )
+        rows.extend(landed)
+        rejections.extend(refused)
+    return SectionResult(applied=rows, rejected=rejections)

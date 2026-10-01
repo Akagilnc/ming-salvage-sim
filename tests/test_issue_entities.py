@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+from ming_sim.applier import Provenance
+
 import pytest
 
 import ming_sim.issues as I
@@ -430,7 +432,7 @@ def test_new_issue_nondict_effect_fields_do_not_crash(game, monkeypatch):
             "ongoing_effects": ["也不是dict"],
             "effect_on_fail": None,
         }],
-    })
+    }, source=Provenance.system_simulation)
     # 不抛错、整月不崩；该国策被正常处理(创建)
     new = [e for e in out["new_issues"] if e.get("title") == "效果字段畸形国策"]
     assert new and not new[0].get("rejected")
@@ -446,7 +448,7 @@ def test_initiative_floor_applies_when_enrich_empty(game, monkeypatch):
                         lambda *a, **k: {"effect_on_resolve": {}, "ongoing_effects": {}, "effect_on_fail": {}})
     I.apply_issue_tracker_output(db, state, {
         "new_issues": [{"origin_kind": "decree", "origin_ref": _decree_origin(db, state), "title": "空回报国策", "kind": "initiative"}],
-    })
+    }, source=Provenance.system_simulation)
     row = db.conn.execute(
         "SELECT effect_on_resolve FROM issues WHERE title='空回报国策'").fetchone()
     assert row is not None                         # 国策入库了

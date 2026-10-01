@@ -4,6 +4,8 @@
 结案却无月度 economy/fiscal_creates 时，响亮告警——不再静默放过「只推进度条、无实体后果」
 的空壳结案（#45 太学府月经费没立账、#46 天雄军没建军籍的真踩坑）。warn-only，不阻断结算。
 """
+
+from ming_sim.applier import Provenance
 from ming_sim import issues
 from ming_sim.issues import _initiative_resolve_pairing_warnings
 
@@ -127,7 +129,7 @@ def test_resolve_surfaces_pairing_warning_in_result(game):
         db, state,
         {"close_issues": [{"issue_id": issue_id, "reason": "resolved", "narrative": "练成"}]},
         content=content,
-    )
+    source=Provenance.system_simulation)
     warns = out.get("pairing_warnings") or []
     assert any("new_armies" in w for w in warns), f"军事国策结案应 surface 配对告警：{warns}"
 
@@ -150,7 +152,7 @@ def test_resolve_with_new_armies_no_warning_in_result(game):
         db, state,
         {"close_issues": [{"issue_id": issue_id, "reason": "resolved", "narrative": "练成"}]},
         content=content,
-    )
+    source=Provenance.system_simulation)
     assert (out.get("pairing_warnings") or []) == [], f"带 new_armies 不应告警：{out.get('pairing_warnings')}"
 
 

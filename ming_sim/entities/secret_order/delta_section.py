@@ -9,15 +9,18 @@ id 被无脑报成「已应用」。
 
 from __future__ import annotations
 
+from ming_sim.applier import RejectedItem, Provenance
+
 from typing import Dict, List
 
-from ming_sim.applier import section_from_rows
+from ming_sim.applier import SectionResult
 
 
 def apply(run):
     from ming_sim.issues import _parse_sqlite_id, record_secret_order_disclosure
 
     applied: List[Dict[str, object]] = []
+    rejections: List[RejectedItem] = []
     for item in run.current_extracted.get("secret_order_updates") or []:
         if not isinstance(item, dict):
             continue
@@ -28,35 +31,19 @@ def apply(run):
         sim_note = raw_note if isinstance(raw_note, str) else str(raw_note or "")
         disclosed = item.get("disclosed") is True
         if raw_id is None or not sim_note.strip():
-            applied.append({
-                "order_id": raw_id, "rejected": True,
-                "category": "invalid_enum", "reason": "order_id 或 sim_note 缺失",
-                "item": item,
-            })
+            rejections.append(RejectedItem(item=item, reason="order_id 或 sim_note 缺失", category="invalid_enum", source=run.ctx.source))
             continue
         try:
             real_id = _parse_sqlite_id(raw_id)
         except (TypeError, ValueError):
-            applied.append({
-                "order_id": raw_id, "rejected": True,
-                "category": "invalid_enum", "reason": "order_id 非整数或超界",
-                "item": item,
-            })
+            rejections.append(RejectedItem(item=item, reason="order_id 非整数或超界", category="invalid_enum", source=run.ctx.source))
             continue
         order = run.db.get_secret_order(real_id)
         if order is None:
-            applied.append({
-                "order_id": real_id, "rejected": True,
-                "category": "missing_ref", "reason": "密令不存在",
-                "item": item,
-            })
+            rejections.append(RejectedItem(item=item, reason="密令不存在", category="missing_ref", source=run.ctx.source))
             continue
         if order["status"] != "active":
-            applied.append({
-                "order_id": real_id, "rejected": True, "category": "invalid_enum",
-                "reason": f"密令当前 {order['status']}，非 active，不写推演副作用",
-                "item": item,
-            })
+            rejections.append(RejectedItem(item=item, reason=f"密令当前 {order['status']}，非 active，不写推演副作用", category="invalid_enum", source=run.ctx.source))
             continue
         run.db.update_secret_order_sim_note(
             real_id, sim_note, year=run.state.year,
@@ -70,4 +57,4 @@ def apply(run):
         applied.append({
             "order_id": real_id, "sim_note": sim_note, "disclosed": disclosed,
         })
-    return section_from_rows(applied, run.ctx.source, category="secret_order_updates")
+    return SectionResult(applied=applied, rejected=rejections)

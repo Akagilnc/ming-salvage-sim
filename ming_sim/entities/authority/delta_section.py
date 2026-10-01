@@ -6,9 +6,11 @@
 
 from __future__ import annotations
 
+from ming_sim.applier import RejectedItem, Provenance
+
 from typing import Dict, List
 
-from ming_sim.applier import section_from_rows
+from ming_sim.applier import SectionResult
 
 # 与落地核同义的失败原因 → 拒收类别（供机读聚合；其余归 invalid_authority_change）。
 _KNOWN_CATEGORIES = frozenset({
@@ -25,21 +27,15 @@ def apply(run):
     from ming_sim.issues import _apply_authority_change_item
 
     results: List[Dict[str, object]] = []
+    rejections: List[RejectedItem] = []
     for item in run.current_extracted.get("authority_changes") or []:
         if not isinstance(item, dict):
-            results.append({
-                "rejected": True, "category": "invalid_shape", "item": item,
-                "reason": "授权变更项必须为对象",
-            })
+            rejections.append(RejectedItem(item=item, reason="授权变更项必须为对象", category="invalid_shape", source=run.ctx.source))
             continue
         try:
             results.append(_apply_authority_change_item(run.db, run.state, item))
         except ValueError as exc:
             reason = str(exc)
-            results.append({
-                "rejected": True,
-                "category": reason if reason in _KNOWN_CATEGORIES
-                else "invalid_authority_change",
-                "reason": reason, "item": item,
-            })
-    return section_from_rows(results, run.ctx.source, category="authority_changes")
+            rejections.append(RejectedItem(item=item, reason=reason, category=reason if reason in _KNOWN_CATEGORIES
+                else "invalid_authority_change", source=run.ctx.source))
+    return SectionResult(applied=results, rejected=rejections)

@@ -1,3 +1,5 @@
+
+from ming_sim.applier import Provenance
 import json
 from pathlib import Path
 
@@ -379,7 +381,7 @@ def test_until_stop_commitment_rejects_direct_resolved_close(game, monkeypatch):
         db,
         state,
         {"close_issues": [{"issue_id": row["id"], "reason": "resolved", "narrative": "误按承诺完成结案"}]},
-    )
+    source=Provenance.system_simulation)
 
     close = out["closes"][0]
     assert close["rejected"] is True
@@ -401,7 +403,7 @@ def test_until_stop_commitment_rejects_direct_failed_close_without_effects(game,
         db,
         state,
         {"close_issues": [{"issue_id": row["id"], "reason": "failed", "narrative": "误按承诺失败结案"}]},
-    )
+    source=Provenance.system_simulation)
 
     close = out["closes"][0]
     assert close["rejected"] is True

@@ -11,6 +11,8 @@ kind 分派矩阵（法）：
 
 from __future__ import annotations
 
+from ming_sim.applier import Provenance
+
 import json
 import logging
 import re
@@ -1446,6 +1448,7 @@ def resolve_breach_pleas_from_extraction(
     extracted: Dict[str, object],
     *,
     commit: bool = False,
+    source: Provenance = Provenance.system_simulation,
 ) -> List[Dict[str, object]]:
     """召对/结算 extraction 真入口：既有键识别反悔或坚持后消费哭谏条。
 
@@ -1455,11 +1458,11 @@ def resolve_breach_pleas_from_extraction(
     沉默：不在此函数出现 → pending 保留
     """
     if not isinstance(extracted, dict):
-        return []
+        return [], []
     results: List[Dict[str, object]] = []
     pending = _pending_breach_pleas(db)
     if not pending:
-        return []
+        return [], []
 
     cancel_ids = _extract_ref_ids(extracted.get("cancels"), prefixes=("issue",))
     cancel_ids |= _extract_ref_ids(extracted.get("close_issues"), prefixes=("issue",))
@@ -1570,4 +1573,4 @@ def resolve_breach_pleas_from_extraction(
 
     if commit and results:
         db.conn.commit()
-    return results
+    return results, []

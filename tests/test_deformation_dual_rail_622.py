@@ -9,6 +9,8 @@
 
 from __future__ import annotations
 
+from ming_sim.applier import Provenance
+
 import json
 
 from ming_sim.db import GameDB
@@ -17,7 +19,7 @@ from ming_sim.due_review import (
     apply_pending_due_reviews,
     decide_due_review_verdict,
 )
-from ming_sim.flows import _apply_economy_list
+from ming_sim.entities.economy.apply import _apply_economy_list
 from ming_sim.issues import apply_issue_inertia_and_ongoing
 from ming_sim.staged_commitment import write_due_staged_commitment_todos
 from tests.test_dossier_reported_progress_619 import _world_fingerprint
@@ -328,7 +330,7 @@ def test_apply_economy_list_directed_pay_arrears_echoes_beyond_intent(game):
 
     ledger_before = db.conn.execute("SELECT COUNT(*) FROM economy_ledger").fetchone()[0]
 
-    applied = _apply_economy_list(
+    applied, applied_rejections = _apply_economy_list(
         db,
         state,
         [{
@@ -344,7 +346,7 @@ def test_apply_economy_list_directed_pay_arrears_echoes_beyond_intent(game):
         }],
         origin_ref="dossier:parent",
         commit=True,
-    )
+    source=Provenance.system_simulation)
     assert applied and applied[0].get("beyond_intent") is True, applied
     assert applied[0]["delta"] == -10
     assert applied[0]["origin_ref"] == "dossier:parent"
@@ -362,7 +364,7 @@ def test_apply_economy_list_directed_pay_arrears_echoes_beyond_intent(game):
     assert row["origin_ref"] == "dossier:parent"
 
     # 反向锚：不带标记 → ledger=0，canonical 回执为 false/空来源
-    applied_plain = _apply_economy_list(
+    applied_plain, applied_plain_rejections = _apply_economy_list(
         db,
         state,
         [{
@@ -375,7 +377,7 @@ def test_apply_economy_list_directed_pay_arrears_echoes_beyond_intent(game):
             "reason": "定向补饷无标记",
         }],
         commit=True,
-    )
+    source=Provenance.system_simulation)
     assert applied_plain and applied_plain[0]["beyond_intent"] is False, applied_plain
     assert applied_plain[0]["origin_ref"] == ""
     assert applied_plain[0]["applied"] is True
@@ -387,7 +389,7 @@ def test_apply_economy_list_directed_pay_arrears_echoes_beyond_intent(game):
     assert int(plain_row["beyond_intent"]) == 0
 
     # 畸形值仍由 coerce 单点归 0，补饷分支不得自建判定
-    applied_bad = _apply_economy_list(
+    applied_bad, applied_bad_rejections = _apply_economy_list(
         db,
         state,
         [{
@@ -401,7 +403,7 @@ def test_apply_economy_list_directed_pay_arrears_echoes_beyond_intent(game):
             "beyond_intent": [],
         }],
         commit=True,
-    )
+    source=Provenance.system_simulation)
     assert applied_bad and applied_bad[0]["beyond_intent"] is False, applied_bad
     assert applied_bad[0]["origin_ref"] == ""
     assert applied_bad[0]["applied"] is True
@@ -555,13 +557,13 @@ def test_apply_economy_list_four_exit_effective_origin_receipt_matrix(game):
         pooled_move = _move_base(pooled_reason, item_origin=item_origin, beyond=beyond)
         pooled_move["delta"] = -10
         pooled_move["purpose"] = "补饷"
-        pooled = _apply_economy_list(
+        pooled, pooled_rejections = _apply_economy_list(
             db, state, [pooled_move],
             origin_ref=outer,
             allow_pay_arrears_pool=True,
             pay_arrears_pool_army_ids=[army_id],
             commit=True,
-        )
+        source=Provenance.system_simulation)
         assert pooled and len(pooled) == 1, (label, pooled)
         _assert_receipt(
             pooled[0], expect_origin=expect_origin, expect_beyond=expect_beyond, applied=True,
@@ -582,9 +584,9 @@ def test_apply_economy_list_four_exit_effective_origin_receipt_matrix(game):
             "target_kind": "army",
             "target_id": army_id,
         })
-        zeroed = _apply_economy_list(
+        zeroed, zeroed_rejections = _apply_economy_list(
             db, state, [zero_move], origin_ref=outer, commit=True,
-        )
+        source=Provenance.system_simulation)
         assert zeroed and len(zeroed) == 1, (label, zeroed)
         _assert_receipt(
             zeroed[0], expect_origin=expect_origin, expect_beyond=expect_beyond, applied=False,
@@ -603,9 +605,9 @@ def test_apply_economy_list_four_exit_effective_origin_receipt_matrix(game):
             "target_kind": "army",
             "target_id": army_id,
         })
-        directed = _apply_economy_list(
+        directed, directed_rejections = _apply_economy_list(
             db, state, [directed_move], origin_ref=outer, commit=True,
-        )
+        source=Provenance.system_simulation)
         assert directed and len(directed) == 1, (label, directed)
         _assert_receipt(
             directed[0], expect_origin=expect_origin, expect_beyond=expect_beyond, applied=True,
@@ -622,9 +624,9 @@ def test_apply_economy_list_four_exit_effective_origin_receipt_matrix(game):
         ordinary_move["delta"] = -4
         ordinary_move["category"] = "事项"
         # 无 purpose/target → 常规扣账出口
-        ordinary = _apply_economy_list(
+        ordinary, ordinary_rejections = _apply_economy_list(
             db, state, [ordinary_move], origin_ref=outer, commit=True,
-        )
+        source=Provenance.system_simulation)
         assert ordinary and len(ordinary) == 1, (label, ordinary)
         _assert_receipt(
             ordinary[0], expect_origin=expect_origin, expect_beyond=expect_beyond, applied=True,

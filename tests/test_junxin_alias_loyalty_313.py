@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+from ming_sim.applier import Provenance
+
 
 def _seed_army(db, state, army_id: str = "junxin_alias_army"):
     db.create_armies_from_extraction(
@@ -24,7 +26,7 @@ def _seed_army(db, state, army_id: str = "junxin_alias_army"):
             "central_pay_share": 0.0,
         }],
         actor="测试",
-    )
+    source=Provenance.system_simulation)
     return army_id
 
 
@@ -42,7 +44,7 @@ def test_junxin_alias_maps_to_loyalty_not_morale(game):
     db.apply_army_deltas(
         state, pseudo, None, "测试",
         {aid: {"军心": 8}},
-    )
+    source=Provenance.system_simulation)
 
     after = db.conn.execute(
         "SELECT morale, loyalty FROM armies WHERE id=?", (aid,)
@@ -65,7 +67,7 @@ def test_shiqi_alias_still_maps_to_morale(game):
     db.apply_army_deltas(
         state, pseudo, None, "测试",
         {aid: {"士气": 7}},
-    )
+    source=Provenance.system_simulation)
 
     after = db.conn.execute(
         "SELECT morale, loyalty FROM armies WHERE id=?", (aid,)
@@ -83,7 +85,7 @@ def test_junxin_and_shiqi_aliases_independent(game):
     db.apply_army_deltas(
         state, pseudo, None, "测试",
         {aid: {"军心": 5, "士气": 3}},
-    )
+    source=Provenance.system_simulation)
 
     after = db.conn.execute(
         "SELECT morale, loyalty FROM armies WHERE id=?", (aid,)

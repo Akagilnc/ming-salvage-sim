@@ -9,6 +9,8 @@ population_transfers。禁止 station 文本解析、第二事实核、第二转
 
 from __future__ import annotations
 
+from ming_sim.applier import Provenance
+
 import os
 import shutil
 
@@ -98,7 +100,7 @@ def test_redeploy_moves_fact_region_keeps_pay_source(game):
     pay_src = str(before["pay_source_region"])
     _pin_split_arrears(db, "dongjiang", province=40.0, central=10.0)
 
-    changes = db.apply_army_deltas(
+    changes, changes_rejections = db.apply_army_deltas(
         state, _pseudo_event("东江调防登莱"), None, "兵部",
         {
             "dongjiang": {
@@ -107,7 +109,7 @@ def test_redeploy_moves_fact_region_keeps_pay_source(game):
                 "reason": "移镇登莱",
             },
         },
-    )
+    source=Provenance.system_simulation)
     assert not any(c.get("rejected") for c in changes if isinstance(c, dict))
     row = db.conn.execute(
         "SELECT station, station_region, pay_source_region FROM armies WHERE id='dongjiang'"
@@ -129,10 +131,10 @@ def test_redeploy_moves_fact_region_keeps_pay_source(game):
 def test_station_region_rejects_unknown_region_id(game):
     """非空 station_region 必须是已入库 regions.id；不从 station 反推。"""
     db, state, _content = game
-    changes = db.apply_army_deltas(
+    changes, changes_rejections = db.apply_army_deltas(
         state, _pseudo_event(), None, "test",
         {"dongjiang": {"station_region": "not_a_real_region", "reason": "坏 id"}},
-    )
+    source=Provenance.system_simulation)
     rejected = [c for c in changes if c.get("rejected")]
     assert rejected and rejected[0]["field"] == "station_region"
     row = db.conn.execute(

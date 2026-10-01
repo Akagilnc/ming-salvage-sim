@@ -16,6 +16,8 @@
 
 from __future__ import annotations
 
+from ming_sim.applier import Provenance
+
 import re
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
@@ -558,7 +560,7 @@ def _collect_grant_issue_ids(extracted: Dict[str, object]) -> Set[int]:
     grant_ids: Set[int] = set()
     for key in ("economy_moves", "fiscal_creates", "fiscal_changes"):
         for it in extracted.get(key) or []:
-            if not isinstance(it, dict) or it.get("rejected"):
+            if not isinstance(it, dict):
                 continue
             purpose = str(
                 it.get("purpose") or it.get("reason") or it.get("category") or ""
@@ -579,7 +581,7 @@ def _collect_reject_issue_ids(extracted: Dict[str, object]) -> Set[int]:
     """拒/斥退：只认 cancels 显式信号；close_issues / 办砸终值不算。"""
     cancels = [
         it for it in (extracted.get("cancels") or [])
-        if isinstance(it, dict) and not it.get("rejected")
+        if isinstance(it, dict)
     ]
     return _extract_ref_ids(cancels, prefixes=("issue",))
 
@@ -622,7 +624,7 @@ def _grant_narrative_for_issue(
 ) -> str:
     for key in ("economy_moves", "fiscal_creates", "fiscal_changes"):
         for it in extracted.get(key) or []:
-            if not isinstance(it, dict) or it.get("rejected"):
+            if not isinstance(it, dict):
                 continue
             if cid not in _issue_refs_strict(it):
                 continue
@@ -761,6 +763,7 @@ def resolve_credit_events_from_extraction(
     extracted: Dict[str, object],
     *,
     commit: bool = False,
+    source: Provenance = Provenance.system_simulation,
 ) -> Dict[str, List[Dict[str, object]]]:
     """召对/结算 extraction 真入口同缝（resolve_breach_pleas_from_extraction 先例）。
 
@@ -772,7 +775,7 @@ def resolve_credit_events_from_extraction(
             "fulfillment": [],
             "dispositions": [],
             "urge": [],
-        }
+        }, []
     fulfillment = resolve_fulfillment_credit_from_extraction(db, state, extracted)
     dispositions = resolve_disposition_credit_from_extraction(db, state, extracted)
     urge = resolve_urge_credit_from_extraction(
@@ -784,4 +787,4 @@ def resolve_credit_events_from_extraction(
         "fulfillment": fulfillment,
         "dispositions": dispositions,
         "urge": urge,
-    }
+    }, []

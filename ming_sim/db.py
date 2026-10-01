@@ -6,6 +6,8 @@ GameDB 持有 self.content（GameContent），seed 类方法从中读人物/地�
 
 from __future__ import annotations
 
+from ming_sim.applier import RejectedItem, Provenance
+
 import contextlib
 from dataclasses import replace
 import json
@@ -4478,6 +4480,7 @@ class GameDB:
         self_funded_pay: object = _SENTINEL,
         latched_escape: str | None = None,
         raw_item: Dict[str, object] | None = None,
+            source: Provenance = Provenance.system_simulation,
     ) -> List[Dict[str, object]]:
         """唯一生产 owner_power 转出口（ADR 0025 D5/D7 + #318）。
 
@@ -4486,54 +4489,35 @@ class GameDB:
         （确定性第 3 振）可转出。mutiny_count>=3 不得回 ming。
         """
         changes: List[Dict[str, object]] = []
+        rejections: List[RejectedItem] = []
         army_id = str(row["id"])
         old_owner = str(row["owner_power"] or "").strip()
         owner_power = str(new_owner or "").strip()
         item = raw_item if raw_item is not None else {"army_id": army_id}
 
         if not owner_power:
-            changes.append({
-                "army": row["name"], "field": "owner_power",
-                "rejected": True, "category": "invalid_enum",
-                "reason": "owner_power 不得为空",
-                "item": item,
-            })
-            return changes
+            rejections.append(RejectedItem(item=item, reason="owner_power 不得为空", category="invalid_enum", source=source))
+            return changes, rejections
 
         owner_exists = self.conn.execute(
             "SELECT 1 FROM powers WHERE id = ?", (owner_power,)
         ).fetchone()
         if owner_exists is None:
-            changes.append({
-                "army": row["name"], "field": "owner_power",
-                "rejected": True, "category": "hallucinated_id",
-                "reason": f"army_delta owner_power '{owner_power}' 不在 powers 表",
-                "item": item,
-            })
-            return changes
+            rejections.append(RejectedItem(item=item, reason=f"army_delta owner_power '{owner_power}' 不在 powers 表", category="hallucinated_id", source=source))
+            return changes, rejections
 
         if owner_power == old_owner:
-            return changes
+            return changes, rejections
 
         # 空来源：1/2 振 latched 倒戈一律拒收（#318 无 trusted_event_id 生产路径）
         if bool(row["is_mutinied"]) and latched_escape != "third_strike":
-            changes.append({
-                "army": row["name"], "field": "owner_power",
-                "rejected": True, "category": "invalid_enum",
-                "reason": "哗变锁存军空来源不得改归属（仅第3振确定性转流寇）",
-                "item": item,
-            })
-            return changes
+            rejections.append(RejectedItem(item=item, reason="哗变锁存军空来源不得改归属（仅第3振确定性转流寇）", category="invalid_enum", source=source))
+            return changes, rejections
 
         mutiny_count = int(row["mutiny_count"] or 0)
         if owner_power == "ming" and mutiny_count >= 3:
-            changes.append({
-                "army": row["name"], "field": "owner_power",
-                "rejected": True, "category": "invalid_enum",
-                "reason": "mutiny_count>=3 永久流寇不可回明；招安须另建新军",
-                "item": item,
-            })
-            return changes
+            rejections.append(RejectedItem(item=item, reason="mutiny_count>=3 永久流寇不可回明；招安须另建新军", category="invalid_enum", source=source))
+            return changes, rejections
 
         old_source = str(row["pay_source_region"] or "")
         try:
@@ -4577,21 +4561,13 @@ class GameDB:
             if pay_source_region_val:
                 self._require_valid_pay_source_region(army_id, pay_source_region_val)
         except (TypeError, ValueError) as exc:
-            changes.append({
-                "army": row["name"], "field": "pay_source",
-                "rejected": True, "category": "invalid_enum",
-                "reason": f"army_delta 饷源字段非法：{exc}",
-                "item": item,
-            })
-            return changes
+            rejections.append(RejectedItem(item=item, reason=f"army_delta 饷源字段非法：{exc}", category="invalid_enum", source=source))
+            return changes, rejections
 
         origin_error = self.effect_origin_rejection(origin_ref) if require_origin else None
         if origin_error:
-            changes.append({
-                "army": row["name"], "field": "owner_power", **origin_error,
-                "item": item,
-            })
-            return changes
+            rejections.append(RejectedItem(item=item, reason=origin_error["reason"], category=origin_error["category"], source=source))
+            return changes, rejections
 
         old_values = {
             "owner_power": old_owner,
@@ -4702,7 +4678,7 @@ class GameDB:
             self._reconcile_army_pay_source_region_container(pay_source_region_val)
             self._reconcile_central_army_pay_arrears_container()
             self.assert_army_pay_source_container_conservation()
-        return changes
+        return changes, rejections
 
     def _apply_army_pay_source_delta(
         self,
@@ -4714,8 +4690,10 @@ class GameDB:
         raw_changes: Dict[str, object],
         reason: str,
         changes: List[Dict[str, object]],
+        rejections: List[RejectedItem],
         origin_ref: str = "",
         require_origin: bool = False,
+            source: Provenance = Provenance.system_simulation,
     ) -> None:
         normalized = {
             ARMY_FIELD_ALIASES.get(str(k).strip(), str(k).strip()): v
@@ -4730,7 +4708,7 @@ class GameDB:
         if "owner_power" in normalized:
             proposed_owner = str(normalized.get("owner_power") or "").strip()
             if proposed_owner != str(row["owner_power"] or "").strip():
-                changes.extend(self.transition_army_owner_power(
+                landed, refused = self.transition_army_owner_power(
                     state,
                     row,
                     proposed_owner,
@@ -4742,7 +4720,9 @@ class GameDB:
                     require_origin=require_origin,
                     **_army_owner_transition_pay_kwargs(normalized),
                     raw_item={"army_id": army_id, "changes": raw_changes},
-                ))
+                source=source)
+                changes.extend(landed)
+                rejections.extend(refused)
                 return
 
         # #319 ADR 0025 D4①：先拒脏输入（fail-loud / invalid_enum），校验通过后
@@ -4792,12 +4772,7 @@ class GameDB:
             if pay_source_region:
                 self._require_valid_pay_source_region(army_id, pay_source_region)
         except (TypeError, ValueError) as exc:
-            changes.append({
-                "army": row["name"], "field": "pay_source",
-                "rejected": True, "category": "invalid_enum",
-                "reason": f"army_delta 饷源字段非法：{exc}",
-                "item": {"army_id": army_id, "changes": raw_changes},
-            })
+            rejections.append(RejectedItem(item={"army_id": army_id, "changes": raw_changes}, reason=f"army_delta 饷源字段非法：{exc}", category="invalid_enum", source=source))
             return
 
         # 合法且被 deny 的饷源字段：静默 no-op，不写库、不留 rejected
@@ -4829,10 +4804,7 @@ class GameDB:
             return
         origin_error = self.effect_origin_rejection(origin_ref) if require_origin else None
         if origin_error:
-            changes.append({
-                "army": row["name"], "field": "pay_source", **origin_error,
-                "item": {"army_id": army_id, "changes": raw_changes},
-            })
+            rejections.append(RejectedItem(item={"army_id": army_id, "changes": raw_changes}, reason=origin_error["reason"], category=origin_error["category"], source=source))
             return
 
         # 饷源-only 路径：不触 owner_power（唯一 owner 写口 = transition_army_owner_power）
@@ -6004,6 +5976,8 @@ class GameDB:
             normalized_text = json.dumps(normalized, ensure_ascii=False, sort_keys=True)
         else:
             normalized_text = str(normalized or "")
+        if isinstance(source, Provenance):
+            source = source.value
         self.conn.execute(
             """
             INSERT INTO person_logs
@@ -6069,11 +6043,13 @@ class GameDB:
         self,
         changes: List[Dict[str, object]],
         commit: bool = True,
+            source: Provenance = Provenance.system_simulation,
     ) -> List[Dict[str, object]]:
         """据 extractor 输出改人物 power_id（降将/叛臣/归正）。new_power 须为合法 power id。"""
+        rejections: List[RejectedItem] = []
         applied: List[Dict[str, object]] = []
         if not isinstance(changes, list):
-            return applied
+            return applied, rejections
         valid_powers = {r["id"] for r in self.conn.execute("SELECT id FROM powers").fetchall()}
         for raw in changes:
             if not isinstance(raw, dict):
@@ -6082,30 +6058,16 @@ class GameDB:
             new_power = str(raw.get("new_power") or raw.get("新势力") or "").strip()
             reason = str(raw.get("reason") or raw.get("原因") or "")
             if not name or not new_power:
-                applied.append({
-                    "rejected": True, "category": "invalid_enum",
-                    "reason": "易主项缺 name/new_power",
-                    "item": raw,
-                })
+                rejections.append(RejectedItem(item=raw, reason="易主项缺 name/new_power", category="invalid_enum", source=source))
                 continue
             if new_power not in valid_powers:
-                applied.append({
-                    "name": name, "new_power": new_power, "rejected": True,
-                    "category": "hallucinated_id",
-                    "reason": f"易主 new_power '{new_power}' 未在 powers",
-                    "item": raw,
-                })
+                rejections.append(RejectedItem(item=raw, reason=f"易主 new_power '{new_power}' 未在 powers", category="hallucinated_id", source=source))
                 continue
             row = self.conn.execute(
                 "SELECT power_id, faction FROM characters WHERE name=?", (name,)
             ).fetchone()
             if row is None:
-                applied.append({
-                    "name": name, "new_power": new_power, "rejected": True,
-                    "category": "missing_ref",
-                    "reason": f"易主 人物 '{name}' 未入库",
-                    "item": raw,
-                })
+                rejections.append(RejectedItem(item=raw, reason=f"易主 人物 '{name}' 未入库", category="missing_ref", source=source))
                 continue
             old_power = row["power_id"] or "ming"
             if old_power == new_power:
@@ -6124,7 +6086,7 @@ class GameDB:
             applied.append({"name": name, "old_power": old_power, "new_power": new_power, "reason": reason})
         if commit:
             self.conn.commit()
-        return applied
+        return applied, rejections
 
     def set_character_office(
         self,
@@ -6753,6 +6715,7 @@ class GameDB:
         self,
         deltas: Dict[str, Dict[str, int]],
         commit: bool = True,
+            source: Provenance = Provenance.system_simulation,
     ) -> List[Dict[str, object]]:
         """deltas 结构：{ key: {satisfaction: +/-N, leverage: +/-N} }
         key 形式：'农民' (全国) 或 '农民@shaanxi' (省级)。
@@ -6773,11 +6736,7 @@ class GameDB:
                 (name.strip(), region_id.strip()),
             ).fetchone()
             if not row:
-                rejected.append({
-                    "name": key, "rejected": True, "category": "missing_ref",
-                    "reason": f"class_delta 查无此阶级「{key}」（未入 classes 表）",
-                    "item": {key: fields},
-                })
+                rejected.append(RejectedItem(item={key: fields}, reason=f"class_delta 查无此阶级「{key}」（未入 classes 表）", category="missing_ref", source=source))
                 continue
             sat = int(row["satisfaction"]) + int(fields.get("satisfaction", 0) or 0)
             lev = int(row["leverage"]) + int(fields.get("leverage", 0) or 0)
@@ -6905,19 +6864,9 @@ class GameDB:
             return None
         if unauthorized_batch:
             from ming_sim.entities.affair.store import UnauthorizedAffairOriginRef
-            return {
-                "rejected": True,
-                # Distinct from missing/invalid existence — strategic preflight
-                # must not envelope-fail this; apply paths still reject itemwise.
-                "category": "unauthorized_affair_origin",
-                "reason": str(UnauthorizedAffairOriginRef()),
-            }
-        return {
-            "rejected": True,
-            "category": "missing_origin_ref" if not value else "invalid_origin_ref",
-            "reason": ("效果缺 origin_ref；盘面自然演化须显式标为「盘面自发」"
-                       if not value else f"origin_ref 非法：{value}"),
-        }
+            return {"category": "unauthorized_affair_origin", "reason": str(UnauthorizedAffairOriginRef())}
+        return {"category": "missing_origin_ref" if not value else "invalid_origin_ref", "reason": "效果缺 origin_ref；盘面自然演化须显式标为「盘面自发」"
+                       if not value else f"origin_ref 非法：{value}"}
 
     def apply_power_deltas(
         self,
@@ -6926,28 +6875,20 @@ class GameDB:
         commit: bool = True,
         origin_ref: str = "",
         require_origin: bool = False,
+            source: Provenance = Provenance.system_simulation,
     ) -> List[Dict[str, object]]:
+        rejections: List[RejectedItem] = []
         allowed_fields = {"leverage", "military_strength", "supply"}
         changes: List[Dict[str, object]] = []
         for power_id, raw_changes in updates.items():
             if power_id == "ming":
                 # prompt 明文禁止写 ming——按脏数据逐项拒收留痕，与同函数其余拒收
                 # 路一致（cmr S1 r2，原 print 静默跳是迁契约漏网）。
-                changes.append({
-                    "power_id": power_id, "rejected": True,
-                    "category": "invalid_enum",
-                    "reason": "power_updates 不处理大明自身（ming），prompt 明文禁止",
-                    "item": {"power_id": power_id, "changes": raw_changes},
-                })
+                rejections.append(RejectedItem(item={"power_id": power_id, "changes": raw_changes}, reason="power_updates 不处理大明自身（ming），prompt 明文禁止", category="invalid_enum", source=source))
                 continue
             row = self.conn.execute("SELECT * FROM powers WHERE id = ?", (power_id,)).fetchone()
             if row is None:
-                changes.append({
-                    "power_id": power_id, "rejected": True,
-                    "category": "hallucinated_id",
-                    "reason": f"power_updates 引用未入库势力 '{power_id}'",
-                    "item": {"power_id": power_id, "changes": raw_changes},
-                })
+                rejections.append(RejectedItem(item={"power_id": power_id, "changes": raw_changes}, reason=f"power_updates 引用未入库势力 '{power_id}'", category="hallucinated_id", source=source))
                 continue
             # reason 载体按别名表扫描（近况/最近行动 等与 近动/last_action 同义，
             # 硬编码键名会漏——cmr S1 r3）：先取 reason 义，再取 last_action 义。
@@ -6969,12 +6910,7 @@ class GameDB:
                     # 载体键——跳过，不得记成 invalid_enum 假阳（cmr S1 r2）。
                     continue
                 if field not in allowed_fields:
-                    changes.append({
-                        "power": row["name"], "field": str(raw_field),
-                        "rejected": True, "category": "invalid_enum",
-                        "reason": f"power_updates 只允许 威望/实力/经济，'{raw_field}' 非法",
-                        "item": {"power_id": power_id, "field": str(raw_field), "value": value},
-                    })
+                    rejections.append(RejectedItem(item={"power_id": power_id, "field": str(raw_field), "value": value}, reason=f"power_updates 只允许 威望/实力/经济，'{raw_field}' 非法", category="invalid_enum", source=source))
                     continue
                 old_value = row[field]
                 try:
@@ -6987,12 +6923,7 @@ class GameDB:
                         raise ValueError("非整数 delta")
                     delta = int(value)
                 except (TypeError, ValueError):
-                    changes.append({
-                        "power": row["name"], "field": str(raw_field),
-                        "rejected": True, "category": "invalid_enum",
-                        "reason": f"power_updates '{raw_field}' 值非整数：{value!r}",
-                        "item": {"power_id": power_id, "field": str(raw_field), "value": value},
-                    })
+                    rejections.append(RejectedItem(item={"power_id": power_id, "field": str(raw_field), "value": value}, reason=f"power_updates '{raw_field}' 值非整数：{value!r}", category="invalid_enum", source=source))
                     continue
                 new_value = max(0, min(100, int(old_value) + delta))
                 actual_delta = new_value - int(old_value)
@@ -7000,11 +6931,7 @@ class GameDB:
                     continue
                 origin_error = self.effect_origin_rejection(origin_ref) if require_origin else None
                 if origin_error:
-                    changes.append({
-                        "power": row["name"], "field": str(raw_field),
-                        **origin_error,
-                        "item": {"power_id": power_id, "field": str(raw_field), "value": value},
-                    })
+                    rejections.append(RejectedItem(item={"power_id": power_id, "field": str(raw_field), "value": value}, reason=origin_error["reason"], category=origin_error["category"], source=source))
                     continue
                 stored_new: object = new_value
                 log_delta: int | None = actual_delta
@@ -7042,7 +6969,7 @@ class GameDB:
                 })
         if commit:
             self.conn.commit()
-        return changes
+        return changes, rejections
 
     def apply_power_rename(
         self,
@@ -7279,22 +7206,17 @@ class GameDB:
         commit: bool = True,
         origin_ref: str = "",
         require_origin: bool = False,
+        strict_effect: bool = False,
+            source: Provenance = Provenance.system_simulation,
     ) -> List[Dict[str, object]]:
+        rejections: List[RejectedItem] = []
         changes: List[Dict[str, object]] = []
         for region_id, raw_changes in region_deltas.items():
             row = self.conn.execute("SELECT * FROM regions WHERE id = ?", (region_id,)).fetchone()
             if row is None:
                 # ADR 0008 决定 1:LLM 幻觉地区 id = 逐项拒收留痕,不再 print 静默跳;
                 # 坏一项不带走整批(同信封好地区照落)。
-                changes.append({
-                    "region_id": region_id, "rejected": True,
-                    "category": "missing_ref",
-                    "reason": f"region_delta 引用未入库地区 '{region_id}'",
-                    "item": {"region_id": region_id, "changes": raw_changes},
-                    # 历史 print-skip → convention 一致补标（当前 issue 路不走 region,
-                    # 防未来接入时误升级——cmr S2 r2 claude P3）。
-                    "issue_strict": False,
-                })
+                rejections.append(RejectedItem(item={"region_id": region_id, "changes": raw_changes}, reason=f"region_delta 引用未入库地区 '{region_id}'", category="missing_ref", source=source))
                 continue
             reason_raw = raw_changes.get("reason")
             if reason_raw is None or not str(reason_raw).strip():
@@ -7318,20 +7240,17 @@ class GameDB:
                             raise ValueError("非整数 delta")
                         cannon_delta = int(value)
                     except (TypeError, ValueError):
-                        changes.append({
-                            "region": row["name"], "field": field,
-                            "rejected": True, "category": "invalid_enum",
-                            "reason": f"region_delta 'cannon'（地区 '{region_id}'）值非整数：{value!r}",
-                            "item": {"region_id": region_id, "field": field, "value": value},
-                            "issue_strict": not isinstance(value, (bool, float)),  # 同上 convention
-                        })
+                        if strict_effect and (not isinstance(value, (bool, float))):
+                            raise ValueError(f"region_delta 'cannon'（地区 '{region_id}'）值非整数：{value!r}")
+                        rejections.append(RejectedItem(item={"region_id": region_id, "field": field, "value": value}, reason=f"region_delta 'cannon'（地区 '{region_id}'）值非整数：{value!r}", category="invalid_enum", source=source))
                         continue
                     old_value = int(row["cannon"])
                     if cannon_delta != 0 and require_origin:
                         origin_error = self.effect_origin_rejection(origin_ref)
                         if origin_error:
-                            changes.append({"region": row["name"], "field": field, **origin_error,
-                                            "item": {"region_id": region_id, "field": field, "value": value}})
+                            if strict_effect and (True):
+                                raise ValueError(origin_error["reason"])
+                            rejections.append(RejectedItem(item={"region_id": region_id, "field": field, "value": value}, reason=origin_error["reason"], category=origin_error["category"], source=source))
                             continue
                     new_value = self.apply_region_cannon(state, region_id, cannon_delta)
                     actual_delta = new_value - old_value
@@ -7391,15 +7310,11 @@ class GameDB:
                 # ADR 0008 决定 1:LLM 引用非法地区字段 = 逐项拒收留痕(invalid_enum),
                 # 不再 raise 崩整月;同地区的合法字段照落,坏一项不带走整批。
                 if field not in _REGION_DIRECT_SET and field not in FISCAL_SCORE_FIELDS:
-                    changes.append({
-                        "region": row["name"], "field": str(raw_field),
-                        "rejected": True, "category": "invalid_enum",
-                        "reason": (
-                            f"region_delta 引用非法地区字段 '{raw_field}'（地区 '{region_id}'）；"
-                            f"合法字段：{_REGION_DIRECT_TUPLE + FISCAL_SCORE_FIELDS}"
-                        ),
-                        "item": {"region_id": region_id, "field": str(raw_field), "value": value},
-                    })
+                    if strict_effect and (True):
+                        raise ValueError(f"region_delta 引用非法地区字段 '{raw_field}'（地区 '{region_id}'）；"
+                            f"合法字段：{_REGION_DIRECT_TUPLE + FISCAL_SCORE_FIELDS}")
+                    rejections.append(RejectedItem(item={"region_id": region_id, "field": str(raw_field), "value": value}, reason=f"region_delta 引用非法地区字段 '{raw_field}'（地区 '{region_id}'）；"
+                            f"合法字段：{_REGION_DIRECT_TUPLE + FISCAL_SCORE_FIELDS}", category="invalid_enum", source=source))
                     continue
 
                 # ADR 0008 决定 1:数值字段(fiscal/score/quantity)的脏叶子值
@@ -7412,15 +7327,9 @@ class GameDB:
                             raise ValueError("非整数 delta")
                         value = int(value)
                     except (TypeError, ValueError):
-                        changes.append({
-                            "region": row["name"], "field": field,
-                            "rejected": True, "category": "invalid_enum",
-                            "reason": f"region_delta '{raw_field}'（地区 '{region_id}'）值非整数：{value!r}",
-                            "item": {"region_id": region_id, "field": field, "value": value},
-                            # float/bool 历史静默套用=可活;None/串历史 int() 致命=严格
-                            # （convention 对称 army,防未来 issue 路接入误升级;ship-pre r1）。
-                            "issue_strict": not isinstance(value, (bool, float)),
-                        })
+                        if strict_effect and (not isinstance(value, (bool, float))):
+                            raise ValueError(f"region_delta '{raw_field}'（地区 '{region_id}'）值非整数：{value!r}")
+                        rejections.append(RejectedItem(item={"region_id": region_id, "field": field, "value": value}, reason=f"region_delta '{raw_field}'（地区 '{region_id}'）值非整数：{value!r}", category="invalid_enum", source=source))
                         continue
 
                 # ── fiscal JSON 子字段（corruption 等）────────────────────────
@@ -7440,8 +7349,9 @@ class GameDB:
                     if require_origin:
                         origin_error = self.effect_origin_rejection(origin_ref)
                         if origin_error:
-                            changes.append({"region": row["name"], "field": field, **origin_error,
-                                            "item": {"region_id": region_id, "field": field, "value": value}})
+                            if strict_effect and (True):
+                                raise ValueError(origin_error["reason"])
+                            rejections.append(RejectedItem(item={"region_id": region_id, "field": field, "value": value}, reason=origin_error["reason"], category=origin_error["category"], source=source))
                             continue
                     fiscal[field] = new_value
                     self.conn.execute(
@@ -7504,31 +7414,29 @@ class GameDB:
                                 (text_value,),
                             ).fetchone() is None
                         ):
-                            changes.append({
-                                "region": row["name"], "field": field,
-                                "rejected": True, "category": "invalid_enum",
-                                "reason": (
-                                    f"region_delta 'controlled_by'（地区 '{region_id}'）"
-                                    f"必须是 powers.id 中的非空真实势力 id：{value!r}"
-                                ),
-                                "item": {"region_id": region_id, "field": field, "value": value},
-                            })
+                            if strict_effect and (True):
+                                raise ValueError(f"region_delta 'controlled_by'（地区 '{region_id}'）"
+                                    f"必须是 powers.id 中的非空真实势力 id：{value!r}")
+                            rejections.append(RejectedItem(item={"region_id": region_id, "field": field, "value": value}, reason=f"region_delta 'controlled_by'（地区 '{region_id}'）"
+                                    f"必须是 powers.id 中的非空真实势力 id：{value!r}", category="invalid_enum", source=source))
                             continue
                     if not text_value or text_value == str(old_value):
                         continue
                     if require_origin:
                         origin_error = self.effect_origin_rejection(origin_ref)
                         if origin_error:
-                            changes.append({"region": row["name"], "field": field, **origin_error,
-                                            "item": {"region_id": region_id, "field": field, "value": value}})
+                            if strict_effect and (True):
+                                raise ValueError(origin_error["reason"])
+                            rejections.append(RejectedItem(item={"region_id": region_id, "field": field, "value": value}, reason=origin_error["reason"], category=origin_error["category"], source=source))
                             continue
                     stored_new = text_value
                     log_delta = None
                 if require_origin and field not in REGION_TEXT_FIELDS:
                     origin_error = self.effect_origin_rejection(origin_ref)
                     if origin_error:
-                        changes.append({"region": row["name"], "field": field, **origin_error,
-                                        "item": {"region_id": region_id, "field": field, "value": value}})
+                        if strict_effect and (True):
+                            raise ValueError(origin_error["reason"])
+                        rejections.append(RejectedItem(item={"region_id": region_id, "field": field, "value": value}, reason=origin_error["reason"], category=origin_error["category"], source=source))
                         continue
                 self.conn.execute(
                     f"UPDATE regions SET {field} = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
@@ -7568,7 +7476,7 @@ class GameDB:
                     changes.extend(extra)
         if commit:
             self.conn.commit()
-        return changes
+        return changes, rejections
 
     def _apply_on_restore(
         self,
@@ -7884,7 +7792,10 @@ class GameDB:
         commit: bool = True,
         origin_ref: str = "",
         require_origin: bool = False,
+        strict_effect: bool = False,
+            source: Provenance = Provenance.system_simulation,
     ) -> List[Dict[str, object]]:
+        rejections: List[RejectedItem] = []
         changes: List[Dict[str, object]] = []
         for army_id, raw_changes in army_deltas.items():
             row = self.conn.execute("SELECT * FROM armies WHERE id = ?", (army_id,)).fetchone()
@@ -7892,12 +7803,9 @@ class GameDB:
                 # ADR 0008 决定 1:LLM 幻觉军队 id = 逐项拒收留痕(missing_ref),不再
                 # raise 崩整月;同信封好军队照落,坏一项不带走整批(原意「先建军」由
                 # new_armies 段负责,此处只拒补兵/改属性的悬空引用)。
-                changes.append({
-                    "army_id": army_id, "rejected": True,
-                    "category": "missing_ref",
-                    "reason": f"army_delta 引用未入库军队 '{army_id}'（补兵/改属性落不了，先建军）",
-                    "item": {"army_id": army_id, "changes": raw_changes},
-                })
+                if strict_effect and (True):
+                    raise ValueError(f"army_delta 引用未入库军队 '{army_id}'（补兵/改属性落不了，先建军）")
+                rejections.append(RejectedItem(item={"army_id": army_id, "changes": raw_changes}, reason=f"army_delta 引用未入库军队 '{army_id}'（补兵/改属性落不了，先建军）", category="missing_ref", source=source))
                 continue
             reason_raw = raw_changes.get("reason")
             if reason_raw is None or not str(reason_raw).strip():
@@ -7909,8 +7817,8 @@ class GameDB:
             consumed_pay_source_fields: frozenset[str] = frozenset()
             if self.is_army_pay_source_cutover_enabled():
                 self._apply_army_pay_source_delta(
-                    state, event, edict_id, actor, row, raw_changes, reason, changes,
-                    origin_ref=origin_ref, require_origin=require_origin,
+                    state, event, edict_id, actor, row, raw_changes, reason, changes, rejections,
+                    origin_ref=origin_ref, require_origin=require_origin, source=source,
                 )
                 row = self.conn.execute("SELECT * FROM armies WHERE id = ?", (army_id,)).fetchone()
             else:
@@ -7924,7 +7832,7 @@ class GameDB:
                 if "owner_power" in normalized:
                     proposed_owner = str(normalized.get("owner_power") or "").strip()
                     if proposed_owner != str(row["owner_power"] or "").strip():
-                        changes.extend(self.transition_army_owner_power(
+                        landed, refused = self.transition_army_owner_power(
                             state,
                             row,
                             proposed_owner,
@@ -7936,7 +7844,9 @@ class GameDB:
                             require_origin=require_origin,
                             **_army_owner_transition_pay_kwargs(normalized),
                             raw_item={"army_id": army_id, "changes": raw_changes},
-                        ))
+                        source=source)
+                        changes.extend(landed)
+                        rejections.extend(refused)
                         consumed_pay_source_fields = frozenset(
                             {"owner_power"}
                             | _ARMY_PAY_SOURCE_DELTA_FIELDS.intersection(normalized)
@@ -7966,7 +7876,7 @@ class GameDB:
                     ).fetchone()
                     if current_row is None:
                         continue
-                    changes.extend(self.transition_army_owner_power(
+                    landed, refused = self.transition_army_owner_power(
                         state,
                         current_row,
                         str(value or "").strip(),
@@ -7977,20 +7887,14 @@ class GameDB:
                         origin_ref=origin_ref,
                         require_origin=require_origin,
                         raw_item={"army_id": army_id, "changes": raw_changes},
-                    ))
+                    source=source)
+                    changes.extend(landed)
+                    rejections.extend(refused)
                     continue
                 if field not in _ARMY_VALID_SET:
                     # ADR 0008 决定 1:LLM 引用非法军队字段 = 逐项拒收留痕(invalid_enum),
                     # 不再 print 静默跳;同军队的合法字段照落,坏一项不带走整批。
-                    changes.append({
-                        "army": row["name"], "field": str(raw_field),
-                        "rejected": True, "category": "invalid_enum",
-                        "reason": f"army_delta 引用非法字段 '{raw_field}'",
-                        "item": {"army_id": army_id, "field": str(raw_field), "value": value},
-                        # 历史上此案是 print-skip（非 raise）——国策结案路不升级为
-                        # 崩月（cmr S2 r1 claude:「维持原行为」当真）。
-                        "issue_strict": False,
-                    })
+                    rejections.append(RejectedItem(item={"army_id": army_id, "field": str(raw_field), "value": value}, reason=f"army_delta 引用非法字段 '{raw_field}'", category="invalid_enum", source=source))
                     continue
                 # ADR 0008 决定 1:数值字段的脏叶子值(null/字符串/float/bool)= LLM 脏数据,
                 # 逐项拒收(invalid_enum),不让裸 int(value) 崩整月;bool 是 int 子类、float
@@ -8001,15 +7905,9 @@ class GameDB:
                             raise ValueError("非整数 delta")
                         value = int(value)
                     except (TypeError, ValueError):
-                        changes.append({
-                            "army": row["name"], "field": field,
-                            "rejected": True, "category": "invalid_enum",
-                            "reason": f"army_delta '{raw_field}' 值非整数：{value!r}",
-                            "item": {"army_id": army_id, "field": field, "value": value},
-                            # float/bool 改前是静默套用（int(3.7)=3 照落）=历史可活,
-                            # issue 路容忍;None/字符串历史就 raise,保持严格（cmr S2 r3,2/2）。
-                            "issue_strict": not isinstance(value, (bool, float)),
-                        })
+                        if strict_effect and (not isinstance(value, (bool, float))):
+                            raise ValueError(f"army_delta '{raw_field}' 值非整数：{value!r}")
+                        rejections.append(RejectedItem(item={"army_id": army_id, "field": field, "value": value}, reason=f"army_delta '{raw_field}' 值非整数：{value!r}", category="invalid_enum", source=source))
                         continue
                 current_row = self.conn.execute(
                     "SELECT * FROM armies WHERE id = ?", (army_id,)
@@ -8027,13 +7925,7 @@ class GameDB:
                     if self.is_army_pay_source_cutover_enabled():
                         delta = int(value)
                         if delta < 0:
-                            changes.append({
-                                "army": row["name"], "field": field,
-                                "rejected": True, "category": "invalid_enum",
-                                "reason": "army_delta.arrears 不接受负值核销；真补饷须走 economy_moves",
-                                "item": {"army_id": army_id, "field": field, "value": value},
-                                "issue_strict": False,
-                            })
+                            rejections.append(RejectedItem(item={"army_id": army_id, "field": field, "value": value}, reason="army_delta.arrears 不接受负值核销；真补饷须走 economy_moves", category="invalid_enum", source=source))
                             continue
                         if delta == 0:
                             continue
@@ -8042,22 +7934,10 @@ class GameDB:
                             or bool(row["is_tusi"])
                             or bool(row["self_funded_pay"])
                         ):
-                            changes.append({
-                                "army": row["name"], "field": field,
-                                "rejected": True, "category": "invalid_enum",
-                                "reason": "army_delta.arrears 不接受自养/非明军加欠；双累加器恒为 0",
-                                "item": {"army_id": army_id, "field": field, "value": value},
-                                "issue_strict": False,
-                            })
+                            rejections.append(RejectedItem(item={"army_id": army_id, "field": field, "value": value}, reason="army_delta.arrears 不接受自养/非明军加欠；双累加器恒为 0", category="invalid_enum", source=source))
                             continue
                         if int(row["manpower"] or 0) <= 0:
-                            changes.append({
-                                "army": row["name"], "field": field,
-                                "rejected": True, "category": "invalid_enum",
-                                "reason": "army_delta.arrears 不接受零兵军队加欠；兵力归零欠饷已核销",
-                                "item": {"army_id": army_id, "field": field, "value": value},
-                                "issue_strict": False,
-                            })
+                            rejections.append(RejectedItem(item={"army_id": army_id, "field": field, "value": value}, reason="army_delta.arrears 不接受零兵军队加欠；兵力归零欠饷已核销", category="invalid_enum", source=source))
                             continue
                         self._validate_pay_source_values(
                             army_id, str(row["owner_power"]), str(row["pay_source_region"]),
@@ -8072,8 +7952,9 @@ class GameDB:
                         new_value = new_province + new_central
                         origin_error = self.effect_origin_rejection(origin_ref) if require_origin else None
                         if origin_error:
-                            changes.append({"army": row["name"], "field": field, **origin_error,
-                                            "item": {"army_id": army_id, "field": field, "value": value}})
+                            if strict_effect and (True):
+                                raise ValueError(origin_error["reason"])
+                            rejections.append(RejectedItem(item={"army_id": army_id, "field": field, "value": value}, reason=origin_error["reason"], category=origin_error["category"], source=source))
                             continue
                         self.conn.execute(
                             """
@@ -8188,8 +8069,9 @@ class GameDB:
                     )
                     origin_error = self.effect_origin_rejection(origin_ref) if require_origin and (delta != 0 or will_write_off_arrears) else None
                     if origin_error:
-                        changes.append({"army": row["name"], "field": field, **origin_error,
-                                        "item": {"army_id": army_id, "field": field, "value": value}})
+                        if strict_effect and (True):
+                            raise ValueError(origin_error["reason"])
+                        rejections.append(RejectedItem(item={"army_id": army_id, "field": field, "value": value}, reason=origin_error["reason"], category=origin_error["category"], source=source))
                         continue
                     if will_write_off_arrears:
                         old_arrears = float(row["arrears"] or 0)
@@ -8252,16 +8134,11 @@ class GameDB:
                             "SELECT 1 FROM regions WHERE id = ?", (text_value,),
                         ).fetchone()
                         if exists is None:
-                            changes.append({
-                                "army": row["name"], "field": field,
-                                "rejected": True, "category": "invalid_enum",
-                                "reason": (
-                                    f"army_delta.station_region 未入库 region_id：{text_value}"
-                                ),
-                                "item": {
+                            if strict_effect and (True):
+                                raise ValueError(f"army_delta.station_region 未入库 region_id：{text_value}")
+                            rejections.append(RejectedItem(item={
                                     "army_id": army_id, "field": field, "value": value,
-                                },
-                            })
+                                }, reason=f"army_delta.station_region 未入库 region_id：{text_value}", category="invalid_enum", source=source))
                             continue
                     stored_new = text_value
                     log_delta = None
@@ -8272,8 +8149,9 @@ class GameDB:
                     raise RuntimeError(f"army_delta 合法字段 '{field}' 无落库分支（代码漏接）")
                 origin_error = self.effect_origin_rejection(origin_ref) if require_origin else None
                 if origin_error:
-                    changes.append({"army": row["name"], "field": field, **origin_error,
-                                    "item": {"army_id": army_id, "field": field, "value": value}})
+                    if strict_effect and (True):
+                        raise ValueError(origin_error["reason"])
+                    rejections.append(RejectedItem(item={"army_id": army_id, "field": field, "value": value}, reason=origin_error["reason"], category=origin_error["category"], source=source))
                     continue
                 self.conn.execute(
                     f"UPDATE armies SET {field} = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
@@ -8316,7 +8194,7 @@ class GameDB:
                 )
         if commit:
             self.conn.commit()
-        return changes
+        return changes, rejections
 
     def create_armies_from_extraction(
         self,
@@ -8326,19 +8204,18 @@ class GameDB:
         commit: bool = True,
         origin_ref: str = "",
         require_origin: bool = False,
+        strict_effect: bool = False,
+            source: Provenance = Provenance.system_simulation,
     ) -> List[Dict[str, object]]:
         """据 extractor 输出建新军队。同 id/name 已存在 → 把 manpower 当扩军增量。owner_power 必须是已知 power。"""
+        rejections: List[RejectedItem] = []
         valid_powers = {r["id"] for r in self.conn.execute("SELECT id FROM powers").fetchall()}
         created: List[Dict[str, object]] = []
         for raw in new_armies:
             if not isinstance(raw, dict):
                 # 不再静默丢：留拒收记录（season 路本就被 validate_delta_shape 挡在
                 # S6;issue 路历史即静默,容忍不升级——issue_strict=False,cmr S2 r1）。
-                created.append({
-                    "rejected": True, "category": "invalid_enum",
-                    "reason": f"new_armies 含非 dict 项：{raw!r}",
-                    "item": raw, "issue_strict": False,
-                })
+                rejections.append(RejectedItem(item=raw, reason=f"new_armies 含非 dict 项：{raw!r}", category="invalid_enum", source=source))
                 continue
             item = {POWER_FIELD_ALIASES.get(k, k) if False else k: v for k, v in raw.items()}
             # 规范键：复用 ARMY_FIELD_ALIASES（兼容中文）
@@ -8348,21 +8225,16 @@ class GameDB:
             if not aid:
                 # ADR 0008 决定 1:缺 id = LLM 脏数据,逐项拒收留痕(invalid_enum),
                 # 不再 raise 崩整月;同信封好军照建,坏一项不带走整批。
-                created.append({
-                    "rejected": True, "category": "invalid_enum",
-                    "reason": "new_armies 缺 id（无法建军）",
-                    "item": raw,
-                })
+                if strict_effect and (True):
+                    raise ValueError("new_armies 缺 id（无法建军）")
+                rejections.append(RejectedItem(item=raw, reason="new_armies 缺 id（无法建军）", category="invalid_enum", source=source))
                 continue
             owner = str(item.get("owner_power") or "ming").strip() or "ming"
             if owner not in valid_powers:
                 # ADR 0008 决定 1:owner_power 幻觉 = 逐项拒收留痕(hallucinated_id)。
-                created.append({
-                    "id": aid, "owner_power": owner,
-                    "rejected": True, "category": "hallucinated_id",
-                    "reason": f"new_armies owner_power '{owner}' 不在 powers 表（无法建军 {aid}）",
-                    "item": raw,
-                })
+                if strict_effect and (True):
+                    raise ValueError(f"new_armies owner_power '{owner}' 不在 powers 表（无法建军 {aid}）")
+                rejections.append(RejectedItem(item=raw, reason=f"new_armies owner_power '{owner}' 不在 powers 表（无法建军 {aid}）", category="hallucinated_id", source=source))
                 continue
             name = str(item.get("name") or aid).strip()
             # 查重：同 id 或 同 name → 转 manpower 扩军增量
@@ -8373,11 +8245,7 @@ class GameDB:
                 manpower = item.get("manpower")
                 if manpower is None:
                     # ADR 0008 决定 1:命中已有军但无扩军增量 = 无意义项,逐项拒收留痕。
-                    created.append({
-                        "id": aid, "rejected": True, "category": "invalid_enum",
-                        "reason": f"new_armies 重复 id/name '{aid}' 且无 manpower（无扩军增量）",
-                        "item": raw, "issue_strict": False,  # 历史 print-skip,结案路容忍
-                    })
+                    rejections.append(RejectedItem(item=raw, reason=f"new_armies 重复 id/name '{aid}' 且无 manpower（无扩军增量）", category="invalid_enum", source=source))
                     continue
                 try:
                     if isinstance(manpower, (bool, float)):
@@ -8385,11 +8253,7 @@ class GameDB:
                     delta = int(manpower)
                 except (TypeError, ValueError):
                     # ADR 0008 决定 1:扩军增量非整数 = LLM 脏数据,逐项拒收留痕。
-                    created.append({
-                        "id": aid, "rejected": True, "category": "invalid_enum",
-                        "reason": f"new_armies '{aid}' manpower 非整数：{manpower!r}",
-                        "item": raw, "issue_strict": False,  # 历史 print-skip,结案路容忍
-                    })
+                    rejections.append(RejectedItem(item=raw, reason=f"new_armies '{aid}' manpower 非整数：{manpower!r}", category="invalid_enum", source=source))
                     continue
                 if delta == 0:
                     continue
@@ -8400,16 +8264,16 @@ class GameDB:
                     reason_raw = "扩军"
                 reason = str(reason_raw)
                 pseudo_event = type("E", (), {"id": "season", "title": reason})()
-                merge_results = self.apply_army_deltas(
+                merge_results, merge_results_rejections = self.apply_army_deltas(
                     state,
                     pseudo_event,
                     None,
                     actor,
                     {existing["id"]: {"manpower": delta, "reason": reason}},
                     commit=False, origin_ref=origin_ref, require_origin=require_origin,
-                )
-                if any(result.get("rejected") for result in merge_results):
-                    created.extend(result for result in merge_results if result.get("rejected"))
+                source=source)
+                if merge_results_rejections:
+                    rejections.extend(merge_results_rejections)
                 else:
                     created.append({"army": existing["name"], "manpower_added": delta, "merged_into_existing": True})
                 continue
@@ -8422,14 +8286,9 @@ class GameDB:
                     raise ValueError("非整数")
                 manpower = int(_mp)
             except (KeyError, TypeError, ValueError) as exc:
-                created.append({
-                    "id": aid, "rejected": True, "category": "invalid_enum",
-                    "reason": f"new_armies '{aid}' 缺/非法 manpower（无法建军）：{exc}",
-                    "item": raw,
-                    # 历史谓词只看 manpower（#173 PR2 后唯一必填）：manpower int() 成功=历史可活,
-                    # 缺键/TypeError/ValueError 即历史 raise → 保持严格。
-                    "issue_strict": not _new_army_historically_applied(item),
-                })
+                if strict_effect and (not _new_army_historically_applied(item)):
+                    raise ValueError(f"new_armies '{aid}' 缺/非法 manpower（无法建军）：{exc}")
+                rejections.append(RejectedItem(item=raw, reason=f"new_armies '{aid}' 缺/非法 manpower（无法建军）：{exc}", category="invalid_enum", source=source))
                 continue
             # #173：maintenance_per_turn 列已删（月饷由 army_needed 按兵力派生）；LLM 若仍塞维护费/
             # 军费，经 ARMY_FIELD_ALIASES 已无该别名 → 当未知键忽略，不入库、不影响建军。
@@ -8451,14 +8310,8 @@ class GameDB:
                         _dirty_field = (_f, _v)
                         break
             if _dirty_field is not None:
-                created.append({
-                    "id": aid, "rejected": True, "category": "invalid_enum",
-                    "reason": (f"new_armies '{aid}' 可选字段 '{_dirty_field[0]}' 值非整数："
-                               f"{_dirty_field[1]!r}（在场即须合法，缺省才走默认）"),
-                    "item": raw,
-                    # 历史上此案静默走默认值（非 raise）——结案路容忍不升级。
-                    "issue_strict": False,
-                })
+                rejections.append(RejectedItem(item=raw, reason=f"new_armies '{aid}' 可选字段 '{_dirty_field[0]}' 值非整数："
+                               f"{_dirty_field[1]!r}（在场即须合法，缺省才走默认）", category="invalid_enum", source=source))
                 continue
             def _score(field: str, default: int = 50) -> int:
                 try:
@@ -8479,14 +8332,11 @@ class GameDB:
                     return 0
             initial_arrears = _arrears_init()
             if self.is_army_pay_source_cutover_enabled() and initial_arrears > 0:
-                created.append({
-                    "id": aid, "rejected": True, "category": "invalid_enum",
-                    "reason": (
-                        f"new_armies '{aid}' 新军初始欠饷必须为 0；"
-                        "外生加欠须走 army_delta.arrears 正值"
-                    ),
-                    "item": raw,
-                })
+                if strict_effect and (True):
+                    raise ValueError(f"new_armies '{aid}' 新军初始欠饷必须为 0；"
+                        "外生加欠须走 army_delta.arrears 正值")
+                rejections.append(RejectedItem(item=raw, reason=f"new_armies '{aid}' 新军初始欠饷必须为 0；"
+                        "外生加欠须走 army_delta.arrears 正值", category="invalid_enum", source=source))
                 continue
             # #659：结构化实际驻地可选；非空须为已入库 region_id，缺省 "" 不 fail-loud。
             station_region = str(item.get("station_region") or "").strip()
@@ -8495,14 +8345,11 @@ class GameDB:
                     "SELECT 1 FROM regions WHERE id = ?", (station_region,),
                 ).fetchone()
                 if exists is None:
-                    created.append({
-                        "id": aid, "rejected": True, "category": "invalid_enum",
-                        "reason": (
-                            f"new_armies '{aid}' station_region 未入库 region_id："
-                            f"{station_region}"
-                        ),
-                        "item": raw,
-                    })
+                    if strict_effect and (True):
+                        raise ValueError(f"new_armies '{aid}' station_region 未入库 region_id："
+                            f"{station_region}")
+                    rejections.append(RejectedItem(item=raw, reason=f"new_armies '{aid}' station_region 未入库 region_id："
+                            f"{station_region}", category="invalid_enum", source=source))
                     continue
             pay_source_region = ""
             province_pay_share = central_pay_share = 0.0
@@ -8530,15 +8377,15 @@ class GameDB:
                     if pay_source_region:
                         self._require_valid_pay_source_region(aid, pay_source_region)
                 except (TypeError, ValueError) as exc:
-                    created.append({
-                        "id": aid, "rejected": True, "category": "invalid_enum",
-                        "reason": f"new_armies '{aid}' 饷源字段非法：{exc}",
-                        "item": raw,
-                    })
+                    if strict_effect and (True):
+                        raise ValueError(f"new_armies '{aid}' 饷源字段非法：{exc}")
+                    rejections.append(RejectedItem(item=raw, reason=f"new_armies '{aid}' 饷源字段非法：{exc}", category="invalid_enum", source=source))
                     continue
             origin_error = self.effect_origin_rejection(origin_ref) if require_origin else None
             if origin_error:
-                created.append({"id": aid, **origin_error, "item": raw})
+                if strict_effect and (True):
+                    raise ValueError(origin_error["reason"])
+                rejections.append(RejectedItem(item=raw, reason=origin_error["reason"], category=origin_error["category"], source=source))
                 continue
             commander = str(item.get("commander") or "")
             row = (
@@ -8615,7 +8462,7 @@ class GameDB:
             })
         if commit:
             self.conn.commit()
-        return created
+        return created, rejections
 
     # ── 建筑 ──────────────────────────────────────────────────────────────────
 
@@ -8906,10 +8753,10 @@ class GameDB:
             f"{row['status']}"
         )
 
-    def adjust_factions(self, deltas: Dict[str, object], commit: bool = True) -> List[Dict[str, object]]:
+    def adjust_factions(self, deltas: Dict[str, object], commit: bool = True, source: Provenance = Provenance.system_simulation) -> List[Dict[str, object]]:
         """逐项落库；查无此派系名 → missing_ref 逐项拒收留痕（ADR 0008 决定 1，#14/#63
         死法 3）。入参经 _apply_faction_dict 预清洗（坏值已在那层拒），此处只余未知名一类。
-        返回拒收项列表（{"rejected": True, ...}），由落库编排器 canonical 化后收进拒收报告。
+        返回 RejectedItem 列表，由调用方收进拒收报告。
 
         #9 cmr R5 finding#1：白名单朝堂派系（_LEVERAGE_FACTIONS）的 leverage 列由「offset+官职和」
         派生、结算尾 recompute_all_faction_leverage() 绝对幂等兜底。若此处对白名单直写 leverage 列，
@@ -8935,11 +8782,7 @@ class GameDB:
                 "SELECT satisfaction, leverage FROM factions WHERE name = ?", (faction,)
             ).fetchone()
             if not row:
-                rejected.append({
-                    "name": faction, "rejected": True, "category": "missing_ref",
-                    "reason": f"faction_delta 查无此派系「{faction}」（未入 factions 表）",
-                    "item": {faction: val},
-                })
+                rejected.append(RejectedItem(item={faction: val}, reason=f"faction_delta 查无此派系「{faction}」（未入 factions 表）", category="missing_ref", source=source))
                 continue
             new_sat = max(0, min(100, int(row["satisfaction"]) + sat_d))
             if faction in _LEVERAGE_FACTIONS:
@@ -13584,7 +13427,7 @@ class GameDB:
         self, state: GameState, row, payload: Dict[str, object], dossier_id: int,
     ) -> int:
         """#1503：颁布缝一次消费拨饷载荷 — 扣库+销欠同事务（ADR 0023 clamp）。"""
-        from ming_sim.flows import _apply_economy_list
+        from ming_sim.entities.economy.apply import _apply_economy_list
 
         amount = int(payload.get("amount") or 0)
         if amount <= 0:
@@ -13617,15 +13460,15 @@ class GameDB:
             "target_id": target_id,
             "origin_ref": origin_ref,
         }
-        results = _apply_economy_list(
+        results, results_rejections = _apply_economy_list(
             self, state, [move], commit=False, require_origin=False,
-        )
+        source=Provenance.system_simulation)
+        if results_rejections:
+            raise ValueError(results_rejections[0].reason)
         spent = 0
         for item in results:
             if not isinstance(item, dict):
                 continue
-            if item.get("rejected"):
-                raise ValueError(str(item.get("reason") or "拨饷落账被拒"))
             spent += abs(int(item.get("delta") or 0))
         return spent
 
@@ -15695,22 +15538,19 @@ class GameDB:
                     ),
                 }
                 from ming_sim.entities.character.apply import apply_person_changes as _apply_person_changes
-                results = _apply_person_changes(
+                results, person_rejections = _apply_person_changes(
                     self,
                     state,
                     [item],
                     content=content,
                     origin_ref=origin_ref,
                     require_origin=True,
-                )
-                accepted = [
-                    r for r in results
-                    if isinstance(r, dict) and not r.get("rejected")
-                ]
+                source=Provenance.system_simulation)
+                accepted = results
                 if not accepted:
                     reason = ""
-                    if results and isinstance(results[0], dict):
-                        reason = str(results[0].get("reason") or "")
+                    if person_rejections:
+                        reason = person_rejections[0].reason
                     raise ValueError(reason or "招抚案卷易主物化失败")
             elif row["action_type"] == "authorization":
                 # #528 / #611：公开委任只接 authority_changes 授予槽；判后物化。
@@ -16256,21 +16096,18 @@ class GameDB:
             delta["station"] = dest
         if dest_region:
             delta["station_region"] = dest_region
-        changes = self.apply_army_deltas(
+        changes, changes_rejections = self.apply_army_deltas(
             state, pseudo, None, actor or "军令",
             {army_id: delta},
             commit=False,
             origin_ref=origin_ref,
             require_origin=True,
-        )
+        source=Provenance.system_simulation)
         # #521 r1：目标 station=当前站时 army 写核空接受=幂等 noop 成功，
         # 不得当硬失败以致同批职守变更回滚。
-        rejected = [
-            c for c in changes
-            if isinstance(c, dict) and c.get("rejected")
-        ]
+        rejected = changes_rejections
         if rejected:
-            fail_reason = str(rejected[0].get("reason") or "")
+            fail_reason = rejected[0].reason
             raise ValueError(fail_reason or "军令调驻物化失败")
 
     @staticmethod
@@ -16283,7 +16120,7 @@ class GameDB:
         """
         names: set[str] = set()
         for item in rows or ():
-            if not isinstance(item, dict) or item.get("rejected"):
+            if not isinstance(item, dict):
                 continue
             person = str(item.get("name") or item.get("人物") or "").strip()
             if person:
@@ -16340,22 +16177,19 @@ class GameDB:
             if not entry.get("new_office") and entry.get("office"):
                 entry["new_office"] = entry["office"]
             prepared.append(entry)
-        results = _apply_person_changes(
+        results, person_rejections = _apply_person_changes(
             self,
             state,
             prepared,
             content=content,
             origin_ref=origin_ref,
             require_origin=True,
-        )
-        accepted_p = [
-            r for r in results
-            if isinstance(r, dict) and not r.get("rejected")
-        ]
+        source=Provenance.system_simulation)
+        accepted_p = results
         if not accepted_p:
             fail_reason = ""
-            if results and isinstance(results[0], dict):
-                fail_reason = str(results[0].get("reason") or "")
+            if person_rejections:
+                fail_reason = person_rejections[0].reason
             raise ValueError(fail_reason or "军令职守变更物化失败")
 
     def _apply_authorization_verdict_effect(
@@ -16883,22 +16717,19 @@ class GameDB:
                 item["reason_code"] = "获罪削籍"
                 item["reason"] = "获罪削籍"
             from ming_sim.entities.character.apply import apply_person_changes as _apply_person_changes
-            results = _apply_person_changes(
+            results, person_rejections = _apply_person_changes(
                 self,
                 state,
                 [item],
                 content=content,
                 origin_ref=origin_ref,
                 require_origin=True,
-            )
-            accepted = [
-                r for r in results
-                if isinstance(r, dict) and not r.get("rejected")
-            ]
+            source=Provenance.system_simulation)
+            accepted = results
             if not accepted:
                 fail_reason = ""
-                if results and isinstance(results[0], dict):
-                    fail_reason = str(results[0].get("reason") or "")
+                if person_rejections:
+                    fail_reason = person_rejections[0].reason
                 raise ValueError(fail_reason or "惩处案卷人物效果物化失败")
             self._maybe_write_backing_betray_credit(
                 state, target=target, backing_id=backing_id, reason=reason,
@@ -18665,7 +18496,7 @@ class GameDB:
                 self, state,
                 [person_item],
                 content=content, llm_config=self.llm_config,
-            )
+            source=Provenance.system_simulation)
             affected = self._affected_people_from_applied_rows(
                 applied.get("applied_person_changes", []),
             )

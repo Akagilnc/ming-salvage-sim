@@ -1,6 +1,8 @@
 """#317 — 连续满饷兑换军心上限，且进度跨财政路径与存档持久。"""
 from __future__ import annotations
 
+from ming_sim.applier import Provenance
+
 import sqlite3
 
 import pytest
@@ -119,7 +121,7 @@ def test_army_delta_clamps_loyalty_to_dynamic_mutiny_cap(
 
     db.apply_army_deltas(
         state, event, None, "测试", {ARMY: {"loyalty": 40}}
-    )
+    , source=Provenance.system_simulation)
 
     loyalty = db.conn.execute(
         "SELECT loyalty FROM armies WHERE id=?", (ARMY,)

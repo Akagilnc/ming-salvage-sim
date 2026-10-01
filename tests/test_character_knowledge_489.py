@@ -1,5 +1,7 @@
 """#489 角色见闻：职位裁切、公开事件与参与留痕。"""
 
+from ming_sim.applier import Provenance
+
 import json
 
 from ming_sim.models import Character
@@ -1021,7 +1023,7 @@ def test_structured_person_scope_replaces_role_wide_world_reports(game):
             item["region_id"] = region_id
         return apply_person_changes_only(
             db, state, [item], content=content,
-        )["applied_person_changes"]
+        source=Provenance.system_simulation)["applied_person_changes"]
 
     official = next(c for c in content.characters.values() if c.office_type == "地方")
     applied = appoint(official.name, "河南巡抚", "地方", region_id="henan")

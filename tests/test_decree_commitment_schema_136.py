@@ -1,3 +1,5 @@
+
+from ming_sim.applier import Provenance
 import sqlite3
 
 import pytest
@@ -94,7 +96,7 @@ def test_issue_resolution_removes_building_and_keeps_remove_audit_log(game):
         db,
         state,
         {"close_issues": [{"issue_id": issue_id, "reason": "resolved"}]},
-    )
+    source=Provenance.system_simulation)
 
     assert db.conn.execute(
         "SELECT 1 FROM buildings WHERE id=?", (building["id"],),
@@ -174,7 +176,7 @@ def test_new_issue_persists_commitment_columns_from_tracker_output(game):
             "stop_condition": stop_condition,
             "commitment_kind": "until_stop",
         }],
-    })
+    }, source=Provenance.system_simulation)
 
     created = [item for item in out["new_issues"] if item.get("issue_id")]
     assert len(created) == 1, out
@@ -202,7 +204,7 @@ def test_decree_commitment_shape_with_string_stop_condition_requires_marker(read
             },
             "stop_condition": "character.毛文龙.loyalty >= 65",
         }],
-    })
+    }, source=Provenance.system_simulation)
 
     rejected = [item for item in out["new_issues"] if item.get("rejected")]
     assert len(rejected) == 1, out

@@ -112,7 +112,7 @@ def settle_exposure_from_canonical_actions(db: Any, state: Any, applied: Any) ->
             if isinstance(participant, Mapping) and participant.get("tier") in {"主办", "协办"}:
                 actors.add(str(participant.get("character_id") or "").strip())
         actors.discard("")
-        successful = lambda x: isinstance(x, Mapping) and not x.get("rejected")
+        successful = lambda x: isinstance(x, Mapping)
         # Identity is the successfully promulgated case-bound dossier, never an
         # unrelated fiscal receipt with a convenient shape.
         pay_fact = army_pay_fact_for_dossier(db, did) or {}

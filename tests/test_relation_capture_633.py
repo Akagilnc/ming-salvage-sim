@@ -12,6 +12,8 @@
 
 from __future__ import annotations
 
+from ming_sim.applier import Provenance
+
 import json
 
 from ming_sim.relations import (
@@ -540,17 +542,18 @@ def test_live_roster_cannot_rescue_endpoint_outside_passed_union(game):
     （apply_score_extraction 批内 post=live，故该构造只能经直调缝验证。）"""
     db, state, content = game
     assert db.get_character_status("王绍徽")[0] == "active"  # live 在册
-    res = resolve_relation_edge_events_from_extraction(
+    res, res_rejections = resolve_relation_edge_events_from_extraction(
         db, state,
         {"relation_edge_events": [{
             "施动者": "王绍徽", "受动者": "毕自严", "类目": "结怨",
             "语境": "live 在册但不在传入资格集。", "来源引用": "盘面自发",
         }]},
         allowed_endpoint_names={"毕自严"},  # 故意缺王绍徽
-    )
-    assert len(res) == 1 and res[0].get("rejected")
-    assert res[0]["category"] == "invalid_relation_event"
-    assert "王绍徽" in res[0]["reason"]
+    source=Provenance.system_simulation)
+    assert res == []
+    assert len(res_rejections) == 1
+    assert res_rejections[0].category == "invalid_relation_event"
+    assert "王绍徽" in res_rejections[0].reason
     assert _edge_rows(db) == []  # 零边写入
 
 
@@ -565,5 +568,5 @@ def test_missing_endpoint_qualification_set_fails_loud(game):
                 "施动者": "毕自严", "受动者": "王绍徽", "类目": "结怨",
                 "语境": "缺资格集必须炸，不静默退化。", "来源引用": "盘面自发",
             }]},
-        )
+        source=Provenance.system_simulation)
     assert _edge_rows(db) == []  # 零边副作用
