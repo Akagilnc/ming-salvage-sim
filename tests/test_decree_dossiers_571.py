@@ -991,8 +991,10 @@ def test_manual_directive_capture_reaches_structured_dossier(
     elif case == "dismiss":
         response.update({"目标类型": "character", "目标ID": actor})
     directive_text = "着内库拨银三万两赈灾" if case == "allocation" else "手工旨意"
+    prompts = []
 
-    def prompt_faithful_backend(_prompt, *_args, **_kwargs):
+    def prompt_faithful_backend(prompt, *_args, **_kwargs):
+        prompts.append(prompt)
         return (json.dumps(response, ensure_ascii=False), 1)
 
     monkeypatch.setattr(cli_backend, "_run_backend_for_config", prompt_faithful_backend)
@@ -1024,6 +1026,7 @@ def test_manual_directive_capture_reaches_structured_dossier(
         directive_id = session.add_directive(
             directive_text, dossier_payload=payload,
         ).id
+    assert prompts and directive_text in prompts[0]
     account = "内库" if case == "allocation" else "国库"
     before = state.metrics[account]
 
@@ -1308,6 +1311,7 @@ def test_cli_edit_replaces_text_and_mechanics_before_promulgation(game, monkeypa
 
     assert terminal.review_directives(session) == "issue"
     assert len(prompts) == 1
+    assert revised_text in prompts[0]
 
     db.ensure_dossiers_for_draft_directives(state)
     dossier = db.get_dossier_for_directive(directive.id)
