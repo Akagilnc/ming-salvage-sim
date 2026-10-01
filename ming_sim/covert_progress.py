@@ -1167,8 +1167,10 @@ def apply_monthly_covert_actual_progress(
             units = monthly_actual_units(
                 fidelity=fidelity, originated_quantity=originated,
             )
-        note = str(sel.get("note") or sel.get("备注") or "").strip()
-        if not note:
+        raw_note = str(sel.get("note") or sel.get("备注") or "")
+        if raw_note.strip():
+            note = raw_note
+        else:
             note = (
                 f"月度实进度：执行态{fidelity}（{units:g}）"
                 f"；origin_effects={originated}"

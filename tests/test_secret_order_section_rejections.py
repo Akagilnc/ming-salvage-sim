@@ -71,7 +71,13 @@ def test_update_valid_active_order_applies_no_reject(game):
     }, narrative="x", decree_text="y")
 
     assert _rejection_rows(db, turn, "secret_order_updates") == []
-    assert "推演副作用XYZ" in (db.get_secret_order(oid)["sim_note"] or "")
+    dossier = db.get_dossier_for_secret_order(oid)
+    notes = db.list_dossier_actual_progress(int(dossier["id"]))
+    assert any(
+        int(row["turn"]) == int(state.turn) and "推演副作用XYZ" in str(row["note"])
+        for row in notes
+    )
+    assert db.get_secret_order(oid)["sim_note"] == ""
 
 
 def test_apply_score_extraction_secret_order_update_respects_outer_transaction_rollback(game):
@@ -88,14 +94,15 @@ def test_apply_score_extraction_secret_order_update_respects_outer_transaction_r
         content=content,
     )
     assert out["secret_order_updates"][0]["order_id"] == oid
-    in_tx = db.get_secret_order(oid)
-    assert in_tx is not None
-    assert "测试密令副作用R8" in (in_tx["sim_note"] or "")
+    dossier = db.get_dossier_for_secret_order(oid)
+    in_tx = db.list_dossier_actual_progress(int(dossier["id"]))
+    assert any("测试密令副作用R8" in str(row["note"]) for row in in_tx)
     db.conn.rollback()
 
     row = db.get_secret_order(oid)
     assert row is not None
-    assert "测试密令副作用R8" not in (row["sim_note"] or "")
+    assert row["sim_note"] == ""
+    assert db.list_dossier_actual_progress(int(dossier["id"])) == []
 
 
 def test_oversized_order_id_rejected_not_crash(game):

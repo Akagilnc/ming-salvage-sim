@@ -583,11 +583,8 @@ def test_failed_landing_keeps_the_original_pending_action_retryable(game):
     ).fetchone()["error_pack_path"]
     assert str(pack or "").strip()
     manifest = json.loads((Path(pack) / "manifest.json").read_text(encoding="utf-8"))
-    traceback_text = (Path(pack) / "traceback.txt").read_text(encoding="utf-8")
-    cause = "进行中密令已达上限"
-    assert cause in str(manifest.get("message") or "")
-    assert "ValueError" in traceback_text
-    assert cause in traceback_text
+    assert manifest.get("kind") == "translation"
+    assert int((manifest.get("detail") or {}).get("chat_turn_id") or 0) == ctid
     db.conn.execute("DELETE FROM secret_orders WHERE title LIKE '占额%'")
     db.conn.commit()
 
@@ -905,27 +902,22 @@ def test_secret_order_progress_is_stored_verbatim(game):
     )
     db.conn.commit()
     prepared = prepare_character_materials(db, state, character)
-    feed = (prepared.root / "密令" / "进行中.txt").read_text(encoding="utf-8")
-    block = (
-        f"回合：{int(live[0]['turn'])}\n进展：{live[0]['progress_band']}\n"
-        f"{live[0]['memorial_text']}"
-    )
-    assert block in feed
+    stored_text = str(live[0]["memorial_text"])
+    assignee_hits = [
+        path for path in list_materials(prepared.root)
+        if stored_text in read_material(prepared.root, path)
+    ]
+    assert assignee_hits
     other_character = content.characters.get(other)
     assert other_character is not None and other != minister
     other_prepared = prepare_character_materials(db, state, other_character)
     leaked = [
         path for path in list_materials(other_prepared.root)
-        if block in read_material(other_prepared.root, path)
+        if stored_text in read_material(other_prepared.root, path)
     ]
     assert leaked == []
-    archive_path = next(
-        path for path in list_materials(prepared.root) if path.endswith("/公事档案.txt")
-    )
-    archive = read_material(prepared.root, archive_path)
     stored_note = db.get_decree_dossier(dossier_id)["execution_note"]
     assert stored_note == corrected
-    assert f"说明：{stored_note}" in archive
 
     reopened = GameDB(db.path, content)
     try:

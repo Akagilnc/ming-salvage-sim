@@ -1014,8 +1014,8 @@ def _attach_commission_staging_fields(
 ) -> None:
     """透传既有 staging 字段：assignee / participant_roster / due_turn。
 
-    字段可在交办顶层，或挂在 grant 对象内（与 stage_grant_allocation_candidate
-    kwargs 同口径）。期限单源＝due_turn；deadline_months / end_turn 仅作换算输入。
+    字段可在交办顶层，或挂在 grant 对象内。期限单源＝due_turn；
+    deadline_months / end_turn 仅作换算输入。
     """
     grant = item.get("grant") if isinstance(item.get("grant"), Mapping) else {}
     lead = str(
@@ -2338,18 +2338,24 @@ def _dispatch_promises(
                     None,
                 )
                 if entry is None:
-                    # #1897「保留待办可重试，不当成功」：真实成案失败不是应允成功。
-                    # commit_pending_actions 已把该行标 failed——那会让原 action_id
-                    # 永远重试不到（preexisting_pending_ids / pending 查询都跳过它）。
-                    # 这里把它放回 pending 交还玩家，下一轮同一 action_id 可再应允。
-                    # 归类按真实失败原因：这是落库失败，不是实体状态不容许。
+                    cause = _rc.commit_exception(int(action_id))
+                    if cause is None:
+                        # 返回 False：目标已关闭等合法状态拒收，commit 已标 failed。
+                        # 不是可重试的数据库故障，不放回 pending。
+                        _reject(
+                            rejected, item,
+                            "密令目标状态不容许，该暂存已失败",
+                            "invalid_state", source,
+                        )
+                        continue
+                    # 真实异常已被提交缝记下：放回 pending，同一 action_id 可再应允。
+                    # SQLite 故障在提交缝直接上抛，不会走到这里。
                     db.conn.execute(
                         "UPDATE pending_actions SET status='pending' WHERE id=?",
                         (int(action_id),),
                     )
-                    cause = _rc.commit_exception(int(action_id))
                     reason = "密令未能落库，原暂存已保留可重试"
-                    detail = str(cause) if cause is not None else ""
+                    detail = str(cause)
                     if detail:
                         reason = f"{reason}：{detail}"
                     _reject(

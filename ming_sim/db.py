@@ -11927,11 +11927,12 @@ class GameDB:
         Reported rows never enter apply (ADR 0073).
         """
         dossier = self.get_decree_dossier(int(dossier_id))
-        band = str(progress_band or "").strip()
+        raw_band = str(progress_band or "")
+        band_present = raw_band.strip()
         text = str(memorial_text or "")
         if dossier is None:
             raise ValueError("案卷不存在")
-        if not band or not text.strip():
+        if not band_present or not text.strip():
             raise ValueError("进展档和密奏均不能为空")
         origin_norm = self._normalize_dossier_report_origin(
             origin, is_terminal=bool(is_terminal),
@@ -11939,7 +11940,7 @@ class GameDB:
         secret_order_id = dossier.get("secret_order_id")
         if secret_order_id:
             return self._record_secret_dossier_progress(
-                int(dossier_id), int(secret_order_id), int(turn), band, text,
+                int(dossier_id), int(secret_order_id), int(turn), raw_band, text,
                 is_terminal=bool(is_terminal), origin=origin_norm, commit=commit,
             )
         payload = {}
@@ -11952,7 +11953,7 @@ class GameDB:
         if not self._dossier_has_execution_surface(dossier.get("action_type"), payload):
             raise ValueError("非执行面案卷不可挂奏报")
         return self._record_general_dossier_progress(
-            int(dossier_id), int(turn), band, text,
+            int(dossier_id), int(turn), raw_band, text,
             is_terminal=bool(is_terminal), origin=origin_norm, commit=commit,
         )
 
@@ -12017,11 +12018,11 @@ class GameDB:
 
         target = self.get_decree_dossier(int(dossier_id))
         reports = self.list_dossier_progress(int(dossier_id))
-        reported_bands = [
-            str(item.get("progress_band") or "").strip()
-            for item in reports
-            if str(item.get("progress_band") or "").strip()
-        ]
+        reported_bands = []
+        for item in reports:
+            raw_band = str(item.get("progress_band") or "")
+            if raw_band.strip():
+                reported_bands.append(raw_band)
         execution_outcome = (
             str(target.get("execution_outcome") or "").strip() if target else ""
         )
@@ -12119,13 +12120,17 @@ class GameDB:
         for dossier_id, item in supplied.items():
             # #625：有在场稽核时 origin 带同派/私货结构化标记（扩 origin，不加列）。
             origin = self.compose_supervision_report_origin(int(dossier_id), int(turn))
-            self.record_dossier_progress(
-                dossier_id, int(turn), str(item["progress_band"]).strip(),
+            report_id = self.record_dossier_progress(
+                dossier_id, int(turn), str(item.get("progress_band") or ""),
                 str(item["memorial_text"] or ""),
                 origin=origin,
                 commit=False,
             )
-            reports.append(self.list_dossier_progress(dossier_id)[-1])
+            written = next(
+                row for row in self.list_dossier_progress(dossier_id)
+                if int(row["id"]) == int(report_id)
+            )
+            reports.append(written)
         return reports
 
     def _grant_escort_presence(
@@ -18088,6 +18093,10 @@ class GameDB:
                     tlog(f"[pending_actions] 落库失败 id={pa['id']} {pa['kind']}/{pa['action']}：{exc}")
                     if rejection_collector is not None:
                         rejection_collector.note_commit_exception(int(pa["id"]), exc)
+                    # 真实 SQLite 故障停原链：不标 failed，外层事务回滚后原行动仍 pending。
+                    # 领域拒收（ValueError 等）仍终态 failed，不冒充可重试故障。
+                    if isinstance(exc, sqlite3.Error):
+                        raise
                     ok = False
                     self.conn.execute(
                         "UPDATE pending_actions SET status='failed' WHERE id=?", (int(pa["id"]),))
@@ -18180,19 +18189,24 @@ class GameDB:
                             (int(pa["id"]),),
                         )
                 except Exception as exc:
-                    # #654 r3-C.2 路1：directive 特路与通用分支同款——回滚后标 failed，不崩结算
+                    # directive 特路与通用分支同款：领域拒收回滚后标 failed。
+                    # 真实 SQLite 故障不标 failed，交外层原链停住。
                     self.conn.execute(f"ROLLBACK TO {savepoint}")
                     # 0150-D2 / #1745：typed 归属缺口不得吞成 pending failed。
                     from ming_sim.applier import RejectionCollectorRequired
                     if isinstance(exc, RejectionCollectorRequired):
                         raise
+                    tlog(
+                        f"[pending_actions] 落库失败 id={pa['id']} "
+                        f"{pa['kind']}/{pa['action']}：{exc}"
+                    )
+                    if rejection_collector is not None:
+                        rejection_collector.note_commit_exception(int(pa["id"]), exc)
+                    if isinstance(exc, sqlite3.Error):
+                        raise
                     self.conn.execute(
                         "UPDATE pending_actions SET status='failed' WHERE id=?",
                         (int(pa["id"]),),
-                    )
-                    tlog(
-                        f"[pending_actions] 落库失败标 failed id={pa['id']} "
-                        f"{pa['kind']}/{pa['action']}：{exc}"
                     )
                     result = None
                 finally:
@@ -20523,7 +20537,7 @@ class GameDB:
                 float(units),
                 str(fidelity_state),
                 str(floor_state),
-                str(note or "")[:240],
+                str(note or ""),
                 origin,
             ),
         )
@@ -20539,7 +20553,7 @@ class GameDB:
             "units": float(units),
             "fidelity_state": str(fidelity_state),
             "floor_state": str(floor_state),
-            "note": str(note or "")[:240],
+            "note": str(note or ""),
             "origin_ref": origin,
         }
 
@@ -21932,9 +21946,10 @@ class GameDB:
         *,
         commit: bool = True,
     ) -> None:
-        """推演写密令副作用（泄漏/反弹）。最新一条原样留在 sim_note 列。
+        """推演写本月推进实况。原文进入实况轨当月 note，不覆盖单位。
 
-        不进奏报轨，也不进实况轨。年月不参与存储。
+        月份身份是当前 game_state.turn。年月参数不参与存储，正文日期不另立月份。
+        不写 secret_orders.sim_note，不进奏报轨。
         """
         _ = (year, period)
         if commit:
@@ -21942,12 +21957,12 @@ class GameDB:
                 self._update_secret_order_sim_note_in_transaction(order_id, sim_note)
         else:
             self._update_secret_order_sim_note_in_transaction(order_id, sim_note)
-        tlog(f"[secret_order] sim_note id={order_id} note={str(sim_note)[:40]!r}")
+        tlog(f"[secret_order] actual note id={order_id} note={str(sim_note)[:40]!r}")
 
     def _update_secret_order_sim_note_in_transaction(
         self, order_id: int, sim_note: str,
     ) -> None:
-        """调用方持有事务时写最新副作用原文，并同步案卷在办。"""
+        """调用方持有事务时把实况原文写入当月实况轨，并同步案卷在办。"""
         raw = str(sim_note or "")
         if not raw.strip():
             return
@@ -21957,10 +21972,29 @@ class GameDB:
         ).fetchone()
         if row is None:
             return
-        self.conn.execute(
-            "UPDATE secret_orders SET sim_note=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
-            (raw, int(order_id)),
-        )
+        dossier = self.get_dossier_for_secret_order(int(order_id))
+        if dossier is None:
+            raise ValueError("密令进展缺少对应案卷")
+        did = int(dossier["id"])
+        turn = self._current_game_turn()
+        existing = self.conn.execute(
+            "SELECT id, units FROM dossier_actual_progress WHERE dossier_id=? AND turn=?",
+            (did, int(turn)),
+        ).fetchone()
+        if existing is None:
+            self.conn.execute(
+                """
+                INSERT INTO dossier_actual_progress
+                    (dossier_id, turn, units, fidelity_state, floor_state, note, origin_ref)
+                VALUES (?, ?, 0, '', '', ?, ?)
+                """,
+                (did, int(turn), raw, f"dossier:{did}"),
+            )
+        else:
+            self.conn.execute(
+                "UPDATE dossier_actual_progress SET note=? WHERE id=?",
+                (raw, int(existing["id"])),
+            )
         self.mark_secret_order_in_progress(order_id, commit=False)
 
     def mark_secret_order_in_progress(

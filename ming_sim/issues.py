@@ -9317,7 +9317,7 @@ def _apply_score_extraction_body(
     applied_power_changes: List[Dict[str, object]] = []
     applied_office_changes: List[Dict[str, object]] = []
 
-    # 11) secret_order_updates：推演写 active 密令副作用（泄漏/反弹）到 sim_note。结案不走这里。
+    # 11) secret_order_updates：推演写 active 密令本月实况到实况轨。结案不走这里。
     applied_secret_orders: List[Dict[str, object]] = []
     for item in extracted.get("secret_order_updates") or []:
         if not isinstance(item, dict):
@@ -9365,6 +9365,8 @@ def _apply_score_extraction_body(
             applied_secret_orders.append({
                 "order_id": real_id, "sim_note": sim_note, "disclosed": disclosed,
             })
+        except sqlite3.Error:
+            raise
         except Exception as exc:
             applied_secret_orders.append({"order_id": real_id, "rejected": True, "reason": str(exc)})
 

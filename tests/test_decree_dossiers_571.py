@@ -1428,7 +1428,9 @@ def test_secret_order_progress_rolls_back_both_axes_in_outer_atomic(game):
             raise RuntimeError("rollback")
 
     assert db.get_secret_order(order_id)["sim_note"] == ""
-    assert db.get_dossier_for_secret_order(order_id)["status"] == "promulgated"
+    dossier = db.get_dossier_for_secret_order(order_id)
+    assert dossier["status"] == "promulgated"
+    assert db.list_dossier_actual_progress(int(dossier["id"])) == []
 
 @pytest.mark.parametrize(
     "action_type",

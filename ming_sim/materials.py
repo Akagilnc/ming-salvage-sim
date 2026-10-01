@@ -681,6 +681,66 @@ def minimal_opening_context(
     return "\n".join(parts)
 
 
+def _has_legal_inquiry(db: Any, character: Any, knowledge: dict) -> bool:
+    """近侍且已有查访委派。资格看库内职位，不从查访正文认案卷。"""
+    name = str(getattr(character, "name", "") or "")
+    if not name:
+        return False
+    events = knowledge.get("events") or []
+    if not any(str(item.get("kind") or "") == "inquiry_assignment" for item in events):
+        return False
+    from ming_sim.audience_night import is_inner_court_attendant
+
+    row = None
+    if hasattr(db, "conn"):
+        row = db.conn.execute(
+            "SELECT office, office_type, status FROM characters WHERE name=?",
+            (name,),
+        ).fetchone()
+    return bool(row) and is_inner_court_attendant(row)
+
+
+def _inquiry_monthly_report_text(db: Any, character: Any, knowledge: dict) -> str:
+    """合法查访读取与承办人月报同一奏报轨。不含密令正文，不含实况单位。"""
+    if not _has_legal_inquiry(db, character, knowledge):
+        return ""
+    name = str(getattr(character, "name", "") or "")
+    own_ids = {
+        int(order["id"])
+        for order in (
+            db.get_active_secret_orders_for_minister(name)
+            if hasattr(db, "get_active_secret_orders_for_minister") else []
+        )
+    }
+    blocks: list[str] = []
+    if not hasattr(db, "list_secret_orders"):
+        return ""
+    for order in db.list_secret_orders(status="active"):
+        order_id = int(order["id"])
+        if order_id in own_ids:
+            continue
+        excluded = {str(item) for item in (order.get("excluded_names") or [])}
+        if name in excluded:
+            continue
+        memorials = _secret_order_memorials(order)
+        if not memorials:
+            continue
+        blocks.append(f"密令：{order_id}")
+        blocks.extend(memorials)
+    return "\n".join(blocks)
+
+
+def _write_inquiry_monthly_file(
+    tmp: Path, db: Any, state: Any, character: Any, knowledge: dict, *, rel: str,
+) -> str | None:
+    _ = state
+    body = _inquiry_monthly_report_text(db, character, knowledge)
+    if not body:
+        return None
+    _write_text(tmp / rel, body)
+    return rel
+
+
 def _secret_order_memorials(order: Any) -> list[str]:
     """承办人自己的月度奏报。月份与进展取记录字段，正文原样。
 
@@ -970,6 +1030,11 @@ def _write_tree(
     secret_rel = _write_secret_order_file(tmp, db, state, character)
     if secret_rel:
         index.append(secret_rel)
+    inquiry_rel = _write_inquiry_monthly_file(
+        tmp, db, state, character, knowledge, rel=f"{_SECRET_DIR}/查访月报.txt",
+    )
+    if inquiry_rel:
+        index.append(inquiry_rel)
     recommend_rel = _write_recommendation_file(tmp, db, state, character)
     if recommend_rel:
         index.append(recommend_rel)
@@ -1872,6 +1937,12 @@ def _write_one_present_person(
     )
     if secret_rel:
         index.append(secret_rel)
+    inquiry_rel = _write_inquiry_monthly_file(
+        tmp, db, state, character, knowledge,
+        rel=f"{base}/{_SECRET_DIR}/查访月报.txt",
+    )
+    if inquiry_rel:
+        index.append(inquiry_rel)
 
     for dir_key, title, directory_text, _opening_text, _is_handling in matter_lines:
         matter_seg = _safe_segment(dir_key)
