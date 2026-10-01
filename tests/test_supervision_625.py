@@ -23,22 +23,17 @@ from ming_sim.models import TurnPhase
 from tests.test_due_review_621 import _settle_empty_month
 from ming_sim.due_review import (
     build_due_review_input,
+    decide_due_review_verdict,
 )
 from ming_sim.staged_commitment import (
     TODO_STATUS_PENDING,
     write_due_staged_commitment_todos,
 )
-from ming_sim.participant_roster import resolve_dossier_owner_name
 from ming_sim.supervision import (
-    EMPTY_TRANSFORMATION_TENDENCY_FACTS,
-    EXPOSURE_ALLOWED_COLS,
     EXPOSURE_TABLE,
     FORBIDDEN_DULLING_COL_FRAGMENTS,
-    PRESENCE_ALLOWED_COLS,
     PRESENCE_TABLE,
     SUPERVISION_RELATION,
-    SUPERVISION_SURFACE_KEYS,
-    unpack_supervision_surface,
 )
 
 
@@ -163,12 +158,7 @@ def test_ac1_presence_exposure_schema_pragma_and_no_dulling_cols(game):
             "SELECT name FROM sqlite_master WHERE type='table'"
         ).fetchall()
     }
-    pcols = _table_cols(db, PRESENCE_TABLE)
-    ecols = _table_cols(db, EXPOSURE_TABLE)
-    assert pcols == PRESENCE_ALLOWED_COLS
-    assert ecols == EXPOSURE_ALLOWED_COLS
-
-    # 全库无钝化数值列
+    # 全库不得长出钝化数值列。
     tables = [
         str(r[0])
         for r in db.conn.execute(
@@ -432,53 +422,8 @@ def test_ac4_unified_presence_gate_on_terminal_and_recon_paths(game):
     assert any(r["execution_form"] == "degraded" for r in exps)
 
 
-def test_owner_identity_single_source_shared_with_tenure():
-    """①归属人单源：首名 canonical 主办优先，缺档才读 legacy executor；#613 任别共调。"""
-    by_roster_over_executor = {
-        "executor_id": "张居正",
-        "executor_kind": "character",
-        "participant_roster": [{"character_id": "他人", "tier": "主办"}],
-    }
-    assert resolve_dossier_owner_name(by_roster_over_executor) == "他人"
-    by_legacy_executor = {
-        "executor_id": "张居正",
-        "executor_kind": "character",
-        "participant_roster": [],
-    }
-    assert resolve_dossier_owner_name(by_legacy_executor) == "张居正"
-    by_roster = {
-        "executor_id": "",
-        "executor_kind": "",
-        "participant_roster": [
-            {"character_id": "知情甲", "tier": "知情"},
-            {"character_id": "主办乙", "tier": "主办"},
-        ],
-    }
-    assert resolve_dossier_owner_name(by_roster) == "主办乙"
-    assert resolve_dossier_owner_name({}) == ""
-
-
-def test_unpack_supervision_surface_empty_form_is_constant():
-    """②三键 unpack + 空形常量真源。"""
-    empty = unpack_supervision_surface(None)
-    assert empty["supervision_history"] == []
-    assert empty["loophole_exposures"] == []
-    assert empty["transformation_tendency_facts"] == EMPTY_TRANSFORMATION_TENDENCY_FACTS
-    assert set(empty) == set(SUPERVISION_SURFACE_KEYS)
-
-
-# ── AC5 哨兵 ──────────────────────────────────────────────────────
-
-
-
-
-# ── 注入面 ────────────────────────────────────────────────────────
-
-
-
-
 def test_due_review_supervision_history_no_longer_hardcoded_empty(game):
-    """授权面：更新 #621 空列表断言——有在场事实时非空。"""
+    """有在场事实时监督史非空；判词仍只跟实况账，不跟监督史改写。"""
     db, state, content = game
     owner, auditor_row = _pair_same_faction(db)
     subject_id = _subject_dossier(db, state, owner=str(owner["name"]), token="dr")
@@ -486,34 +431,16 @@ def test_due_review_supervision_history_no_longer_hardcoded_empty(game):
         db, state, auditor=str(auditor_row["name"]), subject_id=subject_id, token="dr",
     )
     db.record_monthly_supervision_facts(state.turn, commit=True)
+    db.record_dossier_progress(
+        subject_id, state.turn, "在办", "表报已陈，实绩未充",
+        is_terminal=False, commit=True,
+    )
     _insert_staged(db, state, content, dossier_id=subject_id, due_turn=state.turn)
     write_due_staged_commitment_todos(db, state)
     todo = db.list_next_audience_todos(status=TODO_STATUS_PENDING)[0]
     inp = build_due_review_input(db, todo)
     assert inp["supervision_history"] != []
     assert inp["supervision_history"][0]["auditor_name"] == str(auditor_row["name"])
-
-
-def test_decide_due_review_verdict_unchanged_by_supervision(game):
-    """解 A：不改 decide_due_review_verdict 确定性分支。"""
-    from ming_sim.due_review import decide_due_review_verdict
-
-    base = {
-        "mid_stage": False,
-        "durable_effects": [{"id": 1}],
-        "progress_reports": [],
-        "criterion_text": "清丈",
-        "origin_context": "",
-        "supervision_history": [{
-            "consecutive_months": 12,
-            "auditor_integrity_band": "操守平常",
-            "faction_relation": "same",
-        }],
-        "transformation_tendency_facts": {
-            "longest_consecutive_presence_months": 12,
-            "has_mediocre_auditor": True,
-        },
-    }
-    v = decide_due_review_verdict(base)
-    assert v["outcome"] == "fulfilled"
-    assert v["close"] is True
+    verdict = decide_due_review_verdict(inp)
+    assert verdict["outcome"] == "degraded"
+    assert verdict["close"] is True

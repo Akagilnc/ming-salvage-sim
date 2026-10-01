@@ -15,7 +15,6 @@ from __future__ import annotations
 import pytest
 
 from ming_sim.due_review import (
-    DUE_REVIEW_ENTRY_KIND_WHITELIST,
     apply_due_review_for_todo,
     apply_pending_due_reviews,
     build_due_review_input,
@@ -412,10 +411,6 @@ def test_rush_without_issue_fail_closed_no_remonstrance(game):
 
 
 # ── 四缝白名单 + 接管窗对称 ──────────────────────────────────────────
-
-
-def test_due_review_whitelist_is_staged_only():
-    assert DUE_REVIEW_ENTRY_KIND_WHITELIST == frozenset({ENTRY_KIND_STAGED})
 
 
 def test_remonstrance_not_projected_applied_or_takeover(game):

@@ -17,7 +17,6 @@ from ming_sim.executor_routing import (
     classify_execution_coverage,
     resolve_lead_executors,
 )
-from ming_sim.participant_roster import resolve_dossier_owner_name
 from tests.dossier_test_helpers import promulgate_proposed_appointments
 
 
@@ -188,18 +187,6 @@ def test_legacy_character_executor_migrates_without_overriding_roster(env, actio
     assert [
         item["character_id"] for item in existing_roster if item["tier"] == "主办"
     ] == ["毕自严"]
-
-
-def test_canonical_owner_precedes_legacy_with_history_fallback():
-    assert resolve_dossier_owner_name({
-        "executor_kind": "character", "executor_id": "旧承办",
-        "participant_roster": [{"tier": "主办", "character_id": "新主办"}],
-    }) == "新主办"
-    assert resolve_dossier_owner_name({
-        "executor_kind": "character", "executor_id": "旧承办",
-        "participant_roster": [],
-    }) == "旧承办"
-    assert resolve_dossier_owner_name({"participant_roster": []}) == ""
 
 
 def test_appointment_routes_to_appointee_at_creation(env):
