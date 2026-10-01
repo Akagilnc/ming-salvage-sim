@@ -400,7 +400,7 @@ personnel_secret 模块产出；与公共 `dossier_participants` **分立**（�
 另行暗中加派护送走既有密令声明接缝。被护的拨银交办**同夜**下达时还只是暂存、没有案卷，
 故此项按本夜暂存清单里的 action id 指过去：每项 `{pending_action_id, relation_type∈{护卫,稽核},
 note}`。密令成案时把指向持久化到密令案卷载荷；该拨银收夜成案后由
-`GameDB._resolve_covert_escort_carry` 承接。非拨帑暂存、非法关系类型、空说明逐项拒收不承接。
+`GameDB._resolve_covert_escort_carry` 承接。非拨帑暂存、他夜暂存、已成案拨银、非法关系类型、空说明逐项拒收不承接。
 
 承接落点是**拨银案卷**载荷的 `escort_sources`（每项 `{secret_order_dossier_id, relation_type, note}`），
 不是 0054 关联槽：真实入口里密令应允即先成案（ADR 0038 白名单①）、拨银收夜才成案，

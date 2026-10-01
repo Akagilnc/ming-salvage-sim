@@ -12300,17 +12300,32 @@ class GameDB:
         ).fetchall()
         return [self._coerce_escort_outcome_row(row) for row in rows]
 
-    def _is_staged_grant_commission(self, pending_action_id: int) -> bool:
-        """这条暂存是不是一道拨帑交办（#1900 同夜暗护的合法指向对象）。
+    def _is_staged_grant_commission(
+        self, pending_action_id: int, *, night_id: int, turn: int,
+    ) -> bool:
+        """这条暂存是不是**本夜尚未成案**的拨帑交办（#1900 同夜暗护的合法指向）。
 
-        单一判据＝暂存行自身 kind/action ＋ 既有 ``_directive_dossier_action_type``
-        分类缝（不另抄一份动作类型判定，也不从正文匹配）。
+        单一判据＝暂存行自身：所属夜与回合、仍为 pending、还没有拨帑案卷，
+        再加上 kind/action 与既有 ``_directive_dossier_action_type`` 分类缝。
+        他夜暂存、已提交或已成案的拨银不进这条承接；已成案的旧拨银走关联槽。
         """
         row = self.conn.execute(
-            "SELECT kind, action, payload_json FROM pending_actions WHERE id=?",
+            "SELECT kind, action, payload_json, status, night_id, turn "
+            "FROM pending_actions WHERE id=?",
             (int(pending_action_id),),
         ).fetchone()
         if row is None:
+            return False
+        if str(row["status"] or "") != "pending":
+            return False
+        if int(row["night_id"] or 0) != int(night_id) or int(row["turn"] or 0) != int(turn):
+            return False
+        cased = self.conn.execute(
+            "SELECT 1 FROM decree_dossiers "
+            "WHERE action_type='grant_allocation' AND pending_action_id=? LIMIT 1",
+            (int(pending_action_id),),
+        ).fetchone()
+        if cased is not None:
             return False
         if str(row["kind"]) != "directive" or str(row["action"]) != "拟旨":
             return False
@@ -12338,6 +12353,15 @@ class GameDB:
         dossier = self.get_dossier_for_secret_order(int(secret_order_id))
         if dossier is None:
             raise ValueError("密令成案后未找到案卷")
+        anchor = self.conn.execute(
+            "SELECT night_id, turn FROM pending_actions WHERE id=?",
+            (int(dossier.get("pending_action_id") or 0),),
+        ).fetchone()
+        # 没有本道密令自己的暂存锚，就没有「同夜」可承接；不把指向改挂到别的夜里。
+        if anchor is None:
+            return
+        night_id = int(anchor["night_id"] or 0)
+        turn = int(anchor["turn"] or 0)
         resolved: List[Dict[str, object]] = []
         for item in raw:
             if not isinstance(item, Mapping):
@@ -12348,7 +12372,9 @@ class GameDB:
                 )
             except (AttributeError, TypeError, ValueError):
                 continue
-            if not self._is_staged_grant_commission(staged_id):
+            if not self._is_staged_grant_commission(
+                staged_id, night_id=night_id, turn=turn,
+            ):
                 continue
             relation = str(item.get("relation_type") or "").strip()
             note = item.get("note")

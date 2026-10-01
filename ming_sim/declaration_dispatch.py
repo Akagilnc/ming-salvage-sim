@@ -261,6 +261,7 @@ def _dispatch_declaration_sections(
             int(chat_turn_id or source_chat_turn_id or 0)
             if source_turn_err is None else 0
         ),
+        night_id=int(night_id),
     )
     turn = int(state.turn)
     promises = _dispatch_promises(
@@ -1183,7 +1184,7 @@ def _merge_participant_rosters(existing: object, incoming: list) -> list:
 
 
 def _covert_pending_targets(
-    db: Any, secret: Mapping[str, object],
+    db: Any, secret: Mapping[str, object], *, night_id: int, turn: int,
 ) -> tuple[Optional[List[Dict[str, object]]], List[tuple[str, str]]]:
     """同夜暗护指向：缺省合法；已声明却不可用则逐项拒收，不静默丢掉。
 
@@ -1211,7 +1212,9 @@ def _covert_pending_targets(
         except (TypeError, ValueError):
             errors.append(("暗护指向的暂存交办不存在", "hallucinated_id"))
             continue
-        if not db._is_staged_grant_commission(staged_id):
+        if not db._is_staged_grant_commission(
+            staged_id, night_id=int(night_id), turn=int(turn),
+        ):
             exists = db.conn.execute(
                 "SELECT 1 FROM pending_actions WHERE id=?", (staged_id,),
             ).fetchone()
@@ -1262,6 +1265,7 @@ def _attach_commission_affair(
 def _dispatch_commissions(
     db: Any, state: Any, raw: object, *, minister_name: str, source: Provenance,
     source_chat_turn_id: int = 0,
+    night_id: int = 0,
 ) -> SectionResult:
     """交办声明 → 既有 pending 暂存。
 
@@ -1429,7 +1433,9 @@ def _dispatch_commissions(
             # _apply_pending_action 的「新建」核）。已记录的旧拨银由 dossier_links
             # 直挂；同夜暂存的拨银交办由 escort_pending_targets 承接。
             # 指向在入暂存前校验：缺省合法，已声明却不可用逐项拒收，不静默丢掉。
-            kept_targets, target_errors = _covert_pending_targets(db, secret)
+            kept_targets, target_errors = _covert_pending_targets(
+                db, secret, night_id=int(night_id), turn=int(state.turn),
+            )
             for reason, category in target_errors:
                 _reject(rejected, item, reason, category, source)
             staged_secret = _secret_order_staged_payload(
