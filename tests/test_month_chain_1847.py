@@ -1877,16 +1877,13 @@ def test_build_secret_orders_supply_feed_uses_fact_materials_not_assembled_effec
     )
     assert str(feed.get("board") or "").strip()
 
-    from ming_sim.materials import prepare_world_materials, release_material_tree
+    from ming_sim.materials import _safe_segment, prepare_world_materials, release_material_tree
     prepared = prepare_world_materials(db, state)
     try:
-        listing = "\n".join(prepared.index_lines)
-        bodies = []
-        for rel in prepared.index_lines:
-            path = prepared.root / rel
-            if path.is_file():
-                bodies.append(path.read_text(encoding="utf-8"))
-        assert fact_body in "\n".join(bodies), listing
+        rel = f"事实/character-{_safe_segment(minister)}.txt"
+        assert rel in prepared.index_lines
+        carrier = (prepared.root / rel).read_text(encoding="utf-8").splitlines()
+        assert fact_body in carrier
     finally:
         release_material_tree(prepared.root)
 
