@@ -1207,18 +1207,11 @@ def pre_settle(
                 transit_arrivals_out.extend(arrivals)
             if arrivals:
                 tlog(f"[transit-tick] 本月抵达 {len(arrivals)} 人：{[a['name'] for a in arrivals]}")
-            # #625：孤直稽核反制——涌现缝＋逐人硬门读事实底，邸报前同缝立 issue。
-            counter_hits = db.trigger_supervision_countermeasures(state, commit=False)
-            if counter_hits:
-                auto_triggered = list(auto_triggered) + [
-                    {
-                        "id": item.get("origin_ref"),
-                        "title": f"supervision_countermeasure:{item.get('countermeasure_kind')}",
-                        "issue_id": item.get("issue_id"),
-                        "source": "supervision_countermeasure",
-                    }
-                    for item in counter_hits
-                ]
+            # #1895：原 #625 孤直稽核反制硬门退役——代码不再按 integrity 档
+            # 判定「这位大臣会不会反制」并 hash 指定反制形态。监督在场／连续月数／
+            # 稽核人派系操守等事实仍留在 dossier_supervision_presence 与
+            # build_supervision_judge_surface 供料面；是否反制、采取何种行动由
+            # #1861 逐旨推演／#1843 世界段 run 依人物可及事实自选。
             # #626：承诺所系反噬——事废/烂尾/变形暴露状态驱动，#625 同格挂点。
             backlash_hits = db.trigger_commitment_backlashes(state, commit=False)
             if backlash_hits:

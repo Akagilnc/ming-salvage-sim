@@ -52,7 +52,7 @@
   "secret_order_updates":       [],  // 密令副作用
   "covert_exec_selections":     [],  // #1504 密令带内选态
   "dossier_progress_reports":   [],  // 长差密令逐月密奏（#566 / ADR 0058）
-  "emperor_fate":               null, // "abdicate" | "suicide" | null
+  "emperor_fate":               null, // null 不终局；abdicate/suicide 保留原状态号；其它非空声明（被废、暴毙等）同样终局
 
   // ── relations 模块（#633 / ADR 0082 结算口）──
   "relation_edge_events": [],  // 大臣互动边事件；每项 {施动者, 受动者(单名或名单), 类目, 语境, 来源引用}
@@ -391,6 +391,7 @@ personnel_secret 模块产出；与公共 `dossier_participants` **分立**（�
 ### `dossier_progress_reports` — 长差密令逐月密奏（#566 / ADR 0058）
 personnel_secret 模块产出；settle 内经 `record_monthly_dossier_progress` 消费。
 - 每项必须带 `dossier_id`、`progress_band`、`memorial_text`；三者皆非空。
+- 可选 `origin`：承办人在该条密奏里自己声明的行动。`same_faction_blind` 为睁眼闭眼，`private_goods` 为带私货；两项都声明时用 `+` 连接。未作此选择则省略。同派或敌派不补写行动；未知记号不落成行动。落库后从该条密奏的 origin 续读。
 - 合资格集 = `decree_dossiers.status` 为 `promulgated` / `executing` 且所关联 `secret_orders.status='active'` 的案卷（读缝 `monthly_dossier_reports` / `list_monthly_dossier_progress_nudges`；#1504：不限 tag、不限期限月数）。
 - **必须完整覆盖**合资格集：不得漏项、不得重复、不得指向未知案卷；无合资格却收到提案亦拒。
 - 非法/不全 → fail-loud 整月中止，不走逐项拒收留痕（与 #1745 后的 `dossier_reconciliations` 分轨）。
@@ -471,7 +472,9 @@ personnel_secret 模块产出；settle 内经 `record_monthly_dossier_progress` 
 
 ### `emperor_fate`
 - 顶层标量，不是 list/dict
-- 三选一：`"abdicate"` / `"suicide"` / `null`
+- `null`（或未声明）不终局
+- `"abdicate"` / `"suicide"` 仍落到 `emperor_abdicate` / `emperor_suicide`
+- 其它非空声明同样进入既有终局链：ASCII 标识落到 `emperor_<声明>`，其余（如 `被废`、`暴毙`）以声明本身为终态。不另设宫变硬门，也不为这些终态预写定调句
 
 ### `relation_edge_events` — 大臣互动边事件（#633 / ADR 0082 结算口）
 - 每项：`{"施动者": str, "受动者": str 或 [str], "类目": 九类之一, "语境": str, "来源引用": "dossier:<id>\|盘面自发"}`

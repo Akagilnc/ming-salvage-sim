@@ -336,11 +336,21 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
     assert any(str(row.get("origin_ref") or "") == f"dossier:{plain_did}" for row in payload["landed"])
     assert "预推不可见:宁远补饷" in payload["forecasts"]
     assert _SECRET_FORECAST not in payload["forecasts"]
-    assert _SECRET_DECL not in json.dumps(payload["nominal"], ensure_ascii=False)
-    assert _PUBLIC_REJ in json.dumps(payload["rejections"], ensure_ascii=False)
-    assert _SECRET_REJ not in json.dumps(payload["rejections"], ensure_ascii=False)
+    assert all(
+        (item.get("declaration") or {}).get("body") != _SECRET_DECL
+        for item in payload["nominal"]
+        if isinstance(item, dict)
+    )
+    assert any(
+        (row.get("item") or {}).get("note") == _PUBLIC_REJ
+        for row in payload["rejections"]
+    )
+    assert all(
+        (row.get("item") or {}).get("note") != _SECRET_REJ
+        for row in payload["rejections"]
+    )
     assert payload["world_segment"] == "WORLD_PUBLIC_SEGMENT"
-    assert "朱批可见" in json.dumps(payload["rescript_answers"], ensure_ascii=False)
+    assert any(row.get("note") == "朱批可见" for row in payload["rescript_answers"])
     label = reign_period_label(year, period)
     assert payload["reign_period_label"] == label
     assert label in seen["instructions"]

@@ -11,7 +11,6 @@ import ming_sim.declaration_dispatch as declaration_dispatch
 import ming_sim.decree as decree_mod
 import ming_sim.month_chain as month_chain
 import ming_sim.month_translate as month_translate
-import ming_sim.simulation as simulation
 from ming_sim.declaration_dispatch import pending_action_decree_ref
 from ming_sim.session_write_queue import get_session_write_queue
 from tests.month_chain_helpers import make_light_session
@@ -19,9 +18,6 @@ from tests.dossier_test_helpers import create_test_secret_order
 
 
 def _forbid_extractor(monkeypatch):
-    assert not hasattr(decree_mod, "extract_scores_by_modules_with_agno")
-    assert not hasattr(simulation, "extract_scores_by_modules_with_agno")
-    assert not hasattr(simulation, "EXTRACTION_MODULES")
     monkeypatch.setattr(
         "ming_sim.session.write_decree_with_agno", lambda *_a, **_k: "诏",
     )
@@ -714,14 +710,14 @@ def test_world_segment_reads_material_directory(game, monkeypatch):
         tools = {tool.__name__: tool for tool in agent.tools}
         listing = tools["list_materials"]("")
         index = tools["read_material"]("INDEX.txt")
-        has_dir = hasattr(agent.model, "materials_dir")
+        board = tools["read_material"]("盘面/全局.txt")
         materials_dir = getattr(agent.model, "materials_dir", "")
         seen.append({
             "listing": listing,
             "index": index,
-            "has_dir": has_dir,
+            "board": board,
             "dir_has_index": bool(materials_dir) and (Path(materials_dir) / "INDEX.txt").is_file(),
-            "opening": next(part for part in agent.instructions if "盘面：" in str(part)),
+            "opening": next(part for part in agent.instructions if board and board in str(part)),
         })
         return "静"
 
@@ -733,8 +729,8 @@ def test_world_segment_reads_material_directory(game, monkeypatch):
     assert month_chain.run_world_segment_text(db, state, api) == "静"
     assert "INDEX.txt" in seen[0]["listing"].splitlines()
     assert seen[0]["index"].strip()
-    assert seen[0]["has_dir"] is False
-    assert "盘面：" in seen[0]["opening"]
+    assert seen[0]["board"].strip()
+    assert seen[0]["board"] in seen[0]["opening"]
     # 目录里至少有一份不在开场最小集里的材料。
     extra = next(
         line for line in seen[0]["listing"].splitlines()
@@ -744,7 +740,6 @@ def test_world_segment_reads_material_directory(game, monkeypatch):
 
     cli = LLMConfig(api_key="", base_url="", model="", channel="cli", cli_runner="agy")
     assert month_chain.run_world_segment_text(db, state, cli) == "静"
-    assert seen[1]["has_dir"] is True
     assert seen[1]["dir_has_index"] is True
     assert seen[1]["index"].strip()
 

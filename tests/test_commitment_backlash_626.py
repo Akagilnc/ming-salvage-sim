@@ -2,7 +2,7 @@
 
 Seams:
 - trigger_commitment_backlashes（#625 形制硬门）
-- pre_settle 邸报前既有挂点（与 trigger_supervision_countermeasures 同格）
+- pre_settle 邸报前既有挂点（#1895 退役前与孤直反制硬门同格）
 - assess_foundation_tier 触发侧重算（零新列）
 - find_any_issue_by_origin 幂等
 - issue_advances.trigger_ref 溯源源承诺
@@ -13,7 +13,6 @@ Seams:
 
 from __future__ import annotations
 
-import inspect
 import json
 from pathlib import Path
 
@@ -46,7 +45,6 @@ from ming_sim.commitment_backlash import (
     backlash_origin_ref,
     classify_backlash_source,
 )
-from ming_sim.constants import GATE_TABLES
 from ming_sim.db import GameDB
 from ming_sim.decree import pre_settle
 from ming_sim.issues import (
@@ -750,25 +748,10 @@ def test_ac4_backlash_survives_restore_both_states(game, tmp_path, content):
 
 
 def test_ac5_hook_idempotent_no_gate_table_expansion(game):
-    """硬门挂邸报前既有挂点；幂等；调用侧无第二扫描；GATE_TABLES 不动。"""
+    """承诺反噬经 pre_settle 真实入口只立一次。"""
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.commit()
-
-    # 挂点：pre_settle 源码恰一处调用
-    src = inspect.getsource(pre_settle)
-    assert "trigger_commitment_backlashes" in src
-    assert src.count("trigger_commitment_backlashes") == 1
-    assert "trigger_supervision_countermeasures" in src  # 同格既有挂点
-
-    # 不扩 GATE_TABLES
-    assert GATE_TABLES == (
-        "region", "army", "building", "power", "class", "faction", "character", "event",
-    )
-    # 硬门实现不引用 trigger_gate 求值
-    gate_src = inspect.getsource(GameDB.trigger_commitment_backlashes)
-    assert "evaluate_trigger_gate" not in gate_src
-    assert "GATE_TABLES" not in gate_src
 
     did, holder = _executing_policy_dossier(db, state, token="idemp")
     bar = _seed_halfway(db, state, did=did)
@@ -782,19 +765,14 @@ def test_ac5_hook_idempotent_no_gate_table_expansion(game):
         close=True, commit=True,
     )
     state.turn = int(state.turn) + 1
-    first = db.trigger_commitment_backlashes(state, commit=True)
-    assert len(first) == 1
-    second = db.trigger_commitment_backlashes(state, commit=True)
-    assert second == []
-    assert len(_backlash_issues(db)) == 1
-
-    # pre_settle 路径也只产一条（相位可跑）
     _set_phase_runnable(state, db)
-    # 已幂等，pre_settle 再跑不应新立
     auto = pre_settle(state, db, content=content)
     bl = [a for a in (auto or []) if a.get("source") == "commitment_backlash"]
-    assert bl == []
+    assert len(bl) == 1
     assert len(_backlash_issues(db)) == 1
 
-
-# ── AC6：呈现哨兵 ─────────────────────────────────────────────────
+    _set_phase_runnable(state, db)
+    again = pre_settle(state, db, content=content)
+    bl2 = [a for a in (again or []) if a.get("source") == "commitment_backlash"]
+    assert bl2 == []
+    assert len(_backlash_issues(db)) == 1

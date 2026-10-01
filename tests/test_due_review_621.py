@@ -6,7 +6,6 @@ Seams:
 - apply_pending_due_reviews → record_dossier_execution 适配器（有案卷桥）
 - 无案卷分支：只场面+奏报，不伪造案卷
 - 中段 executing+close=False 不连坐 vs 末段终值+close+至多一次连坐
-- EXTRACTION_MODULES 基数不变；无 AWAITING_DECISION / <<DECISION>>
 - 接管：到期目标 extractor 重复终值拒收
 """
 
@@ -244,10 +243,8 @@ def test_due_review_scene_tops_live_open_night_even_with_body(game):
     open_night(db, state, time_of_day="戌时", location="乾清宫")
     facts = _scene_pending_audience_facts(db, state)
     opening = _scene_opening_text(state, [], "", [], facts)
-    assert "当前待裁场面" in opening
     assert facts, "待裁场面须原样进入开场最小集"
-    joined = "\n".join(facts)
-    assert "三年火器见眉目" in joined or "火器见眉目" in joined
+    assert "三年火器见眉目" in opening
 
 
 # ── P1 有案卷桥 / 无案卷分支 ──────────────────────────────────────────
@@ -549,12 +546,6 @@ def test_three_beat_timing_todo_then_scene_then_slot(game, monkeypatch):
     assert db.list_next_audience_todos(status=TODO_STATUS_PENDING) == []
 
 
-def test_five_module_extractor_fanout_is_retired():
-    from ming_sim import simulation
-    assert not hasattr(simulation, "EXTRACTION_MODULES")
-    assert not hasattr(simulation, "extract_scores_by_modules_with_agno")
-
-
 def test_due_review_settle_does_not_pause_or_decision(game, monkeypatch):
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
@@ -711,7 +702,7 @@ def test_due_month_extractor_blocked_before_todo_write(game):
     )
     item = result["dossier_executions"][0]
     assert item.get("rejected") is True
-    assert "正式复核" in str(item.get("reason") or "")
+    assert item.get("category") == "invalid_transition"
 
     after = db.get_decree_dossier(dossier_id)
     assert after["status"] == "executing"

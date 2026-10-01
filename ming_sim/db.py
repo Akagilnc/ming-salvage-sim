@@ -12254,8 +12254,8 @@ class GameDB:
 
         reports: List[Dict[str, object]] = []
         for dossier_id, item in supplied.items():
-            # #625：有在场稽核时 origin 带同派/私货结构化标记（扩 origin，不加列）。
-            origin = self.compose_supervision_report_origin(int(dossier_id), int(turn))
+            # 派系同／敌只留在监督史。origin 只承接本条密奏里声明的行动。
+            origin = self._monthly_report_origin(item)
             self.record_dossier_progress(
                 dossier_id, int(turn), str(item["progress_band"]).strip(),
                 str(item.get("memorial_text") or ""),
@@ -12554,7 +12554,7 @@ class GameDB:
     ) -> Dict[str, object]:
         """月度在场扫描：稽核链 → presence 行；同 turn UNIQUE 幂等不双计。
 
-        settle 节拍：须先于月报 origin 标记调用（commit=False）。
+        在场与派系关系是事实。月报 origin 不从这里派生人物行动。
         """
         from ming_sim.supervision import (
             SUPERVISION_RELATION,
@@ -12853,112 +12853,12 @@ class GameDB:
             ),
         }
 
-    def compose_supervision_report_origin(
-        self, dossier_id: int, turn: int,
-    ) -> str:
-        """按当月在场稽核派系关系给 #619 origin 打私货/同派标记（扩 origin，不加列）。"""
-        from ming_sim.supervision import (
-            ORIGIN_MARK_PRIVATE_GOODS,
-            ORIGIN_MARK_SAME_FACTION_BLIND,
-            compose_report_origin,
+    def _monthly_report_origin(self, item: Mapping[str, object]) -> str:
+        from ming_sim.supervision import declared_report_action_origin
+
+        return declared_report_action_origin(
+            item.get("origin"), base=self.DOSSIER_REPORT_ORIGIN_MONTHLY,
         )
-
-        base = self.DOSSIER_REPORT_ORIGIN_MONTHLY
-        history = self.list_supervision_history(
-            int(dossier_id), as_of_turn=int(turn),
-        )
-        # 只看本 turn 在场行
-        marks: List[str] = []
-        for row in history:
-            if int(row.get("turn") or 0) != int(turn):
-                continue
-            if not row.get("present"):
-                continue
-            rel = str(row.get("faction_relation") or "")
-            if rel == "same":
-                marks.append(ORIGIN_MARK_SAME_FACTION_BLIND)
-            elif rel == "enemy":
-                marks.append(ORIGIN_MARK_PRIVATE_GOODS)
-        return compose_report_origin(base, marks)
-
-    def trigger_supervision_countermeasures(
-        self, state: GameState, *, commit: bool = False,
-    ) -> List[Dict[str, object]]:
-        """孤直稽核连续在场满 12 月 → 涌现缝立反制 issue（邸报前 auto_trigger 同缝）。
-
-        禁 0099/0091 新机制；禁占 #623 entry_kind；明升暗调形态走既有 issue 载体，
-        人事落地仍经 office_changes applier（本硬门只立局势）。
-        """
-        from ming_sim.supervision import (
-            COUNTERMEASURE_ORIGIN_KIND,
-            COUNTERMEASURE_PRESENCE_MONTHS,
-            countermeasure_origin_ref,
-            is_upright_integrity,
-            pick_countermeasure_kind,
-            character_faction_integrity,
-            derive_consecutive_months,
-        )
-
-        # 全库在场行按 (auditor, dossier) 聚合
-        rows = self.conn.execute(
-            """
-            SELECT dossier_id, auditor_name, turn
-            FROM dossier_supervision_presence
-            WHERE present=1
-            ORDER BY auditor_name, dossier_id, turn
-            """
-        ).fetchall()
-        grouped: Dict[Tuple[str, int], List[int]] = {}
-        for row in rows:
-            key = (str(row["auditor_name"]), int(row["dossier_id"]))
-            grouped.setdefault(key, []).append(int(row["turn"]))
-
-        triggered: List[Dict[str, object]] = []
-        for (auditor, dossier_id), turns in grouped.items():
-            months = derive_consecutive_months(turns)
-            if months < COUNTERMEASURE_PRESENCE_MONTHS:
-                continue
-            _fac, integrity = character_faction_integrity(self, auditor)
-            if not is_upright_integrity(integrity):
-                continue
-            origin_ref = countermeasure_origin_ref(auditor, dossier_id)
-            existing = self.find_any_issue_by_origin(
-                COUNTERMEASURE_ORIGIN_KIND, origin_ref,
-            )
-            if existing is not None:
-                continue
-            kind = pick_countermeasure_kind(auditor, dossier_id)
-            title = f"针对{auditor}的{kind}"
-            # 玩家可见 stage 禁系统词：崇祯朝口语，不写钝化/陋规化
-            stage_text = f"{auditor}连月按核不贷，官场反噬已起，{kind}之议渐露。"
-            issue_id = self.insert_issue(
-                state,
-                kind="situation",
-                title=title,
-                origin_kind=COUNTERMEASURE_ORIGIN_KIND,
-                origin_ref=origin_ref,
-                stage_text=stage_text,
-                tags=["supervision_countermeasure", kind, auditor],
-                participants=[auditor],
-                bar_value=35,
-                bar_good_meaning="反噬平息",
-                bar_bad_meaning="反噬坐大",
-                inertia=1,
-                severity=55,
-                faction_hint=str(_fac or ""),
-                commit=False,
-            )
-            triggered.append({
-                "issue_id": int(issue_id),
-                "auditor_name": auditor,
-                "dossier_id": int(dossier_id),
-                "countermeasure_kind": kind,
-                "origin_ref": origin_ref,
-                "consecutive_months": months,
-            })
-        if commit and triggered:
-            self.conn.commit()
-        return triggered
 
     def list_faction_denunciations(
         self,
