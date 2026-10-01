@@ -109,9 +109,6 @@ def _close_offline(db, state, content, night_id):
     from ming_sim.audience_night import close_night
     return close_night(
         db, state, night_id=night_id, content=content,
-        endorsement_extractor_agent=SimpleNamespace(
-            run=lambda _: SimpleNamespace(content='{"endorsements": []}'),
-        ),
     )
 
 

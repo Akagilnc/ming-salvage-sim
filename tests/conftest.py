@@ -32,6 +32,26 @@ def content() -> GameContent:
     return c
 
 
+def _fresh_temp_dir(prefix: str) -> str:
+    """每次夹具实例一个**私有临时目录**，库文件放其中（#1898 判官）。
+
+    原用 ``tempfile.mkstemp`` 只隔离文件名，父目录仍是全机共享的 tmp：任何
+    按 ``Path(db.path).parent`` 派生兄弟文件（副本库、``*_agno.db``）的用例，
+    都在跨运行、跨 xdist worker 共享同一父目录——上一轮残留的旧 schema 文件
+    会被下一轮当自己的库打开（如 "no such column: office_type"）。
+    私有目录把「派生兄弟文件」整类关进用例自己的作用域，退出时整目录删。
+    """
+    return tempfile.mkdtemp(prefix=prefix)
+
+
+def _drop_temp_dir(directory: str) -> None:
+    """删夹具私有临时目录；失败响亮上抛（ADR 0005：不 ignore_errors 洗白）。
+
+    目录由 _fresh_temp_dir 建、由本函数拥有——残留即真因，不得静默吞掉。
+    """
+    shutil.rmtree(directory)
+
+
 def _seed_opening_db(path: str, content) -> None:
     """生产开局同核：seed_static_data + load_state + sync_opening_legacies，写入 path。"""
     db = GameDB(path, content)
@@ -46,8 +66,8 @@ def _seed_opening_db(path: str, content) -> None:
 @contextmanager
 def _opening_game(content):
     """创建并清理一个与生产开局序列同核的临时盘面。"""
-    fd, path = tempfile.mkstemp(suffix=".db")
-    os.close(fd)
+    home = _fresh_temp_dir("ming-open-")
+    path = os.path.join(home, "opening.db")
     db = None
     try:
         _seed_opening_db(path, content)
@@ -57,9 +77,7 @@ def _opening_game(content):
     finally:
         if db is not None:
             db.close()
-        for p in (path, f"{path}_agno.db"):
-            if os.path.exists(p):
-                os.remove(p)
+        _drop_temp_dir(home)
 
 
 def own_session_until_game_teardown(db, owner) -> None:
@@ -123,15 +141,13 @@ def _game_template_path(content):
     方案 (c)：模板 DB 一次建 + 每案文件拷贝。不用 (d) 事务回滚——全 suite 大量用例自带
     commit/rollback、跨连接可见性、崩溃恢复与 applier 事务边界（ADR 0008 族），禁区命中。
     """
-    fd, path = tempfile.mkstemp(suffix=".db")
-    os.close(fd)
+    home = _fresh_temp_dir("ming-template-")
+    path = os.path.join(home, "template.db")
     try:
         _seed_opening_db(path, content)
         yield path
     finally:
-        for p in (path, f"{path}_agno.db"):
-            if os.path.exists(p):
-                os.remove(p)
+        _drop_temp_dir(home)
 
 
 @pytest.fixture(scope="session")
@@ -207,8 +223,8 @@ def game(content, _game_template_path, monkeypatch):
     不依赖 gitignored data/probe.db（#5）：characters 直接来自 content（101 全）。
     """
     del monkeypatch
-    fd, path = tempfile.mkstemp(suffix=".db")
-    os.close(fd)
+    home = _fresh_temp_dir("ming-game-")
+    path = os.path.join(home, "game.db")
     db = None
     # 独立 MonkeyPatch：测试内 monkeypatch.undo() 不撤掉尾票登记。
     tail_note = pytest.MonkeyPatch()
@@ -223,9 +239,7 @@ def game(content, _game_template_path, monkeypatch):
             if db is not None:
                 _drain_registered_sessions_before_close(db)
                 db.close()
-            for p in (path, f"{path}_agno.db"):
-                if os.path.exists(p):
-                    os.remove(p)
+            _drop_temp_dir(home)
         finally:
             tail_note.undo()
 
@@ -242,8 +256,8 @@ def saved_game(content):
     见 #5 followup。"""
     if not os.path.exists(_SEED_DB) or os.path.getsize(_SEED_DB) == 0:
         pytest.skip("缺玩过存档 data/probe.db（gitignored）；本用例依赖运行时状态，待 deterministic 化（#5 followup）")
-    fd, path = tempfile.mkstemp(suffix=".db")
-    os.close(fd)
+    home = _fresh_temp_dir("ming-saved-")
+    path = os.path.join(home, "saved.db")
     db = None
     try:
         shutil.copy(_SEED_DB, path)
@@ -257,9 +271,7 @@ def saved_game(content):
         # setup（copy/GameDB/load_state）抛错也清 temp（cmr #5 r2 coderabbit）；封装 db.close()（gemini #5）。
         if db is not None:
             db.close()
-        for p in (path, f"{path}_agno.db"):
-            if os.path.exists(p):
-                os.remove(p)
+        _drop_temp_dir(home)
 
 
 def active_ming_character(db, content) -> str:

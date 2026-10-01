@@ -29,7 +29,7 @@ from ming_sim.entities.affair.store import AffairStore
 from ming_sim.public_sayings import list_public_sayings
 from ming_sim.relations import summon_edge_origin
 from ming_sim.session import GameSession
-from tests.conftest import persist_and_schedule_scene
+from tests.conftest import note_queue_until_game_teardown, persist_and_schedule_scene
 
 
 def _activate(db, state, *names: str) -> None:
@@ -196,6 +196,8 @@ def _scene_session(db, state, content, monkeypatch):
     sess.temporary_characters = {}
     sess.agno_db = None
     sess._write_gate = get_session_write_queue(sess).write_gate
+    # 转译在后台线程跑：登记队列归 game 夹具排空，断言失败也不越过关库边界。
+    note_queue_until_game_teardown(db, get_session_write_queue(sess))
     return sess
 
 
