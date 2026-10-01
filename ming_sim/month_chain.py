@@ -498,23 +498,17 @@ def continue_world_after_answers(
     成功则随 dispatch_month_segment 的 alongside 原子落旗（ADR 0157 恢复幂等）。
     续推自身的失败走既有月链诊断（call_failure + 错误包），步骤名 world_continue：
     不占用 world_bind / world_translate 的逃生口，已提交的世界段与批语留在原处。
+    尚未落在 world_continue 上的 SettlementAbort 收进这一步，不退回内层阶段。
     """
-    from ming_sim.exceptions import LLMUnavailable, SettlementAbort
-
     db, state = session.db, session.state
-    try:
-        return _continue_world_after_answers(session, chain, answers=answers, source=source)
-    except (KeyboardInterrupt, SystemExit):
-        raise
-    except Exception as exc:
-        if isinstance(exc, SettlementAbort) and str(getattr(exc, "stage", "") or "") == "world_continue":
-            raise
-        _abort_month_call(
-            db, state, chain, decree_text="", source=source,
-            step="world_continue", exc=exc,
-            kind="model_exhausted" if isinstance(exc, LLMUnavailable) else "code_exception",
-        )
-    raise AssertionError("month call abort must raise")
+    return _guard_month_call(
+        db, state, chain, decree_text="", source=source,
+        step="world_continue",
+        operation=lambda: _continue_world_after_answers(
+            session, chain, answers=answers, source=source,
+        ),
+        home_foreign_abort=True,
+    )
 
 
 def _continue_world_after_answers(
@@ -572,26 +566,18 @@ def continue_decree_after_answers(
     消费事实（清问）与落账同事务——先跑续推 LLM，失败保留 questions 可重试；
     有声明则 clear_questions 走既有段分派的 alongside（ADR 0157）。
     失败登记与世界段续推同一条诊断，步骤名 decree_continue，不丢已提交段文。
+    尚未落在 decree_continue 上的 SettlementAbort 收进这一步，不退回内层阶段。
     """
-    from ming_sim.exceptions import LLMUnavailable, SettlementAbort
-
     db, state = session.db, session.state
     failure_chain = chain if chain is not None else _load_chain(db, int(state.turn))
-    try:
-        _continue_decree_after_answers(
+    _guard_month_call(
+        db, state, failure_chain, decree_text="", source=source,
+        step="decree_continue", decree_ref=decree_ref,
+        operation=lambda: _continue_decree_after_answers(
             session, decree_ref=decree_ref, answers=answers, chain=chain, source=source,
-        )
-    except (KeyboardInterrupt, SystemExit):
-        raise
-    except Exception as exc:
-        if isinstance(exc, SettlementAbort) and str(getattr(exc, "stage", "") or "") == "decree_continue":
-            raise
-        _abort_month_call(
-            db, state, failure_chain, decree_text="", source=source,
-            step="decree_continue", exc=exc, decree_ref=decree_ref,
-            kind="model_exhausted" if isinstance(exc, LLMUnavailable) else "code_exception",
-        )
-        raise AssertionError("month call abort must raise")
+        ),
+        home_foreign_abort=True,
+    )
 
 
 def _continue_decree_after_answers(
@@ -946,8 +932,14 @@ def _guard_month_call(
     operation: Any,
     decree_ref: str = "",
     code_step: Optional[str] = None,
+    home_foreign_abort: bool = False,
 ) -> Any:
-    """模型用尽 → 停住可重试；其它代码异常 → 错误包后停住；中断类原样上浮。"""
+    """模型用尽 → 停住可重试；其它代码异常 → 错误包后停住；中断类原样上浮。
+
+    ``home_foreign_abort`` 只给续推用：尚未落在 ``step`` 上的 SettlementAbort
+    收成这一步的 call_failure，已是这一步的原样上浮。缺省保持既有阶段，
+    不把世界段、预推的 SettlementAbort 改写成别的步骤。
+    """
     from ming_sim.exceptions import LLMUnavailable, SettlementAbort
 
     try:
@@ -957,8 +949,15 @@ def _guard_month_call(
             db, state, chain, decree_text=decree_text, source=source,
             step=step, exc=exc, kind="model_exhausted", decree_ref=decree_ref,
         )
-    except (KeyboardInterrupt, SystemExit, SettlementAbort):
+    except (KeyboardInterrupt, SystemExit):
         raise
+    except SettlementAbort as exc:
+        if not home_foreign_abort or str(getattr(exc, "stage", "") or "") == step:
+            raise
+        _abort_month_call(
+            db, state, chain, decree_text=decree_text, source=source,
+            step=step, exc=exc, kind="code_exception", decree_ref=decree_ref,
+        )
     except Exception as exc:
         _abort_month_call(
             db, state, chain, decree_text=decree_text, source=source,
