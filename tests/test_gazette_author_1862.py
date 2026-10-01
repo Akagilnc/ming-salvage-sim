@@ -260,6 +260,59 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
     )
     db.conn.commit()
     seen = {}
+    import ming_sim.materials as materials
+    real_prepare = month_chain.prepare_gazette_author_materials
+    real_facts = db.textual_facts.readable_materials
+    real_experience = materials._experience_text
+    real_opening = materials._world_opening_text
+    real_treasury = db.treasury_report
+    accepted_facts = set()
+    accepted_events = set()
+    accepted_turns = set()
+    preparing_author = False
+
+    class ObservedFact:
+        def __init__(self, fact):
+            self.fact = fact
+
+        def __getattr__(self, key):
+            if preparing_author and key == "body":
+                accepted_facts.add(self.fact.origin_ref)
+            return getattr(self.fact, key)
+
+    def observe_facts(*args, **kwargs):
+        return tuple(ObservedFact(fact) for fact in real_facts(*args, **kwargs))
+
+    def observe_experience(knowledge, audible_entries=()):
+        if preparing_author:
+            accepted_events.update(item.get("source_id") for item in knowledge.get("events", []))
+            accepted_turns.update(item.get("source_chat_turn_id") for item in audible_entries)
+        return real_experience(knowledge, audible_entries)
+
+    def observe_opening(state, board_text, affair_lines, dossier_facts, **kwargs):
+        if preparing_author:
+            seen["opening_dossiers"] = {item["id"] for item in dossier_facts}
+        return real_opening(state, board_text, affair_lines, dossier_facts, **kwargs)
+
+    def observe_treasury(*args, **kwargs):
+        if preparing_author:
+            seen["treasury_options"] = kwargs
+        return real_treasury(*args, **kwargs)
+
+    def capture_prepare(*args, **kwargs):
+        nonlocal preparing_author
+        preparing_author = True
+        try:
+            return real_prepare(*args, **kwargs)
+        finally:
+            preparing_author = False
+
+    # Observe real writer consumption during this author call; never replace its result.
+    monkeypatch.setattr(db.textual_facts, "readable_materials", observe_facts)
+    monkeypatch.setattr(materials, "_experience_text", observe_experience)
+    monkeypatch.setattr(materials, "_world_opening_text", observe_opening)
+    monkeypatch.setattr(db, "treasury_report", observe_treasury)
+    monkeypatch.setattr(month_chain, "prepare_gazette_author_materials", capture_prepare)
     import ming_sim.agents as agents
     real_create_author = agents.create_gazette_author_agent
 
@@ -308,6 +361,15 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
     assert result.advanced is True
     assert int(state.turn) == turn + 1
     assert not any(path.startswith("密令/") for path in seen["author_files"])
+    assert {f"affair:{affair.id}", f"dossier:{plain_did}"} <= accepted_facts
+    assert {"secret_order:9", f"dossier:{secret_did}"}.isdisjoint(accepted_facts)
+    assert f"secret_order_brief:{order_id}" not in accepted_events
+    assert plain_turn in accepted_turns
+    assert {secret_turn, later_turn, pending_turn}.isdisjoint(accepted_turns)
+    assert plain_did in seen["opening_dossiers"]
+    assert secret_did not in seen["opening_dossiers"]
+    assert seen["treasury_options"]["exclude_origin_prefix"] == "secret_order:"
+    assert secret_did in seen["treasury_options"]["exclude_dossier_ids"]
     from ming_sim.materials import _safe_segment
     fact_rel = f"事实/character-{_safe_segment(minister)}.txt"
     assert _PUBLIC_FACT in seen["author_files"][fact_rel]

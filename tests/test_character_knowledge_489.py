@@ -981,6 +981,7 @@ def test_turn_report_counterpart_never_uses_aggregate_when_sources_exist(game):
         if character.office_type not in ("后宫", "宗藩")
         and db.get_character_status(character.name)[0] == "active"
     )
+    state.turn += 1  # Isolate this source boundary from the seeded opening sources.
     public_marker = "已立来源的邸报公开事项"
     unscoped_marker = "无来源的邸报改写"
     db.record_public_knowledge_event(
@@ -998,9 +999,13 @@ def test_turn_report_counterpart_never_uses_aggregate_when_sources_exist(game):
         for item in db.get_character_knowledge(state, reader.name)[bucket]
     }
     assert "test:report-source-bound-public" in visible_ids
+    # The shared archive must carry the independently supplied public source,
+    # not the caller's unrelated presentation aggregate. No prose classification.
+    assert db.get_turn_report_archive(state.turn)["report"] == public_marker
 
 def test_shared_archive_storage_never_writes_restricted_aggregate(game):
     db, state, content = game
+    state.turn += 1
     participant = next(iter(content.characters))
     secret = "仅经手人可知的密令细节"
     public = "本月公开政务"
@@ -1012,6 +1017,7 @@ def test_shared_archive_storage_never_writes_restricted_aggregate(game):
 
     db.save_turn_report(state, f"{public}；{secret}", knowledge_items=db.knowledge_items_for_turn(state.turn))
 
+    assert db.get_turn_report_archive(state.turn)["report"] == public
     outsider = next(name for name in content.characters if name != participant)
     outsider_ids = {
         item.get("source_id")
