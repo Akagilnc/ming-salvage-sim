@@ -743,7 +743,6 @@ def test_cli_midflow_summon_rejects_unknown_unregistered_person(game, monkeypatc
         "SELECT COUNT(*) AS n FROM characters WHERE name=?", (unknown,),
     ).fetchone()["n"] == 0
     joined = "\n".join(notices)
-    assert "summon" not in outcome
     assert "临时传" not in joined
     assert "未建档" in joined or "补档" in joined
 

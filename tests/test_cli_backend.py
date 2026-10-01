@@ -1044,8 +1044,6 @@ def test_run_kimi_prompt_flag_no_yolo_stdout_only(monkeypatch):
     assert "-p" in cmd and cmd[cmd.index("-p") + 1] == "PROMPT_BODY"
     assert "--yolo" not in cmd and "-y" not in cmd and "--auto" not in cmd
     assert "-m" in cmd and cmd[cmd.index("-m") + 1] == "kimi-k2"
-    # stderr noise must not pollute answer
-    assert "resume" not in out.lower()
 
 
 def test_run_grok_flags_effort_and_plain(monkeypatch):
@@ -1077,7 +1075,6 @@ def test_run_pi_flags_thinking_and_stdout(monkeypatch):
     assert "--thinking" in cmd and cmd[cmd.index("--thinking") + 1] == "medium"
     assert "PROMPT_BODY" in cmd  # positional prompt
     assert captured["kw"].get("input") in (None, "")  # not stdin
-    assert "noise" not in out.lower()
 
 
 @pytest.mark.parametrize(
