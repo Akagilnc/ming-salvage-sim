@@ -879,11 +879,21 @@ def _secret_order_kept_body(text: object) -> str:
     return raw if raw.strip() else ""
 
 
-def _secret_order_body_log(row: sqlite3.Row) -> Dict[str, List[Dict[str, object]]]:
-    """读结构化正文记录。
+def _secret_order_record_body(record: Mapping[str, object]) -> str:
+    """Stored prose must already be a string. A missing or non-string body is not rewritten as empty text."""
+    body = record.get("body")
+    if not isinstance(body, str):
+        raise TypeError("密令正文记录缺少正文")
+    return body
 
-    解析失败、顶层不是对象、或某列不是记录列表时原样抛出。
-    缺列是尚无记录。已存条目不筛选、不改写成空账。
+
+def _secret_order_body_log(row: sqlite3.Row) -> Dict[str, List[Dict[str, object]]]:
+    """Read structured body records.
+
+    ``json.loads`` failures and a non-dict top level propagate. A column that
+    is not a list, or a record whose body is not a string, raises ``TypeError``.
+    A missing column means no records. Stored entries are not filtered and a
+    missing body is not replaced with an empty string.
     """
     parsed = json.loads(row["text_log_json"])
     log: Dict[str, List[Dict[str, object]]] = {}
@@ -894,6 +904,7 @@ def _secret_order_body_log(row: sqlite3.Row) -> Dict[str, List[Dict[str, object]
         for item in entries:
             if not isinstance(item, dict):
                 raise TypeError("密令正文记录条目不是对象")
+            _secret_order_record_body(item)
         log[column] = entries
     return log
 
@@ -909,7 +920,7 @@ def _secret_order_period_recorded(
 
 
 def _project_secret_order_bodies(records: Sequence[Mapping[str, object]]) -> str:
-    """记录按年月与写入次序投影。正文内部不拆、不重排。"""
+    """Project records by year, month, then write order. Body text is copied whole."""
     ordered = sorted(
         enumerate(records),
         key=lambda pair: (
@@ -921,11 +932,9 @@ def _project_secret_order_bodies(records: Sequence[Mapping[str, object]]) -> str
     parts: List[str] = []
     for _, record in ordered:
         marker = str(record.get("marker") or "")
-        body = record.get("body")
-        text = "" if body is None else str(body)
         parts.append(
             f"〔{period_label(int(record.get('year') or 0), int(record.get('period') or 0))}〕"
-            f"{marker}{text}"
+            f"{marker}{_secret_order_record_body(record)}"
         )
     return "\n".join(parts)
 
