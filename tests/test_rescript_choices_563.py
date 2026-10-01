@@ -196,82 +196,8 @@ def test_rejected_ordinary_force_promulgation_adds_rescript_stigma(game):
 # #657 片2：canonical / capability 回验
 # ---------------------------------------------------------------------------
 
-def test_657_canonical_choice_stable_key_order():
-    from ming_sim.rescript_actions import canonical_choice
-    a = canonical_choice({
-        "decision_key": "rescript_draft:1:0",
-        "action": "follow_draft",
-        "draft_capability": "abc",
-        "label": "甲",
-        "hint": "h",
-        "note": "批",
-    })
-    b = canonical_choice({
-        "hint": "h",
-        "label": "甲",
-        "action": "follow_draft",
-        "decision_key": "rescript_draft:1:0",
-        "draft_capability": "abc",
-        "note": "批",
-    })
-    assert a == b
-    assert a["decision_key"] == "rescript_draft:1:0"
-    assert a["action"] == "follow_draft"
 
 
-@pytest.mark.parametrize("amount", ["30", True, 30.75, 30])
-def test_financial_decision_uses_stored_option_not_client_payload(amount):
-    """Raw season options retain strict catalog types and remain server-authoritative."""
-    from ming_sim import rescript_actions as ra
-    from ming_sim.settlement_payload import parse_decision_blocks
-
-    blocks = [
-        {
-            "title": "发帑", "context": "济军", "options": [{
-                "label": "发内帑三十万两", "hint": "济军",
-                "action_type": "grant_allocation", "grant_action": "协饷",
-                "account": "内库", "amount": amount, "purpose": "补饷",
-                "target_kind": "army", "target_id": "guanning", "cadence": "一次性",
-            }, {"label": "暂缓", "hint": "守财"}],
-        },
-        {
-            "title": "巡河", "context": "河工", "options": [
-                {"label": "遣员巡河", "hint": "查勘"},
-                {"label": "暂缓巡河", "hint": "候报"},
-            ],
-        },
-    ]
-    raw = "世界段" + "".join(
-        f"<<DECISION>>{json.dumps(block, ensure_ascii=False)}<<END>>"
-        for block in blocks
-    )
-    decisions = parse_decision_blocks(raw)
-    if type(amount) is not int:
-        # Parse/save boundary rejects the whole malformed typed decision.
-        assert [decision["title"] for decision in decisions] == ["巡河"]
-        return
-    desk = [{
-        "decision_key": f"decision:3:{idx}", "kind": "decision", "turn": 3,
-        "idx": idx, "status": "pending", "options": decision["options"],
-    } for idx, decision in enumerate(decisions)]
-    requests = [
-        {
-            "decision_key": "decision:3:0", "label": "发内帑三十万两",
-            "action_type": "punishment", "account": "国库", "amount": 999,
-        },
-        {"decision_key": "decision:3:1", "label": "遣员巡河"},
-    ]
-
-    batch = ra.validate_all(desk, requests)
-    assert len(batch.items) == 2
-    choice = batch.items[0].choice
-    assert choice["action_type"] == "punishment"  # persisted request identity
-    execution = batch.items[0].execution_option
-    assert execution is not None
-    assert execution["action_type"] == "grant_allocation"
-    assert execution["account"] == "内库"
-    assert execution["amount"] == 30
-    assert type(execution["amount"]) is int
 
 
 def test_decision_parser_rejects_unknown_typed_action_and_keeps_sibling():
@@ -384,41 +310,3 @@ def test_decision_parser_rejects_empty_or_ambiguous_labels(labels):
     raw = f"<<DECISION>>{json.dumps(block, ensure_ascii=False)}<<END>>"
     decisions = parse_decision_blocks(raw)
     assert decisions == []
-
-
-def test_657_capability_revalidate_on_follow(game):
-    """服务端回验：请求 capability 必须等于对当前 option 结构化字段重算值。"""
-    from ming_sim.decree_vocabulary import derive_draft_capability
-    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
-    from ming_sim import rescript_actions as ra
-
-    db, state, _content = game
-    opt = normalize_rescript_layer_a_option({
-        "label": "发帑赈济", "hint": "所安者饥民",
-        "action_type": "assignment", "assignee_name": "",
-        "target_kind": "region", "target_id": "shaanxi",
-        "locality_scope": "single", "region_id": "shaanxi",
-        "transaction_category": "督赈",
-    })
-    assert opt["draft_capability"] == derive_draft_capability(opt)
-    db.save_rescript_drafts(int(state.turn), [{
-        "title": "急", "context": "c",
-        "options": [opt, {"label": "备", "hint": "b",
-                           "draft_capability": derive_draft_capability({"label": "备"})}],
-        "actor_name": "A", "actor_office": "o", "actor_faction": "f",
-    }])
-    db.conn.commit()
-    desk = db.list_rescript_desk(int(state.turn))
-    key = desk[0]["decision_key"]
-    # 正确 cap 通过
-    batch = ra.validate_all(desk, [{
-        "decision_key": key, "action": "follow_draft",
-        "draft_capability": opt["draft_capability"], "label": opt["label"],
-    }])
-    assert batch.items[0].choice["draft_capability"] == opt["draft_capability"]
-    # 旧 cap（改票后）拒
-    with pytest.raises(ValueError, match="capability|stale"):
-        ra.validate_all(desk, [{
-            "decision_key": key, "action": "follow_draft",
-            "draft_capability": "old-round-cap", "label": opt["label"],
-        }])

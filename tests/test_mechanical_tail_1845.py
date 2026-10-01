@@ -28,6 +28,8 @@ def _forbid_extractor(monkeypatch):
 
 
 def _archive_and_stub_world(db, state, monkeypatch):
+    from tests.month_chain_helpers import empty_rescript_response
+    monkeypatch.setattr("ming_sim.rescript_draft.run_rescript_text", empty_rescript_response)
     db.save_turn_report(state, "本月邸报正文·公开")
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
     monkeypatch.setattr(

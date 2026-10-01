@@ -47,6 +47,8 @@ def _production_session(db, state, content):
 
 def _canned_monthly_settlement(monkeypatch, extractor_calls):
     """Keep the production settlement pipeline; replace only external LLM seams."""
+    from tests.month_chain_helpers import empty_rescript_response
+    monkeypatch.setattr("ming_sim.rescript_draft.run_rescript_text", empty_rescript_response)
     from tests.settlement_seam_helpers import canned_full_settlement
 
     def _track_world(*_a, **_k):

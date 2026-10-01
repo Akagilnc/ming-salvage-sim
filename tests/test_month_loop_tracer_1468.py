@@ -56,6 +56,8 @@ class _CannedMinisterAgent:
 
 def _stub_outer_llm_seams(monkeypatch) -> None:
     """只换最外层 LLM 工厂/调用；结算核、收夜、HTTP 路由全真跑。"""
+    from tests.month_chain_helpers import empty_rescript_response
+    monkeypatch.setattr("ming_sim.rescript_draft.run_rescript_text", empty_rescript_response)
     monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
     # #642：召对/收夜关系判官同属外层 LLM 缝——漏 stub 会在有 window 时真网挂起，
     # 票据不归还 → xdist 下 _wait_pending_writes 墙钟假红。

@@ -112,7 +112,7 @@ def test_cli_does_not_end_unadvanced_turn(monkeypatch, action):
     monkeypatch.setattr(term, "review_directives", lambda _s: next(actions))
     monkeypatch.setattr(term, "_print_header", lambda _s: None)
     monkeypatch.setattr(issues_mod, "show_active_issues", lambda _db: None)
-    monkeypatch.setattr(term, "_submit_first_cli_decisions", lambda *_a: "")
+    monkeypatch.setattr(term, "_submit_cli_decisions", lambda *_a: "")
 
     term.play_turn(sess)
 
@@ -676,9 +676,11 @@ def test_play_turn_hitl_advancement_ends_turn(game, monkeypatch, action):
 
     session = make_light_session(db, state, content)
 
-    # 中和外部 LLM 边界，推演主链与亲裁续跑全走真实逻辑
-    monkeypatch.setattr("ming_sim.month_chain.run_world_segment_text", lambda *a, **k: "")
-    monkeypatch.setattr("ming_sim.month_translate.translate_month_segment", lambda *a, **k: {"effects": {}})
+    # 外部模型与终端输入边界；选择须皇帝显式输入，不再自动代选。
+    from tests.month_chain_helpers import canned_full_settlement
+    canned_full_settlement(monkeypatch)
+    inputs = iter(["1", "  原批  "])
+    monkeypatch.setattr("builtins.input", lambda _prompt: next(inputs))
 
     # 单次操作迭代器：未正确 end_turn + return 时若重入交互循环，next 会抛 StopIteration
     actions = iter([action])

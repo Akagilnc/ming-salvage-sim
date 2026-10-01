@@ -1,9 +1,9 @@
 # 0043: 月末亲裁以奏疏批红形态呈现——票拟即选项、批红即点策
 
-Status: Proposed scope clarification（#1847 范围澄清待独立重审；原决定 Accepted，2026-07-03 随 PR #530 合入；决策：2026-07-02 #471 grill Q6 用户拍）
+Status: Accepted（#1847 范围澄清已独立署庭；原决定 Accepted，2026-07-03 随 PR #530 合入；决策：2026-07-02 #471 grill Q6 用户拍）
 
 月末重大岔路（`<<DECISION>>` 决策块）的目标呈现形态 = **奏疏批红**：疏文陈情（局势）+ 内阁票拟（2-3 条拟批 = 现选项）+ 皇帝批红（点策）——此框内按钮不破角色保真，因为批奏疏是皇帝的真实作业（票拟/批红是史实制度本体；「皇帝不点面板」的判据是「皇帝会不会真做这件事」——批红会）；亲笔朱批（自由文本另批）留门不封死，细节归切片。原决定的「机械管线（parse_decision_blocks/resolve_decisions）不动、只换呈现壳」仅指原月末决策块，不构成急务／请旨旧六动作及第二效果写口的保留授权；词表零新增——批红 = 准驳的奏疏载体形态（诏令载体参数），选票拟 = 点策。**大臣 live 求对/急奏入门路径 defer 后续**（北极星实证：名义召见、实为大臣倾诉——inbound 体验大半已由演出承载；成本横跨触发源/时机/流程三面，另立 deferred issue 记录）。
 
-## #1847 范围澄清（修订待独立重审）
+## #1847 范围澄清
 
-急务奏折与叙事请旨由原样批语续推、转译落账，不再另从旧选项载荷落第二遍；[0055](0055-promulgation-gate-at-settlement-effects-follow-verdict.md) 打回三选与判后结构化物化不在退役范围。修订依据、执行边界及验收唯一引用 [#1847](https://github.com/Akagilnc/ming-salvage-sim/issues/1847)，人物分拣与跨月改票决定见 [0093](0093-rescript-loop-triage-draft-six-actions.md)；#1847 票庭已署不代本 ADR 修订署庭。
+急务奏折与叙事请旨由原样批语续推、转译落账，不再另从旧选项载荷落第二遍；[0055](0055-promulgation-gate-at-settlement-effects-follow-verdict.md) 打回三选与判后结构化物化不在退役范围。修订依据、执行边界及验收唯一引用 [#1847](https://github.com/Akagilnc/ming-salvage-sim/issues/1847)，人物分拣与跨月改票决定见 [0093](0093-rescript-loop-triage-draft-six-actions.md)；本修订独立署庭：给事中 run `01a0f8a1-6cf4-7ee1-8010-8ba63c7f09a8`、审刑院 run `01a0f8a9-e0a8-78e3-8291-62b017f5019c`（#1847 起居录）。

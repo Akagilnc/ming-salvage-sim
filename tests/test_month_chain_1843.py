@@ -18,6 +18,8 @@ from tests.dossier_test_helpers import create_test_secret_order
 
 
 def _forbid_extractor(monkeypatch):
+    from tests.month_chain_helpers import empty_rescript_response
+    monkeypatch.setattr("ming_sim.rescript_draft.run_rescript_text", empty_rescript_response)
     monkeypatch.setattr(
         "ming_sim.session.write_decree_with_agno", lambda *_a, **_k: "诏",
     )
@@ -324,30 +326,6 @@ def test_player_recovery_uses_resolve_context_decree_not_ready_delta(game, monke
     assert ctx["source"] == "player_decree"
 
 
-def test_finish_rescript_phase2_stays_settling_until_advanced(game, monkeypatch):
-    """批红续跑入口在主链停住时不得把回合标成已推进。"""
-    from ming_sim.models import TurnPhase
-
-    db, state, content = game
-    minister = next(iter(content.characters.values())).name
-    affair = db.affairs.open(
-        name="批红未推进", origin="旨意", year=state.year, period=state.period, turn=state.turn,
-    )
-    _pending_id, ref = _stage_edict(db, state, minister, "陕西赈灾", "陕西赈灾", -1, affair.id)
-    db.conn.execute(
-        "UPDATE staged_declarations SET questions_json=? WHERE decree_ref=?",
-        ('[{"title":"是否加赈"}]', ref),
-    )
-    db.save_resolve_context(state.turn, "赈灾诏", {})
-    db.conn.commit()
-    closed_turn = int(state.turn)
-    _forbid_extractor(monkeypatch)
-    monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
-    session = make_light_session(db, state, content)
-    session.state.turn_phase = TurnPhase.SETTLING.value
-    session.finish_rescript_phase2({"apply": None, "summons": [], "revise_keys": [], "batch": None}, {"joined": []})
-    assert int(session.state.turn) == closed_turn
-    assert session.state.turn_phase == TurnPhase.SETTLING.value
 
 
 def test_world_segment_persists_declaration_ending_with_commit(game, monkeypatch):

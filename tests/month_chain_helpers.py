@@ -35,6 +35,13 @@ def make_light_session(db, state, content):
     return session
 
 
+def empty_rescript_response(session, *, officers, backlog, answer=None):
+    import json
+    return json.dumps({"actor_name": officers[-1]["name"], "items": [], "revisions": []}) if answer is None else json.dumps({
+        "disposition": "settled", "text": "", "decree": None,
+    })
+
+
 def canned_full_settlement(
     monkeypatch,
     *,
@@ -58,6 +65,7 @@ def canned_full_settlement(
         simulator_calls.append({"world": True, "narrative": narrative})
         return narrative
 
+    monkeypatch.setattr("ming_sim.rescript_draft.run_rescript_text", empty_rescript_response)
     monkeypatch.setattr("ming_sim.month_chain.run_world_segment_text", _world)
     monkeypatch.setattr(
         "ming_sim.month_chain.run_gazette_text",

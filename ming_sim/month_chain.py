@@ -232,11 +232,15 @@ def _month_fact_materials(
                 })
     answers: List[Dict[str, Any]] = []
     if hasattr(db, "list_pending_decisions"):
-        for row in db.list_pending_decisions(turn):
-            if str(row.get("status") or "") != "decided":
+        answer_rows = db.list_pending_decisions(turn) + [
+            r for r in db.list_rescript_drafts() if r["answered_turn"] == turn
+        ]
+        for row in answer_rows:
+            if str(row.get("status") or "") not in {"decided", "revision_pending"}:
                 continue
             choice = row.get("choice") if isinstance(row.get("choice"), dict) else {}
             answers.append({
+                **row, "choice": dict(choice),
                 "title": row.get("title") or "",
                 "label": choice.get("label") or "",
                 "note": choice.get("note") or "",
@@ -526,11 +530,8 @@ def run_player_month_chain(
         abort_from(exc)
     # #1845：下次过月前 join／重开续接上月机械尾。尾异常不改写成月链 call_failure。
     ensure_mechanical_tails(_session_owner(db, state, llm_config, agno_db, content))
-    # 请旨续推的原故障原样上浮：问与 world_continued 都未消费，批红入口重试看见同一颗异常。
     _consume_rescript_answers(
-        SimpleNamespace(
-            db=db, state=state, llm_config=llm_config, agno_db=agno_db, content=content,
-        ),
+        SimpleNamespace(db=db, state=state, llm_config=llm_config, agno_db=agno_db, content=content),
         chain, source=source,
     )
     try:
@@ -576,6 +577,11 @@ def _run_loaded_month_chain(
     )
     world_outcome = _run_world_segment(session, chain, source=source)
     declaration_outcome = world_outcome or declaration_outcome
+    from ming_sim.rescript_draft import produce_memorials
+    _guard_month_call(
+        db, state, chain, decree_text=decree_text, source=source, step="rescript-draft",
+        operation=lambda: produce_memorials(session, chain, source=source),
+    )
     desk = _materialize_rescript_desk(db, state, chain)
     if desk is not None:
         return ResolveResult(
@@ -1539,6 +1545,16 @@ def _materialize_rescript_desk(
                 ),
             })
         decisions.extend(_rescript_decisions(verdicts, open_items["triad"]))
+    for dossier in db.list_decree_dossiers(status="proposed"):
+        if (dossier["payload"] or {}).get("deliberation_state") != "stalled":
+            continue
+        decisions.append({
+            "event_id": f"deliberation:{dossier['id']}", "title": "无人站台原案",
+            "context": dossier["decree_text"], "options": [
+                {"label": "御笔强推", "hint": "皇帝独担，复用原案颁布", "action": "imperial_push"},
+                {"label": "留中", "hint": "原案留存", "action": "hold"},
+            ],
+        })
     for ref, questions in open_items["decree_questions"]:
         for idx, question in enumerate(questions):
             if not isinstance(question, dict):
@@ -1554,14 +1570,7 @@ def _materialize_rescript_desk(
         _pin_world_question_event_bindings(chain, db=db, state=state, turn=turn)
     if decisions:
         db.save_pending_decisions(turn, decisions)
-    # 已应用 return_revise 仍 pending，但是本批已办，不是新待裁。
-    # 清锚仍只走推进事务里的 clear_return_revise_choice_anchors。
-    from ming_sim.rescript_actions import row_is_applied_return_revise
-
-    desk = [
-        row for row in db.list_rescript_desk(turn)
-        if not row_is_applied_return_revise(row)
-    ]
+    desk = db.list_rescript_desk(turn)
     if not desk:
         return None
     chain["stage"] = "rescript"
@@ -1627,12 +1636,12 @@ def _question_as_decision(question: Dict[str, object], *, event_id: str) -> Dict
     for opt in options:
         if not isinstance(opt, dict):
             continue
-        label = str(opt.get("label") or "").strip()
-        if not label:
+        label = str(opt.get("label") or "")
+        if not label.strip():
             continue
         cleaned.append({
             "label": label,
-            "hint": str(opt.get("hint") or "").strip(),
+            "hint": str(opt.get("hint") or ""),
             **{
                 key: opt[key] for key in opt
                 if key not in {"label", "hint"} and opt[key] is not None
@@ -1640,8 +1649,8 @@ def _question_as_decision(question: Dict[str, object], *, event_id: str) -> Dict
         })
     return {
         "event_id": event_id,
-        "title": str(question.get("title") or "").strip() or "请旨",
-        "context": str(question.get("context") or "").strip(),
+        "title": str(question.get("title") or "") or "请旨",
+        "context": str(question.get("context") or ""),
         "options": cleaned,
     }
 
@@ -1694,6 +1703,11 @@ def _consume_rescript_answers(
     """
     db, state = session.db, session.state
     turn = int(state.turn)
+    from ming_sim.rescript_draft import consume_memorial_answers
+    _guard_month_call(
+        db, state, chain, decree_text="", source=source, step="rescript-answer",
+        operation=lambda: consume_memorial_answers(session, chain, source=source),
+    )
     rows = db.list_pending_decisions(turn)
     decided = [r for r in rows if str(r.get("status") or "") == "decided"]
     if not decided:
@@ -1702,16 +1716,28 @@ def _consume_rescript_answers(
     def _answer_from_row(row: Dict[str, object]) -> Dict[str, object]:
         choice = row.get("choice") if isinstance(row.get("choice"), dict) else {}
         return {
-            "label": str(choice.get("label") or "").strip(),
-            "hint": str(choice.get("hint") or "").strip(),
-            "note": str(choice.get("note") or "").strip(),
-            "context": str(row.get("context") or "").strip(),
+            **row, "choice": dict(choice),
+            "label": str(choice.get("label") or ""),
+            "hint": str(choice.get("hint") or ""),
+            "note": str(choice.get("note") or ""),
+            "context": str(row.get("context") or ""),
             "event_id": str(row.get("event_id") or ""),
             "title": str(row.get("title") or ""),
         }
 
     for row in decided:
         event_id = str(row.get("event_id") or "")
+        if event_id.startswith("deliberation:"):
+            from ming_sim.rescript_actions import apply_imperial_deliberation_push
+            original = db.get_decree_dossier(int(event_id.partition(":")[2]))
+            if (row["choice"] or {}).get("action") == "imperial_push" and (original["payload"] or {}).get("deliberation_state") == "stalled":
+                with atomic(db):
+                    apply_imperial_deliberation_push(
+                        db, state, target_dossier_id=int(original["id"]),
+                        decision_key=row["decision_key"],
+                        decree_text=(row.get("choice") or {}).get("note", ""),
+                    )
+            continue
         if not event_id.startswith("dossier:"):
             continue
         choice = row.get("choice") if isinstance(row.get("choice"), dict) else {}
@@ -1729,7 +1755,7 @@ def _consume_rescript_answers(
         _record_world_question_event_choices(db, state, chain, world_rows, turn=turn)
         continue_world_after_answers(
             session, chain,
-            answers=[_answer_from_row(r) for r in world_rows],
+            answers=[_answer_from_row(r) for r in sorted(world_rows, key=lambda r: r["answer_order"])],
             source=source,
         )
 
@@ -1746,7 +1772,7 @@ def _consume_rescript_answers(
             continue
         continue_decree_after_answers(
             session, decree_ref=ref, chain=chain,
-            answers=[_answer_from_row(r) for r in ref_rows],
+            answers=[_answer_from_row(r) for r in sorted(ref_rows, key=lambda r: r["answer_order"])],
             source=source,
         )
 
@@ -1823,8 +1849,6 @@ def _advance_after_gazette(
     from ming_sim.decree import (
         TIMEOUT_TURN, _carry_pending_clarification_actions, atomic_and_reload,
     )
-    from ming_sim.rescript_actions import clear_return_revise_choice_anchors
-
     settled_year, settled_period = int(state.year), int(state.period)
     ending_outcome: Optional[Dict[str, object]] = None
     with atomic_and_reload(db, state, content=content):
@@ -1854,7 +1878,6 @@ def _advance_after_gazette(
         )
         chain = _load_chain(db, turn)
         db.mark_directives_issued(state)
-        clear_return_revise_choice_anchors(db, None)
         # #652：刚结束的月份的执行判定和实付已落定；下月任何吸收前回流。
         from ming_sim.issues import _apply_recovery_driven_transfers
         _apply_recovery_driven_transfers(db, state, commit=False)

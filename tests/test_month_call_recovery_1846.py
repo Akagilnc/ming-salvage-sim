@@ -22,6 +22,8 @@ from tests.month_chain_helpers import make_light_session
 
 
 def _forbid_extractor(monkeypatch):
+    from tests.month_chain_helpers import empty_rescript_response
+    monkeypatch.setattr("ming_sim.rescript_draft.run_rescript_text", empty_rescript_response)
     monkeypatch.setattr(
         "ming_sim.session.write_decree_with_agno", lambda *_a, **_k: "诏",
     )

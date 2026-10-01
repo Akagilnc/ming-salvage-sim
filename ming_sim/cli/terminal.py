@@ -667,24 +667,36 @@ def review_directives(session: GameSession) -> str:
         print("未识别操作。")
 
 
-def _submit_first_cli_decisions(session: GameSession, result) -> str:
-    """CLI 暂无亲裁 UI：所有结算入口共用同一首选项续跑策略。
-
-    #657：经 session.submit_hitl_choices 唯一编排；注入既有 `_cli_write_gate`。
-    首选项投影走 ``project_preferred_hitl_choice`` 唯一真源（急务=follow_draft+capability）。
-    """
+def _submit_cli_decisions(session: GameSession, result) -> str:
+    """CLI 文书批语：皇帝选择拟批或亲笔；不自动代选。"""
     if result is None or not result.awaiting:
         return "" if result is None else result.report
-    from ming_sim.rescript_actions import project_preferred_hitl_choice
-
-    print("\n【月末重大抉择】（CLI 暂自动取首选项；交互式裁决见网页版）")
-    # result.decisions 已是合并 desk；若空则回读 session.pending_decisions
-    decisions = list(result.decisions or []) or list(session.pending_decisions())
     choices = []
-    for decision in decisions:
-        item = project_preferred_hitl_choice(decision)
-        print(f"  · {decision.get('title')} → {item.get('label', '（无）')}")
-        choices.append(item)
+    for row in list(result.decisions or []) or session.pending_decisions():
+        print(f"\n{row['title']}\n{row['context']}")
+        for idx, option in enumerate(row["options"], 1):
+            print(f"{idx}. {option['label']} {option.get('hint', '')}")
+        explicit = str(row.get("event_id") or "").startswith(("dossier:", "deliberation:"))
+        while True:
+            raw = input("拟批编号 / 亲笔批语" + ("（m 另旨·中旨）" if row["kind"] == "rescript_draft" else "") + "：")
+            choice = {"decision_key": row["decision_key"]}
+            if raw.isdecimal() and 1 <= int(raw) <= len(row["options"]):
+                option = row["options"][int(raw) - 1]
+                choice.update(label=option["label"], hint=option.get("hint", ""))
+                if explicit:
+                    choice["action"] = option.get("dossier_decision") or option.get("action") or ""
+                choice["note"] = input("附批（可空）：")
+                break
+            if not explicit and raw.strip():
+                if raw == "m" and row["kind"] == "rescript_draft":
+                    choice.update(action="midzhi", note=input("御笔旨意："))
+                    if not choice["note"].strip():
+                        continue
+                else:
+                    choice["note"] = raw
+                break
+            print("请选择编号；不代选。")
+        choices.append(choice)
     return session.submit_hitl_choices(choices, write_gate=_cli_write_gate(session))
 
 
@@ -729,7 +741,7 @@ def play_turn(session: GameSession) -> None:
                 # #1353 fold-in r8：颁诏/退朝前挂唯一 write_gate，使 resolve 收夜 drain 同流。
                 _cli_write_gate(session)
                 result = session.advance_without_decree()
-                report = _submit_first_cli_decisions(session, result)
+                report = _submit_cli_decisions(session, result)
             except (ValueError, SettlementAbort, LLMUnavailable, LLMContractError) as error:
                 # 跳过与颁诏共享可恢复结算语义：失败后留在本回合循环，允许重试。
                 # #1353 fold-in r8：统一重试耗尽的 LLMUnavailable 不退出 CLI。
@@ -759,7 +771,7 @@ def play_turn(session: GameSession) -> None:
                 # #1353 fold-in r8：颁诏/退朝前挂唯一 write_gate，使 resolve 收夜 drain 同流。
                 _cli_write_gate(session)
                 result = session.resolve_turn()
-                report = _submit_first_cli_decisions(session, result)
+                report = _submit_cli_decisions(session, result)
             except (ValueError, SettlementAbort, LLMUnavailable, LLMContractError) as error:
                 # 恢复态守门 / 结算中止 / 欠账耗尽（#1353 r8）/ 契约失败（#1700）：打印指引后留在
                 # 本回合交互循环——玩家重按 issue/skip 即重试整段，CLI 不退出。

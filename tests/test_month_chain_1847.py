@@ -222,16 +222,28 @@ def test_answering_triad_applies_and_releases_rescript_gate(game, monkeypatch, d
     del pending_id
 
 
-def test_answering_world_question_resumes_suffix_then_gazette(game, monkeypatch):
+@pytest.mark.parametrize("vacant", [False, True])
+def test_answering_world_question_resumes_suffix_then_gazette(game, monkeypatch, vacant):
     """真实 continue_world_after_answers：只打 LLM 外缝，续推闸与清问须落库可见。"""
     db, state, content = game
     closed_turn = int(state.turn)
     continuation_calls = []
-    dispatched_segments = []
 
     _forbid_extractor(monkeypatch)
+    if vacant:
+        db.conn.execute("UPDATE characters SET office='' WHERE office LIKE '%首辅%' OR office LIKE '%司礼监掌印%'")
+        db.conn.commit()
+        def no_unsigned_run(*args, **kwargs):
+            raise AssertionError("双缺位不得空跑票拟")
+        monkeypatch.setattr("ming_sim.rescript_draft.run_rescript_text", no_unsigned_run)
     monkeypatch.setattr(
-        month_chain, "run_world_segment_text", lambda *a, **k: _WORLD_WITH_QUESTION,
+        month_chain, "run_world_segment_text", lambda *a, **k: _WORLD_WITH_QUESTION.replace(
+            '"label":"准调关宁","hint":"饷银加紧"',
+            '"label":"准调关宁","hint":"饷银加紧",'
+            '"action_type":"grant_allocation","grant_action":"协饷",'
+            '"account":"内库","amount":30,"target_kind":"army",'
+            '"target_id":"guanning","purpose":"补饷","cadence":"一次性"',
+        ),
     )
     monkeypatch.setattr(
         month_translate, "translate_month_segment", lambda *a, **k: {"effects": {}},
@@ -241,17 +253,7 @@ def test_answering_world_question_resumes_suffix_then_gazette(game, monkeypatch)
         continuation_calls.append(list(answers))
         return "准调关宁，关宁增戍。"
 
-    real_dispatch = month_translate.dispatch_month_segment
-
-    def spy_dispatch(db_, state_, *, segment, llm_config, source, alongside=None):
-        dispatched_segments.append(str(segment))
-        return real_dispatch(
-            db_, state_, segment=segment, llm_config=llm_config,
-            source=source, alongside=alongside,
-        )
-
     monkeypatch.setattr(month_chain, "_run_world_continuation_text", fake_continuation)
-    monkeypatch.setattr(month_translate, "dispatch_month_segment", spy_dispatch)
 
     session = make_light_session(db, state, content)
     session.llm_config = object()
@@ -264,12 +266,14 @@ def test_answering_world_question_resumes_suffix_then_gazette(game, monkeypatch)
             "decision_key": desk_row["decision_key"],
             "label": choice["label"],
             "hint": choice.get("hint") or "",
+            "note": "  照办\n原批  ",
         }],
         write_gate=session._write_gate,
     )
 
     assert continuation_calls and continuation_calls[0][0]["label"] == choice["label"]
-    assert any("关宁增戍" in seg for seg in dispatched_segments)
+    assert continuation_calls[0][0]["note"] == "  照办\n原批  "
+    assert db.list_decree_dossiers() == []
     assert session.state.turn_phase == TurnPhase.SETTLING.value
     chain = month_chain._load_chain(db, closed_turn)
     assert chain.get("world_questions") in (None, [], ())
@@ -620,6 +624,131 @@ def test_cross_month_pending_draft_opens_rescript_desk(game, monkeypatch):
     titles = [row["title"] for row in session.pending_decisions()]
     assert titles == ["旧急务甲"]
     assert session.pending_decisions()[0]["kind"] == "rescript_draft"
+
+
+@pytest.mark.parametrize("vacant", [False, True])
+def test_model_memorial_revision_is_next_month_same_identity(game, monkeypatch, vacant):
+    """真实入口覆盖无硬数量门、原批、原案改票、双缺位搁置与补任再呈。"""
+    import ming_sim.rescript_draft as drafting
+    from pathlib import Path
+    real_rescript = drafting.run_rescript_text
+    db, state, content = game
+    turn = int(state.turn)
+    _forbid_extractor(monkeypatch)
+    monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
+    affair = db.affairs.open(name="急务", origin="奏折", year=state.year, period=state.period, turn=state.turn)
+    monkeypatch.setattr(month_translate, "translate_month_segment", lambda *a, **k: {"effects": {"economy_moves": [{
+        "origin_ref": f"affair:{affair.id}", "account": "国库", "delta": -2,
+        "category": "急务办理", "reason": "办理",
+    }]}})
+    calls, answers = [], []
+    failures = {"triage": True, "answer": True}
+    raw_note = "  发回\n查清后再呈  "
+    options = [{"label": str(i), "hint": ""} for i in range(7)]
+
+    def model(session, *, officers, backlog, answer=None):
+        if answer is not None:
+            if len(answers) == 1 and failures["answer"]:
+                failures["answer"] = False
+                raise LLMUnavailable("批后模型用尽", stage="rescript-answer")
+            answers.append(answer)
+            return json.dumps({"disposition": "revise" if answer["choice"].get("note") == raw_note else "settled",
+                               "text": "问后办理" if len(answers) == 1 else "", "decree": None})
+        if failures["triage"]:
+            failures["triage"] = False
+            raise LLMUnavailable("票拟模型用尽", stage="rescript-draft")
+        calls.append(backlog)
+        return json.dumps({
+            "actor_name": officers[0]["name"],
+            "items": [{"title": str(i), "context": "  原奏\n拟旨  ", "options": options}
+                      for i in range(6)] if int(session.state.turn) == turn else [],
+            "revisions": [{"decision_key": row["decision_key"], "title": "改票", "context": "修订奏折",
+                           "options": options} for row in backlog],
+        })
+
+    def external_model(prepared, prompt, **kwargs):
+        payload = json.loads(prompt)
+        if payload["answer"] is None:
+            for officer in payload["officers"]:
+                assert (Path(prepared.root) / officer["materials"]).is_dir()
+            assert payload["world"] is None
+        else:
+            assert (Path(prepared.root) / payload["world"]["materials"]).is_dir()
+        assert [(o["name"], o["office"], o["faction"]) for o in payload["officers"]] == [
+            (o["name"], o["office"], o["faction"]) for o in drafting.triage_officers(db)
+        ]
+        return model(session, officers=payload["officers"], backlog=payload["backlog"], answer=payload["answer"])
+
+    monkeypatch.setattr(drafting, "run_rescript_text", real_rescript)
+    monkeypatch.setattr("ming_sim.agents.create_rescript_draft_agent", lambda config, prepared: prepared)
+    monkeypatch.setattr(drafting, "run_agent_text", external_model)
+    session = make_light_session(db, state, content)
+    session.llm_config = object()
+    from ming_sim.exceptions import SettlementAbort
+    with pytest.raises(SettlementAbort) as stopped:
+        session.resolve_turn(allow_empty_decree=True)
+    assert stopped.value.stage == "rescript-draft"
+    assert month_chain._load_chain(db, turn)["world_committed"] is True
+    session = make_light_session(db, db.load_state(content), content)
+    session.llm_config = object()
+    state = session.state
+    assert session.resolve_turn(allow_empty_decree=True).awaiting
+    desk = session.pending_decisions()
+    assert len(desk) == 6
+    assert all(len(row["options"]) == 7 for row in desk)
+    assert len(drafting.triage_officers(db)) == 2
+    assert {row["actor_name"] for row in desk} == {drafting.triage_officers(db)[0]["name"]}
+    original = desk[0]
+    batch = [{"decision_key": row["decision_key"], "label": row["options"][0]["label"]}
+             for row in reversed(desk)]
+    batch[-1]["note"] = raw_note
+    with pytest.raises(SettlementAbort) as stopped:
+        session.submit_hitl_choices(batch, write_gate=session._write_gate)
+    assert stopped.value.stage == "rescript-answer"
+    assert not session.pending_decisions()
+    session = make_light_session(db, db.load_state(content), content)
+    session.llm_config = object()
+    state = session.state
+    session.resolve_turn(allow_empty_decree=True)
+    assert [r[0] for r in db.conn.execute("SELECT delta FROM economy_ledger WHERE category='急务办理'")] == [-2]
+    assert [row["decision_key"] for row in answers] == [item["decision_key"] for item in batch]
+    assert answers[-1]["choice"]["note"] == raw_note
+    assert answers[-1]["memorial"]["context"] == "  原奏\n拟旨  "
+    assert not session.pending_decisions()
+    assert session.deferred_rescripts()[0]["decision_key"] == original["decision_key"]
+    assert len(calls) == 1
+    assert int(state.turn) == turn
+
+    # Next month is opened only after this month's report, not within submit.
+    db.save_turn_report(state, "归档", title="归档", public_body="归档")
+    assert session.resolve_turn(allow_empty_decree=True).advanced
+    if vacant:
+        officers = drafting.triage_officers(db)
+        for row in officers:
+            db.conn.execute("UPDATE characters SET office='' WHERE name=?", (row["name"],))
+        db.conn.commit()
+        assert session.resolve_turn(allow_empty_decree=True).stage == "gazette"
+        assert not session.pending_decisions()
+        assert len(calls) == 1  # No stand-in and no model call with an invented actor.
+        assert session.deferred_rescripts()[0]["decision_key"] == original["decision_key"]
+        db.save_turn_report(state, "归档", title="归档", public_body="归档")
+        assert session.resolve_turn(allow_empty_decree=True).advanced
+        db.conn.execute("UPDATE characters SET office=? WHERE name=?", (officers[-1]["office"], officers[-1]["name"]))
+        db.conn.commit()
+    assert session.resolve_turn(allow_empty_decree=True).awaiting
+    revised = session.pending_decisions()
+    assert len(revised) == 1
+    assert revised[0]["decision_key"] == original["decision_key"]
+    assert revised[0]["revision_round"] == 1
+    assert calls[-1][0]["choice"]["note"] == raw_note
+    # Durable answer idempotency and revision identity survive reopening the session.
+    reopened = make_light_session(db, db.load_state(content), content)
+    reopened.llm_config = object()
+    assert reopened.pending_decisions()[0]["decision_key"] == original["decision_key"]
+    reopened.submit_hitl_choices(_hitl_payload(revised[0]), write_gate=reopened._write_gate)
+    assert not reopened.deferred_rescripts()
+    assert not reopened.pending_decisions()
+    assert len(db.list_rescript_drafts()) == 6
 
 
 def test_decree_continuation_keeps_forecast_and_lands_affair_effect(game, monkeypatch):

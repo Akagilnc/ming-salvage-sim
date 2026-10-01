@@ -1287,6 +1287,8 @@ _CONTINUATION_SEGMENT = "world-continuation-segment"
 
 
 def _install_liao_month_stubs(monkeypatch, *, world_text: str, translate):
+    from tests.month_chain_helpers import empty_rescript_response
+    monkeypatch.setattr("ming_sim.rescript_draft.run_rescript_text", empty_rescript_response)
     import ming_sim.month_chain as month_chain
     import ming_sim.month_translate as month_translate
     from tests.test_month_chain_1843 import _forbid_extractor

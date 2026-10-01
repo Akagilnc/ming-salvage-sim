@@ -1759,6 +1759,7 @@ class WebGame:
             pending_decisions = (
                 self.session.pending_decisions() if awaiting_decision else []
             )
+            deferred_rescripts = self.db.list_rescript_drafts(status="revision_pending")
             durable_phase2_resume = (
                 awaiting_decision
                 and self.db.get_resolve_context(self.state.turn) is not None
@@ -1873,6 +1874,7 @@ class WebGame:
             "failed_secret_order_count": sum(
                 1 for _a in self.db.list_failed_secret_order_actions()),
             "pending_decisions": pending_decisions,
+            "deferred_rescripts": deferred_rescripts,
             # #657：phase1 已落 decided、desk 只查 pending 为空时，投影 typed 续跑信号。
             # 不把 decided 塞回 pending 列表；前端空 POST 既有 resolve_decisions/stream。
             "resume_phase2": durable_phase2_resume and not settlement_entry_inflight,

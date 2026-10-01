@@ -2373,19 +2373,18 @@ class GameDB:
         self.ensure_column("pending_decisions", "event_id", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("pending_decisions", "rejection_reason", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("pending_decisions", "opposition", "TEXT NOT NULL DEFAULT ''")
-        # #656 / ADR 0093 前半：kind 扩列（最小扩展，ensure_column 先例同款）。
-        # 'decision'=既有 simulator 决策块行为一字不变；'rescript_draft'=急务票拟行
-        # （phase2 产生、跨月留存待 #657 六动作裁决）。actor 三列＝分拣/票拟 actor 身份
-        # 投影随行落库（票面 F3.2：任免后 actor 变更可机械断言）。
+        # 同案头区分请旨／颁布三选与人物急务，署名及官职事实随原案保存。
         self.ensure_column("pending_decisions", "kind", "TEXT NOT NULL DEFAULT 'decision'")
         self.ensure_column("pending_decisions", "actor_name", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("pending_decisions", "actor_office", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("pending_decisions", "actor_faction", "TEXT NOT NULL DEFAULT ''")
-        # #657：改票轮次与 append-only 全史；默认 0 / '[]' 兼容旧行。
+        # 次月同案改票保留轮次与上次拟批。
         self.ensure_column(
             "pending_decisions", "revision_round", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column(
             "pending_decisions", "prior_options_json", "TEXT NOT NULL DEFAULT '[]'")
+        self.ensure_column("pending_decisions", "answered_turn", "INTEGER NOT NULL DEFAULT 0")
+        self.ensure_column("pending_decisions", "answer_order", "INTEGER NOT NULL DEFAULT 0")
         self._backfill_event_triggers_from_event_pool_issues()
         # 步骤7：回合阶段（旧库迁移，schema 升级非 fallback）
         self.ensure_column("game_state", "turn_phase", "TEXT NOT NULL DEFAULT 'summoning'")
@@ -9339,25 +9338,6 @@ class GameDB:
         )
         return nxt
 
-    def complete_rescript_summon_scaffold_turn(self, chat_turn_id: int) -> None:
-        """#657：空问话召见 scaffold 消费成功 → status=consumed（非在飞终态唯一写点）。
-
-        list_in_flight 不含 consumed；与 failed（真失败）分立。body 已非空时
-        再入走 consumed 短路，不走 ensure CAS。
-        """
-        ctid = int(chat_turn_id or 0)
-        if ctid <= 0:
-            return
-        self.conn.execute(
-            "UPDATE chat_turns SET status='consumed' "
-            "WHERE id=? AND status='generating' AND user_message_id IS NULL",
-            (ctid,),
-        )
-        if (
-            not bool(getattr(self.conn, "_commit_suspended", False))
-            and int(getattr(self.conn, "_atomic_depth", 0) or 0) == 0
-        ):
-            self.conn.commit()
 
     def list_in_flight_chat_turns(
         self,
@@ -10912,145 +10892,45 @@ class GameDB:
         ]
 
     def save_pending_decisions(self, turn: int, decisions: List[Dict[str, object]]) -> None:
-        """覆写本回合待裁 decision 行（先清后插），idx 按列表顺序。choice 初始空（待皇帝选）。
-
-        #656 A6/F2 不变式：只清只写 kind='decision'（与 clear_pending_decisions/
-        save_rescript_drafts 同款按 kind 收窄）——'rescript_draft' 票拟行跨月留存，
-        不被 decision 盘面覆写连带清除。
-        """
-        turn = int(turn)
-        # 两种 kind 共用 (turn, idx) 主键。先把保留的 draft 搬到负数暂存区，
-        # 删除旧 decisions 后再按新盘面长度接续重排；draft 的内容与 event_id
-        # 均不改，decision 数量增减也不会与旧 draft idx 相撞。
-        self.conn.execute(
-            "UPDATE pending_decisions SET idx = -idx - 1 "
-            "WHERE turn = ? AND kind = 'rescript_draft'",
-            (turn,),
-        )
-        draft_rows = self.conn.execute(
-            "SELECT idx FROM pending_decisions "
-            "WHERE turn = ? AND kind = 'rescript_draft' ORDER BY idx DESC",
-            (turn,),
-        ).fetchall()
-        self.conn.execute(
-            "DELETE FROM pending_decisions WHERE turn = ? AND kind = 'decision'",
-            (turn,),
-        )
-        for idx, d in enumerate(decisions):
-            self.conn.execute(
-                """INSERT INTO pending_decisions
-                   (turn, idx, event_id, title, context, rejection_reason, opposition,
-                    options_json, choice_json, status, kind)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', 'pending', 'decision')""",
-                (
-                    turn, idx,
-                    str(d.get("event_id") or ""),
-                    str(d.get("title") or ""),
-                    str(d.get("context") or ""),
-                    str(d.get("rejection_reason") or ""),
-                    str(d.get("opposition") or ""),
-                    json.dumps(d.get("options") or [], ensure_ascii=False),
-                ),
-            )
-        for offset, row in enumerate(draft_rows):
-            self.conn.execute(
-                "UPDATE pending_decisions SET idx = ? WHERE turn = ? AND idx = ?",
-                (len(decisions) + offset, turn, int(row["idx"])),
-            )
-        self.conn.commit()
+        """Append newly presented identities; never renumber or erase persisted answers."""
+        with atomic(self):
+            idx = int(self.conn.execute(
+                "SELECT COALESCE(MAX(idx)+1,0) FROM pending_decisions WHERE turn=?", (int(turn),),
+            ).fetchone()[0])
+            for item in decisions:
+                identity = str(item.get("event_id") or "")
+                if identity and self.conn.execute(
+                    "SELECT 1 FROM pending_decisions WHERE turn=? AND kind='decision' AND event_id=?",
+                    (int(turn), identity),
+                ).fetchone():
+                    continue
+                self.conn.execute(
+                    "INSERT INTO pending_decisions "
+                    "(turn,idx,event_id,title,context,rejection_reason,opposition,options_json,choice_json,status,kind) "
+                    "VALUES (?,?,?,?,?,?,?,?,'','pending','decision')",
+                    (int(turn), idx, identity, str(item.get("title") or ""), str(item.get("context") or ""),
+                     str(item.get("rejection_reason") or ""), str(item.get("opposition") or ""),
+                     json.dumps(item.get("options") or [], ensure_ascii=False)),
+                )
+                idx += 1
 
     def list_pending_decisions(self, turn: int) -> List[Dict[str, object]]:
-        """读本回合决策点（按 idx）——HITL envelope 唯一读取缝。
-
-        #656 A6：谓词收窄到 kind='decision'——persist-then-abort 后落库的
-        rescript_draft 票拟行不再混进亲裁/刷新/all-decided/submit 消费面
-        （急务只经 list_rescript_drafts 读，批红面归 #657）；调用方不再重复过滤。
-        options 反序列化；choice 为已选则带出。
-        #657：补 revision_round / prior_options_json 投影。
-        """
         rows = self.conn.execute(
-            "SELECT idx, event_id, title, context, rejection_reason, opposition, "
-            "options_json, choice_json, status, kind, actor_name, actor_office, actor_faction, "
-            "turn, revision_round, prior_options_json "
-            "FROM pending_decisions WHERE turn = ? AND kind = 'decision' ORDER BY idx",
-            (int(turn),),
+            "SELECT * FROM pending_decisions WHERE turn=? AND kind='decision' ORDER BY idx", (int(turn),),
         ).fetchall()
-        out: List[Dict[str, object]] = []
-        for r in rows:
-            try:
-                options = json.loads(r["options_json"] or "[]")
-            except Exception as exc:
-                tlog(f"[db] options_json 损坏，回空：{exc}")  # #14 surface
-                options = []
-            choice_raw = (r["choice_json"] or "").strip()
-            try:
-                choice = json.loads(choice_raw) if choice_raw else None
-            except Exception as exc:
-                tlog(f"[db] choice_json 损坏，回 None（idx={r['idx']}）：{exc}")  # #14 surface
-                choice = None
-            try:
-                prior = json.loads(r["prior_options_json"] or "[]")
-            except Exception as exc:
-                tlog(f"[db] prior_options_json 损坏，回空：{exc}")  # #14 surface
-                prior = []
-            source_turn = int(r["turn"])
-            idx = int(r["idx"])
-            kind = str(r["kind"] or "decision")
-            out.append({
-                "idx": idx,
-                "decision_key": f"{kind}:{source_turn}:{idx}",
-                "source_turn": source_turn,
-                "turn": source_turn,
-                "event_id": r["event_id"],
-                "title": r["title"],
-                "context": r["context"],
-                "rejection_reason": r["rejection_reason"],
-                "opposition": r["opposition"],
-                "options": options if isinstance(options, list) else [],
-                "choice": choice,
-                "status": r["status"],
-                "kind": kind,
-                "actor_name": r["actor_name"],
-                "actor_office": r["actor_office"],
-                "actor_faction": r["actor_faction"],
-                "revision_round": int(r["revision_round"] or 0),
-                "prior_options_json": prior if isinstance(prior, list) else [],
-            })
-        return out
+        return [self._project_rescript_desk_row(row) for row in rows]
 
     def clear_pending_decisions(self, turn: int) -> None:
         """#656：按 kind 过滤——只清 'decision' 行（既有生命周期一字不变）；
-        'rescript_draft' 行跨月留存，终态清理归 #657 六动作裁决路径。"""
+        'rescript_draft' 原案跨月保留，发回项由次月票拟接续。"""
         self.conn.execute(
             "DELETE FROM pending_decisions WHERE turn = ? AND kind = 'decision'",
             (int(turn),),
         )
         self.conn.commit()
 
-    def save_rescript_drafts(self, turn: int, drafts: List[Dict[str, object]]) -> None:
-        """#656 / ADR 0093 前半：急务票拟行（kind='rescript_draft'）覆写本回合。
-
-        与 save_pending_decisions 同款先清后插（只清同 kind，不碰 decision 行）；
-        idx 从本回合保留的 decision 行最大 idx 之后续编（与 decision 行共占
-        (turn, idx) 主键不撞）。event_id 缺失的急务在此确定性合成 `urgent:{turn}:{idx}`
-        （票面 F2.2）。
-        只写 conn 不 commit——提交交调用方事务（与 save_resolve_context 同事务序列，F2.5）。
-        """
-        # 先删后算 idx（#656 A3）：起始 idx 只由保留的 decision 行决定——相同
-        # decision 盘面重复覆写得到相同 idx 与 `urgent:{turn}:{idx}`，合成身份不随
-        # 被删旧行漂移。不新增 UUID/映射账。
-        self.conn.execute(
-            "DELETE FROM pending_decisions WHERE turn = ? AND kind = 'rescript_draft'",
-            (int(turn),),
-        )
-        self._insert_rescript_draft_rows(int(turn), drafts)
-
     def append_rescript_drafts(self, turn: int, drafts: List[Dict[str, object]]) -> None:
-        """#657：HITL phase2 续跑追加本回合新票拟，不 DELETE 既有急务行。
-
-        保留 return_revise/decided/跨月 backlog；只在 max(idx)+1 后续插。
-        只写 conn 不 commit——与 save_resolve_context 同事务。
-        """
+        """追加本月票拟，不覆盖原案；与月链相位同事务。"""
         self._insert_rescript_draft_rows(int(turn), drafts)
 
     def _insert_rescript_draft_rows(
@@ -11084,50 +10964,12 @@ class GameDB:
             )
             idx += 1
 
-    def list_rescript_drafts(self) -> List[Dict[str, object]]:
-        """#656：全部急务票拟行（kind='rescript_draft'），跨月留存待 #657 批红面消费。
-
-        #657：补 choice / revision_round / prior_options_json 投影（list 面保留）。
-        """
+    def list_rescript_drafts(self, *, status: str | None = None) -> List[Dict[str, object]]:
         rows = self.conn.execute(
-            "SELECT turn, idx, event_id, title, context, options_json, choice_json, status, "
-            "actor_name, actor_office, actor_faction, revision_round, prior_options_json "
-            "FROM pending_decisions WHERE kind = 'rescript_draft' ORDER BY turn, idx"
+            "SELECT * FROM pending_decisions WHERE kind='rescript_draft' "
+            "AND (? IS NULL OR status=?) ORDER BY turn,idx", (status, status),
         ).fetchall()
-        out: List[Dict[str, object]] = []
-        for r in rows:
-            try:
-                options = json.loads(r["options_json"] or "[]")
-            except Exception as exc:
-                tlog(f"[db] options_json 损坏，回空：{exc}")  # #14 surface
-                options = []
-            choice_raw = (r["choice_json"] or "").strip()
-            try:
-                choice = json.loads(choice_raw) if choice_raw else None
-            except Exception as exc:
-                tlog(f"[db] choice_json 损坏，回 None（draft turn={r['turn']} idx={r['idx']}）：{exc}")
-                choice = None
-            try:
-                prior = json.loads(r["prior_options_json"] or "[]")
-            except Exception as exc:
-                tlog(f"[db] prior_options_json 损坏，回空：{exc}")  # #14 surface
-                prior = []
-            out.append({
-                "turn": int(r["turn"]),
-                "idx": int(r["idx"]),
-                "event_id": r["event_id"],
-                "title": r["title"],
-                "context": r["context"],
-                "options": options if isinstance(options, list) else [],
-                "choice": choice,
-                "status": r["status"],
-                "actor_name": r["actor_name"],
-                "actor_office": r["actor_office"],
-                "actor_faction": r["actor_faction"],
-                "revision_round": int(r["revision_round"] or 0),
-                "prior_options_json": prior if isinstance(prior, list) else [],
-            })
-        return out
+        return [self._project_rescript_desk_row(row) for row in rows]
 
     def list_rescript_desk(self, turn: int) -> List[Dict[str, object]]:
         """#657 批红案头唯一合并读出口。
@@ -11140,10 +10982,7 @@ class GameDB:
         turn = int(turn)
         rows = self.conn.execute(
             """
-            SELECT turn, idx, event_id, title, context, rejection_reason, opposition,
-                   options_json, choice_json, status, kind,
-                   actor_name, actor_office, actor_faction,
-                   revision_round, prior_options_json
+            SELECT *
             FROM pending_decisions
             WHERE status = 'pending'
               AND (
@@ -11159,47 +10998,19 @@ class GameDB:
         return [self._project_rescript_desk_row(r) for r in rows]
 
     def _project_rescript_desk_row(self, r: Any) -> Dict[str, object]:
-        """pending_decisions 行 → desk 投影（pending/decided 共用）。"""
-        kind = str(r["kind"] or "decision")
-        source_turn = int(r["turn"])
-        idx = int(r["idx"])
-        try:
-            options = json.loads(r["options_json"] or "[]")
-        except Exception as exc:
-            tlog(f"[db] options_json 损坏，回空：{exc}")  # #14 surface
-            options = []
-        if not isinstance(options, list):
-            options = []
-        choice_raw = (r["choice_json"] or "").strip()
-        try:
-            choice = json.loads(choice_raw) if choice_raw else None
-        except Exception as exc:
-            tlog(f"[db] choice_json 损坏，回 None（desk {kind}:{source_turn}:{idx}）：{exc}")
-            choice = None
-        try:
-            prior = json.loads(r["prior_options_json"] or "[]")
-        except Exception as exc:
-            tlog(f"[db] prior_options_json 损坏，回空：{exc}")  # #14 surface
-            prior = []
+        kind, source_turn, idx = str(r["kind"]), int(r["turn"]), int(r["idx"])
         return {
-            "decision_key": f"{kind}:{source_turn}:{idx}",
-            "kind": kind,
-            "source_turn": source_turn,
-            "turn": source_turn,
-            "idx": idx,
-            "event_id": r["event_id"],
-            "title": r["title"],
-            "context": r["context"],
-            "rejection_reason": r["rejection_reason"] if "rejection_reason" in r.keys() else "",
-            "opposition": r["opposition"] if "opposition" in r.keys() else "",
-            "options": options,
-            "choice": choice,
-            "status": r["status"],
-            "actor_name": r["actor_name"],
-            "actor_office": r["actor_office"],
-            "actor_faction": r["actor_faction"],
-            "revision_round": int(r["revision_round"] or 0),
-            "prior_options_json": prior if isinstance(prior, list) else [],
+            "decision_key": f"{kind}:{source_turn}:{idx}", "kind": kind,
+            "source_turn": source_turn, "turn": source_turn, "idx": idx,
+            "event_id": r["event_id"], "title": r["title"], "context": r["context"],
+            "rejection_reason": r["rejection_reason"], "opposition": r["opposition"],
+            "options": json.loads(r["options_json"] or "[]"),
+            "choice": json.loads(r["choice_json"]) if r["choice_json"] else None,
+            "status": r["status"], "actor_name": r["actor_name"],
+            "actor_office": r["actor_office"], "actor_faction": r["actor_faction"],
+            "revision_round": int(r["revision_round"]),
+            "prior_options_json": json.loads(r["prior_options_json"] or "[]"),
+            "answered_turn": int(r["answered_turn"]), "answer_order": int(r["answer_order"]),
         }
 
     def get_rescript_desk_rows_by_keys(
@@ -11224,10 +11035,7 @@ class GameDB:
                 continue
             r = self.conn.execute(
                 """
-                SELECT turn, idx, event_id, title, context, rejection_reason, opposition,
-                       options_json, choice_json, status, kind,
-                       actor_name, actor_office, actor_faction,
-                       revision_round, prior_options_json
+                SELECT *
                 FROM pending_decisions
                 WHERE turn = ? AND idx = ? AND kind = ?
                 """,
@@ -19222,8 +19030,7 @@ class GameDB:
     ) -> List[int]:
         """旧式/新式旨稿共用的幂等成案口；返回已成案 dossier id 列表（#1778 起 national 亦单行）。
 
-        #658：payload.target_dossier_id 指向 stalled 廷议时，复用该案卷并落御笔手敕，
-        不新建第二案卷。directive identity = directive:<id>。
+        御笔强推归批红原案 decision_key，本口不再接自由下旨的旧旁路。
         """
         structured = dict(payload or {})
         if not structured:
@@ -19233,45 +19040,8 @@ class GameDB:
                 "target_id": f"legacy-directive:{directive_id}",
                 "locality_scope": "none",
             }
-        # #658：互斥权威——push 与 ordinary 并存响亮拒绝；push 在 normalize 前短路
-        kind = classify_directive_structured_kind(structured)
-        target_did = (
-            imperial_push_target_dossier_id(structured)
-            if kind == "push" else None
-        )
-        if target_did is not None:
-            # 同 directive↔目标 dossier 已绑定：幂等返回，不重跑 stalled 校验副作用
-            bound = self.conn.execute(
-                "SELECT id FROM decree_dossiers WHERE id=? AND directive_id=?",
-                (int(target_did), int(directive_id)),
-            ).fetchone()
-            if bound is not None:
-                self._attach_affair_from_payload(state, structured, int(target_did))
-                if commit:
-                    self._commit_dossier_write(True)
-                return [int(target_did)]
-            from ming_sim.rescript_actions import apply_imperial_deliberation_push
-            push_mode = self._normalize_dossier_mode(
-                structured["mode"] if "mode" in structured else "ordinary"
-            )
-            pushed = apply_imperial_deliberation_push(
-                self, state,
-                target_dossier_id=int(target_did),
-                directive_identity=f"directive:{int(directive_id)}",
-                decree_text=str(text or ""),
-                mode=push_mode,
-                commit=False,
-            )
-            # 绑 directive_id 到既有案卷，供 restore/幂等
-            self.conn.execute(
-                "UPDATE decree_dossiers SET directive_id=?, updated_at=CURRENT_TIMESTAMP "
-                "WHERE id=? AND (directive_id IS NULL OR directive_id=0 OR directive_id=?)",
-                (int(directive_id), int(pushed), int(directive_id)),
-            )
-            self._attach_affair_from_payload(state, structured, int(pushed))
-            if commit:
-                self._commit_dossier_write(True)
-            return [int(pushed)]
+        if classify_directive_structured_kind(structured) == "push":
+            raise ValueError("御笔强推须从批红以原案 decision_key 提交，不经手拟或召对成案")
         structured = self._normalize_directive_dossier_payload(
             structured, content=self.content, current_turn=int(state.turn),
         )

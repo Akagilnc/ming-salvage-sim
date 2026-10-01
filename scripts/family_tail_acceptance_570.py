@@ -208,9 +208,8 @@ def _auto_complete_hitl(session: GameSession) -> Optional[str]:
     """真实结算若出 HITL，一次 awaiting 自动选第一项；返回完整 report。
 
     #657：session.submit_hitl_choices 唯一编排 + 既有 session._write_gate。
-    首选项投影走 project_preferred_hitl_choice 唯一真源。
+    探针明确提交拟批标签；不投影旧效果载荷。
     """
-    from ming_sim.rescript_actions import project_preferred_hitl_choice
 
     result = session.advance_without_decree()
     if result is None:
@@ -219,7 +218,7 @@ def _auto_complete_hitl(session: GameSession) -> Optional[str]:
         return result.report
     decisions = list(result.decisions) or session.pending_decisions()
     choices = [
-        project_preferred_hitl_choice(d)
+        {"decision_key": d["decision_key"], "label": d["options"][0]["label"], "action": d["options"][0].get("dossier_decision") or d["options"][0].get("action") or ""}
         for d in sorted(decisions, key=lambda x: int(x.get("idx") or 0))
     ]
     return session.submit_hitl_choices(choices, write_gate=session._write_gate)

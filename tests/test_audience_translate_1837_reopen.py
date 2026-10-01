@@ -114,6 +114,8 @@ def _close_offline(db, state, content, night_id):
 
 def _player_month(db, state, content, monkeypatch, dossier_id, *, effects=None):
     """Drive the player month entry with only model outputs supplied offline."""
+    from tests.month_chain_helpers import empty_rescript_response
+    monkeypatch.setattr("ming_sim.rescript_draft.run_rescript_text", empty_rescript_response)
     import threading
     import ming_sim.month_chain as month_chain
     import ming_sim.month_translate as month_translate

@@ -54,8 +54,7 @@ def main() -> int:
 
     # HITL：推演若出决策点，自动选第一项，续跑 phase2（含 4 模块 extractor）。
     # #657：session.submit_hitl_choices 唯一编排 + 既有 session._write_gate。
-    # 首选项投影走 project_preferred_hitl_choice 唯一真源。
-    from ming_sim.rescript_actions import project_preferred_hitl_choice
+    # 探针明确提交拟批标签；不投影旧效果载荷。
 
     rounds = 0
     while getattr(result, "awaiting", False):
@@ -64,7 +63,7 @@ def main() -> int:
         print(f"[hitl] 第{rounds}轮决策点 {len(decisions)} 个，自动选第一项：")
         choices = []
         for d in sorted(decisions, key=lambda x: int(x.get("idx") or 0)):
-            item = project_preferred_hitl_choice(d)
+            item = {"decision_key": d["decision_key"], "label": d["options"][0]["label"], "action": d["options"][0].get("dossier_decision") or d["options"][0].get("action") or ""}
             label = str(item.get("label") or "")
             print(f"   - #{d.get('idx')} {str(d.get('title'))[:40]} → 选「{label[:40]}」")
             choices.append(item)
