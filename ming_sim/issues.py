@@ -3744,26 +3744,40 @@ def _is_fiscal_levy_petition_event(ev: Event) -> bool:
     )
 
 
-def _fiscal_levy_answered_event_ids(db: GameDB, turn: int) -> set[str]:
-    """本段（turn）已答复的请饷／议停事件真实 id——结局声明的唯一资格门。
+def _fiscal_levy_answered_rows(db: GameDB, turn: int) -> List[Dict[str, object]]:
+    """本段已答的请饷／议停行：真实事件 id 与已落原批语。资格的唯一读口。
 
-    资格＝**本段真的有御批**：该回合批红页上已答（decided，含留中）的请旨行。
-    「历史呈过」不构成授权：呈过而未答、或上一段的旧留中行，都不是本段可译的
-    御批。转译入口的答复名单与此同源；原批语由该入口从同一已答行读出。
-
-    前缀真源 = month_chain；此处局部导入以免与月链成模块环。
+    资格＝该回合批红页上已答（decided，含留中）且带请饷前缀的行。呈过而未答、
+    或上一段的旧留中行，不在此列。前缀真源 = month_chain；此处局部导入以免成环。
     """
     from ming_sim.month_chain import _LEVY_PETITION_PREFIX
 
-    return {
-        str(row["event_id"])[len(_LEVY_PETITION_PREFIX):]
-        for row in db.conn.execute(
-            "SELECT event_id FROM pending_decisions "
-            "WHERE turn = ? AND kind='decision' AND status='decided'",
-            (int(turn),),
-        ).fetchall()
-        if str(row["event_id"] or "").startswith(_LEVY_PETITION_PREFIX)
-    }
+    rows: List[Dict[str, object]] = []
+    for row in db.conn.execute(
+        "SELECT event_id, choice_json FROM pending_decisions "
+        "WHERE turn = ? AND kind='decision' AND status='decided'",
+        (int(turn),),
+    ).fetchall():
+        event_id = str(row["event_id"] or "")
+        if not event_id.startswith(_LEVY_PETITION_PREFIX):
+            continue
+        try:
+            choice = json.loads(str(row["choice_json"] or "{}"))
+        except (TypeError, ValueError):
+            choice = {}
+        rows.append({
+            "event_id": event_id[len(_LEVY_PETITION_PREFIX):],
+            "rescript": choice if isinstance(choice, dict) else {},
+        })
+    return rows
+
+
+def _fiscal_levy_answered_event_ids(db: GameDB, turn: int) -> set[str]:
+    """本段已答复的请饷／议停事件真实 id——结局声明的唯一资格门。
+
+    行来自 ``_fiscal_levy_answered_rows``。转译供料名单由同一行派生。
+    """
+    return {str(row["event_id"]) for row in _fiscal_levy_answered_rows(db, turn)}
 
 
 def _fiscal_levy_declared_outcome_label_or_error(

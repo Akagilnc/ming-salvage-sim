@@ -158,38 +158,25 @@ def translate_month_segment(
 def _answered_levy_verdicts(db: Any, turn: int) -> list[dict[str, object]]:
     """本段待译的三饷请旨事件：已答行的事件身份、闭集，以及已存原批语（#1891）。
 
-    资格仍是本回合已答的请饷行。原批语取自该行已落的 choice，原样交给转译，
-    不依赖续推复述，也不在这里判准驳（ADR 0142 / P6）。
+    已答行只读 ``_fiscal_levy_answered_rows``。原批语原样交给转译，不依赖续推
+    复述，也不在这里判准驳（ADR 0142 / P6）。
     """
-    from ming_sim.issues import _fiscal_levy_event_by_id
-    from ming_sim.month_chain import _LEVY_PETITION_PREFIX
+    from ming_sim.issues import _fiscal_levy_answered_rows, _fiscal_levy_event_by_id
 
     out: list[dict[str, object]] = []
     seen: set[str] = set()
-    rows = db.conn.execute(
-        "SELECT event_id, choice_json FROM pending_decisions "
-        "WHERE turn = ? AND kind='decision' AND status='decided'",
-        (int(turn),),
-    ).fetchall()
-    for row in rows:
-        event_id = str(row["event_id"] or "")
-        if not event_id.startswith(_LEVY_PETITION_PREFIX):
-            continue
-        real_id = event_id[len(_LEVY_PETITION_PREFIX):]
+    for row in _fiscal_levy_answered_rows(db, turn):
+        real_id = str(row["event_id"])
         if real_id in seen:
             continue
         ev = _fiscal_levy_event_by_id(real_id)
         if ev is None:
             continue
-        try:
-            choice = json.loads(str(row["choice_json"] or "{}"))
-        except (TypeError, ValueError):
-            choice = {}
         seen.add(real_id)
         out.append({
             "event_id": real_id,
             "terminal_reason_labels": list(getattr(ev, "terminal_reason_labels", []) or []),
-            "rescript": choice if isinstance(choice, dict) else {},
+            "rescript": row["rescript"],
         })
     out.sort(key=lambda item: str(item["event_id"]))
     return out
