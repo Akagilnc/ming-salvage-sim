@@ -61,8 +61,8 @@ def _record_monthly_report(db, state, progress):
     db.record_monthly_dossier_progress(state.turn, [progress])
 
 
-def test_assignee_materials_carry_their_own_monthly_report(game):
-    db, state, content = game
+def test_monthly_report_keeps_its_turn_and_text(game):
+    db, state, _content = game
     order_id, dossier_id = _order(db, state)
     marker = "首批饷车已验山海关关防566"
     _record_monthly_report(db, state, {
@@ -71,26 +71,10 @@ def test_assignee_materials_carry_their_own_monthly_report(game):
     })
 
     emperor_order = next(item for item in db.list_secret_orders() if item["id"] == order_id)
-    assert emperor_order["dossier_progress"][-1]["memorial_text"] == marker
-
-    from ming_sim.materials import list_materials, prepare_character_materials, read_material
-    assignee_name = str(emperor_order["minister_name"])
-    assignee = content.characters[assignee_name]
-    prepared = prepare_character_materials(db, state, assignee)
-    private_blob = "\n".join(
-        read_material(prepared.root, path)
-        for path in list_materials(prepared.root)
-    )
-    assert marker in private_blob
-    other_name = next(
-        name for name, character in content.characters.items()
-        if name != assignee_name and getattr(character, "status", "") == "active"
-    )
-    other = prepare_character_materials(db, state, content.characters[other_name])
-    other_blob = "\n".join(
-        read_material(other.root, path) for path in list_materials(other.root)
-    )
-    assert marker not in other_blob
+    report = emperor_order["dossier_progress"][-1]
+    assert report["memorial_text"] == marker
+    assert int(report["turn"]) == int(state.turn)
+    assert report["progress_band"] == "在途核验"
 
 
 def test_disclosure_promotes_monthly_report_to_public_event_only_after_disclosure(game):

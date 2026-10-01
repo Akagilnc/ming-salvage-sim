@@ -106,6 +106,9 @@ def apply_audience_round_translation(
         # 本次尝试整笔回滚；源轮仍停在进入本轮之前的 pending，既有补跑再做未完成的工作。
         from ming_sim.audience_translate import AudienceTranslateError
         if ctid > 0 and (failed := result.commit_failure_reason()):
+            cause = result.commit_failure_cause()
+            if cause is not None:
+                raise AudienceTranslateError(failed) from cause
             raise AudienceTranslateError(failed)
         if ctid > 0 and result.scene_facts.rejected:
             raise AudienceTranslateError("说话人分段声明有拒收项")

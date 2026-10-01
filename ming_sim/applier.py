@@ -11,7 +11,7 @@ import json
 import sqlite3
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Any, Callable, Iterator, List, Tuple
+from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
 
 
 def sanitize_sqlite_text(value: Any) -> Any:
@@ -240,6 +240,7 @@ class RejectedItem:
     reason: str                 # 人读原因
     category: str               # 机读类别，供聚合
     source: Provenance          # 来源
+    cause: Optional[BaseException] = None  # 落库原异常；不入库，只接错误包
 
 
 # ---------------------------------------------------------------------------
@@ -325,6 +326,16 @@ class RejectionCollector:
     attempt: int = 1
     _buffer: List[dict] = field(default_factory=list, init=False, repr=False)
     _flushed: List[dict] = field(default_factory=list, init=False, repr=False)
+    _commit_causes: Dict[int, BaseException] = field(
+        default_factory=dict, init=False, repr=False,
+    )
+
+    def note_commit_exception(self, action_id: int, exc: BaseException) -> None:
+        """落库异常留在收集器上，供既有拒收与错误包接原异常。不另写恢复记录。"""
+        self._commit_causes[int(action_id)] = exc
+
+    def commit_exception(self, action_id: int) -> Optional[BaseException]:
+        return self._commit_causes.get(int(action_id))
 
     def record(self, section: str, rejected_item: RejectedItem, turn: int) -> None:
         """暂存一条拒收记录到内存缓冲，不写 DB。
@@ -383,6 +394,7 @@ class RejectionCollector:
         """丢弃缓冲与待镜像快照（回滚路径：DB 行已随事务回滚，内存同步清场）。"""
         self._buffer.clear()
         self._flushed.clear()
+        self._commit_causes.clear()
 
     def has_player_visible_rejection(self) -> bool:
         """本回合是否有 player_decree / hitl_decision 来源的拒收——决定玩家面邸报是否给一句

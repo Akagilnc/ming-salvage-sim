@@ -343,15 +343,17 @@ def render_referenceable_dossier_brief(candidates) -> str:
     for row in candidates:
         if not isinstance(row, dict):
             continue
-        title = str(
+        title_raw = str(
             row.get("secret_title") or row.get("decree_text") or row.get("action_type") or ""
-        ).strip()
+        )
+        title = title_raw if title_raw.strip() else ""
         status_cn = qualitative_dossier_status(row.get("status"))
         decision_cn = qualitative_promulgation_slot(row)
         outcome_cn = qualitative_dossier_outcome(
             row.get("execution_outcome"), status=row.get("status"),
         )
-        note = str(row.get("execution_note") or "").strip()
+        note_raw = str(row.get("execution_note") or "")
+        note = note_raw if note_raw.strip() else ""
         markers = qualitative_midzhi_markers(row)
         facts = []
         if status_cn:

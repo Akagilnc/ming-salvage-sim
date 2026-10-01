@@ -151,6 +151,18 @@ class DeclarationDispatchResult:
                     return str(getattr(item, "reason", "") or "commit_failed")
         return ""
 
+    def commit_failure_cause(self) -> Optional[BaseException]:
+        """落库失败的原异常。没有则返回 None。"""
+        for name in _SECTION_FIELDS:
+            section = getattr(self, name, None)
+            for item in getattr(section, "rejected", None) or []:
+                if getattr(item, "category", "") != "commit_failed":
+                    continue
+                cause = getattr(item, "cause", None)
+                if isinstance(cause, BaseException):
+                    return cause
+        return None
+
     def merge(self, other: "DeclarationDispatchResult") -> "DeclarationDispatchResult":
         """按 section 逐个 merge，供 :func:`settle_staged_declarations_in_decree_order`
         把同一旨下多条暂存声明的落地结果折叠成一份。"""
@@ -758,11 +770,11 @@ def _declared_prose(value: object) -> Optional[str]:
 
 def _reject(
     rejected: List[RejectedItem], item: object, reason: str, category: str,
-    source: Provenance,
+    source: Provenance, *, cause: Optional[BaseException] = None,
 ) -> None:
     rejected.append(RejectedItem(
         item=dict(item) if isinstance(item, Mapping) else {"raw_value": item},
-        reason=reason, category=category, source=source,
+        reason=reason, category=category, source=source, cause=cause,
     ))
 
 
@@ -2335,9 +2347,13 @@ def _dispatch_promises(
                         "UPDATE pending_actions SET status='pending' WHERE id=?",
                         (int(action_id),),
                     )
+                    cause = _rc.commit_exception(int(action_id))
+                    reason = "密令未能落库，原暂存已保留可重试"
+                    detail = str(cause) if cause is not None else ""
+                    if detail:
+                        reason = f"{reason}：{detail}"
                     _reject(
-                        rejected, item,
-                        "密令未能落库，原暂存已保留可重试", "commit_failed", source,
+                        rejected, item, reason, "commit_failed", source, cause=cause,
                     )
                     continue
                 if str(entry.get("action") or "") == "新建":

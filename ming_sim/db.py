@@ -18086,6 +18086,8 @@ class GameDB:
                             *rejection, pending_action_id=int(pa["id"]),
                         )
                     tlog(f"[pending_actions] 落库失败 id={pa['id']} {pa['kind']}/{pa['action']}：{exc}")
+                    if rejection_collector is not None:
+                        rejection_collector.note_commit_exception(int(pa["id"]), exc)
                     ok = False
                     self.conn.execute(
                         "UPDATE pending_actions SET status='failed' WHERE id=?", (int(pa["id"]),))

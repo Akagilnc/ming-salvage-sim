@@ -210,24 +210,25 @@ def parse_report_origin(origin: object) -> Tuple[str, Tuple[str, ...]]:
     return base, marks
 
 
-# 空 origin 在读出口归一到月度奏报（与 GameDB 月度 base 同一字符串）。
-MONTHLY_REPORT_BASE = "dossier-report:monthly_errand"
-
-
 def report_origin_base(origin: object) -> str:
     """业务身份：标记不算另一条奏报。空 origin 即月度轨。"""
+    from ming_sim.db import GameDB
+
     base, _marks = parse_report_origin(origin)
-    return base or MONTHLY_REPORT_BASE
+    return base or GameDB.DOSSIER_REPORT_ORIGIN_MONTHLY
 
 
 def latest_monthly_memorial(reports: object) -> str:
     """同月奏报轨上最后一条非终值正文。判空用副本，返回值保持原文。"""
+    from ming_sim.db import GameDB
+
+    monthly = GameDB.DOSSIER_REPORT_ORIGIN_MONTHLY
     for item in reversed(list(reports or [])):
         if not isinstance(item, Mapping):
             continue
         if item.get("is_terminal"):
             continue
-        if report_origin_base(item.get("origin")) != MONTHLY_REPORT_BASE:
+        if report_origin_base(item.get("origin")) != monthly:
             continue
         text = str(item.get("memorial_text") or "")
         if text.strip():

@@ -2423,6 +2423,8 @@ def gather_impeachment_surge_candidates(state: GameState, db: GameDB) -> List[Di
             ).fetchone():
                 continue
             candidate_id = f"impeachment_surge:{origin_ref}:{faction}"
+            decree_text = str(row["decree_text"] or "")
+            execution_note = str(row["execution_note"] or "")
             candidates.append({
                 "id": candidate_id,
                 "origin_kind": "impeachment_surge",
@@ -2439,8 +2441,8 @@ def gather_impeachment_surge_candidates(state: GameState, db: GameDB) -> List[Di
                 "responsible_person_ids": responsible_ids,
                 "responsible_faction_ids": responsible_factions,
                 "dossier_id": did,
-                "decree_text": str(row["decree_text"] or "").strip(),
-                "execution_note": str(row["execution_note"] or "").strip(),
+                "decree_text": decree_text if decree_text.strip() else "",
+                "execution_note": execution_note if execution_note.strip() else "",
                 "execution_outcome": str(row["execution_outcome"] or "").strip(),
                 "beyond_intent": True,
                 "reported_bands": list(fork_state.get("reported_bands") or []),

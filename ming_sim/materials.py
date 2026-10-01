@@ -682,18 +682,26 @@ def minimal_opening_context(
 
 
 def _secret_order_memorials(order: Any) -> list[str]:
-    """承办人自己的月度奏报原文。催办/核议不是月报，实况单位不进这份材料。"""
-    from ming_sim.supervision import MONTHLY_REPORT_BASE, report_origin_base
+    """承办人自己的月度奏报。月份与进展取记录字段，正文原样。
 
+    催办/核议不是月报，实况单位不进这份材料。不从正文日期或排列序号推定月份。
+    """
+    from ming_sim.db import GameDB
+    from ming_sim.supervision import report_origin_base
+
+    monthly = GameDB.DOSSIER_REPORT_ORIGIN_MONTHLY
     texts: list[str] = []
     for item in order.get("dossier_progress") or []:
         if not isinstance(item, Mapping) or item.get("is_terminal"):
             continue
-        if report_origin_base(item.get("origin")) != MONTHLY_REPORT_BASE:
+        if report_origin_base(item.get("origin")) != monthly:
             continue
         text = str(item.get("memorial_text") or "")
-        if text.strip():
-            texts.append(text)
+        if not text.strip():
+            continue
+        turn = int(item.get("turn") or 0)
+        band = str(item.get("progress_band") or "")
+        texts.append(f"回合：{turn}\n进展：{band}\n{text}")
     return texts
 
 
@@ -706,20 +714,23 @@ def _write_secret_order_file(
     text is kept for on-demand read — no replacement length cap (#1833 AC).
     DB/read failures raise; they are not washed into an empty-business result.
     """
+    from ming_sim.db import GameDB
+    from ming_sim.supervision import report_origin_base
+
     name = str(getattr(character, "name", "") or "")
     orders = db.get_active_secret_orders_for_minister(name) if name else []
     if orders:
+        monthly = GameDB.DOSSIER_REPORT_ORIGIN_MONTHLY
         lines = [
             "【你身上还在办的密令】",
             "在册密令：",
         ]
         for o in orders:
-            monthly = str(getattr(db, "DOSSIER_REPORT_ORIGIN_MONTHLY", "dossier-report:monthly_errand"))
             turn = int(state.turn)
             advanced = any(
                 not item.get("is_terminal")
                 and int(item.get("turn") or 0) == turn
-                and str(item.get("origin") or "").startswith(monthly)
+                and report_origin_base(item.get("origin")) == monthly
                 for item in (o.get("dossier_progress") or [])
             )
             tag = "✅ 本月已推进" if advanced else "⚠️ 本月尚未推进"

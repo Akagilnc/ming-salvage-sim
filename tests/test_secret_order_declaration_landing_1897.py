@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -31,7 +32,7 @@ from ming_sim.audience_translation import (
     catch_up_pending_translations,
     run_turn_translation_job,
 )
-from ming_sim.materials import prepare_character_materials, prepare_scene_materials
+from ming_sim.materials import list_materials, prepare_character_materials, read_material
 from ming_sim.session_write_queue import ClassifiedWriteGate
 from ming_sim.supervision import ORIGIN_MARK_SAME_FACTION_BLIND, origin_has_mark
 
@@ -581,6 +582,12 @@ def test_failed_landing_keeps_the_original_pending_action_retryable(game):
         "SELECT error_pack_path FROM chat_turns WHERE id=?", (ctid,),
     ).fetchone()["error_pack_path"]
     assert str(pack or "").strip()
+    manifest = json.loads((Path(pack) / "manifest.json").read_text(encoding="utf-8"))
+    traceback_text = (Path(pack) / "traceback.txt").read_text(encoding="utf-8")
+    cause = "进行中密令已达上限"
+    assert cause in str(manifest.get("message") or "")
+    assert "ValueError" in traceback_text
+    assert cause in traceback_text
     db.conn.execute("DELETE FROM secret_orders WHERE title LIKE '占额%'")
     db.conn.commit()
 
@@ -892,21 +899,25 @@ def test_secret_order_progress_is_stored_verbatim(game):
 
     character = content.characters.get(minister)
     assert character is not None
+    db.conn.execute(
+        "UPDATE decree_dossiers SET execution_note=? WHERE id=?",
+        (corrected, dossier_id),
+    )
+    db.conn.commit()
     prepared = prepare_character_materials(db, state, character)
     feed = (prepared.root / "密令" / "进行中.txt").read_text(encoding="utf-8")
-    assert corrected in feed
-    an.append_ledger_entry(
-        db, night_id, person_names=[minister], presence_effect="enter",
-        source_chat_turn_id=ctid, body="入殿",
+    block = (
+        f"回合：{int(live[0]['turn'])}\n进展：{live[0]['progress_band']}\n"
+        f"{live[0]['memorial_text']}"
     )
-    scene = prepare_scene_materials(db, state)
-    scene_feed = (
-        scene.root / "人物" / minister / "密令" / "进行中.txt"
-    ).read_text(encoding="utf-8")
-    assert corrected in scene_feed
-    for path in scene.root.rglob("进行中.txt"):
-        if minister not in path.parts:
-            assert corrected not in path.read_text(encoding="utf-8")
+    assert block in feed
+    archive_path = next(
+        path for path in list_materials(prepared.root) if path.endswith("/公事档案.txt")
+    )
+    archive = read_material(prepared.root, archive_path)
+    stored_note = db.get_decree_dossier(dossier_id)["execution_note"]
+    assert stored_note == corrected
+    assert f"说明：{stored_note}" in archive
 
     reopened = GameDB(db.path, content)
     try:
