@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import re
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 
@@ -25,6 +26,8 @@ _DECREE_QUESTION_PREFIX = "decree-question:"
 # 不从疏文猜配（ADR 0115）。与 world-question/decree-question 同列：都是案头身份，
 # 不是 events 表事件，故不进 event_triggers 的普通回写分支。
 _LEVY_PETITION_PREFIX = "levy-petition:"
+# 与 <<DECISION>> 同一类机标：切前缀与交接读取共用这一条，不另写切分。
+_LEVY_BLOCK_RE = re.compile(r"<<LEVY>>\s*(\{.*?\})\s*<<END>>", re.DOTALL)
 
 
 def _session_owner(db: Any, state: Any, llm_config: Any, agno_db: Any, content: Any):
@@ -107,14 +110,12 @@ def _world_segment_message(db: Any, state: Any, cheat_directive: str) -> str:
 def _levy_handoff_blocks(text: str, turn: int) -> List[Dict[str, Any]]:
     """按出现顺序读 <<LEVY>> 块。块内的事件 id 不是绑定源，读的时候丢掉。"""
     import json
-    import re
 
     from ming_sim.exceptions import SettlementAbort
     from ming_sim.settlement_payload import parse_decision_blocks
 
-    pattern = re.compile(r"<<LEVY>>\s*(\{.*?\})\s*<<END>>", re.DOTALL)
     blocks: List[Dict[str, Any]] = []
-    for match in pattern.finditer(text or ""):
+    for match in _LEVY_BLOCK_RE.finditer(text or ""):
         try:
             obj = json.loads(match.group(1))
         except Exception as exc:
@@ -523,7 +524,7 @@ def continue_world_after_answers(
         _save_chain(db, turn, chain, source=source)
 
     if str(text or "").strip():
-        # 续推若再吐 DECISION 机标，只落问前缀文，勿把机标喂进转译。
+        # 续推若再吐 DECISION / LEVY 机标，只落问前缀文，勿把机标喂进转译。
         prefix, _extra = _split_at_question(str(text))
         if prefix.strip():
             result = dispatch_month_segment(
@@ -1786,18 +1787,28 @@ def _pause(
 
 
 def _split_at_question(text: str) -> tuple[str, List[dict]]:
-    """前缀 = 首个合法 DECISION 之前；questions = 该段全部合法请旨块。"""
+    """前缀 = 首个合法 DECISION 或 LEVY 块之前。questions 只收 DECISION。
+
+    LEVY 的 JSON 由交接按名单读取，不进入送去转译的段文。切点仍是这一处。
+    """
     from ming_sim.decree import _DECISION_RE, parse_decision_blocks
 
     questions: List[dict] = []
     first_start: Optional[int] = None
+
+    def _note(start: int) -> None:
+        nonlocal first_start
+        if first_start is None or start < first_start:
+            first_start = start
+
     for match in _DECISION_RE.finditer(text):
         parsed = parse_decision_blocks(match.group(0))
         if not parsed:
             continue
-        if first_start is None:
-            first_start = match.start()
+        _note(match.start())
         questions.extend(parsed)
+    for match in _LEVY_BLOCK_RE.finditer(text or ""):
+        _note(match.start())
     if first_start is None:
         return text, []
     return text[:first_start], questions

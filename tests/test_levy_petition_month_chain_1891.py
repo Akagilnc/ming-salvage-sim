@@ -92,7 +92,7 @@ def _install_model_boundary(
     seen: dict = {
         "world_messages": world_log if world_log is not None else [],
         "continue_prompts": [], "translate_prompts": [],
-        "gazette": 0,
+        "segments": [], "gazette": 0,
     }
 
     def _agent_text(_agent, prompt, tag="", **_kwargs):
@@ -120,6 +120,15 @@ def _install_model_boundary(
         return dict(declaration or {"effects": {}})
 
     monkeypatch.setattr(month_translate, "run_declaration_translate_prompt", _translate)
+
+    dispatch_month_segment = month_translate.dispatch_month_segment
+
+    def _dispatch(db, state, *args, **kwargs):
+        # 转译入口实际收到的段文。请旨机标须已在切前缀时拿掉。
+        seen["segments"].append(str(kwargs.get("segment") or ""))
+        return dispatch_month_segment(db, state, *args, **kwargs)
+
+    monkeypatch.setattr(month_translate, "dispatch_month_segment", _dispatch)
     return seen
 
 
@@ -177,9 +186,10 @@ def test_emperor_approves_levy_petition_through_real_month_chain(game, monkeypat
     db, state, content = game
     _prepare(db, state, content, monkeypatch)
     before = _settle_p(db)["p"]["三饷应征"]
+    world_text = "关外告急，户部请加辽饷以济边饷。" + _levy_block()
     seen = _install_model_boundary(
         monkeypatch,
-        world_text="关外告急，户部请加辽饷以济边饷。" + _levy_block(),
+        world_text=world_text,
         declaration={"effects": [{
             "event_id": "liao_levy_rise_1631",
             "事件结局": {"liao_levy_rise_1631": "已准"},
@@ -201,6 +211,10 @@ def test_emperor_approves_levy_petition_through_real_month_chain(game, monkeypat
     row = desk[0]
     assert row["event_id"] == f"{_LEVY_PETITION_PREFIX}liao_levy_rise_1631"
     assert row["title"] == "辽饷升至一分二厘"
+    # 请饷块只走交接，不进送去转译的段文。段文仍是世界段原文的前缀。
+    handed = [segment for segment in seen["segments"] if segment and segment in world_text]
+    assert handed
+    assert all("<<LEVY>>" not in segment for segment in seen["segments"])
     # 到点但未裁 → 账上无终局行（不再自动置已准）。
     assert _ledger_field(db, "terminal_state") == ""
 
