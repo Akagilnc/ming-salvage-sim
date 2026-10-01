@@ -34,7 +34,7 @@ from ming_sim.decree_vocabulary import (
     DOSSIER_ACTION_TYPES, DIRECTIVE_ACTION_TYPES, dossier_action_policy,
 )
 from ming_sim.matching import match_army_id_from_text, match_region_id_from_text
-from ming_sim.exceptions import LLMContractError, OfficeAppointmentRejection
+from ming_sim.exceptions import LLMContractError, OfficeAppointmentRejection, PendingActionRefusal
 from ming_sim.intelligence import OFFICE_SLOTS
 from ming_sim.models import (
     FRONT_HALF_DONE_PHASES, Character, Event, GameState, is_vassal_prince,
@@ -18364,24 +18364,43 @@ class GameDB:
                 )
                 raw_task = covert_task_from_payload(payload) or payload.get("covert_task")
                 if not raw_task:
-                    raise CovertContractError("密令确认缺少差务类型")
-                frozen_task = build_covert_task_contract(covert_task=raw_task)
-                order_id = self.create_secret_order(
-                    state, assignee, title, content_text, tags, deadline_months=deadline,
-                    excluded_names=excluded, excluded_offices=excluded_offices,
-                    origin_minister_name=str(pa.get("minister_name") or "") or None,
-                    origin_chat_message_id=origin_mid,
-                    origin_chat_message_ids=[] if origin_mid is None else None,
-                    pending_action_id=int(pa["id"]),
-                    covert_task=frozen_task,
-                )
+                    raise PendingActionRefusal(
+                        "密令确认缺少差务类型",
+                        category="missing_task_type",
+                        item={"pending_action_id": int(pa["id"])},
+                    )
+                try:
+                    frozen_task = build_covert_task_contract(covert_task=raw_task)
+                    order_id = self.create_secret_order(
+                        state, assignee, title, content_text, tags, deadline_months=deadline,
+                        excluded_names=excluded, excluded_offices=excluded_offices,
+                        origin_minister_name=str(pa.get("minister_name") or "") or None,
+                        origin_chat_message_id=origin_mid,
+                        origin_chat_message_ids=[] if origin_mid is None else None,
+                        pending_action_id=int(pa["id"]),
+                        covert_task=frozen_task,
+                    )
+                except CovertContractError as exc:
+                    raise PendingActionRefusal(
+                        str(exc),
+                        category="covert_contract",
+                        item={"pending_action_id": int(pa["id"])},
+                    ) from exc
                 if order_id is not None and payload.get("dossier_links") is not None:
                     links = payload.get("dossier_links")
                     if not isinstance(links, list):
-                        raise ValueError("密令案卷关联必须为列表")
+                        raise PendingActionRefusal(
+                            "密令案卷关联必须为列表",
+                            category="dossier_links_shape",
+                            item={"pending_action_id": int(pa["id"])},
+                        )
                     dossier = self.get_dossier_for_secret_order(int(order_id))
                     if dossier is None:
-                        raise ValueError("密令成案后未找到案卷")
+                        raise PendingActionRefusal(
+                            "密令成案后未找到案卷",
+                            category="missing_dossier",
+                            item={"pending_action_id": int(pa["id"]), "order_id": int(order_id)},
+                        )
                     self.add_dossier_links(
                         int(dossier["id"]), links, commit=False,
                     )
@@ -22192,13 +22211,21 @@ class GameDB:
         """任何首次实际办理入口共用：密令轴在办时，案卷轴幂等进入 executing。"""
         dossier = self.get_dossier_for_secret_order(order_id)
         if dossier is None:
-            raise ValueError("密令进展缺少对应案卷")
+            raise PendingActionRefusal(
+                "密令进展缺少对应案卷",
+                category="missing_dossier",
+                item={"order_id": int(order_id)},
+            )
         if dossier["status"] == "promulgated":
             self.transition_decree_dossier(
                 int(dossier["id"]), "executing", commit=False,
             )
         elif dossier["status"] != "executing":
-            raise ValueError("在办密令的案卷不处于可执行状态")
+            raise PendingActionRefusal(
+                "在办密令的案卷不处于可执行状态",
+                category="dossier_not_executable",
+                item={"order_id": int(order_id), "dossier_status": dossier["status"]},
+            )
         self._commit_dossier_write(commit)
 
     def rush_secret_order(
@@ -22214,9 +22241,17 @@ class GameDB:
             (int(order_id),),
         ).fetchone()
         if row is None:
-            raise ValueError("密令不存在")
+            raise PendingActionRefusal(
+                "密令不存在",
+                category="missing_order",
+                item={"order_id": int(order_id)},
+            )
         if row["status"] != "active":
-            raise ValueError(f"当前状态 {row['status']}，不能催办")
+            raise PendingActionRefusal(
+                f"当前状态 {row['status']}，不能催办",
+                category="not_active",
+                item={"order_id": int(order_id), "status": row["status"]},
+            )
         try:
             months = max(0, min(int(deadline_months or 0), 36))
         except (TypeError, ValueError):

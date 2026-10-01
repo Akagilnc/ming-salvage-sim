@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, List, Optional
 
+from ming_sim.exceptions import PendingActionRefusal
 from ming_sim.staged_commitment import (
     ENTRY_KIND_GRACE_PLEA,
     ENTRY_KIND_RUSH_REMONSTRANCE,
@@ -480,23 +481,35 @@ def rush_staged_commitment_stage(
 
     不用 decree_dossiers.due_turn。同对象不得双真源。
     不写 issues.end_turn（#620 段派生 end_turn 不落 DB；催办不得侧写第二时间线）。
-    无 issue 承载 → ValueError（fail-closed 不产谏条、不伪造 issue）。
+    无 issue 承载 → PendingActionRefusal（fail-closed 不产谏条、不伪造 issue）。
     record_history=False：生产入口经 pending_actions 确认闸门落库时，由该 pending 行作史源，
     避免双插 committed 行。
     """
     if not _issue_exists(db, commitment_ref):
-        raise ValueError(f"承诺 issue#{int(commitment_ref)} 不存在，不能催办")
+        raise PendingActionRefusal(
+            f"承诺 issue#{int(commitment_ref)} 不存在，不能催办",
+            category="missing_commitment",
+            item={"commitment_ref": int(commitment_ref)},
+        )
 
     row = db.conn.execute(
         "SELECT id, stages_json, status, commitment_kind FROM issues WHERE id=?",
         (int(commitment_ref),),
     ).fetchone()
     if str(row["status"] or "") != "active":
-        raise ValueError(f"承诺 issue#{int(commitment_ref)} 状态 {row['status']}，不能催办")
+        raise PendingActionRefusal(
+            f"承诺 issue#{int(commitment_ref)} 状态 {row['status']}，不能催办",
+            category="not_active",
+            item={"commitment_ref": int(commitment_ref), "status": row["status"]},
+        )
 
     stages = normalize_commitment_stages(row["stages_json"])
     if not stages:
-        raise ValueError(f"承诺 issue#{int(commitment_ref)} 无分段，不能催办")
+        raise PendingActionRefusal(
+            f"承诺 issue#{int(commitment_ref)} 无分段，不能催办",
+            category="no_stages",
+            item={"commitment_ref": int(commitment_ref)},
+        )
 
     target_stage = None
     target_i = -1
@@ -506,7 +519,11 @@ def rush_staged_commitment_stage(
             target_i = i
             break
     if target_stage is None:
-        raise ValueError(f"承诺 issue#{int(commitment_ref)} 无 stage_idx={stage_idx}")
+        raise PendingActionRefusal(
+            f"承诺 issue#{int(commitment_ref)} 无 stage_idx={stage_idx}",
+            category="missing_stage",
+            item={"commitment_ref": int(commitment_ref), "stage_idx": int(stage_idx)},
+        )
 
     try:
         months = max(0, min(int(deadline_months if deadline_months is not None else 1), 36))

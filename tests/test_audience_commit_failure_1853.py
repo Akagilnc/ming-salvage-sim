@@ -28,7 +28,7 @@ from tests.conftest import (
     persist_and_schedule_scene,
     stub_audience_translate,
 )
-from tests.dossier_test_helpers import TYPED_COVERT_TASK
+from tests.dossier_test_helpers import TYPED_COVERT_TASK, create_test_secret_order
 from tests.test_decree_forecast_1861 import _sess
 
 
@@ -248,6 +248,46 @@ def test_ineligible_secret_order_is_business_refusal(game, monkeypatch):
     ).fetchone()
     assert turn["extract_status"] == "done"
     assert str(turn["error_pack_path"] or "") == ""
+
+
+def test_closed_secret_order_rush_fails_one_item_and_commits_the_rest(game):
+    """已结案密令的催办是业务拒收：该项 failed，同批其余项照常 committed，不抛。"""
+    db, state, content = game
+    minister = _active_minister(content)
+    live = create_test_secret_order(db, state, minister, "在办密令", "仍在办", [])
+    closed = create_test_secret_order(db, state, minister, "已结密令", "已结案", [])
+    db.close_secret_order(closed, "done", "账目已核", state.turn)
+    first = db.stage_pending_action(
+        state.turn, "secret_order", "更新", minister,
+        {"new_title": "在办改题", "new_content": "仍在办"},
+        target_id=live,
+    )
+    rush = db.stage_pending_action(
+        state.turn, "secret_order", "催办", minister,
+        {"deadline_months": 1, "reason": "加急"},
+        target_id=closed,
+    )
+    second = db.stage_pending_action(
+        state.turn, "secret_order", "更新", minister,
+        {"new_title": "在办再改", "new_content": "仍在办"},
+        target_id=live,
+    )
+
+    applied = db.commit_pending_actions(state, content=content)
+
+    statuses = {
+        int(row["id"]): row["status"]
+        for row in db.conn.execute(
+            "SELECT id, status FROM pending_actions WHERE id IN (?,?,?)",
+            (first, rush, second),
+        )
+    }
+    assert statuses[first] == "committed"
+    assert statuses[rush] == "failed"
+    assert statuses[second] == "committed"
+    assert {int(item["id"]) for item in applied} == {first, second}
+    assert db.get_secret_order(live)["title"] == "在办再改"
+    assert db.get_secret_order(closed)["status"] == "done"
 
 
 def test_night_forecast_exhaustion_resumes_from_real_consumer(game, monkeypatch):
