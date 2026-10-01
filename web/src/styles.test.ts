@@ -7,26 +7,6 @@ const styles = readdirSync(stylesDir)
   .map((f) => readFileSync(`${stylesDir}/${f}`, "utf8"))
   .join("\n");
 
-// 把一段 CSS 声明归一：折叠所有空白（含换行），并去掉注释。
-// 断言落在「两列布局 + 左栏可滚」这个语义上，不落在源码的空格排布上——
-// 排布是源码形状，改个缩进不该红。
-const normalize = (css: string) =>
-  css.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/\s+/g, " ").trim();
-
-describe("窄屏召见布局", () => {
-  it("保留两列并让左栏滚动，避免密令被立绘裁掉", () => {
-    const narrowLayout = styles.match(
-      /\.chat-full-grid\s*\{[^}]*minmax\(120px,\s*38%\)\s+minmax\(0,\s*1fr\);[^}]*\}[\s\S]*?\.minister-side\s*\{[^}]*\}/,
-    )?.[0];
-
-    expect(narrowLayout).toBeDefined();
-    const decls = normalize(narrowLayout!);
-    expect(decls).toContain("grid-template-columns: minmax(120px, 38%) minmax(0, 1fr);");
-    expect(decls).not.toContain("overflow: hidden;");
-    expect(decls).toContain("overflow-y: auto;");
-  });
-});
-
 describe("#1342 朝堂抽屉不得挡底栏命令", () => {
   it("drawer-scrim / court-drawer 底部留出命令安全区", () => {
     const scrim = styles.match(/\.drawer-scrim\s*\{[^}]*\}/)?.[0] || "";

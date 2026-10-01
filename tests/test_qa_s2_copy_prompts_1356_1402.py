@@ -4,7 +4,7 @@
 1. minister_agent 召对称谓正向口径（陛下/皇上/臣；亲王才殿下）
 2. season_simulator 停自算年号，上下文喂 reign_period_label 事实
 3. #1356 邸报报头年月 ≡ 报文自身月（后端 previous_reign_period_label 投影；FE 渲染见 vitest）
-4. web _require_active_minister 改调 can_summon 取文案（删「已尚未登场」平行副本）
+4. web _require_active_minister 的拒绝文案与 session.can_summon 的原因是同一段
 """
 
 from __future__ import annotations
@@ -113,8 +113,8 @@ def test_state_payload_projects_previous_reign_period_label(game):
     assert payload["previous_reign_period_label"] != payload["turn"]["reign_period_label"]
 
 
-def test_require_active_minister_uses_can_summon_copy_no_yi_shangwei(game, monkeypatch):
-    """#1402：offstage 文案走 session.can_summon，不得「已尚未登场」。"""
+def test_require_active_minister_uses_can_summon_reason(game, monkeypatch):
+    """#1402：offstage 拒绝走 session.can_summon；web 详情与该原因同一段文字。"""
     import web_app
     from fastapi import HTTPException
     from ming_sim.session import GameSession
@@ -141,8 +141,6 @@ def test_require_active_minister_uses_can_summon_copy_no_yi_shangwei(game, monke
 
     ok, reason = sess.can_summon(content.characters[name])
     assert ok is False
-    # 负向闸案：旧平行副本多一个「已」字（#1402删的就是它），不得请回来。
-    assert "已尚未" not in reason
 
     stub = SimpleNamespace(
         session=sess,

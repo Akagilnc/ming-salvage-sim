@@ -7,6 +7,7 @@ import shutil
 import threading
 from types import SimpleNamespace
 
+import ming_sim.audience_translation as audience_translation
 import ming_sim.decree as decree_mod
 import ming_sim.decree_forecast as forecast_mod
 import ming_sim.month_translate as month_translate
@@ -375,8 +376,9 @@ def test_held_rejudgments_overlap_instead_of_waiting_in_one_worker(game, monkeyp
     db.conn.commit()
     open_night(db, state)
     entered = []
-    gate = threading.Event()
-    lock = threading.Lock()
+    release = threading.Event()
+    cond = threading.Condition()
+    futs = []
 
     def judge(_agent, prompt, **_kwargs):
         dossier = json.loads(prompt)["dossiers"][0]
@@ -385,16 +387,29 @@ def test_held_rejudgments_overlap_instead_of_waiting_in_one_worker(game, monkeyp
         })
 
     def simulate(_agent, _prompt, **_kwargs):
-        with lock:
+        with cond:
             entered.append(1)
-            if len(entered) == 2:
-                gate.set()
-        # 并行门闩：两条腿都必须真在飞（#1861 P5）。第二腿到达才开闩，
-        # 无需也不该设时限——预推链上的真实工作耗时与机器负载相关，
-        # 拿秒数当判据是测试自造的时钟预算（违 queue 模块 K10a 同款纪律：
-        # 屏障放行不按 elapsed 判失败）。真串行化由 CI 作业收尾兜。
-        gate.wait()
+            cond.notify_all()
+        # 两条腿都进了推演才放行（#1861 P5）。放行不看秒数：缺腿时由
+        # 扫描票完成且其余在飞票都已停在本替身里这一终端事实打开，
+        # 断言随即变红，finally 仍能排空。
+        release.wait()
         return "预推"
+
+    real_submit = audience_translation._executor.submit
+
+    def tracking_submit(*args, **kwargs):
+        fut = real_submit(*args, **kwargs)
+        with cond:
+            futs.append(fut)
+            cond.notify_all()
+
+        def _notify_terminal(_fut):
+            with cond:
+                cond.notify_all()
+
+        fut.add_done_callback(_notify_terminal)
+        return fut
 
     monkeypatch.setattr(decree_mod, "run_agent_text", judge)
     monkeypatch.setattr(forecast_mod.agents, "run_agent_text", simulate)
@@ -402,47 +417,62 @@ def test_held_rejudgments_overlap_instead_of_waiting_in_one_worker(game, monkeyp
         month_translate, "run_declaration_translate_prompt",
         lambda *_a, **_k: {"commissions": []},
     )
+    monkeypatch.setattr(audience_translation._executor, "submit", tracking_submit)
     sess = _sess(db, state, content, monkeypatch, lambda *_a, **_k: {})
     assert forecast_mod.schedule_held_decree_forecasts(sess) is True
-    _drain(sess)
-    assert len(entered) == 2
-    for dossier_id, pending_id in zip(ids, pending_ids):
-        stale_ref = pending_action_decree_ref(pending_id, 1)
-        held_ref = held_dossier_decree_ref(dossier_id)
-        stale = db.staged_declarations.staged_for(stale_ref)
-        fresh = db.staged_declarations.staged_for(held_ref)
-        assert stale[0].verdict["decision"] == "rejected"
-        assert len(fresh) == 1 and fresh[0].status == "staged"
-        assert fresh[0].verdict["decision"] == "promulgated"
-        assert dossier_id in fresh[0].visible_refs["dossiers"]
-    from ming_sim.month_chain import _settle_edicts
+    try:
+        with cond:
+            while True:
+                pending = [fut for fut in futs if not fut.done()]
+                scan_done = bool(futs) and futs[0].done()
+                if len(entered) >= 2:
+                    break
+                if scan_done and len(pending) == len(entered):
+                    break
+                cond.wait()
+        release.set()
+        _drain(sess)
+        assert len(entered) == 2
+        for dossier_id, pending_id in zip(ids, pending_ids):
+            stale_ref = pending_action_decree_ref(pending_id, 1)
+            held_ref = held_dossier_decree_ref(dossier_id)
+            stale = db.staged_declarations.staged_for(stale_ref)
+            fresh = db.staged_declarations.staged_for(held_ref)
+            assert stale[0].verdict["decision"] == "rejected"
+            assert len(fresh) == 1 and fresh[0].status == "staged"
+            assert fresh[0].verdict["decision"] == "promulgated"
+            assert dossier_id in fresh[0].visible_refs["dossiers"]
+        from ming_sim.month_chain import _settle_edicts
 
-    chain = {}
-    _settle_edicts(sess, chain=chain)
-    assert all(
-        db.get_decree_dossier(dossier_id)["promulgation_decision"] == "promulgated"
-        for dossier_id in ids
-    )
-    for dossier_id, pending_id in zip(ids, pending_ids):
-        stale_ref = pending_action_decree_ref(pending_id, 1)
-        held_ref = held_dossier_decree_ref(dossier_id)
-        assert not db.staged_declarations.is_settled(stale_ref)
-        assert db.staged_declarations.is_settled(held_ref)
+        chain = {}
+        _settle_edicts(sess, chain=chain)
+        assert all(
+            db.get_decree_dossier(dossier_id)["promulgation_decision"] == "promulgated"
+            for dossier_id in ids
+        )
+        for dossier_id, pending_id in zip(ids, pending_ids):
+            stale_ref = pending_action_decree_ref(pending_id, 1)
+            held_ref = held_dossier_decree_ref(dossier_id)
+            assert not db.staged_declarations.is_settled(stale_ref)
+            assert db.staged_declarations.is_settled(held_ref)
 
-    # 再次进入月链结算：留中案卷仍保持 dossier 身份，旧 pending-action 暂存不被冒名结算
-    _settle_edicts(sess, chain=chain)
-    for dossier_id, pending_id in zip(ids, pending_ids):
-        stale_ref = pending_action_decree_ref(pending_id, 1)
-        held_ref = held_dossier_decree_ref(dossier_id)
-        assert not db.staged_declarations.is_settled(stale_ref)
-        assert db.staged_declarations.is_settled(held_ref)
-        dossier = db.get_decree_dossier(dossier_id)
-        assert forecast_mod.decree_ref_for_dossier(db, dossier) == held_ref
-    late = db.create_decree_dossier(
-        state, action_type="policy", decree_text="预推后", target_kind="issue",
-        target_id="test-policy", payload={"text": "预推后"},
-    )
-    assert late not in fresh[0].visible_refs["dossiers"]
+        # 再次进入月链结算：留中案卷仍保持 dossier 身份，旧 pending-action 暂存不被冒名结算
+        _settle_edicts(sess, chain=chain)
+        for dossier_id, pending_id in zip(ids, pending_ids):
+            stale_ref = pending_action_decree_ref(pending_id, 1)
+            held_ref = held_dossier_decree_ref(dossier_id)
+            assert not db.staged_declarations.is_settled(stale_ref)
+            assert db.staged_declarations.is_settled(held_ref)
+            dossier = db.get_decree_dossier(dossier_id)
+            assert forecast_mod.decree_ref_for_dossier(db, dossier) == held_ref
+        late = db.create_decree_dossier(
+            state, action_type="policy", decree_text="预推后", target_kind="issue",
+            target_id="test-policy", payload={"text": "预推后"},
+        )
+        assert late not in fresh[0].visible_refs["dossiers"]
+    finally:
+        release.set()
+        _drain(sess)
 
 
 def test_same_local_ids_on_two_saves_both_stage(game, _game_template_path, monkeypatch, tmp_path):
@@ -455,24 +485,43 @@ def test_same_local_ids_on_two_saves_both_stage(game, _game_template_path, monke
     other = GameDB(str(copy_path), content)
 
     entered = []
-    started = threading.Event()
+    proceed = threading.Event()
     release = threading.Event()
-    entered_lock = threading.Lock()
+    cond = threading.Condition()
+    futs = []
 
     def judge(_agent, prompt, *_args, **_kwargs):
-        with entered_lock:
+        with cond:
             entered.append(1)
             if len(entered) >= 2:
                 release.set()
-        started.set()
-        # 两存档各自起腿，判官须等对方到场才放行——两个 session 的在飞事实
-        # 是契约，不按时限判（第二腿要真做完材料快照，时长与负载相关）。
+            cond.notify_all()
+        proceed.set()
+        # 两存档的判官都进了替身才放行。第一腿若在进替身前就结束，
+        # 队列排空会打开 proceed；第二腿同样缺席时，在飞票与已进入
+        # 替身的数量对齐即打开 release。都不按时限判。
         release.wait()
         dossier = json.loads(prompt)["dossiers"][0]
         return json.dumps({
             "verdicts": [{"dossier_id": dossier["id"], "decision": "promulgated"}],
         })
 
+    real_submit = audience_translation._executor.submit
+
+    def tracking_submit(*args, **kwargs):
+        fut = real_submit(*args, **kwargs)
+        with cond:
+            futs.append(fut)
+            cond.notify_all()
+
+        def _notify_terminal(_fut):
+            with cond:
+                cond.notify_all()
+
+        fut.add_done_callback(_notify_terminal)
+        return fut
+
+    monkeypatch.setattr(audience_translation._executor, "submit", tracking_submit)
     monkeypatch.setattr(decree_mod, "run_agent_text", judge)
     monkeypatch.setattr(forecast_mod.agents, "run_agent_text", lambda *_a, **_k: "预推")
     monkeypatch.setattr(
@@ -480,6 +529,7 @@ def test_same_local_ids_on_two_saves_both_stage(game, _game_template_path, monke
         lambda *_a, **_k: {"commissions": []},
     )
     armed = []
+    watcher = None
     try:
         for one_db, one_state in ((db, state), (other, other.load_state())):
             night = open_night(one_db, one_state)
@@ -498,11 +548,27 @@ def test_same_local_ids_on_two_saves_both_stage(game, _game_template_path, monke
         assert forecast_mod.schedule_pending_decree_forecast(
             armed[0][0], armed[0][2], night_id=armed[0][3],
         ) is True
-        # 第一腿已进判官（真在飞）才起第二腿——在飞事实是契约，不按时限判。
-        started.wait()
+
+        def _open_when_first_queue_idle() -> None:
+            get_session_write_queue(armed[0][0]).wait_idle()
+            proceed.set()
+
+        watcher = threading.Thread(target=_open_when_first_queue_idle, daemon=True)
+        watcher.start()
+        # 判官进替身，或第一腿队列已经排空。后者是终端事实，不是时钟。
+        proceed.wait()
         assert forecast_mod.schedule_pending_decree_forecast(
             armed[1][0], armed[1][2], night_id=armed[1][3],
         ) is True
+        with cond:
+            while True:
+                pending = [fut for fut in futs if not fut.done()]
+                if len(entered) >= 2:
+                    break
+                if len(futs) >= 2 and len(pending) == len(entered):
+                    break
+                cond.wait()
+        release.set()
         for sess, one_db, pending_id, _night_id in armed:
             _drain(sess)
             stored = one_db.staged_declarations.staged_for(
@@ -517,3 +583,5 @@ def test_same_local_ids_on_two_saves_both_stage(game, _game_template_path, monke
         for sess, *_rest in armed:
             _drain(sess)
         other.close()
+        if watcher is not None:
+            watcher.join()
