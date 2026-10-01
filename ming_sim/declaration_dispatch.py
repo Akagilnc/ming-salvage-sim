@@ -464,7 +464,7 @@ def _dispatch_effects(
         return SectionResult(applied=[], rejected=rejected)
 
     refs = visible_refs or {}
-    rejected_events = preflight_declared_event_effects(
+    rejected_effects = preflight_declared_event_effects(
         db, state, [(event_id, clean) for _, event_id, clean in clean_items],
         open_affair_ids=set(refs.get("affairs", ())),
     )
@@ -473,10 +473,10 @@ def _dispatch_effects(
     ordered_effect_event_ids = {field: [] for field in EMPTY_EXTRACTION}
     effect_sequence: list[tuple[dict[str, object], dict[str, list[tuple[str, object]]], dict[str, list[str]]]] = []
     accepted_effect = False
-    for item, event_id, clean in clean_items:
-        if event_id in rejected_events:
+    for index, (item, event_id, clean) in enumerate(clean_items):
+        if index in rejected_effects:
             rejected.append(RejectedItem(
-                item=dict(item), reason=rejected_events[event_id],
+                item=dict(item), reason=rejected_effects[index],
                 category="event_rejected", source=source,
             ))
             continue

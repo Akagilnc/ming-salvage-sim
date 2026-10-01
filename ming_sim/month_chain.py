@@ -93,72 +93,111 @@ def _world_segment_message(db: Any, state: Any, cheat_directive: str) -> str:
         "instruction": message,
         "levy_petitions": petitions,
         "levy_petitions_contract": (
-            "levy_petitions 是本月到点的三饷请饷／议停事件，各带其终局标签闭集。"
-            "presentation_due 为 true 的（本月到点、尚未呈过）本月上疏陈情拟旨，"
-            "按标准 DECISION 结构停在问处，并把 event_id 原样写成本事件的 "
-            "event_id 值，由皇帝亲裁。presentation_due 为 false 的（已呈过、被留中）"
-            "是否再上疏由你自决，本月不重上旧疏。"
+            "levy_petitions 的数组顺序就是本月交接顺序。"
+            "上疏时按这个顺序逐件写 <<LEVY>>{title, context, options}<<END>>，"
+            "块内不写事件 id；写了也不作关联。"
+            "块数必须与名单等长。不再上疏的一件写 {\"present\": false}。"
+            "presentation_due 为 true 的必须写成请旨，不能写 present false。"
+            "presentation_due 为 false 的由你决定是否再上疏；一件都不上时整段不写 LEVY 块。"
+            "普通请旨仍用 <<DECISION>>，不能代替 LEVY 块，也不承担请饷事件身份。"
         ),
     }, ensure_ascii=False)
 
 
+def _levy_handoff_blocks(text: str, turn: int) -> List[Dict[str, Any]]:
+    """按出现顺序读 <<LEVY>> 块。块内的事件 id 不是绑定源，读的时候丢掉。"""
+    import json
+    import re
+
+    from ming_sim.exceptions import SettlementAbort
+    from ming_sim.settlement_payload import parse_decision_blocks
+
+    pattern = re.compile(r"<<LEVY>>\s*(\{.*?\})\s*<<END>>", re.DOTALL)
+    blocks: List[Dict[str, Any]] = []
+    for match in pattern.finditer(text or ""):
+        try:
+            obj = json.loads(match.group(1))
+        except Exception as exc:
+            raise SettlementAbort(
+                "请饷交接块无法对齐名单",
+                turn=int(turn), stage="world_bind",
+            ) from exc
+        if not isinstance(obj, dict):
+            raise SettlementAbort(
+                "请饷交接块无法对齐名单",
+                turn=int(turn), stage="world_bind",
+            )
+        if obj.get("present") is False:
+            blocks.append({"present": False})
+            continue
+        body = {
+            key: value for key, value in obj.items()
+            if key not in {"event_id", "origin_ref", "petition_ref", "present"}
+        }
+        parsed = parse_decision_blocks(
+            "<<DECISION>>" + json.dumps(body, ensure_ascii=False) + "<<END>>"
+        )
+        if len(parsed) != 1:
+            raise SettlementAbort(
+                "请饷交接块不是可上呈的请旨",
+                turn=int(turn), stage="world_bind",
+            )
+        blocks.append(dict(parsed[0]))
+    return blocks
+
+
 def _pin_world_question_identities(
     levy_petitions: List[Dict[str, Any]], questions: List[Dict[str, Any]],
-    turn: int = 0,
+    turn: int = 0, *, world_text: str = "",
 ) -> List[Dict[str, Any]]:
-    """#1891（ADR 0115）：交接时把请旨身份钉进问题本身，随月链持久化。
+    """#1891（ADR 0115）：请旨与事件的关联由交接名单的顺序构造，不读回显。
 
-    绑定真源＝本月交接的那份名单快照（与世界段消息共用同一次取数），不是回显，
-    也不在恢复时按实时资格重解。恢复只续用当次已存身份与奏疏。
+    名单快照的下标就是稳定键。``<<LEVY>>`` 块按同一顺序对齐；块里没有事件 id
+    可读，写了也丢掉。普通 ``<<DECISION>>`` 保持世界段请旨，不承担请饷身份。
 
-    请旨若报出一个**真实存在**的饷率事件、而该事件不在本月交接名单内，这是
-    契约违反（回显了未交接的身份，或陈旧／错写的身份），按 ADR 0115「无法绑定
-    fail-loud」响亮失败——不静默降成无主的世界段请旨。静默降格会让皇帝的亲裁
-    落在匿名案头上、原事件永无终局（正是 #345 旧 bug 之源）。此处不据疏文猜配。
-
-    反向同理：交接名单里 ``presentation_due`` 为真的请饷，本段世界请旨中**没有
-    任何一条绑到它**，也是契约违反——名单是本月到点应呈的权限事实，交接消息已
-    写明本月上疏陈情拟旨，故「一件都没被认领」本身即可判定，不必分辨哪条疏文
-    属于哪件请饷。同样 fail-loud，不静默放过等下一月再当首次事件重呈。
-
-    ``presentation_due`` 为假（已呈过、被留中）的不受此约束：是否再上疏由大臣
-    自决，本段无人认领是合法结果，照旧作普通世界段请旨放行。
+    名单为空则不读 LEVY 块。有应呈件却没有等长的块，或块数对不上名单，无法
+    唯一对齐，响亮失败。已留中的可以整段不写块（不再上疏）；要再上疏就必须
+    与名单等长，不上的那件显式 present false。
     """
     from ming_sim.exceptions import SettlementAbort
-    from ming_sim.issues import FISCAL_LEVY_EVENT_CATEGORY, _fiscal_levy_event_by_id
 
-    offered = {
-        str(item.get("event_id") or "") for item in levy_petitions
-        if str(item.get("event_id") or "")
-    }
-    bound: set[str] = set()
-    pinned: List[Dict[str, Any]] = []
-    for question in questions:
-        if not isinstance(question, dict):
-            continue
-        row = dict(question)
-        event_id = str(row.get("event_id") or "").strip()
-        ev = _fiscal_levy_event_by_id(event_id) if event_id else None
-        if ev is not None and getattr(ev, "category", "") == FISCAL_LEVY_EVENT_CATEGORY:
-            if event_id not in offered:
-                raise SettlementAbort(
-                    f"请旨回显了本月未交接的饷率事件身份，无法绑定：{event_id}",
-                    turn=int(turn), stage="world_bind",
-                )
-            row["event_id"] = f"{_LEVY_PETITION_PREFIX}{event_id}"
-            bound.add(event_id)
-        pinned.append(row)
-    unclaimed = [
-        str(item.get("event_id") or "") for item in levy_petitions
-        if item.get("presentation_due")
-        and str(item.get("event_id") or "") not in bound
+    roster = [
+        item for item in levy_petitions
+        if isinstance(item, dict) and str(item.get("event_id") or "")
     ]
-    if unclaimed:
+    ordinary = [dict(question) for question in questions if isinstance(question, dict)]
+    if not roster:
+        return ordinary
+    blocks = _levy_handoff_blocks(world_text, turn)
+    mandatory = [item for item in roster if item.get("presentation_due")]
+    if not blocks:
+        if mandatory:
+            missing = "、".join(str(item.get("event_id")) for item in mandatory)
+            raise SettlementAbort(
+                f"本月到点应呈的请饷事件没有按交接顺序形成请旨：{missing}",
+                turn=int(turn), stage="world_bind",
+            )
+        return ordinary
+    if len(blocks) != len(roster):
         raise SettlementAbort(
-            f"本月到点应呈的请饷事件无任何请旨绑到：{'、'.join(unclaimed)}",
+            f"请饷交接块数与本月名单无法对齐：块 {len(blocks)}，名单 {len(roster)}",
             turn=int(turn), stage="world_bind",
         )
-    return pinned
+    pinned: List[Dict[str, Any]] = []
+    for item, block in zip(roster, blocks):
+        event_id = str(item.get("event_id"))
+        if block.get("present") is False:
+            if item.get("presentation_due"):
+                raise SettlementAbort(
+                    f"本月到点应呈的请饷事件没有形成请旨：{event_id}",
+                    turn=int(turn), stage="world_bind",
+                )
+            continue
+        row = dict(block)
+        row.pop("present", None)
+        row["event_id"] = f"{_LEVY_PETITION_PREFIX}{event_id}"
+        pinned.append(row)
+    return pinned + ordinary
 
 
 def _gazette_public_fact(fact: Any, secret_dossier_ids: Optional[set[int]] = None) -> bool:
@@ -745,6 +784,14 @@ def _consume_call_failure_for_retry(
     if failure.get("escape_armed") and step in _TRANSLATE_ESCAPE_STEPS:
         _discard_segment_for_escape(chain, failure)
         chain["translate_exhaust_stops"] = 0
+    if step == "world_bind":
+        # 绑不上的世界段文本是**无效产物**：它已被判为契约违反，重来一次也绑不上，
+        # 留着只会让原位重试反复撞同一堵墙。按 #1846「只续未成」丢弃该未成产物，
+        # 让重试真正重跑世界段；已提交的财政与已答批红一概不动。
+        chain.pop("world_text", None)
+        chain["world_text_ready"] = False
+        chain.pop("world_questions", None)
+        chain.pop("levy_petitions", None)
     if step == "secret_orders_supply":
         # 仅废弃 0058 校验未通过的产物；其它中断保留产物，重开接续未完成相。
         if chain.get("secret_orders_supply_invalid"):
@@ -1022,6 +1069,7 @@ def _run_world_segment(
     session: Any, chain: Dict[str, Any], *, source: Provenance,
 ) -> Optional[Dict[str, object]]:
     from ming_sim.month_translate import dispatch_month_segment
+    from ming_sim.exceptions import SettlementAbort
 
     db, state = session.db, session.state
     turn = int(state.turn)
@@ -1047,10 +1095,23 @@ def _run_world_segment(
     if chain.get("world_committed"):
         return chain.get("declaration_outcome")
     prefix, questions = _split_at_question(str(chain.get("world_text") or ""))
-    # 交接时钉定：请旨问题按上面那份名单快照换上稳定案头身份，随链持久化。
-    chain["world_questions"] = _pin_world_question_identities(
-        chain.get("levy_petitions") or [], questions, turn,
-    )
+
+    def _bind() -> List[Dict[str, Any]]:
+        # 交接时钉定：请旨按上面那份名单快照换上稳定案头身份，随链持久化。绑定是
+        # 生成之后、本段转译之前的一步，未成即本段未完成——故按既有失败通道登记
+        # （call_failure + 错误包），由 #1846 的持久相位续未成，而非静默放行。
+        return _pin_world_question_identities(
+            chain.get("levy_petitions") or [], questions, turn,
+            world_text=str(chain.get("world_text") or ""),
+        )
+
+    try:
+        chain["world_questions"] = _bind()
+    except SettlementAbort as exc:
+        _abort_month_call(
+            db, state, chain, decree_text="", source=source,
+            step="world_bind", exc=exc, kind="code_exception",
+        )
 
     def mark(result: Any) -> None:
         # 完成标记与世界效果同一事务；调用方链要等提交成功后再采纳。

@@ -1770,7 +1770,8 @@ def list_fiscal_levy_petitions_due(
     ``presentation_due`` 是**权限事实**而非措辞：首次到点、尚未呈过的应呈请
     （True）；已呈过、被留中的由大臣自决是否再上疏（False）。原事件、原疏与亲笔
     批语随 ``prior_petition`` 带回，供后续世界段读同一持久事实（#1891 读端闭环），
-    代码不代它再顶一次旧疏。
+    代码不代它再顶一次旧疏。名单顺序就是交接键：世界段按这个顺序写请旨块，
+    不回显事件 id（ADR 0115）。
     """
     c = _ctx()
     terminal_states = _event_terminal_states(db)
@@ -4531,20 +4532,50 @@ def _strategic_event_result_preflight_error(
     return ""
 
 
+def _declared_levy_outcome_attribution_error(item: dict, event_id: str) -> str:
+    """#1891：结局声明的归属必须与被预检授权的归属是同一个事件。
+
+    落账写口（``_apply_fiscal_levy_declared_outcomes``）消费的是各项 ``事件结局``
+    映射的**全部键**，与 envelope 顶层的 ``event_id`` 无关。预检按顶层归属判资格，
+    写口却按键写，两条轴不一致时就会出现「按 A 的授权写 B 的结局」——包括顶层
+    根本没有归属键的无主项。故此处先判归属一致性：声明了饷率结局的效果项，归属
+    必须就是那个事件，且不能无归属。此门不新增资格，只把授权目标与落账目标收成
+    同一件事（ADR 0115 一事件一裁断）。
+    """
+    outcomes = item.get("事件结局")
+    if not isinstance(outcomes, dict):
+        return ""
+    targets = sorted(
+        str(key) for key in outcomes
+        if _is_fiscal_levy_petition_event(_fiscal_levy_event_by_id(str(key)) or Event(id="", title=""))
+    )
+    if not targets:
+        return ""
+    if not event_id:
+        return f"请饷结局声明无事件归属，无授权可对：{'、'.join(targets)}"
+    stray = [target for target in targets if target != event_id]
+    if stray:
+        return f"请饷结局声明与归属事件不符：{'、'.join(stray)}（归属 {event_id}）"
+    return ""
+
+
 def preflight_declared_event_effects(
     db: GameDB, state: GameState, items: list[tuple[str, dict]],
     open_affair_ids: set[int] | None = None,
-) -> dict[str, str]:
+) -> dict[int, str]:
     """C3: decide an event-owned effect envelope before any of its fields write.
 
     Same judgment runs once here; the apply path does not re-gate after writes.
     ``open_affair_ids`` is the same frozen visible set apply will arm, so origin
     checks here and at write share one authority.
+
+    返回 ``{效果项序号: 理由}``。按序号而非按归属 event_id 归键：真正被写的是每项
+    自己声明的字段，无归属项与错归属项都参与判定，按 event_id 归键会把它们漏掉
+    （#1891）。
     """
-    groups: dict[str, list[dict]] = {}
-    for event_id, item in items:
-        if event_id:
-            groups.setdefault(event_id, []).append(item)
+    groups: dict[str, list[int]] = {}
+    for index, (event_id, _item) in enumerate(items):
+        groups.setdefault(str(event_id or "").strip(), []).append(index)
     if not groups:
         return {}
     previous_authorized = getattr(db, "_batch_authorized_open_affair_ids", None)
@@ -4554,7 +4585,7 @@ def preflight_declared_event_effects(
         db._batch_authorized_open_affair_ids = frozen_affairs
         db._batch_frozen_open_affair_ids = frozen_affairs
     try:
-        return _preflight_declared_event_groups(db, state, groups)
+        return _preflight_declared_event_groups(db, state, groups, items)
     finally:
         if open_affair_ids is not None:
             db._batch_authorized_open_affair_ids = previous_authorized
@@ -4562,42 +4593,58 @@ def preflight_declared_event_effects(
 
 
 def _preflight_declared_event_groups(
-    db: GameDB, state: GameState, groups: dict[str, list[dict]],
-) -> dict[str, str]:
+    db: GameDB, state: GameState, groups: dict[str, list[int]],
+    items: list[tuple[str, dict]],
+) -> dict[int, str]:
     content = db.content
     candidates = {event.id for event in gather_candidate_events(state, db)}
-    rejected: dict[str, str] = {}
+    rejected: dict[int, str] = {}
     pseudo_event = Event(id="season", title="月末整体推演", kind="月末", summary="",
                          urgency=0, severity=0, credibility=100, interests=[], audiences=[])
-    for event_id, group in groups.items():
+
+    def _reject(indexes: list[int], reason: str) -> None:
+        for index in indexes:
+            rejected[index] = reason
+
+    for event_id, indexes in groups.items():
+        # 归属一致性先判，且逐项判：它与顶层归属是否合法无关。
+        for index in indexes:
+            error = _declared_levy_outcome_attribution_error(items[index][1], event_id)
+            if error:
+                rejected[index] = error
+        pending = [index for index in indexes if index not in rejected]
+        if not pending or not event_id:
+            # 无归属的效果项不经事件通道；除归属一致性外照旧放行。
+            continue
+        group = [items[index][1] for index in pending]
         event = content.event_by_id.get(event_id)
         if event is None:
-            rejected[event_id] = f"效果归属的事件不存在：{event_id}"
+            _reject(pending, f"效果归属的事件不存在：{event_id}")
             continue
         if _is_fiscal_levy_petition_event(event):
             # #1891：请饷／议停请旨的结局与战略事件同一通道，只是资格门不同——
             # 须**本段已答**（该回合批红页上有该事件已答的请旨行），没答过的没有
             # 御批可译：呈过但未答、或上一段的旧留中行，都不构成本段授权。
             if db.event_terminal_state(event_id):
-                rejected[event_id] = f"饷率事件已裁定，不能再落结局：{event_id}"
+                _reject(pending, f"饷率事件已裁定，不能再落结局：{event_id}")
                 continue
             if event_id not in _fiscal_levy_answered_event_ids(db, int(state.turn)):
-                rejected[event_id] = f"饷率事件本段未答，无御批可译：{event_id}"
+                _reject(pending, f"饷率事件本段未答，无御批可译：{event_id}")
                 continue
-            outcome = {}
+            outcome: Dict[str, object] = {}
             for item in group:
                 outcome.update(item.get("事件结局") or {})
             label, error = _fiscal_levy_declared_outcome_label_or_error(
                 db, state, event, outcome,
             )
             if error:
-                rejected[event_id] = error
+                _reject(pending, error)
             continue
         if not _is_strategic_foreign_node_event(event):
-            rejected[event_id] = f"效果归属的战略事件不存在：{event_id}"
+            _reject(pending, f"效果归属的战略事件不存在：{event_id}")
             continue
         if event_id not in candidates or db.event_terminal_state(event_id) or event.auto_trigger:
-            rejected[event_id] = f"战略事件当前不能触发：{event_id}"
+            _reject(pending, f"战略事件当前不能触发：{event_id}")
             continue
         if not any(
             isinstance(issue, dict)
@@ -4605,14 +4652,14 @@ def _preflight_declared_event_groups(
             and str(issue.get("id") or issue.get("origin_ref") or "").strip() == event_id
             for item in group for issue in (item.get("new_issues") or [])
         ):
-            rejected[event_id] = f"战略事件缺 event_pool 声明：{event_id}"
+            _reject(pending, f"战略事件缺 event_pool 声明：{event_id}")
             continue
         outcome = {}
         for item in group:
             outcome.update(item.get("事件结局") or {})
         label, error = _strategic_event_outcome_label_or_error(event_id, {"事件结局": outcome}, content)
         if error:
-            rejected[event_id] = error
+            _reject(pending, error)
             continue
         region_items = [(key, value) for item in group for key, value in (item.get("region_delta") or {}).items()]
         army_items = [(key, value) for item in group for key, value in (item.get("army_delta") or {}).items()]
@@ -4622,10 +4669,10 @@ def _preflight_declared_event_groups(
         )
         new_armies = [army for item in group for army in (item.get("new_armies") or [])]
         if _pending_person_changes_block_event_gate(event, people, db, content=content):
-            rejected[event_id] = f"战略事件被同项人物变更阻断：{event_id}"
+            _reject(pending, f"战略事件被同项人物变更阻断：{event_id}")
             continue
         if not (region_items or army_items or power_items or people or new_armies):
-            rejected[event_id] = f"战略事件缺世界状态主账结果：{event_id}"
+            _reject(pending, f"战略事件缺世界状态主账结果：{event_id}")
             continue
         error = _strategic_event_result_preflight_error(
             db, state, event_id, event.title, label, dict(region_items), dict(army_items),
@@ -4634,7 +4681,7 @@ def _preflight_declared_event_groups(
             ordered_power_items=power_items,
         )
         if error:
-            rejected[event_id] = error
+            _reject(pending, error)
     return rejected
 
 

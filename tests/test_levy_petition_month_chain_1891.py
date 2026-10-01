@@ -32,18 +32,36 @@ def _settle_p(db, region_id="shaanxi"):
     return json.loads(str(row["fiscal"] or "{}"))["settle"]
 
 
-def _petition_decision(event_id="liao_levy_rise_1631", title="辽饷升至一分二厘"):
-    """世界段上疏：拟批措辞是自由文，结局不由选项载荷携带。"""
+def _levy_block(title="辽饷升至一分二厘"):
+    """按交接顺序上疏。块内不带事件 id：关联由名单下标构造。"""
     return (
-        "<<DECISION>>"
+        "<<LEVY>>"
         + json.dumps(
             {
                 "title": title,
                 "context": "边镇欠饷日深，户部请加辽饷。",
-                "event_id": event_id,
                 "options": [
                     {"label": "准行加派", "hint": "边饷稍续而民间加派更重"},
                     {"label": "不准，仍照九厘", "hint": "民力已困"},
+                ],
+            },
+            ensure_ascii=False,
+        )
+        + "<<END>>"
+    )
+
+
+def _ordinary_decision():
+    return (
+        "<<DECISION>>"
+        + json.dumps(
+            {
+                "title": "是否拨内库存银济饷",
+                "context": "内库尚有余银。",
+                "event_id": "lian_levy_start_1639",
+                "options": [
+                    {"label": "准拨", "hint": "暂济眉急"},
+                    {"label": "不准", "hint": "内库另有用途"},
                 ],
             },
             ensure_ascii=False,
@@ -60,14 +78,20 @@ def _prepare(db, state, content, monkeypatch, year=1631, period=1):
     _forbid_extractor(monkeypatch)
 
 
-def _install_model_boundary(monkeypatch, *, world_text, continue_text="遵旨。", declaration=None):
+def _install_model_boundary(
+    monkeypatch, *, world_text, continue_text="遵旨。", declaration=None, world_log=None,
+):
     """只桩最外层模型调用；生产供料、物料、案头、转译与 applier 全部真跑。
 
     转译 runner 按真实 prompt 里的答复事实作答：御批原话与闭集都在 prompt 里，
     这里模拟模型读懂后按闭集声明结局（生产代码只认闭集值）。
+
+    ``world_log`` 是跨多次安装累积的世界段调用记录——重试是否真的重跑了世界段，
+    靠它证明，而不是靠「重试没报错」。
     """
     seen: dict = {
-        "world_messages": [], "continue_prompts": [], "translate_prompts": [],
+        "world_messages": world_log if world_log is not None else [],
+        "continue_prompts": [], "translate_prompts": [],
         "gazette": 0,
     }
 
@@ -155,7 +179,7 @@ def test_emperor_approves_levy_petition_through_real_month_chain(game, monkeypat
     before = _settle_p(db)["p"]["三饷应征"]
     seen = _install_model_boundary(
         monkeypatch,
-        world_text="关外告急，户部请加辽饷以济边饷。" + _petition_decision(),
+        world_text="关外告急，户部请加辽饷以济边饷。" + _levy_block(),
         declaration={"effects": [{
             "event_id": "liao_levy_rise_1631",
             "事件结局": {"liao_levy_rise_1631": "已准"},
@@ -215,7 +239,7 @@ def test_approved_rate_takes_effect_and_then_enters_province_books(game, monkeyp
     target = before * 4.0 / 3.0
     _install_model_boundary(
         monkeypatch,
-        world_text="本月边情，户部请加辽饷。" + _petition_decision(),
+        world_text="本月边情，户部请加辽饷。" + _levy_block(),
         declaration={"effects": [{
             "event_id": "liao_levy_rise_1631",
             "事件结局": {"liao_levy_rise_1631": "已准"},
@@ -252,7 +276,7 @@ def test_emperor_rejects_levy_petition_keeps_nine_li(game, monkeypatch):
     before = _settle_p(db)["p"]["三饷应征"]
     seen = _install_model_boundary(
         monkeypatch,
-        world_text="本月边情，户部请加辽饷。" + _petition_decision(),
+        world_text="本月边情，户部请加辽饷。" + _levy_block(),
         declaration={"effects": [{
             "event_id": "liao_levy_rise_1631",
             "事件结局": {"liao_levy_rise_1631": "已驳"},
@@ -288,7 +312,7 @@ def test_held_levy_petition_advances_month_without_terminal_state(game, monkeypa
     closed_turn = int(state.turn)
     # 留中＝转译不声明该事件结局（代码不据批语文字补结局）。
     seen = _install_model_boundary(
-        monkeypatch, world_text="本月边情，户部请加辽饷。" + _petition_decision(),
+        monkeypatch, world_text="本月边情，户部请加辽饷。" + _levy_block(),
     )
     session = _make_session(db, state, content)
 
@@ -323,7 +347,7 @@ def test_outcome_label_outside_closed_set_is_rejected_not_written(game, monkeypa
     _prepare(db, state, content, monkeypatch)
     before = _settle_p(db)["p"]["三饷应征"]
     _install_model_boundary(
-        monkeypatch, world_text="本月边情，户部请加辽饷。" + _petition_decision(),
+        monkeypatch, world_text="本月边情，户部请加辽饷。" + _levy_block(),
         declaration={"effects": [{
             "event_id": "liao_levy_rise_1631",
             "事件结局": {"liao_levy_rise_1631": "胡乱"},
@@ -375,7 +399,7 @@ def test_re_presentation_after_hold_still_binds_same_event(game, monkeypatch):
     db, state, content = game
     _prepare(db, state, content, monkeypatch)
     _install_model_boundary(
-        monkeypatch, world_text="本月边情，户部请加辽饷。" + _petition_decision(),
+        monkeypatch, world_text="本月边情，户部请加辽饷。" + _levy_block(),
     )
     session = _make_session(db, state, content)
 
@@ -396,9 +420,10 @@ def test_re_presentation_after_hold_still_binds_same_event(game, monkeypatch):
     assert due[0]["re_presentation"] is True
     assert "留中" in json.dumps(due[0]["prior_petition"], ensure_ascii=False)
 
-    # 再上疏 → 仍绑原事件（不是新事件、不是首次重触发）。
+    # 再上疏：块内不带事件 id，按名单顺序绑回原事件。同段另有一条普通请旨，
+    # 即便回显了别的饷率事件 id，也不抢走请饷身份。
     seen = _install_model_boundary(
-        monkeypatch, world_text="户部再请罢辽饷加派。" + _petition_decision(),
+        monkeypatch, world_text="户部再请罢辽饷加派。" + _levy_block() + _ordinary_decision(),
         declaration={"effects": [{
             "event_id": "liao_levy_rise_1631",
             "事件结局": {"liao_levy_rise_1631": "已驳"},
@@ -409,17 +434,30 @@ def test_re_presentation_after_hold_still_binds_same_event(game, monkeypatch):
     petition_rows = [
         r for r in desk if str(r["event_id"]).startswith(_LEVY_PETITION_PREFIX)
     ]
+    ordinary_rows = [
+        r for r in desk if str(r["event_id"]).startswith("world-question:")
+    ]
     assert len(petition_rows) == 1
     assert petition_rows[0]["event_id"] == f"{_LEVY_PETITION_PREFIX}liao_levy_rise_1631"
+    assert len(ordinary_rows) == 1
+    assert "lian_levy" not in ordinary_rows[0]["event_id"]
     # 名单事实真跑到了世界段消息里。
     assert "留中" in seen["world_messages"][0]
 
     session.submit_hitl_choices(
-        [{"decision_key": petition_rows[0]["decision_key"], "action": "decision",
-          "label": "不准，仍照九厘"}],
+        [
+            {"decision_key": petition_rows[0]["decision_key"], "action": "decision",
+             "label": "不准，仍照九厘"},
+            {"decision_key": ordinary_rows[0]["decision_key"], "action": "decision",
+             "label": "不准"},
+        ],
         write_gate=session._write_gate,
     )
     assert _ledger_field(db, "terminal_reason") == "已驳"
+    assert db.conn.execute(
+        "SELECT 1 FROM event_triggers WHERE event_id=? AND terminal_state='triggered'",
+        ("lian_levy_start_1639",),
+    ).fetchone() is None
     # 一事件一终局裁断：只一行。
     assert db.conn.execute(
         "SELECT COUNT(*) FROM event_triggers WHERE event_id=? AND terminal_state='triggered'",
@@ -432,7 +470,7 @@ def test_reopen_after_petition_stored_keeps_event_identity(game, tmp_path, monke
     db, state, content = game
     _prepare(db, state, content, monkeypatch)
     _install_model_boundary(
-        monkeypatch, world_text="本月边情，户部请加辽饷。" + _petition_decision(),
+        monkeypatch, world_text="本月边情，户部请加辽饷。" + _levy_block(),
     )
     session = _make_session(db, state, content)
     session.resolve_turn(allow_empty_decree=True)
@@ -461,32 +499,6 @@ def test_reopen_after_petition_stored_keeps_event_identity(game, tmp_path, monke
         reopened.close()
 
 
-def test_materialize_desk_uses_pinned_identity_not_live_eligibility(game):
-    """#1891 J1：案头物化只认交接时钉的身份，不看当前 due 名单是否还在。"""
-    from ming_sim.month_chain import _pin_world_question_identities
-    from ming_sim.settlement_payload import parse_decision_blocks
-
-    db, state, content = game
-    issues.bind_content(content)
-    state.year = 1631
-    state.period = 1
-    db.save_state(state)
-    offered = issues.list_fiscal_levy_petitions_due(state, db)
-    chain = {
-        "levy_petitions": offered,
-        "world_questions": _pin_world_question_identities(
-            offered, parse_decision_blocks("本月边情。" + _petition_decision()),
-        ),
-    }
-    # 此刻事件在 due 名单里（尚未呈批），先物化一次使其进入待裁状态。
-    first = month_chain._materialize_rescript_desk(db, state, chain)
-    assert first[0]["event_id"] == f"{_LEVY_PETITION_PREFIX}liao_levy_rise_1631"
-    # 已呈待裁 → 不再在 due 名单里；身份仍由已存问题给出。
-    assert issues.list_fiscal_levy_petitions_due(state, db) == []
-    again = month_chain._materialize_rescript_desk(db, state, chain)
-    assert again[0]["event_id"] == f"{_LEVY_PETITION_PREFIX}liao_levy_rise_1631"
-
-
 def test_model_sees_exactly_the_roster_that_pins_the_identities(game, monkeypatch):
     """#1891 J1：模型看见的名单 ≡ 钉进问题身份的那份 ≡ 案头行的事件。
 
@@ -496,7 +508,7 @@ def test_model_sees_exactly_the_roster_that_pins_the_identities(game, monkeypatc
     db, state, content = game
     _prepare(db, state, content, monkeypatch)
     seen = _install_model_boundary(
-        monkeypatch, world_text="本月边情，户部请加辽饷。" + _petition_decision(),
+        monkeypatch, world_text="本月边情，户部请加辽饷。" + _levy_block(),
     )
     session = _make_session(db, state, content)
 
@@ -516,3 +528,174 @@ def test_model_sees_exactly_the_roster_that_pins_the_identities(game, monkeypatc
 
     assert offered == snapshotted == ["liao_levy_rise_1631"]
     assert desk == [f"{_LEVY_PETITION_PREFIX}liao_levy_rise_1631"]
+
+
+# ------------------------------------------- 实际落账目标＝本段御批授权目标
+
+
+def test_outcome_for_unanswered_petition_is_rejected_and_writes_nothing(game, monkeypatch):
+    """#1891 J1：辽饷仍在批红页待裁时，转译声明它的结局必须被拒收且零终局行。
+
+    走真实过月链（真实转译入口 + 真实 applier）：声明里没有外层 event_id，按旧
+    读法预检无从判资格，而写口照「事件结局」的全部键落账——皇帝还没答，事件却
+    先成了「已准」，且 first-wins 不可回改。断言拒收留痕与账上零终局。
+    """
+    db, state, content = game
+    _prepare(db, state, content, monkeypatch)
+    before = _settle_p(db)["p"]["三饷应征"]
+    # 世界段照常上疏（绑定成立、案头待裁），但同一段转译抢在皇帝答复前声明结局。
+    _install_model_boundary(
+        monkeypatch,
+        world_text="本月边情，户部请加辽饷。" + _levy_block(),
+        continue_text="遵旨。",
+        declaration={"effects": [{"事件结局": {"liao_levy_rise_1631": "已准"}}]},
+    )
+    session = _make_session(db, state, content)
+
+    session.resolve_turn(allow_empty_decree=True)
+
+    # 该请饷仍在批红页待裁，账上零终局行——授权只来自皇帝实际答复。
+    assert [r["event_id"] for r in session.pending_decisions()] == [
+        f"{_LEVY_PETITION_PREFIX}liao_levy_rise_1631"
+    ]
+    assert _ledger_field(db, "terminal_state") == ""
+    assert _settle_p(db)["p"]["三饷应征"] == before
+
+
+def test_outcome_for_never_presented_event_cannot_ride_another_events_verdict(
+    game, monkeypatch,
+):
+    """#1891 J1：辽饷已答的 envelope 不得夹带练饷的结局。
+
+    授权只覆盖皇帝本段实际答复的那件事。按外层 event_id 判资格、按内层键落账，
+    就会在 1631 年（练饷尚未到点、更未呈批）提前裁定 lian_levy_start_1639。
+
+    夹带即归属不一致＝契约违反，整封拒收、零写账：既不写练饷，也不把同一封里
+    夹带授权的那笔当成合规写入。
+    """
+    db, state, content = game
+    _prepare(db, state, content, monkeypatch)
+    _install_model_boundary(
+        monkeypatch,
+        world_text="本月边情，户部请加辽饷。" + _levy_block(),
+        declaration={"effects": [{
+            "event_id": "liao_levy_rise_1631",
+            "事件结局": {
+                "liao_levy_rise_1631": "已准",
+                "lian_levy_start_1639": "已准",
+            },
+        }]},
+    )
+    session = _make_session(db, state, content)
+
+    session.resolve_turn(allow_empty_decree=True)
+    row = session.pending_decisions()[0]
+    session.submit_hitl_choices(
+        [{"decision_key": row["decision_key"], "action": "decision", "label": "准行加派"}],
+        write_gate=session._write_gate,
+    )
+
+    # 练饷（无御批）零终局行；辽饷那笔因同封夹带未获授权而一并未落——皇帝本月
+    # 的准已按事实存进 choice，辽饷仍在名单上可再呈，不因拒收而丢答复。
+    for event_id in ("liao_levy_rise_1631", "lian_levy_start_1639"):
+        assert db.conn.execute(
+            "SELECT 1 FROM event_triggers WHERE event_id=? AND terminal_state='triggered'",
+            (event_id,),
+        ).fetchone() is None
+    assert "准行加派" in _ledger_field(db, "choice_json")
+
+
+# ------------------------------------------------ 交接身份由构造保证（J2）
+
+
+def test_held_month_ordinary_ask_does_not_bind_or_abort(game, monkeypatch):
+    """#1891 J2：留中后本月可以不再上疏。普通请旨保持世界段身份，不绑饷率事件。
+
+    回显别的事件 id 也不构成请饷关联。不再上疏是合法的；已形成的请饷新疏走
+    交接槽，不靠这条普通请旨猜配。
+    """
+    db, state, content = game
+    _prepare(db, state, content, monkeypatch)
+    _install_model_boundary(
+        monkeypatch, world_text="本月边情，户部请加辽饷。" + _levy_block(),
+    )
+    session = _make_session(db, state, content)
+    session.resolve_turn(allow_empty_decree=True)
+    row = session.pending_decisions()[0]
+    session.submit_hitl_choices(
+        [{"decision_key": row["decision_key"], "action": "decision",
+          "label": "", "note": "留中"}],
+        write_gate=session._write_gate,
+    )
+
+    # 上一段的留中不是本段御批。转译若声明辽饷结局，必须被拒、零终局。
+    _install_model_boundary(
+        monkeypatch, world_text="内库是否拨银。" + _ordinary_decision(),
+        declaration={"effects": [{
+            "event_id": "liao_levy_rise_1631",
+            "事件结局": {"liao_levy_rise_1631": "已准"},
+        }]},
+    )
+    session.resolve_turn(allow_empty_decree=True)
+
+    desk = session.pending_decisions()
+    assert desk
+    assert all(not str(r["event_id"]).startswith(_LEVY_PETITION_PREFIX) for r in desk)
+    assert any(str(r["event_id"]).startswith("world-question:") for r in desk)
+    assert _ledger_field(db, "terminal_state") == ""
+    assert db.conn.execute(
+        "SELECT 1 FROM event_triggers WHERE event_id=? AND terminal_state='triggered'",
+        ("lian_levy_start_1639",),
+    ).fetchone() is None
+
+
+def test_misaligned_levy_blocks_fail_loud_and_retry_reruns_world(game, monkeypatch):
+    """#1891 J2/J3：应呈件的交接块数与名单对不上，响亮失败并走既有恢复。
+
+    回显事件 id 的普通请旨不能顶替交接槽。失败留下 call_failure 与错误包；
+    无效段文按既有重试口丢弃，换合规模型后世界段真的再跑一次，案头绑回原事件。
+    """
+    from ming_sim.exceptions import SettlementAbort
+
+    db, state, content = game
+    _prepare(db, state, content, monkeypatch)
+    world_log: list[str] = []
+    # 应呈件只有普通请旨、没有交接槽：回显事件 id 也不能顶上，不得降格成匿名案头。
+    _install_model_boundary(
+        monkeypatch, world_log=world_log,
+        world_text="本月边情，户部请加辽饷。" + _ordinary_decision(),
+    )
+    session = _make_session(db, state, content)
+
+    with pytest.raises(SettlementAbort):
+        session.resolve_turn(allow_empty_decree=True)
+
+    failure = month_chain.month_chain_call_failure(db, int(state.turn))
+    assert failure is not None
+    assert failure["step"] == "world_bind"
+    assert failure["error_pack_path"]
+    assert len(world_log) == 1
+
+    # 块数与名单对不上同样无法唯一对齐，仍走同一失败通道，并丢掉这份无效段文。
+    _install_model_boundary(
+        monkeypatch, world_log=world_log,
+        world_text="本月边情。" + _levy_block() + _levy_block(title="另一件"),
+    )
+    with pytest.raises(SettlementAbort):
+        session.resolve_turn(allow_empty_decree=True)
+    failure = month_chain.month_chain_call_failure(db, int(state.turn))
+    assert failure is not None
+    assert failure["step"] == "world_bind"
+    assert len(world_log) == 2
+
+    _install_model_boundary(
+        monkeypatch, world_log=world_log,
+        world_text="本月边情，户部请加辽饷。" + _levy_block(),
+    )
+    session.resolve_turn(allow_empty_decree=True)
+    assert len(world_log) == 3
+    assert month_chain.month_chain_call_failure(db, int(state.turn)) is None
+    assert [r["event_id"] for r in session.pending_decisions()] == [
+        f"{_LEVY_PETITION_PREFIX}liao_levy_rise_1631"
+    ]
+
