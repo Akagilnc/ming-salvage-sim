@@ -260,16 +260,21 @@ def test_secret_order_materials_keep_full_content_and_fail_loud_on_db_error(
 ):
     db, state, content = game
     character = _active_minister(db, content)
+    original = (
+        "逐项核验太仓出纳原簿，先将各月领银的关防、经手人及兑付日期抄录存案。\r\n"
+        "\r\n边镇报领之数与户部拨发之数分列，不因账面相合便认作实付；"
+        "遇有缺页，将缺页所在月份另记，携原簿来奏，不得据传闻补写。\r末页仍留原有空白。  "
+    )
     create_test_secret_order(
-        db, state, character.name, "长密令", "密令长正文", [], deadline_months=6,
+        db, state, character.name, "长密令", original, [], deadline_months=6,
     )
     prepared = prepare_character_materials(
         db, state, character, dest_root=tmp_path / "secret-ok",
     )
     secret_path = next(p for p in list_materials(prepared.root) if p.startswith("密令/"))
-    assert read_material(prepared.root, secret_path)
-    # 只钉载体存在与 DB 失败即抛（大理寺 01a0f1f4 裁定）：自由正文不作行集
-    # 成员关系推断——splitlines 按文本行边界切，一次合法换行即假红。
+    # Independent input must survive the real API read, without constraining framing.
+    tools = {tool.__name__: tool for tool in material_tools(prepared.root)}
+    assert original in tools["read_material"](secret_path)
 
     def boom(_name):
         raise RuntimeError("secret-order-db-boom")

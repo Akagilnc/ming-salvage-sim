@@ -1,6 +1,7 @@
 """#489 角色见闻：职位裁切、公开事件与参与留痕。"""
 
 import json
+import sqlite3
 
 import pytest
 from ming_sim.knowledge import build_character_knowledge
@@ -1353,7 +1354,34 @@ def test_army_truth_is_exactly_scoped_to_person_command(game):
 
 
 
-def test_household_secret_ledger_keeps_amount_but_hides_case_semantics(game, tmp_path):
+@pytest.fixture
+def household_ledger_reads(game):
+    """Observe real SQLite field consumption without replacing rows or rendering."""
+    db, _, _ = game
+    reads = set()
+    original_factory = db.conn.row_factory
+
+    class LedgerRow(sqlite3.Row):
+        def __getitem__(self, key):
+            reads.add((super().__getitem__("delta"), key))
+            return super().__getitem__(key)
+
+    def factory(cursor, values):
+        fields = {column[0] for column in cursor.description}
+        if {"delta", "balance_after", "excluded_targets"} <= fields:
+            return LedgerRow(cursor, values)
+        return original_factory(cursor, values)
+
+    db.conn.row_factory = factory
+    try:
+        yield reads
+    finally:
+        db.conn.row_factory = original_factory
+
+
+def test_household_secret_ledger_keeps_amount_but_hides_case_semantics(
+    game, tmp_path, household_ledger_reads,
+):
     db, state, content = game
     clerk = next(c for c in content.characters.values() if c.office_type == "户部")
     order_id = create_test_secret_order(
@@ -1367,6 +1395,8 @@ def test_household_secret_ledger_keeps_amount_but_hides_case_semantics(game, tmp
     )
     world = db.get_character_knowledge(state, clerk.name)["world"]
     assert world.get("treasury")
+    assert {(-1, "delta"), (-1, "balance_after")} <= household_ledger_reads
+    assert {(-1, "reason"), (-1, "category")}.isdisjoint(household_ledger_reads)
     row = db.conn.execute(
         "SELECT excluded_names FROM secret_orders WHERE id=?", (order_id,),
     ).fetchone()
@@ -1379,6 +1409,7 @@ def test_household_secret_ledger_keeps_amount_but_hides_case_semantics(game, tmp
             p for p in list_materials(prepared.root) if p.endswith("/公事档案.txt")
         )
         assert read_material(prepared.root, archive_rel)
+        assert {(-1, "reason"), (-1, "category")}.isdisjoint(household_ledger_reads)
         assert int(dossier["id"]) not in _referenceable_dossier_ids(
             db, clerk.name, int(state.turn),
         )
@@ -1386,8 +1417,8 @@ def test_household_secret_ledger_keeps_amount_but_hides_case_semantics(game, tmp
         release_material_tree(prepared.root)
 
 
-def test_household_secret_ledger_hides_case_by_excluded_office(game):
-    """#1812：户部职署排挤落在 excluded_targets 与案卷可否引用上。"""
+def test_household_secret_ledger_hides_case_by_excluded_office(game, household_ledger_reads):
+    """#1812: current-office exclusion prevents real ledger case-field consumption."""
     db, state, content = game
     clerk = next(c for c in content.characters.values() if c.office_type == "户部")
     successor = next(
@@ -1410,6 +1441,8 @@ def test_household_secret_ledger_hides_case_by_excluded_office(game):
         "people": [], "offices": [clerk.office_type],
     }
     assert db.get_character_knowledge(state, clerk.name)["world"].get("treasury")
+    assert {(-2, "delta"), (-2, "balance_after")} <= household_ledger_reads
+    assert {(-2, "reason"), (-2, "category")}.isdisjoint(household_ledger_reads)
     assert int(dossier["id"]) not in _referenceable_dossier_ids(
         db, clerk.name, int(state.turn),
     )
@@ -1429,9 +1462,12 @@ def test_household_secret_ledger_hides_case_by_excluded_office(game):
     clerk.office, clerk.office_type = "闲住", "未仕"
     successor.office, successor.office_type = clerk_office, "户部"
     try:
+        household_ledger_reads.clear()
         assert db.get_character_knowledge(
             state, successor.name,
         )["world"].get("treasury")
+        assert {(-2, "delta"), (-2, "balance_after")} <= household_ledger_reads
+        assert {(-2, "reason"), (-2, "category")}.isdisjoint(household_ledger_reads)
         assert int(dossier["id"]) not in _referenceable_dossier_ids(
             db, successor.name, int(state.turn),
         )
