@@ -110,18 +110,6 @@ def _record_monthly(db, state, *, progress=None):
     db.conn.commit()
 
 
-def test_engine_arrival_band_strictly_beats_bare_when_escorted():
-    """既有折损范围：有护界严于无护，三十两面额中位差七两。逐路落账由护送测试走真实入口。"""
-    from ming_sim.db import grant_arrival_bounds
-
-    bare_lo, bare_hi = grant_arrival_bounds(ORDERED, escorted=False)
-    escort_lo, escort_hi = grant_arrival_bounds(ORDERED, escorted=True)
-    assert bare_hi < escort_lo
-    assert (bare_lo, bare_hi) == (15, 18)
-    assert (escort_lo, escort_hi) == (22, 25)
-    assert (escort_lo + escort_hi) // 2 - (bare_lo + bare_hi) // 2 == 7
-
-
 def test_escort_progress_stays_on_the_secret_order_and_survives_restore(game):
     """护行密奏挂密令案卷，不写到拨帑案卷上；重开后原文仍在。"""
     db, state, content = game
@@ -186,26 +174,6 @@ def test_close_merges_recon_note_without_second_treasury_debit(game):
     # 仍无二次扣库
     assert int(state.metrics["内库"]) == after_grant_inner
     assert db.list_economy_moves_for_dossier(gid) == moves_before
-
-
-def test_engine_gives_band_midpoint_with_no_proposal_port(game):
-    """沿途损耗归引擎：0054 提案口确已退役，逐路仍机械落中位（供 S10 结案读）。"""
-    from ming_sim.db import grant_arrival_bounds
-
-    db, state, content = game
-    bare = _in_transit_grant(db, state)
-    _record_monthly(db, state)
-    row = db.list_dossier_reconciliations(bare)[-1]
-    lo, hi = grant_arrival_bounds(ORDERED, escorted=False)
-    assert row["arrived_amount"] == (lo + hi) // 2
-    # 提案口确已退役：声明里给实抵提案无人消费，行仍由引擎中位落账
-    issue_engine.apply_score_extraction(
-        db, state,
-        {"dossier_reconciliations": [{"dossier_id": bare, "arrived_amount": 99}]},
-        content=content,
-    )
-    assert _recon_rejections(db) == []
-    assert db.list_dossier_reconciliations(bare)[-1]["arrived_amount"] == (lo + hi) // 2
 
 
 def test_failed_close_reconciles_only_when_the_silver_already_left(game):

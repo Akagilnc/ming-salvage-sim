@@ -167,7 +167,7 @@
 
 ### 5.2 关键实读发现：有 7 个键没有 apply_score_extraction 内的落库段
 
-`dossier_progress_reports`、`faction_denunciations`、`dossier_reconciliations`（decree.py:2389/2394/2398 在 settle 尾部机械落库）、`covert_exec_selections`（decree.py:2429 → covert_progress）、`world_advance`（纯 passthrough，issues.py:9085）、`emperor_fate`（`_resolve_victory` 9105 消费）、`事件结局`（战略 outcome 标签闸 4390/4449 消费）。**任何「从登记表派生 EMPTY_EXTRACTION」的方案，这 7 键必须以框架段/机械段条目登记，否则派生缩键、`sanitize_delta_shape` 会开始拒收合法键**——这是派生案的硬约束。
+`dossier_progress_reports`、`faction_denunciations`、`covert_exec_selections`（decree.py:2429 → covert_progress）、`world_advance`（纯 passthrough，issues.py:9085）、`emperor_fate`（`_resolve_victory` 9105 消费）、`事件结局`（战略 outcome 标签闸 4390/4449 消费）。当时实读还含 `dossier_reconciliations`（decree.py:2389/2394/2398）；**#1900 已把它从 `EMPTY_EXTRACTION` 与消费口删除，现役登记不得再把它登记回来**。**任何「从登记表派生 EMPTY_EXTRACTION」的方案，其余仍在形状里且无落库段的键必须以框架段/机械段条目登记，否则派生缩键、`sanitize_delta_shape` 会开始拒收合法键**——这是派生案的硬约束。
 
 ### 5.3 建议（择一）：登记表为唯一手写真源，三常量全部派生或消亡
 
