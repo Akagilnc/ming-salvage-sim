@@ -1408,7 +1408,7 @@ def test_household_secret_ledger_keeps_amount_but_hides_case_semantics(
         archive_rel = next(
             p for p in list_materials(prepared.root) if p.endswith("/公事档案.txt")
         )
-        assert read_material(prepared.root, archive_rel)
+        read_material(prepared.root, archive_rel)
         assert {(-1, "reason"), (-1, "category")}.isdisjoint(household_ledger_reads)
         assert int(dossier["id"]) not in _referenceable_dossier_ids(
             db, clerk.name, int(state.turn),

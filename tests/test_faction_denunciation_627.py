@@ -99,7 +99,6 @@ def _make_forked(db, state, dossier_id: int, *, token: str = "fork"):
 
 def test_world_materials_exclude_secret_fork_from_gazette(game, tmp_path):
     """公开材料只列入有奏报且与旨外或执行格分叉的案；密令案与未分叉案不入。"""
-    import json
     from ming_sim.materials import prepare_world_materials, read_material
 
     db, state, content = game
@@ -151,7 +150,8 @@ def test_world_materials_exclude_secret_fork_from_gazette(game, tmp_path):
         db, state, dest_root=tmp_path / "gazette",
         exclude_secret_order_dossiers=True,
     )
-    facts = json.loads(read_material(prepared.root, "盘面/派系检举事实.txt"))
+    read_material(prepared.root, "盘面/派系检举事实.txt")
+    facts = prepared.world_facts["denunciation"]
     assert {item["dossier_id"] for item in facts["forked_dossiers"]} == {
         beyond_executing,
         report_transformed,

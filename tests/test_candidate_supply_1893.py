@@ -63,7 +63,8 @@ def _drop_event(content, ev):
 
 
 def _read_candidates(prepared):
-    return json.loads(read_material(prepared.root, CANDIDATE_REL))
+    read_material(prepared.root, CANDIDATE_REL)
+    return prepared.world_facts["candidates"]
 
 
 # --- 供料侧：合格候选可达，资格门不合格 / 已有终态者不可达 ---
@@ -105,7 +106,8 @@ def test_ineligible_and_terminal_events_stay_out_of_supply(game, tmp_path, conte
         ids = {item["id"] for item in _read_candidates(prepared)["events"]}
         assert later.id not in ids
         assert avoided.id not in ids
-        terminals = json.loads(read_material(prepared.root, "盘面/事件终态.txt"))
+        read_material(prepared.root, "盘面/事件终态.txt")
+        terminals = prepared.world_facts["event_terminals"]
         assert terminals[avoided.id] == {
             "terminal_state": "avoided", "terminal_reason": "探针：前提已被化解",
         }
@@ -114,11 +116,12 @@ def test_ineligible_and_terminal_events_stay_out_of_supply(game, tmp_path, conte
         # 落定新的终态后重新备目录；旧调用快照不变，无候选仍可读取终态。
         db.mark_event_obsolete(state, later.id, reason="前提永久消失")
         refreshed = prepare_world_materials(db, state, dest_root=tmp_path / "m2")
-        updated = json.loads(read_material(refreshed.root, "盘面/事件终态.txt"))
+        read_material(refreshed.root, "盘面/事件终态.txt")
+        updated = refreshed.world_facts["event_terminals"]
         assert updated[later.id] == {
             "terminal_state": "obsolete", "terminal_reason": "前提永久消失",
         }
-        assert json.loads(read_material(prepared.root, "盘面/事件终态.txt")) == terminals
+        assert later.id not in prepared.world_facts["event_terminals"]
     finally:
         _drop_event(content, later)
         _drop_event(content, avoided)
@@ -175,7 +178,7 @@ def test_surge_candidate_offered_by_world_segment_is_declared_and_lands(game, tm
     prepared = prepare_world_materials(db, state, dest_root=tmp_path / "world")
     world_surge = {
         item["id"]: item
-        for item in json.loads(read_material(prepared.root, CANDIDATE_REL))["impeachment_surge"]
+        for item in _read_candidates(prepared)["impeachment_surge"]
         if int(item["dossier_id"]) == secret_did
     }
     assert world_surge, "密令案卷的弹劾潮候选未进世界段材料目录（供料侧断链）"

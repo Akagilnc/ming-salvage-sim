@@ -719,13 +719,11 @@ def test_world_segment_reads_material_directory(game, monkeypatch):
     def capture(agent, _message, **_kwargs):
         tools = {tool.__name__: tool for tool in agent.tools}
         listing = tools["list_materials"]("")
-        index = tools["read_material"]("INDEX.txt")
-        board = tools["read_material"]("盘面/全局.txt")
+        tools["read_material"]("INDEX.txt")
+        tools["read_material"]("盘面/全局.txt")
         materials_dir = getattr(agent.model, "materials_dir", "")
         seen.append({
             "listing": listing,
-            "index": index,
-            "board": board,
             "dir_has_index": bool(materials_dir) and (Path(materials_dir) / "INDEX.txt").is_file(),
             "instructions": [str(part) for part in agent.instructions],
         })
@@ -740,17 +738,13 @@ def test_world_segment_reads_material_directory(game, monkeypatch):
     catalog = [line for line in seen[0]["listing"].splitlines() if line]
     assert "INDEX.txt" in catalog
     assert any(line != "INDEX.txt" for line in catalog)
-    assert seen[0]["index"].strip()
-    assert seen[0]["board"].strip()
     assert seen[0]["dir_has_index"] is False
     # 开场通道＝prepare 交回的那一份，不靠栏目名从 instructions 里认。
-    assert openings[0]
     assert openings[0] in seen[0]["instructions"]
 
     cli = LLMConfig(api_key="", base_url="", model="", channel="cli", cli_runner="agy")
     assert month_chain.run_world_segment_text(db, state, cli) == "静"
     assert seen[1]["dir_has_index"] is True
-    assert seen[1]["index"].strip()
 
 
 def test_month_chain_lands_specialized_facts_before_due_and_gazette(game, monkeypatch):

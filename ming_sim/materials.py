@@ -46,6 +46,7 @@ class PreparedMaterials:
     root: Path
     opening: str
     index_lines: tuple[str, ...]
+    world_facts: Mapping[str, Any] | None = None
 
 
 def identity_material_rel(name: object) -> str:
@@ -1231,51 +1232,6 @@ def _write_gazette_index(
     return index
 
 
-def _write_world_textual_fact_files(
-    tmp: Path, db: Any, include_fact: Any = None,
-) -> list[str]:
-    """World directory: character/army/region textual facts once from store.
-
-    affair facts already ride 事务/*/当前情况.txt — do not mint a second carrier.
-    """
-    store = getattr(db, "textual_facts", None)
-    if store is None or not hasattr(db, "conn"):
-        return []
-    rows = db.conn.execute(
-        "SELECT DISTINCT subject_kind, subject_id FROM textual_facts "
-        "WHERE subject_kind IN ('character', 'army', 'region') "
-        "ORDER BY subject_kind, subject_id"
-    ).fetchall()
-    index: list[str] = []
-    for row in rows:
-        kind = str(row["subject_kind"] or "").strip()
-        subject_id = str(row["subject_id"] or "").strip()
-        if not kind or not subject_id:
-            continue
-        facts = store.readable_materials(subject_kind=kind, subject_id=subject_id)
-        body = "\n".join(
-            raw for fact in facts
-            if _keep_fact(fact, include_fact) and (raw := str(fact.body or "")).strip()
-        )
-        if not body:
-            continue
-        label = subject_id
-        if kind == "region" and hasattr(db, "region_rows"):
-            for region in db.region_rows():
-                if str(region["id"] or "") == subject_id:
-                    label = str(region["name"] or subject_id)
-                    break
-        elif kind == "army" and hasattr(db, "army_rows"):
-            for army in db.army_rows():
-                if str(army["id"] or "") == subject_id:
-                    label = str(army["name"] or subject_id)
-                    break
-        rel = f"{_FACT_DIR}/{kind}-{_safe_segment(label)}.txt"
-        _write_text(tmp / rel, body)
-        index.append(rel)
-    return index
-
-
 # ── 过月推演者材料目录（#1834 / ADR 0153 / 0155 / 0157）──
 #
 # 推演者三层全看（实况 + 人物经历 + 公开说法），另有盘面（0155 读取形态段）。
@@ -1385,6 +1341,7 @@ def _world_board_text(
     db: Any, state: Any, *,
     ledger_origin_prefix_excluded: str = "",
     exclude_dossier_ids: Optional[set[int]] = None,
+    roster_text: str | None = None,
 ) -> str:
     """盘面全量：未按职位裁切的实况账本（0034 后出注记：仅人物按职位读衙门底账，
     推演者不受此限）。各段落直取账本读方法，不经任何奏报/邸报文本中转——满足
@@ -1392,6 +1349,7 @@ def _world_board_text(
     # limit=None：与 region_rows/army_rows/treasury_report 的既有「None=不截断」
     # 约定一致，真正的全量——不是拿一个更大的数顶替旧上限（#1834 大理寺 bounce）。
     sections = (
+        ("朝臣", roster_text if roster_text is not None else _world_roster_text(db, state)),
         ("国库", db.treasury_report(
             state, limit=None, exclude_origin_prefix=ledger_origin_prefix_excluded,
             exclude_dossier_ids=exclude_dossier_ids,
@@ -1463,7 +1421,7 @@ def _world_affair_lines(db: Any, include_fact: Any = None) -> list[tuple[str, st
 
 
 def _world_roster_names(db: Any) -> list[str]:
-    """全部人物经历真源：持久 characters 表，不以当前在朝名册为白名单
+    """全部人物经历与事实：持久人物表及文字事实历史对象，不限当前在朝名册。
 
     (#1834 大理寺 bounce：已离朝/下狱/致仕/死亡等不在当前朝臣名册的人物仍须
     可读——#1819 Resolution 决定 1「各人物经历……三层全可读」不按当前在朝
@@ -1473,18 +1431,26 @@ def _world_roster_names(db: Any) -> list[str]:
         return []
     return [
         str(row["name"] or "").strip()
-        for row in db.conn.execute("SELECT name FROM characters ORDER BY name").fetchall()
+        for row in db.conn.execute(
+            "SELECT name FROM characters UNION "
+            "SELECT subject_id AS name FROM textual_facts WHERE subject_kind='character' "
+            "ORDER BY name"
+        ).fetchall()
         if str(row["name"] or "").strip()
     ]
 
 
-def _world_subject_ids(db: Any, table: str) -> list[str]:
-    """`armies`/`regions` 全量 id（TEXT 主键），世界目录按对象枚举文字事实用。"""
+def _world_subject_ids(db: Any, table: str, subject_kind: str) -> list[str]:
+    """实体及历史文字事实对象的全量 id，不以现存实体过滤历史材料。"""
     if not hasattr(db, "conn"):
         return []
     return [
         str(row["id"] or "").strip()
-        for row in db.conn.execute(f"SELECT id FROM {table} ORDER BY id").fetchall()
+        for row in db.conn.execute(
+            f"SELECT id FROM {table} UNION "
+            "SELECT subject_id AS id FROM textual_facts WHERE subject_kind=? ORDER BY id",
+            (subject_kind,),
+        ).fetchall()
         if str(row["id"] or "").strip()
     ]
 
@@ -1573,6 +1539,25 @@ def _world_fiscal_levy_petitions(db: Any, state: Any) -> list:
     return items
 
 
+def _material_facts_text(value: Any, indent: str = "") -> str:
+    """Human material field lists, not a round-trippable object export.
+
+    Stored prose is copied intact; indentation describes only the field hierarchy.
+    Internal consumers use the prepare snapshot, never parse this presentation.
+    """
+    if isinstance(value, Mapping):
+        return "\n".join(
+            f"{indent}{key}：\n{_material_facts_text(item, indent + '  ')}"
+            for key, item in value.items()
+        ) or f"{indent}（无）"
+    if isinstance(value, (list, tuple)):
+        return "\n".join(
+            f"{indent}—\n{_material_facts_text(item, indent + '  ')}"
+            for item in value
+        ) or f"{indent}（无）"
+    return f"{indent}{value if value is not None else '（无）'}"
+
+
 def _write_candidate_event_files(tmp: Path, candidates: list) -> list[str]:
     index: list[str] = []
     index_rel = f"{_CANDIDATE_DIR}/INDEX.txt"
@@ -1590,7 +1575,7 @@ def _write_candidate_event_files(tmp: Path, candidates: list) -> list[str]:
             ("事件类型", item["event_type"]),
             ("事由", item["summary"]),
             ("相关", "、".join(item["interests"])),
-            ("前提门", json.dumps(item["trigger_gate"], ensure_ascii=False)),
+            ("前提门", "\n" + _material_facts_text(item["trigger_gate"])),
             ("可解条件", item["resolve_condition"]),
             ("崩坏条件", item["fail_condition"]),
             ("历史前情与结果", item["precondition"]),
@@ -1653,16 +1638,16 @@ def _write_world_tree(
     public_events: list,
     affair_lines: list[tuple[str, str, str, str]],
     board_text: str,
-    denunciation_facts: dict[str, object],
-    candidates: dict[str, list],
+    roster_text: str,
+    world_facts: Mapping[str, Any],
     include_fact: Any = None,
     include_event: Any = None,
     secret_turn_ids: set[int] | None = None,
 ) -> list[str]:
     from ming_sim.knowledge import build_character_knowledge
-    from ming_sim.issues import _event_terminal_records
 
     index: list[str] = []
+    candidates = world_facts["candidates"]
     textual_facts = getattr(db, "textual_facts", None)
 
     board_rel = f"{_BOARD_DIR}/全局.txt"
@@ -1670,20 +1655,20 @@ def _write_world_tree(
     index.append(board_rel)
 
     denunciation_rel = f"{_BOARD_DIR}/派系检举事实.txt"
-    _write_text(tmp / denunciation_rel, json.dumps(denunciation_facts, ensure_ascii=False))
+    _write_text(tmp / denunciation_rel, _material_facts_text(world_facts["denunciation"]))
     index.append(denunciation_rel)
 
     # #1893：人物事件与弹劾潮候选进同一份世界目录（硬门已在读侧判过），
     # 供同一次月末世界段里的模型自读挑选；不在此代选、不代发难。
-    _write_text(tmp / _CANDIDATE_REL, json.dumps(candidates, ensure_ascii=False))
+    _write_text(tmp / _CANDIDATE_REL, _material_facts_text(candidates))
     index.append(_CANDIDATE_REL)
 
     # 已落终态独立供阅，不回填候选、不从奏报或暂存声明推导。
     terminal_rel = f"{_BOARD_DIR}/事件终态.txt"
-    _write_text(tmp / terminal_rel, json.dumps(_event_terminal_records(db), ensure_ascii=False))
+    _write_text(tmp / terminal_rel, _material_facts_text(world_facts["event_terminals"]))
     index.append(terminal_rel)
 
-    _write_text(tmp / _COURT_ROSTER_REL, _world_roster_text(db, state))
+    _write_text(tmp / _COURT_ROSTER_REL, roster_text)
     index.append(_COURT_ROSTER_REL)
 
     for name in _world_roster_names(db):
@@ -1708,7 +1693,7 @@ def _write_world_tree(
         ))
         index.append(facts_rel)
 
-    for army_id in _world_subject_ids(db, "armies"):
+    for army_id in _world_subject_ids(db, "armies", "army"):
         rel = f"{_ARMY_DIR}/{army_id}/按月实况.txt"
         _write_text(tmp / rel, _textual_facts_text(
             textual_facts, subject_kind="army", subject_id=army_id,
@@ -1716,7 +1701,7 @@ def _write_world_tree(
         ))
         index.append(rel)
 
-    for region_id in _world_subject_ids(db, "regions"):
+    for region_id in _world_subject_ids(db, "regions", "region"):
         rel = f"{_REGION_DIR}/{region_id}/按月实况.txt"
         _write_text(tmp / rel, _textual_facts_text(
             textual_facts, subject_kind="region", subject_id=region_id,
@@ -1733,7 +1718,6 @@ def _write_world_tree(
 
     index.extend(_write_candidate_event_files(tmp, candidates["events"]))
     index.extend(_write_fiscal_levy_petition_files(tmp, db, state))
-    index.extend(_write_world_textual_fact_files(tmp, db, include_fact=include_fact))
     index.extend(_write_public_by_month(tmp, public_events))
     index.extend(_write_gazette_index(
         tmp,
@@ -2287,14 +2271,16 @@ def prepare_world_materials(
     公开说法、历月邸报按需自读（#1834）。写入（拒收/实况回目录、下月材料）不
     在本函数职责内——本函数只组装可读材料，不提供任何写入口。
 
-    `盘面/事件终态.txt` 是已落事件记录的 JSON 对象，按 event_id 索引，值含
-    terminal_state / terminal_reason；无记录为 {}，有终态的事件不回填候选。
-    人物候选的逐件材料与结构化候选文件共用本次准备的同一份资格快照。
+    目录事实文件为人读字段清单，不承担解析契约。内部结构化读口
+    `PreparedMaterials.world_facts` 留存本次候选、检举事实及终态快照；
+    终态按 event_id 索引，值含 terminal_state / terminal_reason，空记录为 {}。
+    有终态的事件不回填候选；逐件候选材料共用同一份资格快照。
 
     `public_feed=True` 只给公共供料方（公共邸报作者）：受显式排除的公开说法
     不进其目录（#1829 C1）。世界段、逐旨预推、整月密报是全量推演者，按
     ADR 0155 三层全看，不传该参数（#1829 F1）。"""
     from ming_sim.knowledge import build_character_knowledge
+    from ming_sim.issues import _event_terminal_records
 
     # public_events 的既有投影与具体 character_name 无关（build_character_knowledge
     # 里 public_events 恒取 `_character_knowledge_events("", ...)`）——借用同一投影，
@@ -2311,8 +2297,10 @@ def prepare_world_materials(
             fact for fact in dossier_facts
             if int(fact["id"]) not in secret_dossiers
         ]
+    roster_text = _world_roster_text(db, state)
     board_text = _world_board_text(
-        db, state, ledger_origin_prefix_excluded=ledger_origin_prefix_excluded,
+        db, state, roster_text=roster_text,
+        ledger_origin_prefix_excluded=ledger_origin_prefix_excluded,
         exclude_dossier_ids=secret_dossiers or None,
     )
     denunciation_facts = db.build_faction_denunciation_facts(
@@ -2320,13 +2308,18 @@ def prepare_world_materials(
     )
     # #1893：候选只在世界段起调时取一次，目录写入与 opening 共用同一份冻结结果。
     candidates = candidate_supply(db, state, exclude_dossier_ids=secret_dossiers or None)
+    world_facts = {
+        "candidates": candidates,
+        "denunciation": denunciation_facts,
+        "event_terminals": _event_terminal_records(db),
+    }
 
     dest, index = _publish_material_tree(
         dest_root,
         world_materials_root(db, state),
         lambda tmp: _write_world_tree(
             tmp, db, state, public_events, affair_lines, board_text,
-            denunciation_facts, candidates, include_fact, include_event,
+            roster_text, world_facts, include_fact, include_event,
             _secret_order_chat_turn_ids(db) if exclude_secret_order_audience else None,
         ),
     )
@@ -2336,4 +2329,6 @@ def prepare_world_materials(
         events=len(candidates["events"]),
         surges=len(candidates["impeachment_surge"]),
     )
-    return PreparedMaterials(root=dest, opening=opening, index_lines=tuple(index))
+    return PreparedMaterials(
+        root=dest, opening=opening, index_lines=tuple(index), world_facts=world_facts,
+    )

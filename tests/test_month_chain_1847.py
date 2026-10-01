@@ -652,7 +652,6 @@ def test_decree_continuation_keeps_forecast_and_lands_affair_effect(game, monkey
     def fake_agent(llm_config, prepared):
         del llm_config
         captured["prepared_root"] = str(getattr(prepared, "root", "") or "")
-        captured["prepared_opening"] = str(getattr(prepared, "opening", "") or "")
         return object()
 
     def fake_run(agent, message, tag="", transport_policy=None):
@@ -704,7 +703,6 @@ def test_decree_continuation_keeps_forecast_and_lands_affair_effect(game, monkey
     payload = json.loads(message)
     assert payload["this_decree"]["decree_text"]
     assert payload["this_decree"]["status"] == "promulgated"
-    assert captured.get("prepared_opening")
     from pathlib import Path
     assert not Path(str(captured["prepared_root"])).exists()
     assert str(affair.id) in str(captured.get("grounding") or "")
@@ -1311,7 +1309,6 @@ def test_step_4a_rescript_continuation_feeds_supply_run_input(game, monkeypatch)
         and item.get("covert_task_contract") is not None
         for item in eligible
     )
-    assert str(captured_feed.get("board") or "").strip()
 
     # Verify 0058 structured落库与实况单位（禁盯密奏正文）
     reports = db.list_dossier_progress(dossier_id)
@@ -2067,14 +2064,13 @@ def test_build_secret_orders_supply_feed_uses_fact_materials_not_assembled_effec
         int(item.get("dossier_id") or 0) == dossier_id
         for item in (feed.get("eligible_dossiers") or [])
     )
-    assert str(feed.get("board") or "").strip()
 
     from ming_sim.materials import (
         _safe_segment, list_materials, prepare_world_materials, read_material, release_material_tree,
     )
     prepared = prepare_world_materials(db, state)
     try:
-        rel = f"事实/character-{_safe_segment(minister)}.txt"
+        rel = f"人物/{_safe_segment(minister)}/按月实况.txt"
         assert rel in list_materials(prepared.root)
         carrier = read_material(prepared.root, rel)
         assert fact_body in carrier

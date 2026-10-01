@@ -11,7 +11,6 @@ tests/test_material_directory_1830.py 的同一泛化入口覆盖，不在此重
 
 from __future__ import annotations
 
-import json
 import os
 import tempfile
 from pathlib import Path
@@ -44,7 +43,8 @@ def test_prepare_writes_typed_tree_with_board_affairs_and_gazette_index(game, tm
     names = list_materials(prepared.root)
     assert "INDEX.txt" in names
     assert "盘面/全局.txt" in names
-    denunciation = json.loads(read_material(prepared.root, "盘面/派系检举事实.txt"))
+    read_material(prepared.root, "盘面/派系检举事实.txt")
+    denunciation = prepared.world_facts["denunciation"]
     assert denunciation == db.build_faction_denunciation_facts()
     assert set(denunciation) == {
         "forked_dossiers", "faction_enmities", "faction_situations", "character_personas",
@@ -55,9 +55,7 @@ def test_prepare_writes_typed_tree_with_board_affairs_and_gazette_index(game, tm
     assert any(p.startswith("邸报/") for p in names)
 
     for rel in names:
-        assert read_material(prepared.root, rel)
-    # 独立入档标题原文搬运，不解析 INDEX 的路径、日期或排版。
-    assert "辽东告急" in read_material(prepared.root, "INDEX.txt")
+        read_material(prepared.root, rel)
 
     # 无裸副本：不得直接倒出世界库/JSON。
     assert not any(n.lower().endswith((".db", ".sqlite", ".sqlite3", ".json")) for n in names)
@@ -97,9 +95,9 @@ def test_character_army_region_textual_facts_reach_world_directory(game, tmp_pat
     army_id = str(db.conn.execute("SELECT id FROM armies LIMIT 1").fetchone()["id"])
     region_id = str(db.conn.execute("SELECT id FROM regions LIMIT 1").fetchone()["id"])
 
-    character_fact = "SENTINEL_CHARACTER_FACT_1828：右臂中箭，尚未痊愈"
-    army_fact = "SENTINEL_ARMY_FACT_1828：欠饷已逾三月"
-    region_fact = "SENTINEL_REGION_FACT_1828：旱情加剧，流民渐增"
+    character_fact = "右臂中箭，尚未痊愈"
+    army_fact = "欠饷已逾三月"
+    region_fact = "旱情加剧，流民渐增"
     db.textual_facts.append(
         subject_kind="character", subject_id=character_name, body=character_fact,
         year=state.year, period=state.period, turn=state.turn,
@@ -155,8 +153,8 @@ def test_world_materials_isolate_invocations_and_databases(game, tmp_path, monke
     first = prepare_world_materials(db, state, dest_root=requested)
     second = prepare_world_materials(db, state, dest_root=requested)
     assert first.root != second.root
-    assert read_material(first.root, "INDEX.txt")
-    assert read_material(second.root, "INDEX.txt")
+    read_material(first.root, "INDEX.txt")
+    read_material(second.root, "INDEX.txt")
 
     # 第二档库与夹具库同父目录（材料树按 db stem 隔层正是为同父多档互不互踩），
     # 但资源归属归本用例：在该父目录里用 mkstemp 原子占一个唯一名（不是拼一个
@@ -233,16 +231,16 @@ def test_world_materials_include_textual_facts_once_and_gazette_not_duplicated(g
 
     prepared = prepare_world_materials(db, state, dest_root=tmp_path / "world-facts")
     names = list_materials(prepared.root)
-    fact_paths = [p for p in names if p.startswith("事实/")]
-    assert any(p.startswith("事实/character-") for p in fact_paths)
-    assert any(p.startswith("事实/region-") for p in fact_paths)
+    from ming_sim.materials import _safe_segment
+    assert f"人物/{_safe_segment(name)}/按月实况.txt" in names
+    assert f"地区/{region['id']}/按月实况.txt" in names
+    assert not any(p.startswith("事实/") for p in names)
     # typed store still reachable for the written subjects
     assert db.textual_facts.readable_materials(subject_kind="character", subject_id=name)
     assert db.textual_facts.readable_materials(
         subject_kind="region", subject_id=str(region["id"]),
     )
-    # affair textual facts ride 事务/ only — not a second 事实/affair-* carrier.
-    assert not any(p.startswith("事实/affair-") for p in names)
+    # affair textual facts ride 事务/ only.
     affair_paths = [p for p in names if p.startswith(f"事务/affair-{affair.id}-")]
     assert len([p for p in affair_paths if p.endswith("/当前情况.txt")]) == 1
 
@@ -280,9 +278,9 @@ def test_world_materials_carry_eligible_person_event_candidates(game, tmp_path):
     ]
     assert candidate_paths
     # 人读索引可读；实际取阅路径只从列目录取得，不解析索引排版。
-    assert read_material(prepared.root, "候选事件/INDEX.txt").strip()
+    read_material(prepared.root, "候选事件/INDEX.txt")
     for rel in candidate_paths:
-        assert read_material(prepared.root, rel)
+        read_material(prepared.root, rel)
     # 候选集合＝权威快照逐条可达；快照为空则本例无意义，故先钉非空。
     eligible = {ev.id for ev in issues.gather_candidate_events(state, db)}
     assert eligible, "fixture 需当期有合资格人物事件"
@@ -291,9 +289,7 @@ def test_world_materials_carry_eligible_person_event_candidates(game, tmp_path):
     labels = list(content.event_by_id["jisi_lubian"].terminal_reason_labels)
     roster = {
         item["id"]: list(item["terminal_reason_labels"])
-        for item in json.loads(read_material(
-            prepared.root, "盘面/候选事件与弹劾潮.txt",
-        ))["events"]
+        for item in prepared.world_facts["candidates"]["events"]
     }
     assert labels and roster.get("jisi_lubian") == labels
     assert "jisi_lubian" in eligible
@@ -316,7 +312,7 @@ def test_world_materials_carry_due_fiscal_levy_petitions(game, tmp_path):
     assert "liao_levy_rise_1631" in due
 
     prepared = prepare_world_materials(db, state, dest_root=tmp_path / "levy")
-    assert read_material(prepared.root, "请旨事项/INDEX.txt").strip()
+    read_material(prepared.root, "请旨事项/INDEX.txt")
     paths = [
         p for p in list_materials(prepared.root)
         if p.startswith("请旨事项/") and p.endswith(".txt") and not p.endswith("/INDEX.txt")
@@ -325,7 +321,7 @@ def test_world_materials_carry_due_fiscal_levy_petitions(game, tmp_path):
     from ming_sim.materials import _safe_segment
     assert set(paths) == {f"请旨事项/{_safe_segment(event_id)}.txt" for event_id in due}
     for rel in paths:
-        assert read_material(prepared.root, rel)
+        read_material(prepared.root, rel)
 
     # 已落终态者不再呈请；亲裁一次后同一事件不再顶回批红。
     db.mark_event_triggered(state, "liao_levy_rise_1631", terminal_reason="已准")

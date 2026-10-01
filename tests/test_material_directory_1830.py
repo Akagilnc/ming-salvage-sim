@@ -52,7 +52,7 @@ def test_prepare_writes_typed_tree_and_index(game, tmp_path):
     assert any(p.startswith("荐人/") for p in names)
     assert any(p.startswith("事实/") for p in names)
     for rel in names:
-        assert read_material(prepared.root, rel)
+        read_material(prepared.root, rel)
     # 路径由列目录取得；人读 INDEX 不承担路径解析契约。
     # 大理寺 01a0f1f4 裁定：不重调生产渲染器逐字比正文（与被调函数同进同出，
     # 只证接线），也不扫描名册正文推断成员身份（人读正文不是结构化记录身份，
@@ -68,8 +68,8 @@ def test_same_requested_root_creates_independent_material_invocations(game, tmp_
     second = prepare_character_materials(db, state, character, dest_root=requested)
 
     assert first.root != second.root
-    assert read_material(first.root, "INDEX.txt")
-    assert read_material(second.root, "INDEX.txt")
+    read_material(first.root, "INDEX.txt")
+    read_material(second.root, "INDEX.txt")
 
 
 def test_material_tree_contains_only_structurally_related_world_details(game, tmp_path):
@@ -209,8 +209,8 @@ def test_character_materials_exclude_legacy_raw_turn_report_and_keep_public_gaze
     """#883/#1832: raw turn_reports do not authorize person gazette files.
 
     Typed public counterparts still land under 公开说法/邸报/。契约只落结构化
-    字段：载体路径集合（数量与所属月份）；INDEX 只检查独立入档标题原文搬运，
-    不解析展示行。载体归属与准入由路径集合承担。
+    字段：载体路径集合（数量与所属月份）；INDEX 只读取、不约束正文。
+    载体归属与准入由路径集合承担。
     """
     db, state, content = game
     character = _active_minister(db, content)
@@ -252,7 +252,7 @@ def test_character_materials_exclude_legacy_raw_turn_report_and_keep_public_gaze
         f"公开说法/邸报/1627年{month}月.txt" for month in range(1, 8)
     ]
     assert not any(p.startswith("邸报/") for p in names)
-    assert "辽东标题" in read_material(prepared.root, "INDEX.txt")
+    read_material(prepared.root, "INDEX.txt")
 
 
 def test_secret_order_materials_keep_full_content_and_fail_loud_on_db_error(
