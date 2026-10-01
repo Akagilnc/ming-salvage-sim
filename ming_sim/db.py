@@ -3013,8 +3013,8 @@ class GameDB:
         # 已落账的复征白写。辽饷／田赋另有饷率通道按 seed 重算 settle.p，但它们的省份
         # 字段同样被罢征清零过，一并恢复才与罢征对称（`scale_tian_fu` 的三税残差口径
         # 依赖这些字段非零）。
-        # 省级实收按 seed 分布 ×（声明额度 / seed 定额）摊回。声明 0 即实收 0；
-        # 声明等于 seed 定额时写回各省 seed 原值。seed 定额缺失时不臆造。
+        # 省级实收按 round(seed 分布 × 声明额度 / seed 定额) 摊回。
+        # seed 定额缺失时不臆造。
         if budget_role == "dynamic" and stem in self._DYNAMIC_REGION_FIELD:
             self._restore_dynamic_region_field(stem, max(0, int(init_value)))
         if commit:
@@ -3025,8 +3025,9 @@ class GameDB:
         """按声明额度摊回 dynamic 税的省级实收（`create_fiscal_item` 的对称侧）。
 
         省字段是盐税／商税旁路的实收，目录 base 是系数。份额沿用 seed 各省分布：
-        `province = seed_province × declared_base / seed_base`。声明等于 seed 定额时
-        逐省写回 seed 原值。seed 本身为 0 的省份保持 0。seed 定额缺失或非正时不写。
+        `province = round(seed_province × declared_base / seed_base)`。声明等于
+        seed 定额时 round 回原值，声明 0 得 0。seed 本身为 0 的省份保持 0。
+        seed 定额缺失或非正时不写。
         """
         field = self._DYNAMIC_REGION_FIELD.get(stem)
         if field is None:
@@ -3041,12 +3042,7 @@ class GameDB:
             seed_value = int((region_def.fiscal or {}).get(field, 0) or 0) if region_def else 0
             if seed_value <= 0:
                 continue
-            if declared == seed_base:
-                target = seed_value
-            elif declared == 0:
-                target = 0
-            else:
-                target = max(0, round(seed_value * declared / seed_base))
+            target = max(0, round(seed_value * declared / seed_base))
             fiscal: dict = json.loads(str(row["fiscal"] or "{}"))
             if not isinstance(fiscal, dict):
                 continue
