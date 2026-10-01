@@ -400,14 +400,10 @@ def test_exact_levy_fact_stays_out_of_public_read_chain_and_free_report_enters_i
     assert free_body in public_read
 
 
-# ── legacy 万口径档：折算随存档单位换算，sub-万不可表达 ────────────────────────
-
 def _make_legacy_db(content, path: str) -> GameDB:
+    """只把财政引擎打回 legacy。人口仍按人记账。"""
     db = GameDB(path, content)
     db.seed_static_data()
-    db.conn.execute("UPDATE classes SET population = population / 10000")
-    db.conn.execute("UPDATE regions SET population = population / 10000")
-    db.conn.execute("DELETE FROM save_meta WHERE key='population_unit'")
     db.conn.execute("UPDATE fiscal_config SET value=0 WHERE key='__fiscal_engine'")
     db.conn.commit()
     return db
@@ -418,44 +414,6 @@ def legacy_game(content, tmp_path):
     db = _make_legacy_db(content, str(tmp_path / "legacy650.db"))
     state = db.load_state()
     yield db, state, content
-
-
-def test_unmarked_cutover_save_rejects_and_never_consumes_surcharge(game, monkeypatch):
-    """无人口单位标记的档不冒充 persons 池消费历史账。
-
-    契约：拒收 + 一个都不消费。拒收类别随当前 fiscal_engine 而定（__fiscal_engine
-    是建库 seed 产物，不再由打开旧档补写——#1889），故只断言「确有一条拒收」，
-    不锁死是哪一类；缺失引用那一支由 legacy_game 用例单独钉住。
-    """
-    db, state, content = game
-    db.conn.execute("DELETE FROM save_meta WHERE key='population_unit'")
-    fiscal = json.loads(db.conn.execute(
-        "SELECT fiscal FROM regions WHERE id='shaanxi'"
-    ).fetchone()[0])
-    fiscal["settle"].setdefault("_meta", {})["加派基线"] = 10.0
-    db.conn.execute("UPDATE regions SET fiscal=? WHERE id='shaanxi'",
-                    (json.dumps(fiscal, ensure_ascii=False),))
-    db.conn.commit()
-    path = db.path
-    db.close()
-    db = GameDB(path, content)
-    state = db.load_state()
-    farmer_before = _pop(db, "农民", "shaanxi")
-    displaced_before = _pop(db, "流民", "shaanxi")
-    before_turn = state.turn
-
-    applied = apply_score_extraction(db, state, {
-        "surcharge_decrees": [_decree(db, state, monthly_amount=10.0)],
-    }, content, None)
-    assert not applied["surcharge_decrees"]
-    assert len(applied["surcharge_decrees_rejections"]) == 1, applied["surcharge_decrees_rejections"]
-
-    from tests.test_due_review_621 import _settle_empty_month
-    _settle_empty_month(db, state, content, monkeypatch)
-
-    assert state.turn == before_turn + 1
-    assert _pop(db, "农民", "shaanxi") == farmer_before
-    assert _pop(db, "流民", "shaanxi") == displaced_before
 
 
 def test_legacy_fiscal_engine_rejects_surcharge_and_never_consumes_it(legacy_game, monkeypatch):

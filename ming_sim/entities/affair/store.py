@@ -7,7 +7,9 @@ from dataclasses import dataclass
 from typing import Any, Mapping
 
 from ming_sim.applier import connection_owns_transaction, sanitize_sqlite_text
+from ming_sim.entities.character import CharacterStore
 from ming_sim.entities.dossier import DossierStore
+from ming_sim.entities.issue import IssueStore
 from ming_sim.strict_types import strict_int
 
 _ATTACH_NEW = "new"
@@ -262,9 +264,15 @@ class AffairStore:
         """Unbound may bind once; same id is idempotent; a different id fails loud."""
         self.get(affair_id)
         want = int(affair_id)
-        # 案卷指针的读写都在案卷 store（ADR 0151/0154）：此表不经动态 SQL 写。
+        # 已有本表写口的，指针写进该写口。动态 SQL 只剩尚无 store 的边事件表。
         if table == "decree_dossiers":
             self.point_dossier(int(row_id), want)
+            return
+        if table == "characters":
+            self.point_character(str(row_id), want)
+            return
+        if table == "issues":
+            self.point_issue_row(int(row_id), want)
             return
         key_column = _POINTER_KEY_COLUMNS.get(table, "id")
         current = self._current_pointer(table, row_id)
@@ -294,6 +302,14 @@ class AffairStore:
         self.get(affair_id)
         self._dossiers().set_affair_id_if_unbound(int(dossier_id), int(affair_id))
 
+    def point_character(self, name: str, affair_id: int) -> None:
+        self.get(affair_id)
+        CharacterStore(self._conn).set_affair_id_if_unbound(str(name), int(affair_id))
+
+    def point_issue_row(self, issue_id: int, affair_id: int) -> None:
+        self.get(affair_id)
+        IssueStore(self._conn).set_affair_id_if_unbound(int(issue_id), int(affair_id))
+
     def _current_pointer(self, table: str, row_id: int | str) -> int:
         label = _POINTER_TABLES.get(table)
         if label is None:
@@ -301,6 +317,10 @@ class AffairStore:
         key_column = _POINTER_KEY_COLUMNS.get(table, "id")
         if table == "decree_dossiers":
             return self._dossiers().affair_id_of(int(row_id))
+        if table == "characters":
+            return CharacterStore(self._conn).affair_id_of(str(row_id))
+        if table == "issues":
+            return IssueStore(self._conn).affair_id_of(int(row_id))
         row = self._conn.execute(
             f"SELECT affair_id FROM {table} WHERE {key_column}=?",
             (row_id if key_column != "id" else int(row_id),),

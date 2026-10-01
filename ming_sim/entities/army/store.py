@@ -90,3 +90,24 @@ class ArmyStore:
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             payload,
         )
+
+    def upsert(self, row: Mapping[str, object]) -> None:
+        """Debug replace of one army. Caller commits."""
+        allowed = ARMY_COLUMNS | {"updated_at"}
+        if "id" not in row or row["id"] in (None, ""):
+            raise ValueError("缺主键 id")
+        columns = _checked(row, allowed=allowed)
+        assignments = ", ".join(
+            f"{column}=excluded.{column}" for column in columns if column != "id"
+        )
+        action = f"DO UPDATE SET {assignments}" if assignments else "DO NOTHING"
+        placeholders = ", ".join("?" for _ in columns)
+        self._conn.execute(
+            f"INSERT INTO armies ({', '.join(columns)}) VALUES ({placeholders}) "
+            f"ON CONFLICT(id) {action}",
+            [row[column] for column in columns],
+        )
+
+    def delete(self, army_id: str) -> int:
+        cursor = self._conn.execute("DELETE FROM armies WHERE id=?", (army_id,))
+        return int(cursor.rowcount or 0)

@@ -36,7 +36,6 @@ from ming_sim.distance import DistanceMatrix
 from ming_sim.paths import bundled_path
 from ming_sim.db import (
     GameDB,
-    POPULATION_UNIT_PERSONS,
     _LEVERAGE_FACTIONS,
     _approx_wanliang,
     compute_loyalty_soft_adjust,
@@ -1110,37 +1109,24 @@ def _resolve_commitment_issue(
     from_value = int(row["bar_value"])
     progress = commitment_progress_payload(db, state, row) or {}
     metric_delta = {"commitment_progress": progress} if progress else {}
-    db.conn.execute(
-        """
-        UPDATE issues SET bar_value=100, phase=?, status='resolved',
-                          resolution_summary=?, closed_turn=?,
-                          last_advance_turn=?, updated_at=CURRENT_TIMESTAMP
-        WHERE id=?
-        """,
-        (
-            db._derive_issue_phase(100),
-            "承诺停止条件已达成，自动结清。",
-            state.turn,
-            state.turn,
-            issue_id,
-        ),
-    )
-    db.conn.execute(
-        """
-        INSERT INTO issue_advances (
-            issue_id, turn, trigger_kind, delta_bar,
-            from_value, to_value, narrative, metric_delta
-        ) VALUES (?, ?, 'commitment_resolve', ?, ?, 100, ?, ?)
-        """,
-        (
-            issue_id,
-            state.turn,
-            100 - from_value,
-            from_value,
-            "承诺停止条件已达成，自动结清。",
-            json.dumps(metric_delta, ensure_ascii=False),
-        ),
-    )
+    db.issues.update(issue_id, {
+        "bar_value": 100,
+        "phase": db._derive_issue_phase(100),
+        "status": "resolved",
+        "resolution_summary": "承诺停止条件已达成，自动结清。",
+        "closed_turn": state.turn,
+        "last_advance_turn": state.turn,
+    })
+    db.issues.append_advance({
+        "issue_id": issue_id,
+        "turn": state.turn,
+        "trigger_kind": "commitment_resolve",
+        "delta_bar": 100 - from_value,
+        "from_value": from_value,
+        "to_value": 100,
+        "narrative": "承诺停止条件已达成，自动结清。",
+        "metric_delta": json.dumps(metric_delta, ensure_ascii=False),
+    })
     if commit:
         db.conn.commit()
 
@@ -1156,36 +1142,22 @@ def _expire_commitment_issue(
     from_value = int(row["bar_value"])
     progress = commitment_progress_payload(db, state, row) or {}
     metric_delta = {"commitment_progress": progress} if progress else {}
-    db.conn.execute(
-        """
-        UPDATE issues SET status='dropped', resolution_summary=?,
-                          closed_turn=?, last_advance_turn=?,
-                          updated_at=CURRENT_TIMESTAMP
-        WHERE id=?
-        """,
-        (
-            "承诺期限已至，停账收尾。",
-            state.turn,
-            state.turn,
-            issue_id,
-        ),
-    )
-    db.conn.execute(
-        """
-        INSERT INTO issue_advances (
-            issue_id, turn, trigger_kind, delta_bar,
-            from_value, to_value, narrative, metric_delta
-        ) VALUES (?, ?, 'expire', 0, ?, ?, ?, ?)
-        """,
-        (
-            issue_id,
-            state.turn,
-            from_value,
-            from_value,
-            "承诺期限已至，停账收尾。",
-            json.dumps(metric_delta, ensure_ascii=False),
-        ),
-    )
+    db.issues.update(issue_id, {
+        "status": "dropped",
+        "resolution_summary": "承诺期限已至，停账收尾。",
+        "closed_turn": state.turn,
+        "last_advance_turn": state.turn,
+    })
+    db.issues.append_advance({
+        "issue_id": issue_id,
+        "turn": state.turn,
+        "trigger_kind": "expire",
+        "delta_bar": 0,
+        "from_value": from_value,
+        "to_value": from_value,
+        "narrative": "承诺期限已至，停账收尾。",
+        "metric_delta": json.dumps(metric_delta, ensure_ascii=False),
+    })
     if commit:
         db.conn.commit()
 
@@ -1201,24 +1173,22 @@ def _ack_due_commitment_issue(
     issue_id = int(row["id"])
     from_value = int(row["bar_value"])
     summary = narrative or "到期待裁承诺已由皇帝裁决确认。"
-    db.conn.execute(
-        """
-        UPDATE issues SET status='dropped', resolution_summary=?,
-                          closed_turn=?, last_advance_turn=?,
-                          updated_at=CURRENT_TIMESTAMP
-        WHERE id=?
-        """,
-        (summary, state.turn, state.turn, issue_id),
-    )
-    db.conn.execute(
-        """
-        INSERT INTO issue_advances (
-            issue_id, turn, trigger_kind, delta_bar,
-            from_value, to_value, narrative, metric_delta
-        ) VALUES (?, ?, 'commitment_ack', 0, ?, ?, ?, '{}')
-        """,
-        (issue_id, state.turn, from_value, from_value, summary),
-    )
+    db.issues.update(issue_id, {
+        "status": "dropped",
+        "resolution_summary": summary,
+        "closed_turn": state.turn,
+        "last_advance_turn": state.turn,
+    })
+    db.issues.append_advance({
+        "issue_id": issue_id,
+        "turn": state.turn,
+        "trigger_kind": "commitment_ack",
+        "delta_bar": 0,
+        "from_value": from_value,
+        "to_value": from_value,
+        "narrative": summary,
+        "metric_delta": "{}",
+    })
     if commit:
         db.conn.commit()
     return db.conn.execute("SELECT * FROM issues WHERE id=?", (issue_id,)).fetchone()
@@ -2584,7 +2554,7 @@ def _auto_trigger_seed_issues_in_atomic(state: GameState, db: GameDB) -> List[Di
                     _apply_issue_entities(
                         db,
                         state,
-                        _content_population_effect_for_save(db, ev.effect_on_trigger),
+                        ev.effect_on_trigger,
                         f"事件#{ev.id}触发",
                         content=c,
                     )
@@ -2607,7 +2577,7 @@ def _auto_trigger_seed_issues_in_atomic(state: GameState, db: GameDB) -> List[Di
                 _apply_issue_entities(
                     db,
                     state,
-                    _content_population_effect_for_save(db, ev.effect_on_trigger),
+                    ev.effect_on_trigger,
                     f"事件#{ev.id}触发",
                     content=c,
                 )
@@ -2746,11 +2716,9 @@ def event_to_issue(db: GameDB, state: GameState, ev: Event, *, commit: bool = Tr
     if ev.issue_inertia:
         inertia = ev.issue_inertia
     if ev.effect_on_resolve:
-        # #648：content 真源人口量已「人」，持久化进 issue 行前按本档口径换算，
-        # 使后续结案/失败落账（读行内 effect）天然按档口径，无需在读取端再换算。
-        effect_resolve = _content_population_effect_for_save(db, ev.effect_on_resolve)
+        effect_resolve = ev.effect_on_resolve
     if ev.effect_on_fail:
-        effect_fail = _content_population_effect_for_save(db, ev.effect_on_fail)
+        effect_fail = ev.effect_on_fail
     # insert 的代码/DB 真异常上抛（ADR 0008 决定1 / ADR 0005 fail-loud），与 decree 路径
     # （apply_issue_tracker_output 的 new_issues 段）一致；旧 `except Exception: WARN; return None`
     # 把真异常吞成 None、调用方记普通 rejected，正是 #14/#63 catalog「该落没落无人知」实例
@@ -3417,38 +3385,6 @@ def _spawn_legacy_from_effect(
     dur_label = "永久" if duration < 0 else f"{duration}月"
     print(f"[帝国修正] 局势#{issue_id}「{issue_title}」落「{name}」({dur_label}) {modifiers}")
     return summary
-
-
-def _content_population_effect_for_save(
-    db: GameDB, effect: Dict[str, object]
-) -> Dict[str, object]:
-    """#648（ADR 0088/F4）：content 静态人口量已全线「人」，落本档前按存档口径换算。
-
-    新档（人）原样；无标旧档（万人）region_delta.population ÷10⁴（迁移后 content
-    人口值均为 10⁴ 整倍数，整除无损）。只换算 region_delta.*.population，其余段浅拷贝透传。
-    只用于 content 事件真源（effect_on_trigger / event_to_issue 持久化）；LLM 产 delta
-    已按本档口径写，不得经此换算。"""
-    region_delta = effect.get("region_delta")
-    if not isinstance(region_delta, dict) or not region_delta:
-        return effect
-    if db.population_unit == POPULATION_UNIT_PERSONS:
-        return effect
-    scaled: Dict[str, object] = {**effect}
-    scaled_region_delta: Dict[str, object] = {}
-    for rid, fields in region_delta.items():
-        if isinstance(fields, dict) and "population" in fields:
-            scaled_fields = {**fields}
-            try:
-                scaled_fields["population"] = db.scale_content_population_to_save_unit(
-                    fields["population"]
-                )
-            except (TypeError, ValueError):
-                pass  # 非整人口值交由下游 apply_region_deltas 既有拒收留痕，不在此静默改写
-            scaled_region_delta[rid] = scaled_fields
-        else:
-            scaled_region_delta[rid] = fields
-    scaled["region_delta"] = scaled_region_delta
-    return scaled
 
 
 def _apply_issue_entities(
@@ -4963,7 +4899,7 @@ def apply_issue_tracker_output(
                         _apply_issue_entities(
                             db,
                             state,
-                            _content_population_effect_for_save(db, ev.effect_on_trigger),
+                            ev.effect_on_trigger,
                             f"事件#{ev.id}触发",
                             content=runtime_content,
                             llm_config=llm_config,
@@ -5823,8 +5759,7 @@ def _restore_person_write_state(
     commit: bool = True,
 ) -> None:
     character_rows, office_rows, faction_rows, content_rows, office_change_rows = snapshot
-    db.conn.execute("DELETE FROM character_offices")
-    db.conn.execute("DELETE FROM office_change_records")
+    db.characters.clear_office_archive()
     snapshot_names = {str(row["name"]) for row in character_rows}
     for row in db.conn.execute("SELECT name FROM characters").fetchall():
         name = str(row["name"])
@@ -5849,44 +5784,12 @@ def _restore_person_write_state(
             content=content,
             commit=False,
         )
-    db.conn.executemany(
-        "INSERT INTO character_offices "
-        "(character_name, office_title, source, dossier_id, "
-        "appointment_tenure, region_id, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        [
-            (
-                row["character_name"],
-                row["office_title"],
-                row["source"],
-                row.get("dossier_id"),
-                row["appointment_tenure"],
-                str(row.get("region_id") or ""),
-                row["updated_at"],
-            )
-            for row in office_rows
-        ],
-    )
-    db.conn.executemany(
-        "INSERT INTO office_change_records "
-        "(id, character_name, office_title, office_type, source, dossier_id, "
-        "appointment_tenure, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        [
-            (
-                row["id"], row["character_name"], row["office_title"],
-                row["office_type"], row["source"], row.get("dossier_id"),
-                row["appointment_tenure"],
-                row["created_at"],
-            )
-            for row in office_change_rows
-        ],
-    )
+    db.characters.insert_office_snapshots(office_rows)
+    db.characters.insert_office_change_snapshots(office_change_rows)
     # #9：还原 factions.leverage + leverage_offset（起复路中途的全重算回滚，与 character 状态一并
     # 还原）。R1 finding#2：offset 是基线逻辑态，漏还原则即便 leverage 还原也会被后续 reconcile 用脏
     # offset 重算回去 → 基线漂移。
-    db.conn.executemany(
-        "UPDATE factions SET leverage=?, leverage_offset=? WHERE name=?",
-        [(row["leverage"], row["leverage_offset"], row["name"]) for row in faction_rows],
-    )
+    db.factions.restore_leverage(faction_rows)
     if commit:
         db.conn.commit()
     if content is not None:
@@ -7170,9 +7073,6 @@ def _apply_surcharge_decrees(
                 f"surcharge_decrees {region_id!r} 无 settle 财政基座，逐省累积账无处落",
             )
             continue
-        if db.population_unit != POPULATION_UNIT_PERSONS:
-            _reject("missing_ref", "surcharge_decrees 仅适用于 population_unit='人' 的人口池档")
-            continue
         if _surcharge_population_pool_members(db, region_id) != {"农民", "流民"}:
             _reject("missing_ref", f"surcharge_decrees {region_id!r} 缺农民/流民省级人口池")
             continue
@@ -7242,8 +7142,7 @@ def _apply_levy_driven_transfers(
     （reason=加派；累积账月效统一使用 `盘面自发`，不伪归最后一道改账旨）。基线 ≤0 或折算后
     ≤0 的省零入池——停加派/蠲免后入池止（AC5；出口回流归 S5 #652）。
     """
-    if (not db.is_substrate_hub_fiscal_engine_enabled()
-            or db.population_unit != POPULATION_UNIT_PERSONS):
+    if not db.is_substrate_hub_fiscal_engine_enabled():
         return [], []
     records: List[Dict[str, object]] = []
     rows = db.conn.execute(
@@ -7331,15 +7230,6 @@ def _apply_bandit_absorptions(
     rejected: List[Dict[str, object]] = []
     power_changes: List[Dict[str, object]] = []
     items = absorptions if isinstance(absorptions, list) else []
-    # 仅 substrate 人口径新档开环；legacy 不误开（对齐 #649/#650）。
-    if db.population_unit != POPULATION_UNIT_PERSONS:
-        for item in items:
-            rejected.append({
-                "rejected": True, "category": "invalid_enum",
-                "reason": "bandit_absorptions 仅适用于 population_unit='人' 的人口池档",
-                "item": item if isinstance(item, dict) else {"raw_value": item},
-            })
-        return applied, rejected, power_changes
 
     for item in items:
         if not isinstance(item, dict):
@@ -7429,11 +7319,7 @@ def _apply_bandit_absorptions(
             )
             continue
         # 单侧出池（0087 兵源出口无农民对端）+ 实力正增同事务。
-        db.conn.execute(
-            "UPDATE classes SET population = population - ?, updated_at = CURRENT_TIMESTAMP "
-            "WHERE name='流民' AND region_id=?",
-            (actual, region_id),
-        )
+        db.classes.add_population(name="流民", region_id=region_id, delta=-actual)
         strength_delta = actual // int(BANDIT_ABSORPTION_PERSONS_PER_STRENGTH)
         applied_item: Dict[str, object] = {
             "region_id": region_id,
@@ -7500,8 +7386,6 @@ def _apply_recovery_driven_transfers(
     再经执行 outcome 成色折减；经 _apply_population_transfers reason=回流 唯一落库。
     幂等键 (dossier_id, turn)：同键不双扣池。立即开仓/#522 pacification 不在此列。
     """
-    if db.population_unit != POPULATION_UNIT_PERSONS:
-        return [], []
     turn = int(state.turn)
     # 月份推进事务只执行一次；同一案在本次扫描内仅回流一次。
     seen_keys: set[tuple[int, int]] = set()
@@ -9727,11 +9611,11 @@ def apply_issue_inertia_and_ongoing(
             to_bar = commitment_bar if commitment_bar is not None else bar
             actual_bar = int(to_bar) - int(from_bar)
             if commitment_bar is not None and actual_bar != 0:
-                db.conn.execute(
-                    "UPDATE issues SET bar_value=?, phase=?, last_advance_turn=?, updated_at=CURRENT_TIMESTAMP "
-                    "WHERE id=?",
-                    (int(commitment_bar), db._derive_issue_phase(int(commitment_bar)), state.turn, issue_id),
-                )
+                db.issues.update(issue_id, {
+                    "bar_value": int(commitment_bar),
+                    "phase": db._derive_issue_phase(int(commitment_bar)),
+                    "last_advance_turn": state.turn,
+                })
                 bar = int(commitment_bar)
             metric_delta: Dict[str, object] = {"metrics": metric_part, "economy": economy_part}
             metric_delta.update(applied_monthly_parts)
@@ -9746,19 +9630,16 @@ def apply_issue_inertia_and_ongoing(
                     else f"持续效果落账 (折扣 {int(scale*100)}%)"
                 )
             )
-            db.conn.execute(
-                """
-                    INSERT INTO issue_advances (
-                        issue_id, turn, trigger_kind, delta_bar,
-                        from_value, to_value, narrative, metric_delta
-                    ) VALUES (?, ?, 'ongoing', ?, ?, ?, ?, ?)
-                """,
-                (
-                    issue_id, state.turn, actual_bar, from_bar, int(to_bar),
-                    narrative,
-                    json.dumps(metric_delta, ensure_ascii=False),
-                ),
-            )
+            db.issues.append_advance({
+                "issue_id": issue_id,
+                "turn": state.turn,
+                "trigger_kind": "ongoing",
+                "delta_bar": actual_bar,
+                "from_value": from_bar,
+                "to_value": int(to_bar),
+                "narrative": narrative,
+                "metric_delta": json.dumps(metric_delta, ensure_ascii=False),
+            })
             if commit_local:
                 db.conn.commit()
 

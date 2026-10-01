@@ -528,14 +528,7 @@ def rush_staged_commitment_stage(
     stages_blob = stages_to_json(stages)
 
     # 唯一写口：stages_json[].due_turn。禁侧写 issues.end_turn（票面单口 + #620 不落 DB）。
-    db.conn.execute(
-        """
-        UPDATE issues
-        SET stages_json=?, updated_at=CURRENT_TIMESTAMP
-        WHERE id=?
-        """,
-        (stages_blob, int(commitment_ref)),
-    )
+    db.issues.update(int(commitment_ref), {"stages_json": stages_blob})
 
     why = reason if str(reason or "").strip() else "奉旨加急"
     if record_history:

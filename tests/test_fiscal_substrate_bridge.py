@@ -4768,6 +4768,10 @@ def test_resolve_directives_nested_cutover_bad_state_uses_settlement_abort_error
     assert _read_settle(db)["p"] == []
 
 
+def _log_has(msgs: list[str], *needles: str) -> bool:
+    return any(all(needle in message for needle in needles) for message in msgs)
+
+
 def test_apply_fixed_period_flows_malformed_fiscal_container_isolated(fresh_game, monkeypatch):
     # Public entry contract: fixed fiscal must not crash before shadow substrate isolation can log.
     import ming_sim.flows as flows_mod
@@ -4790,7 +4794,8 @@ def test_apply_fixed_period_flows_malformed_fiscal_container_isolated(fresh_game
     assert db.conn.execute("SELECT fiscal FROM regions WHERE id='shaanxi'").fetchone()["fiscal"] == "[]"
     tax_flow = next(f for f in flow_rows if f.get("category") == "田赋辽饷盐商")
     assert tax_flow["amount"] == expected_tax, "坏 fiscal 省当月固定税收应出列，不能按默认 fiscal 造钱"
-    assert msgs
+    assert _log_has(msgs, "[province-fiscal] shaanxi")
+    assert _log_has(msgs, "[fiscal-substrate] shaanxi", "ValueError")
 
 
 def test_substrate_malformed_fiscal_json_is_logged_not_prefiltered(fresh_game, monkeypatch):
@@ -4810,7 +4815,7 @@ def test_substrate_malformed_fiscal_json_is_logged_not_prefiltered(fresh_game, m
     flows_mod._advance_province_fiscal_substrate(db, state)
 
     assert db.conn.execute("SELECT fiscal FROM regions WHERE id='shaanxi'").fetchone()["fiscal"] == "{bad"
-    assert msgs
+    assert _log_has(msgs, "[fiscal-substrate] shaanxi", "JSONDecodeError")
 
 
 def test_apply_fixed_period_flows_malformed_fiscal_json_isolated(fresh_game, monkeypatch):
@@ -4835,7 +4840,8 @@ def test_apply_fixed_period_flows_malformed_fiscal_json_isolated(fresh_game, mon
     assert db.conn.execute("SELECT fiscal FROM regions WHERE id='shaanxi'").fetchone()["fiscal"] == "{bad"
     tax_flow = next(f for f in flow_rows if f.get("category") == "田赋辽饷盐商")
     assert tax_flow["amount"] == expected_tax, "坏 fiscal 省当月固定税收应出列，不能按默认 fiscal 造钱"
-    assert msgs
+    assert _log_has(msgs, "[province-fiscal] shaanxi", "JSONDecodeError")
+    assert _log_has(msgs, "[fiscal-substrate] shaanxi", "JSONDecodeError")
 
 
 @pytest.mark.parametrize("field,bad_value", [
@@ -4869,7 +4875,7 @@ def test_apply_fixed_period_flows_malformed_fiscal_scalar_isolated(fresh_game, m
     assert isinstance(flow_rows, list) and flow_rows, "坏 fiscal 标量不该掀翻固定财政"
     tax_flow = next(f for f in flow_rows if f.get("category") == "田赋辽饷盐商")
     assert tax_flow["amount"] == expected_tax, "坏 fiscal 标量省当月固定税收应出列"
-    assert msgs
+    assert _log_has(msgs, "[province-fiscal] shaanxi", f"fiscal.{field}")
 
 
 def test_fixed_flow_loader_accepts_already_decoded_fiscal_dict(monkeypatch):
@@ -4892,7 +4898,7 @@ def test_fixed_flow_loader_rejects_non_finite_numeric_values(monkeypatch, bad_sc
     monkeypatch.setattr(flows_mod, "tlog", lambda msg: msgs.append(msg))
 
     assert flows_mod._load_region_fiscal_for_fixed_flow("shaanxi", fiscal) is None
-    assert msgs
+    assert _log_has(msgs, "[province-fiscal] shaanxi", "fiscal.liao_xiang")
 
 
 @pytest.mark.parametrize("payload", [[], 0, False])
@@ -4903,7 +4909,7 @@ def test_fixed_flow_loader_rejects_decoded_non_dict_payloads(monkeypatch, payloa
     monkeypatch.setattr(flows_mod, "tlog", lambda msg: msgs.append(msg))
 
     assert flows_mod._load_region_fiscal_for_fixed_flow("shaanxi", payload) is None
-    assert msgs
+    assert _log_has(msgs, "[province-fiscal] shaanxi")
 
 
 def test_apply_fixed_period_flows_commits_shadow_substrate_when_standalone(fresh_game):

@@ -82,3 +82,39 @@ class RegionStore:
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             payload,
         )
+
+    def rows(self, *, limit: int | None = None, danger_order: bool = False) -> list[Any]:
+        """Region sheet. Danger order is the materials view; name order is the roster."""
+        order = (
+            "(unrest + military_pressure + gentry_resistance + (100 - public_support)) "
+            "DESC, name"
+            if danger_order
+            else "kind DESC, name"
+        )
+        sql = f"SELECT * FROM regions ORDER BY {order}"
+        params: tuple[object, ...] = ()
+        if limit is not None:
+            sql += " LIMIT ?"
+            params = (limit,)
+        return self._conn.execute(sql, params).fetchall()
+
+    def upsert(self, row: Mapping[str, object]) -> None:
+        """Debug replace of one region. Caller commits."""
+        allowed = REGION_COLUMNS | {"updated_at"}
+        if "id" not in row or row["id"] in (None, ""):
+            raise ValueError("缺主键 id")
+        columns = _checked(row, allowed=allowed)
+        assignments = ", ".join(
+            f"{column}=excluded.{column}" for column in columns if column != "id"
+        )
+        action = f"DO UPDATE SET {assignments}" if assignments else "DO NOTHING"
+        placeholders = ", ".join("?" for _ in columns)
+        self._conn.execute(
+            f"INSERT INTO regions ({', '.join(columns)}) VALUES ({placeholders}) "
+            f"ON CONFLICT(id) {action}",
+            [row[column] for column in columns],
+        )
+
+    def delete(self, region_id: str) -> int:
+        cursor = self._conn.execute("DELETE FROM regions WHERE id=?", (region_id,))
+        return int(cursor.rowcount or 0)

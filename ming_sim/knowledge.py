@@ -80,27 +80,25 @@ def _issue_audience_names(db: Any, issue: Any) -> set[str] | None:
 
 
 def _exclusion_lists_from_row(row: Any) -> tuple[set[str], set[str], set[str]]:
-    """Parse excluded_names and excluded_targets.people/offices from one row."""
+    """Parse excluded_names and excluded_targets.people/offices from one row.
+
+    A missing column is an absent ledger. Stored text that is not the expected
+    JSON container raises; it is not treated as an empty exclusion.
+    """
+    from ming_sim.entities.character_knowledge.store import _load_list, _load_targets
+
     try:
-        excluded_names = {
-            str(name) for name in json.loads(row["excluded_names"] or "[]")
-        }
-    except (TypeError, ValueError, KeyError, IndexError):
-        excluded_names = set()
-    targets: object = {}
+        raw_names = row["excluded_names"]
+    except (KeyError, IndexError):
+        raw_names = "[]"
+    excluded_names = set(_load_list(raw_names))
     try:
         raw_targets = row["excluded_targets"]
-    except (KeyError, IndexError, TypeError):
+    except (KeyError, IndexError):
         raw_targets = None
-    if raw_targets:
-        try:
-            targets = json.loads(raw_targets or "{}")
-        except (TypeError, ValueError):
-            targets = {}
-    if not isinstance(targets, dict):
-        targets = {}
-    people = {str(name) for name in (targets.get("people") or [])}
-    offices = {str(name) for name in (targets.get("offices") or [])}
+    targets = {} if raw_targets is None else _load_targets(raw_targets)
+    people = set(targets.get("people") or [])
+    offices = set(targets.get("offices") or [])
     return excluded_names, people, offices
 
 

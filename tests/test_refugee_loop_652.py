@@ -18,7 +18,7 @@ from ming_sim.constants import (
     RECOVERY_OUTCOME_FACTORS,
     RECOVERY_PERSONS_PER_WAN,
 )
-from ming_sim.db import GameDB, POPULATION_UNIT_PERSONS
+from ming_sim.db import GameDB
 from ming_sim.issues import apply_score_extraction
 from tests.month_chain_helpers import canned_full_settlement, make_light_session
 
@@ -612,28 +612,5 @@ def test_month_settle_with_disaster_and_executing_relief(game, monkeypatch):
     assert result is not None and result.awaiting is False
     assert result.advanced is False
     assert db.dossiers.get(dossier_id)["status"] == "executing"
-
-
-
-
-@pytest.mark.usefixtures("_offline_scene_beat_generator")
-def test_legacy_population_unit_skips_absorption_and_recovery(game, monkeypatch):
-    db, state, content = game
-    db.conn.execute("DELETE FROM save_meta WHERE key='population_unit'")
-    db.conn.commit()
-    assert db.population_unit != POPULATION_UNIT_PERSONS
-
-    applied = apply_score_extraction(db, state, {
-        "bandit_absorptions": [{
-            "region_id": "shaanxi", "power_id": "bandits",
-            "requested_count": 10, "origin_ref": "盘面自发",
-        }],
-    }, content, None)
-    assert applied["bandit_absorptions"] == [] and applied["bandit_absorptions_rejections"]
-
-    assert db.dossiers.get(_recovery_grant(db, state, amount=10))["execution_outcome"] == "fulfilled"
-    before = _pop(db, "流民", "shaanxi")
-    _advance_canned_month(db, state, content, monkeypatch)
-    assert _pop(db, "流民", "shaanxi") == before
 
 

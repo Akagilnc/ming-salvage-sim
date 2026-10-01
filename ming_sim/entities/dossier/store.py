@@ -1643,12 +1643,10 @@ class DossierStore:
         ).fetchall()
         out: list[dict[str, object]] = []
         for row in rows:
-            try:
-                payload = json.loads(row["payload_json"] or "{}")
-            except (TypeError, ValueError):
-                payload = {}
+            raw_payload = row["payload_json"]
+            payload = json.loads("{}" if raw_payload is None or raw_payload == "" else raw_payload)
             if not isinstance(payload, dict):
-                payload = {}
+                raise ValueError(f"检举载荷须为对象，得 {type(payload).__name__}")
             out.append({
                 "id": int(row["id"]),
                 "turn": int(row["turn"]),

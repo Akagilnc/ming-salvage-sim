@@ -114,3 +114,105 @@ class CharacterStore:
             """,
             (name, office_title, office_type, source, dossier_id, appointment_tenure),
         )
+
+    def clear_office_archive(self) -> None:
+        """Drop every current-office row and every office-change row."""
+        self._conn.execute("DELETE FROM character_offices")
+        self._conn.execute("DELETE FROM office_change_records")
+
+    def insert_office_snapshots(self, rows: list[Mapping[str, object]]) -> None:
+        """Restore archive rows, including the stored ``updated_at``."""
+        if not rows:
+            return
+        self._conn.executemany(
+            "INSERT INTO character_offices "
+            "(character_name, office_title, source, dossier_id, "
+            "appointment_tenure, region_id, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            [
+                (
+                    row["character_name"],
+                    row["office_title"],
+                    row["source"],
+                    row.get("dossier_id"),
+                    row["appointment_tenure"],
+                    str(row.get("region_id") or ""),
+                    row["updated_at"],
+                )
+                for row in rows
+            ],
+        )
+
+    def insert_office_change_snapshots(self, rows: list[Mapping[str, object]]) -> None:
+        """Restore change rows, including the stored id and ``created_at``."""
+        if not rows:
+            return
+        self._conn.executemany(
+            "INSERT INTO office_change_records "
+            "(id, character_name, office_title, office_type, source, dossier_id, "
+            "appointment_tenure, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            [
+                (
+                    row["id"],
+                    row["character_name"],
+                    row["office_title"],
+                    row["office_type"],
+                    row["source"],
+                    row.get("dossier_id"),
+                    row["appointment_tenure"],
+                    row["created_at"],
+                )
+                for row in rows
+            ],
+        )
+
+    def upsert(self, row: Mapping[str, object]) -> None:
+        """Debug replace of one person. Caller commits."""
+        if "name" not in row or row["name"] in (None, ""):
+            raise ValueError("缺主键 name")
+        columns = _checked(row, allowed=CHARACTER_COLUMNS)
+        assignments = ", ".join(
+            f"{column}=excluded.{column}" for column in columns if column != "name"
+        )
+        action = f"DO UPDATE SET {assignments}" if assignments else "DO NOTHING"
+        placeholders = ", ".join("?" for _ in columns)
+        self._conn.execute(
+            f"INSERT INTO characters ({', '.join(columns)}) VALUES ({placeholders}) "
+            f"ON CONFLICT(name) {action}",
+            [row[column] for column in columns],
+        )
+
+    def delete_by_name(self, name: str) -> int:
+        cursor = self._conn.execute("DELETE FROM characters WHERE name=?", (name,))
+        return int(cursor.rowcount or 0)
+
+    def affair_id_of(self, name: str) -> int:
+        row = self._conn.execute(
+            "SELECT affair_id FROM characters WHERE name=?", (str(name),),
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"人物不存在：{name}")
+        return int(row["affair_id"] or 0)
+
+    def set_affair_id_if_unbound(self, name: str, affair_id: int) -> int:
+        """Bind once; same id is idempotent; a different id fails loud."""
+        from ming_sim.applier import connection_owns_transaction
+
+        want = int(affair_id)
+        person = str(name)
+        owns = connection_owns_transaction(self._conn)
+        cursor = self._conn.execute(
+            "UPDATE characters SET affair_id=? WHERE name=? AND affair_id=0",
+            (want, person),
+        )
+        if int(cursor.rowcount or 0) == 1:
+            if owns:
+                self._conn.commit()
+            return want
+        current = self.affair_id_of(person)
+        if current == want:
+            if owns:
+                self._conn.commit()
+            return want
+        if owns:
+            self._conn.rollback()
+        raise ValueError(f"人物已指向事务 {current}，不能改指 {want}")

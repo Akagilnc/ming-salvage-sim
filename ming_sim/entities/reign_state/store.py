@@ -122,6 +122,36 @@ class ReignStateStore:
             (str(key), int(value)),
         )
 
+    def delete_metric(self, key: str) -> int:
+        cursor = self._conn.execute("DELETE FROM metrics WHERE key=?", (key,))
+        return int(cursor.rowcount or 0)
+
+    def upsert_header(self, row: Mapping[str, object]) -> None:
+        """Debug replace of the reign header. Caller commits."""
+        allowed = frozenset({
+            "id", "year", "period", "turn", "turn_phase", "ended", "ending_status",
+        })
+        unknown = set(row) - allowed
+        if unknown:
+            raise ValueError(f"game_state 列非法：{sorted(unknown)}")
+        if "id" not in row or row["id"] in (None, ""):
+            raise ValueError("缺主键 id")
+        columns = [column for column in sorted(row)]
+        assignments = ", ".join(
+            f"{column}=excluded.{column}" for column in columns if column != "id"
+        )
+        action = f"DO UPDATE SET {assignments}" if assignments else "DO NOTHING"
+        placeholders = ", ".join("?" for _ in columns)
+        self._conn.execute(
+            f"INSERT INTO game_state ({', '.join(columns)}) VALUES ({placeholders}) "
+            f"ON CONFLICT(id) {action}",
+            [row[column] for column in columns],
+        )
+
+    def delete_header(self, row_id: object) -> int:
+        cursor = self._conn.execute("DELETE FROM game_state WHERE id=?", (row_id,))
+        return int(cursor.rowcount or 0)
+
     def insert_ledger(self, row: Mapping[str, object]) -> None:
         """Append one economy_ledger row. Optional columns default in the table."""
         unknown = set(row) - _LEDGER_COLUMNS

@@ -88,11 +88,9 @@ from ming_sim.token_stats import tlog
 
 logger = logging.getLogger(__name__)
 
-# ADR 0088 / #648：人口存储单位口径。content 静态人口量已全线「人」（与 armies.manpower
-# 同刻度）；存档口径判别持久化在 DB 内（save_meta 表），新档 seed 落「人」标，
-# 无标旧档一律判「万人」legacy——不得读 content 元信息判别（其不随档持久化）。
+# ADR 0088 / #648 / #1889：人口存储一律「人」（与 armies.manpower 同刻度）。
+# 新档仍在 save_meta 落标；无标不再改判万人，也不再把 content 人口 ÷10⁴。
 POPULATION_UNIT_PERSONS = "人"
-POPULATION_UNIT_WAN = "万人"
 _POPULATION_UNIT_KEY = "population_unit"
 
 # 落库字段白名单（模块级常量化——避免在 apply_region_deltas / apply_army_deltas /
@@ -904,6 +902,18 @@ class GameDB:
         self.characters = CharacterStore(self.conn)
         self.regions = RegionStore(self.conn)
         self.armies = ArmyStore(self.conn)
+        from ming_sim.entities.building import BuildingStore
+        from ming_sim.entities.faction import FactionStore
+        from ming_sim.entities.fiscal_container import FiscalContainerStore
+        from ming_sim.entities.issue import IssueStore
+        from ming_sim.entities.power import PowerStore
+        from ming_sim.entities.social_class import ClassStore
+        self.buildings = BuildingStore(self.conn)
+        self.factions = FactionStore(self.conn)
+        self.fiscal_containers = FiscalContainerStore(self.conn)
+        self.issues = IssueStore(self.conn)
+        self.powers = PowerStore(self.conn)
+        self.classes = ClassStore(self.conn)
         # 当前字段都在 ming_sim.schema 的 CREATE 里。不再为旧档 ALTER 补列。
         self._ensure_office_type_parents()
         self._ensure_event_parents()
@@ -1613,14 +1623,8 @@ class GameDB:
 
     @property
     def population_unit(self) -> str:
-        """本档人口存储单位口径（ADR 0088/#648）：新档「人」，无标旧档一律「万人」。
-
-        判别只读存档 DB 内的持久标记（save_meta），不读 content 元信息（其不随档
-        持久化，0088 明文禁止）。旧档不迁移、读写按档口径走 legacy。"""
-        row = self.conn.execute(
-            "SELECT value FROM save_meta WHERE key = ?", (_POPULATION_UNIT_KEY,)
-        ).fetchone()
-        return str(row[0]) if row else POPULATION_UNIT_WAN
+        """人口核算一律「人」。无标或旧万人标不再改写读写刻度（#1889）。"""
+        return POPULATION_UNIT_PERSONS
 
     def _mark_population_unit_persons(self) -> None:
         """新档 classes 首次 seed 时落持久人口单位标「人」（commit 由 seed_static_data 末尾统一提交）。"""
@@ -1628,17 +1632,6 @@ class GameDB:
             "INSERT OR REPLACE INTO save_meta (key, value) VALUES (?, ?)",
             (_POPULATION_UNIT_KEY, POPULATION_UNIT_PERSONS),
         )
-
-    def scale_content_population_to_save_unit(self, value: int) -> int:
-        """content 静态人口量（事件 effect 等）已全线「人」；落本档前按存档口径换算。
-
-        新档（人）原样；无标旧档（万人）÷10⁴——迁移后 content 人口值均为 10⁴ 整倍数，
-        整除无损（F4 禁的是对旧档读写加通用有损换算层；此处是 content→档的唯一确定性
-        口径接缝，非通用层）。"""
-        value = int(value)
-        if self.population_unit == POPULATION_UNIT_PERSONS:
-            return value
-        return value // 10000
 
     def seed_static_data(self) -> None:
         """Seed the opening world from content（#1889：实现归 ming_sim/opening_seed）。"""
@@ -1798,16 +1791,10 @@ class GameDB:
             """
         ).fetchone()["total"]
         value = float(total or 0.0)
-        self.conn.execute(
-            """
-            INSERT INTO fiscal_containers (key, value, note)
-            VALUES (?, ?, '中央军饷欠账容器：Σ非自养明军 central_pay_arrears')
-            ON CONFLICT(key) DO UPDATE SET
-              value = excluded.value,
-              note = excluded.note,
-              updated_at = CURRENT_TIMESTAMP
-            """,
-            (_CENTRAL_ARMY_PAY_ARREARS_CONTAINER_KEY, value),
+        self.fiscal_containers.replace(
+            _CENTRAL_ARMY_PAY_ARREARS_CONTAINER_KEY,
+            value,
+            "中央军饷欠账容器：Σ非自养明军 central_pay_arrears",
         )
         return value
 
@@ -2950,7 +2937,7 @@ class GameDB:
         offset = float(row["leverage_offset"] or 0)
         weight_sum = self._faction_office_weight_sum(faction)
         new_lev = max(0, min(100, round(offset + weight_sum)))
-        self.conn.execute("UPDATE factions SET leverage=? WHERE name=?", (new_lev, faction))
+        self.factions.set_leverage(faction, new_lev)
 
     def recompute_all_faction_leverage(self) -> None:
         """#9 cmr R2：全量重算所有白名单朝堂派系 leverage（集中化兜底层）。
@@ -2986,9 +2973,7 @@ class GameDB:
                 continue
             weight_sum = self._faction_office_weight_sum(faction)
             offset = int(content_faction.leverage) - weight_sum
-            self.conn.execute(
-                "UPDATE factions SET leverage_offset=? WHERE name=?", (offset, faction)
-            )
+            self.factions.set_leverage_offset(faction, offset)
             self.recompute_faction_leverage(faction)
         self._set_meta_flag("__leverage_offsets_calibrated")
         self._leverage_offsets_calibrated = True
@@ -3733,10 +3718,11 @@ class GameDB:
             lev = int(row["leverage"]) + int(fields.get("leverage", 0) or 0)
             sat = max(0, min(100, sat))
             lev = max(0, min(100, lev))
-            self.conn.execute(
-                "UPDATE classes SET satisfaction = ?, leverage = ?, updated_at = CURRENT_TIMESTAMP "
-                "WHERE name = ? AND region_id = ?",
-                (sat, lev, name.strip(), region_id.strip()),
+            self.classes.set_satisfaction_leverage(
+                name=name.strip(),
+                region_id=region_id.strip(),
+                satisfaction=sat,
+                leverage=lev,
             )
         if commit:
             self.conn.commit()
@@ -3957,29 +3943,19 @@ class GameDB:
                     continue
                 stored_new: object = new_value
                 log_delta: int | None = actual_delta
-                self.conn.execute(
-                    f"UPDATE powers SET {field} = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-                    (stored_new, power_id),
-                )
-                self.conn.execute(
-                    """
-                    INSERT INTO power_logs
-                    (turn, year, period, power_id, field, old_value, new_value, delta, reason, origin_ref)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        state.turn,
-                        state.year,
-                        state.period,
-                        power_id,
-                        field,
-                        str(old_value),
-                        str(stored_new),
-                        log_delta,
-                        reason,
-                        origin_ref,
-                    ),
-                )
+                self.powers.update(power_id, {field: stored_new})
+                self.powers.append_log({
+                    "turn": state.turn,
+                    "year": state.year,
+                    "period": state.period,
+                    "power_id": power_id,
+                    "field": field,
+                    "old_value": str(old_value),
+                    "new_value": str(stored_new),
+                    "delta": log_delta,
+                    "reason": reason,
+                    "origin_ref": origin_ref,
+                })
                 changes.append({
                     "power": row["name"],
                     "field": field,
@@ -4028,22 +4004,23 @@ class GameDB:
         new_last_action = str(last_action or reason or row["last_action"] or "")[:200]
         if old_name == new_name and old_aliases == new_aliases and row["status"] == new_status and row["last_action"] == new_last_action:
             return None
-        self.conn.execute(
-            """
-            UPDATE powers
-            SET name=?, aliases=?, status=?, last_action=?, updated_at=CURRENT_TIMESTAMP
-            WHERE id=?
-            """,
-            (new_name, new_aliases, new_status, new_last_action, power_id),
-        )
-        self.conn.execute(
-            """
-            INSERT INTO power_name_logs
-            (turn, year, period, power_id, old_name, new_name, old_aliases, new_aliases, reason)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (state.turn, state.year, state.period, power_id, old_name, new_name, old_aliases, new_aliases, reason[:200]),
-        )
+        self.powers.update(power_id, {
+            "name": new_name,
+            "aliases": new_aliases,
+            "status": new_status,
+            "last_action": new_last_action,
+        })
+        self.powers.append_name_log({
+            "turn": state.turn,
+            "year": state.year,
+            "period": state.period,
+            "power_id": power_id,
+            "old_name": old_name,
+            "new_name": new_name,
+            "old_aliases": old_aliases,
+            "new_aliases": new_aliases,
+            "reason": reason[:200],
+        })
         if commit:
             self.conn.commit()
         return {
@@ -4080,26 +4057,9 @@ class GameDB:
                 parts.append(f"{row['power_name']}{label}{sign}{int(delta)}（{row['reason']}）")
         return "；".join(parts) + "。"
 
-    def region_rows(self, limit: int | None = None, danger_order: bool = False) -> List[sqlite3.Row]:
-        order = (
-            "(unrest + military_pressure + gentry_resistance + (100 - public_support)) DESC, name"
-            if danger_order
-            else "kind DESC, name"
-        )
-        sql = f"""
-            SELECT *
-            FROM regions
-            ORDER BY {order}
-        """
-        params: Tuple[object, ...] = ()
-        if limit is not None:
-            sql += " LIMIT ?"
-            params = (limit,)
-        return self.conn.execute(sql, params).fetchall()
-
     def region_payload(self, limit: int | None = None, danger_order: bool = False) -> List[Dict[str, object]]:
         payload: List[Dict[str, object]] = []
-        for row in self.region_rows(limit=limit, danger_order=danger_order):
+        for row in self.regions.rows(limit=limit, danger_order=danger_order):
             payload.append(
                 {
                     "id": row["id"],
@@ -4130,7 +4090,7 @@ class GameDB:
         return str(row["name"]) if row else str(power_id)
 
     def region_report(self, limit: int = 5) -> str:
-        rows = self.region_rows(limit=limit, danger_order=True)
+        rows = self.regions.rows(limit=limit, danger_order=True)
         if not rows:
             return "地区尚未建档。"
         total_tax = self.conn.execute("SELECT SUM(tax_per_turn) AS total FROM regions").fetchone()
@@ -4159,15 +4119,9 @@ class GameDB:
         held = ""
         if str(row["controlled_by"]) != "ming":
             held = f"，控制权：已为{self.power_display_name(row['controlled_by'])}所据（非大明辖治）"
-        # ADR 0088/#648：人口展示按档口径——新档（人）玩家面投影「约N万口」（P4）；
-        # 机面裸人数；无标旧档沿万人 legacy 原样，不加换算层。
-        persons_unit = self.population_unit == POPULATION_UNIT_PERSONS
-
-        pop_qual = (
-            f"人口{population_wan_kou_label(row['population'])}" if persons_unit
-            else f"人口{row['population']}万人"
-        )
-        pop_raw = f"人口{row['population']}人" if persons_unit else f"人口{row['population']}万人"
+        # 人口存储是人。玩家面投影「约N万口」；机面写裸人数。
+        pop_qual = f"人口{population_wan_kou_label(row['population'])}"
+        pop_raw = f"人口{row['population']}人"
         if qualitative:
             return (
                 f"{row['name']}（{row['kind']}）{held}：{pop_qual}，"
@@ -4591,12 +4545,7 @@ class GameDB:
                 continue
             old_val = row[raw_field]
             if raw_field in (REGION_SCORE_FIELDS + REGION_QUANTITY_FIELDS):
-                # #648（ADR 0088）：on_restore 是 content 静态真源→存档接缝，population
-                # 已全线「人」，落本档前按存档口径换算（新档原样；无标旧档无损÷10⁴）。
-                new_val: object = (
-                    self.scale_content_population_to_save_unit(value)
-                    if raw_field == "population" else int(value)
-                )
+                new_val: object = int(value)
             else:
                 new_val = str(value)
             if str(old_val) == str(new_val):
@@ -5578,44 +5527,40 @@ class GameDB:
         if self.conn.execute("SELECT 1 FROM regions WHERE id = ?", (region_id,)).fetchone() is None:
             raise ValueError(f"建筑 region_id 引用未入库地区 '{region_id}'")
         base = re.sub(r"[^a-z0-9]+", "", (region_id or "rgn").lower()) or "rgn"
-        seq = self.conn.execute(
-            "SELECT COUNT(*) FROM buildings WHERE region_id = ?", (region_id,)
-        ).fetchone()[0]
+        seq = self.buildings.count_in_region(region_id)
         building_id = f"{base}_b{int(seq) + 1}"
-        while self.conn.execute("SELECT 1 FROM buildings WHERE id = ?", (building_id,)).fetchone():
+        while self.buildings.exists(building_id):
             seq += 1
             building_id = f"{base}_b{int(seq) + 1}"
-        self.conn.execute(
-            """
-            INSERT INTO buildings
-            (id, region_id, name, category, level, condition, maintenance, risk,
-             output_metric, output_amount, status, origin, created_turn)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                building_id,
-                region_id,
-                name.strip()[:60] or "无名建筑",
-                category,
-                max(1, min(5, int(level))),
-                max(0, min(100, int(condition))),
-                max(0, int(maintenance)),
-                max(0, min(100, int(risk))),
-                output_metric,
-                max(0, int(output_amount)),
-                status.strip()[:160] or "新立，尚在筹建。",
-                origin,
-                state.turn,
-            ),
-        )
-        self.conn.execute(
-            """
-            INSERT INTO building_logs
-            (turn, year, period, building_id, field, old_value, new_value, delta, reason, actor, origin_ref)
-            VALUES (?, ?, ?, ?, 'create', '', ?, NULL, ?, '档房', ?)
-            """,
-            (state.turn, state.year, state.period, building_id, name.strip()[:60], "诏书新立建筑", origin_ref),
-        )
+        building_name = name.strip()[:60] or "无名建筑"
+        self.buildings.insert({
+            "id": building_id,
+            "region_id": region_id,
+            "name": building_name,
+            "category": category,
+            "level": max(1, min(5, int(level))),
+            "condition": max(0, min(100, int(condition))),
+            "maintenance": max(0, int(maintenance)),
+            "risk": max(0, min(100, int(risk))),
+            "output_metric": output_metric,
+            "output_amount": max(0, int(output_amount)),
+            "status": status.strip()[:160] or "新立，尚在筹建。",
+            "origin": origin,
+            "created_turn": state.turn,
+        })
+        self.buildings.append_log({
+            "turn": state.turn,
+            "year": state.year,
+            "period": state.period,
+            "building_id": building_id,
+            "field": "create",
+            "old_value": "",
+            "new_value": building_name,
+            "delta": None,
+            "reason": "诏书新立建筑",
+            "actor": "档房",
+            "origin_ref": origin_ref,
+        })
         if commit:
             self.conn.commit()
         return building_id
@@ -5629,19 +5574,23 @@ class GameDB:
         origin_ref: str = "",
     ) -> bool:
         """拆除/废止建筑（issue 失败或撤销结案）。返回是否真删了一行。"""
-        row = self.conn.execute("SELECT name FROM buildings WHERE id = ?", (building_id,)).fetchone()
+        row = self.buildings.get(building_id)
         if row is None:
             return False
-        self.conn.execute(
-            """
-            INSERT INTO building_logs
-            (turn, year, period, building_id, field, old_value, new_value, delta, reason, actor, origin_ref)
-            VALUES (?, ?, ?, ?, 'remove', ?, '', NULL, ?, '档房', ?)
-            """,
-            (state.turn, state.year, state.period, building_id,
-             str(row["name"]), (reason or "建筑废止").strip()[:80], origin_ref),
-        )
-        self.conn.execute("DELETE FROM buildings WHERE id = ?", (building_id,))
+        self.buildings.append_log({
+            "turn": state.turn,
+            "year": state.year,
+            "period": state.period,
+            "building_id": building_id,
+            "field": "remove",
+            "old_value": str(row["name"]),
+            "new_value": "",
+            "delta": None,
+            "reason": (reason or "建筑废止").strip()[:80],
+            "actor": "档房",
+            "origin_ref": origin_ref,
+        })
+        self.buildings.delete(building_id)
         if commit:
             self.conn.commit()
         return True
@@ -5660,7 +5609,7 @@ class GameDB:
         changes: List[Dict[str, object]] = []
         valid_fields = set(BUILDING_SCORE_FIELDS + BUILDING_QUANTITY_FIELDS + BUILDING_TEXT_FIELDS)
         for building_id, raw_changes in building_deltas.items():
-            row = self.conn.execute("SELECT * FROM buildings WHERE id = ?", (building_id,)).fetchone()
+            row = self.buildings.get(building_id)
             if row is None:
                 print(f"[WARN] building_delta 引用未入库建筑 '{building_id}' → 跳过")
                 continue
@@ -5711,22 +5660,22 @@ class GameDB:
                 else:
                     print(f"[WARN] building_delta 未处理字段 '{field}' → 跳过")
                     continue
-                self.conn.execute(
-                    f"UPDATE buildings SET {field} = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-                    (stored_new, building_id),
-                )
-                self.conn.execute(
-                    """
-                    INSERT INTO building_logs
-                    (turn, year, period, building_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor, origin_ref)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        state.turn, state.year, state.period, building_id, field,
-                        str(old_value), str(stored_new), log_delta, reason,
-                        event.id, edict_id, actor, origin_ref,
-                    ),
-                )
+                self.buildings.update(building_id, {field: stored_new})
+                self.buildings.append_log({
+                    "turn": state.turn,
+                    "year": state.year,
+                    "period": state.period,
+                    "building_id": building_id,
+                    "field": field,
+                    "old_value": str(old_value),
+                    "new_value": str(stored_new),
+                    "delta": log_delta,
+                    "reason": reason,
+                    "event_id": event.id,
+                    "edict_id": edict_id,
+                    "actor": actor,
+                    "origin_ref": origin_ref,
+                })
                 changes.append({
                     "building": row["name"],
                     "field": field,
@@ -5871,20 +5820,13 @@ class GameDB:
             new_sat = max(0, min(100, int(row["satisfaction"]) + sat_d))
             if faction in _LEVERAGE_FACTIONS:
                 # 白名单：leverage 增量注入 offset（不被 reconcile 抹），satisfaction 仍直写。
-                self.conn.execute(
-                    "UPDATE factions SET satisfaction = ?, leverage_offset = leverage_offset + ? "
-                    "WHERE name = ?",
-                    (new_sat, lev_d, faction),
-                )
+                self.factions.add_leverage_offset(faction, new_sat, lev_d)
                 # 立即令 leverage 体现 offset 变化（含本次增量）；reconcile 后确认同值。
                 self.recompute_faction_leverage(faction)
             else:
                 # 非白名单：维持原样直写 leverage 列（reconcile 不碰非白名单）。
                 new_lev = max(0, min(100, int(row["leverage"]) + lev_d))
-                self.conn.execute(
-                    "UPDATE factions SET satisfaction = ?, leverage = ? WHERE name = ?",
-                    (new_sat, new_lev, faction),
-                )
+                self.factions.set_satisfaction_and_leverage(faction, new_sat, new_lev)
         if commit:
             self.conn.commit()
         return rejected
@@ -15667,45 +15609,43 @@ class GameDB:
         from ming_sim.staged_commitment import stages_to_json
         # 字符串面经 stages_to_json 正确解析或响亮拒绝，禁止 char-iterate 静默存 []
         stages_blob = stages_to_json([] if stages_json is None else stages_json)
-        cur = self.conn.execute(
-            """
-            INSERT INTO issues (
-                kind, title, origin_kind, origin_ref, origin_turn,
-                bar_value, bar_good_meaning, bar_bad_meaning, inertia,
-                phase, stage_text, status, severity, region_hint, faction_hint,
-                tags, participants, participant_roster, target_roster, ongoing_effects, cancellable, cancel_cost,
-                effect_on_resolve, effect_on_fail, resolve_condition, fail_condition,
-                end_turn, stop_condition, commitment_kind, stages_json, last_advance_turn
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                sanitize_sqlite_text(kind), sanitize_sqlite_text(title),
-                sanitize_sqlite_text(origin_kind), sanitize_sqlite_text(origin_ref), state.turn,
-                bar_value, sanitize_sqlite_text(bar_good_meaning), sanitize_sqlite_text(bar_bad_meaning), int(inertia),
-                phase, sanitize_sqlite_text(stage_text), severity,
-                sanitize_sqlite_text(region_hint), sanitize_sqlite_text(faction_hint),
-                safe_json_dumps(tags or [], ensure_ascii=False),
-                safe_json_dumps(participant_names, ensure_ascii=False),
-                safe_json_dumps(participant_roster, ensure_ascii=False),
-                safe_json_dumps(normalized_targets, ensure_ascii=False),
-                safe_json_dumps(ongoing_effects or {}, ensure_ascii=False),
-                sanitize_sqlite_text(cancellable),
-                safe_json_dumps(cancel_cost or {}, ensure_ascii=False),
-                safe_json_dumps(effect_on_resolve or {}, ensure_ascii=False),
-                safe_json_dumps(effect_on_fail or {}, ensure_ascii=False),
-                sanitize_sqlite_text(resolve_condition), sanitize_sqlite_text(fail_condition),
-                int(end_turn),
-                (
-                    safe_json_dumps(stop_condition, ensure_ascii=False, separators=(",", ":"))
-                    if isinstance(stop_condition, dict)
-                    else sanitize_sqlite_text(str(stop_condition or ""))
-                ),
-                sanitize_sqlite_text(str(commitment_kind or "")),
-                sanitize_sqlite_text(stages_blob),
-                state.turn,
+        issue_id = self.issues.insert({
+            "kind": sanitize_sqlite_text(kind),
+            "title": sanitize_sqlite_text(title),
+            "origin_kind": sanitize_sqlite_text(origin_kind),
+            "origin_ref": sanitize_sqlite_text(origin_ref),
+            "origin_turn": state.turn,
+            "bar_value": bar_value,
+            "bar_good_meaning": sanitize_sqlite_text(bar_good_meaning),
+            "bar_bad_meaning": sanitize_sqlite_text(bar_bad_meaning),
+            "inertia": int(inertia),
+            "phase": phase,
+            "stage_text": sanitize_sqlite_text(stage_text),
+            "status": "active",
+            "severity": severity,
+            "region_hint": sanitize_sqlite_text(region_hint),
+            "faction_hint": sanitize_sqlite_text(faction_hint),
+            "tags": safe_json_dumps(tags or [], ensure_ascii=False),
+            "participants": safe_json_dumps(participant_names, ensure_ascii=False),
+            "participant_roster": safe_json_dumps(participant_roster, ensure_ascii=False),
+            "target_roster": safe_json_dumps(normalized_targets, ensure_ascii=False),
+            "ongoing_effects": safe_json_dumps(ongoing_effects or {}, ensure_ascii=False),
+            "cancellable": sanitize_sqlite_text(cancellable),
+            "cancel_cost": safe_json_dumps(cancel_cost or {}, ensure_ascii=False),
+            "effect_on_resolve": safe_json_dumps(effect_on_resolve or {}, ensure_ascii=False),
+            "effect_on_fail": safe_json_dumps(effect_on_fail or {}, ensure_ascii=False),
+            "resolve_condition": sanitize_sqlite_text(resolve_condition),
+            "fail_condition": sanitize_sqlite_text(fail_condition),
+            "end_turn": int(end_turn),
+            "stop_condition": (
+                safe_json_dumps(stop_condition, ensure_ascii=False, separators=(",", ":"))
+                if isinstance(stop_condition, dict)
+                else sanitize_sqlite_text(str(stop_condition or ""))
             ),
-        )
-        issue_id = int(cur.lastrowid)
+            "commitment_kind": sanitize_sqlite_text(str(commitment_kind or "")),
+            "stages_json": sanitize_sqlite_text(stages_blob),
+            "last_advance_turn": state.turn,
+        })
         self.affairs.bind_from_origin_ref("issues", issue_id, origin_ref)
         if commit:
             self.conn.commit()
@@ -15715,10 +15655,10 @@ class GameDB:
             "assignment",
             title,
             stage_text,
-            f"issue:{int(cur.lastrowid)}",
+            f"issue:{issue_id}",
             commit=commit,
         )
-        return int(cur.lastrowid)
+        return issue_id
 
     def insert_issue_with_affair_declaration(
         self,
@@ -15805,31 +15745,28 @@ class GameDB:
         # inertia 可被本次行动改变（钳到 -10..+10 五档区间）
         new_inertia = int(row["inertia"]) + int(inertia_delta)
         new_inertia = max(-10, min(10, new_inertia))
-        self.conn.execute(
-            """
-            UPDATE issues SET bar_value=?, phase=?, stage_text=?, status=?, inertia=?,
-                              closed_turn=?, last_advance_turn=?, updated_at=CURRENT_TIMESTAMP
-            WHERE id=?
-            """,
-            (to_value, new_phase, sanitize_sqlite_text(to_stage_text), new_status, new_inertia, closed_turn, state.turn, issue_id),
-        )
-        self.conn.execute(
-            """
-            INSERT INTO issue_advances (
-                issue_id, turn, trigger_kind, trigger_ref,
-                delta_bar, from_value, to_value,
-                from_stage_text, to_stage_text, narrative, metric_delta
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                issue_id, state.turn,
-                sanitize_sqlite_text(trigger_kind), sanitize_sqlite_text(trigger_ref),
-                actual_delta, from_value, to_value,
-                sanitize_sqlite_text(from_stage_text), sanitize_sqlite_text(to_stage_text),
-                sanitize_sqlite_text(narrative),
-                safe_json_dumps(metric_delta or {}, ensure_ascii=False),
-            ),
-        )
+        self.issues.update(issue_id, {
+            "bar_value": to_value,
+            "phase": new_phase,
+            "stage_text": sanitize_sqlite_text(to_stage_text),
+            "status": new_status,
+            "inertia": new_inertia,
+            "closed_turn": closed_turn,
+            "last_advance_turn": state.turn,
+        })
+        self.issues.append_advance({
+            "issue_id": issue_id,
+            "turn": state.turn,
+            "trigger_kind": sanitize_sqlite_text(trigger_kind),
+            "trigger_ref": sanitize_sqlite_text(trigger_ref),
+            "delta_bar": actual_delta,
+            "from_value": from_value,
+            "to_value": to_value,
+            "from_stage_text": sanitize_sqlite_text(from_stage_text),
+            "to_stage_text": sanitize_sqlite_text(to_stage_text),
+            "narrative": sanitize_sqlite_text(narrative),
+            "metric_delta": safe_json_dumps(metric_delta or {}, ensure_ascii=False),
+        })
         if commit:
             self.conn.commit()
         return self.conn.execute("SELECT * FROM issues WHERE id=?", (issue_id,)).fetchone()
@@ -15861,29 +15798,27 @@ class GameDB:
         from_stage_text = row["stage_text"]
         to_stage_text = narrative or from_stage_text
         new_phase = self._derive_issue_phase(to_value)
-        self.conn.execute(
-            """
-            UPDATE issues SET bar_value=?, phase=?, stage_text=?, status=?,
-                              closed_turn=?, last_advance_turn=?, updated_at=CURRENT_TIMESTAMP
-            WHERE id=?
-            """,
-            (to_value, new_phase, sanitize_sqlite_text(to_stage_text), reason, state.turn, state.turn, issue_id),
-        )
-        self.conn.execute(
-            """
-            INSERT INTO issue_advances (
-                issue_id, turn, trigger_kind, trigger_ref,
-                delta_bar, from_value, to_value,
-                from_stage_text, to_stage_text, narrative, metric_delta
-            ) VALUES (?, ?, 'close', ?, ?, ?, ?, ?, ?, ?, '{}')
-            """,
-            (
-                issue_id, state.turn, sanitize_sqlite_text(reason),
-                actual_delta, from_value, to_value,
-                sanitize_sqlite_text(from_stage_text), sanitize_sqlite_text(to_stage_text),
-                sanitize_sqlite_text(narrative),
-            ),
-        )
+        self.issues.update(issue_id, {
+            "bar_value": to_value,
+            "phase": new_phase,
+            "stage_text": sanitize_sqlite_text(to_stage_text),
+            "status": reason,
+            "closed_turn": state.turn,
+            "last_advance_turn": state.turn,
+        })
+        self.issues.append_advance({
+            "issue_id": issue_id,
+            "turn": state.turn,
+            "trigger_kind": "close",
+            "trigger_ref": sanitize_sqlite_text(reason),
+            "delta_bar": actual_delta,
+            "from_value": from_value,
+            "to_value": to_value,
+            "from_stage_text": sanitize_sqlite_text(from_stage_text),
+            "to_stage_text": sanitize_sqlite_text(to_stage_text),
+            "narrative": sanitize_sqlite_text(narrative),
+            "metric_delta": "{}",
+        })
         if commit:
             self.conn.commit()
         return self.conn.execute("SELECT * FROM issues WHERE id=?", (issue_id,)).fetchone()
@@ -16028,24 +15963,21 @@ class GameDB:
         row = self.conn.execute("SELECT * FROM issues WHERE id=?", (issue_id,)).fetchone()
         if row is None or row["status"] != "active":
             return None
-        self.conn.execute(
-            "UPDATE issues SET status='dropped', closed_turn=?, last_advance_turn=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
-            (state.turn, state.turn, issue_id),
-        )
-        self.conn.execute(
-            """
-            INSERT INTO issue_advances (
-                issue_id, turn, trigger_kind, delta_bar,
-                from_value, to_value, narrative, metric_delta
-            ) VALUES (?, ?, 'cancel', 0, ?, ?, ?, ?)
-            """,
-            (
-                issue_id, state.turn,
-                int(row["bar_value"]), int(row["bar_value"]),
-                narrative,
-                json.dumps(applied_cost or {}, ensure_ascii=False),
-            ),
-        )
+        self.issues.update(issue_id, {
+            "status": "dropped",
+            "closed_turn": state.turn,
+            "last_advance_turn": state.turn,
+        })
+        self.issues.append_advance({
+            "issue_id": issue_id,
+            "turn": state.turn,
+            "trigger_kind": "cancel",
+            "delta_bar": 0,
+            "from_value": int(row["bar_value"]),
+            "to_value": int(row["bar_value"]),
+            "narrative": narrative,
+            "metric_delta": json.dumps(applied_cost or {}, ensure_ascii=False),
+        })
         if commit:
             self.conn.commit()
         return self.conn.execute("SELECT * FROM issues WHERE id=?", (issue_id,)).fetchone()
@@ -17708,20 +17640,20 @@ class GameDB:
         data = {k: v for k, v in values.items() if k in valid}
         if pk not in data or data[pk] in (None, ""):
             raise ValueError(f"缺主键 {pk}")
-        cols = list(data.keys())
-        placeholders = ",".join("?" for _ in cols)
-        collist = ",".join(cols)
-        update_cols = [column for column in cols if column != pk]
-        conflict_action = (
-            "DO UPDATE SET "
-            + ",".join(f"{column}=excluded.{column}" for column in update_cols)
-            if update_cols else "DO NOTHING"
-        )
-        self.conn.execute(
-            f"INSERT INTO {table} ({collist}) VALUES ({placeholders}) "
-            f"ON CONFLICT({pk}) {conflict_action}",
-            [data[c] for c in cols],
-        )
+        if table == "game_state":
+            self.reign.upsert_header(data)
+        elif table == "metrics":
+            self.reign.upsert_metric(str(data["key"]), int(data["value"]))
+        elif table == "regions":
+            self.regions.upsert(data)
+        elif table == "armies":
+            self.armies.upsert(data)
+        elif table == "characters":
+            self.characters.upsert(data)
+        elif table == "buildings":
+            self.buildings.upsert(data)
+        else:
+            raise ValueError(f"表 {table!r} 不在调试白名单")
         # #1889：economy_accounts 已降级为 metrics 的派生视图，无需（也不能）再同步；
         # 改 metrics 即改真源。
         self.conn.commit()
@@ -17731,9 +17663,22 @@ class GameDB:
     def admin_delete(self, table: str, pk_value: object) -> int:
         """按主键删行，返回受影响行数。"""
         pk = self.admin_check_table(table)
-        cur = self.conn.execute(f"DELETE FROM {table} WHERE {pk}=?", (pk_value,))
+        if table == "game_state":
+            deleted = self.reign.delete_header(pk_value)
+        elif table == "metrics":
+            deleted = self.reign.delete_metric(str(pk_value))
+        elif table == "regions":
+            deleted = self.regions.delete(str(pk_value))
+        elif table == "armies":
+            deleted = self.armies.delete(str(pk_value))
+        elif table == "characters":
+            deleted = self.characters.delete_by_name(str(pk_value))
+        elif table == "buildings":
+            deleted = self.buildings.delete(str(pk_value))
+        else:
+            raise ValueError(f"表 {table!r} 不在调试白名单")
         self.conn.commit()
-        return cur.rowcount
+        return deleted
 
     def record_relation_edge_event(
         self,

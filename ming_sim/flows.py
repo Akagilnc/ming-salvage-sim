@@ -396,31 +396,11 @@ def _substrate_hub_budget_income_lines(
 
 
 def _set_fiscal_container(db: GameDB, key: str, value: float, note: str) -> None:
-    db.conn.execute(
-        """
-        INSERT INTO fiscal_containers (key, value, note)
-        VALUES (?, ?, ?)
-        ON CONFLICT(key) DO UPDATE SET
-          value = excluded.value,
-          note = excluded.note,
-          updated_at = CURRENT_TIMESTAMP
-        """,
-        (key, float(value), note),
-    )
+    db.fiscal_containers.replace(key, value, note)
 
 
 def _add_fiscal_container(db: GameDB, key: str, delta: float, note: str) -> None:
-    db.conn.execute(
-        """
-        INSERT INTO fiscal_containers (key, value, note)
-        VALUES (?, ?, ?)
-        ON CONFLICT(key) DO UPDATE SET
-          value = fiscal_containers.value + excluded.value,
-          note = excluded.note,
-          updated_at = CURRENT_TIMESTAMP
-        """,
-        (key, float(delta), note),
-    )
+    db.fiscal_containers.add(key, delta, note)
 
 
 # 固定月度收支科目目录现走数据驱动：db.iter_budget_items() 从 fiscal_config 读
@@ -2374,21 +2354,15 @@ def _apply_population_transfers(
         amount = min(amount, int(src_row["population"]))
         if amount > 0:
             # 单记录双写：同一事务内源减目标增，任一腿失败整体回滚（ADR 0008 决定 2）。
-            db.conn.execute(
-                "UPDATE classes SET population = population - ?, updated_at = CURRENT_TIMESTAMP "
-                "WHERE name=? AND region_id=?",
-                (amount, src_cls, src_region),
-            )
-            db.conn.execute(
-                "UPDATE classes SET population = population + ?, updated_at = CURRENT_TIMESTAMP "
-                "WHERE name=? AND region_id=?",
-                (amount, dst_cls, dst_region),
-            )
-            db.conn.execute(
-                "INSERT INTO population_transfer_ledger "
-                "(turn, source, target, amount, reason, origin_ref) VALUES (?, ?, ?, ?, ?, ?)",
-                (int(db.conn.execute("SELECT turn FROM game_state WHERE id=1").fetchone()[0]),
-                 source, target, amount, reason, origin_ref),
+            db.classes.add_population(name=src_cls, region_id=src_region, delta=-amount)
+            db.classes.add_population(name=dst_cls, region_id=dst_region, delta=amount)
+            db.classes.append_transfer(
+                turn=int(db.conn.execute("SELECT turn FROM game_state WHERE id=1").fetchone()[0]),
+                source=source,
+                target=target,
+                amount=amount,
+                reason=reason,
+                origin_ref=origin_ref,
             )
         region_name = str(db.conn.execute(
             "SELECT name FROM regions WHERE id=?", (src_region,)

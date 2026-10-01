@@ -35,8 +35,9 @@ def test_advance_non_dict_item_rejected_not_crash(read_game, bad_item):
     out = I.apply_issue_tracker_output(db, state, {"advances": [bad_item]})
     rej = _rejected(out)
     assert len(rej) == 1
+    assert rej[0]["rejected"] is True
     assert rej[0]["category"] == "invalid_enum"
-    assert "非对象" in rej[0]["reason"]
+    assert rej[0]["item"] == bad_item
 
 
 @pytest.mark.parametrize("bad_id", ["abc", None, True, 1.5, -10 ** 100])

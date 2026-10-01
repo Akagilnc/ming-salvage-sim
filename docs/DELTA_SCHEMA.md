@@ -105,7 +105,7 @@ canonical 段形＝list，每条记录**同时表达两条腿**：applier 读一
 |---|---|
 | `source` | `<class_name>@<region_id>` 省级行（如 `农民@shaanxi`）；全国行（region_id 空）不合法 |
 | `target` | 同上；须与 source **同 region_id**（跨省在途归 #475 预留，本契约不做） |
-| `amount` | 拟转正整数（严格 int，拒数字串/float/bool）；单位随存档 `population_unit`（新档「人」、legacy「万」），全线禁混刻度 |
+| `amount` | 拟转正整数（严格 int，拒数字串/float/bool）；单位是「人」 |
 | `reason` | 枚举×方向矩阵：`加派`/`摊派`/`灾害`＝农民→流民；`兵灾`＝农民→流民、军户→流民；`逃亡`＝军户→流民；`回流`＝流民→农民（**仅引擎 recovery 单核可写**，extractor 申报整项拒收，#652）。方向出阵即拒 |
 | `origin_ref` | **必填** `dossier:<id>`（须存在且已颁）或精确哨兵 `盘面自发`——来源追溯契约与 `reason` 机制枚举两槽并存、职责互斥 |
 
@@ -122,11 +122,11 @@ canonical 段形＝list；中英别名：`流民投贼` / `投贼吸收`。LLM �
 |---|---|
 | `region_id` | 须有 `流民@region_id` 省级行 |
 | `power_id` | 流寇股：`bandits` 或 `bandit_*`，须已入库 |
-| `requested_count` | 正整数（严格 int）；单位随存档 `population_unit` |
+| `requested_count` | 正整数（严格 int）；单位是「人」 |
 | `origin_ref` | 必填 `dossier:<id>` 或 `盘面自发` |
 
 - 流寇 `power_updates.military_strength` **正增量**整项拒收（必须走本段）；负增量（剿股）仍走 `power_updates`。
-- 仅 `population_unit='人'` 新档可写；legacy 拒收。
+- 人口一律按「人」写。
 - item 字段中英别名：`地区编号`→region_id、`势力编号`→power_id、`请求口数`/`请求人数`/`拟吸口数`→requested_count。
 
 ### `surcharge_decrees` — 下旨加派（#650/ADR 0089 明渠）
@@ -142,7 +142,7 @@ canonical 段形＝list，每项落一道加派旨：逐省累积账当回合落
 
 - item 字段中英别名：`地区编号`→region_id、`月增额`/`月额`→monthly_amount。
 - 同批 `(origin_ref, region_id)` 仅首项成功，重复项逐项拒收。
-- 仅 `substrate_hub` 且 `population_unit='人'` 的新人口池档可写入、消费；legacy 或无人口单位标记的旧档拒收且不迁移。历史正账若农民/流民两行皆无则安全出列，仅缺一行视为损坏并 fail-loud。
+- 仅 `substrate_hub` 财政档可写入、消费；legacy 财政引擎拒收且不消费。人口一律「人」。历史正账若农民/流民两行皆无则安全出列，仅缺一行视为损坏并 fail-loud。
 - 无旨不入账：段空＝累积账不动；停征后入池止（出口回流归 S5 #652）。
 
 ### `region_delta` — 地区变化
@@ -150,7 +150,7 @@ canonical 段形＝list，每项落一道加派旨：逐省累积账当回合落
 - key：region_id（如 `beizhili` / `shaanxi` / `liaodong` 等，看 `content/regions.json` id 列）
 - value：dict，字段（来自 `REGION_*` 常量）：
   - score（0-100，int）：`public_support` `unrest` `gentry_resistance` `military_pressure`
-  - quantity（int）：`population` `registered_land` `hidden_land` `tax_per_turn` `grain_security`；**单位契约（ADR 0088/#648）**：`population` 以「人」计，与 armies `manpower` 同刻度；旧档按档口径为「万人」——写端以 extractor 输入 `population_unit` 为准，勿混刻度
+  - quantity（int）：`population` `registered_land` `hidden_land` `tax_per_turn` `grain_security`；**单位契约（ADR 0088/#648，#1889 废万人档）**：`population` 以「人」计，与 armies `manpower` 同刻度
   - special quantity（int 增量）：`cannon`（城防炮，落库时按 `city_level×8` 上限 clamp 并留痕）
   - text：`natural_disaster` `human_disaster` `status`
   - `controlled_by`：必须是 `powers.id` 中存在的非空势力 id（`null`/空白/未知 id 逐项拒收留痕）

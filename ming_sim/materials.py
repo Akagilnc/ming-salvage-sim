@@ -733,8 +733,8 @@ def _write_textual_fact_files(
     if name:
         subjects.append(("character", name, name))
     region_ids = set((knowledge.get("scope") or {}).get("region_ids") or ())
-    if region_ids and hasattr(db, "region_rows"):
-        for row in db.region_rows():
+    if region_ids and hasattr(db, "regions"):
+        for row in db.regions.rows():
             if str(row["id"] or "") not in region_ids:
                 continue
             rid = str(row["id"] or "")
@@ -775,10 +775,10 @@ def _write_textual_fact_files(
 
 def _write_region_detail_files(tmp: Path, db: Any, knowledge: dict) -> list[str]:
     region_ids = set((knowledge.get("scope") or {}).get("region_ids") or ())
-    if not region_ids or not hasattr(db, "region_rows"):
+    if not region_ids or not hasattr(db, "regions"):
         return []
     index: list[str] = []
-    for row in db.region_rows():
+    for row in db.regions.rows():
         if str(row["id"] or "") not in region_ids:
             continue
         name = str(row["name"] or row["id"] or "")
@@ -1190,8 +1190,8 @@ def _write_world_textual_fact_files(
         if not body:
             continue
         label = subject_id
-        if kind == "region" and hasattr(db, "region_rows"):
-            for region in db.region_rows():
+        if kind == "region" and hasattr(db, "regions"):
+            for region in db.regions.rows():
                 if str(region["id"] or "") == subject_id:
                     label = str(region["name"] or subject_id)
                     break

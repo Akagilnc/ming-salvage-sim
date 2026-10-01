@@ -105,52 +105,45 @@ def seed_opening_world(db: Any) -> None:
     is_fresh_factions_seed = not db.table_has_rows("factions")
     if is_fresh_factions_seed:
         for faction in db.content.factions.values():
-            db.conn.execute(
-                """
-                INSERT INTO factions (name, satisfaction, leverage, agenda)
-                VALUES (?, ?, ?, ?)
-                """,
-                (faction.name, faction.satisfaction, faction.leverage, faction.agenda),
+            db.factions.insert(
+                name=faction.name,
+                satisfaction=faction.satisfaction,
+                leverage=faction.leverage,
+                agenda=faction.agenda,
             )
     if not db.table_has_rows("classes"):
-        # ADR 0088/#648：classes 首次 seed = 新档 cutover 点，落持久人口单位标「人」。
-        # 旧档表已有行（万人口径）不重 seed、不落标 → population_unit 恒判「万人」legacy。
+        # 人口一律「人」。classes 首次 seed 落持久标；已有行不重 seed。
         db._mark_population_unit_persons()
         for cls in db.content.classes.values():
-            db.conn.execute(
-                """
-                INSERT INTO classes (name, region_id, population, satisfaction, leverage, agenda)
-                VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                (cls.name, cls.region_id, cls.population, cls.satisfaction, cls.leverage, cls.agenda),
+            db.classes.insert(
+                name=cls.name,
+                region_id=cls.region_id,
+                population=cls.population,
+                satisfaction=cls.satisfaction,
+                leverage=cls.leverage,
+                agenda=cls.agenda,
             )
     for power in db.content.powers.values():
-        db.conn.execute(
-            """
-            INSERT OR IGNORE INTO powers
-            (id, name, kind, leader, stance, leverage, satisfaction, military_strength,
-             cohesion, supply, agenda, status, last_action, aliases)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                power.id,
-                power.name,
-                power.kind,
-                power.leader,
-                power.stance,
-                power.leverage,
-                power.satisfaction,
-                power.military_strength,
-                power.cohesion,
-                power.supply,
-                power.agenda,
-                power.status,
-                power.last_action,
+        db.powers.insert_ignore({
+            "id": power.id,
+            "name": power.name,
+            "kind": power.kind,
+            "leader": power.leader,
+            "stance": power.stance,
+            "leverage": power.leverage,
+            "satisfaction": power.satisfaction,
+            "military_strength": power.military_strength,
+            "cohesion": power.cohesion,
+            "supply": power.supply,
+            "agenda": power.agenda,
+            "status": power.status,
+            "last_action": power.last_action,
+            "aliases": (
                 json.dumps(power.aliases, ensure_ascii=False)
                 if isinstance(power.aliases, list)
-                else power.aliases,
+                else power.aliases
             ),
-        )
+        })
     for region in db.content.regions.values():
         db.regions.insert_ignore({
             "id": region.id,
@@ -206,27 +199,21 @@ def seed_opening_world(db: Any) -> None:
             })
     if not db.table_has_rows("buildings"):
         for building in db.content.buildings.values():
-            db.conn.execute(
-                """
-                INSERT INTO buildings
-                (id, region_id, name, category, level, condition, maintenance, risk,
-                 output_metric, output_amount, status, origin, created_turn)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'preset', 0)
-                """,
-                (
-                    building.id,
-                    building.region_id,
-                    building.name,
-                    building.category,
-                    building.level,
-                    building.condition,
-                    building.maintenance,
-                    building.risk,
-                    building.output_metric,
-                    building.output_amount,
-                    building.status,
-                ),
-            )
+            db.buildings.insert({
+                "id": building.id,
+                "region_id": building.region_id,
+                "name": building.name,
+                "category": building.category,
+                "level": building.level,
+                "condition": building.condition,
+                "maintenance": building.maintenance,
+                "risk": building.risk,
+                "output_metric": building.output_metric,
+                "output_amount": building.output_amount,
+                "status": building.status,
+                "origin": "preset",
+                "created_turn": 0,
+            })
     db._initialize_army_pay_source_spine(is_fresh_armies_seed)
     # #173：维护费列退役 drop 已上移至 init_schema（每个打开路径都跑，含现存档的纯
     # init_schema 路径，见 cmr drop R1）；此处新档 seed INSERT 后该列本就不存在，无需再 drop。

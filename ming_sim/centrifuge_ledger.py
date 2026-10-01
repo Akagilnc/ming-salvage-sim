@@ -195,7 +195,7 @@ def rebuild_centrifuge_cache(db: Any) -> None:
     with atomic(db):
         conn = db.conn
         conn.execute("DELETE FROM faction_axis_debt")
-        conn.execute("UPDATE factions SET edict_overdraw = 0")
+        db.factions.reset_edict_overdraw()
         # blood_debt from direct
         blood_rows = conn.execute(
             """
@@ -242,10 +242,7 @@ def rebuild_centrifuge_cache(db: Any) -> None:
         for row in od_rows:
             total = int(row["total"])
             if total > 0:
-                conn.execute(
-                    "UPDATE factions SET edict_overdraw = ? WHERE name = ?",
-                    (total, str(row["faction"])),
-                )
+                db.factions.set_edict_overdraw(str(row["faction"]), total)
 
 
 def _resolve_target_faction_identity(
@@ -475,11 +472,4 @@ def _accrue_centrifuge(
                     (faction, payload["axis"], int(payload["amount"])),
                 )
             elif kind == "overdraw":
-                conn.execute(
-                    """
-                    UPDATE factions
-                    SET edict_overdraw = edict_overdraw + ?
-                    WHERE name = ?
-                    """,
-                    (int(payload["amount"]), faction),
-                )
+                db.factions.add_edict_overdraw(faction, int(payload["amount"]))

@@ -47,8 +47,9 @@ def test_close_non_dict_item_rejected_not_crash(read_game, bad_item):
     out = I.apply_issue_tracker_output(db, state, {"close_issues": [bad_item]})
     rej = _rejected(out)
     assert len(rej) == 1
+    assert rej[0]["rejected"] is True
     assert rej[0]["category"] == "invalid_enum"
-    assert "非对象" in rej[0]["reason"]
+    assert rej[0]["item"] == bad_item
 
 
 def test_close_bad_reason_rejected(read_game):

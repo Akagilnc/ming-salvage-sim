@@ -83,25 +83,31 @@ def _targets(values: Optional[Mapping[str, Iterable[str]]]) -> Dict[str, List[st
     return {k: _names(v) for k, v in (values or {}).items()}
 
 
+def _stored_json(raw: object, *, empty: str) -> object:
+    """Absent text uses the column default. Corrupt text and the wrong container raise."""
+    if raw is None or raw == "":
+        raw = empty
+    parsed = json.loads(raw)
+    return parsed
+
+
 def _load_list(raw: object) -> List[str]:
-    try:
-        parsed = json.loads(raw or "[]")
-    except (TypeError, ValueError):
-        return []
-    return [str(x) for x in parsed] if isinstance(parsed, list) else []
+    parsed = _stored_json(raw, empty="[]")
+    if not isinstance(parsed, list):
+        raise ValueError(f"名单须为列表，得 {type(parsed).__name__}")
+    return [str(item) for item in parsed]
 
 
 def _load_targets(raw: object) -> Dict[str, List[str]]:
     """Decode an excluded_targets column: {"people": [...], "offices": [...]}."""
-    try:
-        parsed = json.loads(raw or "{}")
-    except (TypeError, ValueError):
-        return {}
+    parsed = _stored_json(raw, empty="{}")
     if not isinstance(parsed, dict):
-        return {}
+        raise ValueError(f"排除对象须为对象，得 {type(parsed).__name__}")
     out: Dict[str, List[str]] = {}
     for key, value in parsed.items():
-        out[str(key)] = [str(x) for x in value] if isinstance(value, list) else []
+        if not isinstance(value, list):
+            raise ValueError(f"排除对象 {key} 须为列表，得 {type(value).__name__}")
+        out[str(key)] = [str(item) for item in value]
     return out
 
 
