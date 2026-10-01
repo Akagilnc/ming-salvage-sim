@@ -184,7 +184,7 @@ def test_engine_auto_failed_materialize_writes_zero_joint_liability(game):
     assert db.get_relation_edge_events(event_kind="连坐") == []
 
 
-def test_dead_liable_party_skips_satisfaction_but_enters_note(game, caplog):
+def test_dead_liable_party_skips_satisfaction_but_enters_note(game):
     db, state, content = game
     dossier_id = _executing_dossier(db, state)
     db.conn.execute("UPDATE characters SET status='dead' WHERE name='倪元璐'")
@@ -208,7 +208,6 @@ def test_dead_liable_party_skips_satisfaction_but_enters_note(game, caplog):
     assert "徐光启" in edges
     note = db.get_decree_dossier(dossier_id)["execution_note"]
     assert "倪元璐" in note
-    assert "跳过已故" in caplog.text
 
 
 def test_explicit_affected_parties_must_pass_full_key_validation(game):

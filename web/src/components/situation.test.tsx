@@ -232,7 +232,9 @@ describe("#1726 StateModal 奏疏收件箱", () => {
 
   it("无奏疏时示空态，不因有局势而填充", () => {
     const cleanup = render(<StateModal state={baseState([])} />);
-    expect(document.querySelector(".empty-note")?.textContent?.trim()).not.toBe("");
+    const empty = document.querySelector(".empty-note");
+    expect(empty).not.toBeNull();
+    expect(empty!.textContent?.trim()).not.toBe("");
     expect(document.querySelector(".situation-panel")).toBeNull();
     cleanup();
   });

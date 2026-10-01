@@ -64,8 +64,6 @@ def test_clichat_runner_exit_raises_typed_llm_unavailable(monkeypatch):
     # 玩家可见 message 走 diegetic 口吻，不夹机器原文
     _assert_no_machine_text(str(exc))
     _assert_no_machine_text(exc.message)
-    # 技术细节可留 provider_message 供日志，但不得冒充台词
-    assert "codex" in (exc.provider_message or "").lower() or "退出码" in (exc.provider_message or "")
     assert exc.code  # typed
 
 

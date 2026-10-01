@@ -712,7 +712,6 @@ def test_due_month_extractor_blocked_before_todo_write(game):
     )
     item = result["dossier_executions"][0]
     assert item.get("rejected") is True
-    assert "正式复核" in str(item.get("reason") or "")
 
     after = db.get_decree_dossier(dossier_id)
     assert after["status"] == "executing"

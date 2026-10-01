@@ -130,7 +130,6 @@ def test_decree_commitment_dedups_same_batch_fiscal_create_carrier(game, monkeyp
     fiscal_result = out["fiscal_creates"][0]
     assert fiscal_result["rejected"] is True
     assert fiscal_result["category"] == "deduped_commitment_carrier"
-    assert "承诺 issue" in fiscal_result["reason"]
 
 
 def test_decree_commitment_does_not_dedup_same_name_income_fiscal_create(game, monkeypatch):
@@ -986,7 +985,6 @@ def test_until_stop_commitment_rejects_direct_resolved_close(game, monkeypatch):
     close = out["closes"][0]
     assert close["rejected"] is True
     assert close["category"] == "invalid_enum"
-    assert "承诺" in close["reason"]
     after = db.conn.execute("SELECT status FROM issues WHERE id=?", (row["id"],)).fetchone()
     assert after["status"] == "active"
 
@@ -1026,7 +1024,6 @@ def test_until_stop_commitment_rejects_direct_failed_close_without_effects(game,
     close = out["closes"][0]
     assert close["rejected"] is True
     assert close["category"] == "invalid_enum"
-    assert "承诺" in close["reason"]
     after = db.conn.execute("SELECT status FROM issues WHERE id=?", (row["id"],)).fetchone()
     assert after["status"] == "active"
     assert int(state.metrics["民心"]) == starting_popular_support

@@ -78,20 +78,6 @@ def _front_half_detail(phase: str) -> str:
     return detail
 
 
-def test_serialized_web_write_awaiting_decision_says_waiting_for_rescript():
-    """#1306：awaiting_decision 与 settling 的 409 详情非空且互不相同。"""
-    awaiting = _front_half_detail(TurnPhase.AWAITING_DECISION.value)
-    settling = _front_half_detail(TurnPhase.SETTLING.value)
-    assert awaiting != settling
-
-
-def test_serialized_web_write_settling_keeps_settlement_in_progress_copy():
-    """#1306：settling 仍是 409，且与 awaiting 不是同一详情。"""
-    assert _front_half_detail(TurnPhase.SETTLING.value) != _front_half_detail(
-        TurnPhase.AWAITING_DECISION.value
-    )
-
-
 def test_serialized_web_write_phase_messages_cover_front_half_done():
     """#1306 全 FRONT_HALF_DONE 相位均 409，详情只按 awaiting / 其余两支分叉。"""
     awaiting = _front_half_detail(TurnPhase.AWAITING_DECISION.value)

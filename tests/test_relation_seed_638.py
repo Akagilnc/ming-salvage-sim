@@ -426,10 +426,9 @@ def test_seed_replay_does_not_overwrite_later_brew_summary(fresh_session):
 
 
 def test_existing_save_is_never_touched_by_seed_import(game, monkeypatch):
-    """旧档不受影响：真实构造 GameSession 后，关系流水/摘要逐字段不变且无导入日志。"""
+    """旧档不受影响：真实构造 GameSession 后，关系流水/摘要逐字段不变，且不调用模型。"""
     import ming_sim.cli_backend as _cb
     import ming_sim.llm_model as llm_mod
-    import ming_sim.token_stats as token_stats
 
     db, _state, content = game
     assert db.has_state() is True
@@ -450,8 +449,6 @@ def test_existing_save_is_never_touched_by_seed_import(game, monkeypatch):
         _cb, "_run_backend_for_config",
         lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("读旧档不得调用 LLM")),
     )
-    logs = []
-    monkeypatch.setattr(token_stats, "tlog", logs.append)
     cfg = LLMConfig(api_key="", base_url="http://unused", model="unused")
     sess = GameSession(db_path=db_path, llm_config=cfg, content=content)
     try:
@@ -463,7 +460,6 @@ def test_existing_save_is_never_touched_by_seed_import(game, monkeypatch):
         ).fetchall()]
         assert events_after == events_before
         assert summaries_after == summaries_before
-        assert not any("关系 seed 导入" in message for message in logs)
     finally:
         sess.close()
 

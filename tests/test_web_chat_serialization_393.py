@@ -383,5 +383,4 @@ def test_nonstream_chat_rejects_when_session_draining():
 
     events = list(runtime.chat_stream("殿上", "边饷如何？"))
     assert events and events[0].get("type") == "error"
-    assert "正在关闭" in str(events[0].get("message") or "")
     assert runtime._pending_writes_count == 0

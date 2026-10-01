@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import contextlib
 import io
-import re
 import sqlite3
 from types import SimpleNamespace
 
@@ -22,21 +21,10 @@ from ming_sim.flows import apply_fixed_period_flows
 from ming_sim.knowledge import build_character_knowledge
 from ming_sim.report import print_header
 from ming_sim.materials import list_materials, prepare_character_materials, read_material
+from tests.test_army_card_status_1501 import _assert_ming_register
 
 ARMY = "guanning"
 
-
-def _assert_ming_register(db, text: str) -> None:
-    rows = db.conn.execute(
-        "SELECT name, manpower, status FROM armies WHERE owner_power='ming'"
-    ).fetchall()
-    assert rows and text
-    for row in rows:
-        assert row["name"] in text
-        assert re.search(rf"(?<!\d){int(row['manpower'])}(?!\d)", text)
-        status = str(row["status"] or "").strip()
-        if status:
-            assert status not in text
 PATHS = ("legacy", "substrate_hub")
 
 _RAW_KEYS = frozenset({"morale", "loyalty", "arrears"})

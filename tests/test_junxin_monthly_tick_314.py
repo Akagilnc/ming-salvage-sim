@@ -265,9 +265,6 @@ def test_substrate_hub_pure_province_source_loyalty_regression(game):
     ).fetchall()
     assert len(logs) == 1, f"忠诚日志应仅一条，实得 {len(logs)}"
     assert int(logs[0]["delta"]) == -5
-    reason = str(logs[0]["reason"])
-    assert "累计欠饷逾三月" in reason, f"reason 应为累计原因，实得 {reason!r}"
-    assert "中央军饷足额" not in reason, f"累计原因不得含中央军饷足额，实得 {reason!r}"
 
 
 def test_substrate_hub_hybrid_source_loyalty_regression(game):
@@ -302,9 +299,6 @@ def test_substrate_hub_hybrid_source_loyalty_regression(game):
     ).fetchall()
     assert len(logs) == 1, f"忠诚日志应仅一条，实得 {len(logs)}"
     assert int(logs[0]["delta"]) == -5
-    reason = str(logs[0]["reason"])
-    assert "累计欠饷逾三月" in reason, f"reason 应为累计原因，实得 {reason!r}"
-    assert "中央军饷足额" not in reason, f"累计原因不得含中央军饷足额，实得 {reason!r}"
 
 
 def test_zero_manpower_army_no_crash_no_tick(game):

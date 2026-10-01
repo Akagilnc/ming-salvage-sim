@@ -1,13 +1,13 @@
 """#489 角色见闻：职位裁切、公开事件与参与留痕。"""
 
 import json
-import re
 
 from ming_sim.models import Character
 import pytest
 from ming_sim.knowledge import build_character_knowledge
 from ming_sim.materials import list_materials, prepare_character_materials, read_material
 from tests.dossier_test_helpers import create_test_secret_order
+from tests.test_army_card_status_1501 import _assert_ming_register
 
 def test_role_roster_only_lists_current_active_ming_people(game):
     db, state, content = game
@@ -1337,19 +1337,6 @@ def test_household_secret_ledger_hides_case_by_excluded_office(game):
         db.set_character_office(successor.name, prior_office, office_type=prior_type)
         clerk.office, clerk.office_type = clerk_office, clerk_type
         successor.office, successor.office_type = prior_office, prior_type
-
-
-def _assert_ming_register(db, text: str) -> None:
-    rows = db.conn.execute(
-        "SELECT name, manpower, status FROM armies WHERE owner_power='ming'"
-    ).fetchall()
-    assert rows and text
-    for row in rows:
-        assert row["name"] in text
-        assert re.search(rf"(?<!\d){int(row['manpower'])}(?!\d)", text)
-        status = str(row["status"] or "").strip()
-        if status:
-            assert status not in text
 
 
 def _assert_court_offices(db, state, text: str) -> None:

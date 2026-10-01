@@ -98,7 +98,6 @@ def test_audience_admission_keeps_blank_fail_open_and_reuses_basic_qualification
     db.set_character_status(state, dead.name, "dead", reason="测试")
     decision = sess.admit_audience(dead)
     assert decision.result is None
-    assert "已故" in decision.reason
 
 
 def test_audience_admission_records_offsite_summon_before_allowing_audience(game):

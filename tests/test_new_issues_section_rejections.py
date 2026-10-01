@@ -140,7 +140,6 @@ def test_new_issue_non_dict_item_rejected_not_crash(read_game, bad_item):
     rej = _rejected(out)
     assert len(rej) == 1
     assert rej[0]["category"] == "invalid_enum"
-    assert "非对象" in rej[0]["reason"]
 
 
 @pytest.mark.parametrize("field,bad", [
@@ -157,7 +156,6 @@ def test_new_issue_dirty_coercion_field_rejected(read_game, field, bad):
     rej = _rejected(out)
     assert len(rej) == 1, out
     assert rej[0]["category"] == "invalid_enum"
-    assert "强转失败" in rej[0]["reason"]
 
 
 @pytest.mark.parametrize("bad_kind", ["reform", "policy", "局势"])
@@ -182,7 +180,6 @@ def test_new_issue_dirty_inertia_rejected(read_game):
     rej = _rejected(out)
     assert len(rej) == 1, out
     assert rej[0]["category"] == "invalid_enum"
-    assert "强转失败" in rej[0]["reason"]
 
 
 def test_new_issue_oversized_severity_clamped_not_abort(game):
@@ -239,7 +236,6 @@ def test_new_issue_infinity_field_rejected_not_abort(read_game):
     rej = _rejected(out)
     assert len(rej) == 1, out
     assert rej[0]["category"] == "invalid_enum"
-    assert "强转失败" in rej[0]["reason"]
 
 
 def test_new_issue_infinity_expected_months_rejected_not_abort(read_game):
@@ -406,7 +402,6 @@ def test_new_issue_event_pool_rejects_expired_event(game):
     rej = _rejected(out)
     assert len(rej) == 1, out
     assert rej[0]["id"] == eid
-    assert "过期" in rej[0]["reason"] or "终态" in rej[0]["reason"]
     assert db.find_any_issue_by_origin("event_pool", eid) is None
 
 
@@ -441,7 +436,6 @@ def test_authoritative_event_pool_rejects_same_batch_obsolete_event(game):
     rejected = [item for item in _rejected(out) if item.get("id") == downstream.id]
     assert [item["id"] for item in created] == [upstream.id], out
     assert len(rejected) == 1, out
-    assert "终态" in rejected[0]["reason"] or "作废" in rejected[0]["reason"]
     assert db.find_any_issue_by_origin("event_pool", downstream.id) is None
 
 

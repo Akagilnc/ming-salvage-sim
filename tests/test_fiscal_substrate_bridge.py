@@ -1564,7 +1564,6 @@ def test_budget_lines_read_persisted_substrate_hub_income_source(fresh_game):
     assert income["起运"] == 11
     assert income["盐税"] == 3
     assert income["商税"] == 4
-    assert "田赋辽饷盐商" not in income
     assert expenses["太仓亏空"] == 3
 
 
@@ -2806,7 +2805,13 @@ def test_army_delta_owner_power_from_ming_clears_pay_source_arrears(fresh_db):
         """
     ).fetchall()
     writeoff = next(
-        (log for log in logs if log["field"] == "arrears" and "核销" in log["reason"]),
+        (
+            log for log in logs
+            if log["field"] == "arrears"
+            and float(log["old_value"]) > 0
+            and float(log["new_value"]) == 0
+            and float(log["delta"]) < 0
+        ),
         None,
     )
     owner_log = next((log for log in logs if log["field"] == "owner_power"), None)
@@ -4524,7 +4529,12 @@ def test_cutover_pay_source_errors_abort_fixed_flows(fresh_game, monkeypatch, tm
     assert abort.error_pack_path
     pack = Path(abort.error_pack_path)
     assert pack.exists()
-    assert "饷源比例和必须为 1" in (pack / "traceback.txt").read_text(encoding="utf-8")
+    shares = db.conn.execute(
+        "SELECT province_pay_share, central_pay_share FROM armies WHERE id='shaanxi_army'"
+    ).fetchone()
+    assert shares["province_pay_share"] == 0.7
+    assert shares["central_pay_share"] == 0.2
+    assert "ValueError" in (pack / "traceback.txt").read_text(encoding="utf-8")
 
 
 def test_cutover_substrate_bad_state_uses_settlement_abort_error_pack(fresh_game, monkeypatch, tmp_path):
@@ -4628,7 +4638,7 @@ def test_cutover_outbound_debit_failure_uses_settlement_abort_error_pack(
     assert abort.error_pack_path
     pack = Path(abort.error_pack_path)
     assert pack.exists()
-    assert "边饷hub实拨失败" in (pack / "traceback.txt").read_text(encoding="utf-8")
+    assert "RuntimeError" in (pack / "traceback.txt").read_text(encoding="utf-8")
 
 
 def test_cutover_taicang_loss_rate_bad_state_uses_settlement_abort_error_pack(

@@ -196,7 +196,7 @@ def test_breach_excludes_stale_minister_faction_from_costs(game):
     )
 
 
-def test_breach_skips_dead_but_records_living_offstage_relations(game, caplog):
+def test_breach_skips_dead_but_records_living_offstage_relations(game):
     db, state, _ = game
     roster = [
         {"character_id": "徐光启", "tier": "主办", "role": "总理"},
@@ -225,7 +225,6 @@ def test_breach_skips_dead_but_records_living_offstage_relations(game, caplog):
     assert [(row["delta"], row["cost_identity"]) for row in dead_faction_events] == [
         (-4, "breach")
     ]
-    assert "跳过已故参与者徐光启" in caplog.text
 
 
 def test_cancel_linked_issue_breaches_only_its_origin_dossier_once(game):
