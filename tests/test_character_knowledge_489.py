@@ -486,11 +486,25 @@ def test_public_disclosure_drops_private_roster_but_keeps_event_exclusion(game):
         state, [{"character_id": participant.name}], "private_matter", "密查", "旧密令",
         source_id=source_id,
     )
+    db.conn.execute(
+        "INSERT INTO character_knowledge_events "
+        "(turn, year, period, character_name, kind, title, body, source_id, excluded_names) "
+        "VALUES (?, ?, ?, '', 'source_projection', '密查', '旧密令', ?, '[]')",
+        (state.turn, state.year, state.period, source_id),
+    )
     db.record_public_knowledge_event(
         state, "奉明公开", "公开案情", source_id=source_id,
         excluded_names=[excluded.name],
     )
 
+    participant_view = db.get_character_knowledge(state, participant.name)
+    kept = next(
+        item for item in participant_view["public_events"]
+        if item.get("source_id") == source_id
+    )
+    assert kept["kind"] == "public"
+    assert kept["title"] == "奉明公开"
+    assert kept["body"] == "公开案情"
     allowed_view = db.get_character_knowledge(state, allowed.name)
     excluded_view = db.get_character_knowledge(state, excluded.name)
     assert any(item.get("source_id") == source_id for item in allowed_view["public_events"])

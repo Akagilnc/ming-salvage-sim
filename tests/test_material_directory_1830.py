@@ -273,7 +273,7 @@ def test_character_materials_exclude_legacy_raw_turn_report_and_keep_public_gaze
     stored_title = db.conn.execute(
         "SELECT title FROM turn_reports WHERE turn=?", (1,),
     ).fetchone()["title"]
-    assert titled.strip() == f"{rel} {reign_period_label(1627, 1)} {stored_title}"
+    assert titled == f"{rel} {reign_period_label(1627, 1)} {stored_title}"
 
 
 def test_secret_order_materials_keep_full_content_and_fail_loud_on_db_error(

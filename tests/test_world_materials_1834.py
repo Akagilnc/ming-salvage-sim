@@ -73,7 +73,7 @@ def test_prepare_writes_typed_tree_with_board_affairs_and_gazette_index(game, tm
     stored_title = next(
         row["title"] for row in db.list_turn_reports() if int(row["turn"]) == past_turn
     )
-    assert gazette_line.strip() == (
+    assert gazette_line == (
         f"{gazette_rel} {reign_period_label(past_year, past_period)} {stored_title}"
     )
 

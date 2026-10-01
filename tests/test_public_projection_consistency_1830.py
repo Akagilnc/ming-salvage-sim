@@ -6,17 +6,17 @@ render_character_knowledge 的整体重投影 人物/<名>/见闻.txt——world
 正文再拼一遍，public_events/events 又逐条重述，于是同一条邸报同时可经
 公开说法/邸报/ 与 见闻.txt 读到。公开材料因此存在非既定重复载体。
 
-契约面只落在结构化字段上：载体路径集合、载体归属（哪条记录走哪个子树）、
-INDEX 与工具一致性。一份公开材料只经一个载体可读，由「同一月份在同一根目录
-下只有一条载体路径」这一路径集合事实证明——不是靠正文行数守恒，也不比对任何
-人读渲染措辞或固定片段。文件正文的行数、字数与内容都不是记录身份。同正文两条来源只核对 source_id，
-以及三类目录都列出该月载体路径。
+契约面：载体路径集合、载体归属、INDEX 与工具一致性，外加同一月份载体的
+全文等于该月各条公开记录按既定写法拼出的原文。路径仍证明「一月一个载体」；
+逐条留下靠 source_id，以及该月文件与这些记录的全文一致。不靠行数，也不在
+正文里埋哨兵。
 """
 
 from __future__ import annotations
 
 from ming_sim.audience_night import get_open_night, open_night, present_names_at, summon_enter
 from ming_sim.materials import (
+    _is_gazette_public_event,
     list_materials,
     material_tools,
     prepare_character_materials,
@@ -68,6 +68,23 @@ def _layer_paths(root, prefix):
     }
 
 
+def _public_month_text(events, year, period) -> str:
+    """与 _write_public_by_month 同一写法：有标题有正文则「标题：正文」。"""
+    lines = []
+    for item in events:
+        if _is_gazette_public_event(item):
+            continue
+        if int(item.get("year") or 0) != year or int(item.get("period") or 0) != period:
+            continue
+        title = str(item.get("title") or "")
+        body = str(item.get("body") or "")
+        if not (title.strip() or body.strip()):
+            continue
+        lines.append(f"{title}：{body}" if title and body else (title or body))
+    text = "\n".join(lines)
+    return text if text.endswith("\n") else text + "\n"
+
+
 def _public_layer(root, prefix):
     """公开层按既定载体划分：按月公开说法 vs 邸报载体。"""
     shape = _layer_paths(root, prefix)
@@ -89,6 +106,19 @@ def test_scene_person_public_layer_matches_character_and_world_admission(game, t
     night_id = int(night["id"])
     if character.name not in present_names_at(db, night_id):
         summon_enter(db, night_id, character.name)
+
+    shared_year, shared_period = int(state.year) + 80, 3
+    shared_state = GameState(
+        turn=int(state.turn) + 3, year=shared_year, period=shared_period,
+        metrics=dict(state.metrics),
+    )
+    shared = "赈济已奉准。"
+    db.record_public_knowledge_event(
+        shared_state, "陕西赈务", shared, source_id="judge:shaanxi",
+    )
+    db.record_public_knowledge_event(
+        shared_state, "河南赈务", shared, source_id="judge:henan",
+    )
 
     scene = prepare_scene_materials(db, state, dest_root=tmp_path / "scene")
     solo = prepare_character_materials(db, state, character, dest_root=tmp_path / "solo")
@@ -151,6 +181,21 @@ def test_scene_person_public_layer_matches_character_and_world_admission(game, t
     )
     assert tools["read_material"](gazette_rel) == read_material(scene.root, gazette_rel)
 
+    public_events = db.get_character_knowledge(state, character.name)["public_events"]
+    source_ids = [str(item.get("source_id") or "") for item in public_events]
+    assert "judge:shaanxi" in source_ids
+    assert "judge:henan" in source_ids
+    month_name = f"{shared_year}年{shared_period}月.txt"
+    expected = _public_month_text(public_events, shared_year, shared_period)
+    assert "陕西赈务：赈济已奉准。" in expected.splitlines()
+    assert "河南赈务：赈济已奉准。" in expected.splitlines()
+    for root, prefix in (
+        (scene.root, f"人物/{character.name}/公开说法/"),
+        (solo.root, "公开说法/"),
+        (world.root, "公开说法/"),
+    ):
+        assert read_material(root, prefix + month_name) == expected
+
 
 def test_rebuild_adds_only_the_new_record_own_carrier(game, tmp_path):
     """重备按新记录增自己的载体，既有公开层载体路径一概不动。"""
@@ -185,40 +230,3 @@ def test_rebuild_adds_only_the_new_record_own_carrier(game, tmp_path):
     }
     assert set(before_by_month) <= set(after_by_month)
     assert after_gazette == before_gazette
-
-
-def test_same_prose_from_distinct_sources_stays_in_each_directory(game, tmp_path):
-    """正文相同、source_id 不同的两条公开来源都留在读侧，三类目录都列出该月载体。"""
-    db, state, content = game
-    character = _active_minister(db, content)
-    year, period = int(state.year) + 80, 3
-    stamped = GameState(
-        turn=int(state.turn) + 3, year=year, period=period, metrics=dict(state.metrics),
-    )
-    shared = "赈济已奉准。"
-    db.record_public_knowledge_event(
-        stamped, "陕西赈务", shared, source_id="judge:shaanxi",
-    )
-    db.record_public_knowledge_event(
-        stamped, "河南赈务", shared, source_id="judge:henan",
-    )
-
-    public_events = db.get_character_knowledge(state, character.name)["public_events"]
-    source_ids = [str(item.get("source_id") or "") for item in public_events]
-    assert "judge:shaanxi" in source_ids
-    assert "judge:henan" in source_ids
-    month_name = f"{year}年{period}月.txt"
-
-    open_night(db, state, location="乾清宫", time_of_day="夜")
-    night = get_open_night(db)
-    assert night is not None
-    night_id = int(night["id"])
-    if character.name not in present_names_at(db, night_id):
-        summon_enter(db, night_id, character.name)
-
-    scene = prepare_scene_materials(db, state, dest_root=tmp_path / "scene")
-    solo = prepare_character_materials(db, state, character, dest_root=tmp_path / "solo")
-    world = prepare_world_materials(db, state, dest_root=tmp_path / "world")
-    assert month_name in _layer_paths(scene.root, f"人物/{character.name}/公开说法/")
-    assert month_name in _layer_paths(solo.root, "公开说法/")
-    assert month_name in _layer_paths(world.root, "公开说法/")

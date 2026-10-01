@@ -1861,9 +1861,9 @@ def test_build_secret_orders_supply_feed_uses_fact_materials_not_assembled_effec
         and (row.get("declaration") or {}).get("body") == secret_decl
         for row in (feed.get("nominal") or [])
     )
-    # 未 settled 的拟旨不得进入名义／实入冒充已落。
+    # 未 settled 的拟旨不得进入名义。身份是 decree_ref，不是正文是否撞车。
     assert all(
-        (row.get("declaration") or {}).get("body") != unsettled_body
+        row.get("decree_ref") != "pending-action:1847-unpromulgated:1"
         for row in (feed.get("nominal") or [])
     )
     assert not any(int(row.get("delta") or 0) == -99 for row in (feed.get("landed") or []))
@@ -1874,7 +1874,7 @@ def test_build_secret_orders_supply_feed_uses_fact_materials_not_assembled_effec
     )
     assert any(
         isinstance(row.get("item"), dict)
-        and row["item"].get("note") == "密令拒收探针"
+        and str(row["item"].get("origin_ref") or "") == f"secret_order:{order_id}"
         and row.get("section") == "密令"
         for row in (feed.get("rejections") or [])
     )
@@ -1895,7 +1895,15 @@ def test_build_secret_orders_supply_feed_uses_fact_materials_not_assembled_effec
         rel = f"事实/character-{_safe_segment(minister)}.txt"
         assert rel in prepared.index_lines
         carrier = (prepared.root / rel).read_text(encoding="utf-8")
-        assert fact_body in carrier
+        kept = [
+            str(fact.body or "")
+            for fact in db.textual_facts.readable_materials(
+                subject_kind="character", subject_id=minister,
+            )
+            if str(fact.body or "").strip()
+        ]
+        expected = "\n".join(kept)
+        assert carrier == (expected if expected.endswith("\n") else expected + "\n")
     finally:
         release_material_tree(prepared.root)
 
@@ -1906,11 +1914,10 @@ def test_build_secret_orders_supply_feed_uses_fact_materials_not_assembled_effec
     )
     assert all(
         row.get("decree_ref") != f"secret_order:{order_id}"
-        and (row.get("declaration") or {}).get("body") != secret_decl
         for row in (gazette.get("nominal") or [])
     )
     assert all(
-        not (isinstance(row.get("item"), dict) and row["item"].get("note") == "密令拒收探针")
+        str((row.get("item") or {}).get("origin_ref") or "") != f"secret_order:{order_id}"
         for row in (gazette.get("rejections") or [])
     )
 

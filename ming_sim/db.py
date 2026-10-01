@@ -10453,15 +10453,17 @@ class GameDB:
             items = self.knowledge_items_for_turn(state.turn)
         for item in items:
             source_id = str(item.get("source_id") or "")
-            existing = self.conn.execute(
-                "SELECT kind FROM character_knowledge_events "
-                "WHERE character_name='' AND source_id=?",
+            existing_public = self.conn.execute(
+                "SELECT 1 FROM character_knowledge_events "
+                "WHERE character_name='' AND source_id=? AND kind='public' LIMIT 1",
                 (source_id,),
             ).fetchone()
             # An explicit disclosure is the authoritative event for this
             # provenance.  Archive materialization may fill a missing ledger
             # row, but must never downgrade public back to roster-scoped.
-            if existing is not None and str(existing["kind"] or "") == "public":
+            # The lookup names kind='public': another row of this source may
+            # be returned first when the query does not.
+            if existing_public is not None:
                 continue
             self.record_public_knowledge_event(
                 state,
@@ -10484,12 +10486,15 @@ class GameDB:
         not lose that item's access boundary.
         """
         rows = self.conn.execute(
-            "SELECT turn, year, period, title, body, source_id, excluded_names "
+            "SELECT turn, year, period, kind, title, body, source_id, excluded_names "
             "FROM character_knowledge_events WHERE character_name='' AND turn=? "
             "ORDER BY id",
             (int(turn),),
         ).fetchall()
         by_source: Dict[str, Dict[str, object]] = {}
+        # An explicit public row is the payload for that source. A later
+        # source_projection of the same source_id must not replace it.
+        public_kept: set[str] = set()
         for row in rows:
             try:
                 excluded_names = json.loads(row["excluded_names"] or "[]")
@@ -10497,11 +10502,16 @@ class GameDB:
                 excluded_names = []
             if not isinstance(excluded_names, list):
                 excluded_names = []
-            item = {
+            key = str(row["source_id"] or "")
+            is_public = str(row["kind"] or "") == "public"
+            if key and key in public_kept and not is_public:
+                continue
+            by_source[key] = {
                 "title": row["title"], "body": row["body"],
                 "source_id": row["source_id"], "excluded_names": excluded_names,
             }
-            by_source[str(row["source_id"] or "")] = item
+            if key and is_public:
+                public_kept.add(key)
 
         source_rows = self.conn.execute(
             "SELECT title, body, source_id, participant_roster, excluded_names, "

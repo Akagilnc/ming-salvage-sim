@@ -296,21 +296,14 @@ def _persisted_transit_arrivals(db: Any, turn: int) -> list:
     return []
 
 
-def run_gazette_text(
-    db: Any, state: Any, llm_config: Any, chain: Dict[str, Any],
-) -> tuple[str, str]:
-    """批红与全部效果落定后的一次邸报写作。返回作者自写的 (title, report)。"""
-    import json
+def prepare_gazette_author_materials(db: Any, state: Any):
+    """邸报作者可读目录。五道筛是这一次准备的内容，不是另一套材料账。"""
+    from ming_sim.materials import (
+        SECRET_ORDER_ORIGIN_PREFIX,
+        prepare_world_materials,
+        secret_order_dossier_ids,
+    )
 
-    from ming_sim.agents import create_gazette_author_agent, parse_agent_json, run_agent_text
-    from ming_sim.exceptions import LLMUnavailable
-    from ming_sim.llm_transport import audience_transport_policy
-    from ming_sim.materials import prepare_world_materials, release_material_tree
-
-    from ming_sim.materials import SECRET_ORDER_ORIGIN_PREFIX, secret_order_dossier_ids
-
-    if llm_config is None:
-        raise LLMUnavailable("邸报缺少模型配置", stage="gazette")
     secret_dossiers = secret_order_dossier_ids(db)
 
     def include_fact(fact: Any) -> bool:
@@ -321,7 +314,7 @@ def run_gazette_text(
             return False
         return not _item_is_secret_dossier(event, secret_dossiers)
 
-    prepared = prepare_world_materials(
+    return prepare_world_materials(
         db, state,
         include_fact=include_fact,
         include_event=include_event,
@@ -329,6 +322,22 @@ def run_gazette_text(
         exclude_secret_order_audience=True,
         exclude_secret_order_dossiers=True,
     )
+
+
+def run_gazette_text(
+    db: Any, state: Any, llm_config: Any, chain: Dict[str, Any],
+) -> tuple[str, str]:
+    """批红与全部效果落定后的一次邸报写作。返回作者自写的 (title, report)。"""
+    import json
+
+    from ming_sim.agents import create_gazette_author_agent, parse_agent_json, run_agent_text
+    from ming_sim.exceptions import LLMUnavailable
+    from ming_sim.llm_transport import audience_transport_policy
+    from ming_sim.materials import release_material_tree
+
+    if llm_config is None:
+        raise LLMUnavailable("邸报缺少模型配置", stage="gazette")
+    prepared = prepare_gazette_author_materials(db, state)
     message = json.dumps(_gazette_feed(db, state, chain), ensure_ascii=False)
     try:
         agent = create_gazette_author_agent(llm_config, prepared)

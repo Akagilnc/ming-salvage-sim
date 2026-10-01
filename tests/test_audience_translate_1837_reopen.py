@@ -369,7 +369,22 @@ def test_inquiry_declaration_preserves_assignment_in_attendant_materials(game, m
         carrier = f"人物/{attendant.name}/经历.txt"
         assert carrier in prepared.index_lines
         experience = (Path(prepared.root) / carrier).read_text(encoding="utf-8")
-        assert all(event["body"] in experience for event in report_events)
+        from ming_sim.materials import _person_audience_experience
+        current = db.get_character_knowledge(state, attendant.name)
+        lines = []
+        for item in current.get("events") or []:
+            title = str(item.get("title") or "")
+            body = str(item.get("body") or "")
+            if not title.strip() and not body.strip():
+                continue
+            lines.append(f"{title}：{body}" if title and body else (title or body))
+        lines.extend(
+            str(item["body"])
+            for item in _person_audience_experience(db, attendant.name)
+            if item.get("body")
+        )
+        expected = "\n".join(lines) or "（无）"
+        assert experience == (expected if expected.endswith("\n") else expected + "\n")
     finally:
         release_material_tree(prepared.root)
 

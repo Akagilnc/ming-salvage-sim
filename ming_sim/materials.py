@@ -551,16 +551,19 @@ def _visible_affair_lines(knowledge: dict) -> list[dict[str, object]]:
     lines: list[dict[str, object]] = []
     for issue in knowledge.get("issues") or []:
         issue_id = int(issue.get("id") or 0)
-        title = str(issue.get("title") or "").strip()
-        if issue_id <= 0 or not title:
+        title = str(issue.get("title") or "")
+        if issue_id <= 0 or not title.strip():
             continue
+        stage = str(issue.get("stage_text") or "")
+        resolve = str(issue.get("resolve_condition") or "")
+        fail = str(issue.get("fail_condition") or "")
         lines.append({
             "id": issue_id,
             "affair_id": int(issue.get("affair_id") or 0),
             "title": title,
-            "situation": str(issue.get("stage_text") or "").strip() or "见目录。",
-            "resolve_condition": str(issue.get("resolve_condition") or "").strip(),
-            "fail_condition": str(issue.get("fail_condition") or "").strip(),
+            "situation": stage if stage.strip() else "见目录。",
+            "resolve_condition": resolve if resolve.strip() else "",
+            "fail_condition": fail if fail.strip() else "",
             "source_id": str(issue.get("source_id") or f"issue:{issue_id}"),
             "audience_names": tuple(issue.get("audience_names") or ()),
             "participant_roster": issue.get("participant_roster") or "[]",
@@ -769,7 +772,10 @@ def _write_textual_fact_files(
         facts = readable(subject_kind=kind, subject_id=subject_id)
         if not facts:
             continue
-        body = "\n".join(str(fact.body or "").strip() for fact in facts if str(fact.body or "").strip())
+        body = "\n".join(
+            raw for fact in facts
+            if (raw := str(fact.body or "")).strip()
+        )
         if not body:
             continue
         rel = f"{_FACT_DIR}/{kind}-{_safe_segment(label)}.txt"
@@ -934,10 +940,11 @@ def _experience_text(knowledge: dict, audible_entries: Sequence[dict] = ()) -> s
     """
     lines: list[str] = []
     for item in knowledge.get("events") or []:
-        title = str(item.get("title") or "").strip()
-        body = str(item.get("body") or "").strip()
-        if title or body:
-            lines.append(f"{title}：{body}".strip("："))
+        title = str(item.get("title") or "")
+        body = str(item.get("body") or "")
+        if not title.strip() and not body.strip():
+            continue
+        lines.append(f"{title}：{body}" if title and body else (title or body))
     lines.extend(str(item["body"]) for item in audible_entries if item.get("body"))
     return "\n".join(lines) or "（无）"
 
@@ -1067,10 +1074,10 @@ def prepare_character_materials(
     affairs = _handled_affair_lines(db, state, name, issue_materials)
     for row in _carryover_drafts(db, state):
         title = f"尚未入档旨稿#{int(row['id'])}"
-        body = str(row.get("text") or "").strip()
+        body = str(row.get("text") or "")
         affairs.append({
             "id": f"draft-{int(row['id'])}", "title": title,
-            "situation": f"{body}（尚未入档）" if body else "尚未入档",
+            "situation": f"{body}（尚未入档）" if body.strip() else "尚未入档",
         })
     from types import SimpleNamespace
     from ming_sim.knowledge import current_character_office
@@ -1131,15 +1138,13 @@ def _with_archived_gazette_titles(
 
 def _gazette_index_line(rel: str, year: int, period: int, title: str) -> str:
     """一行 = 路径、年月、已入档标题。无标题时只留路径，不另造标题。"""
-    if not str(title or "").strip():
+    shown = str(title or "")
+    if not shown.strip():
         return rel
     from ming_sim.models import reign_period_label
 
     label = reign_period_label(year, period) if year and 1 <= period <= 12 else ""
-    shown = str(title)
-    if "\n" in shown or "\r" in shown:
-        shown = shown.replace("\r\n", " ").replace("\n", " ").replace("\r", " ")
-    return f"{rel} {label} {shown}".strip() if label else f"{rel} {shown}".strip()
+    return f"{rel} {label} {shown}" if label else f"{rel} {shown}"
 
 
 def _write_gazette_index(
@@ -1188,9 +1193,8 @@ def _write_world_textual_fact_files(
             continue
         facts = store.readable_materials(subject_kind=kind, subject_id=subject_id)
         body = "\n".join(
-            str(fact.body or "").strip()
-            for fact in facts
-            if _keep_fact(fact, include_fact) and str(fact.body or "").strip()
+            raw for fact in facts
+            if _keep_fact(fact, include_fact) and (raw := str(fact.body or "")).strip()
         )
         if not body:
             continue

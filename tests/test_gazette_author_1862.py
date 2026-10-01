@@ -57,6 +57,119 @@ def _session(db, state, content, monkeypatch):
     return session
 
 
+def _assert_author_directory_keeps_each_public_record(db, state, minister, secret_did, plain_did):
+    """作者目录是 prepare_gazette_author_materials 的产出，不是事后再滤的第二份树。"""
+    from ming_sim.assets import format_money
+    from ming_sim.materials import (
+        _person_audience_experience,
+        _safe_segment,
+        _secret_order_chat_turn_ids,
+        dossier_id_in_origin,
+        is_secret_order_origin,
+        secret_order_dossier_ids,
+    )
+    from ming_sim.models import period_label
+
+    prepared = month_chain.prepare_gazette_author_materials(db, state)
+    try:
+        secret_dossiers = secret_order_dossier_ids(db)
+
+        def author_fact(fact) -> bool:
+            origin = str(fact.origin_ref or "")
+            if is_secret_order_origin(origin):
+                return False
+            dossier_id = dossier_id_in_origin(origin)
+            return dossier_id is None or dossier_id not in secret_dossiers
+
+        facts = [
+            fact for fact in db.textual_facts.readable_materials(
+                subject_kind="character", subject_id=minister,
+            )
+            if author_fact(fact)
+        ]
+        origins = {str(fact.origin_ref or "") for fact in facts}
+        assert f"dossier:{plain_did}" in origins
+        assert f"dossier:{secret_did}" not in origins
+        assert "secret_order:9" not in origins
+        month_body = "\n".join(
+            f"{fact.occurred_month}：{fact.body}" for fact in facts
+        ) or "（无）"
+        month_rel = f"人物/{_safe_segment(minister)}/按月实况.txt"
+        assert read_material(prepared.root, month_rel) == (
+            month_body if month_body.endswith("\n") else month_body + "\n"
+        )
+        flat_parts = [str(fact.body or "") for fact in facts if str(fact.body or "").strip()]
+        flat_rel = f"事实/character-{_safe_segment(minister)}.txt"
+        if flat_parts:
+            flat = "\n".join(flat_parts)
+            assert read_material(prepared.root, flat_rel) == (
+                flat if flat.endswith("\n") else flat + "\n"
+            )
+        else:
+            assert flat_rel not in list_materials(prepared.root)
+
+        def author_event(item) -> bool:
+            kind = str(item.get("kind") or "")
+            source = str(item.get("source_id") or "")
+            if kind in {"secret_order", "secret_order_brief"}:
+                return False
+            if is_secret_order_origin(source):
+                return False
+            origin = item.get("origin_ref") or source
+            dossier_id = dossier_id_in_origin(origin)
+            return dossier_id is None or dossier_id not in secret_dossiers
+
+        knowledge = db.get_character_knowledge(state, minister)
+        lines = []
+        for item in knowledge.get("events") or []:
+            if not author_event(item):
+                continue
+            title = str(item.get("title") or "")
+            body = str(item.get("body") or "")
+            if not title.strip() and not body.strip():
+                continue
+            lines.append(f"{title}：{body}" if title and body else (title or body))
+        secret_turns = _secret_order_chat_turn_ids(db)
+        audience = [
+            entry for entry in _person_audience_experience(db, minister)
+            if int(entry.get("source_chat_turn_id") or 0) not in secret_turns
+        ]
+        lines.extend(str(entry["body"]) for entry in audience if entry.get("body"))
+        experience = "\n".join(lines) or "（无）"
+        experience_rel = f"人物/{_safe_segment(minister)}/经历.txt"
+        assert read_material(prepared.root, experience_rel) == (
+            experience if experience.endswith("\n") else experience + "\n"
+        )
+
+        board = read_material(prepared.root, "盘面/全局.txt")
+        rows = db.conn.execute(
+            "SELECT year, period, account, delta, category, reason, origin_ref "
+            "FROM economy_ledger WHERE turn=?",
+            (int(state.turn),),
+        ).fetchall()
+        secret_lines = []
+        public_lines = []
+        for row in rows:
+            origin = str(row["origin_ref"] or "")
+            dossier_id = dossier_id_in_origin(origin)
+            rendered = (
+                f"{period_label(int(row['year']), int(row['period']))} "
+                f"{row['account']}{'+' if int(row['delta']) > 0 else ''}{format_money(int(row['delta']))} "
+                f"{row['category']}：{row['reason']}"
+            )
+            if is_secret_order_origin(origin) or (
+                dossier_id is not None and dossier_id in secret_dossiers
+            ):
+                secret_lines.append(rendered)
+            else:
+                public_lines.append(rendered)
+        assert secret_lines and public_lines
+        assert all(line not in board for line in secret_lines)
+        assert any(line in board for line in public_lines)
+    finally:
+        release_material_tree(prepared.root)
+
+
 def test_author_waits_until_rescript_is_done(game, monkeypatch):
     db, state, content = game
     minister = next(iter(content.characters.values())).name
@@ -259,6 +372,9 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
         (turn, json.dumps({"label": "准了", "note": "朱批可见"}, ensure_ascii=False)),
     )
     db.conn.commit()
+    _assert_author_directory_keeps_each_public_record(
+        db, state, minister, secret_did, plain_did,
+    )
     seen = {}
 
     def world(*_a, **_k):
@@ -363,8 +479,9 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
         # ADR 0142）。这是「原样搬运」而非「推断身份」——两侧同为模型产出，
         # 断言的是载体与产物同一，而不是从正文里认记录。索引行只由路径＋朝代
         # 月标签＋已入档标题拼成，不夹带正文。
-        assert text.strip() == str(archive["report"]).strip()
-        assert gazette.strip() == f"{rel} {label} {archive['title']}"
+        report = str(archive["report"])
+        assert text == (report if report.endswith("\n") else report + "\n")
+        assert gazette == f"{rel} {label} {archive['title']}"
         # 亲历载体：本人经历.txt 在册且非空。旧账在正文里找 `_SECRET_BRIEF`
         # 等哨兵串，已删（大理寺 553d581fb）：那是对人读正文做子串推断，人读
         # 正文不是记录身份，一次合法改写即假红。密令简报确以 typed 来源落在

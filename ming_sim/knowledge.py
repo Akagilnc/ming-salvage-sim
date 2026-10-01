@@ -517,10 +517,10 @@ def _issue_audience_case_events(
         if source_id in known:
             continue
         try:
-            stage = _prose(issue["stage_text"]).strip()
+            stage = _prose(issue["stage_text"])
         except (KeyError, IndexError, TypeError):
             stage = ""
-        if not stage or not _reader_in_issue_audience(db, issue, character_name):
+        if not str(stage).strip() or not _reader_in_issue_audience(db, issue, character_name):
             continue
         if not knowledge_row_visible_to(
             db,
@@ -697,15 +697,24 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
     # Identity is the durable source_id.  Same prose, overlapping prose, or the
     # same turn does not make two sources one record.  An empty source_id has
     # no identity to collapse.  A repeated non-empty source_id is one record.
+    # An explicit public event is the authoritative payload for that source
+    # (the same priority knowledge_items_for_turn already uses on the write
+    # side): it replaces an earlier projection, and a later non-public row
+    # must not replace it.
     deduped_public = []
-    seen_source_ids: set[str] = set()
+    index_by_source: dict[str, int] = {}
     for row in visible_public:
         source_id = str(row.get("source_id") or "")
-        if source_id:
-            if source_id in seen_source_ids:
-                continue
-            seen_source_ids.add(source_id)
-        deduped_public.append(row)
+        if not source_id:
+            deduped_public.append(row)
+            continue
+        slot = index_by_source.get(source_id)
+        if slot is None:
+            index_by_source[source_id] = len(deduped_public)
+            deduped_public.append(row)
+            continue
+        if str(row.get("kind") or "") == "public":
+            deduped_public[slot] = row
     # Independently persisted public sayings never enter the archive
     # aggregation/dedup rules above.  Append the authoritative public-layer
     # projection after those rules, then join its layer prose.
