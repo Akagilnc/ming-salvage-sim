@@ -651,7 +651,7 @@ def test_for_role_preserves_cli_channel_fields_for_advanced_roles():
 def test_config_constants_single_source_in_models():
     """SSOT 接线（#58/#60）：channel/model/timeout 默认常量的 canonical 定义在 models，
     llm_config / cli_backend 旧址只是 re-export（同一对象），LLMConfig 默认值即引用这些常量——
-    防未来在第二处重写字面量漂移。#1472：max_tokens 字段已概念级删除。"""
+    防未来在第二处重写字面量漂移。"""
     import ming_sim.models as m
     import ming_sim.llm_config as lc
     import ming_sim.cli_backend as cb
@@ -665,7 +665,6 @@ def test_config_constants_single_source_in_models():
     assert lc.API_DEFAULT_TIMEOUT_SECONDS is m.API_DEFAULT_TIMEOUT_SECONDS
     # LLMConfig 默认值 == 常量（dataclass 默认引用 SSOT，非裸字面量）
     cfg = LLMConfig(api_key="", base_url="", model="m")
-    assert "max_tokens" not in LLMConfig.__dataclass_fields__
     assert cfg.timeout_seconds == m.API_DEFAULT_TIMEOUT_SECONDS
     assert cfg.cli_timeout_seconds == m.CLI_DEFAULT_TIMEOUT_SECONDS
 

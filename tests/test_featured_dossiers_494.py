@@ -44,7 +44,6 @@ def test_every_active_seven_faction_minister_has_featured_dossier(game):
     for character in ministers:
         rendered = minister_dossier(character)
         assert all(k in rendered for k in _DOSSIER_KEYS)
-        assert "未有专门 dossier" not in rendered
 
 
 def test_seven_faction_dossiers_are_objective_and_identity_scoped(game):

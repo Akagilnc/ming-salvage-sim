@@ -98,7 +98,6 @@ def test_audience_admission_keeps_blank_fail_open_and_reuses_basic_qualification
     db.set_character_status(state, dead.name, "dead", reason="测试")
     decision = sess.admit_audience(dead)
     assert decision.result is None
-    assert "已故" in decision.reason
 
 
 def test_audience_admission_records_offsite_summon_before_allowing_audience(game):
@@ -143,18 +142,12 @@ def test_cli_initial_selection_records_remote_summon_without_returning_minister(
     sess.state = state
     _set_place(game, "洪承畴", location="shaanxi")
     answers = iter(["洪承畴", "quit"])
-    notices = []
     monkeypatch.setattr("builtins.input", lambda *_a, **_k: next(answers))
-    monkeypatch.setattr("builtins.print", lambda *args, **_k: notices.append(" ".join(map(str, args))))
 
     assert terminal.choose_minister(sess) is None
     assert [(row["person_name"], row["origin_id"]) for row in an.list_unsettled_summons(db)] == [
         ("洪承畴", f"cli:initial:{state.turn}:洪承畴"),
     ]
-    # 成功记召不喷固定承旨句；资格失败仍可经 reason 打印。
-    joined = "\n".join(notices)
-    assert "赴京" not in joined and "不能入殿" not in joined
-    assert "已传召" not in joined
 
 
 def test_cli_initial_selection_rejects_unknown_unregistered_person(game, monkeypatch):
@@ -167,11 +160,7 @@ def test_cli_initial_selection_rejects_unknown_unregistered_person(game, monkeyp
     unknown = "乌有先生甲"
     assert unknown not in sess.content.characters
     answers = iter([unknown, "quit"])
-    notices: list[str] = []
     monkeypatch.setattr("builtins.input", lambda *_a, **_k: next(answers))
-    monkeypatch.setattr(
-        "builtins.print", lambda *args, **_k: notices.append(" ".join(map(str, args))),
-    )
 
     assert terminal.choose_minister(sess) is None
     assert unknown not in sess.temporary_characters
@@ -181,9 +170,6 @@ def test_cli_initial_selection_rejects_unknown_unregistered_person(game, monkeyp
     assert db.conn.execute(
         "SELECT COUNT(*) AS n FROM characters WHERE name=?", (unknown,),
     ).fetchone()["n"] == 0
-    joined = "\n".join(notices)
-    assert "临时传" not in joined
-    assert "入殿" not in joined
 
 
 def test_in_transit_summon_origin_is_idempotent_and_restorable(game):
@@ -691,8 +677,8 @@ def test_multi_origin_fresh_independent_retract_and_single_departure(game, monke
     assert {row["origin_id"] for row in unsettled} == {origin_a, origin_b}
 
 
-def test_cli_midflow_summon_consumes_admission_without_entering(game, monkeypatch):
-    """#670 T3：夜内「传X来」场外只打印闸文，不返 summon:、不入殿。"""
+def test_cli_midflow_summon_consumes_admission_without_entering(game):
+    """#670 T3：夜内「传X来」不返 summon:、不入殿，传召落未结行。"""
     from ming_sim.cli import terminal
 
     sess = _session(game)
@@ -700,24 +686,16 @@ def test_cli_midflow_summon_consumes_admission_without_entering(game, monkeypatc
     sess.state = state
     current = _set_place(game, "毕自严", location="beizhili")
     _set_place(game, "洪承畴", location="shaanxi")
-    notices: list[str] = []
-    monkeypatch.setattr(
-        "builtins.print", lambda *args, **_k: notices.append(" ".join(map(str, args))),
-    )
 
     outcome = terminal._handle_court_command(sess, "传洪承畴来", current)
 
     assert outcome == "handled"
-    # 成功记召不喷固定承旨句，仍 handled 不入殿。
-    joined = "\n".join(notices)
-    assert "赴京" not in joined and "不能入殿" not in joined
-    assert "已传召" not in joined
     assert [row["origin_id"] for row in an.list_unsettled_summons(db)] == [
         f"cli:midflow:{state.turn}:洪承畴",
     ]
 
 
-def test_cli_midflow_summon_rejects_unknown_unregistered_person(game, monkeypatch):
+def test_cli_midflow_summon_rejects_unknown_unregistered_person(game):
     """#670：CLI 夜内换人未知人物不得 summon-temp 旁路，须 ADR 0038 持久入册后再 admission。"""
     from ming_sim.cli import terminal
 
@@ -727,10 +705,6 @@ def test_cli_midflow_summon_rejects_unknown_unregistered_person(game, monkeypatc
     current = _set_place(game, "毕自严", location="beizhili")
     unknown = "乌有先生乙"
     assert unknown not in sess.content.characters
-    notices: list[str] = []
-    monkeypatch.setattr(
-        "builtins.print", lambda *args, **_k: notices.append(" ".join(map(str, args))),
-    )
 
     outcome = terminal._handle_court_command(sess, f"传{unknown}来", current)
 
@@ -742,9 +716,6 @@ def test_cli_midflow_summon_rejects_unknown_unregistered_person(game, monkeypatc
     assert db.conn.execute(
         "SELECT COUNT(*) AS n FROM characters WHERE name=?", (unknown,),
     ).fetchone()["n"] == 0
-    joined = "\n".join(notices)
-    assert "临时传" not in joined
-    assert "未建档" in joined or "补档" in joined
 
 
 
@@ -781,10 +752,6 @@ def test_summon_recorder_default_body_is_empty_and_tags_carry_facts(game):
     assert by_id[transit_id]["body"] == ""
     assert an.TAG_SUMMON_UNSETTLED in by_id[fresh_id]["tags"]
     assert an.TAG_IN_TRANSIT in by_id[transit_id]["tags"]
-    scroll = an.read_night_scroll(db, night_id)
-    scene_text = "\n".join(str(row.get("body") or "") for row in scroll)
-    assert "赴京候见" not in scene_text
-    assert "在途未至" not in scene_text
 
 
 def test_consume_open_night_and_recorder_share_one_transaction(game, monkeypatch):

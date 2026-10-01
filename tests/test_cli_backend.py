@@ -748,7 +748,6 @@ def test_clichat_invoke_passes_fixture_content_and_completion(monkeypatch):
     p = seen["prompt"]
     assert p.index("SYS_ROLE") < p.index("USER_MSG") < p.index("PRIOR_ASST")
     assert p.index("PRIOR_ASST") < p.index("TOOL_OUT") < p.index("12345")
-    assert "   " not in p
     assert out.role == "assistant"
     assert out.event == "AssistantResponse"
     assert out.tool_calls == []

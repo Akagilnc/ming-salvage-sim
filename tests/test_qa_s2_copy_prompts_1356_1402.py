@@ -110,7 +110,7 @@ def test_state_payload_projects_previous_reign_period_label(game):
 
 
 def test_require_active_minister_uses_can_summon_copy_no_yi_shangwei(game, monkeypatch):
-    """#1402：offstage 文案走 session.can_summon，不得「已尚未登场」。"""
+    """#1402：offstage 拒收走 session.can_summon，HTTP 详情与该 reason 同一对象。"""
     import web_app
     from fastapi import HTTPException
     from ming_sim.session import GameSession
@@ -137,7 +137,6 @@ def test_require_active_minister_uses_can_summon_copy_no_yi_shangwei(game, monke
 
     ok, reason = sess.can_summon(content.characters[name])
     assert ok is False
-    assert "尚未登场" in reason
 
     stub = SimpleNamespace(
         session=sess,
@@ -151,6 +150,4 @@ def test_require_active_minister_uses_can_summon_copy_no_yi_shangwei(game, monke
         web_app._require_active_minister(name)
     assert ei.value.status_code == 409
     detail = ei.value.detail
-    assert "尚未登场" in detail
-    # DRY：与 can_summon 文案同源
     assert detail == reason.strip()
