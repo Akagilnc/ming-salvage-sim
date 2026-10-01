@@ -11,20 +11,13 @@ from ming_sim.db import GameDB
 from ming_sim import issues as issues_mod
 from ming_sim.issues import apply_score_extraction, apply_issue_tracker_output
 from ming_sim.public_sayings import list_public_sayings, record_public_saying
+from tests.test_declaration_dispatch_1835 import _minister
 
 
 
 NINGYUAN = "宁远护送"
 ORIGIN = "拨银、调将、派兵去宁远"
 PROGRESS = "护送银两已出京，尚未抵宁远"
-
-
-def _minister(db):
-    row = db.conn.execute(
-        "SELECT name FROM characters WHERE status='active' ORDER BY name LIMIT 1"
-    ).fetchone()
-    assert row is not None
-    return str(row["name"])
 
 
 def _declaration(*, attach="new", birth_key="", affair_id=None, identity=""):

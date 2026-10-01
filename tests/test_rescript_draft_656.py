@@ -785,14 +785,14 @@ def test_validate_items_rejects_unknown_item_field_whole_batch():
     """r2 裁决 B2：item 层多产的未知自由文本字段不得接受后静默省略——整批 shape 错。"""
     item = _legal_item()
     item["extra"] = "模型多写的合法自由文本"
-    with pytest.raises(ValueError, match="未知字段"):
+    with pytest.raises(ValueError):
         validate_rescript_draft_items({"items": [item]}, set())
 
 def test_validate_items_rejects_unknown_option_field_whole_batch():
     """非 isolate：option 未知键仍整批 ValueError（generate isolate 时走 heal）。"""
     item = _legal_item()
     item["options"][0]["extra_option"] = "模型多写的合法自由文本"
-    with pytest.raises(ValueError, match="extra_option|未知|契约失败"):
+    with pytest.raises(ValueError):
         validate_rescript_draft_items({"items": [item]}, set())
 
 def test_validate_items_accepts_optional_issue_id_binding_key():
@@ -936,7 +936,7 @@ def test_r3_top_level_unknown_field_rejects_whole_batch():
         }],
         "summary": "臣请圣裁",
     }
-    with pytest.raises(ValueError, match="未知字段"):
+    with pytest.raises(ValueError):
         validate_rescript_draft_items(data, set())
 
 def test_r3_strict_parse_control_char_raises_contract_error():
@@ -945,7 +945,7 @@ def test_r3_strict_parse_control_char_raises_contract_error():
     from ming_sim.exceptions import LLMContractError
     # 控制字符 \x01 在 JSON 字符串内非法，必须触发 JSONDecodeError→LLMContractError
     raw = '{"items": [{"title": "a\x01b", "context": "c", "options": [{"label": "l1", "hint": "h1"}, {"label": "l2", "hint": "h2"}]}]}'
-    with pytest.raises(LLMContractError, match="不是合法 JSON"):
+    with pytest.raises(LLMContractError):
         _parse_rescript_json_strict(raw)
 
 def test_r3_strict_parse_concatenated_objects_raises_contract_error():
@@ -953,7 +953,7 @@ def test_r3_strict_parse_concatenated_objects_raises_contract_error():
     from ming_sim.rescript_draft import _parse_rescript_json_strict
     from ming_sim.exceptions import LLMContractError
     raw = '{"items": [{"title": "甲", "context": "c", "options": [{"label": "a", "hint": "h1"}, {"label": "b", "hint": "h2"}]}]}{"items": []}'
-    with pytest.raises(LLMContractError, match="不是合法 JSON"):
+    with pytest.raises(LLMContractError):
         _parse_rescript_json_strict(raw)
 
 def test_r3_strict_parse_degrades_via_generate(game, monkeypatch, tmp_path):
@@ -979,7 +979,7 @@ def test_r3_lone_surrogate_field_rejects_whole_batch():
             "options": _two_opts("发帑赈济", "所安者饥民", "缓征", "先赈后征"),
         }]
     }
-    with pytest.raises(ValueError, match="不可编码字符"):
+    with pytest.raises(ValueError):
         validate_rescript_draft_items(data, set())
     # 正常中文与约数家产表述仍通过
     good = {

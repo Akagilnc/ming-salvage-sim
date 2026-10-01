@@ -2403,7 +2403,7 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     expect(memorialsDialog.querySelector(".situation-panel")).toBeNull();
     const emptyNote = memorialsDialog.querySelector(".empty-note");
     expect(emptyNote).not.toBeNull();
-    expect(emptyNote!.textContent?.trim()).not.toBe("");
+    expect(emptyNote!.textContent?.trim()).toBeTruthy();
     expect(memorialsDialog.textContent).not.toContain(SETTLEMENT_CLOSED_REASON);
     expect(memorialsDialog.textContent).not.toContain(SNAP_MEMORIAL);
     await closeOpenOverlay(host);

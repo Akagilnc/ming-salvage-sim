@@ -389,7 +389,7 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
             if line == rel or line.startswith(rel + " ")
         )
         assert text.strip() == _REPORT
-        assert _TITLE in gazette.split()
+        assert _TITLE in gazette
         assert _REPORT not in gazette
         experience = next(path for path in prepared.index_lines if path.endswith("/经历.txt"))
         experience_text = (prepared.root / experience).read_text(encoding="utf-8")

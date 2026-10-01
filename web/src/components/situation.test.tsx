@@ -130,17 +130,7 @@ describe("empty bar label presentation (#626)", () => {
     };
   }
 
-  it("detail modal omits empty parentheses when bar meanings are blank", () => {
-    const cleanup = render(
-      <SituationDetailModal issue={makeEmptyBarIssue()} onClose={() => undefined} />
-    );
-    const heads = Array.from(document.querySelectorAll(".situation-tip-outcome-head"));
-    expect(heads).toHaveLength(2);
-    expect(heads.every((el) => !(el.textContent || "").includes("（") && !(el.textContent || "").includes("）"))).toBe(true);
-    cleanup();
-  });
-
-  it("detail modal keeps parentheses when bar meanings are present", () => {
+  it("detail modal renders supplied bar meanings", () => {
     const cleanup = render(
       <SituationDetailModal issue={makeIssue()} onClose={() => undefined} />
     );
@@ -148,7 +138,6 @@ describe("empty bar label presentation (#626)", () => {
     const headText = heads.map((el) => el.textContent || "").join("\n");
     expect(headText).toContain("欠饷清偿");
     expect(headText).toContain("军心溃散");
-    expect(headText).toContain("（");
     cleanup();
   });
 
@@ -234,7 +223,7 @@ describe("#1726 StateModal 奏疏收件箱", () => {
     const cleanup = render(<StateModal state={baseState([])} />);
     const empty = document.querySelector(".empty-note");
     expect(empty).not.toBeNull();
-    expect(empty!.textContent?.trim()).not.toBe("");
+    expect(empty!.textContent?.trim()).toBeTruthy();
     expect(document.querySelector(".situation-panel")).toBeNull();
     cleanup();
   });

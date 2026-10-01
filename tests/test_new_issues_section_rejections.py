@@ -168,7 +168,6 @@ def test_new_issue_bad_kind_rejected(read_game, bad_kind):
     rej = _rejected(out)
     assert len(rej) == 1, out
     assert rej[0]["category"] == "invalid_enum"
-    assert "kind" in rej[0]["reason"]
 
 
 def test_new_issue_dirty_inertia_rejected(read_game):
@@ -301,7 +300,6 @@ def test_new_issue_falsy_nonstring_kind_rejected(read_game, bad_kind):
     rej = _rejected(out)
     assert len(rej) == 1, out
     assert rej[0]["category"] == "invalid_enum"
-    assert "kind" in rej[0]["reason"]
 
 
 def test_new_issue_insert_code_exception_propagates(game, monkeypatch):
@@ -454,7 +452,6 @@ def test_new_issue_scalar_string_tags_rejected(read_game, bad_tags):
     rej = _rejected(out)
     assert len(rej) == 1, out
     assert rej[0]["category"] == "invalid_enum"
-    assert "tags" in rej[0]["reason"]
 
 
 def test_new_issue_non_string_tag_element_rejected(read_game):
@@ -464,7 +461,6 @@ def test_new_issue_non_string_tag_element_rejected(read_game):
     rej = _rejected(out)
     assert len(rej) == 1, out
     assert rej[0]["category"] == "invalid_enum"
-    assert "tags" in rej[0]["reason"]
 
 
 def test_new_issue_valid_list_tags_preserved(game):

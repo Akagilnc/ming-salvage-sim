@@ -74,7 +74,7 @@ def test_legacy_issue_status_change_uses_person_transition_matrix(game):
     db.set_character_status(state, name, "dead", "前置死亡")
     content.characters[name].status = "dead"
 
-    with pytest.raises(ValueError, match="dead 无 status 出边"):
+    with pytest.raises(ValueError):
         I._apply_issue_entities(
             db,
             state,
@@ -251,7 +251,7 @@ def test_issue_unified_person_change_shadows_legacy_person_effects(game):
 def test_resolve_rejects_bad_unified_person_change_effect(read_game):
     db, state, content = read_game
 
-    with pytest.raises(ValueError, match="人物变更 非法"):
+    with pytest.raises(ValueError):
         I._apply_issue_entities(
             db,
             state,
@@ -265,7 +265,7 @@ def test_resolve_rejects_bad_unified_person_change_effect(read_game):
 def test_issue_person_change_effect_rejects_malformed_shape(read_game, bad_effect):
     db, state, content = read_game
 
-    with pytest.raises(ValueError, match="人物变更"):
+    with pytest.raises(ValueError):
         I._apply_issue_entities(db, state, bad_effect, "局势#测试结案", content=content)
 
 

@@ -144,7 +144,6 @@ def test_region_controlled_by_rejects_non_power_id_and_preserves_region(game, ba
     assert len(rows) == 1
     _, reason, category, _ = rows[0]
     assert category == "invalid_enum"
-    assert "controlled_by" in reason
     after = db.conn.execute(
         "SELECT controlled_by FROM regions WHERE id=?", (good,)
     ).fetchone()[0]

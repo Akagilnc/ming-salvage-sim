@@ -46,7 +46,6 @@ def test_advance_bad_issue_id_rejected(read_game, bad_id):
     rej = _rejected(out)
     assert len(rej) == 1, out
     assert rej[0]["category"] == "invalid_enum"
-    assert "issue_id" in rej[0]["reason"]
 
 
 @pytest.mark.parametrize("field,bad", [

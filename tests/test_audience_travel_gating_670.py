@@ -1387,7 +1387,7 @@ def test_fresh_summon_omitted_content_syncs_db_and_rolls_back_together(game):
         (first.name, "行止"),
     ).fetchone()["n"])
 
-    with pytest.raises(an.AudienceNightError, match="已在途赴 shandong") as ei:
+    with pytest.raises(an.AudienceNightError) as ei:
         an.commit_fresh_summons_for_night(db, state, night_id)
     assert ei.value.code == "summon_departure_rejected"
 

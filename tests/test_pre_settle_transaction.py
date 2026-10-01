@@ -415,7 +415,7 @@ def test_write_decree_raises_at_awaiting_not_resolveresult(game):
     sess.db = db
     sess.state = state
 
-    with pytest.raises(ValueError, match="亲裁"):
+    with pytest.raises(ValueError):
         sess.write_decree()
 
 

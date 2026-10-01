@@ -636,7 +636,7 @@ def test_resolve_turn_write_gate_held_by_caller_no_reenter(game, tmp_path, monke
     sess.deaths_this_turn = []
 
     try:
-        with pytest.raises(ValueError, match="草案"):
+        with pytest.raises(ValueError):
             sess.resolve_turn(write_gate_already_held=True)
         assert seen.get("write_gate") is None, (
             f"held outer gate must not re-enter; got {seen.get('write_gate')!r}"

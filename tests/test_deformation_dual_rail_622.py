@@ -10,38 +10,20 @@
 from __future__ import annotations
 
 import json
+from functools import partial
 
 from ming_sim.db import GameDB
 from tests.dossier_test_helpers import create_test_secret_order
-from ming_sim.due_review import (
-    apply_pending_due_reviews,
-    decide_due_review_verdict,
-)
+from ming_sim.due_review import decide_due_review_verdict
 from ming_sim.flows import _apply_economy_list
 from ming_sim.issues import apply_score_extraction
 from ming_sim.situation_drift import apply_situation_monthly_drift
-from ming_sim.staged_commitment import write_due_staged_commitment_todos
 from tests.test_dossier_reported_progress_619 import _world_fingerprint
+from tests.test_due_review_621 import _executing_policy_dossier as _executing_policy
+from tests.test_fiscal_beyond_intent_1260 import _prime_and_apply_due_review as _apply_due_review
 
 
 # ── shared helpers ────────────────────────────────────────────────────
-
-
-def _executing_policy(db, state, *, token: str):
-    dossier_id = db.create_decree_dossier(
-        state,
-        action_type="policy",
-        decree_text=f"清丈差务·{token}",
-        target_kind="issue",
-        target_id=token,
-        participants=[
-            {"character_id": "倪元璐", "tier": "主办", "role": "清丈"},
-            {"character_id": "徐光启", "tier": "协办", "role": "坐镇"},
-        ],
-    )
-    db.apply_dossier_promulgation(state, dossier_id, "promulgated")
-    assert db.get_decree_dossier(dossier_id)["status"] == "executing"
-    return dossier_id
 
 
 def _insert_final_stage(db, state, content, *, dossier_id: int, title: str):
@@ -75,19 +57,7 @@ def _insert_final_stage(db, state, content, *, dossier_id: int, title: str):
     return int(created["issue_id"])
 
 
-def _prime_and_apply_due_review(db, state, content, *, dossier_id: int, title: str):
-    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
-    db.conn.commit()
-    _insert_final_stage(db, state, content, dossier_id=dossier_id, title=title)
-    write_due_staged_commitment_todos(db, state)
-    db.conn.execute(
-        "UPDATE next_audience_todos SET created_turn=?",
-        (state.turn - 1,),
-    )
-    db.conn.commit()
-    results = apply_pending_due_reviews(db, state, commit=True)
-    assert results and results[0].get("branch") == "dossier"
-    return results[0]
+_prime_and_apply_due_review = partial(_apply_due_review, stage_writer=_insert_final_stage)
 
 
 def _cost_liability(db, dossier_id):

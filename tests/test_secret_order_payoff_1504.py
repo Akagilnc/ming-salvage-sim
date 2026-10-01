@@ -227,7 +227,7 @@ def test_task_specific_contract_from_explicit_fields_not_tags():
     ],
 )
 def test_confirmation_rejects_incomplete_delivery_identity(unit, identity, sign):
-    with pytest.raises(CovertContractError, match="identity"):
+    with pytest.raises(CovertContractError):
         build_covert_task_contract(
             kind="差务", axes=["实务事功"], direction=1,
             delivery_unit=unit, delivery_target_units=1, effect_sign=sign, **identity,

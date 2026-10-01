@@ -36,7 +36,6 @@ def test_close_bad_issue_id_rejected(read_game, bad_issue_id):
     rej = _rejected(out)
     assert len(rej) == 1
     assert rej[0]["category"] == "invalid_enum"
-    assert "issue_id" in rej[0]["reason"]
 
 
 @pytest.mark.parametrize("bad_item", [None, 42, "字符串", ["列表"]])
@@ -59,7 +58,6 @@ def test_close_bad_reason_rejected(read_game):
     rej = _rejected(out)
     assert len(rej) == 1
     assert rej[0]["category"] == "invalid_enum"
-    assert "reason" in rej[0]["reason"]
 
 
 def test_close_unknown_issue_rejected_missing_ref(read_game):

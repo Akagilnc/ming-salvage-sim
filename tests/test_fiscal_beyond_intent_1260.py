@@ -74,10 +74,12 @@ def _insert_final_stage(db, state, content, *, dossier_id: int, title: str):
     return int(created["issue_id"])
 
 
-def _prime_and_apply_due_review(db, state, content, *, dossier_id: int, title: str):
+def _prime_and_apply_due_review(
+    db, state, content, *, dossier_id: int, title: str, stage_writer=_insert_final_stage,
+):
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.commit()
-    _insert_final_stage(db, state, content, dossier_id=dossier_id, title=title)
+    stage_writer(db, state, content, dossier_id=dossier_id, title=title)
     write_due_staged_commitment_todos(db, state)
     db.conn.execute(
         "UPDATE next_audience_todos SET created_turn=?",
