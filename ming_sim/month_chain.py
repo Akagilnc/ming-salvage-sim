@@ -1189,10 +1189,11 @@ def run_secret_orders_supply(
     # #1896：供料里只给身份材料路径，正文写进**本次调用自己**的树（ADR 0155:8
     # 目录读取形态／#1814 身份隔离）。不并进世界段与邸报作者共用的世界树——那份
     # 树的读者不该因共用而读到某人的私务（含其在办密报正文）。
+    # 身份写入与调用同在既有 try/finally 里：写入失败也释放本树，不另建清理层。
     from ming_sim.materials import write_identity_materials
 
-    write_identity_materials(prepared, db, state, _feed_identity_names(feed))
     try:
+        write_identity_materials(prepared, db, state, _feed_identity_names(feed))
         agent = create_secret_order_supply_agent(llm_config, prepared)
         raw = run_agent_text(
             agent, message, tag="secret_orders_supply",
@@ -1249,9 +1250,22 @@ def _step_4a_secret_order_supply(
         chain["secret_orders_supply_product"] = product
         _save_chain(db, turn, chain, decree_text=decree_text, source=source)
 
-    # Phase 1: 0058 report completeness validation and persistence
-    if not chain.get("secret_orders_reports_done"):
-        reports = product.get("dossier_progress_reports") or []
+    # Phase 1: 0058 覆盖校验。已提交过的合法报告不重写；新重起产物仍须完整校验。
+    reports = product.get("dossier_progress_reports") or []
+    if chain.get("secret_orders_reports_done"):
+        try:
+            db.validate_monthly_dossier_progress(int(turn), reports)
+        except ValueError as exc:
+            chain["secret_orders_supply_invalid"] = True
+            _save_chain(db, turn, chain, decree_text=decree_text, source=source)
+            _abort_month_call(
+                db, state, chain,
+                decree_text=decree_text, source=source,
+                step="secret_orders_supply",
+                exc=exc,
+                kind="code_exception",
+            )
+    else:
         validation_failed = False
         try:
             with atomic(db):

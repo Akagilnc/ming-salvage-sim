@@ -12090,17 +12090,17 @@ class GameDB:
             out.append(item)
         return out
 
-    def record_monthly_dossier_progress(
-        self, turn: int, generated: object = None,
-    ) -> List[Dict[str, object]]:
-        """Persist one valid extractor-authored brief for every eligible dossier."""
+    def _monthly_dossier_report_supply(
+        self, turn: int, generated: object,
+    ) -> Optional[Dict[int, Dict[str, object]]]:
+        """校验本月密奏覆盖。无合资格案卷且产物为空时返回 None；不写库。"""
         candidates = {
             int(item["dossier_id"]): item
             for item in self.list_monthly_dossier_progress_nudges(int(turn))
         }
         if not candidates:
             if generated is None or generated == []:
-                return []
+                return None
             raise ValueError("无合资格长差案卷却收到本月密奏")
         if generated is None or generated == []:
             raise ValueError("合资格长差案卷缺少本月密奏")
@@ -12123,6 +12123,21 @@ class GameDB:
             supplied[dossier_id] = item
         if set(supplied) != set(candidates):
             raise ValueError("合资格长差案卷月报未完整覆盖")
+        return supplied
+
+    def validate_monthly_dossier_progress(
+        self, turn: int, generated: object = None,
+    ) -> None:
+        """只校验新产物覆盖，不写报告。已提交的合法报告不因重试再落一遍。"""
+        self._monthly_dossier_report_supply(int(turn), generated)
+
+    def record_monthly_dossier_progress(
+        self, turn: int, generated: object = None,
+    ) -> List[Dict[str, object]]:
+        """Persist one valid extractor-authored brief for every eligible dossier."""
+        supplied = self._monthly_dossier_report_supply(int(turn), generated)
+        if not supplied:
+            return []
 
         reports: List[Dict[str, object]] = []
         for dossier_id, item in supplied.items():
@@ -20474,7 +20489,7 @@ class GameDB:
                 float(units),
                 str(fidelity_state),
                 str(floor_state),
-                str(note or "")[:240],
+                str(note or ""),
                 origin,
             ),
         )
@@ -20490,7 +20505,7 @@ class GameDB:
             "units": float(units),
             "fidelity_state": str(fidelity_state),
             "floor_state": str(floor_state),
-            "note": str(note or "")[:240],
+            "note": str(note or ""),
             "origin_ref": origin,
         }
 

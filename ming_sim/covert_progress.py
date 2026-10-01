@@ -145,25 +145,29 @@ def progress_units_for_state(state: object) -> float:
     return float(PROGRESS_UNITS[name])
 
 
+_DEBT_SEVERITIES = frozenset({"轻", "中", "重"})
+
+
 def seed_guilt_counts_as_debt(seed_guilt: object) -> bool:
-    if seed_guilt is None:
-        return False
+    """真相底只收结构化罪情。severity ∈ {轻, 中, 重} 才入罪谱。
+
+    crime 是说明散文，不承重。解析失败、非对象、severity 为空或「无」，都不造罪。
+    """
     if isinstance(seed_guilt, Mapping):
         guilt: object = seed_guilt
     else:
-        text = str(seed_guilt).strip()
+        text = str(seed_guilt or "").strip()
         if not text:
             return False
         try:
             parsed = json.loads(text)
         except (TypeError, ValueError):
-            return True
+            return False
         if not isinstance(parsed, Mapping):
-            return True
+            return False
         guilt = parsed
-    crime = str(guilt.get("crime") or "无").strip() or "无"
-    severity = str(guilt.get("severity") or "无").strip() or "无"
-    return not (crime == "无" and severity == "无")
+    severity = str(guilt.get("severity") or "").strip()
+    return severity in _DEBT_SEVERITIES
 
 
 def covert_task_from_payload(payload: object) -> Optional[Dict[str, object]]:
@@ -989,9 +993,13 @@ def investigation_fact_difficulty(
                 ability = float(ability_row["ability"])
             except (TypeError, ValueError):
                 ability = _ABILITY_REFERENCE
-            if ability > 0.0:
-                # 办案人能力强 → 同样难度所需投入更少（难度按参考能力归一）。
-                difficulty *= _ABILITY_REFERENCE / ability
+            # 零是合法能力，走同一公式（参考值/能力）。0 用 inf 表达除零，
+            # 不另立「能力为零则拒绝」的闸，也不把前置因子覆盖成常数。
+            # 解析失败或非有限值仍按参考能力（乘子为 1）。
+            if math.isfinite(ability) and ability >= 0.0:
+                difficulty *= (
+                    math.inf if ability == 0.0 else _ABILITY_REFERENCE / ability
+                )
 
     for spoiled in db.list_investigation_spoiled_facts(name):
         if str(spoiled.get("fact_key") or "") != key:
@@ -1063,7 +1071,8 @@ def investigation_monthly_capacity(
             ability = float(row["ability"])
         except (TypeError, ValueError):
             ability = _ABILITY_CAPACITY_REFERENCE
-        if ability > 0.0:
+        # 零参与同一带宽公式。解析失败或非有限值用参考能力。
+        if math.isfinite(ability):
             capacity *= 1.0 + _ABILITY_CAPACITY_WEIGHT * (
                 (ability - _ABILITY_CAPACITY_REFERENCE) / _ABILITY_CAPACITY_REFERENCE
             )
@@ -1190,6 +1199,7 @@ def _consume_monthly_clues(
     *,
     live: set[str],
     blocked: set[str],
+    capacity: float,
 ) -> float:
     """线索只助其所指实有实证：把并入本案的真实线索按所指 fact_key 记成实投。
 
@@ -1208,6 +1218,9 @@ def _consume_monthly_clues(
     → 零投入、代码不代选（J4，大理寺已结清）；此处路由的是**来源线索该助哪条
     既有实证**，不替人物挑活干。
     """
+    # 未到差与零带宽：线索也不加成。不标 credited，人到场后仍可一次性消费。
+    if float(capacity) <= 0.0:
+        return 0.0
     by_key = {str(lane["fact_key"]): lane for lane in lanes}
     clues = investigation_clue_records(db, dossier_id)
     if not clues:
@@ -1286,7 +1299,8 @@ def apply_investigation_monthly_effort(
     if bound and (bound not in live or bound in blocked):
         # 线索只助其所指实有证据：指向不存在/已被别案查获的事实 → 确定性丢弃。
         _consume_monthly_clues(
-            db, dossier_id, target, investigator, lanes, live=live, blocked=blocked,
+            db, dossier_id, target, investigator, lanes,
+            live=live, blocked=blocked, capacity=capacity,
         )
         _write_fact_lanes(db, dossier_id, lanes, commit=commit)
         return {
@@ -1300,17 +1314,23 @@ def apply_investigation_monthly_effort(
             None,
         )
         if already is not None:
-            # 本案已掌握该证：不重复投入、也不重复计数。
+            # 本案已掌握该证：人物不再重复投入。独立新证线索仍按到差消费。
+            credited = _consume_monthly_clues(
+                db, dossier_id, target, investigator, lanes,
+                live=live, blocked=blocked, capacity=capacity,
+            )
             _write_fact_lanes(db, dossier_id, lanes, commit=commit)
             return {
-                "bound_fact_key": bound, "effort_applied": 0.0, "mastered": [],
+                "bound_fact_key": bound, "effort_applied": 0.0,
+                "clue_credited": credited, "mastered": [],
                 "units": investigation_lane_actual_units(db, int(dossier_id)),
             }
     if not bound or amount <= 0.0 or not lanes:
         # 无下手处／敷衍停办／未到差（capacity=0）／空 lane 集：确定零投入。
-        # 真实线索仍各自助它所指的实证（一次性），但代码不替人物挑本月下手的。
+        # 人已到差时，真实线索仍各自助它所指的实证（一次性）。
         credited = _consume_monthly_clues(
-            db, dossier_id, target, investigator, lanes, live=live, blocked=blocked,
+            db, dossier_id, target, investigator, lanes,
+            live=live, blocked=blocked, capacity=capacity,
         )
         _write_fact_lanes(db, dossier_id, lanes, commit=commit)
         return {
@@ -1329,8 +1349,14 @@ def apply_investigation_monthly_effort(
             db, target=target, fact_key=key, investigator=investigator,
         )
         lane["difficulty"] = difficulty
-        if difficulty == float("inf"):
-            # 已被毁成 gone：投入无处可施，不得靠重开案/再投入把它查回来。
+        # 毁成 gone 才无处可施。能力为零把难度乘成 inf，实投仍入账；
+        # effort >= inf 为假，故不掌握，也不另立禁零闸。
+        gone = any(
+            str(row.get("fact_key") or "") == key
+            and str(row.get("effect") or "") == "gone"
+            for row in db.list_investigation_spoiled_facts(target)
+        )
+        if gone:
             _write_fact_lanes(db, dossier_id, lanes, commit=commit)
             return {
                 "bound_fact_key": key, "effort_applied": 0.0, "mastered": [],
@@ -1345,7 +1371,8 @@ def apply_investigation_monthly_effort(
             mastered_now.append(key)
         break
     credited = _consume_monthly_clues(
-        db, dossier_id, target, investigator, lanes, live=live, blocked=blocked,
+        db, dossier_id, target, investigator, lanes,
+        live=live, blocked=blocked, capacity=capacity,
     )
     _write_fact_lanes(db, dossier_id, lanes, commit=commit)
     return {
@@ -1405,8 +1432,12 @@ def _investigation_knowledge_known(
         "SELECT 1 FROM characters WHERE name=?", (who,),
     ).fetchone():
         return False
-    if not _investigation_tips(db, dossier_id, name):
-        return False  # 没有真实传话声明 → 不因关系边存在而替其知情
+    # 传话记录与关系边必须是同一人。别人递过话，不能把未递话的关系人算成知情来源。
+    if not any(
+        str(tip.get("source") or "").strip() == who
+        for tip in _investigation_tips(db, dossier_id, name)
+    ):
+        return False
     return any(
         str(edge["source"]) == who or str(edge["target"]) == who
         for edge in db.get_relation_edge_events(person=name)
@@ -1529,11 +1560,10 @@ def merge_investigation_confirmation(
     fact_key: str = "",
     commit: bool = False,
 ) -> int:
-    """同目标汇案：并案卷 + 留下这条真实来源。
+    """同目标汇案：并案卷。只有带事实指针的来源才留下待消费线索。
 
-    #1896：来源指针只是溯源；真实线索要真助它所指的实证，故每并入一条来源，
-    同时在 ``investigation_clues`` 落一条待消费线索（带 fact_key 时按其所指，
-    不带时由月核算按 ADR 0098 确定性兜底路由），月核算时一次性记成实投。
+    重复的无指针下令不是来源。pending_action_id 与聊天记录只是确认闸，
+    不制造线索。已落库的空指针旧线索仍由月核算按 ADR 0098:11 消费。
     """
     dossier = db.get_dossier_for_secret_order(int(order_id))
     if dossier is None:
@@ -1550,17 +1580,19 @@ def merge_investigation_confirmation(
         "turn": turn,
     })
     payload[INVESTIGATION_PROVENANCE_KEY] = sources
-    clues = payload.get(INVESTIGATION_CLUES_KEY)
-    if not isinstance(clues, list):
-        clues = []
-    clues.append({
-        "pending_action_id": int(pending_action_id or 0),
-        "origin_chat_message_ids": [int(x) for x in origin_chat_message_ids],
-        "fact_key": str(fact_key or "").strip(),
-        "turn": turn,
-        "credited": False,
-    })
-    payload[INVESTIGATION_CLUES_KEY] = clues
+    key = str(fact_key or "").strip()
+    if key:
+        clues = payload.get(INVESTIGATION_CLUES_KEY)
+        if not isinstance(clues, list):
+            clues = []
+        clues.append({
+            "pending_action_id": int(pending_action_id or 0),
+            "origin_chat_message_ids": [int(x) for x in origin_chat_message_ids],
+            "fact_key": key,
+            "turn": turn,
+            "credited": False,
+        })
+        payload[INVESTIGATION_CLUES_KEY] = clues
     db.update_decree_dossier_payload(did, payload, commit=commit)
     return int(order_id)
 
@@ -1685,9 +1717,11 @@ def _investigation_declaration(
     fact = str(item.get("fact_key", item.get("所查事实")) or "").strip()
     if fact:
         out["fact_key"] = fact
-    method = str(item.get("method", item.get("查法")) or "").strip()
-    if method:
-        out["method"] = method
+    raw_method = item["method"] if "method" in item else item.get("查法")
+    if raw_method is not None and not isinstance(raw_method, (Mapping, list)):
+        method = str(raw_method)
+        if method != "":
+            out["method"] = method
     tip = item.get("tip_off", item.get("通风报信"))
     if isinstance(tip, Mapping):
         source = str(tip.get("source", tip.get("递话人")) or "").strip()
@@ -1706,9 +1740,11 @@ def _investigation_declaration(
             }
     suppress = item.get("suppression", item.get("压案"))
     if isinstance(suppress, Mapping):
-        form = str(suppress.get("form", suppress.get("方式")) or "").strip()
-        if form:
-            out["suppression"] = {"form": form}
+        raw_form = suppress["form"] if "form" in suppress else suppress.get("方式")
+        if raw_form is not None and not isinstance(raw_form, (Mapping, list)):
+            form = str(raw_form)
+            if form != "":
+                out["suppression"] = {"form": form}
     return out
 
 
@@ -1783,12 +1819,19 @@ def apply_monthly_covert_actual_progress(
         units = monthly_actual_units(
             fidelity=fidelity, originated_quantity=originated,
         )
-        note = str(sel.get("note") or sel.get("备注") or "").strip()
-        if not note:
+        if "note" in sel:
+            raw_note = sel.get("note")
+        elif "备注" in sel:
+            raw_note = sel.get("备注")
+        else:
+            raw_note = None
+        if raw_note is None or isinstance(raw_note, (Mapping, list)) or str(raw_note) == "":
             note = (
                 f"月度实进度：执行态{fidelity}（{units:g}）"
                 f"；origin_effects={originated}"
             )
+        else:
+            note = str(raw_note)
         row = db.record_dossier_actual_progress(
             did,
             turn,
@@ -1930,9 +1973,17 @@ def _apply_investigation_selection(
                 origin_ref=f"dossier:{did}", turn=turn, commit=False,
             )
     units = float(result.get("units") or 0.0)
-    note = str((sel or {}).get("note") or (sel or {}).get("备注") or "").strip()
-    if not note:
+    sel_map = sel if isinstance(sel, Mapping) else {}
+    if "note" in sel_map:
+        raw_note = sel_map.get("note")
+    elif "备注" in sel_map:
+        raw_note = sel_map.get("备注")
+    else:
+        raw_note = None
+    if raw_note is None or isinstance(raw_note, (Mapping, list)) or str(raw_note) == "":
         note = f"查案实况：本月投入 {result.get('effort_applied', 0.0):g}，已掌握 {units:g} 条"
+    else:
+        note = str(raw_note)
     row = db.record_dossier_actual_progress(
         did, turn, units=units, fidelity_state="", floor_state="",
         note=note, commit=False,
