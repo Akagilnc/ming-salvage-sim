@@ -7,6 +7,7 @@ list_materials/read_material (API), CLI cwd/readonly flags, restore rebuild.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -147,12 +148,14 @@ def test_material_tree_contains_only_structurally_related_world_details(game, tm
         "SELECT name FROM regions WHERE id=?", ("shaanxi",),
     ).fetchone()["name"]
     assert region_name in region_text and army["name"] in army_text
-    assert "民心13" not in region_text and "动乱87" not in region_text
-    assert "补给：17" not in army_text
-    assert "士气：23" not in army_text and "士气23" not in army_text
-    assert "忠诚：31" not in army_text and "军心：31" not in army_text
-    assert "训练：44" not in army_text
-    assert "装备：52" not in army_text
+
+    def _bare(score: int):
+        return re.compile(rf"(?<!\d){score}(?!\d)")
+
+    for score in (13, 87):
+        assert _bare(score).search(region_text) is None
+    for score in (17, 23, 31, 44, 52):
+        assert _bare(score).search(army_text) is None
 
 
 def _agent_with_materials(root: Path, *, with_cli_cwd: bool):

@@ -709,6 +709,7 @@ def test_world_segment_reads_material_directory(game, monkeypatch):
     db, state, content = game
     bind_content(content)
     seen = []
+    board_fact = db.treasury_report(state, limit=None)
 
     def capture(agent, _message, **_kwargs):
         tools = {tool.__name__: tool for tool in agent.tools}
@@ -721,7 +722,10 @@ def test_world_segment_reads_material_directory(game, monkeypatch):
             "index": index,
             "has_dir": has_dir,
             "dir_has_index": bool(materials_dir) and (Path(materials_dir) / "INDEX.txt").is_file(),
-            "opening": next(part for part in agent.instructions if "盘面：" in str(part)),
+            "opening": next(
+                part for part in agent.instructions
+                if board_fact and board_fact in str(part)
+            ),
         })
         return "静"
 
@@ -734,7 +738,7 @@ def test_world_segment_reads_material_directory(game, monkeypatch):
     assert "INDEX.txt" in seen[0]["listing"].splitlines()
     assert seen[0]["index"].strip()
     assert seen[0]["has_dir"] is False
-    assert "盘面：" in seen[0]["opening"]
+    assert board_fact in str(seen[0]["opening"])
     # 目录里至少有一份不在开场最小集里的材料。
     extra = next(
         line for line in seen[0]["listing"].splitlines()

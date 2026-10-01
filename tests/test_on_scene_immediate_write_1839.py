@@ -97,8 +97,7 @@ def test_kill_lands_status_and_next_materials_show_it(game, tmp_path):
     assert roster_paths
     for path in roster_paths:
         text = read_material(prepared.root, path)
-        # 名册只列 active；死者不得再以 active 行出现
-        assert f"{victim}：" not in text or "dead" in text
+        assert victim not in text
     # 若死者仍在场，其人物档料须写明当前状态
     victim_dossier = f"人物/{victim}/人物档料.txt"
     if victim_dossier in listed:

@@ -14,6 +14,20 @@ import re
 from ming_sim.constants import ARMY_SCORE_FIELDS
 
 
+def _army_report_clause(db, name: str, *, limit: int) -> str:
+    report = db.army_report(limit=limit)
+    ordered = [row["name"] for row in db.army_rows(limit=limit, danger_order=True)]
+    start = report.find(name)
+    assert start >= 0
+    end = len(report)
+    if name in ordered:
+        for other in ordered[ordered.index(name) + 1:]:
+            pos = report.find(other, start + len(name))
+            if pos != -1:
+                end = min(end, pos)
+    return report[start:end]
+
+
 def _pay_source():
     return {
         "pay_source_region": "shaanxi",
@@ -131,10 +145,6 @@ def test_army_public_exits_surface_firearm_and_cannon(game):
         db.conn.execute(f"UPDATE armies SET {cols} WHERE id=?", (*fields.values(), aid))
         db.conn.commit()
 
-    def _report_seg() -> str:
-        body = db.army_report(limit=8).split("：", 1)[-1]
-        return next(p for p in body.split("；") if p.startswith(name + "："))
-
     def _roster_line(*, qualitative: bool) -> str:
         return next(
             line for line in db.army_roster(
@@ -152,10 +162,10 @@ def test_army_public_exits_surface_firearm_and_cannon(game):
 
     # report：抬危入榜；固定火器只改炮数；截取目标军行核对炮门可数事实
     _set(firearm_equipment=45, cannon_equipment=11, supply=1, morale=1, loyalty=1, training=1)
-    seg_a = _report_seg()
+    seg_a = _army_report_clause(db, name, limit=8)
     assert re.search(r"(?<!\d)11(?!\d)", seg_a)
     _set(cannon_equipment=8)  # 火器不变
-    seg_b = _report_seg()
+    seg_b = _army_report_clause(db, name, limit=8)
     assert re.search(r"(?<!\d)8(?!\d)", seg_b)
     assert not re.search(r"(?<!\d)11(?!\d)", seg_b) and seg_a != seg_b
 

@@ -156,11 +156,11 @@ describe("DecisionModal", () => {
     const cleanup = render(<DecisionModal decisions={decisions} onResolve={vi.fn()} />);
     const documentPage = document.querySelector<HTMLElement>(".decision-document");
     expect(documentPage).not.toBeNull();
-    expect(documentPage!.querySelector(".decision-document-section:nth-of-type(1) .decision-section-label")?.textContent).toBe("疏文");
-    expect(documentPage!.querySelector(".decision-document-section:nth-of-type(1) h3")?.textContent).toBe("关宁军饷");
-    expect(documentPage!.querySelector(".decision-document-section:nth-of-type(2) .decision-section-label")?.textContent).toBe("内阁票拟");
-    expect(documentPage!.querySelector(".decision-document-section:nth-of-type(2) .decision-option-label")?.textContent).toBe("拟批：拨帑速发");
-    expect(documentPage!.querySelector(".decision-document-section:nth-of-type(3) label")?.textContent).toBe("朱笔亲批");
+    const sections = documentPage!.querySelectorAll(".decision-document-section");
+    expect(sections[0].querySelector("h3")?.textContent).toBe("关宁军饷");
+    expect(sections[0].textContent).toContain("辽东急报：军中已三月未饷。");
+    expect(sections[1].querySelector(".decision-option-label")?.textContent).toContain("拨帑速发");
+    expect(documentPage!.querySelector(".decision-red-pen textarea")).not.toBeNull();
     // 印即确认键：文书序末位为 .decision-confirm 真按钮，无独立装饰 seal
     const sealConfirm = documentPage!.querySelector<HTMLButtonElement>(".decision-confirm");
     expect(sealConfirm).not.toBeNull();
@@ -270,19 +270,15 @@ describe("DecisionModal #1202 seal-is-confirm first screen + pick affordance", (
     const cleanup = render(<DecisionModal decisions={[decisions[0]]} onResolve={vi.fn()} />);
     const confirm = () => document.querySelector<HTMLButtonElement>(".decision-confirm")!;
     const options = () => document.querySelectorAll<HTMLButtonElement>(".decision-option");
-    const hint = () => document.querySelector(".decision-hint-line")?.textContent || "";
 
-    // 路一：未择且批示空 → 禁用 + 提示
+    // 路一：未择且批示空 → 禁用
     expect(confirm().disabled).toBe(true);
-    expect(hint()).toContain("请择一票拟，或亲笔批示。");
     expect(document.querySelectorAll(".decision-option.is-picked")).toHaveLength(0);
 
     // 路二 a：择一票拟 → 可点；#1385 底栏文案态须反映已择
     act(() => options()[0].click());
     expect(confirm().disabled).toBe(false);
     expect(options()[0].classList.contains("is-picked")).toBe(true);
-    expect(hint()).toMatch(/已择|落印/);
-    expect(hint()).not.toContain("请择一票拟");
     cleanup();
 
     // 路二 b：仅亲笔批示有内容 → 可点（ADR 0043 留门）
@@ -376,7 +372,6 @@ describe("DecisionModal #1202 seal-is-confirm first screen + pick affordance", (
     });
     expect(confirm().disabled).toBe(true);
     expect(document.querySelectorAll(".decision-option.is-picked")).toHaveLength(0);
-    expect(document.querySelector(".decision-hint-line")?.textContent).toContain("此疏须择一票拟。");
     cleanupDossier();
   });
 

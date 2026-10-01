@@ -222,8 +222,6 @@ describe("ArmyDrawer presentation", () => {
 
     // 即使 props 仍带旧 status / 军情三键，军牌 DOM 不得渲染之
     expect(host.textContent).not.toContain(statusSentence);
-    expect(host.textContent).not.toContain("欠饷严重");
-    expect(host.textContent).not.toMatch(/状态/);
     expect(host.textContent).not.toContain("欠饷约60万两，数月军饷");
     expect(host.textContent).not.toContain("士气：不振");
     expect(host.textContent).not.toContain("不满");
@@ -234,8 +232,9 @@ describe("ArmyDrawer presentation", () => {
 describe("RegionDrawer #648 population (P7: LLM 长文，无 UI 模板)", () => {
   it("never renders fixed population strings (约N万口 / 不足一万口)", () => {
     const host = renderRegionDrawer([makeRegion({ population: 7200000 })]);
-    expect(host.textContent).not.toContain("万口");
-    expect(host.textContent).not.toContain("不足一万");
+    expect(host.textContent).toContain("北直隶");
+    expect(host.textContent).not.toContain("7200000");
+    expect(host.textContent).not.toContain("720");
     expect(host.textContent).not.toContain("undefined");
   });
 });

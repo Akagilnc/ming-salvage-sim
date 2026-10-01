@@ -16,6 +16,20 @@ import pytest
 from ming_sim.army_pay import army_needed
 
 
+def _army_report_clause(db, report: str, name: str, *, limit: int) -> str:
+    """Isolate one army by the same row order army_report uses, not punctuation."""
+    ordered = [row["name"] for row in db.army_rows(limit=limit, danger_order=True)]
+    start = report.find(name)
+    assert start >= 0
+    end = len(report)
+    if name in ordered:
+        for other in ordered[ordered.index(name) + 1:]:
+            pos = report.find(other, start + len(name))
+            if pos != -1:
+                end = min(end, pos)
+    return report[start:end]
+
+
 def test_army_payload_exposes_army_needed(read_game):
     """army_payload 须暴露引擎实扣应发 army_needed（供 web/LLM 呈现「月饷」），与 army_pay.army_needed 一致。"""
     db, _state, _ = read_game
@@ -71,8 +85,7 @@ def test_army_public_exits_approx_arrears_and_hide_split_accounts(game):
     name = row["name"]
     detail, roster = db.army_detail(name), db.army_roster(filter_names=[name])
     report = db.army_report(limit=100)
-    # 按出口结构隔离目标军字段（report 只扫目标段，避开合计饷银）
-    seg = next(p for p in report.split("：", 1)[-1].split("；") if p.startswith(name + "："))
+    seg = _army_report_clause(db, report, name, limit=100)
     exits = (detail, seg, roster)
     joined = "\n".join(exits)
     # 欠饷裸精确小数不得进入真实出口（与 #321 raw 哨兵同形）
