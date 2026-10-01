@@ -2132,7 +2132,7 @@ class WebGame:
             "directives": [self.directive_payload(row) for row in self.directive_rows()],
             "pending_count": self.session.pending_count(),
             "pending_directive_count": self.pending_directive_count(),
-            "secret_orders": self.db.list_secret_orders(),
+            "secret_orders": project_secret_orders_for_player(self.db.list_secret_orders()),
             "can_undo_last_chat": self.can_undo_last_chat(minister_name),
         }
 
@@ -5122,15 +5122,41 @@ async def api_memorials_read(body: Dict[str, Any]) -> Dict[str, Any]:
         return game.mark_memorials_read(clean)
 
 
+_PLAYER_CLOSED_SECRET_ORDER_STATUSES = frozenset({"done", "failed"})
+
+
+def project_secret_orders_for_player(
+    orders: List[Dict[str, Any]], status: str = "",
+) -> List[Dict[str, Any]]:
+    """玩家投影：结案成败收成同一档。账本 status 不动，奏报原文不动。
+
+    先投影再过滤。按 done 或 failed 查询得到的是同一份已结案清单，
+    不能凭「问 failed 有没有行」读出实际成败。
+    """
+    want = str(status or "").strip()
+    if want in _PLAYER_CLOSED_SECRET_ORDER_STATUSES:
+        want = "closed"
+    projected: List[Dict[str, Any]] = []
+    for order in orders:
+        item = dict(order)
+        if item.get("status") in _PLAYER_CLOSED_SECRET_ORDER_STATUSES:
+            item["status"] = "closed"
+        if want and item.get("status") != want:
+            continue
+        projected.append(item)
+    return projected
+
+
 @app.get("/api/secret_orders")
 async def api_secret_orders(status: str = "") -> Dict[str, Any]:
-    """列出密令。status 为空返回全部，否则按 active/done/failed 过滤。
+    """列出密令的玩家投影。status 为空返回全部，否则按投影后的状态过滤。
 
-    failed_secret_order_count 真源在 state_payload（~1405）；前端 useDurableProjection
-    只读 state，本端点不重复暴露。
+    failed_secret_order_count 是落库失败的待办计数，不是结案成败。
     """
     game = get_game()
-    orders = game.db.list_secret_orders(status=status or None)
+    orders = project_secret_orders_for_player(
+        game.db.list_secret_orders(), status=status,
+    )
     return {"orders": orders}
 
 

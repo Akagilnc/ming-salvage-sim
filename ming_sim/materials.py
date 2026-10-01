@@ -48,6 +48,63 @@ class PreparedMaterials:
     index_lines: tuple[str, ...]
 
 
+def identity_material_rel(name: object) -> str:
+    """某人「此刻所知」的天下」在材料目录里的相对路径（ADR 0155 读取形态）。
+
+    查案 4a 要按身份给办案人与被查者各一份可及材料（#1814／ADR 0034），
+    但读取形态是**备目录、按需自读**，不是把全文塞进调用消息（ADR 0155:8），
+    故此处只给路径，正文由 ``write_identity_materials`` 写进该次调用自己的树。
+    """
+    return f"{_PERSON_DIR}/{_safe_segment(name)}/此刻所知.txt"
+
+
+def write_identity_materials(
+    prepared: Any, db: Any, state: Any, names: Sequence[object],
+) -> List[str]:
+    """把各人的身份投影写进**已备好的材料树**，返回相对路径。
+
+    调用方备什么树就写什么树（4a 密令供料传自己的 ``prepared``）。实情须说明白：
+    4a 目前用的是 ``prepare_world_materials(db, state)`` 的默认根
+    （``…/turn-N/世界推演``），与世界段同一路径——**不外泄靠的是生命周期而非路径**：
+    4a 调完即 ``release_material_tree`` 整树释放，邸报作者用前会重新 prepare，
+    故读不到上一场留在树里的东西（#1862 用例正守「密报不入邸报」这条界）。
+
+    ⚠️ 故本函数**不得**在别的调用还持有一棵未释放的树时被调进去：身份投影含
+    本人私务（含其在办密报正文），并进一棵**别人正在读**的树等于把密报内容
+    抬进其读取范围。同场不等于人物全知，读取范围也不该因共用一棵树而互相放宽。
+    """
+    from ming_sim.knowledge import build_character_knowledge, render_character_knowledge
+
+    root = Path(prepared.root)
+    index = list(getattr(prepared, "index_lines", ()) or ())
+    written: List[str] = []
+    for raw in names:
+        name = str(raw or "").strip()
+        if not name or not db.conn.execute(
+            "SELECT 1 FROM characters WHERE name=?", (name,),
+        ).fetchone():
+            continue  # 不是真人物（如「某类人」式题名）：没有身份材料，不编
+        knowledge = (
+            db.get_character_knowledge(state, name) if hasattr(db, "get_character_knowledge")
+            else build_character_knowledge(db, state, name)
+        )
+        rel = identity_material_rel(name)
+        _write_text(
+            root / rel,
+            render_character_knowledge(knowledge, name, db=db, state=state),
+        )
+        index.append(rel)
+        written.append(rel)
+    if written:
+        index_path = root / _INDEX_NAME
+        existing = index_path.read_text(encoding="utf-8") if index_path.is_file() else ""
+        merged = [line for line in existing.splitlines() if line]
+        merged.extend(rel for rel in written if rel not in merged)
+        _write_text(index_path, "\n".join(merged))
+        object.__setattr__(prepared, "index_lines", tuple(index))
+    return written
+
+
 def _safe_segment(name: object) -> str:
     """Readable, path-safe text identity with a collision-resistant suffix."""
     text = str(name or "").strip() or "未名"
@@ -1879,6 +1936,7 @@ def _character_projection_from_db_row(row: Any) -> Any:
         power_id=_str("power_id", "ming") or "ming",
         summary=_str("summary"),
         identity=_int("identity", 50),
+        intrigue=_int("intrigue", 50),
     )
 
 
@@ -1900,7 +1958,7 @@ def _resolve_present_character(
         row = db.conn.execute(
             """
             SELECT name, office, office_type, faction, aliases, personal_skills,
-                   loyalty, ability, integrity, courage, style, identity,
+                   loyalty, ability, integrity, courage, style, identity, intrigue,
                    summary, power_id
             FROM characters WHERE name=?
             """,

@@ -9476,9 +9476,9 @@ def _apply_score_extraction_body(
         if not isinstance(item, dict):
             continue
         raw_id = item.get("order_id")
-        sim_note = str(item.get("sim_note") or item.get("result") or "").strip()
+        sim_note = str(item.get("sim_note") or item.get("result") or "")
         disclosed = item.get("disclosed") is True
-        if raw_id is None or not sim_note:
+        if raw_id is None or not sim_note.strip():
             applied_secret_orders.append({"order_id": raw_id, "rejected": True,
                                           "category": "invalid_enum",
                                           "reason": "order_id 或 sim_note 缺失"})
