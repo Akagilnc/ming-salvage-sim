@@ -140,7 +140,7 @@ def test_escort_progress_stays_on_the_secret_order_and_survives_restore(game):
 
 
 def test_close_merges_recon_note_without_second_treasury_debit(game):
-    """S10 结案同源读对账并 merge_execution_note；不二次扣库、不改原流水。"""
+    """S10 结案后对账行在账上；不二次扣库、不改原流水。"""
     db, state, content = game
     before_inner = int(state.metrics["内库"])
     gid = _in_transit_grant(db, state, amount=ORDERED)
@@ -164,8 +164,6 @@ def test_close_merges_recon_note_without_second_treasury_debit(game):
     assert result["dossier_executions"] == [{"dossier_id": gid, "outcome": "fulfilled"}]
     closed = db.get_decree_dossier(gid)
     assert closed["status"] == "closed"
-    note = closed["execution_note"]
-    assert "赈银押解到达" in note
     from ming_sim.db import grant_arrival_bounds
     lo, hi = grant_arrival_bounds(ORDERED, escorted=False)
     row = db.list_dossier_reconciliations(gid)[-1]

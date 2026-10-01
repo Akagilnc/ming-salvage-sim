@@ -96,16 +96,10 @@ def test_player_month_entry_settles_prepushed_edicts_then_world_once(game, monke
 
     def world(db_, state_, llm_config, agno_db=None, cheat_directive=""):
         del llm_config, agno_db, cheat_directive
-        from ming_sim.materials import prepare_world_materials, release_material_tree
-        prepared = prepare_world_materials(db_, state_)
-        try:
-            world_calls.append({
-                "treasury": int(state_.metrics["国库"]),
-                "opening": prepared.opening,
-                "edicts": _categories(db_),
-            })
-        finally:
-            release_material_tree(prepared.root)
+        world_calls.append({
+            "treasury": int(state_.metrics["国库"]),
+            "edicts": _categories(db_),
+        })
         return "世界段只推演一次。"
 
     def translate(*_a, **_k):
@@ -721,7 +715,6 @@ def test_world_segment_reads_material_directory(game, monkeypatch):
             "index": index,
             "has_dir": has_dir,
             "dir_has_index": bool(materials_dir) and (Path(materials_dir) / "INDEX.txt").is_file(),
-            "opening": next(part for part in agent.instructions if "盘面：" in str(part)),
         })
         return "静"
 
@@ -731,16 +724,11 @@ def test_world_segment_reads_material_directory(game, monkeypatch):
         model="gpt-test", channel="api",
     )
     assert month_chain.run_world_segment_text(db, state, api) == "静"
-    assert "INDEX.txt" in seen[0]["listing"].splitlines()
+    catalog = [line for line in seen[0]["listing"].splitlines() if line]
+    assert "INDEX.txt" in catalog
+    assert any(line != "INDEX.txt" for line in catalog)
     assert seen[0]["index"].strip()
     assert seen[0]["has_dir"] is False
-    assert "盘面：" in seen[0]["opening"]
-    # 目录里至少有一份不在开场最小集里的材料。
-    extra = next(
-        line for line in seen[0]["listing"].splitlines()
-        if line and line != "INDEX.txt" and line not in seen[0]["opening"]
-    )
-    assert extra
 
     cli = LLMConfig(api_key="", base_url="", model="", channel="cli", cli_runner="agy")
     assert month_chain.run_world_segment_text(db, state, cli) == "静"

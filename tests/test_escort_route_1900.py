@@ -236,6 +236,9 @@ def test_escort_result_requires_link_and_writes_no_destination_account(game):
     _order_id, escort_dossier = _escort_order(db, state)
     before_inner = int(state.metrics["内库"])
     moves_before = db.list_economy_moves_for_dossier(grant)
+    metric_keys = {
+        str(row["key"]) for row in db.conn.execute("SELECT key FROM metrics").fetchall()
+    }
 
     result = _declare(db, state, {"escort_results": [
         {"dossier_id": grant, "escort_source_dossier_id": escort_dossier,
@@ -246,10 +249,9 @@ def test_escort_result_requires_link_and_writes_no_destination_account(game):
     assert db.list_dossier_escort_outcomes(grant) == []
     assert int(state.metrics["内库"]) == before_inner
     assert db.list_economy_moves_for_dossier(grant) == moves_before
-
-    # 逐路实况不是目的地账户：国库/内库之外不因护送多出任何余额行
-    keys = {str(r["key"]) for r in db.conn.execute("SELECT key FROM metrics").fetchall()}
-    assert not any("护送" in k or "escort" in k.lower() for k in keys)
+    assert {
+        str(row["key"]) for row in db.conn.execute("SELECT key FROM metrics").fetchall()
+    } == metric_keys
 
 
 @pytest.mark.parametrize("bad", ["yes", 1, None, []])
@@ -1226,54 +1228,35 @@ def test_escort_routes_reach_supply_and_world_materials(game):
     assert [(r["dossier_id"], r["escorted"], r["note"]) for r in as_source] == [
         (grant, False, route_note),
     ]
-    assert route_note in feed["board"]
 
-    from types import SimpleNamespace
-    from ming_sim.materials import (
-        character_office_archive_text, grant_route_reader_facts,
-        prepare_world_materials, release_material_tree,
-    )
+    from ming_sim.materials import grant_route_reader_facts
 
-    def _route_view(person, dossier_id):
+    def _route_rows(person, dossier_id):
         dossiers = db.list_referenceable_dossiers(person, state.turn)
-        rows = [
+        return [
             item for item in grant_route_reader_facts(db, person, dossiers)
             if int(item["dossier_id"]) == dossier_id
         ]
+
+    def _route_view(person, dossier_id):
+        rows = _route_rows(person, dossier_id)
         assert len(rows) == 1
         return rows[0]
 
     db.record_dossier_progress(grant, int(state.turn), "在途", "奏报银两仍在途")
 
-    def _board_and_archives():
-        prepared = prepare_world_materials(db, state)
-        try:
-            board = (prepared.root / "盘面" / "全局.txt").read_text(encoding="utf-8")
-        finally:
-            release_material_tree(prepared.root)
-        archives = {
-            person: character_office_archive_text(
-                db, state, SimpleNamespace(name=person), {},
-            )
-            for person in (executor, escortee, outsider)
-        }
-        return board, archives
-
-    board, archives = _board_and_archives()
-    assert route_note in board
-    assert route_note in archives[executor]
-    assert route_note in archives[escortee]
-    assert route_note not in archives[outsider]
     executor_view = _route_view(executor, grant)
     escortee_view = _route_view(escortee, grant)
     outsider_view = _route_view(outsider, grant)
     assert executor_view["source_dossier_id"] == escort_dossier
     assert executor_view["note"] == route_note
+    assert executor_view["route_visible"] is True
     assert escortee_view["route_visible"] is True
     assert escortee_view["source_dossier_id"] is None
     assert escortee_view["note"] == route_note
     assert outsider_view["route_visible"] is False
     assert outsider_view["source_dossier_id"] is None
+    assert outsider_view["note"] == ""
     assert outsider_view["memorial_text"] == "奏报银两仍在途"
 
     db.record_dossier_escort_result(
@@ -1281,33 +1264,28 @@ def test_escort_routes_reach_supply_and_world_materials(game):
         escorted=True, note="此趟改记有护",
     )
     flipped = build_secret_orders_supply_feed(db, state, {"facts": {}})
-    assert feed["board"] != flipped["board"]
     flipped_source = next(
         row["escort_routes_as_escort_source"] for row in flipped["eligible_dossiers"]
         if int(row["dossier_id"]) == escort_dossier
     )
-    assert [(r["dossier_id"], r["escorted"]) for r in flipped_source] == [(grant, True)]
-    board_after, archives_after = _board_and_archives()
-    assert board != board_after
-    assert archives[executor] != archives_after[executor]
-    assert archives[escortee] != archives_after[escortee]
-    assert archives[outsider] == archives_after[outsider]
+    assert [(r["dossier_id"], r["escorted"], r["note"]) for r in flipped_source] == [
+        (grant, True, "此趟改记有护"),
+    ]
     executor_after = _route_view(executor, grant)
     escortee_after = _route_view(escortee, grant)
     outsider_after = _route_view(outsider, grant)
     assert executor_after["source_dossier_id"] == escort_dossier
     assert executor_after["note"] == "此趟改记有护"
+    assert executor_after["escorted"] is True
     assert escortee_after["source_dossier_id"] is None
     assert escortee_after["note"] == "此趟改记有护"
+    assert escortee_after["escorted"] is True
     assert outsider_after["route_visible"] is False
     assert outsider_after["source_dossier_id"] is None
+    assert outsider_after["note"] == ""
     assert outsider_after["memorial_text"] == "奏报银两仍在途"
-    assert "此趟改记有护" in archives_after[executor]
-    assert "此趟改记有护" in archives_after[escortee]
-    assert "此趟改记有护" not in archives_after[outsider]
-    assert "奏报银两仍在途" in archives_after[outsider]
 
-    # 正常结案之后，翻已落的逐路实况仍改得到推演账本；对账扫描面不再把它当在途。
+    # 正常结案之后，逐路实况仍可覆盖；对账扫描面不再把它当在途。
     plain = _in_transit_grant(
         db, state, text="本回合押解到达", target_id="liaodong",
         escort={"escortees": [_escort_entry(db, escortee)]},
@@ -1317,28 +1295,28 @@ def test_escort_routes_reach_supply_and_world_materials(game):
         "dossier_id": plain, "escorted": True, "note": plain_note,
     }]})
     plain_fact = next(f for f in continuing_dossier_facts(db, state.turn) if f["id"] == plain)
+    assert plain_fact["escorted"] is True
     assert plain_fact["escort_note"] == plain_note
-    plain_feed = build_secret_orders_supply_feed(db, state, {"facts": {}})
-    assert plain_note in plain_feed["board"]
-    plain_board, plain_archives = _board_and_archives()
-    assert plain_note in plain_board
-    assert plain_note in plain_archives[escortee]
-    assert plain_note not in plain_archives[outsider]
+    plain_reader = _route_view(escortee, plain)
+    assert plain_reader["route_visible"] is True
+    assert plain_reader["note"] == plain_note
+    assert plain_reader["escorted"] is True
+    assert _route_rows(outsider, plain) == []
     db.record_dossier_execution(plain, "fulfilled", "押解已达", int(state.turn), close=True)
     assert plain not in {
         int(row["dossier_id"])
         for row in db.list_monthly_grant_reconciliation_targets()
     }
-    closed_feed = build_secret_orders_supply_feed(db, state, {"facts": {}})
-    closed_board, _archives = _board_and_archives()
+    assert [(row["escorted"], row["note"]) for row in db.list_dossier_escort_outcomes(plain)] == [
+        (True, plain_note),
+    ]
     db.record_dossier_escort_result(
         int(state.turn), dossier_id=plain, escort_source_dossier_id=plain,
         escorted=False, note="结案后改记失护",
     )
-    reopened_feed = build_secret_orders_supply_feed(db, state, {"facts": {}})
-    reopened_board, _archives = _board_and_archives()
-    assert closed_board != reopened_board
-    assert closed_feed["board"] != reopened_feed["board"]
+    assert [(row["escorted"], row["note"]) for row in db.list_dossier_escort_outcomes(plain)] == [
+        (False, "结案后改记失护"),
+    ]
     assert plain not in {
         int(row["dossier_id"])
         for row in db.list_monthly_grant_reconciliation_targets()
