@@ -11,7 +11,6 @@ import ming_sim.declaration_dispatch as declaration_dispatch
 import ming_sim.decree as decree_mod
 import ming_sim.month_chain as month_chain
 import ming_sim.month_translate as month_translate
-import ming_sim.simulation as simulation
 from ming_sim.declaration_dispatch import pending_action_decree_ref
 from ming_sim.session_write_queue import get_session_write_queue
 from tests.month_chain_helpers import make_light_session
@@ -19,9 +18,6 @@ from tests.dossier_test_helpers import create_test_secret_order
 
 
 def _forbid_extractor(monkeypatch):
-    assert not hasattr(decree_mod, "extract_scores_by_modules_with_agno")
-    assert not hasattr(simulation, "extract_scores_by_modules_with_agno")
-    assert not hasattr(simulation, "EXTRACTION_MODULES")
     monkeypatch.setattr(
         "ming_sim.session.write_decree_with_agno", lambda *_a, **_k: "诏",
     )

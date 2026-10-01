@@ -12,7 +12,6 @@ Seams:
 
 from __future__ import annotations
 
-import json
 import sqlite3
 
 import pytest
@@ -30,6 +29,7 @@ from ming_sim.staged_commitment import (
     write_due_staged_commitment_todos,
 )
 from ming_sim.supervision import (
+    EMPTY_TRANSFORMATION_TENDENCY_FACTS,
     EXPOSURE_TABLE,
     FORBIDDEN_DULLING_COL_FRAGMENTS,
     PRESENCE_TABLE,
@@ -301,8 +301,9 @@ def test_ac2_paired_observation_slots_and_countermeasure_hard_gate(game):
     assert tend_u["longest_consecutive_presence_months"] == 12
     assert tend_m["has_mediocre_auditor"] is True
     assert tend_u["has_upright_auditor"] is True
-    assert "dull" not in json.dumps(tend_m, ensure_ascii=False).lower()
-    assert "钝化" not in json.dumps(tend_m, ensure_ascii=False)
+    # 观察槽键集＝事实包真源。不在整包序列化文本里扫词，免得稽核人姓名撞上禁词。
+    assert set(tend_m) == set(EMPTY_TRANSFORMATION_TENDENCY_FACTS)
+    assert set(tend_u) == set(EMPTY_TRANSFORMATION_TENDENCY_FACTS)
 
     # 执行格判词观察槽：督办复核读取监督事实
     _insert_staged(db, state, content, dossier_id=sub_m, due_turn=state.turn)

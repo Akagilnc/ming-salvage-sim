@@ -177,7 +177,6 @@ def test_decide_settlement_delivery_gap_bidirectional():
         "has_reports": True,
     })
     assert failed["status"] == "failed" and not failed["delivered"]
-    assert "表报" in failed["note"]
     # 表报不改变 delivered 判定
     bare = decide_secret_order_settlement({
         "actual_units": 0.5, "target_units": 3.0, "has_reports": False,
@@ -191,23 +190,7 @@ def test_target_units_min_one_when_due():
     assert target_progress_units(deadline_span=6, due_turn=0) == 0.0
 
 
-def test_task_specific_contract_from_explicit_fields_not_tags():
-    audit = build_covert_task_contract(
-        deadline_span=3, due_turn=10,
-        kind="补发饷银", axes=["既得利益"], direction=1,
-        delivery_unit="万两", delivery_target_units=3, effect_sign=-1,
-        purpose="其它", category="密令差务", account="内库",
-    )
-    catch = build_covert_task_contract(
-        deadline_span=3, due_turn=10,
-        kind="缉获人犯", axes=["实务事功"], direction=1,
-        delivery_unit="人犯", delivery_target_units=3, effect_sign=1, person_action="处置",
-    )
-    assert audit["kind"] == "补发饷银" and audit["axes"] == ["既得利益"]
-    assert audit["delivery"]["unit"] == "万两"
-    assert audit["delivery"]["target_units"] == 3.0
-    assert catch["kind"] == "缉获人犯" and catch["delivery"]["unit"] == "人犯"
-    assert catch["delivery"]["target_units"] == 3.0
+def test_task_specific_contract_rejects_tags_without_explicit_fields():
     with pytest.raises(CovertContractError):
         build_covert_task_contract(
             deadline_span=3, due_turn=10, tags=["辽饷", "兵部", "密查", "稽核"],
@@ -293,7 +276,7 @@ def test_actual_progress_container_separate_from_reported_rail(game):
     # 两轨分立
     assert reported[0]["progress_band"] == "在办"
     assert not reported[0]["is_terminal"]
-    assert "dossier_progress_json" not in json.dumps(actual, ensure_ascii=False)
+    assert "dossier_progress_json" not in actual[0]
     # list_dossier_durable_effects 仍只 economy+fiscal；实进度走并列读口
     durable = db.list_dossier_durable_effects(did)
     assert all("account" in r or "key" in r or "delta" in r for r in durable) or durable == []

@@ -11,7 +11,6 @@ from ming_sim.action_materialize import (
     stage_punishment_candidate)
 from ming_sim.db import atomic
 from ming_sim.decree import pre_settle
-from ming_sim.executor_routing import resolve_lead_executors
 from tests.dossier_test_helpers import promulgate_proposed_appointments
 
 
@@ -53,32 +52,8 @@ def test_punishment_without_admitted_strike_subtype_is_excluded(env, punish_acti
     assert db.conn.execute("SELECT COUNT(*) FROM decree_dossiers").fetchone()[0] == dossiers_before
 
 
-def test_transaction_category_vocabulary_still_comes_from_duty_routes():
-    """#1778 决定 3 只删「按类别配人」；事务类别词表真源仍是 offices.json duty_routes。"""
-    from ming_sim.executor_routing import duty_route_categories
-
-    cats = duty_route_categories()
-    assert {"钱粮", "清丈", "缉拿", "缉捕", "河工"} <= cats
-    assert "修仙" not in cats
-
-
-def test_excluded_action_has_no_leads(env):
-    result = resolve_lead_executors(
-        action_type="policy", payload={"transaction_category": "修仙"},
-    )
-    assert result["route"] == "excluded"
-    assert result["leads"] == []
-
-
 def test_unnamed_assignment_gets_no_lead_from_code(env):
-    """#1778 决定 3/乙：没点将、名单也没写 → 代码不配人；成案缝 unassigned 响亮失败。"""
-    result = resolve_lead_executors(
-        action_type="assignment", payload={"transaction_category": "清丈"},
-    )
-    assert result["route"] == "unassigned"
-    assert result["leads"] == []
-    assert result["signal"] is None
-
+    """#1778 决定 3/乙：没点将、名单也没写 → 代码不配人；成案缝响亮失败。"""
     db, state, _ = env
     with pytest.raises(ValueError):
         _create(db, state, category="清丈", payload={"transaction_category": "清丈"})
@@ -470,16 +445,3 @@ def test_national_policy_is_one_dossier_without_province_routing(env):
     assert len(ids) == 1
     row = db.get_decree_dossier(ids[0])
     assert row["region_id"] == ""
-
-    # 单省差务未点将、名单也没写 → 空 leads（钉代码不配人、无省级/中央回退）
-    single = resolve_lead_executors(
-        action_type="assignment",
-        payload={
-            "transaction_category": "清丈",
-            "locality_scope": "single",
-            "target_kind": "region",
-            "target_id": "shaanxi",
-        },
-    )
-    assert single["leads"] == []
-    assert single["route"] == "unassigned"

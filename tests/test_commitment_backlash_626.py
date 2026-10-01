@@ -780,6 +780,3 @@ def test_ac5_hook_idempotent_no_gate_table_expansion(game):
     bl2 = [a for a in (again or []) if a.get("source") == "commitment_backlash"]
     assert bl2 == []
     assert len(_backlash_issues(db)) == 1
-
-
-# ── AC6：呈现哨兵 ─────────────────────────────────────────────────
