@@ -240,12 +240,12 @@ def dispatch_month_segment(
     translate_fn: Optional[MonthTranslateFn] = None,
     source: Provenance = Provenance.system_simulation,
     alongside: Optional[Callable[[DeclarationDispatchResult], None]] = None,
+    answered_verdicts: tuple[Mapping[str, object], ...] | list[Mapping[str, object]] = (),
 ) -> DeclarationDispatchResult:
     """世界段转译一次，整份声明沿 C0 唯一原子分派入口提交。
 
-    本段答复到的三饷请旨事件（#1891）由 ``_translate_month_segment_front`` 从批红
-    案头既有行读出（事件身份、闭集与已存原批语），不另设调用参数——转译输入的
-    组装只有这一处。
+    三饷原批语只由世界答后段传入（#1891）。本函数不再按回合把已答行塞进每一次
+    转译：旨意续推和问前世界段不是那一次解释。
     """
     from ming_sim.materials import continuing_dossier_facts
 
@@ -255,7 +255,7 @@ def dispatch_month_segment(
         db, segment=segment, turn=turn, decree_payload=payload,
         llm_config=llm_config, translate_fn=translate_fn,
         continuing_dossiers=continuing_dossier_facts(db, turn),
-        answered_verdicts=_answered_levy_verdicts(db, turn),
+        answered_verdicts=answered_verdicts,
     )
     return dispatch_declaration(
         db, state, declaration,

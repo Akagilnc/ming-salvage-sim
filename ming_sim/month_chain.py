@@ -575,13 +575,15 @@ def _continue_world_after_answers(
         _save_chain(db, turn, chain, source=source)
 
     # 续推若再吐 DECISION / LEVY 机标，只落问前缀文，勿把机标喂进转译。
-    # 已存原批语仍走这一次转译；前缀为空不能把原批语挡在入口外。
+    # 原批语只在这一次世界答后转译里解释；前缀为空不能把原批语挡在入口外。
     prefix, _extra = _split_at_question(text)
-    if prefix.strip() or _answered_levy_verdicts(db, turn):
+    verdicts = _answered_levy_verdicts(db, turn)
+    if prefix.strip() or verdicts:
         result = dispatch_month_segment(
             db, state, segment=prefix if prefix.strip() else "",
             llm_config=session.llm_config, source=source,
             alongside=mark_continued,
+            answered_verdicts=verdicts,
         )
         return _ending_from_dispatch_result(result) or outcome
     # 无前缀、也无本段原批语：无落账后果，仍须原子记下已续，避免重入再烧。

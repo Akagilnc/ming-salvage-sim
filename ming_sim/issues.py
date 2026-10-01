@@ -1785,14 +1785,13 @@ def _fiscal_levy_answered_petitions(db: GameDB) -> Dict[str, Dict[str, object]]:
         real_id = event_id[len(_LEVY_PETITION_PREFIX):]
         if real_id not in unresolved:
             continue
-        try:
-            choice = json.loads(str(row["choice_json"] or "{}"))
-        except (TypeError, ValueError):
-            choice = {}
+        choice = GameDB.parse_engine_payload_json(
+            row["choice_json"], surface="pending_decisions.choice_json",
+        )
         answered[real_id] = {
             "title": str(row["title"] or ""),
             "context": str(row["context"] or ""),
-            "rescript": choice if isinstance(choice, dict) else {},
+            "rescript": choice,
         }
     return answered
 
@@ -3766,13 +3765,12 @@ def _fiscal_levy_answered_rows(db: GameDB, turn: int) -> List[Dict[str, object]]
         event_id = str(row["event_id"] or "")
         if not event_id.startswith(_LEVY_PETITION_PREFIX):
             continue
-        try:
-            choice = json.loads(str(row["choice_json"] or "{}"))
-        except (TypeError, ValueError):
-            choice = {}
+        choice = GameDB.parse_engine_payload_json(
+            row["choice_json"], surface="pending_decisions.choice_json",
+        )
         rows.append({
             "event_id": event_id[len(_LEVY_PETITION_PREFIX):],
-            "rescript": choice if isinstance(choice, dict) else {},
+            "rescript": choice,
         })
     return rows
 
@@ -4632,7 +4630,11 @@ def _preflight_declared_event_groups(
                 )
                 if closed_error:
                     break
-            outcome.update(piece)
+            if isinstance(piece, dict):
+                for key, item_value in piece.items():
+                    outcome.setdefault(key, item_value)
+            else:
+                outcome.update(piece)
         if closed_error:
             _reject(pending, closed_error)
             continue
@@ -9099,12 +9101,17 @@ def _apply_score_extraction_body(
         ev = runtime_content.event_by_id.get(event_id)
         _reject_suppressed_strategic_results(event_id, ev.title if ev is not None else event_id)
 
-    # #1891：请饷／议停请旨的结局在此落事件账唯一写口。声明来自同一段 C0 转译
-    # （#1815）——即世界段续推读懂御批后写出的事件结局，代码只按该事件闭集归一，
-    # 不解析批语文字（ADR 0142 / P6）。未声明＝留中，本次答复只留 choice 事实。
-    _apply_fiscal_levy_declared_outcomes(
-        db, state, runtime_content, extracted, commit=commit_now,
+    # #1891：请饷／议停请旨的结局在此落事件账唯一写口。有逐笔顺序时按交代先后
+    # 送写口，写口自己的 first-wins 留下首笔；归并字典的后项覆盖不算到达。
+    # 未声明＝留中，本次答复只留 choice 事实。不解析批语文字（ADR 0142 / P6）。
+    levy_sources = (
+        [step for step, _ordered, _ids in effect_sequence]
+        if effect_sequence is not None else [extracted]
     )
+    for levy_source in levy_sources:
+        _apply_fiscal_levy_declared_outcomes(
+            db, state, runtime_content, levy_source, commit=commit_now,
+        )
 
     for new_issue in (issue_summary.get("new_issues") or []):
         if not (
@@ -9121,9 +9128,21 @@ def _apply_score_extraction_body(
             new_issue["rejected"] = True
             new_issue["reason"] = "饷率事件结局只经御批写口"
             continue
+        outcome_payload: Dict[str, object] = extracted
+        if effect_sequence is not None:
+            for step_extracted, _ordered, _ids in effect_sequence:
+                step_outcomes = step_extracted.get("事件结局")
+                if (
+                    isinstance(step_outcomes, dict)
+                    and _event_outcome_label(step_outcomes, event_id)
+                ):
+                    outcome_payload = {
+                        "事件结局": {event_id: step_outcomes[event_id]},
+                    }
+                    break
         outcome_label, outcome_error = _strategic_event_outcome_label_or_error(
             event_id,
-            extracted,
+            outcome_payload,
             runtime_content,
         )
         if outcome_error:

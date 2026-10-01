@@ -490,7 +490,13 @@ def _dispatch_effects(
             if isinstance(value, list) and isinstance(current, list):
                 current.extend(value)
             elif isinstance(value, dict) and isinstance(current, dict):
-                current.update(value)
+                # 事件结局是一事件一裁断：后项不得盖掉已到达的首笔。逐笔原文在
+                # effect_sequence，唯一写口按那个顺序消费。
+                if field == "事件结局":
+                    for key, outcome_value in value.items():
+                        current.setdefault(key, outcome_value)
+                else:
+                    current.update(value)
             elif value is not None and not isinstance(value, (list, dict)):
                 extraction[field] = value
         for field, pairs in step_ordered.items():

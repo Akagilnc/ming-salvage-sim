@@ -238,11 +238,11 @@ def test_answering_world_question_resumes_suffix_then_gazette(game, monkeypatch)
 
     real_dispatch = month_translate.dispatch_month_segment
 
-    def spy_dispatch(db_, state_, *, segment, llm_config, source, alongside=None):
+    def spy_dispatch(db_, state_, *, segment, llm_config, source, alongside=None, **kwargs):
         dispatched_segments.append(str(segment))
         return real_dispatch(
             db_, state_, segment=segment, llm_config=llm_config,
-            source=source, alongside=alongside,
+            source=source, alongside=alongside, **kwargs,
         )
 
     monkeypatch.setattr(month_chain, "_run_world_continuation_text", fake_continuation)
