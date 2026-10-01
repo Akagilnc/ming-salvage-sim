@@ -1258,25 +1258,6 @@ def _event_terminal_records(db: GameDB) -> Dict[str, Dict[str, str]]:
     return records
 
 
-def _event_pending_choice_records(db: GameDB) -> Dict[str, Dict[str, str]]:
-    records: Dict[str, Dict[str, str]] = {}
-    for r in db.conn.execute(
-        """
-        SELECT event_id, terminal_state, terminal_reason, source
-        FROM event_triggers
-        WHERE COALESCE(terminal_state, '') = ''
-          AND COALESCE(terminal_reason, '') != ''
-        """
-    ).fetchall():
-        if r["event_id"]:
-            records[str(r["event_id"])] = {
-                "terminal_state": "",
-                "terminal_reason": str(r["terminal_reason"] or ""),
-                "source": str(r["source"] or ""),
-            }
-    return records
-
-
 FISCAL_LEVY_EVENT_CATEGORY = "fiscal_levy"
 # #1891：请旨答复经 #1847 批红页落账时的唯一写口来源标记。旧 "fiscal_levy_shadow"
 # 自动置结局桩退役——饷率结局只由皇帝批红产生。
@@ -1669,11 +1650,12 @@ def apply_historical_fiscal_rates(
     *,
     commit: bool = True,
 ) -> List[Dict[str, object]]:
-    """饷率 effect 通道：同 tick 前置结局 stub + settle.p set-to-target。
+    """饷率 effect 通道：读已置终局，重算 settle.p 目标。
 
-    #259 shadow 阶段只处理 category=fiscal_levy 的历史事件；结局值必须经事件自身
-    terminal_reason_labels 白名单归一。随后按事件账重算在征饷集并持久化省级
-    settle.p，保证后续 settle_tick 当月读到目标值且重复运行不叠加。
+    只处理 category=fiscal_levy。终局必须已经由请饷声明写口落进事件账；
+    滞留的 choice 标签不在这里升成终局。结局值经事件自身 terminal_reason_labels
+    白名单归一。随后按事件账重算在征饷集并持久化省级 settle.p，保证后续
+    settle_tick 当月读到目标值且重复运行不叠加。
     """
     c = _ctx()
     should_commit = commit and not db.conn.in_transaction
@@ -1681,7 +1663,6 @@ def apply_historical_fiscal_rates(
 
     def run_fiscal_levy_pass() -> None:
         terminal_records = _event_terminal_records(db)
-        pending_choice_records = _event_pending_choice_records(db)
         for ev in c.events:
             if getattr(ev, "category", "") != FISCAL_LEVY_EVENT_CATEGORY:
                 continue
@@ -1692,37 +1673,6 @@ def apply_historical_fiscal_rates(
                     state,
                     db,
                 )
-            elif ev.id in pending_choice_records:
-                if _event_window_expired(ev, state):
-                    pass
-                elif not _event_window_open(ev, state):
-                    continue
-                elif not _gate_passed(ev.trigger_gate, state.metrics, db):
-                    continue
-                else:
-                    record = pending_choice_records[ev.id]
-                    label = _fiscal_levy_normalized_terminal_reason_or_abort(
-                        ev,
-                        record.get("terminal_reason"),
-                        state,
-                    )
-                    db.mark_event_triggered(
-                        state,
-                        ev.id,
-                        source=record.get("source") or FISCAL_LEVY_RESCRIPT_SOURCE,
-                        terminal_reason=label,
-                        commit=False,
-                    )
-                    terminal_records[ev.id] = {
-                        "terminal_state": "triggered",
-                        "terminal_reason": label,
-                    }
-                    applied.append({
-                        "id": ev.id,
-                        "title": ev.title,
-                        "terminal_state": "triggered",
-                        "terminal_reason": label,
-                    })
             if ev.id not in terminal_records:
                 if _event_window_expired(ev, state):
                     db.mark_event_expired(state, ev.id, commit=False)
@@ -3799,8 +3749,7 @@ def _fiscal_levy_answered_event_ids(db: GameDB, turn: int) -> set[str]:
 
     资格＝**本段真的有御批**：该回合批红页上已答（decided，含留中）的请旨行。
     「历史呈过」不构成授权：呈过而未答、或上一段的旧留中行，都不是本段可译的
-    御批。转译入口喂给模型的答复名单（month_translate._answered_levy_verdicts）
-    与此同源，两处不再各判一套。
+    御批。转译入口的答复名单与此同源；原批语由该入口从同一已答行读出。
 
     前缀真源 = month_chain；此处局部导入以免与月链成模块环。
     """
@@ -3820,16 +3769,17 @@ def _fiscal_levy_answered_event_ids(db: GameDB, turn: int) -> set[str]:
 def _fiscal_levy_declared_outcome_label_or_error(
     db: GameDB, state: GameState, ev: Event, outcome: Dict[str, object],
 ) -> tuple[str, str]:
-    """请饷／议停事件声明结局 → 闭集标签。缺声明不报错（留中即不声明结局）。
+    """请饷／议停事件声明结局 → 闭集标签。
 
-    声明了却不在该事件 terminal_reason_labels 闭集内＝响亮失败，不写脏串
-    （ADR 0020 落位 1）。与 applier 落账走同一归一器，两处不各判一套。
+    键不在声明里＝留中，不报错。键在、值却归不出闭集标签（空对象、空串、
+    闭集外）＝响亮失败，不写脏串（ADR 0020）。与落账写口走同一归一器。
     """
     del db
-    label = _event_outcome_label(outcome, ev.id)
-    if not label:
+    if ev.id not in outcome:
         return "", ""
-    return _fiscal_levy_normalized_terminal_reason_or_abort(ev, label, state), ""
+    label = _event_outcome_label(outcome, ev.id)
+    raw = label if label else outcome.get(ev.id)
+    return _fiscal_levy_normalized_terminal_reason_or_abort(ev, raw, state), ""
 
 
 def _apply_fiscal_levy_declared_outcomes(
@@ -3839,8 +3789,9 @@ def _apply_fiscal_levy_declared_outcomes(
     """请饷／议停事件在本段声明的结局 → 事件账唯一写口（#1891）。
 
     唯一触发源是同一段 C0 转译产出的 ``事件结局``（与战略事件同一字段、同一写口）。
-    已在 preflight 判过的资格与闭集这里不再重判，只做归一后落账；未声明的事件不在
-    此出现——留中就是留中，代码不据批语文字补一个结局（ADR 0142 / P6）。
+    已在 preflight 判过的资格与闭集这里不再重判，只做归一后落账。键不在声明里的
+    事件不会出现在这里——留中就是留中。键在但归不出闭集标签，仍走同一归一失败，
+    不静默跳过。代码不据批语文字补一个结局（ADR 0142 / P6）。
     """
     outcomes = extracted.get("事件结局")
     if not isinstance(outcomes, dict) or not outcomes:
@@ -3851,9 +3802,8 @@ def _apply_fiscal_levy_declared_outcomes(
         if ev is None or not _is_fiscal_levy_petition_event(ev):
             continue
         raw_label = _event_outcome_label(outcomes, event_id)
-        if not raw_label:
-            continue
-        label = _fiscal_levy_normalized_terminal_reason_or_abort(ev, raw_label, state)
+        declared = raw_label if raw_label else outcomes.get(event_id)
+        label = _fiscal_levy_normalized_terminal_reason_or_abort(ev, declared, state)
         db.mark_event_triggered(
             state, event_id, source=FISCAL_LEVY_RESCRIPT_SOURCE,
             terminal_reason=label, commit=commit,

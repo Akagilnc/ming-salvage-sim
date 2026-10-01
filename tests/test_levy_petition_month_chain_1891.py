@@ -181,6 +181,19 @@ def _ledger_field(db, field, event_id="liao_levy_rise_1631", default=""):
     return default if row is None else str(row[field] or "")
 
 
+def _rescript(decision_key: str, label: str, note: str | None = None) -> dict:
+    """批红页已落的原批语形状：键、动作、朱批、缺省 hint；留中另带 note。"""
+    choice = {
+        "decision_key": decision_key,
+        "action": "decision",
+        "label": label,
+        "hint": "",
+    }
+    if note is not None:
+        choice["note"] = note
+    return choice
+
+
 def test_emperor_approves_levy_petition_through_real_month_chain(game, monkeypatch):
     """世界段上疏 → 同一批红页亲裁「准」→ 转译按闭集声明 → 事件终局。"""
     db, state, content = game
@@ -232,8 +245,11 @@ def test_emperor_approves_levy_petition_through_real_month_chain(game, monkeypat
     assert seen["translate_prompts"], "答复后的转译应经既有转译入口"
     rosters = [r for prompt in seen["translate_prompts"] if (r := _levy_roster(prompt))]
     assert rosters, "答复后的转译必须拿到本段请饷事件的闭集名单"
-    assert [row["event_id"] for row in rosters[0]] == ["liao_levy_rise_1631"]
-    assert rosters[0][0]["terminal_reason_labels"] == ["已准", "已驳"]
+    assert rosters[0] == [{
+        "event_id": "liao_levy_rise_1631",
+        "terminal_reason_labels": ["已准", "已驳"],
+        "rescript": _rescript(row["decision_key"], "准行加派"),
+    }]
 
     ledger = _ledger(db)
     assert ledger["terminal_state"] == "triggered"
@@ -309,6 +325,7 @@ def test_emperor_rejects_levy_petition_keeps_nine_li(game, monkeypatch):
     assert [{
         "event_id": "liao_levy_rise_1631",
         "terminal_reason_labels": ["已准", "已驳"],
+        "rescript": _rescript(row["decision_key"], "不准，仍照九厘"),
     }] in [_levy_roster(p) for p in seen["translate_prompts"]]
     assert _ledger_field(db, "terminal_reason") == "已驳"
 
@@ -344,6 +361,7 @@ def test_held_levy_petition_advances_month_without_terminal_state(game, monkeypa
     assert [{
         "event_id": "liao_levy_rise_1631",
         "terminal_reason_labels": ["已准", "已驳"],
+        "rescript": _rescript(row["decision_key"], "", note="留中，俟户部再议"),
     }] in [_levy_roster(p) for p in seen["translate_prompts"]]
     assert _ledger_field(db, "terminal_state") == ""
     assert _ledger_field(db, "terminal_reason") == ""
@@ -353,18 +371,20 @@ def test_held_levy_petition_advances_month_without_terminal_state(game, monkeypa
     assert int(state.turn) > closed_turn
 
 
-def test_outcome_label_outside_closed_set_is_rejected_not_written(game, monkeypatch):
-    """转译声明闭集外的结局＝响亮失败，事务回滚、账上零终局行（不写脏串）。"""
+@pytest.mark.parametrize("raw_label", ["胡乱", {}])
+def test_outcome_label_outside_closed_set_is_rejected_not_written(game, monkeypatch, raw_label):
+    """闭集外标签与显式空声明都走既有续推失败：登记步骤与错误包，不写终局、不推进。"""
     from ming_sim.exceptions import SettlementAbort
 
     db, state, content = game
     _prepare(db, state, content, monkeypatch)
     before = _settle_p(db)["p"]["三饷应征"]
+    closed_turn = int(state.turn)
     _install_model_boundary(
         monkeypatch, world_text="本月边情，户部请加辽饷。" + _levy_block(),
         declaration={"effects": [{
             "event_id": "liao_levy_rise_1631",
-            "事件结局": {"liao_levy_rise_1631": "胡乱"},
+            "事件结局": {"liao_levy_rise_1631": raw_label},
         }]},
     )
     session = _make_session(db, state, content)
@@ -372,14 +392,32 @@ def test_outcome_label_outside_closed_set_is_rejected_not_written(game, monkeypa
     session.resolve_turn(allow_empty_decree=True)
     row = session.pending_decisions()[0]
 
-    with pytest.raises(SettlementAbort, match="结局标签无法归一"):
+    with pytest.raises(SettlementAbort) as caught:
         session.submit_hitl_choices(
             [{"decision_key": row["decision_key"], "action": "decision", "label": "准行加派"}],
             write_gate=session._write_gate,
         )
 
+    assert caught.value.stage == "world_continue"
+    assert caught.value.error_pack_path
+    failure = month_chain.month_chain_call_failure(db, closed_turn)
+    assert failure is not None
+    assert failure["step"] == "world_continue"
+    assert failure["kind"] == "code_exception"
+    assert failure.get("error_pack_path")
+    assert "结局标签无法归一" in str(failure["message"])
+    stored = db.conn.execute(
+        "SELECT status, choice_json FROM pending_decisions WHERE event_id=?",
+        (f"{_LEVY_PETITION_PREFIX}liao_levy_rise_1631",),
+    ).fetchone()
+    assert stored["status"] == "decided"
+    assert json.loads(stored["choice_json"])["label"] == "准行加派"
     assert _ledger_field(db, "terminal_state") == ""
     assert _settle_p(db)["p"]["三饷应征"] == before
+    assert int(state.turn) == closed_turn
+    chain = month_chain._load_chain(db, closed_turn)
+    assert chain.get("world_questions")
+    assert not chain.get("world_continued")
 
 
 def test_no_levy_petition_means_no_extra_ask_and_no_new_run(game, monkeypatch):
@@ -480,7 +518,9 @@ def test_re_presentation_after_hold_still_binds_same_event(game, monkeypatch):
 
 
 def test_reopen_after_petition_stored_keeps_event_identity(game, tmp_path, monkeypatch):
-    """#1891 J1：呈批存盘后关档重开，案头仍是原请饷事件、亲裁仍落该事件一次。"""
+    """关档重开后按原 decision_key 续办：身份、终局与实账都落在原请饷事件上。"""
+    import shutil
+
     db, state, content = game
     _prepare(db, state, content, monkeypatch)
     _install_model_boundary(
@@ -489,11 +529,10 @@ def test_reopen_after_petition_stored_keeps_event_identity(game, tmp_path, monke
     session = _make_session(db, state, content)
     session.resolve_turn(allow_empty_decree=True)
     row = session.pending_decisions()[0]
+    decision_key = row["decision_key"]
     assert row["event_id"] == f"{_LEVY_PETITION_PREFIX}liao_levy_rise_1631"
     db.conn.commit()
     path = str(tmp_path / "reopen.db")
-    import shutil
-
     shutil.copyfile(db.path, path)
     db.close()
 
@@ -501,47 +540,101 @@ def test_reopen_after_petition_stored_keeps_event_identity(game, tmp_path, monke
     try:
         issues.bind_content(content)
         state2 = reopened.load_state()
-        # 重开后案头仍指向原请饷事件，未退化成普通世界段身份。
-        desk = reopened.list_rescript_desk(int(state2.turn))
-        petition_rows = [
-            r for r in desk if str(r["event_id"]).startswith(_LEVY_PETITION_PREFIX)
-        ]
-        assert len(petition_rows) == 1
-        assert petition_rows[0]["event_id"] == f"{_LEVY_PETITION_PREFIX}liao_levy_rise_1631"
-        assert petition_rows[0]["title"] == "辽饷升至一分二厘"
+        closed_turn = int(state2.turn)
+        seen = _install_model_boundary(
+            monkeypatch,
+            world_text="重开后不得再跑已提交的世界段。",
+            declaration={"effects": [{
+                "event_id": "liao_levy_rise_1631",
+                "事件结局": {"liao_levy_rise_1631": "已准"},
+            }]},
+        )
+        session2 = _make_session(reopened, state2, content)
+        session2.submit_hitl_choices(
+            [{"decision_key": decision_key, "action": "decision", "label": "准行加派"}],
+            write_gate=session2._write_gate,
+        )
+
+        assert seen["world_messages"] == []
+        assert len(seen["continue_prompts"]) == 1
+        ledger = _ledger(reopened)
+        assert ledger["terminal_state"] == "triggered"
+        assert ledger["terminal_reason"] == "已准"
+        assert ledger["source"] == FISCAL_LEVY_RESCRIPT_SOURCE
+        stored = reopened.conn.execute(
+            "SELECT event_id, status FROM pending_decisions WHERE event_id=?",
+            (f"{_LEVY_PETITION_PREFIX}liao_levy_rise_1631",),
+        ).fetchone()
+        assert stored["event_id"] == f"{_LEVY_PETITION_PREFIX}liao_levy_rise_1631"
+        assert stored["status"] == "decided"
+        assert int(state2.turn) > closed_turn
     finally:
         reopened.close()
 
 
-def test_model_sees_exactly_the_roster_that_pins_the_identities(game, monkeypatch):
-    """#1891 J1：模型看见的名单 ≡ 钉进问题身份的那份 ≡ 案头行的事件。
+def test_declined_presentation_keeps_following_world_facts(game, monkeypatch):
+    """合法不呈请不是暂停切点：交接块之后的世界事实仍进既有转译并落账。"""
+    import ming_sim.month_translate as month_translate
 
-    交接只有一份名单快照。若供料与身份钉定按各自时机各查一次实时资格，账本在
-    两者之间一变，模型就会看到与实际被绑定的不一致——本断言直接以实账比较三者。
-    """
     db, state, content = game
     _prepare(db, state, content, monkeypatch)
-    seen = _install_model_boundary(
+    _install_model_boundary(
         monkeypatch, world_text="本月边情，户部请加辽饷。" + _levy_block(),
     )
     session = _make_session(db, state, content)
-
     session.resolve_turn(allow_empty_decree=True)
+    row = session.pending_decisions()[0]
+    session.submit_hitl_choices(
+        [{"decision_key": row["decision_key"], "action": "decision",
+          "label": "", "note": "留中"}],
+        write_gate=session._write_gate,
+    )
+    assert _ledger_field(db, "terminal_state") == ""
 
-    # 模型真实收到的名单（世界段消息是本票供料面，真跑）。
-    payload = json.loads(seen["world_messages"][0])
-    offered = [p["event_id"] for p in payload["levy_petitions"]]
-    # 月链上持久化的交接快照（读真实存库相位，非测试自造）。
-    chain = month_chain._load_chain(db, int(state.turn))
-    snapshotted = [p["event_id"] for p in chain["levy_petitions"]]
-    # 案头行的身份 = 依那份快照钉定的。
-    desk = [
-        r["event_id"] for r in session.pending_decisions()
-        if str(r["event_id"]).startswith(_LEVY_PETITION_PREFIX)
-    ]
+    fact = "陕西大旱，户部发赈银。"
+    affair = db.affairs.open(
+        name="户部发赈", origin="世界段", year=state.year, period=state.period,
+        turn=state.turn,
+    )
+    world_text = (
+        "<<LEVY>>"
+        + json.dumps({"present": False}, ensure_ascii=False)
+        + "<<END>>"
+        + fact
+    )
+    seen = _install_model_boundary(monkeypatch, world_text=world_text)
 
-    assert offered == snapshotted == ["liao_levy_rise_1631"]
-    assert desk == [f"{_LEVY_PETITION_PREFIX}liao_levy_rise_1631"]
+    def _translate(prompt, llm_config=None, *, tag="", policy=None):
+        seen["translate_prompts"].append(prompt)
+        if fact in str(prompt):
+            return {"effects": {"economy_moves": [{
+                "origin_ref": f"affair:{affair.id}",
+                "account": "国库",
+                "delta": -1,
+                "category": "赈银",
+                "reason": fact,
+            }]}}
+        return {"effects": {}}
+
+    monkeypatch.setattr(month_translate, "run_declaration_translate_prompt", _translate)
+
+    result = session.resolve_turn(allow_empty_decree=True)
+
+    assert result.advanced is True
+    assert seen["translate_prompts"]
+    assert any(fact in str(prompt) for prompt in seen["translate_prompts"])
+    assert any(
+        fact in segment and "<<LEVY>>" not in segment for segment in seen["segments"]
+    )
+    assert all(
+        not str(item["event_id"]).startswith(_LEVY_PETITION_PREFIX)
+        for item in session.pending_decisions()
+    )
+    assert _ledger_field(db, "terminal_state") == ""
+    assert db.conn.execute(
+        "SELECT 1 FROM economy_ledger WHERE reason=?",
+        (fact,),
+    ).fetchone() is not None
 
 
 # ------------------------------------------- 实际落账目标＝本段御批授权目标

@@ -89,9 +89,9 @@ def build_month_segment_translate_prompt(request: MonthTranslationInput) -> str:
 def _build_levy_verdict_rule(request: MonthTranslationInput) -> str:
     """#1891：请饷／议停请旨经御批裁定的结局，按本段答复的闭集声明。
 
-    段文已带皇帝对本事件请旨的答复（label/hint/note 即御批原话）与该事件的
-    ``terminal_reason_labels`` 闭集。批红答复已由世界段续推写成段文，这里只把
-    结局按闭集落进 ``事件结局``——代码只认闭集值，不解析御批文字（ADR 0142 / P6）。
+    ``rescript`` 是已经落账的原批语，``event_id`` 是交接绑上的事件身份。
+    转译按闭集把结局写入 ``事件结局``。代码不解析批语、不要求续推复述原话
+    （ADR 0142 / P6）。
     """
     verdicts = [
         answer for answer in (request.answered_verdicts or ())
@@ -103,15 +103,17 @@ def _build_levy_verdict_rule(request: MonthTranslationInput) -> str:
         {
             "event_id": str(answer.get("event_id") or ""),
             "terminal_reason_labels": list(answer.get("terminal_reason_labels") or []),
+            "rescript": answer.get("rescript") if isinstance(answer.get("rescript"), dict) else {},
         }
         for answer in verdicts
     ]
     return (
-        "- 【本段答复的三饷请旨事件】皇帝已在上列事件上批红答复。"
+        "- 【本段答复的三饷请旨事件】下列每项的 rescript 是已经落账的原批语，"
+        "event_id 是绑定的事件身份。"
         + json.dumps(roster, ensure_ascii=False)
-        + "。段文交代了皇帝准或驳（而非留中）时，在该事件的效果项里用 "
-        "\"事件结局\" 写 {事件 id: 闭集标签} 声明它的结局；留中不声明。"
-        "御批原话以段文为准，闭集之外的值一律不写。\n"
+        + "。准或驳时，在该事件的效果项里用 "
+        "\"事件结局\" 写 {事件 id: 闭集标签}；留中不声明。"
+        "原批语只供理解，不得改写；闭集之外的值一律不写。\n"
     )
 
 
@@ -154,23 +156,42 @@ def translate_month_segment(
 
 
 def _answered_levy_verdicts(db: Any, turn: int) -> list[dict[str, object]]:
-    """本段待译的三饷请旨事件：已答的批红行 → 真实事件 id + 结局闭集（#1891）。
+    """本段待译的三饷请旨事件：已答行的事件身份、闭集，以及已存原批语（#1891）。
 
-    答复（御批原话）由世界段续推写进段文；此处只把「哪些事件本段有御批可译」与其
-    闭集作为事实供转译参照，不替它判语义（ADR 0142 / P6）。数据真源＝批红案头
-    已存行与内容表，不另立账本。
+    资格仍是本回合已答的请饷行。原批语取自该行已落的 choice，原样交给转译，
+    不依赖续推复述，也不在这里判准驳（ADR 0142 / P6）。
     """
-    from ming_sim.issues import _fiscal_levy_answered_event_ids, _fiscal_levy_event_by_id
+    from ming_sim.issues import _fiscal_levy_event_by_id
+    from ming_sim.month_chain import _LEVY_PETITION_PREFIX
 
     out: list[dict[str, object]] = []
-    for real_id in sorted(_fiscal_levy_answered_event_ids(db, turn)):
+    seen: set[str] = set()
+    rows = db.conn.execute(
+        "SELECT event_id, choice_json FROM pending_decisions "
+        "WHERE turn = ? AND kind='decision' AND status='decided'",
+        (int(turn),),
+    ).fetchall()
+    for row in rows:
+        event_id = str(row["event_id"] or "")
+        if not event_id.startswith(_LEVY_PETITION_PREFIX):
+            continue
+        real_id = event_id[len(_LEVY_PETITION_PREFIX):]
+        if real_id in seen:
+            continue
         ev = _fiscal_levy_event_by_id(real_id)
         if ev is None:
             continue
+        try:
+            choice = json.loads(str(row["choice_json"] or "{}"))
+        except (TypeError, ValueError):
+            choice = {}
+        seen.add(real_id)
         out.append({
             "event_id": real_id,
             "terminal_reason_labels": list(getattr(ev, "terminal_reason_labels", []) or []),
+            "rescript": choice if isinstance(choice, dict) else {},
         })
+    out.sort(key=lambda item: str(item["event_id"]))
     return out
 
 
@@ -235,8 +256,8 @@ def dispatch_month_segment(
     """世界段转译一次，整份声明沿 C0 唯一原子分派入口提交。
 
     本段答复到的三饷请旨事件（#1891）由 ``_translate_month_segment_front`` 从批红
-    案头既有行读出（答复与闭集都是已存事实），不另设调用参数——转译输入的组装
-    只有这一处。
+    案头既有行读出（事件身份、闭集与已存原批语），不另设调用参数——转译输入的
+    组装只有这一处。
     """
     from ming_sim.materials import continuing_dossier_facts
 

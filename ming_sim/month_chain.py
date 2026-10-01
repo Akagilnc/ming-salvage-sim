@@ -80,7 +80,6 @@ def _world_segment_message(db: Any, state: Any, cheat_directive: str) -> str:
 
     这份名单与月链 ``chain["levy_petitions"]`` 取自同一次交接：月链在推演前取定并存
     链，推演时账本尚未变动（纯读函数），身份钉定再读链上那份快照。
-    tests/test_levy_petition_month_chain_1891.py 以实账断言这份一致性，不靠本注释。
     """
     import json
 
@@ -497,7 +496,30 @@ def continue_world_after_answers(
 
     消费事实（清问 + world_continued）与落账同事务：LLM 先跑，失败零消费可重试；
     成功则随 dispatch_month_segment 的 alongside 原子落旗（ADR 0157 恢复幂等）。
+    续推自身的失败走既有月链诊断（call_failure + 错误包），步骤名 world_continue：
+    不占用 world_bind / world_translate 的逃生口，已提交的世界段与批语留在原处。
     """
+    from ming_sim.exceptions import LLMUnavailable, SettlementAbort
+
+    db, state = session.db, session.state
+    try:
+        return _continue_world_after_answers(session, chain, answers=answers, source=source)
+    except (KeyboardInterrupt, SystemExit):
+        raise
+    except Exception as exc:
+        if isinstance(exc, SettlementAbort) and str(getattr(exc, "stage", "") or "") == "world_continue":
+            raise
+        _abort_month_call(
+            db, state, chain, decree_text="", source=source,
+            step="world_continue", exc=exc,
+            kind="model_exhausted" if isinstance(exc, LLMUnavailable) else "code_exception",
+        )
+    raise AssertionError("month call abort must raise")
+
+
+def _continue_world_after_answers(
+    session: Any, chain: Dict[str, Any], *, answers: List[Dict[str, object]], source: Provenance,
+) -> Optional[Dict[str, object]]:
     from ming_sim.month_translate import dispatch_month_segment
 
     db, state = session.db, session.state
@@ -549,7 +571,34 @@ def continue_decree_after_answers(
     幂等：questions 已清则视为已续，同回合重入零新增效果。
     消费事实（清问）与落账同事务——先跑续推 LLM，失败保留 questions 可重试；
     有声明则 clear_questions 走既有段分派的 alongside（ADR 0157）。
+    失败登记与世界段续推同一条诊断，步骤名 decree_continue，不丢已提交段文。
     """
+    from ming_sim.exceptions import LLMUnavailable, SettlementAbort
+
+    db, state = session.db, session.state
+    failure_chain = chain if chain is not None else _load_chain(db, int(state.turn))
+    try:
+        _continue_decree_after_answers(
+            session, decree_ref=decree_ref, answers=answers, chain=chain, source=source,
+        )
+    except (KeyboardInterrupt, SystemExit):
+        raise
+    except Exception as exc:
+        if isinstance(exc, SettlementAbort) and str(getattr(exc, "stage", "") or "") == "decree_continue":
+            raise
+        _abort_month_call(
+            db, state, failure_chain, decree_text="", source=source,
+            step="decree_continue", exc=exc, decree_ref=decree_ref,
+            kind="model_exhausted" if isinstance(exc, LLMUnavailable) else "code_exception",
+        )
+        raise AssertionError("month call abort must raise")
+
+
+def _continue_decree_after_answers(
+    session: Any, *, decree_ref: str, answers: List[Dict[str, object]],
+    chain: Optional[Dict[str, Any]] = None,
+    source: Provenance = Provenance.player_decree,
+) -> None:
     from ming_sim.exceptions import LLMUnavailable
     from ming_sim.month_translate import dispatch_month_segment
 
@@ -660,7 +709,8 @@ def run_player_month_chain(
         abort_from(exc)
     # #1845：下次过月前 join／重开续接上月机械尾。尾异常不改写成月链 call_failure。
     ensure_mechanical_tails(_session_owner(db, state, llm_config, agno_db, content))
-    # 请旨续推的原故障原样上浮：问与 world_continued 都未消费，批红入口重试看见同一颗异常。
+    # 请旨续推的故障先按既有 call_failure 登记（错误包 + 失败步骤），再原样上浮。
+    # 问与 world_continued 都未消费；批红入口重试只续未成的续推。
     _consume_rescript_answers(
         SimpleNamespace(
             db=db, state=state, llm_config=llm_config, agno_db=agno_db, content=content,
@@ -1786,32 +1836,52 @@ def _pause(
     return ResolveResult(awaiting=False, advanced=False, stage=stage)
 
 
-def _split_at_question(text: str) -> tuple[str, List[dict]]:
-    """前缀 = 首个合法 DECISION 或 LEVY 块之前。questions 只收 DECISION。
+def _levy_block_declines_presentation(raw_json: str) -> bool:
+    """合法不呈请：块是 JSON 对象且 present 恰为 false。坏 JSON 不是不呈请。"""
+    import json
 
-    LEVY 的 JSON 由交接按名单读取，不进入送去转译的段文。切点仍是这一处。
+    try:
+        obj = json.loads(raw_json)
+    except Exception:
+        return False
+    return isinstance(obj, dict) and obj.get("present") is False
+
+
+def _split_at_question(text: str) -> tuple[str, List[dict]]:
+    """前缀 = 首个真实请旨之前，并剔除此前的合法不呈请交接块。
+
+    真实请旨 = 合法 DECISION，或 present 不是 false 的 LEVY。
+    ``present: false`` 只是交接标记：从送去转译的前缀里拿掉，不截断其后的世界事实。
+    整段只有这一块、没有其它事实时，前缀为空，标记本段完成仍合法。
+    questions 只收 DECISION。LEVY 身份仍由全文交接读取，坏 JSON 仍在绑定处失败。
     """
     from ming_sim.decree import _DECISION_RE, parse_decision_blocks
 
     questions: List[dict] = []
-    first_start: Optional[int] = None
-
-    def _note(start: int) -> None:
-        nonlocal first_start
-        if first_start is None or start < first_start:
-            first_start = start
-
-    for match in _DECISION_RE.finditer(text):
+    spans: List[tuple[int, int, bool]] = []
+    for match in _DECISION_RE.finditer(text or ""):
         parsed = parse_decision_blocks(match.group(0))
         if not parsed:
             continue
-        _note(match.start())
         questions.extend(parsed)
+        spans.append((match.start(), match.end(), True))
     for match in _LEVY_BLOCK_RE.finditer(text or ""):
-        _note(match.start())
-    if first_start is None:
-        return text, []
-    return text[:first_start], questions
+        declines = _levy_block_declines_presentation(match.group(1))
+        spans.append((match.start(), match.end(), not declines))
+    spans.sort()
+    first_real = next((start for start, _end, real in spans if real), None)
+    limit = len(text or "") if first_real is None else first_real
+    pieces: List[str] = []
+    cursor = 0
+    for start, end, real in spans:
+        if start >= limit or real:
+            break
+        if start < cursor:
+            continue
+        pieces.append(text[cursor:start])
+        cursor = end
+    pieces.append(text[cursor:limit])
+    return "".join(pieces), questions
 
 
 def _load_chain(db: Any, turn: int) -> Dict[str, Any]:
