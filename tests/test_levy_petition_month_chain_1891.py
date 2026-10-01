@@ -818,3 +818,42 @@ def test_misaligned_levy_blocks_fail_loud_and_retry_reruns_world(game, monkeypat
     assert [r["event_id"] for r in session.pending_decisions()] == [
         f"{_LEVY_PETITION_PREFIX}liao_levy_rise_1631"
     ]
+
+
+def test_explicit_bad_levy_marker_after_hold_stops_at_world_bind(game, monkeypatch):
+    """留中后再上：显式坏交接停在 world_bind。没写块仍可推进。"""
+    from ming_sim.exceptions import SettlementAbort
+
+    db, state, content = game
+    _prepare(db, state, content, monkeypatch)
+    _install_model_boundary(
+        monkeypatch, world_text="本月边情，户部请加辽饷。" + _levy_block(),
+    )
+    session = _make_session(db, state, content)
+    session.resolve_turn(allow_empty_decree=True)
+    row = session.pending_decisions()[0]
+    session.submit_hitl_choices(
+        [{"decision_key": row["decision_key"], "action": "decision",
+          "label": "", "note": "留中"}],
+        write_gate=session._write_gate,
+    )
+    held_turn = int(state.turn)
+    assert _ledger_field(db, "terminal_state") == ""
+
+    for marker in ("<<LEVY>>null<<END>>", "<<LEVY>>[{}]<<END>>", "<<LEVY>>{broken}<<END>>"):
+        _install_model_boundary(
+            monkeypatch, world_text="边饷仍紧。" + marker,
+        )
+        with pytest.raises(SettlementAbort):
+            session.resolve_turn(allow_empty_decree=True)
+        failure = month_chain.month_chain_call_failure(db, held_turn)
+        assert failure is not None
+        assert failure["step"] == "world_bind"
+        assert int(state.turn) == held_turn
+        assert _ledger_field(db, "terminal_state") == ""
+
+    _install_model_boundary(monkeypatch, world_text="户部本月不再上疏。")
+    result = session.resolve_turn(allow_empty_decree=True)
+    assert result.advanced is True
+    assert int(state.turn) > held_turn
+    assert _ledger_field(db, "terminal_state") == ""

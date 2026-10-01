@@ -1673,29 +1673,15 @@ def apply_historical_fiscal_rates(
                     state,
                     db,
                 )
-            if ev.id not in terminal_records:
-                if _event_window_expired(ev, state):
-                    db.mark_event_expired(state, ev.id, commit=False)
-                    terminal_records[ev.id] = {
-                        "terminal_state": "expired",
-                        "terminal_reason": "过最晚触发时点仍未达成触发门",
-                    }
-                    applied.append({"id": ev.id, "title": ev.title, "terminal_state": "expired"})
-                    continue
-                if not _event_window_open(ev, state):
-                    continue
-                if not _gate_passed(ev.trigger_gate, state.metrics, db):
-                    continue
-                # #1891：具资格、尚未呈过的请饷／议停事件在此**不置结局**。
-                # 旧 shadow 桩在此直接写已准／已停，使皇帝永无从亲裁；现只交
-                # petition-due 名单给月末世界段 run（#1843），由过月模型成陈情与
-                # 拟旨，走同一请旨入口进 #1847 批红页。引擎不代答（P6）。
-                _fiscal_levy_require_labels(ev, state)
-                applied.append({
-                    "id": ev.id,
-                    "title": ev.title,
-                    "terminal_state": "petition_due",
-                })
+            elif _event_window_expired(ev, state):
+                # 窗口已关仍无御批：过期是本通道的记账，不是结局。
+                # 到点未裁的资格只在 list_fiscal_levy_petitions_due，此处不另判、不另回报。
+                db.mark_event_expired(state, ev.id, commit=False)
+                terminal_records[ev.id] = {
+                    "terminal_state": "expired",
+                    "terminal_reason": "过最晚触发时点仍未达成触发门",
+                }
+                applied.append({"id": ev.id, "title": ev.title, "terminal_state": "expired"})
         _apply_fiscal_levy_targets(db, state, terminal_records)
 
     if should_commit:
@@ -1714,8 +1700,8 @@ def list_fiscal_levy_petitions_due(
     交付对象是 #1843 既有月末世界段 run：过月模型读这份名单与当月军费材料，自行
     决定成不成陈情、要不要上疏。引擎只供事实，不代答（P6）。
 
-    资格门与 apply_historical_fiscal_rates 的请旨判定同源：窗口开、门过、未过期、
-    未终态。已呈待批（批红页上仍有该事件请旨行）不再重触发为首次事件。
+    资格只在这里判一次：窗口开、门过、未过期、未终态。已呈待批（批红页上仍有该事件
+    请旨行）不再重触发为首次事件。
 
     ``presentation_due`` 是**权限事实**而非措辞：首次到点、尚未呈过的应呈请
     （True）；已呈过、被留中的由大臣自决是否再上疏（False）。原事件、原疏与亲笔
@@ -2503,6 +2489,8 @@ def gather_candidate_events(state: GameState, db: GameDB) -> List[Event]:
     for ev in c.events:
         if ev.id in spawned or ev.trigger_year <= 0:
             continue
+        if _is_fiscal_levy_event(ev):
+            continue
         if _event_window_expired(ev, state):
             continue
         if ev.auto_trigger:
@@ -2523,6 +2511,8 @@ def gather_candidate_events(state: GameState, db: GameDB) -> List[Event]:
     # seed 情势：trigger_gate 阈值达标即进候选
     for ev in c.seed_events:
         if ev.id in spawned:
+            continue
+        if _is_fiscal_levy_event(ev):
             continue
         if _event_window_expired(ev, state):
             continue
@@ -2552,6 +2542,8 @@ def apply_event_terminal_states(
         for ev in c.events:
             if ev.id in terminal_refs or ev.trigger_year <= 0:
                 continue
+            if _is_fiscal_levy_event(ev):
+                continue
             if _event_window_expired(ev, state):
                 db.mark_event_expired(state, ev.id, commit=False)
                 terminal_refs.add(ev.id)
@@ -2575,6 +2567,8 @@ def apply_event_terminal_states(
 
         for ev in c.seed_events:
             if ev.id in terminal_refs:
+                continue
+            if _is_fiscal_levy_event(ev):
                 continue
             if _event_window_expired(ev, state):
                 db.mark_event_expired(state, ev.id, commit=False)
@@ -2609,6 +2603,8 @@ def _auto_trigger_seed_issues_in_atomic(state: GameState, db: GameDB) -> List[Di
     for ev in [*c.events, *c.seed_events]:
         historical_event = any(ev is item for item in c.events)
         if not ev.auto_trigger:
+            continue
+        if _is_fiscal_levy_event(ev):
             continue
         terminal_state = terminal_states.get(ev.id)
         if terminal_state and (historical_event or terminal_state == "expired"):
@@ -2737,10 +2733,14 @@ def show_active_issues(db: GameDB) -> None:
 def event_to_issue(db: GameDB, state: GameState, ev: Event, *, commit: bool = True) -> Optional[int]:
     """把一个预设 event（EVENTS / SEED_EVENTS）落成一条 situation issue。供推演判定触发后调用。
 
+    饷率事件不立局势、不记触发。结局只经御批写口。
+
     去重分两类：
     - 无 trigger_gate（开局局势）：查任意状态同源 issue，立过则永不重立。
     - 有 trigger_gate（条件触发危机）：只查 active 同源 issue，结案/撤销后 gate 再达标可重新触发。
     """
+    if _is_fiscal_levy_event(ev):
+        return None
     if ev.trigger_gate:
         if db.find_active_issue_by_origin("event_pool", ev.id) is not None:
             return None
@@ -3731,6 +3731,11 @@ def _is_strategic_foreign_node_event(ev: Event) -> bool:
     )
 
 
+def _is_fiscal_levy_event(ev: object) -> bool:
+    """category=fiscal_levy。结局不走候选池、硬触发或通用终态通道。"""
+    return getattr(ev, "category", "") == FISCAL_LEVY_EVENT_CATEGORY
+
+
 def _is_fiscal_levy_petition_event(ev: Event) -> bool:
     """#1891：交 #1847 请旨、结局由御批经转译置定的三饷请饷／议停事件。
 
@@ -3739,7 +3744,7 @@ def _is_fiscal_levy_petition_event(ev: Event) -> bool:
     名单，且此刻必须「已呈待裁或已答未裁」——没呈过的没有御批可译。
     """
     return (
-        getattr(ev, "category", "") == FISCAL_LEVY_EVENT_CATEGORY
+        _is_fiscal_levy_event(ev)
         and bool(getattr(ev, "terminal_reason_labels", None))
     )
 
@@ -5098,6 +5103,14 @@ def apply_issue_tracker_output(
                 # auto_trigger 事件只能程序硬触发，LLM 不准从候选池立项
                 print(f"[INFO] new_issue 已拒：event {event_id} 标了 auto_trigger，只能程序硬触发。")
                 applied_new.append({"id": ev.id, "title": ev.title, "rejected": True, "reason": "auto_trigger 事件仅程序可触发"})
+                continue
+            if _is_fiscal_levy_event(ev):
+                # 候选快照里残留的饷率 id 也不许在此记触发。结局只经御批写口。
+                print(f"[INFO] new_issue 已拒：event {event_id} 是饷率事件，结局只经御批。")
+                applied_new.append({
+                    "id": ev.id, "title": ev.title, "rejected": True,
+                    "reason": "饷率事件结局只经御批写口",
+                })
                 continue
             if db.event_terminal_state(ev.id) == "expired":
                 print(f"[INFO] new_issue 已拒：event {event_id} 已过期终态，不再从 event_pool 立项。")
@@ -9107,6 +9120,11 @@ def _apply_score_extraction_body(
             continue
         event_id = str(new_issue.get("id") or "").strip()
         if event_id not in strategic_event_pool_ids:
+            continue
+        deferred_event = runtime_content.event_by_id.get(event_id)
+        if deferred_event is not None and _is_fiscal_levy_event(deferred_event):
+            new_issue["rejected"] = True
+            new_issue["reason"] = "饷率事件结局只经御批写口"
             continue
         outcome_label, outcome_error = _strategic_event_outcome_label_or_error(
             event_id,

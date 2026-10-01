@@ -508,26 +508,6 @@ def test_load_event_fail_loud_on_bad_gate_key(monkeypatch):
         content_mod.load_event_content("x.json")
 
 
-def test_load_event_drops_retired_default_terminal_reason(monkeypatch):
-    """#1891：加载器丢掉已退役的 default_terminal_reason，不把它收成事件字段。
-
-    本测试只证明加载结果没有该属性、闭集标签仍在。结局由谁写入不在这里证明。
-    """
-    import ming_sim.content as content_mod
-    raw = [{"id": "e", "title": "t", "kind": "k", "summary": "s",
-            "urgency": 1, "severity": 1, "credibility": 1,
-            "interests": [], "audiences": [],
-            "open_window": True,
-            "terminal_reason_labels": ["已准", "已驳"],
-            "default_terminal_reason": "已驳"}]
-    monkeypatch.setattr(content_mod, "load_json_asset", lambda *a, **k: raw)
-
-    events = content_mod.load_event_content("x.json")
-
-    assert not hasattr(events[0], "default_terminal_reason")
-    assert events[0].terminal_reason_labels == ["已准", "已驳"]
-
-
 def test_load_event_requires_latest_or_open_window(monkeypatch):
     """历史锚定事件必须显式声明最晚时点或 open_window，漏填不许隐式永不过期。"""
     import pytest

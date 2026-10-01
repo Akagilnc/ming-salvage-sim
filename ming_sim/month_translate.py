@@ -72,8 +72,9 @@ def build_month_segment_translate_prompt(request: MonthTranslationInput) -> str:
         "清单没有的案卷，或段文未明确结果的，留空，不得推断结案。\n"
         "- effects 可为一份效果对象，或按段文顺序排列的效果对象数组；同一人物或军队"
         "的多次交代须逐项排列，不合并为净增量。effects 只声明叙事推演产生、"
-        "且未由下方旨意结构化载荷表示的效果；每项效果若属事件战果，须在该项顶层 "
-        "event_id 明写事件 id；未标就是独立效果，即使 reason 提及事件亦不改变归属。"
+        "且未由下方旨意结构化载荷表示的效果；每项效果若属事件战果，或属本段已答"
+        "请饷的结局，须在该项顶层 event_id 明写该事件 id，并与该项「事件结局」的键"
+        "相同；未标就是独立效果，即使 reason 提及事件亦不改变归属。"
         "不同归属拆成不同 effects 项。"
         "同类效果若已由结构化载荷表示，不得再重复声明。预推时载荷尚未物化，"
         "不能把它理解成已经落账。\n"
@@ -90,8 +91,8 @@ def _build_levy_verdict_rule(request: MonthTranslationInput) -> str:
     """#1891：请饷／议停请旨经御批裁定的结局，按本段答复的闭集声明。
 
     ``rescript`` 是已经落账的原批语，``event_id`` 是交接绑上的事件身份。
-    转译按闭集把结局写入 ``事件结局``。代码不解析批语、不要求续推复述原话
-    （ADR 0142 / P6）。
+    转译把同一 id 写在效果项顶层，并按闭集写入 ``事件结局``。代码不解析批语、
+    不要求续推复述原话（ADR 0142 / P6）。
     """
     verdicts = [
         answer for answer in (request.answered_verdicts or ())
@@ -111,9 +112,9 @@ def _build_levy_verdict_rule(request: MonthTranslationInput) -> str:
         "- 【本段答复的三饷请旨事件】下列每项的 rescript 是已经落账的原批语，"
         "event_id 是绑定的事件身份。"
         + json.dumps(roster, ensure_ascii=False)
-        + "。准或驳时，在该事件的效果项里用 "
-        "\"事件结局\" 写 {事件 id: 闭集标签}；留中不声明。"
-        "原批语只供理解，不得改写；闭集之外的值一律不写。\n"
+        + "。准或驳时，该事件单独成一项效果：顶层 event_id 写这份名单里的事件 id，"
+        "\"事件结局\" 写 {同一个事件 id: 闭集标签}。两项必须是同一个 id。"
+        "留中不声明。原批语只供理解，不得改写；闭集之外的值一律不写。\n"
     )
 
 

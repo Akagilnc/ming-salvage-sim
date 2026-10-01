@@ -27,7 +27,8 @@ _DECREE_QUESTION_PREFIX = "decree-question:"
 # 不是 events 表事件，故不进 event_triggers 的普通回写分支。
 _LEVY_PETITION_PREFIX = "levy-petition:"
 # 与 <<DECISION>> 同一类机标：切前缀与交接读取共用这一条，不另写切分。
-_LEVY_BLOCK_RE = re.compile(r"<<LEVY>>\s*(\{.*?\})\s*<<END>>", re.DOTALL)
+# 括号里是整段载荷。只认 `{...}` 会把 null / 数组看成「没有块」。
+_LEVY_BLOCK_RE = re.compile(r"<<LEVY>>(.*?)<<END>>", re.DOTALL)
 # 世界段生产指令与用户消息里的交接契约共用这一句，避免一边只认 DECISION。
 LEVY_HANDOFF_RULE = (
     "levy_petitions 的数组顺序就是本月交接顺序。"
@@ -118,7 +119,7 @@ def _levy_handoff_blocks(text: str, turn: int) -> List[Dict[str, Any]]:
     blocks: List[Dict[str, Any]] = []
     for match in _LEVY_BLOCK_RE.finditer(text or ""):
         try:
-            obj = json.loads(match.group(1))
+            obj = json.loads(match.group(1).strip())
         except Exception as exc:
             raise SettlementAbort(
                 "请饷交接块无法对齐名单",
@@ -157,9 +158,10 @@ def _pin_world_question_identities(
     名单快照的下标就是稳定键。``<<LEVY>>`` 块按同一顺序对齐；块里没有事件 id
     可读，写了也丢掉。普通 ``<<DECISION>>`` 保持世界段请旨，不承担请饷身份。
 
-    名单为空则不读 LEVY 块。有应呈件却没有等长的块，或块数对不上名单，无法
-    唯一对齐，响亮失败。已留中的可以整段不写块（不再上疏）；要再上疏就必须
-    与名单等长，不上的那件显式 present false。
+    显式坏块在读取时失败，不因名单为空或无人应呈而当成没写。名单为空时，合法块
+    不占用请旨。有应呈件却没有等长的块，或块数对不上名单，无法唯一对齐，响亮
+    失败。已留中的可以整段不写块（不再上疏）；要再上疏就必须与名单等长，不上的
+    那件显式 present false。
     """
     from ming_sim.exceptions import SettlementAbort
 
@@ -168,9 +170,10 @@ def _pin_world_question_identities(
         if isinstance(item, dict) and str(item.get("event_id") or "")
     ]
     ordinary = [dict(question) for question in questions if isinstance(question, dict)]
+    # 先读块：显式坏载荷在这里失败，不能因为名单为空或无人应呈就被当成没写块。
+    blocks = _levy_handoff_blocks(world_text, turn)
     if not roster:
         return ordinary
-    blocks = _levy_handoff_blocks(world_text, turn)
     mandatory = [item for item in roster if item.get("presentation_due")]
     if not blocks:
         if mandatory:
@@ -1876,7 +1879,8 @@ def _split_at_question(text: str) -> tuple[str, List[dict]]:
     真实请旨 = 合法 DECISION，或 present 不是 false 的 LEVY。
     ``present: false`` 只是交接标记：从送去转译的前缀里拿掉，不截断其后的世界事实。
     整段只有这一块、没有其它事实时，前缀为空，标记本段完成仍合法。
-    questions 只收 DECISION。LEVY 身份仍由全文交接读取，坏 JSON 仍在绑定处失败。
+    questions 只收 DECISION。LEVY 身份仍由全文交接读取。坏 JSON、非对象载荷
+    在绑定处失败，并且从送去转译的前缀里切开，不把机标当世界事实送进去。
     """
     from ming_sim.decree import _DECISION_RE, parse_decision_blocks
 
@@ -1889,7 +1893,7 @@ def _split_at_question(text: str) -> tuple[str, List[dict]]:
         questions.extend(parsed)
         spans.append((match.start(), match.end(), True))
     for match in _LEVY_BLOCK_RE.finditer(text or ""):
-        declines = _levy_block_declines_presentation(match.group(1))
+        declines = _levy_block_declines_presentation(match.group(1).strip())
         spans.append((match.start(), match.end(), not declines))
     spans.sort()
     first_real = next((start for start, _end, real in spans if real), None)
