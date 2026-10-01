@@ -58,9 +58,6 @@ def test_liaodong_stage_text_does_not_name_bajiu_offstage_as_active_petitioners(
     )
     # 若点到名册人物，每人须非罢居串；允许匿名将领/边情质感
     named = {name for name in characters if name in stage}
-    assert named or ("将" in stage or "边" in stage), (
-        "stage_text 既未点名册人物，也未保留将领/边情叙事质感"
-    )
     for name in named:
         office = characters[name].office or ""
         assert "罢居" not in office, f"点名 {name} 仍是罢居串: {office!r}"

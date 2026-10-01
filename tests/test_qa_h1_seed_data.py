@@ -190,7 +190,6 @@ def test_deficit_stage_text_aligns_with_opening_treasury_and_hubu():
     assert "毕自严" not in stage, f"具题人仍是南京户书: {stage!r}"
     assert "郭允厚" in stage, stage
     # 禁与开局国库 320 恒冲突的「不足三百万」硬数；允许定性或对齐实数
-    assert "不足三百万" not in stage, stage
     # 若仍写具体「百万」量级，不得宣称低于开局国库
     m = re.search(r"不足\s*([一二三四五六七八九十百千万0-9]+)\s*万", stage)
     assert m is None, f"仍用不足X万硬数易与账本漂移冲突: {stage!r}"

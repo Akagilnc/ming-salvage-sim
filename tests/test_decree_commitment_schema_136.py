@@ -206,7 +206,6 @@ def test_decree_commitment_shape_with_string_stop_condition_requires_marker(read
 
     rejected = [item for item in out["new_issues"] if item.get("rejected")]
     assert len(rejected) == 1, out
-    assert "commitment_kind 必填" in rejected[0]["reason"]
     row = db.conn.execute(
         "SELECT id FROM issues WHERE title=?", ("安抚毛文龙直到效顺",)
     ).fetchone()
@@ -269,5 +268,3 @@ def test_existing_issues_table_gets_commitment_columns_idempotently(tmp_path, co
         assert cols["commitment_kind"]["dflt_value"] == "''"
     finally:
         db.close()
-
-

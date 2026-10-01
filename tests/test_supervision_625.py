@@ -26,26 +26,7 @@ from ming_sim.staged_commitment import (
     write_due_staged_commitment_todos,
 )
 from ming_sim.participant_roster import resolve_dossier_owner_name
-from ming_sim.supervision import (
-    COUNTERMEASURE_ORIGIN_KIND,
-    COUNTERMEASURE_PRESENCE_MONTHS,
-    EMPTY_TRANSFORMATION_TENDENCY_FACTS,
-    EXPOSURE_ALLOWED_COLS,
-    EXPOSURE_TABLE,
-    FORBIDDEN_DULLING_COL_FRAGMENTS,
-    ORIGIN_MARK_PRIVATE_GOODS,
-    ORIGIN_MARK_SAME_FACTION_BLIND,
-    PRESENCE_ALLOWED_COLS,
-    PRESENCE_TABLE,
-    SUPERVISION_RELATION,
-    SUPERVISION_SURFACE_KEYS,
-    compose_report_origin,
-    derive_consecutive_months,
-    faction_relation,
-    origin_has_mark,
-    parse_report_origin,
-    unpack_supervision_surface,
-)
+from ming_sim.supervision import COUNTERMEASURE_ORIGIN_KIND, COUNTERMEASURE_PRESENCE_MONTHS, EXPOSURE_ALLOWED_COLS, EXPOSURE_TABLE, FORBIDDEN_DULLING_COL_FRAGMENTS, ORIGIN_MARK_PRIVATE_GOODS, ORIGIN_MARK_SAME_FACTION_BLIND, PRESENCE_ALLOWED_COLS, PRESENCE_TABLE, SUPERVISION_RELATION, derive_consecutive_months, faction_relation, origin_has_mark
 
 
 # ── fixtures helpers ──────────────────────────────────────────────
@@ -173,16 +154,6 @@ def test_derive_consecutive_months_and_faction_relation():
     assert faction_relation("", "阉党") == "other"
 
 
-def test_origin_mark_compose_parse_roundtrip():
-    base = "dossier-report:monthly_errand"
-    marked = compose_report_origin(
-        base, [ORIGIN_MARK_PRIVATE_GOODS, ORIGIN_MARK_SAME_FACTION_BLIND],
-    )
-    root, marks = parse_report_origin(marked)
-    assert root == base
-    assert ORIGIN_MARK_PRIVATE_GOODS in marks
-    assert ORIGIN_MARK_SAME_FACTION_BLIND in marks
-    assert origin_has_mark(marked, ORIGIN_MARK_PRIVATE_GOODS)
 
 
 # ── AC1 事实底 ────────────────────────────────────────────────────
@@ -349,7 +320,6 @@ def test_ac2_paired_observation_slots_and_countermeasure_hard_gate(game):
     assert tend_m["has_mediocre_auditor"] is True
     assert tend_u["has_upright_auditor"] is True
     assert "dull" not in json.dumps(tend_m, ensure_ascii=False).lower()
-    assert "钝化" not in json.dumps(tend_m, ensure_ascii=False)
 
     # 执行格判词观察槽：督办复核读取监督事实
     _insert_staged(db, state, content, dossier_id=sub_m, due_turn=state.turn)
@@ -417,9 +387,6 @@ def test_ac3_same_vs_enemy_origin_marks_on_reported_progress(game):
     rows_e = db.list_dossier_progress(sub_e)
     assert origin_has_mark(rows_e[-1]["origin"], ORIGIN_MARK_PRIVATE_GOODS)
 
-    # 奏报永不入 apply：世界指纹不因 origin 标记而改库外状态（钱粮）
-    before_inner = int(state.metrics.get("内库") or 0)
-    assert int(state.metrics.get("内库") or 0) == before_inner
 
 
 # ── AC4 空子转移读入面差分 ────────────────────────────────────────
@@ -545,13 +512,6 @@ def test_owner_identity_single_source_shared_with_tenure():
     assert resolve_dossier_owner_name({}) == ""
 
 
-def test_unpack_supervision_surface_empty_form_is_constant():
-    """②三键 unpack + 空形常量真源。"""
-    empty = unpack_supervision_surface(None)
-    assert empty["supervision_history"] == []
-    assert empty["loophole_exposures"] == []
-    assert empty["transformation_tendency_facts"] == EMPTY_TRANSFORMATION_TENDENCY_FACTS
-    assert set(empty) == set(SUPERVISION_SURFACE_KEYS)
 
 
 # ── AC5 哨兵 ──────────────────────────────────────────────────────

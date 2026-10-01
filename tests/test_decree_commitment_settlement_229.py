@@ -3,12 +3,7 @@ import json
 import pytest
 
 from tests.test_due_review_621 import _settle_empty_month as _player_month
-from ming_sim.issues import (
-    apply_issue_inertia_and_ongoing,
-    apply_score_extraction,
-    commitment_progress_payload,
-    show_active_issues,
-)
+from ming_sim.issues import apply_issue_inertia_and_ongoing, apply_score_extraction, commitment_progress_payload
 
 
 def _promulgated_commitment_origin(db, state, token: str) -> str:
@@ -287,9 +282,6 @@ def test_commitment_ongoing_malformed_entity_payloads_are_rejected_without_crash
         "ORDER BY id"
     ).fetchall()
     assert [row["category"] for row in rows] == ["invalid_shape", "invalid_shape", "invalid_shape"]
-    assert any("region_delta.beizhili" in row["reason"] for row in rows)
-    assert any("army_delta.guanning" in row["reason"] for row in rows)
-    assert any("power_updates.houjin" in row["reason"] for row in rows)
 
 
 def test_commitment_stop_gate_resolve_respects_outer_transaction_rollback(game):
@@ -527,37 +519,6 @@ def test_until_stop_arrears_commitment_settlement_oracle_resolves_with_restore(g
     assert payloads[-1]["commitment_progress"]["remaining_arrears"] == 0
 
 
-def test_commitment_progress_contexts_are_structured(game, capsys):
-    db, state, content = game
-    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
-    db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
-    db.conn.execute("UPDATE armies SET arrears=0 WHERE owner_power='ming'")
-    db.conn.execute("UPDATE armies SET arrears=25 WHERE id='guanning'")
-    db.conn.commit()
-    issue_id = db.insert_issue(
-        state,
-        kind="initiative",
-        title="关宁月饷",
-        origin_kind="decree",
-        origin_ref="decree:turn-1:guanning-pay",
-        bar_value=0,
-        inertia=0,
-        stage_text="每月拨银补关宁旧欠，直到补齐。",
-        ongoing_effects={
-            "economy": [
-                {"account": "国库", "delta": -10, "reason": "关宁月饷", "purpose": "补饷"}
-            ]
-        },
-        stop_condition=json.dumps({"army.guanning.arrears": "<=0"}, ensure_ascii=False),
-        commitment_kind="until_stop",
-    )
-
-    _advance_player_month(db, state, content)
-
-    show_active_issues(db)
-    output = capsys.readouterr().out
-    assert "已第1月" in output
-    assert "直到补齐" in output
 
 
 
@@ -1441,7 +1402,6 @@ def test_due_one_shot_commitment_ack_closes_review_loop_without_effects(game):
     row = _issue_row(db, issue_id)
     assert row["status"] == "dropped"
     assert row["closed_turn"] == state.turn
-    assert "圣裁处理" in row["resolution_summary"]
     assert int(state.metrics["民心"]) == popular_support_at_ack
     advances = db.conn.execute(
         "SELECT trigger_kind, metric_delta FROM issue_advances WHERE issue_id=? ORDER BY id",

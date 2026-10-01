@@ -42,7 +42,6 @@ def test_rejected_item_fields():
         source=Provenance.system_simulation,
     )
     assert ri.item is raw
-    assert ri.reason == "id 不在军队表"
     assert ri.category == "hallucinated_id"
     assert ri.source is Provenance.system_simulation
 

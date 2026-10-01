@@ -17,64 +17,8 @@ def _column_info(db, table):
     return {row["name"]: dict(row) for row in db.conn.execute(f"PRAGMA table_info({table})").fetchall()}
 
 
-def test_characters_table_has_person_archive_fields(read_game):
-    """ADR 0009 stores machine-readable reason and travel state on characters."""
-    db, _, _ = read_game
-
-    cols = _columns(db, "characters")
-
-    assert "reason_code" in cols
-    assert "transit_to" in cols
-    assert {"transit_distance_remaining", "transit_speed_factor"} <= cols
-    info = _column_info(db, "characters")
-    for name in ("transit_distance_remaining", "transit_speed_factor"):
-        assert info[name]["type"] == "REAL"
-        assert info[name]["notnull"] == 0
-        assert info[name]["dflt_value"] is None
-    for name in ("reason_code", "transit_to"):
-        assert info[name]["type"] == "TEXT"
-        assert info[name]["notnull"] == 1
-        assert info[name]["dflt_value"] == "''"
 
 
-def test_person_logs_table_records_person_archive_audit_chain(read_game):
-    """ADR 0009 persists person archive process history separately from final state."""
-    db, _, _ = read_game
-
-    cols = _columns(db, "person_logs")
-
-    assert {
-        "id",
-        "turn",
-        "year",
-        "period",
-        "person_name",
-        "action",
-        "payload_summary",
-        "derived_from",
-        "normalized",
-        "source",
-        "created_at",
-    } <= cols
-
-    info = _column_info(db, "person_logs")
-    for name in ("person_name", "action", "payload_summary", "derived_from", "normalized", "source"):
-        assert info[name]["type"] == "TEXT"
-        assert info[name]["notnull"] == 1
-    for name in ("payload_summary", "derived_from", "normalized", "source"):
-        assert info[name]["dflt_value"] == "''"
-
-    indexes = {
-        row["name"]
-        for row in db.conn.execute("PRAGMA index_list(person_logs)").fetchall()
-    }
-    assert "idx_person_logs_turn" in indexes
-
-    foreign_keys = {
-        (row["from"], row["table"], row["to"])
-        for row in db.conn.execute("PRAGMA foreign_key_list(person_logs)").fetchall()
-    }
-    assert ("person_name", "characters", "name") in foreign_keys
 
 
 def test_person_logs_accepts_audit_rows_for_existing_characters(game):

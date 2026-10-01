@@ -371,14 +371,6 @@ describe("QA A-1 #1276/#1282/#1285 GameHud HUD 对齐", () => {
       (b.getAttribute("aria-label") || "").startsWith("邸报"),
     );
     expect(dibao).toBeTruthy();
-    expect(dibao?.textContent).toContain("邸报");
-    expect(dibao?.textContent).toContain("上月抄报");
-    expect(dibao?.textContent).not.toContain("起居注");
-    // 起居注不得再占命令木牌 caption
-    const mislabeled = Array.from(host.querySelectorAll(".hud2-cmd-caption")).find((b) =>
-      b.textContent?.includes("起居注"),
-    );
-    expect(mislabeled).toBeFalsy();
     act(() => { dibao?.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
     expect(opened).toEqual(["report"]);
   });

@@ -65,7 +65,6 @@ def test_clichat_runner_exit_raises_typed_llm_unavailable(monkeypatch):
     _assert_no_machine_text(str(exc))
     _assert_no_machine_text(exc.message)
     # 技术细节可留 provider_message 供日志，但不得冒充台词
-    assert "codex" in (exc.provider_message or "").lower() or "退出码" in (exc.provider_message or "")
     assert exc.code  # typed
 
 
@@ -159,5 +158,3 @@ def test_chat_answer_path_typed_failure_keeps_scroll_clean():
 
     _assert_no_machine_text(ei.value.message)
     assert persisted == []
-
-

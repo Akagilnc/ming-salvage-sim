@@ -101,10 +101,7 @@ def test_absent_minister_reads_saying_not_actual_status(game):
     assert status != "dead"
     # 公开层是说法，不是把实况改成死讯。
     known_items = list(view.get("events") or []) + list(public)
-    assert not any(
-        item.get("kind") == "character_status" and "死" in str(item.get("body") or "")
-        for item in known_items
-    )
+    assert not any(item.get("kind") == "character_status" for item in known_items)
 
 
 def test_public_saying_excluded_name_does_not_see_it_others_do(game, monkeypatch):

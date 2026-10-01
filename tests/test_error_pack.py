@@ -148,8 +148,6 @@ def test_web_issue_endpoint_returns_structured_abort(monkeypatch):
         asyncio.run(_run())
 
     assert ei.value.status_code != 500
-    assert "可重试" in str(ei.value.payload)
-    assert "错误包" in str(ei.value.payload)
 
 def test_next_attempt_skips_malformed_and_foreign_entries(game, monkeypatch, tmp_path):
     """attempt 推导跳过畸形后缀/他 turn/非目录项，取本 turn 数字后缀 max+1

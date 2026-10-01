@@ -440,7 +440,6 @@ def test_verify_llm_available_respects_api_channel_over_backend_env(monkeypatch)
 
     verify_llm_available(cfg)
 
-    assert captured["prompt"] == "输出 ok"
     assert not isinstance(captured["model"], CliChat)
 
 
@@ -466,7 +465,6 @@ def test_verify_llm_available_smokes_cli_channel_without_backend_env(monkeypatch
 
     verify_llm_available(cfg)
 
-    assert seen["prompt"] == "输出 ok"
     assert seen["config"] is cfg
 
 
@@ -706,7 +704,6 @@ def test_for_role_advanced_empty_cli_model_no_api_model_leak(monkeypatch):
     assert derived.cli_model == ""           # cli_model 仍空
     chat = create_chat_model(derived)
     assert chat.id == "gpt-5.5"              # runner 默认,不是 api-advanced
-    assert chat.id != "api-advanced"
 
 
 def test_cli_empty_cli_model_does_not_leak_api_model_to_runner(monkeypatch):

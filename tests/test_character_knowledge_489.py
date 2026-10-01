@@ -357,7 +357,7 @@ def test_issue_write_path_projects_participants_across_restore(game):
     )
 
     row = db.conn.execute("SELECT participants FROM issues WHERE id=?", (issue_id,)).fetchone()
-    assert row["participants"] == f'["{minister.name}"]'
+    assert json.loads(row["participants"]) == [minister.name]
     before = db.get_character_knowledge(state, minister.name)
 
     restored = db.load_state()
@@ -520,8 +520,11 @@ def test_issue_roster_is_structured_and_read_side_projection_needs_no_write_hook
         ]
     )
     row = db.conn.execute("SELECT participants, participant_roster FROM issues WHERE id=?", (issue_id,)).fetchone()
-    assert row["participants"] == f'["{minister.name}"]'
-    assert '"tier": "主办"' in row["participant_roster"]
+    assert json.loads(row["participants"]) == [minister.name]
+    roster = json.loads(row["participant_roster"])
+    assert roster[0]["tier"] == "主办"
+    assert roster[0]["role"] == "监理"
+    assert roster[0]["delegator_id"] == "毕自严"
     assert any(item["source_id"] == f"issue:{issue_id}" for item in db.get_character_knowledge(state, minister.name)["events"])
 
 def test_participation_adapter_reads_structured_roster_without_fake_names(game):
@@ -1087,7 +1090,6 @@ def test_structured_person_scope_replaces_role_wide_world_reports(game):
     key_hn = db.project_office_identity("巡抚", "地方", character_name=other.name)
     assert key_sx["archive_key"] == "slot:巡抚@shaanxi"
     assert key_hn["archive_key"] == "slot:巡抚@henan"
-    assert key_sx["archive_key"] != key_hn["archive_key"]
 
     # Succession: same seat title@region shares archive identity with predecessor.
     pred = official.name

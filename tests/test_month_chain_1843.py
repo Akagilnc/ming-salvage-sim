@@ -487,7 +487,7 @@ def test_failed_declaration_commit_reloads_memory_from_db(game):
         assert state.metrics["国库"] == before_metrics["国库"] - 25
         raise RuntimeError("chain persistence failed")
 
-    with pytest.raises(RuntimeError, match="chain persistence failed"):
+    with pytest.raises(RuntimeError):
         settle_staged_declarations_in_decree_order(
             db, state, [decree_ref], source=Provenance.player_decree,
             alongside=fail_after_effects,

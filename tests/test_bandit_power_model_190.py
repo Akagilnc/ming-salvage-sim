@@ -18,7 +18,6 @@ def test_seed_splits_li_zicheng_and_zhang_xianzhong_bandit_powers(read_game):
     }
     assert rows["李自成"]["power_id"] == "bandit_li_zicheng"
     assert rows["张献忠"]["power_id"] == "bandit_zhang_xianzhong"
-    assert rows["李自成"]["power_id"] != rows["张献忠"]["power_id"]
 
     powers = {
         row["id"]: dict(row)

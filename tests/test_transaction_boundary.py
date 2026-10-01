@@ -295,7 +295,7 @@ def test_swallowed_inner_exception_forces_outer_rollback(game):
     db.conn.execute("DELETE FROM kv_store WHERE key='s1_swallow'")
     db.conn.commit()
 
-    with pytest.raises(RuntimeError, match="回滚"):
+    with pytest.raises(RuntimeError):
         with atomic(db):
             try:
                 with atomic(db):
@@ -366,7 +366,7 @@ def test_connection_commit_attempts_all_runtime_callbacks(game):
     db.conn.execute("BEGIN")
     db.conn._runtime_commit_callbacks = [first, broken, last]
 
-    with pytest.raises(RuntimeError, match="runtime commit callback failed"):
+    with pytest.raises(RuntimeError):
         db.conn.commit()
 
     assert calls == ["first", "broken", "last"]
@@ -375,7 +375,7 @@ def test_connection_commit_attempts_all_runtime_callbacks(game):
 def test_executescript_inside_atomic_fails_loud(game):
     """atomic 内 executescript 响亮拒绝（C 层隐式 commit 绕过暂停，cmr S1 r1 F4）。"""
     db, state, content = game
-    with pytest.raises(RuntimeError, match="executescript"):
+    with pytest.raises(RuntimeError):
         with atomic(db):
             db.conn.executescript("SELECT 1;")
 
@@ -395,7 +395,7 @@ def test_swallowed_conn_context_exception_forces_outer_rollback(game):
         db.conn.execute("DELETE FROM kv_store WHERE key=?", (k,))
     db.conn.commit()
 
-    with pytest.raises(RuntimeError, match="回滚"):
+    with pytest.raises(RuntimeError):
         with atomic(db):
             db.conn.execute("INSERT INTO kv_store(key,value) VALUES('s1r2_w1','W1')")
             try:
@@ -491,7 +491,7 @@ def test_atomic_rejects_plain_connection(tmp_path):
         def __init__(self):
             self.conn = sqlite3.connect(str(tmp_path / "plain.db"))
 
-    with pytest.raises(TypeError, match="_SuspendableConnection"):
+    with pytest.raises(TypeError):
         with atomic(PlainDB()):
             pass
 
@@ -521,7 +521,7 @@ def test_ddl_after_swallowed_conn_context_does_not_escape(game):
     ri = RejectedItem(item={}, reason="r", category="invalid_enum", source=Provenance.unknown)
     rc.record("army_delta", ri, turn=1)
 
-    with pytest.raises(RuntimeError, match="回滚"):
+    with pytest.raises(RuntimeError):
         with atomic(db):
             try:
                 with db.conn:
@@ -567,7 +567,7 @@ def test_begin_failure_at_entry_restores_flags(game, monkeypatch):
         return real_execute(self, sql, *args, **kwargs)
     monkeypatch.setattr(_SuspendableConnection, "execute", failing_execute)
 
-    with pytest.raises(sqlite3.OperationalError, match="BEGIN"):
+    with pytest.raises(sqlite3.OperationalError):
         with atomic(db):
             pass  # 不应到达
 

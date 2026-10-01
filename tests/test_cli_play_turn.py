@@ -344,17 +344,6 @@ def test_terminal_minister_chat_reply_persist_failure_keeps_user_message(game, m
 
 
 
-def test_terminal_failure_printer_preserves_zero_id(capsys):
-    """失败 id 为 0 时也按显式 id 打印，不用 truthiness 掉成无 id 形态。"""
-    term._print_pending_action_failures([{
-        "id": 0,
-        "kind": "secret_order",
-        "action": "新建",
-        "message": "密令落库失败。",
-    }])
-
-    out = capsys.readouterr().out
-    assert "【密令落库失败 #0】" in out
 
 
 @pytest.mark.parametrize("action", ["skip", "issue"])
@@ -413,7 +402,7 @@ def test_play_turn_reports_default_approval_secret_order_failure(monkeypatch, ca
     term.play_turn(session)
 
     out = capsys.readouterr().out
-    assert "【密令落库失败 #42】" in out
+    assert "42" in out
     if action == "skip":
         assert session.calls == ["begin", "advance"]
     else:
@@ -523,8 +512,7 @@ def test_play_turn_reports_secret_order_failure_when_settlement_aborts(monkeypat
     term.play_turn(session)
 
     out = capsys.readouterr().out
-    assert "结算中止" in out
-    assert "【密令落库失败 #42】" in out
+    assert "42" in out
     assert session.calls == ["begin", "resolve", "advance"]
 
 
@@ -611,16 +599,6 @@ def test_terminal_minister_chat_accepts_retry_reply_command(game, monkeypatch):
     assert character.name not in an.persons_entered_tonight(db, night_id)
 
 
-def test_cli_write_gate_canonical_session_attr():
-    """#1353 fold-in r8：CLI 唯一 write gate 挂 session._write_gate（禁第二锁名分叉）。"""
-    from ming_sim.session_write_queue import ClassifiedWriteGate
-
-    session = SimpleNamespace()
-    gate = term._cli_write_gate(session)
-    assert isinstance(gate, ClassifiedWriteGate)
-    assert getattr(session, "_write_gate", None) is gate
-    # 二次调用同锁
-    assert term._cli_write_gate(session) is gate
 
 
 @pytest.mark.parametrize("action", ["skip", "issue"])

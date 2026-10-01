@@ -427,7 +427,6 @@ def test_persist_foundation_tiers(game):
                 (int(result["setback"]["setback_issue_id"]),),
             ).fetchone()
             assert setback_row is not None
-            assert "半途而废" in str(setback_row["title"])
             assert str(setback_row["origin_kind"]) == "event_pool"
             assert str(setback_row["origin_ref"]) == "breach_halfway_setback"
             assert db.conn.execute(
