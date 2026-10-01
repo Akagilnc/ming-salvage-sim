@@ -20518,8 +20518,9 @@ class GameDB:
     ) -> Dict[str, object]:
         """#1504 实况轨月度进度（0073）。禁与 dossier_progress_json/sim_note 混写。
 
-        同一 (dossier, turn) 的 note 与推演实况正文共用。冲突更新改单位与执行态；
-        已有非空 note 保持不动，空 note 才用本次 note 填上。
+        同一 (dossier, turn) 的 note 与推演实况正文共用。冲突更新改单位与执行态。
+        本次 note 去掉空白后仍有字，即为同月更正，替换已存正文；空白则只动数值，
+        留下已存正文。
         """
         did = int(dossier_id)
         origin = f"dossier:{did}"
@@ -20533,9 +20534,9 @@ class GameDB:
                 fidelity_state=excluded.fidelity_state,
                 floor_state=excluded.floor_state,
                 note=CASE
-                    WHEN TRIM(COALESCE(dossier_actual_progress.note, '')) <> ''
-                    THEN dossier_actual_progress.note
-                    ELSE excluded.note
+                    WHEN TRIM(COALESCE(excluded.note, '')) <> ''
+                    THEN excluded.note
+                    ELSE dossier_actual_progress.note
                 END,
                 origin_ref=excluded.origin_ref
             """,
@@ -21973,7 +21974,7 @@ class GameDB:
         """调用方持有事务时把实况原文写入当月实况轨，并同步案卷在办。
 
         只写 note，不改 units。数值写口见 record_dossier_actual_progress：
-        它不覆盖这里已经写下的非空原文。
+        空白 note 留下这里的原文，非空 note 按同月更正替换。
         """
         raw = str(sim_note or "")
         if not raw.strip():

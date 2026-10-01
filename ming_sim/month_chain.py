@@ -1023,15 +1023,27 @@ def build_secret_orders_supply_feed(
     不拼装「已生效效果」清单，也不另造逐段实际结果账本。
     """
     from ming_sim.covert_progress import _is_issuance_turn
-    from ming_sim.materials import _world_board_text
+    from ming_sim.materials import _world_board_text, actual_progress_notes
 
     turn = int(state.turn)
     candidates = db.list_monthly_dossier_progress_nudges(turn)
     eligible = _enrich_eligible_dossiers_for_supply(db, candidates)
-    active_orders = [
-        dict(o) for o in db.list_secret_orders(status="active")
-        if not _is_issuance_turn(o, turn)
-    ]
+    for row in eligible:
+        dossier_id = int(row.get("dossier_id") or 0)
+        row["actual_notes"] = actual_progress_notes(db, dossier_id) if dossier_id else []
+    active_orders = []
+    for order in db.list_secret_orders(status="active"):
+        if _is_issuance_turn(order, turn):
+            continue
+        item = dict(order)
+        dossier = (
+            db.get_dossier_for_secret_order(int(order["id"]))
+            if hasattr(db, "get_dossier_for_secret_order") else None
+        )
+        item["actual_notes"] = (
+            actual_progress_notes(db, int(dossier["id"])) if dossier is not None else []
+        )
+        active_orders.append(item)
     materials = _month_fact_materials(db, state, chain, include_secret_sources=True)
     return {
         "instruction": "为本月所有在办密令产出密奏和执行态声明。据实况自行判断办理与拒收。",

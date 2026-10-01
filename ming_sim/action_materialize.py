@@ -208,6 +208,15 @@ def _apply_existing_appointment_hit(
             )
             if pending_id:
                 resolved = int(pending_id)
+        elif int(night_id or 0) > 0:
+            moved = session.db.update_office_candidate_payload(
+                resolved,
+                dict(_office_payload(row)),
+                night_id=int(night_id),
+                source_chat_turn_id=int(source_chat_turn_id or 0),
+            )
+            if moved:
+                resolved = int(moved)
         if recommendation_fields:
             current = session.db.conn.execute(
                 "SELECT payload_json FROM pending_actions WHERE id=?", (resolved,),
@@ -1039,33 +1048,18 @@ def _annotate_office_pending_path(
     if seat and not existing_seat:
         payload["region_id"] = seat
         changed = True
-    if not changed and (
+    # 语义已在也走同一补账写口：只写故事账会让候选留在旧夜，后夜应允 missing_ref。
+    semantic_hit = (
         (mode_mark in {"midzhi", "ordinary"} and payload.get("mode") == mode_mark)
         or (tenure_mark == "署理" and payload.get("任别") == "署理")
         or (seat and existing_seat == seat)
-    ):
-        # 语义已在：仍回 id（no-op 去重存活），可补留痕
-        _write_path_nature_ledger(
-            db,
-            pending_id=pending_id,
-            payload=payload,
-            mode_mark=mode_mark,
-            tenure_mark=tenure_mark,
-            minister_name=minister_name,
-            turn=turn,
-            night_id=int(night_id or 0),
-            source_chat_turn_id=int(source_chat_turn_id or 0),
-        )
-        return pending_id
-    if not changed:
-        return pending_id
-
+    )
     updated = db.update_office_candidate_payload(
         pending_id, payload,
         night_id=int(night_id or 0) or None,
         source_chat_turn_id=int(source_chat_turn_id or 0),
     )
-    if updated:
+    if updated and (changed or semantic_hit):
         _write_path_nature_ledger(
             db,
             pending_id=pending_id,

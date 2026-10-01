@@ -681,30 +681,32 @@ def minimal_opening_context(
     return "\n".join(parts)
 
 
-def _has_legal_inquiry(db: Any, character: Any, knowledge: dict) -> bool:
-    """近侍且已有查访委派。资格看库内职位，不从查访正文认案卷。"""
-    name = str(getattr(character, "name", "") or "")
-    if not name:
-        return False
-    events = knowledge.get("events") or []
-    if not any(str(item.get("kind") or "") == "inquiry_assignment" for item in events):
-        return False
-    from ming_sim.audience_night import is_inner_court_attendant
-
-    row = None
-    if hasattr(db, "conn"):
-        row = db.conn.execute(
-            "SELECT office, office_type, status FROM characters WHERE name=?",
-            (name,),
-        ).fetchone()
-    return bool(row) and is_inner_court_attendant(row)
+def _known_secret_order_ids(knowledge: dict) -> set[int]:
+    """密令私读只有承办简报。查访委派不构成对其它密令的授权。"""
+    found: set[int] = set()
+    for item in knowledge.get("events") or []:
+        source = str(item.get("source_id") or "")
+        prefix = "secret_order_brief:"
+        if not source.startswith(prefix):
+            continue
+        token = source[len(prefix):].split(":", 1)[0]
+        if token.isdigit():
+            found.add(int(token))
+    return found
 
 
 def _inquiry_monthly_report_text(db: Any, character: Any, knowledge: dict) -> str:
-    """合法查访读取与承办人月报同一奏报轨。不含密令正文，不含实况单位。"""
-    if not _has_legal_inquiry(db, character, knowledge):
-        return ""
+    """查访月报只读此人已经知道的密令奏报，并套当前职位排除。
+
+    承办人自己的月报在进行中密令里。历史查访记录不打开全部在办密令。
+    不含密令实况正文，也不从查访问句里认案卷。
+    """
+    from ming_sim.knowledge import knowledge_row_visible_to
+
     name = str(getattr(character, "name", "") or "")
+    known = _known_secret_order_ids(knowledge)
+    if not name or not known or not hasattr(db, "list_secret_orders"):
+        return ""
     own_ids = {
         int(order["id"])
         for order in (
@@ -713,14 +715,19 @@ def _inquiry_monthly_report_text(db: Any, character: Any, knowledge: dict) -> st
         )
     }
     blocks: list[str] = []
-    if not hasattr(db, "list_secret_orders"):
-        return ""
     for order in db.list_secret_orders(status="active"):
         order_id = int(order["id"])
-        if order_id in own_ids:
+        if order_id not in known or order_id in own_ids:
             continue
-        excluded = {str(item) for item in (order.get("excluded_names") or [])}
-        if name in excluded:
+        visible = knowledge_row_visible_to(db, {
+            "source_id": f"secret_order_brief:{order_id}",
+            "kind": "secret_order_brief",
+            "excluded_names": json.dumps(order.get("excluded_names") or [], ensure_ascii=False),
+            "excluded_targets": json.dumps(
+                order.get("excluded_targets") or {}, ensure_ascii=False,
+            ),
+        }, name)
+        if not visible:
             continue
         memorials = _secret_order_memorials(order)
         if not memorials:
@@ -1469,6 +1476,38 @@ def _world_subject_ids(db: Any, table: str) -> list[str]:
     ]
 
 
+def actual_progress_notes(db: Any, dossier_id: int) -> list[dict[str, object]]:
+    """实况轨原文读投影。空白说明不算正文。不另存一份。"""
+    if not hasattr(db, "list_dossier_actual_progress"):
+        return []
+    notes: list[dict[str, object]] = []
+    for row in db.list_dossier_actual_progress(int(dossier_id)):
+        note = str(row.get("note") or "")
+        if not note.strip():
+            continue
+        notes.append({"turn": int(row.get("turn") or 0), "note": note})
+    return notes
+
+
+def _write_secret_actual_note_files(tmp: Path, db: Any) -> list[str]:
+    """推演目录里的实况原文。人物目录与滤掉密令案卷的邸报目录不写。"""
+    if not hasattr(db, "list_secret_orders") or not hasattr(db, "get_dossier_for_secret_order"):
+        return []
+    written: list[str] = []
+    for order in db.list_secret_orders():
+        dossier = db.get_dossier_for_secret_order(int(order["id"]))
+        if dossier is None:
+            continue
+        notes = actual_progress_notes(db, int(dossier["id"]))
+        if not notes:
+            continue
+        body = "\n".join(f"回合：{item['turn']}\n{item['note']}" for item in notes)
+        rel = f"{_SECRET_DIR}/实况/{int(order['id'])}.txt"
+        _write_text(tmp / rel, body)
+        written.append(rel)
+    return written
+
+
 def _textual_facts_text(
     textual_facts: Any, *, subject_kind: str, subject_id: str, include_fact: Any = None,
 ) -> str:
@@ -1496,6 +1535,7 @@ def _write_world_tree(
     include_fact: Any = None,
     include_event: Any = None,
     secret_turn_ids: set[int] | None = None,
+    include_secret_actuals: bool = True,
 ) -> list[str]:
     from ming_sim.knowledge import build_character_knowledge
 
@@ -1558,6 +1598,8 @@ def _write_world_tree(
         _write_text(tmp / rel, body)
         index.append(rel)
 
+    if include_secret_actuals:
+        index.extend(_write_secret_actual_note_files(tmp, db))
     index.extend(_write_world_textual_fact_files(tmp, db, include_fact=include_fact))
     index.extend(_write_public_by_month(tmp, public_events))
     index.extend(_write_gazette_index(
@@ -2100,6 +2142,7 @@ def prepare_world_materials(
             tmp, db, state, public_events, affair_lines, board_text,
             denunciation_facts, include_fact, include_event,
             _secret_order_chat_turn_ids(db) if exclude_secret_order_audience else None,
+            include_secret_actuals=not exclude_secret_order_dossiers,
         ),
     )
 

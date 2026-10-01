@@ -1168,13 +1168,9 @@ def apply_monthly_covert_actual_progress(
                 fidelity=fidelity, originated_quantity=originated,
             )
         raw_note = str(sel.get("note") or sel.get("备注") or "")
-        if raw_note.strip():
-            note = raw_note
-        else:
-            note = (
-                f"月度实进度：执行态{fidelity}（{units:g}）"
-                f"；origin_effects={originated}"
-            )
+        # 没有推演者给出的正文就不写说明。机器拼的执行态句子会占住同一 note，
+        # 随后的真实正文进不来。空白留给数值写口，已存原文保持不动。
+        note = raw_note if raw_note.strip() else ""
         row = db.record_dossier_actual_progress(
             did,
             turn,

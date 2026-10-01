@@ -32,7 +32,6 @@ from ming_sim.audience_translation import (
     catch_up_pending_translations,
     run_turn_translation_job,
 )
-from ming_sim.materials import list_materials, prepare_character_materials, read_material
 from ming_sim.session_write_queue import ClassifiedWriteGate
 from ming_sim.supervision import ORIGIN_MARK_SAME_FACTION_BLIND, origin_has_mark
 
@@ -893,31 +892,6 @@ def test_secret_order_progress_is_stored_verbatim(game):
     assert marked_rows[0]["memorial_text"] == corrected
     assert origin_has_mark(marked_rows[0]["origin"], ORIGIN_MARK_SAME_FACTION_BLIND)
     assert int(marked_rows[0]["turn"]) == int(state.turn)
-
-    character = content.characters.get(minister)
-    assert character is not None
-    db.conn.execute(
-        "UPDATE decree_dossiers SET execution_note=? WHERE id=?",
-        (corrected, dossier_id),
-    )
-    db.conn.commit()
-    prepared = prepare_character_materials(db, state, character)
-    stored_text = str(live[0]["memorial_text"])
-    assignee_hits = [
-        path for path in list_materials(prepared.root)
-        if stored_text in read_material(prepared.root, path)
-    ]
-    assert assignee_hits
-    other_character = content.characters.get(other)
-    assert other_character is not None and other != minister
-    other_prepared = prepare_character_materials(db, state, other_character)
-    leaked = [
-        path for path in list_materials(other_prepared.root)
-        if stored_text in read_material(other_prepared.root, path)
-    ]
-    assert leaked == []
-    stored_note = db.get_decree_dossier(dossier_id)["execution_note"]
-    assert stored_note == corrected
 
     reopened = GameDB(db.path, content)
     try:

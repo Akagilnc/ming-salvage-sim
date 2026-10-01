@@ -315,6 +315,57 @@ def test_recommendation_commission_stages_office_with_reason(game, monkeypatch):
     assert any(e["candidate"] == same_faction.name and e["reason"] == reason for e in events)
 
 
+def test_repeated_same_appointment_moves_with_the_later_source_night(game, monkeypatch):
+    """语义未变的再任命仍走既有候选补账，归属改到后一夜，应允不再 missing_ref。"""
+    from ming_sim.audience_night import get_open_night
+
+    db, state, content = game
+    appointee = next(
+        c for c in content.characters.values()
+        if c.status == "active" and c.office != "巡抚"
+        and c.office_type not in ("后宫", "宗藩", "未仕")
+    )
+    decl = {"commissions": [{
+        "text": "着即中旨擢用。",
+        "appointment": {
+            "name": appointee.name, "office": "巡抚", "action": "任命", "mode": "midzhi",
+        },
+    }]}
+    first = _scene_declaration(db, state, content, monkeypatch, "擢用。", decl)
+    assert first.commissions.rejected == []
+    staged_id = int(first.commissions.applied[0]["id"])
+    night1 = int(get_open_night(db)["id"])
+    _close_offline(db, state, content, night1)
+
+    second = _scene_declaration(db, state, content, monkeypatch, "仍是这道中旨。", decl)
+    assert second.commissions.rejected == []
+    assert int(second.commissions.applied[0]["id"]) == staged_id
+    night2 = int(get_open_night(db)["id"])
+    assert night2 != night1
+    row = db.conn.execute(
+        "SELECT night_id FROM pending_actions WHERE id=?", (staged_id,),
+    ).fetchone()
+    assert int(row["night_id"]) == night2
+    ledger = db.conn.execute(
+        "SELECT night_id, source_chat_turn_id FROM story_ledger_entries "
+        "WHERE night_id=? AND tags LIKE ?",
+        (night2, f"%pending:{staged_id}%"),
+    ).fetchall()
+    assert ledger
+    assert all(int(item["night_id"]) == night2 for item in ledger)
+    turn_nights = {
+        int(item["id"]): int(item["night_id"])
+        for item in db.conn.execute("SELECT id, night_id FROM chat_turns")
+    }
+    assert all(turn_nights[int(item["source_chat_turn_id"])] == night2 for item in ledger)
+
+    approval = _scene_declaration(db, state, content, monkeypatch, "准。", {
+        "promises": [{"action_id": staged_id, "decision": "应允"}],
+    })
+    assert approval.promises.rejected == []
+    assert any(int(item.get("action_id") or 0) == staged_id for item in approval.promises.applied)
+
+
 def test_recommendation_outside_slice_is_rejected(game):
     db, state, content = game
     night = open_night(db, state)
@@ -386,6 +437,7 @@ def test_inquiry_declaration_preserves_assignment_in_attendant_materials(game, m
         assert carrier in prepared.index_lines
         experience = (Path(prepared.root) / carrier).read_text(encoding="utf-8")
         assert all(event["body"] in experience for event in report_events)
+        assert not any(line.endswith("查访月报.txt") for line in prepared.index_lines)
     finally:
         release_material_tree(prepared.root)
 
