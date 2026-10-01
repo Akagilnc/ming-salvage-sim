@@ -1530,15 +1530,57 @@ def test_step_4a_crash_recovery_resumes_without_re_running_supply(game, monkeypa
     ).fetchone()[0] == 1
 
 
+def _faction_rows(db):
+    rows = db.conn.execute(
+        "SELECT name, faction FROM characters "
+        "WHERE status='active' AND power_id='ming' "
+        "AND COALESCE(faction,'') NOT IN ('','流寇','后金','宗室') "
+        "ORDER BY name"
+    ).fetchall()
+    by_faction: dict[str, list] = {}
+    for row in rows:
+        by_faction.setdefault(str(row["faction"]), []).append(row)
+    return by_faction
+
+
+def _supervise(db, state, *, auditor: str, subject_id: int, token: str) -> None:
+    audit_id = db.create_decree_dossier(
+        state,
+        action_type="policy",
+        decree_text=f"稽核{token}",
+        target_kind="issue",
+        target_id=f"audit-{token}",
+        executor_kind="character",
+        executor_id=auditor,
+        participants=[{"character_id": auditor, "tier": "主办"}],
+    )
+    db.apply_dossier_promulgation(state, audit_id, "promulgated")
+    db.add_dossier_links(audit_id, [{
+        "target_dossier_id": int(subject_id),
+        "relation_type": "稽核",
+        "note": token,
+    }])
+
+
 def test_step_4a_missing_covert_fidelity_records_inline_rejection(game, monkeypatch):
-    """步骤 4a：0073 执行态校验失败停在 4a，不结案；重试废弃产物并重起供料。"""
+    """步骤 4a：0073 执行态校验失败停在 4a，不结案；重试废弃产物并重起供料。
+
+    同派与敌派监督随这次真实过月写入。未声明不落行动；声明后的记号可续读。
+    """
     from ming_sim.exceptions import SettlementAbort
 
     db, state, content = game
     turn = int(state.turn)
-    minister = db.conn.execute(
-        "SELECT name FROM characters WHERE status='active' AND power_id='ming' LIMIT 1"
-    ).fetchone()[0]
+    by_faction = _faction_rows(db)
+    same_faction, same_rows = next(
+        (faction, rows) for faction, rows in by_faction.items() if len(rows) >= 2
+    )
+    enemy = next(
+        rows[0] for faction, rows in by_faction.items()
+        if faction != same_faction and rows
+    )
+    minister = str(same_rows[0]["name"])
+    same_auditor = str(same_rows[1]["name"])
     order_id = create_test_secret_order(
         db, state, minister, "密令执行态缺失", "差务", [], deadline_months=1,
     )
@@ -1547,6 +1589,8 @@ def test_step_4a_missing_covert_fidelity_records_inline_rejection(game, monkeypa
         (turn - 1, turn, order_id),
     )
     dossier_id = int(db.get_dossier_for_secret_order(order_id)["id"])
+    _supervise(db, state, auditor=same_auditor, subject_id=dossier_id, token="same")
+    _supervise(db, state, auditor=str(enemy["name"]), subject_id=dossier_id, token="enemy")
     db.conn.commit()
 
     call_count = 0
@@ -1574,7 +1618,7 @@ def test_step_4a_missing_covert_fidelity_records_inline_rejection(game, monkeypa
                 "dossier_id": dossier_id,
                 "progress_band": "持平",
                 "memorial_text": "按期奏报",
-                "origin": "same_faction_blind+不是行动",
+                "origin": "same_faction_blind+private_goods+不是行动",
             }],
             "covert_exec_selections": [{"order_id": order_id, "fidelity": "忠实"}],
         }
@@ -1605,6 +1649,12 @@ def test_step_4a_missing_covert_fidelity_records_inline_rejection(game, monkeypa
     silent_origin = db.list_dossier_progress(dossier_id)[-1]["origin"]
     assert not origin_has_mark(silent_origin, ORIGIN_MARK_SAME_FACTION_BLIND)
     assert not origin_has_mark(silent_origin, ORIGIN_MARK_PRIVATE_GOODS)
+    silent_relations = {
+        row.get("faction_relation")
+        for row in db.list_supervision_history(dossier_id, as_of_turn=turn)
+        if row.get("present")
+    }
+    assert silent_relations == {"same", "enemy"}
 
     with pytest.raises(SettlementAbort) as replaced:
         session.resolve_turn(allow_empty_decree=True)
@@ -1626,8 +1676,14 @@ def test_step_4a_missing_covert_fidelity_records_inline_rejection(game, monkeypa
     assert len(db.list_dossier_progress(dossier_id)) == 1
     declared_origin = db.list_dossier_progress(dossier_id)[-1]["origin"]
     assert origin_has_mark(declared_origin, ORIGIN_MARK_SAME_FACTION_BLIND)
-    assert not origin_has_mark(declared_origin, ORIGIN_MARK_PRIVATE_GOODS)
+    assert origin_has_mark(declared_origin, ORIGIN_MARK_PRIVATE_GOODS)
     assert "不是行动" not in str(declared_origin)
+    kept_relations = {
+        row.get("faction_relation")
+        for row in db.list_supervision_history(dossier_id, as_of_turn=turn)
+        if row.get("present")
+    }
+    assert kept_relations == {"same", "enemy"}
     assert db.conn.execute(
         "SELECT COUNT(*) FROM dossier_actual_progress WHERE dossier_id=? AND turn=?",
         (dossier_id, turn),

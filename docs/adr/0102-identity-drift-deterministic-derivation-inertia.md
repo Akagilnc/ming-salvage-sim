@@ -4,4 +4,4 @@ Status: 修订待票庭重审（#1895；原决定 PR #708，2026-07-08）
 
 法源与人物选择边界见 [0011 后出修订](0011-edict-resistance-and-centrifuge-ledger.md#后出设计修订1895待票庭重审)，执行归属与改约顺序见 [#1895](https://github.com/Akagilnc/ming-salvage-sim/issues/1895)。恩遇、依律清算、罗织与派内弃卒是可读事实，不是必然离党或同仇的心意；废四向确定性派生、惯性缩放、排除模型认同判断及事件消费独占写权，不能以“世界事实派生”豁免。
 
-保留 identity 记录、0011-4 静态 seed、党籍与事件事实、幂等记账及既有读取能力；模型判断认同，代码承接声明、clamp 与记录，不自动联动防备或人物行动。#701 的原派生建设合同随 #1895 改约重审，seed 回填不证明动态派生已建；第五向见 [0121](0121-identity-fifth-rule-execution-writeback.md)，不另起人物 run。
+保留 identity 记录、0011-4 静态 seed、党籍与事件事实、幂等记账及既有读取能力；模型判断认同，代码承接声明、clamp 与记录，不自动联动防备或人物行动。#701 的原派生建设合同已按 #1895 改约并交票庭重审，重审未过。seed 回填不证明动态派生已建；第五向见 [0121](0121-identity-fifth-rule-execution-writeback.md)，不另起人物 run。

@@ -5,8 +5,9 @@ Seams:
 - record_monthly_supervision_facts（与 grant recon 同段）
 - build_due_review_input.supervision_history
 - 督办复核的监督事实观察槽
-- dossier_reported_progress origin 结构化私货/同派标记
 - auto_trigger 涌现缝反制 issue
+
+同派／敌派与月报行动声明的真实过月入口在 test_month_chain_1847。
 """
 
 from __future__ import annotations
@@ -28,21 +29,15 @@ from ming_sim.staged_commitment import (
     write_due_staged_commitment_todos,
 )
 from ming_sim.participant_roster import resolve_dossier_owner_name
-from tests.dossier_test_helpers import create_test_secret_order
 from ming_sim.supervision import (
     EMPTY_TRANSFORMATION_TENDENCY_FACTS,
     EXPOSURE_ALLOWED_COLS,
     EXPOSURE_TABLE,
     FORBIDDEN_DULLING_COL_FRAGMENTS,
-    ORIGIN_MARK_PRIVATE_GOODS,
-    ORIGIN_MARK_SAME_FACTION_BLIND,
     PRESENCE_ALLOWED_COLS,
     PRESENCE_TABLE,
     SUPERVISION_RELATION,
     SUPERVISION_SURFACE_KEYS,
-    derive_consecutive_months,
-    faction_relation,
-    origin_has_mark,
     unpack_supervision_surface,
 )
 
@@ -68,13 +63,6 @@ def _pair_same_faction(db):
         if len(rows) >= 2:
             return rows[0], rows[1]
     raise RuntimeError("no same-faction pair")
-
-
-def _pair_enemy_faction(db):
-    by_f = _chars_by_faction(db)
-    facs = [f for f, rows in by_f.items() if rows]
-    assert len(facs) >= 2
-    return by_f[facs[0]][0], by_f[facs[1]][0]
 
 
 def _upright_and_mediocre(db):
@@ -158,18 +146,6 @@ def _table_cols(db, table: str) -> set[str]:
         str(row["name"])
         for row in db.conn.execute(f'PRAGMA table_info("{table}")').fetchall()
     }
-
-
-# ── unit pure ─────────────────────────────────────────────────────
-
-
-def test_derive_consecutive_months_and_faction_relation():
-    assert derive_consecutive_months([1, 2, 3, 5], end_turn=5) == 1
-    assert derive_consecutive_months([1, 2, 3, 4], end_turn=4) == 4
-    assert derive_consecutive_months([10, 11, 12], end_turn=12) == 3
-    assert faction_relation("东林", "东林") == "same"
-    assert faction_relation("东林", "阉党") == "enemy"
-    assert faction_relation("", "阉党") == "other"
 
 
 # ── AC1 事实底 ────────────────────────────────────────────────────
@@ -357,58 +333,6 @@ def test_ac2_paired_observation_slots_and_countermeasure_hard_gate(game):
         "supervision_countermeasure",
         f"auditor:{upright['name']}:dossier:{sub_u}",
     ) is None
-
-
-# ── AC3 同派/敌派 origin 标记 ─────────────────────────────────────
-
-
-def _secret_subject(db, state, *, owner: str, token: str) -> int:
-    order_id = create_test_secret_order(
-        db, state, owner, f"差务{token}", f"承办{token}", [],
-    )
-    return int(db.get_dossier_for_secret_order(order_id)["id"])
-
-
-def test_ac3_relation_facts_do_not_invent_report_actions(game):
-    """同派／敌派只留在监督史。月报未带声明时不写睁眼闭眼或带私货。"""
-    db, state, _content = game
-    same_a, same_b = _pair_same_faction(db)
-    enemy_a, enemy_b = _pair_enemy_faction(db)
-    before_inner = int(state.metrics.get("内库") or 0)
-
-    sub_s = _secret_subject(db, state, owner=str(same_a["name"]), token="sf")
-    _audit_dossier(
-        db, state, auditor=str(same_b["name"]), subject_id=sub_s, token="sf",
-    )
-    sub_e = _secret_subject(db, state, owner=str(enemy_a["name"]), token="ef")
-    _audit_dossier(
-        db, state, auditor=str(enemy_b["name"]), subject_id=sub_e, token="ef",
-    )
-    db.record_monthly_supervision_facts(state.turn, commit=True)
-    same_hist = db.list_supervision_history(sub_s, as_of_turn=state.turn)
-    enemy_hist = db.list_supervision_history(sub_e, as_of_turn=state.turn)
-    assert any(row.get("faction_relation") == "same" and row.get("present") for row in same_hist)
-    assert any(row.get("faction_relation") == "enemy" and row.get("present") for row in enemy_hist)
-
-    db.record_monthly_dossier_progress(state.turn, [
-        {
-            "dossier_id": sub_s,
-            "progress_band": "在办",
-            "memorial_text": "同路例行奏报",
-        },
-        {
-            "dossier_id": sub_e,
-            "progress_band": "在办",
-            "memorial_text": "异路例行奏报",
-        },
-    ])
-    same_origin = db.list_dossier_progress(sub_s)[-1]["origin"]
-    enemy_origin = db.list_dossier_progress(sub_e)[-1]["origin"]
-    assert not origin_has_mark(same_origin, ORIGIN_MARK_SAME_FACTION_BLIND)
-    assert not origin_has_mark(same_origin, ORIGIN_MARK_PRIVATE_GOODS)
-    assert not origin_has_mark(enemy_origin, ORIGIN_MARK_PRIVATE_GOODS)
-    assert not origin_has_mark(enemy_origin, ORIGIN_MARK_SAME_FACTION_BLIND)
-    assert int(state.metrics.get("内库") or 0) == before_inner
 
 
 # ── AC4 空子转移读入面差分 ────────────────────────────────────────
