@@ -20516,7 +20516,11 @@ class GameDB:
         note: str = "",
         commit: bool = True,
     ) -> Dict[str, object]:
-        """#1504 实况轨月度进度（0073）。禁与 dossier_progress_json/sim_note 混写。"""
+        """#1504 实况轨月度进度（0073）。禁与 dossier_progress_json/sim_note 混写。
+
+        同一 (dossier, turn) 的 note 与推演实况正文共用。冲突更新改单位与执行态；
+        已有非空 note 保持不动，空 note 才用本次 note 填上。
+        """
         did = int(dossier_id)
         origin = f"dossier:{did}"
         self.conn.execute(
@@ -20528,7 +20532,11 @@ class GameDB:
                 units=excluded.units,
                 fidelity_state=excluded.fidelity_state,
                 floor_state=excluded.floor_state,
-                note=excluded.note,
+                note=CASE
+                    WHEN TRIM(COALESCE(dossier_actual_progress.note, '')) <> ''
+                    THEN dossier_actual_progress.note
+                    ELSE excluded.note
+                END,
                 origin_ref=excluded.origin_ref
             """,
             (
@@ -21962,7 +21970,11 @@ class GameDB:
     def _update_secret_order_sim_note_in_transaction(
         self, order_id: int, sim_note: str,
     ) -> None:
-        """调用方持有事务时把实况原文写入当月实况轨，并同步案卷在办。"""
+        """调用方持有事务时把实况原文写入当月实况轨，并同步案卷在办。
+
+        只写 note，不改 units。数值写口见 record_dossier_actual_progress：
+        它不覆盖这里已经写下的非空原文。
+        """
         raw = str(sim_note or "")
         if not raw.strip():
             return
