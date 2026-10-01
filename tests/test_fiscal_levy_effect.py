@@ -1576,3 +1576,126 @@ def test_fiscal_levy_held_petition_is_supplied_to_next_world_segment(game, monke
         assert "姑候户部再核" in text
     finally:
         materials_mod.release_material_tree(prepared.root)
+
+
+def _present_liao_petition(db, state):
+    state.year = 1631
+    state.period = 1
+    db.save_state(state)
+    db.record_event_petition_answer(
+        state, "liao_levy_rise_1631", {},
+        {"title": "辽饷", "context": "请旨", "options": ["已准", "已驳"]},
+    )
+
+
+def _liao_terminal(db):
+    row = db.conn.execute(
+        "SELECT terminal_state, terminal_reason FROM event_triggers WHERE event_id=?",
+        ("liao_levy_rise_1631",),
+    ).fetchone()
+    return dict(row) if row is not None else None
+
+
+def test_same_batch_keeps_the_first_event_outcome(game):
+    """同批先已驳、后已准：留下第一次裁定，后写不覆盖，也不另造拒收。"""
+    from ming_sim.declaration_dispatch import dispatch_declaration
+
+    db, state, content = game
+    issues.bind_content(content)
+    _present_liao_petition(db, state)
+    result = dispatch_declaration(db, state, {"effects": [
+        {
+            "event_id": "liao_levy_rise_1631",
+            "事件结局": {"liao_levy_rise_1631": "已驳"},
+        },
+        {
+            "event_id": "liao_levy_rise_1631",
+            "事件结局": {"liao_levy_rise_1631": "已准"},
+        },
+    ]})
+    assert result.effects.rejected == []
+    assert _liao_terminal(db) == {"terminal_state": "triggered", "terminal_reason": "已驳"}
+
+
+def test_unbound_envelope_does_not_overwrite_the_first_event_outcome(game):
+    """有归属的已驳之后，无 event_id 的信封不得借全局结局写成已准。"""
+    from ming_sim.declaration_dispatch import dispatch_declaration
+
+    db, state, content = game
+    issues.bind_content(content)
+    _present_liao_petition(db, state)
+    before = int(state.metrics["民心"])
+    result = dispatch_declaration(db, state, {"effects": [
+        {
+            "event_id": "liao_levy_rise_1631",
+            "事件结局": {"liao_levy_rise_1631": "已驳"},
+        },
+        {
+            "事件结局": {"liao_levy_rise_1631": "已准"},
+            "metric_delta": {"民心": 1},
+        },
+    ]})
+    assert result.effects.rejected == []
+    assert _liao_terminal(db) == {"terminal_state": "triggered", "terminal_reason": "已驳"}
+    report = result.effects.applied[0]
+    assert state.metrics["民心"] == before + report["metric_delta"]["民心"]
+
+
+def test_later_illegal_outcome_does_not_discard_the_first_ruling(game):
+    """后一封非法标签不得把同事件已成立的第一次裁定整组打掉。"""
+    from ming_sim.declaration_dispatch import dispatch_declaration
+
+    db, state, content = game
+    issues.bind_content(content)
+    _present_liao_petition(db, state)
+    result = dispatch_declaration(db, state, {"effects": [
+        {
+            "event_id": "liao_levy_rise_1631",
+            "事件结局": {"liao_levy_rise_1631": "已驳"},
+        },
+        {
+            "event_id": "liao_levy_rise_1631",
+            "事件结局": {"liao_levy_rise_1631": "乱写"},
+        },
+    ]})
+    assert result.effects.rejected == []
+    assert _liao_terminal(db) == {"terminal_state": "triggered", "terminal_reason": "已驳"}
+
+
+def test_independent_petition_outcome_commits_for_another_connection(game):
+    """独立调用默认提交；第二条连接读得到终态。commit=False 则不落盘。"""
+    import sqlite3
+
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1631
+    state.period = 1
+    db.save_state(state)
+
+    held = issues.apply_petition_event_outcome(
+        state, db, "liao_levy_rise_1631", "已准", commit=False,
+    )
+    assert held["settled"] is True
+    other = sqlite3.connect(db.path)
+    try:
+        absent = other.execute(
+            "SELECT terminal_reason FROM event_triggers WHERE event_id=?",
+            ("liao_levy_rise_1631",),
+        ).fetchone()
+    finally:
+        other.close()
+    assert absent is None or not str(absent[0] or "").strip()
+    db.conn.rollback()
+
+    settled = issues.apply_petition_event_outcome(state, db, "liao_levy_rise_1631", "已准")
+    assert settled["settled"] is True
+    assert settled["terminal_reason"] == "已准"
+    other = sqlite3.connect(db.path)
+    try:
+        row = other.execute(
+            "SELECT terminal_state, terminal_reason FROM event_triggers WHERE event_id=?",
+            ("liao_levy_rise_1631",),
+        ).fetchone()
+    finally:
+        other.close()
+    assert tuple(row) == ("triggered", "已准")

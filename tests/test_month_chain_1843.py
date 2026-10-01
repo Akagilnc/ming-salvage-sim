@@ -850,3 +850,69 @@ def test_month_chain_lands_specialized_facts_before_due_and_gazette(game, monkey
     assert db.conn.execute(
         "SELECT knowledge_status FROM chat_messages WHERE id=?", (message_id,),
     ).fetchone()["knowledge_status"] == "released"
+
+
+def _stage_region_unrest_edict(db, state, minister, delta):
+    pending_id = db.stage_pending_action(
+        state.turn, kind="directive", action="拟旨", minister_name=minister,
+        payload={
+            "dossier_action_type": "policy", "target_kind": "issue",
+            "target_id": "month-chain", "actor": minister, "mode": "ordinary",
+            "text": "三省民变",
+        },
+    )
+    ref = pending_action_decree_ref(pending_id, 1)
+    regions = {
+        region_id: {"origin_ref": "盘面自发", "unrest": delta, "reason": "三省民变"}
+        for region_id in ("shaanxi", "shanxi", "henan")
+    }
+    db.staged_declarations.stage(
+        decree_ref=ref,
+        declaration={"effects": {"region_delta": regions}},
+        turn=int(state.turn),
+        verdict={"decision": "promulgated"},
+        forecast_text="预推不可见:三省民变",
+        visible_refs={"affairs": [], "issues": [], "secret_orders": []},
+    )
+
+
+def _set_three_province_unrest(db, value):
+    for region_id in ("shaanxi", "shanxi", "henan"):
+        db.conn.execute(
+            "UPDATE regions SET unrest=? WHERE id=?", (value, region_id),
+        )
+    db.conn.commit()
+
+
+def _three_province_unrest(db):
+    return {
+        row["id"]: int(row["unrest"])
+        for row in db.conn.execute(
+            "SELECT id, unrest FROM regions WHERE id IN ('shaanxi','shanxi','henan')",
+        )
+    }
+
+
+def test_edict_that_drops_unrest_below_gate_does_not_trigger_world_event(game, monkeypatch):
+    """三省 unrest 75 经旨降 20 后，世界事件读当月实账，不得在旨前触发。"""
+    db, state, content = game
+    minister = next(iter(content.characters.values())).name
+    _set_three_province_unrest(db, 75)
+    _stage_region_unrest_edict(db, state, minister, -20)
+    session = _prepare_player_month(db, state, content, monkeypatch)
+    session.resolve_turn(allow_empty_decree=True)
+    unrest = _three_province_unrest(db)
+    assert unrest == {"shaanxi": 55, "shanxi": 55, "henan": 55}
+    assert db.event_terminal_state("north_three_uprising") is None
+
+
+def test_edict_that_raises_unrest_over_gate_triggers_after_the_edict(game, monkeypatch):
+    """三省 unrest 55 经旨升 20 后，同一过月入口在实账上触发。"""
+    db, state, content = game
+    minister = next(iter(content.characters.values())).name
+    _set_three_province_unrest(db, 55)
+    _stage_region_unrest_edict(db, state, minister, 20)
+    session = _prepare_player_month(db, state, content, monkeypatch)
+    session.resolve_turn(allow_empty_decree=True)
+    assert _three_province_unrest(db) == {"shaanxi": 75, "shanxi": 75, "henan": 75}
+    assert db.event_terminal_state("north_three_uprising") == "triggered"

@@ -13,7 +13,7 @@ import sqlite3
 from contextlib import contextmanager
 from typing import Any, Dict, List, Literal, Mapping, Optional, Sequence, Tuple
 
-from ming_sim.applier import atomic
+from ming_sim.applier import atomic, connection_owns_transaction
 from ming_sim.appointment_tenure import appointment_tenure_from
 from ming_sim.authority_privileges import AUTHORITY_PRIVILEGE_SET
 from ming_sim.constants import (
@@ -1446,11 +1446,14 @@ def apply_petition_event_outcome(
             "terminal_reason": _event_terminal_records(db).get(eid, {}).get("terminal_reason", ""),
         }
     label = _fiscal_levy_normalized_terminal_reason_or_abort(event, raw, state)
+    # 所有权必须在写入前看。sqlite 对 DML 隐式 BEGIN，写完后再看 in_transaction
+    # 永远为真，默认 commit=True 的独立调用就会报成功却不落盘。
+    owns_transaction = commit and connection_owns_transaction(db.conn)
     db.mark_event_triggered(
         state, eid, source="petition_verdict", terminal_reason=label, commit=False,
     )
     apply_event_cascading_invalidations(state, db, commit=False)
-    if commit and not db.conn.in_transaction:
+    if owns_transaction:
         db.conn.commit()
     return {
         "id": eid, "settled": True, "terminal_state": "triggered", "terminal_reason": label,
@@ -2559,13 +2562,13 @@ def auto_trigger_seed_issues(state: GameState, db: GameDB) -> List[Dict[str, obj
     立 issue，绕过 LLM 因果判定（不进候选池等 extractor 决定）。event_to_issue 自带去重，
     已触发过返回 None 自动跳过。返回本回合硬触发的清单（供日志/邸报告知）。
 
-    放在结算链 simulator 之前调用，使硬立的 issue 当回合即进盘面、被邸报叙述。"""
+    唯一月链消费点在逐旨落账之后、世界段之前，硬立的 issue 当回合即进盘面。"""
     with atomic(db):
         return _auto_trigger_seed_issues_in_atomic(state, db)
 
 
 def _auto_trigger_seed_issues_in_atomic(state: GameState, db: GameDB) -> List[Dict[str, object]]:
-    """auto_trigger_seed_issues 的事务体；由外层函数或 pre_settle 嵌套事务统一提交/回滚。"""
+    """auto_trigger_seed_issues 的事务体；嵌套在月链事务内时由外层统一提交/回滚。"""
     c = _ctx()
     terminal_states = _event_terminal_states(db)
     triggered: List[Dict[str, object]] = []
@@ -3862,6 +3865,18 @@ def _event_outcome_label(raw_outcomes: object, event_id: str) -> str:
     return str(raw or "").strip()
 
 
+def _merge_first_event_outcome(current: Dict[str, object], incoming: object, event_id: str) -> None:
+    """信封只贡献自己的 event_id；空归属不写；同键首次非空标签胜，后写不覆盖。"""
+    eid = str(event_id or "").strip()
+    if not eid or not isinstance(current, dict) or not isinstance(incoming, dict):
+        return
+    if not _event_outcome_label({eid: incoming.get(eid)}, eid):
+        return
+    if _event_outcome_label(current, eid):
+        return
+    current[eid] = incoming[eid]
+
+
 def _normalize_event_outcome_label(event_id: str, label: str) -> str:
     allowed = _STRATEGIC_EVENT_OUTCOME_LABELS.get(event_id, frozenset())
     compact = re.sub(r"\s+", "", str(label or ""))
@@ -4450,7 +4465,7 @@ def _preflight_declared_event_groups(
                 continue
             outcome: Dict[str, object] = {}
             for item in group:
-                outcome.update(item.get("事件结局") or {})
+                _merge_first_event_outcome(outcome, item.get("事件结局") or {}, event_id)
             raw_label = _event_outcome_label(outcome, event_id)
             if not raw_label:
                 # 留中／未答毕：本疏已答而事件未终，不写终态（合法，不是缺项）。
@@ -4473,7 +4488,7 @@ def _preflight_declared_event_groups(
             continue
         outcome = {}
         for item in group:
-            outcome.update(item.get("事件结局") or {})
+            _merge_first_event_outcome(outcome, item.get("事件结局") or {}, event_id)
         label, error = _strategic_event_outcome_label_or_error(event_id, {"事件结局": outcome}, content)
         if error:
             rejected[event_id] = error

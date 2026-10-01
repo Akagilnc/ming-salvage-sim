@@ -927,17 +927,11 @@ def _collect_disclosures_from_result(chain: Optional[Dict[str, Any]], result: An
 def _consume_event_gates_after_edicts(
     session: Any, chain: Dict[str, Any], *, decree_text: str, source: Provenance,
 ) -> None:
-    """#1892：世界段从**当月实账**起调——逐旨落账后重跑既有判门，再开世界段。
+    """#1892：世界事件的唯一消费时点——逐旨落账之后、世界段之前。
 
-    修复「世界触发未消费逐旨落账后的当月实况」：``pre_settle`` 的判门
-    （apply_event_terminal_states + auto_trigger_seed_issues）在**旨意结算之前**跑，
-    那时本月旨意的机械后果尚未入账，依赖这些后果才达成的判门本月必然漏发
-    （诊断反例：unrest 由旨意抬到 80、gate 已 true，事件仍无终态）。
-
-    这里**复用同一对既有判门**在世界段起调前再跑一次，不新增平行判门、不新增
-    触发机制：两条路径读的都是同一批 ``event_triggers`` 终态账，天然幂等
-    （已落终态／已触发者在各自函数内被跳过），因此重跑只会把「本月新达成的
-    判门」补上，不会二次触发或翻转既有终态。
+    判门读当月实账。旨前跑过的终态不可撤销，所以这里不是第二遍补判，
+    ``pre_settle`` 不再调用这两条判门。``event_gates_after_edicts_done`` 只防止
+    同月恢复时再消费一次。
     """
     from ming_sim.issues import apply_event_terminal_states, auto_trigger_seed_issues
     from ming_sim.token_stats import tlog
@@ -951,12 +945,12 @@ def _consume_event_gates_after_edicts(
         triggered = auto_trigger_seed_issues(state, db)
     if terminalized:
         tlog(
-            f"[event-gate] 逐旨后补判终态 {len(terminalized)} 条："
+            f"[event-gate] 逐旨后终态 {len(terminalized)} 条："
             f"{[(t['id'], t['terminal_state']) for t in terminalized]}"
         )
     if triggered:
         tlog(
-            f"[event-gate] 逐旨后补判硬触发 {len(triggered)} 条："
+            f"[event-gate] 逐旨后硬触发 {len(triggered)} 条："
             f"{[t.get('title') for t in triggered]}"
         )
     with atomic(db):

@@ -922,3 +922,30 @@ def test_final_strategic_rejection_leaves_no_owned_effects(game):
     triggered = db.has_event_triggered("jisi_lubian")
     assert state.metrics["民心"] == metric_before + (-3 if triggered else 0)
     assert state.metrics["国库"] == treasury_before + (-1 if triggered else 0)
+
+
+def test_month_translation_receives_person_candidate_identity(game):
+    """人物候选身份与 event_pool 声明契约进入过月转译请求，不另开模型调用。"""
+    from ming_sim import issues
+    from ming_sim.month_translate import (
+        build_month_segment_translate_prompt,
+        dispatch_month_segment,
+    )
+
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1636
+    state.period = 4
+    db.save_state(state)
+    segment = "盛京传来皇太极称帝改国号的消息。"
+    assert "huangtaiji_chengdi" not in segment
+    seen = []
+
+    def translate(request, _config):
+        seen.append(request)
+        return {"effects": {}}
+
+    dispatch_month_segment(db, state, segment=segment, translate_fn=translate)
+    prompt = build_month_segment_translate_prompt(seen[0])
+    assert "huangtaiji_chengdi" in prompt
+    assert "event_pool" in prompt

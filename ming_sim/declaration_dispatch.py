@@ -345,7 +345,11 @@ def _effect_extraction_from_clean(
             extraction[field].extend(value)
             ordered_effect_event_ids[field].extend([event_id] * len(value))
         elif isinstance(value, dict):
-            extraction[field].update(value)
+            if field == "事件结局":
+                from ming_sim.issues import _merge_first_event_outcome
+                _merge_first_event_outcome(extraction[field], value, event_id)
+            else:
+                extraction[field].update(value)
             if field in ordered_deltas:
                 ordered_deltas[field].extend(value.items())
                 ordered_effect_event_ids[field].extend([event_id] * len(value))
@@ -434,7 +438,12 @@ def _dispatch_effects(
         )])
 
     from ming_sim.simulation import EMPTY_EXTRACTION
-    from ming_sim.issues import apply_score_extraction, preflight_declared_event_effects, sanitize_delta_shape
+    from ming_sim.issues import (
+        _merge_first_event_outcome,
+        apply_score_extraction,
+        preflight_declared_event_effects,
+        sanitize_delta_shape,
+    )
     from ming_sim.decree import _collect_inline_rejections
     from ming_sim.person_delta_adapter import normalize_person_changes
 
@@ -490,7 +499,9 @@ def _dispatch_effects(
         effect_sequence.append((step_extraction, step_ordered, step_event_ids))
         for field, value in step_extraction.items():
             current = extraction[field]
-            if isinstance(value, list) and isinstance(current, list):
+            if field == "事件结局" and isinstance(value, dict) and isinstance(current, dict):
+                _merge_first_event_outcome(current, value, event_id)
+            elif isinstance(value, list) and isinstance(current, list):
                 current.extend(value)
             elif isinstance(value, dict) and isinstance(current, dict):
                 current.update(value)

@@ -1406,6 +1406,7 @@ def _world_candidate_events(db: Any, state: Any) -> list:
             "trigger_gate": dict(ev.trigger_gate),
             "resolve_condition": ev.resolve_condition,
             "fail_condition": ev.fail_condition,
+            "terminal_reason_labels": list(getattr(ev, "terminal_reason_labels", []) or []),
             # ADR 0014 §2：战斗/对抗类软判须喂「历史结果 + 历史成因」作锚。该锚
             # 在既有 precondition 字段里（事件自带的三档结果与判定依据），不回显
             # 等于把锚抽掉。
