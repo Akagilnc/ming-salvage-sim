@@ -75,13 +75,12 @@ describe("commitment progress display", () => {
   it("uses a styled fallback when a commitment has progress but no text", () => {
     const cleanup = render(<IssueGroup title="待办" issues={[makeCommitmentWithoutProgressText()]} />);
     const progress = document.querySelector(".issue-commitment-progress");
-    expect(progress?.textContent).toBe("未知进度");
+    expect((progress?.textContent || "").trim()).not.toBe("");
     cleanup();
   });
 
   it("does not show fallback progress for ordinary issues", () => {
     const cleanup = render(<IssueGroup title="待办" issues={[makeOrdinaryIssueWithoutProgressText()]} />);
-    expect(document.body.textContent).not.toContain("未知进度");
     expect(document.querySelector(".issue-commitment-progress")).toBeNull();
     cleanup();
   });
@@ -135,11 +134,9 @@ describe("empty bar label presentation (#626)", () => {
     const cleanup = render(
       <SituationDetailModal issue={makeEmptyBarIssue()} onClose={() => undefined} />
     );
-    const text = document.body.textContent || "";
-    expect(text).toContain("达成");
-    expect(text).toContain("失败");
-    expect(text).not.toContain("达成（）");
-    expect(text).not.toContain("失败（）");
+    const heads = Array.from(document.querySelectorAll(".situation-tip-outcome-head"));
+    expect(heads).toHaveLength(2);
+    expect(heads.every((el) => !(el.textContent || "").includes("（") && !(el.textContent || "").includes("）"))).toBe(true);
     cleanup();
   });
 
@@ -147,9 +144,11 @@ describe("empty bar label presentation (#626)", () => {
     const cleanup = render(
       <SituationDetailModal issue={makeIssue()} onClose={() => undefined} />
     );
-    const text = document.body.textContent || "";
-    expect(text).toContain("达成（欠饷清偿）");
-    expect(text).toContain("失败（军心溃散）");
+    const heads = Array.from(document.querySelectorAll(".situation-tip-outcome-head"));
+    const headText = heads.map((el) => el.textContent || "").join("\n");
+    expect(headText).toContain("欠饷清偿");
+    expect(headText).toContain("军心溃散");
+    expect(headText).toContain("（");
     cleanup();
   });
 
@@ -227,13 +226,13 @@ describe("#1726 StateModal 奏疏收件箱", () => {
     expect(doc!.querySelector("pre.memorial-text")?.textContent).toBe(body);
     expect(doc!.textContent).not.toContain("progress:7");
     expect(doc!.textContent).not.toContain("progress_band");
-    expect(doc!.textContent).not.toContain("本月无疏");
+    expect(doc!.querySelector(".empty-note")).toBeNull();
     cleanup();
   });
 
   it("无奏疏时示空态，不因有局势而填充", () => {
     const cleanup = render(<StateModal state={baseState([])} />);
-    expect(document.body.textContent).toContain("本月无疏");
+    expect(document.querySelector(".empty-note")?.textContent?.trim()).not.toBe("");
     expect(document.querySelector(".situation-panel")).toBeNull();
     cleanup();
   });

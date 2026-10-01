@@ -309,7 +309,7 @@ def test_character_context_with_db_reads_own_style_and_viewer_ledger(game):
     assert NEW_STYLE in rendered
     assert person.name in rendered and other.name in rendered
     own_dto = expected_own[0]
-    assert own_dto["recent_context"] in rendered or "两人在朝上声气相通" in rendered
+    assert own_dto["recent_context"] in rendered
 
 
 def test_context_passes_raw_style_and_ledger_prose_without_rewrite(game):

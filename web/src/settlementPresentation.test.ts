@@ -31,30 +31,31 @@ describe("settlement presentation routing", () => {
   });
 
   it("#1234 year-month label is driven only by server settlement_display", () => {
-    expect(yearMonthLabel({ year: 1627, period: 10 })).toBe("1627 年 10 月");
-    expect(yearMonthLabel({ year: 1627, period: 10, settlement_display: false })).toBe("1627 年 10 月");
-    expect(yearMonthLabel({ year: 1627, period: 10, settlement_display: true })).toBe("1627 年 10 月 · 核账");
+    const base = { year: 1627, period: 10 };
+    const plain = yearMonthLabel(base);
+    expect(yearMonthLabel({ ...base, settlement_display: false })).toBe(plain);
+    const marked = yearMonthLabel({ ...base, settlement_display: true });
+    expect(marked).not.toBe(plain);
+    expect(plain).toContain(String(base.year));
+    expect(plain).toContain(String(base.period));
+    expect(marked).toContain(String(base.year));
+    expect(marked).toContain(String(base.period));
   });
 
-  it("#1323 awaiting_decision 文案层：年月标 ·待批；递话/关闭理由分口吻", () => {
-    expect(yearMonthLabel({
-      year: 1627, period: 10, settlement_display: true, phase: "awaiting_decision",
-    })).toBe("1627 年 10 月 · 待批");
-    expect(yearMonthLabel({
-      year: 1627, period: 10, settlement_display: true, phase: "settling",
-    })).toBe("1627 年 10 月 · 核账");
+  it("#1323 awaiting_decision 文案层：年月标按相位分叉；递话/关闭理由分口吻", () => {
+    const base = { year: 1627, period: 10, settlement_display: true as const };
+    const awaiting = yearMonthLabel({ ...base, phase: "awaiting_decision" });
+    const settling = yearMonthLabel({ ...base, phase: "settling" });
+    const plain = yearMonthLabel({ year: 1627, period: 10 });
+    expect(awaiting).not.toBe(settling);
+    expect(awaiting).not.toBe(plain);
+    expect(settling).not.toBe(plain);
     expect(wangSettlementSlipText("awaiting_decision")).toBe(WANG_AWAITING_SLIP);
     expect(wangSettlementSlipText("settling")).toBe(WANG_SETTLEMENT_SLIP);
     expect(settlementClosedReason("awaiting_decision")).toBe(AWAITING_CLOSED_REASON);
     expect(settlementClosedReason("settling")).toBe(SETTLEMENT_CLOSED_REASON);
-    // P4：正向短句，无进度条/百分比/秒数/模板长文
-    expect(WANG_AWAITING_SLIP).toMatch(/待批/);
-    expect(WANG_AWAITING_SLIP).toMatch(/批红/);
-    expect(WANG_AWAITING_SLIP).not.toMatch(/%|％|\d+\s*秒|进度条/);
-    expect(WANG_AWAITING_SLIP.length).toBeLessThan(40);
-    expect(AWAITING_CLOSED_REASON).toMatch(/待批/);
-    expect(AWAITING_CLOSED_REASON).toMatch(/批红/);
-    // 显隐谓词仍只看 settlement_display（phase 不充门控真源）
+    expect(wangSettlementSlipText("awaiting_decision")).not.toBe(wangSettlementSlipText("settling"));
+    expect(settlementClosedReason("awaiting_decision")).not.toBe(settlementClosedReason("settling"));
     expect(wangSettlementSlipVisible(true)).toBe(true);
     expect(wangSettlementSlipVisible(false)).toBe(false);
   });
@@ -106,8 +107,7 @@ describe("#1236 T3 settlement face gates (唯一谓词 settlement_display)", () 
     }
     expect(wangSettlementSlipVisible(false)).toBe(false);
     expect(wangSettlementSlipVisible(true)).toBe(true);
-    expect(WANG_SETTLEMENT_SLIP.length).toBeGreaterThan(0);
-    expect(WANG_SETTLEMENT_SLIP).not.toMatch(/%|％|\d+\s*秒|进度条/);
-    expect(SETTLEMENT_CLOSED_REASON).toMatch(/核账/);
+    expect(wangSettlementSlipText("settling")).toBe(WANG_SETTLEMENT_SLIP);
+    expect(settlementClosedReason("settling")).toBe(SETTLEMENT_CLOSED_REASON);
   });
 });

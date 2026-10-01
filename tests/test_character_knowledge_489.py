@@ -1,6 +1,7 @@
 """#489 角色见闻：职位裁切、公开事件与参与留痕。"""
 
 import json
+import re
 
 from ming_sim.models import Character
 import pytest
@@ -83,7 +84,8 @@ def test_current_state_facts_are_selected_by_content_domain_not_role_label(
     assert roster
     assert "personnel" in view
     assert roster[0]["name"] in view["personnel"]
-    assert (roster[0]["office"] or "无现任官职") in view["personnel"]
+    if roster[0]["office"]:
+        assert roster[0]["office"] in view["personnel"]
     assert "不应读取的派系底账" not in view["personnel"]
     assert "military" not in view
     assert "treasury" not in view
@@ -376,7 +378,10 @@ def test_secret_office_exclusion_does_not_hide_unrelated_world_bucket(game):
     view = db.get_character_knowledge(state, clerk.name)
 
     assert db.list_secret_orders()[0]["excluded_targets"] == {"people": [], "offices": ["户部"]}
-    assert view["world"]["public"] == "登基伊始，朝廷暂无前回合奏报。"
+    public = view["world"]["public"]
+    assert public
+    assert "暗查亏空" not in public
+    assert "查户部旧账" not in public
     assert view["world"].get("treasury")
     assert not any(item["source_id"] == f"secret_order:{order}" for item in view["events"])
 
@@ -1334,6 +1339,28 @@ def test_household_secret_ledger_hides_case_by_excluded_office(game):
         successor.office, successor.office_type = prior_office, prior_type
 
 
+def _assert_ming_register(db, text: str) -> None:
+    rows = db.conn.execute(
+        "SELECT name, manpower, status FROM armies WHERE owner_power='ming'"
+    ).fetchall()
+    assert rows and text
+    for row in rows:
+        assert row["name"] in text
+        assert re.search(rf"(?<!\d){int(row['manpower'])}(?!\d)", text)
+        status = str(row["status"] or "").strip()
+        if status:
+            assert status not in text
+
+
+def _assert_court_offices(db, state, text: str) -> None:
+    rows = db.current_court_roster_rows(state)
+    assert rows and text
+    for row in rows:
+        assert row["name"] in text
+        if row["office"]:
+            assert row["office"] in text
+
+
 def _office_archive_from_materials(db, state, character, root):
     prepared = prepare_character_materials(db, state, character, dest_root=root)
     path = next(p for p in list_materials(prepared.root) if p.endswith("/公事档案.txt"))
@@ -1434,8 +1461,8 @@ def test_central_ledgers_and_unbounded_household_history_reach_final_materials(g
     )
     assert "EARLY_LEDGER_0" in household_archive and "内库" not in household_archive
     war_archive = _office_archive_from_materials(db, state, war, tmp_path / "war")
-    assert "兵籍在册" in war_archive and "军心" not in war_archive and "欠饷" not in war_archive
+    _assert_ming_register(db, war_archive)
     personnel_archive = _office_archive_from_materials(
         db, state, personnel, tmp_path / "personnel",
     )
-    assert "任免簿" in personnel_archive
+    _assert_court_offices(db, state, personnel_archive)

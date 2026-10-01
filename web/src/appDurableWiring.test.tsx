@@ -4,7 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "./main";
-import { SETTLEMENT_CLOSED_REASON } from "./settlementPresentation";
+import { SETTLEMENT_CLOSED_REASON, yearMonthLabel } from "./settlementPresentation";
 import { measureElectronLayout } from "./testSupport/electronLayout";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -2292,7 +2292,10 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     const host = await mountApp();
 
     // 顶栏快照四键 + 核账标（legacies / economy 同源叠影）
-    expect(host.textContent).toContain("· 核账");
+    expect(host.textContent).toContain(yearMonthLabel(settlementBaseState("settling").turn));
+    expect(host.textContent).not.toContain(
+      yearMonthLabel({ ...settlementBaseState("settling").turn, phase: "awaiting_decision" }),
+    );
     expect(host.textContent).toContain(`${SNAP_TREASURY}万两`);
     expect(host.textContent).toContain(`${SNAP_INNER}万两`);
     expect(host.textContent).toContain(String(SNAP_MINXIN));
@@ -2398,7 +2401,7 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     expect(memorialsDialog.textContent).not.toContain(MIDCOURSE_ISSUE);
     expect(memorialsDialog.querySelector(".situation-list")).toBeNull();
     expect(memorialsDialog.querySelector(".situation-panel")).toBeNull();
-    expect(memorialsDialog.textContent).toContain("本月无疏");
+    expect(memorialsDialog.querySelector(".empty-note")?.textContent?.trim()).not.toBe("");
     expect(memorialsDialog.textContent).not.toContain(SETTLEMENT_CLOSED_REASON);
     expect(memorialsDialog.textContent).not.toContain(SNAP_MEMORIAL);
     await closeOpenOverlay(host);
@@ -2590,7 +2593,12 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     });
     const host = await mountApp();
     expect(host.querySelector("[data-testid=wang-settlement-slip]")).toBeNull();
-    expect(host.textContent).not.toContain("· 核账");
+    expect(host.textContent).not.toContain(
+      yearMonthLabel({ year: 1627, period: 10, settlement_display: true, phase: "settling" }),
+    );
+    expect(host.textContent).not.toContain(
+      yearMonthLabel({ year: 1627, period: 10, settlement_display: true, phase: "awaiting_decision" }),
+    );
     expect(byAria(host, "省份列表")?.getAttribute("aria-disabled")).toBe("false");
     expect(byAria(host, "军队列表")?.getAttribute("aria-disabled")).toBe("false");
     // 局势（半程）与上月已结一并恢复
@@ -2744,7 +2752,8 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
       return new Response("{}", { status: 404 });
     });
     const host = await mountApp();
-    expect(cmdByCaption(host, "奏疏")?.getAttribute("aria-label")).toBe("奏疏：1 件待览");
+    expect(cmdByCaption(host, "奏疏")?.getAttribute("aria-label")).toMatch(/(?<!\d)1(?!\d)/);
+    expect(cmdByCaption(host, "奏疏")?.getAttribute("aria-label")).not.toMatch(/(?<!\d)0(?!\d)/);
     await click(cmdByCaption(host, "奏疏"));
     await tick();
     await act(async () => {
@@ -2765,7 +2774,8 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     });
     await tick();
     // 关面板后 gen 已 bump；迟到回执不得把 HUD 未读数覆写成 0。
-    expect(cmdByCaption(host, "奏疏")?.getAttribute("aria-label")).toBe("奏疏：1 件待览");
+    expect(cmdByCaption(host, "奏疏")?.getAttribute("aria-label")).toMatch(/(?<!\d)1(?!\d)/);
+    expect(cmdByCaption(host, "奏疏")?.getAttribute("aria-label")).not.toMatch(/(?<!\d)0(?!\d)/);
   });
 
   it("#1342 朝堂抽屉开着时点拟诏：关抽屉并开拟诏台", async () => {

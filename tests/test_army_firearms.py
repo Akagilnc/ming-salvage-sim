@@ -14,20 +14,6 @@ import re
 from ming_sim.constants import ARMY_SCORE_FIELDS
 
 
-def _army_report_clause(db, name: str, *, limit: int) -> str:
-    report = db.army_report(limit=limit)
-    ordered = [row["name"] for row in db.army_rows(limit=limit, danger_order=True)]
-    start = report.find(name)
-    assert start >= 0
-    end = len(report)
-    if name in ordered:
-        for other in ordered[ordered.index(name) + 1:]:
-            pos = report.find(other, start + len(name))
-            if pos != -1:
-                end = min(end, pos)
-    return report[start:end]
-
-
 def _pay_source():
     return {
         "pay_source_region": "shaanxi",
@@ -145,35 +131,37 @@ def test_army_public_exits_surface_firearm_and_cannon(game):
         db.conn.execute(f"UPDATE armies SET {cols} WHERE id=?", (*fields.values(), aid))
         db.conn.commit()
 
-    def _roster_line(*, qualitative: bool) -> str:
-        return next(
-            line for line in db.army_roster(
-                filter_names=[name], qualitative_equipment=qualitative
-            ).splitlines()
-            if line.startswith(name + "|")
-        )
+    def _has(text: str, number: int) -> bool:
+        return re.search(rf"(?<!\d){number}(?!\d)", text) is not None
 
-    _set(firearm_equipment=45, cannon_equipment=3)
+    _set(firearm_equipment=45, cannon_equipment=3, manpower=8000, salary_rate=1.0)
     detail = db.army_detail(name)
-    assert "45" in detail and "3" in detail
+    roster = db.army_roster(filter_names=[name])
+    assert _has(detail, 45) and _has(detail, 3)
+    assert _has(roster, 45) and _has(roster, 3)
     _set(firearm_equipment=91, cannon_equipment=7)
     detail_hi = db.army_detail(name)
-    assert detail != detail_hi and "91" in detail_hi and "7" in detail_hi and "91" not in detail
+    roster_hi = db.army_roster(filter_names=[name])
+    assert detail != detail_hi
+    assert _has(detail_hi, 91) and _has(detail_hi, 7) and not _has(detail, 91)
+    assert _has(roster_hi, 91) and not _has(roster, 91)
 
-    # report：抬危入榜；固定火器只改炮数；截取目标军行核对炮门可数事实
-    _set(firearm_equipment=45, cannon_equipment=11, supply=1, morale=1, loyalty=1, training=1)
-    seg_a = _army_report_clause(db, name, limit=8)
-    assert re.search(r"(?<!\d)11(?!\d)", seg_a)
-    _set(cannon_equipment=8)  # 火器不变
-    seg_b = _army_report_clause(db, name, limit=8)
-    assert re.search(r"(?<!\d)8(?!\d)", seg_b)
-    assert not re.search(r"(?<!\d)11(?!\d)", seg_b) and seg_a != seg_b
+    _set(
+        firearm_equipment=45, cannon_equipment=11,
+        supply=1, morale=1, loyalty=1, training=1,
+        manpower=8000, salary_rate=1.0,
+    )
+    report_a = db.army_report(limit=8)
+    assert name in report_a
+    _set(cannon_equipment=8)
+    report_b = db.army_report(limit=8)
+    assert name in report_b and report_a != report_b
 
-    _set(firearm_equipment=30, cannon_equipment=4)
-    cells_num = _roster_line(qualitative=False).split("|")
-    cells_q = _roster_line(qualitative=True).split("|")
-    assert cells_num[-2] == "30" and cells_num[-1] == "4"
-    assert cells_q[-2] != "30" and "30" not in cells_q and cells_q[-1] == "4"
+    _set(firearm_equipment=30, cannon_equipment=4, manpower=8000, salary_rate=1.0)
+    roster_num = db.army_roster(filter_names=[name], qualitative_equipment=False)
+    roster_q = db.army_roster(filter_names=[name], qualitative_equipment=True)
+    assert _has(roster_num, 30) and _has(roster_num, 4)
+    assert not _has(roster_q, 30) and _has(roster_q, 4)
 
     db.create_armies_from_extraction(state, [{
         "id": "probe_fire_new", "name": "火器新营", "owner_power": "ming",

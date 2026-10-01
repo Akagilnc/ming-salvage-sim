@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import re
 import sqlite3
 from types import SimpleNamespace
 
@@ -23,6 +24,19 @@ from ming_sim.report import print_header
 from ming_sim.materials import list_materials, prepare_character_materials, read_material
 
 ARMY = "guanning"
+
+
+def _assert_ming_register(db, text: str) -> None:
+    rows = db.conn.execute(
+        "SELECT name, manpower, status FROM armies WHERE owner_power='ming'"
+    ).fetchall()
+    assert rows and text
+    for row in rows:
+        assert row["name"] in text
+        assert re.search(rf"(?<!\d){int(row['manpower'])}(?!\d)", text)
+        status = str(row["status"] or "").strip()
+        if status:
+            assert status not in text
 PATHS = ("legacy", "substrate_hub")
 
 _RAW_KEYS = frozenset({"morale", "loyalty", "arrears"})
@@ -306,7 +320,7 @@ def test_four_chains_embed_situation_matrix(game):
     war = next(c for c in content.characters.values() if c.office_type == "兵部")
     knowledge = build_character_knowledge(db, state, war.name)
     military = (knowledge.get("world") or {}).get("military") or ""
-    assert "兵籍在册" in military
+    _assert_ming_register(db, military)
 
     # #321 P7：print_header 不得回流 army_report（以目标军结构化 name 哨兵为唯一负断言）
     buf = io.StringIO()
@@ -329,7 +343,7 @@ def test_four_chains_embed_situation_matrix(game):
         read_material(prepared.root, path)
         for path in list_materials(prepared.root) if path != "INDEX.txt"
     )
-    assert "兵籍在册" in blob
+    _assert_ming_register(db, blob)
 
 
 @pytest.mark.parametrize("fiscal_path", PATHS)

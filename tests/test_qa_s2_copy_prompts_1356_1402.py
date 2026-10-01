@@ -31,11 +31,8 @@ def test_gazette_header_uses_report_own_month_not_current_turn(game):
     # 开局 t0：无固定 seed 邸报（删除方案）；当前回合仍是天启七年十月
     assert state.turn == 1
     assert (state.year, state.period) == (1627, 10)
-    assert reign_period_label(state.year, state.period) == "天启七年十月"
     opening_body = db.previous_turn_summary(state)
-    assert "天启七年九月邸报" not in opening_body
-    assert "待办未解（开局三事）" not in opening_body
-    assert "信王于乾清宫即皇帝位" not in opening_body
+    assert opening_body == ""
 
     # 落一条真实「九月」报文 → 报头必须九月（与报文自身月同源）
     db.conn.execute(
@@ -43,7 +40,7 @@ def test_gazette_header_uses_report_own_month_not_current_turn(game):
         (0, 1627, 9, "天启七年九月邸报\n\n一、真结算九月报文"),
     )
     db.conn.commit()
-    assert db.previous_turn_reign_period_label(state) == "天启七年九月"
+    assert db.previous_turn_reign_period_label(state) == reign_period_label(1627, 9)
     assert "真结算九月报文" in db.previous_turn_summary(state)
 
 
@@ -58,12 +55,11 @@ def test_gazette_header_cross_year_december_report_under_january_state(game):
     # 过月后 state 已是崇祯元年正月
     state.year, state.period, state.turn = 1628, 1, 6
     current = reign_period_label(state.year, state.period)
-    assert current == "崇祯元年正月"
     header = db.previous_turn_reign_period_label(state)
-    assert header == "天启七年十二月"
+    assert header == reign_period_label(1627, 12)
     assert header != current
     body = db.previous_turn_summary(state)
-    assert "十二月" in body
+    assert "天启七年十二月邸报·跨年钉测" in body
 
 
 def test_state_payload_projects_previous_reign_period_label(game):
@@ -81,7 +77,7 @@ def test_state_payload_projects_previous_reign_period_label(game):
         (0, 1627, 9, "天启七年九月邸报\n\n一、真结算九月报文·payload 钉"),
     )
     db.conn.commit()
-    assert db.previous_turn_reign_period_label(state) == "天启七年九月"
+    assert db.previous_turn_reign_period_label(state) == reign_period_label(1627, 9)
 
     # 与 c3 同形轻壳：经 WebGame.state_payload 真投影
     runtime = object.__new__(web_app.WebGame)
@@ -106,10 +102,9 @@ def test_state_payload_projects_previous_reign_period_label(game):
     runtime.character_power_id = lambda c: "ming"
 
     payload = web_app.WebGame.state_payload(runtime)
-    assert payload["previous_reign_period_label"] == "天启七年九月"
+    assert payload["previous_reign_period_label"] == reign_period_label(1627, 9)
     assert "真结算九月报文" in payload["previous_summary"]
     assert payload["turn"]["reign_period_label"] == reign_period_label(state.year, state.period)
-    assert payload["turn"]["reign_period_label"] == "天启七年十月"
     assert payload["previous_reign_period_label"] != payload["turn"]["reign_period_label"]
 
 

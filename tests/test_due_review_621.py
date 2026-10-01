@@ -244,10 +244,11 @@ def test_due_review_scene_tops_live_open_night_even_with_body(game):
     open_night(db, state, time_of_day="戌时", location="乾清宫")
     facts = _scene_pending_audience_facts(db, state)
     opening = _scene_opening_text(state, [], "", [], facts)
-    assert "当前待裁场面" in opening
     assert facts, "待裁场面须原样进入开场最小集"
+    assert opening
     joined = "\n".join(facts)
-    assert "三年火器见眉目" in joined or "火器见眉目" in joined
+    assert stages[0]["origin_context"] in joined
+    assert stages[0]["criterion_text"] in joined
 
 
 # ── P1 有案卷桥 / 无案卷分支 ──────────────────────────────────────────

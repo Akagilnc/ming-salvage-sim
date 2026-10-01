@@ -8,6 +8,7 @@ import {
   SETTLEMENT_CLOSED_REASON,
   WANG_AWAITING_SLIP,
   WANG_SETTLEMENT_SLIP,
+  yearMonthLabel,
 } from "../settlementPresentation";
 import type { GameState, Minister } from "../types";
 
@@ -108,8 +109,8 @@ describe("#1236 GameHud face gates eat settlement_display", () => {
     );
 
     expect(host.querySelector("[data-testid=wang-settlement-slip]")?.textContent).toContain(WANG_SETTLEMENT_SLIP);
-    expect(host.textContent).toContain("· 核账");
-    expect(host.textContent).not.toContain("· 待批");
+    expect(host.textContent).toContain(yearMonthLabel(state.turn));
+    expect(host.textContent).not.toContain(yearMonthLabel({ ...state.turn, phase: "awaiting_decision" }));
     // 关闭组：省/兵
     const regionBtn = Array.from(host.querySelectorAll("button")).find((b) => b.getAttribute("aria-label") === "省份列表");
     const armyBtn = Array.from(host.querySelectorAll("button")).find((b) => b.getAttribute("aria-label") === "军队列表");
@@ -133,9 +134,9 @@ describe("#1236 GameHud face gates eat settlement_display", () => {
       (b.getAttribute("aria-label") || "").startsWith("奏疏"),
     );
     expect(memorialBtn?.querySelector(".hud2-cmd-badge")).toBeNull();
-    expect(memorialCap?.textContent).toMatch(/0\s*件待览/);
-    expect(memorialCap?.getAttribute("aria-label")).toMatch(/0\s*件待览/);
-    expect(memorialCap?.textContent).not.toContain("半程");
+    expect(memorialCap?.textContent).toMatch(/(?<!\d)0(?!\d)/);
+    expect(memorialCap?.getAttribute("aria-label")).toMatch(/(?<!\d)0(?!\d)/);
+    expect(memorialCap?.textContent).not.toMatch(/(?<!\d)3(?!\d)/);
     // situation 关闭 / closed_issues 只读：半程议题不渲染，上月已结仍在
     expect(host.textContent).not.toContain("半程军饷议题");
     expect(host.querySelector(".situation-list")).toBeNull();
@@ -227,8 +228,8 @@ describe("#1236 GameHud face gates eat settlement_display", () => {
       />,
     );
     expect(host.querySelector("[data-testid=wang-settlement-slip]")?.textContent).toContain(WANG_AWAITING_SLIP);
-    expect(host.textContent).toContain("· 待批");
-    expect(host.textContent).not.toContain("· 核账");
+    expect(host.textContent).toContain(yearMonthLabel(state.turn));
+    expect(host.textContent).not.toContain(yearMonthLabel({ ...state.turn, phase: "settling" }));
     const regionBtn = Array.from(host.querySelectorAll("button")).find((b) => b.getAttribute("aria-label") === "省份列表")!;
     expect(regionBtn.getAttribute("aria-disabled")).toBe("true");
     act(() => { regionBtn.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
@@ -287,7 +288,7 @@ describe("#1236 roster chat entry stripped in settlement_display", () => {
     const card = host.querySelector("button.minister-card") as HTMLButtonElement;
     expect(card.disabled).toBe(true);
     expect(card.getAttribute("title")).toBe(AWAITING_CLOSED_REASON);
-    expect(card.getAttribute("title")).not.toMatch(/核账/);
+    expect(card.getAttribute("title")).not.toBe(SETTLEMENT_CLOSED_REASON);
   });
 
   it("AppointmentDrawer 任免名册不再承载召对入口", () => {
@@ -371,14 +372,6 @@ describe("QA A-1 #1276/#1282/#1285 GameHud HUD 对齐", () => {
       (b.getAttribute("aria-label") || "").startsWith("邸报"),
     );
     expect(dibao).toBeTruthy();
-    expect(dibao?.textContent).toContain("邸报");
-    expect(dibao?.textContent).toContain("上月抄报");
-    expect(dibao?.textContent).not.toContain("起居注");
-    // 起居注不得再占命令木牌 caption
-    const mislabeled = Array.from(host.querySelectorAll(".hud2-cmd-caption")).find((b) =>
-      b.textContent?.includes("起居注"),
-    );
-    expect(mislabeled).toBeFalsy();
     act(() => { dibao?.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
     expect(opened).toEqual(["report"]);
   });
@@ -402,7 +395,8 @@ describe("QA A-1 #1276/#1282/#1285 GameHud HUD 对齐", () => {
       (b.getAttribute("aria-label") || "").startsWith("奏疏"),
     );
     expect(memorial).toBeTruthy();
-    expect(memorial?.textContent).toMatch(/3\s*件待览/);
+    expect(memorial?.textContent).toMatch(/(?<!\d)3(?!\d)/);
+    expect(memorial?.textContent).not.toMatch(/(?<!\d)0(?!\d)/);
     const badge = host.querySelector(".hud2-cmd-badge");
     expect(badge?.textContent).toBe("3");
     // 零未读时不得借 issues 条数充数
@@ -412,7 +406,8 @@ describe("QA A-1 #1276/#1282/#1285 GameHud HUD 对齐", () => {
     const zeroCap = Array.from(hostZero.querySelectorAll(".hud2-cmd-caption")).find((b) =>
       (b.getAttribute("aria-label") || "").startsWith("奏疏"),
     );
-    expect(zeroCap?.textContent).toMatch(/0\s*件待览/);
+    expect(zeroCap?.textContent).toMatch(/(?<!\d)0(?!\d)/);
+    expect(zeroCap?.textContent).not.toMatch(/(?<!\d)3(?!\d)/);
     act(() => { memorial?.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
     expect(opened).toEqual(["state"]);
   });

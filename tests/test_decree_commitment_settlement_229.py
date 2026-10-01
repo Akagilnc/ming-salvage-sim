@@ -283,13 +283,15 @@ def test_commitment_ongoing_malformed_entity_payloads_are_rejected_without_crash
 
     assert _faction_satisfaction(db, "军队") == 52
     rows = db.conn.execute(
-        "SELECT category, reason FROM rejection_reports WHERE reason LIKE '%须为对象%' "
+        "SELECT category, reason FROM rejection_reports WHERE category = 'invalid_shape' "
         "ORDER BY id"
     ).fetchall()
-    assert [row["category"] for row in rows] == ["invalid_shape", "invalid_shape", "invalid_shape"]
-    assert any("region_delta.beizhili" in row["reason"] for row in rows)
-    assert any("army_delta.guanning" in row["reason"] for row in rows)
-    assert any("power_updates.houjin" in row["reason"] for row in rows)
+    paths = ("region_delta.beizhili", "army_delta.guanning", "power_updates.houjin")
+    matched = [row for row in rows if any(path in row["reason"] for path in paths)]
+    assert len(matched) == 3
+    assert [row["category"] for row in matched] == ["invalid_shape"] * 3
+    found = [next(path for path in paths if path in row["reason"]) for row in matched]
+    assert sorted(found) == sorted(paths)
 
 
 def test_commitment_stop_gate_resolve_respects_outer_transaction_rollback(game):
@@ -554,9 +556,11 @@ def test_commitment_progress_contexts_are_structured(game, capsys):
 
     _advance_player_month(db, state, content)
 
+    progress = commitment_progress_payload(db, state, _issue_row(db, issue_id))
+    assert progress is not None
+    assert progress["months_elapsed"] == 1
     show_active_issues(db)
     output = capsys.readouterr().out
-    assert "已第1月" in output
     assert "直到补齐" in output
 
 

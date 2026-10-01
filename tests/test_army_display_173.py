@@ -16,20 +16,6 @@ import pytest
 from ming_sim.army_pay import army_needed
 
 
-def _army_report_clause(db, report: str, name: str, *, limit: int) -> str:
-    """Isolate one army by the same row order army_report uses, not punctuation."""
-    ordered = [row["name"] for row in db.army_rows(limit=limit, danger_order=True)]
-    start = report.find(name)
-    assert start >= 0
-    end = len(report)
-    if name in ordered:
-        for other in ordered[ordered.index(name) + 1:]:
-            pos = report.find(other, start + len(name))
-            if pos != -1:
-                end = min(end, pos)
-    return report[start:end]
-
-
 def test_army_payload_exposes_army_needed(read_game):
     """army_payload 须暴露引擎实扣应发 army_needed（供 web/LLM 呈现「月饷」），与 army_pay.army_needed 一致。"""
     db, _state, _ = read_game
@@ -83,22 +69,22 @@ def test_army_public_exits_approx_arrears_and_hide_split_accounts(game):
     )
     db.conn.commit()
     name = row["name"]
-    detail, roster = db.army_detail(name), db.army_roster(filter_names=[name])
+    detail = db.army_detail(name)
+    roster = db.army_roster(filter_names=[name])
     report = db.army_report(limit=100)
-    seg = _army_report_clause(db, report, name, limit=100)
-    exits = (detail, seg, roster)
-    joined = "\n".join(exits)
-    # 欠饷裸精确小数不得进入真实出口（与 #321 raw 哨兵同形）
-    assert name in detail and "12.5" not in joined
-    for forbidden in ("province_pay_arrears", "central_pay_arrears", "省份额欠", "中央份额欠"):
-        assert forbidden not in joined
+    assert name in detail and name in report
+    for text in (detail, roster, report):
+        assert "12.5" not in text
+    payload = {army["id"]: army for army in db.army_payload()}[row["id"]]
+    for key in ("arrears", "province_pay_arrears", "central_pay_arrears"):
+        assert key not in payload
     db.conn.execute(
         "UPDATE armies SET arrears=0, province_pay_arrears=0, central_pay_arrears=0 WHERE id=?",
         (row["id"],),
     )
     db.conn.commit()
     assert db.army_detail(name) != detail
-    for text in exits:
+    for text in (detail, roster):
         for bare in scores.values():
             assert not re.search(rf"(?<!\d){bare}(?!\d)", text)
 

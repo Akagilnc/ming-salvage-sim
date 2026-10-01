@@ -504,10 +504,12 @@ def test_region_army_formatters_skip_rejected_items():
 
     only_rej_r = format_region_changes([
         {"rejected": True, "category": "invalid_enum", "reason": "字段非法"}])
-    assert "未见明确地区盘面变化" in only_rej_r
+    assert only_rej_r == format_region_changes([])
+    assert only_rej_r != out_r and "山东" not in only_rej_r
     only_rej_a = format_army_changes([
         {"rejected": True, "category": "invalid_enum", "reason": "字段非法"}])
-    assert "未见明确军队盘面变化" in only_rej_a
+    assert only_rej_a == format_army_changes([])
+    assert only_rej_a != out_a and "京营" not in only_rej_a
 
 
 def test_duplicate_army_noninteger_manpower_rejected(game):

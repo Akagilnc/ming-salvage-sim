@@ -3213,7 +3213,8 @@ def test_manpower_zero_writeoffs_pay_source_arrears_before_retiring_army(fresh_d
         FROM army_logs
         WHERE army_id = 'shaanxi_army'
           AND field = 'arrears'
-          AND reason LIKE '%核销%'
+          AND CAST(old_value AS REAL) = 10
+          AND CAST(new_value AS REAL) = 0
         ORDER BY id DESC
         LIMIT 1
         """

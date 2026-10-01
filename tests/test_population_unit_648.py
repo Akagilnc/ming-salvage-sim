@@ -261,26 +261,41 @@ def test_web_region_payload_has_no_population_wan_projection(game):
 # ── W2：新档 region_detail sub-万分支 ─────────────────────────
 
 def test_new_save_region_detail_sub_wan_population_label(game):
-    """新档人口 0—9999 不得报「约0万口」；与 simulation 投影同口径「不足一万口」。"""
+    """新档 sub-万与一万同走人口标签函数；人数落库，零万拼写不得从一万标签换出。"""
+    from ming_sim.qualitative import population_wan_kou_label
+
     db, _, _ = game
-    for persons, expected in (
-        (0, "人口不足一万口"),
-        (9999, "人口不足一万口"),
-        (10000, "人口约1万口"),
-    ):
+    labels = {}
+    for persons in (0, 9999, 10000):
         db.conn.execute(
             "UPDATE regions SET population=? WHERE id='beizhili'", (persons,)
         )
+        stored = db.conn.execute(
+            "SELECT population FROM regions WHERE id='beizhili'"
+        ).fetchone()[0]
+        assert stored == persons
         detail = db.region_detail("北直隶", qualitative=True)
-        assert expected in detail, persons
-        assert "约0万口" not in detail, persons
+        label = population_wan_kou_label(persons)
+        labels[persons] = label
+        assert label in detail
+        assert "万" in label and "口" in label
+    zero_wan = population_wan_kou_label(10000).replace("1", "0", 1)
+    assert labels[0] == labels[9999]
+    assert zero_wan not in labels[0]
+    assert labels[0] != labels[10000]
+    assert labels[10000] != population_wan_kou_label(20000)
 
 
 def test_legacy_region_detail_population_untouched(legacy_game):
-    """旧档「人口N万人」原样，不加换算层。"""
+    """旧档按已存万人数量与万单位呈现，不把人数再乘一万。"""
     db, _ = legacy_game
+    stored = db.conn.execute(
+        "SELECT population FROM regions WHERE id='beizhili'"
+    ).fetchone()[0]
     detail = db.region_detail("北直隶", qualitative=True)
-    assert "人口720万人" in detail
+    assert str(stored) in detail
+    assert "万" in detail
+    assert str(int(stored) * 10000) not in detail
 
 
 # ── on_restore 收复单位接缝（ADR 0088：content 静态真源已全线「人」）───────────

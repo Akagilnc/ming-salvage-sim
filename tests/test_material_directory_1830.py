@@ -91,7 +91,8 @@ def test_prepare_writes_typed_tree_and_index(game, tmp_path):
     roster = read_material(prepared.root, "人物/朝臣名册.txt")
     status, _reason = db.get_character_status(character.name)
     assert character.name in roster
-    assert (character.office or "无现任官职") in roster
+    if character.office:
+        assert character.office in roster
     assert status in roster
 
 

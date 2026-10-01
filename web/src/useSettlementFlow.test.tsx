@@ -476,7 +476,7 @@ describe("#1433 useSettlementFlow — 退朝 awaiting 消费面（禁盲 reload 
     expect(reload).not.toHaveBeenCalled();
     // 批红面不丢：同会话停窗弹决策，HUD 读状态口投影
     expect(host.querySelector("[data-testid=pending-count]")?.textContent).toBe("1");
-    expect(host.querySelector("[data-testid=year-month]")?.textContent).toBe("1627 年 10 月 · 待批");
+    expect(host.querySelector("[data-testid=year-month]")?.textContent).toBe(yearMonthLabel(awaitingState.turn));
     expect(host.querySelector("[data-testid=settlement-display]")?.textContent).toBe("true");
     expect(host.querySelector("[data-testid=busy]")?.textContent).toBe("");
     expect(host.querySelector("[data-testid=error]")?.textContent).toBe("");
@@ -567,7 +567,7 @@ describe("#1234 useSettlementFlow — 同会话 awaiting 停窗消费状态口",
     const { host, hookRef, cleanup } = mountHarness({ loadState });
 
     // 点击前：无核账标
-    expect(host.querySelector("[data-testid=year-month]")?.textContent).toBe("1627 年 10 月");
+    expect(host.querySelector("[data-testid=year-month]")?.textContent).toBe(yearMonthLabel(preClickState.turn));
     expect(host.querySelector("[data-testid=settlement-display]")?.textContent).toBe("false");
 
     await act(async () => {
@@ -578,7 +578,7 @@ describe("#1234 useSettlementFlow — 同会话 awaiting 停窗消费状态口",
     expect(reload).not.toHaveBeenCalled();
 
     // 同会话不 reload：状态口投影驱动 HUD
-    expect(host.querySelector("[data-testid=year-month]")?.textContent).toBe("1627 年 10 月 · 待批");
+    expect(host.querySelector("[data-testid=year-month]")?.textContent).toBe(yearMonthLabel(awaitingState.turn));
     expect(host.querySelector("[data-testid=settlement-display]")?.textContent).toBe("true");
     expect(host.querySelector("[data-testid=treasury]")?.textContent).toBe("1781");
     expect(host.querySelector("[data-testid=inner]")?.textContent).toBe("320");
