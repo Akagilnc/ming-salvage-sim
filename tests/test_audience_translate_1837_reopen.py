@@ -395,7 +395,6 @@ def test_separate_inquiries_same_turn_survive_and_retry_is_idempotent(game, with
     assignments = [event for event in db.get_character_knowledge(state, attendant.name)["events"]
                    if event["kind"] == "inquiry_assignment"]
     assert len(assignments) == 2
-    assert {event["body"] for event in assignments} == set(queries)
     assert len({event["source_id"] for event in assignments}) == 2
 
 

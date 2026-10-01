@@ -2038,11 +2038,9 @@ def test_build_secret_orders_supply_feed_uses_fact_materials_not_assembled_effec
     assert "segment_applied_results" not in feed
     assert feed.get("world_segment") == "世界段原文·密报可读。"
     assert secret_forecast in (feed.get("forecasts") or [])
-    assert any(
-        row.get("decree_ref") == f"secret_order:{order_id}"
-        and (row.get("declaration") or {}).get("body") == secret_decl
-        for row in (feed.get("nominal") or [])
-    )
+    nominal = next(row for row in feed["nominal"]
+                   if row["decree_ref"] == f"secret_order:{order_id}")
+    assert nominal["declaration"]["body"] == secret_decl
     # 未 settled 的拟旨不得进入名义。身份是 decree_ref，不是正文是否撞车。
     assert all(
         row.get("decree_ref") != "pending-action:1847-unpromulgated:1"

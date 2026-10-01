@@ -88,10 +88,9 @@ def write_identity_materials(
         written.append(rel)
     if written:
         index_path = root / _INDEX_NAME
-        existing = index_path.read_text(encoding="utf-8") if index_path.is_file() else ""
-        merged = [line for line in existing.splitlines() if line]
-        merged.extend(rel for rel in written if rel not in merged)
-        _write_text(index_path, "\n".join(merged))
+        # Append paths without re-reading or normalizing the existing free text.
+        with index_path.open("a", encoding="utf-8", newline="") as stream:
+            stream.write("\n" + "\n".join(written) + "\n")
         object.__setattr__(prepared, "index_lines", tuple(index))
     return written
 

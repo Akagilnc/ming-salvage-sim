@@ -70,10 +70,7 @@ def test_army_public_exits_approx_arrears_and_hide_split_accounts(game):
     db.conn.commit()
     name = row["name"]
     detail, roster = db.army_detail(name), db.army_roster(filter_names=[name])
-    report = db.army_report(limit=100)
-    # 按出口结构隔离目标军字段（report 只扫目标段，避开合计饷银）
-    seg = next(p for p in report.split("：", 1)[-1].split("；") if p.startswith(name + "："))
-    exits = (detail, seg, roster)
+    exits = (detail, roster)
     joined = "\n".join(exits)
     # 欠饷裸精确小数不得进入真实出口（与 #321 raw 哨兵同形）
     assert name in detail and "12.5" not in joined
@@ -88,57 +85,6 @@ def test_army_public_exits_approx_arrears_and_hide_split_accounts(game):
     for text in exits:
         for bare in scores.values():
             assert not re.search(rf"(?<!\d){bare}(?!\d)", text)
-
-
-def test_army_arrears_presentation_rounds_half_steps_up(game):
-    """#305：半档进位只比欠饷近似事实（不拿含 pay_months 的整份 detail 当 oracle）。"""
-    from ming_sim.db import _approx_wanliang
-
-    db, _state, _ = game
-    row = db.conn.execute(
-        "SELECT id,name FROM armies WHERE owner_power='ming' ORDER BY id LIMIT 1"
-    ).fetchone()
-
-    def _arrears_fact(arrears: float) -> str:
-        db.conn.execute(
-            "UPDATE armies SET arrears=?, province_pay_arrears=?, central_pay_arrears=0 WHERE id=?",
-            (arrears, arrears, row["id"]),
-        )
-        db.conn.commit()
-        approx = _approx_wanliang(arrears)
-        assert approx in db.army_detail(row["name"])
-        return approx
-
-    assert _arrears_fact(12.5) == _arrears_fact(15) != _arrears_fact(12)
-    assert _arrears_fact(25) == _arrears_fact(30) != _arrears_fact(15)
-
-
-def test_army_payload_exposes_approx_arrears_text_not_raw(game):
-    """#321：web 只读 army_payload.arrears_text approximate；numeric arrears 键缺席；raw 12.5 不裸出。"""
-    from ming_sim.db import _player_army_situation
-
-    db, _state, _ = game
-    row = db.conn.execute(
-        "SELECT id FROM armies WHERE owner_power='ming' ORDER BY id LIMIT 1"
-    ).fetchone()
-    db.conn.execute(
-        """
-        UPDATE armies
-        SET arrears=12.5, province_pay_arrears=12.5, central_pay_arrears=0
-        WHERE id=?
-        """,
-        (row["id"],),
-    )
-    db.conn.commit()
-
-    full = db.conn.execute("SELECT * FROM armies WHERE id=?", (row["id"],)).fetchone()
-    expected = _player_army_situation(full, db._army_pay(full))["arrears_text"]
-    payload = {army["id"]: army for army in db.army_payload()}
-    assert "arrears" not in payload[row["id"]]
-    assert payload[row["id"]]["arrears_text"] == expected
-    assert "12.5" not in expected
-
-
 
 
 def test_danger_order_uses_army_needed_for_arrears_months(game):

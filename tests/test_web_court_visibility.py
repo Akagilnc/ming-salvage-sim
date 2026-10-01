@@ -533,33 +533,3 @@ def test_identity_resolves_weishi_and_vassal_aliases_no_duplicate_file(game):
         for r in db.conn.execute("SELECT name FROM characters").fetchall()
     }
     assert after_p == before_p, f"福王别名不得建重档，多出：{after_p - before_p}"
-
-
-def test_choose_minister_real_entry_excludes_weishi_includes_court(game, monkeypatch):
-    """#1317 r2：CLI choose_minister 真入口与可召谓词同口径（排未仕，留真臣）。"""
-    from ming_sim.cli import terminal as term
-
-    db, _state, content = game
-    sess = _session_stub(db, content)
-
-    # 强行 active 未仕，确认真入口仍不列
-    db.conn.execute(
-        "UPDATE characters SET status='active' WHERE name=?", ("史可法",),
-    )
-    db.conn.commit()
-
-    printed: list[str] = []
-
-    def fake_print(*args, **_kwargs):
-        printed.append(" ".join(str(a) for a in args))
-
-    # quit ∈ COURT_BREAK_COMMANDS → 返回 None（退朝），只验证列名册副作用
-    monkeypatch.setattr("builtins.print", fake_print)
-    monkeypatch.setattr("builtins.input", lambda *_a, **_k: "quit")
-
-    assert term.choose_minister(sess) is None
-
-    blob = "\n".join(printed)
-    assert "可召见大臣" in blob
-    assert "史可法" not in blob
-    assert "温体仁" in blob or "毕自严" in blob

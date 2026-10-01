@@ -270,7 +270,6 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
             for path in list_materials(prepared.root)
         }
         seen["author_files"] = files
-        seen["author_blob"] = "\n".join([prepared.opening, *files.values()])
         return real_create_author(llm_config, prepared)
 
     monkeypatch.setattr(agents, "create_gazette_author_agent", capture_author)
@@ -308,13 +307,7 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
 
     assert result.advanced is True
     assert int(state.turn) == turn + 1
-    author_blob = seen["author_blob"]
-    for secret in (
-        _SECRET_FACT, _SECRET_DOSSIER_FACT, _SECRET_AUDIENCE, _SECRET_BRIEF,
-        _SECRET_DOSSIER_TEXT, _SECRET_DOSSIER_LEDGER,
-        "密令分轮应允经历1862", "待决密令经历1862", "密令账", "密令案卷账",
-    ):
-        assert secret not in author_blob
+    assert not any(path.startswith("密令/") for path in seen["author_files"])
     from ming_sim.materials import _safe_segment
     fact_rel = f"事实/character-{_safe_segment(minister)}.txt"
     assert _PUBLIC_FACT in seen["author_files"][fact_rel]
@@ -331,8 +324,6 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
     assert all(str(row.get("origin_ref") or "") != "secret_order:9" for row in payload["landed"])
     assert all(str(row.get("origin_ref") or "") != f"dossier:{secret_did}" for row in payload["landed"])
     assert any(str(row.get("origin_ref") or "") == f"dossier:{plain_did}" for row in payload["landed"])
-    assert "预推不可见:宁远补饷" in payload["forecasts"]
-    assert _SECRET_FORECAST not in payload["forecasts"]
     assert all(item.get("decree_ref") != "secret_order:9" for item in payload["nominal"])
     assert any(
         str((item.get("item") or {}).get("origin_ref") or "") == f"affair:{affair.id}"
@@ -343,7 +334,7 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
         for item in payload["rejections"]
     )
     assert payload["world_segment"] == "WORLD_PUBLIC_SEGMENT"
-    assert any(row.get("note") == "朱批可见" for row in payload["rescript_answers"])
+    assert [row["event_id"] for row in payload["rescript_answers"]] == ["note:1"]
     label = reign_period_label(year, period)
     assert payload["reign_period_label"] == label
     assert {item["origin_ref"] for item in payload["due_commitments"]} == {

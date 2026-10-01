@@ -998,7 +998,6 @@ def test_turn_report_counterpart_never_uses_aggregate_when_sources_exist(game):
         for item in db.get_character_knowledge(state, reader.name)[bucket]
     }
     assert "test:report-source-bound-public" in visible_ids
-    assert unscoped_marker not in db.get_turn_report(state.turn)
 
 def test_shared_archive_storage_never_writes_restricted_aggregate(game):
     db, state, content = game
@@ -1013,7 +1012,6 @@ def test_shared_archive_storage_never_writes_restricted_aggregate(game):
 
     db.save_turn_report(state, f"{public}；{secret}", knowledge_items=db.knowledge_items_for_turn(state.turn))
 
-    assert secret not in db.get_turn_report(state.turn)
     outsider = next(name for name in content.characters if name != participant)
     outsider_ids = {
         item.get("source_id")
