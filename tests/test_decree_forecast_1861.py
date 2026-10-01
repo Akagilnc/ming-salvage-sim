@@ -36,6 +36,56 @@ def _drain(sess) -> None:
     get_session_write_queue(sess).wait_idle()
 
 
+def _track_submits(monkeypatch, cond, futs) -> None:
+    real_submit = audience_translation._executor.submit
+
+    def tracking_submit(fn, /, *args, **kwargs):
+        fut = real_submit(fn, *args, **kwargs)
+        with cond:
+            futs.append(fut)
+            cond.notify_all()
+
+        def _notify_terminal(_fut) -> None:
+            with cond:
+                cond.notify_all()
+
+        fut.add_done_callback(_notify_terminal)
+        return fut
+
+    monkeypatch.setattr(audience_translation._executor, "submit", tracking_submit)
+
+
+def _calls_overlapped(cond, entered, futs, need: int) -> bool:
+    """True when `need` stub calls are inside together.
+
+    A future still waiting for a worker has not arrived. Return once every
+    submitted call has finished, is blocked in the stub, or is queued behind
+    workers that are all inside the stub.
+    """
+    limit = audience_translation._executor._max_workers
+    with cond:
+        while len(entered) < need:
+            inflight = 0
+            queued = 0
+            for fut in futs:
+                if fut.done():
+                    continue
+                if fut.running():
+                    inflight += 1
+                else:
+                    queued += 1
+            # A running call that has not entered can still arrive.
+            if inflight > len(entered):
+                cond.wait()
+                continue
+            # A free worker can pick up a queued call.
+            if queued and inflight < limit:
+                cond.wait()
+                continue
+            return False
+        return True
+
+
 def _sess(db, state, content, monkeypatch, translate_fn):
     sess = GameSession.__new__(GameSession)
     sess.db = db
@@ -390,49 +440,23 @@ def test_held_rejudgments_overlap_instead_of_waiting_in_one_worker(game, monkeyp
         with cond:
             entered.append(1)
             cond.notify_all()
-        # 两条腿都进了推演才放行（#1861 P5）。放行不看秒数：缺腿时由
-        # 扫描票完成且其余在飞票都已停在本替身里这一终端事实打开，
-        # 断言随即变红，finally 仍能排空。
         release.wait()
         return "预推"
 
-    real_submit = audience_translation._executor.submit
-
-    def tracking_submit(*args, **kwargs):
-        fut = real_submit(*args, **kwargs)
-        with cond:
-            futs.append(fut)
-            cond.notify_all()
-
-        def _notify_terminal(_fut):
-            with cond:
-                cond.notify_all()
-
-        fut.add_done_callback(_notify_terminal)
-        return fut
-
+    _track_submits(monkeypatch, cond, futs)
     monkeypatch.setattr(decree_mod, "run_agent_text", judge)
     monkeypatch.setattr(forecast_mod.agents, "run_agent_text", simulate)
     monkeypatch.setattr(
         month_translate, "run_declaration_translate_prompt",
         lambda *_a, **_k: {"commissions": []},
     )
-    monkeypatch.setattr(audience_translation._executor, "submit", tracking_submit)
     sess = _sess(db, state, content, monkeypatch, lambda *_a, **_k: {})
     assert forecast_mod.schedule_held_decree_forecasts(sess) is True
     try:
-        with cond:
-            while True:
-                pending = [fut for fut in futs if not fut.done()]
-                scan_done = bool(futs) and futs[0].done()
-                if len(entered) >= 2:
-                    break
-                if scan_done and len(pending) == len(entered):
-                    break
-                cond.wait()
+        overlapped = _calls_overlapped(cond, entered, futs, 2)
         release.set()
         _drain(sess)
-        assert len(entered) == 2
+        assert overlapped
         for dossier_id, pending_id in zip(ids, pending_ids):
             stale_ref = pending_action_decree_ref(pending_id, 1)
             held_ref = held_dossier_decree_ref(dossier_id)
@@ -485,7 +509,6 @@ def test_same_local_ids_on_two_saves_both_stage(game, _game_template_path, monke
     other = GameDB(str(copy_path), content)
 
     entered = []
-    proceed = threading.Event()
     release = threading.Event()
     cond = threading.Condition()
     futs = []
@@ -493,35 +516,14 @@ def test_same_local_ids_on_two_saves_both_stage(game, _game_template_path, monke
     def judge(_agent, prompt, *_args, **_kwargs):
         with cond:
             entered.append(1)
-            if len(entered) >= 2:
-                release.set()
             cond.notify_all()
-        proceed.set()
-        # 两存档的判官都进了替身才放行。第一腿若在进替身前就结束，
-        # 队列排空会打开 proceed；第二腿同样缺席时，在飞票与已进入
-        # 替身的数量对齐即打开 release。都不按时限判。
         release.wait()
         dossier = json.loads(prompt)["dossiers"][0]
         return json.dumps({
             "verdicts": [{"dossier_id": dossier["id"], "decision": "promulgated"}],
         })
 
-    real_submit = audience_translation._executor.submit
-
-    def tracking_submit(*args, **kwargs):
-        fut = real_submit(*args, **kwargs)
-        with cond:
-            futs.append(fut)
-            cond.notify_all()
-
-        def _notify_terminal(_fut):
-            with cond:
-                cond.notify_all()
-
-        fut.add_done_callback(_notify_terminal)
-        return fut
-
-    monkeypatch.setattr(audience_translation._executor, "submit", tracking_submit)
+    _track_submits(monkeypatch, cond, futs)
     monkeypatch.setattr(decree_mod, "run_agent_text", judge)
     monkeypatch.setattr(forecast_mod.agents, "run_agent_text", lambda *_a, **_k: "预推")
     monkeypatch.setattr(
@@ -529,7 +531,6 @@ def test_same_local_ids_on_two_saves_both_stage(game, _game_template_path, monke
         lambda *_a, **_k: {"commissions": []},
     )
     armed = []
-    watcher = None
     try:
         for one_db, one_state in ((db, state), (other, other.load_state())):
             night = open_night(one_db, one_state)
@@ -548,34 +549,20 @@ def test_same_local_ids_on_two_saves_both_stage(game, _game_template_path, monke
         assert forecast_mod.schedule_pending_decree_forecast(
             armed[0][0], armed[0][2], night_id=armed[0][3],
         ) is True
-
-        def _open_when_first_queue_idle() -> None:
-            get_session_write_queue(armed[0][0]).wait_idle()
-            proceed.set()
-
-        watcher = threading.Thread(target=_open_when_first_queue_idle, daemon=True)
-        watcher.start()
-        # 判官进替身，或第一腿队列已经排空。后者是终端事实，不是时钟。
-        proceed.wait()
+        first_inside = _calls_overlapped(cond, entered, futs, 1)
         assert forecast_mod.schedule_pending_decree_forecast(
             armed[1][0], armed[1][2], night_id=armed[1][3],
         ) is True
-        with cond:
-            while True:
-                pending = [fut for fut in futs if not fut.done()]
-                if len(entered) >= 2:
-                    break
-                if len(futs) >= 2 and len(pending) == len(entered):
-                    break
-                cond.wait()
+        overlapped = _calls_overlapped(cond, entered, futs, 2)
         release.set()
-        for sess, one_db, pending_id, _night_id in armed:
+        for sess, *_rest in armed:
             _drain(sess)
+        assert first_inside and overlapped
+        for sess, one_db, pending_id, _night_id in armed:
             stored = one_db.staged_declarations.staged_for(
                 pending_action_decree_ref(pending_id, 1),
             )
             assert len(stored) == 1 and stored[0].verdict["decision"] == "promulgated"
-        assert len(entered) == 2
     finally:
         # 无论成败先放行门闩，再把两 session 排空——第二连接由本用例自己持有，
         # 夹具只管第一库；不排空就关它，仍在飞的腿会打到已关闭的连接上。
@@ -583,5 +570,3 @@ def test_same_local_ids_on_two_saves_both_stage(game, _game_template_path, monke
         for sess, *_rest in armed:
             _drain(sess)
         other.close()
-        if watcher is not None:
-            watcher.join()
