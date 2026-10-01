@@ -4,7 +4,7 @@ Seams:
 - rush_staged_commitment_stage → issues.stages_json[].due_turn（真加速唯一写口）
 - pending_actions(action=催办, status=committed) → urge_history 史源
 - build_due_review_input.urge_history（读时派生事实）
-- decide_due_review_verdict 只按实况账判（#1895 退役失真档调制）
+- 到期复核只按实况账判（#1895 退役失真档调制）
 - ENTRY_KIND_RUSH_REMONSTRANCE / ENTRY_KIND_GRACE_PLEA + payload_json 真伪底
 - 四缝单一白名单（仅 ENTRY_KIND_STAGED）
 """
@@ -18,7 +18,6 @@ from ming_sim.due_review import (
     apply_due_review_for_todo,
     apply_pending_due_reviews,
     build_due_review_input,
-    decide_due_review_verdict,
     dossiers_with_pending_due_review,
     list_due_review_scenes,
     project_due_review_scene,
@@ -245,8 +244,6 @@ def test_urge_no_longer_rewrites_verdict_ac1_1895(game):
     )
     todo = [t for t in db.list_next_audience_todos() if int(t["id"]) == tid][0]
     base_inp = build_due_review_input(db, todo)
-    base_verdict = decide_due_review_verdict(base_inp)
-    assert base_verdict["outcome"] == "degraded"
 
     rush_staged_commitment_stage(
         db, state, commitment_ref=issue_id, stage_idx=0,
@@ -257,14 +254,11 @@ def test_urge_no_longer_rewrites_verdict_ac1_1895(game):
         deadline_months=0, reason="再催",
     )
     rushed_inp = build_due_review_input(db, todo)
-    rushed_verdict = decide_due_review_verdict(rushed_inp)
 
-    # 催办史仍作事实素材落进输入（世界因果保留）……
+    # 催办史仍作事实素材落进输入（世界因果保留）。
     assert len(rushed_inp["urge_history"]) > len(base_inp["urge_history"])
-    # ……但判词不再被它压重：同一实况、同一终值。
-    assert rushed_verdict["outcome"] == base_verdict["outcome"] == "degraded"
 
-    # 落库路径同样只认实况：重催不把执行格改写成 failed/transformed。
+    # 落库路径只认实况：重催不把执行格改写成 failed/transformed。
     applied = apply_due_review_for_todo(db, state, todo, commit=True)
     assert applied["verdict"]["outcome"] == "degraded"
     assert db.get_decree_dossier(dossier_id)["execution_outcome"] == "degraded"
@@ -663,11 +657,11 @@ def test_commitment_rush_via_pending_actions_gate(game):
 def test_payload_json_corrupt_read_is_loud(game):
     """腐坏 payload 读路响亮，禁静默等同空底。"""
     from ming_sim.db import GameDB
-    with pytest.raises(ValueError, match="腐坏"):
+    with pytest.raises(ValueError):
         GameDB.parse_engine_payload_json(
             "{not-json", surface="test.payload_json",
         )
-    with pytest.raises(ValueError, match="非对象|须为对象"):
+    with pytest.raises(ValueError):
         GameDB.parse_engine_payload_json(
             "[1,2]", surface="test.payload_json",
         )

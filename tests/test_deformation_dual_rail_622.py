@@ -195,32 +195,6 @@ def test_ac1_ac2_transformed_vs_degraded_dual_rail_tracer(game, tmp_path, conten
     # 无 durable beyond_intent 效果——仅表报
     assert db.list_economy_moves_for_dossier(deg_id) == []
 
-    # 单元对照：decide_due_review_verdict 仅标记不同
-    base_input = {
-        "mid_stage": False,
-        "criterion_text": "清丈见成数",
-        "origin_context": "清丈畿辅田亩",
-        "progress_reports": [{"progress_band": "在办", "memorial_text": "已办十之八九"}],
-        "durable_effects": [{
-            "origin_ref": "dossier:0",
-            "delta": 12,
-            "beyond_intent": False,
-        }],
-    }
-    # 有实况无旨外 → fulfilled（对照树完整性）
-    assert decide_due_review_verdict(base_input)["outcome"] == "fulfilled"
-    marked = dict(base_input)
-    marked["durable_effects"] = [{
-        "origin_ref": "dossier:0",
-        "delta": 12,
-        "beyond_intent": True,
-    }]
-    assert decide_due_review_verdict(marked)["outcome"] == "transformed"
-    # 无实况有表报 → degraded（与 transformed 对照）
-    no_effects = dict(base_input)
-    no_effects["durable_effects"] = []
-    assert decide_due_review_verdict(no_effects)["outcome"] == "degraded"
-
     result_deg = _prime_and_apply_due_review(
         db, state, content, dossier_id=deg_id, title="打折对照·清丈",
     )

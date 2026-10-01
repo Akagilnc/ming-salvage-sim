@@ -22,8 +22,8 @@ from ming_sim.decree import pre_settle
 from ming_sim.models import TurnPhase
 from tests.test_due_review_621 import _settle_empty_month
 from ming_sim.due_review import (
+    apply_pending_due_reviews,
     build_due_review_input,
-    decide_due_review_verdict,
 )
 from ming_sim.staged_commitment import (
     TODO_STATUS_PENDING,
@@ -423,7 +423,7 @@ def test_ac4_unified_presence_gate_on_terminal_and_recon_paths(game):
 
 
 def test_due_review_supervision_history_no_longer_hardcoded_empty(game):
-    """有在场事实时监督史非空；判词仍只跟实况账，不跟监督史改写。"""
+    """有在场事实时监督史非空；到期消费后执行格只跟实况账。"""
     db, state, content = game
     owner, auditor_row = _pair_same_faction(db)
     subject_id = _subject_dossier(db, state, owner=str(owner["name"]), token="dr")
@@ -441,6 +441,13 @@ def test_due_review_supervision_history_no_longer_hardcoded_empty(game):
     inp = build_due_review_input(db, todo)
     assert inp["supervision_history"] != []
     assert inp["supervision_history"][0]["auditor_name"] == str(auditor_row["name"])
-    verdict = decide_due_review_verdict(inp)
-    assert verdict["outcome"] == "degraded"
-    assert verdict["close"] is True
+    db.conn.execute(
+        "UPDATE next_audience_todos SET created_turn=?",
+        (int(state.turn) - 1,),
+    )
+    db.conn.commit()
+    applied = apply_pending_due_reviews(db, state, commit=True)
+    assert applied
+    dossier = db.get_decree_dossier(subject_id)
+    assert dossier["execution_outcome"] == "degraded"
+    assert dossier["status"] == "closed"
