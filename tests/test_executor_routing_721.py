@@ -11,10 +11,7 @@ from ming_sim.action_materialize import (
     stage_punishment_candidate)
 from ming_sim.db import atomic
 from ming_sim.decree import pre_settle
-from ming_sim.executor_routing import (
-    classify_execution_coverage,
-    resolve_lead_executors,
-)
+from ming_sim.executor_routing import resolve_lead_executors
 from tests.dossier_test_helpers import promulgate_proposed_appointments
 
 
@@ -41,9 +38,19 @@ def _create(db, state, *, action="assignment", category="清丈", payload=None,
     )
 
 
-@pytest.mark.parametrize("payload", [{}, {"punish_action": ""}, {"punish_action": "抄家"}])
-def test_punishment_without_admitted_strike_subtype_is_excluded(payload):
-    assert classify_execution_coverage("punishment", payload) is None
+@pytest.mark.parametrize("punish_action", ["", "抄家"])
+def test_punishment_without_admitted_strike_subtype_is_excluded(env, punish_action):
+    """未准入惩处细类不经 stage 落 pending 或案卷。"""
+    db, state, _ = env
+    pending_before = db.conn.execute("SELECT COUNT(*) FROM pending_actions").fetchone()[0]
+    dossiers_before = db.conn.execute("SELECT COUNT(*) FROM decree_dossiers").fetchone()[0]
+    pending_id = stage_punishment_candidate(
+        db, state.turn, "陈新甲", text="拿问", target_id="毕自严",
+        punish_action=punish_action, transaction_category="缉拿",
+    )
+    assert pending_id == 0
+    assert db.conn.execute("SELECT COUNT(*) FROM pending_actions").fetchone()[0] == pending_before
+    assert db.conn.execute("SELECT COUNT(*) FROM decree_dossiers").fetchone()[0] == dossiers_before
 
 
 def test_transaction_category_vocabulary_still_comes_from_duty_routes():

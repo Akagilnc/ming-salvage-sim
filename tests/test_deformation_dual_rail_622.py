@@ -13,10 +13,7 @@ import json
 
 from ming_sim.db import GameDB
 from tests.dossier_test_helpers import create_test_secret_order
-from ming_sim.due_review import (
-    apply_pending_due_reviews,
-    decide_due_review_verdict,
-)
+from ming_sim.due_review import apply_pending_due_reviews
 from ming_sim.flows import _apply_economy_list
 from ming_sim.issues import apply_issue_inertia_and_ongoing, apply_score_extraction
 from ming_sim.staged_commitment import write_due_staged_commitment_todos
@@ -294,22 +291,6 @@ def test_coerce_beyond_intent_flag_closed_affirmative_world():
     # 畸形：非标量 + 垃圾串 + 空串 —— 一律 0（不得捏造肯定）
     for value in ([], {}, [False], {"a": 1}, "null", "None", "0.0", "", "  ", "maybe", "garbage"):
         assert coerce(value) == 0, value
-
-
-def test_decide_due_review_malformed_beyond_intent_stays_fulfilled():
-    """durable_effects 带 beyond_intent=[] 畸形标记须判 fulfilled 而非 transformed。"""
-    review_input = {
-        "mid_stage": False,
-        "criterion_text": "清丈见成数",
-        "origin_context": "清丈畿辅田亩",
-        "progress_reports": [{"progress_band": "在办", "memorial_text": "已办十之八九"}],
-        "durable_effects": [{
-            "origin_ref": "dossier:0",
-            "delta": 12,
-            "beyond_intent": [],
-        }],
-    }
-    assert decide_due_review_verdict(review_input)["outcome"] == "fulfilled"
 
 
 # ── ⑥ 补饷路由 seam：beyond_intent 不得因 purpose 分叉丢键（#622 r3）──
