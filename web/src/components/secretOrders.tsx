@@ -1,7 +1,7 @@
 import React from "react";
 import { Lock, MessageSquare, X } from "lucide-react";
 import { FullscreenModal } from "./hud";
-import type { SecretOrder } from "../types";
+import type { DossierProgressReport, SecretOrder } from "../types";
 
 export function SecretOrdersModal({
   orders,
@@ -101,6 +101,15 @@ export function SecretOrdersModal({
   );
 }
 
+function secretReportTitle(report: DossierProgressReport): string {
+  const band = report.progress_band ? ` · ${report.progress_band}` : "";
+  const base = (report.origin || "").split("+")[0];
+  if (report.is_terminal || base.endsWith(":execution_verdict")) return `结案${band}`;
+  if (base.endsWith(":rush")) return `催办${band}`;
+  if (base.endsWith(":review_claim")) return `核议${band}`;
+  return `第 ${report.turn} 回合月报${band}`;
+}
+
 function SecretOrderDetailDialog({
   order,
   statusLabel,
@@ -149,10 +158,10 @@ function SecretOrderDetailDialog({
           </dl>
           <SecretOrderDetailBlock title="密令正文" text={order.content || "未记正文。"} />
           {order.sim_note ? <SecretOrderDetailBlock title="月度动向" text={order.sim_note} tone="green" /> : null}
-          {(order.dossier_progress || []).map((report, index) => (
+          {(order.dossier_progress || []).map((report) => (
             <SecretOrderDetailBlock
               key={report.id}
-              title={`${report.is_terminal ? "结案密奏" : `第 ${index + 1} 月密奏`} · ${report.progress_band}`}
+              title={secretReportTitle(report)}
               text={report.memorial_text}
               tone="green"
             />

@@ -11829,12 +11829,15 @@ class GameDB:
         if row is None:
             raise ValueError("密令不存在")
         reports = json.loads(row["dossier_progress_json"] or "[]")
-        # 同月替换只覆盖同一 origin。催办/核议与月度奏报同月并存，不互相抹掉。
+        # 同月、同一业务身份只留一条。标记（同派/私货）不是另一月。
+        # 催办/核议与月度奏报 base 不同，同月并存。
+        from ming_sim.supervision import report_origin_base
+        incoming = report_origin_base(origin)
         existing = next((
             item for item in reports
             if not item.get("is_terminal")
             and int(item.get("turn", 0)) == int(turn)
-            and str(item.get("origin") or "") == origin
+            and report_origin_base(item.get("origin")) == incoming
         ), None)
         if existing is None or is_terminal:
             report_id = max((int(item.get("id", 0)) for item in reports), default=0) + 1
@@ -21591,8 +21594,8 @@ class GameDB:
         deadline_months: int = 0,
         covert_task: Optional[Mapping[str, object]] = None,
     ) -> Tuple[int, bool]:
-        """同一承办大臣已有 active 密令 → 更新其要旨(title/content/tags/限期)并记一条
-        「奉旨更新」进展；否则新建。返回 (order_id, was_update)。
+        """同一承办大臣已有 active 密令 → 更新其要旨(title/content/tags/限期)；否则新建。
+        返回 (order_id, was_update)。更新不另写一条月度奏报。
         补 CLI 后端无 function-calling 的缺口：原靠大臣 function-call 改密令，现失效；
         再次下密令给同一承办人即更新已有条，而非建重复（限期=0 表示不动原限期）。"""
         existing = self.conn.execute(
@@ -21622,8 +21625,8 @@ class GameDB:
         origin_chat_message_id: Optional[int] = None,
         origin_chat_message_ids: Optional[Iterable[int]] = None,
     ) -> bool:
-        """按**精确 id** 更新 active 密令要旨（title/content/tags/限期），记一条「奉旨更新」进展。
-        返回是否更新（id 存在且状态为 active）。
+        """按**精确 id** 更新 active 密令要旨（title/content/tags/限期）。
+        返回是否更新（id 存在且状态为 active）。不写月度奏报。
 
         与 upsert_secret_order 的区别：upsert 按「该大臣最新 active」改，会话动作「更新」已解析出
         确切 target id 时必须走本方法，否则大臣有多条 active 密令会改错条（CMR F1）。
@@ -21700,7 +21703,6 @@ class GameDB:
                 payload["tags"] = json.loads(tags_json)
                 self.update_decree_dossier_payload(int(dossier["id"]), payload, commit=False)
         tlog(f"[secret_order] update id={order_id} title={title[:20]}")
-        self.update_secret_order_progress(int(order_id), f"奉旨更新密令要旨：{content}", state.year, state.period)
         return True
 
     def list_secret_orders(
@@ -21785,15 +21787,11 @@ class GameDB:
                     self.transition_decree_dossier(
                         int(dossier["id"]), "executing", commit=False,
                     )
-                # 仅当结案正文是新增玩家叙事时追加终奏；不复写/复制既有 0058 奏报（P7）
+                # 仅当结案正文不是已有月度奏报时追加终奏。判重用副本，入库仍是原文。
                 if has_progress_chain and close_text.strip():
-                    last_memorial = ""
-                    for item in reversed(reports):
-                        text = str(item.get("memorial_text") or "").strip()
-                        if text:
-                            last_memorial = text
-                            break
-                    if close_text.strip() != last_memorial:
+                    from ming_sim.supervision import latest_monthly_memorial
+                    last_memorial = latest_monthly_memorial(reports)
+                    if close_text.strip() != last_memorial.strip():
                         self.record_dossier_progress(
                             int(dossier["id"]), int(turn_closed), "结案",
                             close_text, is_terminal=True, commit=False,

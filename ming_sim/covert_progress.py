@@ -661,16 +661,11 @@ def player_facing_secret_order_close_text(
     order: Mapping[str, object],
     reports: Sequence[Mapping[str, object]],
 ) -> str:
-    existing = str(order.get("result") or "").strip()
-    if existing:
+    existing = str(order.get("result") or "")
+    if existing.strip():
         return existing
-    for item in reversed(list(reports or [])):
-        if not isinstance(item, Mapping):
-            continue
-        text = str(item.get("memorial_text") or "").strip()
-        if text:
-            return text
-    return ""
+    from ming_sim.supervision import latest_monthly_memorial
+    return latest_monthly_memorial(reports)
 
 
 def minister_eligible_for_monthly_covert(db: Any, minister_name: str) -> bool:

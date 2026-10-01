@@ -18,7 +18,7 @@ import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, List, Optional, Sequence
+from typing import Any, Callable, List, Mapping, Optional, Sequence
 
 _UNSAFE = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
 _INDEX_NAME = "INDEX.txt"
@@ -681,7 +681,25 @@ def minimal_opening_context(
     return "\n".join(parts)
 
 
-def _write_secret_order_file(tmp: Path, db: Any, state: Any, character: Any) -> str | None:
+def _secret_order_memorials(order: Any) -> list[str]:
+    """承办人自己的月度奏报原文。催办/核议不是月报，实况单位不进这份材料。"""
+    from ming_sim.supervision import MONTHLY_REPORT_BASE, report_origin_base
+
+    texts: list[str] = []
+    for item in order.get("dossier_progress") or []:
+        if not isinstance(item, Mapping) or item.get("is_terminal"):
+            continue
+        if report_origin_base(item.get("origin")) != MONTHLY_REPORT_BASE:
+            continue
+        text = str(item.get("memorial_text") or "")
+        if text.strip():
+            texts.append(text)
+    return texts
+
+
+def _write_secret_order_file(
+    tmp: Path, db: Any, state: Any, character: Any, *, rel: str | None = None,
+) -> str | None:
     """Directory copy of the minister's active secret-order reminder.
 
     Logic lives here after #1833 retired the registry brief builder. Full task
@@ -713,10 +731,11 @@ def _write_secret_order_file(tmp: Path, db: Any, state: Any, character: Any) -> 
             content = str(o.get("content") or "")
             if content:
                 lines.append(content)
+            lines.extend(_secret_order_memorials(o))
         brief = "\n".join(lines)
     else:
         brief = ""
-    rel = f"{_SECRET_DIR}/进行中.txt"
+    rel = rel or f"{_SECRET_DIR}/进行中.txt"
     _write_text(tmp / rel, brief or "（无进行中密令）")
     return rel
 
@@ -1836,6 +1855,12 @@ def _write_one_present_person(
         character_office_archive_text(db, state, character, knowledge),
     )
     index.append(office_rel)
+
+    secret_rel = _write_secret_order_file(
+        tmp, db, state, character, rel=f"{base}/{_SECRET_DIR}/进行中.txt",
+    )
+    if secret_rel:
+        index.append(secret_rel)
 
     for dir_key, title, directory_text, _opening_text, _is_handling in matter_lines:
         matter_seg = _safe_segment(dir_key)

@@ -247,15 +247,10 @@ def terminal_report_facade(
     )
     # 变形：优先复用末次非终值月报陈词作假象载体（仍须成功口径）。
     if key == "transformed" and prior_reports:
-        for item in reversed(list(prior_reports)):
-            if not isinstance(item, dict):
-                continue
-            if item.get("is_terminal"):
-                continue
-            text = str(item.get("memorial_text") or "").strip()
-            if text:
-                memorial = text
-                break
+        from ming_sim.supervision import latest_monthly_memorial
+        text = latest_monthly_memorial(prior_reports)
+        if text:
+            memorial = text
     return band, memorial
 
 def qualitative_dossier_status(value: object) -> str:

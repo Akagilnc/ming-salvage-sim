@@ -602,6 +602,7 @@ export type DossierProgressReport = {
   progress_band: string;
   memorial_text: string;
   is_terminal: boolean;
+  origin?: string;
 };
 
 export type SecretOrder = {

@@ -142,6 +142,15 @@ class DeclarationDispatchResult:
     rushes: SectionResult
     travel_tones: SectionResult
 
+    def commit_failure_reason(self) -> str:
+        """真实落库失败的原因。空字符串表示本份声明没有这类拒收。"""
+        for name in _SECTION_FIELDS:
+            section = getattr(self, name, None)
+            for item in getattr(section, "rejected", None) or []:
+                if getattr(item, "category", "") == "commit_failed":
+                    return str(getattr(item, "reason", "") or "commit_failed")
+        return ""
+
     def merge(self, other: "DeclarationDispatchResult") -> "DeclarationDispatchResult":
         """按 section 逐个 merge，供 :func:`settle_staged_declarations_in_decree_order`
         把同一旨下多条暂存声明的落地结果折叠成一份。"""
@@ -1139,7 +1148,8 @@ def _dispatch_commissions(
             from ming_sim.strict_types import strict_int
             if not isinstance(progress, Mapping) or any(
                 item.get(key) for key in
-                ("grant", "appointment", "punishment", "pacification", "assignment", "secret_order")
+                ("grant", "appointment", "punishment", "pacification", "assignment",
+                 "secret_order", "secret_order_update", "secret_order_review")
             ):
                 _reject(rejected, item, "密令进展载荷须为独立对象", "invalid_shape", source)
                 continue
@@ -1148,18 +1158,18 @@ def _dispatch_commissions(
             except (TypeError, ValueError):
                 order_id = 0
             note = progress.get("note")
-            actor = str(minister_name or "").strip() or _commission_fallback_actor(db)
-            active = db.get_active_secret_orders_for_minister(actor)
-            target = next((o for o in active if int(o["id"]) == order_id), None)
+            target = _active_secret_order(db, order_id)
+            assignee = _scene_secret_assignee(minister_name, target)
             if (
-                target is None or order_id <= 0 or not isinstance(note, str) or not note.strip()
+                target is None or assignee is None or order_id <= 0
+                or not isinstance(note, str) or not note.strip()
                 or int(target.get("turn_issued") or 0) == int(state.turn)
             ):
                 _reject(rejected, item, "密令进展须指向承办人的往期有效密令且有进展正文", "invalid_state", source)
                 continue
             row_id = db.stage_pending_action(
                 int(state.turn), kind="secret_order", action="记进展",
-                minister_name=actor, target_id=order_id, payload={"note": note},
+                minister_name=assignee, target_id=order_id, payload={"note": note},
                 night_id=staged_night,
                 source_chat_turn_id=source_chat_turn_id,
             )
@@ -1172,7 +1182,7 @@ def _dispatch_commissions(
             if not isinstance(update, Mapping) or any(
                 item.get(key) for key in
                 ("grant", "appointment", "punishment", "pacification", "assignment",
-                 "secret_order", "secret_order_progress")
+                 "secret_order", "secret_order_progress", "secret_order_review")
             ):
                 _reject(rejected, item, "密令修改载荷须为独立对象", "invalid_shape", source)
                 continue
@@ -1180,29 +1190,63 @@ def _dispatch_commissions(
                 order_id = strict_int(update.get("order_id"), accept_numeric_strings=False)
             except (TypeError, ValueError):
                 order_id = 0
-            actor = str(minister_name or "").strip() or _commission_fallback_actor(db)
-            target = next((o for o in db.get_active_secret_orders_for_minister(actor)
-                           if int(o["id"]) == order_id), None)
+            target = _active_secret_order(db, order_id)
+            assignee = _scene_secret_assignee(minister_name, target)
             content_text = update.get("content")
-            if target is None or order_id <= 0 or not isinstance(content_text, str) or not content_text.strip():
+            if (
+                target is None or assignee is None or order_id <= 0
+                or not isinstance(content_text, str) or not content_text.strip()
+            ):
                 _reject(rejected, item, "密令修改须指向承办人的有效密令并提供正文", "invalid_state", source)
                 continue
-            source_turn = db.conn.execute(
-                "SELECT user_message_id FROM chat_turns "
-                "WHERE id=? AND minister_name=? AND turn=? AND status='active'",
-                (int(source_chat_turn_id), actor, int(state.turn)),
-            ).fetchone()
-            if source_turn is None or source_turn["user_message_id"] is None:
+            origin_mid = _source_user_message_id(db, source_chat_turn_id, int(state.turn))
+            if origin_mid is None:
                 _reject(rejected, item, "密令修改缺本轮口谕源轮", "missing_ref", source)
                 continue
             payload = {
                 "new_title": update.get("title") or target["title"],
                 "new_content": content_text,
                 "deadline_months": update.get("deadline_months", 0),
-                "origin_chat_message_id": int(source_turn["user_message_id"]),
+                "origin_chat_message_id": origin_mid,
             }
             row_id = db.stage_pending_action(
-                int(state.turn), "secret_order", "更新", actor, payload,
+                int(state.turn), "secret_order", "更新", assignee, payload,
+                target_id=order_id, night_id=staged_night,
+                source_chat_turn_id=source_chat_turn_id,
+            )
+            applied.append({"id": row_id, "kind": "secret_order"})
+            continue
+
+        review = item.get("secret_order_review")
+        if review is not None:
+            from ming_sim.strict_types import strict_int
+            if not isinstance(review, Mapping) or any(
+                item.get(key) for key in
+                ("grant", "appointment", "punishment", "pacification", "assignment",
+                 "secret_order", "secret_order_progress", "secret_order_update")
+            ):
+                _reject(rejected, item, "密令核议载荷须为独立对象", "invalid_shape", source)
+                continue
+            try:
+                order_id = strict_int(review.get("order_id"), accept_numeric_strings=False)
+            except (TypeError, ValueError):
+                order_id = 0
+            claim = review.get("claim")
+            if not isinstance(claim, str):
+                _reject(rejected, item, "密令核议陈词须为原文", "invalid_shape", source)
+                continue
+            target = _active_secret_order(db, order_id)
+            assignee = _scene_secret_assignee(minister_name, target)
+            if target is None or assignee is None or order_id <= 0:
+                _reject(rejected, item, "密令核议须指向承办人的有效密令", "invalid_state", source)
+                continue
+            origin_mid = _source_user_message_id(db, source_chat_turn_id, int(state.turn))
+            if origin_mid is None:
+                _reject(rejected, item, "密令核议缺本轮口谕源轮", "missing_ref", source)
+                continue
+            payload = {"claim": claim, "origin_chat_message_id": origin_mid}
+            row_id = db.stage_pending_action(
+                int(state.turn), "secret_order", "提交核议", assignee, payload,
                 target_id=order_id, night_id=staged_night,
                 source_chat_turn_id=source_chat_turn_id,
             )
@@ -1607,6 +1651,52 @@ def _dispatch_commissions(
         )
         applied.append({"id": row_id, "payload": payload, "kind": "directive"})
     return SectionResult(applied=applied, rejected=rejected)
+
+
+def _active_secret_order(db: Any, order_id: int) -> Optional[Mapping[str, Any]]:
+    """按密令 id 读仍在办的那一条。说话人不是查找键。"""
+    if int(order_id or 0) <= 0 or not hasattr(db, "get_secret_order"):
+        return None
+    order = db.get_secret_order(int(order_id))
+    if not isinstance(order, Mapping):
+        return None
+    if str(order.get("status") or "") != "active":
+        return None
+    return order
+
+
+def _scene_secret_assignee(speaker: object, order: Optional[Mapping[str, Any]]) -> Optional[str]:
+    """场景源轮与承办身份分开：空说话人或殿上整场轮用已落库的承办人。
+
+    另一名册人物不得冒充承办人。不回落殿前常在。
+    """
+    if order is None:
+        return None
+    from ming_sim.audience_night import SCENE_CHAT_SPEAKER
+
+    assignee = str(order.get("minister_name") or "").strip()
+    if not assignee:
+        return None
+    who = str(speaker or "").strip()
+    if not who or who == SCENE_CHAT_SPEAKER:
+        return assignee
+    if who == assignee:
+        return assignee
+    return None
+
+
+def _source_user_message_id(db: Any, source_chat_turn_id: int, turn: int) -> Optional[int]:
+    """本轮口谕。源轮身份是 chat_turn id，不要求说话人等于承办人。"""
+    if int(source_chat_turn_id or 0) <= 0:
+        return None
+    row = db.conn.execute(
+        "SELECT user_message_id FROM chat_turns "
+        "WHERE id=? AND turn=? AND status='active' AND user_message_id IS NOT NULL",
+        (int(source_chat_turn_id), int(turn)),
+    ).fetchone()
+    if row is None or row["user_message_id"] is None:
+        return None
+    return int(row["user_message_id"])
 
 
 def _is_roster_character(db: Any, name: str) -> bool:

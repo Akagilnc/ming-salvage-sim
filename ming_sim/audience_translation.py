@@ -102,9 +102,12 @@ def apply_audience_round_translation(
             chat_turn_id=ctid,
             source=source,
         )
-        # 分段若有一项拒收，整轮不可标 done；atomic 回滚部分落账，后台保 pending。
+        # 真实落库失败与分段拒收都不得把源轮标 done。异常离开 atomic，
+        # 本次尝试整笔回滚；源轮仍停在进入本轮之前的 pending，既有补跑再做未完成的工作。
+        from ming_sim.audience_translate import AudienceTranslateError
+        if ctid > 0 and (failed := result.commit_failure_reason()):
+            raise AudienceTranslateError(failed)
         if ctid > 0 and result.scene_facts.rejected:
-            from ming_sim.audience_translate import AudienceTranslateError
             raise AudienceTranslateError("说话人分段声明有拒收项")
         # 主角持久化 + 转译水位：chat_turns 不在前像表，undo 走重投影。
         _bind_round_after_dispatch(db, nid, ctid, result)

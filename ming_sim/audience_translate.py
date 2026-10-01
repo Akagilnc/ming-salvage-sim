@@ -278,6 +278,8 @@ def build_c0_declaration_shape() -> str:
         '      "secret_order_update": {"order_id": "承办人现役密令 id", '
         '"title": "新标题（有则填）", "content": "完整新正文（必填）", '
         '"deadline_months": "期限月数（有则填）"},\n'
+        '      "secret_order_review": {"order_id": "承办人现役密令 id", '
+        '"claim": "核议陈词（原样）"},\n'
         '      "assignment": {"title": "独立事项名", "target_id": "事项 id", '        '"assignee": "承办人 id", "participant_roster": [], '
         '"target_candidate": "续办所指候选 id（新案留空）", '
         '"commitment_kind": "承诺类别（无承诺填无）", '
@@ -377,6 +379,7 @@ def build_audience_translate_prompt(
         "名册里的承办人 assignee 与上面写明的 covert_task 冻结任务契约；"
         "契约字段不全或承办人只说到场景（无具名人）时不要勉强成条。\n"
         "往期密令具名进展走 commission.secret_order_progress；不凭空记进展。\n"
+        "现役密令提交核议走 commission.secret_order_review（order_id 与 claim 原样）。\n"
         "- 皇帝对已暂存交办说「准」「照办」等应允语义 → promises 里 decision=应允；"
         "「不准」「作罢」→ 拒绝；修改已有新建密令 → 修改并给完整 typed new_content，"
         "不从原话截断猜正文。皇帝本轮未表态 → promises 为空（默认不应允）。\n"

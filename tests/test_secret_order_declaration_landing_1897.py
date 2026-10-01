@@ -13,23 +13,27 @@
 - 承办人须是名册具名人物：场景标签与虚构人名都 durable 拒收；
 - 补译交办承接源夜：夜收后补译暂存仍属源夜（直接与间接暂存入口 alike），
   应允照常成案；
-- 成案真失败不当成功：原 action_id 保留可重试，故障解除后同一 id 成案。
+- 成案真失败不当成功：源轮水位不标 done，原 action 仍 pending，补跑只做未完成的成案。
 """
 
 from __future__ import annotations
 
 import json
-import linecache
-import sqlite3
-import traceback
 
 import pytest
 
 from ming_sim import audience_night as an
+from ming_sim.audience_translate import AudienceTranslateError
 from ming_sim.db import GameDB
 from ming_sim.declaration_dispatch import dispatch_declaration
-from ming_sim.audience_translation import apply_audience_round_translation
-from ming_sim.materials import prepare_character_materials
+from ming_sim.audience_translation import (
+    apply_audience_round_translation,
+    catch_up_pending_translations,
+    run_turn_translation_job,
+)
+from ming_sim.materials import prepare_character_materials, prepare_scene_materials
+from ming_sim.session_write_queue import ClassifiedWriteGate
+from ming_sim.supervision import ORIGIN_MARK_SAME_FACTION_BLIND, origin_has_mark
 
 
 def _minister(db) -> str:
@@ -519,8 +523,8 @@ def test_late_translation_staged_secret_order_still_lands_under_its_source_night
 
 
 def test_failed_landing_keeps_the_original_pending_action_retryable(game):
-    """#1897：真实成案失败不当成功，且原待办保留可重试——同一 action_id 故障解除后成案。"""
-    db, state, _ = game
+    """真实成案失败不把源轮标 done。原暂存仍 pending，补跑只完成这一次成案。"""
+    db, state, content = game
     minister = _minister(db)
     night_id, ctid = _open_night(db, state, minister)
 
@@ -529,52 +533,76 @@ def test_failed_landing_keeps_the_original_pending_action_retryable(game):
     )
     assert result.commissions.rejected == []
     staged_id = int(_staged_secret_order_rows(db, state.turn)[0]["id"])
+    reply = "臣领旨。"
 
-    # 成案上限查询被库本身拒绝一次。解除授权后再走同一暂存。
-    cap_sql = "SELECT COUNT(*) FROM secret_orders WHERE status='active'"
-    gate = {"open": True}
+    def _translate(_prompt, _config):
+        return {
+            "promises": [{"action_id": staged_id, "decision": "应允"}],
+            "scene_facts": [{
+                "body": reply,
+                "role": "minister",
+                "audibility": "殿上公开",
+                "person_names": [minister],
+            }],
+        }
 
-    def _authorizer(action, arg1, arg2, _db_name, _source):
-        if (
-            gate["open"]
-            and action == sqlite3.SQLITE_READ
-            and arg1 == "secret_orders"
-            and arg2 == "status"
-        ):
-            for frame in traceback.extract_stack():
-                if not str(frame.filename).endswith("db.py"):
-                    continue
-                window = "".join(
-                    linecache.getline(frame.filename, frame.lineno + delta)
-                    for delta in range(0, 3)
-                )
-                if cap_sql in window:
-                    gate["open"] = False
-                    return sqlite3.SQLITE_DENY
-        return sqlite3.SQLITE_OK
-
-    db.conn.set_authorizer(_authorizer)
-    try:
-        failed = _approve(db, state, minister, ctid, night_id, staged_id)
-    finally:
-        db.conn.set_authorizer(None)
-    assert gate["open"] is False
-
-    assert failed.promises.applied == [], failed.promises.applied
-    assert len(failed.promises.rejected) == 1
-    # 归类按真实失败原因：落库失败不是「实体状态不容许」（R1）。
-    assert _rejection_rows(db, state.turn, "promises")[-1]["category"] == "commit_failed"
-    assert db.list_secret_orders() == []
-    # 原暂存仍是 pending：不是 failed 死行，同一 id 可再应允。
+    # 进行中密令已满时，新建在内层事务之前失败。提交方接住这次失败，
+    # 源轮不得因此标 done；腾出空额后，原暂存仍可补跑成案。
+    db.conn.executemany(
+        "INSERT INTO secret_orders "
+        "(turn_issued, year_issued, period_issued, minister_name, title) "
+        "VALUES (?, ?, ?, ?, ?)",
+        [
+            (int(state.turn), int(state.year), int(state.period), minister, f"占额{i}")
+            for i in range(20)
+        ],
+    )
+    db.conn.commit()
+    with pytest.raises(AudienceTranslateError):
+        run_turn_translation_job(
+            db, state,
+            emperor_message="此事要密办，卿去查来。",
+            reply=reply,
+            night_id=night_id,
+            chat_turn_id=ctid,
+            minister_name=minister,
+            translate_fn=_translate,
+            write_gate=ClassifiedWriteGate(),
+        )
+    assert db.get_story_extract_status(ctid) != "done"
+    assert all(
+        order["title"] != "查办粮科私卖" for order in db.list_secret_orders()
+    )
     status = db.conn.execute(
         "SELECT status FROM pending_actions WHERE id=?", (staged_id,),
     ).fetchone()["status"]
     assert status == "pending", status
+    pack = db.conn.execute(
+        "SELECT error_pack_path FROM chat_turns WHERE id=?", (ctid,),
+    ).fetchone()["error_pack_path"]
+    assert str(pack or "").strip()
+    db.conn.execute("DELETE FROM secret_orders WHERE title LIKE '占额%'")
+    db.conn.commit()
 
-    retried = _approve(db, state, minister, ctid, night_id, staged_id)
-    assert retried.promises.rejected == [], retried.promises.rejected
-    order_id = int(retried.promises.applied[0]["secret_order_id"])
-    assert db.get_secret_order(order_id)["status"] == "active"
+    reopened = GameDB(db.path, content)
+    try:
+        waiting = reopened.list_unextracted_replies(night_id=night_id)
+        assert any(int(row["chat_turn_id"]) == ctid for row in waiting)
+        caught = catch_up_pending_translations(
+            reopened, state,
+            chat_turn_id=ctid,
+            translate_fn=_translate,
+            write_gate=ClassifiedWriteGate(),
+            within_barrier=True,
+        )
+        assert caught["extracted"] == 1
+        assert caught["pending"] == 0
+        assert reopened.get_story_extract_status(ctid) == "done"
+        landed = reopened.list_secret_orders(status="active", minister_name=minister)
+        assert len(landed) == 1
+        assert landed[0]["minister_name"] == minister
+    finally:
+        reopened.close()
 
 
 def test_approved_rush_reports_success_and_is_not_repeated(game):
@@ -794,11 +822,26 @@ def test_secret_order_progress_is_stored_verbatim(game):
     state.period = 4
     db.save_state(state)
     raw_note = f"\n  已查得线索，仍须密访。  \n〔{int(state.year)}年1月〕旧报未结。\n"
+    other = _summonable_name(db, content)
+    stolen = _dispatch(db, state, other, {"commissions": [{
+        "text": "据实以闻。", "secret_order_progress": {"order_id": order_id, "note": raw_note},
+    }]}, ctid, night_id)
+    assert stolen.commissions.applied == []
+    assert _rejection_rows(db, state.turn)[-1]["category"] == "invalid_state"
 
-    progressed = _dispatch(db, state, minister, {"commissions": [{
+    db.conn.execute(
+        "UPDATE chat_turns SET minister_name=? WHERE id=?", ("殿上", ctid),
+    )
+    db.conn.commit()
+    progressed = _dispatch(db, state, "", {"commissions": [{
         "text": "据实以闻。", "secret_order_progress": {"order_id": order_id, "note": raw_note},
     }]}, ctid, night_id)
     assert progressed.commissions.rejected == [], progressed.commissions.rejected
+    staged_name = db.conn.execute(
+        "SELECT minister_name FROM pending_actions WHERE id=?",
+        (int(progressed.commissions.applied[0]["id"]),),
+    ).fetchone()["minister_name"]
+    assert staged_name == minister
     assert _approve(
         db, state, minister, ctid, night_id,
         int(progressed.commissions.applied[0]["id"]),
@@ -837,12 +880,33 @@ def test_secret_order_progress_is_stored_verbatim(game):
     assert str(db.get_secret_order(order_id)["result"] or "") == ""
     assert db.sum_dossier_actual_progress_units(dossier_id) == 0
 
+    marked = f"{db.DOSSIER_REPORT_ORIGIN_MONTHLY}+{ORIGIN_MARK_SAME_FACTION_BLIND}"
+    db.record_dossier_progress(
+        dossier_id, int(state.turn), "在办", corrected, origin=marked, commit=True,
+    )
+    marked_rows = _open_reports(db)
+    assert len(marked_rows) == 1, marked_rows
+    assert marked_rows[0]["memorial_text"] == corrected
+    assert origin_has_mark(marked_rows[0]["origin"], ORIGIN_MARK_SAME_FACTION_BLIND)
+    assert int(marked_rows[0]["turn"]) == int(state.turn)
+
     character = content.characters.get(minister)
     assert character is not None
     prepared = prepare_character_materials(db, state, character)
     feed = (prepared.root / "密令" / "进行中.txt").read_text(encoding="utf-8")
-    assert "本月已推进" in feed
-    assert f"#{order_id}" in feed
+    assert corrected in feed
+    an.append_ledger_entry(
+        db, night_id, person_names=[minister], presence_effect="enter",
+        source_chat_turn_id=ctid, body="入殿",
+    )
+    scene = prepare_scene_materials(db, state)
+    scene_feed = (
+        scene.root / "人物" / minister / "密令" / "进行中.txt"
+    ).read_text(encoding="utf-8")
+    assert corrected in scene_feed
+    for path in scene.root.rglob("进行中.txt"):
+        if minister not in path.parts:
+            assert corrected not in path.read_text(encoding="utf-8")
 
     reopened = GameDB(db.path, content)
     try:
@@ -853,3 +917,48 @@ def test_secret_order_progress_is_stored_verbatim(game):
         assert str(reopened.get_secret_order(order_id)["result"] or "") == ""
     finally:
         reopened.close()
+
+
+def test_scene_review_claim_lands_on_the_review_rail(game):
+    """提交核议走现役暂存与应允。陈词进核议轨，不冒充月报。"""
+    db, state, _content = game
+    minister = _minister(db)
+    night_id, ctid = _open_night(db, state, minister)
+    _dispatch(db, state, minister, _secret_order_declaration(assignee=minister), ctid, night_id)
+    order_id = int(
+        _approve(db, state, minister, ctid, night_id,
+                 int(_staged_secret_order_rows(db, state.turn)[0]["id"]))
+        .promises.applied[0]["secret_order_id"]
+    )
+    claim = "\n  臣已办结，请予核议。  \n"
+    db.conn.execute(
+        "UPDATE chat_turns SET minister_name=? WHERE id=?", ("殿上", ctid),
+    )
+    db.conn.commit()
+    staged = _dispatch(db, state, "", {"commissions": [{
+        "text": "请核议。",
+        "secret_order_review": {"order_id": order_id, "claim": claim},
+    }]}, ctid, night_id)
+    assert staged.commissions.rejected == [], staged.commissions.rejected
+    action_id = int(staged.commissions.applied[0]["id"])
+    row = db.conn.execute(
+        "SELECT action, minister_name, payload_json FROM pending_actions WHERE id=?",
+        (action_id,),
+    ).fetchone()
+    assert row["action"] == "提交核议"
+    assert row["minister_name"] == minister
+    assert json.loads(row["payload_json"])["claim"] == claim
+    approved = _approve(db, state, "", ctid, night_id, action_id)
+    assert approved.promises.rejected == [], approved.promises.rejected
+    dossier_id = int(db.get_dossier_for_secret_order(order_id)["id"])
+    reviews = [
+        item for item in db.list_dossier_progress(dossier_id)
+        if str(item["origin"]) == db.DOSSIER_REPORT_ORIGIN_REVIEW
+    ]
+    assert [item["memorial_text"] for item in reviews] == [claim]
+    monthly = [
+        item for item in db.list_dossier_progress(dossier_id)
+        if not item["is_terminal"]
+        and str(item["origin"]).startswith(db.DOSSIER_REPORT_ORIGIN_MONTHLY)
+    ]
+    assert monthly == []
