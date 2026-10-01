@@ -1283,27 +1283,52 @@ class GameSession:
     def fail_audience_chat_turn(
         self, turn: AudienceChatTurn, *, replied: bool = False,
         error: Optional[BaseException] = None,
-    ) -> None:
-        """召对未成：记回滚差异 → 终态化本轮（孤儿 generating 会永久挡住本夜后续问话）。
+        translation_dispatched: bool = False,
+        court_action: str = "",
+    ) -> bool:
+        """召对失败收口。已提交的回话不删、不回滚。
 
-        问话已落库时保留它并把轮标 interrupted（玩家可重试），否则整轮作废。
-        ``replied`` = 回话已可见（payload 已下发）时的后置失败。
+        账上 ``active`` 且已挂 ``minister_message_id`` = 回话已提交。此时：
+        转译尚未派出且抽取未完成 → 既有 ``extract_status=pending`` 与 translation
+        错误包；否则既有 ``post_reply_recovery``（``court_break`` / ``after_reply``）。
+        ``replied`` 表示调用方已有回话对象。对象在、账上无回话（落库事务回滚）
+        与对象尚未产生，都走未完成收口：记回滚差异，问话留下并标 interrupted。
+        账上已有回话而调用方还没拿到 payload（调度在返回前抛）同样不得回滚。
+
+        返回是否按已落回话记下了恢复相位。
         """
         from ming_sim.decree_forecast import schedule_restored_decree_forecasts
         from ming_sim.exceptions import LLMUnavailable
 
         if not turn.chat_turn_id:
-            return
+            return False
+        row = self.db.conn.execute(
+            "SELECT status, minister_message_id, extract_status FROM chat_turns WHERE id = ?",
+            (turn.chat_turn_id,),
+        ).fetchone()
+        reply_landed = bool(
+            row is not None
+            and row["status"] == "active"
+            and row["minister_message_id"]
+        )
+        # 账上已落优先于 ``replied``。调用方看见对象但事务未提交时 replied 为真、
+        # reply_landed 为假，落入下面的未完成收口，不假装已落。
+        if reply_landed:
+            return self._record_persisted_audience_reply_failure(
+                turn, row, error,
+                translation_dispatched=translation_dispatched,
+                court_action=court_action,
+            )
         self.db.record_chat_turn_rollback_diffs(
             turn.chat_turn_id, turn.before_snapshot,
             self.db.capture_chat_rollback_snapshot(),
         )
         if not turn.user_message_id:
-            row = self.db.conn.execute(
+            user_row = self.db.conn.execute(
                 "SELECT user_message_id FROM chat_turns WHERE id = ?",
                 (turn.chat_turn_id,),
             ).fetchone()
-            turn.user_message_id = int(row["user_message_id"] or 0) if row else 0
+            turn.user_message_id = int(user_row["user_message_id"] or 0) if user_row else 0
         if turn.user_message_id:
             restored_ids = self.db.restore_interrupted_after_failed_retry(turn.chat_turn_id)
             schedule_restored_decree_forecasts(self, restored_ids)
@@ -1317,6 +1342,38 @@ class GameSession:
         else:
             restored_ids = self.db.fail_chat_turn(turn.chat_turn_id)
             schedule_restored_decree_forecasts(self, restored_ids)
+        return False
+
+    def _record_persisted_audience_reply_failure(
+        self, turn: AudienceChatTurn, row, error: Optional[BaseException], *,
+        translation_dispatched: bool, court_action: str,
+    ) -> bool:
+        """已落回话的失败相位。不新增恢复列，不删已提交的回话。"""
+        from ming_sim.audience_night import write_audience_error_pack
+
+        translation_pending = (
+            not translation_dispatched
+            and str(row["extract_status"] or "") != "done"
+        )
+        detail = {"chat_turn_id": turn.chat_turn_id, "phase": "post_reply"}
+        if translation_pending:
+            self.db.mark_story_extraction_pending(turn.chat_turn_id)
+            if error is not None:
+                pack = write_audience_error_pack(
+                    kind="translation", message=str(error), detail=detail,
+                    db=self.db, exc=error,
+                )
+                self.db.set_chat_turn_error_pack(turn.chat_turn_id, pack)
+            return True
+        pack = ""
+        if error is not None:
+            pack = write_audience_error_pack(
+                kind="reply", message=str(error), detail=detail,
+                db=self.db, exc=error,
+            )
+        phase = "court_break" if court_action == "court_break" else "after_reply"
+        self.db.mark_post_reply_failure(turn.chat_turn_id, phase, pack)
+        return True
 
     def scene_chat(
         self, message: str, *, chat_turn_id: int = 0,

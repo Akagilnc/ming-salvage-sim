@@ -2594,10 +2594,12 @@ def test_658_free_decree_capture_target_dossier_real_entry(game, monkeypatch):
     from ming_sim.session_write_queue import get_session_write_queue
     web_game = types.SimpleNamespace(db=db, state=state, content=content, session=session, directive_rows=lambda: db.list_directives(state, statuses=('pending', 'draft')), directive_payload=lambda row: dict(row))
     web_game._write_gate = get_session_write_queue(web_game).write_gate
-    # #1902：摆一条 draft 作**测试数据准备**（拟诏台入口已退役，玩家拟旨只从召对来）。
-    from tests.directive_entry_helpers import stage_draft_directive
-
-    dir_id = stage_draft_directive(session, text_in).id
+    payload = cli_backend.resubmit_draft_admission_payload(
+        text_in, bad_payload={}, failure_reason="成案未入档",
+        db=db, content=content,
+        llm_config=getattr(session, "llm_config", None),
+    )
+    dir_id = db.add_directive(state, None, text_in, "手动新增", dossier_payload=payload)
     row = db.conn.execute('SELECT dossier_payload_json FROM turn_directives WHERE id=?', (dir_id,)).fetchone()
     payload = json.loads(str(row['dossier_payload_json'] or '{}'))
     assert int(payload.get('target_dossier_id') or 0) == did
@@ -2717,9 +2719,12 @@ def test_658_typed_target_and_backing_reject_bad_shapes(game, monkeypatch):
     def backend_bad(prompt, *_a, **_k):
         return (json.dumps({'拟旨意图': '拟旨', '目标案卷ID': True}, ensure_ascii=False), 1)
     monkeypatch.setattr(cli_backend, '_run_backend_for_config', backend_bad)
-    from tests.directive_entry_helpers import live_draft_payload
     with pytest.raises(ValueError):
-        live_draft_payload(f'着即强推南迁（案卷{did}）', None, db=db, content=content)
+        cli_backend.resubmit_draft_admission_payload(
+            f'着即强推南迁（案卷{did}）',
+            bad_payload={}, failure_reason="成案未入档",
+            db=db, content=content,
+        )
     assert len(db.list_decree_dossiers()) == before_dossiers
     assert len(db.list_dossier_endorsements(did)) == before_ends + 2
     assert db.conn.execute('SELECT COUNT(*) AS c FROM turn_directives').fetchone()['c'] == before_dirs + 2
@@ -2828,9 +2833,11 @@ def test_658_mixed_ordinary_triad_and_target_rejected(game, monkeypatch):
     def backend_mixed(prompt, *_a, **_k):
         return (json.dumps({'拟旨意图': '拟旨', '动作类型': 'policy', '目标类型': 'issue', '目标ID': 'river', '目标案卷ID': did}, ensure_ascii=False), 1)
     monkeypatch.setattr(cli_backend, '_run_backend_for_config', backend_mixed)
-    from tests.directive_entry_helpers import live_draft_payload
     with pytest.raises(ValueError, match='不得同时'):
-        live_draft_payload('混载旨文', None, db=db, content=content)
+        cli_backend.resubmit_draft_admission_payload(
+            '混载旨文', bad_payload={}, failure_reason="成案未入档",
+            db=db, content=content,
+        )
     assert len(db.list_decree_dossiers()) == before_dossiers
     assert db.conn.execute('SELECT COUNT(*) AS c FROM turn_directives').fetchone()['c'] == before_dirs
 

@@ -344,10 +344,13 @@ def test_manual_owner_example_seal_advances(tracer_client, monkeypatch):
         return _owner_manual_backend_json(), 1
 
     monkeypatch.setattr(cli_backend, "_run_backend_for_config", backend)
-    # #1902：摆一条 draft 作**测试数据准备**（拟诏台入口已退役，玩家拟旨只从召对来）。
-    from tests.directive_entry_helpers import stage_draft_directive
-
-    stage_draft_directive(game.session, "着户部继续核查陕西赈务，按月具报。")
+    text = "着户部继续核查陕西赈务，按月具报。"
+    payload = cli_backend.resubmit_draft_admission_payload(
+        text, bad_payload={}, failure_reason="成案未入档",
+        db=game.db, content=game.content,
+        llm_config=getattr(game.session, "llm_config", None),
+    )
+    game.db.add_directive(game.state, None, text, "手动新增", dossier_payload=payload)
     turn_before = game.state.turn
     _post_issue_stream(
         tracer_client, expected_turn=turn_before, step="#1624 owner seal",
@@ -423,10 +426,13 @@ def test_http_manual_directive_lands_beyond_fifteen_initiatives_1790(
         return _owner_manual_backend_json(), 1
 
     monkeypatch.setattr(cli_backend, "_run_backend_for_config", backend)
-    # #1902：摆一条 draft 作**测试数据准备**（拟诏台入口已退役，玩家拟旨只从召对来）。
-    from tests.directive_entry_helpers import stage_draft_directive
-
-    stage_draft_directive(game.session, "着户部继续核查陕西赈务，按月具报。")
+    text = "着户部继续核查陕西赈务，按月具报。"
+    payload = cli_backend.resubmit_draft_admission_payload(
+        text, bad_payload={}, failure_reason="成案未入档",
+        db=game.db, content=game.content,
+        llm_config=getattr(game.session, "llm_config", None),
+    )
+    game.db.add_directive(game.state, None, text, "手动新增", dossier_payload=payload)
 
     turn_before = int(state.turn)
     body = _post_issue_stream(

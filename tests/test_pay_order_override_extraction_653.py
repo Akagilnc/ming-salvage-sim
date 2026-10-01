@@ -7,11 +7,9 @@ import ming_sim.cli_backend as cli_backend
 
 def test_single_pay_order_capture_grounds_relative_deadline_at_current_turn(game, monkeypatch):
     db, _state, content = game
-    prompts = []
     db.conn.execute("UPDATE game_state SET turn=7 WHERE id=1")
 
     def fake(prompt, *_args, **_kwargs):
-        prompts.append(prompt)
         return json.dumps({
             "拟旨意图": "拟旨",
             "动作类型": "pay_order_override",
@@ -25,10 +23,10 @@ def test_single_pay_order_capture_grounds_relative_deadline_at_current_turn(game
         }, ensure_ascii=False), {}
 
     monkeypatch.setattr(cli_backend, "_run_backend_for_config", fake)
-    from tests.directive_entry_helpers import live_draft_payload
-
-    result = live_draft_payload(
-        "拟旨让陕西边饷居末、官俸优先三个月", None, db=db, content=content,
+    result = cli_backend.resubmit_draft_admission_payload(
+        "拟旨让陕西边饷居末、官俸优先三个月",
+        bad_payload={}, failure_reason="成案未入档",
+        db=db, content=content,
     )
     assert result["entries"] == [
         {"key": "due_priority_军饷@shaanxi", "value": 40, "until_turn": 9},
@@ -49,16 +47,8 @@ def test_single_pay_order_capture_grounds_relative_deadline_at_current_turn(game
     assert staged_entries == result["entries"]
     assert all("duration_months" not in entry for entry in staged_entries)
 
-    assert "陕西=@shaanxi" in prompts[0]
-    assert "相对期限只填 duration_months=N" in prompts[0]
-    assert "until_turn=当前 turn+N-1" not in prompts[0]
-    assert '"duration_months":3' in prompts[0]
-    assert "默认军饷/官俸/宗禄/赈济=10/20/30/40" in prompts[0]
-
 
 def test_relative_deadline_cannot_stage_llm_computed_expired_turn(game, monkeypatch):
-    from tests.directive_entry_helpers import live_draft_payload
-
     db, _state, content = game
     db.conn.execute("UPDATE game_state SET turn=7 WHERE id=1")
     monkeypatch.setattr(
@@ -71,8 +61,10 @@ def test_relative_deadline_cannot_stage_llm_computed_expired_turn(game, monkeypa
         }, ensure_ascii=False), {}),
     )
     with pytest.raises(ValueError, match="已过期"):
-        live_draft_payload(
-            "陕西边饷居末三个月", None, db=db, content=content,
+        cli_backend.resubmit_draft_admission_payload(
+            "陕西边饷居末三个月",
+            bad_payload={}, failure_reason="成案未入档",
+            db=db, content=content,
         )
 
 

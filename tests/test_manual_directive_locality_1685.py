@@ -39,10 +39,14 @@ def test_manual_directive_region_assembly_writes_single_and_advances(
         return json.dumps(_extracted("单省"), ensure_ascii=False), 1
 
     monkeypatch.setattr(cli_backend, "_run_backend_for_config", backend)
-    # #1902：摆一条 draft 作**测试数据准备**（拟诏台入口已退役，玩家拟旨只从召对来）。
-    from tests.directive_entry_helpers import stage_draft_directive
-
-    stage_draft_directive(game.session, "着依旨施行。")
+    payload = cli_backend.resubmit_draft_admission_payload(
+        "着依旨施行。", bad_payload={}, failure_reason="成案未入档",
+        db=game.db, content=game.content,
+        llm_config=getattr(game.session, "llm_config", None),
+    )
+    game.db.add_directive(
+        game.state, None, "着依旨施行。", "手动新增", dossier_payload=payload,
+    )
 
     assert len(calls) == 1
     turn_before = game.state.turn

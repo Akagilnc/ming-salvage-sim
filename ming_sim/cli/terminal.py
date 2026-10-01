@@ -271,6 +271,7 @@ def _retry_interrupted_reply_cli(session: GameSession, minister_name: str) -> Op
         user_message_id=int(target.get("user_message_id") or 0),
     )
     result = None
+    translation_dispatched = False
     try:
         turn.before_snapshot = db.capture_chat_rollback_snapshot()
         result = session.scene_chat(
@@ -281,12 +282,16 @@ def _retry_interrupted_reply_cli(session: GameSession, minister_name: str) -> Op
         GameSession.complete_audience_chat_turn(
             session, turn, message_speaker, str(getattr(result, "answer", "") or ""), result,
         )
+        translation_dispatched = True
         print(f"\n{message_speaker}：{wrap(str(getattr(result, 'answer', '') or ''))}\n")
     except Exception as exc:
         # 失败翻回 interrupted 保持可再重试（与 web 同语义）：终态化亦走共核方法。
+        # 调度在 complete 返回前抛时 translation_dispatched 仍为假：已落回话走转译待补。
         try:
             GameSession.fail_audience_chat_turn(
                 session, turn, replied=result is not None, error=exc,
+                translation_dispatched=translation_dispatched,
+                court_action=str(getattr(result, "court_action", "") or ""),
             )
         except Exception:
             logger.exception(
@@ -404,6 +409,7 @@ def minister_chat(session: GameSession, character: Character, *, selected: bool 
             ),
         )
         result = None
+        translation_dispatched = False
         try:
             # #1842：殿上走 scene_chat；显式密令仍走 session.chat（与 Web 同核）。
             # 殿上不派旧判官/尾随抽取——转译一次承接。
@@ -415,11 +421,14 @@ def minister_chat(session: GameSession, character: Character, *, selected: bool 
             GameSession.complete_audience_chat_turn(
                 session, chat_turn, character.name, result.answer, result,
             )
+            translation_dispatched = True
         except BaseException as original_error:
             try:
                 GameSession.fail_audience_chat_turn(
                     session, chat_turn,
                     replied=result is not None, error=original_error,
+                    translation_dispatched=translation_dispatched,
+                    court_action=str(getattr(result, "court_action", "") or ""),
                 )
             except BaseException as cleanup_error:
                 raise original_error from cleanup_error

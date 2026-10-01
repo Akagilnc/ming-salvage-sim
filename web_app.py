@@ -1874,47 +1874,6 @@ class WebGame:
         )
         return turn.chat_turn_id, turn.before_snapshot
 
-    def _record_chat_rollback_items(
-        self,
-        chat_turn_id: int,
-        before_snapshot: Dict[str, Any],
-    ) -> None:
-        if not chat_turn_id:
-            return
-        after_snapshot = self.db.capture_chat_rollback_snapshot()
-        self.db.record_chat_turn_rollback_diffs(chat_turn_id, before_snapshot, after_snapshot)
-
-    def _record_persisted_reply_failure(
-        self, chat_turn_id: int, error: BaseException, *,
-        translation_unstarted: bool, court_action: str = "",
-    ) -> bool:
-        """持闸调用；以落库相位分流转译补偿与回话后尾随恢复。"""
-        if not chat_turn_id:
-            return False
-        row = self.db.conn.execute(
-            "SELECT status, minister_message_id, extract_status FROM chat_turns WHERE id = ?",
-            (chat_turn_id,),
-        ).fetchone()
-        if not row or row["status"] != "active" or not row["minister_message_id"]:
-            return False
-        from ming_sim.audience_night import write_audience_error_pack
-        translation_pending = translation_unstarted and row["extract_status"] != "done"
-        if translation_pending:
-            self.db.mark_story_extraction_pending(chat_turn_id)
-        pack = write_audience_error_pack(
-            kind="translation" if translation_pending else "reply",
-            message=str(error), detail={"chat_turn_id": chat_turn_id, "phase": "post_reply"},
-            db=self.db, exc=error,
-        )
-        if translation_pending:
-            self.db.set_chat_turn_error_pack(chat_turn_id, pack)
-        else:
-            self.db.mark_post_reply_failure(
-                chat_turn_id,
-                "court_break" if court_action == "court_break" else "after_reply", pack,
-            )
-        return True
-
     def _fail_chat_turn_and_reload(
         self, chat_turn_id: int, before_snapshot: Dict[str, Any],
         error: Optional[BaseException] = None,
@@ -2313,24 +2272,20 @@ class WebGame:
                 # 终态写尽力而为——abandon 崩不得跳过 restore，否则 turn 卡 generating。
                 try:
                     with cleanup_gate:
-                        reply_persisted = self._record_persisted_reply_failure(
-                            chat_turn_id, error,
-                            translation_unstarted=not translation_scheduled,
-                            court_action=getattr(result, "court_action", ""),
+                        GameSession.fail_audience_chat_turn(
+                            self.session,
+                            AudienceChatTurn(
+                                chat_turn_id=chat_turn_id,
+                                accepted_turn=accepted_turn,
+                                night_id=0,
+                                before_snapshot=before_snapshot,
+                                user_message_id=int(target.get("user_message_id") or 0),
+                            ),
+                            replied=result is not None,
+                            error=error,
+                            translation_dispatched=translation_scheduled,
+                            court_action=str(getattr(result, "court_action", "") or ""),
                         )
-                        if not reply_persisted:
-                            self._record_chat_rollback_items(chat_turn_id, before_snapshot)
-                            restored_ids = self.db.restore_interrupted_after_failed_retry(chat_turn_id)
-                            from ming_sim.decree_forecast import schedule_restored_decree_forecasts
-                            schedule_restored_decree_forecasts(self.session, restored_ids)
-                        if not reply_persisted and not isinstance(error, LLMUnavailable):
-                            from ming_sim.audience_night import write_audience_error_pack
-                            pack = write_audience_error_pack(
-                                kind="reply", message=str(error),
-                                detail={"chat_turn_id": chat_turn_id},
-                                db=self.db, exc=error,
-                            )
-                            self.db.set_chat_turn_error_pack(chat_turn_id, pack)
                 except Exception:
                     logger.exception(
                         "retry cleanup: restore_interrupted failed chat_turn_id=%s",
@@ -2900,22 +2855,37 @@ class WebGame:
                     try:
                         if chat_turn_id:
                             with bare_write_gate:
-                                reply_persisted = self._record_persisted_reply_failure(
-                                    chat_turn_id, error,
-                                    translation_unstarted=payload is None,
+                                reply_persisted = GameSession.fail_audience_chat_turn(
+                                    self.session,
+                                    AudienceChatTurn(
+                                        chat_turn_id=int(chat_turn_id),
+                                        accepted_turn=int(accepted_turn or self.state.turn),
+                                        night_id=0,
+                                        before_snapshot=before_snapshot,
+                                        user_message_id=0,
+                                    ),
+                                    replied=payload is not None or reply_done_emitted,
+                                    error=error,
+                                    translation_dispatched=payload is not None,
                                     court_action=court_action,
                                 )
                     except Exception:
                         logger.exception(
-                            "stream worker cleanup: record persisted reply failure failed chat_turn_id=%s",
+                            "stream worker cleanup: fail_chat_turn/reload failed chat_turn_id=%s",
                             chat_turn_id,
                         )
-                        # 相位取证失败绝不可推定回话未落，进而删问话/回话。
+                        # 收口自身失败：不删问话/回话（无法证明未落），但本轮没有可交付的 payload。
                         reply_persisted = True
+                        if payload is None:
+                            emit_delta("", replace=True)
                     if payload is None and not reply_persisted:
                         try:
                             with write_gate:
-                                self._fail_chat_turn_and_reload(chat_turn_id, before_snapshot, error)
+                                self.chat_history = {
+                                    name: [] for name in self.session.content.characters
+                                }
+                                for name, msgs in self.db.load_all_chat_history().items():
+                                    self.chat_history.setdefault(name, []).extend(msgs)
                         except Exception:
                             logger.exception(
                                 "stream worker cleanup: fail_chat_turn/reload failed chat_turn_id=%s",

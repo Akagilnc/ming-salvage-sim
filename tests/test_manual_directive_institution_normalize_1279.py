@@ -18,7 +18,7 @@ import pytest
 
 
 from types import SimpleNamespace
-def _mock_draft_intent(monkeypatch, *, text: str, roster):
+def _mock_draft_intent(monkeypatch, *, roster):
     import ming_sim.cli_backend as cli_backend
 
     response = {
@@ -38,9 +38,6 @@ def _mock_draft_intent(monkeypatch, *, text: str, roster):
                 if str(item.get("character_id") or "").strip()
             ) or "此人"
             return (f"通政司启：朝中查无「{names}」，乞陛下明示。", 1)
-        emperor = prompt.split("【皇帝】", 1)[1].split("【大臣回话】", 1)[0]
-        if "请据此拟旨" not in emperor or text not in emperor:
-            return (json.dumps({"拟旨意图": "无"}, ensure_ascii=False), 1)
         return (json.dumps(response, ensure_ascii=False), 1)
 
     monkeypatch.setattr(cli_backend, "_run_backend_for_config", backend)
@@ -53,17 +50,17 @@ def _stage_draft_and_read_back(game_tuple, monkeypatch, text: str):
     读起来像玩家现役入口仍在。拟诏台 Web 入口已退役，玩家拟旨只从召对来；此处
     只为测抽取结构／属地归一，直接经共享抽取核 + 引擎写入面落库后读回真实行。
     """
-    from ming_sim.session import GameSession
-
     db, state, content = game_tuple
-    session = GameSession.__new__(GameSession)
-    session.db = db
-    session.state = state
-    session.llm_config = None
-    session.content = content
-    from tests.directive_entry_helpers import stage_draft_directive
+    import ming_sim.cli_backend as cli_backend
 
-    staged = stage_draft_directive(session, text)
+    payload = cli_backend.resubmit_draft_admission_payload(
+        text, bad_payload={}, failure_reason="成案未入档",
+        db=db, content=content,
+    )
+    staged = SimpleNamespace(
+        id=db.add_directive(state, None, text, "手动新增", dossier_payload=payload),
+        text=text, status="draft",
+    )
     return {
         "directive": {"id": staged.id, "text": staged.text, "status": staged.status},
         "directives": [
@@ -77,10 +74,11 @@ def _capture_ids(game, monkeypatch, *, text: str, roster):
     import ming_sim.cli_backend as cli_backend
 
     db, _state, content = game
-    _mock_draft_intent(monkeypatch, text=text, roster=roster)
-    from tests.directive_entry_helpers import live_draft_payload
-
-    payload = live_draft_payload(text, None, db=db, content=content)
+    _mock_draft_intent(monkeypatch, roster=roster)
+    payload = cli_backend.resubmit_draft_admission_payload(
+        text, bad_payload={}, failure_reason="成案未入档",
+        db=db, content=content,
+    )
     return [str(item["character_id"]) for item in (payload.get("participant_roster") or [])]
 
 
@@ -91,13 +89,14 @@ def test_capture_manual_directive_drops_ministry_name_as_participant(game, monke
     db, state, content = game
     text = "着户部核清太仓实存，边饷优先"
     _mock_draft_intent(
-        monkeypatch, text=text,
+        monkeypatch,
         roster=[{"character_id": "户部", "tier": "主办", "role": "核太仓"}],
     )
 
-    from tests.directive_entry_helpers import live_draft_payload
-
-    payload = live_draft_payload(text, None, db=db, content=content)
+    payload = cli_backend.resubmit_draft_admission_payload(
+        text, bad_payload={}, failure_reason="成案未入档",
+        db=db, content=content,
+    )
     roster = payload.get("participant_roster") or []
     assert all(str(item.get("character_id") or "") != "户部" for item in roster)
 
@@ -136,7 +135,7 @@ def test_staged_draft_accepts_ministry_subject_without_rejection(game, monkeypat
     db, _state, _content = game
     text = "着户部核清太仓实存，边饷优先"
     _mock_draft_intent(
-        monkeypatch, text=text,
+        monkeypatch,
         roster=[{"character_id": "户部", "tier": "主办"}],
     )
 
@@ -233,17 +232,19 @@ def test_non_person_filter_does_not_use_institution_substring_class():
 def test_adr0053_unknown_person_still_rejected_at_capture(game, monkeypatch):
     """禁放松主键校验：纠错耗尽后真正不存在的人名仍在 capture seam 拒收。"""
     import ming_sim.cli_backend as cli_backend
-    from tests.directive_entry_helpers import live_draft_payload
 
     db, _state, content = game
     text = "着不存在之人核太仓"
     _mock_draft_intent(
-        monkeypatch, text=text,
+        monkeypatch,
         roster=[{"character_id": "不存在之人甲", "tier": "主办"}],
     )
 
     with pytest.raises(ValueError) as ei:
-        live_draft_payload(text, None, db=db, content=content)
+        cli_backend.resubmit_draft_admission_payload(
+            text, bad_payload={}, failure_reason="成案未入档",
+            db=db, content=content,
+        )
     msg = str(ei.value)
     assert "不存在之人甲" in msg
     assert any(m in msg for m in ("乞陛下明示", "朝籍", "查无"))

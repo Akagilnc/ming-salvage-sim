@@ -41,9 +41,10 @@ def test_capture_drops_dachen_generic_no_409(game, monkeypatch):
         return (json.dumps(response, ensure_ascii=False), 1)
 
     monkeypatch.setattr(cli_backend, "_run_backend_for_config", backend)
-    from tests.directive_entry_helpers import live_draft_payload
-
-    payload = live_draft_payload(text, None, db=db, content=content)
+    payload = cli_backend.resubmit_draft_admission_payload(
+        text, bad_payload={}, failure_reason="成案未入档",
+        db=db, content=content,
+    )
     ids = [str(item["character_id"]) for item in (payload.get("participant_roster") or [])]
     assert "大臣" not in ids
     assert ids == ["毕自严"]
@@ -80,10 +81,11 @@ def test_capture_unknown_person_still_409(game, monkeypatch):
         return (json.dumps(response, ensure_ascii=False), 1)
 
     monkeypatch.setattr(cli_backend, "_run_backend_for_config", backend)
-    from tests.directive_entry_helpers import live_draft_payload
-
     with pytest.raises(ValueError) as ei:
-        live_draft_payload(text, None, db=db, content=content)
+        cli_backend.resubmit_draft_admission_payload(
+            text, bad_payload={}, failure_reason="成案未入档",
+            db=db, content=content,
+        )
     msg = str(ei.value)
     assert "不存在之人甲" in msg
     assert any(m in msg for m in ("乞陛下明示", "朝籍", "查无"))
@@ -226,10 +228,14 @@ def test_web_create_directive_long_extract_still_lands_real_draft(game, monkeypa
         ),
         directive_payload=lambda row: dict(row),
     )
-    # #1902：摆一条 draft 作**测试数据准备**（拟诏台入口已退役，玩家拟旨只从召对来）。
-    from tests.directive_entry_helpers import stage_draft_directive
-
-    staged = stage_draft_directive(session, text)
+    payload = cli_backend.resubmit_draft_admission_payload(
+        text, bad_payload={}, failure_reason="成案未入档",
+        db=db, content=content,
+    )
+    staged = types.SimpleNamespace(
+        id=db.add_directive(state, None, text, "手动新增", dossier_payload=payload),
+        text=text, status="draft",
+    )
     assert clock["t"] - 1000.0 > 30.0, clock  # 确实跨过旧罩
     directive_id = int(staged.id)
     assert directive_id > 0
@@ -261,9 +267,10 @@ def test_normal_capture_path_unchanged(game, monkeypatch):
         cli_backend, "_run_backend_for_config",
         lambda *_a, **_k: (json.dumps(response, ensure_ascii=False), 1),
     )
-    from tests.directive_entry_helpers import live_draft_payload
-
-    payload = live_draft_payload(text, None, db=db, content=content)
+    payload = cli_backend.resubmit_draft_admission_payload(
+        text, bad_payload={}, failure_reason="成案未入档",
+        db=db, content=content,
+    )
     assert payload["dossier_action_type"] == "policy"
     assert payload["target_id"] == "treasury-audit"
     ids = [str(i["character_id"]) for i in (payload.get("participant_roster") or [])]

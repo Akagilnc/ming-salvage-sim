@@ -172,7 +172,15 @@ def _directive(text: str) -> None:
 
     game = web_app.web_game
     assert game is not None
-    stage_draft_directive(game.session, text)
+    stage_draft_directive(
+        game.session, text,
+        dossier_payload={
+            "dossier_action_type": "policy",
+            "target_kind": "issue",
+            "target_id": "liao-ration",
+            "mode": "ordinary",
+        },
+    )
 
 
 def _player_write_via_chat(client: TestClient, label: str) -> dict:

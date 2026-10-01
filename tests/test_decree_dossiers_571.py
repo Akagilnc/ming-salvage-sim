@@ -993,22 +993,19 @@ def test_manual_directive_capture_reaches_structured_dossier(
         response.update({"目标类型": "character", "目标ID": actor})
     directive_text = "着内库拨银三万两赈灾" if case == "allocation" else "手工旨意"
 
-    def prompt_faithful_backend(prompt, *_args, **_kwargs):
-        emperor = prompt.split("【皇帝】", 1)[1].split("【大臣回话】", 1)[0]
-        if "请据此拟旨" not in emperor or directive_text not in emperor:
-            return (json.dumps({"拟旨意图": "无"}, ensure_ascii=False), 1)
-        return (json.dumps(response, ensure_ascii=False), 1)
-
-    monkeypatch.setattr(cli_backend, "_run_backend_for_config", prompt_faithful_backend)
+    monkeypatch.setattr(
+        cli_backend, "_run_backend_for_config",
+        lambda *_a, **_k: (json.dumps(response, ensure_ascii=False), 1),
+    )
     session = GameSession.__new__(GameSession)
     session.db = db
     session.state = state
     session.llm_config = None
     session.content = content
-    # #1902：拟诏台 Web/CLI 手写入口退役，唯一在役路径 = 共享抽取核 + 引擎写入面。
-    from tests.directive_entry_helpers import live_draft_payload
-
-    payload = live_draft_payload(directive_text, None, db=db, content=content)
+    payload = cli_backend.resubmit_draft_admission_payload(
+        directive_text, bad_payload={}, failure_reason="成案未入档",
+        db=db, content=content,
+    )
     directive_id = db.add_directive(
         state, None, directive_text, "手动新增", dossier_payload=payload,
     )
@@ -1056,8 +1053,6 @@ def test_manual_directive_capture_rejects_malformed_roster(
 ):
     import ming_sim.cli_backend as cli_backend
     from ming_sim.session import GameSession
-    from tests.directive_entry_helpers import live_draft_payload
-
     db, state, content = game
     response = {
         "拟旨意图": "拟旨", "动作类型": "assignment",
@@ -1078,8 +1073,11 @@ def test_manual_directive_capture_rejects_malformed_roster(
 
     # #1902：Web 手写入口退役，业务拒收直接以 ValueError 上抛（旧路由包成 409）。
     with pytest.raises(ValueError, match="参与人"):
-        live_draft_payload("手工旨意", None, db=db, content=content)
-        db.add_directive(state, None, "手工旨意", "手动新增", dossier_payload={})
+        payload = cli_backend.resubmit_draft_admission_payload(
+            "手工旨意", bad_payload={}, failure_reason="成案未入档",
+            db=db, content=content,
+        )
+        db.add_directive(state, None, "手工旨意", "手动新增", dossier_payload=payload)
 
     assert db.list_pending_actions(state.turn) == []
     assert db.list_directives(state) == []
@@ -1095,8 +1093,6 @@ def test_manual_directive_capture_rejects_missing_empty_or_invalid_tier_without_
 ):
     import ming_sim.cli_backend as cli_backend
     from ming_sim.session import GameSession
-    from tests.directive_entry_helpers import live_draft_payload
-
     db, state, content = game
     participant = _active_minister(db)
     roster_item = {"character_id": participant}
@@ -1121,7 +1117,10 @@ def test_manual_directive_capture_rejects_missing_empty_or_invalid_tier_without_
 
     # #1902：两条手写入口同退役，业务拒收只剩共享抽取核这一条路径。
     with pytest.raises(ValueError, match="参与人"):
-        payload = live_draft_payload("手工旨意", None, db=db, content=content)
+        payload = cli_backend.resubmit_draft_admission_payload(
+            "手工旨意", bad_payload={}, failure_reason="成案未入档",
+            db=db, content=content,
+        )
         db.add_directive(state, None, "手工旨意", "手动新增", dossier_payload=payload)
 
     assert db.list_pending_actions(state.turn) == []

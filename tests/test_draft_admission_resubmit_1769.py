@@ -91,6 +91,35 @@ _GOOD_XIEANG = {
 
 # 名册产物错同形：结构合法但点名朝中查无此人 → heal 耗尽 → UnknownParticipantEscalate
 _UNKNOWN_NAME = "张三丰"
+_STORED_BAD_PAY_ORDER = cb.project_draft_extract_to_directive_payload(
+    {
+        "draft_action": "拟旨",
+        "dossier_action_type": "pay_order_override",
+        "target_kind": "army",
+        "target_id": "guanning",
+        "mode": "ordinary",
+        "entries": [{"key": "arrears_priority_军饷", "value": 1}],
+        "assignee": "郭允厚",
+    },
+    decree_text=_DECREE_TEXT,
+)
+_STORED_GOOD_XIEANG = cb.project_draft_extract_to_directive_payload(
+    {
+        "draft_action": "拟旨",
+        "dossier_action_type": "grant_allocation",
+        "grant_action": "协饷",
+        "purpose": "补饷",
+        "target_kind": "army",
+        "target_id": "guanning",
+        "mode": "ordinary",
+        "amount": 15,
+        "account": "国库",
+        "assignee": "郭允厚",
+        "execution_surface": "immediate",
+        "entries": [],
+    },
+    decree_text=_DECREE_TEXT,
+)
 _BAD_UNKNOWN_PARTICIPANT = {
     **_GOOD_XIEANG,
     "参与人": [
@@ -198,11 +227,11 @@ def _finish_month_after_gazette(game, turn: int) -> None:
     assert int(game.state.turn) == int(turn) + 1
 
 
-def _post_directive(game, text: str) -> None:
-    """#1902：摆一条 draft 作**测试数据准备**（拟诏台入口已退役，玩家拟旨只从召对来）。"""
+def _post_directive(game, text: str, dossier_payload: dict) -> None:
+    """摆一条显式结构化 draft。不抽取，不占用补交重写的模型供料。"""
     from tests.directive_entry_helpers import stage_draft_directive
 
-    stage_draft_directive(game.session, text)
+    stage_draft_directive(game.session, text, dossier_payload=dossier_payload)
 
 
 def _latest_directive_id(game) -> int:
@@ -249,12 +278,12 @@ def test_draft_admission_resubmit_success_advances_month(admission_game, monkeyp
     """
     game = admission_game
     # 原抽 + 重写1 仍坏；重写2 才成案（owner：总计 3）
-    _queue_backend(monkeypatch, [_BAD_PAY_ORDER, _BAD_PAY_ORDER, _GOOD_XIEANG])
+    _queue_backend(monkeypatch, [_BAD_PAY_ORDER, _GOOD_XIEANG])
     resubmit_calls = _spy_resubmit_kwargs(monkeypatch)
     client = TestClient(web_app.app)
     turn = int(game.state.turn)
 
-    _post_directive(game, _DECREE_TEXT)
+    _post_directive(game, _DECREE_TEXT, _STORED_BAD_PAY_ORDER)
     wait_pending_writes(game)
     draft_id = _latest_directive_id(game)
     first_row = game.db.get_directive(draft_id)
@@ -306,12 +335,12 @@ def test_draft_admission_exhaust_keeps_draft_and_advances(admission_game, monkey
     """耗尽路：原抽+重写2 共 3 次仍坏 → draft 留到下月、月推进、拒因留痕。"""
     game = admission_game
     # 原抽 + 两次重写皆坏（总计 3）；变异把重写预算改回 1 时本案须红（calls==2）
-    _queue_backend(monkeypatch, [_BAD_PAY_ORDER, _BAD_PAY_ORDER, _BAD_PAY_ORDER])
+    _queue_backend(monkeypatch, [_BAD_PAY_ORDER, _BAD_PAY_ORDER])
     resubmit_calls = _spy_resubmit_kwargs(monkeypatch)
     client = TestClient(web_app.app)
     turn = int(game.state.turn)
 
-    _post_directive(game, _DECREE_TEXT)
+    _post_directive(game, _DECREE_TEXT, _STORED_BAD_PAY_ORDER)
     wait_pending_writes(game)
     did = _latest_directive_id(game)
     source_turn = int(game.db.get_directive(did)["turn"])
@@ -385,17 +414,15 @@ def test_draft_admission_mixed_good_and_bad_independent(admission_game, monkeypa
     而不是拿 DB 里的旧拒因再问一遍。
     """
     game = admission_game
-    _queue_backend(monkeypatch, [
-        _GOOD_XIEANG, _BAD_PAY_ORDER, _BAD_UNKNOWN_PARTICIPANT,
-    ])
+    _queue_backend(monkeypatch, [_BAD_UNKNOWN_PARTICIPANT])
     resubmit_calls = _spy_resubmit_kwargs(monkeypatch)
     client = TestClient(web_app.app)
     turn = int(game.state.turn)
 
-    _post_directive(game, "准从国库见银拨关宁军饷十五万两即发。")
+    _post_directive(game, "准从国库见银拨关宁军饷十五万两即发。", _STORED_GOOD_XIEANG)
     wait_pending_writes(game)
     good_id = _latest_directive_id(game)
-    _post_directive(game, _DECREE_TEXT)
+    _post_directive(game, _DECREE_TEXT, _STORED_BAD_PAY_ORDER)
     wait_pending_writes(game)
     bad_id = _latest_directive_id(game)
     assert bad_id != good_id
@@ -427,7 +454,7 @@ def test_draft_admission_code_fault_aborts_with_error_pack(admission_game, monke
     client = TestClient(web_app.app)
     turn = int(game.state.turn)
 
-    _post_directive(game, "准从国库见银拨关宁军饷十五万两即发。")
+    _post_directive(game, "准从国库见银拨关宁军饷十五万两即发。", _STORED_GOOD_XIEANG)
     wait_pending_writes(game)
 
     def boom(*_a, **_k):
@@ -451,7 +478,7 @@ def test_draft_admission_resubmit_code_fault_aborts_with_error_pack(
     client = TestClient(web_app.app)
     turn = int(game.state.turn)
 
-    _post_directive(game, _DECREE_TEXT)
+    _post_directive(game, _DECREE_TEXT, _STORED_BAD_PAY_ORDER)
     wait_pending_writes(game)
 
     def boom(*_a, **_k):
@@ -484,14 +511,12 @@ def test_resubmit_non_intent_keeps_original_payload_no_special_decree(
 ):
     """类1：原抽坏 pay_order → 重写无拟旨意图 → draft 仍原载荷、不得 issued special_decree。"""
     game = admission_game
-    _queue_backend(monkeypatch, [
-        _BAD_PAY_ORDER, _NO_INTENT_REWRITE, _NO_INTENT_REWRITE,
-    ])
+    _queue_backend(monkeypatch, [_NO_INTENT_REWRITE, _NO_INTENT_REWRITE])
     resubmit_calls = _spy_resubmit_kwargs(monkeypatch)
     client = TestClient(web_app.app)
     turn = int(game.state.turn)
 
-    _post_directive(game, _DECREE_TEXT)
+    _post_directive(game, _DECREE_TEXT, _STORED_BAD_PAY_ORDER)
     wait_pending_writes(game)
     did = _latest_directive_id(game)
     first = game.db.read_directive_dossier_payload(game.db.get_directive(did))
@@ -564,11 +589,11 @@ def test_exhaust_zero_dossier_system_simulation_no_steam_decree(
 ):
     """类3：耗尽零成案 → source=system_simulation；不发 STAT_DECREES_ISSUED；陈旧 last_decree 不进 resolve。"""
     game = admission_game
-    _queue_backend(monkeypatch, [_BAD_PAY_ORDER, _BAD_PAY_ORDER, _BAD_PAY_ORDER])
+    _queue_backend(monkeypatch, [_BAD_PAY_ORDER, _BAD_PAY_ORDER])
     client = TestClient(web_app.app)
     turn = int(game.state.turn)
 
-    _post_directive(game, _DECREE_TEXT)
+    _post_directive(game, _DECREE_TEXT, _STORED_BAD_PAY_ORDER)
     wait_pending_writes(game)
     did = _latest_directive_id(game)
 

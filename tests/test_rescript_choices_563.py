@@ -40,9 +40,9 @@ def test_manual_mode_uses_typed_extractor_judgment(
     monkeypatch.setattr(
         cli_backend, "_run_backend_for_config", lambda *_args, **_kwargs: (extracted, {}),
     )
-    from tests.directive_entry_helpers import live_draft_payload
-
-    assert live_draft_payload(emperor_text)["mode"] == expected
+    assert cli_backend.resubmit_draft_admission_payload(
+        emperor_text, bad_payload={}, failure_reason="成案未入档",
+    )["mode"] == expected
 
 
 def test_manual_edit_preserves_existing_mode_when_text_and_extractor_are_silent(monkeypatch):
@@ -54,9 +54,10 @@ def test_manual_edit_preserves_existing_mode_when_text_and_extractor_are_silent(
         cli_backend, "_run_backend_for_config", lambda *_args, **_kwargs: (extracted, {}),
     )
 
-    from tests.directive_entry_helpers import live_draft_payload
-
-    payload = live_draft_payload("增列核验期限", existing_mode="midzhi")
+    payload = cli_backend.resubmit_draft_admission_payload(
+        "增列核验期限", bad_payload={}, failure_reason="成案未入档",
+        existing_mode="midzhi",
+    )
 
     assert payload["mode"] == "midzhi"
 
