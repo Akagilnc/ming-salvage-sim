@@ -221,6 +221,56 @@ def test_midzhi_rescript_model_uses_original_key_and_existing_gate(game, monkeyp
     assert gate == [int(dossier["id"])]
 
 
+@pytest.mark.parametrize("desk_kind", ["mixed", "decision", "empty"])
+def test_1589_keyless_batch_rejected_without_writes(game, monkeypatch, desk_kind):
+    """Stable identity admission survives six-action retirement, including empty desks."""
+    from ming_sim.models import TurnPhase
+    from tests.month_chain_helpers import canned_full_settlement, make_light_session
+
+    db, state, content = game
+    canned_full_settlement(monkeypatch)
+    if desk_kind != "empty":
+        monkeypatch.setattr("ming_sim.month_chain.run_world_segment_text", lambda *a, **k:
+            '<<DECISION>>{"title":"请旨","context":"c","options":[{"label":"准"},{"label":"缓"}]}<<END>>')
+    if desk_kind == "mixed":
+        monkeypatch.setattr("ming_sim.rescript_draft.run_rescript_text", lambda session, *, officers, backlog, answer=None:
+            json.dumps({"actor_name": officers[-1]["name"], "revisions": [],
+                        "items": [{"title": "急务", "context": "c", "options": [{"label": "准"}]}]})
+            if answer is None else json.dumps({"disposition": "settled", "text": ""}))
+    monkeypatch.setattr("ming_sim.month_chain._run_world_continuation_text", lambda *a, **k: "")
+    session = make_light_session(db, state, content)
+    session.llm_config = object()
+    session.resolve_turn(allow_empty_decree=True)
+    state.turn_phase = TurnPhase.AWAITING_DECISION.value
+    db.save_state(state)
+    turn = int(state.turn)
+    rows = session.pending_decisions()
+    assert {r["kind"] for r in rows} == {
+        "mixed": {"rescript_draft", "decision"}, "decision": {"decision"}, "empty": set(),
+    }[desk_kind]
+    dossier_ids = {r["id"] for r in db.list_decree_dossiers()}
+    events = [tuple(r) for r in db.conn.execute("SELECT event_id, terminal_state, source FROM event_triggers ORDER BY event_id")]
+    choices = [{"label": "准"}]
+    if desk_kind == "mixed":
+        choices.insert(0, {"decision_key": rows[0]["decision_key"], "label": "准"})
+    with pytest.raises(ValueError):
+        session.submit_hitl_choices(choices, write_gate=session._write_gate)
+    after = session.pending_decisions()
+    assert {r["decision_key"] for r in after} == {r["decision_key"] for r in rows}
+    assert all(r["status"] == "pending" and not r["choice"] for r in after)
+    assert {r["id"] for r in db.list_decree_dossiers()} == dossier_ids
+    assert [tuple(r) for r in db.conn.execute("SELECT event_id, terminal_state, source FROM event_triggers ORDER BY event_id")] == events
+    assert db.load_state(content).turn_phase == TurnPhase.AWAITING_DECISION.value
+    assert int(state.turn) == turn
+    session.submit_hitl_choices(
+        [{"decision_key": r["decision_key"], "label": "准"} for r in rows],
+        write_gate=session._write_gate,
+    )
+    assert not session.pending_decisions()
+    assert int(state.turn) == turn
+    assert state.turn_phase == TurnPhase.SETTLING.value
+
+
 def test_658_typed_target_and_backing_reject_bad_shapes(game, monkeypatch):
     """#658：typed 解析边界表驱动 + 一条外部入口零写（不跨裸值/双别名/session 全排列）。"""
     from ming_sim.db import imperial_push_target_dossier_id, parse_backing_dossier_id

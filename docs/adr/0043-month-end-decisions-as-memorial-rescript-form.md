@@ -6,4 +6,4 @@ Status: Accepted（#1847 范围澄清已独立署庭；原决定 Accepted，2026
 
 ## #1847 范围澄清
 
-急务奏折与叙事请旨由原样批语续推、转译落账，不再另从旧选项载荷落第二遍；[0055](0055-promulgation-gate-at-settlement-effects-follow-verdict.md) 打回三选与判后结构化物化不在退役范围。修订依据、执行边界及验收唯一引用 [#1847](https://github.com/Akagilnc/ming-salvage-sim/issues/1847)，人物分拣与跨月改票决定见 [0093](0093-rescript-loop-triage-draft-six-actions.md)；本修订独立署庭：给事中 run `01a0f8a1-6cf4-7ee1-8010-8ba63c7f09a8`、审刑院 run `01a0f8a9-e0a8-78e3-8291-62b017f5019c`（#1847 起居录）。
+急务奏折与叙事请旨由原样批语续推、转译落账，不再另从旧选项载荷落第二遍；[0055](0055-promulgation-gate-at-settlement-effects-follow-verdict.md) 打回三选与判后结构化物化不在退役范围。修订依据、执行边界及验收唯一引用 [#1847](https://github.com/Akagilnc/ming-salvage-sim/issues/1847)，人物分拣与跨月改票决定见 [0093](0093-rescript-loop-triage-draft-six-actions.md)；本修订独立署庭：给事中 run `01a0f8a1-6cf4-7ee1-8010-8ba63c7f09a8`、符宝郎 run `01a0f8a9-e0a8-78e3-8291-62b017f5019c`（#1847 起居录）。

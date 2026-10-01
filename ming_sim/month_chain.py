@@ -366,7 +366,7 @@ def continue_world_after_answers(
     """批红答复后从问处续推世界段一次；问前已落不动，整段不重推。
 
     完整续推文先存当前月链；转译失败恢复不重推。
-    消费事实（清问 + world_continued）与落账同事务（ADR 0157 恢复幂等）。
+    消费旧问、承接新问与落账同事务；无新问才记 world_continued（ADR 0157）。
     """
     from ming_sim.month_translate import dispatch_month_segment
 
@@ -383,6 +383,7 @@ def continue_world_after_answers(
         chain["world_continuation_text"] = _run_world_continuation_text(session, chain, answers)
         _save_chain(db, turn, chain, source=source)
     text = chain["world_continuation_text"]
+    prefix, extra = _split_at_question(str(text or ""))
     outcome = None
 
     def mark_continued(result: Any = None) -> None:
@@ -392,20 +393,22 @@ def continue_world_after_answers(
             chain["declaration_outcome"] = candidate
             outcome = candidate
         _collect_disclosures_from_result(chain, result)
-        chain["world_questions"] = []
-        chain["world_continued"] = True
+        chain["world_question_offset"] = (
+            int(chain.get("world_question_offset", 0)) + len(chain["world_questions"])
+        )
+        chain["world_questions"] = extra
+        chain["world_continued"] = not extra
+        chain["world_text"] = str(chain.get("world_text") or "") + "\n" + str(text or "")
+        chain.pop("world_question_event_bindings", None)
         chain.pop("world_continuation_text", None)
         _save_chain(db, turn, chain, source=source)
 
-    if str(text or "").strip():
-        # 续推若再吐 DECISION 机标，只落问前缀文，勿把机标喂进转译。
-        prefix, _extra = _split_at_question(str(text))
-        if prefix.strip():
-            result = dispatch_month_segment(
-                db, state, segment=prefix, llm_config=session.llm_config, source=source,
-                alongside=mark_continued,
-            )
-            return _ending_from_dispatch_result(result) or outcome
+    if prefix.strip():
+        result = dispatch_month_segment(
+            db, state, segment=prefix, llm_config=session.llm_config, source=source,
+            alongside=mark_continued,
+        )
+        return _ending_from_dispatch_result(result) or outcome
     # 空续推：无落账后果，仍须原子记下已续，避免重入再烧。
     with atomic(db):
         mark_continued(None)
@@ -420,9 +423,9 @@ def continue_decree_after_answers(
     """批红答复后从问处续推该旨一次；问前已落声明不动。
 
     同一 decree_ref 问前声明可能已 settled，续推声明直接分派，不另造平行暂存身份。
-    幂等：questions 已清则视为已续，同回合重入零新增效果。
+    幂等：只消费当前问题身份；已答旧问不驱动下一轮续推。
     完整续推文先存当前月链；转译失败恢复不重推。
-    消费事实（清问）随既有段分派 alongside 与落账同事务（ADR 0157）。
+    消费旧问、承接新问随既有段分派 alongside 与落账同事务（ADR 0157）。
     """
     from ming_sim.exceptions import LLMUnavailable
     from ming_sim.month_translate import dispatch_month_segment
@@ -442,25 +445,26 @@ def continue_decree_after_answers(
         products[decree_ref] = _run_decree_continuation_text(session, dossier, answers)
         _save_chain(db, int(state.turn), chain, source=source)
     text = products[decree_ref]
-    prefix, _extra = _split_at_question(str(text or ""))
-    if not prefix.strip():
-        # LLM 已成功且无问后文：空后果终态，方可清问。
-        with atomic(db):
-            db.staged_declarations.clear_questions(decree_ref)
-            products.pop(decree_ref)
-            _save_chain(db, int(state.turn), chain, source=source)
-        return
+    prefix, extra = _split_at_question(str(text or ""))
     payload = dossier.get("payload") if isinstance(dossier.get("payload"), dict) else {}
 
-    def consume(result: Any) -> None:
+    def consume(result: Any = None) -> None:
         candidate = _ending_from_dispatch_result(result)
         if candidate is not None:
             chain["declaration_outcome"] = candidate
         _collect_disclosures_from_result(chain, result)
+        offsets = chain.setdefault("decree_question_offsets", {})
+        offsets[decree_ref] = (
+            int(offsets.get(decree_ref, 0)) + len(db.staged_declarations.questions_for(decree_ref))
+        )
+        db.staged_declarations.replace_questions(decree_ref, extra, forecast_text=str(text or ""))
         products.pop(decree_ref)
         _save_chain(db, int(state.turn), chain, source=source)
-        db.staged_declarations.clear_questions(decree_ref)
 
+    if not prefix.strip():
+        with atomic(db):
+            consume()
+        return
     dispatch_month_segment(
         db, state, segment=prefix,
         decree_payload=payload if isinstance(payload, dict) else {},
@@ -1573,15 +1577,17 @@ def _materialize_rescript_desk(
             ],
         })
     for ref, questions in open_items["decree_questions"]:
+        offset = int((chain.get("decree_question_offsets") or {}).get(ref, 0))
         for idx, question in enumerate(questions):
             if not isinstance(question, dict):
                 continue
             decisions.append(_question_as_decision(
-                question, event_id=f"{_DECREE_QUESTION_PREFIX}{ref}:{idx}",
+                question, event_id=f"{_DECREE_QUESTION_PREFIX}{ref}:{offset + idx}",
             ))
+    offset = int(chain.get("world_question_offset", 0))
     for idx, question in enumerate(open_items["world_questions"]):
         decisions.append(_question_as_decision(
-            question, event_id=f"{_WORLD_QUESTION_PREFIX}{turn}:{idx}",
+            question, event_id=f"{_WORLD_QUESTION_PREFIX}{turn}:{offset + idx}",
         ))
     if open_items["world_questions"]:
         _pin_world_question_event_bindings(chain, db=db, state=state, turn=turn)
@@ -1615,7 +1621,7 @@ def _pin_world_question_event_bindings(
 ) -> None:
     """推送案头时把事件身份钉进月链（ADR 0115）。
 
-    案头行身份保持 ``world-question:{turn}:{idx}``，不把事件 id 写进那一列。
+    案头行身份保持 ``world-question:{turn}:{idx}``，后续问题顺延 idx，不把事件 id 写进那一列。
     事件身份只来自交接时请旨块自带、且属于当回合
     ``gather_fiscal_levy_petitions`` 快照的 event_id。只从 origin_ref 填进来的
     id 不是这份快照。没有这份身份的请旨保持非事件身份：剩余数量不能证明它属于
@@ -1636,7 +1642,7 @@ def _pin_world_question_event_bindings(
     bindings: Dict[str, str] = {}
     used: set[str] = set()
     for idx, question in enumerate(questions):
-        desk_key = f"{_WORLD_QUESTION_PREFIX}{turn}:{idx}"
+        desk_key = f"{_WORLD_QUESTION_PREFIX}{turn}:{int(chain.get('world_question_offset', 0)) + idx}"
         echoed = str(question.get("event_id") or "").strip()
         origin_ref = str(question.get("origin_ref") or "").strip()
         if origin_ref and echoed == origin_ref:
@@ -1760,6 +1766,7 @@ def _consume_rescript_answers(
     world_rows = [
         r for r in rows
         if str(r.get("event_id") or "").startswith(_WORLD_QUESTION_PREFIX)
+        and int(str(r["event_id"]).rsplit(":", 1)[1]) >= int(chain.get("world_question_offset", 0))
     ]
     if (
         world_rows
@@ -1779,7 +1786,9 @@ def _consume_rescript_answers(
         if not event_id.startswith(_DECREE_QUESTION_PREFIX):
             continue
         body = event_id[len(_DECREE_QUESTION_PREFIX):]
-        ref = body.rsplit(":", 1)[0] if ":" in body else body
+        ref, _, idx = body.rpartition(":")
+        if int(idx) < int((chain.get("decree_question_offsets") or {}).get(ref, 0)):
+            continue
         decree_rows_by_ref.setdefault(ref, []).append(row)
     for ref, ref_rows in decree_rows_by_ref.items():
         if not all(str(r.get("status") or "") == "decided" for r in ref_rows):

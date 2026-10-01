@@ -130,12 +130,18 @@ def consume_memorial_answers(session, chain: dict, *, source) -> None:
 
         def consume(result=None):
             if midzhi:
-                payload = dict(decree["payload"])
-                payload.update(mode="midzhi", decision_key=key, text=decree["text"])
+                payload = db._normalize_directive_dossier_payload(
+                    {**decree["payload"], "mode": "midzhi", "decision_key": key,
+                     "text": decree["text"]},
+                    content=session.content, current_turn=int(state.turn),
+                )
+                action_type = db._directive_dossier_action_type(payload)
+                executor_kind, executor_id = db._directive_executor(action_type, payload)
                 ids = db.create_decree_dossiers(
-                    state, action_type=payload["dossier_action_type"],
+                    state, action_type=action_type,
                     decree_text=decree["text"], target_kind=payload["target_kind"],
                     target_id=payload["target_id"], payload=payload, status="proposed",
+                    executor_kind=executor_kind, executor_id=executor_id,
                     due_turn=int(payload.get("due_turn") or 0),
                     participants=payload.get("participant_roster"), commit=False,
                 )

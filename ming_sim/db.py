@@ -14926,6 +14926,11 @@ class GameDB:
                 )
             ) OR (
                     d.status='executing'
+                AND NOT EXISTS (
+                    SELECT 1 FROM decree_dossier_decisions forced
+                    WHERE forced.dossier_id=d.id AND forced.turn=?
+                      AND forced.rescript_action='force_promulgated'
+                )
             ) OR (
                     d.status='promulgated'
                 AND (
@@ -14943,6 +14948,7 @@ class GameDB:
             (
                 int(turn), int(turn), int(turn),
                 int(turn), int(turn), int(turn),
+                int(turn),
                 int(turn), int(turn), int(turn),
             ),
         ).fetchall()
