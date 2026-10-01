@@ -1792,40 +1792,6 @@ def _compose_inworld_fact_report(
         raise cli_runner_unavailable(exc, backend=tag) from exc
 
 
-def compose_unknown_participant_inworld_report(
-    names: Optional[List[str]] = None,
-    *,
-    voice: str = "tongzheng",
-    speaker_name: str = "",
-    speaker_role: str = "",
-    llm_config: Any = None,
-) -> str:
-    """P7：把查无此人事实喂给 LLM，产大臣/通政司口吻回禀；禁模板当台词。
-
-    产文失败 → typed LLMUnavailable（#1299/#1310/#1452
-    失败单源 CLI_RUNNER_PLAYER_MESSAGE），玩家重下这道点名。
-    speaker_role：大臣口吻时接 minister_speaker_role 客观档料（0033）；不在此复制档料。
-    """
-    cleaned = _normalize_unknown_participant_names(names)
-    if voice == "minister":
-        role = str(speaker_role or "").strip()
-        if not role:
-            name = str(speaker_name or "").strip()
-            role = f"大臣{name}" if name else "大臣"
-    else:
-        role = "通政使司官"
-    fact = unknown_participant_fact(cleaned)
-    prompt = (
-        f"你是{role}。根据下列事实，以本职口吻向皇帝回禀。\n"
-        f"事实：{fact}\n"
-    )
-    return _compose_inworld_fact_report(
-        prompt,
-        llm_config=llm_config,
-        tag="participant_escalate_report",
-    )
-
-
 def compose_decree_validation_recovery(
     failed_fields: Optional[List[str]] = None,
     *,
@@ -3218,65 +3184,6 @@ def _is_manual_special_decree_fallback(payload: Mapping[str, Any]) -> bool:
     )
 
 
-def capture_manual_directive_payload(
-    text: str, llm_config: Any = None, *, existing_mode: object = None,
-    db: Any = None, content: Any = None,
-) -> Dict[str, object]:
-    """Web/CLI 手工下旨共用既有草稿抽取 seam；在写入边界归一人物引用。
-
-    #1327 / #1274 V-1：空载零 LLM 直落 special_decree。
-    #1465 切片③：外层 30s 总罩已删——长抽取不再被墙钟截断成 special_decree
-    fallback（宪法 #9）；次数/空转由 transport 在 runner 侧收口。
-    真不在册耗尽 → 通政司戏内回禀 ValueError（不落草案、不除名）；
-    回禀产文失败 → typed LLMUnavailable（禁固定戏内模板当台词）。
-    """
-    directive_text = str(text or "").strip()
-    fallback_mode = resolve_directive_mode(existing=existing_mode)
-    # 空载短路：无正文可抽 → 直落草案结构，零 LLM 调用（P5：禁为省写把可短路 LLM 串回）。
-    if not directive_text:
-        return _manual_special_decree_payload(fallback_mode)
-
-    prompt = (
-        f"请据此拟旨，并从以下已成旨文抽取结构，不得改写：\n{directive_text}"
-    )
-
-    def _run_extract() -> Dict[str, Any]:
-        # #1274 V-1：extract→validate 有界纠错；db/content 齐时参与人名册自愈。
-        return extract_draft_intent_with_roster_heal(
-            prompt, directive_text, llm_config=llm_config,
-            db=db, content=content,
-        )
-
-    captured: Dict[str, Any]
-    try:
-        captured = _run_extract()
-    except UnknownParticipantEscalate as exc:
-        # 真不在册：通政司戏内回禀；禁吞 special_decree、禁除名照落。
-        report = compose_unknown_participant_inworld_report(
-            exc.names,
-            voice="tongzheng",
-            llm_config=llm_config,
-        )
-        raise ValueError(report) from exc
-    except ValueError:
-        # 其它业务 ValueError 原样上抛；禁吞成 special_decree。
-        raise
-    except Exception as exc:
-        # 纠错路上 LLM 终失败（transport 已尽次数）→ special_decree 原文照落
-        # （零改参与人）。此处只接 transport 已判终的失败，不再自设墙钟。
-        _log(f"手工拟诏 capture 降级 special_decree：{exc}")
-        return _manual_special_decree_payload(fallback_mode)
-
-    # heal 已 normalize+validate；投影与 #1769 补交共用同一 helper（禁双路径漂移）。
-    return project_draft_extract_to_directive_payload(
-        captured,
-        decree_text=directive_text,
-        existing_mode=existing_mode,
-        db=db,
-        content=content,
-    )
-
-
 def build_draft_admission_resubmit_feedback(
     *,
     failure_reason: str,
@@ -3308,7 +3215,7 @@ def project_draft_extract_to_directive_payload(
     db: Any = None,
     content: Any = None,
 ) -> Dict[str, object]:
-    """把 extract_draft_intent 结果投影为 turn_directives.dossier_payload（与手工 capture 同形）。"""
+    """把 extract_draft_intent 结果投影为 turn_directives.dossier_payload。"""
     declared_mode = resolve_directive_mode(
         extracted=captured.get("mode"), existing=existing_mode,
     )
@@ -3423,14 +3330,12 @@ def resubmit_draft_admission_payload(
             initial_correction=feedback,
         )
     except UnknownParticipantEscalate as exc:
-        # 已识别的名册产物错：与 capture_manual_directive_payload 同一归一
-        # ——产物错走本票 B 路预算/留存，不得升成整月 SettlementAbort 连带好旨。
+        # 名册产物错走本票 B 路预算/留存，不得升成整月 SettlementAbort 连带好旨。
         # 结算路无召对现场，不另作戏内回禀；只把不在册事实当失败事实回喂下一次重写。
         raise ValueError(exc.fact) from exc
-    # #1769 结算路 B：仅「仍为拟旨且非 capture 空载 fallback」才算本轮成功产物。
+    # #1769 结算路 B：仅「仍为拟旨且非空载 special_decree fallback」才算本轮成功产物。
     # extract 缺拟旨意图/垃圾 → draft_action=无；project 再映成 special_decree
     # fallback——若 replace_payload 会毁掉原 pay_order/grant 并被二次 ensure 成案（P1）。
-    # capture 首次空载/超时 fallback 不经本函数，不动。
     if captured.get("draft_action") != "拟旨":
         raise ValueError("结算补交重写未返回拟旨意图")
     payload = project_draft_extract_to_directive_payload(

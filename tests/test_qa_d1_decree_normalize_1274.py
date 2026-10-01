@@ -41,9 +41,9 @@ def test_capture_drops_dachen_generic_no_409(game, monkeypatch):
         return (json.dumps(response, ensure_ascii=False), 1)
 
     monkeypatch.setattr(cli_backend, "_run_backend_for_config", backend)
-    payload = cli_backend.capture_manual_directive_payload(
-        text, None, db=db, content=content,
-    )
+    from tests.directive_entry_helpers import live_draft_payload
+
+    payload = live_draft_payload(text, None, db=db, content=content)
     ids = [str(item["character_id"]) for item in (payload.get("participant_roster") or [])]
     assert "大臣" not in ids
     assert ids == ["毕自严"]
@@ -80,10 +80,10 @@ def test_capture_unknown_person_still_409(game, monkeypatch):
         return (json.dumps(response, ensure_ascii=False), 1)
 
     monkeypatch.setattr(cli_backend, "_run_backend_for_config", backend)
+    from tests.directive_entry_helpers import live_draft_payload
+
     with pytest.raises(ValueError) as ei:
-        cli_backend.capture_manual_directive_payload(
-            text, None, db=db, content=content,
-        )
+        live_draft_payload(text, None, db=db, content=content)
     msg = str(ei.value)
     assert "不存在之人甲" in msg
     assert any(m in msg for m in ("乞陛下明示", "朝籍", "查无"))
@@ -177,25 +177,6 @@ def test_patch_decree_and_manual_directive_routes_removed():
 # ── 4) #1327 空载/有界 capture ─────────────────────────────────────
 
 
-def test_empty_text_capture_short_circuits_without_llm(monkeypatch):
-    """空载：无可抽取正文 → 零 LLM、直落 special_decree。"""
-    import ming_sim.cli_backend as cli_backend
-
-    calls = []
-
-    def boom(*_a, **_k):
-        calls.append(1)
-        raise AssertionError("空载不得调用 LLM")
-
-    monkeypatch.setattr(cli_backend, "_run_backend_for_config", boom)
-    monkeypatch.setattr(cli_backend, "extract_draft_intent", boom)
-
-    payload = cli_backend.capture_manual_directive_payload("   ", None)
-    assert payload["dossier_action_type"] == "special_decree"
-    assert payload["target_id"] == "manual-directive"
-    assert calls == []
-
-
 def test_web_create_directive_long_extract_still_lands_real_draft(game, monkeypatch):
     """#1465 切片③：拟旨 capture 跨旧 30s 罩仍成案（真实入口 → 读回 pending 案卷）。
 
@@ -280,9 +261,9 @@ def test_normal_capture_path_unchanged(game, monkeypatch):
         cli_backend, "_run_backend_for_config",
         lambda *_a, **_k: (json.dumps(response, ensure_ascii=False), 1),
     )
-    payload = cli_backend.capture_manual_directive_payload(
-        text, None, db=db, content=content,
-    )
+    from tests.directive_entry_helpers import live_draft_payload
+
+    payload = live_draft_payload(text, None, db=db, content=content)
     assert payload["dossier_action_type"] == "policy"
     assert payload["target_id"] == "treasury-audit"
     ids = [str(i["character_id"]) for i in (payload.get("participant_roster") or [])]

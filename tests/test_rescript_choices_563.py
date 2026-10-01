@@ -40,7 +40,9 @@ def test_manual_mode_uses_typed_extractor_judgment(
     monkeypatch.setattr(
         cli_backend, "_run_backend_for_config", lambda *_args, **_kwargs: (extracted, {}),
     )
-    assert cli_backend.capture_manual_directive_payload(emperor_text)["mode"] == expected
+    from tests.directive_entry_helpers import live_draft_payload
+
+    assert live_draft_payload(emperor_text)["mode"] == expected
 
 
 def test_manual_edit_preserves_existing_mode_when_text_and_extractor_are_silent(monkeypatch):
@@ -52,9 +54,9 @@ def test_manual_edit_preserves_existing_mode_when_text_and_extractor_are_silent(
         cli_backend, "_run_backend_for_config", lambda *_args, **_kwargs: (extracted, {}),
     )
 
-    payload = cli_backend.capture_manual_directive_payload(
-        "增列核验期限", existing_mode="midzhi",
-    )
+    from tests.directive_entry_helpers import live_draft_payload
+
+    payload = live_draft_payload("增列核验期限", existing_mode="midzhi")
 
     assert payload["mode"] == "midzhi"
 

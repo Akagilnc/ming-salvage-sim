@@ -287,16 +287,21 @@ def test_terminal_minister_chat_preserves_chat_error_when_rollback_fails(game, m
     def _scene_chat(message, *, chat_turn_id=0, stream_emit=None, minister_name=""):
         raise RuntimeError("LLM down")
 
-    def _boom_fail_chat_turn(_id):
+    def _boom_restore(_id):
         raise RuntimeError("rollback failed")
 
     session.scene_chat = _scene_chat  # type: ignore[method-assign]
-    monkeypatch.setattr(session.db, "fail_chat_turn", _boom_fail_chat_turn)
+    monkeypatch.setattr(session.db, "restore_interrupted_after_failed_retry", _boom_restore)
     answers = iter(["命洪承畴督办陕西赈灾，东厂暗助护赈银。"])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
 
     with pytest.raises(RuntimeError, match="LLM down"):
         term.minister_chat(session, SimpleNamespace(name=minister_name))
+
+    row = db.conn.execute(
+        "SELECT status FROM chat_turns ORDER BY id DESC LIMIT 1",
+    ).fetchone()
+    assert row["status"] == "generating"
 
 
 def test_terminal_minister_chat_reply_persist_failure_keeps_user_message(game, monkeypatch):

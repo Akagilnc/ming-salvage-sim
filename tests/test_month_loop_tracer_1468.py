@@ -22,7 +22,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 import ming_sim.agents as agents_mod
-import ming_sim.cli_backend as cli_backend
 import ming_sim.decree as decree_mod
 import ming_sim.session as session_mod
 import web_app
@@ -62,17 +61,6 @@ def _stub_outer_llm_seams(monkeypatch) -> None:
     # 票据不归还 → xdist 下 _wait_pending_writes 墙钟假红。
     # 高亮判官默认 8s 超时——必须零延迟 stub，否则两月链必破速度红线。
     monkeypatch.setattr(web_app, "run_highlight_judge", lambda **_k: [])
-    # 拟旨 capture 默认 30s 总罩——外层接缝 canned，禁真 LLM/真等。
-    monkeypatch.setattr(
-        cli_backend,
-        "capture_manual_directive_payload",
-        lambda text, llm_config=None, **_k: {
-            "dossier_action_type": "policy",
-            "target_kind": "issue",
-            "target_id": "month-loop-tracer-1468",
-            "mode": "ordinary",
-        },
-    )
     # 判决及本月世界段只桩现役外部 LLM 缝。
     monkeypatch.setattr(
         decree_mod,
@@ -320,7 +308,16 @@ def _play_one_month(
     # #1902：摆一条 draft 作**测试数据准备**（拟诏台入口已退役，玩家拟旨只从召对来）。
     from tests.directive_entry_helpers import stage_draft_directive
 
-    stage_draft_directive(game.session, f"着户部清核辽饷（{month_label}）。")
+    stage_draft_directive(
+        game.session,
+        f"着户部清核辽饷（{month_label}）。",
+        dossier_payload={
+            "dossier_action_type": "policy",
+            "target_kind": "issue",
+            "target_id": "month-loop-tracer-1468",
+            "mode": "ordinary",
+        },
+    )
     dirs = game.session.list_directives()
     assert dirs, f"{month_label}: directive list empty after staging"
 

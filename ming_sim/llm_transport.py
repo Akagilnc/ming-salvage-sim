@@ -58,9 +58,8 @@ class TransportPolicy:
     """统一 transport 预算；调用方可在 runtime 预算上收紧特定入口的重试。"""
 
     max_attempts: int = TRANSPORT_DEFAULT_MAX_ATTEMPTS
-    # #1853 召对 / #1846 过月共用：429 一次终止；其它瞬断最多三次。
-    # 非此名单的调用仍可走 default_transport_policy（#1465 429 自愈）。
-    retry_429: bool = True
+    # 429 一次终止；其它瞬断最多三次、间隔五秒。召对与其余调用同一套。
+    retry_429: bool = False
     # SDK/httpx read 阻塞预算（bind_transport_sdk_budget → model.timeout）。
     attempt_timeout_seconds: float = TRANSPORT_DEFAULT_ATTEMPT_TIMEOUT_SECONDS
     # #1792：可重试失败 → 下一 attempt 起手前的固定间隔（秒）。不按失败种类区分。

@@ -2129,10 +2129,7 @@ class WebGame:
         return get_open_night(self.db) is not None
 
     def interrupted_reply_retries(self, minister_name: str) -> List[Dict[str, Any]]:
-        """#505：某大臣重开后待重试的中断回话轮（问话已落、回话未落）——恢复提示取数。
-        测试替身无 conn/该接口时返回空（无中断可重试）。"""
-        if not hasattr(self.db, "get_interrupted_reply_retries"):
-            return []
+        """#505：某大臣重开后待重试的中断回话轮（问话已落、回话未落）——恢复提示取数。"""
         return self.db.get_interrupted_reply_retries(minister_name)
 
     def reply_retries(self, minister_name: str) -> List[Dict[str, Any]]:
@@ -2149,7 +2146,7 @@ class WebGame:
                                if int(retry["chat_turn_id"]) in ids],
                               key=lambda item: int(item["chat_turn_id"]))
         interrupted = self.interrupted_reply_retries(minister_name)
-        post_reply = self.db.get_post_reply_retries(minister_name) if hasattr(self.db, "get_post_reply_retries") else []
+        post_reply = self.db.get_post_reply_retries(minister_name)
         return sorted([*interrupted, *post_reply], key=lambda item: int(item["chat_turn_id"]))
 
     def _resume_post_reply(self, minister_name: str, target: Dict[str, Any]) -> Dict[str, Any]:

@@ -1,22 +1,50 @@
-"""#1902：拟诏台手写入口（CLI add/edit、Web POST|PATCH /api/directives）退役后的**测试数据准备**。
+"""#1902：拟诏台手写入口退役后的测试数据准备。
 
-**这不是玩家现役入口。** 两端手拟新旨入口已退役，玩家拟旨只从召对来（#1772）；
-仓内已无任何生产调用方走「手拟抽取 → 直接落 draft」这条链（`GameSession.add_directive`
-/ `update_directive` 随之删，落库走引擎面 `db.add_directive`）。
-
-仍在用的共享抽取核是 **成案准入补交** 那条：`session._resubmit_draft_admission_failures`
-→ `cli_backend.resubmit_draft_admission_payload`（按旧代码名整删会打断现役准入补交，
-故 `capture_manual_directive_payload` 作为其共用归一逻辑保留，非退役物）。
-
-因此本模块只提供**旧草稿场景的直接数据库准备**：把一条 draft 摆到库里，好让测
-抽取结构／属地／参与人／成案准入补交。调用点须自己说明是在准备旧稿数据，
-禁把这里的准备动作当成玩家入口来宣称。
+这不是玩家现役入口。玩家拟旨只从召对来。抽取与投影走成案补交同一对核：
+`extract_draft_intent_with_roster_heal` + `project_draft_extract_to_directive_payload`。
+不在册以 `ValueError(fact)` 上抛，与 `resubmit_draft_admission_payload` 同形。
 """
 
 from __future__ import annotations
 
 from types import SimpleNamespace
 from typing import Any, Optional
+
+
+def live_draft_payload(
+    text: str,
+    llm_config: Any = None,
+    *,
+    existing_mode: object = None,
+    db: Any = None,
+    content: Any = None,
+):
+    """成案补交那条抽取核：抽取后投影。空载短路与异常降级包装已删。"""
+    from ming_sim.cli_backend import (
+        UnknownParticipantEscalate,
+        extract_draft_intent_with_roster_heal,
+        project_draft_extract_to_directive_payload,
+    )
+
+    directive_text = str(text or "").strip()
+    prompt = f"请据此拟旨，并从以下已成旨文抽取结构，不得改写：\n{directive_text}"
+    try:
+        captured = extract_draft_intent_with_roster_heal(
+            prompt,
+            directive_text,
+            llm_config=llm_config,
+            db=db,
+            content=content,
+        )
+    except UnknownParticipantEscalate as exc:
+        raise ValueError(exc.fact) from exc
+    return project_draft_extract_to_directive_payload(
+        captured,
+        decree_text=directive_text,
+        existing_mode=existing_mode,
+        db=db,
+        content=content,
+    )
 
 
 def stage_draft_directive(
@@ -27,22 +55,20 @@ def stage_draft_directive(
     content: Any = None,
     llm_config: Any = None,
     notes: str = "",
+    dossier_payload: Any = None,
 ):
-    """**测试数据准备**：经共享抽取核取结构，再落一条 draft。
-
-    这是旧草稿场景的摆库动作，不是玩家入口（旧入口退役前等价 Web POST
-    /api/directives）。要验玩家拟旨行为，须走召对话轮的真实落库路径。
-    """
-    from ming_sim.cli_backend import capture_manual_directive_payload
-
+    """摆一条 draft。未给 payload 时经现役抽取核取结构，再落库。"""
     target_db = db if db is not None else getattr(session, "db", None)
     target_content = content if content is not None else getattr(session, "content", None)
     config = llm_config if llm_config is not None else getattr(session, "llm_config", None)
-    payload = capture_manual_directive_payload(
-        text,
-        config,
-        **({"db": target_db, "content": target_content} if target_content is not None else {}),
-    )
+    payload = dossier_payload
+    if payload is None:
+        payload = live_draft_payload(
+            text,
+            config,
+            db=target_db,
+            content=target_content,
+        )
     directive_id = target_db.add_directive(
         session.state, None, text, "手动新增", notes=notes, dossier_payload=payload,
     )

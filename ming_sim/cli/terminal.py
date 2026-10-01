@@ -15,7 +15,6 @@ from typing import List, Optional
 from ming_sim.constants import (
     COURT_BREAK_COMMANDS,
     EXIT_COMMANDS,
-    STAY_ATTEND_COMMANDS,
     TURN_UNIT,
 )
 from ming_sim.assets import wrap
@@ -176,12 +175,6 @@ def _handle_court_command(
     if lowered in COURT_BREAK_COMMANDS or raw in COURT_BREAK_COMMANDS:
         return "court_break"
 
-    # #526：留侍口令（确定性封闭集；落叙事账、在场不变）
-    if raw in STAY_ATTEND_COMMANDS or lowered in STAY_ATTEND_COMMANDS:
-        from ming_sim.audience_night import stay_attend_in_audience
-        stay_attend_in_audience(session.db, current.name)
-        return "handled"
-
     # 退下（短句正则，不误伤长对话）
     if re.fullmatch(
         r"\s*(退下|退了|跪安|下去|done|dismiss|让[他其]退下|叫[他其]退下|让此人退下|叫此人退下)\s*",
@@ -270,19 +263,16 @@ def _retry_interrupted_reply_cli(session: GameSession, minister_name: str) -> Op
     if not db.reopen_interrupted_chat_turn_for_retry(chat_turn_id):
         print(f"{minister_name}上一轮回奏仍在进行，请稍候再问。\n")
         return None
-    before_snapshot = (
-        db.capture_chat_rollback_snapshot()
-        if hasattr(db, "capture_chat_rollback_snapshot") else {}
-    )
     turn = AudienceChatTurn(
         chat_turn_id=chat_turn_id,
         accepted_turn=int(target.get("turn") or session.state.turn),
         night_id=0,
-        before_snapshot=before_snapshot,
+        before_snapshot={},
         user_message_id=int(target.get("user_message_id") or 0),
     )
     result = None
     try:
+        turn.before_snapshot = db.capture_chat_rollback_snapshot()
         result = session.scene_chat(
             question, chat_turn_id=chat_turn_id,
             minister_name=SCENE_CHAT_SPEAKER,

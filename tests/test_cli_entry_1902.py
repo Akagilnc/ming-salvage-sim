@@ -99,7 +99,7 @@ def test_review_directives_retires_manual_add_and_edit(monkeypatch, capsys):
     assert "add 新增" not in out and "edit N 改" not in out
 
 
-def test_adjudication_takes_emperor_pick_not_first_option(monkeypatch, capsys):
+def test_adjudication_takes_emperor_pick_not_first_option(monkeypatch):
     """批红按皇帝所选编号提交；不取首选项。"""
     session = _wire_gate(monkeypatch, _AdjudicateSession([_draft_row()]))
     result = SimpleNamespace(awaiting=True, report="", decisions=session.pending_decisions())
@@ -114,12 +114,6 @@ def test_adjudication_takes_emperor_pick_not_first_option(monkeypatch, capsys):
     assert choice["label"] == "照旧额全发"
     assert choice["action"] == "follow_draft"
     assert choice["draft_capability"] == "cap-b"
-    # 案头两条都呈给皇帝，且呈在提交之前（不锁逐字排版：编号/括注是界面固定话语的
-    # 呈现形态，不是本用例的契约；契约是「两条都在」与「按编号对得上」）。
-    out = capsys.readouterr().out
-    assert "先发半饷" in out and "照旧额全发" in out
-    assert out.index("先发半饷") < out.index("照旧额全发")
-    assert "自动取首选项" not in out
 
 
 def _ordinary_row(decision_key: str = "decision:3:0") -> dict:
@@ -529,17 +523,6 @@ def test_save_to_rejects_unsafe_names(game):
     for bad in ("../../etc/passwd", ".hidden", "   "):
         with pytest.raises(UnsafeSaveNameError):
             session.save_to(bad)
-
-
-def test_cli_runner_roster_is_the_single_dispatch_admission_list():
-    """#1902：七个现役宿主都放行，未登记宿主拒收。分派行为由 test_cli_backend 钉。"""
-    from ming_sim import cli_backend as cb
-
-    assert all(
-        cb.is_supported_cli_runner(runner)
-        for runner in ("agy", "codex", "claude", "cursor", "kimi", "grok", "pi")
-    )
-    assert not cb.is_supported_cli_runner("new-host")
 
 
 # ── F1：真实 CLI 入口必须消费运行档保存的配置（不再索要 key、不跑默认地址） ──

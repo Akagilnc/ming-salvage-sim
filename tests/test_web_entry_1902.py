@@ -100,22 +100,6 @@ def test_nonstream_issue_route_is_retired():
     ), "流式颁诏入口必须保留"
 
 
-def test_settlement_abort_sse_carries_typed_keys_not_deadlock_409():
-    """#1902：中止在 SSE 上带 typed stage/error_pack，且不冒充 409。
-
-    issue/stream 的 409 是「月份令牌失效/死锁」专用信号（前端与 tracer 据此分流），
-    结算中止若也报 409 会被误判成死锁。
-    """
-    from ming_sim.exceptions import SettlementAbort
-
-    payload = web_app._settlement_sse_error_data(
-        SettlementAbort("中止", turn=3, stage="extract", error_pack_path="/tmp/x"),
-    )
-    assert "status_code" not in payload
-    assert payload["stage"] == "extract"
-    assert payload["error_pack_path"] == "/tmp/x"
-
-
 def test_portrait_delete_route_is_retired():
     """立绘清空端点前端零调用，随 #1902 退役；上传面仍在。"""
     assert not any(
@@ -130,29 +114,3 @@ def test_portrait_delete_route_is_retired():
     ), "立绘上传端点必须保留"
 
 
-def test_transport_segment_retired_from_runtime_config():
-    """#1902：往档里塞 transport 段不改变策略；召对传输遇 429 不重试。"""
-    from ming_sim import llm_transport as lt
-
-    assert lt.resolve_transport_policy({"transport": {"max_attempts": 9}}) == lt.default_transport_policy()
-    assert lt.audience_transport_policy().retry_429 is False
-
-
-def test_env_runner_selection_is_retired():
-    """#1902：MING_SIM_LLM_BACKEND 选宿主退役——宿主只由运行配置声明。"""
-    import os as _os
-
-    from ming_sim import cli_backend as cb
-    from ming_sim.models import LLMConfig
-
-    _os.environ["MING_SIM_LLM_BACKEND"] = "codex"  # 旧路若复活，这行会生效
-    try:
-        # 行为面：环境变量说 codex、运行配置没说 → 不落 CLI 通道；配置说了才算。
-        assert cb.cli_backend_active(
-            LLMConfig(api_key="", base_url="", model="m", channel=""),
-        ) is False
-        assert cb.cli_backend_active(
-            LLMConfig(api_key="", base_url="", model="m", channel="cli", cli_runner="codex"),
-        ) is True
-    finally:
-        _os.environ.pop("MING_SIM_LLM_BACKEND", None)

@@ -78,9 +78,9 @@ def _capture_ids(game, monkeypatch, *, text: str, roster):
 
     db, _state, content = game
     _mock_draft_intent(monkeypatch, text=text, roster=roster)
-    payload = cli_backend.capture_manual_directive_payload(
-        text, None, db=db, content=content,
-    )
+    from tests.directive_entry_helpers import live_draft_payload
+
+    payload = live_draft_payload(text, None, db=db, content=content)
     return [str(item["character_id"]) for item in (payload.get("participant_roster") or [])]
 
 
@@ -95,9 +95,9 @@ def test_capture_manual_directive_drops_ministry_name_as_participant(game, monke
         roster=[{"character_id": "户部", "tier": "主办", "role": "核太仓"}],
     )
 
-    payload = cli_backend.capture_manual_directive_payload(
-        text, None, db=db, content=content,
-    )
+    from tests.directive_entry_helpers import live_draft_payload
+
+    payload = live_draft_payload(text, None, db=db, content=content)
     roster = payload.get("participant_roster") or []
     assert all(str(item.get("character_id") or "") != "户部" for item in roster)
 
@@ -233,6 +233,7 @@ def test_non_person_filter_does_not_use_institution_substring_class():
 def test_adr0053_unknown_person_still_rejected_at_capture(game, monkeypatch):
     """禁放松主键校验：纠错耗尽后真正不存在的人名仍在 capture seam 拒收。"""
     import ming_sim.cli_backend as cli_backend
+    from tests.directive_entry_helpers import live_draft_payload
 
     db, _state, content = game
     text = "着不存在之人核太仓"
@@ -242,9 +243,7 @@ def test_adr0053_unknown_person_still_rejected_at_capture(game, monkeypatch):
     )
 
     with pytest.raises(ValueError) as ei:
-        cli_backend.capture_manual_directive_payload(
-            text, None, db=db, content=content,
-        )
+        live_draft_payload(text, None, db=db, content=content)
     msg = str(ei.value)
     assert "不存在之人甲" in msg
     assert any(m in msg for m in ("乞陛下明示", "朝籍", "查无"))

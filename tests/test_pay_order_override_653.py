@@ -1627,9 +1627,9 @@ def _capture_override_decree(game, monkeypatch, text, entries):
         return (_json.dumps(response, ensure_ascii=False), 1)
 
     monkeypatch.setattr(cli_backend, "_run_backend_for_config", backend)
-    payload = cli_backend.capture_manual_directive_payload(
-        text, None, db=db, content=content,
-    )
+    from tests.directive_entry_helpers import live_draft_payload
+
+    payload = live_draft_payload(text, None, db=db, content=content)
     assert payload["dossier_action_type"] == "pay_order_override"
     assert payload["target_kind"] == "account"
     assert payload["entries"] == entries

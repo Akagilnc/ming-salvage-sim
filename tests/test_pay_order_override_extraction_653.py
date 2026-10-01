@@ -25,7 +25,9 @@ def test_single_pay_order_capture_grounds_relative_deadline_at_current_turn(game
         }, ensure_ascii=False), {}
 
     monkeypatch.setattr(cli_backend, "_run_backend_for_config", fake)
-    result = cli_backend.capture_manual_directive_payload(
+    from tests.directive_entry_helpers import live_draft_payload
+
+    result = live_draft_payload(
         "拟旨让陕西边饷居末、官俸优先三个月", None, db=db, content=content,
     )
     assert result["entries"] == [
@@ -55,6 +57,8 @@ def test_single_pay_order_capture_grounds_relative_deadline_at_current_turn(game
 
 
 def test_relative_deadline_cannot_stage_llm_computed_expired_turn(game, monkeypatch):
+    from tests.directive_entry_helpers import live_draft_payload
+
     db, _state, content = game
     db.conn.execute("UPDATE game_state SET turn=7 WHERE id=1")
     monkeypatch.setattr(
@@ -67,7 +71,7 @@ def test_relative_deadline_cannot_stage_llm_computed_expired_turn(game, monkeypa
         }, ensure_ascii=False), {}),
     )
     with pytest.raises(ValueError, match="已过期"):
-        cli_backend.capture_manual_directive_payload(
+        live_draft_payload(
             "陕西边饷居末三个月", None, db=db, content=content,
         )
 

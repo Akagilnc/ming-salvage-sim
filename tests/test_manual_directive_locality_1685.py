@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 
-from ming_sim.cli_backend import capture_manual_directive_payload as _real_capture
 from tests.test_month_loop_tracer_1468 import _post_issue_stream, tracer_client
 
 
@@ -39,7 +38,6 @@ def test_manual_directive_region_assembly_writes_single_and_advances(
         calls.append(1)
         return json.dumps(_extracted("单省"), ensure_ascii=False), 1
 
-    monkeypatch.setattr(cli_backend, "capture_manual_directive_payload", _real_capture)
     monkeypatch.setattr(cli_backend, "_run_backend_for_config", backend)
     # #1902：摆一条 draft 作**测试数据准备**（拟诏台入口已退役，玩家拟旨只从召对来）。
     from tests.directive_entry_helpers import stage_draft_directive

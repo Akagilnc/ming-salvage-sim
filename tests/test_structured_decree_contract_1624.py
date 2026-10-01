@@ -6,7 +6,6 @@ import json
 
 import pytest
 
-from ming_sim.cli_backend import capture_manual_directive_payload as _real_capture
 from ming_sim.structured_decree import (
     StructuredDecreeCombinationError,
     assemble_structured_decree,
@@ -344,7 +343,6 @@ def test_manual_owner_example_seal_advances(tracer_client, monkeypatch):
     def backend(*_a, **_k):
         return _owner_manual_backend_json(), 1
 
-    monkeypatch.setattr(cli_backend, "capture_manual_directive_payload", _real_capture)
     monkeypatch.setattr(cli_backend, "_run_backend_for_config", backend)
     # #1902：摆一条 draft 作**测试数据准备**（拟诏台入口已退役，玩家拟旨只从召对来）。
     from tests.directive_entry_helpers import stage_draft_directive
@@ -424,7 +422,6 @@ def test_http_manual_directive_lands_beyond_fifteen_initiatives_1790(
     def backend(*_a, **_k):
         return _owner_manual_backend_json(), 1
 
-    monkeypatch.setattr(cli_backend, "capture_manual_directive_payload", _real_capture)
     monkeypatch.setattr(cli_backend, "_run_backend_for_config", backend)
     # #1902：摆一条 draft 作**测试数据准备**（拟诏台入口已退役，玩家拟旨只从召对来）。
     from tests.directive_entry_helpers import stage_draft_directive

@@ -1006,9 +1006,9 @@ def test_manual_directive_capture_reaches_structured_dossier(
     session.llm_config = None
     session.content = content
     # #1902：拟诏台 Web/CLI 手写入口退役，唯一在役路径 = 共享抽取核 + 引擎写入面。
-    payload = cli_backend.capture_manual_directive_payload(
-        directive_text, None, db=db, content=content,
-    )
+    from tests.directive_entry_helpers import live_draft_payload
+
+    payload = live_draft_payload(directive_text, None, db=db, content=content)
     directive_id = db.add_directive(
         state, None, directive_text, "手动新增", dossier_payload=payload,
     )
@@ -1056,6 +1056,7 @@ def test_manual_directive_capture_rejects_malformed_roster(
 ):
     import ming_sim.cli_backend as cli_backend
     from ming_sim.session import GameSession
+    from tests.directive_entry_helpers import live_draft_payload
 
     db, state, content = game
     response = {
@@ -1077,9 +1078,7 @@ def test_manual_directive_capture_rejects_malformed_roster(
 
     # #1902：Web 手写入口退役，业务拒收直接以 ValueError 上抛（旧路由包成 409）。
     with pytest.raises(ValueError, match="参与人"):
-        cli_backend.capture_manual_directive_payload(
-            "手工旨意", None, db=db, content=content,
-        )
+        live_draft_payload("手工旨意", None, db=db, content=content)
         db.add_directive(state, None, "手工旨意", "手动新增", dossier_payload={})
 
     assert db.list_pending_actions(state.turn) == []
@@ -1096,6 +1095,7 @@ def test_manual_directive_capture_rejects_missing_empty_or_invalid_tier_without_
 ):
     import ming_sim.cli_backend as cli_backend
     from ming_sim.session import GameSession
+    from tests.directive_entry_helpers import live_draft_payload
 
     db, state, content = game
     participant = _active_minister(db)
@@ -1121,9 +1121,7 @@ def test_manual_directive_capture_rejects_missing_empty_or_invalid_tier_without_
 
     # #1902：两条手写入口同退役，业务拒收只剩共享抽取核这一条路径。
     with pytest.raises(ValueError, match="参与人"):
-        payload = cli_backend.capture_manual_directive_payload(
-            "手工旨意", None, db=db, content=content,
-        )
+        payload = live_draft_payload("手工旨意", None, db=db, content=content)
         db.add_directive(state, None, "手工旨意", "手动新增", dossier_payload=payload)
 
     assert db.list_pending_actions(state.turn) == []
