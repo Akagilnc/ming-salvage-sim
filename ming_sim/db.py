@@ -870,6 +870,81 @@ def clamp_grant_arrival_amount(
     return max(lo, min(hi, proposed))
 
 
+_SECRET_ORDER_BODY_COLUMNS = ("result", "sim_note")
+
+
+def _secret_order_kept_body(text: object) -> str:
+    """空白正文记空串；已有字句原样保留，含内部空行。"""
+    raw = str(text or "")
+    return raw if raw.strip() else ""
+
+
+def _secret_order_body_log(row: sqlite3.Row) -> Dict[str, List[Dict[str, object]]]:
+    """读结构化正文记录。尚无记录而列上已有文字时，整段当作一条不拆的旧记录。"""
+    raw = row["text_log_json"] if "text_log_json" in row.keys() else "{}"
+    try:
+        parsed = json.loads(raw or "{}")
+    except (TypeError, json.JSONDecodeError):
+        parsed = {}
+    if not isinstance(parsed, dict):
+        parsed = {}
+    log: Dict[str, List[Dict[str, object]]] = {}
+    for column in _SECRET_ORDER_BODY_COLUMNS:
+        entries = parsed.get(column)
+        records: List[Dict[str, object]] = []
+        if isinstance(entries, list):
+            for item in entries:
+                if isinstance(item, dict) and "body" in item:
+                    records.append(dict(item))
+        column_text = str(row[column] or "") if column in row.keys() else ""
+        if not records and column_text != "":
+            records.append({
+                "legacy": True,
+                "year": 0,
+                "period": 0,
+                "body": column_text,
+            })
+        log[column] = records
+    return log
+
+
+def _secret_order_period_recorded(
+    records: Sequence[Mapping[str, object]], year: int, period: int,
+) -> bool:
+    return any(
+        not record.get("legacy")
+        and int(record.get("year") or 0) == int(year)
+        and int(record.get("period") or 0) == int(period)
+        for record in records
+    )
+
+
+def _project_secret_order_bodies(records: Sequence[Mapping[str, object]]) -> str:
+    """记录按年月与写入次序投影。正文内部不拆、不重排。"""
+    ordered = sorted(
+        enumerate(records),
+        key=lambda pair: (
+            int(pair[1].get("year") or 0),
+            int(pair[1].get("period") or 0),
+            0 if pair[1].get("legacy") else 1,
+            pair[0],
+        ),
+    )
+    parts: List[str] = []
+    for _, record in ordered:
+        if record.get("legacy"):
+            parts.append(str(record.get("body") or ""))
+            continue
+        marker = str(record.get("marker") or "")
+        body = record.get("body")
+        text = "" if body is None else str(body)
+        parts.append(
+            f"〔{period_label(int(record.get('year') or 0), int(record.get('period') or 0))}〕"
+            f"{marker}{text}"
+        )
+    return "\n".join(parts)
+
+
 class GameDB:
     def __init__(self, path: str, content: Optional[GameContent] = None, llm_config: Any = None):
         self.path = path
@@ -1477,6 +1552,7 @@ class GameDB:
                 status TEXT NOT NULL DEFAULT 'active',
                 result TEXT NOT NULL DEFAULT '',
                 sim_note TEXT NOT NULL DEFAULT '',
+                text_log_json TEXT NOT NULL DEFAULT '{}',
                 excluded_names TEXT NOT NULL DEFAULT '[]',
                 dossier_progress_json TEXT NOT NULL DEFAULT '[]',
                 turn_closed INTEGER,
@@ -2320,6 +2396,8 @@ class GameDB:
             "decree_dossier_link_rejections", "pending_action_id", "INTEGER"
         )
         self.ensure_column("secret_orders", "sim_note", "TEXT NOT NULL DEFAULT ''")
+        # 承办进展 / 推演副作用的正文按记录存放。result、sim_note 只是投影。
+        self.ensure_column("secret_orders", "text_log_json", "TEXT NOT NULL DEFAULT '{}'")
         # 密令期限：0=无硬期限；due_turn>0 且 ≤当前回合时，settle 尾部按实进度对账派生 done/failed（#1504）。
         self.ensure_column("secret_orders", "due_turn", "INTEGER NOT NULL DEFAULT 0")
         if self.ensure_column(
@@ -21878,81 +21956,106 @@ class GameDB:
                 raise
         tlog(f"[secret_order] close id={order_id} status={status}")
 
+    def _load_secret_order_body_row(self, order_id: int, *, active_only: bool) -> Optional[sqlite3.Row]:
+        sql = "SELECT * FROM secret_orders WHERE id = ?"
+        if active_only:
+            sql += " AND status = 'active'"
+        return self.conn.execute(sql, (int(order_id),)).fetchone()
+
+    def _write_secret_order_body(
+        self,
+        order_id: int,
+        column: str,
+        records: Sequence[Mapping[str, object]],
+        *,
+        extra_assignments: str = "",
+        extra_params: Sequence[object] = (),
+    ) -> None:
+        assert column in _SECRET_ORDER_BODY_COLUMNS
+        row = self._load_secret_order_body_row(order_id, active_only=False)
+        if row is None:
+            return
+        log = _secret_order_body_log(row)
+        log[column] = [dict(record) for record in records]
+        params: List[object] = list(extra_params)
+        params.extend((
+            _project_secret_order_bodies(log[column]),
+            json.dumps(log, ensure_ascii=False),
+        ))
+        sets = f"{column} = ?, text_log_json = ?, updated_at = CURRENT_TIMESTAMP"
+        if extra_assignments:
+            sets = f"{extra_assignments}, {sets}"
+        params.append(int(order_id))
+        self.conn.execute(
+            f"UPDATE secret_orders SET {sets} WHERE id = ?",
+            params,
+        )
+
     def submit_secret_order_for_review(self, order_id: int, claim: str, year: int, period: int) -> bool:
         """#1504：大臣自认办结 → 缩 due_turn 至当月，月末机械对账。
 
-        claim 按月戳追加进 result（奏报/陈词轨），不入实况对账真源。仅 active 可提交。
+        claim 按记录追加进 result（奏报/陈词轨），不入实况对账真源。仅 active 可提交。
         """
-        row = self.conn.execute(
-            "SELECT status, turn_issued FROM secret_orders WHERE id = ?", (int(order_id),)
-        ).fetchone()
-        if not row or row["status"] != "active":
+        row = self._load_secret_order_body_row(int(order_id), active_only=True)
+        if row is None:
             return False
         turn_row = self.conn.execute("SELECT turn FROM game_state WHERE id=1").fetchone()
         current_turn = int(turn_row["turn"]) if turn_row is not None else int(row["turn_issued"] or 0)
-        stamp = f"〔{period_label(year, period)}〕[提交核议] "
-        raw_claim = str(claim or "")
-        note = raw_claim if raw_claim.strip() else ""
-        prev = self.conn.execute(
-            "SELECT result FROM secret_orders WHERE id = ?", (int(order_id),)
-        ).fetchone()["result"] or ""
-        lines = [ln for ln in prev.split("\n") if ln.strip()]
-        lines.append(f"{stamp}{note}")
+        note = _secret_order_kept_body(claim)
+        records = _secret_order_body_log(row)["result"]
+        records.append({
+            "year": int(year),
+            "period": int(period),
+            "marker": "[提交核议] ",
+            "body": note,
+        })
         with atomic(self):
-            self.conn.execute(
-                """
-                UPDATE secret_orders
-                SET due_turn = ?, result = ?, updated_at = CURRENT_TIMESTAMP
-                WHERE id = ? AND status = 'active'
-                """,
-                (current_turn, "\n".join(lines), int(order_id)),
+            self._write_secret_order_body(
+                int(order_id), "result", records,
+                extra_assignments="due_turn = ?",
+                extra_params=(current_turn,),
             )
             self.mark_secret_order_in_progress(int(order_id), commit=False)
         tlog(f"[secret_order] submit_for_review id={order_id} due_now claim={note[:60]!r}")
         return True
 
     def _has_secret_order_period_line(self, order_id: int, column: str, year: int, period: int) -> bool:
-        """本年月该列是否已有一行（用于一回合一步闸门）。"""
-        stamp = f"〔{period_label(year, period)}〕"
-        row = self.conn.execute(
-            f"SELECT {column} AS v FROM secret_orders WHERE id = ?", (int(order_id),)
-        ).fetchone()
+        """本年月该列是否已有进展记录（用于一回合一步闸门）。旧档整段不拆，故不计入。"""
+        assert column in _SECRET_ORDER_BODY_COLUMNS
+        row = self._load_secret_order_body_row(int(order_id), active_only=False)
         if row is None:
             return False
-        return any(ln.startswith(stamp) for ln in str(row["v"] or "").split("\n"))
+        return _secret_order_period_recorded(
+            _secret_order_body_log(row)[column], year, period,
+        )
 
     def _append_secret_order_line(
         self, order_id: int, column: str, note: str, year: int, period: int,
         reject_if_same_period: bool = False,
         commit: bool = True,
     ) -> bool:
-        """把一条带年月戳的进展/副作用追加进密令的 result/sim_note，存成历史时间线。
-        reject_if_same_period=True 时，本年月已有行则拒写（返回 False，用于一回合一步）；
-        否则同年月再写替换当月行。不同年月一律新增。返回是否实际写入。"""
-        assert column in ("result", "sim_note")
-        stamp = f"〔{period_label(year, period)}〕"
-        row = self.conn.execute(
-            f"SELECT {column} AS v FROM secret_orders WHERE id = ? AND status = 'active'",
-            (int(order_id),),
-        ).fetchone()
+        """把一条进展/副作用按记录追加进密令正文。
+        reject_if_same_period=True 时，本年月已有记录则拒写（返回 False，用于一回合一步）；
+        否则同年月再写替换当月记录。不同年月一律新增。返回是否实际写入。"""
+        assert column in _SECRET_ORDER_BODY_COLUMNS
+        row = self._load_secret_order_body_row(int(order_id), active_only=True)
         if row is None:
             return False  # 已结案或不存在，不追加
-        lines = [ln for ln in str(row["v"] or "").split("\n") if ln.strip()]
-        if reject_if_same_period and any(ln.startswith(stamp) for ln in lines):
+        records = _secret_order_body_log(row)[column]
+        if reject_if_same_period and _secret_order_period_recorded(records, year, period):
             return False  # 本回合已推过一步，拒
-        lines = [ln for ln in lines if not ln.startswith(stamp)]  # 去掉当月旧行
-        body = str(note or "")
-        lines.append(f"{stamp}{body if body.strip() else ''}")
-        # 按〔年月〕戳排序，保证时间线顺序（同月替换后不致错位）
-        def _stamp_key(ln: str):
-            import re as _re
-            m = _re.match(r"〔(\d+)年(\d+)月〕", ln)
-            return (int(m.group(1)), int(m.group(2))) if m else (0, 0)
-        lines.sort(key=_stamp_key)
-        self.conn.execute(
-            f"UPDATE secret_orders SET {column} = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-            ("\n".join(lines), int(order_id)),
-        )
+        records = [
+            record for record in records
+            if record.get("legacy")
+            or int(record.get("year") or 0) != int(year)
+            or int(record.get("period") or 0) != int(period)
+        ]
+        records.append({
+            "year": int(year),
+            "period": int(period),
+            "body": _secret_order_kept_body(note),
+        })
+        self._write_secret_order_body(int(order_id), column, records)
         if commit:
             self.conn.commit()
         return True
@@ -22051,39 +22154,36 @@ class GameDB:
             months = 1
         target_turn = int(state.turn) + months
         old_due = int(row["due_turn"] or 0)
-        stamp = f"〔{period_label(state.year, state.period)}〕"
         why = reason if str(reason or "").strip() else "奉旨加急"
-        prev = row["result"] or ""
-        lines = [ln for ln in prev.split("\n") if ln.strip()]
+        body_row = self._load_secret_order_body_row(int(order_id), active_only=True)
+        records = _secret_order_body_log(body_row)["result"] if body_row is not None else []
         with atomic(self):
             if months <= 0:
-                lines.append(f"{stamp}[奉旨即核] {why}；本月到期按实进度对账。")
-                self.conn.execute(
-                    """
-                    UPDATE secret_orders
-                    SET due_turn = ?, deadline_span = 0,
-                        result = ?, updated_at=CURRENT_TIMESTAMP
-                    WHERE id = ?
-                    """,
-                    (int(state.turn), "\n".join(lines), int(order_id)),
+                records.append({
+                    "year": int(state.year),
+                    "period": int(state.period),
+                    "marker": "[奉旨即核] ",
+                    "body": f"{why}；本月到期按实进度对账。",
+                })
+                due_turn = int(state.turn)
+                self._write_secret_order_body(
+                    int(order_id), "result", records,
+                    extra_assignments="due_turn = ?, deadline_span = 0",
+                    extra_params=(due_turn,),
                 )
                 status = "active"
-                due_turn = int(state.turn)
             else:
                 due_turn = target_turn if old_due <= 0 else min(old_due, target_turn)
-                lines.append(f"{stamp}[奉旨加急] {why}；御限改为 {months} 个月内核议。")
-                self.conn.execute(
-                    """
-                    UPDATE secret_orders
-                    SET due_turn = ?, deadline_span = ?, result = ?, updated_at = CURRENT_TIMESTAMP
-                    WHERE id = ?
-                    """,
-                    (
-                        due_turn,
-                        max(int(due_turn) - int(state.turn), 0),
-                        "\n".join(lines),
-                        int(order_id),
-                    ),
+                records.append({
+                    "year": int(state.year),
+                    "period": int(state.period),
+                    "marker": "[奉旨加急] ",
+                    "body": f"{why}；御限改为 {months} 个月内核议。",
+                })
+                self._write_secret_order_body(
+                    int(order_id), "result", records,
+                    extra_assignments="due_turn = ?, deadline_span = ?",
+                    extra_params=(due_turn, max(int(due_turn) - int(state.turn), 0)),
                 )
                 status = "active"
             self.mark_secret_order_in_progress(int(order_id), commit=False)

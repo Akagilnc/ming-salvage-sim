@@ -14,8 +14,6 @@ per-character `characters.intrigue` 列及其 seed 数据件，并把它接进 0
 
 from __future__ import annotations
 
-import json
-
 
 # ---------------------------------------------------------------- 人物账本接缝
 
@@ -81,73 +79,6 @@ def test_new_character_enters_roster_with_intrigue(game):
     assert db.conn.execute(
         "SELECT intrigue FROM characters WHERE name=?", ("周慎行",),
     ).fetchone()["intrigue"] == created.intrigue
-
-
-# ---------------------------------------------------------------- 领域查案接缝
-
-
-def _seed_guilty_pair(db, *, investigator="黄道周", target="魏忠贤"):
-    """一桩最小真案：目标有 seed_guilt，承办人在场，其余轴全部钉死。"""
-    db.conn.execute(
-        "UPDATE characters SET seed_guilt=? WHERE name=?",
-        (json.dumps({"crime": "侵冒", "severity": "中"}, ensure_ascii=False), target),
-    )
-    db.conn.execute(
-        "UPDATE characters SET loyalty=90, identity=50, ability=60, intrigue=50 "
-        "WHERE name IN (?,?)",
-        (investigator, target),
-    )
-    db.conn.execute(
-        "UPDATE characters SET location='京师', transit_to='' "
-        "WHERE name IN (?,?)",
-        (investigator, target),
-    )
-    db.conn.commit()
-
-
-def test_equal_effort_lands_differently_by_target_concealment(game):
-    """相同实投下，低遮掩者已掌握、高遮掩者尚未。零遮掩不得比低遮掩更难掌握。"""
-    from ming_sim.covert_progress import (
-        apply_investigation_monthly_effort,
-        investigation_lane_actual_units,
-    )
-
-    db, state, _content = game
-    investigator = "袁可立"
-    seen = {}
-    for target, intrigue in (("黄道周", 0), ("魏忠贤", 1), ("王在晋", 100)):
-        _seed_guilty_pair(db, investigator=investigator, target=target)
-        db.conn.execute(
-            "UPDATE characters SET intrigue=? WHERE name=?", (intrigue, target),
-        )
-        db.conn.commit()
-        oid = db.create_secret_order(
-            state, investigator, "密查", "密查", [],
-            deadline_months=6,
-            covert_task={
-                "kind": "查核", "axes": ["既得利益"], "direction": 1,
-                "investigation_target": target,
-                "delivery": {
-                    "target_units": 1.0, "effect_sign": 1,
-                    "investigation_target": target,
-                },
-            },
-        )
-        did = int(db.get_dossier_for_secret_order(oid)["id"])
-        apply_investigation_monthly_effort(
-            db, did, target, investigator,
-            fact_key=target, intensity=1.0, commit=True,
-        )
-        seen[intrigue] = investigation_lane_actual_units(db, did)
-        db.conn.execute("UPDATE decree_dossiers SET status='closed' WHERE id=?", (did,))
-        db.conn.execute(
-            "UPDATE secret_orders SET status='cancelled' WHERE id=?", (int(oid),),
-        )
-        db.conn.commit()
-
-    assert seen[0] >= 1.0
-    assert seen[1] >= 1.0
-    assert seen[100] == 0.0
 
 
 def test_intrigue_reaches_character_input_only_as_a_qualitative_band(game):

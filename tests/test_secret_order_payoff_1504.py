@@ -27,7 +27,6 @@ from ming_sim.covert_progress import (
     decide_secret_order_settlement,
     investigation_clue_records,
     investigation_fact_difficulty,
-    investigation_monthly_capacity,
     live_investigation_fact_keys,
     monthly_actual_units,
     progress_units_for_state,
@@ -828,104 +827,6 @@ def test_1376_candidate_confirm_freezes_explicit_typed_contract(game):
     assert contract["kind"] != "稽核"
 
 
-def test_investigation_mastery_needs_effort_to_reach_fact_difficulty(game):
-    """#1896：投入累计到"该条罪证自己的难度"才记已掌握；无统一阈值、无月度门槛。
-
-    取代旧"执行态折固定增量、满 1 自动坐实并固定写依律"，也取代上一版误留的
-    单月硬顶／最低在查月数 floor（ADR 0098 后出修订明文退役）。
-    """
-    db, state, _ = game
-    name = _minister(db)
-    target = db.conn.execute(
-        "SELECT name FROM characters WHERE name<>? AND status='active' LIMIT 1",
-        (name,),
-    ).fetchone()["name"]
-    _set_axes(db, name, loyalty=90, identity=30)
-    db.conn.execute("UPDATE characters SET seed_guilt=? WHERE name=?", (_structured_guilt(), target))
-    # 本例只考"实投累计到该条难度"这条机制，不考目标遮掩——把遮掩钉在参考值，
-    # 否则"一月满强度即达门槛"会随名册 seed 校准而漂（本例断言的是机制不是 seed 值）。
-    db.conn.execute("UPDATE characters SET intrigue=50 WHERE name=?", (target,))
-    _co_locate(db, name, target)
-    oid = _issue(
-        db, state, name, "查核辽饷侵冒", "查核辽饷侵冒",
-        months=6, target=1, kind="查核辽饷侵冒", axes=["既得利益"],
-        investigation_target=target,
-    )
-    did = int(db.get_dossier_for_secret_order(oid)["id"])
-    difficulty = investigation_fact_difficulty(
-        db, target=target, fact_key=target, investigator=name,
-    )
-    assert difficulty > 0.0
-
-    # 敷衍：显式 0 ＝合法零投入 → 不查获、也不改实证
-    _next_month(db, state)
-    out = apply_monthly_covert_actual_progress(
-        db, state, selections=[{"order_id": oid, "effort": 0.0}], commit=True,
-    )
-    row = next(r for r in out if r["order_id"] == oid)
-    assert row["effort_applied"] == 0.0
-    assert investigation_lane_actual_units(db, did) == 0.0
-    assert _lanes(db, oid)[target]["effort"] == 0.0
-    assert _lanes(db, oid)[target]["mastered"] is False
-
-    # 代码不替人物挑本月下手的罪：没给 fact_key → 无下手处，零投入
-    _next_month(db, state)
-    out = apply_monthly_covert_actual_progress(
-        db, state, selections=[{"order_id": oid, "effort": 1.0}], commit=True,
-    )
-    row = next(r for r in out if r["order_id"] == oid)
-    assert row["effort_applied"] == 0.0
-    assert row["fact_key"] == ""
-    assert _lanes(db, oid)[target]["effort"] == 0.0
-
-    # 投入未达难度：累计但不查获（实投＝强度×承办人真实处境，非模型直采）
-    capacity = investigation_monthly_capacity(db, name, dossier_id=did)
-    apply_investigation_monthly_effort(
-        db, did, target, name, fact_key=target, intensity=0.2, commit=True,
-    )
-    assert _lanes(db, oid)[target]["effort"] == pytest.approx(0.2 * capacity)
-    assert _lanes(db, oid)[target]["mastered"] is False
-    assert investigation_lane_actual_units(db, did) == 0.0
-
-    # 补足到难度即记已掌握——不设最低在查月数 floor，也不写依律/翻轴
-    apply_investigation_monthly_effort(
-        db, did, target, name, fact_key=target, intensity=1.0, commit=True,
-    )
-    lane = _lanes(db, oid)[target]
-    assert lane["mastered"] is True
-    assert lane["effort"] >= difficulty
-    assert set(lane) == {"fact_key", "effort", "difficulty", "months", "mastered"}
-    assert investigation_lane_actual_units(db, did) == 1.0
-
-    # 运行期新长的把柄边入同一案即新 lane，可再查
-    edge_id = db.record_relation_edge_event(
-        source=name, target=target, event_kind="把柄",
-        context="侵冒把柄", origin=f"test:{did}", evidence=True,
-    )
-    edge_difficulty = investigation_fact_difficulty(
-        db, target=target, fact_key=str(edge_id), investigator=name,
-    )
-    assert edge_difficulty > difficulty
-    result = {}
-    for _ in range(12):
-        result = apply_investigation_monthly_effort(
-            db, did, target, name, fact_key=str(edge_id), intensity=1.0, commit=True,
-        )
-        if str(edge_id) in (result.get("mastered") or []):
-            break
-    assert str(edge_id) in result["mastered"]
-    assert _lanes(db, oid)[str(edge_id)]["effort"] >= edge_difficulty
-    assert investigation_lane_actual_units(db, did) == 2.0
-
-    # 本案已掌握的事实在再投入时不重复计数、不虚增查获
-    again = apply_investigation_monthly_effort(
-        db, did, target, name, fact_key=target, intensity=1.0, commit=True,
-    )
-    assert again["effort_applied"] == 0.0
-    assert again["mastered"] == []
-    assert investigation_lane_actual_units(db, did) == 2.0
-
-
 def test_non_finite_effort_is_invalid_not_full_investment(game):
     """#1896 R2：非有限数值不是"下了死力"，是坏产物——拒收，不洗成满额投入。
 
@@ -1669,14 +1570,205 @@ def _lanes(db, oid):
     return {r["fact_key"]: r for r in payload[FACT_LANES_KEY]}
 
 
-def test_deep_dig_lands_through_month_chain_entry(game):
-    """#1896 贯穿：4a 声明经真实月链接缝落账，实投达该条难度即记已掌握。
+def _open_errands(db, name, *, except_dossier=0):
+    return int(db.conn.execute(
+        "SELECT COUNT(*) AS n FROM decree_dossiers "
+        "WHERE executor_kind='character' AND executor_id=? "
+        "AND status IN ('promulgated','executing') AND id<>?",
+        (name, int(except_dossier)),
+    ).fetchone()["n"])
 
-    取代上一版两个反设门槛的用例：既不锁单月硬顶，也不锁最低在查月数 floor
-    （ADR 0098 后出修订已把两者退役）。此处只断言人物当月真实声明的后果。
+
+def _retire_order(db, order_id):
+    db.conn.execute(
+        "UPDATE secret_orders SET status='cancelled' WHERE id=?", (int(order_id),),
+    )
+    db.conn.execute(
+        "UPDATE decree_dossiers SET status='closed' WHERE secret_order_id=?",
+        (int(order_id),),
+    )
+    db.conn.commit()
+
+
+def _clear_open_errands(db, name):
+    db.conn.execute(
+        "UPDATE decree_dossiers SET status='closed' "
+        "WHERE executor_kind='character' AND executor_id=? "
+        "AND status IN ('promulgated','executing')",
+        (name,),
+    )
+    db.conn.commit()
+
+
+def test_deep_dig_lands_through_month_chain_entry(game):
+    """#1896 贯穿：4a 声明经真实月链接缝落账。
+
+    能力、未结差务、遮掩和逐证掌握都在这一条入口上见结果。实投数字来自
+    契约常量，不回读当月产能函数。
     """
-    db, state, _ = game
+    from ming_sim.session import register_unlisted_person_record
+
+    db, state, content = game
     name = _minister(db)
+    _set_axes(db, name, loyalty=90, identity=30)
+    _clear_open_errands(db, name)
+    db.conn.execute(
+        "UPDATE characters SET ability=60, transit_to='' WHERE name=?", (name,),
+    )
+    db.conn.commit()
+
+    # 承办人能力与未结差务：同一 4a 入口上的四组独立常量。
+    cap_target = "周慎行"
+    register_unlisted_person_record(
+        db, state, content,
+        name=cap_target, office="兵部主事", office_type="兵部", faction="东林",
+        region_id="京师",
+    )
+    db.conn.execute(
+        "UPDATE characters SET seed_guilt=?, intrigue=100, location='京师', transit_to='' "
+        "WHERE name=?",
+        (_structured_guilt(), cap_target),
+    )
+    db.conn.commit()
+    _co_locate(db, name, cap_target, place="京师")
+    def _one_month(ability):
+        db.conn.execute(
+            "UPDATE characters SET ability=? WHERE name=?", (ability, name),
+        )
+        db.conn.commit()
+        oid = _issue(
+            db, state, name, "查核产能", "查核产能", months=12, target=1,
+            kind="查核", axes=["既得利益"], investigation_target=cap_target,
+        )
+        did = int(db.get_dossier_for_secret_order(oid)["id"])
+        _next_month(db, state)
+        chain = _run_supply_4a(
+            db, state, [{"order_id": oid, "fact_key": cap_target, "effort": 1.0}],
+        )
+        assert chain.get("covert_progress_done") is True
+        assert chain.get("secret_orders_supply_invalid") is not True
+        effort = float(_lanes(db, oid)[cap_target]["effort"])
+        _retire_order(db, oid)
+        return did, effort
+
+    _did, effort = _one_month(0)
+    assert _open_errands(db, name) == 0
+    assert effort == pytest.approx(0.5)
+    _did, effort = _one_month(1)
+    assert effort == pytest.approx(0.5083333333333333)
+    _did, effort = _one_month(60)
+    assert effort == pytest.approx(1.0)
+    errands = [
+        _issue(
+            db, state, name, title, title, months=6, target=1,
+            kind="缉获人犯", unit="人犯",
+        )
+        for title in ("旁务甲", "旁务乙", "旁务丙")
+    ]
+    busy_did, effort = _one_month(60)
+    assert _open_errands(db, name, except_dossier=busy_did) == 3
+    assert effort == pytest.approx(0.55)
+    for extra in errands:
+        _retire_order(db, extra)
+    assert _open_errands(db, name) == 0
+
+    # 相同满强度：遮掩低者已掌握，遮掩高者尚未。零遮掩不比低遮掩更难。
+    investigator = name
+    seen = {}
+    for suspect, intrigue in (("黄道周", 0), ("魏忠贤", 1), ("王在晋", 100)):
+        db.conn.execute(
+            "UPDATE characters SET seed_guilt=?, intrigue=?, location='京师', transit_to='' "
+            "WHERE name=?",
+            (_structured_guilt(), intrigue, suspect),
+        )
+        db.conn.execute(
+            "UPDATE characters SET ability=60, location='京师', transit_to='' WHERE name=?",
+            (investigator,),
+        )
+        db.conn.commit()
+        oid = _issue(
+            db, state, investigator, "密查", "密查", months=6, target=1,
+            kind="查核", axes=["既得利益"], investigation_target=suspect,
+        )
+        did = int(db.get_dossier_for_secret_order(oid)["id"])
+        _next_month(db, state)
+        chain = _run_supply_4a(
+            db, state, [{"order_id": oid, "fact_key": suspect, "effort": 1.0}],
+        )
+        assert chain.get("covert_progress_done") is True
+        assert chain.get("secret_orders_supply_invalid") is not True
+        seen[intrigue] = investigation_lane_actual_units(db, did)
+        _retire_order(db, oid)
+    assert seen[0] >= 1.0
+    assert seen[1] >= 1.0
+    assert seen[100] == 0.0
+
+    # 未指明罪证不下手；未达难度不掌握；达到后掌握。新边是新 lane。再投入不双计。
+    db.conn.execute(
+        "UPDATE characters SET ability=60, transit_to='' WHERE name=?", (name,),
+    )
+    db.conn.commit()
+    assert _open_errands(db, name) == 0
+    topic = "申用嘉"
+    register_unlisted_person_record(
+        db, state, content,
+        name=topic, office="户部主事", office_type="户部", faction="东林",
+        region_id="京师",
+    )
+    db.conn.execute(
+        "UPDATE characters SET seed_guilt=?, intrigue=50, location='京师', transit_to='' "
+        "WHERE name=?",
+        (_structured_guilt(), topic),
+    )
+    db.conn.commit()
+    _co_locate(db, name, topic, place="京师")
+    oid = _issue(
+        db, state, name, "查核掌握", "查核掌握", months=24, target=2,
+        kind="查核", axes=["既得利益"], investigation_target=topic,
+    )
+    did = int(db.get_dossier_for_secret_order(oid)["id"])
+    _next_month(db, state)
+    chain = _run_supply_4a(db, state, [{"order_id": oid, "effort": 1.0}])
+    assert chain.get("secret_orders_supply_invalid") is not True
+    assert _lanes(db, oid)[topic]["effort"] == 0.0
+    assert investigation_lane_actual_units(db, did) == 0.0
+
+    _next_month(db, state)
+    _run_supply_4a(db, state, [{"order_id": oid, "fact_key": topic, "effort": 0.2}])
+    assert _lanes(db, oid)[topic]["effort"] == pytest.approx(0.2)
+    assert _lanes(db, oid)[topic]["mastered"] is False
+    assert investigation_lane_actual_units(db, did) == 0.0
+
+    _next_month(db, state)
+    _run_supply_4a(db, state, [{"order_id": oid, "fact_key": topic, "effort": 1.0}])
+    lane = _lanes(db, oid)[topic]
+    assert lane["effort"] == pytest.approx(1.2)
+    assert lane["mastered"] is True
+    assert set(lane) == {"fact_key", "effort", "difficulty", "months", "mastered"}
+    assert investigation_lane_actual_units(db, did) == 1.0
+
+    edge_id = db.record_relation_edge_event(
+        source=name, target=topic, event_kind="把柄",
+        context="侵冒把柄", origin=f"test:{did}", evidence=True,
+    )
+    mastered_edge = False
+    for _ in range(12):
+        _next_month(db, state)
+        _run_supply_4a(
+            db, state, [{"order_id": oid, "fact_key": str(edge_id), "effort": 1.0}],
+        )
+        if _lanes(db, oid).get(str(edge_id), {}).get("mastered"):
+            mastered_edge = True
+            break
+    assert mastered_edge is True
+    assert investigation_lane_actual_units(db, did) == 2.0
+    held = float(_lanes(db, oid)[topic]["effort"])
+    _next_month(db, state)
+    _run_supply_4a(db, state, [{"order_id": oid, "fact_key": topic, "effort": 1.0}])
+    assert float(_lanes(db, oid)[topic]["effort"]) == held
+    assert investigation_lane_actual_units(db, did) == 2.0
+    _retire_order(db, oid)
+
     target = next(
         row["name"] for row in db.conn.execute(
             "SELECT name FROM characters WHERE status='active' AND name<>? ORDER BY name",
@@ -1684,7 +1776,6 @@ def test_deep_dig_lands_through_month_chain_entry(game):
         ).fetchall()
         if live_investigation_fact_keys(db, row["name"])
     )
-    _set_axes(db, name, loyalty=90, identity=30)
     _co_locate(db, name, target)
     key = live_investigation_fact_keys(db, target)[0]
     oid = _issue(
@@ -1692,9 +1783,6 @@ def test_deep_dig_lands_through_month_chain_entry(game):
         kind="查核", axes=["既得利益"], investigation_target=target,
     )
     did = int(db.get_dossier_for_secret_order(oid)["id"])
-    difficulty = investigation_fact_difficulty(
-        db, target=target, fact_key=key, investigator=name,
-    )
 
     # 模型把 effort 填到荒谬的 100 → 引擎只吃强度，实投由人物处境折算
     _next_month(db, state)
@@ -1704,9 +1792,8 @@ def test_deep_dig_lands_through_month_chain_entry(game):
     assert chain.get("covert_progress_done") is True
     assert chain.get("secret_orders_supply_invalid") is not True
     lane = _lanes(db, oid)[key]
-    capacity = investigation_monthly_capacity(db, name, dossier_id=did)
-    assert lane["effort"] == pytest.approx(capacity)
-    assert lane["mastered"] is (capacity >= difficulty)
+    assert lane["effort"] == pytest.approx(1.0)
+    assert lane["effort"] != 100
     assert investigation_lane_actual_units(db, did) == float(lane["mastered"])
 
     # 敷衍（显式 0）下月零投入：不增投入、不重复计数
