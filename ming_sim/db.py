@@ -2286,8 +2286,6 @@ class GameDB:
         self.ensure_column("characters", "summary", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("characters", "aliases", "TEXT NOT NULL DEFAULT '[]'")
         self.ensure_column("characters", "identity", "INTEGER NOT NULL DEFAULT 50")
-        # ADR 0108 阴谋能力列（#1896 一并交付）：老档 ensure_column 迁移同款。
-        self.ensure_column("characters", "intrigue", "INTEGER NOT NULL DEFAULT 50")
         self.ensure_column("characters", "seed_guilt", "TEXT NOT NULL DEFAULT ''")
         self._backfill_person_core_character_static_fields()
         self._migrate_character_identity_seed()
@@ -5308,16 +5306,6 @@ class GameDB:
                     (character.identity, _seed_guilt_storage_value(character.seed_guilt), character.name),
                 )
             self._set_meta_flag("__identity_seed_v1")
-        # ADR 0108 阴谋能力 seed 同款一次性回填：老档该列刚由 ensure_column 补出，
-        # 全体停在 DDL 缺省 50；只补仍在缺省上的名册行，已被玩过的值不动
-        # （静态 seed 轴无事件派生，改写等于抹掉真实进度——同 identity 的守卫形状）。
-        if not self._has_meta_flag("__intrigue_seed_v1"):
-            for character in self.content.characters.values():
-                self.conn.execute(
-                    "UPDATE characters SET intrigue=? WHERE name=? AND intrigue=50",
-                    (character.intrigue, character.name),
-                )
-            self._set_meta_flag("__intrigue_seed_v1")
         # Retire only the shipped ambiguous alias collision from old saves and
         # backfill approved static dismissal provenance without rewriting play.
         for name in ("袁可立", "袁崇焕"):

@@ -4,7 +4,9 @@ Status: Accepted（PR #708 merged 2026-07-08；决策：2026-07-08 M12 设计闸
 
 ## 后出修订（#1896，2026-10-01）
 
-**陛下裁定遮掩轴本次交付**（大理寺上呈 `01a0f305-a36e-7512-a4fb-8deed9df6871@judge` decisionGate 第一项；owner `b83b71af-9883-4f82-bbf6-8bc0aa14e1df` 答「这次就补上」）。本 ADR 净新契约 (a) 的**建列＋seed 数据件本次落地**：`characters.intrigue INTEGER NOT NULL DEFAULT 50`（CREATE 块 ＋ `ensure_column` 老档迁移同款），seed 值随 `content/characters.json` 逐人显式给出（厂卫/权阉顶格、清流低，理由随值可查），沿既有装载／入册／持久存读／当前格式恢复路径承载；一次性回填走 `__intrigue_seed_v1` meta flag，守卫形状同 `identity`（只补仍在 DDL 缺省上的名册行，不改写已玩过的值）。
+**陛下裁定遮掩轴本次交付**（大理寺上呈 `01a0f305-a36e-7512-a4fb-8deed9df6871@judge` decisionGate 第一项；owner `b83b71af-9883-4f82-bbf6-8bc0aa14e1df` 答「这次就补上」）。本 ADR 净新契约 (a) 的**建列＋seed 数据件本次落地**：`characters.intrigue INTEGER NOT NULL DEFAULT 50`（新开局 CREATE），seed 值随 `content/characters.json` 逐人显式给出（厂卫/权阉顶格、清流低，理由随值可查），沿既有装载／入册／持久存读／当前格式恢复路径承载。
+
+**存档边界**：同卷 owner 插话 `64b7aa45-8865-4d2d-9495-dd1925545a08`（human queued_command）原文：「我早就说过无数次了！不考虑旧存档兼容，以前不，现在不，以后也不，除非哪天我明确说要考虑才开始考虑」。本次补属性不构成该禁令的例外：人物账本接缝在新开局与新增人物入册时承载初始值，持久存读只保证当前格式内无损恢复；不承接缺该属性的旧档迁移或一次性回填，相关兼容实现及专属测试不属合法交付。不得把当前格式恢复解释为升级旧档，也不因此新增旧档识别／拒收机制或处置既存存档。
 
 **遮蔽消费方①（0098 逐证难度）本次一并接通**：`investigation_fact_difficulty` 读目标的 `characters.intrigue`，按参考值 50 归一后相乘——同等条件下目标越会遮掩越难查，兑现已准设计原句「被查的人越会遮掩、关系网越深，越难查」。**不**以 `characters.identity`（党籍认同，CONTEXT.md 孤臣轴）冒充遮掩。查案对象不在 `characters` 行里时该轴退化不参与。
 

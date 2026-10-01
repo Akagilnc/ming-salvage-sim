@@ -5,7 +5,7 @@ per-character `characters.intrigue` 列及其 seed 数据件，并把它接进 0
 此前一轮施工自行延期该因子（以 identity 冒充或干脆留白），本片把那处欠交结清。
 
 覆盖面按票面「怎么验」：
-- 人物账本接缝：真实开局装载 → 持久存读 → 存档重开读回不变（老档迁移同款路径）；
+- 人物账本接缝：当前格式新开局装载 → 持久存读 → 同格式重开读回不变；
 - 领域查案接缝：控制其余条件仅改目标 intrigue → 逐证难度与相同实投下查获有差异，
   且**不是**代理轴（identity / 自由类目 / 关系网计数皆不动难度）；
 - P4：角色输入只吃定性投影，人物呈现上下文不见裸 int。
@@ -45,79 +45,31 @@ def test_intrigue_is_seeded_from_roster_and_persisted(game):
     assert 黄道周 < 30
 
 
-def test_intrigue_never_equals_the_column_default(game):
-    """seed 不得与 DDL 缺省 50 撞——否则老档一次性回填的守卫无法分辨"未迁移"。
-
-    ``_migrate_character_identity_seed`` 只补仍在缺省上的行；名册里若有人的 seed
-    恰是 50，他的老档行会永远停在缺省、拿不到真值。故在数据件层就禁掉。
-    """
-    _db, _state, content = game
-    assert all(c.intrigue != 50 for c in content.characters.values())
-
-
-def test_intrigue_survives_reopen_and_old_save_migration(tmp_path, content):
-    """存档重开读回不变；pre-intrigue 老档经 ensure_column + 一次性回填拿到真值。"""
+def test_current_format_reopen_keeps_seeded_and_played_intrigue(tmp_path, content):
+    """当前格式重开读回不变：开局 seed 与其后改过的值都不被重写。"""
     from ming_sim.db import GameDB
 
-    path = tmp_path / "pre-intrigue.db"
+    path = tmp_path / "current.db"
     first = GameDB(str(path), content)
     first.seed_static_data()
+    seeded = content.characters["魏忠贤"].intrigue
     assert first.conn.execute(
         "SELECT intrigue FROM characters WHERE name=?", ("魏忠贤",),
-    ).fetchone()["intrigue"] == content.characters["魏忠贤"].intrigue
+    ).fetchone()["intrigue"] == seeded
+    first.conn.execute("UPDATE characters SET intrigue=17 WHERE name=?", ("黄道周",))
+    first.conn.commit()
     first.close()
 
-    # 模拟 pre-intrigue 老档：该列不存在、meta flag 未落。
-    legacy = GameDB(str(path), content)
-    legacy.conn.execute("ALTER TABLE characters DROP COLUMN intrigue")
-    legacy.conn.execute("DELETE FROM metrics WHERE key='__intrigue_seed_v1'")
-    legacy.conn.commit()
-    legacy.close()
-
     restored = GameDB(str(path), content)
-    row = restored.conn.execute(
+    assert restored.conn.execute(
         "SELECT intrigue FROM characters WHERE name=?", ("魏忠贤",),
-    ).fetchone()
-    assert row["intrigue"] == content.characters["魏忠贤"].intrigue
-    restored.close()
-
-
-def test_intrigue_migration_does_not_rewrite_a_played_value(tmp_path, content):
-    """老档里已被玩过的值不得被回填覆盖（同 identity 守卫的形状）。"""
-    from ming_sim.db import GameDB
-
-    path = tmp_path / "played.db"
-    first = GameDB(str(path), content)
-    first.seed_static_data()
-    first.close()
-
-    # 造一个 pre-intrigue 老档：列不存在、meta flag 未落（DDL/DML 各自显式 commit，
-    # 否则隐式事务回滚会只撤一半、造出既非新档也非老档的第三种形状）。
-    legacy = GameDB(str(path), content)
-    legacy.conn.execute("ALTER TABLE characters DROP COLUMN intrigue")
-    legacy.conn.commit()
-    legacy.conn.execute("DELETE FROM metrics WHERE key='__intrigue_seed_v1'")
-    legacy.conn.commit()
-    legacy.close()
-
-    # 重开：ensure_column 补出该列（全体落 DDL 缺省 50），回填把名册行刷成 seed
-    # 真值——再把一人改成别的值，模拟"玩家已玩过、值已不是缺省"。
-    between = GameDB(str(path), content)
-    assert between.conn.execute(
-        "SELECT intrigue FROM characters WHERE name=?", ("魏忠贤",),
-    ).fetchone()["intrigue"] == content.characters["魏忠贤"].intrigue
-    between.conn.execute("UPDATE characters SET intrigue=17 WHERE name=?", ("黄道周",))
-    between.conn.commit()
-    between.close()
-
-    # 再开：一次性回填已落 flag，不得重跑、不得覆盖玩过的值。
-    restored = GameDB(str(path), content)
+    ).fetchone()["intrigue"] == seeded
     assert restored.conn.execute(
         "SELECT intrigue FROM characters WHERE name=?", ("黄道周",),
     ).fetchone()["intrigue"] == 17
     assert restored.conn.execute(
-        "SELECT intrigue FROM characters WHERE name=?", ("魏忠贤",),
-    ).fetchone()["intrigue"] == content.characters["魏忠贤"].intrigue
+        "SELECT 1 FROM metrics WHERE key='__intrigue_seed_v1'",
+    ).fetchone() is None
     restored.close()
 
 
