@@ -683,41 +683,17 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
             character_name,
         )
     ]
-    projection_bodies_by_turn: dict[int, list[str]] = {}
-    for row in visible_public:
-        if str(row.get("source_id") or "").startswith("projection:"):
-            projection_bodies_by_turn.setdefault(int(row.get("turn") or 0), []).append(
-                str(row.get("body") or "")
-            )
-    visible_public = [
-        row for row in visible_public
-        if str(row.get("source_id") or "").startswith("projection:")
-        or not any(
-            str(row.get("body") or "")
-            and str(row.get("body") or "") in aggregate
-            for aggregate in projection_bodies_by_turn.get(int(row.get("turn") or 0), [])
-        )
-    ]
-    # Collapse only exact same-turn archive/source duplicates.  Never compare
-    # substrings and never deduplicate across turns: those are independent
-    # historical facts even when their prose happens to overlap.
-    archive_bodies = {
-        (int(row.get("turn") or 0), str(row.get("body") or ""))
-        for row in visible_public
-        if str(row.get("source_id") or "").startswith("projection:")
-    }
-    visible_public = [
-        row for row in visible_public
-        if str(row.get("source_id") or "").startswith("projection:")
-        or (int(row.get("turn") or 0), str(row.get("body") or "")) not in archive_bodies
-    ]
+    # Identity is the durable source_id.  Same prose, overlapping prose, or the
+    # same turn does not make two sources one record.  An empty source_id has
+    # no identity to collapse.  A repeated non-empty source_id is one record.
     deduped_public = []
-    seen_exact: set[tuple[int, str]] = set()
+    seen_source_ids: set[str] = set()
     for row in visible_public:
-        identity = (int(row.get("turn") or 0), str(row.get("body") or ""))
-        if identity[1] and identity in seen_exact:
-            continue
-        seen_exact.add(identity)
+        source_id = str(row.get("source_id") or "")
+        if source_id:
+            if source_id in seen_source_ids:
+                continue
+            seen_source_ids.add(source_id)
         deduped_public.append(row)
     # Independently persisted public sayings never enter the archive
     # aggregation/dedup rules above.  Append the authoritative public-layer

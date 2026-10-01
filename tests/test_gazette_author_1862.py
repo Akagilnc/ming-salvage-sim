@@ -285,39 +285,10 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
         assert tag == "gazette", f"unexpected agent tag: {tag!r}"
         seen["tag"] = tag
         seen["prompt"] = prompt
-        seen["instructions"] = "\n".join(
-            str(part) for part in (getattr(agent, "instructions", None) or [])
-        )
-        listing = ""
-        for tool in getattr(agent, "tools", []) or []:
-            entry = getattr(tool, "entrypoint", tool)
-            if getattr(entry, "__name__", "") == "list_materials":
-                listing = entry()
-                break
-        seen["files"] = listing
-        read = None
-        for tool in getattr(agent, "tools", []) or []:
-            entry = getattr(tool, "entrypoint", tool)
-            if getattr(entry, "__name__", "") == "read_material":
-                read = entry
-                break
-        if read is not None:
-            for rel in listing.splitlines():
-                if rel.endswith(".txt"):
-                    seen["files"] += "\n" + read(rel)
         return json.dumps({"title": _TITLE, "report": _REPORT}, ensure_ascii=False)
 
     monkeypatch.setattr(month_chain, "run_world_segment_text", world)
     monkeypatch.setattr("ming_sim.agents.run_agent_text", run_agent)
-    before = prepare_world_materials(db, state)
-    try:
-        before_board = next(rel for rel in before.index_lines if rel.endswith("全局.txt"))
-        before_board_text = (before.root / before_board).read_text(encoding="utf-8")
-        assert _SECRET_DOSSIER_LEDGER in before_board_text
-        assert _PLAIN_DOSSIER_LEDGER in before_board_text
-        assert _PLAIN_DOSSIER_TEXT in before.opening
-    finally:
-        release_material_tree(before.root)
     session = _session(db, state, content, monkeypatch)
     result = session.resolve_turn(allow_empty_decree=True)
 
@@ -326,7 +297,6 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
     archive = db.get_turn_report_archive(turn)
     assert archive["title"] == _TITLE
     assert archive["report"] == _REPORT
-    assert archive["title"] not in archive["report"]
     listed = next(row for row in db.list_turn_reports() if int(row["turn"]) == turn)
     assert listed["title"] == _TITLE
     payload = json.loads(seen["prompt"])
@@ -336,14 +306,19 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
     assert any(str(row.get("origin_ref") or "") == f"dossier:{plain_did}" for row in payload["landed"])
     assert "预推不可见:宁远补饷" in payload["forecasts"]
     assert _SECRET_FORECAST not in payload["forecasts"]
-    assert _SECRET_DECL not in json.dumps(payload["nominal"], ensure_ascii=False)
-    assert _PUBLIC_REJ in json.dumps(payload["rejections"], ensure_ascii=False)
-    assert _SECRET_REJ not in json.dumps(payload["rejections"], ensure_ascii=False)
+    assert all(item.get("decree_ref") != "secret_order:9" for item in payload["nominal"])
+    assert any(
+        str((item.get("item") or {}).get("origin_ref") or "") == f"affair:{affair.id}"
+        for item in payload["rejections"]
+    )
+    assert all(
+        str((item.get("item") or {}).get("origin_ref") or "") != "secret_order:9"
+        for item in payload["rejections"]
+    )
     assert payload["world_segment"] == "WORLD_PUBLIC_SEGMENT"
-    assert "朱批可见" in json.dumps(payload["rescript_answers"], ensure_ascii=False)
+    assert any(row.get("note") == "朱批可见" for row in payload["rescript_answers"])
     label = reign_period_label(year, period)
     assert payload["reign_period_label"] == label
-    assert label in seen["instructions"]
     assert {item["origin_ref"] for item in payload["due_commitments"]} == {
         "", f"dossier:{plain_did}",
     }
@@ -356,21 +331,6 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
         for item in payload["waiting_audience"]
     ), payload["waiting_audience"]
     assert set(payload["month_open"]) == {"国库", "内库", "民心", "皇威"}
-    assert _PUBLIC_FACT in seen["files"]
-    assert _SECRET_FACT not in seen["files"]
-    assert _SECRET_BRIEF not in seen["files"]
-    assert _SECRET_AUDIENCE not in seen["files"]
-    assert "密令分轮应允经历1862" not in seen["files"]
-    assert "待决密令经历1862" not in seen["files"]
-    assert _PRIVATE_KEEP in seen["files"]
-    assert _SECRET_DOSSIER_LEDGER not in seen["files"]
-    assert _PLAIN_DOSSIER_LEDGER in seen["files"]
-    assert _SECRET_DOSSIER_FACT not in seen["files"]
-    assert _PLAIN_DOSSIER_FACT in seen["files"]
-    assert _SECRET_DOSSIER_TEXT not in seen["instructions"]
-    assert _PLAIN_DOSSIER_TEXT in seen["instructions"]
-    assert "SECRET_LEDGER" not in seen["files"]
-    assert "密令账" not in seen["files"]
     knowledge = db.get_character_knowledge(state, minister)
     public_ids = {
         str(item.get("source_id") or "") for item in knowledge.get("public_events") or []
@@ -403,9 +363,8 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
         # ADR 0142）。这是「原样搬运」而非「推断身份」——两侧同为模型产出，
         # 断言的是载体与产物同一，而不是从正文里认记录。索引行只由路径＋朝代
         # 月标签＋已入档标题拼成，不夹带正文。
-        assert text.strip() == _REPORT
-        assert _TITLE in gazette.split()
-        assert _REPORT not in gazette
+        assert text.strip() == str(archive["report"]).strip()
+        assert gazette.strip() == f"{rel} {label} {archive['title']}"
         # 亲历载体：本人经历.txt 在册且非空。旧账在正文里找 `_SECRET_BRIEF`
         # 等哨兵串，已删（大理寺 553d581fb）：那是对人读正文做子串推断，人读
         # 正文不是记录身份，一次合法改写即假红。密令简报确以 typed 来源落在

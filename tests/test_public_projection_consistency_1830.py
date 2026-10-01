@@ -9,8 +9,8 @@ render_character_knowledge 的整体重投影 人物/<名>/见闻.txt——world
 契约面只落在结构化字段上：载体路径集合、载体归属（哪条记录走哪个子树）、
 INDEX 与工具一致性。一份公开材料只经一个载体可读，由「同一月份在同一根目录
 下只有一条载体路径」这一路径集合事实证明——不是靠正文行数守恒，也不比对任何
-人读渲染措辞或固定片段。文件正文的行数、字数与内容都不是记录身份，本文件的
-绿灯不承载「某段正文没出现在别处」这类主张；那类主张不由本测试负责。
+人读渲染措辞或固定片段。文件正文的行数、字数与内容都不是记录身份。同正文两条来源的那一条
+只核对 source_id，以及月文件与已落库标题、正文按投影顺序的原样拼接。
 """
 
 from __future__ import annotations
@@ -185,3 +185,48 @@ def test_rebuild_adds_only_the_new_record_own_carrier(game, tmp_path):
     }
     assert set(before_by_month) <= set(after_by_month)
     assert after_gazette == before_gazette
+
+
+def test_same_prose_from_distinct_sources_stays_in_each_directory(game, tmp_path):
+    """正文相同的两条公开来源都留下，并按投影顺序原样写入三类目录的同一月文件。"""
+    db, state, content = game
+    character = _active_minister(db, content)
+    year, period = int(state.year) + 80, 3
+    stamped = GameState(
+        turn=int(state.turn) + 3, year=year, period=period, metrics=dict(state.metrics),
+    )
+    shared = "赈济已奉准。"
+    db.record_public_knowledge_event(
+        stamped, "陕西赈务", shared, source_id="judge:shaanxi",
+    )
+    db.record_public_knowledge_event(
+        stamped, "河南赈务", shared, source_id="judge:henan",
+    )
+
+    public_events = db.get_character_knowledge(state, character.name)["public_events"]
+    source_ids = [str(item.get("source_id") or "") for item in public_events]
+    assert "judge:shaanxi" in source_ids
+    assert "judge:henan" in source_ids
+    rows = [
+        item for item in public_events
+        if str(item.get("source_id") or "") in {"judge:shaanxi", "judge:henan"}
+    ]
+    expected = "\n".join(f"{item['title']}：{item['body']}" for item in rows) + "\n"
+    month_name = f"{year}年{period}月.txt"
+
+    open_night(db, state, location="乾清宫", time_of_day="夜")
+    night = get_open_night(db)
+    assert night is not None
+    night_id = int(night["id"])
+    if character.name not in present_names_at(db, night_id):
+        summon_enter(db, night_id, character.name)
+
+    scene = prepare_scene_materials(db, state, dest_root=tmp_path / "scene")
+    solo = prepare_character_materials(db, state, character, dest_root=tmp_path / "solo")
+    world = prepare_world_materials(db, state, dest_root=tmp_path / "world")
+    scene_rel = f"人物/{character.name}/公开说法/{month_name}"
+    solo_rel = f"公开说法/{month_name}"
+    world_rel = f"公开说法/{month_name}"
+    assert read_material(scene.root, scene_rel) == expected
+    assert read_material(solo.root, solo_rel) == expected
+    assert read_material(world.root, world_rel) == expected

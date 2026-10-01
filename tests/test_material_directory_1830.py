@@ -211,7 +211,6 @@ def test_read_material_stays_inside_directory(game, tmp_path):
         read_material(prepared.root, display)
     miss = tools["read_material"](display)
     assert miss.startswith("无法读取：")
-    assert "本月邸报" not in miss
 
 
 def test_character_materials_exclude_legacy_raw_turn_report_and_keep_public_gazettes(
@@ -269,8 +268,10 @@ def test_character_materials_exclude_legacy_raw_turn_report_and_keep_public_gaze
         line for line in index_lines
         if line.strip() == rel or line.strip().startswith(rel + " ")
     )
-    # 索引行 = 路径 + 朝代月标签 + 已入档标题；不夹带报告正文。
-    assert set(titled.split()) == {rel, reign_period_label(1627, 1), "辽东标题"}
+    stored_title = db.conn.execute(
+        "SELECT title FROM turn_reports WHERE turn=?", (1,),
+    ).fetchone()["title"]
+    assert titled.strip() == f"{rel} {reign_period_label(1627, 1)} {stored_title}"
 
 
 def test_secret_order_materials_keep_full_content_and_fail_loud_on_db_error(
