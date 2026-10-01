@@ -10,11 +10,11 @@ status: accepted
 
 > 本 ADR 为 cmr R1（3/3 全 findings：2 P0 / 2 P1 / 4 P2）后的修订版——R1 抓出的「京运补三本账双付」「双轨 isclose 不可能」「hub 事务相位未钉」「outbound 不变式自指」等真洞已在下列决策中收口。
 
-> **#1889 续（2026-10-01）**：决定 1 与决定 10 中「老档续旧引擎、durable bit 把 legacy 隔离留在生产」不再约束代码。后出 Owner 原话要求去掉旧档专用引擎（源卷 `~/.claude/projects/-Users-akagilnc-WorkSpace-Ming-LLM/a45c2e6b-8c9a-4f56-85fb-73324ee40299.jsonl`，uuid `23ee56db-cc2a-41d2-8307-06c99c71a2e9`）。生产预算与月度收支只走 substrate hub；`calc_province_fiscal` 留作测试参照。既存存档文件不删。开局负面修正（旧称遗产）不是旧引擎。
+> **#1889 后出裁定（2026-10-02）**：决定 1 与决定 10 原有「老档续旧引擎、durable bit 把 legacy 隔离留在生产」已不再约束代码；Owner 原话为「我早就说过无数次了！不考虑旧存档兼容，以前不，现在不，以后也不，除非哪天我明确说要考虑才开始考虑」（源卷 `~/.claude/projects/-Users-akagilnc-WorkSpace-Ming-LLM/a45c2e6b-8c9a-4f56-85fb-73324ee40299.jsonl`，queued_command source_uuid `23ee56db-cc2a-41d2-8307-06c99c71a2e9`）。同卷 assistant `d43ddc22-89c8-496c-ac40-6532a0950823` 呈问「如何处置 ADR0021 新增的退役财政『留作测试参照』条款？」，选项 1「撤回这条没有依据的保留条款」；Owner 答「1889 撤」（queued_command source_uuid `52a2a415-985f-4a1a-9851-05dc3746fd52`）。该保留条款撤回，决定 10 按下文修订。生产预算与月度收支只走 substrate hub；既存存档文件不删。开局负面修正（旧称遗产）不是旧引擎。
 
 ## 决定
 
-1. **cutover 作用范围 = 仅新开存档（前置定调）。** 退役 `calc_province_fiscal`、改用基座驱动国库，**只对新开游戏生效**（同 `content/buildings.json` 金手指先例）；老存档继续旧引擎。故**不存在「换引擎那一月」的口径跳变**——新游戏从首回合即用基座的真实数。「不跳口径」据此**正确理解为「保留收入科目结构」**（田赋 / 盐 / 商 / 起运 不丢类），**不是「数字与旧引擎一致」**（新基座的全部意义就是给出更真实、更低的数；旧公式的量级本就是脱节占位）。
+1. **财政只走 substrate hub（#1889 后出裁定修订）。** 退役 `calc_province_fiscal`，不为旧档保留另一套引擎、迁移或分流；既存存档文件不删。新游戏从首回合即用基座的真实数。「不跳口径」仍指**保留收入科目结构**（田赋 / 盐 / 商 / 起运 不丢类），不是要求数字与旧引擎一致。
 
 2. **京运补分层。** 京运补（朝廷按史实年例从国库拨给边镇）= **#261 确定性史实年例基线 + #260 玩家拨饷偏移**，与 [ADR 0020](0020-fiscal-levy-effect-channel-event-driven.md) 的「饷率通道基线 + #260 offset」同构。使 #261 在未定型的 #260/#150 缺席下能独立闭环（边镇有史实注入），又给皇帝拨饷干预留叠加口（守「皇帝只经下旨影响世界」铁律）。
 
@@ -45,7 +45,7 @@ status: accepted
 
 9. **cutover 失败分层。** 省「失地 / 非 ming 控」按 ADR 0019 动态成员谓词**静默出列**（剧情正常态、不算失败）；省 settle「守恒破 / 坏态」→ **月级 `SettlementAbort` 响亮错误包**（守 ADR 0008「shape 垃圾响亮中止、绝不让坏账静默漏进国库」）。
 
-10. **双轨对账 = 测试期 sanity check，非生产硬闸（纠正 R1 P0-2）。** 新基座的数本就与旧引擎不同（更真实），生产环境**不做新旧 `isclose` 断言**（规模差数倍、必 FAIL）。双轨对账降级为**测试期**：新引擎在代表性 seed 上跑，断**守恒 + 末态硬期望 + 国库轨迹合理**（基座 G1–G22 oracle 风格），旧引擎仅作粗参照、**不做相等断言**。**旧 `calc_province_fiscal` 不删除**（R2 纠正与决定 1 的冲突：决定 1「老档续旧引擎」要求它留着，且 `compute_budget_lines` 仍依赖它）——而是**按存档级 durable bit gate**（如 `fiscal_engine = legacy | substrate_hub`：新档 seed = `substrate_hub`、既有存档迁移显式写 / 保持 `legacy`；`compute_budget_lines` / `apply_fixed_period_flows` / UI 摘要全读同一 bit 分流，legacy 隔离不下线）。**禁用 `fiscal_config` schema-version 推断 cutover**（R3/codex：它对老档逐版迁移补 key、会把升级的老档误切新引擎）。ADR 0019 已排除逐省渐进 cutover。
+10. **财政验收不依赖退役旧引擎（#1889 后出裁定修订）。** 新基座的数本就与旧引擎不同，生产环境不做新旧 `isclose` 断言。现役引擎在代表性 seed 上验证**守恒 + 末态硬期望 + 国库轨迹合理**，不以保留旧引擎作参照为前提。退役财政实现、旧入口及只为它们存在、无必要行为价值的内部测试按现行质量法删除；不再保留旧档引擎分流或标记读口，也不以新增证明性测试换取旧物保留。现役财政核算与既有合法行为测试继续保留。
 
 ## Consequences / 落位边界
 
