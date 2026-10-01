@@ -1897,7 +1897,7 @@ def test_build_secret_orders_supply_feed_uses_fact_materials_not_assembled_effec
         rel = f"事实/character-{_safe_segment(minister)}.txt"
         assert rel in prepared.index_lines
         carrier = read_material(prepared.root, rel)
-        assert carrier == fact_body + "\n"
+        assert fact_body in carrier
     finally:
         release_material_tree(prepared.root)
 

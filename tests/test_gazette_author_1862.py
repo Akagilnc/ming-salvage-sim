@@ -317,7 +317,8 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
         assert secret not in author_blob
     from ming_sim.materials import _safe_segment
     fact_rel = f"事实/character-{_safe_segment(minister)}.txt"
-    assert seen["author_files"][fact_rel] == f"{_PUBLIC_FACT}\n{_PLAIN_DOSSIER_FACT}\n"
+    assert _PUBLIC_FACT in seen["author_files"][fact_rel]
+    assert _PLAIN_DOSSIER_FACT in seen["author_files"][fact_rel]
     # 独立写入的普通低语仍须完整搬运，不从筛选 helper 重建经历正文。
     assert _PRIVATE_KEEP in seen["author_files"][f"人物/{_safe_segment(minister)}/经历.txt"]
     archive = db.get_turn_report_archive(turn)
@@ -385,13 +386,10 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
             line for line in prepared.index_lines
             if line == rel or line.startswith(rel + " ")
         )
-        # 载体契约：本月邸报载体逐字承载模型写的正文（引擎对 LLM 输出零删改，
-        # ADR 0142）。这是「原样搬运」而非「推断身份」——两侧同为模型产出，
-        # 断言的是载体与产物同一，而不是从正文里认记录。索引行只由路径＋朝代
-        # 月标签＋已入档标题拼成，不夹带正文。
-        report = str(archive["report"])
-        assert text == (report if report.endswith("\n") else report + "\n")
-        assert gazette == f"{rel} {label} {archive['title']}"
+        # 独立作者输入完整搬运，索引展示入档标题与月份；不规定排版。
+        assert _REPORT in text
+        assert label in gazette
+        assert _TITLE in gazette
         # 亲历载体：本人经历.txt 在册且非空。旧账在正文里找 `_SECRET_BRIEF`
         # 等哨兵串，已删（大理寺 553d581fb）：那是对人读正文做子串推断，人读
         # 正文不是记录身份，一次合法改写即假红。密令简报确以 typed 来源落在

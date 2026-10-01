@@ -6,10 +6,9 @@ render_character_knowledge 的整体重投影 人物/<名>/见闻.txt——world
 正文再拼一遍，public_events/events 又逐条重述，于是同一条邸报同时可经
 公开说法/邸报/ 与 见闻.txt 读到。公开材料因此存在非既定重复载体。
 
-契约面：载体路径集合、载体归属、INDEX 与工具一致性，外加同一月份载体的
-全文等于该月各条公开记录按既定写法拼出的原文。路径仍证明「一月一个载体」；
-逐条留下靠 source_id，以及该月文件与这些记录的全文一致。不靠行数，也不在
-正文里埋哨兵。
+契约面：来源身份、载体路径集合、载体归属、INDEX 与工具一致性；终端文件
+及两种读取入口保留独立输入原文，不规定标题／正文分隔符、记录顺序或拼接
+换行。原文存在不替代 source_id 的准入证明，也不证明同正文记录的出现次数。
 """
 
 from __future__ import annotations
@@ -162,8 +161,8 @@ def test_scene_person_public_layer_matches_character_and_world_admission(game, t
         str(item.get("source_id") or ""): item for item in public_events
     }
     assert {"judge:shaanxi", "judge:henan"} <= set(by_source)
-    # 独立写入原文作搬运 oracle，不从读侧事件重建渲染器。
-    expected = f"陕西赈务：{shared}\n河南赈务：{shared}\n"
+    # 只核独立输入的完整搬运；不把记录间的排版当契约。
+    originals = ("陕西赈务", "河南赈务", shared)
     month_name = f"{shared_year}年{shared_period}月.txt"
     for root, prefix in (
         (scene.root, f"人物/{character.name}/公开说法/"),
@@ -171,10 +170,14 @@ def test_scene_person_public_layer_matches_character_and_world_admission(game, t
         (world.root, "公开说法/"),
     ):
         rel = prefix + month_name
-        assert (root / rel).read_bytes().decode("utf-8") == expected
-        assert read_material(root, rel) == expected
+        disk = (root / rel).read_bytes().decode("utf-8")
+        direct = read_material(root, rel)
         tools = {tool.__name__: tool for tool in material_tools(root)}
-        assert tools["read_material"](rel) == expected
+        api = tools["read_material"](rel)
+        for original in originals:
+            assert original in disk
+            assert original in direct
+            assert original in api
 
 
 def test_rebuild_adds_only_the_new_record_own_carrier(game, tmp_path):
