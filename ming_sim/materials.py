@@ -751,6 +751,64 @@ def _write_secret_order_file(
     return rel
 
 
+def _inquiry_monthly_report_rels(
+    tmp: Path,
+    db: Any,
+    character: Any,
+    knowledge: dict,
+    *,
+    prefix: str = "",
+) -> list[str]:
+    """查访声明点名的密令，只拉该令当前月度非终值奏报。
+
+    见闻里没有 order 标记的委派不打开任何密令。承办人自己的在办令已在进行中.txt。
+    排除看密令当前字段，不看委派当时的快照。没有月报正文就不写文件。
+    """
+    from ming_sim.knowledge import knowledge_row_visible_to
+
+    name = str(getattr(character, "name", "") or "")
+    if not name or not hasattr(db, "list_secret_orders"):
+        return []
+    own_active: set[int] = set()
+    if hasattr(db, "get_active_secret_orders_for_minister"):
+        own_active = {
+            int(order["id"])
+            for order in db.get_active_secret_orders_for_minister(name)
+        }
+    by_id = {int(order["id"]): order for order in db.list_secret_orders()}
+    written: list[str] = []
+    seen: set[int] = set()
+    for event in knowledge.get("events") or []:
+        if str(event.get("kind") or "") != "inquiry_assignment":
+            continue
+        order_id = inquiry_source_order_id(event.get("source_id"))
+        if order_id is None or order_id in seen or order_id in own_active:
+            continue
+        seen.add(order_id)
+        order = by_id.get(order_id)
+        if order is None:
+            continue
+        visible_row = {
+            "source_id": event.get("source_id"),
+            "kind": event.get("kind"),
+            "excluded_names": json.dumps(
+                list(order.get("excluded_names") or []), ensure_ascii=False,
+            ),
+            "excluded_targets": json.dumps(
+                order.get("excluded_targets") or {}, ensure_ascii=False,
+            ),
+        }
+        if not knowledge_row_visible_to(db, visible_row, name):
+            continue
+        texts = _secret_order_memorials(order)
+        if not texts:
+            continue
+        rel = f"{prefix}{_SECRET_DIR}/查访月报/{order_id}.txt"
+        _write_text(tmp / rel, "\n".join(texts))
+        written.append(rel)
+    return written
+
+
 def _write_recommendation_file(tmp: Path, db: Any, state: Any, character: Any) -> str | None:
     from ming_sim.recommendations import build_recommendation_brief
 
@@ -970,6 +1028,7 @@ def _write_tree(
     secret_rel = _write_secret_order_file(tmp, db, state, character)
     if secret_rel:
         index.append(secret_rel)
+    index.extend(_inquiry_monthly_report_rels(tmp, db, character, knowledge))
     recommend_rel = _write_recommendation_file(tmp, db, state, character)
     if recommend_rel:
         index.append(recommend_rel)
@@ -1274,6 +1333,23 @@ def secret_order_dossier_ids(db: Any) -> set[int]:
 
 # 密令来源 origin / source_id 唯一前缀（#1862 reopen）。拼接与判定都走这里。
 SECRET_ORDER_ORIGIN_PREFIX = "secret_order:"
+
+
+def inquiry_order_source_suffix(order_id: int) -> str:
+    """查访见闻指向一条密令的结构化后缀。不用 secret_order: 前缀。"""
+    return f":order:{int(order_id)}"
+
+
+def inquiry_source_order_id(source_id: object) -> Optional[int]:
+    """从见闻 source_id 取出已声明的密令 id。无标记或非十进制则不是查访读轨。"""
+    text = str(source_id or "")
+    if not text.startswith("inquiry:"):
+        return None
+    _, separator, tail = text.partition(":order:")
+    token = tail.partition(":")[0]
+    if not separator or not token.isascii() or not token.isdecimal():
+        return None
+    return int(token)
 
 
 def is_secret_order_origin(origin: object) -> bool:
@@ -1907,6 +1983,9 @@ def _write_one_present_person(
     )
     if secret_rel:
         index.append(secret_rel)
+    index.extend(_inquiry_monthly_report_rels(
+        tmp, db, character, knowledge, prefix=f"{base}/",
+    ))
 
     for dir_key, title, directory_text, _opening_text, _is_handling in matter_lines:
         matter_seg = _safe_segment(dir_key)

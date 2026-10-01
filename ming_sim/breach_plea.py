@@ -786,18 +786,18 @@ def finalize_persist(
 
     if tier == FOUNDATION_ROOTED:
         outcome = "degraded"
-        note = f"根基已成而撤后续之诺，只失未兑现红利（{reason}）"[:200]
+        note = f"根基已成而撤后续之诺，只失未兑现红利（{reason}）"
         close = True
     elif tier == FOUNDATION_HALFWAY:
         outcome = "failed"
-        note = f"事废：办到一半松手，沉没投入与国势倒退（{reason}）"[:200]
+        note = f"事废：办到一半松手，沉没投入与国势倒退（{reason}）"
         close = True
         setback = _apply_halfway_national_setback(
             db, state, title=title, reason=reason, origin_ref=origin_ref,
         )
     else:
         outcome = "failed"
-        note = f"刚起头撤，所费付诸东流（{reason}）"[:200]
+        note = f"刚起头撤，所费付诸东流（{reason}）"
         close = True
 
     apply_0056 = bool(kinds & _BREACH_KINDS_TRIGGER_0056)
@@ -819,13 +819,6 @@ def finalize_persist(
                 int(target_dossier_id), outcome, note, int(state.turn),
                 close=close, commit=False,
             )
-            if outcome in {"degraded", "failed", "transformed"}:
-                db.record_dossier_progress(
-                    int(target_dossier_id), int(state.turn), outcome, note,
-                    is_terminal=True,
-                    origin=GameDB.DOSSIER_REPORT_ORIGIN_VERDICT,
-                    commit=False,
-                )
             exec_result = {
                 "dossier_id": int(target_dossier_id),
                 "outcome": outcome,

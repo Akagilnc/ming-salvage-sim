@@ -160,14 +160,11 @@ def test_ac1_ac2_transformed_vs_degraded_dual_rail_tracer(game, tmp_path, conten
     # 连坐走既有挂载点
     assert len(_cost_liability(db, xf_id)) == 1
 
-    # 双口径三面：奏报说兑现 × 执行格记变形 × 实况效果在库
+    # 双口径：角色自己的过程奏报留在奏报轨；执行格记变形；实况效果在库。
+    # 结案不再另造终值陈词。
     xf_progress = db.list_dossier_progress(xf_id)
-    terminal_rows = [r for r in xf_progress if r.get("is_terminal")]
-    assert terminal_rows, xf_progress
-    term = terminal_rows[-1]
-    assert term["progress_band"] not in {
-        "transformed", "degraded", "fulfilled", "failed", "executing", "变形",
-    }
+    assert not [r for r in xf_progress if r.get("is_terminal")]
+    assert len(xf_progress) == 1
     assert xf_dossier["execution_outcome"] == "transformed"
     assert db.list_economy_moves_for_dossier(xf_id)
     # 机械分叉：list_dossier_progress band 面 ≠ 英文执行格原串
@@ -228,10 +225,8 @@ def test_ac1_ac2_transformed_vs_degraded_dual_rail_tracer(game, tmp_path, conten
     assert deg_dossier["execution_outcome"] == "degraded"
     assert result_deg["verdict"]["outcome"] == "degraded"
     deg_progress = db.list_dossier_progress(deg_id)
-    deg_term = [r for r in deg_progress if r.get("is_terminal")][-1]
-    assert deg_term["progress_band"] not in {
-        "degraded", "transformed", "fulfilled", "failed", "executing",
-    }
+    assert not [r for r in deg_progress if r.get("is_terminal")]
+    assert len(deg_progress) == 1
     # 假进度尾部：再写奏报，世界 fingerprint 不变
     fp_before_fake = _world_fingerprint(db)
     db.record_dossier_progress(

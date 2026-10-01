@@ -2048,18 +2048,60 @@ def _dispatch_inquiries(
         if not is_inner_court_attendant(character):
             _reject(rejected, item, "受命者不是近侍", "invalid_state", source)
             continue
+        order_suffix = ""
+        raw_order = item.get("order_id", None)
+        if raw_order not in (None, ""):
+            from ming_sim.strict_types import strict_int
+            try:
+                order_id = strict_int(raw_order, accept_numeric_strings=False)
+            except ValueError:
+                _reject(
+                    rejected, item, "查访 order_id 须为整数",
+                    "invalid_shape", source,
+                )
+                continue
+            if order_id <= 0:
+                _reject(
+                    rejected, item, "查访 order_id 须为正整数",
+                    "invalid_shape", source,
+                )
+                continue
+            order = db.get_secret_order(order_id)
+            if order is None:
+                _reject(
+                    rejected, item, f"密令不存在：{order_id}",
+                    "hallucinated_id", source,
+                )
+                continue
+            from ming_sim.knowledge import knowledge_row_visible_to
+            if not knowledge_row_visible_to(db, {
+                "source_id": f"secret_order:{order_id}",
+                "excluded_names": json.dumps(order.get("excluded_names") or []),
+                "excluded_targets": json.dumps(order.get("excluded_targets") or {}),
+            }, attendant):
+                _reject(rejected, item, "受命者在密令排除名单内", "invalid_state", source)
+                continue
+            from ming_sim.materials import inquiry_order_source_suffix
+            order_suffix = inquiry_order_source_suffix(order_id)
         # 可预期拒收只在声明形状/幻影 id；持久化失败不得洗成 invalid_state 继续
         # （失败诚实宪法：未识别异常保留真因，由事务/调用方接住）。
         # Use the exact declared subject as identity, not as a fact selector.
         # A turn/position alone collides across separately dispatched statements.
+        # order_id 编进 source_id，读轨按这个结构化指针取月报，不从 query 散文认卷。
         subject_id = hashlib.sha256(query.encode("utf-8")).hexdigest()
         db.register_character_knowledge_source(
             state, [{"character_id": attendant}], "inquiry_assignment",
             "奉旨查访", query,
-            source_id=(f"inquiry:{state.turn}:{attendant}:{index}:{subject_id}"
-                       + (f":chat_turn:{int(chat_turn_id)}" if chat_turn_id else "")),
+            source_id=(
+                f"inquiry:{state.turn}:{attendant}:{index}:{subject_id}"
+                + order_suffix
+                + (f":chat_turn:{int(chat_turn_id)}" if chat_turn_id else "")
+            ),
         )
-        applied.append({"attendant": attendant, "query": query})
+        applied_row: Dict[str, Any] = {"attendant": attendant, "query": query}
+        if order_suffix:
+            applied_row["order_id"] = order_id
+        applied.append(applied_row)
     return SectionResult(applied=applied, rejected=rejected)
 
 

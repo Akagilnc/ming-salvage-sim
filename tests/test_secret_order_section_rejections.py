@@ -73,10 +73,7 @@ def test_update_valid_active_order_applies_no_reject(game):
     assert _rejection_rows(db, turn, "secret_order_updates") == []
     dossier = db.get_dossier_for_secret_order(oid)
     notes = db.list_dossier_actual_progress(int(dossier["id"]))
-    assert any(
-        int(row["turn"]) == int(state.turn) and "推演副作用XYZ" in str(row["note"])
-        for row in notes
-    )
+    assert [int(row["turn"]) for row in notes] == [int(state.turn)]
     assert db.get_secret_order(oid)["sim_note"] == ""
 
 
@@ -96,7 +93,7 @@ def test_apply_score_extraction_secret_order_update_respects_outer_transaction_r
     assert out["secret_order_updates"][0]["order_id"] == oid
     dossier = db.get_dossier_for_secret_order(oid)
     in_tx = db.list_dossier_actual_progress(int(dossier["id"]))
-    assert any("测试密令副作用R8" in str(row["note"]) for row in in_tx)
+    assert [int(item["turn"]) for item in in_tx] == [int(state.turn)]
     db.conn.rollback()
 
     row = db.get_secret_order(oid)

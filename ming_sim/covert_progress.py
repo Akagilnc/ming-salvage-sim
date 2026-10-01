@@ -648,7 +648,7 @@ def decide_secret_order_settlement(review_input: Mapping[str, object]) -> Dict[s
     return {
         "status": status,
         "outcome": outcome,
-        "note": note[:200],
+        "note": note,
         "close": True,
         "is_terminal": True,
         "actual_units": actual,

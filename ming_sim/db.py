@@ -12345,7 +12345,7 @@ class GameDB:
                 proposed = amount
             else:
                 proposed = int(targets[dossier_id]["ordered_amount"]) - amount
-            note = str(item.get("note") or "").strip()
+            note = str(item.get("note") or "")
             supplied[dossier_id] = (proposed, note)
 
         # 无在途目标：坏提案已逐项拒收，不落假对账行。
@@ -16017,20 +16017,22 @@ class GameDB:
 
         初写仍由 record_dossier_execution 落 judge note；本接口只做增补合并。
         """
-        text = str(fragment or "").strip()
-        if not text:
+        fragment_raw = str(fragment or "")
+        fragment_key = fragment_raw.strip()
+        if not fragment_key:
             raise ValueError("说明片段不能为空")
         row = self.get_decree_dossier(dossier_id)
         if row is None:
             raise KeyError(f"案卷不存在：{dossier_id}")
-        existing = str(row.get("execution_note") or "").strip()
-        if text in existing.split("；"):
-            merged = existing
-        elif existing:
-            merged = f"{existing}；{text}"
+        existing_raw = str(row.get("execution_note") or "")
+        existing_keys = [part.strip() for part in existing_raw.split("；")]
+        if fragment_key in existing_keys:
+            merged = existing_raw
+        elif existing_raw:
+            merged = f"{existing_raw}；{fragment_raw}"
         else:
-            merged = text
-        if merged != existing:
+            merged = fragment_raw
+        if merged != existing_raw:
             self.conn.execute(
                 """
                 UPDATE decree_dossiers
@@ -17147,10 +17149,13 @@ class GameDB:
                     (int(order_id),),
                 ).fetchone()
                 if order is not None and order["status"] == "active":
-                    previous = str(order["result"] or "")
-                    result = "\n".join(x for x in (previous, reason) if x)
+                    from ming_sim.covert_progress import player_facing_secret_order_close_text
+                    result = player_facing_secret_order_close_text(
+                        dict(order), self.list_dossier_progress(dossier_id),
+                    )
                     self.close_secret_order(
-                        int(order_id), "failed", result, int(state.turn), commit=False,
+                        int(order_id), "failed", result, int(state.turn),
+                        execution_note=reason, commit=False,
                     )
                     continue
             self.record_dossier_execution(
@@ -21789,15 +21794,11 @@ class GameDB:
         result: str,
         turn_closed: int,
         *,
+        execution_note: Optional[str] = None,
         commit: bool = True,
     ) -> None:
         def close_in_current_transaction() -> None:
             dossier = self.get_dossier_for_secret_order(int(order_id))
-            reports = (
-                self.list_dossier_progress(int(dossier["id"]))
-                if dossier is not None else []
-            )
-            has_progress_chain = bool(reports)
             close_text = str(result or "")
             self.conn.execute(
                 """
@@ -21812,20 +21813,11 @@ class GameDB:
                     self.transition_decree_dossier(
                         int(dossier["id"]), "executing", commit=False,
                     )
-                # 仅当结案正文不是已有月度奏报时追加终奏。判重用副本，入库仍是原文。
-                if has_progress_chain and close_text.strip():
-                    from ming_sim.supervision import latest_monthly_memorial
-                    last_memorial = latest_monthly_memorial(reports)
-                    if close_text.strip() != last_memorial.strip():
-                        self.record_dossier_progress(
-                            int(dossier["id"]), int(turn_closed), "结案",
-                            close_text, is_terminal=True, commit=False,
-                        )
                 self.record_dossier_execution(
                     int(dossier["id"]),
                     "fulfilled" if str(status) == "done" else "failed",
-                    close_text, int(turn_closed),
-                    close=True, commit=False,
+                    close_text if execution_note is None else execution_note,
+                    int(turn_closed), close=True, commit=False,
                 )
 
         if self.conn.in_transaction:

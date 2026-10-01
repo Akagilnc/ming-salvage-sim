@@ -203,9 +203,12 @@ def build_translation_target_grounding(db: Any, state: Any = None) -> str:
         for stage in stages:
             lines.append(f"stage\t{int(row['id'])}\t{stage['stage_idx']}\t{stage}")
     for row in db.conn.execute(
-        "SELECT id, title FROM secret_orders WHERE status='active' ORDER BY id"
+        "SELECT id, title, status FROM secret_orders ORDER BY id"
     ).fetchall():
-        lines.append(f"secret_order\t{int(row['id'])}\t{str(row['title'] or '')}")
+        lines.append(
+            f"secret_order\t{int(row['id'])}\t{str(row['status'] or '')}\t"
+            f"{str(row['title'] or '')}"
+        )
     if state is not None:
         from ming_sim.due_review import list_due_review_scenes
         for scene in list_due_review_scenes(db, state):
@@ -297,7 +300,8 @@ def build_c0_declaration_shape() -> str:
         '    {"action_id": 正整数, "form": "会签|当面站台|御笔手敕", '
         '"endorser_id": "人名（御笔手敕为空）"}\n'
         '  ],\n'
-        '  "inquiries": [{"attendant": "受命近侍", "query": "所查之事"}],\n'
+        '  "inquiries": [{"attendant": "受命近侍", "query": "所查之事", '
+        '"order_id": "目录里点名的密令 id（未点名则省略）"}],\n'
         '  "rushes": [{"target_kind": "commitment|secret_order", "target_id": 正整数, '
         '"stage_idx": 0, "deadline_months": 1, "reason": "催办缘由"}],\n'
         '  "travel_tones": [{"person_name": "人名", "tone": "常行|加急|星夜兼程"}],\n'
@@ -394,7 +398,9 @@ def build_audience_translate_prompt(
         "- 承接不了的交办仍写入 commissions（由代码拒收），不要改写皇帝原话去猜。\n"
         "- 暗渠揭破场面呈上后皇帝禁摊派 → commissions 一项 dossier_action_type=prohibit_covert_levy，target_id 填当前场面案卷 dossier_id。\n"
         "- 大臣具名举荐某人任某差并附荐词 → commissions 任命 + recommendation（荐者/荐词原句）。\n"
-        "- 皇帝交代近侍查某事 → inquiries；催某件分段事或密令 → rushes；传召说明缓急 → travel_tones。\n"
+        "- 皇帝交代近侍查某事 → inquiries；只有点名【权威目标目录】里某一条密令时才填该行精确 order_id，"
+        "未点名则省略 order_id，只记委派、不拉取密令月报；不得从查访散文猜测密令。"
+        "催某件分段事或密令 → rushes；传召说明缓急 → travel_tones。\n"
         f"{grounding_block}"
         f"【本场已说的话】\n{said_block}\n"
         f"【本夜暂存清单】{pending_block}\n"

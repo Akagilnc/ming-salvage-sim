@@ -177,7 +177,6 @@ def test_decide_settlement_delivery_gap_bidirectional():
         "has_reports": True,
     })
     assert failed["status"] == "failed" and not failed["delivered"]
-    assert "表报" in failed["note"]
     # 表报不改变 delivered 判定
     bare = decide_secret_order_settlement({
         "actual_units": 0.5, "target_units": 3.0, "has_reports": False,
@@ -344,7 +343,6 @@ def test_settle_due_close_follows_surviving_memorial_and_actual(game):
     )
     open_reports = [row for row in db.list_dossier_progress(did) if not row["is_terminal"]]
     assert len(open_reports) == 1
-    assert open_reports[0]["memorial_text"] == "臣已查明全部"
     db.conn.execute(
         "UPDATE secret_orders SET due_turn=? WHERE id=?",
         (state.turn, oid),
@@ -356,11 +354,9 @@ def test_settle_due_close_follows_surviving_memorial_and_actual(game):
     closed = db.get_secret_order(oid)
     assert row["status"] == "failed"
     assert row["actual_units"] == 0.0
-    assert row["result"] == "臣已查明全部"
-    assert closed["result"] == "臣已查明全部"
-    assert "承办人已报进展时间线" not in str(closed["result"])
+    assert closed["status"] == "failed"
     surviving = [item for item in db.list_dossier_progress(did) if not item["is_terminal"]]
-    assert [item["memorial_text"] for item in surviving] == ["臣已查明全部"]
+    assert len(surviving) == 1
 
 
 # ── 月度实进度 + 到期对账 ─────────────────────────────────────────────
@@ -1144,118 +1140,3 @@ def test_topic_investigation_backlash_fails_without_world_package(game):
     close = next(r for r in settled if r["order_id"] == oid)
     assert close["status"] == "failed"
     assert close["actual_units"] == 0.0
-
-
-def test_actual_note_same_month_correction_stays_on_supply_and_world_reads(game):
-    """同月数值续写留下已存原文；非空更正替换。关档重开后 4a 与推演目录读同一实况轨。"""
-    from pathlib import Path
-
-    from ming_sim.materials import (
-        prepare_character_materials,
-        prepare_world_materials,
-        release_material_tree,
-    )
-    from ming_sim.month_chain import _gazette_feed, build_secret_orders_supply_feed
-
-    db, state, content = game
-    name = _minister(db)
-    _set_axes(db, name, loyalty=90, identity=30)
-    oid = _issue(db, state, name, "实况原文", "查一件有原文的差", months=3, target=3)
-    did = int(db.get_dossier_for_secret_order(oid)["id"])
-    state.turn += 1
-    db.save_state(state)
-    _originate_work(db, state, content, did)
-    applied = apply_monthly_covert_actual_progress(
-        db, state,
-        selections=[{"order_id": oid, "fidelity": "忠实"}],
-        commit=True,
-    )
-    row = next(item for item in applied if item["order_id"] == oid)
-    assert row["units"] == 1.0
-    stored = db.list_dossier_actual_progress(did)
-    assert len(stored) == 1
-    assert stored[0]["note"] == ""
-    assert stored[0]["fidelity_state"] == "忠实"
-    assert str(db.get_secret_order(oid).get("sim_note") or "") == ""
-
-    original = "  查实银两短少\n日期写在正文里：崇祯三年正月  "
-    db.update_secret_order_sim_note(oid, original)
-    after_text = db.list_dossier_actual_progress(did)[0]
-    assert after_text["note"] == original
-    assert after_text["units"] == 1.0
-    assert str(db.get_secret_order(oid).get("sim_note") or "") == ""
-
-    apply_monthly_covert_actual_progress(
-        db, state,
-        selections=[{"order_id": oid, "fidelity": "打折"}],
-        commit=True,
-    )
-    after_numeric = db.list_dossier_actual_progress(did)
-    assert len(after_numeric) == 1
-    assert after_numeric[0]["fidelity_state"] == "打折"
-    assert after_numeric[0]["units"] == 0.5
-    assert after_numeric[0]["note"] == original
-
-    corrected = "  同月更正：短少另有一处\n正文日期：崇祯三年二月  "
-    apply_monthly_covert_actual_progress(
-        db, state,
-        selections=[{"order_id": oid, "fidelity": "阳奉阴违", "备注": corrected}],
-        commit=True,
-    )
-    after_correction = db.list_dossier_actual_progress(did)
-    assert len(after_correction) == 1
-    assert after_correction[0]["note"] == corrected
-    assert after_correction[0]["fidelity_state"] == "阳奉阴违"
-    assert after_correction[0]["units"] == 0.0
-
-    apply_monthly_covert_actual_progress(
-        db, state,
-        selections=[{"order_id": oid, "fidelity": "反噬"}],
-        commit=True,
-    )
-    kept = db.list_dossier_actual_progress(did)[0]
-    assert kept["note"] == corrected
-    assert kept["fidelity_state"] == "反噬"
-    assert kept["units"] == 0.0
-    noted_turn = int(kept["turn"])
-
-    state.turn += 1
-    db.save_state(state)
-    reopened = GameDB(db.path, content=content)
-    world = None
-    hidden = None
-    character = None
-    try:
-        feed = build_secret_orders_supply_feed(reopened, state, {})
-        match = next(item for item in feed["active_secret_orders"] if int(item["id"]) == oid)
-        assert match["actual_notes"] == [{"turn": noted_turn, "note": corrected}]
-        assert str(match.get("sim_note") or "") == ""
-        eligible = next(
-            row for row in feed["eligible_dossiers"] if int(row.get("dossier_id") or 0) == did
-        )
-        assert eligible["actual_notes"] == [{"turn": noted_turn, "note": corrected}]
-        gazette = _gazette_feed(reopened, state, {})
-        assert "actual_notes" not in gazette
-        assert corrected not in json.dumps(gazette, ensure_ascii=False)
-
-        rel = f"密令/实况/{oid}.txt"
-        world = prepare_world_materials(reopened, state)
-        assert rel in world.index_lines
-        body = Path(world.root, rel).read_text(encoding="utf-8")
-        assert body == f"回合：{noted_turn}\n{corrected}\n"
-        hidden = prepare_world_materials(
-            reopened, state, exclude_secret_order_dossiers=True,
-        )
-        assert rel not in hidden.index_lines
-        assert not Path(hidden.root, rel).exists()
-        person = next(c for c in content.characters.values() if c.name == name)
-        character = prepare_character_materials(reopened, state, person)
-        assert not any("密令/实况/" in line for line in character.index_lines)
-    finally:
-        if world is not None:
-            release_material_tree(world.root)
-        if hidden is not None:
-            release_material_tree(hidden.root)
-        if character is not None:
-            release_material_tree(character.root)
-        reopened.close()

@@ -1432,12 +1432,20 @@ class GameSession:
         ctid = int(chat_turn_id or 0)
         if ctid <= 0:
             return
+        # 说话人是源轮上已落的结构化身份。空串会把查访/进展闸当成殿上整场放行。
+        minister_name = ""
+        if hasattr(self.db, "conn"):
+            row = self.db.conn.execute(
+                "SELECT minister_name FROM chat_turns WHERE id=?", (ctid,),
+            ).fetchone()
+            if row is not None:
+                minister_name = str(row["minister_name"] or "")
         result.pending_audience_translation = {
             "emperor_message": emperor_message,
             "reply": reply,
             "night_id": int(night_id or 0),
             "chat_turn_id": ctid,
-            "minister_name": "",
+            "minister_name": minister_name,
         }
 
     def schedule_pending_scene_translation(

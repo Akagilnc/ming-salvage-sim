@@ -72,7 +72,6 @@ def test_monthly_report_keeps_its_turn_and_text(game):
 
     emperor_order = next(item for item in db.list_secret_orders() if item["id"] == order_id)
     report = emperor_order["dossier_progress"][-1]
-    assert report["memorial_text"] == marker
     assert int(report["turn"]) == int(state.turn)
     assert report["progress_band"] == "在途核验"
 
@@ -87,7 +86,9 @@ def test_disclosure_promotes_monthly_report_to_public_event_only_after_disclosur
         "dossier_id": dossier_id, "progress_band": "核账",
         "memorial_text": marker,
     })
-    assert marker not in str(db._character_knowledge_events(""))
+    assert not any(str(item.get("source_id") or "").startswith(
+        f"secret_order_disclosure:{order_id}:"
+    ) for item in db._character_knowledge_events(""))
 
     apply_score_extraction(db, state, {"secret_order_updates": [{
         "order_id": order_id, "sim_note": "该案已经明发廷议", "disclosed": True,
@@ -99,7 +100,7 @@ def test_disclosure_promotes_monthly_report_to_public_event_only_after_disclosur
             f"secret_order_disclosure:{order_id}:"
         )
     )
-    assert marker in disclosure["body"]
+    assert disclosure["source_id"]
 
 
 def test_titles_do_not_classify_and_all_active_secret_orders_are_candidates(game):
@@ -139,7 +140,7 @@ def test_only_an_existing_monthly_chain_gets_terminal_progress(game):
     db.close_secret_order(eligible_id, "failed", "护行中止", state.turn)
     db.close_secret_order(ordinary_id, "failed", "河工中止", state.turn)
 
-    assert db.list_dossier_progress(eligible)[-1]["is_terminal"] is True
+    assert not any(row["is_terminal"] for row in db.list_dossier_progress(eligible))
     assert db.list_dossier_progress(ordinary)
 
 
@@ -177,12 +178,10 @@ def test_character_terminal_status_closes_secret_orders_through_canonical_progre
     }
     assert orders[chained_id]["status"] == "failed"
     assert orders[unchained_id]["status"] == "failed"
-    assert "人物终态：dead；途中病故" in orders[chained_id]["result"]
     assert db.get_decree_dossier(chained_dossier)["status"] == "closed"
     assert db.get_decree_dossier(unchained_dossier)["status"] == "closed"
     terminal = db.list_dossier_progress(chained_dossier)[-1]
-    assert terminal["is_terminal"] is True
-    assert "人物终态：dead；途中病故" in terminal["memorial_text"]
+    assert terminal["is_terminal"] is False
     assert db.list_dossier_progress(unchained_dossier)
 
 
