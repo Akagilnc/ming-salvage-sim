@@ -60,8 +60,14 @@ CORE_SCHEMA_SQL = """
         transit_speed_factor REAL,
         transit_start_turn INTEGER NOT NULL DEFAULT 0,
         identity INTEGER NOT NULL DEFAULT 50,
-        seed_guilt TEXT NOT NULL DEFAULT ''
+        seed_guilt TEXT NOT NULL DEFAULT '',
+        portrait_id TEXT NOT NULL DEFAULT '',
+        court_role TEXT NOT NULL DEFAULT '',
+        summary TEXT NOT NULL DEFAULT '',
+        aliases TEXT NOT NULL DEFAULT '[]',
+        affair_id INTEGER NOT NULL DEFAULT 0
     );
+    CREATE INDEX IF NOT EXISTS idx_characters_affair ON characters(affair_id);
 
     -- #1889：官职类别（office_type）的唯一真源 = characters.office_type。
     -- 原 character_offices.office_type 是同一事实的第二个可写表示（旧代码还得靠
@@ -128,7 +134,9 @@ CORE_SCHEMA_SQL = """
         name TEXT PRIMARY KEY,
         satisfaction INTEGER NOT NULL,
         leverage INTEGER NOT NULL,
-        agenda TEXT NOT NULL
+        agenda TEXT NOT NULL,
+        edict_overdraw INTEGER NOT NULL DEFAULT 0 CHECK (edict_overdraw >= 0),
+        leverage_offset REAL NOT NULL DEFAULT 0
     );
 
     CREATE TABLE IF NOT EXISTS powers (
@@ -358,6 +366,7 @@ CORE_SCHEMA_SQL = """
         target_id TEXT,
         dossier_id INTEGER,
         origin_ref TEXT NOT NULL DEFAULT '',
+        beyond_intent INTEGER NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -391,6 +400,8 @@ CORE_SCHEMA_SQL = """
         year INTEGER NOT NULL,
         period INTEGER NOT NULL,
         report TEXT NOT NULL,
+        attendant_message TEXT NOT NULL DEFAULT '',
+        title TEXT NOT NULL DEFAULT '',
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -403,6 +414,14 @@ CORE_SCHEMA_SQL = """
         context TEXT NOT NULL DEFAULT '',
         options_json TEXT NOT NULL DEFAULT '[]',
         choice_json TEXT NOT NULL DEFAULT '',
+        rejection_reason TEXT NOT NULL DEFAULT '',
+        opposition TEXT NOT NULL DEFAULT '',
+        kind TEXT NOT NULL DEFAULT 'decision',
+        actor_name TEXT NOT NULL DEFAULT '',
+        actor_office TEXT NOT NULL DEFAULT '',
+        actor_faction TEXT NOT NULL DEFAULT '',
+        revision_round INTEGER NOT NULL DEFAULT 0,
+        prior_options_json TEXT NOT NULL DEFAULT '[]',
         status TEXT NOT NULL DEFAULT 'pending',
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         PRIMARY KEY (turn, idx)
@@ -431,6 +450,10 @@ CORE_SCHEMA_SQL = """
         minister_name TEXT NOT NULL DEFAULT '',
         payload_json TEXT NOT NULL DEFAULT '{}',
         status TEXT NOT NULL DEFAULT 'pending',    -- pending | committed | failed | held_over
+        committed_directive_id INTEGER NOT NULL DEFAULT 0,
+        night_id INTEGER NOT NULL DEFAULT 0,
+        night_approved INTEGER NOT NULL DEFAULT 0,
+        version INTEGER NOT NULL DEFAULT 1,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -480,9 +503,7 @@ CORE_SCHEMA_SQL = """
         agno_session_id TEXT NOT NULL DEFAULT '',
         agno_runs_before INTEGER NOT NULL DEFAULT 0,
         status TEXT NOT NULL DEFAULT 'active',
-        -- #498：对话轮锚定夜容器；0=未挂夜（旧档/无夜路径）
-        -- night_id 列可能由 ensure_column 后补；索引不得写在本 CREATE 块
-        -- （旧档 chat_turns 已存在时 CREATE TABLE IF NOT EXISTS 不重建，索引会引用缺列失败）
+        -- #498：对话轮锚定夜容器；0=未挂夜
         night_id INTEGER NOT NULL DEFAULT 0,
         -- 与 story_ledger_entries.seq 共用夜内单调序（allocate_night_seq）
         night_seq INTEGER NOT NULL DEFAULT 0,
@@ -501,6 +522,8 @@ CORE_SCHEMA_SQL = """
         ON chat_turns(minister_name, turn, status, id);
     CREATE INDEX IF NOT EXISTS idx_chat_turns_status_id
         ON chat_turns(status, id);
+    CREATE INDEX IF NOT EXISTS idx_chat_turns_night
+        ON chat_turns(night_id, id);
 
     -- #498 召对夜一等容器 + 故事账本（ADR 0035）
     CREATE TABLE IF NOT EXISTS audience_nights (
@@ -541,12 +564,15 @@ CORE_SCHEMA_SQL = """
         -- #501 时序键（ADR 0036 cmr R7）：口令账=自身 seq；抽取账=源对话轮原始时序，
         -- 使补跑落回原时间位、不因补跑时刻错位。NULL 时读取端 COALESCE 回退 seq。
         order_key REAL,
+        origin_ref TEXT NOT NULL DEFAULT '',
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         UNIQUE(night_id, seq),
         FOREIGN KEY(night_id) REFERENCES audience_nights(id)
     );
     CREATE INDEX IF NOT EXISTS idx_story_ledger_night_seq
         ON story_ledger_entries(night_id, seq);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_ledger_origin_ref
+        ON story_ledger_entries(origin_ref) WHERE origin_ref != '';
 
     CREATE TABLE IF NOT EXISTS chat_turn_rollback_items (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -580,6 +606,7 @@ CORE_SCHEMA_SQL = """
         sim_note TEXT NOT NULL DEFAULT '',
         excluded_names TEXT NOT NULL DEFAULT '[]',
         dossier_progress_json TEXT NOT NULL DEFAULT '[]',
+        excluded_targets TEXT NOT NULL DEFAULT '{}',
         turn_closed INTEGER,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -642,6 +669,7 @@ CORE_SCHEMA_SQL = """
         kind TEXT NOT NULL,
         origin_ref TEXT NOT NULL,
         reason TEXT NOT NULL DEFAULT '',
+        beyond_intent INTEGER NOT NULL DEFAULT 0,
         removed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -656,6 +684,7 @@ CORE_SCHEMA_SQL = """
         kind TEXT NOT NULL,
         origin_ref TEXT NOT NULL,
         reason TEXT NOT NULL DEFAULT '',
+        beyond_intent INTEGER NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -671,6 +700,7 @@ CORE_SCHEMA_SQL = """
         delta INTEGER NOT NULL,
         origin_ref TEXT NOT NULL,
         reason TEXT NOT NULL DEFAULT '',
+        beyond_intent INTEGER NOT NULL DEFAULT 0,
         changed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -681,7 +711,13 @@ CORE_SCHEMA_SQL = """
         key   TEXT PRIMARY KEY,
         value INTEGER NOT NULL,
         kind  TEXT NOT NULL,
-        note  TEXT NOT NULL DEFAULT ''
+        note  TEXT NOT NULL DEFAULT '',
+        budget_role TEXT NOT NULL DEFAULT 'fixed',
+        account TEXT NOT NULL DEFAULT '',
+        direction TEXT NOT NULL DEFAULT '',
+        display TEXT NOT NULL DEFAULT '',
+        sort_order INTEGER NOT NULL DEFAULT 9999,
+        origin_ref TEXT NOT NULL DEFAULT ''
     );
 
     CREATE TABLE IF NOT EXISTS fiscal_containers (
@@ -899,6 +935,7 @@ CORE_SCHEMA_SQL = """
         year INTEGER NOT NULL,
         period INTEGER NOT NULL,
         evidence INTEGER NOT NULL DEFAULT 0 CHECK (evidence IN (0, 1)),
+        affair_id INTEGER NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         UNIQUE(source, target, event_kind, context, origin)
     );
@@ -908,6 +945,9 @@ CORE_SCHEMA_SQL = """
 
     CREATE INDEX IF NOT EXISTS idx_relation_edges_person
     ON relation_edge_events(source, target, event_kind, id);
+
+    CREATE INDEX IF NOT EXISTS idx_relation_edge_events_affair
+    ON relation_edge_events(affair_id, id);
 
     -- #636 关系摘要层 S5：两段式摘要（奠基段机械只增不改＋近况段整段重酿，ID-9）。
     -- 零数值强度字段（P4/ADR 0083）；结构字段首发集＝有向关系对、维度标记、
@@ -995,6 +1035,21 @@ CORE_SCHEMA_SQL = """
             OR (kind IN ('direct','kinship') AND axis IS NOT NULL
                 AND base IS NOT NULL AND legitimacy_pct IS NOT NULL)
         )
+    );
+
+    CREATE TABLE IF NOT EXISTS ending_summary (
+        turn INTEGER PRIMARY KEY,
+        year INTEGER NOT NULL,
+        period INTEGER NOT NULL,
+        ending_status TEXT NOT NULL,
+        summary TEXT NOT NULL DEFAULT '',
+        timeline TEXT NOT NULL DEFAULT '[]',
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS save_meta (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
     );"""
 
 

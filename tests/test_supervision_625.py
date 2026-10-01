@@ -235,7 +235,7 @@ def test_ac1_monthly_write_idempotent_readable_and_restore(game, tmp_path, conte
     db.record_monthly_supervision_facts(turn, commit=True)
     db.record_monthly_supervision_facts(turn, commit=True)  # 幂等不双计
 
-    presence = db.list_supervision_presence(subject_id)
+    presence = db.dossiers.presence_rows(subject_id)
     assert len(presence) == 1
     row = presence[0]
     assert row["turn"] == turn
@@ -258,13 +258,13 @@ def test_ac1_monthly_write_idempotent_readable_and_restore(game, tmp_path, conte
     db.record_loophole_exposure(
         subject_id, turn, "policy", "transformed", commit=True,
     )
-    exps = db.list_loophole_exposures(subject_id)
+    exps = db.dossiers.exposure_rows(subject_id)
     assert len(exps) == 1
     assert exps[0]["action_type"] == "policy"
     assert exps[0]["execution_form"] == "transformed"
 
     expected_hist = db.list_supervision_history(subject_id)
-    expected_exp = db.list_loophole_exposures(subject_id)
+    expected_exp = db.dossiers.exposure_rows(subject_id)
 
     backup = tmp_path / "restore-625.db"
     db.backup_to(str(backup))
@@ -273,10 +273,10 @@ def test_ac1_monthly_write_idempotent_readable_and_restore(game, tmp_path, conte
     restored = GameDB(str(backup), content=content)
     try:
         assert restored.list_supervision_history(subject_id) == expected_hist
-        assert restored.list_loophole_exposures(subject_id) == expected_exp
+        assert restored.dossiers.exposure_rows(subject_id) == expected_exp
         # restore 后同 turn 重跑不双计
         restored.record_monthly_supervision_facts(turn, commit=True)
-        assert len(restored.list_supervision_presence(subject_id)) == 1
+        assert len(restored.dossiers.presence_rows(subject_id)) == 1
     finally:
         restored.close()
 
@@ -291,9 +291,9 @@ def test_ac1_settle_segment_writes_presence(game, monkeypatch):
         db, state, auditor=str(auditor["name"]), subject_id=subject_id, token="seg",
     )
     before_turn = int(state.turn)
-    before = len(db.list_supervision_presence(subject_id))
+    before = len(db.dossiers.presence_rows(subject_id))
     _settle_empty_month(db, state, content, monkeypatch)
-    after = db.list_supervision_presence(subject_id)
+    after = db.dossiers.presence_rows(subject_id)
     assert len(after) == before + 1
     # settle 推进 turn；在场行键控 before_turn
     assert any(int(r["turn"]) == before_turn for r in after)
@@ -461,7 +461,7 @@ def test_ac4_unified_presence_gate_on_terminal_and_recon_paths(game):
     db.record_dossier_execution(
         bare_id, "transformed", "无人盯走样", turn, close=True, commit=True,
     )
-    assert db.list_loophole_exposures(bare_id) == []
+    assert db.dossiers.exposure_rows(bare_id) == []
 
     # 被盯紧：终值变形落暴露 → 读入面差分
     watched_id = _subject_dossier(db, state, owner=str(owner["name"]), token="watch")
@@ -498,7 +498,7 @@ def test_ac4_unified_presence_gate_on_terminal_and_recon_paths(game):
     db.conn.commit()
     out_bare = db.record_monthly_loophole_exposures_from_reconciliations(turn, commit=True)
     assert int(out_bare["exposure_written"]) == 0
-    assert db.list_loophole_exposures(recon_bare) == []
+    assert db.dossiers.exposure_rows(recon_bare) == []
 
     recon_watched = _subject_dossier(db, state, owner=str(owner["name"]), token="rw")
     _audit_dossier(
@@ -517,7 +517,7 @@ def test_ac4_unified_presence_gate_on_terminal_and_recon_paths(game):
     db.conn.commit()
     out_w = db.record_monthly_loophole_exposures_from_reconciliations(turn, commit=True)
     assert int(out_w["exposure_written"]) >= 1
-    exps = db.list_loophole_exposures(recon_watched)
+    exps = db.dossiers.exposure_rows(recon_watched)
     assert any(r["execution_form"] == "degraded" for r in exps)
 
 

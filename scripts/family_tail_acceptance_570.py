@@ -425,7 +425,11 @@ def _run_sample(index: int, root: str, content: GameContent, cfg: LLMConfig) -> 
             participants=[{"character_id": cabinet_name, "tier": "主办"}],
             payload={"mode": "ordinary"},
         )
-        db.dossiers.force_executing_promulgated(int(errand))
+        db.conn.execute(
+            "UPDATE decree_dossiers SET status='executing', "
+            "promulgation_decision='promulgated' WHERE id=?",
+            (int(errand),),
+        )
         db.conn.commit()
         db.record_dossier_progress(
             errand, state.turn, "在途", memorial_text,

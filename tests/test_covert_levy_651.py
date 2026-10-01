@@ -71,7 +71,7 @@ def test_same_segment_denunciation_creates_exposure_todo(game, monkeypatch):
         source=Provenance.player_decree,
         visible_refs={"dossiers": {did}},
     )
-    assert db.list_faction_denunciations(target_dossier_id=did)
+    assert db.dossiers.denunciations(target_dossier_id=did)
     todos = db.list_next_audience_todos(status="pending")
     assert any(t["entry_kind"] == ENTRY_KIND for t in todos)
 

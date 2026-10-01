@@ -111,9 +111,17 @@ def _plant_force_history(db: GameDB, state, count: int) -> list[int]:
         )
         # Closed historical force row: decision rejected + rescript force.
         # History loader joins decisions×payload; marker=批红强颁 when rescript_action set.
-        db.dossiers.force_closed_rejected(int(did), int(state.turn))
-        db.dossiers.append_force_promulgation_marker(
-            int(did), max(1, int(state.turn) - 1),
+        db.conn.execute(
+            "UPDATE decree_dossiers SET status='closed', "
+            "promulgation_decision='rejected', rescript_pending=0, closed_turn=? "
+            "WHERE id=?",
+            (int(state.turn), int(did)),
+        )
+        db.conn.execute(
+            """INSERT INTO decree_dossier_decisions
+                   (dossier_id, turn, decision, rescript_action, reason, legal_reason_code)
+               VALUES (?, ?, 'rejected', 'force_promulgated', ?, '')""",
+            (int(did), max(1, int(state.turn) - 1), "批红强颁"),
         )
         ids.append(did)
     db.conn.commit()

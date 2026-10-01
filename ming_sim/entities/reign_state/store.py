@@ -11,6 +11,14 @@ from __future__ import annotations
 from typing import Any, Dict, Mapping, Optional
 
 
+_LEDGER_ORDER = (
+    "turn", "year", "period", "account", "delta", "balance_after", "category",
+    "reason", "event_id", "edict_id", "actor", "purpose", "target_kind",
+    "target_id", "dossier_id", "origin_ref", "beyond_intent",
+)
+_LEDGER_COLUMNS = frozenset(_LEDGER_ORDER)
+
+
 _SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS game_state (
     id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -105,3 +113,26 @@ class ReignStateStore:
             str(row["key"]): int(row["value"])
             for row in self._conn.execute("SELECT key, value FROM metrics").fetchall()
         }
+
+    def upsert_metric(self, key: str, value: int) -> None:
+        """Write one balance. Does not commit; the caller owns the transaction."""
+        self._conn.execute(
+            "INSERT INTO metrics (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (str(key), int(value)),
+        )
+
+    def insert_ledger(self, row: Mapping[str, object]) -> None:
+        """Append one economy_ledger row. Optional columns default in the table."""
+        unknown = set(row) - _LEDGER_COLUMNS
+        if unknown:
+            raise ValueError(f"economy_ledger 列非法：{sorted(unknown)}")
+        columns = [column for column in _LEDGER_ORDER if column in row]
+        if not columns:
+            raise ValueError("economy_ledger insert needs fields")
+        placeholders = ", ".join("?" for _ in columns)
+        self._conn.execute(
+            f"INSERT INTO economy_ledger ({', '.join(columns)}) "
+            f"VALUES ({placeholders})",
+            [row[column] for column in columns],
+        )

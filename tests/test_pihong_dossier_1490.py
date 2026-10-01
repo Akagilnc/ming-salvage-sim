@@ -2716,7 +2716,7 @@ def test_658_typed_target_and_backing_reject_bad_shapes(game, monkeypatch):
     db.ensure_dossiers_for_draft_directives(state)
     status = db.conn.execute('SELECT status FROM turn_directives WHERE id=?', (bad_directive,)).fetchone()['status']
     assert status == 'draft'
-    assert all((int(row['id']) != bad_directive for row in db.dossiers.draft_directives_with_dossier(state.turn)))
+    assert all((int(row['id']) != bad_directive for row in db.dossiers.directives_with_dossiers(state.turn)))
     db.mark_directives_issued(state)
     status = db.conn.execute('SELECT status FROM turn_directives WHERE id=?', (bad_directive,)).fetchone()['status']
     assert status == 'draft'

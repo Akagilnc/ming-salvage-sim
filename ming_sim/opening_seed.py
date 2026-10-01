@@ -50,44 +50,35 @@ def seed_opening_world(db: Any) -> None:
             office_type = infer_office_type_from_office(
                 office, character.office_type, db.llm_config, use_llm=False
             )
-            db.conn.execute(
-                """
-                INSERT INTO characters
-                (name, office, office_type, faction, aliases, personal_skills, loyalty, ability, integrity, courage, style, identity, seed_guilt,
-                 birth_year, historical_death_year, historical_death_month, debut_year, debut_month,
-                 status, status_reason, reason_code, status_changed_turn, portrait_id, power_id, location, transit_to, summary)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    character.name,
-                    office,
-                    office_type,
-                    character.faction,
-                    json.dumps(character.aliases, ensure_ascii=False),
-                    json.dumps(character.personal_skills, ensure_ascii=False),
-                    character.loyalty,
-                    character.ability,
-                    character.integrity,
-                    character.courage,
-                    character.style,
-                    character.identity,
-                    _seed_guilt_storage_value(character.seed_guilt),
-                    character.birth_year,
-                    character.historical_death_year,
-                    character.historical_death_month,
-                    character.debut_year,
-                    character.debut_month,
-                    character.status,
-                    character.status_reason,
-                    character.reason_code,
-                    0,
-                    character.portrait_id,
-                    character.power_id,
-                    character.location,
-                    character.transit_to,
-                    character.summary,
-                ),
-            )
+            db.characters.insert({
+                "name": character.name,
+                "office": office,
+                "office_type": office_type,
+                "faction": character.faction,
+                "aliases": json.dumps(character.aliases, ensure_ascii=False),
+                "personal_skills": json.dumps(character.personal_skills, ensure_ascii=False),
+                "loyalty": character.loyalty,
+                "ability": character.ability,
+                "integrity": character.integrity,
+                "courage": character.courage,
+                "style": character.style,
+                "identity": character.identity,
+                "seed_guilt": _seed_guilt_storage_value(character.seed_guilt),
+                "birth_year": character.birth_year,
+                "historical_death_year": character.historical_death_year,
+                "historical_death_month": character.historical_death_month,
+                "debut_year": character.debut_year,
+                "debut_month": character.debut_month,
+                "status": character.status,
+                "status_reason": character.status_reason,
+                "reason_code": character.reason_code,
+                "status_changed_turn": 0,
+                "portrait_id": character.portrait_id,
+                "power_id": character.power_id,
+                "location": character.location,
+                "transit_to": character.transit_to,
+                "summary": character.summary,
+            })
     if not db.table_has_rows("character_offices"):
         for row in db.conn.execute("SELECT name, office, office_type FROM characters").fetchall():
             # 同 add_character/set_character_office 走 person-title 守卫接缝：名分不写脏行。
@@ -161,78 +152,58 @@ def seed_opening_world(db: Any) -> None:
             ),
         )
     for region in db.content.regions.values():
-        db.conn.execute(
-            """
-            INSERT OR IGNORE INTO regions
-            (id, name, kind, population, public_support, unrest, natural_disaster, human_disaster,
-             registered_land, hidden_land, tax_per_turn, grain_security, gentry_resistance,
-             military_pressure, status, controlled_by, fiscal)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                region.id,
-                region.name,
-                region.kind,
-                region.population,
-                region.public_support,
-                region.unrest,
-                region.natural_disaster,
-                region.human_disaster,
-                region.registered_land,
-                region.hidden_land,
-                region.tax_per_turn,
-                region.grain_security,
-                region.gentry_resistance,
-                region.military_pressure,
-                region.status,
-                region.controlled_by,
-                json.dumps(region.fiscal, ensure_ascii=False),
-            ),
-        )
+        db.regions.insert_ignore({
+            "id": region.id,
+            "name": region.name,
+            "kind": region.kind,
+            "population": region.population,
+            "public_support": region.public_support,
+            "unrest": region.unrest,
+            "natural_disaster": region.natural_disaster,
+            "human_disaster": region.human_disaster,
+            "registered_land": region.registered_land,
+            "hidden_land": region.hidden_land,
+            "tax_per_turn": region.tax_per_turn,
+            "grain_security": region.grain_security,
+            "gentry_resistance": region.gentry_resistance,
+            "military_pressure": region.military_pressure,
+            "status": region.status,
+            "controlled_by": region.controlled_by,
+            "fiscal": json.dumps(region.fiscal, ensure_ascii=False),
+        })
     is_fresh_armies_seed = not db.table_has_rows("armies")
     if is_fresh_armies_seed:
         for army in db.content.armies.values():
-            db.conn.execute(
-                """
-                INSERT INTO armies
-                (id, name, station, station_region, theater, commander, controller, troop_type, manpower,
-                 supply, morale, training, equipment, arrears,
-                 province_pay_arrears, central_pay_arrears, pay_source_region,
-                 province_pay_share, central_pay_share, is_tusi, self_funded_pay,
-                 mobility, loyalty, firearm_equipment, cannon_equipment, salary_rate, status, owner_power)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    army.id,
-                    army.name,
-                    army.station,
-                    army.station_region,
-                    army.theater,
-                    army.commander,
-                    army.controller,
-                    army.troop_type,
-                    army.manpower,
-                    army.supply,
-                    army.morale,
-                    army.training,
-                    army.equipment,
-                    army.arrears,
-                    army.province_pay_arrears,
-                    army.central_pay_arrears,
-                    army.pay_source_region,
-                    army.province_pay_share,
-                    army.central_pay_share,
-                    army.is_tusi,
-                    army.self_funded_pay,
-                    army.mobility,
-                    army.loyalty,
-                    army.firearm_equipment,   # 新档贯通火器/随军大炮（CMR codexB）
-                    army.cannon_equipment,
-                    army.salary_rate,         # #44 名义月饷率(两/兵·月)
-                    army.status,
-                    army.owner_power,
-                ),
-            )
+            db.armies.insert({
+                "id": army.id,
+                "name": army.name,
+                "station": army.station,
+                "station_region": army.station_region,
+                "theater": army.theater,
+                "commander": army.commander,
+                "controller": army.controller,
+                "troop_type": army.troop_type,
+                "manpower": army.manpower,
+                "supply": army.supply,
+                "morale": army.morale,
+                "training": army.training,
+                "equipment": army.equipment,
+                "arrears": army.arrears,
+                "province_pay_arrears": army.province_pay_arrears,
+                "central_pay_arrears": army.central_pay_arrears,
+                "pay_source_region": army.pay_source_region,
+                "province_pay_share": army.province_pay_share,
+                "central_pay_share": army.central_pay_share,
+                "is_tusi": army.is_tusi,
+                "self_funded_pay": army.self_funded_pay,
+                "mobility": army.mobility,
+                "loyalty": army.loyalty,
+                "firearm_equipment": army.firearm_equipment,   # 新档贯通火器/随军大炮（CMR codexB）
+                "cannon_equipment": army.cannon_equipment,
+                "salary_rate": army.salary_rate,         # #44 名义月饷率(两/兵·月)
+                "status": army.status,
+                "owner_power": army.owner_power,
+            })
     if not db.table_has_rows("buildings"):
         for building in db.content.buildings.values():
             db.conn.execute(
@@ -262,7 +233,5 @@ def seed_opening_world(db: Any) -> None:
     db._apply_region_city_levels()  # 新档 region 此时才 INSERT 完，按史实补 city_level
     # #9：派系势力 offset 校准。此刻 factions + characters 均已 INSERT。
     # cmr R3：传 offset 列「本次是否刚 ADD」——首次校准只在建库那次跑，常规 load 不碰 offset。
-    db._calibrate_faction_offsets(
-        is_fresh_factions_seed, getattr(db, "_leverage_offset_col_added", False)
-    )
+    db._calibrate_faction_offsets(is_fresh_factions_seed)
     db.conn.commit()

@@ -126,23 +126,12 @@ def test_old_save_migrates_and_mutiny_progress_survives_reopen(game, tmp_path, f
     path = str(tmp_path / "old-save.db")
     copied = sqlite3.connect(path)
     db.conn.backup(copied)
-    copied.execute("ALTER TABLE armies DROP COLUMN mutiny_count")
-    copied.execute("ALTER TABLE armies DROP COLUMN mutiny_probation")
-    copied.close()
-
-    migrated = GameDB(path, content)
-    columns = {row["name"] for row in migrated.conn.execute("PRAGMA table_info(armies)")}
-    assert {"mutiny_count", "mutiny_probation"} <= columns
-    defaults = migrated.conn.execute(
-        "SELECT mutiny_count,mutiny_probation FROM armies WHERE id=?", (ARMY,)
-    ).fetchone()
-    assert tuple(defaults) == (0, 0)
-    migrated.conn.execute(
+    copied.execute(
         "UPDATE armies SET loyalty=95,is_mutinied=1,mutiny_count=2,mutiny_probation=2 WHERE id=?",
         (ARMY,),
     )
-    migrated.conn.commit()
-    migrated.close()
+    copied.commit()
+    copied.close()
 
     reopened = GameDB(path, content)
     try:

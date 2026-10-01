@@ -106,13 +106,23 @@ def test_person_title_kind_does_not_materialize_office_parent(fresh_game_dir):
     minister = sess.db.conn.execute(
         "SELECT name FROM characters WHERE status='active' AND power_id='ming' LIMIT 1"
     ).fetchone()[0]
+    before = sess.db.conn.execute(
+        "SELECT office_title FROM character_offices WHERE character_name=?",
+        (minister,),
+    ).fetchone()
     sess.db.set_character_office(minister, "降臣", "身名分")
     assert sess.db.conn.execute(
         "SELECT 1 FROM offices WHERE office_type='身名分'"
     ).fetchone() is None
-    assert sess.db.conn.execute(
-        "SELECT 1 FROM character_offices WHERE character_name=?", (minister,)
-    ).fetchone() is None
+    after = sess.db.conn.execute(
+        "SELECT office_title FROM character_offices WHERE character_name=?",
+        (minister,),
+    ).fetchone()
+    if before is None:
+        assert after is None
+    else:
+        assert after["office_title"] == before["office_title"]
+        assert after["office_title"] != "降臣"
 
 
 def test_appointment_category_survives_reopen_from_canonical_source(fresh_game_dir):

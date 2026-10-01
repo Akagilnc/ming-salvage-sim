@@ -113,7 +113,9 @@ def test_same_rank_demotion_and_two_band_promotion_follow_upward_formula(game):
 
 
 def test_restoration_and_displaced_third_state_use_latest_historical_office(game):
-    db, state, _content = game
+    from ming_sim.issues import _displace_duplicate_offices
+
+    db, state, content = game
     _yuan_id, yuan = _appointment_dossier(db, state, "袁可立", "陕西巡抚")
     assert yuan["break_rank"]["basis"] == "historical_office"
     assert yuan["break_rank"]["is_break_rank"] is False
@@ -126,19 +128,14 @@ def test_restoration_and_displaced_third_state_use_latest_historical_office(game
     assert same["break_rank"]["current_rank_band"] == 3
 
     _add(db, state, "候铨乙", "兵部尚书", "兵部")
-    db.set_character_office("候铨乙", "听用候铨", "待铨")
-    db.conn.execute("UPDATE characters SET reason_code='被顶替' WHERE name='候铨乙'")
-    # Recreate the archived previous office, as displacement does in production.
-    # #1889：备档只留历史 office_title；官职类别真源唯一是 characters.office_type。
-    db.conn.execute(
-        "UPDATE character_offices SET office_title='兵部尚书' WHERE character_name='候铨乙'"
-    )
-    db.conn.execute("UPDATE characters SET office_type='兵部' WHERE name='候铨乙'")
+    _add(db, state, "占缺丙", "白身", "布衣")
+    displaced = _displace_duplicate_offices(db, content, "占缺丙", "兵部尚书")
+    assert "候铨乙:兵部尚书" in displaced
     _return_id, returned = _appointment_dossier(db, state, "候铨乙", "户部尚书")
     assert returned["break_rank"]["basis"] == "historical_office"
     assert returned["break_rank"]["is_break_rank"] is False
 
-    # AC: 起复跳升 / 听用候铨跳升仍按 upward 公式（现职带−新职带≥2）打标。
+    # AC: 起复跳升仍按 upward 公式（现职带−新职带≥2）打标。
     _jump_id, jumped = _appointment_dossier(db, state, "起复甲", "兵部尚书")
     assert jumped["break_rank"]["basis"] == "historical_office"
     assert jumped["break_rank"]["is_break_rank"] is False  # 3→2 only one band
@@ -149,14 +146,6 @@ def test_restoration_and_displaced_third_state_use_latest_historical_office(game
     assert big["break_rank"]["basis"] == "historical_office"
     assert big["break_rank"]["is_break_rank"] is True
     assert big["break_rank"]["current_rank_band"] - big["break_rank"]["new_rank_band"] >= 2
-
-    db.conn.execute(
-        "UPDATE character_offices SET office_title='翰林院编修' WHERE character_name='候铨乙'"
-    )
-    db.conn.execute("UPDATE characters SET office_type='翰林院' WHERE name='候铨乙'")
-    _disp_jump_id, disp_jump = _appointment_dossier(db, state, "候铨乙", "兵部尚书")
-    assert disp_jump["break_rank"]["basis"] == "historical_office"
-    assert disp_jump["break_rank"]["is_break_rank"] is True
 
 
 def test_title_stems_keep_distinct_ming_bands_inside_same_office_type():

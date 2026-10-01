@@ -1410,12 +1410,12 @@ class WebGame:
     def cased_directive_payloads(self) -> List[Dict[str, Any]]:
         """#1764 御案只读投影：已成案·待盖玺（0051 proposed）。
 
-        读 dossiers.draft_directives_with_dossier + dossier status；不改 list_directives 过滤，
+        读 dossiers.directives_with_dossiers + dossier status；不改 list_directives 过滤，
         不另立事实源。上游 SELECT td.* + EXISTS 按主键逐行返回，无需 seen 去重。
         过月后 draft 迁出则桌空。
         """
         out: List[Dict[str, Any]] = []
-        for row in self.db.dossiers.draft_directives_with_dossier(self.state.turn):
+        for row in self.db.dossiers.directives_with_dossiers(self.state.turn):
             dir_id = int(row["id"])
             dossier = self.db.dossiers.get_for_directive(dir_id)
             if dossier is None:

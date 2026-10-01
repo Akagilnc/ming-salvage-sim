@@ -195,17 +195,13 @@ def appointment_break_rank(
         )
         if may_have_history:
             archived = db.conn.execute(
-                # #1889：office_type 真源唯一是 characters.office_type（备档不再存该列）
-                "SELECT co.office_title, c.office_type FROM character_offices co "
-                "JOIN characters c ON c.name = co.character_name WHERE co.character_name=?",
+                "SELECT office_title FROM character_offices WHERE character_name=?",
                 (person,),
             ).fetchone()
-            if archived is not None and _is_substantive_office(
-                archived["office_title"], archived["office_type"]
-            ):
+            if archived is not None and _is_substantive_office(archived["office_title"]):
                 historical = True
                 current_title = canonical_office_title(archived["office_title"])
-                current_type = str(archived["office_type"] or "").strip()
+                current_type = ""
             else:
                 current_title = ""
                 current_type = ""

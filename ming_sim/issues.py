@@ -1660,10 +1660,9 @@ def _apply_fiscal_levy_targets(
             continue
         settle["p"] = next_p
         settle["_meta"] = meta
-        db.conn.execute(
-            "UPDATE regions SET fiscal = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-            (json.dumps(fiscal, ensure_ascii=False), region_id),
-        )
+        db.regions.update(region_id, {
+            "fiscal": json.dumps(fiscal, ensure_ascii=False),
+        })
         touched += 1
     return touched
 
@@ -5697,22 +5696,24 @@ def _displace_duplicate_offices(
             else infer_office_type_from_office(new_holder_office, old_type, db.llm_config)
         )
         # 排挤后 character_offices / 内存 office_region 与 characters 同事务同步：
-        # 全顶替 → 名分，备档删除、任所清空；部分保留 → 余职 + 原 seat 入 record。
+        # 全顶替 → 听用候铨，历史实职备档保留；部分保留 → 余职 + 原 seat 入 record。
         # 内存 seat 必须以备档真源对齐（record 后可能因非地方 office_type 钳空）。
         retained_seat = "" if fully_displaced else str(
             db.character_office_region(row["name"]) or ""
         ).strip()
         if fully_displaced:
-            db.conn.execute(
-                "UPDATE characters SET office=?, office_type=?, status_reason=?, reason_code=? WHERE name=?",
-                (new_holder_office, new_type, "被顶替", "被顶替", row["name"]),
-            )
+            db.characters.update(row["name"], {
+                "office": new_holder_office,
+                "office_type": new_type,
+                "status_reason": "被顶替",
+                "reason_code": "被顶替",
+            })
             db.set_character_transit(str(row["name"]), content=content, commit=False)
         else:
-            db.conn.execute(
-                "UPDATE characters SET office=?, office_type=? WHERE name=?",
-                (new_holder_office, new_type, row["name"]),
-            )
+            db.characters.update(row["name"], {
+                "office": new_holder_office,
+                "office_type": new_type,
+            })
         db._record_character_office(
             row["name"], new_holder_office, new_type, "被顶替", region_id=retained_seat,
         )
@@ -5828,19 +5829,16 @@ def _restore_person_write_state(
     for row in db.conn.execute("SELECT name FROM characters").fetchall():
         name = str(row["name"])
         if name not in snapshot_names:
-            db.conn.execute("DELETE FROM characters WHERE name=?", (name,))
-    db.conn.executemany(
-        "UPDATE characters SET status=?, office=?, office_type=?, status_reason=?, "
-        "status_changed_turn=?, reason_code=? WHERE name=?",
-        [
-            (
-                row["status"], row["office"], row["office_type"],
-                row["status_reason"], row["status_changed_turn"],
-                row["reason_code"], row["name"],
-            )
-            for row in character_rows
-        ],
-    )
+            db.characters.delete(name)
+    for row in character_rows:
+        db.characters.update(row["name"], {
+            "status": row["status"],
+            "office": row["office"],
+            "office_type": row["office_type"],
+            "status_reason": row["status_reason"],
+            "status_changed_turn": row["status_changed_turn"],
+            "reason_code": row["reason_code"],
+        })
     for row in character_rows:
         db.set_character_transit(
             str(row["name"]),
@@ -6093,10 +6091,10 @@ def apply_office_appointment(
                     region_id=seat,
                 )
             if cur_status == "active":
-                db.conn.execute(
-                    "UPDATE characters SET status_reason='', reason_code='' WHERE name=?",
-                    (name,),
-                )
+                db.characters.update(name, {
+                    "status_reason": '',
+                    "reason_code": '',
+                })
                 if content is not None and name in content.characters:
                     content.characters[name].status_reason = ""
                     content.characters[name].reason_code = ""
@@ -6373,10 +6371,9 @@ def _apply_person_changes(
             if origin_error:
                 applied.append(origin_error)
                 continue
-            db.conn.execute(
-                "UPDATE characters SET loyalty=? WHERE name=?",
-                (new_loyalty, name),
-            )
+            db.characters.update(name, {
+                "loyalty": new_loyalty,
+            })
             if content is not None and name in content.characters:
                 content.characters[name].loyalty = new_loyalty
             result = {
@@ -6413,10 +6410,9 @@ def _apply_person_changes(
             if origin_error:
                 applied.append(origin_error)
                 continue
-            db.conn.execute(
-                "UPDATE characters SET style=? WHERE name=?",
-                (new_style, name),
-            )
+            db.characters.update(name, {
+                "style": new_style,
+            })
             if content is not None and name in content.characters:
                 content.characters[name].style = new_style
             result = {
@@ -6681,18 +6677,18 @@ def _apply_person_changes(
                     # transit_start_turn 与 transit_to 成对回滚：派生任命前置 set_character_status
                     # （放归/赦还→offstage 属 ousted）现会清 transit_start_turn=0，回滚须对称还原，
                     # 否则留「transit_to 非空 + start=0」被兜底当 legacy-overdue 误判（CMR r2 防御）。
-                    db.conn.execute(
-                        "UPDATE characters SET status=?, office=?, office_type=?, "
-                        "status_reason=?, status_changed_turn=?, reason_code=?, transit_to=?, "
-                        "transit_distance_remaining=?, transit_speed_factor=?, transit_start_turn=? "
-                        "WHERE name=?",
-                        (
-                            row["status"], row["office"], row["office_type"],
-                            row["status_reason"], row["status_changed_turn"], row["reason_code"],
-                            row["transit_to"], row["transit_distance_remaining"],
-                            row["transit_speed_factor"], row["transit_start_turn"], name,
-                        ),
-                    )
+                    db.characters.update(name, {
+                        "status": row["status"],
+                        "office": row["office"],
+                        "office_type": row["office_type"],
+                        "status_reason": row["status_reason"],
+                        "status_changed_turn": row["status_changed_turn"],
+                        "reason_code": row["reason_code"],
+                        "transit_to": row["transit_to"],
+                        "transit_distance_remaining": row["transit_distance_remaining"],
+                        "transit_speed_factor": row["transit_speed_factor"],
+                        "transit_start_turn": row["transit_start_turn"],
+                    })
                     if content is not None and name in content.characters:
                         ch = content.characters[name]
                         ch.status = str(row["status"] or "")
@@ -6874,11 +6870,14 @@ def _apply_person_changes(
                 # 易主后人仍 active（在新主任事，持身名分=降臣/归附），不变式1 不破；清原 reason_code/
                 # status_reason（如陷虏「松山兵败被执」）——已投敌、不再是本朝在押，旧因不能滞留（决定3）；
                 # status_changed_turn 记本回合（易主即状态变更）。
-                db.conn.execute(
-                    "UPDATE characters SET office=?, office_type=?, status='active', "
-                    "reason_code='', status_reason=?, status_changed_turn=? WHERE name=?",
-                    (new_title, "身名分", str(item.get("reason") or ""), state.turn, name),
-                )
+                db.characters.update(name, {
+                    "office": new_title,
+                    "office_type": "身名分",
+                    "status": 'active',
+                    "reason_code": '',
+                    "status_reason": str(item.get("reason") or ""),
+                    "status_changed_turn": state.turn,
+                })
                 db.set_character_transit(name, content=content, commit=False)
                 if commit_person_change:
                     db.conn.commit()
@@ -7212,10 +7211,9 @@ def _apply_surcharge_decrees(
         new = max(0.0, old + amount)  # 负额停征/蠲免，账面钳 ≥0
         meta[_SETTLE_META_JIAPIAI_KEY] = new
         settle["_meta"] = meta
-        db.conn.execute(
-            "UPDATE regions SET fiscal = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-            (json.dumps(fiscal, ensure_ascii=False), region_id),
-        )
+        db.regions.update(region_id, {
+            "fiscal": json.dumps(fiscal, ensure_ascii=False),
+        })
         claimed_origins.add(claim)
         applied.append({
             "region_id": region_id,

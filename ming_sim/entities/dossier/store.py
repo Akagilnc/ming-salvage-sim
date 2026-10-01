@@ -1321,7 +1321,7 @@ class DossierStore:
 
     def presence_rows(
         self, dossier_id: int, *, as_of_turn: Optional[int] = None,
-    ) -> list[Any]:
+    ) -> list[dict[str, object]]:
         sql = (
             "SELECT id, dossier_id, turn, auditor_name, audit_dossier_id, "
             "relation_type, present FROM dossier_supervision_presence WHERE dossier_id=?"
@@ -1330,7 +1330,19 @@ class DossierStore:
         if as_of_turn is not None:
             sql += " AND turn<=?"
             params = (int(dossier_id), int(as_of_turn))
-        return self._conn.execute(sql + " ORDER BY turn, id", params).fetchall()
+        rows = self._conn.execute(sql + " ORDER BY turn, id", params).fetchall()
+        return [
+            {
+                "id": int(r["id"]),
+                "dossier_id": int(r["dossier_id"]),
+                "turn": int(r["turn"]),
+                "auditor_name": str(r["auditor_name"] or ""),
+                "audit_dossier_id": int(r["audit_dossier_id"]),
+                "relation_type": str(r["relation_type"] or ""),
+                "present": bool(r["present"]),
+            }
+            for r in rows
+        ]
 
     def presence_turns_by_auditor(
         self, *, min_months: int, as_of_turn: Optional[int] = None,
@@ -1349,20 +1361,41 @@ class DossierStore:
             params,
         ).fetchall()
 
-    def exposure_rows(self, dossier_id: int) -> list[Any]:
-        return self._conn.execute(
-            "SELECT * FROM dossier_loophole_exposures WHERE dossier_id=? ORDER BY turn, id",
-            (int(dossier_id),),
+    def exposure_rows(
+        self, dossier_id: int, *, as_of_turn: Optional[int] = None,
+    ) -> list[dict[str, object]]:
+        sql = (
+            "SELECT id, dossier_id, turn, action_type, execution_form "
+            "FROM dossier_loophole_exposures WHERE dossier_id=?"
+        )
+        params: list[object] = [int(dossier_id)]
+        if as_of_turn is not None:
+            sql += " AND turn<=?"
+            params.append(int(as_of_turn))
+        rows = self._conn.execute(
+            sql + " ORDER BY turn, id", tuple(params),
         ).fetchall()
+        return [
+            {
+                "id": int(r["id"]),
+                "dossier_id": int(r["dossier_id"]),
+                "turn": int(r["turn"]),
+                "action_type": str(r["action_type"] or ""),
+                "execution_form": str(r["execution_form"] or ""),
+            }
+            for r in rows
+        ]
 
-    def directives_with_dossiers(self, turn: int) -> list[Any]:
-        return self._conn.execute(
+    def directives_with_dossiers(self, turn: int) -> list[dict[str, object]]:
+        """Draft directives whose dossier creation succeeded."""
+        rows = self._conn.execute(
             """SELECT td.* FROM turn_directives td
                WHERE td.turn<=? AND td.status='draft'
                  AND EXISTS (SELECT 1 FROM decree_dossiers d WHERE d.directive_id=td.id)
                ORDER BY td.id""",
             (int(turn),),
         ).fetchall()
+        return [dict(row) for row in rows]
 
     def upsert_reconciliation(
         self, dossier_id: int, turn: int, *, ordered: int, arrived: int,
@@ -1600,7 +1633,7 @@ class DossierStore:
             clauses.append("target_dossier_id=?")
             params.append(int(target_dossier_id))
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-        return self._conn.execute(
+        rows = self._conn.execute(
             f"""SELECT id, turn, accuser_name, accuser_faction, subject_name,
                        subject_faction, target_dossier_id, origin, payload_json,
                        memorial_text
@@ -1608,6 +1641,27 @@ class DossierStore:
                 ORDER BY turn, id""",
             tuple(params),
         ).fetchall()
+        out: list[dict[str, object]] = []
+        for row in rows:
+            try:
+                payload = json.loads(row["payload_json"] or "{}")
+            except (TypeError, ValueError):
+                payload = {}
+            if not isinstance(payload, dict):
+                payload = {}
+            out.append({
+                "id": int(row["id"]),
+                "turn": int(row["turn"]),
+                "accuser_name": str(row["accuser_name"] or ""),
+                "accuser_faction": str(row["accuser_faction"] or ""),
+                "subject_name": str(row["subject_name"] or ""),
+                "subject_faction": str(row["subject_faction"] or ""),
+                "target_dossier_id": int(row["target_dossier_id"]),
+                "origin": str(row["origin"] or ""),
+                "payload": payload,
+                "memorial_text": str(row["memorial_text"] or ""),
+            })
+        return out
 
     def latest_denunciation_for(
         self, *, accuser_name: str, target_dossier_id: int, origin: str,
@@ -1658,17 +1712,31 @@ class DossierStore:
         return int(row["affair_id"] or 0)
 
     def set_affair_id_if_unbound(self, dossier_id: int, affair_id: int) -> int:
-        """Bind once; same id is idempotent; a different id fails loud."""
+        """Bind once; same id is idempotent; a different id fails loud.
+
+        Transaction ownership is read before the UPDATE. The write itself opens
+        an implicit transaction, so a check afterwards would treat that
+        transaction as an outer one and skip the commit.
+        """
+        from ming_sim.applier import connection_owns_transaction
+
         want = int(affair_id)
+        owns = connection_owns_transaction(self._conn)
         cur = self._conn.execute(
             "UPDATE decree_dossiers SET affair_id=? WHERE id=? AND affair_id=0",
             (want, int(dossier_id)),
         )
         if int(cur.rowcount or 0) == 1:
+            if owns:
+                self._conn.commit()
             return want
         current = self.affair_id_of(dossier_id)
         if current == want:
+            if owns:
+                self._conn.commit()
             return want
+        if owns:
+            self._conn.rollback()
         raise ValueError(f"案卷已指向事务 {current}，不能改指 {want}")
 
     def rows_for_affair(self, affair_id: int) -> list[Any]:
@@ -1683,44 +1751,6 @@ class DossierStore:
             "SELECT * FROM decree_cost_events WHERE dossier_id=? ORDER BY id",
             (int(dossier_id),),
         ).fetchall()
-
-    def set_executor_and_target(
-        self, dossier_id: int, *, executor_id: str, target_kind: str,
-        target_id: str,
-    ) -> None:
-        """Repoint an existing dossier's carrier. Used by acceptance probes only."""
-        self._conn.execute(
-            "UPDATE decree_dossiers SET executor_kind='character', executor_id=?, "
-            "target_kind=?, target_id=? WHERE id=?",
-            (executor_id, target_kind, target_id, int(dossier_id)),
-        )
-
-    def force_executing_promulgated(self, dossier_id: int) -> None:
-        """Acceptance probe fixture: promote a proposed row straight to executing."""
-        self._conn.execute(
-            "UPDATE decree_dossiers SET status='executing', "
-            "promulgation_decision='promulgated' WHERE id=?",
-            (int(dossier_id),),
-        )
-
-    def force_closed_rejected(self, dossier_id: int, turn: int) -> None:
-        """Acceptance probe fixture: a closed historical row awaiting 强颁."""
-        self._conn.execute(
-            "UPDATE decree_dossiers SET status='closed', "
-            "promulgation_decision='rejected', rescript_pending=0, closed_turn=? "
-            "WHERE id=?",
-            (int(turn), int(dossier_id)),
-        )
-
-    def append_force_promulgation_marker(
-        self, dossier_id: int, turn: int, *, reason: str = "批红强颁",
-    ) -> None:
-        self._conn.execute(
-            """INSERT INTO decree_dossier_decisions
-                   (dossier_id, turn, decision, rescript_action, reason, legal_reason_code)
-               VALUES (?, ?, 'rejected', 'force_promulgated', ?, '')""",
-            (int(dossier_id), int(turn), reason),
-        )
 
     def recent_reported_progress(self) -> list[Any]:
         return self._conn.execute(
@@ -1852,13 +1882,3 @@ class DossierStore:
         ).fetchone()
         return float(row["total"] if row is not None else 0.0)
 
-    def draft_directives_with_dossier(self, turn: int) -> list[dict[str, object]]:
-        """Settlement projection: drafts whose dossier creation succeeded."""
-        rows = self._conn.execute(
-            """SELECT td.* FROM turn_directives td
-               WHERE td.turn<=? AND td.status='draft'
-                 AND EXISTS (SELECT 1 FROM decree_dossiers d WHERE d.directive_id=td.id)
-               ORDER BY td.id""",
-            (int(turn),),
-        ).fetchall()
-        return [dict(row) for row in rows]

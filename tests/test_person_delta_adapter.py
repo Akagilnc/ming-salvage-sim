@@ -1801,6 +1801,10 @@ def test_set_character_office_person_title_survives_stem_collision(game):
     old_office_type = content.characters[name].office_type
 
     try:
+        before = db.conn.execute(
+            "SELECT office_title FROM character_offices WHERE character_name=?",
+            (name,),
+        ).fetchone()
         db.set_character_office(name, "诸生", "身名分")
 
         row = db.conn.execute(
@@ -1810,9 +1814,15 @@ def test_set_character_office_person_title_survives_stem_collision(game):
         assert db.conn.execute(
             "SELECT 1 FROM offices WHERE office_type='身名分'"
         ).fetchone() is None
-        assert db.conn.execute(
-            "SELECT 1 FROM character_offices WHERE character_name=?", (name,)
-        ).fetchone() is None
+        after = db.conn.execute(
+            "SELECT office_title FROM character_offices WHERE character_name=?",
+            (name,),
+        ).fetchone()
+        if before is None:
+            assert after is None
+        else:
+            assert after["office_title"] == before["office_title"]
+            assert after["office_title"] != "诸生"
     finally:
         content.characters[name].office = old_office
         content.characters[name].office_type = old_office_type

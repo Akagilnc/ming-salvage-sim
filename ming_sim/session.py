@@ -1922,7 +1922,7 @@ class GameSession:
             dossier_rejections = self.db.ensure_dossiers_for_draft_directives(
                 self.state, record_rejections=is_last,
             )
-        dossiered_directives = list(self.db.dossiers.draft_directives_with_dossier(self.state.turn))
+        dossiered_directives = list(self.db.dossiers.directives_with_dossiers(self.state.turn))
         # DB owner supplies the canonical read-only default-approval projection.
         # Negative preview ids participate in stale-decree fingerprinting without
         # colliding with durable turn_directives ids.

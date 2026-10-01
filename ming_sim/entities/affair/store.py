@@ -293,8 +293,6 @@ class AffairStore:
     def point_dossier(self, dossier_id: int, affair_id: int) -> None:
         self.get(affair_id)
         self._dossiers().set_affair_id_if_unbound(int(dossier_id), int(affair_id))
-        if connection_owns_transaction(self._conn):
-            self._conn.commit()
 
     def _current_pointer(self, table: str, row_id: int | str) -> int:
         label = _POINTER_TABLES.get(table)

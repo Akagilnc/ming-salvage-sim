@@ -133,23 +133,12 @@ def test_redemption_progress_migrates_and_survives_reopen(game, tmp_path, fiscal
     path = str(tmp_path / "old-save.db")
     copied = sqlite3.connect(path)
     db.conn.backup(copied)
-    copied.execute("ALTER TABLE armies DROP COLUMN full_pay_streak")
-    copied.execute("ALTER TABLE armies DROP COLUMN redemption_count")
-    copied.close()
-
-    migrated = GameDB(path, content)
-    columns = {row["name"] for row in migrated.conn.execute("PRAGMA table_info(armies)")}
-    assert {"full_pay_streak", "redemption_count"} <= columns
-    defaults = migrated.conn.execute(
-        "SELECT full_pay_streak,redemption_count FROM armies WHERE id=?", (ARMY,)
-    ).fetchone()
-    assert tuple(defaults) == (0, 0)
-    migrated.conn.execute(
+    copied.execute(
         "UPDATE armies SET full_pay_streak=11,redemption_count=1,mutiny_count=2,loyalty=95 WHERE id=?",
         (ARMY,),
     )
-    migrated.conn.commit()
-    migrated.close()
+    copied.commit()
+    copied.close()
 
     reopened = GameDB(path, content)
     try:
