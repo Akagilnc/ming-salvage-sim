@@ -253,8 +253,13 @@ def test_1589_keyless_batch_rejected_without_writes(game, monkeypatch, desk_kind
     choices = [{"label": "准"}]
     if desk_kind == "mixed":
         choices.insert(0, {"decision_key": rows[0]["decision_key"], "label": "准"})
-    with pytest.raises(ValueError):
-        session.submit_hitl_choices(choices, write_gate=session._write_gate)
+    invalid_batches = [choices, [{"decision_key": "decision:999:0", "label": "准"}]]
+    if rows:
+        keyed = {"decision_key": rows[0]["decision_key"], "label": "准"}
+        invalid_batches.append([keyed, keyed])
+    for batch in invalid_batches:
+        with pytest.raises(ValueError):
+            session.submit_hitl_choices(batch, write_gate=session._write_gate)
     after = session.pending_decisions()
     assert {r["decision_key"] for r in after} == {r["decision_key"] for r in rows}
     assert all(r["status"] == "pending" and not r["choice"] for r in after)
@@ -269,6 +274,17 @@ def test_1589_keyless_batch_rejected_without_writes(game, monkeypatch, desk_kind
     assert not session.pending_decisions()
     assert int(state.turn) == turn
     assert state.turn_phase == TurnPhase.SETTLING.value
+    if rows:
+        state.turn_phase = TurnPhase.AWAITING_DECISION.value
+        db.save_state(state)
+        with pytest.raises(ValueError):
+            session.submit_hitl_choices(
+                [{"decision_key": rows[0]["decision_key"], "label": "准", "note": "改写旧批"}],
+                write_gate=session._write_gate,
+            )
+        persisted = db.get_rescript_desk_rows_by_keys([r["decision_key"] for r in rows])
+        assert all(r["status"] == "decided" and not r["choice"].get("note") for r in persisted)
+        assert int(state.turn) == turn
 
 
 def test_658_typed_target_and_backing_reject_bad_shapes(game, monkeypatch):
