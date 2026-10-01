@@ -7,8 +7,10 @@
 
 from ming_sim.entities.issue.tracker import apply_issue_tracker_output
 from ming_sim.applier import Provenance
-from ming_sim import issues
-from ming_sim.issues import _initiative_resolve_pairing_warnings
+from ming_sim.entities.issue.effects import (
+    _emit_pairing_warnings,
+    _initiative_resolve_pairing_warnings,
+)
 
 
 def _w(title, tags=None, ongoing=None, effect=None):
@@ -169,7 +171,7 @@ def test_emit_preparsed_list_tags_still_warns():
         "tags": ["募营"],             # 已是 list（非 JSON 串）
         "ongoing_effects": {},        # 已是 dict
     }
-    issues._emit_pairing_warnings(new_row, {"metrics": {"民心": 1}}, sink)
+    _emit_pairing_warnings(new_row, {"metrics": {"民心": 1}}, sink)
     assert any("new_armies" in w for w in sink), \
         f"预解析 list tags 不应被 json.loads 吞成空 → 军事配对告警须响：{sink}"
 
@@ -184,5 +186,5 @@ def test_emit_preparsed_dict_ongoing_no_false_warn():
         "tags": [],                   # 已是 list
         "ongoing_effects": {"economy": [{"account": "国库", "delta": -500}]},  # 已是 dict、有效月支
     }
-    issues._emit_pairing_warnings(new_row, {"metrics": {"民心": 1}}, sink)
+    _emit_pairing_warnings(new_row, {"metrics": {"民心": 1}}, sink)
     assert sink == [], f"预解析 dict ongoing 的有效月支不应被吞 → 不应报假告警：{sink}"

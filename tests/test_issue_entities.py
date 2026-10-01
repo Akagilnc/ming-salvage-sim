@@ -1,6 +1,6 @@
 """国策结案实体后果 + 全局严格(不静默)。
 
-覆盖 issues._apply_issue_entities 与底层 apply：
+覆盖 entities.issue.effects._apply_issue_entities 与底层 apply：
 - 建军 / 补兵 / 人物状态(死/流放/下狱) 真落库
 - 非法 delta 抛错中断，绝不静默跳过（用户拍板的全局严格·选项1）
 """
@@ -13,7 +13,7 @@ from ming_sim.applier import Provenance
 
 import pytest
 
-import ming_sim.issues as I
+import ming_sim.entities.issue.effects as I
 from tests.conftest import active_ming_character
 from ming_sim.settlement import SettlementContext, settle_delta
 from ming_sim.settlement.views import metric_deltas, shape_rejections

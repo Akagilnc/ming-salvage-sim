@@ -12,22 +12,13 @@ from __future__ import annotations
 
 from ming_sim.applier import RejectedItem, Provenance
 
-from dataclasses import dataclass, field
 from typing import Dict, List
 
 from ming_sim.applier import SectionResult
 from ming_sim.settlement.outcome import IssueSectionResult
 
 
-@dataclass
-class IssueApplyBundle:
-    """局势段的返回：局势结果，加上战果物化要并进已跑过的实体段。"""
-
-    issue: IssueSectionResult
-    extras: Dict[str, SectionResult] = field(default_factory=dict)
-
-
-def apply(run) -> IssueApplyBundle:
+def apply(run) -> SectionResult:
     from ming_sim.entities.issue.tracker import apply_issue_tracker_output
     from ming_sim.issues import (
         _monthly_economy_items,
@@ -84,7 +75,12 @@ def apply(run) -> IssueApplyBundle:
     run.commitment_economy_carriers = carriers
 
     extras = _resolve_strategic_events(run, issue_summary)
-    return IssueApplyBundle(issue=_issue_section(run, issue_summary), extras=extras)
+    issue = _issue_section(run, issue_summary)
+    run.issue_result = issue
+    from ming_sim.settlement.run import _store
+    for extra_name, extra in extras.items():
+        _store(run, extra_name, extra)
+    return SectionResult(applied=list(issue.applied), rejected=list(issue.rejected))
 
 
 def _issue_section(run, summary: Dict[str, object]) -> IssueSectionResult:
@@ -137,7 +133,6 @@ def _resolve_strategic_events(run, issue_summary) -> Dict[str, SectionResult]:
     from ming_sim.entities.affair import UnauthorizedAffairOriginRef
     from ming_sim.entities.character.apply import apply_person_changes
     from ming_sim.issues import (
-        _person_change_name,
         _strategic_event_outcome_label_or_error,
         apply_event_cascading_invalidations,
     )

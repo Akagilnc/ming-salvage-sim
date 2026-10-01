@@ -8215,7 +8215,7 @@ class GameDB:
             if not isinstance(raw, dict):
                 # 不再静默丢：留拒收记录（season 路本就被 validate_delta_shape 挡在
                 # S6;issue 路历史即静默,容忍不升级——issue_strict=False,cmr S2 r1）。
-                rejections.append(RejectedItem(item=raw, reason=f"new_armies 含非 dict 项：{raw!r}", category="invalid_enum", source=source))
+                rejections.append(RejectedItem(item={"raw_value": raw}, reason=f"new_armies 含非 dict 项：{raw!r}", category="invalid_enum", source=source))
                 continue
             item = {POWER_FIELD_ALIASES.get(k, k) if False else k: v for k, v in raw.items()}
             # 规范键：复用 ARMY_FIELD_ALIASES（兼容中文）
@@ -16818,7 +16818,8 @@ class GameDB:
                 break
         if not hit:
             return
-        context = str(reason or "").strip() or "处置站台者"
+        raw_context = str(reason or "")
+        context = raw_context if raw_context.strip() else "处置站台者"
         from ming_sim.credit_events import KIND_BETRAY, write_credit_event
         write_credit_event(
             self, state,

@@ -230,7 +230,10 @@ def test_close_merges_recon_note_without_second_treasury_debit(game):
     assert db.list_economy_moves_for_dossier(gid) == moves_before
 
     result = settle_delta(state, db, {'dossier_executions': [{'dossier_id': gid, 'outcome': 'fulfilled', 'note': '赈银押解到达'}]}, SettlementContext(content=content))
-    assert view(result, "dossier_executions") == [{"dossier_id": gid, "outcome": "fulfilled"}]
+    assert view(result, "dossier_executions") == [{
+        "dossier_id": gid, "outcome": "fulfilled",
+        "source_item": {"dossier_id": gid, "outcome": "fulfilled", "note": "赈银押解到达"},
+    }]
     closed = db.get_decree_dossier(gid)
     assert closed["status"] == "closed"
     note = closed["execution_note"]

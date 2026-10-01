@@ -24,7 +24,8 @@ _KNOWN_CATEGORIES = frozenset({
 
 
 def apply(run):
-    from ming_sim.issues import (
+    from ming_sim.entities.authority.apply import (
+        AuthorityDataError,
         _prepare_authority_change_item,
         _write_authority_change_item,
     )
@@ -33,11 +34,11 @@ def apply(run):
     rejections: List[RejectedItem] = []
     for item in run.current_extracted.get("authority_changes") or []:
         if not isinstance(item, dict):
-            rejections.append(RejectedItem(item=item, reason="授权变更项必须为对象", category="invalid_shape", source=run.ctx.source))
+            rejections.append(RejectedItem(item={"raw_value": item}, reason="授权变更项必须为对象", category="invalid_shape", source=run.ctx.source))
             continue
         try:
             prepared = _prepare_authority_change_item(run.db, run.state, item)
-        except ValueError as exc:
+        except AuthorityDataError as exc:
             reason = str(exc)
             rejections.append(RejectedItem(item=item, reason=reason, category=reason if reason in _KNOWN_CATEGORIES
                 else "invalid_authority_change", source=run.ctx.source))

@@ -1,11 +1,8 @@
 """信用事件段（#628 / 0079）。
 
-**位置纪律**：写端必须后置于各段校验落格之后，只消费**未 rejected** 的落格项
-——禁为被拒的 fulfilled / 人事立伪信用档。故本段排在登记表末段。
-
-被拒项的求差在本段一处做：财政/经济段的落格摘要会丢 ``purpose``/``issue_id``，
-故对拒收项（带 ``item``＝源对象）求差、保留源项叙事字段供识别，且不把被拒项
-喂进信用写端。此即「单一保护点在落库层」——信用段不再二次过滤。
+**位置纪律**：写端必须后置于各段校验落格之后，只消费实际落账的源项。
+回执上的 ``source_item`` 指回产生该回执的源对象；``applied is False`` 的
+未落地回执不进信用。被拒项不在 applied 里，不再另做拒收求差。
 """
 
 from __future__ import annotations
@@ -24,17 +21,21 @@ def _placed(run, *names: str) -> SectionResult:
     return acc
 
 
-def _source_minus_rejections(originals: object, rejected) -> List[Dict[str, object]]:
-    """源项减去被拒项（按对象同一性，非字段相等）。"""
-    rejected_obj_ids = {
-        id(item.item) for item in rejected
-        if isinstance(getattr(item, "item", None), dict)
-    }
+def _landed_sources(section: SectionResult) -> List[Dict[str, object]]:
+    """实际落地回执上的源项。同一源项的多笔分录只计一次。"""
+    seen: set[int] = set()
     out: List[Dict[str, object]] = []
-    for item in originals or []:
-        if not isinstance(item, dict) or id(item) in rejected_obj_ids:
+    for row in section.applied:
+        if not isinstance(row, dict) or row.get("applied") is False:
             continue
-        out.append(item)
+        source = row.get("source_item")
+        if not isinstance(source, dict):
+            continue
+        marker = id(source)
+        if marker in seen:
+            continue
+        seen.add(marker)
+        out.append(source)
     return out
 
 
@@ -55,26 +56,14 @@ def apply(run):
     person = _placed(run, "person_pre", "person_issue", "person_post")
     issue = run.issue_result
     credit_applied: Dict[str, object] = {
-        "dossier_executions": _source_minus_rejections(
-            run.current_extracted.get("dossier_executions"),
-            _placed(run, "dossier_executions").rejected,
-        ),
+        "dossier_executions": _landed_sources(_placed(run, "dossier_executions")),
         "人物变更": [
             row for row in person.applied
             if isinstance(row, dict) and not row.get("cascade_echo")
         ],
-        "economy_moves": _source_minus_rejections(
-            run.current_extracted.get("economy_moves"),
-            _placed(run, "economy").rejected,
-        ),
-        "fiscal_creates": _source_minus_rejections(
-            run.current_extracted.get("fiscal_creates"),
-            _placed(run, "fiscal_creates").rejected,
-        ),
-        "fiscal_changes": _source_minus_rejections(
-            run.current_extracted.get("fiscal_changes"),
-            _placed(run, "fiscal_changes").rejected,
-        ),
+        "economy_moves": _landed_sources(_placed(run, "economy")),
+        "fiscal_creates": _landed_sources(_placed(run, "fiscal_creates")),
+        "fiscal_changes": _landed_sources(_placed(run, "fiscal_changes")),
         "cancels": list(issue.cancels) if issue is not None else [],
     }
     resolutions, rejections = resolve_credit_events_from_extraction(

@@ -97,7 +97,6 @@ def _displace_duplicate_offices(
     new_office: str,
     *,
     region_id: str = "",
-    commit: bool = True,
 ) -> List[str]:
     """新任者 new_holder 拿到 new_office 后，把其中每个独占实职分项从其他 active 官员
     office 里剔除，避免双缺官。返回被腾出的 (旧任者:职) 描述列表。
@@ -189,8 +188,6 @@ def _displace_duplicate_offices(
             displaced_factions.add(str(frow["faction"]))
     for fac in displaced_factions:
         db.recompute_faction_leverage(fac)
-    if commit:
-        db.conn.commit()
     return displaced
 
 
@@ -238,7 +235,6 @@ def apply_office_appointment(
     appointment_tenure: str = "真除",
     region_id: str = "",
     llm_config: Any = None,
-    commit: bool = True,
     source: Provenance = Provenance.system_simulation,
 ) -> Dict[str, object]:
     """朝臣任命/调任的唯一落地核。
@@ -301,13 +297,13 @@ def apply_office_appointment(
                 "active",
                 reason if str(reason).strip() else "诏书任命",
                 content=content,
-                commit=commit,
+                commit=False,
             )
         with _appointment_tenure_scope(db, appointment_tenure):
             db.set_character_office(
                 name, new_office, new_office_type,
                 source=reason if str(reason).strip() else "诏书调任", llm_config=llm_config,
-                commit=commit,
+                commit=False,
                 region_id=seat,
             )
         if cur_status == "active":
@@ -318,11 +314,9 @@ def apply_office_appointment(
             if content is not None and name in content.characters:
                 content.characters[name].status_reason = ""
                 content.characters[name].reason_code = ""
-            if commit:
-                db.conn.commit()
         seat = db.character_office_region(name) or seat
         displaced_parts = _displace_duplicate_offices(
-            db, content, name, new_office, region_id=seat, commit=commit,
+            db, content, name, new_office, region_id=seat,
         )
         holder = content.characters[name]
         holder.office = new_office
@@ -353,13 +347,13 @@ def apply_office_appointment(
     }
     with _appointment_tenure_scope(db, appointment_tenure):
         appointed, _ = apply_appointment(
-            db, state, content, appointment, llm_config=llm_config, commit=commit,
+            db, state, content, appointment, llm_config=llm_config, commit=False,
         )
     if not appointed:
         return RejectedItem(item={"name": name, "new_office": new_office, "kind": "appoint"}, reason=f"建档失败（查重/字段不合）；原 status={cur_status or '不在册'}", category="invalid_transition", source=source)
     seat = db.character_office_region(appointed) or seat
     displaced_parts = _displace_duplicate_offices(
-        db, content, appointed, new_office, region_id=seat, commit=commit,
+        db, content, appointed, new_office, region_id=seat,
     )
     return {
         "name": appointed, "new_office": new_office, "kind": "appoint", "reason": reason,

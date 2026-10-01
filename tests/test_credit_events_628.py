@@ -303,14 +303,18 @@ def test_fulfill_back_and_urge_three_decisions(game):
         payload_json={"kind": "rush_remonstrance"}, commit=True,
     )
 
-    grace_purpose = "准宽限加拨"
-    settle_delta(state, db, {'economy_moves': [{'account': '国库', 'delta': 5, 'category': '军费', 'purpose': grace_purpose, 'reason': '准宽限', 'origin_ref': '盘面自发', 'issue_id': cid_g}], 'cancels': [{'issue_id': cid_rg}, {'issue_id': cid_rr}]}, SettlementContext(content=content))
+    grace_purpose = "未准宽限，仅补发旧欠"
+    settle_delta(state, db, {'economy_moves': [{'account': '国库', 'delta': 5, 'category': '军费', 'purpose': grace_purpose, 'reason': '未准宽限', 'origin_ref': '盘面自发', 'issue_id': cid_g}], 'cancels': [{'issue_id': cid_rg}, {'issue_id': cid_rr}]}, SettlementContext(content=content))
     g_edges = [
         e for e in _credit_edges(db, event_kind=KIND_BACK, target="倪元璐")
         if f"issue:{cid_g}:credit:grant_grace" in str(e["origin"])
     ]
-    assert g_edges, "准宽限须写撑腰"
-    assert g_edges[-1]["context"] in {grace_purpose, "准宽限", "乞恩宽限"}
+    assert not g_edges
+    pending_grace = [
+        t for t in db.list_next_audience_todos(status="pending")
+        if int(t.get("commitment_ref") or 0) == cid_g
+    ]
+    assert pending_grace
 
     rg_edges = [
         e for e in _credit_edges(db, event_kind=KIND_BETRAY, target="徐光启")

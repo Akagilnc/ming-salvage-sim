@@ -159,9 +159,9 @@ def _preflight(
     from uuid import uuid4
 
     from ming_sim.entities.affair import ATTACH_BIRTH, declaration_from_payload
+    from ming_sim.entities.character.names import _canonicalize_person_change_names
     from ming_sim.issues import (
         _STRATEGIC_FOREIGN_NODE_OUTCOME_TARGETS,
-        _canonicalize_person_change_names,
         _ctx as content_context,
         _derive_ordered_deltas,
         _event_pool_ids_for_strategic_foreign_nodes,
@@ -388,24 +388,7 @@ def _store(run, name: str, result: SectionResult) -> None:
 
 
 def _capture(run, name: str, result) -> None:
-    """登记表一格的返回值落进运行态。局势段额外交回战果物化。"""
-    if name == "power":
-        from ming_sim.entities.power.delta_section import PowerApplyBundle
-
-        if not isinstance(result, PowerApplyBundle):
-            raise RuntimeError("势力段未返回 PowerApplyBundle")
-        _store(run, "power", result.power)
-        _store(run, "bandit_absorptions", result.bandit)
-        return
-    if name == "issue":
-        from ming_sim.entities.issue.delta_section import IssueApplyBundle
-
-        if not isinstance(result, IssueApplyBundle):
-            raise RuntimeError("局势段未返回 IssueApplyBundle")
-        run.issue_result = result.issue
-        for extra_name, extra in result.extras.items():
-            _store(run, extra_name, extra)
-        return
+    """登记表一格的返回值落进运行态。"""
     _store(run, name, result)
 
 
@@ -487,7 +470,7 @@ def _build_outcome(run) -> SettlementOutcome:
         shape.append(RejectedItem(
             item=(
                 {k: v for k, v in item.items() if k != "_effect_event_id"}
-                if isinstance(item, dict) else item
+                if isinstance(item, dict) else {"raw_value": item}
             ),
             reason=reason or f"拒收（{section} 未注明原因）",
             category="invalid_shape",

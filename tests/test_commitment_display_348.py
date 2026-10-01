@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import re
 
-from ming_sim.issues import (
+from ming_sim.entities.issue.commitment_display import (
     commitment_display_text,
     commitment_progress_payload,
     commitment_timed_bar_value,

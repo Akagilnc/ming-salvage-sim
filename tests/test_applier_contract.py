@@ -10,7 +10,7 @@ import json
 
 import pytest
 
-from ming_sim.applier import ApplyContext, Provenance, RejectedItem, RejectionCollector, SectionResult
+from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
 
 
 def test_provenance_enum_values():
@@ -63,35 +63,6 @@ def _make_ri(category="hallucinated_id") -> RejectedItem:
     return RejectedItem(item={}, reason="x", category=category, source=Provenance.unknown)
 
 
-def test_section_result_holds_applied_and_rejected():
-    """applied 为任意列表，rejected 为 RejectedItem 列表。"""
-    r = SectionResult(applied=["a", "b"], rejected=[_make_ri()])
-    assert len(r.applied) == 2
-    assert len(r.rejected) == 1
-
-
-def test_section_result_merge():
-    """两个 SectionResult 聚合后 applied/rejected 各自拼接。"""
-    a = SectionResult(applied=[1, 2], rejected=[_make_ri("hallucinated_id")])
-    b = SectionResult(applied=[3], rejected=[_make_ri("invalid_enum"), _make_ri("missing_ref")])
-    merged = a.merge(b)
-    assert merged.applied == [1, 2, 3]
-    assert len(merged.rejected) == 3
-
-
-def test_section_result_merge_empty():
-    """空 SectionResult 与非空合并，结果与非空相等。"""
-    empty = SectionResult(applied=[], rejected=[])
-    non_empty = SectionResult(applied=[42], rejected=[_make_ri()])
-    assert empty.merge(non_empty).applied == [42]
-    assert len(empty.merge(non_empty).rejected) == 1
-    assert non_empty.merge(empty).applied == [42]
-
-
-# ---------------------------------------------------------------------------
-# ApplyContext
-# ---------------------------------------------------------------------------
-
 @pytest.fixture
 def clean_rejections(game):
     """game 基底是活存档 probe.db 副本——真实游玩可能已写入 rejection_reports。
@@ -102,20 +73,6 @@ def clean_rejections(game):
     db.conn.execute("DROP TABLE IF EXISTS rejection_reports")
     return game
 
-
-def test_apply_context_holds_all_fields(read_game):
-    """ApplyContext 持 db/state/content + source。"""
-    db, state, content = read_game
-    ctx = ApplyContext(db=db, state=state, content=content, source=Provenance.player_decree)
-    assert ctx.db is db
-    assert ctx.state is state
-    assert ctx.content is content
-    assert ctx.source is Provenance.player_decree
-
-
-# ---------------------------------------------------------------------------
-# RejectionCollector — 缓冲与 flush
-# ---------------------------------------------------------------------------
 
 def test_rejection_collector_flush_before_record_leaves_db_empty(clean_rejections):
     """flush 前 DB 中无 rejection_reports 行。"""

@@ -31,6 +31,7 @@ def apply_issue_tracker_output(
     source: Provenance = Provenance.system_simulation,
 ) -> Dict[str, object]:
     import ming_sim.issues as issues
+    import ming_sim.entities.issue.effects as issue_effects
     # Do not re-copy open_affair_ids_at_input: settle path already hands the single
     # internal working set from the settlement orchestrator; a second copy would drop
     # same-batch new_issues births from later carriers (close / durable origin).
@@ -84,7 +85,7 @@ def apply_issue_tracker_output(
             # 非 dict 主路径走 validate abort、非逐项拒收，是 validate 层「结构畸形前置 abort」vs
             # 「值脏逐项拒收」的两层分工；改 validate 让非 dict 亦逐项拒收＝跨所有 list 段的设计决策，
             # defer #63 validate 层通用切片）。
-            entity_rejections.append(RejectedItem(item=adv, reason=f"advances 条目非对象（应为 dict）：{adv!r}", category="invalid_enum", source=source))
+            entity_rejections.append(RejectedItem(item={"raw_value": adv}, reason=f"advances 条目非对象（应为 dict）：{adv!r}", category="invalid_enum", source=source))
             continue
         try:
             # _parse_sqlite_id：非整数/bool/float/超 SQLite 64-bit → ValueError（含 10**100 这类
@@ -132,7 +133,7 @@ def apply_issue_tracker_output(
         # 终结结算：bar 自然推到 100/0 触发的 resolved/failed，与 close_issues 一样落终结效果（含建筑）
         if new_row["status"] == "resolved":
             effect = loads_effect_dict(new_row["effect_on_resolve"])
-            issues._emit_pairing_warnings(new_row, effect, pairing_warnings)
+            issue_effects._emit_pairing_warnings(new_row, effect, pairing_warnings)
             parent_origin_ref = issues._canonical_issue_origin(db, new_row)
             _apply_metric_dict(state, effect.get("metrics") or {}, db=db)
             entity_rejections.extend(_apply_economy_list(
@@ -140,9 +141,13 @@ def apply_issue_tracker_output(
                 origin_ref=parent_origin_ref,
             source=source)[1])
             entity_rejections.extend(_apply_faction_dict(db, effect.get("factions") or {}, source=source)[1])
-            issues._apply_issue_buildings(db, state, effect.get("buildings"), issues._ISSUE_PSEUDO_EVENT, f"局势#{issue_id}结案", commit=False, origin_ref=parent_origin_ref)
+            _b_ops, _b_rej = issue_effects._apply_issue_buildings(
+                db, state, effect.get("buildings"), issues._ISSUE_PSEUDO_EVENT,
+                f"局势#{issue_id}结案", origin_ref=parent_origin_ref, source=source,
+            )
+            entity_rejections.extend(_b_rej)
             entity_rejections.extend(
-                issues._apply_issue_entities(
+                issue_effects._apply_issue_entities(
                     db,
                     state,
                     effect,
@@ -150,7 +155,6 @@ def apply_issue_tracker_output(
                     content=runtime_content,
                     llm_config=llm_config,
                     applied_person_changes=issue_person_changes,
-                    commit=False,
                     origin_ref=parent_origin_ref,
                 source=source))
             issues._spawn_legacy_from_effect(db, state, effect, issue_id, str(new_row["title"]), commit=False)
@@ -163,9 +167,13 @@ def apply_issue_tracker_output(
                 origin_ref=parent_origin_ref,
             source=source)[1])
             entity_rejections.extend(_apply_faction_dict(db, effect.get("factions") or {}, source=source)[1])
-            issues._apply_issue_buildings(db, state, effect.get("buildings"), issues._ISSUE_PSEUDO_EVENT, f"局势#{issue_id}失败", commit=False, origin_ref=parent_origin_ref)
+            _b_ops, _b_rej = issue_effects._apply_issue_buildings(
+                db, state, effect.get("buildings"), issues._ISSUE_PSEUDO_EVENT,
+                f"局势#{issue_id}失败", origin_ref=parent_origin_ref, source=source,
+            )
+            entity_rejections.extend(_b_rej)
             entity_rejections.extend(
-                issues._apply_issue_entities(
+                issue_effects._apply_issue_entities(
                     db,
                     state,
                     effect,
@@ -173,7 +181,6 @@ def apply_issue_tracker_output(
                     content=runtime_content,
                     llm_config=llm_config,
                     applied_person_changes=issue_person_changes,
-                    commit=False,
                     origin_ref=parent_origin_ref,
                 source=source))
             issues._spawn_legacy_from_effect(db, state, effect, issue_id, str(new_row["title"]), commit=False)
@@ -197,7 +204,7 @@ def apply_issue_tracker_output(
             # validate_delta_shape 已在 apply 前拦非 dict list 项，此为 defense-in-depth（直接调
             # apply_issue_tracker_output / 绕过 validate 时生效）——逐项拒收，不让坏项带走整批
             # （ADR 0008 决定 1，同 close_issues 非 dict 守卫，cmr ni r1 Claude）。
-            entity_rejections.append(RejectedItem(item=ni, reason=f"new_issues 条目非对象（应为 dict）：{ni!r}", category="invalid_enum", source=source))
+            entity_rejections.append(RejectedItem(item={"raw_value": ni}, reason=f"new_issues 条目非对象（应为 dict）：{ni!r}", category="invalid_enum", source=source))
             continue
         raw_title = ni.get("title")
         origin_kind = str(ni.get("origin_kind") or "").lower()
@@ -342,7 +349,7 @@ def apply_issue_tracker_output(
                     continue
                 if ev.effect_on_trigger:
                     entity_rejections.extend(
-                        issues._apply_issue_entities(
+                        issue_effects._apply_issue_entities(
                             db,
                             state,
                             issues._content_population_effect_for_save(db, ev.effect_on_trigger),
@@ -350,7 +357,6 @@ def apply_issue_tracker_output(
                             content=runtime_content,
                             llm_config=llm_config,
                             applied_person_changes=issue_person_changes,
-                            commit=False,
                         source=source)
                     )
                 db.mark_event_triggered(state, ev.id, commit=False)
@@ -695,7 +701,7 @@ def apply_issue_tracker_output(
         if not isinstance(cl, dict):
             # 非 dict 项（如 close_issues:[null]/标量，_sanitize 不清列表项可达）：cl.get 会抛
             # AttributeError（不在下方 except 内）崩整月——逐项拒收，不让坏项带走整批（codex r4）。
-            entity_rejections.append(RejectedItem(item=cl, reason=f"close_issues 条目非对象（应为 dict）：{cl!r}", category="invalid_enum", source=source))
+            entity_rejections.append(RejectedItem(item={"raw_value": cl}, reason=f"close_issues 条目非对象（应为 dict）：{cl!r}", category="invalid_enum", source=source))
             continue
         try:
             # _parse_sqlite_id：非整数/bool/float/超 SQLite 64-bit 范围 → ValueError（含 10**100
@@ -797,7 +803,7 @@ def apply_issue_tracker_output(
             # 浅合并：metrics/economy/factions/buildings/legacy 等顶层段，现给覆盖预设
             effect = {**effect, **cl_effect}
         if reason == "resolved":
-            issues._emit_pairing_warnings(new_row, effect, pairing_warnings)
+            issue_effects._emit_pairing_warnings(new_row, effect, pairing_warnings)
         parent_origin_ref = issues._canonical_issue_origin(db, new_row)
         _apply_metric_dict(state, effect.get("metrics") or {}, db=db)
         entity_rejections.extend(_apply_economy_list(
@@ -805,13 +811,14 @@ def apply_issue_tracker_output(
             origin_ref=parent_origin_ref,
         source=source)[1])
         entity_rejections.extend(_apply_faction_dict(db, effect.get("factions") or {}, source=source)[1])
-        building_ops = issues._apply_issue_buildings(
+        building_ops, building_rejections = issue_effects._apply_issue_buildings(
             db, state, effect.get("buildings"),
             issues._ISSUE_PSEUDO_EVENT, f"局势#{issue_id}{'结案' if reason == 'resolved' else '失败'}",
-            commit=False, origin_ref=parent_origin_ref,
+            origin_ref=parent_origin_ref, source=source,
         )
+        entity_rejections.extend(building_rejections)
         close_person_changes: List[Dict[str, object]] = []
-        entity_rejections.extend(issues._apply_issue_entities(
+        entity_rejections.extend(issue_effects._apply_issue_entities(
             db,
             state,
             effect,
@@ -819,7 +826,6 @@ def apply_issue_tracker_output(
             content=runtime_content,
             llm_config=llm_config,
             applied_person_changes=close_person_changes,
-            commit=False,
             origin_ref=parent_origin_ref,
         source=source))
         issue_person_changes.extend(close_person_changes)

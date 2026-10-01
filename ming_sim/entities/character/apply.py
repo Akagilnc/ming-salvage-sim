@@ -63,8 +63,6 @@ def apply_person_changes(
     def log_applied(
         result: Dict[str, object],
         item: Dict[str, object],
-        *,
-        commit: bool | None = None,
     ) -> None:
         if isinstance(result, RejectedItem):
             return
@@ -92,7 +90,7 @@ def apply_person_changes(
             derived_from=str(result.get("derived_from") or derived_from or ""),
             normalized=normalized,
             source=source,
-            commit=False if commit is None else commit,
+            commit=False,
             origin_ref=origin_ref,
         )
 
@@ -193,7 +191,7 @@ def apply_person_changes(
                 "reason": str(item.get("reason") or ""),
             }
             applied.append(result)
-            log_applied(result, item, commit=False)
+            log_applied(result, item)
             continue
 
         if action == "性情":
@@ -232,7 +230,7 @@ def apply_person_changes(
                 "reason": str(item.get("reason") or ""),
             }
             applied.append(result)
-            log_applied(result, item, commit=False)
+            log_applied(result, item)
             continue
 
         if action in {"处置", "罢黜"}:
@@ -377,7 +375,7 @@ def apply_person_changes(
                                 or ""
                             ).strip(),
                             llm_config=llm_config,
-                            commit=False, source=source,
+                            source=source,
                         ),
                     )
                 if isinstance(result, RejectedItem):
@@ -456,7 +454,7 @@ def apply_person_changes(
                         or ""
                     ).strip(),
                     llm_config=llm_config,
-                    commit=False, source=source,
+                    source=source,
                 ),
             )
             wrapped = result if isinstance(result, RejectedItem) else {"动作": effective_action, **result}
@@ -494,17 +492,17 @@ def apply_person_changes(
                         ch.reason_code = str(row["reason_code"] or "")
                 else:
                     applied.append(release_result)
-                    log_applied(release_result, item, commit=False)
+                    log_applied(release_result, item)
             elif isinstance(wrapped, dict) and transition.startswith("normalize:"):
                 wrapped["normalized"] = f"{action}->{effective_action}"
             if isinstance(wrapped, RejectedItem):
                 rejections.append(wrapped)
                 continue
             applied.append(wrapped)
-            log_applied(wrapped, item, commit=False if derive_label else None)
+            log_applied(wrapped, item)
             for displacement_result in displaced_talent_pool_results(wrapped.get("displaced")):
                 applied.append(displacement_result)
-                log_applied(displacement_result, item, commit=False if derive_label else None)
+                log_applied(displacement_result, item)
             continue
 
         if action == "易主":
@@ -735,7 +733,7 @@ def apply_person_changes(
                     commit=False,
                 )
                 applied.append(result)
-                log_applied(result, item, commit=False)
+                log_applied(result, item)
                 from ming_sim.audience_night import (
                     settle_unsettled_summons_for_person,
                 )

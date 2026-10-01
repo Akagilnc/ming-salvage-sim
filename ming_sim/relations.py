@@ -169,8 +169,8 @@ def credit_event_to_edge(record: Mapping[str, Any]) -> dict[str, Any]:
     ).strip()
     if not person:
         raise ValueError("信用事件缺少当事人")
-    context = str(record.get("context") or record.get("sentence") or "").strip()
-    if not context:
+    raw_context = str(record.get("context") or record.get("sentence") or "")
+    if not raw_context.strip():
         raise ValueError("信用事件语境不能为空")
     direction = CREDIT_DIRECTION[kind]
     source, target = (
@@ -186,7 +186,7 @@ def credit_event_to_edge(record: Mapping[str, Any]) -> dict[str, Any]:
         "source": source,
         "target": target,
         "event_kind": kind,
-        "context": context,
+        "context": raw_context,
         "origin": bound_origin,
         "origin_round": origin_round,
         "turn": turn,
@@ -346,7 +346,7 @@ def resolve_relation_edge_events_from_extraction(
     turn = int(getattr(state, "turn", 0) or 0)
     for item in items:
         if not isinstance(item, Mapping):
-            rejections.append(RejectedItem(item=item, reason="大臣互动项必须为对象", category="invalid_shape", source=source))
+            rejections.append(RejectedItem(item={"raw_value": item}, reason="大臣互动项必须为对象", category="invalid_shape", source=source))
             continue
         try:
             prepared = _prepare_one_interaction(

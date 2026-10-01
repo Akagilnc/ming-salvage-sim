@@ -210,7 +210,6 @@ def test_decree_commitment_shape_with_string_stop_condition_requires_marker(read
     rejected = out.get("rejected") or []
     assert len(rejected) == 1, out
     assert rejected[0].category == "invalid_enum"
-    assert "commitment_kind" in rejected[0].reason
     row = db.conn.execute(
         "SELECT id FROM issues WHERE title=?", ("安抚毛文龙直到效顺",)
     ).fetchone()

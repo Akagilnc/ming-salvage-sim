@@ -22,7 +22,7 @@ def apply(run, moves: List[object] | None = None, *, index_base: int = 0) -> Sec
     """
     from ming_sim.entities.affair import UnauthorizedAffairOriginRef
     from ming_sim.entities.economy.apply import _apply_economy_list
-    from ming_sim.issues import _payload_owned_dossier_for_origin
+    from ming_sim.entities.authority.apply import _payload_owned_dossier_for_origin
 
     del index_base
     if moves is None:
@@ -42,7 +42,7 @@ def apply(run, moves: List[object] | None = None, *, index_base: int = 0) -> Sec
             if origin_ref and not str(
                 move.get("origin_ref") or move.get("来源引用") or ""
             ).strip():
-                move = {**move, "origin_ref": origin_ref}
+                move["origin_ref"] = origin_ref
             if origin_ref.startswith("dossier:"):
                 dossier = _payload_owned_dossier_for_origin(run.db, origin_ref)
                 if dossier is not None and str(

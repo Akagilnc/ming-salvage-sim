@@ -236,7 +236,7 @@ class RejectedItem:
     source 由调用方传入，决定是否向玩家可见（ADR 0008 决定 5）。
     """
 
-    item: Any                   # 原始对象，原样保留便于重放分析
+    item: dict                  # 恒为对象；非对象在拒收产生处包成 {"raw_value": 原值}
     reason: str                 # 人读原因
     category: str               # 机读类别，供聚合
     source: Provenance          # 来源

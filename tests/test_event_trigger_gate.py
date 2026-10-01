@@ -2208,7 +2208,9 @@ def test_historical_situation_auto_trigger_rolls_back_soft_issue_when_core_effec
     def boom(*args, **kwargs):
         raise RuntimeError("boom after issue insert")
 
-    monkeypatch.setattr(issues, "_apply_issue_entities", boom)
+    import ming_sim.entities.issue.effects as issue_effects
+
+    monkeypatch.setattr(issue_effects, "_apply_issue_entities", boom)
 
     with pytest.raises(RuntimeError, match="boom after issue insert"):
         issues.auto_trigger_seed_issues(state, db)
@@ -2883,7 +2885,9 @@ def test_apply_issue_entities_person_changes_respect_commit_false(game):
         ("毛文龙",),
     ).fetchone()[0]
 
-    issues._apply_issue_entities(
+    import ming_sim.entities.issue.effects as issue_effects
+
+    issue_effects._apply_issue_entities(
         db,
         state,
         {
@@ -2893,7 +2897,6 @@ def test_apply_issue_entities_person_changes_respect_commit_false(game):
         },
         "测试 helper no-commit",
         content=content,
-        commit=False,
     )
     db.conn.rollback()
 

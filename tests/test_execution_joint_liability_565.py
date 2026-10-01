@@ -72,7 +72,10 @@ def test_fulfilled_writes_zero_joint_liability_rows(game):
 
     result = _close_via_adapter(db, state, content, dossier_id, "fulfilled", note="如期办妥")
 
-    assert view(result, "dossier_executions") == [{"dossier_id": dossier_id, "outcome": "fulfilled"}]
+    assert view(result, "dossier_executions") == [{
+        "dossier_id": dossier_id, "outcome": "fulfilled",
+        "source_item": {"dossier_id": dossier_id, "outcome": "fulfilled", "note": "如期办妥"},
+    }]
     assert _cost_events(db, dossier_id) == []
     assert _sat(db, "东林") == before_donglin
     assert _sat(db, "西学") == before_xixue
@@ -100,7 +103,10 @@ def test_terminal_outcomes_charge_lead_and_downgraded_delegator(
         db, state, content, dossier_id, outcome, note="门生办砸，走样",
     )
 
-    assert view(result, "dossier_executions") == [{"dossier_id": dossier_id, "outcome": outcome}]
+    assert view(result, "dossier_executions") == [{
+        "dossier_id": dossier_id, "outcome": outcome,
+        "source_item": {"dossier_id": dossier_id, "outcome": outcome, "note": "门生办砸，走样"},
+    }]
     assert _sat(db, "东林") == max(0, before_donglin + lead_delta)
     if delegator_delta is None:
         assert _sat(db, "西学") == before_xixue
@@ -247,7 +253,13 @@ def test_explicit_affected_parties_must_pass_full_key_validation(game):
         db, state, content, dossier_id, "failed", note="全键合法",
         affected_parties=valid,
     )
-    assert view(result, "dossier_executions") == [{"dossier_id": dossier_id, "outcome": "failed"}]
+    assert view(result, "dossier_executions") == [{
+        "dossier_id": dossier_id, "outcome": "failed",
+        "source_item": {
+            "dossier_id": dossier_id, "outcome": "failed", "note": "全键合法",
+            "affected_parties": valid,
+        },
+    }]
     assert _sat(db, outsider) == before_outsider
     assert not any(row["target_id"] == outsider for row in _sat_events(db, dossier_id))
     # roster 映射仍落主办派系

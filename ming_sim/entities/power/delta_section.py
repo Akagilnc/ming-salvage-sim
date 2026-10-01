@@ -10,22 +10,13 @@ from __future__ import annotations
 
 from ming_sim.applier import RejectedItem, Provenance
 
-from dataclasses import dataclass
 from typing import Dict, List
 
 from ming_sim.applier import SectionResult
 from ming_sim.issues import POWER_FIELD_ALIASES, _effect_event_ids, _is_bandit_power_id
 
 
-@dataclass
-class PowerApplyBundle:
-    """势力与流民投贼分属两个子段：拒收归属不靠原因文案。"""
-
-    power: SectionResult
-    bandit: SectionResult
-
-
-def apply(run):
+def apply(run) -> SectionResult:
     from ming_sim.issues import _apply_bandit_absorptions
 
     applied_absorptions, absorption_rejections, absorption_power_changes = (
@@ -88,8 +79,11 @@ def apply(run):
         power_changes.extend(landed)
         rejections.extend(refused)
 
-    source = run.ctx.source
-    return PowerApplyBundle(
-        power=SectionResult(applied=power_changes, rejected=rejections),
-        bandit=SectionResult(applied=bandit_rows, rejected=absorption_rejections),
+    from ming_sim.settlement.run import _store
+
+    _store(
+        run,
+        "bandit_absorptions",
+        SectionResult(applied=bandit_rows, rejected=absorption_rejections),
     )
+    return SectionResult(applied=power_changes, rejected=rejections)

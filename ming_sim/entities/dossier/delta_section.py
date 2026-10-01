@@ -112,5 +112,9 @@ def apply_executions(run):
         run.db.apply_execution_joint_liability(
             run.state, dossier_id, outcome, reason=note, commit=False,
         )
-        applied.append({"dossier_id": dossier_id, "outcome": outcome})
+        applied.append({
+            "dossier_id": dossier_id,
+            "outcome": outcome,
+            "source_item": item,
+        })
     return SectionResult(applied=applied, rejected=rejected)

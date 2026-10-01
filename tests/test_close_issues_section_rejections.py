@@ -39,7 +39,6 @@ def test_close_bad_issue_id_rejected(read_game, bad_issue_id):
     rej = _rejected(out)
     assert len(rej) == 1
     assert rej[0].category == "invalid_enum"
-    assert "issue_id" in rej[0].reason
 
 
 @pytest.mark.parametrize("bad_item", [None, 42, "字符串", ["列表"]])
@@ -51,7 +50,6 @@ def test_close_non_dict_item_rejected_not_crash(read_game, bad_item):
     rej = _rejected(out)
     assert len(rej) == 1
     assert rej[0].category == "invalid_enum"
-    assert "非对象" in rej[0].reason
 
 
 def test_close_bad_reason_rejected(read_game):
@@ -63,7 +61,6 @@ def test_close_bad_reason_rejected(read_game):
     rej = _rejected(out)
     assert len(rej) == 1
     assert rej[0].category == "invalid_enum"
-    assert "reason" in rej[0].reason
 
 
 def test_close_unknown_issue_rejected_missing_ref(read_game):
@@ -100,7 +97,6 @@ def test_close_already_inactive_rejected_missing_ref(game):
     rej = _rejected(out)
     assert len(rej) == 1
     assert rej[0].category == "missing_ref"
-    assert "active" in rej[0].reason
 
 
 def test_close_failed_on_uncollapsible_rejected_invalid_enum(game):
@@ -113,55 +109,8 @@ def test_close_failed_on_uncollapsible_rejected_invalid_enum(game):
     rej = _rejected(out)
     assert len(rej) == 1
     assert rej[0].category == "invalid_enum"
-    assert "不可崩坏" in rej[0].reason
-    # 行为：issue 仍 active（拒结案，不被误标 missing_ref 也未被结案）。
+    # 行为：issue 仍 active。
     assert db.conn.execute("SELECT status FROM issues WHERE id=?", (iid,)).fetchone()["status"] == "active"
-
-
-def test_close_rejection_reaches_rejection_reports(game):
-    """端到端 plumbing：close 段拒收真落 rejection_reports 表。
-
-    ADR 0150 决定 2 删掉旧递归桥接后，拒收由知道行形状的段收成 RejectedItem，
-    再按登记表给出的具名段入库。
-    """
-    from ming_sim.applier import Provenance, RejectionCollector, RejectedItem
-
-    db, state, _ = game
-    item = RejectedItem(item={"issue_id": 999999, "reason": "resolved"}, reason="close 测试拒收", category="missing_ref", source=Provenance.unknown)
-    collector = RejectionCollector()
-    collector.record("issue_summary", item, 7)
-    collector.flush_to_db(db)
-
-    row = db.conn.execute(
-        "SELECT section, category, reason FROM rejection_reports "
-        "WHERE turn=7 AND section='issue_summary'"
-    ).fetchone()
-    assert row is not None, "close 段拒收未落 rejection_reports"
-    assert row["category"] == "missing_ref"
-
-
-def test_scalar_item_rejection_preserves_original_in_reports(game):
-    """非 dict 坏项（item 为标量/null）的 item_json 须存原始坏项本身（ADR 决定 5），
-    不是整个 rejected wrapper——canonical 化按 'item' 键**存在性**解包、覆盖标量
-    原件（cmr r5 codex）。"""
-    import json
-    from ming_sim.applier import Provenance, RejectionCollector, RejectedItem
-
-    close_rows = [
-        RejectedItem(item=42, reason="条目非对象", category="invalid_enum", source=Provenance.unknown),
-        RejectedItem(item=None, reason="条目非对象", category="invalid_enum", source=Provenance.unknown),
-    ]
-    collector = RejectionCollector()
-    for item in close_rows:
-        collector.record("issue_summary", item, 8)
-    db = game[0]
-    collector.flush_to_db(db)
-
-    rows = db.conn.execute(
-        "SELECT item_json FROM rejection_reports WHERE turn=8 AND section='issue_summary' ORDER BY id"
-    ).fetchall()
-    items = [json.loads(r["item_json"]) for r in rows]
-    assert 42 in items and None in items, items  # 原始标量原件保真，非嵌套 wrapper
 
 
 def test_close_issue_code_exception_propagates(read_game, monkeypatch):

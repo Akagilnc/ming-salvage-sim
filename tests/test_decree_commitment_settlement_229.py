@@ -3,7 +3,8 @@ import json
 import pytest
 
 from tests.test_due_review_621 import _settle_empty_month as _player_month
-from ming_sim.issues import apply_issue_inertia_and_ongoing, commitment_progress_payload, show_active_issues
+from ming_sim.entities.issue.commitment_display import commitment_progress_payload
+from ming_sim.issues import apply_issue_inertia_and_ongoing, show_active_issues
 
 
 

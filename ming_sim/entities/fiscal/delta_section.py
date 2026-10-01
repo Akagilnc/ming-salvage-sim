@@ -270,11 +270,12 @@ def apply_changes(run) -> SectionResult:
             if change["pair"] == loss_pair
         ]
         try:
-            run.db.set_fiscal_config_batch(final_values, commit=False)
+            run.db.validate_fiscal_config_values(final_values)
         except ValueError as exc:
             for change in pair_changes:
                 rejections.append(RejectedItem(item=change["item"], reason=f"调率目标「{change['key']}」非法：{exc}", category="invalid_enum", source=run.ctx.source))
             continue
+        run.db.set_fiscal_config_batch(final_values, commit=False)
         for change in pair_changes:
             run.db.conn.execute(
                 "UPDATE fiscal_config SET origin_ref=? WHERE key=?",

@@ -652,6 +652,7 @@ def test_dossier_execution_accepts_sqlite_integer_id(game):
 
     assert view(result, "dossier_executions") == [{
         "dossier_id": dossier_id, "outcome": "fulfilled",
+        "source_item": {"dossier_id": dossier_id, "outcome": "fulfilled", "note": "办理完毕"},
     }]
     assert db.get_decree_dossier(dossier_id)["status"] == "closed"
 
@@ -804,6 +805,7 @@ def test_force_promulgated_dossier_authorizes_same_batch_effect_after_execution_
 
     assert view(result, "dossier_executions") == [{
         "dossier_id": dossier_id, "outcome": "fulfilled",
+        "source_item": {"dossier_id": dossier_id, "outcome": "fulfilled", "note": "赈济已毕"},
     }]
     assert state.metrics["国库"] == before - 3
 
@@ -820,6 +822,7 @@ def test_extractor_accepts_transformed_execution_outcome(game):
 
     assert view(result, "dossier_executions") == [{
         "dossier_id": dossier_id, "outcome": "transformed",
+        "source_item": {"dossier_id": dossier_id, "outcome": "transformed", "note": "名义奉行，实则借旨行私"},
     }]
     dossier = db.get_decree_dossier(dossier_id)
     assert dossier["status"] == "closed"
@@ -1809,6 +1812,7 @@ def test_executing_dossier_stays_visible_and_extractor_can_close_it(game):
     result = settle_delta(state, db, {'dossier_executions': [{'dossier_id': dossier_id, 'outcome': 'fulfilled', 'note': '奉旨出师，军令已毕'}]}, SettlementContext(content=content))
     assert view(result, "dossier_executions") == [{
         "dossier_id": dossier_id, "outcome": "fulfilled",
+        "source_item": {"dossier_id": dossier_id, "outcome": "fulfilled", "note": "奉旨出师，军令已毕"},
     }]
     assert db.get_decree_dossier(dossier_id)["status"] == "closed"
 
