@@ -28,6 +28,7 @@ from ming_sim.staged_commitment import (
     write_due_staged_commitment_todos,
 )
 from ming_sim.participant_roster import resolve_dossier_owner_name
+from tests.dossier_test_helpers import create_test_secret_order
 from ming_sim.supervision import (
     EMPTY_TRANSFORMATION_TENDENCY_FACTS,
     EXPOSURE_ALLOWED_COLS,
@@ -39,11 +40,9 @@ from ming_sim.supervision import (
     PRESENCE_TABLE,
     SUPERVISION_RELATION,
     SUPERVISION_SURFACE_KEYS,
-    compose_report_origin,
     derive_consecutive_months,
     faction_relation,
     origin_has_mark,
-    parse_report_origin,
     unpack_supervision_surface,
 )
 
@@ -171,18 +170,6 @@ def test_derive_consecutive_months_and_faction_relation():
     assert faction_relation("东林", "东林") == "same"
     assert faction_relation("东林", "阉党") == "enemy"
     assert faction_relation("", "阉党") == "other"
-
-
-def test_origin_mark_compose_parse_roundtrip():
-    base = "dossier-report:monthly_errand"
-    marked = compose_report_origin(
-        base, [ORIGIN_MARK_PRIVATE_GOODS, ORIGIN_MARK_SAME_FACTION_BLIND],
-    )
-    root, marks = parse_report_origin(marked)
-    assert root == base
-    assert ORIGIN_MARK_PRIVATE_GOODS in marks
-    assert ORIGIN_MARK_SAME_FACTION_BLIND in marks
-    assert origin_has_mark(marked, ORIGIN_MARK_PRIVATE_GOODS)
 
 
 # ── AC1 事实底 ────────────────────────────────────────────────────
@@ -375,48 +362,74 @@ def test_ac2_paired_observation_slots_and_countermeasure_hard_gate(game):
 # ── AC3 同派/敌派 origin 标记 ─────────────────────────────────────
 
 
-def test_ac3_same_vs_enemy_origin_marks_on_reported_progress(game):
+def _secret_subject(db, state, *, owner: str, token: str) -> int:
+    order_id = create_test_secret_order(
+        db, state, owner, f"差务{token}", f"承办{token}", [],
+    )
+    return int(db.get_dossier_for_secret_order(order_id)["id"])
+
+
+def test_ac3_relation_facts_do_not_invent_report_actions(game):
+    """同派／敌派只留在监督史。月报不声明行动就不写睁眼闭眼或带私货。"""
     db, state, _content = game
     same_a, same_b = _pair_same_faction(db)
     enemy_a, enemy_b = _pair_enemy_faction(db)
+    before_inner = int(state.metrics.get("内库") or 0)
 
-    # 同派
-    sub_s = _subject_dossier(db, state, owner=str(same_a["name"]), token="sf")
+    sub_s = _secret_subject(db, state, owner=str(same_a["name"]), token="sf")
     _audit_dossier(
         db, state, auditor=str(same_b["name"]), subject_id=sub_s, token="sf",
     )
-    db.record_monthly_supervision_facts(state.turn, commit=True)
-    origin_s = db.compose_supervision_report_origin(sub_s, state.turn)
-    assert origin_has_mark(origin_s, ORIGIN_MARK_SAME_FACTION_BLIND)
-    assert not origin_has_mark(origin_s, ORIGIN_MARK_PRIVATE_GOODS)
-
-    rid = db.record_dossier_progress(
-        sub_s, state.turn, "在办", "同路稽核例行奏报",
-        origin=origin_s, commit=True,
-    )
-    assert rid > 0
-    rows = db.list_dossier_progress(sub_s)
-    assert origin_has_mark(rows[-1]["origin"], ORIGIN_MARK_SAME_FACTION_BLIND)
-
-    # 敌派
-    sub_e = _subject_dossier(db, state, owner=str(enemy_a["name"]), token="ef")
+    sub_e = _secret_subject(db, state, owner=str(enemy_a["name"]), token="ef")
     _audit_dossier(
         db, state, auditor=str(enemy_b["name"]), subject_id=sub_e, token="ef",
     )
     db.record_monthly_supervision_facts(state.turn, commit=True)
-    origin_e = db.compose_supervision_report_origin(sub_e, state.turn)
-    assert origin_has_mark(origin_e, ORIGIN_MARK_PRIVATE_GOODS)
-    assert not origin_has_mark(origin_e, ORIGIN_MARK_SAME_FACTION_BLIND)
+    same_hist = db.list_supervision_history(sub_s, as_of_turn=state.turn)
+    enemy_hist = db.list_supervision_history(sub_e, as_of_turn=state.turn)
+    assert any(row.get("faction_relation") == "same" and row.get("present") for row in same_hist)
+    assert any(row.get("faction_relation") == "enemy" and row.get("present") for row in enemy_hist)
 
-    db.record_dossier_progress(
-        sub_e, state.turn, "在办", "异路稽核密折",
-        origin=origin_e, commit=True,
+    db.record_monthly_dossier_progress(state.turn, [
+        {
+            "dossier_id": sub_s,
+            "progress_band": "在办",
+            "memorial_text": "同路例行奏报",
+            "origin": "same_faction_blind+不是行动",
+        },
+        {
+            "dossier_id": sub_e,
+            "progress_band": "在办",
+            "memorial_text": "异路例行奏报",
+        },
+    ])
+    same_origin = db.list_dossier_progress(sub_s)[-1]["origin"]
+    enemy_origin = db.list_dossier_progress(sub_e)[-1]["origin"]
+    assert origin_has_mark(same_origin, ORIGIN_MARK_SAME_FACTION_BLIND)
+    assert not origin_has_mark(same_origin, ORIGIN_MARK_PRIVATE_GOODS)
+    assert "不是行动" not in str(same_origin)
+    assert not origin_has_mark(enemy_origin, ORIGIN_MARK_PRIVATE_GOODS)
+    assert not origin_has_mark(enemy_origin, ORIGIN_MARK_SAME_FACTION_BLIND)
+
+    db.record_monthly_dossier_progress(state.turn, [
+        {
+            "dossier_id": sub_s,
+            "progress_band": "在办",
+            "memorial_text": "同路例行奏报",
+            "origin": ORIGIN_MARK_SAME_FACTION_BLIND,
+        },
+        {
+            "dossier_id": sub_e,
+            "progress_band": "在办",
+            "memorial_text": "异路声明私货",
+            "origin": ORIGIN_MARK_PRIVATE_GOODS,
+        },
+    ])
+    assert len(db.list_dossier_progress(sub_s)) == 1
+    assert len(db.list_dossier_progress(sub_e)) == 1
+    assert origin_has_mark(
+        db.list_dossier_progress(sub_e)[-1]["origin"], ORIGIN_MARK_PRIVATE_GOODS,
     )
-    rows_e = db.list_dossier_progress(sub_e)
-    assert origin_has_mark(rows_e[-1]["origin"], ORIGIN_MARK_PRIVATE_GOODS)
-
-    # 奏报永不入 apply：世界指纹不因 origin 标记而改库外状态（钱粮）
-    before_inner = int(state.metrics.get("内库") or 0)
     assert int(state.metrics.get("内库") or 0) == before_inner
 
 

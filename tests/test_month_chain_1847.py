@@ -642,6 +642,7 @@ def test_decree_continuation_keeps_forecast_and_lands_affair_effect(game, monkey
     )
     db.conn.commit()
     captured = {}
+    continued = {"on": False}
 
     def fake_agent(llm_config, prepared):
         del llm_config
@@ -653,12 +654,13 @@ def test_decree_continuation_keeps_forecast_and_lands_affair_effect(game, monkey
         del agent, transport_policy
         captured["tag"] = tag
         captured["message"] = message
-        return "加赈落实，仓廪出十万。"
+        if tag == "decree-forecast-continue":
+            continued["on"] = True
+        return "问后续推已发生。"
 
     def translate(*_a, **kwargs):
         captured["grounding"] = kwargs.get("target_grounding") or ""
-        segment = str(kwargs.get("segment") or "")
-        if "仓廪出十万" not in segment:
+        if not continued["on"]:
             return {"effects": {}}
         return {"effects": {"economy_moves": [{
             "origin_ref": f"affair:{affair.id}",
@@ -1054,14 +1056,20 @@ def test_decree_continuation_ending_ends_the_month(game, monkeypatch):
     )
     db.conn.commit()
 
+    continued = {"on": False}
+
+    def continue_text(*_a, **_k):
+        continued["on"] = True
+        return "问后续推已发生。"
+
     def translate(*_a, **kwargs):
-        if "煤山" not in str(kwargs.get("segment") or ""):
+        if not continued["on"]:
             return {"effects": {}}
         return {"effects": {"emperor_fate": "abdicate"}}
 
     _forbid_extractor(monkeypatch)
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
-    monkeypatch.setattr(month_chain, "_run_decree_continuation_text", lambda *a, **k: "煤山已定。")
+    monkeypatch.setattr(month_chain, "_run_decree_continuation_text", continue_text)
     monkeypatch.setattr(month_translate, "translate_month_segment", translate)
     monkeypatch.setattr(month_chain, "run_gazette_text", lambda *a, **k: ("邸报", "逊国已闻"))
     monkeypatch.setattr("ming_sim.mechanical_tail._run_tail_body", lambda *a, **k: "done")
@@ -1081,6 +1089,48 @@ def test_decree_continuation_ending_ends_the_month(game, monkeypatch):
     assert month_chain._load_chain(db, closed_turn)["declaration_outcome"]["status"] == "emperor_abdicate"
 
 
+def _resolve_with_emperor_fate(game, monkeypatch, fate):
+    from ming_sim.models import LLMConfig
+
+    db, state, content = game
+    closed_turn = int(state.turn)
+
+    def translate(*_a, **_k):
+        return {"effects": {"emperor_fate": fate}}
+
+    _forbid_extractor(monkeypatch)
+    monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "边事暂宁。")
+    monkeypatch.setattr(month_translate, "translate_month_segment", translate)
+    monkeypatch.setattr(month_chain, "run_gazette_text", lambda *a, **k: ("邸报", "终局已闻"))
+    monkeypatch.setattr("ming_sim.mechanical_tail._run_tail_body", lambda *a, **k: "done")
+    session = make_light_session(db, state, content)
+    session.llm_config = LLMConfig(
+        api_key="sk-test", base_url="https://example.invalid", model="test",
+    )
+    result = session.resolve_turn(allow_empty_decree=True)
+    return db, state, closed_turn, result
+
+
+def test_declared_deposal_ends_on_the_existing_chain(game, monkeypatch):
+    """模型声明的被废走既有声明与终局链，不因旧的两值枚举停在进行中。"""
+    db, state, closed_turn, result = _resolve_with_emperor_fate(game, monkeypatch, "被废")
+    outcome = month_chain._load_chain(db, closed_turn)["declaration_outcome"]
+    assert result.advanced is True
+    assert state.ended is True
+    assert state.ending_status == "被废"
+    assert outcome["status"] == "被废"
+    assert outcome["summary"] == ""
+
+
+def test_null_emperor_fate_does_not_end_the_month(game, monkeypatch):
+    db, state, closed_turn, result = _resolve_with_emperor_fate(game, monkeypatch, None)
+    chain = month_chain._load_chain(db, closed_turn)
+    assert result.advanced is True
+    assert state.ended is not True
+    assert not state.ending_status
+    assert (chain.get("declaration_outcome") or {}).get("status") in (None, "", "ongoing")
+
+
 def test_drift_sees_effects_landed_after_answers(game, monkeypatch):
     """问后续推落下的局面，当月惯性才看得到；未答完不得先跑惯性。"""
     db, state, content = game
@@ -1092,8 +1142,14 @@ def test_drift_sees_effects_landed_after_answers(game, monkeypatch):
     issue_id = int(db.conn.execute("SELECT last_insert_rowid()").fetchone()[0])
     db.conn.commit()
 
+    continued = {"on": False}
+
+    def continue_text(*_a, **_k):
+        continued["on"] = True
+        return "问后续推已发生。"
+
     def translate(*_a, **kwargs):
-        if "问后结案" not in str(kwargs.get("segment") or ""):
+        if not continued["on"]:
             return {"effects": {}}
         return {"effects": {"close_issues": [{
             "issue_id": issue_id, "reason": "resolved",
@@ -1104,7 +1160,7 @@ def test_drift_sees_effects_landed_after_answers(game, monkeypatch):
         month_chain, "run_world_segment_text", lambda *a, **k: _WORLD_WITH_QUESTION,
     )
     monkeypatch.setattr(
-        month_chain, "_run_world_continuation_text", lambda *a, **k: "问后结案。",
+        month_chain, "_run_world_continuation_text", continue_text,
     )
     monkeypatch.setattr(month_translate, "translate_month_segment", translate)
     session = make_light_session(db, state, content)
@@ -1193,8 +1249,14 @@ def test_step_4a_rescript_continuation_feeds_supply_run_input(game, monkeypatch)
             }],
         }
 
+    continued = {"on": False}
+
+    def continue_text(*_a, **_k):
+        continued["on"] = True
+        return "问后续推已发生。"
+
     def translate(*_a, **kwargs):
-        if "问后核银" not in str(kwargs.get("segment") or ""):
+        if not continued["on"]:
             return {"effects": {}}
         return {"effects": {
             "economy_moves": [{
@@ -1209,7 +1271,7 @@ def test_step_4a_rescript_continuation_feeds_supply_run_input(game, monkeypatch)
         month_chain, "run_world_segment_text", lambda *a, **k: _WORLD_WITH_QUESTION,
     )
     monkeypatch.setattr(
-        month_chain, "_run_world_continuation_text", lambda *a, **k: "问后核银。",
+        month_chain, "_run_world_continuation_text", continue_text,
     )
     monkeypatch.setattr(month_translate, "translate_month_segment", translate)
     monkeypatch.setattr(month_chain, "run_secret_orders_supply", supply_run)
@@ -1496,6 +1558,12 @@ def test_step_4a_missing_covert_fidelity_records_inline_rejection(game, monkeypa
                 }],
                 "covert_exec_selections": [],
             }
+        if call_count == 2:
+            # 替换后的产物：执行态合法，月报却是空的。旧完成相不得放它过关。
+            return {
+                "dossier_progress_reports": [],
+                "covert_exec_selections": [{"order_id": order_id, "fidelity": "忠实"}],
+            }
         return {
             "dossier_progress_reports": [{
                 "dossier_id": dossier_id,
@@ -1527,10 +1595,26 @@ def test_step_4a_missing_covert_fidelity_records_inline_rejection(game, monkeypa
         "SELECT COUNT(*) FROM dossier_actual_progress WHERE dossier_id=? AND turn=?",
         (dossier_id, turn),
     ).fetchone()[0] == 0
+    assert chain.get("secret_orders_reports_done") is True
+
+    with pytest.raises(SettlementAbort) as replaced:
+        session.resolve_turn(allow_empty_decree=True)
+    assert replaced.value.stage == "secret_orders_supply"
+    assert call_count == 2
+    replaced_chain = month_chain._load_chain(db, turn)
+    assert replaced_chain.get("secret_orders_supply_invalid") is True
+    assert replaced_chain.get("secret_orders_reports_done") is not True
+    assert replaced_chain.get("secret_orders_supply_done") is not True
+    assert db.get_secret_order(order_id)["status"] == "active"
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM dossier_actual_progress WHERE dossier_id=? AND turn=?",
+        (dossier_id, turn),
+    ).fetchone()[0] == 0
 
     result = session.resolve_turn(allow_empty_decree=True)
     assert result.stage == "gazette"
-    assert call_count == 2
+    assert call_count == 3
+    assert len(db.list_dossier_progress(dossier_id)) == 1
     assert db.conn.execute(
         "SELECT COUNT(*) FROM dossier_actual_progress WHERE dossier_id=? AND turn=?",
         (dossier_id, turn),
@@ -1970,8 +2054,14 @@ def test_step_4a_rescript_path_feeds_landed_not_assembled_effects(game, monkeypa
             }],
         }
 
+    continued = {"on": False}
+
+    def continue_text(*_a, **_k):
+        continued["on"] = True
+        return "问后续推已发生。"
+
     def translate(*_a, **kwargs):
-        if "问后核银" not in str(kwargs.get("segment") or ""):
+        if not continued["on"]:
             return {"effects": {}}
         return {"effects": {
             "economy_moves": [{
@@ -1991,7 +2081,7 @@ def test_step_4a_rescript_path_feeds_landed_not_assembled_effects(game, monkeypa
         month_chain, "run_world_segment_text", lambda *a, **k: _WORLD_WITH_QUESTION,
     )
     monkeypatch.setattr(
-        month_chain, "_run_world_continuation_text", lambda *a, **k: "问后核银。",
+        month_chain, "_run_world_continuation_text", continue_text,
     )
     monkeypatch.setattr(month_translate, "translate_month_segment", translate)
     monkeypatch.setattr(month_chain, "run_secret_orders_supply", supply_run)

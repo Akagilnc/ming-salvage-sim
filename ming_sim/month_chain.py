@@ -653,8 +653,12 @@ def _consume_call_failure_for_retry(
     if step == "secret_orders_supply":
         # 0058 缺报或 0073 执行态校验失败的产物作废并重起供料；其它中断保留产物。
         if chain.get("secret_orders_supply_invalid"):
+            # 作废的是整份产物。奏报相与执行态相属于这份额度，旧完成标记
+            # 不得让下一份空报或残报跳过验收。已落的密奏披露不重做。
             chain.pop("secret_orders_supply_product", None)
             chain.pop("secret_orders_supply_invalid", None)
+            chain.pop("secret_orders_reports_done", None)
+            chain.pop("covert_progress_done", None)
     chain.pop("call_failure", None)
     _save_chain(db, turn, chain, decree_text=decree_text, source=source)
 

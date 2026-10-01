@@ -12107,8 +12107,8 @@ class GameDB:
 
         reports: List[Dict[str, object]] = []
         for dossier_id, item in supplied.items():
-            # #625：有在场稽核时 origin 带同派/私货结构化标记（扩 origin，不加列）。
-            origin = self.compose_supervision_report_origin(int(dossier_id), int(turn))
+            # 派系同／敌只留在监督史。origin 只承接本条密奏里声明的行动。
+            origin = self._monthly_report_origin(item)
             self.record_dossier_progress(
                 dossier_id, int(turn), str(item["progress_band"]).strip(),
                 str(item["memorial_text"]).strip(),
@@ -12407,7 +12407,7 @@ class GameDB:
     ) -> Dict[str, object]:
         """月度在场扫描：稽核链 → presence 行；同 turn UNIQUE 幂等不双计。
 
-        settle 节拍：须先于月报 origin 标记调用（commit=False）。
+        在场与派系关系是事实。月报 origin 不从这里派生人物行动。
         """
         from ming_sim.supervision import (
             SUPERVISION_RELATION,
@@ -12706,33 +12706,12 @@ class GameDB:
             ),
         }
 
-    def compose_supervision_report_origin(
-        self, dossier_id: int, turn: int,
-    ) -> str:
-        """按当月在场稽核派系关系给 #619 origin 打私货/同派标记（扩 origin，不加列）。"""
-        from ming_sim.supervision import (
-            ORIGIN_MARK_PRIVATE_GOODS,
-            ORIGIN_MARK_SAME_FACTION_BLIND,
-            compose_report_origin,
-        )
+    def _monthly_report_origin(self, item: Mapping[str, object]) -> str:
+        from ming_sim.supervision import declared_report_action_origin
 
-        base = self.DOSSIER_REPORT_ORIGIN_MONTHLY
-        history = self.list_supervision_history(
-            int(dossier_id), as_of_turn=int(turn),
+        return declared_report_action_origin(
+            item.get("origin"), base=self.DOSSIER_REPORT_ORIGIN_MONTHLY,
         )
-        # 只看本 turn 在场行
-        marks: List[str] = []
-        for row in history:
-            if int(row.get("turn") or 0) != int(turn):
-                continue
-            if not row.get("present"):
-                continue
-            rel = str(row.get("faction_relation") or "")
-            if rel == "same":
-                marks.append(ORIGIN_MARK_SAME_FACTION_BLIND)
-            elif rel == "enemy":
-                marks.append(ORIGIN_MARK_PRIVATE_GOODS)
-        return compose_report_origin(base, marks)
 
     def list_faction_denunciations(
         self,

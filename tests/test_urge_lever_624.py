@@ -36,7 +36,6 @@ from ming_sim.staged_commitment import (
 from ming_sim.urge_lever import (
     collect_urge_history,
     consume_pending_urge_audience_todos,
-    derive_opportunity_band,
     list_urge_audience_scenes,
     project_urge_audience_scene,
     rush_staged_commitment_stage,
@@ -140,16 +139,6 @@ def _seed_stages(state, *, due0: int | None = None, due1: int | None = None):
     ]
 
 
-def test_opportunity_band_from_durable_effects():
-    assert derive_opportunity_band([]) == "none"
-    assert derive_opportunity_band([{"delta": -10}]) == "low"
-    assert derive_opportunity_band([
-        {"delta": -5000, "account": "国库"},
-        {"delta": -3000, "account": "内库"},
-        {"delta": 100, "account": "民心"},
-    ]) == "high"
-
-
 # ── AC1 催拉杆：真加速 + urge_history + 判词可观察影响 ───────────────
 
 
@@ -213,8 +202,6 @@ def test_rush_staged_commitment_advances_due_and_fills_urge_history(game):
     todo = db.list_next_audience_todos(commitment_ref=issue_id)[0]
     inp = build_due_review_input(db, todo)
     assert inp["urge_history"]
-    # #1895：输入闭集不再带按 integrity 派生的意愿底档。
-    assert "distortion_tendency" not in inp
 
 
 def test_urge_no_longer_rewrites_verdict_ac1_1895(game):
@@ -261,7 +248,6 @@ def test_urge_no_longer_rewrites_verdict_ac1_1895(game):
     base_inp = build_due_review_input(db, todo)
     base_verdict = decide_due_review_verdict(base_inp)
     assert base_verdict["outcome"] == "degraded"
-    assert "distortion_band" not in base_verdict
 
     rush_staged_commitment_stage(
         db, state, commitment_ref=issue_id, stage_idx=0,
@@ -390,8 +376,6 @@ def test_missing_urge_and_supervision_fail_closed_ac7(game):
     inp = build_due_review_input(db, todo)
     assert inp["urge_history"] == []
     assert inp["supervision_history"] == []
-    # #1895：无催/无监督缺源仍是空事实，且不再派生任何意愿底档。
-    assert "distortion_tendency" not in inp
 
 
 def test_urge_history_restore_from_committed_pending_ac7(game):

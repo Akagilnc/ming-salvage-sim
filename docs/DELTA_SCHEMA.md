@@ -52,7 +52,7 @@
   "secret_order_updates":       [],  // 密令副作用
   "covert_exec_selections":     [],  // #1504 密令带内选态
   "dossier_progress_reports":   [],  // 长差密令逐月密奏（#566 / ADR 0058）
-  "emperor_fate":               null, // "abdicate" | "suicide" | null
+  "emperor_fate":               null, // null 不终局；abdicate/suicide 保留原状态号；其它非空声明（被废、暴毙等）同样终局
 
   // ── relations 模块（#633 / ADR 0082 结算口）──
   "relation_edge_events": [],  // 大臣互动边事件；每项 {施动者, 受动者(单名或名单), 类目, 语境, 来源引用}
@@ -444,7 +444,9 @@ personnel_secret 模块产出；settle 内经 `record_monthly_dossier_progress` 
 
 ### `emperor_fate`
 - 顶层标量，不是 list/dict
-- 三选一：`"abdicate"` / `"suicide"` / `null`
+- `null`（或未声明）不终局
+- `"abdicate"` / `"suicide"` 仍落到 `emperor_abdicate` / `emperor_suicide`
+- 其它非空声明同样进入既有终局链：ASCII 标识落到 `emperor_<声明>`，其余（如 `被废`、`暴毙`）以声明本身为终态。不另设宫变硬门，也不为这些终态预写定调句
 
 ### `relation_edge_events` — 大臣互动边事件（#633 / ADR 0082 结算口）
 - 每项：`{"施动者": str, "受动者": str 或 [str], "类目": 九类之一, "语境": str, "来源引用": "dossier:<id>\|盘面自发"}`

@@ -171,6 +171,29 @@ def denunciation_case_upgraded(
     return False
 
 
+DECLARED_REPORT_ACTION_MARKS = frozenset({
+    ORIGIN_MARK_PRIVATE_GOODS,
+    ORIGIN_MARK_SAME_FACTION_BLIND,
+})
+
+
+def declared_report_action_origin(raw: object, *, base: str) -> str:
+    """月报 origin 只留下人物已经声明的睁眼闭眼或带私货。
+
+    同派／敌派是监督事实，不是行动。未声明、或声明里夹着别的记号，都不写成行动。
+    """
+    text = str(raw or "").strip()
+    if not text:
+        return base
+    if text.startswith("dossier-report:"):
+        _root, parsed = parse_report_origin(text)
+        marks = [mark for mark in parsed if mark in DECLARED_REPORT_ACTION_MARKS]
+        return compose_report_origin(base, marks)
+    parts = [part.strip() for part in text.split(ORIGIN_MARK_SEP) if part.strip()]
+    marks = [part for part in parts if part in DECLARED_REPORT_ACTION_MARKS]
+    return compose_report_origin(base, marks)
+
+
 def compose_report_origin(base: str, marks: Iterable[str] = ()) -> str:
     """结构化 origin：base[+mark...]。base 须已带 dossier-report: 前缀。"""
     cleaned = [str(m).strip() for m in marks if str(m or "").strip()]

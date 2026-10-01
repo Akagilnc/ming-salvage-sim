@@ -9509,14 +9509,33 @@ def _apply_score_extraction_body(
     return report
 
 
-def _resolve_victory(db: GameDB, state: GameState, extracted: Dict[str, object]) -> Dict[str, object]:
-    """结局判定：叙事型（崇祯退位/自尽，extractor 抽 emperor_fate）优先于数值型（京畿失守）。
-    20 年到期（timeout）在 decree 结局收口判，不在此。"""
-    fate = extracted.get("emperor_fate")
-    if fate in ("abdicate", "suicide"):
-        if fate == "abdicate":
-            return {"status": "emperor_abdicate", "summary": "崇祯帝退位逊国，大明皇统中绝。"}
+def _declared_emperor_ending(fate: object) -> Optional[Dict[str, object]]:
+    """模型声明的皇帝终态走既有终局链。退位／自尽保留原状态号与定调。
+
+    其它非空声明（被废、暴毙，以及声明里的其它终态）同样终局，不再被旧的两值枚举丢掉。
+    不定调新句子：总评仍由结局 agent 据邸报来写。
+    """
+    if not isinstance(fate, str):
+        return None
+    token = fate.strip()
+    if not token or token.lower() in {"null", "none"}:
+        return None
+    if token == "abdicate":
+        return {"status": "emperor_abdicate", "summary": "崇祯帝退位逊国，大明皇统中绝。"}
+    if token == "suicide":
         return {"status": "emperor_suicide", "summary": "崇祯帝自尽殉国，煤山一缢，大明社稷俱亡。"}
+    if token.isascii() and token.replace("_", "").isalnum() and not token[0].isdigit():
+        status = token if token.startswith("emperor_") else f"emperor_{token}"
+        return {"status": status, "summary": ""}
+    return {"status": token, "summary": ""}
+
+
+def _resolve_victory(db: GameDB, state: GameState, extracted: Dict[str, object]) -> Dict[str, object]:
+    """结局判定：模型声明的皇帝终态优先于数值型（京畿失守）。
+    20 年到期（timeout）在 decree 结局收口判，不在此。"""
+    declared = _declared_emperor_ending(extracted.get("emperor_fate"))
+    if declared is not None:
+        return declared
     return victory_status(db, state)
 
 
