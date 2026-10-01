@@ -45,7 +45,11 @@ def _fresh_temp_dir(prefix: str) -> str:
 
 
 def _drop_temp_dir(directory: str) -> None:
-    shutil.rmtree(directory, ignore_errors=True)
+    """删夹具私有临时目录；失败响亮上抛（ADR 0005：不 ignore_errors 洗白）。
+
+    目录由 _fresh_temp_dir 建、由本函数拥有——残留即真因，不得静默吞掉。
+    """
+    shutil.rmtree(directory)
 
 
 def _seed_opening_db(path: str, content) -> None:

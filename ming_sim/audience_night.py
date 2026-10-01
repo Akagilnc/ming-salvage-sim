@@ -1222,7 +1222,6 @@ def close_night(
     on_closing: Optional[Callable[[], None]] = None,
     llm_config: Any = None,
     write_gate: Any = None,
-    endorsement_extractor_agent: Any = None,
     translate_fn: Any = None,
     write_queue: Any = None,
 ) -> Dict[str, Any]:
@@ -1238,8 +1237,7 @@ def close_night(
     3. 短写持 write_gate：终局效果、明发、CLOSED。
 
     待补转译失败不阻断收夜：该轮保持待补（status/diagnostic 仍可查），由 #1846
-    玩家重试或过月 join 承接，同次收夜不再自动调模型。成功前不得判官/明发/
-    终局效果/CLOSED。
+    玩家重试或过月 join 承接，同次收夜不再自动调模型。
     """
     # #1353 r7：共享 conn 读一律短持 runtime gate（禁闸外裸 SELECT）。
     gate = _gate_cm(write_gate)
@@ -1367,13 +1365,12 @@ def auto_close_open_night(
     crash_after_step: Optional[int] = None,
     llm_config: Any = None,
     write_gate: Any = None,
-    endorsement_extractor_agent: Any = None,
     on_closing: Optional[Callable[[], None]] = None,
 ) -> Optional[Dict[str, Any]]:
     """颁诏/过回合前：有开夜则顺势收夜；无开夜返回 None。
 
-    write_gate 应为真实 runtime Lock（或 CLI 下 None）；close_night 只在短写阶段持锁，
-    endorsement LLM 期间释放。调用方不得在外层持同一把非重入锁再传入 nullcontext。
+    write_gate 应为真实 runtime Lock（或 CLI 下 None）；close_night 只在短写阶段持锁。
+    调用方不得在外层持同一把非重入锁再传入 nullcontext。
     """
     with _gate_cm(write_gate):
         open_n = get_open_night(db)
@@ -1387,7 +1384,6 @@ def auto_close_open_night(
         crash_after_step=crash_after_step,
         llm_config=llm_config,
         write_gate=write_gate,
-        endorsement_extractor_agent=endorsement_extractor_agent,
         on_closing=on_closing,
     )
 
