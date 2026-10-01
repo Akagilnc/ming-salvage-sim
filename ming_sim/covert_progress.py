@@ -620,14 +620,15 @@ def player_facing_secret_order_close_text(
     order: Mapping[str, object],
     reports: Sequence[Mapping[str, object]],
 ) -> str:
-    existing = str(order.get("result") or "").strip()
-    if existing:
+    """结案给玩家的字就是账上的字。空白只用来判断有没有正文。"""
+    existing = str(order.get("result") or "")
+    if existing.strip():
         return existing
     for item in reversed(list(reports or [])):
         if not isinstance(item, Mapping):
             continue
-        text = str(item.get("memorial_text") or "").strip()
-        if text:
+        text = str(item.get("memorial_text") or "")
+        if text.strip():
             return text
     return ""
 
@@ -1362,6 +1363,7 @@ def apply_investigation_monthly_effort(
         }
 
     mastered_now: List[str] = []
+    applied_amount = 0.0
     for lane in lanes:
         key = str(lane["fact_key"])
         if key != bound:
@@ -1370,20 +1372,17 @@ def apply_investigation_monthly_effort(
             db, target=target, fact_key=key, investigator=investigator,
         )
         lane["difficulty"] = difficulty
-        # 毁证只看 spoiled 账。能力为零的 inf 仍入账，effort >= inf 为假所以不掌握。
-        if investigation_fact_is_gone(db, target, key):
-            _write_fact_lanes(db, dossier_id, lanes, commit=commit)
-            return {
-                "bound_fact_key": key, "effort_applied": 0.0, "mastered": [],
-                "units": 0.0, "dropped_fact_key": key,
-            }
-        lane["effort"] = float(lane.get("effort") or 0.0) + amount
-        lane["months"] = int(lane.get("months") or 0) + 1
-        # 掌握证据 ≠ 已经依法清算 ≠ 自动翻轴：只落 mastered，不写依律/翻轴。
-        if not lane.get("mastered") and float(lane["effort"]) >= float(difficulty):
-            lane["mastered"] = True
-        if lane.get("mastered"):
-            mastered_now.append(key)
+        # 毁证只看 spoiled 账：已毁事实不再投入。能力为零的 inf 仍入账，
+        # effort >= inf 为假所以不掌握。早退会跳过后面的独立来源消费。
+        if not investigation_fact_is_gone(db, target, key):
+            lane["effort"] = float(lane.get("effort") or 0.0) + amount
+            lane["months"] = int(lane.get("months") or 0) + 1
+            applied_amount = amount
+            # 掌握证据 ≠ 已经依法清算 ≠ 自动翻轴：只落 mastered，不写依律/翻轴。
+            if not lane.get("mastered") and float(lane["effort"]) >= float(difficulty):
+                lane["mastered"] = True
+            if lane.get("mastered"):
+                mastered_now.append(key)
         break
     credited = _consume_monthly_clues(
         db, dossier_id, target, investigator, lanes,
@@ -1392,7 +1391,7 @@ def apply_investigation_monthly_effort(
     _write_fact_lanes(db, dossier_id, lanes, commit=commit)
     return {
         "bound_fact_key": bound,
-        "effort_applied": amount,
+        "effort_applied": applied_amount,
         "declared_intensity": declared,
         "capacity": capacity,
         "clue_credited": credited,

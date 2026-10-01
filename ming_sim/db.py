@@ -11937,10 +11937,10 @@ class GameDB:
         """
         dossier = self.get_decree_dossier(int(dossier_id))
         band = str(progress_band or "").strip()
-        text = str(memorial_text or "").strip()
+        text = str(memorial_text or "")
         if dossier is None:
             raise ValueError("案卷不存在")
-        if not band or not text:
+        if not band or not text.strip():
             raise ValueError("进展档和密奏均不能为空")
         origin_norm = self._normalize_dossier_report_origin(
             origin, is_terminal=bool(is_terminal),
@@ -12117,8 +12117,8 @@ class GameDB:
             except (TypeError, ValueError) as exc:
                 raise ValueError("长差月报案卷编号无效") from exc
             band = str(item.get("progress_band") or "").strip()
-            text = str(item.get("memorial_text") or "").strip()
-            if dossier_id not in candidates or dossier_id in supplied or not band or not text:
+            text = str(item.get("memorial_text") or "")
+            if dossier_id not in candidates or dossier_id in supplied or not band or not text.strip():
                 raise ValueError("长差月报存在未知、重复或空白条目")
             supplied[dossier_id] = item
         if set(supplied) != set(candidates):
@@ -12145,7 +12145,7 @@ class GameDB:
             origin = self.compose_supervision_report_origin(int(dossier_id), int(turn))
             self.record_dossier_progress(
                 dossier_id, int(turn), str(item["progress_band"]).strip(),
-                str(item["memorial_text"]).strip(),
+                str(item.get("memorial_text") or ""),
                 origin=origin,
                 commit=False,
             )
@@ -13190,10 +13190,8 @@ class GameDB:
                 continue
             # 仅 canonical / ITEM_FIELD_ALIASES 背书键（检举人/被检举人→*_name）
             accuser = str(raw.get("accuser_name") or "").strip()
-            memorial = str(
-                raw.get("memorial_text") or raw.get("body") or ""
-            ).strip()
-            if not accuser or not memorial:
+            memorial = str(raw.get("memorial_text") or raw.get("body") or "")
+            if not accuser or not memorial.strip():
                 continue
             try:
                 dossier_id = int(
@@ -21839,11 +21837,11 @@ class GameDB:
                 if has_progress_chain and close_text.strip():
                     last_memorial = ""
                     for item in reversed(reports):
-                        text = str(item.get("memorial_text") or "").strip()
-                        if text:
+                        text = str(item.get("memorial_text") or "")
+                        if text.strip():
                             last_memorial = text
                             break
-                    if close_text.strip() != last_memorial:
+                    if close_text != last_memorial:
                         self.record_dossier_progress(
                             int(dossier["id"]), int(turn_closed), "结案",
                             close_text, is_terminal=True, commit=False,
@@ -21893,7 +21891,8 @@ class GameDB:
         turn_row = self.conn.execute("SELECT turn FROM game_state WHERE id=1").fetchone()
         current_turn = int(turn_row["turn"]) if turn_row is not None else int(row["turn_issued"] or 0)
         stamp = f"〔{period_label(year, period)}〕[提交核议] "
-        note = (claim or "").strip()
+        raw_claim = str(claim or "")
+        note = raw_claim if raw_claim.strip() else ""
         prev = self.conn.execute(
             "SELECT result FROM secret_orders WHERE id = ?", (int(order_id),)
         ).fetchone()["result"] or ""
@@ -21942,7 +21941,8 @@ class GameDB:
         if reject_if_same_period and any(ln.startswith(stamp) for ln in lines):
             return False  # 本回合已推过一步，拒
         lines = [ln for ln in lines if not ln.startswith(stamp)]  # 去掉当月旧行
-        lines.append(f"{stamp}{note.strip()}")
+        body = str(note or "")
+        lines.append(f"{stamp}{body if body.strip() else ''}")
         # 按〔年月〕戳排序，保证时间线顺序（同月替换后不致错位）
         def _stamp_key(ln: str):
             import re as _re

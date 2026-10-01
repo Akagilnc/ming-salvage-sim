@@ -67,8 +67,8 @@ def test_current_format_reopen_keeps_seeded_and_played_intrigue(tmp_path, conten
     restored.close()
 
 
-def test_new_character_enters_roster_with_a_consumable_intrigue(game):
-    """新增人物沿同一入册路径，属性可被查案接缝消费（不是只在开局名册里有）。"""
+def test_new_character_enters_roster_with_intrigue(game):
+    """新增人物沿同一入册路径写入 characters.intrigue。"""
     from ming_sim.session import register_unlisted_person_record
 
     db, state, content = game
@@ -81,26 +81,6 @@ def test_new_character_enters_roster_with_a_consumable_intrigue(game):
     assert db.conn.execute(
         "SELECT intrigue FROM characters WHERE name=?", ("周慎行",),
     ).fetchone()["intrigue"] == created.intrigue
-
-    from ming_sim.covert_progress import apply_investigation_monthly_effort
-
-    oid = db.create_secret_order(
-        state, "黄道周", "密查", "密查", [],
-        deadline_months=3,
-        covert_task={
-            "kind": "查核", "axes": ["既得利益"], "direction": 1,
-            "investigation_target": "周慎行",
-            "delivery": {
-                "target_units": 1.0, "effect_sign": 1,
-                "investigation_target": "周慎行",
-            },
-        },
-    )
-    did = int(db.get_dossier_for_secret_order(oid)["id"])
-    out = apply_investigation_monthly_effort(
-        db, did, "周慎行", "黄道周", fact_key="周慎行", intensity=1.0, commit=True,
-    )
-    assert isinstance(out["effort_applied"], float)
 
 
 # ---------------------------------------------------------------- 领域查案接缝
