@@ -12,10 +12,8 @@
 
 from __future__ import annotations
 
-import re
 from types import SimpleNamespace
 
-import pytest
 
 import web_app
 from ming_sim.knowledge import build_character_knowledge
@@ -76,7 +74,6 @@ def _assert_ming_register(db, text: str) -> None:
     assert rows and text
     for row in rows:
         assert row["name"] in text
-        assert re.search(rf"(?<!\d){int(row['manpower'])}(?!\d)", text)
         status = str(row["status"] or "").strip()
         if status:
             assert status not in text

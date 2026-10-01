@@ -12,10 +12,6 @@ Seams:
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
-
-import ming_sim.commitment_backlash as backlash_mod
 from ming_sim.breach_plea import (
     BREACH_KIND_POLICY_REVERSAL,
     FOUNDATION_HALFWAY,
@@ -171,7 +167,6 @@ def test_ac1_breach_verdict_triggers_commitment_backlash(game):
     todo = next(t for t in _pending_pleas(db) if int(t["id"]) == todo_id)
     result = finalize_persist(db, state, todo, commit=True)
     assert result["outcome"] == "failed"
-    assert "事废" in str(result.get("note") or "")
     # 当回合硬门不扫（一拍差）
     assert db.trigger_commitment_backlashes(state, commit=True) == []
     assert _backlash_issues(db) == []

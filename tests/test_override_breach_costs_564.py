@@ -335,7 +335,7 @@ def test_legacy_persisted_reaction_severity_migrates_narrowly_and_idempotently(g
     try:
         json.loads(malformed_payload)
     except ValueError as exc:
-        expected_exc = str(exc)
+        expected_exc = type(exc)
 
     db.conn.commit()
     path = db.path
@@ -359,10 +359,12 @@ def test_legacy_persisted_reaction_severity_migrates_narrowly_and_idempotently(g
             (malformed_id,),
         ).fetchone()[0]
         assert leftover == malformed_payload
-        warning = caplog.text
-        assert "decree_dossier_decisions" in warning
-        assert str(malformed_id) in warning
-        assert expected_exc in warning
+        assert any(
+            isinstance(record.args, tuple)
+            and record.args[:2] == ("decree_dossier_decisions", malformed_id)
+            and isinstance(record.args[2], expected_exc)
+            for record in caplog.records
+        )
     finally:
         reopened.close()
 

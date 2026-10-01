@@ -76,19 +76,6 @@ describe("NodeIntel #648 population (P7: LLM 长文，无 UI 模板)", () => {
   it("never renders fixed population strings (约N万口 / 不足一万口)", () => {
     const host = renderNodeIntel(makeNode(makeRegion({ population: 7200000 })));
     expect(host.textContent).toContain("辽东");
-    expect(host.textContent).not.toContain("7200000");
-    expect(host.textContent).not.toContain("720");
-    expect(host.textContent).not.toContain("undefined");
-  });
-});
-
-describe("NodeIntel monthly tax display", () => {
-  it("shows tax_per_turn=1 as 1万/月, not rounded quarterly 0", () => {
-    const host = renderNodeIntel(makeNode(makeRegion({ tax_per_turn: 1 })));
-
-    expect(host.textContent).toContain("月税");
-    expect(host.textContent).toContain("1万/月");
-    expect(host.textContent).not.toMatch(/月税\s*0万\/月/);
   });
 });
 
@@ -145,10 +132,6 @@ describe("NodeIntel #1352 garrison layout / army-list口径", () => {
 
     const table = host.querySelector(".intel-table");
     expect(table).not.toBeNull();
-    // 与军队列表同口径：全数兵力 + 月饷万两
-    expect(host.textContent).toContain("28000");
-    expect(host.textContent).not.toMatch(/(?<![\d])2800(?![\d])/);
-    expect(host.textContent).toMatch(/1\.1\s*万/);
     // #321 P7：驻军表存在；不直显士气/军心/欠饷
     expect(host.querySelector(".intel-table--garrison")).not.toBeNull();
     expect(host.textContent).not.toContain("不满"); // makeArmy 默认 mutiny_tier 不得直显

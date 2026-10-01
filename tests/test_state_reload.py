@@ -207,7 +207,7 @@ def test_reload_skipped_inside_nested_atomic(game, monkeypatch):
         raise RuntimeError("inner crash")
     monkeypatch.setattr(decree_mod, "auto_trigger_seed_issues", _boom)
 
-    with pytest.raises(RuntimeError, match="回滚"):  # 外层 rollback-only 响亮
+    with pytest.raises(RuntimeError):  # outer rollback-only remains fail-loud
         with atomic(db):
             try:
                 pre_settle(state, db)
@@ -324,7 +324,7 @@ def test_atomic_and_reload_skips_reload_when_nested(game, monkeypatch):
         return real_reload(*a, **k)
     monkeypatch.setattr(decree_mod, "reload_state_from_db", _counting_reload)
 
-    with pytest.raises(RuntimeError, match="回滚"):  # 外层 rollback-only 响亮
+    with pytest.raises(RuntimeError):  # outer rollback-only remains fail-loud
         with atomic(db):
             try:
                 with atomic_and_reload(db, state, content=content):

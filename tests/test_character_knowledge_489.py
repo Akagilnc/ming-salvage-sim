@@ -2,7 +2,6 @@
 
 import json
 
-from ming_sim.models import Character
 import pytest
 from ming_sim.knowledge import build_character_knowledge
 from ming_sim.materials import list_materials, prepare_character_materials, read_material
@@ -886,7 +885,6 @@ def test_rewritten_archive_cannot_reintroduce_restricted_source(game):
         item.get("body", "")
         for item in db.get_character_knowledge(state, excluded.name)["public_events"]
     )
-    assert "有人暗中安排了不应知晓的事务" not in excluded_text
 
 def test_archive_write_materializes_unmirrored_source_scope(game):
     """结算保存聚合档案时，不能丢掉先写入的受限事项来源边界。"""

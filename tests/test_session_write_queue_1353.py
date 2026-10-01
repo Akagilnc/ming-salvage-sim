@@ -474,17 +474,20 @@ def test_write_turn_still_blocks_on_open_barrier():
 
 
 def test_no_elapsed_timeout_api_on_barrier():
-    """队列层已删 elapsed 熔断分类：barrier/wait_prior/run 无 timeout_s 形参。"""
-    import inspect
-
-    import ming_sim.session_write_queue as swq
-
+    """The public queue API rejects the retired timeout option."""
     q = SessionWriteQueue()
-    assert "timeout_s" not in inspect.signature(q.barrier).parameters
-    assert "timeout_s" not in inspect.signature(q.wait_prior).parameters
-    assert "timeout_s" not in inspect.signature(q.run).parameters
-    assert "timeout_s" not in inspect.signature(q.ticketed_gate).parameters
-    assert not hasattr(swq, "TicketBarrierTimeout")
+    ticket = q.claim()
+    try:
+        with pytest.raises(TypeError):
+            q.barrier(lambda: None, timeout_s=0)
+        with pytest.raises(TypeError):
+            q.wait_prior(ticket, timeout_s=0)
+        with pytest.raises(TypeError):
+            q.run(ticket, lambda: None, timeout_s=0)
+        with pytest.raises(TypeError):
+            q.ticketed_gate(ticket, timeout_s=0)
+    finally:
+        q.complete(ticket)
 
 
 def test_get_session_write_queue_wiring_fail_loud_no_broad_swallow():

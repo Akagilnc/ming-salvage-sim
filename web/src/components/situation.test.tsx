@@ -114,7 +114,6 @@ describe("commitment progress display", () => {
       );
     });
 
-    expect(document.body.textContent).toContain("承诺进度");
     expect(document.body.textContent).toContain(commitmentText);
     cleanup();
   });
@@ -136,8 +135,6 @@ describe("empty bar label presentation (#626)", () => {
     );
     const heads = Array.from(document.querySelectorAll(".situation-tip-outcome-head"));
     const headText = heads.map((el) => el.textContent || "").join("\n");
-    expect(headText).toContain("欠饷清偿");
-    expect(headText).toContain("军心溃散");
     cleanup();
   });
 

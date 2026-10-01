@@ -358,7 +358,7 @@ def test_inquiry_declaration_preserves_assignment_in_attendant_materials(game, m
     assert not any(e["source_id"] in {r["source_id"] for r in sources}
                    for e in db.get_character_knowledge(state, other)["events"])
     from ming_sim.audience_night import summon_enter
-    from ming_sim.materials import prepare_scene_materials, release_material_tree
+    from ming_sim.materials import list_materials, prepare_scene_materials, release_material_tree
     # A fresh night must make this report readable, not merely list a carrier.
     _close_offline(db, state, content, int(open_night(db, state)["id"]))
     night = open_night(db, state)
@@ -367,7 +367,7 @@ def test_inquiry_declaration_preserves_assignment_in_attendant_materials(game, m
     try:
         from pathlib import Path
         carrier = f"人物/{attendant.name}/经历.txt"
-        assert carrier in prepared.index_lines
+        assert carrier in list_materials(prepared.root)
         experience = (Path(prepared.root) / carrier).read_text(encoding="utf-8")
         assert all(event["body"] in experience for event in report_events)
     finally:

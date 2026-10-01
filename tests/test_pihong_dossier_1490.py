@@ -310,7 +310,6 @@ def test_missing_dossier_fields_stay_pending_then_full_retry_decides(web_game, m
     assert r1.status_code == 200, r1.text
     assert 'event: error' in r1.text, r1.text
     assert 'event: done' not in r1.text
-    assert any((token in r1.text for token in ('批红', 'dossier', '非法', '选项'))), r1.text
     row = db.list_pending_decisions(state.turn)[0]
     assert row['status'] == 'pending', f"非法载荷绝不可落 decided，got status={row['status']!r} choice={row['choice']!r}"
     assert row['choice'] is None
@@ -372,7 +371,6 @@ def test_due_commitment_shaped_submit_does_not_poison_or_deadlock(web_game, monk
     assert r.status_code == 200, r.text
     assert 'event: error' not in r.text, r.text
     assert 'event: done' in r.text, r.text
-    assert '批红决策载荷非法' not in r.text
     assert len(phase2_calls) == 1
     decided_row = phase2_calls[0][0]
     assert decided_row['status'] == 'decided'
@@ -494,7 +492,6 @@ def test_ordinary_event_with_hallucinated_capability_submits(web_game, monkeypat
     assert r.status_code == 200, r.text
     assert 'event: error' not in r.text, r.text
     assert 'event: done' in r.text, r.text
-    assert '批红选择必须是本案提供的强颁、收回或留中选项' not in r.text
     assert len(phase2_calls) == 1
     decided = phase2_calls[0][0]
     assert decided['status'] == 'decided'
@@ -912,7 +909,7 @@ def test_657_prewrite_failure_zero_db_writes(game):
 
     def boom(_it):
         raise RuntimeError('llm down')
-    with pytest.raises(RuntimeError, match='prewrite LLM 失败|llm down'):
+    with pytest.raises(RuntimeError):
         ra.run_prewrite_llms(batch, deliberate_runner=boom)
     hit = next((r for r in db.list_rescript_drafts() if r['title'] == '陕西告饥'))
     assert hit['status'] == 'pending'

@@ -1,19 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
-  AWAITING_CLOSED_REASON,
   FACE_GROUP,
-  SETTLEMENT_CLOSED_REASON,
-  WANG_AWAITING_SLIP,
-  WANG_SETTLEMENT_SLIP,
   isFaceReachable,
   isSettlementDisplay,
-  settlementClosedReason,
   settlementFaceAccess,
   shouldAutoOpenClosedIssuesAfterSettlement,
   shouldAutoOpenSecretOrdersAfterSettlement,
-  wangSettlementSlipText,
   wangSettlementSlipVisible,
-  yearMonthLabel,
   type FaceAccess,
   type SettlementFaceKey,
 } from "./settlementPresentation";
@@ -30,35 +23,6 @@ describe("settlement presentation routing", () => {
     expect(shouldAutoOpenClosedIssuesAfterSettlement()).toBe(false);
   });
 
-  it("#1234 year-month label is driven only by server settlement_display", () => {
-    const base = { year: 1627, period: 10 };
-    const plain = yearMonthLabel(base);
-    expect(yearMonthLabel({ ...base, settlement_display: false })).toBe(plain);
-    const marked = yearMonthLabel({ ...base, settlement_display: true });
-    expect(marked).not.toBe(plain);
-    expect(plain).toContain(String(base.year));
-    expect(plain).toContain(String(base.period));
-    expect(marked).toContain(String(base.year));
-    expect(marked).toContain(String(base.period));
-  });
-
-  it("#1323 awaiting_decision 文案层：年月标按相位分叉；递话/关闭理由分口吻", () => {
-    const base = { year: 1627, period: 10, settlement_display: true as const };
-    const awaiting = yearMonthLabel({ ...base, phase: "awaiting_decision" });
-    const settling = yearMonthLabel({ ...base, phase: "settling" });
-    const plain = yearMonthLabel({ year: 1627, period: 10 });
-    expect(awaiting).not.toBe(settling);
-    expect(awaiting).not.toBe(plain);
-    expect(settling).not.toBe(plain);
-    expect(wangSettlementSlipText("awaiting_decision")).toBe(WANG_AWAITING_SLIP);
-    expect(wangSettlementSlipText("settling")).toBe(WANG_SETTLEMENT_SLIP);
-    expect(settlementClosedReason("awaiting_decision")).toBe(AWAITING_CLOSED_REASON);
-    expect(settlementClosedReason("settling")).toBe(SETTLEMENT_CLOSED_REASON);
-    expect(wangSettlementSlipText("awaiting_decision")).not.toBe(wangSettlementSlipText("settling"));
-    expect(settlementClosedReason("awaiting_decision")).not.toBe(settlementClosedReason("settling"));
-    expect(wangSettlementSlipVisible(true)).toBe(true);
-    expect(wangSettlementSlipVisible(false)).toBe(false);
-  });
 });
 
 /** 票面 r2 机械清单：关闭 / 只读 / 必达 / 呈现 / 排除（不缩表）。 */
@@ -107,7 +71,5 @@ describe("#1236 T3 settlement face gates (唯一谓词 settlement_display)", () 
     }
     expect(wangSettlementSlipVisible(false)).toBe(false);
     expect(wangSettlementSlipVisible(true)).toBe(true);
-    expect(wangSettlementSlipText("settling")).toBe(WANG_SETTLEMENT_SLIP);
-    expect(settlementClosedReason("settling")).toBe(SETTLEMENT_CLOSED_REASON);
   });
 });

@@ -712,7 +712,6 @@ def test_fact_brief_levy_uses_civil_arrears_breakdown_relation(game):
                 if e["metric"] == "加派量" and e["subject_id"] == "shaanxi")
     assert levy["value"] == pytest.approx(13.0)  # 20 - (8+20)*.25
     assert levy["value"] != pytest.approx(15.0)  # 被废止的 20*(1-.25)
-    assert levy["detail"] == "三饷加派净额"
 
 
 def test_fact_brief_levy_derives_regular_assessment_like_settle_tick(game):

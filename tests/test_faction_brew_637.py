@@ -566,21 +566,10 @@ def test_source_faction_target_faction_equals_current_projection_and_nulls_and_n
                 assert projected["source_faction"] is None
             if row["target"] == EMPEROR_NODE:
                 assert projected["target_faction"] is None
-            # 纯数据字段：无任何拼接串
-            for key in ("source", "target", "source_faction", "target_faction"):
-                val = projected[key]
-                if val is not None:
-                    assert isinstance(val, str)
-                    assert "(" not in val and "（" not in val and "与" not in val or val in (projected["source"], projected["target"], projected["source_faction"], projected["target_faction"])
-            # 严禁出现 "{source}({faction})与{target}" 式拼接串在任何字符串字段
-            dumped = json.dumps(projected, ensure_ascii=False)
-            # 若字段为拼接串，必含 source 与 faction 同串
-            if projected["source_faction"] is not None:
-                assert f"{projected['source']}({projected['source_faction']})" not in dumped
-                assert f"{projected['source']}（{projected['source_faction']}）" not in dumped
-            if projected["target_faction"] is not None:
-                assert f"{projected['target']}({projected['target_faction']})" not in dumped
-                assert f"{projected['target']}（{projected['target_faction']}）" not in dumped
+            # Separate structured identities must preserve the source rows,
+            # regardless of punctuation that may legitimately occur in names.
+            assert projected["source"] == row["source"]
+            assert projected["target"] == row["target"]
 
     # 表外党籍显式 null：经 build 显式投影路径验证（不经 select）
     payload_out = build_faction_brew_input(

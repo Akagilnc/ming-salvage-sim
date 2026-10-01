@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 import sqlite3
-import threading
 
 import pytest
 
@@ -419,7 +418,7 @@ def test_decree_continuation_survives_llm_exhaustion_then_retries(game, monkeypa
         raised = None
     except RuntimeError as exc:
         raised = exc
-    assert raised is not None and "模型调用耗尽" in str(raised)
+    assert isinstance(raised, RuntimeError)
     assert db.staged_declarations.questions_for(ref), (
         "续推失败后 questions 已清，恢复将无法再续推"
     )
@@ -828,7 +827,7 @@ def test_question_note_only_is_kept_and_other_decisions_still_require_label(
         rejected = None
     except ValueError as exc:
         rejected = exc
-    assert rejected is not None and "选项不在当前 options" in str(rejected)
+    assert isinstance(rejected, ValueError)
     assert db.staged_declarations.questions_for(ref)
     assert session.pending_decisions()[0]["status"] == "pending"
 
@@ -863,7 +862,7 @@ def test_question_note_only_is_kept_and_other_decisions_still_require_label(
         ordinary_rejected = None
     except ValueError as exc:
         ordinary_rejected = exc
-    assert ordinary_rejected is not None and "选项不在当前 options" in str(ordinary_rejected)
+    assert isinstance(ordinary_rejected, ValueError)
     assert session.pending_decisions()[0]["status"] == "pending"
 
 
@@ -1877,16 +1876,15 @@ def test_build_secret_orders_supply_feed_uses_fact_materials_not_assembled_effec
     )
     assert str(feed.get("board") or "").strip()
 
-    from ming_sim.materials import prepare_world_materials, release_material_tree
+    from ming_sim.materials import list_materials, prepare_world_materials, release_material_tree
     prepared = prepare_world_materials(db, state)
     try:
-        listing = "\n".join(prepared.index_lines)
         bodies = []
-        for rel in prepared.index_lines:
+        for rel in list_materials(prepared.root):
             path = prepared.root / rel
             if path.is_file():
                 bodies.append(path.read_text(encoding="utf-8"))
-        assert fact_body in "\n".join(bodies), listing
+        assert fact_body in "\n".join(bodies)
     finally:
         release_material_tree(prepared.root)
 

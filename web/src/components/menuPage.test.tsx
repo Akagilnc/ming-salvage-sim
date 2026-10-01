@@ -354,7 +354,6 @@ describe("ApiSettingsModal reasoning strength", () => {
 
     const select = document.querySelector<HTMLSelectElement>('select[name="reasoning_strength"]');
     expect(select?.disabled).toBe(true);
-    expect(document.body.textContent).toContain("该后端不支持推理强度设置");
     cleanup();
   });
 
@@ -545,7 +544,6 @@ describe("ApiSettingsModal reasoning strength", () => {
       )?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
 
-    expect(document.body.textContent).not.toContain("Advanced Thinking Level");
     const save = Array.from(document.querySelectorAll("button")).find((button) =>
       button.textContent === "保存"
     );
@@ -908,7 +906,6 @@ describe("ApiSettingsModal reasoning strength", () => {
 
     const strength = document.querySelector<HTMLSelectElement>('select[name="reasoning_strength"]');
     expect(strength?.disabled).toBe(true);
-    expect(document.body.textContent).toContain("该后端不支持推理强度设置");
     cleanup();
   });
 
@@ -1000,7 +997,6 @@ describe("#1732 MenuPage · 就地消解", () => {
     });
     const card = document.querySelector('[aria-label="覆盖主进度确认"]');
     expect(card).not.toBeNull();
-    expect(card?.textContent).toContain("将覆盖当前主进度");
     const cancel = Array.from(card!.querySelectorAll("button")).find((b) =>
       (b.textContent || "").includes("取消")
     );

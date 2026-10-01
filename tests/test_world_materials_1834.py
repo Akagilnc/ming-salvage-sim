@@ -52,24 +52,13 @@ def test_prepare_writes_typed_tree_with_board_affairs_and_gazette_index(game, tm
     assert any(p.startswith("邸报/") for p in names)
 
     index = read_material(prepared.root, "INDEX.txt")
-    listed = set(names)
-    for line in index.splitlines():
-        stripped = line.strip()
-        if not stripped:
-            continue
-        assert stripped in listed or any(
-            stripped.startswith(rel + " ") for rel in listed
-        )
-    for rel in listed:
+    for rel in names:
         if rel != "INDEX.txt":
+            assert rel in index
             assert read_material(prepared.root, rel)
-    gazette_rel = f"邸报/{past_year}年{past_period}月.txt"
-    gazette_line = next(
-        line for line in index.splitlines()
-        if line.strip() == gazette_rel or line.strip().startswith(gazette_rel + " ")
-    )
-    assert "辽东告急" in gazette_line
-    assert "历月邸报正文" not in gazette_line
+    assert f"邸报/{past_year}年{past_period}月.txt" in names
+    assert "辽东告急" in index
+    assert "历月邸报正文" not in index
 
     # 无裸副本：不得直接倒出世界库/JSON。
     assert not any(n.lower().endswith((".db", ".sqlite", ".sqlite3", ".json")) for n in names)
@@ -237,13 +226,11 @@ def test_world_materials_include_textual_facts_once_and_gazette_not_duplicated(g
 
     prepared = prepare_world_materials(db, state, dest_root=tmp_path / "world-facts")
     names = list_materials(prepared.root)
-    index_lines = {
-        line.strip() for line in read_material(prepared.root, "INDEX.txt").splitlines() if line.strip()
-    }
+    index = read_material(prepared.root, "INDEX.txt")
     fact_paths = [p for p in names if p.startswith("事实/")]
     assert any(p.startswith("事实/character-") for p in fact_paths)
     assert any(p.startswith("事实/region-") for p in fact_paths)
-    assert set(fact_paths) <= index_lines
+    assert all(path in index for path in fact_paths)
     # typed store still reachable for the written subjects
     assert db.textual_facts.readable_materials(subject_kind="character", subject_id=name)
     assert db.textual_facts.readable_materials(
@@ -253,13 +240,13 @@ def test_world_materials_include_textual_facts_once_and_gazette_not_duplicated(g
     assert not any(p.startswith("事实/affair-") for p in names)
     affair_paths = [p for p in names if p.startswith(f"事务/affair-{affair.id}-")]
     assert len([p for p in affair_paths if p.endswith("/当前情况.txt")]) == 1
-    assert set(affair_paths) <= index_lines
+    assert all(path in index for path in affair_paths)
 
     gazette_paths = [p for p in names if p.startswith("邸报/")]
     assert gazette_paths
-    assert set(gazette_paths) <= index_lines
+    assert all(path in index for path in gazette_paths)
     assert expected_public_rel in names
-    assert expected_public_rel in index_lines
+    assert expected_public_rel in index
     # 邸报 stays a top-level carrier; public layer does not grow gazette path twins.
     assert not any(p.startswith("公开说法/邸报/") for p in names)
     # _is_gazette_public_event 必须把 turn_report 挡出 公开说法/：gate 在场时

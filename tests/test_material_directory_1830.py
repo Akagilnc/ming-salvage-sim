@@ -7,21 +7,12 @@ list_materials/read_material (API), CLI cwd/readonly flags, restore rebuild.
 from __future__ import annotations
 
 import json
-import re
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
 
 import pytest
 from tests.dossier_test_helpers import create_test_secret_order
 
-from ming_sim.audience_night import (
-    AUDIBILITY_PUBLIC,
-    append_ledger_entry,
-    close_night,
-    open_night,
-    summon_enter,
-)
 from ming_sim.materials import (
     MaterialsRoot,
     _handled_affair_lines,
@@ -31,11 +22,8 @@ from ming_sim.materials import (
     material_tools,
     prepare_character_materials,
     read_material,
-    release_material_tree,
 )
-from ming_sim.models import CourtContext, LLMConfig
-from ming_sim.registry import create_scene_agent
-from ming_sim.session import GameSession
+from ming_sim.models import CourtContext
 
 
 def _active_minister(db, content, *, office_type=None):
@@ -75,19 +63,10 @@ def test_prepare_writes_typed_tree_and_index(game, tmp_path):
     assert any(p.startswith("荐人/") for p in names)
     assert any(p.startswith("事实/") for p in names)
     index = read_material(prepared.root, "INDEX.txt")
-    assert "人物/朝臣名册.txt" in index.splitlines()
-    assert any(line.startswith("密令/") for line in index.splitlines())
-    assert any(line.startswith("荐人/") for line in index.splitlines())
-    assert any(line.startswith("事实/") for line in index.splitlines())
-    listed = set(names)
-    for line in index.splitlines():
-        stripped = line.strip()
-        if not stripped:
-            continue
-        if stripped in listed:
-            assert read_material(prepared.root, stripped)
-        else:
-            assert any(stripped.startswith(rel + " ") for rel in listed)
+    for rel in names:
+        if rel != "INDEX.txt":
+            assert rel in index
+            assert read_material(prepared.root, rel)
     roster = read_material(prepared.root, "人物/朝臣名册.txt")
     status, _reason = db.get_character_status(character.name)
     assert character.name in roster
@@ -143,20 +122,7 @@ def test_material_tree_contains_only_structurally_related_world_details(game, tm
     region_paths = [path for path in names if path.startswith("地区/")]
     army_paths = [path for path in names if path.startswith("军队/")]
     assert len(region_paths) == 1 and len(army_paths) == 1
-    region_text = read_material(prepared.root, region_paths[0])
-    army_text = read_material(prepared.root, army_paths[0])
-    region_name = db.conn.execute(
-        "SELECT name FROM regions WHERE id=?", ("shaanxi",),
-    ).fetchone()["name"]
-    assert region_name in region_text and army["name"] in army_text
 
-    def _bare(score: int):
-        return re.compile(rf"(?<!\d){score}(?!\d)")
-
-    for score in (13, 87):
-        assert _bare(score).search(region_text) is None
-    for score in (17, 23, 31, 44, 52):
-        assert _bare(score).search(army_text) is None
 
 
 def _agent_with_materials(root: Path, *, with_cli_cwd: bool):
@@ -192,7 +158,7 @@ def test_opening_handled_matters_are_filtered_within_authorized_knowledge(game, 
         db.get_character_knowledge = original_get
     assert current_office in prepared.opening
     assert character.office not in prepared.opening
-    issue_paths = {line for line in prepared.index_lines if line.startswith("事务/issue-")}
+    issue_paths = {path for path in list_materials(prepared.root) if path.startswith("事务/issue-")}
     assert issue_paths == {
         "事务/issue-101/当前情况.txt", "事务/issue-102/当前情况.txt",
     }
@@ -300,15 +266,10 @@ def test_character_materials_exclude_legacy_raw_turn_report_and_keep_public_gaze
     for month in range(1, 8):
         assert any(f"1627年{month}月.txt" in p for p in gazette_paths)
         assert f"PUBLIC_GAZETTE_MONTH_{month}" in blob
-    index_lines = read_material(prepared.root, "INDEX.txt").splitlines()
-    rel = next(p for p in gazette_paths if p.endswith("1627年1月.txt"))
-    titled = next(
-        line for line in index_lines
-        if line.strip() == rel or line.strip().startswith(rel + " ")
-    )
-    assert rel.startswith("公开说法/邸报/")
-    assert "辽东标题" in titled
-    assert "PUBLIC_GAZETTE_MONTH_1" not in titled
+    index = read_material(prepared.root, "INDEX.txt")
+    assert all(rel in index for rel in gazette_paths)
+    assert "辽东标题" in index
+    assert "PUBLIC_GAZETTE_MONTH_1" not in index
 
 
 def test_secret_order_materials_keep_full_content_and_fail_loud_on_db_error(

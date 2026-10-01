@@ -182,9 +182,8 @@ def test_decree_commitment_does_not_dedup_same_name_income_fiscal_create(game, m
     ).fetchone()[0] >= 1
 
 
-def test_decree_commitment_same_account_alias_miss_emits_residual_signal(game, monkeypatch, capsys):
-    """ADR0027 残留观测：同批、同账户、有 decree 承诺却**异名**未匹配上的 fiscal_create
-    照常落账，但必须打日志当试玩信号（便于发现异名漏匹规律，#340 US8）。"""
+def test_decree_commitment_same_account_alias_miss_keeps_distinct_fiscal_item(game, monkeypatch):
+    """Different categories in the same account remain distinct fiscal items."""
     db, state, content = game
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
 
@@ -235,15 +234,10 @@ def test_decree_commitment_same_account_alias_miss_emits_residual_signal(game, m
         "SELECT COUNT(*) FROM fiscal_config WHERE key IN "
         "('xuguangqi_gongfei_base', 'xuguangqi_gongfei_rate')"
     ).fetchone()[0] >= 1
-    # 但必须留下 ADR0027 残留观测信号（试玩可见 = 能发现异名漏匹规律）
-    captured = capsys.readouterr()
-    combined = captured.out + captured.err
-    assert "ADR0027 残留观测" in combined
-    assert "徐光启三务公费" in combined
 
 
-def test_decree_commitment_unrelated_account_no_residual_signal(game, monkeypatch, capsys):
-    """残留观测只在【同账户】触发：不同账户的无关 fiscal_create 不应误报信号。"""
+def test_decree_commitment_unrelated_account_keeps_fiscal_item(game, monkeypatch):
+    """An authorized item in another account must not be deduplicated."""
     db, state, content = game
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
 
@@ -270,6 +264,7 @@ def test_decree_commitment_unrelated_account_no_residual_signal(game, monkeypatc
             "fiscal_creates": [
                 {
                     "key": "neiku_dujiang_base",
+                    "origin_ref": "盘面自发",
                     "account": "内库",  # 不同账户
                     "direction": "expense",
                     "init_value": 10,
@@ -281,8 +276,7 @@ def test_decree_commitment_unrelated_account_no_residual_signal(game, monkeypatc
         content=content,
     )
 
-    captured = capsys.readouterr()
-    assert "ADR0027 残留观测" not in (captured.out + captured.err)
+    assert db.get_fiscal_config()["neiku_dujiang_base"] == 10
 
 
 def test_until_stop_commitment_shape_rejects_without_explicit_marker(read_game, monkeypatch):

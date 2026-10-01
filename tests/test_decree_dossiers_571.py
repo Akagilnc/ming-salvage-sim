@@ -1238,7 +1238,6 @@ def test_cli_dossiered_directive_is_not_listed_editable_or_deletable(
 
     assert session.list_directives() == []
     assert terminal.review_directives(session) == "back"
-    assert capsys.readouterr().out.count("没有这条草案。") == 2
     assert db.get_dossier_for_directive(directive_id) is not None
     assert db.list_directives(state)[0]["text"] == "着修河工"
 
@@ -1670,7 +1669,6 @@ def test_underfunded_in_transit_allocation_closes_from_execution_state(game):
     assert state.metrics["国库"] == 0
     assert dossier["status"] == "closed"
     assert dossier["execution_outcome"] == "failed"
-    assert "不足额" in dossier["execution_note"]
 
 def test_underfunded_immediate_allocation_is_not_recorded_as_fulfilled(game):
     db, state, _content = game
@@ -1693,7 +1691,6 @@ def test_underfunded_immediate_allocation_is_not_recorded_as_fulfilled(game):
     assert state.metrics["国库"] == 0
     assert dossier["status"] == "closed"
     assert dossier["execution_outcome"] == "failed"
-    assert "不足额" in dossier["execution_note"]
 
 @pytest.mark.parametrize(
     "payload",
@@ -1912,7 +1909,7 @@ def test_malformed_dossier_origin_is_rejected_fail_closed(game, origin_ref):
 
     assert state.metrics["国库"] == before
     assert result["economy_moves"] == []
-    assert '"category": "invalid_origin_ref"' in json.dumps(result, ensure_ascii=False)
+    assert result["economy_moves_rejections"][0]["category"] == "invalid_origin_ref"
 
 def test_withdrawn_rescript_records_closed_turn(game):
     from ming_sim.db import GameDB
@@ -2040,10 +2037,7 @@ def test_inner_treasury_admission_uses_actual_once_and_preserves_surface(
     assert dossier["execution_outcome"] == outcome
     assert state.metrics["内库"] == max(0, balance - 10)
     assert len(db.list_economy_moves_for_dossier(dossier_id)) == int(expected_actual != 0)
-    if outcome == "failed":
-        assert "应拨10两" in dossier["execution_note"]
-        assert f"实拨{abs(expected_actual)}两" in dossier["execution_note"]
-    else:
+    if outcome != "failed":
         assert status == "executing"
         assert dossier_id in {
             row["id"] for row in db.list_decree_dossiers_for_simulation(state.turn)

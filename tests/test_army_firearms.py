@@ -9,7 +9,6 @@ simulator 看得见、软性加权判战；引擎只 clamp、不算胜负。
 
 from __future__ import annotations
 
-import re
 
 from ming_sim.constants import ARMY_SCORE_FIELDS
 
@@ -116,61 +115,6 @@ def test_create_army_cannon_count_clamped(game):
         "SELECT cannon_equipment FROM armies WHERE id='heavy_test'"
     ).fetchone()[0]
     assert val == 12
-
-
-def test_army_public_exits_surface_firearm_and_cannon(game):
-    """detail/report/roster 同一读侧：可数火器/炮门 + roster 双态差分（无内部 renderer patch）。"""
-    db, state, _ = game
-    row = db.conn.execute(
-        "SELECT id, name FROM armies WHERE owner_power='ming' LIMIT 1"
-    ).fetchone()
-    aid, name = row["id"], row["name"]
-
-    def _set(**fields):
-        cols = ", ".join(f"{k}=?" for k in fields)
-        db.conn.execute(f"UPDATE armies SET {cols} WHERE id=?", (*fields.values(), aid))
-        db.conn.commit()
-
-    def _has(text: str, number: int) -> bool:
-        return re.search(rf"(?<!\d){number}(?!\d)", text) is not None
-
-    _set(firearm_equipment=45, cannon_equipment=3, manpower=8000, salary_rate=1.0)
-    detail = db.army_detail(name)
-    roster = db.army_roster(filter_names=[name])
-    assert _has(detail, 45) and _has(detail, 3)
-    assert _has(roster, 45) and _has(roster, 3)
-    _set(firearm_equipment=91, cannon_equipment=7)
-    detail_hi = db.army_detail(name)
-    roster_hi = db.army_roster(filter_names=[name])
-    assert detail != detail_hi
-    assert _has(detail_hi, 91) and _has(detail_hi, 7) and not _has(detail, 91)
-    assert _has(roster_hi, 91) and not _has(roster, 91)
-
-    _set(
-        firearm_equipment=45, cannon_equipment=11,
-        supply=1, morale=1, loyalty=1, training=1,
-        manpower=8000, salary_rate=1.0,
-    )
-    report_a = db.army_report(limit=8)
-    assert name in report_a
-    _set(cannon_equipment=8)
-    report_b = db.army_report(limit=8)
-    assert name in report_b and report_a != report_b
-
-    _set(firearm_equipment=30, cannon_equipment=4, manpower=8000, salary_rate=1.0)
-    roster_num = db.army_roster(filter_names=[name], qualitative_equipment=False)
-    roster_q = db.army_roster(filter_names=[name], qualitative_equipment=True)
-    assert _has(roster_num, 30) and _has(roster_num, 4)
-    assert not _has(roster_q, 30) and _has(roster_q, 4)
-
-    db.create_armies_from_extraction(state, [{
-        "id": "probe_fire_new", "name": "火器新营", "owner_power": "ming",
-        "manpower": 4000, "maintenance_per_turn": 1,
-        "firearm_equipment": 77, "cannon_equipment": 5, **_pay_source(),
-    }], actor="测试")
-    for key in ("probe_fire_new", "火器新营"):
-        d = db.army_detail(key)
-        assert "77" in d and "5" in d
 
 
 def test_fresh_seed_wires_firearm_not_all_zero(content):

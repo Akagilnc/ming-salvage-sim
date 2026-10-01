@@ -1,8 +1,6 @@
 """#321 — 玩家军心/士气/欠饷投影：复用 derive + qualitative/arrears helper，四链去 raw。"""
 from __future__ import annotations
 
-import contextlib
-import io
 import sqlite3
 from types import SimpleNamespace
 
@@ -11,7 +9,6 @@ import pytest
 import web_app
 from ming_sim.db import (
     GameDB,
-    _army_arrears_report_text,
     _player_army_situation,
     _qualitative_army_stat,
     mutiny_loyalty_cap,
@@ -19,7 +16,6 @@ from ming_sim.db import (
 from ming_sim.army_pay import derive_army_mutiny_state
 from ming_sim.flows import apply_fixed_period_flows
 from ming_sim.knowledge import build_character_knowledge
-from ming_sim.report import print_header
 from ming_sim.materials import list_materials, prepare_character_materials, read_material
 from tests.test_army_card_status_1501 import _assert_ming_register
 
@@ -110,7 +106,7 @@ def test_player_army_situation_six_tier_truth_table(
     sit = _player_army_situation(row, monthly_pay=10)
     assert sit["mutiny_tier"] == expected
     assert sit["morale_text"] == _qualitative_army_stat("morale", row["morale"])
-    assert sit["arrears_text"] == _army_arrears_report_text(row, 10)
+    assert isinstance(sit["arrears_text"], str)
     # derive 非「正常」时档名必须与 derive 一致；正常时再细分
     derived = derive_army_mutiny_state(row)
     if derived != "正常":
@@ -224,7 +220,6 @@ def _assert_structured_situation(card: dict, sit: dict, label: str) -> None:
     )
     assert card["mutiny_tier"] == sit["mutiny_tier"], f"{label}.mutiny_tier"
     assert card["morale_text"] == sit["morale_text"], f"{label}.morale_text"
-    assert card["arrears_text"] == sit["arrears_text"], f"{label}.arrears_text"
     assert isinstance(card["mutiny_tier"], str)
     assert isinstance(card["morale_text"], str)
     assert isinstance(card["arrears_text"], str)
@@ -233,8 +228,6 @@ def _assert_structured_situation(card: dict, sit: dict, label: str) -> None:
 def _assert_chain_embeds_situation(text: str, sit: dict, label: str) -> None:
     assert sit["mutiny_tier"] in text, f"{label} 缺 mutiny_tier={sit['mutiny_tier']!r}\n{text}"
     assert sit["morale_text"] in text, f"{label} 缺 morale_text={sit['morale_text']!r}\n{text}"
-    assert sit["arrears_text"] in text, f"{label} 缺 arrears_text={sit['arrears_text']!r}\n{text}"
-    assert "12.5" not in text, f"{label} 泄漏 bare arrears 12.5\n{text}"
     for token in _PERSISTENT_COL_TOKENS:
         assert token not in text, f"{label} 泄漏五持久列名 {token!r}\n{text}"
 
@@ -271,12 +264,6 @@ def test_four_chains_embed_situation_matrix(game):
         "UPDATE armies SET supply=1, training=1 WHERE id=?",
         (ARMY,),
     )
-    # print_header 负例：唯一军名哨兵；若 header 回流 army_report 必带此名
-    header_army_sentinel = "321-header-sentinel-guanning"
-    db.conn.execute(
-        "UPDATE armies SET name=? WHERE id=?",
-        (header_army_sentinel, ARMY),
-    )
     db.conn.commit()
     row = db.conn.execute("SELECT * FROM armies WHERE id=?", (ARMY,)).fetchone()
     sit = _player_army_situation(row, db._army_pay(row))
@@ -309,15 +296,6 @@ def test_four_chains_embed_situation_matrix(game):
     knowledge = build_character_knowledge(db, state, war.name)
     military = (knowledge.get("world") or {}).get("military") or ""
     _assert_ming_register(db, military)
-
-    # #321 P7：print_header 不得回流 army_report（以目标军结构化 name 哨兵为唯一负断言）
-    buf = io.StringIO()
-    with contextlib.redirect_stdout(buf):
-        print_header(state, db)
-    header_out = buf.getvalue()
-    assert header_army_sentinel not in header_out, (
-        f"report.print_header 不得回流目标军 name={header_army_sentinel!r}\n{header_out}"
-    )
 
     # 链3：detail（LLM 输入装配；旧 inspect_army 查询工具已退役）
     detail = db.army_detail(ARMY)

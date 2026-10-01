@@ -65,7 +65,7 @@ def test_conflicting_affair_declaration_on_existing_dossier_fails_loud(game):
         },
     )
     before = db.conn.execute("SELECT COUNT(*) AS n FROM affairs").fetchone()["n"]
-    try:
+    with pytest.raises(ValueError):
         db.create_decree_dossiers(
             state,
             action_type="assignment",
@@ -82,10 +82,6 @@ def test_conflicting_affair_declaration_on_existing_dossier_fails_loud(game):
                 ),
             },
         )
-    except ValueError as exc:
-        assert str(first.id) in str(exc)
-    else:
-        raise AssertionError("expected conflict")
     assert db.conn.execute("SELECT COUNT(*) AS n FROM affairs").fetchone()["n"] == before
 
 

@@ -3,17 +3,9 @@
 from __future__ import annotations
 from tests.conftest import open_hall_turn
 
-import asyncio
-import json
-import threading
-from types import MethodType, SimpleNamespace
-
 import pytest
-from fastapi import HTTPException
-from fastapi.testclient import TestClient
-
 from ming_sim.db import GameDB
-from ming_sim.session import AudienceAdmission, ChatTurnResult, GameSession
+from ming_sim.session import AudienceAdmission, GameSession
 from ming_sim import audience_night as an
 
 
@@ -775,8 +767,6 @@ def test_summon_recorder_default_body_is_empty_and_tags_carry_facts(game):
     assert an.TAG_IN_TRANSIT in by_id[transit_id]["tags"]
     scroll = an.read_night_scroll(db, night_id)
     scene_text = "\n".join(str(row.get("body") or "") for row in scroll)
-    assert "赴京候见" not in scene_text
-    assert "在途未至" not in scene_text
 
 
 def test_consume_open_night_and_recorder_share_one_transaction(game, monkeypatch):

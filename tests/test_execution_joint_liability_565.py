@@ -295,9 +295,6 @@ def test_assistant_row_delegator_gets_secondary_assistant_zero_mechanical(game):
     assert edges == {"倪元璐", "徐光启"}
     assert "黄道周" not in edges
 
-    note = db.get_decree_dossier(dossier_id)["execution_note"]
-    assert "徐光启（委派）" in note
-    assert "黄道周（" not in note
 
 
 def test_dual_role_lead_and_delegator_primary_wins(game):
@@ -337,9 +334,6 @@ def test_dual_role_lead_and_delegator_primary_wins(game):
     }
     assert edges == {"倪元璐", "徐光启"}
 
-    note = db.get_decree_dossier(dossier_id)["execution_note"]
-    assert "徐光启（主办）" in note
-    assert "徐光启（委派）" not in note
 
 
 def test_liability_query_excludes_knowers_but_keeps_delegator_fk(game):

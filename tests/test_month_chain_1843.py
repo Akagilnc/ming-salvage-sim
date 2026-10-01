@@ -735,7 +735,7 @@ def test_world_segment_reads_material_directory(game, monkeypatch):
         model="gpt-test", channel="api",
     )
     assert month_chain.run_world_segment_text(db, state, api) == "静"
-    assert "INDEX.txt" in seen[0]["listing"].splitlines()
+    assert "INDEX.txt" in seen[0]["listing"]
     assert seen[0]["index"].strip()
     assert seen[0]["has_dir"] is False
     assert board_fact in str(seen[0]["opening"])

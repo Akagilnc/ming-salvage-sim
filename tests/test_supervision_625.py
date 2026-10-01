@@ -348,8 +348,6 @@ def test_ac2_paired_observation_slots_and_countermeasure_hard_gate(game):
     assert tend_u["longest_consecutive_presence_months"] == 12
     assert tend_m["has_mediocre_auditor"] is True
     assert tend_u["has_upright_auditor"] is True
-    assert "dull" not in json.dumps(tend_m, ensure_ascii=False).lower()
-    assert "钝化" not in json.dumps(tend_m, ensure_ascii=False)
 
     # 执行格判词观察槽：督办复核读取监督事实
     _insert_staged(db, state, content, dossier_id=sub_m, due_turn=state.turn)

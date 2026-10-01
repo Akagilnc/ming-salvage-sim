@@ -311,7 +311,7 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
     monkeypatch.setattr("ming_sim.agents.run_agent_text", run_agent)
     before = prepare_world_materials(db, state)
     try:
-        before_board = next(rel for rel in before.index_lines if rel.endswith("全局.txt"))
+        before_board = next(rel for rel in list_materials(before.root) if rel.endswith("全局.txt"))
         before_board_text = (before.root / before_board).read_text(encoding="utf-8")
         assert _SECRET_DOSSIER_LEDGER in before_board_text
         assert _PLAIN_DOSSIER_LEDGER in before_board_text
@@ -384,14 +384,12 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
             if path.startswith("公开说法/邸报/")
         )
         text = read_material(prepared.root, rel)
-        gazette = next(
-            line for line in prepared.index_lines
-            if line == rel or line.startswith(rel + " ")
-        )
+        gazette = read_material(prepared.root, "INDEX.txt")
+        assert rel in gazette
         assert text.strip() == _REPORT
         assert _TITLE in gazette
         assert _REPORT not in gazette
-        experience = next(path for path in prepared.index_lines if path.endswith("/经历.txt"))
+        experience = next(path for path in list_materials(prepared.root) if path.endswith("/经历.txt"))
         experience_text = (prepared.root / experience).read_text(encoding="utf-8")
         assert _SECRET_BRIEF in experience_text
         assert _SECRET_AUDIENCE in experience_text
@@ -403,7 +401,7 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
     try:
         world_experience = "\n".join(
             (world.root / rel).read_text(encoding="utf-8")
-            for rel in world.index_lines
+            for rel in list_materials(world.root)
             if rel.endswith("/经历.txt")
         )
         assert _SECRET_BRIEF in world_experience
@@ -411,7 +409,7 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
         assert "密令分轮应允经历1862" in world_experience
         assert "待决密令经历1862" in world_experience
         assert _PRIVATE_KEEP in world_experience
-        board = next(rel for rel in world.index_lines if rel.endswith("全局.txt"))
+        board = next(rel for rel in list_materials(world.root) if rel.endswith("全局.txt"))
         board_text = (world.root / board).read_text(encoding="utf-8")
         assert _SECRET_DOSSIER_LEDGER in board_text
         assert _PLAIN_DOSSIER_LEDGER in board_text

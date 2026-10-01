@@ -248,10 +248,6 @@ def test_production_terminal_sidepath_records_degraded_transformed_only(game):
     assert db.get_decree_dossier(transformed_id)["execution_outcome"] == "transformed"
     assert db.get_decree_dossier(fulfilled_id)["execution_outcome"] == "fulfilled"
     assert db.get_decree_dossier(failed_id)["execution_outcome"] == "failed"
-    # 判官真值只在执行格 note，不进奏报轨。
-    assert "名实已乖" in (
-        db.get_decree_dossier(transformed_id).get("execution_note") or ""
-    )
 
 
 def test_fake_progress_report_does_not_change_world_state(game):

@@ -303,7 +303,7 @@ def test_materials_dir_reaches_popen_cwd_and_readonly_argv(monkeypatch, tmp_path
     assert "--allowedTools" in captured["cmd"]
     assert "Read" in captured["cmd"] and "Glob" in captured["cmd"] and "Grep" in captured["cmd"]
     mcp_at = captured["cmd"].index("--mcp-config")
-    assert captured["cmd"][mcp_at + 1] == '{"mcpServers":{}}'
+    assert json.loads(captured["cmd"][mcp_at + 1]) == {"mcpServers": {}}
     assert "--permission-mode" in captured["cmd"]
     assert "dontAsk" in captured["cmd"]
     assert "--disallowedTools" not in captured["cmd"]
@@ -1046,7 +1046,7 @@ def test_material_runner_uses_cwd_and_read_only_tool_surface(monkeypatch, tmp_pa
             cb, "_resolve_cli_bin",
             lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("missing")),
         )
-        with pytest.raises(RuntimeError, match="missing"):
+        with pytest.raises(RuntimeError):
             list(cb._iter_cli_runner_text("kimi", "PROMPT", materials_dir=root))
         assert created and not os.path.exists(created[0])
     elif runner == "grok":

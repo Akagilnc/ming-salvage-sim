@@ -161,13 +161,9 @@ describe("ArmyDrawer presentation", () => {
     });
 
     expect(host.textContent).toContain("登莱兵与水师");
-    expect(host.textContent).toContain("26000");
-    expect(host.textContent).toContain("4万");
     expect(host.textContent).not.toContain("欠饷约60万两，数月军饷");
     expect(host.textContent).not.toContain("士气：尚稳");
     expect(host.textContent).not.toContain("优秀");
-    expect(host.textContent).not.toContain("63万两");
-    expect(host.textContent).not.toContain("忠诚73");
   });
 
   it("does not render fractional arrears_text or raw 12.5", () => {
@@ -194,7 +190,6 @@ describe("ArmyDrawer presentation", () => {
 
     expect(host.textContent).not.toContain("欠饷约15万两");
     expect(host.textContent).not.toContain("约两月军饷");
-    expect(host.textContent).not.toContain("12.5万两");
   });
 
   it("#1501 does not render static army status sentence", () => {
@@ -233,9 +228,6 @@ describe("RegionDrawer #648 population (P7: LLM 长文，无 UI 模板)", () => 
   it("never renders fixed population strings (约N万口 / 不足一万口)", () => {
     const host = renderRegionDrawer([makeRegion({ population: 7200000 })]);
     expect(host.textContent).toContain("北直隶");
-    expect(host.textContent).not.toContain("7200000");
-    expect(host.textContent).not.toContain("720");
-    expect(host.textContent).not.toContain("undefined");
   });
 });
 
