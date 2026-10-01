@@ -3013,36 +3013,46 @@ class GameDB:
         # 已落账的复征白写。辽饷／田赋另有饷率通道按 seed 重算 settle.p，但它们的省份
         # 字段同样被罢征清零过，一并恢复才与罢征对称（`scale_tian_fu` 的三税残差口径
         # 依赖这些字段非零）。
-        # 恢复值取 seed 真源（`content/regions.json` 的各省 fiscal 字段），与目录侧
-        # `_seeded_fiscal_config_value` 同一口径：恢复该税项的常态征收额，不臆造数。
+        # 省级实收按 seed 分布 ×（声明额度 / seed 定额）摊回。声明 0 即实收 0；
+        # 声明等于 seed 定额时写回各省 seed 原值。seed 定额缺失时不臆造。
         if budget_role == "dynamic" and stem in self._DYNAMIC_REGION_FIELD:
-            self._restore_dynamic_region_field(stem)
+            self._restore_dynamic_region_field(stem, max(0, int(init_value)))
         if commit:
             self.conn.commit()
         return base_key
 
-    def _restore_dynamic_region_field(self, stem: str) -> int:
-        """把某 dynamic 税的**省级收入源**恢复回 seed 值（`create_fiscal_item` 的对称侧）。
+    def _restore_dynamic_region_field(self, stem: str, declared_base: int) -> int:
+        """按声明额度摊回 dynamic 税的省级实收（`create_fiscal_item` 的对称侧）。
 
-        与 `apply_dynamic_fiscal_scale` 同一字段映射、同一批省份，故与罢征写口
-        （`remove_fiscal_item` 罢 → 本方法复）严格读写对称。只在 seed 有正值的省份
-        恢复：seed 本身为 0 的省份（不产盐／无商路）保持 0。
+        省字段是盐税／商税旁路的实收，目录 base 是系数。份额沿用 seed 各省分布：
+        `province = seed_province × declared_base / seed_base`。声明等于 seed 定额时
+        逐省写回 seed 原值。seed 本身为 0 的省份保持 0。seed 定额缺失或非正时不写。
         """
         field = self._DYNAMIC_REGION_FIELD.get(stem)
         if field is None:
             return 0
+        seed_base = self._seeded_fiscal_config_value(f"{stem}_base")
+        if seed_base is None or seed_base <= 0:
+            return 0
+        declared = max(0, int(declared_base))
         touched = 0
         for row in self.conn.execute("SELECT id, fiscal FROM regions").fetchall():
             region_def = self.content.regions.get(str(row["id"]))
             seed_value = int((region_def.fiscal or {}).get(field, 0) or 0) if region_def else 0
             if seed_value <= 0:
                 continue
+            if declared == seed_base:
+                target = seed_value
+            elif declared == 0:
+                target = 0
+            else:
+                target = max(0, round(seed_value * declared / seed_base))
             fiscal: dict = json.loads(str(row["fiscal"] or "{}"))
             if not isinstance(fiscal, dict):
                 continue
-            if int(fiscal.get(field, 0) or 0) == seed_value:
+            if int(fiscal.get(field, 0) or 0) == target:
                 continue
-            fiscal[field] = seed_value
+            fiscal[field] = target
             self.conn.execute(
                 "UPDATE regions SET fiscal = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                 (json.dumps(fiscal, ensure_ascii=False), str(row["id"])),
@@ -3105,11 +3115,11 @@ class GameDB:
         if cache is None:
             cache = {}
             for rec in list(self.content.fiscal_items or ()):
-                key = str(rec.get("key") or "")
-                if not key or key.startswith("__"):
+                rec_key = str(rec.get("key") or "")
+                if not rec_key or rec_key.startswith("__"):
                     continue
                 try:
-                    cache[key] = int(rec.get("value"))
+                    cache[rec_key] = int(rec.get("value"))
                 except (TypeError, ValueError):
                     continue
             self._seed_fiscal_value_cache = cache
@@ -19718,19 +19728,29 @@ class GameDB:
             return
         self._ensure_event_parent(eid)
         payload = json.dumps(choice if isinstance(choice, dict) else {}, ensure_ascii=False)
-        label = str((choice or {}).get("label") or "")[:200] if isinstance(choice, dict) else ""
+        raw_label = str((choice or {}).get("label") or "") if isinstance(choice, dict) else ""
+        label = raw_label[:200]
+        # 有结局白名单的事件只落归一后的合法标签。呈现词（留中、准奏）留在 choice_json，
+        # 不写入 terminal_reason，也不擦掉已有的合法 pending。无白名单的事件仍把 label
+        # 原样暂存（普通 HITL）。已有非空终态一律保留（ADR 0115 first-wins）。
+        event = self.content.event_by_id.get(eid)
+        allowed = list(getattr(event, "terminal_reason_labels", []) or []) if event is not None else []
+        if allowed:
+            from ming_sim.issues import _normalize_event_terminal_reason
+            stored_reason = _normalize_event_terminal_reason(event, raw_label)
+            replace_pending = bool(stored_reason)
+        else:
+            stored_reason = label
+            replace_pending = True
+        replace_flag = 1 if replace_pending else 0
         self.conn.execute(
             """
             INSERT INTO event_triggers
                 (event_id, turn, year, period, source, terminal_state, terminal_reason, choice_json)
             VALUES (?, ?, ?, ?, ?, '', ?, ?)
             ON CONFLICT(event_id) DO UPDATE SET
-                -- 终态账不可逆（codex correctness）：HITL 选择只暂存 choice_json；新行不抢先
-                -- 写 triggered，待 phase2 的 event_pool 正常立局势后再由 mark_event_triggered 补终态。
-                -- 冲突时**保留**已有 terminal_state——
-                -- HITL 选择只补 choice_json，绝不把已有的 expired/avoided/obsolete 翻成
-                -- triggered。source 同理：只有空终态暂存行或已是 triggered 的行才更新成
-                -- hitl_decision，expired/avoided/obsolete 不被误标。
+                -- 终态账不可逆：HITL 选择只暂存 choice_json；新行不抢先写 triggered。
+                -- 冲突时保留已有 terminal_state。source 只有空终态或已 triggered 才更新。
                 source = CASE
                     WHEN COALESCE(event_triggers.terminal_state, '') IN ('', 'triggered')
                     THEN excluded.source
@@ -19739,37 +19759,32 @@ class GameDB:
                 terminal_state = event_triggers.terminal_state,
                 terminal_reason = CASE
                     WHEN COALESCE(event_triggers.terminal_state, '') = ''
+                         AND ? = 1
                     THEN excluded.terminal_reason
+                    WHEN COALESCE(event_triggers.terminal_state, '') = ''
+                    THEN event_triggers.terminal_reason
                     WHEN COALESCE(event_triggers.terminal_reason, '') = ''
-                    THEN excluded.terminal_reason
-                    -- #1899：自动基线桩（source=fiscal_levy_shadow，无 choice）落的
-                    -- 结局只是**史实默认值**，不是皇帝的裁断。此前本分支一律保留桩残值，
-                    -- 于是桩先落「已准」、皇帝随后亲批「已驳」时，事件账同时留下
-                    -- terminal_reason=已准 与 choice.label=已驳——残值冒充皇帝批准，
-                    -- 消费者照残值重新开征一道已罢的辽饷。此处把真批语**接管**该结局：
-                    -- 仅限桩基线（source 仍是 fiscal_levy_shadow 且 choice_json 此前为空）
-                    -- 且本次批语非空时生效；已有真决定的行、expired/avoided/obsolete 行、
-                    -- 空 label 一律不动，终态账不可逆的既有约定不变。
-                    WHEN event_triggers.source = 'fiscal_levy_shadow'
-                         AND COALESCE(event_triggers.choice_json, '') = ''
-                         AND COALESCE(excluded.terminal_reason, '') != ''
+                         AND ? = 1
                     THEN excluded.terminal_reason
                     ELSE event_triggers.terminal_reason
                 END,
                 choice_json = excluded.choice_json
             """,
-            (eid, state.turn, state.year, state.period, source, label, payload),
+            (
+                eid, state.turn, state.year, state.period, source, stored_reason, payload,
+                replace_flag, replace_flag,
+            ),
         )
-        # #1899：皇帝亲批的饷率结局，其机械后果在**批红落账的同一刻**经真写口落到
-        # 目录（罢后再准 = 重新开征，owner d5405bb6），而不是推迟到月链消费那一刻
-        # 再补——推迟后同月内两种批语先后被压成同一个 turn，代码只能自造固定优先
-        # 规则判反一种（owner 裁定 2026-10-01「相反批语按最后一条算」）。在批红
-        # 当场写，写入顺序即批语先后，罢与复都由后写者胜。放在此处亦使自动基线桩
-        # （`mark_event_triggered(source=fiscal_levy_shadow)`，无 choice）在结构上
-        # 永远到不了复征路径。局部 import 避 db↔issues 顶层环（同本文件既有先例）。
-        if label:
-            from ming_sim.issues import _fiscal_levy_apply_emperor_ruling
-            _fiscal_levy_apply_emperor_ruling(self, state, eid, label)
+        # 财政只跟随本写口实际收下的合法结局。已终局的另一裁断、未能归一的呈现词，
+        # 都不改目录。局部 import 避 db↔issues 顶层环。
+        if stored_reason:
+            accepted = self.conn.execute(
+                "SELECT terminal_reason FROM event_triggers WHERE event_id = ?",
+                (eid,),
+            ).fetchone()
+            if accepted is not None and str(accepted["terminal_reason"] or "") == stored_reason:
+                from ming_sim.issues import _fiscal_levy_apply_emperor_ruling
+                _fiscal_levy_apply_emperor_ruling(self, state, eid, stored_reason)
         if commit:
             self.conn.commit()
 

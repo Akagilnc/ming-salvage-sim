@@ -278,11 +278,9 @@ def test_reabolition_after_reinstatement_keeps_both_write_ports_working(game):
 # ── 自动结局残值不冒充皇帝批准（R4）───────────────────────────────────────
 
 def test_emperor_rejection_overrides_automatic_baseline_stub(game):
-    """R4：自动基线桩先落「已准」，皇帝随后亲批「已驳」→ 真批语接管，不复征。
+    """已终局的自动桩保持原结局。随后的「已驳」只进 choice，不改终态、不复征。
 
-    桩落的只是史实默认值，不是皇帝的裁断。此前终态 reason 一律保留桩残值，于是
-    事件账同时留下 terminal_reason=已准 与 choice.label=已驳，残值冒充批准，
-    消费者照残值重新开征一道已罢的辽饷。断言落在事件账这一外部可见结构上。
+    终态账 first-wins。已罢目录不会因为未收下的驳回或桩本身被重新开征。
     """
     db, state = _at(game, 1631, 1, 10)
     db.mark_event_triggered(
@@ -301,14 +299,15 @@ def test_emperor_rejection_overrides_automatic_baseline_stub(game):
         (RISE_EVENT_ID,),
     ).fetchone()
     assert json.loads(row["choice_json"])["label"] == "已驳"
+    assert row["terminal_reason"] == "已准"
 
     db, state = _settle_month(game, 15)
 
-    assert _settle(db)["p"]["三饷应征"] == 0.0, "驳回后不得凭空复征"
+    assert _settle(db)["p"]["三饷应征"] == 0.0, "未收下的驳回不得改已罢目录，也不得复征"
     row = db.conn.execute(
         "SELECT terminal_reason FROM event_triggers WHERE event_id = ?", (RISE_EVENT_ID,),
     ).fetchone()
-    assert row["terminal_reason"] == "已驳", "桩残值不得冒充皇帝批准"
+    assert row["terminal_reason"] == "已准"
 
 
 def test_automatic_stub_without_choice_does_not_reinstate(game):
@@ -550,13 +549,11 @@ def test_real_rescript_ruling_reaches_event_ledger_and_fiscal_consumption(game):
 
 
 def test_ruling_without_event_binding_leaves_event_ledger_untouched(game):
-    """反向契约：无绑定的普通请旨**不得**被猜配进任何事件账（ADR 0142）。
-
-    绑定只认机标显式带来的那一个。没有绑定就没有事件可落——否则等于从疏文猜
-    哪个事件，替 LLM 决定事件归属。
-    """
+    """反向契约：无绑定的普通请旨批红后仍不得进事件账（ADR 0142）。"""
     from ming_sim.month_chain import _WORLD_QUESTION_PREFIX, _question_as_decision
+    from ming_sim import rescript_actions as ra
 
+    db, state, content = game
     db, state = _at(game, 1631, 1, 15)
     question = {
         "title": "寻常请旨",
@@ -567,10 +564,14 @@ def test_ruling_without_event_binding_leaves_event_ledger_untouched(game):
     assert "bound_event_id" not in decision
 
     db.save_pending_decisions(15, [decision])
+    desk = db.list_rescript_desk(15)
+    batch = ra.validate_all(desk, [{"decision_key": desk[0]["decision_key"], "label": "已准"}])
+    ra.apply_rescript_batch(db, state, batch, ra.PrewriteResults(), content=content)
+    db.conn.commit()
     row = db.conn.execute(
         "SELECT 1 FROM event_triggers WHERE event_id = ?", (RISE_EVENT_ID,),
     ).fetchone()
-    assert row is None, "无绑定的请旨不得凭空造出事件账行"
+    assert row is None, "无绑定的请旨批红后不得凭空造出事件账行"
 
 
 # ── 更晚的批语取代更早的「准」：目录须与事件账一致（R2）────────────────────
@@ -607,77 +608,113 @@ def test_later_rejection_withdraws_earlier_approval_on_same_pending_event(game, 
     )
 
 
-def test_rejection_without_prior_approval_does_not_abolish(game):
-    """反向契约：驳回面对一道**从未准过**的辽饷，不得凭空罢征。
-
-    撤回只撤本事件自己造成的效果；无「准」可撤时目录不动，票面「驳不自行恢复
-    罢征」照旧成立，驳也从不自行**罢**征（不发明「所有驳回都罢征」的新政策）。
-    """
-    db, state = _at(game, 1631, 1, 10)
-    seed = _settle(db)["p"]["三饷应征"]
-
-    _emperor_rates_rise(db, state, 12, label="已驳")
-    db, state = _settle_month(game, 13)
-
-    assert _settle(db)["p"]["三饷应征"] == pytest.approx(seed), (
-        "一道驳回不得凭空罢征"
-    )
-
-
-# ── 共享 dynamic 科目重立须恢复省级收入源（R3）──────────────────────────────
-
-def test_recreated_salt_tax_restores_province_revenue_source(game):
-    """R3：重立盐税后实收真回来（目录行只是系数，省级字段才是实收源）。
-
-    盐税／商税的实收走 `regions.fiscal.salt_tax` / `commerce_tax`（flows 盐商旁路
-    直接汇总该字段），目录 `盐税_base` / `盐税_rate` 只是系数。`remove_fiscal_item`
-    罢征时把省份字段一并清零，但 `create_fiscal_item` 重立只补目录行——复征被接收、
-    目录齐全，实收却恒 0（judge 独立复现：重立 23、7 均被接收，实际月收入均为 0）。
-
-    读写对称：罢 = 删目录 + 清零省级字段，复 = 重立目录 + 恢复省级字段。
-    """
-    from ming_sim.flows import _substrate_hub_salt_commerce_income_split
+@pytest.mark.parametrize("label", ["留中", "准奏"])
+def test_noncanonical_rescript_label_does_not_become_terminal_reason(game, label):
+    """呈现词留在批语里。关档重开后下月消费不得把它当成结局而中止。"""
+    from ming_sim.month_chain import _WORLD_QUESTION_PREFIX, _question_as_decision
+    from ming_sim import rescript_actions as ra
 
     db, state, content = game
-
-    def salt_side_channel():
-        return _substrate_hub_salt_commerce_income_split(db)[0]
-
-    baseline = salt_side_channel()
-    assert baseline > 0, "本用例前提：开局盐税旁路有收入"
-
-    _abolish(db, state, 10, stem="盐税")
-    assert salt_side_channel() == 0.0, "罢盐税后省级收入源应清零"
-
-    dispatch_declaration(db, state, {"effects": [{"fiscal_creates": [{
-        "key": "盐税", "account": "国库", "direction": "income", "init_value": 23,
-        "display": "盐税", "origin_ref": "盘面自发", "reason": "复征",
-    }]}]})
+    db, state = _at(game, 1631, 4, 15)
+    _abolish(db, state, 15)
+    question = {
+        "title": "辽饷加派",
+        "context": "户部请加辽饷",
+        "event_id": RISE_EVENT_ID,
+        "options": [{"label": label, "hint": ""}, {"label": "已准", "hint": ""}],
+    }
+    decision = _question_as_decision(question, event_id=f"{_WORLD_QUESTION_PREFIX}15:0")
+    db.save_pending_decisions(15, [decision])
+    desk = db.list_rescript_desk(15)
+    batch = ra.validate_all(desk, [{"decision_key": desk[0]["decision_key"], "label": label}])
+    ra.apply_rescript_batch(db, state, batch, ra.PrewriteResults(), content=content)
+    db.save_state(state)
     db.conn.commit()
 
-    assert salt_side_channel() == pytest.approx(baseline), (
-        "重立盐税必须同时恢复省级收入源，否则复征被接收却实收恒 0"
-    )
-    # 仍只有**一条**收入路径：重立行按 seed 声明落 dynamic，不得进中央定额预算
-    # 目录与省级那条叠成同一税项两条收入（全局硬规 #12/#14）。
-    assert all(
-        db._stem_of(str(item["key"])) != "盐税" for item in db.iter_budget_items()
-    ), "重立的 dynamic 赋税不得进入中央 fixed 预算目录"
+    loaded = db.load_state()
+    loaded.turn = 16
+    loaded.turn_phase = ""
+    decree_mod.pre_settle(loaded, db, content=content)
+    db.conn.commit()
+
+    row = db.conn.execute(
+        "SELECT terminal_reason, choice_json FROM event_triggers WHERE event_id = ?",
+        (RISE_EVENT_ID,),
+    ).fetchone()
+    assert json.loads(row["choice_json"])["label"] == label
+    assert row["terminal_reason"] != label
+    assert _settle(db)["p"]["三饷应征"] == 0.0
+
+
+def test_closed_rejection_does_not_accept_later_approval(game):
+    """已终局为已驳后再呈已准：终态不变，已罢目录不被这道未收下的准复征。"""
+    db, state = _at(game, 1631, 1, 10)
+    _emperor_rates_rise(db, state, 10, label="已驳")
+    db, state = _settle_month(game, 11)
+    _abolish(db, state, 12)
+    _emperor_rates_rise(db, state, 13, label="已准")
+
+    row = db.conn.execute(
+        "SELECT terminal_state, terminal_reason, choice_json FROM event_triggers WHERE event_id = ?",
+        (RISE_EVENT_ID,),
+    ).fetchone()
+    assert row["terminal_state"] == "triggered"
+    assert row["terminal_reason"] == "已驳"
+    assert json.loads(row["choice_json"])["label"] == "已准"
+
+    db, state = _settle_month(game, 14)
+    assert _rate_row(db, "辽饷_rate") is None
+    assert _settle(db)["p"]["三饷应征"] == 0.0
+
+
+@pytest.mark.parametrize("zeroing", [False, True], ids=["removal", "zeroing"])
+def test_rejection_does_not_cover_later_independent_contribution(game, zeroing):
+    """后出独立决定改了活行归属后，旧的驳回不得删空或调零这份新贡献。"""
+    db, state = _at(game, 1631, 1, 15)
+    _abolish(db, state, 15, zeroing=zeroing)
+    _emperor_rates_rise(db, state, 15, label="已准")
+    if zeroing:
+        dispatch_declaration(db, state, {"effects": [{"fiscal_changes": [{
+            "key": "辽饷_rate", "delta": -1,
+            "origin_ref": "盘面自发", "reason": "独立改定",
+        }]}]})
+        db.conn.commit()
+    else:
+        _abolish(db, state, 16)
+        dispatch_declaration(db, state, {"effects": [{"fiscal_creates": [{
+            "key": "辽饷", "account": "国库", "direction": "income",
+            "init_value": 86, "display": "辽饷",
+            "origin_ref": "盘面自发", "reason": "独立重立",
+        }]}]})
+        db.conn.commit()
+
+    _emperor_rates_rise(db, state, 17, label="已驳")
+    if zeroing:
+        rate = _rate_row(db, "辽饷_rate")
+        assert rate is not None and int(rate["value"]) == 99
+    else:
+        base = _rate_row(db, "辽饷_base")
+        assert base is not None and int(base["value"]) == 86
+
+    db, state = _settle_month(game, 18)
+    assert _settle(db)["p"]["三饷应征"] > 0.0
 
 
 @pytest.mark.parametrize(
-    ("stem", "category", "init_value"),
-    [("盐税", "盐税", 23), ("商税", "商税", 7)],
-    ids=["salt_tax", "commerce_tax"],
+    ("stem", "category", "seed_base", "init_value"),
+    [
+        ("盐税", "盐税", 23, 0),
+        ("盐税", "盐税", 23, 23),
+        ("盐税", "盐税", 23, 46),
+        ("商税", "商税", 7, 0),
+        ("商税", "商税", 7, 7),
+        ("商税", "商税", 7, 14),
+    ],
 )
-def test_recreated_dynamic_tax_moves_real_persisted_ledger(game, stem, category, init_value):
-    """R3 实账面：罢 → 复征后**持久化的国库流水**真回来（票面「怎么验」口径）。
-
-    上一例核的是省级收入源本身；本例走 `pre_settle` 真落 `economy_ledger`，按结构化
-    `category` 取数（盐／商税在 flows 里各走自己那一路，不混入 `起运`），验的是复征
-    当月国库**实收**不再停在罢征时的水平——HEAD 上复征当月与罢征当月同值（该
-    category 整月无行），即复征白写。
-    """
+def test_recreated_dynamic_tax_moves_real_persisted_ledger(
+    game, stem, category, seed_base, init_value,
+):
+    """重立 dynamic 盐／商税：国库实收按声明额度相对 seed 定额的比例回来，仍只走一条路径。"""
     def side_channel_remittance(db, turn):
         row = db.conn.execute(
             "SELECT COALESCE(SUM(delta), 0) AS total FROM economy_ledger "
@@ -687,18 +724,27 @@ def test_recreated_dynamic_tax_moves_real_persisted_ledger(game, stem, category,
         return float(row["total"] or 0)
 
     db, state, content = game
-    _abolish(db, state, 10, stem=stem)
+    db, state = _at(game, 1628, 1, 10)
+    db, state = _settle_month(game, 10)
+    baseline = side_channel_remittance(db, 10)
+    assert baseline > 0
+
+    _abolish(db, state, 11, stem=stem)
     db, state = _settle_month(game, 11)
-    abolished_month = side_channel_remittance(db, 11)
-    assert abolished_month == 0.0, f"罢{stem}当月国库不应有该路入账"
+    assert side_channel_remittance(db, 11) == 0.0
 
     dispatch_declaration(db, state, {"effects": [{"fiscal_creates": [{
         "key": stem, "account": "国库", "direction": "income", "init_value": init_value,
         "display": stem, "origin_ref": "盘面自发", "reason": "复征",
     }]}]})
     db.conn.commit()
-    db, state = _settle_month(game, 12)
+    stored = _rate_row(db, f"{stem}_base")
+    assert stored is not None and int(stored["value"]) == init_value
+    assert all(db._stem_of(str(item["key"])) != stem for item in db.iter_budget_items())
 
-    assert side_channel_remittance(db, 12) > 0.0, (
-        f"复征{stem}后国库实收应真回来，不得停在罢征水平（复征白写）"
-    )
+    db, state = _settle_month(game, 12)
+    got = side_channel_remittance(db, 12)
+    if init_value == 0:
+        assert got == 0.0
+    else:
+        assert got == pytest.approx(baseline * init_value / seed_base, rel=1e-9, abs=1.0)
