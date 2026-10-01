@@ -857,6 +857,19 @@ def grant_arrival_bounds(ordered_amount: int, *, escorted: bool) -> Tuple[int, i
     return (lo, hi)
 
 
+def payload_declares_escort(payload: object) -> bool:
+    """拨银载荷是否自带押解安排。未成案与已成案共用这一判据，只是取数位置不同。"""
+    if not isinstance(payload, dict):
+        return False
+    escort = payload.get("escort")
+    if not isinstance(escort, dict):
+        return False
+    escortees = escort.get("escortees")
+    return isinstance(escortees, list) and any(
+        str(name or "").strip() for name in escortees
+    )
+
+
 class GameDB:
     def __init__(self, path: str, content: Optional[GameContent] = None, llm_config: Any = None):
         self.path = path
@@ -12147,15 +12160,7 @@ class GameDB:
             payload = json.loads(str(row["payload_json"] or "{}"))
         except (TypeError, ValueError):
             return False
-        if not isinstance(payload, dict):
-            return False
-        escort = payload.get("escort")
-        if not isinstance(escort, dict):
-            return False
-        escortees = escort.get("escortees")
-        return isinstance(escortees, list) and any(
-            str(name or "").strip() for name in escortees
-        )
+        return payload_declares_escort(payload)
 
     def record_dossier_escort_result(
         self, turn: int, *, dossier_id: int, escort_source_dossier_id: int = 0,
@@ -12467,7 +12472,7 @@ class GameDB:
         return found
 
     def _escort_route_ledger_line(
-        self, dossier_id: int, *, escorted: bool, source: object,
+        self, dossier_id: int, *, escorted: bool, source: object, note: str = "",
     ) -> str:
         history = self.list_dossier_reconciliations(int(dossier_id))
         latest = history[-1] if history else None
@@ -12479,6 +12484,9 @@ class GameDB:
                 f" 实抵:{int(latest['arrived_amount'])}"
                 f" 损耗:{int(latest['loss_amount'])}"
             )
+        # 已落的实况原文照字附上，不改写。
+        if note:
+            line += " " + note
         return line
 
     def escort_route_ledger_text(self) -> str:
@@ -12496,6 +12504,7 @@ class GameDB:
                 dossier_id,
                 escorted=bool(target["escorted"]),
                 source=target["escort_source_dossier_id"],
+                note=str(target.get("escort_note") or ""),
             ))
         persisted = self.conn.execute(
             """
@@ -12517,9 +12526,9 @@ class GameDB:
             ).fetchone()
             if grant is None or str(grant["action_type"] or "") != "grant_allocation":
                 continue
-            escorted, source, _relation = self._grant_escort_presence(dossier_id)
+            escorted, source, _relation, note = self._grant_escort_presence(dossier_id)
             lines.append(self._escort_route_ledger_line(
-                dossier_id, escorted=escorted, source=source,
+                dossier_id, escorted=escorted, source=source, note=note,
             ))
             seen.add(dossier_id)
         if not lines:
@@ -12583,7 +12592,7 @@ class GameDB:
 
     def _grant_escort_presence(
         self, dossier_id: int, *, turn: Optional[int] = None,
-    ) -> Tuple[bool, Optional[int], str]:
+    ) -> Tuple[bool, Optional[int], str, str]:
         """被护案卷侧读入链上的**逐路已落实况**（#1900），不读链是否存在。
 
         0054 的关联是「谁护谁」的交代，不是「这趟护成了」的结果；密令整体成败／
@@ -12598,22 +12607,24 @@ class GameDB:
             (int(dossier_id),) if turn is None else (int(dossier_id), int(turn)),
         ).fetchone()
         if row is None:
-            return False, None, ""
+            return False, None, "", ""
         return (
             bool(row["escorted"]),
             int(row["escort_source_dossier_id"]),
             str(row["relation_type"] or ""),
+            str(row["note"] or ""),
         )
 
     def list_monthly_grant_reconciliation_targets(
         self, turn: Optional[int] = None,
     ) -> List[Dict[str, object]]:
-        """扫描面：在途的拨帑案卷 ＋ **本回合正常结案**的拨帑案卷。
+        """扫描面：在途的拨帑案卷 ＋ **本回合已经出库**的结案拨帑。
 
         正常结案不免除本次核账（#1900）：世界段同段提交 fulfilled 的那道拨帑，
         结案后 status 已离开 executing，若只扫 executing 就整趟漏账。带 ``turn``
-        时把「本回合结案且非 failed」的路一并纳入；成案即不足额（failed）者钱粮
-        未出库，仍不进扫描面。不带 ``turn``（供料读侧）只看在途，不翻历史结案。
+        时把本回合结案且已经按面额出库的路一并纳入——办理失败不抹掉已经离开
+        国库的那笔。成案即不足额、钱粮并未足额出库的 failed，仍不进扫描面。
+        不带 ``turn``（供料读侧）只看在途，不翻历史结案。
 
         ``turn`` 给定时逐路只认该回合已落的实际护送；不给取各路最近一次已落实况。
         """
@@ -12632,12 +12643,13 @@ class GameDB:
                 WHERE action_type='grant_allocation'
                   AND (
                     status='executing'
-                    OR (status='closed' AND closed_turn=? AND execution_outcome<>'failed')
+                    OR (status='closed' AND closed_turn=?)
                   )
                 ORDER BY id
                 """,
                 (int(turn),),
             ).fetchall()
+        from ming_sim.materials import dossier_paid_amount
         targets: List[Dict[str, object]] = []
         for row in rows:
             try:
@@ -12660,7 +12672,13 @@ class GameDB:
             if ordered <= 0:
                 continue
             dossier_id = int(row["id"])
-            escorted, source_id, relation = self._grant_escort_presence(
+            if (
+                str(row["status"] or "") == "closed"
+                and str(row["execution_outcome"] or "") == "failed"
+                and dossier_paid_amount(self, dossier_id) != ordered
+            ):
+                continue
+            escorted, source_id, relation, note = self._grant_escort_presence(
                 dossier_id, turn=turn,
             )
             targets.append({
@@ -12669,6 +12687,7 @@ class GameDB:
                 "escorted": escorted,
                 "escort_source_dossier_id": source_id,
                 "relation_type": relation,
+                "escort_note": note,
                 "decree_text": str(row["decree_text"] or ""),
                 "target_id": str(row["target_id"] or ""),
             })

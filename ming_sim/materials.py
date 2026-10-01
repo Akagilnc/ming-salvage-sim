@@ -988,7 +988,7 @@ def _escort_identity_lines(db: Any, name: str, dossiers: list) -> str:
             continue
         dossier_id = int(dossier["id"])
         if _reader_sees_route_actual(db, name, dossier):
-            escorted, source_id, _relation = db._grant_escort_presence(dossier_id)
+            escorted, source_id, _relation, note = db._grant_escort_presence(dossier_id)
             line = f"- [内部键 {dossier_id}] 护送实况：{'有护' if escorted else '无护'}"
             if _reader_may_cite_escort_source(db, name, dossier_id, source_id):
                 line += f"；来源案卷 {int(source_id)}"
@@ -999,6 +999,8 @@ def _escort_identity_lines(db: Any, name: str, dossiers: list) -> str:
                     f"；实抵 {int(latest['arrived_amount'])}"
                     f"；损耗 {int(latest['loss_amount'])}"
                 )
+            if note:
+                line += "；" + note
             lines.append(line)
             continue
         progress = db.list_dossier_progress(dossier_id) if hasattr(db, "list_dossier_progress") else []
@@ -1668,7 +1670,7 @@ def continuing_dossier_facts(db: Any, turn: int) -> list[dict[str, object]]:
         payload = row.get("payload") or {}
         if not isinstance(payload, dict):
             payload = {}
-        escorted, escort_source_id, escort_relation = db._grant_escort_presence(
+        escorted, escort_source_id, escort_relation, escort_note = db._grant_escort_presence(
             dossier_id, turn=int(turn),
         )
         facts.append({
@@ -1683,6 +1685,7 @@ def continuing_dossier_facts(db: Any, turn: int) -> list[dict[str, object]]:
             "escorted": bool(escorted),
             "escort_source_dossier_id": escort_source_id,
             "escort_relation_type": str(escort_relation or ""),
+            "escort_note": escort_note,
         })
     return facts
 

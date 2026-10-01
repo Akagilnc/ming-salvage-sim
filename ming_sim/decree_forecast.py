@@ -16,6 +16,7 @@ from typing import Any, Dict, Optional
 
 from ming_sim import agents, audience_translation, decree
 from ming_sim.audience_translate import build_translation_target_grounding
+from ming_sim.db import payload_declares_escort
 from ming_sim.declaration_dispatch import (
     held_dossier_decree_ref,
     pending_action_decree_ref,
@@ -158,7 +159,7 @@ def forecast_snapshot(
         # 不用 MAX(id)+1 猜号——两道同夜预推会猜到同一个未来号，落账时串路。
         # 猜号只留在判官候选的整数 id 上（批红契约要正整数），不进护送目录。
         catalog_token = _uncased_grant_catalog_token(db, body, decree_ref)
-        if catalog_token and (covert_sources or _payload_declares_escort(payload)):
+        if catalog_token and (covert_sources or payload_declares_escort(payload)):
             grounding = _append_this_decree_escort_grounding(
                 grounding, body, covert_sources, catalog_token,
             )
@@ -260,19 +261,6 @@ def _held_snapshot(session: Any, dossier_id: int) -> Optional[Dict[str, Any]]:
     return snapshot
 
 
-def _payload_declares_escort(payload: object) -> bool:
-    """与 ``GameDB.dossier_declares_escort`` 同一判据，用在尚未成案的载荷上。"""
-    if not isinstance(payload, dict):
-        return False
-    escort = payload.get("escort")
-    if not isinstance(escort, dict):
-        return False
-    escortees = escort.get("escortees")
-    return isinstance(escortees, list) and any(
-        str(name or "").strip() for name in escortees
-    )
-
-
 def _uncased_grant_catalog_token(
     db: Any, candidate: Dict[str, Any], decree_ref: str,
 ) -> Optional[str]:
@@ -305,7 +293,7 @@ def _append_this_decree_escort_grounding(
     kind = str(candidate.get("target_kind") or "")
     target_id = str(candidate.get("target_id") or "")
     payload = candidate.get("payload") if isinstance(candidate.get("payload"), dict) else {}
-    declared = _payload_declares_escort(payload)
+    declared = payload_declares_escort(payload)
     lines = [
         f"dossier\t{token}\t{kind}:{target_id}\t本旨"
         + ("\t自带押解" if declared else ""),

@@ -222,8 +222,9 @@ def test_close_merges_recon_note_without_second_treasury_debit(game):
     assert "赈银押解到达" in note
     from ming_sim.db import grant_arrival_bounds
     lo, hi = grant_arrival_bounds(ORDERED, escorted=False)
-    assert "应解30两" in note
-    assert f"实抵{(lo + hi) // 2}两" in note
+    row = db.list_dossier_reconciliations(gid)[-1]
+    assert row["ordered_amount"] == ORDERED
+    assert row["arrived_amount"] == (lo + hi) // 2
     # 仍无二次扣库
     assert int(state.metrics["内库"]) == after_grant_inner
     assert db.list_economy_moves_for_dossier(gid) == moves_before
@@ -249,8 +250,10 @@ def test_engine_gives_band_midpoint_with_no_proposal_port(game):
     assert db.list_dossier_reconciliations(bare)[-1]["arrived_amount"] == (lo + hi) // 2
 
 
-def test_underfunded_closed_grants_excluded_from_monthly_targets(game):
-    """成案当回合不足额 failed+close 者不进月度对账扫描面。"""
+def test_failed_close_reconciles_only_when_the_silver_already_left(game):
+    """不足额、银两未出库的失败不进核账；足额出库后再失败的，仍按逐路实况核本次。"""
+    from ming_sim.db import grant_arrival_bounds
+
     db, state, _content = game
     state.metrics["内库"] = 0
     db.conn.execute("UPDATE metrics SET value=0 WHERE key='内库'")
@@ -268,8 +271,40 @@ def test_underfunded_closed_grants_excluded_from_monthly_targets(game):
     db.apply_dossier_promulgation(state, dossier_id, "promulgated")
     row = db.get_decree_dossier(dossier_id)
     assert row["status"] == "closed"
-    targets = db.list_monthly_grant_reconciliation_targets()
-    assert dossier_id not in {int(t["dossier_id"]) for t in targets}
+    assert row["execution_outcome"] == "failed"
+    assert db.list_economy_moves_for_dossier(dossier_id) == []
+    turn = int(state.turn)
+    assert dossier_id not in {
+        int(t["dossier_id"])
+        for t in db.list_monthly_grant_reconciliation_targets(turn)
+    }
+
+    paid = _in_transit_grant(db, state, text="已出库后办理失败", target_id="liaodong")
+    _order_id, escort_id = _escort_order(db, state, [paid])
+    debits = [int(move["delta"]) for move in db.list_economy_moves_for_dossier(paid)]
+    assert debits == [-ORDERED]
+    db.record_dossier_execution(
+        paid, "failed", "途中未能办结", turn, close=True,
+    )
+    closed = db.get_decree_dossier(paid)
+    assert closed["status"] == "closed"
+    assert closed["execution_outcome"] == "failed"
+    assert paid not in {
+        int(t["dossier_id"]) for t in db.list_monthly_grant_reconciliation_targets()
+    }
+    scanned = {
+        int(t["dossier_id"]): t
+        for t in db.list_monthly_grant_reconciliation_targets(turn)
+    }
+    assert dossier_id not in scanned
+    assert scanned[paid]["escorted"] is True
+    assert scanned[paid]["escort_source_dossier_id"] == escort_id
+    reports = _record_recon(db, turn)
+    assert [int(item["dossier_id"]) for item in reports] == [paid]
+    lo, hi = grant_arrival_bounds(ORDERED, escorted=True)
+    assert reports[0]["arrived_amount"] == (lo + hi) // 2
+    assert reports[0]["loss_amount"] == ORDERED - reports[0]["arrived_amount"]
+    assert db.list_dossier_reconciliations(dossier_id) == []
 
 
 def test_settle_entry_lands_engine_arrival_per_route(game, monkeypatch):
