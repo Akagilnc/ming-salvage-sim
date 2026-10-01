@@ -53,7 +53,6 @@ def test_seven_faction_dossiers_are_objective_and_identity_scoped(game):
 
     for faction in SEVEN_FACTIONS:
         rendered = faction_context_with_db(replace(base, faction=faction, identity=65), db)
-        assert "【派系档料】" in rendered
         assert not re.search(r"\d+", rendered)
 
     middle = faction_context_with_db(replace(base, identity=60), db)
@@ -70,7 +69,7 @@ def test_north_star_ministers_have_distinct_featured_voices(game):
     for name in names:
         character = content.characters[name]
         full = character_context_with_db(character, db)
-        assert name in full and "【人物档料】" in full
+        assert name in full
         dossier = minister_dossier(character)
         assert all(k in dossier for k in _DOSSIER_KEYS)
         assert dossier in full

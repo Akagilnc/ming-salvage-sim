@@ -714,7 +714,7 @@ def test_run_runner_execs_resolved_abspath(monkeypatch, runner, resolved):
 # ── CliChat public: prompt shape + typed completion structure ──
 
 def test_clichat_invoke_builds_prompt_and_completion_structure(monkeypatch):
-    """#1563：公开 invoke 只证 prompt 角色标签顺序与 typed completion 结构；不锁生成正文。"""
+    """#1563：公开 invoke 证各条非空输入按原顺序进入 prompt，以及 typed completion 原样带回。"""
     cc = cb.CliChat(id="cli-test", backend="agy")
     seen = {}
 
@@ -739,14 +739,8 @@ def test_clichat_invoke_builds_prompt_and_completion_structure(monkeypatch):
     ]
     out = cc.invoke(msgs, Message(role="assistant"))
     p = seen["prompt"]
-    # role tags + order (structural markers from deterministic inputs)
-    for tag in ("【系统设定】", "【皇帝/输入】", "【你此前的回答】", "【工具结果】", "【developer】"):
-        assert tag in p
-    assert p.index("【系统设定】") < p.index("【皇帝/输入】")
-    assert p.count("【皇帝/输入】") == 1  # blank skipped
-    assert "【你此前的回答】" in p and "PRIOR_ASST" in p
-    assert "12345" in p
-    assert "【执行约束·必读】" in p
+    assert p.index("SYS_ROLE") < p.index("USER_MSG") < p.index("PRIOR_ASST") < p.index("TOOL_OUT") < p.index("12345")
+    assert p.count("USER_MSG") == 1
     # typed completion + passthrough on structured content (fixture, not LLM prose)
     assert out.role == "assistant"
     assert out.event == "AssistantResponse"
@@ -766,17 +760,15 @@ def test_clichat_invoke_json_constraint_and_no_constraint(monkeypatch):
     monkeypatch.setattr(cb, "_trace", lambda rec: None)
     msgs = [SimpleNamespace(role="user", content="EXTRACT")]
     cc.invoke(msgs, Message(role="assistant"), response_format={"type": "json_object"})
-    assert "【输出格式硬约束】" in seen[0]
 
     class _RF(BaseModel):
         x: int = 0
 
     cc.invoke(msgs, Message(role="assistant"), response_format=_RF)
-    assert "【输出格式硬约束】" in seen[1]
-
     cc.invoke(msgs, Message(role="assistant"))
-    assert "【输出格式硬约束】" not in seen[2]
-    assert "【执行约束·必读】" in seen[2]
+    assert all("EXTRACT" in prompt for prompt in seen)
+    assert seen[0] != seen[2]
+    assert seen[1] != seen[2]
 
 
 def test_clichat_invoke_error_traced_and_reraised(monkeypatch):

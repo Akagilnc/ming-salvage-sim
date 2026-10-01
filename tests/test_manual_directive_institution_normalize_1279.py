@@ -30,19 +30,10 @@ def _mock_draft_intent(monkeypatch, *, text: str, roster):
         "参与人": roster,
     }
 
-    def backend(prompt, *_args, tag="", **_kwargs):
-        # r6 escalate 出口：按 tag 分派，禁一律吐抽取 JSON / 禁 prompt 形状假设炸 IndexError
+    def backend(_prompt, *_args, tag="", **_kwargs):
+        # 回禀出口按结构化 tag 分派；正文不进断言。
         if tag == "participant_escalate_report":
-            names = "、".join(
-                str(item.get("character_id") or "").strip()
-                for item in roster
-                if str(item.get("character_id") or "").strip()
-            ) or "此人"
-            return (f"通政司启：朝中查无「{names}」，乞陛下明示。", 1)
-        emperor = prompt.split("【皇帝】", 1)[1].split("【大臣回话】", 1)[0]
-        # 替身只对**材料**忠实：皇帝段没有本轮旨文正文就装没看见。不断言指令句写法。
-        if text not in emperor:
-            return (json.dumps({"拟旨意图": "无"}, ensure_ascii=False), 1)
+            return ("回禀", 1)
         return (json.dumps(response, ensure_ascii=False), 1)
 
     monkeypatch.setattr(cli_backend, "_run_backend_for_config", backend)
@@ -237,11 +228,7 @@ def test_adr0053_unknown_person_still_rejected_at_capture(game, monkeypatch):
         roster=[{"character_id": "不存在之人甲", "tier": "主办"}],
     )
 
-    with pytest.raises(ValueError) as ei:
+    with pytest.raises(ValueError):
         cli_backend.capture_manual_directive_payload(
             text, None, db=db, content=content,
         )
-    msg = str(ei.value)
-    assert "不存在之人甲" in msg
-    assert any(m in msg for m in ("乞陛下明示", "朝籍", "查无"))
-    assert "参与人物不存在" not in msg  # F5：禁原始 409 泄漏

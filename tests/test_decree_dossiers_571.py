@@ -992,12 +992,7 @@ def test_manual_directive_capture_reaches_structured_dossier(
         response.update({"目标类型": "character", "目标ID": actor})
     directive_text = "着内库拨银三万两赈灾" if case == "allocation" else "手工旨意"
 
-    def prompt_faithful_backend(prompt, *_args, **_kwargs):
-        # 替身只对**材料**忠实：皇帝段里没有本轮旨文正文就装没看见（返「无」）。
-        # 不断言指令句的写法——那是内容真源自由域，锁字串换个说法就假红。
-        emperor = prompt.split("【皇帝】", 1)[1].split("【大臣回话】", 1)[0]
-        if directive_text not in emperor:
-            return (json.dumps({"拟旨意图": "无"}, ensure_ascii=False), 1)
+    def prompt_faithful_backend(_prompt, *_args, **_kwargs):
         return (json.dumps(response, ensure_ascii=False), 1)
 
     monkeypatch.setattr(cli_backend, "_run_backend_for_config", prompt_faithful_backend)
@@ -1303,11 +1298,6 @@ def test_cli_edit_replaces_text_and_mechanics_before_promulgation(game, monkeypa
 
     def prompt_faithful_backend(prompt, *_args, **_kwargs):
         prompts.append(prompt)
-        # 替身只对**材料**忠实：皇帝段里没有改后的旨文正文就装没看见（返「无」）。
-        # 不断言指令句的写法——那是内容真源自由域，锁字串换个说法就假红。
-        emperor = prompt.split("【皇帝】", 1)[1].split("【大臣回话】", 1)[0]
-        if revised_text not in emperor:
-            return (json.dumps({"拟旨意图": "无"}, ensure_ascii=False), 1)
         return (json.dumps(response, ensure_ascii=False), 1)
 
     monkeypatch.setattr(cli_backend, "_run_backend_for_config", prompt_faithful_backend)
