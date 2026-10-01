@@ -310,13 +310,13 @@ def _merge_plea_kind_into_todo(
         )
     meta["absorbed_breach_kinds"] = absorbed_list
     # 保留首类 primary；补充理由/案卷
-    if reason and not str(meta.get("reason") or "").strip():
-        meta["reason"] = str(reason)[:400]
-    elif reason:
+    incoming = str(reason or "")
+    if incoming.strip() and not str(meta.get("reason") or "").strip():
+        meta["reason"] = incoming
+    elif incoming.strip():
         prev = str(meta.get("reason") or "")
-        add = str(reason)[:200]
-        if add and add not in prev:
-            meta["reason"] = f"{prev}；{add}"[:400]
+        if incoming not in prev:
+            meta["reason"] = f"{prev}；{incoming}"
     if int(target_dossier_id or 0) > 0 and int(meta.get("target_dossier_id") or 0) <= 0:
         meta["target_dossier_id"] = int(target_dossier_id)
     if extra:
@@ -377,16 +377,16 @@ def write_breach_plea_todo(
         return _merge_plea_kind_into_todo(
             db, existing,
             breach_kind=kind,
-            reason=str(reason or label)[:400],
+            reason=str(reason) if str(reason or "").strip() else label,
             target_dossier_id=int(target_dossier_id or 0),
             extra=extra,
         )
 
     meta: Dict[str, object] = {
         "breach_kind": kind,
-        "reason": str(reason or label)[:400],
+        "reason": str(reason) if str(reason or "").strip() else label,
         "target_dossier_id": int(target_dossier_id or 0),
-        "commitment_title": title[:120],
+        "commitment_title": title,
         "absorbed_breach_kinds": [],
     }
     if extra:
@@ -411,7 +411,7 @@ def write_breach_plea_todo(
             return _merge_plea_kind_into_todo(
                 db, existing,
                 breach_kind=kind,
-                reason=str(reason or label)[:400],
+                reason=str(reason) if str(reason or "").strip() else label,
                 target_dossier_id=int(target_dossier_id or 0),
                 extra=extra,
             )
@@ -564,7 +564,11 @@ def _apply_halfway_national_setback(
                 trigger_ref=origin_ref or f"breach:{title}",
                 delta_bar=0,
                 stage_text="国势倒退",
-                narrative=str(reason or "办到一半撤诺，沉没投入化为负累")[:400],
+                narrative=(
+                    str(reason)
+                    if str(reason or "").strip()
+                    else "办到一半撤诺，沉没投入化为负累"
+                ),
                 metric_delta={},
                 commit=False,
             )
@@ -767,7 +771,8 @@ def finalize_persist(
     #   实写同人去重（tail.guofu_from_0056；origin 前缀 dossier:{id}:breach）。
     #   跨承诺/跨案卷同人边各落各账，UNIQUE 键含 origin 本就允许。
     kinds = plea_kind_set(meta)
-    reason = str(meta.get("reason") or todo.get("criterion_text") or "坚持撤诺")[:400]
+    raw_reason = str(meta.get("reason") or todo.get("criterion_text") or "")
+    reason = raw_reason if raw_reason.strip() else "坚持撤诺"
     commitment_ref = int(todo["commitment_ref"])
     row = _issue_row(db, commitment_ref)
     title = str(row["title"] if row is not None else meta.get("commitment_title") or "")
@@ -784,18 +789,18 @@ def finalize_persist(
 
     if tier == FOUNDATION_ROOTED:
         outcome = "degraded"
-        note = f"根基已成而撤后续之诺，只失未兑现红利（{reason}）"[:200]
+        note = f"根基已成而撤后续之诺，只失未兑现红利（{reason}）"
         close = True
     elif tier == FOUNDATION_HALFWAY:
         outcome = "failed"
-        note = f"事废：办到一半松手，沉没投入与国势倒退（{reason}）"[:200]
+        note = f"事废：办到一半松手，沉没投入与国势倒退（{reason}）"
         close = True
         setback = _apply_halfway_national_setback(
             db, state, title=title, reason=reason, origin_ref=origin_ref,
         )
     else:
         outcome = "failed"
-        note = f"刚起头撤，所费付诸东流（{reason}）"[:200]
+        note = f"刚起头撤，所费付诸东流（{reason}）"
         close = True
 
     apply_0056 = bool(kinds & _BREACH_KINDS_TRIGGER_0056)
@@ -1353,7 +1358,7 @@ def try_defer_revoke_to_breach_plea(
             db, state,
             commitment_ref=cid,
             breach_kind=BREACH_KIND_POLICY_REVERSAL,
-            reason=str(reason or "撤回成命")[:400],
+            reason=str(reason) if str(reason or "").strip() else "撤回成命",
             target_dossier_id=int(target_dossier_id or 0),
             extra={
                 "deferred_revoke": True,

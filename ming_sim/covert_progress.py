@@ -554,7 +554,7 @@ def decide_secret_order_settlement(review_input: Mapping[str, object]) -> Dict[s
     return {
         "status": status,
         "outcome": outcome,
-        "note": note[:200],
+        "note": note,
         "close": True,
         "is_terminal": True,
         "actual_units": actual,
@@ -567,14 +567,14 @@ def player_facing_secret_order_close_text(
     order: Mapping[str, object],
     reports: Sequence[Mapping[str, object]],
 ) -> str:
-    existing = str(order.get("result") or "").strip()
-    if existing:
+    existing = str(order.get("result") or "")
+    if existing.strip():
         return existing
     for item in reversed(list(reports or [])):
         if not isinstance(item, Mapping):
             continue
-        text = str(item.get("memorial_text") or "").strip()
-        if text:
+        text = str(item.get("memorial_text") or "")
+        if text.strip():
             return text
     return ""
 
@@ -1078,8 +1078,14 @@ def apply_monthly_covert_actual_progress(
             units = monthly_actual_units(
                 fidelity=fidelity, originated_quantity=originated,
             )
-        note = str(sel.get("note") or sel.get("备注") or "").strip()
-        if not note:
+        note_raw = sel.get("note")
+        if note_raw is None or not str(note_raw).strip():
+            note_raw = sel.get("备注")
+        if note_raw is None or not str(note_raw).strip():
+            note = ""
+        else:
+            note = str(note_raw)
+        if not note.strip():
             note = (
                 f"月度实进度：执行态{fidelity}（{units:g}）"
                 f"；origin_effects={originated}"

@@ -403,21 +403,21 @@ def apply_distortion_to_verdict(
     if outcome == "fulfilled":
         if band == "必歪":
             out["outcome"] = "transformed"
-            out["note"] = (note + "；催办失真，事已变形")[:200]
+            out["note"] = note + "；催办失真，事已变形"
         elif band in {"易歪", "微歪"}:
             out["outcome"] = "degraded"
-            out["note"] = (note + "；催紧之下，实绩打折")[:200]
+            out["note"] = note + "；催紧之下，实绩打折"
     elif outcome == "degraded":
         if band == "必歪":
             out["outcome"] = "failed" if not has_effects else "transformed"
-            out["note"] = (note + "；催之愈急，愈见走样")[:200]
+            out["note"] = note + "；催之愈急，愈见走样"
         elif band == "易歪" and not has_effects:
             out["outcome"] = "failed"
-            out["note"] = (note + "；表报难掩亏空")[:200]
+            out["note"] = note + "；表报难掩亏空"
     elif outcome == "failed":
         # 已是最重终值；附注失真
         if band in {"易歪", "必歪"}:
-            out["note"] = (note + "；催办之下终无实绩")[:200]
+            out["note"] = note + "；催办之下终无实绩"
     return out
 
 
