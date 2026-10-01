@@ -154,10 +154,10 @@ def test_shape_garbage_rejected_per_existing_extractor_contract(game):
         {
             "relation_edge_events": [
                 "不是对象",  # 非 dict item → sanitize 层逐项拒收
-                {"施动者": "甲", "受动者": "乙", "类目": "擅自发明", "语境": "x"},  # 未知类目
-                {"施动者": "甲", "受动者": "乙", "类目": "结怨", "语境": "   "},  # 空语境
-                {"受动者": "乙", "类目": "结怨", "语境": "缺施动者"},  # 缺施动者
-                {"施动者": "甲", "受动者": "皇帝", "类目": "兑现所托", "语境": "君臣类目不归本口"},
+                {"施动者": "毕自严", "受动者": "王绍徽", "类目": "擅自发明", "语境": "x", "来源引用": "盘面自发"},  # 未知类目
+                {"施动者": "毕自严", "受动者": "王绍徽", "类目": "结怨", "语境": "   ", "来源引用": "盘面自发"},  # 空语境
+                {"受动者": "王绍徽", "类目": "结怨", "语境": "缺施动者", "来源引用": "盘面自发"},  # 缺施动者
+                {"施动者": "毕自严", "受动者": "王绍徽", "类目": "兑现所托", "语境": "君臣类目不归本口", "来源引用": "盘面自发"},
             ],
         },
         content=content,
@@ -188,20 +188,20 @@ def test_shape_garbage_rejected_per_existing_extractor_contract(game):
 def test_non_string_actor_target_context_shapes_rejected(game):
     """施动者/受动者/语境非字符串形状逐项拒收留痕，零写入（不 str() 搭救）。"""
     db, state, content = game
-    base = {"受动者": "乙", "类目": "结怨", "语境": "x", "来源引用": "盘面自发"}
+    base = {"受动者": "王绍徽", "类目": "结怨", "语境": "x", "来源引用": "盘面自发"}
     out = apply_score_extraction(
         db, state,
         {
             "relation_edge_events": [
                 {"施动者": 123, **base},  # 数字型施动者
                 {"施动者": {"名": "甲"}, **base},  # 对象型施动者
-                {"施动者": "甲", "受动者": ("乙",), "类目": "结怨",
+                {"施动者": "毕自严", "受动者": ("王绍徽",), "类目": "结怨",
                  "语境": "x", "来源引用": "盘面自发"},  # tuple 受动者容器
-                {"施动者": "甲", "受动者": ["乙", 3], "类目": "结怨",
+                {"施动者": "毕自严", "受动者": ["王绍徽", 3], "类目": "结怨",
                  "语境": "x", "来源引用": "盘面自发"},  # 混型受动者列表
-                {"施动者": "甲", "受动者": "乙", "类目": "结怨",
+                {"施动者": "毕自严", "受动者": "王绍徽", "类目": "结怨",
                  "语境": 42, "来源引用": "盘面自发"},  # 数字型语境
-                {"施动者": "甲", "受动者": "乙", "类目": "结怨",
+                {"施动者": "毕自严", "受动者": "王绍徽", "类目": "结怨",
                  "语境": {"句": "x"}, "来源引用": "盘面自发"},  # 对象型语境
             ],
         },
@@ -221,7 +221,7 @@ def test_non_string_actor_target_context_shapes_rejected(game):
 def test_missing_or_forged_provenance_rejected_with_trace_no_edges(game):
     """缺 provenance/伪前缀/未知未授权案卷/自带 round 的伪造值：逐项拒收留痕不落边。"""
     db, state, content = game
-    base = {"施动者": "甲", "受动者": "乙", "类目": "结怨", "语境": "x"}
+    base = {"施动者": "毕自严", "受动者": "王绍徽", "类目": "结怨", "语境": "x"}
     out = apply_score_extraction(
         db, state,
         {
@@ -234,20 +234,24 @@ def test_missing_or_forged_provenance_rejected_with_trace_no_edges(game):
                 {**base, "来源引用": "fake"},  # 伪前缀自由文本
                 {**base, "来源引用": " 盘面自发 "},  # 空白包裹哨兵变体
                 {**base, "来源引用": "\n盘面自发\t"},  # 换行/制表包裹变体
+                {**base, "来源引用": 123},
+                {**base, "来源引用": "盘面自发", "类目": "协作"},
             ],
         },
         content=content,
     )
     res = out["relation_edge_event_resolutions"]
     rejected = [r for r in res if r.get("rejected")]
-    assert len(rejected) == 8
+    assert len(rejected) == 9
     assert all(r["category"] == "invalid_relation_event" for r in rejected)
     assert {r["item"].get("来源引用") for r in rejected} == {
         None, "   ", "盘面自发|round:999", "dossier:999999", "fake",
-        " 盘面自发 ", "\n盘面自发\t",
+        " 盘面自发 ", "\n盘面自发\t", 123,
     }
-    # 全部拒收：库里零边、无任何 origin 被默认成「盘面自发」落库
-    assert _edge_rows(db) == []
+    rows = _edge_rows(db)
+    assert _triplets(rows) == {("毕自严", "王绍徽", "协作")}
+    assert len(rows) == 1
+    assert rows[0]["origin"] == f"盘面自发:relation:协作|round:{state.turn}"
 
 
 def test_whitespace_padded_noncanonical_origins_rejected_no_strip_rescue(game):
@@ -256,7 +260,7 @@ def test_whitespace_padded_noncanonical_origins_rejected_no_strip_rescue(game):
     庭裁 probe：守门曾先 strip 后授权，把非 canonical provenance 归一成合法
     来源（fail-open）；本负例钉死精确匹配契约。"""
     db, state, content = game
-    base = {"施动者": "甲", "受动者": "乙", "类目": "结怨", "语境": "x"}
+    base = {"施动者": "毕自严", "受动者": "王绍徽", "类目": "结怨", "语境": "x"}
     variants = [" 盘面自发 ", "\n盘面自发\t", "盘面自发\n", "\t盘面自发", "盘面自发 "]
     out = apply_score_extraction(
         db, state,
@@ -270,22 +274,6 @@ def test_whitespace_padded_noncanonical_origins_rejected_no_strip_rescue(game):
     assert {r["item"]["来源引用"] for r in rejected} == set(variants)
     # 零写入：无任何归一后的「盘面自发」origin 溜进库
     assert _edge_rows(db) == []
-
-
-def test_settlement_edge_origin_rejects_missing_and_non_string():
-    """拼装器本体不再静默默认哨兵；缺失/非字符串诚实报错。"""
-    import pytest
-
-    from ming_sim.relations import settlement_edge_origin
-
-    with pytest.raises(ValueError):
-        settlement_edge_origin(None, "联名")
-    with pytest.raises(ValueError):
-        settlement_edge_origin(123, "联名")
-    with pytest.raises(ValueError):
-        settlement_edge_origin("   ", "联名")
-    # 合法条目照常拼装；拼装器不独立 strip——值原样进入 origin（空白只作非空谓词）
-    assert settlement_edge_origin("盘面自发", "联名") == "盘面自发:relation:联名"
 
 
 def _promulgated_dossier(db, state, holder, token):

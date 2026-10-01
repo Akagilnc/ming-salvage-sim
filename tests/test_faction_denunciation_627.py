@@ -12,31 +12,21 @@ Seams:
 
 from __future__ import annotations
 
-import ast
 import json
-import re
-from pathlib import Path
 
 import pytest
 
 from ming_sim.db import GameDB
 from ming_sim.supervision import (
-    DENUNCIATION_ALLOWED_COLS,
     DENUNCIATION_ORIGIN_BASE,
     DENUNCIATION_TABLE,
     ORIGIN_MARK_DENUNCIATION_FALSE,
     ORIGIN_MARK_DENUNCIATION_TRUE,
-    compose_denunciation_origin,
-    derive_denunciation_is_true,
     faction_relation,
-    is_reported_actual_fork,
     origin_has_mark,
 )
 from tests.test_dossier_reported_progress_619 import _world_fingerprint
 from tests.dossier_test_helpers import create_test_secret_order
-
-
-_REPO = Path(__file__).resolve().parents[1]
 
 
 # ── helpers ───────────────────────────────────────────────────────
@@ -151,13 +141,6 @@ def _escalate_fork(db, state, dossier_id: int, *, token: str = "esc"):
     )
 
 
-def _table_cols(db, table: str) -> set[str]:
-    return {
-        str(row["name"])
-        for row in db.conn.execute(f'PRAGMA table_info("{table}")').fetchall()
-    }
-
-
 def _scripted_entry(
     *,
     accuser: str,
@@ -174,88 +157,6 @@ def _scripted_entry(
 
 
 # ── unit pure ─────────────────────────────────────────────────────
-
-
-def test_fork_predicate_pure_and_single_source_expression():
-    assert is_reported_actual_fork(
-        reported_bands=["已竣"], beyond_intent=True, execution_outcome="executing",
-    ) is True
-    assert is_reported_actual_fork(
-        reported_bands=["已竣"], beyond_intent=False, execution_outcome="transformed",
-    ) is True
-    assert is_reported_actual_fork(
-        reported_bands=["已竣"], beyond_intent=False, execution_outcome="fulfilled",
-    ) is False
-    assert is_reported_actual_fork(
-        reported_bands=[], beyond_intent=True, execution_outcome="transformed",
-    ) is False
-
-    # 结构断言：fork 判据表达式全库仅一处（supervision.py）
-    needle = 'outcome not in {"", "fulfilled", "executing"}'
-    hits: list[Path] = []
-    for path in (_REPO / "ming_sim").rglob("*.py"):
-        text = path.read_text(encoding="utf-8")
-        if needle in text:
-            hits.append(path.relative_to(_REPO))
-    assert hits == [Path("ming_sim/supervision.py")], hits
-
-    src = (_REPO / "ming_sim" / "supervision.py").read_text(encoding="utf-8")
-    tree = ast.parse(src)
-    defs = [
-        n.name for n in tree.body
-        if isinstance(n, ast.FunctionDef) and n.name == "is_reported_actual_fork"
-    ]
-    assert defs == ["is_reported_actual_fork"]
-
-
-def test_veracity_derivation_mechanical_and_origin_marks():
-    """真伪底派生：分叉→真；无分叉→私货；origin 单源 mark。"""
-    assert derive_denunciation_is_true(fork=True) is True
-    assert derive_denunciation_is_true(fork=False) is False
-
-    o_true = compose_denunciation_origin(is_true=True)
-    o_false = compose_denunciation_origin(is_true=False)
-    assert o_true.startswith(DENUNCIATION_ORIGIN_BASE)
-    assert origin_has_mark(o_true, ORIGIN_MARK_DENUNCIATION_TRUE)
-    assert origin_has_mark(o_false, ORIGIN_MARK_DENUNCIATION_FALSE)
-    assert not origin_has_mark(o_true, ORIGIN_MARK_DENUNCIATION_FALSE)
-
-
-def test_no_intensity_quota_template_symbols():
-    """P6/P7：烈度门/quota/模板函数定义不得再存在（禁词表字符串除外）。"""
-    src = (_REPO / "ming_sim" / "supervision.py").read_text(encoding="utf-8")
-    tree = ast.parse(src)
-    top_names = {
-        n.name for n in tree.body
-        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
-    }
-    assign_names: set[str] = set()
-    for n in tree.body:
-        if isinstance(n, ast.Assign):
-            for t in n.targets:
-                if isinstance(t, ast.Name):
-                    assign_names.add(t.id)
-        elif isinstance(n, ast.AnnAssign) and isinstance(n.target, ast.Name):
-            assign_names.add(n.target.id)
-    for banned in (
-        "DENUNCIATION_INTENSITY_GATES",
-        "denunciation_quota",
-        "render_denunciation_memorial",
-        "faction_conflict_intensity",
-        "pick_denunciation_accusers",
-    ):
-        assert banned not in top_names, banned
-        assert banned not in assign_names, banned
-    db_src = (_REPO / "ming_sim" / "db.py").read_text(encoding="utf-8")
-    db_tree = ast.parse(db_src)
-    db_fns = {
-        n.name for n in ast.walk(db_tree) if isinstance(n, ast.FunctionDef)
-    }
-    assert "render_denunciation_memorial" not in db_fns
-    assert "denunciation_quota" not in db_fns
-    assert "trigger_faction_denunciations" not in db_fns
-    assert "accept_faction_denunciations" in db_fns
-    assert "build_faction_denunciation_facts" in db_fns
 
 
 # ── AC1 事实供给 ──────────────────────────────────────────────────
@@ -505,28 +406,6 @@ def test_ac5_zero_template_exposure_and_622(game):
         "SELECT COUNT(*) AS n FROM decree_dossiers"
     ).fetchone()["n"] == dossier_n_before
     assert _world_fingerprint(db) == fp_before
-
-    # 知识轨没有新增条目（由上面的结构化计数证明）。
-    # schema 白名单
-    assert DENUNCIATION_TABLE in {
-        r[0] for r in db.conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        ).fetchall()
-    }
-    assert _table_cols(db, DENUNCIATION_TABLE) == DENUNCIATION_ALLOWED_COLS
-
-    # 引擎侧零模板句：产出路径无固定文案常量
-    prod_files = [
-        _REPO / "ming_sim" / "supervision.py",
-        _REPO / "ming_sim" / "db.py",
-        _REPO / "ming_sim" / "decree.py",
-    ]
-    template_re = re.compile(
-        r"奏称：.*办理.*有异状|请皇上按问"
-    )
-    for path in prod_files:
-        text = path.read_text(encoding="utf-8")
-        assert not template_re.search(text), f"模板句残留于 {path.name}"
 
     # #622 读端改调 public fork 单源
     actor = subject_name

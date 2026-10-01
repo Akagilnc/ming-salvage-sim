@@ -9,12 +9,10 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[1]
 
 
 
@@ -35,10 +33,7 @@ def test_gazette_header_uses_report_own_month_not_current_turn(game):
     assert state.turn == 1
     assert (state.year, state.period) == (1627, 10)
     assert reign_period_label(state.year, state.period) == "天启七年十月"
-    opening_body = db.previous_turn_summary(state)
-    assert "天启七年九月邸报" not in opening_body
-    assert "待办未解（开局三事）" not in opening_body
-    assert "信王于乾清宫即皇帝位" not in opening_body
+    assert db.previous_turn_summary(state) == ""
 
     # 落一条真实「九月」报文 → 报头必须九月（与报文自身月同源）
     db.conn.execute(
@@ -48,19 +43,6 @@ def test_gazette_header_uses_report_own_month_not_current_turn(game):
     db.conn.commit()
     assert db.previous_turn_reign_period_label(state) == "天启七年九月"
     assert "真结算九月报文" in db.previous_turn_summary(state)
-
-    # 禁前端第二份年号表：无天启/崇祯 epoch 常量平行表
-    web_src = ROOT / "web/src"
-    offenders: list[str] = []
-    for path in web_src.rglob("*.ts*"):
-        if "node_modules" in path.parts:
-            continue
-        body = path.read_text(encoding="utf-8")
-        if "1621" in body and ("天启" in body or "TIANQI" in body or "tianqi" in body):
-            offenders.append(str(path.relative_to(ROOT)))
-        if "CHONGZHEN_EPOCH" in body or "TIANQI_EPOCH" in body:
-            offenders.append(str(path.relative_to(ROOT)))
-    assert offenders == []
 
 
 def test_gazette_header_cross_year_december_report_under_january_state(game):

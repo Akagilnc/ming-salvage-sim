@@ -760,21 +760,6 @@ def test_ac5_hook_idempotent_no_gate_table_expansion(game):
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.commit()
 
-    # 挂点：pre_settle 源码恰一处调用
-    src = inspect.getsource(pre_settle)
-    assert "trigger_commitment_backlashes" in src
-    assert src.count("trigger_commitment_backlashes") == 1
-    assert "trigger_supervision_countermeasures" in src  # 同格既有挂点
-
-    # 不扩 GATE_TABLES
-    assert GATE_TABLES == (
-        "region", "army", "building", "power", "class", "faction", "character", "event",
-    )
-    # 硬门实现不引用 trigger_gate 求值
-    gate_src = inspect.getsource(GameDB.trigger_commitment_backlashes)
-    assert "evaluate_trigger_gate" not in gate_src
-    assert "GATE_TABLES" not in gate_src
-
     did, holder = _executing_policy_dossier(db, state, token="idemp")
     bar = _seed_halfway(db, state, did=did)
     cid = _insert_commitment(

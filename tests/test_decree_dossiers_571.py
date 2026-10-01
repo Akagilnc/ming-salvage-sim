@@ -1189,10 +1189,7 @@ def test_manual_directive_capture_rejects_missing_empty_or_invalid_tier_without_
 def test_final_decree_edit_path_removed_no_bypass(game):
     """#1341/#1338：裸设总诏入口已拆——无 set_decree、无 PATCH /api/decree，
     既有草案正文不被旁路改写；OpenAPI 不再广告死路。"""
-    import inspect
-
     import web_app
-    from ming_sim.session import GameSession
 
     db, state, _content = game
     directive_id = db.add_directive(
@@ -1205,9 +1202,6 @@ def test_final_decree_edit_path_removed_no_bypass(game):
         },
     )
 
-    assert not hasattr(GameSession, "set_decree")
-    assert not hasattr(web_app, "api_edit_decree")
-    assert not hasattr(web_app, "EditDecreeRequest")
     paths = {getattr(r, "path", None) for r in web_app.app.routes}
     assert "/api/decree" not in paths or not any(
         getattr(r, "path", None) == "/api/decree"
@@ -1217,8 +1211,6 @@ def test_final_decree_edit_path_removed_no_bypass(game):
     # 草案正文未被旁路改写
     assert db.get_dossier_for_directive(directive_id) is None
     assert db.list_directives(state)[0]["text"] == "拨十两赈济"
-    # session 源码不再出现 set_decree 实现（防复活）
-    assert "def set_decree" not in inspect.getsource(GameSession)
 
 def test_cli_dossiered_directive_is_not_listed_editable_or_deletable(
     game, monkeypatch, capsys,

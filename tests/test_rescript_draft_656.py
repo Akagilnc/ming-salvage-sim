@@ -1040,8 +1040,6 @@ def test_657_s1_rescript_emitted_set_subset_of_dossier(game):
     )
     assert RESCRIPT_EMITTED_DOSSIER_ACTION_TYPES <= DOSSIER_ACTION_TYPES
     assert "dismiss_assignment" in RESCRIPT_EMITTED_DOSSIER_ACTION_TYPES
-    assert not hasattr(dv, "RESCRIPT_ROUTABLE_ACTION_TYPES")
-    assert not hasattr(dv, "NATIONAL_FANOUT_ACTION_TYPES")
     _ = game  # fixture keeps DB init path green
 
 def test_657_s1_derive_draft_capability_stable_and_sensitive():

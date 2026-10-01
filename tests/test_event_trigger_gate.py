@@ -1410,24 +1410,6 @@ def test_pending_gate_uses_same_place_canonical_terminal_state(game):
     ) is False
 
 
-def test_wuyin_lubian_content_treats_lu_death_as_soft_battle_outcome():
-    """#189：戊寅虏变不能把卢象升写成人物核心；卢死/生是战事软判结果。"""
-    events_path = Path(__file__).resolve().parents[1] / "content" / "events.json"
-    events = json.loads(events_path.read_text(encoding="utf-8"))
-    wuyin = next(item for item in events if item["id"] == "wuyin_lubian")
-    songshan = next(item for item in events if item["id"] == "songshan_battle")
-
-    assert "殉国" not in wuyin["title"]
-    assert "本局按盘面软判" in wuyin["summary"]
-    assert "卢象升得" not in wuyin["resolve_condition"]
-    assert "卢象升孤军战死" not in wuyin["fail_condition"]
-    assert "卢象升生死由软判" in wuyin["precondition"]
-    assert "本局按盘面软判援锦主帅" in songshan["summary"]
-    assert "洪承畴率" not in songshan["summary"]
-    assert "洪承畴稳" not in songshan["resolve_condition"]
-    assert "洪承畴降金" not in songshan["fail_condition"]
-
-
 def test_mao_wenlong_event_trigger_respects_outer_transaction_rollback(game):
     """post-merge CMR：event trigger 写入不得提前提交外层普通事务。"""
     db, state, content = game

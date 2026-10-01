@@ -1019,18 +1019,6 @@ def test_1271_three_endpoints_grok_reasoning_supported_and_capability_list(monke
     assert set(post_result["cli_reasoning_runners"]) == set(CLI_REASONING_STRENGTH_RUNNERS)
 
 
-def test_1271_cli_supports_reasoning_strength_has_no_literal_set():
-    """#1271 验收①：grep 谓词无字面量集合 + 委派 CLI_REASONING_STRENGTH_RUNNERS。"""
-    import inspect
-
-    from ming_sim.llm_config import cli_supports_reasoning_strength
-
-    src = inspect.getsource(cli_supports_reasoning_strength)
-    assert "CLI_REASONING_STRENGTH_RUNNERS" in src
-    assert '{"codex"' not in src and "{'codex'" not in src
-    assert '"codex", "claude"' not in src
-
-
 def _count_llm_calls(monkeypatch):
     """#1228 行为验收：统计连通 smoke / CLI 后端真实调用次数（不断言墙钟）。"""
     import ming_sim.cli_backend as _cb

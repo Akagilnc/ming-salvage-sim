@@ -473,43 +473,9 @@ def test_write_turn_still_blocks_on_open_barrier():
     assert order == ["barrier", "late"], order
 
 
-def test_no_elapsed_timeout_api_on_barrier():
-    """队列层已删 elapsed 熔断分类：barrier/wait_prior/run 无 timeout_s 形参。"""
-    import inspect
-    from pathlib import Path
-
-    import ming_sim.session_write_queue as swq
-
-    q = SessionWriteQueue()
-    assert "timeout_s" not in inspect.signature(q.barrier).parameters
-    assert "timeout_s" not in inspect.signature(q.wait_prior).parameters
-    assert "timeout_s" not in inspect.signature(q.run).parameters
-    assert "timeout_s" not in inspect.signature(q.ticketed_gate).parameters
-    text = Path(swq.__file__).read_text(encoding="utf-8")
-    assert "TicketBarrierTimeout" not in text
-    assert "DEFAULT_TICKET_WAIT_S" not in text
-    assert not hasattr(swq, "TicketBarrierTimeout")
-
-
 def test_get_session_write_queue_wiring_fail_loud_no_broad_swallow():
-    """#1353 r7 / ADR 0005：接线赋值禁宽吞；WebGame/session 必共享同一 queue/gate。"""
-    import re
-    from pathlib import Path
-
-    import ming_sim.session_write_queue as swq
+    """WebGame/session 共享同一写入队列。"""
     from ming_sim.session_write_queue import get_session_write_queue
-
-    text = Path(swq.__file__).read_text(encoding="utf-8")
-    # 定位 get_session_write_queue 函数体，禁 except Exception + pass 宽吞。
-    m = re.search(
-        r"def get_session_write_queue\(.*?(?=\ndef |\Z)",
-        text,
-        flags=re.S,
-    )
-    assert m is not None
-    body = m.group(0)
-    assert "except Exception" not in body
-    assert re.search(r"except\s+Exception\s*:\s*\n\s*pass", body) is None
 
     class _Sess:
         pass

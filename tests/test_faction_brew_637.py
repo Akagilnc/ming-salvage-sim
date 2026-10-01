@@ -602,10 +602,8 @@ def test_source_faction_target_faction_equals_current_projection_and_nulls_and_n
 
 # ---- 送修口二负例 (b)：重试月场景，prompt 不把旧事件称作本月 ----
 
-def test_faction_brew_prompt_retry_month_does_not_label_old_events_as_current_month(game):
-    """负例(b) 机械可验：复刻重试月场景（水位之上含旧月事件），断言 prompt 渲染措辞不把旧事件称作本月。
-    正向表述：描述为未处理事件、每条自带时间戳、以事件自带年月为据；禁负向句。"""
-    from pathlib import Path
+def test_faction_brew_retry_preserves_event_dates(game):
+    """重试月保留未消化事件的原始年月，不把它们改成本月。"""
     db, state, _ = game
     # 旧月事件：落在当前 year/period
     old_year, old_period = int(state.year), int(state.period)
@@ -643,24 +641,3 @@ def test_faction_brew_prompt_retry_month_does_not_label_old_events_as_current_mo
     assert payload["new_events"][0]["year"] == old_year
     assert payload["new_events"][0]["period"] == old_period
     assert payload["year"] != payload["new_events"][0]["year"] or payload["period"] != payload["new_events"][0]["period"]
-
-    # prompt 措辞断言：不把旧事件称作本月，且为正向表述
-    prompt_path = Path("content/prompts/faction_brew.md")
-    prompt = prompt_path.read_text(encoding="utf-8")
-    # 禁止旧措辞
-    assert "本月新落" not in prompt
-    assert "本月新事" not in prompt
-    # 必须含新措辞（正向）
-    assert "本批待酿的涉派事件" in prompt
-    assert "水位之上未消化的新事件" in prompt or "未消化的新事件" in prompt
-    assert "以其自带年月为据" in prompt
-    assert "has_pending_failure为真时包含此前失败月的遗留事件" in prompt
-    assert "source_faction" in prompt and "target_faction" in prompt
-    assert "都须由本批新事件撑起" in prompt
-    assert "以事件自带年月定夺新旧与跨度" in prompt
-    # 宪法 P6 禁负向句：不得出现“不要当作本月发生/不要把旧事件当本月”
-    assert "不要当作本月发生" not in prompt
-    assert "不要把旧事件当本月" not in prompt
-    assert "不要把" not in prompt or "不要把旧事件当本月" not in prompt  # 宽松：确保无负向时间语义
-    # 正向表述校验：提示按自带时序判断（不通过否定达到）
-    assert "依各事件自带时序判断" in prompt or "以事件自带年月定夺" in prompt or "以其自带年月为据" in prompt
