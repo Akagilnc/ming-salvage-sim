@@ -3687,9 +3687,6 @@ _STRATEGIC_FOREIGN_NODE_OUTCOME_TARGETS: Dict[str, Dict[str, frozenset[str]]] = 
         "powers": frozenset({"bandit_li_zicheng"}),
     },
 }
-_STRATEGIC_EVENT_OUTCOME_LABELS: Dict[str, frozenset[str]] = {
-    "jisi_lubian": frozenset({"挡于边墙", "入塞被遏", "长驱直入"}),
-}
 _STRATEGIC_EVENT_OUTCOME_LABEL_ALIASES: Dict[str, Dict[str, str]] = {
     "jisi_lubian": {
         "挡于边墙外": "挡于边墙",
@@ -3865,27 +3862,48 @@ def _event_outcome_label(raw_outcomes: object, event_id: str) -> str:
     return str(raw or "").strip()
 
 
-def _merge_first_event_outcome(current: Dict[str, object], incoming: object, event_id: str) -> None:
-    """信封只贡献自己的 event_id；空归属不写；同键首次非空标签胜，后写不覆盖。"""
+def _closed_outcome_labels(content: Optional[GameContent], event_id: str) -> frozenset[str]:
+    """封闭结局集只认事件自身声明；写口与供料共用这一份，不另存枚举。"""
+    ev = content.event_by_id.get(str(event_id or "").strip()) if content is not None else None
+    raw = getattr(ev, "terminal_reason_labels", None) or []
+    return frozenset(str(label).strip() for label in raw if str(label).strip())
+
+
+def _merge_first_event_outcome(
+    current: Dict[str, object], incoming: object, event_id: str,
+) -> list[dict[str, object]]:
+    """信封只写入自己的 event_id。
+
+    空归属、或键不属于本信封的非空结局，不写，并作为未归属声明交调用方拒收。
+    同键首次非空标签胜，后写不覆盖，也不算拒收。
+    """
+    unowned: list[dict[str, object]] = []
+    if not isinstance(incoming, dict):
+        return unowned
     eid = str(event_id or "").strip()
-    if not eid or not isinstance(current, dict) or not isinstance(incoming, dict):
-        return
-    if not _event_outcome_label({eid: incoming.get(eid)}, eid):
-        return
-    if _event_outcome_label(current, eid):
-        return
-    current[eid] = incoming[eid]
+    for key, value in incoming.items():
+        key_s = str(key).strip()
+        if not _event_outcome_label({key_s: value}, key_s):
+            continue
+        if not eid or key_s != eid:
+            unowned.append({key_s: value})
+            continue
+        if not isinstance(current, dict) or _event_outcome_label(current, eid):
+            continue
+        current[eid] = value
+    return unowned
 
 
-def _normalize_event_outcome_label(event_id: str, label: str) -> str:
-    allowed = _STRATEGIC_EVENT_OUTCOME_LABELS.get(event_id, frozenset())
+def _normalize_event_outcome_label(event_id: str, label: str, content: GameContent) -> str:
+    allowed = _closed_outcome_labels(content, event_id)
     compact = re.sub(r"\s+", "", str(label or ""))
     if not compact:
         return ""
     for canonical in allowed:
         if compact == re.sub(r"\s+", "", canonical):
             return canonical
-    return _STRATEGIC_EVENT_OUTCOME_LABEL_ALIASES.get(event_id, {}).get(compact, "")
+    alias = _STRATEGIC_EVENT_OUTCOME_LABEL_ALIASES.get(event_id, {}).get(compact, "")
+    return alias if alias in allowed else ""
 
 
 def _strategic_event_outcome_label_or_error(
@@ -3893,14 +3911,14 @@ def _strategic_event_outcome_label_or_error(
     extracted: Dict[str, object],
     content: GameContent,
 ) -> tuple[str, str]:
-    allowed = _STRATEGIC_EVENT_OUTCOME_LABELS.get(event_id, frozenset())
+    allowed = _closed_outcome_labels(content, event_id)
     if not allowed:
         return "", ""
     label = _event_outcome_label(extracted.get("事件结局") or {}, event_id)
     event_title = content.event_by_id[event_id].title if event_id in content.event_by_id else event_id
     if not label:
         return "", f"战略/外敌事件「{event_title}」缺事件结局标签"
-    normalized = _normalize_event_outcome_label(event_id, label)
+    normalized = _normalize_event_outcome_label(event_id, label, content)
     if not normalized:
         raise ValueError(
             f"战略/外敌事件「{event_title}」事件结局标签无法归一：{label}；"

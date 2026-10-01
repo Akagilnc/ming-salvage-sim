@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 
 import pytest
@@ -949,3 +950,9 @@ def test_month_translation_receives_person_candidate_identity(game):
     prompt = build_month_segment_translate_prompt(seen[0])
     assert "huangtaiji_chengdi" in prompt
     assert "event_pool" in prompt
+    from ming_sim.materials import _world_candidate_events
+
+    jisi = next(item for item in _world_candidate_events(db, state) if item["id"] == "jisi_lubian")
+    labels = list(content.event_by_id["jisi_lubian"].terminal_reason_labels)
+    assert labels and jisi["terminal_reason_labels"] == labels
+    assert json.dumps(labels, ensure_ascii=False) in seen[0].target_grounding

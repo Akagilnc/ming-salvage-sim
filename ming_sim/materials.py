@@ -1484,21 +1484,21 @@ def _write_candidate_event_files(tmp: Path, db: Any, state: Any) -> list[str]:
     index.append(index_rel)
     for item, entry in zip(candidates, entries):
         rel = f"{_CANDIDATE_DIR}/{entry}"
-        body = "\n".join(
-            f"{label}：{value}"
-            for label, value in (
-                ("id", item["id"]),
-                ("标题", item["title"]),
-                ("类别", item["kind"]),
-                ("事件类型", item["event_type"]),
-                ("事由", item["summary"]),
-                ("相关", "、".join(item["interests"])),
-                ("前提门", json.dumps(item["trigger_gate"], ensure_ascii=False)),
-                ("可解条件", item["resolve_condition"]),
-                ("崩坏条件", item["fail_condition"]),
-                ("历史前情与结果", item["precondition"]),
-            )
-        )
+        rows = [
+            ("id", item["id"]),
+            ("标题", item["title"]),
+            ("类别", item["kind"]),
+            ("事件类型", item["event_type"]),
+            ("事由", item["summary"]),
+            ("相关", "、".join(item["interests"])),
+            ("前提门", json.dumps(item["trigger_gate"], ensure_ascii=False)),
+            ("可解条件", item["resolve_condition"]),
+            ("崩坏条件", item["fail_condition"]),
+            ("历史前情与结果", item["precondition"]),
+        ]
+        if item.get("terminal_reason_labels"):
+            rows.append(("封闭结局", "、".join(item["terminal_reason_labels"])))
+        body = "\n".join(f"{label}：{value}" for label, value in rows)
         _write_text(tmp / rel, body)
         index.append(rel)
     return index

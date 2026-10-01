@@ -333,11 +333,12 @@ def _effect_extraction_from_clean(
     event_id: str,
     *,
     empty_extraction: Mapping[str, object],
-) -> tuple[dict[str, object], dict[str, list[tuple[str, object]]], dict[str, list[str]]]:
+) -> tuple[dict[str, object], dict[str, list[tuple[str, object]]], dict[str, list[str]], list[dict[str, object]]]:
     """Build one apply_score_extraction payload from a single effect envelope."""
     extraction = copy.deepcopy(dict(empty_extraction))
     ordered_deltas = {field: [] for field in _ORDERED_DELTA_FIELDS}
     ordered_effect_event_ids = {field: [] for field in empty_extraction}
+    unowned_outcomes: list[dict[str, object]] = []
     for field, value in clean.items():
         if field not in empty_extraction:
             continue
@@ -347,7 +348,9 @@ def _effect_extraction_from_clean(
         elif isinstance(value, dict):
             if field == "事件结局":
                 from ming_sim.issues import _merge_first_event_outcome
-                _merge_first_event_outcome(extraction[field], value, event_id)
+                unowned_outcomes.extend(
+                    _merge_first_event_outcome(extraction[field], value, event_id)
+                )
             else:
                 extraction[field].update(value)
             if field in ordered_deltas:
@@ -355,7 +358,7 @@ def _effect_extraction_from_clean(
                 ordered_effect_event_ids[field].extend([event_id] * len(value))
         elif value is not None:
             extraction[field] = value
-    return extraction, ordered_deltas, ordered_effect_event_ids
+    return extraction, ordered_deltas, ordered_effect_event_ids, unowned_outcomes
 
 
 def _persist_specialized_extraction(
@@ -493,9 +496,18 @@ def _dispatch_effects(
         accepted_effect = True
         if event_id:
             accepted_event_ids.append(event_id)
-        step_extraction, step_ordered, step_event_ids = _effect_extraction_from_clean(
-            clean, event_id, empty_extraction=EMPTY_EXTRACTION,
+        step_extraction, step_ordered, step_event_ids, unowned_outcomes = (
+            _effect_extraction_from_clean(
+                clean, event_id, empty_extraction=EMPTY_EXTRACTION,
+            )
         )
+        for stray in unowned_outcomes:
+            rejected.append(RejectedItem(
+                item={"event_id": event_id, "事件结局": stray},
+                reason="事件结局不属于本效果信封，未写入",
+                category="invalid_state",
+                source=source,
+            ))
         effect_sequence.append((step_extraction, step_ordered, step_event_ids))
         for field, value in step_extraction.items():
             current = extraction[field]

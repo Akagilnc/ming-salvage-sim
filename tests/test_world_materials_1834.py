@@ -311,6 +311,16 @@ def test_world_materials_carry_eligible_person_event_candidates(game, tmp_path):
     assert eligible, "fixture 需当期有合资格人物事件"
     assert "huangtaiji_chengdi" in eligible
     assert len(candidate_paths) == len(eligible)
+    labels = list(content.event_by_id["jisi_lubian"].terminal_reason_labels)
+    assert labels
+    jisi_body = next(
+        body for body in (read_material(prepared.root, rel) for rel in candidate_paths)
+        if body.splitlines()[0] == "id：jisi_lubian"
+    )
+    fields = dict(
+        line.split("：", 1) for line in jisi_body.splitlines() if "：" in line
+    )
+    assert fields["封闭结局"].split("、") == labels
 
 
 def test_world_materials_carry_due_fiscal_levy_petitions(game, tmp_path):
