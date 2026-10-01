@@ -359,7 +359,7 @@ def _own_affair_lines(
     still-active linked issue" cannot occur — this function does not need to
     special-case it.
     """
-    from ming_sim.knowledge import _issue_audience_case_events, _issue_audience_names
+    from ming_sim.knowledge import _issue_audience_case_events, _reader_in_issue_audience
     from ming_sim.participant_roster import participant_roster_names
 
     store = getattr(db, "affairs", None)
@@ -427,7 +427,7 @@ def _own_affair_lines(
             roster = participant_roster_names(issue["participant_roster"])
         except (KeyError, IndexError, TypeError):
             roster = set()
-        if character_name in roster or character_name in _issue_audience_names(db, issue):
+        if character_name in roster or _reader_in_issue_audience(db, issue, character_name):
             handling_ids.add(linked_affair_id)
 
     candidate_ids = dossier_participant_ids | set(linked_material) | handling_ids
@@ -584,7 +584,7 @@ def _opening_affair_lines(
     resolved there. This function only consumes that verdict for "affair-"
     entries — it does not re-derive or change the gate itself.
     """
-    from ming_sim.knowledge import _issue_audience_names
+    from ming_sim.knowledge import _reader_in_issue_audience
     from ming_sim.participant_roster import participant_roster_names
 
     visible = {
@@ -609,7 +609,7 @@ def _opening_affair_lines(
             roster = participant_roster_names(issue["participant_roster"])
         except (KeyError, IndexError, TypeError):
             roster = set()
-        if character_name not in roster and character_name not in _issue_audience_names(db, issue):
+        if character_name not in roster and not _reader_in_issue_audience(db, issue, character_name):
             continue
         seen.add(dir_key)
         handled.append(visible[dir_key][:2])

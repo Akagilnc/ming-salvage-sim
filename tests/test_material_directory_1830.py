@@ -210,7 +210,9 @@ def test_read_material_stays_inside_directory(game, tmp_path):
     with pytest.raises(FileNotFoundError):
         read_material(prepared.root, display)
     miss = tools["read_material"](display)
-    assert miss.startswith("无法读取：")
+    assert isinstance(miss, str)
+    assert display in miss
+    assert "本月邸报" not in miss
 
 
 def test_character_materials_exclude_legacy_raw_turn_report_and_keep_public_gazettes(

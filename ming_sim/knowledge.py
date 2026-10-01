@@ -79,6 +79,17 @@ def _issue_audience_names(db: Any, issue: Any) -> set[str] | None:
     return names
 
 
+def _reader_in_issue_audience(db: Any, issue: Any, character_name: str) -> bool:
+    """Whether the optional audience supplement names this reader.
+
+    ``None`` means the supplement does not apply. That is not a grant.
+    An empty supplement does not name anyone. Malformed audience payloads
+    still raise from ``_issue_audience_names``.
+    """
+    audiences = _issue_audience_names(db, issue)
+    return bool(audiences) and character_name in audiences
+
+
 def _exclusion_lists_from_row(row: Any) -> tuple[set[str], set[str], set[str]]:
     """Parse excluded_names and excluded_targets.people/offices from one row."""
     try:
@@ -509,7 +520,7 @@ def _issue_audience_case_events(
             stage = _prose(issue["stage_text"]).strip()
         except (KeyError, IndexError, TypeError):
             stage = ""
-        if not stage or character_name not in _issue_audience_names(db, issue):
+        if not stage or not _reader_in_issue_audience(db, issue, character_name):
             continue
         if not knowledge_row_visible_to(
             db,
