@@ -1437,9 +1437,9 @@ def _pin_world_question_event_bindings(
 
     案头行身份保持 ``world-question:{turn}:{idx}``，不把事件 id 写进那一列。
     事件身份只来自当回合 ``gather_fiscal_levy_petitions`` 的 id 快照：请旨块自带且
-    属于该快照的 event_id 直接钉上；缺 id 且只剩一件未绑定的到期事项、也只剩一条
-    未绑定的请旨时，钉这一对。两边都还剩则 fail-loud，不按标题、不按 origin_ref、
-    不静默跳过。钉完之后快照再变也不改这张表。
+    属于该快照的 event_id 直接钉上。只从 origin_ref 填进来的 id 不是快照回显。
+    缺 id 且只剩一件未绑定的到期事项、也只剩一条未绑定的请旨时，钉这一对。
+    两边都还剩则 fail-loud，不按标题、不静默跳过。钉完之后快照再变也不改这张表。
     """
     if isinstance(chain.get("world_question_event_bindings"), dict):
         return
@@ -1460,9 +1460,10 @@ def _pin_world_question_event_bindings(
     unbound: List[int] = []
     for idx, question in enumerate(questions):
         desk_key = f"{_WORLD_QUESTION_PREFIX}{turn}:{idx}"
-        echoed = ""
-        if not question.get("event_id_from_origin_ref"):
-            echoed = str(question.get("event_id") or "").strip()
+        echoed = str(question.get("event_id") or "").strip()
+        origin_ref = str(question.get("origin_ref") or "").strip()
+        if origin_ref and echoed == origin_ref:
+            echoed = ""
         if echoed in due_set and echoed not in used:
             bindings[desk_key] = echoed
             used.add(echoed)

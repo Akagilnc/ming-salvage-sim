@@ -1410,6 +1410,38 @@ def test_fiscal_levy_petition_reaches_emperor_desk_and_lands_only_after_choice(g
     )
 
 
+def test_unpresented_fiscal_levy_declaration_leaves_terminal_empty(game, monkeypatch):
+    """到期未呈的三饷事项，世界段转译声明结局后终态仍空。"""
+    from ming_sim.models import LLMConfig
+    from tests.month_chain_helpers import make_light_session
+
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1631
+    state.period = 1
+    db.save_state(state)
+
+    def translate(*_a, **_k):
+        return {"effects": [{
+            "event_id": "liao_levy_rise_1631",
+            "事件结局": {"liao_levy_rise_1631": "已准"},
+        }]}
+
+    _install_liao_month_stubs(
+        monkeypatch, world_text=_liao_world_question_without_event_id(), translate=translate,
+    )
+    session = make_light_session(db, state, content)
+    session.llm_config = LLMConfig(
+        api_key="sk-test", base_url="https://example.invalid", model="test",
+    )
+    session.resolve_turn(allow_empty_decree=True)
+    assert not db.event_terminal_state("liao_levy_rise_1631")
+    assert [
+        row for row in db.list_event_petition_records()
+        if row.get("event_id") == "liao_levy_rise_1631"
+    ] == []
+
+
 def test_fiscal_levy_held_petition_is_supplied_to_next_world_segment(game, monkeypatch):
     """留中走案头：不写终态，已呈原文与原批语进入后续世界材料。"""
     from pathlib import Path

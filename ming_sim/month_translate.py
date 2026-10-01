@@ -37,28 +37,18 @@ def _visible_effect_refs(db: Any, turn: int, decree_payload: Mapping[str, object
 def petition_verdict_grounding(db: Any, state: Any) -> list[dict[str, object]]:
     """已呈皇帝、待亲裁落定结局的三饷事项及其封闭标签集（#1892 / ADR 0143 输入侧）。
 
-    转译器据这段**已有事实**把皇帝的准驳语义落到该事项的封闭结局标签上；不声明
-    结局即「本疏已答而事件未终」（留中），引擎据此不写终态。只供事实，不代模型判断。
+    只列事件账里已有请旨答复、终态仍空的事项。到期但尚未上疏的事项不在此列，
+    转译器不得把它们写成已批。不声明结局即留中，引擎不写终态。只供事实，不代模型判断。
     """
-    from ming_sim.issues import gather_fiscal_levy_petitions, petition_outcome_is_admissible
+    from ming_sim.issues import _fiscal_levy_event_by_id, petition_outcome_is_admissible
 
     out: list[dict[str, object]] = []
-    for ev in gather_fiscal_levy_petitions(state, db):
-        if not petition_outcome_is_admissible(state, db, ev.id, None):
-            continue
-        out.append({
-            "event_id": ev.id,
-            "title": ev.title,
-            "verdict_labels": list(getattr(ev, "terminal_reason_labels", []) or []),
-        })
     for row in db.list_event_petition_records():
         event_id = str(row.get("event_id") or "")
         if not event_id or any(item["event_id"] == event_id for item in out):
             continue
         if not petition_outcome_is_admissible(state, db, event_id, None):
             continue
-        from ming_sim.issues import _fiscal_levy_event_by_id
-
         ev = _fiscal_levy_event_by_id(event_id)
         if ev is None:
             continue

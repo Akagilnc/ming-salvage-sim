@@ -4409,9 +4409,8 @@ def petition_outcome_is_admissible(
 ) -> bool:
     """该事件是否可由本回合的亲裁答复置定结局（#1892 亲裁语义落账）。
 
-    资格只认既有事实，不新增判门：事件须是三饷类、尚未落任何终态，且**确曾呈过皇帝**
-    （当回合在请旨候选里，或事件账里已有请旨答复记录）。没呈过的事件不接受亲裁结局——
-    否则任何段文都能凭空把一个未上疏的事件写成已批。
+    资格只认事件账里已有的请旨答复（:meth:`list_event_petition_records`），且终态仍空。
+    到期在请旨候选里只说明可以上疏，不是皇帝已经批过。没呈过的事件不接受亲裁结局。
     """
     eid = str(event_id or "").strip()
     if not eid:
@@ -4422,10 +4421,10 @@ def petition_outcome_is_admissible(
         return False
     if db.event_terminal_state(eid):
         return False
-    if any(ev.id == eid for ev in gather_fiscal_levy_petitions(state, db)):
-        return True
     return any(
-        str(row.get("event_id") or "") == eid for row in db.list_event_petition_records()
+        str(row.get("event_id") or "") == eid
+        and not str(row.get("terminal_state") or "").strip()
+        for row in db.list_event_petition_records()
     )
 
 
@@ -4444,7 +4443,7 @@ def _preflight_declared_event_groups(
             continue
         # #1892：三饷请旨的亲裁结局与战略节点信封不同路——它不要求世界状态主账结果
         # （三饷的征收由饷率通道按终局标签核算），只要求标签落在事件自声明的封闭集内，
-        # 且事件确曾呈过皇帝。归一失败响亮失败（ADR 0014），不静默丢弃亲裁。
+        # 且事件账里已有请旨答复、终态仍空。归一失败响亮失败（ADR 0014），不静默丢弃亲裁。
         if getattr(event, "category", "") == FISCAL_LEVY_EVENT_CATEGORY:
             if not petition_outcome_is_admissible(state, db, event_id, content):
                 rejected[event_id] = f"三饷事项当前不能由亲裁置定结局：{event_id}"

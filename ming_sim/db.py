@@ -19576,7 +19576,7 @@ class GameDB:
         """
         out: List[Dict[str, object]] = []
         for r in self.conn.execute(
-            "SELECT event_id, turn, year, period, terminal_state, terminal_reason, choice_json "
+            "SELECT rowid, event_id, turn, year, period, terminal_state, terminal_reason, choice_json "
             "FROM event_triggers"
         ).fetchall():
             raw = str(r["choice_json"] or "").strip()
@@ -19584,8 +19584,15 @@ class GameDB:
                 continue
             try:
                 payload = json.loads(raw)
-            except Exception:
-                continue
+            except json.JSONDecodeError as exc:
+                from ming_sim.exceptions import SettlementAbort
+
+                raise SettlementAbort(
+                    "event_triggers.choice_json 解析失败 "
+                    f"event_id={r['event_id']!r} rowid={r['rowid']}",
+                    turn=int(r["turn"] or 0),
+                    stage="petition_records",
+                ) from exc
             if not isinstance(payload, dict):
                 continue
             petition = payload.get("petition")
