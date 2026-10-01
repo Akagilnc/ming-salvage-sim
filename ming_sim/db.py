@@ -880,22 +880,21 @@ def _secret_order_kept_body(text: object) -> str:
 
 
 def _secret_order_body_log(row: sqlite3.Row) -> Dict[str, List[Dict[str, object]]]:
-    """读结构化正文记录。"""
-    try:
-        parsed = json.loads(row["text_log_json"] or "{}")
-    except (TypeError, json.JSONDecodeError):
-        parsed = {}
-    if not isinstance(parsed, dict):
-        parsed = {}
+    """读结构化正文记录。
+
+    解析失败、顶层不是对象、或某列不是记录列表时原样抛出。
+    缺列是尚无记录。已存条目不筛选、不改写成空账。
+    """
+    parsed = json.loads(row["text_log_json"])
     log: Dict[str, List[Dict[str, object]]] = {}
     for column in _SECRET_ORDER_BODY_COLUMNS:
-        entries = parsed.get(column)
-        records: List[Dict[str, object]] = []
-        if isinstance(entries, list):
-            for item in entries:
-                if isinstance(item, dict) and "body" in item:
-                    records.append(dict(item))
-        log[column] = records
+        entries = parsed.get(column, [])
+        if not isinstance(entries, list):
+            raise TypeError(f"密令正文记录 {column} 不是列表")
+        for item in entries:
+            if not isinstance(item, dict):
+                raise TypeError("密令正文记录条目不是对象")
+        log[column] = entries
     return log
 
 
@@ -21749,6 +21748,7 @@ class GameDB:
         ).fetchone()
         if row is None or row["status"] != "active":
             return False
+        self._read_secret_order_body_before_write(int(order_id))
         persisted_title = title
         tags_json = json.dumps(tags, ensure_ascii=False) if tags is not None else (row["tags"] or "[]")
         deadline = max(0, min(int(deadline_months or 0), 36))
@@ -21946,6 +21946,12 @@ class GameDB:
             sql += " AND status = 'active'"
         return self.conn.execute(sql, (int(order_id),)).fetchone()
 
+    def _read_secret_order_body_before_write(self, order_id: int) -> None:
+        """写正文前先读账。读失败在调用方事务内、本写事务外抛出。"""
+        row = self._load_secret_order_body_row(int(order_id), active_only=True)
+        if row is not None:
+            _secret_order_body_log(row)
+
     def _write_secret_order_body(
         self,
         order_id: int,
@@ -22054,6 +22060,7 @@ class GameDB:
     ) -> bool:
         """承办人推进一步：按年月追加进 result 历史时间线，不改 status。
         同月再报则替换当月行（修改最新进度，不叠加多条）。"""
+        self._read_secret_order_body_before_write(int(order_id))
         with atomic(self):
             ok = self._append_secret_order_line(
                 order_id,
@@ -22080,6 +22087,7 @@ class GameDB:
     ) -> None:
         """推演写密令副作用（泄漏/反弹等），按年月追加进 sim_note 历史时间线，
         不动 result/status。同月再写替换（推演每月一次）。与承办人进展分列。"""
+        self._read_secret_order_body_before_write(int(order_id))
         if commit:
             with atomic(self):
                 self._update_secret_order_sim_note_in_transaction(

@@ -773,9 +773,6 @@ def test_unlimited_investigation_due_now_reads_real_acquisitions(game, due_actio
         investigation_target=target,
     )
     did = int(db.get_dossier_for_secret_order(oid)["id"])
-    difficulty = investigation_fact_difficulty(
-        db, target=target, fact_key=target, investigator=name,
-    )
     _dig_months(db, state, oid, target, months=2)
     assert investigation_lane_actual_units(db, did) == 1.0
 
@@ -1703,6 +1700,58 @@ def test_deep_dig_lands_through_month_chain_entry(game):
     assert seen[1] >= 1.0
     assert seen[100] == 0.0
 
+    # 关系网只认结构化 evidence 边。无边、或只有自由类目边：满月实投 1 即掌握。
+    # 一条把柄边把难度抬到 1.05，同一实投掌握不了。党籍认同不进这道账。
+    def _network_month(suspect, *, identity, edge=None):
+        assert register_unlisted_person_record(
+            db, state, content,
+            name=suspect, office="兵部主事", office_type="兵部", faction="东林",
+            region_id="京师",
+        ) is not None
+        db.conn.execute(
+            "UPDATE characters SET seed_guilt=?, intrigue=50, identity=?, "
+            "ability=60, location='京师', transit_to='' WHERE name=?",
+            (_structured_guilt(), identity, suspect),
+        )
+        db.conn.execute(
+            "UPDATE characters SET ability=60, location='京师', transit_to='' WHERE name=?",
+            (name,),
+        )
+        db.conn.commit()
+        _co_locate(db, name, suspect, place="京师")
+        if edge is not None:
+            kind, evidence = edge
+            db.record_relation_edge_event(
+                source=name, target=suspect, event_kind=kind,
+                context="关系网对照", origin=f"test:1896-{suspect}", evidence=evidence,
+            )
+        oid = _issue(
+            db, state, name, "查核关系网", "查核关系网", months=6, target=1,
+            kind="查核", axes=["既得利益"], investigation_target=suspect,
+        )
+        _next_month(db, state)
+        chain = _run_supply_4a(
+            db, state, [{"order_id": oid, "fact_key": suspect, "effort": 1.0}],
+        )
+        assert chain.get("covert_progress_done") is True
+        assert chain.get("secret_orders_supply_invalid") is not True
+        lane = _lanes(db, oid)[suspect]
+        _retire_order(db, oid)
+        return lane
+
+    plain = _network_month("查网甲", identity=95)
+    assert plain["effort"] == pytest.approx(1.0)
+    assert plain["difficulty"] == pytest.approx(1.0)
+    assert plain["mastered"] is True
+    category = _network_month("查网乙", identity=5, edge=("站台", False))
+    assert category["effort"] == pytest.approx(1.0)
+    assert category["difficulty"] == pytest.approx(1.0)
+    assert category["mastered"] is True
+    levered = _network_month("查网丙", identity=95, edge=("把柄", True))
+    assert levered["effort"] == pytest.approx(1.0)
+    assert levered["difficulty"] == pytest.approx(1.05)
+    assert levered["mastered"] is False
+
     # 未指明罪证不下手；未达难度不掌握；达到后掌握。新边是新 lane。再投入不双计。
     db.conn.execute(
         "UPDATE characters SET ability=60, transit_to='' WHERE name=?", (name,),
@@ -1746,6 +1795,11 @@ def test_deep_dig_lands_through_month_chain_entry(game):
     assert lane["mastered"] is True
     assert set(lane) == {"fact_key", "effort", "difficulty", "months", "mastered"}
     assert investigation_lane_actual_units(db, did) == 1.0
+    fed = build_secret_orders_supply_feed(db, state, {})
+    fed_order = next(item for item in fed["active_secret_orders"] if int(item["id"]) == oid)
+    fed_fact = next(item for item in fed_order["investigation_facts"] if item["fact_key"] == topic)
+    assert fed_fact["state"] == "已掌握"
+    assert "difficulty" not in fed_fact
 
     edge_id = db.record_relation_edge_event(
         source=name, target=topic, event_kind="把柄",
@@ -2171,65 +2225,6 @@ def test_merged_clue_assists_the_fact_it_points_at(game):
     assert "查无此证" not in _lanes(db, oid)
 
 
-def test_difficulty_reads_real_evidence_edges_only(game):
-    """#1896：难度只读**真实结构化输入**——把柄 evidence 边算数，其余不算。
-
-    撤回以错误字段与自由类目替代真实输入的处方后，本用例钉住撤回后的口径：
-    - 结构化 evidence 边（把柄）→ 难度升（ADR 0098 机读判据）；
-    - event_kind 自由类目边（站台/恩义…）→ **不**改难度（ADR 0098:15 九类
-      自由类目不驱动任何机械分支，判官误标不该改查案难度）；
-    - characters.identity（党籍认同）→ **不**当遮掩（ADR 0108:5,7／CONTEXT.md
-      孤臣轴；遮掩因子读 characters.intrigue，见 test_intrigue_concealment_1896.py）。
-    """
-    db, state, _ = game
-    name = _minister(db)
-    target = db.conn.execute(
-        "SELECT name FROM characters WHERE name<>? AND status='active' LIMIT 1",
-        (name,),
-    ).fetchall()[0]["name"]
-    peer = db.conn.execute(
-        "SELECT name FROM characters WHERE name NOT IN (?,?) AND status='active' LIMIT 1",
-        (name, target),
-    ).fetchall()[0]["name"]
-    _set_axes(db, name, loyalty=90, identity=30)
-    db.conn.execute("UPDATE characters SET seed_guilt=? WHERE name=?", (_structured_guilt(), target))
-    db.conn.execute("UPDATE characters SET seed_guilt=? WHERE name=?", (_structured_guilt(), peer))
-    _co_locate(db, name, target, peer)
-    db.conn.commit()
-    base = investigation_fact_difficulty(
-        db, target=target, fact_key=target, investigator=name,
-    )
-
-    # 自由类目边（站台，非 evidence）→ 难度**不动**（撤回的替代输入）
-    db.record_relation_edge_event(
-        source=peer, target=target, event_kind="站台",
-        context="廷上替他说话", origin="test:1896-category", evidence=False,
-    )
-    db.conn.commit()
-    assert investigation_fact_difficulty(
-        db, target=target, fact_key=target, investigator=name,
-    ) == base
-
-    # 结构化 evidence 边（把柄）→ 难度**升**（真实关系网输入）
-    db.record_relation_edge_event(
-        source=peer, target=target, event_kind="把柄",
-        context="一条实据", origin="test:1896-evidence", evidence=True,
-    )
-    db.conn.commit()
-    levered = investigation_fact_difficulty(
-        db, target=target, fact_key=target, investigator=name,
-    )
-    assert levered > base
-
-    # 党籍认同（identity）高低 → 难度**不动**（它不是遮掩，ADR 0108:5,7）
-    db.conn.execute("UPDATE characters SET identity=95 WHERE name=?", (target,))
-    db.conn.execute("UPDATE characters SET identity=5 WHERE name=?", (target,))
-    db.conn.commit()
-    assert investigation_fact_difficulty(
-        db, target=target, fact_key=target, investigator=name,
-    ) == levered
-
-
 def test_supply_feed_identity_material_is_empty_for_topic_target(game):
     """#1896：查案对象不是真人物时，身份材料如实留空——不编造、不炸掉整月供料。"""
     from ming_sim.month_chain import build_secret_orders_supply_feed
@@ -2305,26 +2300,6 @@ def test_supply_feed_carries_per_fact_investigation_materials(game):
     assert "difficulty" not in fact
     # 清白目标：照开案、照列空清单
     assert orders[clean_oid]["investigation_facts"] == []
-
-    # 已掌握的事实在供料里如实标为已掌握，供下一月据实决策。
-    # 到差之后按月核算直到掌握；不锁难度数字，也不假定两个月一定够。
-    _co_locate(db, name, guilty)
-    db.conn.execute("UPDATE characters SET ability=88 WHERE name=?", (name,))
-    db.conn.commit()
-    did = int(db.get_dossier_for_secret_order(oid)["id"])
-    mastered = False
-    for _ in range(24):
-        row = apply_investigation_monthly_effort(
-            db, did, guilty, name, fact_key=keys[0], intensity=1.0, commit=True,
-        )
-        if keys[0] in row["mastered"]:
-            mastered = True
-            break
-    assert mastered
-    feed2 = build_secret_orders_supply_feed(db, state, {})
-    orders2 = {int(o["id"]): o for o in feed2["active_secret_orders"]}
-    fact2 = orders2[oid]["investigation_facts"][0]
-    assert fact2["state"] == "已掌握"
 
 
 def test_spoliated_fact_reported_as_unreachable_in_feed(game):
