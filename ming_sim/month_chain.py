@@ -651,7 +651,7 @@ def _consume_call_failure_for_retry(
         _discard_segment_for_escape(chain, failure)
         chain["translate_exhaust_stops"] = 0
     if step == "secret_orders_supply":
-        # 仅废弃 0058 校验未通过的产物；其它中断保留产物，重开接续未完成相。
+        # 0058 缺报或 0073 执行态校验失败的产物作废并重起供料；其它中断保留产物。
         if chain.get("secret_orders_supply_invalid"):
             chain.pop("secret_orders_supply_product", None)
             chain.pop("secret_orders_supply_invalid", None)
@@ -1169,6 +1169,7 @@ def _step_4a_secret_order_supply(
         from ming_sim.decree import _collect_inline_rejections
         from ming_sim.error_pack import rejections_jsonl_path
 
+        validation_failed = False
         try:
             collector = RejectionCollector()
             selections = product.get("covert_exec_selections") or []
@@ -1177,6 +1178,12 @@ def _step_4a_secret_order_supply(
                     db, state, selections=selections, only_supplied=False, commit=False,
                 )
                 rejections = [r for r in rows if r.get("rejected")]
+                # 0073 执行态校验失败＝产物未完成：不落实况、不结案。
+                # 其它拒收仍记账后继续（#1846 第5条只把校验失败停在 4a）。
+                invalid = [r for r in rejections if r.get("category") == "invalid_enum"]
+                if invalid:
+                    validation_failed = True
+                    raise ValueError("0073 covert exec selection failed validation")
                 if rejections:
                     _collect_inline_rejections(
                         collector, {"covert_exec_selections": rows}, turn, source,
@@ -1186,6 +1193,9 @@ def _step_4a_secret_order_supply(
                 _save_chain(db, turn, chain, decree_text=decree_text, source=source)
                 mirror_rejections_after_commit(db, collector, rejections_jsonl_path)
         except Exception as exc:
+            if validation_failed:
+                chain["secret_orders_supply_invalid"] = True
+                _save_chain(db, turn, chain, decree_text=decree_text, source=source)
             _abort_4a(exc)
 
     # Phase 4: Settle due secret orders

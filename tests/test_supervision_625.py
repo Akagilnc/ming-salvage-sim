@@ -17,6 +17,8 @@ import sqlite3
 import pytest
 
 from ming_sim.db import GameDB
+from ming_sim.decree import pre_settle
+from ming_sim.models import TurnPhase
 from tests.test_due_review_621 import _settle_empty_month
 from ming_sim.due_review import (
     build_due_review_input,
@@ -357,17 +359,17 @@ def test_ac2_paired_observation_slots_and_countermeasure_hard_gate(game):
     assert inp["supervision_history"]
     assert inp["transformation_tendency_facts"]["longest_consecutive_presence_months"] >= 1
 
-    # #1895：孤直反制硬门退役——代码不再按 integrity 档判定「会不会反制」，
-    # 也不再 hash 指定反制形态（架空／断信息／诬告围攻／明升暗调）。人物据其
-    # 可及事实自选是否反制、采取何种行动，归 #1861 逐旨推演／#1843 世界段 run。
-    assert not hasattr(db, "trigger_supervision_countermeasures")
     # 抓手与事实素材照留：连续在场月数、稽核人派系操守定性仍可读可持久。
     assert tend_u["has_upright_auditor"] is True
     assert surface_u["supervision_history"], "监督在场事实必须仍可供料"
+    # 真实前括号：退役硬门若被装回 pre_settle，这里会立反制局势或调用失败。
+    state.turn_phase = TurnPhase.SUMMONING.value
+    db.save_state(state)
+    pre_settle(state, db, content=content)
     assert db.find_any_issue_by_origin(
         "supervision_countermeasure",
         f"auditor:{upright['name']}:dossier:{sub_u}",
-    ) is None, "代码不得凭 integrity／在场月数自动立反制局势"
+    ) is None
 
 
 # ── AC3 同派/敌派 origin 标记 ─────────────────────────────────────

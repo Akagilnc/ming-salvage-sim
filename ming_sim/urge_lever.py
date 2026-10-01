@@ -4,9 +4,9 @@
 真加速写口按对象类唯一：
 - 密令：secret_orders.due_turn（既有 rush_secret_order）
 - 分段承诺：issues.stages_json[].due_turn（本模块 rush_staged_commitment_stage）
-反催谏/求宽限走 next_audience_todos 新 entry_kind，真伪底仅 payload_json。
-#1895：原「失真倾向」读时派生定性档（按 integrity＋催办压力算肯不肯歪办）连同
-其对到期复核判词的只准更重改写一并退役——人物肯不肯办归模型按可及事实自选。
+反催谏/求宽限的记录能力仍是 next_audience_todos 的 entry_kind，真伪只活在 payload_json。
+#1895：催办不再按胆识、皇威、操守或可乘之利代选谏言、求缓与真伪。
+期限提前、催办史和已记录的谏言／求缓照留；人物说不说归既有人物 run。
 """
 
 from __future__ import annotations
@@ -28,31 +28,8 @@ from ming_sim.token_stats import tlog
 URGE_PENDING_KIND_COMMITMENT = "commitment"
 URGE_PENDING_ACTION = "催办"
 
-# 人身 archetype 阈值（characters.integrity 0-100）
-_INTEGRITY_GUDU = 75  # 孤直
-_INTEGRITY_FUSHI = 40  # 低于此 → 附势；中间庸吏
-
-# 期限离谱：压缩比 ≤ 此阈值，或剩余月数过短
-_UNREASONABLE_RATIO = 0.34
-_UNREASONABLE_REMAIN_CAP = 3
-
-# 敢言：courage - 皇威压制（0068 高皇威负向）
-_DARE_SPEAK_FLOOR = 35
-
-# 可乘之利：流水绝对额合计
+# 可乘之利：流水绝对额合计（到期复核供料，不代选人物行动）
 _OPPORTUNITY_HIGH_ABS = 4000
-
-
-def person_integrity_archetype(integrity: object) -> str:
-    try:
-        score = int(integrity)
-    except (TypeError, ValueError):
-        score = 50
-    if score >= _INTEGRITY_GUDU:
-        return "孤直"
-    if score < _INTEGRITY_FUSHI:
-        return "附势"
-    return "庸吏"
 
 
 def derive_opportunity_band(durable_effects: object) -> str:
@@ -86,67 +63,6 @@ def derive_opportunity_band(durable_effects: object) -> str:
     if total_abs >= _OPPORTUNITY_HIGH_ABS:
         return "high"
     return "low"
-
-
-def dare_speak_score(courage: object, imperial_prestige: object) -> int:
-    """敢言度＝胆识 − 皇威负向调制（0068）。"""
-    try:
-        c = int(courage)
-    except (TypeError, ValueError):
-        c = 50
-    try:
-        p = int(imperial_prestige)
-    except (TypeError, ValueError):
-        p = 50
-    # 皇威以 50 为中性；高于中性压制敢言
-    return int(c) - max(0, int(p) - 40)
-
-
-def dare_speak_passes(courage: object, imperial_prestige: object) -> bool:
-    return dare_speak_score(courage, imperial_prestige) >= _DARE_SPEAK_FLOOR
-
-
-def is_deadline_unreasonable(
-    *,
-    old_due: int,
-    new_due: int,
-    current_turn: int,
-) -> bool:
-    """期限离谱判据（首版阈值，可 playtest 调）。"""
-    try:
-        old_r = max(0, int(old_due) - int(current_turn))
-        new_r = max(0, int(new_due) - int(current_turn))
-    except (TypeError, ValueError):
-        return False
-    if old_r <= 0:
-        return False
-    if new_r <= _UNREASONABLE_REMAIN_CAP and old_r > _UNREASONABLE_REMAIN_CAP * 2:
-        return True
-    if new_r <= int(old_r * _UNREASONABLE_RATIO):
-        return True
-    return False
-
-
-def derive_grace_truth(
-    *,
-    unreasonable: bool,
-    archetype: str,
-    opportunity_band: str = "none",
-) -> Dict[str, object]:
-    """求宽限真伪底：引擎知底，不进玩家面。"""
-    # 工期真不够：期限离谱且非附势借机
-    if unreasonable and archetype != "附势":
-        return {"truth": "genuine", "grace_fake": False}
-    if (not unreasonable) and archetype == "附势":
-        return {"truth": "pretextual", "grace_fake": True}
-    if archetype == "附势" and opportunity_band == "high":
-        return {"truth": "pretextual", "grace_fake": True}
-    if unreasonable:
-        return {"truth": "genuine", "grace_fake": False}
-    # 附势轻催：借宽限拖磨
-    if archetype == "附势":
-        return {"truth": "pretextual", "grace_fake": True}
-    return {"truth": "genuine", "grace_fake": False}
 
 
 def _parse_payload(raw: object) -> Dict[str, object]:
@@ -352,7 +268,7 @@ def rush_staged_commitment_stage(
 
     不用 decree_dossiers.due_turn。同对象不得双真源。
     不写 issues.end_turn（#620 段派生 end_turn 不落 DB；催办不得侧写第二时间线）。
-    无 issue 承载 → ValueError（fail-closed 不产谏条、不伪造 issue）。
+    无 issue 承载 → ValueError（不伪造 issue）。催办不代选谏言、求缓或真伪。
     record_history=False：生产入口经 pending_actions 确认闸门落库时，由该 pending 行作史源，
     避免双插 committed 行。
     """
@@ -421,98 +337,6 @@ def rush_staged_commitment_stage(
             reason=why,
         )
 
-    host = resolve_host_character(db, commitment_ref=int(commitment_ref), dossier_id=None)
-    # try dossier host if issue linked
-    origin_row = db.conn.execute(
-        "SELECT origin_ref FROM issues WHERE id=?", (int(commitment_ref),),
-    ).fetchone()
-    dossier_id = None
-    if origin_row is not None:
-        ref = str(origin_row["origin_ref"] or "")
-        if ref.startswith("dossier:"):
-            try:
-                dossier_id = int(ref.split(":", 1)[1])
-            except (TypeError, ValueError):
-                dossier_id = None
-    if dossier_id is not None:
-        host = resolve_host_character(
-            db, commitment_ref=int(commitment_ref), dossier_id=dossier_id,
-        )
-
-    prestige = 50
-    try:
-        metrics = getattr(state, "metrics", None) or {}
-        prestige = int(metrics.get("皇威", 50))
-    except (TypeError, ValueError):
-        prestige = 50
-
-    unreasonable = is_deadline_unreasonable(
-        old_due=old_due, new_due=int(new_due), current_turn=turn,
-    )
-    archetype = person_integrity_archetype(host["integrity"])
-    opp = "none"
-    if dossier_id is not None and hasattr(db, "list_dossier_durable_effects"):
-        # #1260：durable_effects 合并单源（economy+fiscal）。
-        effects = list(db.list_dossier_durable_effects(int(dossier_id)))
-        opp = derive_opportunity_band(effects)
-    elif dossier_id is not None and hasattr(db, "list_economy_moves_for_dossier"):
-        # 旧夹具兜底：仅 economy 面（无单源助手时）。
-        effects = list(db.list_economy_moves_for_dossier(int(dossier_id)))
-        opp = derive_opportunity_band(effects)
-
-    remonstrance_written = False
-    grace_written = False
-
-    # 操之过急谏：期限离谱 + 敢言；UNIQUE 幂等
-    if unreasonable and dare_speak_passes(host["courage"], prestige):
-        payload = {
-            "truth": "genuine",
-            "grace_fake": False,
-            "kind": "rush_remonstrance",
-            "unreasonable": True,
-        }
-        created = db.insert_next_audience_todo(
-            commitment_ref=int(commitment_ref),
-            stage_idx=int(stage_idx),
-            due_turn=int(new_due),
-            criterion_text="期限过急，恐难如期",
-            origin_context=why,
-            status="pending",
-            entry_kind=ENTRY_KIND_RUSH_REMONSTRANCE,
-            created_turn=turn,
-            payload_json=payload,
-            commit=False,
-        )
-        remonstrance_written = bool(created)
-
-    # 求宽限：与谏可并存（entry_kind 不同）；真伪底仅 payload。
-    # 触发谓词 load-bearing：期限离谱（工期真不够）或附势借宽限拖磨——无 months<=N 恒真析取。
-    grace_truth = derive_grace_truth(
-        unreasonable=unreasonable,
-        archetype=archetype,
-        opportunity_band=opp,
-    )
-    should_grace = bool(unreasonable) or archetype == "附势"
-    if should_grace:
-        g_payload = {
-            **grace_truth,
-            "kind": "grace_plea",
-            "unreasonable": bool(unreasonable),
-        }
-        g_created = db.insert_next_audience_todo(
-            commitment_ref=int(commitment_ref),
-            stage_idx=int(stage_idx),
-            due_turn=int(new_due),
-            criterion_text="乞恩宽限",
-            origin_context=why,
-            status="pending",
-            entry_kind=ENTRY_KIND_GRACE_PLEA,
-            created_turn=turn,
-            payload_json=g_payload,
-            commit=False,
-        )
-        grace_written = bool(g_created)
-
     if commit:
         db.conn.commit()
 
@@ -523,11 +347,6 @@ def rush_staged_commitment_stage(
         "due_turn": int(new_due),
         "deadline_months": months,
         "reason": why,
-        "unreasonable": bool(unreasonable),
-        "remonstrance_written": remonstrance_written,
-        "grace_written": grace_written,
-        "host": host,
-        "archetype": archetype,
     }
 
 

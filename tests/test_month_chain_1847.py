@@ -1464,28 +1464,45 @@ def test_step_4a_crash_recovery_resumes_without_re_running_supply(game, monkeypa
 
 
 def test_step_4a_missing_covert_fidelity_records_inline_rejection(game, monkeypatch):
-    """步骤 4a：密令缺少有效执行态时按 0073 记入 inline rejection，不静默吞掉。"""
+    """步骤 4a：0073 执行态校验失败停在 4a，不结案；重试废弃产物并重起供料。"""
+    from ming_sim.exceptions import SettlementAbort
+
     db, state, content = game
     turn = int(state.turn)
     minister = db.conn.execute(
         "SELECT name FROM characters WHERE status='active' AND power_id='ming' LIMIT 1"
     ).fetchone()[0]
     order_id = create_test_secret_order(
-        db, state, minister, "密令执行态缺失", "差务", [], deadline_months=2,
+        db, state, minister, "密令执行态缺失", "差务", [], deadline_months=1,
     )
-    db.conn.execute("UPDATE secret_orders SET turn_issued=? WHERE id=?", (turn - 1, order_id))
+    db.conn.execute(
+        "UPDATE secret_orders SET turn_issued=?, due_turn=? WHERE id=?",
+        (turn - 1, turn, order_id),
+    )
     dossier_id = int(db.get_dossier_for_secret_order(order_id)["id"])
     db.conn.commit()
 
-    # Supply run provides 0058 report, but omits covert_exec_selections!
+    call_count = 0
+
     def supply_run(*_a, **_k):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return {
+                "dossier_progress_reports": [{
+                    "dossier_id": dossier_id,
+                    "progress_band": "持平",
+                    "memorial_text": "按期奏报",
+                }],
+                "covert_exec_selections": [],
+            }
         return {
             "dossier_progress_reports": [{
                 "dossier_id": dossier_id,
                 "progress_band": "持平",
                 "memorial_text": "按期奏报",
             }],
-            "covert_exec_selections": [],
+            "covert_exec_selections": [{"order_id": order_id, "fidelity": "忠实"}],
         }
 
     _forbid_extractor(monkeypatch)
@@ -1495,17 +1512,30 @@ def test_step_4a_missing_covert_fidelity_records_inline_rejection(game, monkeypa
 
     session = make_light_session(db, state, content)
 
+    with pytest.raises(SettlementAbort) as caught:
+        session.resolve_turn(allow_empty_decree=True)
+    assert caught.value.stage == "secret_orders_supply"
+    chain = month_chain._load_chain(db, turn)
+    failure = chain.get("call_failure")
+    assert isinstance(failure, dict)
+    assert failure.get("step") == "secret_orders_supply"
+    assert chain.get("secret_orders_supply_invalid") is True
+    assert chain.get("covert_progress_done") is not True
+    assert chain.get("secret_orders_supply_done") is not True
+    assert db.get_secret_order(order_id)["status"] == "active"
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM dossier_actual_progress WHERE dossier_id=? AND turn=?",
+        (dossier_id, turn),
+    ).fetchone()[0] == 0
+
     result = session.resolve_turn(allow_empty_decree=True)
     assert result.stage == "gazette"
-
-    # Inline rejection：断言机读 category，不读人读 prose（ADR 0142 / 0073）
-    rejections = db.conn.execute(
-        "SELECT section, category, reason FROM rejection_reports "
-        "WHERE turn=? AND section='covert_exec_selections'",
-        (turn,),
-    ).fetchall()
-    assert len(rejections) == 1
-    assert rejections[0]["category"] == "invalid_enum"
+    assert call_count == 2
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM dossier_actual_progress WHERE dossier_id=? AND turn=?",
+        (dossier_id, turn),
+    ).fetchone()[0] == 1
+    assert db.get_secret_order(order_id)["status"] != "active"
 
 
 def test_settle_edicts_persists_pending_disclosures_in_same_transaction(game, monkeypatch):

@@ -36,12 +36,8 @@ from ming_sim.staged_commitment import (
 from ming_sim.urge_lever import (
     collect_urge_history,
     consume_pending_urge_audience_todos,
-    dare_speak_passes,
-    derive_grace_truth,
     derive_opportunity_band,
-    is_deadline_unreasonable,
     list_urge_audience_scenes,
-    person_integrity_archetype,
     project_urge_audience_scene,
     rush_staged_commitment_stage,
 )
@@ -144,15 +140,6 @@ def _seed_stages(state, *, due0: int | None = None, due1: int | None = None):
     ]
 
 
-# ── 纯函数：人身 / 可乘之利 / 敢言 / 期限 ──────────────────────────
-
-
-def test_person_integrity_archetype_three_way():
-    assert person_integrity_archetype(90) == "孤直"
-    assert person_integrity_archetype(55) == "庸吏"
-    assert person_integrity_archetype(20) == "附势"
-
-
 def test_opportunity_band_from_durable_effects():
     assert derive_opportunity_band([]) == "none"
     assert derive_opportunity_band([{"delta": -10}]) == "low"
@@ -161,27 +148,6 @@ def test_opportunity_band_from_durable_effects():
         {"delta": -3000, "account": "内库"},
         {"delta": 100, "account": "民心"},
     ]) == "high"
-
-
-def test_deadline_unreasonable_and_dare_speak():
-    assert is_deadline_unreasonable(old_due=40, new_due=5, current_turn=1) is True
-    assert is_deadline_unreasonable(old_due=40, new_due=38, current_turn=1) is False
-    # 高皇威压制敢言；低皇威 + 高 courage 敢言
-    assert dare_speak_passes(courage=80, imperial_prestige=90) is False
-    assert dare_speak_passes(courage=80, imperial_prestige=20) is True
-
-
-def test_grace_truth_two_forms_ac6_pure():
-    genuine = derive_grace_truth(
-        unreasonable=True, archetype="孤直", opportunity_band="none",
-    )
-    fake = derive_grace_truth(
-        unreasonable=False, archetype="附势", opportunity_band="high",
-    )
-    assert genuine["truth"] == "genuine"
-    assert genuine["grace_fake"] is False
-    assert fake["truth"] == "pretextual"
-    assert fake["grace_fake"] is True
 
 
 # ── AC1 催拉杆：真加速 + urge_history + 判词可观察影响 ───────────────
@@ -318,68 +284,6 @@ def test_urge_no_longer_rewrites_verdict_ac1_1895(game):
     assert applied["verdict"]["outcome"] == "degraded"
     assert db.get_decree_dossier(dossier_id)["execution_outcome"] == "degraded"
 
-def test_rush_remonstrance_first_unreasonable_idempotent_ac5(game):
-    db, state, content = game
-    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
-    db.conn.commit()
-    state.metrics["皇威"] = 15
-    db.conn.execute(
-        "UPDATE metrics SET value=? WHERE key='皇威'", (15,),
-    )
-    db.conn.commit()
-    dossier_id = _executing_policy_dossier(db, state, host="倪元璐")
-    _set_integrity(db, "倪元璐", 85, courage=90)
-    stages = _seed_stages(state)  # far due
-    issue_id, _ = _insert_staged_commitment(
-        db, state, content, stages=stages, origin_ref=f"dossier:{dossier_id}",
-        title="谏言对照之诺",
-    )
-
-    r1 = rush_staged_commitment_stage(
-        db, state, commitment_ref=issue_id, stage_idx=0,
-        deadline_months=1, reason="着一月内了结",
-    )
-    assert r1.get("remonstrance_written") is True
-    todos = db.list_next_audience_todos(commitment_ref=issue_id)
-    rem = [t for t in todos if t["entry_kind"] == ENTRY_KIND_RUSH_REMONSTRANCE]
-    assert len(rem) == 1
-
-    r2 = rush_staged_commitment_stage(
-        db, state, commitment_ref=issue_id, stage_idx=0,
-        deadline_months=0, reason="再催即核",
-    )
-    assert r2.get("remonstrance_written") is False  # 幂等
-    todos2 = db.list_next_audience_todos(commitment_ref=issue_id)
-    rem2 = [t for t in todos2 if t["entry_kind"] == ENTRY_KIND_RUSH_REMONSTRANCE]
-    assert len(rem2) == 1
-
-
-def test_high_prestige_suppresses_remonstrance_dare_ac5(game):
-    db, state, content = game
-    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
-    db.conn.commit()
-    state.metrics["皇威"] = 95
-    db.conn.execute("UPDATE metrics SET value=? WHERE key='皇威'", (95,))
-    db.conn.commit()
-    dossier_id = _executing_policy_dossier(db, state, host="倪元璐")
-    _set_integrity(db, "倪元璐", 85, courage=50)
-    stages = _seed_stages(state)
-    issue_id, _ = _insert_staged_commitment(
-        db, state, content, stages=stages, origin_ref=f"dossier:{dossier_id}",
-        title="高皇威不敢谏",
-    )
-    r = rush_staged_commitment_stage(
-        db, state, commitment_ref=issue_id, stage_idx=0,
-        deadline_months=1, reason="着一月内了结",
-    )
-    assert r.get("remonstrance_written") is False
-    rem = [
-        t for t in db.list_next_audience_todos(commitment_ref=issue_id)
-        if t["entry_kind"] == ENTRY_KIND_RUSH_REMONSTRANCE
-    ]
-    assert rem == []
-
-
 # ── AC6 求宽限真伪底落 payload、玩家面零裸露 ─────────────────────────
 
 
@@ -391,17 +295,22 @@ def test_grace_plea_payload_truth_hidden_from_player_ac6(game):
     db.conn.execute("UPDATE metrics SET value=? WHERE key='皇威'", (40,))
     db.conn.commit()
     dossier_id = _executing_policy_dossier(db, state, host="倪元璐")
-    _set_integrity(db, "倪元璐", 25, courage=40)
     stages = _seed_stages(state)
     issue_id, _ = _insert_staged_commitment(
         db, state, content, stages=stages, origin_ref=f"dossier:{dossier_id}",
         title="宽限真伪之诺",
     )
-    r = rush_staged_commitment_stage(
-        db, state, commitment_ref=issue_id, stage_idx=0,
-        deadline_months=6, reason="稍加催促",
+    db.insert_next_audience_todo(
+        commitment_ref=issue_id,
+        stage_idx=0,
+        due_turn=state.turn,
+        criterion_text="乞恩宽限",
+        origin_context="稍加催促",
+        status=TODO_STATUS_PENDING,
+        entry_kind=ENTRY_KIND_GRACE_PLEA,
+        created_turn=state.turn,
+        payload_json={"truth": "pretextual", "grace_fake": True, "kind": "grace_plea"},
     )
-    assert r.get("grace_written") is True
     grace = [
         t for t in db.list_next_audience_todos(commitment_ref=issue_id)
         if t["entry_kind"] == ENTRY_KIND_GRACE_PLEA
@@ -655,41 +564,6 @@ def test_rush_does_not_side_write_end_turn(game):
         assert after == before == end_seed
 
 
-def test_grace_not_written_for_gudu_reasonable_long_deadline(game):
-    """负向：months>6 · 合理期限 · 孤直 → 无宽限条（months<=6 析取不得恒真）。"""
-    db, state, content = game
-    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
-    db.conn.commit()
-    state.metrics["皇威"] = 40
-    db.conn.execute("UPDATE metrics SET value=? WHERE key='皇威'", (40,))
-    db.conn.commit()
-    dossier_id = _executing_policy_dossier(db, state, host="倪元璐")
-    _set_integrity(db, "倪元璐", 90, courage=80)  # 孤直
-    # due 很近：催 months=12 几乎不压缩 → 合理期限
-    stages = [{
-        "stage_idx": 0,
-        "due_turn": state.turn + 14,
-        "criterion_text": "火器见眉目",
-        "origin_context": "近限期之诺",
-    }]
-    issue_id, _ = _insert_staged_commitment(
-        db, state, content, stages=stages, origin_ref=f"dossier:{dossier_id}",
-        title="孤直合理不宽限",
-    )
-    r = rush_staged_commitment_stage(
-        db, state, commitment_ref=issue_id, stage_idx=0,
-        deadline_months=12, reason="稍缓催之",
-    )
-    assert r.get("unreasonable") is False
-    assert r.get("archetype") == "孤直"
-    assert r.get("grace_written") is False
-    grace = [
-        t for t in db.list_next_audience_todos(commitment_ref=issue_id)
-        if t["entry_kind"] == ENTRY_KIND_GRACE_PLEA
-    ]
-    assert grace == []
-
-
 def test_urge_audience_project_and_consume_path(game):
     """谏/宽限：召对顶出投影可见 + settle 消费离 pending（不进 due-review）。"""
     db, state, content = game
@@ -699,15 +573,21 @@ def test_urge_audience_project_and_consume_path(game):
     db.conn.execute("UPDATE metrics SET value=? WHERE key='皇威'", (15,))
     db.conn.commit()
     dossier_id = _executing_policy_dossier(db, state, host="倪元璐")
-    _set_integrity(db, "倪元璐", 85, courage=90)
     stages = _seed_stages(state)
     issue_id, _ = _insert_staged_commitment(
         db, state, content, stages=stages, origin_ref=f"dossier:{dossier_id}",
         title="召对顶出之诺",
     )
-    rush_staged_commitment_stage(
-        db, state, commitment_ref=issue_id, stage_idx=0,
-        deadline_months=1, reason="着一月内了结",
+    db.insert_next_audience_todo(
+        commitment_ref=issue_id,
+        stage_idx=0,
+        due_turn=state.turn,
+        criterion_text="期限过急",
+        origin_context="着一月内了结",
+        status=TODO_STATUS_PENDING,
+        entry_kind=ENTRY_KIND_RUSH_REMONSTRANCE,
+        created_turn=state.turn - 1,
+        payload_json={"truth": "genuine", "grace_fake": False},
     )
     scenes = list_urge_audience_scenes(db, state)
     kinds = {s["entry_kind"] for s in scenes}
@@ -736,7 +616,11 @@ def test_commitment_rush_via_pending_actions_gate(game):
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.commit()
     dossier_id = _executing_policy_dossier(db, state, host="倪元璐")
-    _set_integrity(db, "倪元璐", 30)
+    # 旧公式会因附势＋胆识＋低皇威＋大幅压缩期限写出谏言和假求缓。
+    state.metrics["皇威"] = 15
+    db.conn.execute("UPDATE metrics SET value=? WHERE key='皇威'", (15,))
+    db.conn.commit()
+    _set_integrity(db, "倪元璐", 25, courage=90)
     stages = _seed_stages(state)
     issue_id, _ = _insert_staged_commitment(
         db, state, content, stages=stages, origin_ref=f"dossier:{dossier_id}",
@@ -757,7 +641,7 @@ def test_commitment_rush_via_pending_actions_gate(game):
     pid = db.stage_pending_action(
         state.turn, kind="commitment", action="催办",
         minister_name="倪元璐", target_id=issue_id,
-        payload={"stage_idx": 0, "deadline_months": 3, "reason": "闸门催"},
+        payload={"stage_idx": 0, "deadline_months": 1, "reason": "闸门催"},
     )
     assert pid > 0
     applied = db.commit_pending_actions(state, content=content)
@@ -768,7 +652,7 @@ def test_commitment_rush_via_pending_actions_gate(game):
             "SELECT stages_json FROM issues WHERE id=?", (issue_id,),
         ).fetchone()["stages_json"]
     )
-    assert int(after[0]["due_turn"]) == state.turn + 3
+    assert int(after[0]["due_turn"]) == state.turn + 1
     assert int(after[0]["due_turn"]) < old_due
     end_after = int(
         db.conn.execute(
@@ -779,8 +663,13 @@ def test_commitment_rush_via_pending_actions_gate(game):
 
     hist = collect_urge_history(db, commitment_ref=issue_id)
     assert len(hist) >= 1
-    assert hist[-1]["new_due"] == state.turn + 3
+    assert hist[-1]["new_due"] == state.turn + 1
     assert hist[-1]["reason"] == "闸门催"
+    chosen = [
+        t for t in db.list_next_audience_todos(commitment_ref=issue_id)
+        if t["entry_kind"] in {ENTRY_KIND_RUSH_REMONSTRANCE, ENTRY_KIND_GRACE_PLEA}
+    ]
+    assert chosen == []
     # 单行史源：pending 标 committed，无双插
     n_committed = db.conn.execute(
         """
