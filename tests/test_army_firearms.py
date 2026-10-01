@@ -172,3 +172,48 @@ def test_apply_army_delta_chinese_keys(game):
     ).fetchone()
     assert row["firearm_equipment"] == 25
     assert row["cannon_equipment"] == 5
+
+
+def test_army_public_exits_surface_firearm_and_cannon(game):
+    """detail/report/roster 同一读侧：可数火器/炮门 + roster 双态差分（无内部 renderer patch）。"""
+    db, state, _ = game
+    row = db.conn.execute(
+        "SELECT id, name FROM armies WHERE owner_power='ming' LIMIT 1"
+    ).fetchone()
+    aid, name = row["id"], row["name"]
+
+    def _set(**fields):
+        cols = ", ".join(f"{k}=?" for k in fields)
+        db.conn.execute(f"UPDATE armies SET {cols} WHERE id=?", (*fields.values(), aid))
+        db.conn.commit()
+
+    def _roster(*, qualitative: bool) -> str:
+        return db.army_roster(filter_names=[name], qualitative_equipment=qualitative)
+
+    _set(firearm_equipment=45, cannon_equipment=3)
+    detail = db.army_detail(name)
+    _set(firearm_equipment=91)
+    assert db.army_detail(name) != detail
+
+    # 只改炮门，验证 report 没丢掉这项可数事实。
+    _set(cannon_equipment=11, supply=1, morale=1, loyalty=1, training=1)
+    report = db.army_report(limit=8)
+    _set(cannon_equipment=8)
+    assert db.army_report(limit=8) != report
+
+    _set(firearm_equipment=30, cannon_equipment=4)
+    numeric = _roster(qualitative=False)
+    qualitative = _roster(qualitative=True)
+    assert numeric != qualitative
+    _set(cannon_equipment=8)
+    assert _roster(qualitative=False) != numeric
+    assert _roster(qualitative=True) != qualitative
+
+    db.create_armies_from_extraction(state, [{
+        "id": "probe_fire_new", "name": "火器新营", "owner_power": "ming",
+        "manpower": 4000, "maintenance_per_turn": 1,
+        "firearm_equipment": 77, "cannon_equipment": 5, **_pay_source(),
+    }], actor="测试")
+    assert db.army_detail("probe_fire_new") == db.army_detail("火器新营")
+    card = next(c for c in db.army_payload() if c["id"] == "probe_fire_new")
+    assert (card["firearm_equipment"], card["cannon_equipment"]) == (77, 5)

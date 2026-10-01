@@ -347,7 +347,8 @@ def test_terminal_minister_chat_reply_persist_failure_keeps_user_message(game, m
 
 
 @pytest.mark.parametrize("action", ["skip", "issue"])
-def test_play_turn_reports_default_approval_secret_order_failure(monkeypatch, capsys, action):
+@pytest.mark.parametrize("failure_id", [42, 0])
+def test_play_turn_reports_default_approval_secret_order_failure(monkeypatch, capsys, action, failure_id):
     """#415: 退朝默认提交密令失败时，CLI 也必须给出失败 id。"""
 
     class Db:
@@ -377,7 +378,7 @@ def test_play_turn_reports_default_approval_secret_order_failure(monkeypatch, ca
         def advance_without_decree(self):
             self.calls.append("advance")
             self.db.actions.append({
-                "id": 42,
+                "id": failure_id,
                 "kind": "secret_order",
                 "action": "新建",
             })
@@ -385,7 +386,7 @@ def test_play_turn_reports_default_approval_secret_order_failure(monkeypatch, ca
         def resolve_turn(self):
             self.calls.append("resolve")
             self.db.actions.append({
-                "id": 42,
+                "id": failure_id,
                 "kind": "secret_order",
                 "action": "新建",
             })
@@ -402,7 +403,7 @@ def test_play_turn_reports_default_approval_secret_order_failure(monkeypatch, ca
     term.play_turn(session)
 
     out = capsys.readouterr().out
-    assert "42" in out
+    assert str(failure_id) in out
     if action == "skip":
         assert session.calls == ["begin", "advance"]
     else:

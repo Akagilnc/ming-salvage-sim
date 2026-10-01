@@ -356,17 +356,21 @@ def test_run_codex_flags_and_stdout(monkeypatch):
     assert "-c" not in captured["cmd"]
 
 
-def test_codex_streaming_runner_degrades_to_oneshot_final(monkeypatch):
+@pytest.mark.parametrize("packet_kind", ["item.completed", "agent_message"])
+def test_codex_streaming_runner_degrades_to_oneshot_final(monkeypatch, packet_kind):
     """codex --json 只给终包（无 delta 事件）时，流式 runner 仍出完整终文。"""
     from tests.cli_process_doubles import FakeCliRunnerScript
 
     final = "STREAM_FINAL_BODY"
+    final_packet = (
+        {"type": "item.completed", "item": {"type": "agent_message", "text": final}}
+        if packet_kind == "item.completed"
+        else {"type": "agent_message", "message": final}
+    )
     script = FakeCliRunnerScript([{
         "stdout": (
-            json.dumps({"type": "item.started", "item": {"type": "reasoning"}}) + "\n",
-            json.dumps(
-                {"type": "item.completed", "item": {"type": "agent_message", "text": final}}
-            ) + "\n",
+            json.dumps({"type": "item.completed", "item": {"type": "reasoning", "text": "DRAFT"}}) + "\n",
+            json.dumps(final_packet) + "\n",
         ),
         "returncode": 0,
     }])
@@ -1133,3 +1137,111 @@ def test_add_gate_llm_args_uses_gate_cli_runners():
         p.parse_args(["--runner", "opencode", "--model", "m"])
     ns = p.parse_args(["--runner", "claude", "--model", "claude-opus-4-8", "--channel", "cli"])
     assert ns.runner == "claude" and ns.model == "claude-opus-4-8"
+
+
+def test_resolve_cli_bin_found_on_current_path(monkeypatch):
+    monkeypatch.setattr(
+        cb.shutil, "which",
+        lambda name, path=None: "/usr/local/bin/codex" if path is None else None,
+    )
+    monkeypatch.setattr(cb, "_login_shell_path", lambda: None)
+    monkeypatch.setattr(cb, "_CODEX_BIN", "codex")
+    captured = _capture_run(monkeypatch)
+    cb._dispatch_cli_runner("codex", "p")
+    assert captured["cmd"][0] == "/usr/local/bin/codex"
+
+
+
+def test_resolve_cli_bin_found_via_extra_dirs_when_gui_path_bare(monkeypatch):
+    monkeypatch.setattr(cb, "_EXTRA_BIN_DIRS", ["/fake/extra/bin"])
+    monkeypatch.setattr(cb.os.path, "isdir", lambda p: True)
+    home_bin = "/fake/extra/bin/codex"
+
+    def fake_which(name, path=None):
+        return home_bin if path and "/fake/extra/bin" in path else None
+
+    monkeypatch.setattr(cb.shutil, "which", fake_which)
+    monkeypatch.setattr(cb, "_login_shell_path", lambda: None)
+    monkeypatch.setattr(cb, "_CODEX_BIN", "codex")
+    captured = _capture_run(monkeypatch)
+    cb._dispatch_cli_runner("codex", "p")
+    assert captured["cmd"][0] == home_bin
+
+
+
+def test_resolve_cli_bin_login_shell_path_last_resort(monkeypatch):
+    def fake_which(name, path=None):
+        if path and "/opt/odd/bin" in path:
+            return "/opt/odd/bin/codex"
+        return None
+
+    monkeypatch.setattr(cb.shutil, "which", fake_which)
+    monkeypatch.setattr(cb, "_login_shell_path", lambda: "/opt/odd/bin")
+    monkeypatch.setattr(cb, "_CODEX_BIN", "codex")
+    captured = _capture_run(monkeypatch)
+    cb._dispatch_cli_runner("codex", "p")
+    assert captured["cmd"][0] == "/opt/odd/bin/codex"
+
+
+
+def test_resolve_cli_bin_falls_back_and_miss_not_cached(monkeypatch):
+    monkeypatch.setattr(cb, "_login_shell_path", lambda: None)
+    monkeypatch.setattr(cb.shutil, "which", lambda name, path=None: None)
+    monkeypatch.setattr(cb, "_CODEX_BIN", "codex")
+    captured = _capture_run(monkeypatch)
+    cb._dispatch_cli_runner("codex", "p")
+    assert captured["cmd"][0] == "codex"
+    monkeypatch.setattr(
+        cb.shutil, "which",
+        lambda name, path=None: "/Users/x/.local/bin/codex" if path is None else None,
+    )
+    cb._dispatch_cli_runner("codex", "p")
+    assert captured["cmd"][0] == "/Users/x/.local/bin/codex"
+
+
+
+def test_login_shell_path_extracts_from_sentinels_despite_noise(monkeypatch):
+    monkeypatch.setattr(cb, "_DISCOVERED_LOGIN_PATH", None)
+
+    probe = _P(stdout=(
+        "Warning: /usr/local/bin not writable: skipping\n"
+        "<<<CMRPATH>>>/Users/x/.local/bin:/opt/homebrew/bin:/usr/bin<<<ENDPATH>>>\n"
+    ))
+    monkeypatch.setattr(cb, "_RAW_RUN", lambda *a, **k: probe)
+    monkeypatch.setattr(cb, "_CODEX_BIN", "codex")
+    monkeypatch.setenv("PATH", "/bare/bin")
+    monkeypatch.setattr(cb, "_EXTRA_BIN_DIRS", [])
+    monkeypatch.setattr(cb.shutil, "which", lambda name, path=None:
+        "/Users/x/.local/bin/codex" if path and "/Users/x/.local/bin" in path else None)
+    captured = _capture_run(monkeypatch)
+    cb._dispatch_cli_runner("codex", "p")
+    assert captured["cmd"][0] == "/Users/x/.local/bin/codex"
+
+
+
+def test_login_shell_path_single_dir_not_dropped(monkeypatch):
+    monkeypatch.setattr(cb, "_DISCOVERED_LOGIN_PATH", None)
+
+    probe = _P(stdout="<<<CMRPATH>>>/usr/bin<<<ENDPATH>>>\n")
+    monkeypatch.setattr(cb, "_RAW_RUN", lambda *a, **k: probe)
+    monkeypatch.setattr(cb, "_CODEX_BIN", "codex")
+    monkeypatch.setenv("PATH", "/bare/bin")
+    monkeypatch.setattr(cb, "_EXTRA_BIN_DIRS", [])
+    monkeypatch.setattr(cb.shutil, "which", lambda name, path=None:
+        "/usr/bin/codex" if path and "/usr/bin" in path else None)
+    captured = _capture_run(monkeypatch)
+    cb._dispatch_cli_runner("codex", "p")
+    assert captured["cmd"][0] == "/usr/bin/codex"
+
+
+
+def test_resolve_cli_bin_absolutizes_relative_result(monkeypatch):
+    monkeypatch.setattr(cb, "_login_shell_path", lambda: None)
+    monkeypatch.setattr(
+        cb.shutil, "which",
+        lambda name, path=None: "./bin/codex" if path is None else None,
+    )
+    monkeypatch.setattr(cb, "_CODEX_BIN", "./bin/codex")
+    captured = _capture_run(monkeypatch)
+    cb._dispatch_cli_runner("codex", "p")
+    assert captured["cmd"][0] == cb.os.path.abspath("./bin/codex")

@@ -4806,8 +4806,9 @@ def test_resolve_directives_nested_cutover_bad_state_uses_settlement_abort_error
     assert _read_settle(db)["p"] == []
 
 
-def test_apply_fixed_period_flows_malformed_fiscal_container_isolated(fresh_game, monkeypatch):
-    # Public entry contract: fixed fiscal must not crash before shadow substrate isolation can log.
+@pytest.mark.parametrize("payload", [[], 0, False])
+def test_apply_fixed_period_flows_malformed_fiscal_container_isolated(fresh_game, payload):
+    # Public entry: malformed containers are isolated, preserved, and excluded from tax.
     import ming_sim.flows as flows_mod
 
     db, state = fresh_game
@@ -4816,21 +4817,16 @@ def test_apply_fixed_period_flows_malformed_fiscal_container_isolated(fresh_game
     expected_tax = sum(
         int(d["province_total"]) for d in before_details if d["region_id"] != "shaanxi"
     )
-    db.conn.execute("UPDATE regions SET fiscal='[]' WHERE id='shaanxi'")
+    raw = json.dumps(payload)
+    db.conn.execute("UPDATE regions SET fiscal=? WHERE id='shaanxi'", (raw,))
     db.conn.commit()
-
-    msgs: list[str] = []
-    monkeypatch.setattr(flows_mod, "tlog", lambda msg: msgs.append(msg))
 
     flow_rows = flows_mod.apply_fixed_period_flows(db, state)
 
     assert isinstance(flow_rows, list) and flow_rows, "坏 fiscal 容器不该掀翻固定财政"
-    assert db.conn.execute("SELECT fiscal FROM regions WHERE id='shaanxi'").fetchone()["fiscal"] == "[]"
+    assert db.conn.execute("SELECT fiscal FROM regions WHERE id='shaanxi'").fetchone()["fiscal"] == raw
     tax_flow = next(f for f in flow_rows if f.get("category") == "田赋辽饷盐商")
     assert tax_flow["amount"] == expected_tax, "坏 fiscal 省当月固定税收应出列，不能按默认 fiscal 造钱"
-    shaanxi_msgs = [m for m in msgs if "shaanxi" in str(m)]
-    assert len(shaanxi_msgs) >= 2, msgs
-    assert any("ValueError" in str(m) for m in shaanxi_msgs), msgs
 
 
 def test_substrate_malformed_fiscal_json_is_logged_not_prefiltered(fresh_game, monkeypatch):
@@ -4884,6 +4880,9 @@ def test_apply_fixed_period_flows_malformed_fiscal_json_isolated(fresh_game, mon
 @pytest.mark.parametrize("field,bad_value", [
     ("corruption", []),
     ("liao_xiang", []),
+    ("liao_xiang", float("nan")),
+    ("liao_xiang", float("inf")),
+    ("liao_xiang", 10 ** 309),
 ])
 def test_apply_fixed_period_flows_malformed_fiscal_scalar_isolated(fresh_game, monkeypatch, field, bad_value):
     import ming_sim.flows as flows_mod

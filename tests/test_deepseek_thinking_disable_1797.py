@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 
 import pytest
 
@@ -163,3 +164,45 @@ def test_create_chat_model_non_deepseek_minimax_strength_unchanged(monkeypatch):
     )
     model = create_chat_model(cfg, enable_thinking=False)
     assert model.extra_body == {"thinking": {"type": "adaptive"}, "reasoning_split": True}
+
+
+@pytest.mark.parametrize("provider_data,message_data", [
+    (None, None),
+    ({"finish_reason": "stop"}, None),
+    (None, {"finish_reason": "length"}),
+])
+def test_dump_llm_messages_records_reasoning_usage_finish_reason(
+    monkeypatch, tmp_path, provider_data, message_data
+):
+    """调试落盘入口：正文零删改、原始 usage/finish_reason 送往序列化。"""
+    import ming_sim.agents as agents_mod
+
+    dump_path = tmp_path / "llm_dump_test.log"
+    monkeypatch.setattr(agents_mod, "_DUMP_LLM", True)
+    monkeypatch.setattr(agents_mod, "_DUMP_PATH", str(dump_path))
+    msg = SimpleNamespace(
+        role="assistant", content="可见正文", reasoning_content="思考过程甲",
+        reasoning="中转 reasoning 正文", reasoning_details=None,
+        tool_calls=None, provider_data=message_data,
+    )
+    metrics = SimpleNamespace(
+        input_tokens=100, output_tokens=20, total_tokens=120, reasoning_tokens=42,
+    )
+    values = []
+    serialize = agents_mod._dump_value
+
+    def record_value(value):
+        values.append(value)
+        return serialize(value)
+
+    monkeypatch.setattr(agents_mod, "_dump_value", record_value)
+    agents_mod._dump_llm_messages(SimpleNamespace(
+        messages=[msg], reasoning_content=None, metrics=metrics,
+        model_provider_data=provider_data,
+    ), "test-tag")
+    text = dump_path.read_text(encoding="utf-8")
+    assert msg.reasoning_content in text and msg.reasoning in text
+    assert metrics in values
+    if provider_data or message_data:
+        finish_reason = (provider_data or message_data)["finish_reason"]
+        assert finish_reason in values and finish_reason in text

@@ -1416,3 +1416,45 @@ def test_due_one_shot_commitment_ack_closes_review_loop_without_effects(game):
     assert db.conn.execute(
         "SELECT COUNT(*) FROM issue_advances WHERE issue_id=?", (issue_id,),
     ).fetchone()[0] == len(advances)
+
+
+def test_commitment_progress_contexts_are_structured(game, monkeypatch, capsys):
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
+    db.conn.execute("UPDATE armies SET arrears=0 WHERE owner_power='ming'")
+    db.conn.execute("UPDATE armies SET arrears=25 WHERE id='guanning'")
+    db.conn.commit()
+    issue_id = db.insert_issue(
+        state,
+        kind="initiative",
+        title="关宁月饷",
+        origin_kind="decree",
+        origin_ref="decree:turn-1:guanning-pay",
+        bar_value=0,
+        inertia=0,
+        stage_text="每月拨银补关宁旧欠，直到补齐。",
+        ongoing_effects={
+            "economy": [
+                {"account": "国库", "delta": -10, "reason": "关宁月饷", "purpose": "补饷"}
+            ]
+        },
+        stop_condition=json.dumps({"army.guanning.arrears": "<=0"}, ensure_ascii=False),
+        commitment_kind="until_stop",
+    )
+
+    _advance_player_month(db, state, content)
+
+    import ming_sim.issues as issues_mod
+
+    inputs = []
+    display = issues_mod.commitment_display_text
+
+    def record_display(progress, row):
+        inputs.append((int(row["id"]), progress["months_elapsed"]))
+        return display(progress, row)
+
+    monkeypatch.setattr(issues_mod, "commitment_display_text", record_display)
+    issues_mod.show_active_issues(db)
+    capsys.readouterr()
+    assert inputs == [(issue_id, 1)]

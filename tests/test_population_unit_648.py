@@ -303,3 +303,28 @@ def test_legacy_save_restore_jianzhou_converts_to_wan(game, legacy_game):
         "SELECT population FROM regions WHERE id='jianzhou'"
     ).fetchone()[0]
     assert after == JIANZHOU_RESTORE_POP_WAN
+
+
+def test_new_save_region_detail_sub_wan_population_label(game):
+    """新档 sub-wan 同桶，与达到一万口的真实出口可分。"""
+    db, _, _ = game
+    details = {}
+    for persons in (0, 9999, 10000):
+        db.conn.execute(
+            "UPDATE regions SET population=? WHERE id='beizhili'", (persons,)
+        )
+        details[persons] = db.region_detail("北直隶", qualitative=True)
+    assert details[0] == details[9999]
+    assert details[9999] != details[10000]
+
+
+
+def test_legacy_region_detail_population_untouched(legacy_game):
+    """旧档「人口N万人」原样，不加换算层。"""
+    db, _ = legacy_game
+    detail = db.region_detail("北直隶", qualitative=True)
+    population = db.conn.execute(
+        "SELECT population FROM regions WHERE id='beizhili'"
+    ).fetchone()["population"]
+    # 源数值及其量纲，不锁「人口」等展示标签。
+    assert f"{population}万人" in detail

@@ -67,3 +67,74 @@ def test_army_rows_non_danger_sorted_by_theater_name(read_game):
     keys = [(str(r["theater"]), str(r["name"])) for r in rows]
     assert keys == sorted(keys)
     assert len(db.army_rows(limit=2, danger_order=False)) == 2
+
+
+def test_army_report_shows_actual_charge(game):
+    """army_report 月饷总额须基于 army_needed（引擎实扣）——格式化金额串出现在真实出口。"""
+    from ming_sim.assets import format_money
+    from ming_sim.models import monthly_amount
+
+    db, _state, _ = game
+    aid = db.conn.execute(
+        "SELECT id FROM armies WHERE owner_power='ming' AND salary_rate>0 "
+        "ORDER BY manpower DESC LIMIT 1"
+    ).fetchone()["id"]
+    db.conn.execute(
+        "UPDATE armies SET manpower = manpower + 100000 WHERE id=?", (aid,)
+    )
+    db.conn.commit()
+    total_needed = sum(
+        army_needed(r) for r in db.conn.execute("SELECT * FROM armies").fetchall()
+    )
+    expected = format_money(monthly_amount(total_needed))
+    report = db.army_report(limit=20)
+    assert expected in report
+    assert monthly_amount(total_needed) > 0
+
+
+
+def test_army_public_exits_approx_arrears_and_hide_split_accounts(game):
+    """#305/D10：分账机器字段不进出口，欠饷事实仍接通 detail。"""
+    db, _state, _ = game
+    row = db.conn.execute(
+        "SELECT id,name FROM armies WHERE owner_power='ming' ORDER BY id LIMIT 1"
+    ).fetchone()
+    db.conn.execute(
+        "UPDATE armies SET arrears=12.5, province_pay_arrears=12.5, central_pay_arrears=0 WHERE id=?",
+        (row["id"],),
+    )
+    db.conn.commit()
+    name = row["name"]
+    detail, roster = db.army_detail(name), db.army_roster(filter_names=[name])
+    report = db.army_report(limit=100)
+    for text in (detail, report, roster):
+        for field in ("province_pay_arrears", "central_pay_arrears"):
+            assert field not in text
+    db.conn.execute(
+        "UPDATE armies SET arrears=0, province_pay_arrears=0, central_pay_arrears=0 WHERE id=?",
+        (row["id"],),
+    )
+    db.conn.commit()
+    assert db.army_detail(name) != detail
+
+
+
+def test_army_arrears_presentation_rounds_half_steps_up(game):
+    """#305：真实军牌的半档进位；固定月饷，避免欠饷月数干扰。"""
+
+    db, _state, _ = game
+    row = db.conn.execute(
+        "SELECT id,name FROM armies WHERE owner_power='ming' ORDER BY id LIMIT 1"
+    ).fetchone()
+
+    def _arrears_fact(arrears: float) -> str:
+        db.conn.execute(
+            "UPDATE armies SET arrears=?, province_pay_arrears=?, central_pay_arrears=0, "
+            "manpower=20000, salary_rate=100 WHERE id=?",
+            (arrears, arrears, row["id"]),
+        )
+        db.conn.commit()
+        return next(card for card in db.army_payload() if card["id"] == row["id"])["arrears_text"]
+
+    assert _arrears_fact(12.5) == _arrears_fact(15) != _arrears_fact(12)
+    assert _arrears_fact(25) == _arrears_fact(30) != _arrears_fact(15)
