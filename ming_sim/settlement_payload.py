@@ -80,6 +80,12 @@ def parse_decision_blocks(text: str) -> List[Dict[str, object]]:
             for key in season_option_fields(action_type):
                 if key in o:
                     option[key] = action_type if key == "action_type" else o[key]
+            # 事件结局与留中是既有结构化字段（ADR 0020 terminal_reason、
+            # 批红 dossier_decision=hold）。呈现 label 不承担转译。
+            if o.get("terminal_reason") not in (None, ""):
+                option["terminal_reason"] = str(o.get("terminal_reason"))
+            if o.get("dossier_decision") not in (None, ""):
+                option["dossier_decision"] = str(o.get("dossier_decision"))
             options.append(option)
         try:
             bind_decision_options(options)

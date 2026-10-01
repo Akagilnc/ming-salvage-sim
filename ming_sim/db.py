@@ -19723,22 +19723,44 @@ class GameDB:
         if not eid:
             return
         self._ensure_event_parent(eid)
-        payload = json.dumps(choice if isinstance(choice, dict) else {}, ensure_ascii=False)
-        raw_label = str((choice or {}).get("label") or "") if isinstance(choice, dict) else ""
+        choice_dict = choice if isinstance(choice, dict) else {}
+        payload = json.dumps(choice_dict, ensure_ascii=False)
+        raw_label = str(choice_dict.get("label") or "")
         label = raw_label[:200]
-        # 有结局白名单的事件只落归一后的合法标签。呈现词（留中、准奏）留在 choice_json，
-        # 不写入 terminal_reason，也不擦掉已有的合法 pending。无白名单的事件仍把 label
-        # 原样暂存（普通 HITL）。已有非空终态一律保留（ADR 0115 first-wins）。
+        # 结局取结构化 terminal_reason；缺该字段时，直接写口仍接受本就是白名单
+        # 标签的 label（案头标准选项、测试直写）。留中是 dossier_decision=hold，
+        # 不写准驳。白名单事件对不上就响亮拒绝，不把呈现词静默当成无效果。
+        # 已有非空终态一律保留（ADR 0115 first-wins）。
         event = self.content.event_by_id.get(eid)
         allowed = list(getattr(event, "terminal_reason_labels", []) or []) if event is not None else []
-        if allowed:
+        held = str(choice_dict.get("dossier_decision") or "") == "hold"
+        structured = choice_dict.get("terminal_reason")
+        has_structured = structured not in (None, "")
+        if held and has_structured:
+            raise ValueError(f"事件 {eid} 的批语不能同时留中又带结局")
+        if allowed and not held:
             from ming_sim.issues import _normalize_event_terminal_reason
-            stored_reason = _normalize_event_terminal_reason(event, raw_label)
-            replace_pending = bool(stored_reason)
+            raw_outcome = structured if has_structured else raw_label
+            stored_reason = _normalize_event_terminal_reason(event, raw_outcome)
+            if not stored_reason:
+                raise ValueError(
+                    f"事件 {eid} 的批语没有可归一的结局：{raw_outcome!r}"
+                )
+            replace_pending = True
+        elif held:
+            stored_reason = ""
+            replace_pending = False
         else:
             stored_reason = label
             replace_pending = True
         replace_flag = 1 if replace_pending else 0
+        hold_flag = 1 if held else 0
+        prior = self.conn.execute(
+            "SELECT terminal_state, terminal_reason FROM event_triggers WHERE event_id = ?",
+            (eid,),
+        ).fetchone()
+        prior_state = str(prior["terminal_state"] or "") if prior is not None else ""
+        prior_reason = str(prior["terminal_reason"] or "") if prior is not None else ""
         self.conn.execute(
             """
             INSERT INTO event_triggers
@@ -19747,6 +19769,7 @@ class GameDB:
             ON CONFLICT(event_id) DO UPDATE SET
                 -- 终态账不可逆：HITL 选择只暂存 choice_json；新行不抢先写 triggered。
                 -- 冲突时保留已有 terminal_state。source 只有空终态或已 triggered 才更新。
+                -- 留中清掉尚未终局的准驳暂存，已终局的原因不动。
                 source = CASE
                     WHEN COALESCE(event_triggers.terminal_state, '') IN ('', 'triggered')
                     THEN excluded.source
@@ -19758,6 +19781,9 @@ class GameDB:
                          AND ? = 1
                     THEN excluded.terminal_reason
                     WHEN COALESCE(event_triggers.terminal_state, '') = ''
+                         AND ? = 1
+                    THEN ''
+                    WHEN COALESCE(event_triggers.terminal_state, '') = ''
                     THEN event_triggers.terminal_reason
                     WHEN COALESCE(event_triggers.terminal_reason, '') = ''
                          AND ? = 1
@@ -19768,19 +19794,17 @@ class GameDB:
             """,
             (
                 eid, state.turn, state.year, state.period, source, stored_reason, payload,
-                replace_flag, replace_flag,
+                replace_flag, hold_flag, replace_flag,
             ),
         )
-        # 财政只跟随本写口实际收下的合法结局。已终局的另一裁断、未能归一的呈现词，
-        # 都不改目录。局部 import 避 db↔issues 顶层环。
-        if stored_reason:
-            accepted = self.conn.execute(
-                "SELECT terminal_reason FROM event_triggers WHERE event_id = ?",
-                (eid,),
-            ).fetchone()
-            if accepted is not None and str(accepted["terminal_reason"] or "") == stored_reason:
-                from ming_sim.issues import _fiscal_levy_apply_emperor_ruling
-                _fiscal_levy_apply_emperor_ruling(self, state, eid, stored_reason)
+        # 财政只跟随本写口新收下的结局。判据是写前的终态与原因，不用写后读回
+        # 相等：已终局的同标签重交读回去仍相等，但并没有接受新裁断。
+        reason_landed = bool(stored_reason) and prior_reason != stored_reason and (
+            prior_state == "" or prior_reason == ""
+        )
+        if reason_landed:
+            from ming_sim.issues import _fiscal_levy_apply_emperor_ruling
+            _fiscal_levy_apply_emperor_ruling(self, state, eid, stored_reason)
         if commit:
             self.conn.commit()
 

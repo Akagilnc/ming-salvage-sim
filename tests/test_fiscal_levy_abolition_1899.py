@@ -170,11 +170,20 @@ def test_rise_approval_reinstates_through_every_abolition_write_port(game, zeroi
     复征此前只走 `create_fiscal_item`，它对「行仍在册」返回 None —— 调零落法的罢征
     于是永不复征，这道「准」被静默丢弃、下月照旧征。本例钉死**两口都通**，且复征
     后 rate 回到该键自己的 seed 值（100，不是同 stem 的 base 值 43）。
+
+    停征先在升率窗口打开前过月：窗口内无人答复会被历史自动桩收成已准，那之后
+    再交同一个标签是重放旧终态，写口不把它当成新裁断。重新开征的「准」必须是
+    事件尚未终局时写下的那一次。
     """
-    db, state = _at(game, 1631, 1, 10)
+    db, state = _at(game, 1630, 12, 10)
     _abolish(db, state, 10, zeroing=zeroing)
     db, state = _settle_month(game, 11)
     assert _settle(db)["p"]["三饷应征"] == 0.0, "罢后应先停征"
+    prior = db.conn.execute(
+        "SELECT terminal_state FROM event_triggers WHERE event_id = ?",
+        (RISE_EVENT_ID,),
+    ).fetchone()
+    assert prior is None or str(prior["terminal_state"] or "") == ""
 
     db, state = _at(game, 1631, 6, 15)
     _emperor_rates_rise(db, state, 15)
@@ -185,6 +194,18 @@ def test_rise_approval_reinstates_through_every_abolition_write_port(game, zeroi
         reopened["_meta"]["辽饷九厘基线"] * 4.0 / 3.0
     ), "复征后按新率（一分二厘）征"
     assert _rate_row(db, "辽饷_rate")["value"] == 100
+
+    # 已终局为已准后再罢、再交同一个标签：终态保留，目录不被重放复征。
+    _abolish(db, state, 17, zeroing=zeroing)
+    _emperor_rates_rise(db, state, 18)
+    db, state = _settle_month(game, 19)
+    closed = db.conn.execute(
+        "SELECT terminal_state, terminal_reason FROM event_triggers WHERE event_id = ?",
+        (RISE_EVENT_ID,),
+    ).fetchone()
+    assert closed["terminal_state"] == "triggered"
+    assert closed["terminal_reason"] == "已准"
+    assert _settle(db)["p"]["三饷应征"] == 0.0
 
 
 # ── 批语先后：最后一条批语胜，两种真实顺序各钉一次（R2）────────────────────
@@ -255,8 +276,11 @@ def test_later_turn_abolition_after_approval_keeps_abolition(game):
 
 
 def test_reabolition_after_reinstatement_keeps_both_write_ports_working(game):
-    """罢→准→再罢：后续决定的**真写口**都通（不再 missing_ref），且真落罢。"""
-    db, state = _at(game, 1631, 1, 10)
+    """罢→准→再罢：后续决定的**真写口**都通（不再 missing_ref），且真落罢。
+
+    第一次停征落在升率窗口打开前，避免无人答复的自动桩先把事件收成已准。
+    """
+    db, state = _at(game, 1630, 12, 10)
     _abolish(db, state, 10)
     db, state = _settle_month(game, 11)
     assert _settle(db)["p"]["三饷应征"] == 0.0
@@ -353,6 +377,18 @@ def test_abolished_tian_fu_zeroes_regular_assessment(game):
     assert during["p"]["正赋应征"] == 0.0
     assert during["_meta"]["正赋应征基线"] == pytest.approx(before)
 
+    # 零额度重立不是复征：声明 0 不得把正赋恢复成开局全额。
+    dispatch_declaration(db, state, {"effects": [{"fiscal_creates": [{
+        "key": "田赋", "account": "国库", "direction": "income",
+        "init_value": 0, "display": "田赋",
+        "origin_ref": "盘面自发", "reason": "复征",
+    }]}]})
+    db.conn.commit()
+    apply_historical_fiscal_rates(state, db)
+    assert _settle(db)["p"]["正赋应征"] == 0.0
+    assert _rate_row(db, "田赋_base")["value"] == 0
+
+    _abolish(db, state, 1, stem="田赋")
     # 复征 = 一道新批语（真重立写口），比罢晚 → 复征在位。
     db, state = _at(game, 1628, 1, 2)
     dispatch_declaration(db, state, {"effects": [{"fiscal_creates": [{
@@ -608,20 +644,31 @@ def test_later_rejection_withdraws_earlier_approval_on_same_pending_event(game, 
     )
 
 
-@pytest.mark.parametrize("label", ["留中", "准奏"])
-def test_noncanonical_rescript_label_does_not_become_terminal_reason(game, label):
-    """呈现词留在批语里。关档重开后下月消费不得把它当成结局而中止。"""
+@pytest.mark.parametrize(
+    ("option", "label", "risen"),
+    [
+        ({"label": "留中", "hint": "", "dossier_decision": "hold"}, "留中", False),
+        ({"label": "准奏", "hint": "", "terminal_reason": "已准"}, "准奏", True),
+    ],
+)
+def test_rescript_structured_outcome_survives_reopen(game, option, label, risen):
+    """呈现词留在批语里。结局只来自选项上的结构化字段。
+
+    资格时点是崇祯四年六月（升率窗口已开）。批红后关档重开，再推进到下月
+    pre_settle：留中不写准驳、不征；带结局的准奏按新率复征。
+    """
+    from ming_sim.db import GameDB
     from ming_sim.month_chain import _WORLD_QUESTION_PREFIX, _question_as_decision
     from ming_sim import rescript_actions as ra
 
     db, state, content = game
-    db, state = _at(game, 1631, 4, 15)
+    db, state = _at(game, 1631, 6, 15)
     _abolish(db, state, 15)
     question = {
         "title": "辽饷加派",
         "context": "户部请加辽饷",
         "event_id": RISE_EVENT_ID,
-        "options": [{"label": label, "hint": ""}, {"label": "已准", "hint": ""}],
+        "options": [option, {"label": "已驳", "hint": "", "terminal_reason": "已驳"}],
     }
     decision = _question_as_decision(question, event_id=f"{_WORLD_QUESTION_PREFIX}15:0")
     db.save_pending_decisions(15, [decision])
@@ -631,19 +678,38 @@ def test_noncanonical_rescript_label_does_not_become_terminal_reason(game, label
     db.save_state(state)
     db.conn.commit()
 
-    loaded = db.load_state()
-    loaded.turn = 16
-    loaded.turn_phase = ""
-    decree_mod.pre_settle(loaded, db, content=content)
-    db.conn.commit()
+    path = db.path
+    db.close()
+    opened = GameDB(path, content)
+    try:
+        loaded = opened.load_state()
+        assert (loaded.year, loaded.period) == (1631, 6)
+        loaded.next_period()
+        loaded.turn_phase = ""
+        decree_mod.pre_settle(loaded, opened, content=content)
+        opened.conn.commit()
+        row = opened.conn.execute(
+            "SELECT terminal_state, terminal_reason, choice_json FROM event_triggers WHERE event_id = ?",
+            (RISE_EVENT_ID,),
+        ).fetchone()
+        fiscal = json.loads(str(opened.conn.execute(
+            "SELECT fiscal FROM regions WHERE id = 'shaanxi'"
+        ).fetchone()["fiscal"]))
+        settle = fiscal["settle"]
+    finally:
+        db.conn = opened.conn
 
-    row = db.conn.execute(
-        "SELECT terminal_reason, choice_json FROM event_triggers WHERE event_id = ?",
-        (RISE_EVENT_ID,),
-    ).fetchone()
     assert json.loads(row["choice_json"])["label"] == label
-    assert row["terminal_reason"] != label
-    assert _settle(db)["p"]["三饷应征"] == 0.0
+    if risen:
+        assert row["terminal_state"] == "triggered"
+        assert row["terminal_reason"] == "已准"
+        assert settle["p"]["三饷应征"] == pytest.approx(
+            settle["_meta"]["辽饷九厘基线"] * 4.0 / 3.0
+        )
+    else:
+        assert row["terminal_state"] == ""
+        assert row["terminal_reason"] == ""
+        assert settle["p"]["三饷应征"] == 0.0
 
 
 def test_closed_rejection_does_not_accept_later_approval(game):
@@ -697,7 +763,12 @@ def test_rejection_does_not_cover_later_independent_contribution(game, zeroing):
         assert base is not None and int(base["value"]) == 86
 
     db, state = _settle_month(game, 18)
-    assert _settle(db)["p"]["三饷应征"] > 0.0
+    settled = _settle(db)
+    seed_base = int(db._seeded_fiscal_config_value("辽饷_base"))
+    live_base = int(_rate_row(db, "辽饷_base")["value"])
+    assert settled["p"]["三饷应征"] == pytest.approx(
+        settled["_meta"]["辽饷九厘基线"] * live_base / seed_base
+    )
 
 
 @pytest.mark.parametrize(

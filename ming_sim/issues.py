@@ -1399,6 +1399,35 @@ def _is_stored_number(raw: object) -> bool:
     return not isinstance(raw, bool) and isinstance(raw, (int, float))
 
 
+def _fiscal_levy_tian_in_force(db: GameDB) -> bool:
+    """田赋在征：rate 在册且为正；若已声明 田赋_base，额度须为正。
+
+    田赋 seed 没有金额 base。重立 init_value=0 会写下 base 0 与 rate 100，
+    只看 rate 会把零额度当成复征、把正赋恢复成开局全额。base 行不存在时
+    仍是开局 rate 目录，按在征。
+    """
+    if not _fiscal_levy_catalog_in_force(db, _FISCAL_LEVY_TIAN_KEYS):
+        return False
+    row = db.conn.execute(
+        "SELECT value FROM fiscal_config WHERE key = '田赋_base'"
+    ).fetchone()
+    if row is None:
+        return True
+    return int(row["value"] or 0) > 0
+
+
+def _fiscal_levy_liao_declared_scale(db: GameDB) -> float:
+    """在征辽饷按声明 base / seed base 计。seed 定额缺失时不另造比例。"""
+    row = db.conn.execute(
+        "SELECT value FROM fiscal_config WHERE key = '辽饷_base'"
+    ).fetchone()
+    live = int(row["value"] or 0) if row is not None else 0
+    seed = db._seeded_fiscal_config_value("辽饷_base")
+    if seed is None or seed <= 0 or live <= 0:
+        return 1.0
+    return live / float(seed)
+
+
 def _fiscal_levy_catalog_in_force(db: GameDB, keys: tuple) -> bool:
     """该组目录键当前是否**在征**——直接读目录，不重建批语时序。
 
@@ -1747,8 +1776,8 @@ def _fiscal_levy_apply_emperor_ruling(
 ) -> bool:
     """把写口已经收下的辽饷升率结局落到目录。
 
-    调用方只在读回的 terminal_reason 等于本次合法标签时进来。「已准」复征已罢的
-    辽饷；「已驳」只撤本事件仍拥有的复征。留中、准奏等未能归一的呈现词不到这里。
+    调用方只在本写口新收下合法标签时进来。「已准」复征已罢的辽饷；「已驳」只撤
+    本事件仍拥有的复征。留中不进这里，也不改目录。
     """
     if str(event_id or "").strip() != _LIAO_LEVY_RISE_EVENT_ID:
         return False
@@ -1786,7 +1815,8 @@ def _apply_fiscal_levy_targets(
     # （见 `_fiscal_levy_apply_emperor_ruling`），消费端不重放：旧准不会被更后出的
     # 罢顶掉，同一道准也不会在重入时凭空复征。
     liao_in_force = _fiscal_levy_catalog_in_force(db, _FISCAL_LEVY_LIAO_KEYS)
-    tian_abolished = not _fiscal_levy_catalog_in_force(db, _FISCAL_LEVY_TIAN_KEYS)
+    tian_abolished = not _fiscal_levy_tian_in_force(db)
+    liao_scale = _fiscal_levy_liao_declared_scale(db) if liao_in_force else 0.0
     region_entries: List[Dict[str, object]] = []
     denominator_complete = True
     for row in db.conn.execute("SELECT id, fiscal FROM regions ORDER BY id").fetchall():
@@ -1869,7 +1899,8 @@ def _apply_fiscal_levy_targets(
         # 辽饷在征与否直接读目录（#1899）：目录在征才征，罢后残值不再被当复征证据。
         # 「准」的重新开征已在上方经真写口重立目录，故此处无需任何时序比较或 tie-break。
         if liao_in_force:
-            target_liao = liao_seed * (_LIAO_LEVY_RISE_FACTOR if liao_rise_approved else 1.0)
+            rise = _LIAO_LEVY_RISE_FACTOR if liao_rise_approved else 1.0
+            target_liao = liao_seed * liao_scale * rise
         else:
             target_liao = 0.0
         target_jiao = jiao_seed if jiao_in_force else 0.0
@@ -1957,6 +1988,17 @@ def apply_historical_fiscal_rates(
     def run_fiscal_levy_pass() -> None:
         terminal_records = _event_terminal_records(db)
         pending_choice_records = _event_pending_choice_records(db)
+        answered_ids = {
+            str(row["event_id"])
+            for row in db.conn.execute(
+                """
+                SELECT event_id FROM event_triggers
+                WHERE COALESCE(terminal_state, '') = ''
+                  AND TRIM(COALESCE(choice_json, '')) NOT IN ('', '{}')
+                """
+            )
+            if row["event_id"]
+        }
         for ev in c.events:
             if getattr(ev, "category", "") != FISCAL_LEVY_EVENT_CATEGORY:
                 continue
@@ -2010,6 +2052,10 @@ def apply_historical_fiscal_rates(
                 if not _event_window_open(ev, state):
                     continue
                 if not _gate_passed(ev.trigger_gate, state.metrics, db):
+                    continue
+                # 已有亲裁答复（含留中）就不是没人裁。默认结局只填无人答复的窗口；
+                # 无 choice 的历史自动桩仍在，退役归 #1891。
+                if ev.id in answered_ids:
                     continue
                 label = _fiscal_levy_default_terminal_reason(ev, state)
                 db.mark_event_triggered(
