@@ -1059,7 +1059,7 @@ def _attach_investigation_facts(
     那会变成免费清白神谕）。
     """
     from ming_sim.covert_progress import (
-        investigation_fact_difficulty,
+        investigation_fact_is_gone,
         investigation_tip_records,
         investigation_action_records,
         live_investigation_fact_keys,
@@ -1089,11 +1089,8 @@ def _attach_investigation_facts(
         }
         facts: List[Dict[str, Any]] = []
         for key in live_investigation_fact_keys(db, target):
-            difficulty = investigation_fact_difficulty(
-                db, target=target, fact_key=key, investigator=investigator,
-            )
             lane = lanes.get(key, {})
-            if difficulty == float("inf"):
+            if investigation_fact_is_gone(db, target, key):
                 state_text = "已被毁证湮灭"
             elif bool(lane.get("mastered")):
                 state_text = "已掌握"

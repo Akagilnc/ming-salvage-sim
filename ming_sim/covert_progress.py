@@ -905,6 +905,22 @@ def _append_investigation_log(
     db.update_decree_dossier_payload(int(dossier_id), payload)
 
 
+def investigation_fact_is_gone(db: Any, target: str, fact_key: str) -> bool:
+    """这条罪证是否已被毁成 gone。唯一判据是 investigation_spoiled_facts。
+
+    难度里的 inf 不是这个判据：能力为零也会把难度乘成 inf，不能冒充毁证。
+    """
+    name = str(target or "").strip()
+    key = str(fact_key or "").strip()
+    if not name or not key:
+        return False
+    return any(
+        str(row.get("fact_key") or "") == key
+        and str(row.get("effect") or "") == "gone"
+        for row in db.list_investigation_spoiled_facts(name)
+    )
+
+
 def investigation_fact_difficulty(
     db: Any,
     *,
@@ -1001,11 +1017,13 @@ def investigation_fact_difficulty(
                     math.inf if ability == 0.0 else _ABILITY_REFERENCE / ability
                 )
 
+    if investigation_fact_is_gone(db, name, key):
+        return float("inf")
     for spoiled in db.list_investigation_spoiled_facts(name):
         if str(spoiled.get("fact_key") or "") != key:
             continue
         if str(spoiled.get("effect") or "") == "gone":
-            return float("inf")
+            continue
         difficulty *= _SPOILED_HARDER_MULTIPLIER
     return max(_MIN_DIFFICULTY, float(difficulty))
 
@@ -1248,7 +1266,10 @@ def _consume_monthly_clues(
             db, target=target, fact_key=key, investigator=investigator,
         )
         lane["difficulty"] = difficulty
-        if difficulty != float("inf") and float(lane["effort"]) >= difficulty:
+        if (
+            not investigation_fact_is_gone(db, target, key)
+            and float(lane["effort"]) >= difficulty
+        ):
             lane["mastered"] = True
     payload = _dossier_payload_map(db, dossier_id)
     payload[INVESTIGATION_CLUES_KEY] = clues
@@ -1349,14 +1370,8 @@ def apply_investigation_monthly_effort(
             db, target=target, fact_key=key, investigator=investigator,
         )
         lane["difficulty"] = difficulty
-        # 毁成 gone 才无处可施。能力为零把难度乘成 inf，实投仍入账；
-        # effort >= inf 为假，故不掌握，也不另立禁零闸。
-        gone = any(
-            str(row.get("fact_key") or "") == key
-            and str(row.get("effect") or "") == "gone"
-            for row in db.list_investigation_spoiled_facts(target)
-        )
-        if gone:
+        # 毁证只看 spoiled 账。能力为零的 inf 仍入账，effort >= inf 为假所以不掌握。
+        if investigation_fact_is_gone(db, target, key):
             _write_fact_lanes(db, dossier_id, lanes, commit=commit)
             return {
                 "bound_fact_key": key, "effort_applied": 0.0, "mastered": [],

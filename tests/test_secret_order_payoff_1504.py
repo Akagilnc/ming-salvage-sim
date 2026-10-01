@@ -2486,6 +2486,24 @@ def test_spoliated_fact_reported_as_unreachable_in_feed(game):
         db, target=target, fact_key=key, effect="gone",
         knowledge_source=informer, dossier_id=spoiler_did, commit=True,
     )
+    untouched = next(
+        row["name"] for row in db.conn.execute(
+            "SELECT name FROM characters WHERE status='active' AND power_id='ming' "
+            "AND name NOT IN (?, ?) ORDER BY name",
+            (name, target),
+        ).fetchall()
+    )
+    db.conn.execute(
+        "UPDATE characters SET seed_guilt=? WHERE name=?",
+        (_structured_guilt(), untouched),
+    )
+    db.conn.execute("UPDATE characters SET ability=0 WHERE name=?", (name,))
+    db.conn.commit()
+    zero_oid = _issue(
+        db, state, name, "零能力查未毁之罪", "零能力查未毁之罪",
+        months=3, target=1, kind="查核", axes=["既得利益"],
+        investigation_target=untouched,
+    )
     oid = _issue(
         db, state, name, "密查被毁证者", "密查被毁证者",
         months=3, target=1, kind="查核", axes=["既得利益"],
@@ -2497,6 +2515,11 @@ def test_spoliated_fact_reported_as_unreachable_in_feed(game):
     fact = next(f for f in order["investigation_facts"] if f["fact_key"] == key)
     assert fact["state"] == "已被毁证湮灭"
     assert "difficulty" not in fact  # 不把难度／inf 摆给模型
+    # 能力为零把难度乘成 inf，不能因此把未毁的罪证说成已湮灭。
+    zero_order = next(o for o in feed["active_secret_orders"] if int(o["id"]) == zero_oid)
+    zero_fact = next(f for f in zero_order["investigation_facts"] if f["fact_key"] == untouched)
+    assert zero_fact["state"] == "在查"
+    assert db.list_investigation_spoiled_facts(untouched) == []
 
 
 def test_closed_case_blocks_same_fact_on_later_case_and_due(game):
