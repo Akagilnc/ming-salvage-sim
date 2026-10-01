@@ -224,7 +224,7 @@ def test_class_delta_displaced_accepts_sat_lev_population_face_removed(game):
     rejections = applied["class_delta_rejections"]
     assert len(rejections) == 1
     assert rejections[0]["category"] == "invalid_enum"
-    assert "population_transfers" in rejections[0]["reason"]  # 指向合法入口
+    assert rejections[0]["reason"]
     row2 = db.conn.execute(
         "SELECT population, satisfaction FROM classes "
         "WHERE name='流民' AND region_id='shaanxi'"

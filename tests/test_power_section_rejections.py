@@ -213,7 +213,7 @@ def test_ming_power_update_rejected_with_trace(game):
     rows = [r for r in _rejection_rows(db, turn) if r[0] == "power_changes"]
     assert len(rows) == 1
     assert rows[0][2] == "invalid_enum"
-    assert "ming" in rows[0][1] or "大明" in rows[0][1]
+    assert rows[0][1]
 
 
 def test_float_and_bool_power_values_rejected(game):

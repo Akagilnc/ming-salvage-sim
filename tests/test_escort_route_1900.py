@@ -9,7 +9,7 @@ Seams:
   不提前成案、不放宽通用校验，也不因目标随后 committed 丢掉已受理的指向
 - 转译声明 ``escort_links`` → ``GameDB.add_dossier_links``（关联真源，单向新指旧）
 - 转译声明 ``escort_results`` → ``GameDB.record_dossier_escort_result``（逐路实况）
-- ``_grant_escort_presence`` / ``list_monthly_grant_reconciliation_targets``
+- ``list_dossier_escort_outcomes`` / ``list_monthly_grant_reconciliation_targets``
   （对账只读逐路实况，不凭关联、不凭密令整体成败；正常结案不免除本次核账）
 - ``build_translation_target_grounding``（实况与安排分离：失护不反写有护）
 - 整月密报供料与 ``continuing_dossier_facts``（按各路结果读，不按整体状态推断）
@@ -619,7 +619,6 @@ def test_same_decree_escort_declaration_survives_restore(game):
     try:
         assert reopened.dossier_declares_escort(grant) is True
         assert reopened.list_dossier_escort_outcomes(grant) == outcomes
-        assert reopened._grant_escort_presence(grant, turn=state.turn)[:2] == (True, grant)
     finally:
         reopened.close()
 
