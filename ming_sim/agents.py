@@ -962,6 +962,8 @@ def create_secret_order_supply_agent(llm_config: LLMConfig, prepared: Any = None
         "   - dossier_id: 整数，对应 eligible_dossiers 中的 dossier_id",
         "   - progress_band: 字符串，进展评级（如'顺利'、'持平'、'受阻'等）",
         "   - memorial_text: 字符串，承办人呈报皇帝的本月密奏正文，不可为空",
+        "   - origin: 承办人在这条密奏里自己选择的行动。睁眼闭眼写 same_faction_blind，"
+        "带私货写 private_goods；两样都选则用 + 连在一起。只写他这一次选出的记号",
         "2. `covert_exec_selections`: 列表，每个在办密令一条。每项包含：",
         "   - order_id: 整数，对应 active_secret_orders 中的 id",
         "   - fidelity: 字符串，执行态，必须为 '忠实'、'打折'、'阳奉阴违'、'反噬' 之一",

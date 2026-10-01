@@ -370,7 +370,7 @@ def _secret_subject(db, state, *, owner: str, token: str) -> int:
 
 
 def test_ac3_relation_facts_do_not_invent_report_actions(game):
-    """同派／敌派只留在监督史。月报不声明行动就不写睁眼闭眼或带私货。"""
+    """同派／敌派只留在监督史。月报未带声明时不写睁眼闭眼或带私货。"""
     db, state, _content = game
     same_a, same_b = _pair_same_faction(db)
     enemy_a, enemy_b = _pair_enemy_faction(db)
@@ -395,7 +395,6 @@ def test_ac3_relation_facts_do_not_invent_report_actions(game):
             "dossier_id": sub_s,
             "progress_band": "在办",
             "memorial_text": "同路例行奏报",
-            "origin": "same_faction_blind+不是行动",
         },
         {
             "dossier_id": sub_e,
@@ -405,31 +404,10 @@ def test_ac3_relation_facts_do_not_invent_report_actions(game):
     ])
     same_origin = db.list_dossier_progress(sub_s)[-1]["origin"]
     enemy_origin = db.list_dossier_progress(sub_e)[-1]["origin"]
-    assert origin_has_mark(same_origin, ORIGIN_MARK_SAME_FACTION_BLIND)
+    assert not origin_has_mark(same_origin, ORIGIN_MARK_SAME_FACTION_BLIND)
     assert not origin_has_mark(same_origin, ORIGIN_MARK_PRIVATE_GOODS)
-    assert "不是行动" not in str(same_origin)
     assert not origin_has_mark(enemy_origin, ORIGIN_MARK_PRIVATE_GOODS)
     assert not origin_has_mark(enemy_origin, ORIGIN_MARK_SAME_FACTION_BLIND)
-
-    db.record_monthly_dossier_progress(state.turn, [
-        {
-            "dossier_id": sub_s,
-            "progress_band": "在办",
-            "memorial_text": "同路例行奏报",
-            "origin": ORIGIN_MARK_SAME_FACTION_BLIND,
-        },
-        {
-            "dossier_id": sub_e,
-            "progress_band": "在办",
-            "memorial_text": "异路声明私货",
-            "origin": ORIGIN_MARK_PRIVATE_GOODS,
-        },
-    ])
-    assert len(db.list_dossier_progress(sub_s)) == 1
-    assert len(db.list_dossier_progress(sub_e)) == 1
-    assert origin_has_mark(
-        db.list_dossier_progress(sub_e)[-1]["origin"], ORIGIN_MARK_PRIVATE_GOODS,
-    )
     assert int(state.metrics.get("内库") or 0) == before_inner
 
 

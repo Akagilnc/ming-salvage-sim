@@ -19,6 +19,11 @@ from ming_sim.exceptions import LLMUnavailable
 from ming_sim.models import TurnPhase
 from tests.month_chain_helpers import make_light_session
 from tests.test_month_chain_1843 import _forbid_extractor, _stage_edict
+from ming_sim.supervision import (
+    ORIGIN_MARK_PRIVATE_GOODS,
+    ORIGIN_MARK_SAME_FACTION_BLIND,
+    origin_has_mark,
+)
 from tests.dossier_test_helpers import create_test_secret_order
 
 
@@ -1569,6 +1574,7 @@ def test_step_4a_missing_covert_fidelity_records_inline_rejection(game, monkeypa
                 "dossier_id": dossier_id,
                 "progress_band": "持平",
                 "memorial_text": "按期奏报",
+                "origin": "same_faction_blind+不是行动",
             }],
             "covert_exec_selections": [{"order_id": order_id, "fidelity": "忠实"}],
         }
@@ -1596,6 +1602,9 @@ def test_step_4a_missing_covert_fidelity_records_inline_rejection(game, monkeypa
         (dossier_id, turn),
     ).fetchone()[0] == 0
     assert chain.get("secret_orders_reports_done") is True
+    silent_origin = db.list_dossier_progress(dossier_id)[-1]["origin"]
+    assert not origin_has_mark(silent_origin, ORIGIN_MARK_SAME_FACTION_BLIND)
+    assert not origin_has_mark(silent_origin, ORIGIN_MARK_PRIVATE_GOODS)
 
     with pytest.raises(SettlementAbort) as replaced:
         session.resolve_turn(allow_empty_decree=True)
@@ -1615,6 +1624,10 @@ def test_step_4a_missing_covert_fidelity_records_inline_rejection(game, monkeypa
     assert result.stage == "gazette"
     assert call_count == 3
     assert len(db.list_dossier_progress(dossier_id)) == 1
+    declared_origin = db.list_dossier_progress(dossier_id)[-1]["origin"]
+    assert origin_has_mark(declared_origin, ORIGIN_MARK_SAME_FACTION_BLIND)
+    assert not origin_has_mark(declared_origin, ORIGIN_MARK_PRIVATE_GOODS)
+    assert "不是行动" not in str(declared_origin)
     assert db.conn.execute(
         "SELECT COUNT(*) FROM dossier_actual_progress WHERE dossier_id=? AND turn=?",
         (dossier_id, turn),

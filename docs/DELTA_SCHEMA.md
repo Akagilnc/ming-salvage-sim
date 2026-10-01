@@ -388,6 +388,7 @@ personnel_secret 模块产出；与公共 `dossier_participants` **分立**（�
 ### `dossier_progress_reports` — 长差密令逐月密奏（#566 / ADR 0058）
 personnel_secret 模块产出；settle 内经 `record_monthly_dossier_progress` 消费。
 - 每项必须带 `dossier_id`、`progress_band`、`memorial_text`；三者皆非空。
+- 可选 `origin`：承办人在该条密奏里自己声明的行动。`same_faction_blind` 为睁眼闭眼，`private_goods` 为带私货；两项都声明时用 `+` 连接。未作此选择则省略。同派或敌派不补写行动；未知记号不落成行动。落库后从该条密奏的 origin 续读。
 - 合资格集 = `decree_dossiers.status` 为 `promulgated` / `executing` 且所关联 `secret_orders.status='active'` 的案卷（读缝 `monthly_dossier_reports` / `list_monthly_dossier_progress_nudges`；#1504：不限 tag、不限期限月数）。
 - **必须完整覆盖**合资格集：不得漏项、不得重复、不得指向未知案卷；无合资格却收到提案亦拒。
 - 非法/不全 → fail-loud 整月中止，不走逐项拒收留痕（与 #1745 后的 `dossier_reconciliations` 分轨）。
