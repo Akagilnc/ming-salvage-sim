@@ -880,10 +880,9 @@ def _secret_order_kept_body(text: object) -> str:
 
 
 def _secret_order_body_log(row: sqlite3.Row) -> Dict[str, List[Dict[str, object]]]:
-    """读结构化正文记录。尚无记录而列上已有文字时，整段当作一条不拆的旧记录。"""
-    raw = row["text_log_json"] if "text_log_json" in row.keys() else "{}"
+    """读结构化正文记录。"""
     try:
-        parsed = json.loads(raw or "{}")
+        parsed = json.loads(row["text_log_json"] or "{}")
     except (TypeError, json.JSONDecodeError):
         parsed = {}
     if not isinstance(parsed, dict):
@@ -896,14 +895,6 @@ def _secret_order_body_log(row: sqlite3.Row) -> Dict[str, List[Dict[str, object]
             for item in entries:
                 if isinstance(item, dict) and "body" in item:
                     records.append(dict(item))
-        column_text = str(row[column] or "") if column in row.keys() else ""
-        if not records and column_text != "":
-            records.append({
-                "legacy": True,
-                "year": 0,
-                "period": 0,
-                "body": column_text,
-            })
         log[column] = records
     return log
 
@@ -912,8 +903,7 @@ def _secret_order_period_recorded(
     records: Sequence[Mapping[str, object]], year: int, period: int,
 ) -> bool:
     return any(
-        not record.get("legacy")
-        and int(record.get("year") or 0) == int(year)
+        int(record.get("year") or 0) == int(year)
         and int(record.get("period") or 0) == int(period)
         for record in records
     )
@@ -926,15 +916,11 @@ def _project_secret_order_bodies(records: Sequence[Mapping[str, object]]) -> str
         key=lambda pair: (
             int(pair[1].get("year") or 0),
             int(pair[1].get("period") or 0),
-            0 if pair[1].get("legacy") else 1,
             pair[0],
         ),
     )
     parts: List[str] = []
     for _, record in ordered:
-        if record.get("legacy"):
-            parts.append(str(record.get("body") or ""))
-            continue
         marker = str(record.get("marker") or "")
         body = record.get("body")
         text = "" if body is None else str(body)
@@ -2396,8 +2382,6 @@ class GameDB:
             "decree_dossier_link_rejections", "pending_action_id", "INTEGER"
         )
         self.ensure_column("secret_orders", "sim_note", "TEXT NOT NULL DEFAULT ''")
-        # 承办进展 / 推演副作用的正文按记录存放。result、sim_note 只是投影。
-        self.ensure_column("secret_orders", "text_log_json", "TEXT NOT NULL DEFAULT '{}'")
         # 密令期限：0=无硬期限；due_turn>0 且 ≤当前回合时，settle 尾部按实进度对账派生 done/failed（#1504）。
         self.ensure_column("secret_orders", "due_turn", "INTEGER NOT NULL DEFAULT 0")
         if self.ensure_column(
@@ -22020,7 +22004,7 @@ class GameDB:
         return True
 
     def _has_secret_order_period_line(self, order_id: int, column: str, year: int, period: int) -> bool:
-        """本年月该列是否已有进展记录（用于一回合一步闸门）。旧档整段不拆，故不计入。"""
+        """本年月该列是否已有进展记录（用于一回合一步闸门）。"""
         assert column in _SECRET_ORDER_BODY_COLUMNS
         row = self._load_secret_order_body_row(int(order_id), active_only=False)
         if row is None:
@@ -22046,8 +22030,7 @@ class GameDB:
             return False  # 本回合已推过一步，拒
         records = [
             record for record in records
-            if record.get("legacy")
-            or int(record.get("year") or 0) != int(year)
+            if int(record.get("year") or 0) != int(year)
             or int(record.get("period") or 0) != int(period)
         ]
         records.append({
