@@ -11,6 +11,7 @@ DB 只机械记事实（监督在场 / 空子暴露 / 任期读既有 appointmen
 """
 
 from __future__ import annotations
+from ming_sim.entities.character.store import CharacterStore
 
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
 
@@ -297,10 +298,7 @@ def pick_countermeasure_kind(auditor_name: str, dossier_id: int) -> str:
 def character_tenure(db: Any, name: str) -> str:
     if not name:
         return "真除"
-    row = db.conn.execute(
-        "SELECT appointment_tenure FROM character_offices WHERE character_name=?",
-        (name,),
-    ).fetchone()
+    row = CharacterStore(db.conn).read_resolve_executor_appointment_tenure((name,))
     if row is None:
         return "真除"
     return normalize_appointment_tenure(row["appointment_tenure"])
@@ -309,10 +307,7 @@ def character_tenure(db: Any, name: str) -> str:
 def character_faction_integrity(db: Any, name: str) -> Tuple[str, object]:
     if not name:
         return "", None
-    row = db.conn.execute(
-        "SELECT faction, integrity FROM characters WHERE name=?",
-        (name,),
-    ).fetchone()
+    row = CharacterStore(db.conn).read_character_faction_integrity((name,))
     if row is None:
         return "", None
     return str(row["faction"] or ""), row["integrity"]

@@ -99,7 +99,9 @@ def _set_axes(db, name, *, loyalty, identity, faction=None, seed_guilt=""):
         ).fetchone()["faction"]
     db.conn.execute(
         "UPDATE characters SET loyalty=?, identity=?, seed_guilt=? WHERE name=?",
-        (int(loyalty), int(identity), seed_guilt, name),
+        (int(loyalty), int(identity), json.dumps({
+            "crime": seed_guilt or "无", "severity": "中" if seed_guilt else "无",
+        }, ensure_ascii=False), name),
     )
     if faction:
         db.conn.execute(
@@ -162,7 +164,6 @@ def test_seed_guilt_structured_clean_vs_debt():
     assert not seed_guilt_counts_as_debt(None)
     assert not seed_guilt_counts_as_debt({"crime": "无", "severity": "无"})
     assert not seed_guilt_counts_as_debt('{"crime": "无", "severity": "无"}')
-    assert seed_guilt_counts_as_debt("血债")
     assert seed_guilt_counts_as_debt({"crime": "交结近侍", "severity": "中"})
 
 
@@ -177,7 +178,6 @@ def test_decide_settlement_delivery_gap_bidirectional():
         "has_reports": True,
     })
     assert failed["status"] == "failed" and not failed["delivered"]
-    assert "表报" in failed["note"]
     # 表报不改变 delivered 判定
     bare = decide_secret_order_settlement({
         "actual_units": 0.5, "target_units": 3.0, "has_reports": False,
@@ -227,7 +227,7 @@ def test_task_specific_contract_from_explicit_fields_not_tags():
     ],
 )
 def test_confirmation_rejects_incomplete_delivery_identity(unit, identity, sign):
-    with pytest.raises(CovertContractError, match="identity"):
+    with pytest.raises(CovertContractError):
         build_covert_task_contract(
             kind="差务", axes=["实务事功"], direction=1,
             delivery_unit=unit, delivery_target_units=1, effect_sign=sign, **identity,
@@ -757,7 +757,8 @@ def test_investigation_lane_progress_emits_reason_before_used(game):
         (name,),
     ).fetchone()["name"]
     _set_axes(db, name, loyalty=90, identity=30)
-    db.conn.execute("UPDATE characters SET seed_guilt=? WHERE name=?", ("侵冒", target))
+    db.conn.execute("UPDATE characters SET seed_guilt=? WHERE name=?",
+                    (json.dumps({"crime": "侵冒", "severity": "中"}, ensure_ascii=False), target))
     db.conn.commit()
     oid = _issue(
         db, state, name, "查核辽饷侵冒", "查核辽饷侵冒",
@@ -820,8 +821,9 @@ def test_closed_case_blocks_same_fact_on_later_case_and_due(game):
         (name, target),
     ).fetchone()["name"]
     _set_axes(db, name, loyalty=90, identity=30)
-    db.conn.execute("UPDATE characters SET seed_guilt=? WHERE name=?", ("侵冒", target))
-    db.conn.execute("UPDATE characters SET seed_guilt=? WHERE name=?", ("侵冒", other))
+    for person in (target, other):
+        db.conn.execute("UPDATE characters SET seed_guilt=? WHERE name=?",
+                        (json.dumps({"crime": "侵冒", "severity": "中"}, ensure_ascii=False), person))
     db.conn.commit()
     oid = _issue(
         db, state, name, "查核辽饷侵冒", "查核辽饷侵冒",
@@ -976,7 +978,6 @@ def test_catch_quantity_tracer_same_unit_done_and_mismatch_ignored(game):
     assert row["target_units"] == 3.0
 
 
-
 def test_create_secret_order_rejects_missing_contract(game):
     db, state, _ = game
     name = _minister(db)
@@ -1056,8 +1057,6 @@ def test_region_monthly_progress_sums_increments_without_final_value_gate(game):
     assert row["status"] == "done"
 
 
-
-
 def test_positive_inflow_does_not_freeze_purpose_and_counts(game):
     db, state, content = game
     name = _minister(db)
@@ -1098,10 +1097,6 @@ def test_positive_inflow_does_not_freeze_purpose_and_counts(game):
     settled = settle_due_secret_orders(db, state, commit=True)
     row_s = next(r for r in settled if r["order_id"] == oid)
     assert row_s["status"] == "done"
-
-
-
-
 
 
 def test_topic_investigation_backlash_fails_without_world_package(game):

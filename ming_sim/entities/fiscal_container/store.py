@@ -39,3 +39,14 @@ class FiscalContainerStore:
             """,
             (key, float(delta), note),
         )
+
+    def values_for(self, keys: tuple[str, ...]) -> Any:
+        return self._conn.execute(
+            f"SELECT key,value FROM fiscal_containers WHERE key IN ({','.join('?' for _ in keys)})", keys,
+        ).fetchall()
+
+    def read_get_central_army_pay_arrears_container(self, params: Any = ()) -> Any:
+        return self._conn.execute('SELECT value FROM fiscal_containers WHERE key = ?', params).fetchone()
+
+    def read_treasury_hub_result(self, params: Any = ()) -> Any:
+        return self._conn.execute("\n            SELECT key, value FROM fiscal_containers\n            WHERE key IN ('hub_京运实拨', 'hub_中央军饷实拨', 'hub_京运损耗')\n            ", params).fetchall()

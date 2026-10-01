@@ -4,6 +4,14 @@
 """
 
 from __future__ import annotations
+from ming_sim.entities.army.store import ArmyStore
+from ming_sim.entities.character.store import CharacterStore
+from ming_sim.entities.social_class.store import ClassStore
+from ming_sim.entities.faction.store import FactionStore
+from ming_sim.entities.issue.store import IssueStore
+from ming_sim.entities.power.store import PowerStore
+from ming_sim.entities.region.store import RegionStore
+from ming_sim.entities.reign_state.store import ReignStateStore
 
 import copy
 import json
@@ -126,9 +134,7 @@ def _apply_authority_change_item(
         kind, separator, target_id = scope.partition(":")
         if not separator or not kind or not target_id:
             raise ValueError("invalid_authority_scope")
-        if not db.conn.execute(
-            "SELECT 1 FROM characters WHERE name=?", (holder_id,)
-        ).fetchone():
+        if not CharacterStore(db.conn).read_assert_characters_exist((holder_id,)):
             raise ValueError("授权对象不在人物档")
         origin = db.find_authority_by_origin(
             dossier_id, holder_id=holder_id, privilege=privilege, scope=scope,
@@ -162,15 +168,10 @@ def _apply_authority_change_item(
         )
         if existing is not None:
             raise ValueError("duplicate_active_authority")
-        cursor = db.conn.execute(
-            "INSERT INTO authority_records "
-            "(holder_id,privilege,scope,effective_turn,expires_turn,dossier_id) "
-            "VALUES (?,?,?,?,?,?)",
-            (
+        cursor = CharacterStore(db.conn).write_apply_authority_change_item_authority_records((
                 holder_id, privilege, scope, effective_turn, expires_turn,
                 dossier_id,
-            ),
-        )
+            ))
         authority_id = int(cursor.lastrowid)
         return {
             "动作": "授予",
@@ -197,10 +198,7 @@ def _apply_authority_change_item(
             "dossier_id": dossier_id,
             "reason": "already_revoked",
         }
-    revoked = db.conn.execute(
-        "UPDATE authority_records SET revoked=1,revoked_turn=? "
-        "WHERE id=? AND revoked=0", (int(state.turn), authority_id),
-    )
+    revoked = CharacterStore(db.conn).write_apply_authority_change_item((int(state.turn), authority_id))
     if revoked.rowcount <= 0:
         raise ValueError("unknown_authority_id")
     privilege = str(record.get("privilege") or "")
@@ -565,10 +563,7 @@ def _commitment_remaining_from_gate(
 
 
 def _latest_commitment_paid_total(db: GameDB, issue_id: int) -> int:
-    rows = db.conn.execute(
-        "SELECT metric_delta FROM issue_advances WHERE issue_id=? ORDER BY id DESC",
-        (issue_id,),
-    ).fetchall()
+    rows = IssueStore(db.conn).read_latest_commitment_paid_total((issue_id,))
     for row in rows:
         payload = load_stored_object(row["metric_delta"], label="metric_delta")
         progress = payload.get("commitment_progress")
@@ -1184,12 +1179,12 @@ def _ack_due_commitment_issue(
     })
     if commit:
         db.conn.commit()
-    return db.conn.execute("SELECT * FROM issues WHERE id=?", (issue_id,)).fetchone()
+    return IssueStore(db.conn).read_ack_due_commitment_issue((issue_id,))
 
 
 def _event_issue_refs(db: GameDB) -> set:
     refs: set = set()
-    for r in db.conn.execute("SELECT origin_ref FROM issues WHERE origin_kind='event_pool'").fetchall():
+    for r in IssueStore(db.conn).read_event_issue_refs():
         if r["origin_ref"]:
             refs.add(r["origin_ref"])
     return refs
@@ -1201,7 +1196,7 @@ def _event_trigger_refs(db: GameDB) -> set:
 
 def _event_terminal_states(db: GameDB) -> Dict[str, str]:
     states: Dict[str, str] = {}
-    for r in db.conn.execute("SELECT event_id, terminal_state FROM event_triggers").fetchall():
+    for r in IssueStore(db.conn).read_event_terminal_states():
         terminal_state = str(r["terminal_state"] or "")
         if r["event_id"] and terminal_state:
             states[str(r["event_id"])] = terminal_state
@@ -1210,9 +1205,7 @@ def _event_terminal_states(db: GameDB) -> Dict[str, str]:
 
 def _event_terminal_records(db: GameDB) -> Dict[str, Dict[str, str]]:
     records: Dict[str, Dict[str, str]] = {}
-    for r in db.conn.execute(
-        "SELECT event_id, terminal_state, terminal_reason FROM event_triggers"
-    ).fetchall():
+    for r in IssueStore(db.conn).read_event_terminal_records():
         terminal_state = str(r["terminal_state"] or "")
         if r["event_id"] and terminal_state:
             records[str(r["event_id"])] = {
@@ -1224,14 +1217,7 @@ def _event_terminal_records(db: GameDB) -> Dict[str, Dict[str, str]]:
 
 def _event_pending_choice_records(db: GameDB) -> Dict[str, Dict[str, str]]:
     records: Dict[str, Dict[str, str]] = {}
-    for r in db.conn.execute(
-        """
-        SELECT event_id, terminal_state, terminal_reason, source
-        FROM event_triggers
-        WHERE COALESCE(terminal_state, '') = ''
-          AND COALESCE(terminal_reason, '') != ''
-        """
-    ).fetchall():
+    for r in IssueStore(db.conn).read_event_pending_choice_records():
         if r["event_id"]:
             records[str(r["event_id"])] = {
                 "terminal_state": "",
@@ -1322,10 +1308,7 @@ def _canonicalize_existing_fiscal_levy_terminal_reason(
         state,
     )
     if label != record.get("terminal_reason"):
-        db.conn.execute(
-            "UPDATE event_triggers SET terminal_reason=? WHERE event_id=?",
-            (label, ev.id),
-        )
+        IssueStore(db.conn).write_canonicalize_existing_fiscal_levy_terminal_reason((label, ev.id))
         record["terminal_reason"] = label
 
 
@@ -1492,7 +1475,7 @@ def _apply_fiscal_levy_targets(
     lian_levy_approved = _fiscal_levy_event_approved(terminal_records, _LIAN_LEVY_START_EVENT_ID)
     region_entries: List[Dict[str, object]] = []
     denominator_complete = True
-    for row in db.conn.execute("SELECT id, fiscal FROM regions ORDER BY id").fetchall():
+    for row in RegionStore(db.conn).read_apply_fiscal_levy_targets():
         region_id = str(row["id"])
         fiscal = _load_region_fiscal_for_fiscal_levy(region_id, row["fiscal"])
         if fiscal is None:
@@ -2008,10 +1991,7 @@ def _event_window_expired(ev: Event, state: GameState) -> bool:
 def _dead_person_core_subjects(ev: Event, db: GameDB) -> List[str]:
     dead: List[str] = []
     for name in getattr(ev, "person_core_subjects", []) or []:
-        row = db.conn.execute(
-            "SELECT status FROM characters WHERE name = ?",
-            (str(name),),
-        ).fetchone()
+        row = CharacterStore(db.conn).read_dead_person_core_subjects((str(name),))
         if row is not None and str(row["status"] or "") == "dead":
             dead.append(str(name))
     return dead
@@ -2147,27 +2127,24 @@ def _eval_gate_key(key: str, metrics: Dict[str, int], db: GameDB) -> Optional[fl
             values.append(1 if db.has_event_terminal_state(cid, "triggered") else 0)
             continue
         if table == "region":
-            row = db.conn.execute(f"SELECT {field} FROM regions WHERE id = ?", (cid,)).fetchone()
+            row = db.regions.field_row(field, cid)
         elif table == "army":
-            row = db.conn.execute(f"SELECT {field} FROM armies WHERE id = ?", (cid,)).fetchone()
+            row = db.armies.field_row(field, cid)
         elif table == "building":
-            row = db.conn.execute(f"SELECT {field} FROM buildings WHERE id = ?", (cid,)).fetchone()
+            row = db.buildings.field_row(field, cid)
         elif table == "power":
-            row = db.conn.execute(f"SELECT {field} FROM powers WHERE id = ?", (cid,)).fetchone()
+            row = db.powers.field_row(field, cid)
         elif table == "faction":
             # factions 表主键是 name（中文，如 阉党），field 取 leverage/satisfaction
-            row = db.conn.execute(f"SELECT {field} FROM factions WHERE name = ?", (cid,)).fetchone()
+            row = db.factions.field_row(field, cid)
         elif table == "character":
-            row = db.conn.execute(f"SELECT {field} FROM characters WHERE name = ?", (cid,)).fetchone()
+            row = db.characters.field_row(field, cid)
         elif table == "class":
             if "@" in cid:
                 cname, rid = cid.split("@", 1)
             else:
                 cname, rid = cid, ""
-            row = db.conn.execute(
-                f"SELECT {field} FROM classes WHERE name = ? AND region_id = ?",
-                (cname, rid),
-            ).fetchone()
+            row = db.classes.field_row(field, cname, rid)
         if row is None:
             return None
         try:
@@ -2200,16 +2177,16 @@ def _eval_gate_key_str(key: str, db: GameDB) -> Optional[str]:
         return None
     table, cid, field = parts
     field = _gate_sql_field(table, field, key, kind="text")
-    sql = {
-        "region": f"SELECT {field} FROM regions WHERE id = ?",
-        "army": f"SELECT {field} FROM armies WHERE id = ?",
-        "power": f"SELECT {field} FROM powers WHERE id = ?",
-        "character": f"SELECT {field} FROM characters WHERE name = ?",
-        "event": f"SELECT {field} FROM event_triggers WHERE event_id = ?",
-    }.get(table)
-    if sql is None:
-        return None
-    row = db.conn.execute(sql, (cid,)).fetchone()
+    if table == "event":
+        row = IssueStore(db.conn).read_eval_gate_key_str_owned((cid,), field).fetchone()
+    else:
+        store = {
+            "region": db.regions, "army": db.armies,
+            "power": db.powers, "character": db.characters,
+        }.get(table)
+        if store is None:
+            return None
+        row = store.field_row(field, cid)
     if row is None:
         return None
     return str(row[0])
@@ -2293,7 +2270,7 @@ def gather_impeachment_surge_candidates(state: GameState, db: GameDB) -> List[Di
         # #622/#1260 单源：仅有旨外 durable 的变形才构成 deformation_exposure。
         if not db.dossier_has_beyond_intent(did):
             continue
-        roster = json.loads(str(row["participant_roster"] or "[]"))
+        roster = load_stored_list(row["participant_roster"], label='participant_roster')
         if not isinstance(roster, list):
             raise ValueError("participant_roster 不是名单")
         if not roster:
@@ -2312,11 +2289,7 @@ def gather_impeachment_surge_candidates(state: GameState, db: GameDB) -> List[Di
         if not responsible_ids:
             continue
         # 存在门只看责任集；知情/协办离场不得 any() 否决整卷。
-        placeholders = ",".join("?" for _ in responsible_ids)
-        chars = db.conn.execute(
-            f"SELECT name,faction,status FROM characters WHERE name IN ({placeholders})",
-            responsible_ids,
-        ).fetchall()
+        chars = db.characters.named_status_rows(responsible_ids)
         char_by_name = {str(item["name"]): item for item in chars}
         if any(
             name not in char_by_name
@@ -2332,11 +2305,7 @@ def gather_impeachment_surge_candidates(state: GameState, db: GameDB) -> List[Di
         union_ids = list(dict.fromkeys([*participant_ids, *responsible_ids]))
         missing = [name for name in union_ids if name not in char_by_name]
         if missing:
-            missing_ph = ",".join("?" for _ in missing)
-            for item in db.conn.execute(
-                f"SELECT name,faction,status FROM characters WHERE name IN ({missing_ph})",
-                missing,
-            ).fetchall():
+            for item in db.characters.named_status_rows(missing):
                 char_by_name[str(item["name"])] = item
         eligible_target_ids = [
             name for name in union_ids
@@ -2360,10 +2329,7 @@ def gather_impeachment_surge_candidates(state: GameState, db: GameDB) -> List[Di
             personas = personas_by_faction.get(faction, [])
             if not situation or not personas:
                 continue
-            if db.conn.execute(
-                "SELECT 1 FROM issues WHERE origin_kind='impeachment_surge' "
-                "AND origin_ref=? AND faction_hint=? LIMIT 1", (origin_ref, faction),
-            ).fetchone():
+            if IssueStore(db.conn).read_gather_impeachment_surge_candidates((origin_ref, faction)):
                 continue
             candidate_id = f"impeachment_surge:{origin_ref}:{faction}"
             candidates.append({
@@ -2783,10 +2749,7 @@ def _register_runtime_rollback_snapshot(
 
 def _load_pending_gate_shadow_rows(db: GameDB) -> Dict[str, Dict[str, str]]:
     shadow_rows: Dict[str, Dict[str, str]] = {}
-    for row in db.conn.execute(
-        "SELECT name, status, status_reason, reason_code, location, transit_to, "
-        "power_id, office, office_type FROM characters"
-    ).fetchall():
+    for row in CharacterStore(db.conn).read_load_pending_gate_shadow_rows():
         shadow_rows[str(row["name"])] = {
             "status": str(row["status"] or "active"),
             "status_reason": str(row["status_reason"] or ""),
@@ -2802,7 +2765,7 @@ def _load_pending_gate_shadow_rows(db: GameDB) -> Dict[str, Dict[str, str]]:
 
 def _load_pending_gate_power_shadow_rows(db: GameDB) -> Dict[str, Dict[str, int]]:
     power_shadow_rows: Dict[str, Dict[str, int]] = {}
-    for row in db.conn.execute("SELECT id, leverage, military_strength, supply FROM powers").fetchall():
+    for row in PowerStore(db.conn).read_load_pending_gate_power_shadow_rows():
         power_shadow_rows[str(row["id"])] = {
             "leverage": int(row["leverage"] or 0),
             "military_strength": int(row["military_strength"] or 0),
@@ -2814,7 +2777,7 @@ def _load_pending_gate_power_shadow_rows(db: GameDB) -> Dict[str, Dict[str, int]
 def _load_pending_gate_valid_regions(db: GameDB) -> set[str]:
     return {
         str(row["id"])
-        for row in db.conn.execute("SELECT id FROM regions").fetchall()
+        for row in RegionStore(db.conn).read_load_pending_gate_valid_regions()
     }
 
 
@@ -3436,7 +3399,7 @@ def _apply_issue_entities(
             new_name = str(item.get("new_name") or "").strip()
             if not power_id or not new_name:
                 raise ValueError(f"{label} power_renames 非法（全局严格，不静默）：power_id/new_name 缺失")
-            if db.conn.execute("SELECT 1 FROM powers WHERE id=?", (power_id,)).fetchone() is None:
+            if PowerStore(db.conn).read_apply_issue_entities((power_id,)) is None:
                 raise ValueError(f"{label} power_renames 引用未入库势力 '{power_id}'")
             db.apply_power_rename(
                 state,
@@ -3841,7 +3804,7 @@ def _strategic_event_result_preflight_error(
                 return _noop_error("region", region_id, raw_field, value)
             return ""
         if field in FISCAL_SCORE_FIELDS:
-            fiscal = json.loads(str(row["fiscal"] or "{}"))
+            fiscal = load_stored_object(row["fiscal"], label='fiscal')
             old_value = int(fiscal.get(field, 50))
             delta = int(value)
             net_pct = int(((legacy_mods.get("regions") or {})
@@ -3939,7 +3902,7 @@ def _strategic_event_result_preflight_error(
     db.conn.execute("SAVEPOINT strategic_entity_result_preflight")
     try:
         for region_id, raw_changes in (ordered_region_items if ordered_region_items is not None else region_deltas.items()):
-            row = db.conn.execute("SELECT * FROM regions WHERE id = ?", (region_id,)).fetchone()
+            row = db.regions.row(region_id)
             if row is None:
                 return f"战略/外敌事件「{event_title or event_id}」战果引用未入库地区：{region_id}"
             if not isinstance(raw_changes, dict):
@@ -3960,10 +3923,7 @@ def _strategic_event_result_preflight_error(
                         value is None
                         or not controller
                         or controller.lower() == "null"
-                        or db.conn.execute(
-                            "SELECT 1 FROM powers WHERE id = ? LIMIT 1",
-                            (controller,),
-                        ).fetchone() is None
+                        or PowerStore(db.conn).read_strategic_event_result_preflight_error((controller,)) is None
                     ):
                         return (
                             f"战略/外敌事件「{event_title or event_id}」地区战果 controlled_by "
@@ -3978,14 +3938,14 @@ def _strategic_event_result_preflight_error(
             )
 
         for army_id, raw_changes in (ordered_army_items if ordered_army_items is not None else army_deltas.items()):
-            row = db.conn.execute("SELECT * FROM armies WHERE id = ?", (army_id,)).fetchone()
+            row = db.armies.row(army_id)
             if row is None:
                 return f"战略/外敌事件「{event_title or event_id}」战果引用未入库军队：{army_id}"
             if not isinstance(raw_changes, dict):
                 return f"战略/外敌事件「{event_title or event_id}」军队战果须为对象：{army_id}"
             if "cannon_transfer_to" in raw_changes:
                 target_id = raw_changes["cannon_transfer_to"]
-                target = (db.conn.execute("SELECT cannon_equipment, is_mutinied FROM armies WHERE id=?", (target_id,)).fetchone()
+                target = (ArmyStore(db.conn).read_apply_extracted_army_delta((target_id,))
                           if isinstance(target_id, str) and target_id else None)
                 cannon_keys = [key for key in raw_changes
                                if ARMY_FIELD_ALIASES.get(key, key) == "cannon_equipment"]
@@ -4094,10 +4054,7 @@ def _strategic_event_result_preflight_error(
             name = _person_change_name(item)
             if action in {"处置", "罢黜"}:
                 target_status = "dismissed" if action == "罢黜" else str(item.get("status") or "").strip()
-                row = db.conn.execute(
-                    "SELECT status FROM characters WHERE name = ?",
-                    (name,),
-                ).fetchone()
+                row = CharacterStore(db.conn).read_dead_person_core_subjects((name,))
                 if row is not None and str(row["status"] or "") == target_status:
                     return _noop_error(
                         "person",
@@ -4108,13 +4065,7 @@ def _strategic_event_result_preflight_error(
             if action in {"任命", "调任"}:
                 target_office = normalize_office(str(item.get("office") or item.get("new_office") or ""))
                 if target_office:
-                    row = db.conn.execute(
-                        "SELECT c.office, c.office_type, "
-                        "COALESCE(co.appointment_tenure, '真除') AS appointment_tenure "
-                        "FROM characters c LEFT JOIN character_offices co "
-                        "ON co.character_name = c.name WHERE c.name = ?",
-                        (name,),
-                    ).fetchone()
+                    row = CharacterStore(db.conn).read_strategic_event_result_preflight_error_c_office_c_office_type_COALESCE_co_appointment_tenure_真除_AS_appoi((name,))
                     if row is not None:
                         current_office = normalize_office(str(row["office"] or ""))
                         current_type = str(row["office_type"] or "")
@@ -4152,10 +4103,7 @@ def _strategic_event_result_preflight_error(
                             )
             if action != "行止":
                 continue
-            row = db.conn.execute(
-                "SELECT status, location, transit_to FROM characters WHERE name = ?",
-                (name,),
-            ).fetchone()
+            row = CharacterStore(db.conn).read_strategic_event_result_preflight_error((name,))
             if row is not None:
                 departure, departure_error = _admit_transit_departure(
                     item,
@@ -4599,7 +4547,7 @@ def apply_issue_tracker_output(
         # 不裸 continue 静默丢。**必须先验、再应用 metric**：原序先 _apply_metric_dict（就地 mutate
         # state.metrics）后判 None，会让拒收项的 metric_delta 副作用已落 state、与「未落地」矛盾且结算
         # commit 无 rollback（cmr advances r1 codex high + claude concur）。
-        _chk = db.conn.execute("SELECT status FROM issues WHERE id=?", (issue_id,)).fetchone()
+        _chk = IssueStore(db.conn).read_apply_issue_tracker_output((issue_id,))
         if _chk is None or _chk["status"] != "active":
             applied_advances.append({
                 "rejected": True, "category": "missing_ref",
@@ -5007,8 +4955,6 @@ def apply_issue_tracker_output(
                 )
                 stages_for_commitment = capture_commitment_stages(
                     stages_source_from_issue_item(ni),
-                    narrative_text=str(ni.get("stage_text") or ni.get("title") or ""),
-                    origin_turn=int(state.turn),
                 )
                 has_stages = bool(stages_for_commitment)
                 if not ongoing_has_work and end_turn_for_commitment <= 0 and not has_stages:
@@ -5180,8 +5126,6 @@ def apply_issue_tracker_output(
         stages_norm = (
             capture_commitment_stages(
                 stages_source_from_issue_item(ni),
-                narrative_text=str(ni.get("stage_text") or ni.get("title") or ""),
-                origin_turn=int(state.turn),
             )
             if is_commitment
             else []
@@ -5272,9 +5216,7 @@ def apply_issue_tracker_output(
             })
             continue
         narrative = str(cl.get("narrative") or "")[:400]
-        chk = db.conn.execute(
-            "SELECT * FROM issues WHERE id=?", (issue_id,)
-        ).fetchone()
+        chk = IssueStore(db.conn).read_ack_due_commitment_issue((issue_id,))
         if reason == "acknowledged":
             from ming_sim.staged_commitment import is_stage_derived_end_turn
             if chk is None:
@@ -5345,7 +5287,7 @@ def apply_issue_tracker_output(
             #   ① 未找到 / ② 已非 active → 陈旧/幻觉引用（missing_ref）；
             #   ③ 找到且仍 active 却被拒 → close_issue 唯一剩余 None 路径＝reason=failed 用于
             #      不可崩坏局势（无 effect_on_fail，保持 active）＝LLM 语义误判（invalid_enum），非「未找到」。
-            chk = db.conn.execute("SELECT status FROM issues WHERE id=?", (issue_id,)).fetchone()
+            chk = IssueStore(db.conn).read_apply_issue_tracker_output((issue_id,))
             if chk is None:
                 category, why = "missing_ref", f"close_issues 引用未找到的 issue {issue_id}"
             elif chk["status"] != "active":
@@ -5420,7 +5362,7 @@ def apply_issue_tracker_output(
             issue_id = int(cn.get("issue_id"))
         except (TypeError, ValueError):
             continue
-        row = db.conn.execute("SELECT * FROM issues WHERE id=?", (issue_id,)).fetchone()
+        row = IssueStore(db.conn).read_ack_due_commitment_issue((issue_id,))
         if row is None or row["status"] != "active":
             continue
         if row["cancellable"] != "decree":
@@ -5573,10 +5515,7 @@ def _displace_duplicate_offices(
     new_seat = str(region_id or "").strip()
     displaced: List[str] = []
     displaced_names: set[str] = set()  # #9 cmr R1：被顶替者去重，循环后逐派系重算 leverage。
-    rows = db.conn.execute(
-        "SELECT name, office FROM characters WHERE status='active' AND power_id='ming' AND name!=?",
-        (new_holder,),
-    ).fetchall()
+    rows = CharacterStore(db.conn).read_displace_duplicate_offices((new_holder,))
     for row in rows:
         holder_parts = [p.strip() for p in str(row["office"]).split(",") if p.strip()]
         # Seat-aware exclusive collision: resolved local seat only bumps the
@@ -5597,8 +5536,7 @@ def _displace_duplicate_offices(
         # 剔掉一个分项后,保留官职对应的 office_type 可能变了(如剔「兵部尚书」后只剩「左都御史」=都察院)。
         # 若独占实职被完全腾空,旧任仍 active,但其名分必须落入人才池的「听用候铨」,
         # 不能留下 active + 空 office 的半身份（ADR 0009 S5）。
-        old_type_row = db.conn.execute(
-            "SELECT office_type FROM characters WHERE name=?", (row["name"],)).fetchone()
+        old_type_row = CharacterStore(db.conn).read_displace_duplicate_offices_office_type((row["name"],))
         old_type = old_type_row["office_type"] if old_type_row else ""
         new_type = (
             "身名分"
@@ -5643,9 +5581,7 @@ def _displace_duplicate_offices(
     # 绝对幂等（非白名单 return、重复无害）。去重后逐派系各调一次。
     displaced_factions = set()
     for dn in displaced_names:
-        frow = db.conn.execute(
-            "SELECT faction FROM characters WHERE name=?", (dn,)
-        ).fetchone()
+        frow = CharacterStore(db.conn).read_displace_duplicate_offices_faction((dn,))
         # 空/None faction 提前滤掉（recompute_faction_leverage("") 虽被白名单校验 no-op，
         # 但提前过滤免去无意义调用，集合也不残留空串。线上 R5 gemini medium。
         if frow is not None and frow["faction"]:
@@ -5660,27 +5596,15 @@ def _displace_duplicate_offices(
 def _snapshot_person_write_state(db: GameDB, content: Optional[GameContent]):
     character_rows = [
         dict(row)
-        for row in db.conn.execute(
-            "SELECT name, status, office, office_type, status_reason, "
-            "status_changed_turn, reason_code, transit_to, transit_distance_remaining, "
-            "transit_speed_factor, transit_start_turn FROM characters"
-        ).fetchall()
+        for row in CharacterStore(db.conn).read_snapshot_person_write_state()
     ]
     office_rows = [
         dict(row)
-        for row in db.conn.execute(
-            # #1889：备档不再存 office_type（真源唯一是 characters.office_type），
-            # 人物写入快照按需的官职类别从 characters 侧带出。
-            "SELECT character_name, office_title, source, dossier_id, "
-            "appointment_tenure, region_id, updated_at FROM character_offices"
-        ).fetchall()
+        for row in CharacterStore(db.conn).read_snapshot_person_write_state_character_name_office_title_source_dossier_id_appointment_tenure_()
     ]
     office_change_rows = [
         dict(row)
-        for row in db.conn.execute(
-            "SELECT id, character_name, office_title, office_type, source, dossier_id, "
-            "appointment_tenure, created_at FROM office_change_records"
-        ).fetchall()
+        for row in CharacterStore(db.conn).read_snapshot_person_write_state_id_character_name_office_title_office_type_source_dossier_id_appo()
     ]
     # #9：起复路（apply_office_appointment）中途经 set_character_status/set_character_office 会
     # 全重算 factions.leverage；失败回滚必须连 leverage 一并还原，否则 leverage 凭空抬高（违「全有或全无」）。
@@ -5688,9 +5612,7 @@ def _snapshot_person_write_state(db: GameDB, content: Optional[GameContent]):
     # （adjust_factions 白名单路改 offset）后回滚，须连 leverage_offset 一并还原，否则基线漂移。
     faction_rows = [
         dict(row)
-        for row in db.conn.execute(
-            "SELECT name, leverage, leverage_offset FROM factions"
-        ).fetchall()
+        for row in FactionStore(db.conn).read_snapshot_person_write_state()
     ]
     content_rows = _snapshot_content_character_rows(content)
     return character_rows, office_rows, faction_rows, content_rows, office_change_rows
@@ -5735,7 +5657,7 @@ def _restore_person_write_state(
     character_rows, office_rows, faction_rows, content_rows, office_change_rows = snapshot
     db.characters.clear_office_archive()
     snapshot_names = {str(row["name"]) for row in character_rows}
-    for row in db.conn.execute("SELECT name FROM characters").fetchall():
+    for row in CharacterStore(db.conn).read_names():
         name = str(row["name"])
         if name not in snapshot_names:
             db.characters.delete(name)
@@ -6122,13 +6044,7 @@ def _apply_person_changes(
         return rejected(item, str(error["reason"]), str(error["category"])) if error else None
 
     def character_row(name: str):
-        return db.conn.execute(
-            "SELECT name, status, office, office_type, power_id, status_reason, "
-            "status_changed_turn, reason_code, transit_to, transit_distance_remaining, "
-            "transit_speed_factor, transit_start_turn "
-            "FROM characters WHERE name=?",
-            (name,),
-        ).fetchone()
+        return CharacterStore(db.conn).read_character_row((name,))
 
     def log_applied(
         result: Dict[str, object],
@@ -6142,7 +6058,7 @@ def _apply_person_changes(
         action = str(result.get("动作") or result.get("action") or "").strip()
         if not name or not action:
             return
-        if db.conn.execute("SELECT 1 FROM characters WHERE name=?", (name,)).fetchone() is None:
+        if CharacterStore(db.conn).read_assert_characters_exist((name,)) is None:
             return
         summary = (
             str(result.get("reason") or item.get("reason") or "")
@@ -6232,9 +6148,7 @@ def _apply_person_changes(
             if content is not None and name not in content.characters:
                 applied.append(rejected(item, "非既有人物", "hallucinated_id"))
                 continue
-            row = db.conn.execute(
-                "SELECT name, loyalty FROM characters WHERE name=?", (name,)
-            ).fetchone()
+            row = CharacterStore(db.conn).read_apply_person_changes((name,))
             if row is None:
                 applied.append(rejected(item, "非既有人物", "hallucinated_id"))
                 continue
@@ -6270,9 +6184,7 @@ def _apply_person_changes(
             if content is not None and name not in content.characters:
                 applied.append(rejected(item, "非既有人物", "hallucinated_id"))
                 continue
-            row = db.conn.execute(
-                "SELECT name, style FROM characters WHERE name=?", (name,)
-            ).fetchone()
+            row = CharacterStore(db.conn).read_apply_person_changes_name_style((name,))
             if row is None:
                 applied.append(rejected(item, "非既有人物", "hallucinated_id"))
                 continue
@@ -6324,7 +6236,7 @@ def _apply_person_changes(
             if content is not None and name not in content.characters:
                 applied.append(rejected(item, "非既有人物", "hallucinated_id", status=status))
                 continue
-            row = db.conn.execute("SELECT name FROM characters WHERE name=?", (name,)).fetchone()
+            row = CharacterStore(db.conn).read_apply_person_changes_name((name,))
             if row is None:
                 applied.append(rejected(item, "非既有人物", "hallucinated_id", status=status))
                 continue
@@ -6767,11 +6679,7 @@ def _apply_person_changes(
             if content is not None and name not in content.characters:
                 applied.append(rejected(item, "非既有人物", "hallucinated_id"))
                 continue
-            row = db.conn.execute(
-                "SELECT status, location, transit_to, transit_distance_remaining, "
-                "transit_speed_factor, transit_start_turn FROM characters WHERE name=?",
-                (name,),
-            ).fetchone()
+            row = CharacterStore(db.conn).read_apply_person_changes_status_location_transit_to_transit_distance_remaining_transit_spe((name,))
             if row is None:
                 applied.append(rejected(item, "非既有人物", "hallucinated_id"))
                 continue
@@ -6964,10 +6872,7 @@ def _surcharge_population_pool_members(db: GameDB, region_id: str) -> set[str]:
     """Return the materialized provincial rows that make up a surcharge pool."""
     return {
         str(row["name"])
-        for row in db.conn.execute(
-            "SELECT name FROM classes WHERE region_id=? AND name IN ('农民', '流民')",
-            (region_id,),
-        ).fetchall()
+        for row in ClassStore(db.conn).read_surcharge_population_pool_members((region_id,))
     }
 
 
@@ -7018,16 +6923,14 @@ def _apply_surcharge_decrees(
             )
             continue
         region_id = str(item.get("region_id") or "").strip()
-        row = db.conn.execute(
-            "SELECT controlled_by, fiscal FROM regions WHERE id=?", (region_id,)
-        ).fetchone() if region_id else None
+        row = RegionStore(db.conn).read_apply_surcharge_decrees((region_id,)) if region_id else None
         if row is None:
             _reject("missing_ref", f"surcharge_decrees 未知 region_id：{region_id!r}")
             continue
         if str(row["controlled_by"] or "") != "ming":
             _reject("missing_ref", f"surcharge_decrees 非明省不可加派：{region_id!r}")
             continue
-        fiscal = json.loads(str(row["fiscal"] or "{}"))
+        fiscal = load_stored_object(row["fiscal"], label='fiscal')
         settle = fiscal.get("settle") if isinstance(fiscal, dict) else None
         if not (isinstance(settle, dict) and isinstance(settle.get("st"), dict)
                 and isinstance(settle.get("p"), dict)):
@@ -7106,13 +7009,11 @@ def _apply_levy_driven_transfers(
     ≤0 的省零入池——停加派/蠲免后入池止（AC5；出口回流归 S5 #652）。
     """
     records: List[Dict[str, object]] = []
-    rows = db.conn.execute(
-        "SELECT id, fiscal, public_support FROM regions WHERE controlled_by='ming' ORDER BY id"
-    ).fetchall()
+    rows = RegionStore(db.conn).read_apply_levy_driven_transfers()
     for row in rows:
         region_id = str(row["id"])
         try:
-            fiscal = json.loads(str(row["fiscal"] or "{}"))
+            fiscal = load_stored_object(row["fiscal"], label='fiscal')
         except (TypeError, ValueError) as exc:
             raise ValueError(f"{region_id}.fiscal 持久 JSON 损坏，无法结算加派账") from exc
         if not isinstance(fiscal, dict):
@@ -7147,9 +7048,7 @@ def _apply_levy_driven_transfers(
         amount = int(round(raw_persons))
         if amount <= 0:
             continue
-        balance = int(db.conn.execute(
-            "SELECT population FROM classes WHERE name='农民' AND region_id=?", (region_id,)
-        ).fetchone()["population"])
+        balance = int(ClassStore(db.conn).read_apply_levy_driven_transfers((region_id,))["population"])
         amount = min(amount, balance)  # clamp：原语超余额即拒，先钳免噪音
         if amount <= 0:
             continue
@@ -7222,9 +7121,7 @@ def _apply_bandit_absorptions(
         if not region_id:
             _reject("missing_ref", "bandit_absorptions 缺 region_id")
             continue
-        region_row = db.conn.execute(
-            "SELECT controlled_by FROM regions WHERE id=?", (region_id,)
-        ).fetchone()
+        region_row = RegionStore(db.conn).read_apply_bandit_absorptions((region_id,))
         if region_row is None:
             _reject("missing_ref", f"bandit_absorptions 未知 region_id：{region_id!r}")
             continue
@@ -7237,9 +7134,7 @@ def _apply_bandit_absorptions(
                 f"bandit_absorptions power_id 须为流寇股（bandits/bandit_*）：{power_id!r}",
             )
             continue
-        power_row = db.conn.execute(
-            "SELECT id FROM powers WHERE id=?", (power_id,)
-        ).fetchone()
+        power_row = PowerStore(db.conn).read_apply_bandit_absorptions((power_id,))
         if power_row is None:
             _reject("hallucinated_id", f"bandit_absorptions 引用未入库势力 '{power_id}'")
             continue
@@ -7261,10 +7156,7 @@ def _apply_bandit_absorptions(
                 "item": item,
             })
             continue
-        pool_row = db.conn.execute(
-            "SELECT population FROM classes WHERE name='流民' AND region_id=?",
-            (region_id,),
-        ).fetchone()
+        pool_row = ClassStore(db.conn).read_apply_bandit_absorptions((region_id,))
         if pool_row is None:
             _reject(
                 "missing_ref",
@@ -7368,7 +7260,7 @@ def _apply_recovery_driven_transfers(
         region_id = str(row["target_id"] or payload.get("target_id") or "").strip()
         if target_kind != "region" or not region_id:
             continue
-        if db.conn.execute("SELECT 1 FROM regions WHERE id=?", (region_id,)).fetchone() is None:
+        if RegionStore(db.conn).read_assert_commission_grant_target_exists((region_id,)) is None:
             continue
         outcome = str(row["execution_outcome"] or "").strip()
         if outcome not in RECOVERY_OUTCOME_FACTORS:
@@ -7390,11 +7282,7 @@ def _apply_recovery_driven_transfers(
             if reconciled:
                 silver = max(0, sum(reconciled))
             else:
-                paid_row = db.conn.execute(
-                    "SELECT COALESCE(SUM(-delta), 0) FROM economy_ledger "
-                    "WHERE origin_ref=? AND turn=? AND delta<0",
-                    (f"dossier:{dossier_id}", turn),
-                ).fetchone()
+                paid_row = ReignStateStore(db.conn).read_apply_recovery_driven_transfers((f"dossier:{dossier_id}", turn))
                 silver = max(0, int(paid_row[0] or 0))
         else:
             silver = _recovery_effective_silver_wan(db, dossier_id, turn)
@@ -7404,14 +7292,8 @@ def _apply_recovery_driven_transfers(
         amount = int(round(raw_persons))
         if amount <= 0:
             continue
-        pool_row = db.conn.execute(
-            "SELECT population FROM classes WHERE name='流民' AND region_id=?",
-            (region_id,),
-        ).fetchone()
-        farmer_row = db.conn.execute(
-            "SELECT 1 FROM classes WHERE name='农民' AND region_id=?",
-            (region_id,),
-        ).fetchone()
+        pool_row = ClassStore(db.conn).read_apply_bandit_absorptions((region_id,))
+        farmer_row = ClassStore(db.conn).read_apply_recovery_driven_transfers((region_id,))
         if pool_row is None or farmer_row is None:
             continue
         remaining = remaining_by_region.setdefault(region_id, int(pool_row["population"]))
@@ -7442,7 +7324,7 @@ def _write_fiscal_config_change(
     """Canonical fiscal change writer shared by extraction and prohibition rollback."""
     db.validate_fiscal_config_value(key, new_value)
     db.set_fiscal_config(key, new_value, commit=False)
-    db.conn.execute("UPDATE fiscal_config SET origin_ref=? WHERE key=?", (origin_ref, key))
+    db.fiscal_config.set_origin(key, origin_ref)
     db.record_fiscal_config_change(
         turn=turn, key=key, old_value=old_value, new_value=new_value,
         origin_ref=origin_ref, reason=reason, beyond_intent=beyond_intent,
@@ -7478,31 +7360,16 @@ def neutralize_covert_fiscal_effects(
     for key in sorted(keys):
         stem = db._stem_of(key)
         base_key, rate_key = f"{stem}_base", f"{stem}_rate"
-        receipt = db.conn.execute(
-            """SELECT 1 FROM fiscal_config_changes
-               WHERE origin_ref=? AND key=? AND reason=? LIMIT 1""",
-            (receipt_origin, key, _COVERT_NEUTRALIZATION_REASON),
-        ).fetchone()
-        if receipt is None:
-            receipt = db.conn.execute(
-                """SELECT 1 FROM fiscal_config_tombstones
-                   WHERE origin_ref=? AND key IN (?, ?) AND reason=? LIMIT 1""",
-                (receipt_origin, base_key, rate_key, _COVERT_NEUTRALIZATION_REASON),
-            ).fetchone()
-        if receipt is not None:
+        if db.fiscal_config.neutralization_recorded(
+            receipt_origin, key, base_key, rate_key, _COVERT_NEUTRALIZATION_REASON,
+        ):
             continue
 
         current = db.get_fiscal_config().get(key)
         if current is None:
             continue
-        latest_remove = db.conn.execute(
-            "SELECT removed_turn turn,id FROM fiscal_config_tombstones WHERE key=? ORDER BY removed_turn DESC,id DESC LIMIT 1",
-            (key,),
-        ).fetchone()
-        latest_create = db.conn.execute(
-            "SELECT turn,id,origin_ref,beyond_intent FROM fiscal_config_creations WHERE key=? ORDER BY turn DESC,id DESC LIMIT 1",
-            (key,),
-        ).fetchone()
+        latest_remove = db.fiscal_config.latest_lifecycle("remove", key)
+        latest_create = db.fiscal_config.latest_lifecycle("create", key)
         remove_mark = (int(latest_remove["turn"]), 0, int(latest_remove["id"])) if latest_remove else (-1, -1, -1)
         create_mark = (int(latest_create["turn"]), 1, int(latest_create["id"])) if latest_create else (-1, -1, -1)
         start = max(remove_mark, create_mark)
@@ -7522,11 +7389,7 @@ def neutralize_covert_fiscal_effects(
             continue
 
         contribution = 0
-        for row in db.conn.execute(
-            """SELECT id,turn,delta,beyond_intent FROM fiscal_config_changes
-               WHERE key=? AND origin_ref=? ORDER BY turn,id""",
-            (key, old_origin),
-        ).fetchall():
+        for row in db.fiscal_config.changes_for(key, old_origin):
             mark = (int(row["turn"]), 2, int(row["id"]))
             if mark > start and bool(db.coerce_beyond_intent_flag(row["beyond_intent"])):
                 contribution += int(row["delta"])
@@ -7726,17 +7589,13 @@ def _apply_extracted_army_delta(
             requested = _strict_int(payload[cannon_keys[0]]) if len(cannon_keys) == 1 else 0
         except (TypeError, ValueError):
             requested = 0
-        source = db.conn.execute(
-            "SELECT cannon_equipment, is_mutinied FROM armies WHERE id=?", (army_id,)
-        ).fetchone()
+        source = ArmyStore(db.conn).read_apply_extracted_army_delta((army_id,))
         origin_error = db.effect_origin_rejection(origin_ref)
         if origin_error:
             army_changes.append({"army_id": army_id, **origin_error,
                                  "item": {"army_id": army_id, "changes": raw_changes}})
             return army_changes
-        target = (db.conn.execute(
-            "SELECT cannon_equipment, is_mutinied FROM armies WHERE id=?", (target_id,)
-        ).fetchone() if isinstance(target_id, str) and target_id else None)
+        target = (ArmyStore(db.conn).read_apply_extracted_army_delta((target_id,)) if isinstance(target_id, str) and target_id else None)
         if (len(cannon_keys) != 1 or requested >= 0 or source is None
                 or target is None or target_id == army_id):
             army_changes.append({
@@ -8136,10 +7995,7 @@ def _apply_score_extraction_body(
             if content is not None:
                 from ming_sim.session import _find_existing_minister
                 name = _find_existing_minister(content, name, db) or name
-            row = db.conn.execute(
-                "SELECT status, power_id, reason_code FROM characters WHERE name=?",
-                (name,),
-            ).fetchone()
+            row = CharacterStore(db.conn).read_amnesty_conflict_power_ids((name,))
             if row is None:
                 continue
             old_power = str(row["power_id"] or "").strip()
@@ -8597,7 +8453,7 @@ def _apply_score_extraction_body(
             and item.get("issue_id") is not None
         ):
             continue
-        row = db.conn.execute("SELECT ongoing_effects FROM issues WHERE id=?", (int(item["issue_id"]),)).fetchone()
+        row = IssueStore(db.conn).read_apply_score_extraction_body((int(item["issue_id"]),))
         if row is None:
             continue
         ongoing = loads_effect_dict(row["ongoing_effects"])
@@ -9104,10 +8960,7 @@ def _apply_score_extraction_body(
                 })
             continue
         for change in pair_changes:
-            db.conn.execute(
-                "UPDATE fiscal_config SET origin_ref=? WHERE key=?",
-                (change["origin_ref"], change["key"]),
-            )
+            db.fiscal_config.set_origin(change["key"], change["origin_ref"])
             db.record_fiscal_config_change(
                 turn=state.turn, key=str(change["key"]),
                 old_value=int(change["old"]), new_value=int(change["new"]),
@@ -9433,7 +9286,7 @@ def apply_issue_inertia_and_ongoing(
                         inertia_rejections.append(_tr)
                     _spawn_legacy_from_effect(db, state, effect, issue_id, str(new_row["title"]))
                     continue
-                row = db.conn.execute("SELECT * FROM issues WHERE id=?", (issue_id,)).fetchone()
+                row = IssueStore(db.conn).read_ack_due_commitment_issue((issue_id,))
                 if row is None:
                     continue
                 bar = int(row["bar_value"])
@@ -9601,7 +9454,7 @@ def apply_issue_inertia_and_ongoing(
             if commit_local:
                 db.conn.commit()
 
-        row = db.conn.execute("SELECT * FROM issues WHERE id=?", (issue_id,)).fetchone()
+        row = IssueStore(db.conn).read_ack_due_commitment_issue((issue_id,))
         if row is None or row["status"] != "active":
             continue
         stop_gate = _commitment_stop_gate(row) if is_commitment else {}
@@ -9618,17 +9471,14 @@ def apply_issue_inertia_and_ongoing(
 def clear_gated_legacies(db: GameDB, state: GameState) -> List[str]:
     """每月调一次：取所有 active 且带 clear_gate 的 legacy，gate 达标即置 'cleared'。
     返回被消除的 legacy 名称列表（供叙事/提示用，不强制使用）。"""
-    rows = db.conn.execute(
-        "SELECT id, name, clear_gate, narrative_hint FROM legacies "
-        "WHERE status='active' AND clear_gate != '' AND clear_gate != '{}'"
-    ).fetchall()
+    rows = ReignStateStore(db.conn).read_clear_gated_legacies()
     cleared: List[str] = []
     for row in rows:
         gate = load_stored_object(row["clear_gate"], label="clear_gate")
         if not gate:
             continue
         if _gate_passed(gate, state.metrics, db):
-            db.conn.execute("UPDATE legacies SET status='cleared' WHERE id=?", (int(row["id"]),))
+            ReignStateStore(db.conn).write_clear_gated_legacies((int(row["id"]),))
             cleared.append(str(row["name"]))
     if cleared:
         db.conn.commit()
@@ -9643,31 +9493,20 @@ def sync_opening_legacies(db: GameDB, state: GameState) -> None:
     一个函数覆盖新档（全补）/旧档（补缺）/达标档（不补/清残）。"""
     for leg in _ctx().opening_legacies:
         passed = _gate_passed(leg.clear_gate, state.metrics, db)
-        existing = db.conn.execute(
-            "SELECT id FROM legacies WHERE legacy_key=? AND status='active'",
-            (leg.key,),
-        ).fetchone()
+        existing = ReignStateStore(db.conn).read_sync_opening_legacies((leg.key,))
         if existing is not None:
-            db.conn.execute(
-                """UPDATE legacies
-                   SET name=?, modifiers=?, narrative_hint=?, clear_gate=?
-                   WHERE legacy_key=? AND status='active'""",
-                (
+            ReignStateStore(db.conn).write_sync_opening_legacies((
                     leg.name,
                     json.dumps(leg.modifiers, ensure_ascii=False),
                     leg.narrative_hint,
                     json.dumps(leg.clear_gate, ensure_ascii=False),
                     leg.key,
-                ),
-            )
+                ))
             db.conn.commit()
             db._legacy_mod_cache = None
         if passed:
             if existing is not None:
-                db.conn.execute(
-                    "UPDATE legacies SET status='cleared' WHERE legacy_key=? AND status='active'",
-                    (leg.key,),
-                )
+                ReignStateStore(db.conn).write_sync_opening_legacies_legacies((leg.key,))
                 db.conn.commit()
                 db._legacy_mod_cache = None
             continue

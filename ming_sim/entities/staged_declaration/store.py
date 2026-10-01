@@ -14,7 +14,10 @@ from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any, Mapping
 
-from ming_sim.applier import atomic, connection_owns_transaction, sanitize_sqlite_text
+from ming_sim.applier import (
+    atomic, connection_owns_transaction, sanitize_sqlite_text,
+    load_stored_object, load_stored_list,
+)
 
 _STATUS_STAGED = "staged"
 _STATUS_DISCARDED = "discarded"
@@ -194,12 +197,7 @@ class StagedDeclarationStore:
         ).fetchall()
         questions: list = []
         for row in rows:
-            raw = row["questions_json"]
-            if not raw:
-                continue
-            parsed = json.loads(raw)
-            if isinstance(parsed, list):
-                questions.extend(parsed)
+            questions.extend(_load_questions(row["questions_json"]))
         return questions
 
     def forecast_text_for(self, decree_ref: str) -> str:
@@ -247,11 +245,23 @@ class StagedDeclarationStore:
             self._conn.commit()
         return int(cur.rowcount or 0)
 
+    def read_month_fact_materials(self, params: Any = ()) -> Any:
+        return self._conn.execute("SELECT decree_ref, declaration_json, forecast_text, visible_refs_json FROM staged_declarations WHERE created_turn=? AND status='settled' ORDER BY id", params).fetchall()
+
+
+def _load_questions(raw: object) -> list[dict]:
+    questions = load_stored_list(raw, label="questions_json")
+    if any(not isinstance(question, dict) for question in questions):
+        raise ValueError("questions_json 成员须为对象")
+    return questions
+
 
 def _load_optional_json(row: Any, column: str) -> object:
     if column not in row.keys() or row[column] is None:
         return None
-    return json.loads(row[column])
+    if column == "questions_json":
+        return _load_questions(row[column])
+    return load_stored_object(row[column], label=column)
 
 
 def _row_to_staged(row: Any) -> StagedDeclaration:
@@ -260,10 +270,10 @@ def _row_to_staged(row: Any) -> StagedDeclaration:
     forecast_text = row["forecast_text"] if "forecast_text" in row.keys() else None
     return StagedDeclaration(
         id=int(row["id"]), decree_ref=str(row["decree_ref"]),
-        declaration=json.loads(row["declaration_json"] or "{}"),
+        declaration=load_stored_object(row["declaration_json"], label="declaration_json"),
         status=str(row["status"]), created_turn=int(row["created_turn"]),
-        visible_refs=json.loads(row["visible_refs_json"] or "{}"),
-        verdict=verdict if isinstance(verdict, dict) else None,
-        questions=questions if isinstance(questions, list) else None,
+        visible_refs=load_stored_object(row["visible_refs_json"], label="visible_refs_json"),
+        verdict=verdict,
+        questions=questions,
         forecast_text=None if forecast_text is None else str(forecast_text),
     )

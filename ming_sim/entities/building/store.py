@@ -30,6 +30,10 @@ def _checked(values: Mapping[str, object], *, allowed: frozenset[str]) -> list[s
 class BuildingStore:
     """Single write port for a building and its change log."""
 
+    def field_row(self, field: str, building_id: str) -> Any:
+        """Read a schema field already validated by the gate/subject consumer."""
+        return self._conn.execute(f"SELECT {field} FROM buildings WHERE id=?", (building_id,)).fetchone()
+
     def __init__(self, conn: Any) -> None:
         self._conn = conn
 
@@ -90,3 +94,21 @@ class BuildingStore:
             self._conn, "buildings", row,
             pk="id", allowed=BUILDING_COLUMNS | {"updated_at"}, what="buildings",
         )
+
+    def read_building_detail(self, params: Any = ()) -> Any:
+        return self._conn.execute('SELECT * FROM buildings WHERE id = ? OR name = ?', params).fetchone()
+
+    def read_buildings_report(self, params: Any = ()) -> Any:
+        return self._conn.execute('SELECT * FROM buildings WHERE region_id = ? ORDER BY category, name', params).fetchall()
+
+    def read_buildings_report_(self, params: Any = ()) -> Any:
+        return self._conn.execute('SELECT * FROM buildings ORDER BY region_id, category, name', params).fetchall()
+
+    def read_building_detail_(self, params: Any = ()) -> Any:
+        return self._conn.execute('SELECT * FROM buildings WHERE name LIKE ?', params).fetchone()
+
+    def read_compute_budget_lines(self, params: Any = ()) -> Any:
+        return self._conn.execute('SELECT category, condition, maintenance, output_metric, output_amount FROM buildings', params).fetchall()
+
+    def read_apply_fixed_period_flows(self, params: Any = ()) -> Any:
+        return self._conn.execute('SELECT id, name, category, condition, maintenance, output_metric, output_amount FROM buildings', params).fetchall()

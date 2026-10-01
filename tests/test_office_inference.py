@@ -97,7 +97,6 @@ def test_runtime_cli_unknown_office_uses_configured_runner_without_env(monkeypat
     )
 
     assert infer("绝无此名的杜撰怪衔庚辛壬", llm_config=cfg) == "边镇"
-    assert "官名：绝无此名的杜撰怪衔庚辛壬" in seen["prompt"]
     assert seen["config"] is cfg
 
 

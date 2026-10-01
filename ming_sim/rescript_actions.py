@@ -12,6 +12,10 @@
 """
 
 from __future__ import annotations
+from ming_sim.entities.army.store import ArmyStore
+from ming_sim.entities.character.store import CharacterStore
+from ming_sim.entities.issue.store import IssueStore
+from ming_sim.applier import load_stored_object
 
 import concurrent.futures
 import json
@@ -764,9 +768,7 @@ def map_rescript_option_or_choice(
         if target_kind != "army":
             raise ValueError("military_order.target_kind 必须为 army")
         if db is not None:
-            row = db.conn.execute(
-                "SELECT id FROM armies WHERE id=?", (target_id,),
-            ).fetchone()
+            row = ArmyStore(db.conn).read_map_rescript_option_or_choice((target_id,))
             if row is None:
                 raise ValueError(f"military_order 假军：{target_id!r}")
         if not assignee_name:
@@ -881,9 +883,7 @@ def map_rescript_option_or_choice(
             raise ValueError("任命缺 office")
         # 罢免：目标须 active 明臣
         if appoint_action == "罢免" and db is not None:
-            row = db.conn.execute(
-                "SELECT status, power_id FROM characters WHERE name=?", (name,),
-            ).fetchone()
+            row = CharacterStore(db.conn).read_find_pacification_target((name,))
             if row is None or str(row["status"]) != "active" or str(row["power_id"] or "") != "ming":
                 raise ValueError("罢免目标须为 active 明臣")
         payload["appoint_action"] = appoint_action
@@ -1198,9 +1198,7 @@ def _apply_deliberate(
         )
     if deliberation_state == "stalled":
         origin = f"dossier:{dossier_id}"
-        already = db.conn.execute(
-            "SELECT id FROM issues WHERE origin_ref=? LIMIT 1", (origin,),
-        ).fetchone()
+        already = IssueStore(db.conn).read_apply_deliberate((origin,))
         if already is None:
             db.insert_issue(
                 state,
@@ -1239,16 +1237,13 @@ def apply_imperial_deliberation_push(
         raise ValueError(f"御笔强推只接 proposed 案卷：{did}")
     payload = row.get("payload")
     if not isinstance(payload, dict):
-        payload = json.loads(str(row.get("payload_json") or "{}"))
+        payload = load_stored_object(row.get("payload_json"), label="stored JSON")
     if not isinstance(payload, dict):
         raise ValueError("廷议案卷 payload 非对象")
     if str(payload.get("deliberation_state") or "") != "stalled":
         raise ValueError(f"御笔强推只接 stalled 廷议：{did}")
     origin = f"dossier:{did}"
-    issue = db.conn.execute(
-        "SELECT id, status FROM issues WHERE origin_ref=? AND status='active' LIMIT 1",
-        (origin,),
-    ).fetchone()
+    issue = IssueStore(db.conn).read_apply_imperial_deliberation_push((origin,))
     if issue is None:
         raise ValueError(f"御笔强推要求 active issue origin_ref={origin}")
     new_payload = dict(payload)
@@ -1521,10 +1516,10 @@ def clear_return_revise_choice_anchors(
         "AND choice_json IS NOT NULL AND TRIM(choice_json) NOT IN ('', '{}')"
     ).fetchall()
     for r in rows:
-        raw = r["choice_json"] or "{}"
+        raw = r["choice_json"]
         try:
-            choice = json.loads(raw)
-        except json.JSONDecodeError as exc:
+            choice = load_stored_object(raw, label="choice_json")
+        except ValueError as exc:
             raise ValueError(
                 f"return_revise 清锚 choice_json 损坏："
                 f"turn={r['turn']} idx={r['idx']}"

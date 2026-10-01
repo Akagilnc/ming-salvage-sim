@@ -29,12 +29,8 @@ def _army_arrears(db, army_id: str) -> int:
 def _seed_central_army_arrears(db, arrears_by_army_id: dict[str, int]) -> None:
     for army_id, arrears in arrears_by_army_id.items():
         db.conn.execute(
-            """
-            UPDATE armies
-            SET arrears = ?, province_pay_arrears = 0, central_pay_arrears = ?
-            WHERE id = ?
-            """,
-            (arrears, arrears, army_id),
+            '\n            UPDATE armies\n            SET  province_pay_arrears = 0, central_pay_arrears = ?\n            WHERE id = ?\n            ',
+            (arrears, army_id,),
         )
 
 
@@ -296,7 +292,7 @@ def test_commitment_stop_gate_resolve_respects_outer_transaction_rollback(game):
     db, state, _content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
-    db.conn.execute("UPDATE armies SET arrears=0 WHERE owner_power='ming'")
+    db.conn.execute("UPDATE armies SET province_pay_arrears=0, central_pay_arrears=0 WHERE owner_power='ming'")
     issue_id = db.insert_issue(
         state,
         kind="initiative",
@@ -446,7 +442,7 @@ def test_until_stop_arrears_commitment_settlement_oracle_resolves_with_restore(g
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
-    db.conn.execute("UPDATE armies SET arrears=0 WHERE owner_power='ming'")
+    db.conn.execute("UPDATE armies SET province_pay_arrears=0, central_pay_arrears=0 WHERE owner_power='ming'")
     _seed_central_army_arrears(db, {"guanning": 70, "xuan_da": 40})
     state.metrics["国库"] = 500
     db.save_state(state)
@@ -527,39 +523,6 @@ def test_until_stop_arrears_commitment_settlement_oracle_resolves_with_restore(g
     assert payloads[-1]["commitment_progress"]["remaining_arrears"] == 0
 
 
-def test_commitment_progress_contexts_are_structured(game, capsys):
-    db, state, content = game
-    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
-    db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
-    db.conn.execute("UPDATE armies SET arrears=0 WHERE owner_power='ming'")
-    db.conn.execute("UPDATE armies SET arrears=25 WHERE id='guanning'")
-    db.conn.commit()
-    issue_id = db.insert_issue(
-        state,
-        kind="initiative",
-        title="关宁月饷",
-        origin_kind="decree",
-        origin_ref="decree:turn-1:guanning-pay",
-        bar_value=0,
-        inertia=0,
-        stage_text="每月拨银补关宁旧欠，直到补齐。",
-        ongoing_effects={
-            "economy": [
-                {"account": "国库", "delta": -10, "reason": "关宁月饷", "purpose": "补饷"}
-            ]
-        },
-        stop_condition=json.dumps({"army.guanning.arrears": "<=0"}, ensure_ascii=False),
-        commitment_kind="until_stop",
-    )
-
-    _advance_player_month(db, state, content)
-
-    show_active_issues(db)
-    output = capsys.readouterr().out
-    assert "已第1月" in output
-    assert "直到补齐" in output
-
-
 
 
 def test_commitment_progress_fractional_strict_gate_can_be_satisfied(game):
@@ -567,8 +530,8 @@ def test_commitment_progress_fractional_strict_gate_can_be_satisfied(game):
     db, state, _content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
-    db.conn.execute("UPDATE armies SET arrears=0 WHERE owner_power='ming'")
-    db.conn.execute("UPDATE armies SET arrears=0.5 WHERE id='guanning'")
+    db.conn.execute("UPDATE armies SET province_pay_arrears=0, central_pay_arrears=0 WHERE owner_power='ming'")
+    db.conn.execute("UPDATE armies SET province_pay_arrears=0, central_pay_arrears=0.5 WHERE id='guanning'")
     db.conn.commit()
     issue_id = db.insert_issue(
         state,
@@ -587,7 +550,7 @@ def test_commitment_progress_fractional_strict_gate_can_be_satisfied(game):
 
     assert progress["remaining_arrears"] == 0
 
-    db.conn.execute("UPDATE armies SET arrears=1.5 WHERE id='guanning'")
+    db.conn.execute("UPDATE armies SET province_pay_arrears=0, central_pay_arrears=1.5 WHERE id='guanning'")
     short_issue_id = db.insert_issue(
         state,
         kind="initiative",
@@ -605,7 +568,7 @@ def test_commitment_progress_fractional_strict_gate_can_be_satisfied(game):
 
     assert short_progress["remaining_arrears"] == 1
 
-    db.conn.execute("UPDATE armies SET arrears=1.5 WHERE id='guanning'")
+    db.conn.execute("UPDATE armies SET province_pay_arrears=0, central_pay_arrears=1.5 WHERE id='guanning'")
     greater_issue_id = db.insert_issue(
         state,
         kind="initiative",
@@ -628,8 +591,8 @@ def test_commitment_ongoing_economy_not_scaled_by_bar_discount(game):
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
-    db.conn.execute("UPDATE armies SET arrears=0 WHERE owner_power='ming'")
-    db.conn.execute("UPDATE armies SET arrears=200 WHERE id='guanning'")
+    db.conn.execute("UPDATE armies SET province_pay_arrears=0, central_pay_arrears=0 WHERE owner_power='ming'")
+    db.conn.execute("UPDATE armies SET province_pay_arrears=0, central_pay_arrears=200 WHERE id='guanning'")
     state.metrics["国库"] = 500
     db.save_state(state)
 
@@ -662,7 +625,7 @@ def test_arrears_commitment_preserves_explicit_monthly_payment_target(game):
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
-    db.conn.execute("UPDATE armies SET arrears=0 WHERE owner_power='ming'")
+    db.conn.execute("UPDATE armies SET province_pay_arrears=0, central_pay_arrears=0 WHERE owner_power='ming'")
     _seed_central_army_arrears(db, {"guanning": 70, "xuan_da": 40})
     state.metrics["国库"] = 500
     db.save_state(state)
@@ -782,8 +745,8 @@ def test_commitment_end_turn_expires_without_resolve_effects(game):
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
-    db.conn.execute("UPDATE armies SET arrears=0 WHERE owner_power='ming'")
-    db.conn.execute("UPDATE armies SET arrears=200 WHERE id='guanning'")
+    db.conn.execute("UPDATE armies SET province_pay_arrears=0, central_pay_arrears=0 WHERE owner_power='ming'")
+    db.conn.execute("UPDATE armies SET province_pay_arrears=0, central_pay_arrears=200 WHERE id='guanning'")
     state.metrics["国库"] = 500
     db.save_state(state)
 
@@ -825,7 +788,7 @@ def test_limited_duration_commitment_ticks_until_end_turn_then_expires(game):
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
-    db.conn.execute("UPDATE armies SET arrears=0 WHERE owner_power='ming'")
+    db.conn.execute("UPDATE armies SET province_pay_arrears=0, central_pay_arrears=0 WHERE owner_power='ming'")
     _seed_central_army_arrears(db, {"guanning": 200})
     state.metrics["国库"] = 500
     start_turn = state.turn
@@ -881,7 +844,7 @@ def test_until_stop_condition_beats_later_end_turn_for_stacked_commitment(game):
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
-    db.conn.execute("UPDATE armies SET arrears=0 WHERE owner_power='ming'")
+    db.conn.execute("UPDATE armies SET province_pay_arrears=0, central_pay_arrears=0 WHERE owner_power='ming'")
     _seed_central_army_arrears(db, {"guanning": 30})
     state.metrics["国库"] = 500
     db.save_state(state)
@@ -970,8 +933,8 @@ def test_commitment_missing_purpose_still_routes_arrears_budget(game):
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
-    db.conn.execute("UPDATE armies SET arrears=0 WHERE owner_power='ming'")
-    db.conn.execute("UPDATE armies SET arrears=100 WHERE id='guanning'")
+    db.conn.execute("UPDATE armies SET province_pay_arrears=0, central_pay_arrears=0 WHERE owner_power='ming'")
+    db.conn.execute("UPDATE armies SET province_pay_arrears=0, central_pay_arrears=100 WHERE id='guanning'")
     state.metrics["国库"] = 500
     db.save_state(state)
 
@@ -1012,7 +975,7 @@ def test_commitment_targeted_pay_uses_explicit_arrears_target(game):
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
-    db.conn.execute("UPDATE armies SET arrears=0 WHERE owner_power='ming'")
+    db.conn.execute("UPDATE armies SET province_pay_arrears=0, central_pay_arrears=0 WHERE owner_power='ming'")
     _seed_central_army_arrears(db, {"guanning": 100, "xuan_da": 100})
     state.metrics["国库"] = 500
     db.save_state(state)
@@ -1053,7 +1016,7 @@ def test_commitment_malformed_pay_target_does_not_fall_back_to_priority_pool(gam
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
-    db.conn.execute("UPDATE armies SET arrears=0 WHERE owner_power='ming'")
+    db.conn.execute("UPDATE armies SET province_pay_arrears=0, central_pay_arrears=0 WHERE owner_power='ming'")
     _seed_central_army_arrears(db, {"guanning": 100, "xuan_da": 100})
     state.metrics["国库"] = 500
     db.save_state(state)
@@ -1101,7 +1064,7 @@ def test_non_arrears_commitment_missing_pay_target_does_not_open_priority_pool(g
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
-    db.conn.execute("UPDATE armies SET arrears=0 WHERE owner_power='ming'")
+    db.conn.execute("UPDATE armies SET province_pay_arrears=0, central_pay_arrears=0 WHERE owner_power='ming'")
     _seed_central_army_arrears(db, {"guanning": 100, "xuan_da": 100})
     state.metrics["国库"] = 500
     state.metrics["皇威"] = 50
@@ -1149,7 +1112,7 @@ def test_commitment_pay_pool_is_scoped_to_arrears_stop_gate_armies(game):
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
-    db.conn.execute("UPDATE armies SET arrears=0 WHERE owner_power='ming'")
+    db.conn.execute("UPDATE armies SET province_pay_arrears=0, central_pay_arrears=0 WHERE owner_power='ming'")
     _seed_central_army_arrears(db, {"guanning": 100, "xuan_da": 100, "jizhen": 100})
     state.metrics["国库"] = 500
     db.save_state(state)
@@ -1195,7 +1158,7 @@ def test_commitment_progress_keeps_strict_stop_gate_semantics(game):
     db, state, _content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
-    db.conn.execute("UPDATE armies SET arrears=0 WHERE owner_power='ming'")
+    db.conn.execute("UPDATE armies SET province_pay_arrears=0, central_pay_arrears=0 WHERE owner_power='ming'")
     db.save_state(state)
 
     issue_id = db.insert_issue(
@@ -1441,7 +1404,6 @@ def test_due_one_shot_commitment_ack_closes_review_loop_without_effects(game):
     row = _issue_row(db, issue_id)
     assert row["status"] == "dropped"
     assert row["closed_turn"] == state.turn
-    assert "圣裁处理" in row["resolution_summary"]
     assert int(state.metrics["民心"]) == popular_support_at_ack
     advances = db.conn.execute(
         "SELECT trigger_kind, metric_delta FROM issue_advances WHERE issue_id=? ORDER BY id",

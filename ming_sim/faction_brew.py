@@ -15,6 +15,9 @@ factions 表外→该事件不入任何派系视图，不猜不建新映射表�
 """
 
 from __future__ import annotations
+from ming_sim.entities.character.store import CharacterStore
+from ming_sim.entities.faction.store import FactionStore
+from ming_sim.entities.person_log.store import PersonLogStore
 
 import json
 from typing import Any, Dict, List
@@ -36,10 +39,10 @@ def project_character_factions(db: Any) -> Dict[str, str]:
     （中宫/后金/嫔妃等真实种子）与皇帝节点不入。每次现算——党籍/派系集合
     随引擎演化，投影永远对表当前态。"""
     in_table = {
-        row["name"] for row in db.conn.execute("SELECT name FROM factions").fetchall()
+        row["name"] for row in FactionStore(db.conn).read_names()
     }
     projection: Dict[str, str] = {}
-    for row in db.conn.execute("SELECT name, faction FROM characters").fetchall():
+    for row in CharacterStore(db.conn).read_project_character_factions():
         faction = row["faction"]
         if faction in in_table:
             projection[row["name"]] = faction
@@ -61,11 +64,7 @@ def select_faction_brew_targets(db: Any, *, year: int, period: int) -> List[Dict
         row["faction"]: row for row in db.get_faction_brew_pending()
     }
     latest_event_id: Dict[str, int] = {}
-    for row in db.conn.execute(
-        "SELECT source, target, MAX(id) AS max_id FROM relation_edge_events "
-        "WHERE year = ? AND period = ? GROUP BY source, target",
-        (int(year), int(period)),
-    ).fetchall():
+    for row in PersonLogStore(db.conn).read_select_faction_brew_targets((int(year), int(period))):
         max_id = int(row["max_id"])
         for endpoint in (row["source"], row["target"]):
             faction = projection.get(endpoint)

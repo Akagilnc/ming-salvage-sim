@@ -1,6 +1,7 @@
 """#654 差务属地 oracle：闭合结构化组合，不解析散文。"""
 
 from __future__ import annotations
+from ming_sim.entities.region.store import RegionStore
 
 from typing import Any, Dict, List, Mapping, Optional
 
@@ -71,14 +72,10 @@ def _resolve_single_region_id(
     tid = str(target_id or "").strip()
     if not tid:
         raise ValueError("单省目标 target_id 为空")
-    by_id = conn.execute(
-        "SELECT id, kind, controlled_by FROM regions WHERE id=?", (tid,),
-    ).fetchone()
+    by_id = RegionStore(conn).read_resolve_single_region_id((tid,))
     if by_id is not None:
         return _region_row_to_locality(by_id)
-    by_name = conn.execute(
-        "SELECT id, kind, controlled_by FROM regions WHERE name=?", (tid,),
-    ).fetchall()
+    by_name = RegionStore(conn).read_resolve_single_region_id_id_kind_controlled_by((tid,))
     if len(by_name) == 1:
         return _region_row_to_locality(by_name[0])
     if len(by_name) > 1:
@@ -89,9 +86,7 @@ def _resolve_single_region_id(
     matched = match_region_id_from_text(tid, regions_content)
     if matched is None:
         raise ValueError(f"单省目标零命中或歧义：{tid!r}")
-    row = conn.execute(
-        "SELECT id, kind, controlled_by FROM regions WHERE id=?", (matched,),
-    ).fetchone()
+    row = RegionStore(conn).read_resolve_single_region_id((matched,))
     if row is None:
         raise ValueError(f"单省目标零命中：{tid!r}")
     return _region_row_to_locality(row)

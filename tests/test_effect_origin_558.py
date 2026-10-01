@@ -275,7 +275,7 @@ def test_zero_manpower_origin_gate_matches_actual_arrears_writeoff(game):
     row = db.conn.execute("SELECT id FROM armies WHERE owner_power='ming' LIMIT 1").fetchone()
     army_id = row["id"]
     db.conn.execute(
-        "UPDATE armies SET manpower=0, arrears=5, province_pay_arrears=3, central_pay_arrears=2 WHERE id=?",
+        'UPDATE armies SET manpower=0, province_pay_arrears=3, central_pay_arrears=2 WHERE id=?',
         (army_id,),
     )
     db.conn.execute("UPDATE armies SET owner_power='houjin' WHERE id=?", (army_id,))

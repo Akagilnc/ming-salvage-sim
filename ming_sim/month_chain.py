@@ -11,6 +11,8 @@
 """
 
 from __future__ import annotations
+from ming_sim.entities.reign_state.store import ReignStateStore
+from ming_sim.entities.staged_declaration.store import StagedDeclarationStore
 
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
@@ -157,11 +159,7 @@ def _month_fact_materials(
     nominal: List[Dict[str, Any]] = []
     forecasts: List[str] = []
     if hasattr(db, "conn"):
-        rows = db.conn.execute(
-            "SELECT decree_ref, declaration_json, forecast_text, visible_refs_json "
-            "FROM staged_declarations WHERE created_turn=? AND status='settled' ORDER BY id",
-            (turn,),
-        ).fetchall()
+        rows = StagedDeclarationStore(db.conn).read_month_fact_materials((turn,))
         for row in rows:
             decree_ref = str(row["decree_ref"] or "")
             declaration = load_stored_json(
@@ -182,11 +180,7 @@ def _month_fact_materials(
                 forecasts.append(forecast)
     landed: List[Dict[str, Any]] = []
     if hasattr(db, "conn"):
-        for row in db.conn.execute(
-            "SELECT account, delta, category, reason, origin_ref FROM economy_ledger "
-            "WHERE turn=? ORDER BY id",
-            (turn,),
-        ):
+        for row in ReignStateStore(db.conn).read_month_ledger((turn,)):
             origin = str(row["origin_ref"] or "")
             if not include_secret_sources and (
                 is_secret_order_origin(origin)
@@ -1270,9 +1264,7 @@ def _open_rescript_items(
         if questions:
             # 未答请旨不论案卷创建回合，均须本回合收口（#1847 / 留中回流同审）。
             decree_questions.append((ref, questions))
-    world_questions = [
-        q for q in (chain.get("world_questions") or []) if isinstance(q, dict)
-    ]
+    world_questions = list(chain.get("world_questions") or [])
     return {
         "triad": triad,
         "decree_questions": decree_questions,
@@ -1613,9 +1605,29 @@ def _split_at_question(text: str) -> tuple[str, List[dict]]:
 
 def _load_chain(db: Any, turn: int) -> Dict[str, Any]:
     ctx = db.resolve_contexts.get(turn) or {}
-    payload = ctx.get("simulator_payload") or {}
-    chain = payload.get(_CHAIN_KEY) if isinstance(payload, dict) else None
-    return dict(chain) if isinstance(chain, dict) else {}
+    payload = ctx.get("simulator_payload", {})
+    if not isinstance(payload, dict):
+        raise ValueError("过月恢复载荷必须为对象")
+    chain = payload.get(_CHAIN_KEY, {})
+    if not isinstance(chain, dict):
+        raise ValueError("过月恢复月链必须为对象")
+    for field in (
+        "advanced", "covert_progress_done", "due_secret_orders_settled", "inertia_done",
+        "opening_levy_done", "secret_orders_disclosures_done", "secret_orders_reports_done",
+        "secret_orders_supply_done", "secret_orders_supply_invalid", "world_continued", "world_text_ready",
+    ):
+        if field in chain and not isinstance(chain[field], bool):
+            raise ValueError(f"过月恢复 {field} 必须为布尔值")
+    for field in ("call_failure", "declaration_outcome", "mechanical_tail"):
+        if field in chain and chain[field] is not None and not isinstance(chain[field], dict):
+            raise ValueError(f"过月恢复 {field} 必须为对象")
+    for field in ("world_questions", "pending_disclosures"):
+        if field not in chain:
+            continue
+        values = chain[field]
+        if not isinstance(values, list) or any(not isinstance(value, dict) for value in values):
+            raise ValueError(f"过月恢复 {field} 必须为对象名单")
+    return dict(chain)
 
 
 def _save_chain(

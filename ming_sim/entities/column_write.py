@@ -7,7 +7,10 @@ invent schema, or validate business values.
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from typing import Any, Mapping
+
+from ming_sim.applier import connection_owns_transaction
 
 
 def checked_columns(
@@ -18,6 +21,34 @@ def checked_columns(
     if unknown:
         raise ValueError(f"{what} 列非法：{sorted(unknown)}")
     return [column for column in sorted(values)]
+
+
+def bind_affair_once(
+    conn: Any, table: str, key: object, affair_id: int, *, pk: str = "id",
+) -> int:
+    """Shared once-only pointer write; caller-owned transactions stay caller-owned.
+
+    Table and primary-key names come only from entity-store constants.
+    """
+    want = int(affair_id)
+    with conn if connection_owns_transaction(conn) else nullcontext():
+        row = conn.execute(
+            f"SELECT affair_id FROM {table} WHERE {pk}=?", (key,),
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"{table} 不存在：{key}")
+        current = int(row["affair_id"] or 0)
+        if current == want:
+            return want
+        if current:
+            raise ValueError(f"{table} 已指向事务 {current}，不能改指 {want}")
+        cursor = conn.execute(
+            f"UPDATE {table} SET affair_id=? WHERE {pk}=? AND affair_id=0",
+            (want, key),
+        )
+        if cursor.rowcount != 1:
+            raise ValueError(f"{table} 已指向其它事务，不能改指 {want}")
+    return want
 
 
 def upsert_by_pk(

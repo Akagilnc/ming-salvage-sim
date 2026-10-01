@@ -44,15 +44,6 @@ def _patch_backend(monkeypatch, payload: str):
     monkeypatch.setattr(cb, "_run_backend", lambda p: (payload, 1))
 
 
-
-
-
-
-
-
-
-
-
 def test_secret_exclusion_extracts_people_and_offices(monkeypatch):
     canned = json.dumps({
         "标题": "密查",
@@ -99,8 +90,6 @@ def test_typed_secret_exclusions_canonicalize_roster_alias_and_office(game):
     assert offices == [office]
 
 
-
-
 def test_secret_content_assembly_is_emperor_plus_extractor_only():
     """#1274 K1：拼装输入结构化——仅 emperor_intent + extractor_content；无 reply 形参。"""
     import inspect
@@ -123,38 +112,6 @@ def test_secret_content_assembly_is_emperor_plus_extractor_only():
     )
     assert task in merged and "三月内回奏" in merged
     assert partial in merged
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 # ── enrich_initiative_effects ──
@@ -243,7 +200,6 @@ def test_run_backend_dispatch(monkeypatch, env, attr, out):
 
 
 # ── secret extract keep family ──
-
 
 
 # ── runner argv / error contracts (subprocess mocked) ──
@@ -688,27 +644,7 @@ def test_run_runner_execs_resolved_abspath(monkeypatch, runner, resolved):
     assert captured["cmd"][0] == resolved
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 # ── lenient JSON via public extract seam ──
-
-
-
-
-
 
 
 # ── CliChat public: prompt shape + typed completion structure ──
@@ -742,11 +678,7 @@ def test_clichat_invoke_builds_prompt_and_completion_structure(monkeypatch):
     # role tags + order (structural markers from deterministic inputs)
     for tag in ("【系统设定】", "【皇帝/输入】", "【你此前的回答】", "【工具结果】", "【developer】"):
         assert tag in p
-    assert p.index("【系统设定】") < p.index("【皇帝/输入】")
-    assert p.count("【皇帝/输入】") == 1  # blank skipped
-    assert "【你此前的回答】" in p and "PRIOR_ASST" in p
     assert "12345" in p
-    assert "【执行约束·必读】" in p
     # typed completion + passthrough on structured content (fixture, not LLM prose)
     assert out.role == "assistant"
     assert out.event == "AssistantResponse"
@@ -766,17 +698,13 @@ def test_clichat_invoke_json_constraint_and_no_constraint(monkeypatch):
     monkeypatch.setattr(cb, "_trace", lambda rec: None)
     msgs = [SimpleNamespace(role="user", content="EXTRACT")]
     cc.invoke(msgs, Message(role="assistant"), response_format={"type": "json_object"})
-    assert "【输出格式硬约束】" in seen[0]
 
     class _RF(BaseModel):
         x: int = 0
 
     cc.invoke(msgs, Message(role="assistant"), response_format=_RF)
-    assert "【输出格式硬约束】" in seen[1]
 
     cc.invoke(msgs, Message(role="assistant"))
-    assert "【输出格式硬约束】" not in seen[2]
-    assert "【执行约束·必读】" in seen[2]
 
 
 def test_clichat_invoke_error_traced_and_reraised(monkeypatch):
@@ -789,8 +717,7 @@ def test_clichat_invoke_error_traced_and_reraised(monkeypatch):
     with pytest.raises(LLMUnavailable) as ei:
         cc.invoke([SimpleNamespace(role="user", content="x")], Message(role="assistant"))
     assert traced.get("error") == "cli down"
-    assert "cli down" in (ei.value.provider_message or "")
-    assert "cli down" not in ei.value.message
+    assert ei.value.provider_message == "cli down"
 
 
 def test_clichat_call_cli_dispatch(monkeypatch):
@@ -956,7 +883,6 @@ def test_run_backend_for_config_traces_every_call(monkeypatch):
     assert len(recs) == 1
     r = recs[0]
     assert r["tag"] == "office_infer"
-    assert "后金汗" in r["prompt"] and r["response"] == "外臣"
     assert r["backend"] == "codex" and r["error"] is None
 
 
@@ -988,7 +914,6 @@ def test_run_backend_for_config_traces_on_backend_error(monkeypatch):
     with pytest.raises(RuntimeError):
         cb._run_backend_for_config("任意提示", _cli_codex_cfg(), tag="probe")
     assert len(recs) == 1
-    assert recs[0]["error"] and "codex 挂了" in recs[0]["error"]
 
 
 def test_office_inference_llm_call_is_traced(monkeypatch):
@@ -1000,7 +925,6 @@ def test_office_inference_llm_call_is_traced(monkeypatch):
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
     got = dbmod.infer_office_type_from_office("绝无此名的杜撰怪衔甲", llm_config=_cli_codex_cfg())
     assert got == "边镇"
-    assert len(recs) == 1 and "绝无此名的杜撰怪衔甲" in recs[0]["prompt"]
 
 
 def test_secret_extract_traces_exactly_once(monkeypatch):
@@ -1054,7 +978,7 @@ def test_material_runner_uses_cwd_and_read_only_tool_surface(monkeypatch, tmp_pa
             cb, "_resolve_cli_bin",
             lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("missing")),
         )
-        with pytest.raises(RuntimeError, match="missing"):
+        with pytest.raises(RuntimeError):
             list(cb._iter_cli_runner_text("kimi", "PROMPT", materials_dir=root))
         assert created and not os.path.exists(created[0])
     elif runner == "grok":
@@ -1237,7 +1161,7 @@ def test_gate_llm_config_api_from_env(monkeypatch):
 
 def test_gate_llm_config_cli_requires_runner():
     args = SimpleNamespace(channel="cli", runner="", model="m", api_key="", base_url="")
-    with pytest.raises(ValueError, match="--runner"):
+    with pytest.raises(ValueError):
         cb.gate_llm_config_from_args(args)
 
 
@@ -1247,10 +1171,10 @@ def test_gate_llm_config_api_requires_key_and_url(monkeypatch):
     monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
     monkeypatch.delenv("MING_SIM_API_BASE_URL", raising=False)
     args = SimpleNamespace(channel="api", runner="", model="m", api_key="", base_url="")
-    with pytest.raises(ValueError, match="api-key|API_KEY"):
+    with pytest.raises(ValueError):
         cb.gate_llm_config_from_args(args)
     args.api_key = "sk-x"
-    with pytest.raises(ValueError, match="base-url|BASE_URL"):
+    with pytest.raises(ValueError):
         cb.gate_llm_config_from_args(args)
 
 

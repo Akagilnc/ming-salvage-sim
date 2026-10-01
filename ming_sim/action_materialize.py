@@ -6,6 +6,9 @@
 """
 
 from __future__ import annotations
+from ming_sim.entities.army.store import ArmyStore
+from ming_sim.entities.character.store import CharacterStore
+from ming_sim.entities.issue.store import IssueStore
 
 import json
 import re
@@ -61,20 +64,7 @@ def minister_speaker_role(
     return "，".join(bits) or "大臣"
 
 
-
-
-
-
-
-
-
-
-
-
 # ── handlers（委派既有 stage，不另造落库）────────────────────────────
-
-
-
 
 
 def _persist_appointment_summon(
@@ -107,7 +97,7 @@ def _persist_appointment_summon(
             ).fetchone()
             if row is None:
                 raise ValueError("任命后传召所关联的暂存任命不存在")
-            stored = json.loads(row["payload_json"] or "{}")
+            stored = load_stored_object(row["payload_json"], label='payload_json')
             stored["summon_after"] = "是"
             session.db.conn.execute(
                 "UPDATE pending_actions SET payload_json=? WHERE id=?",
@@ -197,7 +187,7 @@ def _apply_existing_appointment_hit(
             current = session.db.conn.execute(
                 "SELECT payload_json FROM pending_actions WHERE id=?", (resolved,),
             ).fetchone()
-            stored = json.loads(current["payload_json"] or "{}")
+            stored = load_stored_object(current["payload_json"], label='payload_json')
             stored.update(recommendation_fields)
             session.db.conn.execute(
                 "UPDATE pending_actions SET payload_json=? WHERE id=?",
@@ -212,8 +202,6 @@ def _apply_existing_appointment_hit(
                 origin_chat_turn_id=int(origin_chat_turn_id or 0),
             )
         return resolved
-
-
 
 
 def stage_pacification_candidate(
@@ -356,10 +344,7 @@ def stage_punishment_candidate(
             return 0
         if linked_issue_id <= 0:
             return 0
-        issue = db.conn.execute(
-            "SELECT origin_kind,status,target_roster FROM issues WHERE id=?",
-            (linked_issue_id,),
-        ).fetchone()
+        issue = IssueStore(db.conn).read_stage_punishment_candidate((linked_issue_id,))
         if issue is None or issue["status"] != "active" or issue["origin_kind"] != "impeachment_surge":
             return 0
         if disposition not in issue_dispositions_allowed():
@@ -451,8 +436,6 @@ def stage_punishment_candidate(
     if existing_id:
         return db.update_directive_candidate(existing_id, staged)
     return db.stage_directive_candidate(int(turn), minister_name, payload=staged)
-
-
 
 
 GRANT_ACTIONS = frozenset({
@@ -571,7 +554,6 @@ def require_grant_allocation_shape(
     return out
 
 
-
 def _grant_target(intent: Dict[str, Any]) -> Tuple[str, str]:
     action = str(intent.get("grant_action") or "").strip()
     name = str(intent.get("name") or "").strip()
@@ -597,7 +579,7 @@ def _resolve_xiexang_army_id(db: Any, raw_target: str) -> str:
     tid = str(raw_target or "").strip()
     if not tid:
         return ""
-    row = db.conn.execute("SELECT id FROM armies WHERE id=?", (tid,)).fetchone()
+    row = ArmyStore(db.conn).read_map_rescript_option_or_choice((tid,))
     if row is not None:
         return str(row["id"])
     content = getattr(db, "content", None)
@@ -606,9 +588,7 @@ def _resolve_xiexang_army_id(db: Any, raw_target: str) -> str:
         from ming_sim.matching import canonical_army_id_exact
         matched = canonical_army_id_exact(tid, armies)
         if matched:
-            hit = db.conn.execute(
-                "SELECT id FROM armies WHERE id=?", (matched,),
-            ).fetchone()
+            hit = ArmyStore(db.conn).read_map_rescript_option_or_choice((matched,))
             if hit is not None:
                 return str(hit["id"])
     return ""
@@ -912,7 +892,6 @@ def stage_grant_allocation_candidate(
     return db.stage_directive_candidate(int(turn), minister_name, payload=staged)
 
 
-
 def _parse_json_field(raw: object) -> Any:
     """Classifier FieldSpec 只能承字符串；dict/list JSON 串在此还原。"""
     if isinstance(raw, (dict, list)):
@@ -954,29 +933,7 @@ def _assignment_absolute_end_turn(
     return 0
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 # 纯授权案卷归收权·罢差（ADR 0041/0071）；不得入撤回成命目标域。
-
-
-
-
-
 
 
 _RESPONSIBLE_BODY_SPLIT = re.compile(r"[,，、/;／|]")
@@ -1022,7 +979,7 @@ def character_person_names(db: Any) -> set[str]:
         return set()
     return {
         str(row["name"]).strip()
-        for row in db.conn.execute("SELECT name FROM characters").fetchall()
+        for row in CharacterStore(db.conn).read_names()
         if str(row["name"] or "").strip()
     }
 
@@ -1044,9 +1001,6 @@ def assert_responsible_bodies_org_only(
         name = str(body or "").strip()
         if name and name in persons:
             raise ValueError(f"responsible_bodies 禁个人名：{name}")
-
-
-
 
 
 def _list_pending_office_rows(
@@ -1116,9 +1070,6 @@ def _match_office_row_by_name_office(
             continue
         hits.append(row)
     return hits
-
-
-
 
 
 def _annotate_office_pending_path(
@@ -1242,9 +1193,6 @@ def _write_path_nature_ledger(
     )
 
 
-
-
-
 def _authorization_privilege(raw: object) -> str:
     """公开委任默认 privilege=便宜行事；显式四闭集权项原样保留。"""
     from ming_sim.authority_privileges import AUTHORITY_PRIVILEGE_SET
@@ -1337,7 +1285,7 @@ def _parse_revoke_decree_target(
     if tid <= 0:
         return None
     if kind == "issue":
-        row = db.conn.execute("SELECT * FROM issues WHERE id=?", (tid,)).fetchone()
+        row = IssueStore(db.conn).read_ack_due_commitment_issue((tid,))
         if row is None:
             return None
         if str(row["kind"] or "").strip() != "initiative":
@@ -1539,22 +1487,13 @@ def stage_assignment_candidate(
     has_ongoing = isinstance(parsed_ongoing, dict) and bool(parsed_ongoing)
     if kind_raw == "until_stop":
         staged["commitment_kind"] = "until_stop"
-    # #620 AC2：生产捕获——结构化 stages / JSON 串 / 正文「三年X五年Y」→ 绝对 due 段表
-    # 分层：召对入口对分类器坏形 stages 容错（回落正文年诺）；库层 capture/stages_to_json 仍响亮 ValueError
+    # Structured classifier input may be refused here; narrative never creates stages.
     from ming_sim.staged_commitment import capture_commitment_stages
     stages_raw = stages if stages not in (None, "") else None
     try:
-        stages_norm = capture_commitment_stages(
-            stages_raw,
-            narrative_text=body,
-            origin_turn=int(turn),
-        )
+        stages_norm = capture_commitment_stages(stages_raw)
     except ValueError:
-        stages_norm = capture_commitment_stages(
-            None,
-            narrative_text=body,
-            origin_turn=int(turn),
-        )
+        stages_norm = []
     if kind_raw == "until_stop" or has_stop or absolute_end > 0 or has_ongoing or stages_norm:
         if has_stop:
             staged["stop_condition"] = parsed_stop

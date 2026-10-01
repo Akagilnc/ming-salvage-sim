@@ -231,7 +231,7 @@ def test_player_decrees_sequential_army_station_reads_updated_roster(game, monke
 def test_world_segment_cross_category_order_by_declaration(game, order, expected_arrears):
     """先加欠饷再拨款清欠按交代先后；对调先后时按当时存量，不因类别段序颠倒。"""
     db, state, _ = game
-    db.conn.execute("UPDATE armies SET arrears=0, province_pay_arrears=0, central_pay_arrears=0 WHERE id='jingying'")
+    db.conn.execute("UPDATE armies SET  province_pay_arrears=0, central_pay_arrears=0 WHERE id='jingying'")
     db.conn.commit()
     state.metrics["国库"] = 100
     arrears_effect = {"army_delta": {"jingying": {
@@ -270,7 +270,7 @@ def test_world_segment_cross_category_order_by_declaration(game, order, expected
 def test_world_segment_cross_category_order_survives_reopen(game, tmp_path):
     """过月落账后重开：欠饷已清与拒收一致性仍在。"""
     db, state, _ = game
-    db.conn.execute("UPDATE armies SET arrears=0, province_pay_arrears=0, central_pay_arrears=0 WHERE id='jingying'")
+    db.conn.execute("UPDATE armies SET  province_pay_arrears=0, central_pay_arrears=0 WHERE id='jingying'")
     db.conn.commit()
     state.metrics["国库"] = 50
     dispatch_month_segment(

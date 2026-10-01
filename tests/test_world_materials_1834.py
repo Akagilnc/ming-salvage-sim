@@ -238,9 +238,7 @@ def test_world_materials_include_textual_facts_once_and_gazette_not_duplicated(g
 
     prepared = prepare_world_materials(db, state, dest_root=tmp_path / "world-facts")
     names = list_materials(prepared.root)
-    index_lines = {
-        line.strip() for line in read_material(prepared.root, "INDEX.txt").splitlines() if line.strip()
-    }
+    index_lines = set(prepared.index_lines)
     fact_paths = [p for p in names if p.startswith("事实/")]
     assert any(p.startswith("事实/character-") for p in fact_paths)
     assert any(p.startswith("事实/region-") for p in fact_paths)

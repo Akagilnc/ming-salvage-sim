@@ -6,6 +6,8 @@ CLI 和 Web 各自只做 I/O 包装。
 """
 
 from __future__ import annotations
+from ming_sim.entities.army.store import ArmyStore
+from ming_sim.entities.character.store import CharacterStore
 
 import json
 import logging
@@ -355,14 +357,10 @@ def register_unlisted_person_record(
         db.conn.execute(f"RELEASE SAVEPOINT {savepoint}")
         if owns_transaction:
             db.conn.commit()
-    row = db.conn.execute(
-        "SELECT portrait_id FROM characters WHERE name=?", (name,),
-    ).fetchone()
+    row = CharacterStore(db.conn).read_register_unlisted_person_record((name,))
     if row:
         character.portrait_id = str(row["portrait_id"])
     return character
-
-
 
 
 def _canonical_minister_key(content: Any, name: str, db: "GameDB") -> str:
@@ -392,10 +390,7 @@ def _appointment_intent_is_current_office_noop(
         return False
     canonical = _canonical_minister_key(content, clean_name, db)
     try:
-        row = conn.execute(
-            "SELECT status, office FROM characters WHERE name = ?",
-            (canonical,),
-        ).fetchone()
+        row = CharacterStore(conn).read_appointment_intent_is_current_office_noop((canonical,))
     except sqlite3.Error:
         return False
     if row is None or str(row["status"] or "") != "active":
@@ -419,16 +414,12 @@ def _target_active_officeholder(db: Any, name: str, content: Any = None) -> bool
         return False
     key = _canonical_minister_key(content, clean, db)
     try:
-        row = conn.execute(
-            "SELECT status, office FROM characters WHERE name = ?", (key,)
-        ).fetchone()
+        row = CharacterStore(conn).read_appointment_intent_is_current_office_noop((key,))
     except sqlite3.Error:
         return False
     if row is None:
         return False
     return str(row["status"] or "") == "active" and bool(str(row["office"] or "").strip())
-
-
 
 
 def canonical_new_appointment_person_fields(
@@ -520,18 +511,10 @@ def apply_appointment(
     content.characters[name] = character
     db.add_character(state, character, llm_config=llm_config, commit=commit)
     # add_character 已写入并分配 portrait_id，回写到内存对象
-    row = db.conn.execute(
-        "SELECT portrait_id FROM characters WHERE name=?", (name,)
-    ).fetchone()
+    row = CharacterStore(db.conn).read_register_unlisted_person_record((name,))
     if row:
         character.portrait_id = str(row["portrait_id"])
     return (name, displaced)
-
-
-
-
-
-
 
 
 def _pending_action_failure_payload(pa: Dict[str, Any]) -> Dict[str, Any]:
@@ -558,20 +541,7 @@ def _pending_action_failure_payload(pa: Dict[str, Any]) -> Dict[str, Any]:
 def _sync_offices_from_db_impl(content: GameContent, db: "GameDB", llm_config: Optional[LLMConfig] = None) -> None:
     """启动/读档时以 DB characters 表重建内存人物表。
     DB 是持久化真相；不要在这里修写 DB。"""
-    rows = db.conn.execute(
-        """
-        SELECT c.name, c.office, c.office_type, c.faction, c.aliases, c.personal_skills,
-               c.loyalty, c.ability, c.integrity, c.courage, c.style, c.identity, c.seed_guilt,
-               c.birth_year, c.historical_death_year, c.historical_death_month,
-               c.debut_year, c.debut_month, c.status, c.status_reason, c.reason_code,
-               c.portrait_id, c.power_id, c.location, c.transit_to,
-               c.transit_distance_remaining, c.transit_speed_factor, c.transit_start_turn,
-               c.summary,
-               COALESCE(co.region_id, '') AS office_region
-        FROM characters c
-        LEFT JOIN character_offices co ON co.character_name = c.name
-        """
-    ).fetchall()
+    rows = CharacterStore(db.conn).read_sync_offices_from_db_impl()
     characters: Dict[str, Character] = {}
     for row in rows:
         name = row["name"]
@@ -899,10 +869,7 @@ class GameSession:
         eligible, reason = self.can_summon(character)
         if not eligible:
             return AudienceAdmissionDecision(None, reason=reason)
-        row = self.db.conn.execute(
-            "SELECT location, transit_to FROM characters WHERE name=?",
-            (character.name,),
-        ).fetchone()
+        row = CharacterStore(self.db.conn).read_admit_audience((character.name,))
         # #670：无 DB 行不得 blank fail-open 入殿；在册空 location 仍 fail-open 在京。
         if row is None:
             return AudienceAdmissionDecision(
@@ -982,7 +949,6 @@ class GameSession:
             from ming_sim.decree_forecast import schedule_held_decree_forecasts
             schedule_held_decree_forecasts(self)
         return decision
-
 
 
     def _recognize_audience_command_verdict(self, message: str) -> str:
@@ -1456,7 +1422,6 @@ class GameSession:
             write_queue=write_queue,
             admitted_ticket=getattr(result, "_admitted_write_ticket", None),
         )
-
 
 
     # ── 拟旨 / 草案阶段 ───────────────────────────────────────────────────
@@ -2099,9 +2064,7 @@ class GameSession:
             # 单行改票：专用 agent + 唯一 {"options":[...]} shape；禁 monthly items[] / drafts[0]
             agent = create_rescript_revise_agent(self.llm_config, self.agno_db)
             army_targets = [
-                dict(row) for row in self.db.conn.execute(
-                    "SELECT id, name, station FROM armies WHERE owner_power='ming' ORDER BY name"
-                )
+                dict(row) for row in ArmyStore(self.db.conn).read_revision_rows()
             ]
             payload = {
                 "mode": "single_row_revise",

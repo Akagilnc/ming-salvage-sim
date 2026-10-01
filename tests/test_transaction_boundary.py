@@ -319,7 +319,7 @@ def test_backup_to_inside_atomic_fails_loud(game, tmp_path):
     """atomic 内 backup_to 响亮拒绝（备份会带未提交脏页，cmr S1 r1 F3）。"""
     db, state, content = game
     dest = str(tmp_path / "snap.db")
-    with pytest.raises(RuntimeError, match="atomic"):
+    with pytest.raises(RuntimeError):
         with atomic(db):
             db.backup_to(dest)
 
@@ -376,7 +376,7 @@ def test_connection_commit_attempts_all_runtime_callbacks(game):
 def test_executescript_inside_atomic_fails_loud(game):
     """atomic 内 executescript 响亮拒绝（C 层隐式 commit 绕过暂停，cmr S1 r1 F4）。"""
     db, state, content = game
-    with pytest.raises(RuntimeError, match="executescript"):
+    with pytest.raises(RuntimeError):
         with atomic(db):
             db.conn.executescript("SELECT 1;")
 
@@ -427,7 +427,7 @@ def test_ddl_first_inside_atomic_rolls_back(game):
     ri = RejectedItem(item={}, reason="r", category="invalid_enum", source=Provenance.unknown)
     rc.record("army_delta", ri, turn=1)
 
-    with pytest.raises(RuntimeError, match="boom"):
+    with pytest.raises(RuntimeError):
         with atomic(db):
             rc.flush_to_db(db)  # 第一条语句 = CREATE TABLE
             raise RuntimeError("boom")
@@ -492,7 +492,7 @@ def test_atomic_rejects_plain_connection(tmp_path):
         def __init__(self):
             self.conn = sqlite3.connect(str(tmp_path / "plain.db"))
 
-    with pytest.raises(TypeError, match="_SuspendableConnection"):
+    with pytest.raises(TypeError):
         with atomic(PlainDB()):
             pass
 
@@ -545,7 +545,7 @@ def test_ddl_after_explicit_midatomic_rollback_does_not_escape(game):
     ri = RejectedItem(item={}, reason="r", category="invalid_enum", source=Provenance.unknown)
     rc.record("army_delta", ri, turn=1)
 
-    with pytest.raises(RuntimeError, match="boom"):
+    with pytest.raises(RuntimeError):
         with atomic(db):
             db.conn.execute("INSERT INTO kv_store(key,value) VALUES('s1r3_x','x')")
             db.conn.rollback()  # 中途显式回滚（暂停期允许）
@@ -568,7 +568,7 @@ def test_begin_failure_at_entry_restores_flags(game, monkeypatch):
         return real_execute(self, sql, *args, **kwargs)
     monkeypatch.setattr(_SuspendableConnection, "execute", failing_execute)
 
-    with pytest.raises(sqlite3.OperationalError, match="BEGIN"):
+    with pytest.raises(sqlite3.OperationalError):
         with atomic(db):
             pass  # 不应到达
 

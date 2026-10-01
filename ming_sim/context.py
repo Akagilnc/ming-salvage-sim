@@ -5,6 +5,9 @@
 """
 
 from __future__ import annotations
+from ming_sim.entities.faction.store import FactionStore
+from ming_sim.entities.power.store import PowerStore
+from ming_sim.entities.region.store import RegionStore
 
 import json
 import re
@@ -123,12 +126,10 @@ def victory_status(db: GameDB, state: GameState) -> Dict[str, object]:
     20 年到期走 decree 结局收口（turn>=240），均不在此判。其余一律 ongoing。
     京畿 = beizhili，控制权字段 controlled_by（FK powers）；非 'ming' 即京师失守。
     """
-    beizhili = db.conn.execute("SELECT * FROM regions WHERE id = 'beizhili'").fetchone()
+    beizhili = RegionStore(db.conn).read_victory_status()
     if beizhili is not None and str(beizhili["controlled_by"]) != "ming":
         holder_id = str(beizhili["controlled_by"])
-        holder = db.conn.execute(
-            "SELECT name FROM powers WHERE id = ?", (holder_id,)
-        ).fetchone()
+        holder = PowerStore(db.conn).read_power_display_name((holder_id,))
         holder_name = str(holder["name"]) if holder else holder_id
         return {
             "status": ENDING_CAPITAL_FALLEN,
@@ -163,12 +164,12 @@ def state_context(state: GameState) -> str:
 
 
 def parse_json_dict(raw: str) -> Dict[str, int]:
+    from ming_sim.applier import load_stored_object
+
     try:
-        data = json.loads(raw)
-    except json.JSONDecodeError as error:
+        data = load_stored_object(raw, label="数值变化 JSON")
+    except ValueError as error:
         raise LLMContractError(f"数据库中的数值变化 JSON 已损坏：{raw[:200]}") from error
-    if not isinstance(data, dict):
-        raise LLMContractError(f"数据库中的数值变化不是 object：{raw[:200]}")
     parsed: Dict[str, int] = {}
     for key, value in data.items():
         try:
@@ -315,10 +316,7 @@ def character_context_with_db(
 
 def faction_context_with_db(character: Character, db: GameDB) -> str:
     """只组装当前人物认同度允许知道的本派档料；不提供全局派系表。"""
-    faction = db.conn.execute(
-        "SELECT agenda, satisfaction, leverage FROM factions WHERE name = ?",
-        (character.faction,),
-    ).fetchone()
+    faction = FactionStore(db.conn).read_faction_context_with_db((character.faction,))
     bucket = _identity_bucket(character.identity)
     dossier = _FACTION_DOSSIERS.get(character.faction)
     if bucket == "low":

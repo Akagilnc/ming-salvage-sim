@@ -56,6 +56,9 @@ class TextualFact:
 class TextualFactStore:
     """World-record home for textual facts. Live writes append; undo restores a row."""
 
+    def snapshot_rows(self) -> Any:
+        return self._conn.execute("SELECT * FROM textual_facts").fetchall()
+
     def __init__(self, conn: Any) -> None:
         self._conn = conn
 
@@ -151,6 +154,9 @@ class TextualFactStore:
             params.append(kind)
         sql += " ORDER BY year ASC, period ASC, id ASC"
         return tuple(_row_to_fact(row) for row in self._conn.execute(sql, params).fetchall())
+
+    def read_write_world_textual_fact_files(self, params: Any = ()) -> Any:
+        return self._conn.execute("SELECT DISTINCT subject_kind, subject_id FROM textual_facts WHERE subject_kind IN ('character', 'army', 'region') ORDER BY subject_kind, subject_id", params).fetchall()
 
 
 def _row_to_fact(row: Any) -> TextualFact:

@@ -14,7 +14,6 @@ def _army_row(db, army_id):
     return db.conn.execute("SELECT * FROM armies WHERE id=?", (army_id,)).fetchone()
 
 
-
 @pytest.mark.parametrize("army_id,expected", [
     ("guanning", 15),   # 72000 × 2.0 / 10000 = 14.4 → ceil 15
     ("jingying", 9),    # 85000 × 1.0 / 10000 = 8.5 → ceil 9
@@ -88,7 +87,6 @@ def test_defected_army_to_ming_owes_salary_not_free(read_game):
     assert needed > 0
 
 
-
 def test_total_ming_salary_is_72_ceil_sum(read_game):
     # 实际总月应发 = sum(ceil(每军))=72 万两。设计「66.5」是 sum(小数月应发)；army_needed 每军 ceil
     # （万两整数、不少发），ceil 累积使总额 72 > 66.5（cmr r1 codex/claude 实测）。开局 vs 旧 65 = +10.8%
@@ -142,8 +140,8 @@ def test_auto_pay_reaches_salary_army_via_arrears_filter(game):
     aid = str(db.conn.execute(
         "SELECT id FROM armies WHERE owner_power='ming' LIMIT 1").fetchone()["id"])
     # 只留这一支有欠饷，孤立验证「它是否进得了受饷分发」
-    db.conn.execute("UPDATE armies SET arrears=0 WHERE owner_power='ming'")
-    db.conn.execute("UPDATE armies SET salary_rate=1.5, arrears=10 WHERE id=?", (aid,))
+    db.conn.execute("UPDATE armies SET province_pay_arrears=0, central_pay_arrears=0 WHERE owner_power='ming'")
+    db.conn.execute('UPDATE armies SET salary_rate=1.5, province_pay_arrears=0, central_pay_arrears=10 WHERE id=?', (aid,))
     db.conn.commit()
     hit = {str(r["id"]) for r in db.conn.execute(
         "SELECT id FROM armies WHERE owner_power='ming' AND arrears>0")}
@@ -158,8 +156,8 @@ def test_auto_pay_empty_allowed_ids_pays_no_armies(game):
     db, state, _ = game
     aid = str(db.conn.execute(
         "SELECT id FROM armies WHERE owner_power='ming' LIMIT 1").fetchone()["id"])
-    db.conn.execute("UPDATE armies SET arrears=0 WHERE owner_power='ming'")
-    db.conn.execute("UPDATE armies SET arrears=10 WHERE id=?", (aid,))
+    db.conn.execute("UPDATE armies SET province_pay_arrears=0, central_pay_arrears=0 WHERE owner_power='ming'")
+    db.conn.execute('UPDATE armies SET province_pay_arrears=0, central_pay_arrears=10 WHERE id=?', (aid,))
     db.conn.commit()
     spent = _auto_pay_arrears_by_priority(
         db, state, "国库", 5, "补饷", "空范围补饷", allowed_army_ids=[]
@@ -174,8 +172,8 @@ def test_auto_pay_strips_allowed_army_ids_before_filtering(game):
     db, state, _ = game
     aid = str(db.conn.execute(
         "SELECT id FROM armies WHERE owner_power='ming' LIMIT 1").fetchone()["id"])
-    db.conn.execute("UPDATE armies SET arrears=0 WHERE owner_power='ming'")
-    db.conn.execute("UPDATE armies SET arrears=10 WHERE id=?", (aid,))
+    db.conn.execute("UPDATE armies SET province_pay_arrears=0, central_pay_arrears=0 WHERE owner_power='ming'")
+    db.conn.execute('UPDATE armies SET province_pay_arrears=0, central_pay_arrears=10 WHERE id=?', (aid,))
     db.conn.commit()
 
     spent = _auto_pay_arrears_by_priority(
@@ -184,7 +182,6 @@ def test_auto_pay_strips_allowed_army_ids_before_filtering(game):
     row = _army_row(db, aid)
     assert spent > 0
     assert row["arrears"] < 10
-
 
 
 def test_coerce_new_salary_rate_blocks_freeload():

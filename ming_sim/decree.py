@@ -4,6 +4,9 @@
 """
 
 from __future__ import annotations
+from ming_sim.entities.character.store import CharacterStore
+from ming_sim.entities.social_class.store import ClassStore
+from ming_sim.entities.faction.store import FactionStore
 
 import json
 import sqlite3
@@ -152,7 +155,6 @@ def collect_new_arrival_waiting_audience(
     return result
 
 
-
 # #1753 decision key promulgation-verdict-heal-by-resume-then-fail-closed：
 # 颁布判决 LLM 违契约 → 同一会话有界纠正补交次数（单一真源；不含首次）。
 PROMULGATION_VERDICT_HEAL_RETRIES = 3
@@ -251,10 +253,7 @@ def resolve_executor_appointment_tenure(
     name = resolve_dossier_owner_name(dossier)
     if not name:
         return DEFAULT_APPOINTMENT_TENURE
-    row = db.conn.execute(
-        "SELECT appointment_tenure FROM character_offices WHERE character_name=?",
-        (name,),
-    ).fetchone()
+    row = CharacterStore(db.conn).read_resolve_executor_appointment_tenure((name,))
     if row is None:
         return DEFAULT_APPOINTMENT_TENURE
     return normalize_appointment_tenure(row["appointment_tenure"])
@@ -287,12 +286,8 @@ def build_promulgation_judge_context(
     dossiers: Sequence[Dict[str, object]],
 ) -> Dict[str, object]:
     """Build the deterministic snapshot from persisted dossier evidence only."""
-    faction_rows = db.conn.execute(
-        "SELECT name,leverage,agenda FROM factions ORDER BY name"
-    ).fetchall()
-    class_rows = db.conn.execute(
-        "SELECT DISTINCT name FROM classes ORDER BY name"
-    ).fetchall()
+    faction_rows = FactionStore(db.conn).read_build_promulgation_judge_context()
+    class_rows = ClassStore(db.conn).read_ordered_names()
     issue_rows = db.list_active_issues()
     authority = int(state.metrics.get("皇威", 0))
     authority_band = imperial_authority_band(authority)
@@ -333,16 +328,11 @@ def build_promulgation_judge_context(
             "courage": qualitative_character_axis("courage", row["courage"]),
             "integrity": qualitative_character_axis("integrity", row["integrity"]),
         }
-        for row in db.conn.execute(
-            "SELECT name,office,office_type,faction,courage,integrity FROM characters "
-            "WHERE status='active' AND power_id='ming' AND "
-            "(office LIKE '%首辅%' OR office LIKE '%掌印%' OR office LIKE '%给事中%' "
-            "OR office_type='六科') ORDER BY office_type,office,name"
-        ).fetchall()
+        for row in CharacterStore(db.conn).read_build_promulgation_judge_context()
     ]
     history = []
     for item in db.dossiers.rescript_history_rows():
-        payload = json.loads(str(item["payload_json"] or "{}"))
+        payload = load_stored_object(item["payload_json"], label="stored JSON")
         mode = str(payload.get("mode") or "ordinary")
         rescript_action = str(item["rescript_action"] or "")
         forced = rescript_action == "force_promulgated"
@@ -501,15 +491,15 @@ def _validate_promulgation_verdict_item(
         }
     else:
         faction_names = {
-            str(item["name"]) for item in db.conn.execute("SELECT name FROM factions")
+            str(item["name"]) for item in FactionStore(db.conn).read_names()
         }
         class_names = {
             str(item["name"])
-            for item in db.conn.execute("SELECT DISTINCT name FROM classes")
+            for item in ClassStore(db.conn).read_names()
         }
         gatekeeper_ids = {
             str(item["name"])
-            for item in db.conn.execute("SELECT name FROM characters")
+            for item in CharacterStore(db.conn).read_names()
         }
         context_dossiers = {}
 
@@ -602,23 +592,21 @@ def validate_promulgation_verdicts(
         context = {
             "dossiers": [],
             "factions": [
-                dict(item) for item in db.conn.execute("SELECT name FROM factions")
+                dict(item) for item in FactionStore(db.conn).read_names()
             ],
             "classes": [
-                str(item["name"]) for item in db.conn.execute(
-                    "SELECT DISTINCT name FROM classes ORDER BY name"
-                )
+                str(item["name"]) for item in ClassStore(db.conn).read_ordered_names()
             ],
             "gatekeepers": [
                 {"name": str(item["name"])}
-                for item in db.conn.execute("SELECT name FROM characters")
+                for item in CharacterStore(db.conn).read_names()
             ],
         }
     proposed_modes: Dict[int, str] = {}
     for dossier in proposed_dossiers:
         payload = dossier.get("payload")
         if not isinstance(payload, dict):
-            payload = json.loads(str(dossier.get("payload_json") or "{}"))
+            payload = load_stored_object(dossier.get("payload_json"), label="stored JSON")
         action_type = dossier.get("action_type")
         external_review = (
             dossier_action_policy(action_type, payload)["external_review"]
@@ -727,7 +715,6 @@ def _open_affair_ids_from_payload(payload: object) -> set[int]:
     return ids
 
 
-
 def write_decree_with_agno(
     llm_config: LLMConfig,
     agno_db: SqliteDb,
@@ -791,7 +778,7 @@ def _requires_full_settlement(state: GameState, db: GameDB) -> bool:
     for row in db.dossiers.list_dossiers(status="executing"):
         payload = row.get("payload")
         if not isinstance(payload, dict):
-            payload = json.loads(str(row.get("payload_json") or "{}"))
+            payload = load_stored_object(row.get("payload_json"), label="stored JSON")
         # Non-terminal executing dossiers remain simulator continuation context.
         if dossier_action_policy(row.get("action_type"), payload)["execution_surface"] != "terminal":
             executing_work = True
@@ -1008,14 +995,7 @@ def tick_transit_arrivals(
     commit=False 时不提交——由外层事务（如 pre_settle 的 atomic_and_reload）统一提交。
     """
     current_turn = int(state.turn)
-    rows = db.conn.execute(
-        "SELECT name, transit_to, transit_distance_remaining, transit_speed_factor, "
-        "transit_start_turn FROM characters "
-        "WHERE status='active' AND COALESCE(transit_to, '') != '' "
-        "AND transit_distance_remaining IS NOT NULL "
-        "AND transit_speed_factor IS NOT NULL "
-        "ORDER BY name"
-    ).fetchall()
+    rows = CharacterStore(db.conn).read_tick_transit_arrivals()
     arrivals: List[Dict[str, object]] = []
     for row in rows:
         name = str(row["name"])
@@ -1240,8 +1220,6 @@ def pre_settle(
         raise
     mirror_rejections_after_commit(db, collector, rejections_jsonl_path)
     return auto_triggered
-
-
 
 
 def _collect_inline_rejections(

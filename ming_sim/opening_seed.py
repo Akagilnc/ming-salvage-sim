@@ -11,6 +11,7 @@ module owns the *sequence*, not a parallel set of writers.
 """
 
 from __future__ import annotations
+from ming_sim.entities.character.store import CharacterStore
 
 import json
 from typing import Any
@@ -33,14 +34,7 @@ def seed_opening_world(db: Any) -> None:
     db._ensure_office_type_parents()
 
     if not db.table_has_rows("office_slots"):
-        db.conn.executemany(
-            """
-            INSERT INTO office_slots
-                (office_title, office_type, region_id, jurisdiction, sort_order)
-            VALUES (?, ?, ?, ?, ?)
-            """,
-            [(*slot, index) for index, slot in enumerate(OFFICE_SLOTS)],
-        )
+        CharacterStore(db.conn).write_seed_opening_world([(*slot, index) for index, slot in enumerate(OFFICE_SLOTS)])
 
     if not db.table_has_rows("characters"):
         for character in db.content.characters.values():
@@ -80,7 +74,7 @@ def seed_opening_world(db: Any) -> None:
                 "summary": character.summary,
             })
     if not db.table_has_rows("character_offices"):
-        for row in db.conn.execute("SELECT name, office, office_type FROM characters").fetchall():
+        for row in CharacterStore(db.conn).read_knowledge_items_for_turn():
             # 同 add_character/set_character_office 走 person-title 守卫接缝：名分不写脏行。
             # Jurisdiction only from explicit content office_region — never location.
             ch = (
@@ -181,7 +175,6 @@ def seed_opening_world(db: Any) -> None:
                 "morale": army.morale,
                 "training": army.training,
                 "equipment": army.equipment,
-                "arrears": army.arrears,
                 "province_pay_arrears": army.province_pay_arrears,
                 "central_pay_arrears": army.central_pay_arrears,
                 "pay_source_region": army.pay_source_region,

@@ -15,22 +15,11 @@ from ming_sim.flows import (
     derive_army_mutiny_state,
 )
 ARMY = "guanning"
-PATHS = ("substrate_hub",)
-
-
-def _configure_fiscal_path(db, fiscal_path: str):
-    value = 0 if fiscal_path == "legacy" else 1
-    for key in ("__army_pay_source_cutover", "__fiscal_engine"):
-        db.conn.execute(
-            "INSERT INTO fiscal_config(key,value,kind,note) VALUES (?,?,'meta','test') "
-            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-            (key, value),
-        )
 
 
 def _setup(
     db,
-    fiscal_path: str,
+
     *,
     loyalty: int,
     arrears: float,
@@ -38,31 +27,24 @@ def _setup(
     is_tusi: int = 0,
     self_funded_pay: int = 0,
 ):
-    _configure_fiscal_path(db, fiscal_path)
     db.conn.execute("UPDATE armies SET manpower=0")
     # 土司/自养不进军心 tick，双累加器与总欠必须为 0。明军走全中央饷源。
     exempt = bool(is_tusi or self_funded_pay)
     central_share = 0 if exempt else 1
     stored_arrears = 0 if exempt else arrears
-    central_arrears = 0 if exempt or fiscal_path != "substrate_hub" else arrears
+    central_arrears = 0 if exempt else arrears
     db.conn.execute(
-        """UPDATE armies SET owner_power='ming', is_tusi=?, self_funded_pay=?,
-           manpower=10000, salary_rate=1, loyalty=?, arrears=?, is_mutinied=?,
-           province_pay_share=0, central_pay_share=?,
-           province_pay_arrears=0, central_pay_arrears=? WHERE id=?""",
-        (
-            is_tusi, self_funded_pay, loyalty, stored_arrears, latched,
-            central_share, central_arrears, ARMY,
-        ),
+        "UPDATE armies SET owner_power='ming', is_tusi=?, self_funded_pay=?,\n           manpower=10000, salary_rate=1, loyalty=?, is_mutinied=?,\n           province_pay_share=0, central_pay_share=?,\n           province_pay_arrears=0, central_pay_arrears=? WHERE id=?",
+        (is_tusi, self_funded_pay, loyalty, latched, central_share, central_arrears, ARMY,),
     )
     db.conn.commit()
 
 
-def _set_arrears(db, fiscal_path: str, arrears: float):
-    central_arrears = arrears if fiscal_path == "substrate_hub" else 0
+def _set_arrears(db,  arrears: float):
+    central_arrears = arrears
     db.conn.execute(
-        "UPDATE armies SET arrears=?, province_pay_arrears=0, central_pay_arrears=? WHERE id=?",
-        (arrears, central_arrears, ARMY),
+        'UPDATE armies SET  province_pay_arrears=0, central_pay_arrears=? WHERE id=?',
+        (central_arrears, ARMY,),
     )
     db.conn.commit()
 
@@ -76,20 +58,18 @@ def _tick(db, state):
     return int(row["loyalty"]), int(row["is_mutinied"]), derive_army_mutiny_state(row)
 
 
-@pytest.mark.parametrize("fiscal_path", PATHS)
-def test_arrears_spiral_enters_mutiny_only_after_both_conditions(game, fiscal_path):
+def test_arrears_spiral_enters_mutiny_only_after_both_conditions(game):
     db, state, _ = game
-    _setup(db, fiscal_path, loyalty=22, arrears=3)
+    _setup(db, loyalty=22, arrears=3)
 
     assert _tick(db, state)[:3] == (17, 0, "鼓噪")  # <20 alone, only 3 months owed
-    _set_arrears(db, fiscal_path, 5)
+    _set_arrears(db, 5)
     assert _tick(db, state)[:3] == (12, 1, "哗变")
 
 
-@pytest.mark.parametrize("fiscal_path", PATHS)
-def test_mutiny_stays_latched_while_loyalty_recovers_below_40(game, fiscal_path):
+def test_mutiny_stays_latched_while_loyalty_recovers_below_40(game):
     db, state, _ = game
-    _setup(db, fiscal_path, loyalty=20, arrears=0, latched=1)
+    _setup(db, loyalty=20, arrears=0, latched=1)
 
     trajectory = [_tick(db, state) for _ in range(3)]
     assert trajectory == [
@@ -97,18 +77,16 @@ def test_mutiny_stays_latched_while_loyalty_recovers_below_40(game, fiscal_path)
     ]
 
 
-@pytest.mark.parametrize("fiscal_path", PATHS)
-def test_mutiny_exits_at_40_only_when_arrears_have_retired(game, fiscal_path):
+def test_mutiny_exits_at_40_only_when_arrears_have_retired(game):
     db, state, _ = game
-    _setup(db, fiscal_path, loyalty=35, arrears=0, latched=1)
+    _setup(db, loyalty=35, arrears=0, latched=1)
 
     assert _tick(db, state)[:3] == (40, 0, "不满")
 
 
-@pytest.mark.parametrize("fiscal_path", PATHS)
-def test_raised_loyalty_alone_does_not_release_latch(game, fiscal_path):
+def test_raised_loyalty_alone_does_not_release_latch(game):
     db, state, _ = game
-    _setup(db, fiscal_path, loyalty=45, arrears=5, latched=1)
+    _setup(db, loyalty=45, arrears=5, latched=1)
 
     assert _tick(db, state)[:3] == (40, 1, "哗变")
 
@@ -130,7 +108,6 @@ def test_derive_mutiny_state_boundaries_and_latch(loyalty, latched, expected):
     assert derive_army_mutiny_state(army) == expected
 
 
-@pytest.mark.parametrize("fiscal_path", PATHS)
 @pytest.mark.parametrize(
     ("exemption", "flags"),
     [("tusi", {"is_tusi": 1}), ("self_funded", {"self_funded_pay": 1})],
@@ -141,10 +118,10 @@ def test_derive_mutiny_state_boundaries_and_latch(loyalty, latched, expected):
     ids=("would-enter", "would-exit"),
 )
 def test_exempt_armies_preserve_mutiny_latch(
-    game, fiscal_path, exemption, flags, loyalty, arrears, latched
+    game,  exemption, flags, loyalty, arrears, latched
 ):
     db, state, _ = game
-    _setup(db, fiscal_path, loyalty=loyalty, arrears=arrears, latched=latched, **flags)
+    _setup(db, loyalty=loyalty, arrears=arrears, latched=latched, **flags)
 
     assert _tick(db, state)[1] == latched, exemption
 

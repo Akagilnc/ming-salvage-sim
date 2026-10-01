@@ -8,6 +8,8 @@ live agent session.
 """
 
 from __future__ import annotations
+from ming_sim.entities.character.store import CharacterStore
+from ming_sim.entities.textual_fact.store import TextualFactStore
 
 import hashlib
 import json
@@ -1173,11 +1175,7 @@ def _write_world_textual_fact_files(
     store = getattr(db, "textual_facts", None)
     if store is None or not hasattr(db, "conn"):
         return []
-    rows = db.conn.execute(
-        "SELECT DISTINCT subject_kind, subject_id FROM textual_facts "
-        "WHERE subject_kind IN ('character', 'army', 'region') "
-        "ORDER BY subject_kind, subject_id"
-    ).fetchall()
+    rows = TextualFactStore(db.conn).read_write_world_textual_fact_files()
     index: list[str] = []
     for row in rows:
         kind = str(row["subject_kind"] or "").strip()
@@ -1351,7 +1349,7 @@ def _world_roster_names(db: Any) -> list[str]:
         return []
     return [
         str(row["name"] or "").strip()
-        for row in db.conn.execute("SELECT name FROM characters ORDER BY name").fetchall()
+        for row in CharacterStore(db.conn).read_world_roster_names()
         if str(row["name"] or "").strip()
     ]
 
@@ -1361,9 +1359,7 @@ def _world_subject_ids(db: Any, table: str) -> list[str]:
     if not hasattr(db, "conn"):
         return []
     return [
-        str(row["id"] or "").strip()
-        for row in db.conn.execute(f"SELECT id FROM {table} ORDER BY id").fetchall()
-        if str(row["id"] or "").strip()
+        subject_id.strip() for subject_id in getattr(db, table).ordered_ids() if subject_id.strip()
     ]
 
 
@@ -1573,9 +1569,7 @@ def _scene_present_rows(db: Any, state: Any) -> list[tuple[str, str]]:
     for name in names:
         office = ""
         if hasattr(db, "conn"):
-            row = db.conn.execute(
-                "SELECT office FROM characters WHERE name=?", (name,),
-            ).fetchone()
+            row = CharacterStore(db.conn).read_dispatch_inquiries((name,))
             if row is not None:
                 office = str(row["office"] or "")
         rows.append((name, office))
@@ -1637,15 +1631,7 @@ def _resolve_present_character(
     if hit is not None:
         return hit
     if hasattr(db, "conn"):
-        row = db.conn.execute(
-            """
-            SELECT name, office, office_type, faction, aliases, personal_skills,
-                   loyalty, ability, integrity, courage, style, identity,
-                   summary, power_id
-            FROM characters WHERE name=?
-            """,
-            (name,),
-        ).fetchone()
+        row = CharacterStore(db.conn).read_resolve_present_character((name,))
         if row is not None:
             return _character_projection_from_db_row(row)
     from ming_sim.models import Character

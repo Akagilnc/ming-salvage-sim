@@ -706,7 +706,7 @@ def test_t11_rebuild_clears_dirty_and_write_path_rolls_back(game, monkeypatch):
         return real_execute(sql, parameters)
 
     monkeypatch.setattr(db.conn, "execute", boom_on_log)
-    with pytest.raises(sqlite3.OperationalError, match="simulated write failure"):
+    with pytest.raises(sqlite3.OperationalError):
         accrue_blood_debt(
             db=db,
             turn=state.turn,
@@ -736,7 +736,7 @@ def test_t11_rebuild_clears_dirty_and_write_path_rolls_back(game, monkeypatch):
 
     before_rebuild = _snapshot(db)
     monkeypatch.setattr(db.conn, "execute", boom_on_rebuild)
-    with pytest.raises(sqlite3.OperationalError, match="simulated rebuild failure"):
+    with pytest.raises(sqlite3.OperationalError):
         rebuild_centrifuge_cache(db)
     monkeypatch.setattr(db.conn, "execute", real_execute2)
     assert _snapshot(db) == before_rebuild

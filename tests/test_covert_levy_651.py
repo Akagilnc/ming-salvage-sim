@@ -26,8 +26,6 @@ def _bound_case(db, state):
     return did, int(cur.lastrowid), str(army["id"]), str(executor)
 
 
-
-
 def test_exposure_uses_single_dispatcher_and_projects_exact_case(game, monkeypatch):
     db, state, _ = game
     did, issue_id, _, executor = _bound_case(db, state)
@@ -93,8 +91,6 @@ def test_empty_effect_month_rechecks_persisted_exposure(game, monkeypatch):
     session.resolve_turn(allow_empty_decree=True)
     todos = db.list_next_audience_todos(status="pending")
     assert any(t["entry_kind"] == ENTRY_KIND for t in todos)
-
-
 
 
 def test_rejected_canonical_results_neither_consume_nor_create_channel(game, monkeypatch):
@@ -221,7 +217,7 @@ def test_tacit_and_prohibition_use_real_canonical_identity_and_are_idempotent(ga
     _exposed_todo(db, state, monkeypatch, did)
     origin = f"dossier:{did}"
     key = next(iter(db.get_fiscal_config()))
-    db.conn.execute("UPDATE armies SET arrears=10 WHERE id=?", (army_id,))
+    db.conn.execute('UPDATE armies SET province_pay_arrears=0, central_pay_arrears=10 WHERE id=?', (army_id,))
 
     # An unrelated ordinary fiscal receipt must not impersonate the terminal order.
     unrelated = apply_score_extraction(db, state, {"fiscal_changes": [{
@@ -283,7 +279,7 @@ def test_prohibition_consumes_immediately_when_arrears_are_already_zero(game, mo
     db, state, _ = game
     did, _, army_id, _ = _bound_case(db, state)
     _exposed_todo(db, state, monkeypatch, did)
-    db.conn.execute("UPDATE armies SET arrears=0 WHERE id=?", (army_id,))
+    db.conn.execute('UPDATE armies SET province_pay_arrears=0, central_pay_arrears=0 WHERE id=?', (army_id,))
     _promulgated_prohibition(db, state, did)
 
     assert settle_exposure_from_canonical_actions(db, state, {}) == 1
@@ -294,11 +290,11 @@ def test_prohibition_reminder_is_consumed_after_later_payoff(game, monkeypatch):
     db, state, _ = game
     did, _, army_id, _ = _bound_case(db, state)
     _exposed_todo(db, state, monkeypatch, did)
-    db.conn.execute("UPDATE armies SET arrears=6 WHERE id=?", (army_id,))
+    db.conn.execute('UPDATE armies SET province_pay_arrears=0, central_pay_arrears=6 WHERE id=?', (army_id,))
     _promulgated_prohibition(db, state, did)
 
     assert settle_exposure_from_canonical_actions(db, state, {}) == 1
-    db.conn.execute("UPDATE armies SET arrears=0 WHERE id=?", (army_id,))
+    db.conn.execute('UPDATE armies SET province_pay_arrears=0, central_pay_arrears=0 WHERE id=?', (army_id,))
     assert settle_exposure_from_canonical_actions(db, state, {}) == 1
     assert db.list_next_audience_todos(status="pending") == []
 
@@ -320,9 +316,7 @@ def test_prohibition_blocks_every_covert_write_but_preserves_ordinary_legs(game)
     assert all(not item.get("rejected") for item in setup["fiscal_creates"])
     historical_rows = list(db.list_fiscal_effects_for_dossier(did))
     db.conn.execute(
-        """UPDATE armies SET arrears=8, province_pay_share=0, central_pay_share=1,
-           province_pay_arrears=0, central_pay_arrears=8
-           WHERE id=?""",
+        'UPDATE armies SET  province_pay_share=0, central_pay_share=1,\n           province_pay_arrears=0, central_pay_arrears=8\n           WHERE id=?',
         (army_id,),
     )
     _promulgated_prohibition(db, state, did)
@@ -484,7 +478,7 @@ def test_zero_pay_receipts_are_not_durable_tacit_effects(game, monkeypatch):
     db, state, _ = game
     did, _, army_id, _ = _bound_case(db, state)
     _exposed_todo(db, state, monkeypatch, did)
-    db.conn.execute("UPDATE armies SET arrears=0")
+    db.conn.execute('UPDATE armies SET province_pay_arrears=0, central_pay_arrears=0')
     origin = f"dossier:{did}"
     directed = _apply_economy_list(db, state, [{
         "account": "国库", "delta": -2, "purpose": "补饷",
@@ -546,8 +540,6 @@ def test_false_denunciation_is_not_retroactively_made_true_by_current_fork(game,
         (*values[:6], compose_denunciation_origin(is_true=True), "{}", "真举"),
     )
     assert write_exposure_todos(db, state) == 1
-
-
 
 
 def test_population_transfer_is_the_self_grown_unrest_channel(game, monkeypatch):

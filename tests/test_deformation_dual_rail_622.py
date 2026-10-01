@@ -101,8 +101,6 @@ def _cost_liability(db, dossier_id):
     ]
 
 
-
-
 # ── ① AC1+AC2(+AC4) tracer ───────────────────────────────────────────
 
 
@@ -343,12 +341,8 @@ def test_decide_due_review_malformed_beyond_intent_stays_fulfilled():
 
 def _seed_army_arrears(db, army_id: str, arrears: int) -> None:
     db.conn.execute(
-        """
-        UPDATE armies
-        SET arrears = ?, province_pay_arrears = 0, central_pay_arrears = ?
-        WHERE id = ?
-        """,
-        (arrears, arrears, army_id),
+        '\n        UPDATE armies\n        SET  province_pay_arrears = 0, central_pay_arrears = ?\n        WHERE id = ?\n        ',
+        (arrears, army_id,),
     )
     db.conn.commit()
 
@@ -452,7 +446,7 @@ def test_commitment_pooled_pay_arrears_inherits_beyond_intent(game):
     db, state, _content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
-    db.conn.execute("UPDATE armies SET arrears=0 WHERE owner_power='ming'")
+    db.conn.execute("UPDATE armies SET province_pay_arrears=0, central_pay_arrears=0 WHERE owner_power='ming'")
     _seed_army_arrears(db, "guanning", 40)
     _seed_army_arrears(db, "xuan_da", 30)
     state.metrics["国库"] = 500

@@ -37,19 +37,9 @@ def loads_effect_dict(raw: object) -> Dict[str, object]:
 
     已是 dict 则原样返回。空值是没有效果。写坏的文本或非对象不能当成没有效果。
     """
-    if isinstance(raw, dict):
-        return raw
-    if raw is None or raw == "":
-        return {}
-    if not isinstance(raw, str):
-        raise ValueError("效果 JSON 必须为对象")
-    try:
-        value = json.loads(raw)
-    except (ValueError, TypeError) as exc:
-        raise ValueError("效果 JSON 损坏") from exc
-    if not isinstance(value, dict):
-        raise ValueError("效果 JSON 必须为对象")
-    return value
+    from ming_sim.applier import load_stored_object
+
+    return load_stored_object(raw, label="效果 JSON")
 
 
 def _nonzero_int(raw: object) -> bool:

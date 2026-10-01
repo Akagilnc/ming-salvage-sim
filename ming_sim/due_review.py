@@ -10,6 +10,7 @@
 """
 
 from __future__ import annotations
+from ming_sim.entities.issue.store import IssueStore
 
 import re
 from typing import Any, Dict, List, Optional
@@ -83,10 +84,7 @@ def parse_dossier_id_from_origin(origin_ref: object) -> Optional[int]:
 
 
 def _issue_meta(db: Any, commitment_ref: int) -> Dict[str, object]:
-    row = db.conn.execute(
-        "SELECT id, title, origin_ref, stages_json, stage_text FROM issues WHERE id=?",
-        (int(commitment_ref),),
-    ).fetchone()
+    row = IssueStore(db.conn).read_issue_meta((int(commitment_ref),))
     if row is None:
         return {
             "id": int(commitment_ref),

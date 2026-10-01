@@ -21,6 +21,7 @@ updated_at_period＝更新纪年语义标识（天启七年十月式，非裸 tu
 """
 
 from __future__ import annotations
+from ming_sim.entities.person_log.store import PersonLogStore
 
 from typing import Any, Dict, List
 
@@ -77,9 +78,7 @@ def project_relation_ledger(db: Any, *, viewer: str | None) -> List[Dict[str, st
         (str(row["source"]), str(row["target"]))
         for row in db.get_relation_summaries()
     }
-    for row in db.conn.execute(
-        "SELECT DISTINCT source, target FROM relation_edge_events"
-    ).fetchall():
+    for row in PersonLogStore(db.conn).read_project_relation_ledger():
         pairs.add((str(row["source"]), str(row["target"])))
     if name is not None:
         pairs = {pair for pair in pairs if name in pair}

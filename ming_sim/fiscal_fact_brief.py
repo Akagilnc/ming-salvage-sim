@@ -38,6 +38,10 @@ F3.2：本摘要作为账本事实输入；最终 class_delta 由 internal extra
 任免等同回合事实综合判断，代码不约束 satisfaction 的方向或幅度。
 """
 from __future__ import annotations
+from ming_sim.entities.army.store import ArmyStore
+from ming_sim.entities.region.store import RegionStore
+from ming_sim.entities.reign_state.store import ReignStateStore
+from ming_sim.applier import load_stored_object
 
 import json
 import math
@@ -58,17 +62,13 @@ FACT_CLASS_MAP = {
 
 
 def _current_turn(db: Any) -> int:
-    row = db.conn.execute("SELECT turn FROM game_state WHERE id = 1").fetchone()
+    row = ReignStateStore(db.conn).read_current_settle_turn()
     return int(row["turn"]) if row is not None and row["turn"] is not None else 0
 
 
 def _latest_provenance_origin(db: Any, key: str) -> str:
     """fiscal_config_changes 该键最新一行 provenance（dossier:<id>）；无行返回空串。"""
-    row = db.conn.execute(
-        "SELECT origin_ref FROM fiscal_config_changes WHERE key = ? ORDER BY id DESC LIMIT 1",
-        (str(key),),
-    ).fetchone()
-    return str(row["origin_ref"] or "") if row is not None else ""
+    return db.fiscal_config.latest_origin((str(key),))
 
 
 def _config_origin_ref(db: Any, winning_key: str) -> str:
@@ -80,13 +80,11 @@ def _config_origin_ref(db: Any, winning_key: str) -> str:
 def _ming_settle_bases(db: Any) -> List[Tuple[str, Dict[str, Any], Dict[str, Any]]]:
     """① 明控且有 settle key 的省级基座；缺 key 出列，坏 JSON/现存坏结构响亮失败。"""
     out: List[Tuple[str, Dict[str, Any], Dict[str, Any]]] = []
-    rows = db.conn.execute(
-        "SELECT id, fiscal FROM regions WHERE controlled_by = 'ming' ORDER BY id"
-    ).fetchall()
+    rows = RegionStore(db.conn).read_settle_ming_province_substrate_ticks()
     for row in rows:
         region_id = str(row["id"])
         try:
-            fiscal = json.loads(str(row["fiscal"] or "{}"))
+            fiscal = load_stored_object(row["fiscal"], label='fiscal')
         except (TypeError, ValueError) as exc:
             raise ValueError(
                 f"fiscal_fact_brief：region {region_id} fiscal JSON 非法：{exc}"
@@ -174,12 +172,7 @@ def _priority_override_origin_for(
             causal_keys.append(winning_key)
     if not causal_keys:
         return ""
-    placeholders = ",".join("?" for _ in causal_keys)
-    row = db.conn.execute(
-        f"SELECT origin_ref FROM fiscal_config_changes WHERE key IN ({placeholders}) "
-        "ORDER BY id DESC LIMIT 1", tuple(causal_keys),
-    ).fetchone()
-    return str(row["origin_ref"] or "") if row is not None else ""
+    return db.fiscal_config.latest_origin(tuple(causal_keys))
 
 
 def _priority_override_origin(
@@ -225,20 +218,11 @@ def _due_order_displacement_entries(
     for subject, bp in resolved.haircut_bp.items():
         dues[subject] = haircut_due(dues[subject], int(bp))[0]
     unpaid = {s: 0.0 for s in DUE_SUBJECTS}
-    rows = db.conn.execute(
-        "SELECT field, delta FROM region_logs WHERE turn=? AND region_id=? "
-        "AND field IN ('settle_官俸欠_NewDebt','settle_宗禄欠_NewDebt')",
-        (turn, region_id),
-    ).fetchall()
+    rows = RegionStore(db.conn).read_due_order_displacement_entries((turn, region_id))
     for row in rows:
         subject = "官俸" if "官俸欠" in str(row["field"]) else "宗禄"
         unpaid[subject] += max(0.0, float(row["delta"] or 0))
-    army = db.conn.execute(
-        "SELECT COALESCE(SUM(CASE WHEN CAST(new_value AS REAL)>CAST(old_value AS REAL) "
-        "THEN CAST(new_value AS REAL)-CAST(old_value AS REAL) ELSE 0 END),0) AS v "
-        "FROM army_logs WHERE turn=? AND field='province_pay_arrears' AND army_id IN "
-        "(SELECT id FROM armies WHERE pay_source_region=?)", (turn, region_id),
-    ).fetchone()
+    army = ArmyStore(db.conn).read_due_order_displacement_entries((turn, region_id))
     unpaid["军饷"] = float(army["v"] or 0)
     unpaid["赈济"] = max(0.0, float(st.get("unmet_relief", 0) or 0))
     actual_paid = {s: max(0.0, dues[s] - min(dues[s], unpaid[s])) for s in DUE_SUBJECTS}
@@ -281,21 +265,12 @@ def _arrears_order_displacement_entries(
         return []
 
     actual_repaid = {s: 0.0 for s in ARREARS_SUBJECTS}
-    rows = db.conn.execute(
-        "SELECT field, delta FROM region_logs WHERE turn=? AND region_id=? "
-        "AND field IN ('settle_官俸欠_Repaid','settle_宗禄欠_Repaid')",
-        (turn, region_id),
-    ).fetchall()
+    rows = RegionStore(db.conn).read_arrears_order_displacement_entries((turn, region_id))
     for row in rows:
         subject = "官俸欠" if "官俸欠" in str(row["field"]) else "宗禄欠"
         # Repaid 留痕 delta 为负；取绝对值作实偿流量
         actual_repaid[subject] += max(0.0, -float(row["delta"] or 0))
-    army = db.conn.execute(
-        "SELECT COALESCE(SUM(CASE WHEN CAST(old_value AS REAL)>CAST(new_value AS REAL) "
-        "THEN CAST(old_value AS REAL)-CAST(new_value AS REAL) ELSE 0 END),0) AS v "
-        "FROM army_logs WHERE turn=? AND field='province_pay_arrears' AND army_id IN "
-        "(SELECT id FROM armies WHERE pay_source_region=?)", (turn, region_id),
-    ).fetchone()
+    army = ArmyStore(db.conn).read_arrears_order_displacement_entries((turn, region_id))
     actual_repaid["军饷欠"] = float(army["v"] or 0)
 
     # 偿前 CLAIM = 月末存量 + 当月实偿（action 补饷已在 settle 前扣，不入本瀑布）
@@ -419,12 +394,7 @@ def build_fiscal_fact_brief(db: Any) -> List[Dict[str, Any]]:
     # ② 分源欠饷月数（army 级，带属地 region）：ceil(分源现欠/月需)——0023 per-source
     #    双累加器本身就是分源持久投影面（F2.2 备选口径），零分母短路（0023 D6/D11）。
     #    #659：army 级事实属地=station_region（实际驻地）；pay_source_region 只服务饷源分账。
-    army_rows = db.conn.execute(
-        "SELECT id, name, owner_power, manpower, salary_rate, pay_source_region, "
-        "station_region, "
-        "central_pay_share, province_pay_share, province_pay_arrears, central_pay_arrears "
-        "FROM armies ORDER BY rowid"
-    ).fetchall()
+    army_rows = ArmyStore(db.conn).read_build_fiscal_fact_brief()
     region_of_army: Dict[str, str] = {}
     for row in army_rows:
         if str(row["owner_power"]) != "ming":
@@ -457,11 +427,7 @@ def build_fiscal_fact_brief(db: Any) -> List[Dict[str, Any]]:
     # ③ 本回合省池自动偿还受益事实：army_logs field='province_pay_arrears' 当月负 delta
     #    （surplus waterfall/action 还按余额占比偿还）。补饷销欠走 economy_ledger 缝（④）、
     #    中央侧无自动偿还位（0023 D7③），均不在本缝重复计。
-    repaid_log_rows = db.conn.execute(
-        "SELECT id, army_id, old_value, new_value FROM army_logs "
-        "WHERE turn = ? AND field = 'province_pay_arrears' ORDER BY id",
-        (turn,),
-    ).fetchall()
+    repaid_log_rows = ArmyStore(db.conn).read_build_fiscal_fact_brief_id_army_id_old_value_new_value((turn,))
     for row in repaid_log_rows:
         try:
             delta = float(str(row["new_value"])) - float(str(row["old_value"]))
@@ -484,11 +450,7 @@ def build_fiscal_fact_brief(db: Any) -> List[Dict[str, Any]]:
 
     # ④ 补发受益事实：economy_ledger purpose='补饷' 当月行（value<0=资源流入=受益符号域）；
     #    属地随目标军 station_region 归因（#659；同省 scoped 军户键受约束）。
-    relief_rows = db.conn.execute(
-        "SELECT id, delta, category, target_kind, target_id, origin_ref FROM economy_ledger "
-        "WHERE turn = ? AND purpose = '补饷' AND delta < 0 ORDER BY id",
-        (turn,),
-    ).fetchall()
+    relief_rows = ReignStateStore(db.conn).read_build_fiscal_fact_brief((turn,))
     for row in relief_rows:
         target_id = str(row["target_id"] or "").strip()
         if not target_id:
@@ -548,13 +510,7 @@ def build_fiscal_fact_brief(db: Any) -> List[Dict[str, Any]]:
     #    value=delta<0 入受益符号域（owner r5「Repaid 取反受益」即以留痕负号
     #    落实，此处不再二次取反）。restore 后
     #    region_logs 随档恢复，投影可重建（E2E 在案）。
-    flow_rows = db.conn.execute(
-        "SELECT id, region_id, field, delta FROM region_logs "
-        "WHERE turn = ? AND field IN "
-        "('settle_官俸欠_NewDebt', 'settle_官俸欠_Repaid', "
-        " 'settle_宗禄欠_NewDebt', 'settle_宗禄欠_Repaid') ORDER BY id",
-        (turn,),
-    ).fetchall()
+    flow_rows = RegionStore(db.conn).read_build_fiscal_fact_brief((turn,))
     for row in flow_rows:
         try:
             delta = float(row["delta"] or 0)

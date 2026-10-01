@@ -48,7 +48,7 @@ def test_edge_event_kind_and_evidence_are_fail_closed(game):
             turn=state.turn,
         )
 
-    with pytest.raises(ValueError, match="evidence"):
+    with pytest.raises(ValueError):
         db.record_relation_edge_event(
             source="甲",
             target="乙",

@@ -97,11 +97,7 @@ def test_deterministic_tick_plus_five_unaffected_by_soft_clamp(game):
         """UPDATE armies SET manpower=0"""
     )
     db.conn.execute(
-        """UPDATE armies SET owner_power='ming', is_tusi=0, self_funded_pay=0,
-           manpower=10000, salary_rate=1, province_pay_share=0, central_pay_share=1,
-           arrears=0, province_pay_arrears=0, central_pay_arrears=0,
-           loyalty=40, mutiny_count=0, redemption_count=0, is_mutinied=0,
-           mutiny_probation=0, full_pay_streak=0 WHERE id=?""",
+        "UPDATE armies SET owner_power='ming', is_tusi=0, self_funded_pay=0,\n           manpower=10000, salary_rate=1, province_pay_share=0, central_pay_share=1, province_pay_arrears=0, central_pay_arrears=0,\n           loyalty=40, mutiny_count=0, redemption_count=0, is_mutinied=0,\n           mutiny_probation=0, full_pay_streak=0 WHERE id=?",
         (ARMY,),
     )
     db.conn.commit()

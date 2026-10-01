@@ -5,6 +5,7 @@
 """
 
 from __future__ import annotations
+from ming_sim.entities.character_knowledge.store import CharacterKnowledgeStore
 
 import json
 from typing import Any, Iterable, Mapping
@@ -62,12 +63,7 @@ def record_public_saying(
         if _character_names(values)
     }
     owns = bool(commit) and connection_owns_transaction(db.conn)
-    cur = db.conn.execute(
-        "INSERT INTO public_sayings "
-        "(turn, year, period, body, involved_characters, affair_ref, source_id, "
-        "excluded_names, excluded_targets) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (
+    cur = CharacterKnowledgeStore(db.conn).write_record_public_saying((
             int(state.turn),
             int(state.year),
             int(state.period),
@@ -77,14 +73,10 @@ def record_public_saying(
             f"{SOURCE_PREFIX}pending",
             json.dumps(names, ensure_ascii=False),
             json.dumps(targets, ensure_ascii=False),
-        ),
-    )
+        ))
     saying_id = int(cur.lastrowid)
     source_id = f"{SOURCE_PREFIX}{saying_id}"
-    db.conn.execute(
-        "UPDATE public_sayings SET source_id=? WHERE id=?",
-        (source_id, saying_id),
-    )
+    CharacterKnowledgeStore(db.conn).write_record_public_saying_public_sayings((source_id, saying_id))
     if owns:
         db.conn.commit()
     return saying_id
@@ -108,23 +100,17 @@ def public_layer_events(db: Any) -> list[dict[str, object]]:
 
 
 def _json_name_list(raw: object) -> list[str]:
-    values = json.loads(raw or "[]")
-    if not isinstance(values, list):
-        raise ValueError("excluded_names 不是名单")
-    return [str(name) for name in values if str(name).strip()]
+    from ming_sim.entities.character_knowledge.store import _load_list
+
+    return [name for name in _load_list(raw) if name.strip()]
 
 
 def _json_target_map(raw: object) -> dict[str, list[str]]:
-    payload = json.loads(raw or "{}")
-    if not isinstance(payload, dict):
-        raise ValueError("excluded_targets 不是对象")
+    from ming_sim.entities.character_knowledge.store import _load_targets
+
     result: dict[str, list[str]] = {}
-    for key, values in payload.items():
-        names = (
-            [str(name) for name in values if str(name).strip()]
-            if isinstance(values, list)
-            else []
-        )
+    for key, values in _load_targets(raw).items():
+        names = [name for name in values if name.strip()]
         if names:
             result[str(key)] = names
     return result
@@ -151,11 +137,7 @@ def list_public_sayings(
     involved_character: str | None = None,
     affair_ref: str | None = None,
 ) -> list[dict[str, object]]:
-    rows = db.conn.execute(
-        "SELECT id, turn, year, period, body, involved_characters, affair_ref, source_id, "
-        "excluded_names, excluded_targets "
-        "FROM public_sayings ORDER BY id"
-    ).fetchall()
+    rows = CharacterKnowledgeStore(db.conn).read_list_public_sayings()
     result = [_row_as_saying(row) for row in rows]
     if involved_character is not None:
         name = str(involved_character).strip()

@@ -32,6 +32,13 @@ def _checked(values: Mapping[str, object], *, allowed: frozenset[str]) -> list[s
 class RegionStore:
     """Single write port for a region and its change log."""
 
+    def ordered_ids(self) -> list[str]:
+        return [str(row["id"]) for row in self._conn.execute("SELECT id FROM regions ORDER BY id").fetchall()]
+
+    def field_row(self, field: str, region_id: str) -> Any:
+        """Read a schema field already validated by the gate/subject consumer."""
+        return self._conn.execute(f"SELECT {field} FROM regions WHERE id=?", (region_id,)).fetchone()
+
     def __init__(self, conn: Any) -> None:
         self._conn = conn
 
@@ -105,3 +112,81 @@ class RegionStore:
     def delete(self, region_id: str) -> int:
         cursor = self._conn.execute("DELETE FROM regions WHERE id=?", (region_id,))
         return int(cursor.rowcount or 0)
+
+    def read_assert_commission_grant_target_exists(self, params: Any = ()) -> Any:
+        return self._conn.execute('SELECT 1 FROM regions WHERE id=?', params).fetchone()
+
+    def read_apply_fiscal_levy_targets(self, params: Any = ()) -> Any:
+        return self._conn.execute('SELECT id, fiscal FROM regions ORDER BY id', params).fetchall()
+
+    def read_apply_levy_driven_transfers(self, params: Any = ()) -> Any:
+        return self._conn.execute("SELECT id, fiscal, public_support FROM regions WHERE controlled_by='ming' ORDER BY id", params).fetchall()
+
+    def read_apply_bandit_absorptions(self, params: Any = ()) -> Any:
+        return self._conn.execute('SELECT controlled_by FROM regions WHERE id=?', params).fetchone()
+
+    def read_load_pending_gate_valid_regions(self, params: Any = ()) -> Any:
+        return self._conn.execute('SELECT id FROM regions', params).fetchall()
+
+    def row(self, region_id: str) -> Any:
+        return self._conn.execute('SELECT * FROM regions WHERE id = ?', (region_id,)).fetchone()
+
+    def read_apply_surcharge_decrees(self, params: Any = ()) -> Any:
+        return self._conn.execute('SELECT controlled_by, fiscal FROM regions WHERE id=?', params).fetchone()
+
+    def read_apply_dynamic_fiscal_scale(self, params: Any = ()) -> Any:
+        return self._conn.execute('SELECT id, fiscal FROM regions', params).fetchall()
+
+    def read_settle_province_tick(self, params: Any = ()) -> Any:
+        return self._conn.execute('SELECT fiscal FROM regions WHERE id = ?', params).fetchone()
+
+    def read_settle_ming_province_substrate_ticks(self, params: Any = ()) -> Any:
+        return self._conn.execute("SELECT id, fiscal FROM regions WHERE controlled_by = 'ming' ORDER BY id", params).fetchall()
+
+    def read_scale_tian_fu(self, params: Any = ()) -> Any:
+        return self._conn.execute('SELECT id, tax_per_turn, fiscal FROM regions', params).fetchall()
+
+    def read_apply_region_cannon(self, params: Any = ()) -> Any:
+        return self._conn.execute('SELECT city_level, cannon FROM regions WHERE id=?', params).fetchone()
+
+    def read_province_army_pay_container_total(self, params: Any = ()) -> Any:
+        return self._conn.execute("SELECT id, fiscal FROM regions WHERE controlled_by = 'ming'", params).fetchall()
+
+    def read_require_valid_pay_source_region(self, params: Any = ()) -> Any:
+        return self._conn.execute('SELECT controlled_by, fiscal FROM regions WHERE id = ?', params).fetchone()
+
+    def read_region_report(self, params: Any = ()) -> Any:
+        return self._conn.execute('SELECT SUM(tax_per_turn) AS total FROM regions', params).fetchone()
+
+    def read_turn_region_summary(self, params: Any = ()) -> Any:
+        return self._conn.execute("\n            SELECT rl.*, r.name AS region_name\n            FROM region_logs rl\n            JOIN regions r ON r.id = rl.region_id\n            WHERE rl.turn = ?\n              AND rl.field NOT LIKE 'settle_官俸欠_%'\n              AND rl.field NOT LIKE 'settle_宗禄欠_%'\n            ORDER BY rl.id\n            LIMIT ?\n            ", params).fetchall()
+
+    def read_add_building(self, params: Any = ()) -> Any:
+        return self._conn.execute('SELECT 1 FROM regions WHERE id = ?', params).fetchone()
+
+    def read_build_translation_target_grounding(self, params: Any = ()) -> Any:
+        return self._conn.execute('SELECT id, name FROM regions ORDER BY id', params).fetchall()
+
+    def read_due_order_displacement_entries(self, params: Any = ()) -> Any:
+        return self._conn.execute("SELECT field, delta FROM region_logs WHERE turn=? AND region_id=? AND field IN ('settle_官俸欠_NewDebt','settle_宗禄欠_NewDebt')", params).fetchall()
+
+    def read_arrears_order_displacement_entries(self, params: Any = ()) -> Any:
+        return self._conn.execute("SELECT field, delta FROM region_logs WHERE turn=? AND region_id=? AND field IN ('settle_官俸欠_Repaid','settle_宗禄欠_Repaid')", params).fetchall()
+
+    def read_build_fiscal_fact_brief(self, params: Any = ()) -> Any:
+        return self._conn.execute("SELECT id, region_id, field, delta FROM region_logs WHERE turn = ? AND field IN ('settle_官俸欠_NewDebt', 'settle_官俸欠_Repaid',  'settle_宗禄欠_NewDebt', 'settle_宗禄欠_Repaid') ORDER BY id", params).fetchall()
+
+    def read_victory_status(self, params: Any = ()) -> Any:
+        return self._conn.execute("SELECT * FROM regions WHERE id = 'beizhili'", params).fetchone()
+
+    def read_originated_quantity_this_turn(self, params: Any = ()) -> Any:
+        return self._conn.execute('SELECT region_id, field, new_value, delta FROM region_logs WHERE origin_ref=? AND turn=?', params).fetchall()
+
+    def read_apply_population_transfers(self, params: Any = ()) -> Any:
+        return self._conn.execute('SELECT name FROM regions WHERE id=?', params).fetchone()
+
+    def read_resolve_single_region_id(self, params: Any = ()) -> Any:
+        return self._conn.execute('SELECT id, kind, controlled_by FROM regions WHERE id=?', params).fetchone()
+
+    def read_resolve_single_region_id_id_kind_controlled_by(self, params: Any = ()) -> Any:
+        return self._conn.execute('SELECT id, kind, controlled_by FROM regions WHERE name=?', params).fetchall()

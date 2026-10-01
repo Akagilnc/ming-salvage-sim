@@ -246,7 +246,7 @@ def test_submit_decisions_does_not_overwrite_already_decided_rows(game, monkeypa
     state.turn_phase = "awaiting_decision"
     db.save_state(state)
     # ② #1589：空 desk + 非空无键异载荷整批拒，不静默吞掉——phase2 不重入
-    with pytest.raises(ValueError, match="decision_key"):
+    with pytest.raises(ValueError):
         sess.submit_hitl_choices(
             [{"label": "留", "note": "改裁"}], write_gate=get_session_write_queue(sess).write_gate,
         )

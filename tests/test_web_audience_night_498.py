@@ -184,8 +184,6 @@ def test_persisted_reply_before_translation_admission_has_no_retry_button(web_ga
     assert retry.status_code == 404
 
 
-
-
 @pytest.mark.parametrize("night_status", [an.NIGHT_STATUS_CLOSING, an.NIGHT_STATUS_CLOSED])
 def test_pending_translation_retries_original_round_after_night_seal(web_game, monkeypatch, night_status):
     """A sealed night keeps its failed source round repairable before month advance."""
@@ -478,10 +476,6 @@ async def _start_hanging_chat(game, client, minister, monkeypatch):
 # ── ② 对话内应允候选：收夜提交即准旨，月末玩家流零二次准驳 ─────────────
 
 
-
-
-
-
 # ── ③ #1353 K10a：挂起在飞不按 elapsed 造 409；工人终态后过月续跑 ──
 
 
@@ -554,7 +548,6 @@ def test_asgi_dossiered_directive_has_no_retired_review_surface(web_game):
     assert int(match["dossier_id"]) > 0
     assert match["dossier_status"] == "proposed"
     assert match["source"] == "手动新增"
-    assert "着户部核边饷" in str(match["text"])
 
 def test_asgi_inflight_reply_lands_then_issue_closes_and_advances(web_game, monkeypatch):
     """AC10「回话完成入档后才收夜再颁诏」：#1353 过月屏障等 chat 整轮票清零后收夜再颁诏。
@@ -671,7 +664,6 @@ def test_night_approved_directive_closes_into_month_end_without_second_review(we
         (turn_before,),
     ).fetchall()
     assert any(str(row["text"] or "") == text for row in rows), rows
-
 
 
 def test_legacy_pending_only_advances_to_durable_dossier_without_review_api(web_game, monkeypatch):

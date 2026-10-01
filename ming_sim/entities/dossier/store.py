@@ -11,9 +11,11 @@ from __future__ import annotations
 import json
 from typing import Any, Iterable, Mapping, Optional
 
+from ming_sim.applier import load_stored_object, load_stored_list
 from ming_sim.constants import DOSSIER_LINK_TYPES
 from ming_sim.decree_vocabulary import dossier_action_policy
 from ming_sim.strict_types import strict_int
+from ming_sim.participant_roster import load_participant_roster
 
 DOSSIER_STATUSES = frozenset({"proposed", "promulgated", "executing", "closed"})
 DOSSIER_TRANSITIONS = {
@@ -367,36 +369,16 @@ def hydrate_dossier_row(row: Any) -> dict[str, Any]:
     if out.get("secret_order_id") is not None:
         out["secret_order_id"] = int(out["secret_order_id"])
     out["rescript_pending"] = bool(out.get("rescript_pending"))
-    try:
-        payload = json.loads(out.get("payload_json") or "{}")
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"案卷#{out['id']} payload_json 无效") from exc
-    if not isinstance(payload, dict):
-        raise ValueError(f"案卷#{out['id']} payload_json 非对象")
+    payload = load_stored_object(out.get("payload_json"), label="payload_json")
     out["payload"] = payload
     out["mode"] = normalize_dossier_mode(
         payload["mode"] if "mode" in payload else "ordinary"
     )
-    try:
-        stigma = json.loads(out.get("stigma_json") or "[]")
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"案卷#{out['id']} stigma_json 无效") from exc
-    if not isinstance(stigma, list):
-        raise ValueError(f"案卷#{out['id']} stigma_json 非列表")
+    stigma = load_stored_list(out.get("stigma_json"), label="stigma_json")
     out["stigma"] = stigma
-    try:
-        roster = json.loads(out.get("participant_roster") or "[]")
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"案卷#{out['id']} participant_roster 无效") from exc
-    if not isinstance(roster, list):
-        raise ValueError(f"案卷#{out['id']} participant_roster 非列表")
+    roster = load_participant_roster(out.get("participant_roster"))
     out["participant_roster"] = roster
-    try:
-        extension = json.loads(out.get("extension_json") or "{}")
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"案卷#{out['id']} extension_json 无效") from exc
-    if not isinstance(extension, dict):
-        raise ValueError(f"案卷#{out['id']} extension_json 非对象")
+    extension = load_stored_object(out.get("extension_json"), label="extension_json")
     signal = extension.get("execution_signal")
     if signal is not None and not isinstance(signal, dict):
         raise ValueError(f"案卷#{out['id']} execution_signal 非对象")
@@ -540,7 +522,7 @@ class DossierStore:
         if new_status not in DOSSIER_TRANSITIONS[old_status]:
             raise ValueError(f"案卷非法迁移：{old_status} -> {new_status}")
         if old_status == "promulgated" and new_status == "closed":
-            payload = json.loads(str(row["payload_json"] or "{}"))
+            payload = load_stored_object(row["payload_json"], label="payload_json")
             if has_execution_surface(row["action_type"], payload):
                 raise ValueError("带执行判定面的案卷不得从 promulgated 直接 closed")
             if not str(row["execution_outcome"] or ""):
@@ -735,14 +717,14 @@ class DossierStore:
             item["id"] = int(item["id"])
             item["dossier_id"] = int(item["dossier_id"])
             item["turn"] = int(item["turn"])
-            item["primary_opponents"] = json.loads(
-                str(item.pop("primary_opponents_json") or "[]")
+            item["primary_opponents"] = load_stored_list(
+                item.pop("primary_opponents_json"), label="primary_opponents_json",
             )
-            item["criteria_snapshot"] = json.loads(
-                str(item.pop("criteria_snapshot_json") or "{}")
+            item["criteria_snapshot"] = load_stored_object(
+                item.pop("criteria_snapshot_json"), label="criteria_snapshot_json",
             )
-            item["affected_parties"] = json.loads(
-                str(item.pop("affected_parties_json") or "[]")
+            item["affected_parties"] = load_stored_list(
+                item.pop("affected_parties_json"), label="affected_parties_json",
             )
             item["midzhi_unpromulgatable"] = bool(
                 item["midzhi_unpromulgatable"]
@@ -1677,10 +1659,7 @@ class DossierStore:
         ).fetchall()
         out: list[dict[str, object]] = []
         for row in rows:
-            raw_payload = row["payload_json"]
-            payload = json.loads("{}" if raw_payload is None or raw_payload == "" else raw_payload)
-            if not isinstance(payload, dict):
-                raise ValueError(f"检举载荷须为对象，得 {type(payload).__name__}")
+            payload = load_stored_object(row["payload_json"], label="检举 payload_json")
             out.append({
                 "id": int(row["id"]),
                 "turn": int(row["turn"]),
@@ -1743,33 +1722,18 @@ class DossierStore:
             raise KeyError(f"案卷不存在：{dossier_id}")
         return int(row["affair_id"] or 0)
 
+    def snapshot_rows(self, table: str) -> Any:
+        sql = {
+            "decree_dossiers": "SELECT * FROM decree_dossiers",
+            "decree_dossier_decisions": "SELECT * FROM decree_dossier_decisions",
+            "dossier_reported_progress": "SELECT * FROM dossier_reported_progress",
+        }[table]
+        return self._conn.execute(sql).fetchall()
+
     def set_affair_id_if_unbound(self, dossier_id: int, affair_id: int) -> int:
-        """Bind once; same id is idempotent; a different id fails loud.
+        from ming_sim.entities.column_write import bind_affair_once
 
-        Transaction ownership is read before the UPDATE. The write itself opens
-        an implicit transaction, so a check afterwards would treat that
-        transaction as an outer one and skip the commit.
-        """
-        from ming_sim.applier import connection_owns_transaction
-
-        want = int(affair_id)
-        owns = connection_owns_transaction(self._conn)
-        cur = self._conn.execute(
-            "UPDATE decree_dossiers SET affair_id=? WHERE id=? AND affair_id=0",
-            (want, int(dossier_id)),
-        )
-        if int(cur.rowcount or 0) == 1:
-            if owns:
-                self._conn.commit()
-            return want
-        current = self.affair_id_of(dossier_id)
-        if current == want:
-            if owns:
-                self._conn.commit()
-            return want
-        if owns:
-            self._conn.rollback()
-        raise ValueError(f"案卷已指向事务 {current}，不能改指 {want}")
+        return bind_affair_once(self._conn, "decree_dossiers", int(dossier_id), affair_id)
 
     def rows_for_affair(self, affair_id: int) -> list[Any]:
         return self._conn.execute(
@@ -1947,4 +1911,3 @@ class DossierStore:
             (int(dossier_id),),
         ).fetchone()
         return float(row["total"] if row is not None else 0.0)
-

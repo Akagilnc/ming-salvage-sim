@@ -38,8 +38,8 @@ def _global_population(db: GameDB) -> int:
 
 def _pin_split_arrears(db: GameDB, army_id: str, *, province: float, central: float) -> None:
     db.conn.execute(
-        "UPDATE armies SET province_pay_arrears=?, central_pay_arrears=?, arrears=? WHERE id=?",
-        (province, central, province + central, army_id),
+        'UPDATE armies SET province_pay_arrears=?, central_pay_arrears=? WHERE id=?',
+        (province, central, army_id,),
     )
     db.conn.commit()
 
@@ -85,8 +85,6 @@ def _simulator_army_dicts(payload_armies):
         cols = payload_armies.get("cols") or payload_armies.get("columns") or []
         return [dict(zip(cols, row)) for row in payload_armies["rows"]]
     return list(payload_armies)
-
-
 
 
 def test_redeploy_moves_fact_region_keeps_pay_source(game):

@@ -15,6 +15,8 @@
 """
 
 from __future__ import annotations
+from ming_sim.entities.issue.store import IssueStore
+from ming_sim.entities.person_log.store import PersonLogStore
 
 import re
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
@@ -114,15 +116,7 @@ def _existing_edge_id(
     if not base:
         return None
     bare = base.split("|", 1)[0]
-    row = db.conn.execute(
-        """
-        SELECT id FROM relation_edge_events
-        WHERE source=? AND target=? AND event_kind=?
-          AND (origin=? OR origin LIKE ?)
-        ORDER BY id LIMIT 1
-        """,
-        (source, target, event_kind, base, f"{bare}|%"),
-    ).fetchone()
+    row = PersonLogStore(db.conn).read_existing_edge_id((source, target, event_kind, base, f"{bare}|%"))
     return int(row["id"]) if row is not None else None
 
 
@@ -190,10 +184,7 @@ def _sponsor_names(db: Any, dossier_id: int) -> List[str]:
 
 
 def _commitment_ids_for_dossier(db: Any, dossier_id: int) -> List[int]:
-    rows = db.conn.execute(
-        "SELECT id FROM issues WHERE origin_ref=?",
-        (f"dossier:{int(dossier_id)}",),
-    ).fetchall()
+    rows = IssueStore(db.conn).read_commitment_ids_for_dossier((f"dossier:{int(dossier_id)}",))
     return [int(row["id"]) for row in rows]
 
 
@@ -597,9 +588,7 @@ def _pending_urge_todos(db: Any, state: Any) -> List[Dict[str, object]]:
 
 def _host_person_for_commitment(db: Any, cid: int) -> str:
     host = resolve_host_character(db, commitment_ref=cid, dossier_id=None)
-    row = db.conn.execute(
-        "SELECT origin_ref FROM issues WHERE id=?", (cid,),
-    ).fetchone()
+    row = IssueStore(db.conn).read_rush_staged_commitment_stage_origin_ref((cid,))
     if row is not None:
         did = _parse_dossier_ref(row["origin_ref"])
         if did is not None:

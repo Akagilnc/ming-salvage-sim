@@ -60,7 +60,9 @@ class ChatMessageStore:
             raise ValueError("奏对高亮 highlights_json 必须为名单")
         out: List[str] = []
         for item in data:
-            if isinstance(item, str) and item.strip():
+            if not isinstance(item, str):
+                raise ValueError("奏对高亮成员须为文字")
+            if item.strip():
                 out.append(item.strip())
         return out
 
@@ -295,13 +297,10 @@ class ResolveContextStore:
             return None
 
         def _load(text: str, label: str) -> object:
-            from ming_sim.applier import load_stored_json
+            from ming_sim.applier import load_stored_object
 
-            # 恢复用的权威记录。空文本是没有载荷；写坏的文本不能当成空上下文。
-            if not text:
-                return {}
             try:
-                return load_stored_json(text, label=label)
+                return load_stored_object(text, label=label)
             except ValueError as exc:
                 raise ValueError(
                     f"过月上下文 {label} 损坏，本月无法恢复（turn={turn}）：{exc}"

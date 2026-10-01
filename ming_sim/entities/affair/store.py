@@ -220,11 +220,7 @@ class AffairStore:
         affair_id = int(parsed["affair_id"])
         if affair_id not in authorized_ids:
             raise UnauthorizedAffairOriginRef()
-        active_issue = self._conn.execute(
-            "SELECT 1 FROM issues WHERE affair_id=? AND status='active' LIMIT 1",
-            (affair_id,),
-        ).fetchone()
-        if active_issue is not None:
+        if IssueStore(self._conn).has_active_for_affair(affair_id):
             raise ValueError("事务尚有未了局势")
         return self.declare_closed(affair_id, turn=turn).id
 
@@ -276,25 +272,14 @@ class AffairStore:
         if table == "issues":
             self.point_issue_row(int(row_id), want)
             return
-        key_column = _POINTER_KEY_COLUMNS.get(table, "id")
-        current = self._current_pointer(table, row_id)
-        if current == want:
-            return
-        if current != 0:
-            raise ValueError(
-                f"{_POINTER_TABLES[table]}已指向事务 {current}，不能改指 {want}"
-            )
-        owns = connection_owns_transaction(self._conn)
-        cur = self._conn.execute(
-            f"UPDATE {table} SET affair_id=? WHERE {key_column}=? AND affair_id=0",
-            (want, row_id),
+        from ming_sim.entities.column_write import bind_affair_once
+
+        if table not in _POINTER_TABLES:
+            raise ValueError(f"事务指针表非法：{table}")
+        bind_affair_once(
+            self._conn, table, row_id, want,
+            pk=_POINTER_KEY_COLUMNS.get(table, "id"),
         )
-        if int(cur.rowcount or 0) != 1:
-            raise ValueError(
-                f"{_POINTER_TABLES[table]}已指向其它事务，不能改指 {want}"
-            )
-        if owns:
-            self._conn.commit()
 
     def _dossiers(self) -> DossierStore:
         """#1889 / ADR 0151：案卷表的读写一律经案卷 store，本模块只编排指针语义。"""
@@ -386,12 +371,7 @@ class AffairStore:
         return tuple(refs)
 
     def affair_id_for_issue(self, issue_id: int) -> int:
-        row = self._conn.execute(
-            "SELECT affair_id FROM issues WHERE id=?", (int(issue_id),)
-        ).fetchone()
-        if row is None:
-            raise KeyError(f"局势不存在：{issue_id}")
-        return int(row["affair_id"] or 0)
+        return IssueStore(self._conn).affair_id_of(int(issue_id))
 
     @staticmethod
     def current_situation(textual_facts: Any, affair_id: int):

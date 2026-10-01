@@ -4,6 +4,7 @@
 揭破只进入 next_audience_todos 的唯一 dispatcher。
 """
 from __future__ import annotations
+from ming_sim.entities.issue.store import IssueStore
 
 from typing import Any, Dict, List, Mapping
 
@@ -57,10 +58,7 @@ def stopped_covert_effect(
 
 
 def _issue_for_dossier(db: Any, dossier_id: int) -> int:
-    row = db.conn.execute(
-        "SELECT id FROM issues WHERE origin_ref=? ORDER BY id LIMIT 1",
-        (f"dossier:{int(dossier_id)}",),
-    ).fetchone()
+    row = IssueStore(db.conn).read_issue_for_dossier((f"dossier:{int(dossier_id)}",))
     return int(row["id"]) if row is not None else 0
 
 

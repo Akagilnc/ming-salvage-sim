@@ -7,6 +7,12 @@ free of a second copy of the world state.
 """
 
 from __future__ import annotations
+from ming_sim.entities.army.store import ArmyStore
+from ming_sim.entities.character_knowledge.store import CharacterKnowledgeStore
+from ming_sim.entities.character.store import CharacterStore
+from ming_sim.entities.issue.store import IssueStore
+from ming_sim.entities.reign_state.store import ReignStateStore
+from ming_sim.applier import load_stored_list
 
 import json
 import re
@@ -46,9 +52,7 @@ def _issue_audience_names(db: Any, issue: Any) -> set[str] | None:
     raw: object = None
     saw_db_row = False
     if hasattr(db, "conn"):
-        row = db.conn.execute(
-            "SELECT audiences FROM events WHERE id=?", (origin_ref,),
-        ).fetchone()
+        row = IssueStore(db.conn).read_issue_audience_names((origin_ref,))
         if row is not None:
             saw_db_row = True
             raw = row["audiences"]
@@ -139,9 +143,7 @@ def knowledge_row_visible_to(
     """
     reader = None
     try:
-        reader = db.conn.execute(
-            "SELECT name, office, office_type FROM characters WHERE name=?", (character_name,)
-        ).fetchone()
+        reader = CharacterStore(db.conn).read_knowledge_row_visible_to((character_name,))
     except (AttributeError, TypeError):
         reader = None
     target = target or reader or row
@@ -328,14 +330,7 @@ def _role_roster(db: Any, office_type: str, state: Any) -> str:
     """
     if not hasattr(db, "conn"):
         return f"{office_type}本职在册：暂无。"
-    rows = db.conn.execute(
-        """SELECT name, office FROM characters
-           WHERE office_type = ? AND status = 'active' AND power_id = 'ming'
-             AND (debut_year = 0 OR debut_year < ?
-                  OR (debut_year = ? AND debut_month <= ?))
-           ORDER BY name""",
-        (office_type, int(state.year), int(state.year), int(state.period)),
-    ).fetchall()
+    rows = CharacterStore(db.conn).read_role_roster((office_type, int(state.year), int(state.year), int(state.period)))
     if not rows:
         return f"{office_type}本职在册：暂无。"
     # The roster is a membership fact, not a second free-text office report.
@@ -366,7 +361,7 @@ def _source_archive_rows(db: Any, character_name: str, upto_turn: int) -> list[D
                 or re.fullmatch(r"settlement:narrative:\d+", source_id)):
             continue
         participants = participant_roster_names(row["participant_roster"])
-        excluded = json.loads(row["excluded_names"] or "[]")
+        excluded = load_stored_list(row["excluded_names"], label='excluded_names')
         if not isinstance(excluded, list):
             raise ValueError("excluded_names 不是名单")
         # A participant-rostered source is private to its participants unless
@@ -399,17 +394,10 @@ def _household_secret_case_hidden(
 
 def _household_ledger(db: Any, state: Any, character_name: str) -> str:
     """户部太仓账：保留密支数额，按 typed 密令关联裁去案情语义。"""
-    balance = db.conn.execute(
-        "SELECT balance FROM economy_accounts WHERE account='国库'"
-    ).fetchone()
+    balance = ReignStateStore(db.conn).read_household_ledger_balance()
     # #1889：案卷→密令的指向经 store 解析（ADR 0151），此模块不 JOIN 案卷表。
     rows = [
-        dict(r) for r in db.conn.execute(
-            """SELECT e.year,e.period,e.delta,e.balance_after,e.category,e.reason,
-                      e.origin_ref,e.dossier_id
-               FROM economy_ledger e
-               WHERE e.account='国库' ORDER BY e.id DESC"""
-        ).fetchall()
+        dict(r) for r in ReignStateStore(db.conn).read_household_ledger()
     ]
     _dossier_ids = {
         int(
@@ -423,9 +411,7 @@ def _household_ledger(db: Any, state: Any, character_name: str) -> str:
     _secret_ids = {v for v in _secret_by_dossier.values() if v}
     _exclusions = {
         int(r["id"]): (r["excluded_names"], r["excluded_targets"])
-        for r in db.conn.execute(
-            "SELECT id,excluded_names,excluded_targets FROM secret_orders"
-        ).fetchall()
+        for r in CharacterKnowledgeStore(db.conn).read_household_ledger()
     } if _secret_ids else {}
     for r in rows:
         _did = int(
@@ -437,10 +423,7 @@ def _household_ledger(db: Any, state: Any, character_name: str) -> str:
         r["excluded_names"] = _names
         r["excluded_targets"] = _targets
     try:
-        reader = db.conn.execute(
-            "SELECT name, office, office_type FROM characters WHERE name=?",
-            (character_name,),
-        ).fetchone()
+        reader = CharacterStore(db.conn).read_knowledge_row_visible_to((character_name,))
     except (AttributeError, TypeError):
         reader = None
     lines = [f"太仓实存：{int(balance['balance'] if balance else state.metrics['国库'])}"]
@@ -455,9 +438,7 @@ def _household_ledger(db: Any, state: Any, character_name: str) -> str:
 
 
 def _army_register(db: Any) -> str:
-    rows = db.conn.execute(
-        "SELECT name,manpower FROM armies WHERE owner_power='ming' ORDER BY name"
-    ).fetchall()
+    rows = ArmyStore(db.conn).read_army_register()
     return "兵籍在册：\n" + "\n".join(
         f"{row['name']}：{int(row['manpower'])}人" for row in rows
     )
@@ -501,10 +482,7 @@ def _world(
             db.buildings_report(region_id=primary, qualitative=True)
         )
 
-    armies = db.conn.execute(
-        "SELECT id,name FROM armies WHERE commander=? OR controller=? ORDER BY name",
-        (character_name, character_name),
-    ).fetchall()
+    armies = ArmyStore(db.conn).read_world((character_name, character_name))
     if armies:
         ids = tuple(str(row["id"]) for row in armies)
         scope["army_ids"] = ids
@@ -520,9 +498,7 @@ def current_character_office(
     name = str(character_name or getattr(character, "name", "") or "")
     current = None
     if hasattr(db, "conn"):
-        current = db.conn.execute(
-            "SELECT office, office_type FROM characters WHERE name = ?", (name,),
-        ).fetchone()
+        current = CharacterStore(db.conn).read_current_character_office((name,))
     return (
         str((current["office"] if current is not None else getattr(character, "office", "")) or ""),
         str((current["office_type"] if current is not None else getattr(character, "office_type", "")) or ""),
@@ -812,7 +788,7 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
             character_name,
         ):
             continue
-        target_roster = json.loads(str(issue["target_roster"] or "[]"))
+        target_roster = load_stored_list(issue["target_roster"], label='target_roster')
         if not isinstance(target_roster, list):
             raise ValueError("target_roster 不是名单")
         if issue["origin_kind"] != "impeachment_surge":

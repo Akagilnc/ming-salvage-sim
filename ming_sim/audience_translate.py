@@ -14,6 +14,11 @@
 """
 
 from __future__ import annotations
+from ming_sim.entities.army.store import ArmyStore
+from ming_sim.entities.character_knowledge.store import CharacterKnowledgeStore
+from ming_sim.entities.character.store import CharacterStore
+from ming_sim.entities.issue.store import IssueStore
+from ming_sim.entities.region.store import RegionStore
 
 import json
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
@@ -171,32 +176,21 @@ def build_translation_target_grounding(db: Any, state: Any = None) -> str:
     if not hasattr(db, "conn"):
         return ""
     lines: List[str] = []
-    for row in db.conn.execute(
-        "SELECT id, name FROM regions ORDER BY id"
-    ).fetchall():
+    for row in RegionStore(db.conn).read_build_translation_target_grounding():
         lines.append(f"region\t{row['id']}\t{row['name']}")
-    for row in db.conn.execute(
-        "SELECT id, name FROM armies ORDER BY id"
-    ).fetchall():
+    for row in ArmyStore(db.conn).read_build_translation_target_grounding():
         lines.append(f"army\t{row['id']}\t{row['name']}")
-    for row in db.conn.execute(
-        "SELECT name, office FROM characters WHERE status='active' "
-        "ORDER BY name"
-    ).fetchall():
+    for row in CharacterStore(db.conn).read_build_translation_target_grounding():
         lines.append(
             f"character\t{row['name']}\t{str(row['office'] or row['name'])}"
         )
     from ming_sim.staged_commitment import load_commitment_stages
-    for row in db.conn.execute(
-        "SELECT id, title, stages_json FROM issues WHERE status='active' ORDER BY id"
-    ).fetchall():
+    for row in IssueStore(db.conn).read_build_translation_target_grounding():
         stages = load_commitment_stages(row['stages_json'])
         lines.append(f"issue\t{int(row['id'])}\t{str(row['title'] or '')}")
         for stage in stages:
             lines.append(f"stage\t{int(row['id'])}\t{stage['stage_idx']}\t{stage}")
-    for row in db.conn.execute(
-        "SELECT id, title FROM secret_orders WHERE status='active' ORDER BY id"
-    ).fetchall():
+    for row in CharacterKnowledgeStore(db.conn).read_build_translation_target_grounding():
         lines.append(f"secret_order\t{int(row['id'])}\t{str(row['title'] or '')}")
     if state is not None:
         from ming_sim.due_review import list_due_review_scenes

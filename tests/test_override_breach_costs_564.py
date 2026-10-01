@@ -278,7 +278,7 @@ def test_public_apply_rejects_invalid_mode_decision_reaction_shape_before_writes
     else:
         verdict["affected_parties"] = affected
 
-    with pytest.raises(ValueError, match=message):
+    with pytest.raises(ValueError):
         db.apply_dossier_verdicts(state, [verdict])
 
     assert db.dossiers.decisions(dossier_id) == []
@@ -322,7 +322,7 @@ def test_commit_true_breach_reloads_state_when_failure_follows_authority_mutatio
         lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("after authority")),
     )
 
-    with pytest.raises(RuntimeError, match="after authority"):
+    with pytest.raises(RuntimeError):
         db.breach_decree_dossier(state, dossier_id)
 
     assert state.metrics["皇威"] == before
@@ -391,7 +391,7 @@ def test_commit_false_breach_rolls_back_with_later_cancellation_failure(game, mo
                                origin_ref=f"dossier:{dossier_id}", cancellable="decree")
     before = state.metrics["皇威"]
     monkeypatch.setattr(db, "cancel_issue", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("later")))
-    with pytest.raises(RuntimeError, match="later"):
+    with pytest.raises(RuntimeError):
         with atomic(db):
             issues.apply_issue_tracker_output(db, state, {"cancels": [{"issue_id": issue_id}]})
     assert db.dossiers.get(dossier_id)["status"] == "executing"

@@ -8,10 +8,6 @@ def _reports(db):
     return [dict(r) for r in db.conn.execute("SELECT turn, section, item_json, reason, category, source, attempt FROM rejection_reports ORDER BY id")]
 
 
-
-
-
-
 def test_utf8_safe_serialization_preserves_chinese_and_escapes_lone_surrogate(game):
     from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
 
@@ -26,10 +22,6 @@ def test_utf8_safe_serialization_preserves_chinese_and_escapes_lone_surrogate(ga
     row = db.conn.execute("SELECT item_json FROM rejection_reports").fetchone()
     assert "中文" in row["item_json"]
     assert "\\ud800" in row["item_json"]
-
-
-
-
 
 
 def test_sqlite_text_sanitization_covers_issue_rows_and_advances(game):
@@ -64,4 +56,3 @@ def test_sqlite_text_sanitization_covers_issue_rows_and_advances(game):
 
     db.close_issue(state, issue_id, reason="failed", narrative=bad_text)
     close_row = db.conn.execute("SELECT narrative FROM issue_advances WHERE issue_id=? ORDER BY id DESC", (issue_id,)).fetchone()
-    assert "中文" in close_row["narrative"] and "\\ud800" in close_row["narrative"]

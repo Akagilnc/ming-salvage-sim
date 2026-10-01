@@ -51,6 +51,11 @@ textual_facts / public_sayings / presence / scene_facts（原生 `origin_ref`
 """
 
 from __future__ import annotations
+from ming_sim.entities.army.store import ArmyStore
+from ming_sim.entities.character.store import CharacterStore
+from ming_sim.entities.issue.store import IssueStore
+from ming_sim.entities.region.store import RegionStore
+from ming_sim.applier import load_stored_object
 
 import contextlib
 import copy
@@ -873,7 +878,7 @@ def _assert_commission_grant_target_exists(
     kind = str(target_kind or "").strip()
     tid = str(target_id or "").strip()
     if kind == "region":
-        row = db.conn.execute("SELECT 1 FROM regions WHERE id=?", (tid,)).fetchone()
+        row = RegionStore(db.conn).read_assert_commission_grant_target_exists((tid,))
         if row is None:
             raise KeyError(f"地区不存在：{tid}")
         return
@@ -881,7 +886,7 @@ def _assert_commission_grant_target_exists(
         _assert_characters_exist(db, [tid])
         return
     if kind == "army":
-        row = db.conn.execute("SELECT 1 FROM armies WHERE id=?", (tid,)).fetchone()
+        row = ArmyStore(db.conn).read_assert_commission_grant_target_exists((tid,))
         if row is None:
             raise KeyError(f"军队不存在：{tid}")
         return
@@ -890,7 +895,7 @@ def _assert_commission_grant_target_exists(
             iid = int(tid)
         except (TypeError, ValueError) as exc:
             raise KeyError(f"事项不存在：{tid}") from exc
-        row = db.conn.execute("SELECT 1 FROM issues WHERE id=?", (iid,)).fetchone()
+        row = IssueStore(db.conn).read_assert_commission_grant_target_exists((iid,))
         if row is None:
             raise KeyError(f"事项不存在：{tid}")
         return
@@ -1519,15 +1524,10 @@ def _dispatch_commissions(
 def _commission_fallback_actor(db: Any) -> str:
     """场景整场入口无单人大臣锚时，directive.actor 回落殿前常在（王承恩优先）。"""
     for name in ("王承恩", "曹化淳"):
-        row = db.conn.execute(
-            "SELECT name FROM characters WHERE name=? LIMIT 1", (name,),
-        ).fetchone()
+        row = CharacterStore(db.conn).read_commission_fallback_actor_name((name,))
         if row is not None:
             return str(row["name"])
-    row = db.conn.execute(
-        "SELECT name FROM characters WHERE status='active' "
-        "AND power_id='ming' ORDER BY name LIMIT 1"
-    ).fetchone()
+    row = CharacterStore(db.conn).read_commission_fallback_actor()
     return str(row["name"]) if row is not None else ""
 
 
@@ -1777,9 +1777,7 @@ def _dispatch_inquiries(
             _reject(rejected, item, str(exc), "hallucinated_id", source)
             continue
         from ming_sim.audience_night import is_inner_court_attendant
-        character = db.conn.execute(
-            "SELECT office FROM characters WHERE name=?", (attendant,)
-        ).fetchone()
+        character = CharacterStore(db.conn).read_dispatch_inquiries((attendant,))
         if not is_inner_court_attendant(character):
             _reject(rejected, item, "受命者不是近侍", "invalid_state", source)
             continue
@@ -1830,10 +1828,7 @@ def _dispatch_rushes(
         reason = str(item.get("reason") or "")
         actor = str(minister_name or "").strip() or _commission_fallback_actor(db)
         if target_kind == "commitment":
-            row = db.conn.execute(
-                "SELECT id, status, stages_json FROM issues WHERE id=?",
-                (target_id,),
-            ).fetchone()
+            row = IssueStore(db.conn).read_dispatch_rushes((target_id,))
             if row is None:
                 _reject(rejected, item, f"催办目标承诺不存在：{target_id}", "hallucinated_id", source)
                 continue
@@ -2028,7 +2023,7 @@ def _dispatch_promises(
             ):
                 _reject(rejected, item, "只有新建密令可用非空 typed new_content 修改", "invalid_shape", source)
                 continue
-            payload = json.loads(row["payload_json"] or "{}")
+            payload = load_stored_object(row["payload_json"], label='payload_json')
             if not isinstance(payload, dict):
                 raise ValueError("密令候选载荷损坏")
             payload["content"] = new_content
@@ -2065,7 +2060,7 @@ def _dispatch_promises(
             else:
                 changed = False
                 if kind == "directive" and declared_mode is not None:
-                    payload = json.loads(row["payload_json"] or "{}")
+                    payload = load_stored_object(row["payload_json"], label='payload_json')
                     if not isinstance(payload, dict):
                         raise ValueError("拟旨候选载荷损坏")
                     if payload.get("mode", "ordinary") != declared_mode:
@@ -2106,9 +2101,7 @@ def _assert_textual_fact_subject_exists(db: Any, subject_kind: str, subject_id: 
     if table_column is None:
         return  # 未知 kind 留给 TextualFactStore.append 自己的枚举校验拒收。
     table, column = table_column
-    row = db.conn.execute(
-        f"SELECT 1 FROM {table} WHERE {column}=?", (subject_id,),
-    ).fetchone()
+    row = getattr(db, table).field_row(column, subject_id)
     if row is None:
         raise KeyError(f"{subject_kind} 不存在：{subject_id}")
 
@@ -2222,7 +2215,7 @@ def _dispatch_textual_facts(
 
 def _assert_characters_exist(db: Any, names: Sequence[str]) -> None:
     for name in names:
-        row = db.conn.execute("SELECT 1 FROM characters WHERE name=?", (name,)).fetchone()
+        row = CharacterStore(db.conn).read_assert_characters_exist((name,))
         if row is None:
             raise KeyError(f"人物不存在：{name}")
 

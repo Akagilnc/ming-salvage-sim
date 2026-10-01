@@ -8,6 +8,8 @@
 """
 
 from __future__ import annotations
+from ming_sim.entities.reign_state.store import ReignStateStore
+from ming_sim.entities.character.store import CharacterStore
 
 import contextlib
 import json
@@ -20,6 +22,7 @@ from datetime import datetime, timezone
 from collections.abc import Mapping
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
+from ming_sim.applier import load_stored_list
 from ming_sim.db import normalize_office
 from ming_sim.error_pack import error_packs_root
 from ming_sim.models import GameState
@@ -319,10 +322,7 @@ def resolve_standing_roster(db: Any) -> List[str]:
     """开夜时动态解析常在员额：在职且 active 的御前近臣槽位持有者。"""
     if not hasattr(db, "conn"):
         return []
-    rows = db.conn.execute(
-        "SELECT name, office, office_type, status FROM characters "
-        "WHERE status = 'active' ORDER BY name"
-    ).fetchall()
+    rows = CharacterStore(db.conn).read_resolve_standing_roster()
     return [str(row["name"]) for row in rows if is_inner_court_attendant(row)]
 
 
@@ -433,7 +433,6 @@ def list_ledger(db: Any, night_id: int) -> List[Dict[str, Any]]:
             "kind": "ledger",
         })
     return out
-
 
 
 def list_chat_turns_for_night(db: Any, night_id: int) -> List[Dict[str, Any]]:
@@ -733,9 +732,7 @@ def _character_status(db: Any, name: str) -> str:
     if hasattr(db, "get_character_status"):
         status, _reason = db.get_character_status(name)
         return str(status or "")
-    row = db.conn.execute(
-        "SELECT status FROM characters WHERE name = ?", (name,)
-    ).fetchone()
+    row = CharacterStore(db.conn).read_dead_person_core_subjects((name,))
     return str(row["status"]) if row is not None else ""
 
 
@@ -770,12 +767,7 @@ def is_pending_source_round(db: Any, night_id: int, chat_turn_id: int, turn: int
     """封夜后只承接同月、同夜仍待补的既有回话，不开放新玩家输入。"""
     if chat_turn_id <= 0:
         return False
-    return db.conn.execute(
-        "SELECT 1 FROM chat_turns t JOIN game_state g ON g.id=1 "
-        "WHERE t.id=? AND t.night_id=? AND t.status='active' "
-        "AND t.minister_message_id>0 AND t.extract_status='pending' AND g.turn=?",
-        (int(chat_turn_id), int(night_id), int(turn)),
-    ).fetchone() is not None
+    return ReignStateStore(db.conn).read_is_pending_source_round_owned((int(chat_turn_id), int(night_id), int(turn))).fetchone() is not None
 
 
 def append_ledger_entry(
@@ -1392,10 +1384,7 @@ def _project_unsettled_summon_kind(
         return "fresh"
     from ming_sim.matching import is_capital_location
 
-    row = db.conn.execute(
-        "SELECT location, transit_to, status FROM characters WHERE name=?",
-        (person_name,),
-    ).fetchone()
+    row = CharacterStore(db.conn).read_project_unsettled_summon_kind((person_name,))
     if row is None:
         return "in_transit"
     status = str(row["status"] or "active").strip() or "active"
@@ -1414,7 +1403,7 @@ def list_unsettled_summons(db: Any) -> List[Dict[str, Any]]:
     ).fetchall()
     projected: List[Dict[str, Any]] = []
     for row in rows:
-        tags = json.loads(row["tags"] or "[]")
+        tags = load_stored_list(row["tags"], label='tags')
         if TAG_SUMMON_UNSETTLED not in tags or TAG_SUMMON_SETTLED in tags:
             continue
         origin = next(
@@ -1422,7 +1411,7 @@ def list_unsettled_summons(db: Any) -> List[Dict[str, Any]]:
              if str(tag).startswith(_SUMMON_ORIGIN_PREFIX)),
             "",
         )
-        names = json.loads(row["person_names"] or "[]")
+        names = load_stored_list(row["person_names"], label='person_names')
         if not origin or not names:
             continue
         person_name = str(names[0])
@@ -1464,10 +1453,7 @@ def list_waiting_audience_summons(db: Any) -> List[Dict[str, Any]]:
     for item in list_unsettled_summons(db):
         if item["kind"] != "waiting":
             continue
-        row = db.conn.execute(
-            "SELECT location FROM characters WHERE name=?",
-            (item["person_name"],),
-        ).fetchone()
+        row = CharacterStore(db.conn).read_list_waiting_audience_summons((item["person_name"],))
         location = str(row["location"] or "").strip() if row is not None else ""
         # 防御：kind 已判定 waiting；location 仍回填权威行止供汇总读端。
         if location and not is_capital_location(location):
@@ -1493,10 +1479,7 @@ def list_arrived_unsettled_summons(db: Any) -> List[Dict[str, Any]]:
     for item in list_unsettled_summons(db):
         if item["kind"] != "in_transit":
             continue
-        row = db.conn.execute(
-            "SELECT location, transit_to, status FROM characters WHERE name=?",
-            (item["person_name"],),
-        ).fetchone()
+        row = CharacterStore(db.conn).read_project_unsettled_summon_kind((item["person_name"],))
         if row is None or str(row["transit_to"] or "").strip():
             continue
         status = str(row["status"] or "active").strip() or "active"
@@ -1558,7 +1541,7 @@ def _mark_summon_entries_in_transit(db: Any, items: Sequence[Dict[str, Any]]) ->
         ).fetchone()
         if row is None:
             continue
-        tags = json.loads(row["tags"] or "[]")
+        tags = load_stored_list(row["tags"], label='tags')
         if TAG_IN_TRANSIT in tags:
             continue
         tags.append(TAG_IN_TRANSIT)
@@ -1589,7 +1572,7 @@ def settle_summon_origin(
         row = db.conn.execute(
             "SELECT tags FROM story_ledger_entries WHERE id=?", (item["entry_id"],)
         ).fetchone()
-        tags = json.loads(row["tags"] or "[]")
+        tags = load_stored_list(row["tags"], label='tags')
         tags = [tag for tag in tags if tag != TAG_SUMMON_UNSETTLED]
         tags.append(TAG_SUMMON_SETTLED)
         db.conn.execute(
@@ -1605,10 +1588,7 @@ def retire_unsettled_summons_for_inactive(db: Any) -> List[str]:
     """人物已非 active 时确定性结清其全部未结传召（ADR 0096 / ADR 0009）。"""
     settled: List[str] = []
     for item in list(list_unsettled_summons(db)):
-        row = db.conn.execute(
-            "SELECT status FROM characters WHERE name=?",
-            (item["person_name"],),
-        ).fetchone()
+        row = CharacterStore(db.conn).read_sponsor_dismissed((item["person_name"],))
         status = str(row["status"] or "active").strip() or "active" if row is not None else "active"
         if status == "active":
             continue
@@ -1717,7 +1697,7 @@ def update_summon_travel_tone(
     ).fetchone()
     if row is None:
         raise KeyError(f"传召账不存在：{entry_id}")
-    tags = [str(t) for t in json.loads(row["tags"] or "[]")]
+    tags = [str(t) for t in load_stored_list(row["tags"], label='tags')]
     tags = [t for t in tags if not str(t).startswith(_SUMMON_TRAVEL_TONE_PREFIX)]
     tags.append(_travel_tone_tag(tone))
     db.conn.execute(
@@ -1829,10 +1809,7 @@ def commit_fresh_summons_for_night(
     origins: List[str] = []
     with atomic_and_reload(db, state, content=content):
         for person_name, items in by_person.items():
-            row = db.conn.execute(
-                "SELECT location, transit_to, status FROM characters WHERE name=?",
-                (person_name,),
-            ).fetchone()
+            row = CharacterStore(db.conn).read_project_unsettled_summon_kind((person_name,))
             current_transit = str(row["transit_to"] or "").strip() if row is not None else ""
             location = str(row["location"] or "").strip() if row is not None else ""
             if current_transit:

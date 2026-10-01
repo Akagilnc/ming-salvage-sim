@@ -7,8 +7,9 @@ directive capture (#1279 / QA A-2) and night-archive involved_people projection
 
 from __future__ import annotations
 
-import json
 from typing import Dict, List, Mapping
+
+from ming_sim.applier import load_stored_list
 
 # ADR 0053 机械三档闭集（唯一真源）：归一缝、票拟层 A shape 与 prompt 契约共引，
 # 禁第二份字面量。主办可多人（北极星实证：倪元璐＋黄道周合力清丈畿辅）。
@@ -59,24 +60,32 @@ def is_non_person_participant_name(name: str) -> bool:
     return False
 
 
+def load_participant_roster(raw: object) -> list[dict]:
+    """Persisted roster members are objects, never silently filtered input."""
+    roster = load_stored_list(raw, label="participant_roster")
+    for item in roster:
+        if not isinstance(item, dict):
+            raise ValueError("participant_roster 成员须为对象")
+        for key in ("character_id", "name", "tier", "delegator_id"):
+            if key == "delegator_id" and item.get(key) is None:
+                continue
+            if key in item and not isinstance(item[key], str):
+                raise ValueError(f"participant_roster.{key} 须为文字")
+    return roster
+
+
 def resolve_dossier_owner_name(dossier: Mapping[str, object]) -> str:
     """案卷归属人：首名 canonical 主办，缺档时才读 legacy executor。
 
     #613 任别读端与 #625 监督事实底共调此单源；roster 解析禁止第三份遍历。
     缺档（无主办且无 executor）返回空串，由调用方按真除或缺席降级。
     """
-    roster = dossier.get("participant_roster") or []
-    if isinstance(roster, str):
-        roster = json.loads(roster)
-    if isinstance(roster, list):
-        for entry in roster:
-            if not isinstance(entry, dict):
-                continue
-            if str(entry.get("tier") or "").strip() != "主办":
-                continue
-            name = str(entry.get("character_id") or "").strip()
-            if name:
-                return name
+    for entry in load_participant_roster(dossier.get("participant_roster")):
+        if str(entry.get("tier") or "").strip() != "主办":
+            continue
+        name = str(entry.get("character_id") or "").strip()
+        if name:
+            return name
     executor_id = str(dossier.get("executor_id") or "").strip()
     executor_kind = str(dossier.get("executor_kind") or "").strip()
     if executor_id and executor_kind in {"", "character"}:
@@ -86,13 +95,11 @@ def resolve_dossier_owner_name(dossier: Mapping[str, object]) -> str:
 
 def participant_roster_names(raw: object) -> set[str]:
     """Project persisted dict roster entries to their character names."""
-    roster = json.loads(raw or "[]")
-    if not isinstance(roster, list):
-        raise ValueError("participant_roster 不是名单")
+    roster = load_participant_roster(raw)
     return {
         str(item.get("character_id") or item.get("name"))
         for item in roster
-        if isinstance(item, dict) and (item.get("character_id") or item.get("name"))
+        if item.get("character_id") or item.get("name")
     }
 
 

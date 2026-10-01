@@ -1,6 +1,12 @@
 """固定月度财政流与数值/经济/派系 delta 应用。L6。"""
 
 from __future__ import annotations
+from ming_sim.entities.army.store import ArmyStore
+from ming_sim.entities.building.store import BuildingStore
+from ming_sim.entities.social_class.store import ClassStore
+from ming_sim.entities.fiscal_container.store import FiscalContainerStore
+from ming_sim.entities.region.store import RegionStore
+from ming_sim.entities.reign_state.store import ReignStateStore
 
 import copy
 import json
@@ -24,7 +30,6 @@ from ming_sim.token_stats import tlog
 # 基准皇庄收入走 fiscal_config.皇庄_base；此常数只用于增量计算
 _HUANG_TIAN_RENT_PER_WAN_MU = 0.57  # ≈ 20万两/月 ÷ 35万亩
 
-_FIXED_FLOW_NUMERIC_FIELDS = ("huang_tian", "liao_xiang", "salt_tax", "commerce_tax", "corruption")
 _CENTRAL_TAICANG_HUMAN_LOSS_RATE = "central_taicang_human_loss_rate"
 _CENTRAL_TAICANG_SINK_LOSS_RATE = "central_taicang_sink_loss_rate"
 _CENTRAL_JINGYUN_HUMAN_LOSS_RATE = "central_jingyun_human_loss_rate"
@@ -50,144 +55,6 @@ def raise_fixed_period_flow_abort_if_needed(
         stage="fixed_fiscal",
         error_pack_path=pack_path,
     ) from exc
-
-
-def _province_transport_ratio(fiscal: dict, unrest: int) -> float:
-    """解运比（保留函数签名，返回1.0；实际损耗已并入 _province_efficiency）。"""
-    return 1.0
-
-
-def _province_collection_rate(gentry_resistance: int, unrest: int) -> float:
-    """实收率（保留函数签名，返回1.0；实际损耗已并入 _province_efficiency）。"""
-    return 1.0
-
-
-def _province_efficiency(fiscal: dict, gentry_resistance: int, unrest: int) -> float:
-    """综合到账率：士绅阻力 + 腐败度 + 民变三因子决定税银实际到账比例。
-    上限 1.0（现代化/彻底改革后可接近满额），下限 0.05（完全失控）。
-    开局典型值：富省~0.25，贫乱省~0.15。
-    改革路径：清查士绅→gentry↓，整治贪腐→corruption↓，赈灾→unrest↓，效率可升至0.60+。
-    """
-    corruption = fiscal.get("corruption", 50)
-    rate = (1.0
-            - gentry_resistance / 100 * 0.55
-            - corruption        / 100 * 0.45
-            - max(0, unrest - 20) / 100 * 0.30)
-    return max(0.05, min(1.00, rate))
-
-
-def _fixed_flow_scalars_are_numeric(region_id: str, fiscal: dict) -> bool:
-    for key in _FIXED_FLOW_NUMERIC_FIELDS:
-        if key not in fiscal:
-            continue
-        value = fiscal[key]
-        try:
-            finite_number = (
-                not isinstance(value, bool)
-                and isinstance(value, (int, float))
-                and math.isfinite(float(value))
-            )
-        except OverflowError:
-            finite_number = False
-        if not finite_number:
-            tlog(f"[province-fiscal] {region_id} fiscal.{key} 非数字，本{TURN_UNIT}固定税收出列")
-            return False
-    return True
-
-
-def _load_region_fiscal_for_fixed_flow(region_id: str, raw_fiscal: object) -> Optional[dict]:
-    """省级 fiscal 持久文档。空白是空对象；在场损坏拒绝本月固定税收。
-
-    文档在、标量不是数：该省当月出列，不把坏数当成零继续造钱。
-    """
-    fiscal = load_stored_object(raw_fiscal, label=f"{region_id}.fiscal")
-    if not _fixed_flow_scalars_are_numeric(region_id, fiscal):
-        return None
-    return fiscal
-
-
-def calc_province_fiscal(
-    state: GameState,
-    db: GameDB,
-) -> Tuple[int, int, List[Dict]]:
-    """按省计算月度财政收入。
-
-    tax_per_turn 是省级校准月税基准（含田赋+辽饷+盐税+商税合计）。
-    fiscal JSON 里的税种细分用于拆比例；动态系数（tr/cr）乘在总量上。
-    皇庄地租单独走内库，基准来自 fiscal.huang_tian × 租率。
-
-    返回 (国库月收合计, 内库月收合计, 明细列表)。
-    """
-    rows = db.conn.execute(
-        "SELECT id, name, unrest, gentry_resistance, tax_per_turn, fiscal FROM regions"
-    ).fetchall()
-    if not rows:
-        raise SystemExit("calc_province_fiscal: regions 表无数据，中止。")
-
-    wei = state.metrics.get("皇威", 58)
-
-    guo_ku_total = 0
-    nei_ku_total = 0
-    details: List[Dict] = []
-
-    for row in rows:
-        region_id    = str(row["id"])
-        name         = str(row["name"])
-        unrest       = int(row["unrest"])
-        gentry       = int(row["gentry_resistance"])
-        tax_base     = int(row["tax_per_turn"])   # 省级月税基准（万两）
-        fiscal = _load_region_fiscal_for_fixed_flow(region_id, row["fiscal"])
-        if fiscal is None:
-            details.append({
-                "region_id": region_id, "name": name, "田赋": 0, "辽饷": 0,
-                "盐税": 0, "商税": 0, "皇庄": 0, "province_total": 0,
-                "efficiency": 0, "isolated": True,
-            })
-            continue
-
-        huang_tian   = fiscal.get("huang_tian", 0)
-        liao_xiang   = fiscal.get("liao_xiang", 0)
-        salt_tax     = fiscal.get("salt_tax", 0)
-        commerce_tax = fiscal.get("commerce_tax", 0)
-
-        # 综合到账率（单一系数，上限1.0，改革后可接近满额）
-        eff = _province_efficiency(fiscal, gentry, unrest)
-
-        # 辽饷受皇威额外折扣（皇威低→地方截留多）
-        liao_eff = eff * (0.5 + wei / 200)
-        liao_eff = max(0.10, min(1.00, liao_eff))
-
-        # 全部税种统一乘综合到账率
-        liao     = round(liao_xiang   * liao_eff)
-        salt     = round(salt_tax     * eff)
-        commerce = round(commerce_tax * eff)
-        tian_fu_base = max(0, tax_base - liao_xiang - salt_tax - commerce_tax)
-        tian_fu  = round(tian_fu_base * eff)
-
-        # 皇庄 → 内库
-        # 基准由 fiscal_config.皇庄_base 统一覆盖（已校准）；
-        # huang_tian 字段用于记录没收藩王庄田后的增量：
-        #   增量月收 = 新增万亩 × _HUANG_TIAN_RENT_PER_WAN_MU
-        # 只有北直隶有 huang_tian > 0，增量=0（开局无新增），后续没收时才>基准
-        huang_income = 0  # 开局皇庄收入走 fiscal_config，此处不重复计算
-
-        province_guo = tian_fu + liao + salt + commerce
-        guo_ku_total += province_guo
-        nei_ku_total += huang_income
-
-        details.append({
-            "region_id":       region_id,
-            "name":            name,
-            "田赋":            tian_fu,
-            "辽饷":            liao,
-            "盐税":            salt,
-            "商税":            commerce,
-            "皇庄":            huang_income,
-            "province_total":  province_guo,
-            "efficiency":      round(eff, 3),
-        })
-
-    return guo_ku_total, nei_ku_total, details
 
 
 def _as_finite_nonnegative_float(label: str, value: object) -> float:
@@ -217,9 +84,7 @@ def _substrate_hub_salt_commerce_income_split(db: GameDB) -> Tuple[float, float]
     """Salt and commerce taxes stay as central side-channel income under cutover."""
     salt_total = 0.0
     commerce_total = 0.0
-    rows = db.conn.execute(
-        "SELECT id, fiscal FROM regions WHERE controlled_by = 'ming'"
-    ).fetchall()
+    rows = RegionStore(db.conn).read_province_army_pay_container_total()
     for row in rows:
         fiscal = load_stored_object(
             row["fiscal"], label=f"region {row['id']} fiscal",
@@ -238,13 +103,11 @@ def _project_substrate_hub_remittance(db: GameDB) -> float:
     from .fiscal_tick import settle_tick
 
     remittance_total = 0.0
-    rows = db.conn.execute(
-        "SELECT id, fiscal FROM regions WHERE controlled_by = 'ming' ORDER BY id"
-    ).fetchall()
+    rows = RegionStore(db.conn).read_settle_ming_province_substrate_ticks()
     for row in rows:
         region_id = str(row["id"])
         try:
-            fiscal = json.loads(str(row["fiscal"] or "{}"))
+            fiscal = load_stored_object(row["fiscal"], label='fiscal')
         except (TypeError, ValueError) as exc:
             raise ValueError(f"region {region_id!r} fiscal JSON 非法，无法投影起运") from exc
         if not isinstance(fiscal, dict):
@@ -261,20 +124,14 @@ def _project_substrate_hub_remittance(db: GameDB) -> float:
 
 
 def _fiscal_container_value(db: GameDB, key: str) -> float:
-    row = db.conn.execute(
-        "SELECT value FROM fiscal_containers WHERE key = ?",
-        (key,),
-    ).fetchone()
+    row = FiscalContainerStore(db.conn).read_get_central_army_pay_arrears_container((key,))
     return float(row["value"] or 0.0) if row is not None else 0.0
 
 
 def _fiscal_container_values_when_complete(
     db: GameDB, keys: Tuple[str, ...]
 ) -> Optional[Dict[str, float]]:
-    rows = db.conn.execute(
-        f"SELECT key, value FROM fiscal_containers WHERE key IN ({','.join('?' for _ in keys)})",
-        keys,
-    ).fetchall()
+    rows = db.fiscal_containers.values_for(keys)
     if len(rows) != len(keys):
         return None
     values = {key: 0.0 for key in keys}
@@ -402,15 +259,7 @@ def compute_budget_lines(
     )
     nk_huang = 0
     # #1366 预算只陈列结算前拟拨事实：京运补与中央份额分开。
-    rows = db.conn.execute(
-        """
-        SELECT id, manpower, salary_rate, owner_power, central_pay_share,
-               pay_source_region
-        FROM armies
-        WHERE owner_power = 'ming' AND is_tusi = 0 AND self_funded_pay = 0
-          AND central_pay_share > 0
-        """
-    ).fetchall()
+    rows = ArmyStore(db.conn).read_compute_budget_lines()
     army_map = {str(row["id"]): row for row in rows}
     ordered = [army_map[key] for key in ARMY_SALARY_PRIORITY if key in army_map]
     ordered += [row for row in rows if str(row["id"]) not in ARMY_SALARY_PRIORITY]
@@ -439,7 +288,7 @@ def compute_budget_lines(
     budget["国库"]["income"].extend(hub_income_lines)
     budget["国库"]["expense"].extend(army_pay_lines)
     budget["国库"]["expense"].extend(hub_expense_lines)
-    # 皇庄＝fiscal_config 基准（开局校准月额）＋ calc_province_fiscal 的没收藩田增量（开局 0）。
+    # 皇庄＝fiscal_config 基准（开局校准月额）＋没收藩田增量（开局 0）。
     huang_base = round(int(cfg.get("皇庄_base", 20)) * cfg.get("皇庄_rate", 100) / 100)
     budget["内库"]["income"].append(
         {"name": "皇庄", "amount": int(huang_base + nk_huang), "note": "皇庄月地租（基准+没收藩田增量）"}
@@ -459,9 +308,7 @@ def compute_budget_lines(
     # 建筑：按当前 condition 折算月产出/维护。内廷类维护扣内库，余扣国库；产出按 output_metric。
     bld_in = {"国库": 0, "内库": 0}
     bld_out = {"国库": 0, "内库": 0}
-    for r in db.conn.execute(
-        "SELECT category, condition, maintenance, output_metric, output_amount FROM buildings"
-    ).fetchall():
+    for r in BuildingStore(db.conn).read_compute_budget_lines():
         cond = max(0, min(100, int(r["condition"])))
         metric = str(r["output_metric"] or "")
         if metric in ("国库", "内库") and r["output_amount"]:
@@ -655,7 +502,7 @@ def _maybe_third_strike_defect(
     """
     if not (bool(new_latched) and int(new_mutiny_count) >= 3):
         return False
-    row = db.conn.execute("SELECT * FROM armies WHERE id = ?", (army_id,)).fetchone()
+    row = db.armies.row(army_id)
     if row is None:
         return False
     # 已非明军则不重复转移
@@ -689,9 +536,7 @@ class _HubOutboundResult(NamedTuple):
 def _substrate_hub_jingyun_due_by_region(db: GameDB) -> Dict[str, float]:
     """Read the existing province substrate 京运补 gross demand for the shared hub tier."""
     due_by_region: Dict[str, float] = {}
-    rows = db.conn.execute(
-        "SELECT id, fiscal FROM regions WHERE controlled_by = 'ming'"
-    ).fetchall()
+    rows = RegionStore(db.conn).read_province_army_pay_container_total()
     for row in rows:
         fiscal = load_stored_object(row["fiscal"], label=f"region {row['id']} fiscal")
         settle = fiscal.get("settle")
@@ -902,10 +747,7 @@ def _auto_pay_arrears_by_priority(
     # #44：受饷资格用 arrears>0（不再 maintenance_per_turn>0）。#44 把欠饷累计从 maintenance 改成
     # army_needed(salary_rate 派生)，二者已解耦——salary_rate>0 但 maintenance=0 的军会累 arrears 却被
     # 旧 filter 排除、拨饷永远散不到（cmr r2 claude）。arrears>0 本就隐含曾有应发（needed>0 才累）。
-    rows = db.conn.execute(
-        "SELECT * FROM armies "
-        "WHERE owner_power='ming' AND arrears>0"
-    ).fetchall()
+    rows = ArmyStore(db.conn).read_auto_pay_arrears_by_priority()
     if allowed_ids is not None:
         rows = [row for row in rows if str(row["id"]) in allowed_ids]
     army_map = {str(r["id"]): r for r in rows}
@@ -1009,7 +851,6 @@ def _pay_single_army_arrears(
     db.armies.update(str(row["id"]), {
         "province_pay_arrears": province_new,
         "central_pay_arrears": central_new,
-        "arrears": new_arrears,
     }, touch=False)
     db.armies.append_log({
         "turn": state.turn,
@@ -1167,9 +1008,7 @@ def _apply_economy_list(
             })
             continue
         if purpose == "补饷" and target_kind == "army" and delta < 0 and raw_target_id:
-            row = db.conn.execute(
-                "SELECT * FROM armies WHERE id = ?", (raw_target_id,)
-            ).fetchone()
+            row = db.armies.row(raw_target_id)
             if row is None:
                 applied.append({
                     "account": account,
@@ -1345,16 +1184,7 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
     db._current_month_central_pay_shortfalls = {}
     db._current_month_central_pay_dues = {}
     db._current_month_pay_opening_arrears = {}
-    army_rows_raw = db.conn.execute(
-        """
-        SELECT id, name, manpower, salary_rate, owner_power, arrears, morale, loyalty,
-               pay_source_region, province_pay_share, central_pay_share,
-               province_pay_arrears, central_pay_arrears, is_tusi, self_funded_pay
-        FROM armies
-        WHERE owner_power = 'ming' AND is_tusi = 0 AND self_funded_pay = 0
-          AND central_pay_share > 0
-        """
-    ).fetchall()
+    army_rows_raw = ArmyStore(db.conn).read_apply_fixed_period_flows()
     try:
         for row in army_rows_raw:
             db._validate_pay_source_values(
@@ -1466,9 +1296,7 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
         else:
             # Pure-central armies never enter the province substrate applier,
             # so this is their existing monthly settlement owner seam.
-            row_months = db.conn.execute(
-                "SELECT consecutive_pay_shortfall_months FROM armies WHERE id=?", (army_id,)
-            ).fetchone()
+            row_months = ArmyStore(db.conn).read_apply_fixed_period_flows_consecutive_pay_shortfall_months((army_id,))
             months = int(row_months["consecutive_pay_shortfall_months"] or 0) if row_months else 0
             new_months = months + 1 if shortfall > 1e-9 else 0
             db.armies.update(army_id, {
@@ -1480,7 +1308,6 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
 
         db.armies.update(army_id, {
             "central_pay_arrears": central_arrears,
-            "arrears": new_arrears,
             "morale": new_morale,
         })
         if shortfall > 0:
@@ -1561,10 +1388,7 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
 
     # ── #318 分叉前全军归一（legacy/hub 前一次；不挂资格子集）──
     # 1) 零兵先清闩（防误转流寇） 2) 旧存档第三振正兵力在 advance 可解闩前转出
-    for _pre_row in db.conn.execute(
-        "SELECT id, manpower, salary_rate, owner_power, is_mutinied, mutiny_count "
-        "FROM armies"
-    ).fetchall():
+    for _pre_row in ArmyStore(db.conn).read_apply_fixed_period_flows_id_manpower_salary_rate_owner_power_is_mutinied_mutiny_count():
         if army_needed(_pre_row) <= 0:
             _clear_zero_manpower_mutiny_latch(db, state, _pre_row)
             continue
@@ -1585,9 +1409,7 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
     # buildings 表 maintenance/output_amount 已是月值，不过 monthly_amount。
     # 产出按 condition/100 折算；output_metric 按建筑自报去向落（国库/内库/民心/皇威）。
     # 维护按 category 分账：内廷类(皇庄/织造/御窑等) 扣内库；其它(财政/军事/民生/科技/交通) 扣国库。
-    building_rows = db.conn.execute(
-        "SELECT id, name, category, condition, maintenance, output_metric, output_amount FROM buildings"
-    ).fetchall()
+    building_rows = BuildingStore(db.conn).read_apply_fixed_period_flows()
     for row in building_rows:
         bid = str(row["id"])
         name = str(row["name"])
@@ -1704,16 +1526,7 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
                 "sink_loss": taicang_sink_loss,
             })
         # ── #314 军心月度 tick（substrate_hub 统一，省级+中央结算后）──────────
-        loyalty_rows = db.conn.execute(
-            """
-            SELECT id, name, manpower, salary_rate, owner_power,
-                   arrears, province_pay_arrears, central_pay_arrears,
-                   loyalty, is_tusi, self_funded_pay, is_mutinied,
-                   mutiny_count, mutiny_probation, full_pay_streak, redemption_count
-            FROM armies
-            WHERE owner_power = 'ming' AND is_tusi = 0 AND self_funded_pay = 0
-            """
-        ).fetchall()
+        loyalty_rows = ArmyStore(db.conn).read_apply_fixed_period_flows_id_name_manpower_salary_rate_owner_power_arrears_province_pay_arr()
         for lr in loyalty_rows:
             full_needed_loyalty = army_needed(lr)
             if full_needed_loyalty <= 0:
@@ -2028,7 +1841,7 @@ def _apply_population_transfers(
                 f"跨省转移本票不做（#475 预留）：{source!r} → {target!r} 须同省",
             )
             continue
-        if db.conn.execute("SELECT 1 FROM regions WHERE id=?", (src_region,)).fetchone() is None:
+        if RegionStore(db.conn).read_assert_commission_grant_target_exists((src_region,)) is None:
             _reject("missing_ref", f"population_transfers 未知 region_id：{src_region!r}")
             continue
         reason = str(item.get("reason") or "").strip()
@@ -2078,14 +1891,8 @@ def _apply_population_transfers(
                 "item": item,
             })
             continue
-        src_row = db.conn.execute(
-            "SELECT population FROM classes WHERE name=? AND region_id=?",
-            (src_cls, src_region),
-        ).fetchone()
-        dst_row = db.conn.execute(
-            "SELECT population FROM classes WHERE name=? AND region_id=?",
-            (dst_cls, dst_region),
-        ).fetchone()
+        src_row = ClassStore(db.conn).read_apply_population_transfers((src_cls, src_region))
+        dst_row = ClassStore(db.conn).read_apply_population_transfers((dst_cls, dst_region))
         if src_row is None or dst_row is None:
             missing = source if src_row is None else target
             _reject(
@@ -2104,16 +1911,14 @@ def _apply_population_transfers(
             db.classes.add_population(name=src_cls, region_id=src_region, delta=-amount)
             db.classes.add_population(name=dst_cls, region_id=dst_region, delta=amount)
             db.classes.append_transfer(
-                turn=int(db.conn.execute("SELECT turn FROM game_state WHERE id=1").fetchone()[0]),
+                turn=int(ReignStateStore(db.conn).read_record_dossier_decision()[0]),
                 source=source,
                 target=target,
                 amount=amount,
                 reason=reason,
                 origin_ref=origin_ref,
             )
-        region_name = str(db.conn.execute(
-            "SELECT name FROM regions WHERE id=?", (src_region,)
-        ).fetchone()["name"] or "")
+        region_name = str(RegionStore(db.conn).read_apply_population_transfers((src_region,))["name"] or "")
         applied.append({
             "source": source,
             "target": target,

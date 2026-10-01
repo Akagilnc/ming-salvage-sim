@@ -16,6 +16,8 @@
 """
 
 from __future__ import annotations
+from ming_sim.entities.issue.store import IssueStore
+from ming_sim.entities.reign_state.store import ReignStateStore
 
 import codecs
 import json
@@ -1270,9 +1272,6 @@ _SECRET_PREFIXES = ("密令如下：", "密令如下:", "密令：", "密令:")
 # 只在「大臣有 active 密令 或 是妃嫔」时调（省 token）。
 
 
-
-
-
 def _directive_mode(value: object) -> Optional[str]:
     """Normalize the extractor's typed mode value, never player prose."""
     return {
@@ -2140,9 +2139,7 @@ def _pay_order_grounding_facts(content: Any, db: Any = None) -> str:
             lines.append(f"{name}=@{rid}")
     timing = ""
     if db is not None:
-        state = db.conn.execute(
-            "SELECT turn, year, period FROM game_state WHERE id=1"
-        ).fetchone()
+        state = ReignStateStore(db.conn).read_pay_order_grounding_facts()
         if state is not None:
             timing = (
                 f"当前结算时点：turn={int(state['turn'])}，"
@@ -2172,7 +2169,7 @@ def _pay_order_grounding_facts(content: Any, db: Any = None) -> str:
 
 def _ground_relative_pay_order_deadlines(result: Dict[str, Any], db: Any) -> Dict[str, Any]:
     """在既有抽取适配缝把结构化相对月数落成 active-through 绝对 turn。"""
-    row = db.conn.execute("SELECT turn FROM game_state WHERE id=1").fetchone()
+    row = ReignStateStore(db.conn).read_record_dossier_decision()
     if row is None:
         return result
     current_turn = int(row["turn"])
@@ -2659,10 +2656,7 @@ def _stalled_deliberation_push_facts(db: Any) -> str:
     """#658：自由下旨可强推的 stalled 廷议＋active issue 投影（候选相关切片）。"""
     if db is None:
         return ""
-    try:
-        rows = db.dossiers.list_dossiers(status="proposed")
-    except Exception:
-        return ""
+    rows = db.dossiers.list_dossiers(status="proposed")
     lines: List[str] = []
     for row in rows or []:
         try:
@@ -2672,11 +2666,7 @@ def _stalled_deliberation_push_facts(db: Any) -> str:
             if str(payload.get("deliberation_state") or "") != "stalled":
                 continue
             did = int(row["id"])
-            issue = db.conn.execute(
-                "SELECT id, title FROM issues WHERE origin_ref=? AND status='active' "
-                "LIMIT 1",
-                (f"dossier:{did}",),
-            ).fetchone()
+            issue = IssueStore(db.conn).read_stalled_deliberation_push_facts((f"dossier:{did}",))
             if issue is None:
                 continue
             # #1565/0142：题名只认结构化 title|target_id|既有 issue.title；
@@ -3263,7 +3253,6 @@ def extract_draft_intent(
     return _finalize_extract_with_combo(cand_result, needs_combo=needs_combo)
 
 
-
 # 八值 target_kind 真源在 decree_vocabulary.TARGET_KINDS（#654 / owner A 禁双定义）
 from ming_sim.decree_vocabulary import TARGET_KINDS as _VALID_DRAFT_TARGET_KINDS
 from ming_sim.execution_pressure import normalize_locality_scope as _normalize_locality_scope
@@ -3529,14 +3518,6 @@ def resubmit_draft_admission_payload(
     if _is_manual_special_decree_fallback(payload):
         raise ValueError("结算补交重写落空载 special_decree fallback")
     return payload
-
-
-
-
-
-
-
-
 
 
 def _matched_prefix(message: str, prefixes) -> Optional[str]:
@@ -4268,7 +4249,6 @@ def _extract_secret_order(
     if isinstance(raw, str) and raw:
         result["extract_raw"] = raw
     return result
-
 
 
 # 纯确认短句的原子片段：密令按钮当轮若【整句】只由这些片段拼成（如「可，照办」=可+照办、

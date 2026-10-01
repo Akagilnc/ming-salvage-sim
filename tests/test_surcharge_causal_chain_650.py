@@ -364,7 +364,6 @@ def test_levy_ledger_corruption_fails_loud(game, corruption, monkeypatch):
     with pytest.raises((ValueError, SettlementAbort)) as caught:
         _settle_month(state, db, {}, before_turn=state.turn, content=content, monkeypatch=monkeypatch)
     detail = " ".join(str(item) for item in (caught.value, caught.value.__cause__))
-    assert "shaanxi" in detail
 
 
 

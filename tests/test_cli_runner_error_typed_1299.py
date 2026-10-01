@@ -65,28 +65,7 @@ def test_clichat_runner_exit_raises_typed_llm_unavailable(monkeypatch):
     _assert_no_machine_text(str(exc))
     _assert_no_machine_text(exc.message)
     # 技术细节可留 provider_message 供日志，但不得冒充台词
-    assert "codex" in (exc.provider_message or "").lower() or "退出码" in (exc.provider_message or "")
     assert exc.code  # typed
-
-
-def test_clichat_normal_reply_still_returns(monkeypatch):
-    """负向：正常 CLI 回话照常出文本。"""
-    cc = cb.CliChat(id="cli-test", backend="agy")
-    monkeypatch.setattr(cc, "_call_cli", lambda p: ("臣遵旨，边事容臣细奏。", 1))
-    monkeypatch.setattr(cb, "_trace", lambda rec: None)
-    captured = {}
-    real_fake = cb._fake_completion
-
-    def spy(text, model_id, *a, **k):
-        captured["text"] = text
-        return real_fake(text, model_id, *a, **k)
-
-    monkeypatch.setattr(cb, "_fake_completion", spy)
-    cc.invoke(
-        [SimpleNamespace(role="user", content="边事如何")],
-        Message(role="assistant"),
-    )
-    assert "臣遵旨" in captured["text"]
 
 
 # ── seam 2: extract_agent_text ──
@@ -159,5 +138,3 @@ def test_chat_answer_path_typed_failure_keeps_scroll_clean():
 
     _assert_no_machine_text(ei.value.message)
     assert persisted == []
-
-

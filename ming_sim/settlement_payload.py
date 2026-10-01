@@ -1,6 +1,7 @@
 """结算 payload 的请旨解析与批红选项校验。请旨来自逐旨／世界段推演，不从邸报抽取。"""
 
 from __future__ import annotations
+from ming_sim.entities.issue.store import IssueStore
 
 import json
 import re
@@ -219,17 +220,7 @@ def bind_decisions_to_candidate_events(
 
 def list_due_commitments(db: GameDB, state: GameState) -> List[Dict[str, object]]:
     """到期的 form③ 一次性承诺供邸报作者读取；不自动结案。"""
-    rows = db.conn.execute(
-        """
-        SELECT * FROM issues
-        WHERE status='active'
-          AND commitment_kind != ''
-          AND end_turn > 0
-          AND end_turn <= ?
-        ORDER BY id
-        """,
-        (int(state.turn),),
-    ).fetchall()
+    rows = IssueStore(db.conn).read_list_due_commitments((int(state.turn),))
     due_commitments: List[Dict[str, object]] = []
     from ming_sim.staged_commitment import should_skip_form3_due_for_staged
     for row in rows:

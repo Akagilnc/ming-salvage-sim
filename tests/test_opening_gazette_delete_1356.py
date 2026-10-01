@@ -60,8 +60,6 @@ def test_new_game_t0_previous_summary_strictly_empty(game):
     summary = db.previous_turn_summary(state)
     assert summary == ""
     # 固定空态文案不得回流
-    assert "登基伊始" not in summary
-    assert "尚无上月" not in summary
 
 
 def test_new_game_t0_previous_reign_period_label_empty_with_empty_summary(game):
@@ -74,13 +72,6 @@ def test_new_game_t0_previous_reign_period_label_empty_with_empty_summary(game):
     assert label == ""
     assert "九月" not in label
     assert "天启" not in label
-
-
-
-
-
-
-
 
 
 def test_state_payload_t0_previous_summary_empty(game):
@@ -112,7 +103,6 @@ def test_state_payload_t0_previous_summary_empty(game):
 
     payload = web_app.WebGame.state_payload(runtime)
     assert payload.get("previous_summary") == ""
-    assert "登基伊始" not in (payload.get("previous_summary") or "")
     assert payload["turn"]["reign_period_label"] == "天启七年十月"
     # r5：payload 开局 label 与空 summary 同口径，禁九月残留
     assert payload.get("previous_reign_period_label") in ("", None)

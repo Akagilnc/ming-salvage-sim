@@ -10,6 +10,8 @@
 """
 
 from __future__ import annotations
+from ming_sim.entities.character.store import CharacterStore
+from ming_sim.entities.faction.store import FactionStore
 
 from typing import Any, Dict, Optional, Set, Tuple
 
@@ -248,10 +250,7 @@ def rebuild_centrifuge_cache(db: Any) -> None:
 def _resolve_target_faction_identity(
     conn: Any, target: str, *, turn: int
 ) -> Tuple[str, int]:
-    rows = conn.execute(
-        "SELECT faction, identity FROM characters WHERE name = ?",
-        (target,),
-    ).fetchall()
+    rows = CharacterStore(conn).read_resolve_target_faction_identity((target,))
     if len(rows) != 1:
         raise _abort(turn, f"target 精确命中必须恰好 1 行，得 {len(rows)}：{target!r}")
     row = rows[0]
@@ -259,9 +258,7 @@ def _resolve_target_faction_identity(
     if not isinstance(faction, str) or not faction.strip():
         raise _abort(turn, f"派生 faction 非法：{faction!r}")
     faction = str(faction)
-    fac_row = conn.execute(
-        "SELECT 1 FROM factions WHERE name = ?", (faction,)
-    ).fetchone()
+    fac_row = FactionStore(conn).read_resolve_target_faction_identity((faction,))
     if fac_row is None:
         raise _abort(turn, f"派生 faction 不在 factions 表：{faction!r}")
     identity = row["identity"]

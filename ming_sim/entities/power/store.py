@@ -36,6 +36,19 @@ def _checked(values: Mapping[str, object], *, allowed: frozenset[str]) -> list[s
 class PowerStore:
     """Single write port for a power and its logs."""
 
+    def rows(self, exclude_self: bool = False) -> Any:
+        where = "WHERE id != 'ming'" if exclude_self else ""
+        return self._conn.execute(
+            f"SELECT * FROM powers {where} ORDER BY CASE id "
+            "WHEN 'ming' THEN 0 WHEN 'houjin' THEN 1 WHEN 'mongol' THEN 2 "
+            "WHEN 'korea' THEN 3 WHEN 'japan' THEN 4 WHEN 'dutch' THEN 5 "
+            "WHEN 'bandits' THEN 6 ELSE 9 END, name",
+        ).fetchall()
+
+    def field_row(self, field: str, power_id: str) -> Any:
+        """Read a schema field already validated by the gate/subject consumer."""
+        return self._conn.execute(f"SELECT {field} FROM powers WHERE id=?", (power_id,)).fetchone()
+
     def __init__(self, conn: Any) -> None:
         self._conn = conn
 
@@ -78,3 +91,33 @@ class PowerStore:
             "new_aliases, reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             tuple(row.get(column) for column in _NAME_LOG_COLUMNS),
         )
+
+    def read_load_pending_gate_power_shadow_rows(self, params: Any = ()) -> Any:
+        return self._conn.execute('SELECT id, leverage, military_strength, supply FROM powers', params).fetchall()
+
+    def read_apply_bandit_absorptions(self, params: Any = ()) -> Any:
+        return self._conn.execute('SELECT id FROM powers WHERE id=?', params).fetchone()
+
+    def read_apply_issue_entities(self, params: Any = ()) -> Any:
+        return self._conn.execute('SELECT 1 FROM powers WHERE id=?', params).fetchone()
+
+    def read_strategic_event_result_preflight_error(self, params: Any = ()) -> Any:
+        return self._conn.execute('SELECT 1 FROM powers WHERE id = ? LIMIT 1', params).fetchone()
+
+    def read_transition_army_owner_power(self, params: Any = ()) -> Any:
+        return self._conn.execute('SELECT 1 FROM powers WHERE id = ?', params).fetchone()
+
+    def read_apply_power_rename(self, params: Any = ()) -> Any:
+        return self._conn.execute('SELECT * FROM powers WHERE id = ?', params).fetchone()
+
+    def read_turn_power_summary(self, params: Any = ()) -> Any:
+        return self._conn.execute('\n            SELECT pl.*, p.name AS power_name\n            FROM power_logs pl\n            JOIN powers p ON p.id = pl.power_id\n            WHERE pl.turn = ?\n            ORDER BY pl.id\n            LIMIT ?\n            ', params).fetchall()
+
+    def read_power_display_name(self, params: Any = ()) -> Any:
+        return self._conn.execute('SELECT name FROM powers WHERE id = ?', params).fetchone()
+
+    def read_find_pacification_target(self, params: Any = ()) -> Any:
+        return self._conn.execute('SELECT kind, leader, stance FROM powers WHERE id=?', params).fetchone()
+
+    def read_apply_character_power_changes(self, params: Any = ()) -> Any:
+        return self._conn.execute('SELECT id FROM powers', params).fetchall()

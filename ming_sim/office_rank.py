@@ -1,5 +1,6 @@
 """明制品级带与任命破格标记的确定性领域函数。"""
 from __future__ import annotations
+from ming_sim.entities.character.store import CharacterStore
 
 import re
 from typing import Any, Optional
@@ -153,14 +154,11 @@ def office_leverage_multiplier(office: object, already_normalized: bool = False)
     return max(office_weights, default=DEFAULT_LEVERAGE_MULTIPLIER)
 
 
-def _is_substantive_office(title: object) -> bool:
-    """备档认任命事实。品级词表只给品级，认不出不得把职名删成非实职。
-
-    已知非官身份（待铨、听用候铨、生员等）不覆盖既有历史。具体职名不是那些身份时
-    就是实职，不要求词干命中。职名为空时不建档，避免空白职名盖掉既有历史。
-    官职类别不参与这一判断。
-    """
+def _is_substantive_office(title: object, office_type: object = "") -> bool:
+    """Identity kinds are not offices; rank vocabulary does not gate new office titles."""
     text = canonical_office_title(title)
+    if str(office_type or "").strip() in {"身名分", "无名分"}:
+        return False
     if not text or any(label and label in text for label in _NON_OFFICES):
         return False
     return True
@@ -174,10 +172,7 @@ def appointment_break_rank(
     target = str(new_office or "").strip()
     target_type = str(new_office_type or "").strip()
     new_band = office_rank_band(target, target_type)
-    row = db.conn.execute(
-        "SELECT office,office_type,status,reason_code FROM characters WHERE name=?",
-        (person,),
-    ).fetchone()
+    row = CharacterStore(db.conn).read_appointment_break_rank((person,))
 
     historical = False
     current_title = ""
@@ -193,22 +188,9 @@ def appointment_break_rank(
             ))
         )
         if may_have_history:
-            archived = db.conn.execute(
-                """
-                SELECT o.office_title,
-                       (
-                         SELECT c.office_type FROM office_change_records c
-                         WHERE c.character_name=o.character_name
-                           AND c.office_title=o.office_title
-                         ORDER BY c.id DESC LIMIT 1
-                       ) AS office_type
-                FROM character_offices o
-                WHERE o.character_name=?
-                """,
-                (person,),
-            ).fetchone()
+            archived = CharacterStore(db.conn).read_appointment_break_rank_o_office_title_SELECT_c_office_type((person,))
             if archived is not None and _is_substantive_office(
-                archived["office_title"],
+                archived["office_title"], archived["office_type"],
             ):
                 historical = True
                 current_title = canonical_office_title(archived["office_title"])
@@ -217,7 +199,7 @@ def appointment_break_rank(
                 current_title = ""
                 current_type = ""
 
-    if not _is_substantive_office(current_title):
+    if not _is_substantive_office(current_title, current_type):
         broken = new_band <= FIRST_APPOINTMENT_HIGH_OFFICE_THRESHOLD
         return {
             "is_break_rank": broken,

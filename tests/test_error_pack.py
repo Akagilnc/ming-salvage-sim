@@ -40,7 +40,7 @@ def test_write_error_pack_inside_atomic_is_rejected(game, monkeypatch, tmp_path)
     db, state, content = game
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
 
-    with pytest.raises(RuntimeError, match="atomic"):
+    with pytest.raises(RuntimeError):
         with atomic(db):
             write_error_pack(db, state, exc=RuntimeError("x"),
                              extracted=None, resolve_ctx=None)

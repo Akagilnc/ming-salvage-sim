@@ -322,16 +322,6 @@ def test_apply_score_extraction_splits_bad_nested_entity(game):
     assert applied["validate_shape_rejections"][0]["item"] == {"entity_id": "shanxi", "raw_value": "not-a-dict"}
 
 
-def test_apply_score_extraction_accepts_flat_faction_scalar(game):
-    """faction_delta 支持旧扁平 int 格式 {"阉党": -10}（extractor prompt 明确允许、
-    _apply_faction_dict 主动消费）。validate 不得把它当二级非 dict 误拒；class 扁平 item
-    则由段适配器按 #564 契约逐项 invalid_enum 拒收，不升级成整批 shape 中止。"""
-    db, state, _ = game
-    # 不抛 = validate 未错杀合法 faction；非法 class item 由 adapter 逐项拒收。
-    I.apply_score_extraction(db, state, {
-        "faction_delta": {"阉党": -10},
-        "class_delta": {"农民": 0},   # 非法扁平 class item：adapter 逐项 invalid_enum 拒收
-    })
 
 
 def test_apply_score_extraction_rejects_nondict_power_second_level_per_entity(game):

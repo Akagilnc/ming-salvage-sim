@@ -19,6 +19,7 @@ issue 盘面事实，不新建 issue。event_id 绑定走 bind_decisions_to_cand
 """
 
 from __future__ import annotations
+from ming_sim.entities.character.store import CharacterStore
 
 import copy
 import json
@@ -1111,12 +1112,7 @@ def select_triage_actor(db: GameDB) -> Optional[Dict[str, str]]:
     `%掌印%`——御马监掌印太监与票拟/批红职权无关，不得成为分拣 actor。
     """
     for office_pattern in ("%首辅%", "%司礼监掌印%"):
-        row = db.conn.execute(
-            "SELECT name,office,faction FROM characters "
-            "WHERE status='active' AND power_id='ming' AND office LIKE ? "
-            "ORDER BY office_type,office,name LIMIT 1",
-            (office_pattern,),
-        ).fetchone()
+        row = CharacterStore(db.conn).read_select_triage_actor((office_pattern,))
         if row is not None:
             return {
                 "name": str(row["name"]),

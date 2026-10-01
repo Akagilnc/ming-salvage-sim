@@ -9,6 +9,8 @@
 """
 
 from __future__ import annotations
+from ming_sim.entities.character.store import CharacterStore
+from ming_sim.entities.issue.store import IssueStore
 
 import json
 from typing import Any, Dict, List, Optional
@@ -332,21 +334,17 @@ def resolve_host_character(db: Any, *, commitment_ref: int, dossier_id: Optional
     if dossier_id is not None:
         dossier = db.dossiers.get(int(dossier_id))
         if isinstance(dossier, dict):
-            roster = dossier.get("participant_roster") or []
-            if isinstance(roster, str):
-                roster = json.loads(roster)
+            from ming_sim.participant_roster import load_participant_roster
+            roster = load_participant_roster(dossier.get("participant_roster"))
             for item in roster or []:
                 if isinstance(item, dict) and str(item.get("tier") or "") == "主办":
                     name = str(item.get("character_id") or "").strip()
                     if name:
                         break
     if not name:
-        row = db.conn.execute(
-            "SELECT participants, participant_roster FROM issues WHERE id=?",
-            (int(commitment_ref),),
-        ).fetchone()
+        row = IssueStore(db.conn).read_resolve_host_character((int(commitment_ref),))
         if row is not None:
-            roster = json.loads(row["participant_roster"] or "[]")
+            roster = load_stored_list(row["participant_roster"], label='participant_roster')
             if not isinstance(roster, list):
                 raise ValueError("participant_roster 不是名单")
             for item in roster or []:
@@ -361,10 +359,7 @@ def resolve_host_character(db: Any, *, commitment_ref: int, dossier_id: Optional
                     name = str(parts[0]).strip()
     integrity, courage = 50, 50
     if name:
-        crow = db.conn.execute(
-            "SELECT integrity, courage FROM characters WHERE name=?",
-            (name,),
-        ).fetchone()
+        crow = CharacterStore(db.conn).read_resolve_host_character((name,))
         if crow is not None:
             try:
                 integrity = int(crow["integrity"])
@@ -454,9 +449,7 @@ def _record_commitment_urge(
 
 
 def _issue_exists(db: Any, commitment_ref: int) -> bool:
-    row = db.conn.execute(
-        "SELECT id FROM issues WHERE id=?", (int(commitment_ref),),
-    ).fetchone()
+    row = IssueStore(db.conn).read_issue_exists((int(commitment_ref),))
     return row is not None
 
 
@@ -482,10 +475,7 @@ def rush_staged_commitment_stage(
     if not _issue_exists(db, commitment_ref):
         raise ValueError(f"承诺 issue#{int(commitment_ref)} 不存在，不能催办")
 
-    row = db.conn.execute(
-        "SELECT id, stages_json, status, commitment_kind FROM issues WHERE id=?",
-        (int(commitment_ref),),
-    ).fetchone()
+    row = IssueStore(db.conn).read_rush_staged_commitment_stage((int(commitment_ref),))
     if str(row["status"] or "") != "active":
         raise ValueError(f"承诺 issue#{int(commitment_ref)} 状态 {row['status']}，不能催办")
 
@@ -539,9 +529,7 @@ def rush_staged_commitment_stage(
 
     host = resolve_host_character(db, commitment_ref=int(commitment_ref), dossier_id=None)
     # try dossier host if issue linked
-    origin_row = db.conn.execute(
-        "SELECT origin_ref FROM issues WHERE id=?", (int(commitment_ref),),
-    ).fetchone()
+    origin_row = IssueStore(db.conn).read_rush_staged_commitment_stage_origin_ref((int(commitment_ref),))
     dossier_id = None
     if origin_row is not None:
         ref = str(origin_row["origin_ref"] or "")

@@ -36,21 +36,8 @@ def _setup_army(db, aid, *, loyalty=50, arrears=0.0, manpower=10000,
     ming_paid = owner_power == "ming" and not is_tusi
     kept_arrears = float(arrears) if ming_paid else 0.0
     db.conn.execute(
-        """
-        UPDATE armies
-        SET owner_power=?, is_tusi=?, self_funded_pay=0,
-            manpower=?, salary_rate=?, loyalty=?, arrears=?, morale=50,
-            pay_source_region=?, province_pay_share=0, central_pay_share=?,
-            province_pay_arrears=0, central_pay_arrears=?
-        WHERE id=?
-        """,
-        (
-            owner_power, is_tusi, manpower, salary_rate, loyalty, kept_arrears,
-            "liaodong" if ming_paid else "",
-            1.0 if ming_paid else 0.0,
-            kept_arrears,
-            aid,
-        ),
+        '\n        UPDATE armies\n        SET owner_power=?, is_tusi=?, self_funded_pay=0,\n            manpower=?, salary_rate=?, loyalty=?, morale=50,\n            pay_source_region=?, province_pay_share=0, central_pay_share=?,\n            province_pay_arrears=0, central_pay_arrears=?\n        WHERE id=?\n        ',
+        (owner_power, is_tusi, manpower, salary_rate, loyalty, "liaodong" if ming_paid else "", 1.0 if ming_paid else 0.0, kept_arrears, aid,),
     )
 
 
@@ -75,11 +62,8 @@ def _run_months(db, state, months, *, fund_fully=True):
 def _seed_arrears_months(db, aid, months, needed):
     amount = months * needed
     db.conn.execute(
-        """UPDATE armies
-           SET arrears=?, province_pay_arrears=0, central_pay_arrears=?,
-               province_pay_share=0, central_pay_share=1, pay_source_region='liaodong'
-           WHERE id=?""",
-        (amount, amount, aid),
+        "UPDATE armies\n           SET  province_pay_arrears=0, central_pay_arrears=?,\n               province_pay_share=0, central_pay_share=1, pay_source_region='liaodong'\n           WHERE id=?",
+        (amount, aid,),
     )
     db.conn.commit()
 
@@ -211,10 +195,7 @@ def test_self_funded_army_untouched(game):
     db, state, _ = game
     _silence_other_armies(db, keep=(KEG,))
     db.conn.execute(
-        "UPDATE armies SET owner_power='ming', is_tusi=0, self_funded_pay=1, "
-        "manpower=10000, salary_rate=1.0, loyalty=50, arrears=0, "
-        "pay_source_region='', province_pay_share=0, central_pay_share=0, "
-        "province_pay_arrears=0, central_pay_arrears=0 WHERE id=?", (KEG,))
+        "UPDATE armies SET owner_power='ming', is_tusi=0, self_funded_pay=1, manpower=10000, salary_rate=1.0, loyalty=50, pay_source_region='', province_pay_share=0, central_pay_share=0, province_pay_arrears=0, central_pay_arrears=0 WHERE id=?", (KEG,))
     db.conn.commit()
     _run_months(db, state, 1)
     assert _loyalty_of(db, KEG) == 50, "自养军 loyalty 不得被 tick 动"
@@ -252,15 +233,7 @@ def test_substrate_hub_pure_province_source_loyalty_regression(game):
     aid = "fujian_navy"  # 种子纯省源 fujian 1.0/0.0
     _silence_other_armies(db, keep=(aid,))
     db.conn.execute(
-        """
-        UPDATE armies
-        SET owner_power='ming', is_tusi=0, self_funded_pay=0,
-            manpower=10000, salary_rate=1.0, loyalty=50, morale=50,
-            province_pay_share=1.0, central_pay_share=0.0,
-            pay_source_region='fujian',
-            province_pay_arrears=3.0, central_pay_arrears=0, arrears=3.0
-        WHERE id=?
-        """,
+        "\n        UPDATE armies\n        SET owner_power='ming', is_tusi=0, self_funded_pay=0,\n            manpower=10000, salary_rate=1.0, loyalty=50, morale=50,\n            province_pay_share=1.0, central_pay_share=0.0,\n            pay_source_region='fujian',\n            province_pay_arrears=3.0, central_pay_arrears=0\n        WHERE id=?\n        ",
         (aid,),
     )
     db.conn.commit()
@@ -285,15 +258,7 @@ def test_substrate_hub_hybrid_source_loyalty_regression(game):
     aid = "xuan_da"  # 种子混合 shanxi 0.55/0.45
     _silence_other_armies(db, keep=(aid,))
     db.conn.execute(
-        """
-        UPDATE armies
-        SET owner_power='ming', is_tusi=0, self_funded_pay=0,
-            manpower=10000, salary_rate=1.0, loyalty=50, morale=50,
-            province_pay_share=0.55, central_pay_share=0.45,
-            pay_source_region='shanxi',
-            province_pay_arrears=3.0, central_pay_arrears=0, arrears=3.0
-        WHERE id=?
-        """,
+        "\n        UPDATE armies\n        SET owner_power='ming', is_tusi=0, self_funded_pay=0,\n            manpower=10000, salary_rate=1.0, loyalty=50, morale=50,\n            province_pay_share=0.55, central_pay_share=0.45,\n            pay_source_region='shanxi',\n            province_pay_arrears=3.0, central_pay_arrears=0\n        WHERE id=?\n        ",
         (aid,),
     )
     db.conn.commit()

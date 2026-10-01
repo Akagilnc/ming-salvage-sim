@@ -11,6 +11,9 @@
 """
 
 from __future__ import annotations
+from ming_sim.entities.character.store import CharacterStore
+from ming_sim.entities.region.store import RegionStore
+from ming_sim.entities.reign_state.store import ReignStateStore
 
 import copy
 import json
@@ -486,14 +489,9 @@ def read_covert_task_contract(dossier: Mapping[str, object] | None) -> Optional[
     if not isinstance(payload, Mapping):
         raw_json = dossier.get("payload_json")
         if isinstance(raw_json, str) and raw_json.strip():
-            label = f"案卷#{dossier.get('id')} payload_json"
-            try:
-                loaded = json.loads(raw_json)
-            except (TypeError, ValueError) as exc:
-                raise ValueError(f"{label} 损坏") from exc
-            if not isinstance(loaded, Mapping):
-                raise ValueError(f"{label} 必须为对象")
-            payload = loaded
+            from ming_sim.applier import load_stored_object
+
+            payload = load_stored_object(raw_json, label=f"案卷#{dossier.get('id')} payload_json")
         else:
             payload = None
     if not isinstance(payload, Mapping):
@@ -578,17 +576,14 @@ def player_facing_secret_order_close_text(
 
 
 def minister_eligible_for_monthly_covert(db: Any, minister_name: str) -> bool:
-    row = db.conn.execute(
-        "SELECT 1 FROM characters WHERE name=? AND status='active'",
-        (str(minister_name or "").strip(),),
-    ).fetchone()
+    row = CharacterStore(db.conn).read_minister_eligible_for_monthly_covert((str(minister_name or "").strip(),))
     return row is not None
 
 
 def _current_game_turn(db: Any, turn: object = None) -> int:
     if turn is not None:
         return int(turn)
-    row = db.conn.execute("SELECT turn FROM game_state WHERE id=1").fetchone()
+    row = ReignStateStore(db.conn).read_record_dossier_decision()
     if row is not None:
         return int(row["turn"])
     return 0
@@ -691,14 +686,11 @@ def _delivery_matches_region(row: Mapping[str, object], delivery: Mapping[str, o
 
 
 def _dossier_payload_map(db: Any, dossier_id: int) -> Dict[str, object]:
-    label = f"案卷#{int(dossier_id)} payload_json"
-    try:
-        payload = json.loads(db.dossiers.payload_of(int(dossier_id)))
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"{label} 损坏") from exc
-    if not isinstance(payload, dict):
-        raise ValueError(f"{label} 必须为对象")
-    return payload
+    from ming_sim.applier import load_stored_object
+
+    return load_stored_object(
+        db.dossiers.payload_of(int(dossier_id)), label=f"案卷#{int(dossier_id)} payload_json",
+    )
 
 
 def live_investigation_fact_keys(db: Any, target: str) -> List[str]:
@@ -706,10 +698,7 @@ def live_investigation_fact_keys(db: Any, target: str) -> List[str]:
     if not name:
         return []
     keys: List[str] = []
-    row = db.conn.execute(
-        "SELECT seed_guilt FROM characters WHERE name=?",
-        (name,),
-    ).fetchone()
+    row = CharacterStore(db.conn).read_live_investigation_fact_keys((name,))
     if row is not None and seed_guilt_counts_as_debt(row["seed_guilt"]):
         keys.append(name)
     for edge in db.get_relation_edge_events(person=name, evidence=True):
@@ -718,29 +707,29 @@ def live_investigation_fact_keys(db: Any, target: str) -> List[str]:
 
 
 def _lanes_from_payload(payload: Mapping[str, object]) -> List[Dict[str, object]]:
-    raw = payload.get(FACT_LANES_KEY)
+    from ming_sim.applier import load_stored_list
+    from math import isfinite
+
     lanes: List[Dict[str, object]] = []
     seen: set[str] = set()
-    if isinstance(raw, list):
-        for item in raw:
-            if not isinstance(item, Mapping):
-                continue
-            key = str(item.get("fact_key") or "").strip()
-            if not key or key in seen:
-                continue
-            seen.add(key)
-            try:
-                progress = float(item.get("progress") or 0.0)
-            except (TypeError, ValueError):
-                progress = 0.0
-            reason = str(item.get("reason_code") or "").strip()
-            legal = reason in PERSON_LEGAL_REASON_CODES
-            lanes.append({
-                "fact_key": key,
-                "progress": max(0.0, progress),
-                "used": bool(item.get("used")) and legal,
-                "reason_code": reason if legal else "",
-            })
+    for item in load_stored_list(payload.get(FACT_LANES_KEY), label=FACT_LANES_KEY):
+        if not isinstance(item, Mapping):
+            raise ValueError("持久事实段须为对象")
+        key = item.get("fact_key")
+        if not isinstance(key, str) or not key.strip() or key in seen:
+            raise ValueError("持久事实段 fact_key 须为不重复的非空文字")
+        seen.add(key)
+        progress = float(item.get("progress", 0.0))
+        if not isfinite(progress) or progress < 0:
+            raise ValueError("持久事实段 progress 须为非负有限数")
+        reason = item.get("reason_code", "")
+        if not isinstance(reason, str) or (reason and reason not in PERSON_LEGAL_REASON_CODES):
+            raise ValueError("持久事实段 reason_code 非法")
+        lanes.append({
+            "fact_key": key, "progress": progress,
+            "used": bool(item.get("used")) and reason in PERSON_LEGAL_REASON_CODES,
+            "reason_code": reason,
+        })
     return lanes
 
 
@@ -750,13 +739,9 @@ def globally_used_fact_keys(db: Any, *, except_dossier_id: int = 0) -> set[str]:
     for row_id, payload_json in db.dossiers.all_payloads():
         if skip and int(row_id) == skip:
             continue
-        label = f"案卷#{int(row_id)} payload_json"
-        try:
-            payload = json.loads(payload_json)
-        except (TypeError, ValueError) as exc:
-            raise ValueError(f"{label} 损坏") from exc
-        if not isinstance(payload, Mapping):
-            raise ValueError(f"{label} 必须为对象")
+        from ming_sim.applier import load_stored_object
+
+        payload = load_stored_object(payload_json, label=f"案卷#{int(row_id)} payload_json")
         for lane in _lanes_from_payload(payload):
             if lane.get("used"):
                 used.add(str(lane["fact_key"]))
@@ -810,13 +795,9 @@ def read_substantiated_legal_reason_code(
     if not name or not key:
         return ""
     for row_id, payload_json in db.dossiers.all_payloads():
-        label = f"案卷#{int(row_id)} payload_json"
-        try:
-            payload = json.loads(payload_json)
-        except (TypeError, ValueError) as exc:
-            raise ValueError(f"{label} 损坏") from exc
-        if not isinstance(payload, Mapping):
-            raise ValueError(f"{label} 必须为对象")
+        from ming_sim.applier import load_stored_object
+
+        payload = load_stored_object(payload_json, label=f"案卷#{int(row_id)} payload_json")
         contract = payload.get(CONTRACT_KEY) if isinstance(payload.get(CONTRACT_KEY), Mapping) else {}
         if _investigation_target_of(contract) != name:
             continue
@@ -965,11 +946,7 @@ def originated_quantity_this_turn(
             origin, turn=current, action=action,
         ))
     if "region_delta" in fields:
-        rows = db.conn.execute(
-            "SELECT region_id, field, new_value, delta FROM region_logs "
-            "WHERE origin_ref=? AND turn=?",
-            (origin, current),
-        ).fetchall()
+        rows = RegionStore(db.conn).read_originated_quantity_this_turn((origin, current))
         for row in rows:
             if _delivery_matches_region(row, delivery):
                 qty += abs(float(row["delta"] or 0))

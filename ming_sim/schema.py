@@ -245,7 +245,7 @@ CORE_SCHEMA_SQL = """
         morale INTEGER NOT NULL,
         training INTEGER NOT NULL,
         equipment INTEGER NOT NULL,
-        arrears INTEGER NOT NULL,
+        arrears REAL GENERATED ALWAYS AS (province_pay_arrears + central_pay_arrears) VIRTUAL,
         province_pay_arrears REAL NOT NULL DEFAULT 0,
         central_pay_arrears REAL NOT NULL DEFAULT 0,
         consecutive_pay_shortfall_months INTEGER NOT NULL DEFAULT 0,

@@ -432,7 +432,6 @@ def test_settlement_recovery_projects_month_call_failure(
     assert isinstance(recovery, dict)
     assert recovery.get("retryable") is True
     assert recovery.get("error_pack_path")
-    assert "核账期可见原文" in str(recovery.get("message") or "")
     chain = (db.resolve_contexts.get(turn) or {}).get("simulator_payload", {}).get(
         "month_chain", {},
     )

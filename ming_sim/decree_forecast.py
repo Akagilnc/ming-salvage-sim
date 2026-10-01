@@ -73,8 +73,9 @@ def _payload_dict(candidate: Dict[str, Any]) -> Dict[str, Any]:
     raw = candidate.get("payload_json")
     if raw in (None, ""):
         return {}
-    loaded = json.loads(str(raw))
-    return loaded if isinstance(loaded, dict) else {}
+    from ming_sim.applier import load_stored_object
+
+    return load_stored_object(raw, label="预推案卷 payload_json")
 
 
 def _this_decree_fact(
