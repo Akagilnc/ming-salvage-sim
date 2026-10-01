@@ -219,10 +219,7 @@ def test_enter_review_does_not_clobber_settling(game):
 
 def test_advance_without_edict_refused_after_settling(game):
     """#1274 r1：空壳已删；settling 恢复归 session.resolve_turn，不再经独立退朝壳拒绝。"""
-    import ming_sim.decree as decree_mod
     from ming_sim.decree import pre_settle
-
-    assert not hasattr(decree_mod, "advance_without_edict")
 
     db, state, content = game
     turn = state.turn
@@ -314,11 +311,8 @@ def test_sticky_phases_cover_awaiting_decision(game):
 
 def test_advance_without_edict_refused_at_awaiting(game):
     """#1274 r1：空壳已删；awaiting 由 session.resolve_turn 幂等返回决策，不经退朝壳拒绝。"""
-    import ming_sim.decree as decree_mod
     from ming_sim.decree import pre_settle
     from ming_sim.session import GameSession
-
-    assert not hasattr(decree_mod, "advance_without_edict")
 
     db, state, content = game
     turn = state.turn

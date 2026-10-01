@@ -133,8 +133,8 @@ describe("empty bar label presentation (#626)", () => {
     const cleanup = render(
       <SituationDetailModal issue={makeIssue()} onClose={() => undefined} />
     );
-    const heads = Array.from(document.querySelectorAll(".situation-tip-outcome-head"));
-    const headText = heads.map((el) => el.textContent || "").join("\n");
+    expect(document.body.textContent).toContain(makeIssue().bar_good_meaning);
+    expect(document.body.textContent).toContain(makeIssue().bar_bad_meaning);
     cleanup();
   });
 

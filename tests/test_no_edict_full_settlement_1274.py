@@ -75,11 +75,7 @@ def test_no_edict_advance_runs_full_settlement_chain(game, monkeypatch):
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_no_edict_fast_path_branch_is_dead(game, monkeypatch):
     """负向：快路壳已删；空旨过月走世界段，不推进、不走 extractor。"""
-    # 1) grep 级缺席：生产码不再定义/导出 advance_without_edict 快路壳
-    import ming_sim.decree as decree_pkg
-    assert not hasattr(decree_pkg, "advance_without_edict")
-
-    # 2) 行为层：空旨 resolve_directives 必调 simulator
+    # 空旨 resolve_directives 必调 simulator
     db, state, content = game
     closed_turn = int(state.turn)
     sim_calls = []

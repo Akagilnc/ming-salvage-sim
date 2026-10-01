@@ -881,10 +881,9 @@ def test_rewritten_archive_cannot_reintroduce_restricted_source(game):
     )
     db.save_turn_report(state, "聚合邸报改写：有人暗中安排了不应知晓的事务。")
 
-    excluded_text = " ".join(
-        item.get("body", "")
-        for item in db.get_character_knowledge(state, excluded.name)["public_events"]
-    )
+    excluded_events = db.get_character_knowledge(state, excluded.name)["public_events"]
+    assert not any(event["source_id"] == "test:rewritten-secret" for event in excluded_events)
+    assert not any(event["kind"] == "turn_report" for event in excluded_events)
 
 def test_archive_write_materializes_unmirrored_source_scope(game):
     """结算保存聚合档案时，不能丢掉先写入的受限事项来源边界。"""

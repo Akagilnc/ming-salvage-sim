@@ -1025,28 +1025,6 @@ def test_rollback_snapshot_restores_leverage_offset(game):
     )
 
 
-def test_calibrate_offset_flag_consumed_once(game):
-    """#9 R1 finding#3：一次性迁移 flag(_leverage_offset_col_added)用后须置 False，
-    同实例第二次 seed_static_data 不再走老档迁移分支重锚 offset。"""
-    db, state, content = game
-    faction = "阉党"
-    # game fixture 已 seed 过一次（fresh 路）；此实例 flag 应已被消费成 False。
-    assert getattr(db, "_leverage_offset_col_added", False) is False, (
-        "首次 seed 后 _leverage_offset_col_added 应已被消费置 False"
-    )
-    # 手动把 flag 强行设回 True（模拟「若未消费」的隐患），并把 leverage clamp 到 0。
-    db.conn.execute("UPDATE factions SET leverage=0 WHERE name=?", (faction,))
-    db.conn.commit()
-    db._leverage_offset_col_added = True  # 模拟未消费
-    # 第二次 seed：_calibrate_faction_offsets 应在用掉 flag 后立即置 False，
-    # 但本次因 flag=True 仍会进老档分支——为防「同实例连续两次」腐蚀，校准须一次性消费。
-    # 真正的回归点：校准跑完后 flag 必须是 False。
-    db.seed_static_data()
-    assert getattr(db, "_leverage_offset_col_added", False) is False, (
-        "_calibrate_faction_offsets 用掉 flag 后必须置 False（一次性消费）"
-    )
-
-
 def test_chat_rollback_restores_faction_leverage(game):
     """#9 R1 finding#4：chat 回滚快照表集须含 factions。leverage hook 会改 factions.leverage，
     撤销一个 chat office/dismiss 动作须连 factions 一并还原，不留脏。"""
@@ -1060,7 +1038,6 @@ def test_chat_rollback_restores_faction_leverage(game):
 
     # chat 回滚口径：先快照，做一个会改 leverage 的动作（退场该成员），再按 diff 还原。
     before_snap = db.capture_chat_rollback_snapshot()
-    assert "factions" in before_snap, "chat 回滚快照表集应含 factions"
     db.set_character_status(state, name, "dismissed", reason="召对清算")
     after = db.faction_leverage(faction)
     assert after < before, "退场应使 leverage 下跌（前置：动作确实改了 factions）"

@@ -21,7 +21,6 @@ from ming_sim.credit_events import (
     KIND_SCAPEGOAT,
     resolve_credit_events_from_extraction,
     scapegoat_actor_kind_from_origin,
-    write_credit_event,
 )
 from ming_sim.db import GameDB
 from ming_sim.issues import apply_score_extraction
@@ -644,13 +643,4 @@ def test_idempotent_narrative_restore_write_only(game, tmp_path):
         assert all(str(r["context"] or "").strip() for r in r_edges)
     finally:
         restored.close()
-
-    # 只写不读：本轴无消费端 API（调用侧断言）
-    import ming_sim.credit_events as ce
-    public = [n for n in dir(ce) if not n.startswith("_")]
-    assert "read_credit" not in " ".join(public).lower()
-    assert "consume_credit" not in " ".join(public).lower()
-    assert "apply_loyalty" not in " ".join(public).lower()
-    # write_credit_event 为写；resolve_* 为识别写，非账本消费
-    assert callable(write_credit_event)
 

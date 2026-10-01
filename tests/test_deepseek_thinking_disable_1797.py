@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -208,6 +209,9 @@ def test_dump_llm_messages_records_reasoning_usage_finish_reason(monkeypatch, tm
     # reasoning：字段正文（不锁 dump 字数/标签模板）
     assert "思考过程甲" in text
     assert "中转 reasoning 正文" in text
+    # Decode the embedded JSON value, not dump labels, spacing or key order.
+    usage, _ = json.JSONDecoder().raw_decode(text[text.index("{"):])
+    assert usage == vars(metrics)
 
     # 有值演练：只种 RunOutput.model_provider_data 字面键（bounce 明示允许）
     dump_path.write_text("", encoding="utf-8")

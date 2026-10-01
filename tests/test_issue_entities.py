@@ -328,10 +328,12 @@ def test_apply_score_extraction_accepts_flat_faction_scalar(game):
     则由段适配器按 #564 契约逐项 invalid_enum 拒收，不升级成整批 shape 中止。"""
     db, state, _ = game
     # 不抛 = validate 未错杀合法 faction；非法 class item 由 adapter 逐项拒收。
-    I.apply_score_extraction(db, state, {
+    applied = I.apply_score_extraction(db, state, {
         "faction_delta": {"阉党": -10},
         "class_delta": {"农民": 0},   # 非法扁平 class item：adapter 逐项 invalid_enum 拒收
     })
+    assert applied["faction_delta"] == {"阉党": -10}
+    assert applied["class_delta_rejections"][0]["category"] == "invalid_enum"
 
 
 def test_apply_score_extraction_rejects_nondict_power_second_level_per_entity(game):
@@ -353,7 +355,11 @@ def test_apply_score_extraction_tolerates_null_field(read_game):
     不抛 ValueError(apply 本就 `.get(key) or {}` 容忍)。"""
     db, state, _ = read_game
     # region_delta=None(null)+ army_delta=None,均应被当空 no-op 放行,不抛。
+    before_regions = [tuple(row) for row in db.conn.execute("SELECT * FROM regions ORDER BY id")]
+    before_armies = [tuple(row) for row in db.conn.execute("SELECT * FROM armies ORDER BY id")]
     I.apply_score_extraction(db, state, {"region_delta": None, "army_delta": None})
+    assert [tuple(row) for row in db.conn.execute("SELECT * FROM regions ORDER BY id")] == before_regions
+    assert [tuple(row) for row in db.conn.execute("SELECT * FROM armies ORDER BY id")] == before_armies
 
 
 def test_apply_score_extraction_rejects_unknown_top_level_key(game):

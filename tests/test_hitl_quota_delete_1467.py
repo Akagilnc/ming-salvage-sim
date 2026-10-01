@@ -10,21 +10,10 @@ web/src 前端面不源码扫描：TS 选择器形状与界面文案不是本仓
 
 from __future__ import annotations
 
-import ming_sim.llm_config as llm_config
-import ming_sim.simulation as simulation
 import web_app
 
 
 def test_hitl_quota_mechanism_fully_deleted():
     """机制缺席：配置读写/loader/API 端点全部不在。"""
-    assert not hasattr(llm_config, "GAME_SETTINGS_DEFAULTS")
-    assert not hasattr(llm_config, "load_runtime_game")
-    assert not hasattr(llm_config, "save_runtime_game")
-    assert not hasattr(llm_config, "RUNTIME_GAME_PATH")
-    assert not hasattr(simulation, "_load_hitl_min_decisions")
-
-    assert not hasattr(web_app, "GameSettingsRequest")
-    assert not hasattr(web_app, "api_menu_game_settings")
-    assert not hasattr(web_app, "api_menu_save_game_settings")
     paths = {getattr(route, "path", None) for route in web_app.app.routes}
     assert "/api/menu/game_settings" not in paths

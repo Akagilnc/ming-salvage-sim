@@ -183,9 +183,11 @@ def test_decree_commitment_does_not_dedup_same_name_income_fiscal_create(game, m
 
 
 def test_decree_commitment_same_account_alias_miss_keeps_distinct_fiscal_item(game, monkeypatch):
-    """Different categories in the same account remain distinct fiscal items."""
+    """Unmatched expense remains distinct and its supplied name is observable."""
     db, state, content = game
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    logs = []
+    monkeypatch.setattr(I, "tlog", logs.append)
 
     out = I.apply_score_extraction(
         db,
@@ -234,6 +236,7 @@ def test_decree_commitment_same_account_alias_miss_keeps_distinct_fiscal_item(ga
         "SELECT COUNT(*) FROM fiscal_config WHERE key IN "
         "('xuguangqi_gongfei_base', 'xuguangqi_gongfei_rate')"
     ).fetchone()[0] >= 1
+    assert any(fiscal_result["display"] in entry for entry in logs)
 
 
 def test_decree_commitment_unrelated_account_keeps_fiscal_item(game, monkeypatch):

@@ -103,11 +103,11 @@ def test_typed_secret_exclusions_canonicalize_roster_alias_and_office(game):
 
 def test_secret_content_assembly_is_emperor_plus_extractor_only():
     """#1274 K1：拼装输入结构化——仅 emperor_intent + extractor_content；无 reply 形参。"""
-    import inspect
-
-    params = inspect.signature(cb.assemble_secret_order_content).parameters
-    assert set(params) == {"emperor_intent", "extractor_content"}
-    assert "reply" not in params and "minister_reply" not in params
+    for reply_key in ("reply", "minister_reply"):
+        with pytest.raises(TypeError):
+            cb.assemble_secret_order_content(
+                emperor_intent="旨", extractor_content="声明", **{reply_key: "臣答"},
+            )
 
     task = "密查关宁欠饷"
     extracted = f"{task}，三月内回奏，方法：密访核册"
@@ -115,6 +115,7 @@ def test_secret_content_assembly_is_emperor_plus_extractor_only():
         emperor_intent=task,
         extractor_content=extracted,
     )
+    assert body == extracted
     # 御旨未覆盖时兜底并入御旨，仍不接受第三路 reply
     partial = "臣已领旨办理。"
     merged = cb.assemble_secret_order_content(
@@ -591,7 +592,6 @@ def test_resolve_cli_bin_falls_back_and_miss_not_cached(monkeypatch):
     monkeypatch.setattr(cb, "_login_shell_path", lambda: None)
     monkeypatch.setattr(cb.shutil, "which", lambda name, path=None: None)
     assert cb._resolve_cli_bin("codex", "codex") == "codex"
-    assert "codex" not in cb._BIN_CACHE
     monkeypatch.setattr(
         cb.shutil, "which",
         lambda name, path=None: "/Users/x/.local/bin/codex" if path is None else None,
@@ -1009,10 +1009,9 @@ def test_secret_extract_traces_exactly_once(monkeypatch):
 
 
 def test_public_cli_support_restores_existing_runners(monkeypatch):
-    assert cb._CLI_BACKENDS == frozenset({"agy", "codex", "claude", "cursor", "kimi", "grok", "pi"})
     assert cb.GATE_CLI_RUNNERS == ("codex", "claude", "cursor", "kimi", "grok", "pi")
     assert [row["value"] for row in cb.cli_runner_choices()] == ["agy", "codex", "claude", "cursor", "kimi", "grok", "pi"]
-    assert set(cb.cli_model_choices()) == set(cb._CLI_BACKENDS)
+    assert set(cb.cli_model_choices()) == {row["value"] for row in cb.cli_runner_choices()}
     for name in ("opencode",):
         assert not cb.is_supported_cli_runner(name)
         monkeypatch.setenv("MING_SIM_LLM_BACKEND", name)

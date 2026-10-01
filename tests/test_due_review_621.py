@@ -550,10 +550,6 @@ def test_three_beat_timing_todo_then_scene_then_slot(game, monkeypatch):
     assert db.list_next_audience_todos(status=TODO_STATUS_PENDING) == []
 
 
-def test_five_module_extractor_fanout_is_retired():
-    from ming_sim import simulation
-    assert not hasattr(simulation, "EXTRACTION_MODULES")
-    assert not hasattr(simulation, "extract_scores_by_modules_with_agno")
 
 
 def test_due_review_settle_does_not_pause_or_decision(game, monkeypatch):

@@ -1200,9 +1200,6 @@ def test_final_decree_edit_path_removed_no_bypass(game):
         },
     )
 
-    assert not hasattr(GameSession, "set_decree")
-    assert not hasattr(web_app, "api_edit_decree")
-    assert not hasattr(web_app, "EditDecreeRequest")
     paths = {getattr(r, "path", None) for r in web_app.app.routes}
     assert "/api/decree" not in paths or not any(
         getattr(r, "path", None) == "/api/decree"

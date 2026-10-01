@@ -1019,18 +1019,14 @@ def test_657_s1_schema_columns_and_no_banned_fields(game):
     ]
     assert idx_sql and "origin_ref" in idx_sql[0] and "origin_ref != ''" in idx_sql[0].replace('"', "")
 
-def test_657_s1_rescript_emitted_set_subset_of_dossier(game):
+def test_657_s1_rescript_emitted_set_subset_of_dossier():
     """A12 前置（#1778 后）：只剩 emitted 闭集 ⊂ DOSSIER；七类 routable 已整体取消。"""
-    import ming_sim.decree_vocabulary as dv
     from ming_sim.decree_vocabulary import (
         DOSSIER_ACTION_TYPES,
         RESCRIPT_EMITTED_DOSSIER_ACTION_TYPES,
     )
     assert RESCRIPT_EMITTED_DOSSIER_ACTION_TYPES <= DOSSIER_ACTION_TYPES
     assert "dismiss_assignment" in RESCRIPT_EMITTED_DOSSIER_ACTION_TYPES
-    assert not hasattr(dv, "RESCRIPT_ROUTABLE_ACTION_TYPES")
-    assert not hasattr(dv, "NATIONAL_FANOUT_ACTION_TYPES")
-    _ = game  # fixture keeps DB init path green
 
 def test_657_s1_derive_draft_capability_stable_and_sensitive():
     """capability：同字段稳定；闭集任一有效差改变键。"""

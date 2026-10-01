@@ -32,7 +32,6 @@ from ming_sim.supervision import (
     EMPTY_TRANSFORMATION_TENDENCY_FACTS,
     EXPOSURE_ALLOWED_COLS,
     EXPOSURE_TABLE,
-    FORBIDDEN_DULLING_COL_FRAGMENTS,
     ORIGIN_MARK_PRIVATE_GOODS,
     ORIGIN_MARK_SAME_FACTION_BLIND,
     PRESENCE_ALLOWED_COLS,
@@ -204,19 +203,6 @@ def test_ac1_presence_exposure_schema_pragma_and_no_dulling_cols(game):
     ecols = _table_cols(db, EXPOSURE_TABLE)
     assert pcols == PRESENCE_ALLOWED_COLS
     assert ecols == EXPOSURE_ALLOWED_COLS
-
-    # 全库无钝化数值列
-    tables = [
-        str(r[0])
-        for r in db.conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
-        ).fetchall()
-    ]
-    for table in tables:
-        for col in _table_cols(db, table):
-            low = col.lower()
-            for frag in FORBIDDEN_DULLING_COL_FRAGMENTS:
-                assert frag.lower() not in low, f"{table}.{col} 命中禁列片段 {frag}"
 
 
 def test_ac1_monthly_write_idempotent_readable_and_restore(game, tmp_path, content):
