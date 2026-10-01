@@ -704,12 +704,12 @@ def test_883_only_explicit_leak_conclusion_promotes_secret_order_to_public(game)
         content=content,
     )
     assert shown["secret_order_updates"][0]["disclosed"] is True
-    public_events = db._character_knowledge_events("")
-    assert any(
-        str(item.get("source_id") or "").startswith("secret_order_disclosure:")
-        and "密事已公开883" in (item.get("body") or "")
-        for item in public_events
-    )
+    prefix = f"secret_order_disclosure:{oid}:"
+    disclosed = [
+        item for item in db._character_knowledge_events("")
+        if str(item.get("source_id") or "").startswith(prefix)
+    ]
+    assert len(disclosed) == 1
 
 
 def test_883_cross_turn_repeat_disclosed_does_not_mint_duplicate_public_event(game):

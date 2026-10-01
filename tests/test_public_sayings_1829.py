@@ -81,18 +81,19 @@ def test_absent_minister_reads_saying_not_actual_status(game):
     reader = _礼部大臣(content)
     assert reader.name != "袁崇焕"
 
-    record_public_saying(
+    saying_id = record_public_saying(
         db,
         state,
         "袁崇焕已死于宁远",
         involved_characters=["袁崇焕"],
     )
+    source_id = f"public_saying:{saying_id}"
 
     view = db.get_character_knowledge(state, reader.name)
     public = view["public_events"]
     saying = next(
         item for item in public
-        if str(item.get("source_id") or "").startswith("public_saying:")
+        if str(item.get("source_id") or "") == source_id
     )
     assert saying["title"] == "有此说法"
     assert saying["body"] == "袁崇焕已死于宁远"
@@ -201,13 +202,14 @@ def test_public_saying_survives_same_turn_archive_projection(game):
     db, state, content = game
     reader = _礼部大臣(content)
     claim = "袁崇焕已死于宁远"
-    record_public_saying(db, state, claim, involved_characters=["袁崇焕"])
+    saying_id = record_public_saying(db, state, claim, involved_characters=["袁崇焕"])
+    source_id = f"public_saying:{saying_id}"
     db.save_turn_report(state, f"本月邸报亦录：{claim}", public_body=f"本月邸报亦录：{claim}")
 
     view = db.get_character_knowledge(state, reader.name)
     saying = next(
         item for item in view["public_events"]
-        if str(item.get("source_id") or "").startswith("public_saying:")
+        if str(item.get("source_id") or "") == source_id
     )
     assert saying["title"] == "有此说法"
     assert saying["body"] == claim
