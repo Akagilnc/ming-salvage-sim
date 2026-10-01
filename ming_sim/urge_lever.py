@@ -13,6 +13,8 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, List, Optional
 
+from ming_sim.applier import load_stored_list
+
 from ming_sim.staged_commitment import (
     ENTRY_KIND_GRACE_PLEA,
     ENTRY_KIND_RUSH_REMONSTRANCE,
@@ -354,10 +356,7 @@ def resolve_host_character(db: Any, *, commitment_ref: int, dossier_id: Optional
                         name = cand
                         break
             if not name:
-                try:
-                    parts = json.loads(row["participants"] or "[]")
-                except (TypeError, ValueError):
-                    parts = []
+                parts = load_stored_list(row["participants"], label="participants")
                 if parts:
                     name = str(parts[0]).strip()
     integrity, courage = 50, 50

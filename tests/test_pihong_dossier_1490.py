@@ -864,7 +864,7 @@ def test_657_return_revise_round_prior_and_clear_anchor(web_game, monkeypatch):
         assert int(hit['revision_round'] or 0) == 1
         assert (hit['choice'] or {}).get('action') == 'return_revise'
         assert len(hit['prior_options_json'] or []) == 1
-        ctx = probe.get_resolve_context(int(probe.load_state().turn))
+        ctx = probe.resolve_contexts.get(int(probe.load_state().turn))
         assert ctx is None or ctx.get('extracted') is None
         new_labels = [str(o.get('label') or '') for o in hit['options'] or []]
         assert '新拟甲' in new_labels
@@ -926,13 +926,11 @@ def test_657_prewrite_failure_zero_db_writes(game):
 def test_657_abi_mapper_matrix_a1_a12(game):
     """A1–A12：map 正/负 + 判后 follow/midzhi→apply 链（补 A5/A6/A11）。"""
     from ming_sim import rescript_actions as ra
-    import ming_sim.decree_vocabulary as dv
     from ming_sim.decree_vocabulary import DOSSIER_ACTION_TYPES, RESCRIPT_EMITTED_DOSSIER_ACTION_TYPES
     from ming_sim.rescript_draft import normalize_rescript_layer_a_option
     db, state, content = game
     assert RESCRIPT_EMITTED_DOSSIER_ACTION_TYPES < DOSSIER_ACTION_TYPES
     assert 'dismiss_assignment' in RESCRIPT_EMITTED_DOSSIER_ACTION_TYPES
-    assert not hasattr(dv, 'RESCRIPT_ROUTABLE_ACTION_TYPES')
     cols = {r[1] for r in db.conn.execute('PRAGMA table_info(decree_dossiers)').fetchall()}
     assert 'rescript_origin' not in cols
     ministers = db.conn.execute("SELECT name FROM characters WHERE status='active' AND power_id='ming' ORDER BY name LIMIT 2").fetchall()
@@ -1495,7 +1493,7 @@ def test_657_mixed_batch_follow_plus_decision_and_no_context_copy(web_game, monk
         by_key = {str(row['decision_key']): row for row in decs}
         assert (by_key[d_key]['choice'] or {}).get('label') == '打回'
         assert by_key[grant_key]['choice'] == {'decision_key': grant_key, 'label': '发内帑', 'hint': '', 'action': 'decision'}
-        ctx = probe.get_resolve_context(int(probe.load_state().turn))
+        ctx = probe.resolve_contexts.get(int(probe.load_state().turn))
         assert ctx is None or ctx.get('extracted') is None
         mid_dossiers = len(probe.dossiers.list_dossiers())
         assert mid_dossiers > dossiers_before
@@ -1510,7 +1508,7 @@ def test_657_mixed_batch_follow_plus_decision_and_no_context_copy(web_game, monk
         assert len(probe.dossiers.list_dossiers()) == mid_dossiers
         decs = probe.list_pending_decisions(int(probe.load_state().turn))
         assert not decs or all((d.get('status') == 'decided' for d in decs))
-        ctx = probe.get_resolve_context(int(probe.load_state().turn))
+        ctx = probe.resolve_contexts.get(int(probe.load_state().turn))
         if ctx is not None:
             blob = json.dumps(ctx, ensure_ascii=False)
             assert 'committed_rescript_batch' not in blob
@@ -1545,7 +1543,7 @@ def test_1589_mixed_desk_keyless_choice_rejected_batch_zero_writes(web_game):
         assert all((str(row.get('status')) == 'pending' for row in rows)), rows
         assert all((not row.get('choice') for row in rows)), rows
         assert len(probe.dossiers.list_dossiers()) == dossiers_before
-        ctx = probe.get_resolve_context(turn_before)
+        ctx = probe.resolve_contexts.get(turn_before)
         assert ctx is None or ctx.get('extracted') is None
     finally:
         probe.close()
@@ -2273,7 +2271,7 @@ def test_1625_inflight_phase2_does_not_advertise_resume(web_game, monkeypatch):
     db.save_state(state)
     db.conn.commit()
     assert web_game.session.pending_decisions(), 'reverse 窗起点须有 pending 案头'
-    assert db.get_resolve_context(state.turn) is not None
+    assert db.resolve_contexts.get(state.turn) is not None
     entry_lock = web_app._settlement_entry_lock(web_game)
     desk_read = threading.Event()
     resolve_begun = threading.Event()

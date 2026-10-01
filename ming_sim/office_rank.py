@@ -15,7 +15,6 @@ _NON_OFFICES = frozenset({
     "", "待铨", "听用候铨", "白身", "白丁", "布衣", "未仕", "童子",
     "进士", "举人", "生员", "贡生", "监生", "秀才", "诸生", "庠生", "国子监生",
 })
-_UNOFFICED_TYPES = frozenset({"", "未仕", "生员", "乡绅", "富商", "布衣", "待铨"})
 _TITLE_NOISE_SUFFIXES = (
     "革职候勘", "革职", "候勘", "闲住", "罢居", "致仕", "赋闲",
 )
@@ -155,16 +154,18 @@ def office_leverage_multiplier(office: object, already_normalized: bool = False)
 
 
 def _is_substantive_office(title: object, office_type: object = "") -> bool:
-    """Recognize a real title even when its archived type is blank or legacy state."""
+    """备档认任命事实。品级词表只给品级，认不出不得把职名删成非实职。
+
+    已知非官身份（待铨、听用候铨、生员等）不覆盖既有历史。具体职名不是那些身份时
+    就是实职，不要求词干命中，也不要求类别脱离未仕集合——类别落成待铨仍要记。
+    职名为空时不单靠类别建档，避免空白职名盖掉既有历史。
+    """
     text = canonical_office_title(title)
-    if not text or any(label in text for label in _NON_OFFICES if label):
+    if not text or any(label and label in text for label in _NON_OFFICES):
         return False
-    title_is_real = any(
-        _match_rank_rule(part, _table(), "leverage_multiplier") is not None
-        for part in concurrent_office_titles(text)
-    )
-    declared_type_is_real = str(office_type or "").strip() not in _UNOFFICED_TYPES
-    return title_is_real or declared_type_is_real
+    # 调用方传入已解析类别。具体职名不因类别落在未仕集合、也不因词表无词干而被否决。
+    _ = office_type
+    return True
 
 
 def appointment_break_rank(
@@ -195,13 +196,25 @@ def appointment_break_rank(
         )
         if may_have_history:
             archived = db.conn.execute(
-                "SELECT office_title FROM character_offices WHERE character_name=?",
+                """
+                SELECT o.office_title,
+                       (
+                         SELECT c.office_type FROM office_change_records c
+                         WHERE c.character_name=o.character_name
+                           AND c.office_title=o.office_title
+                         ORDER BY c.id DESC LIMIT 1
+                       ) AS office_type
+                FROM character_offices o
+                WHERE o.character_name=?
+                """,
                 (person,),
             ).fetchone()
-            if archived is not None and _is_substantive_office(archived["office_title"]):
+            if archived is not None and _is_substantive_office(
+                archived["office_title"], archived["office_type"],
+            ):
                 historical = True
                 current_title = canonical_office_title(archived["office_title"])
-                current_type = ""
+                current_type = str(archived["office_type"] or "").strip()
             else:
                 current_title = ""
                 current_type = ""

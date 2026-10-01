@@ -179,7 +179,7 @@ def test_resolve_stream_uses_settlement_period_entry(game, monkeypatch):
     assert entered["n"] == 1
     assert "event: done" in serialized
     # 快照仍在（本替身 submit 未推进月份）；phase2 窗内展示态真源不灭
-    assert db.get_month_open_snapshot(int(state.turn)) == before
+    assert db.month_open_snapshots.get(int(state.turn)) == before
 
 
 def test_resolve_stream_entry_failure_exits_display_when_not_front_half(game, monkeypatch):
@@ -202,7 +202,7 @@ def test_resolve_stream_entry_failure_exits_display_when_not_front_half(game, mo
 
     serialized = asyncio.run(_drain_resolve_sse([{"label": "发"}]))
     assert "event: error" in serialized
-    assert db.get_month_open_snapshot(int(state.turn)) is None
+    assert db.month_open_snapshots.get(int(state.turn)) is None
     assert runtime.state_payload()["turn"]["settlement_display"] is False
 
 

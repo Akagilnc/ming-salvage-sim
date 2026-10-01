@@ -56,7 +56,7 @@ def test_no_edict_advance_runs_full_settlement_chain(game, monkeypatch):
     assert int(state.turn) == closed_turn
     # 世界段必经（负向：快路已死，也不再走 extractor）
     assert len(sim_calls) == 1
-    assert not db.get_turn_report(closed_turn)
+    assert not db.turn_reports.report_text(closed_turn)
     # 局势 bar：惯性推进后至少有一条变化，或 inertia 路径已跑过（空盘面也允许全不变）
     bars_after = _issue_bars(db)
     # 有 inertia≠0 的 issue 时 bar 应动；无则仅要求链跑通（上面 turn/report/sim 已锁）
@@ -74,12 +74,7 @@ def test_no_edict_advance_runs_full_settlement_chain(game, monkeypatch):
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_no_edict_fast_path_branch_is_dead(game, monkeypatch):
-    """负向：快路壳已删；空旨过月走世界段，不推进、不走 extractor。"""
-    # 1) grep 级缺席：生产码不再定义/导出 advance_without_edict 快路壳
-    import ming_sim.decree as decree_pkg
-    assert not hasattr(decree_pkg, "advance_without_edict")
-
-    # 2) 行为层：空旨 resolve_directives 必调 simulator
+    """负向：空旨过月走世界段，不推进。"""
     db, state, content = game
     closed_turn = int(state.turn)
     sim_calls = []
@@ -97,7 +92,7 @@ def test_no_edict_fast_path_branch_is_dead(game, monkeypatch):
     assert result.advanced is False
     assert len(sim_calls) == 1
     assert int(state.turn) == closed_turn
-    assert not db.get_turn_report(closed_turn)
+    assert not db.turn_reports.report_text(closed_turn)
 
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
@@ -148,7 +143,7 @@ def test_with_edict_resolve_turn_still_full_settlement(game, monkeypatch):
     assert result.advanced is False
     assert len(sim_calls) == 1
     assert int(state.turn) == closed_turn
-    assert not db.get_turn_report(closed_turn)
+    assert not db.turn_reports.report_text(closed_turn)
 
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
@@ -190,4 +185,4 @@ def test_web_no_edict_endpoint_routes_to_full_settlement(game, monkeypatch):
     assert response["advanced"] is False
     assert len(sim_calls) == 1
     assert int(state.turn) == closed_turn
-    assert not db.get_turn_report(closed_turn)
+    assert not db.turn_reports.report_text(closed_turn)

@@ -54,7 +54,7 @@ def test_new_game_t0_previous_summary_strictly_empty(game):
     assert state.turn == 1
     assert (state.year, state.period) == (1627, 10)
 
-    assert db.get_turn_report(0) == ""
+    assert db.turn_reports.report_text(0) == ""
     assert db.conn.execute("SELECT report FROM turn_reports WHERE turn = 0").fetchone() is None
 
     summary = db.previous_turn_summary(state)

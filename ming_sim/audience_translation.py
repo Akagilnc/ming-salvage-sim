@@ -548,13 +548,10 @@ def _load_emperor_message_for_turn(
         uid = trow["user_message_id"]
         if not uid:
             return ""
-        mrow = db.conn.execute(
-            "SELECT content FROM chat_messages WHERE id=?",
-            (int(uid),),
-        ).fetchone()
-        if mrow is None:
+        body = db.chat_messages.content_of(int(uid))
+        if body is None:
             return ""
-        return str(mrow["content"] or "")
+        return body
 
 
 def catch_up_pending_translations(

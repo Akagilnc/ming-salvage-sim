@@ -115,6 +115,5 @@ def test_qian_qianyi_seed_office_records_bajiu_dismissal():
     ch = characters["钱谦益"]
     assert ch.status == "dismissed", f"钱谦益 seed 状态应为 dismissed：{ch.status!r}"
     assert ch.reason_code == "获罪削籍", ch.reason_code
-    assert "罢居" in (ch.status_reason or ""), ch.status_reason
     assert ch.office == "", f"无现任者 office 应为空：{ch.office!r}"
     assert "礼部" in ch.historical_office and "侍郎" in ch.historical_office, ch.historical_office

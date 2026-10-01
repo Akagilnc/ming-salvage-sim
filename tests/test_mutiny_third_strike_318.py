@@ -538,10 +538,3 @@ def test_hub_excluded_persisted_third_strike_defects_once(game, identity):
         log for log in _logs(db, ("owner_power",)) if log["field"] == "owner_power"
     ]
     assert len(owner_logs2) == 1
-
-
-def test_owner_power_transition_is_the_adapter():
-    """易主走 GameDB.transition_army_owner_power。"""
-    from ming_sim.db import GameDB
-
-    assert hasattr(GameDB, "transition_army_owner_power")

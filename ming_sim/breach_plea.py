@@ -16,6 +16,7 @@ import logging
 import re
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
+from ming_sim.applier import load_stored_list, load_stored_object
 from ming_sim.entities.dossier import DOSSIER_REPORT_ORIGIN_VERDICT
 from ming_sim.db import GameDB
 from ming_sim.models import loads_effect_dict
@@ -96,13 +97,7 @@ def decode_plea_meta(origin_context: object) -> Dict[str, object]:
     if not text.startswith(_META_PREFIX):
         return {}
     raw = text[len(_META_PREFIX):]
-    try:
-        data = json.loads(raw)
-    except (TypeError, ValueError):
-        return {}
-    if not isinstance(data, dict):
-        return {}
-    return data
+    return load_stored_object(raw, label="breach_plea_meta")
 
 
 def commitment_natural_due_turn(row: Any) -> int:
@@ -206,15 +201,11 @@ def _dedicated_accounts(row: Any) -> List[str]:
         keys = []
 
     tags_raw = row["tags"] if "tags" in keys else "[]"
-    try:
-        tags = json.loads(tags_raw or "[]")
-    except (TypeError, ValueError):
-        tags = []
-    if isinstance(tags, list):
-        for tag in tags:
-            t = str(tag or "").strip()
-            if t.startswith("专款:"):
-                _add(t.split(":", 1)[1].strip())
+    tags = load_stored_list(tags_raw, label="tags")
+    for tag in tags:
+        t = str(tag or "").strip()
+        if t.startswith("专款:"):
+            _add(t.split(":", 1)[1].strip())
 
     ongoing_raw = row["ongoing_effects"] if "ongoing_effects" in keys else "{}"
     ongoing = loads_effect_dict(ongoing_raw or "{}")
@@ -1203,10 +1194,7 @@ def _sponsor_transferred(db: Any, name: str, commitment_row: Any) -> bool:
             except KeyError:
                 executor_id, payload_json = "", "{}"
             if str(executor_id or "") == name:
-                try:
-                    payload = json.loads(payload_json)
-                except (TypeError, ValueError):
-                    payload = {}
+                payload = load_stored_object(payload_json, label="payload_json")
                 if isinstance(payload, dict):
                     expected = str(
                         payload.get("executor_office")

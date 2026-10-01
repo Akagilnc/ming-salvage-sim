@@ -662,7 +662,7 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
     # each aggregate archive.  Source rows redact restricted fragments from
     # the aggregate, while independently persisted public fragments remain
     # available to the character.
-    for report in db.list_turn_reports():
+    for report in db.turn_reports.list_archives():
         # The opening gazette is seed material, not a prior played turn.
         # Its separately persisted opening facts remain visible without
         # turning the turn-zero aggregate into every role's public rail.

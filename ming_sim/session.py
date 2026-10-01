@@ -45,6 +45,8 @@ from ming_sim.applier import (
     Provenance,
     atomic,
     connection_owns_transaction,
+    load_stored_list,
+    load_stored_object,
     register_runtime_outcome_callbacks,
 )
 from ming_sim.decree import (
@@ -581,26 +583,9 @@ def _sync_offices_from_db_impl(content: GameContent, db: "GameDB", llm_config: O
         office_type = infer_office_type_from_office(
             row["office"], row["office_type"], llm_config, use_llm=False
         )
-        import json as _json
-
-        try:
-            aliases = _json.loads(row["aliases"] or "[]")
-        except (TypeError, ValueError):
-            aliases = []
-        if not isinstance(aliases, list):
-            aliases = []
-        try:
-            personal_skills = _json.loads(row["personal_skills"] or "[]")
-        except (TypeError, ValueError):
-            personal_skills = []
-        if not isinstance(personal_skills, list):
-            personal_skills = []
-        try:
-            seed_guilt = _json.loads(row["seed_guilt"] or "{}")
-        except (TypeError, ValueError):
-            seed_guilt = {}
-        if not isinstance(seed_guilt, dict):
-            seed_guilt = {}
+        aliases = load_stored_list(row["aliases"], label="aliases")
+        personal_skills = load_stored_list(row["personal_skills"], label="personal_skills")
+        seed_guilt = load_stored_object(row["seed_guilt"], label="seed_guilt")
         characters[name] = Character(
             name=name,
             office=row["office"],
@@ -1862,7 +1847,7 @@ class GameSession:
         # 从 context 恢复来源和原诏后续跑月链，财政不二落。
         recovered_source = None
         if self.state.turn_phase == TurnPhase.SETTLING.value:
-            ctx = self.db.get_resolve_context(self.state.turn)
+            ctx = self.db.resolve_contexts.get(self.state.turn)
             if ctx is not None:
                 recovered_source = _provenance_from_stored(ctx.get("source"))
                 stored = str(ctx.get("decree_text") or "").strip()
@@ -2052,7 +2037,7 @@ class GameSession:
 
         self._assert_awaiting_decision_submit()
         desk = list(self.db.list_rescript_desk(int(self.state.turn)))
-        ctx = self.db.get_resolve_context(self.state.turn)
+        ctx = self.db.resolve_contexts.get(self.state.turn)
         # #389：event_id 缺失/回显越权（越出本回合候选快照）时以候选快照重绑——
         # 迁自旧 submit_decisions 的绑定步（与 choices[idx] 位置写协议无关，非
         # 猜绑，唯一权威仍是 bind_decisions_to_candidate_events）；scope 与旧
@@ -2305,7 +2290,7 @@ class GameSession:
                 )
 
         if not (self.last_decree or "").strip():
-            ctx0 = self.db.get_resolve_context(self.state.turn)
+            ctx0 = self.db.resolve_contexts.get(self.state.turn)
             if ctx0 is not None:
                 self.last_decree = str(ctx0.get("decree_text") or "")
 
@@ -2456,7 +2441,7 @@ class GameSession:
                 "resolve_rescript_decisions 显式携 decision_key"
             )
         if not (self.last_decree or "").strip():
-            ctx0 = self.db.get_resolve_context(self.state.turn)
+            ctx0 = self.db.resolve_contexts.get(self.state.turn)
             if ctx0 is not None:
                 self.last_decree = str(ctx0.get("decree_text") or "")
         before_turn = int(self.state.turn)

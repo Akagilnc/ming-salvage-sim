@@ -40,6 +40,8 @@ from openai.types.chat import ChatCompletion, ChatCompletionMessage
 from openai.types.chat.chat_completion import Choice
 from pydantic import BaseModel
 
+from ming_sim.applier import load_stored_object
+
 # CLI runner 默认模型单一真源在 models（L0 叶子），此处 re-export 保留
 # `from ming_sim.cli_backend import CODEX_DEFAULT_MODEL` 既有路径（#60）。
 from ming_sim.models import CODEX_DEFAULT_MODEL, CLAUDE_DEFAULT_MODEL, LLMConfig
@@ -2666,9 +2668,7 @@ def _stalled_deliberation_push_facts(db: Any) -> str:
         try:
             payload = row.get("payload") if isinstance(row.get("payload"), dict) else None
             if payload is None:
-                payload = json.loads(str(row.get("payload_json") or "{}"))
-            if not isinstance(payload, dict):
-                continue
+                payload = load_stored_object(row.get("payload_json"), label="payload_json")
             if str(payload.get("deliberation_state") or "") != "stalled":
                 continue
             did = int(row["id"])
@@ -2694,7 +2694,7 @@ def _stalled_deliberation_push_facts(db: Any) -> str:
             lines.append(
                 f"  案卷ID={did} issue#{int(issue['id'])} 题={title} 正文={body}"
             )
-        except (TypeError, ValueError, KeyError, json.JSONDecodeError):
+        except KeyError:
             continue
     if not lines:
         return ""

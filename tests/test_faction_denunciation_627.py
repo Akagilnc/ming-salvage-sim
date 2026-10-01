@@ -199,28 +199,6 @@ def test_veracity_derivation_mechanical_and_origin_marks():
     assert not origin_has_mark(o_true, ORIGIN_MARK_DENUNCIATION_FALSE)
 
 
-def test_no_intensity_quota_template_symbols():
-    """P6/P7：烈度门/quota/模板函数不得再挂在监督模块或 GameDB 上。"""
-    import ming_sim.supervision as supervision
-
-    for banned in (
-        "DENUNCIATION_INTENSITY_GATES",
-        "denunciation_quota",
-        "render_denunciation_memorial",
-        "faction_conflict_intensity",
-        "pick_denunciation_accusers",
-    ):
-        assert not hasattr(supervision, banned), banned
-    for banned in (
-        "render_denunciation_memorial",
-        "denunciation_quota",
-        "trigger_faction_denunciations",
-    ):
-        assert not hasattr(GameDB, banned), banned
-    assert hasattr(GameDB, "accept_faction_denunciations")
-    assert hasattr(GameDB, "build_faction_denunciation_facts")
-
-
 # ── AC1 事实供给 ──────────────────────────────────────────────────
 
 

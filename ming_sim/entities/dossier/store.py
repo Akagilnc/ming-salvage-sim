@@ -410,11 +410,18 @@ class DossierStore:
     def __init__(self, conn: Any) -> None:
         self._conn = conn
 
-    def _commit(self, commit: bool) -> None:
-        """Commit unless an outer atomic/BEGIN owns the transaction."""
-        if commit and not bool(getattr(self._conn, "_commit_suspended", False)) and int(
-            getattr(self._conn, "_atomic_depth", 0) or 0
-        ) == 0:
+    def _owns(self) -> bool:
+        """Snapshot before this method's first DML.
+
+        SQLite opens an implicit transaction on UPDATE/INSERT, so reading
+        in_transaction afterwards would skip every commit.
+        """
+        from ming_sim.applier import connection_owns_transaction
+
+        return connection_owns_transaction(self._conn)
+
+    def _commit(self, commit: bool, owns: bool) -> None:
+        if commit and owns:
             self._conn.commit()
 
     def get(self, dossier_id: int) -> Optional[dict[str, Any]]:
@@ -519,6 +526,7 @@ class DossierStore:
     def transition(
         self, dossier_id: int, new_status: str, *, commit: bool = True,
     ) -> None:
+        owns = self._owns()
         row = self._conn.execute(
             "SELECT status,action_type,payload_json,execution_outcome "
             "FROM decree_dossiers WHERE id=?",
@@ -543,11 +551,12 @@ class DossierStore:
             "WHERE id=?",
             (new_status, int(dossier_id)),
         )
-        self._commit(commit)
+        self._commit(commit, owns)
 
     def close(
         self, dossier_id: int, reason: str = "", *, commit: bool = True,
     ) -> None:
+        owns = self._owns()
         row = self.get(dossier_id)
         if row is None:
             raise KeyError(f"案卷不存在：{dossier_id}")
@@ -565,7 +574,7 @@ class DossierStore:
             "UPDATE decree_dossiers SET interruption_reason=? WHERE id=?",
             (str(reason or ""), int(dossier_id)),
         )
-        self._commit(commit)
+        self._commit(commit, owns)
 
     # ── payload / participants / links ────────────────────────────
 
@@ -573,6 +582,7 @@ class DossierStore:
         self, dossier_id: int, payload: Mapping[str, object], *, commit: bool = True,
     ) -> None:
         """Replace payload_json for an existing dossier (deliberation_state 等 typed 字段)."""
+        owns = self._owns()
         did = int(dossier_id)
         if self._conn.execute(
             "SELECT 1 FROM decree_dossiers WHERE id=?", (did,)
@@ -585,14 +595,14 @@ class DossierStore:
             "WHERE id=?",
             (json.dumps(dict(payload), ensure_ascii=False), did),
         )
-        if commit:
-            self._commit(True)
+        self._commit(commit, owns)
 
     def add_links(
         self, source_dossier_id: int, links: Iterable[Mapping[str, object]], *,
         commit: bool = True,
     ) -> None:
         """把确认后的新→旧案卷关联整批落账；任一坏引用则整批拒收并留痕。"""
+        owns = self._owns()
         source_id = strict_int(source_dossier_id, accept_numeric_strings=False)
         source = self.get(source_id)
         if source is None:
@@ -622,7 +632,7 @@ class DossierStore:
         if rejection is not None:
             target_id, relation, note, reason = rejection
             self.record_link_rejection(source_id, target_id, relation, note, reason)
-            self._commit(commit)
+            self._commit(commit, owns)
             exc = ValueError(reason)
             # commit_pending_actions rolls its business savepoint back.  Carry the
             # rejected item across that boundary so its outer failure path can
@@ -637,7 +647,7 @@ class DossierStore:
             [(source_id, target_id, relation, note)
              for target_id, relation, note in normalized],
         )
-        self._commit(commit)
+        self._commit(commit, owns)
 
     def record_link_rejection(
         self, source_id: int, target_id: int, relation: str, note: str,
@@ -882,16 +892,18 @@ class DossierStore:
     def set_stigma(
         self, dossier_id: int, stigma: list[dict[str, object]], *, commit: bool = True,
     ) -> None:
+        owns = self._owns()
         self._conn.execute(
             "UPDATE decree_dossiers SET stigma_json=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
             (json.dumps(stigma, ensure_ascii=False), int(dossier_id)),
         )
-        self._commit(commit)
+        self._commit(commit, owns)
 
     def set_participants_and_archive(
         self, dossier_id: int, roster: object, archive_keys: list[str], *,
         commit: bool = True,
     ) -> None:
+        owns = self._owns()
         self._conn.execute(
             "UPDATE decree_dossiers SET participant_roster=?,office_archive_keys=?, "
             "updated_at=CURRENT_TIMESTAMP WHERE id=?",
@@ -901,7 +913,7 @@ class DossierStore:
                 int(dossier_id),
             ),
         )
-        self._commit(commit)
+        self._commit(commit, owns)
 
     # ── endorsements ──────────────────────────────────────────────
 
@@ -911,6 +923,7 @@ class DossierStore:
         commit: bool = True,
     ) -> int:
         """Persist one already-spoken ADR 0070 endorsement; never re-judge willingness."""
+        owns = self._owns()
         did, cid, dkey, kind, person, is_imperial = self._validate_endorsement(
             dossier_id, form=form, source_chat_turn_id=source_chat_turn_id,
             decision_key=decision_key, endorser_id=endorser_id, imperial=imperial,
@@ -926,8 +939,7 @@ class DossierStore:
             "AND endorser_id=? AND imperial=? AND source_chat_turn_id=? AND decision_key=?",
             (did, kind, person, int(is_imperial), cid, dkey),
         ).fetchone()
-        if commit:
-            self._commit(True)
+        self._commit(commit, owns)
         return int(row["id"])
 
     def _validate_endorsement(
@@ -1053,13 +1065,13 @@ class DossierStore:
         )
 
     def merge_execution_note(self, dossier_id: int, merged: str, *, commit: bool = True) -> None:
+        owns = self._owns()
         self._conn.execute(
             "UPDATE decree_dossiers SET execution_note=?, updated_at=CURRENT_TIMESTAMP "
             "WHERE id=?",
             (merged, int(dossier_id)),
         )
-        if commit:
-            self._commit(True)
+        self._commit(commit, owns)
 
     def ids_for_secret_order(self, secret_order_id: int) -> list[int]:
         rows = self._conn.execute(
@@ -1847,6 +1859,7 @@ class DossierStore:
         floor_state: str, note: str = "", commit: bool = True,
     ) -> dict[str, object]:
         """#1504 实况轨月度进度（0073）。禁与 dossier_progress_json/sim_note 混写。"""
+        owns = self._owns()
         did = int(dossier_id)
         origin = f"dossier:{did}"
         self._conn.execute(
@@ -1871,8 +1884,7 @@ class DossierStore:
                 origin,
             ),
         )
-        if commit and int(getattr(self._conn, "_atomic_depth", 0) or 0) == 0:
-            self._conn.commit()
+        self._commit(commit, owns)
         row = self._conn.execute(
             "SELECT * FROM dossier_actual_progress WHERE dossier_id=? AND turn=?",
             (did, int(turn)),

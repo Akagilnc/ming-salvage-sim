@@ -16,14 +16,12 @@ from concurrent.futures import Future
 import pytest
 
 import ming_sim.month_chain as month_chain
-import ming_sim.decree as decree_mod
 from ming_sim.applier import Provenance
 from ming_sim.session_write_queue import get_session_write_queue
 from tests.month_chain_helpers import make_light_session
 
 
 def _forbid_extractor(monkeypatch):
-    assert not hasattr(decree_mod, "extract_scores_by_modules_with_agno")
     monkeypatch.setattr(
         "ming_sim.session.write_decree_with_agno", lambda *_a, **_k: "诏",
     )
@@ -390,7 +388,7 @@ def test_ending_summary_runs_in_mechanical_tail_after_advance(
     executor = _install_deferred(monkeypatch)
     tail_reads_under_gate = []
     main_saves_under_gate = []
-    orig_reports = db.list_turn_reports
+    orig_reports = db.turn_reports.list_archives
     orig_save_state = db.save_state
     in_tail = False
 
@@ -404,7 +402,7 @@ def test_ending_summary_runs_in_mechanical_tail_after_advance(
             main_saves_under_gate.append(bool(gate.locked()))
         return orig_save_state(game_state)
 
-    monkeypatch.setattr(db, "list_turn_reports", _reports)
+    monkeypatch.setattr(db.turn_reports, "list_archives", _reports)
     monkeypatch.setattr(db, "save_state", _save_state)
 
     try:
@@ -537,7 +535,6 @@ def test_mechanical_tail_missing_llm_config_surfaces_retry(game, monkeypatch):
         settled_period=int(state.period),
         ending_outcome={"status": "emperor_abdicate", "summary": "退位"},
     )
-    assert hasattr(executor, "fn")
     try:
         _run_deferred(executor)
     except Exception:

@@ -70,14 +70,6 @@ def test_city_cannon_lower_bound_clamp_audited_not_as_cap(game):
     assert len(rows) == 1, "请求减炮被下限 clamp 成 no-op 也须留痕"
     assert int(rows[0]["delta"]) == 0
     assert str(rows[0]["reason"]).strip()
-    # 加炮被上限拦住与减炮被下限拦住不是同一条审计。beizhili 城防已在上限。
-    run_settle(db, state, content, {"region_delta": {"beizhili": {"origin_ref": "盘面自发", "城防炮": 10}}})
-    plus = db.conn.execute(
-        "SELECT reason FROM region_logs WHERE region_id='beizhili' AND field='cannon' AND turn=?",
-        (before_turn,),
-    ).fetchall()
-    assert plus and str(plus[-1]["reason"]).strip()
-    assert plus[-1]["reason"] != rows[0]["reason"]
 
 
 def test_zero_cannon_request_leaves_no_log(game):

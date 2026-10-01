@@ -393,7 +393,7 @@ def test_exact_levy_fact_stays_out_of_public_read_chain_and_free_report_enters_i
         state, db, {"surcharge_decrees": [_decree(db, state,monthly_amount=-10.0)]},
         before_turn=second_turn, content=content, monkeypatch=monkeypatch, narrative=free_body,
     )
-    assert db.get_turn_report(second_turn) == free_body
+    assert db.turn_reports.report_text(second_turn) == free_body
     public_read = " ".join(
         item.get("body", "") for item in db.get_character_knowledge(state, "温体仁")["public_events"]
     )

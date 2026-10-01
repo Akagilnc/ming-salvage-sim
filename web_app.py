@@ -834,7 +834,7 @@ class WebGame:
             self.chat_history: Dict[str, List[Dict[str, str]]] = {
                 name: [] for name in self.session.content.characters
             }
-            for name, msgs in self.db.load_all_chat_history().items():
+            for name, msgs in self.db.chat_messages.history_by_minister().items():
                 self.chat_history.setdefault(name, []).extend(msgs)
             _DEFAULT_FAVORITES = {"王承恩", "曹化淳", "李若琏", "魏忠贤", "田尔耕"}
             _fav_raw = self.db.kv_get("favorites")
@@ -1052,7 +1052,7 @@ class WebGame:
                 candidate._write_gate = q.write_gate  # type: ignore[attr-defined]
             candidate.begin_turn()
             chat_history = {name: [] for name in candidate.content.characters}
-            for name, msgs in candidate.db.load_all_chat_history().items():
+            for name, msgs in candidate.db.chat_messages.history_by_minister().items():
                 chat_history.setdefault(name, []).extend(msgs)
             default_favorites = {"王承恩", "曹化淳", "李若琏", "魏忠贤", "田尔耕"}
             fav_raw = candidate.db.kv_get("favorites")
@@ -1278,7 +1278,7 @@ class WebGame:
         previous_turn = int(self.state.turn) - 1
         if previous_turn < 0:
             return ""
-        return self.db.get_turn_report(previous_turn)
+        return self.db.turn_reports.report_text(previous_turn)
 
     def _runtime_write_queue(self) -> SessionWriteQueue:
         return get_session_write_queue(self)
@@ -1627,7 +1627,7 @@ class WebGame:
 
     def _month_open_snapshot(self) -> Optional[Dict[str, int]]:
         """#1234 路③：当前回合未过期月初快照；无则 None（⇔ 非核账展示态）。"""
-        return self.db.get_month_open_snapshot(int(self.state.turn))
+        return self.db.month_open_snapshots.get(int(self.state.turn))
 
     def _display_metrics(self) -> Dict[str, int]:
         """顶栏四键呈现缝：核账期读快照，否则读活值。"""
@@ -1768,7 +1768,7 @@ class WebGame:
             )
             durable_phase2_resume = (
                 awaiting_decision
-                and self.db.get_resolve_context(self.state.turn) is not None
+                and self.db.resolve_contexts.get(self.state.turn) is not None
                 and not pending_decisions
             )
             # #1846 / ADR 0157：settling 恢复面只投影月链失败与错误包；无 ready 重放分流。
@@ -2059,7 +2059,7 @@ class WebGame:
             from ming_sim.decree_forecast import schedule_restored_decree_forecasts
             schedule_restored_decree_forecasts(self.session, restored_ids)
         self.chat_history = {name: [] for name in self.session.content.characters}
-        for name, msgs in self.db.load_all_chat_history().items():
+        for name, msgs in self.db.chat_messages.history_by_minister().items():
             self.chat_history.setdefault(name, []).extend(msgs)
 
     def undo_last_chat(self, minister_name: str, *, gate_held: bool = False) -> Dict[str, Any]:
@@ -2124,7 +2124,7 @@ class WebGame:
                     )
         self.session.refresh_runtime_after_chat_rollback()
         self.chat_history = {name: [] for name in self.session.content.characters}
-        for name, msgs in self.db.load_all_chat_history().items():
+        for name, msgs in self.db.chat_messages.history_by_minister().items():
             self.chat_history.setdefault(name, []).extend(msgs)
         character = None if minister_name == "殿上" else self.session._character(minister_name)
         return {
@@ -5210,12 +5210,12 @@ async def api_history_turn(turn: int) -> Dict[str, Any]:
     """某回合玩家历史：只交付邸报、诏书、已颁草案与独立递话原文。"""
     db = get_game().db
     # #671：一次读 turn_reports；year/period 在 extraction/directives 皆无时回落存档行
-    archive = db.get_turn_report_archive(turn)
+    archive = db.turn_reports.archive(turn)
     report = str((archive or {}).get("report") or "")
     attendant_message = str((archive or {}).get("attendant_message") or "")
     # #1843 reopen：本月诏书改读月链常驻的 pending_resolve_context.decree_text
     # （旧 turn_extractions 只由旧 settle 后半段写，新档恒空）。
-    resolve_ctx = db.get_resolve_context(turn) or {}
+    resolve_ctx = db.resolve_contexts.get(turn) or {}
     decree_text = str(resolve_ctx.get("decree_text") or "")
     directives = db.list_directives_by_turn(turn)
     # exists：report/递话纯空白与空串同属缺席（临时 strip）；payload 仍回原文

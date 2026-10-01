@@ -530,7 +530,11 @@ class _GapBDB:
             or not row.get("minister_message_id")
         ]
 
-    def load_all_chat_history(self):
+    @property
+    def chat_messages(self):
+        return self
+
+    def history_by_minister(self):
         out = {}
         for m in self.messages:
             out.setdefault(m["minister"], []).append({"role": m["role"], "content": m["content"]})
@@ -555,7 +559,7 @@ class _GapBDB:
     def set_message_highlights(self, message_id, phrases):
         return None
 
-    def load_all_chat_history(self):
+    def history_by_minister(self):
         result: dict = {}
         for m in self.messages:
             result.setdefault(m["minister"], []).append(

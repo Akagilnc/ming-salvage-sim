@@ -11,7 +11,6 @@ import ming_sim.declaration_dispatch as declaration_dispatch
 import ming_sim.decree as decree_mod
 import ming_sim.month_chain as month_chain
 import ming_sim.month_translate as month_translate
-import ming_sim.simulation as simulation
 from ming_sim.declaration_dispatch import pending_action_decree_ref
 from ming_sim.session_write_queue import get_session_write_queue
 from tests.month_chain_helpers import make_light_session
@@ -19,9 +18,6 @@ from tests.dossier_test_helpers import create_test_secret_order
 
 
 def _forbid_extractor(monkeypatch):
-    assert not hasattr(decree_mod, "extract_scores_by_modules_with_agno")
-    assert not hasattr(simulation, "extract_scores_by_modules_with_agno")
-    assert not hasattr(simulation, "EXTRACTION_MODULES")
     monkeypatch.setattr(
         "ming_sim.session.write_decree_with_agno", lambda *_a, **_k: "诏",
     )
@@ -140,7 +136,7 @@ def test_player_month_entry_settles_prepushed_edicts_then_world_once(game, monke
     assert result.advanced is False
     assert result.stage == "gazette"
     assert int(state.turn) == closed_turn
-    assert not db.get_turn_report(closed_turn)
+    assert not db.turn_reports.report_text(closed_turn)
     assert sources_before == {
         str(row[0]) for row in db.conn.execute("SELECT source_id FROM character_knowledge_sources")
     }
@@ -323,7 +319,7 @@ def test_player_recovery_uses_resolve_context_decree_not_ready_delta(game, monke
     # 无 ready delta：不得出现 metric_delta 级大跳（旧 ready 会 -40）
     assert db.load_state().metrics["民心"] > support - 40
     assert session.last_decree == "崩溃前原诏"
-    ctx = db.get_resolve_context(turn)
+    ctx = db.resolve_contexts.get(turn)
     assert "extracted" not in ctx
     assert ctx["source"] == "player_decree"
 
@@ -372,7 +368,7 @@ def test_world_segment_persists_declaration_ending_with_commit(game, monkeypatch
     expected = {"status": "emperor_suicide", "summary": "崇祯帝自尽殉国，煤山一缢，大明社稷俱亡。"}
     assert outcome == expected
     assert chain["declaration_outcome"] == expected
-    payload = db.get_resolve_context(int(state.turn))["simulator_payload"]
+    payload = db.resolve_contexts.get(int(state.turn))["simulator_payload"]
     assert payload["month_chain"]["declaration_outcome"] == expected
 
 
@@ -416,7 +412,7 @@ def test_player_entry_recovers_ending_after_interrupted_segment(game, monkeypatc
 
     waiting = session.resolve_turn(allow_empty_decree=True)
     assert waiting.stage == "gazette"
-    payload = db.get_resolve_context(turn)["simulator_payload"]
+    payload = db.resolve_contexts.get(turn)["simulator_payload"]
     assert payload["month_chain"]["declaration_outcome"]["status"] == "emperor_abdicate"
     assert "call_failure" not in payload["month_chain"]
 

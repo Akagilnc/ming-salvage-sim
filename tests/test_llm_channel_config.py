@@ -222,8 +222,6 @@ def test_create_chat_model_never_injects_max_tokens(monkeypatch):
         channel="api",
         reasoning_strength="high",
     )
-    assert not hasattr(cfg, "max_tokens")
-
     create_chat_model(cfg)
     create_chat_model(cfg, temperature=0.2, enable_thinking=True)
     create_chat_model(cfg, temperature=0, force_json_output=True)
@@ -707,13 +705,9 @@ def test_config_constants_single_source_in_models():
     assert lc.CODEX_DEFAULT_MODEL is m.CODEX_DEFAULT_MODEL
     assert cb.CODEX_DEFAULT_MODEL is m.CODEX_DEFAULT_MODEL
     assert cb.CLAUDE_DEFAULT_MODEL is m.CLAUDE_DEFAULT_MODEL
-    assert not hasattr(m, "API_DEFAULT_MAX_TOKENS")
-    assert not hasattr(lc, "API_DEFAULT_MAX_TOKENS")
     assert lc.API_DEFAULT_TIMEOUT_SECONDS is m.API_DEFAULT_TIMEOUT_SECONDS
     # LLMConfig 默认值 == 常量（dataclass 默认引用 SSOT，非裸字面量）
     cfg = LLMConfig(api_key="", base_url="", model="m")
-    assert not hasattr(cfg, "max_tokens")
-    assert "max_tokens" not in {f.name for f in cfg.__dataclass_fields__.values()} if hasattr(cfg, "__dataclass_fields__") else True
     assert "max_tokens" not in LLMConfig.__dataclass_fields__
     assert cfg.timeout_seconds == m.API_DEFAULT_TIMEOUT_SECONDS
     assert cfg.cli_timeout_seconds == m.CLI_DEFAULT_TIMEOUT_SECONDS
@@ -914,4 +908,3 @@ def test_gate_evidence_config_omits_max_tokens():
     cfg = cb.gate_llm_config_from_args(args)
     block = cb.gate_evidence_config(args, cfg)
     assert "max_tokens" not in block
-    assert not hasattr(cfg, "max_tokens")

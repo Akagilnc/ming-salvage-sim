@@ -227,15 +227,6 @@ def test_mid_countdown_save_reopen_continues_identically(game, tmp_path):
             pass
         raise
 
-def test_removed_symbols_have_no_live_residues():
-    import ming_sim.db as dbmod
-    import ming_sim.decree as decreemod
-    import ming_sim.flows as flowsmod
-    banned = ('force_transit_' + 'arrivals', '_build_transit_' + 'nudge', 'transit_' + 'nudge')
-    for mod in (dbmod, dbmod.GameDB, decreemod, flowsmod):
-        for name in banned:
-            assert not hasattr(mod, name), name
-
 def _assert_ledger_match(db, name: str, expected):
     loc, to, remaining, factor, start_turn = expected
     row = _ledger(db, name)

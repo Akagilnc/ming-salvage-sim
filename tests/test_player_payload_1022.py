@@ -15,7 +15,11 @@ import web_app
 
 
 class _HistoryDB:
-    def get_turn_report_archive(self, turn: int):
+    def __init__(self) -> None:
+        self.turn_reports = SimpleNamespace(archive=self._archive)
+        self.resolve_contexts = SimpleNamespace(get=self._resolve)
+
+    def _archive(self, turn: int):
         return {
             "year": 0,
             "period": 0,
@@ -23,7 +27,7 @@ class _HistoryDB:
             "attendant_message": "",
         }
 
-    def get_resolve_context(self, turn: int):
+    def _resolve(self, turn: int):
         return {
             "decree_text": "诏曰：赈济辽东。",
         }

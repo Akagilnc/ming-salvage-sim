@@ -80,7 +80,7 @@ def test_success_clear_holds_write_gate_not_peer_txn(game, monkeypatch):
 
     # 预置残留快照（模拟点即入 capture 后未推月）
     db.capture_month_open_snapshot(state)
-    assert db.get_month_open_snapshot(int(state.turn)) == before
+    assert db.month_open_snapshots.get(int(state.turn)) == before
 
     gate = web_app._game_write_gate(runtime)
     clear_saw_gate = {"locked": None}
@@ -111,7 +111,7 @@ def test_success_clear_holds_write_gate_not_peer_txn(game, monkeypatch):
         t.start()
         assert not a_done.is_set(), "A 成功支 clear 不得在 B 持 gate 时无门完成"
         # B 事务窗内快照仍在——证明 DELETE 未落进共享连接/B 侧可见状态
-        assert db.get_month_open_snapshot(int(state.turn)) == before
+        assert db.month_open_snapshots.get(int(state.turn)) == before
         gate.release()
         a_done.wait()
         t.join()
@@ -122,7 +122,7 @@ def test_success_clear_holds_write_gate_not_peer_txn(game, monkeypatch):
 
     assert not a_err, a_err
     assert clear_saw_gate["locked"] is True, "成功支 clear 须持 write_gate"
-    assert db.get_month_open_snapshot(int(state.turn)) is None
+    assert db.month_open_snapshots.get(int(state.turn)) is None
     assert web_app._settlement_entry_inflight(runtime) == 0
     assert runtime.state_payload()["turn"]["settlement_display"] is False
 
@@ -225,7 +225,7 @@ def test_success_clear_throw_via_orphan_exits_display(game, monkeypatch):
 
     assert raised is not None and "orphan clear boom" in str(raised)
     assert web_app._settlement_entry_inflight(runtime) == 0
-    assert db.get_month_open_snapshot(int(state.turn)) is None
+    assert db.month_open_snapshots.get(int(state.turn)) is None
     assert runtime.state_payload()["turn"]["settlement_display"] is False
 
 
@@ -240,4 +240,4 @@ def test_refresh_turn_no_longer_clears_orphan(game):
     runtime = _shell(db, state, content)
     # 绑定真实方法（轻壳无实例绑定）
     web_app.WebGame.refresh_turn(runtime)
-    assert db.get_month_open_snapshot(int(state.turn)) == before
+    assert db.month_open_snapshots.get(int(state.turn)) == before

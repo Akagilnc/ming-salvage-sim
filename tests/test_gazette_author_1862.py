@@ -323,11 +323,11 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
 
     assert result.advanced is True
     assert int(state.turn) == turn + 1
-    archive = db.get_turn_report_archive(turn)
+    archive = db.turn_reports.archive(turn)
     assert archive["title"] == _TITLE
     assert archive["report"] == _REPORT
     assert archive["title"] not in archive["report"]
-    listed = next(row for row in db.list_turn_reports() if int(row["turn"]) == turn)
+    listed = next(row for row in db.turn_reports.list_archives() if int(row["turn"]) == turn)
     assert listed["title"] == _TITLE
     payload = json.loads(seen["prompt"])
     assert any(row.get("category") == "宁远补饷" for row in payload["landed"])
@@ -450,7 +450,7 @@ def test_gazette_failure_retries_report_only(game, monkeypatch):
     ).fetchone()[0]
     assert charged == 1
     assert world_calls == [1]
-    assert db.get_turn_report(turn) == ""
+    assert db.turn_reports.report_text(turn) == ""
     failure = month_chain.month_chain_call_failure(db, turn)
     assert failure["step"] == "gazette"
 
@@ -461,6 +461,6 @@ def test_gazette_failure_retries_report_only(game, monkeypatch):
     assert db.conn.execute(
         "SELECT COUNT(*) FROM economy_ledger WHERE category='宁远补饷'",
     ).fetchone()[0] == 1
-    archive = db.get_turn_report_archive(turn)
+    archive = db.turn_reports.archive(turn)
     assert archive["title"] == _TITLE
     assert archive["report"] == _REPORT

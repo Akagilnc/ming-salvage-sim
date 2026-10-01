@@ -11,6 +11,7 @@ import json
 import re
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
+from ming_sim.applier import load_stored_list, load_stored_object
 from ming_sim.decree_vocabulary import TARGET_KINDS
 from ming_sim.entities.dossier import DOSSIER_MODES
 from ming_sim.execution_pressure import write_locality_scope_for_target_kind
@@ -251,12 +252,7 @@ def stage_pacification_candidate(
     for row in pending_rows:
         if row.get("kind") != "directive":
             continue
-        try:
-            payload = json.loads(str(row.get("payload_json") or "{}"))
-        except (TypeError, ValueError):
-            continue
-        if not isinstance(payload, dict):
-            continue
+        payload = load_stored_object(row.get("payload_json"), label="payload_json")
         if str(payload.get("dossier_action_type") or "").strip() != "pacification":
             continue
         if str(payload.get("target_id") or "").strip() != target:
@@ -368,11 +364,8 @@ def stage_punishment_candidate(
             return 0
         if disposition not in issue_dispositions_allowed():
             return 0
-        try:
-            roster = json.loads(str(issue["target_roster"] or "[]"))
-        except (TypeError, ValueError):
-            return 0
-        if not isinstance(roster, list) or not roster:
+        roster = load_stored_list(issue["target_roster"], label="target_roster")
+        if not roster:
             return 0
         if disposition == "办人":
             if target not in roster:
@@ -401,12 +394,7 @@ def stage_punishment_candidate(
     for row in pending_rows:
         if row.get("kind") != "directive":
             continue
-        try:
-            payload = json.loads(str(row.get("payload_json") or "{}"))
-        except (TypeError, ValueError):
-            continue
-        if not isinstance(payload, dict):
-            continue
+        payload = load_stored_object(row.get("payload_json"), label="payload_json")
         if str(payload.get("dossier_action_type") or "").strip() != "punishment":
             continue
         if str(payload.get("target_id") or "").strip() != target:
@@ -852,12 +840,7 @@ def stage_grant_allocation_candidate(
                 continue
             if int(row["id"]) != want_id:
                 continue
-            try:
-                payload = json.loads(str(row.get("payload_json") or "{}"))
-            except (TypeError, ValueError):
-                break
-            if not isinstance(payload, dict):
-                break
+            payload = load_stored_object(row.get("payload_json"), label="payload_json")
             if str(payload.get("dossier_action_type") or "").strip() != "grant_allocation":
                 break
             existing_id = want_id
@@ -1087,11 +1070,7 @@ def _list_pending_office_rows(
 
 
 def _office_payload(row: Dict[str, Any]) -> Dict[str, Any]:
-    try:
-        payload = json.loads(str(row.get("payload_json") or "{}"))
-    except (TypeError, ValueError):
-        return {}
-    return payload if isinstance(payload, dict) else {}
+    return load_stored_object(row.get("payload_json"), label="payload_json")
 
 
 def _match_office_row_by_name_office(
@@ -1515,12 +1494,7 @@ def stage_assignment_candidate(
                 continue
             if int(row["id"]) != want_id:
                 continue
-            try:
-                payload = json.loads(str(row.get("payload_json") or "{}"))
-            except (TypeError, ValueError):
-                break
-            if not isinstance(payload, dict):
-                break
+            payload = load_stored_object(row.get("payload_json"), label="payload_json")
             if str(payload.get("dossier_action_type") or "").strip() != "assignment":
                 break
             existing_id = want_id
@@ -1649,12 +1623,7 @@ def stage_authorization_candidate(
         for row in pending_rows:
             if int(row["id"]) != want_id:
                 continue
-            try:
-                payload = json.loads(str(row.get("payload_json") or "{}"))
-            except (TypeError, ValueError):
-                break
-            if not isinstance(payload, dict):
-                break
+            payload = load_stored_object(row.get("payload_json"), label="payload_json")
             if str(payload.get("dossier_action_type") or "").strip() != "authorization":
                 break
             existing_id = want_id
@@ -1757,12 +1726,7 @@ def stage_referral_candidate(
                 continue
             if int(row["id"]) != want_id:
                 continue
-            try:
-                payload = json.loads(str(row.get("payload_json") or "{}"))
-            except (TypeError, ValueError):
-                break
-            if not isinstance(payload, dict):
-                break
+            payload = load_stored_object(row.get("payload_json"), label="payload_json")
             if str(payload.get("dossier_action_type") or "").strip() != "referral":
                 break
             existing_id = want_id
@@ -1844,12 +1808,7 @@ def stage_revoke_authority_candidate(
         for row in pending_rows:
             if int(row["id"]) != want_id:
                 continue
-            try:
-                payload = json.loads(str(row.get("payload_json") or "{}"))
-            except (TypeError, ValueError):
-                break
-            if not isinstance(payload, dict):
-                break
+            payload = load_stored_object(row.get("payload_json"), label="payload_json")
             if str(payload.get("dossier_action_type") or "").strip() != "revoke_authority":
                 break
             existing_id = want_id
@@ -1920,12 +1879,7 @@ def stage_revoke_decree_candidate(
         for row in pending_rows:
             if int(row["id"]) != want_id:
                 continue
-            try:
-                payload = json.loads(str(row.get("payload_json") or "{}"))
-            except (TypeError, ValueError):
-                break
-            if not isinstance(payload, dict):
-                break
+            payload = load_stored_object(row.get("payload_json"), label="payload_json")
             if str(payload.get("dossier_action_type") or "").strip() != "revoke_decree":
                 break
             existing_id = want_id

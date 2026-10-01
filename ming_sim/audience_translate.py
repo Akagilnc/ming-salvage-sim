@@ -19,7 +19,7 @@ import json
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
 
 from ming_sim.decree_vocabulary import TARGET_KINDS
-from ming_sim.applier import Provenance
+from ming_sim.applier import Provenance, load_stored_object
 
 TranslateFn = Callable[[str, Any], Mapping[str, object]]
 
@@ -71,12 +71,7 @@ def build_pending_summaries(db: Any, turn: int, *, night_id: int = 0) -> List[st
     rows = db.conn.execute(sql, tuple(params)).fetchall()
     out: List[str] = []
     for row in rows:
-        try:
-            payload = json.loads(str(row["payload_json"] or "{}"))
-        except (TypeError, ValueError):
-            payload = {}
-        if not isinstance(payload, dict):
-            payload = {}
+        payload = load_stored_object(row["payload_json"], label="payload_json")
         text = str(payload.get("text") or row["action"] or "").strip()
         brief = text[:60] if text else str(row["kind"] or "")
         approved = "已应允" if int(row["night_approved"] or 0) else "待应允"
@@ -138,12 +133,9 @@ def build_night_said_so_far(
         ):
             if not mid:
                 continue
-            row = db.conn.execute(
-                "SELECT content FROM chat_messages WHERE id=?", (int(mid),),
-            ).fetchone()
-            if row is None:
+            body = db.chat_messages.content_of(int(mid))
+            if body is None:
                 continue
-            body = str(row["content"] or "")
             if not body.strip():
                 continue
             lines.append(f"[chat_turn_id={tid}] {role_label}：{body}")

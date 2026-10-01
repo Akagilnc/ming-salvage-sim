@@ -773,7 +773,7 @@ def test_knowledge_exclusion_reads_current_office_without_nameerror(
 
     monkeypatch.setattr(db, "_character_knowledge_events", events)
     monkeypatch.setattr(db, "list_issued_directives", lambda: [])
-    monkeypatch.setattr(db, "list_turn_reports", lambda: [])
+    monkeypatch.setattr(db.turn_reports, "list_archives", lambda: [])
     monkeypatch.setattr(db, "knowledge_exclusion_targets_for_source", lambda _: targets)
 
     knowledge = build_character_knowledge(db, state, name)
@@ -954,7 +954,7 @@ def test_shared_archive_storage_never_writes_restricted_aggregate(game):
 
     db.save_turn_report(state, f"{public}；{secret}", knowledge_items=db.knowledge_items_for_turn(state.turn))
 
-    assert secret not in db.get_turn_report(state.turn)
+    assert secret not in db.turn_reports.report_text(state.turn)
 
 def test_character_added_after_archive_cannot_read_old_participant_source(game):
     """The durable participant roster, not an archival deny-list snapshot, grants access."""

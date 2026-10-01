@@ -16,6 +16,8 @@ import json
 import re
 from typing import Any, Dict, List
 
+from ming_sim.applier import load_stored_object
+
 ENTRY_KIND_STAGED = "staged_commitment"
 # #624 / ADR 0078：反催谏 / 求宽限（0075 同款 next_audience_todos 通道；不进 due-review 白名单）
 ENTRY_KIND_RUSH_REMONSTRANCE = "rush_remonstrance"
@@ -347,12 +349,7 @@ def list_due_grant_report_dossiers_for_scan(
     for row in rows:
         if str(row["execution_outcome"] or "").strip():
             continue
-        try:
-            payload = _json.loads(str(row["payload_json"] or "{}"))
-        except (TypeError, ValueError):
-            payload = {}
-        if not isinstance(payload, dict):
-            payload = {}
+        payload = load_stored_object(row["payload_json"], label="payload_json")
         # due_turn 单源：有未来 due 且仍 executing 即到期候选（不另滤 cadence/grant_action）
         did = int(row["id"])
         due_turn = int(row["due_turn"] or 0)

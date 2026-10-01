@@ -233,7 +233,7 @@ def _first_month_gazette_via_production_settle(
     """
     db = session.db
     closed_turn = int(session.state.turn)
-    existing = str(db.get_turn_report(closed_turn) or "").strip()
+    existing = str(db.turn_reports.report_text(closed_turn) or "").strip()
     if existing:
         return existing
 
@@ -247,7 +247,7 @@ def _first_month_gazette_via_production_settle(
         return ""
 
     # 唯一真源：落库 turn_report（closed_turn）；禁用内存 last_report 冒充。
-    return str(db.get_turn_report(closed_turn) or "")
+    return str(db.turn_reports.report_text(closed_turn) or "")
 
 
 def _run_sample(index: int, root: str, content: GameContent, cfg: LLMConfig) -> dict:
@@ -444,10 +444,10 @@ def _run_sample(index: int, root: str, content: GameContent, cfg: LLMConfig) -> 
         # 邸报：生产首月结算落库 turn_report（证据面；空不造假）
         gazette_blob = str(first_month_gazette or "")
         if not gazette_blob.strip():
-            reports = db.list_turn_reports()
+            reports = db.turn_reports.list_archives()
             gazette_blob = str((reports[-1]["report"] if reports else "") or "")
             if not gazette_blob.strip() and int(state.turn) > 0:
-                gazette_blob = str(db.get_turn_report(int(state.turn) - 1) or "")
+                gazette_blob = str(db.turn_reports.report_text(int(state.turn) - 1) or "")
         p4_gazette = _surface_capture("邸报gazette", gazette_blob)
 
         checks = {

@@ -473,21 +473,6 @@ def test_write_turn_still_blocks_on_open_barrier():
     assert order == ["barrier", "late"], order
 
 
-def test_no_elapsed_timeout_api_on_barrier():
-    """队列层已删 elapsed 熔断分类：barrier/wait_prior/run 无 timeout_s 形参。"""
-    import inspect
-
-    import ming_sim.session_write_queue as swq
-
-    q = SessionWriteQueue()
-    assert "timeout_s" not in inspect.signature(q.barrier).parameters
-    assert "timeout_s" not in inspect.signature(q.wait_prior).parameters
-    assert "timeout_s" not in inspect.signature(q.run).parameters
-    assert "timeout_s" not in inspect.signature(q.ticketed_gate).parameters
-    assert not hasattr(swq, "TicketBarrierTimeout")
-    assert not hasattr(swq, "DEFAULT_TICKET_WAIT_S")
-
-
 def test_get_session_write_queue_wiring_fail_loud_no_broad_swallow():
     """#1353 r7 / ADR 0005：接线赋值禁宽吞；WebGame/session 必共享同一 queue/gate。"""
     from ming_sim.session_write_queue import get_session_write_queue

@@ -6,7 +6,9 @@ import json
 from dataclasses import dataclass
 from typing import Any, Mapping
 
-from ming_sim.applier import connection_owns_transaction, sanitize_sqlite_text
+from ming_sim.applier import (
+    connection_owns_transaction, load_stored_list, sanitize_sqlite_text,
+)
 from ming_sim.entities.character import CharacterStore
 from ming_sim.entities.dossier import DossierStore
 from ming_sim.entities.issue import IssueStore
@@ -467,18 +469,8 @@ class AffairStore:
         out: list[dict[str, object]] = []
         for row in rows:
             origin = str(row["origin_ref"] or "").strip()
-            try:
-                tags = json.loads(row["tags"] or "[]")
-            except (TypeError, ValueError):
-                tags = []
-            if not isinstance(tags, list):
-                tags = []
-            try:
-                people = json.loads(row["person_names"] or "[]")
-            except (TypeError, ValueError):
-                people = []
-            if not isinstance(people, list):
-                people = []
+            tags = load_stored_list(row["tags"], label="tags")
+            people = load_stored_list(row["person_names"], label="person_names")
             out.append({
                 "id": int(row["id"]),
                 "body": str(row["body"] or ""),

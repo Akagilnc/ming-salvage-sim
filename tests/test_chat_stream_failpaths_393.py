@@ -81,7 +81,11 @@ class _FailingPrologueDB:
     def fail_chat_turn(self, chat_turn_id):
         self.failed_turns.append(int(chat_turn_id))
 
-    def load_all_chat_history(self):
+    @property
+    def chat_messages(self):
+        return self
+
+    def history_by_minister(self):
         return {}
 
     def get_last_active_chat_turn(self, *a, **k):
@@ -239,7 +243,11 @@ class _DoubleFailDB:
     def fail_chat_turn(self, chat_turn_id):
         raise RuntimeError("fail_chat_turn 也崩了（DB 已坏）")
 
-    def load_all_chat_history(self):
+    @property
+    def chat_messages(self):
+        return self
+
+    def history_by_minister(self):
         return {}
 
     def get_last_active_chat_turn(self, *a, **k):
@@ -292,7 +300,11 @@ class _WorkerPathDB:
     def fail_chat_turn(self, chat_turn_id):
         raise RuntimeError("fail_chat_turn 也崩了（DB 已坏）")
 
-    def load_all_chat_history(self):
+    @property
+    def chat_messages(self):
+        return self
+
+    def history_by_minister(self):
         return {}
 
     def get_last_active_chat_turn(self, *a, **k):

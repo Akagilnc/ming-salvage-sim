@@ -20,6 +20,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, List, Optional, Sequence
 
+from ming_sim.applier import load_stored_list, load_stored_object
+
 _UNSAFE = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
 _INDEX_NAME = "INDEX.txt"
 _PERSON_DIR = "人物"
@@ -1109,8 +1111,9 @@ def _with_archived_gazette_titles(
 ) -> list[dict[str, object]]:
     """标题只取 turn_reports 已入档字段。缺标题留空，不读正文。"""
     archived: dict[int, str] = {}
-    if hasattr(db, "list_turn_reports"):
-        for item in db.list_turn_reports():
+    archives = getattr(getattr(db, "turn_reports", None), "list_archives", None)
+    if archives is not None:
+        for item in archives():
             archived[int(item.get("turn") or 0)] = str(item.get("title") or "")
     stamped: list[dict[str, object]] = []
     for row in rows:
@@ -1458,7 +1461,11 @@ def _write_world_tree(
     index.extend(_write_gazette_index(
         tmp,
         _with_archived_gazette_titles(
-            db.list_turn_reports() if hasattr(db, "list_turn_reports") else (), db,
+            (
+                db.turn_reports.list_archives()
+                if getattr(getattr(db, "turn_reports", None), "list_archives", None)
+                else ()
+            ), db,
         ),
         prefix=_WORLD_GAZETTE_DIR,
     ))
@@ -1497,9 +1504,13 @@ def continuing_dossier_facts(db: Any, turn: int) -> list[dict[str, object]]:
         if status != "executing":
             continue
         dossier_id = int(row["id"])
-        payload = row.get("payload") or {}
-        if not isinstance(payload, dict):
+        raw_payload = row.get("payload")
+        if isinstance(raw_payload, dict):
+            payload = raw_payload
+        elif raw_payload in (None, ""):
             payload = {}
+        else:
+            payload = load_stored_object(raw_payload, label="payload")
         facts.append({
             "id": dossier_id,
             "status": status,
@@ -1572,12 +1583,7 @@ def _scene_present_rows(db: Any, state: Any) -> list[tuple[str, str]]:
 
 
 def _json_list_field(raw: object) -> list[str]:
-    try:
-        value = json.loads(raw or "[]")
-    except (TypeError, ValueError):
-        return []
-    if not isinstance(value, list):
-        return []
+    value = load_stored_list(raw, label="人物名单")
     return [str(item) for item in value if str(item).strip()]
 
 
@@ -1675,13 +1681,10 @@ def _scene_spoken_text(db: Any) -> str:
         ):
             if not mid:
                 continue
-            row = db.conn.execute(
-                "SELECT content FROM chat_messages WHERE id=?", (int(mid),),
-            ).fetchone()
-            if row is None:
+            body = db.chat_messages.content_of(int(mid))
+            if body is None:
                 continue
             # #1812 P6：对话正文是自由文本，判空用局部 stripped 副本，写出用原文。
-            body = str(row["content"] or "")
             if not body.strip():
                 continue
             lines.append(f"{role_label}：{body}")

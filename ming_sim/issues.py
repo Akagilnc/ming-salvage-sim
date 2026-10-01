@@ -14,7 +14,7 @@ from contextlib import contextmanager
 from typing import Any, Dict, List, Literal, Mapping, Optional, Tuple
 
 from ming_sim.entities.dossier import DOSSIER_REPORT_ORIGIN_VERDICT
-from ming_sim.applier import atomic
+from ming_sim.applier import atomic, load_stored_list, load_stored_object
 from ming_sim.appointment_tenure import appointment_tenure_from
 from ming_sim.authority_privileges import AUTHORITY_PRIVILEGE_SET
 from ming_sim.constants import (
@@ -239,10 +239,9 @@ def _payload_owned_dossier_for_origin(db: GameDB, origin_ref: object) -> Optiona
     row = db.dossiers.get(dossier_id)
     if row is None or not db.dossiers.authorizes_effects(dossier_id):
         return None
-    try:
-        payload = row.get("payload") or json.loads(str(row.get("payload_json") or "{}"))
-    except (TypeError, ValueError):
-        return None
+    payload = row.get("payload")
+    if not isinstance(payload, dict):
+        payload = load_stored_object(row.get("payload_json"), label="payload_json")
     if not isinstance(payload, dict):
         return None
     if dossier_action_policy(row.get("action_type"), payload)["effect_owner"] != "payload":
@@ -523,12 +522,9 @@ def _legacy_commitment_stop_gate(resolve_condition: object) -> Dict[str, str]:
 def _commitment_stop_gate(row: sqlite3.Row) -> Dict[str, str]:
     keys = row.keys() if hasattr(row, "keys") else []
     raw = row["stop_condition"] if "stop_condition" in keys else ""
-    if raw:
-        try:
-            gate = json.loads(str(raw))
-        except (TypeError, ValueError):
-            gate = {}
-        if isinstance(gate, dict) and gate:
+    if str(raw or "").strip():
+        gate = load_stored_object(raw, label="stop_condition")
+        if gate:
             return gate
     return _legacy_commitment_stop_gate(row["resolve_condition"] if "resolve_condition" in keys else "")
 
@@ -574,11 +570,8 @@ def _latest_commitment_paid_total(db: GameDB, issue_id: int) -> int:
         (issue_id,),
     ).fetchall()
     for row in rows:
-        try:
-            payload = json.loads(str(row["metric_delta"] or "{}"))
-        except (TypeError, ValueError):
-            continue
-        progress = payload.get("commitment_progress") if isinstance(payload, dict) else None
+        payload = load_stored_object(row["metric_delta"], label="metric_delta")
+        progress = payload.get("commitment_progress")
         if isinstance(progress, dict):
             try:
                 return int(progress.get("paid_total") or 0)
@@ -1379,23 +1372,9 @@ def _fiscal_levy_base_transport(
     return max(0.0, seed_transport - liao_seed)
 
 
-def _load_region_fiscal_for_fiscal_levy(region_id: str, raw_fiscal: object) -> Optional[dict]:
-    if isinstance(raw_fiscal, dict):
-        return raw_fiscal
-    if raw_fiscal is None or raw_fiscal == "":
-        raw_fiscal = "{}"
-    elif not isinstance(raw_fiscal, (str, bytes, bytearray)):
-        tlog(f"[fiscal-levy] {region_id} fiscal 非字典，本{TURN_UNIT}饷率通道出列")
-        return None
-    try:
-        fiscal = json.loads(raw_fiscal)
-    except (TypeError, ValueError) as exc:
-        tlog(f"[fiscal-levy] {region_id} fiscal 解析失败，本{TURN_UNIT}饷率通道出列：{type(exc).__name__}: {exc}")
-        return None
-    if not isinstance(fiscal, dict):
-        tlog(f"[fiscal-levy] {region_id} fiscal 非字典，本{TURN_UNIT}饷率通道出列")
-        return None
-    return fiscal
+def _load_region_fiscal_for_fiscal_levy(region_id: str, raw_fiscal: object) -> dict:
+    """省级 fiscal 持久文档。空白是空对象；在场损坏拒绝本月加派。"""
+    return load_stored_object(raw_fiscal, label=f"{region_id}.fiscal")
 
 
 def _fiscal_levy_event_by_id(event_id: str) -> Optional[Event]:
@@ -4505,12 +4484,8 @@ def _emit_pairing_warnings(new_row, effect: object, sink: Optional[List[str]] = 
     if isinstance(raw_tags, (list, tuple)):
         tags = list(raw_tags)
     else:
-        try:
-            tags = json.loads(raw_tags or "[]")
-        except (TypeError, ValueError):
-            tags = []
-    # ongoing_effects 经统一守门 loads_effect_dict（已解析 dict 原样 / JSON 串解析 / 非 dict→{}，
-    # 含调用方预解析容器的兼容，#117 R5 chokepoint 一致）。
+        tags = load_stored_list(raw_tags, label="tags")
+    # ongoing_effects 经 loads_effect_dict：已解析对象原样；空白是空对象；损坏即拒。
     ongoing = loads_effect_dict(_g("ongoing_effects", "{}"))
     for w in _initiative_resolve_pairing_warnings(str(_g("title", "") or ""), tags, ongoing, effect):
         tlog(f"[pairing] {w}")
@@ -6707,14 +6682,11 @@ def _apply_person_changes(
                         )
                         continue
                     if action_type == "pacification":
-                        try:
-                            payload = dossier.get("payload") or json.loads(
-                                str(dossier.get("payload_json") or "{}")
-                            )
-                        except (TypeError, ValueError):
-                            payload = {}
+                        payload = dossier.get("payload")
                         if not isinstance(payload, dict):
-                            payload = {}
+                            payload = load_stored_object(
+                                dossier.get("payload_json"), label="payload_json",
+                            )
                         bound_target = str(
                             payload.get("target_id") or dossier.get("target_id") or ""
                         ).strip()
@@ -7128,7 +7100,7 @@ def _apply_levy_driven_transfers(
 
     口径（AC2 确定性可断言）：每明省读 settle._meta「加派基线」(万两/月)，
     入池(人) = 基线 × LEVY_DISPLACEMENT_RATE(人/万两·月) × (100−民心)/100。
-    本机制只在 substrate_hub 新财政档启用；legacy 档不接受也不消费加派账。
+    加派入池随 substrate hub 的省级账结算。
     结果钳到农民@省余额后再交 _apply_population_transfers 守恒原语落账
     （reason=加派；累积账月效统一使用 `盘面自发`，不伪归最后一道改账旨）。基线 ≤0 或折算后
     ≤0 的省零入池——停加派/蠲免后入池止（AC5；出口回流归 S5 #652）。
@@ -7386,10 +7358,7 @@ def _apply_recovery_driven_transfers(
         dossier_id = int(row["id"])
         if (dossier_id, turn) in seen_keys:
             continue
-        try:
-            payload = json.loads(str(row["payload_json"] or "{}"))
-        except (TypeError, ValueError):
-            continue
+        payload = load_stored_object(row["payload_json"], label="payload_json")
         if not isinstance(payload, dict):
             continue
         grant_action = str(payload.get("grant_action") or "").strip()
@@ -9655,10 +9624,7 @@ def clear_gated_legacies(db: GameDB, state: GameState) -> List[str]:
     ).fetchall()
     cleared: List[str] = []
     for row in rows:
-        try:
-            gate = json.loads(str(row["clear_gate"] or "{}"))
-        except (ValueError, TypeError):
-            gate = {}
+        gate = load_stored_object(row["clear_gate"], label="clear_gate")
         if not gate:
             continue
         if _gate_passed(gate, state.metrics, db):

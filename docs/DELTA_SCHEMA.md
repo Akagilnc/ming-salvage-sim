@@ -142,7 +142,7 @@ canonical 段形＝list，每项落一道加派旨：逐省累积账当回合落
 
 - item 字段中英别名：`地区编号`→region_id、`月增额`/`月额`→monthly_amount。
 - 同批 `(origin_ref, region_id)` 仅首项成功，重复项逐项拒收。
-- 仅 `substrate_hub` 财政档可写入、消费；legacy 财政引擎拒收且不消费。人口一律「人」。历史正账若农民/流民两行皆无则安全出列，仅缺一行视为损坏并 fail-loud。
+- 财政写入与消费都走 substrate hub。人口一律「人」。历史正账若农民/流民两行皆无则安全出列，仅缺一行视为损坏并 fail-loud。
 - 无旨不入账：段空＝累积账不动；停征后入池止（出口回流归 S5 #652）。
 
 ### `region_delta` — 地区变化

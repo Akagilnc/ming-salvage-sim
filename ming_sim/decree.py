@@ -25,7 +25,7 @@ from ming_sim.agents import (
 )
 from ming_sim.applier import (
     Provenance, RejectedItem, RejectionCollector, atomic,
-    mirror_rejections_after_commit,
+    load_stored_object, mirror_rejections_after_commit,
 )
 from ming_sim.constants import TURN_UNIT
 from ming_sim.context import ENDING_LABELS, ENDING_ONGOING, ENDING_TIMEOUT, victory_status
@@ -224,11 +224,7 @@ def _dossier_payload_dict(row: Mapping[str, object] | Dict[str, object]) -> Dict
     payload = row.get("payload")
     if isinstance(payload, dict):
         return payload
-    try:
-        parsed = json.loads(str(row.get("payload_json") or "{}"))
-    except (TypeError, ValueError, json.JSONDecodeError):
-        return {}
-    return parsed if isinstance(parsed, dict) else {}
+    return load_stored_object(row.get("payload_json"), label="payload_json")
 
 
 def _is_stalled_deliberation(dossier: Mapping[str, object] | Dict[str, object]) -> bool:
@@ -1070,7 +1066,7 @@ def prepare_resolve_front_half(
     # 已有-context 重入：只读既有真源。save_resolve_context 是整行 upsert，placeholder
     # 默认空字段会冲掉已有原诏/source。
     if state.turn_phase in FRONT_HALF_DONE_PHASES:
-        existing = db.get_resolve_context(int(state.turn))
+        existing = db.resolve_contexts.get(int(state.turn))
         if existing is not None:
             payload = existing.get("simulator_payload")
             if isinstance(payload, dict) and isinstance(payload.get("transit_arrivals"), list):
@@ -1099,7 +1095,7 @@ def prepare_resolve_front_half(
             }
             # #671：占位 upsert 不得以默认空串覆盖已持久 attendant_message
             #（同 turn 占位重入时尤甚）。
-            prior_placeholder = db.get_resolve_context(int(state.turn))
+            prior_placeholder = db.resolve_contexts.get(int(state.turn))
             preserved_attendant = (
                 str(prior_placeholder.get("attendant_message") or "")
                 if isinstance(prior_placeholder, dict)
@@ -1114,7 +1110,7 @@ def prepare_resolve_front_half(
         raise_fixed_period_flow_abort_if_needed(db, state, exc)
         raise
 
-    ctx = db.get_resolve_context(int(state.turn))
+    ctx = db.resolve_contexts.get(int(state.turn))
     payload = ctx.get("simulator_payload") if isinstance(ctx, dict) else None
     if isinstance(payload, dict) and isinstance(payload.get("transit_arrivals"), list):
         return list(payload["transit_arrivals"])
@@ -1310,7 +1306,7 @@ def resolve_decisions_phase2(
 ) -> str:
     """phase2：皇帝亲裁完，读回 phase1 暂存上下文 + 已存决策点选择，续跑结算。
     要求本回合处于 awaiting_decision（已有 resolve_context）。返回完整结算报告。"""
-    ctx = db.get_resolve_context(state.turn)
+    ctx = db.resolve_contexts.get(state.turn)
     if ctx is None:
         raise LLMContractError("无待决推演上下文，无法续跑结算（phase1 未暂停或已结算）。")
     before_turn = state.turn

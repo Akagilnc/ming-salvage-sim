@@ -20,19 +20,6 @@ _STATUS_STAGED = "staged"
 _STATUS_DISCARDED = "discarded"
 _STATUS_SETTLED = "settled"
 
-_LIVE_COLUMNS = (
-    "id",
-    "decree_ref",
-    "declaration_json",
-    "visible_refs_json",
-    "verdict_json",
-    "questions_json",
-    "forecast_text",
-    "status",
-    "created_turn",
-    "created_at",
-)
-
 _TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS staged_declarations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -89,29 +76,8 @@ class StagedDeclarationStore:
 
     @staticmethod
     def ensure_schema(conn: Any) -> None:
-        """现役形状写在 CREATE。已有表缺列时就地重排一次：改名、按现役形状建表、拷重叠列、丢掉旧表。"""
-        exists = conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='staged_declarations'"
-        ).fetchone()
-        if exists is None:
-            conn.executescript(_SCHEMA_SQL)
-            return
-        present = [
-            str(row[1]) for row in conn.execute("PRAGMA table_info(staged_declarations)")
-        ]
-        if set(_LIVE_COLUMNS) <= set(present):
-            conn.executescript(_INDEX_SQL)
-            return
-        overlap = [name for name in _LIVE_COLUMNS if name in present]
-        conn.execute("ALTER TABLE staged_declarations RENAME TO staged_declarations_prev")
-        conn.executescript(_TABLE_SQL)
-        cols = ", ".join(overlap)
-        conn.execute(
-            f"INSERT INTO staged_declarations ({cols}) "
-            f"SELECT {cols} FROM staged_declarations_prev"
-        )
-        conn.execute("DROP TABLE staged_declarations_prev")
-        conn.executescript(_INDEX_SQL)
+        """现役形状只由 CREATE IF NOT EXISTS 建立。不探列、不改名、不搬旧行。"""
+        conn.executescript(_SCHEMA_SQL)
 
     def stage(
         self, *, decree_ref: str, declaration: Mapping[str, object], turn: int,

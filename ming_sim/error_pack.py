@@ -162,7 +162,7 @@ def write_error_pack(
     内容：
       - traceback.txt        完整 traceback
       - delta.json           当回合 delta（无则 {} + 说明）
-      - resolve_context.json db.get_resolve_context(turn)（无则 null）
+      - resolve_context.json db.resolve_contexts.get(turn)（无则 null）
       - save_backup.db       SQLite 热备（conn.backup() API）
       - manifest.json        db 路径 / turn / 年月 / 版本 / attempt / 异常类型+消息 / 时间戳
 

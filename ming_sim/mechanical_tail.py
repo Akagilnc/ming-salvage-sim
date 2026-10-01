@@ -93,8 +93,9 @@ def generate_ending_summary_for_tail(
 
     def _load_gazettes():
         loaded = []
-        if hasattr(db, "list_turn_reports"):
-            for row in db.list_turn_reports():
+        archives = getattr(getattr(db, "turn_reports", None), "list_archives", None)
+        if archives is not None:
+            for row in archives():
                 turn = int(row.get("turn") or 0)
                 if turn > int(closed_state.turn):
                     continue
@@ -369,14 +370,11 @@ def schedule_mechanical_tail_after_advance(
 
 
 def _resolve_context_turns(db: Any, current_turn: int) -> list[int]:
-    """有月链记录的回合。无连接的替身才退回 0..current。"""
-    conn = getattr(db, "conn", None)
-    if conn is None:
+    """有月链记录的回合。没有 resolve context 读口的替身退回 0..current。"""
+    store = getattr(db, "resolve_contexts", None)
+    if store is None or not hasattr(store, "turns"):
         return list(range(0, int(current_turn) + 1))
-    rows = conn.execute(
-        "SELECT turn FROM pending_resolve_context ORDER BY turn"
-    ).fetchall()
-    return [int(row["turn"]) for row in rows]
+    return store.turns()
 
 
 def _pending_mechanical_tails(

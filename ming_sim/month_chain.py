@@ -149,8 +149,7 @@ def _month_fact_materials(
     include_secret_sources=False：邸报作者，滤密令来源。
     include_secret_sources=True：整月密报 run，可读密令来源。
     """
-    import json
-
+    from ming_sim.applier import load_stored_json
     from ming_sim.materials import is_secret_order_origin, secret_order_dossier_ids
 
     turn = int(state.turn)
@@ -165,14 +164,12 @@ def _month_fact_materials(
         ).fetchall()
         for row in rows:
             decree_ref = str(row["decree_ref"] or "")
-            try:
-                declaration = json.loads(row["declaration_json"] or "{}")
-            except json.JSONDecodeError:
-                declaration = {}
-            try:
-                visible = json.loads(row["visible_refs_json"] or "{}")
-            except json.JSONDecodeError:
-                visible = {}
+            declaration = load_stored_json(
+                row["declaration_json"], label="declaration_json", blank={},
+            )
+            visible = load_stored_json(
+                row["visible_refs_json"], label="visible_refs_json", blank={},
+            )
             if not include_secret_sources and (
                 _decree_ref_is_secret(db, decree_ref)
                 or _secret_sourced(declaration)
@@ -216,10 +213,7 @@ def _month_fact_materials(
             ):
                 if not include_secret_sources and str(row["source"] or "") == "secret_order":
                     continue
-                try:
-                    item = json.loads(row["item_json"] or "{}")
-                except json.JSONDecodeError:
-                    item = {}
+                item = load_stored_json(row["item_json"], label="item_json", blank={})
                 if not include_secret_sources and (
                     _secret_sourced(item) or _item_is_secret_dossier(item, secret_dossiers)
                 ):
@@ -243,8 +237,9 @@ def _month_fact_materials(
                 "event_id": row.get("event_id") or "",
             })
     snapshot = None
-    if hasattr(db, "get_month_open_snapshot"):
-        snapshot = db.get_month_open_snapshot(turn)
+    getter = getattr(getattr(db, "month_open_snapshots", None), "get", None)
+    if getter is not None:
+        snapshot = getter(turn)
     return {
         "nominal": nominal,
         "landed": landed,
@@ -289,7 +284,7 @@ def _gazette_feed(db: Any, state: Any, chain: Dict[str, Any]) -> Dict[str, Any]:
 
 def _persisted_transit_arrivals(db: Any, turn: int) -> list:
     """过月前半段已写入 resolve context 的本月抵达。缺键与非列表按该读口视为无抵达。"""
-    ctx = db.get_resolve_context(int(turn)) or {}
+    ctx = db.resolve_contexts.get(int(turn)) or {}
     payload = ctx.get("simulator_payload") if isinstance(ctx, dict) else None
     if isinstance(payload, dict) and isinstance(payload.get("transit_arrivals"), list):
         return list(payload["transit_arrivals"])
@@ -585,7 +580,7 @@ def _run_loaded_month_chain(
     # 门控遗产读的是这些写入，须晚于它们；催办/待核只消费上月待办，并入这一次即可。
     # 到期密令结案已由步骤 4a 办理；drift 内再调为幂等兜底。
     _run_month_drift(db, state, chain, turn, decree_text, source)
-    archive = db.get_turn_report_archive(turn)
+    archive = db.turn_reports.archive(turn)
     if archive is None or not str(archive.get("report") or "").strip():
         from ming_sim.models import LLMConfig
 
@@ -601,7 +596,7 @@ def _run_loaded_month_chain(
             db, state, chain, decree_text=decree_text, source=source,
             step="gazette", operation=_write_gazette,
         )
-        archive = db.get_turn_report_archive(turn)
+        archive = db.turn_reports.archive(turn)
         if archive is None or not str(archive.get("report") or "").strip():
             return _pause(db, turn, chain, decree_text, source, "gazette")
     advanced = _advance_after_gazette(
@@ -1617,7 +1612,7 @@ def _split_at_question(text: str) -> tuple[str, List[dict]]:
 
 
 def _load_chain(db: Any, turn: int) -> Dict[str, Any]:
-    ctx = db.get_resolve_context(turn) or {}
+    ctx = db.resolve_contexts.get(turn) or {}
     payload = ctx.get("simulator_payload") or {}
     chain = payload.get(_CHAIN_KEY) if isinstance(payload, dict) else None
     return dict(chain) if isinstance(chain, dict) else {}
@@ -1627,7 +1622,7 @@ def _save_chain(
     db: Any, turn: int, chain: Dict[str, Any], *,
     decree_text: str = "", source: Provenance = Provenance.system_simulation,
 ) -> None:
-    ctx = db.get_resolve_context(turn) or {}
+    ctx = db.resolve_contexts.get(turn) or {}
     payload = dict(ctx.get("simulator_payload") or {})
     payload[_CHAIN_KEY] = chain
     stored_source = ctx.get("source") or source

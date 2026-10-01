@@ -16,6 +16,7 @@ import copy
 import json
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
+from ming_sim.applier import load_stored_object
 from ming_sim.constants import ECONOMY_ACCOUNTS, REGION_FIELD_ALIASES
 from ming_sim.materials import secret_order_origin
 from ming_sim.person_archive_contract import PERSON_ACTIONS, PERSON_LEGAL_REASON_CODES
@@ -108,13 +109,7 @@ def seed_guilt_counts_as_debt(seed_guilt: object) -> bool:
         text = str(seed_guilt).strip()
         if not text:
             return False
-        try:
-            parsed = json.loads(text)
-        except (TypeError, ValueError):
-            return True
-        if not isinstance(parsed, Mapping):
-            return True
-        guilt = parsed
+        guilt = load_stored_object(text, label="seed_guilt")
     crime = str(guilt.get("crime") or "无").strip() or "无"
     severity = str(guilt.get("severity") or "无").strip() or "无"
     return not (crime == "无" and severity == "无")
@@ -491,11 +486,14 @@ def read_covert_task_contract(dossier: Mapping[str, object] | None) -> Optional[
     if not isinstance(payload, Mapping):
         raw_json = dossier.get("payload_json")
         if isinstance(raw_json, str) and raw_json.strip():
+            label = f"案卷#{dossier.get('id')} payload_json"
             try:
                 loaded = json.loads(raw_json)
-            except (TypeError, ValueError):
-                loaded = None
-            payload = loaded if isinstance(loaded, Mapping) else None
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"{label} 损坏") from exc
+            if not isinstance(loaded, Mapping):
+                raise ValueError(f"{label} 必须为对象")
+            payload = loaded
         else:
             payload = None
     if not isinstance(payload, Mapping):
@@ -693,11 +691,14 @@ def _delivery_matches_region(row: Mapping[str, object], delivery: Mapping[str, o
 
 
 def _dossier_payload_map(db: Any, dossier_id: int) -> Dict[str, object]:
+    label = f"案卷#{int(dossier_id)} payload_json"
     try:
         payload = json.loads(db.dossiers.payload_of(int(dossier_id)))
-    except (TypeError, ValueError):
-        return {}
-    return dict(payload) if isinstance(payload, Mapping) else {}
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{label} 损坏") from exc
+    if not isinstance(payload, dict):
+        raise ValueError(f"{label} 必须为对象")
+    return payload
 
 
 def live_investigation_fact_keys(db: Any, target: str) -> List[str]:
@@ -749,12 +750,13 @@ def globally_used_fact_keys(db: Any, *, except_dossier_id: int = 0) -> set[str]:
     for row_id, payload_json in db.dossiers.all_payloads():
         if skip and int(row_id) == skip:
             continue
+        label = f"案卷#{int(row_id)} payload_json"
         try:
             payload = json.loads(payload_json)
-        except (TypeError, ValueError):
-            continue
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{label} 损坏") from exc
         if not isinstance(payload, Mapping):
-            continue
+            raise ValueError(f"{label} 必须为对象")
         for lane in _lanes_from_payload(payload):
             if lane.get("used"):
                 used.add(str(lane["fact_key"]))
@@ -807,13 +809,14 @@ def read_substantiated_legal_reason_code(
     key = str(fact_key or "").strip()
     if not name or not key:
         return ""
-    for _row_id, payload_json in db.dossiers.all_payloads():
+    for row_id, payload_json in db.dossiers.all_payloads():
+        label = f"案卷#{int(row_id)} payload_json"
         try:
             payload = json.loads(payload_json)
-        except (TypeError, ValueError):
-            continue
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{label} 损坏") from exc
         if not isinstance(payload, Mapping):
-            continue
+            raise ValueError(f"{label} 必须为对象")
         contract = payload.get(CONTRACT_KEY) if isinstance(payload.get(CONTRACT_KEY), Mapping) else {}
         if _investigation_target_of(contract) != name:
             continue

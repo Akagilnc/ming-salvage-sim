@@ -162,7 +162,11 @@ class _RecordingDB:
         # #1716：_chat_payload 经 pending_directive_count 读此口；轻壳无拟旨暂存
         return []
 
-    def load_all_chat_history(self):
+    @property
+    def chat_messages(self):
+        return self
+
+    def history_by_minister(self):
         out: dict[str, list] = {}
         for m in self.messages:
             out.setdefault(m["minister"], []).append({"role": m["role"], "content": m["content"]})

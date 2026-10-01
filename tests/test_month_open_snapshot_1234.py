@@ -72,9 +72,9 @@ def test_capture_is_idempotent_and_turn_bound(game):
     db.save_state(state)
     db.capture_month_open_snapshot(state)
 
-    snap = db.get_month_open_snapshot(int(state.turn))
+    snap = db.month_open_snapshots.get(int(state.turn))
     assert snap == before
-    assert db.get_month_open_snapshot(int(state.turn) + 1) is None
+    assert db.month_open_snapshots.get(int(state.turn) + 1) is None
 
 
 def test_state_payload_overlays_snapshot_when_present(game):
@@ -160,7 +160,7 @@ def test_clear_on_month_complete_returns_live_values(game):
     payload = _runtime(db, state).state_payload()
     assert payload["turn"]["settlement_display"] is False
     assert payload["metrics"]["国库"] == before["国库"] + 40
-    assert db.get_month_open_snapshot(turn) is None
+    assert db.month_open_snapshots.get(turn) is None
 
 
 def test_cross_month_snapshot_does_not_bleed(game):
@@ -189,7 +189,7 @@ def test_oracle_normal_phase_clears_via_startup_hook(game, capsys):
 
     cleared = clear_orphan_month_open_snapshot(db, state)
     assert cleared is True
-    assert db.get_month_open_snapshot(int(state.turn)) is None
+    assert db.month_open_snapshots.get(int(state.turn)) is None
     logged = capsys.readouterr().out
     assert "month_open_snapshot" in logged
     assert "启动清除孤儿月初快照" in logged
@@ -216,7 +216,7 @@ def test_oracle_settling_phase_keeps_display_for_recovery(game):
 
     cleared = clear_orphan_month_open_snapshot(db, state)
     assert cleared is False
-    assert db.get_month_open_snapshot(int(state.turn)) == before
+    assert db.month_open_snapshots.get(int(state.turn)) == before
 
     payload = _runtime(db, state).state_payload()
     assert payload["turn"]["settlement_display"] is True
@@ -263,7 +263,7 @@ def test_capture_before_mutation_on_resolve_turn_entry(game, monkeypatch):
     with pytest.raises(RuntimeError, match="stop-after-capture"):
         sess.resolve_turn(decree="诏曰测试")
 
-    assert db.get_month_open_snapshot(int(state.turn)) == before
+    assert db.month_open_snapshots.get(int(state.turn)) == before
 
 
 def test_capture_before_mutation_on_advance_without_edict(game, monkeypatch):
@@ -298,7 +298,7 @@ def test_capture_before_mutation_on_advance_without_edict(game, monkeypatch):
     with pytest.raises(RuntimeError, match="stop-after-capture-advance"):
         sess.advance_without_decree()
 
-    assert db.get_month_open_snapshot(int(state.turn)) == before
+    assert db.month_open_snapshots.get(int(state.turn)) == before
 
 
 def test_player_month_advance_expires_snapshot(game, monkeypatch):
@@ -309,7 +309,7 @@ def test_player_month_advance_expires_snapshot(game, monkeypatch):
     turn = int(state.turn)
     db.capture_month_open_snapshot(state)
     _settle_empty_month(db, state, content, monkeypatch)
-    assert db.get_month_open_snapshot(turn) is None
+    assert db.month_open_snapshots.get(turn) is None
     assert state.turn == turn + 1
     payload = _runtime(db, state).state_payload()
     assert payload["turn"]["settlement_display"] is False
@@ -376,7 +376,7 @@ def test_web_advance_entry_exposes_settlement_display(game, monkeypatch):
     def _observe_then_done(**_kw):
         # 点即入已在 entry accept 完成——结算入口即可见核账脸与点击前四键。
         actions.append("resolve")
-        mid["snap"] = db.get_month_open_snapshot(int(state.turn))
+        mid["snap"] = db.month_open_snapshots.get(int(state.turn))
         mid["payload"] = runtime.state_payload()
         state.metrics["国库"] = before["国库"] + 9
         db.save_state(state)
@@ -400,7 +400,7 @@ def test_web_advance_entry_exposes_settlement_display(game, monkeypatch):
     assert mid["payload"]["metrics"]["国库"] == before["国库"]
     # 成功回常态（summoning）：生命周期缝清残留，拟诏不再被核账门误挡。
     assert result["state"]["turn"]["settlement_display"] is False
-    assert db.get_month_open_snapshot(int(state.turn)) is None
+    assert db.month_open_snapshots.get(int(state.turn)) is None
 
 
 def test_web_advance_entry_awaiting_keeps_phase_and_decisions(game, monkeypatch):
@@ -462,4 +462,4 @@ def test_web_advance_entry_awaiting_keeps_phase_and_decisions(game, monkeypatch)
     assert state.turn_phase == TurnPhase.AWAITING_DECISION.value
     assert result["state"]["turn"]["phase"] == TurnPhase.AWAITING_DECISION.value
     assert result["state"]["turn"]["settlement_display"] is True
-    assert db.get_month_open_snapshot(turn_before) is not None
+    assert db.month_open_snapshots.get(turn_before) is not None

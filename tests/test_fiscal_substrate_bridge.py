@@ -809,7 +809,7 @@ def test_settling_context_retry_does_not_recompute_substrate_hub_pre_settle(fres
         "测试诏",
         {},
     )
-    assert db.get_resolve_context(turn) is not None
+    assert db.resolve_contexts.get(turn) is not None
 
     pre_settle(state, db)
 
@@ -4606,14 +4606,11 @@ def test_fixed_flow_loader_rejects_non_finite_numeric_values(monkeypatch, bad_sc
 
 
 @pytest.mark.parametrize("payload", [[], 0, False])
-def test_fixed_flow_loader_rejects_decoded_non_dict_payloads(monkeypatch, payload):
+def test_fixed_flow_loader_rejects_decoded_non_dict_payloads(payload):
     import ming_sim.flows as flows_mod
 
-    msgs: list[str] = []
-    monkeypatch.setattr(flows_mod, "tlog", lambda msg: msgs.append(msg))
-
-    assert flows_mod._load_region_fiscal_for_fixed_flow("shaanxi", payload) is None
-    assert _log_has(msgs, "[province-fiscal] shaanxi")
+    with pytest.raises(ValueError, match="fiscal"):
+        flows_mod._load_region_fiscal_for_fixed_flow("shaanxi", payload)
 
 
 def test_apply_fixed_period_flows_commits_shadow_substrate_when_standalone(fresh_game):

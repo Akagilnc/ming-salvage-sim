@@ -155,7 +155,6 @@ def test_patch_decree_route_removed_and_directives_remain():
         and "PATCH" in (getattr(r, "methods", None) or set())
     ]
     assert patch_decree == []
-    assert not hasattr(web_app, "api_edit_decree")
 
     post_dirs = [
         r for r in web_app.app.routes

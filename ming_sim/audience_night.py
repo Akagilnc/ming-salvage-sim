@@ -244,17 +244,10 @@ def _now_iso() -> str:
 
 
 def _json_list(value: Any) -> List[Any]:
-    if value is None:
-        return []
-    if isinstance(value, list):
-        return value
-    if isinstance(value, str):
-        try:
-            parsed = json.loads(value or "[]")
-        except (TypeError, ValueError):
-            return []
-        return parsed if isinstance(parsed, list) else []
-    return []
+    """持久 JSON 名单。空白是 []；在场损坏或非名单即拒。"""
+    from ming_sim.applier import load_stored_list
+
+    return load_stored_list(value, label="JSON 名单")
 
 
 def _row_dict(row: Any) -> Dict[str, Any]:
@@ -563,16 +556,12 @@ def read_night_scroll(db: Any, night_id: int) -> List[Dict[str, Any]]:
             message_id = int(turn.get(column) or 0)
             if not message_id:
                 continue
-            row = db.conn.execute(
-                "SELECT content,created_at,highlights_json FROM chat_messages WHERE id=?",
-                (message_id,),
-            ).fetchone()
+            row = db.chat_messages.scroll_row(message_id)
             if row is None:
                 continue
             content = str(row["content"] or "")
-            # #544：只走 GameDB._parse_highlights_json 唯一真源（SELECT 已点名该列）
             hl: List[str] = (
-                list(db._parse_highlights_json(row["highlights_json"]))
+                list(db.chat_messages.parse_highlights(row["highlights_json"]))
                 if role == "minister"
                 else []
             )
@@ -2345,10 +2334,7 @@ def rescript_summon_origin_consumed(
         return False
     tags_raw = entry.get("tags")
     if isinstance(tags_raw, str):
-        try:
-            tags_list = json.loads(tags_raw or "[]")
-        except Exception:
-            tags_list = []
+        tags_list = _json_list(tags_raw)
     elif isinstance(tags_raw, (list, tuple)):
         tags_list = list(tags_raw)
     else:

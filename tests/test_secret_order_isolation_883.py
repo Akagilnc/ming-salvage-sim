@@ -652,7 +652,7 @@ def test_883_shared_archive_bypass_positive_and_negative(game):
     # 负向结构：密令只在 brief；纯公开入档；brief 正文不自动流入共享档。
     create_test_secret_order(db, state, assignee.name, "旁路密查", secret_marker, [])
     db.save_turn_report(state, "公开句；本月漕运如常。")
-    report_blob = " ".join(item["report"] for item in db.list_turn_reports())
+    report_blob = " ".join(item["report"] for item in db.turn_reports.list_archives())
     assert secret_marker not in report_blob
     assert "公开句" in report_blob
     assert all(secret_marker not in body for body in _shared_bodies(db))
@@ -662,7 +662,7 @@ def test_883_shared_archive_bypass_positive_and_negative(game):
     db.conn.execute("DELETE FROM secret_orders")
     db.conn.commit()
     db.save_turn_report(state, public_marker)
-    report_blob = " ".join(item["report"] for item in db.list_turn_reports())
+    report_blob = " ".join(item["report"] for item in db.turn_reports.list_archives())
     assert public_marker in report_blob
 
 

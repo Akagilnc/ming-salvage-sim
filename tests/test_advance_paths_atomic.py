@@ -202,7 +202,7 @@ def test_submit_decisions_does_not_overwrite_already_decided_rows(game, monkeypa
     db.save_resolve_context(
         turn, "HITL诏", {"candidate_events": []},
     )
-    ctx = db.get_resolve_context(turn)
+    ctx = db.resolve_contexts.get(turn)
     assert ctx is not None
     db.save_pending_decisions(turn, [{
         "title": "毛文龙裁断", "context": "c",
@@ -444,10 +444,7 @@ def test_skip_refused_at_front_half_done(game):
     FRONT_HALF_DONE 恢复/亲裁由 session.resolve_turn 真缝承担（settling 恢复 /
     awaiting 幂等返回决策），不再经独立退朝壳拒绝。
     """
-    import ming_sim.decree as decree_mod
     from ming_sim.decree import pre_settle
-
-    assert not hasattr(decree_mod, "advance_without_edict")
 
     db, state, content = game
     turn = state.turn

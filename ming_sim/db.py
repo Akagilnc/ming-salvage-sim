@@ -15,7 +15,10 @@ import re
 import sqlite3
 from typing import Any, Dict, Iterable, List, Mapping, NamedTuple, Optional, Sequence, Set, Tuple
 
-from ming_sim.applier import atomic, connection_owns_transaction, safe_json_dumps, sanitize_sqlite_text
+from ming_sim.applier import (
+    atomic, connection_owns_transaction, load_stored_json, load_stored_list,
+    load_stored_object, safe_json_dumps, sanitize_sqlite_text,
+)
 from ming_sim.appointment_tenure import appointment_tenure_from
 from ming_sim.authority_privileges import AUTHORITY_PRIVILEGE_SQL_IN
 from ming_sim.assets import format_money, format_money_delta, format_wanliang_amount
@@ -836,6 +839,15 @@ def clamp_grant_arrival_amount(
     proposed = int(proposed_arrived)
     return max(lo, min(hi, proposed))
 
+
+def _decision_json_fields(row: Any) -> Tuple[list, object, list]:
+    """pending_decisions 三列 JSON。空白是空名单 / 未选；在场损坏即拒。"""
+    options = load_stored_list(row["options_json"], label="options_json")
+    prior = load_stored_list(row["prior_options_json"], label="prior_options_json")
+    choice = load_stored_json(row["choice_json"], label="choice_json", blank=None)
+    return options, choice, prior
+
+
 class GameDB:
     def __init__(self, path: str, content: Optional[GameContent] = None, llm_config: Any = None):
         self.path = path
@@ -1249,9 +1261,9 @@ class GameDB:
         """一次扫描 Ming 省 fiscal payload 并推进已有 settle 基座。
 
         动态 shadow spine 用这个批量桥，避免 selector 先解析、单省 bridge 再 SELECT/解析。
-        合法但无 settle 的 Ming 省按旧语义出列；坏 JSON/容器/settle st/p 与 settle_tick
-        ValueError/守恒错误作为 outcome.error 返回，供 shadow 调用方隔离 tlog。其它异常继续上抛，
-        保持桥接 bug fail-loud。
+        合法但无 settle 的 Ming 省按旧语义出列。持久 fiscal JSON 损坏直接拒绝。
+        容器/settle st/p 与 settle_tick 的 ValueError/守恒错误作为 outcome.error 返回。
+        其它异常继续上抛。
         """
         from .fiscal_tick import FiscalConservationError
 
@@ -1263,10 +1275,10 @@ class GameDB:
         ).fetchall()
         for row in rows:
             region_id = str(row["id"])
+            fiscal = load_stored_object(row["fiscal"], label=f"{region_id}.fiscal")
+            if "settle" not in fiscal:
+                continue
             try:
-                fiscal = json.loads(str(row["fiscal"] or "{}"))
-                if isinstance(fiscal, dict) and "settle" not in fiscal:
-                    continue
                 result = self._settle_province_tick_from_fiscal(
                     region_id,
                     fiscal,
@@ -1554,7 +1566,7 @@ class GameDB:
         """
         from ming_sim.office_rank import _is_substantive_office
 
-        if not _is_substantive_office(office):
+        if not _is_substantive_office(office, office_type):
             return
         if office_type not in PERSON_TITLE_KINDS:
             self._ensure_office_type_parent(office_type)
@@ -1691,13 +1703,12 @@ class GameDB:
         )
 
     def _initialize_army_pay_source_spine(self, is_fresh_armies_seed: bool) -> None:
-        """Adopt the current pay spine once. An already-hub save is not split again."""
-        already_hub = self._stored_fiscal_engine_marker() == _FISCAL_ENGINE_SUBSTRATE_HUB
-        if already_hub and not is_fresh_armies_seed:
-            return
-        if not is_fresh_armies_seed and not self.table_has_rows("armies"):
-            self._mark_army_pay_source_cutover_enabled()
-            self._mark_substrate_hub_fiscal_engine_enabled()
+        """Fresh content seed writes province/central arrears once.
+
+        An existing army ledger keeps its splits. Re-seeding must not
+        recompute them from the lump-sum arrears column.
+        """
+        if not is_fresh_armies_seed:
             return
         rows = self.conn.execute(
             """
@@ -1839,11 +1850,10 @@ class GameDB:
             ).fetchone()
             if region is None or str(region["controlled_by"] or "") != "ming":
                 return False
-            try:
-                fiscal = json.loads(str(region["fiscal"] or "{}"))
-            except (TypeError, ValueError):
-                return False
-            settle = fiscal.get("settle") if isinstance(fiscal, dict) else None
+            fiscal = load_stored_object(
+                region["fiscal"], label=f"region {region_id} fiscal",
+            )
+            settle = fiscal.get("settle")
             if not isinstance(settle, dict) or not isinstance(settle.get("st"), dict):
                 return False
         return True
@@ -2458,8 +2468,8 @@ class GameDB:
             "SELECT id, fiscal FROM regions WHERE controlled_by = 'ming' ORDER BY id"
         ).fetchall()
         for row in rows:
-            fiscal = json.loads(str(row["fiscal"] or "{}"))
-            settle = fiscal.get("settle") if isinstance(fiscal, dict) else None
+            fiscal = load_stored_object(row["fiscal"], label=f"region {row['id']} fiscal")
+            settle = fiscal.get("settle")
             if not isinstance(settle, dict) or not isinstance(settle.get("st"), dict) \
                     or not isinstance(settle.get("p"), dict):
                 continue
@@ -2479,11 +2489,8 @@ class GameDB:
         ).fetchone()
         if row is None:
             return
-        try:
-            fiscal = json.loads(str(row["fiscal"] or "{}"))
-        except (TypeError, ValueError):
-            return
-        settle = fiscal.get("settle") if isinstance(fiscal, dict) else None
+        fiscal = load_stored_object(row["fiscal"], label=f"region {region_id} fiscal")
+        settle = fiscal.get("settle")
         if not isinstance(settle, dict) or not isinstance(settle.get("st"), dict) \
                 or not isinstance(settle.get("p"), dict):
             return
@@ -5808,7 +5815,7 @@ class GameDB:
 
         # 上回合奏报单独存在 turn_reports，直接取。
         # #1843 reopen：旧 turn_logs 回落随旧结算核删除；无邸报即真空。
-        report = self.get_turn_report(previous_turn)
+        report = self.turn_reports.report_text(previous_turn)
         if report:
             return report
         return ""
@@ -5826,11 +5833,8 @@ class GameDB:
         previous_turn = int(state.turn) - 1
         if previous_turn < 0:
             return ""
-        # 与 previous_turn_summary / get_turn_report 同口径：非空才算有报
-        row = self.conn.execute(
-            "SELECT year, period, report FROM turn_reports WHERE turn = ?",
-            (previous_turn,),
-        ).fetchone()
+        # 与 previous_turn_summary / turn_reports.report_text 同口径：非空才算有报
+        row = self.turn_reports.archive(previous_turn)
         if row is not None and (row["report"] or ""):
             try:
                 return reign_period_label(int(row["year"]), int(row["period"]))
@@ -5871,29 +5875,6 @@ class GameDB:
         self.chat_messages.set_highlights_json(int(message_id), payload)
         self.conn.commit()
 
-    def get_message_highlights(self, message_id: int) -> List[str]:
-        row = self.conn.execute(
-            "SELECT highlights_json FROM chat_messages WHERE id = ?",
-            (int(message_id),),
-        ).fetchone()
-        if row is None:
-            return []
-        return self._parse_highlights_json(row["highlights_json"])
-
-    @staticmethod
-    def _parse_highlights_json(raw: Any) -> List[str]:
-        try:
-            data = json.loads(raw or "[]")
-        except (TypeError, ValueError, json.JSONDecodeError):
-            return []
-        if not isinstance(data, list):
-            return []
-        out: List[str] = []
-        for item in data:
-            if isinstance(item, str) and item.strip():
-                out.append(item.strip())
-        return out
-
     def delete_chat_messages(self, message_ids: Iterable[int]) -> None:
         ids = [int(mid) for mid in message_ids if mid is not None]
         if not ids:
@@ -5904,23 +5885,10 @@ class GameDB:
                 [f"chat_message:{mid}" for mid in ids], commit=False,
             )
 
-    def load_all_chat_history(self) -> Dict[str, List[Dict[str, str]]]:
-        """读出全部召对记录，按大臣分组，供进程启动时恢复内存缓存。"""
-        rows = self.conn.execute(
-            "SELECT minister_name, role, content FROM chat_messages ORDER BY id"
-        ).fetchall()
-        history: Dict[str, List[Dict[str, str]]] = {}
-        for row in rows:
-            history.setdefault(row["minister_name"], []).append(
-                {"role": row["role"], "content": row["content"]}
-            )
-        return history
-
     def build_chat_projection(self, minister_name: str, night_id: Optional[int] = None) -> List[Dict[str, Any]]:
         """当前召对夜的 turn-identified 投影：user/minister 逐条带 chat_turn_id。
 
-        单一真源：以 chat_messages（与 load_all_chat_history 同基）为骨架，join
-        chat_turns 打 turn 身份。前端据此一投影渲染。
+        消息行归 ChatMessageStore；chat_turns 身份留在召对投影。
         """
         if night_id is None:
             open_night = self.conn.execute(
@@ -5938,15 +5906,7 @@ class GameDB:
             for message_id in (turn["user_message_id"], turn["minister_message_id"])
             if message_id is not None
         ]
-        if message_ids:
-            placeholders = ",".join("?" for _ in message_ids)
-            msgs = self.conn.execute(
-                f"SELECT id, role, content, highlights_json FROM chat_messages "
-                f"WHERE id IN ({placeholders}) ORDER BY id",
-                message_ids,
-            ).fetchall()
-        else:
-            msgs = []
+        msgs = self.chat_messages.rows_by_ids(message_ids)
         msg_turn: Dict[int, int] = {}
         for t in turns:
             tid = int(t["id"])
@@ -5961,7 +5921,7 @@ class GameDB:
             role = m["role"]
             # #544：只大臣气泡携带判官清单；帝侧恒 []（SELECT 已点名 highlights_json）
             highlights = (
-                self._parse_highlights_json(m["highlights_json"])
+                self.chat_messages.parse_highlights(m["highlights_json"])
                 if role == "minister"
                 else []
             )
@@ -6158,14 +6118,12 @@ class GameDB:
                         "UPDATE chat_turns SET status = 'interrupted' WHERE id = ?",
                         (ctid,),
                     )
-                    qrow = self.conn.execute(
-                        "SELECT content FROM chat_messages WHERE id = ?", (int(uid),)
-                    ).fetchone()
+                    question = self.chat_messages.content_of(int(uid))
                     interrupted.append({
                         "chat_turn_id": ctid,
                         "minister_name": str(row["minister_name"]),
                         "turn": int(row["turn"]),
-                        "question": str(qrow["content"]) if qrow is not None else "",
+                        "question": question or "",
                     })
                 else:
                     self.conn.execute(
@@ -6186,45 +6144,55 @@ class GameDB:
         where = " AND ".join(clauses)
         rows = self.conn.execute(
             f"""
-            SELECT t.id, t.minister_name, t.turn, t.error_pack_path, m.content AS question
+            SELECT id, minister_name, turn, error_pack_path, user_message_id
             FROM chat_turns t
-            JOIN chat_messages m ON m.id = t.user_message_id
             WHERE {where}
-            ORDER BY t.id ASC
+            ORDER BY id ASC
             """,
             params,
         ).fetchall()
-        return [
-            {
-                "chat_turn_id": int(r["id"]),
-                "minister_name": str(r["minister_name"]),
-                "turn": int(r["turn"]),
-                "question": str(r["question"]),
-                "error_pack_path": str(r["error_pack_path"] or ""),
-            }
-            for r in rows
-        ]
+        out: List[Dict[str, Any]] = []
+        for row in rows:
+            question = self.chat_messages.content_of(int(row["user_message_id"]))
+            if question is None:
+                continue
+            out.append({
+                "chat_turn_id": int(row["id"]),
+                "minister_name": str(row["minister_name"]),
+                "turn": int(row["turn"]),
+                "question": question,
+                "error_pack_path": str(row["error_pack_path"] or ""),
+            })
+        return out
 
     def get_post_reply_retries(self, minister_name: str) -> List[Dict[str, Any]]:
         """已落回话的尾随失败：保留原轮身份与错误包，不回到生成态。"""
         rows = self.conn.execute(
-            """SELECT t.id, t.minister_name, t.turn, t.post_reply_recovery,
-                      t.post_reply_error_pack_path, q.content AS question, a.content AS answer,
-                      t.minister_message_id
-               FROM chat_turns t
-               JOIN chat_messages q ON q.id = t.user_message_id
-               JOIN chat_messages a ON a.id = t.minister_message_id
-               WHERE t.minister_name = ? AND t.status = 'active'
-                 AND t.post_reply_recovery != ''
-                 AND t.post_reply_recovery NOT LIKE 'recovering:%' ORDER BY t.id ASC""",
+            """SELECT id, minister_name, turn, post_reply_recovery,
+                      post_reply_error_pack_path, user_message_id, minister_message_id
+               FROM chat_turns
+               WHERE minister_name = ? AND status = 'active'
+                 AND post_reply_recovery != ''
+                 AND post_reply_recovery NOT LIKE 'recovering:%' ORDER BY id ASC""",
             (minister_name,),
         ).fetchall()
-        return [{"chat_turn_id": int(r["id"]), "minister_name": str(r["minister_name"]),
-                 "turn": int(r["turn"]), "question": str(r["question"]),
-                 "answer": str(r["answer"]), "minister_message_id": int(r["minister_message_id"]),
-                 "recovery_phase": str(r["post_reply_recovery"]),
-                 "error_pack_path": str(r["post_reply_error_pack_path"] or "")}
-                for r in rows]
+        out: List[Dict[str, Any]] = []
+        for row in rows:
+            question = self.chat_messages.content_of(int(row["user_message_id"]))
+            answer = self.chat_messages.content_of(int(row["minister_message_id"]))
+            if question is None or answer is None:
+                continue
+            out.append({
+                "chat_turn_id": int(row["id"]),
+                "minister_name": str(row["minister_name"]),
+                "turn": int(row["turn"]),
+                "question": question,
+                "answer": answer,
+                "minister_message_id": int(row["minister_message_id"]),
+                "recovery_phase": str(row["post_reply_recovery"]),
+                "error_pack_path": str(row["post_reply_error_pack_path"] or ""),
+            })
+        return out
 
     def mark_post_reply_failure(self, chat_turn_id: int, phase: str, pack_path: str) -> None:
         self.conn.execute(
@@ -6798,15 +6766,23 @@ class GameDB:
         rows = self.conn.execute(
             f"""
             SELECT t.id AS chat_turn_id, t.minister_name, t.night_id, t.night_seq,
-                   t.extract_status, t.error_pack_path, m.content AS reply
+                   t.extract_status, t.error_pack_path, t.minister_message_id
             FROM chat_turns t
-            JOIN chat_messages m ON m.id = t.minister_message_id
             WHERE {where}
-            ORDER BY t.night_id ASC, t.night_seq ASC, t.id ASC
+            ORDER BY night_id ASC, night_seq ASC, id ASC
             """,
             params,
         ).fetchall()
-        return [self._row_dict(r) for r in rows]
+        out: List[Dict[str, Any]] = []
+        for row in rows:
+            reply = self.chat_messages.content_of(int(row["minister_message_id"]))
+            if reply is None:
+                continue
+            item = self._row_dict(row)
+            item.pop("minister_message_id", None)
+            item["reply"] = reply
+            out.append(item)
+        return out
 
     def is_global_last_active_chat_turn(self, chat_turn_id: int) -> bool:
         row = self.conn.execute(
@@ -7190,51 +7166,12 @@ class GameDB:
         if commit:
             self.conn.commit()
 
-    def get_turn_report_archive(self, turn: int) -> Optional[Dict[str, object]]:
-        """#671：一次读 turn_reports 行（year/period/report/attendant）；无行→None。"""
-        row = self.conn.execute(
-            "SELECT year, period, report, attendant_message, title FROM turn_reports WHERE turn = ?",
-            (int(turn),),
-        ).fetchone()
-        if row is None:
-            return None
-        return {
-            "year": int(row["year"] or 0),
-            "period": int(row["period"] or 0),
-            "report": str(row["report"] or ""),
-            "attendant_message": str(row["attendant_message"] or ""),
-            "title": str(row["title"] or ""),
-        }
-
-    def get_turn_report(self, turn: int) -> str:
-        row = self.get_turn_report_archive(turn)
-        return str(row["report"] if row else "") or ""
-
-    def get_turn_attendant_message(self, turn: int) -> str:
-        """#671：指定回合王承恩独立递话（turn_reports 分栏；空＝无递话）。"""
-        row = self.get_turn_report_archive(turn)
-        if row is None:
-            return ""
-        return str(row["attendant_message"] or "")
-
     def previous_turn_attendant_message(self, state: GameState) -> str:
         """#671：状态口投影——仅上一已完成月的独立递话。"""
         previous_turn = int(state.turn) - 1
         if previous_turn < 0:
             return ""
-        return self.get_turn_attendant_message(previous_turn)
-
-    def list_turn_reports(self) -> List[Dict[str, object]]:
-        """Return the durable gazette archive in chronological order."""
-        rows = self.conn.execute(
-            "SELECT turn, year, period, report, title FROM turn_reports ORDER BY turn, rowid"
-        ).fetchall()
-        return [
-            {"turn": int(row["turn"]), "year": int(row["year"]),
-             "period": int(row["period"]), "report": row["report"] or "",
-             "title": str(row["title"] or "")}
-            for row in rows
-        ]
+        return self.turn_reports.attendant_message(previous_turn)
 
     def persist_knowledge_items_for_turn(
         self,
@@ -7370,11 +7307,11 @@ class GameDB:
         ).fetchone()
         if row is None:
             return None
-        try:
-            timeline = json.loads(row["timeline"] or "[]")
-        except Exception as exc:
-            tlog(f"[db] timeline JSON 损坏，回空：{exc}")  # #14 surface
-            timeline = []
+        timeline = load_stored_json(
+            row["timeline"], label=f"结局 timeline turn={row['turn']}", blank=[],
+        )
+        if not isinstance(timeline, list):
+            raise ValueError(f"结局 timeline 必须为名单（turn={row['turn']}）")
         return {
             "turn": int(row["turn"]),
             "year": int(row["year"]),
@@ -7386,30 +7323,39 @@ class GameDB:
 
     def list_monthly_archives(self) -> List[Dict[str, object]]:
         """每回合至多一条月档；召对场次绝不扩增月度时间线。"""
-        rows = self.conn.execute(
-            """
-            SELECT turn, MAX(year) AS year, MAX(period) AS period,
-                   MAX(has_report) AS has_report,
-                   MAX(has_attendant) AS has_attendant,
-                   MAX(has_directive) AS has_directive
-            FROM (
-                SELECT turn, year, period,
-                       CASE WHEN length(trim(COALESCE(report, ''), char(9)||char(10)||char(13)||' ')) > 0 THEN 1 ELSE 0 END AS has_report,
-                       CASE WHEN length(trim(COALESCE(attendant_message, ''), char(9)||char(10)||char(13)||' ')) > 0 THEN 1 ELSE 0 END AS has_attendant,
-                       0 AS has_directive
-                FROM turn_reports
-                UNION ALL
-                SELECT turn, year, period, 0, 0, 1 FROM turn_directives WHERE status = 'issued'
-            )
-            GROUP BY turn ORDER BY turn
-            """
-        ).fetchall()
+        by_turn: Dict[int, Dict[str, int]] = {}
+        for row in self.turn_reports.presence_rows():
+            turn = int(row["turn"])
+            by_turn[turn] = {
+                "year": int(row["year"] or 0),
+                "period": int(row["period"] or 0),
+                "has_report": int(row["has_report"] or 0),
+                "has_attendant": int(row["has_attendant"] or 0),
+                "has_directive": 0,
+            }
+        for row in self.conn.execute(
+            "SELECT turn, year, period FROM turn_directives WHERE status = 'issued'"
+        ).fetchall():
+            turn = int(row["turn"])
+            slot = by_turn.get(turn)
+            year = int(row["year"] or 0)
+            period = int(row["period"] or 0)
+            if slot is None:
+                by_turn[turn] = {
+                    "year": year, "period": period,
+                    "has_report": 0, "has_attendant": 0, "has_directive": 1,
+                }
+            else:
+                slot["year"] = max(slot["year"], year)
+                slot["period"] = max(slot["period"], period)
+                slot["has_directive"] = 1
         return [{
-            "kind": "month", "turn": int(r["turn"]), "year": int(r["year"]),
-            "period": int(r["period"]), "has_report": bool(r["has_report"]),
-            "has_attendant": bool(r["has_attendant"]),
-            "has_directive": bool(r["has_directive"]),
-        } for r in rows]
+            "kind": "month", "turn": turn,
+            "year": slot["year"], "period": slot["period"],
+            "has_report": bool(slot["has_report"]),
+            "has_attendant": bool(slot["has_attendant"]),
+            "has_directive": bool(slot["has_directive"]),
+        } for turn, slot in sorted(by_turn.items())]
 
     def list_closed_night_archives(self) -> List[Dict[str, object]]:
         """逐场列出 closed audience night，并保留玩家可见命名所需的容器属性。"""
@@ -7627,22 +7573,7 @@ class GameDB:
         ).fetchall()
         out: List[Dict[str, object]] = []
         for r in rows:
-            try:
-                options = json.loads(r["options_json"] or "[]")
-            except Exception as exc:
-                tlog(f"[db] options_json 损坏，回空：{exc}")  # #14 surface
-                options = []
-            choice_raw = (r["choice_json"] or "").strip()
-            try:
-                choice = json.loads(choice_raw) if choice_raw else None
-            except Exception as exc:
-                tlog(f"[db] choice_json 损坏，回 None（idx={r['idx']}）：{exc}")  # #14 surface
-                choice = None
-            try:
-                prior = json.loads(r["prior_options_json"] or "[]")
-            except Exception as exc:
-                tlog(f"[db] prior_options_json 损坏，回空：{exc}")  # #14 surface
-                prior = []
+            options, choice, prior = _decision_json_fields(r)
             source_turn = int(r["turn"])
             idx = int(r["idx"])
             kind = str(r["kind"] or "decision")
@@ -7656,7 +7587,7 @@ class GameDB:
                 "context": r["context"],
                 "rejection_reason": r["rejection_reason"],
                 "opposition": r["opposition"],
-                "options": options if isinstance(options, list) else [],
+                "options": options,
                 "choice": choice,
                 "status": r["status"],
                 "kind": kind,
@@ -7664,7 +7595,7 @@ class GameDB:
                 "actor_office": r["actor_office"],
                 "actor_faction": r["actor_faction"],
                 "revision_round": int(r["revision_round"] or 0),
-                "prior_options_json": prior if isinstance(prior, list) else [],
+                "prior_options_json": prior,
             })
         return out
 
@@ -7746,36 +7677,21 @@ class GameDB:
         ).fetchall()
         out: List[Dict[str, object]] = []
         for r in rows:
-            try:
-                options = json.loads(r["options_json"] or "[]")
-            except Exception as exc:
-                tlog(f"[db] options_json 损坏，回空：{exc}")  # #14 surface
-                options = []
-            choice_raw = (r["choice_json"] or "").strip()
-            try:
-                choice = json.loads(choice_raw) if choice_raw else None
-            except Exception as exc:
-                tlog(f"[db] choice_json 损坏，回 None（draft turn={r['turn']} idx={r['idx']}）：{exc}")
-                choice = None
-            try:
-                prior = json.loads(r["prior_options_json"] or "[]")
-            except Exception as exc:
-                tlog(f"[db] prior_options_json 损坏，回空：{exc}")  # #14 surface
-                prior = []
+            options, choice, prior = _decision_json_fields(r)
             out.append({
                 "turn": int(r["turn"]),
                 "idx": int(r["idx"]),
                 "event_id": r["event_id"],
                 "title": r["title"],
                 "context": r["context"],
-                "options": options if isinstance(options, list) else [],
+                "options": options,
                 "choice": choice,
                 "status": r["status"],
                 "actor_name": r["actor_name"],
                 "actor_office": r["actor_office"],
                 "actor_faction": r["actor_faction"],
                 "revision_round": int(r["revision_round"] or 0),
-                "prior_options_json": prior if isinstance(prior, list) else [],
+                "prior_options_json": prior,
             })
         return out
 
@@ -7813,24 +7729,7 @@ class GameDB:
         kind = str(r["kind"] or "decision")
         source_turn = int(r["turn"])
         idx = int(r["idx"])
-        try:
-            options = json.loads(r["options_json"] or "[]")
-        except Exception as exc:
-            tlog(f"[db] options_json 损坏，回空：{exc}")  # #14 surface
-            options = []
-        if not isinstance(options, list):
-            options = []
-        choice_raw = (r["choice_json"] or "").strip()
-        try:
-            choice = json.loads(choice_raw) if choice_raw else None
-        except Exception as exc:
-            tlog(f"[db] choice_json 损坏，回 None（desk {kind}:{source_turn}:{idx}）：{exc}")
-            choice = None
-        try:
-            prior = json.loads(r["prior_options_json"] or "[]")
-        except Exception as exc:
-            tlog(f"[db] prior_options_json 损坏，回空：{exc}")  # #14 surface
-            prior = []
+        options, choice, prior = _decision_json_fields(r)
         return {
             "decision_key": f"{kind}:{source_turn}:{idx}",
             "kind": kind,
@@ -7849,7 +7748,7 @@ class GameDB:
             "actor_office": r["actor_office"],
             "actor_faction": r["actor_faction"],
             "revision_round": int(r["revision_round"] or 0),
-            "prior_options_json": prior if isinstance(prior, list) else [],
+            "prior_options_json": prior,
         }
 
     def get_rescript_desk_rows_by_keys(
@@ -7905,23 +7804,9 @@ class GameDB:
         if not name:
             return None
         try:
-            if turn is not None:
-                row = self.conn.execute(
-                    "SELECT id FROM chat_messages "
-                    "WHERE minister_name=? AND role='user' AND knowledge_status='held' "
-                    "AND turn=? ORDER BY id DESC LIMIT 1",
-                    (name, int(turn)),
-                ).fetchone()
-            else:
-                row = self.conn.execute(
-                    "SELECT id FROM chat_messages "
-                    "WHERE minister_name=? AND role='user' AND knowledge_status='held' "
-                    "ORDER BY id DESC LIMIT 1",
-                    (name,),
-                ).fetchone()
+            return self.chat_messages.latest_held_user_id(name, None if turn is None else int(turn))
         except sqlite3.OperationalError:
             return None
-        return int(row["id"]) if row is not None else None
 
     def _parse_origin_chat_message_id(
         self, payload: Optional[Mapping[str, object]],
@@ -8014,12 +7899,9 @@ class GameDB:
             return []
         if row is None:
             return []
-        try:
-            parsed = json.loads(row["origin_chat_message_ids"] or "[]")
-        except (TypeError, ValueError):
-            return []
-        if not isinstance(parsed, list):
-            return []
+        parsed = load_stored_list(
+            row["origin_chat_message_ids"], label="origin_chat_message_ids",
+        )
         return self._coerce_positive_message_ids(parsed)
 
     def _classify_secret_order_audience(
@@ -8466,10 +8348,9 @@ class GameDB:
             return None
         return matched
 
-    def _commit_dossier_write(self, commit: bool) -> None:
-        if commit and not bool(getattr(self.conn, "_commit_suspended", False)) and int(
-            getattr(self.conn, "_atomic_depth", 0) or 0
-        ) == 0:
+    def _commit_dossier_write(self, commit: bool, owns: bool) -> None:
+        """Commit only when the caller snapshotted ownership before its first DML."""
+        if commit and owns:
             self.conn.commit()
 
     @classmethod
@@ -8519,6 +8400,7 @@ class GameDB:
         origin: str,
         commit: bool,
     ) -> int:
+        owns = self.owns_transaction()
         row = self.conn.execute(
             "SELECT dossier_progress_json FROM secret_orders WHERE id=?", (order_id,),
         ).fetchone()
@@ -8545,8 +8427,7 @@ class GameDB:
             "UPDATE secret_orders SET dossier_progress_json=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
             (json.dumps(reports, ensure_ascii=False), order_id),
         )
-        if commit:
-            self._commit_dossier_write(True)
+        self._commit_dossier_write(commit, owns)
         return report_id
 
     def record_dossier_progress(
@@ -8566,6 +8447,7 @@ class GameDB:
         Non-secret execution-surface dossiers use dossier_reported_progress (#619).
         Reported rows never enter apply (ADR 0073).
         """
+        owns = self.owns_transaction()
         dossier = self.dossiers.get(int(dossier_id))
         band = str(progress_band or "").strip()
         text = str(memorial_text or "").strip()
@@ -8590,7 +8472,7 @@ class GameDB:
             int(dossier_id), int(turn), band=band, text=text, origin=origin_norm,
             is_terminal=bool(is_terminal),
         )
-        self._commit_dossier_write(commit)
+        self._commit_dossier_write(commit, owns)
         return report_id
 
     def list_dossier_progress(self, dossier_id: int) -> List[Dict[str, object]]:
@@ -8682,12 +8564,7 @@ class GameDB:
         out: List[Dict[str, object]] = []
         for row in rows:
             dossier_id = int(row["id"])
-            try:
-                payload = json.loads(row["payload_json"] or "{}")
-            except (TypeError, ValueError):
-                payload = {}
-            if not isinstance(payload, dict):
-                payload = {}
+            payload = load_stored_object(row["payload_json"], label="payload_json")
             item: Dict[str, object] = {
                 "dossier_id": dossier_id,
                 "secret_order_id": int(row["secret_order_id"]),
@@ -8763,12 +8640,7 @@ class GameDB:
         rows = self.dossiers.in_transit_grants()
         targets: List[Dict[str, object]] = []
         for row in rows:
-            try:
-                payload = json.loads(str(row["payload_json"] or "{}"))
-            except (TypeError, ValueError):
-                payload = {}
-            if not isinstance(payload, dict):
-                payload = {}
+            payload = load_stored_object(row["payload_json"], label="payload_json")
             policy = dossier_action_policy("grant_allocation", payload)
             if policy.get("execution_surface") != "in_transit":
                 continue
@@ -9265,12 +9137,7 @@ class GameDB:
         raw = self.kv_get(self.MEMORIAL_READS_KV_KEY)
         if not raw:
             return set()
-        try:
-            data = json.loads(raw)
-        except (TypeError, ValueError):
-            return set()
-        if not isinstance(data, list):
-            return set()
+        data = load_stored_list(raw, label="memorial_reads")
         return {str(item) for item in data if str(item or "").strip()}
 
     def mark_memorials_read(self, keys: Iterable[str]) -> None:
@@ -9580,12 +9447,9 @@ class GameDB:
                 accuser_name=accuser, target_dossier_id=int(dossier_id), origin=origin,
             )
             if prior_row is not None:
-                try:
-                    prev_payload = json.loads(prior_row["payload_json"] or "{}")
-                except (TypeError, ValueError):
-                    prev_payload = {}
-                if not isinstance(prev_payload, dict):
-                    prev_payload = {}
+                prev_payload = load_stored_object(
+                    prior_row["payload_json"], label="payload_json",
+                )
                 if not denunciation_case_upgraded(prev_payload, fork_state):
                     continue
 
@@ -10038,6 +9902,7 @@ class GameDB:
         给出属地行，其余（含 national）单行 region_id=''；与 create_decree_dossier
         共享单行内核。契约错抛 ValueError；复合键按 (source, region_id) 查补。
         """
+        owns = self.owns_transaction()
         from ming_sim.execution_pressure import resolve_dossier_region_ids
         from ming_sim.executor_routing import (
             require_execution_lead_or_raise,
@@ -10237,7 +10102,7 @@ class GameDB:
             )
             new_ids_by_region[rid] = int(did)
 
-        self._commit_dossier_write(commit)
+        self._commit_dossier_write(commit, owns)
 
         merged: Dict[str, int] = dict(existing_by_region)
         merged.update(new_ids_by_region)
@@ -10340,6 +10205,7 @@ class GameDB:
         _skip_lead_route: bool = False,
     ) -> int:
         """单行案卷内核（#654 region_id）；create_decree_dossier(s) 共用。"""
+        owns = self.owns_transaction()
         action = str(action_type or "").strip()
         text = str(decree_text or "")
         normalized_payload = dict(payload or {})
@@ -10602,7 +10468,7 @@ class GameDB:
                 state, roster, "assignment", "旨意案卷", text,
                 source_id=f"decree_dossier:{dossier_id}", commit=False,
             )
-        self._commit_dossier_write(commit)
+        self._commit_dossier_write(commit, owns)
         # 拒收镜像归外层 RejectionCollector owner（0150-D2；本核不自建不自镜像）。
         return dossier_id
 
@@ -10624,6 +10490,7 @@ class GameDB:
         state: Optional[GameState] = None, commit: bool = True,
     ) -> List[Dict[str, object]]:
         """Append ADR 0053 roster entries without replacing durable members."""
+        owns = self.owns_transaction()
         row = self.dossiers.participant_row(int(dossier_id))
         if row is None:
             raise KeyError(f"案卷不存在：{dossier_id}")
@@ -10691,13 +10558,14 @@ class GameDB:
                         source_id=f"dossier:{int(dossier_id)}:participant:{identity}",
                         commit=False,
                     )
-        self._commit_dossier_write(commit)
+        self._commit_dossier_write(commit, owns)
         return added
 
     def _append_midzhi_stigma(
         self, dossier_id: int, *, decision: str, turn: int, commit: bool = True,
     ) -> None:
         """Append one marker per dossier semantic midzhi event, regardless of replay turn."""
+        owns = self.owns_transaction()
         marker_fields = {
             "rejected": ("predeclared", "rejected"),
             "promulgated": ("predeclared", "promulgated"),
@@ -10721,7 +10589,7 @@ class GameDB:
         ):
             stigma.append(marker)
             self.dossiers.set_stigma(int(dossier_id), stigma, commit=False)
-        self._commit_dossier_write(commit)
+        self._commit_dossier_write(commit, owns)
 
     # Central yamen archive identity: offices.json allowed_types minus non-yamen
     # kinds. Never union characters.office_type (外臣/内臣/宗藩/未仕 would leak).
@@ -10961,6 +10829,7 @@ class GameDB:
         commit: bool = True,
     ) -> None:
         """颁布/批红组合态。rejected 与 hold 永不成为主链 status。"""
+        owns = self.owns_transaction()
         if str(legal_reason_code or "").strip():
             raise ValueError("legal_reason_code 仅供尚未落地的依律集写入路径")
         decision = str(decision or "").strip()
@@ -11026,12 +10895,13 @@ class GameDB:
             ),
             criteria_snapshot_json=safe_json_dumps(criteria_snapshot or {}),
         )
-        self._commit_dossier_write(commit)
+        self._commit_dossier_write(commit, owns)
 
     def record_dossier_execution(
         self, dossier_id: int, outcome: str, note: str, turn: int, *,
         close: bool = True, commit: bool = True,
     ) -> None:
+        owns = self.owns_transaction()
         row = self.dossiers.get(dossier_id)
         if row is None:
             raise KeyError(f"案卷不存在：{dossier_id}")
@@ -11066,7 +10936,7 @@ class GameDB:
                     int(dossier_id), int(turn), action_type, outcome,
                     commit=False,
                 )
-        self._commit_dossier_write(commit)
+        self._commit_dossier_write(commit, owns)
 
     def apply_dossier_promulgation(
         self, state: GameState, dossier_id: int, decision: str, *,
@@ -11487,15 +11357,6 @@ class GameDB:
     _JOINT_LIABILITY_TRIGGERS = frozenset(_EXECUTION_OUTCOME_INTENSITY)
     _INTENSITY_DOWNGRADE = {"strong": "weak", "weak": None}
 
-    def _record_decree_cost(
-        self, dossier_id: int, turn: int, cost_kind: str, target_kind: str,
-        target_id: str, delta: int, reason: str, *, cost_identity: str,
-    ) -> bool:
-        return self.dossiers.record_cost_event(
-            int(dossier_id), int(turn), cost_kind, target_kind, target_id,
-            int(delta), reason, cost_identity,
-        )
-
     def _current_judge_affected_parties(
         self, dossier_id: int, turn: int,
     ) -> List[Dict[str, str]]:
@@ -11520,7 +11381,7 @@ class GameDB:
         self, state: GameState, dossier_id: int, reason: str, *, cost_identity: str,
     ) -> None:
         """Record and apply the shared authority event exactly once."""
-        if not self._record_decree_cost(
+        if not self.dossiers.record_cost_event(
             dossier_id, state.turn, "authority", "metric", "皇威",
             self._OVERRIDE_AUTHORITY_COST, reason, cost_identity=cost_identity,
         ):
@@ -11548,7 +11409,7 @@ class GameDB:
                 if kind not in {"faction", "class"} or magnitude is None or sign is None:
                     raise ValueError("反应代价只接受已校验 typed 清单")
                 delta = sign * magnitude
-                if not self._record_decree_cost(
+                if not self.dossiers.record_cost_event(
                     dossier_id, state.turn, "satisfaction", kind, key, delta, stigma_reason,
                     cost_identity="override",
                 ):
@@ -11583,7 +11444,7 @@ class GameDB:
                 was_closed and self.dossiers.authorizes_effects(dossier_id)
             ):
                 return False
-            if not self._record_decree_cost(
+            if not self.dossiers.record_cost_event(
                 dossier_id, state.turn, "breach", "dossier", str(dossier_id), 0, reason,
                 cost_identity="breach",
             ):
@@ -11629,7 +11490,7 @@ class GameDB:
                 * self._REACTION_INTENSITY[self._BREACH_FACTION_REACTION["intensity"]]
             )
             for faction in sorted(factions):
-                if self._record_decree_cost(
+                if self.dossiers.record_cost_event(
                     dossier_id, state.turn, "satisfaction", "faction", faction,
                     breach_delta, reason, cost_identity="breach",
                 ):
@@ -11662,6 +11523,7 @@ class GameDB:
 
         初写仍由 record_dossier_execution 落 judge note；本接口只做增补合并。
         """
+        owns = self.owns_transaction()
         text = str(fragment or "").strip()
         if not text:
             raise ValueError("说明片段不能为空")
@@ -11679,7 +11541,7 @@ class GameDB:
             self.dossiers.merge_execution_note(
                 int(dossier_id), merged, commit=False,
             )
-            self._commit_dossier_write(commit)
+            self._commit_dossier_write(commit, owns)
         return merged
 
     def validate_joint_liability_affected_parties(
@@ -11724,7 +11586,7 @@ class GameDB:
         """#565 委派连坐：仅由 dossier_executions 适配器在落终值时调用。
 
         责任面由 project_execution_liability_parties 投影；写轨全经
-        _record_decree_cost + record_relation_edge_event；幂等键不含 turn。
+        dossiers.record_cost_event + record_relation_edge_event；幂等键不含 turn。
         """
         outcome = str(outcome or "").strip()
         if outcome not in self._JOINT_LIABILITY_TRIGGERS:
@@ -11746,7 +11608,7 @@ class GameDB:
             if dossier is None:
                 raise KeyError(f"案卷不存在：{dossier_id}")
             # 整笔幂等门闩（含全员已故仅记说明的情形）；UNIQUE 不含 turn。
-            if not self._record_decree_cost(
+            if not self.dossiers.record_cost_event(
                 dossier_id, state.turn, "liability", "dossier", str(dossier_id),
                 0, reason_text, cost_identity=identity,
             ):
@@ -11789,7 +11651,7 @@ class GameDB:
                 )
                 faction = str(row["faction"] or "").strip()
                 if faction and faction in registered_factions:
-                    if self._record_decree_cost(
+                    if self.dossiers.record_cost_event(
                         dossier_id, state.turn, "satisfaction", "faction", faction,
                         delta, reason_text, cost_identity=identity,
                     ):
@@ -12457,13 +12319,13 @@ class GameDB:
                     raise ValueError("办人目标不在弹劾潮 target_roster")
         if issue_disposition == "压下" and issue is not None:
             faction = str(issue["faction_hint"] or "").strip()
-            if self._record_decree_cost(
+            if self.dossiers.record_cost_event(
                 dossier_id, state.turn, "authority", "metric", "皇威", -1,
                 "压下弹劾", cost_identity="impeachment_suppression",
             ):
                 state.metrics["皇威"] = max(0, int(state.metrics.get("皇威", 0)) - 1)
                 self.reign.upsert_metric("皇威", int(state.metrics["皇威"]))
-            if faction and self._record_decree_cost(
+            if faction and self.dossiers.record_cost_event(
                 dossier_id, state.turn, "satisfaction", "faction", faction, -1,
                 "压下弹劾", cost_identity="impeachment_suppression",
             ):
@@ -12752,6 +12614,7 @@ class GameDB:
         self, state: GameState, character_name: str, reason: str, *,
         commit: bool = True,
     ) -> int:
+        owns = self.owns_transaction()
         rows = self.dossiers.open_by_executor(str(character_name))
         materializing = int(getattr(self.conn, "_materializing_dossier_id", 0) or 0)
         rows = [row for row in rows if int(row["id"]) != materializing]
@@ -12776,7 +12639,7 @@ class GameDB:
                 dossier_id, "failed", reason, state.turn,
                 close=True, commit=False,
             )
-        self._commit_dossier_write(commit)
+        self._commit_dossier_write(commit, owns)
         return len(rows)
 
     def stage_pending_action(
@@ -12880,12 +12743,7 @@ class GameDB:
             raise KeyError(f"暂存动作不存在：{aid}")
         if str(row["status"] or "") != "pending":
             raise ValueError(f"暂存动作状态不可挂背书：{row['status']}")
-        try:
-            payload = json.loads(str(row["payload_json"] or "{}"))
-        except (TypeError, ValueError):
-            payload = {}
-        if not isinstance(payload, dict):
-            payload = {}
+        payload = load_stored_object(row["payload_json"], label="payload_json")
         form = str(entry.get("form") or "").strip()
         endorser_id = str(entry.get("endorser_id") or "").strip()
         imperial = bool(entry.get("imperial", False))
@@ -13165,16 +13023,11 @@ class GameDB:
     ) -> Dict[str, object]:
         """把新 payload 与旧 payload 里的下划线控制键（`_` 前缀）合并：新 payload 为主，
         旧的下划线键在新里缺席时保留。用于原地改草不抹夜内态/待澄清闸（#502 L5）。"""
-        try:
-            old = json.loads(existing_json or "{}") if not isinstance(
-                existing_json, (dict, list)) else existing_json
-        except (ValueError, TypeError):
-            old = {}
+        old = load_stored_object(existing_json, label="payload_json")
         merged: Dict[str, object] = dict(new_payload or {})
-        if isinstance(old, dict):
-            for k, v in old.items():
-                if str(k).startswith("_") and k not in merged:
-                    merged[k] = v
+        for k, v in old.items():
+            if str(k).startswith("_") and k not in merged:
+                merged[k] = v
         return merged
 
     def _merge_directive_payload(
@@ -13249,11 +13102,8 @@ class GameDB:
         ).fetchone()
         if row is None:
             return 0
-        try:
-            payload = json.loads(row["payload_json"] or "{}")
-        except (ValueError, TypeError):
-            payload = {}
-        if not isinstance(payload, dict) or "_needs_clarification" not in payload:
+        payload = load_stored_object(row["payload_json"], label="payload_json")
+        if "_needs_clarification" not in payload:
             return int(candidate_id)
         payload.pop("_needs_clarification", None)
         self.conn.execute(
@@ -13408,12 +13258,7 @@ class GameDB:
         ).fetchone()
         if row is None:
             return 0
-        try:
-            payload = json.loads(row["payload_json"] or "{}")
-        except (ValueError, TypeError):
-            payload = {}
-        if not isinstance(payload, dict):
-            payload = {}
+        payload = load_stored_object(row["payload_json"], label="payload_json")
         payload["_needs_clarification"] = True
         self.conn.execute(
             "UPDATE pending_actions SET payload_json=? WHERE id=?",
@@ -13491,16 +13336,14 @@ class GameDB:
             or pa.get("action") != "拟旨"
         ):
             return {"classification": "invalid"}
+        payload = load_stored_object(pa.get("payload_json"), label="payload_json")
+        if payload.get("_needs_clarification") and not allow_clarification:
+            return {"classification": "needs_clarification"}
         try:
-            payload = json.loads(str(pa.get("payload_json") or "{}"))
-            if not isinstance(payload, dict):
-                return {"classification": "invalid"}
-            if payload.get("_needs_clarification") and not allow_clarification:
-                return {"classification": "needs_clarification"}
             payload = self._normalize_directive_dossier_payload(
                 payload, content=content, current_turn=int(state.turn),
             )
-        except (TypeError, ValueError, json.JSONDecodeError):
+        except (TypeError, ValueError):
             return {"classification": "invalid"}
         text = str(payload.get("text") or "")
         if not text.strip():
@@ -13600,12 +13443,7 @@ class GameDB:
                 if committed is not None:
                     applied.append(committed)
                 continue
-            try:
-                payload = json.loads(pa["payload_json"] or "{}")
-                if not isinstance(payload, dict):
-                    payload = {}
-            except (ValueError, TypeError):
-                payload = {}
+            payload = load_stored_object(pa["payload_json"], label="payload_json")
             # apply 抛错(如 催办 对已非 active 的密令)= 当 False:下面标 failed、
             # 不中断本轮其余动作、更不能崩整个结算(CMR P0)。
             cm = atomic(self) if owns_transaction else contextlib.nullcontext()
@@ -14149,12 +13987,7 @@ class GameDB:
         for row in dossiers:
             if str(row.get("action_type") or "") != "appointment":
                 continue
-            try:
-                payload = json.loads(str(row.get("payload_json") or "{}"))
-            except (TypeError, ValueError):
-                payload = {}
-            if not isinstance(payload, dict):
-                payload = {}
+            payload = load_stored_object(row.get("payload_json"), label="payload_json")
             if payload.get("recommendation") is None:
                 continue
             minister = str(payload.get("_minister_name") or "")
@@ -14449,37 +14282,6 @@ class GameDB:
         )
         self.conn.commit()
 
-    def get_resolve_context(self, turn: int) -> Optional[Dict[str, object]]:
-        """读回本月过月上下文。无则 None。"""
-        row = self.conn.execute(
-            "SELECT decree_text, simulator_payload_json, source, attendant_message "
-            "FROM pending_resolve_context WHERE turn = ?",
-            (int(turn),),
-        ).fetchone()
-        if row is None:
-            return None
-
-        def _load(text: str, label: str) -> object:
-            # #1889：这是恢复用的权威记录，不是可降级的呈现材料。载荷读不出来就是
-            # 恢复材料已损，fail-loud 上抛（ADR 0005）——不再回退空对象把「读失败」
-            # 伪装成「本月本就没有过月上下文」照常恢复。
-            if not text:
-                return {}
-            try:
-                return json.loads(text)
-            except (TypeError, ValueError) as exc:
-                raise ValueError(
-                    f"过月上下文 {label} 损坏，本月无法恢复（turn={turn}）：{exc}"
-                ) from exc
-
-        attendant_message = str(row["attendant_message"] or "")
-        return {
-            "decree_text": row["decree_text"],
-            "simulator_payload": _load(row["simulator_payload_json"], "simulator_payload"),
-            "source": row["source"] or "system_simulation",
-            "attendant_message": attendant_message,  # #671 王承恩独立递话
-        }
-
     def clear_resolve_context(self, turn: int) -> None:
         self.resolve_contexts.delete(int(turn))
         self.dossiers.clear_pending_promulgation_verdicts(int(turn))
@@ -14505,22 +14307,6 @@ class GameDB:
         )
         self.conn.commit()
         return created
-
-    def get_month_open_snapshot(self, turn: int) -> Optional[Dict[str, int]]:
-        """读本回合月初快照四键；无则 None。仅呈现层消费。"""
-        row = self.conn.execute(
-            """SELECT treasury, inner_treasury, public_support, imperial_prestige
-               FROM month_open_snapshot WHERE turn = ?""",
-            (int(turn),),
-        ).fetchone()
-        if row is None:
-            return None
-        return {
-            "国库": int(row["treasury"]),
-            "内库": int(row["inner_treasury"]),
-            "民心": int(row["public_support"]),
-            "皇威": int(row["imperial_prestige"]),
-        }
 
     def clear_month_open_snapshot(self, turn: int) -> None:
         """过期/清除本回合快照。atomic 内 commit 为 no-op，与 clear_resolve_context 同窗。"""
@@ -14682,6 +14468,7 @@ class GameDB:
         #658：payload.target_dossier_id 指向 stalled 廷议时，复用该案卷并落御笔手敕，
         不新建第二案卷。directive identity = directive:<id>。
         """
+        owns = self.owns_transaction()
         structured = dict(payload or {})
         if not structured:
             structured = {
@@ -14701,8 +14488,7 @@ class GameDB:
             bound = self.dossiers.bound_to_directive(int(target_did), int(directive_id))
             if bound is not None:
                 self._attach_affair_from_payload(state, structured, int(target_did))
-                if commit:
-                    self._commit_dossier_write(True)
+                self._commit_dossier_write(commit, owns)
                 return [int(target_did)]
             from ming_sim.rescript_actions import apply_imperial_deliberation_push
             push_mode = normalize_dossier_mode(
@@ -14719,8 +14505,7 @@ class GameDB:
             # 绑 directive_id 到既有案卷，供 restore/幂等
             self.dossiers.bind_directive(int(pushed), int(directive_id))
             self._attach_affair_from_payload(state, structured, int(pushed))
-            if commit:
-                self._commit_dossier_write(True)
+            self._commit_dossier_write(commit, owns)
             return [int(pushed)]
         structured = self._normalize_directive_dossier_payload(
             structured, content=self.content, current_turn=int(state.turn),
@@ -15814,11 +15599,11 @@ class GameDB:
         for lg in self.conn.execute(
             "SELECT modifiers FROM legacies WHERE status='active' ORDER BY id"
         ).fetchall():
-            try:
-                eff = json.loads(str(lg["modifiers"] or "{}"))
-            except Exception as exc:
-                tlog(f"[db] legacy modifiers JSON 损坏，跳过该 legacy：{exc}")  # #14 surface
-                continue
+            eff = load_stored_json(
+                lg["modifiers"], label="遗产修正 modifiers", blank={},
+            )
+            if not isinstance(eff, dict):
+                raise ValueError("遗产修正 modifiers 必须为对象")
             for acc in ("国库", "内库", "民心", "皇威"):
                 v = eff.get(acc)
                 if isinstance(v, (int, float)):
@@ -16453,12 +16238,7 @@ class GameDB:
             return out
         for row in brief_rows:
             raw = row["origin_chat_message_ids"] if row is not None else "[]"
-            try:
-                parsed = json.loads(raw or "[]")
-            except (TypeError, ValueError):
-                continue
-            if not isinstance(parsed, list):
-                continue
+            parsed = load_stored_list(raw, label="origin_chat_message_ids")
             for item in parsed:
                 try:
                     mid = int(item)
@@ -16467,12 +16247,7 @@ class GameDB:
                 if mid > 0:
                     out[mid] = True
         for row in pending_rows:
-            try:
-                payload = json.loads(row["payload_json"] or "{}")
-            except (TypeError, ValueError):
-                continue
-            if not isinstance(payload, dict):
-                continue
+            payload = load_stored_object(row["payload_json"], label="payload_json")
             mid = self._parse_origin_chat_message_id(payload)
             if mid is not None:
                 out.setdefault(mid, False)
@@ -16523,15 +16298,10 @@ class GameDB:
             if commit:
                 self.conn.commit()
             return []
-        placeholders = ",".join("?" for _ in pins)
         try:
-            rows = self.conn.execute(
-                f"SELECT id FROM chat_messages WHERE id IN ({placeholders})",
-                pins,
-            ).fetchall()
+            live_ids = self.chat_messages.existing_ids(pins)
         except sqlite3.OperationalError:
-            rows = []
-        live_ids = [int(row["id"]) for row in rows]
+            live_ids = []
         source_ids: List[str] = []
         for mid in live_ids:
             self.chat_messages.set_knowledge_status(mid, "withheld")
@@ -16602,19 +16372,7 @@ class GameDB:
         protection = self._secret_origin_message_protection()
         exclude = explicit_exclude | set(protection)
         try:
-            if name_set:
-                placeholders = ",".join("?" for _ in name_set)
-                rows = self.conn.execute(
-                    f"SELECT id, minister_name, turn, content FROM chat_messages "
-                    f"WHERE knowledge_status='held' AND minister_name IN ({placeholders}) "
-                    f"ORDER BY id",
-                    tuple(sorted(name_set)),
-                ).fetchall()
-            else:
-                rows = self.conn.execute(
-                    "SELECT id, minister_name, turn, content FROM chat_messages "
-                    "WHERE knowledge_status='held' ORDER BY id",
-                ).fetchall()
+            rows = self.chat_messages.held_rows(sorted(name_set) if name_set else None)
         except sqlite3.OperationalError:
             return 0
         if not rows:
@@ -17145,6 +16903,8 @@ class GameDB:
         *,
         commit: bool = True,
     ) -> None:
+        owns = self.owns_transaction()
+
         def close_in_current_transaction() -> None:
             dossier = self.dossiers.get_for_secret_order(int(order_id))
             reports = (
@@ -17186,7 +16946,7 @@ class GameDB:
                     close=True, commit=False,
                 )
 
-        if self.conn.in_transaction:
+        if not owns:
             savepoint = "close_secret_order_axes"
             self.conn.execute(f"SAVEPOINT {savepoint}")
             try:
@@ -17197,8 +16957,6 @@ class GameDB:
                 raise
             else:
                 self.conn.execute(f"RELEASE {savepoint}")
-                if commit and int(getattr(self.conn, "_atomic_depth", 0) or 0) == 0:
-                    self.conn.commit()
         elif commit:
             with atomic(self):
                 close_in_current_transaction()
@@ -17349,6 +17107,7 @@ class GameDB:
         self, order_id: int, *, commit: bool = True,
     ) -> None:
         """任何首次实际办理入口共用：密令轴在办时，案卷轴幂等进入 executing。"""
+        owns = self.owns_transaction()
         dossier = self.dossiers.get_for_secret_order(order_id)
         if dossier is None:
             raise ValueError("密令进展缺少对应案卷")
@@ -17358,7 +17117,7 @@ class GameDB:
             )
         elif dossier["status"] != "executing":
             raise ValueError("在办密令的案卷不处于可执行状态")
-        self._commit_dossier_write(commit)
+        self._commit_dossier_write(commit, owns)
 
     def rush_secret_order(
         self,

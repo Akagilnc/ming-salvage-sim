@@ -85,8 +85,3 @@ def _web_runtime(db, state, content, *, monkeypatch, session=None):
 
 
 
-def test_advance_without_edict_shell_absent():
-    """#1274 r1：decree.advance_without_edict 空壳已删（prep 归 resolve_turn）。"""
-    import ming_sim.decree as decree_mod
-
-    assert not hasattr(decree_mod, "advance_without_edict")
