@@ -1814,9 +1814,8 @@ class WebGame:
 
     # ── 聊天 ──────────────────────────────────────────────────────────────
     def chat_projection(self, minister_name: str) -> List[Dict[str, Any]]:
-        """当前召对夜的殿上投影；轻量测试替身可只实现单参读取。"""
-        if not hasattr(self.db, "conn"):
-            return self.db.build_chat_projection(minister_name)
+        """当前召对夜的殿上投影。调用方传入的说话人只标识本次请求。"""
+        del minister_name
         from ming_sim.audience_night import get_open_night, SCENE_CHAT_SPEAKER
         night = get_open_night(self.db)
         return self.db.build_chat_projection(
@@ -1825,8 +1824,9 @@ class WebGame:
 
     def _minister_agno_session_id(self, minister_name: str) -> str:
         # 所有 Web 召对都由场景 agent 生成；chat_turn 与 agent 必须绑同一 Agno session。
+        del minister_name
         from ming_sim.audience_night import get_open_night
-        night = get_open_night(self.db) if hasattr(self.db, "conn") else None
+        night = get_open_night(self.db)
         if night is not None:
             return f"scene-night-{int(night['id'])}"
         return f"scene-night-pending-turn-{int(self.state.turn)}"
@@ -1835,7 +1835,7 @@ class WebGame:
         if self.state.turn_phase not in (TurnPhase.SUMMONING.value, TurnPhase.REVIEWING.value):
             return False
         from ming_sim.audience_night import SCENE_CHAT_SPEAKER, get_open_night
-        if minister_name == SCENE_CHAT_SPEAKER and hasattr(self.db, "conn"):
+        if minister_name == SCENE_CHAT_SPEAKER:
             night = get_open_night(self.db)
             if night:
                 turns = self.db.list_hall_chat_turns(int(night["id"]))
@@ -1847,20 +1847,14 @@ class WebGame:
     def _audience_turn_in_flight(self, minister_name: str) -> bool:
         """同夜场景共用一个 agent session：前轮回话未落定时不准开下一轮。
 
-        后台转译不在此等待。无夜的轻量替身仍按大臣查；在飞的定义由 DB 写口维护。
+        后台转译不在此等待。在飞的定义由 DB 写口按本夜维护。
         """
-        if hasattr(self.db, "list_in_flight_chat_turns"):
-            if hasattr(self.db, "conn"):
-                from ming_sim.audience_night import get_open_night
-                night = get_open_night(self.db)
-                if night is not None:
-                    return bool(self.db.list_in_flight_chat_turns(night_id=int(night["id"])))
-            return bool(self.db.list_in_flight_chat_turns(
-                minister_name=minister_name, turn=int(self.state.turn),
-            ))
-        # 极薄兜底：旧替身无接口时不挡（与 get_last_active 语义接近）
-        existing = self.db.get_last_active_chat_turn(minister_name, self.state.turn)
-        return existing is not None and not existing.get("minister_message_id")
+        del minister_name
+        from ming_sim.audience_night import get_open_night
+        night = get_open_night(self.db)
+        if night is None:
+            return False
+        return bool(self.db.list_in_flight_chat_turns(night_id=int(night["id"])))
 
     def _start_chat_turn(
         self, minister_name: str, *, attach_to_hall: bool = True,
@@ -1895,7 +1889,7 @@ class WebGame:
         translation_unstarted: bool, court_action: str = "",
     ) -> bool:
         """持闸调用；以落库相位分流转译补偿与回话后尾随恢复。"""
-        if not chat_turn_id or not hasattr(self.db, "conn"):
+        if not chat_turn_id:
             return False
         row = self.db.conn.execute(
             "SELECT status, minister_message_id, extract_status FROM chat_turns WHERE id = ?",
@@ -1954,7 +1948,7 @@ class WebGame:
 
     def undo_last_chat(self, minister_name: str, *, gate_held: bool = False) -> Dict[str, Any]:
         from ming_sim.audience_night import SCENE_CHAT_SPEAKER, get_open_night
-        if minister_name == SCENE_CHAT_SPEAKER and hasattr(self.db, "conn"):
+        if minister_name == SCENE_CHAT_SPEAKER:
             night = get_open_night(self.db)
             if night:
                 turns = self.db.list_hall_chat_turns(int(night["id"]))
@@ -2075,10 +2069,8 @@ class WebGame:
             schedule_translation=False,
         )
         self.chat_history.setdefault(minister_name, []).append({"role": "minister", "content": answer})
-        open_night = None
-        if hasattr(self.db, "conn"):
-            from ming_sim.audience_night import get_open_night
-            open_night = get_open_night(self.db)
+        from ming_sim.audience_night import get_open_night
+        open_night = get_open_night(self.db)
         return {
             "minister": minister_name,
             "answer": answer,
@@ -2145,7 +2137,7 @@ class WebGame:
 
     def reply_retries(self, minister_name: str) -> List[Dict[str, Any]]:
         from ming_sim.audience_night import SCENE_CHAT_SPEAKER, get_open_night
-        if minister_name == SCENE_CHAT_SPEAKER and hasattr(self.db, "conn"):
+        if minister_name == SCENE_CHAT_SPEAKER:
             night = get_open_night(self.db)
             if night:
                 turns = self.db.list_hall_chat_turns(int(night["id"]))
@@ -2256,9 +2248,8 @@ class WebGame:
                 with gate:
                     self._reject_if_settlement_phase()
                     # #612：CLOSING 冻结重试召对——与 chat 共用唯一玩家输入准入真源，CAS reopen 前拒绝。
-                    if hasattr(self.db, "conn"):
-                        from ming_sim.audience_night import assert_night_accepts_player_input
-                        assert_night_accepts_player_input(self.db, what="召对")
+                    from ming_sim.audience_night import assert_night_accepts_player_input
+                    assert_night_accepts_player_input(self.db, what="召对")
                     if self._audience_turn_in_flight(minister_name):
                         raise HTTPException(
                             status_code=409, detail="本夜上一轮回奏仍在进行，请稍候再问。")
@@ -2711,23 +2702,22 @@ class WebGame:
                 yield {"type": "error", "message": "月末结算/亲裁进行中，暂不能召对。"}
                 return
             # #612：CLOSING 冻结新对话——唯一玩家输入准入真源，无平行 status 判断。
-            if hasattr(self.db, "conn"):
-                from ming_sim.audience_night import (
-                    AudienceNightError,
-                    assert_night_accepts_player_input,
-                )
-                try:
-                    assert_night_accepts_player_input(self.db, what="召对")
-                except AudienceNightError as err:
-                    if getattr(err, "code", "") == "night_closing":
-                        self._complete_pending_write(pending_ticket)
-                        yield {
-                            "type": "error",
-                            "message": str(err) or "本夜收夜中，暂不能召对。",
-                            "code": "night_closing",
-                        }
-                        return
-                    raise
+            from ming_sim.audience_night import (
+                AudienceNightError,
+                assert_night_accepts_player_input,
+            )
+            try:
+                assert_night_accepts_player_input(self.db, what="召对")
+            except AudienceNightError as err:
+                if getattr(err, "code", "") == "night_closing":
+                    self._complete_pending_write(pending_ticket)
+                    yield {
+                        "type": "error",
+                        "message": str(err) or "本夜收夜中，暂不能召对。",
+                        "code": "night_closing",
+                    }
+                    return
+                raise
             if self._audience_turn_in_flight(minister_name):
                 self._complete_pending_write(pending_ticket)
                 yield {"type": "error", "message": "本夜上一轮回奏仍在进行，请稍候再问。"}

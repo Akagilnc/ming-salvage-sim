@@ -10,7 +10,6 @@
 from __future__ import annotations
 
 import asyncio
-import inspect
 import os
 
 import pytest
@@ -36,31 +35,7 @@ def test_uncalled_read_routes_are_retired(path):
 
 
 # 地图节点随 state_payload 下发这条事实由 tests/test_qa_u3_map_nodes_1401.py 等既有
-# 投影用例继续钉；此处只管路由退役，不再另造一条依赖 WebGame 内部属性的用例。
-
-
-@pytest.mark.parametrize("name", ["../../etc/passwd", ".hidden", "///", "  "])
-def test_save_name_guard_is_single_source(name):
-    """非法档名在唯一真源处即拒。"""
-    with pytest.raises(HTTPException) as exc:
-        web_app._safe_save_name(name)
-    assert exc.value.status_code == 400
-    assert "存档名非法" in str(exc.value.detail)
-
-
-def test_game_save_name_shares_module_guard_behaviour():
-    """WebGame._safe_save_name 与菜单页同一份规则：同拒同放（行为面断言）。
-
-    经 WebGame 实例这个**入口面**调，不碰模块私有函数本身（#1902 F4：原用例直接
-    调 ``web_app._safe_save_name`` 再拿 WebGame 转发比一遍，是 helper-only）。
-    """
-    game = object.__new__(web_app.WebGame)
-    # 清洗规则：只留字母/数字/._-，两端空格与内部空格都被剔除（真源同一份）。
-    assert game._safe_save_name(" 关宁 1629 ") == "关宁1629"
-    for bad in ("../x", ".hidden"):
-        with pytest.raises(HTTPException) as exc:
-            game._safe_save_name(bad)
-        assert exc.value.status_code == 400
+# 投影用例继续钉；此处只管路由退役。存档名拒收走菜单删档这条公共入口。
 
 
 def test_menu_delete_route_uses_shared_guard(monkeypatch, tmp_path):

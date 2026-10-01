@@ -443,12 +443,7 @@ def test_pending_retries_empty_without_open_night(game):
 
 
 def test_question_association_failure_leaves_no_orphan_turn(game, monkeypatch):
-    """问话关联更新失败时就地终态化本轮，不留 generating 孤儿轮（#1902 F2）。
-
-    判官原证：关联失败发生在 append 的保护之外、句柄尚未返回，Web 清理拿不到轮号 →
-    遗留 status=generating、user_message_id=null 的孤儿轮，下一次问话被永久拒收
-    （「本夜上一轮回奏仍在进行，请稍候再问。」）。
-    """
+    """问话与轮关联失败时整段回滚：库里不留问话，也不留占着本夜的轮。"""
     db, _state, _content = game
     session = _hall_session(game)
 
@@ -459,14 +454,21 @@ def test_question_association_failure_leaves_no_orphan_turn(game, monkeypatch):
     with pytest.raises(RuntimeError, match="association boom"):
         session.begin_audience_chat_turn("边饷如何？", message_speaker="张瑞图")
 
-    # 无孤儿轮：本夜不会被判「上一轮仍在进行」。
     assert db.list_in_flight_chat_turns() == []
+    assert db.conn.execute("SELECT id, role, content FROM chat_messages").fetchall() == []
+    assert db.conn.execute(
+        "SELECT id, status, user_message_id FROM chat_turns"
+    ).fetchall() == []
     assert an.get_open_night(db) is not None
 
-    # 关联恢复后，真实下一次问话进得来（孤儿轮会挡在这里）。
     monkeypatch.undo()
     turn = session.begin_audience_chat_turn("再问一句", message_speaker="张瑞图")
     assert int(turn.chat_turn_id) >= 1
+    linked = db.conn.execute(
+        "SELECT user_message_id FROM chat_turns WHERE id = ?",
+        (int(turn.chat_turn_id),),
+    ).fetchone()
+    assert int(linked["user_message_id"] or 0) >= 1
     assert an.get_open_night(db) is not None
 
 
@@ -516,12 +518,8 @@ def test_load_missing_slot_keeps_current_game(game, capsys):
     assert session.db.conn.execute("SELECT 1").fetchone()[0] == marker_before == 1
 
 
-def test_save_name_guard_rejects_traversal_in_both_entries(game):
-    """存档名清洗真源一份：穿越名在 CLI 与 Web 两端都拒（#1902 F2）。"""
-    import pytest as _pytest
-    from fastapi import HTTPException
-
-    import web_app
+def test_save_to_rejects_unsafe_names(game):
+    """穿越档名在会话存档入口拒收。Web 公共删档入口另有菜单路由案。"""
     from ming_sim.paths import UnsafeSaveNameError
     from tests.month_chain_helpers import make_light_session
 
@@ -529,11 +527,8 @@ def test_save_name_guard_rejects_traversal_in_both_entries(game):
     session = make_light_session(db, state, content)
 
     for bad in ("../../etc/passwd", ".hidden", "   "):
-        with _pytest.raises(UnsafeSaveNameError):
+        with pytest.raises(UnsafeSaveNameError):
             session.save_to(bad)
-        with _pytest.raises(HTTPException) as exc:
-            web_app._safe_save_name(bad)
-        assert exc.value.status_code == 400
 
 
 def test_cli_runner_roster_is_the_single_dispatch_admission_list():

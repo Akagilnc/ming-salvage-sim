@@ -1159,8 +1159,8 @@ class GameSession:
         ``ensure_summon`` 非空时按「宣 X」同入口补入殿账。问话原文在此落库，
         入口不再自行 append。
 
-        无 conn 的极薄替身分支已删（#1902 J4）：真 GameDB 恒有 conn 与夜表，
-        留一条不带夜表的建轮路径等于给测试壳维护第二套召对生命周期。
+        建轮、问话、问话关联在同一 ``atomic`` 里提交。关联写失败则整段回滚，
+        不留下无所属的问话，也不留下仍占着本夜的半成品轮。
         """
         from ming_sim.applier import atomic
         from ming_sim.audience_night import (
@@ -1169,10 +1169,7 @@ class GameSession:
             ensure_summon_enter,
             get_open_night,
         )
-        from ming_sim.decree_forecast import (
-            schedule_held_decree_forecasts,
-            schedule_restored_decree_forecasts,
-        )
+        from ming_sim.decree_forecast import schedule_held_decree_forecasts
 
         owner = SCENE_CHAT_SPEAKER
         speaker = str(message_speaker or "").strip() or owner
@@ -1199,31 +1196,13 @@ class GameSession:
                     self.db, night_id, ensure_summon,
                     origin_chat_turn_id=chat_turn_id, commit=False,
                 )
-        user_message_id = 0
-        try:
             user_message_id = self.db.append_chat_message(
                 speaker, accepted_turn, "user", message,
             )
             if chat_turn_id:
-                # 关联问话与 append 同在保护内：这一写失败时句柄尚未返回，调用方
-                # 无从终态化本轮——留 status=generating、user_message_id=null 的
-                # 孤儿轮，_audience_turn_in_flight 会把本夜永久判为「上一轮仍在
-                # 进行」，下一次问话直接被拒（#1902 F2）。
                 self.db.update_chat_turn_messages(
                     chat_turn_id, user_message_id=user_message_id,
                 )
-        except BaseException as error:
-            # 建轮成功但问话落库/关联失败：就地终态化本轮（否则留下 status=generating 的
-            # 孤儿轮，_audience_turn_in_flight 会把本夜永久判为「上一轮仍在进行」）。
-            if chat_turn_id:
-                self.db.record_chat_turn_rollback_diffs(
-                    chat_turn_id, before_snapshot,
-                    self.db.capture_chat_rollback_snapshot(),
-                )
-                schedule_restored_decree_forecasts(
-                    self, self.db.fail_chat_turn(chat_turn_id),
-                )
-            raise error
         return AudienceChatTurn(
             chat_turn_id=int(chat_turn_id or 0),
             accepted_turn=accepted_turn,
@@ -1249,24 +1228,19 @@ class GameSession:
         ``schedule_translation=False`` 给在闸内、须自行安排转译时机的调用方
         （Web 流式/重试：转译要挂在闸外），落库与回滚差异仍同一条路。
         """
-        minister_message_id = 0
-        if turn.chat_turn_id and hasattr(self.db, "persist_minister_reply"):
+        if turn.chat_turn_id:
+            # persist_minister_reply 已在同一事务里插入回话、关联并升 active。
             minister_message_id = int(self.db.persist_minister_reply(
                 message_speaker, turn.accepted_turn, reply, turn.chat_turn_id,
             ) or 0)
-        else:
-            minister_message_id = int(self.db.append_chat_message(
-                message_speaker, turn.accepted_turn, "minister", reply,
-            ) or 0)
-        if turn.chat_turn_id:
-            if minister_message_id:
-                self.db.update_chat_turn_messages(
-                    turn.chat_turn_id, minister_message_id=minister_message_id,
-                )
             self.db.record_chat_turn_rollback_diffs(
                 turn.chat_turn_id, turn.before_snapshot,
                 self.db.capture_chat_rollback_snapshot(),
             )
+        else:
+            minister_message_id = int(self.db.append_chat_message(
+                message_speaker, turn.accepted_turn, "minister", reply,
+            ) or 0)
         if result is not None and schedule_translation:
             self.schedule_pending_scene_translation(result)
         return minister_message_id
@@ -1284,9 +1258,7 @@ class GameSession:
         """
         from ming_sim.audience_night import SCENE_CHAT_SPEAKER, get_open_night
 
-        if not hasattr(self.db, "get_interrupted_reply_retries"):
-            return []
-        night = get_open_night(self.db) if hasattr(self.db, "conn") else None
+        night = get_open_night(self.db)
         if night is None:
             return []
         hall_ids = {
@@ -1308,8 +1280,8 @@ class GameSession:
         return sorted(out, key=lambda item: int(item["chat_turn_id"]))
 
     def _chat_message_speaker(self, message_id: int) -> str:
-        """chat_messages 某行的归属大臣名；无此行/无 conn 时返回空串。"""
-        if not message_id or not hasattr(self.db, "conn"):
+        """chat_messages 某行的归属大臣名；无此行时返回空串。"""
+        if not message_id:
             return ""
         row = self.db.conn.execute(
             "SELECT minister_name FROM chat_messages WHERE id = ?", (int(message_id),),
@@ -1334,7 +1306,7 @@ class GameSession:
             turn.chat_turn_id, turn.before_snapshot,
             self.db.capture_chat_rollback_snapshot(),
         )
-        if not turn.user_message_id and hasattr(self.db, "conn"):
+        if not turn.user_message_id:
             row = self.db.conn.execute(
                 "SELECT user_message_id FROM chat_turns WHERE id = ?",
                 (turn.chat_turn_id,),
