@@ -571,6 +571,9 @@ def _run_loaded_month_chain(
     declaration_outcome = _settle_edicts(
         session, chain=chain, on_outcome=persist_declaration_outcome,
     )
+    _consume_event_gates_after_edicts(
+        session, chain, decree_text=decree_text, source=source,
+    )
     world_outcome = _run_world_segment(session, chain, source=source)
     declaration_outcome = world_outcome or declaration_outcome
     desk = _materialize_rescript_desk(db, state, chain)
@@ -920,6 +923,40 @@ def _collect_disclosures_from_result(chain: Optional[Dict[str, Any]], result: An
                 }
                 if item not in pending:
                     pending.append(item)
+
+
+def _consume_event_gates_after_edicts(
+    session: Any, chain: Dict[str, Any], *, decree_text: str, source: Provenance,
+) -> None:
+    """#1892：世界事件的唯一消费时点——逐旨落账之后、世界段之前。
+
+    判门读当月实账。旨前跑过的终态不可撤销，所以这里不是第二遍补判，
+    ``pre_settle`` 不再调用这两条判门。``event_gates_after_edicts_done`` 只防止
+    同月恢复时再消费一次。
+    """
+    from ming_sim.issues import apply_event_terminal_states, auto_trigger_seed_issues
+    from ming_sim.token_stats import tlog
+
+    db, state = session.db, session.state
+    turn = int(state.turn)
+    if chain.get("event_gates_after_edicts_done"):
+        return
+    with atomic(db):
+        terminalized = apply_event_terminal_states(state, db, commit=False)
+        triggered = auto_trigger_seed_issues(state, db)
+    if terminalized:
+        tlog(
+            f"[event-gate] 逐旨后终态 {len(terminalized)} 条："
+            f"{[(t['id'], t['terminal_state']) for t in terminalized]}"
+        )
+    if triggered:
+        tlog(
+            f"[event-gate] 逐旨后硬触发 {len(triggered)} 条："
+            f"{[t.get('title') for t in triggered]}"
+        )
+    with atomic(db):
+        chain["event_gates_after_edicts_done"] = True
+        _save_chain(db, turn, chain, decree_text=decree_text, source=source)
 
 
 def _run_world_segment(
@@ -1354,6 +1391,8 @@ def _materialize_rescript_desk(
         decisions.append(_question_as_decision(
             question, event_id=f"{_WORLD_QUESTION_PREFIX}{turn}:{idx}",
         ))
+    if open_items["world_questions"]:
+        _pin_world_question_event_bindings(chain, db=db, state=state, turn=turn)
     if decisions:
         db.save_pending_decisions(turn, decisions)
     # 已应用 return_revise 仍 pending，但是本批已办，不是新待裁。
@@ -1369,6 +1408,58 @@ def _materialize_rescript_desk(
     chain["stage"] = "rescript"
     _save_chain(db, turn, chain, source=Provenance.system_simulation)
     return desk
+
+
+def world_question_event_bindings(
+    chain: Dict[str, Any], *, db: Any, state: Any, turn: int,
+) -> Dict[str, str]:
+    """读推送时钉死的「案头行身份 → 事件身份」。缺表时补钉一次，已钉的不再重算。"""
+    pinned = chain.get("world_question_event_bindings")
+    if not isinstance(pinned, dict):
+        _pin_world_question_event_bindings(chain, db=db, state=state, turn=turn)
+        pinned = chain.get("world_question_event_bindings") or {}
+    return {
+        str(key): str(value)
+        for key, value in pinned.items()
+        if str(value or "").strip()
+    }
+
+
+def _pin_world_question_event_bindings(
+    chain: Dict[str, Any], *, db: Any, state: Any, turn: int,
+) -> None:
+    """推送案头时把事件身份钉进月链（ADR 0115）。
+
+    案头行身份保持 ``world-question:{turn}:{idx}``，不把事件 id 写进那一列。
+    事件身份只来自交接时请旨块自带、且属于当回合
+    ``gather_fiscal_levy_petitions`` 快照的 event_id。只从 origin_ref 填进来的
+    id 不是这份快照。没有这份身份的请旨保持非事件身份：剩余数量不能证明它属于
+    某一到期事项，也不按标题猜配。钉完之后快照再变也不改这张表。
+    """
+    if isinstance(chain.get("world_question_event_bindings"), dict):
+        return
+    from ming_sim.issues import gather_fiscal_levy_petitions
+
+    questions = [
+        q for q in (chain.get("world_questions") or []) if isinstance(q, dict)
+    ]
+    due_set: set[str] = set()
+    for ev in gather_fiscal_levy_petitions(state, db):
+        event_id = str(ev.id or "").strip()
+        if event_id:
+            due_set.add(event_id)
+    bindings: Dict[str, str] = {}
+    used: set[str] = set()
+    for idx, question in enumerate(questions):
+        desk_key = f"{_WORLD_QUESTION_PREFIX}{turn}:{idx}"
+        echoed = str(question.get("event_id") or "").strip()
+        origin_ref = str(question.get("origin_ref") or "").strip()
+        if origin_ref and echoed == origin_ref:
+            echoed = ""
+        if echoed in due_set and echoed not in used:
+            bindings[desk_key] = echoed
+            used.add(echoed)
+    chain["world_question_event_bindings"] = bindings
 
 
 def _question_as_decision(question: Dict[str, object], *, event_id: str) -> Dict[str, object]:
@@ -1394,6 +1485,45 @@ def _question_as_decision(question: Dict[str, object], *, event_id: str) -> Dict
         "context": str(question.get("context") or "").strip(),
         "options": cleaned,
     }
+
+
+def _record_world_question_event_choices(
+    db: Any, state: Any, chain: Dict[str, Any], world_rows: List[Dict[str, object]], *,
+    turn: int,
+) -> None:
+    """绑定了三饷事项的请旨行：把「已呈奏疏 + 皇帝原批语」整份落进事件账（#1892）。
+
+    案头身份恒为 world-question: 前缀，故此处按绑定表（world_question_event_bindings，
+    单一真源）取事件身份，而不是从行上的 event_id 反推——那正是 K1 里两处判断不同步
+    的病根。写入走 :meth:`db.record_event_petition_answer`：**只记账，不置结局**。
+
+    结局标签不在这儿落：亲笔准驳须经 #1815 单一语义写口
+    （:func:`ming_sim.issues.apply_petition_event_outcome`，由世界段续推的语义转译
+    声明驱动）置定事件结局。把原始选项标签直接写成 terminal_reason 就是以标签旁路
+    替代亲裁语义转译（ADR 0153:5），也是留中标签污染终局标签集的根因。
+    """
+    bindings = world_question_event_bindings(chain, db=db, state=state, turn=turn)
+    if not bindings:
+        return
+    with atomic(db):
+        for row in world_rows:
+            event_id = bindings.get(str(row.get("event_id") or ""))
+            if not event_id:
+                continue
+            raw_choice = row.get("choice")
+            choice: Dict[str, object] = dict(raw_choice) if isinstance(raw_choice, dict) else {}
+            db.record_event_petition_answer(
+                state, event_id, choice,
+                {
+                    "title": str(row.get("title") or ""),
+                    "context": str(row.get("context") or ""),
+                    "options": [
+                        str(opt.get("label") or "")
+                        for opt in (row.get("options") or []) if isinstance(opt, dict)
+                    ],
+                },
+                commit=False,
+            )
 
 
 def _consume_rescript_answers(
@@ -1437,6 +1567,7 @@ def _consume_rescript_answers(
         and all(str(r.get("status") or "") == "decided" for r in world_rows)
         and chain.get("world_questions")
     ):
+        _record_world_question_event_choices(db, state, chain, world_rows, turn=turn)
         continue_world_after_answers(
             session, chain,
             answers=[_answer_from_row(r) for r in world_rows],

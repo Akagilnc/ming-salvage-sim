@@ -170,6 +170,32 @@ def build_night_said_so_far(
     return lines
 
 
+def _person_candidate_grounding(db: Any, state: Any) -> str:
+    """把人物候选的权威身份和 event_pool 声明契约交给既有转译调用。"""
+    if state is None:
+        return ""
+    from ming_sim.materials import _world_candidate_events
+
+    roster = [
+        {
+            "id": item["id"],
+            "title": item["title"],
+            "terminal_reason_labels": list(item.get("terminal_reason_labels") or []),
+        }
+        for item in _world_candidate_events(db, state)
+    ]
+    if not roster:
+        return ""
+    return (
+        "【合资格人物事件候选】\n"
+        "身份只认下列 id。段文写明其中一件由人物选择发生时，effects 声明 "
+        "new_issues，origin_kind 为 event_pool，id 为该候选 id。"
+        "该候选列出封闭结局标签时，同一信封顶层 event_id 写该 id，"
+        "事件结局只用其中一枚标签。未发生的候选不声明。\n"
+        + json.dumps(roster, ensure_ascii=False)
+    )
+
+
 def build_translation_target_grounding(db: Any, state: Any = None) -> str:
     """权威目标目录：dispatcher 可校验的目标与当前场面投影。
 
@@ -211,14 +237,20 @@ def build_translation_target_grounding(db: Any, state: Any = None) -> str:
         for scene in list_due_review_scenes(db, state):
             if scene.get("kind") == "covert_levy_exposure" and not scene.get("decision"):
                 lines.append("scene\t" + json.dumps(scene, ensure_ascii=False, sort_keys=True))
-    if not lines:
+    candidate_block = _person_candidate_grounding(db, state)
+    if not lines and not candidate_block:
         return ""
-    body = "\n".join(lines)
-    return (
-        "【权威目标目录】\n"
-        "grant.target_id / appointment.region_id / rushes.target_id / 禁摊派案卷 id 必须取对应目录中的精确 id，禁止编造。\n"
-        f"{body}\n"
-    )
+    parts: List[str] = []
+    if lines:
+        body = "\n".join(lines)
+        parts.append(
+            "【权威目标目录】\n"
+            "grant.target_id / appointment.region_id / rushes.target_id / 禁摊派案卷 id 必须取对应目录中的精确 id，禁止编造。\n"
+            f"{body}"
+        )
+    if candidate_block:
+        parts.append(candidate_block)
+    return "\n".join(parts) + "\n"
 
 
 def build_c0_declaration_shape() -> str:

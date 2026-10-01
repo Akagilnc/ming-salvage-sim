@@ -19761,6 +19761,111 @@ class GameDB:
         if commit:
             self.conn.commit()
 
+    def list_event_petition_records(self) -> List[Dict[str, object]]:
+        """三饷请旨的「已呈／原批语」持久读口（#1892 供料侧）。
+
+        请旨由世界段上疏、经案头呈皇帝；皇帝答复与当时所呈的奏疏原文都留在事件账
+        的 ``choice_json`` 里（:meth:`record_event_petition_answer`），因此后续世界段
+        可据本读口取回「已呈奏疏 + 原批语」，把它作为**已有事实**供给推演者，由模型
+        自己决定是否另上疏——引擎不新增自动重呈机制。
+
+        只读 ``choice_json`` 里带 petition 段的事件行；无 petition 段的行不是请旨。
+        """
+        out: List[Dict[str, object]] = []
+        for r in self.conn.execute(
+            "SELECT rowid, event_id, turn, year, period, terminal_state, terminal_reason, choice_json "
+            "FROM event_triggers"
+        ).fetchall():
+            raw = str(r["choice_json"] or "").strip()
+            if not raw:
+                continue
+            try:
+                payload = json.loads(raw)
+            except json.JSONDecodeError as exc:
+                from ming_sim.exceptions import SettlementAbort
+
+                raise SettlementAbort(
+                    "event_triggers.choice_json 解析失败 "
+                    f"event_id={r['event_id']!r} rowid={r['rowid']}",
+                    turn=int(r["turn"] or 0),
+                    stage="petition_records",
+                ) from exc
+            if not isinstance(payload, dict):
+                continue
+            petition = payload.get("petition")
+            if not isinstance(petition, dict):
+                continue
+            # 答案字段（label/hint/note）与 petition 段同级摊平返回：供料侧要一次
+            # 读到「呈疏记录」和「皇帝原批语」，不必自己再拆一层。
+            out.append({
+                **{key: value for key, value in payload.items() if key != "petition"},
+                "event_id": str(r["event_id"] or ""),
+                "turn": int(r["turn"] or 0),
+                "year": int(r["year"] or 0),
+                "period": int(r["period"] or 0),
+                "terminal_state": str(r["terminal_state"] or ""),
+                "terminal_reason": str(r["terminal_reason"] or ""),
+                "petition": dict(petition),
+            })
+        return out
+
+    def record_event_petition_answer(
+        self,
+        state: GameState,
+        event_id: str,
+        answer: Dict[str, object],
+        presented: Dict[str, object],
+        *,
+        commit: bool = True,
+    ) -> None:
+        """三饷请旨：把「已呈奏疏 + 皇帝原批语」整份 durable 落进事件账（#1892）。
+
+        本方法是请旨答复的**唯一**持久写口，且**只记账、不置结局**：
+
+        - 落 ``choice_json`` 的 ``petition`` 段（呈疏原文、选项、皇帝 label/hint/note），
+          供后续世界段据 :meth:`list_event_petition_records` 取回复呈（#1891 供料契约）。
+        - ``terminal_state`` 恒留空、``terminal_reason`` 恒留空：亲笔准驳的**结局标签由
+          语义转译写口置定**（:func:`ming_sim.issues.apply_petition_event_outcome`），
+          不由这里的原始选项标签旁路代批（ADR 0153:5、#1891 亲裁契约）。
+        - 「留中」是本疏已答而事件未终：不写终态，事件仍留在请旨候选里等下次呈报。
+
+        冲突时**只**补 ``choice_json``，绝不把既有 avoided/expired/obsolete/triggered
+        终态翻动——与 :meth:`record_event_decision_choice` 同款终态不可逆纪律。
+        """
+        eid = str(event_id or "").strip()
+        if not eid:
+            return
+        self._ensure_event_parent(eid)
+        payload = json.dumps(
+            {
+                **{
+                    key: value for key, value in (answer or {}).items()
+                    if isinstance(answer, dict)
+                },
+                "petition": {
+                    "presented_turn": int(state.turn),
+                    "presented_year": int(state.year),
+                    "presented_period": int(state.period),
+                    **{key: value for key, value in (presented or {}).items()},
+                },
+            },
+            ensure_ascii=False,
+        )
+        self.conn.execute(
+            """
+            INSERT INTO event_triggers
+                (event_id, turn, year, period, source, terminal_state, terminal_reason, choice_json)
+            VALUES (?, ?, ?, ?, 'petition', '', '', ?)
+            ON CONFLICT(event_id) DO UPDATE SET
+                -- 请旨账只补 choice_json（已呈奏疏 + 原批语）；终态与来源一律沿用既有行，
+                -- 空终态行也不在此写 terminal_reason：结局标签归语义写口，不归原始选项标签。
+                choice_json = excluded.choice_json
+            """,
+            (eid, state.turn, state.year, state.period, payload),
+        )
+        if commit:
+            self.conn.commit()
+
     def record_event_decision_choice(
         self,
         state: GameState,

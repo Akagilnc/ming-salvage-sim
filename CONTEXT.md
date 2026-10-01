@@ -416,6 +416,16 @@ _Avoid_: 开放结局、叙事标签
 历史事件至多触发一次的终局：已发、避过、过期、作废。
 _Avoid_: 未触发
 
+**触发权归属**:
+一个历史事件由谁决定发生。非人世界事件由引擎按触发门判定，人物事件由当事人决定，三饷由皇帝亲裁。
+_Avoid_: 引擎代人拍板
+机制见 [ADR 0014](docs/adr/0014-historical-event-trigger-and-effect-model.md)、[ADR 0115](docs/adr/0115-event-decision-binding-contract.md)。
+
+**核心事实随终态落**:
+事件真正发生时才入账的核心物理事实；未发生则没有这笔事实。
+_Avoid_: 未选择即改国号、按日期旁路
+机制见 [ADR 0014](docs/adr/0014-historical-event-trigger-and-effect-model.md)。
+
 ### Fiscal Substrate
 
 **省级财政基座**:

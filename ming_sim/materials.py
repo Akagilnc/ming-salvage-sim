@@ -32,6 +32,8 @@ _SECRET_DIR = "密令"
 _RECOMMEND_DIR = "荐人"
 _FACT_DIR = "事实"
 _BOARD_DIR = "盘面"
+_CANDIDATE_DIR = "候选事件"
+_PETITION_DIR = "请旨事项"
 _WORLD_GAZETTE_DIR = "邸报"
 _CHARACTER_GAZETTE_DIR = f"{_PUBLIC_DIR}/邸报"
 _COURT_ROSTER_REL = f"{_PERSON_DIR}/朝臣名册.txt"
@@ -1263,6 +1265,9 @@ def _candidate_event_fact(ev: Any) -> dict[str, object]:
         "id": str(ev.id),
         "title": str(ev.title),
         "kind": str(ev.kind),
+        "interests": list(ev.interests),
+        "trigger_gate": dict(ev.trigger_gate),
+        "terminal_reason_labels": list(getattr(ev, "terminal_reason_labels", []) or []),
         "summary": str(ev.summary),
         "event_type": str(ev.event_type),
         "trigger_class": str(getattr(ev, "trigger_class", "") or ""),
@@ -1428,6 +1433,148 @@ def _textual_facts_text(
     return "\n".join(f"{fact.occurred_month}：{fact.body}" for fact in facts)
 
 
+def _world_candidate_events(db: Any, state: Any) -> list:
+    """#1892：合资格且尚无终态的人物事件候选，连同结构化事实交世界段模型自读。
+
+    候选资格与结构化事实由 gather_candidate_events 单一真源判（窗口/前提门/已发
+    终态/三饷亲裁排除）；本函数只把该结果写成材料，不另设判门、不替模型选。
+    """
+    from ming_sim.issues import gather_candidate_events
+
+    return [_candidate_event_fact(ev) for ev in gather_candidate_events(state, db)]
+
+
+def _world_fiscal_levy_petitions(db: Any, state: Any) -> list:
+    """#1892：三饷到点请旨事项——交世界段成陈情与拟旨，皇帝亲裁，不由模型代批。
+
+    资格单一真源＝issues.gather_fiscal_levy_petitions；本函数只投影事件自身既有
+    字段（不另设判门、不写终态）。军费实况仍走盘面既有段落，本目录不重造。
+
+    另投影**已呈未决**事项的既有事实（#1891 后续世界段供料契约）：该事项此前已上疏
+    皇帝、皇帝已批「留中」或尚未答复。推演者据此可另上疏续请，也可不再上疏；引擎
+    不新增自动重呈机制，也不改判门（资格仍由 gather_fiscal_levy_petitions 判）。
+    """
+    from ming_sim.issues import gather_fiscal_levy_petitions
+
+    presented = {}
+    for row in db.list_event_petition_records():
+        event_id = str(row.get("event_id") or "")
+        record = row.get("petition")
+        if not event_id or not isinstance(record, dict):
+            continue
+        # 答案字段（label/hint/note）与呈疏字段同在 choice_json 顶层，petition 段
+        # 只放「何时呈、呈的什么」——两处都读，别只读一层。
+        presented[event_id] = {
+            **record,
+            "emperor_label": str(row.get("label") or ""),
+            "emperor_hint": str(row.get("hint") or ""),
+            "emperor_note": str(row.get("note") or ""),
+            # 留中＝已有请旨答复且终态仍空。不另记标记、不解析批语用词。
+            "held": not str(row.get("terminal_state") or "").strip(),
+        }
+    items = []
+    for ev in gather_fiscal_levy_petitions(state, db):
+        record = presented.get(ev.id)
+        item: dict = {
+            "id": ev.id,
+            "title": ev.title,
+            "summary": ev.summary,
+            # 封闭结局标签＝玩家批红可落的白名单；模型只可在此集内给选项标签，
+            # 否则语义写口的归一器会 fail-loud。
+            "verdict_labels": list(getattr(ev, "terminal_reason_labels", []) or []),
+        }
+        if record is not None:
+            # 逐字供给已呈奏疏原文与皇帝原批语（ADR 0142：不删改、不摘要成模板）。
+            item["presented"] = {
+                "presented_title": str(record.get("title") or ""),
+                "presented_context": str(record.get("context") or ""),
+                "emperor_label": record["emperor_label"],
+                "emperor_hint": record["emperor_hint"],
+                "emperor_note": record["emperor_note"],
+                "held": record["held"],
+                "presented_turn": record.get("presented_turn"),
+                "presented_year": record.get("presented_year"),
+                "presented_period": record.get("presented_period"),
+                "held_turn": record.get("held_turn"),
+            }
+        items.append(item)
+    return items
+
+
+def _write_candidate_event_files(tmp: Path, db: Any, state: Any) -> list[str]:
+    index: list[str] = []
+    candidates = _world_candidate_events(db, state)
+    index_rel = f"{_CANDIDATE_DIR}/INDEX.txt"
+    # 索引与文件名同一真源：写盘用 _safe_segment，索引也必须用它拼，否则目录里
+    # 每一条索引都指向不存在的文件（按原始 id 拼时两者不一致）。
+    entries = [f"{_safe_segment(item['id'])}.txt" for item in candidates]
+    _write_text(tmp / index_rel, "\n".join(entries))
+    index.append(index_rel)
+    for item, entry in zip(candidates, entries):
+        rel = f"{_CANDIDATE_DIR}/{entry}"
+        rows = [
+            ("id", item["id"]),
+            ("标题", item["title"]),
+            ("类别", item["kind"]),
+            ("事件类型", item["event_type"]),
+            ("事由", item["summary"]),
+            ("相关", "、".join(item["interests"])),
+            ("前提门", json.dumps(item["trigger_gate"], ensure_ascii=False)),
+            ("可解条件", item["resolve_condition"]),
+            ("崩坏条件", item["fail_condition"]),
+            ("历史前情与结果", item["precondition"]),
+        ]
+        if item.get("terminal_reason_labels"):
+            rows.append(("封闭结局", "、".join(item["terminal_reason_labels"])))
+        body = "\n".join(f"{label}：{value}" for label, value in rows)
+        _write_text(tmp / rel, body)
+        index.append(rel)
+    return index
+
+
+def _write_fiscal_levy_petition_files(tmp: Path, db: Any, state: Any) -> list[str]:
+    """#1892 J5：到点三饷写成「请旨事项」目录，供世界段据以上疏请旨（皇帝亲裁）。
+
+    与「候选事件」分开：那里是交模型代选是否发生的人物事件；这里的事件发生权在
+    皇帝，模型只负责陈情与拟旨，批红后才落终态。
+    """
+    index: list[str] = []
+    petitions = _world_fiscal_levy_petitions(db, state)
+    index_rel = f"{_PETITION_DIR}/INDEX.txt"
+    entries = [f"{_safe_segment(item['id'])}.txt" for item in petitions]
+    _write_text(tmp / index_rel, "\n".join(entries))
+    index.append(index_rel)
+    for item, entry in zip(petitions, entries):
+        rel = f"{_PETITION_DIR}/{entry}"
+        presented = item.get("presented")
+        prior_lines = ""
+        if isinstance(presented, dict):
+            # 已呈未决的既有事实逐字供给（ADR 0142）：旧疏原文与皇帝原批语都原样写出，
+            # 由推演者自行决定是否另上疏；引擎不加自动重呈。
+            prior_lines = "\n".join((
+                "",
+                f"此前已呈：{presented.get('presented_title') or ''}",
+                f"呈疏年份：{presented.get('presented_year')}",
+                f"呈疏期：{presented.get('presented_period')}",
+                f"已呈奏疏原文：{presented.get('presented_context') or ''}",
+                f"皇帝原批语标签：{presented.get('emperor_label') or ''}",
+                f"皇帝原批语提示：{presented.get('emperor_hint') or ''}",
+                f"皇帝原批语：{presented.get('emperor_note') or ''}",
+            ))
+        body = "\n".join(
+            f"{label}：{value}"
+            for label, value in (
+                ("id", item["id"]),
+                ("事项", item["title"]),
+                ("事由", item["summary"]),
+                ("可批结局标签", "、".join(item["verdict_labels"])),
+            )
+        ) + prior_lines
+        _write_text(tmp / rel, body)
+        index.append(rel)
+    return index
+
+
 def _write_world_tree(
     tmp: Path,
     db: Any,
@@ -1507,6 +1654,8 @@ def _write_world_tree(
         _write_text(tmp / rel, body)
         index.append(rel)
 
+    index.extend(_write_candidate_event_files(tmp, db, state))
+    index.extend(_write_fiscal_levy_petition_files(tmp, db, state))
     index.extend(_write_world_textual_fact_files(tmp, db, include_fact=include_fact))
     index.extend(_write_public_by_month(tmp, public_events))
     index.extend(_write_gazette_index(
@@ -1647,6 +1796,11 @@ def _world_opening_text(
     parts.append(
         f"本月候选：人物事件 {events} 项，弹劾潮 {surges} 项，"
         f"在 {_CANDIDATE_REL}，按需自读。"
+    )
+    parts.append(
+        "到点须皇帝亲裁的事项在「请旨事项」目录（按 INDEX 自读）：这些不由你决定成败，"
+        "你只据盘面与军费实况上疏陈情、拟出请旨，请旨块的 event_id 写该事项 id，"
+        "选项标签只取该事项列出的可批结局标签；皇帝批红后结局才落账。"
     )
     parts.append("人物经历、公开说法、历月邸报在当前目录，按需自读。根目录 INDEX 一行一项。")
     return "\n".join(parts)

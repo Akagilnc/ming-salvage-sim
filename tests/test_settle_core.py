@@ -29,7 +29,12 @@ def test_pre_settle_runs_fixed_fiscal_tick(game):
     assert isinstance(auto, list)
 
 def test_pre_settle_persists_event_terminal_states_in_write_path(game):
-    """PR review：事件过期终态由 pre_settle 写路径落库，候选查询本身不写 DB。"""
+    """过期终态由逐旨后的唯一判门落库；候选查询与 pre_settle 本身不写这条终态。"""
+    from types import SimpleNamespace
+
+    from ming_sim.applier import Provenance
+    import ming_sim.month_chain as month_chain
+
     db, state, content = game
     issues.bind_content(content)
     ev = Event(
@@ -61,6 +66,14 @@ def test_pre_settle_persists_event_terminal_states_in_write_path(game):
         ).fetchone() is None
 
         pre_settle(state, db)
+        assert db.conn.execute(
+            "SELECT 1 FROM event_triggers WHERE event_id=?",
+            (ev.id,),
+        ).fetchone() is None
+        month_chain._consume_event_gates_after_edicts(
+            SimpleNamespace(db=db, state=state), {},
+            decree_text="", source=Provenance.system_simulation,
+        )
 
         row = db.conn.execute(
             "SELECT terminal_state FROM event_triggers WHERE event_id=?",

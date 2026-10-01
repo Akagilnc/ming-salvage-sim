@@ -279,3 +279,91 @@ def test_world_materials_include_textual_facts_once_and_gazette_not_duplicated(g
     # past 月路径不存在；gate 失效后该路径会出现（结构化路径契约，不盯正文）。
     assert f"公开说法/{past_year}年{past_period}月.txt" not in names
     assert f"邸报/{past_year}年{past_period}月.txt" in names
+
+
+def test_world_materials_carry_eligible_person_event_candidates(game, tmp_path):
+    """#1892 J3：世界段起调时材料目录按当前实况给出合资格人物事件候选及结构化事实。
+
+    候选资格单一真源＝issues.gather_candidate_events；本例只钉「供料接缝接通」，
+    不另设判门。已落终态者不入候选（引擎硬触发的大疫不在其中）。
+    """
+    from ming_sim import issues
+
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1636
+    state.period = 4
+    db.save_state(state)
+
+    dest = tmp_path / "world-materials"
+    prepared = prepare_world_materials(db, state, dest_root=dest)
+
+    candidate_paths = [
+        p for p in list_materials(prepared.root)
+        if p.startswith("候选事件/") and p.endswith(".txt") and not p.endswith("/INDEX.txt")
+    ]
+    assert candidate_paths
+    # 目录读口契约：INDEX 每一条都指向真实存在的文件（#1892 J3 曾按原始 id 写
+    # INDEX、写盘却用安全名，整目录索引不可读）。结构化断言，不拼正文。
+    index_lines = [
+        line.strip()
+        for line in read_material(prepared.root, "候选事件/INDEX.txt").splitlines()
+        if line.strip()
+    ]
+    listed = {p.split("/", 1)[1] for p in candidate_paths}
+    assert index_lines, "候选 INDEX 不得为空"
+    assert set(index_lines) == listed, (index_lines, candidate_paths)
+    for rel in candidate_paths:
+        assert read_material(prepared.root, rel)
+    # 候选集合＝权威快照逐条可达；快照为空则本例无意义，故先钉非空。
+    eligible = {ev.id for ev in issues.gather_candidate_events(state, db)}
+    assert eligible, "fixture 需当期有合资格人物事件"
+    assert "huangtaiji_chengdi" in eligible
+    assert len(candidate_paths) == len(eligible)
+    from ming_sim.materials import _world_candidate_events
+
+    labels = list(content.event_by_id["jisi_lubian"].terminal_reason_labels)
+    roster = {
+        item["id"]: list(item["terminal_reason_labels"])
+        for item in _world_candidate_events(db, state)
+    }
+    assert labels and roster.get("jisi_lubian") == labels
+    assert "jisi_lubian" in eligible
+
+
+def test_world_materials_carry_due_fiscal_levy_petitions(game, tmp_path):
+    """#1892 J5：三饷到点须皇帝亲裁，故走「请旨事项」目录交世界段上疏。
+
+    契约＝目录读口（INDEX 每条指向真实文件）与权威快照一致；不盯人读正文。
+    """
+    from ming_sim import issues
+
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1631
+    state.period = 1
+    db.save_state(state)
+
+    due = {ev.id for ev in issues.gather_fiscal_levy_petitions(state, db)}
+    assert "liao_levy_rise_1631" in due
+
+    prepared = prepare_world_materials(db, state, dest_root=tmp_path / "levy")
+    index_lines = [
+        line.strip()
+        for line in read_material(prepared.root, "请旨事项/INDEX.txt").splitlines()
+        if line.strip()
+    ]
+    paths = [
+        p for p in list_materials(prepared.root)
+        if p.startswith("请旨事项/") and p.endswith(".txt") and not p.endswith("/INDEX.txt")
+    ]
+    assert paths
+    assert {p.split("/", 1)[1] for p in paths} == set(index_lines)
+    for rel in paths:
+        assert read_material(prepared.root, rel)
+
+    # 已落终态者不再呈请；亲裁一次后同一事件不再顶回批红。
+    db.mark_event_triggered(state, "liao_levy_rise_1631", terminal_reason="已准")
+    assert "liao_levy_rise_1631" not in {
+        ev.id for ev in issues.gather_fiscal_levy_petitions(state, db)
+    }
