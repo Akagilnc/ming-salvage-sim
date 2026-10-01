@@ -262,7 +262,7 @@ def build_c0_declaration_shape() -> str:
     target_kind_hint = "|".join(sorted(TARGET_KINDS))
     effect_shape = "\n".join(
         f"    {line}" for line in json.dumps(
-            {"event_id": "仅属某事件战果时填事件 id；未填即独立", **EMPTY_EXTRACTION},
+            {"event_id": "效果属于某事件时填该事件 id（战果，或本段已答请饷的结局，且与该项事件结局的键相同）；未填即独立", **EMPTY_EXTRACTION},
             ensure_ascii=False, indent=2,
         ).splitlines()
     )

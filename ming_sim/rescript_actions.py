@@ -465,7 +465,7 @@ def validate_all(
         # 不把批语改写成某条票拟。
         if kind == "decision":
             from ming_sim.month_chain import (
-                _DECREE_QUESTION_PREFIX, _WORLD_QUESTION_PREFIX,
+                _DECREE_QUESTION_PREFIX, _LEVY_PETITION_PREFIX, _WORLD_QUESTION_PREFIX,
             )
 
             event_id = str(row.get("event_id") or "")
@@ -477,6 +477,9 @@ def validate_all(
                 and (
                     event_id.startswith(_DECREE_QUESTION_PREFIX)
                     or event_id.startswith(_WORLD_QUESTION_PREFIX)
+                    # #1891：请饷／议停请旨同属请旨——只批朱笔不点拟批即留中：
+                    # 本次奏疏已答、事件不置终局，由大臣日后自决是否再上疏。
+                    or event_id.startswith(_LEVY_PETITION_PREFIX)
                 )
             ):
                 batch.items.append(ValidatedItem(
@@ -1398,11 +1401,28 @@ def apply_rescript_batch(
                 event_id = str(item.row.get("event_id") or "").strip()
                 # 请旨身份前缀真源 = month_chain；此处局部导入以免与月链形成模块环。
                 from ming_sim.month_chain import (
-                    _DECREE_QUESTION_PREFIX, _WORLD_QUESTION_PREFIX,
+                    _DECREE_QUESTION_PREFIX, _LEVY_PETITION_PREFIX, _WORLD_QUESTION_PREFIX,
                 )
+                # #1891：请饷／议停请旨——案头身份剥前缀还原真实事件。答复只按
+                # 事实落账（亲笔批语原样持久化），不置终局、不猜结局：结局由既有
+                # 世界段续推经 #1815 转译理解后，落事件账唯一写口。
+                if event_id.startswith(_LEVY_PETITION_PREFIX):
+                    db.record_event_petition_answer(
+                        state, event_id[len(_LEVY_PETITION_PREFIX):], item.choice,
+                        {
+                            "title": str(item.row.get("title") or ""),
+                            "context": str(item.row.get("context") or ""),
+                            "options": [
+                                str(opt.get("label") or "")
+                                for opt in (item.row.get("options") or []) if isinstance(opt, dict)
+                            ],
+                        },
+                        commit=False,
+                    )
+                    result.applied_keys.append(item.decision_key)
+                    continue
                 # 请旨身份不是 events 表事件；与 dossier: 同属案头身份前缀，不得进 event_triggers。
-                # 绑定了到期事件的请旨（三饷亲裁）也走此前缀，其事件账由 month_chain 的
-                # world_question_event_bindings 单一写口落，不在此按行反推（#1892 K1）。
+                # 三饷只走上述 levy-petition 交接；普通请旨不反推事件身份。
                 if (
                     event_id
                     and not event_id.startswith("dossier:")

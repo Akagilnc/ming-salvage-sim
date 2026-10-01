@@ -710,6 +710,7 @@ def create_world_segment_agent(llm_config: LLMConfig, prepared: Any) -> Agent:
     设为 cwd。不另造读取机制。
     """
     from ming_sim.materials import material_tools
+    from ming_sim.month_chain import LEVY_HANDOFF_RULE
 
     cfg = _llm_for_role(llm_config, "simulator")
     tlog(f"[world-segment] 使用模型 {describe_effective_model(cfg)}")
@@ -722,7 +723,9 @@ def create_world_segment_agent(llm_config: LLMConfig, prepared: Any) -> Agent:
         "你推演本月旨意之外的世界事件，并承接开场列出的在途办理案卷。"
         "已经落账的旨不要重算，也不要写月末邸报。",
         "本段只写推演结果。",
-        "若需要皇帝裁决，请在问处给出标准 DECISION 结构并停在问处；问后内容不属于本段。",
+        "若本段消息含 levy_petitions，请饷与议停只按交接契约写并停在问处："
+        + LEVY_HANDOFF_RULE,
+        "消息没有 levy_petitions 时，若需要皇帝裁决，在问处给出标准 DECISION 结构并停在问处；问后内容不属于本段。",
         "开场只有最小集。其余材料在当前目录，按需自读。",
         # #1893：候选事实在世界目录里（盘面/候选事件与弹劾潮.txt），本段自读、
         # 自行判定本月哪些真发生、哪个派系是否发难；不选的照实不写。

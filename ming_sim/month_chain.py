@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import re
 from types import SimpleNamespace
 from typing import Any, Dict, List, Mapping, Optional
 
@@ -21,6 +22,24 @@ _CHAIN_KEY = "month_chain"
 _TRANSLATE_ESCAPE_STEPS = frozenset({"world_translate"})
 _WORLD_QUESTION_PREFIX = "world-question:"
 _DECREE_QUESTION_PREFIX = "decree-question:"
+# #1891：请饷／议停请旨的案头身份前缀。真实事件身份在交接时绑定（真实 id 藏在前缀后），
+# 不从疏文猜配（ADR 0115）。与 world-question/decree-question 同列：都是案头身份，
+# 不是 events 表事件，故不进 event_triggers 的普通回写分支。
+_LEVY_PETITION_PREFIX = "levy-petition:"
+# 与 <<DECISION>> 同一类机标：切前缀与交接读取共用这一条，不另写切分。
+# 括号里是整段载荷。只认 `{...}` 会把 null / 数组看成「没有块」。
+_LEVY_BLOCK_RE = re.compile(r"<<LEVY>>(.*?)<<END>>", re.DOTALL)
+_LEVY_OPEN = "<<LEVY>>"
+# 世界段生产指令与用户消息里的交接契约共用这一句，避免一边只认 DECISION。
+LEVY_HANDOFF_RULE = (
+    "levy_petitions 的数组顺序就是本月交接顺序。"
+    "上疏时按这个顺序逐件写 <<LEVY>>{title, context, options}<<END>>，"
+    "块内不写事件 id；写了也不作关联。"
+    "块数必须与名单等长。不再上疏的一件写 {\"present\": false}。"
+    "presentation_due 为 true 的必须写成请旨，不能写 present false。"
+    "presentation_due 为 false 的由你决定是否再上疏；一件都不上时整段不写 LEVY 块。"
+    "普通请旨仍用 <<DECISION>>，不能代替 LEVY 块，也不承担请饷事件身份。"
+)
 
 
 def _session_owner(db: Any, state: Any, llm_config: Any, agno_db: Any, content: Any):
@@ -53,17 +72,161 @@ def run_world_segment_text(
     from ming_sim.materials import prepare_world_materials, release_material_tree
 
     prepared = prepare_world_materials(db, state)
-    message = "推演本月世界段。"
-    if str(cheat_directive or "").strip():
-        message = str(cheat_directive).strip() + "\n" + message
     try:
         agent = create_world_segment_agent(llm_config, prepared)
         return run_agent_text(
-            agent, message, tag="world-segment",
+            agent, _world_segment_message(db, state, cheat_directive),
+            tag="world-segment",
             transport_policy=audience_transport_policy(),
         )
     finally:
         release_material_tree(prepared.root)
+
+
+def _world_segment_message(db: Any, state: Any, cheat_directive: str) -> str:
+    """#1891：本月可呈的请饷／议停事件随世界段消息交接（材料＋军费实况已在目录）。
+
+    只是供料：怎么陈情、拟什么旨，由过月模型自己判断（ADR 0153 / P6）。不给判定
+    指令、不代它写疏文——P7 下疏文必须由模型长出。是否上疏的权限按 #1891 分两层：
+    本月到点、尚未呈过的应呈请；已留中过的（re_presentation）由大臣自决是否再上。
+
+    这份名单与月链 ``chain["levy_petitions"]`` 取自同一次交接：月链在推演前取定并存
+    链，推演时账本尚未变动（纯读函数），身份钉定再读链上那份快照。
+    """
+    import json
+
+    from ming_sim.issues import list_fiscal_levy_petitions_due
+
+    petitions = list_fiscal_levy_petitions_due(state, db)
+    message = "推演本月世界段。"
+    if str(cheat_directive or "").strip():
+        message = str(cheat_directive).strip() + "\n" + message
+    if not petitions:
+        return message
+    return json.dumps({
+        "instruction": message,
+        "levy_petitions": petitions,
+        "levy_petitions_contract": LEVY_HANDOFF_RULE,
+    }, ensure_ascii=False)
+
+
+def _unclosed_levy_opener(text: str) -> Optional[int]:
+    """``<<LEVY>>`` 已经写下、但没有落到闭合 ``<<END>>`` 的起点。
+
+    闭合块内部再出现这四个字不算第二处开头。没有开头是合法缺席，不是坏块。
+    """
+    raw = text or ""
+    covered = [(match.start(), match.end()) for match in _LEVY_BLOCK_RE.finditer(raw)]
+    idx = 0
+    while True:
+        open_at = raw.find(_LEVY_OPEN, idx)
+        if open_at < 0:
+            return None
+        if any(start <= open_at < end for start, end in covered):
+            idx = open_at + len(_LEVY_OPEN)
+            continue
+        return open_at
+
+
+def _levy_handoff_blocks(text: str, turn: int) -> List[Dict[str, Any]]:
+    """按出现顺序读 <<LEVY>> 块。块内的事件 id 不是绑定源，读的时候丢掉。"""
+    import json
+
+    from ming_sim.exceptions import SettlementAbort
+    from ming_sim.settlement_payload import parse_decision_blocks
+
+    if _unclosed_levy_opener(text) is not None:
+        raise SettlementAbort(
+            "请饷交接块未闭合",
+            turn=int(turn), stage="world_bind",
+        )
+    blocks: List[Dict[str, Any]] = []
+    for match in _LEVY_BLOCK_RE.finditer(text or ""):
+        try:
+            obj = json.loads(match.group(1).strip())
+        except Exception as exc:
+            raise SettlementAbort(
+                "请饷交接块无法对齐名单",
+                turn=int(turn), stage="world_bind",
+            ) from exc
+        if not isinstance(obj, dict):
+            raise SettlementAbort(
+                "请饷交接块无法对齐名单",
+                turn=int(turn), stage="world_bind",
+            )
+        if obj.get("present") is False:
+            blocks.append({"present": False})
+            continue
+        body = {
+            key: value for key, value in obj.items()
+            if key not in {"event_id", "origin_ref", "petition_ref", "present"}
+        }
+        parsed = parse_decision_blocks(
+            "<<DECISION>>" + json.dumps(body, ensure_ascii=False) + "<<END>>"
+        )
+        if len(parsed) != 1:
+            raise SettlementAbort(
+                "请饷交接块不是可上呈的请旨",
+                turn=int(turn), stage="world_bind",
+            )
+        blocks.append(dict(parsed[0]))
+    return blocks
+
+
+def _pin_world_question_identities(
+    levy_petitions: List[Dict[str, Any]], questions: List[Dict[str, Any]],
+    turn: int = 0, *, world_text: str = "",
+) -> List[Dict[str, Any]]:
+    """#1891（ADR 0115）：请旨与事件的关联由交接名单的顺序构造，不读回显。
+
+    名单快照的下标就是稳定键。``<<LEVY>>`` 块按同一顺序对齐；块里没有事件 id
+    可读，写了也丢掉。普通 ``<<DECISION>>`` 保持世界段请旨，不承担请饷身份。
+
+    显式坏块在读取时失败，不因名单为空或无人应呈而当成没写。名单为空时，合法块
+    不占用请旨。有应呈件却没有等长的块，或块数对不上名单，无法唯一对齐，响亮
+    失败。已留中的可以整段不写块（不再上疏）；要再上疏就必须与名单等长，不上的
+    那件显式 present false。
+    """
+    from ming_sim.exceptions import SettlementAbort
+
+    roster = [
+        item for item in levy_petitions
+        if isinstance(item, dict) and str(item.get("event_id") or "")
+    ]
+    ordinary = [dict(question) for question in questions if isinstance(question, dict)]
+    # 先读块：显式坏载荷在这里失败，不能因为名单为空或无人应呈就被当成没写块。
+    blocks = _levy_handoff_blocks(world_text, turn)
+    if not roster:
+        return ordinary
+    mandatory = [item for item in roster if item.get("presentation_due")]
+    if not blocks:
+        if mandatory:
+            missing = "、".join(str(item.get("event_id")) for item in mandatory)
+            raise SettlementAbort(
+                f"本月到点应呈的请饷事件没有按交接顺序形成请旨：{missing}",
+                turn=int(turn), stage="world_bind",
+            )
+        return ordinary
+    if len(blocks) != len(roster):
+        raise SettlementAbort(
+            f"请饷交接块数与本月名单无法对齐：块 {len(blocks)}，名单 {len(roster)}",
+            turn=int(turn), stage="world_bind",
+        )
+    pinned: List[Dict[str, Any]] = []
+    for item, block in zip(roster, blocks):
+        event_id = str(item.get("event_id"))
+        if block.get("present") is False:
+            if item.get("presentation_due"):
+                raise SettlementAbort(
+                    f"本月到点应呈的请饷事件没有形成请旨：{event_id}",
+                    turn=int(turn), stage="world_bind",
+                )
+            continue
+        row = dict(block)
+        row.pop("present", None)
+        row["event_id"] = f"{_LEVY_PETITION_PREFIX}{event_id}"
+        pinned.append(row)
+    return pinned + ordinary
 
 
 def _gazette_public_fact(fact: Any, secret_dossier_ids: Optional[set[int]] = None) -> bool:
@@ -363,8 +526,25 @@ def continue_world_after_answers(
 
     消费事实（清问 + world_continued）与落账同事务：LLM 先跑，失败零消费可重试；
     成功则随 dispatch_month_segment 的 alongside 原子落旗（ADR 0157 恢复幂等）。
+    续推自身的失败走既有月链诊断（call_failure + 错误包），步骤名 world_continue：
+    不占用 world_bind / world_translate 的逃生口，已提交的世界段与批语留在原处。
+    尚未落在 world_continue 上的 SettlementAbort 收进这一步，不退回内层阶段。
     """
-    from ming_sim.month_translate import dispatch_month_segment
+    db, state = session.db, session.state
+    return _guard_month_call(
+        db, state, chain, decree_text="", source=source,
+        step="world_continue",
+        operation=lambda: _continue_world_after_answers(
+            session, chain, answers=answers, source=source,
+        ),
+        home_foreign_abort=True,
+    )
+
+
+def _continue_world_after_answers(
+    session: Any, chain: Dict[str, Any], *, answers: List[Dict[str, object]], source: Provenance,
+) -> Optional[Dict[str, object]]:
+    from ming_sim.month_translate import _answered_levy_verdicts, dispatch_month_segment
 
     db, state = session.db, session.state
     turn = int(state.turn)
@@ -372,10 +552,16 @@ def continue_world_after_answers(
         chain["world_questions"] = []
         _save_chain(db, turn, chain, source=source)
         return chain.get("declaration_outcome")
-    if session.llm_config is None:
-        from ming_sim.exceptions import LLMUnavailable
-        raise LLMUnavailable("世界段续推缺少模型配置", stage="world-segment-continue")
-    text = _run_world_continuation_text(session, chain, answers)
+    if not chain.get("world_continuation_ready"):
+        if session.llm_config is None:
+            from ming_sim.exceptions import LLMUnavailable
+            raise LLMUnavailable("世界段续推缺少模型配置", stage="world-segment-continue")
+        produced = _run_world_continuation_text(session, chain, answers)
+        chain["world_continuation_text"] = str(produced or "")
+        chain["world_continuation_ready"] = True
+        # 续推全文先落链，转译失败重入只补转译，不重跑这段已完成的模型调用。
+        _save_chain(db, turn, chain, source=source)
+    text = str(chain.get("world_continuation_text") or "")
     outcome = None
 
     def mark_continued(result: Any = None) -> None:
@@ -389,16 +575,19 @@ def continue_world_after_answers(
         chain["world_continued"] = True
         _save_chain(db, turn, chain, source=source)
 
-    if str(text or "").strip():
-        # 续推若再吐 DECISION 机标，只落问前缀文，勿把机标喂进转译。
-        prefix, _extra = _split_at_question(str(text))
-        if prefix.strip():
-            result = dispatch_month_segment(
-                db, state, segment=prefix, llm_config=session.llm_config, source=source,
-                alongside=mark_continued,
-            )
-            return _ending_from_dispatch_result(result) or outcome
-    # 空续推：无落账后果，仍须原子记下已续，避免重入再烧。
+    # 续推若再吐 DECISION / LEVY 机标，只落问前缀文，勿把机标喂进转译。
+    # 原批语只在这一次世界答后转译里解释；前缀为空不能把原批语挡在入口外。
+    prefix, _extra = _split_at_question(text)
+    verdicts = _answered_levy_verdicts(db, turn)
+    if prefix.strip() or verdicts:
+        result = dispatch_month_segment(
+            db, state, segment=prefix if prefix.strip() else "",
+            llm_config=session.llm_config, source=source,
+            alongside=mark_continued,
+            answered_verdicts=verdicts,
+        )
+        return _ending_from_dispatch_result(result) or outcome
+    # 无前缀、也无本段原批语：无落账后果，仍须原子记下已续，避免重入再烧。
     with atomic(db):
         mark_continued(None)
     return outcome
@@ -415,20 +604,54 @@ def continue_decree_after_answers(
     幂等：questions 已清则视为已续，同回合重入零新增效果。
     消费事实（清问）与落账同事务——先跑续推 LLM，失败保留 questions 可重试；
     有声明则 clear_questions 走既有段分派的 alongside（ADR 0157）。
+    失败登记与世界段续推同一条诊断，步骤名 decree_continue，不丢已提交段文。
+    尚未落在 decree_continue 上的 SettlementAbort 收进这一步，不退回内层阶段。
     """
+    db, state = session.db, session.state
+    failure_chain = chain if chain is not None else _load_chain(db, int(state.turn))
+    _guard_month_call(
+        db, state, failure_chain, decree_text="", source=source,
+        step="decree_continue", decree_ref=decree_ref,
+        operation=lambda: _continue_decree_after_answers(
+            session, decree_ref=decree_ref, answers=answers, chain=chain, source=source,
+        ),
+        home_foreign_abort=True,
+    )
+
+
+def _continue_decree_after_answers(
+    session: Any, *, decree_ref: str, answers: List[Dict[str, object]],
+    chain: Optional[Dict[str, Any]] = None,
+    source: Provenance = Provenance.player_decree,
+) -> None:
     from ming_sim.exceptions import LLMUnavailable
     from ming_sim.month_translate import dispatch_month_segment
 
     db, state = session.db, session.state
+    turn = int(state.turn)
+    if chain is None:
+        chain = _load_chain(db, turn)
     if not db.staged_declarations.questions_for(decree_ref):
         return
-    if session.llm_config is None:
-        raise LLMUnavailable("旨意续推缺少模型配置", stage="decree-forecast-continue")
-    dossier = _dossier_for_decree_ref(db, decree_ref)
-    if dossier is None:
-        return
-    text = _run_decree_continuation_text(session, dossier, answers)
-    prefix, _extra = _split_at_question(str(text or ""))
+    saved = chain.get("decree_continuations")
+    if not isinstance(saved, dict) or decree_ref not in saved:
+        if session.llm_config is None:
+            raise LLMUnavailable("旨意续推缺少模型配置", stage="decree-forecast-continue")
+        dossier = _dossier_for_decree_ref(db, decree_ref)
+        if dossier is None:
+            return
+        produced = _run_decree_continuation_text(session, dossier, answers)
+        saved = dict(saved) if isinstance(saved, dict) else {}
+        saved[decree_ref] = str(produced or "")
+        chain["decree_continuations"] = saved
+        # 续推全文先落链，转译失败重入只补转译／清问，不重跑这段已完成的模型调用。
+        _save_chain(db, turn, chain, source=source)
+    else:
+        dossier = _dossier_for_decree_ref(db, decree_ref)
+        if dossier is None:
+            return
+    text = str(saved.get(decree_ref) or "")
+    prefix, _extra = _split_at_question(text)
     if not prefix.strip():
         # LLM 已成功且无问后文：空后果终态，方可清问。
         db.staged_declarations.clear_questions(decree_ref)
@@ -526,7 +749,8 @@ def run_player_month_chain(
         abort_from(exc)
     # #1845：下次过月前 join／重开续接上月机械尾。尾异常不改写成月链 call_failure。
     ensure_mechanical_tails(_session_owner(db, state, llm_config, agno_db, content))
-    # 请旨续推的原故障原样上浮：问与 world_continued 都未消费，批红入口重试看见同一颗异常。
+    # 请旨续推的故障先按既有 call_failure 登记（错误包 + 失败步骤），再原样上浮。
+    # 问与 world_continued 都未消费；批红入口重试只续未成的续推。
     _consume_rescript_answers(
         SimpleNamespace(
             db=db, state=state, llm_config=llm_config, agno_db=agno_db, content=content,
@@ -654,6 +878,14 @@ def _consume_call_failure_for_retry(
     if failure.get("escape_armed") and step in _TRANSLATE_ESCAPE_STEPS:
         _discard_segment_for_escape(chain, failure)
         chain["translate_exhaust_stops"] = 0
+    if step == "world_bind":
+        # 绑不上的世界段文本是**无效产物**：它已被判为契约违反，重来一次也绑不上，
+        # 留着只会让原位重试反复撞同一堵墙。按 #1846「只续未成」丢弃该未成产物，
+        # 让重试真正重跑世界段；已提交的财政与已答批红一概不动。
+        chain.pop("world_text", None)
+        chain["world_text_ready"] = False
+        chain.pop("world_questions", None)
+        chain.pop("levy_petitions", None)
     if step == "secret_orders_supply":
         # 0058 缺报或 0073 执行态校验失败的产物作废并重起供料；其它中断保留产物。
         if chain.get("secret_orders_supply_invalid"):
@@ -676,6 +908,8 @@ def _discard_segment_for_escape(
         chain.pop("world_text", None)
         chain["world_text_ready"] = False
         chain.pop("world_questions", None)
+        # 逃生口重掷的是世界段本身，交接名单随之一并作废，下次重新取定。
+        chain.pop("levy_petitions", None)
 
 
 def _abort_month_call(
@@ -759,8 +993,14 @@ def _guard_month_call(
     operation: Any,
     decree_ref: str = "",
     code_step: Optional[str] = None,
+    home_foreign_abort: bool = False,
 ) -> Any:
-    """模型用尽 → 停住可重试；其它代码异常 → 错误包后停住；中断类原样上浮。"""
+    """模型用尽 → 停住可重试；其它代码异常 → 错误包后停住；中断类原样上浮。
+
+    ``home_foreign_abort`` 只给续推用：尚未落在 ``step`` 上的 SettlementAbort
+    收成这一步的 call_failure，已是这一步的原样上浮。缺省保持既有阶段，
+    不把世界段、预推的 SettlementAbort 改写成别的步骤。
+    """
     from ming_sim.exceptions import LLMUnavailable, SettlementAbort
 
     try:
@@ -770,8 +1010,15 @@ def _guard_month_call(
             db, state, chain, decree_text=decree_text, source=source,
             step=step, exc=exc, kind="model_exhausted", decree_ref=decree_ref,
         )
-    except (KeyboardInterrupt, SystemExit, SettlementAbort):
+    except (KeyboardInterrupt, SystemExit):
         raise
+    except SettlementAbort as exc:
+        if not home_foreign_abort or str(getattr(exc, "stage", "") or "") == step:
+            raise
+        _abort_month_call(
+            db, state, chain, decree_text=decree_text, source=source,
+            step=step, exc=exc, kind="code_exception", decree_ref=decree_ref,
+        )
     except Exception as exc:
         _abort_month_call(
             db, state, chain, decree_text=decree_text, source=source,
@@ -967,10 +1214,17 @@ def _run_world_segment(
     session: Any, chain: Dict[str, Any], *, source: Provenance,
 ) -> Optional[Dict[str, object]]:
     from ming_sim.month_translate import dispatch_month_segment
+    from ming_sim.exceptions import SettlementAbort
 
     db, state = session.db, session.state
     turn = int(state.turn)
     if not chain.get("world_text_ready"):
+        # #1891：交接名单只取一次，随链持久化。世界段消息与下面的身份钉定读同一份
+        # 快照；恢复时读链上已存身份与奏疏，不按实时资格重解（ADR 0115）。
+        from ming_sim.issues import list_fiscal_levy_petitions_due
+
+        chain["levy_petitions"] = list_fiscal_levy_petitions_due(state, db)
+
         def _push() -> str:
             return run_world_segment_text(
                 db, state, session.llm_config, session.agno_db,
@@ -986,7 +1240,23 @@ def _run_world_segment(
     if chain.get("world_committed"):
         return chain.get("declaration_outcome")
     prefix, questions = _split_at_question(str(chain.get("world_text") or ""))
-    chain["world_questions"] = questions
+
+    def _bind() -> List[Dict[str, Any]]:
+        # 交接时钉定：请旨按上面那份名单快照换上稳定案头身份，随链持久化。绑定是
+        # 生成之后、本段转译之前的一步，未成即本段未完成——故按既有失败通道登记
+        # （call_failure + 错误包），由 #1846 的持久相位续未成，而非静默放行。
+        return _pin_world_question_identities(
+            chain.get("levy_petitions") or [], questions, turn,
+            world_text=str(chain.get("world_text") or ""),
+        )
+
+    try:
+        chain["world_questions"] = _bind()
+    except SettlementAbort as exc:
+        _abort_month_call(
+            db, state, chain, decree_text="", source=source,
+            step="world_bind", exc=exc, kind="code_exception",
+        )
 
     def mark(result: Any) -> None:
         # 完成标记与世界效果同一事务；调用方链要等提交成功后再采纳。
@@ -1517,7 +1787,24 @@ def _materialize_rescript_desk(
 
     open_items = _open_rescript_items(db, state, chain)
     turn = int(state.turn)
+    decided_event_ids = {
+        str(row["event_id"] or "").strip()
+        for row in db.conn.execute(
+            "SELECT event_id FROM pending_decisions "
+            "WHERE turn = ? AND kind = 'decision' AND status = 'decided'",
+            (turn,),
+        ).fetchall()
+        if str(row["event_id"] or "").strip()
+    }
     decisions: List[Dict[str, object]] = []
+
+    def _remember(decision: Dict[str, object]) -> None:
+        event_id = str(decision.get("event_id") or "").strip()
+        # 已答的同一身份不再顶回批红页；原行留在案头账上给后续世界段读。
+        if event_id and event_id in decided_event_ids:
+            return
+        decisions.append(decision)
+
     if open_items["triad"]:
         verdicts = []
         for dossier in open_items["triad"]:
@@ -1538,20 +1825,27 @@ def _materialize_rescript_desk(
                     (latest or {}).get("midzhi_unpromulgatable")
                 ),
             })
-        decisions.extend(_rescript_decisions(verdicts, open_items["triad"]))
+        for decision in _rescript_decisions(verdicts, open_items["triad"]):
+            _remember(decision)
     for ref, questions in open_items["decree_questions"]:
         for idx, question in enumerate(questions):
             if not isinstance(question, dict):
                 continue
-            decisions.append(_question_as_decision(
+            _remember(_question_as_decision(
                 question, event_id=f"{_DECREE_QUESTION_PREFIX}{ref}:{idx}",
             ))
     for idx, question in enumerate(open_items["world_questions"]):
-        decisions.append(_question_as_decision(
+        # #1891：请旨身份在交接时已钉进问题本身（ADR 0115），此处只消前缀还原
+        # 真实事件；不是本月请旨的问题照旧走普通世界段案头身份。
+        event_id = str(question.get("event_id") or "")
+        if event_id.startswith(_LEVY_PETITION_PREFIX):
+            _remember(_question_as_decision(
+                question, event_id=event_id,
+            ))
+            continue
+        _remember(_question_as_decision(
             question, event_id=f"{_WORLD_QUESTION_PREFIX}{turn}:{idx}",
         ))
-    if open_items["world_questions"]:
-        _pin_world_question_event_bindings(chain, db=db, state=state, turn=turn)
     if decisions:
         db.save_pending_decisions(turn, decisions)
     # 已应用 return_revise 仍 pending，但是本批已办，不是新待裁。
@@ -1567,58 +1861,6 @@ def _materialize_rescript_desk(
     chain["stage"] = "rescript"
     _save_chain(db, turn, chain, source=Provenance.system_simulation)
     return desk
-
-
-def world_question_event_bindings(
-    chain: Dict[str, Any], *, db: Any, state: Any, turn: int,
-) -> Dict[str, str]:
-    """读推送时钉死的「案头行身份 → 事件身份」。缺表时补钉一次，已钉的不再重算。"""
-    pinned = chain.get("world_question_event_bindings")
-    if not isinstance(pinned, dict):
-        _pin_world_question_event_bindings(chain, db=db, state=state, turn=turn)
-        pinned = chain.get("world_question_event_bindings") or {}
-    return {
-        str(key): str(value)
-        for key, value in pinned.items()
-        if str(value or "").strip()
-    }
-
-
-def _pin_world_question_event_bindings(
-    chain: Dict[str, Any], *, db: Any, state: Any, turn: int,
-) -> None:
-    """推送案头时把事件身份钉进月链（ADR 0115）。
-
-    案头行身份保持 ``world-question:{turn}:{idx}``，不把事件 id 写进那一列。
-    事件身份只来自交接时请旨块自带、且属于当回合
-    ``gather_fiscal_levy_petitions`` 快照的 event_id。只从 origin_ref 填进来的
-    id 不是这份快照。没有这份身份的请旨保持非事件身份：剩余数量不能证明它属于
-    某一到期事项，也不按标题猜配。钉完之后快照再变也不改这张表。
-    """
-    if isinstance(chain.get("world_question_event_bindings"), dict):
-        return
-    from ming_sim.issues import gather_fiscal_levy_petitions
-
-    questions = [
-        q for q in (chain.get("world_questions") or []) if isinstance(q, dict)
-    ]
-    due_set: set[str] = set()
-    for ev in gather_fiscal_levy_petitions(state, db):
-        event_id = str(ev.id or "").strip()
-        if event_id:
-            due_set.add(event_id)
-    bindings: Dict[str, str] = {}
-    used: set[str] = set()
-    for idx, question in enumerate(questions):
-        desk_key = f"{_WORLD_QUESTION_PREFIX}{turn}:{idx}"
-        echoed = str(question.get("event_id") or "").strip()
-        origin_ref = str(question.get("origin_ref") or "").strip()
-        if origin_ref and echoed == origin_ref:
-            echoed = ""
-        if echoed in due_set and echoed not in used:
-            bindings[desk_key] = echoed
-            used.add(echoed)
-    chain["world_question_event_bindings"] = bindings
 
 
 def _question_as_decision(question: Dict[str, object], *, event_id: str) -> Dict[str, object]:
@@ -1646,45 +1888,6 @@ def _question_as_decision(question: Dict[str, object], *, event_id: str) -> Dict
     }
 
 
-def _record_world_question_event_choices(
-    db: Any, state: Any, chain: Dict[str, Any], world_rows: List[Dict[str, object]], *,
-    turn: int,
-) -> None:
-    """绑定了三饷事项的请旨行：把「已呈奏疏 + 皇帝原批语」整份落进事件账（#1892）。
-
-    案头身份恒为 world-question: 前缀，故此处按绑定表（world_question_event_bindings，
-    单一真源）取事件身份，而不是从行上的 event_id 反推——那正是 K1 里两处判断不同步
-    的病根。写入走 :meth:`db.record_event_petition_answer`：**只记账，不置结局**。
-
-    结局标签不在这儿落：亲笔准驳须经 #1815 单一语义写口
-    （:func:`ming_sim.issues.apply_petition_event_outcome`，由世界段续推的语义转译
-    声明驱动）置定事件结局。把原始选项标签直接写成 terminal_reason 就是以标签旁路
-    替代亲裁语义转译（ADR 0153:5），也是留中标签污染终局标签集的根因。
-    """
-    bindings = world_question_event_bindings(chain, db=db, state=state, turn=turn)
-    if not bindings:
-        return
-    with atomic(db):
-        for row in world_rows:
-            event_id = bindings.get(str(row.get("event_id") or ""))
-            if not event_id:
-                continue
-            raw_choice = row.get("choice")
-            choice: Dict[str, object] = dict(raw_choice) if isinstance(raw_choice, dict) else {}
-            db.record_event_petition_answer(
-                state, event_id, choice,
-                {
-                    "title": str(row.get("title") or ""),
-                    "context": str(row.get("context") or ""),
-                    "options": [
-                        str(opt.get("label") or "")
-                        for opt in (row.get("options") or []) if isinstance(opt, dict)
-                    ],
-                },
-                commit=False,
-            )
-
-
 def _consume_rescript_answers(
     session: Any, chain: Dict[str, Any], *, source: Provenance,
 ) -> None:
@@ -1701,12 +1904,17 @@ def _consume_rescript_answers(
 
     def _answer_from_row(row: Dict[str, object]) -> Dict[str, object]:
         choice = row.get("choice") if isinstance(row.get("choice"), dict) else {}
+        event_id = str(row.get("event_id") or "")
+        # #1891：请饷／议停请旨交续推的是真实事件身份——案头前缀只是批红页身份，
+        # 不该让推演方看到（ADR 0115）。御批原话（label/hint/note）原样带出。
+        if event_id.startswith(_LEVY_PETITION_PREFIX):
+            event_id = event_id[len(_LEVY_PETITION_PREFIX):]
         return {
             "label": str(choice.get("label") or "").strip(),
             "hint": str(choice.get("hint") or "").strip(),
             "note": str(choice.get("note") or "").strip(),
             "context": str(row.get("context") or "").strip(),
-            "event_id": str(row.get("event_id") or ""),
+            "event_id": event_id,
             "title": str(row.get("title") or ""),
         }
 
@@ -1717,16 +1925,19 @@ def _consume_rescript_answers(
         choice = row.get("choice") if isinstance(row.get("choice"), dict) else {}
         _apply_decided_triad(db, state, row, choice, content=session.content)
 
+    # #1891：请饷／议停请旨与世界段请旨同源（都由世界段 run 发出），答复后走同一次
+    # 问后续推——不单开一条续推路径，也不因它是事件身份就漏掉续推。
     world_rows = [
         r for r in rows
-        if str(r.get("event_id") or "").startswith(_WORLD_QUESTION_PREFIX)
+        if str(r.get("event_id") or "").startswith(
+            (_WORLD_QUESTION_PREFIX, _LEVY_PETITION_PREFIX)
+        )
     ]
     if (
         world_rows
         and all(str(r.get("status") or "") == "decided" for r in world_rows)
         and chain.get("world_questions")
     ):
-        _record_world_question_event_choices(db, state, chain, world_rows, turn=turn)
         continue_world_after_answers(
             session, chain,
             answers=[_answer_from_row(r) for r in world_rows],
@@ -1892,22 +2103,57 @@ def _pause(
     return ResolveResult(awaiting=False, advanced=False, stage=stage)
 
 
+def _levy_block_declines_presentation(raw_json: str) -> bool:
+    """合法不呈请：块是 JSON 对象且 present 恰为 false。坏 JSON 不是不呈请。"""
+    import json
+
+    try:
+        obj = json.loads(raw_json)
+    except Exception:
+        return False
+    return isinstance(obj, dict) and obj.get("present") is False
+
+
 def _split_at_question(text: str) -> tuple[str, List[dict]]:
-    """前缀 = 首个合法 DECISION 之前；questions = 该段全部合法请旨块。"""
+    """前缀 = 首个真实请旨之前，并剔除此前的合法不呈请交接块。
+
+    真实请旨 = 合法 DECISION，或 present 不是 false 的 LEVY。
+    ``present: false`` 只是交接标记：从送去转译的前缀里拿掉，不截断其后的世界事实。
+    整段只有这一块、没有其它事实时，前缀为空，标记本段完成仍合法。
+    questions 只收 DECISION。LEVY 身份仍由全文交接读取。坏 JSON、非对象载荷
+    在绑定处失败，并且从送去转译的前缀里切开，不把机标当世界事实送进去。
+    """
     from ming_sim.decree import _DECISION_RE, parse_decision_blocks
 
     questions: List[dict] = []
-    first_start: Optional[int] = None
-    for match in _DECISION_RE.finditer(text):
+    spans: List[tuple[int, int, bool]] = []
+    for match in _DECISION_RE.finditer(text or ""):
         parsed = parse_decision_blocks(match.group(0))
         if not parsed:
             continue
-        if first_start is None:
-            first_start = match.start()
         questions.extend(parsed)
-    if first_start is None:
-        return text, []
-    return text[:first_start], questions
+        spans.append((match.start(), match.end(), True))
+    for match in _LEVY_BLOCK_RE.finditer(text or ""):
+        declines = _levy_block_declines_presentation(match.group(1).strip())
+        spans.append((match.start(), match.end(), not declines))
+    # 未闭合的开头不是散文：从送去转译的前缀里切开，绑定处再按坏块失败。
+    unclosed = _unclosed_levy_opener(text or "")
+    if unclosed is not None:
+        spans.append((unclosed, unclosed, True))
+    spans.sort()
+    first_real = next((start for start, _end, real in spans if real), None)
+    limit = len(text or "") if first_real is None else first_real
+    pieces: List[str] = []
+    cursor = 0
+    for start, end, real in spans:
+        if start >= limit or real:
+            break
+        if start < cursor:
+            continue
+        pieces.append(text[cursor:start])
+        cursor = end
+    pieces.append(text[cursor:limit])
+    return "".join(pieces), questions
 
 
 def _load_chain(db: Any, turn: int) -> Dict[str, Any]:

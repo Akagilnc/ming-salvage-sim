@@ -15,7 +15,7 @@ import pytest
 import ming_sim.month_chain as month_chain
 import ming_sim.month_translate as month_translate
 from ming_sim.declaration_dispatch import pending_action_decree_ref
-from ming_sim.exceptions import LLMUnavailable
+from ming_sim.exceptions import SettlementAbort
 from ming_sim.models import TurnPhase
 from tests.month_chain_helpers import make_light_session
 from tests.test_month_chain_1843 import _forbid_extractor, _stage_edict
@@ -243,11 +243,11 @@ def test_answering_world_question_resumes_suffix_then_gazette(game, monkeypatch)
 
     real_dispatch = month_translate.dispatch_month_segment
 
-    def spy_dispatch(db_, state_, *, segment, llm_config, source, alongside=None):
+    def spy_dispatch(db_, state_, *, segment, llm_config, source, alongside=None, **kwargs):
         dispatched_segments.append(str(segment))
         return real_dispatch(
             db_, state_, segment=segment, llm_config=llm_config,
-            source=source, alongside=alongside,
+            source=source, alongside=alongside, **kwargs,
         )
 
     monkeypatch.setattr(month_chain, "_run_world_continuation_text", fake_continuation)
@@ -422,9 +422,13 @@ def test_decree_continuation_survives_llm_exhaustion_then_retries(game, monkeypa
     try:
         session.submit_hitl_choices(payload, write_gate=session._write_gate)
         raised = None
-    except RuntimeError as exc:
+    except SettlementAbort as exc:
         raised = exc
-    assert raised is not None and "模型调用耗尽" in str(raised)
+    assert raised is not None and raised.stage == "decree_continue"
+    failure = month_chain.month_chain_call_failure(db, int(state.turn))
+    assert failure is not None
+    assert failure["step"] == "decree_continue"
+    assert "模型调用耗尽" in str(failure["message"])
     assert db.staged_declarations.questions_for(ref), (
         "续推失败后 questions 已清，恢复将无法再续推"
     )
@@ -523,9 +527,13 @@ def test_missing_model_keeps_decree_question_until_retry(game, monkeypatch):
     try:
         session.submit_hitl_choices(payload, write_gate=session._write_gate)
         raised = None
-    except LLMUnavailable as exc:
+    except SettlementAbort as exc:
         raised = exc
-    assert raised is not None
+    assert raised is not None and raised.stage == "decree_continue"
+    assert raised.error_pack_path
+    failure = month_chain.month_chain_call_failure(db, int(state.turn))
+    assert failure is not None and failure["step"] == "decree_continue"
+    assert failure["kind"] == "model_exhausted"
     assert db.staged_declarations.questions_for(ref)
     assert session.state.turn_phase == TurnPhase.AWAITING_DECISION.value
 
@@ -563,9 +571,13 @@ def test_missing_model_does_not_mark_world_continued(game, monkeypatch):
     try:
         session.submit_hitl_choices(payload, write_gate=session._write_gate)
         raised = None
-    except LLMUnavailable as exc:
+    except SettlementAbort as exc:
         raised = exc
-    assert raised is not None
+    assert raised is not None and raised.stage == "world_continue"
+    assert raised.error_pack_path
+    failure = month_chain.month_chain_call_failure(db, closed_turn)
+    assert failure is not None and failure["step"] == "world_continue"
+    assert failure["kind"] == "model_exhausted"
     chain = month_chain._load_chain(db, closed_turn)
     assert chain.get("world_continued") is not True
     assert chain.get("world_questions")

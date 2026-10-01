@@ -35,47 +35,6 @@ def _visible_effect_refs(db: Any, turn: int, decree_payload: Mapping[str, object
     }
 
 
-def petition_verdict_grounding(db: Any, state: Any) -> list[dict[str, object]]:
-    """已呈皇帝、待亲裁落定结局的三饷事项及其封闭标签集（#1892 / ADR 0143 输入侧）。
-
-    只列事件账里已有请旨答复、终态仍空的事项。到期但尚未上疏的事项不在此列，
-    转译器不得把它们写成已批。不声明结局即留中，引擎不写终态。只供事实，不代模型判断。
-    """
-    from ming_sim.issues import _fiscal_levy_event_by_id, petition_outcome_is_admissible
-
-    out: list[dict[str, object]] = []
-    for row in db.list_event_petition_records():
-        event_id = str(row.get("event_id") or "")
-        if not event_id or any(item["event_id"] == event_id for item in out):
-            continue
-        if not petition_outcome_is_admissible(state, db, event_id, None):
-            continue
-        ev = _fiscal_levy_event_by_id(event_id)
-        if ev is None:
-            continue
-        out.append({
-            "event_id": event_id,
-            "title": ev.title,
-            "verdict_labels": list(getattr(ev, "terminal_reason_labels", []) or []),
-        })
-    return out
-
-
-def _petition_verdict_block(
-    db: Any, state: Any, decree_payload: Mapping[str, object],
-) -> str:
-    del decree_payload
-    if state is None:
-        return ""
-    items = petition_verdict_grounding(db, state)
-    if not items:
-        return ""
-    return (
-        "【已呈皇帝、待亲裁落定结局的三饷事项】\n"
-        + json.dumps(items, ensure_ascii=False, indent=2)
-    )
-
-
 def _effect_ref_grounding(refs: Mapping[str, object]) -> str:
     return "【本段效果可回指的记录 ID】\n" + "\n".join(
         f"{kind}: {json.dumps(ids, ensure_ascii=False)}" for kind, ids in refs.items()
@@ -102,6 +61,7 @@ class MonthTranslationInput:
     candidates: Mapping[str, object] = dataclasses_field(
         default_factory=lambda: dict(_NO_CANDIDATES),
     )
+    answered_verdicts: tuple[Mapping[str, object], ...] = ()
 
 
 MonthTranslateFn = Callable[[MonthTranslationInput, Any], Mapping[str, object]]
@@ -134,9 +94,7 @@ def build_month_segment_translate_prompt(request: MonthTranslationInput) -> str:
         # #1893：候选事实随本请求送到（世界段材料目录已释放），硬门已判过；挑不挑、
         # 发不发难由模型自己定，落账仍走既有 new_issues 写口，代码不代选、不代发难。
         f"{_candidate_contract_block(candidates)}"
-        "- 段文若交代了皇帝对某个已呈三饷事项的亲裁准驳，在该事项的效果信封顶层 event_id 明写其 id，"
-        "并在该信封的「事件结局」里按该事项给出的封闭标签集声明结局标签；"
-        "皇帝留中或本段未交代该事项结局时不声明——留中不是结局标签。\n"
+        f"{_build_levy_verdict_rule(request)}"
         f"【旨的结构化载荷】\n{json.dumps(dict(request.decree_payload), ensure_ascii=False, indent=2)}\n"
         f"【在途办理案卷】\n{json.dumps(list(request.continuing_dossiers), ensure_ascii=False)}\n"
         f"{grounding_block}"
@@ -169,6 +127,37 @@ def _candidate_contract_block(candidates: Mapping[str, object]) -> str:
     )
 
 
+def _build_levy_verdict_rule(request: MonthTranslationInput) -> str:
+    """#1891：请饷／议停请旨经御批裁定的结局，按本段答复的闭集声明。
+
+    ``rescript`` 是已经落账的原批语，``event_id`` 是交接绑上的事件身份。
+    转译把同一 id 写在效果项顶层，并按闭集写入 ``事件结局``。代码不解析批语、
+    不要求续推复述原话（ADR 0142 / P6）。
+    """
+    verdicts = [
+        answer for answer in (request.answered_verdicts or ())
+        if isinstance(answer, dict) and str(answer.get("event_id") or "").strip()
+    ]
+    if not verdicts:
+        return ""
+    roster = [
+        {
+            "event_id": str(answer.get("event_id") or ""),
+            "terminal_reason_labels": list(answer.get("terminal_reason_labels") or []),
+            "rescript": answer.get("rescript") if isinstance(answer.get("rescript"), dict) else {},
+        }
+        for answer in verdicts
+    ]
+    return (
+        "- 【本段答复的三饷请旨事件】下列每项的 rescript 是已经落账的原批语，"
+        "event_id 是绑定的事件身份。"
+        + json.dumps(roster, ensure_ascii=False)
+        + "。准或驳时，该事件单独成一项效果：顶层 event_id 写这份名单里的事件 id，"
+        "\"事件结局\" 写 {同一个事件 id: 闭集标签}。两项必须是同一个 id。"
+        "留中不声明。原批语只供理解，不得改写；闭集之外的值一律不写。\n"
+    )
+
+
 def _default_month_translate_runner(
     request: MonthTranslationInput, llm_config: Any,
 ) -> Mapping[str, object]:
@@ -191,6 +180,7 @@ def translate_month_segment(
     translate_fn: Optional[MonthTranslateFn] = None,
     continuing_dossiers: tuple[Mapping[str, object], ...] | list[Mapping[str, object]] = (),
     candidates: Optional[Mapping[str, object]] = None,
+    answered_verdicts: tuple[Mapping[str, object], ...] | list[Mapping[str, object]] = (),
 ) -> dict[str, object]:
     """一次完整段转译为 C0 声明；调用失败原样上抛，不伪装成空声明。"""
     request = MonthTranslationInput(
@@ -199,12 +189,40 @@ def translate_month_segment(
         decree_payload=decree_payload,
         continuing_dossiers=tuple(continuing_dossiers),
         candidates=dict(candidates) if candidates is not None else dict(_NO_CANDIDATES),
+        answered_verdicts=tuple(answered_verdicts),
     )
     runner = translate_fn or _default_month_translate_runner
     declaration = runner(request, llm_config)
     if not isinstance(declaration, Mapping):
         raise AudienceTranslateError("转译输出须为 JSON 对象")
     return normalize_audience_declaration(declaration)
+
+
+def _answered_levy_verdicts(db: Any, turn: int) -> list[dict[str, object]]:
+    """本段待译的三饷请旨事件：已答行的事件身份、闭集，以及已存原批语（#1891）。
+
+    已答行只读 ``_fiscal_levy_answered_rows``。原批语原样交给转译，不依赖续推
+    复述，也不在这里判准驳（ADR 0142 / P6）。
+    """
+    from ming_sim.issues import _fiscal_levy_answered_rows, _fiscal_levy_event_by_id
+
+    out: list[dict[str, object]] = []
+    seen: set[str] = set()
+    for row in _fiscal_levy_answered_rows(db, turn):
+        real_id = str(row["event_id"])
+        if real_id in seen:
+            continue
+        ev = _fiscal_levy_event_by_id(real_id)
+        if ev is None:
+            continue
+        seen.add(real_id)
+        out.append({
+            "event_id": real_id,
+            "terminal_reason_labels": list(getattr(ev, "terminal_reason_labels", []) or []),
+            "rescript": row["rescript"],
+        })
+    out.sort(key=lambda item: str(item["event_id"]))
+    return out
 
 
 def _translate_month_segment_front(
@@ -218,6 +236,7 @@ def _translate_month_segment_front(
     translate_fn: Optional[MonthTranslateFn] = None,
     continuing_dossiers: tuple[Mapping[str, object], ...] | list[Mapping[str, object]] = (),
     candidates: Optional[Mapping[str, object]] = None,
+    answered_verdicts: tuple[Mapping[str, object], ...] | list[Mapping[str, object]] = (),
 ) -> tuple[dict[str, object], dict[str, list[int]]]:
     """过月段转译前半：冻结可见引用、拼 grounding、一次转出 C0 声明。"""
     refs = _visible_effect_refs(db, turn, decree_payload)
@@ -226,13 +245,13 @@ def _translate_month_segment_front(
         target_grounding=(
             build_translation_target_grounding(db, state)
             + _effect_ref_grounding(refs)
-            + _petition_verdict_block(db, state, decree_payload)
         ),
         decree_payload=decree_payload,
         llm_config=llm_config,
         translate_fn=translate_fn,
         continuing_dossiers=continuing_dossiers,
         candidates=candidates,
+        answered_verdicts=answered_verdicts,
     )
     return declaration, refs
 
@@ -275,8 +294,12 @@ def dispatch_month_segment(
     translate_fn: Optional[MonthTranslateFn] = None,
     source: Provenance = Provenance.system_simulation,
     alongside: Optional[Callable[[DeclarationDispatchResult], None]] = None,
+    answered_verdicts: tuple[Mapping[str, object], ...] | list[Mapping[str, object]] = (),
 ) -> DeclarationDispatchResult:
-    """世界段转译一次，整份声明沿 C0 唯一原子分派入口提交。"""
+    """世界段转译一次，整份声明沿 C0 唯一原子分派入口提交。
+
+    三饷原批语只由世界答后段传入；旨意续推和问前世界段不是那一次解释。
+    """
     from ming_sim.materials import candidate_supply, continuing_dossier_facts
 
     payload = decree_payload or {}
@@ -291,6 +314,7 @@ def dispatch_month_segment(
         llm_config=llm_config, translate_fn=translate_fn,
         continuing_dossiers=continuing_dossier_facts(db, turn),
         candidates=candidate_supply(db, state),
+        answered_verdicts=answered_verdicts,
     )
     return dispatch_declaration(
         db, state, declaration,
