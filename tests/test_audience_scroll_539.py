@@ -104,6 +104,7 @@ def test_live_and_closed_night_share_the_real_http_contract(game, monkeypatch):
     assert set(live) == set(closed) == {
         "night_id", "status", "messages", "protagonist", "roster", "characters",
         "translation_pending", "translation_retries", "pending_translation_turn_ids", "container",
+        "reply_retries", "forecast_inflight",
     }
     assert live["status"] == "open"
     assert closed["status"] == "closed"

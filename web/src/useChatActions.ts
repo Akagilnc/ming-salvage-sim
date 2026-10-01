@@ -309,6 +309,7 @@ export function useChatActions({
         // #499：撤回后剩余轮的读心递话仍随 turn-identified 投影归位。
         applyHistory(data.history);
             setCanUndoLastChat(!!data.can_undo_last_chat);
+        if (data.reply_retries) setReplyRetries(data.reply_retries);
         setChatNotice("已撤回最近一轮召对。");
       }
     } catch (err) {
@@ -318,12 +319,18 @@ export function useChatActions({
     }
   };
 
-  const retryInterruptedReply = async (targetMinisterName: string, chatTurnId: number) => {
+  const retryInterruptedReply = async (
+    targetMinisterName: string,
+    chatTurnId: number,
+    recoveryPhase?: ReplyRetry["recovery_phase"],
+  ) => {
     // #505：系统层重试——复用已持久问话，不造重复句。
+    // 夜卷是活权威：钮可以只活在卷上，不必先出现在本 hook 的副本里。
     const retry = replyRetries.find((entry) => entry.chat_turn_id === chatTurnId);
-    if (busy || !retry) return;
+    const phase = recoveryPhase ?? retry?.recovery_phase;
+    if (busy || (!retry && !phase)) return;
     const initiatingPanelName = selectedMinisterRef.current;
-    setBusy(retry.recovery_phase ? "恢复本轮后续处理" : "重新生成回话");
+    setBusy(phase ? "恢复本轮后续处理" : "重新生成回话");
     setError("");
     setChatNotice("");
     setRetryReadFailure(null);
@@ -343,8 +350,12 @@ export function useChatActions({
       if (selectedMinisterRef.current !== initiatingPanelName) return;
       applyHistory(data.history);
         setCanUndoLastChat(!!data.can_undo_last_chat);
-      setReplyRetries((current) => current.filter((retry) => retry.chat_turn_id !== chatTurnId));
-      setChatNotice("本轮恢复完成。");
+      if (phase === "decree_forecast") {
+        setChatNotice("已重新排上。");
+      } else {
+        setReplyRetries((current) => current.filter((entry) => entry.chat_turn_id !== chatTurnId));
+        setChatNotice("本轮恢复完成。");
+      }
       invalidateAudienceScroll();
     } catch (postError) {
       try {

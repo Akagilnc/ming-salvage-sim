@@ -479,6 +479,14 @@ class SessionWriteQueue:
         with self._cond:
             return len(self._open)
 
+    def has_open_key_prefix(self, prefix: str) -> bool:
+        """已有票据的第一段是否为 prefix。供夜卷看预推是否还在飞，不另建队列。"""
+        with self._cond:
+            return any(
+                isinstance(key, tuple) and bool(key) and key[0] == prefix and bool(bucket)
+                for key, bucket in self._by_key.items()
+            )
+
     def ticketed_gate(self, ticket: WriteTicket) -> TicketedWriteGate:
         """Production write seam for a claimed ticket."""
         return TicketedWriteGate(self, ticket)

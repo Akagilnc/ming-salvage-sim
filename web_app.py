@@ -2073,6 +2073,7 @@ class WebGame:
                         result = self.undo_last_chat(owner, gate_held=gate_held)
                         result["history"] = self.chat_projection(minister_name)
                         result["can_undo_last_chat"] = self.can_undo_last_chat(minister_name)
+                        result["reply_retries"] = self.reply_retries(minister_name)
                         return result
         if self.state.turn_phase not in (TurnPhase.SUMMONING.value, TurnPhase.REVIEWING.value):
             raise HTTPException(status_code=409, detail="本回合已经进入颁诏结算，不能撤回召对。")
@@ -2134,6 +2135,7 @@ class WebGame:
             "pending_directive_count": self.pending_directive_count(),
             "secret_orders": self.db.list_secret_orders(),
             "can_undo_last_chat": self.can_undo_last_chat(minister_name),
+            "reply_retries": self.reply_retries(minister_name),
         }
 
     def _chat_payload(
@@ -2247,19 +2249,16 @@ class WebGame:
             return []
         return self.db.get_interrupted_reply_retries(minister_name)
 
+    def reply_retries_for_night(self, night_id: int) -> List[Dict[str, Any]]:
+        """指定夜的殿上失败投影。不限当前开夜，供活卷与撤回共用。"""
+        return _reply_retries_for_night(self.db, int(night_id))
+
     def reply_retries(self, minister_name: str) -> List[Dict[str, Any]]:
         from ming_sim.audience_night import SCENE_CHAT_SPEAKER, get_open_night
         if minister_name == SCENE_CHAT_SPEAKER and hasattr(self.db, "conn"):
             night = get_open_night(self.db)
             if night:
-                turns = self.db.list_hall_chat_turns(int(night["id"]))
-                speakers = dict.fromkeys(str(row["minister_name"]) for row in turns)
-                ids = {int(row["id"]) for row in turns}
-                return sorted([retry for speaker in speakers
-                               for retry in (self.interrupted_reply_retries(speaker)
-                                             + self.db.get_post_reply_retries(speaker))
-                               if int(retry["chat_turn_id"]) in ids],
-                              key=lambda item: int(item["chat_turn_id"]))
+                return self.reply_retries_for_night(int(night["id"]))
         interrupted = self.interrupted_reply_retries(minister_name)
         post_reply = self.db.get_post_reply_retries(minister_name) if hasattr(self.db, "get_post_reply_retries") else []
         return sorted([*interrupted, *post_reply], key=lambda item: int(item["chat_turn_id"]))
@@ -2276,23 +2275,25 @@ class WebGame:
                 self.session.close_night_after_chat_if_needed(
                     "court_break", write_gate=self._runtime_write_gate(),
                 )
+                with self._runtime_write_gate():
+                    self.db.clear_post_reply_failure(chat_turn_id)
             elif phase == "decree_forecast":
-                # #1853：夜里预推未成——只补该轮未成的预推，不重落已暂存。
-                from ming_sim.decree_forecast import retry_forecast_for_turn
+                # 交回现役后台调度（真实版本）。HTTP 不等整链，不挡下一句。
+                from ming_sim.decree_forecast import schedule_unfinished_forecasts
 
-                summary = retry_forecast_for_turn(self.session, chat_turn_id)
-                if int(summary.get("pending") or 0) > 0:
-                    raise HTTPException(
-                        status_code=503,
-                        detail="夜里推演仍未成，可稍后再试。",
-                    )
+                still = schedule_unfinished_forecasts(self.session, chat_turn_id)
+                with self._runtime_write_gate():
+                    if still:
+                        self.db.release_post_reply_recovery(chat_turn_id, phase)
+                    else:
+                        self.db.clear_post_reply_failure(chat_turn_id)
             else:
                 self._trail_highlight_judge_after_reply(
                     str(target["answer"]), message_id=int(target["minister_message_id"]),
                     chat_turn_id=chat_turn_id,
                 )
-            with self._runtime_write_gate():
-                self.db.clear_post_reply_failure(chat_turn_id)
+                with self._runtime_write_gate():
+                    self.db.clear_post_reply_failure(chat_turn_id)
         except BaseException:
             with self._runtime_write_gate():
                 self.db.release_post_reply_recovery(chat_turn_id, phase)
@@ -5288,6 +5289,35 @@ def _require_active_minister(minister_name: str) -> None:
         raise HTTPException(status_code=409, detail=(reason or "").strip())
 
 
+def _reply_retries_for_night(db: Any, night_id: int) -> List[Dict[str, Any]]:
+    if not hasattr(db, "list_hall_chat_turns"):
+        return []
+    turns = db.list_hall_chat_turns(int(night_id))
+    speakers = dict.fromkeys(str(row["minister_name"]) for row in turns)
+    ids = {int(row["id"]) for row in turns}
+    rows: List[Dict[str, Any]] = []
+    for speaker in speakers:
+        interrupted = (
+            db.get_interrupted_reply_retries(speaker)
+            if hasattr(db, "get_interrupted_reply_retries") else []
+        )
+        post = (
+            db.get_post_reply_retries(speaker)
+            if hasattr(db, "get_post_reply_retries") else []
+        )
+        rows.extend(
+            retry for retry in (*interrupted, *post)
+            if int(retry["chat_turn_id"]) in ids
+        )
+    return sorted(rows, key=lambda item: int(item["chat_turn_id"]))
+
+
+def _forecast_work_inflight(game: Any) -> bool:
+    from ming_sim.session_write_queue import get_session_write_queue
+
+    return get_session_write_queue(game).has_open_key_prefix("decree_forecast")
+
+
 @app.get("/api/audience/scroll")
 def api_audience_scroll(night_id: int = 0) -> Dict[str, Any]:
     """Shared live/read-only projection of one persisted audience scroll."""
@@ -5297,7 +5327,8 @@ def api_audience_scroll(night_id: int = 0) -> Dict[str, Any]:
     if night is None:
         return {
             "night_id": 0, "status": "", "messages": [], "protagonist": "",
-            "roster": [], "translation_pending": False, "translation_retries": [], "pending_translation_turn_ids": [],
+            "roster": [], "translation_pending": False, "translation_retries": [],
+            "pending_translation_turn_ids": [], "reply_retries": [], "forecast_inflight": False,
         }
     roster = presence_roster(game.db, int(night["id"]))
     protagonist = str(night.get("protagonist_name") or "")
@@ -5322,6 +5353,8 @@ def api_audience_scroll(night_id: int = 0) -> Dict[str, Any]:
         "translation_pending": bool(pending_replies),
         "pending_translation_turn_ids": [int(row["chat_turn_id"]) for row in pending_replies],
         "translation_retries": game.pending_translation_retries(night_id=int(night["id"])),
+        "reply_retries": _reply_retries_for_night(game.db, int(night["id"])),
+        "forecast_inflight": _forecast_work_inflight(game),
     }
 
 

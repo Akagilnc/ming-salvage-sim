@@ -77,7 +77,11 @@ export function ChatModal({
   retryReadFailure?: RetryReadFailure | null;
   onInput: (value: string) => void;
   onSend: (ministerName: string, text?: string) => void;
-  onRetryReply?: (ministerName: string, chatTurnId: number) => void;
+  onRetryReply?: (
+    ministerName: string,
+    chatTurnId: number,
+    recoveryPhase?: ReplyRetry["recovery_phase"],
+  ) => void;
   onRetryTranslation?: (chatTurnId: number) => void;
   onUndo: (ministerName: string) => void;
   onHint: (value: string) => void;
@@ -106,6 +110,8 @@ export function ChatModal({
       characters: Minister[];
       translationPending: boolean;
       translationRetries: TranslationRetry[];
+      replyRetries?: ReplyRetry[];
+      forecastInflight: boolean;
       refreshError: boolean;
     } | { kind: "error" }
   >({ kind: "loading" });
@@ -130,7 +136,7 @@ export function ChatModal({
   React.useEffect(() => {
     let alive = true;
     let retryTimer: number | undefined;
-    let translationPending = false;
+    let keepPolling = false;
     // Once an open night is known, refreshes retain that single authority while loading.
     setScrollState((current) => current.kind === "night" && snapshotStillCurrent(current) ? current : { kind: "loading" });
     const refresh = () => api<{
@@ -142,6 +148,8 @@ export function ChatModal({
       characters?: Minister[];
       translation_pending: boolean;
       translation_retries?: TranslationRetry[];
+      reply_retries?: ReplyRetry[];
+      forecast_inflight?: boolean;
     }>("/api/audience/scroll")
       .then((data) => {
         if (!alive) return;
@@ -184,17 +192,21 @@ export function ChatModal({
           characters: data.characters || [],
           translationPending: data.translation_pending,
           translationRetries: data.translation_retries || [],
+          ...(Object.prototype.hasOwnProperty.call(data, "reply_retries")
+            ? { replyRetries: data.reply_retries || [] }
+            : {}),
+          forecastInflight: !!data.forecast_inflight,
           refreshError: false,
         } : { kind: "none" });
-        translationPending = !!data.translation_pending;
-        if (translationPending) retryTimer = window.setTimeout(refresh, 1500);
+        keepPolling = !!data.translation_pending || !!data.forecast_inflight;
+        if (keepPolling) retryTimer = window.setTimeout(refresh, 1500);
       })
       .catch(() => {
         if (!alive) return;
         setScrollState((current) => current.kind === "night" && snapshotStillCurrent(current)
           ? { ...current, refreshError: true }
           : { kind: "error" });
-        if (translationPending) retryTimer = window.setTimeout(refresh, 1500);
+        if (keepPolling) retryTimer = window.setTimeout(refresh, 1500);
       });
     refresh();
     return () => { alive = false; window.clearTimeout(retryTimer); };
@@ -327,15 +339,18 @@ export function ChatModal({
     }
   };
 
+  const liveReplyRetries = effectiveScrollState.kind === "night" && effectiveScrollState.replyRetries
+    ? effectiveScrollState.replyRetries
+    : replyRetries;
   const turnNotices = new Map<number, React.ReactNode>();
-  for (const retry of replyRetries) {
+  for (const retry of liveReplyRetries) {
     if (!onRetryReply) continue;
     turnNotices.set(retry.chat_turn_id, (
       <div className="chat-system-note danger chat-failure-note" role="alert" data-testid={`reply-retry-${retry.chat_turn_id}`}>
         <span>{retryReadFailure?.kind === "reply" && retryReadFailure.chatTurnId === retry.chat_turn_id
           ? `${retryReadFailure.postSucceeded || retryReadFailure.readFailure ? "召对记录读取失败；" : ""}${!retryReadFailure.postSucceeded ? "回话重试失败：" : ""}${retryReadFailure.message}`
           : <>{retry.recovery_phase ? "回话已保存，后续处理失败" : `问话未得回话（「${retry.question}」）`}。</>}{retry.error_pack_path ? `错误包：${retry.error_pack_path}；请交给作者。` : ""}</span>
-        <button type="button" onClick={() => onRetryReply(AUDIENCE_SCENE_SPEAKER, retry.chat_turn_id)} disabled={!!busy}>
+        <button type="button" onClick={() => onRetryReply(AUDIENCE_SCENE_SPEAKER, retry.chat_turn_id, retry.recovery_phase)} disabled={!!busy}>
           重试
         </button>
       </div>
@@ -364,7 +379,7 @@ export function ChatModal({
       </React.Fragment>
     ));
   }
-  const unmatchedReplyNotices = replyRetries.filter((retry) => !displayMessages.some(
+  const unmatchedReplyNotices = liveReplyRetries.filter((retry) => !displayMessages.some(
     (message) => "chat_turn_id" in message && message.chat_turn_id === retry.chat_turn_id,
   )).map((retry) => <React.Fragment key={retry.chat_turn_id}>{turnNotices.get(retry.chat_turn_id)}</React.Fragment>);
 

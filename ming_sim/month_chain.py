@@ -781,6 +781,7 @@ def _settle_edicts(
     from ming_sim.decree_forecast import (
         _is_held_for_rejudgment,
         decree_ref_for_dossier,
+        note_forecast_staged,
         produce_forecast_product,
         snapshot_for_existing_dossier,
         stage_declaration,
@@ -844,6 +845,10 @@ def _settle_edicts(
                     questions=product["questions"],
                     forecast_text=product["forecast_text"],
                     visible_refs=snapshot.get("visible_refs"),
+                )
+                note_forecast_staged(
+                    db, ref,
+                    pending_action_id=int(dossier.get("pending_action_id") or 0),
                 )
                 verdict = product["verdict"]
             if isinstance(verdict, dict) and verdict.get("decision"):

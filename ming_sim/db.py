@@ -10141,6 +10141,12 @@ class GameDB:
                     # 0038 的恢复是一次新改草：身份号继续递增，不把已作废版本复活。
                     before_row["version"] = max(before_version, current_version) + 1
                 self._restore_row_in_tx(table, before_row)
+                if table == "pending_actions" and before_row.get("kind") == "directive":
+                    self._release_directive_forecast_if_idle({
+                        "kind": "directive",
+                        "action": before_row.get("action"),
+                        "source_chat_turn_id": before_row.get("source_chat_turn_id"),
+                    })
                 if table == "secret_orders":
                     raw_pins = before_row.get("_rollback_brief_origin_chat_message_ids")
                     if raw_pins is None:
@@ -17486,6 +17492,7 @@ class GameDB:
                  self._current_open_night_id(), int(row["id"])),
             )
             self.conn.commit()
+            self._release_source_forecast(int(row["id"]))
             return int(row["id"])
         # #1890：只有 INSERT 分支钉来源轮。改草分支（上方 UPDATE）刻意不动
         # source_chat_turn_id —— 一道交办的身份是它首次被说出口的那一轮，
@@ -17572,7 +17579,66 @@ class GameDB:
              self._current_open_night_id(), int(candidate_id)),
         )
         self.conn.commit()
+        self._release_source_forecast(int(candidate_id))
         return int(candidate_id)
+
+    def _release_source_forecast(self, pending_id: int) -> None:
+        """改草或撤回之后：该来源轮已无未成拟旨才撤掉召对上的预推失败。"""
+        row = self.conn.execute(
+            "SELECT kind, action, source_chat_turn_id FROM pending_actions WHERE id=?",
+            (int(pending_id),),
+        ).fetchone()
+        if row is None:
+            return
+        self._release_directive_forecast_if_idle({
+            "kind": row["kind"],
+            "action": row["action"],
+            "source_chat_turn_id": row["source_chat_turn_id"],
+        })
+
+    def _release_directive_forecast_if_idle(self, pa: Dict[str, object]) -> None:
+        """该来源轮没有仍未预成的应允拟旨时，撤掉召对上的预推失败行。"""
+        if str(pa.get("kind") or "") != "directive" or str(pa.get("action") or "") != "拟旨":
+            return
+        try:
+            ctid = int(pa.get("source_chat_turn_id") or 0)
+        except (TypeError, ValueError):
+            return
+        if ctid <= 0:
+            return
+        from ming_sim.decree_forecast import release_forecast_failure_if_idle
+
+        release_forecast_failure_if_idle(self, ctid)
+
+    @staticmethod
+    def _is_typed_business_refusal(exc: BaseException) -> bool:
+        from ming_sim.exceptions import OfficeAppointmentRejection, PendingActionRefusal
+
+        return isinstance(exc, (PendingActionRefusal, OfficeAppointmentRejection))
+
+    def _record_typed_business_refusal(
+        self, pa: Dict[str, object], exc: BaseException, rejection_collector,
+    ) -> None:
+        if rejection_collector is None:
+            return
+        from ming_sim.applier import Provenance, RejectedItem
+
+        raw_item = getattr(exc, "item", None)
+        item = dict(raw_item) if isinstance(raw_item, dict) else {
+            "pending_action_id": int(pa["id"]),
+            "kind": str(pa.get("kind") or ""),
+            "action": str(pa.get("action") or ""),
+        }
+        rejection_collector.record(
+            "pending_actions",
+            RejectedItem(
+                item=item,
+                reason=str(exc),
+                category=str(getattr(exc, "category", "") or "business_refusal"),
+                source=Provenance.player_decree,
+            ),
+            int(pa.get("turn") or 0),
+        )
 
     def _discard_deleted_directive_forecast(self, target_id: object) -> None:
         try:
@@ -17601,9 +17667,11 @@ class GameDB:
         from ming_sim.declaration_dispatch import (
             discard_staged_declaration, pending_action_decree_ref,
         )
-        return discard_staged_declaration(
-            self, pending_action_decree_ref(int(candidate_id), int(version)),
-        )
+        from ming_sim.decree_forecast import discard_forecast_progress
+
+        ref = pending_action_decree_ref(int(candidate_id), int(version))
+        discard_forecast_progress(self, ref)
+        return discard_staged_declaration(self, ref)
 
     @staticmethod
     def _merge_underscore_control_keys(
@@ -17988,10 +18056,10 @@ class GameDB:
         self, state: GameState, *, content=None, minister_name=None,
         kind_filter: Optional[str] = None, kind_filter_exclude: Optional[str] = None,
         directive_status: str = "draft", action_ids: Optional[Iterable[int]] = None,
-        rejection_collector=None, loud_apply_error: bool = False,
+        rejection_collector=None,
     ) -> List[Dict[str, object]]:
         """颁诏:把本回合 pending 暂存的结构化写动作批量落到真实表(不拒绝即允许),
-        按 id 序(=操作发生序)apply。落得了标 committed、落不了标 failed(都不留 pending,
+        按 id 序(=操作发生序)apply。落得了标 committed、业务拒收标 failed(都不留 pending,
         故幂等:已 committed/失败/held_over 不在 pending 清单、不重跑)。
         #525：held_over 留中档由同表 durable 保留、本终端只读 pending，故默认提交跳过留中。
         在月链世界段之前调，使后续步骤读到已落账的聊天动作。
@@ -18001,11 +18069,9 @@ class GameDB:
         默认 None=颁诏批量落全回合。
         kind_filter 非空=只 commit 指定 kind(如 'directive')的暂存,跳过其余 kind。
         kind_filter_exclude 非空=只 commit 该 kind 以外的暂存(召对确认应允放过 directive,BUG 1)。
-        loud_apply_error（#1853）：apply 抛真异常时**不**洗成终态 failed，改为回滚本行动
-        作后原样上抛。召对应允直写（夜内白名单）传 True——那一轮的转译结果整体成败由
-        调用方裁决，吞掉异常会让转译标 done 而密令未落（假成功）。颁诏批量与收夜
-        提交留默认 False：那里逐条隔离是既有契约（CMR P0），失败由 pending_action_failures
-        渠道上报。
+        真异常（#1853 / ADR 0005 / ADR 0008）：回滚本动作后留 pending 并上抛，停止本批。
+        业务拒收只认案卷关联拒收属性、PendingActionRefusal、OfficeAppointmentRejection：
+        只终态该项并继续其余项。返回 False 的数据拒收同样只终态该项。
         directive_status controls how kind=directive candidates enter turn_directives:
         "draft" for decree-checkpoint default approval, "pending" for chat-approved
         candidates that must still pass the later准/驳 interface.
@@ -18045,14 +18111,14 @@ class GameDB:
                             "UPDATE pending_actions SET status='failed' WHERE id=?",
                             (int(pa["id"]),),
                         )
+                        self._release_directive_forecast_if_idle(pa)
                     continue
                 payload = dict(prepared["payload"])
                 payload["_canonical_pending_directive"] = True
                 committed = self._commit_conversational_draft(
                     state, pa, payload, content=content,
                     directive_status=directive_status,
-                    rejection_collector=rejection_collector,
-                    loud_apply_error=loud_apply_error)
+                    rejection_collector=rejection_collector)
                 if committed is not None:
                     applied.append(committed)
                 continue
@@ -18062,8 +18128,6 @@ class GameDB:
                     payload = {}
             except (ValueError, TypeError):
                 payload = {}
-            # apply 抛错(如 催办 对已非 active 的密令)= 当 False:下面标 failed、
-            # 不中断本轮其余动作、更不能崩整个结算(CMR P0)。
             cm = atomic(self) if owns_transaction else contextlib.nullcontext()
             with cm:
                 savepoint = f"pending_action_apply_{int(pa['id'])}"
@@ -18093,6 +18157,7 @@ class GameDB:
                     if ok:
                         self.conn.execute(
                             "UPDATE pending_actions SET status='committed' WHERE id=?", (int(pa["id"]),))
+                        self._release_directive_forecast_if_idle(pa)
                     else:
                         self.conn.execute(f"ROLLBACK TO {savepoint}")
                         restore_office_memory()
@@ -18100,6 +18165,7 @@ class GameDB:
                         # 否则回合推进后成旧回合不可见死行,永不再处理(ship-pre CMR codex)。
                         self.conn.execute(
                             "UPDATE pending_actions SET status='failed' WHERE id=?", (int(pa["id"]),))
+                        self._release_directive_forecast_if_idle(pa)
                 except Exception as exc:
                     self.conn.execute(f"ROLLBACK TO {savepoint}")
                     restore_office_memory()
@@ -18114,14 +18180,22 @@ class GameDB:
                         self._record_dossier_link_rejection(
                             *rejection, pending_action_id=int(pa["id"]),
                         )
-                    tlog(f"[pending_actions] 落库失败 id={pa['id']} {pa['kind']}/{pa['action']}：{exc}")
-                    ok = False
-                    if loud_apply_error and rejection is None:
-                        # #1853：真异常不是业务拒收。留 pending（不洗终态 failed，
-                        # 原动作 id 与来源轮仍可核可重试），把成败交还调用方裁决。
+                        self.conn.execute(
+                            "UPDATE pending_actions SET status='failed' WHERE id=?", (int(pa["id"]),))
+                        self._release_directive_forecast_if_idle(pa)
+                        tlog(f"[pending_actions] 业务拒收 id={pa['id']} {pa['kind']}/{pa['action']}：{exc}")
+                        ok = False
+                    elif self._is_typed_business_refusal(exc):
+                        self._record_typed_business_refusal(pa, exc, rejection_collector)
+                        self.conn.execute(
+                            "UPDATE pending_actions SET status='failed' WHERE id=?", (int(pa["id"]),))
+                        self._release_directive_forecast_if_idle(pa)
+                        tlog(f"[pending_actions] 业务拒收 id={pa['id']} {pa['kind']}/{pa['action']}：{exc}")
+                        ok = False
+                    else:
+                        # #1853：真异常留 pending，停止本批。收夜与颁诏由既有失败行接手。
+                        tlog(f"[pending_actions] 落库失败上抛 id={pa['id']} {pa['kind']}/{pa['action']}：{exc}")
                         raise
-                    self.conn.execute(
-                        "UPDATE pending_actions SET status='failed' WHERE id=?", (int(pa["id"]),))
                 finally:
                     self.conn.execute(f"RELEASE {savepoint}")
                 if rejection_collector is not None:
@@ -18178,7 +18252,7 @@ class GameDB:
     def _commit_conversational_draft(
         self, state: GameState, pa: Dict[str, object], payload: Dict[str, object],
         *, content=None, directive_status: str = "draft",
-        rejection_collector=None, loud_apply_error: bool = False,
+        rejection_collector=None,
     ) -> Optional[Dict[str, object]]:
         """提交一条对话式拟旨暂存，并让 draft 行与 pending 状态同事务落定。"""
         owns_transaction = not (
@@ -18202,6 +18276,7 @@ class GameDB:
                             "UPDATE pending_actions SET status='committed' WHERE id=?",
                             (int(pa["id"]),),
                         )
+                        self._release_directive_forecast_if_idle(pa)
                         result = {"id": pa["id"], "kind": pa["kind"],
                                   "action": pa["action"], "target_id": pa["target_id"]}
                     else:
@@ -18210,29 +18285,39 @@ class GameDB:
                             "UPDATE pending_actions SET status='failed' WHERE id=?",
                             (int(pa["id"]),),
                         )
+                        self._release_directive_forecast_if_idle(pa)
                 except Exception as exc:
-                    # #654 r3-C.2 路1：directive 特路与通用分支同款——回滚后标 failed，不崩结算
                     self.conn.execute(f"ROLLBACK TO {savepoint}")
-                    # 0150-D2 / #1745：typed 归属缺口不得吞成 pending failed。
                     from ming_sim.applier import RejectionCollectorRequired
                     if isinstance(exc, RejectionCollectorRequired):
                         raise
-                    if loud_apply_error:
-                        # #1853：同 commit_pending_actions——真异常不洗终态 failed。
+                    rejection = getattr(exc, "dossier_link_rejection", None)
+                    if rejection is not None:
+                        self._record_dossier_link_rejection(
+                            *rejection, pending_action_id=int(pa["id"]),
+                        )
+                        self.conn.execute(
+                            "UPDATE pending_actions SET status='failed' WHERE id=?",
+                            (int(pa["id"]),),
+                        )
+                        self._release_directive_forecast_if_idle(pa)
+                        tlog(f"[pending_actions] 业务拒收 id={pa['id']} {pa['kind']}/{pa['action']}：{exc}")
+                        result = None
+                    elif self._is_typed_business_refusal(exc):
+                        self._record_typed_business_refusal(pa, exc, rejection_collector)
+                        self.conn.execute(
+                            "UPDATE pending_actions SET status='failed' WHERE id=?",
+                            (int(pa["id"]),),
+                        )
+                        self._release_directive_forecast_if_idle(pa)
+                        tlog(f"[pending_actions] 业务拒收 id={pa['id']} {pa['kind']}/{pa['action']}：{exc}")
+                        result = None
+                    else:
                         tlog(
                             f"[pending_actions] 落库失败上抛 id={pa['id']} "
                             f"{pa['kind']}/{pa['action']}：{exc}"
                         )
                         raise
-                    self.conn.execute(
-                        "UPDATE pending_actions SET status='failed' WHERE id=?",
-                        (int(pa["id"]),),
-                    )
-                    tlog(
-                        f"[pending_actions] 落库失败标 failed id={pa['id']} "
-                        f"{pa['kind']}/{pa['action']}：{exc}"
-                    )
-                    result = None
                 finally:
                     self.conn.execute(f"RELEASE {savepoint}")
                 if rejection_collector is not None:
@@ -21557,10 +21642,19 @@ class GameDB:
                  if _raw == c.name or _raw in (c.aliases or [])),
                 None,
             )
+            from ming_sim.exceptions import PendingActionRefusal
             if _ch is not None and is_vassal_prince(_ch):
-                raise ValueError(f"{_ch.name}为就藩宗室，非朝廷命官，不可受密令。")
+                raise PendingActionRefusal(
+                    f"{_ch.name}为就藩宗室，非朝廷命官，不可受密令。",
+                    category="ineligible_vassal",
+                    item={"assignee": _ch.name},
+                )
             if _ch is not None and self.resolve_power_id(_ch) != "ming":
-                raise ValueError(f"{_ch.name}不属大明朝廷，不可受密令。")
+                raise PendingActionRefusal(
+                    f"{_ch.name}不属大明朝廷，不可受密令。",
+                    category="ineligible_power",
+                    item={"assignee": _ch.name},
+                )
         provenance_message_ids = self._coerce_positive_message_ids([
             *([] if origin_chat_message_id is None else [origin_chat_message_id]),
             *(origin_chat_message_ids or []),
@@ -21589,7 +21683,12 @@ class GameDB:
             "SELECT COUNT(*) FROM secret_orders WHERE status='active'"
         ).fetchone()[0]
         if active_count >= 20:
-            raise ValueError(f"进行中密令已达上限（20条），请先结案部分密令再下新令。当前：{active_count} 条。")
+            from ming_sim.exceptions import PendingActionRefusal
+            raise PendingActionRefusal(
+                f"进行中密令已达上限（20条），请先结案部分密令再下新令。当前：{active_count} 条。",
+                category="active_cap",
+                item={"active_count": int(active_count)},
+            )
         raw_excluded_names, excluded_offices = canonical_secret_order_exclusions(
             self.content, excluded_names or [], excluded_offices or [], f"{title}\n{content}",
         )
