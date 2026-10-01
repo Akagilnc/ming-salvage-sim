@@ -21,8 +21,6 @@ from ming_sim.db import (
 from ming_sim.exceptions import OfficeAppointmentRejection
 from ming_sim.models import GameState, is_vassal_prince
 
-import ming_sim.entities.character.appointment as _appointment
-
 def _appointment_region_id(payload: Dict[str, object]) -> str:
     """Typed 任所 from appointment payload keys; never inferred from title/location."""
     return str(
@@ -323,7 +321,7 @@ def apply_office_appointment(
             if commit:
                 db.conn.commit()
         seat = db.character_office_region(name) or seat
-        displaced_parts = _appointment._displace_duplicate_offices(
+        displaced_parts = _displace_duplicate_offices(
             db, content, name, new_office, region_id=seat, commit=commit,
         )
         holder = content.characters[name]
@@ -360,7 +358,7 @@ def apply_office_appointment(
     if not appointed:
         return RejectedItem(item={"name": name, "new_office": new_office, "kind": "appoint"}, reason=f"建档失败（查重/字段不合）；原 status={cur_status or '不在册'}", category="invalid_transition", source=source)
     seat = db.character_office_region(appointed) or seat
-    displaced_parts = _appointment._displace_duplicate_offices(
+    displaced_parts = _displace_duplicate_offices(
         db, content, appointed, new_office, region_id=seat, commit=commit,
     )
     return {
