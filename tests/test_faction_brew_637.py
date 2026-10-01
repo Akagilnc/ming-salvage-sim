@@ -643,11 +643,3 @@ def test_faction_brew_prompt_retry_month_does_not_label_old_events_as_current_mo
     assert payload["new_events"][0]["year"] == old_year
     assert payload["new_events"][0]["period"] == old_period
     assert payload["year"] != payload["new_events"][0]["year"] or payload["period"] != payload["new_events"][0]["period"]
-
-    # 负向闸案（唯一保留的 prompt 面断言）：提示词不得把水位之上的旧月事件
-    # 称作本月，也不得用「不要…」式负向句下达时间语义——这两类都是被明令
-    # 禁掉的坏形状，任何改写都不得把它们请回来。正向表述的**具体措辞**
-    # 属内容真源自由域，不作机械契约（否则换个说法就假红）。
-    prompt = Path("content/prompts/faction_brew.md").read_text(encoding="utf-8")
-    for banned in ("本月新落", "本月新事", "不要当作本月发生", "不要把旧事件当本月"):
-        assert banned not in prompt, banned

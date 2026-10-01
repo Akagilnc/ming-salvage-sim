@@ -7,6 +7,12 @@ const styles = readdirSync(stylesDir)
   .map((f) => readFileSync(`${stylesDir}/${f}`, "utf8"))
   .join("\n");
 
+// 把一段 CSS 声明归一：折叠所有空白（含换行），并去掉注释。
+// 断言落在「两列布局 + 左栏可滚」这个语义上，不落在源码的空格排布上——
+// 排布是源码形状，改个缩进不该红。
+const normalize = (css: string) =>
+  css.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/\s+/g, " ").trim();
+
 describe("窄屏召见布局", () => {
   it("保留两列并让左栏滚动，避免密令被立绘裁掉", () => {
     const narrowLayout = styles.match(
@@ -14,9 +20,10 @@ describe("窄屏召见布局", () => {
     )?.[0];
 
     expect(narrowLayout).toBeDefined();
-    expect(narrowLayout).toContain("grid-template-columns: minmax(120px, 38%) minmax(0, 1fr);");
-    expect(narrowLayout).not.toContain("overflow: hidden;");
-    expect(narrowLayout).toContain("overflow-y: auto;");
+    const decls = normalize(narrowLayout!);
+    expect(decls).toContain("grid-template-columns: minmax(120px, 38%) minmax(0, 1fr);");
+    expect(decls).not.toContain("overflow: hidden;");
+    expect(decls).toContain("overflow-y: auto;");
   });
 });
 

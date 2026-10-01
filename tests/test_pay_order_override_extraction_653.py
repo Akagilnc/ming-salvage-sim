@@ -1,4 +1,5 @@
 import json
+import re
 
 import pytest
 
@@ -45,13 +46,29 @@ def test_single_pay_order_capture_grounds_relative_deadline_at_current_turn(game
     assert staged_entries == result["entries"]
     assert all("duration_months" not in entry for entry in staged_entries)
 
-    # 接地事实段的结构化内容（canonical id / 字段名 / 默认优先级取值）是契约；
-    # 指令句的措辞不是，不锁句式。
-    assert "陕西=@shaanxi" in prompts[0]
-    assert "duration_months" in prompts[0]
-    assert "until_turn=当前 turn+N-1" not in prompts[0]
-    assert '"duration_months":3' in prompts[0]
-    assert "默认军饷/官俸/宗禄/赈济=10/20/30/40" in prompts[0]
+    # 接地事实段的**结构化内容**是契约：地区 canonical id 映射、相对期限字段名、
+    # 以及欠科目闭集与默认优先级的「科目集合 → 优先级取值」映射。取值一律回
+    # pay_order 单一真源取，不在此复述其字面排布；事实段的措辞与分隔写法不是契约。
+    from ming_sim.pay_order import ARREARS_SUBJECTS, DEFAULT_DUE_PRIORITY, DUE_SUBJECTS
+
+    facts = prompts[0]
+    assert "陕西=@shaanxi" in facts
+    assert "duration_months" in facts
+    for subject in DUE_SUBJECTS:
+        assert subject in facts
+    for subject in ARREARS_SUBJECTS:
+        assert subject in facts
+
+    # 默认优先级：解析事实段里每一处「左列=右列」配对，取左列提到全部 due 科目的
+    # 那一处，核对其取值序列 == DEFAULT_DUE_PRIORITY 的取值序列。分隔符任写。
+    candidates = [
+        (left, right)
+        for left, right in re.findall(r"([^\n；;。=]+)=([^\n；;。]+)", facts)
+        if all(subject in left for subject in DUE_SUBJECTS)
+    ]
+    assert len(candidates) == 1, candidates
+    values = [int(v) for v in re.findall(r"\d+", candidates[0][1])]
+    assert values == [DEFAULT_DUE_PRIORITY[s] for s in DEFAULT_DUE_PRIORITY], candidates
 
 
 def test_relative_deadline_cannot_stage_llm_computed_expired_turn(game, monkeypatch):

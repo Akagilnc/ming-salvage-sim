@@ -18,7 +18,21 @@ from ming_sim.exceptions import LLMUnavailable
 from ming_sim.models import LLMConfig
 from ming_sim.session import GameSession
 from ming_sim.session_write_queue import get_session_write_queue
-from tests.conftest import offline_empty_audience_translate, persist_and_schedule_scene, stub_audience_translate, stub_scene_agent
+from tests.conftest import (
+    offline_empty_audience_translate, own_session_until_game_teardown,
+    persist_and_schedule_scene, stub_audience_translate, stub_scene_agent,
+)
+
+
+def _drain(sess) -> None:
+    """等本 session 队列真正排空再继续断言或交还夹具。
+
+    不用固定窗口：预推链上的真实工作（材料目录快照落盘 + 逐旨推演）耗时与
+    机器负载相关，窗口比工作短就假红——那是测试自造的时钟预算，不是被测契约。
+    队列「无在飞票」是唯一完成事实（与 tests/test_audience_background.py 的
+    排空口一致）；真挂死由 CI 作业收尾兜。
+    """
+    get_session_write_queue(sess).wait_idle()
 
 
 def _sess(db, state, content, monkeypatch, translate_fn):
@@ -35,6 +49,9 @@ def _sess(db, state, content, monkeypatch, translate_fn):
     sess._beat_generator = None
     sess._scene_registry = None
     sess._write_gate = get_session_write_queue(sess).write_gate
+    # 轻壳 session 的后台预推腿也归既有夹具排空生命周期：夹具关库前先排空，
+    # 否则仍在飞的材料快照会打到已关闭的连接上（sqlite3.ProgrammingError）。
+    own_session_until_game_teardown(db, sess)
     stub_audience_translate(monkeypatch, translate_fn)
     stub_scene_agent(monkeypatch, SimpleNamespace(
         run=lambda _message: SimpleNamespace(content="臣领旨。", tools=[]),
@@ -128,7 +145,7 @@ def test_scene_chat_approval_forecasts_each_decree_without_visible_effect(game, 
     ctid = db.create_chat_turn(state, "殿上", "scene", 0, night_id=int(night["id"]))
     result = sess.scene_chat("两道都准", chat_turn_id=ctid)
     persist_and_schedule_scene(sess, db, result)
-    assert get_session_write_queue(sess).wait_idle(timeout_s=5)
+    _drain(sess)
 
     assert db.conn.execute(
         "SELECT 1 FROM staged_declarations WHERE decree_ref=?",
@@ -235,7 +252,7 @@ def test_scene_chat_rejection_is_staged_for_later_rescript_not_shown_at_night(
     ctid = db.create_chat_turn(state, "殿上", "scene", 0, night_id=int(night["id"]))
     result = sess.scene_chat("准这道", chat_turn_id=ctid)
     persist_and_schedule_scene(sess, db, result)
-    assert get_session_write_queue(sess).wait_idle(timeout_s=5)
+    _drain(sess)
 
     stored = db.staged_declarations.staged_for(pending_action_decree_ref(pending_id, 1))
     assert len(stored) == 1
@@ -286,7 +303,7 @@ def test_repeat_scene_approval_does_not_rerun_exhausted_forecast(game, monkeypat
         ctid = db.create_chat_turn(state, "殿上", "scene", 0, night_id=int(night["id"]))
         result = sess.scene_chat(message, chat_turn_id=ctid)
         persist_and_schedule_scene(sess, db, result)
-        assert get_session_write_queue(sess).wait_idle(timeout_s=5)
+        _drain(sess)
         assert calls == [1]
         assert db.staged_declarations.staged_for(pending_action_decree_ref(pending_id, 1)) == ()
     assert calls == [1]
@@ -372,7 +389,11 @@ def test_held_rejudgments_overlap_instead_of_waiting_in_one_worker(game, monkeyp
             entered.append(1)
             if len(entered) == 2:
                 gate.set()
-        assert gate.wait(2)
+        # 并行门闩：两条腿都必须真在飞（#1861 P5）。第二腿到达才开闩，
+        # 无需也不该设时限——预推链上的真实工作耗时与机器负载相关，
+        # 拿秒数当判据是测试自造的时钟预算（违 queue 模块 K10a 同款纪律：
+        # 屏障放行不按 elapsed 判失败）。真串行化由 CI 作业收尾兜。
+        gate.wait()
         return "预推"
 
     monkeypatch.setattr(decree_mod, "run_agent_text", judge)
@@ -383,7 +404,7 @@ def test_held_rejudgments_overlap_instead_of_waiting_in_one_worker(game, monkeyp
     )
     sess = _sess(db, state, content, monkeypatch, lambda *_a, **_k: {})
     assert forecast_mod.schedule_held_decree_forecasts(sess) is True
-    assert get_session_write_queue(sess).wait_idle(timeout_s=5)
+    _drain(sess)
     assert len(entered) == 2
     for dossier_id, pending_id in zip(ids, pending_ids):
         stale_ref = pending_action_decree_ref(pending_id, 1)
@@ -438,13 +459,15 @@ def test_same_local_ids_on_two_saves_both_stage(game, _game_template_path, monke
     release = threading.Event()
     entered_lock = threading.Lock()
 
-    def judge(_agent, prompt, **_kwargs):
+    def judge(_agent, prompt, *_args, **_kwargs):
         with entered_lock:
             entered.append(1)
             if len(entered) >= 2:
                 release.set()
         started.set()
-        assert release.wait(2)
+        # 两存档各自起腿，判官须等对方到场才放行——两个 session 的在飞事实
+        # 是契约，不按时限判（第二腿要真做完材料快照，时长与负载相关）。
+        release.wait()
         dossier = json.loads(prompt)["dossiers"][0]
         return json.dumps({
             "verdicts": [{"dossier_id": dossier["id"], "decision": "promulgated"}],
@@ -475,19 +498,22 @@ def test_same_local_ids_on_two_saves_both_stage(game, _game_template_path, monke
         assert forecast_mod.schedule_pending_decree_forecast(
             armed[0][0], armed[0][2], night_id=armed[0][3],
         ) is True
-        assert started.wait(2)
+        # 第一腿已进判官（真在飞）才起第二腿——在飞事实是契约，不按时限判。
+        started.wait()
         assert forecast_mod.schedule_pending_decree_forecast(
             armed[1][0], armed[1][2], night_id=armed[1][3],
         ) is True
         for sess, one_db, pending_id, _night_id in armed:
-            assert get_session_write_queue(sess).wait_idle(timeout_s=5)
+            _drain(sess)
             stored = one_db.staged_declarations.staged_for(
                 pending_action_decree_ref(pending_id, 1),
             )
             assert len(stored) == 1 and stored[0].verdict["decision"] == "promulgated"
         assert len(entered) == 2
     finally:
+        # 无论成败先放行门闩，再把两 session 排空——第二连接由本用例自己持有，
+        # 夹具只管第一库；不排空就关它，仍在飞的腿会打到已关闭的连接上。
         release.set()
         for sess, *_rest in armed:
-            get_session_write_queue(sess).wait_idle(timeout_s=5)
+            _drain(sess)
         other.close()

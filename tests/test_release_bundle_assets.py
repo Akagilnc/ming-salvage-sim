@@ -91,30 +91,36 @@ def _spec_datas(tmp_path, monkeypatch) -> list:
     monkeypatch.chdir(tmp_path)
     exec(compile(ast.Module(body=body, type_ignores=[]), str(repo / "Ming_LLM.spec"), "exec"), namespace)
 
-    # datas 里 tree_datas 的返回值是「一批 (source, destination)」的列表，
-    # 故先摊平再统一成 (source, destination) 字符串对。
-    pairs: list[tuple[str, str]] = []
-    pending = list(captured["datas"])
-    while pending:
-        item = pending.pop()
-        if isinstance(item, (list, tuple)) and len(item) == 2 and isinstance(item[0], str):
-            pairs.append((item[0], item[1]))
-        elif isinstance(item, (list, tuple)):
-            pending.extend(item)
-        else:  # pragma: no cover - spec 装配形状外的项
-            raise AssertionError(f"unexpected datas entry: {item!r}")
+    # PyInstaller 的 datas 契约是**扁平的 (source, destination) 配对列表**
+    # （见 https://pyinstaller.org/en/stable/spec-files.html）：每一项直接是
+    # 二元组，不接受嵌套子列表。故此处逐项断言二元组本身，嵌套即失败——
+    # 不做递归摊平把非法形状洗成合法形状。
     root = str(tmp_path)
-    return [(src.replace(root, "").replace("\\", "/"), str(dst)) for src, dst in pairs]
+    return [
+        (src.replace(root, "").replace("\\", "/"), str(dst).replace("\\", "/"))
+        for src, dst in captured["datas"]
+    ]
 
 
-def test_spec_datas_ship_dist_assets_once_and_never_repack_public(tmp_path, monkeypatch):
-    """#1185：vite 已把 public 拷进 dist；spec 只打 dist 树，不得再单独打 public。"""
+def test_spec_datas_ship_dist_assets_into_dist_and_never_repack_public(tmp_path, monkeypatch):
+    """#1185：vite 已把 public 拷进 dist；spec 只打 dist 树，不得再单独打 public。
+
+    断言落在 Analysis 实收的 (source, destination) 配对上：来源与**目标目录**
+    都是契约——web_app 只从 bundled web/dist 提供前端，dist 装到别处就是坏包。
+    """
     datas = _spec_datas(tmp_path, monkeypatch)
+    assert datas
 
-    sources = [src for src, _dst in datas]
-    assert any(s.endswith("web/dist/index.html") for s in sources), sources
-    assert any(s.endswith("web/dist/assets/app.js") for s in sources), sources
-    assert not any("web/public" in s for s in sources), sources
+    shipped = {
+        src: dst for src, dst in datas
+        if src.endswith(("web/dist/index.html", "web/dist/assets/app.js"))
+    }
+    assert set(shipped) == {"web/dist/index.html", "web/dist/assets/app.js"}, datas
+    # 目标目录须原样落在 web/dist 之下（index.html → web/dist，app.js → web/dist/assets）
+    assert shipped["web/dist/index.html"] == "web/dist", shipped
+    assert shipped["web/dist/assets/app.js"] == "web/dist/assets", shipped
+
+    assert not any("web/public" in src for src, _dst in datas), datas
 
 
 def test_spec_datas_puts_requirements_at_bundle_root(tmp_path, monkeypatch):

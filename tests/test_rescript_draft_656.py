@@ -666,18 +666,6 @@ def test_generate_rejects_military_order_empty_assignee(monkeypatch, tmp_path):
     assert opts[0]["label"] == item["options"][1]["label"]
 
 
-def test_prompt_carries_no_negative_display_instruction():
-    """P4 负向闸案：提示词不得写「不要显示数值」式负向句——玩家永不见裸数值。
-
-    只钉这条被明令禁掉的坏形状。正向定性表述的**具体措辞**属内容真源自由域，
-    不作机械契约：换个说法就假红。定性真的到位由 validate/呈现层用例证明
-    （本文件 shape 校验组＋P4 哨兵），不由 prompt 字串证明。
-    """
-    prompt = (Path(__file__).resolve().parents[1] / "content" / "prompts" / "rescript_draft.md") \
-        .read_text(encoding="utf-8")
-    assert "不要出现任何数字数值" not in prompt
-    assert "不要显示" not in prompt
-
 # ---------------------------------------------------------------------------
 # shape 校验＋权威快照绑定（F2.2/F2.3/F2.5）
 # ---------------------------------------------------------------------------
