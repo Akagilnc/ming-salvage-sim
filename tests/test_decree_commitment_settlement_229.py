@@ -93,7 +93,6 @@ def test_created_future_limited_duration_commitment_applies_first_month(game, mo
     out = settle_delta(state, db, {'new_issues': [{'origin_kind': 'decree', 'origin_ref': _promulgated_commitment_origin(db, state, 'future-monthly-authority'), 'kind': 'initiative', 'title': '连续两月宣示皇威', 'stage_text': '连续两月遣使宣示皇威。', 'ongoing_effects': {'metrics': {'皇威': -1}}, 'end_turn': expected_end_turn, 'commitment_kind': 'until_stop'}]}, SettlementContext(content=content))
 
     created = issue_rows(out, "new_issues")[0]
-    assert created["rejected"] is False
     issue_id = created["issue_id"]
 
     _advance_player_month(db, state, content)
@@ -961,7 +960,6 @@ def test_commitment_missing_purpose_still_routes_arrears_budget(game):
 
     result = settle_delta(state, db, {'new_issues': [{'origin_kind': 'decree', 'origin_ref': _promulgated_commitment_origin(db, state, 'missing-purpose'), 'kind': 'initiative', 'title': '每月补关宁欠饷直到补齐', 'ongoing_effects': {'economy': [{'account': '国库', 'delta': -50, 'reason': '每月补关宁欠饷'}]}, 'stop_condition': {'army.guanning.arrears': '<=0'}, 'commitment_kind': 'until_stop'}]}, SettlementContext(content=content))
     created = issue_rows(result, "new_issues")[0]
-    assert not created.get("rejected")
 
     _advance_player_month(db, state, content)
 
@@ -1187,7 +1185,6 @@ def test_end_turn_without_ongoing_is_not_expired_by_settlement_tick(game):
     db.conn.commit()
     result = settle_delta(state, db, {'new_issues': [{'origin_kind': 'decree', 'origin_ref': _promulgated_commitment_origin(db, state, 'future-review'), 'kind': 'initiative', 'title': '三月后复试', 'ongoing_effects': {}, 'stop_condition': '', 'end_turn': state.turn, 'commitment_kind': 'until_stop'}]}, SettlementContext(content=content))
     created = issue_rows(result, "new_issues")[0]
-    assert not created.get("rejected")
     issue_id = int(created["issue_id"])
 
     _advance_player_month(db, state, content)
@@ -1265,7 +1262,7 @@ def test_semantically_empty_one_shot_commitment_acks_once(game):
     ).fetchone()[0] == 0
 
     out = settle_delta(state, db, {'close_issues': [{'issue_id': issue_id, 'reason': 'acknowledged', 'narrative': '皇帝已复试，此承诺已由圣裁收尾。'}]}, SettlementContext(content=content))
-    assert issue_rows(out, "closes")[0]["rejected"] is False
+    assert issue_rows(out, "closes")[0]["issue_id"] == issue_id
     assert _issue_row(db, issue_id)["status"] == "dropped"
 
     _settle_empty_month(db, state, content)
@@ -1308,7 +1305,7 @@ def test_metadata_only_one_shot_commitment_acks_once(game):
     ).fetchone()[0] == 0
 
     out = settle_delta(state, db, {'close_issues': [{'issue_id': issue_id, 'reason': 'acknowledged', 'narrative': '皇帝已复试，此占位承诺已由圣裁收尾。'}]}, SettlementContext(content=content))
-    assert issue_rows(out, "closes")[0]["rejected"] is False
+    assert issue_rows(out, "closes")[0]["issue_id"] == issue_id
     assert _issue_row(db, issue_id)["status"] == "dropped"
 
 
@@ -1343,7 +1340,7 @@ def test_due_one_shot_commitment_ack_closes_review_loop_without_effects(game):
     out = settle_delta(state, db, {'close_issues': [{'issue_id': issue_id, 'reason': 'acknowledged', 'narrative': '皇帝已复试孙承宗，此承诺已由圣裁处理。'}]}, SettlementContext(content=content))
 
     close = issue_rows(out, "closes")[0]
-    assert close["rejected"] is False
+    assert close["issue_id"] == issue_id
     row = _issue_row(db, issue_id)
     assert row["status"] == "dropped"
     assert row["closed_turn"] == state.turn

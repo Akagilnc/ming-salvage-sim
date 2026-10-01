@@ -425,9 +425,8 @@ def test_apply_army_deltas_rejects_five_persistent_mutiny_columns(game, field):
     changes, changes_rejections = db.apply_army_deltas(
         state, event, None, "测试", {ARMY: {field: 1, "reason": "probe"}}
     , source=Provenance.system_simulation)
-    rejected = [c for c in changes if c.get("rejected")]
-    assert rejected, f"{field} 应被拒收"
-    assert all(c.get("category") == "invalid_enum" for c in rejected)
+    assert changes_rejections, f"{field} 应被拒收"
+    assert all(c.category == "invalid_enum" for c in changes_rejections)
     after = db.conn.execute(
         f"SELECT {field} FROM armies WHERE id=?", (ARMY,)
     ).fetchone()[field]

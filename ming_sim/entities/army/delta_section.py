@@ -102,24 +102,17 @@ def apply_army_delta_with_cannon_transfer(
         actual = (min(-requested, int(source_row["cannon_equipment"]),
                       12 - int(target["cannon_equipment"])) if writable else 0)
         if actual > 0:
-            db.conn.execute("SAVEPOINT cannon_transfer")
-            try:
-                transfer_changes: List[Dict[str, object]] = []
-                for leg_id, leg_delta in ((army_id, -actual), (target_id, actual)):
-                    leg_changes, leg_rejections = db.apply_army_deltas(
-                        state, pseudo_event, None, "档房",
-                        {leg_id: {"随军大炮": leg_delta, "reason": raw_changes.get("reason")}},
-                        commit=False, origin_ref=origin_ref, require_origin=True,
-                    source=source,)
-                    rejections.extend(leg_rejections)
-                    if len(leg_changes) != 1 or leg_changes[0].get("delta") != leg_delta:
-                        raise RuntimeError("随军炮转移双边实数不等")
-                    transfer_changes.extend(leg_changes)
-                db.conn.execute("RELEASE SAVEPOINT cannon_transfer")
-            except Exception:
-                db.conn.execute("ROLLBACK TO SAVEPOINT cannon_transfer")
-                db.conn.execute("RELEASE SAVEPOINT cannon_transfer")
-                raise
+            transfer_changes: List[Dict[str, object]] = []
+            for leg_id, leg_delta in ((army_id, -actual), (target_id, actual)):
+                leg_changes, leg_rejections = db.apply_army_deltas(
+                    state, pseudo_event, None, "档房",
+                    {leg_id: {"随军大炮": leg_delta, "reason": raw_changes.get("reason")}},
+                    commit=False, origin_ref=origin_ref, require_origin=True,
+                source=source,)
+                rejections.extend(leg_rejections)
+                if len(leg_changes) != 1 or leg_changes[0].get("delta") != leg_delta:
+                    raise RuntimeError("随军炮转移双边实数不等")
+                transfer_changes.extend(leg_changes)
             army_changes.extend(transfer_changes)
         else:
             for leg_id in (army_id, target_id):

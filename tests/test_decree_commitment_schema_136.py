@@ -1,4 +1,5 @@
 
+from ming_sim.entities.issue.tracker import apply_issue_tracker_output
 from ming_sim.applier import Provenance
 import sqlite3
 
@@ -92,7 +93,7 @@ def test_issue_resolution_removes_building_and_keeps_remove_audit_log(game):
         },
     )
 
-    result = I.apply_issue_tracker_output(
+    result = apply_issue_tracker_output(
         db,
         state,
         {"close_issues": [{"issue_id": issue_id, "reason": "resolved"}]},
@@ -165,7 +166,7 @@ def test_new_issue_persists_commitment_columns_from_tracker_output(game):
     db, state, _ = game
     stop_condition = {"army.guanning.arrears": "<=0"}
 
-    out = I.apply_issue_tracker_output(db, state, {
+    out = apply_issue_tracker_output(db, state, {
         "new_issues": [{
             "origin_kind": "decree",
             "origin_ref": _promulgated_commitment_origin(db, state),
@@ -193,7 +194,7 @@ def test_new_issue_persists_commitment_columns_from_tracker_output(game):
 def test_decree_commitment_shape_with_string_stop_condition_requires_marker(read_game):
     db, state, _ = read_game
 
-    out = I.apply_issue_tracker_output(db, state, {
+    out = apply_issue_tracker_output(db, state, {
         "new_issues": [{
             "origin_kind": "decree",
             "origin_ref": "decree:turn-1:appease-mao",
@@ -206,9 +207,10 @@ def test_decree_commitment_shape_with_string_stop_condition_requires_marker(read
         }],
     }, source=Provenance.system_simulation)
 
-    rejected = [item for item in out["new_issues"] if item.get("rejected")]
+    rejected = out.get("rejected") or []
     assert len(rejected) == 1, out
-    assert "commitment_kind 必填" in rejected[0]["reason"]
+    assert rejected[0].category == "invalid_enum"
+    assert "commitment_kind" in rejected[0].reason
     row = db.conn.execute(
         "SELECT id FROM issues WHERE title=?", ("安抚毛文龙直到效顺",)
     ).fetchone()

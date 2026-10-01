@@ -118,7 +118,8 @@ def apply_creates(run) -> SectionResult:
             init_value = init_raw
         # display 缺省＝归一 stem（与落库同源，raw key 去 _base 才不把
         # 「关税_rate」显示成「关税_rate」；DELTA_SCHEMA 契约「缺省=key 去后缀」）。
-        display = str(create.get("display") or "").strip() or (run.db._stem_of(key) or key)
+        display_raw = str(create.get("display") or "")
+        display = display_raw if display_raw.strip() else (run.db._stem_of(key) or key)
         origin_ref = str(create.get("origin_ref") or "").strip()
         origin_error = run.db.effect_origin_rejection(origin_ref)
         if origin_error:
@@ -178,7 +179,7 @@ def apply_creates(run) -> SectionResult:
 def apply_changes(run) -> SectionResult:
     """调整月度固定收支系数。中央损耗率成对配置（base/rate）成对落，守双边守恒。"""
     from ming_sim.covert_levy import canonical_fiscal_result, stopped_covert_effect
-    from ming_sim.issues import _write_fiscal_config_change
+    from ming_sim.entities.fiscal.config_writer import _write_fiscal_config_change
 
     applied: List[Dict[str, object]] = []
     rejections: List[RejectedItem] = []

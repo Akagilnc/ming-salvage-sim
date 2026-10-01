@@ -35,7 +35,7 @@ def apply(run):
             transfer_items.append(item)
 
     applied_transfers, primitive_rejections = _apply_population_transfers(
-        run.db, transfer_items, commit=False, source=run.ctx.source,
+        run.db, transfer_items, source=run.ctx.source,
     )
     return SectionResult(
         applied=applied_transfers,

@@ -2983,8 +2983,8 @@ class GameDB:
             "(turn, key, value, kind, origin_ref, reason, beyond_intent) "
             "VALUES (?, ?, ?, ?, ?, ?, ?)",
             [
-                (int(turn), base_key, max(0, init_value), "base", origin_ref, note[:240], beyond_flag),
-                (int(turn), rate_key, 100, "rate", origin_ref, note[:240], beyond_flag),
+                (int(turn), base_key, max(0, init_value), "base", origin_ref, note, beyond_flag),
+                (int(turn), rate_key, 100, "rate", origin_ref, note, beyond_flag),
             ],
         )
         if commit:
@@ -8285,7 +8285,7 @@ class GameDB:
                 if isinstance(_mp, (bool, float)):
                     raise ValueError("非整数")
                 manpower = int(_mp)
-            except (KeyError, TypeError, ValueError) as exc:
+            except (KeyError, TypeError, ValueError, OverflowError) as exc:
                 if strict_effect and (not _new_army_historically_applied(item)):
                     raise ValueError(f"new_armies '{aid}' 缺/非法 manpower（无法建军）：{exc}")
                 rejections.append(RejectedItem(item=raw, reason=f"new_armies '{aid}' 缺/非法 manpower（无法建军）：{exc}", category="invalid_enum", source=source))
@@ -13461,7 +13461,7 @@ class GameDB:
             "origin_ref": origin_ref,
         }
         results, results_rejections = _apply_economy_list(
-            self, state, [move], commit=False, require_origin=False,
+            self, state, [move], require_origin=False,
         source=Provenance.system_simulation)
         if results_rejections:
             raise ValueError(results_rejections[0].reason)
@@ -18439,7 +18439,8 @@ class GameDB:
         office = str(payload.get("office") or "")
         if pa["action"] == "任命":
             # 朝臣任命/升迁/调任 → person-only adapter（不经 full settlement recovery）。
-            reason = str(payload.get("reason") or "奉旨任免").strip() or "奉旨任免"
+            raw_reason = str(payload.get("reason") or "")
+            reason = raw_reason if raw_reason.strip() else "奉旨任免"
             office_type = str(payload.get("office_type") or "").strip()
             try:
                 appointment_tenure = appointment_tenure_from(payload)
@@ -19402,7 +19403,7 @@ class GameDB:
             ON CONFLICT(event_id) DO UPDATE SET
                 {self._event_terminal_upgrade_assignments(fill_triggered_reason=True)}
             """,
-            (event_id, state.turn, state.year, state.period, source, str(terminal_reason or "")[:200]),
+            (event_id, state.turn, state.year, state.period, source, str(terminal_reason or "")),
         )
         if commit:
             self.conn.commit()
@@ -19425,7 +19426,7 @@ class GameDB:
             ON CONFLICT(event_id) DO UPDATE SET
                 {self._event_terminal_upgrade_assignments()}
             """,
-            (event_id, state.turn, state.year, state.period, source, reason[:200]),
+            (event_id, state.turn, state.year, state.period, source, reason),
         )
         if commit:
             self.conn.commit()
@@ -19448,7 +19449,7 @@ class GameDB:
             ON CONFLICT(event_id) DO UPDATE SET
                 {self._event_terminal_upgrade_assignments()}
             """,
-            (event_id, state.turn, state.year, state.period, source, reason[:200]),
+            (event_id, state.turn, state.year, state.period, source, reason),
         )
         if commit:
             self.conn.commit()

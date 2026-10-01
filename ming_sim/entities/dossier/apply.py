@@ -47,35 +47,43 @@ def apply_dossier_participant_items(
                 raise ValueError("追加参与层级必须为主办/协办/知情")
             if not delegator_id:
                 raise ValueError("追加参与人必须注明委派人")
-            added = db.append_decree_dossier_participants(dossier_id, [{
-                "character_id": character_id,
-                "tier": tier,
-                "role": role,
-                "delegator_id": delegator_id,
-            }], state=state, commit=False)
-            if not added:
-                existing = db.get_decree_dossier(dossier_id) or {}
-                if not any(
-                    row.get("character_id") == character_id
-                    and row.get("tier") == tier
-                    and row.get("role") == role
-                    and row.get("delegator_id") == delegator_id
-                    for row in existing.get("participant_roster", [])
-                ):
-                    raise ValueError("参与人未实际加入案卷")
-            persisted = added[0] if added else {
-                "character_id": character_id, "tier": tier,
-            }
-            results.append({
-                "dossier_id": dossier_id,
-                "character_id": persisted["character_id"],
-                "tier": persisted["tier"],
-            })
-        except (TypeError, ValueError, KeyError) as exc:
+        except (TypeError, ValueError) as exc:
             rejections.append(RejectedItem(
                 item=item,
                 reason=str(exc),
                 category="invalid_participant_roster",
                 source=source,
             ))
+            continue
+        added = db.append_decree_dossier_participants(dossier_id, [{
+            "character_id": character_id,
+            "tier": tier,
+            "role": role,
+            "delegator_id": delegator_id,
+        }], state=state, commit=False)
+        if not added:
+            existing = db.get_decree_dossier(dossier_id) or {}
+            roster = existing.get("participant_roster") or []
+            if not any(
+                row.get("character_id") == character_id
+                and row.get("tier") == tier
+                and row.get("role") == role
+                and row.get("delegator_id") == delegator_id
+                for row in roster
+            ):
+                rejections.append(RejectedItem(
+                    item=item,
+                    reason="参与人未实际加入案卷",
+                    category="invalid_participant_roster",
+                    source=source,
+                ))
+                continue
+        persisted = added[0] if added else {
+            "character_id": character_id, "tier": tier,
+        }
+        results.append({
+            "dossier_id": dossier_id,
+            "character_id": persisted["character_id"],
+            "tier": persisted["tier"],
+        })
     return results, rejections

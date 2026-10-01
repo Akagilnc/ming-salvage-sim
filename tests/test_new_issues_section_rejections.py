@@ -6,6 +6,7 @@ print[WARN]; skip`——脏字段（int("abc")/dict("脏")/list(5)）与 insert 
 insert 的代码/DB 异常上抛（ADR 0005 fail-loud）。用 kind=situation 避开 initiative 配额门。
 """
 
+from ming_sim.entities.issue.tracker import apply_issue_tracker_output
 from ming_sim.applier import Provenance
 
 import json
@@ -66,7 +67,7 @@ def _new(result):
 
 
 def _rejected(result):
-    return [n for n in _new(result) if n.get("rejected")]
+    return list(result.get("rejected") or [])
 
 
 def _pick_event_pool_id(db):
@@ -138,11 +139,11 @@ def test_temp_events_replaces_same_id_and_restores_original(content):
 @pytest.mark.parametrize("bad_item", [None, 42, "字符串"])
 def test_new_issue_non_dict_item_rejected_not_crash(read_game, bad_item):
     db, state, _ = read_game
-    out = I.apply_issue_tracker_output(db, state, {"new_issues": [bad_item]}, source=Provenance.system_simulation)
+    out = apply_issue_tracker_output(db, state, {"new_issues": [bad_item]}, source=Provenance.system_simulation)
     rej = _rejected(out)
     assert len(rej) == 1
-    assert rej[0]["category"] == "invalid_enum"
-    assert "非对象" in rej[0]["reason"]
+    assert rej[0].category == "invalid_enum"
+    assert "非对象" in rej[0].reason
 
 
 @pytest.mark.parametrize("field,bad", [
@@ -155,11 +156,11 @@ def test_new_issue_non_dict_item_rejected_not_crash(read_game, bad_item):
 def test_new_issue_dirty_coercion_field_rejected(read_game, field, bad):
     db, state, _ = read_game
     ni = {"origin_kind": "decree", "kind": "situation", "title": "测试·脏字段", field: bad}
-    out = I.apply_issue_tracker_output(db, state, {"new_issues": [ni]}, source=Provenance.system_simulation)
+    out = apply_issue_tracker_output(db, state, {"new_issues": [ni]}, source=Provenance.system_simulation)
     rej = _rejected(out)
     assert len(rej) == 1, out
-    assert rej[0]["category"] == "invalid_enum"
-    assert "强转失败" in rej[0]["reason"]
+    assert rej[0].category == "invalid_enum"
+    assert "强转失败" in rej[0].reason
 
 
 @pytest.mark.parametrize("bad_kind", ["reform", "policy", "局势"])
@@ -168,11 +169,11 @@ def test_new_issue_bad_kind_rejected(read_game, bad_kind):
     # 脏 kind（DELTA_SCHEMA 记 reform 等是已知坏值）→ insert_issue 会抛 ValueError；移除 broad
     # except 后须预检拒整项，不能逃逸成 SettlementAbort（cmr ni r1 concur）。
     ni = {"origin_kind": "decree", "kind": bad_kind, "title": "测试·脏kind"}
-    out = I.apply_issue_tracker_output(db, state, {"new_issues": [ni]}, source=Provenance.system_simulation)
+    out = apply_issue_tracker_output(db, state, {"new_issues": [ni]}, source=Provenance.system_simulation)
     rej = _rejected(out)
     assert len(rej) == 1, out
-    assert rej[0]["category"] == "invalid_enum"
-    assert "kind" in rej[0]["reason"]
+    assert rej[0].category == "invalid_enum"
+    assert "kind" in rej[0].reason
 
 
 def test_new_issue_dirty_inertia_rejected(read_game):
@@ -180,11 +181,11 @@ def test_new_issue_dirty_inertia_rejected(read_game):
     # _compute_inertia 的 legacy int(inertia) 回退在其 try 外，脏 inertia 会抛——须在预校验 try
     # 内拒整项，不能逃逸 abort（cmr ni r2 codex）。
     ni = {"origin_kind": "decree", "kind": "situation", "title": "测试·脏inertia", "inertia": "abc"}
-    out = I.apply_issue_tracker_output(db, state, {"new_issues": [ni]}, source=Provenance.system_simulation)
+    out = apply_issue_tracker_output(db, state, {"new_issues": [ni]}, source=Provenance.system_simulation)
     rej = _rejected(out)
     assert len(rej) == 1, out
-    assert rej[0]["category"] == "invalid_enum"
-    assert "强转失败" in rej[0]["reason"]
+    assert rej[0].category == "invalid_enum"
+    assert "强转失败" in rej[0].reason
 
 
 def test_new_issue_oversized_severity_clamped_not_abort(game):
@@ -192,11 +193,11 @@ def test_new_issue_oversized_severity_clamped_not_abort(game):
     # severity=10**100：int() 过得了但绑定 SQLite 抛 OverflowError——insert_issue 移除 broad
     # except 后会逃逸 abort。severity 与 bar_value 同 0-100 分值，应 clamp 到 100、照常落库
     # （非拒整项；与 bar_value 静默 clamp 一致，cmr ni r2 codex）。
-    out = I.apply_issue_tracker_output(db, state, {
+    out = apply_issue_tracker_output(db, state, {
         "new_issues": [{"origin_kind": "decree", "origin_ref": _decree_origin(db, state), "kind": "situation",
                         "title": "测试·超大severity", "severity": 10 ** 100}],
     }, source=Provenance.system_simulation)
-    created = [n for n in _new(out) if not n.get("rejected") and n.get("issue_id")]
+    created = [n for n in _new(out) if n.get("issue_id")]
     assert len(created) == 1, out  # 不 abort、照常落库
     iid = int(created[0]["issue_id"])
     sev = db.conn.execute("SELECT severity FROM issues WHERE id=?", (iid,)).fetchone()["severity"]
@@ -205,7 +206,7 @@ def test_new_issue_oversized_severity_clamped_not_abort(game):
 
 def test_new_issue_whitespace_resolve_condition_falls_back_to_stop_condition(game):
     db, state, _ = game
-    out = I.apply_issue_tracker_output(db, state, {
+    out = apply_issue_tracker_output(db, state, {
         "new_issues": [{
             "origin_kind": "decree",
             "origin_ref": _decree_origin(db, state),
@@ -217,7 +218,7 @@ def test_new_issue_whitespace_resolve_condition_falls_back_to_stop_condition(gam
         }],
     }, source=Provenance.system_simulation)
 
-    created = [n for n in _new(out) if not n.get("rejected") and n.get("issue_id")]
+    created = [n for n in _new(out) if n.get("issue_id")]
     assert len(created) == 1, out
     iid = int(created[0]["issue_id"])
     row = db.conn.execute(
@@ -237,11 +238,11 @@ def test_new_issue_infinity_field_rejected_not_abort(read_game):
     # JSON 里 1e309 解析成 float('inf')，int(inf) 抛 OverflowError（非 TypeError/ValueError）——
     # 预校验须连 OverflowError 一起拒整项，不能逃逸 abort（cmr ni r3 codex）。
     ni = {"origin_kind": "decree", "kind": "situation", "title": "测试·inf", "bar_value": 1e309}
-    out = I.apply_issue_tracker_output(db, state, {"new_issues": [ni]}, source=Provenance.system_simulation)
+    out = apply_issue_tracker_output(db, state, {"new_issues": [ni]}, source=Provenance.system_simulation)
     rej = _rejected(out)
     assert len(rej) == 1, out
-    assert rej[0]["category"] == "invalid_enum"
-    assert "强转失败" in rej[0]["reason"]
+    assert rej[0].category == "invalid_enum"
+    assert "强转失败" in rej[0].reason
 
 
 def test_new_issue_infinity_expected_months_rejected_not_abort(read_game):
@@ -249,20 +250,20 @@ def test_new_issue_infinity_expected_months_rejected_not_abort(read_game):
     # expected_months=inf 经严格化的 _compute_inertia（_strict_int 拒 float/inf，cmr ni r6）→
     # 拒整项（与 bar_value=inf 一致），不逃逸 abort。
     ni = {"origin_kind": "decree", "kind": "situation", "title": "测试·inf月数", "expected_months": 1e309}
-    out = I.apply_issue_tracker_output(db, state, {"new_issues": [ni]}, source=Provenance.system_simulation)
+    out = apply_issue_tracker_output(db, state, {"new_issues": [ni]}, source=Provenance.system_simulation)
     rej = _rejected(out)
     assert len(rej) == 1, out
-    assert rej[0]["category"] == "invalid_enum"
+    assert rej[0].category == "invalid_enum"
 
 
 def test_new_issue_severity_zero_preserved(game):
     db, state, _ = game
     # 合法 severity=0 须保留，不能被 `or 50` 静默改成 50（数据保真，cmr ni r4 codex）。
-    out = I.apply_issue_tracker_output(db, state, {
+    out = apply_issue_tracker_output(db, state, {
         "new_issues": [{"origin_kind": "decree", "origin_ref": _decree_origin(db, state), "kind": "situation", "title": "测试·severity0",
                         "severity": 0, "effect_on_resolve": {"metrics": {"民心": 1}}}],
     }, source=Provenance.system_simulation)
-    created = [n for n in _new(out) if not n.get("rejected") and n.get("issue_id")]
+    created = [n for n in _new(out) if n.get("issue_id")]
     assert len(created) == 1, out
     iid = int(created[0]["issue_id"])
     assert db.conn.execute("SELECT severity FROM issues WHERE id=?", (iid,)).fetchone()["severity"] == 0
@@ -271,12 +272,12 @@ def test_new_issue_severity_zero_preserved(game):
 def test_new_issue_garbage_severity_rejected(read_game):
     db, state, _ = read_game
     # severity=[] 是脏值（非缺省/null）——应走拒整项（int([]) TypeError），不静默默认 50。
-    out = I.apply_issue_tracker_output(db, state, {
+    out = apply_issue_tracker_output(db, state, {
         "new_issues": [{"origin_kind": "decree", "kind": "situation", "title": "测试·脏severity", "severity": []}],
     }, source=Provenance.system_simulation)
     rej = _rejected(out)
     assert len(rej) == 1, out
-    assert rej[0]["category"] == "invalid_enum"
+    assert rej[0].category == "invalid_enum"
 
 
 @pytest.mark.parametrize("field,bad", [
@@ -291,10 +292,10 @@ def test_new_issue_bool_float_int_field_rejected(read_game, field, bad):
     # 整数字段用 _strict_int：bool/float 拒整项（与 region/army/faction 段一致，cmr ni r6 codex），
     # 不再 int(3.7)=3 / int(True)=1 静默强转落库。
     ni = {"origin_kind": "decree", "kind": "situation", "title": "测试·bool/float", field: bad}
-    out = I.apply_issue_tracker_output(db, state, {"new_issues": [ni]}, source=Provenance.system_simulation)
+    out = apply_issue_tracker_output(db, state, {"new_issues": [ni]}, source=Provenance.system_simulation)
     rej = _rejected(out)
     assert len(rej) == 1, out
-    assert rej[0]["category"] == "invalid_enum"
+    assert rej[0].category == "invalid_enum"
 
 
 @pytest.mark.parametrize("bad_kind", [False, 0, []])
@@ -303,11 +304,11 @@ def test_new_issue_falsy_nonstring_kind_rejected(read_game, bad_kind):
     # present 的 falsy 非串 kind（false/0/[]）不再被 `or "initiative"` 静默默认、绕过白名单——
     # None-sentinel 只对 缺省/null/空串 默认，其余走白名单拒收（cmr ni r6 codex）。
     ni = {"origin_kind": "decree", "kind": bad_kind, "title": "测试·falsy kind"}
-    out = I.apply_issue_tracker_output(db, state, {"new_issues": [ni]}, source=Provenance.system_simulation)
+    out = apply_issue_tracker_output(db, state, {"new_issues": [ni]}, source=Provenance.system_simulation)
     rej = _rejected(out)
     assert len(rej) == 1, out
-    assert rej[0]["category"] == "invalid_enum"
-    assert "kind" in rej[0]["reason"]
+    assert rej[0].category == "invalid_enum"
+    assert "kind" in rej[0].reason
 
 
 def test_new_issue_insert_code_exception_propagates(game, monkeypatch):
@@ -317,7 +318,7 @@ def test_new_issue_insert_code_exception_propagates(game, monkeypatch):
     monkeypatch.setattr(type(db), "insert_issue", _boom)
     # insert 代码/DB 异常不再 WARN 吞 → 上抛（上层 applier.atomic 据此 SettlementAbort）。
     with pytest.raises(RuntimeError, match="模拟 insert_issue"):
-        I.apply_issue_tracker_output(db, state, {
+        apply_issue_tracker_output(db, state, {
             "new_issues": [{"origin_kind": "decree", "origin_ref": _decree_origin(db, state),
                             "kind": "situation", "title": "测试·正常字段"}],
         }, source=Provenance.system_simulation)
@@ -325,7 +326,7 @@ def test_new_issue_insert_code_exception_propagates(game, monkeypatch):
 
 def test_new_issue_valid_decree_still_creates(game):
     db, state, _ = game
-    out = I.apply_issue_tracker_output(db, state, {
+    out = apply_issue_tracker_output(db, state, {
         "new_issues": [{
             "origin_kind": "decree", "kind": "situation", "title": "测试·新立局势",
             "origin_ref": _decree_origin(db, state),
@@ -333,7 +334,7 @@ def test_new_issue_valid_decree_still_creates(game):
             "effect_on_resolve": {"metrics": {"民心": 1}},
         }],
     }, source=Provenance.system_simulation)
-    created = [n for n in _new(out) if not n.get("rejected") and n.get("issue_id")]
+    created = [n for n in _new(out) if n.get("issue_id")]
     assert len(created) == 1, out
     iid = int(created[0]["issue_id"])
     row = db.conn.execute("SELECT title, status FROM issues WHERE id=?", (iid,)).fetchone()
@@ -379,7 +380,7 @@ def test_new_issue_event_pool_insert_exception_propagates(game, monkeypatch):
         _ensure_event_candidate(db, state, eid)
         monkeypatch.setattr(type(db), "insert_issue", _boom)
         with pytest.raises(RuntimeError, match="模拟 event_pool"):
-            I.apply_issue_tracker_output(db, state, {
+            apply_issue_tracker_output(db, state, {
                 "new_issues": [{"origin_kind": "event_pool", "id": eid}],
             }, source=Provenance.system_simulation)
 
@@ -401,14 +402,14 @@ def test_new_issue_event_pool_rejects_expired_event(game):
     eid = _pick_event_pool_id(db)
     db.mark_event_expired(state, eid)
 
-    out = I.apply_issue_tracker_output(db, state, {
+    out = apply_issue_tracker_output(db, state, {
         "new_issues": [{"origin_kind": "event_pool", "id": eid}],
     }, source=Provenance.system_simulation)
 
     rej = _rejected(out)
     assert len(rej) == 1, out
-    assert rej[0]["id"] == eid
-    assert "过期" in rej[0]["reason"] or "终态" in rej[0]["reason"]
+    assert rej[0].item["id"] == eid
+    assert "过期" in rej[0].reason or "终态" in rej[0].reason
     assert db.find_any_issue_by_origin("event_pool", eid) is None
 
 
@@ -426,7 +427,7 @@ def test_authoritative_event_pool_rejects_same_batch_obsolete_event(game):
         snapshot = {candidate.id for candidate in I.gather_candidate_events(state, db)}
         assert {upstream.id, downstream.id} <= snapshot
 
-        out = I.apply_issue_tracker_output(
+        out = apply_issue_tracker_output(
             db,
             state,
             {
@@ -440,10 +441,10 @@ def test_authoritative_event_pool_rejects_same_batch_obsolete_event(game):
         source=Provenance.system_simulation)
 
     created = [item for item in _new(out) if item.get("issue_id")]
-    rejected = [item for item in _rejected(out) if item.get("id") == downstream.id]
+    rejected = [item for item in _rejected(out) if item.item.get("id") == downstream.id]
     assert [item["id"] for item in created] == [upstream.id], out
     assert len(rejected) == 1, out
-    assert "终态" in rejected[0]["reason"] or "作废" in rejected[0]["reason"]
+    assert "终态" in rejected[0].reason or "作废" in rejected[0].reason
     assert db.find_any_issue_by_origin("event_pool", downstream.id) is None
 
 
@@ -458,29 +459,29 @@ def test_authoritative_event_pool_rejects_same_batch_obsolete_event(game):
 def test_new_issue_scalar_string_tags_rejected(read_game, bad_tags):
     db, state, _ = read_game
     ni = {"origin_kind": "decree", "kind": "situation", "title": "测试·标量tags", "tags": bad_tags}
-    out = I.apply_issue_tracker_output(db, state, {"new_issues": [ni]}, source=Provenance.system_simulation)
+    out = apply_issue_tracker_output(db, state, {"new_issues": [ni]}, source=Provenance.system_simulation)
     rej = _rejected(out)
     assert len(rej) == 1, out
-    assert rej[0]["category"] == "invalid_enum"
-    assert "tags" in rej[0]["reason"]
+    assert rej[0].category == "invalid_enum"
+    assert "tags" in rej[0].reason
 
 
 def test_new_issue_non_string_tag_element_rejected(read_game):
     db, state, _ = read_game
     ni = {"origin_kind": "decree", "kind": "situation", "title": "测试·脏tag元素", "tags": [5, "正常"]}
-    out = I.apply_issue_tracker_output(db, state, {"new_issues": [ni]}, source=Provenance.system_simulation)
+    out = apply_issue_tracker_output(db, state, {"new_issues": [ni]}, source=Provenance.system_simulation)
     rej = _rejected(out)
     assert len(rej) == 1, out
-    assert rej[0]["category"] == "invalid_enum"
-    assert "tags" in rej[0]["reason"]
+    assert rej[0].category == "invalid_enum"
+    assert "tags" in rej[0].reason
 
 
 def test_new_issue_valid_list_tags_preserved(game):
     db, state, _ = game
     # 正常 list[str] tags 整词保全（不拆字），pairing 短语完整 → 正常立项落库。
     ni = {"origin_kind": "decree", "origin_ref": _decree_origin(db, state), "kind": "situation", "title": "测试·正常tags", "tags": ["募营", "边事"]}
-    out = I.apply_issue_tracker_output(db, state, {"new_issues": [ni]}, source=Provenance.system_simulation)
-    created = [n for n in _new(out) if not n.get("rejected") and n.get("issue_id")]
+    out = apply_issue_tracker_output(db, state, {"new_issues": [ni]}, source=Provenance.system_simulation)
+    created = [n for n in _new(out) if n.get("issue_id")]
     assert len(created) == 1, out
     iid = int(created[0]["issue_id"])
     row = db.conn.execute("SELECT tags FROM issues WHERE id=?", (iid,)).fetchone()
@@ -497,8 +498,8 @@ def test_new_issue_valid_list_tags_preserved(game):
 def test_new_issue_non_dict_cancel_cost_tolerated(game, bad_cancel):
     db, state, _ = game
     ni = {"origin_kind": "decree", "origin_ref": _decree_origin(db, state), "kind": "situation", "title": "测试·脏cancel", "cancel_cost": bad_cancel}
-    out = I.apply_issue_tracker_output(db, state, {"new_issues": [ni]}, source=Provenance.system_simulation)
-    created = [n for n in _new(out) if not n.get("rejected") and n.get("issue_id")]
+    out = apply_issue_tracker_output(db, state, {"new_issues": [ni]}, source=Provenance.system_simulation)
+    created = [n for n in _new(out) if n.get("issue_id")]
     assert len(created) == 1, out  # issue 仍立（不因次要字段脏拒整项）
     iid = int(created[0]["issue_id"])
     row = db.conn.execute("SELECT cancel_cost FROM issues WHERE id=?", (iid,)).fetchone()
@@ -510,8 +511,8 @@ def test_new_issue_valid_cancel_cost_preserved(game):
     # 正常 dict cancel_cost 原样保全（_eff_dict 对 dict 直通）。
     ni = {"origin_kind": "decree", "origin_ref": _decree_origin(db, state), "kind": "situation", "title": "测试·正常cancel",
           "cancellable": "decree", "cancel_cost": {"民心": -5, "皇威": -2}}
-    out = I.apply_issue_tracker_output(db, state, {"new_issues": [ni]}, source=Provenance.system_simulation)
-    created = [n for n in _new(out) if not n.get("rejected") and n.get("issue_id")]
+    out = apply_issue_tracker_output(db, state, {"new_issues": [ni]}, source=Provenance.system_simulation)
+    created = [n for n in _new(out) if n.get("issue_id")]
     assert len(created) == 1, out
     iid = int(created[0]["issue_id"])
     row = db.conn.execute("SELECT cancel_cost FROM issues WHERE id=?", (iid,)).fetchone()

@@ -16,7 +16,7 @@ def apply(run) -> SectionResult:
     rejected_rows = []
     for key, value in run.current_ordered.get("class_delta") or []:
         applied, rejected = _apply_class_dict(
-            run.db, {key: value}, commit=False, source=run.ctx.source,
+            run.db, {key: value}, source=run.ctx.source,
         )
         merge_delta_maps(totals, applied)
         rejected_rows.extend(rejected)

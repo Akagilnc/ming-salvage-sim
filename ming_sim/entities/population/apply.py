@@ -9,7 +9,6 @@ def _apply_population_transfers(
     db: GameDB,
     transfers: object,
     *,
-    commit: bool = True,
     source: Provenance,
 ) -> Tuple[List[Dict[str, object]], List[Dict[str, object]]]:
     """#649/ADR 0087：人口守恒转移原语（delta 段 population_transfers 的唯一落库核）。
@@ -17,7 +16,7 @@ def _apply_population_transfers(
     canonical 段形＝转移记录 list；每条记录**同时表达两条腿**（源阶级减 N、目标阶级
     增 N），本核读一条合法记录后在同一事务内机械完成两次写——LLM 不提交双腿，
     系统不建配平器（单记录双写从形状上消灭合法路径的单侧变动）。两侧更新复用调用方
-    事务边界（settle 后半段 atomic），本核只在无外层事务时自行 commit。
+    事务边界（settle 后半段 atomic）。本核不提交。
 
     校验分层（ADR 0015，r4 终态）：section 非 list 已由 sanitize_delta_shape 拒段；
     list 内坏记录逐项拒收留痕（非 dict 项按 0015 F1 {'raw_value':…} 包装），好记录照落。
@@ -56,26 +55,26 @@ def _apply_population_transfers(
                 "人口只经单记录守恒转移变动）",
             )
             continue
-        source = str(item.get("source") or "").strip()
+        row_source = str(item.get("source") or "").strip()
         target = str(item.get("target") or "").strip()
-        if source.count("@") != 1 or target.count("@") != 1:
+        if row_source.count("@") != 1 or target.count("@") != 1:
             _reject(
                 "invalid_shape",
-                f"source/target 须为 阶级@region_id 省级行：{source!r} / {target!r}",
+                f"source/target 须为 阶级@region_id 省级行：{row_source!r} / {target!r}",
             )
             continue
-        src_cls, src_region = (part.strip() for part in source.split("@", 1))
+        src_cls, src_region = (part.strip() for part in row_source.split("@", 1))
         dst_cls, dst_region = (part.strip() for part in target.split("@", 1))
         if not src_cls or not dst_cls or not src_region or not dst_region:
             _reject(
                 "invalid_shape",
-                f"source/target 须为非空 阶级@region_id 省级行（全国行不合法）：{source!r} / {target!r}",
+                f"source/target 须为非空 阶级@region_id 省级行（全国行不合法）：{row_source!r} / {target!r}",
             )
             continue
         if src_region != dst_region:
             _reject(
                 "invalid_shape",
-                f"跨省转移本票不做（#475 预留）：{source!r} → {target!r} 须同省",
+                f"跨省转移本票不做（#475 预留）：{row_source!r} → {target!r} 须同省",
             )
             continue
         if db.conn.execute("SELECT 1 FROM regions WHERE id=?", (src_region,)).fetchone() is None:
@@ -132,7 +131,7 @@ def _apply_population_transfers(
             (dst_cls, dst_region),
         ).fetchone()
         if src_row is None or dst_row is None:
-            missing = source if src_row is None else target
+            missing = row_source if src_row is None else target
             _reject(
                 "missing_ref",
                 f"population_transfers 查无此阶级省级行「{missing}」"
@@ -160,13 +159,13 @@ def _apply_population_transfers(
                 "INSERT INTO population_transfer_ledger "
                 "(turn, source, target, amount, reason, origin_ref) VALUES (?, ?, ?, ?, ?, ?)",
                 (int(db.conn.execute("SELECT turn FROM game_state WHERE id=1").fetchone()[0]),
-                 source, target, amount, reason, origin_ref),
+                 row_source, target, amount, reason, origin_ref),
             )
         region_name = str(db.conn.execute(
             "SELECT name FROM regions WHERE id=?", (src_region,)
         ).fetchone()["name"] or "")
         applied.append({
-            "source": source,
+            "source": row_source,
             "target": target,
             "amount": amount,
             "reason": reason,
@@ -178,7 +177,5 @@ def _apply_population_transfers(
             # 落档口径随存档持久标（F3）：下游对账以此为唯一单位解释。
             "population_unit": population_unit,
         })
-    if commit:
-        db.conn.commit()
     return applied, rejected
 

@@ -415,7 +415,6 @@ def test_disposition_scapegoat_cover_prosecute_on_transformed(game):
         isinstance(r, dict)
         and r.get("动作") == "任命"
         and not r.get("cascade_echo")
-        and not r.get("rejected")
         for r in pcs_rel
     ), "任命本体须落格且非回声"
     sg_rel = [

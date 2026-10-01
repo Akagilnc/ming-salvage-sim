@@ -1,7 +1,7 @@
 """委任授权（``authority_changes``）落库段。
 
-授予/收权走既有 ``_apply_authority_change_item`` 单一落地核；本段只负责把失败
-按真实原因归类成拒收项——分类口径集中在此，拒收类别不拿宽 catch 统一冒称。
+授予/收权先做无写校验，校验失败才归成拒收项。写库在 catch 之外，
+写后故障由外层事务回滚。
 """
 
 from __future__ import annotations
@@ -24,7 +24,10 @@ _KNOWN_CATEGORIES = frozenset({
 
 
 def apply(run):
-    from ming_sim.issues import _apply_authority_change_item
+    from ming_sim.issues import (
+        _prepare_authority_change_item,
+        _write_authority_change_item,
+    )
 
     results: List[Dict[str, object]] = []
     rejections: List[RejectedItem] = []
@@ -33,9 +36,14 @@ def apply(run):
             rejections.append(RejectedItem(item=item, reason="授权变更项必须为对象", category="invalid_shape", source=run.ctx.source))
             continue
         try:
-            results.append(_apply_authority_change_item(run.db, run.state, item))
+            prepared = _prepare_authority_change_item(run.db, run.state, item)
         except ValueError as exc:
             reason = str(exc)
             rejections.append(RejectedItem(item=item, reason=reason, category=reason if reason in _KNOWN_CATEGORIES
                 else "invalid_authority_change", source=run.ctx.source))
+            continue
+        applied = prepared.get("applied")
+        if applied is None:
+            applied = _write_authority_change_item(run.db, run.state, prepared)
+        results.append(applied)
     return SectionResult(applied=results, rejected=rejections)

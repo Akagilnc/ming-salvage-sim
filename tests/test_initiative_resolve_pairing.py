@@ -5,6 +5,7 @@
 的空壳结案（#45 太学府月经费没立账、#46 天雄军没建军籍的真踩坑）。warn-only，不阻断结算。
 """
 
+from ming_sim.entities.issue.tracker import apply_issue_tracker_output
 from ming_sim.applier import Provenance
 from ming_sim import issues
 from ming_sim.issues import _initiative_resolve_pairing_warnings
@@ -125,7 +126,7 @@ def test_resolve_surfaces_pairing_warning_in_result(game):
         effect_on_resolve={"metrics": {"民心": 1}},  # 缺 new_armies/office_changes
     )
     db.conn.commit()
-    out = issues.apply_issue_tracker_output(
+    out = apply_issue_tracker_output(
         db, state,
         {"close_issues": [{"issue_id": issue_id, "reason": "resolved", "narrative": "练成"}]},
         content=content,
@@ -148,7 +149,7 @@ def test_resolve_with_new_armies_no_warning_in_result(game):
         }]},
     )
     db.conn.commit()
-    out = issues.apply_issue_tracker_output(
+    out = apply_issue_tracker_output(
         db, state,
         {"close_issues": [{"issue_id": issue_id, "reason": "resolved", "narrative": "练成"}]},
         content=content,

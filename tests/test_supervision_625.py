@@ -137,7 +137,6 @@ def _insert_staged(db, state, content, *, dossier_id: int, due_turn: int):
     }]
     out = settle_delta(state, db, {'new_issues': [{'origin_kind': 'decree', 'origin_ref': f'dossier:{int(dossier_id)}', 'kind': 'initiative', 'title': f'清丈分段-{dossier_id}', 'stage_text': '限期清丈', 'commitment_kind': 'until_stop', 'ongoing_effects': {}, 'stages': stages}]}, SettlementContext(content=content))
     created = issue_rows(out, "new_issues")[0]
-    assert created.get("rejected") is False, created
     return int(created["issue_id"])
 
 

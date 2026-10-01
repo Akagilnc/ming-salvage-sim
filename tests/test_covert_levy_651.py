@@ -424,11 +424,11 @@ def test_zero_pay_receipts_are_not_durable_tacit_effects(game, monkeypatch):
         "account": "国库", "delta": -2, "purpose": "补饷",
         "target_kind": "army", "target_id": army_id,
         "origin_ref": origin, "beyond_intent": True,
-    }], commit=False, require_origin=True, source=Provenance.system_simulation)
+    }], require_origin=True, source=Provenance.system_simulation)
     pooled, pooled_rejections = _apply_economy_list(db, state, [{
         "account": "国库", "delta": -2, "purpose": "补饷",
         "origin_ref": origin, "beyond_intent": True,
-    }], commit=False, allow_pay_arrears_pool=True, require_origin=True, source=Provenance.system_simulation)
+    }], allow_pay_arrears_pool=True, require_origin=True, source=Provenance.system_simulation)
     assert directed[0]["applied"] is False and pooled[0]["applied"] is False
     assert settle_exposure_from_canonical_actions(db, state, {
         "economy_moves": directed + pooled,

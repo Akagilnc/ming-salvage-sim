@@ -6,6 +6,7 @@ inertia_delta 裸 int() 在 try 外脏值（int("高")/int(1e309)）逃逸成 Se
 new_issues 段，进 advances 列表、桥接收进 rejection_reports），advance_issue 代码/DB 异常上抛。
 """
 
+from ming_sim.entities.issue.tracker import apply_issue_tracker_output
 from ming_sim.applier import Provenance
 
 import pytest
@@ -19,7 +20,7 @@ def _adv(result):
 
 
 def _rejected(result):
-    return [a for a in _adv(result) if a.get("rejected")]
+    return list(result.get("rejected") or [])
 
 
 def _make_active_issue(db, state):
@@ -34,22 +35,22 @@ def _make_active_issue(db, state):
 def test_advance_non_dict_item_rejected_not_crash(read_game, bad_item):
     db, state, _ = read_game
     # 非 dict adv 项（advances:[null]/标量）：adv.get 会抛 AttributeError 崩整月——逐项拒收守门。
-    out = I.apply_issue_tracker_output(db, state, {"advances": [bad_item]}, source=Provenance.system_simulation)
+    out = apply_issue_tracker_output(db, state, {"advances": [bad_item]}, source=Provenance.system_simulation)
     rej = _rejected(out)
     assert len(rej) == 1
-    assert rej[0]["category"] == "invalid_enum"
-    assert "非对象" in rej[0]["reason"]
+    assert rej[0].category == "invalid_enum"
+    assert "非对象" in rej[0].reason
 
 
 @pytest.mark.parametrize("bad_id", ["abc", None, True, 1.5, -10 ** 100])
 def test_advance_bad_issue_id_rejected(read_game, bad_id):
     db, state, _ = read_game
     # _parse_sqlite_id 拒非整数/bool/float/超 64-bit → 逐项拒收留痕，不裸 continue 静默丢、不逃逸。
-    out = I.apply_issue_tracker_output(db, state, {"advances": [{"issue_id": bad_id, "delta_bar": 5}]}, source=Provenance.system_simulation)
+    out = apply_issue_tracker_output(db, state, {"advances": [{"issue_id": bad_id, "delta_bar": 5}]}, source=Provenance.system_simulation)
     rej = _rejected(out)
     assert len(rej) == 1, out
-    assert rej[0]["category"] == "invalid_enum"
-    assert "issue_id" in rej[0]["reason"]
+    assert rej[0].category == "invalid_enum"
+    assert "issue_id" in rej[0].reason
 
 
 @pytest.mark.parametrize("field,bad", [
@@ -65,19 +66,19 @@ def test_advance_dirty_int_field_rejected(game, field, bad):
     iid = _make_active_issue(db, state)
     # delta_bar/inertia_delta 用 _strict_int（拒 bool/float/inf/非数）→ 脏值逐项拒收留痕，
     # 不再裸 int() 在 try 外逃逸 abort、也不静默截断（int(True)=1 / int(1.5)=1）。
-    out = I.apply_issue_tracker_output(db, state, {"advances": [{"issue_id": iid, field: bad}]}, source=Provenance.system_simulation)
+    out = apply_issue_tracker_output(db, state, {"advances": [{"issue_id": iid, field: bad}]}, source=Provenance.system_simulation)
     rej = _rejected(out)
     assert len(rej) == 1, out
-    assert rej[0]["category"] == "invalid_enum"
+    assert rej[0].category == "invalid_enum"
 
 
 def test_advance_missing_issue_rejected(read_game):
     db, state, _ = read_game
     # advance_issue 回 None（issue 不存在）→ missing_ref 逐项拒收留痕，不裸 continue 静默丢。
-    out = I.apply_issue_tracker_output(db, state, {"advances": [{"issue_id": 999999, "delta_bar": 5}]}, source=Provenance.system_simulation)
+    out = apply_issue_tracker_output(db, state, {"advances": [{"issue_id": 999999, "delta_bar": 5}]}, source=Provenance.system_simulation)
     rej = _rejected(out)
     assert len(rej) == 1, out
-    assert rej[0]["category"] == "missing_ref"
+    assert rej[0].category == "missing_ref"
 
 
 def test_advance_non_active_issue_rejected(game):
@@ -85,20 +86,20 @@ def test_advance_non_active_issue_rejected(game):
     # 已结案 issue（非 active）→ advance_issue 回 None → missing_ref 留痕（陈旧引用）。
     iid = _make_active_issue(db, state)
     db.close_issue(state, iid, reason="resolved", narrative="先结案")
-    out = I.apply_issue_tracker_output(db, state, {"advances": [{"issue_id": iid, "delta_bar": 5}]}, source=Provenance.system_simulation)
+    out = apply_issue_tracker_output(db, state, {"advances": [{"issue_id": iid, "delta_bar": 5}]}, source=Provenance.system_simulation)
     rej = _rejected(out)
     assert len(rej) == 1, out
-    assert rej[0]["category"] == "missing_ref"
+    assert rej[0].category == "missing_ref"
 
 
 def test_advance_valid_still_advances(game):
     db, state, _ = game
     # 正常 advance（存在 active issue + 合法字段）仍正常推进、不被误拒。
     iid = _make_active_issue(db, state)
-    out = I.apply_issue_tracker_output(
+    out = apply_issue_tracker_output(
         db, state, {"advances": [{"issue_id": iid, "delta_bar": 10, "narrative": "推进局势"}]}
     , source=Provenance.system_simulation)
-    done = [a for a in _adv(out) if not a.get("rejected") and a.get("issue_id") == iid]
+    done = [a for a in _adv(out) if a.get("issue_id") == iid]
     assert len(done) == 1, out
 
 
@@ -110,7 +111,7 @@ def test_advance_code_exception_propagates(game, monkeypatch):
         raise RuntimeError("模拟 advance_issue 落库代码异常")
     monkeypatch.setattr(type(db), "advance_issue", _boom)
     with pytest.raises(RuntimeError, match="模拟 advance_issue"):
-        I.apply_issue_tracker_output(db, state, {"advances": [{"issue_id": iid, "delta_bar": 5}]}, source=Provenance.system_simulation)
+        apply_issue_tracker_output(db, state, {"advances": [{"issue_id": iid, "delta_bar": 5}]}, source=Provenance.system_simulation)
 
 
 # --- reject 路径不得泄漏 metric 副作用（cmr advances r1 codex high + claude concur）---
@@ -122,11 +123,11 @@ def test_advance_code_exception_propagates(game, monkeypatch):
 def test_advance_missing_issue_no_metric_leak(read_game):
     db, state, _ = read_game
     before = dict(state.metrics)
-    out = I.apply_issue_tracker_output(db, state, {
+    out = apply_issue_tracker_output(db, state, {
         "advances": [{"issue_id": 999999, "delta_bar": 5, "metric_delta": {"民心": -10}}],
     }, source=Provenance.system_simulation)
     rej = _rejected(out)
-    assert len(rej) == 1 and rej[0]["category"] == "missing_ref", out
+    assert len(rej) == 1 and rej[0].category == "missing_ref", out
     assert dict(state.metrics) == before, f"missing_ref advance 不得泄漏 metric：{before} → {dict(state.metrics)}"
 
 
@@ -135,11 +136,11 @@ def test_advance_non_active_issue_no_metric_leak(game):
     iid = _make_active_issue(db, state)
     db.close_issue(state, iid, reason="resolved", narrative="先结案")
     before = dict(state.metrics)
-    out = I.apply_issue_tracker_output(db, state, {
+    out = apply_issue_tracker_output(db, state, {
         "advances": [{"issue_id": iid, "delta_bar": 5, "metric_delta": {"皇威": -8}}],
     }, source=Provenance.system_simulation)
     rej = _rejected(out)
-    assert len(rej) == 1 and rej[0]["category"] == "missing_ref", out
+    assert len(rej) == 1 and rej[0].category == "missing_ref", out
     assert dict(state.metrics) == before, "已非 active advance 不得泄漏 metric"
 
 
@@ -150,9 +151,9 @@ def test_advance_non_dict_metric_delta_tolerated(game, bad_metric):
     # （flows 同款 #117 守门）：不 raise、正常推进、metrics 不变（sourcery advances r2 testing）。
     iid = _make_active_issue(db, state)
     before = dict(state.metrics)
-    out = I.apply_issue_tracker_output(db, state, {
+    out = apply_issue_tracker_output(db, state, {
         "advances": [{"issue_id": iid, "delta_bar": 5, "metric_delta": bad_metric}],
     }, source=Provenance.system_simulation)
-    done = [a for a in _adv(out) if not a.get("rejected") and a.get("issue_id") == iid]
+    done = [a for a in _adv(out) if a.get("issue_id") == iid]
     assert len(done) == 1, out
     assert dict(state.metrics) == before, "非 dict metric_delta 须 sanitize 为 {}、metrics 不变"

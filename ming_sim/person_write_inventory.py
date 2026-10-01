@@ -74,7 +74,7 @@ PERSON_WRITE_POINT_INVENTORY = (
         "reason": "顶替腾缺是任命派生事件，需收口。",
     },
     {
-        "location": "ming_sim/issues.py:apply_office_appointment",
+        "location": "ming_sim/entities/character/appointment.py:apply_office_appointment",
         "owner": "legacy_person_path",
         "disposition": "migrate_to_person_applier",
         "reason": "任官后清状态原因仍是人物状态/名分写入，需随任命核收口。",

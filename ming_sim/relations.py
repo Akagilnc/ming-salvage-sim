@@ -203,11 +203,11 @@ def credit_events_as_edges(records: Iterable[Mapping[str, Any]]) -> list[dict[st
 # ── #633 结算口（ADR 0082）：邸报大臣互动 → 边事件当场落库 ──────────────
 
 
-def _capture_one_interaction(
+def _prepare_one_interaction(
     db: Any, state: Any, item: Mapping[str, Any], turn: int,
     allowed_endpoint_names: Any,
     allowed_dossier_ids: Any = None,
-) -> list[dict[str, Any]]:
+) -> dict[str, Any]:
     kind = validate_edge_kind(item.get("类目") or item.get("kind"))
     if kind not in MINISTER_EDGE_KINDS:
         raise ValueError(f"结算口只收大臣侧类目，得 {kind!r}（君臣类目归 0079 写端）")
@@ -273,25 +273,51 @@ def _capture_one_interaction(
     _validated_settlement_endpoints(
         db, state, source, targets, allowed_endpoint_names,
     )
+    return {
+        "kind": kind,
+        "source": source,
+        "targets": targets,
+        "context": context,
+        "origin": origin,
+    }
+
+
+def _write_one_interaction(
+    db: Any, state: Any, prepared: Mapping[str, Any], turn: int,
+) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
-    for target in targets:
+    for target in prepared["targets"]:
         # r2 F2 基数：每「施动者→受动者」有序对恰一行；N 方联名=牵头者→各联署者
         # N-1 行；联署者互不写边、不做对称翻倍——由这个机械展开保证。
         edge_id = int(db.record_relation_edge_event(
-            source=source,
+            source=prepared["source"],
             target=target,
-            event_kind=kind,
-            context=context,
-            origin=origin,
+            event_kind=prepared["kind"],
+            context=prepared["context"],
+            origin=prepared["origin"],
             turn=turn,
             year=int(state.year),
             period=int(state.period),
         ))
         out.append({
-            "source": source, "target": target, "event_kind": kind,
-            "origin": origin, "edge_id": edge_id,
+            "source": prepared["source"], "target": target,
+            "event_kind": prepared["kind"],
+            "origin": prepared["origin"], "edge_id": edge_id,
         })
     return out
+
+
+def _capture_one_interaction(
+    db: Any, state: Any, item: Mapping[str, Any], turn: int,
+    allowed_endpoint_names: Any,
+    allowed_dossier_ids: Any = None,
+) -> list[dict[str, Any]]:
+    prepared = _prepare_one_interaction(
+        db, state, item, turn,
+        allowed_endpoint_names=allowed_endpoint_names,
+        allowed_dossier_ids=allowed_dossier_ids,
+    )
+    return _write_one_interaction(db, state, prepared, turn)
 
 
 def resolve_relation_edge_events_from_extraction(
@@ -323,11 +349,13 @@ def resolve_relation_edge_events_from_extraction(
             rejections.append(RejectedItem(item=item, reason="大臣互动项必须为对象", category="invalid_shape", source=source))
             continue
         try:
-            results.extend(_capture_one_interaction(
+            prepared = _prepare_one_interaction(
                 db, state, item, turn,
                 allowed_endpoint_names=allowed_endpoint_names,
                 allowed_dossier_ids=dossier_ids_at_input,
-            ))
+            )
         except (TypeError, ValueError) as exc:
             rejections.append(RejectedItem(item=dict(item), reason=str(exc), category="invalid_relation_event", source=source))
+            continue
+        results.extend(_write_one_interaction(db, state, prepared, turn))
     return results, rejections

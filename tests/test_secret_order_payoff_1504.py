@@ -404,8 +404,10 @@ def test_n_month_deadline_yields_exactly_n_ticks(game):
         selections=[{"order_id": oid, "fidelity": "忠实"}],
         commit=True,
     source=Provenance.system_simulation)
-    assert not any(r.get("order_id") == oid and not r.get("skipped") and r.get("units") is not None
-                   and not r.get("rejected") for r in out0 if r.get("order_id") == oid and "units" in r)
+    assert not any(
+        r.get("order_id") == oid and not r.get("skipped") and r.get("units") is not None
+        for r in out0
+    )
     assert db.sum_dossier_actual_progress_units(did) == 0.0
     assert all(int(b.get("order_id") or 0) != oid for b in build_secret_covert_effect_briefs(db, turn=state.turn))
 

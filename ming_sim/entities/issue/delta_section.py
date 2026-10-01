@@ -28,11 +28,11 @@ class IssueApplyBundle:
 
 
 def apply(run) -> IssueApplyBundle:
+    from ming_sim.entities.issue.tracker import apply_issue_tracker_output
     from ming_sim.issues import (
         _monthly_economy_items,
         _strategic_event_outcome_label_or_error,
         apply_event_cascading_invalidations,
-        apply_issue_tracker_output,
         loads_effect_dict,
     )
 

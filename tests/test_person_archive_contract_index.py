@@ -112,7 +112,6 @@ def test_reason_alias_shouzhi_outranks_offstage_default_via_person_delta(game):
         pcs = view(applied, "applied_person_changes")
         assert pcs[0]["动作"] == "处置" and pcs[0]["derived_from"] == "夺情"
         assert pcs[1]["动作"] == "任命" and pcs[1]["derived_from"] == "夺情"
-        assert pcs[1].get("rejected") is not True
         assert db.conn.execute(
             "SELECT status FROM characters WHERE name=?", (name,)
         ).fetchone()["status"] == "active"

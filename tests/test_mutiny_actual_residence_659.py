@@ -110,7 +110,7 @@ def test_redeploy_moves_fact_region_keeps_pay_source(game):
             },
         },
     source=Provenance.system_simulation)
-    assert not any(c.get("rejected") for c in changes if isinstance(c, dict))
+    assert changes_rejections == []
     row = db.conn.execute(
         "SELECT station, station_region, pay_source_region FROM armies WHERE id='dongjiang'"
     ).fetchone()
@@ -135,8 +135,8 @@ def test_station_region_rejects_unknown_region_id(game):
         state, _pseudo_event(), None, "test",
         {"dongjiang": {"station_region": "not_a_real_region", "reason": "坏 id"}},
     source=Provenance.system_simulation)
-    rejected = [c for c in changes if c.get("rejected")]
-    assert rejected and rejected[0]["field"] == "station_region"
+    assert changes_rejections and changes_rejections[0].item.get("field") == "station_region"
+    assert changes_rejections[0].category == "invalid_enum"
     row = db.conn.execute(
         "SELECT station_region FROM armies WHERE id='dongjiang'"
     ).fetchone()

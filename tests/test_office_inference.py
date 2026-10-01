@@ -6,7 +6,9 @@
 
 from __future__ import annotations
 
-from ming_sim.applier import Provenance
+from ming_sim.entities.character.appointment import apply_office_appointment
+
+from ming_sim.applier import Provenance, RejectedItem
 
 import pytest
 
@@ -275,10 +277,7 @@ def test_sync_restores_office_region_from_character_offices(tmp_path):
 
 def test_appointment_seat_identity_reuses_local_and_strips_central(game):
     """一次任职 resolved seat：地方同职省略 region 续任不跨省挤位；中央夹带 region 归一空。"""
-    from ming_sim.issues import (
-        _canonical_appointment_fields,
-        apply_office_appointment,
-    )
+    from ming_sim.issues import _canonical_appointment_fields
 
     db, state, content = game
     rows = db.conn.execute(
@@ -291,12 +290,12 @@ def test_appointment_seat_identity_reuses_local_and_strips_central(game):
         db, state, content, a, "巡抚",
         new_office_type="督抚", region_id="shaanxi", reason="seat-a",
     source=Provenance.system_simulation)
-    assert not r1.get("rejected")
+    assert not isinstance(r1, RejectedItem), r1
     r2 = apply_office_appointment(
         db, state, content, b, "巡抚",
         new_office_type="督抚", region_id="henan", reason="seat-b",
     source=Provenance.system_simulation)
-    assert not r2.get("rejected")
+    assert not isinstance(r2, RejectedItem), r2
     assert db.character_office_region(a) == "shaanxi"
     assert db.character_office_region(b) == "henan"
 
@@ -305,7 +304,7 @@ def test_appointment_seat_identity_reuses_local_and_strips_central(game):
         db, state, content, a, "巡抚",
         new_office_type="督抚", region_id="", reason="reappoint-omit-region",
     source=Provenance.system_simulation)
-    assert not r3.get("rejected")
+    assert not isinstance(r3, RejectedItem), r3
     assert not r3.get("displaced"), r3
     assert content.characters[a].office == "巡抚"
     assert content.characters[a].office_region == "shaanxi"
@@ -323,6 +322,6 @@ def test_appointment_seat_identity_reuses_local_and_strips_central(game):
         db, state, content, a, "户部尚书",
         new_office_type="户部", region_id="henan", reason="central-noise-region",
     source=Provenance.system_simulation)
-    assert not r4.get("rejected")
+    assert not isinstance(r4, RejectedItem), r4
     assert db.character_office_region(a) == ""
     assert content.characters[a].office_region == ""

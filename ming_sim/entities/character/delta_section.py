@@ -20,46 +20,37 @@ from ming_sim.applier import SectionResult
 
 
 def apply_declared_person_changes(run, changes, *, phase: str):
-    """人物项逐条原子落账：坏项只回滚自己那条 savepoint，同批合法项照落。
+    """人物项逐条落账。归属非法只在写前解析处拒收。
 
-    代码异常响亮上抛，不与脏项同流（ADR 0005）。落库核在本实体，不经编排器中转。
+    代码异常由外层事务回滚，不记成拒收（ADR 0005）。落库核在本实体。
     """
     from ming_sim.entities.affair import UnauthorizedAffairOriginRef
     from ming_sim.entities.character.apply import apply_person_changes
 
+    del phase
     rows = []
     rejections = []
-    for index, person_change in enumerate(changes):
-        savepoint = f"person_affair_{phase}_{index}"
-        run.db.conn.execute(f"SAVEPOINT {savepoint}")
+    for person_change in changes:
         try:
             origin_ref = run.origin_ref_from_result_item(person_change)
-            results, refused = apply_person_changes(
-                run.db, run.state, [dict(person_change)],
-                source=run.ctx.source,
-                content=run.ctx.content,
-                llm_config=run.ctx.llm_config,
-                origin_ref=origin_ref,
-                require_origin=True,
-            )
-            if origin_ref:
-                for result in results:
-                    result.setdefault("origin_ref", origin_ref)
-            if not results:
-                run.db.conn.execute(f"ROLLBACK TO {savepoint}")
-            run.db.conn.execute(f"RELEASE {savepoint}")
-            rows.extend(results)
-            rejections.extend(refused)
-            for result in results:
-                rejections.extend(result.pop("backlash_results", None) or [])
         except UnauthorizedAffairOriginRef as exc:
-            run.db.conn.execute(f"ROLLBACK TO {savepoint}")
-            run.db.conn.execute(f"RELEASE {savepoint}")
             rejections.append(RejectedItem(item=dict(person_change), reason=str(exc), category="unauthorized_affair_origin", source=run.ctx.source))
-        except Exception:
-            run.db.conn.execute(f"ROLLBACK TO {savepoint}")
-            run.db.conn.execute(f"RELEASE {savepoint}")
-            raise
+            continue
+        results, refused = apply_person_changes(
+            run.db, run.state, [dict(person_change)],
+            source=run.ctx.source,
+            content=run.ctx.content,
+            llm_config=run.ctx.llm_config,
+            origin_ref=origin_ref,
+            require_origin=True,
+        )
+        if origin_ref:
+            for result in results:
+                result.setdefault("origin_ref", origin_ref)
+        rows.extend(results)
+        rejections.extend(refused)
+        for result in results:
+            rejections.extend(result.pop("backlash_results", None) or [])
     return SectionResult(applied=rows, rejected=rejections)
 
 def apply_pre_issue(run):

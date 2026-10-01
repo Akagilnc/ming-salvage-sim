@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from ming_sim.applier import Provenance
+from ming_sim.entities.issue.tracker import apply_issue_tracker_output
+
+from ming_sim.applier import Provenance, atomic
 
 
 import pytest
@@ -11,7 +13,7 @@ import ming_sim.audience_night as audience_night
 import ming_sim.simulation as simulation
 from ming_sim.db import GameDB
 from ming_sim import issues as issues_mod
-from ming_sim.issues import apply_issue_tracker_output
+
 from ming_sim.public_sayings import list_public_sayings, record_public_saying
 from ming_sim.settlement import SettlementContext, settle_delta
 from ming_sim.settlement.views import issue_rows, shape_rejections
@@ -159,7 +161,7 @@ def test_typed_affair_new_issues_share_provenance_and_close_final_state(game):
     )
     result = settle_delta(state, db, {'affair_declarations': [_declaration(attach='close', affair_id=existing.id)], 'new_issues': [{'origin_kind': 'decree', 'kind': 'situation', 'title': '护送仍在途中', 'affair_declaration': _declaration(attach='existing', affair_id=existing.id)}, {'origin_kind': 'decree', 'kind': 'situation', 'title': '推演另起风波', 'affair_declaration': _declaration(identity='new-storm')}]}, SettlementContext(content=content, open_affair_ids_at_input={existing.id}))
     created = issue_rows(result, "new_issues")
-    assert [item["rejected"] for item in created] == [False, False]
+    assert len(created) == 2
     assert db.affairs.affair_id_for_issue(created[0]["issue_id"]) == existing.id
     assert db.affairs.affair_id_for_issue(created[1]["issue_id"]) != existing.id
     assert db.affairs.get(existing.id).status == "open"
@@ -245,15 +247,16 @@ def test_new_issue_affair_attach_failure_leaves_no_partial_product(game, monkeyp
 
     monkeypatch.setattr(db.affairs, "attach_from_declaration", boom)
     with pytest.raises(RuntimeError, match="attach boom"):
-        apply_issue_tracker_output(
-            db, state,
-            {"new_issues": [{
-                "origin_kind": "decree",
-                "kind": "situation",
-                "title": "原子落库",
-                "affair_declaration": _declaration(identity="atomic-issue"),
-            }]},
-        source=Provenance.system_simulation)
+        with atomic(db):
+            apply_issue_tracker_output(
+                db, state,
+                {"new_issues": [{
+                    "origin_kind": "decree",
+                    "kind": "situation",
+                    "title": "原子落库",
+                    "affair_declaration": _declaration(identity="atomic-issue"),
+                }]},
+            source=Provenance.system_simulation)
     assert db.conn.execute("SELECT COUNT(*) AS n FROM issues").fetchone()["n"] == issues_before
     assert db.conn.execute("SELECT COUNT(*) AS n FROM affairs").fetchone()["n"] == affairs_before
     assert db.conn.execute(

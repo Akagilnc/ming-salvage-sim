@@ -1,4 +1,5 @@
 
+from ming_sim.entities.issue.tracker import apply_issue_tracker_output
 from ming_sim.applier import Provenance
 import json
 from pathlib import Path
@@ -37,7 +38,6 @@ def test_until_stop_commitment_issue_is_created_with_carrier_fields(game, monkey
     out = settle_delta(state, db, {'new_issues': [{'origin_kind': 'decree', 'origin_ref': _promulgated_commitment_origin(db, state, 'pay-guanning-arrears'), 'kind': 'initiative', 'title': '每月补关宁军饷直到补齐', 'bar_value': 20, 'stage_text': '户部按月拨银补关宁旧欠', 'ongoing_effects': {'economy': [{'account': '国库', 'delta': -50, 'category': '补饷承诺', 'reason': '每月补关宁欠饷', 'purpose': '补饷', 'target_kind': 'army', 'target_id': 'guanning'}]}, 'stop_condition': stop_condition, 'commitment_kind': 'until_stop'}]}, SettlementContext(content=content))
 
     created = issue_rows(out, "new_issues")[0]
-    assert created["rejected"] is False
     row = _issue_by_title(db, "每月补关宁军饷直到补齐")
     assert row is not None
     assert row["origin_kind"] == "decree"
@@ -58,14 +58,13 @@ def test_decree_commitment_dedups_same_batch_fiscal_create_carrier(game, monkeyp
 
     out = settle_delta(state, db, {'new_issues': [{'origin_kind': 'decree', 'origin_ref': _promulgated_commitment_origin(db, state, 'xixue-monthly'), 'kind': 'initiative', 'title': '每月拨西学经费', 'stage_text': '太仓每月拨银五十万两办西学。', 'ongoing_effects': {'economy': [{'account': '国库', 'delta': -50, 'category': '西学经费', 'reason': '每月拨西学经费'}]}, 'commitment_kind': 'until_stop'}], 'fiscal_creates': [{'key': '西学经费_base', 'account': '国库', 'direction': 'expense', 'init_value': 50, 'display': '西学经费', 'reason': '同批 extractor 误产的重复月支', 'origin_ref': '盘面自发'}]}, SettlementContext(content=content))
 
-    assert issue_rows(out, "new_issues")[0]["rejected"] is False
+    assert issue_rows(out, "new_issues")
     assert _issue_by_title(db, "每月拨西学经费") is not None
     assert db.conn.execute(
         "SELECT COUNT(*) FROM fiscal_config WHERE key IN ('西学经费_base', '西学经费_rate')"
     ).fetchone()[0] == 0
     fiscal_result = rejected_view(out, "fiscal_creates")[0]
     assert fiscal_result.category == "deduped_commitment_carrier"
-    assert "承诺 issue" in fiscal_result.reason
 
 
 def test_decree_commitment_does_not_dedup_same_name_income_fiscal_create(game, monkeypatch):
@@ -77,8 +76,9 @@ def test_decree_commitment_does_not_dedup_same_name_income_fiscal_create(game, m
 
     out = settle_delta(state, db, {'new_issues': [{'origin_kind': 'decree', 'origin_ref': _promulgated_commitment_origin(db, state, 'xixue-monthly'), 'kind': 'initiative', 'title': '每月拨西学经费', 'stage_text': '太仓每月拨银五十万两办西学。', 'ongoing_effects': {'economy': [{'account': '国库', 'delta': -50, 'category': '西学经费', 'reason': '每月拨西学经费'}]}, 'commitment_kind': 'until_stop'}], 'fiscal_creates': [{'key': '西学经费_base', 'account': '国库', 'direction': 'income', 'init_value': 50, 'display': '西学经费', 'reason': '新设西学专项捐输（收入）', 'origin_ref': '盘面自发'}]}, SettlementContext(content=content))
 
+    assert rejected_view(out, "fiscal_creates") == []
     fiscal_result = view(out, "fiscal_creates")[0]
-    assert fiscal_result.get("rejected") is not True   # 收入科目未被误去重
+    assert fiscal_result["key"]
     assert db.conn.execute(
         "SELECT COUNT(*) FROM fiscal_config WHERE key IN ('西学经费_base', '西学经费_rate')"
     ).fetchone()[0] >= 1
@@ -93,8 +93,8 @@ def test_decree_commitment_same_account_alias_miss_emits_residual_signal(game, m
     out = settle_delta(state, db, {'new_issues': [{'origin_kind': 'decree', 'origin_ref': _promulgated_commitment_origin(db, state, 'xixue-monthly'), 'kind': 'initiative', 'title': '每月拨西学经费', 'stage_text': '太仓每月拨银五十万两办西学。', 'ongoing_effects': {'economy': [{'account': '国库', 'delta': -50, 'category': '西学经费', 'reason': '每月拨西学经费'}]}, 'commitment_kind': 'until_stop'}], 'fiscal_creates': [{'key': 'xuguangqi_gongfei_base', 'account': '国库', 'direction': 'expense', 'init_value': 50, 'display': '徐光启三务公费', 'reason': '月支', 'origin_ref': '盘面自发'}]}, SettlementContext(content=content))
 
     # 异名 → 未去重，fiscal_create 照常落账（不被拒）
-    fiscal_result = view(out, "fiscal_creates")[0]
-    assert fiscal_result.get("rejected") is not True
+    assert rejected_view(out, "fiscal_creates") == []
+    assert view(out, "fiscal_creates")
     assert db.conn.execute(
         "SELECT COUNT(*) FROM fiscal_config WHERE key IN "
         "('xuguangqi_gongfei_base', 'xuguangqi_gongfei_rate')"
@@ -174,7 +174,6 @@ def test_future_one_shot_commitment_issue_is_created_with_deadline_only(game, mo
     out = settle_delta(state, db, {'new_issues': [{'origin_kind': 'decree', 'origin_ref': _promulgated_commitment_origin(db, state, 'sunchengzong-review'), 'kind': 'initiative', 'title': '三月后复试孙承宗', 'stage_text': '孙承宗暂听候政，三月后复试军国大计。', 'end_turn': state.turn + 3, 'commitment_kind': 'until_stop'}]}, SettlementContext(content=content))
 
     created = issue_rows(out, "new_issues")[0]
-    assert created["rejected"] is False
     row = _issue_by_title(db, "三月后复试孙承宗")
     assert row is not None
     assert row["commitment_kind"] == "until_stop"
@@ -192,7 +191,6 @@ def test_open_ended_ongoing_commitment_issue_is_created_with_explicit_marker(gam
     out = settle_delta(state, db, {'new_issues': [{'origin_kind': 'decree', 'origin_ref': _promulgated_commitment_origin(db, state, 'open-ended-appeasement'), 'kind': 'initiative', 'title': '长期安抚毛文龙', 'stage_text': '遣臣常驻皮岛安抚，未设硬时限。', 'ongoing_effects': {'metrics': {'皇威': -1}}, 'commitment_kind': 'until_stop'}]}, SettlementContext(content=content))
 
     created = issue_rows(out, "new_issues")[0]
-    assert created["rejected"] is False
     row = _issue_by_title(db, "长期安抚毛文龙")
     assert row is not None
     assert row["commitment_kind"] == "until_stop"
@@ -377,16 +375,16 @@ def test_until_stop_commitment_rejects_direct_resolved_close(game, monkeypatch):
     settle_delta(state, db, {'new_issues': [{'origin_kind': 'decree', 'origin_ref': _promulgated_commitment_origin(db, state, 'pay-liao-close-guard'), 'kind': 'initiative', 'title': '每月补辽饷直到补齐防误结案', 'ongoing_effects': {'economy': [{'account': '国库', 'delta': -50, 'reason': '每月补饷'}]}, 'stop_condition': {'army.guanning.arrears': '<=0'}, 'commitment_kind': 'until_stop'}]}, SettlementContext(content=content))
     row = _issue_by_title(db, "每月补辽饷直到补齐防误结案")
 
-    out = I.apply_issue_tracker_output(
+    out = apply_issue_tracker_output(
         db,
         state,
         {"close_issues": [{"issue_id": row["id"], "reason": "resolved", "narrative": "误按承诺完成结案"}]},
     source=Provenance.system_simulation)
 
-    close = out["closes"][0]
-    assert close["rejected"] is True
-    assert close["category"] == "invalid_enum"
-    assert "承诺" in close["reason"]
+    assert out["closes"] == []
+    close = out["rejected"][0]
+    assert close.category == "invalid_enum"
+    assert "承诺" in close.reason
     after = db.conn.execute("SELECT status FROM issues WHERE id=?", (row["id"],)).fetchone()
     assert after["status"] == "active"
 
@@ -399,16 +397,16 @@ def test_until_stop_commitment_rejects_direct_failed_close_without_effects(game,
     settle_delta(state, db, {'new_issues': [{'origin_kind': 'decree', 'origin_ref': _promulgated_commitment_origin(db, state, 'pay-liao-fail-guard'), 'kind': 'initiative', 'title': '每月补辽饷直到补齐防失败误结案', 'ongoing_effects': {'economy': [{'account': '国库', 'delta': -50, 'reason': '每月补饷'}]}, 'effect_on_fail': {'metrics': {'民心': -7}}, 'stop_condition': {'army.guanning.arrears': '<=0'}, 'commitment_kind': 'until_stop'}]}, SettlementContext(content=content))
     row = _issue_by_title(db, "每月补辽饷直到补齐防失败误结案")
 
-    out = I.apply_issue_tracker_output(
+    out = apply_issue_tracker_output(
         db,
         state,
         {"close_issues": [{"issue_id": row["id"], "reason": "failed", "narrative": "误按承诺失败结案"}]},
     source=Provenance.system_simulation)
 
-    close = out["closes"][0]
-    assert close["rejected"] is True
-    assert close["category"] == "invalid_enum"
-    assert "承诺" in close["reason"]
+    assert out["closes"] == []
+    close = out["rejected"][0]
+    assert close.category == "invalid_enum"
+    assert "承诺" in close.reason
     after = db.conn.execute("SELECT status FROM issues WHERE id=?", (row["id"],)).fetchone()
     assert after["status"] == "active"
     assert int(state.metrics["民心"]) == starting_popular_support

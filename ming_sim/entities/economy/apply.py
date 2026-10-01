@@ -10,7 +10,6 @@ def _apply_economy_list(
     state: GameState,
     economy: List[Dict[str, object]],
     *,
-    commit: bool = True,
     allow_pay_arrears_pool: bool = False,
     pay_arrears_pool_army_ids: Optional[List[str]] = None,
     require_origin: bool = False,
@@ -124,7 +123,7 @@ def _apply_economy_list(
                     budget,
                     category,
                     reason,
-                    commit=commit,
+                    commit=False,
                     allowed_army_ids=allowed_pool_ids,
                     origin_ref=effective_origin_ref,
                     beyond_intent=beyond_raw,
@@ -181,8 +180,6 @@ def _apply_economy_list(
                 if pay_source_cutover:
                     db._reconcile_army_pay_source_region_container(str(row["pay_source_region"] or ""))
                     db._reconcile_central_army_pay_arrears_container()
-                if commit:
-                    db.conn.commit()
                 from ming_sim.covert_levy import canonical_fiscal_result
                 applied.append(canonical_fiscal_result(
                     db, move, applied=True,
@@ -213,8 +210,6 @@ def _apply_economy_list(
                 )
                 if received != -actual:
                     raise RuntimeError("钱库互拨双边实数不等")
-            if commit:
-                db.conn.commit()
             from ming_sim.covert_levy import canonical_fiscal_result
             for leg_account, leg_delta in ((account, actual), (destination, received)):
                 applied.append(canonical_fiscal_result(
@@ -228,7 +223,7 @@ def _apply_economy_list(
             purpose=purpose or "其它" if delta < 0 else None,
             target_kind=None, target_id=None, origin_ref=effective_origin_ref,
             beyond_intent=beyond_raw,
-            commit=commit,
+            commit=False,
         )
         if actual:
             from ming_sim.covert_levy import canonical_fiscal_result

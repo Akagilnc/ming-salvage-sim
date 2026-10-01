@@ -105,7 +105,6 @@ def test_decree_lands_accumulated_ledger_same_turn(game):
     rec = view(applied, "surcharge_decrees")[0]
     assert rec["region_id"] == "shaanxi"
     assert rec["monthly_amount"] == 10.0
-    assert not rec.get("rejected")
 
     meta = _settle_payload(db, "shaanxi")["_meta"]
     assert meta["加派基线"] == pytest.approx(10.0)

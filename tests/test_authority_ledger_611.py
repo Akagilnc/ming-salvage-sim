@@ -39,15 +39,16 @@ def _eligible_dossier(db, state, holder, *, target_kind="issue", target_id="清�
 
 
 def _grant(db, state, content, holder, privilege, scope, dossier, **turns):
-    result = view(settle_delta(state, db, {'authority_changes': [{'动作': '授予', 'holder_id': holder, 'privilege': privilege, 'scope': scope, 'dossier_id': dossier['id'], **turns}]}, SettlementContext(content=content)), "authority_changes")[0]
-    assert result.get("rejected") is not True
+    out = settle_delta(state, db, {'authority_changes': [{'动作': '授予', 'holder_id': holder, 'privilege': privilege, 'scope': scope, 'dossier_id': dossier['id'], **turns}]}, SettlementContext(content=content))
+    assert rejected_view(out, "authority_changes") == []
+    result = view(out, "authority_changes")[0]
     return int(result["authority_id"])
 
 
 def _revoke(db, state, content, authority_id, dossier):
-    result = view(settle_delta(state, db, {'authority_changes': [{'动作': '收回', 'authority_id': authority_id, 'dossier_id': dossier['id']}]}, SettlementContext(content=content)), "authority_changes")[0]
-    assert result.get("rejected") is not True
-    return result
+    out = settle_delta(state, db, {'authority_changes': [{'动作': '收回', 'authority_id': authority_id, 'dossier_id': dossier['id']}]}, SettlementContext(content=content))
+    assert rejected_view(out, "authority_changes") == []
+    return view(out, "authority_changes")[0]
 
 
 

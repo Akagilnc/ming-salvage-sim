@@ -11,11 +11,10 @@ from ming_sim.applier import SectionResult
 
 
 def apply(run):
-    from ming_sim.issues import _apply_surcharge_decrees
+    from ming_sim.entities.surcharge.apply import _apply_surcharge_decrees
 
     applied_surcharges, surcharge_rejections = _apply_surcharge_decrees(
-        run.db, run.current_extracted.get("surcharge_decrees") or [],
-        commit=False, source=run.ctx.source,
+        run.db, run.current_extracted.get("surcharge_decrees") or [], source=run.ctx.source,
     )
     run.surcharge_claims = {
         (str(item.get("origin_ref") or ""), str(item.get("region_id") or ""))

@@ -430,7 +430,6 @@ def test_gate_evidence_reloads_dossier_after_reconsideration_mutation(game):
     )
     db.record_dossier_decision(grant_dossier_id, "promulgated")
     grant = view(settle_delta(state, db, {'authority_changes': [{'动作': '授予', 'holder_id': holder, 'privilege': '便宜行事', 'scope': f'issue:policy-{state.turn}', 'dossier_id': grant_dossier_id}]}, SettlementContext(content=content)), "authority_changes")[0]
-    assert grant.get("rejected") is not True
     authority_id = int(grant["authority_id"])
     assert db.get_authority(authority_id)["dossier_id"] == grant_dossier_id
     assert grant_dossier_id != dossier_id

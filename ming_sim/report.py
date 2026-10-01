@@ -34,7 +34,7 @@ def print_header(state: GameState, db: Optional[GameDB] = None) -> None:
 
 
 def format_region_changes(changes: List[Dict[str, object]]) -> str:
-    # 拒收项(ADR 0008 决定 1)与 applied 项同列，但不是盘面变化，先滤掉。
+    # 调用方只传入已落账的地区变化。拒收在 RejectedItem 列表，不与本列混装。
     changes = changes or []
     if not changes:
         return f"本{TURN_UNIT}未见明确地区盘面变化。"
@@ -50,7 +50,7 @@ def format_region_changes(changes: List[Dict[str, object]]) -> str:
 
 
 def format_army_changes(changes: List[Dict[str, object]]) -> str:
-    # 拒收项(ADR 0008 决定 1)与 applied 项同列，但不是盘面变化，先滤掉。
+    # 调用方只传入已落账的军队变化。拒收在 RejectedItem 列表，不与本列混装。
     changes = changes or []
     if not changes:
         return f"本{TURN_UNIT}未见明确军队盘面变化。"
@@ -70,7 +70,7 @@ def format_army_changes(changes: List[Dict[str, object]]) -> str:
 
 
 def format_power_changes(changes: List[Dict[str, object]]) -> str:
-    # 拒收项(ADR 0008 决定 1)与 applied 项同列，但不是盘面变化，先滤掉。
+    # 调用方只传入已落账的势力变化。拒收在 RejectedItem 列表，不与本列混装。
     applied = changes or []
     if not applied:
         return f"本{TURN_UNIT}未见明确势力盘面变化。"

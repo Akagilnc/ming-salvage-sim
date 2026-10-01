@@ -9,7 +9,6 @@ def _apply_faction_dict(
     db: GameDB,
     faction_delta: Dict[str, object],
     *,
-    commit: bool = True,
     source: Provenance,
 ) -> Tuple[Dict[str, object], List[RejectedItem]]:
     """支持两种格式：
@@ -52,7 +51,7 @@ def _apply_faction_dict(
     if cleaned:
         # db 层未知名 → missing_ref 拒收：未写库，须从 cleaned 剔除，否则未落库的未知派系
         # 会进 faction_delta 段被 web 面板当「已落」误显（cmr r3 codex，DB↔呈现漂移=#14 本症）。
-        for _rej in db.adjust_factions(cleaned, commit=commit, source=source):
+        for _rej in db.adjust_factions(cleaned, commit=False, source=source):
             cleaned.pop(next(iter(_rej.item)), None)
             rejected.append(_rej)
     return cleaned, rejected

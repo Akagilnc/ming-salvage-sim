@@ -115,7 +115,7 @@ def test_material_tree_contains_only_structurally_related_world_details(game, tm
     army = db.conn.execute("SELECT id,name FROM armies ORDER BY id LIMIT 1").fetchone()
     # Real declaration entrance (not office_slots vacancy catalog / bare DB hook).
     from ming_sim.issues import apply_person_changes_only
-    applied = apply_person_changes_only(
+    person_bundle = apply_person_changes_only(
         db, state,
         [{
             "name": character.name,
@@ -126,8 +126,9 @@ def test_material_tree_contains_only_structurally_related_world_details(game, tm
             "reason": "test-materials-posting",
         }],
         content=content,
-    source=Provenance.system_simulation)["applied_person_changes"]
-    assert applied and not applied[0].get("rejected"), applied
+    source=Provenance.system_simulation)
+    applied = person_bundle["applied_person_changes"]
+    assert applied and person_bundle["rejected"] == [], person_bundle
     db.conn.execute("UPDATE armies SET commander='' WHERE commander=?", (character.name,))
     db.conn.execute(
         "UPDATE armies SET commander=?,supply=17,morale=23,loyalty=31,training=44,equipment=52 "

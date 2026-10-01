@@ -2575,7 +2575,7 @@ def test_army_delta_arrears_splits_positive_and_rejects_negative_under_cutover(f
     after = fresh_db.conn.execute(
         "SELECT * FROM armies WHERE id = 'shaanxi_army'"
     ).fetchone()
-    assert not any(c.get("rejected") for c in changes)
+    assert changes_rejections == []
     assert after["province_pay_arrears"] == pytest.approx(before["province_pay_arrears"] + 6.5)
     assert after["central_pay_arrears"] == pytest.approx(before["central_pay_arrears"] + 3.5)
     assert after["arrears"] == pytest.approx(after["province_pay_arrears"] + after["central_pay_arrears"])
@@ -2584,7 +2584,7 @@ def test_army_delta_arrears_splits_positive_and_rejects_negative_under_cutover(f
         state, event, None, "测试", {"shaanxi_army": {"arrears": -1, "reason": "无现金减欠"}},
         commit=False,
     source=Provenance.system_simulation)
-    assert rejected and rejected[0]["rejected"] is True
+    assert rejected_rejections and not rejected
     again = fresh_db.conn.execute(
         "SELECT * FROM armies WHERE id = 'shaanxi_army'"
     ).fetchone()
@@ -2617,8 +2617,8 @@ def test_army_delta_arrears_rejects_exempt_army_under_cutover(fresh_db):
         WHERE army_id = 'southwest_tusi' AND field = 'arrears' AND reason = '误记欠饷'
         """
     ).fetchone()
-    assert changes and changes[0]["rejected"] is True
-    assert changes[0].get("category") == "invalid_enum"
+    assert changes_rejections and changes_rejections[0].category == "invalid_enum"
+    assert not changes
     assert after["arrears"] == pytest.approx(before["arrears"])
     assert logs["count"] == 0
 
@@ -2685,8 +2685,8 @@ def test_army_delta_owner_power_to_ming_requires_same_delta_pay_source(fresh_db)
     source=Provenance.system_simulation)
 
     row = fresh_db.conn.execute("SELECT * FROM armies WHERE id = 'shaanxi_army'").fetchone()
-    assert rejected and rejected[0]["rejected"] is True
-    assert "pay_source_region" in rejected[0]["reason"]
+    assert rejected_rejections and "pay_source_region" in rejected_rejections[0].reason
+    assert not rejected
     assert row["owner_power"] == "houjin"
 
     changes, changes_rejections = fresh_db.apply_army_deltas(
@@ -2706,7 +2706,7 @@ def test_army_delta_owner_power_to_ming_requires_same_delta_pay_source(fresh_db)
     source=Provenance.system_simulation)
 
     row = fresh_db.conn.execute("SELECT * FROM armies WHERE id = 'shaanxi_army'").fetchone()
-    assert not any(c.get("rejected") for c in changes)
+    assert changes_rejections == []
     assert row["owner_power"] == "ming"
     assert row["pay_source_region"] == "shaanxi"
     assert row["province_pay_share"] == pytest.approx(0.65)
@@ -2745,8 +2745,8 @@ def test_army_delta_rejects_unknown_owner_power_without_clearing_arrears(fresh_d
         WHERE id = 'shaanxi_army'
         """
     ).fetchone()
-    assert rejected and rejected[0]["rejected"] is True
-    assert rejected[0]["category"] == "hallucinated_id"
+    assert rejected_rejections and rejected_rejections[0].category == "hallucinated_id"
+    assert not rejected
     assert dict(after) == dict(before)
 
 
@@ -2776,8 +2776,8 @@ def test_army_delta_rejects_pay_source_without_ming_settle_substrate(fresh_db):
     row = fresh_db.conn.execute(
         "SELECT pay_source_region FROM armies WHERE id = 'shaanxi_army'"
     ).fetchone()
-    assert rejected and rejected[0]["rejected"] is True
-    assert "pay_source_region" in rejected[0]["reason"]
+    assert rejected_rejections and "pay_source_region" in rejected_rejections[0].reason
+    assert not rejected
     assert row["pay_source_region"] == "shaanxi"
 
 
@@ -2795,7 +2795,7 @@ def test_army_delta_owner_power_from_ming_clears_pay_source_arrears(fresh_db):
     source=Provenance.system_simulation)
 
     row = fresh_db.conn.execute("SELECT * FROM armies WHERE id = 'shaanxi_army'").fetchone()
-    assert not any(c.get("rejected") for c in changes)
+    assert changes_rejections == []
     assert row["owner_power"] == "houjin"
     assert row["pay_source_region"] == ""
     assert row["province_pay_share"] == pytest.approx(0)
@@ -2870,8 +2870,8 @@ def test_army_delta_rejects_ming_exempt_flag_before_pay_arrears_writeoff(fresh_d
         WHERE id = 'shaanxi_army'
         """
     ).fetchone()
-    assert rejected and rejected[0]["rejected"] is True
-    assert rejected[0].get("category") == "invalid_enum"
+    assert rejected_rejections and rejected_rejections[0].category == "invalid_enum"
+    assert not rejected
     assert dict(after) == dict(before)
     assert _read_settle(fresh_db, "shaanxi")["st"]["军饷欠"] == pytest.approx(
         _province_pay_arrears(fresh_db, "shaanxi"), abs=1e-6
@@ -2914,7 +2914,6 @@ def test_economy_pay_arrears_from_central_account_splits_by_current_debt_ratio(f
             "target_kind": "army",
             "target_id": "shaanxi_army",
         }],
-        commit=False,
     source=Provenance.system_simulation)
 
     after_army = fresh_db.conn.execute(
@@ -2976,7 +2975,6 @@ def test_economy_pay_arrears_from_central_account_can_repay_pure_province_source
             "target_kind": "army",
             "target_id": "fujian_navy",
         }],
-        commit=False,
     source=Provenance.system_simulation)
 
     after_army = fresh_db.conn.execute(
@@ -3031,7 +3029,6 @@ def test_economy_pay_arrears_preserves_fractional_pay_source_tail(fresh_db):
             "target_kind": "army",
             "target_id": "shaanxi_army",
         }],
-        commit=False,
     source=Provenance.system_simulation)
 
     row = fresh_db.conn.execute(
@@ -3091,7 +3088,6 @@ def test_economy_pay_arrears_clamps_integer_spend_and_preserves_tail(fresh_db):
             "target_kind": "army",
             "target_id": "shaanxi_army",
         }],
-        commit=False,
     source=Provenance.system_simulation)
 
     row = fresh_db.conn.execute(
@@ -3161,7 +3157,7 @@ def test_economy_pay_arrears_rejects_missing_or_unknown_target_without_repaying_
     ).fetchone()
     before_province = _province_pay_arrears(fresh_db, "shaanxi")
 
-    applied, applied_rejections = _apply_economy_list(fresh_db, state, [move], commit=False, source=Provenance.system_simulation)
+    applied, applied_rejections = _apply_economy_list(fresh_db, state, [move], source=Provenance.system_simulation)
 
     after_army = fresh_db.conn.execute(
         """
@@ -3178,8 +3174,8 @@ def test_economy_pay_arrears_rejects_missing_or_unknown_target_without_repaying_
         LIMIT 1
         """
     ).fetchone()
-    assert applied and applied[0]["rejected"] is True
-    assert applied[0]["category"] == "missing_ref"
+    assert applied_rejections and applied_rejections[0].category == "missing_ref"
+    assert not applied
     assert state.metrics["国库"] == before_treasury
     assert ledger_row is None
     assert dict(after_army) == dict(before_army)
@@ -3283,7 +3279,7 @@ def test_manpower_zero_then_arrears_delta_does_not_resurrect_writeoff_debt(fresh
     assert row["province_pay_arrears"] == pytest.approx(0)
     assert row["central_pay_arrears"] == pytest.approx(0)
     assert row["arrears"] == pytest.approx(0)
-    assert not any(change["field"] == "arrears" and not change.get("rejected") for change in changes)
+    assert not any(change.get("field") == "arrears" for change in changes)
     assert _province_pay_arrears(fresh_db, "shaanxi") == pytest.approx(0)
     assert fresh_db.get_central_army_pay_arrears_container() == pytest.approx(
         _non_self_funded_pay_arrears(fresh_db)[1], abs=1e-6
@@ -3300,8 +3296,8 @@ def test_new_ming_army_requires_valid_pay_source_under_cutover(fresh_db):
         "owner_power": "ming",
     }], commit=False, source=Provenance.system_simulation)
 
-    assert rejected and rejected[0]["rejected"] is True
-    assert "pay_source_region" in rejected[0]["reason"]
+    assert rejected_rejections and "pay_source_region" in rejected_rejections[0].reason
+    assert not rejected
     assert fresh_db.conn.execute(
         "SELECT 1 FROM armies WHERE id = 'no_pay_source'"
     ).fetchone() is None
@@ -3327,8 +3323,8 @@ def test_new_ming_army_rejects_non_ming_pay_source_region(fresh_db):
         "central_pay_share": 0.0,
     }], commit=False, source=Provenance.system_simulation)
 
-    assert rejected and rejected[0]["rejected"] is True
-    assert "pay_source_region" in rejected[0]["reason"]
+    assert rejected_rejections and "pay_source_region" in rejected_rejections[0].reason
+    assert not rejected
     assert fresh_db.conn.execute(
         "SELECT 1 FROM armies WHERE id = 'rebel_source_army'"
     ).fetchone() is None
@@ -3384,8 +3380,8 @@ def test_new_ming_army_rejects_initial_arrears_under_cutover(fresh_db):
         "arrears": 10,
     }], commit=False, source=Provenance.system_simulation)
 
-    assert rejected and rejected[0]["rejected"] is True
-    assert rejected[0].get("category") == "invalid_enum"
+    assert rejected_rejections and rejected_rejections[0].category == "invalid_enum"
+    assert not rejected
     assert fresh_db.conn.execute(
         "SELECT 1 FROM armies WHERE id = 'arrears_new_army'"
     ).fetchone() is None

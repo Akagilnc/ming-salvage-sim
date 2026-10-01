@@ -46,7 +46,7 @@ def test_settlement_interaction_lands_directed_edge_with_origin_round(game):
     db, state, content = game
     out = settle_delta(state, db, {'relation_edge_events': [{'施动者': '毕自严', '受动者': '王绍徽', '类目': '使绊', '语境': '毕自严在户部用度上挡了王绍徽的路。', '来源引用': '盘面自发'}]}, SettlementContext(content=content))
     res = view(out, "relation_edge_event_resolutions")
-    assert not any(r.get("rejected") for r in res), res
+    assert rejected_view(out, "relation_edge_event_resolutions") == []
     rows = _edge_rows(db, source="毕自严", target="王绍徽")
     assert len(rows) == 1
     row = rows[0]
@@ -70,7 +70,7 @@ def test_three_way_joint_memorial_expands_lead_to_each_cosigner_only(game):
     db, state, content = game
     out = settle_delta(state, db, {'relation_edge_events': [{'施动者': '温体仁', '受动者': ['周延儒', '黄立极'], '类目': '联名', '语境': '温体仁牵头联合周延儒、黄立极上疏。', '来源引用': '盘面自发'}]}, SettlementContext(content=content))
     res = view(out, "relation_edge_event_resolutions")
-    assert not any(r.get("rejected") for r in res), res
+    assert rejected_view(out, "relation_edge_event_resolutions") == []
     rows = [r for r in _edge_rows(db) if r["event_kind"] == "联名"]
     # 正例：唯一应有集合 {甲→乙, 甲→丙}，同 origin
     assert _triplets(rows) == {
@@ -244,7 +244,7 @@ def test_authorized_dossier_origin_accepted_bound_to_current_turn(game):
     )
     assert padded.category == "invalid_relation_event"
     assert "不归一首尾空白" in padded.reason
-    assert len(res) == 1 and not any(r.get("rejected") for r in res), res
+    assert len(res) == 1
     # 恰一行合法边落库；无归一后的 dossier origin 变体
     rows = _edge_rows(db)
     assert len(rows) == 1
@@ -477,7 +477,7 @@ def test_valid_roster_endpoints_still_land_after_endpoint_gate(game):
     db, state, content = game
     out = settle_delta(state, db, {'relation_edge_events': [{'施动者': '孙传庭', '受动者': ['洪承畴'], '类目': '恩义', '语境': '合格名册双端点。', '来源引用': '盘面自发'}]}, SettlementContext(content=content))
     res = view(out, "relation_edge_event_resolutions")
-    assert not any(r.get("rejected") for r in res), res
+    assert rejected_view(out, "relation_edge_event_resolutions") == []
     assert _triplets(_edge_rows(db)) == {("孙传庭", "洪承畴", "恩义")}
 
 
@@ -495,7 +495,7 @@ def test_interaction_then_same_batch_dismissal_still_lands(game):
     # 人物变更确实生效：该员已出 post 名册（证明拒收不是守门失灵）
     assert db.get_character_status("王绍徽")[0] == "dismissed"
     res = view(out, "relation_edge_event_resolutions")
-    assert not any(r.get("rejected") for r in res), res
+    assert rejected_view(out, "relation_edge_event_resolutions") == []
     row = _edge_rows(db, source="王绍徽", target="毕自严")[0]
     assert (row["source"], row["target"], row["event_kind"]) == ("王绍徽", "毕自严", "结怨")
     assert row["origin"] == f"盘面自发:relation:结怨|round:{state.turn}"
@@ -512,7 +512,7 @@ def test_reinstatement_then_interaction_in_same_batch_still_lands(game):
     # 人物变更确实生效：该员已入 post 名册（证明落库不是 pre 资格）
     assert db.get_character_status("孙承宗")[0] == "active"
     res = view(out, "relation_edge_event_resolutions")
-    assert not any(r.get("rejected") for r in res), res
+    assert rejected_view(out, "relation_edge_event_resolutions") == []
     row = _edge_rows(db, source="孙承宗", target="毕自严")[0]
     assert (row["source"], row["target"], row["event_kind"]) == ("孙承宗", "毕自严", "协作")
 

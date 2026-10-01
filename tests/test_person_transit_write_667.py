@@ -1,12 +1,13 @@
 
-from ming_sim.applier import Provenance
+from ming_sim.entities.character.appointment import apply_office_appointment
+from ming_sim.applier import Provenance, RejectedItem
 import shutil
 import sys
 
 import pytest
 
 from ming_sim import issues
-from ming_sim.issues import apply_office_appointment
+
 from ming_sim.settlement import SettlementContext, settle_delta
 from ming_sim.settlement.views import rejected_view, view
 
@@ -221,7 +222,7 @@ def test_office_appointment_keeps_status_reason_mirrored(
         db, state, content, name, "兵部尚书", reason=appointment_reason,
     source=Provenance.system_simulation)
 
-    assert not result.get("rejected")
+    assert not isinstance(result, RejectedItem), result
     row = db.conn.execute(
         "SELECT status, status_reason, reason_code FROM characters WHERE name=?", (name,),
     ).fetchone()

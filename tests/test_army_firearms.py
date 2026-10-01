@@ -209,8 +209,7 @@ def test_create_army_cannon_nonint_rejected_not_crash(read_game):
     assert db.conn.execute(
         "SELECT COUNT(*) FROM armies WHERE id='cannon_nonint_test'"
     ).fetchone()[0] == 0
-    rej = [c for c in created if c.get("rejected")]
-    assert len(rej) == 1 and rej[0]["category"] == "invalid_enum"
+    assert len(created_rejections) == 1 and created_rejections[0].category == "invalid_enum"
 
 
 def test_apply_army_delta_chinese_keys(game):

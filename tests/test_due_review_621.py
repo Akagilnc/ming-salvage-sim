@@ -77,7 +77,6 @@ def _insert_staged_commitment(
     origin = origin_ref or _promulgated_origin(db, state, title)
     out = settle_delta(state, db, {'new_issues': [{'origin_kind': 'decree', 'origin_ref': origin, 'kind': 'initiative', 'title': title, 'stage_text': '三年火器见眉目，五年新历成。', 'commitment_kind': 'until_stop', 'ongoing_effects': {}, 'stages': stages}]}, SettlementContext(content=content))
     created = issue_rows(out, "new_issues")[0]
-    assert created.get("rejected") is False, created
     return int(created["issue_id"]), origin
 
 

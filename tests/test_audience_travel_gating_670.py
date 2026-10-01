@@ -970,7 +970,7 @@ def test_waiting_active_departure_settles_and_does_not_revive(game):
         }],
         content=content,
     source=Provenance.system_simulation)
-    assert results and not results[0].get("rejected")
+    assert results and results_rejections == []
     assert _travel_row(db, person.name)["transit_to"] == "shaanxi"
     assert an.list_unsettled_summons(db) == []
     assert an.list_waiting_audience_summons(db) == []
@@ -1083,15 +1083,16 @@ def test_waiting_active_departure_commits_transit_log_settle_and_mirror(game):
         ).fetchone()["n"]
     )
 
-    results = apply_person_changes_only(
+    person_bundle = apply_person_changes_only(
         db, state,
         [{
             "name": person.name, "动作": "行止", "transit_to": "shaanxi",
             "origin_ref": "盘面自发",
         }],
         content=content,
-    source=Provenance.system_simulation)["applied_person_changes"]
-    assert results and not results[0].get("rejected")
+    source=Provenance.system_simulation)
+    results = person_bundle["applied_person_changes"]
+    assert results and person_bundle["rejected"] == []
 
     travel = _travel_row(db, person.name)
     assert travel["transit_to"] == "shaanxi"
@@ -1149,7 +1150,7 @@ def test_waiting_active_departure_respects_strategic_preflight_savepoint(game):
         }],
         content=content,
     source=Provenance.system_simulation)
-    assert results and not results[0].get("rejected")
+    assert results and results_rejections == []
     # 预检内可见暂态写，但不得 durable commit 掉 SAVEPOINT。
     assert _travel_row(db, person.name)["transit_to"] == "henan"
     assert an.list_unsettled_summons(db) == []
@@ -1190,7 +1191,7 @@ def test_waiting_active_departure_external_rollback_reverts_transit_and_settle(g
         }],
         content=content,
     source=Provenance.system_simulation)
-    assert results and not results[0].get("rejected")
+    assert results and results_rejections == []
     assert _travel_row(db, person.name)["transit_to"] == "shaanxi"
     assert an.list_unsettled_summons(db) == []
     db.conn.rollback()

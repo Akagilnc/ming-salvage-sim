@@ -344,7 +344,7 @@ def test_relation_edge_events_do_not_mutate_style(game):
 
     out = settle_delta(state, db, {'relation_edge_events': [{'施动者': source, '受动者': target, '类目': '使绊', '语境': '毕自严在户部用度上挡了王绍徽的路。', '来源引用': '盘面自发'}]}, SettlementContext(content=content))
     res = view(out, "relation_edge_event_resolutions")
-    assert not any(r.get("rejected") for r in res), res
+    assert rejected_view(out, "relation_edge_event_resolutions") == []
     rows = db.get_relation_edge_events(source=source, target=target)
     assert len(rows) == 1
     assert _style_row(db, source) == before_db[source]

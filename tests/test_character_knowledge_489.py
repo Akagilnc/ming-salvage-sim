@@ -1023,11 +1023,15 @@ def test_structured_person_scope_replaces_role_wide_world_reports(game):
             item["region_id"] = region_id
         return apply_person_changes_only(
             db, state, [item], content=content,
-        source=Provenance.system_simulation)["applied_person_changes"]
+        source=Provenance.system_simulation)
+
+    def accepted(*args, **kwargs):
+        bundle = appoint(*args, **kwargs)
+        assert bundle["applied_person_changes"] and bundle["rejected"] == [], bundle
+        return bundle["applied_person_changes"]
 
     official = next(c for c in content.characters.values() if c.office_type == "地方")
-    applied = appoint(official.name, "河南巡抚", "地方", region_id="henan")
-    assert applied and not applied[0].get("rejected"), applied
+    applied = accepted(official.name, "河南巡抚", "地方", region_id="henan")
     # Physical presence elsewhere must not rewrite durable 辖域.
     db.conn.execute(
         "UPDATE characters SET location=? WHERE name=?",
@@ -1072,10 +1076,8 @@ def test_structured_person_scope_replaces_role_wide_world_reports(game):
         and db.get_character_status(c.name)[0] == "active"
         and c.office_type not in {"地方", "督抚", "边镇"}
     )
-    a1 = appoint("练国事", "巡抚", "地方", region_id="shaanxi")
-    a2 = appoint(other.name, "巡抚", "地方", region_id="henan")
-    assert a1 and not a1[0].get("rejected"), a1
-    assert a2 and not a2[0].get("rejected"), a2
+    a1 = accepted("练国事", "巡抚", "地方", region_id="shaanxi")
+    a2 = accepted(other.name, "巡抚", "地方", region_id="henan")
     assert db.character_office_region("练国事") == "shaanxi"
     assert db.character_office_region(other.name) == "henan"
     # Cross-province same bare title must not exclusive-displace each other.
@@ -1105,9 +1107,8 @@ def test_structured_person_scope_replaces_role_wide_world_reports(game):
         participants=[{"character_id": pred, "tier": "主办"}],
     )
     # predecessor leaves; successor takes same seat
-    appoint(pred, "闲住", "未仕")
-    s_applied = appoint(succ, "河南巡抚", "地方", region_id="henan")
-    assert s_applied and not s_applied[0].get("rejected"), s_applied
+    accepted(pred, "闲住", "未仕")
+    s_applied = accepted(succ, "河南巡抚", "地方", region_id="henan")
     visible = {
         int(item["id"])
         for item in db.list_referenceable_dossiers(succ, state.turn)
@@ -1153,12 +1154,13 @@ def test_structured_person_scope_replaces_role_wide_world_reports(game):
         "SELECT office, office_type FROM characters WHERE name=?", (bare.name,),
     ).fetchone()
     rejected = appoint(bare.name, "新设巡抚", "地方")
-    assert rejected and rejected[0].get("rejected"), rejected
-    assert rejected[0].get("category") == "missing_field", rejected
-    assert isinstance(rejected[0].get("item"), dict), rejected
-    assert rejected[0]["item"].get("office") == "新设巡抚"
-    assert rejected[0]["item"].get("office_type") == "地方"
-    assert "region_id" not in rejected[0]["item"]
+    refused = rejected["rejected"]
+    assert rejected["applied_person_changes"] == []
+    assert len(refused) == 1 and refused[0].category == "missing_field", refused
+    assert isinstance(refused[0].item, dict), refused
+    assert refused[0].item.get("office") == "新设巡抚"
+    assert refused[0].item.get("office_type") == "地方"
+    assert "region_id" not in refused[0].item
     after = db.conn.execute(
         "SELECT office, office_type FROM characters WHERE name=?", (bare.name,),
     ).fetchone()
@@ -1166,18 +1168,18 @@ def test_structured_person_scope_replaces_role_wide_world_reports(game):
     assert db.get_character_knowledge(state, bare.name)["scope"]["region_ids"] == ()
     # Unknown region_id is typed missing_ref — still no silent empty 辖域.
     unknown = appoint(bare.name, "新设巡抚", "地方", region_id="not_a_region")
-    assert unknown and unknown[0].get("rejected"), unknown
-    assert unknown[0].get("category") == "missing_ref", unknown
-    assert isinstance(unknown[0].get("item"), dict), unknown
-    assert unknown[0]["item"].get("region_id") == "not_a_region"
+    unknown_refused = unknown["rejected"]
+    assert unknown["applied_person_changes"] == []
+    assert len(unknown_refused) == 1 and unknown_refused[0].category == "missing_ref", unknown_refused
+    assert isinstance(unknown_refused[0].item, dict), unknown_refused
+    assert unknown_refused[0].item.get("region_id") == "not_a_region"
     after_unknown = db.conn.execute(
         "SELECT office, office_type FROM characters WHERE name=?", (bare.name,),
     ).fetchone()
     assert after_unknown["office"] == prior_office["office"]
     assert db.get_character_knowledge(state, bare.name)["scope"]["region_ids"] == ()
     # Same real entrance later attaches seat; migration still independent of location.
-    ok = appoint(bare.name, "新设巡抚", "地方", region_id="jiangxi")
-    assert ok and not ok[0].get("rejected"), ok
+    ok = accepted(bare.name, "新设巡抚", "地方", region_id="jiangxi")
     db.conn.execute(
         "UPDATE characters SET location=? WHERE name=?", ("henan", bare.name),
     )

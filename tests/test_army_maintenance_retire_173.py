@@ -82,7 +82,7 @@ def test_existing_save_drops_maintenance_column_on_open(content, tmp_path):
             "id": "post_drop_army", "name": "迁移后新军", "owner_power": "ming",
             "manpower": 5000, **_pay_source(),
         }], source=Provenance.system_simulation)
-        assert not created[0].get("rejected"), f"drop 后建新军 INSERT 应成功不崩：{created[0]}"
+        assert created and created_rejections == [], created
         assert db2.conn.execute("SELECT id FROM armies WHERE id='post_drop_army'").fetchone() is not None
     finally:
         db2.close()
@@ -96,7 +96,7 @@ def test_legacy_new_army_needs_only_manpower(game):
     created, created_rejections = db.create_armies_from_extraction(state, [{
         "id": "qin_army_x", "name": "秦军营", "owner_power": "ming", "manpower": 8000,
     }], source=Provenance.system_simulation)
-    assert not created[0].get("rejected"), f"只给 manpower 应建军成功：{created[0]}"
+    assert created and created_rejections == [], created
     assert db.conn.execute("SELECT id FROM armies WHERE id='qin_army_x'").fetchone() is not None
 
 
@@ -107,7 +107,7 @@ def test_new_army_maintenance_key_ignored(game):
         "id": "qin_army_y", "name": "秦军乙", "owner_power": "ming",
         "manpower": 5000, "maintenance_per_turn": 99, "维护费": 99, **_pay_source(),
     }], source=Provenance.system_simulation)
-    assert not created[0].get("rejected"), f"塞维护费键不应拒整军：{created[0]}"
+    assert created and created_rejections == [], created
     assert db.conn.execute("SELECT id FROM armies WHERE id='qin_army_y'").fetchone() is not None
 
 
@@ -116,7 +116,7 @@ def test_new_army_still_requires_manpower(read_game):
     created, created_rejections = db.create_armies_from_extraction(state, [{
         "id": "qin_army_z", "name": "无兵营", "owner_power": "ming",
     }], source=Provenance.system_simulation)
-    assert created[0].get("rejected"), "缺 manpower 应拒建军"
+    assert created_rejections and created_rejections[0].category == "invalid_enum" and not created
     assert db.conn.execute("SELECT id FROM armies WHERE id='qin_army_z'").fetchone() is None
 
 
@@ -127,7 +127,7 @@ def test_new_army_inf_manpower_rejected_not_crash(read_game):
     created, created_rejections = db.create_armies_from_extraction(state, [{
         "id": "inf_army", "name": "无穷营", "owner_power": "ming", "manpower": float("inf"),
     }], source=Provenance.system_simulation)
-    assert created[0].get("rejected"), "inf manpower 应拒建军"
+    assert created_rejections and created_rejections[0].category == "invalid_enum" and not created
     assert db.conn.execute("SELECT id FROM armies WHERE id='inf_army'").fetchone() is None
 
 
@@ -155,9 +155,8 @@ def test_army_delta_maintenance_rejected_as_invalid_field(game, field_key):
         "SELECT id FROM armies WHERE owner_power='ming' LIMIT 1").fetchone()["id"])
     changes, changes_rejections = db.apply_army_deltas(
         state, _pseudo("加饷"), None, "户部", {aid: {field_key: 5, "reason": "诏加饷"}}, source=Provenance.system_simulation)
-    rejected = [c for c in changes if c.get("rejected")]
-    assert rejected and rejected[0]["category"] == "invalid_enum", \
-        f"写维护费应作非法字段拒收(invalid_enum)：{changes}"
+    assert changes_rejections and changes_rejections[0].category == "invalid_enum", \
+        f"写维护费应作非法字段拒收(invalid_enum)：{changes_rejections}"
 
 
 def test_army_delta_other_fields_still_apply(game):

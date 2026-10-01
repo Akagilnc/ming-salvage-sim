@@ -31,12 +31,12 @@ def apply_person_changes(
         normalize_reason_code,
         resolve_person_transition,
     )
+    from ming_sim.entities.character.appointment import apply_office_appointment
     from ming_sim.issues import (
         _admit_transit_departure,
         _load_pending_gate_valid_regions,
         _parse_sqlite_id,
         _payload_owned_person_duplicate,
-        apply_office_appointment,
     )
 
     def rejected(item, reason, category, *, status=None) -> RejectedItem:

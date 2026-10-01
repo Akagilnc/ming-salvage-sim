@@ -1,5 +1,6 @@
 """#564 强颁与毁约的确定性代价轨（ADR 0056）。"""
 
+from ming_sim.entities.issue.tracker import apply_issue_tracker_output
 from ming_sim.applier import Provenance
 
 import json
@@ -245,8 +246,8 @@ def test_cancel_linked_issue_breaches_only_its_origin_dossier_once(game):
     popular_support = state.metrics["民心"]
     cancel = {"issue_id": issue_id, "narrative": "撤回成命", "applied_cost": {"metrics": {"民心": -9}}}
 
-    issues.apply_issue_tracker_output(db, state, {"cancels": [cancel]}, source=Provenance.system_simulation)
-    issues.apply_issue_tracker_output(db, state, {"cancels": [cancel]}, source=Provenance.system_simulation)
+    apply_issue_tracker_output(db, state, {"cancels": [cancel]}, source=Provenance.system_simulation)
+    apply_issue_tracker_output(db, state, {"cancels": [cancel]}, source=Provenance.system_simulation)
 
     assert db.conn.execute("SELECT status FROM issues WHERE id=?", (issue_id,)).fetchone()[0] == "dropped"
     assert db.get_decree_dossier(dossier_id)["status"] == "closed"
@@ -453,7 +454,7 @@ def test_commit_false_breach_rolls_back_with_later_cancellation_failure(game, mo
     monkeypatch.setattr(db, "cancel_issue", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("later")))
     with pytest.raises(RuntimeError, match="later"):
         with atomic(db):
-            issues.apply_issue_tracker_output(db, state, {"cancels": [{"issue_id": issue_id}]}, source=Provenance.system_simulation)
+            apply_issue_tracker_output(db, state, {"cancels": [{"issue_id": issue_id}]}, source=Provenance.system_simulation)
     assert db.get_decree_dossier(dossier_id)["status"] == "executing"
     assert _cost_events(db, dossier_id) == []
     # DB truth rolled back; caller reload owns the in-memory mirror.
@@ -488,7 +489,7 @@ def test_active_commitment_can_breach_closed_issued_dossier_but_not_never_issued
                                origin_ref=f"dossier:{never}", cancellable="decree", commitment_kind="funding")
 
     # #623：cancel 承诺 → 当回合只写挽留，不即时 0056
-    issues.apply_issue_tracker_output(db, state, {"cancels": [{"issue_id": active}]}, source=Provenance.system_simulation)
+    apply_issue_tracker_output(db, state, {"cancels": [{"issue_id": active}]}, source=Provenance.system_simulation)
     assert _cost_events(db, issued) == []
     plea = next(
         t for t in db.list_next_audience_todos(status="pending")
@@ -501,7 +502,7 @@ def test_active_commitment_can_breach_closed_issued_dossier_but_not_never_issued
     assert db.get_decree_dossier(issued)["closed_turn"] == closed_turn
 
     # 未颁发案卷：cancel 可写挽留，但坚持时 0056 不得落（无合法颁发源）
-    issues.apply_issue_tracker_output(db, state, {"cancels": [{"issue_id": excluded}]}, source=Provenance.system_simulation)
+    apply_issue_tracker_output(db, state, {"cancels": [{"issue_id": excluded}]}, source=Provenance.system_simulation)
     never_pleas = [
         t for t in db.list_next_audience_todos(status="pending")
         if t.get("entry_kind") == ENTRY_KIND_BREACH_PLEA

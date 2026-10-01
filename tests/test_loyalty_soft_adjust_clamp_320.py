@@ -38,7 +38,7 @@ def _loyalty(db) -> int:
 
 
 def _apply(db, state, delta: dict, *, event=None, origin_ref: str = ""):
-    return db.apply_army_deltas(
+    changes, _rejections = db.apply_army_deltas(
         state,
         event or _event(),
         None,
@@ -46,6 +46,7 @@ def _apply(db, state, delta: dict, *, event=None, origin_ref: str = ""):
         {ARMY: delta},
         origin_ref=origin_ref,
     source=Provenance.system_simulation)
+    return changes
 
 
 def test_positive_large_delta_clamped_to_plus_15(game):
@@ -56,7 +57,7 @@ def test_positive_large_delta_clamped_to_plus_15(game):
     changes = _apply(db, state, {"loyalty": 50})
 
     assert _loyalty(db) == 55
-    loyalty_changes = [c for c in changes if c.get("field") == "loyalty" and not c.get("rejected")]
+    loyalty_changes = [c for c in changes if c.get("field") == "loyalty"]
     assert loyalty_changes and loyalty_changes[0]["delta"] == 15
     assert loyalty_changes[0]["old"] == 40
     assert loyalty_changes[0]["new"] == 55
@@ -177,7 +178,7 @@ def test_canonical_and_alias_same_event_do_not_double_count_positive(game):
 
     assert _loyalty(db) == 85
     assert _loyalty(db) != 100
-    loyalty_changes = [c for c in changes if c.get("field") == "loyalty" and not c.get("rejected")]
+    loyalty_changes = [c for c in changes if c.get("field") == "loyalty"]
     assert len(loyalty_changes) == 1
     assert loyalty_changes[0]["delta"] == 15
     assert loyalty_changes[0]["old"] == 70
@@ -193,7 +194,7 @@ def test_canonical_and_alias_same_event_do_not_double_count_negative(game):
 
     assert _loyalty(db) == 55
     assert _loyalty(db) != 40
-    loyalty_changes = [c for c in changes if c.get("field") == "loyalty" and not c.get("rejected")]
+    loyalty_changes = [c for c in changes if c.get("field") == "loyalty"]
     assert len(loyalty_changes) == 1
     assert loyalty_changes[0]["delta"] == -15
     assert loyalty_changes[0]["old"] == 70

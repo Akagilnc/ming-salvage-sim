@@ -7,7 +7,8 @@ issue #104 原提议的 `c.status != "offstage"` 会把「DB 已 active 但内�
 """
 from __future__ import annotations
 
-from ming_sim.applier import Provenance
+from ming_sim.entities.character.appointment import apply_office_appointment
+from ming_sim.applier import Provenance, RejectedItem
 
 from types import SimpleNamespace
 
@@ -496,11 +497,11 @@ def test_identity_resolves_weishi_and_vassal_aliases_no_duplicate_file(game):
         r["name"]
         for r in db.conn.execute("SELECT name FROM characters").fetchall()
     }
-    res = issues.apply_office_appointment(
+    res = apply_office_appointment(
         db, state, content, "史宪之", "兵部职方司主事",
         reason="#1317 r2 别名入仕", new_office_type="兵部",
     source=Provenance.system_simulation)
-    assert not res.get("rejected"), res
+    assert not isinstance(res, RejectedItem), res
     assert res.get("name") == "史可法"
     after = {
         r["name"]
@@ -525,11 +526,12 @@ def test_identity_resolves_weishi_and_vassal_aliases_no_duplicate_file(game):
         r["name"]
         for r in db.conn.execute("SELECT name FROM characters").fetchall()
     }
-    res_p = issues.apply_office_appointment(
+    res_p = apply_office_appointment(
         db, state, content, "福王", "兵部尚书", reason="幻觉授宗藩",
     source=Provenance.system_simulation)
-    assert res_p.get("rejected") is True
-    assert "宗藩" in str(res_p.get("reason") or "")
+    assert isinstance(res_p, RejectedItem)
+    assert res_p.category == "invalid_transition"
+    assert "宗藩" in res_p.reason
     after_p = {
         r["name"]
         for r in db.conn.execute("SELECT name FROM characters").fetchall()

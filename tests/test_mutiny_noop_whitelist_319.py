@@ -425,7 +425,6 @@ def test_pay_clear_via_economy_moves_next_tick_loyalty_plus_5(game, fiscal_path)
             "target_kind": "army",
             "target_id": ARMY,
         }],
-        commit=True,
     source=Provenance.system_simulation)
     assert any(m.get("applied") for m in applied if isinstance(m, dict))
 
@@ -487,12 +486,9 @@ def test_latched_cutover_rejects_invalid_pay_source_share(game):
         state, _event(), None, "测试", {ARMY: dict(bad)}
     , source=Provenance.system_simulation)
 
-    rejected = [
-        c for c in changes
-        if c.get("rejected") and c.get("category") == "invalid_enum"
-    ]
-    assert rejected, f"畸形 share 应 invalid_enum 拒收：{changes}"
-    assert any("饷源比例和必须为 1" in str(c.get("reason") or "") for c in rejected)
+    rejected = [c for c in changes_rejections if c.category == "invalid_enum"]
+    assert rejected, f"畸形 share 应 invalid_enum 拒收：{changes_rejections}"
+    assert any("饷源比例和必须为 1" in c.reason for c in rejected)
     assert _snapshot(db, PAY_SOURCE_DENY_FIELDS) == before
 
 
@@ -508,12 +504,9 @@ def test_latched_cutover_rejects_unknown_pay_source_region(game):
         state, _event(), None, "测试", {ARMY: dict(bad)}
     , source=Provenance.system_simulation)
 
-    rejected = [
-        c for c in changes
-        if c.get("rejected") and c.get("category") == "invalid_enum"
-    ]
-    assert rejected, f"不存在 region 应 invalid_enum 拒收：{changes}"
-    assert any("未入库" in str(c.get("reason") or "") for c in rejected)
+    rejected = [c for c in changes_rejections if c.category == "invalid_enum"]
+    assert rejected, f"不存在 region 应 invalid_enum 拒收：{changes_rejections}"
+    assert any("未入库" in c.reason for c in rejected)
     assert _snapshot(db, PAY_SOURCE_DENY_FIELDS) == before
 
 

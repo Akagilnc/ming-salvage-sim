@@ -69,9 +69,7 @@ def test_yuan_arrears_paid_then_arrives_e2e(game):
         assert new_arrears == 0, (
             f"补饷未真扣减欠饷：arrears0={arrears0} → new={new_arrears}（前置条件没经引擎满足）"
         )
-        assert any(
-            not m.get("rejected") for m in view(applied, "economy_moves")
-        ), "补饷 economy_move 应被落库应用"
+        assert view(applied, "economy_moves"), "补饷 economy_move 应被落库应用"
 
         arrived = db.conn.execute(
             "SELECT status, location, transit_to, transit_distance_remaining, "

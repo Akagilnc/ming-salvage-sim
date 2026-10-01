@@ -271,9 +271,7 @@ def test_empty_source_delta_cannot_defect_latched_first_or_second_strike(
         assert after["owner_power"] == "ming"
         assert after["is_mutinied"] == 1
         # 拒收或 no-op：不得出现成功的 owner 变更
-        assert not any(
-            c.get("field") == "owner_power" and not c.get("rejected") for c in changes
-        )
+        assert not any(c.get("field") == "owner_power" for c in changes)
 
 
 def test_non_latched_generic_owner_change_still_works_via_adapter(game):
@@ -303,7 +301,7 @@ def test_non_latched_generic_owner_change_still_works_via_adapter(game):
     source=Provenance.system_simulation)
 
     row = db.conn.execute("SELECT * FROM armies WHERE id=?", (ARMY,)).fetchone()
-    assert not any(c.get("rejected") for c in changes)
+    assert changes_rejections == []
     assert row["owner_power"] == "houjin"
     assert row["is_mutinied"] == 0
     assert float(row["arrears"]) == pytest.approx(0)
@@ -357,7 +355,7 @@ def test_transfer_to_ming_rejects_mutiny_count_ge_3(game, cutover):
     ).fetchone()
     assert row["owner_power"] == "bandits"
     assert row["mutiny_count"] == 3
-    assert any(c.get("rejected") for c in changes)
+    assert changes_rejections
 
 
 @pytest.mark.parametrize("cutover", (0, 1))
@@ -387,7 +385,7 @@ def test_transfer_to_ming_requires_d6_pay_source(game, cutover):
         {ARMY: {"owner_power": "ming", "reason": "招安"}},
         commit=False,
     source=Provenance.system_simulation)
-    assert any(c.get("rejected") for c in rejected)
+    assert rejected_rejections
     assert (
         db.conn.execute(
             "SELECT owner_power FROM armies WHERE id=?", (ARMY,)
@@ -412,7 +410,7 @@ def test_transfer_to_ming_requires_d6_pay_source(game, cutover):
         commit=False,
     source=Provenance.system_simulation)
     row = db.conn.execute("SELECT * FROM armies WHERE id=?", (ARMY,)).fetchone()
-    assert not any(c.get("rejected") for c in ok)
+    assert ok_rejections == []
     assert row["owner_power"] == "ming"
     assert row["pay_source_region"] == "liaodong"
     assert float(row["province_pay_share"] or 0) == pytest.approx(0.0)

@@ -13,6 +13,8 @@ Seams:
 
 from __future__ import annotations
 
+from ming_sim.entities.issue.tracker import apply_issue_tracker_output
+
 from ming_sim.applier import Provenance
 
 import json
@@ -42,7 +44,7 @@ from ming_sim.due_review import (
     dossiers_with_pending_due_review,
     list_due_review_scenes,
 )
-from ming_sim.issues import apply_issue_tracker_output
+
 from ming_sim.models import TurnPhase
 from ming_sim.staged_commitment import (
     ENTRY_KIND_STAGED,
@@ -939,7 +941,6 @@ def test_merged_persist_via_tracker_cancel_settles(game):
     hit = [c for c in cancels if int(c.get("issue_id") or 0) == int(cid)]
     assert hit, f"cancel 须命中承诺，got={cancels!r}"
     assert hit[0].get("breach_plea_decision") == "persist"
-    assert hit[0].get("rejected") is False
     # todo consumed
     assert _pending_pleas(db) == []
     todo_row = db.conn.execute(

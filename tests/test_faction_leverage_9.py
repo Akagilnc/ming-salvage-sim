@@ -13,11 +13,13 @@
 
 from __future__ import annotations
 
-from ming_sim.applier import Provenance
+from ming_sim.entities.character.appointment import apply_office_appointment
+
+from ming_sim.applier import Provenance, RejectedItem
 
 import pytest
 
-from ming_sim.issues import apply_office_appointment
+
 
 
 def _yandang_core(db):
@@ -160,8 +162,8 @@ def test_restore_uses_new_office_weight_not_old(game):
 
     # cmr R3 finding#3 防假绿：两次任命都必须真落库（未被拒）——若低职任命被拒(inc_low=0)，
     # 高职任命成功仍满足 inc_high>inc_low，本测试会假绿（没真验「加的是新职权重」）。
-    assert not result_lo.get("rejected"), f"起复到地方不应被拒：{result_lo}"
-    assert not result_hi.get("rejected"), f"起复到内阁不应被拒：{result_hi}"
+    assert not isinstance(result_lo, RejectedItem), result_lo
+    assert not isinstance(result_hi, RejectedItem), result_hi
     # 低职起复后该人应 active 且 office 含目标低职（新职权重确被计入，而非任命形同未发生）。
     assert db.get_character_status(name_lo)[0] == "active", "低职起复后该人应 active"
     lo_office = db.conn.execute(
@@ -200,18 +202,16 @@ def test_promotion_via_set_character_office_raises_leverage(game):
 
 
 def test_failed_appointment_rolls_back_faction_leverage(game):
-    """#9 finding#2 事务回滚：失败的 apply_office_appointment（走 _restore_person_write_state）后，
-    该 faction leverage 与调用前一致（中途全重算被回滚、不漂移）。"""
+    """代码故障原样上抛，由外层事务回滚 leverage 与人物状态。"""
+    from ming_sim.applier import atomic
+
     db, state, content = game
-    # 构造失败：起复一个在册阉党成员，但 set_character_office 抛错（授个会让 infer 报错的非法链）。
-    # 更稳的失败注入：monkeypatch set_character_office 抛错，验回滚还原 leverage。
     name = db.conn.execute(
         "SELECT name FROM characters WHERE faction='阉党' AND status='active' "
         "AND office_type NOT IN ('后宫','宗藩','未仕','') LIMIT 1"
     ).fetchone()
     assert name is not None
     name = name["name"]
-    # 先退场，制造一个「起复」场景（起复路会 set_character_status(active)→全重算→再 set_character_office）。
     db.set_character_status(state, name, "dismissed", reason="清算")
     before = db.faction_leverage("阉党")
 
@@ -222,18 +222,19 @@ def test_failed_appointment_rolls_back_faction_leverage(game):
 
     db.set_character_office = _boom  # type: ignore[assignment]
     try:
-        result = apply_office_appointment(
-            db, state, content, name, "内阁大学士", reason="起复内阁", faction="阉党"
-        , source=Provenance.system_simulation)
+        with pytest.raises(RuntimeError, match="注入故障"):
+            with atomic(db):
+                apply_office_appointment(
+                    db, state, content, name, "内阁大学士", reason="起复内阁", faction="阉党",
+                    source=Provenance.system_simulation,
+                )
     finally:
         db.set_character_office = orig  # type: ignore[assignment]
 
-    assert result.get("rejected"), f"注入故障应使任命 rejected：{result}"
     after = db.faction_leverage("阉党")
     assert after == before, (
         f"失败任命回滚后阉党 leverage 应不变(before={before} after={after})"
     )
-    # 人物状态也应回滚（仍 dismissed，未被中途 set_character_status(active) 残留）
     assert db.get_character_status(name)[0] == "dismissed", "失败任命应回滚人物状态"
 
 
@@ -262,7 +263,7 @@ def test_displaced_minister_faction_leverage_recomputed(game):
     result = apply_office_appointment(
         db, state, content, "孙承宗", "兵部尚书", reason="起复掌兵部", faction="东林"
     , source=Provenance.system_simulation)
-    assert not result.get("rejected"), f"任命不应被拒：{result}"
+    assert not isinstance(result, RejectedItem), result
     assert result.get("displaced"), f"应顶替崔呈秀的兵部尚书：{result}"
     after = db.faction_leverage("阉党")
     assert after < before, (
@@ -350,7 +351,7 @@ def test_add_character_appointment_lifts_faction_leverage(game):
     result = apply_office_appointment(
         db, state, content, new_name, "翰林院侍读学士", reason="新科入翰林", faction=faction
     , source=Provenance.system_simulation)
-    assert not result.get("rejected"), f"新大臣任命不应被拒：{result}"
+    assert not isinstance(result, RejectedItem), result
     assert result.get("kind") == "appoint", f"应走新建档(appoint)路：{result}"
     # 新成员确入册且 active/ming（add_character 落库成功），权重和随之上升。
     after_ws = db._faction_office_weight_sum(faction)

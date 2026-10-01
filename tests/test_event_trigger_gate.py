@@ -6,6 +6,7 @@ seed 情势，历史 `events` 分支只过纯日历窗口 `_event_window_open` �
 才进候选；无 gate（空 dict）= 纯日历锚定，行为不变。
 """
 
+from ming_sim.entities.issue.tracker import apply_issue_tracker_output
 from ming_sim.applier import Provenance
 import json
 from contextlib import contextmanager
@@ -405,7 +406,7 @@ def test_event_pool_apply_uses_pushed_candidate_snapshot_not_fresh_recompute(gam
         assert ev.id in {candidate.id for candidate in issues.gather_candidate_events(state, db)}
 
         state.metrics["民心"] = 60
-        out = issues.apply_issue_tracker_output(
+        out = apply_issue_tracker_output(
             db,
             state,
             {"new_issues": [{"origin_kind": "event_pool", "id": ev.id}]},
@@ -981,7 +982,7 @@ def test_mao_wenlong_event_trigger_lands_character_status(game):
         assert any(ev.id == "mao_wenlong" for ev in cands)
         before_logs = db.conn.execute("SELECT COUNT(*) FROM person_logs WHERE person_name=?", ("毛文龙",)).fetchone()[0]
 
-        out = issues.apply_issue_tracker_output(
+        out = apply_issue_tracker_output(
             db,
             state,
             {"new_issues": [{"origin_kind": "event_pool", "id": "mao_wenlong"}]},
@@ -1048,7 +1049,7 @@ def test_direct_issue_tracker_rejects_strategic_event_without_world_state_delta(
 
     assert any(ev.id == "jisi_lubian" for ev in issues.gather_candidate_events(state, db))
 
-    out = issues.apply_issue_tracker_output(
+    out = apply_issue_tracker_output(
         db,
         state,
         {"new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}]},
@@ -1477,7 +1478,7 @@ def test_mao_wenlong_event_trigger_respects_outer_transaction_rollback(game):
 
         db.conn.execute("BEGIN")
         issues._register_runtime_rollback_snapshot(db, state, content)
-        out = issues.apply_issue_tracker_output(
+        out = apply_issue_tracker_output(
             db,
             state,
             {"new_issues": [{"origin_kind": "event_pool", "id": "mao_wenlong"}]},
@@ -1508,7 +1509,7 @@ def test_issue_tracker_rollback_restores_bound_content_when_content_omitted(game
 
         db.conn.execute("BEGIN")
         issues._register_runtime_rollback_snapshot(db, state, content)
-        out = issues.apply_issue_tracker_output(
+        out = apply_issue_tracker_output(
             db,
             state,
             {"new_issues": [{"origin_kind": "event_pool", "id": "mao_wenlong"}]},
@@ -1532,7 +1533,7 @@ def test_issue_tracker_rollback_removes_dynamic_character_attrs(game):
 
     db.conn.execute("BEGIN")
     issues._register_runtime_rollback_snapshot(db, state, content)
-    issues.apply_issue_tracker_output(db, state, {"advances": []}, content=content, source=Provenance.system_simulation)
+    apply_issue_tracker_output(db, state, {"advances": []}, content=content, source=Provenance.system_simulation)
     character._test_runtime_ghost_attr = "ghost"
     db.conn.rollback()
 
@@ -1581,7 +1582,7 @@ def test_event_pool_situation_insert_respects_outer_transaction_rollback(game):
     content.event_by_id[ev.id] = ev
     try:
         db.conn.execute("BEGIN")
-        out = issues.apply_issue_tracker_output(
+        out = apply_issue_tracker_output(
             db,
             state,
             {"new_issues": [{"origin_kind": "event_pool", "id": ev.id}]},
@@ -1609,7 +1610,7 @@ def test_mao_wenlong_event_pool_rechecks_gate_before_effect(game):
     db.conn.execute("UPDATE characters SET loyalty = ? WHERE name = ?", (70, "毛文龙"))
     before_logs = db.conn.execute("SELECT COUNT(*) FROM person_logs WHERE person_name=?", ("毛文龙",)).fetchone()[0]
 
-    out = issues.apply_issue_tracker_output(
+    out = apply_issue_tracker_output(
         db,
         state,
         {"new_issues": [{"origin_kind": "event_pool", "id": "mao_wenlong"}]},
@@ -2401,7 +2402,7 @@ def test_mao_wenlong_event_pool_uses_candidate_snapshot_before_advances(game):
     try:
         assert all(c.id != ev.id for c in issues.gather_candidate_events(state, db))
 
-        out = issues.apply_issue_tracker_output(
+        out = apply_issue_tracker_output(
             db,
             state,
             {
@@ -2494,7 +2495,7 @@ def test_event_pool_rechecks_after_advances_close_gate(game):
     try:
         assert any(c.id == ev.id for c in issues.gather_candidate_events(state, db))
 
-        out = issues.apply_issue_tracker_output(
+        out = apply_issue_tracker_output(
             db,
             state,
             {
@@ -2556,7 +2557,7 @@ def test_event_pool_rechecks_after_prior_event_effect_closes_gate(game):
         cands = issues.gather_candidate_events(state, db)
         assert {first.id, second.id}.issubset({c.id for c in cands})
 
-        out = issues.apply_issue_tracker_output(
+        out = apply_issue_tracker_output(
             db,
             state,
             {
@@ -2590,7 +2591,7 @@ def test_issue_tracker_decree_new_issue_respects_outer_transaction_rollback(game
     db.conn.commit()
 
     db.conn.execute("BEGIN")
-    out = issues.apply_issue_tracker_output(
+    out = apply_issue_tracker_output(
         db,
         state,
         {
@@ -2633,7 +2634,7 @@ def test_issue_tracker_advance_respects_outer_transaction_rollback(game):
     db.conn.commit()
 
     db.conn.execute("BEGIN")
-    out = issues.apply_issue_tracker_output(
+    out = apply_issue_tracker_output(
         db,
         state,
         {"advances": [{"issue_id": issue_id, "delta_bar": 7, "stage_text": "推进后"}]},
@@ -2669,7 +2670,7 @@ def test_issue_tracker_advance_effects_respect_outer_transaction_rollback(game):
     db.conn.commit()
 
     db.conn.execute("BEGIN")
-    out = issues.apply_issue_tracker_output(
+    out = apply_issue_tracker_output(
         db,
         state,
         {"advances": [{"issue_id": issue_id, "delta_bar": 10, "stage_text": "办成"}]},
@@ -2709,7 +2710,7 @@ def test_issue_tracker_close_respects_outer_transaction_rollback(game):
     db.conn.commit()
 
     db.conn.execute("BEGIN")
-    out = issues.apply_issue_tracker_output(
+    out = apply_issue_tracker_output(
         db,
         state,
         {"close_issues": [{"issue_id": issue_id, "reason": "resolved", "narrative": "结案"}]},
@@ -2757,7 +2758,7 @@ def test_issue_tracker_close_effects_respect_outer_transaction_rollback(game):
     db.conn.commit()
 
     db.conn.execute("BEGIN")
-    out = issues.apply_issue_tracker_output(
+    out = apply_issue_tracker_output(
         db,
         state,
         {"close_issues": [{"issue_id": issue_id, "reason": "resolved", "narrative": "结案"}]},
@@ -2811,7 +2812,7 @@ def test_issue_tracker_close_entity_effects_respect_outer_transaction_rollback(g
     db.conn.commit()
 
     db.conn.execute("BEGIN")
-    out = issues.apply_issue_tracker_output(
+    out = apply_issue_tracker_output(
         db,
         state,
         {"close_issues": [{"issue_id": issue_id, "reason": "resolved", "narrative": "结案"}]},
@@ -2853,7 +2854,7 @@ def test_issue_tracker_close_legacy_expiry_respects_outer_transaction_rollback(g
     db.conn.commit()
 
     db.conn.execute("BEGIN")
-    out = issues.apply_issue_tracker_output(
+    out = apply_issue_tracker_output(
         db,
         state,
         {"close_issues": [{"issue_id": issue_id, "reason": "resolved", "narrative": "结案"}]},
@@ -3825,7 +3826,7 @@ def test_event_pool_pending_gate_reuses_shadow_prefetch_across_new_issues(game, 
     monkeypatch.setattr(issues, "gather_candidate_events", fake_gather_candidate_events)
     db.conn.set_trace_callback(trace)
     try:
-        out = issues.apply_issue_tracker_output(
+        out = apply_issue_tracker_output(
             db,
             state,
             {
@@ -4146,7 +4147,7 @@ def test_issue_tracker_cancel_respects_outer_transaction_rollback(game):
     db.conn.commit()
 
     db.conn.execute("BEGIN")
-    out = issues.apply_issue_tracker_output(
+    out = apply_issue_tracker_output(
         db,
         state,
         {"cancels": [{"issue_id": issue_id, "narrative": "撤办"}]},
@@ -4179,7 +4180,7 @@ def test_issue_tracker_cancel_cost_respects_outer_transaction_rollback(game):
     db.conn.commit()
 
     db.conn.execute("BEGIN")
-    out = issues.apply_issue_tracker_output(
+    out = apply_issue_tracker_output(
         db,
         state,
         {
@@ -4299,7 +4300,7 @@ def test_mao_wenlong_event_obsolete_when_core_subject_already_dead(game):
 
     issues.apply_event_terminal_states(state, db)
 
-    out = issues.apply_issue_tracker_output(
+    out = apply_issue_tracker_output(
         db,
         state,
         {"new_issues": [{"origin_kind": "event_pool", "id": "mao_wenlong"}]},
@@ -4341,7 +4342,7 @@ def test_mao_wenlong_event_excluded_when_yuan_unavailable(game):
         cands = issues.gather_candidate_events(state, db)
         assert all(ev.id != "mao_wenlong" for ev in cands), yuan_status
 
-        out = issues.apply_issue_tracker_output(
+        out = apply_issue_tracker_output(
             db,
             state,
             {"new_issues": [{"origin_kind": "event_pool", "id": "mao_wenlong"}]},
@@ -4398,7 +4399,7 @@ def test_event_pool_current_candidate_recheck_cached_until_state_changes(game, m
 
     monkeypatch.setattr(issues, "gather_candidate_events", fake_gather_candidate_events)
     try:
-        out = issues.apply_issue_tracker_output(
+        out = apply_issue_tracker_output(
             db,
             state,
             {
@@ -4432,7 +4433,7 @@ def test_mao_wenlong_event_pool_duplicate_emit_is_idempotent(game):
     with _restore_yuan_as_guanning_commander(db, content):
         before_logs = db.conn.execute("SELECT COUNT(*) FROM person_logs WHERE person_name=?", ("毛文龙",)).fetchone()[0]
 
-        out = issues.apply_issue_tracker_output(
+        out = apply_issue_tracker_output(
             db,
             state,
             {"new_issues": [

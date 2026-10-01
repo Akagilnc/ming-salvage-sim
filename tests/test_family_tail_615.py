@@ -71,7 +71,6 @@ def _grant_self_scope_authority(db, state, content, holder):
     )
     db.record_dossier_decision(grant_id, "promulgated")
     result = view(settle_delta(state, db, {'authority_changes': [{'动作': '授予', 'holder_id': holder, 'privilege': '便宜行事', 'scope': f'character:{holder}', 'dossier_id': grant_id}]}, SettlementContext(content=content)), "authority_changes")[0]
-    assert result.get("rejected") is not True
     return int(result["authority_id"])
 
 
