@@ -292,7 +292,7 @@ export function DecisionModal({
           <div className="decision-document-section">
             <span className="decision-section-label">疏文</span>
             <h3 id="decision-document-title">{cur.title}</h3>
-            <p>{cur.context || "臣等谨陈时局，请陛下裁夺。"}</p>
+            <p>{cur.context}</p>
             {rescript && cur.actor_name ? (
               <p className="decision-actor">票拟：{cur.actor_name}
                 {cur.actor_office ? `（${cur.actor_office}）` : ""}

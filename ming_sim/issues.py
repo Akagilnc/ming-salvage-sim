@@ -3787,18 +3787,18 @@ def _fiscal_levy_answered_event_ids(db: GameDB, turn: int) -> set[str]:
 
 def _fiscal_levy_declared_outcome_label_or_error(
     db: GameDB, state: GameState, ev: Event, outcome: Dict[str, object],
-) -> tuple[str, str]:
-    """请饷／议停事件声明结局 → 闭集标签。
+) -> None:
+    """逐笔核对请饷／议停声明是否落在闭集里。
 
-    键不在声明里＝留中，不报错。键在、值却归不出闭集标签（空对象、空串、
-    闭集外）＝响亮失败，不写脏串（ADR 0020）。与落账写口走同一归一器。
+    键不在这一笔里＝这一笔没有结局，不报错。键在、值却归不出闭集标签（空对象、
+    空串、闭集外）＝响亮失败，不写脏串（ADR 0020）。与落账写口走同一归一器。
     """
     del db
     if ev.id not in outcome:
-        return "", ""
+        return
     label = _event_outcome_label(outcome, ev.id)
     raw = label if label else outcome.get(ev.id)
-    return _fiscal_levy_normalized_terminal_reason_or_abort(ev, raw, state), ""
+    _fiscal_levy_normalized_terminal_reason_or_abort(ev, raw, state)
 
 
 def _apply_fiscal_levy_declared_outcomes(
@@ -4600,18 +4600,13 @@ def _preflight_declared_event_groups(
             if event_id not in _fiscal_levy_answered_event_ids(db, int(state.turn)):
                 _reject(pending, f"饷率事件本段未答，无御批可译：{event_id}")
                 continue
-            outcome: Dict[str, object] = {}
             for item in group:
                 piece = item.get("事件结局") or {}
                 if isinstance(piece, dict):
-                    # 闭集先看每一笔实际声明。归并后再验会让后项盖掉闭集外的值。
+                    # 逐笔核对。归并后再验会让后一笔盖掉前一笔闭集外的值。
                     _fiscal_levy_declared_outcome_label_or_error(db, state, event, piece)
-                outcome.update(piece)
-            label, error = _fiscal_levy_declared_outcome_label_or_error(
-                db, state, event, outcome,
-            )
-            if error:
-                _reject(pending, error)
+                else:
+                    _fiscal_levy_normalized_terminal_reason_or_abort(event, piece, state)
             continue
         if not _is_strategic_foreign_node_event(event):
             _reject(pending, f"效果归属的战略事件不存在：{event_id}")

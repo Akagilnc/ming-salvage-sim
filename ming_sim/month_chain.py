@@ -29,6 +29,7 @@ _LEVY_PETITION_PREFIX = "levy-petition:"
 # 与 <<DECISION>> 同一类机标：切前缀与交接读取共用这一条，不另写切分。
 # 括号里是整段载荷。只认 `{...}` 会把 null / 数组看成「没有块」。
 _LEVY_BLOCK_RE = re.compile(r"<<LEVY>>(.*?)<<END>>", re.DOTALL)
+_LEVY_OPEN = "<<LEVY>>"
 # 世界段生产指令与用户消息里的交接契约共用这一句，避免一边只认 DECISION。
 LEVY_HANDOFF_RULE = (
     "levy_petitions 的数组顺序就是本月交接顺序。"
@@ -109,6 +110,24 @@ def _world_segment_message(db: Any, state: Any, cheat_directive: str) -> str:
     }, ensure_ascii=False)
 
 
+def _unclosed_levy_opener(text: str) -> Optional[int]:
+    """``<<LEVY>>`` 已经写下、但没有落到闭合 ``<<END>>`` 的起点。
+
+    闭合块内部再出现这四个字不算第二处开头。没有开头是合法缺席，不是坏块。
+    """
+    raw = text or ""
+    covered = [(match.start(), match.end()) for match in _LEVY_BLOCK_RE.finditer(raw)]
+    idx = 0
+    while True:
+        open_at = raw.find(_LEVY_OPEN, idx)
+        if open_at < 0:
+            return None
+        if any(start <= open_at < end for start, end in covered):
+            idx = open_at + len(_LEVY_OPEN)
+            continue
+        return open_at
+
+
 def _levy_handoff_blocks(text: str, turn: int) -> List[Dict[str, Any]]:
     """按出现顺序读 <<LEVY>> 块。块内的事件 id 不是绑定源，读的时候丢掉。"""
     import json
@@ -116,6 +135,11 @@ def _levy_handoff_blocks(text: str, turn: int) -> List[Dict[str, Any]]:
     from ming_sim.exceptions import SettlementAbort
     from ming_sim.settlement_payload import parse_decision_blocks
 
+    if _unclosed_levy_opener(text) is not None:
+        raise SettlementAbort(
+            "请饷交接块未闭合",
+            turn=int(turn), stage="world_bind",
+        )
     blocks: List[Dict[str, Any]] = []
     for match in _LEVY_BLOCK_RE.finditer(text or ""):
         try:
@@ -1564,7 +1588,24 @@ def _materialize_rescript_desk(
 
     open_items = _open_rescript_items(db, state, chain)
     turn = int(state.turn)
+    decided_event_ids = {
+        str(row["event_id"] or "").strip()
+        for row in db.conn.execute(
+            "SELECT event_id FROM pending_decisions "
+            "WHERE turn = ? AND kind = 'decision' AND status = 'decided'",
+            (turn,),
+        ).fetchall()
+        if str(row["event_id"] or "").strip()
+    }
     decisions: List[Dict[str, object]] = []
+
+    def _remember(decision: Dict[str, object]) -> None:
+        event_id = str(decision.get("event_id") or "").strip()
+        # 已答的同一身份不再顶回批红页；原行留在案头账上给后续世界段读。
+        if event_id and event_id in decided_event_ids:
+            return
+        decisions.append(decision)
+
     if open_items["triad"]:
         verdicts = []
         for dossier in open_items["triad"]:
@@ -1585,12 +1626,13 @@ def _materialize_rescript_desk(
                     (latest or {}).get("midzhi_unpromulgatable")
                 ),
             })
-        decisions.extend(_rescript_decisions(verdicts, open_items["triad"]))
+        for decision in _rescript_decisions(verdicts, open_items["triad"]):
+            _remember(decision)
     for ref, questions in open_items["decree_questions"]:
         for idx, question in enumerate(questions):
             if not isinstance(question, dict):
                 continue
-            decisions.append(_question_as_decision(
+            _remember(_question_as_decision(
                 question, event_id=f"{_DECREE_QUESTION_PREFIX}{ref}:{idx}",
             ))
     for idx, question in enumerate(open_items["world_questions"]):
@@ -1598,11 +1640,11 @@ def _materialize_rescript_desk(
         # 真实事件；不是本月请旨的问题照旧走普通世界段案头身份。
         event_id = str(question.get("event_id") or "")
         if event_id.startswith(_LEVY_PETITION_PREFIX):
-            decisions.append(_question_as_decision(
+            _remember(_question_as_decision(
                 question, event_id=event_id,
             ))
             continue
-        decisions.append(_question_as_decision(
+        _remember(_question_as_decision(
             question, event_id=f"{_WORLD_QUESTION_PREFIX}{turn}:{idx}",
         ))
     if decisions:
@@ -1895,6 +1937,10 @@ def _split_at_question(text: str) -> tuple[str, List[dict]]:
     for match in _LEVY_BLOCK_RE.finditer(text or ""):
         declines = _levy_block_declines_presentation(match.group(1).strip())
         spans.append((match.start(), match.end(), not declines))
+    # 未闭合的开头不是散文：从送去转译的前缀里切开，绑定处再按坏块失败。
+    unclosed = _unclosed_levy_opener(text or "")
+    if unclosed is not None:
+        spans.append((unclosed, unclosed, True))
     spans.sort()
     first_real = next((start for start, _end, real in spans if real), None)
     limit = len(text or "") if first_real is None else first_real

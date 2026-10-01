@@ -840,7 +840,14 @@ def test_explicit_bad_levy_marker_after_hold_stops_at_world_bind(game, monkeypat
     held_turn = int(state.turn)
     assert _ledger_field(db, "terminal_state") == ""
 
-    for marker in ("<<LEVY>>null<<END>>", "<<LEVY>>[{}]<<END>>", "<<LEVY>>{broken}<<END>>"):
+    for marker in (
+        "<<LEVY>>null<<END>>",
+        "<<LEVY>>[{}]<<END>>",
+        "<<LEVY>>{broken}<<END>>",
+        "<<LEVY>>",
+        "<<LEVY>>{\"present\": false}",
+        "<<LEVY>>{\"title\": \"户部请饷\"}",
+    ):
         _install_model_boundary(
             monkeypatch, world_text="边饷仍紧。" + marker,
         )
