@@ -572,8 +572,8 @@ def _continue_world_after_answers(
         _collect_disclosures_from_result(chain, result)
         chain["world_questions"] = questions
         chain["world_continued"] = not questions
+        chain["world_text"] = str(chain.get("world_text") or "") + "\n" + text
         if questions:
-            chain["world_text"] = str(chain.get("world_text") or "") + "\n" + text
             chain.pop("world_continuation_ready", None)
             chain.pop("world_continuation_text", None)
         _save_chain(db, turn, chain, source=source)
@@ -583,7 +583,7 @@ def _continue_world_after_answers(
     questions = _number_followup_questions(
         db, turn, questions, f"{_WORLD_QUESTION_PREFIX}{turn}:",
     )
-    verdicts = _answered_levy_verdicts(db, turn)
+    verdicts = _answered_levy_verdicts(db, turn, answers=answers)
     if prefix.strip() or verdicts:
         result = dispatch_month_segment(
             db, state, segment=prefix if prefix.strip() else "",

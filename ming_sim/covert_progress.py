@@ -244,7 +244,7 @@ def covert_task_from_payload(payload: object) -> Optional[Dict[str, object]]:
         or source.get("investigation_fact")
         or payload.get("investigation_fact")
         or ""
-    ).strip()
+    )
     if not kind and not unit and target is None and not normalize_axes(axes) and not investigation_target:
         return None
     out: Dict[str, object] = {}
@@ -411,8 +411,8 @@ def build_covert_task_contract(
             "investigation_target": inv_target,
             "delivery": delivery,
         }
-        inv_fact = str(investigation_fact or "").strip()
-        if inv_fact:
+        inv_fact = str(investigation_fact or "")
+        if inv_fact.strip():
             # 线索所指事实：汇案时按它把真实线索绑到对应实证（J9）。
             contract["investigation_fact"] = inv_fact
             delivery["investigation_fact"] = inv_fact
@@ -1545,7 +1545,7 @@ def _investigation_fact_of(contract: Mapping[str, object]) -> str:
     delivery = contract.get("delivery") if isinstance(contract.get("delivery"), Mapping) else {}
     return str(
         contract.get("investigation_fact") or delivery.get("investigation_fact") or ""
-    ).strip()
+    )
 
 
 def find_active_investigation_order_id(db: Any, target: str) -> int:

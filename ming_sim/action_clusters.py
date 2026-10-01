@@ -23,7 +23,6 @@ class FieldSpec:
     zh: str
     allowed: Optional[FrozenSet[str]] = None
     default: Any = ""
-    max_len: Optional[int] = None
     as_int: bool = False
     int_lo: int = 0  # symmetric lower bound; >0 marks positive integer
     int_hi: int = 10**9
@@ -289,8 +288,6 @@ def assert_action_candidate_shape(obj: Any) -> Dict[str, Any]:
                 # Non-enum values are transported verbatim; identities are
                 # normalized by their consumers, not by trimming every string.
                 s = str(raw or "")
-            if spec.max_len is not None:
-                s = s[: spec.max_len]
             out[name] = s
     if "draft_text" in obj:
         out["draft_text"] = obj.get("draft_text")

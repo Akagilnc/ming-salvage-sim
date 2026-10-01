@@ -19,14 +19,14 @@ export function groupIssues(issues: Issue[]) {
 }
 
 function commitmentProgressText(issue: Issue) {
-  const text = issue.commitment_progress_text?.trim();
-  if (text) return text;
+  const text = issue.commitment_progress_text;
+  if (text?.trim()) return text;
   return issue.commitment_progress ? "未知进度" : "";
 }
 
 /** 空串不渲染括号端标（#626：硬门可留空 bar，web 不画『达成（）』/空进度端）。 */
 function barLabel(text: string | undefined | null): string {
-  return (text || "").trim();
+  return text?.trim() ? text : "";
 }
 
 function outcomeHead(kind: "达成" | "失败", meaning: string | undefined | null): string {

@@ -19,7 +19,7 @@ export function ClosedIssuesModal({ items, onClose }: { items: ClosedIssue[]; on
 
 function closedBarLabel(cls: string, item: ClosedIssue): string {
   const raw = cls === "resolved" ? item.bar_good_meaning : item.bar_bad_meaning;
-  return (raw || "").trim();
+  return raw?.trim() ? raw : "";
 }
 
 function ClosedGroup({ title, items, cls }: { title: string; items: ClosedIssue[]; cls: string }) {

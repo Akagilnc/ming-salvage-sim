@@ -620,8 +620,8 @@ def _visible_affair_lines(knowledge: dict) -> list[dict[str, object]]:
             "affair_id": int(issue.get("affair_id") or 0),
             "title": title,
             "situation": str(issue.get("stage_text") or "") or "见目录。",
-            "resolve_condition": str(issue.get("resolve_condition") or "").strip(),
-            "fail_condition": str(issue.get("fail_condition") or "").strip(),
+            "resolve_condition": str(issue.get("resolve_condition") or ""),
+            "fail_condition": str(issue.get("fail_condition") or ""),
             "source_id": str(issue.get("source_id") or f"issue:{issue_id}"),
             "audience_names": tuple(issue.get("audience_names") or ()),
             "participant_roster": issue.get("participant_roster") or "[]",
@@ -1183,10 +1183,7 @@ def _gazette_index_line(rel: str, year: int, period: int, title: str) -> str:
     from ming_sim.models import reign_period_label
 
     label = reign_period_label(year, period) if year and 1 <= period <= 12 else ""
-    shown = str(title)
-    if "\n" in shown or "\r" in shown:
-        shown = shown.replace("\r\n", " ").replace("\n", " ").replace("\r", " ")
-    return f"{rel} {label} {shown}".strip() if label else f"{rel} {shown}".strip()
+    return f"{rel} {label} {title}" if label else f"{rel} {title}"
 
 
 def _write_gazette_index(

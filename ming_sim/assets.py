@@ -107,4 +107,4 @@ def str_field(data: Dict[str, object], key: str, path: str) -> str:
     value = data.get(key)
     if not isinstance(value, str) or not value.strip():
         raise SystemExit(f"设定字段应为非空字符串：{path}.{key}")
-    return value.strip()
+    return value

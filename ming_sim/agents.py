@@ -514,11 +514,10 @@ def parse_agent_json(raw: str, stage: str) -> Dict[str, Any]:
             data = json.loads(snippet)
         except json.JSONDecodeError:
             data = None
-        # 试 3：净化 control char（\r\v\f\x00-\x1f 等）后再解
+        # 试 3：标准库允许字符串内控制字符，保留字段原文。
         if data is None:
-            cleaned = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", snippet)
             try:
-                data = json.loads(cleaned)
+                data = json.loads(snippet, strict=False)
             except json.JSONDecodeError:
                 data = None
         # 试 4：截取首个合法平衡的 {...} 子串（防 LLM 重发拼接）
@@ -548,9 +547,8 @@ def parse_agent_json(raw: str, stage: str) -> Dict[str, Any]:
                         break
             if best_end > 0:
                 first_block = snippet[: best_end + 1]
-                first_block = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", first_block)
                 try:
-                    data = json.loads(first_block)
+                    data = json.loads(first_block, strict=False)
                 except json.JSONDecodeError as error:
                     raise LLMContractError(
                         f"{stage} 输出不是合法 JSON：{error}\n原始输出：{raw[:800]}",

@@ -360,10 +360,10 @@ def _issue_condition_text(raw: object) -> str:
     if raw is None:
         return ""
     if isinstance(raw, str):
-        return raw.strip()
+        return raw
     if isinstance(raw, (dict, list)):
         return json.dumps(raw, ensure_ascii=False, separators=(",", ":"))
-    return str(raw).strip()
+    return str(raw)
 
 
 def _normalize_commitment_kind(raw: object) -> str:
@@ -851,7 +851,7 @@ def _commitment_fiscal_create_duplicate_reason(
     db: GameDB,
 ) -> str:
     account = str(create.get("account") or "").strip()
-    display = str(create.get("display") or "").strip() or (db._stem_of(str(create.get("key") or "")) or str(create.get("key") or ""))
+    display = str(create.get("display") or "") or (db._stem_of(str(create.get("key") or "")) or str(create.get("key") or ""))
     create_tokens = _recurring_funding_label_tokens(
         display,
         create.get("key"),
@@ -3252,7 +3252,7 @@ def _pending_person_changes_block_event_gate(
                 continue
             overlay(name, "power_id", new_power)
             overlay(name, "status", "active")
-            overlay(name, "status_reason", str(item.get("reason") or "")[:200])
+            overlay(name, "status_reason", str(item.get("reason") or ""))
             overlay(name, "reason_code", "")
             overlay(name, "office", new_title)
             overlay(name, "office_type", "身名分")
@@ -3282,7 +3282,7 @@ def _pending_person_changes_block_event_gate(
             if cur_status == "active":
                 overlay(name, "status_reason", "")
             else:
-                overlay(name, "status_reason", str(item.get("reason") or "")[:200] or "诏书任命")
+                overlay(name, "status_reason", str(item.get("reason") or "") or "诏书任命")
             overlay(name, "reason_code", "")
             overlay(name, "office", normalized_office)
             # 显式名分透传（#1059 codex 同族）：事件闸预览的 overlay 须与真实 apply 一致，
@@ -5624,8 +5624,8 @@ def apply_issue_tracker_output(
             cancel_cost=cancel_cost,
             effect_on_resolve=resolve_eff,
             effect_on_fail=fail_eff,
-            resolve_condition=resolve_condition[:300],
-            fail_condition=str(ni.get("fail_condition") or "")[:300],
+            resolve_condition=resolve_condition,
+            fail_condition=str(ni.get("fail_condition") or ""),
             end_turn=end_turn,
             stop_condition=stop_condition,
             commitment_kind=commitment_kind,
@@ -5684,7 +5684,7 @@ def apply_issue_tracker_output(
                 "item": cl,
             })
             continue
-        narrative = str(cl.get("narrative") or "")[:400]
+        narrative = str(cl.get("narrative") or "")
         chk = db.conn.execute(
             "SELECT * FROM issues WHERE id=?", (issue_id,)
         ).fetchone()
@@ -5843,7 +5843,7 @@ def apply_issue_tracker_output(
                 trigger_kind="decree",
                 delta_bar=0,
                 stage_text=row["stage_text"],
-                narrative=str(cn.get("narrative") or "陛下欲罢，然此事非诏可消。")[:400],
+                narrative=str(cn.get("narrative") or "陛下欲罢，然此事非诏可消。"),
                 metric_delta={"皇威": -2},
                 commit=not external_transaction,
             )
@@ -5888,7 +5888,7 @@ def apply_issue_tracker_output(
                 db, state,
                 commitment_ref=issue_id,
                 breach_kind=BREACH_KIND_POLICY_REVERSAL,
-                reason=str(cn.get("narrative") or "撤回成命")[:400],
+                reason=str(cn.get("narrative") or "撤回成命"),
                 target_dossier_id=int(parse_dossier_id(origin_ref_c) or 0),
             )
             applied_cancels.append({
@@ -5919,7 +5919,7 @@ def apply_issue_tracker_output(
         if deterministic_breach:
             db.breach_decree_dossier(
                 state, int(linked_dossier["id"]),
-                reason=str(cn.get("narrative") or "撤回成命")[:400], commit=False,
+                reason=str(cn.get("narrative") or "撤回成命"), commit=False,
             )
         cost = {} if deterministic_breach else (cn.get("applied_cost") or {})
         if isinstance(cost, dict):
@@ -5932,7 +5932,7 @@ def apply_issue_tracker_output(
             entity_rejections.extend(_apply_faction_dict(db, cost.get("factions") or {}, commit=commit_now).rejections)  # 派系拒收不蒸发（#14/#63 cmr r2）
         db.cancel_issue(
             state, issue_id,
-            narrative=str(cn.get("narrative") or "")[:400],
+            narrative=str(cn.get("narrative") or ""),
             applied_cost=cost if isinstance(cost, dict) else {},
             commit=not external_transaction,
         )
@@ -6402,14 +6402,14 @@ def apply_office_appointment(
                     state,
                     name,
                     "active",
-                    reason[:200] or "诏书任命",
+                    reason or "诏书任命",
                     content=content,
                     commit=commit,
                 )
             with _appointment_tenure_scope(db, appointment_tenure):
                 db.set_character_office(
                     name, new_office, new_office_type,
-                    source=reason[:60] or "诏书调任", llm_config=llm_config,
+                    source=reason or "诏书调任", llm_config=llm_config,
                     commit=commit,
                     region_id=seat,
                 )
@@ -7376,7 +7376,7 @@ def _apply_dossier_participant_items(
             added = db.append_decree_dossier_participants(dossier_id, [{
                 "character_id": character_id,
                 "tier": tier,
-                "role": str(item.get("role") or "").strip(),
+                "role": str(item.get("role") or ""),
                 "delegator_id": delegator_id,
             }], state=state, commit=False)
             if not added:
@@ -7385,7 +7385,7 @@ def _apply_dossier_participant_items(
                 if not any(
                     row.get("character_id") == character_id
                     and row.get("tier") == tier
-                    and row.get("role") == str(item.get("role") or "").strip()
+                    and row.get("role") == str(item.get("role") or "")
                     and row.get("delegator_id") == delegator_id
                     for row in existing.get("participant_roster", [])
                 ):
@@ -9452,7 +9452,7 @@ def _apply_score_extraction_body(
             init_value = init_raw
         # display 缺省=归一 stem（与落库同源——raw key 去 _base 会把「关税_rate」
         # 显示成「关税_rate」,cmr S3 r11;DELTA_SCHEMA 契约「缺省=key 去后缀」）。
-        display = str(create.get("display") or "").strip() or (db._stem_of(key) or key)
+        display = str(create.get("display") or "") or (db._stem_of(key) or key)
         origin_ref = str(create.get("origin_ref") or "").strip()
         origin_error = db.effect_origin_rejection(origin_ref)
         if origin_error:
@@ -9485,7 +9485,7 @@ def _apply_score_extraction_body(
             )
             if residual_account:
                 residual_display = (
-                    str(create.get("display") or "").strip()
+                    str(create.get("display") or "")
                     or (db._stem_of(key) or key) or "无名月支"
                 )
                 tlog(

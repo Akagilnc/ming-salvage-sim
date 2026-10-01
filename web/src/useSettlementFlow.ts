@@ -326,7 +326,7 @@ export function useSettlementFlow({
     const expectedTurn = state?.turn?.turn;
     try {
       // 作弊强制结算项随颁诏一次性穿入；发出即清空，绝不跨回合。
-      const cheatPayload = cheatDirective.trim();
+      const cheatPayload = cheatDirective;
       const body: Record<string, unknown> = { cheat: cheatPayload };
       if (expectedTurn != null && Number.isFinite(Number(expectedTurn))) {
         body.expected_turn = Number(expectedTurn);
@@ -336,7 +336,7 @@ export function useSettlementFlow({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
-      if (cheatPayload) {
+      if (cheatPayload.trim()) {
         receipt.setCheatDirective("");
       }
       const outcome = await consumeSettle(response);

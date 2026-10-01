@@ -854,9 +854,6 @@ def _iter_cli_runner_text(
                 provider_message=f"agy auth race：{(stdout_text + stderr)[:200]}",
             )
         text = stdout_text if stdout_text.strip() else final_text
-        if runner == "codex" and not json_events and not text:
-            # 兜底：stdout 空时干净段可能落在合并流 "OpenAI Codex v" 之前。
-            text = (stdout_text + stderr).split("OpenAI Codex v")[0]
         # 非零退出不洗成瞬断：无 typed status 的失败当确定性失败（#1780 / ADR 0142）。
         if returncode != 0:
             raise RuntimeError(f"{runner} 调用失败（退出码 {returncode}）：{stderr[:200]}")
@@ -1834,8 +1831,8 @@ def build_participant_correction_feedback(
         f"请改正为名册中陛下所指之人的正确规范名（须仍是同一人）；"
         f"不得擅自除去或另换他人。\n"
     )
-    facts = str(roster_facts or "").strip()
-    if facts:
+    facts = str(roster_facts or "")
+    if facts.strip():
         block += facts if facts.endswith("\n") else facts + "\n"
     return block
 
@@ -1949,11 +1946,11 @@ def compose_decree_validation_recovery(
         f"需要皇帝重新说明：{feature}。以本职口吻回禀，明确此旨尚未记录，并请皇帝"
         "补充或改说所需信息后重拟。"
     )
-    emperor = str(emperor_words or "").strip()
-    if emperor:
+    emperor = str(emperor_words or "")
+    if emperor.strip():
         prompt += f"\n【皇帝原话】{emperor}"
-    prior = str(prior_output or "").strip()
-    if prior:
+    prior = str(prior_output or "")
+    if prior.strip():
         prompt += f"\n【原产出】{prior}"
     return _compose_inworld_fact_report(
         prompt, llm_config=llm_config, tag="decree_validation_recovery",
@@ -2023,11 +2020,11 @@ def compose_secret_order_landing_recovery(
         f"以本职揣摩圣意：能从皇帝原话与既有交代补全的，陈述你理解的密令要点请皇帝确认；"
         f"揣摩不出的，以本职口吻当场请示皇帝所需。"
     )
-    emperor = str(emperor_words or "").strip()
-    if emperor:
+    emperor = str(emperor_words or "")
+    if emperor.strip():
         prompt += f"\n【皇帝原话】{emperor}"
-    prior = str(prior_output or "").strip()
-    if prior:
+    prior = str(prior_output or "")
+    if prior.strip():
         prompt += f"\n【原抽取产出】{prior}"
     return _compose_inworld_fact_report(
         prompt, llm_config=llm_config, tag="secret_order_landing_recovery",
@@ -2686,10 +2683,10 @@ def _stalled_deliberation_push_facts(db: Any) -> str:
                 or payload.get("target_id")
                 or issue["title"]
                 or ""
-            ).strip()
+            )
             body = str(
                 payload.get("text") or row.get("decree_text") or ""
-            ).strip()
+            )
             # #658：完整 title/body 供唯一辨认；禁 40 字截断导致同前缀误绑定
             lines.append(
                 f"  案卷ID={did} issue#{int(issue['id'])} 题={title} 正文={body}"
@@ -2740,7 +2737,7 @@ def extract_draft_intent(
     correction_feedback（#1274 V-1）：校验失败回喂的纠错指令；非空时 LLM 挂死响亮上抛。"""
     roster_facts = _draft_intent_character_roster_facts(content)
     army_facts = _draft_intent_army_grounding_facts(content)
-    correction_block = str(correction_feedback or "").strip()
+    correction_block = str(correction_feedback or "")
     if correction_block and not correction_block.endswith("\n"):
         correction_block += "\n"
     stalled_push_facts = _stalled_deliberation_push_facts(db)
@@ -2975,7 +2972,7 @@ def extract_draft_intent(
     # 直接用大臣回话（可能是「好的，加上…」等确认语）会覆盖原草案——须由 LLM 合并。
     _existing_draft_text = (
         "" if existing_draft_text is None else str(existing_draft_text)
-    ).strip()
+    )
     _supplement_mode = (has_pending_draft or bool(_candidates)) and (
         bool(_existing_draft_text) or bool(_candidates))
     intent_schema_line = (
@@ -3540,15 +3537,6 @@ def resubmit_draft_admission_payload(
 
 
 
-def _matched_prefix(message: str, prefixes) -> Optional[str]:
-    """消息命中某前缀则返回前缀后的正文（玩家那句意图），否则 None。"""
-    pm = (message or "").strip()
-    for pre in prefixes:
-        if pm.startswith(pre):
-            return pm[len(pre):].strip()
-    return None
-
-
 def _scan_outside_strings(text: str, handle) -> str:
     """逐字扫描 text，字符串内部（含转义）原样输出；字符串外的字符交给
     handle(text, i, out, n) -> next_i 处理（append 想保留的到 out、返回下一位置）。
@@ -3820,137 +3808,9 @@ def _choose_assignee(
     return default_assignee
 
 
-def _split_audience_context(context: str) -> Tuple[str, str]:
-    """把召对上下文快照剥成 (皇帝任务文本, "")：去掉「皇帝：/大臣：」角色标签、
-    「【本轮确认】…」只保留期限/约束等实质补充。皇帝行=任务正文（作御旨守门输入+兜底种子）。
-
-    #1274 K1 / ADR 0142：大臣行不再并入 content 拼装——实质补充须由 extractor「内容」字段
-    承载；第二返回值恒为空串，保留元组形以免调用点分叉。
-    """
-    entries: List[Tuple[str, str]] = []  # ("e"=皇帝任务行,)
-    for raw in (context or "").splitlines():
-        line = raw.strip()
-        if not line:
-            continue
-        if line.startswith("【本轮确认】"):
-            material = _secret_confirmation_material(line.removeprefix("【本轮确认】"))
-            if material:
-                entries.append(("e", material))
-            continue
-        if line.startswith("皇帝："):
-            task = line[len("皇帝："):].strip()
-            if task:
-                entries.append(("e", task))
-        # 大臣行：不入 content 拼装（extractor 读完整上下文自行抽「内容」）
-    # 只取最近的任务跨度：排除同回合更早的无关问答，但保留连续多条相关皇帝任务行。
-    # 旧实现从最后一条皇帝行起，能排除「京营操练如何？」这类无关问答，却会丢掉
-    # 「先命洪承畴赈灾、再令东厂护银」这种前几轮连续补充的同一密令任务。
-    boundary = -1
-    for i, (kind, text) in enumerate(entries):
-        if kind == "e" and not _secret_context_task_like(text):
-            boundary = i
-    emperor_indices = [i for i, (kind, _text) in enumerate(entries) if i > boundary and kind == "e"]
-    if not emperor_indices:
-        emperor_indices = [i for i, (kind, _text) in enumerate(entries) if kind == "e"]
-    start = emperor_indices[-1] if emperor_indices else None
-    selected_emperor = entries[start][1] if start is not None else ""
-    if start is not None:
-        for i in reversed(emperor_indices[:-1]):
-            prior_text = entries[i][1]
-            if not _secret_context_tasks_related(prior_text, selected_emperor):
-                break
-            start = i
-            selected_emperor = prior_text + "\n" + selected_emperor
-    span = entries[start:] if start is not None else entries
-    emperor_lines = [text for kind, text in span if kind == "e"]
-    return "\n".join(emperor_lines), ""
-
-
-def _secret_context_task_like(text: str) -> bool:
-    compact = re.sub(r"\s+", "", text or "")
-    if not compact:
-        return False
-    if _secret_context_constraint_like(compact):
-        return True
-    if re.search(r"[?？]$", compact):
-        return False
-    return bool(re.search(r"(命|令|着|遣|派|督办|查|暗查|密查|护|封存|截留|赈|再令|另令|须|务必|回奏|月内|日内)", compact))
-
-
-def _secret_context_tasks_related(prior: str, later: str) -> bool:
-    later_compact = re.sub(r"\s+", "", later or "")
-    if _secret_context_constraint_like(later_compact):
-        return True
-    if re.search(r"^(再|另|又|并|仍|复)(令|命|着|遣|派)", later_compact):
-        return bool(_secret_context_topic_chars(prior) & _secret_context_topic_chars(later))
-    if re.search(r"(月内|日内|回奏|结案|期限)", later_compact) and not re.search(
-        r"(命|令|着|遣|派|督办|暗查|密查|查|护|封存|截留|赈)", later_compact
-    ):
-        return True
-    return False
-
-
-def _secret_context_constraint_like(text: str) -> bool:
-    compact = re.sub(r"\s+", "", text or "")
-    return bool(re.search(r"(机密|保密|不可泄露|不得泄露|不得外泄|不可外泄|勿泄|秘而不宣|勿使.*知晓|不得.*知晓)", compact))
-
-
-def _secret_context_topic_chars(text: str) -> set:
-    compact = re.sub(r"[^\u4e00-\u9fff]", "", text or "")
-    compact = re.sub(r"^(再|另|又|并|仍|复)?(令|命|着|遣|派)", "", compact)
-    compact = re.sub(
-        r"^[\u4e00-\u9fff]{2,4}(?=(督办|暗查|密查|查|护|封存|截留|加操|操练|密访|补|拨))",
-        "",
-        compact,
-    )
-    compact = re.sub(
-        r"(此事|机密|保密|不可|不得|泄露|外泄|勿泄|秘而不宣|知晓|再|另|又|并|仍|复|令|命|着|遣|派|督办|暗查|密查|查|护|封存|截留|须|务必|回奏|月内|日内|臣|领命|遵旨|谨记|加操|操练)",
-        "",
-        compact,
-    )
-    return set(compact)
-
-
-def _secret_confirmation_material(text: str) -> str:
-    material = (text or "").strip()
-    if not material:
-        return ""
-    atoms = (
-        "准卿所奏", "按你意思", "照你意思", "就这么办", "便如此", "准奏", "照准",
-        "照办", "就按", "就照", "依卿", "依你", "便依", "同意", "卿所奏",
-        "你意思", "所奏", "如此", "这么办", "就办", "可", "准", "好", "是",
-        "善", "行", "办", "吧", "奏",
-    )
-    changed = True
-    while changed:
-        changed = False
-        material = re.sub(r"^[\s，,。.!！?？；;：:、]+", "", material)
-        for atom in atoms:
-            if material.startswith(atom):
-                material = material[len(atom):]
-                changed = True
-                break
-    material = re.sub(r"^[\s，,。.!！?？；;：:、]+", "", material).strip()
-    return material
-
-
 def _merge_secret_content(*parts: str) -> str:
-    """把皇帝显式旨意 / LLM 内容 / 大臣回话合并成一道密令正文，去重保序。
-
-    #397 Step6：兜底合并须同时保住御旨与大臣补充（承办人/要点），任一非空都并入；
-    完全相同的段（去空白后）只留一份，避免 LLM 内容与回话雷同时整段重复。"""
-    merged: List[str] = []
-    seen: set = set()
-    for p in parts:
-        chunk = p or ""
-        if not chunk.strip():
-            continue
-        key = re.sub(r"\s+", "", chunk)
-        if key in seen:
-            continue
-        seen.add(key)
-        merged.append(chunk)
-    return "\n".join(merged)
+    """拼接原串；空白判断不改正文，不按去空白的文本去重。"""
+    return "\n".join(p for p in parts if p and p.strip())
 
 
 def _secret_metadata_from_command(text: str) -> Tuple[List[str], int]:
@@ -4146,16 +4006,9 @@ def _extract_secret_order(
         obj = parsed
     _content_llm = str(obj.get("内容") or "")
     _assignee_llm = str(obj.get("承办人") or "").strip()
-    # 上下文合成路径（force_default_assignee，#354 短确认从对话取正文）：player_command 是带
-    # 「皇帝：/大臣：」标签的对话快照——剥角色标签得纯御旨任务，作装配输入。
-    # #1274 K1 / ADR 0142：content = 御旨 + extractor「内容」；reply 永不入拼装。
-    # 大臣实质补充必须出现在 extractor schema「内容」字段（上 prompt 已钉契约）。
-    if force_default_assignee:
-        _emperor_fallback, _ = _split_audience_context(player_command)
-    else:
-        _emperor_fallback = player_command
+    # 对话快照和抽取字段均保留原串，不由代码筛选或剥除任务片段。
     content = assemble_secret_order_content(
-        emperor_intent=_emperor_fallback,
+        emperor_intent=player_command,
         extractor_content=_content_llm,
     )
     # #1565/0142：题名只认抽取器结构化「标题」；禁从 content/player_command 散文截取。

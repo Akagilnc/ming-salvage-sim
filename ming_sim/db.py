@@ -197,7 +197,7 @@ def _seed_guilt_storage_value(value: object) -> str:
     if isinstance(value, Mapping):
         if not value:
             return ""
-        crime = str(value.get("crime") or "").strip()
+        crime = str(value.get("crime") or "")
         severity = str(value.get("severity") or "无").strip()
         return safe_json_dumps({"crime": crime, "severity": severity}, ensure_ascii=False)
     return str(value or "")
@@ -3387,7 +3387,7 @@ class GameDB:
                (removed_turn, key, value, kind, origin_ref, reason, beyond_intent)
                SELECT ?, key, value, kind, ?, ?, ? FROM fiscal_config
                WHERE key IN (?, ?)""",
-            (int(turn), origin_ref, reason[:240], beyond_flag, base_key, rate_key),
+            (int(turn), origin_ref, reason, beyond_flag, base_key, rate_key),
         )
         self.conn.execute(
             "DELETE FROM fiscal_config WHERE key IN (?, ?)", (base_key, rate_key)
@@ -5832,18 +5832,18 @@ class GameDB:
             self.conn.execute(
                 "UPDATE characters SET status=?, status_reason=?, "
                 "status_changed_turn=?, office='', reason_code=? WHERE name=?",
-                (status, reason[:200], state.turn, reason_code_value, name),
+                (status, reason, state.turn, reason_code_value, name),
             )
             self.set_character_transit(name, content=content, commit=False)
         else:
             self.conn.execute(
                 "UPDATE characters SET status=?, status_reason=?, status_changed_turn=?, reason_code=? WHERE name=?",
-                (status, reason[:200], state.turn, reason_code_value, name),
+                (status, reason, state.turn, reason_code_value, name),
             )
         if content is not None and name in content.characters:
             character = content.characters[name]
             character.status = status
-            character.status_reason = reason[:200]
+            character.status_reason = reason
             character.reason_code = reason_code_value
             if ousted:
                 character.office = ""
@@ -5852,7 +5852,7 @@ class GameDB:
             self.recompute_faction_leverage(str(prev["faction"] or ""))
         if status in _OUSTED_STATES:
             self.interrupt_dossiers_for_character(
-                state, name, f"人物终态：{status}；{reason}".rstrip("；"),
+                state, name, f"人物终态：{status}；{reason}",
                 commit=False,
             )
         if commit:
@@ -6120,10 +6120,10 @@ class GameDB:
                 state.period,
                 person_name,
                 action,
-                str(payload_summary or "")[:200],
-                str(derived_from or "")[:120],
+                str(payload_summary or ""),
+                str(derived_from or ""),
                 normalized_text,  # 全量存：normalized 是结构化审计 JSON，[:500] 会从中间切断成不可解析（PR #106 CodeRabbit）
-                str(source or "")[:80],
+                str(source or ""),
                 str(origin_ref or ""),
             ),
         )
@@ -7149,8 +7149,8 @@ class GameDB:
             if alias and alias not in merged_aliases:
                 merged_aliases.append(alias)
         new_aliases = "，".join(merged_aliases)
-        new_status = str(status or row["status"] or "")[:200]
-        new_last_action = str(last_action or reason or row["last_action"] or "")[:200]
+        new_status = str(status or row["status"] or "")
+        new_last_action = str(last_action or reason or row["last_action"] or "")
         if old_name == new_name and old_aliases == new_aliases and row["status"] == new_status and row["last_action"] == new_last_action:
             return None
         self.conn.execute(
@@ -7167,7 +7167,7 @@ class GameDB:
             (turn, year, period, power_id, old_name, new_name, old_aliases, new_aliases, reason)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (state.turn, state.year, state.period, power_id, old_name, new_name, old_aliases, new_aliases, reason[:200]),
+            (state.turn, state.year, state.period, power_id, old_name, new_name, old_aliases, new_aliases, reason),
         )
         if commit:
             self.conn.commit()
@@ -7559,7 +7559,7 @@ class GameDB:
                     stored_new = new_value
                     log_delta = actual_delta
                 else:  # REGION_TEXT_FIELDS
-                    text_value = str(value).strip()[:160]
+                    text_value = str(value).strip() if field == "controlled_by" else str(value)
                     if field == "controlled_by":
                         if (
                             value is None
@@ -8300,7 +8300,7 @@ class GameDB:
                     stored_new = new_value
                     log_delta = actual_delta
                 elif field in ARMY_TEXT_FIELDS:
-                    text_value = str(value).strip()[:160]
+                    text_value = str(value).strip() if field == "station_region" else str(value)
                     if not text_value or text_value == str(old_value):
                         continue
                     # #659：station_region 非空须为已入库 regions.id；禁止从 station 文本反推。
@@ -8450,7 +8450,7 @@ class GameDB:
                     continue
                 if delta == 0:
                     continue
-                reason = str(item.get("reason") or item.get("status") or "扩军")[:80]
+                reason = str(item.get("reason") or item.get("status") or "扩军")
                 pseudo_event = type("E", (), {"id": "season", "title": reason})()
                 merge_results = self.apply_army_deltas(
                     state,
@@ -8643,7 +8643,7 @@ class GameDB:
             self._reconcile_army_pay_source_region_container(pay_source_region)
             self._reconcile_central_army_pay_arrears_container()
             self.assert_army_pay_source_container_conservation()
-            reason = str(item.get("reason") or item.get("status") or "新立军队")[:80]
+            reason = str(item.get("reason") or item.get("status") or "新立军队")
             self.conn.execute(
                 """
                 INSERT INTO army_logs
@@ -8709,7 +8709,7 @@ class GameDB:
             (
                 building_id,
                 region_id,
-                name.strip()[:60] or "无名建筑",
+                name if name.strip() else "无名建筑",
                 category,
                 max(1, min(5, int(level))),
                 max(0, min(100, int(condition))),
@@ -8717,7 +8717,7 @@ class GameDB:
                 max(0, min(100, int(risk))),
                 output_metric,
                 max(0, int(output_amount)),
-                status.strip()[:160] or "新立，尚在筹建。",
+                status if status.strip() else "新立，尚在筹建。",
                 origin,
                 state.turn,
             ),
@@ -8728,7 +8728,7 @@ class GameDB:
             (turn, year, period, building_id, field, old_value, new_value, delta, reason, actor, origin_ref)
             VALUES (?, ?, ?, ?, 'create', '', ?, NULL, ?, '档房', ?)
             """,
-            (state.turn, state.year, state.period, building_id, name.strip()[:60], "诏书新立建筑", origin_ref),
+            (state.turn, state.year, state.period, building_id, name, "诏书新立建筑", origin_ref),
         )
         if commit:
             self.conn.commit()
@@ -8817,7 +8817,7 @@ class GameDB:
                     stored_new = text_value
                     log_delta = None
                 elif field in BUILDING_TEXT_FIELDS:
-                    text_value = str(value).strip()[:160]
+                    text_value = str(value)
                     if not text_value or text_value == str(old_value):
                         continue
                     stored_new = text_value
@@ -9120,9 +9120,8 @@ class GameDB:
         for item in list(phrases or []):
             if not isinstance(item, str):
                 continue
-            phrase = item.strip()
-            if phrase:
-                clean.append(phrase)
+            if item.strip():
+                clean.append(item)
         payload = json.dumps(clean, ensure_ascii=False)
         self.conn.execute(
             "UPDATE chat_messages SET highlights_json = ? WHERE id = ?",
@@ -9150,7 +9149,7 @@ class GameDB:
         out: List[str] = []
         for item in data:
             if isinstance(item, str) and item.strip():
-                out.append(item.strip())
+                out.append(item)
         return out
 
     def delete_chat_messages(self, message_ids: Iterable[int]) -> None:
@@ -16278,7 +16277,7 @@ class GameDB:
             id="military_order", title="军令调遣", kind="圣旨", summary="",
             urgency=0, severity=0, credibility=100, interests=[], audiences=[],
         )
-        delta: Dict[str, object] = {"reason": reason[:80]}
+        delta: Dict[str, object] = {"reason": reason}
         if dest:
             delta["station"] = dest
         if dest_region:
@@ -16572,7 +16571,7 @@ class GameDB:
 
         reason = str(
             payload.get("text") or row.get("decree_text") or "撤回成命"
-        )[:400]
+        )
 
         # #1894：撤旨照常过外廷。外廷（0055 颁布判决）准行即当月落实，
         # 不再把撤令延后到下一次召对等一场挽留——旧 ADR 0075「先顶哭谏、
@@ -19706,7 +19705,7 @@ class GameDB:
             ON CONFLICT(event_id) DO UPDATE SET
                 {self._event_terminal_upgrade_assignments(fill_triggered_reason=True)}
             """,
-            (event_id, state.turn, state.year, state.period, source, str(terminal_reason or "")[:200]),
+            (event_id, state.turn, state.year, state.period, source, str(terminal_reason or "")),
         )
         if commit:
             self.conn.commit()
@@ -19729,7 +19728,7 @@ class GameDB:
             ON CONFLICT(event_id) DO UPDATE SET
                 {self._event_terminal_upgrade_assignments()}
             """,
-            (event_id, state.turn, state.year, state.period, source, reason[:200]),
+            (event_id, state.turn, state.year, state.period, source, reason),
         )
         if commit:
             self.conn.commit()
@@ -19752,7 +19751,7 @@ class GameDB:
             ON CONFLICT(event_id) DO UPDATE SET
                 {self._event_terminal_upgrade_assignments()}
             """,
-            (event_id, state.turn, state.year, state.period, source, reason[:200]),
+            (event_id, state.turn, state.year, state.period, source, reason),
         )
         if commit:
             self.conn.commit()
@@ -20674,7 +20673,7 @@ class GameDB:
                (turn, key, old_value, new_value, delta, origin_ref, reason, beyond_intent)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
             (int(turn), key, int(old_value), int(new_value),
-             int(new_value) - int(old_value), origin_ref, reason[:240], beyond_flag),
+             int(new_value) - int(old_value), origin_ref, reason, beyond_flag),
         )
 
     def list_fiscal_effects_for_dossier(self, dossier_id: int) -> List[Dict[str, object]]:

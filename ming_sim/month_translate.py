@@ -198,19 +198,22 @@ def translate_month_segment(
     return normalize_audience_declaration(declaration)
 
 
-def _answered_levy_verdicts(db: Any, turn: int) -> list[dict[str, object]]:
+def _answered_levy_verdicts(
+    db: Any, turn: int, *, answers: list[dict[str, object]],
+) -> list[dict[str, object]]:
     """本段待译的三饷请旨事件：已答行的事件身份、闭集，以及已存原批语（#1891）。
 
-    已答行只读 ``_fiscal_levy_answered_rows``。原批语原样交给转译，不依赖续推
-    复述，也不在这里判准驳（ADR 0142 / P6）。
+    已答行只读 ``_fiscal_levy_answered_rows``，从已交接的实际答复取本次供料。
+    历史仍留账，不重标为新答复；不解析批语或在这里判准驳（ADR 0142 / P6）。
     """
     from ming_sim.issues import _fiscal_levy_answered_rows, _fiscal_levy_event_by_id
 
     out: list[dict[str, object]] = []
     seen: set[str] = set()
+    answered_ids = {str(answer.get("event_id") or "") for answer in answers}
     for row in _fiscal_levy_answered_rows(db, turn):
         real_id = str(row["event_id"])
-        if real_id in seen:
+        if real_id not in answered_ids or real_id in seen:
             continue
         ev = _fiscal_levy_event_by_id(real_id)
         if ev is None:
