@@ -22,7 +22,6 @@ import json
 import logging
 import os
 import queue
-from concurrent.futures import ThreadPoolExecutor
 import re
 import shutil
 import subprocess
@@ -38,21 +37,12 @@ from agno.models.message import Message
 from agno.models.openai import OpenAIChat
 from agno.models.response import ModelResponse
 from openai.types.chat import ChatCompletion, ChatCompletionMessage
-from openai.types.chat.chat_completion_message_function_tool_call import (
-    ChatCompletionMessageFunctionToolCall,
-    Function as ToolFunction,
-)
 from openai.types.chat.chat_completion import Choice
-from openai.types.chat.chat_completion_chunk import (
-    ChoiceDeltaToolCall,
-    ChoiceDeltaToolCallFunction,
-)
 from pydantic import BaseModel
 
 # CLI runner 默认模型单一真源在 models（L0 叶子），此处 re-export 保留
 # `from ming_sim.cli_backend import CODEX_DEFAULT_MODEL` 既有路径（#60）。
 from ming_sim.models import CODEX_DEFAULT_MODEL, CLAUDE_DEFAULT_MODEL, LLMConfig
-from ming_sim.constants import DOSSIER_LINK_TYPES
 from ming_sim.decree_vocabulary import DIRECTIVE_ACTION_TYPES
 from ming_sim.structured_decree import (
     StructuredDecreeCombinationError,
@@ -335,15 +325,14 @@ def _log(msg: str) -> None:
 def _infer_tag(prompt: str) -> str:
     """从 prompt（含 system 段）猜是哪个 agent 在调用，方便复盘。
 
-    simulator/extractor 的输入都含上月邸报全文（含『月末奏章』等词），
-    故须用各自唯一标识并把易被邸报词污染的项前置。
+    兼容无显式 tag 的调用日志；按专属标识推断，避免邸报正文的词污染分类。
     """
     p = prompt
     if "扮演被皇帝召见" in p or "大臣扮演" in p:
         return "minister"
     if "module_allowed_fields" in p or "score_extractor" in p or "本月结算抽取" in p:
         return "extractor"
-    if "simulator_payload" in p:  # 仅真 simulator 的 user payload 才有
+    if "simulator_payload" in p:
         return "simulator"
     if "诏书" in p and "拟" in p:
         return "decree"
@@ -1277,189 +1266,11 @@ _SECRET_PREFIXES = ("密令如下：", "密令如下:", "密令：", "密令:")
 # 不靠关键字白名单（脆、永远漏），交给 LLM 读对话判意图——皇帝本轮对该大臣【现有密令】
 # 要做什么（更新内容 / 提交核议 / 催办 / 记进展），以及若是妃嫔有无调教。
 # 只在「大臣有 active 密令 或 是妃嫔」时调（省 token）。
-def extract_minister_actions(
-    player_message: str,
-    minister_reply: str,
-    active_orders: List[Dict[str, Any]],
-    is_consort: bool = False,
-    llm_config: Any = None,
-) -> Dict[str, Any]:
-    """LLM 判皇帝本轮对密令/妃嫔的意图，返回结构化动作。失败返回「无」动作。"""
-    orders_brief = "；".join(
-        f"#{o.get('id')}「{o.get('title', '')}」：{str(o.get('content', ''))[:50]}"
-        for o in (active_orders or [])
-    ) or "（无）"
-    consort_line = (
-        '  "调教技能": "", "调教性格": "",   // 仅当此人是妃嫔、且皇帝在调教她(赐技能/改性格)时填，否则空\n'
-        if is_consort else ""
-    )
-    prompt = (
-        "你是信息抽取器，不扮演、不写圣旨。读皇帝这句话 + 大臣回话 + 该大臣现有密令清单，"
-        "判断皇帝**本轮**对密令"
-        + ("（及调教妃嫔）" if is_consort else "")
-        + "的意图。只输出一个 JSON 对象（无代码围栏、无多余字）：\n"
-        "{\n"
-        '  "密令动作": "无|更新|提交核议|催办|记进展",  // 皇帝补充/改/纠正某现有密令的内容或数额=更新；让其呈报办结待核=提交核议；催/加急/限期=催办；问进度并据回话记录=记进展；都不是=无\n'
-        '  "目标密令编号": 0,                        // 上述动作针对哪条现有密令的 id（清单里的 #数字）；只有一条时填那条\n'
-        '  "新标题": "", "新内容": "", "期限月数": 0,  // 仅"更新"时给：综合皇帝话+大臣回话，写该密令改后的【完整新要旨】\n'
-        + consort_line +
-        "}\n"
-        "判定要点：皇帝口语如「更新/改成/其实是/纠正/补充…」指向某现有密令即「更新」，新内容要把改动并入完整要旨（别只写增量）。语义判断，别拘泥字面措辞。\n\n"
-        "【该大臣现有密令】" + orders_brief + "\n"
-        "【皇帝】" + (player_message or "（无）") + "\n"
-        "【大臣回话】" + (minister_reply or "（无）") + "\n"
-    )
-    raw = ""
-    try:
-        raw, _ = _run_backend_for_config(prompt, llm_config, tag="minister_actions")
-    except Exception as exc:  # 抽取失败不阻断对话
-        _log(f"大臣动作抽取失败：{exc}")
-    obj = _loads_lenient(raw) or {}
-
-    def _int(v, hi=10**9):
-        try:
-            return max(0, min(int(v or 0), hi))
-        except (TypeError, ValueError):
-            return 0
-
-    # 动作归一到固定枚举：LLM 返回枚举外的串 → 「无」，防按未知动作误操作（CMR F10）。
-    # order_id 不在此处强校验 active：消费方（web/session）持 active 清单做范围校验 + 单条兜底。
-    _raw_action = str(obj.get("密令动作") or "无").strip()
-    _action = _raw_action if _raw_action in {"无", "更新", "提交核议", "催办", "记进展"} else "无"
-    return {
-        "secret_action": _action,
-        "order_id": _int(obj.get("目标密令编号")),
-        # Title has no formal length cap (family removed silent 20-char hard trunc).
-        "new_title": str(obj.get("新标题") or "").strip(),
-        "new_content": str(obj.get("新内容") or ""),
-        "deadline_months": _int(obj.get("期限月数"), 36),
-        "cultivate_skill": str(obj.get("调教技能") or "").strip()[:20],
-        "cultivate_trait": str(obj.get("调教性格") or "").strip()[:20],
-    }
 
 
-def classify_cli_action_intent(
-    player_message: str,
-    active_orders: Optional[List[Dict[str, Any]]] = None,
-    is_consort: bool = False,
-    has_pending_draft: bool = False,
-    pending_summaries: Optional[List[str]] = None,
-    llm_config: Any = None,
-    recent_context: str = "",
-    current_turn: int = 0,
-    backing_dossier_candidates: Optional[List[Dict[str, Any]]] = None,
-) -> List[Dict[str, Any]]:
-    """召对动作 typed 判断：读皇帝本条消息 + ADR 0028 最近相关召对上下文，不读本轮大臣回话。
-
-    输出契约（#515）：动作候选**列表**（单动作 = 长度 1；认不出/失败 = []）。
-    枚举与 kind map 唯一真源 = ming_sim.action_clusters 登记表。
-    这条调用可与大臣回话并发；跨轮指代（「这三件事你都办」）靠 recent_context /
-    待确认动作解析前轮事项并逐事产候选。LLM 软判坏 shape → []。
-    current_turn / GATE_TABLES 契约供交办承诺落到合法 end_turn 与 stop_condition。
-    """
-    from ming_sim.action_clusters import (
-        candidates_from_classifier_payload,
-        classifier_json_fields_prompt,
-    )
-    from ming_sim.constants import GATE_TABLES
-
-    orders_brief = "；".join(
-        f"#{o.get('id')}「{o.get('title', '')}」：{str(o.get('content', ''))[:50]}"
-        for o in (active_orders or [])
-    ) or "（无）"
-    pending_brief = "；".join(pending_summaries or []) or "（无）"
-    context_block = (recent_context or "").strip() or "（无）"
-    backing_facts = json.dumps(
-        backing_dossier_candidates or [], ensure_ascii=False, separators=(",", ":"),
-    )
-    # 字段/枚举唯一真源 = 登记表 FieldSpec（#515：禁手写字段副本）
-    schema_obj = classifier_json_fields_prompt()
-    turn_n = int(current_turn or 0)
-    gate_tables = "/".join(GATE_TABLES)
-    prompt = (
-        "你是召对动作意图分类器，读皇帝本条消息与【最近相关召对】上下文，"
-        "不读也不等待大臣本轮回话。"
-        "判断本轮是否属于一个或多个政务动作，并抽出可从皇帝话与相关上下文直接确定的结构字段。"
-        "单动作输出一个 JSON 对象，多动作输出 JSON 对象数组（无代码围栏、无多余字）：\n"
-        + schema_obj + "\n"
-        "规则：确认优先于新动作；按几件事拆旨——一件独立的事各出一条候选，"
-        "同一件事只出一条：钱、承办人、完成期限都挂在该条上，旨稿即该案正文；"
-        "同一事项同一目标的重复表示不得重复候选；每一道独立旨意只判一次颁布方式。"
-        "拟旨表达整道旨的颁布方式；同一事的拨帑/任免等机械载荷挂在该事候选上。"
-        "一句确有多道彼此独立的事（如太仓拨款补宁远军需，与派员赴陕西赈灾）时，"
-        "逐事各出一条候选。"
-        + _DIRECTIVE_MODE_PROMPT
-        + "「拟旨如下」只是路由，不是动作类型。同一话语为载荷式拨饷"
-        "（太仓/国库拨军饷销欠）时动作类型填恩赏·拨帑：恩赏拨帑=协饷、用途=补饷、"
-        "目标类型=army、目标=可解析军队 id、账户太仓归一为国库。"
-        "发内帑不是协饷，不得改判为协饷。纯无动作仍输出无；非协饷恩赏走各自恩赏拨帑值。"
-        "修改待确认动作时，确认=修改、新内容=完整非空修改正文；有多个待确认候选时，"
-        "目标编号必须且只能填一个所指候选 id。\n"
-        "跨轮指代（如「这三件事你都办」「三事全允」）须结合最近相关召对上下文与"
-        "待确认动作列表解析所指事项，逐事各产一条候选；更新既有候选时填目标候选=该道 id。\n"
-        "拿问、下狱、赐死、廷杖、罚俸、削籍、放归、昭雪属惩处，不得判任免罢免。\n"
-        "问/令查分界（语义整体判断，禁字样启发）：\n"
-        "- 纯问句→动作类型填无（零动作）。含「密查/查访」字样的疑问仍是问，"
-        "如「陕西巡抚可有？」「可有人密查陕西军饷？」「着人查访军情如何？」→无。\n"
-        "- 含命令词但整体为问（如「命东厂密查其家产的是谁」）→仍无，不得升格密令。\n"
-        "- 祈使令查且指向【现有密令】的补充/续查→密令动作=更新（填目标密令编号）："
-        "如已有「查其家产」时「再去查他在苏州的田产」→更新原令。\n"
-        "- 祈使令查且为真正另案、或无相关现有密令→密令动作=新建："
-        "如「你去查他家产」「着东厂密查其家产」。\n"
-        "- 不得因出现密查/查访字样就判密令；整体为问则无；"
-        "整体为令时按是否指向现有密令选更新或新建。\n"
-        "- 更新/催办/提交核议/记进展仅针对【现有密令】；无现有密令时不要硬判这四者"
-        "（新建不受此限）。非妃嫔不要硬判调教。\n"
-        "交办·责成 vs 当场问对（语义整体判断，禁字样启发）：\n"
-        "- 仅当所问之事能在本次召对内当场答完，且没有离殿后继续履行的要求时，"
-        "才是当场问对→动作类型填无（普通对话，零动作）。如：\n"
-        "  · 杨卿，太仓实存与关宁、陕西边饷核到哪一步？盐课积引与畿辅清丈何者可先试？分策回奏\n"
-        "  · 郭卿，改元之后钱粮如何撑过春月？关宁与陕西何者当先？太仓实存与刚性支出开列回奏。\n"
-        "  · 黄阁老，入春边事与朝局何者最急？关宁军心、陕西赈抚、厂卫旧线，内阁据实回奏。\n"
-        "- 离殿后须继续办理的独立差事，动作类型填交办·责成（例如退朝后核查各省库、"
-        "另案督赈）。同一事的完成期限挂在该事候选上，不另立交办候选："
-        f"日级期限不足一月则截止回合={turn_n + 1}；相对月数填期限月数=N。\n"
-        "完成期限契约：\n"
-        f"- 当前回合={turn_n}。相对期限填期限月数=N（连续N月/三月内）；"
-        f"或截止回合填绝对回合号（须 > 当前回合；日级不足一月填{turn_n + 1}）。\n"
-        f"- 停止条件须为可寻址 dict JSON，key 带表前缀（{gate_tables}），"
-        'value 含比较算符，如 {"army.guanning.arrears":"<=0"}；'
-        "自然语言军令状须落成该 shape，不得只写散文。\n\n"
-        f"【最近相关召对】\n{context_block}\n"
-        f"【站台案卷候选（逐背书）】{backing_facts}\n"
-        "每项 endorser_id 是该案站台者；惩处目标与 endorser_id 相同且语义指向其站台事项时，"
-        "从该人物候选 dossier_id 填站台案卷，否则留 null。\n"
-        f"【待确认动作】{pending_brief}\n"
-        f"【现有密令】{orders_brief}\n"
-        f"【此人是否妃嫔】{'是' if is_consort else '否'}\n"
-        f"【本回合是否已有拟旨草案】{'是' if has_pending_draft else '否'}\n"
-        "【皇帝】" + (player_message or "（无）") + "\n"
-    )
-    raw = ""
-    try:
-        # 跨通道 JSON 抽取：API → _run_api_for_config；其余 → CLI backend。
-        # 不得直调 _run_backend_for_config（显式 API 会抛，classify 捕后返 []）。
-        raw, _ = _run_json_extractor_for_config(prompt, llm_config, tag="action_intent")
-    except Exception as exc:
-        _log(f"召对动作意图判断失败：{exc}")
-        return []
-    obj = _loads_lenient(raw, accepted_types=(dict, list))
-    if obj is None:
-        obj = {}
-    # 列表契约：对象或 list 均走登记表 soft 归一；坏 shape / 无 → []。
-    return candidates_from_classifier_payload(obj, soft=True)
 
 
-_DIRECTIVE_MODE_PROMPT = (
-    "颁布方式判断皇帝所言这道旨是不是中旨：只有语义明确是中旨才填 midzhi/中旨直发；"
-    "新旨未判为中旨填 ordinary/普通；补充或修改既有候选且本轮没有新的颁布方式决定时留空，"
-    "沿用候选原值。不要判断它该不该走中旨。"
-)
 
-
-# 对话式拟旨意图抽取（ADR 0006 自然语言路径）：玩家口头「拟旨吧/帮我拟一道旨」时，
-# 无显式前缀（_DRAFT_PREFIXES）→ LLM 判出意图 → 进 pending_actions(kind=directive)暂存；
-# 大臣回话即草案文本，commit 时再建 turn_directives 条目。
 def _directive_mode(value: object) -> Optional[str]:
     """Normalize the extractor's typed mode value, never player prose."""
     return {
@@ -2846,10 +2657,10 @@ def _stalled_deliberation_push_facts(db: Any) -> str:
     """#658：自由下旨可强推的 stalled 廷议＋active issue 投影（候选相关切片）。"""
     if db is None:
         return ""
-    try:
-        rows = db.list_decree_dossiers(status="proposed")
-    except Exception:
-        return ""
+    # #1849：供料库读失败是代码/IO 错，一律响亮上抛（ADR 0005）。此前静默洗成
+    # 空事实块，抽取遂在缺御笔强推事实下照常出产、写入口再覆盖原草稿——
+    # 失败被消解成合法产物（失败诚实宪法）。
+    rows = db.list_decree_dossiers(status="proposed")
     lines: List[str] = []
     for row in rows or []:
         try:
@@ -2883,7 +2694,9 @@ def _stalled_deliberation_push_facts(db: Any) -> str:
             lines.append(
                 f"  案卷ID={did} issue#{int(issue['id'])} 题={title} 正文={body}"
             )
-        except (TypeError, ValueError, KeyError, json.JSONDecodeError):
+        except (TypeError, ValueError, KeyError, json.JSONDecodeError) as exc:
+            # #1849：坏项隔离留痕（ADR 0005：只拒该项、不带走整批，但必须记原因）。
+            _log(f"强推案卷事实跳过坏行（dossier={row.get('id')!r}）：{exc}")
             continue
     if not lines:
         return ""
@@ -2909,7 +2722,8 @@ def extract_draft_intent(
     harvest_participants: bool = False,
 ) -> Dict[str, Any]:
     """LLM 判皇帝本轮是否在口头请大臣拟旨（非显式前缀），返回拟旨意图 + 草案文本 + 目标候选。
-    失败/无 → {"draft_action": "无", "draft_text": "", "target_candidate": ""}。
+    模型答无/非拟旨 → {"draft_action": "无", "draft_text": "", "target_candidate": ""}；
+    抽取调用本身失败（LLM 终失败、代码错）一律上抛，不得降级成「无」（#1849 失败诚实）。
     has_pending_draft=True：本回合已有草案暂存，皇帝「补充/修改当前草稿」也归拟旨。
     existing_draft_text 非空时（补充模式）：LLM 输出合并草案，payload 存合并后全文；
     不能用大臣确认回话（「好的，加上…」）覆盖原草案。
@@ -2975,7 +2789,6 @@ def extract_draft_intent(
             + structured_decree_prompt_contract() + "\n"
             "拨帑动作逐道使用以下 ACTION_CLUSTERS 字段（其余动作留缺省）：\n"
             + grant_fields_prompt
-            + _DIRECTIVE_MODE_PROMPT
             + "不得把同一段文字复制成多道；不得遗漏皇帝要求的任一道拟旨事项。\n\n"
             + correction_block
             + roster_facts
@@ -2989,16 +2802,14 @@ def extract_draft_intent(
             + "【皇帝】" + (player_message or "（无）") + "\n"
             + "【大臣完整回话】" + (minister_reply or "（无）") + "\n"
         )
-        raw = ""
-        try:
-            raw, _ = _run_backend_for_config(prompt, llm_config, tag="draft_intent")
-        except Exception as exc:
-            # 纠错重试路上 LLM 挂死响亮上抛（owner：该报）；首抽仍吞掉以免挡对话。
-            if correction_block:
-                raise
-            _log(f"多旨稿抽取失败：{exc}")
-        obj = _loads_lenient(raw) or {}
-        values = obj.get("成品旨稿") if isinstance(obj, dict) else None
+        # #1849：抽取调用失败一律上抛。失败不得降级成「无拟旨意图」——
+        # 那会让写入口把失败洗成 special_decree 冒充成功产物（失败诚实宪法）。
+        raw, _ = _run_backend_for_config(prompt, llm_config, tag="draft_intent")
+        # #1849：解析失败也是抽取失败，不是「无意图」（与单条路同一根因）。
+        obj = _loads_lenient(raw)
+        if not isinstance(obj, dict):
+            raise ValueError("多旨稿抽取产物不可解析为 JSON 对象")
+        values = obj.get("成品旨稿")
         drafts = []
         draft_combo_flags: List[bool] = []
         seen_texts = set()
@@ -3230,7 +3041,6 @@ def extract_draft_intent(
         + merge_schema_line
         + "}\n"
         "判定要点：皇帝明确让大臣拟旨/起草圣旨→拟旨；仅商议/问询/催办/评论不算。语义判断，别拘字面。\n"
-        + _DIRECTIVE_MODE_PROMPT + "\n"
         + structured_decree_prompt_contract() + "\n"
         '非拨帑旨填共同契约目标/属地/事务类别/承办字段及“颁布方式”(普通|中旨直发)；拨帑旨只用 ACTION_CLUSTERS 字段。\n'
         '同一句交办只写一处事务声明（attach 仅 new|existing）；无声明不自建。\n'
@@ -3246,18 +3056,21 @@ def extract_draft_intent(
         + "【皇帝】" + (player_message or "（无）") + "\n"
         + "【大臣回话】" + (minister_reply or "（无）") + "\n"
     )
-    raw = ""
-    try:
-        raw, _ = _run_backend_for_config(prompt, llm_config, tag="draft_intent")
-    except Exception as exc:
-        if correction_block:
-            raise
-        _log(f"拟旨意图抽取失败：{exc}")
-    obj = _loads_lenient(raw) or {}
+    # #1849：同多旨稿路径——抽取调用失败一律上抛。首抽也不例外：
+    # 吞掉后这里只当「无拟旨意图」，下游 project 会把失败洗成 special_decree
+    # 冒充成功产物（失败诚实宪法）。无意图只在模型真的这样回答时成立。
+    raw, _ = _run_backend_for_config(prompt, llm_config, tag="draft_intent")
+    # #1849：解析失败/缺意图键/非法意图值都是抽取产物不可用，不是「无意图」；
+    # 一律响亮拒收（同 _coerce_draft_target_kind / 动作类型非法的既有契约），
+    # 禁再消解成合法无意图让写入口覆盖原草稿。
+    obj = _loads_lenient(raw)
     if not isinstance(obj, dict):
-        obj = {}
-    _raw = str(obj.get("拟旨意图") or "无").strip()
-    _action = _raw if _raw in {"无", "拟旨"} else "无"
+        raise ValueError("拟旨抽取产物不可解析为 JSON 对象")
+    if "拟旨意图" not in obj:
+        raise ValueError("拟旨抽取产物缺「拟旨意图」")
+    _action = str(obj.get("拟旨意图") or "").strip()
+    if _action not in {"无", "拟旨"}:
+        raise ValueError(f"拟旨意图非法：{_action!r}")
     # #654 H：无意图立即短路，不跑 acting/动作类型/target_kind 校验。
     # #1778：召对交办后置点将仍收承办人/名单（harvest_participants），不另造抽取器。
     if _action == "无":
@@ -3310,10 +3123,8 @@ def extract_draft_intent(
         push_mode = _directive_mode(obj.get("颁布方式"))
         if push_mode is not None:
             push_out["mode"] = push_mode
-        try:
-            push_declaration = _affair_declaration_from_draft_obj(obj)
-        except (TypeError, ValueError):
-            push_declaration = {}
+        # #1849：非法事务声明是脏产物，不得静默弃声明后照样出成功强推。
+        push_declaration = _affair_declaration_from_draft_obj(obj)
         if push_declaration:
             push_out["affair_declaration"] = _stamp_split_birth_key(
                 push_declaration["affair_declaration"]
@@ -3379,20 +3190,20 @@ def extract_draft_intent(
         mechanical["mode"] = mode
     merged = str(obj.get("合并草案") or "").strip()
     # #654 H 已在上方对 _action=="无" 短路；此处仅保留 #653 pay_order 验形。
+    # #1849：entries 非法是脏产物，响亮拒收；不得洗成「无意图」让写入口
+    # 以 special_decree 覆盖原草稿（失败诚实宪法）。
     if dossier_action == "pay_order_override" and (
         not isinstance(mechanical["entries"], list) or not mechanical["entries"]
     ):
-        return {"draft_action": "无", "draft_text": "", "target_candidate": ""}
+        raise ValueError("pay_order_override 须有非空 entries 清单")
     if not _candidates:
         # 无候选：沿用单条语义——补充模式合并、否则大臣回话即草案。
         if _supplement_mode:
             draft_text = merged if merged else _existing_draft_text
         else:
             draft_text = (minister_reply or "").strip()
-        try:
-            single_declaration = _affair_declaration_from_draft_obj(obj)
-        except (TypeError, ValueError):
-            return {"draft_action": "无", "draft_text": "", "target_candidate": ""}
+        # #1849：非法事务声明响亮拒收（禁静默弃声明后照样出成功草案）。
+        single_declaration = _affair_declaration_from_draft_obj(obj)
         if single_declaration:
             single_declaration = {
                 "affair_declaration": _stamp_split_birth_key(
@@ -3433,10 +3244,8 @@ def extract_draft_intent(
         existing = str(_by_id[int(target)].get("text") or "")
         # 补某道：优先合并全文；LLM 未合并时保留原文（避免用确认语覆盖），原文亦空则退回话。
         draft_text = merged if merged else (existing if existing else (minister_reply or "").strip())
-    try:
-        cand_declaration = _affair_declaration_from_draft_obj(obj)
-    except (TypeError, ValueError):
-        return {"draft_action": "无", "draft_text": "", "target_candidate": ""}
+    # #1849：非法事务声明响亮拒收（禁洗成「无意图」）。
+    cand_declaration = _affair_declaration_from_draft_obj(obj)
     if cand_declaration:
         cand_declaration = {
             "affair_declaration": _stamp_split_birth_key(
@@ -3501,11 +3310,13 @@ def capture_manual_directive_payload(
 ) -> Dict[str, object]:
     """Web/CLI 手工下旨共用既有草稿抽取 seam；在写入边界归一人物引用。
 
-    #1327 / #1274 V-1：空载零 LLM 直落 special_decree。
+    #1327 / #1274 V-1：空载零 LLM 直落 special_decree（无正文）。
     #1465 切片③：外层 30s 总罩已删——长抽取不再被墙钟截断成 special_decree
     fallback（宪法 #9）；次数/空转由 transport 在 runner 侧收口。
     真不在册耗尽 → 通政司戏内回禀 ValueError（不落草案、不除名）；
     回禀产文失败 → typed LLMUnavailable（禁固定戏内模板当台词）。
+    #1849：抽取调用失败不再降级 special_decree 冒充成功拟旨，一律响亮上抛。
+    special_decree 另有一合法来路：模型真答「无拟旨意图」（产物空，非失败）。
     """
     directive_text = str(text or "").strip()
     fallback_mode = resolve_directive_mode(existing=existing_mode)
@@ -3535,14 +3346,13 @@ def capture_manual_directive_payload(
             llm_config=llm_config,
         )
         raise ValueError(report) from exc
-    except ValueError:
-        # 其它业务 ValueError 原样上抛；禁吞成 special_decree。
-        raise
-    except Exception as exc:
-        # 纠错路上 LLM 终失败（transport 已尽次数）→ special_decree 原文照落
-        # （零改参与人）。此处只接 transport 已判终的失败，不再自设墙钟。
-        _log(f"手工拟诏 capture 降级 special_decree：{exc}")
-        return _manual_special_decree_payload(fallback_mode)
+
+    # 其余失败一律响亮上抛：LLM 终失败已由 transport 翻成 typed LLMUnavailable
+    # （Web → 结构化 400，禁裸 500），业务 ValueError 原样上抛（CLI 留在审阅循环）。
+    # #1849：此处曾用 `except Exception` 把任何失败——含 AttributeError 等代码错误
+    # ——降级成 special_decree 冒充成功拟旨（Web 更新草稿后 200 返回）；真实抽取核
+    # 内部（extract_draft_intent 首抽）也曾吞错续行，同样洗成 special_decree。
+    # 两处皆已删；失败诚实宪法禁此。
 
     # heal 已 normalize+validate；投影与 #1769 补交共用同一 helper（禁双路径漂移）。
     return project_draft_extract_to_directive_payload(
@@ -3634,10 +3444,10 @@ def project_draft_extract_to_directive_payload(
         classify_directive_structured_kind,
         imperial_push_target_dossier_id,
     )
-    try:
-        pre_kind = classify_directive_structured_kind(payload)
-    except ValueError:
-        pre_kind = "ordinary"
+    # #1849：互斥违规（push 与 triad 并存）此前先被 except 洗成 "ordinary" 再走
+    # 组装，报出的可能已是别的字段错；禁临时改判，直接响亮上抛（同一 classify
+    # 在下方组装后还会再判一次，掩盖只会让真因被别的字段错顶替）。
+    pre_kind = classify_directive_structured_kind(payload)
     if pre_kind not in {"push", "empty"} and payload.get("target_kind") not in (None, ""):
         regions_content = getattr(content, "regions", None) if content is not None else None
         conn = getattr(db, "conn", None) if db is not None else None
@@ -3722,215 +3532,12 @@ def resubmit_draft_admission_payload(
     return payload
 
 
-# 任免(office)会话动作抽取：与密令【完全独立】——任免和密令无关，故另起一函数，
-# 不并进 extract_minister_actions、不挂密令那个 active gate。随召对触发（任何召对都
-# 可能口头派官/罢官，含跟太监说），ungated；过判由「应允才落、拒绝就丢」兜底。
-def extract_appointment_action(
-    player_message: str,
-    minister_reply: str,
-    llm_config: Any = None,
-) -> Dict[str, Any]:
-    """LLM 判皇帝本轮口头是否在任免某人（任命/罢免），返回结构化动作。失败/无 → 「无」。
-    只判自然语言；显式「拟旨如下：」里的任免走 extractor 的 office_changes，不在此。
-
-    字段/枚举唯一真源 = appointment catalog FieldSpec（含 summon_after）；
-    串行 fallback 与分类器同形，禁止手写第二份字段定义。
-    """
-    from ming_sim.action_clusters import cluster_by_kind, normalize_one_candidate
-
-    cluster = cluster_by_kind("appointment")
-    if cluster is None:
-        raise RuntimeError("appointment cluster missing from action catalog")
-    # Prompt 字段行直接从 catalog FieldSpec 生成，不复制枚举。
-    field_lines: List[str] = []
-    for spec in cluster.fields:
-        if spec.allowed is not None:
-            vals = sorted(spec.allowed, key=lambda x: (x != "无", x))
-            field_lines.append(f'  "{spec.zh}": "{"|".join(vals)}",')
-        elif spec.as_int:
-            field_lines.append(f'  "{spec.zh}": 0,')
-        else:
-            field_lines.append(f'  "{spec.zh}": "",')
-    if field_lines:
-        field_lines[-1] = field_lines[-1].rstrip(",")
-    schema = "{\n" + "\n".join(field_lines) + "\n}"
-    prompt = (
-        "你是信息抽取器，不扮演、不写圣旨。读皇帝这句话 + 被召对者回话，判断皇帝**本轮**"
-        "是否在口头任免某人（授官/升迁/调任=任命；革职/罢黜=罢免）。"
-        "拿问、下狱、赐死、廷杖、罚俸、削籍、放归、昭雪属惩处，不是任免，任免动作填「无」。"
-        "只输出一个 JSON 对象（无代码围栏、无多余字）：\n"
-        + schema + "\n"
-        "判定要点：皇帝口语如「着X任/授X为/升X/调X去/革X职/罢X」即任免；"
-        "对已拟任免的路径应答「特旨钦命」→任免动作可无、颁布方式=中旨直发；"
-        "「署理」→任免动作可无、任别=署理。"
-        "地方/督抚/边镇任命须填任所为英文 region_id（如 shaanxi/fujian/liaodong）；"
-        "任所是辖域不是行止去向；中央衙门任命任所留空。"
-        "任命并令其入京/来见/赴阙 → 任命后传召=是；未要求传召则否。"
-        "闲谈、议事、下密令、拟旨、惩处都不算。"
-        "语义判断，别拘字面。无任免且无路径应答 → 任免动作填「无」、其余留空。\n\n"
-        "【皇帝】" + (player_message or "（无）") + "\n"
-        "【回话】" + (minister_reply or "（无）") + "\n"
-    )
-    raw = ""
-    try:
-        raw, _ = _run_backend_for_config(prompt, llm_config, tag="appointment")
-    except Exception as exc:  # 抽取失败不阻断对话
-        _log(f"任免动作抽取失败：{exc}")
-    obj = _loads_lenient(raw) or {}
-    if not isinstance(obj, dict):
-        obj = {}
-    # 颁布方式：先把中文/前缀声明归一到 catalog 枚举 ordinary|midzhi，再 soft normalize。
-    mapped_mode = _directive_mode(obj.get("颁布方式") if "颁布方式" in obj else obj.get("mode"))
-    if mapped_mode is not None:
-        obj = {**obj, "mode": mapped_mode}
-    # 不收「顶替」字段：顶替/去职由落地核按 office 自动去重（与 extractor office_changes 同机制）。
-    # soft normalize 经 catalog：枚举外 → default；summon_after 等字段与分类器同形。
-    normalized = normalize_one_candidate({**obj, "kind": "appointment"}, soft=True)
-    result = {
-        "appoint_action": str(normalized.get("appoint_action") or "无"),
-        "name": str(normalized.get("name") or "").strip()[:20],
-        "office": str(normalized.get("office") or "").strip()[:40],
-        "summon_after": str(normalized.get("summon_after") or "否"),
-    }
-    seat = str(normalized.get("region_id") or "").strip()[:40]
-    if seat:
-        result["region_id"] = seat
-    mode = str(normalized.get("mode") or "").strip()
-    if mode:
-        result["mode"] = mode
-    tenure = str(normalized.get("appointment_tenure") or "").strip()
-    if tenure:
-        result["appointment_tenure"] = tenure
-    return result
 
 
-def extract_confirmation_intent(
-    player_message: str,
-    minister_reply: str,
-    pending_summaries: List[str],
-    llm_config: Any = None,
-) -> Dict[str, Any]:
-    """皇帝本轮对【上一轮经大臣领命确认、尚未落库的暂存动作】是应允/拒绝/留中/修改/未表态。
-    对话确认(ADR 0006 重设计)：应允 → 当场 commit，拒绝 → 丢，留中 → held_over 档，
-    修改 → 原地更新同一候选内容（#1376 owner：改内容后仍走确认/默认准），无 → 留。
-    失败/无 → confirmation=「无」。#525：留中为第三态，豁免默认准，不成案。
-    确认判读只许结构化 LLM JSON 枚举（ADR 0028 2026-07-23 / ADR 0142）；
-    禁自由散文 regex/词表快路（准/不准/作罢/算了…）。结构性前缀/端点路由在调用方。
-
-    返回 {"confirmation": 应允|拒绝|留中|修改|无, "target_ids": [合法候选 id...],
-    "new_content": "修改正文（仅修改时填充）"}。
-    #1509：同一次 confirmation JSON 可选「目标编号」——修改多候选时由调用方按编号过滤；
-    编号只接受摘要里方括号列出的合法 id，非法/空由调用方作含糊，不在此机械读玩家散文。
-    """
-    by_id: Dict[int, str] = {}
-    listing_parts: List[str] = []
-    for s in pending_summaries or []:
-        text = str(s or "").strip()
-        m = re.match(r"^\[(\d+)\]\s*(.*)$", text)
-        if m:
-            pid = int(m.group(1))
-            rest = (m.group(2) or "").strip()
-            by_id[pid] = rest
-            listing_parts.append(f"  [{pid}] {rest[:40]}")
-        elif text:
-            listing_parts.append(f"  {text[:40]}")
-    listing = "\n".join(listing_parts) if listing_parts else "（无）"
-    prompt = (
-        "你是信息抽取器，不扮演。皇帝上一轮经大臣领命确认后，有几条【尚未落库的暂存政务动作】"
-        "待皇帝定夺。读皇帝这句话，判断他对这些暂存动作的态度：\n"
-        "  应允=准/可/照办/就这么办/依卿所奏/便如此；\n"
-        "  拒绝=不必/罢了/再议/不准/作罢/算了；\n"
-        "  留中=留中/留中不发/先搁置不颁（挂起，非拒绝）；\n"
-        "  修改=要求改/更正/收窄/扩充该暂存内容（未应允也未拒绝，继续改同一候选）；\n"
-        "  无=没提这些、继续说别的、含糊未表态。\n"
-        "只输出一个 JSON（无代码围栏、无多余字）：\n"
-        '{"确认":"应允|拒绝|留中|修改|无","目标编号":[方括号里的候选编号...],"新内容":""}。\n'
-        "指向具体某道（含修改第几道/某道）就填其编号；单道可留空目标编号；"
-        "多道修改未指明哪道=确认仍为修改、目标编号留空。语义判断，别拘字面。\n"
-        "修改时「新内容」=玩家所下修改正文（去结构化「修改：」前缀后的御旨材料），"
-        "应允/拒绝/留中/无时「新内容」留空。\n\n"
-        "【待皇帝定夺的暂存动作】\n" + listing + "\n"
-        "【皇帝】" + (player_message or "（无）") + "\n"
-        "【大臣回话】" + (minister_reply or "（无）") + "\n"
-    )
-    raw = ""
-    try:
-        raw, _ = _run_json_extractor_for_config(prompt, llm_config, tag="confirmation")
-    except Exception as exc:  # 抽取失败不阻断对话；当未表态，暂存留到颁诏(算同意)
-        _log(f"确认意图抽取失败：{exc}")
-    obj = _loads_lenient(raw) or {}
-    if not isinstance(obj, dict):
-        obj = {}
-    v = str(obj.get("确认") or "无").strip()
-    if v not in {"应允", "拒绝", "留中", "修改", "无"}:
-        v = "无"
-    raw_targets = obj.get("目标编号") or []
-    target_ids: List[int] = []
-    if isinstance(raw_targets, list):
-        for t in raw_targets:
-            digits = "".join(ch for ch in str(t) if ch.isdigit())
-            if digits and int(digits) in by_id and int(digits) not in target_ids:
-                target_ids.append(int(digits))
-    # #1376：修改判词携带 typed 新内容——唯一权威正文。ADR 0142 禁从自由散文机械提取，
-    # 此字段仅从结构化 LLM JSON 吸收；未填/非修改时留空。
-    new_content = str(obj.get("新内容") or "")
-    if v != "修改":
-        new_content = ""
-    return {"confirmation": v, "target_ids": target_ids, "new_content": new_content}
 
 
-def extract_directive_confirmation(
-    player_message: str,
-    minister_reply: str,
-    candidates: List[Dict[str, Any]],
-    llm_config: Any = None,
-) -> Dict[str, Any]:
-    """多道圣旨并存时（#502），判皇帝口头准驳/留中**指向哪几道**（提案粒度，AC4）。
-    返回 {"decision": "应允|拒绝|留中|无|含糊", "target_ids": [id...]}。
-    - 意图明确、指名了哪道 → decision=应允/拒绝/留中，target_ids=点名的候选 id。
-    - 意图明确、但**没指明是哪道**（多道并存说「准了/留中」）→ decision=含糊、target_ids=[]，
-      驱动大臣当场追问澄清（AC5：不静默当「不回→默认同意」）。
-    - 没在准驳这些 → decision=无。
-    抽取失败按含糊兜底（多道下宁可追问，不误提交）。#525 留中复用同一 target_ids/含糊规则。"""
-    by_id = {int(c["id"]): c for c in candidates}
-    listing = "\n".join(
-        f"  [{int(c['id'])}] {str(c.get('summary') or '')[:40]}" for c in candidates
-    )
-    prompt = (
-        "你是信息抽取器，不扮演。本夜大臣名下有下列**多道各自独立**的圣旨候选待皇帝定夺。"
-        "读皇帝这句话，判断他的口头准驳/留中**指向哪几道**：\n"
-        "  应允=准/照办这几道；拒绝=不必/作罢这几道；留中=留中/留中不发这几道；"
-        "含糊=有准驳或留中意思但没指明是哪道；无=没提这些。\n"
-        "只输出一个 JSON（无代码围栏、无多余字）：\n"
-        '{"决定":"应允|拒绝|留中|无|含糊","目标编号":[方括号里的候选编号...]}。\n'
-        "指向具体某道就填其编号；说「准了/都准/留中」但多道并存又没指明哪道=含糊、目标编号留空。语义判断，别拘字面。\n\n"
-        "【候选】\n" + listing + "\n"
-        "【皇帝】" + (player_message or "（无）") + "\n"
-        "【大臣回话】" + (minister_reply or "（无）") + "\n"
-    )
-    raw = ""
-    try:
-        raw, _ = _run_json_extractor_for_config(prompt, llm_config, tag="directive_confirmation")
-    except Exception as exc:  # 抽取失败：多道下按含糊兜底（追问，不误提交）
-        _log(f"多道准驳指认抽取失败：{exc}")
-        return {"decision": "含糊", "target_ids": []}
-    obj = _loads_lenient(raw) or {}
-    if not isinstance(obj, dict):
-        obj = {}
-    decision = str(obj.get("决定") or "无").strip()
-    if decision not in {"应允", "拒绝", "留中", "无", "含糊"}:
-        decision = "无"
-    raw_targets = obj.get("目标编号") or []
-    target_ids: List[int] = []
-    if isinstance(raw_targets, list):
-        for t in raw_targets:
-            digits = "".join(ch for ch in str(t) if ch.isdigit())
-            if digits and int(digits) in by_id and int(digits) not in target_ids:
-                target_ids.append(int(digits))
-    # 准驳/留中意图明确却没指到任何一道 → 含糊（AC5：不落到静默默认）。
-    if decision in {"应允", "拒绝", "留中"} and not target_ids:
-        decision = "含糊"
-    return {"decision": decision, "target_ids": target_ids}
+
+
 
 
 def _matched_prefix(message: str, prefixes) -> Optional[str]:
@@ -4477,6 +4084,8 @@ def _extract_secret_order(
         "  \"交付目标\": 到期须交付的正数目标（调查为须坐实的事实条数）,\n"
         "  \"效果符号\": 1,\n"
         "  \"调查对象\": \"查人填人物规范名；北极星专题查核填相关人员范围（如 辽饷转运及押运相关人员）；非调查留空\",\n"
+        "  \"调查事实\": \"本道密令所指的那条罪证标识——已有线索/举发/证词明确指向哪一条就填哪一条的标识"
+        "（与既有在查案卷同目标时可复用其罪证标识）；没指明具体哪一条就留空，引擎不会替你挑一条\",\n"
         "  \"钱粮用途\": \"支出 purpose（补饷/其它）；收入留空\", \"钱粮类别\": \"category\", \"钱粮账户\": \"account\",\n"
         "  \"钱粮标靶种类\": \"补饷时填 army，其余留空\", \"钱粮标靶编号\": \"补饷时填军队 id，其余留空\",\n"
         "  \"人物动作\": \"人物变更动作，非人物留空\",\n"
@@ -4634,6 +4243,7 @@ def _extract_secret_order(
             field=obj.get("地区字段"),
             region_target=obj.get("地区目标值"),
             investigation_target=obj.get("调查对象"),
+            investigation_fact=obj.get("调查事实"),
             effect_sign=obj.get("效果符号"),
         )
     except CovertContractError as exc:
@@ -4663,42 +4273,6 @@ def _extract_secret_order(
         result["extract_raw"] = raw
     return result
 
-def resolve_minister_actions(
-    minister_reply: str, player_message: str = "", default_assignee: str = "", llm_config: Any = None,
-    secret_context: str = "",
-    dossier_candidates: Optional[List[Dict[str, Any]]] = None,
-) -> Dict[str, Any]:
-    """玩家上一句带拟旨/密令前缀时生成候选。
-    - 拟旨：大臣回话原文即圣旨草稿（单一文本字段，够用）。
-    - 密令（#397/#1274 K1）：经 _extract_secret_order 结构化装配 content=御旨+extractor
-      「内容」（reply 不入拼装）；产物缺口由上游 land_or_recover 处置；call 失败响亮上抛。
-    返回 {decree_text, secret_order}。"""
-    out: Dict[str, Any] = {"decree_text": None, "secret_order": None}
-    reply = (minister_reply or "").strip()
-
-    draft_intent = _matched_prefix(player_message, _DRAFT_PREFIXES)
-    if draft_intent is not None:
-        out["decree_text"] = reply or draft_intent or None
-
-    secret_intent = _matched_prefix(player_message, _SECRET_PREFIXES)
-    if secret_intent is not None and (reply or secret_intent):
-        secret_command = secret_intent
-        force_default_assignee = False
-        if _secret_prefix_needs_recent_context(secret_intent) and (secret_context or "").strip():
-            secret_command = (
-                (secret_context or "").strip()
-                + ("\n【本轮确认】" + secret_intent if secret_intent else "")
-            ).strip()
-            force_default_assignee = True
-        # #397/#1274 K1：显式『密令如下：<X>』的密令正文须留住御旨 X——交
-        # _extract_secret_order 结构化装配（御旨+extractor「内容」；reply 不入拼装）。
-        out["secret_order"] = _extract_secret_order(
-            secret_command, reply, default_assignee, llm_config,
-            force_default_assignee=force_default_assignee,
-            dossier_candidates=dossier_candidates,
-        )
-
-    return out
 
 
 # 纯确认短句的原子片段：密令按钮当轮若【整句】只由这些片段拼成（如「可，照办」=可+照办、
@@ -4804,7 +4378,7 @@ def _fake_completion(
     text: str, model_id: str, tool_calls: list[ChatCompletionMessageFunctionToolCall] | None = None,
 ) -> ChatCompletion:
     """把纯文本包成 OpenAI ChatCompletion 交给 agno 解析。"""
-    msg = ChatCompletionMessage(role="assistant", content=text, tool_calls=tool_calls)
+    msg = ChatCompletionMessage(role="assistant", content=text)
     choice = Choice(index=0, message=msg, finish_reason="stop")
     return ChatCompletion(
         id="cli-backend", choices=[choice], created=0,
@@ -4847,10 +4421,9 @@ class CliChat(OpenAIChat):
         global _seq
         assistant_message.metrics.start_timer()
         # 拟旨/密令不走 agno function-calling（agy 不支持）。大臣照常自然回话；
-        # 玩家用拟旨/密令按钮（消息带前缀）时，handler 用 resolve_minister_actions
         # 把这句回话原文整段入档。invoke 只负责出文本。
         materials = str(getattr(self, "materials_dir", "") or "").strip() or None
-        prompt = _cli_prompt(messages, response_format, tools, materials_dir=materials)
+        prompt = _messages_to_prompt(messages, response_format, materials_dir=materials)
         with _TRACE_LOCK:  # 原子自增，防并发丢增量/seq 重复（#83）
             _seq += 1
             seq = _seq
@@ -4887,11 +4460,7 @@ class CliChat(OpenAIChat):
             _log(f"#{seq} {tag} {dt}s attempts={attempts} resp={len(text)}c"
                  + (f" ERROR={error}" if error else ""))
 
-        text, tool_calls = _cli_recommendation_call(text, tools)
-        provider_response = (
-            _fake_completion(text, self.id, tool_calls)
-            if tool_calls else _fake_completion(text, self.id)
-        )
+        provider_response = _fake_completion(text, self.id)
         return self._parse_provider_response(provider_response, response_format=response_format)
 
     async def ainvoke(  # type: ignore[override]
@@ -4931,8 +4500,7 @@ class CliChat(OpenAIChat):
             )
             return
         materials = str(getattr(self, "materials_dir", "") or "").strip() or None
-        prompt = _cli_prompt(messages, response_format, tools, materials_dir=materials)
-        held = ""
+        prompt = _messages_to_prompt(messages, response_format, materials_dir=materials)
         try:
             # #1465 切片③：空转判死归子进程增量读（新字节即活动，不设总墙钟），
             # 本处只搬 `_iter_cli_runner_text` 已判活的文本 —— 机器横幅不进 delta。
@@ -4946,9 +4514,7 @@ class CliChat(OpenAIChat):
                 materials_dir=materials,
             )
             for delta in stream:
-                ready, held = _cli_stream_safe_prefix(held + str(delta))
-                if ready:
-                    yield ModelResponse(role="assistant", content=ready)
+                yield ModelResponse(role="assistant", content=str(delta))
         except Exception as exc:
             # #1299/#1310：流式 runner 失败同翻 typed，禁机器横幅进 delta/content。
             # #1465：已 typed 的可重试瞬断原样上浮（同 invoke）。
@@ -4958,25 +4524,6 @@ class CliChat(OpenAIChat):
             if isinstance(exc, (LLMUnavailable, TransportIdleTimeout)):
                 raise
             raise cli_runner_unavailable(exc, backend=self.backend) from exc
-        text, tool_calls = _cli_recommendation_call(held, tools)
-        if text:
-            yield ModelResponse(role="assistant", content=text)
-        if tool_calls:
-            yield ModelResponse(
-                role="assistant",
-                tool_calls=[
-                    ChoiceDeltaToolCall(
-                        index=index,
-                        id=call.id,
-                        type=call.type,
-                        function=ChoiceDeltaToolCallFunction(
-                            name=call.function.name,
-                            arguments=call.function.arguments,
-                        ),
-                    )
-                    for index, call in enumerate(tool_calls)
-                ],
-            )
 
     async def ainvoke_stream(self, *args, **kwargs):  # type: ignore[override]
         for response in self.invoke_stream(*args, **kwargs):

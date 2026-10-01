@@ -233,7 +233,7 @@ class RejectedItem:
     """一条被拒收的 delta 项，附原因与分析类别。
 
     category 约定值（非 exhaustive）：hallucinated_id / invalid_enum / missing_ref。
-    source 由 driver/extractor 灌注，决定是否向玩家可见（ADR 0008 决定 5）。
+    source 由调用方传入，决定是否向玩家可见（ADR 0008 决定 5）。
     """
 
     item: dict                  # 原始 dict，原样保留便于重放分析
@@ -273,14 +273,12 @@ class SectionResult:
 class ApplyContext:
     """适配器入参，持结算所需的全部外部依赖。
 
-    registry 可为 None（向后兼容无 registry 路径）。
-    source 由 driver/extractor 在调用前灌注。
+    source 由调用方在调用前传入。
     """
 
     db: Any          # GameDB（不在 applier 层导入 GameDB 避免循环）
     state: Any       # GameState
     content: Any     # GameContent
-    registry: Any    # 可为 None
     source: Provenance
 
 
@@ -304,7 +302,6 @@ CREATE TABLE IF NOT EXISTS rejection_reports (
     category TEXT    NOT NULL,
     source   TEXT    NOT NULL,
     attempt  INTEGER NOT NULL DEFAULT 1,
-    resimulation_invalidated INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 """
@@ -351,14 +348,6 @@ class RejectionCollector:
         空缓冲时直接返回（幂等）。
         """
         db.conn.execute(_CREATE_REJECTION_REPORTS)
-        cols = {
-            str(row[1]) for row in db.conn.execute("PRAGMA table_info(rejection_reports)").fetchall()
-        }
-        if "resimulation_invalidated" not in cols:
-            db.conn.execute(
-                "ALTER TABLE rejection_reports "
-                "ADD COLUMN resimulation_invalidated INTEGER NOT NULL DEFAULT 0"
-            )
         if not self._buffer:
             return
         db.conn.executemany(
@@ -412,7 +401,7 @@ def register_runtime_outcome_callbacks(
     """Run callbacks at the real outermost commit/rollback boundary.
 
     Nested owners register on the shared connection so side effects (JSONL mirror,
-    registry refresh) only fire after the outermost commit, and are discarded on
+    runtime-memory updates) only fire after the outermost commit, and are discarded on
     rollback. Depth 0 runs on_commit immediately.
     """
     if getattr(db.conn, "_atomic_depth", 0) == 0:

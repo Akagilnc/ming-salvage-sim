@@ -175,25 +175,16 @@ def test_army_public_exits_surface_firearm_and_cannon(game):
         assert "77" in d and "5" in d
 
 
-def test_fresh_seed_wires_firearm_not_all_zero(content):
+def test_fresh_seed_wires_firearm_not_all_zero(content, tmp_path):
     """新档 seed 必须贯通火器（非全 0）。"""
-    import os
-    import tempfile
     from ming_sim.db import GameDB
 
-    fd, p = tempfile.mkstemp(suffix=".db")
-    os.close(fd)
-    try:
-        db = GameDB(p, content)
-        db.seed_static_data()
-        rows = db.conn.execute("SELECT firearm_equipment FROM armies").fetchall()
-        assert rows
-        assert any(int(r["firearm_equipment"]) > 0 for r in rows)
-        db.conn.close()
-    finally:
-        for f in (p, f"{p}_agno.db"):
-            if os.path.exists(f):
-                os.remove(f)
+    db = GameDB(str(tmp_path / "seed.db"), content)
+    db.seed_static_data()
+    rows = db.conn.execute("SELECT firearm_equipment FROM armies").fetchall()
+    assert rows
+    assert any(int(r["firearm_equipment"]) > 0 for r in rows)
+    db.conn.close()
 
 
 def test_create_army_cannon_nonint_rejected_not_crash(read_game):
@@ -228,15 +219,3 @@ def test_apply_army_delta_chinese_keys(game):
     ).fetchone()
     assert row["firearm_equipment"] == 25
     assert row["cannon_equipment"] == 5
-
-
-def test_simulator_payload_includes_firearm(read_game):
-    """喂 simulator 的军表必须带火器/大炮列。"""
-    db, state, _ = read_game
-    from ming_sim.simulation import build_simulator_payload
-
-    payload = build_simulator_payload(state, db, "", "")
-    armies = payload.get("armies") or {}
-    cols = armies.get("cols") or []
-    assert "firearm_equipment" in cols
-    assert "cannon_equipment" in cols

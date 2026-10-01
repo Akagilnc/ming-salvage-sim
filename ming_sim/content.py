@@ -79,6 +79,11 @@ def load_character_content() -> Tuple[Dict[str, Faction], Dict[str, Character]]:
         identity = int_field(character_fields, "identity", path)
         if not 0 <= identity <= 100:
             raise SystemExit(f"设定字段超出范围：{path}.identity（应为 0–100）")
+        # ADR 0108 阴谋能力：静态 seed 能力轴，与 identity 同为 int 0–100 承重列。
+        character_fields.setdefault("intrigue", 50)
+        intrigue = int_field(character_fields, "intrigue", path)
+        if not 0 <= intrigue <= 100:
+            raise SystemExit(f"设定字段超出范围：{path}.intrigue（应为 0–100）")
         seed_guilt_raw = item.get("seed_guilt")
         if seed_guilt_raw is None:
             seed_guilt_raw = {}
@@ -137,6 +142,7 @@ def load_character_content() -> Tuple[Dict[str, Faction], Dict[str, Character]]:
             summary=str(item.get("summary") or ""),
             portrait_id=str(item.get("portrait_id") or ""),
             identity=identity,
+            intrigue=intrigue,
             seed_guilt=seed_guilt,
         )
 
@@ -281,12 +287,6 @@ def load_event_content(filename: str = "events.json") -> List[Event]:
             string_list(item["terminal_reason_labels"], f"{filename}[{idx}].terminal_reason_labels")
             if "terminal_reason_labels" in item else []
         )
-        default_terminal_reason = str(item.get("default_terminal_reason") or "").strip()
-        if default_terminal_reason and default_terminal_reason not in terminal_reason_labels:
-            raise SystemExit(
-                f"{filename}[{idx}] default_terminal_reason={default_terminal_reason!r} "
-                "不在 terminal_reason_labels 白名单内。"
-            )
         gate_raw = item.get("trigger_gate") or {}
         if not isinstance(gate_raw, dict):
             raise SystemExit(f"{filename}[{idx}] trigger_gate 必须是对象（key→比较式）。")
@@ -337,7 +337,6 @@ def load_event_content(filename: str = "events.json") -> List[Event]:
                 trigger_gate=trigger_gate,
                 auto_trigger=bool(item.get("auto_trigger") or False),
                 terminal_reason_labels=terminal_reason_labels,
-                default_terminal_reason=default_terminal_reason,
                 bar_value=int(item.get("bar_value") or 0),
                 bar_good_meaning=str(item.get("bar_good_meaning") or ""),
                 bar_bad_meaning=str(item.get("bar_bad_meaning") or ""),
@@ -613,72 +612,16 @@ def dict_of_strings(value: object, path: str) -> Dict[str, str]:
     return output
 
 
-def load_skill_content() -> Tuple[
-    Dict[str, List[str]],
-    Dict[str, Dict[str, object]],
-    Dict[str, List[str]],
-    Dict[str, List[str]],
-    List[str],
-    Dict[str, str],
-    Dict[str, List[str]],
-    Dict[str, str],
-    Set[str],
-    Dict[str, Dict[str, object]],
-]:
-    data = require_dict(load_json_asset("skills.json"), "skills.json")
-    office_skills_data = dict_of_string_lists(data.get("office_skills"), "skills.json.office_skills")
-    skill_catalog = {
-        str(key): require_dict(value, f"skills.json.skill_catalog.{key}")
-        for key, value in require_dict(data.get("skill_catalog"), "skills.json.skill_catalog").items()
-    }
-    office_default_skills = dict_of_string_lists(data.get("office_default_skills"), "skills.json.office_default_skills")
-    personal_skill_ids = dict_of_string_lists(data.get("personal_skill_ids"), "skills.json.personal_skill_ids")
-    common_skills = string_list(data.get("common_skills"), "skills.json.common_skills")
-    skill_descriptions = dict_of_strings(data.get("skill_descriptions"), "skills.json.skill_descriptions")
-    grant_keywords = dict_of_string_lists(data.get("grant_keywords"), "skills.json.grant_keywords")
-    directive_keywords = dict_of_strings(data.get("directive_keywords"), "skills.json.directive_keywords")
-    directive_skill_ids = set(string_list(data.get("directive_skill_ids"), "skills.json.directive_skill_ids"))
-    office_definitions: Dict[str, Dict[str, object]] = {}
-    for office_type, raw in require_dict(data.get("office_definitions"), "skills.json.office_definitions").items():
-        item = require_dict(raw, f"skills.json.office_definitions.{office_type}")
-        skills_ref = str(item.get("skills_ref") or office_type)
-        office_definitions[str(office_type)] = {
-            "skills": office_skills_data.get(skills_ref, []),
-            "tools": string_list(item.get("tools"), f"skills.json.office_definitions.{office_type}.tools"),
-            "authority_scope": str_field(item, "authority_scope", f"skills.json.office_definitions.{office_type}"),
-            "power": int_field(item, "power", f"skills.json.office_definitions.{office_type}"),
-            "responsibility": int_field(item, "responsibility", f"skills.json.office_definitions.{office_type}"),
-            "corruption_risk": int_field(item, "corruption_risk", f"skills.json.office_definitions.{office_type}"),
+def load_office_definitions() -> Dict[str, Dict[str, object]]:
+    data = require_dict(load_json_asset("office_definitions.json"), "office_definitions.json")
+    return {
+        str(office_type): {
+            field: int_field(require_dict(raw, f"office_definitions.{office_type}"), field,
+                             f"office_definitions.{office_type}")
+            for field in ("power", "responsibility", "corruption_risk")
         }
-
-    for skill_id in common_skills:
-        if skill_id not in skill_catalog:
-            raise SystemExit(f"common_skills 引用了未定义 skill：{skill_id}")
-    for mapping_name, mapping in {
-        "office_default_skills": office_default_skills,
-        "personal_skill_ids": personal_skill_ids,
-        "grant_keywords": grant_keywords,
-    }.items():
-        for key, skill_ids in mapping.items():
-            for skill_id in skill_ids:
-                if skill_id not in skill_catalog:
-                    raise SystemExit(f"{mapping_name}.{key} 引用了未定义 skill：{skill_id}")
-    for keyword, skill_id in directive_keywords.items():
-        if skill_id not in skill_catalog:
-            raise SystemExit(f"directive_keywords.{keyword} 引用了未定义 skill：{skill_id}")
-
-    return (
-        office_skills_data,
-        skill_catalog,
-        office_default_skills,
-        personal_skill_ids,
-        common_skills,
-        skill_descriptions,
-        grant_keywords,
-        directive_keywords,
-        directive_skill_ids,
-        office_definitions,
-    )
+        for office_type, raw in require_dict(data.get("office_definitions"), "office_definitions").items()
+    }
 
 
 def load_fiscal_config() -> "List[Dict[str, object]]":
@@ -748,27 +691,14 @@ class GameContent:
     powers: Dict[str, Power] = field(default_factory=dict)
     classes: Dict[str, SocialClass] = field(default_factory=dict)
 
-    # skill 体系（load_skill_content 十元组）
-    office_skills: Dict[str, List[str]] = field(default_factory=dict)
-    skill_catalog: Dict[str, Dict[str, object]] = field(default_factory=dict)
-    office_default_skills: Dict[str, List[str]] = field(default_factory=dict)
-    personal_skill_ids: Dict[str, List[str]] = field(default_factory=dict)
-    common_skills: List[str] = field(default_factory=list)
-    skill_descriptions: Dict[str, str] = field(default_factory=dict)
-    grant_keywords: Dict[str, List[str]] = field(default_factory=dict)
-    directive_keywords: Dict[str, str] = field(default_factory=dict)
-    directive_skill_ids: Set[str] = field(default_factory=set)
     office_definitions: Dict[str, Dict[str, object]] = field(default_factory=dict)
-    skill_tool_templates: Dict[str, str] = field(default_factory=dict)
 
-    # 提示词
+    # 提示词（#1837 reopen：minister/consort agent prompt 随旧 agent 退役）
     game_world_prompt: str = ""
-    minister_agent_prompt: str = ""
     scene_agent_prompt: str = ""
-    consort_agent_prompt: str = ""
 
     decree_writer_prompt: str = ""
-    season_simulator_prompt: str = ""
+    gazette_author_prompt: str = ""
     ending_summary_prompt: str = ""
     rescript_draft_prompt: str = ""
     relation_brew_prompt: str = ""
@@ -787,18 +717,7 @@ class GameContent:
         buildings = load_building_content()
         powers = load_powers()
         classes = load_class_content()
-        (
-            office_skills_data,
-            skill_catalog,
-            office_default_skills,
-            personal_skill_ids,
-            common_skills,
-            skill_descriptions,
-            grant_keywords,
-            directive_keywords,
-            directive_skill_ids,
-            office_definitions,
-        ) = load_skill_content()
+        office_definitions = load_office_definitions()
         return cls(
             factions=factions,
             characters=characters,
@@ -812,24 +731,12 @@ class GameContent:
             faction_metrics=tuple(factions.keys()),
             powers=powers,
             classes=classes,
-            office_skills=office_skills_data,
-            skill_catalog=skill_catalog,
-            office_default_skills=office_default_skills,
-            personal_skill_ids=personal_skill_ids,
-            common_skills=common_skills,
-            skill_descriptions=skill_descriptions,
-            grant_keywords=grant_keywords,
-            directive_keywords=directive_keywords,
-            directive_skill_ids=directive_skill_ids,
             office_definitions=office_definitions,
             fiscal_items=load_fiscal_config(),
-            skill_tool_templates=dict_of_strings(load_json_asset("skill_tools.json"), "skill_tools.json"),
             game_world_prompt=load_text_asset("prompts/game_world.md"),
-            minister_agent_prompt=load_text_asset("prompts/minister_agent.md"),
             scene_agent_prompt=load_text_asset("prompts/scene_agent.md"),
-            consort_agent_prompt=load_text_asset("prompts/consort_agent.md"),
             decree_writer_prompt=load_text_asset("prompts/decree_writer.md"),
-            season_simulator_prompt=load_text_asset("prompts/season_simulator.md"),
+            gazette_author_prompt=load_text_asset("prompts/gazette_author.md"),
             ending_summary_prompt=load_text_asset("prompts/ending_summary.md"),
             rescript_draft_prompt=load_text_asset("prompts/rescript_draft.md"),
             relation_brew_prompt=load_text_asset("prompts/relation_brew.md"),

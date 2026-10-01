@@ -6,19 +6,17 @@ Seams:
 - apply_pending_due_reviews → record_dossier_execution 适配器（有案卷桥）
 - 无案卷分支：只场面+奏报，不伪造案卷
 - 中段 executing+close=False 不连坐 vs 末段终值+close+至多一次连坐
-- EXTRACTION_MODULES 基数不变；无 AWAITING_DECISION / <<DECISION>>
 - 接管：到期目标 extractor 重复终值拒收
 """
 
 from __future__ import annotations
 
-import json
 
 import pytest
 
 import ming_sim.issues as issue_engine
 from ming_sim.audience_night import list_ledger, open_night
-from ming_sim.decree import settle_with_delta
+from tests.test_month_chain_1843 import _prepare_player_month
 from ming_sim.due_review import (
     apply_pending_due_reviews,
     build_due_review_input,
@@ -99,11 +97,14 @@ def _insert_staged_commitment(
     return int(created["issue_id"]), origin
 
 
-def _settle_empty_month(db, state, content):
+def _settle_empty_month(db, state, content, monkeypatch):
     before = state.turn
-    report = settle_with_delta(state, db, {}, before_turn=before, content=content)
+    session = _prepare_player_month(db, state, content, monkeypatch)
+    session.resolve_turn(allow_empty_decree=True)
+    db.save_turn_report(state, "邸报", public_body="邸报")
+    result = session.resolve_turn(allow_empty_decree=True)
     assert state.turn == before + 1
-    return report
+    return result
 
 
 def _cost_events(db, dossier_id, *, identity="连坐"):
@@ -220,22 +221,18 @@ def test_due_review_scene_tops_next_audience_with_origin_context(game):
     assert len(scenes) == 1
     scene = scenes[0]
     assert scene["origin_context"] == "三年火器见眉目"
-    assert "复命" in scene["scene_text"]
-    assert "三年火器见眉目" in scene["scene_text"]
-    # P4 哨兵：枚举/系统词不进玩家可见串
-    banned = (
-        "fulfilled", "degraded", "failed", "transformed", "executing",
-        "AWAITING_DECISION", "<<DECISION>>", "EXTRACTION_MODULES",
-        "progress_band", "is_terminal",
-    )
-    blob = json.dumps(scene, ensure_ascii=False)
-    for token in banned:
-        assert token not in blob
-        assert token not in scene["scene_text"]
+    assert "payload_json" not in scene
 
 
 def test_due_review_scene_tops_live_open_night_even_with_body(game):
-    """C1：生产 open-beat 供 body 时，复命仍须顶上真实召对开夜账。"""
+    """#1838 reopen：待裁场面进场景开场最小集，不再写开夜旁白账。"""
+    import json
+    from ming_sim.materials import (
+        _scene_pending_audience_facts,
+        prepare_scene_materials,
+        release_material_tree,
+    )
+
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.commit()
@@ -248,26 +245,32 @@ def test_due_review_scene_tops_live_open_night_even_with_body(game):
     _insert_staged_commitment(db, state, content, stages=stages)
     write_due_staged_commitment_todos(db, state)
 
-    # 模拟生产 ensure_open_night_for_audience(..., body=open_beat_text)
-    open_beat = "戌时乾清宫，烛影摇红，召对启。"
-    night = open_night(
-        db, state, time_of_day="戌时", location="乾清宫", body=open_beat,
-    )
-    ledger = list_ledger(db, int(night["id"]))
-    open_entries = [e for e in ledger if "开夜" in (e.get("tags") or [])]
-    assert open_entries, ledger
-    open_text = str(open_entries[0].get("body") or "")
-    assert open_beat in open_text
-    assert "复命" in open_text
-    assert "三年火器见眉目" in open_text
-    for token in ("fulfilled", "AWAITING_DECISION", "<<DECISION>>"):
-        assert token not in open_text
+    open_night(db, state, time_of_day="戌时", location="乾清宫")
+    scenes = list_due_review_scenes(db, state)
+    assert len(scenes) == 1
+    scene = scenes[0]
+    prepared = prepare_scene_materials(db, state)
+    try:
+        facts = _scene_pending_audience_facts(db, state)
+        matched = [
+            json.loads(line) for line in facts
+            if json.loads(line).get("todo_id") == scene["todo_id"]
+        ]
+        assert len(matched) == 1
+        assert matched[0] == scene
+        payload = next(
+            line for line in facts
+            if json.loads(line).get("todo_id") == scene["todo_id"]
+        )
+        assert payload in prepared.opening
+    finally:
+        release_material_tree(prepared.root)
 
 
 # ── P1 有案卷桥 / 无案卷分支 ──────────────────────────────────────────
 
 
-def test_dossier_branch_writes_execution_slot_via_adapter(game):
+def test_dossier_branch_writes_execution_slot_via_adapter(game, monkeypatch):
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.commit()
@@ -291,13 +294,13 @@ def test_dossier_branch_writes_execution_slot_via_adapter(game):
         origin_ref=f"dossier:{dossier_id}",
         title="有案卷分段之诺",
     )
-    # settle 写 todo（中段到期）→ 次回合 settle 落格
-    _settle_empty_month(db, state, content)
+    # 过月写 todo（中段到期）→ 次回合落格
+    _settle_empty_month(db, state, content, monkeypatch)
     assert db.list_next_audience_todos(status=TODO_STATUS_PENDING)
     scenes = list_due_review_scenes(db, state)
     assert scenes and scenes[0]["origin_context"] == "三年火器见眉目"
 
-    _settle_empty_month(db, state, content)
+    _settle_empty_month(db, state, content, monkeypatch)
     dossier = db.get_decree_dossier(dossier_id)
     # 中段：过程态 executing，不结案
     assert dossier["execution_outcome"] == "executing"
@@ -527,7 +530,7 @@ def test_executing_outcome_rejects_close_true(game):
 # ── P4/P5 时序与机械哨兵 ──────────────────────────────────────────────
 
 
-def test_three_beat_timing_todo_then_scene_then_slot(game):
+def test_three_beat_timing_todo_then_scene_then_slot(game, monkeypatch):
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.commit()
@@ -543,12 +546,12 @@ def test_three_beat_timing_todo_then_scene_then_slot(game):
     )
 
     # beat0: 未到期
-    _settle_empty_month(db, state, content)
+    _settle_empty_month(db, state, content, monkeypatch)
     assert db.list_next_audience_todos() == []
     assert not list_due_review_scenes(db, state)
 
-    # beat1: settle 写 todo
-    _settle_empty_month(db, state, content)
+    # beat1: 过月写 todo
+    _settle_empty_month(db, state, content, monkeypatch)
     todos = db.list_next_audience_todos(status=TODO_STATUS_PENDING)
     assert len(todos) == 1
     # 落格尚未发生
@@ -556,21 +559,14 @@ def test_three_beat_timing_todo_then_scene_then_slot(game):
     # beat2: 召对场面可读
     scenes = list_due_review_scenes(db, state)
     assert len(scenes) == 1
-    assert "复命" in scenes[0]["scene_text"]
 
-    # beat3: 下一 settle 落格 + 消费
-    _settle_empty_month(db, state, content)
+    # beat3: 下一过月落格 + 消费
+    _settle_empty_month(db, state, content, monkeypatch)
     assert db.get_decree_dossier(dossier_id)["execution_outcome"]
     assert db.list_next_audience_todos(status=TODO_STATUS_PENDING) == []
 
 
-def test_five_module_extractor_fanout_is_retired():
-    from ming_sim import simulation
-    assert not hasattr(simulation, "EXTRACTION_MODULES")
-    assert not hasattr(simulation, "extract_scores_by_modules_with_agno")
-
-
-def test_due_review_settle_does_not_pause_or_decision(game):
+def test_due_review_settle_does_not_pause_or_decision(game, monkeypatch):
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.commit()
@@ -584,12 +580,12 @@ def test_due_review_settle_does_not_pause_or_decision(game):
     _insert_staged_commitment(
         db, state, content, stages=stages, origin_ref=f"dossier:{dossier_id}",
     )
-    report1 = _settle_empty_month(db, state, content)
-    assert "<<DECISION>>" not in report1
+    result1 = _settle_empty_month(db, state, content, monkeypatch)
+    assert result1.awaiting is False
     assert state.turn_phase != TurnPhase.AWAITING_DECISION.value
-    report2 = _settle_empty_month(db, state, content)
-    assert "<<DECISION>>" not in report2
-    assert state.turn_phase == TurnPhase.SUMMONING.value
+    result2 = _settle_empty_month(db, state, content, monkeypatch)
+    assert result2.awaiting is False
+    assert state.turn_phase == TurnPhase.ISSUED.value
     assert db.list_pending_decisions(state.turn) == []
     assert db.list_pending_decisions(state.turn - 1) == []
 
@@ -614,7 +610,6 @@ def test_input_closed_set_degrades_when_sources_missing(game):
     assert inp["progress_reports"] == []
     assert inp.get("transformation_tendency_facts", {}).get("exposure_count", 0) == 0
     scene = project_due_review_scene(db, todo, review_input=inp)
-    assert scene["scene_text"]
 
 
 def test_formal_review_blocks_extractor_second_terminal(game):
@@ -727,7 +722,7 @@ def test_due_month_extractor_blocked_before_todo_write(game):
     )
     item = result["dossier_executions"][0]
     assert item.get("rejected") is True
-    assert "正式复核" in str(item.get("reason") or "")
+    assert item.get("category") == "invalid_transition"
 
     after = db.get_decree_dossier(dossier_id)
     assert after["status"] == "executing"
@@ -819,12 +814,4 @@ def test_p6_gap_visible_cause_not_auto(game):
     )
     write_due_staged_commitment_todos(db, state)
     scene = list_due_review_scenes(db, state)[0]
-    gap_text = scene.get("gap_text")
-    statement_text = scene.get("statement_text")
-    # 0118：缺口 + 陈词双到位（真值非空，缺席/None 不得靠 or "" 蒙混）
-    assert isinstance(gap_text, str) and gap_text.strip()
-    assert isinstance(statement_text, str) and statement_text.strip()
-    # 因不自动：不得出现机械归因定论词
-    for banned in ("真没办", "被吞", "欺瞒坐实", "归因="):
-        assert banned not in scene["scene_text"]
-        assert banned not in statement_text
+    assert scene["criterion_text"] == "火器见眉目"

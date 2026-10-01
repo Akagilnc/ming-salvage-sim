@@ -10,12 +10,10 @@ from tests.conftest import with_monthly_reports
 from tests.dossier_test_helpers import TYPED_COVERT_TASK
 from tests.dossier_test_helpers import create_test_secret_order
 
-
 def _actor(db):
     return str(db.conn.execute(
         "SELECT name FROM characters WHERE status='active' ORDER BY name LIMIT 1"
     ).fetchone()["name"])
-
 
 def _people(db, count):
     rows = db.conn.execute(
@@ -24,7 +22,6 @@ def _people(db, count):
     ).fetchall()
     assert len(rows) >= count
     return [str(row["name"]) for row in rows]
-
 
 def _secret(db, state, *, title="密查漕弊", body="暗访仓胥", tags=None):
     lead = _actor(db)
@@ -36,44 +33,8 @@ def _secret(db, state, *, title="密查漕弊", body="暗访仓胥", tags=None):
     assert dossier is not None
     return lead, int(order_id), int(dossier["id"])
 
-
-def _grouped(db, state, order_ids=None):
-    from ming_sim.settlement_payload import (
-        group_secret_orders_for_sim,
-        _select_secret_orders_for_sim,
-    )
-
-    if order_ids is None:
-        rows = _select_secret_orders_for_sim(db)
-    else:
-        wanted = {int(oid) for oid in order_ids}
-        rows = [
-            row for row in db.list_secret_orders()
-            if int(row["id"]) in wanted
-        ]
-    return group_secret_orders_for_sim(rows)
-
-
 # ── S1: 私读缝 ──────────────────────────────────────────────
 
-
-def test_s1_private_rail_exposes_secret_dossier_id_and_roster(game):
-    """personnel_secret 私轨为本批密令暴露 dossier_id+participant_roster。"""
-    from ming_sim.simulation import build_simulator_payload
-
-    db, state, _content = game
-    lead, order_id, dossier_id = _secret(db, state)
-    db.append_decree_dossier_participants(dossier_id, [{
-        "character_id": lead, "tier": "主办", "role": "密访",
-    }], state=state)
-
-    public = build_simulator_payload(state, db, "", "")
-    assert all(
-        int(row["id"]) != dossier_id
-        for row in public.get("decree_dossiers") or []
-        if isinstance(row, dict) and row.get("id") is not None
-    )
-    assert str(dossier_id) not in str(public.get("secret_orders") or "")
 
 
 def test_s1_public_projection_filter_unchanged(game):
@@ -84,79 +45,9 @@ def test_s1_public_projection_filter_unchanged(game):
     assert all(int(row["id"]) != dossier_id for row in visible)
     assert all(str(row.get("action_type") or "") != "secret_order" for row in visible)
 
-
 # ── S2: 私字段 + 冻结授权 + apply ───────────────────────────
 
 
-def test_s2_secret_field_appends_via_real_settle_and_recovery_replays(game):
-    """① 真实 settle 入口落密令 roster；recovery 同冻结 ctx 重放一致。"""
-    import driver
-    import ming_sim.decree as decree
-    import ming_sim.issues as issue_engine
-
-    db, state, content = game
-    lead, worker = _people(db, 2)
-    # Non 护行/稽核 tags + short deadline: avoid #566 monthly-progress fail-loud.
-    order_id = create_test_secret_order(db,
-        state, lead, "密查仓胥", "暗访通州仓", ["密访"], deadline_months=1,
-        covert_task=TYPED_COVERT_TASK,
-    )
-    dossier_id = int(db.get_dossier_for_secret_order(order_id)["id"])
-    db.append_decree_dossier_participants(dossier_id, [{
-        "character_id": lead, "tier": "主办", "role": "密访",
-    }], state=state)
-
-    delta = {
-        "secret_dossier_participants": [{
-            "dossier_id": dossier_id,
-            "character_id": worker,
-            "tier": "协办",
-            "role": "随员核账",
-            "delegator_id": lead,
-        }],
-    }
-    from tests.section_rejection_helpers import run_settle as settle_after_prepare
-
-    driver.run_prepare(db, state, content)
-    settle_after_prepare(db, state, content, with_monthly_reports(db, delta))
-
-    roster = db.get_decree_dossier(dossier_id)["participant_roster"]
-    assert any(
-        row.get("character_id") == worker and row.get("tier") == "协办"
-        for row in roster
-    )
-
-    # Crash-style freeze: persist ready ctx then replay recovery.
-    before_turn = state.turn
-    # Reset roster to only lead so replay must re-append worker.
-    db.conn.execute(
-        "UPDATE decree_dossiers SET participant_roster=? WHERE id=?",
-        (
-            __import__("json").dumps(
-                [{"character_id": lead, "tier": "主办", "role": "密访"}],
-                ensure_ascii=False,
-            ),
-            dossier_id,
-        ),
-    )
-    db.conn.commit()
-    grouped = _grouped(db, state, [order_id])
-    from ming_sim.decree import secret_dossier_ids_from_secret_orders
-    assert dossier_id in secret_dossier_ids_from_secret_orders(db, grouped)
-
-    decree.pre_settle(state, db)
-    db.save_resolve_context(
-        state.turn, "", "",
-        {"decree_dossiers": []},
-        secret_orders=grouped,
-        extracted=with_monthly_reports(db, delta),
-    )
-    driver.run_settle(db, state, content, with_monthly_reports(db, delta))
-    roster2 = db.get_decree_dossier(dossier_id)["participant_roster"]
-    assert any(
-        row.get("character_id") == worker and row.get("tier") == "协办"
-        for row in roster2
-    )
 
 
 def test_s2_tracer_613_565_readers_see_appended_roster(game):
@@ -243,7 +134,7 @@ def test_s2_private_field_rejects_non_batch_and_public_ids(game):
     lead, worker = _people(db, 2)
     _o1, batch_id = _secret(db, state, title="本批密令")[1:]
     # second secret not in auth set
-    _lead2, _o2, other_secret = _secret(db, state, title="他批密令", body="另案")
+    _lead2, _o2, other_secret = _secret(db, state, title="他批密令")
     # seed lead on both so append shape is valid if auth were open
     for did in (batch_id, other_secret):
         d = db.get_decree_dossier(did)
@@ -281,6 +172,75 @@ def test_s2_private_field_rejects_non_batch_and_public_ids(game):
     assert rows[2]["character_id"] == worker
 
 
+def test_month_segment_dispatch_uses_secret_order_dossier_ids_authority(game):
+    """#1862 reopen：月段翻译→dispatch 以案卷自身密令指向为唯一写权。"""
+    from ming_sim.month_translate import dispatch_month_segment
+
+    db, state, _content = game
+    lead, worker = _people(db, 2)
+    order_id = create_test_secret_order(
+        db, state, lead, "密查仓胥", "暗访通州仓", ["稽核"], deadline_months=3,
+    )
+    dossier_id = int(db.get_dossier_for_secret_order(order_id)["id"])
+    db.append_decree_dossier_participants(dossier_id, [{
+        "character_id": lead, "tier": "主办", "role": "密访",
+    }], state=state)
+    plain_id = db.create_decree_dossier(
+        state, action_type="policy", decree_text="公开案",
+        target_kind="issue", target_id="plain-secret-auth-1252",
+    )
+    db.apply_dossier_promulgation(state, plain_id, "promulgated")
+    db.append_decree_dossier_participants(plain_id, [{
+        "character_id": lead, "tier": "主办", "role": "承办",
+    }], state=state)
+
+    def translate(_request, _cfg):
+        return {
+            "effects": {
+                "secret_dossier_participants": [
+                    {
+                        "dossier_id": dossier_id,
+                        "character_id": worker,
+                        "tier": "协办",
+                        "role": "随员",
+                        "delegator_id": lead,
+                    },
+                    {
+                        "dossier_id": plain_id,
+                        "character_id": worker,
+                        "tier": "协办",
+                        "role": "随员",
+                        "delegator_id": lead,
+                    },
+                ],
+            },
+        }
+
+    result = dispatch_month_segment(
+        db, state, segment="密令参与人月段", translate_fn=translate,
+    )
+    assert result.effects.applied, result.effects.rejected
+    rows = list(result.effects.applied[0].get("secret_dossier_participants") or [])
+
+    def _row_dossier_id(row: dict) -> int:
+        if row.get("dossier_id") is not None:
+            return int(row["dossier_id"])
+        item = row.get("item") if isinstance(row.get("item"), dict) else {}
+        return int(item.get("dossier_id") or 0)
+
+    secret_row = next(r for r in rows if _row_dossier_id(r) == dossier_id)
+    plain_row = next(r for r in rows if _row_dossier_id(r) == plain_id)
+    assert secret_row.get("rejected") is not True, secret_row
+    assert plain_row.get("rejected") is True, plain_row
+    roster = db.get_decree_dossier(dossier_id)["participant_roster"]
+    assert any(
+        row.get("character_id") == worker and row.get("tier") == "协办"
+        for row in roster
+    )
+    plain_roster = db.get_decree_dossier(plain_id)["participant_roster"]
+    assert all(row.get("character_id") != worker for row in plain_roster)
+
+
 @pytest.mark.parametrize("authority", [None, set()])
 def test_s2_missing_secret_authority_never_rebuilds_from_live_db(game, authority):
     """⑤ 私授权 None/空集不重建。"""
@@ -302,51 +262,6 @@ def test_s2_missing_secret_authority_never_rebuilds_from_live_db(game, authority
     assert len(db.get_decree_dossier(dossier_id)["participant_roster"]) == 1
 
 
-def test_s2_driver_persists_secret_orders_and_freezes_secret_authority(game, monkeypatch):
-    """driver 同口径 DB 查询并 persist secret_orders，替掉 secret_orders=[]。"""
-    import driver
-
-    db, state, content = game
-    lead, worker = _people(db, 2)
-    order_id = create_test_secret_order(db,
-        state, lead, "密查仓胥", "暗访通州仓", ["稽核"], deadline_months=3,
-    )
-    dossier_id = int(db.get_dossier_for_secret_order(order_id)["id"])
-    db.append_decree_dossier_participants(dossier_id, [{
-        "character_id": lead, "tier": "主办", "role": "密访",
-    }], state=state)
-
-    monkeypatch.setattr(
-        driver, "settle_with_delta",
-        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("crash after ready")),
-    )
-    with pytest.raises(RuntimeError, match="crash after ready"):
-        driver.run_prepare(db, state, content)
-        driver.run_settle(db, state, content, {
-            "secret_dossier_participants": [{
-                "dossier_id": dossier_id, "character_id": worker,
-                "tier": "协办", "delegator_id": lead,
-            }],
-        })
-    ctx = db.get_resolve_context(state.turn)
-    assert isinstance(ctx["secret_orders"], dict)
-    # Frozen secret_orders must carry the real order so recovery can re-derive.
-    from ming_sim.settlement_payload import iter_secret_order_ids
-    assert order_id in iter_secret_order_ids(ctx["secret_orders"])
 
 
 # ── S3: prompt 正向特征化 + DELTA_SCHEMA ─────────────────────
-
-
-def test_s3_runtime_contract_owns_secret_field():
-    """私字段归 personnel_secret：钉 MODULE_FIELDS/EMPTY_EXTRACTION/TOP_LEVEL_ALIASES。"""
-    from ming_sim.simulation import (
-        EMPTY_EXTRACTION,
-        MODULE_FIELDS,
-        TOP_LEVEL_ALIASES,
-    )
-
-    assert "secret_dossier_participants" in MODULE_FIELDS["personnel_secret"]
-    assert "secret_dossier_participants" not in MODULE_FIELDS["issues"]
-    assert "secret_dossier_participants" in EMPTY_EXTRACTION
-    assert TOP_LEVEL_ALIASES["密令案卷参与人"] == "secret_dossier_participants"

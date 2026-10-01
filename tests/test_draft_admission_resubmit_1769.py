@@ -1,6 +1,7 @@
 """#1769 draft 成案拒收 → 结算路补交 / 耗尽留到下月。
 
-真实入口：POST /api/directives → POST /api/decree/issue/stream；
+真实入口：草稿落桌（#1849 后走现行 capture 核 + session.add_directive；
+独立手拟新增 Web 口已退役）→ POST /api/decree/issue/stream；
 下月供料经 session.write_decree → write_decree_with_agno 真实投影。
 断言 SSE 终态与 turn_directives / rejection_reports / dossier 结构化字段。
 
@@ -30,7 +31,7 @@ import ming_sim.session as session_mod
 import web_app
 from ming_sim.decree import write_decree_with_agno as _real_write_decree_with_agno
 from ming_sim.error_pack import latest_error_pack_for_turn
-from tests.test_army_pay_decree_1503 import _set_guanning_arrears
+from tests.army_pay_helpers import _set_guanning_arrears
 from tests.test_month_loop_tracer_1468 import (
     _get_state,
     _post_issue_stream,
@@ -200,9 +201,15 @@ def _finish_month_after_gazette(game, turn: int) -> None:
     assert int(game.state.turn) == int(turn) + 1
 
 
-def _post_directive(client, text: str) -> None:
-    resp = client.post("/api/directives", json={"text": text, "notes": ""})
-    assert resp.status_code == 200, resp.text
+def _post_directive(game, text: str) -> int:
+    """#1849：独立手拟新增 Web 口已退役；经现行 capture 核 + session 落草案。
+
+    与召对拟旨同一条 turn_directives 写入、同一拟旨抽取核，故下游成案准入断言
+    仍验的是真实落桌产物。
+    """
+    from tests.directive_seed_helpers import seed_manual_draft
+
+    return seed_manual_draft(game.session, text)
 
 
 def _latest_directive_id(game) -> int:
@@ -254,7 +261,7 @@ def test_draft_admission_resubmit_success_advances_month(admission_game, monkeyp
     client = TestClient(web_app.app)
     turn = int(game.state.turn)
 
-    _post_directive(client, _DECREE_TEXT)
+    _post_directive(game, _DECREE_TEXT)
     wait_pending_writes(game)
     draft_id = _latest_directive_id(game)
     first_row = game.db.get_directive(draft_id)
@@ -311,7 +318,7 @@ def test_draft_admission_exhaust_keeps_draft_and_advances(admission_game, monkey
     client = TestClient(web_app.app)
     turn = int(game.state.turn)
 
-    _post_directive(client, _DECREE_TEXT)
+    _post_directive(game, _DECREE_TEXT)
     wait_pending_writes(game)
     did = _latest_directive_id(game)
     source_turn = int(game.db.get_directive(did)["turn"])
@@ -336,21 +343,13 @@ def test_draft_admission_exhaust_keeps_draft_and_advances(admission_game, monkey
     _finish_month_after_gazette(game, turn)
     assert source_turn < int(game.state.turn)
 
-    # 下月召对真实供料（验收 2「下次召对大臣可就此追问」，复用 A 路、无新通知）：
-    # 大臣本月奏对的组装输入里带该旨原文与「尚未入档」事实，回禀措辞由 LLM 自己长。
-    minister = next(
-        c for c in game.session.content.characters.values()
-        if c.office_type not in ("后宫",)
+    # 跨月未入档旨稿进入现役角色材料供料；按结构化 id/正文核对，
+    # 不锁召对提示词。当前回合尚未跨月的草案仍被 carryover 边界排除。
+    from ming_sim.materials import _carryover_drafts
+    assert any(
+        int(d["id"]) == did and d["text"] == row["text"]
+        for d in _carryover_drafts(game.db, game.state)
     )
-    from ming_sim.materials import prepare_character_materials
-    audience_input = game.session._audience_prompt_for_message(
-        "卿有何事？", minister,
-        prepared=prepare_character_materials(game.db, game.state, minister),
-    )
-    assert str(row["text"] or "") in audience_input
-    assert str(did) in audience_input
-    # 反向（本回合新拟草案不得越界）归其契约本家：
-    # test_audience_background.py::test_audience_prompt_does_not_expose_unissued_draft_...
 
     # 下月拟诏真实入口：write_decree → 供料含 admission_status=上月未入档
     payloads = _write_decree_capture_payloads(monkeypatch, game)
@@ -400,10 +399,10 @@ def test_draft_admission_mixed_good_and_bad_independent(admission_game, monkeypa
     client = TestClient(web_app.app)
     turn = int(game.state.turn)
 
-    _post_directive(client, "准从国库见银拨关宁军饷十五万两即发。")
+    _post_directive(game, "准从国库见银拨关宁军饷十五万两即发。")
     wait_pending_writes(game)
     good_id = _latest_directive_id(game)
-    _post_directive(client, _DECREE_TEXT)
+    _post_directive(game, _DECREE_TEXT)
     wait_pending_writes(game)
     bad_id = _latest_directive_id(game)
     assert bad_id != good_id
@@ -435,7 +434,7 @@ def test_draft_admission_code_fault_aborts_with_error_pack(admission_game, monke
     client = TestClient(web_app.app)
     turn = int(game.state.turn)
 
-    _post_directive(client, "准从国库见银拨关宁军饷十五万两即发。")
+    _post_directive(game, "准从国库见银拨关宁军饷十五万两即发。")
     wait_pending_writes(game)
 
     def boom(*_a, **_k):
@@ -459,7 +458,7 @@ def test_draft_admission_resubmit_code_fault_aborts_with_error_pack(
     client = TestClient(web_app.app)
     turn = int(game.state.turn)
 
-    _post_directive(client, _DECREE_TEXT)
+    _post_directive(game, _DECREE_TEXT)
     wait_pending_writes(game)
 
     def boom(*_a, **_k):
@@ -499,7 +498,7 @@ def test_resubmit_non_intent_keeps_original_payload_no_special_decree(
     client = TestClient(web_app.app)
     turn = int(game.state.turn)
 
-    _post_directive(client, _DECREE_TEXT)
+    _post_directive(game, _DECREE_TEXT)
     wait_pending_writes(game)
     did = _latest_directive_id(game)
     first = game.db.read_directive_dossier_payload(game.db.get_directive(did))
@@ -567,20 +566,20 @@ def test_pending_product_error_enters_resubmit_seam_not_softlock(
     assert len(_rejection_rows(game, did)) == 1
 
 
-def test_exhaust_zero_dossier_system_simulation_no_steam_decree(
+def test_exhaust_zero_dossier_system_simulation_no_decree(
     admission_game, monkeypatch,
 ):
-    """类3：耗尽零成案 → source=system_simulation；不发 STAT_DECREES_ISSUED；陈旧 last_decree 不进 resolve。"""
+    """类3：耗尽零成案 → source=system_simulation；陈旧 last_decree 不进 resolve、不算本月已颁。"""
     game = admission_game
     _queue_backend(monkeypatch, [_BAD_PAY_ORDER, _BAD_PAY_ORDER, _BAD_PAY_ORDER])
     client = TestClient(web_app.app)
     turn = int(game.state.turn)
 
-    _post_directive(client, _DECREE_TEXT)
+    _post_directive(game, _DECREE_TEXT)
     wait_pending_writes(game)
     did = _latest_directive_id(game)
 
-    # 陈旧拟诏稿：旧行为会把它当本月已颁送入 resolve（player_decree + Steam 误计）
+    # 陈旧拟诏稿：旧行为会把它当本月已颁送入 resolve（player_decree 误计）
     stale = "陈旧拟诏稿·不得视为本月已颁·#1769"
     game.session.last_decree = stale
     game.session._decree_draft_fingerprint = ((did, "stale"),)
@@ -598,7 +597,7 @@ def test_exhaust_zero_dossier_system_simulation_no_steam_decree(
 
     monkeypatch.setattr(session_mod, "resolve_directives", spy_resolve)
 
-    body = _post_issue_stream(
+    _post_issue_stream(
         client, expected_turn=turn, step="1769 zero-exhaust system_simulation",
     )
     assert _turn_of(_get_state(client)) == turn + 1
@@ -611,17 +610,8 @@ def test_exhaust_zero_dossier_system_simulation_no_steam_decree(
     assert call["source"] == Provenance.system_simulation
     assert call["directives_len"] == 0
     assert not (call["decree_text"] or "").strip()
-    assert (game.session.last_decree or "") != stale
-
-    steam = body.get("steam_events") or []
-    assert not any(
-        isinstance(e, dict) and e.get("name") == "STAT_DECREES_ISSUED"
-        for e in steam
-    ), f"零成案不得计已颁: {steam!r}"
-    assert any(
-        isinstance(e, dict) and e.get("name") == "STAT_TURNS_PLAYED"
-        for e in steam
-    ), f"邸报写成后应计过月: {steam!r}"
+    # #1769 真实能力：邸报写成即过月（上文 turn+1），且不得留下陈旧拟诏稿当本月已颁。
+    assert not (game.session.last_decree or "").strip()
 
 
 def test_pending_preview_turn_key_no_keyerror_on_issue(
@@ -686,10 +676,10 @@ def test_pending_preview_turn_key_no_keyerror_on_issue(
     ), f"当月 preview 误标上月未入档: {feed_dirs!r}"
 
 
-def test_advance_without_edict_vacuum_steam_no_decree_issued(
+def test_advance_without_edict_vacuum_no_decree_issued(
     admission_game, monkeypatch,
 ):
-    """类B：POST 真空退朝成功 → 有 TURNS_PLAYED/MAX_TURN，无 DECREES_ISSUED。"""
+    """类B：POST 真空退朝成功 → 月份真推进，且本月无旨（last_decree 仍空）。"""
     game = admission_game
     turn = int(game.state.turn)
     assert not (game.session.last_decree or "").strip()
@@ -701,14 +691,6 @@ def test_advance_without_edict_vacuum_steam_no_decree_issued(
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body.get("awaiting_decision") is False
+    assert body.get("advanced") is True
     assert _turn_of(_get_state(client)) == turn + 1
-
-    steam = body.get("steam_events") or []
-    names = [
-        e.get("name") for e in steam if isinstance(e, dict)
-    ]
-    assert "STAT_TURNS_PLAYED" in names, f"邸报写成后应计过月: {steam!r}"
-    assert "STAT_MAX_TURN_REACHED" in names, f"邸报写成后应计最大月: {steam!r}"
-    assert "STAT_DECREES_ISSUED" not in names, (
-        f"真空退朝不得计已颁: {steam!r}"
-    )
+    assert not (game.session.last_decree or "").strip()

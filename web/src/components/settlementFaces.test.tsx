@@ -2,7 +2,6 @@ import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { GameHud, resolveUnreadMemorialCount } from "./gameHud";
-import { SettlementLock } from "./settlementLock";
 import { MinisterCardList, AppointmentDrawer } from "./drawers";
 import {
   AWAITING_CLOSED_REASON,
@@ -81,7 +80,7 @@ function makeState(
 function minister(name = "周延儒"): Minister {
   return {
     name, office: "首辅", office_type: "内阁", faction: "", style: "",
-    status: "active", status_label: "在朝", summary: "辅臣", favorite: false, skills: [],
+    status: "active", status_label: "在朝", summary: "辅臣", favorite: false,
   };
 }
 
@@ -471,18 +470,6 @@ describe("QA A-1 #1276/#1282/#1285 GameHud HUD 对齐", () => {
   });
 });
 
-describe("#1236 SettlementLock 装饰层自身契约", () => {
-  it("装饰层无 aria-modal、role=status、pointer-events 不吞全屏", () => {
-    const host = mount(
-      <SettlementLock stage="数值推演结算" progress={null} thinking="推敲中" narrative="" />,
-    );
-    const decor = host.querySelector("[data-testid=settlement-lock-decor]");
-    expect(decor).not.toBeNull();
-    expect(decor?.getAttribute("aria-modal")).toBeNull();
-    expect(decor?.getAttribute("role")).toBe("status");
-  });
-});
-
 describe("#1796 GameHud settlementFace 同会话切核账期面", () => {
   it("settlement_display=false 但 face=true：切面；state 真源不被改写", () => {
     const state = makeState(false);
@@ -510,40 +497,5 @@ describe("#1796 GameHud settlementFace 同会话切核账期面", () => {
     expect(host.querySelector("[data-testid=wang-settlement-slip]")).not.toBeNull();
     // 结构化：传入的 state 真源字段未被组件改写
     expect(state.turn.settlement_display).toBe(false);
-  });
-});
-
-describe("#1725 SettlementLock 中心进度呈现（组件面负向；贯通 happy-path 见 appDurableWiring）", () => {
-  // Happy-path typed progress → progressbar is owned by App entry wiring test.
-  // Keep only component-local negatives: no progress invents no bar.
-
-  it("无 typed progress 时即便 stage 是已知标签也不出 progressbar", () => {
-    const host = mount(
-      <SettlementLock stage="推演月末邸报" progress={null} thinking="" narrative="" />,
-    );
-    expect(host.querySelector("[data-testid=settlement-wait-progress]")).toBeNull();
-    expect(host.querySelector(".settlement-lock-stage")?.textContent || "").toContain(
-      "推演月末邸报",
-    );
-  });
-
-  it("空 stage 无 progress 仍呈档房摘录 chrome，无 progressbar", () => {
-    const host = mount(
-      <SettlementLock stage="" progress={null} thinking="" narrative="" />,
-    );
-    expect(host.querySelector(".settlement-lock-stage")?.textContent || "").toContain(
-      "档房摘录正在呈递。",
-    );
-    expect(host.querySelector("[data-testid=settlement-wait-progress]")).toBeNull();
-  });
-
-  it("HITL 续推文案无 typed progress 时不伪造刻度", () => {
-    const host = mount(
-      <SettlementLock stage="圣意亲裁，续推时局" progress={null} thinking="" narrative="" />,
-    );
-    expect(host.querySelector("[data-testid=settlement-wait-progress]")).toBeNull();
-    expect(host.querySelector(".settlement-lock-stage")?.textContent || "").toContain(
-      "圣意亲裁，续推时局",
-    );
   });
 });

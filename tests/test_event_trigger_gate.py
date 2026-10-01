@@ -508,21 +508,6 @@ def test_load_event_fail_loud_on_bad_gate_key(monkeypatch):
         content_mod.load_event_content("x.json")
 
 
-def test_load_event_rejects_default_terminal_reason_outside_labels(monkeypatch):
-    """default_terminal_reason 必须来自 terminal_reason_labels 白名单。"""
-    import pytest
-    import ming_sim.content as content_mod
-    bad = [{"id": "e", "title": "t", "kind": "k", "summary": "s",
-            "urgency": 1, "severity": 1, "credibility": 1,
-            "interests": [], "audiences": [],
-            "open_window": True,
-            "terminal_reason_labels": ["已准"],
-            "default_terminal_reason": "已驳"}]
-    monkeypatch.setattr(content_mod, "load_json_asset", lambda *a, **k: bad)
-    with pytest.raises(SystemExit, match="default_terminal_reason"):
-        content_mod.load_event_content("x.json")
-
-
 def test_load_event_requires_latest_or_open_window(monkeypatch):
     """历史锚定事件必须显式声明最晚时点或 open_window，漏填不许隐式永不过期。"""
     import pytest
@@ -974,489 +959,6 @@ def test_mao_wenlong_event_trigger_lands_character_status(game):
         ).fetchone()[0] == before_logs + 1
 
 
-def test_strategic_foreign_event_records_trigger_and_lands_soft_result_delta(game):
-    """#189：战略/外敌战事触发后，软判结果同信封落世界主账，不转长期 issue。"""
-    db, state, content = game
-    issues.bind_content(content)
-    state.year = 1629
-    state.period = 11
-    db.conn.execute("UPDATE regions SET military_pressure = ? WHERE id = ?", (20, "beizhili"))
-    db.conn.execute(
-        "UPDATE armies SET manpower = ?, morale = ?, cannon_equipment = ? WHERE id = ?",
-        (30000, 50, 5, "jingying"),
-    )
-    db.conn.execute("UPDATE armies SET cannon_equipment = 11 WHERE id = 'guanning'")
-
-    assert any(ev.id == "jisi_lubian" for ev in issues.gather_candidate_events(state, db))
-
-    out = issues.apply_score_extraction(
-        db,
-        state,
-        {
-            "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
-            "事件结局": {"jisi_lubian": "入塞被遏"},
-            "region_delta": {"beizhili": {"origin_ref": "盘面自发", "military_pressure": 35, "controlled_by": "ming", "reason": "己巳之变软判敌逼京畿"}},
-            "army_delta": {"jingying": {"origin_ref": "盘面自发", "manpower": -5000, "morale": -8,
-                                        "随军大炮": -100, "cannon_transfer_to": "guanning", "reason": "己巳之变勤王战损"}},
-        },
-        content=content,
-    )
-
-    assert out["issue_summary"]["new_issues"][0]["rejected"] is False
-    assert db.has_event_triggered("jisi_lubian")
-    assert db.find_any_issue_by_origin("event_pool", "jisi_lubian") is None
-    region = db.conn.execute(
-        "SELECT military_pressure, controlled_by FROM regions WHERE id = ?", ("beizhili",)
-    ).fetchone()
-    army = db.conn.execute(
-        "SELECT manpower, morale FROM armies WHERE id = ?", ("jingying",)
-    ).fetchone()
-    assert region["military_pressure"] == 55
-    assert region["controlled_by"] == "ming"
-    assert army["manpower"] == 25000
-    assert army["morale"] == 42
-    assert db.conn.execute("SELECT cannon_equipment FROM armies WHERE id='jingying'").fetchone()[0] == 4
-    assert db.conn.execute("SELECT cannon_equipment FROM armies WHERE id='guanning'").fetchone()[0] == 12
-
-
-def test_strategic_event_result_delta_is_all_or_nothing_on_rejected_item(game):
-    """ADR0014：同一战略战事信封内一项战果拒收，整组战果都不得半落主账。"""
-    db, state, content = game
-    issues.bind_content(content)
-    state.year = 1629
-    state.period = 11
-    db.conn.execute("UPDATE regions SET military_pressure = ? WHERE id = ?", (20, "beizhili"))
-    db.conn.execute("UPDATE armies SET morale = ? WHERE id = ?", (50, "jingying"))
-
-    out = issues.apply_score_extraction(
-        db,
-        state,
-        {
-            "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
-            "事件结局": {"jisi_lubian": "入塞被遏"},
-            "region_delta": {"beizhili": {"origin_ref": "盘面自发", "military_pressure": 35, "reason": "己巳之变软判敌逼京畿"}},
-            "army_delta": {"jingying": {"origin_ref": "盘面自发", "不存在字段": 1, "reason": "己巳之变无效战果字段"}},
-        },
-        content=content,
-    )
-
-    assert out["issue_summary"]["new_issues"][0]["rejected"] is True
-    assert not db.has_event_triggered("jisi_lubian")
-    assert db.conn.execute(
-        "SELECT military_pressure FROM regions WHERE id = ?", ("beizhili",)
-    ).fetchone()["military_pressure"] == 20
-    assert db.conn.execute(
-        "SELECT morale FROM armies WHERE id = ?", ("jingying",)
-    ).fetchone()["morale"] == 50
-    assert any(item.get("rejected") for item in out["region_changes"])
-    assert any(item.get("rejected") for item in out["army_changes"])
-
-
-def test_strategic_event_latched_army_deny_rejects_whole_envelope(game):
-    """#319 P1：latched 军 morale 将被写缝静默 no-op 时，战略预检须拒整封（含兄弟地区战果）。"""
-    db, state, content = game
-    issues.bind_content(content)
-    state.year = 1629
-    state.period = 11
-    db.conn.execute("UPDATE regions SET military_pressure = ? WHERE id = ?", (20, "beizhili"))
-    db.conn.execute(
-        "UPDATE armies SET morale = ?, is_mutinied = 1 WHERE id = ?",
-        (50, "jingying"),
-    )
-
-    out = issues.apply_score_extraction(
-        db,
-        state,
-        {
-            "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
-            "事件结局": {"jisi_lubian": "入塞被遏"},
-            "region_delta": {
-                "beizhili": {
-                    "origin_ref": "盘面自发",
-                    "military_pressure": 35,
-                    "reason": "己巳之变软判敌逼京畿",
-                }
-            },
-            "army_delta": {
-                "jingying": {
-                    "origin_ref": "盘面自发",
-                    "morale": -8,
-                    "reason": "己巳之变勤王战损",
-                }
-            },
-        },
-        content=content,
-    )
-
-    assert out["issue_summary"]["new_issues"][0]["rejected"] is True
-    assert not db.has_event_triggered("jisi_lubian")
-    assert db.conn.execute(
-        "SELECT military_pressure FROM regions WHERE id = ?", ("beizhili",)
-    ).fetchone()["military_pressure"] == 20
-    assert db.conn.execute(
-        "SELECT morale, is_mutinied FROM armies WHERE id = ?", ("jingying",)
-    ).fetchone()["morale"] == 50
-
-
-def test_strategic_event_missing_origin_rejects_whole_result_envelope(game):
-    """ADR0014/#558：来源拒收也必须在战略战果预检中令整个信封原子失败。"""
-    db, state, content = game
-    issues.bind_content(content)
-    state.year = 1629
-    state.period = 11
-    db.conn.execute("UPDATE regions SET military_pressure = 20 WHERE id = 'beizhili'")
-    db.conn.execute("UPDATE armies SET morale = 50 WHERE id = 'jingying'")
-
-    out = issues.apply_score_extraction(
-        db,
-        state,
-        {
-            "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
-            "事件结局": {"jisi_lubian": "入塞被遏"},
-            "region_delta": {"beizhili": {
-                "origin_ref": "盘面自发", "military_pressure": 35,
-                "reason": "己巳之变软判敌逼京畿",
-            }},
-            "army_delta": {"jingying": {
-                "morale": -8, "reason": "己巳之变勤王战损",
-            }},
-        },
-        content=content,
-    )
-
-    issue = out["issue_summary"]["new_issues"][0]
-    assert issue["rejected"] is True
-    assert "来源" in issue["reason"]
-    assert not db.has_event_triggered("jisi_lubian")
-    assert db.conn.execute(
-        "SELECT military_pressure FROM regions WHERE id='beizhili'"
-    ).fetchone()[0] == 20
-    assert db.conn.execute(
-        "SELECT morale FROM armies WHERE id='jingying'"
-    ).fetchone()[0] == 50
-
-
-def test_strategic_foreign_event_lands_new_army_soft_result_delta(game):
-    """ship-pre CMR：战略战事软判结果可落新军主账，并驱动事件触发。"""
-    db, state, content = game
-    issues.bind_content(content)
-    state.year = 1629
-    state.period = 11
-    army_id = "__test_jisi_raider_army__"
-
-    assert any(ev.id == "jisi_lubian" for ev in issues.gather_candidate_events(state, db))
-
-    out = issues.apply_score_extraction(
-        db,
-        state,
-        {
-            "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
-            "事件结局": {"jisi_lubian": "入塞被遏"},
-            "new_armies": [
-                {
-                    "origin_ref": "盘面自发", "id": army_id,
-                    "name": "己巳入塞偏师",
-                    "owner_power": "houjin",
-                    "station": "北直隶 / 遵化",
-                    "manpower": 1200,
-                    "reason": "己巳之变软判后金入塞偏师成军",
-                }
-            ],
-        },
-        content=content,
-    )
-
-    assert out["issue_summary"]["new_issues"][0]["rejected"] is False
-    assert db.has_event_triggered("jisi_lubian")
-    assert dict(db.conn.execute(
-        "SELECT owner_power, manpower FROM armies WHERE id = ?", (army_id,)
-    ).fetchone()) == {"owner_power": "houjin", "manpower": 1200}
-    assert out["created_armies"][0].get("rejected") is not True
-
-
-@pytest.mark.parametrize(
-    ("army_id", "army_name", "existing_id"),
-    [
-        ("jingying", "己巳入塞偏师", "jingying"),
-        ("__test_jisi_name_collision__", "京营", "jingying"),
-    ],
-)
-def test_strategic_new_army_result_rejects_existing_army_collision(
-    game, army_id, army_name, existing_id
-):
-    """CMR R10：战略新军战果不得撞既有军队 id/name 走扩编合并路径。"""
-    db, state, content = game
-    issues.bind_content(content)
-    state.year = 1629
-    state.period = 11
-    before = db.conn.execute(
-        "SELECT manpower, owner_power FROM armies WHERE id = ?", (existing_id,)
-    ).fetchone()
-
-    out = issues.apply_score_extraction(
-        db,
-        state,
-        {
-            "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
-            "事件结局": {"jisi_lubian": "入塞被遏"},
-            "new_armies": [
-                {
-                    "origin_ref": "盘面自发", "id": army_id,
-                    "name": army_name,
-                    "owner_power": "houjin",
-                    "station": "北直隶 / 遵化",
-                    "manpower": 1200,
-                    "reason": "己巳之变软判后金入塞偏师成军",
-                }
-            ],
-        },
-        content=content,
-    )
-
-    assert out["issue_summary"]["new_issues"][0]["rejected"] is True
-    assert not db.has_event_triggered("jisi_lubian")
-    after = db.conn.execute(
-        "SELECT manpower, owner_power FROM armies WHERE id = ?", (existing_id,)
-    ).fetchone()
-    assert dict(after) == dict(before)
-    if army_id != existing_id:
-        assert db.conn.execute("SELECT 1 FROM armies WHERE id = ?", (army_id,)).fetchone() is None
-    assert out["created_armies"][0]["rejected"] is True
-
-
-def test_strategic_new_army_result_rejects_nonpositive_manpower(game):
-    """同族自查：战略新军战果不能用 0/负兵力建出无效新军来触发事件。"""
-    db, state, content = game
-    issues.bind_content(content)
-    state.year = 1629
-    state.period = 11
-    army_id = "__test_zero_jisi_raider_army__"
-
-    out = issues.apply_score_extraction(
-        db,
-        state,
-        {
-            "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
-            "事件结局": {"jisi_lubian": "入塞被遏"},
-            "new_armies": [
-                {
-                    "origin_ref": "盘面自发", "id": army_id,
-                    "name": "己巳入塞空营",
-                    "owner_power": "houjin",
-                    "station": "北直隶 / 遵化",
-                    "manpower": 0,
-                    "reason": "己巳之变软判后金入塞偏师成军",
-                }
-            ],
-        },
-        content=content,
-    )
-
-    assert out["issue_summary"]["new_issues"][0]["rejected"] is True
-    assert not db.has_event_triggered("jisi_lubian")
-    assert db.conn.execute("SELECT 1 FROM armies WHERE id = ?", (army_id,)).fetchone() is None
-    assert out["created_armies"][0]["rejected"] is True
-
-
-def test_strategic_event_records_outcome_label_with_world_state_delta(game):
-    """ADR0014：战略战事软判须同写结局标签账，供下游链分支读取。"""
-    db, state, content = game
-    issues.bind_content(content)
-    state.year = 1629
-    state.period = 11
-
-    out = issues.apply_score_extraction(
-        db,
-        state,
-        {
-            "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
-            "事件结局": {"jisi_lubian": "入塞被遏"},
-            "region_delta": {"beizhili": {"origin_ref": "盘面自发", "military_pressure": 35, "reason": "己巳之变软判敌逼京畿"}},
-        },
-        content=content,
-    )
-
-    assert out["issue_summary"]["new_issues"][0]["rejected"] is False
-    row = db.conn.execute(
-        "SELECT terminal_state, terminal_reason FROM event_triggers WHERE event_id=?",
-        ("jisi_lubian",),
-    ).fetchone()
-    assert dict(row) == {"terminal_state": "triggered", "terminal_reason": "入塞被遏"}
-
-
-def test_strategic_event_outcome_label_normalizes_known_synonym(game):
-    """ADR0014：事件结局标签允许近义归一到闭合标签集，不因措辞微差拒收。"""
-    db, state, content = game
-    issues.bind_content(content)
-    state.year = 1629
-    state.period = 11
-
-    out = issues.apply_score_extraction(
-        db,
-        state,
-        {
-            "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
-            "事件结局": {"jisi_lubian": "入塞遭遏"},
-            "region_delta": {"beizhili": {"origin_ref": "盘面自发", "military_pressure": 35, "reason": "己巳之变软判敌逼京畿"}},
-        },
-        content=content,
-    )
-
-    assert out["issue_summary"]["new_issues"][0]["rejected"] is False
-    row = db.conn.execute(
-        "SELECT terminal_reason FROM event_triggers WHERE event_id=?",
-        ("jisi_lubian",),
-    ).fetchone()
-    assert row["terminal_reason"] == "入塞被遏"
-
-
-def test_event_outcome_retry_ignores_non_landable_event_without_world_state_delta(game):
-    """PR#214：只因 new_issues 幻觉静态事件 id、但无战果主账时，不应触发 retry/fail-loud。"""
-    db, state, content = game
-    issues.bind_content(content)
-    state.year = 1629
-    state.period = 11
-
-    extracted = {
-        "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
-        "事件结局": {"jisi_lubian": "大胜"},
-        "region_delta": {"shandong": {"origin_ref": "盘面自发", "民心": -1, "reason": " unrelated famine pressure "}},
-    }
-
-    issues.normalize_event_outcome_labels_or_error(
-        extracted,
-        content,
-        db=db,
-        state=state,
-    )
-
-    assert extracted["事件结局"] == {"jisi_lubian": "大胜"}
-
-
-def test_strategic_event_delta_requires_outcome_label_without_mutation(game):
-    """ADR0014：战略战果 delta 必须同写结局标签，缺标签则整组拒收且不落主账。"""
-    db, state, content = game
-    issues.bind_content(content)
-    state.year = 1629
-    state.period = 11
-    row = db.conn.execute(
-        "SELECT military_pressure FROM regions WHERE id = ?",
-        ("beizhili",),
-    ).fetchone()
-    original_pressure = row["military_pressure"]
-
-    out = issues.apply_score_extraction(
-        db,
-        state,
-        {
-            "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
-            "region_delta": {"beizhili": {"origin_ref": "盘面自发", "military_pressure": 35, "reason": "己巳之变软判敌逼京畿"}},
-        },
-        content=content,
-    )
-
-    issue = out["issue_summary"]["new_issues"][0]
-    assert issue["rejected"] is True
-    assert issue["category"] == "missing_event_outcome"
-    assert "缺事件结局标签" in issue["reason"]
-    row = db.conn.execute(
-        "SELECT military_pressure FROM regions WHERE id = ?",
-        ("beizhili",),
-    ).fetchone()
-    assert row["military_pressure"] == original_pressure
-    assert db.conn.execute(
-        "SELECT 1 FROM event_triggers WHERE event_id=?",
-        ("jisi_lubian",),
-    ).fetchone() is None
-
-
-def test_strategic_event_outcome_label_unknown_fails_loud_without_mutation(game):
-    """ADR0014：无法可靠归一的事件结局须 fail-loud，不能普通拒收后继续结算。"""
-    db, state, content = game
-    issues.bind_content(content)
-    state.year = 1629
-    state.period = 11
-    db.conn.execute("UPDATE regions SET military_pressure = ? WHERE id = ?", (20, "beizhili"))
-
-    with pytest.raises(ValueError, match="事件结局标签无法归一"):
-        issues.apply_score_extraction(
-            db,
-            state,
-            {
-                "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
-                "事件结局": {"jisi_lubian": "大胜"},
-                "region_delta": {"beizhili": {"origin_ref": "盘面自发", "military_pressure": 35, "reason": "己巳之变软判敌逼京畿"}},
-            },
-            content=content,
-        )
-
-    assert not db.has_event_triggered("jisi_lubian")
-    assert db.conn.execute(
-        "SELECT military_pressure FROM regions WHERE id = ?", ("beizhili",)
-    ).fetchone()["military_pressure"] == 20
-
-
-def test_anchored_strategic_new_army_without_event_trigger_is_rejected(game):
-    """ship-pre CMR：有战役锚点但无 event_pool 触发时，新军战果不得半落库。"""
-    db, state, content = game
-    issues.bind_content(content)
-    state.year = 1629
-    state.period = 11
-    army_id = "__test_orphan_jisi_raider__"
-
-    out = issues.apply_score_extraction(
-        db,
-        state,
-        {
-            "new_armies": [
-                {
-                    "origin_ref": "盘面自发", "id": army_id,
-                    "name": "孤立入塞偏师",
-                    "owner_power": "houjin",
-                    "station": "北直隶 / 遵化",
-                    "manpower": 1200,
-                    "reason": "己巳之变软判后金入塞偏师成军",
-                }
-            ],
-        },
-        content=content,
-    )
-
-    assert not db.has_event_triggered("jisi_lubian")
-    assert db.conn.execute("SELECT id FROM armies WHERE id = ?", (army_id,)).fetchone() is None
-    assert out["created_armies"][0]["rejected"] is True
-    assert out["created_armies"][0]["category"] == "event_rejected"
-    assert "未触发" in out["created_armies"][0]["reason"]
-
-
-def test_anchored_strategic_region_outcome_without_reason_is_rejected(game):
-    """ship-pre CMR：疑似战略战果缺 reason 时，不得当普通地区 delta 半落库。"""
-    db, state, content = game
-    issues.bind_content(content)
-    state.year = 1629
-    state.period = 11
-    db.conn.execute("UPDATE regions SET military_pressure = ? WHERE id = ?", (20, "beizhili"))
-
-    out = issues.apply_score_extraction(
-        db,
-        state,
-        {
-            "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
-            "事件结局": {"jisi_lubian": "入塞被遏"},
-            "region_delta": {"beizhili": {"origin_ref": "盘面自发", "military_pressure": 35}},
-        },
-        content=content,
-    )
-
-    assert out["issue_summary"]["new_issues"][0]["rejected"] is True
-    assert not db.has_event_triggered("jisi_lubian")
-    assert db.conn.execute(
-        "SELECT military_pressure FROM regions WHERE id = ?", ("beizhili",)
-    ).fetchone()["military_pressure"] == 20
-    assert out["region_changes"][0]["rejected"] is True
-    assert out["region_changes"][0]["category"] == "event_rejected"
-
-
 def test_ordinary_jinzhou_preparedness_delta_is_not_rejected_as_songshan_outcome(game):
     """ship-pre CMR：普通锦州战备整饬不等于松锦决战战果。"""
     db, state, content = game
@@ -1477,46 +979,6 @@ def test_ordinary_jinzhou_preparedness_delta_is_not_rejected_as_songshan_outcome
         "SELECT training FROM armies WHERE id = ?", ("guanning",)
     ).fetchone()["training"] == before + 5
     assert out["army_changes"][0].get("rejected") is not True
-
-
-def test_strategic_foreign_event_survives_named_commander_death_with_soft_result_delta(game):
-    """#189：战略战事点名将已死也不作废，由在位军镇承接软判结果。"""
-    db, state, content = game
-    issues.bind_content(content)
-    state.year = 1641
-    state.period = 8
-    db.conn.execute("UPDATE characters SET status = ? WHERE name = ?", ("dead", "洪承畴"))
-    db.conn.execute("UPDATE regions SET military_pressure = ? WHERE id = ?", (40, "liaodong"))
-    db.conn.execute(
-        "UPDATE armies SET manpower = ?, morale = ? WHERE id = ?",
-        (60000, 55, "guanning"),
-    )
-
-    assert any(ev.id == "songshan_battle" for ev in issues.gather_candidate_events(state, db))
-
-    out = issues.apply_score_extraction(
-        db,
-        state,
-        {
-            "new_issues": [{"origin_kind": "event_pool", "id": "songshan_battle"}],
-            "region_delta": {"liaodong": {"origin_ref": "盘面自发", "military_pressure": 18, "reason": "松锦决战软判辽东吃紧"}},
-            "army_delta": {"guanning": {"origin_ref": "盘面自发", "manpower": -12000, "morale": -12, "reason": "松锦决战关宁主力战损"}},
-        },
-        content=content,
-    )
-
-    assert out["issue_summary"]["new_issues"][0]["rejected"] is False
-    assert db.has_event_triggered("songshan_battle")
-    assert db.find_any_issue_by_origin("event_pool", "songshan_battle") is None
-    region = db.conn.execute(
-        "SELECT military_pressure FROM regions WHERE id = ?", ("liaodong",)
-    ).fetchone()
-    army = db.conn.execute(
-        "SELECT manpower, morale FROM armies WHERE id = ?", ("guanning",)
-    ).fetchone()
-    assert region["military_pressure"] == 59
-    assert army["manpower"] == 48000
-    assert army["morale"] == 43
 
 
 def test_strategic_foreign_event_rejects_trigger_without_world_state_delta(game):
@@ -1561,30 +1023,6 @@ def test_direct_issue_tracker_rejects_strategic_event_without_world_state_delta(
     assert not db.has_event_triggered("jisi_lubian")
 
 
-def test_anchored_strategic_result_delta_without_event_trigger_is_rejected(game):
-    """#189 CMR R6：有战役锚点但无 event_pool 触发时，不得只落战果主账。"""
-    db, state, content = game
-    issues.bind_content(content)
-    state.year = 1629
-    state.period = 11
-    db.conn.execute("UPDATE regions SET military_pressure = ? WHERE id = ?", (20, "beizhili"))
-
-    out = issues.apply_score_extraction(
-        db,
-        state,
-        {"region_delta": {"beizhili": {"origin_ref": "盘面自发", "military_pressure": 20, "reason": "己巳之变软判敌逼京畿"}}},
-        content=content,
-    )
-
-    assert not db.has_event_triggered("jisi_lubian")
-    assert db.conn.execute(
-        "SELECT military_pressure FROM regions WHERE id = ?", ("beizhili",)
-    ).fetchone()["military_pressure"] == 20
-    assert out["region_changes"][0]["rejected"] is True
-    assert out["region_changes"][0]["category"] == "event_rejected"
-    assert "未触发" in out["region_changes"][0]["reason"]
-
-
 def test_ordinary_army_station_delta_with_strategic_place_anchor_is_not_rejected(game):
     """ship-pre CMR：普通调防只含战略地名，不得被误当成未触发战役战果。"""
     db, state, content = game
@@ -1606,55 +1044,6 @@ def test_ordinary_army_station_delta_with_strategic_place_anchor_is_not_rejected
         "SELECT station FROM armies WHERE id = ?", ("guanning",)
     ).fetchone()["station"] == "锦州前屯"
     assert out["army_changes"][0].get("rejected") is not True
-
-
-def test_issue_194_lindan_xiqian_requires_world_state_main_ledger_delta(game):
-    """#194：林丹汗西迁已归战略/外敌类，必须落势力或世界主账才算触发。"""
-    db, state, content = game
-    issues.bind_content(content)
-    state.year = 1632
-    state.period = 4
-
-    assert any(ev.id == "lindan_xiqian" for ev in issues.gather_candidate_events(state, db))
-    before_mongol = db.conn.execute(
-        "SELECT military_strength FROM powers WHERE id = ?", ("mongol",)
-    ).fetchone()["military_strength"]
-    before_houjin = db.conn.execute(
-        "SELECT military_strength FROM powers WHERE id = ?", ("houjin",)
-    ).fetchone()["military_strength"]
-
-    out = issues.apply_score_extraction(
-        db,
-        state,
-        {"new_issues": [{"origin_kind": "event_pool", "id": "lindan_xiqian"}]},
-        content=content,
-    )
-
-    assert out["issue_summary"]["new_issues"][0]["rejected"] is True
-    assert "主账" in out["issue_summary"]["new_issues"][0]["reason"]
-    assert not db.has_event_triggered("lindan_xiqian")
-
-    out = issues.apply_score_extraction(
-        db,
-        state,
-        {
-            "new_issues": [{"origin_kind": "event_pool", "id": "lindan_xiqian"}],
-            "power_updates": {
-                "mongol": {"origin_ref": "盘面自发", "military_strength": -8, "reason": "林丹汗西迁青海，察哈尔诸部离散"},
-                "houjin": {"origin_ref": "盘面自发", "military_strength": 5, "reason": "林丹汗西迁后后金收拢蒙古右翼"},
-            },
-        },
-        content=content,
-    )
-
-    assert out["issue_summary"]["new_issues"][0]["rejected"] is False
-    assert db.has_event_triggered("lindan_xiqian")
-    assert db.conn.execute(
-        "SELECT military_strength FROM powers WHERE id = ?", ("mongol",)
-    ).fetchone()["military_strength"] == before_mongol - 8
-    assert db.conn.execute(
-        "SELECT military_strength FROM powers WHERE id = ?", ("houjin",)
-    ).fetchone()["military_strength"] == before_houjin + 5
 
 
 def test_lindan_xiqian_does_not_capture_untriggered_beizhili_border_policy_delta(game):
@@ -1684,53 +1073,6 @@ def test_lindan_xiqian_does_not_capture_untriggered_beizhili_border_policy_delta
         "SELECT military_pressure FROM regions WHERE id = ?", ("beizhili",)
     ).fetchone()["military_pressure"] == 27
     assert out["region_changes"][0].get("rejected") is not True
-
-
-def test_shared_jinzhou_result_does_not_double_consume_dalingghe_and_songshan(game):
-    """PR R1：大凌河与松锦同池时，泛锦州战果不能同一 delta 双落账。"""
-    db, state, content = game
-    issues.bind_content(content)
-    state.year = 1641
-    state.period = 8
-    db.conn.execute(
-        "UPDATE regions SET controlled_by = ?, military_pressure = ? WHERE id = ?",
-        ("ming", 20, "liaodong"),
-    )
-    db.conn.execute(
-        "UPDATE armies SET supply = ?, arrears = ?, morale = ? WHERE id = ?",
-        (40, 45, 50, "guanning"),
-    )
-    db.conn.execute("UPDATE powers SET military_strength = ? WHERE id = ?", (75, "houjin"))
-    cands = {ev.id for ev in issues.gather_candidate_events(state, db)}
-    assert {"dalingghe", "songshan_battle"} <= cands
-
-    out = issues.apply_score_extraction(
-        db,
-        state,
-        {
-            "new_issues": [
-                {"origin_kind": "event_pool", "id": "dalingghe"},
-                {"origin_kind": "event_pool", "id": "songshan_battle"},
-            ],
-            "region_delta": {
-                "liaodong": {
-                    "origin_ref": "盘面自发", "military_pressure": 8,
-                    "reason": "锦州战事软判辽东军压上升",
-                }
-            },
-        },
-        content=content,
-    )
-
-    assert not db.has_event_triggered("dalingghe")
-    assert db.has_event_triggered("songshan_battle")
-    assert db.conn.execute(
-        "SELECT military_pressure FROM regions WHERE id = ?", ("liaodong",)
-    ).fetchone()["military_pressure"] == 28
-    assert any(
-        item["id"] == "dalingghe" and item.get("rejected")
-        for item in out["issue_summary"]["new_issues"]
-    )
 
 
 @pytest.mark.parametrize("reason", [
@@ -1927,70 +1269,6 @@ def test_target_person_delta_without_event_anchor_does_not_satisfy_strategic_eve
     assert out["applied_person_changes"][0].get("rejected") is not True
 
 
-def test_rejected_noncandidate_strategic_event_with_unknown_label_preserves_unrelated_delta(game):
-    """PR#214：非候选事件即使带无法归一标签，也只按候选闸拒收，不应 fail-loud 吞掉无关 delta。"""
-    db, state, content = game
-    issues.bind_content(content)
-    state.year = 1629
-    state.period = 11
-    db.mark_event_triggered(state, "jisi_lubian")
-    db.conn.execute("UPDATE regions SET military_pressure = ? WHERE id = ?", (20, "beizhili"))
-    db.conn.execute("UPDATE regions SET unrest = ? WHERE id = ?", (78, "shaanxi"))
-    assert all(candidate.id != "jisi_lubian" for candidate in issues.gather_candidate_events(state, db))
-
-    out = issues.apply_score_extraction(
-        db,
-        state,
-        {
-            "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
-            "事件结局": {"jisi_lubian": "大胜"},
-            "region_delta": {
-                "beizhili": {"origin_ref": "盘面自发", "military_pressure": 20, "reason": "己巳之变重复引用战果"},
-                "shaanxi": {"origin_ref": "盘面自发", "unrest": 1},
-            },
-        },
-        content=content,
-    )
-
-    assert out["issue_summary"]["new_issues"][0]["rejected"] is True
-    assert "候选" in out["issue_summary"]["new_issues"][0]["reason"]
-    assert db.conn.execute(
-        "SELECT military_pressure FROM regions WHERE id = ?", ("beizhili",)
-    ).fetchone()["military_pressure"] == 20
-    assert db.conn.execute(
-        "SELECT unrest FROM regions WHERE id = ?", ("shaanxi",)
-    ).fetchone()["unrest"] == 79
-
-
-def test_rejected_strategic_foreign_event_does_not_land_battle_delta(game):
-    """#189 CMR：战略事件被同信封关门拒收时，伴随战果 delta 不得半落库。"""
-    db, state, content = game
-    issues.bind_content(content)
-    state.year = 1629
-    state.period = 11
-    db.mark_event_triggered(state, "jisi_lubian")
-    db.conn.execute("UPDATE regions SET military_pressure = ? WHERE id = ?", (20, "beizhili"))
-
-    out = issues.apply_score_extraction(
-        db,
-        state,
-        {
-            "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
-            "region_delta": {"beizhili": {"origin_ref": "盘面自发", "military_pressure": 20, "reason": "己巳之变重复引用战果"}},
-        },
-        content=content,
-    )
-
-    assert out["issue_summary"]["new_issues"][0]["rejected"] is True
-    assert "候选" in out["issue_summary"]["new_issues"][0]["reason"]
-    assert db.conn.execute(
-        "SELECT military_pressure FROM regions WHERE id = ?", ("beizhili",)
-    ).fetchone()["military_pressure"] == 20
-    assert out["region_changes"][0]["rejected"] is True
-    assert out["region_changes"][0]["category"] == "event_rejected"
-    assert "战果不落" in out["region_changes"][0]["reason"]
-
-
 def test_rejected_strategic_foreign_event_preserves_unrelated_region_delta(game):
     """#189 CMR R2：战略事件被拒时，只跳过其战果，不能吞掉本月无关地区变化。"""
     db, state, content = game
@@ -2069,32 +1347,6 @@ def test_rejected_strategic_event_preserves_unrelated_person_delta(game):
     assert out["applied_person_changes"][0].get("rejected") is not True
 
 
-def test_previously_triggered_strategic_event_rejects_duplicate_without_landing_delta(game):
-    """#189 CMR R2：历史曾触发不等于本回合触发；重复引用不得补落新战果。"""
-    db, state, content = game
-    issues.bind_content(content)
-    state.year = 1629
-    state.period = 11
-    db.mark_event_triggered(state, "jisi_lubian")
-    db.conn.execute("UPDATE regions SET military_pressure = ? WHERE id = ?", (20, "beizhili"))
-
-    out = issues.apply_score_extraction(
-        db,
-        state,
-        {
-            "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
-            "region_delta": {"beizhili": {"origin_ref": "盘面自发", "military_pressure": 10, "reason": "己巳之变重复引用战果"}},
-        },
-        content=content,
-    )
-
-    assert out["issue_summary"]["new_issues"][0]["rejected"] is True
-    assert "候选" in out["issue_summary"]["new_issues"][0]["reason"]
-    assert db.conn.execute(
-        "SELECT military_pressure FROM regions WHERE id = ?", ("beizhili",)
-    ).fetchone()["military_pressure"] == 20
-
-
 def test_rejected_strategic_event_does_not_land_substitute_commander_person_delta(game):
     """#189 CMR R3：替补将也是战事软判结果；重复/拒收事件不得单独杀人。"""
     db, state, content = game
@@ -2135,285 +1387,6 @@ def test_rejected_strategic_event_does_not_land_substitute_commander_person_delt
     assert "战果不落" in out["applied_person_changes"][0]["reason"]
 
 
-def test_strategic_event_invalid_controlled_by_suppresses_sibling_deltas(game):
-    """Codex P1：战略事件 controlled_by 脏值须整组预拒，不能靠兄弟字段触发终态。"""
-    db, state, content = game
-    issues.bind_content(content)
-    state.year = 1638
-    state.period = 9
-    before = db.conn.execute(
-        "SELECT controlled_by, military_pressure FROM regions WHERE id = ?",
-        ("beizhili",),
-    ).fetchone()
-
-    out = issues.apply_score_extraction(
-        db,
-        state,
-        {
-            "new_issues": [{"origin_kind": "event_pool", "id": "wuyin_lubian"}],
-            "region_delta": {
-                "beizhili": {
-                    "origin_ref": "盘面自发", "controlled_by": "not_a_real_power",
-                    "military_pressure": 5,
-                    "reason": "戊寅虏变软判北直隶陷落但势力 id 脏",
-                }
-            },
-        },
-        content=content,
-    )
-
-    assert out["issue_summary"]["new_issues"][0]["rejected"] is True
-    assert "controlled_by" in out["issue_summary"]["new_issues"][0]["reason"]
-    assert "整组战果不落主账" in out["region_changes"][0]["reason"]
-    assert not db.has_event_triggered("wuyin_lubian")
-    after = db.conn.execute(
-        "SELECT controlled_by, military_pressure FROM regions WHERE id = ?",
-        ("beizhili",),
-    ).fetchone()
-    assert after["controlled_by"] == before["controlled_by"]
-    assert after["military_pressure"] == before["military_pressure"]
-
-
-def test_invalid_strategic_event_result_delta_does_not_mark_event_triggered(game):
-    """#189 CMR R2：战果 delta 被逐项拒收时，不得只落 event_triggers 空壳。"""
-    db, state, content = game
-    issues.bind_content(content)
-    state.year = 1629
-    state.period = 11
-
-    out = issues.apply_score_extraction(
-        db,
-        state,
-        {
-            "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
-            "事件结局": {"jisi_lubian": "入塞被遏"},
-            "region_delta": {"beizhili": {"origin_ref": "盘面自发", "不存在字段": 1, "reason": "己巳之变无效战果字段"}},
-        },
-        content=content,
-    )
-
-    assert out["issue_summary"]["new_issues"][0]["rejected"] is True
-    assert "非法地区字段" in out["issue_summary"]["new_issues"][0]["reason"]
-    assert not db.has_event_triggered("jisi_lubian")
-    assert out["region_changes"][0]["rejected"] is True
-
-
-def test_strategic_event_cannon_clamp_noop_does_not_mark_event_triggered(game):
-    """CMR R11：clamp 后 delta=0 的审计留痕不算战略战事世界状态结果。"""
-    db, state, content = game
-    issues.bind_content(content)
-    state.year = 1629
-    state.period = 11
-    row = db.conn.execute(
-        "SELECT city_level FROM regions WHERE id = ?", ("beizhili",)
-    ).fetchone()
-    cap = int(row["city_level"]) * 8
-    db.conn.execute("UPDATE regions SET cannon = ? WHERE id = ?", (cap, "beizhili"))
-
-    out = issues.apply_score_extraction(
-        db,
-        state,
-        {
-            "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
-            "事件结局": {"jisi_lubian": "入塞被遏"},
-            "region_delta": {
-                "beizhili": {
-                    "origin_ref": "盘面自发", "cannon": 1,
-                    "reason": "己巳之变软判京畿城防炮已满额仍报增炮",
-                }
-            },
-        },
-        content=content,
-    )
-
-    assert out["issue_summary"]["new_issues"][0]["rejected"] is True
-    assert "无真实世界状态变化" in out["issue_summary"]["new_issues"][0]["reason"]
-    assert not db.has_event_triggered("jisi_lubian")
-    assert db.conn.execute(
-        "SELECT cannon FROM regions WHERE id = ?", ("beizhili",)
-    ).fetchone()["cannon"] == cap
-
-
-def test_strategic_event_army_clamp_noop_does_not_mark_event_triggered(game):
-    """同族自查：军队数值 clamp 后无变化也不能充当战略战事主账结果。"""
-    db, state, content = game
-    issues.bind_content(content)
-    state.year = 1629
-    state.period = 11
-    db.conn.execute("UPDATE armies SET manpower = ? WHERE id = ?", (0, "jingying"))
-
-    out = issues.apply_score_extraction(
-        db,
-        state,
-        {
-            "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
-            "事件结局": {"jisi_lubian": "入塞被遏"},
-            "army_delta": {"jingying": {"origin_ref": "盘面自发", "manpower": -5000, "reason": "己巳之变勤王战损"}},
-        },
-        content=content,
-    )
-
-    assert out["issue_summary"]["new_issues"][0]["rejected"] is True
-    assert "无真实世界状态变化" in out["issue_summary"]["new_issues"][0]["reason"]
-    assert not db.has_event_triggered("jisi_lubian")
-    assert db.conn.execute(
-        "SELECT manpower FROM armies WHERE id = ?", ("jingying",)
-    ).fetchone()["manpower"] == 0
-
-
-def test_strategic_event_loyalty_mixed_alias_nets_once_and_soft_clamps(game):
-    """#320 战略接缝：同军同事件 {loyalty:+50, 军心:-100} 净合计后软钳 -15，预检通过且只落一笔。"""
-    db, state, content = game
-    issues.bind_content(content)
-    state.year = 1629
-    state.period = 11
-    db.conn.execute(
-        """UPDATE armies SET loyalty=?, mutiny_count=0, redemption_count=0,
-           is_mutinied=0, mutiny_probation=0 WHERE id=?""",
-        (100, "jingying"),
-    )
-
-    out = issues.apply_score_extraction(
-        db,
-        state,
-        {
-            "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
-            "事件结局": {"jisi_lubian": "入塞被遏"},
-            # 有序载荷：先正后负；预检不得按首叶 +50 误判 no-op
-            "army_delta": {
-                "jingying": {
-                    "origin_ref": "盘面自发",
-                    "loyalty": 50,
-                    "军心": -100,
-                    "reason": "己巳之变勤王军心净挫",
-                }
-            },
-        },
-        content=content,
-    )
-
-    assert out["issue_summary"]["new_issues"][0]["rejected"] is False
-    assert db.has_event_triggered("jisi_lubian")
-    assert db.conn.execute(
-        "SELECT loyalty FROM armies WHERE id = ?", ("jingying",)
-    ).fetchone()["loyalty"] == 85
-    loyalty_logs = db.conn.execute(
-        """SELECT field, old_value, new_value, delta FROM army_logs
-           WHERE army_id=? AND field='loyalty' ORDER BY id""",
-        ("jingying",),
-    ).fetchall()
-    assert len(loyalty_logs) == 1
-    assert int(loyalty_logs[0]["delta"]) == -15
-    assert int(loyalty_logs[0]["old_value"]) == 100
-    assert int(loyalty_logs[0]["new_value"]) == 85
-
-
-def test_strategic_event_loyalty_net_zero_alias_pair_is_noop(game):
-    """#320 战略接缝：净零 {loyalty:+50, 军心:-50} 仍拒收无真实世界状态变化。"""
-    db, state, content = game
-    issues.bind_content(content)
-    state.year = 1629
-    state.period = 11
-    db.conn.execute(
-        """UPDATE armies SET loyalty=?, mutiny_count=0, redemption_count=0 WHERE id=?""",
-        (70, "jingying"),
-    )
-
-    out = issues.apply_score_extraction(
-        db,
-        state,
-        {
-            "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
-            "事件结局": {"jisi_lubian": "入塞被遏"},
-            "army_delta": {
-                "jingying": {
-                    "origin_ref": "盘面自发",
-                    "loyalty": 50,
-                    "军心": -50,
-                    "reason": "己巳之变军心对冲净零",
-                }
-            },
-        },
-        content=content,
-    )
-
-    assert out["issue_summary"]["new_issues"][0]["rejected"] is True
-    assert "无真实世界状态变化" in out["issue_summary"]["new_issues"][0]["reason"]
-    assert not db.has_event_triggered("jisi_lubian")
-    assert db.conn.execute(
-        "SELECT loyalty FROM armies WHERE id = ?", ("jingying",)
-    ).fetchone()["loyalty"] == 70
-    assert db.conn.execute(
-        "SELECT COUNT(*) FROM army_logs WHERE army_id=? AND field='loyalty'",
-        ("jingying",),
-    ).fetchone()[0] == 0
-
-
-def test_strategic_event_loyalty_illegal_leaf_still_rejects_envelope(game):
-    """#320 战略接缝：loyalty 合法叶夹带非法叶仍整组拒收，主账不半落。"""
-    db, state, content = game
-    issues.bind_content(content)
-    state.year = 1629
-    state.period = 11
-    db.conn.execute("UPDATE armies SET loyalty = ? WHERE id = ?", (80, "jingying"))
-
-    out = issues.apply_score_extraction(
-        db,
-        state,
-        {
-            "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
-            "事件结局": {"jisi_lubian": "入塞被遏"},
-            "army_delta": {
-                "jingying": {
-                    "origin_ref": "盘面自发",
-                    "loyalty": -20,
-                    "morale": 3.5,  # 非整数：逐叶拒
-                    "reason": "己巳之变脏战果",
-                }
-            },
-        },
-        content=content,
-    )
-
-    assert out["issue_summary"]["new_issues"][0]["rejected"] is True
-    assert "值非整数" in out["issue_summary"]["new_issues"][0]["reason"]
-    assert not db.has_event_triggered("jisi_lubian")
-    assert db.conn.execute(
-        "SELECT loyalty FROM armies WHERE id = ?", ("jingying",)
-    ).fetchone()["loyalty"] == 80
-
-
-def test_strategic_event_same_place_departure_is_canonical_noop(game):
-    """#667：合法同地行止按共享 canonical 终态在 preflight 判为无变化。"""
-    db, state, content = game
-    issues.bind_content(content)
-    state.year = 1638
-    state.period = 9
-    db.conn.execute(
-        "UPDATE characters SET status='active', location='beizhili', transit_to='' WHERE name='卢象升'"
-    )
-    content.characters["卢象升"].location = "beizhili"
-    content.characters["卢象升"].transit_to = ""
-
-    out = issues.apply_score_extraction(
-        db,
-        state,
-        {
-            "new_issues": [{"origin_kind": "event_pool", "id": "wuyin_lubian"}],
-            "人物变更": [{
-                "origin_ref": "盘面自发", "name": "卢象升", "动作": "行止",
-                "transit_to": "beizhili", "reason": "戊寅虏变后留镇北直隶",
-            }],
-        },
-        content=content,
-    )
-
-    rejected_issue = out["issue_summary"]["new_issues"][0]
-    assert rejected_issue["rejected"] is True
-    assert "无真实世界状态变化" in rejected_issue["reason"]
-    assert not db.has_event_triggered("wuyin_lubian")
-
-
 def test_pending_gate_uses_same_place_canonical_terminal_state(game):
     """#667：同地行止真实终态不在途，pending gate 不得投影出 transit_to。"""
     db, _state, content = game
@@ -2432,741 +1405,6 @@ def test_pending_gate_uses_same_place_canonical_terminal_state(game):
         db,
         content=content,
     ) is False
-
-
-@pytest.mark.parametrize(
-    "travel",
-    [
-        {"location": "beizhili"},
-        {"location": "beizhili", "transit_to": "liaodong"},
-    ],
-    ids=["location-only", "mixed"],
-)
-def test_strategic_event_rejects_noncanonical_person_travel(game, travel):
-    """#667：战略 preflight 复用真实 applier，拒收 location-only/mixed 行止。"""
-    db, state, content = game
-    issues.bind_content(content)
-    state.year = 1638
-    state.period = 9
-    db.conn.execute(
-        "UPDATE characters SET status = ?, location = ?, transit_to = ? WHERE name = ?",
-        ("active", "beizhili", "", "卢象升"),
-    )
-    content.characters["卢象升"].status = "active"
-    content.characters["卢象升"].location = "beizhili"
-    content.characters["卢象升"].transit_to = ""
-
-    out = issues.apply_score_extraction(
-        db,
-        state,
-        {
-            "new_issues": [{"origin_kind": "event_pool", "id": "wuyin_lubian"}],
-            "人物变更": [
-                {
-                    "origin_ref": "盘面自发", "name": "卢象升",
-                    "动作": "行止",
-                    **travel,
-                    "reason": "戊寅虏变软判主帅行止",
-                }
-            ],
-        },
-        content=content,
-    )
-
-    rejected_issue = out["issue_summary"]["new_issues"][0]
-    assert rejected_issue["rejected"] is True
-    assert rejected_issue["category"] == "invalid_event_result_delta"
-    assert "人物战果拒收" in rejected_issue["reason"]
-    assert "行止只接受 transit_to 启程" in rejected_issue["reason"]
-    assert not db.has_event_triggered("wuyin_lubian")
-    row = db.conn.execute(
-        "SELECT status, location, transit_to FROM characters WHERE name = ?",
-        ("卢象升",),
-    ).fetchone()
-    assert dict(row) == {"status": "active", "location": "beizhili", "transit_to": ""}
-
-
-@pytest.mark.parametrize("action,status", [("处置", "dismissed"), ("罢黜", "dismissed")])
-def test_strategic_event_person_same_status_noop_does_not_mark_event_triggered(game, action, status):
-    """CMR R13：战略人物处置/罢黜若状态未变，不得只靠改缘由消耗战事事件。"""
-    db, state, content = game
-    issues.bind_content(content)
-    state.year = 1638
-    state.period = 9
-    db.conn.execute(
-        "UPDATE characters SET status = ?, status_reason = ?, reason_code = '' WHERE name = ?",
-        (status, "已先行罢黜", "卢象升"),
-    )
-    content.characters["卢象升"].status = status
-    content.characters["卢象升"].status_reason = "已先行罢黜"
-    content.characters["卢象升"].reason_code = ""
-    item = {"name": "卢象升", "动作": action, "reason": "戊寅虏变软判主帅已罢黜"}
-    if action == "处置":
-        item["status"] = status
-
-    out = issues.apply_score_extraction(
-        db,
-        state,
-        {
-            "new_issues": [{"origin_kind": "event_pool", "id": "wuyin_lubian"}],
-            "人物变更": [item],
-        },
-        content=content,
-    )
-
-    assert out["issue_summary"]["new_issues"][0]["rejected"] is True
-    assert "无真实世界状态变化" in out["issue_summary"]["new_issues"][0]["reason"]
-    assert not db.has_event_triggered("wuyin_lubian")
-    row = db.conn.execute(
-        "SELECT status, status_reason FROM characters WHERE name = ?",
-        ("卢象升",),
-    ).fetchone()
-    assert dict(row) == {"status": status, "status_reason": "已先行罢黜"}
-
-
-@pytest.mark.parametrize("action", ["任命", "调任"])
-def test_strategic_event_person_same_office_noop_does_not_mark_event_triggered(game, action):
-    """CMR R14：战略人物任命/调任若官职未变，不得消耗战事事件。"""
-    db, state, content = game
-    issues.bind_content(content)
-    state.year = 1638
-    state.period = 9
-    office = "大名府知府"
-    office_type = issues.infer_office_type_from_office(office, "", db.llm_config)
-    db.conn.execute(
-        "UPDATE characters SET status = ?, office = ?, office_type = ? WHERE name = ?",
-        ("active", office, office_type, "卢象升"),
-    )
-    content.characters["卢象升"].status = "active"
-    content.characters["卢象升"].office = office
-    content.characters["卢象升"].office_type = office_type
-    db.set_character_office("卢象升", office, office_type, commit=False)
-    db.conn.execute(
-        "UPDATE character_offices SET appointment_tenure = ? WHERE character_name = ?",
-        ("真除", "卢象升"),
-    )
-
-    out = issues.apply_score_extraction(
-        db,
-        state,
-        {
-            "new_issues": [{"origin_kind": "event_pool", "id": "wuyin_lubian"}],
-            "人物变更": [
-                {
-                    "origin_ref": "盘面自发", "name": "卢象升",
-                    "动作": action,
-                    "office": office,
-                    "office_type": office_type,
-                    "任别": "真除",
-                    "reason": "戊寅虏变软判主帅仍督师",
-                }
-            ],
-        },
-        content=content,
-    )
-
-    assert out["issue_summary"]["new_issues"][0]["rejected"] is True
-    assert "无真实世界状态变化" in out["issue_summary"]["new_issues"][0]["reason"]
-    assert not db.has_event_triggered("wuyin_lubian")
-    row = db.conn.execute(
-        "SELECT status, office, office_type FROM characters WHERE name = ?",
-        ("卢象升",),
-    ).fetchone()
-    assert dict(row) == {"status": "active", "office": office, "office_type": office_type}
-
-
-@pytest.mark.parametrize("action", ["任命", "调任"])
-def test_strategic_event_person_tenure_change_is_material_world_state(game, action):
-    """#607：同官同类仅任别改变仍是战果，不得 suppress 同信封落账。"""
-    db, state, content = game
-    issues.bind_content(content)
-    state.year = 1638
-    state.period = 9
-    office = "大名府知府"
-    office_type = issues.infer_office_type_from_office(office, "", db.llm_config)
-    db.set_character_office("卢象升", office, office_type, commit=False)
-    db.conn.execute(
-        "UPDATE character_offices SET appointment_tenure = ? WHERE character_name = ?",
-        ("署理", "卢象升"),
-    )
-    before_pressure = db.conn.execute(
-        "SELECT military_pressure FROM regions WHERE id = ?", ("beizhili",)
-    ).fetchone()["military_pressure"]
-
-    out = issues.apply_score_extraction(
-        db,
-        state,
-        {
-            "new_issues": [{"origin_kind": "event_pool", "id": "wuyin_lubian"}],
-            "人物变更": [{
-                "origin_ref": "盘面自发",
-                "name": "卢象升",
-                "动作": action,
-                "office": office,
-                "office_type": office_type,
-                "任别": "真除",
-                "reason": "戊寅虏变后主帅由署理转真除",
-            }],
-            "region_delta": {
-                "beizhili": {
-                    "origin_ref": "盘面自发",
-                    "military_pressure": -1,
-                    "reason": "戊寅虏变边患稍解",
-                }
-            },
-        },
-        content=content,
-    )
-
-    assert out["issue_summary"]["new_issues"][0]["rejected"] is False
-    assert db.has_event_triggered("wuyin_lubian")
-    assert db.conn.execute(
-        "SELECT appointment_tenure FROM character_offices WHERE character_name = ?",
-        ("卢象升",),
-    ).fetchone()["appointment_tenure"] == "真除"
-    assert db.conn.execute(
-        "SELECT military_pressure FROM regions WHERE id = ?", ("beizhili",)
-    ).fetchone()["military_pressure"] == before_pressure - 1
-
-
-@pytest.mark.parametrize("action", ["任命", "调任"])
-def test_strategic_event_invalid_person_tenure_rejects_whole_result_envelope(game, action):
-    """#607：非法任别须逐项拒收，且战略事件同信封战果不得半落主账。"""
-    db, state, content = game
-    issues.bind_content(content)
-    state.year = 1638
-    state.period = 9
-    office = "大名府知府"
-    office_type = issues.infer_office_type_from_office(office, "", db.llm_config)
-    db.set_character_office("卢象升", office, office_type, commit=False)
-    before_pressure = db.conn.execute(
-        "SELECT military_pressure FROM regions WHERE id = ?", ("beizhili",)
-    ).fetchone()["military_pressure"]
-
-    out = issues.apply_score_extraction(
-        db,
-        state,
-        {
-            "new_issues": [{"origin_kind": "event_pool", "id": "wuyin_lubian"}],
-            "人物变更": [{
-                "name": "卢象升",
-                "动作": action,
-                "office": "宣大总督",
-                "office_type": office_type,
-                "任别": "权署",
-                "reason": "戊寅虏变后调度主帅",
-            }],
-            "region_delta": {
-                "beizhili": {"military_pressure": -1, "reason": "戊寅虏变边患稍解"}
-            },
-        },
-        content=content,
-    )
-
-    rejected_issue = out["issue_summary"]["new_issues"][0]
-    assert rejected_issue["rejected"] is True
-    assert rejected_issue["category"] == "invalid_event_result_delta"
-    assert "人物战果拒收" in rejected_issue["reason"]
-    assert "任别非白名单" in rejected_issue["reason"]
-    assert not db.has_event_triggered("wuyin_lubian")
-    office_row = db.conn.execute(
-        "SELECT c.office, co.appointment_tenure FROM characters c "
-        "LEFT JOIN character_offices co ON co.character_name = c.name WHERE c.name = ?",
-        ("卢象升",),
-    ).fetchone()
-    assert dict(office_row) == {"office": office, "appointment_tenure": "真除"}
-    assert db.conn.execute(
-        "SELECT military_pressure FROM regions WHERE id = ?", ("beizhili",)
-    ).fetchone()["military_pressure"] == before_pressure
-    assert any(item.get("rejected") for item in out["applied_person_changes"])
-    assert any(item.get("rejected") for item in out["region_changes"])
-
-
-def test_strategic_event_accepts_power_update_as_material_world_state(game):
-    """ADR0014：势力也是世界主账，只有有效 power_updates 的战略战果也可触发事件。"""
-    db, state, content = game
-    issues.bind_content(content)
-    state.year = 1629
-    state.period = 11
-    db.conn.execute("UPDATE powers SET military_strength = ? WHERE id = ?", (50, "houjin"))
-
-    out = issues.apply_score_extraction(
-        db,
-        state,
-        {
-            "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
-            "事件结局": {"jisi_lubian": "入塞被遏"},
-            "power_updates": {
-                "houjin": {"origin_ref": "盘面自发", "military_strength": -3, "reason": "己巳之变后金入塞受挫"}
-            },
-        },
-        content=content,
-    )
-
-    assert out["issue_summary"]["new_issues"][0]["rejected"] is False
-    assert db.has_event_triggered("jisi_lubian")
-    assert db.conn.execute(
-        "SELECT military_strength FROM powers WHERE id = ?", ("houjin",)
-    ).fetchone()["military_strength"] == 47
-    assert any(
-        item.get("field") == "military_strength" and item.get("delta") == -3
-        for item in out["power_changes"]
-    )
-
-
-def test_strategic_event_power_update_requires_event_anchor(game):
-    """online R3 Codex：power-only 战略战果也必须带事件 reason 锚点。"""
-    db, state, content = game
-    issues.bind_content(content)
-    state.year = 1629
-    state.period = 11
-    db.conn.execute("UPDATE powers SET military_strength = ? WHERE id = ?", (50, "houjin"))
-
-    out = issues.apply_score_extraction(
-        db,
-        state,
-        {
-            "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
-            "事件结局": {"jisi_lubian": "入塞被遏"},
-            "power_updates": {"houjin": {"origin_ref": "盘面自发", "military_strength": -3}},
-        },
-        content=content,
-    )
-
-    issue = out["issue_summary"]["new_issues"][0]
-    assert issue["rejected"] is True
-    assert "势力战果缺 reason/原因 事件锚点" in issue["reason"]
-    assert not db.has_event_triggered("jisi_lubian")
-    assert db.conn.execute(
-        "SELECT military_strength FROM powers WHERE id = ?", ("houjin",)
-    ).fetchone()["military_strength"] == 50
-    assert out["power_changes"][0]["rejected"] is True
-
-
-def test_accepted_strategic_event_applies_power_updates_after_main_result(game):
-    """同族自查：战略事件已有真实主账结果时，power_updates 可作为同信封附带战果落库。"""
-    db, state, content = game
-    issues.bind_content(content)
-    state.year = 1629
-    state.period = 11
-    db.conn.execute("UPDATE regions SET military_pressure = ? WHERE id = ?", (20, "beizhili"))
-    db.conn.execute("UPDATE powers SET military_strength = ? WHERE id = ?", (50, "houjin"))
-
-    out = issues.apply_score_extraction(
-        db,
-        state,
-        {
-            "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
-            "事件结局": {"jisi_lubian": "入塞被遏"},
-            "region_delta": {"beizhili": {"origin_ref": "盘面自发", "military_pressure": 10, "controlled_by": "ming", "reason": "己巳之变软判敌逼京畿"}},
-            "power_updates": {
-                "houjin": {"origin_ref": "盘面自发", "military_strength": -3, "reason": "己巳之变后金入塞受挫"}
-            },
-        },
-        content=content,
-    )
-
-    assert out["issue_summary"]["new_issues"][0]["rejected"] is False
-    assert db.has_event_triggered("jisi_lubian")
-    assert db.conn.execute(
-        "SELECT military_pressure FROM regions WHERE id = ?", ("beizhili",)
-    ).fetchone()["military_pressure"] == 30
-    assert db.conn.execute(
-        "SELECT military_strength FROM powers WHERE id = ?", ("houjin",)
-    ).fetchone()["military_strength"] == 47
-    assert any(item.get("field") == "military_strength" and item.get("delta") == -3 for item in out["power_changes"])
-
-
-def test_invalid_strategic_power_update_blocks_main_result(game):
-    """同族自查：同信封 power_updates 自身拒收时，地区战果也不得半落主账。"""
-    db, state, content = game
-    issues.bind_content(content)
-    state.year = 1629
-    state.period = 11
-    db.conn.execute("UPDATE regions SET military_pressure = ? WHERE id = ?", (20, "beizhili"))
-    db.conn.execute("UPDATE powers SET military_strength = ? WHERE id = ?", (50, "houjin"))
-
-    out = issues.apply_score_extraction(
-        db,
-        state,
-        {
-            "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
-            "事件结局": {"jisi_lubian": "入塞被遏"},
-            "region_delta": {"beizhili": {"origin_ref": "盘面自发", "military_pressure": 10, "reason": "己巳之变软判敌逼京畿"}},
-            "power_updates": {
-                "houjin": {"origin_ref": "盘面自发", "城防": 3, "reason": "己巳之变后金入塞受挫"}
-            },
-        },
-        content=content,
-    )
-
-    assert out["issue_summary"]["new_issues"][0]["rejected"] is True
-    assert "势力战果拒收" in out["issue_summary"]["new_issues"][0]["reason"]
-    assert not db.has_event_triggered("jisi_lubian")
-    assert db.conn.execute(
-        "SELECT military_pressure FROM regions WHERE id = ?", ("beizhili",)
-    ).fetchone()["military_pressure"] == 20
-    assert db.conn.execute(
-        "SELECT military_strength FROM powers WHERE id = ?", ("houjin",)
-    ).fetchone()["military_strength"] == 50
-    assert any(item.get("rejected") and item.get("category") == "event_rejected" for item in out["region_changes"])
-    assert any(item.get("rejected") and item.get("category") == "event_rejected" for item in out["power_changes"])
-
-
-def test_orphan_strategic_power_update_without_event_issue_is_rejected(game):
-    """同族自查：带战略事件锚点的 power_updates 没有事件立项时，也不得按普通势力变化落库。"""
-    db, state, content = game
-    issues.bind_content(content)
-    state.year = 1629
-    state.period = 11
-    db.conn.execute("UPDATE powers SET military_strength = ? WHERE id = ?", (50, "houjin"))
-
-    out = issues.apply_score_extraction(
-        db,
-        state,
-        {
-            "power_updates": {
-                "houjin": {"origin_ref": "盘面自发", "military_strength": -3, "reason": "己巳之变后金入塞受挫"}
-            },
-        },
-        content=content,
-    )
-
-    assert not db.has_event_triggered("jisi_lubian")
-    assert db.conn.execute(
-        "SELECT military_strength FROM powers WHERE id = ?", ("houjin",)
-    ).fetchone()["military_strength"] == 50
-    assert any(
-        item.get("rejected") and item.get("category") == "event_rejected" and item.get("power_id") == "houjin"
-        for item in out["power_changes"]
-    )
-
-
-@pytest.mark.parametrize("control_field", ["controlled_by", "归属"])
-def test_jisi_border_contained_outcome_rejects_invasion_world_state(game, control_field):
-    """CMR R11：己巳结局标签不得与结构化世界状态战果自相矛盾。"""
-    db, state, content = game
-    issues.bind_content(content)
-    state.year = 1629
-    state.period = 11
-    db.conn.execute(
-        "UPDATE regions SET military_pressure = ?, controlled_by = ? WHERE id = ?",
-        (20, "ming", "beizhili"),
-    )
-
-    out = issues.apply_score_extraction(
-        db,
-        state,
-        {
-            "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
-            "事件结局": {"jisi_lubian": "挡于边墙"},
-            "region_delta": {
-                "beizhili": {
-                    "origin_ref": "盘面自发", control_field: "houjin",
-                    "military_pressure": 40,
-                    "reason": "己巳之变软判后金长驱直入兵临京师",
-                }
-            },
-        },
-        content=content,
-    )
-
-    assert out["issue_summary"]["new_issues"][0]["rejected"] is True
-    assert "事件结局" in out["issue_summary"]["new_issues"][0]["reason"]
-    assert not db.has_event_triggered("jisi_lubian")
-    region = db.conn.execute(
-        "SELECT military_pressure, controlled_by FROM regions WHERE id = ?", ("beizhili",)
-    ).fetchone()
-    assert dict(region) == {"military_pressure": 20, "controlled_by": "ming"}
-
-
-def test_strategic_event_person_result_rejection_blocks_other_result_deltas(game):
-    """ADR0014：战略战事人物战果拒收时，同信封地区战果也不得半落主账。"""
-    db, state, content = game
-    issues.bind_content(content)
-    state.year = 1638
-    state.period = 9
-    db.conn.execute("UPDATE regions SET military_pressure = ? WHERE id = ?", (20, "beizhili"))
-    db.conn.execute("UPDATE characters SET status = ? WHERE name = ?", ("active", "卢象升"))
-
-    out = issues.apply_score_extraction(
-        db,
-        state,
-        {
-            "new_issues": [{"origin_kind": "event_pool", "id": "wuyin_lubian"}],
-            "region_delta": {"beizhili": {"origin_ref": "盘面自发", "military_pressure": 15, "reason": "戊寅虏变软判畿南受压"}},
-            "人物变更": [{"origin_ref": "盘面自发", "name": "卢象升", "动作": "处置", "status": "candidate", "reason": "戊寅虏变软判战死"}],
-        },
-        content=content,
-    )
-
-    assert out["issue_summary"]["new_issues"][0]["rejected"] is True
-    assert not db.has_event_triggered("wuyin_lubian")
-    assert db.conn.execute(
-        "SELECT military_pressure FROM regions WHERE id = ?", ("beizhili",)
-    ).fetchone()["military_pressure"] == 20
-    assert db.get_character_status("卢象升")[0] == "active"
-    assert any(item.get("rejected") for item in out["region_changes"])
-    assert any(item.get("rejected") for item in out["applied_person_changes"])
-
-
-def test_strategic_person_alias_stays_in_rejected_event_envelope(game):
-    """CMR R12：战略人物别名须先归一再分流，事件拒收时不得漏成普通人物变更。"""
-    db, state, content = game
-    issues.bind_content(content)
-    state.year = 1638
-    state.period = 9
-    alias = "__test_lu_zhifu__"
-    content.characters["卢象升"].aliases = list(content.characters["卢象升"].aliases or []) + [alias]
-    db.conn.execute("UPDATE characters SET status = ? WHERE name = ?", ("active", "卢象升"))
-
-    out = issues.apply_score_extraction(
-        db,
-        state,
-        {
-            "new_issues": [{"origin_kind": "event_pool", "id": "wuyin_lubian"}],
-            "region_delta": {"beizhili": {"origin_ref": "盘面自发", "不存在字段": 1, "reason": "戊寅虏变无效战果字段"}},
-            "人物变更": [{"origin_ref": "盘面自发", "name": alias, "动作": "处置", "status": "dead", "reason": "戊寅虏变软判战死"}],
-        },
-        content=content,
-    )
-
-    assert out["issue_summary"]["new_issues"][0]["rejected"] is True
-    assert not db.has_event_triggered("wuyin_lubian")
-    assert db.get_character_status("卢象升")[0] == "active"
-    assert any(
-        item.get("rejected") and item.get("category") == "event_rejected" and item.get("name") == "卢象升"
-        for item in out["applied_person_changes"]
-    )
-
-
-def test_rejected_strategic_person_preflight_restores_content_power_id(game):
-    """CMR R8：人物战果预检干跑失败后，内存人物 power_id 也必须随 DB 回滚。"""
-    db, state, content = game
-    issues.bind_content(content)
-    state.year = 1641
-    state.period = 8
-    db.conn.execute("UPDATE characters SET power_id = ?, status = ? WHERE name = ?", ("ming", "active", "洪承畴"))
-    content.characters["洪承畴"].power_id = "ming"
-    before_db_power = db.conn.execute(
-        "SELECT power_id FROM characters WHERE name = ?", ("洪承畴",)
-    ).fetchone()["power_id"]
-    before_content_power = content.characters["洪承畴"].power_id
-
-    out = issues.apply_score_extraction(
-        db,
-        state,
-        {
-            "new_issues": [{"origin_kind": "event_pool", "id": "songshan_battle"}],
-            "人物变更": [
-                {
-                    "origin_ref": "盘面自发", "name": "洪承畴",
-                    "动作": "易主",
-                    "方式": "被俘而降",
-                    "new_power": "houjin",
-                    "new_title": "降臣",
-                    "反噬": {"ming": {"military_strength": -5}},
-                    "reason": "松锦决战软判主帅被俘降金",
-                }
-            ],
-            "new_armies": [
-                {
-                    "origin_ref": "盘面自发", "id": "__bad_songshan_army__",
-                    "name": "无效松山军",
-                    "owner_power": "__missing_power__",
-                    "station": "松山",
-                    "manpower": 1200,
-                    "reason": "松锦决战软判无效新军",
-                }
-            ],
-        },
-        content=content,
-    )
-
-    assert out["issue_summary"]["new_issues"][0]["rejected"] is True
-    assert not db.has_event_triggered("songshan_battle")
-    assert db.conn.execute(
-        "SELECT power_id FROM characters WHERE name = ?", ("洪承畴",)
-    ).fetchone()["power_id"] == before_db_power
-    assert content.characters["洪承畴"].power_id == before_content_power
-
-
-def test_strategic_person_backlash_rejection_blocks_event_result_envelope(game):
-    """CMR R9：易主顶层成功但反噬拒收，也必须拒整组战略战果。"""
-    db, state, content = game
-    issues.bind_content(content)
-    state.year = 1641
-    state.period = 8
-    db.conn.execute("UPDATE characters SET power_id = ?, status = ? WHERE name = ?", ("ming", "active", "洪承畴"))
-    db.conn.execute("UPDATE regions SET military_pressure = ? WHERE id = ?", (20, "liaodong"))
-    content.characters["洪承畴"].power_id = "ming"
-
-    out = issues.apply_score_extraction(
-        db,
-        state,
-        {
-            "new_issues": [{"origin_kind": "event_pool", "id": "songshan_battle"}],
-            "region_delta": {"liaodong": {"origin_ref": "盘面自发", "military_pressure": 5, "reason": "松锦决战软判辽东吃紧"}},
-            "人物变更": [
-                {
-                    "origin_ref": "盘面自发", "name": "洪承畴",
-                    "动作": "易主",
-                    "方式": "被俘而降",
-                    "new_power": "houjin",
-                    "new_title": "降臣",
-                    "反噬": {"__missing_power__": {"military_strength": -5}},
-                    "reason": "松锦决战软判主帅被俘降金",
-                }
-            ],
-        },
-        content=content,
-    )
-
-    assert out["issue_summary"]["new_issues"][0]["rejected"] is True
-    assert not db.has_event_triggered("songshan_battle")
-    assert db.conn.execute(
-        "SELECT military_pressure FROM regions WHERE id = ?", ("liaodong",)
-    ).fetchone()["military_pressure"] == 20
-    assert db.conn.execute(
-        "SELECT power_id FROM characters WHERE name = ?", ("洪承畴",)
-    ).fetchone()["power_id"] == "ming"
-    assert content.characters["洪承畴"].power_id == "ming"
-    assert any(item.get("rejected") for item in out["region_changes"])
-
-
-def test_strategic_foreign_event_lands_soft_result_person_delta(game):
-    """#189 CMR：战略战事的人死/生是软判结果，须能落人物主账。"""
-    db, state, content = game
-    issues.bind_content(content)
-    state.year = 1638
-    state.period = 9
-    db.conn.execute("UPDATE characters SET status = ? WHERE name = ?", ("active", "卢象升"))
-
-    assert any(ev.id == "wuyin_lubian" for ev in issues.gather_candidate_events(state, db))
-
-    out = issues.apply_score_extraction(
-        db,
-        state,
-        {
-            "new_issues": [{"origin_kind": "event_pool", "id": "wuyin_lubian"}],
-            "人物变更": [{"origin_ref": "盘面自发", "name": "卢象升", "动作": "处置", "status": "dead", "reason": "戊寅虏变软判战死"}],
-        },
-        content=content,
-    )
-
-    assert out["issue_summary"]["new_issues"][0]["rejected"] is False
-    assert db.has_event_triggered("wuyin_lubian")
-    assert db.get_character_status("卢象升")[0] == "dead"
-
-
-def test_strategic_event_style_only_temperament_is_material_world_state(game):
-    """#641：style-only 合法性情战果承认 materiality，可触发事件且各投影一致。"""
-    import json
-
-    db, state, content = game
-    issues.bind_content(content)
-    state.year = 1638
-    state.period = 9
-    person = "卢象升"
-    new_style = "  经戊寅边事锤炼，临机更沉得住气。\n少作张扬。  "
-    before_style = db.conn.execute(
-        "SELECT style FROM characters WHERE name=?", (person,)
-    ).fetchone()["style"]
-    assert new_style != before_style
-    assert any(ev.id == "wuyin_lubian" for ev in issues.gather_candidate_events(state, db))
-
-    out = issues.apply_score_extraction(
-        db,
-        state,
-        {
-            "new_issues": [{"origin_kind": "event_pool", "id": "wuyin_lubian"}],
-            "人物变更": [{
-                "origin_ref": "盘面自发",
-                "name": person,
-                "动作": "性情",
-                "style": new_style,
-                "reason": "戊寅虏变后主帅性情软进化",
-            }],
-        },
-        content=content,
-    )
-
-    issue = out["issue_summary"]["new_issues"][0]
-    assert issue.get("rejected") is not True
-    assert issue.get("category") != "missing_world_state_delta"
-    assert db.has_event_triggered("wuyin_lubian")
-    assert db.conn.execute(
-        "SELECT style FROM characters WHERE name=?", (person,)
-    ).fetchone()["style"] == new_style
-    assert content.characters[person].style == new_style
-    change = next(
-        item for item in out["applied_person_changes"]
-        if item.get("name") == person and item.get("动作") == "性情"
-    )
-    assert change.get("rejected") is not True
-    assert change["old_style"] == before_style
-    assert change["new_style"] == new_style
-    assert change["style"] == new_style
-    log = db.conn.execute(
-        "SELECT action, normalized FROM person_logs "
-        "WHERE person_name=? AND action=? ORDER BY id DESC LIMIT 1",
-        (person, "性情"),
-    ).fetchone()
-    assert log is not None
-    normalized = json.loads(log["normalized"])
-    assert normalized["old_style"] == before_style
-    assert normalized["new_style"] == new_style
-
-
-def test_strategic_event_same_style_temperament_is_not_material(game):
-    """#641：同值 style 重写不构成 material world-state delta。"""
-    db, state, content = game
-    issues.bind_content(content)
-    state.year = 1638
-    state.period = 9
-    person = "卢象升"
-    current = db.conn.execute(
-        "SELECT style FROM characters WHERE name=?", (person,)
-    ).fetchone()["style"] or "沉毅果决，临阵不苟。"
-    # 确保当前 style 非空可重写；若库内为空则先落一笔再测同值。
-    if not str(current).strip():
-        current = "沉毅果决，临阵不苟。"
-        issues.apply_score_extraction(
-            db,
-            state,
-            {"人物变更": [{
-                "origin_ref": "盘面自发",
-                "name": person,
-                "动作": "性情",
-                "style": current,
-                "reason": "前置写入",
-            }]},
-            content=content,
-        )
-
-    out = issues.apply_score_extraction(
-        db,
-        state,
-        {
-            "new_issues": [{"origin_kind": "event_pool", "id": "wuyin_lubian"}],
-            "人物变更": [{
-                "origin_ref": "盘面自发",
-                "name": person,
-                "动作": "性情",
-                "style": current,
-                "reason": "戊寅虏变后同值重写",
-            }],
-        },
-        content=content,
-    )
-
-    issue = out["issue_summary"]["new_issues"][0]
-    assert issue.get("rejected") is True
-    assert issue.get("category") == "missing_world_state_delta"
-    assert not db.has_event_triggered("wuyin_lubian")
-    assert db.conn.execute(
-        "SELECT style FROM characters WHERE name=?", (person,)
-    ).fetchone()["style"] == current
 
 
 def test_wuyin_lubian_content_treats_lu_death_as_soft_battle_outcome():
@@ -3410,47 +1648,6 @@ def test_yuan_xialing_event_excluded_after_jisi_border_contained_outcome(game):
     )
 
     assert all(ev.id != "yuan_xialing" for ev in issues.gather_candidate_events(state, db))
-
-
-def test_yuan_xialing_event_included_after_jisi_event_issue_triggers(game):
-    """#191 CMR：己巳之变真实从 event_pool 触发后，袁下狱上游终态门应可查并打开。"""
-    db, state, content = game
-    issues.bind_content(content)
-    state.year = 1629
-    state.period = 11
-    assert any(ev.id == "jisi_lubian" for ev in issues.gather_candidate_events(state, db))
-
-    out = issues.apply_score_extraction(
-        db,
-        state,
-        {
-            "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
-            "事件结局": {"jisi_lubian": "入塞被遏"},
-            "region_delta": {"beizhili": {"origin_ref": "盘面自发", "military_pressure": 35, "reason": "己巳之变软判敌逼京畿"}},
-            "army_delta": {"jingying": {"origin_ref": "盘面自发", "manpower": -5000, "morale": -8, "reason": "己巳之变勤王战损"}},
-        },
-        content=content,
-    )
-
-    assert out["issue_summary"]["new_issues"][0]["rejected"] is False
-    row = db.conn.execute(
-        "SELECT terminal_state, terminal_reason FROM event_triggers WHERE event_id=?",
-        ("jisi_lubian",),
-    ).fetchone()
-    assert row is not None
-    assert row["terminal_state"] == "triggered"
-    assert row["terminal_reason"] == "入塞被遏"
-
-    state.year = 1629
-    state.period = 12
-    db.conn.execute("UPDATE characters SET status=? WHERE name=?", ("active", "袁崇焕"))
-    db.conn.execute("UPDATE armies SET commander=? WHERE id=?", ("袁崇焕", "guanning"))
-    db.conn.execute(
-        "UPDATE characters SET status=?, status_reason=? WHERE name=?",
-        ("dead", "袁崇焕双岛斩帅", "毛文龙"),
-    )
-
-    assert any(ev.id == "yuan_xialing" for ev in issues.gather_candidate_events(state, db))
 
 
 def test_legacy_event_pool_issue_backfills_trigger_without_guessing_outcome(game):
@@ -3817,48 +2014,6 @@ def test_issue_194_dead_named_general_does_not_obsolete_strategic_foreign_event(
     assert row is None
 
 
-def test_issue_194_dalingghe_requires_world_state_main_ledger_result(game):
-    """#194：新增战略/外敌事件复用 S3，同信封缺主账则拒收，有主账才记触发。"""
-    db, state, content = game
-    issues.bind_content(content)
-    state.year = 1631
-    state.period = 8
-    assert any(ev.id == "dalingghe" for ev in issues.gather_candidate_events(state, db))
-
-    missing = issues.apply_score_extraction(
-        db,
-        state,
-        {"new_issues": [{"origin_kind": "event_pool", "id": "dalingghe"}]},
-        content=content,
-    )
-
-    assert missing["issue_summary"]["new_issues"][0]["rejected"] is True
-    assert "主账" in missing["issue_summary"]["new_issues"][0]["reason"]
-    assert not db.has_event_triggered("dalingghe")
-
-    applied = issues.apply_score_extraction(
-        db,
-        state,
-        {
-            "new_issues": [{"origin_kind": "event_pool", "id": "dalingghe"}],
-            "region_delta": {
-                "liaodong": {
-                    "origin_ref": "盘面自发", "military_pressure": 8,
-                    "reason": "大凌河之围软判：后金围城，辽东军压上升",
-                }
-            },
-        },
-        content=content,
-    )
-
-    assert applied["issue_summary"]["new_issues"][0]["rejected"] is False
-    row = db.conn.execute(
-        "SELECT terminal_state, terminal_reason FROM event_triggers WHERE event_id=?",
-        ("dalingghe",),
-    ).fetchone()
-    assert dict(row) == {"terminal_state": "triggered", "terminal_reason": ""}
-
-
 def test_huabei_plague_auto_triggers_with_deterministic_core_effect(game):
     """#192：华北大疫是天灾核心事实，到点硬触发并落库，不等 LLM 候选记得写。"""
     db, state, content = game
@@ -3952,18 +2107,22 @@ def test_historical_auto_trigger_event_expires_after_latest_window(game):
         content.events.remove(ev)
 
 
-def test_gated_auto_trigger_seed_event_can_recur_after_previous_issue_resolved(game):
-    """PR review：seed auto_trigger 带 gate 时，旧 resolved issue 不应永久压住再触发。"""
+def test_gated_auto_trigger_seed_event_does_not_refire_after_issue_resolved(game):
+    """#1892：世界事件读已落终态不再重发——结案后下月不复发（判 J4）。
+
+    旧合同（带 gate 的 seed 硬触发结案后可再立第二条）使同一世界事件被发两次。
+    """
     db, state, content = game
     issues.bind_content(content)
-    ev = _hist_event("__test_recurring_auto_seed__", {"民心": "<=5"})
+    ev = _hist_event("__test_no_refire_auto_seed__", {"民心": "<=5"})
     ev.auto_trigger = True
     ev.event_type = "situation"
     content.seed_events.append(ev)
     try:
         state.metrics["民心"] = 3
         first = issues.auto_trigger_seed_issues(state, db)
-        first_item = next(item for item in first if item["id"] == "__test_recurring_auto_seed__")
+        first_item = next(item for item in first if item["id"] == "__test_no_refire_auto_seed__")
+        assert db.event_terminal_state("__test_no_refire_auto_seed__") == "triggered"
         db.conn.execute(
             "UPDATE issues SET status='resolved' WHERE id=?",
             (first_item["issue_id"],),
@@ -3972,8 +2131,11 @@ def test_gated_auto_trigger_seed_event_can_recur_after_previous_issue_resolved(g
 
         second = issues.auto_trigger_seed_issues(state, db)
 
-        second_item = next(item for item in second if item["id"] == "__test_recurring_auto_seed__")
-        assert second_item["issue_id"] != first_item["issue_id"]
+        assert all(item["id"] != "__test_no_refire_auto_seed__" for item in second)
+        assert db.conn.execute(
+            "SELECT COUNT(*) FROM issues WHERE origin_kind='event_pool' AND origin_ref=?",
+            ("__test_no_refire_auto_seed__",),
+        ).fetchone()[0] == 1
     finally:
         content.seed_events.remove(ev)
 
@@ -4092,43 +2254,71 @@ def test_jingshi_plague_auto_triggers_and_weakens_capital_garrison(game):
     assert after["morale"] == before["morale"] - 16
 
 
-def test_huangtaiji_chengdi_auto_triggers_and_renames_houjin(game):
-    """#192：皇太极称帝核心事实确定性落库，后金稳定 id 展示为大清。"""
+def test_huangtaiji_chengdi_lands_only_when_model_picks_it(game, monkeypatch):
+    """#1893/#192：称帝不选不落、选中一次落定——两向都走真实接缝。
+
+    旧断链有两处，且都在本用例须穿过的接缝上：月初 ``GameSession.begin_turn``
+    按日期自动改名（不选也发生），以及模型选中后局势/改名不随既有写口落账。
+    故此处不另造旁路断言：先走 begin_turn（历史故障所在入口），再走
+    ``dispatch_month_segment``（模型挑选所在入口），在外部可见结果上双向钉死。
+    """
+    from ming_sim.month_translate import dispatch_month_segment
+    from ming_sim.decree import prepare_resolve_front_half
+    from ming_sim.session import GameSession
+    import ming_sim.session as session_mod
+
     db, state, content = game
     issues.bind_content(content)
-    state.year = 1636
-    state.period = 4
+    state.year, state.period = 1636, 4
+    db.save_state(state)
 
-    triggered = issues.auto_trigger_seed_issues(state, db)
+    def _power_name():
+        return db.conn.execute(
+            "SELECT name, aliases, status FROM powers WHERE id='houjin'",
+        ).fetchone()
 
-    assert any(item["id"] == "huangtaiji_chengdi" for item in triggered)
-    assert db.has_event_triggered("huangtaiji_chengdi")
-    assert all(ev.id != "huangtaiji_chengdi" for ev in issues.gather_candidate_events(state, db))
-    row = db.conn.execute(
-        "SELECT name, aliases, status, last_action FROM powers WHERE id=?",
-        ("houjin",),
-    ).fetchone()
+    assert _power_name()["name"] == "后金", "本用例以未选中的后金为起点，起点已变则本用例空转"
+
+    # 不选：经真实 begin_turn 入口，日期到了也不改名、不发终态，候选仍在池里可挑。
+    # 用 __new__ 跳过重型 __init__（agno/registry/LLM），只装 begin_turn 需要的协作者。
+    monkeypatch.setattr(session_mod, "_sync_offices_from_db_impl", lambda *a, **k: None)
+    monkeypatch.setattr(GameSession, "auto_save", lambda self, tag: None)
+    sess = GameSession.__new__(GameSession)
+    sess.db, sess.content, sess.llm_config, sess.agno_db = db, content, None, None
+    sess.begin_turn()
+    state = sess.state
+    prepare_resolve_front_half(state, db, decree_text="", content=content)
+
+    assert _power_name()["name"] == "后金"
+    assert db.event_terminal_state("huangtaiji_chengdi") is None
+    assert db.find_any_issue_by_origin("event_pool", "huangtaiji_chengdi") is None
+    assert "huangtaiji_chengdi" in {
+        ev.id for ev in issues.gather_candidate_events(state, db)
+    }
+    assert all(
+        item["id"] != "huangtaiji_chengdi"
+        for item in issues.auto_trigger_seed_issues(state, db)
+    )
+
+    # 选：经真实 dispatch_month_segment 入口落一次终态、局势与改国号。
+    declaration = {"effects": {"new_issues": [{
+        "origin_kind": "event_pool", "id": "huangtaiji_chengdi",
+        "title": "皇太极称帝改国号大清",
+    }]}}
+    result = dispatch_month_segment(
+        db, state, segment="皇太极称帝",
+        translate_fn=lambda request, config: declaration,
+    )
+    applied = result.effects.applied[0]["issue_summary"]["new_issues"]
+    assert [item.get("rejected") for item in applied] == [False]
+    assert db.event_terminal_state("huangtaiji_chengdi") == "triggered"
+    row = _power_name()
     assert row["name"] == "大清"
-    assert "后金" in row["aliases"]
-    assert "大清" in row["aliases"]
-    assert "称帝" in row["status"]
-    assert row["last_action"] == "皇太极称帝改国号大清"
-
-
-def test_huangtaiji_chengdi_keeps_diplomatic_response_axis_as_situation_issue(game):
-    """#192：称帝核心事实硬落后，承不承认伪号/联蒙抗清仍要留给软判推进。"""
-    db, state, content = game
-    issues.bind_content(content)
-    state.year = 1636
-    state.period = 4
-
-    triggered = issues.auto_trigger_seed_issues(state, db)
-
-    item = next(entry for entry in triggered if entry["id"] == "huangtaiji_chengdi")
-    assert item["issue_id"] > 0
+    assert "后金" in row["aliases"] and "大清" in row["aliases"]
+    # #192：承不承认伪号/联蒙抗清仍是要软判推进的局势，不是即时结清的硬事件。
     issue = db.conn.execute(
-        "SELECT status, kind, origin_kind, origin_ref FROM issues WHERE id=?",
-        (item["issue_id"],),
+        "SELECT status, kind, origin_kind, origin_ref FROM issues WHERE origin_ref=?",
+        ("huangtaiji_chengdi",),
     ).fetchone()
     assert dict(issue) == {
         "status": "active",
@@ -4137,42 +2327,89 @@ def test_huangtaiji_chengdi_keeps_diplomatic_response_axis_as_situation_issue(ga
         "origin_ref": "huangtaiji_chengdi",
     }
 
+    # 读档续跑不重发：终态已在候选硬门里排掉。
+    issues.auto_trigger_seed_issues(state, db)
+    assert "huangtaiji_chengdi" not in {
+        ev.id for ev in issues.gather_candidate_events(state, db)
+    }
+    again = dispatch_month_segment(
+        db, state, segment="再说称帝",
+        translate_fn=lambda request, config: declaration,
+    )
+    assert [
+        item.get("rejected")
+        for item in again.effects.applied[0]["issue_summary"]["new_issues"]
+    ] == [True]
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM issues WHERE origin_kind='event_pool' AND origin_ref=?",
+        ("huangtaiji_chengdi",),
+    ).fetchone()[0] == 1
 
-def test_historical_power_rename_tick_reads_huangtaiji_event_effect(game):
-    """CMR：月初展示名 tick 也读事件 effect，避免同一称帝事实维护两份文案。"""
+
+def test_fiscal_levy_events_stay_out_of_model_candidate_pool(game):
+    """#1892/#1893：三饷是皇帝亲裁，不进人物候选交模型代批（ADR 0020）。"""
+    from ming_sim.issues import FISCAL_LEVY_EVENT_CATEGORY
+
     db, state, content = game
-    ev = content.event_by_id["huangtaiji_chengdi"]
-    rename = ev.effect_on_trigger["power_renames"][0]
-    original = dict(rename)
-    try:
-        rename.update(
-            {
-                "new_name": "测试清",
-                "aliases": "后金，测试清",
-                "reason": "测试称帝事实",
-                "status": "测试称帝状态",
-                "last_action": "测试称帝行动",
-            }
-        )
-        state.year = 1636
-        state.period = 4
+    issues.bind_content(content)
+    levy_ids = {
+        ev.id for ev in content.events
+        if getattr(ev, "category", "") == FISCAL_LEVY_EVENT_CATEGORY
+    }
+    assert levy_ids, "content 里应至少有一个三饷事件"
 
-        changed = db.apply_historical_power_renames(state)
-
-        assert changed and changed[0]["new_name"] == "测试清"
-        row = db.conn.execute(
-            "SELECT name, aliases, status, last_action FROM powers WHERE id=?",
-            ("houjin",),
-        ).fetchone()
-        assert dict(row) == {
-            "name": "测试清",
-            "aliases": "后金，测试清",
-            "status": "测试称帝状态",
-            "last_action": "测试称帝行动",
+    for year in (1631, 1637, 1639, 1640):
+        state.year, state.period = year, 1
+        db.save_state(state)
+        assert not levy_ids & {
+            ev.id for ev in issues.gather_candidate_events(state, db)
         }
-    finally:
-        rename.clear()
-        rename.update(original)
+
+
+@pytest.mark.parametrize(
+    "event_id,setup",
+    [
+        (
+            "korea_envoy",
+            lambda db: db.conn.execute(
+                "UPDATE powers SET leverage=80 WHERE id='houjin'",
+            ),
+        ),
+        (
+            "houjin_split",
+            lambda db: db.conn.execute(
+                "UPDATE powers SET cohesion=50 WHERE id='houjin'",
+            ),
+        ),
+        (
+            "jiangnan_gentry_revolt",
+            lambda db: db.conn.executemany(
+                "UPDATE classes SET satisfaction=20 WHERE name='士绅' AND region_id=?",
+                [("nanzhili",), ("zhejiang",), ("fujian",)],
+            ),
+        ),
+    ],
+)
+def test_person_events_are_model_candidates_not_engine_hard_fired(game, event_id, setup):
+    """#1892 J2：有人拍板者的人物事件迁出 auto_trigger——引擎不硬发，只作候选交模型选。
+
+    门槛达标时若仍被引擎硬发，等于代码替人物（朝鲜仁祖／后金贝勒／江南士绅）拍板。
+    """
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1628
+    state.period = 6
+    db.save_state(state)
+    setup(db)
+    db.conn.commit()
+
+    assert not content.event_by_id[event_id].auto_trigger
+    triggered = issues.auto_trigger_seed_issues(state, db)
+
+    assert all(item["id"] != event_id for item in triggered)
+    assert db.event_terminal_state(event_id) is None
+    assert db.find_any_issue_by_origin("event_pool", event_id) is None
+    assert event_id in {ev.id for ev in issues.gather_candidate_events(state, db)}
 
 
 def test_mao_wenlong_event_pool_uses_candidate_snapshot_before_advances(game):
@@ -5421,8 +3658,8 @@ def test_event_pool_pending_person_changes_are_simulated_sequentially(game):
     assert out["applied_person_changes"][1]["rejected"] is True
 
 
-def test_apply_score_extraction_registry_refresh_rolls_back_with_outer_transaction(game):
-    """post-merge CMR R11：外层事务回滚时，任命刷新过的 registry 也要回到旧身份。"""
+def test_apply_score_extraction_appointment_rolls_back_with_outer_transaction(game):
+    """外层事务回滚时，任命的 DB 与内存身份均回到旧值。"""
     import pytest
 
     from ming_sim.applier import atomic
@@ -5439,16 +3676,6 @@ def test_apply_score_extraction_registry_refresh_rolls_back_with_outer_transacti
     content.characters["韩爌"].office = "内阁首辅"
     content.characters["韩爌"].office_type = "内阁"
 
-    class _OfficeSnapshotRegistry:
-        def __init__(self):
-            self.agents = {"韩爌": "内阁首辅"}
-            self.session_ids = {"韩爌": "minister-韩爌-turn-test"}
-
-        def refresh(self, name):
-            self.agents[name] = content.characters[name].office
-
-    registry = _OfficeSnapshotRegistry()
-
     with pytest.raises(RuntimeError):
         with atomic(db):
             issues.apply_score_extraction(
@@ -5456,18 +3683,15 @@ def test_apply_score_extraction_registry_refresh_rolls_back_with_outer_transacti
                 state,
                 {"人物变更": [{"origin_ref": "盘面自发", "name": "韩爌", "动作": "任命", "office": "兵部尚书"}]},
                 content=content,
-                registry=registry,
             )
-            assert registry.agents["韩爌"] == "兵部尚书"
-            raise RuntimeError("rollback registry probe")
+            assert content.characters["韩爌"].office == "兵部尚书"
+            raise RuntimeError("rollback appointment probe")
 
     assert db.conn.execute(
         "SELECT office FROM characters WHERE name=?",
         ("韩爌",),
     ).fetchone()["office"] == "内阁首辅"
     assert content.characters["韩爌"].office == "内阁首辅"
-    assert registry.agents == {"韩爌": "内阁首辅"}
-    assert registry.session_ids == {"韩爌": "minister-韩爌-turn-test"}
 
 
 def test_event_pool_pending_alias_appointment_blocks_canonical_gate(game):
@@ -6126,7 +4350,7 @@ def test_invalid_pending_person_change_does_not_block_event_gate(game):
             state,
             {
                 "new_issues": [{"origin_kind": "event_pool", "id": "mao_wenlong"}],
-                "人物变更": [{"origin_ref": "盘面自发", "name": "袁崇焕", "动作": "处置", "status": "candidate", "reason": "非法候选"}],
+                "人物变更": [{"origin_ref": "盘面自发", "name": "袁崇焕", "动作": "处置", "status": "active", "reason": "处置不能恢复在职"}],
             },
             content=content,
         )

@@ -10,6 +10,8 @@ _serialized_web_write), not private _write_gate.locked() / _pending_writes_count
 """
 from __future__ import annotations
 
+from ming_sim.session_write_queue import get_session_write_queue
+
 import json
 import threading
 from types import SimpleNamespace
@@ -93,7 +95,6 @@ def _base_runtime(db):
     character = minister_double("测试大臣")
     state = SimpleNamespace(turn=1, year=1628, period=1, turn_phase="summoning")
     runtime = object.__new__(web_app.WebGame)
-    runtime._write_gate = threading.Lock()
     from ming_sim.session_write_queue import SessionWriteQueue
     runtime._write_queue = SessionWriteQueue()
     runtime._write_gate = runtime._write_queue.write_gate
@@ -106,7 +107,6 @@ def _base_runtime(db):
         state=state,
         db=db,
         close=lambda: None,
-        abandon_chat_turn_scene=lambda *_a, **_k: None,
         # #1842：WebGame persist 尾必调；轻壳无 pending 时 no-op。
         schedule_pending_scene_translation=lambda result: None,
         _character=lambda name: character,
@@ -155,7 +155,7 @@ def _base_runtime(db):
 def test_prologue_failure_fails_orphan_turn_and_releases_gate():
     db = _FailingPrologueDB()
     runtime, minister = _base_runtime(db)
-    gen = runtime.chat_stream(minister, "辽东军情如何？")
+    gen = runtime.chat_stream("殿上", "辽东军情如何？")
     with pytest.raises(RuntimeError):
         next(gen)  # prologue 在 append_chat_message 崩 → 重新抛出
     # 孤儿轮被失败掉（不留 active 无回复轮挡住该大臣）
@@ -196,7 +196,7 @@ def test_prologue_finally_does_not_release_foreign_gate_holder():
 
     runtime._complete_pending_write = complete_then_hand_path_to_other
 
-    gen = runtime.chat_stream(minister, "辽东军情如何？")
+    gen = runtime.chat_stream("殿上", "辽东军情如何？")
     with pytest.raises(RuntimeError):
         next(gen)
 
@@ -255,7 +255,7 @@ def test_prologue_cleanup_failure_still_releases_gate_and_counter():
     db = _DoubleFailDB()
     runtime, minister = _base_runtime(db)
 
-    gen = runtime.chat_stream(minister, "辽东军情如何？")
+    gen = runtime.chat_stream("殿上", "辽东军情如何？")
     with pytest.raises(RuntimeError):
         next(gen)
 
@@ -271,7 +271,7 @@ class _StreamCrashAgent:
 
 
 class _WorkerPathDB:
-    """Prologue succeeds (append_chat_message OK) but worker _chat_stream_payload crashes
+    """Prologue succeeds (append_chat_message OK) but worker scene payload crashes
     AND fail_chat_turn also crashes → worker double-failure path."""
 
     def create_chat_turn(self, *a, **k):
@@ -303,16 +303,15 @@ class _WorkerPathDB:
 
 
 def test_worker_cleanup_failure_still_emits_error_and_releases_gate():
-    """R3 self-check: worker 内 _chat_stream_payload 崩 → _fail_chat_turn_and_reload 自身也崩 →
+    """R3 self-check: worker 内 scene payload 崩 → _fail_chat_turn_and_reload 自身也崩 →
     仍须推 error 事件给消费者（否则 generator 永久挂死）、释放写路径 + pending ownership。"""
     db = _WorkerPathDB()
     runtime, minister = _base_runtime(db)
     agent = _StreamCrashAgent()
     runtime.session.registry = SimpleNamespace(get=lambda _c, **_kw: agent)
     runtime.session._character = lambda name: minister_double(minister)
-    runtime.session._start_cli_action_intent = lambda *_a, **_k: None
 
-    gen = runtime.chat_stream(minister, "辽东军情如何？")
+    gen = runtime.chat_stream("殿上", "辽东军情如何？")
     events = list(gen)  # consumer drives generator to completion
 
     # #1353 r11：error+end 双终态（消费者没挂死，且以 end 收束）
@@ -333,15 +332,6 @@ def test_worker_cleanup_double_failure_emits_original_error_end_and_logs(caplog)
     agent = _StreamCrashAgent()
     runtime.session.registry = SimpleNamespace(get=lambda _c, **_kw: agent)
     runtime.session._character = lambda name: minister_double(minister)
-    runtime.session._start_cli_action_intent = lambda *_a, **_k: None
-
-    abandon_calls: list[int] = []
-
-    def _boom_abandon(ctid):
-        abandon_calls.append(int(ctid))
-        raise RuntimeError("abandon 二次崩溃")
-
-    runtime.session.abandon_chat_turn_scene = _boom_abandon
 
     primary = "LLM 流式调用崩溃。"
     events: list[dict] = []
@@ -350,7 +340,7 @@ def test_worker_cleanup_double_failure_emits_original_error_end_and_logs(caplog)
 
     def consume() -> None:
         try:
-            for item in runtime.chat_stream(minister, "辽东军情如何？"):
+            for item in runtime.chat_stream("殿上", "辽东军情如何？"):
                 events.append(item)
                 if item.get("type") == "end":
                     break
@@ -377,11 +367,9 @@ def test_worker_cleanup_double_failure_emits_original_error_end_and_logs(caplog)
     assert err.get("message") == primary, err
     assert "abandon" not in str(err.get("message") or "")
     assert "fail_chat_turn" not in str(err.get("message") or "")
-    assert abandon_calls == [7]
 
     # 日志机械断言：abandon + fail 两次 cleanup 均 logger.exception 留痕
     joined = "\n".join(r.getMessage() for r in caplog.records)
-    assert "stream worker cleanup: abandon_chat_turn_scene failed" in joined, joined
     assert "stream worker cleanup: fail_chat_turn/reload failed" in joined, joined
     # traceback 须在 exception 记录里（logger.exception → exc_info）
     assert any(r.exc_info for r in caplog.records), caplog.records
@@ -398,8 +386,6 @@ def test_worker_postprocess_exception_emits_error_end():
     runtime, minister = _base_runtime(db)
     runtime.session.registry = SimpleNamespace(get=lambda _c, **_kw: None)
     runtime.session._character = lambda name: minister_double(minister)
-    runtime.session._start_cli_action_intent = lambda *_a, **_k: None
-    runtime.session.abandon_chat_turn_scene = lambda *_a, **_k: None
     runtime.session.close_night_after_chat_if_needed = None
 
     runtime._scene_chat_stream_payload = (  # type: ignore[method-assign]
@@ -421,7 +407,7 @@ def test_worker_postprocess_exception_emits_error_end():
 
     def consume() -> None:
         try:
-            for item in runtime.chat_stream(minister, "边饷如何？"):
+            for item in runtime.chat_stream("殿上", "边饷如何？"):
                 events.append(item)
                 if item.get("type") == "end":
                     break
@@ -445,170 +431,6 @@ def test_worker_postprocess_exception_emits_error_end():
     err = next(e for e in events if e.get("type") == "error")
     assert "highlight trail boom" in str(err.get("message") or ""), err
     _assert_write_path_free(runtime)
-
-
-# ── #542 r6e：非流 chat / retry prologue 与流式同清理缝 ─────────────────────
-
-
-def _runtime_for_nonstream_chat(*, start_scene=None, append_error=None, abandon_error=None):
-    """Minimal WebGame double for non-stream chat/retry prologue fail paths."""
-    abandoned: list[int] = []
-    failed: list[int] = []
-    restored: list[int] = []
-
-    class _DB:
-        def create_chat_turn(self, *a, **k):
-            return 7
-
-        def capture_chat_rollback_snapshot(self):
-            return {}
-
-        def record_chat_turn_rollback_diffs(self, *a, **k):
-            return None
-
-        def append_chat_message(self, *a, **k):
-            if append_error is not None:
-                raise append_error
-            return 1
-
-        def update_chat_turn_messages(self, *a, **k):
-            return None
-
-        def fail_chat_turn(self, chat_turn_id):
-            failed.append(int(chat_turn_id))
-
-        def load_all_chat_history(self):
-            return {}
-
-        def get_interrupted_reply_retries(self, minister_name):
-            return [{
-                "chat_turn_id": 7,
-                "minister_name": "测试大臣",
-                "question": "辽东军情如何？",
-                "turn": 1,
-            }]
-
-        def reopen_interrupted_chat_turn_for_retry(self, chat_turn_id):
-            return True
-
-        def restore_interrupted_after_failed_retry(self, chat_turn_id):
-            restored.append(int(chat_turn_id))
-
-    db = _DB()
-    character = minister_double("测试大臣")
-    state = SimpleNamespace(turn=1, year=1628, period=1, turn_phase="summoning")
-
-    def _start_scene(minister_name, chat_turn_id):
-        if start_scene is not None:
-            return start_scene(minister_name, chat_turn_id)
-        return None
-
-    def _abandon(ctid):
-        abandoned.append(int(ctid or 0))
-        if abandon_error is not None:
-            raise abandon_error
-
-    runtime = object.__new__(web_app.WebGame)
-    runtime._write_gate = threading.Lock()
-    from ming_sim.session_write_queue import SessionWriteQueue
-    runtime._write_queue = SessionWriteQueue()
-    runtime._write_gate = runtime._write_queue.write_gate
-    runtime._runtime_write_queue = lambda: runtime._write_queue  # type: ignore
-    runtime._mark_pending_write = lambda key=None: runtime._write_queue.claim(key=key or ("pending",))  # type: ignore
-    runtime._complete_pending_write = lambda ticket=None: runtime._write_queue.complete(ticket)  # type: ignore
-    runtime.session = install_hall_admission(SimpleNamespace(
-        temporary_characters=set(),
-        content=SimpleNamespace(characters={character.name: character}),
-        state=state,
-        db=db,
-        close=lambda: None,
-        start_chat_turn_scene=_start_scene,
-        start_chat_turn_exit_scene=lambda *_a, **_k: None,
-        join_chat_turn_scene=lambda *_a, **_k: [],
-        persist_chat_turn_scene=lambda *_a, **_k: None,
-        abandon_chat_turn_scene=_abandon,
-        # #1842：WebGame persist 尾必调；轻壳无 pending 时 no-op。
-        schedule_pending_scene_translation=lambda result: None,
-        _character=lambda name: character,
-        chat=lambda *a, **k: (_ for _ in ()).throw(
-            RuntimeError("session.chat should not run")
-        ),
-    ))
-    runtime.chat_history = {character.name: []}
-    runtime._persistent_chat_minister = lambda name: True
-    runtime._audience_turn_in_flight = lambda name: False
-    runtime._start_chat_turn = lambda name, **_k: (7, {})
-    runtime._record_chat_rollback_items = lambda *a, **k: None
-    return runtime, character.name, abandoned, failed, restored
-
-
-def test_nonstream_chat_prologue_failure_fails_turn_and_abandons_scene():
-    """#542 r6e: 非流 chat 在 _start_chat_turn 之后 prologue 写失败，须 abandon + fail，
-    且写路径释放（经 _assert_write_path_free 公开探针）。"""
-    boom = RuntimeError("DB 写盘失败（模拟非流 prologue 崩溃）")
-    runtime, minister, abandoned, failed, _restored = _runtime_for_nonstream_chat(
-        append_error=boom,
-    )
-    with pytest.raises(RuntimeError, match="非流 prologue"):
-        runtime.chat(minister, "辽东军情如何？")
-    assert abandoned == [7]
-    assert failed == [7]
-    _assert_write_path_free(runtime)
-
-
-def test_nonstream_chat_abandon_secondary_failure_still_fails_turn():
-    """#1408 r2: abandon 二次异常不得跳过 fail 终态写，且原错不叠二次。"""
-    boom = RuntimeError("DB 写盘失败（模拟非流 prologue 崩溃）")
-    abandon_boom = RuntimeError("abandon 二次崩溃")
-    runtime, minister, abandoned, failed, _restored = _runtime_for_nonstream_chat(
-        append_error=boom,
-        abandon_error=abandon_boom,
-    )
-    with pytest.raises(RuntimeError, match="非流 prologue") as excinfo:
-        runtime.chat(minister, "辽东军情如何？")
-    assert excinfo.value is boom
-    assert abandoned == [7]
-    assert failed == [7]
-    _assert_write_path_free(runtime)
-
-
-def test_retry_start_scene_failure_restores_interrupted_and_abandons():
-    """#542 r6e: retry reopen 后 start_chat_turn_scene 同步抛错，须 abandon + restore
-    interrupted、不 fail，且写路径释放。"""
-    def _boom_start(_minister, _ctid):
-        raise RuntimeError("start_chat_turn_scene boom")
-
-    runtime, minister, abandoned, failed, restored = _runtime_for_nonstream_chat(
-        start_scene=_boom_start,
-    )
-    with pytest.raises(RuntimeError, match="start_chat_turn_scene boom"):
-        runtime.retry_interrupted_reply(minister)
-    assert abandoned == [7]
-    assert restored == [7]
-    assert failed == []  # retry 失败翻回 interrupted，不 fail
-    _assert_write_path_free(runtime)
-
-
-def test_retry_abandon_secondary_failure_still_restores_interrupted():
-    """#1408 r2: retry 路 abandon 二次异常不得跳过 restore 终态写，且原错不叠二次。"""
-    def _boom_start(_minister, _ctid):
-        raise RuntimeError("start_chat_turn_scene boom")
-
-    abandon_boom = RuntimeError("abandon 二次崩溃")
-    runtime, minister, abandoned, failed, restored = _runtime_for_nonstream_chat(
-        start_scene=_boom_start,
-        abandon_error=abandon_boom,
-    )
-    with pytest.raises(RuntimeError, match="start_chat_turn_scene boom") as excinfo:
-        runtime.retry_interrupted_reply(minister)
-    assert "abandon" not in str(excinfo.value)
-    assert abandoned == [7]
-    assert restored == [7]
-    assert failed == []
-    _assert_write_path_free(runtime)
-
-
-# ── #1452：非流式两入口 LLM 死 + 流式 RunErrorEvent 戏内单源 ─────────────────
 
 
 def _parse_sse(text: str) -> list[tuple[str, dict]]:
@@ -642,28 +464,6 @@ def _assert_structured_llm_http(response) -> dict:
     return detail
 
 
-def test_nonstream_api_chat_llm_unavailable_is_structured_not_500(monkeypatch):
-    """#1452 A：POST /api/ministers/{name}/chat 底层 LLMUnavailable → 非 500 结构化。"""
-    provider = "Unknown model error: top_p not supported"
-
-    class _BoomChat:
-        def chat(self, minister_name: str, message: str, intent=None, *, explicit_secret_order=False):
-            raise LLMUnavailable(
-                CLI_RUNNER_PLAYER_MESSAGE,
-                code="llm_cli_error",
-                provider_message=provider,
-            )
-
-    monkeypatch.setattr(web_app, "_require_active_minister", lambda _n: None)
-    monkeypatch.setattr(web_app, "get_game", lambda: _BoomChat())
-
-    response = TestClient(web_app.app).post(
-        "/api/ministers/测试大臣/chat", json={"message": "边饷如何？"},
-    )
-    detail = _assert_structured_llm_http(response)
-    assert detail["code"] == "llm_cli_error"
-    assert detail["message"] == CLI_RUNNER_PLAYER_MESSAGE
-    assert detail["provider_message"] == provider
 
 
 def test_nonstream_api_issue_decree_llm_unavailable_is_structured_not_500(
@@ -695,7 +495,7 @@ def test_nonstream_api_issue_decree_llm_unavailable_is_structured_not_500(
         refresh_turn=lambda: None,
         directive_rows=lambda: [],
         state_payload=lambda: {"turn": {"turn": int(state.turn)}},
-        _write_gate=threading.Lock(),
+        _write_gate=get_session_write_queue(session).write_gate,
     )
     monkeypatch.setattr(web_app, "get_game", lambda: runtime)
     monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda *_a, **_k: None)
@@ -732,15 +532,6 @@ class RunCompletedEvent:
     content = None
     tools = []
     status = "COMPLETED"
-
-
-class ToolCallCompletedEvent:
-    """agno 同名事件替身：type(event).__name__ == 'ToolCallCompletedEvent'。"""
-
-    def __init__(self, tool):
-        self.tool = tool
-        self.event = "ToolCallCompleted"
-        self.content = None
 
 
 class _RunErrorAgent:
@@ -820,7 +611,7 @@ def _post_chat_stream(monkeypatch, web_game, minister: str, message: str = "边�
     monkeypatch.setattr(web_app, "_require_active_minister", lambda _n: None)
     monkeypatch.setattr(web_app, "get_game", lambda: web_game)
     return TestClient(web_app.app).post(
-        f"/api/ministers/{minister}/chat/stream", json={"message": message},
+        "/api/audience/chat/stream", json={"message": message},
     )
 
 
@@ -887,127 +678,6 @@ def test_chat_stream_run_error_event_sse_system_layer_no_retry(monkeypatch, game
     assert attempts[0].get("outcome") == "terminal_fail"
 
 
-def test_chat_stream_two_transient_then_success_three_attempts(monkeypatch, game):
-    """#1465 ① / #1792：两次可重试失败（含一次 typed 503）后第三次成功
-    → 真 interpret/atomic 落库 + 3 attempts 可回指；
-    第二、三次起手各晚于前次失败 ≥ retry_interval（受控时钟，不真等）。
-
-    同案 fo2Og：失败 attempt 写入确定性 Agno run；重试读回/持久史保留前轮、排除失败
-    attempt，且不改游戏账（≠ fail_chat_turn 整轮回滚）。
-    """
-    import ming_sim.llm_transport as transport_mod
-    from ming_sim.models import TRANSPORT_DEFAULT_RETRY_INTERVAL_SECONDS
-    from tests.test_audience_restore_505 import _seed_agno_v3_runs
-
-    def _mixed_retryable(n):
-        # attempt 1：瞬断；attempt 2：typed 503。
-        if n == 2:
-            return LLMUnavailable(
-                "限流",
-                code="llm_run_error",
-                provider_message="model_concurrency_rate_limit_exceeded",
-                status_code=503,
-            )
-        return LLMUnavailable(
-            "连接失败",
-            code="llm_connection_error",
-            provider_message="connection reset",
-        )
-
-    db, _state, _content = game
-    minister = "毕自严"
-    session_id = "minister-retry-hist"
-    # 前轮 Agno 史：本轮起点 keep_count=1；失败 attempt 残迹须截掉、前轮须保留
-    _seed_agno_v3_runs(db, session_id, run_count=1)
-    prior_ids = [f"run-{session_id}-0"]
-    assert [str(r.get("run_id")) for r in db._agno_merged_runs(session_id)] == prior_ids
-
-    clock = {"t": 1000.0}
-    attempt_starts: list[float] = []
-    waits: list[float] = []
-
-    def _wait(seconds: float) -> None:
-        waits.append(float(seconds))
-        clock["t"] += float(seconds)
-
-    monkeypatch.setattr(transport_mod, "_sleep_retry_interval", _wait)
-
-    agent = _FailLeavingAgnoRunAgent(
-        db, session_id, fail_times=2, error_factory=_mixed_retryable,
-    )
-    real_run = agent.run
-
-    def _timed_run(*a, **k):
-        attempt_starts.append(clock["t"])
-        return real_run(*a, **k)
-
-    agent.run = _timed_run  # type: ignore[method-assign]
-    web_game, minister = _transport_web_game(game, agent, monkeypatch)
-    web_game.session.registry.session_ids[minister] = session_id
-
-    # 游戏账基线（截史不得动问话/回话账）
-    user_msgs_before = int(
-        db.conn.execute(
-            "SELECT COUNT(*) AS c FROM chat_messages WHERE role='user'",
-        ).fetchone()["c"]
-    )
-
-    response = _post_chat_stream(monkeypatch, web_game, minister)
-    assert response.status_code == 200, response.text
-    events = _parse_sse(response.text)
-    types = [e[0] for e in events]
-    assert "done" in types, events
-    done = next(e[1] for e in events if e[0] == "done")
-    assert done.get("answer")
-    assert agent.calls == 3
-    attempts = done.get("transport_attempts") or []
-    assert [a.get("outcome") for a in attempts] == [
-        "retryable_fail", "retryable_fail", "ok",
-    ]
-    assert attempts[1].get("status_code") == 503
-    # #1792：两段固定间隔；第二、三次起手 ≥ 前次失败后的 interval
-    interval = TRANSPORT_DEFAULT_RETRY_INTERVAL_SECONDS
-    assert waits == [interval, interval], waits
-    assert len(attempt_starts) == 3, attempt_starts
-    assert attempt_starts[1] - attempt_starts[0] >= interval, attempt_starts
-    assert attempt_starts[2] - attempt_starts[1] >= interval, attempt_starts
-    # 真写路径：大臣回话已落库
-    assert int(done.get("minister_message_id") or 0) > 0
-    chat_turn_id = int(done.get("chat_turn_id") or 0)
-    assert chat_turn_id > 0
-    row = db.conn.execute(
-        "SELECT status, minister_message_id, agno_session_id, agno_runs_before "
-        "FROM chat_turns WHERE id=?",
-        (chat_turn_id,),
-    ).fetchone()
-    assert row is not None
-    assert int(row["minister_message_id"] or 0) > 0
-    assert str(row["status"]) != "failed"
-    assert str(row["agno_session_id"] or "") == session_id
-    assert int(row["agno_runs_before"] or 0) == 1
-
-    # 重试实际读回：每 attempt 启动时只见前轮，不见失败 attempt 残迹
-    assert agent.history_at_attempt_start == [prior_ids, prior_ids, prior_ids], (
-        agent.history_at_attempt_start
-    )
-    # 持久读回：终态仍只保留前轮（失败 run 已截；成功 attempt 未另写）
-    final_ids = [str(r.get("run_id")) for r in db._agno_merged_runs(session_id)]
-    assert final_ids == prior_ids, final_ids
-    assert all(not rid.startswith("fail-attempt-") for rid in final_ids)
-
-    # 游戏账未因截史回滚：问话增加、回话在、轮未 fail
-    user_msgs_after = int(
-        db.conn.execute(
-            "SELECT COUNT(*) AS c FROM chat_messages WHERE role='user'",
-        ).fetchone()["c"]
-    )
-    assert user_msgs_after == user_msgs_before + 1
-    minister_msgs = int(
-        db.conn.execute(
-            "SELECT COUNT(*) AS c FROM chat_messages WHERE role='minister'",
-        ).fetchone()["c"]
-    )
-    assert minister_msgs >= 1
 
 
 def test_chat_stream_three_transient_exhausted_system_fail_then_resend(monkeypatch, game):
@@ -1072,11 +742,11 @@ def test_chat_stream_three_transient_exhausted_system_fail_then_resend(monkeypat
     ).fetchone()
     assert fail_row is not None
     assert str(fail_row["status"]) == "interrupted"
-    assert web_game.interrupted_reply_retries(minister)[-1]["chat_turn_id"] == failed_turn
+    assert web_game.interrupted_reply_retries("殿上")[-1]["chat_turn_id"] == failed_turn
 
     # 实际重发：换可成功 agent（#1842：经 create_scene_agent 工厂缝）
     ok_agent = _CountingFailAgent(fail_times=0, error_factory=_conn_err)
-    web_game.session.registry.agent = ok_agent
+    web_game.session._fake_scene_agent = ok_agent
     stub_scene_agent(monkeypatch, ok_agent)
     response2 = _post_chat_stream(monkeypatch, web_game, minister, message="再问边饷。")
     events2 = _parse_sse(response2.text)
@@ -1316,12 +986,10 @@ def test_chat_stream_halfstream_retry_replaces_temp_presentation(monkeypatch, ga
 
     事件序列：content delta → replace delta → content delta → done。
     按客户端规则重放后，临时正文 = done.answer（不叠旧半句）。不锁措辞。
-
-    同案动作/结果相容：首 attempt 流中 dismiss 落账后瞬断，终 attempt 无 dismiss 工具
-    → done.court_action 仍为 dismiss（不延后退场、不加次数例外）。
+    #1836 reopen：场景核零动作工具，半流案不再夹 dismiss 副作用。
     """
 
-    class _PartialDismissThenOk:
+    class _PartialThenOk:
         def __init__(self):
             self.calls = 0
 
@@ -1329,22 +997,15 @@ def test_chat_stream_halfstream_retry_replaces_temp_presentation(monkeypatch, ga
             self.calls += 1
             if self.calls == 1:
                 yield RunContent("旧半句")
-                tool = SimpleNamespace(
-                    tool_name="dismiss_minister",
-                    result="__dismiss__",
-                    tool_args={},
-                )
-                yield ToolCallCompletedEvent(tool)
                 raise LLMUnavailable(
                     "连接失败",
                     code="llm_connection_error",
                     provider_message="connection reset",
                 )
-            # 终 attempt 工具账无 dismiss——结构结果须仍对齐已落账退场
             yield RunContent("新整段")
             yield RunCompletedEvent()
 
-    agent = _PartialDismissThenOk()
+    agent = _PartialThenOk()
     web_game, minister = _transport_web_game(game, agent, monkeypatch)
 
     response = _post_chat_stream(monkeypatch, web_game, minister)
@@ -1355,7 +1016,6 @@ def test_chat_stream_halfstream_retry_replaces_temp_presentation(monkeypatch, ga
     assert agent.calls == 2
     attempts = done.get("transport_attempts") or []
     assert [a.get("outcome") for a in attempts] == ["retryable_fail", "ok"]
-    assert done.get("court_action") == "dismiss", done
 
     # 呈现结构：delta 序列含 replace，且位于首段 content 与后续 content 之间
     delta_seq = [
@@ -1397,7 +1057,7 @@ def test_chat_stream_halfstream_terminal_fail_replaces_temp(
 ):
     """#1465 ④：半流已出 delta 后终失败 → content → replace → error；重放临时正文空。
 
-    恢复/重发由 dismiss 耗尽案与 three_transient 案承担；系统层 typed 由 RunErrorEvent 案承担。
+    恢复/重发由 three_transient 案承担；系统层 typed 由 RunErrorEvent 案承担。
     """
 
     class _PartialThenTerminal:
@@ -1468,97 +1128,3 @@ def test_chat_stream_error_status_run_output_system_layer_not_diegetic(
     assert "workdir" not in str(detail.get("message") or "")
     assert "exit code" not in str(detail.get("message") or "").lower()
     assert detail.get("provider_message")
-
-
-def test_chat_stream_halfstream_dismiss_exhaust_no_double_side_effect_recovery(
-    monkeypatch, game,
-):
-    """#1465 ④ 半流相容：已执行退场后 transport 耗尽 → 退场不重复；终失败既有恢复。
-
-    首 attempt：delta + dismiss 落账后瞬断；后续 attempt 再瞬断至耗尽。
-    - start_exit 只新登记一次（0036 落账即史实；重试不重置 exit_started）
-    - 终失败 fail_chat_turn 恢复：轮 failed、告退账按 origin 回滚、夜开、可重发
-    不另造半流回滚机制。
-    """
-    from ming_sim import audience_night as an
-
-    def _conn_err(_n):
-        return LLMUnavailable(
-            "连接失败",
-            code="llm_connection_error",
-            provider_message="connection reset",
-        )
-
-    class _DismissThenAlwaysFail:
-        def __init__(self):
-            self.calls = 0
-
-        def run(self, *_a, **_k):
-            self.calls += 1
-            if self.calls == 1:
-                yield RunContent("旧半句")
-                tool = SimpleNamespace(
-                    tool_name="dismiss_minister",
-                    result="__dismiss__",
-                    tool_args={},
-                )
-                yield ToolCallCompletedEvent(tool)
-                raise _conn_err(self.calls)
-            # 后续 attempt 无 dismiss 工具——不得再落告退
-            yield RunContent("再半句")
-            raise _conn_err(self.calls)
-
-    agent = _DismissThenAlwaysFail()
-    web_game, minister = _transport_web_game(game, agent, monkeypatch)
-    db = web_game.db
-
-    exit_starts = {"n": 0}
-    real_start_exit = web_game.session.start_exit_scene_from_dismiss_tools
-
-    def _count_start_exit(*a, **k):
-        result = real_start_exit(*a, **k)
-        if result:
-            exit_starts["n"] += 1
-        return result
-
-    web_game.session.start_exit_scene_from_dismiss_tools = _count_start_exit  # type: ignore[method-assign]
-
-    response = _post_chat_stream(monkeypatch, web_game, minister)
-    assert response.status_code == 200, response.text
-    events = _parse_sse(response.text)
-    assert events[-1][0] == "error", events
-    detail = events[-1][1]
-    max_a = default_transport_policy().max_attempts
-    assert agent.calls == max_a
-    assert exit_starts["n"] == 1, exit_starts  # 退场副作用不重复
-    attempts = detail.get("transport_attempts") or []
-    assert len(attempts) == max_a
-    assert attempts[-1].get("outcome") == "terminal_fail"
-
-    failed_turn = int(detail.get("chat_turn_id") or 0)
-    assert failed_turn > 0
-    fail_row = db.conn.execute(
-        "SELECT status FROM chat_turns WHERE id=?", (failed_turn,),
-    ).fetchone()
-    assert fail_row is not None and str(fail_row["status"]) == "interrupted"
-
-    # 既有 fail_chat_turn 恢复：本轮 origin/source 绑定的进出账全清（含告退 scaffold）
-    open_night = an.get_open_night(db)
-    assert open_night is not None
-    turn_ledger = db.conn.execute(
-        "SELECT id FROM story_ledger_entries "
-        "WHERE origin_chat_turn_id=? OR source_chat_turn_id=?",
-        (failed_turn, failed_turn),
-    ).fetchall()
-    assert turn_ledger == [], turn_ledger
-    # 夜开 + 可重发（写路径已释放；重发会再走入殿）
-    ok_agent = _CountingFailAgent(fail_times=0, error_factory=_conn_err)
-    web_game.session.registry.agent = ok_agent
-    stub_scene_agent(monkeypatch, ok_agent)
-    response2 = _post_chat_stream(monkeypatch, web_game, minister, message="再问边饷。")
-    events2 = _parse_sse(response2.text)
-    assert "done" in [e[0] for e in events2], events2
-    done2 = next(e[1] for e in events2 if e[0] == "done")
-    assert int(done2.get("chat_turn_id") or 0) != failed_turn
-    assert int(done2.get("minister_message_id") or 0) > 0
-    assert an.get_open_night(db) is not None

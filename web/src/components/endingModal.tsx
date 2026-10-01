@@ -59,12 +59,6 @@ export function EndingModal({ ending, failure, onClose, onRetry }: { ending: End
                     {it.gazette ? (
                       <p className="ending-timeline-chapter">{it.gazette}</p>
                     ) : null}
-                    {it.decree_brief ? (
-                      <p className="ending-timeline-decree">诏：{it.decree_brief}</p>
-                    ) : null}
-                    {it.effect_brief ? (
-                      <p className="ending-timeline-effect">效：{it.effect_brief}</p>
-                    ) : null}
                   </div>
                 </li>
               ))}

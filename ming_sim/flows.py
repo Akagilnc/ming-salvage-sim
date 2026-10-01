@@ -2167,7 +2167,7 @@ def _apply_population_transfers(
     行；origin_ref 缺失/伪前缀/未颁案卷；白名单外字段。数据拒收永不中止事务；代码
     异常照常上抛由 applier.atomic 回滚（两轴分立）。
 
-    返回 (applied list, rejections list)：前者供 effect_brief/turn_extractions 留痕，
+    返回 (applied list, rejections list)：前者供当前声明落账反馈，
     后者由顶层置于 "population_transfers_rejections" 段、桥接自动收。
     不复用 DeltaApplyResult（其 applied 声明为 dict、文档限定 faction/class）；
     本核 applied 为转移记录 list，直接声明窄类型（#649 C2）。
@@ -2309,6 +2309,12 @@ def _apply_population_transfers(
                 "WHERE name=? AND region_id=?",
                 (amount, dst_cls, dst_region),
             )
+            db.conn.execute(
+                "INSERT INTO population_transfer_ledger "
+                "(turn, source, target, amount, reason, origin_ref) VALUES (?, ?, ?, ?, ?, ?)",
+                (int(db.conn.execute("SELECT turn FROM game_state WHERE id=1").fetchone()[0]),
+                 source, target, amount, reason, origin_ref),
+            )
         region_name = str(db.conn.execute(
             "SELECT name FROM regions WHERE id=?", (src_region,)
         ).fetchone()["name"] or "")
@@ -2319,10 +2325,10 @@ def _apply_population_transfers(
             "reason": reason,
             "origin_ref": origin_ref,
             "region_id": src_region,
-            # #649 F2（判词）：省名随 applied 记录入摘要——effect_brief 输出「陕西…」
+            # #649 F2（判词）：省名随 applied 记录入摘要——applied 记录省名
             # 而非裸 region_id；真源＝既有 regions 表，不另建映射。
             "region_name": region_name,
-            # 落档口径随存档持久标（F3）：effect_brief 措辞与下游对账以此为唯一单位解释。
+            # 落档口径随存档持久标（F3）：下游对账以此为唯一单位解释。
             "population_unit": population_unit,
         })
     if commit:

@@ -14,13 +14,9 @@ import pytest
 
 import ming_sim.rescript_draft as rescript_mod
 from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
-from ming_sim.constants import TURN_UNIT
 from ming_sim.db import GameDB
-from ming_sim.decree import persist_resolve_context
-from ming_sim.error_pack import clear_for_resimulation
 from ming_sim.exceptions import LLMUnavailable, SettlementAbort
 from ming_sim.rescript_draft import (
-    build_rescript_draft_payload,
     generate_rescript_draft,
     select_triage_actor,
     validate_rescript_draft_items,
@@ -28,10 +24,8 @@ from ming_sim.rescript_draft import (
 
 _CANNED = '{"economy_moves": [], "new_armies": [], "new_issues": [], "secret_order_updates": []}'
 
-
 # #1778 决定 3：生成批次的票拟必带参与名单（ADR 0053 三档，至少一名主办）。
 _ROSTER = [{"character_id": "毕自严", "tier": "主办", "role": "", "delegator_id": None}]
-
 
 def _layer_a_opt(label: str = "拟", hint: str = "h", **kw) -> dict:
     """#657 生产层 A option 夹具（validate/generate 路径必用）。"""
@@ -50,19 +44,14 @@ def _layer_a_opt(label: str = "拟", hint: str = "h", **kw) -> dict:
     base.update(kw)
     return base
 
-
 def _two_opts(a: str = "甲", ha: str = "h1", b: str = "乙", hb: str = "h2", **kw) -> list:
     return [_layer_a_opt(label=a, hint=ha, **kw), _layer_a_opt(label=b, hint=hb, **kw)]
-
-
-
 
 def _retire_existing_actors(db) -> None:
     db.conn.execute(
         "UPDATE characters SET status='retired' WHERE status='active' AND power_id='ming' "
         "AND (office LIKE '%首辅%' OR office LIKE '%掌印%')"
     )
-
 
 def _add_character(db, name: str, office: str, faction: str, office_type: str = "内阁") -> None:
     template = db.conn.execute("SELECT * FROM characters LIMIT 1").fetchone()
@@ -80,7 +69,6 @@ def _add_character(db, name: str, office: str, faction: str, office_type: str = 
     )
     db.conn.commit()
 
-
 # ---------------------------------------------------------------------------
 # F3.1 分拣人唯一规则
 # ---------------------------------------------------------------------------
@@ -93,7 +81,6 @@ def test_triage_actor_prefers_first_assistant_over_eunuch_director(game):
     actor = select_triage_actor(db)
     assert actor == {"name": "测试首辅", "office": "内阁首辅", "faction": "阉党"}
 
-
 def test_triage_actor_falls_back_to_eunuch_director(game):
     db, _state, _content = game
     _retire_existing_actors(db)
@@ -101,14 +88,12 @@ def test_triage_actor_falls_back_to_eunuch_director(game):
     actor = select_triage_actor(db)
     assert actor is not None and actor["name"] == "测试掌印"
 
-
 def test_triage_actor_negative_yumajian_zhangyin_never_selected(game):
     """r2 裁决 B1 负例：御马监掌印太监与票拟/批红职权无关，不得顶补分拣 actor。"""
     db, _state, _content = game
     _retire_existing_actors(db)
     _add_character(db, "御马监掌印", "御马监掌印太监", "阉党", office_type="内廷")
     assert select_triage_actor(db) is None
-
 
 def test_triage_actor_duplicate_hits_deterministic_order(game):
     db, _state, _content = game
@@ -119,12 +104,10 @@ def test_triage_actor_duplicate_hits_deterministic_order(game):
     # ORDER BY office_type,office,name（gatekeeper 先例同款确定性序）→ A辅臣 在前
     assert actor is not None and actor["name"] == "A辅臣"
 
-
 def test_triage_actor_absent_when_both_offices_vacant(game):
     db, _state, _content = game
     _retire_existing_actors(db)
     assert select_triage_actor(db) is None
-
 
 def test_triage_actor_follows_reappointment(game):
     """F3.2 换人即换立场（可机械断言面）：任免后 actor 事实变更。"""
@@ -138,7 +121,6 @@ def test_triage_actor_follows_reappointment(game):
     _add_character(db, "继任首辅", "内阁首辅", "阉党")
     actor = select_triage_actor(db)
     assert actor["name"] == "继任首辅" and actor["faction"] == "阉党"
-
 
 # ---------------------------------------------------------------------------
 # F2.1/F2.2 载体与字段映射
@@ -173,7 +155,6 @@ def test_save_and_list_rescript_drafts_roundtrip(game):
     # 无对应 issue 的急务＝确定性合成 id urgent:{turn}:{idx}
     assert second["event_id"] == f"urgent:{turn}:1"
 
-
 def test_rescript_draft_idx_continues_after_decision_rows(game):
     db, state, _content = game
     turn = state.turn
@@ -193,7 +174,6 @@ def test_rescript_draft_idx_continues_after_decision_rows(game):
     assert all(r["kind"] == "decision" for r in rows)
     drafts = db.list_rescript_drafts()
     assert [d["idx"] for d in drafts] == [2]  # 与 decision 行共占 (turn, idx) 主键续编
-
 
 def test_clear_pending_decisions_keeps_rescript_drafts(game):
     """F2.4 定音点：phase2 清除只清 decision 行；rescript_draft 跨月留存。"""
@@ -215,7 +195,6 @@ def test_clear_pending_decisions_keeps_rescript_drafts(game):
     ).fetchall()
     assert [r["kind"] for r in rows] == ["rescript_draft"]
     assert [d["title"] for d in db.list_rescript_drafts()] == ["急务"]
-
 
 def test_save_pending_decisions_keeps_rescript_drafts(game):
     """判修 C2（run 01a02d20）：save_pending_decisions 与 clear/save_rescript_drafts
@@ -249,7 +228,6 @@ def test_save_pending_decisions_keeps_rescript_drafts(game):
     for field in ("event_id", "title", "context", "options"):
         assert draft_after[field] == draft_before[field]
 
-
 def test_save_rescript_drafts_overwrites_not_duplicates(game):
     db, state, _content = game
     turn = state.turn
@@ -259,7 +237,6 @@ def test_save_rescript_drafts_overwrites_not_duplicates(game):
                 {"label": "甲", "hint": ""}, {"label": "乙", "hint": ""}]},
         ])
     assert len(db.list_rescript_drafts()) == 1
-
 
 def test_repeated_overwrite_keeps_stable_synthetic_ids(game):
     """A3 判词：先删后算 idx——相同 decision 盘面重复覆写得到相同 idx 与
@@ -292,7 +269,6 @@ def test_repeated_overwrite_keeps_stable_synthetic_ids(game):
     # decision 行 idx 不受影响
     decisions = db.list_pending_decisions(turn)
     assert [d["idx"] for d in decisions] == [0, 1]
-
 
 # ---------------------------------------------------------------------------
 # F3.3 原样不变式＋P4 输入侧定性投影＋prompt 正向措辞（机械验收）
@@ -331,89 +307,6 @@ def test_validate_and_persist_preserve_whitespace_verbatim(game):
     assert row["options"] == drafts[0]["options"]
 
 
-def test_payload_projection_excludes_machine_condition_fields():
-    """A4 判词：票拟 issue 投影是字段白名单——只携绑定 issue_id 与明确的定性/
-    叙事文字；机器契约字段（resolve/fail/stop condition 及中文别名）整体不进票拟
-    输入，seed_events 的 public_support >60 / unrest <30 阈值串零穿透；未知字段
-    不透传（删除「任意字符串全透传」根因，零字符串扫描/擦洗）。"""
-    from ming_sim.models import GameState
-
-    state = GameState.__new__(GameState)
-    state.year, state.period, state.turn = 1630, 4, 40
-    resolve_cond = ("陕西 public_support（地方民心）>60 且 unrest（动乱值）<30，"
-                    "且驻陕官军/边军已能压制叛军即可结案")
-    simulator_payload = {"active_issues": [{
-        "issue_id": 42, "kind": "situation", "title": "陕西告饥",
-        "状态": "流民渐聚", "进度": "未见起色",
-        "局势走向": -7, "end_turn": 48,
-        "结案条件": resolve_cond,
-        "resolve_condition": resolve_cond,
-        "fail_condition": "陕西流寇成股（万人以上）攻破州县",
-        "stop_condition": "民力已竭",
-        f"当前每{TURN_UNIT}效果": {"metrics": {"民心": -1},
-            "economy": [{"account": "国库", "delta": -500}]},
-        f"上{TURN_UNIT}推进": {"delta_bar": 12, "narrative": "抚臣发帑赈济"},
-        "commitment_progress": {"months_elapsed": 3, "paid_total": 150,
-                                "remaining_to_goal": "距达标仍有差距"},
-        "未知嵌套": {"深层文字": "某处告急", "阈值": "public_support >60"},
-    }]}
-    payload = build_rescript_draft_payload(state, "邸报正文", simulator_payload,
-                                           {"name": "首辅", "office": "内阁首辅", "faction": "阉党"})
-    issues = payload["active_issues"]
-    assert len(issues) == 1
-    issue = issues[0]
-    # 白名单内：绑定 id 与定性/叙事文字
-    assert issue["issue_id"] == 42                      # 权威绑定快照保留
-    assert issue["title"] == "陕西告饥"
-    assert issue["状态"] == "流民渐聚"                   # 定性叙事保留
-    assert issue["进度"] == "未见起色"                   # 定性档位保留
-    # 白名单外字段整体不透传（含机器契约条件与任意未知嵌套）
-    for field in ("kind", "局势走向", "end_turn", "结案条件", "resolve_condition",
-                  "fail_condition", "stop_condition", f"当前每{TURN_UNIT}效果",
-                  f"上{TURN_UNIT}推进", "commitment_progress", "未知嵌套"):
-        assert field not in issue, field
-    # 机械负向判据：seed_events 阈值串零穿透整个 payload（含邸报正文之外的一切 slot）
-    serialized = json.dumps(payload, ensure_ascii=False)
-    assert ">60" not in serialized
-    assert "<30" not in serialized
-    assert "万人以上" not in serialized
-    # 纪年契约字段照旧
-    assert payload["turn"]["year"] == 1630 and payload["turn"]["reign_period_label"]
-
-
-def test_payload_projects_consumable_region_targets_from_real_monthly_board(game):
-    """系统票拟看到同批盘面的合法 region id，而非从地名臆造目标。"""
-    from ming_sim.simulation import build_simulator_payload
-
-    db, state, _content = game
-    simulator_payload = build_simulator_payload(state, db, "", "")
-    payload = build_rescript_draft_payload(
-        state, "邸报", simulator_payload,
-        {"name": "首辅", "office": "内阁首辅", "faction": "阉党"},
-    )
-
-    targets = {row["id"]: row for row in payload["region_targets"]}
-    assert targets["liaodong"] == {
-        "id": "liaodong", "name": "辽东 / 宁锦", "kind": "边镇",
-    }
-    assert "ningyuan" not in targets
-
-    bad = dict(simulator_payload)
-    for table in (
-        {"cols": ["id", "name", "kind"], "rows": [["liaodong"]]},
-        {"cols": ["id", "name", "kind"], "rows": [["", "辽东", "边镇"]]},
-        {"cols": ["id", "name", "kind"], "rows": [[123, "辽东", "边镇"]]},
-        {"cols": ["id", "name", "kind"], "rows": [["liaodong", ["辽东"], "边镇"]]},
-        {"cols": ["id", "name", "kind"], "rows": ["abc"]},
-    ):
-        bad["regions"] = table
-        with pytest.raises(ValueError):
-            build_rescript_draft_payload(
-                state, "邸报", bad,
-                {"name": "首辅", "office": "内阁首辅", "faction": "阉党"},
-            )
-
-
 def test_generate_ungrounded_region_heals_then_drops_sibling_kept(monkeypatch, tmp_path):
     """#1746：region target 未接地 → heal 耗尽只剔该 option，兄弟保留。"""
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
@@ -436,40 +329,6 @@ def test_generate_ungrounded_region_heals_then_drops_sibling_kept(monkeypatch, t
     assert drafts is not None and len(drafts) == 1
     assert len(drafts[0]["options"]) == 1
     assert drafts[0]["options"][0].get("label") == sibling.get("label")
-
-
-def test_payload_projects_consumable_army_targets_from_real_monthly_board(game):
-    """系统票拟看到同批盘面的合法 army id，而非把省 id 当军."""
-    from ming_sim.action_materialize import GRANT_ACTIONS
-    from ming_sim.simulation import build_simulator_payload
-
-    db, state, _content = game
-    simulator_payload = build_simulator_payload(state, db, "", "")
-    enemy_ids = {
-        "manchu_banners_main",
-        "han_liaoren_corps",
-        "mongol_chahar_host",
-        "korean_border_army",
-        "bandit_wangjiayin",
-    }
-    army_board = simulator_payload["armies"]
-    id_index = army_board["cols"].index("id")
-    assert enemy_ids <= {row[id_index] for row in army_board["rows"]}
-
-    payload = build_rescript_draft_payload(
-        state, "邸报", simulator_payload,
-        {"name": "首辅", "office": "内阁首辅", "faction": "阉党"},
-    )
-
-    targets = {row["id"]: row for row in payload["army_targets"]}
-    assert targets["guanning"]["id"] == "guanning"
-    assert targets["guanning"]["name"]
-    assert "liaodong" not in targets
-    assert enemy_ids.isdisjoint(targets)
-    # #1620：非军饷 grant_action 闭集同源；军饷走 grant_kind=army_pay
-    assert payload["grant_actions"] == sorted(GRANT_ACTIONS - {"无", "协饷"})
-    assert "协饷" not in payload["grant_actions"]
-    assert payload["grant_kinds"] == ["army_pay"]
 
 
 def test_generate_ungrounded_army_heals_then_drops_sibling_kept(monkeypatch, tmp_path):
@@ -497,43 +356,6 @@ def test_generate_ungrounded_army_heals_then_drops_sibling_kept(monkeypatch, tmp
     assert drafts is not None and len(drafts) == 1
     assert len(drafts[0]["options"]) == 1
     assert drafts[0]["options"][0].get("label") == sibling.get("label")
-
-
-def test_payload_projects_character_targets_full_characters_name_set(game):
-    """#1804：票拟入口人物目录外延＝characters.name 全集；不筛在朝/官职；无裸属性。"""
-    from ming_sim.rescript_draft import character_targets_from_db
-
-    db, state, _content = game
-    # 离场且无官职的在册人——目录与闸均须收纳（防回退 #1778）
-    db.conn.execute(
-        "UPDATE characters SET status='retired', office='' "
-        "WHERE name=(SELECT name FROM characters LIMIT 1)"
-    )
-    db.conn.commit()
-    known = {
-        str(row["name"])
-        for row in db.conn.execute("SELECT name FROM characters").fetchall()
-        if str(row["name"] or "").strip()
-    }
-    office_by_name = {
-        str(row["name"]): str(row["office"] or "")
-        for row in db.conn.execute("SELECT name, office FROM characters").fetchall()
-    }
-    # 票拟入口缝：目录由 db 投影注入 payload，不经共享 simulator_payload。
-    payload = build_rescript_draft_payload(
-        state, "邸报", {},
-        {"name": "首辅", "office": "内阁首辅", "faction": "阉党"},
-        character_targets=character_targets_from_db(db),
-    )
-    catalog = payload["character_targets"]
-    assert isinstance(catalog, list) and catalog
-    names = {row["name"] for row in catalog}
-    assert names == known
-    for row in catalog:
-        assert set(row) == {"name", "office"}
-        assert row["office"] == office_by_name[row["name"]]
-        for banned in ("loyalty", "ability", "integrity", "courage", "identity", "faction"):
-            assert banned not in row
 
 
 def test_generate_combined_target_and_roster_failures_reported_together_then_land(
@@ -601,7 +423,6 @@ def test_generate_combined_target_and_roster_failures_reported_together_then_lan
     assert "target_id" in fields
     assert "participant_roster" in fields
 
-
 def test_generate_combined_target_roster_partial_heal_reports_remaining(
     monkeypatch, tmp_path,
 ):
@@ -667,7 +488,6 @@ def test_generate_combined_target_roster_partial_heal_reports_remaining(
     }
     assert second_fields == {"participant_roster"}
 
-
 def test_generate_unknown_roster_character_heals_with_legal_set_then_lands(
     monkeypatch, tmp_path,
 ):
@@ -730,7 +550,6 @@ def test_generate_unknown_roster_character_heals_with_legal_set_then_lands(
     assert "participant_roster.character_id" not in bad_fixed
     assert "participant_roster.delegator_id" not in bad_fixed
 
-
 def test_generate_unknown_delegator_heals_then_drops_sibling_kept(
     monkeypatch, tmp_path,
 ):
@@ -757,7 +576,6 @@ def test_generate_unknown_delegator_heals_then_drops_sibling_kept(
     assert drafts is not None and len(drafts) == 1
     assert len(drafts[0]["options"]) == 1
     assert drafts[0]["options"][0].get("label") == sibling.get("label")
-
 
 def test_generate_existing_offcourt_roster_character_lands(monkeypatch, tmp_path):
     """#1804 防回退 #1778：存在但不在朝/无官职 → 合法落库，不得判非法。"""
@@ -788,7 +606,6 @@ def test_generate_existing_offcourt_roster_character_lands(monkeypatch, tmp_path
     assert drafts[0]["options"][0]["participant_roster"][0]["character_id"] == "离场无职甲"
     assert drafts[0]["options"][1]["participant_roster"][0]["delegator_id"] == "离场无职乙"
 
-
 def test_generate_military_order_region_target_heals_then_drops(monkeypatch, tmp_path):
     """#1746 heal-covers-illegal-values-too：军令 target_kind=region 非法 → 补交耗尽只剔该 option。"""
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
@@ -817,7 +634,6 @@ def test_generate_military_order_region_target_heals_then_drops(monkeypatch, tmp
     assert drafts is not None
     opts = drafts[0]["options"]
     assert len(opts) == 1 and opts[0]["label"] == sibling["label"]
-
 
 def test_generate_rejects_military_order_empty_assignee(monkeypatch, tmp_path):
     """#1746：可定位 option 缺 assignee_name → 补交耗尽后只剔该 option，兄弟项仍呈。"""
@@ -850,16 +666,6 @@ def test_generate_rejects_military_order_empty_assignee(monkeypatch, tmp_path):
     assert opts[0]["label"] == item["options"][1]["label"]
 
 
-def test_payload_projection_without_active_issues_degrades_to_empty():
-    from ming_sim.models import GameState
-
-    state = GameState.__new__(GameState)
-    state.year, state.period, state.turn = 1630, 4, 40
-    payload = build_rescript_draft_payload(state, "邸报", {},
-                                           {"name": "首辅", "office": "内阁首辅", "faction": "阉党"})
-    assert payload["active_issues"] == []
-
-
 def test_prompt_zero_numeric_instruction_is_positive_qualitative():
     """P4 落 prompt 用正向表述，不写「不要显示数值」式负向句；其余承载事实/F2.3/
     结构化契约的合法约束不得借机删除。"""
@@ -871,7 +677,6 @@ def test_prompt_zero_numeric_instruction_is_positive_qualitative():
     assert "不得虚构" in prompt            # 事实约束保留
     assert "不许凑数" in prompt            # F2.3 约束保留
     assert "只输出一个 JSON object" in prompt  # 结构化契约保留
-
 
 # ---------------------------------------------------------------------------
 # shape 校验＋权威快照绑定（F2.2/F2.3/F2.5）
@@ -888,13 +693,11 @@ def test_validate_items_binds_only_board_issue_ids():
     assert [d.get("event_id") for d in drafts] == ["issue:5", None, None]
     assert drafts[1]["title"] == "幻觉回显"  # 文本原样保留，只不信 id
 
-
 def _valid_item(i: int) -> dict:
     return {
         "title": f"条目{i}", "context": f"导语{i}",
         "options": _two_opts("甲拟", "所安者饥民", "乙拟", "所拂者小农"),
     }
-
 
 def test_validate_items_no_count_cap_keeps_all_legal():
     """#1801 ①c：条目数无硬上限——6 条全合法照呈；第 6 条字段非法仍整批 ValueError
@@ -907,7 +710,6 @@ def test_validate_items_no_count_cap_keeps_all_legal():
     sixth_illegal.append({"title": "缺导语"})
     with pytest.raises(ValueError):
         validate_rescript_draft_items({"items": sixth_illegal}, set())
-
 
 @pytest.mark.parametrize("mutate", [
     lambda item: item.update(title=""),
@@ -927,7 +729,6 @@ def test_validate_items_missing_required_field_fails_whole_batch(mutate):
     with pytest.raises(ValueError):
         validate_rescript_draft_items({"items": [good, bad]}, set())
 
-
 def test_validate_items_single_option_is_legal():
     """#1801：单拟合法——条目只给 1 个 option 照常呈上。"""
     item = _valid_item(0)
@@ -936,7 +737,6 @@ def test_validate_items_single_option_is_legal():
     assert len(drafts) == 1
     assert len(drafts[0]["options"]) == 1
     assert drafts[0]["title"] == item["title"]
-
 
 def test_validate_items_many_options_not_gated_or_truncated():
     """#1801：多项不拦——5 个 option 照常呈上、不截断、不报错。"""
@@ -948,7 +748,6 @@ def test_validate_items_many_options_not_gated_or_truncated():
     drafts = validate_rescript_draft_items({"items": [item]}, set())
     assert len(drafts) == 1
     assert [o["label"] for o in drafts[0]["options"]] == [f"拟{i}" for i in range(5)]
-
 
 def test_validate_items_empty_options_drops_item_keeps_siblings(monkeypatch):
     """#1801：0 项按 F2.3 不足照实消失；其它条目仍呈上；日志响亮；不整批判死。"""
@@ -964,7 +763,6 @@ def test_validate_items_empty_options_drops_item_keeps_siblings(monkeypatch):
     assert logs, "0 项条目消失须响亮留痕"
     assert any(empty["title"] in msg for msg in logs)
 
-
 def test_validate_items_non_list_options_drops_item_keeps_siblings(monkeypatch):
     """#1801：非 list options 该条目消失；其它条目仍呈上；日志响亮；不整批判死。"""
     logs: list[str] = []
@@ -978,18 +776,15 @@ def test_validate_items_non_list_options_drops_item_keeps_siblings(monkeypatch):
     assert logs, "非 list options 条目消失须响亮留痕"
     assert any(bad["title"] in msg for msg in logs)
 
-
 def test_validate_items_empty_list_is_legal_headless_month():
     """合法 items=[] 仍是「本月确无急务」（F2.3 不凑数）。"""
     assert validate_rescript_draft_items({"items": []}, set()) == []
-
 
 def test_validate_items_rejects_illegal_top_level():
     with pytest.raises(ValueError):
         validate_rescript_draft_items({"nope": []}, set())
     with pytest.raises(ValueError):
         validate_rescript_draft_items("不是 JSON object", set())
-
 
 def _legal_item() -> dict:
     return {
@@ -998,14 +793,12 @@ def _legal_item() -> dict:
         "options": _two_opts("发帑赈济", "所安者饥民", "缓征加赈", "先赈后征"),
     }
 
-
 def test_validate_items_rejects_unknown_item_field_whole_batch():
     """r2 裁决 B2：item 层多产的未知自由文本字段不得接受后静默省略——整批 shape 错。"""
     item = _legal_item()
     item["extra"] = "模型多写的合法自由文本"
     with pytest.raises(ValueError, match="未知字段"):
         validate_rescript_draft_items({"items": [item]}, set())
-
 
 def test_validate_items_rejects_unknown_option_field_whole_batch():
     """非 isolate：option 未知键仍整批 ValueError（generate isolate 时走 heal）。"""
@@ -1014,14 +807,12 @@ def test_validate_items_rejects_unknown_option_field_whole_batch():
     with pytest.raises(ValueError, match="extra_option|未知|契约失败"):
         validate_rescript_draft_items({"items": [item]}, set())
 
-
 def test_validate_items_accepts_optional_issue_id_binding_key():
     """issue_id 是唯一豁免的可选绑定键，白名单收窄不得误伤既有绑定路。"""
     item = _legal_item()
     item["issue_id"] = 42
     drafts = validate_rescript_draft_items({"items": [item]}, {42})
     assert drafts[0]["event_id"] == "issue:42"
-
 
 def test_generate_rescript_draft_degrades_loudly_without_raising(game, monkeypatch, tmp_path):
     """F2.5 响亮降级（r2 B3 收窄后）：typed LLMUnavailable → tlog＋附记，返回 None，不抛。"""
@@ -1038,7 +829,6 @@ def test_generate_rescript_draft_degrades_loudly_without_raising(game, monkeypat
     assert note.is_file()
     # 标准 JSON 转义保真：结构化 reason，不锁原文呈现
     assert "LLM 不可用" in json.loads(note.read_text(encoding="utf-8"))["reason"]
-
 
 def test_generate_rescript_draft_program_error_propagates(game, monkeypatch):
     """r2 裁决 B3 / ADR 0005：程序错不得以「非承重支路」为由吞成降级。
@@ -1059,48 +849,11 @@ def test_generate_rescript_draft_program_error_propagates(game, monkeypatch):
     with pytest.raises(RuntimeError, match="programmer bug sentinel"):
         generate_rescript_draft(object(), payload, state.turn)
 
-
 # ---------------------------------------------------------------------------
 # F1.3/F2.5 崩溃恢复：不重跑票拟步（持久层读回）＋restore 往返无损
 # ---------------------------------------------------------------------------
 
-def test_restore_roundtrip_preserves_draft_rows_field_by_field(game):
-    """F2.5 restore 断言（结算中存档点）：ready context＋票拟已落，restore 后逐字段无损。"""
-    db, state, content = game
-    turn = state.turn
-    persist_resolve_context(
-        db, turn, {},
-        decree_text="诏", narrative="邸报",
-        simulator_payload={}, secret_orders=[], relevant_memories=[],
-        rescript_drafts=[{
-            "event_id": "issue:7", "title": "辽饷告匮",
-            "context": "九边欠饷数月，饥溃可待。",
-            "options": _two_opts("折发宗禄", "所拂者宗藩", "加派小农", "所拂者小农"),
-            "actor_name": "测试首辅", "actor_office": "内阁首辅", "actor_faction": "阉党",
-        }],
-    )
-    before = db.list_rescript_drafts()
-    assert len(before) == 1
-
-    import tempfile, os
-    fd, path = tempfile.mkstemp(suffix=".db")
-    os.close(fd)
-    try:
-        db.backup_to(path)
-        restored = GameDB(path, content)
-        try:
-            after = restored.list_rescript_drafts()
-        finally:
-            restored.close()
-    finally:
-        os.remove(path)
-        if os.path.exists(f"{path}_agno.db"):
-            os.remove(f"{path}_agno.db")
-
-    assert after == before
-
-
-def test_restore_roundtrip_at_awaiting_pause_has_no_draft_rows(game):
+def test_restore_roundtrip_at_awaiting_pause_has_no_draft_rows(game, tmp_path):
     """F2.5 restore 断言（AWAITING 暂停态存档点）：phase1 暂停时尚无票拟行，restore 后同形。"""
     db, state, content = game
     turn = state.turn
@@ -1109,152 +862,30 @@ def test_restore_roundtrip_at_awaiting_pause_has_no_draft_rows(game):
             {"label": "a", "hint": ""}, {"label": "b", "hint": ""}]},
     ])
 
-    import tempfile, os
-    fd, path = tempfile.mkstemp(suffix=".db")
-    os.close(fd)
+    path = str(tmp_path / "restore.db")
+    db.backup_to(path)
+    restored = GameDB(path, content)
     try:
-        db.backup_to(path)
-        restored = GameDB(path, content)
-        try:
-            assert restored.list_rescript_drafts() == []
-            rows = restored.list_pending_decisions(turn)
-            assert [r["title"] for r in rows] == ["抉择"]
-            assert all(r["kind"] == "decision" for r in rows)
-        finally:
-            restored.close()
+        assert restored.list_rescript_drafts() == []
+        rows = restored.list_pending_decisions(turn)
+        assert [r["title"] for r in rows] == ["抉择"]
+        assert all(r["kind"] == "decision" for r in rows)
     finally:
-        os.remove(path)
-        if os.path.exists(f"{path}_agno.db"):
-            os.remove(f"{path}_agno.db")
-
+        restored.close()
 
 # ---------------------------------------------------------------------------
-# A2 重模拟作废：陈旧票拟与 ready context 降级同生死
+# 票拟与本月上下文同存（#1846 已删 ready 降级）
 # ---------------------------------------------------------------------------
 
 def _ready_with_drafts(db, state, drafts):
-    persist_resolve_context(
-        db, state.turn, {},
-        decree_text="诏", narrative="邸报",
-        simulator_payload={}, secret_orders=[], relevant_memories=[],
-        rescript_drafts=drafts,
-    )
-
+    if drafts:
+        db.save_rescript_drafts(state.turn, drafts)
 
 def _draft_rows(title: str) -> list:
     return [{"title": title, "context": "旧导语", "options": [
         {"label": "甲", "hint": ""}, {"label": "乙", "hint": ""}],
         "actor_name": "测试首辅", "actor_office": "内阁首辅", "actor_faction": "阉党",
     }]
-
-
-def test_resimulation_clear_invalidates_stale_drafts(game):
-    """A2 判词：ready→clear 作废动作清该 turn 陈旧票拟行；phase1 context 与
-    decision 行保留。重跑结果为空列表时不得残留旧票拟冒充新头版。"""
-    db, state, content = game
-    turn = state.turn
-    db.save_pending_decisions(turn, [
-        {"title": "抉择", "context": "c", "options": [
-            {"label": "a", "hint": ""}, {"label": "b", "hint": ""}]},
-    ])
-    _ready_with_drafts(db, state, _draft_rows("陈旧急务"))
-    assert [d["title"] for d in db.list_rescript_drafts()] == ["陈旧急务"]
-
-    clear_for_resimulation(db, turn)
-
-    # 陈旧票拟行已清；decision 行不动；phase1 context 降级保留（非删行）
-    assert db.list_rescript_drafts() == []
-    rows = db.list_pending_decisions(turn)
-    assert [r["title"] for r in rows] == ["抉择"]
-    ctx = db.get_resolve_context(turn)
-    assert ctx is not None and ctx.get("extracted") is None
-
-    # 重跑结果为空列表（本月确无急务）→ 零残留
-    persist_resolve_context(
-        db, turn, {}, decree_text="诏", narrative="邸报新",
-        simulator_payload={}, secret_orders=[], relevant_memories=[],
-        rescript_drafts=[],
-    )
-    assert db.list_rescript_drafts() == []
-
-
-def test_resimulation_clear_degraded_rerun_leaves_no_stale_drafts(game):
-    """A2 回归（降级 None）：重跑票拟步降级返回 None 时，旧票拟不得存活。"""
-    db, state, _content = game
-    turn = state.turn
-    _ready_with_drafts(db, state, _draft_rows("陈旧急务"))
-    clear_for_resimulation(db, turn)
-    # 重跑降级：persist 不携 rescript_drafts（None）
-    persist_resolve_context(
-        db, turn, {}, decree_text="诏", narrative="邸报新",
-        simulator_payload={}, secret_orders=[], relevant_memories=[],
-    )
-    assert db.get_resolve_context(turn) is not None
-    assert db.list_rescript_drafts() == []   # 无头版，而非旧版冒充
-
-
-def test_resimulation_clear_atomic_on_downgrade_write_failure(game, monkeypatch):
-    """A2-r4 判词（故障注入）：作废动作单事务——context 降级写失败时，draft 删除、
-    rejection 作废标记与 ready 降级一并回滚；不得留下「ready 真源仍在、配套票拟
-    已删」的半作废状态。decision 行不受影响。"""
-    db, state, _content = game
-    turn = state.turn
-    db.save_pending_decisions(turn, [
-        {"title": "抉择", "context": "c", "options": [
-            {"label": "a", "hint": ""}, {"label": "b", "hint": ""}]},
-    ])
-    _ready_with_drafts(db, state, _draft_rows("陈旧急务"))
-    # 预置一条该 turn 的拒收记录，验证作废标记同样随事务回滚。
-    collector = RejectionCollector(attempt=1)
-    collector.record("issues", RejectedItem(
-        item={"issue_id": "i1"}, reason="幻觉 id",
-        category="hallucinated_id", source=Provenance.system_simulation,
-    ), turn)
-    collector.flush_to_db(db)
-    db.conn.commit()
-
-    def _boom(*_args, **_kwargs):
-        raise RuntimeError("注入：降级写失败")
-
-    monkeypatch.setattr(db, "save_resolve_context", _boom)
-    with pytest.raises(RuntimeError, match="注入：降级写失败"):
-        clear_for_resimulation(db, turn)
-
-    # 全回滚：draft 仍在、rejection 未被作废、ctx 仍 ready、decision 行不动。
-    assert [d["title"] for d in db.list_rescript_drafts()] == ["陈旧急务"]
-    row = db.conn.execute(
-        "SELECT resimulation_invalidated FROM rejection_reports WHERE turn=?", (turn,)
-    ).fetchone()
-    assert row is not None and row[0] == 0
-    ctx = db.get_resolve_context(turn)
-    assert ctx is not None and ctx.get("extracted") is not None
-    assert [r["title"] for r in db.list_pending_decisions(turn)] == ["抉择"]
-
-    # 注入解除后重跑成功路径：三路陈旧清零语义照常成立。
-    monkeypatch.undo()
-    clear_for_resimulation(db, turn)
-    assert db.list_rescript_drafts() == []
-    ctx = db.get_resolve_context(turn)
-    assert ctx is not None and ctx.get("extracted") is None
-
-
-def test_resimulation_clear_new_results_fully_replace_old_drafts(game):
-    """A2 回归（新列表）：重跑产出新票拟时只有新行，旧行零残留。"""
-    db, state, _content = game
-    turn = state.turn
-    _ready_with_drafts(db, state, _draft_rows("陈旧急务"))
-    clear_for_resimulation(db, turn)
-    persist_resolve_context(
-        db, turn, {}, decree_text="诏", narrative="邸报新",
-        simulator_payload={}, secret_orders=[], relevant_memories=[],
-        rescript_drafts=_draft_rows("新急务"),
-    )
-    assert [d["title"] for d in db.list_rescript_drafts()] == ["新急务"]
-
-
-# ---------------------------------------------------------------------------
-# A6 HITL envelope 单缝：persist-then-abort 后票拟不进亲裁/刷新/submit 消费面
-# ---------------------------------------------------------------------------
 
 def test_persist_then_abort_draft_never_enters_hitl_envelope(game):
     """A6+#657：list_pending_decisions 仍只回 decision；批红案头 desk 合并投影含急务。
@@ -1272,7 +903,7 @@ def test_persist_then_abort_draft_never_enters_hitl_envelope(game):
             {"label": "a", "hint": ""}, {"label": "b", "hint": ""}]},
     ])
     _ready_with_drafts(db, state, _draft_rows("急务"))
-    # persist-then-abort 形状：ready ctx＋decision 与 draft 同回合并存
+    # 本月上下文 + decision 与 draft 同回合并存
 
     rows = db.list_pending_decisions(turn)
     assert [r["kind"] for r in rows] == ["decision"]
@@ -1297,7 +928,6 @@ def test_persist_then_abort_draft_never_enters_hitl_envelope(game):
     drafts = {d["title"]: d["status"] for d in db.list_rescript_drafts()}
     assert drafts["急务"] == "pending"   # 票拟不被误标 decided
 
-
 # ---------------------------------------------------------------------------
 # PR #1521 r3：三条 shape 拒收负例（顶层未知字段 / 畸形 JSON / lone surrogate）
 # ---------------------------------------------------------------------------
@@ -1314,7 +944,6 @@ def test_r3_top_level_unknown_field_rejects_whole_batch():
     with pytest.raises(ValueError, match="未知字段"):
         validate_rescript_draft_items(data, set())
 
-
 def test_r3_strict_parse_control_char_raises_contract_error():
     """r3-2 strict 解析：含非法控制字符的 raw 不做清洗，直解失败抛 LLMContractError。"""
     from ming_sim.rescript_draft import _parse_rescript_json_strict
@@ -1324,7 +953,6 @@ def test_r3_strict_parse_control_char_raises_contract_error():
     with pytest.raises(LLMContractError, match="不是合法 JSON"):
         _parse_rescript_json_strict(raw)
 
-
 def test_r3_strict_parse_concatenated_objects_raises_contract_error():
     """r3-2 strict 解析：拼接对象不截首块，直解失败抛 LLMContractError。"""
     from ming_sim.rescript_draft import _parse_rescript_json_strict
@@ -1332,7 +960,6 @@ def test_r3_strict_parse_concatenated_objects_raises_contract_error():
     raw = '{"items": [{"title": "甲", "context": "c", "options": [{"label": "a", "hint": "h1"}, {"label": "b", "hint": "h2"}]}]}{"items": []}'
     with pytest.raises(LLMContractError, match="不是合法 JSON"):
         _parse_rescript_json_strict(raw)
-
 
 def test_r3_strict_parse_degrades_via_generate(game, monkeypatch, tmp_path):
     """r3-2 集成：畸形 JSON 经 generate 降级为无头月而非静默修复。"""
@@ -1346,7 +973,6 @@ def test_r3_strict_parse_degrades_via_generate(game, monkeypatch, tmp_path):
     assert generate_rescript_draft(object(), payload, turn) is None
     note = tmp_path / "error_packs" / "rescript_draft_degraded" / f"turn{turn}.json"
     assert note.is_file()
-
 
 def test_r3_lone_surrogate_field_rejects_whole_batch():
     """r3-3 UTF-8 合约：lone surrogate 在 validate 即整批 ValueError，正常中文仍通过。"""
@@ -1369,7 +995,6 @@ def test_r3_lone_surrogate_field_rejects_whole_batch():
     }
     assert len(validate_rescript_draft_items(good, set())) == 1
 
-
 # ---------------------------------------------------------------------------
 # #657 片1：行事实与案头（schema + 词表 + desk 读）
 # ---------------------------------------------------------------------------
@@ -1377,10 +1002,8 @@ def test_r3_lone_surrogate_field_rejects_whole_batch():
 def _pending_columns(db) -> set[str]:
     return {r[1] for r in db.conn.execute("PRAGMA table_info(pending_decisions)").fetchall()}
 
-
 def _ledger_columns(db) -> set[str]:
     return {r[1] for r in db.conn.execute("PRAGMA table_info(story_ledger_entries)").fetchall()}
-
 
 def test_657_s1_schema_columns_and_no_banned_fields(game):
     """片1：revision_round/prior_options_json/origin_ref 列存在；无 consumed_epoch/rescript_origin。"""
@@ -1401,7 +1024,6 @@ def test_657_s1_schema_columns_and_no_banned_fields(game):
     ]
     assert idx_sql and "origin_ref" in idx_sql[0] and "origin_ref != ''" in idx_sql[0].replace('"', "")
 
-
 def test_657_s1_rescript_emitted_set_subset_of_dossier(game):
     """A12 前置（#1778 后）：只剩 emitted 闭集 ⊂ DOSSIER；七类 routable 已整体取消。"""
     import ming_sim.decree_vocabulary as dv
@@ -1414,7 +1036,6 @@ def test_657_s1_rescript_emitted_set_subset_of_dossier(game):
     assert not hasattr(dv, "RESCRIPT_ROUTABLE_ACTION_TYPES")
     assert not hasattr(dv, "NATIONAL_FANOUT_ACTION_TYPES")
     _ = game  # fixture keeps DB init path green
-
 
 def test_657_s1_derive_draft_capability_stable_and_sensitive():
     """capability：同字段稳定；闭集任一有效差改变键。"""
@@ -1447,9 +1068,6 @@ def test_657_s1_derive_draft_capability_stable_and_sensitive():
     with_default["summon_target"] = ""
     assert derive_draft_capability(with_default) == a
 
-
-
-
 def test_657_validate_rejects_label_hint_only_options():
     """#657 Class1：旧仅 label/hint 两键输入必须整批失败（无兼容适配层）。"""
     data = {"items": [{
@@ -1461,7 +1079,6 @@ def test_657_validate_rejects_label_hint_only_options():
     }]}
     with pytest.raises(ValueError):
         validate_rescript_draft_items(data, set())
-
 
 def test_657_validate_layer_a_roundtrip_capability(game):
     """合法七类 option 整链 validate→persist→读回全字段+capability。"""
@@ -1495,7 +1112,6 @@ def test_657_validate_layer_a_roundtrip_capability(game):
     row = db.list_rescript_drafts()[0]
     assert row["options"][0]["draft_capability"] == opts[0]["draft_capability"]
     assert row["options"][1]["amount"] == 100
-
 
 def test_657_s1_option_shape_stamps_draft_capability():
     """层 A option 必填键校验；服务端写 draft_capability。"""
@@ -1534,7 +1150,6 @@ def test_657_s1_option_shape_stamps_draft_capability():
     with pytest.raises(ValueError):
         normalize_rescript_layer_a_option({**raw, "action_type": "修仙"})
 
-
 def _army_pay_grant_option(**extra) -> dict:
     opt = {
         "label": "补发关宁军饷",
@@ -1554,7 +1169,6 @@ def _army_pay_grant_option(**extra) -> dict:
     }
     opt.update(extra)
     return opt
-
 
 def test_1620_validate_army_pay_grant_kind_maps_to_xiexang():
     """真实票拟入口：合法 kind 映射；无 kind 直写协饷与 kind+action 并存整批拒。"""
@@ -1595,7 +1209,6 @@ def test_1620_validate_army_pay_grant_kind_maps_to_xiexang():
                 set(),
             )
 
-
 def test_1620_layer_a_reward_with_army_target_stays_reward():
     """赏赉+army 不因 target_kind 升格协饷。"""
     from ming_sim.rescript_draft import normalize_rescript_layer_a_option
@@ -1615,7 +1228,6 @@ def test_1620_layer_a_reward_with_army_target_stays_reward():
         "account": "国库",
     })
     assert opt["grant_action"] == "赏赉"
-
 
 @pytest.mark.parametrize("extra,drop", [
     pytest.param({"grant_action": "赏赉"}, (), id="conflict-reward"),
@@ -1646,7 +1258,6 @@ def test_1620_layer_a_army_pay_rejects_bad_typed_shape(extra, drop):
     with pytest.raises(ValueError):
         normalize_rescript_layer_a_option(raw)
 
-
 def test_1620_internal_canonical_xiexang_renormalizes_without_kind():
     """内部 canonical（无 kind、grant_action=协饷）二次归一仍通；生成旁路另闸。"""
     from ming_sim.rescript_draft import normalize_rescript_layer_a_option
@@ -1657,7 +1268,6 @@ def test_1620_internal_canonical_xiexang_renormalizes_without_kind():
     assert opt["grant_action"] == "协饷"
     assert opt["purpose"] == "补饷"
     assert opt["account"] == "国库"
-
 
 def test_657_s1_list_rescript_desk_merges_cross_month_and_decisions(game):
     """desk：旧急务 ORDER BY turn,idx → 本月 decision；decision_key 与新列投影。"""

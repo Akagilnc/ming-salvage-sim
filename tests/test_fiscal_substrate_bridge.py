@@ -877,8 +877,8 @@ def test_substrate_hub_cutover_runs_multi_tick_treasury_trajectory(fresh_game):
     assert taicang_loss_stocks[-1] > taicang_loss_months[-1]
 
 
-def test_ready_context_retry_does_not_recompute_substrate_hub_pre_settle(fresh_game):
-    from ming_sim.decree import persist_resolve_context, pre_settle
+def test_settling_context_retry_does_not_recompute_substrate_hub_pre_settle(fresh_game):
+    from ming_sim.decree import pre_settle
 
     db, state = fresh_game
     turn = state.turn
@@ -888,17 +888,12 @@ def test_ready_context_retry_does_not_recompute_substrate_hub_pre_settle(fresh_g
     before_containers = _hub_container_snapshot(db)
     before_balance = state.metrics["国库"]
 
-    persist_resolve_context(
-        db,
+    db.save_resolve_context(
         turn,
+        "测试诏",
         {},
-        decree_text="测试诏",
-        narrative="测试邸报",
-        simulator_payload={},
-        secret_orders=[],
-        relevant_memories=[],
     )
-    assert db.get_resolve_context(turn)["extracted"] == {}
+    assert db.get_resolve_context(turn) is not None
 
     pre_settle(state, db)
 
@@ -4769,12 +4764,6 @@ def test_advance_without_edict_cutover_bad_state_uses_settlement_abort_error_pac
     before_phase = state.turn_phase
 
     # canned LLM；崩应在 pre_settle fiscal，到不了 simulator
-    monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
-    monkeypatch.setattr(
-        decree_mod, "simulate_season_with_payload",
-        lambda *a, **k: (_ for _ in ()).throw(AssertionError("不应到 simulator")),
-    )
-
     sess = GameSession.__new__(GameSession)
     sess.db, sess.state, sess.content = db, state, content
     sess.registry = sess.llm_config = sess.agno_db = None

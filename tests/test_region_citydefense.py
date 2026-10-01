@@ -51,12 +51,3 @@ def test_region_cannon_level0_caps_zero(game):
     db, state, _ = game
     db.apply_region_cannon(state, "mongol_chahar", 50)
     assert db.conn.execute("SELECT cannon FROM regions WHERE id='mongol_chahar'").fetchone()[0] == 0
-
-
-def test_simulator_payload_includes_region_defense(read_game):
-    db, state, _ = read_game
-    from ming_sim.simulation import build_simulator_payload
-    payload = build_simulator_payload(state, db, "", "")
-    cols = (payload.get("regions") or {}).get("cols") or []
-    assert "city_level" in cols
-    assert "cannon" in cols

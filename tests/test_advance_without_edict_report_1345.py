@@ -1,7 +1,7 @@
 """#1345/#1382 A2 → #1274 QA J-1 改写 → #1382 last_report 耐久投影。
 
 原钉：快路 advance_without_edict 落正式月档（save_turn_report）。
-#1274 owner B-2：快路已废；无旨月走完整结算链，月档由 settle_with_delta 正常链落
+#1274 owner B-2：快路已废；无旨月走完整玩家月链，邸报归档后推进
 （DRY，禁两条结算路）。
 
 #1382 大理寺：`last_report` 不得靠 session 瞬态；状态口按 state.turn-1 读
@@ -10,6 +10,8 @@ load_state 恢复、history/turn/{closed_turn} 三者同份已落库原文。
 """
 
 from __future__ import annotations
+
+from ming_sim.session_write_queue import ClassifiedWriteGate
 
 import asyncio
 import contextlib
@@ -24,11 +26,8 @@ from ming_sim.session import GameSession
 
 
 def _canned(monkeypatch, narrative="本月退朝未下正式圣旨，边事自演。"):
-    monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
-    monkeypatch.setattr(
-        decree_mod, "simulate_season_with_payload",
-        lambda *a, **k: (narrative, k.get("simulator_payload") or {}),
-    )
+    from tests.settlement_seam_helpers import canned_full_settlement
+    canned_full_settlement(monkeypatch, narrative=narrative)
 
 
 def _session(db, state, content):
@@ -65,7 +64,7 @@ def _web_runtime(db, state, content, *, monkeypatch, session=None):
     runtime.ending_payload = lambda: None
     runtime.public_character = lambda c: {"name": getattr(c, "name", "")}
     runtime.character_power_id = lambda c: "ming"
-    runtime._write_gate = threading.Lock()
+    runtime._write_gate = ClassifiedWriteGate()
     runtime.refresh_turn = lambda: None
 
     @contextlib.contextmanager

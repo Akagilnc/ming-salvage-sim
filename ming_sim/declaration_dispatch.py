@@ -46,20 +46,16 @@ textual_facts / public_sayings / presence / scene_facts（原生 `origin_ref`
 要同样的回滚兜底（直接调用，失败即代表某处不变式被打破，按 ADR 0005 响亮
 失败而非当作 LLM 数据问题吞掉）。
 
-`register_unlisted_person_record`（本模块 `_dispatch_registrations` 与
-`GameSession._apply_unlisted_person_registration` 共用）本身不再合成
-`style` 占位文案（P7），也不再对调用方传入的 `style`/`summary` 做任何删改
-（P6）：声明给什么就原样存什么，没给就是空字符串。历史召对工具路径按
-source 归一的只是 `loyalty`/`source_label`——那是那条既有路径自己算好后
-显式传入的既有行为，本票未改动；该路径的 `register_unlisted_person` 工具
-schema 本就没给 LLM 开放 `style` 字段，故其 `style` 目前恒为空，走本函数
-既有下游缺省，不是被按 source 合成。
+`register_unlisted_person_record` 是登记唯一写核；转译声明的 `style`/
+`summary` 原样存储，缺省为空，不合成玩家可感文案（P6/P7）。
 """
 
 from __future__ import annotations
 
 import contextlib
 import copy
+import hashlib
+import json
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, Iterator, List, Mapping, Optional, Sequence, Tuple
 
@@ -89,7 +85,7 @@ from ming_sim.audience_night import (
 from ming_sim.entities.affair import ATTACH_BIRTH, ATTACH_EXPERIENCE, declaration_from_payload
 from ming_sim.error_pack import rejections_jsonl_path
 from ming_sim.relations import summon_edge_origin
-from ming_sim.issues import apply_person_changes_only
+from ming_sim.issues import _ORDERED_DELTA_FIELDS, apply_person_changes_only
 from ming_sim.public_sayings import record_public_saying
 from ming_sim.relations import validate_edge_kind
 
@@ -130,6 +126,7 @@ class DeclarationDispatchResult:
 
     commissions: SectionResult
     promises: SectionResult
+    endorsements: SectionResult
     textual_facts: SectionResult
     public_sayings: SectionResult
     on_scene_facts: SectionResult
@@ -139,6 +136,9 @@ class DeclarationDispatchResult:
     protagonist: ProtagonistResult
     registrations: SectionResult
     effects: SectionResult
+    inquiries: SectionResult
+    rushes: SectionResult
+    travel_tones: SectionResult
 
     def merge(self, other: "DeclarationDispatchResult") -> "DeclarationDispatchResult":
         """按 section 逐个 merge，供 :func:`settle_staged_declarations_in_decree_order`
@@ -146,6 +146,7 @@ class DeclarationDispatchResult:
         return DeclarationDispatchResult(
             commissions=self.commissions.merge(other.commissions),
             promises=self.promises.merge(other.promises),
+            endorsements=self.endorsements.merge(other.endorsements),
             textual_facts=self.textual_facts.merge(other.textual_facts),
             public_sayings=self.public_sayings.merge(other.public_sayings),
             on_scene_facts=self.on_scene_facts.merge(other.on_scene_facts),
@@ -155,13 +156,17 @@ class DeclarationDispatchResult:
             protagonist=self.protagonist.merge(other.protagonist),
             registrations=self.registrations.merge(other.registrations),
             effects=self.effects.merge(other.effects),
+            inquiries=self.inquiries.merge(other.inquiries),
+            rushes=self.rushes.merge(other.rushes),
+            travel_tones=self.travel_tones.merge(other.travel_tones),
         )
 
 
 _SECTION_FIELDS: Tuple[str, ...] = (
-    "commissions", "promises", "textual_facts", "public_sayings",
+    "commissions", "promises", "endorsements", "textual_facts", "public_sayings",
     "on_scene_facts", "presence", "scene_facts", "edge_events",
     "protagonist", "registrations", "effects",
+    "inquiries", "rushes", "travel_tones",
 )
 _KNOWN_SECTIONS = frozenset(_SECTION_FIELDS)
 
@@ -169,10 +174,11 @@ _KNOWN_SECTIONS = frozenset(_SECTION_FIELDS)
 def _empty_dispatch_result() -> DeclarationDispatchResult:
     empty = SectionResult(applied=[], rejected=[])
     return DeclarationDispatchResult(
-        commissions=empty, promises=empty, textual_facts=empty, public_sayings=empty,
+        commissions=empty, promises=empty, endorsements=empty,
+        textual_facts=empty, public_sayings=empty,
         on_scene_facts=empty, presence=empty, scene_facts=empty, edge_events=empty,
         protagonist=ProtagonistResult(validated=None, rejected=[]), registrations=empty,
-        effects=empty,
+        effects=empty, inquiries=empty, rushes=empty, travel_tones=empty,
     )
 
 
@@ -237,11 +243,31 @@ def _dispatch_declaration_sections(
         db, state, declaration.get("registrations"), source=source,
         source_turn_error=source_turn_err,
     )
+    preexisting_pending_ids = {
+        int(row["id"]) for row in db.conn.execute(
+            "SELECT id FROM pending_actions WHERE turn=? AND status='pending'",
+            (int(state.turn),),
+        ).fetchall()
+    }
     commissions = _dispatch_commissions(
         db, state, declaration.get("commissions"),
         minister_name=minister_name, source=source,
+        source_chat_turn_id=(
+            int(chat_turn_id or source_chat_turn_id or 0)
+            if source_turn_err is None else 0
+        ),
     )
     turn = int(state.turn)
+    promises = _dispatch_promises(
+        db, state, declaration.get("promises"), night_id=night_id,
+        chat_turn_id=origin_ctid, source=source,
+        preexisting_pending_ids=preexisting_pending_ids,
+    )
+    # 背书在应允之后：挂暂存载荷，或已成案则直接写案卷（迟到转译）。
+    endorsements = _dispatch_endorsements(
+        db, state, declaration.get("endorsements"), night_id=night_id,
+        chat_turn_id=origin_ctid, source=source,
+    )
     result = DeclarationDispatchResult(
         commissions=commissions,
         effects=_dispatch_effects(
@@ -250,10 +276,8 @@ def _dispatch_declaration_sections(
             turn=turn, source=source, visible_refs=visible_refs,
             defer_disclosure=defer_disclosure,
         ),
-        promises=_dispatch_promises(
-            db, state, declaration.get("promises"), night_id=night_id,
-            chat_turn_id=origin_ctid, source=source,
-        ),
+        promises=promises,
+        endorsements=endorsements,
         # 第四类夜绑定 section 统一消费源轮校验（ADR 0038 / #1839 AC3）：
         # 缺源轮或不属本夜 → 逐项 missing_ref，零落账；过月 night_id<=0 不拦。
         textual_facts=_dispatch_textual_facts(
@@ -284,6 +308,24 @@ def _dispatch_declaration_sections(
             db, declaration.get("protagonist"), source=source,
         ),
         registrations=registrations,
+        # #1837 reopen：旧 agent 工具退役后由转译承接的即时/催办声明。
+        inquiries=_dispatch_inquiries(
+            db, state, declaration.get("inquiries"), source=source,
+            chat_turn_id=origin_ctid, source_turn_error=source_turn_err,
+        ),
+        rushes=_dispatch_rushes(
+            db, state, declaration.get("rushes"),
+            minister_name=minister_name, source=source,
+            source_chat_turn_id=(
+                int(chat_turn_id or source_chat_turn_id or 0)
+                if source_turn_err is None else 0
+            ),
+        ),
+        travel_tones=_dispatch_travel_tones(
+            db, declaration.get("travel_tones"), night_id=night_id,
+            chat_turn_id=origin_ctid, source=source,
+            source_turn_error=source_turn_err, state=state,
+        ),
     )
     _record_unknown_sections(collector, declaration, turn, source)
     _record_section_rejections(collector, result, turn)
@@ -295,14 +337,12 @@ def _effect_extraction_from_clean(
     event_id: str,
     *,
     empty_extraction: Mapping[str, object],
-) -> tuple[dict[str, object], dict[str, list[tuple[str, object]]], dict[str, list[str]]]:
+) -> tuple[dict[str, object], dict[str, list[tuple[str, object]]], dict[str, list[str]], list[dict[str, object]]]:
     """Build one apply_score_extraction payload from a single effect envelope."""
     extraction = copy.deepcopy(dict(empty_extraction))
-    ordered_deltas = {field: [] for field in (
-        "metric_delta", "faction_delta", "class_delta",
-        "region_delta", "army_delta", "power_updates",
-    )}
+    ordered_deltas = {field: [] for field in _ORDERED_DELTA_FIELDS}
     ordered_effect_event_ids = {field: [] for field in empty_extraction}
+    unowned_outcomes: list[dict[str, object]] = []
     for field, value in clean.items():
         if field not in empty_extraction:
             continue
@@ -310,13 +350,19 @@ def _effect_extraction_from_clean(
             extraction[field].extend(value)
             ordered_effect_event_ids[field].extend([event_id] * len(value))
         elif isinstance(value, dict):
-            extraction[field].update(value)
+            if field == "事件结局":
+                from ming_sim.issues import _merge_first_event_outcome
+                unowned_outcomes.extend(
+                    _merge_first_event_outcome(extraction[field], value, event_id)
+                )
+            else:
+                extraction[field].update(value)
             if field in ordered_deltas:
                 ordered_deltas[field].extend(value.items())
                 ordered_effect_event_ids[field].extend([event_id] * len(value))
         elif value is not None:
             extraction[field] = value
-    return extraction, ordered_deltas, ordered_effect_event_ids
+    return extraction, ordered_deltas, ordered_effect_event_ids, unowned_outcomes
 
 
 def _persist_specialized_extraction(
@@ -331,7 +377,7 @@ def _persist_specialized_extraction(
 ) -> None:
     """转译契约仍收的专属案卷字段，交既有写入口，不在通用 applier 里再写一份。
 
-    密奏须先有本回合稽核在场扫描，origin 才带得上同派标记。对账只落本段提案，
+    密奏先落本回合稽核在场事实；origin 只承接密奏里已经声明的行动，不按派系补写。对账只落本段提案，
     未提案目标的中位默认留到月末一次补，避免后段中位覆盖前段实抵。
 
     过月主链（ADR 0157 步骤 4a）整月密奏与执行态由独立供料 run 落账；
@@ -399,7 +445,12 @@ def _dispatch_effects(
         )])
 
     from ming_sim.simulation import EMPTY_EXTRACTION
-    from ming_sim.issues import apply_score_extraction, preflight_declared_event_effects, sanitize_delta_shape
+    from ming_sim.issues import (
+        _merge_first_event_outcome,
+        apply_score_extraction,
+        preflight_declared_event_effects,
+        sanitize_delta_shape,
+    )
     from ming_sim.decree import _collect_inline_rejections
     from ming_sim.person_delta_adapter import normalize_person_changes
 
@@ -434,13 +485,11 @@ def _dispatch_effects(
         open_affair_ids=set(refs.get("affairs", ())),
     )
     extraction = copy.deepcopy(EMPTY_EXTRACTION)
-    ordered_deltas = {field: [] for field in (
-        "metric_delta", "faction_delta", "class_delta",
-        "region_delta", "army_delta", "power_updates",
-    )}
+    ordered_deltas = {field: [] for field in _ORDERED_DELTA_FIELDS}
     ordered_effect_event_ids = {field: [] for field in EMPTY_EXTRACTION}
     effect_sequence: list[tuple[dict[str, object], dict[str, list[tuple[str, object]]], dict[str, list[str]]]] = []
     accepted_effect = False
+    accepted_event_ids: list[str] = []
     for item, event_id, clean in clean_items:
         if event_id in rejected_events:
             rejected.append(RejectedItem(
@@ -449,13 +498,26 @@ def _dispatch_effects(
             ))
             continue
         accepted_effect = True
-        step_extraction, step_ordered, step_event_ids = _effect_extraction_from_clean(
-            clean, event_id, empty_extraction=EMPTY_EXTRACTION,
+        if event_id:
+            accepted_event_ids.append(event_id)
+        step_extraction, step_ordered, step_event_ids, unowned_outcomes = (
+            _effect_extraction_from_clean(
+                clean, event_id, empty_extraction=EMPTY_EXTRACTION,
+            )
         )
+        for stray in unowned_outcomes:
+            rejected.append(RejectedItem(
+                item={"event_id": event_id, "事件结局": stray},
+                reason="事件结局不属于本效果信封，未写入",
+                category="invalid_state",
+                source=source,
+            ))
         effect_sequence.append((step_extraction, step_ordered, step_event_ids))
         for field, value in step_extraction.items():
             current = extraction[field]
-            if isinstance(value, list) and isinstance(current, list):
+            if field == "事件结局" and isinstance(value, dict) and isinstance(current, dict):
+                _merge_first_event_outcome(current, value, event_id)
+            elif isinstance(value, list) and isinstance(current, list):
                 current.extend(value)
             elif isinstance(value, dict) and isinstance(current, dict):
                 current.update(value)
@@ -467,8 +529,12 @@ def _dispatch_effects(
             ordered_effect_event_ids[field].extend(event_ids)
     if not accepted_effect:
         return SectionResult(applied=[], rejected=rejected)
+    # 归一器按字段登记信封归属，只声明「事件结局」这类单个字典字段时不登记该键；
+    # 事件身份由**已被接受的信封**自身的 event_id 决定。被预检拒收的信封已经
+    # 退出本批效果，其身份不得再交给亲裁写口。
     report = apply_score_extraction(
         db, state, extraction, content=db.content,
+        declared_effect_event_ids=accepted_event_ids,
         open_affair_ids_at_input=set(refs.get("affairs", ())),
         dossier_ids_at_input=set(refs.get("dossiers", ())),
         secret_dossier_ids_at_input=set(refs.get("secret_dossiers", ())),
@@ -478,11 +544,21 @@ def _dispatch_effects(
         effect_sequence=effect_sequence if isinstance(raw, list) else None,
         defer_disclosure=defer_disclosure,
     )
+    # #670：续启赴京成功后结清 in_transit 传召，与本段落账同事务。
+    from ming_sim.audience_night import settle_applied_arrived_summons
+    settle_applied_arrived_summons(db, report)
     _collect_inline_rejections(collector, report, turn, source)
     _persist_specialized_extraction(
         db, state, extraction, collector=collector, turn=turn, source=source,
         defer_monthly_secret_supply=defer_disclosure,
     )
+    # 检举在 specialized extraction 中落库；待办须在它之后扫描。
+    from ming_sim.covert_levy import (
+        settle_exposure_from_canonical_actions,
+        write_exposure_todos,
+    )
+    write_exposure_todos(db, state, report)
+    settle_exposure_from_canonical_actions(db, state, report)
     return SectionResult(applied=[report], rejected=rejected)
 
 
@@ -801,6 +877,14 @@ def _commission_appointment_fields(
             category="invalid_shape", source=source,
         )
     payload: Dict[str, Any] = {"name": name, "office": office, "appoint_action": action}
+    mode = appointment.get("mode")
+    if mode is not None:
+        if not isinstance(mode, str) or mode not in {"ordinary", "midzhi"}:
+            return None, RejectedItem(
+                item=dict(appointment), reason=f"任免模式非法：{mode}",
+                category="invalid_enum", source=source,
+            )
+        payload["mode"] = mode
     tenure = str(
         appointment.get("appointment_tenure") or appointment.get("任别") or ""
     ).strip()
@@ -979,30 +1063,28 @@ def _attach_commission_staging_fields(
 
 
 def _attach_commission_affair(
-    db: Any, state: Any, item: Mapping[str, object], payload: Dict[str, Any],
+    db: Any, item: Mapping[str, object], payload: Dict[str, Any],
     *, rejected: List[RejectedItem], source: Provenance,
 ) -> bool:
-    """可选事务声明挂到载荷；失败时已写入 rejected，返回 False。"""
+    """校验声明并暂存；事务仅在收夜案卷接缝物化。"""
     raw_affair = declaration_from_payload(item, allowed=ATTACH_BIRTH)
     if raw_affair is None:
         return True
     try:
-        affair_id = db.affairs.resolve_declaration(
-            raw_affair, year=state.year, period=state.period,
-            turn=state.turn, allowed=ATTACH_BIRTH,
-        )
+        db.affairs.peek_declared_id(raw_affair, allowed=ATTACH_BIRTH)
     except KeyError as exc:
         _reject(rejected, item, str(exc), "hallucinated_id", source)
         return False
     except ValueError as exc:
         _reject(rejected, item, str(exc), "invalid_shape", source)
         return False
-    payload["affair_id"] = affair_id
+    payload["affair_declaration"] = raw_affair
     return True
 
 
 def _dispatch_commissions(
     db: Any, state: Any, raw: object, *, minister_name: str, source: Provenance,
+    source_chat_turn_id: int = 0,
 ) -> SectionResult:
     """交办声明 → 既有 pending 暂存。
 
@@ -1015,6 +1097,343 @@ def _dispatch_commissions(
     items, rejected = _section_items(raw, label="交办声明", source=source)
     applied: List[Any] = []
     for item in items:
+        # #1837 reopen：禁摊派交办——按场面事实绑定暴露案卷，不解析自由文本。
+        if _is_prohibit_covert_levy_item(item):
+            try:
+                applied.append(
+                    _stage_prohibit_covert_levy(
+                        db, state, item, minister_name=minister_name,
+                        source_chat_turn_id=source_chat_turn_id,
+                    )
+                )
+            except KeyError as exc:
+                _reject(rejected, item, str(exc), "invalid_state", source)
+            except (TypeError, ValueError) as exc:
+                _reject(rejected, item, str(exc), "invalid_shape", source)
+            continue
+
+        strategy = item.get("strategy_selection")
+        if strategy is not None:
+            from ming_sim.strict_types import strict_int
+            body = _declared_prose(item.get("text"))
+            actor = str(minister_name or "").strip()
+            if not isinstance(strategy, Mapping) or any(
+                item.get(key) for key in
+                ("grant", "appointment", "punishment", "pacification", "assignment", "secret_order")
+            ):
+                _reject(rejected, item, "点策交办须为独立结构化载荷", "invalid_shape", source)
+                continue
+            try:
+                origin_id = strict_int(strategy.get("source_chat_turn_id"), accept_numeric_strings=False)
+            except (TypeError, ValueError):
+                origin_id = 0
+            target_id = strategy.get("target_id")
+            if not body or not actor or not isinstance(target_id, str) or not target_id.strip() or origin_id <= 0:
+                _reject(rejected, item, "点策交办须有正文、目标和陈策源轮", "invalid_shape", source)
+                continue
+            origin = db.conn.execute(
+                "SELECT 1 FROM chat_turns earlier JOIN chat_turns current "
+                "ON earlier.night_id=current.night_id AND earlier.turn=current.turn "
+                "WHERE earlier.id=? AND current.id=? AND earlier.id<current.id "
+                "AND earlier.minister_name=? AND current.minister_name=? "
+                "AND earlier.minister_message_id IS NOT NULL "
+                "AND earlier.status='active' AND current.status='active' "
+                "AND earlier.undone_at IS NULL AND current.undone_at IS NULL",
+                (origin_id, int(source_chat_turn_id or 0), actor, actor),
+            ).fetchone()
+            if origin is None:
+                _reject(rejected, item, "点策陈策轮不属本夜前序有效召对", "missing_ref", source)
+                continue
+            payload = {
+                "text": body, "actor": actor,
+                "dossier_action_type": "strategy_selection", "target_kind": "policy",
+                "target_id": target_id.strip(), "source_chat_turn_id": origin_id,
+                "mode": "ordinary",
+            }
+            row_id = db.stage_pending_action(
+                int(state.turn), "directive", "拟旨", actor, payload,
+                source_chat_turn_id=source_chat_turn_id,
+            )
+            applied.append({"id": row_id, "payload": payload, "kind": "directive"})
+            continue
+
+        progress = item.get("secret_order_progress")
+        if progress is not None:
+            from ming_sim.strict_types import strict_int
+            if not isinstance(progress, Mapping) or any(
+                item.get(key) for key in
+                ("grant", "appointment", "punishment", "pacification", "assignment", "secret_order")
+            ):
+                _reject(rejected, item, "密令进展载荷须为独立对象", "invalid_shape", source)
+                continue
+            try:
+                order_id = strict_int(progress.get("order_id"), accept_numeric_strings=False)
+            except (TypeError, ValueError):
+                order_id = 0
+            note = progress.get("note")
+            actor = str(minister_name or "").strip() or _commission_fallback_actor(db)
+            active = db.get_active_secret_orders_for_minister(actor)
+            target = next((o for o in active if int(o["id"]) == order_id), None)
+            if (
+                target is None or order_id <= 0 or not isinstance(note, str) or not note.strip()
+                or int(target.get("turn_issued") or 0) == int(state.turn)
+            ):
+                _reject(rejected, item, "密令进展须指向承办人的往期有效密令且有进展正文", "invalid_state", source)
+                continue
+            row_id = db.stage_pending_action(
+                int(state.turn), kind="secret_order", action="记进展",
+                minister_name=actor, target_id=order_id, payload={"note": note},
+                source_chat_turn_id=source_chat_turn_id,
+            )
+            applied.append({"id": row_id, "kind": "secret_order"})
+            continue
+
+        update = item.get("secret_order_update")
+        if update is not None:
+            from ming_sim.strict_types import strict_int
+            if not isinstance(update, Mapping) or any(
+                item.get(key) for key in
+                ("grant", "appointment", "punishment", "pacification", "assignment",
+                 "secret_order", "secret_order_progress")
+            ):
+                _reject(rejected, item, "密令修改载荷须为独立对象", "invalid_shape", source)
+                continue
+            try:
+                order_id = strict_int(update.get("order_id"), accept_numeric_strings=False)
+            except (TypeError, ValueError):
+                order_id = 0
+            actor = str(minister_name or "").strip() or _commission_fallback_actor(db)
+            target = next((o for o in db.get_active_secret_orders_for_minister(actor)
+                           if int(o["id"]) == order_id), None)
+            content_text = update.get("content")
+            if target is None or order_id <= 0 or not isinstance(content_text, str) or not content_text.strip():
+                _reject(rejected, item, "密令修改须指向承办人的有效密令并提供正文", "invalid_state", source)
+                continue
+            source_turn = db.conn.execute(
+                "SELECT user_message_id FROM chat_turns "
+                "WHERE id=? AND minister_name=? AND turn=? AND status='active'",
+                (int(source_chat_turn_id), actor, int(state.turn)),
+            ).fetchone()
+            if source_turn is None or source_turn["user_message_id"] is None:
+                _reject(rejected, item, "密令修改缺本轮口谕源轮", "missing_ref", source)
+                continue
+            payload = {
+                "new_title": update.get("title") or target["title"],
+                "new_content": content_text,
+                "deadline_months": update.get("deadline_months", 0),
+                "origin_chat_message_id": int(source_turn["user_message_id"]),
+            }
+            row_id = db.stage_pending_action(
+                int(state.turn), "secret_order", "更新", actor, payload,
+                target_id=order_id, source_chat_turn_id=source_chat_turn_id,
+            )
+            applied.append({"id": row_id, "kind": "secret_order"})
+            continue
+
+        secret = item.get("secret_order")
+        if secret is not None:
+            if not isinstance(secret, Mapping) or any(
+                item.get(key) for key in
+                ("grant", "appointment", "punishment", "pacification", "assignment")
+            ):
+                _reject(rejected, item, "密令新建载荷须为独立对象", "invalid_shape", source)
+                continue
+            from ming_sim.cli_backend import secret_order_can_land
+            if not secret_order_can_land(dict(secret)):
+                _reject(rejected, item, "密令缺标题、内容或冻结任务契约", "invalid_shape", source)
+                continue
+            source_turn = db.conn.execute(
+                "SELECT minister_name, user_message_id FROM chat_turns "
+                "WHERE id=? AND turn=? AND status='active'",
+                (int(source_chat_turn_id), int(state.turn)),
+            ).fetchone()
+            if source_turn is None or source_turn["user_message_id"] is None:
+                _reject(rejected, item, "密令缺本轮口谕源轮", "missing_ref", source)
+                continue
+            actor = str(minister_name or "").strip() or str(source_turn["minister_name"])
+            # 差务契约在此一次冻结并校验：落不成案的原因此刻即知，写一条
+            # durable 拒收让下一句戏文里的大臣自己复述/请示（ADR 0155 场中
+            # 承接），不留一条注定落不了库的暂存。
+            from ming_sim.covert_progress import (
+                CovertContractError, build_covert_task_contract,
+            )
+            try:
+                frozen_task = build_covert_task_contract(covert_task=secret.get("covert_task"))
+            except (CovertContractError, TypeError, ValueError) as exc:
+                _reject(rejected, item, f"密令差务契约不成立：{exc}", "invalid_shape", source)
+                continue
+            # 落现役唯一写口（db.stage_pending_action）；应允时按 ADR 0038
+            # 夜内直写成案（_dispatch_promises 的 secret_order 分支）。
+            payload = {
+                "title": str(secret.get("title") or "").strip(),
+                "content": str(secret.get("content") or "").strip(),
+                "assignee": str(secret.get("assignee") or "").strip() or actor,
+                "tags": list(secret.get("tags") or []),
+                "deadline_months": secret.get("deadline_months", 0),
+                "excluded_names": list(secret.get("excluded_names") or []),
+                "excluded_offices": list(secret.get("excluded_offices") or []),
+                "dossier_links": list(secret.get("dossier_links") or []),
+                "covert_task": frozen_task,
+                "origin_chat_message_id": int(source_turn["user_message_id"]),
+            }
+            row_id = db.stage_pending_action(
+                int(state.turn), "secret_order", "新建", actor, payload,
+                source_chat_turn_id=source_chat_turn_id,
+            )
+            applied.append({"id": row_id, "kind": "secret_order"})
+            continue
+
+        assignment = item.get("assignment")
+        if assignment is not None:
+            if not isinstance(assignment, Mapping) or any(
+                item.get(key) for key in ("grant", "appointment", "punishment", "pacification")
+            ):
+                _reject(rejected, item, "责成交办载荷须为独立对象", "invalid_shape", source)
+                continue
+            body = _declared_prose(item.get("text"))
+            if body is None:
+                _reject(rejected, item, "责成交办缺正文", "invalid_shape", source)
+                continue
+            from ming_sim.action_materialize import stage_assignment_candidate
+            actor = str(minister_name or "").strip() or _commission_fallback_actor(db)
+            try:
+                roster = assignment.get("participant_roster")
+                if roster is not None:
+                    from ming_sim.cli_backend import normalize_draft_person_roster
+                    roster = normalize_draft_person_roster(
+                        roster, db=db, content=getattr(db, "content", None),
+                    )
+                row_id = stage_assignment_candidate(
+                    db, int(state.turn), actor, text=body,
+                    title=assignment.get("title", ""),
+                    target_id=assignment.get("target_id", ""),
+                    assignee=assignment.get("assignee", ""),
+                    participant_roster=roster,
+                    extracted_mode=assignment.get("mode"),
+                    commitment_kind=assignment.get("commitment_kind"),
+                    stop_condition=assignment.get("stop_condition"),
+                    end_turn=assignment.get("end_turn", 0),
+                    deadline_months=assignment.get("deadline_months", 0),
+                    ongoing_effects=assignment.get("ongoing_effects"),
+                    stages=assignment.get("stages"),
+                    target_candidate=assignment.get("target_candidate"),
+                    transaction_category=assignment.get("transaction_category", ""),
+                    source_chat_turn_id=source_chat_turn_id,
+                )
+            except (DecreeMaterializationValidationError, TypeError, ValueError) as exc:
+                _reject(rejected, item, str(exc), "invalid_shape", source)
+                continue
+            if row_id:
+                applied.append({"id": row_id, "kind": "directive"})
+            else:
+                _reject(rejected, item, "责成交办未通过现有准入", "invalid_state", source)
+            continue
+
+        # #1894：明确撤一道已发旨的交办载荷。与 grant/appointment/punishment/
+        # pacification/assignment 同形：独立 typed 对象 + 正文，禁与其它载荷混填。
+        revoke = item.get("revoke")
+        if revoke is not None:
+            if not isinstance(revoke, Mapping) or any(
+                item.get(key) for key in
+                ("grant", "appointment", "punishment", "pacification", "assignment",
+                 "secret_order", "secret_order_progress", "secret_order_update",
+                 "strategy_selection")
+            ):
+                _reject(rejected, item, "撤令交办载荷须为独立对象", "invalid_shape", source)
+                continue
+            body = _declared_prose(item.get("text"))
+            if body is None:
+                _reject(rejected, item, "撤令交办缺正文", "invalid_shape", source)
+                continue
+            from ming_sim.action_materialize import stage_revoke_decree_candidate
+            actor = str(minister_name or "").strip() or _commission_fallback_actor(db)
+            # 与其它交办载荷同缝：原旨与撤令沿同一事务关联（ADR 0154）。
+            payload: Dict[str, Any] = {}
+            if not _attach_commission_affair(
+                db, item, payload, rejected=rejected, source=source,
+            ):
+                continue
+            row_id = stage_revoke_decree_candidate(
+                db, int(state.turn), actor,
+                text=body,
+                target_id=revoke.get("target_id", ""),
+                target_kind=revoke.get("target_kind", ""),
+                target_candidate=revoke.get("target_candidate"),
+                extracted_mode=revoke.get("mode", item.get("mode")),
+                affair_declaration=payload.get("affair_declaration"),
+            )
+            if row_id:
+                applied.append({"id": row_id, "kind": "directive"})
+            else:
+                # 目标不是可撤的承诺/旨意（含「撤回最近一轮召对」等非撤令）→
+                # 既有准入零变化，逐项拒收留痕（ADR 0008）。
+                _reject(
+                    rejected, item, "撤令目标不是可撤的已颁承诺/旨意",
+                    "invalid_state", source,
+                )
+            continue
+
+        punishment = item.get("punishment")
+        if punishment is not None:
+            if not isinstance(punishment, Mapping) or item.get("grant") or item.get("appointment"):
+                _reject(rejected, item, "惩处交办载荷须为独立对象", "invalid_shape", source)
+                continue
+            body = _declared_prose(item.get("text"))
+            if body is None:
+                _reject(rejected, item, "惩处交办缺正文", "invalid_shape", source)
+                continue
+            from ming_sim.action_materialize import stage_punishment_candidate
+            actor = str(minister_name or "").strip() or _commission_fallback_actor(db)
+            row_id = stage_punishment_candidate(
+                db, int(state.turn), actor,
+                text=body,
+                target_id=str(punishment.get("target_id") or ""),
+                punish_action=str(punishment.get("punish_action") or ""),
+                extracted_mode=punishment.get("mode"),
+                amount=punishment.get("amount"),
+                transaction_category=punishment.get("transaction_category"),
+                backing_dossier_id=punishment.get("backing_dossier_id"),
+                issue_id=punishment.get("issue_id"),
+                issue_disposition=punishment.get("issue_disposition"),
+                source_chat_turn_id=source_chat_turn_id,
+            )
+            if row_id:
+                applied.append({"id": row_id, "kind": "directive"})
+            else:
+                _reject(rejected, item, "惩处交办未通过现有准入", "invalid_state", source)
+            continue
+
+        pacification = item.get("pacification")
+        if pacification is not None:
+            if not isinstance(pacification, Mapping) or item.get("grant") or item.get("appointment"):
+                _reject(rejected, item, "招抚交办载荷须为独立对象", "invalid_shape", source)
+                continue
+            body = _declared_prose(item.get("text"))
+            if body is None:
+                _reject(rejected, item, "招抚交办缺正文", "invalid_shape", source)
+                continue
+            target = str(pacification.get("target_id") or "").strip()
+            canonical = db._find_pacification_target(db.content, target)
+            if canonical is None:
+                known = target in db.content.characters or any(
+                    target in (character.aliases or [])
+                    for character in db.content.characters.values()
+                )
+                _reject(
+                    rejected, item, "招抚目标不是合格内乱首领",
+                    "invalid_state" if known else "hallucinated_id", source,
+                )
+                continue
+            from ming_sim.action_materialize import stage_pacification_candidate
+            actor = str(minister_name or "").strip() or _commission_fallback_actor(db)
+            row_id = stage_pacification_candidate(
+                db, int(state.turn), actor, text=body,
+                target_id=canonical, extracted_mode=pacification.get("mode"),
+                source_chat_turn_id=source_chat_turn_id,
+            )
+            applied.append({"id": row_id, "kind": "directive"})
+            continue
+
         grant_raw = item.get("grant") or {}
         if grant_raw and not isinstance(grant_raw, Mapping):
             _reject(rejected, item, "拨帑载荷须为对象", "invalid_shape", source)
@@ -1025,7 +1444,29 @@ def _dispatch_commissions(
         if appt_rejected is not None:
             rejected.append(appt_rejected)
             continue
+        if appointment_fields:
+            from ming_sim.session import _canonical_minister_key
+            appointment_fields["name"] = _canonical_minister_key(
+                getattr(db, "content", None), appointment_fields["name"], db,
+            )
 
+        mode = item.get("mode", "ordinary")
+        if not isinstance(mode, str) or mode not in {"ordinary", "midzhi"}:
+            _reject(rejected, item, "交办模式非法", "invalid_enum", source)
+            continue
+        from ming_sim.db import imperial_push_target_dossier_id
+        try:
+            push_id = imperial_push_target_dossier_id(item)
+        except ValueError as exc:
+            _reject(rejected, item, str(exc), "invalid_shape", source)
+            continue
+        if push_id is not None:
+            if grant_raw or appointment_fields:
+                _reject(rejected, item, "御笔强推不可与普通拨帑或任免交办并存", "invalid_shape", source)
+                continue
+            if db.get_decree_dossier(push_id) is None:
+                _reject(rejected, item, "御笔强推目标案卷不存在", "missing_ref", source)
+                continue
         text = item.get("text")
         try:
             if grant_raw:
@@ -1042,14 +1483,17 @@ def _dispatch_commissions(
                 # 收夜成案需要 ordinary triad；纯正文走 special_decree 最小结构
                 # （与 _ensure_directive_dossier 无结构回退同形，声明侧一次给齐）。
                 # target_id 按本批已落条数区分，避免同回合多条纯正文互撞。
-                payload = {
-                    "text": body,
-                    "dossier_action_type": "special_decree",
-                    "target_kind": "policy",
-                    "target_id": f"commission-text:{int(state.turn)}:{len(applied)}",
-                    "locality_scope": "none",
-                    "mode": "ordinary",
-                }
+                if push_id is not None:
+                    payload = {"text": body, "target_dossier_id": push_id, "mode": mode}
+                else:
+                    payload = {
+                        "text": body,
+                        "dossier_action_type": "special_decree",
+                        "target_kind": "policy",
+                        "target_id": f"commission-text:{int(state.turn)}:{len(applied)}",
+                        "locality_scope": "none",
+                        "mode": mode,
+                    }
         except KeyError as exc:
             _reject(rejected, item, str(exc), "hallucinated_id", source)
             continue
@@ -1078,35 +1522,86 @@ def _dispatch_commissions(
                 payload["region_id"] = str(grant_raw["target_id"]).strip()
 
         # #1783/#1778：承办人、名单、期限为既有 staging 字段（stage_grant 同款），
+        if grant_raw:
+            payload["mode"] = mode
         # 非 #1815 新形；声明给出则透传到 directive payload，代码不猜当前大臣。
         _attach_commission_staging_fields(
             payload, item, turn=int(state.turn),
         )
 
         if not _attach_commission_affair(
-            db, state, item, payload, rejected=rejected, source=source,
+            db, item, payload, rejected=rejected, source=source,
         ):
             continue
 
+        # #1837 reopen：荐人信息挂任命载荷；受理口径与原 recommend_person 工具相同。
+        reco_err = _attach_recommendation_fields(
+            db, state, item, payload if appointment_fields else None,
+            default_recommender=minister_name,
+        )
+        if reco_err is not None:
+            _reject(rejected, item, reco_err[0], reco_err[1], source)
+            continue
+
         def _stage_office(shared_text: str) -> Dict[str, Any]:
+            from ming_sim.action_materialize import (
+                _apply_existing_appointment_hit, _same_direction_office_hits,
+            )
+            from types import SimpleNamespace
+            hits = _same_direction_office_hits(
+                db, int(state.turn), name=str(appointment_fields["name"]),
+                office=str(appointment_fields["office"]),
+                action=str(appointment_fields["appoint_action"]),
+                region_id=str(appointment_fields.get("region_id") or ""),
+            )
+            if len(hits) > 1:
+                _reject(rejected, item, "同向任免候选不唯一", "invalid_state", source)
+                return None
+            if hits:
+                oid = _apply_existing_appointment_hit(
+                    SimpleNamespace(db=db), hits[0],
+                    extracted_mode=appointment_fields.get("mode"),
+                    region_id=str(appointment_fields.get("region_id") or ""),
+                    minister_name=minister_name, turn=int(state.turn),
+                    annotate=True,
+                    recommendation_fields={
+                        key: payload[key]
+                        for key in ("reason", "recommendation", "faction")
+                        if payload.get("recommendation") and key in payload
+                    },
+                )
+                return {"id": oid, "kind": "office"}
+            if appointment_fields["appoint_action"] == "任命":
+                from ming_sim.session import _appointment_intent_is_current_office_noop
+                if _appointment_intent_is_current_office_noop(
+                    db, appointment_fields["name"], appointment_fields["office"],
+                    content=getattr(db, "content", None),
+                ):
+                    return None
             # office 成案链只吃任免字段；禁把 grant 的 execution_surface 等带进
             # appointment 案卷（会撞「execution_surface 与案卷动作策略不符」）。
             office_payload = dict(appointment_fields or {})
             office_payload["text"] = shared_text
-            if "affair_id" in payload:
-                office_payload["affair_id"] = payload["affair_id"]
+            if "affair_declaration" in payload:
+                office_payload["affair_declaration"] = payload["affair_declaration"]
+            for key in ("reason", "recommendation", "faction", "replaces"):
+                if key in payload:
+                    office_payload[key] = payload[key]
             oid = db.stage_pending_action(
                 int(state.turn),
                 "office",
                 str(office_payload["appoint_action"]),
                 minister_name,
                 office_payload,
+                source_chat_turn_id=source_chat_turn_id,
             )
             return {"id": oid, "payload": office_payload, "kind": "office"}
 
         # 仅任免 → office 成案链（收夜 → appointment 案卷 → 过月落职）。
         if appointment_fields and not grant_raw:
-            applied.append(_stage_office(str(payload.get("text") or "")))
+            staged = _stage_office(str(payload.get("text") or ""))
+            if staged is not None:
+                applied.append(staged)
             continue
 
         # 有拨帑（±任免）或纯正文拟旨：一份 directive 载荷。任免字段已挂同一 payload
@@ -1119,6 +1614,7 @@ def _dispatch_commissions(
             payload["actor"] = actor
         row_id = db.stage_pending_action(
             int(state.turn), "directive", "拟旨", actor, payload,
+            source_chat_turn_id=source_chat_turn_id,
         )
         applied.append({"id": row_id, "payload": payload, "kind": "directive"})
     return SectionResult(applied=applied, rejected=rejected)
@@ -1139,13 +1635,449 @@ def _commission_fallback_actor(db: Any) -> str:
     return str(row["name"]) if row is not None else ""
 
 
-def _dispatch_promises(
+def _dispatch_endorsements(
     db: Any, state: Any, raw: object, *, night_id: int,
     chat_turn_id: int, source: Provenance,
 ) -> SectionResult:
+    """#1842：每轮转译声明对暂存交办的会签/当面站台/御笔手敕。
+
+    挂在 pending_actions.payload_json["endorsements"]，成案时继承到案卷；
+    目标已成案（迟到转译）则按 pending_action_id 直写案卷背书。来源为本轮。
+    """
     from ming_sim.strict_types import strict_int
 
-    items, rejected = _section_items(raw, label="应允/拒绝声明", source=source)
+    items, rejected = _section_items(raw, label="背书声明", source=source)
+    applied: List[Any] = []
+    ctid = int(chat_turn_id or 0)
+    if ctid <= 0 and items:
+        for item in items:
+            _reject(
+                rejected, item, "背书须绑定本轮对话源", "missing_ref", source,
+            )
+        return SectionResult(applied=applied, rejected=rejected)
+    for item in items:
+        try:
+            action_id = strict_int(
+                item.get("action_id"), accept_numeric_strings=False,
+            )
+        except (TypeError, ValueError):
+            action_id = 0
+        form = str(item.get("form") or "").strip()
+        endorser_id = str(item.get("endorser_id") or "").strip()
+        if action_id <= 0 or form not in {"会签", "当面站台", "御笔手敕"}:
+            _reject(
+                rejected, item,
+                "背书须含正 action_id 与 会签|当面站台|御笔手敕",
+                "invalid_shape", source,
+            )
+            continue
+        imperial = form == "御笔手敕"
+        if imperial:
+            endorser_id = ""
+        elif not endorser_id:
+            _reject(
+                rejected, item, "会签/当面站台必须具名背书人",
+                "invalid_shape", source,
+            )
+            continue
+        row = db.conn.execute(
+            "SELECT id, night_id, status, payload_json FROM pending_actions "
+            "WHERE id=? AND turn=?",
+            (action_id, int(state.turn)),
+        ).fetchone()
+        if row is None or int(row["night_id"] or 0) != int(night_id):
+            _reject(
+                rejected, item, f"暂存动作不属本夜暂存清单：{action_id}",
+                "missing_ref", source,
+            )
+            continue
+        entry = {
+            "form": form,
+            "endorser_id": endorser_id,
+            "imperial": imperial,
+            "source_chat_turn_id": ctid,
+        }
+        status = str(row["status"] or "")
+        if status == "pending":
+            try:
+                db.attach_pending_action_endorsement(
+                    action_id, entry, commit=False,
+                )
+            except (TypeError, ValueError, KeyError) as exc:
+                _reject(rejected, item, str(exc), "invalid_item", source)
+                continue
+        elif status == "committed":
+            drow = db.conn.execute(
+                "SELECT id FROM decree_dossiers WHERE pending_action_id=? "
+                "ORDER BY id", (action_id,),
+            ).fetchall()
+            if not drow:
+                _reject(
+                    rejected, item,
+                    f"已成案暂存无对应案卷：{action_id}",
+                    "missing_ref", source,
+                )
+                continue
+            try:
+                for d in drow:
+                    db.add_dossier_endorsement(
+                        int(d["id"]),
+                        form=form,
+                        endorser_id=endorser_id,
+                        imperial=imperial,
+                        source_chat_turn_id=ctid,
+                        commit=False,
+                    )
+            except (TypeError, ValueError) as exc:
+                _reject(rejected, item, str(exc), "invalid_item", source)
+                continue
+        else:
+            _reject(
+                rejected, item,
+                f"暂存动作状态不可挂背书：{status}",
+                "invalid_item", source,
+            )
+            continue
+        applied.append({
+            "action_id": action_id, "form": form,
+            "endorser_id": endorser_id, "imperial": imperial,
+            "source_chat_turn_id": ctid,
+        })
+    return SectionResult(applied=applied, rejected=rejected)
+
+
+def _is_prohibit_covert_levy_item(item: Mapping[str, object]) -> bool:
+    from ming_sim.covert_levy import PROHIBITION_ACTION
+    action_type = str(
+        item.get("dossier_action_type") or item.get("kind") or ""
+    ).strip()
+    return action_type == PROHIBITION_ACTION
+
+
+def _stage_prohibit_covert_levy(
+    db: Any, state: Any, item: Mapping[str, object], *, minister_name: str,
+    source_chat_turn_id: int = 0,
+) -> Dict[str, Any]:
+    """禁摊派交办：绑定当前暴露案卷 → 既有 directive 暂存并标夜应允。"""
+    from ming_sim.audience_night import mark_actions_night_approved
+    from ming_sim.covert_levy import PROHIBITION_ACTION
+    from ming_sim.due_review import list_due_review_scenes
+
+    try:
+        dossier_id = int(item["target_id"])
+    except (KeyError, TypeError, ValueError):
+        raise KeyError("禁摊派交办缺场面案卷 id") from None
+    if not any(
+        scene.get("kind") == "covert_levy_exposure"
+        and not scene.get("decision")
+        and int(scene.get("dossier_id") or 0) == dossier_id
+        for scene in list_due_review_scenes(db, state)
+    ):
+        raise KeyError(f"当前无待裁的暗渠摊派暴露案卷：{dossier_id}")
+    body = _declared_prose(item.get("text"))
+    if body is None:
+        raise ValueError("禁摊派交办缺正文")
+    actor = str(minister_name or "").strip() or _commission_fallback_actor(db)
+    payload = {
+        "text": body,
+        "actor": actor,
+        "dossier_action_type": PROHIBITION_ACTION,
+        "target_kind": "dossier",
+        "target_id": str(dossier_id),
+        "mode": "ordinary",
+    }
+    row_id = db.stage_pending_action(
+        int(state.turn), "directive", "拟旨", actor, payload,
+        source_chat_turn_id=source_chat_turn_id,
+    )
+    mark_actions_night_approved(db, [row_id])
+    return {"id": row_id, "payload": payload, "kind": "directive"}
+
+
+def _attach_recommendation_fields(
+    db: Any,
+    state: Any,
+    item: Mapping[str, object],
+    payload: Optional[Dict[str, Any]],
+    *,
+    default_recommender: str,
+) -> Optional[Tuple[str, str]]:
+    """把荐人声明挂到任命载荷。无 recommendation 字段 → 无操作。
+
+    返回 (reason, category) 表示拒收；None 表示已挂或无需挂。
+    """
+    reco_raw = item.get("recommendation")
+    if not reco_raw:
+        return None
+    if payload is None:
+        return ("荐人声明须附任命载荷", "invalid_shape")
+    if not isinstance(reco_raw, Mapping):
+        return ("荐人载荷须为对象", "invalid_shape")
+    recommender = str(
+        reco_raw.get("recommender") or default_recommender or ""
+    ).strip()
+    reason = reco_raw.get("reason")
+    if reason is None:
+        reason = ""
+    if not isinstance(reason, str):
+        return ("荐词 reason 须为字符串", "invalid_shape")
+    if not reason.strip():
+        return ("荐人须附非空荐词缘由", "invalid_shape")
+    if not recommender:
+        return ("荐人声明缺荐者", "invalid_shape")
+    target = str(payload.get("name") or "").strip()
+    office = str(payload.get("office") or "").strip()
+    if not target or not office:
+        return ("荐人任命缺 name/office", "invalid_shape")
+    row = next(
+        (
+            candidate
+            for candidate in db.list_recommendation_candidates(state, recommender)
+            if candidate["name"] == target
+        ),
+        None,
+    )
+    if row is None:
+        return (
+            f"被荐者不在荐者派系/见闻可及范围内：{target}",
+            "invalid_state",
+        )
+    # 荐词原句逐字落库；strip 仅作判空谓词（ADR 0082 / #635 Y2）。
+    payload["reason"] = reason
+    payload["recommendation"] = {
+        "candidate_kind": row["candidate_kind"],
+        "basis": row["basis"],
+        "recommender": recommender,
+        "candidate": row,
+    }
+    if row.get("faction"):
+        payload.setdefault("faction", row["faction"])
+    return None
+
+
+def _dispatch_inquiries(
+    db: Any,
+    state: Any,
+    raw: object,
+    *,
+    source: Provenance,
+    chat_turn_id: int = 0,
+    source_turn_error: Optional[str] = None,
+) -> SectionResult:
+    """近臣查访声明 → 近侍角色见闻来源账（ADR 0034）。"""
+    items, rejected = _section_items(raw, label="查访声明", source=source)
+    if source_turn_error:
+        for item in items:
+            _reject(rejected, item, source_turn_error, "missing_ref", source)
+        return SectionResult(applied=[], rejected=rejected)
+    applied: List[Any] = []
+    for index, item in enumerate(items):
+        attendant = str(item.get("attendant") or item.get("person_name") or "").strip()
+        query = item.get("query")
+        if not attendant:
+            _reject(rejected, item, "查访声明缺受命近侍", "invalid_shape", source)
+            continue
+        if not isinstance(query, str) or not query.strip():
+            _reject(rejected, item, "查访声明缺所查之事", "invalid_shape", source)
+            continue
+        try:
+            _assert_characters_exist(db, [attendant])
+        except KeyError as exc:
+            _reject(rejected, item, str(exc), "hallucinated_id", source)
+            continue
+        from ming_sim.audience_night import is_inner_court_attendant
+        character = db.conn.execute(
+            "SELECT office FROM characters WHERE name=?", (attendant,)
+        ).fetchone()
+        if not is_inner_court_attendant(character):
+            _reject(rejected, item, "受命者不是近侍", "invalid_state", source)
+            continue
+        # 可预期拒收只在声明形状/幻影 id；持久化失败不得洗成 invalid_state 继续
+        # （失败诚实宪法：未识别异常保留真因，由事务/调用方接住）。
+        # Use the exact declared subject as identity, not as a fact selector.
+        # A turn/position alone collides across separately dispatched statements.
+        subject_id = hashlib.sha256(query.encode("utf-8")).hexdigest()
+        db.register_character_knowledge_source(
+            state, [{"character_id": attendant}], "inquiry_assignment",
+            "奉旨查访", query,
+            source_id=(f"inquiry:{state.turn}:{attendant}:{index}:{subject_id}"
+                       + (f":chat_turn:{int(chat_turn_id)}" if chat_turn_id else "")),
+        )
+        applied.append({"attendant": attendant, "query": query})
+    return SectionResult(applied=applied, rejected=rejected)
+
+
+def _dispatch_rushes(
+    db: Any,
+    state: Any,
+    raw: object,
+    *,
+    minister_name: str,
+    source: Provenance,
+    source_chat_turn_id: int = 0,
+) -> SectionResult:
+    """催办声明 → 既有 pending 催办写口（密令 / 分段承诺，ADR 0078）。
+
+    ``source_chat_turn_id``（#1890）：暂存行的来源轮，随交办身份落库。"""
+    items, rejected = _section_items(raw, label="催办声明", source=source)
+    applied: List[Any] = []
+    for item in items:
+        target_kind = str(item.get("target_kind") or "").strip()
+        try:
+            target_id = int(item.get("target_id") or 0)
+        except (TypeError, ValueError):
+            target_id = 0
+        if target_kind not in {"commitment", "secret_order"} or target_id <= 0:
+            _reject(
+                rejected, item,
+                "催办须含 target_kind=commitment|secret_order 与正 target_id",
+                "invalid_shape", source,
+            )
+            continue
+        try:
+            raw_deadline = item.get("deadline_months", 1)
+            deadline = max(0, min(int(raw_deadline if raw_deadline is not None else 1), 36))
+        except (TypeError, ValueError):
+            deadline = 1
+        reason = str(item.get("reason") or "")
+        actor = str(minister_name or "").strip() or _commission_fallback_actor(db)
+        if target_kind == "commitment":
+            row = db.conn.execute(
+                "SELECT id, status, stages_json FROM issues WHERE id=?",
+                (target_id,),
+            ).fetchone()
+            if row is None:
+                _reject(rejected, item, f"催办目标承诺不存在：{target_id}", "hallucinated_id", source)
+                continue
+            if str(row["status"] or "") != "active":
+                _reject(
+                    rejected, item,
+                    f"催办目标承诺状态不容许：{row['status']}",
+                    "invalid_state", source,
+                )
+                continue
+            try:
+                stage_idx = int(item["stage_idx"])
+            except (KeyError, TypeError, ValueError):
+                _reject(rejected, item, "催办缺目标分段索引", "invalid_shape", source)
+                continue
+            from ming_sim.staged_commitment import normalize_commitment_stages
+            stages = normalize_commitment_stages(row["stages_json"])
+            if not any(int(stage["stage_idx"]) == stage_idx for stage in stages):
+                _reject(rejected, item, "催办目标分段不存在", "invalid_state", source)
+                continue
+            payload = {
+                "stage_idx": stage_idx,
+                "deadline_months": deadline,
+                "reason": reason,
+            }
+            row_id = db.stage_pending_action(
+                int(state.turn), "commitment", "催办", actor, payload,
+                target_id=target_id, source_chat_turn_id=source_chat_turn_id,
+            )
+            applied.append({
+                "id": row_id, "kind": "commitment", "target_id": target_id,
+                "payload": payload,
+            })
+            continue
+        # secret_order
+        order = db.get_secret_order(target_id) if hasattr(db, "get_secret_order") else None
+        if order is None:
+            _reject(rejected, item, f"催办目标密令不存在：{target_id}", "hallucinated_id", source)
+            continue
+        if str(order.get("status") or "") != "active":
+            _reject(
+                rejected, item,
+                f"催办目标密令状态不容许：{order.get('status')}",
+                "invalid_state", source,
+            )
+            continue
+        payload = {"deadline_months": deadline, "reason": reason}
+        row_id = db.stage_pending_action(
+            int(state.turn), "secret_order", "催办", actor, payload,
+            target_id=target_id, source_chat_turn_id=source_chat_turn_id,
+        )
+        applied.append({
+            "id": row_id, "kind": "secret_order", "target_id": target_id,
+            "payload": payload,
+        })
+    return SectionResult(applied=applied, rejected=rejected)
+
+
+def _dispatch_travel_tones(
+    db: Any,
+    raw: object,
+    *,
+    night_id: int,
+    chat_turn_id: int,
+    source: Provenance,
+    source_turn_error: str,
+    state: Any,
+) -> SectionResult:
+    """传召行程语气声明 → 本轮传召账；已有口令账则更新它。"""
+    from ming_sim.audience_night import record_summon_fresh, update_summon_travel_tone
+    from ming_sim.issues import normalize_travel_tone
+
+    items, rejected = _section_items(raw, label="行程语气声明", source=source)
+    if int(night_id or 0) <= 0 or source_turn_error:
+        for item in items:
+            _reject(rejected, item, source_turn_error or "行程语气须在召对夜内声明", "missing_ref", source)
+        return SectionResult(applied=[], rejected=rejected)
+    applied: List[Any] = []
+    for item in items:
+        person = str(item.get("person_name") or item.get("name") or "").strip()
+        if not person:
+            _reject(rejected, item, "行程语气声明缺人名", "invalid_shape", source)
+            continue
+        try:
+            tone = normalize_travel_tone(item.get("tone") or item.get("行程语气"))
+        except ValueError as exc:
+            _reject(rejected, item, str(exc), "invalid_enum", source)
+            continue
+        try:
+            entry_id = update_summon_travel_tone(
+                db, night_id=int(night_id), person_name=person, travel_tone=tone,
+                origin_chat_turn_id=chat_turn_id,
+            )
+        except KeyError:
+            # A non-command-shaped summons (e.g. an urgent summons) has no
+            # deterministic command ledger. The translator supplies the person;
+            # only an offsite, eligible person can acquire a fresh summons here.
+            from ming_sim.session import AudienceAdmission, GameSession
+            character = db.content.characters.get(person)
+            if character is None:
+                _reject(rejected, item, f"本轮无可传召的场外人物：{person}", "missing_ref", source)
+                continue
+            # Reuse the same admission gate as scene_chat, without starting a
+            # second scene session or parsing the emperor's free text.
+            admission_session = GameSession.__new__(GameSession)
+            admission_session.db = db
+            decision = admission_session.admit_audience(character)
+            if decision.result is not AudienceAdmission.SUMMON_FRESH:
+                _reject(rejected, item, decision.reason or f"本轮无可传召的场外人物：{person}", "invalid_state", source)
+                continue
+            entry_id = record_summon_fresh(
+                db, int(night_id), person,
+                origin_id=f"scene:xuan:{chat_turn_id}:{person}",
+                origin_chat_turn_id=chat_turn_id, travel_tone=tone,
+            )
+        except ValueError as exc:
+            _reject(rejected, item, str(exc), "invalid_state", source)
+            continue
+        applied.append({
+            "entry_id": entry_id, "person_name": person, "tone": tone,
+        })
+    return SectionResult(applied=applied, rejected=rejected)
+
+
+def _dispatch_promises(
+    db: Any, state: Any, raw: object, *, night_id: int,
+    chat_turn_id: int, source: Provenance,
+    preexisting_pending_ids: set[int],
+) -> SectionResult:
+    from ming_sim.strict_types import strict_int
+
+    items, rejected = _section_items(raw, label="应允/拒绝/修改声明", source=source)
     applied: List[Any] = []
     for item in items:
         try:
@@ -1157,9 +2089,9 @@ def _dispatch_promises(
         except (TypeError, ValueError):
             action_id = 0
         decision = str(item.get("decision") or "").strip()
-        if action_id <= 0 or decision not in {"应允", "拒绝"}:
+        if action_id <= 0 or decision not in {"应允", "拒绝", "修改", "留中"}:
             _reject(
-                rejected, item, "应允/拒绝声明须含正 action_id 与 应允/拒绝",
+                rejected, item, "判词声明须含正 action_id 与 应允/拒绝/修改/留中",
                 "invalid_shape", source,
             )
             continue
@@ -1167,11 +2099,14 @@ def _dispatch_promises(
         # 另一夜，声明也不得应允/拒绝它——同样按「不存在实体」拒收（不静默
         # 误批，也不当真拒收物理删除他夜暂存）。
         row = db.conn.execute(
-            "SELECT night_id, kind, action, night_approved FROM pending_actions "
+            "SELECT night_id, kind, action, minister_name, night_approved, payload_json FROM pending_actions "
             "WHERE id=? AND turn=? AND status='pending'",
             (action_id, int(state.turn)),
         ).fetchone()
-        if row is None or int(row["night_id"] or 0) != int(night_id):
+        if (
+            row is None or action_id not in preexisting_pending_ids
+            or int(row["night_id"] or 0) != int(night_id)
+        ):
             _reject(
                 rejected, item, f"暂存动作不属本夜暂存清单：{action_id}",
                 "missing_ref", source,
@@ -1179,12 +2114,43 @@ def _dispatch_promises(
             continue
         kind = str(row["kind"] or "")
         action = str(row["action"] or "")
+        declared_mode = item.get("mode")
+        if declared_mode is not None and (
+            kind != "directive" or decision != "应允"
+            or not isinstance(declared_mode, str)
+            or declared_mode not in {"ordinary", "midzhi"}
+        ):
+            _reject(rejected, item, "应允模式仅可指定普通/中旨拟旨", "invalid_shape", source)
+            continue
         applied_row: Dict[str, Any] = {
             "action_id": action_id, "decision": decision, "kind": kind, "action": action,
         }
-        if decision == "应允":
-            # ADR 0038：密令应允即落地（夜内直写白名单）；任免/拟旨/后宫只标
-            # night_approved，收夜才提交。与旧 session.chat 确认缝同口径。
+        if decision == "留中":
+            if kind != "directive":
+                _reject(rejected, item, "仅拟旨候选可留中", "invalid_shape", source)
+                continue
+            db.hold_over_pending_actions(
+                int(state.turn), str(row["minister_name"]), [action_id],
+            )
+        elif decision == "修改":
+            new_content = item.get("new_content")
+            if (
+                kind != "secret_order" or action != "新建"
+                or not isinstance(new_content, str) or not new_content.strip()
+            ):
+                _reject(rejected, item, "只有新建密令可用非空 typed new_content 修改", "invalid_shape", source)
+                continue
+            payload = json.loads(row["payload_json"] or "{}")
+            if not isinstance(payload, dict):
+                raise ValueError("密令候选载荷损坏")
+            payload["content"] = new_content
+            db.conn.execute(
+                "UPDATE pending_actions SET payload_json=?, night_approved=0 WHERE id=?",
+                (json.dumps(payload, ensure_ascii=False), action_id),
+            )
+        elif decision == "应允":
+            # ADR 0038：密令应允即落地（夜内直写白名单）；任免/拟旨只标
+            # night_approved，收夜才提交。
             if kind == "secret_order":
                 from ming_sim.applier import (
                     RejectionCollector, mirror_rejections_after_commit,
@@ -1208,11 +2174,29 @@ def _dispatch_promises(
                         if oid_i > 0:
                             applied_row["secret_order_id"] = oid_i
                             break
-            elif int(row["night_approved"] or 0) == 1:
-                # 同版已应允：不再列入本轮 applied，夜间预推只在首次转换时起。
-                # 密令不走这里，回填仍读本轮落地行。
-                continue
             else:
+                changed = False
+                if kind == "directive" and declared_mode is not None:
+                    payload = json.loads(row["payload_json"] or "{}")
+                    if not isinstance(payload, dict):
+                        raise ValueError("拟旨候选载荷损坏")
+                    if payload.get("mode", "ordinary") != declared_mode:
+                        payload["mode"] = declared_mode
+                        if int(row["night_approved"] or 0):
+                            db._discard_pending_decree_forecast(action_id)
+                            db.conn.execute(
+                                "UPDATE pending_actions SET payload_json=?, version=version+1 WHERE id=?",
+                                (json.dumps(payload, ensure_ascii=False), action_id),
+                            )
+                        else:
+                            db.conn.execute(
+                                "UPDATE pending_actions SET payload_json=? WHERE id=?",
+                                (json.dumps(payload, ensure_ascii=False), action_id),
+                            )
+                        changed = True
+                if int(row["night_approved"] or 0) and not changed:
+                    # 同版重复应允不触发判官/推演（包含已耗尽的版本）。
+                    continue
                 db.mark_pending_night_approved(
                     [action_id], night_id=night_id or None,
                     source_chat_turn_id=chat_turn_id,
@@ -1373,9 +2357,8 @@ def _dispatch_public_sayings(
     source_turn_error: Optional[str] = None,
 ) -> SectionResult:
     """公开说法：R3 记录 + 进公开层。声明可带 `excluded_names`/`excluded_offices`
-    ——密令『瞒某人』这类显式排除黑名单随说法一起落进它自己的 source
-    （`public_saying:<id>`），一票否决压过公开层与职位桶（既有
-    `knowledge_row_visible_to` 读口，本节只补上一直缺失的写口，#1829/#1832）。
+    ——密令『瞒某人』排除名单与正文同落公开说法表（#1829 reopen），读口按
+    `public_saying:<id>` 一票否决压过公开层与职位桶。
 
     夜上下文源轮缺失/不属本夜时整项 missing_ref（第四类统一源轮校验）。
     """
@@ -1748,18 +2731,12 @@ def _dispatch_registrations(
     source_turn_error: Optional[str] = None,
 ) -> SectionResult:
     """入册：登记名册外人物进入本局可召见人物池。构档的唯一权威实现是
-    `ming_sim.session.register_unlisted_person_record`——`GameSession.
-    _apply_unlisted_person_registration`（召对场景 LLM 工具触发）与本函数
-    共用它，查重规则、落库都不在两处各写一份。「登记之后随手把他召上殿」是
-    召对专属的 UI 便利动作，留给召对侧自己决定要不要做；入册本身与是否立刻
-    传召是两件事，本分派器只管前者。
+    `ming_sim.session.register_unlisted_person_record`；本分派器只管入册。
 
     夜上下文源轮缺失/不属本夜时整项 missing_ref（第四类统一源轮校验）。
 
     `style`（人物材料上的可感文字）原样取声明自带的值、零删改地传给共享写核，
-    不合成任何占位文案（P7）——声明没给就留空。`_apply_unlisted_person_registration`
-    那条历史工具路径按 source 归一的是 `loyalty`/`source_label`，不是
-    `style`（见 `register_unlisted_person_record`）。
+    不合成任何占位文案（P7）——声明没给就留空。
 
     typed 任所（`region_id` / `任所` / `office_region`）原样传给共享写核，不从
     官名或 location 推断。地方/督抚/边镇缺 seat 或未知 region 时，

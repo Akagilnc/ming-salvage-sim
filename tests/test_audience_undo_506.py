@@ -9,6 +9,7 @@
 """
 
 from __future__ import annotations
+from tests.conftest import open_hall_turn
 
 import json
 from typing import Callable, Dict, Mapping, Optional
@@ -51,7 +52,7 @@ def _run_round(
     `declaration` 若给出则经现役转译入口落账；否则只推进空轮水位。
     """
     before = db.capture_chat_rollback_snapshot()
-    night_id, chat_id = an.attach_chat_turn_to_night(db, state, minister)
+    night_id, chat_id = open_hall_turn(db, state, minister)
     uid = db.conn.execute(
         "INSERT INTO chat_messages (minister_name, turn, role, content) "
         "VALUES (?, ?, 'emperor', ?)",
@@ -179,26 +180,22 @@ def test_audit_passes_whitelisted_and_catches_unwhitelisted_night_write(game):
     assert "密令落地" in an.audit_night_direct_writes(db, legal_night)
     an.close_night(db, state, night_id=legal_night)
 
-    # 越权夜：夜内直写 consort_traits（真实盘面、非白名单——本应走待确认暂存）→ 审计咬住
-    # （factions 已随 #1839 第四类并入人物状态副作用，不再作越权哨兵。）
+    # 越权夜：不经结算直写案卷月度进展，仍须被审计咬住。
     def _rogue_direct_write(night_id: int, chat_id: int) -> None:
-        row = db.conn.execute("SELECT name FROM consort_traits LIMIT 1").fetchone()
-        if row is None:
-            db.conn.execute(
-                "INSERT INTO consort_traits (name, extra_skills, extra_traits, updated_turn) "
-                "VALUES ('审计越权探针妃', '越权', '', 0)"
-            )
-        else:
-            db.conn.execute(
-                "UPDATE consort_traits SET extra_skills = extra_skills || 'x' WHERE name = ?",
-                (str(row["name"]),),
-            )
+        dossier = db.conn.execute("SELECT id FROM decree_dossiers LIMIT 1").fetchone()
+        assert dossier is not None
+        db.conn.execute(
+            "INSERT INTO dossier_reported_progress "
+            "(dossier_id, turn, progress_band, memorial_text, origin) "
+            "VALUES (?, ?, '进行中', '越权记录', 'night')",
+            (int(dossier["id"]), int(state.turn)),
+        )
         db.conn.commit()
     rogue_night, _ = _run_round(db, state, m, writes=_rogue_direct_write)
     with pytest.raises(AudienceNightError) as ei:
         an.audit_night_direct_writes(db, rogue_night)
     assert ei.value.code == "unwhitelisted_night_write"
-    assert "consort_traits" in ei.value.detail.get("tables", [])
+    assert "dossier_reported_progress" in ei.value.detail.get("tables", [])
 
 
 # ── AC4：撤回删除该轮新入册人物——档案+入殿账一并消失，像没登场过 ────────────────
@@ -280,17 +277,23 @@ def test_undo_pending_translation_leaves_no_orphan_retry(game):
     # 注意 _run_round 无 facts 分支会把水位推到 done——此处显式改回 pending 建待补态
     db.conn.execute("UPDATE chat_turns SET extract_status = 'pending' WHERE id = ?", (chat_id,))
     db.conn.commit()
-    assert db.count_pending_story_extractions(night_id=night_id) == 1
+
+    assert len(db.list_unextracted_replies(night_id=night_id)) == 1
+
 
     db.undo_chat_turn(chat_id)
 
     # 撤回后：该轮不再是待补重试真源（无孤儿重试入口），补跑不复活该轮账
-    assert db.count_pending_story_extractions(night_id=night_id) == 0
+
+    assert len(db.list_unextracted_replies(night_id=night_id)) == 0
+
     assert db.list_unextracted_replies(night_id=night_id) == []
     # kill+重开后仍无重试入口（撤销持久）
     db2 = _reopen(db, content)
     try:
-        assert db2.count_pending_story_extractions(night_id=night_id) == 0
+
+        assert len(db2.list_unextracted_replies(night_id=night_id)) == 0
+
     finally:
         db2.close()
 
@@ -514,7 +517,7 @@ def test_attach_origin_bind_atomic_no_orphan_enter_on_midway_crash(game):
     db.create_chat_turn = _boom
     try:
         with pytest.raises(RuntimeError):
-            an.attach_chat_turn_to_night(db, state, m)
+            open_hall_turn(db, state, m)
     finally:
         db.create_chat_turn = orig_create
 
@@ -576,7 +579,7 @@ def test_undo_erases_inactive_office_summon_origin_bound_to_chat_turn(game):
     """#672：ensure inactive office origin 绑 chat-turn；undo 按 typed source 清。"""
     db, state, content = game
     m = _active_minister(db, content)
-    night = an.open_night(db, state, empty_scaffold=True)
+    night = an.open_night(db, state)
     night_id = int(night["id"])
 
     def _writes(_nid: int, chat_id: int) -> None:
@@ -609,7 +612,7 @@ def test_reject_pending_discards_inactive_office_summon_origin(game):
     """#672：确认拒绝只清仍 inactive 的 office:<pending_id> origin。"""
     db, state, content = game
     m = _active_minister(db, content)
-    night = an.open_night(db, state, empty_scaffold=True)
+    night = an.open_night(db, state)
     pending_id = db.stage_pending_action(
         int(state.turn), "office", "任命", m,
         {"text": "测试任免原文", "name": "袁崇焕", "office": "辽东巡抚", "summon_after": "是"},

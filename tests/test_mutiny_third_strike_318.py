@@ -11,7 +11,6 @@ import pytest
 
 from ming_sim.db import GameDB
 from ming_sim.flows import apply_fixed_period_flows, derive_army_mutiny_state
-from ming_sim.simulation import build_simulator_payload
 
 ARMY = "guanning"
 PATHS = ("legacy", "substrate_hub")
@@ -418,51 +417,6 @@ def test_transfer_to_ming_requires_d6_pay_source(game, cutover):
     assert float(row["central_pay_share"] or 0) == pytest.approx(1.0)
 
 
-def test_simulator_payload_derives_zero_combat_from_mutiny_latch(game):
-    db, state, _ = game
-    _configure(db, "legacy")
-    _set(db, "legacy", loyalty=10, arrears=5, latched=1, mutiny_count=1)
-
-    payload = build_simulator_payload(state, db, decree_text="", previous_narrative="")
-    by_name = _find_simulator_army(_simulator_army_dicts(payload["armies"]))
-    assert by_name.get("zero_combat") is True
-    assert "is_mutinied" not in by_name  # 机读派生 flag，不抛裸 latch 列
-    # 非闩军
-    db.conn.execute(
-        "UPDATE armies SET is_mutinied=0, loyalty=80 WHERE id=?", (ARMY,)
-    )
-    db.conn.commit()
-    payload2 = build_simulator_payload(state, db, decree_text="", previous_narrative="")
-    by_name2 = _find_simulator_army(_simulator_army_dicts(payload2["armies"]))
-    assert by_name2.get("zero_combat") is False
-
-
-@pytest.mark.parametrize(
-    "morale,loyalty,latched,expect_zero",
-    (
-        (90, 15, 1, True),   # 高 morale / 低 loyalty + latch → zero_combat
-        (10, 85, 0, False),  # 低 morale / 高 loyalty 未闩 → 可战
-    ),
-    ids=("high_morale_low_loyalty_latched", "low_morale_high_loyalty_clear"),
-)
-def test_simulator_zero_combat_cross_morale_loyalty_axes(
-    game, morale, loyalty, latched, expect_zero
-):
-    """#321：机器面仍 raw morale/loyalty + zero_combat；双轴交叉不翻 ABI。"""
-    db, state, _ = game
-    _configure(db, "legacy")
-    _set(db, "legacy", loyalty=loyalty, arrears=5 if latched else 0, latched=latched)
-    db.conn.execute("UPDATE armies SET morale=? WHERE id=?", (morale, ARMY))
-    db.conn.commit()
-
-    payload = build_simulator_payload(state, db, decree_text="", previous_narrative="")
-    army = _find_simulator_army(_simulator_army_dicts(payload["armies"]))
-    assert int(army["morale"]) == morale
-    assert int(army["loyalty"]) == loyalty
-    assert army.get("zero_combat") is expect_zero
-    assert "is_mutinied" not in army
-    assert "mutiny_tier" not in army
-    assert "morale_text" not in army
 
 
 @pytest.mark.parametrize("fiscal_path", PATHS)

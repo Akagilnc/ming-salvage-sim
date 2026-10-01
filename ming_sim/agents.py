@@ -33,7 +33,7 @@ from ming_sim.llm_transport import (
     run_with_transport,
     transport_failure_unavailable,
 )
-from ming_sim.models import GameState, LLMConfig, reign_period_label
+from ming_sim.models import GameState, LLMConfig
 from ming_sim.token_stats import record_stream_metrics, tlog
 
 _content: Optional[GameContent] = None
@@ -629,6 +629,11 @@ def create_promulgation_judge_agent(
             "命门类可打回并置 midzhi_unpromulgatable=true，普通中旨无前科时从严但不得机械地"
             "一概打回；有 promulgation_history 批红强颁前科时与无前科差分，优先打回。",
             "顺颁不得虚构卡点。只输出 JSON，不写解释。",
+            "action_type=revoke_decree 的案卷是撤回一道已发旨：其 revoke_target "
+            "给出那道原旨的正文、已投入（paid）、实际办理进度（progress）与"
+            "参与者。撤令与别的旨一样本月由外廷反应：你可以准行，也可以劝回、"
+            "或以拖延（打回/留中）不使其生效——按原旨办到几分、已花掉多少、"
+            "谁在承办自行判断，代码不预设你必须准行。",
         ],
     )
 
@@ -642,43 +647,6 @@ def create_decree_writer_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agen
         id="decree-writer",
         model=create_chat_model(llm_config, temperature=0.3, top_p=0.9),
         instructions=[_ctx().game_world_prompt, _ctx().decree_writer_prompt],
-        add_history_to_context=False,
-        markdown=False,
-    )
-
-
-def create_arrival_attendant_agent(llm_config: LLMConfig) -> Agent:
-    """#671：抵京候见独立报到声部（王承恩 one-shot；勿复用夜卷）。"""
-    return Agent(
-        name="王承恩抵京报到",
-        id="arrival-attendant",
-        model=create_chat_model(llm_config, temperature=0.4),
-        instructions=[
-            "你是王承恩——御前老太监。用户给出本月新抵京、尚在候旨的结构化名单"
-            "（年月、人名、地点、候旨状态）。你据此向皇爷低声递话。",
-            "名单每行只代表一位来人；据该行连续通报此人本月抵京、现正候旨、仍尚未宣入，自由措辞。",
-            "同月多人逐人点到，以递话正文作答。",
-        ],
-        add_history_to_context=False,
-        markdown=False,
-    )
-
-
-def create_settlement_attendant_agent(llm_config: LLMConfig) -> Agent:
-    """#1745 / 0150-D5-b：结算拒收递话声部（王承恩 one-shot；与抵京报到并列，不复用）。
-
-    代码只供结构化拒收事实；措辞由本 agent 据实编织，代码不写戏内句。
-    """
-    return Agent(
-        name="王承恩结算拒收递话",
-        id="settlement-attendant",
-        model=create_chat_model(llm_config, temperature=0.4),
-        instructions=[
-            "你是王承恩——御前老太监。用户给出本回合有司录档、尚未得行的结构化拒收事实"
-            "（年月、section、category、reason）。你据此向皇爷低声递话。",
-            "只据事实包自由措辞，不复述技术字段名，不编造未给出的细节。",
-            "有事实才开口；以递话正文作答。",
-        ],
         add_history_to_context=False,
         markdown=False,
     )
@@ -703,167 +671,33 @@ def create_highlight_judge_agent(llm_config: LLMConfig) -> Agent:
 
 
 
-def create_endorsement_extractor_agent(llm_config: LLMConfig) -> Agent:
-    """收夜 endorsement-only 抽取员（#612 / ADR 0070）：只绑定已说出口的担名，不写故事账。"""
-    return Agent(
-        name="召对背书绑定员",
-        id="endorsement_extractor",
-        model=create_chat_model(llm_config, temperature=0.1),
-        instructions=[
-            "你只做一件事：把本夜对话里已经说出口的会签、当面站台、御笔手敕，"
-            "绑定到输入给出的可背书案卷。只输出引用绑定，不重写、不复制故事正文。",
-            "只输出 JSON，形如 "
-            '{"endorsements":[{"dossier_id":1,"form":"会签","endorser_id":"毕自严",'
-            '"imperial":false,"source_chat_turn_id":42}]}。',
-            "字段：输入「可背书案卷」以 ref.dossier_id 标识案卷；输出必须用扁平 dossier_id"
-            "（取值自对应 ref.dossier_id），不得输出 dossier_ref；"
-            "form ∈ {会签,当面站台,御笔手敕}；"
-            "会签/当面站台须具名 endorser_id 且 imperial=false；"
-            "御笔手敕须 endorser_id 空串且 imperial=true；"
-            "source_chat_turn_id 必须是输入 surviving_source_turns 中的 id。",
-            "没说出口则不要编造；禁字段：不得输出 facts/body/presence_effect/"
-            "audibility/tags/person_names/dossier_ref。"
-            "无背书时输出 {\"endorsements\":[]}。不输出 JSON 以外任何文字。",
-        ],
-        add_history_to_context=False,
-        markdown=False,
-    )
 
+def create_decree_forecast_agent(llm_config: LLMConfig, prepared: Any) -> Agent:
+    """逐旨预推：与世界段同一材料目录读法，本旨事实由调用消息携带。"""
+    from ming_sim.materials import material_tools
 
-def _is_cols_rows_table(v: object) -> bool:
-    """判断某字段是否 {cols,rows} 二维表（可转 TSV）。"""
-    return isinstance(v, dict) and set(v.keys()) == {"cols", "rows"}
-
-
-def _table_to_tsv(name: str, table: Dict[str, object]) -> str:
-    """{cols,rows} → 真 TSV 文本块（tab 分隔、换行分行）。
-
-    放在 json.dumps 之外，避免 \\t/\\n 被 JSON 转义吃掉压缩收益（实测比 dict-of-rows -25%、
-    比转义后塞进 JSON 再 -10%）。空表只吐表头行（空）。None → 空串。
-    """
-    cols = [str(c) for c in (table.get("cols") or [])]
-    rows = table.get("rows") or []
-    lines = ["\t".join(cols)]
-    for r in rows:  # type: ignore[assignment]
-        lines.append("\t".join("" if v is None else str(v) for v in r))
-    return f"## {name}（TSV，首行列名，tab 分隔）\n" + "\n".join(lines)
-
-
-def build_simulator_context(simulator_payload: Optional[Dict[str, object]]) -> str:
-    """拼 simulator/extractor 共用的盘面前缀段（turn_header + 盘面 TSV 块 + 其余 JSON）。
-
-    缓存关键：simulator 与 extractor 的 system instructions 前缀都是
-    `[game_world, simulator_context, ...]`。本函数对二者吐出**字节级一致**的 simulator_context，
-    simulator 先跑就把 `game_world + simulator_context` 写进 DeepSeek 前缀缓存，extractor
-    再命中。turn_header 文案、取值路径(统一从 payload['turn'])、序列化参数三者两边同源。
-
-    BUG 修复：历史上 simulator 用 state 路径+文案「邸报抬头与正文涉及年月」，extractor 用
-    payload['turn']+文案「抽取涉及年月」→ 第一个字节就分叉 → extractor 整段 payload 全 miss。
-    实测统一后结算 token -14.7%。
-
-    TSV 优化：`{cols,rows}` 二维表（regions/armies/buildings/court_roster/powers_brief）转**真
-    TSV 文本块**（json.dumps 之外，免转义），按「变化最小→最易变」排序——建筑/人物在前，军队/
-    地区其次，诏书/记忆/issue 等高频变化字段连同非表字段走尾部 JSON。其余字段（含 factions_brief/
-    classes_brief 叙述串、issues/memories 等）维持 JSON。实测表类 -25% token。
-    """
-    payload = simulator_payload or {}
-    turn_header = ""
-    # build_simulator_payload 恒带 turn；缺 label 时只走 reign_period_label()，禁西历字面抬头。
-    if isinstance(payload.get("turn"), dict):
-        t = payload["turn"]
-        label = t.get("reign_period_label")
-        if not label:
-            y, p = t.get("year"), t.get("period")
-            if y is not None and p is not None:
-                try:
-                    label = reign_period_label(int(y), int(p))
-                except (TypeError, ValueError):
-                    label = ""
-            else:
-                label = ""
-        if label:
-            turn_header = (
-                f"【本回合年月】{label}（第 {t.get('turn')} 回合）。"
-                f"涉及年月时以此为准。\n"
-            )
-
-    # 盘面表（{cols,rows}）转 TSV，按「稳→变」排序置前；缺失/非表的跳过。
-    table_order = ("buildings", "court_roster", "armies", "regions")
-    tsv_blocks: List[str] = []
-    consumed: set[str] = set()
-    for name in table_order:
-        v = payload.get(name)
-        if _is_cols_rows_table(v):
-            tsv_blocks.append(_table_to_tsv(name, v))  # type: ignore[arg-type]
-            consumed.add(name)
-    # table_order 未列到、但仍是 {cols,rows} 的表也转 TSV（防新增表字段漏压缩），稳定排序。
-    for name in sorted(k for k in payload if k not in consumed and _is_cols_rows_table(payload.get(k))):
-        tsv_blocks.append(_table_to_tsv(name, payload[name]))  # type: ignore[arg-type]
-        consumed.add(name)
-
-    rest = {k: v for k, v in payload.items() if k not in consumed}
-    parts = [turn_header + "【本回合推演输入 simulator_payload】"]
-    parts.extend(tsv_blocks)
-    parts.append("## 其余字段（JSON）\n" + json.dumps(rest, ensure_ascii=False, sort_keys=False))
-    return "\n".join(parts)
-
-
-def create_season_simulator_agent(
-    llm_config: LLMConfig,
-    agno_db: SqliteDb,
-    state: Optional[GameState] = None,
-    db: Optional[object] = None,
-    simulator_payload: Optional[Dict[str, object]] = None,
-) -> Agent:
-    """月末推演日讲官。全量盘面走 user payload，无 tool。
-    走 advanced 角色派生：若 advanced_model 已配，用更强模型；否则 fallback 主 model。
-    一次性 agent：不传 db，免得 runs 累积撑爆 <db>.emperor.db。"""
-    del db, state, agno_db
-    cfg = _llm_for_role(llm_config, "simulator")
-    tlog(f"[simulator] 使用模型 {describe_effective_model(cfg)}")
-    # simulator_context 与 extractor 共用 build_simulator_context → 字节一致 → 暖好 extractor 前缀缓存。
-    simulator_context = build_simulator_context(simulator_payload)
-    from ming_sim.action_clusters import season_option_contract_prompt
-    instructions = [
-        _ctx().game_world_prompt,
-        simulator_context,
-        _ctx().season_simulator_prompt,
-        season_option_contract_prompt("grant_allocation"),
-    ]
-    if is_minimax_base_url(cfg.base_url):
-        instructions.insert(0, _MINIMAX_SHORT_THINKING_PROMPT)
-
-    return Agent(
-        name="月末推演日讲官",
-        id="season-simulator",
-        model=create_chat_model(cfg, temperature=0.9, top_p=0.95, enable_thinking=True),
-        instructions=instructions,
-        add_history_to_context=False,
-        markdown=False,
-    )
-
-
-def create_decree_forecast_agent(
-    llm_config: LLMConfig,
-    simulator_payload: Dict[str, object],
-) -> Agent:
-    """逐旨夜里预推；复用 simulator 模型与盘面投影，不跑月度邸报契约。"""
     cfg = _llm_for_role(llm_config, "simulator")
     tlog(f"[decree-forecast] 使用模型 {describe_effective_model(cfg)}")
+    model = create_chat_model(cfg, temperature=0.9, top_p=0.95, enable_thinking=True)
+    root = getattr(prepared, "root", "")
+    if hasattr(model, "materials_dir"):
+        model.materials_dir = str(root or "")
     instructions = [
         _ctx().game_world_prompt,
-        build_simulator_context(simulator_payload),
         "只推演本次输入中这一道旨在当前盘面上的可能后果。",
         "这是夜里预推，不推演月度世界事件，也不生成月末邸报。",
         "若推演需要皇帝裁决，请在问处给出标准 DECISION 结构并停在问处；问后内容不属于本段。",
+        "开场只有最小集。其余材料在当前目录，按需自读。",
+        str(getattr(prepared, "opening", "") or ""),
     ]
     if is_minimax_base_url(cfg.base_url):
         instructions.insert(0, _MINIMAX_SHORT_THINKING_PROMPT)
     return Agent(
         name="逐旨预推者",
         id="decree-forecast",
-        model=create_chat_model(cfg, temperature=0.9, top_p=0.95, enable_thinking=True),
+        model=model,
         instructions=instructions,
+        tools=material_tools(root),
         add_history_to_context=False,
         markdown=False,
     )
@@ -890,6 +724,11 @@ def create_world_segment_agent(llm_config: LLMConfig, prepared: Any) -> Agent:
         "本段只写推演结果。",
         "若需要皇帝裁决，请在问处给出标准 DECISION 结构并停在问处；问后内容不属于本段。",
         "开场只有最小集。其余材料在当前目录，按需自读。",
+        # #1893：候选事实在世界目录里（盘面/候选事件与弹劾潮.txt），本段自读、
+        # 自行判定本月哪些真发生、哪个派系是否发难；不选的照实不写。
+        "本段自行取阅本月候选的人物事件与弹劾潮（盘面/候选事件与弹劾潮.txt），"
+        "按盘面与史实成因判断哪些本月真的发生、是否有人借机发难；"
+        "确实发生的写进本段正文，不选中的不必提及。",
         str(getattr(prepared, "opening", "") or ""),
     ]
     if is_minimax_base_url(cfg.base_url):
@@ -919,7 +758,7 @@ def create_gazette_author_agent(llm_config: LLMConfig, prepared: Any) -> Agent:
         model.materials_dir = str(root or "")
     instructions = [
         _ctx().game_world_prompt,
-        _ctx().season_simulator_prompt,
+        _ctx().gazette_author_prompt,
         "你写本期邸报。盘面与历月材料沿当前目录，按需自读。",
         "用 json 返回两个字段：title 是你为本期写的标题，report 是呈皇帝的全文。",
         str(getattr(prepared, "opening", "") or ""),
@@ -1048,7 +887,7 @@ def create_rescript_deliberate_agent(llm_config: LLMConfig, agno_db: SqliteDb) -
 
 
 def create_ending_summary_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agent:
-    """国史编纂官：读所给历月邸报与时间线，生成史评式结局总结（纯文本）。一次性，不持久化。"""
+    """国史编纂官：读所给历月邸报，生成史评式结局总结（纯文本）。一次性，不持久化。"""
     del agno_db
     ctx = _ctx()
     return Agent(
@@ -1111,7 +950,12 @@ def create_relation_brew_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agen
 
 
 def create_secret_order_supply_agent(llm_config: LLMConfig, prepared: Any = None) -> Agent:
-    """整月密令供料推演者（步骤 4a）：为合资格长差案卷产出密奏，为在办密令产出执行态。"""
+    """整月密令供料推演者（步骤 4a）：为合资格长差案卷产出密奏，为在办密令产出执行态。
+
+    #1896：查案密令不再用"执行态档位"折进度，改由模型按其所读材料声明本月**实际投入**
+    与**所查事实**；被查者经关系网知情后的毁证选择也在同一次 run 内按其视角声明。
+    引擎只据声明核算累计投入与逐证难度（P6：呈现层零改字，此处只改输入）。
+    """
     from ming_sim.materials import material_tools
 
     cfg = _llm_for_role(llm_config, "simulator")
@@ -1126,17 +970,44 @@ def create_secret_order_supply_agent(llm_config: LLMConfig, prepared: Any = None
         _ctx().game_world_prompt,
         "你是整月密令供料推演者（步骤 4a）。",
         "根据本月事实材料（名义声明、实入流水、拒收、预推文、世界段、请旨答复、盘面）"
-        "及合资格长差案卷、在办密令，自行据实判断办理与拒收，产出密奏和执行态声明。"
+        "及合资格长差案卷、在办密令，自行据实判断办理与拒收，产出密奏和执行态声明。",
         "不得把未落或被拒收的意向当成已生效事实。盘面与文字事实可按需自读当前目录。",
         "必须返回 JSON 对象，包含两个字段：",
         "1. `dossier_progress_reports`: 列表，每个合资格长差案卷一条。每项包含：",
         "   - dossier_id: 整数，对应 eligible_dossiers 中的 dossier_id",
         "   - progress_band: 字符串，进展评级（如'顺利'、'持平'、'受阻'等）",
         "   - memorial_text: 字符串，承办人呈报皇帝的本月密奏正文，不可为空",
+        "   - origin: 承办人在这条密奏里自己选择的行动。睁眼闭眼写 same_faction_blind，"
+        "带私货写 private_goods；两样都选则用 + 连在一起。只写他这一次选出的记号",
         "2. `covert_exec_selections`: 列表，每个在办密令一条。每项包含：",
         "   - order_id: 整数，对应 active_secret_orders 中的 id",
         "   - fidelity: 字符串，执行态，必须为 '忠实'、'打折'、'阳奉阴违'、'反噬' 之一",
         "   - note: 字符串，执行态备注",
+        "查案密令（active_secret_orders 里带 investigation_facts 的那些）改用下列字段"
+        "表态，不要用 fidelity 折算查案进度。effort 必填：敷衍或停办写 0，"
+        "缺这一项不算数——那是没有声明，不是零投入：",
+        "   - effort: 0 到 1 之间的数字，表示你这个月**下了多大劲**去查："
+        "敷衍或停办给 0，真下功夫深挖给 1，取中间的按实情给。这是你的心意，"
+        "不是你办成了多少——引擎会按你手上实情（能力、人在不在差上、别的差务"
+        "压着多少）核出本月实投，并逐月累计。一条罪证要查多久是引擎的账，"
+        "不是你说了算；你本月真下死力，引擎也不拦着当月查出来。",
+        "   - fact_key: 字符串，本月实际下手的罪证标识，取自 investigation_facts。"
+        "只填你真正去查的那条；本月无从下手则省略此字段（引擎不会替你挑一条）。",
+        "   - method: 字符串，你本月用的查法。",
+        "   - tip_off: 对象，仅在你**确有一条消息经关系网递到了被查者手里**时给出："
+        "{source: 递话给他的人}。开案本身他不会知道——须真有人把话递到才算知情；"
+        "没有这条声明，引擎不认他知情，后续毁证与压案声明都不会被承接。",
+        "   - spoliation: 对象，仅在被查者已经知情、且你（按其视角）决定毁证时给出："
+        "{effect: 'harder' 或 'gone', fact_key: 被毁的那条罪证标识}。毁证只作用于"
+        "所指的那一条罪证，不牵连其他；是否毁、毁到何种程度由你按人物决定。",
+        "   - suppression: 对象，仅在被查者已经知情、且你决定压案（行贿说项之类）时"
+        "给出：{form: 他怎么压的}。压不压得住不由你填表决定，写下他做了什么即可。",
+        "   - note: 字符串，密奏正文。奏报写得好听与否与上面声明的实际投入无关。",
+        "active_secret_orders 里每位人物的 investigator_identity_materials / "
+        "investigation_target_identity_materials 的 materials_path 指向本人可及材料索引；"
+        "正文按人物经历、公事档案、事务与公开材料分列在该索引所在子目录，"
+        "先列该子目录取得相对调用根目录的路径，再按需读文件；"
+        "按各自身份演绎，同场不等于谁都知道对方的底细。",
         str(getattr(prepared, "opening", "") or ""),
     ]
     if is_minimax_base_url(cfg.base_url):

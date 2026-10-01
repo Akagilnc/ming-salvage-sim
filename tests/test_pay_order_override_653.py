@@ -517,36 +517,48 @@ def test_turn_region_summary_claim_audit_rows_do_not_consume_limit(game):
     assert not any(row["reason"] in summary for row in claim_rows)
 
 
-def test_deferred_real_revoke_restores_override_only_after_persist(game):
-    from ming_sim.breach_plea import decode_plea_meta, finalize_persist
+def test_real_revoke_restores_override_same_month_with_active_commitment(game):
+    """#1894：目标挂 active 承诺时撤旨当月即恢复 override，不再等下一场挽留坚持。
 
-    db, state, _content = game
+    偿还序案卷无判定面：顺颁即 closed，但 override 键仍在 fiscal_config 在位。
+    「已结案」不等于「实效已退」——这道旨仍须能从**召对撤令入口**撤销，
+    走完暂存 → 成案 → 颁布判决的整条真实链，不直接调数据库写口。
+    """
+    from ming_sim.declaration_dispatch import dispatch_declaration
+
+    db, state, content = game
     until = db._current_settle_turn() + 3
     target = _override_dossier(db, state, [{
         "key": "due_priority_军饷@shaanxi", "value": 40, "until_turn": until,
     }])
     db.apply_dossier_promulgation(state, target, "promulgated")
+    assert db.get_decree_dossier(target)["status"] == "closed"
+    assert "due_priority_军饷@shaanxi" in db.get_fiscal_config()
     issue_id = db.insert_issue(
         state, kind="initiative", title="边饷次序之诺", origin_kind="decree",
         origin_ref=f"dossier:{target}", cancellable="decree",
         commitment_kind="until_stop", bar_value=10, stage_text="在办",
         ongoing_effects={}, end_turn=state.turn + 12,
     )
-    revoke = db.create_decree_dossier(
-        state, action_type="revoke_decree", decree_text="撤回前旨",
-        target_kind="issue", target_id=str(issue_id),
-        payload={"revoke_target_issue_id": issue_id, "revoke_target_dossier_id": target},
+
+    # 召对真入口：撤令经既有准入暂存（closed 但在位的偿还序旨须被准入）
+    staged = dispatch_declaration(
+        db, state,
+        {"commissions": [{
+            "text": "撤回前旨",
+            "revoke": {"target_kind": "issue", "target_id": str(issue_id)},
+        }]},
+        minister_name="",
     )
+    assert not staged.commissions.rejected, staged.commissions.rejected
+    pending = int(staged.commissions.applied[0]["id"])
+    db.commit_pending_actions(state, content=content)
+    revoke = int(db.conn.execute(
+        "SELECT id FROM decree_dossiers WHERE pending_action_id=?", (pending,),
+    ).fetchone()["id"])
     db.apply_dossier_promulgation(state, revoke, "promulgated")
-    cfg = db.get_fiscal_config()
-    assert cfg["due_priority_军饷@shaanxi"] == 40
-    assert cfg["due_priority_军饷@shaanxi_until_turn"] == until
-    todo = next(
-        todo for todo in db.list_next_audience_todos(status="pending")
-        if decode_plea_meta(todo.get("origin_context")).get("revoke_dossier_id") == revoke
-    )
-    result = finalize_persist(db, state, todo, commit=True)
-    assert result["decision"] == "persist"
+
+    # 颁布当月即恢复 override，撤令无「先等一次挽留」的前置
     cfg = db.get_fiscal_config()
     assert "due_priority_军饷@shaanxi" not in cfg
     assert "due_priority_军饷@shaanxi_until_turn" not in cfg
@@ -1069,20 +1081,6 @@ def test_fiscal_fact_brief_bad_json_fails_loud(game):
         build_fiscal_fact_brief(db)
 
 
-def test_simulator_payload_accepts_recaptured_region_without_settle(game):
-    """真实 payload：收复/legacy 明控省缺基座时合法出列，不阻断月末推演。"""
-    from ming_sim.simulation import build_simulator_payload
-
-    db, state, _content = game
-    db.conn.execute(
-        "UPDATE regions SET controlled_by='ming', fiscal='{}' WHERE id='taiwan'"
-    )
-    payload = build_simulator_payload(state, db, "", "")
-    assert isinstance(payload["fiscal_fact_brief"], list)
-    assert not any(
-        e["subject_kind"] == "region" and e["subject_id"] == "taiwan"
-        for e in payload["fiscal_fact_brief"]
-    )
 
 
 def test_fiscal_fact_brief_haircut_and_relief_facts(game):
@@ -1119,24 +1117,8 @@ def test_fiscal_fact_brief_haircut_and_relief_facts(game):
 
 # ═══════════════ F3 LLM 综合归因边界 ═══════════════
 
-def test_class_delta_stays_on_internal_slot():
-    """class_delta 仍由 internal 槽独占；五模块 extractor 扇出已退役。"""
-    from ming_sim import simulation
-    from ming_sim.simulation import MODULE_FIELDS
-    assert not hasattr(simulation, "EXTRACTION_MODULES")
-    assert "class_delta" in MODULE_FIELDS["internal"]
-    assert sum("class_delta" in fields for fields in MODULE_FIELDS.values()) == 1
 
 
-def test_simulator_payload_contains_fiscal_fact_brief(game):
-    """F3 三断言之③：simulator payload 含 fiscal_fact_brief（输入侧特征包）。"""
-    from ming_sim.simulation import build_simulator_payload
-
-    db, state, _content = game
-    payload = build_simulator_payload(state, db, "", "")
-    brief = payload["fiscal_fact_brief"]
-    assert isinstance(brief, list)
-    assert brief == build_fiscal_fact_brief(db)
 
 
 def test_apply_score_extraction_accepts_llm_direction_with_fiscal_loss(game):
@@ -1605,7 +1587,7 @@ def test_fact_brief_long_term_stock_not_fed_as_turn_damage(game):
     assert not [e for e in entries if e["affected_class"] == "宗藩"]
 
 
-# ═══════════════ 真实玩家生产入口 E2E（capture→成案→pre_settle/settle_with_delta）═══
+# ═══════════════ 拟旨 capture→成案（财政物化与下一次省 tick 分别由上方领域用例覆盖）═══
 
 def _pin_shortfall_board(db, region_id):
     """省内池不足盘面钉死（拨付gross=0 → hub 京运补 due=0，p 原样进 tick）：
@@ -1673,130 +1655,12 @@ def _capture_override_decree(game, monkeypatch, text, entries):
     return int(dossier["id"])
 
 
-def test_lifecycle_e2e_capture_to_next_settlement_via_settle_with_delta(game, monkeypatch):
-    """顺颁全链 E2E：拟旨 capture→草案→成案 staging→settle_with_delta 判决→结算尾段
-    atomic 物化（本月已按旧序完成＝不追溯）→下一次真实 pre_settle 结算读取新序。
-    陕西/河南同盘面对照：旨域外省份逐字节照旧（回归不破）。"""
-    from ming_sim.decree import pre_settle, settle_with_delta
-
-    db, state, content = game
-    _pin_shortfall_board(db, "shaanxi")
-    _pin_shortfall_board(db, "henan")
-    opening = {
-        rid: _opening_settle(db, rid) for rid in ("shaanxi", "henan")
-    }
-    did = _capture_override_decree(game, monkeypatch, "今岁边饷居末、官俸优先", [
-        {"key": "due_priority_军饷@shaanxi", "value": 40},
-        {"key": "due_priority_官俸@shaanxi", "value": 10},
-    ])
-    # 判决前零物化（案卷 staging 只验形、不写 config——禁旁路第二真源）
+def test_manual_override_capture_stages_without_premature_materialization(game, monkeypatch):
+    db, _state, _content = game
+    entries = [{"key": "due_priority_军饷@shaanxi", "value": 40}]
+    did = _capture_override_decree(game, monkeypatch, "今岁边饷居末", entries)
+    assert db.get_decree_dossier(did)["status"] == "proposed"
     assert "due_priority_军饷@shaanxi" not in db.get_fiscal_config()
-
-    # 月 T：真实两括号编排（pre_settle 固定财政 + settle_with_delta 判决尾段物化）。
-    # 饷率通道（apply_historical_fiscal_rates）在 tick 前重写 p 的三饷/起运并持久化，
-    # 故纯函数期望用 pre_settle 后持久化的 p_eff（即 tick 实际消费的同份 p）。
-    pre_settle(state, db, content=content)
-    settle_with_delta(
-        state, db, {}, before_turn=state.turn, content=content,
-        dossier_verdicts=[{"dossier_id": did, "decision": "promulgated"}],
-    )
-    cfg = db.get_fiscal_config()
-    assert cfg["due_priority_军饷@shaanxi"] == 40
-    assert cfg["due_priority_官俸@shaanxi"] == 10
-    row = db.conn.execute(
-        "SELECT origin_ref FROM fiscal_config_changes "
-        "WHERE key='due_priority_军饷@shaanxi' ORDER BY id LIMIT 1"
-    ).fetchone()
-    assert row["origin_ref"] == f"dossier:{did}"
-    assert db.get_decree_dossier(did)["status"] == "closed"  # 颁布即终局
-
-    # 月 T 本月已按旧序完成：陕西月末态＝无旨纯函数基线（当月不追溯）。
-    # 军饷欠 CLAIM 在饷源 cutover 下由 per-army 双累加器对账拥有，除外后逐字节比对。
-    p_eff_sx = copy.deepcopy(_opening_settle(db, "shaanxi")["p"])
-    p_eff_hn = copy.deepcopy(_opening_settle(db, "henan")["p"])
-    after_t = {rid: _opening_settle(db, rid) for rid in ("shaanxi", "henan")}
-    month_t = settle_tick(copy.deepcopy(opening["shaanxi"]["st"]), p_eff_sx, [])
-    def _minus_military_claim(st):
-        return {k: v for k, v in st.items() if k != "军饷欠"}
-    assert _minus_military_claim(after_t["shaanxi"]["st"]) == _minus_military_claim(month_t.new_st)
-    sx_army_before = float(db.conn.execute(
-        "SELECT province_pay_arrears FROM armies WHERE id='shaanxi_army'"
-    ).fetchone()[0])
-
-    # 月 T+1：下一次结算读取新序（真实 pre_settle 省级 tick；河南无旨照旧序对照）。
-    # 陕西：官俸优先→宗禄足付（宗禄欠零增长）；河南旧序：宗禄继续被欠。
-    pre_settle(state, db, content=content)
-    settle_with_delta(state, db, {}, before_turn=state.turn, content=content)
-    after_t1 = {rid: _opening_settle(db, rid) for rid in ("shaanxi", "henan")}
-    p_new = dict(p_eff_sx)
-    # 军饷序位40 与赈济默认40 并列 → 默认基准 tie-break（军饷先于赈济）
-    p_new["due_order"] = ["官俸", "宗禄", "军饷", "赈济"]
-    expect_sx = settle_tick(copy.deepcopy(after_t["shaanxi"]["st"]), p_new, [])
-    expect_hn = settle_tick(copy.deepcopy(after_t["henan"]["st"]), p_eff_hn, [])
-    assert _minus_military_claim(after_t1["shaanxi"]["st"]) == _minus_military_claim(expect_sx.new_st)
-    assert _minus_military_claim(after_t1["henan"]["st"]) == _minus_military_claim(expect_hn.new_st)
-    assert after_t1["shaanxi"]["st"] != after_t1["henan"]["st"]  # 旨效真实偏离对照省
-    assert after_t1["shaanxi"]["st"]["宗禄欠"] == after_t["shaanxi"]["st"]["宗禄欠"]
-    assert after_t1["henan"]["st"]["宗禄欠"] > after_t["henan"]["st"]["宗禄欠"]
-    # 边饷居末：陕西军省份额积欠增加（对照省军饷照旧序优先支付）
-    sx_army_after = float(db.conn.execute(
-        "SELECT province_pay_arrears FROM armies WHERE id='shaanxi_army'"
-    ).fetchone()[0])
-    assert sx_army_after > sx_army_before
-
-
-def test_lifecycle_e2e_rejected_then_force_via_settlement_pipeline(game, monkeypatch):
-    """打回＋强颁走真实结算管线：settle_with_delta 内 rejected verdict 零 config 写入；
-    同事务批红强颁（rescript action）→ 物化仍在本月结算之后 → 下一次结算才吃折发。"""
-    from dossier_test_helpers import rejected_verdict
-
-    from ming_sim.decree import pre_settle, settle_with_delta
-
-    db, state, content = game
-    _pin_shortfall_board(db, "shaanxi")
-    opening = _opening_settle(db, "shaanxi")
-    did = _capture_override_decree(game, monkeypatch, "今岁宗禄折半", [
-        {"key": "due_haircut_bp_宗禄@shaanxi", "value": 5000},
-    ])
-
-    # 月 T：打回判决（零写入）＋同事务批红强颁（效果跟判决走）
-    before_cfg = db.get_fiscal_config()
-    before_rows = db.conn.execute(
-        "SELECT COUNT(*) c FROM fiscal_config_changes"
-    ).fetchone()["c"]
-    pre_settle(state, db, content=content)
-    settle_with_delta(
-        state, db, {}, before_turn=state.turn, content=content,
-        dossier_verdicts=[rejected_verdict(did)],
-        dossier_rescript_actions=[{"dossier_id": did, "decision": "force_promulgated"}],
-    )
-    # 打回阶段零写入：全部 provenance 变化均来自强颁物化（无期限旨只有主键一行）
-    rows = db.conn.execute("SELECT key FROM fiscal_config_changes").fetchall()
-    assert {r["key"] for r in rows} == {"due_haircut_bp_宗禄@shaanxi"}
-    cfg = db.get_fiscal_config()
-    assert cfg["due_haircut_bp_宗禄@shaanxi"] == 5000       # 强颁物化
-    assert cfg.get("due_haircut_bp_宗禄@shaanxi_until_turn") is None
-    assert db.dossier_authorizes_effects(did)
-
-    # 强颁发生在本月推演后：月 T 结算未吃折发（宗禄欠＝无折基线续延）。
-    # 宗禄欠 CLAIM 不经 army 对账，可作纯函数字节断言。
-    after_t = _opening_settle(db, "shaanxi")
-    p_eff = copy.deepcopy(after_t["p"])
-    month_t = settle_tick(copy.deepcopy(opening["st"]), p_eff, [])
-    assert after_t["st"]["宗禄欠"] == month_t.new_st["宗禄欠"]
-
-    # 月 T+1：折发生效——Due.宗禄 floor(4.07×5000/10000)=2.03 入付，折掉部分不入宗禄欠
-    pre_settle(state, db, content=content)
-    settle_with_delta(state, db, {}, before_turn=state.turn, content=content)
-    after_t1 = _opening_settle(db, "shaanxi")
-    p_half = dict(p_eff)
-    p_half["due_haircut_bp"] = {"宗禄": 5000}
-    expect = settle_tick(copy.deepcopy(after_t["st"]), p_half, [])
-    assert after_t1["st"]["宗禄欠"] == expect.new_st["宗禄欠"]
-    # 折半后宗禄应得减半：月末宗禄欠增量低于无折基线（免除不入欠的守恒方向）
-    assert (after_t1["st"]["宗禄欠"] - after_t["st"]["宗禄欠"]) < (
-        month_t.new_st["宗禄欠"] - opening["st"]["宗禄欠"]
-    )
 
 
 # ═══════════════ F2.3（owner 拍板 r5）：官俸欠/宗禄欠当回合流量持久留痕 ═══════════════

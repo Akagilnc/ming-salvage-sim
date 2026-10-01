@@ -77,11 +77,6 @@ def test_until_stop_commitment_issue_is_created_with_carrier_fields(game, monkey
     assert json.loads(row["ongoing_effects"])["economy"][0]["target_id"] == "guanning"
     assert json.loads(row["stop_condition"]) == stop_condition
     assert json.loads(row["effect_on_resolve"]) == {}
-    payload = I.issue_to_payload(row, [])
-    assert payload["commitment_kind"] == "until_stop"
-    assert json.loads(payload["stop_condition"]) == stop_condition
-    assert payload["结案条件"] == "(未填)"
-    assert payload["condition_role"] == "commitment_stop_condition"
 
 
 def test_decree_commitment_dedups_same_batch_fiscal_create_carrier(game, monkeypatch):
@@ -486,9 +481,6 @@ def test_future_one_shot_commitment_issue_is_created_with_deadline_only(game, mo
     assert json.loads(row["ongoing_effects"]) == {}
     assert row["inertia"] == 0
     assert row["cancellable"] == "decree"
-    payload = I.issue_to_payload(row, [])
-    assert payload["end_turn"] == state.turn + 3
-    assert payload["commitment_kind"] == "until_stop"
 
 
 def test_open_ended_ongoing_commitment_issue_is_created_with_explicit_marker(game, monkeypatch):

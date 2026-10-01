@@ -11,6 +11,8 @@
 
 from __future__ import annotations
 
+from ming_sim.session_write_queue import get_session_write_queue
+
 from types import SimpleNamespace
 
 from ming_sim.audience_night import (
@@ -27,7 +29,7 @@ from ming_sim.entities.affair.store import AffairStore
 from ming_sim.public_sayings import list_public_sayings
 from ming_sim.relations import summon_edge_origin
 from ming_sim.session import GameSession
-from tests.conftest import deterministic_test_beat_generator, persist_and_schedule_scene
+from tests.conftest import note_queue_until_game_teardown, persist_and_schedule_scene
 
 
 def _activate(db, state, *names: str) -> None:
@@ -99,23 +101,23 @@ def test_three_speaker_segments_private_whisper_reaches_only_participant(game):
         and not e.get("presence_effect")
     ]
     assert len(segments) == 4
-    by_body = {e["body"]: e for e in segments}
-    assert by_body[wang_reply]["person_names"] == ["王绍徽"]
-    assert by_body[wang_reply]["audibility"] == AUDIBILITY_PUBLIC
-    assert by_body[bi_interject]["person_names"] == ["毕自严"]
-    assert by_body[bi_interject]["audibility"] == AUDIBILITY_PUBLIC
-    assert by_body[wang_whisper]["person_names"] == ["王承恩", "王绍徽"]
-    assert by_body[wang_whisper]["audibility"] == AUDIBILITY_PRIVATE
-    assert by_body[scene_whisper]["audibility"] == AUDIBILITY_PRIVATE
+    by_id = {e["id"]: e for e in segments}
+    reply_id, interject_id, whisper_id, scene_id = [
+        e["id"] for e in result.scene_facts.applied
+    ]
+    assert by_id[reply_id]["person_names"] == ["王绍徽"]
+    assert by_id[reply_id]["audibility"] == AUDIBILITY_PUBLIC
+    assert by_id[interject_id]["person_names"] == ["毕自严"]
+    assert by_id[interject_id]["audibility"] == AUDIBILITY_PUBLIC
+    assert by_id[whisper_id]["person_names"] == ["王承恩", "王绍徽"]
+    assert by_id[whisper_id]["audibility"] == AUDIBILITY_PRIVATE
+    assert by_id[scene_id]["audibility"] == AUDIBILITY_PRIVATE
 
-    # 王绍徽在场期间可闻殿上公开；御前低语不进其经历投影
-    wang_exp = person_night_experience(db, nid, "王绍徽")
-    bodies = [e["body"] for e in wang_exp]
-    assert wang_reply in bodies
-    assert bi_interject in bodies
-    assert wang_whisper not in bodies
-    assert scene_whisper not in bodies
-    assert wang_whisper in [e["body"] for e in person_night_experience(db, nid, "王承恩")]
+    # Visibility follows ledger identity, independent of shared dialogue text.
+    wang_ids = {e["id"] for e in person_night_experience(db, nid, "王绍徽")}
+    assert {reply_id, interject_id} <= wang_ids
+    assert {whisper_id, scene_id}.isdisjoint(wang_ids)
+    assert whisper_id in {e["id"] for e in person_night_experience(db, nid, "王承恩")}
 
     # 转译已承接本轮 → 转译水位推进，不另起旧路径
     row = db.conn.execute(
@@ -193,11 +195,9 @@ def _scene_session(db, state, content, monkeypatch):
     sess.llm_config = SimpleNamespace(channel="")
     sess.temporary_characters = {}
     sess.agno_db = None
-    from ming_sim.beat_orchestration import ChatTurnSceneRegistry
-    from ming_sim.session import _CLI_ACTION_INTENT_EXECUTOR
-    sess._beat_generator = deterministic_test_beat_generator
-    sess._scene_registry = ChatTurnSceneRegistry(_CLI_ACTION_INTENT_EXECUTOR)
-    sess._write_gate = None
+    sess._write_gate = get_session_write_queue(sess).write_gate
+    # 转译在后台线程跑：登记队列归 game 夹具排空，断言失败也不越过关库边界。
+    note_queue_until_game_teardown(db, get_session_write_queue(sess))
     return sess
 
 
@@ -349,7 +349,7 @@ def test_edge_event_and_public_saying_attach_affair(game):
 
     assert len(result.public_sayings.applied) == 1
     sayings = list_public_sayings(db, involved_character="毕自严")
-    matched = next(s for s in sayings if s["body"] == saying_body)
+    matched = next(s for s in sayings if s["id"] == result.public_sayings.applied[0]["id"])
     # 与边事件侧同严：affair_ref 必须精确等于该事务 origin_ref
     assert matched["affair_ref"] == AffairStore.origin_ref(affair.id)
 

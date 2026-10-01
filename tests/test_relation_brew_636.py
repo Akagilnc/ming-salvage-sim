@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 import hashlib
 import httpx
 import json
@@ -21,21 +22,33 @@ import threading
 import pytest
 from openai import APIConnectionError, APITimeoutError
 
-import ming_sim.decree as decree_module
 from ming_sim.faction_brew import STANCE_KEY, VIEW_FACTION_STANCE
-from ming_sim.db import GameDB
-from ming_sim.decree import SettlementAbort, settle_with_delta
 from ming_sim.exceptions import LLMUnavailable
 from ming_sim.relation_brew import (
     FOUNDINGS_KEY,
     RECENT_KEY,
-    MonthEndRelationBrewLeg,
     build_brew_input,
     merge_founding_segment,
     relation_dimension,
     run_month_end_relation_brew,
 )
 from ming_sim.relations import EMPEROR_NODE
+
+
+@pytest.mark.parametrize("error_type", [APITimeoutError, APIConnectionError])
+def test_provider_fault_becomes_typed_brew_failure(monkeypatch, error_type):
+    """生产调用缝仅把已知 provider 故障译成声明类型，保留原始 cause。"""
+    from ming_sim.mechanical_tail import _brew_fn_for_session
+
+    fault = error_type(request=httpx.Request("POST", "https://llm.invalid/v1"))
+    monkeypatch.setattr("ming_sim.agents.create_relation_brew_agent", lambda *_a: object())
+    def fail(*_a, **_kw):
+        raise fault
+    monkeypatch.setattr("ming_sim.agents.run_agent_text", fail)
+    brew = _brew_fn_for_session(SimpleNamespace(llm_config=object(), agno_db=None))
+    with pytest.raises(LLMUnavailable) as caught:
+        brew(json.dumps({"source": "甲", "target": "乙"}))
+    assert caught.value.__cause__ is fault
 
 
 def _add_edge(db, state, *, source, target, kind, context, origin):
@@ -212,8 +225,8 @@ def test_failed_month_degrades_to_pending_and_rebrews_next_month(game):
     relation_calls = [c for c in calls if "view" not in c]
     assert relation_calls and relation_calls[0]["has_pending_failure"] is True
     payload = relation_calls[0]
-    new_hits = [e for e in payload["new_events"] if e["context"] == failed_context]
-    prior_hits = [e for e in payload["prior_events"] if e["context"] == failed_context]
+    new_hits = [e for e in payload["new_events"] if e["origin"] == "audience:turn-1"]
+    prior_hits = [e for e in payload["prior_events"] if e["origin"] == "audience:turn-1"]
     assert len(new_hits) + len(prior_hits) == 1
     assert len(new_hits) == 1 and prior_hits == []
     assert db.get_relation_brew_pending() == []
@@ -221,120 +234,6 @@ def test_failed_month_degrades_to_pending_and_rebrews_next_month(game):
     assert summary["recent_segment"] == "温周结怨，朝堂侧目。"
     assert summary["dimension"] == "大臣"
     assert int(summary["last_event_id"]) >= int(failed_id)
-
-
-# ---------------- #642 r3 R2：commit→join→persist 前窗口（非 SIGKILL 可控接缝）
-
-def test_r2_commit_join_before_persist_fault_keeps_pending_and_rebrrews_once(
-    game, monkeypatch,
-):
-    """#642 R2：settle atomic 已提交、brew join 已完成、真实 persist 尚未写入时可控中止。
-
-    注入＝既有生产接缝 MonthEndRelationBrewLeg.persist 入口抛错（非 SIGKILL、
-    无 test-only 生产钩子）。重开后续跑恰一次补酿、旧摘要字节不变、边 id 不双增。
-    """
-    db, state, content = game
-    source, target = "洪承畴", EMPEROR_NODE
-    _add_edge(db, state, source=source, target=target, kind="兑现所托",
-              context="洪承畴剿抚办结。", origin="audience:turn-1")
-    calls: list = []
-    brew_fn = _brew_fn_factory(calls)
-    brew_fn.outputs = [_script(recent="洪承畴初结天恩。")]
-    run_month_end_relation_brew(db, state, brew_fn)
-    old_recent = db.get_relation_summary(source, target)["recent_segment"]
-    assert old_recent == "洪承畴初结天恩。"
-
-    # 次月新边事件：进入 settle 生产序后被选中并 durable claim。
-    state.turn += 1
-    state.period += 1
-    _add_edge(db, state, source=source, target=target, kind="辜负",
-              context="洪承畴所请饷银被驳。", origin="audience:turn-2")
-    edge_ids_before = {
-        int(row["id"])
-        for row in db.get_relation_edge_events(source=source, target=target)
-    }
-
-    persist_hits = {"n": 0}
-    real_persist = MonthEndRelationBrewLeg.persist
-
-    def boom_then_real(self):
-        persist_hits["n"] += 1
-        if persist_hits["n"] == 1:
-            # join 之后、真实写入之前：直接中止，不调用真实 persist。
-            raise RuntimeError("persist 前可控中止（#642 R2）")
-        return real_persist(self)
-
-    monkeypatch.setattr(MonthEndRelationBrewLeg, "persist", boom_then_real)
-
-    def runner(settle_state, settle_db, *, settled_turn, settled_year, settled_period):
-        brew = _brew_fn_factory(calls)
-        brew.outputs = [_script(recent="洪承畴请饷被驳，心怨。")]
-        return MonthEndRelationBrewLeg(
-            settle_db, settle_state, brew,
-            settled_turn=settled_turn,
-            settled_year=settled_year,
-            settled_period=settled_period,
-        )
-
-    before_turn = state.turn
-    with pytest.raises(RuntimeError, match="persist 前可控中止"):
-        settle_with_delta(
-            state, db, {}, before_turn=before_turn, content=content,
-            relation_brew_runner=runner,
-        )
-
-    # settle atomic 已提交（turn 推进）；摘要未半写；认领先行 pending 在册。
-    assert state.turn == before_turn + 1
-    assert persist_hits["n"] == 1
-    path = db.path
-    db.close()
-    db = GameDB(path)
-    pending_pairs = [(row["source"], row["target"]) for row in db.get_relation_brew_pending()]
-    assert (source, target) in pending_pairs
-    assert db.get_relation_summary(source, target)["recent_segment"] == old_recent
-    edge_ids_mid = {
-        int(row["id"])
-        for row in db.get_relation_edge_events(source=source, target=target)
-    }
-    assert edge_ids_mid == edge_ids_before
-
-    # 再次结算：补酿恰一次、pending 清除、摘要落定；边 id 不双增。
-    calls.clear()
-
-    def runner2(settle_state, settle_db, *, settled_turn, settled_year, settled_period):
-        brew = _brew_fn_factory(calls)
-        brew.outputs = [_script(recent="洪承畴请饷被驳，心怨。")]
-        return MonthEndRelationBrewLeg(
-            settle_db, settle_state, brew,
-            settled_turn=settled_turn,
-            settled_year=settled_year,
-            settled_period=settled_period,
-        )
-
-    # 重载 state 与打开的 db 对齐（真实恢复路径）。
-    row = db.conn.execute(
-        "SELECT turn, year, period FROM game_state WHERE id = 1"
-    ).fetchone()
-    state.turn = int(row["turn"])
-    state.year = int(row["year"])
-    state.period = int(row["period"])
-    settle_with_delta(
-        state, db, {}, before_turn=state.turn, content=content,
-        relation_brew_runner=runner2,
-    )
-    relation_calls = [c for c in calls if "view" not in c]
-    assert len(relation_calls) == 1
-    assert (source, target) not in [
-        (row["source"], row["target"]) for row in db.get_relation_brew_pending()
-    ]
-    assert db.get_relation_summary(source, target)["recent_segment"] == (
-        "洪承畴请饷被驳，心怨。"
-    )
-    edge_ids_after = {
-        int(row["id"])
-        for row in db.get_relation_edge_events(source=source, target=target)
-    }
-    assert edge_ids_after == edge_ids_before
 
 
 # ---------------- #642 锚④：build_brew_input 只投影 prior 字段（全序/筛选归 read 缝）
@@ -371,11 +270,14 @@ def test_prepare_attaches_prior_events_only_via_history_seam(game, monkeypatch):
     source, target = EMPEROR_NODE, "杨嗣昌"
     prior_context = "越次一召原句。"
     # 严格早于开局年月（1627/10）的奠基原句，水位推进后才能进 prior_events。
-    db.record_relation_edge_event(
+    prior_id = db.record_relation_edge_event(
         source=source, target=target, event_kind="知遇",
         context=prior_context, origin="seed:founding:yueci",
         turn=0, year=1626, period=6,
     )
+    prior_origin = db.conn.execute(
+        "SELECT origin FROM relation_edge_events WHERE id=?", (prior_id,),
+    ).fetchone()["origin"]
     _add_edge(db, state, source=source, target=target, kind="知遇",
               context="首月知遇。", origin="audience:month-1")
     brew_fn = _brew_fn_factory([])
@@ -387,8 +289,11 @@ def test_prepare_attaches_prior_events_only_via_history_seam(game, monkeypatch):
     state.turn += 1
     state.period += 1
     new_context = "次月新知遇。"
-    _add_edge(db, state, source=source, target=target, kind="知遇",
-              context=new_context, origin="audience:month-2")
+    new_id = _add_edge(db, state, source=source, target=target, kind="知遇",
+                       context=new_context, origin="audience:month-2")
+    new_origin = db.conn.execute(
+        "SELECT origin FROM relation_edge_events WHERE id=?", (new_id,),
+    ).fetchone()["origin"]
 
     import ming_sim.relation_brew as brew_mod
     import ming_sim.relation_read as read_mod
@@ -410,13 +315,13 @@ def test_prepare_attaches_prior_events_only_via_history_seam(game, monkeypatch):
     relation_calls = [c for c in calls if "view" not in c]
     assert relation_calls
     payload = relation_calls[0]
-    new_contexts = [e["context"] for e in payload["new_events"]]
-    prior_contexts = [e["context"] for e in payload["prior_events"]]
-    assert new_context in new_contexts
-    assert prior_context not in new_contexts
-    assert prior_context in prior_contexts
-    assert new_context not in prior_contexts
-    assert set(new_contexts).isdisjoint(prior_contexts)
+    new_origins = {e["origin"] for e in payload["new_events"]}
+    prior_origins = {e["origin"] for e in payload["prior_events"]}
+    assert new_origin in new_origins
+    assert prior_origin not in new_origins
+    assert prior_origin in prior_origins
+    assert new_origin not in prior_origins
+    assert new_origins.isdisjoint(prior_origins)
     assert (source, target, int(state.year), int(state.period)) in seen
 
 
@@ -502,45 +407,6 @@ def test_historical_events_alone_do_not_select_in_later_month(game):
     assert report["selected"] == 0
     assert calls == []
     assert db.get_relation_summary("毕自严", "王绍徽") is None
-
-
-# -------------------------------- 结算接缝：事务内定型即启酿、与 chapter/ending 重叠（判词类②）
-
-def test_settle_brew_leg_records_settled_month_not_advanced_month(game):
-    """next_period 已把 state 推进到下一个月后，酿制输入/摘要落款仍须是本结算月
-    快照（decree 传递），不得把下一个月写进输入/last_brewed（错月修复）。"""
-    db, state, content = game
-    _add_edge(db, state, source="徐光启", target=EMPEROR_NODE, kind="协作",
-              context="徐光启与皇上当场协作。", origin="audience:turn-1")
-    calls: list = []
-
-    def runner(settle_state, settle_db, *, settled_turn, settled_year, settled_period):
-        brew_fn = _brew_fn_factory(calls)
-        brew_fn.outputs = [_script(recent="协作在案。")]
-        return MonthEndRelationBrewLeg(
-            settle_db, settle_state, brew_fn,
-            settled_turn=settled_turn,
-            settled_year=settled_year,
-            settled_period=settled_period,
-        )
-
-    before_turn = state.turn
-    settled_year, settled_period = int(state.year), int(state.period)
-    settle_with_delta(
-        state, db, {}, before_turn=before_turn, content=content,
-        relation_brew_runner=runner,
-    )
-
-    assert state.turn == before_turn + 1  # state 已被推进，但落款不得跟着走
-    # 同批新事实：徐光启投影西学 → 关系对＋西学；两腿落款都须是结算月快照。
-    assert len(calls) == 2
-    for payload in calls:
-        assert (payload["year"], payload["period"]) == (settled_year, settled_period)
-    summary = db.get_relation_summary("徐光启", EMPEROR_NODE)
-    assert (summary["last_brewed_year"], summary["last_brewed_period"]) == (
-        settled_year, settled_period,
-    )
-    assert summary["recent_segment"] == "协作在案。"
 
 
 # ------------------------------------------------------- 奠基段拼装机械语义
@@ -714,64 +580,6 @@ def test_parse_seam_value_error_degrades_single_item(game):
     ]
 
 
-def test_settle_aborts_loudly_when_brew_prepare_db_fails(game):
-    """生产路径：prepare 的 claim DB 错误发生在结算 atomic 内→随整体回滚走错误包
-    SettlementAbort，绝不静默继续（ADR 0008 决定 6）。"""
-    db, state, content = game
-    _add_edge(db, state, source="徐光启", target=EMPEROR_NODE, kind="协作",
-              context="徐光启与皇上当场协作。", origin="audience:turn-1")
-
-    class _BoomLeg:
-        def prepare(self):
-            raise sqlite3.OperationalError("认领库不可写")
-
-        def brew(self):
-            raise AssertionError("prepare 已响，不可达")
-
-        def persist(self):
-            raise AssertionError("prepare 已响，不可达")
-
-    def runner(settle_state, settle_db, *, settled_turn, settled_year, settled_period):
-        return _BoomLeg()
-
-    before_turn = state.turn
-    with pytest.raises(SettlementAbort):
-        settle_with_delta(
-            state, db, {}, before_turn=before_turn, content=content,
-            relation_brew_runner=runner,
-        )
-    # 结算整体回滚：turn 不推进、无摘要落定。
-    assert state.turn == before_turn
-    assert db.get_relation_summary("徐光启", EMPEROR_NODE) is None
-
-
-def test_settle_brew_program_error_propagates_loudly_after_commit(game):
-    """brew 相的程序错误不是 LLM 单条失败：join 时响亮上抛（ADR 0005）；结算本体
-    已提交不受影响；join/shutdown 保证不悬空 worker。"""
-    db, state, content = game
-
-    class _BoomLeg:
-        def prepare(self):
-            return True
-
-        def brew(self):
-            raise RuntimeError("酿制编排程序错误必须响亮")
-
-        def persist(self):
-            raise AssertionError("join 已响，不可达")
-
-    def runner(settle_state, settle_db, *, settled_turn, settled_year, settled_period):
-        return _BoomLeg()
-
-    before_turn = state.turn
-    with pytest.raises(RuntimeError, match="酿制编排程序错误必须响亮"):
-        settle_with_delta(
-            state, db, {}, before_turn=before_turn, content=content,
-            relation_brew_runner=runner,
-        )
-    assert state.turn == before_turn + 1  # 结算本体已提交
-
-
 def test_relation_dimension_marks_emperor_edges():
     assert relation_dimension(EMPEROR_NODE, "杨嗣昌") == "君臣"
     assert relation_dimension("杨嗣昌", EMPEROR_NODE) == "君臣"
@@ -868,61 +676,3 @@ def test_batch_of_five_relations_all_enter_call_seam_concurrently(game):
         assert db.get_relation_summary(source, target)["recent_segment"] == (
             f"{source}与{target}协作在案。"
         )
-
-
-# ------------------- 庭裁 Z3：生产 provider 已知故障译 typed 单条降级
-
-
-def _brew_runner_leg(game, monkeypatch, provider_error):
-    """经生产注入工厂 _make_relation_brew_runner 构造真实闭包，把 provider 调用
-    替换为抛指定已知异常；返回已 prepare 的 Leg。"""
-    db, state, _ = game
-    _add_edge(db, state, source="温体仁", target="周延儒", kind="结怨",
-              context="温体仁当殿讦周延儒。", origin="audience:turn-1")
-
-    monkeypatch.setattr(decree_module, "create_relation_brew_agent", lambda cfg, adb: object())
-    monkeypatch.setattr(decree_module, "create_faction_brew_agent", lambda cfg, adb: object())
-
-    def failing_run(agent, prompt, tag):
-        raise provider_error
-
-    monkeypatch.setattr(decree_module, "run_agent_text", failing_run)
-    runner = decree_module._make_relation_brew_runner(None, None)
-    leg = runner(
-        state, db,
-        settled_turn=int(state.turn),
-        settled_year=int(state.year),
-        settled_period=int(state.period),
-    )
-    assert leg.prepare()
-    return db, leg
-
-
-@pytest.mark.parametrize("error_factory", [
-    lambda: APITimeoutError(request=httpx.Request("POST", "https://llm.invalid/v1")),
-    lambda: APIConnectionError(request=httpx.Request("POST", "https://llm.invalid/v1")),
-], ids=["timeout", "connection"])
-def test_provider_known_fault_translates_to_typed_single_degradation(game, monkeypatch, error_factory):
-    """庭裁 Z3：生产 provider 直抛的超时/连接异常在调用适配缝译成声明类型
-    LLMUnavailable（保留 cause），_brew_one 依法单条降级：旧摘要不变、pending
-    保留、结算不因该条报程序错。KeyError/ValueError 程序错不在捕获列，照旧
-    响亮（既有测试钉死）。"""
-    provider_error = error_factory()
-    db, leg = _brew_runner_leg(game, monkeypatch, provider_error)
-    leg.brew()
-    # 译型保留 cause：outcomes 里是 LLMUnavailable，原异常挂在 __cause__。
-    job, parsed, exc = leg.outcomes[0]
-    assert exc is not None and parsed is None
-    assert isinstance(exc, LLMUnavailable)
-    assert isinstance(exc.__cause__, type(provider_error))
-
-    report = leg.persist()
-    source, target = job["source"], job["target"]
-    # 同批新事实：关系条目在前、派系条目（温/周均皇党）在后，双双 typed 单条降级。
-    assert report["degraded"][0] == {"source": source, "target": target, "reason": str(exc)}
-    assert report["degraded"][1]["faction"] == "皇党"
-    assert report["brewed"] == []
-    assert db.get_relation_summary(source, target) is None
-    assert [(row["source"], row["target"]) for row in db.get_relation_brew_pending()] == [
-        (source, target)
-    ]

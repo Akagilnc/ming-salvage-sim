@@ -5,17 +5,16 @@
   （禁 canon 后放行：司礼监/锦衣卫/东厂 恰为人名 alias；词表按明代衙门闭集扩）
 - 自称/集体闭集（陛下/皇帝/朝廷/朕…）→ 不产
 - 带姓称谓别名（韩阁老/毕户部/温阁老/曹太监/王兵部…）→ 走 canon 留人名
-- 禁复用 _is_institution_like_name 子串字集判参与人
+- 参与人不按机关名称中的单字误判身份
 - 禁放松 ADR 0053 主键校验缝（db.py _validate_participant_roster_references）
 """
 
 from __future__ import annotations
-
-import asyncio
 import json
-import types
 
 import pytest
+
+from tests.directive_seed_helpers import seed_manual_draft
 
 
 def _mock_draft_intent(monkeypatch, *, text: str, roster):
@@ -46,8 +45,12 @@ def _mock_draft_intent(monkeypatch, *, text: str, roster):
     monkeypatch.setattr(cli_backend, "_run_backend_for_config", backend)
 
 
-def _web_create(game_tuple, monkeypatch, text: str):
-    import web_app
+def _seed_draft(game_tuple, text: str) -> int:
+    """#1849：独立手拟新增 Web 口（POST /api/directives）已退役。
+
+    落草案改走现行 capture 核 + session.add_directive（CLI 审阅路同款；与召对拟旨
+    共用同一条 turn_directives 写入），故归一不变式仍验在真实落桌上。
+    """
     from ming_sim.session import GameSession
 
     db, state, content = game_tuple
@@ -56,17 +59,7 @@ def _web_create(game_tuple, monkeypatch, text: str):
     session.state = state
     session.llm_config = None
     session.content = content
-    web_game = types.SimpleNamespace(
-        db=db, state=state, content=content, session=session,
-        directive_rows=lambda: db.list_directives(
-            state, statuses=("pending", "draft"),
-        ),
-        directive_payload=lambda row: dict(row),
-    )
-    monkeypatch.setattr(web_app, "get_game", lambda: web_game)
-    return asyncio.run(web_app.api_create_directive(
-        web_app.DirectiveRequest(text=text),
-    ))
+    return seed_manual_draft(session, text)
 
 
 def _capture_ids(game, monkeypatch, *, text: str, roster):
@@ -124,8 +117,8 @@ def test_capture_manual_directive_drops_ministry_name_as_participant(game, monke
         assert "户部" not in ids
 
 
-def test_web_create_directive_accepts_ministry_subject_without_409(game, monkeypatch):
-    """Web POST /api/directives：着户部… 不得 409「参与人物不存在：户部」。"""
+def test_seeded_draft_accepts_ministry_subject_without_409(game, monkeypatch):
+    """落草案入口：着户部… 不得 409「参与人物不存在：户部」。"""
     db, _state, _content = game
     text = "着户部核清太仓实存，边饷优先"
     _mock_draft_intent(
@@ -133,11 +126,10 @@ def test_web_create_directive_accepts_ministry_subject_without_409(game, monkeyp
         roster=[{"character_id": "户部", "tier": "主办"}],
     )
 
-    result = _web_create(game, monkeypatch, text)
-    assert result["directive"]["id"] > 0
-    assert result["directive"]["text"] == text
+    assert _seed_draft(game, text) > 0
+    rows = db.list_directives(game[1])
+    assert any(str(row["text"]) == text for row in rows)
     # ADR 0053 缝仍在：未知真名仍应拒——此处仅断言部院名不撞墙。
-    assert db.list_directives(game[1])
 
 
 def test_capture_manual_directive_keeps_real_person_participant(game, monkeypatch):
@@ -206,12 +198,9 @@ def test_capture_manual_directive_drops_collective_and_institution_names(
 
 
 def test_non_person_filter_does_not_use_institution_substring_class():
-    """参与人缝禁复用 _is_institution_like_name 子串字集（防韩阁老含「阁」被误伤）。"""
+    """带姓称谓别名不是裸机构，不得被参与人分流误判。"""
     import ming_sim.cli_backend as cli_backend
 
-    # assignee-hint 子串仍拒识带机关字的线索（本职不变）
-    assert cli_backend._is_institution_like_name("韩阁老") is True
-    assert cli_backend._is_institution_like_name("毕户部") is True
     # 参与人 raw 三分流：带姓称谓别名不是裸机构，不得判非人
     assert cli_backend._is_non_person_participant_name("韩阁老") is False
     assert cli_backend._is_non_person_participant_name("毕户部") is False

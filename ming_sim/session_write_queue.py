@@ -174,13 +174,27 @@ class TicketedWriteGate:
         self._held = False
 
     def acquire(self, blocking: bool = True, timeout: float = -1) -> bool:
+        return self._take_write_turn(
+            self._queue.write_gate.acquire, blocking=blocking, timeout=timeout,
+        )
+
+    def acquire_translation(self, blocking: bool = True, timeout: float = -1) -> bool:
+        """Same seam, holder kind = translation (so foreground 409 stays honest)."""
+        return self._take_write_turn(
+            self._queue.write_gate.acquire_translation,
+            blocking=blocking, timeout=timeout,
+        )
+
+    def _take_write_turn(
+        self, take: Callable[[], bool], *, blocking: bool, timeout: float,
+    ) -> bool:
         if not blocking:
             # Non-blocking ticketed acquire is not meaningful (order wait is the point).
             raise RuntimeError("TicketedWriteGate only supports blocking acquire")
         del timeout  # lock timeout unused; order wait is terminal-state only
         self._queue.wait_write_turn(self._ticket)
         try:
-            self._queue.write_gate.acquire()
+            take()
         except BaseException:
             self._queue.finish_write_turn(self._ticket)
             raise
@@ -191,6 +205,12 @@ class TicketedWriteGate:
             self._queue.finish_write_turn(self._ticket)
             raise TicketCancelled(f"ticket {self._ticket.seq} cancelled")
         return True
+
+    def is_held_by_translation(self) -> bool:
+        return self._queue.write_gate.is_held_by_translation()
+
+    def wait_while_held_by_translation(self) -> None:
+        self._queue.write_gate.wait_while_held_by_translation()
 
     def release(self) -> None:
         if not self._held:
@@ -525,12 +545,6 @@ def get_session_write_queue(owner: Any) -> SessionWriteQueue:
     `_INSTALL_LOCK` (double-checked) so concurrent first-touch cannot fork two
     queues onto the same owner/session.
 
-    If owner already has a write_gate (legacy fixtures), reuse that same object
-    as the queue's write_gate so drain/barrier never diverge onto a second lock.
-    Production installs ``ClassifiedWriteGate`` via ``SessionWriteQueue()``;
-    bare ``threading.Lock`` fixtures keep their Lock identity (classification
-    requires ClassifiedWriteGate — do not retarget a held Lock mid-test).
-
     Wiring assignments are fail-loud (ADR 0005): silent swallow here can fork
     owner/session onto different queue/gate ledgers and leak tickets.
     """
@@ -560,13 +574,6 @@ def get_session_write_queue(owner: Any) -> SessionWriteQueue:
         # Install on the most session-like object available.
         target = session if session is not None else owner
         q = SessionWriteQueue()
-        # Reuse pre-existing write_gate (Classified or bare Lock) so fixture
-        # hold/409 probes and drain share one lock object.
-        existing_gate = getattr(owner, "_write_gate", None)
-        if existing_gate is None and session is not None:
-            existing_gate = getattr(session, "_write_gate", None)
-        if existing_gate is not None and hasattr(existing_gate, "acquire"):
-            q.write_gate = existing_gate  # type: ignore[assignment]
         target._write_queue = q  # type: ignore[attr-defined]
         target._write_gate = q.write_gate  # type: ignore[attr-defined]
         if session is not None and owner is not session:

@@ -45,12 +45,8 @@ def record_public_saying(
     """记下一条公开说法，并写入公开层。不改人物实况。
 
     `excluded_names`/`excluded_targets`：密令『瞒某人』这类显式排除黑名单
-    一票否决压过公开层——公开说法自己的 source（`public_saying:<id>`）复用
-    既有 `knowledge_row_visible_to` 读口（它已经会回查
-    `knowledge_exclusions_for_source`/`knowledge_exclusion_targets_for_source`），
-    只是之前从未有写口往这个 source_id 上落过排除名单，闸有输入永远是空
-    （#1829/#1832）。落库走既有 `register_character_knowledge_source`（同
-    commissions 等其它 source 一样的持久黑名单表），不另建一套机制。"""
+    一票否决压过公开层。正文与排除名单只存在公开说法记录一处（#1829 reopen）；
+    读口经 `public_saying:<id>` 回查本表，不另抄见闻来源、不月末物化。"""
     if not isinstance(body, str) or not body.strip():
         raise ValueError("公开说法正文不能为空")
     if not isinstance(affair_ref, str):
@@ -59,11 +55,18 @@ def record_public_saying(
     affair = sanitize_sqlite_text(affair_ref.strip())
     people = _character_names(involved_characters)
     people_json = json.dumps(people, ensure_ascii=False)
+    names = _character_names(excluded_names)
+    targets = {
+        str(key): _character_names(values)
+        for key, values in (excluded_targets or {}).items()
+        if _character_names(values)
+    }
     owns = bool(commit) and connection_owns_transaction(db.conn)
     cur = db.conn.execute(
         "INSERT INTO public_sayings "
-        "(turn, year, period, body, involved_characters, affair_ref, source_id) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "(turn, year, period, body, involved_characters, affair_ref, source_id, "
+        "excluded_names, excluded_targets) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             int(state.turn),
             int(state.year),
@@ -72,6 +75,8 @@ def record_public_saying(
             people_json,
             affair,
             f"{SOURCE_PREFIX}pending",
+            json.dumps(names, ensure_ascii=False),
+            json.dumps(targets, ensure_ascii=False),
         ),
     )
     saying_id = int(cur.lastrowid)
@@ -80,25 +85,20 @@ def record_public_saying(
         "UPDATE public_sayings SET source_id=? WHERE id=?",
         (source_id, saying_id),
     )
-    names = _character_names(excluded_names)
-    targets = {
-        str(key): _character_names(values)
-        for key, values in (excluded_targets or {}).items()
-        if _character_names(values)
-    }
-    if (names or targets) and hasattr(db, "register_character_knowledge_source"):
-        db.register_character_knowledge_source(
-            state, (), kind="public", title=LAYER_TITLE, body=text,
-            source_id=source_id, excluded_names=names, excluded_targets=targets,
-            commit=False,
-        )
     if owns:
         db.conn.commit()
     return saying_id
 
 
-def public_layer_events(db: Any) -> list[dict[str, object]]:
-    """投影进 0034 公开层的条目：人人读到「有此说法」，不是实况。"""
+def public_layer_events(db: Any, *, for_public_feed: bool = False) -> list[dict[str, object]]:
+    """投影进 0034 公开层的条目：人人读到「有此说法」，不是实况。
+
+    `for_public_feed=True` 只由公共供料方（公共邸报作者）使用：带显式排除
+    名单的说法不是「人人可读」，公共供料没有可被排除的具体读者，故不投影，
+    否则公共供料会把受排除材料重新公开（#1829 C1）。其余读者（人物、全量
+    推演者）走 `knowledge_row_visible_to` 的按人边界：推演者按 ADR 0155 三层
+    全看，无读者不代表公共（#1829 F1）。
+    """
     return [
         {
             "turn": row["turn"],
@@ -111,25 +111,54 @@ def public_layer_events(db: Any) -> list[dict[str, object]]:
         }
         for row in list_public_sayings(db)
         if row.get("source_id")
+        and not (
+            for_public_feed
+            and (row["excluded_names"] or row["excluded_targets"])
+        )
     ]
 
 
-def _row_as_saying(row: Any) -> dict[str, object]:
+def _json_name_list(raw: object) -> list[str]:
     try:
-        people = json.loads(row["involved_characters"] or "[]")
+        values = json.loads(raw or "[]")
     except (TypeError, ValueError):
-        people = []
-    if not isinstance(people, list):
-        people = []
+        values = []
+    if not isinstance(values, list):
+        values = []
+    return [str(name) for name in values if str(name).strip()]
+
+
+def _json_target_map(raw: object) -> dict[str, list[str]]:
+    try:
+        payload = json.loads(raw or "{}")
+    except (TypeError, ValueError):
+        payload = {}
+    if not isinstance(payload, dict):
+        return {}
+    result: dict[str, list[str]] = {}
+    for key, values in payload.items():
+        names = (
+            [str(name) for name in values if str(name).strip()]
+            if isinstance(values, list)
+            else []
+        )
+        if names:
+            result[str(key)] = names
+    return result
+
+
+def _row_as_saying(row: Any) -> dict[str, object]:
     return {
         "id": int(row["id"]),
         "turn": int(row["turn"]),
         "year": int(row["year"]),
         "period": int(row["period"]),
         "body": str(row["body"] or ""),
-        "involved_characters": [str(name) for name in people if str(name).strip()],
+        "involved_characters": _json_name_list(row["involved_characters"]),
         "affair_ref": str(row["affair_ref"] or ""),
         "source_id": str(row["source_id"] or ""),
+        "excluded_names": _json_name_list(row["excluded_names"]),
+        "excluded_targets": _json_target_map(row["excluded_targets"]),
     }
 
 
@@ -140,7 +169,8 @@ def list_public_sayings(
     affair_ref: str | None = None,
 ) -> list[dict[str, object]]:
     rows = db.conn.execute(
-        "SELECT id, turn, year, period, body, involved_characters, affair_ref, source_id "
+        "SELECT id, turn, year, period, body, involved_characters, affair_ref, source_id, "
+        "excluded_names, excluded_targets "
         "FROM public_sayings ORDER BY id"
     ).fetchall()
     result = [_row_as_saying(row) for row in rows]

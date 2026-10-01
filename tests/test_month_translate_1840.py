@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 
 import pytest
@@ -568,7 +569,8 @@ def test_world_segment_repeated_entity_effects_apply_in_order(game):
     ).fetchall()
     assert len(refs) == 2
     assert refs[0][0] == refs[1][0]
-    assert _pop(db, "流民", "shaanxi") == refugees_before - 2000
+    # #652：世界段不回流；仅邸报后月份推进会扣池。
+    assert _pop(db, "流民", "shaanxi") == refugees_before
 
 
 @pytest.mark.parametrize(
@@ -921,3 +923,55 @@ def test_final_strategic_rejection_leaves_no_owned_effects(game):
     triggered = db.has_event_triggered("jisi_lubian")
     assert state.metrics["民心"] == metric_before + (-3 if triggered else 0)
     assert state.metrics["国库"] == treasury_before + (-1 if triggered else 0)
+
+
+def test_month_translation_receives_person_candidate_identity(game):
+    """人物候选身份与 event_pool 声明契约进入过月转译请求，不另开模型调用。"""
+    from ming_sim import issues
+    from ming_sim.month_translate import (
+        build_month_segment_translate_prompt,
+        dispatch_month_segment,
+    )
+
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1636
+    state.period = 4
+    db.save_state(state)
+    segment = "盛京传来皇太极称帝改国号的消息。"
+    assert "huangtaiji_chengdi" not in segment
+    seen = []
+
+    def translate(request, _config):
+        seen.append(request)
+        return {"effects": {}}
+
+    dispatch_month_segment(db, state, segment=segment, translate_fn=translate)
+    prompt = build_month_segment_translate_prompt(seen[0])
+    assert "huangtaiji_chengdi" in prompt
+    assert "event_pool" in prompt
+    from ming_sim.materials import _world_candidate_events
+
+    jisi = next(item for item in _world_candidate_events(db, state) if item["id"] == "jisi_lubian")
+    labels = list(content.event_by_id["jisi_lubian"].terminal_reason_labels)
+    assert labels and jisi["terminal_reason_labels"] == labels
+    decoder = json.JSONDecoder()
+    text = seen[0].target_grounding
+    matched = []
+    cursor = 0
+    while cursor < len(text):
+        start = text.find("[", cursor)
+        if start < 0:
+            break
+        try:
+            value, end = decoder.raw_decode(text, start)
+        except json.JSONDecodeError:
+            cursor = start + 1
+            continue
+        if isinstance(value, list):
+            matched.extend(
+                item for item in value
+                if isinstance(item, dict) and item.get("id") == "jisi_lubian"
+            )
+        cursor = end
+    assert [item.get("terminal_reason_labels") for item in matched] == [labels]

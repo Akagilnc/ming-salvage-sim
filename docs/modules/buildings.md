@@ -36,12 +36,12 @@
 - 局势 bar 跑完结案 → 该 issue 的 `effect_on_resolve`（或失败时 `effect_on_fail`）里的 `buildings` 段落地建筑。
 - `buildings` 段是数组，每项 `action` ∈ `create`（新建）/`modify`（改既有数值）/`remove`（拆毁）。落地由 `issues._apply_issue_buildings` 处理。
 
-季末推演（`season_simulator`）邸报只叙事描述建筑运转/产出/损坏，**不给建筑写数值增减、不代标新建筑**。推演官从本回合全量盘面的 `buildings` TSV（`build_simulator_context`）读实时数据，不另挂查询 tool。
+世界段从材料目录的「营建」盘面按需读取建筑实况；邸报作者在全部实账落定后据实况写作。建筑数值变动只由结构化声明落账，不从邸报自由正文抽取。
 
 `origin` 列标来源：`preset`（开局设定）/`issue`（局势结案新建）。
 
 ## 查询
 
-- 推演官：全量盘面 `buildings` TSV。大臣：材料目录中职务可见的建筑投影（见闻/公事档案），按需 `list_materials` / `read_material`。
+- 世界段：材料目录「营建」盘面。大臣：材料目录中职务可见的建筑投影（见闻/公事档案），按需 `list_materials` / `read_material`。
 - gate key 寻址：`building.<id>.<field>`（issue 的 trigger_gate / eval_gate 可用）。
 - Web：`GET /api/buildings[?region_id=]`；地图省份节点弹窗显示该省建筑。

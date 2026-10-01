@@ -44,10 +44,6 @@ class _BoomExtractor:
         raise RuntimeError("抽取持续失败·#1468 负向钉")
 
 
-class _CannedEndorsementExtractor:
-    def run(self, _material):
-        return SimpleNamespace(content='{"endorsements":[]}')
-
 
 class _CannedMinisterAgent:
     """非流式 session.chat 读 agent.run().content（非 generator）。"""
@@ -61,10 +57,6 @@ class _CannedMinisterAgent:
 def _stub_outer_llm_seams(monkeypatch) -> None:
     """只换最外层 LLM 工厂/调用；结算核、收夜、HTTP 路由全真跑。"""
     monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
-    monkeypatch.setattr(
-        agents_mod, "create_endorsement_extractor_agent",
-        lambda *a, **k: _CannedEndorsementExtractor(),
-    )
     # #642：召对/收夜关系判官同属外层 LLM 缝——漏 stub 会在有 window 时真网挂起，
     # 票据不归还 → xdist 下 _wait_pending_writes 墙钟假红。
     # 高亮判官默认 8s 超时——必须零延迟 stub，否则两月链必破速度红线。
@@ -80,8 +72,7 @@ def _stub_outer_llm_seams(monkeypatch) -> None:
             "mode": "ordinary",
         },
     )
-    # 月末推演 LLM 边界（sim/extract/拟诏/章记）；resolve_directives 结算核真跑。
-    monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
+    # 判决及本月世界段只桩现役外部 LLM 缝。
     monkeypatch.setattr(
         decree_mod,
         "llm_promulgation_verdicts",
@@ -89,17 +80,6 @@ def _stub_outer_llm_seams(monkeypatch) -> None:
             {"dossier_id": row["id"], "decision": "promulgated"} for row in dossiers
         ],
     )
-    monkeypatch.setattr(
-        decree_mod,
-        "simulate_season_with_payload",
-        lambda *a, **k: (
-            "本月邸报：边饷已清，流寇未息。",
-            k.get("simulator_payload") or {},
-        ),
-    )
-    # #1745：结算拒收递话同属外层 LLM 缝——漏 stub 会在有玩家来源拒收时 sk-test 真网 401。
-    from tests.section_rejection_helpers import install_settlement_attendant_agent_stub
-    install_settlement_attendant_agent_stub(monkeypatch, decree_mod)
     monkeypatch.setattr(
         session_mod, "write_decree_with_agno",
         lambda *a, **k: "奉天承运，诏曰：着户部清核辽饷。",
@@ -188,7 +168,6 @@ def _pick_active_minister(state: dict) -> str:
 
 def _install_canned_minister(game, monkeypatch) -> None:
     agent = _CannedMinisterAgent()
-    game.session.registry.get = lambda _ch, **_kw: agent
     stub_scene_agent(monkeypatch, agent)
 
 
@@ -211,12 +190,15 @@ def _get_state(client: TestClient) -> dict:
 
 
 def _pending_payload(client: TestClient) -> dict:
-    resp = client.get("/api/audience/extraction/pending")
-    _assert_not_bare_500(resp, step="GET /api/audience/extraction/pending")
+
+    """#1842：待补投影唯一真源 = list_pending_translations → chat.translation_retries。"""
+    resp = client.get("/api/audience/chat")
+    _assert_not_bare_500(resp, step="GET /api/audience/chat")
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert isinstance(body, dict)
-    return body
+    retries = list(body.get("translation_retries") or [])
+    return {"pending": retries, "count": len(retries)}
+
 
 
 def _parse_sse(text: str) -> list[dict]:
@@ -336,7 +318,7 @@ def _play_one_month(
     assert game is not None
 
     chat = client.post(
-        f"/api/ministers/{minister}/chat",
+        "/api/audience/chat",
         json={"message": f"边饷如何？本月{month_label}召对。"},
     )
     _assert_not_bare_500(chat, step=f"{month_label} chat")
@@ -349,16 +331,15 @@ def _play_one_month(
     # 顺序 tracer 只验证真实入口和结构化月推进结果。
     _wait_pending_writes(game)
 
-    directive = client.post(
-        "/api/directives",
-        json={"text": f"着户部清核辽饷（{month_label}）。", "notes": ""},
+    # #1849：独立手拟新增 Web 口已退役；经现行 capture 核 + session 落草案
+    # （与召对拟旨同一条 turn_directives 写入）。本 tracer 被测的是月推进。
+    from tests.directive_seed_helpers import seed_manual_draft
+
+    draft_id = seed_manual_draft(
+        game.session, f"着户部清核辽饷（{month_label}）。",
     )
-    _assert_not_bare_500(directive, step=f"{month_label} 拟旨")
-    assert directive.status_code == 200, (
-        f"{month_label} 拟旨 → {directive.status_code}: {directive.text}"
-    )
-    dirs = (directive.json() or {}).get("directives") or []
-    assert dirs, f"{month_label}: directive list empty after POST"
+    assert draft_id > 0, f"{month_label}: seed_manual_draft returned {draft_id}"
+    assert game.db.list_directives(game.state), f"{month_label}: directive list empty after seed"
 
     _wait_pending_writes(game)
 
@@ -412,7 +393,9 @@ def _plant_extraction_debt(game, minister: str, *, sess_tag: str) -> int:
     an.ensure_summon_enter(game.db, nid, minister)
     ctid = game.db.create_chat_turn(game.state, minister, sess_tag, 0, night_id=nid)
     game.db.persist_minister_reply(minister, int(game.state.turn), "臣愿肩起此事。", ctid)
-    assert int(game.db.count_pending_story_extractions(night_id=nid) or 0) >= 1
+
+    assert int(len(game.db.list_unextracted_replies(night_id=nid)) or 0) >= 1
+
     return int(ctid)
 
 
@@ -534,99 +517,3 @@ def _assert_court_break_closed(game, body: dict, night_id: int, *, remote: str) 
         assert str(entry.get("presence_effect") or "") not in {
             an.PRESENCE_ENTER, "enter",
         }, entry
-
-
-@pytest.mark.parametrize("kind", ["offsite", "temporary"])
-def test_issue_1716_offsite_court_break_via_stream(tracer_client, kind, monkeypatch):
-
-    """#1716 stream 入口：已开夜场外/temporary /chat/stream 退朝 → court_break + 夜关。
-
-    temporary 不得因 admission reason 返回 error；正式场外仍走地点分类与无 presence。
-    """
-    client, game, remote, night_id = _setup_open_night_participant(
-        tracer_client, kind=kind,
-    )
-
-    class _StreamAgent:
-        def run(self, *_a, **_k):
-            yield SimpleNamespace(event="RunContent", content="臣领旨。")
-            yield SimpleNamespace(content="", tools=[])
-
-        def get_last_run_output(self):
-            return None
-
-    agent = _StreamAgent()
-    game.session.registry.get = lambda _ch, **_kw: agent
-    stub_scene_agent(monkeypatch, agent)
-
-    stream = client.post(
-        f"/api/ministers/{remote}/chat/stream",
-        json={"message": "退朝"},
-    )
-    _assert_not_bare_500(stream, step=f"#1716 chat/stream {kind} 退朝")
-    assert stream.status_code == 200, stream.text
-    events = _parse_sse(stream.text)
-    types = [str(ev.get("event") or "") for ev in events]
-    assert "error" not in types, events
-    assert "done" in types, events
-    done_raw = next(ev for ev in events if ev.get("event") == "done").get("data") or "{}"
-    done = json.loads(done_raw) if isinstance(done_raw, str) else done_raw
-    assert isinstance(done, dict), done
-    _assert_court_break_closed(game, done, night_id, remote=remote)
-    if kind == "offsite":
-        # 正式场外：该人本夜回话轮 route 须编码 offsite（非殿上）。
-        turn = game.db.conn.execute(
-            "SELECT route FROM chat_turns "
-            "WHERE night_id=? AND minister_name=? AND status='active' "
-            "ORDER BY id DESC LIMIT 1",
-            (night_id, remote),
-        ).fetchone()
-        assert turn is not None
-        assert str(turn["route"] or "") == "offsite", dict(turn)
-
-
-def test_issue_1716_offsite_court_break_via_nonstream(tracer_client, monkeypatch):
-    """#1716 非流式入口：已开夜场外 POST /chat 退朝 → court_break + 夜关。"""
-    client, game, remote, night_id = _setup_open_night_participant(
-        tracer_client, kind="offsite",
-    )
-
-    class _SyncAgent:
-        def run(self, *_a, **_k):
-            return SimpleNamespace(content="臣领旨。", tools=[])
-
-        def get_last_run_output(self):
-            return None
-
-    sync = _SyncAgent()
-    game.session.registry.get = lambda _ch, **_kw: sync
-    stub_scene_agent(monkeypatch, sync)
-    resp = client.post(
-        f"/api/ministers/{remote}/chat", json={"message": "退朝"},
-    )
-    _assert_not_bare_500(resp, step="#1716 chat 场外退朝")
-    assert resp.status_code == 200, resp.text
-    body = resp.json() or {}
-    assert isinstance(body, dict), body
-    _wait_pending_writes(game)
-    _assert_court_break_closed(game, body, night_id, remote=remote)
-
-
-# ── #1725/#1740 settlement typed progress facts via real SSE entry ───────
-
-
-def _stage_payloads_from_sse(events: list[dict]) -> list[dict]:
-    """Extract stage event payloads; require dict shape (content + typed progress)."""
-    stages: list[dict] = []
-    for ev in events:
-        if ev.get("event") != "stage":
-            continue
-        raw = ev.get("data") or "{}"
-        payload = json.loads(raw) if isinstance(raw, str) else raw
-        assert isinstance(payload, dict), f"stage payload must be dict: {payload!r}"
-        stages.append(payload)
-    return stages
-
-
-
-

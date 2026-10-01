@@ -79,19 +79,19 @@ def generate_ending_summary_for_tail(
     save_fn: Any = None,
     gate_run: Any = None,
 ) -> str:
-    """结局总评：读历月邸报／时间线，不再依赖章节记忆。
+    """结局总评：只读一遍已装载的历月邸报；缺配置如实失败，不静默降级。
 
     SQLite 读与落库走 gate_run（会话既有写闸）。模型调用留在闸外。
     """
     from ming_sim.agents import create_ending_summary_agent, run_agent_text
-    from ming_sim.memories import build_timeline
+    from ming_sim.exceptions import LLMUnavailable
     import json
 
     if llm_config is None:
-        return ""
+        raise LLMUnavailable("结局总评缺少模型配置", stage="ending_summary")
     under = gate_run if gate_run is not None else (lambda fn: fn())
 
-    def _load():
+    def _load_gazettes():
         loaded = []
         if hasattr(db, "list_turn_reports"):
             for row in db.list_turn_reports():
@@ -101,15 +101,16 @@ def generate_ending_summary_for_tail(
                 body = str(row.get("report") or row.get("body") or "").strip()
                 if not body:
                     continue
+                # 模型输入每期只保留一个正文键 body（与 ending_summary prompt 一致）。
                 loaded.append({
                     "turn": turn,
                     "year": int(row.get("year") or 0),
                     "period": int(row.get("period") or 0),
                     "body": body,
                 })
-        return loaded, build_timeline(db, upto_turn=int(closed_state.turn))
+        return loaded
 
-    reports, timeline = under(_load)
+    reports = under(_load_gazettes)
     ending_agent = create_ending_summary_agent(llm_config, agno_db)
     payload = {
         "ending": {
@@ -117,7 +118,6 @@ def generate_ending_summary_for_tail(
             "summary": outcome.get("summary"),
         },
         "gazettes": reports,
-        "timeline": timeline,
         "final_state": {
             "year": closed_state.year,
             "period": closed_state.period,
@@ -132,6 +132,16 @@ def generate_ending_summary_for_tail(
     )
     if not summary_text:
         return ""
+    # 终章 UI 历程从同一份已加载邸报投影 gazette，不另读、不把第二份正文送进模型。
+    timeline = [
+        {
+            "turn": int(row["turn"]),
+            "year": int(row["year"]),
+            "period": int(row["period"]),
+            "gazette": str(row.get("body") or ""),
+        }
+        for row in reports
+    ]
     save = save_fn or db.save_ending_summary
 
     def _save():
@@ -147,11 +157,16 @@ def generate_ending_summary_for_tail(
 
 
 def _brew_fn_for_session(session: Any):
-    """生产路径注入真实 LLM；测试无模型时用空串保底。"""
+    """生产路径注入真实 LLM；缺配置如实失败，不给测试开空串分支。"""
     llm_config = getattr(session, "llm_config", None)
     agno_db = getattr(session, "agno_db", None)
     if llm_config is None:
-        return lambda _payload: ""
+        from ming_sim.exceptions import LLMUnavailable
+
+        def _missing(_payload: str) -> str:
+            raise LLMUnavailable("关系酿制缺少模型配置", stage="relation_brew")
+
+        return _missing
 
     from ming_sim.agents import (
         create_faction_brew_agent,

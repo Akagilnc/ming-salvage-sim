@@ -43,7 +43,7 @@ def _stage_break_rank_acting(db, state, content, name):
         minister_name=minister, target_id=None,
         payload={"text": "测试任免原文", "name": name, "office": "陕西巡抚", "任别": "署理", "region_id": "shaanxi"},
     )
-    db.commit_pending_actions(state, content=content, registry=None)
+    db.commit_pending_actions(state, content=content)
     dossier = next(
         row for row in db.list_decree_dossiers()
         if row["pending_action_id"] == pending_id
@@ -127,8 +127,6 @@ def test_break_rank_appointment_rescript_td4_tracer(
     game, monkeypatch, decision, expected_status, expect_force_costs,
 ):
     """P-2：越级任命打回三格 → 批红三选参数化 → TD-4 三要素 restore 同档。"""
-    from ming_sim.decree import settle_with_delta
-
     db, state, content = game
     board = _board_with_td4_three(db, state, content)
     dossier_id = board["dossier_id"]
@@ -167,7 +165,7 @@ def test_break_rank_appointment_rescript_td4_tracer(
         ],
     }
     restored.apply_dossier_verdicts(
-        restored_state, [verdict], content=content, registry=None,
+        restored_state, [verdict], content=content,
     )
     rejected = restored.get_decree_dossier(dossier_id)
     assert rejected["status"] == "proposed"
@@ -201,18 +199,11 @@ def test_break_rank_appointment_rescript_td4_tracer(
     assert _sat(restored, "factions", "东林") == before_faction
     assert _cost_events(restored, dossier_id) == []
 
-    actions = [{"dossier_id": dossier_id, "decision": decision}]
-
-    def _forbid_verdicts(*_a, **_k):
-        raise AssertionError(
-            "player disposition rows must not enter apply_dossier_verdicts"
-        )
-
-    monkeypatch.setattr(restored, "apply_dossier_verdicts", _forbid_verdicts)
+    # 玩家三选接缝已由 test_month_chain_1847 从真实月链覆盖；此处只验
+    # 同一案卷读档后的领域判决和成本，不再编造旧结算后半段。
     settle_turn = restored_state.turn
-    settle_with_delta(
-        restored_state, restored, {}, before_turn=settle_turn, content=content,
-        dossier_rescript_actions=actions,
+    restored.apply_dossier_promulgation(
+        restored_state, dossier_id, decision, content=content,
     )
 
     row = restored.get_decree_dossier(dossier_id)

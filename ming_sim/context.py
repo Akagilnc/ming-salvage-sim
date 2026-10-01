@@ -22,7 +22,6 @@ from ming_sim.qualitative import (
     qualitative_band,
     qualitative_character_axes,
 )
-from ming_sim.skills import available_skill_names
 
 _content: Optional[GameContent] = None
 
@@ -99,8 +98,9 @@ def historical_anchor_for_month(year: int, month: int) -> Dict[str, object]:
 # 结局类型枚举（CLI/Web/总结 agent 共用）。
 # - ongoing：未决
 # - capital_fallen：京师失守（beizhili 易主非 ming）——数值型，本函数判
-# - emperor_abdicate / emperor_suicide：崇祯退位/自尽——叙事型，由 extractor 抽 emperor_fate 后
+# - emperor_abdicate / emperor_suicide：崇祯退位/自尽——叙事型，由声明的 emperor_fate 后
 #   写入 applied["victory_status"]，不在本函数判
+# - 被废 / 暴毙及其它非空皇帝终态声明：同一条终局链承接，不在本函数判
 # - timeout：20 年到期（turn>=240）强制收尾——由 decree 结局收口判，不在本函数判
 ENDING_ONGOING = "ongoing"
 ENDING_CAPITAL_FALLEN = "capital_fallen"
@@ -114,14 +114,17 @@ ENDING_LABELS: Dict[str, str] = {
     ENDING_EMPEROR_ABDICATE: "崇祯逊位",
     ENDING_EMPEROR_SUICIDE: "崇祯殉国",
     ENDING_TIMEOUT: "二十载尘埃落定",
+    "被废": "被废",
+    "暴毙": "暴毙",
 }
 
 
 def victory_status(db: GameDB, state: GameState) -> Dict[str, object]:
     """结局判定（数值型部分）：本函数只判「京师失守」。
 
-    退位/自尽走 extractor 的 emperor_fate（叙事型，见 issues.apply_score_extraction），
-    20 年到期走 decree 结局收口（turn>=240），均不在此判。其余一律 ongoing。
+    退位、自尽、被废、暴毙及其它已声明的皇帝终态走 emperor_fate
+    （叙事型，见 issues.apply_score_extraction），
+    20 年到期走 decree 结局收口（turn>=240），均不在此判。未声明终态则 ongoing。
     京畿 = beizhili，控制权字段 controlled_by（FK powers）；非 'ming' 即京师失守。
     """
     beizhili = db.conn.execute("SELECT * FROM regions WHERE id = 'beizhili'").fetchone()
@@ -311,7 +314,6 @@ def character_context_with_db(
         + faction_context_with_db(character, db)
         + held_authority_context(character, db, turn=turn)
         + relation_ledger_context(character, db)
-        + f"当前可用技能：{available_skill_names(character, db)}"
     )
 
 

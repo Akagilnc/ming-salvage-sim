@@ -29,16 +29,7 @@ def _copy_present(item: Mapping[str, object], *keys: str) -> dict[str, object]:
 
 def _appointment_to_person_change(
     item: Mapping[str, object],
-) -> tuple[dict[str, object], bool]:
-    office_type = str(item.get("office_type") or "").strip()
-    if office_type == "后宫":
-        return {
-            "name": item.get("name", ""),
-            ACTION_KEY: "册封",
-            "office": item.get("office", ""),
-            **_copy_present(item, "office_type", "faction", "reason", "approved", "准许", "origin_ref"),
-            "legacy_appointment": True,
-        }, False
+) -> dict[str, object]:
     return {
         "name": item.get("name", ""),
         ACTION_KEY: "任命",
@@ -48,7 +39,7 @@ def _appointment_to_person_change(
             "region_id", "任所", "辖区",
         ),
         "legacy_spillover": LEGACY_SPILLOVER,
-    }, True
+    }
 
 
 def _status_to_person_change(item: Mapping[str, object]) -> dict[str, object]:
@@ -100,11 +91,8 @@ def normalize_person_changes(extracted: Mapping[str, object]) -> list[dict[str, 
     changes: list[dict[str, object]] = []
     appointment_spillover: list[dict[str, object]] = []
     for item in _dict_items(extracted.get("appointments")):
-        translated, is_spillover = _appointment_to_person_change(item)
-        if is_spillover:
-            appointment_spillover.append(translated)
-        else:
-            changes.append(translated)
+        if str(item.get("office_type") or "").strip() != "后宫":
+            appointment_spillover.append(_appointment_to_person_change(item))
 
     changes.extend(
         _status_to_person_change(item)

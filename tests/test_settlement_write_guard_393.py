@@ -18,6 +18,7 @@ from fastapi import HTTPException
 import web_app
 from ming_sim.models import TurnPhase, FRONT_HALF_DONE_PHASES
 from ming_sim.session import GameSession
+from ming_sim.session_write_queue import get_session_write_queue
 
 
 class _RecordingDB:
@@ -69,7 +70,6 @@ class _FakeGame:
     def __init__(self, turn_phase: str):
         self.state = SimpleNamespace(turn=3, turn_phase=turn_phase, metrics={})
         self.db = _RecordingDB()
-        self._write_gate = threading.Lock()
         consort = SimpleNamespace(name="某秀女", office_type="后宫", status="candidate", office="")
         minister = SimpleNamespace(name="某大臣", office_type="文官")
         self.content = SimpleNamespace(characters={"某秀女": consort, "某大臣": minister})
@@ -79,6 +79,7 @@ class _FakeGame:
             registry=SimpleNamespace(refresh=lambda *a, **k: None, register=lambda *a, **k: None),
             await_translations_before_month=lambda after_drain=None: after_drain() if after_drain else None,
         )
+        self._write_gate = get_session_write_queue(self).write_gate
         # #1402：web _require_active_minister 改调 session.can_summon——假壳挂真方法，禁自造文案表
         self.session.can_summon = MethodType(GameSession.can_summon, self.session)
         self.favorites = set()
@@ -91,11 +92,6 @@ class _FakeGame:
         with web_app._serialized_web_write(self):
             self.db.writes.append("chat")
         return {}
-
-    def _chat_with_write_gate_held(self, minister_name, message):
-        """Fake 侧真实缝：调用方已持闸时直接记写，不重入 _serialized_web_write。"""
-        self.db.writes.append("chat")
-        return {"answer": "臣领旨。", "minister": minister_name, "message": message}
 
     def character_power_id(self, character):
         return "ming"
@@ -133,10 +129,9 @@ def _invoke(coro):
     return asyncio.run(coro)
 
 
-@pytest.mark.parametrize("operation", ("create", "update"))
-def test_directive_capture_runs_outside_write_gate(
-    monkeypatch, operation,
-):
+# #1849 / ADR 0152：独立手拟新增口退役后，drafts 唯一仍会跑拟旨抽取的 Web 写端点是
+# PATCH /api/directives/{id}（改稿）；create 用例随入口一并删除。
+def test_directive_capture_runs_outside_write_gate(monkeypatch):
     import ming_sim.cli_backend as cli_backend
 
     game = _FakeGame(TurnPhase.SUMMONING.value)
@@ -155,10 +150,6 @@ def test_directive_capture_runs_outside_write_gate(
         return payload
 
     game.session.llm_config = SimpleNamespace()
-    game.session.add_directive = lambda text, notes, dossier_payload: (
-        calls.append(("create", text, dossier_payload))
-        or SimpleNamespace(id=8, text=text, status="draft")
-    )
     game.session.update_directive = (
         lambda directive_id, text, dossier_payload:
         calls.append(("update", directive_id, text, dossier_payload))
@@ -166,22 +157,15 @@ def test_directive_capture_runs_outside_write_gate(
     monkeypatch.setattr(cli_backend, "capture_manual_directive_payload", capture)
     monkeypatch.setattr(web_app, "get_game", lambda: game)
 
-    if operation == "create":
-        _invoke(web_app.api_create_directive(web_app.DirectiveRequest(text="清丈田亩")))
-        assert calls == [("create", "清丈田亩", payload)]
-    else:
-        _invoke(web_app.api_update_directive(
-            7, web_app.DirectivePatch(text="重定清丈田亩"),
-        ))
-        assert calls == [("update", 7, "重定清丈田亩", payload)]
-        assert captured_context[0]["existing_mode"] == "midzhi"
+    _invoke(web_app.api_update_directive(
+        7, web_app.DirectivePatch(text="重定清丈田亩"),
+    ))
+    assert calls == [("update", 7, "重定清丈田亩", payload)]
+    assert captured_context[0]["existing_mode"] == "midzhi"
     assert game.db.writes == ["unrelated-write"]
 
 
-@pytest.mark.parametrize("operation", ("create", "update"))
-def test_directive_capture_result_is_rejected_after_turn_changes(
-    monkeypatch, operation,
-):
+def test_directive_capture_result_is_rejected_after_turn_changes(monkeypatch):
     import ming_sim.cli_backend as cli_backend
 
     game = _FakeGame(TurnPhase.SUMMONING.value)
@@ -196,20 +180,14 @@ def test_directive_capture_result_is_rejected_after_turn_changes(
         return payload
 
     game.session.llm_config = SimpleNamespace()
-    game.session.add_directive = lambda *a, **k: calls.append(("create", a, k))
     game.session.update_directive = lambda *a, **k: calls.append(("update", a, k))
     monkeypatch.setattr(cli_backend, "capture_manual_directive_payload", capture)
     monkeypatch.setattr(web_app, "get_game", lambda: game)
 
-    call = (
-        web_app.api_create_directive(web_app.DirectiveRequest(text="清丈田亩"))
-        if operation == "create"
-        else web_app.api_update_directive(
-            7, web_app.DirectivePatch(text="重定清丈田亩"),
-        )
-    )
     with pytest.raises(HTTPException) as exc:
-        _invoke(call)
+        _invoke(web_app.api_update_directive(
+            7, web_app.DirectivePatch(text="重定清丈田亩"),
+        ))
 
     assert exc.value.status_code == 409
     assert calls == []
@@ -218,25 +196,21 @@ def test_directive_capture_result_is_rejected_after_turn_changes(
 # 端点（无 file 参数的）→ 触发可调用。守门命中即 409、db.writes 为空。
 def _endpoint_cases():
     return [
-        ("secret_order", lambda: web_app.api_create_secret_order(
-            "某大臣", web_app.SecretOrderRequest(title="密", content="内容"))),
-        ("withdraw_pending", lambda: web_app.api_withdraw_pending_action(5)),
         ("favorite_add", lambda: web_app.api_add_favorite("某大臣")),
         ("favorite_remove", lambda: web_app.api_remove_favorite("某大臣")),
         ("court_layout", lambda: web_app.api_set_court_layout({"layout": "{}"})),
-        ("select_consort", lambda: web_app.api_select_consort("某秀女")),
         ("admin_upsert", lambda: web_app.api_admin_upsert("metrics", {"key": "国库", "value": "1"})),
         ("admin_delete", lambda: web_app.api_admin_delete("metrics", {"pk_value": "国库"})),
         ("portrait_delete", lambda: web_app.api_delete_portrait("某大臣")),
         # 会话层写端点（cmr Gate2 Finding1 残面：也须走 _write_gate，否则 _refuse_if_settling
         # 的相位检查守不住 pre_settle 窗口）。守门先于 session 调用触发，故 fake session 无需实现这些方法。
-        ("create_directive", lambda: web_app.api_create_directive(web_app.DirectiveRequest(text="清丈田亩"))),
+        # #1849：create_directive（独立手拟新增口）已随 ADR 0152 决定 1 退役。
         ("update_directive", lambda: web_app.api_update_directive(7, web_app.DirectivePatch(text="改稿"))),
         ("delete_directive", lambda: web_app.api_delete_directive(7)),
         # #1341：PATCH /api/decree 已删（零调用方）；不再列入写门面。
         # 撤回召对：undo_chat_turn 直写共享连接，自带的相位门是 phase-only（守不住 pre_settle 窗口），
         # 现一并走 _write_gate（cmr Gate2 r3 Finding1）。守门先于 undo_last_chat 触发。
-        ("undo_chat", lambda: web_app.api_undo_chat("某大臣")),
+        ("undo_chat", lambda: web_app.api_undo_audience_chat()),
         # 生命周期写（save 备份 commit / load 关连接热替换）：worker 持锁期间不得并发跑，
         # 否则撞 _commit_suspended（save→500）或关掉 worker 正写的连接（load 崩）。cmr Gate2 r5。
         # #1732：局内销毁式 /api/game/reset 已删，热替换写门面只剩 load_save。
@@ -384,12 +358,10 @@ def test_advance_short_hold_409_when_gate_taken_after_admit(monkeypatch):
     gate_held_by_peer = threading.Event()
     real_auto = web_app._auto_close_open_night_gate_free
 
-    def _wrapped_auto(game_arg, *, inflight_wait_s=0.0, write_gate=None):
+    def _wrapped_auto(game_arg, *, write_gate=None):
         at_short_hold.set()
         gate_held_by_peer.wait()
-        return real_auto(
-            game_arg, inflight_wait_s=inflight_wait_s, write_gate=write_gate,
-        )
+        return real_auto(game_arg, write_gate=write_gate)
 
     monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", _wrapped_auto)
 
@@ -425,86 +397,6 @@ def test_advance_short_hold_409_when_gate_taken_after_admit(monkeypatch):
         if game._write_gate.locked():
             game._write_gate.release()
         worker.join()
-
-
-def test_secret_order_endpoint_refused_by_phase_before_chat(monkeypatch):
-    """兼容密令按钮端点不得靠真实 WebGame.chat 的 blocking gate/phase-only 路径绕过守门。"""
-    game = _FakeGame(TurnPhase.SETTLING.value)
-    monkeypatch.setattr(web_app, "get_game", lambda: game)
-
-    def _unguarded_chat(*_args, **_kwargs):
-        with game._runtime_write_gate():
-            game.db.writes.append("chat")
-        return {}
-
-    game.chat = _unguarded_chat
-
-    with pytest.raises(HTTPException) as ei:
-        _invoke(web_app.api_create_secret_order(
-            "某大臣", web_app.SecretOrderRequest(title="密", content="内容")))
-
-    assert ei.value.status_code == 409
-    assert game.db.writes == []
-
-
-def test_secret_order_endpoint_refused_when_gate_held_before_chat(monkeypatch):
-    """锁被结算 worker 持有时，兼容密令按钮端点应 409，而不是阻塞在 WebGame.chat。"""
-    game = _FakeGame(TurnPhase.SUMMONING.value)
-    monkeypatch.setattr(web_app, "get_game", lambda: game)
-
-    def _unguarded_chat(*_args, **_kwargs):
-        with game._runtime_write_gate():
-            game.db.writes.append("chat")
-        return {}
-
-    game.chat = _unguarded_chat
-    game._write_gate.acquire()
-    result: dict[str, object] = {}
-
-    def _run_call():
-        try:
-            _invoke(web_app.api_create_secret_order(
-                "某大臣", web_app.SecretOrderRequest(title="密", content="内容")))
-        except BaseException as exc:
-            result["exc"] = exc
-        finally:
-            result["done"] = True
-
-    worker = threading.Thread(target=_run_call)
-    worker.start()
-    try:
-        worker.join()
-        assert result.get("done") is True, "secret_order endpoint blocked waiting for WebGame.chat"
-        exc = result.get("exc")
-        assert isinstance(exc, HTTPException)
-        assert exc.status_code == 409
-        assert game.db.writes == []
-    finally:
-        game._write_gate.release()
-        worker.join()
-
-
-def test_secret_order_endpoint_offloads_chat_work(monkeypatch):
-    """兼容密令按钮端点仍是 async 路由，但同步召对/写入必须离开事件循环线程。
-
-    #1357：不再 monkeypatch 死符号；走 FakeGame 上与生产同名的真方法。
-    """
-    game = _FakeGame(TurnPhase.SUMMONING.value)
-    monkeypatch.setattr(web_app, "get_game", lambda: game)
-    calls: list[str] = []
-
-    async def fake_run_in_threadpool(fn, *args, **kwargs):
-        calls.append("threadpool")
-        return fn(*args, **kwargs)
-
-    monkeypatch.setattr(web_app, "run_in_threadpool", fake_run_in_threadpool)
-
-    result = _invoke(web_app.api_create_secret_order(
-        "某大臣", web_app.SecretOrderRequest(title="密", content="内容")))
-
-    assert result["answer"] == "臣领旨。"
-    assert calls == ["threadpool"]
-    assert game.db.writes == ["chat"]
 
 
 def test_direct_db_write_succeeds_when_free(monkeypatch):

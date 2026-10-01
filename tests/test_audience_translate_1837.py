@@ -1,7 +1,7 @@
 """#1837 C1a：召对转译——交办载荷与应允。
 
 Seams:
-- translate_audience_turn / run_audience_turn_translation（转译 → C0 分派）
+- translate_audience_turn / apply_audience_round_translation（转译 → C0 分派）
 - GameSession.scene_chat（回话后转译；退役并行分类器）
 - close_night 收夜成案 → 过月落账
 """
@@ -29,6 +29,7 @@ from ming_sim.declaration_dispatch import dispatch_declaration
 from ming_sim.session import GameSession
 from ming_sim.session_write_queue import get_session_write_queue
 from tests.conftest import (
+    note_queue_until_game_teardown,
     offline_empty_audience_translate,
     persist_and_schedule_scene,
     stub_audience_translate,
@@ -37,6 +38,7 @@ from tests.conftest import (
 
 
 def _sess(db, state, content, monkeypatch, *, llm_config=None, translate_fn=None):
+    from ming_sim.session_write_queue import SessionWriteQueue
     sess = GameSession.__new__(GameSession)
     sess.db = db
     sess.state = state
@@ -47,9 +49,29 @@ def _sess(db, state, content, monkeypatch, *, llm_config=None, translate_fn=None
     sess.agno_db = None
     sess._beat_generator = None
     sess._scene_registry = None
-    sess._write_gate = None
+    sess._write_queue = SessionWriteQueue()
+    sess._write_gate = sess._write_queue.write_gate
+    # 转译在后台线程跑：登记队列归 game 夹具排空，断言失败也不越过关库边界。
+    note_queue_until_game_teardown(db, sess._write_queue)
     stub_audience_translate(monkeypatch, translate_fn)
     return sess
+
+
+def _scene_turn(sess, db, state, message: str, *, night_id: int | None = None):
+    """生产同形：建轮 → scene_chat(ctid) → persist + schedule → join。"""
+    from ming_sim.audience_night import get_open_night
+    nid = int(night_id or 0)
+    if nid <= 0:
+        open_n = get_open_night(db)
+        nid = int(open_n["id"]) if open_n else 0
+    ctid = int(db.create_chat_turn(
+        state, "殿上", "test-sess", 0, night_id=nid or None,
+    ))
+    result = sess.scene_chat(message, chat_turn_id=ctid)
+    fut = persist_and_schedule_scene(sess, db, result)
+    if fut is not None:
+        fut.result(timeout=30)
+    return result, ctid
 
 
 def _region_id(db, preferred: str = "shaanxi") -> str:
@@ -109,13 +131,13 @@ def _persist_night_chat(db, state, night_id: int, user_text: str, reply: str) ->
     return int(cur.lastrowid)
 
 
-@pytest.mark.parametrize("timing", [
-    "before_close", "after_transfer", "resume_before_bind",
-    "after_close", "after_bound_crash",
-])
+@pytest.mark.parametrize("timing", ["before_close", "after_close", "undo"])
 def test_pending_round_approval_endorsed_before_close_or_after_month_join(
     game, monkeypatch, timing,
 ):
+    """#1842：应允+背书由转译声明；撤回、收夜成案或迟到直写案卷。"""
+    from ming_sim.session_write_queue import SessionWriteQueue
+
     db, state, content = game
     night = open_night(db, state, location="乾清宫", time_of_day="夜")
     nid = int(night["id"])
@@ -124,175 +146,104 @@ def test_pending_round_approval_endorsed_before_close_or_after_month_join(
         minister_name="", night_id=nid,
     )
     aid = int(action.commissions.applied[0]["id"])
-    early_aid = None
-    if timing != "before_close":
-        early = dispatch_declaration(
-            db, state, {"commissions": [{"text": "着兵部核边饷"}]},
-            minister_name="", night_id=nid,
+    if timing != "after_close":
+        class FakeAgent:
+            def run(self, message):
+                return SimpleNamespace(content="臣愿为此旨会签。", tools=[])
+
+        monkeypatch.setattr(
+            "ming_sim.session.create_scene_agent", lambda *a, **k: FakeAgent(),
         )
-        early_aid = int(early.commissions.applied[0]["id"])
-        db.mark_pending_night_approved([early_aid], night_id=nid)
-    ctid = _persist_night_chat(db, state, nid, "准", "臣领旨。")
-    db.mark_story_extraction_pending(ctid)
-    sess = _sess(db, state, content, monkeypatch)
-    sess._write_gate = threading.Lock()
-    queue = get_session_write_queue(sess)
-    batches = []
 
-    class EndorsementAgent:
-        fail_once = False
-        approve_during_transfer_window = False
-        interrupt_before_bind = False
+        def declared_translation(prompt, llm_config):
+            return {
+                **offline_empty_audience_translate(prompt, llm_config),
+                "promises": [{"action_id": aid, "decision": "应允"}],
+                "endorsements": [{
+                    "action_id": aid, "form": "御笔手敕", "endorser_id": "",
+                }],
+            }
 
-        def run(self, materials):
-            if self.interrupt_before_bind:
-                self.interrupt_before_bind = False
-                raise KeyboardInterrupt("died before endorsement bind")
-            if self.approve_during_transfer_window:
-                self.approve_during_transfer_window = False
-                from ming_sim.audience_translation import catch_up_pending_translations
-                catch_up_pending_translations(
-                    db, state, night_id=nid, chat_turn_id=ctid,
-                    llm_config=sess.llm_config, translate_fn=approve,
-                    write_gate=sess._write_gate, write_queue=queue,
-                    within_barrier=True,
-                )
-            payload = json.loads(materials)
-            candidates = payload["可背书案卷"]
-            batches.append([int(c["ref"]["dossier_id"]) for c in candidates])
-            if self.fail_once:
-                self.fail_once = False
-                raise RuntimeError("endorsement unavailable")
-            return json.dumps({"endorsements": [{
-                "dossier_id": int(c["ref"]["dossier_id"]),
-                "form": "御笔手敕", "endorser_id": "", "imperial": True,
-                "source_chat_turn_id": ctid, "decision_key": "",
-            } for c in candidates]}, ensure_ascii=False)
-
-    endorsement_agent = EndorsementAgent()
-    endorsement_agent.approve_during_transfer_window = timing == "after_transfer"
-    endorsement_agent.interrupt_before_bind = timing == "resume_before_bind"
-    monkeypatch.setattr(
-        agents_mod, "create_endorsement_extractor_agent", lambda _: endorsement_agent,
-    )
-
-    def approve(prompt, config):
-        return {
-            **offline_empty_audience_translate(prompt, config),
-            "promises": [{"action_id": aid, "decision": "应允"}],
-        }
-
-    def fail(_prompt, _config):
-        raise RuntimeError("translation unavailable")
-
-    attempts = 0
-
-    def recover_on_closing(prompt, config):
-        nonlocal attempts
-        attempts += 1
-        if attempts == 1:
-            return fail(prompt, config)
-        return approve(prompt, config)
-
-    close_kwargs = dict(
-        content=content, registry=None, llm_config=sess.llm_config,
-        write_gate=sess._write_gate, write_queue=queue,
-        endorsement_extractor_agent=endorsement_agent,
-    )
-    if timing == "after_bound_crash":
-        settle = db.settle_endorsement_batch
-
-        def crash_after_bound(*args, **kwargs):
-            settle(*args, **kwargs)
-            raise KeyboardInterrupt("process died after endorsement watermark")
-
-        with monkeypatch.context() as patch:
-            patch.setattr(db, "settle_endorsement_batch", crash_after_bound)
-            with pytest.raises(KeyboardInterrupt, match="after endorsement watermark"):
-                close_night(db, state, translate_fn=fail, **close_kwargs)
-        close_night(db, state, night_id=nid, translate_fn=approve, **close_kwargs)
-    elif timing == "resume_before_bind":
-        with pytest.raises(KeyboardInterrupt, match="before endorsement bind"):
-            close_night(
-                db, state, translate_fn=fail,
-                content=content, registry=None, llm_config=sess.llm_config,
-                write_gate=sess._write_gate, write_queue=None,
-                endorsement_extractor_agent=endorsement_agent,
-            )
-        close_night(db, state, night_id=nid, translate_fn=approve, **close_kwargs)
-    elif timing == "after_transfer":
-        close_night(
-            db, state, translate_fn=fail,
-            content=content, registry=None, llm_config=sess.llm_config,
-            write_gate=sess._write_gate, write_queue=None,
-            endorsement_extractor_agent=endorsement_agent,
-        )
+        sess = _sess(db, state, content, monkeypatch, translate_fn=declared_translation)
+        _, ctid = _scene_turn(sess, db, state, "朕亲笔担此旨")
+        if timing == "undo":
+            payload = json.loads(db.conn.execute(
+                "SELECT payload_json FROM pending_actions WHERE id=?", (aid,),
+            ).fetchone()["payload_json"])
+            assert len(payload["endorsements"]) == 1
+            db.undo_chat_turn(ctid)
+            restored = db.conn.execute(
+                "SELECT payload_json, night_approved FROM pending_actions WHERE id=?", (aid,),
+            ).fetchone()
+            assert not json.loads(restored["payload_json"]).get("endorsements")
+            assert not restored["night_approved"]
+            close_night(db, state, content=content)
+            assert db.conn.execute(
+                "SELECT COUNT(*) FROM decree_dossiers WHERE pending_action_id=?", (aid,),
+            ).fetchone()[0] == 0
+            return
     else:
-        close_night(
-            db, state,
-            translate_fn=fail if timing == "after_close" else recover_on_closing,
-            **close_kwargs,
+        def failed_translation(prompt, llm_config):
+            raise RuntimeError("translation unavailable")
+
+        class FakeAgent:
+            def run(self, message):
+                return SimpleNamespace(content="臣领旨。", tools=[])
+
+        monkeypatch.setattr(
+            "ming_sim.session.create_scene_agent", lambda *a, **k: FakeAgent(),
         )
+        sess = _sess(db, state, content, monkeypatch, translate_fn=failed_translation)
+        # 真召对入口：回话先落库、后台转译失败，留下待补轮。
+        ctid = int(db.create_chat_turn(state, "殿上", "test-sess", 0, night_id=nid))
+        result = sess.scene_chat("准", chat_turn_id=ctid)
+        future = persist_and_schedule_scene(sess, db, result)
+        assert future is not None
+        with pytest.raises(RuntimeError, match="translation unavailable"):
+            future.result(timeout=30)
+
+    write_queue = SessionWriteQueue()
+    close_kwargs = dict(
+        content=content, llm_config=object(),
+        write_gate=write_queue.write_gate, write_queue=write_queue,
+    )
+    if timing == "before_close":
+        close_night(db, state, **close_kwargs)
+    else:
+        # 回话已持久化而转译失败；收夜补跑也失败，过月入口才补齐。
+        close_night(db, state, **close_kwargs)
+
+        def recovered_translation(prompt, llm_config):
+            return {
+                **offline_empty_audience_translate(prompt, llm_config),
+                "promises": [{"action_id": aid, "decision": "应允"}],
+                "endorsements": [{
+                    "action_id": aid, "form": "御笔手敕", "endorser_id": "",
+                }],
+            }
+
+        stub_audience_translate(monkeypatch, recovered_translation)
+        sess = _sess(db, state, content, monkeypatch, translate_fn=recovered_translation)
+        sess.await_translations_before_month()
+
     row = db.conn.execute(
-        "SELECT status, night_approved, committed_directive_id "
+        "SELECT status, night_approved "
         "FROM pending_actions WHERE id=?", (aid,),
     ).fetchone()
-    if timing != "before_close":
-        assert row["status"] == (
-            "pending" if timing in {"after_close", "after_transfer"} else "committed"
-        )
-        with pytest.raises(AudienceNightError, match="夜已收"):
-            db.mark_pending_night_approved([aid], night_id=nid)
-        if timing in {"after_bound_crash", "resume_before_bind"}:
-            assert int(row["committed_directive_id"]) not in (
-                engine_command_mingfa_publication_ids(list_ledger(db, nid))
-            )
-        stub_audience_translate(monkeypatch, approve)
-        endorsement_agent.fail_once = True
-        with pytest.raises(AudienceNightError, match="背书批抽取失败"):
-            sess.await_translations_before_month()
-        failed_dossier = db.conn.execute(
-            "SELECT id FROM decree_dossiers WHERE pending_action_id=?", (aid,),
-        ).fetchone()
-        assert failed_dossier is not None
-        assert db.list_dossier_endorsements(int(failed_dossier["id"])) == []
-        failed_row = db.conn.execute(
-            "SELECT committed_directive_id FROM pending_actions WHERE id=?", (aid,),
-        ).fetchone()
-        assert int(failed_row["committed_directive_id"]) not in (
-            engine_command_mingfa_publication_ids(list_ledger(db, nid))
-        )
-        sess.await_translations_before_month()
-        row = db.conn.execute(
-            "SELECT status, night_approved, committed_directive_id "
-            "FROM pending_actions WHERE id=?", (aid,),
-        ).fetchone()
     assert row["status"] == "committed"
-    assert int(row["night_approved"]) == 1
-    directive_id = int(row["committed_directive_id"] or 0)
-    assert directive_id > 0
-    dossier = db.conn.execute(
+    assert int(row["night_approved"] or 0) == 1
+    did = int(db.conn.execute(
         "SELECT id FROM decree_dossiers WHERE pending_action_id=?", (aid,),
-    ).fetchone()
-    assert dossier is not None
-    dossier_id = int(dossier["id"])
-    assert len(db.list_dossier_endorsements(dossier_id)) == 1
-    expected_directives = {directive_id}
-    if early_aid is not None:
-        early_row = db.conn.execute(
-            "SELECT committed_directive_id FROM pending_actions WHERE id=?", (early_aid,),
-        ).fetchone()
-        early_directive_id = int(early_row["committed_directive_id"])
-        early_dossier = db.conn.execute(
-            "SELECT id FROM decree_dossiers WHERE pending_action_id=?", (early_aid,),
-        ).fetchone()
-        early_dossier_id = int(early_dossier["id"])
-        assert len(db.list_dossier_endorsements(early_dossier_id)) == 1
-        expected_directives.add(early_directive_id)
-        assert batches == [[early_dossier_id], [dossier_id], [dossier_id]]
-    else:
-        assert batches == [[dossier_id]]
-    assert engine_command_mingfa_publication_ids(list_ledger(db, nid)) == expected_directives
+    ).fetchone()["id"])
+    ends = db.list_dossier_endorsements(did)
+    assert len(ends) == 1
+    assert ends[0]["form"] == "御笔手敕"
+    assert ends[0]["source_chat_turn_id"] == ctid
+    directive_id = int(db.conn.execute(
+        "SELECT id FROM turn_directives WHERE source_pending_action_id=?", (aid,),
+    ).fetchone()["id"])
+    pubs = engine_command_mingfa_publication_ids(list_ledger(db, nid))
+    assert directive_id in pubs
 
 
 def test_translation_entry_preserves_unknown_rejection_and_source_cutoff(
@@ -320,15 +271,22 @@ def test_translation_entry_preserves_unknown_rejection_and_source_cutoff(
             {"body": "提及未在册者", "role": "scene", "person_names": ["未在册者"]},
         ],
     }
-    audience_translate.run_audience_turn_translation(
-        db,
-        state,
+    from ming_sim.audience_translation import apply_audience_round_translation
+    decl = audience_translate.translate_audience_turn(
         emperor_message="本轮问",
         reply="本轮答",
-        night_id=night_id,
-        chat_turn_id=source,
-        minister_name=_hong_name(db, content),
+        night_said=audience_translate.build_night_said_so_far(
+            db, night_id, until_chat_turn_id=source,
+        ),
+        pending_summaries=audience_translate.build_pending_summaries(
+            db, int(state.turn), night_id=night_id,
+        ),
         translate_fn=lambda prompt, config: {**offline_empty_audience_translate(prompt, config), **declaration},
+    )
+    applied = apply_audience_round_translation(
+        db, state, decl,
+        night_id=night_id, chat_turn_id=source,
+        minister_name=_hong_name(db, content),
     )
 
     said = captured["night_said"]
@@ -348,8 +306,8 @@ def test_translation_entry_preserves_unknown_rejection_and_source_cutoff(
         for row in rejected
     )
     assert db.conn.execute(
-        "SELECT COUNT(*) FROM story_ledger_entries WHERE night_id=? AND body=?",
-        (night_id, "提及未在册者"),
+        "SELECT COUNT(*) FROM story_ledger_entries WHERE night_id=? AND id=?",
+        (night_id, applied.scene_facts.applied[0]["id"]),
     ).fetchone()[0] == 1
     malformed = dispatch_declaration(
         db, state,
@@ -369,7 +327,8 @@ def test_summons_translation_does_not_apply_monthly_effects_at_night(game):
     assert army_row is not None
     army_id, morale_before = str(army_row["id"]), int(army_row["morale"])
 
-    result = audience_translate.apply_audience_turn_translation(
+    from ming_sim.audience_translation import apply_audience_round_translation
+    result = apply_audience_round_translation(
         db, state,
         {"effects": {"army_delta": {
             army_id: {"origin_ref": "夜里预推", "morale": 1},
@@ -494,8 +453,7 @@ def test_appointment_and_relief_through_scene_chat_then_close_and_settle(game, m
             }
 
         sess = _sess(db, state, content, monkeypatch, translate_fn=translate_fn)
-        r1 = sess.scene_chat(edict)
-        assert r1.pending_action_id > 0, case["label"]
+        r1, _ = _scene_turn(sess, db, state, edict)
         pending = [
             dict(r) for r in db.conn.execute(
                 "SELECT id, kind, action, payload_json, night_approved "
@@ -514,7 +472,7 @@ def test_appointment_and_relief_through_scene_chat_then_close_and_settle(game, m
         assert payload["appoint_action"] == "任命", case["label"]
         assert int(pending[0]["night_approved"] or 0) == 0, case["label"]
 
-        r2 = sess.scene_chat("准")
+        r2, _ = _scene_turn(sess, db, state, "准")
         assert r2.answer == "臣等遵旨。", case["label"]
         approved = db.conn.execute(
             "SELECT id, kind, night_approved FROM pending_actions "
@@ -524,7 +482,7 @@ def test_appointment_and_relief_through_scene_chat_then_close_and_settle(game, m
             case["label"], approved,
         )
 
-        close_night(db, state, content=content, registry=None, wait_timeout_s=0.0)
+        close_night(db, state, content=content)
         for p in pending:
             row = db.conn.execute(
                 "SELECT status FROM pending_actions WHERE id=?", (int(p["id"]),),
@@ -611,7 +569,7 @@ def test_emperor_准_via_scene_chat_approves_no_reply_stays_unapproved(game, mon
         db, state, content, monkeypatch,
         translate_fn=offline_empty_audience_translate,
     )
-    sess.scene_chat("边事如何？")
+    _scene_turn(sess, db, state, "边事如何？")
     row = db.conn.execute(
         "SELECT night_approved FROM pending_actions WHERE id=?", (staged_id,),
     ).fetchone()
@@ -626,19 +584,25 @@ def test_emperor_准_via_scene_chat_approves_no_reply_stays_unapproved(game, mon
         }
 
     stub_audience_translate(monkeypatch, approve_fn)
-    sess.scene_chat("准")
+    _scene_turn(sess, db, state, "准")
     row = db.conn.execute(
         "SELECT night_approved FROM pending_actions WHERE id=?", (staged_id,),
     ).fetchone()
     assert int(row["night_approved"] or 0) == 1
 
-    close_night(db, state, content=content, registry=None, wait_timeout_s=0.0)
+    close_night(
+        db, state, content=content,
+        write_gate=sess._write_gate, write_queue=sess._write_queue,
+        llm_config=sess.llm_config,
+    )
     pa = db.conn.execute(
-        "SELECT status, committed_directive_id FROM pending_actions WHERE id=?",
-        (staged_id,),
+        "SELECT status FROM pending_actions WHERE id=?", (staged_id,),
     ).fetchone()
     assert pa["status"] == "committed"
-    assert int(pa["committed_directive_id"] or 0) > 0
+    assert db.conn.execute(
+        "SELECT 1 FROM turn_directives WHERE source_pending_action_id=?", (staged_id,),
+    ).fetchone() is not None
+
 
 
 def test_scene_chat_cli_and_api_same_translation_shape(game, monkeypatch):
@@ -670,13 +634,6 @@ def test_scene_chat_cli_and_api_same_translation_shape(game, monkeypatch):
     monkeypatch.setattr(
         "ming_sim.session.create_scene_agent", lambda *a, **k: FakeAgent(),
     )
-    import ming_sim.cli_backend as cb
-
-    def boom(*a, **k):
-        raise AssertionError("scene_chat 不得再调 classify_cli_action_intent")
-
-    monkeypatch.setattr(cb, "classify_cli_action_intent", boom)
-
     shapes = []
     for channel in ("api", "cli"):
         def translate_fn(prompt, llm_config, _decl=declaration):
@@ -691,17 +648,17 @@ def test_scene_chat_cli_and_api_same_translation_shape(game, monkeypatch):
         before = db.conn.execute(
             "SELECT COUNT(*) c FROM pending_actions WHERE status='pending'"
         ).fetchone()["c"]
-        result = sess.scene_chat(edict)
+        result, _ = _scene_turn(sess, db, state, edict)
         after = db.conn.execute(
             "SELECT COUNT(*) c FROM pending_actions WHERE status='pending'"
         ).fetchone()["c"]
         assert after > before
-        assert result.pending_action_id > 0
 
     assert len(shapes) == 2
     assert shapes[0] == shapes[1]
     assert "commissions" in shapes[0] and "promises" in shapes[0]
     assert "noise" not in shapes[0]
+
 
 
 def test_unhandleable_commission_rejected_as_fact_no_forced_ask(game):
@@ -769,20 +726,23 @@ def test_translate_call_failure_is_not_empty_success_dispatch(game, monkeypatch)
         "ming_sim.session.create_scene_agent", lambda *a, **k: FakeAgent(),
     )
     sess = _sess(db, state, content, monkeypatch, translate_fn=boom)
-    result = sess.scene_chat("边饷如何？")
+    ctid = int(db.create_chat_turn(state, "殿上", "test-sess", 0, night_id=None))
+    # 开夜由 scene_chat 内部 ensure
+    result = sess.scene_chat("边饷如何？", chat_turn_id=ctid)
+    fut = persist_and_schedule_scene(sess, db, result)
+    assert fut is not None
+    try:
+        fut.result(timeout=30)
+        raise AssertionError("expected translation failure")
+    except Exception:
+        pass
     assert result.answer == "臣在。"
     after = db.conn.execute(
         "SELECT COUNT(*) c FROM pending_actions WHERE status='pending'"
     ).fetchone()["c"]
     assert after == before  # 失败不得当分派成功写库
-    assert result.pending_action_id == 0
-    failures = list(result.pending_action_failures or [])
-    assert failures, failures
-    assert any(
-        f.get("category") == "translate_failed"
-        and "simulated translate transport failure" in str(f.get("message") or "")
-        for f in failures
-    ), failures
+    # 后台失败 → 待补水位，不洗成成功空声明
+    assert db.get_story_extract_status(ctid) == "pending"
 
 
 def test_translate_empty_success_still_dispatches_without_failure(game, monkeypatch):
@@ -860,7 +820,10 @@ def test_translation_pending_create_approve_reject_undo_via_real_chat_turn(
         "ming_sim.session.create_scene_agent", lambda *a, **k: FakeAgent(),
     )
 
-    # ── 1) 新增：转译落 pending → undo 删行 ──
+    # ── 1) 新增：转译落 pending → undo 按来源轮作废 ──
+    # #1890：本轮首次落下的交办按 source_chat_turn_id 整轮作废（voided 墓碑），
+    # 不再删行——ADR 0038 的硬删除只对「已落账逆转」仍有效，暂存交办按
+    # 2026-09-29 owner 裁定改作废标记。行留着，迟到的写入读它只会看到 voided。
     ctid_create = _active_chat_turn(db, state, night_id)
     create_text = "着户部备陕西赈灾银UNIQUE-CREATE"
     sess = _sess(
@@ -890,8 +853,12 @@ def test_translation_pending_create_approve_reject_undo_via_real_chat_turn(
         (ctid_create,),
     ).fetchone()["n"] > 0
     db.undo_chat_turn(ctid_create)
+    # 墓碑在行上，但不再是活暂存：读口（pending 集 / 本轮交办读口）都看不到它。
     assert db.conn.execute(
-        "SELECT COUNT(*) n FROM pending_actions WHERE id=?",
+        "SELECT status FROM pending_actions WHERE id=?", (created_id,),
+    ).fetchone()["status"] == "voided"
+    assert db.conn.execute(
+        "SELECT COUNT(*) n FROM pending_actions WHERE id=? AND status='pending'",
         (created_id,),
     ).fetchone()["n"] == 0
 
@@ -995,7 +962,7 @@ def test_pure_office_dossier_uses_payload_text_not_template(game):
     assert payload["text"] == edict
 
     db.mark_pending_night_approved([pending_id], night_id=night_id)
-    close_night(db, state, content=content, registry=None, wait_timeout_s=0.0)
+    close_night(db, state, content=content)
 
     dossier = db.conn.execute(
         "SELECT decree_text, payload_json, action_type, status "
@@ -1073,7 +1040,7 @@ def test_scene_chat_translation_can_approve_staged_action(game, monkeypatch):
     )
     sess = _sess(db, state, content, monkeypatch, translate_fn=translate_fn)
     # 用不会与规则段「准」混淆的皇帝原话
-    sess.scene_chat("着即照办")
+    _scene_turn(sess, db, state, "着即照办")
 
     row = db.conn.execute(
         "SELECT night_approved FROM pending_actions WHERE id=?", (staged_id,),

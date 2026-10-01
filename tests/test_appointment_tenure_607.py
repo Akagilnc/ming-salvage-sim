@@ -23,13 +23,13 @@ def _promulgate_appointment(db, state, content, name, office, tenure=None):
         state.turn, kind="office", action="任命",
         minister_name=_active_minister(db), target_id=None, payload=payload,
     )
-    db.commit_pending_actions(state, content=content, registry=None)
+    db.commit_pending_actions(state, content=content)
     dossier = next(
         row for row in db.list_decree_dossiers()
         if row["pending_action_id"] == pending_id
     )
     db.apply_dossier_promulgation(
-        state, dossier["id"], "promulgated", content=content, registry=None,
+        state, dossier["id"], "promulgated", content=content,
     )
     return db.get_decree_dossier(dossier["id"])
 
@@ -113,7 +113,7 @@ def test_failed_dossier_reappointment_rolls_back_audit_and_sequence(game, monkey
         minister_name=_active_minister(db), target_id=None,
         payload={"text": "测试任免原文", "name": name, "office": "失败回滚新官", "任别": "兼署"},
     )
-    db.commit_pending_actions(state, content=content, registry=None)
+    db.commit_pending_actions(state, content=content)
     dossier = next(
         row for row in db.list_decree_dossiers()
         if row["pending_action_id"] == pending_id
@@ -140,7 +140,7 @@ def test_failed_dossier_reappointment_rolls_back_audit_and_sequence(game, monkey
     )
     try:
         db.apply_dossier_promulgation(
-            state, dossier_id, "promulgated", content=content, registry=None,
+            state, dossier_id, "promulgated", content=content,
         )
     except ValueError as exc:
         assert str(exc) == "任免案卷载荷物化失败"
@@ -162,7 +162,7 @@ def test_failed_dossier_reappointment_rolls_back_audit_and_sequence(game, monkey
 
     monkeypatch.undo()
     db.apply_dossier_promulgation(
-        state, dossier_id, "promulgated", content=content, registry=None,
+        state, dossier_id, "promulgated", content=content,
     )
     audit = db.conn.execute(
         "SELECT * FROM office_change_records WHERE dossier_id=?", (dossier_id,)

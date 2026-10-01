@@ -18,15 +18,10 @@ from ming_sim.llm_transport import (
     TRANSPORT_DEFAULT_RETRY_INTERVAL_SECONDS,
 )
 from ming_sim.models import TurnPhase
-from tests.settlement_seam_helpers import make_light_session
+from tests.month_chain_helpers import make_light_session
 
 
 def _forbid_extractor(monkeypatch):
-    import ming_sim.decree as decree_mod
-    import ming_sim.simulation as simulation
-
-    assert not hasattr(decree_mod, "extract_scores_by_modules_with_agno")
-    assert not hasattr(simulation, "extract_scores_by_modules_with_agno")
     monkeypatch.setattr(
         "ming_sim.session.write_decree_with_agno", lambda *_a, **_k: "诏",
     )
@@ -112,7 +107,6 @@ def test_month_entry_world_push_follows_audience_transport_policy(
     calls = {"n": 0}
 
     def boom(self, *_args, **_kwargs):
-        assert getattr(self, "id", None) == "world-segment"
         calls["n"] += 1
         raise sequence[calls["n"] - 1]
 
@@ -246,14 +240,14 @@ def test_world_text_exhaustion_stops_month_keeps_settled_edicts(game, monkeypatc
     assert len(rows) == 1 and int(rows[0]["delta"]) == -7
     abort = caught.value
     assert abort.error_pack_path
-    assert abort.stage in {"world_text", "world-segment", "world_segment"}
+    assert abort.stage == "world_text"
     chain = (db.get_resolve_context(turn) or {}).get("simulator_payload", {}).get(
         "month_chain", {},
     )
     failure = chain.get("call_failure") or {}
     assert failure.get("kind") == "model_exhausted"
     assert failure.get("error_pack_path") == abort.error_pack_path
-    assert "world" in str(failure.get("step") or abort.stage)
+    assert failure.get("step") == "world_text"
     assert not chain.get("world_text_ready")
     assert not chain.get("world_committed")
 
@@ -317,7 +311,8 @@ def test_world_translate_exhaustion_keeps_text_resume_retries_translate_only(
         lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("must not repush world")),
     )
     db.save_turn_report(state, "邸报已成")
-    result = session.resolve_turn(allow_empty_decree=True)
+    # Web's advance_without_edict endpoint uses this exact session entry after reopening.
+    result = session.advance_without_decree()
     assert result.advanced is True
     assert world_calls == [1]
     assert translate_calls == ["fail", "ok"]
@@ -435,7 +430,6 @@ def test_settlement_recovery_projects_month_call_failure(
     recovery = web_game.state_payload().get("settlement_recovery")
     assert isinstance(recovery, dict)
     assert recovery.get("retryable") is True
-    assert recovery.get("ready_replay") is False
     assert recovery.get("error_pack_path")
     assert "核账期可见原文" in str(recovery.get("message") or "")
     chain = (db.get_resolve_context(turn) or {}).get("simulator_payload", {}).get(

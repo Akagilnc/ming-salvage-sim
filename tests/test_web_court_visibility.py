@@ -405,66 +405,8 @@ def test_db_resolve_power_id_authoritative(game):
     assert db.resolve_power_id(ghost2) == "ming"
 
 
-def test_vassal_prince_secret_order_rejected(read_game, monkeypatch):
-    """密令端点 api_create_secret_order 也须拒宗藩（同 /chat 的 API 直连绕过形态，cmr R5）。"""
-    import asyncio
-    import pytest
-    from types import MethodType, SimpleNamespace
-    from fastapi import HTTPException
-    from ming_sim.session import GameSession
-    from web_app import SecretOrderRequest
-    db, state, content = read_game
-    name = next((n for n, c in content.characters.items() if c.office_type == "宗藩"), None)
-    if name is None:
-        pytest.skip("基底盘面无宗藩人物")
-    sess = SimpleNamespace(content=content, temporary_characters=set(), db=db)
-    sess.can_summon = MethodType(GameSession.can_summon, sess)
-    stub = SimpleNamespace(
-        content=content,
-        session=sess,
-        character_power_id=lambda c: web_app._character_power_id(c, db),
-    )
-    monkeypatch.setattr(web_app, "web_game", stub)
-    req = SecretOrderRequest(title="密查", content="着尔暗中查访")
-    with pytest.raises(HTTPException) as ei:
-        asyncio.run(web_app.api_create_secret_order(name, req))
-    assert ei.value.status_code == 409
-    assert "宗室" in ei.value.detail
 
 
-def test_secret_order_endpoint_preserves_long_title_into_confirmation(game, monkeypatch):
-    """#1357 真缝：长标题经生产 _chat_with_write_gate_held 进入 session.chat 消息。"""
-    import asyncio
-    from ming_sim.session import ChatTurnResult
-    from tests.test_qa_c3_secret_order_path_1357_1376 import (
-        webgame_shell_for_secret_order,
-    )
-    from web_app import SecretOrderRequest
-
-    db, state, content = game
-    minister = next(
-        c for c in content.characters.values()
-        if c.office_type not in ("后宫", "宗藩", "未仕")
-        and db.get_character_status(c.name)[0] == "active"
-    )
-    seen = {}
-
-    def _session_chat(minister_name, message, *, chat_turn_id=0, explicit_secret_order=False):
-        seen.update(name=minister_name, message=message)
-        return ChatTurnResult(answer="臣领旨。")
-
-    runtime = webgame_shell_for_secret_order(
-        db, state, content, session_chat=_session_chat,
-    )
-    monkeypatch.setattr(web_app, "web_game", runtime)
-    monkeypatch.setattr(web_app, "get_game", lambda: runtime)
-    title = "超过二十个字的密令标题应完整进入确认与持久化恢复链路甲乙丙丁"
-
-    asyncio.run(web_app.api_create_secret_order(
-        minister.name, SecretOrderRequest(title=title, content="着尔暗中查访"),
-    ))
-
-    assert title in seen["message"]
 
 
 # ── #1317 r2：身份归一 ≠ 可召资格；未仕/宗藩别名解析 + 可召排未仕 ──────────
@@ -534,47 +476,6 @@ def test_real_court_ministers_not_collateral_damaged_by_1317(read_game):
         assert name in roster_names, f"{name} 被挡出 list_ministers"
 
 
-def test_no_active_weishi_in_summonable_roster_including_1642_1645(game):
-    """#1317 r2 类防御：开局 + 强行 active + 1642/1645 debut 未仕均不漏入可召名册。
-
-    钉张煌言(debut 1642)/郑成功(debut 1645) 等同型诸生童生——不靠单一史可法 seed status。
-    """
-    from ming_sim.simulation import build_simulator_payload
-
-    db, state, content = game
-    sess = _session_stub(db, content)
-
-    leaked = [
-        v.name for v in sess.list_ministers()
-        if getattr(content.characters.get(v.name), "office_type", "") == "未仕"
-    ]
-    assert leaked == [], f"未仕漏入可召名册：{leaked}"
-
-    weishi = [
-        (n, c) for n, c in content.characters.items()
-        if getattr(c, "office_type", "") == "未仕"
-        and getattr(c, "power_id", "ming") == "ming"
-    ]
-    assert weishi, "seed 须有未仕样本（史可法/郑成功/张煌言等同型）"
-    names_pinned = {n for n, _ in weishi}
-    assert "张煌言" in names_pinned and int(getattr(content.characters["张煌言"], "debut_year", 0) or 0) == 1642
-    assert "郑成功" in names_pinned and int(getattr(content.characters["郑成功"], "debut_year", 0) or 0) == 1645
-
-    for name, ch in weishi:
-        db.conn.execute(
-            "UPDATE characters SET status='active', power_id='ming' WHERE name=?", (name,),
-        )
-        db.conn.commit()
-        ok, _ = sess.can_summon(ch)
-        assert ok is False, f"active 未仕 {name} 仍可召"
-        assert name not in {v.name for v in sess.list_ministers()}
-        assert visible_in_court(ch, db) is False
-
-    # LLM/extractor 受守面同口径（simulation court_roster / active_ministers）
-    sim = build_simulator_payload(state, db, decree_text="", previous_narrative="")
-    assert "史可法" not in str(sim.get("court_roster", ""))
-    assert "张煌言" not in str(sim.get("court_roster", ""))
-    assert "郑成功" not in str(sim.get("court_roster", ""))
 
 
 def test_identity_resolves_weishi_and_vassal_aliases_no_duplicate_file(game):
@@ -594,7 +495,7 @@ def test_identity_resolves_weishi_and_vassal_aliases_no_duplicate_file(game):
         for r in db.conn.execute("SELECT name FROM characters").fetchall()
     }
     res = issues.apply_office_appointment(
-        db, state, content, None, "史宪之", "兵部职方司主事",
+        db, state, content, "史宪之", "兵部职方司主事",
         reason="#1317 r2 别名入仕", new_office_type="兵部",
     )
     assert not res.get("rejected"), res
@@ -623,7 +524,7 @@ def test_identity_resolves_weishi_and_vassal_aliases_no_duplicate_file(game):
         for r in db.conn.execute("SELECT name FROM characters").fetchall()
     }
     res_p = issues.apply_office_appointment(
-        db, state, content, None, "福王", "兵部尚书", reason="幻觉授宗藩",
+        db, state, content, "福王", "兵部尚书", reason="幻觉授宗藩",
     )
     assert res_p.get("rejected") is True
     assert "宗藩" in str(res_p.get("reason") or "")
@@ -638,27 +539,18 @@ def test_choose_minister_real_entry_excludes_weishi_includes_court(game, monkeyp
     """#1317 r2：CLI choose_minister 真入口与可召谓词同口径（排未仕，留真臣）。"""
     from ming_sim.cli import terminal as term
 
-    db, _state, content = game
+    db, state, content = game
     sess = _session_stub(db, content)
+    sess.state = state
 
-    # 强行 active 未仕，确认真入口仍不列
+    # Active status must not bypass the real CLI admission gate.
     db.conn.execute(
-        "UPDATE characters SET status='active' WHERE name=?", ("史可法",),
+        "UPDATE characters SET status='active',location='beizhili',transit_to='' "
+        "WHERE name IN (?,?)", ("史可法", "温体仁"),
     )
     db.conn.commit()
 
-    printed: list[str] = []
-
-    def fake_print(*args, **_kwargs):
-        printed.append(" ".join(str(a) for a in args))
-
-    # quit ∈ COURT_BREAK_COMMANDS → 返回 None（退朝），只验证列名册副作用
-    monkeypatch.setattr("builtins.print", fake_print)
-    monkeypatch.setattr("builtins.input", lambda *_a, **_k: "quit")
-
-    assert term.choose_minister(sess) is None
-
-    blob = "\n".join(printed)
-    assert "可召见大臣" in blob
-    assert "史可法" not in blob
-    assert "温体仁" in blob or "毕自严" in blob
+    answers = iter(("史可法", "温体仁"))
+    monkeypatch.setattr("builtins.input", lambda *_a, **_k: next(answers))
+    chosen = term.choose_minister(sess)
+    assert chosen is content.characters["温体仁"]

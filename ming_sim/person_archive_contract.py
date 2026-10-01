@@ -8,7 +8,7 @@ tests name ADR scenarios before the state mutation code exists.
 from __future__ import annotations
 
 
-PERSON_TRANSITION_ACTIONS = ("任命", "罢黜", "调任", "处置", "易主", "册封", "行止")
+PERSON_TRANSITION_ACTIONS = ("任命", "罢黜", "调任", "处置", "易主", "行止")
 
 PERSON_NON_TRANSITION_ACTIONS = ("评定", "性情")
 
@@ -22,7 +22,6 @@ def format_person_actions() -> str:
 
 PERSON_STATUSES = (
     "active",
-    "candidate",
     "offstage",
     "dismissed",
     "imprisoned",
@@ -39,7 +38,6 @@ PERSON_REASON_CODES = (
     "自请",
     "出宫",
     "陷虏",
-    "落选",
     "历史卒",
     "登场",
     # #690 / ADR 0011-2 D2-5：依律集扩 0009（走程序坐实 flag；与 cw 高低正交）
@@ -150,17 +148,7 @@ PERSON_TRANSITION_MATRIX = {
         "调任": "apply",
         "处置": "apply",
         "易主": "apply",
-        "册封": "reject:invalid_transition",
         "行止": "apply",
-    },
-    "candidate": {
-        "任命": "reject:invalid_transition",
-        "罢黜": "reject:invalid_transition",
-        "调任": "reject:invalid_transition",
-        "处置": "apply",
-        "易主": "reject:invalid_transition",
-        "册封": "apply",
-        "行止": "reject:invalid_transition",
     },
     "offstage": {
         "任命": "derive:起复",
@@ -168,7 +156,6 @@ PERSON_TRANSITION_MATRIX = {
         "调任": "normalize:任命",
         "处置": "apply",
         "易主": "reject:invalid_transition",
-        "册封": "reject:invalid_transition",
         "行止": "reject:invalid_transition",
     },
     "dismissed": {
@@ -177,7 +164,6 @@ PERSON_TRANSITION_MATRIX = {
         "调任": "normalize:任命",
         "处置": "apply",
         "易主": "reject:invalid_transition",
-        "册封": "reject:invalid_transition",
         "行止": "reject:invalid_transition",
     },
     "imprisoned": {
@@ -186,7 +172,6 @@ PERSON_TRANSITION_MATRIX = {
         "调任": "derive:放归",
         "处置": "apply",
         "易主": "reject:invalid_transition",
-        "册封": "reject:invalid_transition",
         "行止": "reject:invalid_transition",
     },
     "exiled": {
@@ -195,7 +180,6 @@ PERSON_TRANSITION_MATRIX = {
         "调任": "derive:赦还",
         "处置": "apply",
         "易主": "reject:invalid_transition",
-        "册封": "reject:invalid_transition",
         "行止": "reject:invalid_transition",
     },
     "retired": {
@@ -204,7 +188,6 @@ PERSON_TRANSITION_MATRIX = {
         "调任": "normalize:任命",
         "处置": "apply",
         "易主": "reject:invalid_transition",
-        "册封": "reject:invalid_transition",
         "行止": "reject:invalid_transition",
     },
     "dead": {
@@ -213,7 +196,6 @@ PERSON_TRANSITION_MATRIX = {
         "调任": "reject:invalid_transition",
         "处置": "reject:invalid_transition",
         "易主": "reject:invalid_transition",
-        "册封": "reject:invalid_transition",
         "行止": "reject:invalid_transition",
     },
 }
@@ -318,13 +300,6 @@ ACCEPTANCE_SCENARIOS = (
         "input": "任命毛文龙镇东江",
         "actions": ("任命",),
         "requires": ("reject:invalid_transition", "dead_no_outgoing_status"),
-    },
-    {
-        "id": "S14",
-        "title": "选妃册封",
-        "input": "册封某氏为妃",
-        "actions": ("册封",),
-        "requires": ("status:candidate", "candidate_exit"),
     },
     {
         "id": "S15",

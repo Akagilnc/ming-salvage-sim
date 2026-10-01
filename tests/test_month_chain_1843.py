@@ -11,17 +11,13 @@ import ming_sim.declaration_dispatch as declaration_dispatch
 import ming_sim.decree as decree_mod
 import ming_sim.month_chain as month_chain
 import ming_sim.month_translate as month_translate
-import ming_sim.simulation as simulation
 from ming_sim.declaration_dispatch import pending_action_decree_ref
 from ming_sim.session_write_queue import get_session_write_queue
-from tests.settlement_seam_helpers import make_light_session
+from tests.month_chain_helpers import make_light_session
 from tests.dossier_test_helpers import create_test_secret_order
 
 
 def _forbid_extractor(monkeypatch):
-    assert not hasattr(decree_mod, "extract_scores_by_modules_with_agno")
-    assert not hasattr(simulation, "extract_scores_by_modules_with_agno")
-    assert not hasattr(simulation, "EXTRACTION_MODULES")
     monkeypatch.setattr(
         "ming_sim.session.write_decree_with_agno", lambda *_a, **_k: "诏",
     )
@@ -73,7 +69,6 @@ def _prepare_player_month(db, state, content, monkeypatch, *, world=None, transl
     if secret_orders_supply is not None:
         monkeypatch.setattr(month_chain, "run_secret_orders_supply", secret_orders_supply)
     session = make_light_session(db, state, content)
-    session._write_gate = threading.Lock()
     return session
 
 
@@ -92,7 +87,6 @@ def test_player_month_entry_settles_prepushed_edicts_then_world_once(game, monke
     sources_before = {
         str(row[0]) for row in db.conn.execute("SELECT source_id FROM character_knowledge_sources")
     }
-    events = []
     world_calls = []
     translate_calls = []
 
@@ -126,9 +120,7 @@ def test_player_month_entry_settles_prepushed_edicts_then_world_once(game, monke
         queue.complete(ticket)
 
     threading.Thread(target=finish_prior).start()
-    result = session.resolve_turn(
-        allow_empty_decree=True, on_event=lambda kind, data: events.append((kind, data)),
-    )
+    result = session.resolve_turn(allow_empty_decree=True)
     assert joined.get("done") is True
 
     assert world_calls and world_calls[0]["edicts"][:2] == ["宁远补饷", "陕西赈灾"]
@@ -148,7 +140,6 @@ def test_player_month_entry_settles_prepushed_edicts_then_world_once(game, monke
     assert sources_before == {
         str(row[0]) for row in db.conn.execute("SELECT source_id FROM character_knowledge_sources")
     }
-    assert all("预推不可见" not in str(item) and "世界段只推演一次" not in str(item) for item in events)
 
     session.resolve_turn(allow_empty_decree=True)
     assert len(world_calls) == 1
@@ -208,7 +199,6 @@ def test_unforecast_edict_is_caught_up_once_and_crash_does_not_double_charge(gam
     monkeypatch.setattr(declaration_dispatch, "settle_staged_declarations_in_decree_order", flaky)
     session = make_light_session(db, state, content)
     session.llm_config = object()
-    session._write_gate = threading.Lock()
     with pytest.raises(SettlementAbort) as exc_info:
         session.resolve_turn(allow_empty_decree=True)
     assert isinstance(exc_info.value.__cause__, RuntimeError)
@@ -237,6 +227,10 @@ def test_questions_hold_rescript_and_gazette_is_required_before_advance(game, mo
         name="请旨可见", origin="旨意", year=state.year, period=state.period, turn=state.turn,
     )
     pending_id, ref = _stage_edict(db, state, minister, "陕西赈灾", "陕西赈灾", -1, affair.id)
+    from tests.test_refugee_loop_652 import _recovery_grant, _pop
+    _recovery_grant(db, state, amount=10)
+    pool_before = _pop(db, "流民", "shaanxi")
+    farmers_before = _pop(db, "农民", "shaanxi")
     db.conn.execute(
         "UPDATE staged_declarations SET questions_json=? WHERE decree_ref=?",
         ('[{"title":"是否加赈","context":"c","options":[{"label":"加","hint":"h1"},{"label":"否","hint":"h2"}]}]', ref),
@@ -247,7 +241,6 @@ def test_questions_hold_rescript_and_gazette_is_required_before_advance(game, mo
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
     session = make_light_session(db, state, content)
     session.llm_config = object()
-    session._write_gate = threading.Lock()
     monkeypatch.setattr(
         month_chain, "_run_decree_continuation_text", lambda *a, **k: "",
     )
@@ -256,6 +249,7 @@ def test_questions_hold_rescript_and_gazette_is_required_before_advance(game, mo
     assert held.awaiting is True
     assert held.advanced is False
     assert int(state.turn) == closed_turn
+    assert _pop(db, "流民", "shaanxi") == pool_before
     assert any(row["title"] == "是否加赈" for row in held.decisions)
 
     # 历史留中回流的同一请旨仍未答，不能因案卷创建于前月越过批红。
@@ -289,6 +283,7 @@ def test_questions_hold_rescript_and_gazette_is_required_before_advance(game, mo
     waiting_gazette = session.resolve_turn(allow_empty_decree=True)
     assert waiting_gazette.stage == "gazette"
     assert int(state.turn) == closed_turn
+    assert _pop(db, "流民", "shaanxi") == pool_before
 
     db.conn.execute(
         "INSERT INTO turn_reports (turn, year, period, report) VALUES (?, ?, ?, ?)",
@@ -298,17 +293,20 @@ def test_questions_hold_rescript_and_gazette_is_required_before_advance(game, mo
     advanced = session.resolve_turn(allow_empty_decree=True)
     assert advanced.advanced is True
     assert int(state.turn) == closed_turn + 1
+    from ming_sim.constants import RECOVERY_PERSONS_PER_WAN
+    assert _pop(db, "流民", "shaanxi") == pool_before - 10 * RECOVERY_PERSONS_PER_WAN
+    assert _pop(db, "农民", "shaanxi") == farmers_before + 10 * RECOVERY_PERSONS_PER_WAN
     del pending_id
 
 
-def test_player_recovery_discards_legacy_ready_delta(game, monkeypatch):
-    """旧 extractor ready 不能在玩家入口落账；原诏及来源仍用于新月链续跑。"""
+def test_player_recovery_uses_resolve_context_decree_not_ready_delta(game, monkeypatch):
+    """#1846：玩家入口从 resolve_context 原诏续跑；不再存在 ready delta 落账。"""
     db, state, content = game
     turn = int(state.turn)
     decree_mod.pre_settle(state, db, content=content)
     db.save_resolve_context(
-        turn, "崩溃前原诏", "旧叙事", {},
-        extracted={"metric_delta": {"民心": -40}}, source="player_decree",
+        turn, "崩溃前原诏", {},
+        source="player_decree",
     )
     support = db.load_state().metrics["民心"]
     _forbid_extractor(monkeypatch)
@@ -318,10 +316,11 @@ def test_player_recovery_discards_legacy_ready_delta(game, monkeypatch):
 
     assert result.stage == "gazette"
     assert int(state.turn) == turn
+    # 无 ready delta：不得出现 metric_delta 级大跳（旧 ready 会 -40）
     assert db.load_state().metrics["民心"] > support - 40
     assert session.last_decree == "崩溃前原诏"
     ctx = db.get_resolve_context(turn)
-    assert ctx["extracted"] is None
+    assert "extracted" not in ctx
     assert ctx["source"] == "player_decree"
 
 
@@ -339,14 +338,14 @@ def test_finish_rescript_phase2_stays_settling_until_advanced(game, monkeypatch)
         "UPDATE staged_declarations SET questions_json=? WHERE decree_ref=?",
         ('[{"title":"是否加赈"}]', ref),
     )
-    db.save_resolve_context(state.turn, "赈灾诏", "", {})
+    db.save_resolve_context(state.turn, "赈灾诏", {})
     db.conn.commit()
     closed_turn = int(state.turn)
     _forbid_extractor(monkeypatch)
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
     session = make_light_session(db, state, content)
     session.state.turn_phase = TurnPhase.SETTLING.value
-    session.finish_rescript_phase2({"ready_replay": True}, {})
+    session.finish_rescript_phase2({"apply": None, "summons": [], "revise_keys": [], "batch": None}, {"joined": []})
     assert int(session.state.turn) == closed_turn
     assert session.state.turn_phase == TurnPhase.SETTLING.value
 
@@ -402,7 +401,6 @@ def test_player_entry_recovers_ending_after_interrupted_segment(game, monkeypatc
     monkeypatch.setattr(month_chain, "run_world_segment_text", world)
     monkeypatch.setattr(month_translate, "translate_month_segment", lambda *_a, **_k: {"effects": {}})
     session = make_light_session(db, state, content)
-    session._write_gate = threading.Lock()
 
     from ming_sim.exceptions import SettlementAbort
 
@@ -569,19 +567,19 @@ def test_held_dossier_settlement_failure_retry_and_reentry_isolation(game, monke
     monkeypatch.setattr(dd, "settle_staged_declarations_in_decree_order", fail_first)
 
     with pytest.raises(RuntimeError, match="transient settlement crash"):
-        _settle_edicts(sess, registry=None, chain=chain)
+        _settle_edicts(sess, chain=chain)
 
     assert not db.staged_declarations.is_settled(held_ref)
     assert not db.staged_declarations.is_settled(stale_ref)
 
     # 结算失败重试：以 held_ref 身份续跑并成功落账
-    _settle_edicts(sess, registry=None, chain=chain)
+    _settle_edicts(sess, chain=chain)
     assert db.staged_declarations.is_settled(held_ref)
     assert not db.staged_declarations.is_settled(stale_ref)
     assert db.get_decree_dossier(dossier_id)["promulgation_decision"] == "promulgated"
 
     # 再次进入月链结算：保持 held_ref 案卷身份，旧 pending-action 不被冒名结算
-    _settle_edicts(sess, registry=None, chain=chain)
+    _settle_edicts(sess, chain=chain)
     assert db.staged_declarations.is_settled(held_ref)
     assert not db.staged_declarations.is_settled(stale_ref)
     dossier = db.get_decree_dossier(dossier_id)
@@ -701,25 +699,35 @@ def test_world_segment_reads_material_directory(game, monkeypatch):
     from pathlib import Path
 
     import ming_sim.agents as agents_mod
+    import ming_sim.materials as materials_mod
     from ming_sim.agents import bind_content
     from ming_sim.models import LLMConfig
 
     db, state, content = game
     bind_content(content)
     seen = []
+    openings = []
+    real_prepare = materials_mod.prepare_world_materials
+
+    def prepare(db_, state_, *args, **kwargs):
+        prepared = real_prepare(db_, state_, *args, **kwargs)
+        openings.append(prepared.opening)
+        return prepared
+
+    monkeypatch.setattr(materials_mod, "prepare_world_materials", prepare)
 
     def capture(agent, _message, **_kwargs):
         tools = {tool.__name__: tool for tool in agent.tools}
         listing = tools["list_materials"]("")
         index = tools["read_material"]("INDEX.txt")
-        has_dir = hasattr(agent.model, "materials_dir")
+        board = tools["read_material"]("盘面/全局.txt")
         materials_dir = getattr(agent.model, "materials_dir", "")
         seen.append({
             "listing": listing,
             "index": index,
-            "has_dir": has_dir,
+            "board": board,
             "dir_has_index": bool(materials_dir) and (Path(materials_dir) / "INDEX.txt").is_file(),
-            "opening": next(part for part in agent.instructions if "盘面：" in str(part)),
+            "instructions": [str(part) for part in agent.instructions],
         })
         return "静"
 
@@ -729,20 +737,18 @@ def test_world_segment_reads_material_directory(game, monkeypatch):
         model="gpt-test", channel="api",
     )
     assert month_chain.run_world_segment_text(db, state, api) == "静"
-    assert "INDEX.txt" in seen[0]["listing"].splitlines()
+    catalog = [line for line in seen[0]["listing"].splitlines() if line]
+    assert "INDEX.txt" in catalog
+    assert any(line != "INDEX.txt" for line in catalog)
     assert seen[0]["index"].strip()
-    assert seen[0]["has_dir"] is False
-    assert "盘面：" in seen[0]["opening"]
-    # 目录里至少有一份不在开场最小集里的材料。
-    extra = next(
-        line for line in seen[0]["listing"].splitlines()
-        if line and line != "INDEX.txt" and line not in seen[0]["opening"]
-    )
-    assert extra
+    assert seen[0]["board"].strip()
+    assert seen[0]["dir_has_index"] is False
+    # 开场通道＝prepare 交回的那一份，不靠栏目名从 instructions 里认。
+    assert openings[0]
+    assert openings[0] in seen[0]["instructions"]
 
     cli = LLMConfig(api_key="", base_url="", model="", channel="cli", cli_runner="agy")
     assert month_chain.run_world_segment_text(db, state, cli) == "静"
-    assert seen[1]["has_dir"] is True
     assert seen[1]["dir_has_index"] is True
     assert seen[1]["index"].strip()
 
@@ -848,3 +854,69 @@ def test_month_chain_lands_specialized_facts_before_due_and_gazette(game, monkey
     assert db.conn.execute(
         "SELECT knowledge_status FROM chat_messages WHERE id=?", (message_id,),
     ).fetchone()["knowledge_status"] == "released"
+
+
+def _stage_region_unrest_edict(db, state, minister, delta):
+    pending_id = db.stage_pending_action(
+        state.turn, kind="directive", action="拟旨", minister_name=minister,
+        payload={
+            "dossier_action_type": "policy", "target_kind": "issue",
+            "target_id": "month-chain", "actor": minister, "mode": "ordinary",
+            "text": "三省民变",
+        },
+    )
+    ref = pending_action_decree_ref(pending_id, 1)
+    regions = {
+        region_id: {"origin_ref": "盘面自发", "unrest": delta, "reason": "三省民变"}
+        for region_id in ("shaanxi", "shanxi", "henan")
+    }
+    db.staged_declarations.stage(
+        decree_ref=ref,
+        declaration={"effects": {"region_delta": regions}},
+        turn=int(state.turn),
+        verdict={"decision": "promulgated"},
+        forecast_text="预推不可见:三省民变",
+        visible_refs={"affairs": [], "issues": [], "secret_orders": []},
+    )
+
+
+def _set_three_province_unrest(db, value):
+    for region_id in ("shaanxi", "shanxi", "henan"):
+        db.conn.execute(
+            "UPDATE regions SET unrest=? WHERE id=?", (value, region_id),
+        )
+    db.conn.commit()
+
+
+def _three_province_unrest(db):
+    return {
+        row["id"]: int(row["unrest"])
+        for row in db.conn.execute(
+            "SELECT id, unrest FROM regions WHERE id IN ('shaanxi','shanxi','henan')",
+        )
+    }
+
+
+def test_edict_that_drops_unrest_below_gate_does_not_trigger_world_event(game, monkeypatch):
+    """三省 unrest 75 经旨降 20 后，世界事件读当月实账，不得在旨前触发。"""
+    db, state, content = game
+    minister = next(iter(content.characters.values())).name
+    _set_three_province_unrest(db, 75)
+    _stage_region_unrest_edict(db, state, minister, -20)
+    session = _prepare_player_month(db, state, content, monkeypatch)
+    session.resolve_turn(allow_empty_decree=True)
+    unrest = _three_province_unrest(db)
+    assert unrest == {"shaanxi": 55, "shanxi": 55, "henan": 55}
+    assert db.event_terminal_state("north_three_uprising") is None
+
+
+def test_edict_that_raises_unrest_over_gate_triggers_after_the_edict(game, monkeypatch):
+    """三省 unrest 55 经旨升 20 后，同一过月入口在实账上触发。"""
+    db, state, content = game
+    minister = next(iter(content.characters.values())).name
+    _set_three_province_unrest(db, 55)
+    _stage_region_unrest_edict(db, state, minister, 20)
+    session = _prepare_player_month(db, state, content, monkeypatch)
+    session.resolve_turn(allow_empty_decree=True)
+    assert _three_province_unrest(db) == {"shaanxi": 75, "shanxi": 75, "henan": 75}
+    assert db.event_terminal_state("north_three_uprising") == "triggered"

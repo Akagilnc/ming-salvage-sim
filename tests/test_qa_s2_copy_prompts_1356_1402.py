@@ -17,49 +17,8 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_minister_agent_address_terms_positive_in_audience_section():
-    """#1429/#1430：召对场面用词补正向称谓——陛下/皇上/臣；亲王才殿下。
-
-    P7/prompts-positive：正向极简，禁负向句、禁模板。
-    """
-    text = (ROOT / "content/prompts/minister_agent.md").read_text(encoding="utf-8")
-    assert "## 召对场面用词" in text
-    # 切出该节（到下一 ## 或文末）
-    start = text.index("## 召对场面用词")
-    rest = text[start + 2 :]
-    end_rel = rest.find("\n## ")
-    section = text[start:] if end_rel < 0 else text[start : start + 2 + end_rel]
-    assert "陛下" in section
-    assert "皇上" in section
-    assert "臣" in section
-    assert "亲王" in section and "殿下" in section
-    # 禁负向句/模板铁律：本节不得出现「不得/不要/禁止/勿」类负向或 `{` 模板
-    for bad in ("不得称", "不要称", "禁止称", "勿称", "{name}", "${", "{{"):
-        assert bad not in section, bad
 
 
-def test_season_simulator_uses_fed_reign_label_not_self_compute():
-    """#1344：上下文 turn_header 喂 reign_period_label 事实。"""
-    from ming_sim.agents import build_simulator_context
-    from ming_sim.models import reign_period_label
-
-    label = reign_period_label(1627, 10)
-    assert label == "天启七年十月"
-    ctx = build_simulator_context(
-        {
-            "turn": {
-                "year": 1627,
-                "period": 10,
-                "turn": 1,
-                "reign_period_label": label,
-            },
-            "decree_text": "",
-        }
-    )
-    assert "天启七年十月" in ctx
-    assert "【本回合年月】" in ctx
-    # 西历裸拼不得作为抬头权威
-    assert "【本回合年月】1627 年 10 月" not in ctx
 
 
 def test_gazette_header_uses_report_own_month_not_current_turn(game):

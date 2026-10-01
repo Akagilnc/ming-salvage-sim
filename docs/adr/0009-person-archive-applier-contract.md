@@ -6,6 +6,9 @@ Status: accepted（评审收敛并 main：PR #94，2026-06-11；前置 PR #90 / 
 
 本 ADR 是 **ADR 0003（单 key + 显式动作意图）的实现契约**，并作为 **ADR 0008（C2 落库拒收契约与事务边界）的第一块旗舰 adapter**。范围拍板记录：拒绝 1–2 天快速补丁路线（治 90% 症状但 bug 类不死），深做单一入口，该类灭绝（2026-06-11）。
 
+
+后出注记（2026-09-28，#1837 reopen）：:81、:83、:117、:145 规定的 `candidate` 状态与册封随选妃工具删除；后宫以后再设计。后宫人物仍可在册、被宣入殿。
+
 ## 决定 1：动作枚举七个，按级联差异分立
 
 `人物变更` 每项必带 `动作` ∈ **{任命, 罢黜, 调任, 处置, 易主, 册封, 行止}**。
@@ -158,3 +161,8 @@ status 枚举 = models.py 七值 + 实存的 `candidate`（registry.py:375 秀�
 ## 实现时机
 
 契约先行（本文档）；实现等 PR #90 合入 + M0 收口，作为 C2 契约的第一块旗舰 adapter 落地，顺带 C3 的 `_commit_office_action` 搬家。
+
+
+## 后出注记（#1843 reopen，2026-09-28）
+
+原以「ready=1 重试真源 + 历史 delta 文件」为别名表存在理由的条款：#1843 已删 `TOP_LEVEL_ALIASES` / 五模块 extractor 别名与 `turn_extractions`；条目字段规范化（`ITEM_FIELD_ALIASES` / `_canonical_item_fields`）与 C0 声明形状（`EMPTY_EXTRACTION`）保留。ready=1 整套归 #1846。

@@ -35,12 +35,6 @@ def main() -> int:
     )
     session = GameSession(ns.db, cfg)
 
-    def on_event(kind, data):
-        s = str(data)
-        if kind in ("simulator_chunk", "extractor_chunk"):
-            return
-        print(f"  [evt] {kind}: {s[:120]}")
-
     snap = session.begin_turn()
     before = dict(session.state.metrics)
     print(f"[turn] {session.state.year}年{session.state.period}月 turn={session.state.turn} "
@@ -56,7 +50,7 @@ def main() -> int:
     session.enter_review()
     t0 = time.monotonic()
     print("[resolve] 颁诏推演中（agy 调用，耐心等）...")
-    result = session.resolve_turn(decree=ns.decree, on_event=on_event)
+    result = session.resolve_turn(decree=ns.decree)
 
     # HITL：推演若出决策点，自动选第一项，续跑 phase2（含 4 模块 extractor）。
     # #657：session.submit_hitl_choices 唯一编排 + 既有 session._write_gate。
@@ -75,7 +69,7 @@ def main() -> int:
             print(f"   - #{d.get('idx')} {str(d.get('title'))[:40]} → 选「{label[:40]}」")
             choices.append(item)
         report = session.submit_hitl_choices(
-            choices, write_gate=session._write_gate, on_event=on_event,
+            choices, write_gate=session._write_gate,
         )
         result = type("R", (), {"awaiting": False, "report": report})()
 

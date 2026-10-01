@@ -72,14 +72,13 @@ def test_reload_scrubs_next_period_advance(game):
     assert state.year == db_year and state.period == db_period
 
 
-def test_reload_passthrough_content_registry_no_crash(game):
-    """registry 非 None 时只透传不处理（session 级接线待后续）；content 非 None 时
-    重建 characters（幽灵/属性还原另有专测），本测只断不报错且 state 仍刷新。"""
+def test_reload_content_no_crash(game):
+    """content 非 None 时重建 characters，state 仍刷新。"""
     db, state, content = game
     db.conn.execute("UPDATE game_state SET turn_phase='reviewing' WHERE id=1")
     db.conn.commit()
 
-    returned = reload_state_from_db(db, state, content=content, registry=object())
+    returned = reload_state_from_db(db, state, content=content)
 
     assert returned is state
     assert state.turn_phase == "reviewing"
@@ -152,7 +151,6 @@ def test_rollback_purges_content_character_ghost(game, monkeypatch):
     任免 commit 先挂 content 再写 DB；回滚删行留幽灵 → 重试走「在册」路因无行被拒，
     合法 pending 任免标 failed = 决策丢失。
     """
-    import ming_sim.decree as decree_mod
     from ming_sim.decree import pre_settle
     db, state, content = game
     new_name = "赵无忌"
@@ -163,10 +161,10 @@ def test_rollback_purges_content_character_ghost(game, monkeypatch):
     # commit_pending_actions 之后的步骤抛错 → 回滚
     def _boom(*a, **k):
         raise RuntimeError("post-commit step crash")
-    monkeypatch.setattr(decree_mod, "auto_trigger_seed_issues", _boom)
+    monkeypatch.setattr(db, "auto_submit_due_secret_orders", _boom)
 
     with pytest.raises(RuntimeError, match="post-commit step crash"):
-        pre_settle(state, db, content=content, registry=None)
+        pre_settle(state, db, content=content)
 
     assert new_name not in content.characters  # 幽灵已清
     assert db.conn.execute(
@@ -174,7 +172,7 @@ def test_rollback_purges_content_character_ghost(game, monkeypatch):
     # pending 行随回滚回到 pending(行本身也回滚了 status 变更)
     monkeypatch.undo()
 
-    pre_settle(state, db, content=content, registry=None)  # 正常重试
+    pre_settle(state, db, content=content)  # 正常重试
 
     row = db.conn.execute(
         "SELECT status FROM pending_actions WHERE turn=? AND kind='office'",
@@ -206,7 +204,7 @@ def test_reload_skipped_inside_nested_atomic(game, monkeypatch):
 
     def _boom(*a, **k):
         raise RuntimeError("inner crash")
-    monkeypatch.setattr(decree_mod, "auto_trigger_seed_issues", _boom)
+    monkeypatch.setattr(db, "auto_submit_due_secret_orders", _boom)
 
     with pytest.raises(RuntimeError, match="回滚"):  # 外层 rollback-only 响亮
         with atomic(db):
@@ -240,9 +238,8 @@ def test_rollback_restores_existing_character_attributes(game, monkeypatch):
     罢免 commit 改了 content 里现有 Character 的 status/office；回滚还原 DB 行，
     幽灵清理管不到「名字仍在」的脏属性 → content 与 DB 分叉持续整个 session。
     """
-    import ming_sim.decree as decree_mod
     from ming_sim.decree import pre_settle
-    from tests.test_pending_actions import _active_minister_name
+    from tests.legacy_staging_helpers import _active_minister_name
     db, state, content = game
     name = _active_minister_name(db, content)
     # 基准取 DB 行（不变式=reload 后 content 与 DB 同源；活存档 DB 值可能已偏离 content JSON 初值）。
@@ -256,10 +253,10 @@ def test_rollback_restores_existing_character_attributes(game, monkeypatch):
 
     def _boom(*a, **k):
         raise RuntimeError("post-commit step crash")
-    monkeypatch.setattr(decree_mod, "auto_trigger_seed_issues", _boom)
+    monkeypatch.setattr(db, "auto_submit_due_secret_orders", _boom)
 
     with pytest.raises(RuntimeError, match="post-commit step crash"):
-        pre_settle(state, db, content=content, registry=None)
+        pre_settle(state, db, content=content)
 
     # DB 已回滚 → 内存 content 必须同源
     refreshed = content.characters[name]

@@ -1,18 +1,14 @@
-// 颁诏/续裁共用：消费 SSE 推演流，stage/thinking/text 实时更新进度区，
-// 返回传输终态：done（是否过月由 data.advanced 判定）/ decisions（暂停待裁）/ error。
+// 颁诏/续裁/菜单继续共用：消费 SSE 推演流。
+// #1852：结算流只认终态 done/decisions/error；菜单继续仍可走 stage 更新 busy 标签。
 export type SettleStreamOutcome = { kind: "done" | "decisions" | "error"; data: any };
 
-/** Stage SSE payload. current/total are typed wait-progress facts from the backend. */
+/** Stage SSE payload（菜单继续等读档路径用 content 标签；结算进度已退役）。 */
 export type SettlementStageUpdate = {
   content: string;
-  current?: number;
-  total?: number;
 };
 
 type SettleStreamCallbacks = {
-  onStage: (update: SettlementStageUpdate) => void;
-  onThinking: (chunk: string) => void;
-  onNarrative: (chunk: string) => void;
+  onStage?: (update: SettlementStageUpdate) => void;
 };
 
 function consumeSettleBlocks(
@@ -30,24 +26,20 @@ function consumeSettleBlocks(
     let data: any = {};
     try { data = JSON.parse(dataRaw); } catch { continue; }
     if (evName === "stage") {
-      // Pass typed progress fields through; never reverse-lookup from content labels.
-      callbacks.onStage({
+      callbacks.onStage?.({
         content: typeof data.content === "string" ? data.content : "",
-        current: typeof data.current === "number" ? data.current : undefined,
-        total: typeof data.total === "number" ? data.total : undefined,
       });
-    } else if (evName === "thinking") callbacks.onThinking(data.content || "");
-    else if (evName === "text") callbacks.onNarrative(data.content || "");
-    else if (evName === "error") return { kind: "error", data };
+    } else if (evName === "error") return { kind: "error", data };
     else if (evName === "decisions") return { kind: "decisions", data };
     else if (evName === "done") return { kind: "done", data };
+    // thinking/text 等中间事件已随结算进度退役，忽略。
   }
   return null;
 }
 
 export async function consumeSettleStream(
   response: Response,
-  callbacks: SettleStreamCallbacks,
+  callbacks: SettleStreamCallbacks = {},
   options?: { httpErrorLabel?: string },
 ): Promise<SettleStreamOutcome> {
   // #1195：菜单「继续」复用同一 SSE 消费器；httpErrorLabel 区分失败前缀。

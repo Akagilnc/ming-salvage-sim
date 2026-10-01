@@ -1,14 +1,12 @@
 """#655 弹劾潮当前切片：动态候选适配器与 transformed 真源腿。
 
-Confirmed seams: build_simulator_payload candidate_events; apply_issue_tracker_output new_issues.
 """
 import json
 
 import ming_sim.agents as agents_mod
 from ming_sim.db import GameDB
-from ming_sim.issues import apply_issue_tracker_output, gather_impeachment_surge_candidates, issue_to_payload
+from ming_sim.issues import apply_issue_tracker_output, gather_impeachment_surge_candidates
 from ming_sim.models import LLMConfig
-from ming_sim.simulation import build_simulator_payload
 
 
 def _candidate_world(db, state, *, participants=None, execution_note="名实已乖，旨外受益"):
@@ -56,35 +54,6 @@ def _active_pair(db, owner_name):
     return str(others[0]["name"]), str(others[1]["name"])
 
 
-def test_transformed_fact_is_projected_as_namespaced_candidate(game):
-    db, state = game[:2]
-    did, owner, owner_faction = _candidate_world(db, state)
-
-    candidates = gather_impeachment_surge_candidates(state, db)
-    assert candidates
-    item = candidates[0]
-    assert item["id"].startswith("impeachment_surge:commitment:")
-    assert item["origin_ref"] == f"commitment:{did}:deformation_exposure"
-    assert item["source_kind"] == "deformation_exposure"
-    assert item["occurred_turn"] == state.turn
-    assert item["participant_ids"] == [owner]
-    assert item["responsible_person_ids"] == [owner]
-    assert owner in item["eligible_target_ids"]
-    assert owner_faction in item["responsible_faction_ids"]
-    assert item["faction_persona"]["character_personas"]
-    assert item["dossier_id"] == did
-    assert item["decree_text"] == "清丈"
-    assert item["execution_note"] == "名实已乖，旨外受益"
-    assert item["execution_outcome"] == "transformed"
-    assert item["beyond_intent"] is True
-    assert item["actual_effect_count"] >= 1
-    assert item["beyond_intent_effects"]
-    assert all(bool(effect.get("beyond_intent")) for effect in item["beyond_intent_effects"])
-    payload = build_simulator_payload(state, db, "", "")
-    assert item not in payload["candidate_events"]
-    assert all(not str(event["id"]).startswith("impeachment_surge:") for event in payload["candidate_events"])
-    facts = db.build_faction_denunciation_facts()
-    assert all(int(row["dossier_id"]) != did for row in facts["forked_dossiers"])
 
 
 def test_transformed_without_beyond_intent_yields_no_surge_candidate(game):
@@ -275,8 +244,7 @@ def test_target_roster_survives_generic_issue_restore(game, content):
     restored = GameDB(path, content)
     try:
         row = restored.conn.execute("SELECT * FROM issues WHERE id=?", (issue_id,)).fetchone()
-        payload = issue_to_payload(row, [])
-        assert payload["target_roster"] == [owner]
+        assert json.loads(row["target_roster"]) == [owner]
         assert json.loads(row["participants"]) == []
         assert json.loads(row["participant_roster"]) == []
     finally:

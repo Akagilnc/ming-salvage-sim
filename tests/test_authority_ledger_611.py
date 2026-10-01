@@ -6,7 +6,6 @@ from ming_sim.db import GameDB
 from ming_sim import issues as issue_engine
 import ming_sim.decree as decree_mod
 from ming_sim.relations import EMPEROR_NODE
-from ming_sim.simulation import TOP_LEVEL_ALIASES, canonicalize_extraction
 
 
 def _minister(db):
@@ -58,39 +57,8 @@ def _revoke(db, state, content, authority_id, dossier):
     return result
 
 
-def test_authority_changes_alias_canonicalizes_chinese_and_english_op_locally():
-    assert TOP_LEVEL_ALIASES["授权变更"] == "authority_changes"
-    canonical = canonicalize_extraction({
-        "authority_changes": [{
-            "op": "revoke", "authority_id": 2, "dossier_id": 3,
-        }],
-    })
-    assert canonical["authority_changes"] == [{
-        "op": "revoke", "authority_id": 2, "dossier_id": 3,
-    }]
-
-    chinese = canonicalize_extraction({
-        "授权变更": [{
-            "动作": "授予", "授予对象": "甲", "权项": "便宜行事",
-            "事域": "issue:x", "案卷编号": 1,
-        }],
-    })
-    assert chinese["authority_changes"] == [{
-        "op": "授予", "holder_id": "甲", "privilege": "便宜行事",
-        "scope": "issue:x", "dossier_id": 1,
-    }]
 
 
-def test_authority_op_alias_does_not_rewrite_other_sections_action_field():
-    canonical = canonicalize_extraction({
-        "人物变更": [{"动作": "任命", "name": "甲"}],
-        "建筑": [{"动作": "create", "名称": "火器局"}],
-        "authority_changes": [{"动作": "grant", "dossier_id": 7}],
-    })
-
-    assert canonical["人物变更"][0]["action"] == "任命"
-    assert canonical["建筑"][0]["action"] == "create"
-    assert canonical["authority_changes"][0]["op"] == "grant"
 
 
 def test_production_path_grant_restore_revoke_impression_tracer(game):
@@ -490,8 +458,7 @@ def test_production_rejects_bare_domain_scope(game):
 def test_promulgation_payload_does_not_write_authority_records(game):
     """授权案卷不得平行直写 authority_records；#528 仅经 authority_changes 授予。
 
-    完整 privilege/scope/holder 的公开委任顺颁后落一条授权档（单一入口）；
-    skill_grants 仍为零（禁技能镜像）。
+    完整 privilege/scope/holder 的公开委任顺颁后落一条授权档（单一入口）。
     """
     db, state, _content = game
     holder = _minister(db)
@@ -505,17 +472,12 @@ def test_promulgation_payload_does_not_write_authority_records(game):
         executor_id=holder,
         payload={
             "character_id": holder,
-            "skill_id": "便宜行事",
             "holder_id": holder,
             "privilege": "便宜行事",
             "scope": "issue:payload旁路",
             "mode": "ordinary",
         },
     )
-    skills_before = db.conn.execute(
-        "SELECT COUNT(*) AS n FROM skill_grants WHERE character_name=?",
-        (holder,),
-    ).fetchone()["n"]
     db.apply_dossier_promulgation(state, dossier_id, "promulgated")
     rows = db.conn.execute(
         "SELECT * FROM authority_records WHERE dossier_id=?",
@@ -525,10 +487,6 @@ def test_promulgation_payload_does_not_write_authority_records(game):
     assert str(rows[0]["holder_id"]) == holder
     assert str(rows[0]["privilege"]) == "便宜行事"
     assert str(rows[0]["scope"]) == "issue:payload旁路"
-    assert db.conn.execute(
-        "SELECT COUNT(*) AS n FROM skill_grants WHERE character_name=?",
-        (holder,),
-    ).fetchone()["n"] == skills_before
 
 
 def test_promulgation_judge_instructions_cover_held_authority_modifiers(monkeypatch):

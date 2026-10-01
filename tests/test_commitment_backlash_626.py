@@ -2,28 +2,30 @@
 
 Seams:
 - trigger_commitment_backlashes（#625 形制硬门）
-- pre_settle 邸报前既有挂点（与 trigger_supervision_countermeasures 同格）
+- pre_settle 邸报前既有挂点（#1895 退役前与孤直反制硬门同格）
 - assess_foundation_tier 触发侧重算（零新列）
 - find_any_issue_by_origin 幂等
 - issue_advances.trigger_ref 溯源源承诺
-- 与 #623 _apply_halfway_national_setback 去重（无双份 metrics 直击）
-- 呈现哨兵：真实玩家面无系统词；bar 空串 web 条件渲染（无空括号/端标）；#625 区分经特征约束
+- 本片只落具名 metrics 一锤子 + 无 ongoing 月扣镜像（#1894 后 #623 不再代模型
+  生成全国余波，故此处无第二笔要与之去重）
 - extractor commitment_backlash_facts 仅 module==issues 门控
 """
 
 from __future__ import annotations
 
-import inspect
 import json
 from pathlib import Path
 
 import ming_sim.commitment_backlash as backlash_mod
+
+# #1894：#623 的代码生成余波（半途而废局势）已删；该 seed 事件 id 在此仅作
+# 「不得再出现」的负向断言锚，不再由 breach_plea 导出。
+HALFWAY_SETBACK_EVENT_ID = "breach_halfway_setback"
 from ming_sim.breach_plea import (
     BREACH_KIND_POLICY_REVERSAL,
     FOUNDATION_HALFWAY,
     FOUNDATION_JUST_STARTED,
     FOUNDATION_ROOTED,
-    HALFWAY_SETBACK_EVENT_ID,
     PLEA_VERDICT_EXPIRED,
     PLEA_VERDICT_KEY,
     PLEA_VERDICT_PERSIST,
@@ -35,18 +37,14 @@ from ming_sim.breach_plea import (
     write_breach_plea_todo,
 )
 from ming_sim.commitment_backlash import (
-    BACKLASH_BANNED_PLAYER_TOKENS,
     BACKLASH_NAMED_METRICS,
     BACKLASH_ORIGIN_KIND,
     SOURCE_BREACH_VERDICT,
     SOURCE_DEFORMATION_EXPOSURE,
     SOURCE_FAILED_TERMINAL,
-    assert_no_backlash_banned_tokens,
     backlash_origin_ref,
-    build_backlash_narrative_features,
     classify_backlash_source,
 )
-from ming_sim.constants import GATE_TABLES
 from ming_sim.db import GameDB
 from ming_sim.decree import pre_settle
 from ming_sim.issues import (
@@ -56,7 +54,6 @@ from ming_sim.issues import (
     apply_score_extraction,
 )
 from ming_sim.models import TurnPhase, loads_effect_dict
-from ming_sim.simulation import build_simulator_payload
 from ming_sim.staged_commitment import TODO_STATUS_PENDING
 
 
@@ -176,8 +173,9 @@ def test_ac1_breach_verdict_triggers_commitment_backlash(game):
     )
     todo = next(t for t in _pending_pleas(db) if int(t["id"]) == todo_id)
     result = finalize_persist(db, state, todo, commit=True)
-    assert result["outcome"] == "failed"
-    assert "事废" in str(result.get("note") or "")
+    # #1894：代码不判执行格终值（那是执行格判官的判决），只落 0056 与停 tick
+    assert result["breach_0056"] is True
+    assert result["target_dossier_id"] == did
     # 当回合硬门不扫（一拍差）
     assert db.trigger_commitment_backlashes(state, commit=True) == []
     assert _backlash_issues(db) == []
@@ -335,11 +333,16 @@ def test_ac1_transformed_without_beyond_intent_does_not_trigger(game):
     assert _backlash_issues(db) == []
 
 
-# ── AC2：办到一半撤 + 与 #623 无双扣 ──────────────────────────────
+# ── AC2：办到一半撤 + 与 0056 无双扣 ──────────────────────────────
 
 
-def test_ac2_halfway_persist_one_national_plus_one_commitment_no_double_metrics(game):
-    """坚持撤 halfway：一次全国余波（#623）+ 一次承诺所系一锤子（#626）；穿 settle 无续扣。"""
+def test_ac2_halfway_persist_one_commitment_metrics_no_double_count(game):
+    """坚持撤 halfway：0056 那一笔 + 一次承诺所系一锤子（#626）；穿 settle 无续扣。
+
+    #1894：#623 原先那条代码生成的全国余波（民心-3/皇威-2 + 半途而废局势）已随
+    「代码不替执行人物判事并造后果」删除；此刻起同一次松手在代码侧只余 0056
+    名声轨与 #626 承诺所系一锤子，两者不叠加、且都不带月扣镜像。
+    """
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.commit()
@@ -363,22 +366,16 @@ def test_ac2_halfway_persist_one_national_plus_one_commitment_no_double_metrics(
     huangwei_0 = int(state.metrics.get("皇威", 0) or 0)
 
     result = finalize_persist(db, state, todo, commit=True)
-    assert result.get("setback")
-    assert str(result["setback"].get("event_id") or "") == HALFWAY_SETBACK_EVENT_ID
-    # #623 全国余波 metrics 账恰一套（与 0056 皇威成本分立，不把 -5 算进本断言）
-    assert dict(result["setback"].get("metrics_delta") or {}) == {"民心": -3, "皇威": -2}
+    assert result["breach_0056"] is True
+    # 代码不生成任何剧情后果：民心零变动，皇威只被 0056 扣一次
     minxin_1 = int(state.metrics.get("民心", 0) or 0)
     huangwei_1 = int(state.metrics.get("皇威", 0) or 0)
-    assert minxin_1 == max(0, minxin_0 - 3)
-    # 皇威至少含 setback -2；0056 可另扣，但不得出现双份 setback（-4）
-    assert huangwei_1 <= max(0, huangwei_0 - 2)
-    assert huangwei_1 != max(0, huangwei_0 - 4)
-    # 全国余波 issue 恰一条
-    setback_count = db.conn.execute(
-        "SELECT COUNT(*) AS c FROM issues WHERE origin_kind='event_pool' AND origin_ref=?",
-        (HALFWAY_SETBACK_EVENT_ID,),
-    ).fetchone()["c"]
-    assert int(setback_count) == 1
+    assert minxin_1 == minxin_0
+    assert huangwei_1 < huangwei_0
+    assert not any(
+        str(row["origin_ref"] or "") == HALFWAY_SETBACK_EVENT_ID
+        for row in db.conn.execute("SELECT origin_ref FROM issues").fetchall()
+    )
 
     # 次回合承诺所系一锤子
     state.turn = int(state.turn) + 1
@@ -388,14 +385,11 @@ def test_ac2_halfway_persist_one_national_plus_one_commitment_no_double_metrics(
     assert hits[0]["trigger_ref"] == f"issue:{cid}"
     assert dict(hits[0].get("metrics_delta") or {}) == dict(BACKLASH_NAMED_METRICS)
 
-    # #626 具名 metrics 恰一次（与 #623 -3/-2 套件分立，禁同套双扣）
+    # #626 具名 metrics 恰一次，不与 0056 混算
     minxin_2 = int(state.metrics.get("民心", 0) or 0)
     huangwei_2 = int(state.metrics.get("皇威", 0) or 0)
     assert minxin_2 == minxin_1 + int(BACKLASH_NAMED_METRICS["民心"])
     assert huangwei_2 == huangwei_1 + int(BACKLASH_NAMED_METRICS["皇威"])
-    # 无双份 #623 直击（不会再叠 -3/-2）
-    assert minxin_2 == minxin_0 - 3 + int(BACKLASH_NAMED_METRICS["民心"])
-    assert minxin_2 != minxin_0 - 6
 
     bl_issue = db.conn.execute(
         "SELECT id, ongoing_effects FROM issues WHERE id=?",
@@ -404,15 +398,9 @@ def test_ac2_halfway_persist_one_national_plus_one_commitment_no_double_metrics(
     assert bl_issue is not None
     ongoing = loads_effect_dict(bl_issue["ongoing_effects"])
     assert not (ongoing.get("metrics") or {}), ongoing  # 无镜像月扣
-
-    # 全国余波仍一条；承诺所系一条（settle 隔离前先锁计数）
-    assert int(db.conn.execute(
-        "SELECT COUNT(*) AS c FROM issues WHERE origin_kind='event_pool' AND origin_ref=?",
-        (HALFWAY_SETBACK_EVENT_ID,),
-    ).fetchone()["c"]) == 1
     assert len(_backlash_issues(db)) == 1
 
-    # 穿完整 settle：隔离他源 ongoing（#623 setback 自带月扣民心-1），只留本片
+    # 穿完整 settle：隔离他源 ongoing，只留本片
     # 断言本 issue 触发回合净变恰一次 BACKLASH_NAMED_METRICS，次月无续扣（I1）。
     db.conn.execute(
         "UPDATE issues SET status='dropped' WHERE status='active' AND origin_kind!=?",
@@ -760,25 +748,10 @@ def test_ac4_backlash_survives_restore_both_states(game, tmp_path, content):
 
 
 def test_ac5_hook_idempotent_no_gate_table_expansion(game):
-    """硬门挂邸报前既有挂点；幂等；调用侧无第二扫描；GATE_TABLES 不动。"""
+    """承诺反噬经 pre_settle 真实入口只立一次。"""
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.commit()
-
-    # 挂点：pre_settle 源码恰一处调用
-    src = inspect.getsource(pre_settle)
-    assert "trigger_commitment_backlashes" in src
-    assert src.count("trigger_commitment_backlashes") == 1
-    assert "trigger_supervision_countermeasures" in src  # 同格既有挂点
-
-    # 不扩 GATE_TABLES
-    assert GATE_TABLES == (
-        "region", "army", "building", "power", "class", "faction", "character", "event",
-    )
-    # 硬门实现不引用 trigger_gate 求值
-    gate_src = inspect.getsource(GameDB.trigger_commitment_backlashes)
-    assert "evaluate_trigger_gate" not in gate_src
-    assert "GATE_TABLES" not in gate_src
 
     did, holder = _executing_policy_dossier(db, state, token="idemp")
     bar = _seed_halfway(db, state, did=did)
@@ -792,158 +765,14 @@ def test_ac5_hook_idempotent_no_gate_table_expansion(game):
         close=True, commit=True,
     )
     state.turn = int(state.turn) + 1
-    first = db.trigger_commitment_backlashes(state, commit=True)
-    assert len(first) == 1
-    second = db.trigger_commitment_backlashes(state, commit=True)
-    assert second == []
-    assert len(_backlash_issues(db)) == 1
-
-    # pre_settle 路径也只产一条（相位可跑）
     _set_phase_runnable(state, db)
-    # 已幂等，pre_settle 再跑不应新立
     auto = pre_settle(state, db, content=content)
     bl = [a for a in (auto or []) if a.get("source") == "commitment_backlash"]
-    assert bl == []
+    assert len(bl) == 1
     assert len(_backlash_issues(db)) == 1
 
-
-# ── AC6：呈现哨兵 ─────────────────────────────────────────────────
-
-
-def test_ac6_presentation_sentinel_distinct_from_625(game):
-    """真实玩家面：无系统词裸露；bar 空串无空括号/端标（甲）；#625 区分经特征约束。"""
-    db, state, content = game
-    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
-    db.conn.commit()
-
-    did, holder = _executing_policy_dossier(db, state, token="sent")
-    bar = _seed_halfway(db, state, did=did)
-    cid = _insert_commitment(
-        db, state, title="哨兵之诺", origin_ref=f"dossier:{did}",
-        bar_value=bar,
-        participants=[{"character_id": holder, "tier": "主办", "role": "承办"}],
-    )
-    db.record_dossier_execution(
-        did, "failed", "期限已过，诸事不济", int(state.turn),
-        close=True, commit=True,
-    )
-    state.turn = int(state.turn) + 1
-    hits = db.trigger_commitment_backlashes(state, commit=True)
-    assert hits
-    assert hits[0]["source_kind"] == SOURCE_FAILED_TERMINAL
-    issue = db.conn.execute(
-        "SELECT * FROM issues WHERE id=?", (int(hits[0]["issue_id"]),),
-    ).fetchone()
-    assert issue is not None
-
-    # 机读身份保留 origin_kind/origin_ref；tags 不承载系统词
-    assert str(issue["origin_kind"]) == BACKLASH_ORIGIN_KIND
-    assert str(issue["origin_ref"]) == backlash_origin_ref(cid, SOURCE_FAILED_TERMINAL)
-    tags = json.loads(str(issue["tags"] or "[]"))
-    assert isinstance(tags, list)
-    for tag in tags:
-        assert_no_backlash_banned_tokens(tag, surface="tags")
-
-    # P7：硬门不得再落 bar/stage/narrative 成句常量；与 #625 反制 bar 区分
-    assert not hasattr(backlash_mod, "build_backlash_copy")
-    assert not hasattr(backlash_mod, "BACKLASH_BAR_GOOD")
-    assert not hasattr(backlash_mod, "BACKLASH_BAR_BAD")
-    assert not hasattr(backlash_mod, "BACKLASH_CODE_FIXED_PHRASES")
-    assert not hasattr(backlash_mod, "assert_no_backlash_code_fixed_phrases")
-    gate_src = inspect.getsource(GameDB.trigger_commitment_backlashes)
-    assert "build_backlash_copy" not in gate_src
-    assert "所系余波" not in gate_src
-    assert "反噬平息" not in gate_src
-    assert "反噬坐大" not in gate_src
-    assert "classify_backlash_source" in gate_src
-    # 总纲：删『事废 in note』子串判别；classify 签名与实现均不读 note
-    cls_src = inspect.getsource(classify_backlash_source)
-    assert "execution_note" not in cls_src
-    assert "execution_note" not in inspect.signature(classify_backlash_source).parameters
-    assert "'事废' in" not in cls_src and '"事废" in' not in cls_src
-    assert "in note" not in cls_src
-    # 硬门调用 classify 时不传 note
-    assert "execution_note=" not in gate_src
-    assert "execution_note=row" not in gate_src
-
-    # 真实玩家面：title 仅源承诺事实链接；stage/narrative/bar 硬门留空
-    assert str(issue["title"]) == "哨兵之诺"
-    assert str(issue["stage_text"] or "") == ""
-    assert str(issue["bar_good_meaning"] or "") == ""
-    assert str(issue["bar_bad_meaning"] or "") == ""
-    assert "反噬平息" not in str(issue["bar_good_meaning"] or "")
-    assert "反噬坐大" not in str(issue["bar_bad_meaning"] or "")
-
-    player_surfaces = (
-        ("title", issue["title"]),
-        ("stage_text", issue["stage_text"]),
-        ("bar_good", issue["bar_good_meaning"]),
-        ("bar_bad", issue["bar_bad_meaning"]),
-    )
-    for surface_name, text in player_surfaces:
-        assert_no_backlash_banned_tokens(text, surface=surface_name)
-
-    adv = db.conn.execute(
-        "SELECT narrative, to_stage_text FROM issue_advances "
-        "WHERE issue_id=? ORDER BY id DESC LIMIT 1",
-        (int(issue["id"]),),
-    ).fetchone()
-    assert str(adv["narrative"] or "") == ""
-    assert str(adv["to_stage_text"] or "") == ""
-    assert_no_backlash_banned_tokens(adv["narrative"], surface="narrative")
-    assert_no_backlash_banned_tokens(adv["to_stage_text"], surface="advance.stage")
-
-    # issue_payloads 对应字段（web situation 主行/tip 同源）不得裸露禁词
-    payload_fields = {
-        "title": issue["title"],
-        "stage_text": issue["stage_text"],
-        "bar_good_meaning": issue["bar_good_meaning"],
-        "bar_bad_meaning": issue["bar_bad_meaning"],
-        "tags": tags,
-    }
-    payload_blob = json.dumps(payload_fields, ensure_ascii=False)
-    assert_no_backlash_banned_tokens(payload_blob, surface="issue_payloads")
-
-    # 特征化输入注入叙事步；#625 用语区分以约束传递（非代码 bar 常量）
-    features = build_backlash_narrative_features(db)
-    assert features and int(features[0]["issue_id"]) == int(issue["id"])
-    assert features[0]["commitment_ref"] == cid
-    assert features[0]["commitment_title"] == "哨兵之诺"
-    assert features[0]["source_kind"] == SOURCE_FAILED_TERMINAL
-    constraints = features[0]["presentation_constraints"]
-    assert "反噬平息" in constraints["avoid_phrases"]
-    assert "反噬坐大" in constraints["avoid_phrases"]
-    payload = build_simulator_payload(
-        state, db, decree_text="试", previous_narrative="",
-    )
-    assert "commitment_backlash_facts" in payload
-    assert payload["commitment_backlash_facts"]
-    assert int(payload["commitment_backlash_facts"][0]["issue_id"]) == int(issue["id"])
-
-    # 禁词表含 #625 反制用语与系统词
-    for token in ("反噬平息", "反噬坐大", "commitment_backlash", "foundation_tier"):
-        assert token in BACKLASH_BANNED_PLAYER_TOKENS
-
-    # AC6 增断（甲）：玩家面无空括号/空端标——硬门 bar 空 + 无 LLM bar 写口
-    # + web 条件渲染；advance_issue 不写 bar_*_meaning；season_simulator 不承诺 bar 语义
-    advance_src = inspect.getsource(GameDB.advance_issue)
-    assert "bar_good_meaning" not in advance_src
-    assert "bar_bad_meaning" not in advance_src
-    root = Path(__file__).resolve().parents[1]
-    web_src = (root / "web/src/components/situation.tsx").read_text(encoding="utf-8")
-    assert "outcomeHead" in web_src
-    assert "barLabel" in web_src
-    # 空串渲染契约：不得再无条件插值『达成（{bar}）』
-    assert "达成（{issue.bar_good_meaning}）" not in web_src
-    assert "失败（{issue.bar_bad_meaning}）" not in web_src
-    # 空 bar 时玩家可见面不得出现空括号（web 契约由 outcomeHead 保证）
-    good = str(issue["bar_good_meaning"] or "").strip()
-    bad = str(issue["bar_bad_meaning"] or "").strip()
-    assert good == "" and bad == ""
-    # 等价于 web outcomeHead：空 → 仅『达成』/『失败』，无『（）』
-    assert (f"达成（{good}）" if good else "达成") == "达成"
-    assert (f"失败（{bad}）" if bad else "失败") == "失败"
-    assert "达成（）" not in (f"达成（{good}）" if good else "达成")
-    assert "失败（）" not in (f"失败（{bad}）" if bad else "失败")
-
-
+    _set_phase_runnable(state, db)
+    again = pre_settle(state, db, content=content)
+    bl2 = [a for a in (again or []) if a.get("source") == "commitment_backlash"]
+    assert bl2 == []
+    assert len(_backlash_issues(db)) == 1

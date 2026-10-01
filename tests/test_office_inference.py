@@ -286,12 +286,12 @@ def test_appointment_seat_identity_reuses_local_and_strips_central(game):
     a, b = str(rows[0]["name"]), str(rows[1]["name"])
 
     r1 = apply_office_appointment(
-        db, state, content, None, a, "巡抚",
+        db, state, content, a, "巡抚",
         new_office_type="督抚", region_id="shaanxi", reason="seat-a",
     )
     assert not r1.get("rejected")
     r2 = apply_office_appointment(
-        db, state, content, None, b, "巡抚",
+        db, state, content, b, "巡抚",
         new_office_type="督抚", region_id="henan", reason="seat-b",
     )
     assert not r2.get("rejected")
@@ -300,7 +300,7 @@ def test_appointment_seat_identity_reuses_local_and_strips_central(game):
 
     # Same-office local continuation omits region → reuse shaanxi; henan intact.
     r3 = apply_office_appointment(
-        db, state, content, None, a, "巡抚",
+        db, state, content, a, "巡抚",
         new_office_type="督抚", region_id="", reason="reappoint-omit-region",
     )
     assert not r3.get("rejected")
@@ -318,7 +318,7 @@ def test_appointment_seat_identity_reuses_local_and_strips_central(game):
     })
     assert canon == ("户部尚书", "户部", "真除", "")
     r4 = apply_office_appointment(
-        db, state, content, None, a, "户部尚书",
+        db, state, content, a, "户部尚书",
         new_office_type="户部", region_id="henan", reason="central-noise-region",
     )
     assert not r4.get("rejected")

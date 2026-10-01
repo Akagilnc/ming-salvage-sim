@@ -9,6 +9,7 @@ summon_enter 落入殿账；断言推导器读账的机器承重态（在场/不
 """
 
 from __future__ import annotations
+from tests.conftest import open_hall_turn
 
 import pytest
 
@@ -100,12 +101,6 @@ def _cli_session(db, state, content):
     return SimpleNamespace(
         db=db, state=state, content=content, temporary_characters=set(),
         chat=chat, scene_chat=scene_chat,
-        # #542 scene lifecycle seams（CLI minister_chat / 退下会调）；替身 no-op。
-        start_chat_turn_scene=lambda *_a, **_k: None,
-        start_chat_turn_exit_scene=lambda *_a, **_k: None,
-        join_chat_turn_scene=lambda *_a, **_k: [],
-        persist_chat_turn_scene=lambda *_a, **_k: None,
-        abandon_chat_turn_scene=lambda *_a, **_k: None,
         # #1842：persist 尾必调；轻壳无 pending 时 no-op。
         schedule_pending_scene_translation=lambda result: None,
     )
@@ -127,10 +122,10 @@ def test_dismiss_via_cli_command_writes_exit_ledger(game, monkeypatch):
     db, state, content = game
     character = _active_minister(db, content)
     session = _cli_session(db, state, content)
-    answers = iter(["朕问卿边事如何？", "退下"])
+    answers = iter(["退下"])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
 
-    assert term.minister_chat(session, character) == "dismiss"
+    assert term.minister_chat(session, character, selected=True) == "dismiss"
 
     nid = int(an.get_open_night(db)["id"])
     last = an.list_ledger(db, nid)[-1]
@@ -176,7 +171,7 @@ def test_court_break_writes_no_exit_ledger(game, monkeypatch):
     assert an.get_night(db, nid)["status"] == an.NIGHT_STATUS_CLOSED
 
 
-# ── L1 R2：court_action=dismiss 单缝——非流式 web /api/ministers/{name}/chat
+# ── L1 R2：court_action=dismiss 单缝——非流式 web /api/audience/chat
 #          与 CLI tool 路共 GameSession.chat 产源，令退落告退账、名单即时去人 ──
 
 
@@ -192,8 +187,6 @@ def _session_double(db, state, content, registry):
     sess.llm_config = SimpleNamespace(channel="api")
     sess.temporary_characters = set()
     sess._audience_prompt_for_message = lambda message, *_a, **_kw: message
-    sess._start_cli_action_intent = lambda *a, **k: None
-    sess._finish_cli_action_intent = lambda *a, **k: None
     return sess
 
 
@@ -212,47 +205,8 @@ def _tool_registry(tools):
     return Registry()
 
 
-def test_session_chat_tool_dismiss_writes_exit_ledger(game):
-    from types import SimpleNamespace
-    from ming_sim.session import GameSession
-
-    db, state, content = game
-    minister = _active_minister(db, content)
-    an.attach_chat_turn_to_night(db, state, minister.name)  # 生产同：session.chat 前已开夜入殿
-    nid = int(an.get_open_night(db)["id"])
-    assert minister.name in an.present_names_at(db, nid)
-
-    registry = _tool_registry(
-        [SimpleNamespace(tool_name="dismiss_minister", result="__dismiss__")]
-    )
-    result = GameSession.chat(_session_double(db, state, content, registry), minister.name, "臣请退。")
-
-    assert result.court_action == "dismiss"
-    last = an.list_ledger(db, nid)[-1]
-    assert TAG_EXIT in last["tags"] and minister.name in last["person_names"]
-    assert minister.name not in an.present_names_at(db, nid)
 
 
-def test_session_chat_non_dismiss_leaves_present(game):
-    """负向：非令退 tool 轮不落告退账、当前对谈大臣仍在场。"""
-    from ming_sim.session import GameSession
-
-    db, state, content = game
-    minister = _active_minister(db, content)
-    an.attach_chat_turn_to_night(db, state, minister.name)
-    nid = int(an.get_open_night(db)["id"])
-
-    result = GameSession.chat(
-        _session_double(db, state, content, _tool_registry([])), minister.name, "边饷如何？",
-    )
-
-    assert result.court_action == ""
-    exits = [
-        e for e in an.list_ledger(db, nid)
-        if TAG_EXIT in e["tags"] and minister.name in e["person_names"]
-    ]
-    assert exits == []
-    assert minister.name in an.present_names_at(db, nid)
 
 
 # ── L2：告退后再宣入须重新落入殿账（present_names_at 单一在场真源）──────────
@@ -369,7 +323,7 @@ def test_present_names_at_uses_timeline_key_not_raw_seq(game):
     bi_seq = _last_seq(db, nid)
     # 补跑抽取账：时序键落在两道入殿账之间（早排），但其自身 seq 最大（补跑晚落）。
     an.append_ledger_entry(
-        db, nid, body="（补跑抽取账·无在场效果）", order_key=float(xu_seq) + 0.5,
+        db, nid, order_key=float(xu_seq) + 0.5,
     )
     present = an.present_names_at(db, nid, at_seq=bi_seq)
     assert "毕自严" in present  # 旧码在大 seq 抽取账处误 break → 毕自严漏掉
@@ -405,18 +359,18 @@ def test_audible_interval_public_only(game):
     an.summon_enter(db, nid, "毕自严")
     # 王绍徽入殿前的公开对话：不在其侍立区间，不该流入
     before_id = an.append_ledger_entry(
-        db, nid, person_names=["毕自严"], body="毕自严先奏钱粮。",
+        db, nid, person_names=["毕自严"],
         audibility=AUDIBILITY_PUBLIC,
     )
     an.summon_enter(db, nid, "王绍徽")  # 王绍徽侍立区间起点
     # 区间内御前低语：私账不流入
     whisper_id = an.append_ledger_entry(
-        db, nid, person_names=[STANDING], body="王承恩附耳低语。",
+        db, nid, person_names=[STANDING],
         audibility=AUDIBILITY_PRIVATE,
     )
     # 区间内公开条目：应流入
     public_id = an.append_ledger_entry(
-        db, nid, person_names=["王绍徽"], body="王绍徽当廷奏对。",
+        db, nid, person_names=["王绍徽"],
         audibility=AUDIBILITY_PUBLIC,
     )
 

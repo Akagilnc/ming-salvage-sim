@@ -25,11 +25,10 @@ import { MechanicalTailFailure } from "./components/mechanicalTailFailure";
 import { HistoryModal } from "./components/historyModal";
 import { ReportModal } from "./components/reportModal";
 import { SecretOrdersModal } from "./components/secretOrders";
-import { SettlementLock } from "./components/settlementLock";
+import { SettlementGazettePanel } from "./components/settlementGazettePanel";
 import { StateModal } from "./components/stateModal";
 import { filterConsorts, filterMinisters } from "./components/ministerFilters";
 import { DecisionModal } from "./components/decisionModal";
-import { DecisionRecoveryPanel } from "./components/decisionRecovery";
 import { needsPhase2Resume } from "./decisionRouting";
 import { getMapIntelStyle, refreshLabelMaps } from "./format";
 import {
@@ -76,7 +75,6 @@ export function App() {
   const [activeModal, setActiveModal] = React.useState<ModalName>("none");
   const [decree, setDecree] = React.useState("");
   const [report, setReport] = React.useState("");
-  const [gazetteReport, setGazetteReport] = React.useState("");
   const [busy, setBusy] = React.useState("");
   const [error, setError] = React.useState("");
   const [closedShown, setClosedShown] = React.useState<number>(() => {
@@ -84,8 +82,7 @@ export function App() {
     return raw ? Number(raw) : -1;
   });
   const [closedModal, setClosedModal] = React.useState<ClosedIssue[]>([]);
-  const [gazetteShown, setGazetteShown] = React.useState<number>(-1);
-  // 结局页本次加载是否已被玩家关掉（关掉后让位邸报，刷新复位重弹）。
+  // 结局页本次加载是否已被玩家关掉（关掉后让位结局，刷新复位重弹）。
   const [endingDismissed, setEndingDismissed] = React.useState(false);
   const [secretOrders, setSecretOrders] = React.useState<SecretOrder[]>([]);
   const [secretOrderShown, setSecretOrderShown] = React.useState<number>(-1);
@@ -96,12 +93,10 @@ export function App() {
   // Tracks the current selected minister across async boundaries.
   // State closures capture stale values; this ref always reflects the latest.
   const selectedMinisterRef = React.useRef<string>("");
-  const suppressNextReportRef = React.useRef(false);
   const [undoneChatIdentity, setUndoneChatIdentity] = React.useState<ChatIdentity | null>(null);
   const [audienceScrollGeneration, setAudienceScrollGeneration] = React.useState(0);
   const audienceScrollPositionsRef = React.useRef(new Map<string, number>());
   const audienceResumeCheckedRef = React.useRef(false);
-  const audienceResumeGenerationRef = React.useRef(0);
   const invalidateAudienceScroll = React.useCallback(() => {
     setAudienceScrollGeneration((generation) => generation + 1);
   }, []);
@@ -148,7 +143,6 @@ export function App() {
 
   // 召对动作群（useChatActions.ts）：召对面板外围态 + 开召对/发问/撤回/重试。
   const {
-    suggestions,
     chatNotice,
     replyRetries,
     translationRetries,
@@ -157,7 +151,6 @@ export function App() {
     composerHint,
     setComposerHint,
     input,
-    setComposerIntent,
     setInput,
     activeMinister,
     openChat,
@@ -190,16 +183,13 @@ export function App() {
     currentNightId,
   });
 
-  // 诏书台动作群（useEdictActions.ts）：草案 create/save/delete 与本地会话态归属。
+  // 诏书台动作群（useEdictActions.ts）：草案 save/delete 与本地会话态归属。
   const {
-    directiveText,
     editingDirectiveId,
     editingDirectiveText,
-    setDirectiveText,
     setEditingDirectiveText,
     localDirectives,
     resetLocalEdictState,
-    createDirective,
     startEditDirective,
     cancelEditDirective,
     saveDirective,
@@ -209,14 +199,16 @@ export function App() {
   // 颁诏结算流（useSettlementFlow.ts）：盖玺颁诏/failed-only 退朝/HITL 决策点续裁/失败重拉。
   // hook 必须在 menu/loading 早退之前调用。
   const {
-    settleStage,
-    settleProgress,
-    settleThinking,
-    settleNarrative,
+    settlementGazetteReading,
+    advanceRefreshFailed,
+    retryAdvanceRefresh,
+    dismissSettlementGazette,
+    suppressPostAdvanceOverlays,
     pendingDecisions,
     decisionFailures,
     pausedDecisionError,
     settlementHudError,
+    failedEntryWasRetreat,
     clearSettlementHudError,
     issueDecree,
     advanceWithoutEdict,
@@ -230,6 +222,8 @@ export function App() {
     setCheatDirective,
     loadState,
     state,
+    resetLocalEdictState,
+    onMonthAdvanced: () => setActiveModal("none"),
   });
 
 
@@ -271,7 +265,6 @@ export function App() {
     clearSettlementHudError();
     setUndoneChatIdentity(null);
     audienceResumeCheckedRef.current = false;
-    audienceResumeGenerationRef.current += 1;
     setAppView("game");
     await loadState();
   }, [loadState, resetLocalEdictState, clearSettlementHudError]);
@@ -285,7 +278,6 @@ export function App() {
     // #1808 C：退菜单清 settlementHudError，接缝归既有退出路径。
     clearSettlementHudError();
     audienceResumeCheckedRef.current = false;
-    audienceResumeGenerationRef.current += 1;
     await fetch("/api/menu/exit_to_menu", { method: "POST" });
     setState(null);
     setUndoneChatIdentity(null);
@@ -295,6 +287,8 @@ export function App() {
 
   React.useEffect(() => {
     if (!state) return;
+    // #1852：本面邸报阅读中不自动弹已结；朕知道了后再按既有规则。
+    if (suppressPostAdvanceOverlays) return;
     const closed = state.closed_this_turn || [];
     const currentTurn = state.turn.turn;
     // #1236：上月已结属只读组——自动弹窗亦吃 isFaceReachable（与 FACE_GROUP 同口径）。
@@ -308,15 +302,17 @@ export function App() {
       setClosedShown(currentTurn);
       sessionStorage.setItem("closedShownTurn", String(currentTurn));
     }
-  }, [state, closedShown]);
+  }, [state, closedShown, suppressPostAdvanceOverlays]);
 
   // 新回合进入时拉取全部密令，有 active 密令则弹密令进度弹窗（邸报关闭后显示）。
   // #499：密令重取经唯一 latest-wins 协调器 refresh，与 done/撤回共享代次——旧回合的密令
   // 响应迟到不覆盖新结果。shown 标记只在**接受成功后**（onSecretOrders 内）落，取失败可重试；
   // 延迟弹窗在触发时按 isLatest 门控，撤回等推进代次后陈旧定时器 no-op（不会弹已作废的窗）。
   // #1236：密令属关闭组——核账展示态下不自动弹出（角标亦在 HUD 清零）。
+  // #1852：本面邸报阅读中整段延后（含 shown 标记），朕知道了后 effect 重跑再弹。
   React.useEffect(() => {
     if (!state) return;
+    if (suppressPostAdvanceOverlays) return;
     const currentTurn = state.turn.turn;
     if (currentTurn === secretOrderShown) return;
     const settlementDisplay = isSettlementDisplay(state.turn);
@@ -332,57 +328,28 @@ export function App() {
         open: () => setActiveModal("secret_orders"),
       },
     });
-  }, [state?.turn.turn, state?.turn.settlement_display]);
+  }, [state?.turn.turn, state?.turn.settlement_display, suppressPostAdvanceOverlays]);
 
   // 结局已触发：每次进页面/刷新都自动弹结局结算页。玩家点关闭后（endingDismissed）
   // 本次加载让位给盘面/邸报，可继续看局；刷新即复位重弹。
+  // #1852：本面邸报阅读中让位；朕知道了后按既有规则重弹。
   React.useEffect(() => {
     if (!state || !state.ending) return;
     if (endingDismissed) return;
+    if (suppressPostAdvanceOverlays) return;
     setActiveModal("ending");
-  }, [state, endingDismissed]);
+  }, [state, endingDismissed, suppressPostAdvanceOverlays]);
 
-  // 每次进入页面/换回合都弹上回合邸报。不持久化记录——刷新即重新弹。
-  // 同一加载周期内同一回合不重复弹（gazetteShown 用 React state，刷新后回到 -1）。
-  // #1236：邸报(gazette) 属只读组——自动弹出与渲染同吃 isFaceReachable（无第二真源）。
-  React.useEffect(() => {
-    if (!state) return;
-    // 结局页未关掉时让位给它；玩家关掉后（endingDismissed）邸报照常。
-    if (state.ending && !endingDismissed) return;
-    const currentTurn = state.turn.turn;
-    // #1356/#671：t0 双空不自动弹；有邸报或独立递话任一即弹。空壳仍可由木牌打开。
-    // trim 只做空壳门；写入 state 的是未 trim 原文（P6）
-    const hasReport = Boolean((state.previous_summary || "").trim());
-    const hasAttendant = Boolean((state.last_attendant_message || "").trim());
-    if (!hasReport && !hasAttendant) return;
-    if (currentTurn === gazetteShown) return;
-    if (!isFaceReachable("gazette", isSettlementDisplay(state.turn))) return;
-    if (suppressNextReportRef.current) {
-      suppressNextReportRef.current = false;
-      return;
-    }
-    setGazetteReport(state.previous_summary || "");
-    setActiveModal("report");
-    setGazetteShown(currentTurn);
-  }, [state, gazetteShown, endingDismissed, activeModal]);
+  // #1852：退役自动弹出全屏邸报窗。写成即推进的当次阅读由 settlementGazetteReading 本面落位；
+  // 刷新 / 重开落新月份盘面；旧月邸报只经木牌 / 史册自取。
+  // #1855 / ADR 0158 决定 7：三种落点由 state.reopen_landing 驱动，前端不猜夜/核账。
 
   React.useEffect(() => {
     if (!state || appView !== "game" || audienceResumeCheckedRef.current) return;
     audienceResumeCheckedRef.current = true;
-    const generation = audienceResumeGenerationRef.current;
-    api<{ night_id: number; status: string }>("/api/audience/scroll")
-      .then((scroll) => {
-        if (generation !== audienceResumeGenerationRef.current) return;
-        if (scroll.night_id > 0 && scroll.status === "open") {
-          setSelectedMinister(AUDIENCE_SCENE_SPEAKER);
-          setActiveModal("chat");
-        }
-      })
-      .catch((err) => {
-        if (generation === audienceResumeGenerationRef.current) {
-          setError(err instanceof Error ? err.message : String(err));
-        }
-      });
+    if (state.reopen_landing !== "audience") return;
+    setSelectedMinister(AUDIENCE_SCENE_SPEAKER);
+    setActiveModal("chat");
   }, [state, appView]);
 
   // 全局 ESC：按 z-index 优先级，最前面的弹窗先关。
@@ -530,7 +497,7 @@ export function App() {
   };
 
   // #1236：核账门控唯一谓词 = 状态口 settlement_display（刷新/持久）。
-  // #1796：busy==="月末结算" = 同会话装饰——SettlementLock + 立即收拟诏/切核账期面；
+  // #1796：busy==="月末结算" = 同会话切核账期面（立即收拟诏）；#1852 退役进度/推敲等待卡。
   // 绝不升格为刷新真源、不挡必达三面。settlementFace 仅同会话 OR。
   // 召对写入口属关闭组；名册抽屉仍只读可达。
   const chatEntryEnabled = isFaceReachable("chat_entry", settlementFace);
@@ -586,7 +553,10 @@ export function App() {
 
   // 关闭/只读模态：若 activeModal 被外路径设到不可达面，不渲染（逐 key 吃 isFaceReachable）。
   // #1796：关闭组吃 settlementFace（同会话 busy 亦收）；只读组仍只认持久 settlement_display。
-  const secretOrdersOpen = activeModal === "secret_orders" && isFaceReachable("secret_orders", settlementFace);
+  // #1852：本面邸报阅读中不渲染 closed/密令/结局自动弹层（朕知道了后恢复既有规则）。
+  const secretOrdersOpen = activeModal === "secret_orders"
+    && isFaceReachable("secret_orders", settlementFace)
+    && !suppressPostAdvanceOverlays;
   // #1796：点盖玺/退朝 → 拟诏台立即收起，不再原地锁钮盖小卡。
   const edictOpen = activeModal === "edict" && isFaceReachable("edict", settlementFace);
   const chatOpen = activeModal === "chat" && isFaceReachable("chat_entry", settlementFace);
@@ -599,7 +569,9 @@ export function App() {
   const historyOpen = activeModal === "history" && isFaceReachable("history", settlementDisplay);
   // C：起居注入口单闸 = isFaceReachable(audience_archive)；不再经 gameHud.gatedModal 死枝。
   const audienceArchiveOpen = activeModal === "audience_archive" && isFaceReachable("audience_archive", settlementDisplay);
-  const closedIssuesOpen = closedModal.length > 0 && isFaceReachable("closed_issues", settlementDisplay);
+  const closedIssuesOpen = closedModal.length > 0
+    && isFaceReachable("closed_issues", settlementDisplay)
+    && !suppressPostAdvanceOverlays;
   const mapIntelVisible = mapIntelOpen && selectedNode && isFaceReachable("node_intel", settlementFace);
   const regionOpen = regionDrawerOpen && isFaceReachable("region", settlementFace);
   const armyOpen = armyDrawerOpen && isFaceReachable("army", settlementFace);
@@ -623,8 +595,33 @@ export function App() {
       .catch((error) => setError(error instanceof Error ? error.message : String(error)));
   };
 
+  // 已推进但新月状态未确认：旧 state 只供内存持有，不得投影为可操作盘面。
+  // #1854 接手此处的统一失败提示与重试；当次邸报仍可独立阅读、关闭。
+  const currentGazette = settlementGazetteReading ? (
+    <SettlementGazettePanel
+      report={settlementGazetteReading.report}
+      attendantMessage={settlementGazetteReading.attendantMessage}
+      periodLabel={settlementGazetteReading.periodLabel}
+      onDismiss={dismissSettlementGazette}
+    />
+  ) : null;
   return (
     <main className="game-shell" data-settlement-display={settlementDisplay ? "1" : "0"}>
+      {currentGazette}
+      {/* 必达：续跑入口仍挂既有 phase===settling（及 issueDecree 恢复分流）；展示态门控不误关。
+          ship-pre r4：崩溃/中止后重载时相位停在 settling——last_decree 已被 begin_turn 清空。
+          #1418 r2 / #657：all-decided 或 typed resume_phase2 → 同条续跑面，空 POST resolve_decisions/stream。
+          #1808 A：与 hud-error 同槽（.recovery-banner fixed top:64px）——恢复面挂载时 HUD 门控避让，
+          不得压盖唯一续跑 CTA；fail-closed 回 player 时本面不挂，HUD 核心验收仍成立。 */}
+      {(advanceRefreshFailed || pausedDecisionError || settlementHudError || (settleResumeMounted && (!state.settlement_entry_inflight || phase2Resume))) && !edictOpen && !chatOpen ? (
+        <div className="recovery-banner" role="alert" data-testid={advanceRefreshFailed ? "advance-refresh-recovery" : settleResumeMounted && phase2Resume ? "settle-resume" : pausedDecisionError ? "decision-recovery" : settleResumeMounted ? "settle-resume" : "hud-error"}>
+          <span className="recovery-banner-message">{advanceRefreshFailed ? `新月盘面载入失败：${error}` : pausedDecisionError || settlementHudError || state.settlement_recovery?.message || "上月结算未完成（进度已保存）。"}{!advanceRefreshFailed && state.settlement_recovery?.error_pack_path ? ` 错误包：${state.settlement_recovery.error_pack_path}；请把它发给作者。` : ""}</span>
+          <button className="seal-btn-issue" onClick={advanceRefreshFailed ? retryAdvanceRefresh : pausedDecisionError ? retryPendingDecisions : phase2Resume ? resumePhase2 : failedEntryWasRetreat ? advanceWithoutEdict : issueDecree} disabled={!!busy}>重试</button>
+        </div>
+      ) : null}
+
+      {/* Keep the main face mounted, but never expose or accept actions against the stale month. */}
+      <div inert={advanceRefreshFailed} aria-hidden={advanceRefreshFailed} style={{ display: "contents", visibility: advanceRefreshFailed ? "hidden" : undefined }}>
       <GameHud
         stageRef={hudStageCbRef}
         ready={ready}
@@ -666,7 +663,6 @@ export function App() {
         open={haremDrawerOpen}
         onGroupChange={setHaremGroup}
         onClose={() => setHaremDrawerOpen(false)}
-        onOpenChat={openChat}
         onUploadPortrait={uploadPortrait}
         chatEntryEnabled={chatEntryEnabled}
         phase={state.turn.phase}
@@ -732,13 +728,11 @@ export function App() {
           <ChatModal
             minister={activeMinister}
             ministers={audienceRoster}
-            portraitPrefix={(state.consorts || []).some((c) => c.name === activeMinister.name) ? "consort_" : "minister_"}
-            scrollMode={(state.consorts || []).some((c) => c.name === activeMinister.name) ? "legacy" : "audience"}
+            portraitPrefix="minister_"
             currentCampaignId={currentCampaignId}
             currentNightId={currentNightId}
             undoneChatIdentity={undoneChatIdentity}
             chat={chat}
-            suggestions={suggestions}
             pendingUserMessage={pendingUserMessage}
             pendingIdentity={pendingIdentity}
             failedIdentity={failedIdentity}
@@ -750,18 +744,15 @@ export function App() {
             input={input}
             busy={busy}
             error={error}
-            secretOrders={secretOrders.filter((o) => o.status === "active")}
             replyRetries={replyRetries}
             translationRetries={translationRetries}
             retryReadFailure={retryReadFailure}
             onInput={setInput}
-            onIntent={setComposerIntent}
             onSend={sendChat}
             onRetryReply={retryInterruptedReply}
             onRetryTranslation={retryTranslation}
             onUndo={undoLastChat}
             onHint={setComposerHint}
-            onFavorite={toggleFavorite}
             scrollPosition={audienceScrollPositionsRef.current.get(`${currentCampaignId}:${currentNightId}`)}
             onScrollPositionChange={(position) => audienceScrollPositionsRef.current.set(`${currentCampaignId}:${currentNightId}`, position)}
             onClose={() => setActiveModal("none")}
@@ -782,7 +773,6 @@ export function App() {
         >
           <EdictModal
             state={state}
-            directiveText={directiveText}
             editingDirectiveId={editingDirectiveId}
             editingDirectiveText={editingDirectiveText}
             decree={decree}
@@ -790,23 +780,21 @@ export function App() {
             busy={busy}
             error={error}
             localDirectives={localDirectives}
-            onDirectiveTextChange={setDirectiveText}
             onEditingTextChange={setEditingDirectiveText}
-            onCreateDirective={createDirective}
             onStartEdit={startEditDirective}
             onCancelEdit={cancelEditDirective}
             onSaveDirective={saveDirective}
             onDeleteDirective={deleteDirective}
             onIssueDecree={issueDecree}
-            onAdvanceWithoutEdict={advanceWithoutEdict}
+            onAdvanceWithoutEdict={() => { setActiveModal("none"); void advanceWithoutEdict(); }}
           />
         </FullscreenModal>
       ) : null}
 
-      {/* #1356：空 previous_summary 亦可开卷轴壳（木牌）；无固定空注 */}
+      {/* #1356：空 previous_summary 亦可开卷轴壳（木牌）；无固定空注。#1852：仅木牌/史册自取，不自动弹。 */}
       {gazetteOpen ? (
         <ReportModal
-          report={gazetteReport || state.previous_summary || report || ""}
+          report={state.previous_summary || report || ""}
           attendantMessage={state.last_attendant_message || undefined}
           periodLabel={state.previous_reign_period_label || undefined}
           onClose={() => setActiveModal("none")}
@@ -814,7 +802,7 @@ export function App() {
       ) : null}
 
       {activeModal !== "ending" && <MechanicalTailFailure failure={state.mechanical_tail_failure} onRetry={retryMechanicalTail} />}
-      {activeModal === "ending" && state.ending ? (
+      {activeModal === "ending" && state.ending && !suppressPostAdvanceOverlays ? (
         <EndingModal ending={state.ending} failure={state.mechanical_tail_failure} onClose={() => { setEndingDismissed(true); setActiveModal("none"); }} onRetry={retryMechanicalTail} />
       ) : null}
 
@@ -864,70 +852,7 @@ export function App() {
         />
       ) : null}
 
-      {/* 同会话非权威装饰：不挡必达三面；刷新路径零依赖 */}
-      {sessionSettlingBusy ? (
-        <SettlementLock
-          stage={settleStage}
-          progress={settleProgress}
-          thinking={settleThinking}
-          narrative={settleNarrative}
-        />
-      ) : null}
 
-      {/* 必达：续跑入口仍挂既有 phase===settling（及 issueDecree 恢复分流）；展示态门控不误关。
-          ship-pre r4：崩溃/中止后重载时相位停在 settling——last_decree 已被 begin_turn 清空。
-          #1418 r2 / #657：all-decided 或 typed resume_phase2 → 同条续跑面，空 POST resolve_decisions/stream。
-          #1808 A：与 hud-error 同槽（.recovery-banner fixed top:64px）——恢复面挂载时 HUD 门控避让，
-          不得压盖唯一续跑 CTA；fail-closed 回 player 时本面不挂，HUD 核心验收仍成立。 */}
-      {settleResumeMounted ? (
-        <div className="recovery-banner" data-testid="settle-resume">
-          <span className="recovery-banner-message">
-            {state.settlement_recovery?.message
-              || "上月结算未完成（进度已保存）。"}
-          </span>
-          {(() => {
-            // #1620：typed 恢复动作——phase2 / ready 重放 → resume；ready=0 → resimulate。
-            // 文案为人服务；契约只落真实 click→POST，不锁措辞、不挂测试专用属性。
-            const recoveryAction = phase2Resume || state.settlement_recovery?.ready_replay !== false
-              ? "resume"
-              : "resimulate";
-            return (
-              <button
-                className="seal-btn-issue"
-                onClick={phase2Resume ? resumePhase2 : issueDecree}
-                disabled={!!busy}
-              >
-                {recoveryAction === "resimulate" ? "重新推演" : "续跑结算"}
-              </button>
-            );
-          })()}
-        </div>
-      ) : null}
-
-      {/* #1808：phase-1 fail-closed 的 HUD 告知——只吃 settlementHudError，不投影共享 error。
-          相关 modal（拟诏/召对/未落库）正在消费同一失败时不双播；DecisionRecoveryPanel 另承 phase-2。
-          呈现文本走上游消息，不新造固定句式。settle-resume 挂载时避让（A）。 */}
-      {settlementHudError && !edictOpen && !chatOpen && !settleResumeMounted ? (
-        <div
-          className="recovery-banner decision-recovery-banner"
-          role="alert"
-          aria-live="assertive"
-          data-testid="hud-error"
-        >
-          <span className="recovery-banner-message">{settlementHudError}</span>
-        </div>
-      ) : null}
-
-      {/* 必达：批红恢复——不得被 busy/SettlementLock 误关 */}
-      {pausedDecisionError ? (
-        <div data-testid="decision-recovery">
-          <DecisionRecoveryPanel
-            message={pausedDecisionError}
-            busy={sessionSettlingBusy ? "" : busy}
-            onRetry={retryPendingDecisions}
-          />
-        </div>
-      ) : null}
 
       {cheatOpen ? (
         <CheatConsole
@@ -944,6 +869,7 @@ export function App() {
           <DecisionModal decisions={pendingDecisions} failures={decisionFailures} onResolve={submitDecisions} busy={busy} />
         </div>
       ) : null}
+      </div>
     </main>
   );
 }

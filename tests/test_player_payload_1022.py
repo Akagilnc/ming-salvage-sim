@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from ming_sim.session_write_queue import ClassifiedWriteGate
+
 import asyncio
 import json
 import threading
@@ -10,8 +12,6 @@ from types import SimpleNamespace
 import pytest
 
 import web_app
-from ming_sim import skills
-from ming_sim.cli import terminal
 
 
 class _HistoryDB:
@@ -23,20 +23,13 @@ class _HistoryDB:
             "attendant_message": "",
         }
 
-    def get_turn_extraction(self, turn: int):
+    def get_resolve_context(self, turn: int):
         return {
-            "turn": turn,
-            "year": 2,
-            "period": 3,
             "decree_text": "诏曰：赈济辽东。",
-            "extractor_output": {
-                "economy_moves": [{"account": "国库", "delta": -20}],
-                "character": {"loyalty": 88, "ability": 77},
-            },
         }
 
     def list_directives_by_turn(self, turn: int):
-        return [{"id": 7, "text": "命户部发帑", "notes": "家赀约十万两"}]
+        return [{"id": 7, "year": 2, "period": 3, "text": "命户部发帑", "notes": "家赀约十万两"}]
 
 
 def test_history_payload_preserves_narrative_without_machine_ledger(monkeypatch):
@@ -52,7 +45,7 @@ def test_history_payload_preserves_narrative_without_machine_ledger(monkeypatch)
         "report": "邸报：国丈家赀约数十万两。",
         "attendant_message": "",
         "decree_text": "诏曰：赈济辽东。",
-        "directives": [{"id": 7, "text": "命户部发帑", "notes": "家赀约十万两"}],
+        "directives": [{"id": 7, "year": 2, "period": 3, "text": "命户部发帑", "notes": "家赀约十万两"}],
     }
 
 
@@ -95,7 +88,7 @@ class _SettlementGame:
         self.state = SimpleNamespace(turn=9, ended=False, turn_phase="awaiting_decision")
         self.session = _SettlementSession(self.state)
         self.db = SimpleNamespace(list_pending_actions=lambda *_args, **_kwargs: [])
-        self._write_gate = threading.Lock()
+        self._write_gate = ClassifiedWriteGate()
 
     def refresh_turn(self):
         self.session.actions.append("refresh")
@@ -172,30 +165,3 @@ def test_issue_terminals_keep_unadvanced_month_visible(monkeypatch):
     assert synced["advanced"] is False
     assert game.state.turn == 9
     assert game.session.actions == []
-
-
-def test_cli_skill_card_command_uses_qualitative_character_bands(capsys, monkeypatch):
-    character = SimpleNamespace(
-        name="袁崇焕",
-        office="蓟辽督师",
-        office_type="武臣",
-        faction="东林党",
-        loyalty=88,
-        ability=77,
-        integrity=66,
-        courage=55,
-        style="刚毅",
-    )
-    monkeypatch.setattr(skills, "available_skill_ids", lambda character, db=None: [])
-
-    handled = terminal._handle_court_command(
-        SimpleNamespace(db=None), "技能卡", character,
-    )
-
-    rendered = capsys.readouterr().out
-    assert handled == "handled"
-    assert "忠诚可托腹心" in rendered
-    assert "能力才具出众" in rendered
-    assert "清廉操守清正" in rendered
-    assert "胆略进退审慎" in rendered
-    assert all(raw not in rendered for raw in ("忠诚88", "能力77", "清廉66", "胆略55"))

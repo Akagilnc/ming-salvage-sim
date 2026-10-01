@@ -1,6 +1,6 @@
 import React from "react";
-import { Loader2, Lock, RotateCcw, Send, Star, X } from "lucide-react";
-import { MinisterPlaceOffice, MinisterPortrait } from "./hud";
+import { Loader2, RotateCcw, Send, X } from "lucide-react";
+import { MinisterPortrait } from "./hud";
 import { api } from "../api";
 import { ScrollMessages, portraitSources } from "./scrollMessages";
 import { AUDIENCE_SCENE_SPEAKER } from "../audienceScene";
@@ -9,8 +9,6 @@ import type {
   ChatDisplayMessage,
   ChatMessage,
   Minister,
-  SecretOrder,
-  Suggestion,
   RetryReadFailure,
   TranslationRetry,
 } from "../types";
@@ -21,12 +19,10 @@ export function ChatModal({
   minister,
   portraitPrefix,
   ministers,
-  scrollMode = "audience",
   currentCampaignId,
   currentNightId,
   undoneChatIdentity,
   chat,
-  suggestions,
   pendingUserMessage,
   pendingIdentity,
   failedIdentity,
@@ -38,18 +34,15 @@ export function ChatModal({
   input,
   busy,
   error,
-  secretOrders,
   replyRetries = [],
   translationRetries = [],
   retryReadFailure = null,
   onInput,
-  onIntent,
   onSend,
   onRetryReply,
   onRetryTranslation,
   onUndo,
   onHint,
-  onFavorite,
   scrollPosition,
   onScrollPositionChange,
   onClose,
@@ -58,14 +51,12 @@ export function ChatModal({
   minister: Minister;
   portraitPrefix: string;
   ministers: Minister[];
-  scrollMode?: "audience" | "legacy";
   /** Complete ownership of the currently open scroll. */
   currentCampaignId: string;
   currentNightId: number;
   /** Complete persisted identity returned by the latest successful withdrawal. */
   undoneChatIdentity: { campaign_id: string; night_id: number; chat_turn_id: number } | null;
   chat: ChatMessage[];
-  suggestions: Suggestion[];
   pendingUserMessage: string;
   pendingIdentity: { campaign_id: string; night_id: number; chat_turn_id: number } | null;
   /** Provider-failed persisted turn whose generating snapshot must be retired. */
@@ -79,19 +70,16 @@ export function ChatModal({
   input: string;
   busy: string;
   error: string;
-  secretOrders: SecretOrder[];
   /** #505：系统层回话重试（崩溃后问话保留）。 */
   replyRetries?: { chat_turn_id: number; question: string; error_pack_path?: string; recovery_phase?: "after_reply" | "court_break" }[];
   translationRetries?: TranslationRetry[];
   retryReadFailure?: RetryReadFailure | null;
   onInput: (value: string) => void;
-  onIntent?: (intent: "secret_order" | undefined) => void;
   onSend: (ministerName: string, text?: string) => void;
   onRetryReply?: (ministerName: string, chatTurnId: number) => void;
   onRetryTranslation?: (chatTurnId: number) => void;
   onUndo: (ministerName: string) => void;
   onHint: (value: string) => void;
-  onFavorite: (minister: Minister) => void;
   /** Last player-owned position for this campaign/night, if they temporarily left. */
   scrollPosition?: number;
   onScrollPositionChange?: (position: number) => void;
@@ -132,11 +120,9 @@ export function ChatModal({
   const snapshotStillCurrent = (state: typeof scrollState): boolean =>
     state.kind !== "night" || (state.nightId === currentNightId && !state.messages.some(withdrawnFromThisScroll));
   const effectiveScrollState = snapshotStillCurrent(scrollState) ? scrollState : { kind: "loading" as const };
-  // The night scroll is the sole live authority. Personal chat history is only the legacy fallback;
-  // mixing it here reintroduces cross-night records and snapshot-difference heuristics.
-  const displayMessages: Array<ChatDisplayMessage | AudienceScrollMessage> = scrollMode === "legacy" || (effectiveScrollState.kind === "none" && currentNightId === 0)
-    ? [...chat]
-    : effectiveScrollState.kind === "night"
+  // The night scroll is the sole live authority (#1849 reopen: no per-minister legacy fallback).
+  const displayMessages: Array<ChatDisplayMessage | AudienceScrollMessage> =
+    effectiveScrollState.kind === "night"
       ? [...effectiveScrollState.messages]
       : [];
 
@@ -144,13 +130,8 @@ export function ChatModal({
     let alive = true;
     let retryTimer: number | undefined;
     let translationPending = false;
-    // Once an open night is known, refreshes retain that single authority while loading;
-    // first load/minister switches never flash the old per-minister projection.
+    // Once an open night is known, refreshes retain that single authority while loading.
     setScrollState((current) => current.kind === "night" && snapshotStillCurrent(current) ? current : { kind: "loading" });
-    if (scrollMode === "legacy") {
-      setScrollState({ kind: "none" });
-      return () => { alive = false; };
-    }
     const refresh = () => api<{
       night_id: number;
       messages: AudienceScrollMessage[];
@@ -216,9 +197,7 @@ export function ChatModal({
       });
     refresh();
     return () => { alive = false; window.clearTimeout(retryTimer); };
-  }, [minister.name, scrollMode, currentCampaignId, currentNightId, undoneChatIdentity, failedIdentity,
-    // App supplies the explicit durable-settlement generation. Standalone/legacy consumers
-    // retain the historical chat-driven refresh contract until they adopt that signal.
+  }, [minister.name, currentCampaignId, currentNightId, undoneChatIdentity, failedIdentity,
     scrollGeneration === undefined ? chat : scrollGeneration]);
 
   const pendingAlreadyPersisted = !!pendingIdentity
@@ -230,24 +209,18 @@ export function ChatModal({
   }
   const nightCharacters = effectiveScrollState.kind === "night" ? effectiveScrollState.characters : [];
   const portraitCharacters = [...nightCharacters, ...ministers.filter((person) => !nightCharacters.some((item) => item.name === person.name))];
-  const currentMinister = scrollMode === "audience"
-    ? (effectiveScrollState.kind === "night"
-        ? portraitCharacters.find((candidate) => candidate.name === effectiveScrollState.protagonist)
-        : undefined)
-    : minister;
-  const roster = scrollMode === "audience"
-    ? (effectiveScrollState.kind === "night"
-        ? [
-            ...effectiveScrollState.roster,
-            ...ministers.filter((candidate) => (!candidate.status || candidate.status === "active")
-              && !effectiveScrollState.roster.some((entry) => entry.name === candidate.name))
-              .map((candidate) => ({ name: candidate.name, present: false, waiting: true })),
-          ]
-        : ministers.filter((candidate) => !candidate.status || candidate.status === "active")
-            .map((candidate) => ({ name: candidate.name, present: false, waiting: true })))
-    : ministers
-        .filter((candidate) => !candidate.status || candidate.status === "active")
-        .map((candidate) => ({ name: candidate.name, present: true }));
+  const currentMinister = effectiveScrollState.kind === "night"
+    ? portraitCharacters.find((candidate) => candidate.name === effectiveScrollState.protagonist)
+    : undefined;
+  const roster = effectiveScrollState.kind === "night"
+    ? [
+        ...effectiveScrollState.roster,
+        ...ministers.filter((candidate) => (!candidate.status || candidate.status === "active")
+          && !effectiveScrollState.roster.some((entry) => entry.name === candidate.name))
+          .map((candidate) => ({ name: candidate.name, present: false, waiting: true })),
+      ]
+    : ministers.filter((candidate) => !candidate.status || candidate.status === "active")
+        .map((candidate) => ({ name: candidate.name, present: false, waiting: true }));
   const pendingTurnKey = pendingIdentity
     ? `${pendingIdentity.campaign_id}:${pendingIdentity.night_id}:${pendingIdentity.chat_turn_id}`
     : "";
@@ -281,9 +254,8 @@ export function ChatModal({
   }
   const { primary: portraitPrimary, fallback: portraitFallback } = currentMinister
     ? portraitSources(currentMinister, portraitPrefix) : { primary: "", fallback: undefined };
-  const visibleSecretOrders = secretOrders.filter((order) => order.minister_name === currentMinister?.name);
   // Night-level audience_type lives on the persisted container — not the message projection.
-  const audienceType = scrollMode === "audience" && effectiveScrollState.kind === "night"
+  const audienceType = effectiveScrollState.kind === "night"
     ? effectiveScrollState.container?.audience_type ?? ""
     : "";
   const nightContainer = effectiveScrollState.kind === "night" ? effectiveScrollState.container : undefined;
@@ -362,14 +334,16 @@ export function ChatModal({
         <span>{retryReadFailure?.kind === "reply" && retryReadFailure.chatTurnId === retry.chat_turn_id
           ? `${retryReadFailure.postSucceeded || retryReadFailure.readFailure ? "召对记录读取失败；" : ""}${!retryReadFailure.postSucceeded ? "回话重试失败：" : ""}${retryReadFailure.message}`
           : <>{retry.recovery_phase ? "回话已保存，后续处理失败" : `问话未得回话（「${retry.question}」）`}。</>}{retry.error_pack_path ? `错误包：${retry.error_pack_path}；请交给作者。` : ""}</span>
-        <button type="button" onClick={() => onRetryReply(scrollMode === "audience" ? AUDIENCE_SCENE_SPEAKER : minister.name, retry.chat_turn_id)} disabled={!!busy}>
+        <button type="button" onClick={() => onRetryReply(AUDIENCE_SCENE_SPEAKER, retry.chat_turn_id)} disabled={!!busy}>
           重试
         </button>
       </div>
     ));
   }
-  const visibleTranslationRetries: Pick<TranslationRetry, "chat_turn_id" | "retryable" | "error_pack_path">[] = scrollMode === "audience" && effectiveScrollState.kind === "night"
-    ? [...effectiveScrollState.translationRetries] : [...translationRetries];
+  const visibleTranslationRetries: Pick<TranslationRetry, "chat_turn_id" | "retryable" | "error_pack_path">[] =
+    effectiveScrollState.kind === "night"
+      ? [...effectiveScrollState.translationRetries]
+      : [...translationRetries];
   if (retryReadFailure?.kind === "translation" && !visibleTranslationRetries.some((retry) => retry.chat_turn_id === retryReadFailure.chatTurnId)) {
     visibleTranslationRetries.push({ chat_turn_id: retryReadFailure.chatTurnId, retryable: true });
   }
@@ -409,73 +383,32 @@ export function ChatModal({
     dispatchSend(minister.name, input);
   };
 
-  const sendSuggestion = (suggestion: Suggestion) => {
-    if (suggestion.prefix) {
-      onIntent?.(suggestion.intent === "secret_order" ? suggestion.intent : undefined);
-      onInput(suggestion.text);
-      setTimeout(() => inputRef.current?.focus(), 0);
-    } else {
-      dispatchSend(minister.name, suggestion.text);
-    }
-  };
-
   return (
     <div className="chat-full-grid">
       <aside className="modal-pane minister-side">
-        {scrollMode === "audience" ? (
-          <div className="audience-roster" aria-label="在殿花名册">
-            <h2>{nightContainer ? `${nightContainer.location} · ${nightContainer.time_of_day}` : "召对"}</h2>
-            {roster.map((entry) => {
-              const candidate = portraitCharacters.find((item) => item.name === entry.name);
-              const portrait = candidate ? portraitSources(candidate, portraitPrefix) : { primary: "", fallback: undefined };
-              return (
-                <button
-                  type="button"
-                  key={entry.name}
-                  data-roster-name={entry.name}
-                  data-presence={entry.present ? "present" : "waiting" in entry ? "waiting" : "departed"}
-                  onClick={() => dispatchSend(minister.name, `宣${entry.name}`)}
-                  disabled={!!busy}
-                >
-                  <MinisterPortrait className="audience-roster-avatar" primary={portrait.primary} fallback={portrait.fallback} name={entry.name} />
-                  <span>{entry.name}<small>{candidate?.office}{entry.present || "waiting" in entry ? "" : " · 已退"}</small></span>
-                </button>
-              );
-            })}
-          </div>
-        ) : null}
-        {scrollMode === "legacy" && currentMinister ? <div className="minister-profile">
-          <div>
-            <h2>{currentMinister.name}</h2>
-            <p>
-              {currentMinister.status !== "active" && (
-                <span className={`minister-status status-${currentMinister.status}`}>{currentMinister.status_label}</span>
-              )}
-              <MinisterPlaceOffice minister={currentMinister} officeClassName="profile-office" />
-            </p>
-          </div>
-          <button className="icon-button" aria-label="收藏大臣" onClick={() => onFavorite(currentMinister)}>
-            <Star size={16} fill={currentMinister.favorite ? "currentColor" : "none"} />
-          </button>
-        </div> : null}
-        {scrollMode === "legacy" && currentMinister ? <p className="profile-copy">{currentMinister.summary}</p> : null}
+        <div className="audience-roster" aria-label="在殿花名册">
+          <h2>{nightContainer ? `${nightContainer.location} · ${nightContainer.time_of_day}` : "召对"}</h2>
+          {roster.map((entry) => {
+            const candidate = portraitCharacters.find((item) => item.name === entry.name);
+            const portrait = candidate ? portraitSources(candidate, portraitPrefix) : { primary: "", fallback: undefined };
+            return (
+              <button
+                type="button"
+                key={entry.name}
+                data-roster-name={entry.name}
+                data-presence={entry.present ? "present" : "waiting" in entry ? "waiting" : "departed"}
+                onClick={() => dispatchSend(minister.name, `宣${entry.name}`)}
+                disabled={!!busy}
+              >
+                <MinisterPortrait className="audience-roster-avatar" primary={portrait.primary} fallback={portrait.fallback} name={entry.name} />
+                <span>{entry.name}<small>{candidate?.office}{entry.present || "waiting" in entry ? "" : " · 已退"}</small></span>
+              </button>
+            );
+          })}
+        </div>
         <div className="chat-portrait-wrap">
           <MinisterPortrait key={portraitPrimary} primary={portraitPrimary} fallback={portraitFallback} name={currentMinister?.name ?? "殿上"} />
         </div>
-        {scrollMode === "legacy" && visibleSecretOrders.length > 0 && (
-          <div className="chat-secret-orders">
-            <div className="secret-orders-label"><Lock size={12} />密令</div>
-            {visibleSecretOrders.map((o) => (
-              <div key={o.id} className="secret-order-item">
-                <div className="secret-order-title">{o.title}</div>
-                <div className="secret-order-meta">第 {o.year_issued} 年 {o.period_issued} 月下令</div>
-                {o.content && <div className="secret-order-content">{o.content}</div>}
-                {o.sim_note && <div className="secret-order-content"><b>月度动向：</b>{o.sim_note}</div>}
-                {o.result && <div className="secret-order-content"><b>承办回报：</b>{o.result}</div>}
-              </div>
-            ))}
-          </div>
-        )}
       </aside>
 
       <section className="modal-pane chat-main">
@@ -485,14 +418,14 @@ export function ChatModal({
           {!displayMessages.length && !busy && !streamingMinisterMessage && effectiveScrollState.kind !== "loading" && effectiveScrollState.kind !== "error" && (
             <div className="chat-empty-chrome" role="status">请陛下问话</div>
           )}
-          <ScrollMessages messages={displayMessages} ministerName={currentMinister?.name ?? ""} ministers={scrollMode === "audience" ? portraitCharacters : ministers} turnNotices={turnNotices} />
+          <ScrollMessages messages={displayMessages} ministerName={currentMinister?.name ?? ""} ministers={portraitCharacters} turnNotices={turnNotices} />
           {!retryReadFailure && (scrollState.kind === "error" || (scrollState.kind === "night" && scrollState.refreshError)) && (
             <div className="chat-system-note danger" role="alert">召对记录读取失败，请稍后重试。</div>
           )}
           {busy && !streamingMinisterMessage && (
             <div className="chat-message minister thinking">
               <span>{currentMinister?.name ?? "殿上"}</span>
-              <p><Loader2 size={14} />{portraitPrefix === "consort_" ? "思索中..." : "大臣思索中..."}{elapsedSeconds > 0 ? `（${elapsedSeconds}秒）` : ""}</p>
+              <p><Loader2 size={14} />大臣思索中...{elapsedSeconds > 0 ? `（${elapsedSeconds}秒）` : ""}</p>
             </div>
           )}
           {chatNotice && <div className="chat-system-note">{chatNotice}</div>}
@@ -500,19 +433,6 @@ export function ChatModal({
           {error && <div className="chat-system-note danger" role="alert">{error}</div>}
         </div>
         <div className="chat-composer">
-          <div className="hitl-bar">
-            {suggestions.map((suggestion) => (
-              <button
-                key={`${suggestion.label}-${suggestion.text}`}
-                onClick={() => sendSuggestion(suggestion)}
-                disabled={!!busy}
-                title={suggestion.prefix ? `填入前缀：${suggestion.text}` : suggestion.text}
-                className={suggestion.prefix ? "hitl-prefix" : ""}
-              >
-                {suggestion.label}
-              </button>
-            ))}
-          </div>
           <label className="chat-input">
             <span>问话</span>
             <textarea

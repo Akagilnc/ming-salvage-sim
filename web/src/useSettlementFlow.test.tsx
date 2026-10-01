@@ -43,6 +43,19 @@ const settlingState = {
   pending_decisions: [],
 } as GameState;
 
+const advancedMonthState = {
+  turn: { year: 1627, period: 11, turn: 6, phase: "player", settlement_display: false },
+  metrics: { 国库: 1700, 内库: 300, 民心: 54, 皇威: 41 },
+  budget: {
+    国库: { balance: 1700 },
+    内库: { balance: 300 },
+  },
+  previous_summary: "十月邸报·已归档",
+  previous_reign_period_label: "天启七年十月",
+  last_attendant_message: "奴婢呈上月邸报。",
+  pending_decisions: [],
+} as unknown as GameState;
+
 function sseUnadvancedResponse(): Response {
   const body = `event: done\ndata: ${JSON.stringify({ advanced: false, report: "" })}\n\n`;
   return new Response(body, { headers: { "Content-Type": "text/event-stream" } });
@@ -292,7 +305,11 @@ describe("#1351/#1560 useSettlementFlow — advanceWithoutEdict 令牌与 409 �
   it("POST 携 state.turn 为 expected_turn", async () => {
     const fetchMock = vi.fn(async () => ({
       ok: true,
-      json: async () => ({ state: preClickState, pending_action_failures: [] }),
+      json: async () => ({
+        state: advancedMonthState,
+        advanced: true,
+        pending_action_failures: [],
+      }),
     }));
     vi.stubGlobal("fetch", fetchMock);
     const reload = vi.fn();
@@ -300,9 +317,10 @@ describe("#1351/#1560 useSettlementFlow — advanceWithoutEdict 令牌与 409 �
       configurable: true,
       value: { ...window.location, reload },
     });
+    const loadState = vi.fn(async () => advancedMonthState);
 
     const { hookRef, cleanup } = mountHarness({
-      loadState: async () => preClickState,
+      loadState,
       initial: preClickState,
     });
 
@@ -315,7 +333,9 @@ describe("#1351/#1560 useSettlementFlow — advanceWithoutEdict 令牌与 409 �
     expect(String(url)).toContain("/api/decree/advance_without_edict");
     expect(init.method).toBe("POST");
     expect(JSON.parse(String(init.body))).toEqual({ expected_turn: 5 });
-    expect(reload).toHaveBeenCalledTimes(1);
+    // #1852：写成即推进走 loadState + 本面阅读，不整页 reload
+    expect(reload).not.toHaveBeenCalled();
+    expect(loadState).toHaveBeenCalled();
     cleanup();
   });
 
@@ -407,8 +427,9 @@ describe("#1351/#1560 useSettlementFlow — advanceWithoutEdict 令牌与 409 �
     });
 
     expect(host.querySelector("[data-testid=error]")?.textContent).toBe(FAIL_MSG);
-    expect(hookRef.current!.settlementHudError).toBe(FAIL_MSG);
-    expect(host.querySelector("[data-testid=busy]")?.textContent).toBe("");
+    // #1888 J3：共享 error 已由 harness 渲染断言；settlementHudError 位不另读内部态
+    // ——其玩家可见投影（hud-error 告警）由 appDurableWiring.test.tsx 的真实 App 用例证明。
+    expect(host.querySelector('[data-testid="busy"]')?.textContent).toBe("");
     cleanup();
   });
 });
@@ -606,3 +627,6 @@ describe("#1843 未推进的过月终包", () => {
     cleanup();
   });
 });
+
+// 本面邸报阅读态、跨局回执隔离与迟到刷新不重挂邸报，均由 appDurableWiring.test.tsx 的
+// 真实 App 玩家入口用例证明；此层不另立只数 loadState 次数／reload spy 的内部接线副本。

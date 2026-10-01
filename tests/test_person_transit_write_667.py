@@ -162,14 +162,14 @@ def test_status_exit_clears_complete_transit_ledger(game, exit_path):
 
     if exit_path == "appointment_replacement":
         appointed, displaced = apply_appointment(
-            db, state, content, None,
+            db, state, content,
             {"name": "新任测试官", "office": "兵部尚书", "replaces": name},
         )
         assert appointed == "新任测试官"
         assert displaced == name
     else:
         assert db._commit_office_action(
-            state, {"action": "罢免"}, {"name": name}, content, None,
+            state, {"action": "罢免"}, {"name": name}, content,
         ) == {name}
 
     row = db.conn.execute(
@@ -209,7 +209,7 @@ def test_office_appointment_keeps_status_reason_mirrored(
     character.reason_code = "旧代码"
 
     result = apply_office_appointment(
-        db, state, content, None, name, "兵部尚书", reason=appointment_reason,
+        db, state, content, name, "兵部尚书", reason=appointment_reason,
     )
 
     assert not result.get("rejected")

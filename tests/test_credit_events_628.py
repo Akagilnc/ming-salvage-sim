@@ -4,7 +4,7 @@
 ① AC1：#623 既有辜负写口行为覆盖，本片不重写该 origin
 ② 兑付/撑完 + 谏处置三型（正）；校验拒收（fulfilled/任命）不落伪信用（负）
 ③ 处置映射：丢卒两笔 / 包庇撑腰 / 查办不记（负）；真变形案卷 + #565 连坐面
-④ 幂等（origin 写前判重）+ 叙事语境 + restore + 只写不读 + banned 单源
+④ 幂等（origin 写前判重）+ 叙事语境 + restore
 """
 
 from __future__ import annotations
@@ -15,15 +15,12 @@ from ming_sim.breach_plea import (
     write_breach_plea_todo,
 )
 from ming_sim.credit_events import (
-    CREDIT_BANNED_PLAYER_TOKENS,
-    CREDIT_BANNED_SCAN_SURFACES,
     KIND_BACK,
     KIND_BETRAY,
     KIND_FULFILL,
     KIND_SCAPEGOAT,
     resolve_credit_events_from_extraction,
     scapegoat_actor_kind_from_origin,
-    write_credit_event,
 )
 from ming_sim.db import GameDB
 from ming_sim.issues import apply_score_extraction
@@ -576,18 +573,12 @@ def test_disposition_scapegoat_cover_prosecute_on_transformed(game):
         ) = old_succ
 
 
-# ── ④ 幂等 + 叙事语境 + restore + 只写不读 + banned ─────────────────
+# ── ④ 幂等 + 叙事语境 + restore + 只写不读 ────────────────────────
 
 
-def test_idempotent_narrative_restore_write_only_banned(game, tmp_path):
-    """同处置同窗不双写；跨案同人不错吞；叙事语境；restore；零消费；banned 单源。"""
+def test_idempotent_narrative_restore_write_only(game, tmp_path):
+    """同处置同窗不双写；跨案同人不错吞；叙事语境；restore；零消费。"""
     db, state, content = game
-
-    # banned 单源扩展 + 扫描面清单（AC8 票面交付物，#629 收口）
-    assert CREDIT_BANNED_PLAYER_TOKENS
-    assert "credit:scapegoat" in CREDIT_BANNED_PLAYER_TOKENS
-    assert CREDIT_BANNED_SCAN_SURFACES
-    assert "memorial_text" in CREDIT_BANNED_SCAN_SURFACES
 
     roster = _SCAPEGOAT_ROSTER()
     did_a = _transformed_dossier(db, state, token="idem-a-628", roster=roster)
@@ -652,13 +643,4 @@ def test_idempotent_narrative_restore_write_only_banned(game, tmp_path):
         assert all(str(r["context"] or "").strip() for r in r_edges)
     finally:
         restored.close()
-
-    # 只写不读：本轴无消费端 API（调用侧断言）
-    import ming_sim.credit_events as ce
-    public = [n for n in dir(ce) if not n.startswith("_")]
-    assert "read_credit" not in " ".join(public).lower()
-    assert "consume_credit" not in " ".join(public).lower()
-    assert "apply_loyalty" not in " ".join(public).lower()
-    # write_credit_event 为写；resolve_* 为识别写，非账本消费
-    assert callable(write_credit_event)
 

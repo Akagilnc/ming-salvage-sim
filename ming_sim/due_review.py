@@ -19,11 +19,7 @@ from ming_sim.breach_plea import (
     ENTRY_KIND_BREACH_PLEA,
     project_breach_plea_scene,
 )
-from ming_sim.decree_vocabulary import (
-    DEFORMATION_STRIP_PLAYER_TOKENS,
-    URGE_TRUTH_BANNED_PLAYER_TOKENS,
-    terminal_report_facade,
-)
+from ming_sim.decree_vocabulary import terminal_report_facade
 from ming_sim.staged_commitment import (
     ENTRY_KIND_GRACE_PLEA,
     ENTRY_KIND_RUSH_REMONSTRANCE,
@@ -32,26 +28,6 @@ from ming_sim.staged_commitment import (
     TODO_STATUS_PENDING,
     list_due_stages_for_scan,
     normalize_commitment_stages,
-)
-from ming_sim.supervision import SUPERVISION_BANNED_PLAYER_TOKENS
-
-# 真伪底禁词叶源在 decree_vocabulary；此处再导出供既有 import 路径兼容。
-# URGE_TRUTH_BANNED_PLAYER_TOKENS  # re-export
-
-# 玩家可见串静默剥离集（运行时）：仅无歧义系统词/引擎键。
-# 汉语普通词（变形/分界/打折走样/烂尾/钝化…）不进本集——由 assert 哨兵响亮拦截。
-_BANNED_PLAYER_TOKENS = (
-    "AWAITING_DECISION", "<<DECISION>>", "EXTRACTION_MODULES",
-    "close=True", "close=False",
-) + tuple(DEFORMATION_STRIP_PLAYER_TOKENS) + tuple(
-    URGE_TRUTH_BANNED_PLAYER_TOKENS
-) + tuple(
-    token for token in SUPERVISION_BANNED_PLAYER_TOKENS
-    if not any("\u4e00" <= ch <= "\u9fff" for ch in token)
-)
-assert not any(
-    any("\u4e00" <= ch <= "\u9fff" for ch in token)
-    for token in _BANNED_PLAYER_TOKENS
 )
 
 # next_audience_todos.entry_kind 单一分派（#623+#624 合成，禁第二份谓词）：
@@ -178,10 +154,8 @@ def build_due_review_input(db: Any, todo: Dict[str, object]) -> Dict[str, object
     """P5 输入闭集：todo 字段 + stages + list_dossier_progress + 实况；催办/监督缺源=空列表。"""
     from ming_sim.urge_lever import (
         collect_urge_history,
-        derive_distortion_tendency,
         derive_opportunity_band,
         resolve_host_character,
-        summarize_urge_pressure,
     )
 
     commitment_ref = int(todo["commitment_ref"])
@@ -228,20 +202,12 @@ def build_due_review_input(db: Any, todo: Dict[str, object]) -> Dict[str, object
         commitment_ref=commitment_ref,
         dossier_id=branch["dossier_id"],
     )
-    pressure = summarize_urge_pressure(urge_history)
     host = resolve_host_character(
         db,
         commitment_ref=commitment_ref,
         dossier_id=branch["dossier_id"],
     )
     opportunity_band = derive_opportunity_band(durable_effects)
-    distortion_tendency = derive_distortion_tendency(
-        integrity=host["integrity"],
-        urge_count=int(pressure["urge_count"]),
-        urge_tightness=int(pressure["urge_tightness"]),
-        supervision_history=supervision_history,
-        opportunity_band=opportunity_band,
-    )
     army_pay_fact = None
     if branch["dossier_id"] is not None:
         from ming_sim.covert_levy import army_pay_fact_for_dossier
@@ -269,40 +235,7 @@ def build_due_review_input(db: Any, todo: Dict[str, object]) -> Dict[str, object
         "transformation_tendency_facts": transformation_tendency_facts,
         "host": host,
         "opportunity_band": opportunity_band,
-        "distortion_tendency": distortion_tendency,
     }
-
-
-def _strip_banned(text: str) -> str:
-    out = str(text or "")
-    for token in _BANNED_PLAYER_TOKENS:
-        out = out.replace(token, "")
-    return out
-
-
-def _gap_and_statement(review_input: Dict[str, object]) -> tuple[str, str]:
-    """0118 最小玩家面：果可见、因不自动。"""
-    effects = list(review_input.get("durable_effects") or [])
-    reports = list(review_input.get("progress_reports") or [])
-    criterion = str(review_input.get("criterion_text") or "").strip() or "所约之事"
-
-    if effects:
-        gap = f"「{criterion}」一侧已见实账落地"
-    elif reports:
-        gap = f"「{criterion}」交付仍有亏欠，表报与实况未尽合"
-    else:
-        gap = f"「{criterion}」到期未见可核之实绩"
-
-    statement = ""
-    if reports:
-        last = reports[-1]
-        memorial = str(last.get("memorial_text") or "").strip()
-        if memorial:
-            statement = f"承办人陈词：{memorial}"
-    if not statement:
-        statement = "承办人陈词：容臣细禀（尚未具状）。"
-    # 永不自动翻「因」
-    return _strip_banned(gap), _strip_banned(statement)
 
 
 def project_due_review_scene(
@@ -314,21 +247,11 @@ def project_due_review_scene(
     """复命场面投影（ID-13 用词，P4 定性、无数字面板）。"""
     inp = review_input if review_input is not None else build_due_review_input(db, todo)
     origin = str(inp.get("origin_context") or todo.get("origin_context") or "").strip()
-    gap_text, statement_text = _gap_and_statement(inp)
     mid = bool(inp.get("mid_stage"))
-    phase_hint = "中途复命" if mid else "到期复命"
-    origin_bit = f"昔有「{origin}」之约，今期已至。" if origin else "前诺到期，例应复命。"
-    scene_text = _strip_banned(
-        f"{phase_hint}：{origin_bit}{gap_text}。{statement_text}"
-    )
     entry_kind = str(todo.get("entry_kind") or ENTRY_KIND_STAGED)
     scene_kind = "covert_levy_exposure" if audience_todo_lane(entry_kind) == _AUDIENCE_LANE_COVERT_LEVY else "due_review"
     payload = todo.get("payload_json") or {}
     reopened = scene_kind == "covert_levy_exposure" and bool(payload.get("shortfall_reopened"))
-    # Covert exposure is rendered by the existing audience LLM from the facts
-    # below; unlike ordinary due review it must not inject a fixed memorial.
-    if scene_kind == "covert_levy_exposure":
-        scene_text = ""
     if reopened:
         # A prohibition reminder is a fresh shortfall projection, not a replay
         # of the already-settled exposure and its adjudication materials.
@@ -354,9 +277,6 @@ def project_due_review_scene(
         "origin_context": origin,
         "criterion_text": str(todo.get("criterion_text") or ""),
         "mid_stage": mid,
-        "gap_text": gap_text,
-        "statement_text": statement_text,
-        "scene_text": scene_text,
         "branch": str(inp.get("branch") or "no_dossier"),
         "dossier_id": inp.get("dossier_id"),
         "executor_id": str((inp.get("dossier") or {}).get("executor_id") or ""),
@@ -467,20 +387,19 @@ def durable_effects_beyond_intent(effects: object) -> bool:
 
 
 def decide_due_review_verdict(review_input: Dict[str, object]) -> Dict[str, object]:
-    """确定性裁决（不新增 LLM 步）。中段过程态 vs 末段四终值；#624 失真档可观察调制。
+    """确定性裁决（不新增 LLM 步）。中段过程态 vs 末段四终值。
 
-    #622：消费效果行旨外标记——有旨外恶果/受益 → transformed；
-    有实况无旨外 → fulfilled；无实况有表报 → degraded；皆无 → failed。
-    禁另立第二裁决函数。
+    #1895：终值只由实况账判——有旨外恶果/受益 → transformed；有实况无旨外 →
+    fulfilled；无实况有表报 → degraded；皆无 → failed。代码不再由承办人
+    integrity／催办压力派生「失真档」并把判词只往更重方向改写；人物办不办、
+    办得多重归模型按其可及事实自己选（#1816 人物场景／月末 run）。
+    #622 旨外标记口径不变；0118 对账不翻因。禁另立第二裁决函数。
     """
-    from ming_sim.urge_lever import apply_distortion_to_verdict
-
     mid = bool(review_input.get("mid_stage"))
     effects = list(review_input.get("durable_effects") or [])
     reports = list(review_input.get("progress_reports") or [])
     criterion = str(review_input.get("criterion_text") or "").strip() or "所约之事"
     origin = str(review_input.get("origin_context") or "").strip()
-    distortion = dict(review_input.get("distortion_tendency") or {})
 
     if mid:
         note = f"中段复核：{criterion}仍在办理"
@@ -492,7 +411,6 @@ def decide_due_review_verdict(review_input: Dict[str, object]) -> Dict[str, obje
             "close": False,
             "is_terminal": False,
             "mid_stage": True,
-            "distortion_band": str(distortion.get("band") or "不歪"),
         }
 
     # 末段终裁：机械读旨外标记（0072 分界；0118 对账不翻因）
@@ -511,20 +429,13 @@ def decide_due_review_verdict(review_input: Dict[str, object]) -> Dict[str, obje
         note = f"到期复核：{criterion}届期无实绩"
     if origin:
         note = f"{note}（原诺：{origin}）"
-    verdict = {
+    return {
         "outcome": outcome,
         "note": note[:200],
         "close": True,
         "is_terminal": True,
         "mid_stage": False,
-        "distortion_band": str(distortion.get("band") or "不歪"),
     }
-    return apply_distortion_to_verdict(
-        verdict,
-        distortion,
-        has_effects=bool(effects),
-        has_reports=bool(reports),
-    )
 
 
 def _apply_dossier_verdict(

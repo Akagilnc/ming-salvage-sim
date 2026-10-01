@@ -1,6 +1,5 @@
 import React from "react";
 import { audienceStreamPath } from "./audienceScene";
-import { forwardSteamEvents } from "./steamEvents";
 import type { ApiErrorDetail, ChatResponse } from "./types";
 
 export class ApiRequestError extends Error {
@@ -51,7 +50,6 @@ export const api = async <T,>(path: string, options?: RequestInit): Promise<T> =
     throw new ApiRequestError(normalized, response.statusText);
   }
   const payload = await response.json();
-  void forwardSteamEvents(payload);
   return payload;
 };
 
@@ -72,7 +70,6 @@ export const parseSseMessage = (raw: string): { event: string; data: string } | 
 
 export type StreamChatOptions = {
   signal?: AbortSignal;
-  intent?: "secret_order";
   /** #544：流完补挂高亮清单（done 之后、end 之前） */
   onHighlights?: (payload: {
     highlights: string[];
@@ -100,11 +97,12 @@ export const streamChat = async (
     signalOrOptions instanceof AbortSignal || signalOrOptions === undefined
       ? { signal: signalOrOptions }
       : signalOrOptions;
-  const url = audienceStreamPath(ministerName);
+  void ministerName; // live transport is always the single audience scene (#1849 reopen)
+  const url = audienceStreamPath();
   const response = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message, ...(options.intent ? { intent: options.intent } : {}) }),
+    body: JSON.stringify({ message }),
     signal: options.signal,
   });
   if (!response.ok) {

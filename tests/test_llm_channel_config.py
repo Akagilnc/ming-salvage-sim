@@ -279,16 +279,15 @@ def test_create_chat_model_omits_default_headers_when_empty(monkeypatch):
     assert "default_headers" not in captured[0]
 
 
-def test_minister_and_rescript_entries_pass_default_headers_at_transport(monkeypatch, game):
+def test_scene_and_rescript_entries_pass_default_headers_at_transport(monkeypatch, game, tmp_path):
     """#1794：召对/拟诏真实入口 → OpenAIChat 构造缝头表整张到达；不跑真实 LLM。"""
     from ming_sim.agents import bind_content as agents_bind, create_rescript_draft_agent
-    from ming_sim.models import CourtContext
-    from ming_sim.registry import bind_content as registry_bind, create_minister_agent
+    from ming_sim.materials import PreparedMaterials
+    from ming_sim.registry import create_scene_agent
 
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
     db, state, content = game
     agents_bind(content)
-    registry_bind(content)
 
     headers = {
         "X-Custom-Session": "sess-fixed-1",
@@ -311,16 +310,9 @@ def test_minister_and_rescript_entries_pass_default_headers_at_transport(monkeyp
 
     monkeypatch.setattr(llm_model, "OpenAIChat", spy)
 
-    character = next(
-        c for c in content.characters.values()
-        if c.office_type not in ("后宫", "宗藩")
-        and db.get_character_status(c.name)[0] == "active"
-    )
-    create_minister_agent(
-        character,
-        cfg,
-        CourtContext(state=state, db=db, previous_summary=""),
-        db,
+    create_scene_agent(
+        cfg, PreparedMaterials(root=tmp_path, opening="", index_lines=()),
+        content=content,
     )
     assert captured, "召对入口须构造 OpenAIChat"
     assert captured[-1].get("default_headers") == headers
@@ -838,6 +830,7 @@ def test_cli_reasoning_strength_runners_single_source_in_cli_backend():
     assert '{"codex"' not in src and "{'codex'" not in src
 
 
+
 def test_agent_factories_omit_max_tokens_on_param_surface(monkeypatch):
     """#1472：ming_sim.agents 现役工厂 + gate 真实参数面无 max_tokens 键。"""
     from types import SimpleNamespace
@@ -858,7 +851,6 @@ def test_agent_factories_omit_max_tokens_on_param_surface(monkeypatch):
         ending_summary_prompt="es",
     )
     monkeypatch.setattr(agents_mod, "_ctx", lambda: fake_ctx)
-    monkeypatch.setattr(agents_mod, "build_simulator_context", lambda payload: "ctx")
     monkeypatch.setattr(agents_mod, "create_chat_model", spy)
     monkeypatch.setattr(agents_mod, "Agent", lambda **kwargs: kwargs)
     monkeypatch.setattr(agents_mod, "tlog", lambda *a, **k: None)
@@ -877,12 +869,10 @@ def test_agent_factories_omit_max_tokens_on_param_surface(monkeypatch):
     # ming_sim.agents 现役工厂——逐项命名调用，漏一个即红
     factories = [
         ("create_highlight_judge_agent", lambda: agents_mod.create_highlight_judge_agent(cfg)),
-        ("create_endorsement_extractor_agent", lambda: agents_mod.create_endorsement_extractor_agent(cfg)),
         ("create_world_segment_agent", lambda: agents_mod.create_world_segment_agent(
             cfg, SimpleNamespace(root="", opening="盘面"),
         )),
         ("create_decree_writer_agent", lambda: agents_mod.create_decree_writer_agent(cfg, object())),
-        ("create_season_simulator_agent", lambda: agents_mod.create_season_simulator_agent(cfg, object())),
         ("create_promulgation_judge_agent", lambda: agents_mod.create_promulgation_judge_agent(
             cfg, object(),
             session_id="promulgation-judge-turn-test",
@@ -919,6 +909,7 @@ def test_agent_factories_omit_max_tokens_on_param_surface(monkeypatch):
     cb._run_api_for_config("输出 {}", cfg, tag="gate")
     assert len(seen) == before_gate + 1, f"gate must hit create_chat_model once, got +{len(seen) - before_gate}"
     assert "max_tokens" not in seen[-1], seen[-1]
+
 
 
 def test_gate_evidence_config_omits_max_tokens():

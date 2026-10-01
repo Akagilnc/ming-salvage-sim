@@ -11,11 +11,9 @@ from typing import Any
 
 import pytest
 
-from ming_sim.agents import build_simulator_context
 from ming_sim.context import character_context, character_context_with_db
 from ming_sim.exceptions import SettlementAbort
 from ming_sim.person_archive_contract import PERSON_REASON_CODES, normalize_reason_code
-from ming_sim.simulation import build_simulator_payload
 
 # ---------------------------------------------------------------------------
 # helpers（只读观察；不构成第二写缝）
@@ -835,84 +833,6 @@ def _collect_typed_keys(obj: Any, *, _out: set[str] | None = None) -> set[str]:
     return _out
 
 
-def test_t13_p4_surfaces_do_not_feed_new_fields(game):
-    db, state, content = game
-    faction = _faction_of(db, _TARGET_EUNUCH)
-    # 植入 sentinel 到派生表/列与 log
-    db.conn.execute(
-        "INSERT INTO faction_axis_debt(faction, axis, blood_debt, wariness) "
-        "VALUES (?,?,?,?)",
-        (faction, _AXIS, _SENTINEL_DEBT, _SENTINEL_WARINESS),
-    )
-    db.conn.execute(
-        "UPDATE factions SET edict_overdraw=? WHERE name=?",
-        (_SENTINEL_OVERDRAW, faction),
-    )
-    db.conn.execute(
-        "INSERT INTO centrifuge_log("
-        "turn, faction, axis, kind, base, legitimacy_pct, amount, "
-        "source_name, reason_code, source, idem_key"
-        ") VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-        (
-            state.turn,
-            faction,
-            _AXIS,
-            "direct",
-            _SENTINEL_BASE,
-            _SENTINEL_LEG,
-            _SENTINEL_AMOUNT,
-            _TARGET_EUNUCH,
-            None,
-            None,
-            "t13|sentinel|direct",
-        ),
-    )
-    db.conn.commit()
-
-    character = content.characters[_TARGET_EUNUCH]
-    surfaces: list[str] = [
-        character_context(character),
-        character_context_with_db(character, db, turn=state.turn),
-    ]
-    payload = build_simulator_payload(state, db, "", "")
-    brief = str(payload["factions_brief"])
-    ctx = build_simulator_context(payload)
-    report = db.faction_report()
-    surfaces.extend([brief, ctx, report])
-
-    sentinels = (
-        _SENTINEL_DEBT,
-        _SENTINEL_WARINESS,
-        _SENTINEL_OVERDRAW,
-        _SENTINEL_LEG,
-        _SENTINEL_AMOUNT,
-        _SENTINEL_BASE,
-    )
-    # typed-key 面：六字段名均不得出现在真实 payload 的 dict keys 上
-    forbidden_keys = (
-        "blood_debt",
-        "wariness",
-        "edict_overdraw",
-        "legitimacy_pct",
-        "amount",
-        "base",
-    )
-    typed_keys = _collect_typed_keys(payload)
-    for name in forbidden_keys:
-        assert name not in typed_keys
-
-    # 文本 surface：四专有名 + 六 sentinel；禁止对 amount/base 做自由文本子串盯文
-    unique_names = (
-        "blood_debt",
-        "wariness",
-        "edict_overdraw",
-        "legitimacy_pct",
-    )
-    for text in surfaces:
-        for name in unique_names:
-            assert name not in text
-        for value in sentinels:
-            assert str(value) not in text
 
 
 # ---------------------------------------------------------------------------

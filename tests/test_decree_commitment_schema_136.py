@@ -5,7 +5,6 @@ import pytest
 from ming_sim.db import GameDB
 from ming_sim.models import effect_dict_has_work
 import ming_sim.issues as I
-from ming_sim.simulation import canonicalize_extraction
 
 
 def _promulgated_commitment_origin(db, state) -> str:
@@ -214,22 +213,6 @@ def test_decree_commitment_shape_with_string_stop_condition_requires_marker(read
     assert row is None
 
 
-def test_canonicalize_new_issue_preserves_commitment_columns():
-    out = canonicalize_extraction({
-        "new_issues": [{
-            "标题": "每月补饷直到补齐",
-            "来源引用": "decree:turn-1:pay-arrears",
-            "停止条件": {"army.guanning.arrears": "<=0"},
-            "承诺标记": "until_stop",
-            "end_turn": 9,
-        }],
-    })
-
-    assert out["new_issues"][0]["origin_ref"] == "decree:turn-1:pay-arrears"
-    assert out["new_issues"][0]["stop_condition"] == {"army.guanning.arrears": "<=0"}
-    assert out["new_issues"][0]["commitment_kind"] == "until_stop"
-    assert out["new_issues"][0]["end_turn"] == 9
-    assert "resolve_condition" not in out["new_issues"][0]
 
 
 def test_existing_issues_table_gets_commitment_columns_idempotently(tmp_path, content):

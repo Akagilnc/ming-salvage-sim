@@ -1,6 +1,10 @@
 # 探针 driver 复用引擎结算核，不自行复刻结算脊柱
 
-Status: accepted
+Status: superseded
+
+> **#1843 reopen（2026-09-28）**：owner 裁定「连同旧核一起删」（源卷 uuid `1c439239-e748-417a-ac37-79603374583a`）。`driver.py` 与 `settle_with_delta` 旧结算后半段已删除；玩家过月只走 `month_chain.run_player_month_chain`。`pre_settle` / `prepare_resolve_front_half` 仍为玩家链前段，不再与 driver 共用。本 ADR 全文作废，仅作历史。
+
+Status was: accepted
 
 探针 step1 由对话里的 LLM（我）自产邸报叙事 + 稀疏 delta，需要**绕过引擎自带的 extractor** 跑确定性结算。`ming_sim/decree.py` 的结算脊柱夹着两个 LLM 步分两段：前括号（`resolve_directives` 头：固定财政 tick → `auto_trigger_seed_issues`）和后括号（`_settle_after_narrative` 尾：`apply_score_extraction` → turn_logs → 章节记忆 → inertia → `clear_gated_legacies` → 结局判定 → `next_period`）。
 
@@ -20,3 +24,5 @@ Status: accepted
 - **CLAUDE.md「结算编排骨架」里"driver 照此复刻"一句作废**，改述为"driver 复用 `settle_with_delta`，与真实流程同核"。实现时同步改 CLAUDE.md / SETTLEMENT_FLOW.md。
 - 结算脊柱从此只有一份；探针不会和生产结算悄悄分叉。
 - 先做这条（抽核 + driver），#4 城防炮即可经此核 TDD 验证，确立实现顺序。
+
+〔#1846 2026-09-28 reopen：按陛下裁定（uuid `1c439239-e748-417a-ac37-79603374583a`），`driver.py` 与只为它保留的 ready=1 重放路径已删除；本 ADR 整份已被取代。玩家链走 `month_chain`；CLI 沉浸版日后直接接新月链。〕

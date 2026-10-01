@@ -1,21 +1,17 @@
 """#507 连场编排——presence-aware 组装：谁在场听到了什么，区间事实送对。
 
-一条外部行为契约：连场一夜里，对话流按在场名单送入组装——侍立者的补话组装输入
-含其在场时段殿上公开对话（AC2 区间取数），未在场者的组装输入不含殿内对话（AC3），
-且回奏输入按角色见闻分流（AC4，千人千答非旧询问机制）。
+连场一夜中，可闻账按在场区间分流：侍立者听到区间内公开对话，
+未入殿和已退者不闻殿内对应时段的对话。
 
 北极星「乾清宫一夜」骨架（AUDIENCE_NORTH_STAR）：宣毕自严→留侍→宣徐光启→
 毕自严插话站台→宣洪承畴+王绍徽同殿。区间取数/可闻性复用 #500 audible_entries_for
-（御前低语不流入），本片验在真实 GameSession 组装路由与账本读边界。每正向配显式负向。
+（御前低语不流入），本片验在账本可闻性读边界。每正向配显式负向。
 """
 
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 from ming_sim import audience_night as an
 from ming_sim.audience_night import AUDIBILITY_PRIVATE, AUDIBILITY_PUBLIC
-from ming_sim.session import GameSession
 
 STANDING = "王承恩"  # 常在员额（内廷近臣全程在场）
 
@@ -45,7 +41,7 @@ def test_scene_recap_quotes_public_dialogue_within_presence_interval(game):
     an.summon_enter(db, nid, "徐光启")
     heard = _public(db, nid, "徐光启", "徐光启奏：宜用洪承畴督师陕西。")
     whisper = an.append_ledger_entry(
-        db, nid, person_names=[STANDING], body="王承恩附耳：此人跋扈。",
+        db, nid, person_names=[STANDING],
         audibility=AUDIBILITY_PRIVATE,
     )
 
@@ -77,28 +73,6 @@ def test_scene_recap_excludes_dialogue_before_person_entered(game):
     assert "毕自严先奏钱粮九边" not in recap       # 负向：入殿前不闻
 
 
-# ── AC2/AC3 生产路由：真实召对组装（_audience_prompt_for_message）──────────
-
-
-def test_audience_prompt_carries_heard_hall_dialogue_for_present_attendant(game):
-    db, state, content = game
-    _activate(db, state, "毕自严", "徐光启", "洪承畴")
-    night = an.open_night(db, state, location="乾清宫", time_of_day="戌时")
-    nid = int(night["id"])
-    an.summon_enter(db, nid, "毕自严")
-    an.summon_enter(db, nid, "徐光启")
-    _public(db, nid, "徐光启", "徐光启奏：宜用洪承畴督师陕西。")
-
-    session = SimpleNamespace(db=db, state=state)
-    # 正向：侍立在场的毕自严补话组装输入含其在场时段所闻殿上公开对话
-    prompt_present = GameSession._audience_prompt_for_message(
-        session, "卿以为如何？", content.characters["毕自严"])
-    assert "徐光启奏：宜用洪承畴督师陕西。" in prompt_present
-
-    # 负向（AC3）：未在场者（洪承畴，仅置 active 未入殿）组装输入不含殿内对话
-    prompt_absent = GameSession._audience_prompt_for_message(
-        session, "卿以为如何？", content.characters["洪承畴"])
-    assert "徐光启奏：宜用洪承畴督师陕西" not in prompt_absent
 
 
 # ── AC1：乾清宫一夜连场骨架可跑（宣→留侍→宣→插话站台→同殿）──────────────
@@ -139,63 +113,26 @@ def test_qianqing_continuous_night_skeleton_runs(game):
 # ── AC4：回奏输入按角色见闻分流（同问不同答/臣不知，千人千答非旧询问机制）──
 
 
-def test_reply_input_routes_per_character_knowledge_not_one_answer_for_all(game):
-    """同一朝局实况问在场的近臣与普通大臣，组装输入按各自见闻分流（非千人一答）。"""
-    db, state, content = game
-    _activate(db, state, "毕自严")
-    night = an.open_night(db, state, location="乾清宫", time_of_day="戌时")
-    nid = int(night["id"])
-    an.summon_enter(db, nid, "毕自严")
-
-    session = SimpleNamespace(db=db, state=state)
-    question = "陕西巡抚可有？"
-
-    # 正向：问常在近臣王承恩——回奏输入取自其角色见闻。断言**去掉玩家原问后仍在**的见闻
-    # 注入标记（近臣查访得督抚官缺实况），锁的是知识注入而非问句回声——「陕西巡抚」本在原问
-    # 里、断言其存在恒真=假绿；「近臣查访」只由角色见闻投影渲染进 prompt、不在原问中。
-    prompt_attendant = GameSession._audience_prompt_for_message(
-        session, question, content.characters[STANDING])
-    from ming_sim.materials import list_materials, prepare_character_materials, read_material
-    attendant_blob = "\n".join(
-        read_material(d.root, path)
-        for d in [prepare_character_materials(db, state, content.characters[STANDING])]
-        for path in list_materials(d.root) if path != "INDEX.txt"
-    )
-    assert "近臣查访" in attendant_blob
-    assert f"【{STANDING}此刻所知的天下" not in prompt_attendant
-
-    # 负向：同一问题问不知情的普通大臣——目录不注入近臣查访见闻
-    prompt_minister = GameSession._audience_prompt_for_message(
-        session, question, content.characters["毕自严"])
-    minister_blob = "\n".join(
-        read_material(d.root, path)
-        for d in [prepare_character_materials(db, state, content.characters["毕自严"])]
-        for path in list_materials(d.root) if path != "INDEX.txt"
-    )
-    assert "近臣查访" not in minister_blob
-    assert "近臣查访" not in prompt_minister
 
 
 # ── 出殿边界：告退后殿上公开对话不入其组装（区间终点，两条出场路径各一）──────
 
 
-def test_audience_prompt_excludes_hall_dialogue_after_command_dismiss(game):
-    """出殿边界·command dismiss 路径（TAG_EXIT）：令退后的殿上公开对话不入其组装输入。"""
+def test_exit_excludes_later_public_ledger_from_character_hearing(game):
+    """出殿边界：退前所闻保留，退后的公开事实不可闻。"""
     db, state, content = game
     _activate(db, state, "毕自严", "徐光启")
     night = an.open_night(db, state, location="乾清宫", time_of_day="戌时")
     nid = int(night["id"])
     an.summon_enter(db, nid, "毕自严")
     an.summon_enter(db, nid, "徐光启")
-    _public(db, nid, "徐光启", "徐光启奏：陕西糜烂当速定督抚。")  # 毕自严退前所闻
-    an.dismiss_from_audience(db, "毕自严", night_id=nid)         # 令退（口令 TAG_EXIT）
-    _public(db, nid, "徐光启", "徐光启续奏：九边军饷全无着落。")  # 毕自严退后
+    heard_id = _public(db, nid, "徐光启", "徐光启奏：陕西糜烂当速定督抚。")
+    an.dismiss_from_audience(db, "毕自严", night_id=nid)
+    unheard_id = _public(db, nid, "徐光启", "徐光启续奏：九边军饷全无着落。")
 
-    session = SimpleNamespace(db=db, state=state)
-    prompt = GameSession._audience_prompt_for_message(
-        session, "卿以为如何？", content.characters["毕自严"])
-    assert "陕西糜烂当速定督抚" in prompt        # 正向：退前所闻仍在区间内
-    assert "九边军饷全无着落" not in prompt      # 负向：退后公开对话越出侍立区间、不入组装
+    visible_ids = {r["id"] for r in an.audible_entries_for(db, nid, "毕自严")}
+    assert heard_id in visible_ids
+    assert unheard_id not in visible_ids
 
 
 def test_present_roster_reflects_command_dismissal(game):
