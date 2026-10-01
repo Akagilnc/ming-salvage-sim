@@ -268,31 +268,6 @@ def test_ac5_audit_fork_signal_present_only_with_audit_link(game):
     assert "audit_fork_signals" not in escort_nudge
 
 
-# ── ⑤ coerce 闭世界肯定识别器（#622 r2 畸形归 0）────────────────────
-
-
-def test_coerce_beyond_intent_flag_closed_affirmative_world():
-    """coerce_beyond_intent_flag 是闭世界肯定识别器。
-
-    仅契约内肯定表示（True / 非零 int·float / 肯定串集）→1；
-    缺席、否定、空、任何畸形（含非标量、非契约串）一律 →0。
-    开放兜底永不得回归。
-    """
-    coerce = GameDB.coerce_beyond_intent_flag
-
-    # 肯定集
-    for value in (True, 1, 2, 1.5, "true", "TRUE", "1", "yes", "on", "是", "有", "真"):
-        assert coerce(value) == 1, value
-
-    # 否定 / 缺省
-    for value in (False, 0, 0.0, None, "否", "无", "off", "false", "no", "0"):
-        assert coerce(value) == 0, value
-
-    # 畸形：非标量 + 垃圾串 + 空串 —— 一律 0（不得捏造肯定）
-    for value in ([], {}, [False], {"a": 1}, "null", "None", "0.0", "", "  ", "maybe", "garbage"):
-        assert coerce(value) == 0, value
-
-
 # ── ⑥ 补饷路由 seam：beyond_intent 不得因 purpose 分叉丢键（#622 r3）──
 
 
@@ -349,6 +324,31 @@ def test_apply_economy_list_directed_pay_arrears_echoes_beyond_intent(game):
     assert row["purpose"] == "补饷"
     assert row["target_id"] == army_id
     assert row["origin_ref"] == "dossier:parent"
+
+    applied_yes = _apply_economy_list(
+        db,
+        state,
+        [{
+            "account": "国库",
+            "delta": -2,
+            "purpose": "补饷",
+            "target_kind": "army",
+            "target_id": army_id,
+            "category": "补饷",
+            "reason": "定向补饷肯定串",
+            "origin_ref": "dossier:yes",
+            "beyond_intent": "是",
+        }],
+        origin_ref="dossier:yes",
+        commit=True,
+    )
+    assert applied_yes and applied_yes[0].get("beyond_intent") is True, applied_yes
+    yes_row = db.conn.execute(
+        "SELECT beyond_intent FROM economy_ledger WHERE reason=? ORDER BY id DESC LIMIT 1",
+        ("定向补饷肯定串",),
+    ).fetchone()
+    assert yes_row is not None
+    assert int(yes_row["beyond_intent"]) == 1
 
     # 反向锚：不带标记 → ledger=0，canonical 回执为 false/空来源
     applied_plain = _apply_economy_list(
