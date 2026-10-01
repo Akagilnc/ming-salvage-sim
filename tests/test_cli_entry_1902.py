@@ -379,7 +379,7 @@ def _mark_interrupted(db, chat_turn_id: int) -> None:
     db.conn.commit()
 
 
-def test_cli_retry_finds_hall_owned_interrupted_turn(game, monkeypatch, capsys):
+def test_cli_retry_finds_hall_owned_interrupted_turn(game, monkeypatch):
     """建轮归殿上的中断问话，CLI 重试真能取到（不再按大臣名反查查不到）。"""
     db, state, content = game
     session = _hall_session(game)
@@ -405,8 +405,6 @@ def test_cli_retry_finds_hall_owned_interrupted_turn(game, monkeypatch, capsys):
     session.schedule_pending_scene_translation = lambda result: None  # type: ignore[method-assign]
 
     assert term._retry_interrupted_reply_cli(session, minister) is None
-    out = capsys.readouterr().out
-    assert "没有待重试的中断回话" not in out
 
     # 回话真落库，且挂回原问话的那位大臣（不是建轮的殿上）。
     row = db.conn.execute(

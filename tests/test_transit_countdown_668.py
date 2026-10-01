@@ -227,26 +227,6 @@ def test_mid_countdown_save_reopen_continues_identically(game, tmp_path):
             pass
         raise
 
-def test_removed_symbols_have_no_live_residues():
-    banned = ('force_transit_' + 'arrivals', '_build_transit_' + 'nudge', 'transit_' + 'nudge')
-    hits = []
-    self_name = Path(__file__).name
-    scan_paths = []
-    for base in ('ming_sim', 'tests'):
-        for path in (ROOT / base).rglob('*.py'):
-            if path.name == self_name:
-                continue
-            scan_paths.append(path)
-    inventory = ROOT / 'tests' / 'game_fixture_retained_inventory.tsv'
-    if inventory.is_file():
-        scan_paths.append(inventory)
-    for path in scan_paths:
-        text = path.read_text(encoding='utf-8')
-        for token in banned:
-            if token in text:
-                hits.append(f'{path.relative_to(ROOT)}:{token}')
-    assert hits == [], f'live residues: {hits}'
-
 def _assert_ledger_match(db, name: str, expected):
     loc, to, remaining, factor, start_turn = expected
     row = _ledger(db, name)

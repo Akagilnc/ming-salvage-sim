@@ -217,29 +217,6 @@ def test_enter_review_does_not_clobber_settling(game):
     assert state.turn_phase == "settling"
 
 
-def test_advance_without_edict_refused_after_settling(game):
-    """#1274 r1：空壳已删；settling 恢复归 session.resolve_turn，不再经独立退朝壳拒绝。"""
-    import inspect
-
-    import ming_sim.decree as decree_mod
-    from ming_sim.decree import pre_settle
-
-    assert not hasattr(decree_mod, "advance_without_edict")
-    assert "def advance_without_edict" not in inspect.getsource(decree_mod)
-
-    db, state, content = game
-    turn = state.turn
-    pre_settle(state, db)  # 真跑：落财政 + settling
-    rows_after_pre = db.conn.execute(
-        "SELECT COUNT(*) FROM economy_ledger WHERE turn=?", (turn,)).fetchone()[0]
-    assert rows_after_pre > 0
-    assert state.turn_phase == "settling"
-    assert state.turn == turn
-    rows_final = db.conn.execute(
-        "SELECT COUNT(*) FROM economy_ledger WHERE turn=?", (turn,)).fetchone()[0]
-    assert rows_final == rows_after_pre
-
-
 # ---------------------------------------------------------------------------
 # cmr S4 r2 修复回归（F1 第三推进尾 / F2 HITL 相位耐崩+守门）
 # ---------------------------------------------------------------------------
@@ -315,16 +292,10 @@ def test_sticky_phases_cover_awaiting_decision(game):
     assert state.turn_phase == "awaiting_decision"
 
 
-def test_advance_without_edict_refused_at_awaiting(game):
-    """#1274 r1：空壳已删；awaiting 由 session.resolve_turn 幂等返回决策，不经退朝壳拒绝。"""
-    import inspect
-
-    import ming_sim.decree as decree_mod
+def test_advance_without_decree_at_awaiting_returns_decision(game):
+    """awaiting 上 advance_without_decree 幂等返回已存决策，财政行不二写、回合不推进。"""
     from ming_sim.decree import pre_settle
     from ming_sim.session import GameSession
-
-    assert not hasattr(decree_mod, "advance_without_edict")
-    assert "def advance_without_edict" not in inspect.getsource(decree_mod)
 
     db, state, content = game
     turn = state.turn

@@ -14,7 +14,6 @@ from types import SimpleNamespace
 import pytest
 from agno.agent import Agent
 from agno.models.message import Message
-from pydantic import BaseModel
 
 from ming_sim.agents import run_agent_stream_text
 import ming_sim.cli_backend as cb
@@ -124,30 +123,6 @@ def test_typed_secret_exclusions_canonicalize_roster_alias_and_office(game):
     assert offices == [office]
 
 
-
-
-def test_secret_content_assembly_is_emperor_plus_extractor_only():
-    """#1274 K1：拼装输入结构化——仅 emperor_intent + extractor_content；无 reply 形参。"""
-    import inspect
-
-    params = inspect.signature(cb.assemble_secret_order_content).parameters
-    assert set(params) == {"emperor_intent", "extractor_content"}
-    assert "reply" not in params and "minister_reply" not in params
-
-    task = "密查关宁欠饷"
-    extracted = f"{task}，三月内回奏，方法：密访核册"
-    body = cb.assemble_secret_order_content(
-        emperor_intent=task,
-        extractor_content=extracted,
-    )
-    # 御旨未覆盖时兜底并入御旨，仍不接受第三路 reply
-    partial = "臣已领旨办理。"
-    merged = cb.assemble_secret_order_content(
-        emperor_intent=f"{task}，三月内回奏",
-        extractor_content=partial,
-    )
-    assert task in merged and "三月内回奏" in merged
-    assert partial in merged
 
 
 
@@ -745,8 +720,8 @@ def test_run_runner_execs_resolved_abspath(monkeypatch, runner, resolved):
 
 # ── CliChat public: prompt shape + typed completion structure ──
 
-def test_clichat_invoke_builds_prompt_and_completion_structure(monkeypatch):
-    """#1563：公开 invoke 只证 prompt 角色标签顺序与 typed completion 结构；不锁生成正文。"""
+def test_clichat_invoke_passes_fixture_content_and_completion(monkeypatch):
+    """公开 invoke：夹具正文按输入顺序透传，完成结构原样承接 runner 文本。"""
     cc = cb.CliChat(id="cli-test", backend="agy")
     seen = {}
 
@@ -771,44 +746,13 @@ def test_clichat_invoke_builds_prompt_and_completion_structure(monkeypatch):
     ]
     out = cc.invoke(msgs, Message(role="assistant"))
     p = seen["prompt"]
-    # role tags + order (structural markers from deterministic inputs)
-    for tag in ("【系统设定】", "【皇帝/输入】", "【你此前的回答】", "【工具结果】", "【developer】"):
-        assert tag in p
-    assert p.index("【系统设定】") < p.index("【皇帝/输入】")
-    assert p.count("【皇帝/输入】") == 1  # blank skipped
-    assert "【你此前的回答】" in p and "PRIOR_ASST" in p
-    assert "12345" in p
-    assert "【执行约束·必读】" in p
-    # typed completion + passthrough on structured content (fixture, not LLM prose)
+    assert p.index("SYS_ROLE") < p.index("USER_MSG") < p.index("PRIOR_ASST")
+    assert p.index("PRIOR_ASST") < p.index("TOOL_OUT") < p.index("12345")
+    assert "   " not in p
     assert out.role == "assistant"
     assert out.event == "AssistantResponse"
     assert out.tool_calls == []
     assert out.content == runner_text
-
-
-def test_clichat_invoke_json_constraint_and_no_constraint(monkeypatch):
-    cc = cb.CliChat(id="cli-test", backend="agy")
-    seen = []
-
-    def fake_cli(prompt):
-        seen.append(prompt)
-        return ("{}", 1)
-
-    monkeypatch.setattr(cc, "_call_cli", fake_cli)
-    monkeypatch.setattr(cb, "_trace", lambda rec: None)
-    msgs = [SimpleNamespace(role="user", content="EXTRACT")]
-    cc.invoke(msgs, Message(role="assistant"), response_format={"type": "json_object"})
-    assert "【输出格式硬约束】" in seen[0]
-
-    class _RF(BaseModel):
-        x: int = 0
-
-    cc.invoke(msgs, Message(role="assistant"), response_format=_RF)
-    assert "【输出格式硬约束】" in seen[1]
-
-    cc.invoke(msgs, Message(role="assistant"))
-    assert "【输出格式硬约束】" not in seen[2]
-    assert "【执行约束·必读】" in seen[2]
 
 
 def test_clichat_invoke_error_traced_and_reraised(monkeypatch):

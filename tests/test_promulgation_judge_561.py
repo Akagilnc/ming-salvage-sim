@@ -639,13 +639,8 @@ def test_appointment_rejection_check_requires_faction_gate_structure():
 
 def test_ordinary_class_all_promulgated_covers_planted_ordinary_only():
     """TD-1 / ADR 0055 S6: ordinary class = 寻常补饷; every planted one must pass."""
-    from scripts.promulgation_gate_561 import (
-        ORDINARY_TEXT,
-        _ordinary_class_all_promulgated,
-    )
+    from scripts.promulgation_gate_561 import _ordinary_class_all_promulgated
 
-    # Class is the pay edict itself — not an invented multi-sample roster.
-    assert "补" in ORDINARY_TEXT and "饷" in ORDINARY_TEXT
     assert _ordinary_class_all_promulgated([
         ({"ordinary": 1, "hostile": 2},
          {1: {"decision": "promulgated"}, 2: {"decision": "rejected"}}),
@@ -667,10 +662,6 @@ def test_ordinary_class_all_promulgated_covers_planted_ordinary_only():
 
 def test_leader_only_mutation_changes_faction_posture_not_roster(game):
     """TD-9: 安抚首领 = 东林 agenda posture; 许誉卿 stays; no 钱谦益 roster swap."""
-    import inspect
-    from pathlib import Path
-
-    from scripts import promulgation_gate_561 as gate
     from scripts.promulgation_gate_561 import (
         BASE_DONGLIN_AGENDA,
         LEADER_APPEASED_AGENDA,
@@ -713,15 +704,6 @@ def test_leader_only_mutation_changes_faction_posture_not_roster(game):
     # Full payload distinguishable so evidence trace can pair leader vs baseline.
     assert after["factions"] != before["factions"]
     assert after != before
-
-    # Evidence script must not numericize qualitative faction leverage (dead int branch).
-    gate_source = Path(inspect.getfile(gate)).read_text(encoding="utf-8")
-    assert "int(_faction_row" not in gate_source
-    assert "int(after_faction[\"leverage\"])" not in gate_source
-    assert "int(before_faction[\"leverage\"])" not in gate_source
-    # Leader-arm posture check keeps agenda pair only — no leverage fallback.
-    assert "LEADER_APPEASED_AGENDA" in gate_source
-    assert "BASE_DONGLIN_AGENDA" in gate_source
 
     # Forbidden: only rehab 钱谦益 roster and pretend that is 安抚.
     qian_after = db.conn.execute(

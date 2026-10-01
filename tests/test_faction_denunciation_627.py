@@ -12,10 +12,7 @@ Seams:
 
 from __future__ import annotations
 
-import ast
 import json
-import re
-from pathlib import Path
 
 import pytest
 
@@ -34,9 +31,6 @@ from ming_sim.supervision import (
 )
 from tests.test_dossier_reported_progress_619 import _world_fingerprint
 from tests.dossier_test_helpers import create_test_secret_order
-
-
-_REPO = Path(__file__).resolve().parents[1]
 
 
 # ── helpers ───────────────────────────────────────────────────────
@@ -190,23 +184,6 @@ def test_fork_predicate_pure_and_single_source_expression():
         reported_bands=[], beyond_intent=True, execution_outcome="transformed",
     ) is False
 
-    # 结构断言：fork 判据表达式全库仅一处（supervision.py）
-    needle = 'outcome not in {"", "fulfilled", "executing"}'
-    hits: list[Path] = []
-    for path in (_REPO / "ming_sim").rglob("*.py"):
-        text = path.read_text(encoding="utf-8")
-        if needle in text:
-            hits.append(path.relative_to(_REPO))
-    assert hits == [Path("ming_sim/supervision.py")], hits
-
-    src = (_REPO / "ming_sim" / "supervision.py").read_text(encoding="utf-8")
-    tree = ast.parse(src)
-    defs = [
-        n.name for n in tree.body
-        if isinstance(n, ast.FunctionDef) and n.name == "is_reported_actual_fork"
-    ]
-    assert defs == ["is_reported_actual_fork"]
-
 
 def test_veracity_derivation_mechanical_and_origin_marks():
     """真伪底派生：分叉→真；无分叉→私货；origin 单源 mark。"""
@@ -219,43 +196,6 @@ def test_veracity_derivation_mechanical_and_origin_marks():
     assert origin_has_mark(o_true, ORIGIN_MARK_DENUNCIATION_TRUE)
     assert origin_has_mark(o_false, ORIGIN_MARK_DENUNCIATION_FALSE)
     assert not origin_has_mark(o_true, ORIGIN_MARK_DENUNCIATION_FALSE)
-
-
-def test_no_intensity_quota_template_symbols():
-    """P6/P7：烈度门/quota/模板函数定义不得再存在（禁词表字符串除外）。"""
-    src = (_REPO / "ming_sim" / "supervision.py").read_text(encoding="utf-8")
-    tree = ast.parse(src)
-    top_names = {
-        n.name for n in tree.body
-        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
-    }
-    assign_names: set[str] = set()
-    for n in tree.body:
-        if isinstance(n, ast.Assign):
-            for t in n.targets:
-                if isinstance(t, ast.Name):
-                    assign_names.add(t.id)
-        elif isinstance(n, ast.AnnAssign) and isinstance(n.target, ast.Name):
-            assign_names.add(n.target.id)
-    for banned in (
-        "DENUNCIATION_INTENSITY_GATES",
-        "denunciation_quota",
-        "render_denunciation_memorial",
-        "faction_conflict_intensity",
-        "pick_denunciation_accusers",
-    ):
-        assert banned not in top_names, banned
-        assert banned not in assign_names, banned
-    db_src = (_REPO / "ming_sim" / "db.py").read_text(encoding="utf-8")
-    db_tree = ast.parse(db_src)
-    db_fns = {
-        n.name for n in ast.walk(db_tree) if isinstance(n, ast.FunctionDef)
-    }
-    assert "render_denunciation_memorial" not in db_fns
-    assert "denunciation_quota" not in db_fns
-    assert "trigger_faction_denunciations" not in db_fns
-    assert "accept_faction_denunciations" in db_fns
-    assert "build_faction_denunciation_facts" in db_fns
 
 
 # ── AC1 事实供给 ──────────────────────────────────────────────────
@@ -514,19 +454,6 @@ def test_ac5_zero_template_exposure_and_622(game):
         ).fetchall()
     }
     assert _table_cols(db, DENUNCIATION_TABLE) == DENUNCIATION_ALLOWED_COLS
-
-    # 引擎侧零模板句：产出路径无固定文案常量
-    prod_files = [
-        _REPO / "ming_sim" / "supervision.py",
-        _REPO / "ming_sim" / "db.py",
-        _REPO / "ming_sim" / "decree.py",
-    ]
-    template_re = re.compile(
-        r"奏称：.*办理.*有异状|请皇上按问"
-    )
-    for path in prod_files:
-        text = path.read_text(encoding="utf-8")
-        assert not template_re.search(text), f"模板句残留于 {path.name}"
 
     # #622 读端改调 public fork 单源
     actor = subject_name

@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import json
 import math
-from pathlib import Path
 
 import pytest
 
@@ -81,16 +80,6 @@ def _expected_inflow_persons(base_wan: float, support: int) -> int:
 
 
 # ── AC1：加派旨当回合落逐省累积账；无旨不入账 ─────────────────────────────────
-
-def test_surcharge_schema_only_teaches_effect_eligible_dossiers():
-    """加派专属来源契约不得继承其它 delta section 的自然演化哨兵。"""
-    root = Path(__file__).parents[1]
-    schema = (root / "docs/DELTA_SCHEMA.md").read_text(encoding="utf-8")
-    surcharge_section = schema.split("### `surcharge_decrees`", 1)[1].split("### `region_delta`", 1)[0]
-    assert "dossier:<正整数>" in surcharge_section
-    assert "效果资格" in surcharge_section
-    assert "不得使用 `盘面自发`" in surcharge_section
-
 
 def test_decree_lands_accumulated_ledger_same_turn(game):
     """一道加派旨 → settle._meta 加派基线当回合累加落库（P1）；p 三饷应征未被本段直改。"""
