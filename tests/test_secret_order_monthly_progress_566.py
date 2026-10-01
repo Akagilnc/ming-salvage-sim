@@ -5,6 +5,7 @@ import threading
 
 import pytest
 from tests.dossier_test_helpers import create_test_secret_order
+from ming_sim.settlement import SettlementContext, settle_delta
 
 
 def _actor(db):
@@ -87,7 +88,6 @@ def test_only_emperor_private_payload_shows_monthly_report(game):
 
 
 def test_disclosure_promotes_monthly_report_to_public_event_only_after_disclosure(game):
-    from ming_sim.issues import apply_score_extraction
 
     db, state, content = game
     order_id, dossier_id = _order(db, state, title="稽核辽饷", tags=["稽核"])
@@ -98,9 +98,7 @@ def test_disclosure_promotes_monthly_report_to_public_event_only_after_disclosur
     })
     assert marker not in str(db._character_knowledge_events(""))
 
-    apply_score_extraction(db, state, {"secret_order_updates": [{
-        "order_id": order_id, "sim_note": "该案已经明发廷议", "disclosed": True,
-    }]}, content=content)
+    settle_delta(state, db, {'secret_order_updates': [{'order_id': order_id, 'sim_note': '该案已经明发廷议', 'disclosed': True}]}, SettlementContext(content=content))
     public = db._character_knowledge_events("")
     disclosure = next(
         item for item in public

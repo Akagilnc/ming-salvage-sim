@@ -9,6 +9,9 @@ import pytest
 from tests.conftest import with_monthly_reports
 from tests.dossier_test_helpers import TYPED_COVERT_TASK
 from tests.dossier_test_helpers import create_test_secret_order
+from ming_sim.settlement import SettlementContext, settle_delta
+from ming_sim.settlement.views import view
+from ming_sim.settlement.views import rejected_view
 
 def _actor(db):
     return str(db.conn.execute(
@@ -74,16 +77,8 @@ def test_s2_tracer_613_565_readers_see_appended_roster(game):
         f"secret_order:{order_id}", dossier_before,
     )
 
-    result = issue_engine.apply_score_extraction(db, state, {
-        "secret_dossier_participants": [{
-            "dossier_id": dossier_id,
-            "character_id": worker,
-            "tier": "协办",
-            "role": "随员",
-            "delegator_id": lead,
-        }],
-    }, secret_dossier_ids_at_input={dossier_id})
-    assert result["secret_dossier_participants"][0].get("rejected") is not True
+    result = settle_delta(state, db, {'secret_dossier_participants': [{'dossier_id': dossier_id, 'character_id': worker, 'tier': '协办', 'role': '随员', 'delegator_id': lead}]}, SettlementContext(secret_dossier_ids_at_input={dossier_id}))
+    assert view(result, "secret_dossier_participants")
 
     dossier = db.get_decree_dossier(dossier_id)
     # #565: roster is the liability source; 主办 lead is primary.
@@ -116,13 +111,8 @@ def test_s2_public_dossier_participants_still_rejects_secret_id(game):
         target_kind="issue", target_id="calendar-1252",
         participants=[{"character_id": lead, "tier": "主办"}],
     )
-    result = issue_engine.apply_score_extraction(db, state, {
-        "dossier_participants": [{
-            "dossier_id": secret_id, "character_id": worker,
-            "tier": "协办", "delegator_id": lead,
-        }],
-    }, dossier_ids_at_input={public_id})  # frozen public set — secret not in it
-    assert result["dossier_participants"][0]["rejected"] is True
+    result = settle_delta(state, db, {'dossier_participants': [{'dossier_id': secret_id, 'character_id': worker, 'tier': '协办', 'delegator_id': lead}]}, SettlementContext(dossier_ids_at_input={public_id}))  # frozen public set — secret not in it
+    assert rejected_view(result, "dossier_participants")
     assert len(db.get_decree_dossier(secret_id)["participant_roster"]) == 0
 
 
@@ -149,27 +139,12 @@ def test_s2_private_field_rejects_non_batch_and_public_ids(game):
     )
     batch_lead = str(db.get_decree_dossier(batch_id)["executor_id"])
     other_lead = str(db.get_decree_dossier(other_secret)["executor_id"])
-    result = issue_engine.apply_score_extraction(db, state, {
-        "secret_dossier_participants": [
-            {
-                "dossier_id": other_secret, "character_id": worker,
-                "tier": "协办", "delegator_id": other_lead,
-            },
-            {
-                "dossier_id": public_id, "character_id": worker,
-                "tier": "协办", "delegator_id": lead,
-            },
-            {
-                "dossier_id": batch_id, "character_id": worker,
-                "tier": "协办", "delegator_id": batch_lead,
-            },
-        ],
-    }, secret_dossier_ids_at_input={batch_id})
-    rows = result["secret_dossier_participants"]
-    assert rows[0]["rejected"] is True
-    assert rows[1]["rejected"] is True
-    assert rows[2].get("rejected") is not True
-    assert rows[2]["character_id"] == worker
+    result = settle_delta(state, db, {'secret_dossier_participants': [{'dossier_id': other_secret, 'character_id': worker, 'tier': '协办', 'delegator_id': other_lead}, {'dossier_id': public_id, 'character_id': worker, 'tier': '协办', 'delegator_id': lead}, {'dossier_id': batch_id, 'character_id': worker, 'tier': '协办', 'delegator_id': batch_lead}]}, SettlementContext(secret_dossier_ids_at_input={batch_id}))
+    refused = rejected_view(result, "secret_dossier_participants")
+    rows = view(result, "secret_dossier_participants")
+    assert len(refused) == 2
+    assert len(rows) == 1
+    assert rows[0]["character_id"] == worker
 
 
 def test_month_segment_dispatch_uses_secret_order_dossier_ids_authority(game):
@@ -220,18 +195,19 @@ def test_month_segment_dispatch_uses_secret_order_dossier_ids_authority(game):
         db, state, segment="密令参与人月段", translate_fn=translate,
     )
     assert result.effects.applied, result.effects.rejected
-    rows = list(result.effects.applied[0].get("secret_dossier_participants") or [])
+    outcome = result.effects.applied[0]
+    landed = view(outcome, "secret_dossier_participants")
+    refused = rejected_view(outcome, "secret_dossier_participants")
 
-    def _row_dossier_id(row: dict) -> int:
-        if row.get("dossier_id") is not None:
-            return int(row["dossier_id"])
-        item = row.get("item") if isinstance(row.get("item"), dict) else {}
-        return int(item.get("dossier_id") or 0)
+    def _item_dossier_id(item) -> int:
+        if isinstance(item, dict) and item.get("dossier_id") is not None:
+            return int(item["dossier_id"])
+        return 0
 
-    secret_row = next(r for r in rows if _row_dossier_id(r) == dossier_id)
-    plain_row = next(r for r in rows if _row_dossier_id(r) == plain_id)
-    assert secret_row.get("rejected") is not True, secret_row
-    assert plain_row.get("rejected") is True, plain_row
+    secret_row = next(r for r in landed if _item_dossier_id(r) == dossier_id)
+    plain_row = next(r for r in refused if _item_dossier_id(r.item) == plain_id)
+    assert secret_row["character_id"] == worker
+    assert plain_row.item["dossier_id"] == plain_id
     roster = db.get_decree_dossier(dossier_id)["participant_roster"]
     assert any(
         row.get("character_id") == worker and row.get("tier") == "协办"
@@ -252,13 +228,8 @@ def test_s2_missing_secret_authority_never_rebuilds_from_live_db(game, authority
     db.append_decree_dossier_participants(dossier_id, [{
         "character_id": lead, "tier": "主办", "role": "密访",
     }], state=state)
-    result = issue_engine.apply_score_extraction(db, state, {
-        "secret_dossier_participants": [{
-            "dossier_id": dossier_id, "character_id": worker,
-            "tier": "协办", "delegator_id": lead,
-        }],
-    }, secret_dossier_ids_at_input=authority)
-    assert result["secret_dossier_participants"][0]["rejected"] is True
+    result = settle_delta(state, db, {'secret_dossier_participants': [{'dossier_id': dossier_id, 'character_id': worker, 'tier': '协办', 'delegator_id': lead}]}, SettlementContext(secret_dossier_ids_at_input=authority))
+    assert rejected_view(result, "secret_dossier_participants")
     assert len(db.get_decree_dossier(dossier_id)["participant_roster"]) == 1
 
 

@@ -11,6 +11,8 @@ import pytest
 
 import ming_sim.issues as I
 from tests.conftest import active_ming_character
+from ming_sim.settlement import SettlementContext, settle_delta
+from ming_sim.settlement.views import metric_deltas, shape_rejections
 
 
 
@@ -133,12 +135,7 @@ def test_resolve_character_status_syncs_content_travel_state(game):
     old_transit_to = content.characters[name].transit_to
 
     try:
-        I.apply_score_extraction(
-            db,
-            state,
-            {"人物变更": [{"name": name, "动作": "行止", "transit_to": "liaodong"}]},
-            content=content,
-        )
+        settle_delta(state, db, {'人物变更': [{'name': name, '动作': '行止', 'transit_to': 'liaodong'}]}, SettlementContext(content=content))
 
         I._apply_issue_entities(
             db,
@@ -342,8 +339,8 @@ def test_apply_score_extraction_splits_bad_nested_entity(game):
     bad = {
         "region_delta": {"shanxi": "not-a-dict", "henan": {"unrest": 1}},
     }
-    applied = I.apply_score_extraction(db, state, bad)
-    assert applied["validate_shape_rejections"][0]["item"] == {"entity_id": "shanxi", "raw_value": "not-a-dict"}
+    applied = settle_delta(state, db, bad, SettlementContext())
+    assert shape_rejections(applied)[0].item == {"entity_id": "shanxi", "raw_value": "not-a-dict"}
 
 
 def test_apply_score_extraction_accepts_flat_faction_scalar(game):
@@ -352,24 +349,21 @@ def test_apply_score_extraction_accepts_flat_faction_scalar(game):
     则由段适配器按 #564 契约逐项 invalid_enum 拒收，不升级成整批 shape 中止。"""
     db, state, _ = game
     # 不抛 = validate 未错杀合法 faction；非法 class item 由 adapter 逐项拒收。
-    I.apply_score_extraction(db, state, {
-        "faction_delta": {"阉党": -10},
-        "class_delta": {"农民": 0},   # 非法扁平 class item：adapter 逐项 invalid_enum 拒收
-    })
+    settle_delta(state, db, {'faction_delta': {'阉党': -10}, 'class_delta': {'农民': 0}}, SettlementContext())
 
 
 def test_apply_score_extraction_rejects_nondict_power_second_level_per_entity(game):
     """ADR0015：power_updates 二级非 dict 逐 power 拒收。"""
     db, state, _ = game
-    applied = I.apply_score_extraction(db, state, {"power_updates": {"houjin": {"leverage": 1}, "mongol": "bad"}})
-    assert applied["validate_shape_rejections"][0]["item"] == {"entity_id": "mongol", "raw_value": "bad"}
+    applied = settle_delta(state, db, {'power_updates': {'houjin': {'leverage': 1}, 'mongol': 'bad'}}, SettlementContext())
+    assert shape_rejections(applied)[0].item == {"entity_id": "mongol", "raw_value": "bad"}
 
 
 def test_apply_score_extraction_rejects_nondict_list_item_per_item(read_game):
     """ADR0015：list 字段含非 dict 项 → 逐项拒收。"""
     db, state, _ = read_game
-    applied = I.apply_score_extraction(db, state, {"fiscal_creates": [{"key": "x"}, "bad-scalar"]})
-    assert applied["validate_shape_rejections"][0]["item"] == {"raw_value": "bad-scalar"}
+    applied = settle_delta(state, db, {'fiscal_creates': [{'key': 'x'}, 'bad-scalar']}, SettlementContext())
+    assert shape_rejections(applied)[0].item == {"raw_value": "bad-scalar"}
 
 
 def test_apply_score_extraction_tolerates_null_field(read_game):
@@ -377,21 +371,19 @@ def test_apply_score_extraction_tolerates_null_field(read_game):
     不抛 ValueError(apply 本就 `.get(key) or {}` 容忍)。"""
     db, state, _ = read_game
     # region_delta=None(null)+ army_delta=None,均应被当空 no-op 放行,不抛。
-    I.apply_score_extraction(db, state, {"region_delta": None, "army_delta": None})
+    settle_delta(state, db, {'region_delta': None, 'army_delta': None}, SettlementContext())
 
 
 def test_apply_score_extraction_rejects_unknown_top_level_key(game):
     """#57 起源、#649 r4 分层终态改钉：未知顶层 key（拼写错，canonicalize 后仍不在 schema）
     ＝可拆 section → 按段拒收留痕、其余 section 照落，不整份 ValueError（ADR 0015）。"""
     db, state, _ = game
-    applied = I.apply_score_extraction(
-        db, state, {"region_delta_typo": {"shanxi": {"unrest": 5}}, "metric_delta": {"民心": 1}},
-    )
-    shape = [r for r in applied["validate_shape_rejections"]
-             if "region_delta_typo" in str(r.get("reason"))]
-    assert shape and shape[0]["rejected"] is True
-    assert shape[0]["item"] == {"raw_value": {"shanxi": {"unrest": 5}}}
-    assert applied["metric_delta"].get("民心") == 1  # 其余 section 不受累
+    applied = settle_delta(state, db, {'region_delta_typo': {'shanxi': {'unrest': 5}}, 'metric_delta': {'民心': 1}}, SettlementContext())
+    shape = [r for r in shape_rejections(applied)
+             if "region_delta_typo" in r.reason]
+    assert shape and shape[0].category == "invalid_shape"
+    assert shape[0].item == {"raw_value": {"shanxi": {"unrest": 5}}}
+    assert metric_deltas(applied).get("民心") == 1  # 其余 section 不受累
 
 
 def test_resolve_army_delta_reinforces_existing(game):
@@ -482,9 +474,7 @@ def test_runtime_cli_initiative_floor_applies_without_backend_env(game, monkeypa
         cli_timeout_seconds=240,
     )
 
-    I.apply_score_extraction(db, state, {
-        "new_issues": [{"origin_kind": "decree", "origin_ref": _decree_origin(db, state), "title": "runtime空回报国策", "kind": "initiative"}],
-    }, llm_config=cfg)
+    settle_delta(state, db, {'new_issues': [{'origin_kind': 'decree', 'origin_ref': _decree_origin(db, state), 'title': 'runtime空回报国策', 'kind': 'initiative'}]}, SettlementContext(llm_config=cfg))
 
     row = db.conn.execute(
         "SELECT effect_on_resolve FROM issues WHERE title='runtime空回报国策'").fetchone()
@@ -514,9 +504,7 @@ def test_api_channel_initiative_does_not_use_backend_env_floor(game, monkeypatch
         channel="api",
     )
 
-    I.apply_score_extraction(db, state, {
-        "new_issues": [{"origin_kind": "decree", "origin_ref": _decree_origin(db, state), "title": "api空回报国策", "kind": "initiative"}],
-    }, llm_config=cfg)
+    settle_delta(state, db, {'new_issues': [{'origin_kind': 'decree', 'origin_ref': _decree_origin(db, state), 'title': 'api空回报国策', 'kind': 'initiative'}]}, SettlementContext(llm_config=cfg))
 
     row = db.conn.execute(
         "SELECT effect_on_resolve FROM issues WHERE title='api空回报国策'").fetchone()

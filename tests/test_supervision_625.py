@@ -46,6 +46,8 @@ from ming_sim.supervision import (
     parse_report_origin,
     unpack_supervision_surface,
 )
+from ming_sim.settlement import SettlementContext, settle_delta
+from ming_sim.settlement.views import issue_rows
 
 
 # ── fixtures helpers ──────────────────────────────────────────────
@@ -133,23 +135,8 @@ def _insert_staged(db, state, content, *, dossier_id: int, due_turn: int):
         "criterion_text": "清丈见眉目",
         "origin_context": "限期清丈",
     }]
-    out = issue_engine.apply_score_extraction(
-        db, state,
-        {
-            "new_issues": [{
-                "origin_kind": "decree",
-                "origin_ref": f"dossier:{int(dossier_id)}",
-                "kind": "initiative",
-                "title": f"清丈分段-{dossier_id}",
-                "stage_text": "限期清丈",
-                "commitment_kind": "until_stop",
-                "ongoing_effects": {},
-                "stages": stages,
-            }],
-        },
-        content=content,
-    )
-    created = out["issue_summary"]["new_issues"][0]
+    out = settle_delta(state, db, {'new_issues': [{'origin_kind': 'decree', 'origin_ref': f'dossier:{int(dossier_id)}', 'kind': 'initiative', 'title': f'清丈分段-{dossier_id}', 'stage_text': '限期清丈', 'commitment_kind': 'until_stop', 'ongoing_effects': {}, 'stages': stages}]}, SettlementContext(content=content))
+    created = issue_rows(out, "new_issues")[0]
     assert created.get("rejected") is False, created
     return int(created["issue_id"])
 

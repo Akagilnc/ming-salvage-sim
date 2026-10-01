@@ -24,7 +24,6 @@ from ming_sim.due_review import (
     list_due_review_scenes,
     project_due_review_scene,
 )
-from ming_sim.issues import apply_score_extraction
 from ming_sim.staged_commitment import (
     ENTRY_KIND_GRACE_PLEA,
     ENTRY_KIND_RUSH_REMONSTRANCE,
@@ -46,6 +45,8 @@ from ming_sim.urge_lever import (
     project_urge_audience_scene,
     rush_staged_commitment_stage,
 )
+from ming_sim.settlement import SettlementContext, settle_delta
+from ming_sim.settlement.views import issue_rows
 
 
 # ── fixtures ──────────────────────────────────────────────────────────
@@ -88,26 +89,8 @@ def _insert_staged_commitment(
     db, state, content, *, stages, title="催办分段之诺", origin_ref: str = "",
 ):
     origin = origin_ref or _promulgated_origin(db, state, title)
-    out = apply_score_extraction(
-        db,
-        state,
-        {
-            "new_issues": [
-                {
-                    "origin_kind": "decree",
-                    "origin_ref": origin,
-                    "kind": "initiative",
-                    "title": title,
-                    "stage_text": "三年火器见眉目，五年新历成。",
-                    "commitment_kind": "until_stop",
-                    "ongoing_effects": {},
-                    "stages": stages,
-                }
-            ]
-        },
-        content=content,
-    )
-    created = out["issue_summary"]["new_issues"][0]
+    out = settle_delta(state, db, {'new_issues': [{'origin_kind': 'decree', 'origin_ref': origin, 'kind': 'initiative', 'title': title, 'stage_text': '三年火器见眉目，五年新历成。', 'commitment_kind': 'until_stop', 'ongoing_effects': {}, 'stages': stages}]}, SettlementContext(content=content))
+    created = issue_rows(out, "new_issues")[0]
     assert created.get("rejected") is False, created
     return int(created["issue_id"]), origin
 

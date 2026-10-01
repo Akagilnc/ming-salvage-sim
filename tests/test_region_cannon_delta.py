@@ -11,7 +11,8 @@ import pytest
 
 from tests.section_rejection_helpers import run_declaration as run_settle
 from ming_sim.constants import REGION_FIELD_LABELS
-from ming_sim.issues import apply_score_extraction
+from ming_sim.settlement import SettlementContext, settle_delta
+from ming_sim.settlement.views import rejected_view, view
 
 
 def test_cannon_has_chinese_display_label():
@@ -90,11 +91,8 @@ def test_illegal_region_field_rejected_not_raised(read_game):
     改为逐项拒收留痕（region_changes 含 {"rejected": True, "category": "invalid_enum"}），
     好项照落、坏一项不带走整批。"""
     db, state, content = read_game
-    applied = apply_score_extraction(
-        db, state, {"region_delta": {"beizhili": {"origin_ref": "盘面自发", "不存在的字段": 5}}}, content=content
-    )
-    rejected = [c for c in applied["region_changes"]
-                if isinstance(c, dict) and c.get("rejected")]
+    applied = settle_delta(state, db, {'region_delta': {'beizhili': {'origin_ref': '盘面自发', '不存在的字段': 5}}}, SettlementContext(content=content))
+    rejected = rejected_view(applied, "region_changes")
     assert len(rejected) == 1
-    assert rejected[0]["category"] == "invalid_enum"
-    assert rejected[0]["reason"]
+    assert rejected[0].category == "invalid_enum"
+    assert rejected[0].reason

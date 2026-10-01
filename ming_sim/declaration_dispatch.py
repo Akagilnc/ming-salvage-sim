@@ -64,6 +64,7 @@ from ming_sim.action_materialize import (
     IncompleteXiexangPayloadError,
     require_materializable_xiexang_payload,
 )
+from ming_sim.settlement import SettlementContext, settle_delta
 from ming_sim.applier import (
     Provenance,
     RejectedItem,
@@ -413,14 +414,13 @@ def _persist_specialized_extraction(
         selections = extraction.get("covert_exec_selections") or []
         if isinstance(selections, list) and selections:
             from ming_sim.covert_progress import apply_monthly_covert_actual_progress
-            from ming_sim.decree import _collect_inline_rejections
+            from ming_sim.settlement.run import to_rejected_items
 
             rows = apply_monthly_covert_actual_progress(
                 db, state, selections=selections, only_supplied=True, commit=False,
             )
-            _collect_inline_rejections(
-                collector, {"covert_exec_selections": rows}, int(turn), source,
-            )
+            for item in to_rejected_items(rows, source):
+                collector.record("covert_exec_selections", item, int(turn))
 
 
 def _dispatch_effects(
@@ -457,8 +457,7 @@ def _dispatch_effects(
             category="invalid_shape", source=source,
         )])
 
-    from ming_sim.issues import apply_score_extraction, preflight_declared_event_effects, sanitize_delta_shape
-    from ming_sim.decree import _collect_inline_rejections
+    from ming_sim.issues import preflight_declared_event_effects, sanitize_delta_shape
 
     shape_rejections = []
     rejected = []
@@ -510,21 +509,31 @@ def _dispatch_effects(
             ordered_effect_event_ids.setdefault(field, []).extend(event_ids)
     if not accepted_effect:
         return SectionResult(applied=[], rejected=rejected)
-    report = apply_score_extraction(
-        db, state, extraction, content=db.content,
-        open_affair_ids_at_input=set(refs.get("affairs", ())),
-        dossier_ids_at_input=set(refs.get("dossiers", ())),
-        secret_dossier_ids_at_input=set(refs.get("secret_dossiers", ())),
+    outcome = settle_delta(
+        state, db, extraction,
+        SettlementContext(
+            source=source,
+            content=db.content,
+            open_affair_ids_at_input=set(refs.get("affairs", ())),
+            dossier_ids_at_input=set(refs.get("dossiers", ())),
+            secret_dossier_ids_at_input=set(refs.get("secret_dossiers", ())),
+            defer_disclosure=defer_disclosure,
+        ),
         ordered_deltas=ordered_deltas,
         ordered_effect_event_ids=ordered_effect_event_ids,
         prior_shape_rejections=shape_rejections,
         effect_sequence=effect_sequence if isinstance(raw, list) else None,
-        defer_disclosure=defer_disclosure,
     )
     # #670：续启赴京成功后结清 in_transit 传召，与本段落账同事务。
     from ming_sim.audience_night import settle_applied_arrived_summons
-    settle_applied_arrived_summons(db, report)
-    _collect_inline_rejections(collector, report, turn, source)
+    settle_applied_arrived_summons(db, outcome)
+    for section_name, section in outcome.sections().items():
+        for item in section.rejected:
+            collector.record(section_name, item, turn)
+    # 形状拒收只记一次，section 用净化时的原字段名（#1745）。
+    # 不放进 effects.rejected：那条会再被记成声明段名 effects。
+    for section_name, item in zip(outcome.shape_sections, outcome.shape_rejections):
+        collector.record(section_name, item, turn)
     _persist_specialized_extraction(
         db, state, extraction, collector=collector, turn=turn, source=source,
         defer_monthly_secret_supply=defer_disclosure,
@@ -534,9 +543,9 @@ def _dispatch_effects(
         settle_exposure_from_canonical_actions,
         write_exposure_todos,
     )
-    write_exposure_todos(db, state, report)
-    settle_exposure_from_canonical_actions(db, state, report)
-    return SectionResult(applied=[report], rejected=rejected)
+    write_exposure_todos(db, state, outcome)
+    settle_exposure_from_canonical_actions(db, state, outcome)
+    return SectionResult(applied=[outcome], rejected=rejected)
 
 
 def dispatch_declaration(

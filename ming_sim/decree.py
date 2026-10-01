@@ -48,7 +48,6 @@ from ming_sim.issues import (
     apply_event_terminal_states,
     apply_historical_fiscal_rates,
     apply_issue_inertia_and_ongoing,
-    apply_score_extraction,
     _apply_levy_driven_transfers,
     auto_trigger_seed_issues,
     clear_gated_legacies,
@@ -1250,58 +1249,6 @@ def pre_settle(
     return auto_triggered
 
 
-
-
-def _collect_inline_rejections(
-    collector: RejectionCollector,
-    applied: Dict[str, object],
-    turn: int,
-    source: Provenance,
-) -> None:
-    """把 apply 结果里各 section 内嵌的拒收项收进收集器（PR2-S0 桥接）。
-
-    约定：section 结果列表中 `{"rejected": True, ...}` 即拒收项；`reason` 为人读原因，
-    `category` 为机读类别（未迁契约的 section 没有此键 → 兜底 "legacy_inline"）。
-    一层 dict-of-list（issue_summary 的 new_issues/cancels 等）也要下探——new_issues
-    正是实测最常被拒的段，跳过它聚合就失明（cmr S0 r1）。
-    item_json 的取值（ship-pre r3/r4）：迁约 producer（S1-S3 已迁全部）在 wrapper 里
-    携原始 delta 项（'item' 键）→ 桥接解包存原件；仅未迁 legacy section
-    （office_changes/secret_order_* 等）无 'item' 键时才兜底存 wrapper 回显记录。
-    """
-    def _scan(section: str, items: list) -> None:
-        for item in items:
-            if not isinstance(item, dict):
-                continue
-            if item.get("rejected"):
-                report_section = str(item.get("report_section") or section)
-                collector.record(report_section, RejectedItem(
-                    # item_json = 原始 delta 项（ADR 决定 5「原 item 原样保留」）：迁约
-                    # producer 在 wrapper 里带原件（'item' 键）则解包,否则兜底存 wrapper
-                    # （ship-pre r3——存整个 wrapper 会让重放分析消费到嵌套形状）。
-                    # 按 'item' 键**存在性**解包（非值类型）：原 isinstance(dict/list/str) 判会把
-                    # 标量/null 原件（如 close_issues:[null]/[42] 的非 dict 拒收）误存成 wrapper、
-                    # 丢原件保真——key 在即解包，覆盖标量原件（cmr close-issues r5 codex）。
-                    item=item["item"] if "item" in item else item,
-                    # ADR「拒收行必带人读原因」在此集中守门：producer 漏给则合成非空兜底
-                    # ——规则写一处，新 section 免疫同类缺陷（fix-coverage 处方，cmr S0 r3）。
-                    reason=str(item.get("reason") or "") or f"拒收（{report_section} 未注明原因）",
-                    category=str(item.get("report_category") or item.get("category") or "legacy_inline"),
-                    source=source,
-                ), turn)
-            for subkey, subvalue in item.items():
-                if isinstance(subvalue, list):
-                    nested_section = f"{section}.{subkey}"
-                    if nested_section == "issue_summary.closes.applied_person_changes":
-                        continue
-                    _scan(nested_section, subvalue)
-
-    for section, value in applied.items():
-        if isinstance(value, list):
-            _scan(section, value)
-        elif isinstance(value, dict):
-            for subkey, subvalue in value.items():
-                if isinstance(subvalue, list):
-                    _scan(f"{section}.{subkey}", subvalue)
 
 
 def resolve_decisions_phase2(

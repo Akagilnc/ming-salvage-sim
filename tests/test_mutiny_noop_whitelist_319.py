@@ -12,6 +12,7 @@ import pytest
 
 from ming_sim.flows import _apply_economy_list, apply_fixed_period_flows
 from ming_sim import issues as issue_engine
+from ming_sim.settlement import SettlementContext, settle_delta
 
 ARMY = "guanning"
 PATHS = ("legacy", "substrate_hub")
@@ -445,22 +446,7 @@ def test_apply_score_extraction_respects_latched_field_gate(game):
     )
     before = _snapshot(db, ("station", "status", "manpower", "loyalty"))
 
-    issue_engine.apply_score_extraction(
-        db,
-        state,
-        {
-            "army_delta": {
-                ARMY: {
-                    "manpower": -100,
-                    "station": "新驻地",
-                    "status": "已整编",
-                    "loyalty": 5,
-                    "origin_ref": SPONTANEOUS,
-                }
-            }
-        },
-        content=content,
-    )
+    settle_delta(state, db, {'army_delta': {ARMY: {'manpower': -100, 'station': '新驻地', 'status': '已整编', 'loyalty': 5, 'origin_ref': SPONTANEOUS}}}, SettlementContext(content=content))
 
     after = _row(db, "station", "status", "manpower", "loyalty")
     assert after["manpower"] == before["manpower"] - 100

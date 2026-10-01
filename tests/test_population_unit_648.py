@@ -15,11 +15,13 @@ from __future__ import annotations
 import pytest
 
 from ming_sim.db import GameDB, POPULATION_UNIT_PERSONS, POPULATION_UNIT_WAN
-from ming_sim.issues import (
-    apply_score_extraction,
-    auto_trigger_seed_issues,
-    bind_content as issues_bind_content,
-)
+from ming_sim.issues import auto_trigger_seed_issues, bind_content
+
+
+
+
+from ming_sim.settlement import SettlementContext, settle_delta
+from ming_sim.settlement.views import rejected_view
 
 # ── F3/r2 冻结 seed oracle（独立真源=票面冻结表，非实现推导）──────────────────
 AGENDA_FROZEN = "就食求赈，流徙谋生"
@@ -68,7 +70,7 @@ def legacy_game(content, tmp_path):
     path = str(tmp_path / "legacy.db")
     db = _make_legacy_db(content, path)
     state = db.load_state()
-    issues_bind_content(content)
+    bind_content(content)
     yield db, state
 
 
@@ -179,7 +181,7 @@ def test_population_unit_mutation_matrix(game, legacy_game):
     assert one(old_db, "SELECT population FROM regions WHERE id='beizhili'") == 720
 
     # ③ events effect 双向实测：同一 content 真源（华北大疫山西 -400000 人），按档口径落库
-    issues_bind_content(content)
+    bind_content(content)
     for db, expect_delta in ((new_db, -400000), (old_db, -40)):
         before = one(db, "SELECT population FROM regions WHERE id='shanxi'")
         state = db.load_state()
@@ -203,11 +205,9 @@ def test_population_unit_mutation_matrix(game, legacy_game):
 def test_class_delta_displaced_accepts_sat_lev_population_face_removed(game):
     """流民行接受 satisfaction/leverage 更新落库；population 更新面已删除（不得单边改人口）。"""
     db, state, content = game
-    issues_bind_content(content)
+    bind_content(content)
 
-    apply_score_extraction(db, state, {
-        "class_delta": {"流民@shaanxi": {"satisfaction": -5, "leverage": 2}},
-    }, content, None)
+    settle_delta(state, db, {'class_delta': {'流民@shaanxi': {'satisfaction': -5, 'leverage': 2}}}, SettlementContext(content=content))
     row = db.conn.execute(
         "SELECT population, satisfaction, leverage FROM classes "
         "WHERE name='流民' AND region_id='shaanxi'"
@@ -218,13 +218,11 @@ def test_class_delta_displaced_accepts_sat_lev_population_face_removed(game):
 
     # population 字段混进合法 key 的 item：#649 §1.4 升格——整项逐项拒收（原静默忽略），
     # 人口不被触碰，同 item 的 sat 也不落（拒收面＝整个 item）。
-    applied = apply_score_extraction(db, state, {
-        "class_delta": {"流民@shaanxi": {"satisfaction": 1, "population": 123456}},
-    }, content, None)
-    rejections = applied["class_delta_rejections"]
+    applied = settle_delta(state, db, {'class_delta': {'流民@shaanxi': {'satisfaction': 1, 'population': 123456}}}, SettlementContext(content=content))
+    rejections = rejected_view(applied, "class_delta")
     assert len(rejections) == 1
-    assert rejections[0]["category"] == "invalid_enum"
-    assert "population_transfers" in rejections[0]["reason"]  # 指向合法入口
+    assert rejections[0].category == "invalid_enum"
+    assert "population_transfers" in rejections[0].reason  # 指向合法入口
     row2 = db.conn.execute(
         "SELECT population, satisfaction FROM classes "
         "WHERE name='流民' AND region_id='shaanxi'"

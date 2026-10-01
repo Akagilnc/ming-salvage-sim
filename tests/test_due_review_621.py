@@ -25,13 +25,14 @@ from ming_sim.due_review import (
     list_due_review_scenes,
     project_due_review_scene,
 )
-from ming_sim.issues import apply_score_extraction
 from ming_sim.models import TurnPhase
 from ming_sim.staged_commitment import (
     TODO_STATUS_CONSUMED,
     TODO_STATUS_PENDING,
     write_due_staged_commitment_todos,
 )
+from ming_sim.settlement import SettlementContext, settle_delta
+from ming_sim.settlement.views import issue_rows, rejected_view, view
 
 
 # ── fixtures ──────────────────────────────────────────────────────────
@@ -74,26 +75,8 @@ def _insert_staged_commitment(
     db, state, content, *, stages, title="徐光启分段之诺", origin_ref: str = "",
 ):
     origin = origin_ref or _promulgated_origin(db, state, title)
-    out = apply_score_extraction(
-        db,
-        state,
-        {
-            "new_issues": [
-                {
-                    "origin_kind": "decree",
-                    "origin_ref": origin,
-                    "kind": "initiative",
-                    "title": title,
-                    "stage_text": "三年火器见眉目，五年新历成。",
-                    "commitment_kind": "until_stop",
-                    "ongoing_effects": {},
-                    "stages": stages,
-                }
-            ]
-        },
-        content=content,
-    )
-    created = out["issue_summary"]["new_issues"][0]
+    out = settle_delta(state, db, {'new_issues': [{'origin_kind': 'decree', 'origin_ref': origin, 'kind': 'initiative', 'title': title, 'stage_text': '三年火器见眉目，五年新历成。', 'commitment_kind': 'until_stop', 'ongoing_effects': {}, 'stages': stages}]}, SettlementContext(content=content))
+    created = issue_rows(out, "new_issues")[0]
     assert created.get("rejected") is False, created
     return int(created["issue_id"]), origin
 
@@ -652,19 +635,8 @@ def test_formal_review_blocks_extractor_second_terminal(game):
     )
     db.conn.commit()
 
-    result = issue_engine.apply_score_extraction(
-        db, state,
-        {
-            "dossier_executions": [{
-                "dossier_id": dossier_id,
-                "outcome": "transformed",
-                "note": "extractor 抢写第二真源",
-            }]
-        },
-        content=content,
-    )
-    item = result["dossier_executions"][0]
-    assert item.get("rejected") is True
+    result = settle_delta(state, db, {'dossier_executions': [{'dossier_id': dossier_id, 'outcome': 'transformed', 'note': 'extractor 抢写第二真源'}]}, SettlementContext(content=content))
+    assert rejected_view(result, "dossier_executions")
 
     # 正式复核终值不被 extractor 覆盖（若仍 closed 则 outcome 不变；重开后亦拒写）
     dossier = db.get_decree_dossier(dossier_id)
@@ -698,20 +670,9 @@ def test_due_month_extractor_blocked_before_todo_write(game):
     assert before["status"] == "executing"
     assert before["execution_outcome"] in ("", None)
 
-    result = issue_engine.apply_score_extraction(
-        db, state,
-        {
-            "dossier_executions": [{
-                "dossier_id": dossier_id,
-                "outcome": "fulfilled",
-                "note": "extractor 到期月抢写终值",
-            }]
-        },
-        content=content,
-    )
-    item = result["dossier_executions"][0]
-    assert item.get("rejected") is True
-    assert "正式复核" in str(item.get("reason") or "")
+    result = settle_delta(state, db, {'dossier_executions': [{'dossier_id': dossier_id, 'outcome': 'fulfilled', 'note': 'extractor 到期月抢写终值'}]}, SettlementContext(content=content))
+    item = rejected_view(result, "dossier_executions")[0]
+    assert "正式复核" in item.reason
 
     after = db.get_decree_dossier(dossier_id)
     assert after["status"] == "executing"
@@ -730,17 +691,7 @@ def test_takeover_guard_fail_closed_on_ownership_error(game, monkeypatch):
         "ming_sim.due_review.dossiers_with_pending_due_review", _boom,
     )
     with pytest.raises(RuntimeError, match="ownership lookup boom"):
-        issue_engine.apply_score_extraction(
-            db, state,
-            {
-                "dossier_executions": [{
-                    "dossier_id": dossier_id,
-                    "outcome": "failed",
-                    "note": "应被守卫响亮挡住",
-                }]
-            },
-            content=content,
-        )
+        settle_delta(state, db, {'dossier_executions': [{'dossier_id': dossier_id, 'outcome': 'failed', 'note': '应被守卫响亮挡住'}]}, SettlementContext(content=content))
     dossier = db.get_decree_dossier(dossier_id)
     assert dossier["status"] == "executing"
     assert dossier["execution_outcome"] in ("", None)

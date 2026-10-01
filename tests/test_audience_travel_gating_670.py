@@ -483,8 +483,8 @@ def test_arrived_summon_continuation_survives_failed_apply_across_months(game, m
     assert _travel_row(db, person.name)["location"] == "henan"
     assert _travel_row(db, person.name)["transit_to"] == ""
 
-    import ming_sim.issues as issues_mod
-    real_apply = issues_mod.apply_score_extraction
+    import ming_sim.declaration_dispatch as dispatch_mod
+    real_apply = dispatch_mod.settle_delta
     attempts = 0
     continuation = {"人物变更": [{
         "name": person.name, "动作": "行止", "transit_to": "beizhili",
@@ -498,8 +498,8 @@ def test_arrived_summon_continuation_survives_failed_apply_across_months(game, m
             raise RuntimeError("injected continuation applier failure")
         return real_apply(*args, **kwargs)
 
-    # 落账经 declaration_dispatch → issues.apply_score_extraction。
-    monkeypatch.setattr(issues_mod, "apply_score_extraction", fail_once)
+    # 落账经 declaration_dispatch → settlement.settle_delta。
+    monkeypatch.setattr(dispatch_mod, "settle_delta", fail_once)
 
     def advance_continuation():
         session = _prepare_player_month(

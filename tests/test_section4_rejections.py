@@ -311,7 +311,7 @@ def test_unknown_owner_power_army_rejected_good_builds(game):
         ],
     }, narrative="x", decree_text="y")  # 不抛 = 没崩整月
 
-    rows = _rejection_rows(db, turn, "created_armies")
+    rows = _rejection_rows(db, turn, "army_changes")
     assert len(rows) == 1
     assert rows[0][2] == "hallucinated_id"
     assert rows[0][1]
@@ -341,7 +341,7 @@ def test_army_missing_manpower_rejected_good_builds(game):
         ],
     }, narrative="x", decree_text="y")  # 不抛 = 没崩整月
 
-    rows = _rejection_rows(db, turn, "created_armies")
+    rows = _rejection_rows(db, turn, "army_changes")
     assert len(rows) == 1
     assert rows[0][2] == "invalid_enum"
     assert rows[0][1]
@@ -363,7 +363,7 @@ def test_duplicate_army_without_manpower_rejected(game):
         "new_armies": [{"id": dup_id, "name": dup_name, "owner_power": "ming"}],
     }, narrative="x", decree_text="y")
 
-    rows = _rejection_rows(db, turn, "created_armies")
+    rows = _rejection_rows(db, turn, "army_changes")
     assert len(rows) == 1
     assert rows[0][2] == "invalid_enum"
     assert rows[0][1]
@@ -523,7 +523,7 @@ def test_duplicate_army_noninteger_manpower_rejected(game):
             {"id": dup_id, "name": dup_name, "owner_power": "ming", "manpower": "若干"}],
     }, narrative="x", decree_text="y")
 
-    rows = _rejection_rows(db, turn, "created_armies")
+    rows = _rejection_rows(db, turn, "army_changes")
     assert len(rows) == 1
     assert rows[0][2] == "invalid_enum"
     assert rows[0][1]
@@ -566,7 +566,7 @@ def test_dirty_optional_army_field_rejects_item(game):
 
     assert db.conn.execute(
         "SELECT COUNT(*) FROM armies WHERE id='dirty_morale_army'").fetchone()[0] == 0
-    rows = [r for r in _rejection_rows(db, turn) if r[0] == "created_armies"]
+    rows = [r for r in _rejection_rows(db, turn) if r[0] == "army_changes"]
     assert len(rows) == 1
     assert rows[0][2] == "invalid_enum"
 
@@ -643,12 +643,12 @@ def test_all_score_fields_guarded_on_creation(game, field, bad):
     assert db.conn.execute(
         "SELECT COUNT(*) FROM armies WHERE id=?", (f"guard_{field}_army",)
     ).fetchone()[0] == 0
-    rows = _rejection_rows(db, turn, "created_armies")
+    rows = _rejection_rows(db, turn, "army_changes")
     assert len(rows) == 1
 
 
 def test_issue_path_tolerated_rejections_reach_reports(game):
-    """issue 结案路的容忍拒收项不得蒸发——经 issue_summary.entity_rejections 落
+    """issue 结案路的容忍拒收项不得蒸发——经 issue_summary 落
     rejection_reports(改前是 print,改后曾比 print 更静默=违「容忍+留痕」,
     cmr S2 r2,2/2)。"""
     import json as _json
@@ -670,7 +670,7 @@ def test_issue_path_tolerated_rejections_reach_reports(game):
         "close_issues": [{"issue_id": issue_id, "reason": "resolved", "narrative": "测试结案"}],
     }, narrative="x", decree_text="y")
 
-    rows = _rejection_rows(db, turn, "issue_summary.entity_rejections")
+    rows = _rejection_rows(db, turn, "issue_summary")
     assert len(rows) == 1
     assert "士气大振" in rows[0][1] or "非法字段" in rows[0][1]
 

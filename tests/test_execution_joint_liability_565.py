@@ -6,6 +6,8 @@ import pytest
 
 import ming_sim.issues as issue_engine
 from ming_sim.strict_types import validate_affected_parties
+from ming_sim.settlement import SettlementContext, settle_delta
+from ming_sim.settlement.views import rejected_view, view
 
 
 def _roster():
@@ -59,9 +61,7 @@ def _sat(db, faction):
 def _close_via_adapter(db, state, content, dossier_id, outcome, note="办理走样", **extra):
     item = {"dossier_id": dossier_id, "outcome": outcome, "note": note}
     item.update(extra)
-    return issue_engine.apply_score_extraction(
-        db, state, {"dossier_executions": [item]}, content=content,
-    )
+    return settle_delta(state, db, {'dossier_executions': [item]}, SettlementContext(content=content))
 
 
 def test_fulfilled_writes_zero_joint_liability_rows(game):
@@ -72,7 +72,7 @@ def test_fulfilled_writes_zero_joint_liability_rows(game):
 
     result = _close_via_adapter(db, state, content, dossier_id, "fulfilled", note="如期办妥")
 
-    assert result["dossier_executions"] == [{"dossier_id": dossier_id, "outcome": "fulfilled"}]
+    assert view(result, "dossier_executions") == [{"dossier_id": dossier_id, "outcome": "fulfilled"}]
     assert _cost_events(db, dossier_id) == []
     assert _sat(db, "东林") == before_donglin
     assert _sat(db, "西学") == before_xixue
@@ -100,7 +100,7 @@ def test_terminal_outcomes_charge_lead_and_downgraded_delegator(
         db, state, content, dossier_id, outcome, note="门生办砸，走样",
     )
 
-    assert result["dossier_executions"] == [{"dossier_id": dossier_id, "outcome": outcome}]
+    assert view(result, "dossier_executions") == [{"dossier_id": dossier_id, "outcome": outcome}]
     assert _sat(db, "东林") == max(0, before_donglin + lead_delta)
     if delegator_delta is None:
         assert _sat(db, "西学") == before_xixue
@@ -229,7 +229,7 @@ def test_explicit_affected_parties_must_pass_full_key_validation(game):
             "kind": "faction", "key": "东林", "direction": "negative",
         }],
     )
-    assert result["dossier_executions"][0]["rejected"] is True
+    assert rejected_view(result, "dossier_executions")
     assert db.get_decree_dossier(dossier_id)["status"] == "executing"
     assert _cost_events(db, dossier_id) == []
 
@@ -247,7 +247,7 @@ def test_explicit_affected_parties_must_pass_full_key_validation(game):
         db, state, content, dossier_id, "failed", note="全键合法",
         affected_parties=valid,
     )
-    assert result["dossier_executions"] == [{"dossier_id": dossier_id, "outcome": "failed"}]
+    assert view(result, "dossier_executions") == [{"dossier_id": dossier_id, "outcome": "failed"}]
     assert _sat(db, outsider) == before_outsider
     assert not any(row["target_id"] == outsider for row in _sat_events(db, dossier_id))
     # roster 映射仍落主办派系

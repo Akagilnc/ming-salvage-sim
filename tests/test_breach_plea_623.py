@@ -40,13 +40,15 @@ from ming_sim.due_review import (
     dossiers_with_pending_due_review,
     list_due_review_scenes,
 )
-from ming_sim.issues import apply_issue_tracker_output, apply_score_extraction
+from ming_sim.issues import apply_issue_tracker_output
 from ming_sim.models import TurnPhase
 from ming_sim.staged_commitment import (
     ENTRY_KIND_STAGED,
     TODO_STATUS_CONSUMED,
     TODO_STATUS_PENDING,
 )
+from ming_sim.settlement import SettlementContext, settle_delta
+from ming_sim.settlement.views import view
 
 
 # ── fixtures（复用 #621 三拍/_cost_events 口径）────────────────────────
@@ -336,18 +338,9 @@ def test_regret_via_extraction_true_entry_zero_damage(game):
     auth_before = int(state.metrics.get("皇威", 0) or 0)
 
     # 召对真入口：既有键 issue_advances / economy 续拨（禁 breach_plea_decisions 显式通道）
-    out = apply_score_extraction(
-        db, state,
-        {
-            "issue_advances": [{
-                "issue_id": cid, "delta_bar": 1,
-                "narrative": "朕加拨复其供亿，前诺照旧",
-            }],
-        },
-        content=content,
-    )
-    assert out.get("breach_plea_resolutions")
-    assert out["breach_plea_resolutions"][0]["decision"] == "regret"
+    out = settle_delta(state, db, {'issue_advances': [{'issue_id': cid, 'delta_bar': 1, 'narrative': '朕加拨复其供亿，前诺照旧'}]}, SettlementContext(content=content))
+    assert view(out, "breach_plea_resolutions")
+    assert view(out, "breach_plea_resolutions")[0]["decision"] == "regret"
     # 两轨零落账（反悔不写撑腰边）
     assert _cost_events(db, did) == []
     assert db.get_decree_dossier(did)["status"] == "executing"
@@ -486,13 +479,9 @@ def test_persist_via_extraction_cancels_true_entry(game):
         breach_kind=BREACH_KIND_POLICY_REVERSAL,
         reason="仍撤", target_dossier_id=did, commit=True,
     )
-    out = apply_score_extraction(
-        db, state,
-        {"cancels": [{"issue_id": cid, "narrative": "朕意已决，仍撤此诺"}]},
-        content=content,
-    )
-    assert out.get("breach_plea_resolutions")
-    assert out["breach_plea_resolutions"][0]["decision"] == "persist"
+    out = settle_delta(state, db, {'cancels': [{'issue_id': cid, 'narrative': '朕意已决，仍撤此诺'}]}, SettlementContext(content=content))
+    assert view(out, "breach_plea_resolutions")
+    assert view(out, "breach_plea_resolutions")[0]["decision"] == "persist"
     assert _pending_pleas(db) == []
     assert db.conn.execute(
         "SELECT status FROM issues WHERE id=?", (cid,),
@@ -578,7 +567,6 @@ def test_kind_gate_apply_only_finalizes_staged(game):
         "stage_idx": 0, "due_turn": state.turn,
         "criterion_text": "火器", "origin_context": "三年火器",
     }]
-    from ming_sim.issues import apply_score_extraction as ase
     # 用 staged 写端
     from ming_sim.staged_commitment import write_due_staged_commitment_todos
     cid_staged, _ = _insert_commitment(
@@ -974,12 +962,8 @@ def test_merged_persist_via_extraction_settles(game):
     cid, did, holder, todo_id = _merge_funding_then_reversal(
         db, state, token="ext-mrg",
     )
-    out = apply_score_extraction(
-        db, state,
-        {"cancels": [{"issue_id": cid, "narrative": "朕意已决，仍撤此诺"}]},
-        content=content,
-    )
-    resolutions = out.get("breach_plea_resolutions") or []
+    out = settle_delta(state, db, {'cancels': [{'issue_id': cid, 'narrative': '朕意已决，仍撤此诺'}]}, SettlementContext(content=content))
+    resolutions = view(out, "breach_plea_resolutions")
     assert resolutions, "extraction 须 resolve merged 条"
     assert resolutions[0]["decision"] == "persist"
     assert int(resolutions[0].get("todo_id") or 0) == todo_id

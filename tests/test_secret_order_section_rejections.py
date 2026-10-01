@@ -14,6 +14,8 @@ from tests.section_rejection_helpers import run_declaration as run_settle
 from ming_sim import issues
 from tests.section_rejection_helpers import game, rejection_rows
 from tests.dossier_test_helpers import create_test_secret_order
+from ming_sim.settlement import SettlementContext, settle_delta
+from ming_sim.settlement.views import view
 
 
 _rejection_rows = partial(rejection_rows, columns="section, reason, category")
@@ -81,13 +83,8 @@ def test_apply_score_extraction_secret_order_update_respects_outer_transaction_r
     db.conn.commit()
 
     db.conn.execute("BEGIN")
-    out = issues.apply_score_extraction(
-        db,
-        state,
-        {"secret_order_updates": [{"order_id": oid, "sim_note": "测试密令副作用R8"}]},
-        content=content,
-    )
-    assert out["secret_order_updates"][0]["order_id"] == oid
+    out = settle_delta(state, db, {'secret_order_updates': [{'order_id': oid, 'sim_note': '测试密令副作用R8'}]}, SettlementContext(content=content))
+    assert view(out, "secret_order_updates")[0]["order_id"] == oid
     in_tx = db.get_secret_order(oid)
     assert in_tx is not None
     assert "测试密令副作用R8" in (in_tx["sim_note"] or "")

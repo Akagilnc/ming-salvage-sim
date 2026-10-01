@@ -686,14 +686,14 @@ def test_month_drift_settles_due_secret_and_records_inertia_rejection(game, monk
     assert session.resolve_turn(allow_empty_decree=True).stage == "gazette"
     assert db.get_secret_order(order_id)["status"] == "failed"
     rows = db.conn.execute(
-        "SELECT section FROM rejection_reports WHERE turn=? AND section='issue_inertia.entity_rejections'",
+        "SELECT section FROM rejection_reports WHERE turn=? AND section='issue_inertia'",
         (turn,),
     ).fetchall()
     assert len(rows) == 1
     session.resolve_turn(allow_empty_decree=True)
     assert db.get_secret_order(order_id)["status"] == "failed"
     assert len(db.conn.execute(
-        "SELECT id FROM rejection_reports WHERE turn=? AND section='issue_inertia.entity_rejections'",
+        "SELECT id FROM rejection_reports WHERE turn=? AND section='issue_inertia'",
         (turn,),
     ).fetchall()) == 1
 

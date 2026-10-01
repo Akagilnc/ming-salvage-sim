@@ -35,9 +35,9 @@ from ming_sim.covert_progress import (
 )
 from ming_sim.person_archive_contract import PERSON_LEGAL_REASON_CODES
 from ming_sim.db import GameDB
-from ming_sim.issues import apply_score_extraction
 from ming_sim.models import TurnPhase
 from tests.conftest import offline_empty_audience_translate, stub_audience_translate, stub_scene_agent
+from ming_sim.settlement import SettlementContext, settle_delta
 
 
 def _task(*, kind, axes, unit, target, direction=1, investigation_target="", effect_sign=None):
@@ -110,19 +110,7 @@ def _set_axes(db, name, *, loyalty, identity, faction=None, seed_guilt=""):
 
 
 def _originate_work(db, state, content, dossier_id, *, delta=-1):
-    apply_score_extraction(
-        db, state,
-        {
-            "economy_moves": [{
-                "account": "内库",
-                "delta": int(delta),
-                "category": "密令差务",
-                "reason": "差务实办开支",
-                "origin_ref": f"dossier:{int(dossier_id)}",
-            }],
-        },
-        content=content,
-    )
+    settle_delta(state, db, {'economy_moves': [{'account': '内库', 'delta': int(delta), 'category': '密令差务', 'reason': '差务实办开支', 'origin_ref': f'dossier:{int(dossier_id)}'}]}, SettlementContext(content=content))
 
 
 def _catch_names(db, exclude, n=3):
@@ -139,22 +127,7 @@ def _catch_names(db, exclude, n=3):
 
 
 def _originate_catches(db, state, content, dossier_id, names):
-    apply_score_extraction(
-        db, state,
-        {
-            "人物变更": [
-                {
-                    "name": name,
-                    "动作": "处置",
-                    "status": "imprisoned",
-                    "reason": "密令缉获",
-                    "origin_ref": f"dossier:{int(dossier_id)}",
-                }
-                for name in names
-            ],
-        },
-        content=content,
-    )
+    settle_delta(state, db, {'人物变更': [{'name': name, '动作': '处置', 'status': 'imprisoned', 'reason': '密令缉获', 'origin_ref': f'dossier:{int(dossier_id)}'} for name in names]}, SettlementContext(content=content))
 
 
 def test_seed_guilt_structured_clean_vs_debt():
@@ -546,16 +519,8 @@ def test_secret_order_closes_field_is_ignored(game):
     db, state, content = game
     name = _minister(db)
     oid = _issue(db, state, name, "旧链密令", "不应被 closes 结", months=3, target=3)
-    out = apply_score_extraction(
-        db, state,
-        {
-            "secret_order_closes": [
-                {"order_id": oid, "status": "done", "result": "LLM 伪结案"},
-            ],
-        },
-        content=content,
-    )
-    assert "secret_order_closes" not in out
+    out = settle_delta(state, db, {'secret_order_closes': [{'order_id': oid, 'status': 'done', 'result': 'LLM 伪结案'}]}, SettlementContext(content=content))
+    assert not hasattr(out, "secret_order_closes")
     assert db.get_secret_order(oid)["status"] == "active"
 
 
@@ -884,19 +849,7 @@ def test_fiscal_quantity_tracer_same_unit_done_and_gap(game):
     did = int(db.get_dossier_for_secret_order(oid)["id"])
     state.turn += 1
     db.save_state(state)
-    apply_score_extraction(
-        db, state,
-        {
-            "economy_moves": [{
-                "account": "内库",
-                "delta": 9,
-                "category": "抄没",
-                "reason": "无关同案收入不得充交付",
-                "origin_ref": f"dossier:{did}",
-            }],
-        },
-        content=content,
-    )
+    settle_delta(state, db, {'economy_moves': [{'account': '内库', 'delta': 9, 'category': '抄没', 'reason': '无关同案收入不得充交付', 'origin_ref': f'dossier:{did}'}]}, SettlementContext(content=content))
     _originate_work(db, state, content, did, delta=-20)
     apply_monthly_covert_actual_progress(
         db, state, selections=[{"order_id": oid, "fidelity": "忠实"}], commit=True,

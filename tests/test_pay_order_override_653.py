@@ -29,6 +29,8 @@ from ming_sim.pay_order import (
     restore_pay_order_override,
     revoke_pay_order_decree,
 )
+from ming_sim.settlement import SettlementContext, settle_delta
+from ming_sim.settlement.views import rejected_view, class_deltas
 
 
 def _override_dossier(db, state, entries, *, text="偿还序/折发旨") -> int:
@@ -1111,7 +1113,6 @@ def test_fiscal_fact_brief_haircut_and_relief_facts(game):
 
 def test_apply_score_extraction_accepts_llm_direction_with_fiscal_loss(game):
     """F3.2：单一财政受损事实在案时，LLM 综合判断的正向 satisfaction 原样接收。"""
-    from ming_sim.issues import apply_score_extraction
 
     db, state, _content = game
     db.conn.execute(
@@ -1120,11 +1121,9 @@ def test_apply_score_extraction_accepts_llm_direction_with_fiscal_loss(game):
     )
     db.conn.commit()
     assert build_fiscal_fact_brief(db)
-    applied = apply_score_extraction(
-        db, state, {"class_delta": {"军户": {"satisfaction": 9}}}
-    )
-    assert applied["class_delta"]["军户"]["satisfaction"] == 9
-    assert applied["class_delta_rejections"] == []
+    applied = settle_delta(state, db, {'class_delta': {'军户': {'satisfaction': 9}}}, SettlementContext())
+    assert class_deltas(applied)["军户"]["satisfaction"] == 9
+    assert rejected_view(applied, "class_delta") == []
 
 
 # ═══════════════ F1 颁布生命周期 E2E（ADR 0055 判后物化缝）═══════════════

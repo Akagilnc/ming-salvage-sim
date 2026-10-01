@@ -106,10 +106,10 @@ def test_rollback_leaves_no_rows_and_no_jsonl(game, monkeypatch, tmp_path):
     assert not (tmp_path / "error_packs" / "rejections.jsonl").exists()
 
 
-def test_issue_summary_nested_rejections_are_collected(game, monkeypatch, tmp_path):
-    """issue_summary 是 dict(嵌套 new_issues/cancels 列表),桥接不能只看顶层 list
-    ——new_issues 正是实测最常被喂脏的段(origin_kind 缺失被拒,agy 实录),
-    决定 5 的「哪个 section 最常被喂脏」聚合对它失明即失去主要价值(cmr S0 r1,2/2)。"""
+def test_issue_section_rejections_are_collected(game, monkeypatch, tmp_path):
+    """局势段的拒收必须进报告——它正是实测最常被喂脏的段（origin_kind 缺失被拒，
+    agy 实录）。ADR 0150 决定 2 后拒收走 canonical RejectedItem、段名由登记表
+    给出（不再靠旧桥接递归猜 dotted 路径），故此处钉的是具名段 ``issue_summary``。"""
     db, state, content = game
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
     turn = state.turn
@@ -120,7 +120,7 @@ def test_issue_summary_nested_rejections_are_collected(game, monkeypatch, tmp_pa
 
     rows = _rejection_rows(db, turn)
     assert len(rows) == 1
-    assert rows[0][0] == "issue_summary.new_issues"
+    assert rows[0][0] == "issue_summary"
     assert "decree/event_pool" in rows[0][1]  # 拒收原因原样保留
 
 
@@ -137,7 +137,7 @@ def test_nested_atomic_success_path_does_not_orphan_jsonl(game, monkeypatch, tmp
     with pytest.raises(RuntimeError, match="outer rollback"):
         with atomic(db):
             run_settle(db, state, content, {
-                "人物状态变化": [{"name": "查无此人戊", "status": "dead", "reason": "测试"}],
+                "人物变更": [{"name": "查无此人戊", "动作": "下狱", "reason": "测试"}],
             }, narrative="x", decree_text="y")
             raise RuntimeError("outer rollback")
 
@@ -160,7 +160,7 @@ def test_attempt_derivation_failure_does_not_abort_settlement(game, monkeypatch,
     monkeypatch.setattr(decree_mod, "_next_attempt", _boom)
 
     run_settle(db, state, content, {
-        "人物状态变化": [{"name": "查无此人己", "status": "dead", "reason": "测试"}],
+        "人物变更": [{"name": "查无此人己", "动作": "下狱", "reason": "测试"}],
     }, narrative="x", decree_text="y")  # 不抛=结算完成
 
     rows = _rejection_rows(db, turn)
@@ -186,25 +186,26 @@ def test_noncancellable_cancel_rejection_carries_reason(game, monkeypatch, tmp_p
         "cancels": [{"issue_id": issue_id, "narrative": "测试撤销"}],
     }, narrative="x", decree_text="y")
 
-    rows = [r for r in _rejection_rows(db, turn) if r[0] == "issue_summary.cancels"]
+    rows = [r for r in _rejection_rows(db, turn) if r[0] == "issue_summary"]
     assert len(rows) == 1
     assert rows[0][1]  # reason 非空
 
 
 
 
-def test_bridge_synthesizes_reason_when_producer_omits(game):
-    """桥接层集中守 ADR「拒收行必带原因」不变式:任何 producer 漏给 reason,
-    落库前合成非空兜底——规则写一处,未来新 section 免疫同类缺陷(fix-coverage
-    drift 处方:集中化,cmr S0 r3)。"""
+def test_canonicalization_synthesizes_reason_when_producer_omits(game):
+    """拒收 canonical 化集中守 ADR「拒收行必带原因」不变式：任何段漏给 reason，
+    落库前合成非空兜底——规则写一处（``to_rejected_items``），新段免疫同类缺陷
+    （ADR 0150 决定 2；fix-coverage drift 处方：集中化，cmr S0 r3）。"""
     from ming_sim.applier import Provenance, RejectionCollector
-    from ming_sim.decree import _collect_inline_rejections
+    from ming_sim.settlement.run import to_rejected_items
 
     db, state, content = game
     collector = RejectionCollector()
-    _collect_inline_rejections(collector, {
-        "some_section": [{"rejected": True}],  # producer 没给 reason
-    }, 1, Provenance.unknown)
+    for item in to_rejected_items(
+        [{"rejected": True}], Provenance.unknown, report_category="some_section",
+    ):
+        collector.record("some_section", item, 1)
     collector.flush_to_db(db)
     db.conn.commit()
 
@@ -214,9 +215,9 @@ def test_bridge_synthesizes_reason_when_producer_omits(game):
 
 
 def test_inertia_tolerated_rejections_reach_reports(game, monkeypatch, tmp_path):
-    """inertia 自然结案的容忍拒收项也要进 rejection_reports——桥接在 inertia 前
-    已跑,只 tlog 等于这条路永远脱离收集器/attempt/provenance 管线,与 tracker-close
-    路(issue_summary.entity_rejections 有行)同输入两判(ship-pre r1 codex high)。"""
+    """inertia 自然结案的容忍拒收项也要进 rejection_reports——编排器在 inertia
+    段之后补收，只 tlog 等于这条路永远脱离收集器/attempt/provenance 管线，与
+    tracker-close 路（issue_summary 段有行）同输入两判（ship-pre r1 codex high）。"""
     db, state, content = game
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
     turn = state.turn
@@ -234,8 +235,7 @@ def test_inertia_tolerated_rejections_reach_reports(game, monkeypatch, tmp_path)
     from tests.test_due_review_621 import _settle_empty_month
     _settle_empty_month(db, state, content, monkeypatch)
 
-    rows = [r for r in _rejection_rows(db, turn)
-            if r[0] == "issue_inertia.entity_rejections"]
+    rows = [r for r in _rejection_rows(db, turn) if r[0] == "issue_inertia"]
     assert len(rows) == 1
     assert "士气大振" in rows[0][1] or "非法字段" in rows[0][1]
 
@@ -447,7 +447,7 @@ def test_power_move_backlash_rejection_lands_in_reports(game, monkeypatch, tmp_p
             ).fetchall()
         ]
         assert len(rows) == 1
-        assert rows[0]["section"] == "applied_person_changes.backlash_results"
+        assert rows[0]["section"] == "applied_person_changes"
         assert rows[0]["reason"] == "power_updates 引用未入库势力 '查无此势力'"
         assert rows[0]["category"] == "hallucinated_id"
         assert json.loads(rows[0]["item_json"]) == {
@@ -511,7 +511,9 @@ def test_issue_close_power_move_backlash_rejection_is_not_duplicated(game, monke
             ).fetchall()
         ]
         assert len(rows) == 1
-        assert rows[0]["section"] == "issue_summary.applied_person_changes.backlash_results"
+        # 结案路的人物变更由局势段物化，其反噬拒收归具名段（不再靠递归桥接猜
+        # dotted 路径）；无论落在哪一段，都必须只入库一次。
+        assert rows[0]["section"] in {"issue_summary", "applied_person_changes"}
         assert rows[0]["reason"] == "power_updates 引用未入库势力 '查无此势力'"
         assert rows[0]["category"] == "hallucinated_id"
         assert json.loads(rows[0]["item_json"]) == {
@@ -551,7 +553,8 @@ def test_inertia_power_move_backlash_rejection_lands_in_reports(game, monkeypatc
             (turn,),
         ).fetchall()
         assert len(rows) == 1
-        assert rows[0]["section"] == "issue_summary.applied_person_changes.backlash_results"
+        # inertia 自然结案路自带的人物变更，其反噬拒收归具名段 issue_inertia。
+        assert rows[0]["section"] == "issue_inertia"
         assert rows[0]["reason"] == "power_updates 引用未入库势力 '查无此势力'"
         assert rows[0]["category"] == "hallucinated_id"
     finally:

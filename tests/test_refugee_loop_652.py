@@ -19,8 +19,10 @@ from ming_sim.constants import (
     RECOVERY_PERSONS_PER_WAN,
 )
 from ming_sim.db import GameDB, POPULATION_UNIT_PERSONS
-from ming_sim.issues import apply_score_extraction
 from tests.month_chain_helpers import canned_full_settlement, make_light_session
+from ming_sim.settlement import SettlementContext, settle_delta
+from ming_sim.settlement.views import view
+from ming_sim.settlement.views import rejected_view
 
 FARMER_SHAANXI = 6000000
 DISPLACED_SHAANXI = 150000
@@ -90,13 +92,8 @@ def _database_path(db: GameDB) -> str:
 def test_standalone_absorption_is_durable_to_second_connection(game):
     db, state, content = game
     before = _pop(db, "流民", "shaanxi")
-    applied = apply_score_extraction(db, state, {
-        "bandit_absorptions": [{
-            "region_id": "shaanxi", "power_id": "bandit_li_zicheng",
-            "requested_count": 10_000, "origin_ref": "盘面自发",
-        }],
-    }, content, None)
-    assert applied["bandit_absorptions"][0]["actual_count"] == 10_000
+    applied = settle_delta(state, db, {'bandit_absorptions': [{'region_id': 'shaanxi', 'power_id': 'bandit_li_zicheng', 'requested_count': 10000, 'origin_ref': '盘面自发'}]}, SettlementContext(content=content))
+    assert view(applied, "bandit_absorptions")[0]["actual_count"] == 10_000
     with sqlite3.connect(_database_path(db)) as reopened:
         assert reopened.execute(
             "SELECT population FROM classes WHERE name='流民' AND region_id='shaanxi'"
@@ -110,13 +107,8 @@ def test_standalone_surcharge_is_durable_to_second_connection(game):
         target_kind="region", target_id="shaanxi",
     )
     db.record_dossier_decision(dossier_id, "promulgated")
-    applied = apply_score_extraction(db, state, {
-        "surcharge_decrees": [{
-            "region_id": "shaanxi", "monthly_amount": 10.0,
-            "origin_ref": f"dossier:{dossier_id}",
-        }],
-    }, content, None)
-    expected = applied["surcharge_decrees"][0]["加派基线"]
+    applied = settle_delta(state, db, {'surcharge_decrees': [{'region_id': 'shaanxi', 'monthly_amount': 10.0, 'origin_ref': f'dossier:{dossier_id}'}]}, SettlementContext(content=content))
+    expected = view(applied, "surcharge_decrees")[0]["加派基线"]
     with sqlite3.connect(_database_path(db)) as reopened:
         fiscal = json.loads(reopened.execute(
             "SELECT fiscal FROM regions WHERE id='shaanxi'"
@@ -137,16 +129,7 @@ def test_outer_atomic_rolls_back_surcharge_and_absorption(game):
     db.record_dossier_decision(dossier_id, "promulgated")
     with pytest.raises(RuntimeError):
         with atomic(db):
-            apply_score_extraction(db, state, {
-                "surcharge_decrees": [{
-                    "region_id": "shaanxi", "monthly_amount": 10.0,
-                    "origin_ref": f"dossier:{dossier_id}",
-                }],
-                "bandit_absorptions": [{
-                    "region_id": "shaanxi", "power_id": "bandit_li_zicheng",
-                    "requested_count": 10_000, "origin_ref": "盘面自发",
-                }],
-            }, content, None)
+            settle_delta(state, db, {'surcharge_decrees': [{'region_id': 'shaanxi', 'monthly_amount': 10.0, 'origin_ref': f'dossier:{dossier_id}'}], 'bandit_absorptions': [{'region_id': 'shaanxi', 'power_id': 'bandit_li_zicheng', 'requested_count': 10000, 'origin_ref': '盘面自发'}]}, SettlementContext(content=content))
             raise RuntimeError("rollback")
     assert _pop(db, "流民", "shaanxi") == before_pool
     assert db.conn.execute(
@@ -161,14 +144,9 @@ def test_bandit_absorption_clamps_pool_strength_and_ceiling(game):
     db, state, content = game
     pid = "bandit_li_zicheng"
     before = _strength(db, pid)
-    applied = apply_score_extraction(db, state, {
-        "bandit_absorptions": [{
-            "region_id": "shaanxi", "power_id": pid,
-            "requested_count": DISPLACED_SHAANXI + 50_000, "origin_ref": "盘面自发",
-        }],
-    }, content, None)
-    assert not applied["bandit_absorptions_rejections"]
-    rec = applied["bandit_absorptions"][0]
+    applied = settle_delta(state, db, {'bandit_absorptions': [{'region_id': 'shaanxi', 'power_id': pid, 'requested_count': DISPLACED_SHAANXI + 50000, 'origin_ref': '盘面自发'}]}, SettlementContext(content=content))
+    assert not rejected_view(applied, "bandit_absorptions")
+    rec = view(applied, "bandit_absorptions")[0]
     assert rec["actual_count"] == DISPLACED_SHAANXI
     delta = DISPLACED_SHAANXI // BANDIT_ABSORPTION_PERSONS_PER_STRENGTH
     assert rec["strength_delta"] == delta
@@ -177,14 +155,9 @@ def test_bandit_absorption_clamps_pool_strength_and_ceiling(game):
 
     # 空池再吸 → 拒、实力不动
     empty_str = _strength(db, pid)
-    empty = apply_score_extraction(db, state, {
-        "bandit_absorptions": [{
-            "region_id": "shaanxi", "power_id": pid,
-            "requested_count": 1000, "origin_ref": "盘面自发",
-        }],
-    }, content, None)
-    assert empty["bandit_absorptions"] == []
-    assert empty["bandit_absorptions_rejections"]
+    empty = settle_delta(state, db, {'bandit_absorptions': [{'region_id': 'shaanxi', 'power_id': pid, 'requested_count': 1000, 'origin_ref': '盘面自发'}]}, SettlementContext(content=content))
+    assert view(empty, "bandit_absorptions") == []
+    assert rejected_view(empty, "bandit_absorptions")
     assert _strength(db, pid) == empty_str
 
     # 0–100 上界：从 99 吸足量仍停在 100
@@ -194,12 +167,7 @@ def test_bandit_absorption_clamps_pool_strength_and_ceiling(game):
         "UPDATE classes SET population=? WHERE name='流民' AND region_id='henan'", (need,),
     )
     db.conn.commit()
-    apply_score_extraction(db, state, {
-        "bandit_absorptions": [{
-            "region_id": "henan", "power_id": "bandits",
-            "requested_count": need, "origin_ref": "盘面自发",
-        }],
-    }, content, None)
+    settle_delta(state, db, {'bandit_absorptions': [{'region_id': 'henan', 'power_id': 'bandits', 'requested_count': need, 'origin_ref': '盘面自发'}]}, SettlementContext(content=content))
     assert _strength(db, "bandits") == 100
 
 
@@ -210,25 +178,13 @@ def test_bandit_absorption_rejects_unknown_fields_keeps_clean_sibling(game):
     before_pool = _pop(db, "流民", "shaanxi")
     before_str = _strength(db, pid)
     clean_req = 10_000
-    applied = apply_score_extraction(db, state, {
-        "bandit_absorptions": [
-            {
-                "region_id": "shaanxi", "power_id": pid,
-                "requested_count": 20_000, "origin_ref": "盘面自发",
-                "bogus_boost": 999,
-            },
-            {
-                "region_id": "shaanxi", "power_id": pid,
-                "requested_count": clean_req, "origin_ref": "盘面自发",
-            },
-        ],
-    }, content, None)
-    rejections = applied["bandit_absorptions_rejections"]
+    applied = settle_delta(state, db, {'bandit_absorptions': [{'region_id': 'shaanxi', 'power_id': pid, 'requested_count': 20000, 'origin_ref': '盘面自发', 'bogus_boost': 999}, {'region_id': 'shaanxi', 'power_id': pid, 'requested_count': clean_req, 'origin_ref': '盘面自发'}]}, SettlementContext(content=content))
+    rejections = rejected_view(applied, "bandit_absorptions")
     assert len(rejections) == 1
-    assert rejections[0].get("category") == "invalid_enum"
-    assert rejections[0].get("item", {}).get("bogus_boost") == 999
-    assert len(applied["bandit_absorptions"]) == 1
-    rec = applied["bandit_absorptions"][0]
+    assert rejections[0].category == "invalid_enum"
+    assert isinstance(rejections[0].item, dict) and rejections[0].item.get("bogus_boost") == 999
+    assert len(view(applied, "bandit_absorptions")) == 1
+    rec = view(applied, "bandit_absorptions")[0]
     assert rec["actual_count"] == clean_req
     assert rec["strength_delta"] == clean_req // BANDIT_ABSORPTION_PERSONS_PER_STRENGTH
     assert _pop(db, "流民", "shaanxi") == before_pool - clean_req
@@ -239,20 +195,16 @@ def test_free_positive_bandit_strength_rejected_negative_ok(game):
     db, state, content = game
     pid = "bandit_li_zicheng"
     before, houjin_before = _strength(db, pid), _strength(db, "houjin")
-    applied = apply_score_extraction(db, state, {
-        "power_updates": {
-            pid: {"military_strength": 5, "origin_ref": "盘面自发"},
-            "houjin": {"military_strength": 2, "origin_ref": "盘面自发"},
-        },
-    }, content, None)
-    assert any(c.get("rejected") and c.get("power_id") == pid for c in applied["power_changes"])
+    applied = settle_delta(state, db, {'power_updates': {pid: {'military_strength': 5, 'origin_ref': '盘面自发'}, 'houjin': {'military_strength': 2, 'origin_ref': '盘面自发'}}}, SettlementContext(content=content))
+    assert any(
+        isinstance(r.item, dict) and r.item.get("power_id") == pid
+        for r in rejected_view(applied, "power_changes")
+    )
     assert _strength(db, pid) == before
     assert _strength(db, "houjin") == min(100, houjin_before + 2)
 
     before2 = _strength(db, pid)
-    apply_score_extraction(db, state, {
-        "power_updates": {pid: {"military_strength": -3, "origin_ref": "盘面自发"}},
-    }, content, None)
+    settle_delta(state, db, {'power_updates': {pid: {'military_strength': -3, 'origin_ref': '盘面自发'}}}, SettlementContext(content=content))
     assert _strength(db, pid) == max(0, before2 - 3)
 
 
@@ -260,14 +212,9 @@ def test_free_positive_bandit_strength_rejected_negative_ok(game):
 
 def test_llm_free_回流_rejected(game):
     db, state, content = game
-    free = apply_score_extraction(db, state, {
-        "population_transfers": [{
-            "source": "流民@shaanxi", "target": "农民@shaanxi",
-            "amount": 1000, "reason": "回流", "origin_ref": "盘面自发",
-        }],
-    }, content, None)
-    assert free["population_transfers"] == []
-    assert free["population_transfers_rejections"]
+    free = settle_delta(state, db, {'population_transfers': [{'source': '流民@shaanxi', 'target': '农民@shaanxi', 'amount': 1000, 'reason': '回流', 'origin_ref': '盘面自发'}]}, SettlementContext(content=content))
+    assert view(free, "population_transfers") == []
+    assert rejected_view(free, "population_transfers")
     assert _pop(db, "流民", "shaanxi") == DISPLACED_SHAANXI
 
 
@@ -623,13 +570,8 @@ def test_legacy_population_unit_skips_absorption_and_recovery(game, monkeypatch)
     db.conn.commit()
     assert db.population_unit != POPULATION_UNIT_PERSONS
 
-    applied = apply_score_extraction(db, state, {
-        "bandit_absorptions": [{
-            "region_id": "shaanxi", "power_id": "bandits",
-            "requested_count": 10, "origin_ref": "盘面自发",
-        }],
-    }, content, None)
-    assert applied["bandit_absorptions"] == [] and applied["bandit_absorptions_rejections"]
+    applied = settle_delta(state, db, {'bandit_absorptions': [{'region_id': 'shaanxi', 'power_id': 'bandits', 'requested_count': 10, 'origin_ref': '盘面自发'}]}, SettlementContext(content=content))
+    assert view(applied, "bandit_absorptions") == [] and rejected_view(applied, "bandit_absorptions")
 
     assert db.get_decree_dossier(_recovery_grant(db, state, amount=10))["execution_outcome"] == "fulfilled"
     before = _pop(db, "流民", "shaanxi")

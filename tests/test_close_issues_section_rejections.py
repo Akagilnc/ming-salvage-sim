@@ -116,23 +116,28 @@ def test_close_failed_on_uncollapsible_rejected_invalid_enum(game):
 
 
 def test_close_rejection_reaches_rejection_reports(game):
-    """端到端 plumbing：close 段拒收经 _collect_inline_rejections 真落 rejection_reports 表
-    （桥接下探 issue_summary.closes，cmr Claude r1）。"""
-    db, state, _ = game
-    from ming_sim.applier import Provenance, RejectionCollector
-    from ming_sim.decree import _collect_inline_rejections
+    """端到端 plumbing：close 段拒收真落 rejection_reports 表。
 
-    applied = {"issue_summary": {"closes": [{
+    ADR 0150 决定 2 删掉旧递归桥接后，拒收由编排器在 ``_build_outcome`` 一处
+    canonical 化并按登记表给出的具名段入库（不再靠桥接猜 ``issue_summary.closes``）。
+    """
+    from ming_sim.applier import Provenance, RejectionCollector
+    from ming_sim.settlement.run import to_rejected_items
+
+    db, state, _ = game
+    close_rows = [{
         "rejected": True, "category": "missing_ref",
         "reason": "close 测试拒收", "item": {"issue_id": 999999, "reason": "resolved"},
-    }]}}
+    }]
     collector = RejectionCollector()
-    _collect_inline_rejections(collector, applied, 7, Provenance.unknown)
+    for item in to_rejected_items(close_rows, Provenance.unknown,
+                                  report_category="issue"):
+        collector.record("issue_summary", item, 7)
     collector.flush_to_db(db)
 
     row = db.conn.execute(
         "SELECT section, category, reason FROM rejection_reports "
-        "WHERE turn=7 AND section LIKE '%closes%'"
+        "WHERE turn=7 AND section='issue_summary'"
     ).fetchone()
     assert row is not None, "close 段拒收未落 rejection_reports"
     assert row["category"] == "missing_ref"
@@ -140,21 +145,25 @@ def test_close_rejection_reaches_rejection_reports(game):
 
 def test_scalar_item_rejection_preserves_original_in_reports(game):
     """非 dict 坏项（item 为标量/null）的 item_json 须存原始坏项本身（ADR 决定 5），
-    不是整个 rejected wrapper——桥接按 'item' 键存在性解包、覆盖标量原件（cmr r5 codex）。"""
+    不是整个 rejected wrapper——canonical 化按 'item' 键**存在性**解包、覆盖标量
+    原件（cmr r5 codex）。"""
     import json
     from ming_sim.applier import Provenance, RejectionCollector
-    from ming_sim.decree import _collect_inline_rejections
+    from ming_sim.settlement.run import to_rejected_items
 
-    applied = {"issue_summary": {"closes": [
+    close_rows = [
         {"rejected": True, "category": "invalid_enum", "reason": "条目非对象", "item": 42},
         {"rejected": True, "category": "invalid_enum", "reason": "条目非对象", "item": None},
-    ]}}
+    ]
     collector = RejectionCollector()
-    _collect_inline_rejections(collector, applied, 8, Provenance.unknown)
-    collector.flush_to_db(db := game[0])
+    for item in to_rejected_items(close_rows, Provenance.unknown,
+                                  report_category="issue"):
+        collector.record("issue_summary", item, 8)
+    db = game[0]
+    collector.flush_to_db(db)
 
     rows = db.conn.execute(
-        "SELECT item_json FROM rejection_reports WHERE turn=8 AND section LIKE '%closes%' ORDER BY id"
+        "SELECT item_json FROM rejection_reports WHERE turn=8 AND section='issue_summary' ORDER BY id"
     ).fetchall()
     items = [json.loads(r["item_json"]) for r in rows]
     assert 42 in items and None in items, items  # 原始标量原件保真，非嵌套 wrapper

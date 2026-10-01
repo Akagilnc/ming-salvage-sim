@@ -2109,7 +2109,7 @@ def _apply_faction_dict(
     bool/float，cmr r1 codex）→ invalid_enum 逐项拒收留痕（#14 模式 A，原 `continue`
     静默跳）；查无此派系名由 db.adjust_factions 返 missing_ref。
     返回 (已落 delta dict, 拒收项列表)：前者供 web 「派系变化」面板（形状不变），
-    后者由顶层置于 "faction_delta_rejections" 段、桥接 _collect_inline_rejections 自动收。
+    后者由落库编排器置于派系段的 RejectedItem 流，自动收进拒收报告。
     """
     cleaned: Dict[str, object] = {}
     rejected: List[Dict[str, object]] = []

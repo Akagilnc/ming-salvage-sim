@@ -18,9 +18,11 @@ from ming_sim.due_review import (
     decide_due_review_verdict,
 )
 from ming_sim.flows import _apply_economy_list
-from ming_sim.issues import apply_issue_inertia_and_ongoing, apply_score_extraction
+from ming_sim.issues import apply_issue_inertia_and_ongoing
 from ming_sim.staged_commitment import write_due_staged_commitment_todos
 from tests.test_dossier_reported_progress_619 import _world_fingerprint
+from ming_sim.settlement import SettlementContext, settle_delta
+from ming_sim.settlement.views import issue_rows, view
 
 
 # ── shared helpers ────────────────────────────────────────────────────
@@ -45,31 +47,8 @@ def _executing_policy(db, state, *, token: str):
 
 def _insert_final_stage(db, state, content, *, dossier_id: int, title: str):
     origin = f"dossier:{int(dossier_id)}"
-    out = apply_score_extraction(
-        db,
-        state,
-        {
-            "new_issues": [
-                {
-                    "origin_kind": "decree",
-                    "origin_ref": origin,
-                    "kind": "initiative",
-                    "title": title,
-                    "stage_text": "所约之事依限办结。",
-                    "commitment_kind": "until_stop",
-                    "ongoing_effects": {},
-                    "stages": [{
-                        "stage_idx": 0,
-                        "due_turn": state.turn,
-                        "criterion_text": "清丈见成数",
-                        "origin_context": "清丈畿辅田亩",
-                    }],
-                }
-            ]
-        },
-        content=content,
-    )
-    created = out["issue_summary"]["new_issues"][0]
+    out = settle_delta(state, db, {'new_issues': [{'origin_kind': 'decree', 'origin_ref': origin, 'kind': 'initiative', 'title': title, 'stage_text': '所约之事依限办结。', 'commitment_kind': 'until_stop', 'ongoing_effects': {}, 'stages': [{'stage_idx': 0, 'due_turn': state.turn, 'criterion_text': '清丈见成数', 'origin_context': '清丈畿辅田亩'}]}]}, SettlementContext(content=content))
+    created = issue_rows(out, "new_issues")[0]
     assert created.get("rejected") is False, created
     return int(created["issue_id"])
 
@@ -120,21 +99,8 @@ def test_ac1_ac2_transformed_vs_degraded_dual_rail_tracer(game, tmp_path, conten
         is_terminal=False, commit=True,
     )
     # 月末 extractor 落旨外恶果（浮收翻倍样例）——同 origin 载体
-    applied = apply_score_extraction(
-        db, state,
-        {
-            "economy_moves": [{
-                "account": "国库",
-                "delta": 12,
-                "category": "地方浮收",
-                "reason": "借清丈之名额外加派入私",
-                "origin_ref": f"dossier:{xf_id}",
-                "beyond_intent": True,
-            }],
-        },
-        content=content,
-    )
-    assert applied["economy_moves"], applied
+    applied = settle_delta(state, db, {'economy_moves': [{'account': '国库', 'delta': 12, 'category': '地方浮收', 'reason': '借清丈之名额外加派入私', 'origin_ref': f'dossier:{xf_id}', 'beyond_intent': True}]}, SettlementContext(content=content))
+    assert view(applied, "economy_moves"), applied
     moves = db.list_economy_moves_for_dossier(xf_id)
     assert moves and moves[0]["beyond_intent"] is True
     assert moves[0]["origin_ref"] == f"dossier:{xf_id}"

@@ -623,17 +623,15 @@ def _run_opening_levy(
         return
     from ming_sim.issues import _apply_levy_driven_transfers
     from ming_sim.applier import RejectionCollector, mirror_rejections_after_commit
-    from ming_sim.decree import _collect_inline_rejections
     from ming_sim.error_pack import rejections_jsonl_path
+    from ming_sim.settlement.run import to_rejected_items
 
     collector = RejectionCollector()
     with atomic(db):
         _applied, rejected = _apply_levy_driven_transfers(db, commit=False)
         if rejected:
-            _collect_inline_rejections(
-                collector, {"population_transfers_rejections": rejected}, turn,
-                source,
-            )
+            for item in to_rejected_items(rejected, source):
+                collector.record("population_transfers", item, turn)
             collector.flush_to_db(db)
         chain["opening_levy_done"] = True
         _save_chain(db, turn, chain, decree_text=decree_text, source=source)
@@ -896,8 +894,8 @@ def _settle_edicts(
 def _ending_from_dispatch_result(result: Any) -> Optional[Dict[str, object]]:
     if result is None:
         return None
-    for report in result.effects.applied:
-        candidate = report.get("victory_status") if isinstance(report, dict) else None
+    for outcome in result.effects.applied:
+        candidate = getattr(outcome, "victory_status", None)
         if isinstance(candidate, dict) and candidate.get("status") != "ongoing":
             return candidate
     return None
@@ -909,10 +907,10 @@ def _collect_disclosures_from_result(chain: Optional[Dict[str, Any]], result: An
     pending = chain.setdefault("pending_disclosures", [])
     effects = getattr(result, "effects", None)
     applied = getattr(effects, "applied", []) if effects is not None else []
-    for report in applied:
-        if not isinstance(report, dict):
-            continue
-        for update in report.get("secret_order_updates") or []:
+    from ming_sim.settlement.views import view
+
+    for outcome in applied:
+        for update in view(outcome, "secret_order_updates"):
             if isinstance(update, dict) and update.get("disclosed"):
                 item = {
                     "order_id": int(update["order_id"]),
@@ -1167,8 +1165,8 @@ def _step_4a_secret_order_supply(
     if not chain.get("covert_progress_done"):
         from ming_sim.applier import RejectionCollector, mirror_rejections_after_commit
         from ming_sim.covert_progress import apply_monthly_covert_actual_progress
-        from ming_sim.decree import _collect_inline_rejections
         from ming_sim.error_pack import rejections_jsonl_path
+        from ming_sim.settlement.run import to_rejected_items
 
         try:
             collector = RejectionCollector()
@@ -1179,9 +1177,8 @@ def _step_4a_secret_order_supply(
                 )
                 rejections = [r for r in rows if r.get("rejected")]
                 if rejections:
-                    _collect_inline_rejections(
-                        collector, {"covert_exec_selections": rows}, turn, source,
-                    )
+                    for item in to_rejected_items(rows, source):
+                        collector.record("covert_exec_selections", item, turn)
                     collector.flush_to_db(db)
                 chain["covert_progress_done"] = True
                 _save_chain(db, turn, chain, decree_text=decree_text, source=source)
@@ -1215,8 +1212,8 @@ def _run_month_drift(
     from ming_sim.urge_lever import consume_pending_urge_audience_todos
     from ming_sim.audience_night import retire_unsettled_summons_for_inactive
     from ming_sim.applier import RejectionCollector, mirror_rejections_after_commit
-    from ming_sim.decree import _collect_inline_rejections
     from ming_sim.error_pack import rejections_jsonl_path
+    from ming_sim.settlement.run import nested_rejections, to_rejected_items
 
     collector = RejectionCollector()
     with atomic(db):
@@ -1230,17 +1227,17 @@ def _run_month_drift(
         # 默许/查办必须在逐段落账接缝带该段 report 结算，见 declaration_dispatch。
         from ming_sim.covert_levy import settle_exposure_from_canonical_actions, write_exposure_todos
         write_exposure_todos(db, state)
-        settle_exposure_from_canonical_actions(db, state, {})
+        settle_exposure_from_canonical_actions(db, state, None)
         person_changes: list[dict[str, object]] = []
         rejections = apply_issue_inertia_and_ongoing(
             db, state, applied_person_changes=person_changes,
         )
-        _collect_inline_rejections(
-            collector, {
-                "issue_inertia": {"entity_rejections": rejections},
-                "issue_summary": {"applied_person_changes": person_changes},
-            }, turn, source,
-        )
+        for item in to_rejected_items(rejections, source):
+            collector.record("issue_inertia", item, turn)
+        # inertia 自然结案物化的人物变更，其内嵌反噬拒收同样要进报告——这条面
+        # 过去靠已删的递归桥接捞到（ADR 0150 决定 2 删除旧桥，故在此显式交出）。
+        for item in nested_rejections(person_changes, source):
+            collector.record("issue_inertia", item, turn)
         collector.flush_to_db(db)
         db.recompute_all_faction_leverage()
         clear_gated_legacies(db, state)

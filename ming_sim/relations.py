@@ -70,7 +70,7 @@ def _validated_settlement_origin(
     哨兵字面，或恰为已颁且授权效果的 ``dossier:<id>`` 字面。
 
     dossier 引用受**双重闭集合取**（V2）：id 须属本批冻结输入
-    ``allowed_dossier_ids``（apply_score_extraction 既有 dossier_ids_at_input，
+    ``allowed_dossier_ids``（落库编排器既有 dossier_ids_at_input，
     None/缺集/非集合一律按空闭集 fail-closed，不从 live DB 重建），且经既有
     GameDB.effect_origin_rejection 授权。盘面自发不受该集合影响。
 
@@ -113,7 +113,7 @@ def _validated_settlement_endpoints(
     第二名册、不下沉到通用写口——ADR 0081 君臣边与 seed 仍由该写口合法承载
     皇帝节点）：幻觉名/错字/「皇帝」节点及前后两投影均不合格者一律逐项拒收
     留痕。时间语义＝批内瞬态 pre∪post 并集（``allowed_endpoint_names`` 由
-    apply_score_extraction 一次算出传入：入口 pre-roster ∪ 人物变更落定后
+    落库编排器一次算出传入：入口 pre-roster ∪ 人物变更落定后
     post-roster）——同批退场者（先互动后退场）与同批入场者（先入仕/复出后
     互动）的互动都落，不建持久 snapshot、无第二编排；资格集为必传单一契约，
     无缺省 fallback，缺参即 TypeError 显式失败，绝不静默退化到当前 live 投影。
@@ -300,7 +300,7 @@ def resolve_relation_edge_events_from_extraction(
     """#633 结算口真入口（resolve_credit_events_from_extraction 先例）。
 
     消费 extractor delta 的 ``relation_edge_events`` section，经 record_relation_edge_event
-    唯一写口当场落库（TD-1）；尊重调用方事务（apply_score_extraction atomic 内）。
+    唯一写口当场落库（TD-1）；尊重调用方事务（落库编排器 atomic 内）。
     dossier 来源受本批冻结输入闭集（dossier_ids_at_input，None/缺集按空闭集
     fail-closed）与既有 effect_origin_rejection 双重合取；端点经既有名册投影
     校验，资格＝调用方传入的批内瞬态 pre∪post 名册并集（T1 r5 B 案；必传

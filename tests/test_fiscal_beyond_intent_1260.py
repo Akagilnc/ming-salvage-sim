@@ -18,8 +18,10 @@ from ming_sim.due_review import (
     apply_pending_due_reviews,
     decide_due_review_verdict,
 )
-from ming_sim.issues import apply_issue_inertia_and_ongoing, apply_score_extraction
+from ming_sim.issues import apply_issue_inertia_and_ongoing
 from ming_sim.staged_commitment import write_due_staged_commitment_todos
+from ming_sim.settlement import SettlementContext, settle_delta
+from ming_sim.settlement.views import issue_rows, view
 
 
 # ── helpers ──────────────────────────────────────────────────────────
@@ -44,31 +46,8 @@ def _executing_policy(db, state, *, token: str):
 
 def _insert_final_stage(db, state, content, *, dossier_id: int, title: str):
     origin = f"dossier:{int(dossier_id)}"
-    out = apply_score_extraction(
-        db,
-        state,
-        {
-            "new_issues": [
-                {
-                    "origin_kind": "decree",
-                    "origin_ref": origin,
-                    "kind": "initiative",
-                    "title": title,
-                    "stage_text": "所约之事依限办结。",
-                    "commitment_kind": "until_stop",
-                    "ongoing_effects": {},
-                    "stages": [{
-                        "stage_idx": 0,
-                        "due_turn": state.turn,
-                        "criterion_text": "所约财政见成数",
-                        "origin_context": "借旨加派/新立税目",
-                    }],
-                }
-            ]
-        },
-        content=content,
-    )
-    created = out["issue_summary"]["new_issues"][0]
+    out = settle_delta(state, db, {'new_issues': [{'origin_kind': 'decree', 'origin_ref': origin, 'kind': 'initiative', 'title': title, 'stage_text': '所约之事依限办结。', 'commitment_kind': 'until_stop', 'ongoing_effects': {}, 'stages': [{'stage_idx': 0, 'due_turn': state.turn, 'criterion_text': '所约财政见成数', 'origin_context': '借旨加派/新立税目'}]}]}, SettlementContext(content=content))
+    created = issue_rows(out, "new_issues")[0]
     assert created.get("rejected") is False, created
     return int(created["issue_id"])
 
@@ -114,22 +93,8 @@ def test_s1_fiscal_creates_beyond_intent_tracer_and_negatives(game, content):
     did = _executing_policy(db, state, token="fc-1260")
     origin = f"dossier:{did}"
 
-    applied = apply_score_extraction(
-        db, state,
-        {
-            "fiscal_creates": [{
-                "key": "剿饷浮收",
-                "account": "国库",
-                "direction": "income",
-                "init_value": 15,
-                "reason": "借剿饷名义加派",
-                "origin_ref": origin,
-                "beyond_intent": True,
-            }],
-        },
-        content=content,
-    )
-    assert applied["fiscal_creates"] and not applied["fiscal_creates"][0].get("rejected"), applied
+    applied = settle_delta(state, db, {'fiscal_creates': [{'key': '剿饷浮收', 'account': '国库', 'direction': 'income', 'init_value': 15, 'reason': '借剿饷名义加派', 'origin_ref': origin, 'beyond_intent': True}]}, SettlementContext(content=content))
+    assert view(applied, "fiscal_creates"), applied
     rows = db.list_fiscal_effects_for_dossier(did)
     create_rows = [r for r in rows if r.get("effect_kind") == "create"]
     assert {r["key"] for r in create_rows} == {"剿饷浮收_base", "剿饷浮收_rate"}
@@ -150,22 +115,8 @@ def test_s1_fiscal_creates_beyond_intent_tracer_and_negatives(game, content):
         ("否串税目", {"beyond_intent": "no"}),
     ]
     for key, flag in cases:
-        out = apply_score_extraction(
-            db, state,
-            {
-                "fiscal_creates": [{
-                    "key": key,
-                    "account": "国库",
-                    "direction": "income",
-                    "init_value": 3,
-                    "reason": f"负向{key}",
-                    "origin_ref": origin,
-                    **flag,
-                }],
-            },
-            content=content,
-        )
-        assert out["fiscal_creates"] and not out["fiscal_creates"][0].get("rejected"), out
+        out = settle_delta(state, db, {'fiscal_creates': [{'key': key, 'account': '国库', 'direction': 'income', 'init_value': 3, 'reason': f'负向{key}', 'origin_ref': origin, **flag}]}, SettlementContext(content=content))
+        assert view(out, "fiscal_creates"), out
     neg_rows = [
         r for r in db.list_fiscal_effects_for_dossier(did)
         if r.get("effect_kind") == "create"
@@ -190,20 +141,8 @@ def test_s1_fiscal_changes_beyond_intent_tracer_and_negatives(game, content):
     assert key is not None, "fixture must have a fiscal_config rate key"
     rate_key = str(key["key"])
 
-    applied = apply_score_extraction(
-        db, state,
-        {
-            "fiscal_changes": [{
-                "key": rate_key,
-                "delta": 1,
-                "reason": "借旨加派一成",
-                "origin_ref": origin,
-                "beyond_intent": True,
-            }],
-        },
-        content=content,
-    )
-    assert applied["fiscal_changes"] and not applied["fiscal_changes"][0].get("rejected"), applied
+    applied = settle_delta(state, db, {'fiscal_changes': [{'key': rate_key, 'delta': 1, 'reason': '借旨加派一成', 'origin_ref': origin, 'beyond_intent': True}]}, SettlementContext(content=content))
+    assert view(applied, "fiscal_changes"), applied
     change_rows = [
         r for r in db.list_fiscal_effects_for_dossier(did)
         if r.get("effect_kind") == "change"
@@ -216,20 +155,8 @@ def test_s1_fiscal_changes_beyond_intent_tracer_and_negatives(game, content):
         ("畸形", {"beyond_intent": {}}),
         ("否定", {"beyond_intent": "false"}),
     ):
-        out = apply_score_extraction(
-            db, state,
-            {
-                "fiscal_changes": [{
-                    "key": rate_key,
-                    "delta": 1,
-                    "reason": f"调率负向{label}",
-                    "origin_ref": origin,
-                    **flag,
-                }],
-            },
-            content=content,
-        )
-        assert out["fiscal_changes"] and not out["fiscal_changes"][0].get("rejected"), out
+        out = settle_delta(state, db, {'fiscal_changes': [{'key': rate_key, 'delta': 1, 'reason': f'调率负向{label}', 'origin_ref': origin, **flag}]}, SettlementContext(content=content))
+        assert view(out, "fiscal_changes"), out
     all_changes = [
         r for r in db.list_fiscal_effects_for_dossier(did)
         if r.get("effect_kind") == "change"
@@ -262,19 +189,8 @@ def test_s1_fiscal_removes_beyond_intent_tracer_and_negatives(game, content):
         assert created, stem
 
     for stem, flag, expected in subjects:
-        out = apply_score_extraction(
-            db, state,
-            {
-                "fiscal_removes": [{
-                    "key": stem,
-                    "reason": f"裁撤{stem}",
-                    "origin_ref": origin,
-                    **flag,
-                }],
-            },
-            content=content,
-        )
-        assert out["fiscal_removes"] and not out["fiscal_removes"][0].get("rejected"), out
+        out = settle_delta(state, db, {'fiscal_removes': [{'key': stem, 'reason': f'裁撤{stem}', 'origin_ref': origin, **flag}]}, SettlementContext(content=content))
+        assert view(out, "fiscal_removes"), out
         tomb = [
             r for r in db.list_fiscal_effects_for_dossier(did)
             if r.get("effect_kind") == "remove" and str(r.get("key") or "").startswith(stem)
@@ -322,22 +238,8 @@ def test_s2_pure_fiscal_beyond_intent_transformed_fork_backlash(game, content):
     origin = f"dossier:{did}"
 
     # Only fiscal create with beyond_intent — no economy moves for this flag
-    applied = apply_score_extraction(
-        db, state,
-        {
-            "fiscal_creates": [{
-                "key": "借旨新税",
-                "account": "国库",
-                "direction": "income",
-                "init_value": 20,
-                "reason": "借剿饷名义新立浮收",
-                "origin_ref": origin,
-                "beyond_intent": True,
-            }],
-        },
-        content=content,
-    )
-    assert applied["fiscal_creates"] and not applied["fiscal_creates"][0].get("rejected")
+    applied = settle_delta(state, db, {'fiscal_creates': [{'key': '借旨新税', 'account': '国库', 'direction': 'income', 'init_value': 20, 'reason': '借剿饷名义新立浮收', 'origin_ref': origin, 'beyond_intent': True}]}, SettlementContext(content=content))
+    assert view(applied, "fiscal_creates")
     # Zero beyond-flagged economy moves (foundation seed may add plain spend later)
     eco = db.list_economy_moves_for_dossier(did)
     assert not any(bool(m.get("beyond_intent")) for m in eco), eco
@@ -397,22 +299,8 @@ def test_s2_pure_fiscal_without_beyond_intent_fulfilled_no_backlash(game, conten
     did = _executing_policy(db, state, token="s2-neg")
     origin = f"dossier:{did}"
 
-    applied = apply_score_extraction(
-        db, state,
-        {
-            "fiscal_creates": [{
-                "key": "正额新税",
-                "account": "国库",
-                "direction": "income",
-                "init_value": 10,
-                "reason": "奉旨正额",
-                "origin_ref": origin,
-                # no beyond_intent
-            }],
-        },
-        content=content,
-    )
-    assert applied["fiscal_creates"] and not applied["fiscal_creates"][0].get("rejected")
+    applied = settle_delta(state, db, {'fiscal_creates': [{'key': '正额新税', 'account': '国库', 'direction': 'income', 'init_value': 10, 'reason': '奉旨正额', 'origin_ref': origin}]}, SettlementContext(content=content))
+    assert view(applied, "fiscal_creates")
     assert db.dossier_has_beyond_intent(did) is False
 
     result = _prime_and_apply_due_review(
@@ -428,20 +316,7 @@ def test_s2_pure_fiscal_without_beyond_intent_fulfilled_no_backlash(game, conten
         origin_ref=origin2, beyond_intent=0, commit=True,
     )
     # fiscal effect present but no beyond flag
-    apply_score_extraction(
-        db, state,
-        {
-            "fiscal_creates": [{
-                "key": "无旗税目",
-                "account": "国库",
-                "direction": "income",
-                "init_value": 5,
-                "reason": "无旗",
-                "origin_ref": origin2,
-            }],
-        },
-        content=content,
-    )
+    settle_delta(state, db, {'fiscal_creates': [{'key': '无旗税目', 'account': '国库', 'direction': 'income', 'init_value': 5, 'reason': '无旗', 'origin_ref': origin2}]}, SettlementContext(content=content))
     cid = _insert_commitment(
         db, state, title="无分叉变形诺", origin_ref=origin2, bar_value=45,
     )

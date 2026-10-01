@@ -6,6 +6,7 @@ import sqlite3
 
 import pytest
 
+from ming_sim.settlement.views import rejected_view, view
 from tests.conftest import active_ming_character
 
 
@@ -41,7 +42,7 @@ def test_world_segment_explicit_stock_transfers_share_actual_amount(
         db, state, segment="调拨和缴获", translate_fn=lambda request, config: declaration,
     )
     effects = result.effects.applied[0]
-    assert [move["delta"] for move in effects["economy_moves"]] == [-treasury, treasury]
+    assert [move["delta"] for move in view(effects, "economy_moves")] == [-treasury, treasury]
     assert (state.metrics["国库"], state.metrics["内库"]) == (0, treasury)
     rows = db.conn.execute(
         "SELECT account, delta FROM economy_ledger WHERE category='转库' ORDER BY id"
@@ -55,7 +56,7 @@ def test_world_segment_explicit_stock_transfers_share_actual_amount(
     assert {row["id"]: row["cannon_equipment"] for row in cannon} == {
         loser: source_cannon - actual_cannon, winner: target_cannon + actual_cannon,
     }
-    assert sorted(change["delta"] for change in effects["army_changes"]
+    assert sorted(change["delta"] for change in view(effects, "army_changes")
                   if change.get("field") == "cannon_equipment") == [
                       -actual_cannon, actual_cannon,
                   ]
@@ -84,15 +85,14 @@ def test_world_segment_rejects_transfer_with_pay_arrears_claim(game):
         translate_fn=lambda request, config: {"effects": {"economy_moves": [move]}},
     )
 
-    assert result.effects.applied[0]["economy_moves"] == []
-    assert len(result.effects.applied[0]["economy_moves_rejections"]) == 1
-    rejected = result.effects.applied[0]["economy_moves_rejections"][0]
-    assert rejected["account"] == "国库"
-    assert rejected["rejected"] is True
-    assert rejected["category"] == "invalid_enum"
-    assert rejected["item"] == move
+    outcome = result.effects.applied[0]
+    assert view(outcome, "economy_moves") == []
+    rejected = rejected_view(outcome, "economy_moves")
+    assert len(rejected) == 1
+    assert rejected[0].category == "invalid_enum"
+    assert rejected[0].item == move
     assert db.conn.execute(
-        "SELECT COUNT(*) FROM rejection_reports WHERE section='economy_moves_rejections' AND category='invalid_enum'"
+        "SELECT COUNT(*) FROM rejection_reports WHERE section='economy_moves' AND category='invalid_enum'"
     ).fetchone()[0] == 1
     assert (state.metrics["国库"], state.metrics["内库"]) == (100, 0)
     assert db.conn.execute("SELECT arrears FROM armies WHERE id='jingying'").fetchone()[0] == 6
@@ -285,7 +285,7 @@ def test_world_segment_applies_domain_effects_and_reports_rejected_effects(game)
     )
 
     assert result.effects.applied
-    person_change = result.effects.applied[0]["applied_person_changes"][0]
+    person_change = view(result.effects.applied[0], "applied_person_changes")[0]
     assert not person_change.get("rejected", False)
     assert person_change["new_office"] == new_office
     assert db.conn.execute(
@@ -304,11 +304,11 @@ def test_world_segment_applies_domain_effects_and_reports_rejected_effects(game)
     assert any(row["section"] == "army_changes" and row["reason"] and
                row["category"] == "missing_ref" for row in rejection)
     effect_report = result.effects.applied[0]
-    assert effect_report["army_changes"]
-    assert effect_report["army_changes"][0]["new"] == army_before + 2
-    assert effect_report["army_changes"][-1]["rejected"] is True
-    assert effect_report["army_changes"][-1]["reason"]
-    economy_deltas = [move["delta"] for move in effect_report["economy_moves"]]
+    army_rows = view(effect_report, "army_changes")
+    assert army_rows
+    assert army_rows[0]["new"] == army_before + 2
+    assert rejected_view(effect_report, "army_changes")[-1].reason
+    economy_deltas = [move["delta"] for move in view(effect_report, "economy_moves")]
     assert economy_deltas[0] == -treasury_before
     # A personal-wealth proposal has no source ledger; keep the existing
     # one-off treasury income path (income modifiers may change 7 to 6).
@@ -320,14 +320,14 @@ def test_world_segment_applies_domain_effects_and_reports_rejected_effects(game)
     assert ledger_deltas == economy_deltas
     assert state.metrics["国库"] == treasury_before + sum(ledger_deltas)
     manpower_change = next(
-        change for change in effect_report["army_changes"]
+        change for change in view(effect_report, "army_changes")
         if change.get("field") == "manpower"
     )
     assert manpower_change["old"] == manpower_before
     assert manpower_change["new"] == 0
     assert manpower_change["delta"] == -manpower_before
-    assert not effect_report["population_transfers_rejections"]
-    transfer, depleted_transfer = effect_report["population_transfers"]
+    assert not rejected_view(effect_report, "population_transfers")
+    transfer, depleted_transfer = view(effect_report, "population_transfers")
     assert transfer["amount"] == farmer_before
     assert depleted_transfer["amount"] == 0
     assert not depleted_transfer.get("rejected", False)
@@ -399,9 +399,12 @@ def test_staged_month_declarations_settle_in_given_order_and_effects_are_idempot
         ("army_changes", "missing_ref"),
     ]
     assert rejected[0]["reason"]
-    early_effects = results["decree:early"].effects.applied[0]["army_changes"]
-    assert early_effects[-1]["rejected"] is True
-    assert early_effects[-1]["reason"]
+    early_refused = rejected_view(
+        results["decree:early"].effects.applied[0], "army_changes",
+    )
+    assert len(early_refused) == 1
+    assert early_refused[0].category == "missing_ref"
+    assert early_refused[0].reason
 
     assert settle_staged_declarations_in_decree_order(
         db, state, ["decree:late", "decree:early"],
@@ -526,10 +529,9 @@ def test_staged_month_effects_keep_input_reference_authority(game):
     assert hidden.id == future_affair_id
     result = settle_staged_declarations_in_decree_order(db, state, ["frozen-refs"])["frozen-refs"]
     assert state.metrics["国库"] == before - 1
-    rejections = result.effects.applied[0]["economy_moves_rejections"]
+    rejections = rejected_view(result.effects.applied[0], "economy_moves")
     assert len(rejections) == 1
-    assert rejections[0]["rejected"] is True
-    assert rejections[0]["item"]["origin_ref"] == f"affair:{hidden.id}"
+    assert rejections[0].item["origin_ref"] == f"affair:{hidden.id}"
 
 
 def test_world_segment_repeated_entity_effects_apply_in_order(game):

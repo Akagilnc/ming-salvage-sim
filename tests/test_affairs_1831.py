@@ -9,8 +9,10 @@ import ming_sim.audience_night as audience_night
 import ming_sim.simulation as simulation
 from ming_sim.db import GameDB
 from ming_sim import issues as issues_mod
-from ming_sim.issues import apply_score_extraction, apply_issue_tracker_output
+from ming_sim.issues import apply_issue_tracker_output
 from ming_sim.public_sayings import list_public_sayings, record_public_saying
+from ming_sim.settlement import SettlementContext, settle_delta
+from ming_sim.settlement.views import issue_rows, shape_rejections
 
 
 
@@ -111,10 +113,7 @@ def test_same_name_affairs_are_not_merged_and_birth_close_is_rejected(game):
     )
     assert first.id != second.id
     before = db.conn.execute("SELECT COUNT(*) AS n FROM affairs").fetchone()["n"]
-    apply_score_extraction(
-        db, state, {"affair_declarations": [_declaration()]},
-        open_affair_ids_at_input=set(),
-    )
+    settle_delta(state, db, {'affair_declarations': [_declaration()]}, SettlementContext(open_affair_ids_at_input=set()))
     assert db.conn.execute("SELECT COUNT(*) AS n FROM affairs").fetchone()["n"] == before
     try:
         db.create_decree_dossiers(
@@ -136,15 +135,13 @@ def test_same_name_affairs_are_not_merged_and_birth_close_is_rejected(game):
         raise AssertionError("expected birth close to fail")
     assert db.affairs.get(first.id).status == "open"
     for bad_id in (True, 1.5):
-        closed = apply_score_extraction(
-            db, state,
-            {"affair_declarations": [{"attach": "close", "affair_id": bad_id}]},
-            open_affair_ids_at_input={first.id},
-        )
+        closed = settle_delta(state, db, {'affair_declarations': [{'attach': 'close', 'affair_id': bad_id}]}, SettlementContext(open_affair_ids_at_input={first.id}))
         assert db.affairs.get(first.id).status == "open"
         assert any(
-            row.get("report_section") == "affair_declarations"
-            for row in closed["validate_shape_rejections"]
+            row.category == "invalid_shape"
+            and isinstance(row.item, dict)
+            and row.item.get("raw_value") == {"attach": "close", "affair_id": bad_id}
+            for row in shape_rejections(closed)
         )
 
 
@@ -158,38 +155,19 @@ def test_typed_affair_new_issues_share_provenance_and_close_final_state(game):
         name=NINGYUAN, origin=ORIGIN,
         year=state.year, period=state.period, turn=state.turn,
     )
-    result = apply_score_extraction(
-        db, state,
-        {
-            "affair_declarations": [
-                _declaration(attach="close", affair_id=existing.id),
-            ],
-            "new_issues": [
-                {
-                    "origin_kind": "decree", "kind": "situation",
-                    "title": "护送仍在途中",
-                    "affair_declaration": _declaration(
-                        attach="existing", affair_id=existing.id,
-                    ),
-                },
-                {
-                    "origin_kind": "decree", "kind": "situation",
-                    "title": "推演另起风波",
-                    "affair_declaration": _declaration(identity="new-storm"),
-                },
-            ],
-        },
-        content=content, open_affair_ids_at_input={existing.id},
-    )
-    created = result["issue_summary"]["new_issues"]
+    result = settle_delta(state, db, {'affair_declarations': [_declaration(attach='close', affair_id=existing.id)], 'new_issues': [{'origin_kind': 'decree', 'kind': 'situation', 'title': '护送仍在途中', 'affair_declaration': _declaration(attach='existing', affair_id=existing.id)}, {'origin_kind': 'decree', 'kind': 'situation', 'title': '推演另起风波', 'affair_declaration': _declaration(identity='new-storm')}]}, SettlementContext(content=content, open_affair_ids_at_input={existing.id}))
+    created = issue_rows(result, "new_issues")
     assert [item["rejected"] for item in created] == [False, False]
     assert db.affairs.affair_id_for_issue(created[0]["issue_id"]) == existing.id
     assert db.affairs.affair_id_for_issue(created[1]["issue_id"]) != existing.id
     assert db.affairs.get(existing.id).status == "open"
     assert any(
-        row["report_section"] == "affair_declarations"
-        and row["category"] == "invalid_shape"
-        for row in result["validate_shape_rejections"]
+        row.category == "invalid_shape"
+        and isinstance(row.item, dict)
+        and isinstance(row.item.get("raw_value"), dict)
+        and row.item["raw_value"].get("attach") == "close"
+        and row.item["raw_value"].get("affair_id") == existing.id
+        for row in shape_rejections(result)
     )
 
 

@@ -5,9 +5,11 @@ from ming_sim.covert_levy import (
     army_pay_fact_for_dossier, settle_exposure_from_canonical_actions,
     write_exposure_todos,
 )
-from ming_sim.issues import apply_score_extraction
 from ming_sim.due_review import audience_todo_lane, build_due_review_input, list_due_review_scenes
 from types import SimpleNamespace
+from ming_sim.settlement import SettlementContext, settle_delta
+from ming_sim.settlement.views import view
+from ming_sim.settlement.views import rejected_view
 
 
 def _bound_case(db, state):
@@ -223,10 +225,8 @@ def test_tacit_and_prohibition_use_real_canonical_identity_and_are_idempotent(ga
     db.conn.execute("UPDATE armies SET arrears=10 WHERE id=?", (army_id,))
 
     # An unrelated ordinary fiscal receipt must not impersonate the terminal order.
-    unrelated = apply_score_extraction(db, state, {"fiscal_changes": [{
-        "key": key, "delta": 1, "origin_ref": origin, "beyond_intent": False,
-    }]}, content, None)
-    assert unrelated["fiscal_changes"] and not unrelated["fiscal_changes"][0].get("rejected")
+    unrelated = settle_delta(state, db, {'fiscal_changes': [{'key': key, 'delta': 1, 'origin_ref': origin, 'beyond_intent': False}]}, SettlementContext(content=content))
+    assert view(unrelated, "fiscal_changes")
     assert settle_exposure_from_canonical_actions(db, state, unrelated) == 0
     prohibition_id = _promulgated_prohibition(db, state, did)
     assert active_prohibition_dossier(db, did)["id"] == prohibition_id
@@ -308,15 +308,8 @@ def test_prohibition_blocks_every_covert_write_but_preserves_ordinary_legs(game)
     other_did, _, _, _ = _bound_case(db, state)
     origin, other_origin = f"dossier:{did}", f"dossier:{other_did}"
     key = next(iter(db.get_fiscal_config()))
-    setup = apply_score_extraction(db, state, {"fiscal_creates": [
-        {"key": "待禁裁项", "account": "国库", "direction": "income", "init_value": 2,
-         "origin_ref": origin, "beyond_intent": True},
-        {"key": "普通裁项", "account": "国库", "direction": "income", "init_value": 2,
-         "origin_ref": origin},
-    ], "fiscal_changes": [
-        {"key": key, "delta": 1, "origin_ref": origin, "beyond_intent": True},
-    ]}, content, None, dossier_ids_at_input={did})
-    assert all(not item.get("rejected") for item in setup["fiscal_creates"])
+    setup = settle_delta(state, db, {'fiscal_creates': [{'key': '待禁裁项', 'account': '国库', 'direction': 'income', 'init_value': 2, 'origin_ref': origin, 'beyond_intent': True}, {'key': '普通裁项', 'account': '国库', 'direction': 'income', 'init_value': 2, 'origin_ref': origin}], 'fiscal_changes': [{'key': key, 'delta': 1, 'origin_ref': origin, 'beyond_intent': True}]}, SettlementContext(content=content, dossier_ids_at_input={did}))
+    assert not rejected_view(setup, "fiscal_creates")
     historical_rows = list(db.list_fiscal_effects_for_dossier(did))
     db.conn.execute("UPDATE armies SET arrears=8 WHERE id=?", (army_id,))
     db.conn.execute(
@@ -326,46 +319,17 @@ def test_prohibition_blocks_every_covert_write_but_preserves_ordinary_legs(game)
     )
     _promulgated_prohibition(db, state, did)
 
-    result = apply_score_extraction(db, state, {
-        "fiscal_removes": [
-            {"key": "待禁裁项", "origin_ref": origin, "beyond_intent": True},
-            {"key": "普通裁项", "origin_ref": origin, "reason": "摊派"},
-        ],
-        "fiscal_creates": [
-            {"key": "待禁新项", "account": "国库", "direction": "income", "init_value": 2,
-             "origin_ref": origin, "beyond_intent": True},
-            {"key": "普通新项", "account": "国库", "direction": "income", "init_value": 2,
-             "origin_ref": origin, "reason": "摊派"},
-        ],
-        "fiscal_changes": [
-            {"key": key, "delta": 1, "origin_ref": origin, "beyond_intent": True},
-            {"key": key, "delta": 1, "origin_ref": other_origin, "beyond_intent": True},
-            {"key": key, "delta": 1, "origin_ref": origin, "reason": "摊派"},
-        ],
-        "economy_moves": [
-            {"account": "国库", "delta": 1, "origin_ref": origin, "beyond_intent": True},
-            {"account": "国库", "delta": 1, "origin_ref": other_origin, "beyond_intent": True},
-            {"account": "国库", "delta": 1, "origin_ref": origin, "reason": "摊派"},
-            {"account": "国库", "delta": -2, "purpose": "补饷", "target_kind": "army",
-             "target_id": army_id, "origin_ref": origin},
-        ],
-        "population_transfers": [
-            {"source": "农民@shaanxi", "target": "流民@shaanxi", "amount": 1,
-             "reason": "摊派", "origin_ref": origin},
-            {"source": "农民@shaanxi", "target": "流民@shaanxi", "amount": 1,
-             "reason": "加派", "origin_ref": origin},
-        ],
-    }, content, None, dossier_ids_at_input={did, other_did})
+    result = settle_delta(state, db, {'fiscal_removes': [{'key': '待禁裁项', 'origin_ref': origin, 'beyond_intent': True}, {'key': '普通裁项', 'origin_ref': origin, 'reason': '摊派'}], 'fiscal_creates': [{'key': '待禁新项', 'account': '国库', 'direction': 'income', 'init_value': 2, 'origin_ref': origin, 'beyond_intent': True}, {'key': '普通新项', 'account': '国库', 'direction': 'income', 'init_value': 2, 'origin_ref': origin, 'reason': '摊派'}], 'fiscal_changes': [{'key': key, 'delta': 1, 'origin_ref': origin, 'beyond_intent': True}, {'key': key, 'delta': 1, 'origin_ref': other_origin, 'beyond_intent': True}, {'key': key, 'delta': 1, 'origin_ref': origin, 'reason': '摊派'}], 'economy_moves': [{'account': '国库', 'delta': 1, 'origin_ref': origin, 'beyond_intent': True}, {'account': '国库', 'delta': 1, 'origin_ref': other_origin, 'beyond_intent': True}, {'account': '国库', 'delta': 1, 'origin_ref': origin, 'reason': '摊派'}, {'account': '国库', 'delta': -2, 'purpose': '补饷', 'target_kind': 'army', 'target_id': army_id, 'origin_ref': origin}], 'population_transfers': [{'source': '农民@shaanxi', 'target': '流民@shaanxi', 'amount': 1, 'reason': '摊派', 'origin_ref': origin}, {'source': '农民@shaanxi', 'target': '流民@shaanxi', 'amount': 1, 'reason': '加派', 'origin_ref': origin}]}, SettlementContext(content=content, dossier_ids_at_input={did, other_did}))
 
     for lane in ("fiscal_removes", "fiscal_creates", "fiscal_changes"):
-        assert result[lane][0].get("category") == "forbidden_effect", (lane, result[lane])
-    assert result["economy_moves_rejections"][0]["category"] == "forbidden_effect"
-    assert all(not item.get("rejected") for item in result["fiscal_changes"][1:])
-    assert len(result["economy_moves"]) == 3
-    assert not result["fiscal_removes"][1].get("rejected")
-    assert not result["fiscal_creates"][1].get("rejected")
-    assert result["population_transfers_rejections"][0]["category"] == "forbidden_effect"
-    assert len(result["population_transfers"]) == 1
+        assert rejected_view(result, lane)[0].category == "forbidden_effect", lane
+    assert rejected_view(result, "economy_moves")[0].category == "forbidden_effect"
+    assert len(view(result, "fiscal_changes")) == 2
+    assert len(view(result, "economy_moves")) == 3
+    assert view(result, "fiscal_removes")
+    assert view(result, "fiscal_creates")
+    assert rejected_view(result, "population_transfers")[0].category == "forbidden_effect"
+    assert len(view(result, "population_transfers")) == 1
     assert db.get_fiscal_config().get("待禁裁项_base") == 2
     assert db.get_fiscal_config().get("待禁新项_base") is None
     current_rows = {
@@ -382,14 +346,8 @@ def test_prohibition_neutralizes_once_with_zero_receipt_and_partial_clamp(game, 
     other, _, _, _ = _bound_case(db, state)
     _exposed_todo(db, state, monkeypatch, did)
     key = "禁令反冲_base"
-    apply_score_extraction(db, state, {"fiscal_creates": [{
-        "key": key, "account": "国库", "direction": "income", "init_value": 5,
-        "origin_ref": f"dossier:{other}",
-    }]}, content, None, dossier_ids_at_input={other})
-    apply_score_extraction(db, state, {"fiscal_changes": [
-        {"key": key, "delta": 4, "origin_ref": f"dossier:{did}", "beyond_intent": True},
-        {"key": key, "delta": -8, "origin_ref": f"dossier:{other}"},
-    ]}, content, None, dossier_ids_at_input={did, other})
+    settle_delta(state, db, {'fiscal_creates': [{'key': key, 'account': '国库', 'direction': 'income', 'init_value': 5, 'origin_ref': f'dossier:{other}'}]}, SettlementContext(content=content, dossier_ids_at_input={other}))
+    settle_delta(state, db, {'fiscal_changes': [{'key': key, 'delta': 4, 'origin_ref': f'dossier:{did}', 'beyond_intent': True}, {'key': key, 'delta': -8, 'origin_ref': f'dossier:{other}'}]}, SettlementContext(content=content, dossier_ids_at_input={did, other}))
     prohibition = _promulgated_prohibition(db, state, did)
 
     assert settle_exposure_from_canonical_actions(db, state, {}) == 1
@@ -404,13 +362,7 @@ def test_prohibition_neutralizes_once_with_zero_receipt_and_partial_clamp(game, 
     did2, _, _, _ = _bound_case(db, state)
     _exposed_todo(db, state, monkeypatch, did2)
     key2 = "零值回执_base"
-    apply_score_extraction(db, state, {"fiscal_creates": [{
-        "key": key2, "account": "国库", "direction": "income", "init_value": 1,
-        "origin_ref": f"dossier:{other}",
-    }], "fiscal_changes": [
-        {"key": key2, "delta": 2, "origin_ref": f"dossier:{did2}", "beyond_intent": True},
-        {"key": key2, "delta": -3, "origin_ref": f"dossier:{other}"},
-    ]}, content, None, dossier_ids_at_input={did2, other})
+    settle_delta(state, db, {'fiscal_creates': [{'key': key2, 'account': '国库', 'direction': 'income', 'init_value': 1, 'origin_ref': f'dossier:{other}'}], 'fiscal_changes': [{'key': key2, 'delta': 2, 'origin_ref': f'dossier:{did2}', 'beyond_intent': True}, {'key': key2, 'delta': -3, 'origin_ref': f'dossier:{other}'}]}, SettlementContext(content=content, dossier_ids_at_input={did2, other}))
     prohibition2 = _promulgated_prohibition(db, state, did2)
     assert settle_exposure_from_canonical_actions(db, state, {}) == 1
     zero = db.conn.execute(
@@ -418,9 +370,7 @@ def test_prohibition_neutralizes_once_with_zero_receipt_and_partial_clamp(game, 
         (f"dossier:{prohibition2}", key2),
     ).fetchall()
     assert [(row["old_value"], row["new_value"]) for row in zero] == [(0, 0)]
-    apply_score_extraction(db, state, {"fiscal_changes": [{
-        "key": key2, "delta": 3, "origin_ref": f"dossier:{other}",
-    }]}, content, None, dossier_ids_at_input={other})
+    settle_delta(state, db, {'fiscal_changes': [{'key': key2, 'delta': 3, 'origin_ref': f'dossier:{other}'}]}, SettlementContext(content=content, dossier_ids_at_input={other}))
     assert settle_exposure_from_canonical_actions(db, state, {}) == 0
     assert db.get_fiscal_config()[key2] == 3
 
@@ -432,24 +382,10 @@ def test_prohibition_uses_only_current_canonical_incarnation(game, monkeypatch):
     _exposed_todo(db, state, monkeypatch, did)
     origin, other_origin = f"dossier:{did}", f"dossier:{other}"
     key = "转世税_base"
-    apply_score_extraction(db, state, {"fiscal_creates": [{
-        "key": key, "account": "国库", "direction": "income", "init_value": 3,
-        "origin_ref": other_origin,
-    }], "fiscal_changes": [{
-        "key": key, "delta": 4, "origin_ref": origin, "beyond_intent": True,
-    }]}, content, None, dossier_ids_at_input={did, other})
+    settle_delta(state, db, {'fiscal_creates': [{'key': key, 'account': '国库', 'direction': 'income', 'init_value': 3, 'origin_ref': other_origin}], 'fiscal_changes': [{'key': key, 'delta': 4, 'origin_ref': origin, 'beyond_intent': True}]}, SettlementContext(content=content, dossier_ids_at_input={did, other}))
     state.turn += 1  # the old incarnation predates the canonical replacement batch
     # Production's canonical order is remove -> create -> change in one extraction.
-    apply_score_extraction(db, state, {
-        "fiscal_removes": [{"key": key, "origin_ref": other_origin}],
-        "fiscal_creates": [{
-            "key": key, "account": "国库", "direction": "income", "init_value": 10,
-            "origin_ref": other_origin,
-        }],
-        "fiscal_changes": [{
-            "key": key, "delta": 2, "origin_ref": origin, "beyond_intent": True,
-        }],
-    }, content, None, dossier_ids_at_input={did, other})
+    settle_delta(state, db, {'fiscal_removes': [{'key': key, 'origin_ref': other_origin}], 'fiscal_creates': [{'key': key, 'account': '国库', 'direction': 'income', 'init_value': 10, 'origin_ref': other_origin}], 'fiscal_changes': [{'key': key, 'delta': 2, 'origin_ref': origin, 'beyond_intent': True}]}, SettlementContext(content=content, dossier_ids_at_input={did, other}))
     _promulgated_prohibition(db, state, did)
     assert settle_exposure_from_canonical_actions(db, state, {}) == 1
     assert db.get_fiscal_config()[key] == 10
@@ -460,10 +396,7 @@ def test_prohibition_removes_live_covert_creation_without_rewriting_history(game
     did, _, _, _ = _bound_case(db, state)
     _exposed_todo(db, state, monkeypatch, did)
     origin = f"dossier:{did}"
-    apply_score_extraction(db, state, {"fiscal_creates": [{
-        "key": "暗渠新项_rate", "account": "国库", "direction": "income", "init_value": 6,
-        "origin_ref": origin, "beyond_intent": True,
-    }]}, content, None, dossier_ids_at_input={did})
+    settle_delta(state, db, {'fiscal_creates': [{'key': '暗渠新项_rate', 'account': '国库', 'direction': 'income', 'init_value': 6, 'origin_ref': origin, 'beyond_intent': True}]}, SettlementContext(content=content, dossier_ids_at_input={did}))
     before = list(db.list_fiscal_effects_for_dossier(did))
     prohibition = _promulgated_prohibition(db, state, did)
 
@@ -561,11 +494,11 @@ def test_population_transfer_is_the_self_grown_unrest_channel(game, monkeypatch)
         "origin_ref": f"dossier:{did}", "reason": "摊派", "source": "农民@shaanxi",
         "target": "流民@shaanxi", "amount": 1,
     }]}
-    zero = apply_score_extraction(db, state, extracted, content, None, dossier_ids_at_input={did})
-    assert zero["population_transfers"][0]["amount"] == 0
+    zero = settle_delta(state, db, extracted, SettlementContext(content=content, dossier_ids_at_input={did}))
+    assert view(zero, "population_transfers")[0]["amount"] == 0
     assert write_exposure_todos(db, state, zero) == 0
     db.conn.execute("UPDATE classes SET population=1 WHERE name='农民' AND region_id='shaanxi'")
-    real = apply_score_extraction(db, state, extracted, content, None, dossier_ids_at_input={did})
+    real = settle_delta(state, db, extracted, SettlementContext(content=content, dossier_ids_at_input={did}))
     assert write_exposure_todos(db, state, real) == 1
     todo = db.list_next_audience_todos(status="pending")[0]
     assert todo["payload_json"]["channels"] == ["民变自长"]

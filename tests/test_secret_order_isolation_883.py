@@ -16,6 +16,8 @@ from ming_sim import issues
 from tests.test_due_review_621 import _settle_empty_month
 from tests.test_month_chain_1843 import _prepare_player_month
 from tests.dossier_test_helpers import TYPED_COVERT_TASK, create_test_secret_order
+from ming_sim.settlement import SettlementContext, settle_delta
+from ming_sim.settlement.views import view
 
 
 def _active_ministers(db, content):
@@ -699,25 +701,15 @@ def test_883_only_explicit_leak_conclusion_promotes_secret_order_to_public(game)
     assignee = _active_ministers(db, content)[0]
     oid = create_test_secret_order(db, state, assignee.name, "密查盐案", "甲子密查盐案883", [])
 
-    hidden = issues.apply_score_extraction(
-        db, state,
-        {"secret_order_updates": [{"order_id": oid, "sim_note": "风声渐起"}]},
-        content=content,
-    )
-    assert hidden["secret_order_updates"][0]["disclosed"] is False
+    hidden = settle_delta(state, db, {'secret_order_updates': [{'order_id': oid, 'sim_note': '风声渐起'}]}, SettlementContext(content=content))
+    assert view(hidden, "secret_order_updates")[0]["disclosed"] is False
     assert not any(
         str(item.get("source_id") or "").startswith("secret_order_disclosure:")
         for item in db._character_knowledge_events("")
     )
 
-    shown = issues.apply_score_extraction(
-        db, state,
-        {"secret_order_updates": [
-            {"order_id": oid, "sim_note": "密事已公开883", "disclosed": True},
-        ]},
-        content=content,
-    )
-    assert shown["secret_order_updates"][0]["disclosed"] is True
+    shown = settle_delta(state, db, {'secret_order_updates': [{'order_id': oid, 'sim_note': '密事已公开883', 'disclosed': True}]}, SettlementContext(content=content))
+    assert view(shown, "secret_order_updates")[0]["disclosed"] is True
     public_events = db._character_knowledge_events("")
     assert any(
         str(item.get("source_id") or "").startswith("secret_order_disclosure:")
@@ -732,14 +724,8 @@ def test_883_cross_turn_repeat_disclosed_does_not_mint_duplicate_public_event(ga
     assignee = _active_ministers(db, content)[0]
     oid = create_test_secret_order(db, state, assignee.name, "密查仓案", "丙寅密查仓案883", [])
 
-    first = issues.apply_score_extraction(
-        db, state,
-        {"secret_order_updates": [
-            {"order_id": oid, "sim_note": "首度公开883", "disclosed": True},
-        ]},
-        content=content,
-    )
-    assert first["secret_order_updates"][0]["disclosed"] is True
+    first = settle_delta(state, db, {'secret_order_updates': [{'order_id': oid, 'sim_note': '首度公开883', 'disclosed': True}]}, SettlementContext(content=content))
+    assert view(first, "secret_order_updates")[0]["disclosed"] is True
     prefix = f"secret_order_disclosure:{oid}:"
     after_first = [
         item for item in db._character_knowledge_events("")
@@ -750,14 +736,8 @@ def test_883_cross_turn_repeat_disclosed_does_not_mint_duplicate_public_event(ga
 
     # Advance turn so source_id turn suffix would differ if re-inserted.
     state.turn = int(state.turn) + 1
-    second = issues.apply_score_extraction(
-        db, state,
-        {"secret_order_updates": [
-            {"order_id": oid, "sim_note": "再次填写泄漏结论883", "disclosed": True},
-        ]},
-        content=content,
-    )
-    assert second["secret_order_updates"][0]["disclosed"] is True
+    second = settle_delta(state, db, {'secret_order_updates': [{'order_id': oid, 'sim_note': '再次填写泄漏结论883', 'disclosed': True}]}, SettlementContext(content=content))
+    assert view(second, "secret_order_updates")[0]["disclosed"] is True
     after_second = [
         item for item in db._character_knowledge_events("")
         if str(item.get("source_id") or "").startswith(prefix)

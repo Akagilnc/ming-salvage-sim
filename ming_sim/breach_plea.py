@@ -617,18 +617,16 @@ def reclaim_bundled_authorities(
         "dossier_id": src,
     } for b in bundled]
     # 延迟 import 避循环
-    from ming_sim.issues import apply_score_extraction
-    out = apply_score_extraction(
-        db, state, {"authority_changes": changes}, content=None,
+    from ming_sim.settlement import SettlementContext, settle_delta
+
+    outcome = settle_delta(
+        state, db, {"authority_changes": changes}, SettlementContext(),
     )
-    rows = out.get("authority_changes") or []
-    for item in rows:
-        if isinstance(item, dict) and item.get("rejected"):
-            reason_r = str(item.get("reason") or "捆带授权收回被拒")
-            raise ValueError(reason_r)
-    if len(rows) < len(changes):
+    for rejected in outcome.authority.rejected:
+        raise ValueError(rejected.reason or "捆带授权收回被拒")
+    if len(outcome.authority.applied) < len(changes):
         raise ValueError("捆带授权收回未完整落库")
-    return list(rows) if isinstance(rows, list) else []
+    return list(outcome.authority.applied)
 
 
 def stop_origin_commitment_ticks(

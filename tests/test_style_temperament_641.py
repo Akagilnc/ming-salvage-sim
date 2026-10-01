@@ -19,6 +19,9 @@ from ming_sim.decree import reload_state_from_db
 from ming_sim.issues import apply_issue_inertia_and_ongoing
 from ming_sim.person_archive_contract import format_person_actions
 from ming_sim.relation_read import project_relation_ledger
+from ming_sim.settlement import SettlementContext, settle_delta
+from ming_sim.settlement.views import view
+from ming_sim.settlement.views import rejected_view
 
 
 PERSON = "毛文龙"
@@ -90,17 +93,12 @@ def test_apply_score_extraction_writes_temperament_style_and_log(game):
     before_rt = content.characters[PERSON].style
     assert before_rt == before
 
-    applied = issues.apply_score_extraction(
-        db,
-        state,
-        {"人物变更": [_temperament_item()]},
-        content=content,
-    )
+    applied = settle_delta(state, db, {'人物变更': [_temperament_item()]}, SettlementContext(content=content))
 
     after = _style_row(db)
     assert after == NEW_STYLE
     assert content.characters[PERSON].style == NEW_STYLE
-    assert applied["applied_person_changes"] == [
+    assert view(applied, "applied_person_changes") == [
         {
             "name": PERSON,
             "origin_ref": "盘面自发",
@@ -128,16 +126,11 @@ def test_temperament_style_preserves_raw_bytes_through_write_kernel(game):
     before = _style_row(db)
     assert PADDED_STYLE != PADDED_STYLE.strip()
 
-    applied = issues.apply_score_extraction(
-        db,
-        state,
-        {"人物变更": [_temperament_item(style=PADDED_STYLE)]},
-        content=content,
-    )
+    applied = settle_delta(state, db, {'人物变更': [_temperament_item(style=PADDED_STYLE)]}, SettlementContext(content=content))
 
     assert _style_row(db) == PADDED_STYLE
     assert content.characters[PERSON].style == PADDED_STYLE
-    change = applied["applied_person_changes"][0]
+    change = view(applied, "applied_person_changes")[0]
     assert change == {
         "name": PERSON,
         "origin_ref": "盘面自发",
@@ -160,16 +153,10 @@ def test_temperament_style_preserves_raw_bytes_through_write_kernel(game):
 
     # 纯空白仍拒收（契约保留）。
     blank_before = _style_row(db)
-    blank_out = issues.apply_score_extraction(
-        db,
-        state,
-        {"人物变更": [_temperament_item(style="   \n\t  ")]},
-        content=content,
-    )
+    blank_out = settle_delta(state, db, {'人物变更': [_temperament_item(style='   \n\t  ')]}, SettlementContext(content=content))
     assert _style_row(db) == blank_before
     assert content.characters[PERSON].style == PADDED_STYLE
-    assert blank_out["applied_person_changes"][0]["rejected"] is True
-    assert blank_out["applied_person_changes"][0]["category"] == "invalid_enum"
+    assert rejected_view(blank_out, "applied_person_changes")[0].category == "invalid_enum"
 
 
 def test_temperament_outer_tx_rollback_restores_db_and_runtime(game):
@@ -178,12 +165,7 @@ def test_temperament_outer_tx_rollback_restores_db_and_runtime(game):
     before_rt = content.characters[PERSON].style
 
     db.conn.execute("BEGIN")
-    issues.apply_score_extraction(
-        db,
-        state,
-        {"人物变更": [_temperament_item()]},
-        content=content,
-    )
+    settle_delta(state, db, {'人物变更': [_temperament_item()]}, SettlementContext(content=content))
     # 事务内可见脏写；回滚后须 DB 与运行态同回旧值。
     assert content.characters[PERSON].style == NEW_STYLE
     db.conn.rollback()
@@ -194,12 +176,7 @@ def test_temperament_outer_tx_rollback_restores_db_and_runtime(game):
 
 def test_temperament_committed_style_survives_reload(game):
     db, state, content = game
-    issues.apply_score_extraction(
-        db,
-        state,
-        {"人物变更": [_temperament_item()]},
-        content=content,
-    )
+    settle_delta(state, db, {'人物变更': [_temperament_item()]}, SettlementContext(content=content))
     reload_state_from_db(db, state, content=content)
 
     assert _style_row(db) == NEW_STYLE
@@ -247,28 +224,18 @@ def test_apply_score_extraction_rejects_invalid_temperament(game, item, category
     before_rt = content.characters[PERSON].style if PERSON in content.characters else None
     before_logs = db.conn.execute("SELECT COUNT(*) FROM person_logs").fetchone()[0]
 
-    applied = issues.apply_score_extraction(
-        db,
-        state,
-        {"人物变更": [item]},
-        content=content,
-    )
+    applied = settle_delta(state, db, {'人物变更': [item]}, SettlementContext(content=content))
 
     assert _style_row(db) == before
     if before_rt is not None:
         assert content.characters[PERSON].style == before_rt
     assert db.conn.execute("SELECT COUNT(*) FROM person_logs").fetchone()[0] == before_logs
-    assert applied["applied_person_changes"] == [
-        {
-            "name": item["name"],
-            "origin_ref": "盘面自发",
-            "动作": "性情",
-            "rejected": True,
-            "reason": reason,
-            "category": category,
-            "item": item,
-        }
-    ]
+    assert view(applied, "applied_person_changes") == []
+    refused = rejected_view(applied, "applied_person_changes")
+    assert len(refused) == 1
+    assert refused[0].reason == reason
+    assert refused[0].category == category
+    assert refused[0].item == item
 
 
 def test_character_context_with_db_reads_own_style_and_viewer_ledger(game):
@@ -282,12 +249,7 @@ def test_character_context_with_db_reads_own_style_and_viewer_ledger(game):
         and getattr(c, "power_id", "ming") == "ming"
     )
 
-    issues.apply_score_extraction(
-        db,
-        state,
-        {"人物变更": [_temperament_item()]},
-        content=content,
-    )
+    settle_delta(state, db, {'人物变更': [_temperament_item()]}, SettlementContext(content=content))
 
     db.record_relation_edge_event(
         source=person.name,
@@ -327,12 +289,7 @@ def test_context_passes_raw_style_and_ledger_prose_without_rewrite(game):
     padded_summary_recent = "  近因边事互为援引。\n未改旧约。  "
     padded_edge_context = "  两人在朝上声气相通。\n仍留余地。  "
 
-    issues.apply_score_extraction(
-        db,
-        state,
-        {"人物变更": [_temperament_item(style=PADDED_STYLE)]},
-        content=content,
-    )
+    settle_delta(state, db, {'人物变更': [_temperament_item(style=PADDED_STYLE)]}, SettlementContext(content=content))
     db.apply_relation_brew_result(
         source=person.name,
         target=other.name,
@@ -385,21 +342,8 @@ def test_relation_edge_events_do_not_mutate_style(game):
         ("性情",),
     ).fetchone()["c"]
 
-    out = issues.apply_score_extraction(
-        db,
-        state,
-        {
-            "relation_edge_events": [{
-                "施动者": source,
-                "受动者": target,
-                "类目": "使绊",
-                "语境": "毕自严在户部用度上挡了王绍徽的路。",
-                "来源引用": "盘面自发",
-            }],
-        },
-        content=content,
-    )
-    res = out["relation_edge_event_resolutions"]
+    out = settle_delta(state, db, {'relation_edge_events': [{'施动者': source, '受动者': target, '类目': '使绊', '语境': '毕自严在户部用度上挡了王绍徽的路。', '来源引用': '盘面自发'}]}, SettlementContext(content=content))
+    res = view(out, "relation_edge_event_resolutions")
     assert not any(r.get("rejected") for r in res), res
     rows = db.get_relation_edge_events(source=source, target=target)
     assert len(rows) == 1
@@ -420,12 +364,7 @@ def test_temperament_does_not_write_relation_edges(game):
         "SELECT COUNT(*) AS c FROM relation_edge_events"
     ).fetchone()["c"]
 
-    issues.apply_score_extraction(
-        db,
-        state,
-        {"人物变更": [_temperament_item()]},
-        content=content,
-    )
+    settle_delta(state, db, {'人物变更': [_temperament_item()]}, SettlementContext(content=content))
 
     after_edges = db.conn.execute(
         "SELECT COUNT(*) AS c FROM relation_edge_events"

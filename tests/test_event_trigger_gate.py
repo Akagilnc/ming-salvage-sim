@@ -13,6 +13,26 @@ import pytest
 
 from ming_sim import issues
 from ming_sim.models import Event
+from ming_sim.settlement import SettlementContext, settle_delta
+from ming_sim.settlement.views import (
+    class_deltas,
+    faction_deltas,
+    issue_rows,
+    metric_deltas,
+    rejected_view,
+    shape_rejections,
+    view,
+)
+
+
+def _land(db, state, extracted, *, content=None, ordered_deltas=None,
+          ordered_effect_event_ids=None):
+    """直调落账缝：旧总入口已退役，测试走 settle_delta。"""
+    return settle_delta(
+        state, db, extracted, SettlementContext(content=content),
+        ordered_deltas=ordered_deltas,
+        ordered_effect_event_ids=ordered_effect_event_ids,
+    )
 
 
 def _promulgated_dossier(db, state, decree_text):
@@ -912,14 +932,14 @@ def test_mao_wenlong_event_remains_candidate_while_player_departure_is_in_transi
     with _restore_yuan_as_guanning_commander(db, content):
         assert any(ev.id == "mao_wenlong" for ev in issues.gather_candidate_events(state, db))
 
-        applied = issues.apply_score_extraction(
+        applied = _land(
             db,
             state,
             {"人物变更": [{"origin_ref": "盘面自发", "name": "毛文龙", "动作": "行止", "transit_to": "shaanxi", "reason": "启程赴陕西剿抚"}]},
             content=content,
         )
 
-        assert not applied["applied_person_changes"][0].get("rejected", False)
+        assert view(applied, "applied_person_changes")
         row = db.conn.execute(
             "SELECT location, transit_to FROM characters WHERE name=?",
             ("毛文龙",),
@@ -983,7 +1003,7 @@ def test_ordinary_jinzhou_preparedness_delta_is_not_rejected_as_songshan_outcome
     ).fetchone()["training"]
     origin_ref = _promulgated_dossier(db, state, "整饬锦州战备")
 
-    out = issues.apply_score_extraction(
+    out = _land(
         db,
         state,
         {"army_delta": {"guanning": {"origin_ref": origin_ref, "training": 5, "reason": "奉旨整饬锦州战备"}}},
@@ -993,7 +1013,7 @@ def test_ordinary_jinzhou_preparedness_delta_is_not_rejected_as_songshan_outcome
     assert db.conn.execute(
         "SELECT training FROM armies WHERE id = ?", ("guanning",)
     ).fetchone()["training"] == before + 5
-    assert out["army_changes"][0].get("rejected") is not True
+    assert view(out, "army_changes")
 
 
 def test_strategic_foreign_event_rejects_trigger_without_world_state_delta(game):
@@ -1005,15 +1025,15 @@ def test_strategic_foreign_event_rejects_trigger_without_world_state_delta(game)
 
     assert any(ev.id == "jisi_lubian" for ev in issues.gather_candidate_events(state, db))
 
-    out = issues.apply_score_extraction(
+    out = _land(
         db,
         state,
         {"new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}]},
         content=content,
     )
 
-    assert out["issue_summary"]["new_issues"][0]["rejected"] is True
-    assert "主账" in out["issue_summary"]["new_issues"][0]["reason"]
+    assert rejected_view(out, "issue_summary")
+    assert "主账" in rejected_view(out, "issue_summary")[0].reason
     assert not db.has_event_triggered("jisi_lubian")
 
 
@@ -1044,7 +1064,7 @@ def test_ordinary_army_station_delta_with_strategic_place_anchor_is_not_rejected
     issues.bind_content(content)
     origin_ref = _promulgated_dossier(db, state, "移镇锦州前屯")
 
-    out = issues.apply_score_extraction(
+    out = _land(
         db,
         state,
         {
@@ -1058,7 +1078,7 @@ def test_ordinary_army_station_delta_with_strategic_place_anchor_is_not_rejected
     assert db.conn.execute(
         "SELECT station FROM armies WHERE id = ?", ("guanning",)
     ).fetchone()["station"] == "锦州前屯"
-    assert out["army_changes"][0].get("rejected") is not True
+    assert view(out, "army_changes")
 
 
 def test_lindan_xiqian_does_not_capture_untriggered_beizhili_border_policy_delta(game):
@@ -1069,7 +1089,7 @@ def test_lindan_xiqian_does_not_capture_untriggered_beizhili_border_policy_delta
     state.period = 4
     db.conn.execute("UPDATE regions SET military_pressure = ? WHERE id = ?", (30, "beizhili"))
 
-    out = issues.apply_score_extraction(
+    out = _land(
         db,
         state,
         {
@@ -1087,7 +1107,7 @@ def test_lindan_xiqian_does_not_capture_untriggered_beizhili_border_policy_delta
     assert db.conn.execute(
         "SELECT military_pressure FROM regions WHERE id = ?", ("beizhili",)
     ).fetchone()["military_pressure"] == 27
-    assert out["region_changes"][0].get("rejected") is not True
+    assert view(out, "region_changes")
 
 
 @pytest.mark.parametrize("reason", [
@@ -1102,7 +1122,7 @@ def test_henan_place_policy_delta_does_not_capture_untriggered_fall_events(game,
     state.period = 9
     db.conn.execute("UPDATE regions SET military_pressure = ? WHERE id = ?", (30, "henan"))
 
-    out = issues.apply_score_extraction(
+    out = _land(
         db,
         state,
         {
@@ -1121,7 +1141,7 @@ def test_henan_place_policy_delta_does_not_capture_untriggered_fall_events(game,
     assert db.conn.execute(
         "SELECT military_pressure FROM regions WHERE id = ?", ("henan",)
     ).fetchone()["military_pressure"] == 26
-    assert out["region_changes"][0].get("rejected") is not True
+    assert view(out, "region_changes")
 
 
 def test_henan_bandit_policy_delta_does_not_capture_untriggered_luoyang_event(game):
@@ -1135,7 +1155,7 @@ def test_henan_bandit_policy_delta_does_not_capture_untriggered_luoyang_event(ga
         (52, "bandit_li_zicheng"),
     )
 
-    out = issues.apply_score_extraction(
+    out = _land(
         db,
         state,
         {
@@ -1153,7 +1173,7 @@ def test_henan_bandit_policy_delta_does_not_capture_untriggered_luoyang_event(ga
     assert db.conn.execute(
         "SELECT military_strength FROM powers WHERE id = ?", ("bandit_li_zicheng",)
     ).fetchone()["military_strength"] == 49
-    assert out["power_changes"][0].get("rejected") is not True
+    assert view(out, "power_changes")
 
 
 def test_unrelated_region_delta_does_not_satisfy_strategic_event_result_gate(game):
@@ -1164,7 +1184,7 @@ def test_unrelated_region_delta_does_not_satisfy_strategic_event_result_gate(gam
     state.period = 11
     db.conn.execute("UPDATE regions SET unrest = ? WHERE id = ?", (78, "shaanxi"))
 
-    out = issues.apply_score_extraction(
+    out = _land(
         db,
         state,
         {
@@ -1174,8 +1194,8 @@ def test_unrelated_region_delta_does_not_satisfy_strategic_event_result_gate(gam
         content=content,
     )
 
-    assert out["issue_summary"]["new_issues"][0]["rejected"] is True
-    assert "主账" in out["issue_summary"]["new_issues"][0]["reason"]
+    assert rejected_view(out, "issue_summary")
+    assert "主账" in rejected_view(out, "issue_summary")[0].reason
     assert not db.has_event_triggered("jisi_lubian")
     assert db.conn.execute(
         "SELECT unrest FROM regions WHERE id = ?", ("shaanxi",)
@@ -1190,7 +1210,7 @@ def test_target_region_delta_without_event_anchor_does_not_satisfy_strategic_eve
     state.period = 11
     db.conn.execute("UPDATE regions SET unrest = ? WHERE id = ?", (78, "beizhili"))
 
-    out = issues.apply_score_extraction(
+    out = _land(
         db,
         state,
         {
@@ -1200,13 +1220,13 @@ def test_target_region_delta_without_event_anchor_does_not_satisfy_strategic_eve
         content=content,
     )
 
-    assert out["issue_summary"]["new_issues"][0]["rejected"] is True
-    assert "主账" in out["issue_summary"]["new_issues"][0]["reason"]
+    assert rejected_view(out, "issue_summary")
+    assert "主账" in rejected_view(out, "issue_summary")[0].reason
     assert not db.has_event_triggered("jisi_lubian")
     assert db.conn.execute(
         "SELECT unrest FROM regions WHERE id = ?", ("beizhili",)
     ).fetchone()["unrest"] == 79
-    assert out["region_changes"][0].get("rejected") is not True
+    assert view(out, "region_changes")
 
 
 def test_unrelated_person_delta_does_not_satisfy_strategic_event_result_gate(game):
@@ -1217,7 +1237,7 @@ def test_unrelated_person_delta_does_not_satisfy_strategic_event_result_gate(gam
     state.period = 11
     db.conn.execute("UPDATE characters SET status = ? WHERE name = ?", ("active", "孙传庭"))
 
-    out = issues.apply_score_extraction(
+    out = _land(
         db,
         state,
         {
@@ -1227,11 +1247,11 @@ def test_unrelated_person_delta_does_not_satisfy_strategic_event_result_gate(gam
         content=content,
     )
 
-    assert out["issue_summary"]["new_issues"][0]["rejected"] is True
-    assert "主账" in out["issue_summary"]["new_issues"][0]["reason"]
+    assert rejected_view(out, "issue_summary")
+    assert "主账" in rejected_view(out, "issue_summary")[0].reason
     assert not db.has_event_triggered("jisi_lubian")
     assert db.get_character_status("孙传庭")[0] == "dead"
-    assert out["applied_person_changes"][0].get("rejected") is not True
+    assert view(out, "applied_person_changes")
 
 
 def test_unrelated_person_delta_with_event_anchor_does_not_satisfy_strategic_event_result_gate(game):
@@ -1242,7 +1262,7 @@ def test_unrelated_person_delta_with_event_anchor_does_not_satisfy_strategic_eve
     state.period = 11
     db.conn.execute("UPDATE characters SET status = ? WHERE name = ?", ("active", "孙传庭"))
 
-    out = issues.apply_score_extraction(
+    out = _land(
         db,
         state,
         {
@@ -1252,11 +1272,11 @@ def test_unrelated_person_delta_with_event_anchor_does_not_satisfy_strategic_eve
         content=content,
     )
 
-    assert out["issue_summary"]["new_issues"][0]["rejected"] is True
-    assert "主账" in out["issue_summary"]["new_issues"][0]["reason"]
+    assert rejected_view(out, "issue_summary")
+    assert "主账" in rejected_view(out, "issue_summary")[0].reason
     assert not db.has_event_triggered("jisi_lubian")
     assert db.get_character_status("孙传庭")[0] == "dead"
-    assert out["applied_person_changes"][0].get("rejected") is not True
+    assert view(out, "applied_person_changes")
 
 
 def test_target_person_delta_without_event_anchor_does_not_satisfy_strategic_event_result_gate(game):
@@ -1267,7 +1287,7 @@ def test_target_person_delta_without_event_anchor_does_not_satisfy_strategic_eve
     state.period = 9
     db.conn.execute("UPDATE characters SET status = ? WHERE name = ?", ("active", "卢象升"))
 
-    out = issues.apply_score_extraction(
+    out = _land(
         db,
         state,
         {
@@ -1277,11 +1297,11 @@ def test_target_person_delta_without_event_anchor_does_not_satisfy_strategic_eve
         content=content,
     )
 
-    assert out["issue_summary"]["new_issues"][0]["rejected"] is True
-    assert "主账" in out["issue_summary"]["new_issues"][0]["reason"]
+    assert rejected_view(out, "issue_summary")
+    assert "主账" in rejected_view(out, "issue_summary")[0].reason
     assert not db.has_event_triggered("wuyin_lubian")
     assert db.get_character_status("卢象升")[0] == "dead"
-    assert out["applied_person_changes"][0].get("rejected") is not True
+    assert view(out, "applied_person_changes")
 
 
 def test_rejected_strategic_foreign_event_preserves_unrelated_region_delta(game):
@@ -1293,7 +1313,7 @@ def test_rejected_strategic_foreign_event_preserves_unrelated_region_delta(game)
     db.mark_event_triggered(state, "jisi_lubian")
     db.conn.execute("UPDATE regions SET unrest = ? WHERE id = ?", (78, "shaanxi"))
 
-    out = issues.apply_score_extraction(
+    out = _land(
         db,
         state,
         {
@@ -1303,8 +1323,8 @@ def test_rejected_strategic_foreign_event_preserves_unrelated_region_delta(game)
         content=content,
     )
 
-    assert out["issue_summary"]["new_issues"][0]["rejected"] is True
-    assert "候选" in out["issue_summary"]["new_issues"][0]["reason"]
+    assert rejected_view(out, "issue_summary")
+    assert "候选" in rejected_view(out, "issue_summary")[0].reason
     assert db.conn.execute(
         "SELECT unrest FROM regions WHERE id = ?", ("shaanxi",)
     ).fetchone()["unrest"] == 79
@@ -1319,7 +1339,7 @@ def test_rejected_strategic_event_preserves_unanchored_target_region_delta(game)
     db.mark_event_triggered(state, "jisi_lubian")
     db.conn.execute("UPDATE regions SET unrest = ? WHERE id = ?", (78, "beizhili"))
 
-    out = issues.apply_score_extraction(
+    out = _land(
         db,
         state,
         {
@@ -1329,12 +1349,12 @@ def test_rejected_strategic_event_preserves_unanchored_target_region_delta(game)
         content=content,
     )
 
-    assert out["issue_summary"]["new_issues"][0]["rejected"] is True
-    assert "候选" in out["issue_summary"]["new_issues"][0]["reason"]
+    assert rejected_view(out, "issue_summary")
+    assert "候选" in rejected_view(out, "issue_summary")[0].reason
     assert db.conn.execute(
         "SELECT unrest FROM regions WHERE id = ?", ("beizhili",)
     ).fetchone()["unrest"] == 79
-    assert out["region_changes"][0].get("rejected") is not True
+    assert view(out, "region_changes")
 
 
 def test_rejected_strategic_event_preserves_unrelated_person_delta(game):
@@ -1346,7 +1366,7 @@ def test_rejected_strategic_event_preserves_unrelated_person_delta(game):
     db.mark_event_triggered(state, "jisi_lubian")
     db.conn.execute("UPDATE characters SET status = ? WHERE name = ?", ("active", "孙传庭"))
 
-    out = issues.apply_score_extraction(
+    out = _land(
         db,
         state,
         {
@@ -1356,10 +1376,10 @@ def test_rejected_strategic_event_preserves_unrelated_person_delta(game):
         content=content,
     )
 
-    assert out["issue_summary"]["new_issues"][0]["rejected"] is True
-    assert "候选" in out["issue_summary"]["new_issues"][0]["reason"]
+    assert rejected_view(out, "issue_summary")
+    assert "候选" in rejected_view(out, "issue_summary")[0].reason
     assert db.get_character_status("孙传庭")[0] == "dead"
-    assert out["applied_person_changes"][0].get("rejected") is not True
+    assert view(out, "applied_person_changes")
 
 
 def test_rejected_strategic_event_does_not_land_substitute_commander_person_delta(game):
@@ -1371,7 +1391,7 @@ def test_rejected_strategic_event_does_not_land_substitute_commander_person_delt
     db.mark_event_triggered(state, "songshan_battle")
     db.conn.execute("UPDATE characters SET status = ? WHERE name = ?", ("active", "孙传庭"))
 
-    out = issues.apply_score_extraction(
+    out = _land(
         db,
         state,
         {
@@ -1389,17 +1409,16 @@ def test_rejected_strategic_event_does_not_land_substitute_commander_person_delt
         ordered_effect_event_ids={"人物变更": ["", "songshan_battle"]},
     )
 
-    assert out["issue_summary"]["new_issues"][0]["rejected"] is True
-    assert "候选" in out["issue_summary"]["new_issues"][0]["reason"]
+    assert rejected_view(out, "issue_summary")
+    assert "候选" in rejected_view(out, "issue_summary")[0].reason
     assert db.get_character_status("孙传庭")[0] == "active"
-    assert len(out["applied_person_changes"]) == 1
-    assert out["applied_person_changes"][0]["rejected"] is True
+    refused_people = rejected_view(out, "applied_person_changes")
+    assert len(refused_people) == 1
     assert all(
-        "_effect_event_id" not in rejection["item"]
-        for rejection in out["validate_shape_rejections"]
-        if isinstance(rejection.get("item"), dict)
+        not (isinstance(rejection.item, dict) and "_effect_event_id" in rejection.item)
+        for rejection in shape_rejections(out)
     )
-    assert "战果不落" in out["applied_person_changes"][0]["reason"]
+    assert "战果不落" in refused_people[0].reason
 
 
 def test_pending_gate_uses_same_place_canonical_terminal_state(game):
@@ -1522,13 +1541,13 @@ def test_apply_score_extraction_metric_delta_restores_runtime_on_outer_rollback(
     db.conn.commit()
 
     db.conn.execute("BEGIN")
-    out = issues.apply_score_extraction(
+    out = _land(
         db,
         state,
         {"metric_delta": {"民心": -7}},
         content=content,
     )
-    assert out["metric_delta"]["民心"] == -7
+    assert metric_deltas(out)["民心"] == -7
     assert state.metrics["民心"] == 43
     db.conn.rollback()
 
@@ -2419,7 +2438,7 @@ def test_event_pool_uses_candidate_snapshot_before_top_level_metric_delta(game):
     try:
         assert all(c.id != ev.id for c in issues.gather_candidate_events(state, db))
 
-        out = issues.apply_score_extraction(
+        out = _land(
             db,
             state,
             {
@@ -2430,8 +2449,8 @@ def test_event_pool_uses_candidate_snapshot_before_top_level_metric_delta(game):
         )
 
         assert state.metrics["民心"] == 5
-        assert out["issue_summary"]["new_issues"][0]["rejected"] is True
-        assert "候选" in out["issue_summary"]["new_issues"][0]["reason"]
+        assert rejected_view(out, "issue_summary")
+        assert "候选" in rejected_view(out, "issue_summary")[0].reason
         assert not db.has_event_triggered(ev.id)
     finally:
         content.seed_events.remove(ev)
@@ -2886,13 +2905,13 @@ def test_apply_score_extraction_top_level_economy_respects_outer_transaction_rol
     db.conn.commit()
 
     db.conn.execute("BEGIN")
-    out = issues.apply_score_extraction(
+    out = _land(
         db,
         state,
         {"economy_moves": [{"origin_ref": "盘面自发", "account": "国库", "delta": -1, "category": "测试", "reason": reason}]},
         content=content,
     )
-    assert out["economy_moves"][0]["reason"] == reason
+    assert view(out, "economy_moves")[0]["reason"] == reason
     db.conn.rollback()
 
     assert db.conn.execute(
@@ -2908,13 +2927,13 @@ def test_apply_score_extraction_fiscal_changes_respect_outer_transaction_rollbac
     db.conn.commit()
 
     db.conn.execute("BEGIN")
-    out = issues.apply_score_extraction(
+    out = _land(
         db,
         state,
         {"fiscal_changes": [{"origin_ref": "盘面自发", "key": key, "delta": 1, "reason": "测试顶层财政事务R7"}]},
         content=content,
     )
-    assert out["fiscal_changes"][0]["key"] == key
+    assert view(out, "fiscal_changes")[0]["key"] == key
     db.conn.rollback()
 
     assert db.get_fiscal_config()[key] == before
@@ -2934,13 +2953,13 @@ def test_apply_score_extraction_class_delta_respects_outer_transaction_rollback(
     db.conn.commit()
 
     db.conn.execute("BEGIN")
-    out = issues.apply_score_extraction(
+    out = _land(
         db,
         state,
         {"class_delta": {class_key: {"satisfaction": -1}}},
         content=content,
     )
-    assert out["class_delta"][class_key]["satisfaction"] == -1
+    assert class_deltas(out)[class_key]["satisfaction"] == -1
     db.conn.rollback()
 
     if row["region_id"] is None:
@@ -2978,7 +2997,7 @@ def test_apply_score_extraction_top_level_entity_deltas_respect_outer_transactio
     db.conn.commit()
 
     db.conn.execute("BEGIN")
-    out = issues.apply_score_extraction(
+    out = _land(
         db,
         state,
         {
@@ -2992,17 +3011,23 @@ def test_apply_score_extraction_top_level_entity_deltas_respect_outer_transactio
                     "name": "测试顶层事务营",
                     "owner_power": "ming",
                     "manpower": 100,
+                    "pay_source_region": "shaanxi",
+                    "province_pay_share": 1.0,
+                    "central_pay_share": 0.0,
                     "reason": "测试顶层建军事务R7",
                 }
             ],
         },
         content=content,
     )
-    assert out["region_changes"]
-    assert out["army_changes"]
-    assert out["power_changes"]
-    assert out["faction_delta"]
-    assert out["created_armies"][0]["id"] == new_army_id
+    assert view(out, "region_changes")
+    assert view(out, "army_changes")
+    assert view(out, "power_changes")
+    assert faction_deltas(out)
+    assert any(
+        isinstance(item, dict) and item.get("id") == new_army_id
+        for item in view(out, "army_changes")
+    )
     db.conn.rollback()
 
     assert db.conn.execute(
@@ -3033,7 +3058,7 @@ def test_apply_score_extraction_fiscal_create_and_remove_respect_outer_transacti
     db.conn.commit()
 
     db.conn.execute("BEGIN")
-    out = issues.apply_score_extraction(
+    out = _land(
         db,
         state,
         {
@@ -3051,8 +3076,8 @@ def test_apply_score_extraction_fiscal_create_and_remove_respect_outer_transacti
         },
         content=content,
     )
-    assert out["fiscal_removes"][0]["key"] == f"{db._stem_of(remove_key)}_base"
-    assert out["fiscal_creates"][0]["key"] == created_key
+    assert view(out, "fiscal_removes")[0]["key"] == f"{db._stem_of(remove_key)}_base"
+    assert view(out, "fiscal_creates")[0]["key"] == created_key
     db.conn.rollback()
 
     assert remove_key in db.get_fiscal_config()
@@ -3092,7 +3117,7 @@ def test_event_pool_pending_invalid_location_does_not_block_gate(game):
     try:
         assert any(c.id == ev.id for c in issues.gather_candidate_events(state, db))
 
-        out = issues.apply_score_extraction(
+        out = _land(
             db,
             state,
             {
@@ -3102,10 +3127,9 @@ def test_event_pool_pending_invalid_location_does_not_block_gate(game):
             content=content,
         )
 
-        new_issue = out["issue_summary"]["new_issues"][0]
+        new_issue = issue_rows(out, "new_issues")[0]
         assert new_issue["rejected"] is False
-        assert out["applied_person_changes"][0]["rejected"] is True
-        assert out["applied_person_changes"][0]["category"] == "invalid_transition"
+        assert rejected_view(out, "applied_person_changes")[0].category == "invalid_transition"
         assert db.conn.execute(
             "SELECT id FROM issues WHERE origin_kind='event_pool' AND origin_ref=?",
             (ev.id,),
@@ -3142,7 +3166,7 @@ def test_event_pool_pending_invalid_appointment_does_not_block_gate(game):
     content.seed_events.append(ev)
     content.event_by_id[ev.id] = ev
     try:
-        out = issues.apply_score_extraction(
+        out = _land(
             db,
             state,
             {
@@ -3152,8 +3176,8 @@ def test_event_pool_pending_invalid_appointment_does_not_block_gate(game):
             content=content,
         )
 
-        assert out["issue_summary"]["new_issues"][0]["rejected"] is False
-        assert out["applied_person_changes"][0]["rejected"] is True
+        assert issue_rows(out, "new_issues")[0]
+        assert rejected_view(out, "applied_person_changes")
         assert db.conn.execute(
             "SELECT id FROM issues WHERE origin_kind='event_pool' AND origin_ref=?",
             (ev.id,),
@@ -3187,7 +3211,7 @@ def test_event_pool_pending_invalid_allegiance_change_does_not_block_gate(game):
     content.seed_events.append(ev)
     content.event_by_id[ev.id] = ev
     try:
-        out = issues.apply_score_extraction(
+        out = _land(
             db,
             state,
             {
@@ -3197,8 +3221,8 @@ def test_event_pool_pending_invalid_allegiance_change_does_not_block_gate(game):
             content=content,
         )
 
-        assert out["issue_summary"]["new_issues"][0]["rejected"] is False
-        assert out["applied_person_changes"][0]["rejected"] is True
+        assert issue_rows(out, "new_issues")[0]
+        assert rejected_view(out, "applied_person_changes")
         assert db.conn.execute(
             "SELECT id FROM issues WHERE origin_kind='event_pool' AND origin_ref=?",
             (ev.id,),
@@ -3239,7 +3263,7 @@ def test_event_pool_pending_disposition_clears_office_gate(game):
     try:
         assert any(c.id == ev.id for c in issues.gather_candidate_events(state, db))
 
-        out = issues.apply_score_extraction(
+        out = _land(
             db,
             state,
             {
@@ -3249,9 +3273,9 @@ def test_event_pool_pending_disposition_clears_office_gate(game):
             content=content,
         )
 
-        new_issue = out["issue_summary"]["new_issues"][0]
-        assert new_issue["rejected"] is True
-        assert "候选" in new_issue["reason"]
+        refused = rejected_view(out, "issue_summary")
+        assert refused
+        assert "候选" in refused[0].reason
         assert db.conn.execute(
             "SELECT id FROM issues WHERE origin_kind='event_pool' AND origin_ref=?",
             (ev.id,),
@@ -3296,7 +3320,7 @@ def test_event_pool_pending_invalid_location_does_not_clear_transit_gate(game):
     try:
         assert any(c.id == ev.id for c in issues.gather_candidate_events(state, db))
 
-        out = issues.apply_score_extraction(
+        out = _land(
             db,
             state,
             {
@@ -3306,10 +3330,9 @@ def test_event_pool_pending_invalid_location_does_not_clear_transit_gate(game):
             content=content,
         )
 
-        new_issue = out["issue_summary"]["new_issues"][0]
+        new_issue = issue_rows(out, "new_issues")[0]
         assert new_issue["rejected"] is False
-        assert out["applied_person_changes"][0]["rejected"] is True
-        assert out["applied_person_changes"][0]["category"] == "invalid_transition"
+        assert rejected_view(out, "applied_person_changes")[0].category == "invalid_transition"
         assert db.conn.execute(
             "SELECT id FROM issues WHERE origin_kind='event_pool' AND origin_ref=?",
             (ev.id,),
@@ -3353,7 +3376,7 @@ def test_event_pool_pending_power_change_blocks_gate(game):
     try:
         assert any(c.id == ev.id for c in issues.gather_candidate_events(state, db))
 
-        out = issues.apply_score_extraction(
+        out = _land(
             db,
             state,
             {
@@ -3369,9 +3392,9 @@ def test_event_pool_pending_power_change_blocks_gate(game):
             content=content,
         )
 
-        new_issue = out["issue_summary"]["new_issues"][0]
-        assert new_issue["rejected"] is True
-        assert "候选" in new_issue["reason"]
+        refused = rejected_view(out, "issue_summary")
+        assert refused
+        assert "候选" in refused[0].reason
         assert db.conn.execute(
             "SELECT id FROM issues WHERE origin_kind='event_pool' AND origin_ref=?",
             (ev.id,),
@@ -3415,7 +3438,7 @@ def test_event_pool_pending_same_power_allegiance_noop_does_not_block_gate(game)
     content.seed_events.append(ev)
     content.event_by_id[ev.id] = ev
     try:
-        out = issues.apply_score_extraction(
+        out = _land(
             db,
             state,
             {
@@ -3434,9 +3457,8 @@ def test_event_pool_pending_same_power_allegiance_noop_does_not_block_gate(game)
             content=content,
         )
 
-        assert out["issue_summary"]["new_issues"][0]["rejected"] is False
-        assert out["applied_person_changes"][0]["rejected"] is True
-        assert out["applied_person_changes"][0]["category"] == "noop"
+        assert issue_rows(out, "new_issues")[0]
+        assert rejected_view(out, "applied_person_changes")[0].category == "noop"
         assert db.conn.execute(
             "SELECT id FROM issues WHERE origin_kind='event_pool' AND origin_ref=?",
             (ev.id,),
@@ -3484,7 +3506,7 @@ def test_event_pool_pending_allegiance_backlash_blocks_power_gate(game):
     content.seed_events.append(ev)
     content.event_by_id[ev.id] = ev
     try:
-        out = issues.apply_score_extraction(
+        out = _land(
             db,
             state,
             {
@@ -3503,7 +3525,7 @@ def test_event_pool_pending_allegiance_backlash_blocks_power_gate(game):
             content=content,
         )
 
-        assert out["issue_summary"]["new_issues"][0]["rejected"] is True
+        assert rejected_view(out, "issue_summary")
         assert db.conn.execute(
             "SELECT leverage FROM powers WHERE id=?",
             ("houjin",),
@@ -3529,7 +3551,7 @@ def test_event_pool_pending_person_changes_are_simulated_sequentially(game):
     )
     db.conn.execute("UPDATE characters SET status=? WHERE name=?", ("active", "袁崇焕"))
 
-    out = issues.apply_score_extraction(
+    out = _land(
         db,
         state,
         {
@@ -3542,14 +3564,14 @@ def test_event_pool_pending_person_changes_are_simulated_sequentially(game):
         content=content,
     )
 
-    new_issue = out["issue_summary"]["new_issues"][0]
-    assert new_issue["rejected"] is True
-    assert "候选" in new_issue["reason"]
+    refused = rejected_view(out, "issue_summary")
+    assert refused
+    assert "候选" in refused[0].reason
     assert not db.has_event_triggered("mao_wenlong")
     assert db.get_character_status("毛文龙")[0] == "active"
     assert db.get_character_status("袁崇焕")[0] == "dead"
-    assert out["applied_person_changes"][0]["status"] == "dead"
-    assert out["applied_person_changes"][1]["rejected"] is True
+    assert view(out, "applied_person_changes")[0]["status"] == "dead"
+    assert rejected_view(out, "applied_person_changes")
 
 
 def test_apply_score_extraction_appointment_rolls_back_with_outer_transaction(game):
@@ -3572,7 +3594,7 @@ def test_apply_score_extraction_appointment_rolls_back_with_outer_transaction(ga
 
     with pytest.raises(RuntimeError):
         with atomic(db):
-            issues.apply_score_extraction(
+            _land(
                 db,
                 state,
                 {"人物变更": [{"origin_ref": "盘面自发", "name": "韩爌", "动作": "任命", "office": "兵部尚书"}]},
@@ -3618,7 +3640,7 @@ def test_event_pool_pending_alias_appointment_blocks_canonical_gate(game):
     content.seed_events.append(ev)
     content.event_by_id[ev.id] = ev
     try:
-        out = issues.apply_score_extraction(
+        out = _land(
             db,
             state,
             {
@@ -3628,8 +3650,8 @@ def test_event_pool_pending_alias_appointment_blocks_canonical_gate(game):
             content=content,
         )
 
-        assert out["issue_summary"]["new_issues"][0]["rejected"] is True
-        assert out["applied_person_changes"][0]["name"] == "韩爌"
+        assert rejected_view(out, "issue_summary")
+        assert view(out, "applied_person_changes")[0]["name"] == "韩爌"
         assert db.conn.execute(
             "SELECT office FROM characters WHERE name=?",
             ("韩爌",),
@@ -3673,7 +3695,7 @@ def test_event_pool_pending_alias_disposition_blocks_canonical_gate(game):
     content.seed_events.append(ev)
     content.event_by_id[ev.id] = ev
     try:
-        out = issues.apply_score_extraction(
+        out = _land(
             db,
             state,
             {
@@ -3685,8 +3707,8 @@ def test_event_pool_pending_alias_disposition_blocks_canonical_gate(game):
             content=content,
         )
 
-        assert out["issue_summary"]["new_issues"][0]["rejected"] is True
-        assert out["applied_person_changes"][0]["name"] == "韩爌"
+        assert rejected_view(out, "issue_summary")
+        assert view(out, "applied_person_changes")[0]["name"] == "韩爌"
         row = db.conn.execute(
             "SELECT status, office FROM characters WHERE name=?",
             ("韩爌",),
@@ -3854,7 +3876,7 @@ def test_event_pool_pending_rejected_vassal_appointment_does_not_block_gate(game
     content.seed_events.append(ev)
     content.event_by_id[ev.id] = ev
     try:
-        out = issues.apply_score_extraction(
+        out = _land(
             db,
             state,
             {
@@ -3864,9 +3886,8 @@ def test_event_pool_pending_rejected_vassal_appointment_does_not_block_gate(game
             content=content,
         )
 
-        assert out["issue_summary"]["new_issues"][0]["rejected"] is False
-        assert out["applied_person_changes"][0]["rejected"] is True
-        assert "宗藩" in out["applied_person_changes"][0]["reason"]
+        assert issue_rows(out, "new_issues")[0]
+        assert "宗藩" in rejected_view(out, "applied_person_changes")[0].reason
         assert db.conn.execute(
             "SELECT office FROM characters WHERE name=?",
             ("朱常洵",),
@@ -3920,7 +3941,7 @@ def test_event_pool_pending_appointment_displacement_blocks_displaced_office_gat
     content.seed_events.append(ev)
     content.event_by_id[ev.id] = ev
     try:
-        out = issues.apply_score_extraction(
+        out = _land(
             db,
             state,
             {
@@ -3930,7 +3951,7 @@ def test_event_pool_pending_appointment_displacement_blocks_displaced_office_gat
             content=content,
         )
 
-        assert out["issue_summary"]["new_issues"][0]["rejected"] is True
+        assert rejected_view(out, "issue_summary")
         assert db.conn.execute(
             "SELECT office FROM characters WHERE name=?",
             ("崔呈秀",),
@@ -3976,7 +3997,7 @@ def test_event_pool_pending_appointment_clears_reason_gate(game):
     content.seed_events.append(ev)
     content.event_by_id[ev.id] = ev
     try:
-        out = issues.apply_score_extraction(
+        out = _land(
             db,
             state,
             {
@@ -3986,7 +4007,7 @@ def test_event_pool_pending_appointment_clears_reason_gate(game):
             content=content,
         )
 
-        assert out["issue_summary"]["new_issues"][0]["rejected"] is True
+        assert rejected_view(out, "issue_summary")
         row = db.conn.execute(
             "SELECT status, reason_code, status_reason FROM characters WHERE name=?",
             ("钱谦益",),
@@ -4029,7 +4050,7 @@ def test_event_pool_pending_appointment_updates_office_type_gate(game):
     content.seed_events.append(ev)
     content.event_by_id[ev.id] = ev
     try:
-        out = issues.apply_score_extraction(
+        out = _land(
             db,
             state,
             {
@@ -4039,7 +4060,7 @@ def test_event_pool_pending_appointment_updates_office_type_gate(game):
             content=content,
         )
 
-        assert out["issue_summary"]["new_issues"][0]["rejected"] is True
+        assert rejected_view(out, "issue_summary")
         assert db.conn.execute(
             "SELECT office_type FROM characters WHERE name=?",
             ("韩爌",),
@@ -4079,7 +4100,7 @@ def test_event_pool_pending_appointment_normalizes_equivalent_office(game):
     content.seed_events.append(ev)
     content.event_by_id[ev.id] = ev
     try:
-        out = issues.apply_score_extraction(
+        out = _land(
             db,
             state,
             {
@@ -4089,7 +4110,7 @@ def test_event_pool_pending_appointment_normalizes_equivalent_office(game):
             content=content,
         )
 
-        assert out["issue_summary"]["new_issues"][0]["rejected"] is False
+        assert issue_rows(out, "new_issues")[0]
         assert db.conn.execute(
             "SELECT office FROM characters WHERE name=?",
             ("袁崇焕",),
@@ -4187,7 +4208,7 @@ def test_mao_wenlong_event_pool_rechecks_after_same_turn_loyalty_assessment(game
     db.conn.execute("UPDATE characters SET loyalty = ?, status = ? WHERE name = ?", (60, "active", "毛文龙"))
     db.conn.execute("UPDATE characters SET status = ? WHERE name = ?", ("active", "袁崇焕"))
 
-    out = issues.apply_score_extraction(
+    out = _land(
         db,
         state,
         {
@@ -4197,8 +4218,8 @@ def test_mao_wenlong_event_pool_rechecks_after_same_turn_loyalty_assessment(game
         content=content,
     )
 
-    assert out["issue_summary"]["new_issues"][0]["rejected"] is True
-    assert "候选" in out["issue_summary"]["new_issues"][0]["reason"]
+    assert rejected_view(out, "issue_summary")
+    assert "候选" in rejected_view(out, "issue_summary")[0].reason
     assert not db.has_event_triggered("mao_wenlong")
     assert db.get_character_status("毛文龙")[0] == "active"
     assert db.conn.execute("SELECT loyalty FROM characters WHERE name=?", ("毛文龙",)).fetchone()["loyalty"] == 70
@@ -4213,7 +4234,7 @@ def test_mao_wenlong_event_pool_rechecks_after_same_turn_yuan_dismissal(game):
     db.conn.execute("UPDATE characters SET loyalty = ?, status = ? WHERE name = ?", (44, "active", "毛文龙"))
     db.conn.execute("UPDATE characters SET status = ? WHERE name = ?", ("active", "袁崇焕"))
 
-    out = issues.apply_score_extraction(
+    out = _land(
         db,
         state,
         {
@@ -4223,8 +4244,8 @@ def test_mao_wenlong_event_pool_rechecks_after_same_turn_yuan_dismissal(game):
         content=content,
     )
 
-    assert out["issue_summary"]["new_issues"][0]["rejected"] is True
-    assert "候选" in out["issue_summary"]["new_issues"][0]["reason"]
+    assert rejected_view(out, "issue_summary")
+    assert "候选" in rejected_view(out, "issue_summary")[0].reason
     assert not db.has_event_triggered("mao_wenlong")
     assert db.get_character_status("毛文龙")[0] == "active"
     assert db.get_character_status("袁崇焕")[0] == "dismissed"
@@ -4239,7 +4260,7 @@ def test_invalid_pending_person_change_does_not_block_event_gate(game):
     db.conn.execute("UPDATE characters SET loyalty = ?, status = ? WHERE name = ?", (44, "active", "毛文龙"))
 
     with _restore_yuan_as_guanning_commander(db, content):
-        out = issues.apply_score_extraction(
+        out = _land(
             db,
             state,
             {
@@ -4249,12 +4270,11 @@ def test_invalid_pending_person_change_does_not_block_event_gate(game):
             content=content,
         )
 
-        assert out["issue_summary"]["new_issues"][0]["rejected"] is False
+        assert issue_rows(out, "new_issues")[0]
         assert db.has_event_triggered("mao_wenlong")
         assert db.get_character_status("毛文龙")[0] == "dead"
         assert db.get_character_status("袁崇焕")[0] == "active"
-        assert out["applied_person_changes"][0]["rejected"] is True
-        assert out["applied_person_changes"][0]["category"] == "invalid_transition"
+        assert rejected_view(out, "applied_person_changes")[0].category == "invalid_transition"
 
 
 def test_mao_wenlong_event_obsolete_when_core_subject_already_dead(game):

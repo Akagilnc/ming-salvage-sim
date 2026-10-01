@@ -5,6 +5,12 @@ import pytest
 
 from ming_sim import issues
 from ming_sim.issues import apply_office_appointment
+from ming_sim.settlement import SettlementContext, settle_delta
+from ming_sim.settlement.views import rejected_view, view
+
+
+def _land(db, state, extracted, *, content=None):
+    return settle_delta(state, db, extracted, SettlementContext(content=content))
 from ming_sim.decree import reload_state_from_db
 from ming_sim.session import apply_appointment
 
@@ -38,7 +44,7 @@ def test_departure_rejects_nonfinite_distance_before_ledger_write(game, monkeypa
     )
 
     with pytest.raises(ValueError, match="invalid baked travel time"):
-        issues.apply_score_extraction(db, state, {"人物变更": [{
+        _land(db, state, {"人物变更": [{
             "name": name, "origin_ref": "盘面自发", "动作": "行止",
             "transit_to": "liaodong",
         }]}, content=content)
@@ -65,7 +71,7 @@ def test_departure_reads_matrix_from_frozen_bundle_outside_cwd(game, monkeypatch
     monkeypatch.setattr(sys, "_MEIPASS", str(bundle), raising=False)
     monkeypatch.chdir(elsewhere)
 
-    issues.apply_score_extraction(db, state, {"人物变更": [{
+    _land(db, state, {"人物变更": [{
         "name": name, "origin_ref": "盘面自发", "动作": "行止", "transit_to": "liaodong",
     }]}, content=content)
 
@@ -86,7 +92,7 @@ def test_departure_rejects_location_shapes_without_mutation(game, payload):
         "FROM characters WHERE name=?", (name,),
     ).fetchone())
 
-    result = issues.apply_score_extraction(db, state, {"人物变更": [{
+    result = _land(db, state, {"人物变更": [{
         "name": name, "origin_ref": "盘面自发", "动作": "行止", **payload,
     }]}, content=content)
 
@@ -95,7 +101,7 @@ def test_departure_rejects_location_shapes_without_mutation(game, payload):
         "FROM characters WHERE name=?", (name,),
     ).fetchone())
     assert after == before
-    assert result["applied_person_changes"][0]["category"] == "invalid_transition"
+    assert rejected_view(result, "applied_person_changes")[0].category == "invalid_transition"
 
 
 def test_departure_persists_matrix_distance_and_urgent_factor(game):
@@ -104,7 +110,7 @@ def test_departure_persists_matrix_distance_and_urgent_factor(game):
     db.conn.execute("UPDATE characters SET location='beizhili' WHERE name=?", (name,))
     content.characters[name].location = "beizhili"
 
-    issues.apply_score_extraction(db, state, {"人物变更": [{
+    _land(db, state, {"人物变更": [{
         "name": name, "origin_ref": "盘面自发", "动作": "行止",
         "transit_to": "liaodong", "行程语气": "加急",
     }]}, content=content)
@@ -128,7 +134,7 @@ def test_noncanonical_origin_is_narrative_only_noop(game, origin):
     db.conn.execute("UPDATE characters SET location=? WHERE name=?", (origin, name))
     content.characters[name].location = origin
 
-    result = issues.apply_score_extraction(db, state, {"人物变更": [{
+    result = _land(db, state, {"人物变更": [{
         "name": name, "origin_ref": "盘面自发", "动作": "行止", "transit_to": "liaodong",
     }]}, content=content)
 
@@ -144,7 +150,8 @@ def test_noncanonical_origin_is_narrative_only_noop(game, origin):
         character.transit_speed_factor,
         getattr(character, "transit_start_turn", 0),
     ) == ("", None, None, 0)
-    assert result["applied_person_changes"] == []
+    assert view(result, "applied_person_changes") == []
+    assert rejected_view(result, "applied_person_changes") == []
 
 
 @pytest.mark.parametrize("exit_path", ["appointment_replacement", "pending_dismissal"])
@@ -230,12 +237,12 @@ def test_invalid_tone_is_rejected_before_same_destination_idempotence(game, inva
     content.characters[name].location = "beizhili"
     content.characters[name].transit_to = "liaodong"
 
-    result = issues.apply_score_extraction(db, state, {"人物变更": [{
+    result = _land(db, state, {"人物变更": [{
         "name": name, "origin_ref": "盘面自发", "动作": "行止",
         "transit_to": "liaodong", "行程语气": invalid_tone,
     }]}, content=content)
 
-    assert result["applied_person_changes"][0]["category"] == "invalid_enum"
+    assert rejected_view(result, "applied_person_changes")[0].category == "invalid_enum"
 
 
 def test_same_destination_is_idempotent(game):
@@ -244,8 +251,8 @@ def test_same_destination_is_idempotent(game):
     db.conn.execute("UPDATE characters SET location='beizhili' WHERE name=?", (name,))
     content.characters[name].location = "beizhili"
     base = {"name": name, "origin_ref": "盘面自发", "动作": "行止", "transit_to": "liaodong"}
-    issues.apply_score_extraction(db, state, {"人物变更": [base]}, content=content)
+    _land(db, state, {"人物变更": [base]}, content=content)
     db.conn.execute("UPDATE characters SET transit_distance_remaining=1.25 WHERE name=?", (name,))
-    issues.apply_score_extraction(db, state, {"人物变更": [{**base, "行程语气": "星夜兼程"}]}, content=content)
+    _land(db, state, {"人物变更": [{**base, "行程语气": "星夜兼程"}]}, content=content)
     row = db.conn.execute("SELECT transit_distance_remaining, transit_speed_factor FROM characters WHERE name=?", (name,)).fetchone()
     assert tuple(row) == (1.25, 1.0)

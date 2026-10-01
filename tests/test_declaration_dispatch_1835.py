@@ -1181,17 +1181,17 @@ def test_effects_reach_accounting_mouth_without_preseeded_empty_shell(game, monk
     （30+ 恒空容器）。此断言按真实失败形状钉：核算口收到的键集必须等于声明所带
     字段集，且不含任何未声明的 effects 键。
     """
-    import ming_sim.issues as issues
+    import ming_sim.declaration_dispatch as dispatch_mod
 
     db, state, _ = game
     captured: list[dict] = []
-    real = issues.apply_score_extraction
+    real = dispatch_mod.settle_delta
 
-    def spy(db_, state_, extracted, **kwargs):
+    def spy(state_, db_, extracted, *args, **kwargs):
         captured.append(dict(extracted))
-        return real(db_, state_, extracted, **kwargs)
+        return real(state_, db_, extracted, *args, **kwargs)
 
-    monkeypatch.setattr(issues, "apply_score_extraction", spy)
+    monkeypatch.setattr(dispatch_mod, "settle_delta", spy)
     declaration = {"effects": {"metric_delta": {"民心": 1}}}
     result = dispatch_declaration(db, state, declaration)
 

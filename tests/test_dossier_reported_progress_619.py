@@ -13,6 +13,7 @@ import pytest
 import ming_sim.issues as issue_engine
 from ming_sim.db import GameDB
 from tests.dossier_test_helpers import create_test_secret_order
+from ming_sim.settlement import SettlementContext, settle_delta
 
 
 DOSSIER_REPORT_MONTHLY = "dossier-report:monthly_errand"
@@ -214,16 +215,7 @@ def test_production_terminal_sidepath_records_degraded_transformed_only(game):
     fulfilled_id = _executing_assignment(db, state, text="办妥案", target="ok-619")
     failed_id = _executing_assignment(db, state, text="失败案", target="fail-619")
 
-    issue_engine.apply_score_extraction(
-        db, state,
-        {"dossier_executions": [
-            {"dossier_id": degraded_id, "outcome": "degraded", "note": "只得半成"},
-            {"dossier_id": transformed_id, "outcome": "transformed", "note": "名实已乖"},
-            {"dossier_id": fulfilled_id, "outcome": "fulfilled", "note": "如期办妥"},
-            {"dossier_id": failed_id, "outcome": "failed", "note": "事败不成"},
-        ]},
-        content=content,
-    )
+    settle_delta(state, db, {'dossier_executions': [{'dossier_id': degraded_id, 'outcome': 'degraded', 'note': '只得半成'}, {'dossier_id': transformed_id, 'outcome': 'transformed', 'note': '名实已乖'}, {'dossier_id': fulfilled_id, 'outcome': 'fulfilled', 'note': '如期办妥'}, {'dossier_id': failed_id, 'outcome': 'failed', 'note': '事败不成'}]}, SettlementContext(content=content))
 
     deg = db.list_dossier_progress(degraded_id)
     xf = db.list_dossier_progress(transformed_id)

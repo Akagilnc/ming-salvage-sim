@@ -9,6 +9,9 @@ import ming_sim.issues as issue_engine
 from ming_sim.session import GameSession
 from tests.conftest import covering_monthly_extract
 from tests.dossier_test_helpers import TYPED_COVERT_TASK, create_test_secret_order as _create_secret_order, rejected_verdict as _rejected_verdict
+from ming_sim.settlement import SettlementContext, settle_delta
+from ming_sim.settlement.views import view
+from ming_sim.settlement.views import rejected_view
 
 def _active_people(db, count):
     people = [
@@ -179,17 +182,9 @@ def test_month_end_extractor_appends_self_dispatched_participant(game):
         participants=[{"character_id": people[0], "tier": "主办", "role": "总理"}],
     )
 
-    result = issue_engine.apply_score_extraction(db, state, {
-        "dossier_participants": [{
-            "dossier_id": dossier_id,
-            "character_id": people[1],
-            "tier": "协办",
-            "role": "推算历法",
-            "delegator_id": people[0],
-        }],
-    }, dossier_ids_at_input={dossier_id})
+    result = settle_delta(state, db, {'dossier_participants': [{'dossier_id': dossier_id, 'character_id': people[1], 'tier': '协办', 'role': '推算历法', 'delegator_id': people[0]}]}, SettlementContext(dossier_ids_at_input={dossier_id}))
 
-    assert result["dossier_participants"] == [{
+    assert view(result, "dossier_participants") == [{
         "dossier_id": dossier_id, "character_id": people[1], "tier": "协办",
     }]
     assert db.get_decree_dossier(dossier_id)["participant_roster"][-1] == {
@@ -214,15 +209,10 @@ def test_month_end_participant_batch_rejects_each_malformed_item(game, bad_patch
     bad = {key: ({"lead": lead, "worker": worker}.get(value, value))
            for key, value in bad_patch.items()}
     bad["dossier_id"] = dossier_id
-    result = issue_engine.apply_score_extraction(db, state, {
-        "dossier_participants": [bad, {
-            "dossier_id": dossier_id, "character_id": good,
-            "tier": "协办", "delegator_id": lead,
-        }],
-    }, dossier_ids_at_input={dossier_id})
+    result = settle_delta(state, db, {'dossier_participants': [bad, {'dossier_id': dossier_id, 'character_id': good, 'tier': '协办', 'delegator_id': lead}]}, SettlementContext(dossier_ids_at_input={dossier_id}))
 
-    assert result["dossier_participants"][0]["rejected"] is True
-    assert result["dossier_participants"][1]["character_id"] == good
+    assert rejected_view(result, "dossier_participants")
+    assert view(result, "dossier_participants")[0]["character_id"] == good
     roster = db.get_decree_dossier(dossier_id)["participant_roster"]
     assert [item["character_id"] for item in roster] == [lead, good]
 
@@ -246,14 +236,9 @@ def test_extractor_never_reconstructs_missing_dossier_authority_from_live_db(
     )
 
     # 输入权威集故意不含本 dossier：不得从 live DB 反推补权
-    result = issue_engine.apply_score_extraction(db, state, {
-        "dossier_participants": [{
-            "dossier_id": dossier_id, "character_id": worker,
-            "tier": "协办", "delegator_id": lead,
-        }],
-    }, dossier_ids_at_input=set())
+    result = settle_delta(state, db, {'dossier_participants': [{'dossier_id': dossier_id, 'character_id': worker, 'tier': '协办', 'delegator_id': lead}]}, SettlementContext(dossier_ids_at_input=set()))
 
-    assert result["dossier_participants"][0]["rejected"] is True
+    assert rejected_view(result, "dossier_participants")
     assert len(db.get_decree_dossier(dossier_id)["participant_roster"]) == 1
 
 def test_committing_each_directive_creates_independent_restoreable_dossier(game):
@@ -496,21 +481,7 @@ def test_commitments_bind_explicitly_when_multiple_dossiers_share_a_turn(game):
         {"dossier_id": second_id, "decision": "promulgated"},
     ])
 
-    issue_engine.apply_score_extraction(
-        db,
-        state,
-        {
-            "new_issues": [{
-                "origin_kind": "decree",
-                "origin_ref": f"dossier:{second_id}",
-                "kind": "initiative",
-                "title": "每月赈济",
-                "end_turn": state.turn + 2,
-                "commitment_kind": "until_stop",
-            }],
-        },
-        content=content,
-    )
+    settle_delta(state, db, {'new_issues': [{'origin_kind': 'decree', 'origin_ref': f'dossier:{second_id}', 'kind': 'initiative', 'title': '每月赈济', 'end_turn': state.turn + 2, 'commitment_kind': 'until_stop'}]}, SettlementContext(content=content))
 
     commitments = db.list_commitments_for_dossier(second_id)
     assert len(commitments) == 1
@@ -663,13 +634,9 @@ def test_dossier_execution_rejects_non_sqlite_integer_ids(game, invalid_id):
     db.record_dossier_decision(dossier_id, "promulgated")
     db.transition_decree_dossier(dossier_id, "executing")
 
-    result = issue_engine.apply_score_extraction(db, state, {
-        "dossier_executions": [{
-            "dossier_id": invalid_id, "outcome": "fulfilled", "note": "办理完毕",
-        }],
-    }, content=content)
+    result = settle_delta(state, db, {'dossier_executions': [{'dossier_id': invalid_id, 'outcome': 'fulfilled', 'note': '办理完毕'}]}, SettlementContext(content=content))
 
-    assert result["dossier_executions"][0]["rejected"] is True
+    assert rejected_view(result, "dossier_executions")
     assert db.get_decree_dossier(dossier_id)["status"] == "executing"
 
 def test_dossier_execution_accepts_sqlite_integer_id(game):
@@ -681,13 +648,9 @@ def test_dossier_execution_accepts_sqlite_integer_id(game):
     db.record_dossier_decision(dossier_id, "promulgated")
     db.transition_decree_dossier(dossier_id, "executing")
 
-    result = issue_engine.apply_score_extraction(db, state, {
-        "dossier_executions": [{
-            "dossier_id": dossier_id, "outcome": "fulfilled", "note": "办理完毕",
-        }],
-    }, content=content)
+    result = settle_delta(state, db, {'dossier_executions': [{'dossier_id': dossier_id, 'outcome': 'fulfilled', 'note': '办理完毕'}]}, SettlementContext(content=content))
 
-    assert result["dossier_executions"] == [{
+    assert view(result, "dossier_executions") == [{
         "dossier_id": dossier_id, "outcome": "fulfilled",
     }]
     assert db.get_decree_dossier(dossier_id)["status"] == "closed"
@@ -720,20 +683,7 @@ def test_structured_dossier_origin_deduplicates_extractor_but_narrative_applies(
         state, narrative_id, "promulgated", content=content,
     )
 
-    issue_engine.apply_score_extraction(
-        db, state, {
-            "economy_moves": [
-                {
-                    "account": "国库", "delta": -10, "category": "重复拨帑",
-                    "origin_ref": f"dossier:{structured_id}",
-                },
-                {
-                    "account": "国库", "delta": -5, "category": "水利涌现",
-                    "origin_ref": f"dossier:{narrative_id}",
-                },
-            ],
-        }, content=content,
-    )
+    settle_delta(state, db, {'economy_moves': [{'account': '国库', 'delta': -10, 'category': '重复拨帑', 'origin_ref': f'dossier:{structured_id}'}, {'account': '国库', 'delta': -5, 'category': '水利涌现', 'origin_ref': f'dossier:{narrative_id}'}]}, SettlementContext(content=content))
 
     assert state.metrics["国库"] == before - 15
     assert len(db.list_economy_moves_for_dossier(structured_id)) == 1
@@ -758,15 +708,9 @@ def test_payload_owned_appointment_dedup_removes_only_exact_mechanical_effect(ga
     )
     db.record_dossier_decision(dossier_id, "promulgated")
 
-    result = issue_engine.apply_score_extraction(db, state, {
-        "人物变更": [{
-            "name": person["name"], "动作": "调任", "office": "兵部尚书",
-            "office_type": "central", "任别": "真除",
-            "origin_ref": f"dossier:{dossier_id}",
-        }],
-    }, content=content)
+    result = settle_delta(state, db, {'人物变更': [{'name': person['name'], '动作': '调任', 'office': '兵部尚书', 'office_type': 'central', '任别': '真除', 'origin_ref': f'dossier:{dossier_id}'}]}, SettlementContext(content=content))
 
-    assert result["applied_person_changes"] == []
+    assert view(result, "applied_person_changes") == []
 
 def test_payload_owned_appointment_dedup_uses_prior_item_runtime_office_type(game):
     db, state, content = game
@@ -789,21 +733,9 @@ def test_payload_owned_appointment_dedup_uses_prior_item_runtime_office_type(gam
     )
     db.record_dossier_decision(dossier_id, "promulgated")
 
-    result = issue_engine.apply_score_extraction(db, state, {
-        "人物变更": [
-            {
-                "name": person["name"], "动作": "调任", "office": "前置异官",
-                "office_type": "地方", "region_id": "shaanxi", "任别": "真除",
-                "origin_ref": f"dossier:{dossier_id}",
-            },
-            {
-                "name": person["name"], "动作": "调任", "office": "同名未知官",
-                "任别": "真除", "origin_ref": f"dossier:{dossier_id}",
-            },
-        ],
-    }, content=content)
+    result = settle_delta(state, db, {'人物变更': [{'name': person['name'], '动作': '调任', 'office': '前置异官', 'office_type': '地方', 'region_id': 'shaanxi', '任别': '真除', 'origin_ref': f'dossier:{dossier_id}'}, {'name': person['name'], '动作': '调任', 'office': '同名未知官', '任别': '真除', 'origin_ref': f'dossier:{dossier_id}'}]}, SettlementContext(content=content))
 
-    assert [item["new_office"] for item in result["applied_person_changes"]] == ["前置异官"]
+    assert [item["new_office"] for item in view(result, "applied_person_changes")] == ["前置异官"]
     assert content.characters[person["name"]].office == "前置异官"
     assert content.characters[person["name"]].office_type == "地方"
     persisted = db.conn.execute(
@@ -831,14 +763,9 @@ def test_payload_owned_appointment_dedup_preserves_same_person_different_effect(
     )
     db.record_dossier_decision(dossier_id, "promulgated")
 
-    result = issue_engine.apply_score_extraction(db, state, {
-        "人物变更": [{
-            "name": person["name"], "动作": "评定", "loyalty": 1,
-            "origin_ref": f"dossier:{dossier_id}",
-        }],
-    }, content=content)
+    result = settle_delta(state, db, {'人物变更': [{'name': person['name'], '动作': '评定', 'loyalty': 1, 'origin_ref': f'dossier:{dossier_id}'}]}, SettlementContext(content=content))
 
-    assert result["applied_person_changes"][0]["动作"] == "评定"
+    assert view(result, "applied_person_changes")[0]["动作"] == "评定"
     assert db.conn.execute(
         "SELECT loyalty FROM characters WHERE name=?", (person["name"],)
     ).fetchone()[0] == person["loyalty"] + 1
@@ -873,17 +800,9 @@ def test_force_promulgated_dossier_authorizes_same_batch_effect_after_execution_
     db.apply_dossier_promulgation(state, dossier_id, "force_promulgated")
     before = state.metrics["国库"]
 
-    result = issue_engine.apply_score_extraction(db, state, {
-        "dossier_executions": [{
-            "dossier_id": dossier_id, "outcome": "fulfilled", "note": "赈济已毕",
-        }],
-        "economy_moves": [{
-            "account": "国库", "delta": -3, "category": "强颁赈济",
-            "origin_ref": f"dossier:{dossier_id}",
-        }],
-    }, content=content)
+    result = settle_delta(state, db, {'dossier_executions': [{'dossier_id': dossier_id, 'outcome': 'fulfilled', 'note': '赈济已毕'}], 'economy_moves': [{'account': '国库', 'delta': -3, 'category': '强颁赈济', 'origin_ref': f'dossier:{dossier_id}'}]}, SettlementContext(content=content))
 
-    assert result["dossier_executions"] == [{
+    assert view(result, "dossier_executions") == [{
         "dossier_id": dossier_id, "outcome": "fulfilled",
     }]
     assert state.metrics["国库"] == before - 3
@@ -897,15 +816,9 @@ def test_extractor_accepts_transformed_execution_outcome(game):
     db.record_dossier_decision(dossier_id, "promulgated")
     db.transition_decree_dossier(dossier_id, "executing")
 
-    result = issue_engine.apply_score_extraction(
-        db, state, {"dossier_executions": [{
-            "dossier_id": dossier_id,
-            "outcome": "transformed",
-            "note": "名义奉行，实则借旨行私",
-        }]}, content=content,
-    )
+    result = settle_delta(state, db, {'dossier_executions': [{'dossier_id': dossier_id, 'outcome': 'transformed', 'note': '名义奉行，实则借旨行私'}]}, SettlementContext(content=content))
 
-    assert result["dossier_executions"] == [{
+    assert view(result, "dossier_executions") == [{
         "dossier_id": dossier_id, "outcome": "transformed",
     }]
     dossier = db.get_decree_dossier(dossier_id)
@@ -1873,7 +1786,6 @@ def test_batch_draft_extraction_preserves_each_mechanical_payload(monkeypatch):
     assert str(result["drafts"][1].get("execution_surface") or "").strip() == ""
 
 def test_executing_dossier_stays_visible_and_extractor_can_close_it(game):
-    from ming_sim.issues import apply_score_extraction
 
     db, state, content = game
     dossier_id = db.create_decree_dossier(
@@ -1894,17 +1806,8 @@ def test_executing_dossier_stays_visible_and_extractor_can_close_it(game):
     assert dossier_id in {
         row["id"] for row in db.list_decree_dossiers_for_simulation(state.turn)
     }
-    result = apply_score_extraction(
-        db, state, {
-            "dossier_executions": [{
-                "dossier_id": dossier_id,
-                "outcome": "fulfilled",
-                "note": "奉旨出师，军令已毕",
-            }],
-        },
-        content=content,
-    )
-    assert result["dossier_executions"] == [{
+    result = settle_delta(state, db, {'dossier_executions': [{'dossier_id': dossier_id, 'outcome': 'fulfilled', 'note': '奉旨出师，军令已毕'}]}, SettlementContext(content=content))
+    assert view(result, "dossier_executions") == [{
         "dossier_id": dossier_id, "outcome": "fulfilled",
     }]
     assert db.get_decree_dossier(dossier_id)["status"] == "closed"
@@ -1913,20 +1816,16 @@ def test_executing_dossier_stays_visible_and_extractor_can_close_it(game):
     "dossier:not-a-number", "dossier:1:extra", f"dossier:{2 ** 63}",
 ))
 def test_malformed_dossier_origin_is_rejected_fail_closed(game, origin_ref):
-    from ming_sim.issues import apply_score_extraction
 
     db, state, content = game
     before = state.metrics["国库"]
-    result = apply_score_extraction(db, state, {
-        "economy_moves": [{
-            "account": "国库", "delta": -9, "category": "伪造案卷",
-            "origin_ref": origin_ref,
-        }],
-    }, content=content)
+    result = settle_delta(state, db, {'economy_moves': [{'account': '国库', 'delta': -9, 'category': '伪造案卷', 'origin_ref': origin_ref}]}, SettlementContext(content=content))
 
     assert state.metrics["国库"] == before
-    assert result["economy_moves"] == []
-    assert '"category": "invalid_origin_ref"' in json.dumps(result, ensure_ascii=False)
+    assert view(result, "economy_moves") == []
+    refused = rejected_view(result, "economy_moves")
+    assert len(refused) == 1
+    assert refused[0].category == "invalid_origin_ref"
 
 def test_withdrawn_rescript_records_closed_turn(game):
     from ming_sim.db import GameDB

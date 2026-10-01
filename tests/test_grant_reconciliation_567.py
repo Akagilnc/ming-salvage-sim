@@ -20,6 +20,8 @@ from ming_sim.applier import Provenance, RejectionCollector
 from ming_sim.db import GameDB
 from ming_sim.models import TurnPhase
 from tests.dossier_test_helpers import create_test_secret_order
+from ming_sim.settlement import SettlementContext, settle_delta
+from ming_sim.settlement.views import view
 
 
 ORDERED = 30  # 北极星三路各三十万两量级（引擎以「两」为单位的整数面值）
@@ -227,16 +229,8 @@ def test_close_merges_recon_note_without_second_treasury_debit(game):
     assert int(state.metrics["内库"]) == after_grant_inner
     assert db.list_economy_moves_for_dossier(gid) == moves_before
 
-    result = issue_engine.apply_score_extraction(
-        db, state,
-        {"dossier_executions": [{
-            "dossier_id": gid,
-            "outcome": "fulfilled",
-            "note": "赈银押解到达",
-        }]},
-        content=content,
-    )
-    assert result["dossier_executions"] == [{"dossier_id": gid, "outcome": "fulfilled"}]
+    result = settle_delta(state, db, {'dossier_executions': [{'dossier_id': gid, 'outcome': 'fulfilled', 'note': '赈银押解到达'}]}, SettlementContext(content=content))
+    assert view(result, "dossier_executions") == [{"dossier_id": gid, "outcome": "fulfilled"}]
     closed = db.get_decree_dossier(gid)
     assert closed["status"] == "closed"
     note = closed["execution_note"]

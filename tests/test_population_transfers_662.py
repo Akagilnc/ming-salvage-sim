@@ -22,7 +22,8 @@ from test_population_transfers_649 import (
 
 import pytest
 
-from ming_sim.issues import apply_score_extraction
+from ming_sim.settlement import SettlementContext, settle_delta
+from ming_sim.settlement.views import rejected_view, view
 
 
 @pytest.fixture
@@ -57,15 +58,8 @@ def test_disaster_and_war_amounts_above_old_caps_land_and_conserve(war_shaanxi):
     disaster_amount = FARMER_SHAANXI * 6 // 100
     war_amount = garrison_before * 11 // 100
     total_before = _global_population(db)
-    applied = apply_score_extraction(db, state, {
-        "population_transfers": [
-            _transfer(source="农民@shaanxi", target="流民@shaanxi",
-                      amount=disaster_amount, reason="灾害"),
-            _transfer(source="军户@shaanxi", target="流民@shaanxi",
-                      amount=war_amount, reason="兵灾"),
-        ],
-    }, content, None)
-    assert not applied["population_transfers_rejections"]
+    applied = settle_delta(state, db, {'population_transfers': [_transfer(source='农民@shaanxi', target='流民@shaanxi', amount=disaster_amount, reason='灾害'), _transfer(source='军户@shaanxi', target='流民@shaanxi', amount=war_amount, reason='兵灾')]}, SettlementContext(content=content))
+    assert not rejected_view(applied, "population_transfers")
     assert _pop(db, "农民", "shaanxi") == FARMER_SHAANXI - disaster_amount
     assert _pop(db, "军户", "shaanxi") == garrison_before - war_amount
     assert _pop(db, "流民", "shaanxi") == (
@@ -86,14 +80,9 @@ def test_mutation_oracle_bites_disaster_war_mutations(war_shaanxi):
         """单条记录一批：oracle 契约＝每笔成功记录两侧精确 ±amount，故每批一条、
         快照各取前后（同池多记录时按 #649 家族逐批验证，不改 oracle）。"""
         before = _snap(db)
-        applied = apply_score_extraction(db, state, {
-            "population_transfers": [
-                _transfer(source=f"{src_cls}@shaanxi", target="流民@shaanxi",
-                          amount=amount, reason=reason),
-            ],
-        }, content, None)
-        assert not applied["population_transfers_rejections"]
-        rec = applied["population_transfers"][0]
+        applied = settle_delta(state, db, {'population_transfers': [_transfer(source=f'{src_cls}@shaanxi', target='流民@shaanxi', amount=amount, reason=reason)]}, SettlementContext(content=content))
+        assert not rejected_view(applied, "population_transfers")
+        rec = view(applied, "population_transfers")[0]
         after = _snap(db)
         _conservation_oracle(before, after, [rec])  # 正对照
         return before, after, rec
@@ -136,18 +125,9 @@ def test_same_batch_multi_origin_merges_into_single_pool_account(disaster_shaanx
     各入口共用同一 classes 行池＋同一原语——下游读池总量，不按来源分账。"""
     db, state, content = disaster_shaanxi
     total_before = _global_population(db)
-    applied = apply_score_extraction(db, state, {
-        "population_transfers": [
-            _transfer(source="农民@shaanxi", target="流民@shaanxi",
-                      amount=1000, reason="加派"),   # S3 明渠入口（同一本账）
-            _transfer(source="农民@shaanxi", target="流民@shaanxi",
-                      amount=2000, reason="摊派"),   # S4 暗渠入口（同一本账）
-            _transfer(source="农民@shaanxi", target="流民@shaanxi",
-                      amount=4000, reason="灾害"),   # 本票天灾入口
-        ],
-    }, content, None)
-    assert not applied["population_transfers_rejections"]
-    assert len(applied["population_transfers"]) == 3
+    applied = settle_delta(state, db, {'population_transfers': [_transfer(source='农民@shaanxi', target='流民@shaanxi', amount=1000, reason='加派'), _transfer(source='农民@shaanxi', target='流民@shaanxi', amount=2000, reason='摊派'), _transfer(source='农民@shaanxi', target='流民@shaanxi', amount=4000, reason='灾害')]}, SettlementContext(content=content))
+    assert not rejected_view(applied, "population_transfers")
+    assert len(view(applied, "population_transfers")) == 3
     assert _pop(db, "流民", "shaanxi") == DISPLACED_SHAANXI + 7000  # 单行合流
     assert _pop(db, "农民", "shaanxi") == FARMER_SHAANXI - 7000
     assert _global_population(db) == total_before  # 全局守恒不变式

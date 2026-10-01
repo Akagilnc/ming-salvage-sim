@@ -51,10 +51,8 @@ from ming_sim.decree import (
     resolve_decisions_phase2,
     resolve_directives,
 )
-from ming_sim.issues import (
-    apply_score_extraction,
-    bind_content as bind_issue_content,
-)
+from ming_sim.issues import bind_content as bind_issue_content
+from ming_sim.settlement import SettlementContext, settle_delta
 
 HOSTILE_TEXT = "许誉卿执掌封驳时，不经部议清丈天下田亩并追夺东林士绅隐田"
 ORDINARY_TEXT = "循户部成例补发边军一月欠饷"
@@ -239,14 +237,17 @@ def _prepare_reconsideration_facts(
         payload={"mode": "ordinary"},
     )
     db.record_dossier_decision(grant_dossier_id, "promulgated")
-    grant = apply_score_extraction(db, state, {
+    grant_outcome = settle_delta(state, db, {
         "authority_changes": [{
             "动作": "授予", "holder_id": holder, "privilege": "便宜行事",
             "scope": scope, "dossier_id": grant_dossier_id,
         }],
-    })["authority_changes"][0]
-    if grant.get("rejected") is True:
-        raise RuntimeError(f"reconsideration authority grant rejected: {grant}")
+    }, SettlementContext())
+    if grant_outcome.authority.rejected or not grant_outcome.authority.applied:
+        raise RuntimeError(
+            "reconsideration authority grant rejected: "
+            f"{[r.reason for r in grant_outcome.authority.rejected]}"
+        )
     state.metrics["皇威"] = 100
     db.save_state(state)
     db.conn.commit()

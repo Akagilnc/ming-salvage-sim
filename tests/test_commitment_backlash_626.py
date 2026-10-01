@@ -45,14 +45,16 @@ from ming_sim.commitment_backlash import (
 from ming_sim.constants import GATE_TABLES
 from ming_sim.db import GameDB
 from ming_sim.decree import pre_settle
-from ming_sim.issues import (
-    _expire_commitment_issue,
-    _resolve_commitment_issue,
-    apply_issue_inertia_and_ongoing,
-    apply_score_extraction,
-)
+from ming_sim.issues import _expire_commitment_issue, _resolve_commitment_issue, apply_issue_inertia_and_ongoing
+
+
+
+
+
 from ming_sim.models import TurnPhase, loads_effect_dict
 from ming_sim.staged_commitment import TODO_STATUS_PENDING
+from ming_sim.settlement import SettlementContext, settle_delta
+from ming_sim.settlement.views import view
 
 
 # ── fixtures ──────────────────────────────────────────────────────
@@ -261,21 +263,8 @@ def test_ac1_deformation_exposure_triggers_commitment_backlash(game):
         did, state.turn, "在办", "田亩清丈已十之八九",
         is_terminal=False, commit=True,
     )
-    applied = apply_score_extraction(
-        db, state,
-        {
-            "economy_moves": [{
-                "account": "国库",
-                "delta": 8,
-                "category": "地方浮收",
-                "reason": "借清丈之名额外加派",
-                "origin_ref": f"dossier:{did}",
-                "beyond_intent": True,
-            }],
-        },
-        content=content,
-    )
-    assert applied.get("economy_moves")
+    applied = settle_delta(state, db, {'economy_moves': [{'account': '国库', 'delta': 8, 'category': '地方浮收', 'reason': '借清丈之名额外加派', 'origin_ref': f'dossier:{did}', 'beyond_intent': True}]}, SettlementContext(content=content))
+    assert view(applied, "economy_moves")
     moves = db.list_economy_moves_for_dossier(did)
     # _seed_halfway 先落投入行；#622 分叉读端看 beyond_intent 实况行（非首行）
     assert moves and any(bool(m.get("beyond_intent")) for m in moves)

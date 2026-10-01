@@ -16,7 +16,7 @@
 - **定位**：探针（先验证好不好玩），不是地基。**不上 MCP**（连改哪层都没定，固化接口=过早工程化）。
 - **代码基线**：copy 全套上游（已 fork），不在 copy 层取舍，按实际慢慢丢。
 - **第一刀切片**：单回合透明闭环，目标**第一年（~12 回合）**，每步确定性计算摊开打印，让玩家边玩边摸清机制。
-- **月末产出形态**：我每回合产 = 邸报叙事（给玩家看）+ 原 extractor schema 的**稀疏 delta JSON** → 喂 `apply_score_extraction` 落库。把原 simulator + extractor 两个 LLM 步**合并成我一次出**，省掉二次翻译。
+- **月末产出形态**：我每回合产 = 邸报叙事（给玩家看）+ 原 extractor schema 的**稀疏 delta JSON** → 喂 `settlement.settle_delta` 落库。把原 simulator + extractor 两个 LLM 步**合并成我一次出**，省掉二次翻译。
 - **形态分层（先甲后乙）**：
   - **step1（验证）**：形态(1) 我在对话里直接当 runtime+LLM，玩家当皇帝，`terminal.py` 当流程蓝本（不另起进程）。最快、零基建。
   - **step2（跑完第一年）**：形态(3) subagent 当各 LLM 角色（主对话=引擎调度，subagent=大臣/裁判），解决 context 污染、走订阅额度。见 GitHub issue。
@@ -38,7 +38,7 @@
 
 ## 关键技术事实（已挖过，省得重来）
 - **启动脱 key**：`GameSession` 构造即不连 LLM（连通校验只在设置页主动提交配置时跑），CLI 无 api key 能起。
-- **delta 落库单一入口**：`apply_score_extraction(db, state, extracted, …)`（经 `declaration_dispatch` 由月链调用），内部分发到 region/army/building/economy/issue 各 apply。声明只把**自己带的字段**直接送到该口，不再预置旧五模块 `EMPTY_EXTRACTION` 空壳包装（#1835 F1，Owner 裁定 2026-09-30 授权拆除）；该核算核本体整体退役（换 `settle_delta`）属 ADR 0150 决定 6 / #1572 的固定点工程，不在本票。
+- **delta 落库单一入口**：`settlement.settle_delta(state, db, delta, ctx)`（经 `declaration_dispatch` 由月链调用）→ typed `SettlementOutcome`。段适配器按实体入住 `ming_sim/entities/<entity>/delta_section.py`，段序真源是 `ming_sim/settlement/registry.py` 的有序登记表（ADR 0150 决定 1/4）。旧单体入口 `apply_score_extraction` 与旧五模块 `EMPTY_EXTRACTION` 空壳包装**均已退役**，不留 deprecated 壳（#1835 F1，Owner 裁定 2026-09-30 授权拆除；ADR 0150 决定 6）。声明只把**自己带的字段**直接送到该口。拒收走 `RejectedItem` 单一形状（项级 `item/reason/category/source`，`turn`/`section` 由框架补），消费端读 typed 段（`settlement.views`）或直接读 `SettlementOutcome` 字段——不再有 39 键 ad-hoc dict、恒空兼容键、双份键或独立 `*_rejections` 键。
 - **schema 契约**（#1843 reopen 后）：`DECLARATION_EFFECT_FIELDS`（C0 声明效果字段真源：键集 + 各键容器类型）、`ITEM_FIELD_ALIASES` / `_canonical_item_fields`（条目字段规范化）、`read_beyond_intent_raw`（超出旨意读取）。五模块 extractor 别名/MODULE_FIELDS/清洗函数已删；旧 `EMPTY_EXTRACTION` 空壳随 #1835 F1 退役。
 - **接口层（确定性↔LLM，别让 LLM 自己数数）**：材料目录（#1834）与月链供料；逐旨预推与世界段按需读取同一材料目录，不再拼装旧 simulator 盘面。
 - **结算编排骨架**：玩家颁诏与退朝共用 `decree.resolve_directives → month_chain.run_player_month_chain`（ADR 0157）：收夜与 `pre_settle` 后，按旨序消费夜里暂存声明，推演／转译／提交世界段；未完成请旨先停批红，邸报归档后才判结局、推进月份。恢复从暂存声明及落账状态续跑；章节记忆退役。对话探针 `driver.py` 与旧核 `settle_with_delta` 已删（#1843 reopen）；CLI 沉浸版将来直接接新月链。调用顺序与边界见 `docs/SETTLEMENT_FLOW.md`，规则真源见 ADR 0157。

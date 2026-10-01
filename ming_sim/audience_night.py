@@ -21,6 +21,7 @@ from collections.abc import Mapping
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from ming_sim.db import normalize_office
+from ming_sim.settlement.views import view
 from ming_sim.error_pack import error_packs_root
 from ming_sim.models import GameState
 from ming_sim.participant_roster import is_non_person_participant_name
@@ -1543,17 +1544,17 @@ def list_arrived_unsettled_summons(db: Any) -> List[Dict[str, Any]]:
 
 
 def settle_applied_arrived_summons(
-    db: Any, applied: Dict[str, Any],
+    db: Any, outcome: Any,
 ) -> List[str]:
     """结清已由 canonical applier 成功续启赴京的在途召旨。
 
-    只认 applied_person_changes 中未拒收且 transit_to=beizhili 的成功行止；
+    只认人物段中未拒收且 transit_to=beizhili 的成功行止；
     同人全部 kind=in_transit 未结 origin 一并结清。失败/空 applied 为 no-op。
     外层 settle atomic 使行止与结清同成同败（_should_commit 已为 False）。
     """
     accepted = {
         str(item.get("name") or item.get("人物") or "").strip()
-        for item in (applied.get("applied_person_changes") or [])
+        for item in view(outcome, "applied_person_changes")
         if isinstance(item, dict)
         and not item.get("rejected")
         and str(item.get("transit_to") or item.get("去向") or "").strip() == "beizhili"

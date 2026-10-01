@@ -17,8 +17,8 @@ from __future__ import annotations
 from tests.section_rejection_helpers import run_declaration as run_settle
 from tests.section_rejection_helpers import game, rejection_rows as _rejection_rows
 
-FACTION_REJ_SECTION = "faction_delta_rejections"
-CLASS_REJ_SECTION = "class_delta_rejections"
+FACTION_REJ_SECTION = "faction_delta"
+CLASS_REJ_SECTION = "class_delta"
 
 
 def _valid_faction(db):
@@ -238,7 +238,7 @@ def test_issue_effect_faction_rejection_reaches_reports(game):
         "close_issues": [{"issue_id": issue_id, "reason": "resolved", "narrative": "测试结案"}],
     }, narrative="x", decree_text="y")
 
-    rows = _rejection_rows(db, turn, "issue_summary.entity_rejections")
+    rows = _rejection_rows(db, turn, "issue_summary")
     rows = [r for r in rows if r[2] == "missing_ref"]
     assert len(rows) == 1, rows
     assert "查无此派系" in rows[0][1]

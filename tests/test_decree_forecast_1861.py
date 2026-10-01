@@ -18,6 +18,7 @@ from ming_sim.exceptions import LLMUnavailable
 from ming_sim.models import LLMConfig
 from ming_sim.session import GameSession
 from ming_sim.session_write_queue import get_session_write_queue
+from ming_sim.settlement.views import rejected_view
 from tests.conftest import offline_empty_audience_translate, persist_and_schedule_scene, stub_audience_translate, stub_scene_agent
 
 
@@ -164,9 +165,9 @@ def test_scene_chat_approval_forecasts_each_decree_without_visible_effect(game, 
         db, state, [pending_action_decree_ref(second, 1)],
     )[pending_action_decree_ref(second, 1)]
     assert int(state.metrics["国库"]) == treasury_before - 1
-    rejections = settled.effects.applied[0]["economy_moves_rejections"]
+    rejections = rejected_view(settled.effects.applied[0], "economy_moves")
     assert len(rejections) == 1
-    assert rejections[0]["item"]["origin_ref"] == f"affair:{hidden.id}"
+    assert rejections[0].item["origin_ref"] == f"affair:{hidden.id}"
     # Background translation legitimately adds a conversation entry; forecast must not
     # publish an extra ledger entry of its own.
     assert db.conn.execute(

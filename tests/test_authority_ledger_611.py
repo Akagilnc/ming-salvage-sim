@@ -6,6 +6,9 @@ from ming_sim.db import GameDB
 from ming_sim import issues as issue_engine
 import ming_sim.decree as decree_mod
 from ming_sim.relations import EMPEROR_NODE
+from ming_sim.settlement import SettlementContext, settle_delta
+from ming_sim.settlement.views import view
+from ming_sim.settlement.views import rejected_view
 
 
 def _minister(db):
@@ -36,23 +39,13 @@ def _eligible_dossier(db, state, holder, *, target_kind="issue", target_id="清�
 
 
 def _grant(db, state, content, holder, privilege, scope, dossier, **turns):
-    result = issue_engine.apply_score_extraction(db, state, {
-        "authority_changes": [{
-            "动作": "授予", "holder_id": holder, "privilege": privilege,
-            "scope": scope, "dossier_id": dossier["id"], **turns,
-        }],
-    }, content=content)["authority_changes"][0]
+    result = view(settle_delta(state, db, {'authority_changes': [{'动作': '授予', 'holder_id': holder, 'privilege': privilege, 'scope': scope, 'dossier_id': dossier['id'], **turns}]}, SettlementContext(content=content)), "authority_changes")[0]
     assert result.get("rejected") is not True
     return int(result["authority_id"])
 
 
 def _revoke(db, state, content, authority_id, dossier):
-    result = issue_engine.apply_score_extraction(db, state, {
-        "authority_changes": [{
-            "动作": "收回", "authority_id": authority_id,
-            "dossier_id": dossier["id"],
-        }],
-    }, content=content)["authority_changes"][0]
+    result = view(settle_delta(state, db, {'authority_changes': [{'动作': '收回', 'authority_id': authority_id, 'dossier_id': dossier['id']}]}, SettlementContext(content=content)), "authority_changes")[0]
     assert result.get("rejected") is not True
     return result
 
@@ -79,17 +72,8 @@ def test_production_path_grant_restore_revoke_impression_tracer(game):
         )
     ]
 
-    grant_result = issue_engine.apply_score_extraction(db, state, {
-        "authority_changes": [{
-            "动作": "授予",
-            "holder_id": holder,
-            "privilege": "便宜行事",
-            "scope": domain,
-            "dossier_id": grant_dossier["id"],
-        }],
-    }, content=content)
-    assert grant_result["authority_changes"][0].get("rejected") is not True
-    authority_id = int(grant_result["authority_changes"][0]["authority_id"])
+    grant_result = settle_delta(state, db, {'authority_changes': [{'动作': '授予', 'holder_id': holder, 'privilege': '便宜行事', 'scope': domain, 'dossier_id': grant_dossier['id']}]}, SettlementContext(content=content))
+    authority_id = int(view(grant_result, "authority_changes")[0]["authority_id"])
     assert authority_id > 0
 
     # Same holder/domain; projection must surface the granted row.
@@ -121,15 +105,8 @@ def test_production_path_grant_restore_revoke_impression_tracer(game):
     revoke_dossier = _eligible_dossier(
         restored, restored_state, holder, target_id="收权清丈",
     )
-    revoke_result = issue_engine.apply_score_extraction(restored, restored_state, {
-        "authority_changes": [{
-            "动作": "收回",
-            "authority_id": authority_id,
-            "dossier_id": revoke_dossier["id"],
-        }],
-    }, content=content)
-    assert revoke_result["authority_changes"][0].get("rejected") is not True
-    assert revoke_result["authority_changes"][0]["authority_id"] == authority_id
+    revoke_result = settle_delta(restored_state, restored, {'authority_changes': [{'动作': '收回', 'authority_id': authority_id, 'dossier_id': revoke_dossier['id']}]}, SettlementContext(content=content))
+    assert view(revoke_result, "authority_changes")[0]["authority_id"] == authority_id
 
     restored.close()
     final = GameDB(db_path, content)
@@ -162,15 +139,8 @@ def test_production_path_grant_restore_revoke_impression_tracer(game):
 
     # Idempotent already_revoked: no second edge, no revoked_turn rewrite.
     first_revoked_turn = record["revoked_turn"]
-    again = issue_engine.apply_score_extraction(final, final_state, {
-        "authority_changes": [{
-            "动作": "收回",
-            "authority_id": authority_id,
-            "dossier_id": revoke_dossier["id"],
-        }],
-    }, content=content)
-    assert again["authority_changes"][0]["reason"] == "already_revoked"
-    assert again["authority_changes"][0].get("rejected") is not True
+    again = settle_delta(final_state, final, {'authority_changes': [{'动作': '收回', 'authority_id': authority_id, 'dossier_id': revoke_dossier['id']}]}, SettlementContext(content=content))
+    assert view(again, "authority_changes")[0]["reason"] == "already_revoked"
     assert final.get_authority(authority_id)["revoked_turn"] == first_revoked_turn
     assert len(final.get_relation_edge_events(
         source=holder, target=EMPEROR_NODE, event_kind="结怨",
@@ -189,39 +159,14 @@ def test_authority_changes_rejects_ineligible_keeps_legal_peer(game):
     db.record_dossier_decision(rejected_id, "rejected", reason="封驳")
     assert not db.dossier_authorizes_effects(rejected_id)
 
-    result = issue_engine.apply_score_extraction(db, state, {
-        "authority_changes": [
-            {
-                "动作": "授予",
-                "holder_id": holder,
-                "privilege": "尚方剑密授",
-                "scope": "issue:打回",
-                "dossier_id": rejected_id,
-            },
-            {
-                # Missing dossier_id entirely.
-                "动作": "授予",
-                "holder_id": holder,
-                "privilege": "专差督办",
-                "scope": "issue:无来源",
-            },
-            {
-                "动作": "授予",
-                "holder_id": holder,
-                "privilege": "新机构专办",
-                "scope": "issue:合法授予",
-                "dossier_id": good["id"],
-            },
-        ],
-    }, content=content)
+    result = settle_delta(state, db, {'authority_changes': [{'动作': '授予', 'holder_id': holder, 'privilege': '尚方剑密授', 'scope': 'issue:打回', 'dossier_id': rejected_id}, {'动作': '授予', 'holder_id': holder, 'privilege': '专差督办', 'scope': 'issue:无来源'}, {'动作': '授予', 'holder_id': holder, 'privilege': '新机构专办', 'scope': 'issue:合法授予', 'dossier_id': good['id']}]}, SettlementContext(content=content))
 
-    rows = result["authority_changes"]
-    assert rows[0]["rejected"] is True
-    assert rows[0]["reason"] == "dossier_not_effect_eligible"
-    assert rows[1]["rejected"] is True
-    assert rows[1]["reason"] == "missing_dossier_source"
-    assert rows[2].get("rejected") is not True
-    authority_id = int(rows[2]["authority_id"])
+    refused = rejected_view(result, "authority_changes")
+    assert refused[0].reason == "dossier_not_effect_eligible"
+    assert refused[1].reason == "missing_dossier_source"
+    rows = view(result, "authority_changes")
+    assert len(rows) == 1
+    authority_id = int(rows[0]["authority_id"])
     assert db.get_authority(authority_id)["privilege"] == "新机构专办"
     assert db.conn.execute(
         "SELECT COUNT(*) AS n FROM authority_records"
@@ -305,13 +250,11 @@ def test_same_dossier_grant_replay_is_idempotent(game):
             "dossier_id": dossier["id"],
         }],
     }
-    first = issue_engine.apply_score_extraction(db, state, payload, content=content)
-    assert first["authority_changes"][0].get("rejected") is not True
-    authority_id = int(first["authority_changes"][0]["authority_id"])
+    first = settle_delta(state, db, payload, SettlementContext(content=content))
+    authority_id = int(view(first, "authority_changes")[0]["authority_id"])
 
-    second = issue_engine.apply_score_extraction(db, state, payload, content=content)
-    assert second["authority_changes"][0].get("rejected") is not True
-    assert int(second["authority_changes"][0]["authority_id"]) == authority_id
+    second = settle_delta(state, db, payload, SettlementContext(content=content))
+    assert int(view(second, "authority_changes")[0]["authority_id"]) == authority_id
     assert db.conn.execute(
         "SELECT COUNT(*) AS n FROM authority_records"
     ).fetchone()["n"] == 1
@@ -332,18 +275,18 @@ def test_same_dossier_grant_replay_returns_terminal_origin_without_regrant(
     if terminal_state == "expired":
         item["expires_turn"] = state.turn
     payload = {"authority_changes": [item]}
-    first = issue_engine.apply_score_extraction(db, state, payload, content=content)
-    authority_id = int(first["authority_changes"][0]["authority_id"])
+    first = settle_delta(state, db, payload, SettlementContext(content=content))
+    authority_id = int(view(first, "authority_changes")[0]["authority_id"])
     if terminal_state == "revoked":
         revoke_dossier = _eligible_dossier(db, state, holder, target_id="replay-revoke")
         _revoke(db, state, content, authority_id, revoke_dossier)
     else:
         state.turn += 1
 
-    replay = issue_engine.apply_score_extraction(db, state, payload, content=content)
+    replay = settle_delta(state, db, payload, SettlementContext(content=content))
 
-    assert replay["authority_changes"][0]["authority_id"] == authority_id
-    assert replay["authority_changes"][0]["reason"] == "same_dossier_replay"
+    assert view(replay, "authority_changes")[0]["authority_id"] == authority_id
+    assert view(replay, "authority_changes")[0]["reason"] == "same_dossier_replay"
     record = db.get_authority(authority_id)
     if terminal_state == "revoked":
         assert record["revoked"] is True
@@ -359,28 +302,11 @@ def test_duplicate_active_authority_is_rejected_across_dossiers(game):
     holder = _minister(db)
     first_dossier = _eligible_dossier(db, state, holder, target_id="dup-a")
     second_dossier = _eligible_dossier(db, state, holder, target_id="dup-b")
-    first = issue_engine.apply_score_extraction(db, state, {
-        "authority_changes": [{
-            "动作": "授予",
-            "holder_id": holder,
-            "privilege": "便宜行事",
-            "scope": "issue:dup",
-            "dossier_id": first_dossier["id"],
-        }],
-    }, content=content)
-    assert first["authority_changes"][0].get("rejected") is not True
+    first = settle_delta(state, db, {'authority_changes': [{'动作': '授予', 'holder_id': holder, 'privilege': '便宜行事', 'scope': 'issue:dup', 'dossier_id': first_dossier['id']}]}, SettlementContext(content=content))
+    assert view(first, "authority_changes")
 
-    second = issue_engine.apply_score_extraction(db, state, {
-        "authority_changes": [{
-            "动作": "授予",
-            "holder_id": holder,
-            "privilege": "便宜行事",
-            "scope": "issue:dup",
-            "dossier_id": second_dossier["id"],
-        }],
-    }, content=content)
-    assert second["authority_changes"][0]["rejected"] is True
-    assert second["authority_changes"][0]["reason"] == "duplicate_active_authority"
+    second = settle_delta(state, db, {'authority_changes': [{'动作': '授予', 'holder_id': holder, 'privilege': '便宜行事', 'scope': 'issue:dup', 'dossier_id': second_dossier['id']}]}, SettlementContext(content=content))
+    assert rejected_view(second, "authority_changes")[0].reason == "duplicate_active_authority"
     assert db.conn.execute(
         "SELECT COUNT(*) AS n FROM authority_records"
     ).fetchone()["n"] == 1
@@ -396,15 +322,9 @@ def test_duplicate_check_uses_current_turn_not_future_effective_turn(game):
         first_dossier, effective_turn=state.turn, expires_turn=state.turn,
     )
 
-    result = issue_engine.apply_score_extraction(db, state, {
-        "authority_changes": [{
-            "动作": "授予", "holder_id": holder, "privilege": "便宜行事",
-            "scope": "issue:turn-boundary", "effective_turn": state.turn + 1,
-            "dossier_id": second_dossier["id"],
-        }],
-    }, content=content)
+    result = settle_delta(state, db, {'authority_changes': [{'动作': '授予', 'holder_id': holder, 'privilege': '便宜行事', 'scope': 'issue:turn-boundary', 'effective_turn': state.turn + 1, 'dossier_id': second_dossier['id']}]}, SettlementContext(content=content))
 
-    assert result["authority_changes"][0]["reason"] == "duplicate_active_authority"
+    assert rejected_view(result, "authority_changes")[0].reason == "duplicate_active_authority"
     assert db.conn.execute(
         "SELECT COUNT(*) AS n FROM authority_records"
     ).fetchone()["n"] == 1
@@ -420,16 +340,9 @@ def test_duplicate_check_ignores_authority_only_active_in_future(game):
         future_dossier, effective_turn=state.turn + 1,
     )
 
-    result = issue_engine.apply_score_extraction(db, state, {
-        "authority_changes": [{
-            "动作": "授予", "holder_id": holder, "privilege": "便宜行事",
-            "scope": "issue:turn-boundary-future", "effective_turn": state.turn,
-            "expires_turn": state.turn,
-            "dossier_id": current_dossier["id"],
-        }],
-    }, content=content)
+    result = settle_delta(state, db, {'authority_changes': [{'动作': '授予', 'holder_id': holder, 'privilege': '便宜行事', 'scope': 'issue:turn-boundary-future', 'effective_turn': state.turn, 'expires_turn': state.turn, 'dossier_id': current_dossier['id']}]}, SettlementContext(content=content))
 
-    assert result["authority_changes"][0].get("rejected") is not True
+    assert view(result, "authority_changes")
     assert db.conn.execute(
         "SELECT COUNT(*) AS n FROM authority_records"
     ).fetchone()["n"] == 2
@@ -439,17 +352,8 @@ def test_production_rejects_bare_domain_scope(game):
     db, state, content = game
     holder = _minister(db)
     dossier = _eligible_dossier(db, state, holder, target_id="bare")
-    result = issue_engine.apply_score_extraction(db, state, {
-        "authority_changes": [{
-            "动作": "授予",
-            "holder_id": holder,
-            "privilege": "便宜行事",
-            "scope": "边饷",
-            "dossier_id": dossier["id"],
-        }],
-    }, content=content)
-    assert result["authority_changes"][0]["rejected"] is True
-    assert result["authority_changes"][0]["reason"] == "invalid_authority_scope"
+    result = settle_delta(state, db, {'authority_changes': [{'动作': '授予', 'holder_id': holder, 'privilege': '便宜行事', 'scope': '边饷', 'dossier_id': dossier['id']}]}, SettlementContext(content=content))
+    assert rejected_view(result, "authority_changes")[0].reason == "invalid_authority_scope"
     assert db.conn.execute(
         "SELECT COUNT(*) AS n FROM authority_records"
     ).fetchone()["n"] == 0

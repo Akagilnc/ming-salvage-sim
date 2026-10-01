@@ -14,6 +14,9 @@ from ming_sim.person_archive_contract import PERSON_TITLE_KINDS
 from ming_sim.person_delta_adapter import normalize_person_changes
 from tests.conftest import active_ming_character
 from tests.dossier_test_helpers import create_test_secret_order
+from ming_sim.settlement import SettlementContext, settle_delta
+from ming_sim.settlement.views import rejected_view, describe, issue_rows, shape_rejections, view
+
 
 
 def _promulgated_dossier(db, state, decree_text, target_id="毛文龙"):
@@ -60,19 +63,9 @@ def test_retired_legacy_person_keys_are_rejected_per_section_not_silently_droppe
     db, state, content = game
     name = active_ming_character(db, content)
 
-    applied = issues.apply_score_extraction(
-        db,
-        state,
-        {
-            legacy_key: [{"name": name, "status": "dismissed", "new_power": "houjin",
-                          "new_office": "陕西总督", "office": "陕西总督"}],
-            "人物变更": [{"name": name, "origin_ref": "盘面自发", "动作": "评定",
-                          "loyalty": 3, "reason": "同批合法项"}],
-        },
-        content=content,
-    )
+    applied = settle_delta(state, db, {legacy_key: [{'name': name, 'status': 'dismissed', 'new_power': 'houjin', 'new_office': '陕西总督', 'office': '陕西总督'}], '人物变更': [{'name': name, 'origin_ref': '盘面自发', '动作': '评定', 'loyalty': 3, 'reason': '同批合法项'}]}, SettlementContext(content=content))
 
-    result = applied["applied_person_changes"]
+    result = view(applied, "applied_person_changes")
     assert [item["name"] for item in result] == [name]
     assert result[0]["动作"] == "评定" and result[0]["new_loyalty"] > 0
     # 旧键不回流进人物流：既无 dismissed 处置也无 power/office 变化。
@@ -81,14 +74,14 @@ def test_retired_legacy_person_keys_are_rejected_per_section_not_silently_droppe
     # 旧键恒空：不再作为恒空响应键回显（ADR 0150）。
     for retired in ("appointments", "character_status_changes",
                     "character_power_changes", "office_changes"):
-        assert retired not in applied
+        assert not hasattr(applied, retired)
     # ADR 0015：validate 层逐段拒收留痕，report_section 即原 section 名。
     legacy_rejections = [
-        item for item in applied["validate_shape_rejections"]
-        if item.get("report_section") == legacy_key
+        item for item in shape_rejections(applied)
+        if legacy_key in item.reason
     ]
     assert len(legacy_rejections) == 1
-    assert legacy_rejections[0]["category"] == "invalid_shape"
+    assert legacy_rejections[0].category == "invalid_shape"
 
 
 def test_retired_legacy_person_keys_normalize_to_nothing_in_the_person_stream():
@@ -111,10 +104,10 @@ def test_normalize_person_changes_ignores_non_item_shapes():
 def test_apply_score_extraction_reports_no_legacy_person_response_keys(game):
     """ADR 0150「无恒空兼容键」：旧四键不再作为恒空响应键回显。"""
     db, state, _ = game
-    applied = issues.apply_score_extraction(db, state, {}, content=None)
+    applied = settle_delta(state, db, {}, SettlementContext())
     for retired in ("appointments", "character_status_changes",
                     "character_power_changes", "office_changes"):
-        assert retired not in applied
+        assert not hasattr(applied, retired)
 
 
 def test_apply_score_extraction_rejects_person_change_power_move_without_way(read_game):
@@ -122,26 +115,17 @@ def test_apply_score_extraction_rejects_person_change_power_move_without_way(rea
     name = active_ming_character(db, content)
     old_power = content.characters[name].power_id
 
-    applied = issues.apply_score_extraction(
-        db,
-        state,
-        {"人物变更": [{"name": name, "origin_ref": "盘面自发", "动作": "易主", "new_power": "houjin", "reason": "漏方式"}]},
-        content=content,
-    )
+    applied = settle_delta(state, db, {'人物变更': [{'name': name, 'origin_ref': '盘面自发', '动作': '易主', 'new_power': 'houjin', 'reason': '漏方式'}]}, SettlementContext(content=content))
 
     row = db.conn.execute("SELECT power_id FROM characters WHERE name=?", (name,)).fetchone()
     assert row["power_id"] == old_power
     assert content.characters[name].power_id == old_power
-    assert applied["applied_person_changes"] == [
-        {
-            "name": name,
-            "origin_ref": "盘面自发", "动作": "易主",
-            "rejected": True,
-            "reason": "易主 缺 方式",
-            "category": "missing_field",
-            "item": {"name": name, "origin_ref": "盘面自发", "动作": "易主", "new_power": "houjin", "reason": "漏方式"},
-        }
-    ]
+    assert view(applied, "applied_person_changes") == []
+    _refused = rejected_view(applied, "applied_person_changes")
+    assert len(_refused) == 1
+    assert _refused[0].reason == "易主 缺 方式"
+    assert _refused[0].category == "missing_field"
+    assert _refused[0].item == {"name": name, "origin_ref": "盘面自发", "动作": "易主", "new_power": "houjin", "reason": "漏方式"}
 
 
 def test_apply_score_extraction_records_mao_appeasement_commitment_and_loyalty_delta(game):
@@ -151,45 +135,9 @@ def test_apply_score_extraction_records_mao_appeasement_commitment_and_loyalty_d
     ).fetchone()["loyalty"]
     origin_ref = _promulgated_dossier(db, state, "安抚毛文龙")
 
-    applied = issues.apply_score_extraction(
-        db,
-        state,
-        {
-            "new_issues": [
-                {
-                    "origin_kind": "decree",
-                    "origin_ref": origin_ref,
-                    "kind": "initiative",
-                    "title": "安抚毛文龙·进行中",
-                    "bar_value": 20,
-                    "stage_text": "遣臣持诏赴皮岛，安抚东江镇",
-                    "ongoing_effects": {
-                        "人物变更": [
-                            {
-                                "name": "毛文龙",
-                                "origin_ref": origin_ref, "动作": "评定",
-                                "loyalty": 2,
-                                "reason": "奉旨持续安抚",
-                            }
-                        ]
-                    },
-                    "stop_condition": {"character.毛文龙.loyalty": ">=65"},
-                    "commitment_kind": "until_stop",
-                }
-            ],
-            "人物变更": [
-                {
-                    "name": "毛文龙",
-                    "origin_ref": origin_ref, "动作": "评定",
-                    "loyalty": 8,
-                    "reason": "奉旨安抚，软判其观望稍解",
-                }
-            ],
-        },
-        content=content,
-    )
+    applied = settle_delta(state, db, {'new_issues': [{'origin_kind': 'decree', 'origin_ref': origin_ref, 'kind': 'initiative', 'title': '安抚毛文龙·进行中', 'bar_value': 20, 'stage_text': '遣臣持诏赴皮岛，安抚东江镇', 'ongoing_effects': {'人物变更': [{'name': '毛文龙', 'origin_ref': origin_ref, '动作': '评定', 'loyalty': 2, 'reason': '奉旨持续安抚'}]}, 'stop_condition': {'character.毛文龙.loyalty': '>=65'}, 'commitment_kind': 'until_stop'}], '人物变更': [{'name': '毛文龙', 'origin_ref': origin_ref, '动作': '评定', 'loyalty': 8, 'reason': '奉旨安抚，软判其观望稍解'}]}, SettlementContext(content=content))
 
-    assert applied["issue_summary"]["new_issues"][0]["title"] == "安抚毛文龙·进行中"
+    assert issue_rows(applied, "new_issues")[0]["title"] == "安抚毛文龙·进行中"
     issue_row = db.conn.execute(
         "SELECT title, resolve_condition, stop_condition, commitment_kind, status "
         "FROM issues WHERE title='安抚毛文龙·进行中'"
@@ -203,7 +151,7 @@ def test_apply_score_extraction_records_mao_appeasement_commitment_and_loyalty_d
         "SELECT loyalty FROM characters WHERE name='毛文龙'"
     ).fetchone()["loyalty"]
     assert after == min(100, before + 8)
-    assert applied["applied_person_changes"] == [
+    assert view(applied, "applied_person_changes") == [
         {
             "name": "毛文龙",
             "origin_ref": origin_ref, "动作": "评定",
@@ -256,27 +204,18 @@ def test_apply_score_extraction_rejects_invalid_loyalty_assessment(game, item, c
         "SELECT loyalty FROM characters WHERE name='毛文龙'"
     ).fetchone()["loyalty"]
 
-    applied = issues.apply_score_extraction(
-        db,
-        state,
-        {"人物变更": [item]},
-        content=content,
-    )
+    applied = settle_delta(state, db, {'人物变更': [item]}, SettlementContext(content=content))
 
     after = db.conn.execute(
         "SELECT loyalty FROM characters WHERE name='毛文龙'"
     ).fetchone()["loyalty"]
     assert after == before
-    assert applied["applied_person_changes"] == [
-        {
-            "name": item["name"],
-            "origin_ref": "盘面自发", "动作": "评定",
-            "rejected": True,
-            "reason": reason,
-            "category": category,
-            "item": item,
-        }
-    ]
+    assert view(applied, "applied_person_changes") == []
+    _refused = rejected_view(applied, "applied_person_changes")
+    assert len(_refused) == 1
+    assert _refused[0].reason == reason
+    assert _refused[0].category == category
+    assert _refused[0].item == item
 
 
 @pytest.mark.parametrize(
@@ -292,28 +231,14 @@ def test_apply_score_extraction_clamps_loyalty_assessment_delta(game, start, del
     db.conn.commit()
     content.characters["毛文龙"].loyalty = start
 
-    applied = issues.apply_score_extraction(
-        db,
-        state,
-        {
-            "人物变更": [
-                {
-                    "name": "毛文龙",
-                    "origin_ref": "盘面自发", "动作": "评定",
-                    "loyalty": delta,
-                    "reason": "边界软判",
-                }
-            ]
-        },
-        content=content,
-    )
+    applied = settle_delta(state, db, {'人物变更': [{'name': '毛文龙', 'origin_ref': '盘面自发', '动作': '评定', 'loyalty': delta, 'reason': '边界软判'}]}, SettlementContext(content=content))
 
     after = db.conn.execute(
         "SELECT loyalty FROM characters WHERE name='毛文龙'"
     ).fetchone()["loyalty"]
     assert after == expected
     assert content.characters["毛文龙"].loyalty == expected
-    assert applied["applied_person_changes"] == [
+    assert view(applied, "applied_person_changes") == [
         {
             "name": "毛文龙",
             "origin_ref": "盘面自发", "动作": "评定",
@@ -437,36 +362,14 @@ def test_apply_score_extraction_one_time_grant_and_assessment_do_not_create_comm
         "SELECT loyalty FROM characters WHERE name='毛文龙'"
     ).fetchone()["loyalty"]
 
-    applied = issues.apply_score_extraction(
-        db,
-        state,
-        {
-            "economy_moves": [
-                {
-                    "target": "辽饷",
-                    "amount": 200,
-                    "reason": "一次性抚恤东江镇",
-                }
-            ],
-            "new_issues": [],
-            "人物变更": [
-                {
-                    "name": "毛文龙",
-                    "origin_ref": "盘面自发", "动作": "评定",
-                    "loyalty": 3,
-                    "reason": "一次性赏赐后略有感念",
-                }
-            ],
-        },
-        content=content,
-    )
+    applied = settle_delta(state, db, {'economy_moves': [{'target': '辽饷', 'amount': 200, 'reason': '一次性抚恤东江镇'}], 'new_issues': [], '人物变更': [{'name': '毛文龙', 'origin_ref': '盘面自发', '动作': '评定', 'loyalty': 3, 'reason': '一次性赏赐后略有感念'}]}, SettlementContext(content=content))
 
     after_issues = db.conn.execute("SELECT COUNT(*) AS n FROM issues").fetchone()["n"]
     after_loyalty = db.conn.execute(
         "SELECT loyalty FROM characters WHERE name='毛文龙'"
     ).fetchone()["loyalty"]
     assert after_issues == before_issues
-    assert applied["issue_summary"]["new_issues"] == []
+    assert issue_rows(applied, "new_issues") == []
     assert after_loyalty == min(100, before_loyalty + 3)
 
 
@@ -490,12 +393,7 @@ def test_apply_score_extraction_rejects_malformed_power_move_backlash_before_wri
         "reason": "畸形反噬",
     }
 
-    applied = issues.apply_score_extraction(
-        db,
-        state,
-        {"人物变更": [item]},
-        content=content,
-    )
+    applied = settle_delta(state, db, {'人物变更': [item]}, SettlementContext(content=content))
 
     row = db.conn.execute(
         "SELECT power_id, office, office_type FROM characters WHERE name=?", (name,)
@@ -504,16 +402,12 @@ def test_apply_score_extraction_rejects_malformed_power_move_backlash_before_wri
     assert content.characters[name].power_id == old_power
     assert content.characters[name].office == old_office
     assert content.characters[name].office_type == old_office_type
-    assert applied["applied_person_changes"] == [
-        {
-            "name": name,
-            "origin_ref": "盘面自发", "动作": "易主",
-            "rejected": True,
-            "reason": "易主 反噬 项必须是 object(dict)",
-            "category": "invalid_enum",
-            "item": item,
-        }
-    ]
+    assert view(applied, "applied_person_changes") == []
+    _refused = rejected_view(applied, "applied_person_changes")
+    assert len(_refused) == 1
+    assert _refused[0].reason == "易主 反噬 项必须是 object(dict)"
+    assert _refused[0].category == "invalid_enum"
+    assert _refused[0].item == item
 
 
 def test_apply_score_extraction_rejects_forged_legacy_partial_power_way(game):
@@ -522,29 +416,12 @@ def test_apply_score_extraction_rejects_forged_legacy_partial_power_way(game):
     old_power = content.characters[name].power_id
 
     try:
-        applied = issues.apply_score_extraction(
-            db,
-            state,
-            {
-                "人物变更": [
-                    {
-                        "name": name,
-                        "origin_ref": "盘面自发", "动作": "易主",
-                        "new_power": "houjin",
-                        "方式": "乱写方式",
-                        "反噬": {},
-                        "legacy_partial": True,
-                    }
-                ]
-            },
-            content=content,
-        )
+        applied = settle_delta(state, db, {'人物变更': [{'name': name, 'origin_ref': '盘面自发', '动作': '易主', 'new_power': 'houjin', '方式': '乱写方式', '反噬': {}, 'legacy_partial': True}]}, SettlementContext(content=content))
 
         row = db.conn.execute("SELECT power_id FROM characters WHERE name=?", (name,)).fetchone()
         assert row["power_id"] == old_power
         assert content.characters[name].power_id == old_power
-        assert applied["applied_person_changes"][0]["rejected"] is True
-        assert applied["applied_person_changes"][0]["category"] == "invalid_enum"
+        assert rejected_view(applied, "applied_person_changes")[0].category == "invalid_enum"
     finally:
         content.characters[name].power_id = old_power
 
@@ -556,29 +433,12 @@ def test_apply_score_extraction_rejects_power_move_without_backlash_side_effect(
         "SELECT leverage FROM powers WHERE id='houjin'"
     ).fetchone()["leverage"]
 
-    applied = issues.apply_score_extraction(
-        db,
-        state,
-        {
-            "人物变更": [
-                {
-                    "name": name,
-                    "origin_ref": "盘面自发", "动作": "易主",
-                    "new_power": "not_a_power",
-                    "方式": "主动投敌",
-                    "反噬": {"houjin": {"leverage": 2}},
-                }
-            ]
-        },
-        content=content,
-    )
+    applied = settle_delta(state, db, {'人物变更': [{'name': name, 'origin_ref': '盘面自发', '动作': '易主', 'new_power': 'not_a_power', '方式': '主动投敌', '反噬': {'houjin': {'leverage': 2}}}]}, SettlementContext(content=content))
 
     after_leverage = db.conn.execute(
         "SELECT leverage FROM powers WHERE id='houjin'"
     ).fetchone()["leverage"]
     assert after_leverage == before_leverage
-    assert applied["applied_person_changes"][0]["rejected"] is True
-
 
 def test_apply_score_extraction_applies_person_change_office_action(game):
     db, state, content = game
@@ -588,23 +448,7 @@ def test_apply_score_extraction_applies_person_change_office_action(game):
     old_office_type = content.characters[name].office_type
 
     try:
-        applied = issues.apply_score_extraction(
-            db,
-            state,
-            {
-                "人物变更": [
-                    {
-                        "name": name,
-                        "origin_ref": "盘面自发", "动作": "调任",
-                        "office": "测试巡抚",
-                        "office_type": "督抚",
-                        "region_id": "shaanxi",
-                        "reason": "移镇测试",
-                    }
-                ]
-            },
-            content=content,
-        )
+        applied = settle_delta(state, db, {'人物变更': [{'name': name, 'origin_ref': '盘面自发', '动作': '调任', 'office': '测试巡抚', 'office_type': '督抚', 'region_id': 'shaanxi', 'reason': '移镇测试'}]}, SettlementContext(content=content))
 
         row = db.conn.execute(
             "SELECT status, office, office_type FROM characters WHERE name=?", (name,)
@@ -613,9 +457,9 @@ def test_apply_score_extraction_applies_person_change_office_action(game):
         assert row["office"] == "测试巡抚"
         assert row["office_type"] == content.characters[name].office_type
         assert content.characters[name].office == "测试巡抚"
-        assert applied["applied_person_changes"][0]["动作"] == "调任"
-        assert applied["applied_person_changes"][0]["new_office"] == "测试巡抚"
-        assert not applied["applied_person_changes"][0].get("rejected")
+        assert view(applied, "applied_person_changes")[0]["动作"] == "调任"
+        assert view(applied, "applied_person_changes")[0]["new_office"] == "测试巡抚"
+        assert not view(applied, "applied_person_changes")[0].get("rejected")
     finally:
         content.characters[name].status = old_status
         content.characters[name].office = old_office
@@ -626,28 +470,11 @@ def test_apply_score_extraction_rejects_unknown_person_change_new_appointment(re
     db, state, content = read_game
     name = "测试新任官员"
 
-    applied = issues.apply_score_extraction(
-        db,
-        state,
-        {
-            "人物变更": [
-                {
-                    "name": name,
-                    "origin_ref": "盘面自发", "动作": "任命",
-                    "office": "工部主事",
-                    "office_type": "工部",
-                    "faction": "中立",
-                    "reason": "铨选测试",
-                }
-            ]
-        },
-        content=content,
-    )
+    applied = settle_delta(state, db, {'人物变更': [{'name': name, 'origin_ref': '盘面自发', '动作': '任命', 'office': '工部主事', 'office_type': '工部', 'faction': '中立', 'reason': '铨选测试'}]}, SettlementContext(content=content))
 
     assert db.conn.execute("SELECT 1 FROM characters WHERE name=?", (name,)).fetchone() is None
     assert name not in content.characters
-    assert applied["applied_person_changes"][0]["rejected"] is True
-    assert applied["applied_person_changes"][0]["category"] == "hallucinated_id"
+    assert rejected_view(applied, "applied_person_changes")[0].category == "hallucinated_id"
 
 
 def test_apply_score_extraction_rejects_trapped_prisoner_appointment(game):
@@ -663,16 +490,7 @@ def test_apply_score_extraction_rejects_trapped_prisoner_appointment(game):
         db.conn.commit()
         content.characters[name].status = "imprisoned"
 
-        applied = issues.apply_score_extraction(
-            db,
-            state,
-            {
-                "人物变更": [
-                    {"name": name, "origin_ref": "盘面自发", "动作": "任命", "office": "陕西总督", "office_type": "地方", "region_id": "shaanxi", "reason": "狱中拜将"}
-                ]
-            },
-            content=content,
-        )
+        applied = settle_delta(state, db, {'人物变更': [{'name': name, 'origin_ref': '盘面自发', '动作': '任命', 'office': '陕西总督', 'office_type': '地方', 'region_id': 'shaanxi', 'reason': '狱中拜将'}]}, SettlementContext(content=content))
 
         row = db.conn.execute(
             "SELECT status, office, reason_code FROM characters WHERE name=?", (name,)
@@ -680,8 +498,7 @@ def test_apply_score_extraction_rejects_trapped_prisoner_appointment(game):
         assert row["status"] == "imprisoned"
         assert row["office"] == ""
         assert row["reason_code"] == "陷虏"
-        assert applied["applied_person_changes"][0]["rejected"] is True
-        assert applied["applied_person_changes"][0]["category"] == "invalid_transition"
+        assert rejected_view(applied, "applied_person_changes")[0].category == "invalid_transition"
     finally:
         content.characters[name].status = old_status
         content.characters[name].office = old_office
@@ -699,23 +516,7 @@ def test_apply_score_extraction_materializes_derived_release_before_appointment(
         db.set_character_status(state, name, "imprisoned", "旧案在押")
         content.characters[name].status = "imprisoned"
 
-        applied = issues.apply_score_extraction(
-            db,
-            state,
-            {
-                "人物变更": [
-                    {
-                        "name": name,
-                        "origin_ref": "盘面自发", "动作": "任命",
-                        "office": "陕西总督",
-                        "office_type": "地方",
-                        "region_id": "shaanxi",
-                        "reason": "查明旧案后起用",
-                    }
-                ]
-            },
-            content=content,
-        )
+        applied = settle_delta(state, db, {'人物变更': [{'name': name, 'origin_ref': '盘面自发', '动作': '任命', 'office': '陕西总督', 'office_type': '地方', 'region_id': 'shaanxi', 'reason': '查明旧案后起用'}]}, SettlementContext(content=content))
 
         row = db.conn.execute(
             "SELECT status, office, reason_code FROM characters WHERE name=?", (name,)
@@ -735,11 +536,11 @@ def test_apply_score_extraction_materializes_derived_release_before_appointment(
             {"action": "任命", "payload_summary": "查明旧案后起用", "derived_from": "放归"},
             {"action": "处置", "payload_summary": "放归", "derived_from": "放归"},
         ]
-        assert applied["applied_person_changes"][0]["动作"] == "处置"
-        assert applied["applied_person_changes"][0]["status"] == "offstage"
-        assert applied["applied_person_changes"][0]["derived_from"] == "放归"
-        assert applied["applied_person_changes"][1]["动作"] == "任命"
-        assert applied["applied_person_changes"][1]["derived_from"] == "放归"
+        assert view(applied, "applied_person_changes")[0]["动作"] == "处置"
+        assert view(applied, "applied_person_changes")[0]["status"] == "offstage"
+        assert view(applied, "applied_person_changes")[0]["derived_from"] == "放归"
+        assert view(applied, "applied_person_changes")[1]["动作"] == "任命"
+        assert view(applied, "applied_person_changes")[1]["derived_from"] == "放归"
     finally:
         content.characters[name].status = old_status
         content.characters[name].office = old_office
@@ -764,10 +565,7 @@ def test_rejected_derived_appointment_durably_restores_complete_person_state(gam
         "name": name, "rejected": True, "category": "appointment_rejected",
     })
 
-    issues.apply_score_extraction(db, state, {"人物变更": [{
-        "name": name, "origin_ref": "盘面自发", "动作": "任命", "office": "陕西总督",
-        "office_type": "地方", "region_id": "shaanxi",
-    }]}, content=content)
+    settle_delta(state, db, {'人物变更': [{'name': name, 'origin_ref': '盘面自发', '动作': '任命', 'office': '陕西总督', 'office_type': '地方', 'region_id': 'shaanxi'}]}, SettlementContext(content=content))
 
     path = db.conn.execute("PRAGMA database_list").fetchone()[2]
     other = sqlite3.connect(path)
@@ -826,23 +624,7 @@ def test_apply_score_extraction_materializes_displaced_holder_as_talent_pool_cha
         content.characters[old_holder].office_type = "地方"
         content.characters[old_holder].office_region = "shaanxi"
 
-        applied = issues.apply_score_extraction(
-            db,
-            state,
-            {
-                "人物变更": [
-                    {
-                        "name": new_holder,
-                        "origin_ref": "盘面自发", "动作": "调任",
-                        "office": target_office,
-                        "office_type": "地方",
-                        "region_id": "shaanxi",
-                        "reason": "顶替旧任",
-                    }
-                ]
-            },
-            content=content,
-        )
+        applied = settle_delta(state, db, {'人物变更': [{'name': new_holder, 'origin_ref': '盘面自发', '动作': '调任', 'office': target_office, 'office_type': '地方', 'region_id': 'shaanxi', 'reason': '顶替旧任'}]}, SettlementContext(content=content))
 
         old_row = db.conn.execute(
             "SELECT status, office, office_type, reason_code FROM characters WHERE name=?",
@@ -856,7 +638,7 @@ def test_apply_score_extraction_materializes_displaced_holder_as_talent_pool_cha
         }
         assert content.characters[old_holder].office == "听用候铨"
         assert content.characters[old_holder].office_type == "身名分"
-        assert applied["applied_person_changes"] == [
+        assert view(applied, "applied_person_changes") == [
             {
                 "origin_ref": "盘面自发", "动作": "调任",
                 "name": new_holder,
@@ -930,12 +712,7 @@ def test_apply_score_extraction_clears_displaced_reason_when_reappointed(game):
         content.characters[old_holder].office_type = "地方"
         content.characters[old_holder].office_region = "shaanxi"
 
-        issues.apply_score_extraction(
-            db,
-            state,
-            {"人物变更": [{"name": new_holder, "origin_ref": "盘面自发", "动作": "调任", "office": target_office, "office_type": "地方", "region_id": "shaanxi"}]},
-            content=content,
-        )
+        settle_delta(state, db, {'人物变更': [{'name': new_holder, 'origin_ref': '盘面自发', '动作': '调任', 'office': target_office, 'office_type': '地方', 'region_id': 'shaanxi'}]}, SettlementContext(content=content))
         displaced = db.conn.execute(
             "SELECT office, office_type, status_reason, reason_code FROM characters WHERE name=?",
             (old_holder,),
@@ -947,23 +724,7 @@ def test_apply_score_extraction_clears_displaced_reason_when_reappointed(game):
             "reason_code": "被顶替",
         }
 
-        issues.apply_score_extraction(
-            db,
-            state,
-            {
-                "人物变更": [
-                    {
-                        "name": old_holder,
-                        "origin_ref": "盘面自发", "动作": "任命",
-                        "office": reappointed_office,
-                        "office_type": "地方",
-                        "region_id": "henan",
-                        "reason": "重新授实职",
-                    }
-                ]
-            },
-            content=content,
-        )
+        settle_delta(state, db, {'人物变更': [{'name': old_holder, 'origin_ref': '盘面自发', '动作': '任命', 'office': reappointed_office, 'office_type': '地方', 'region_id': 'henan', 'reason': '重新授实职'}]}, SettlementContext(content=content))
 
         row = db.conn.execute(
             "SELECT status, office, office_type, status_reason, reason_code FROM characters WHERE name=?",
@@ -1000,20 +761,7 @@ def test_apply_score_extraction_does_not_release_when_derived_appointment_is_inv
         content.characters[name].status = "imprisoned"
         before_logs = db.conn.execute("SELECT COUNT(*) FROM person_logs").fetchone()[0]
 
-        applied = issues.apply_score_extraction(
-            db,
-            state,
-            {
-                "人物变更": [
-                    {
-                        "name": name,
-                        "origin_ref": "盘面自发", "动作": "任命",
-                        "reason": "漏填官职",
-                    }
-                ]
-            },
-            content=content,
-        )
+        applied = settle_delta(state, db, {'人物变更': [{'name': name, 'origin_ref': '盘面自发', '动作': '任命', 'reason': '漏填官职'}]}, SettlementContext(content=content))
 
         row = db.conn.execute(
             "SELECT status, office FROM characters WHERE name=?", (name,)
@@ -1022,21 +770,16 @@ def test_apply_score_extraction_does_not_release_when_derived_appointment_is_inv
         assert row["office"] == ""
         assert content.characters[name].status == "imprisoned"
         assert db.conn.execute("SELECT COUNT(*) FROM person_logs").fetchone()[0] == before_logs
-        assert applied["applied_person_changes"] == [
-            {
-                "name": name,
-                "origin_ref": "盘面自发", "动作": "任命",
-                "new_office": "",
-                "rejected": True,
-                "reason": "name 或 new_office 空",
-                "category": "missing_field",
-                "item": {
+        assert view(applied, "applied_person_changes") == []
+        _refused = rejected_view(applied, "applied_person_changes")
+        assert len(_refused) == 1
+        assert _refused[0].reason == "name 或 new_office 空"
+        assert _refused[0].category == "missing_field"
+        assert _refused[0].item == {
                     "name": name,
                     "origin_ref": "盘面自发", "动作": "任命",
                     "reason": "漏填官职",
-                },
-            }
-        ]
+                }
     finally:
         content.characters[name].status = old_status
         content.characters[name].office = old_office
@@ -1049,28 +792,14 @@ def test_apply_score_extraction_accepts_status_reason_as_person_reason(game):
     old_office = content.characters[name].office
 
     try:
-        applied = issues.apply_score_extraction(
-            db,
-            state,
-            {
-                "人物变更": [
-                    {
-                        "name": name,
-                        "origin_ref": "盘面自发", "动作": "处置",
-                        "status": "dismissed",
-                        "status_reason": "契约允许的说明",
-                    }
-                ]
-            },
-            content=content,
-        )
+        applied = settle_delta(state, db, {'人物变更': [{'name': name, 'origin_ref': '盘面自发', '动作': '处置', 'status': 'dismissed', 'status_reason': '契约允许的说明'}]}, SettlementContext(content=content))
 
         row = db.conn.execute(
             "SELECT status, status_reason FROM characters WHERE name=?", (name,)
         ).fetchone()
         assert row["status"] == "dismissed"
         assert row["status_reason"] == "契约允许的说明"
-        assert applied["applied_person_changes"] == [
+        assert view(applied, "applied_person_changes") == [
             {
                 "name": name,
                 "origin_ref": "盘面自发", "动作": "处置",
@@ -1100,23 +829,7 @@ def test_apply_score_extraction_rolls_back_derived_release_when_office_write_fai
         before_logs = db.conn.execute("SELECT COUNT(*) FROM person_logs").fetchone()[0]
         monkeypatch.setattr(db, "set_character_office", fail_office_write)
 
-        applied = issues.apply_score_extraction(
-            db,
-            state,
-            {
-                "人物变更": [
-                    {
-                        "name": name,
-                        "origin_ref": "盘面自发", "动作": "任命",
-                        "office": "陕西总督",
-                        "office_type": "地方",
-                        "region_id": "shaanxi",
-                        "reason": "查明旧案后起用",
-                    }
-                ]
-            },
-            content=content,
-        )
+        applied = settle_delta(state, db, {'人物变更': [{'name': name, 'origin_ref': '盘面自发', '动作': '任命', 'office': '陕西总督', 'office_type': '地方', 'region_id': 'shaanxi', 'reason': '查明旧案后起用'}]}, SettlementContext(content=content))
 
         row = db.conn.execute(
             "SELECT status, office, reason_code FROM characters WHERE name=?", (name,)
@@ -1127,8 +840,10 @@ def test_apply_score_extraction_rolls_back_derived_release_when_office_write_fai
         assert content.characters[name].status == "imprisoned"
         assert content.characters[name].office == ""
         assert db.conn.execute("SELECT COUNT(*) FROM person_logs").fetchone()[0] == before_logs
-        assert applied["applied_person_changes"] == [
-            {
+        assert view(applied, "applied_person_changes") == []
+        _refused = rejected_view(applied, "applied_person_changes")
+        assert len(_refused) == 1
+        assert _refused[0].item == {
                 "origin_ref": "盘面自发", "动作": "任命",
                 "name": name,
                 "new_office": "陕西总督",
@@ -1136,7 +851,6 @@ def test_apply_score_extraction_rolls_back_derived_release_when_office_write_fai
                 "reason": "落库失败：simulated office write failure",
                 "derived_from": "放归",
             }
-        ]
     finally:
         content.characters[name].status = old_status
         content.characters[name].office = old_office
@@ -1175,24 +889,7 @@ def test_derived_release_rejection_keeps_prior_person_change_in_atomic_batch(
         monkeypatch.setattr(db, "set_character_office", fail_office_write)
 
         with atomic(db):
-            applied = issues.apply_score_extraction(
-                db,
-                state,
-                {
-                    "人物变更": [
-                        {"name": first, "origin_ref": "盘面自发", "动作": "处置", "status": "dismissed", "reason": "先罢一人"},
-                        {
-                            "name": second,
-                            "origin_ref": "盘面自发", "动作": "任命",
-                            "office": "陕西总督",
-                            "office_type": "地方",
-                            "region_id": "shaanxi",
-                            "reason": "查明旧案后起用",
-                        },
-                    ]
-                },
-                content=content,
-            )
+            applied = settle_delta(state, db, {'人物变更': [{'name': first, 'origin_ref': '盘面自发', '动作': '处置', 'status': 'dismissed', 'reason': '先罢一人'}, {'name': second, 'origin_ref': '盘面自发', '动作': '任命', 'office': '陕西总督', 'office_type': '地方', 'region_id': 'shaanxi', 'reason': '查明旧案后起用'}]}, SettlementContext(content=content))
 
         first_row = db.conn.execute(
             "SELECT status, office FROM characters WHERE name=?", (first,)
@@ -1210,17 +907,19 @@ def test_derived_release_rejection_keeps_prior_person_change_in_atomic_batch(
             "SELECT COUNT(*) FROM person_logs WHERE person_name IN (?, ?)",
             (first, second),
         ).fetchone()[0] == before_logs + 1
-        assert applied["applied_person_changes"] == [
+        assert view(applied, "applied_person_changes") == [
             {"name": first, "origin_ref": "盘面自发", "动作": "处置", "status": "dismissed", "reason": "先罢一人"},
-            {
+        ]
+        _refused = rejected_view(applied, "applied_person_changes")
+        assert len(_refused) == 1
+        assert _refused[0].item == {
                 "origin_ref": "盘面自发", "动作": "任命",
                 "name": second,
                 "new_office": "陕西总督",
                 "rejected": True,
                 "reason": "落库失败：simulated office write failure",
                 "derived_from": "放归",
-            },
-        ]
+            }
     finally:
         content.characters[first].status = old_first_status
         content.characters[first].office = old_first_office
@@ -1243,23 +942,7 @@ def test_derived_release_restores_when_post_office_helper_raises(game, monkeypat
         before_logs = db.conn.execute("SELECT COUNT(*) FROM person_logs").fetchone()[0]
         monkeypatch.setattr(issues, "_displace_duplicate_offices", fail_after_office_write)
 
-        applied = issues.apply_score_extraction(
-            db,
-            state,
-            {
-                "人物变更": [
-                    {
-                        "name": name,
-                        "origin_ref": "盘面自发", "动作": "任命",
-                        "office": "陕西总督",
-                        "office_type": "地方",
-                        "region_id": "shaanxi",
-                        "reason": "查明旧案后起用",
-                    }
-                ]
-            },
-            content=content,
-        )
+        applied = settle_delta(state, db, {'人物变更': [{'name': name, 'origin_ref': '盘面自发', '动作': '任命', 'office': '陕西总督', 'office_type': '地方', 'region_id': 'shaanxi', 'reason': '查明旧案后起用'}]}, SettlementContext(content=content))
 
         row = db.conn.execute(
             "SELECT status, office, reason_code FROM characters WHERE name=?", (name,)
@@ -1270,8 +953,10 @@ def test_derived_release_restores_when_post_office_helper_raises(game, monkeypat
         assert content.characters[name].status == "imprisoned"
         assert content.characters[name].office == ""
         assert db.conn.execute("SELECT COUNT(*) FROM person_logs").fetchone()[0] == before_logs
-        assert applied["applied_person_changes"] == [
-            {
+        assert view(applied, "applied_person_changes") == []
+        _refused = rejected_view(applied, "applied_person_changes")
+        assert len(_refused) == 1
+        assert _refused[0].item == {
                 "origin_ref": "盘面自发", "动作": "任命",
                 "name": name,
                 "new_office": "陕西总督",
@@ -1279,7 +964,6 @@ def test_derived_release_restores_when_post_office_helper_raises(game, monkeypat
                 "reason": "落库失败：simulated post-office failure",
                 "derived_from": "放归",
             }
-        ]
     finally:
         content.characters[name].status = old_status
         content.characters[name].office = old_office
@@ -1313,12 +997,7 @@ def test_apply_score_extraction_does_not_release_non_ming_when_derived_appointme
             "region_id": "shaanxi",
             "reason": "错误任明官",
         }
-        applied = issues.apply_score_extraction(
-            db,
-            state,
-            {"人物变更": [raw_item]},
-            content=content,
-        )
+        applied = settle_delta(state, db, {'人物变更': [raw_item]}, SettlementContext(content=content))
 
         row = db.conn.execute(
             "SELECT status, office, power_id FROM characters WHERE name=?", (name,)
@@ -1328,17 +1007,12 @@ def test_apply_score_extraction_does_not_release_non_ming_when_derived_appointme
         assert row["power_id"] == ""
         assert content.characters[name].status == "imprisoned"
         assert db.conn.execute("SELECT COUNT(*) FROM person_logs").fetchone()[0] == before_logs
-        assert applied["applied_person_changes"] == [
-            {
-                "origin_ref": "盘面自发", "动作": "任命",
-                "name": name,
-                "new_office": "陕西总督",
-                "rejected": True,
-                "reason": f"{name}不属大明朝廷，不能授予大明官职",
-                "category": "invalid_transition",
-                "item": raw_item,
-            }
-        ]
+        assert view(applied, "applied_person_changes") == []
+        _refused = rejected_view(applied, "applied_person_changes")
+        assert len(_refused) == 1
+        assert _refused[0].reason == f"{name}不属大明朝廷，不能授予大明官职"
+        assert _refused[0].category == "invalid_transition"
+        assert _refused[0].item == raw_item
     finally:
         content.characters[name].status = old_status
         content.characters[name].office = old_office
@@ -1352,22 +1026,13 @@ def test_apply_score_extraction_applies_person_change_disposition(game):
     old_office = content.characters[name].office
 
     try:
-        applied = issues.apply_score_extraction(
-            db,
-            state,
-            {
-                "人物变更": [
-                    {"name": name, "origin_ref": "盘面自发", "动作": "处置", "status": "dismissed", "reason": "削职听勘"}
-                ]
-            },
-            content=content,
-        )
+        applied = settle_delta(state, db, {'人物变更': [{'name': name, 'origin_ref': '盘面自发', '动作': '处置', 'status': 'dismissed', 'reason': '削职听勘'}]}, SettlementContext(content=content))
 
         assert db.get_character_status(name)[0] == "dismissed"
         assert content.characters[name].status == "dismissed"
         assert content.characters[name].office == ""
-        assert "person_changes" not in applied
-        assert applied["applied_person_changes"] == [
+        assert not hasattr(applied, "person_changes")
+        assert view(applied, "applied_person_changes") == [
             {"name": name, "origin_ref": "盘面自发", "动作": "处置", "status": "dismissed", "reason": "削职听勘"}
         ]
     finally:
@@ -1382,17 +1047,12 @@ def test_apply_score_extraction_applies_person_change_banish(game):
     old_office = content.characters[name].office
 
     try:
-        applied = issues.apply_score_extraction(
-            db,
-            state,
-            {"人物变更": [{"name": name, "origin_ref": "盘面自发", "动作": "罢黜", "reason": "廷议罢官"}]},
-            content=content,
-        )
+        applied = settle_delta(state, db, {'人物变更': [{'name': name, 'origin_ref': '盘面自发', '动作': '罢黜', 'reason': '廷议罢官'}]}, SettlementContext(content=content))
 
         assert db.get_character_status(name)[0] == "dismissed"
         assert content.characters[name].status == "dismissed"
         assert content.characters[name].office == ""
-        assert applied["applied_person_changes"] == [
+        assert view(applied, "applied_person_changes") == [
             {"name": name, "origin_ref": "盘面自发", "动作": "罢黜", "status": "dismissed", "reason": "廷议罢官"}
         ]
     finally:
@@ -1410,16 +1070,10 @@ def test_apply_score_extraction_rejects_banish_from_imprisoned(game):
         db.set_character_status(state, name, "imprisoned", "候审")
         content.characters[name].status = "imprisoned"
 
-        applied = issues.apply_score_extraction(
-            db,
-            state,
-            {"人物变更": [{"name": name, "origin_ref": "盘面自发", "动作": "罢黜", "reason": "狱中追夺"}]},
-            content=content,
-        )
+        applied = settle_delta(state, db, {'人物变更': [{'name': name, 'origin_ref': '盘面自发', '动作': '罢黜', 'reason': '狱中追夺'}]}, SettlementContext(content=content))
 
         assert db.get_character_status(name)[0] == "imprisoned"
-        assert applied["applied_person_changes"][0]["rejected"] is True
-        assert applied["applied_person_changes"][0]["category"] == "invalid_transition"
+        assert rejected_view(applied, "applied_person_changes")[0].category == "invalid_transition"
     finally:
         content.characters[name].status = old_status
         content.characters[name].office = old_office
@@ -1432,19 +1086,14 @@ def test_apply_score_extraction_offstage_disposition_clears_db_and_content_offic
     old_office = content.characters[name].office
 
     try:
-        applied = issues.apply_score_extraction(
-            db,
-            state,
-            {"人物变更": [{"name": name, "origin_ref": "盘面自发", "动作": "处置", "status": "offstage"}]},
-            content=content,
-        )
+        applied = settle_delta(state, db, {'人物变更': [{'name': name, 'origin_ref': '盘面自发', '动作': '处置', 'status': 'offstage'}]}, SettlementContext(content=content))
 
         row = db.conn.execute("SELECT status, office FROM characters WHERE name=?", (name,)).fetchone()
         assert row["status"] == "offstage"
         assert row["office"] == ""
         assert content.characters[name].status == "offstage"
         assert content.characters[name].office == ""
-        assert applied["applied_person_changes"] == [
+        assert view(applied, "applied_person_changes") == [
             {"name": name, "origin_ref": "盘面自发", "动作": "处置", "status": "offstage", "reason": ""}
         ]
     finally:
@@ -1457,22 +1106,7 @@ def test_apply_score_extraction_persists_reason_code_and_person_log(game):
     name = active_ming_character(db, content)
     before_logs = db.conn.execute("SELECT COUNT(*) FROM person_logs").fetchone()[0]
 
-    applied = issues.apply_score_extraction(
-        db,
-        state,
-        {
-            "人物变更": [
-                {
-                    "name": name,
-                    "origin_ref": "盘面自发", "动作": "处置",
-                    "status": "imprisoned",
-                    "reason_code": "陷虏",
-                    "reason": "兵败被执",
-                }
-            ]
-        },
-        content=content,
-    )
+    applied = settle_delta(state, db, {'人物变更': [{'name': name, 'origin_ref': '盘面自发', '动作': '处置', 'status': 'imprisoned', 'reason_code': '陷虏', 'reason': '兵败被执'}]}, SettlementContext(content=content))
 
     row = db.conn.execute(
         "SELECT status, reason_code FROM characters WHERE name=?", (name,)
@@ -1489,7 +1123,7 @@ def test_apply_score_extraction_persists_reason_code_and_person_log(game):
         "payload_summary": "兵败被执",
         "source": "system_simulation",
     }
-    assert applied["applied_person_changes"][0]["reason_code"] == "陷虏"
+    assert view(applied, "applied_person_changes")[0]["reason_code"] == "陷虏"
 
 
 def test_apply_score_extraction_allegiance_change_rebinds_identity_title(game):
@@ -1504,24 +1138,7 @@ def test_apply_score_extraction_allegiance_change_rebinds_identity_title(game):
         content.characters[name].office = "兵部尚书"
         content.characters[name].office_type = "兵部"
         assert content.characters[name].office
-        applied = issues.apply_score_extraction(
-            db,
-            state,
-            {
-                "人物变更": [
-                    {
-                        "name": name,
-                        "origin_ref": "盘面自发", "动作": "易主",
-                        "方式": "主动投敌",
-                        "new_power": "houjin",
-                        "new_title": "降臣",
-                        "反噬": {},
-                        "reason": "阵前倒戈",
-                    }
-                ]
-            },
-            content=content,
-        )
+        applied = settle_delta(state, db, {'人物变更': [{'name': name, 'origin_ref': '盘面自发', '动作': '易主', '方式': '主动投敌', 'new_power': 'houjin', 'new_title': '降臣', '反噬': {}, 'reason': '阵前倒戈'}]}, SettlementContext(content=content))
 
         row = db.conn.execute(
             "SELECT power_id, office, office_type FROM characters WHERE name=?", (name,)
@@ -1530,7 +1147,7 @@ def test_apply_score_extraction_allegiance_change_rebinds_identity_title(game):
         assert content.characters[name].power_id == "houjin"
         assert content.characters[name].office == "降臣"
         assert content.characters[name].office_type == "身名分"
-        assert applied["applied_person_changes"][0]["new_title"] == "降臣"
+        assert view(applied, "applied_person_changes")[0]["new_title"] == "降臣"
     finally:
         content.characters[name].office = old_office
         content.characters[name].office_type = old_office_type
@@ -1548,30 +1165,14 @@ def test_apply_score_extraction_treats_active_identity_title_as_unappointed(game
         content.characters[name].office = "降臣"
         content.characters[name].office_type = "身名分"
 
-        applied = issues.apply_score_extraction(
-            db,
-            state,
-            {
-                "人物变更": [
-                    {
-                        "name": name,
-                        "origin_ref": "盘面自发", "动作": "任命",
-                        "office": "陕西总督",
-                        "office_type": "督抚",
-                        "region_id": "shaanxi",
-                        "reason": "收叙任用",
-                    }
-                ]
-            },
-            content=content,
-        )
+        applied = settle_delta(state, db, {'人物变更': [{'name': name, 'origin_ref': '盘面自发', '动作': '任命', 'office': '陕西总督', 'office_type': '督抚', 'region_id': 'shaanxi', 'reason': '收叙任用'}]}, SettlementContext(content=content))
 
         row = db.conn.execute(
             "SELECT office, office_type FROM characters WHERE name=?", (name,)
         ).fetchone()
         assert row["office"] == "陕西总督"
-        assert applied["applied_person_changes"][0]["动作"] == "任命"
-        assert "normalized" not in applied["applied_person_changes"][0]
+        assert view(applied, "applied_person_changes")[0]["动作"] == "任命"
+        assert "normalized" not in view(applied, "applied_person_changes")[0]
     finally:
         content.characters[name].office = old_office
         content.characters[name].office_type = old_office_type
@@ -1732,14 +1333,14 @@ def test_set_character_office_person_title_survives_stem_collision(game):
 def test_apply_score_extraction_rejects_invalid_person_dispositions(read_game, item, expected):
     db, state, _ = read_game
 
-    applied = issues.apply_score_extraction(
-        db,
-        state,
-        {"人物变更": [item]},
-        content=None,
-    )
+    applied = settle_delta(state, db, {'人物变更': [item]}, SettlementContext())
 
-    assert applied["applied_person_changes"] == [expected]
+    assert view(applied, "applied_person_changes") == []
+    refused = rejected_view(applied, "applied_person_changes")
+    assert len(refused) == 1
+    assert refused[0].reason == expected["reason"]
+    assert refused[0].category == expected["category"]
+    assert refused[0].item == expected["item"]
 
 
 @pytest.mark.parametrize("with_content", [True, False])
@@ -1747,24 +1348,14 @@ def test_apply_score_extraction_rejects_unknown_person_change(read_game, with_co
     db, state, content = read_game
     item = {"name": "不存在的人", "origin_ref": "盘面自发", "动作": "处置", "status": "dismissed"}
 
-    applied = issues.apply_score_extraction(
-        db,
-        state,
-        {"人物变更": [item]},
-        content=content if with_content else None,
-    )
+    applied = settle_delta(state, db, {'人物变更': [item]}, SettlementContext(content=content if with_content else None))
 
-    assert applied["applied_person_changes"] == [
-        {
-            "name": "不存在的人",
-            "origin_ref": "盘面自发", "动作": "处置",
-            "status": "dismissed",
-            "rejected": True,
-            "reason": "非既有人物",
-            "category": "hallucinated_id",
-            "item": item,
-        }
-    ]
+    assert view(applied, "applied_person_changes") == []
+    _refused = rejected_view(applied, "applied_person_changes")
+    assert len(_refused) == 1
+    assert _refused[0].reason == "非既有人物"
+    assert _refused[0].category == "hallucinated_id"
+    assert _refused[0].item == item
 
 
 def test_apply_score_extraction_rejects_dead_status_outbound(game):
@@ -1772,24 +1363,14 @@ def test_apply_score_extraction_rejects_dead_status_outbound(game):
     name = active_ming_character(db, content)
     db.set_character_status(state, name, "dead", "测试置死")
 
-    applied = issues.apply_score_extraction(
-        db,
-        state,
-        {"人物变更": [{"name": name, "origin_ref": "盘面自发", "动作": "处置", "status": "dismissed"}]},
-        content=content,
-    )
+    applied = settle_delta(state, db, {'人物变更': [{'name': name, 'origin_ref': '盘面自发', '动作': '处置', 'status': 'dismissed'}]}, SettlementContext(content=content))
 
-    assert applied["applied_person_changes"] == [
-        {
-            "name": name,
-            "origin_ref": "盘面自发", "动作": "处置",
-            "status": "dismissed",
-            "rejected": True,
-            "reason": "dead 无 status 出边",
-            "category": "invalid_transition",
-            "item": {"name": name, "origin_ref": "盘面自发", "动作": "处置", "status": "dismissed"},
-        }
-    ]
+    assert view(applied, "applied_person_changes") == []
+    _refused = rejected_view(applied, "applied_person_changes")
+    assert len(_refused) == 1
+    assert _refused[0].reason == "dead 无 status 出边"
+    assert _refused[0].category == "invalid_transition"
+    assert _refused[0].item == {"name": name, "origin_ref": "盘面自发", "动作": "处置", "status": "dismissed"}
 
 
 def _materialize_active_prince(db, state, content):
@@ -1978,63 +1559,31 @@ def test_apply_score_extraction_rejects_invalid_person_travel(game):
     name = active_ming_character(db, content)
     db.set_character_status(state, name, "dismissed", "测试离事")
 
-    applied = issues.apply_score_extraction(
-        db,
-        state,
-        {
-            "人物变更": [
-                {"name": "孔有德", "origin_ref": "盘面自发", "动作": "行止"},
-                {"name": name, "origin_ref": "盘面自发", "动作": "行止", "transit_to": "liaodong"},
-            ]
-        },
-        content=None,
-    )
+    applied = settle_delta(state, db, {'人物变更': [{'name': '孔有德', 'origin_ref': '盘面自发', '动作': '行止'}, {'name': name, 'origin_ref': '盘面自发', '动作': '行止', 'transit_to': 'liaodong'}]}, SettlementContext())
 
-    assert applied["applied_person_changes"] == [
-        {
-            "name": "孔有德",
-            "origin_ref": "盘面自发", "动作": "行止",
-            "rejected": True,
-            "reason": "transit_to 缺失",
-            "category": "missing_field",
-            "item": {"name": "孔有德", "origin_ref": "盘面自发", "动作": "行止"},
-        },
-        {
-            "name": name,
-            "origin_ref": "盘面自发", "动作": "行止",
-            "rejected": True,
-            "reason": "行止 仅适用于 active 人物",
-            "category": "invalid_transition",
-            "item": {"name": name, "origin_ref": "盘面自发", "动作": "行止", "transit_to": "liaodong"},
-        },
-    ]
+    assert view(applied, "applied_person_changes") == []
+    _refused = rejected_view(applied, "applied_person_changes")
+    assert len(_refused) == 2
+    assert _refused[0].reason == "transit_to 缺失"
+    assert _refused[0].category == "missing_field"
+    assert _refused[0].item == {"name": "孔有德", "origin_ref": "盘面自发", "动作": "行止"}
+    assert _refused[1].reason == "行止 仅适用于 active 人物"
+    assert _refused[1].category == "invalid_transition"
+    assert _refused[1].item == {"name": name, "origin_ref": "盘面自发", "动作": "行止", "transit_to": "liaodong"}
 
 
 def test_apply_score_extraction_rejects_unknown_person_travel_region(read_game):
     db, state, content = read_game
     name = active_ming_character(db, content)
 
-    applied = issues.apply_score_extraction(
-        db,
-        state,
-        {
-            "人物变更": [
-                {"name": name, "origin_ref": "盘面自发", "动作": "行止", "transit_to": "not_a_region"},
-            ]
-        },
-        content=content,
-    )
+    applied = settle_delta(state, db, {'人物变更': [{'name': name, 'origin_ref': '盘面自发', '动作': '行止', 'transit_to': 'not_a_region'}]}, SettlementContext(content=content))
 
-    assert applied["applied_person_changes"] == [
-        {
-            "name": name,
-            "origin_ref": "盘面自发", "动作": "行止",
-            "rejected": True,
-            "reason": "transit_to 地区不存在",
-            "category": "missing_ref",
-            "item": {"name": name, "origin_ref": "盘面自发", "动作": "行止", "transit_to": "not_a_region"},
-        }
-    ]
+    assert view(applied, "applied_person_changes") == []
+    _refused = rejected_view(applied, "applied_person_changes")
+    assert len(_refused) == 1
+    assert _refused[0].reason == "transit_to 地区不存在"
+    assert _refused[0].category == "missing_ref"
+    assert _refused[0].item == {"name": name, "origin_ref": "盘面自发", "动作": "行止", "transit_to": "not_a_region"}
 
 
 def test_person_disposition_clears_existing_transit_to(game):
@@ -2046,18 +1595,8 @@ def test_person_disposition_clears_existing_transit_to(game):
     old_transit_to = content.characters[name].transit_to
 
     try:
-        issues.apply_score_extraction(
-            db,
-            state,
-            {"人物变更": [{"name": name, "origin_ref": "盘面自发", "动作": "行止", "transit_to": "liaodong"}]},
-            content=content,
-        )
-        issues.apply_score_extraction(
-            db,
-            state,
-            {"人物变更": [{"name": name, "origin_ref": "盘面自发", "动作": "处置", "status": "dismissed"}]},
-            content=content,
-        )
+        settle_delta(state, db, {'人物变更': [{'name': name, 'origin_ref': '盘面自发', '动作': '行止', 'transit_to': 'liaodong'}]}, SettlementContext(content=content))
+        settle_delta(state, db, {'人物变更': [{'name': name, 'origin_ref': '盘面自发', '动作': '处置', 'status': 'dismissed'}]}, SettlementContext(content=content))
 
         row = db.conn.execute("SELECT status, transit_to FROM characters WHERE name=?", (name,)).fetchone()
         assert row["status"] == "dismissed"
@@ -2078,12 +1617,7 @@ def test_set_character_status_clears_transit_to_when_leaving_active(game):
     old_transit_to = content.characters[name].transit_to
 
     try:
-        issues.apply_score_extraction(
-            db,
-            state,
-            {"人物变更": [{"name": name, "origin_ref": "盘面自发", "动作": "行止", "transit_to": "liaodong"}]},
-            content=content,
-        )
+        settle_delta(state, db, {'人物变更': [{'name': name, 'origin_ref': '盘面自发', '动作': '行止', 'transit_to': 'liaodong'}]}, SettlementContext(content=content))
         db.set_character_status(state, name, "dismissed", "legacy direct status")
 
         row = db.conn.execute(
@@ -2157,14 +1691,7 @@ def test_political_marker_is_audit_only_no_status_premigration(game):
         db.set_character_status = spy
         before_logs = db.conn.execute("SELECT COUNT(*) FROM person_logs").fetchone()[0]
 
-        issues.apply_score_extraction(
-            db, state,
-            {"人物变更": [{
-                "name": name, "origin_ref": "盘面自发", "动作": "任命",
-                "office": "都察院左都御史", "reason": "起用获罪诸臣",
-            }]},
-            content=content,
-        )
+        settle_delta(state, db, {'人物变更': [{'name': name, 'origin_ref': '盘面自发', '动作': '任命', 'office': '都察院左都御史', 'reason': '起用获罪诸臣'}]}, SettlementContext(content=content))
 
         assert not any(r == "昭雪" for _, r in calls), \
             f"政治标记昭雪不应执行 status 迁移原语（决定4）；实际调用={calls}"
@@ -2195,12 +1722,7 @@ def test_reappoint_nonactive_syncs_character_reason_to_db(game):
     content.characters[name].status_reason = "忤逆案削籍"
     content.characters[name].reason_code = "获罪削籍"
 
-    issues.apply_score_extraction(
-        db, state,
-        {"人物变更": [{"name": name, "origin_ref": "盘面自发", "动作": "任命",
-                      "office": "都察院左都御史", "reason": "起用获罪诸臣"}]},
-        content=content,
-    )
+    settle_delta(state, db, {'人物变更': [{'name': name, 'origin_ref': '盘面自发', '动作': '任命', 'office': '都察院左都御史', 'reason': '起用获罪诸臣'}]}, SettlementContext(content=content))
 
     row = db.conn.execute(
         "SELECT status, status_reason, reason_code FROM characters WHERE name=?", (name,)
@@ -2231,11 +1753,7 @@ def test_reappoint_rollback_restores_character_reason(game, monkeypatch):
         raise RuntimeError("post-readback failure")
     monkeypatch.setattr(issues, "resolve_office_type_preserving_title", boom)
 
-    issues.apply_score_extraction(
-        db, state,
-        {"人物变更": [{"name": name, "origin_ref": "盘面自发", "动作": "任命", "office": "陕西总督", "office_type": "地方", "region_id": "shaanxi", "reason": "起用"}]},
-        content=content,
-    )
+    settle_delta(state, db, {'人物变更': [{'name': name, 'origin_ref': '盘面自发', '动作': '任命', 'office': '陕西总督', 'office_type': '地方', 'region_id': 'shaanxi', 'reason': '起用'}]}, SettlementContext(content=content))
 
     ch = content.characters[name]
     assert ch.status == "dismissed", f"回滚后内存 status 未还原：{ch.status!r}"
@@ -2263,11 +1781,7 @@ def test_disposition_manual_rollback_restores_memory_reason_fields(game, monkeyp
         return {"name": name, "new_office": "陕西总督", "rejected": True, "reason": "forced reject"}
     monkeypatch.setattr(issues, "apply_office_appointment", reject)
 
-    issues.apply_score_extraction(
-        db, state,
-        {"人物变更": [{"name": name, "origin_ref": "盘面自发", "动作": "任命", "office": "陕西总督", "office_type": "地方", "region_id": "shaanxi", "reason": "起用"}]},
-        content=content,
-    )
+    settle_delta(state, db, {'人物变更': [{'name': name, 'origin_ref': '盘面自发', '动作': '任命', 'office': '陕西总督', 'office_type': '地方', 'region_id': 'shaanxi', 'reason': '起用'}]}, SettlementContext(content=content))
 
     row = db.conn.execute(
         "SELECT status_reason, reason_code FROM characters WHERE name=?", (name,)
@@ -2291,11 +1805,7 @@ def test_unified_appointment_resolves_alias_before_hallucinated_guard(game):
     ch = content.characters[name]
     ch.aliases = list(ch.aliases or []) + [alias]
 
-    issues.apply_score_extraction(
-        db, state,
-        {"人物变更": [{"name": alias, "origin_ref": "盘面自发", "动作": "任命", "office": "陕西总督", "office_type": "地方", "region_id": "shaanxi", "reason": "起用"}]},
-        content=content,
-    )
+    settle_delta(state, db, {'人物变更': [{'name': alias, 'origin_ref': '盘面自发', '动作': '任命', 'office': '陕西总督', 'office_type': '地方', 'region_id': 'shaanxi', 'reason': '起用'}]}, SettlementContext(content=content))
 
     row = db.conn.execute(
         "SELECT status, office FROM characters WHERE name=?", (name,)
@@ -2519,14 +2029,7 @@ def test_yizhu_sets_active_in_new_master_service(game):
     if name in content.characters:
         content.characters[name].status = "imprisoned"
 
-    issues.apply_score_extraction(
-        db, state,
-        {"人物变更": [{
-            "name": name, "origin_ref": "盘面自发", "动作": "易主",
-            "new_power": "houjin", "方式": "被俘而降", "反噬": {},
-        }]},
-        content=content,
-    )
+    settle_delta(state, db, {'人物变更': [{'name': name, 'origin_ref': '盘面自发', '动作': '易主', 'new_power': 'houjin', '方式': '被俘而降', '反噬': {}}]}, SettlementContext(content=content))
 
     row = db.conn.execute(
         "SELECT status, power_id FROM characters WHERE name=?", (name,)
@@ -2557,14 +2060,7 @@ def test_disposition_syncs_reason_code_to_content_in_txn(game):
     db, state, content = game
     name = active_ming_character(db, content)
 
-    issues.apply_score_extraction(
-        db, state,
-        {"人物变更": [{
-            "name": name, "origin_ref": "盘面自发", "动作": "处置",
-            "status": "dismissed", "reason_code": "获罪削籍", "reason": "忤逆案削籍",
-        }]},
-        content=content,
-    )
+    settle_delta(state, db, {'人物变更': [{'name': name, 'origin_ref': '盘面自发', '动作': '处置', 'status': 'dismissed', 'reason_code': '获罪削籍', 'reason': '忤逆案削籍'}]}, SettlementContext(content=content))
 
     ch = content.characters[name]
     assert ch.status == "dismissed"
@@ -2588,11 +2084,7 @@ def test_reappointment_clears_displaced_mark_in_both_db_and_content(game):
         content.characters[name].reason_code = "被顶替"
         content.characters[name].status_reason = "被顶替"
 
-    issues.apply_score_extraction(
-        db, state,
-        {"人物变更": [{"name": name, "origin_ref": "盘面自发", "动作": "任命", "office": "兵部尚书", "reason": "起复任事"}]},
-        content=content,
-    )
+    settle_delta(state, db, {'人物变更': [{'name': name, 'origin_ref': '盘面自发', '动作': '任命', 'office': '兵部尚书', 'reason': '起复任事'}]}, SettlementContext(content=content))
 
     row = db.conn.execute("SELECT reason_code, status_reason FROM characters WHERE name=?", (name,)).fetchone()
     ch = content.characters[name]
@@ -2612,7 +2104,7 @@ def test_migration_does_not_write_nonregion_location(read_game):
     for r in rows:
         loc = r["location"] or ""
         assert loc == "" or loc in region_ids, \
-            f"{r['name']} location={loc!r} 非合法 region_id（破 region_id 不变式）"
+            f"{describe(r, "name")} location={loc!r} 非合法 region_id（破 region_id 不变式）"
 
 
 def test_yizhu_clears_status_reason_in_db(game):
@@ -2628,12 +2120,7 @@ def test_yizhu_clears_status_reason_in_db(game):
     # （若同回合两写则 status_changed_turn 恒等 state.turn，断言无牙、抓不住 F2 回归）。
     state.turn += 1
 
-    issues.apply_score_extraction(
-        db, state,
-        {"人物变更": [{"name": name, "origin_ref": "盘面自发", "动作": "易主", "new_power": "houjin",
-                      "方式": "被俘而降", "反噬": {}, "reason": "剃发降清"}]},
-        content=content,
-    )
+    settle_delta(state, db, {'人物变更': [{'name': name, 'origin_ref': '盘面自发', '动作': '易主', 'new_power': 'houjin', '方式': '被俘而降', '反噬': {}, 'reason': '剃发降清'}]}, SettlementContext(content=content))
 
     row = db.conn.execute(
         "SELECT status, status_reason, status_changed_turn, reason_code FROM characters WHERE name=?", (name,)
@@ -2653,11 +2140,7 @@ def _appoint(db, state, content, name, office, reason, *, office_type="", region
         item["office_type"] = office_type
     if region_id:
         item["region_id"] = region_id
-    return issues.apply_score_extraction(
-        db, state,
-        {"人物变更": [item]},
-        content=content,
-    )
+    return settle_delta(state, db, {'人物变更': [item]}, SettlementContext(content=content))
 
 
 def test_s2_reappointment_derives_qifu_from_retired(game):
@@ -2677,7 +2160,7 @@ def test_s2_reappointment_derives_qifu_from_retired(game):
         assert row["office"] == "蓟辽督师"
         # 不断言 person_logs 绝对条数：所选 office 若被占会派生 S5 顶替（合法级联），条数随盘面浮动。
         # 只验 S2 起复 derive 链本身：前两项必是 处置(起复) → 任命。
-        pcs = applied["applied_person_changes"]
+        pcs = view(applied, "applied_person_changes")
         assert pcs[0]["动作"] == "处置" and pcs[0]["derived_from"] == "起复"
         assert pcs[1]["动作"] == "任命" and pcs[1]["derived_from"] == "起复"
     finally:
@@ -2701,7 +2184,7 @@ def test_s3_reappointment_derives_zhaoxue_from_dismissed(game):
         assert row["status"] == "active"
         assert row["office"] == "东阁大学士"
         assert db.conn.execute("SELECT COUNT(*) FROM person_logs").fetchone()[0] == before_logs + 2
-        pcs = applied["applied_person_changes"]
+        pcs = view(applied, "applied_person_changes")
         assert pcs[0]["动作"] == "处置" and pcs[0]["derived_from"] == "昭雪"
         assert pcs[1]["动作"] == "任命" and pcs[1]["derived_from"] == "昭雪"
     finally:
@@ -2724,7 +2207,7 @@ def test_s4_reappointment_derives_duoqing_when_mourning(game):
         row = db.conn.execute("SELECT status, office FROM characters WHERE name=?", (name,)).fetchone()
         assert row["status"] == "active"
         assert row["office"] == "礼部尚书,东阁大学士", "夺情任命须真授官（office 规范化兼→,），否则 status=active 但 office 漏写也漏抓（codex R1）"
-        pcs = applied["applied_person_changes"]
+        pcs = view(applied, "applied_person_changes")
         # 丁忧 优先于 offstage→起复：派生须是 夺情 而非 起复
         assert pcs[0]["动作"] == "处置" and pcs[0]["derived_from"] == "夺情"
         assert pcs[1]["动作"] == "任命" and pcs[1]["derived_from"] == "夺情"
@@ -2740,14 +2223,11 @@ def test_person_change_rejects_unknown_action_not_silent(game):
     name = active_ming_character(db, content)
     before_office_db = db.conn.execute("SELECT office FROM characters WHERE name=?", (name,)).fetchone()["office"]
     before_office_mem = content.characters[name].office
-    applied = issues.apply_score_extraction(
-        db, state,
-        {"人物变更": [{"name": name, "origin_ref": "盘面自发", "动作": "瞎搞一通", "office": "兵部尚书", "reason": "非法动作"}]},
-        content=content,
-    )
-    pcs = applied["applied_person_changes"]
-    assert len(pcs) == 1
-    assert pcs[0].get("rejected") is True, "未知动作必须被拒收，不能静默落库或丢弃"
+    applied = settle_delta(state, db, {'人物变更': [{'name': name, 'origin_ref': '盘面自发', '动作': '瞎搞一通', 'office': '兵部尚书', 'reason': '非法动作'}]}, SettlementContext(content=content))
+    pcs = view(applied, "applied_person_changes")
+    refused = rejected_view(applied, "applied_person_changes")
+    assert pcs == []
+    assert len(refused) == 1, "未知动作必须被拒收，不能静默落库或丢弃"
     # 拒收项不得落库：office 须与拒收前完全一致（含 payload 里的 兵部尚书 绝不被写）。断言「office 未变」
     # 即完整覆盖「写了再拒」半落库；不再单独断言「兵部尚书 not in office」——那对原职本就含该串的人物会误失败
     # （codex+CodeRabbit R2 concur，brittle）。「未变」本身已 robust 覆盖 payload 不落库（codex R1）。
@@ -2772,13 +2252,8 @@ def test_s9_consort_leaves_palace_clears_office(game):
         content.characters[name] = consort
         db.add_character(state, consort)
         db.set_character_status(state, name, "active", "在宫")
-        applied = issues.apply_score_extraction(
-            db, state,
-            {"人物变更": [{"name": name, "origin_ref": "盘面自发", "动作": "处置", "status": "offstage",
-                          "reason_code": "出宫", "reason": "出宫居家"}]},
-            content=content,
-        )
-        item = next(r for r in applied["applied_person_changes"] if r.get("name") == name)
+        applied = settle_delta(state, db, {'人物变更': [{'name': name, 'origin_ref': '盘面自发', '动作': '处置', 'status': 'offstage', 'reason_code': '出宫', 'reason': '出宫居家'}]}, SettlementContext(content=content))
+        item = next(r for r in view(applied, "applied_person_changes") if r.get("name") == name)
         assert not item.get("rejected"), f"出宫应被接受，实得 {item}"
         row = db.conn.execute("SELECT status, office, reason_code FROM characters WHERE name=?", (name,)).fetchone()
         assert row["status"] == "offstage"
@@ -2803,16 +2278,8 @@ def test_s15_amnesty_to_ming_then_appoint(game):
         pytest.skip("基底盘面无 active 敌方可招抚人物")
     old = dict(db.conn.execute("SELECT power_id, status, office FROM characters WHERE name=?", (name,)).fetchone())
     try:
-        applied = issues.apply_score_extraction(
-            db, state,
-            {"人物变更": [
-                {"name": name, "origin_ref": "盘面自发", "动作": "易主", "new_power": "ming", "方式": "主动归附",
-                 "反噬": {}, "reason": "受抚归明"},
-                {"name": name, "origin_ref": "盘面自发", "动作": "任命", "office": "福建游击", "office_type": "边镇", "region_id": "fujian", "reason": "授游击"},
-            ]},
-            content=content,
-        )
-        pcs = [r for r in applied["applied_person_changes"] if r.get("name") == name]
+        applied = settle_delta(state, db, {'人物变更': [{'name': name, 'origin_ref': '盘面自发', '动作': '易主', 'new_power': 'ming', '方式': '主动归附', '反噬': {}, 'reason': '受抚归明'}, {'name': name, 'origin_ref': '盘面自发', '动作': '任命', 'office': '福建游击', 'office_type': '边镇', 'region_id': 'fujian', 'reason': '授游击'}]}, SettlementContext(content=content))
+        pcs = [r for r in view(applied, "applied_person_changes") if r.get("name") == name]
         assert any(r.get("动作") == "易主" and not r.get("rejected") for r in pcs), f"易主(归附)应被接受：{pcs}"
         row = db.conn.execute("SELECT power_id, office FROM characters WHERE name=?", (name,)).fetchone()
         assert row["power_id"] == "ming", "招抚归明 power_id 须翻 ming"
@@ -2876,27 +2343,7 @@ def test_bandit_amnesty_rejects_same_power_top_level_suppression(game):
             content.characters[name].office_type = "外臣"
         db.conn.commit()
 
-        applied = issues.apply_score_extraction(
-            db,
-            state,
-            {
-                "power_updates": {
-                    zhang_power: {"military_strength": -7, "reason": "同股剿股误混"},
-                },
-                "人物变更": [
-                    {
-                        "name": zhang,
-                        "origin_ref": "盘面自发", "动作": "易主",
-                        "new_power": "ming",
-                        "方式": "主动归附",
-                        "反噬": {zhang_power: {"military_strength": -5, "reason": "谷城就抚拆散其股"}},
-                        "reason": "谷城受抚归明",
-                    },
-                    {"name": zhang, "origin_ref": "盘面自发", "动作": "任命", "office": "游击将军", "office_type": "边镇", "region_id": "huguang", "reason": "授武将名分"},
-                ],
-            },
-            content=content,
-        )
+        applied = settle_delta(state, db, {'power_updates': {zhang_power: {'military_strength': -7, 'reason': '同股剿股误混'}}, '人物变更': [{'name': zhang, 'origin_ref': '盘面自发', '动作': '易主', 'new_power': 'ming', '方式': '主动归附', '反噬': {zhang_power: {'military_strength': -5, 'reason': '谷城就抚拆散其股'}}, 'reason': '谷城受抚归明'}, {'name': zhang, 'origin_ref': '盘面自发', '动作': '任命', 'office': '游击将军', 'office_type': '边镇', 'region_id': 'huguang', 'reason': '授武将名分'}]}, SettlementContext(content=content))
 
         zhang_strength = db.conn.execute(
             "SELECT military_strength FROM powers WHERE id=?", (zhang_power,)
@@ -2915,9 +2362,9 @@ def test_bandit_amnesty_rejects_same_power_top_level_suppression(game):
         assert li_strength == 48, "招安张献忠不得波及李自成股"
         assert log_deltas == [-5], "削股须一处落账,不得同股双写 power_logs"
         assert any(
-            item.get("rejected") and item.get("power_id") == zhang_power
-            for item in applied["power_changes"]
-        ), f"同股顶层剿股应显式拒收,实得 {applied['power_changes']}"
+            isinstance(item.item, dict) and item.item.get("power_id") == zhang_power
+            for item in rejected_view(applied, "power_changes")
+        ), f"同股顶层剿股应显式拒收,实得 {describe(applied, 'power_changes')}"
     finally:
         for name, row in old_rows.items():
             db.conn.execute(
@@ -2971,27 +2418,7 @@ def test_bandit_amnesty_rejects_same_power_top_level_suppression_when_backlash_e
         content.characters[zhang].office_type = "外臣"
         db.conn.commit()
 
-        applied = issues.apply_score_extraction(
-            db,
-            state,
-            {
-                "power_updates": {
-                    zhang_power: {"military_strength": -7, "reason": "同股剿股误混"},
-                },
-                "人物变更": [
-                    {
-                        "name": zhang,
-                        "origin_ref": "盘面自发", "动作": "易主",
-                        "new_power": "ming",
-                        "方式": "主动归附",
-                        "反噬": {},
-                        "reason": "谷城受抚归明",
-                    },
-                    {"name": zhang, "origin_ref": "盘面自发", "动作": "任命", "office": "游击将军", "office_type": "边镇", "region_id": "huguang", "reason": "授武将名分"},
-                ],
-            },
-            content=content,
-        )
+        applied = settle_delta(state, db, {'power_updates': {zhang_power: {'military_strength': -7, 'reason': '同股剿股误混'}}, '人物变更': [{'name': zhang, 'origin_ref': '盘面自发', '动作': '易主', 'new_power': 'ming', '方式': '主动归附', '反噬': {}, 'reason': '谷城受抚归明'}, {'name': zhang, 'origin_ref': '盘面自发', '动作': '任命', 'office': '游击将军', 'office_type': '边镇', 'region_id': 'huguang', 'reason': '授武将名分'}]}, SettlementContext(content=content))
 
         zhang_strength = db.conn.execute(
             "SELECT military_strength FROM powers WHERE id=?", (zhang_power,)
@@ -3012,9 +2439,9 @@ def test_bandit_amnesty_rejects_same_power_top_level_suppression_when_backlash_e
         assert zhang_strength == 55, "空反噬招安已占用该股,同股顶层剿股不得落账"
         assert log_deltas == []
         assert any(
-            item.get("rejected") and item.get("power_id") == zhang_power
-            for item in applied["power_changes"]
-        ), f"空反噬招安也应显式拒收同股顶层剿股,实得 {applied['power_changes']}"
+            isinstance(item.item, dict) and item.item.get("power_id") == zhang_power
+            for item in rejected_view(applied, "power_changes")
+        ), f"空反噬招安也应显式拒收同股顶层剿股,实得 {describe(applied, 'power_changes')}"
     finally:
         db.conn.execute(
             "UPDATE characters SET power_id=?, status=?, office=?, office_type=? WHERE name=?",
@@ -3063,27 +2490,7 @@ def test_rejected_bandit_amnesty_does_not_block_same_power_suppression(game):
         content.characters[zhang].office_type = "外臣"
         db.conn.commit()
 
-        applied = issues.apply_score_extraction(
-            db,
-            state,
-            {
-                "power_updates": {
-                    zhang_power: {"military_strength": -7, "reason": "剿张献忠股", "origin_ref": "盘面自发"},
-                },
-                "人物变更": [
-                    {
-                        "name": zhang,
-                        "origin_ref": "盘面自发", "动作": "易主",
-                        "new_power": "ming",
-                        "方式": "主动归附",
-                        "new_title": "乱填非白名单",
-                        "反噬": {zhang_power: {"military_strength": -5, "reason": "不会落账"}},
-                        "reason": "非法招安条目",
-                    },
-                ],
-            },
-            content=content,
-        )
+        applied = settle_delta(state, db, {'power_updates': {zhang_power: {'military_strength': -7, 'reason': '剿张献忠股', 'origin_ref': '盘面自发'}}, '人物变更': [{'name': zhang, 'origin_ref': '盘面自发', '动作': '易主', 'new_power': 'ming', '方式': '主动归附', 'new_title': '乱填非白名单', '反噬': {zhang_power: {'military_strength': -5, 'reason': '不会落账'}}, 'reason': '非法招安条目'}]}, SettlementContext(content=content))
 
         zhang_strength = db.conn.execute(
             "SELECT military_strength FROM powers WHERE id=?", (zhang_power,)
@@ -3095,13 +2502,13 @@ def test_rejected_bandit_amnesty_does_not_block_same_power_suppression(game):
         assert zhang_strength == 48
         assert zhang_row["power_id"] == zhang_power
         assert any(
-            item.get("rejected") and item.get("category") == "invalid_enum"
-            for item in applied["applied_person_changes"]
-        ), f"非法招安应拒收,实得 {applied['applied_person_changes']}"
+            item.category == "invalid_enum"
+            for item in rejected_view(applied, "applied_person_changes")
+        ), f"非法招安应拒收,实得 {describe(applied, 'applied_person_changes')}"
         assert any(
             item.get("power") == "张献忠非法招安测试股" and item.get("delta") == -7
-            for item in applied["power_changes"]
-        ), f"招安拒收后剿股应落账,实得 {applied['power_changes']}"
+            for item in view(applied, "power_changes")
+        ), f"招安拒收后剿股应落账,实得 {describe(applied, "power_changes")}"
     finally:
         db.conn.execute(
             "UPDATE characters SET power_id=?, status=?, office=?, office_type=? WHERE name=?",
@@ -3153,26 +2560,7 @@ def test_orphan_bandit_power_can_be_suppressed_when_dead_leader_amnesty_is_rejec
         content.characters[zhang].office_type = "外臣"
         db.conn.commit()
 
-        applied = issues.apply_score_extraction(
-            db,
-            state,
-            {
-                "power_updates": {
-                    zhang_power: {"military_strength": -9, "reason": "剿灭张献忠遗股", "origin_ref": "盘面自发"},
-                },
-                "人物变更": [
-                    {
-                        "name": zhang,
-                        "origin_ref": "盘面自发", "动作": "易主",
-                        "new_power": "ming",
-                        "方式": "主动归附",
-                        "反噬": {zhang_power: {"military_strength": -5, "reason": "误写招安死头目"}},
-                        "reason": "死后不可招安",
-                    },
-                ],
-            },
-            content=content,
-        )
+        applied = settle_delta(state, db, {'power_updates': {zhang_power: {'military_strength': -9, 'reason': '剿灭张献忠遗股', 'origin_ref': '盘面自发'}}, '人物变更': [{'name': zhang, 'origin_ref': '盘面自发', '动作': '易主', 'new_power': 'ming', '方式': '主动归附', '反噬': {zhang_power: {'military_strength': -5, 'reason': '误写招安死头目'}}, 'reason': '死后不可招安'}]}, SettlementContext(content=content))
 
         strength = db.conn.execute(
             "SELECT military_strength FROM powers WHERE id=?", (zhang_power,)
@@ -3187,9 +2575,9 @@ def test_orphan_bandit_power_can_be_suppressed_when_dead_leader_amnesty_is_rejec
         assert strength == 46, "孤儿股只能剿股: 顶层 power_updates 应照落 -9"
         assert log_deltas == [-9], "死头目招安失败后不得再落易主反噬"
         assert any(
-            item.get("动作") == "易主" and item.get("rejected")
-            for item in applied["applied_person_changes"]
-        ), f"死头目招安须拒收,实得 {applied['applied_person_changes']}"
+            isinstance(item.item, dict) and item.item.get("动作") == "易主"
+            for item in rejected_view(applied, "applied_person_changes")
+        ), f"死头目招安须拒收,实得 {describe(applied, 'applied_person_changes')}"
     finally:
         db.conn.execute(
             "UPDATE characters SET power_id=?, status=?, office=?, office_type=? WHERE name=?",
@@ -3251,23 +2639,7 @@ def test_bandit_amnesty_rejects_backlash_targeting_another_bandit_power(game):
             content.characters[name].office_type = "外臣"
         db.conn.commit()
 
-        applied = issues.apply_score_extraction(
-            db,
-            state,
-            {
-                "人物变更": [
-                    {
-                        "name": zhang,
-                        "origin_ref": "盘面自发", "动作": "易主",
-                        "new_power": "ming",
-                        "方式": "主动归附",
-                        "反噬": {li_power: {"military_strength": -5, "reason": "误削李自成股"}},
-                        "reason": "谷城受抚归明",
-                    },
-                ],
-            },
-            content=content,
-        )
+        applied = settle_delta(state, db, {'人物变更': [{'name': zhang, 'origin_ref': '盘面自发', '动作': '易主', 'new_power': 'ming', '方式': '主动归附', '反噬': {li_power: {'military_strength': -5, 'reason': '误削李自成股'}}, 'reason': '谷城受抚归明'}]}, SettlementContext(content=content))
 
         zhang_row = db.conn.execute(
             "SELECT power_id FROM characters WHERE name=?", (zhang,)
@@ -3278,9 +2650,9 @@ def test_bandit_amnesty_rejects_backlash_targeting_another_bandit_power(game):
         assert zhang_row["power_id"] == zhang_power, "错股反噬的招安应整体拒收,不得先易主"
         assert li_strength == 48, "招安张献忠不得削李自成股"
         assert any(
-            item.get("动作") == "易主" and item.get("rejected")
-            for item in applied["applied_person_changes"]
-        ), f"错股反噬须拒收,实得 {applied['applied_person_changes']}"
+            isinstance(item.item, dict) and item.item.get("动作") == "易主"
+            for item in rejected_view(applied, "applied_person_changes")
+        ), f"错股反噬须拒收,实得 {describe(applied, 'applied_person_changes')}"
     finally:
         for name, row in old_rows.items():
             db.conn.execute(
@@ -3304,15 +2676,8 @@ def test_s8_demotion_release_then_lower_appointment_derives_qifu(game):
     try:
         db.set_character_status(state, name, "imprisoned", "旧案在押")
         _ch.status = "imprisoned"
-        applied = issues.apply_score_extraction(
-            db, state,
-            {"人物变更": [
-                {"name": name, "origin_ref": "盘面自发", "动作": "处置", "status": "offstage", "reason": "查明释放"},
-                {"name": name, "origin_ref": "盘面自发", "动作": "任命", "office": "知县", "office_type": "地方", "region_id": "henan", "reason": "贬三级任用"},
-            ]},
-            content=content,
-        )
-        pcs = [r for r in applied["applied_person_changes"] if r.get("name") == name]
+        applied = settle_delta(state, db, {'人物变更': [{'name': name, 'origin_ref': '盘面自发', '动作': '处置', 'status': 'offstage', 'reason': '查明释放'}, {'name': name, 'origin_ref': '盘面自发', '动作': '任命', 'office': '知县', 'office_type': '地方', 'region_id': 'henan', 'reason': '贬三级任用'}]}, SettlementContext(content=content))
+        pcs = [r for r in view(applied, "applied_person_changes") if r.get("name") == name]
         # 末态：active + 低阶官；任命从 offstage 派生 起复。契约 require 'sequence'：派生的 处置(起复)
         # 须落在 任命 之前（release 先于 appoint），用索引锁顺序、不止 any()（Claude PR R1：
         # any 抓不住顺序回归）。robust 对前导 declared 处置 + 可能的 S5 顶替行。

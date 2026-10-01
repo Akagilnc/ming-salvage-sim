@@ -17,7 +17,7 @@ from functools import partial
 from tests.section_rejection_helpers import run_declaration as run_settle
 from tests.section_rejection_helpers import game, rejection_rows
 
-ECO_REJ = "economy_moves_rejections"
+ECO_REJ = "economy_moves"
 
 
 _rejection_rows = partial(rejection_rows, columns="section, reason, category")
@@ -106,7 +106,7 @@ def test_issue_effect_bad_account_economy_reaches_reports(game):
         "close_issues": [{"issue_id": issue_id, "reason": "resolved", "narrative": "测试结案"}],
     }, narrative="x", decree_text="y")
 
-    rows = [r for r in _rejection_rows(db, turn, "issue_summary.entity_rejections")
+    rows = [r for r in _rejection_rows(db, turn, "issue_summary")
             if r[2] == "invalid_enum"]
     assert len(rows) == 1, rows
 
@@ -164,6 +164,6 @@ def test_issue_effect_cancel_economy_reaches_reports(game):
                      "narrative": "撤"}],
     }, narrative="x", decree_text="y")
 
-    rows = [r for r in _rejection_rows(db, turn, "issue_summary.entity_rejections")
+    rows = [r for r in _rejection_rows(db, turn, "issue_summary")
             if r[2] == "invalid_enum"]
     assert len(rows) == 1, rows

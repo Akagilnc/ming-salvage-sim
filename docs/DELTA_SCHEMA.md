@@ -2,7 +2,7 @@
 
 **真相源**：`ming_sim/simulation.py`（`DECLARATION_EFFECT_FIELDS`、`ITEM_FIELD_ALIASES`、`_canonical_item_fields`、`read_beyond_intent_raw`）+ `ming_sim/issues.py`（落库守门）+ `ming_sim/constants.py`（白名单）。
 
-用途：过月逐段声明由 `declaration_dispatch` 交 `apply_score_extraction` 落库；下文记录效果字段约束。**分层校验（ADR 0015 r4 终态）**：顶层非 dict（连 section 都拆不出）才整份重产；未知顶层 key＝可拆 section → 按段拒收留痕，其余 section 照落，**不整份退**；已知 section 内值/项不合法逐项拒收留痕。必须查表，不要凭"我以为"。
+用途：过月逐段声明由 `declaration_dispatch` 交 `settlement.settle_delta` 落库；下文记录效果字段约束。**分层校验（ADR 0015 r4 终态）**：顶层非 dict（连 section 都拆不出）才整份重产；未知顶层 key＝可拆 section → 按段拒收留痕，其余 section 照落，**不整份退**；已知 section 内值/项不合法逐项拒收留痕。必须查表，不要凭"我以为"。
 产出前自查顶层字段集（与 `DECLARATION_EFFECT_FIELDS` 对齐）：未知 key 不再响亮中止，但会被整段拒收留痕、白产一段——别指望守门人帮忙猜拼写。
 
 ## ADR 0055 效果分工线与 origin 槽
@@ -474,6 +474,7 @@ personnel_secret 模块产出；settle 内经 `record_monthly_dossier_progress` 
 | 文件 | 看什么 |
 |---|---|
 | `ming_sim/simulation.py` | `DECLARATION_EFFECT_FIELDS` / `ITEM_FIELD_ALIASES` / `_canonical_item_fields` / `read_beyond_intent_raw` |
-| `ming_sim/issues.py` | `apply_score_extraction()` 里各 issue/new_issue 校验、`origin_kind`/`kind` 白名单 |
+| `ming_sim/settlement/run.py` | 编排器（前置净化 + 按登记表逐段跑 + 组装 `SettlementOutcome`） |
+| `ming_sim/entities/issue/delta_section.py` | 各 issue/new_issue 校验、`origin_kind`/`kind` 白名单 |
 | `ming_sim/db.py` | `set_character_status()` 状态白名单、各 `apply_*_deltas` 字段守门 |
 | `ming_sim/constants.py` | `REGION_*` / `ARMY_*` / `POWER_*` / `BUILDING_*` / `ECONOMY_ACCOUNTS` / `SCORE_METRICS` |

@@ -119,7 +119,7 @@ ENDING_LABELS: Dict[str, str] = {
 def victory_status(db: GameDB, state: GameState) -> Dict[str, object]:
     """结局判定（数值型部分）：本函数只判「京师失守」。
 
-    退位/自尽走 extractor 的 emperor_fate（叙事型，见 issues.apply_score_extraction），
+    退位/自尽走 extractor 的 emperor_fate（叙事型，见 settlement.settle_delta），
     20 年到期走 decree 结局收口（turn>=240），均不在此判。其余一律 ongoing。
     京畿 = beizhili，控制权字段 controlled_by（FK powers）；非 'ming' 即京师失守。
     """

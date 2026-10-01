@@ -6868,7 +6868,7 @@ class GameDB:
     def effect_origin_rejection(self, origin_ref: str) -> Dict[str, object] | None:
         """Authorize extractor provenance immediately before a durable write.
 
-        When apply_score_extraction arms ``_batch_authorized_open_affair_ids``,
+        When the settlement orchestrator arms ``_batch_authorized_open_affair_ids``,
         ``affair:<id>`` must also sit in that frozen batch set — one authority
         for every durable-effect carrier (fiscal included).
         """
@@ -8875,7 +8875,7 @@ class GameDB:
     def adjust_factions(self, deltas: Dict[str, object], commit: bool = True) -> List[Dict[str, object]]:
         """逐项落库；查无此派系名 → missing_ref 逐项拒收留痕（ADR 0008 决定 1，#14/#63
         死法 3）。入参经 _apply_faction_dict 预清洗（坏值已在那层拒），此处只余未知名一类。
-        返回拒收项列表（{"rejected": True, ...}），桥接 _collect_inline_rejections 自动收。
+        返回拒收项列表（{"rejected": True, ...}），由落库编排器 canonical 化后收进拒收报告。
 
         #9 cmr R5 finding#1：白名单朝堂派系（_LEVERAGE_FACTIONS）的 leverage 列由「offset+官职和」
         派生、结算尾 recompute_all_faction_leverage() 绝对幂等兜底。若此处对白名单直写 leverage 列，
@@ -16332,7 +16332,7 @@ class GameDB:
         terminal failure already recorded — caller must return early.
         Returns True when the grant landed.
         """
-        from ming_sim.issues import apply_score_extraction
+        from ming_sim.settlement import SettlementContext, settle_delta
 
         holder = str(
             payload.get("holder_id")
@@ -16354,8 +16354,8 @@ class GameDB:
                 scope = f"{t_kind}:{t_id}"
         if not holder or not privilege or not scope:
             raise ValueError("委任授权案卷缺少 holder_id/privilege/scope")
-        out = apply_score_extraction(
-            self, state,
+        outcome = settle_delta(
+            state, self,
             {
                 "authority_changes": [{
                     "动作": "授予",
@@ -16365,12 +16365,15 @@ class GameDB:
                     "dossier_id": int(dossier_id),
                 }],
             },
-            content=None,
+            SettlementContext(),
         )
-        rows = out.get("authority_changes") or []
-        item = rows[0] if rows else {"rejected": True, "reason": "授予未落"}
-        if item.get("rejected"):
-            reason = str(item.get("reason") or "授予被拒")
+        if outcome.authority.rejected:
+            reason = outcome.authority.rejected[0].reason or "授予被拒"
+        elif not outcome.authority.applied:
+            reason = "授予未落"
+        else:
+            reason = ""
+        if reason:
             # #1628 / 0150-D5-a：跨案 duplicate 接到 assignment 软通道，不得升格整批。
             if reason == "duplicate_active_authority":
                 self.transition_decree_dossier(
@@ -16392,7 +16395,7 @@ class GameDB:
         生产项显式携 authority_id + 本项 dossier_id；观感边由 #611 槽写入。
         不走 0056 毁约轨。
         """
-        from ming_sim.issues import apply_score_extraction
+        from ming_sim.settlement import SettlementContext, settle_delta
         from ming_sim.strict_types import strict_int
 
         try:
@@ -16403,8 +16406,8 @@ class GameDB:
             authority_id = 0
         if authority_id <= 0:
             raise ValueError("收权案卷缺少 authority_id")
-        out = apply_score_extraction(
-            self, state,
+        outcome = settle_delta(
+            state, self,
             {
                 "authority_changes": [{
                     "动作": "收回",
@@ -16412,13 +16415,12 @@ class GameDB:
                     "dossier_id": int(dossier_id),
                 }],
             },
-            content=None,
+            SettlementContext(),
         )
-        rows = out.get("authority_changes") or []
-        item = rows[0] if rows else {"rejected": True, "reason": "收权未落"}
-        if item.get("rejected"):
-            reason = str(item.get("reason") or "收权被拒")
-            raise ValueError(reason)
+        if outcome.authority.rejected:
+            raise ValueError(outcome.authority.rejected[0].reason or "收权被拒")
+        if not outcome.authority.applied:
+            raise ValueError("收权未落")
 
     def _apply_revoke_decree_verdict_effect(
         self, state, row, payload, dossier_id,
@@ -16427,7 +16429,6 @@ class GameDB:
 
         非 undo、不删旧账。代价归 ADR 0056（breach_decree_dossier）。
         """
-        from ming_sim.issues import apply_score_extraction
         from ming_sim.strict_types import strict_int
 
         try:
@@ -16596,7 +16597,7 @@ class GameDB:
             character_person_names,
             parse_responsible_bodies,
         )
-        from ming_sim.issues import apply_score_extraction
+        from ming_sim.settlement import SettlementContext, settle_delta
 
         # 与暂存/admission 同一解析；个人名不得落 participants。
         bodies = parse_responsible_bodies(payload.get("responsible_bodies"))
@@ -16663,13 +16664,13 @@ class GameDB:
             "end_turn": end_turn,
             "commitment_kind": "until_stop",
         }
-        out = apply_score_extraction(
-            self, state, {"new_issues": [ni]}, content=None,
+        outcome = settle_delta(
+            state, self, {"new_issues": [ni]}, SettlementContext(),
         )
-        created = (out.get("issue_summary") or {}).get("new_issues") or []
-        item = created[0] if created else {"rejected": True, "reason": "下议 initiative 未落"}
-        if item.get("rejected"):
-            reason = str(item.get("reason") or "下议 initiative 被拒")
+        created = outcome.issue.new_issues if outcome.issue is not None else []
+        rejected = outcome.issue.rejected if outcome.issue is not None else []
+        if rejected or not created:
+            reason = (rejected[0].reason if rejected else "") or "下议 initiative 被拒"
             self.transition_decree_dossier(dossier_id, "executing", commit=False)
             self.record_dossier_execution(
                 dossier_id, "failed", reason, state.turn, close=True, commit=False,
@@ -16687,10 +16688,8 @@ class GameDB:
         Returns True when initiative landed and caller should continue to the
         shared executing/terminal transition.
         """
-        from ming_sim.issues import (
-            _normalize_commitment_kind,
-            apply_score_extraction,
-        )
+        from ming_sim.issues import _normalize_commitment_kind
+        from ming_sim.settlement import SettlementContext, settle_delta
 
         from ming_sim.participant_roster import resolve_dossier_owner_name
         owner = resolve_dossier_owner_name(row)
@@ -16712,7 +16711,7 @@ class GameDB:
         if commitment_kind == "无":
             commitment_kind = ""
 
-        # 本接缝组装 new_issues item，经 apply_score_extraction 落地；
+        # 本接缝组装 new_issues item，交落库编排器的局势段落地；
         # 逐项 rejected（毒形等）→ 案卷执行失败。#1790 废在办数量硬上限。
         # #520 只授权捕获与落库；不夹带民心等兑现效果（兑现归 #476）。
         ni: Dict[str, object] = {
@@ -16723,7 +16722,7 @@ class GameDB:
             "stage_text": stage_text,
             "participant_roster": [{"character_id": owner, "tier": "主办"}],
         }
-        # 形状保留：承诺字段原样交给 apply_score_extraction。
+        # 形状保留：承诺字段原样交给局势段。
         # 缺 commitment_kind marker 的毒形不得在此洗掉后当普通 initiative 落地（#520）。
         if commitment_kind:
             ni["commitment_kind"] = commitment_kind
@@ -16760,13 +16759,13 @@ class GameDB:
                 ni["commitment_kind"] = "until_stop"
         # ongoing_effects / end_turn 选择规则与缺 marker 拒收交既有校验。
 
-        out = apply_score_extraction(
-            self, state, {"new_issues": [ni]}, content=None,
+        outcome = settle_delta(
+            state, self, {"new_issues": [ni]}, SettlementContext(),
         )
-        created = (out.get("issue_summary") or {}).get("new_issues") or []
-        item = created[0] if created else {"rejected": True, "reason": "交办 initiative 未落"}
-        if item.get("rejected"):
-            reason = str(item.get("reason") or "交办 initiative 被拒")
+        created = outcome.issue.new_issues if outcome.issue is not None else []
+        rejected = outcome.issue.rejected if outcome.issue is not None else []
+        if rejected or not created:
+            reason = (rejected[0].reason if rejected else "") or "交办 initiative 被拒"
             # 校验失败逐项软拒，不掀整批。
             self.transition_decree_dossier(dossier_id, "executing", commit=False)
             self.record_dossier_execution(

@@ -14,7 +14,6 @@ import shutil
 
 from ming_sim.db import GameDB
 from ming_sim.fiscal_fact_brief import build_fiscal_fact_brief
-from ming_sim.issues import apply_score_extraction
 from ming_sim.models import Event
 
 # content/classes.json 冻结字面（施工 oracle，非实现推导）

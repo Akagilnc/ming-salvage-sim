@@ -17,7 +17,8 @@ import os
 import pytest
 
 from ming_sim.db import GameDB, POPULATION_UNIT_PERSONS, POPULATION_UNIT_WAN
-from ming_sim.issues import apply_score_extraction
+from ming_sim.settlement import SettlementContext, settle_delta
+from ming_sim.settlement.views import rejected_view, class_deltas, metric_deltas, shape_rejections, view
 
 # ── 独立 oracle（content 冻结 seed 字面，非实现推导）──────────────────────────
 FARMER_SHAANXI = 6000000      # content/classes.json 农民@shaanxi（人）
@@ -70,13 +71,9 @@ def test_transfer_two_legs_same_transaction_conservation(game):
     """单条记录 → 源减目标增两侧守恒；sub-万（新档人口径）精确 ±3000。"""
     db, state, content = game
     total_before = _global_population(db)
-    applied = apply_score_extraction(db, state, {
-        "population_transfers": [
-            _transfer(source="农民@shaanxi", target="流民@shaanxi", amount=3000, reason="加派"),
-        ],
-    }, content, None)
-    assert not applied["population_transfers_rejections"]
-    rec = applied["population_transfers"][0]
+    applied = settle_delta(state, db, {'population_transfers': [_transfer(source='农民@shaanxi', target='流民@shaanxi', amount=3000, reason='加派')]}, SettlementContext(content=content))
+    assert not rejected_view(applied, "population_transfers")
+    rec = view(applied, "population_transfers")[0]
     assert rec["source"] == "农民@shaanxi"
     assert rec["target"] == "流民@shaanxi"
     assert rec["amount"] == 3000
@@ -103,9 +100,9 @@ def test_all_inflow_reasons_positive_cases_land(game):
     ]
     keys = {tuple(item[key].split("@")) for item in items for key in ("source", "target")}
     before = {(n, r): _pop(db, n, r) for n, r in keys}
-    applied = apply_score_extraction(db, state, {"population_transfers": items}, content, None)
-    assert not applied["population_transfers_rejections"]
-    assert len(applied["population_transfers"]) == len(items)
+    applied = settle_delta(state, db, {'population_transfers': items}, SettlementContext(content=content))
+    assert not rejected_view(applied, "population_transfers")
+    assert len(view(applied, "population_transfers")) == len(items)
     expected = dict(before)
     for item in items:
         src = tuple(item["source"].split("@"))
@@ -132,16 +129,11 @@ def test_direction_matrix_violations_rejected_per_item(game):
     ]
     farmer_before = _pop(db, "农民", "shaanxi")
     displaced_before = _pop(db, "流民", "shaanxi")
-    applied = apply_score_extraction(
-        db, state,
-        {"population_transfers": [good, *bad_items]},
-        content, None,
-    )
-    rejections = applied["population_transfers_rejections"]
+    applied = settle_delta(state, db, {'population_transfers': [good, *bad_items]}, SettlementContext(content=content))
+    rejections = rejected_view(applied, "population_transfers")
     assert len(rejections) == len(bad_items)
-    assert all(r["rejected"] for r in rejections)
-    assert all(r["category"] == "invalid_enum" for r in rejections)
-    assert applied["population_transfers"] and applied["population_transfers"][0]["reason"] == "灾害"
+    assert all(r.category == "invalid_enum" for r in rejections)
+    assert view(applied, "population_transfers") and view(applied, "population_transfers")[0]["reason"] == "灾害"
     # 只有合法项动了账
     assert _pop(db, "农民", "shaanxi") == farmer_before - 50
     assert _pop(db, "流民", "shaanxi") == displaced_before + 50
@@ -157,8 +149,8 @@ def test_amount_and_balance_validation_per_item(game):
         _transfer(source="农民@shaanxi", target="流民@shaanxi", amount=1.5, reason="加派"),
         _transfer(source="农民@shaanxi", target="流民@shaanxi", amount=True, reason="加派"),
     ]
-    applied = apply_score_extraction(db, state, {"population_transfers": bad_items}, content, None)
-    rejections = applied["population_transfers_rejections"]
+    applied = settle_delta(state, db, {'population_transfers': bad_items}, SettlementContext(content=content))
+    rejections = rejected_view(applied, "population_transfers")
     assert len(rejections) == len(bad_items)
     assert _pop(db, "农民", "shaanxi") == FARMER_SHAANXI
     assert _pop(db, "流民", "shaanxi") == DISPLACED_SHAANXI
@@ -174,9 +166,9 @@ def test_reference_validation_national_row_cross_region_unknown(game):
         _transfer(source="农民@no such", target="流民@no such", amount=10, reason="加派"),    # 未知 region
         _transfer(source="流民@gansu", target="农民@gansu", amount=10, reason="回流"),        # 查无此省行
     ]
-    applied = apply_score_extraction(db, state, {"population_transfers": bad_items}, content, None)
-    assert len(applied["population_transfers_rejections"]) == len(bad_items)
-    assert applied["population_transfers"] == []
+    applied = settle_delta(state, db, {'population_transfers': bad_items}, SettlementContext(content=content))
+    assert len(rejected_view(applied, "population_transfers")) == len(bad_items)
+    assert view(applied, "population_transfers") == []
 
 
 def test_origin_ref_required_and_validated(game):
@@ -188,9 +180,9 @@ def test_origin_ref_required_and_validated(game):
         _transfer(source="农民@shaanxi", target="流民@shaanxi", amount=10, reason="加派", origin_ref="dossier:999999"),
         _transfer(source="农民@shaanxi", target="流民@shaanxi", amount=10, reason="加派", origin_ref="诏书"),
     ]
-    applied = apply_score_extraction(db, state, {"population_transfers": bad_items}, content, None)
-    cats = {r["category"] for r in applied["population_transfers_rejections"]}
-    assert len(applied["population_transfers_rejections"]) == len(bad_items)
+    applied = settle_delta(state, db, {'population_transfers': bad_items}, SettlementContext(content=content))
+    cats = {r.category for r in rejected_view(applied, "population_transfers")}
+    assert len(rejected_view(applied, "population_transfers")) == len(bad_items)
     assert "missing_origin_ref" in cats
     assert "invalid_origin_ref" in cats
     assert _pop(db, "流民", "shaanxi") == DISPLACED_SHAANXI
@@ -200,18 +192,12 @@ def test_whitelist_extra_field_and_non_dict_item_rejected(game):
     """白名单外字段逐项拒收；list 内非 dict 坏项由 sanitize 层按 ADR0015 F1
     {'raw_value':…} 包装留痕（r3 分层终态）。"""
     db, state, content = game
-    applied = apply_score_extraction(db, state, {
-        "population_transfers": [
-            _transfer(source="农民@shaanxi", target="流民@shaanxi", amount=10,
-                      reason="加派", population=999999),  # 绝对值覆写字段＝白名单外
-            42,  # 非 dict 坏项（validate 层拆出）
-        ],
-    }, content, None)
-    rejections = applied["population_transfers_rejections"]
+    applied = settle_delta(state, db, {'population_transfers': [_transfer(source='农民@shaanxi', target='流民@shaanxi', amount=10, reason='加派', population=999999), 42]}, SettlementContext(content=content))
+    rejections = rejected_view(applied, "population_transfers")
     assert len(rejections) == 1
-    assert rejections[0]["category"] == "invalid_enum"
-    shape = [r for r in applied["validate_shape_rejections"]
-             if r.get("item") == {"raw_value": 42}]
+    assert rejections[0].category == "invalid_enum"
+    shape = [r for r in shape_rejections(applied)
+             if r.item == {"raw_value": 42}]
     assert shape
     assert _pop(db, "流民", "shaanxi") == DISPLACED_SHAANXI
 
@@ -222,14 +208,11 @@ def test_section_non_list_rejects_section_rest_lands(game):
     sat_before = db.conn.execute(
         "SELECT satisfaction FROM classes WHERE name='农民' AND region_id=''"
     ).fetchone()[0]
-    applied = apply_score_extraction(db, state, {
-        "population_transfers": "凭空一段",
-        "class_delta": {"农民": {"satisfaction": -2}},
-    }, content, None)
-    shape_rej = [r for r in applied["validate_shape_rejections"]
-                 if "population_transfers" in str(r.get("reason"))]
-    assert shape_rej and shape_rej[0]["item"] == {"raw_value": "凭空一段"}
-    assert applied["class_delta"]["农民"]["satisfaction"] == -2
+    applied = settle_delta(state, db, {'population_transfers': '凭空一段', 'class_delta': {'农民': {'satisfaction': -2}}}, SettlementContext(content=content))
+    shape_rej = [r for r in shape_rejections(applied)
+                 if "population_transfers" in r.reason]
+    assert shape_rej and shape_rej[0].item == {"raw_value": "凭空一段"}
+    assert class_deltas(applied)["农民"]["satisfaction"] == -2
     sat_after = db.conn.execute(
         "SELECT satisfaction FROM classes WHERE name='农民' AND region_id='' "
     ).fetchone()[0]
@@ -240,17 +223,12 @@ def test_class_delta_population_key_upgraded_to_per_item_rejection(game):
     """§1.4 升格：class_delta value 内出现 population 键 → 该 item invalid_enum 拒收，
     其余 sat/lev 合法项不受累；人口不变。"""
     db, state, content = game
-    applied = apply_score_extraction(db, state, {
-        "class_delta": {
-            "流民@shaanxi": {"satisfaction": 1, "population": 123456},
-            "农民": {"satisfaction": -3},
-        },
-    }, content, None)
-    rejections = applied["class_delta_rejections"]
+    applied = settle_delta(state, db, {'class_delta': {'流民@shaanxi': {'satisfaction': 1, 'population': 123456}, '农民': {'satisfaction': -3}}}, SettlementContext(content=content))
+    rejections = rejected_view(applied, "class_delta")
     assert len(rejections) == 1
-    assert rejections[0]["category"] == "invalid_enum"
-    assert "population" in rejections[0]["reason"]
-    assert "population_transfers" in rejections[0]["reason"]  # 指向合法入口
+    assert rejections[0].category == "invalid_enum"
+    assert "population" in rejections[0].reason
+    assert "population_transfers" in rejections[0].reason  # 指向合法入口
     row = db.conn.execute(
         "SELECT population, satisfaction FROM classes WHERE name='流民' AND region_id='shaanxi'"
     ).fetchone()
@@ -266,16 +244,11 @@ def test_class_delta_chinese_population_key_upgraded_to_per_item_rejection(game)
     """#649 C3/C4：中文形 {"满意":1,"人口":3000} 经 canonicalize 后 population guard
     统一整项拒收（invalid_enum），满意度与人口均不变；同批合法项照落。"""
     db, state, content = game
-    applied = apply_score_extraction(db, state, {
-        "class_delta": {
-            "农民@shaanxi": {"满意": 1, "人口": 3000},
-            "农民": {"满意": -2},
-        },
-    }, content, None)
-    rejections = applied["class_delta_rejections"]
+    applied = settle_delta(state, db, {'class_delta': {'农民@shaanxi': {'满意': 1, '人口': 3000}, '农民': {'满意': -2}}}, SettlementContext(content=content))
+    rejections = rejected_view(applied, "class_delta")
     assert len(rejections) == 1
-    assert rejections[0]["category"] == "invalid_enum"
-    assert "population" in rejections[0]["reason"]
+    assert rejections[0].category == "invalid_enum"
+    assert "population" in rejections[0].reason
     row = db.conn.execute(
         "SELECT population, satisfaction FROM classes WHERE name='农民' AND region_id='shaanxi'"
     ).fetchone()
@@ -290,15 +263,12 @@ def test_class_delta_chinese_population_key_upgraded_to_per_item_rejection(game)
 def test_unknown_top_level_key_now_per_section_rejection_not_abort(game):
     """r4 分层终态：未知顶层 key=可拆 section → 按段拒收留痕不整份退（ADR0015 待施工纠正面）。"""
     db, state, content = game
-    applied = apply_score_extraction(db, state, {
-        "region_delta_typo": {"shaanxi": {"unrest": 5}},
-        "metric_delta": {"民心": 1},
-    }, content, None)
-    shape_rej = [r for r in applied["validate_shape_rejections"]
-                 if "region_delta_typo" in str(r.get("reason"))]
+    applied = settle_delta(state, db, {'region_delta_typo': {'shaanxi': {'unrest': 5}}, 'metric_delta': {'民心': 1}}, SettlementContext(content=content))
+    shape_rej = [r for r in shape_rejections(applied)
+                 if "region_delta_typo" in r.reason]
     assert shape_rej, "未知顶层 key 必须按段拒收留痕"
-    assert shape_rej[0]["rejected"] is True
-    assert applied["metric_delta"].get("民心") == 1  # 其余 section 照落，不整份退
+    assert shape_rej[0].category == "invalid_shape"
+    assert metric_deltas(applied).get("民心") == 1  # 其余 section 照落，不整份退
 
 
 # ── 双单位（F3）：新档 sub-万精确；legacy 万口径、sub-万不可表达 ──────────────
@@ -307,26 +277,18 @@ def test_legacy_wan_unit_transfer_caps_to_stock_without_unit_conversion(legacy_g
     """legacy 档 amount 按「万」读写：±3（万）精确落账；超源请求按万口径封顶。"""
     db, state, content, _path = legacy_game
     assert db.population_unit == POPULATION_UNIT_WAN
-    applied = apply_score_extraction(db, state, {
-        "population_transfers": [
-            _transfer(source="农民@shaanxi", target="流民@shaanxi", amount=3, reason="灾害"),
-        ],
-    }, content, None)
-    assert not applied["population_transfers_rejections"]
-    rec = applied["population_transfers"][0]
+    applied = settle_delta(state, db, {'population_transfers': [_transfer(source='农民@shaanxi', target='流民@shaanxi', amount=3, reason='灾害')]}, SettlementContext(content=content))
+    assert not rejected_view(applied, "population_transfers")
+    rec = view(applied, "population_transfers")[0]
     assert rec["population_unit"] == POPULATION_UNIT_WAN
     assert _pop(db, "农民", "shaanxi") == LEGACY_FARMER_SHAANXI - 3
     assert _pop(db, "流民", "shaanxi") == LEGACY_DISPLACED_SHAANXI + 3
 
     source_before = _pop(db, "农民", "shaanxi")
     displaced_before = _pop(db, "流民", "shaanxi")
-    applied2 = apply_score_extraction(db, state, {
-        "population_transfers": [
-            _transfer(source="农民@shaanxi", target="流民@shaanxi", amount=3000, reason="灾害"),
-        ],
-    }, content, None)
-    assert not applied2["population_transfers_rejections"]
-    capped = applied2["population_transfers"][0]
+    applied2 = settle_delta(state, db, {'population_transfers': [_transfer(source='农民@shaanxi', target='流民@shaanxi', amount=3000, reason='灾害')]}, SettlementContext(content=content))
+    assert not rejected_view(applied2, "population_transfers")
+    capped = view(applied2, "population_transfers")[0]
     assert capped["amount"] == source_before
     assert capped["population_unit"] == POPULATION_UNIT_WAN
     assert _pop(db, "农民", "shaanxi") == 0
@@ -335,12 +297,8 @@ def test_legacy_wan_unit_transfer_caps_to_stock_without_unit_conversion(legacy_g
 
 def test_new_save_unit_is_persons(game):
     db, state, content = game
-    applied = apply_score_extraction(db, state, {
-        "population_transfers": [
-            _transfer(source="农民@shaanxi", target="流民@shaanxi", amount=1, reason="灾害"),
-        ],
-    }, content, None)
-    assert applied["population_transfers"][0]["population_unit"] == POPULATION_UNIT_PERSONS
+    applied = settle_delta(state, db, {'population_transfers': [_transfer(source='农民@shaanxi', target='流民@shaanxi', amount=1, reason='灾害')]}, SettlementContext(content=content))
+    assert view(applied, "population_transfers")[0]["population_unit"] == POPULATION_UNIT_PERSONS
 
 
 

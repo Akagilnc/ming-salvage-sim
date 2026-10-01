@@ -10,6 +10,8 @@ from ming_sim.models import LLMConfig
 from ming_sim.qualitative import power_band, qualitative_character_axis
 from ming_sim.strict_types import IMPERIAL_AUTHORITY_BANDS
 from tests.dossier_test_helpers import TYPED_COVERT_TASK, rejected_verdict
+from ming_sim.settlement import SettlementContext, settle_delta
+from ming_sim.settlement.views import view
 
 
 def _dossier(db, state, text="清丈天下田亩", **payload):
@@ -402,7 +404,6 @@ def test_gate_reconsideration_resolves_missing_target_to_land_survey(game):
 
 def test_gate_evidence_reloads_dossier_after_reconsideration_mutation(game):
     from scripts.promulgation_gate_561 import _judge_context_for_dossier
-    from ming_sim.issues import apply_score_extraction
 
     db, state, content = game
     dossier_id = _dossier(db, state)
@@ -428,10 +429,7 @@ def test_gate_evidence_reloads_dossier_after_reconsideration_mutation(game):
         payload={"mode": "ordinary"},
     )
     db.record_dossier_decision(grant_dossier_id, "promulgated")
-    grant = apply_score_extraction(db, state, {"authority_changes": [{
-        "动作": "授予", "holder_id": holder, "privilege": "便宜行事",
-        "scope": f"issue:policy-{state.turn}", "dossier_id": grant_dossier_id,
-    }]}, content=content)["authority_changes"][0]
+    grant = view(settle_delta(state, db, {'authority_changes': [{'动作': '授予', 'holder_id': holder, 'privilege': '便宜行事', 'scope': f'issue:policy-{state.turn}', 'dossier_id': grant_dossier_id}]}, SettlementContext(content=content)), "authority_changes")[0]
     assert grant.get("rejected") is not True
     authority_id = int(grant["authority_id"])
     assert db.get_authority(authority_id)["dossier_id"] == grant_dossier_id

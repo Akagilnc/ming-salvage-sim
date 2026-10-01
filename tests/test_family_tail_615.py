@@ -9,6 +9,8 @@ from ming_sim import issues as issue_engine
 from ming_sim.db import GameDB
 from ming_sim.models import Character
 from tests.dossier_test_helpers import _cost_events, _sat
+from ming_sim.settlement import SettlementContext, settle_delta
+from ming_sim.settlement.views import view
 
 
 BLOCKED_LAYERS = {"cabinet_drafting", "palace_rescript", "six_offices"}
@@ -68,15 +70,7 @@ def _grant_self_scope_authority(db, state, content, holder):
         payload={"mode": "ordinary"},
     )
     db.record_dossier_decision(grant_id, "promulgated")
-    result = issue_engine.apply_score_extraction(db, state, {
-        "authority_changes": [{
-            "动作": "授予",
-            "holder_id": holder,
-            "privilege": "便宜行事",
-            "scope": f"character:{holder}",
-            "dossier_id": grant_id,
-        }],
-    }, content=content)["authority_changes"][0]
+    result = view(settle_delta(state, db, {'authority_changes': [{'动作': '授予', 'holder_id': holder, 'privilege': '便宜行事', 'scope': f'character:{holder}', 'dossier_id': grant_id}]}, SettlementContext(content=content)), "authority_changes")[0]
     assert result.get("rejected") is not True
     return int(result["authority_id"])
 

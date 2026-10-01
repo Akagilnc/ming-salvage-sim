@@ -3,6 +3,8 @@ import json
 import pytest
 
 from ming_sim import issues as issue_engine
+from ming_sim.settlement import SettlementContext, settle_delta
+from ming_sim.settlement.views import rejected_view, view
 
 
 VALID_TENURES = ("真除", "署理", "兼署", "加衔")
@@ -90,14 +92,11 @@ def test_person_delta_rejects_invalid_appointment_tenure_without_mutation(
         "name": name, "动作": "任命", "office": "非法任别官", **tenure_fields,
     }
 
-    result = issue_engine.apply_score_extraction(
-        db, state, {"人物变更": [item]}, content=content,
-    )
+    result = settle_delta(state, db, {'人物变更': [item]}, SettlementContext(content=content))
 
-    rejected = result["applied_person_changes"][0]
-    assert rejected["rejected"] is True
-    assert rejected["category"] == "invalid_enum"
-    assert rejected["item"] == item
+    rejected = rejected_view(result, "applied_person_changes")[0]
+    assert rejected.category == "invalid_enum"
+    assert rejected.item == item
     assert db.conn.execute(
         "SELECT office FROM characters WHERE name=?", (name,)
     ).fetchone()["office"] == before
