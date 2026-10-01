@@ -681,73 +681,6 @@ def minimal_opening_context(
     return "\n".join(parts)
 
 
-def _known_secret_order_ids(knowledge: dict) -> set[int]:
-    """密令私读只有承办简报。查访委派不构成对其它密令的授权。"""
-    found: set[int] = set()
-    for item in knowledge.get("events") or []:
-        source = str(item.get("source_id") or "")
-        prefix = "secret_order_brief:"
-        if not source.startswith(prefix):
-            continue
-        token = source[len(prefix):].split(":", 1)[0]
-        if token.isdigit():
-            found.add(int(token))
-    return found
-
-
-def _inquiry_monthly_report_text(db: Any, character: Any, knowledge: dict) -> str:
-    """查访月报只读此人已经知道的密令奏报，并套当前职位排除。
-
-    承办人自己的月报在进行中密令里。历史查访记录不打开全部在办密令。
-    不含密令实况正文，也不从查访问句里认案卷。
-    """
-    from ming_sim.knowledge import knowledge_row_visible_to
-
-    name = str(getattr(character, "name", "") or "")
-    known = _known_secret_order_ids(knowledge)
-    if not name or not known or not hasattr(db, "list_secret_orders"):
-        return ""
-    own_ids = {
-        int(order["id"])
-        for order in (
-            db.get_active_secret_orders_for_minister(name)
-            if hasattr(db, "get_active_secret_orders_for_minister") else []
-        )
-    }
-    blocks: list[str] = []
-    for order in db.list_secret_orders(status="active"):
-        order_id = int(order["id"])
-        if order_id not in known or order_id in own_ids:
-            continue
-        visible = knowledge_row_visible_to(db, {
-            "source_id": f"secret_order_brief:{order_id}",
-            "kind": "secret_order_brief",
-            "excluded_names": json.dumps(order.get("excluded_names") or [], ensure_ascii=False),
-            "excluded_targets": json.dumps(
-                order.get("excluded_targets") or {}, ensure_ascii=False,
-            ),
-        }, name)
-        if not visible:
-            continue
-        memorials = _secret_order_memorials(order)
-        if not memorials:
-            continue
-        blocks.append(f"密令：{order_id}")
-        blocks.extend(memorials)
-    return "\n".join(blocks)
-
-
-def _write_inquiry_monthly_file(
-    tmp: Path, db: Any, state: Any, character: Any, knowledge: dict, *, rel: str,
-) -> str | None:
-    _ = state
-    body = _inquiry_monthly_report_text(db, character, knowledge)
-    if not body:
-        return None
-    _write_text(tmp / rel, body)
-    return rel
-
-
 def _secret_order_memorials(order: Any) -> list[str]:
     """承办人自己的月度奏报。月份与进展取记录字段，正文原样。
 
@@ -1037,11 +970,6 @@ def _write_tree(
     secret_rel = _write_secret_order_file(tmp, db, state, character)
     if secret_rel:
         index.append(secret_rel)
-    inquiry_rel = _write_inquiry_monthly_file(
-        tmp, db, state, character, knowledge, rel=f"{_SECRET_DIR}/查访月报.txt",
-    )
-    if inquiry_rel:
-        index.append(inquiry_rel)
     recommend_rel = _write_recommendation_file(tmp, db, state, character)
     if recommend_rel:
         index.append(recommend_rel)
@@ -1979,12 +1907,6 @@ def _write_one_present_person(
     )
     if secret_rel:
         index.append(secret_rel)
-    inquiry_rel = _write_inquiry_monthly_file(
-        tmp, db, state, character, knowledge,
-        rel=f"{base}/{_SECRET_DIR}/查访月报.txt",
-    )
-    if inquiry_rel:
-        index.append(inquiry_rel)
 
     for dir_key, title, directory_text, _opening_text, _is_handling in matter_lines:
         matter_seg = _safe_segment(dir_key)

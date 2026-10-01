@@ -426,7 +426,7 @@ def test_inquiry_declaration_preserves_assignment_in_attendant_materials(game, m
                    for e in db.get_character_knowledge(state, other)["events"])
     from ming_sim.audience_night import summon_enter
     from ming_sim.materials import prepare_scene_materials, release_material_tree
-    # A fresh night must make this report readable, not merely list a carrier.
+    # 再开一夜后，委派原文仍从见闻进在场人物的经历，不另造月报文件断言。
     _close_offline(db, state, content, int(open_night(db, state)["id"]))
     night = open_night(db, state)
     summon_enter(db, int(night["id"]), attendant.name)
@@ -437,7 +437,6 @@ def test_inquiry_declaration_preserves_assignment_in_attendant_materials(game, m
         assert carrier in prepared.index_lines
         experience = (Path(prepared.root) / carrier).read_text(encoding="utf-8")
         assert all(event["body"] in experience for event in report_events)
-        assert not any(line.endswith("查访月报.txt") for line in prepared.index_lines)
     finally:
         release_material_tree(prepared.root)
 
