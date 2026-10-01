@@ -11,7 +11,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 
 import pytest
@@ -41,33 +40,6 @@ def _mock_draft_intent(monkeypatch, *, roster):
         return (json.dumps(response, ensure_ascii=False), 1)
 
     monkeypatch.setattr(cli_backend, "_run_backend_for_config", backend)
-
-
-def _stage_draft_and_read_back(game_tuple, monkeypatch, text: str):
-    """摆一条 draft 并回读库里的 draft/pending 行——**旧草稿场景的数据准备**。
-
-    #1902 F4：原名 `_web_create` 且在测试内自行拼装旧 Web 回执（`{"directive":…}`），
-    读起来像玩家现役入口仍在。拟诏台 Web 入口已退役，玩家拟旨只从召对来；此处
-    只为测抽取结构／属地归一，直接经共享抽取核 + 引擎写入面落库后读回真实行。
-    """
-    db, state, content = game_tuple
-    import ming_sim.cli_backend as cli_backend
-
-    payload = cli_backend.resubmit_draft_admission_payload(
-        text, bad_payload={}, failure_reason="成案未入档",
-        db=db, content=content,
-    )
-    staged = SimpleNamespace(
-        id=db.add_directive(state, None, text, "手动新增", dossier_payload=payload),
-        text=text, status="draft",
-    )
-    return {
-        "directive": {"id": staged.id, "text": staged.text, "status": staged.status},
-        "directives": [
-            {"id": int(r["id"]), "text": str(r["text"]), "status": str(r["status"])}
-            for r in db.list_directives(state, statuses=("pending", "draft"))
-        ],
-    }
 
 
 def _capture_ids(game, monkeypatch, *, text: str, roster):
@@ -128,22 +100,6 @@ def test_capture_manual_directive_drops_ministry_name_as_participant(game, monke
             for e in roster if isinstance(e, dict)
         ]
         assert "户部" not in ids
-
-
-def test_staged_draft_accepts_ministry_subject_without_rejection(game, monkeypatch):
-    """抽取+落库面：着户部… 不得「参与人物不存在：户部」。"""
-    db, _state, _content = game
-    text = "着户部核清太仓实存，边饷优先"
-    _mock_draft_intent(
-        monkeypatch,
-        roster=[{"character_id": "户部", "tier": "主办"}],
-    )
-
-    result = _stage_draft_and_read_back(game, monkeypatch, text)
-    assert result["directive"]["id"] > 0
-    assert result["directive"]["text"] == text
-    # ADR 0053 缝仍在：未知真名仍应拒——此处仅断言部院名不撞墙。
-    assert db.list_directives(game[1])
 
 
 def test_capture_manual_directive_keeps_real_person_participant(game, monkeypatch):

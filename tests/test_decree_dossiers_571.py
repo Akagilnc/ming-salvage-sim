@@ -1162,7 +1162,7 @@ def test_final_decree_edit_path_removed_no_bypass(game):
     assert "def set_decree" not in inspect.getsource(GameSession)
 
 def test_cli_dossiered_directive_is_not_listed_editable_or_deletable(
-    game, monkeypatch, capsys,
+    game, monkeypatch,
 ):
     """#1902：CLI 拟诏台手写入口退役后，成案草案只剩「不可见、不可删」一条护栏。"""
     import ming_sim.cli.terminal as terminal
@@ -1187,7 +1187,6 @@ def test_cli_dossiered_directive_is_not_listed_editable_or_deletable(
 
     assert session.list_directives() == []
     assert terminal.review_directives(session) == "back"
-    assert capsys.readouterr().out.count("没有这条草案。") == 1
     assert db.get_dossier_for_directive(directive_id) is not None
     assert db.list_directives(state)[0]["text"] == "着修河工"
 

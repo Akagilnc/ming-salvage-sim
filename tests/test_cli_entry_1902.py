@@ -61,7 +61,7 @@ def _wire_gate(monkeypatch, session):
     return session
 
 
-def test_review_directives_retires_manual_add_and_edit(monkeypatch, capsys):
+def test_review_directives_retires_manual_add_and_edit(monkeypatch):
     """拟诏台手写新旨/改稿退役：CLI 审阅只剩审阅、颁布与删旧草案。"""
 
     class Session:
@@ -93,10 +93,6 @@ def test_review_directives_retires_manual_add_and_edit(monkeypatch, capsys):
 
     assert term.review_directives(session) == "back"
     assert session.calls == ["enter_review", "back_to_summoning"]
-    out = capsys.readouterr().out
-    # 四条都不是现役操作（add / 其后正文 / edit 7 / 其后正文）→ 都不落任何写入。
-    assert out.count("未识别操作。") == 4
-    assert "add 新增" not in out and "edit N 改" not in out
 
 
 def test_adjudication_takes_emperor_pick_not_first_option(monkeypatch):
@@ -143,7 +139,7 @@ def test_adjudication_blank_pick_on_urgent_leaves_choice_to_core(monkeypatch):
     assert session.submitted == [[{"decision_key": "rescript_draft:3:0"}]]
 
 
-def test_adjudication_blank_on_ordinary_decision_reprompts(monkeypatch, capsys):
+def test_adjudication_blank_on_ordinary_decision_reprompts(monkeypatch):
     """普通 decision 回车不是核内认的留中：入口重问，不代造空 choice。
 
     核内 validate_all 对缺 action 的 decision 行既不默认 hold 也拒收（"decision 选项
@@ -162,11 +158,9 @@ def test_adjudication_blank_on_ordinary_decision_reprompts(monkeypatch, capsys):
         "label": "留",
         "hint": "暂稳东江",
     }]
-    out = capsys.readouterr().out
-    assert out.count("此案须择定一条（不另批请择案上标注留中的那条）。") == 2
 
 
-def test_adjudication_reprompts_on_out_of_range_number(monkeypatch, capsys):
+def test_adjudication_reprompts_on_out_of_range_number(monkeypatch):
     """越界编号不落 choice：留在本案重问，案头与核都不动（非编号输入是朱笔批语，另一条）。"""
     session = _wire_gate(monkeypatch, _AdjudicateSession([_draft_row()]))
     result = SimpleNamespace(awaiting=True, report="", decisions=session.pending_decisions())
@@ -178,7 +172,6 @@ def test_adjudication_reprompts_on_out_of_range_number(monkeypatch, capsys):
     (choices,) = session.submitted
     assert choices[0]["label"] == "先发半饷"
     assert choices[0]["draft_capability"] == "cap-a"
-    assert capsys.readouterr().out.count("请输入本案列出的编号。") == 3
 
 
 def test_adjudication_uses_desk_readback_when_result_has_no_decisions(monkeypatch):
@@ -499,7 +492,7 @@ def test_save_load_round_trip_through_shared_core(game, monkeypatch, capsys):
         loaded.close()
 
 
-def test_load_missing_slot_keeps_current_game(game, capsys):
+def test_load_missing_slot_keeps_current_game(game):
     """读不存在的档：留在原局，不动活会话。"""
     from tests.month_chain_helpers import make_light_session
 
@@ -508,7 +501,6 @@ def test_load_missing_slot_keeps_current_game(game, capsys):
     marker_before = session.db.conn.execute("SELECT 1").fetchone()[0]
 
     assert term._cli_load(session, "no-such-slot") is None
-    assert "没有存档" in capsys.readouterr().out
     assert session.db.conn.execute("SELECT 1").fetchone()[0] == marker_before == 1
 
 

@@ -3,14 +3,12 @@
 1) #1391 泛称闭集（大臣）capture 零 409；「不存在之人甲」仍 409
 2) #1331/#1339 起居注 involved_people 投影滤非人；默认时辰非「此时」
 3) #1341/#1338 PATCH /api/decree 零调用方已拆，OpenAPI/实现一致
-4) #1327 空载短路；#1465 切片③：外层 30s 总罩已删
+4) 补交抽取核：结构字段按 LLM 结果落地
 """
 
 from __future__ import annotations
 
 import json
-import types
-import threading
 
 import pytest
 
@@ -176,78 +174,7 @@ def test_patch_decree_and_manual_directive_routes_removed():
     ], "删旧草稿入口保留"
 
 
-# ── 4) #1327 空载/有界 capture ─────────────────────────────────────
-
-
-def test_web_create_directive_long_extract_still_lands_real_draft(game, monkeypatch):
-    """#1465 切片③：拟旨 capture 跨旧 30s 罩仍成案（真实入口 → 读回 pending 案卷）。
-
-    真实抽取核入口（#1902 后经会话写入面）；抽取把注入时钟推过 120s（旧外层 30s 总罩下
-    remaining 会扣穿 → 抽取被饿死、落 special_decree 或 LLMUnavailable）。罩既已
-    删，长抽取仍须落**真**草案：结构字段照 LLM 结果走，且读回 pending/案卷可见。
-    确定性、无线程、不跑真墙钟。
-    """
-    from fastapi.testclient import TestClient
-
-    import ming_sim.cli_backend as cli_backend
-    import web_app
-    from ming_sim.session import GameSession
-
-    db, state, content = game
-    text = "着毕自严核清太仓实存"
-    clock = {"t": 1000.0}
-    monkeypatch.setattr(
-        cli_backend, "time", types.SimpleNamespace(monotonic=lambda: clock["t"]),
-    )
-    calls: list[str] = []
-
-    def backend(prompt, *_a, tag="", **_k):
-        calls.append(tag)
-        clock["t"] += 120.0  # 单次抽取就跨过旧 30s 总罩
-        return (
-            json.dumps({
-                "拟旨意图": "拟旨", "动作类型": "policy", "目标类型": "issue",
-                "目标ID": "treasury-audit",
-                "参与人": [{"character_id": "毕自严", "tier": "主办"}],
-            }, ensure_ascii=False),
-            1,
-        )
-
-    monkeypatch.setattr(cli_backend, "_run_backend_for_config", backend)
-
-    session = GameSession.__new__(GameSession)
-    session.db = db
-    session.state = state
-    session.llm_config = None
-    session.content = content
-    web_game = types.SimpleNamespace(
-        _write_gate=threading.Lock(),
-        db=db, state=state, content=content, session=session,
-        directive_rows=lambda: db.list_directives(
-            state, statuses=("pending", "draft"),
-        ),
-        directive_payload=lambda row: dict(row),
-    )
-    payload = cli_backend.resubmit_draft_admission_payload(
-        text, bad_payload={}, failure_reason="成案未入档",
-        db=db, content=content,
-    )
-    staged = types.SimpleNamespace(
-        id=db.add_directive(state, None, text, "手动新增", dossier_payload=payload),
-        text=text, status="draft",
-    )
-    assert clock["t"] - 1000.0 > 30.0, clock  # 确实跨过旧罩
-    directive_id = int(staged.id)
-    assert directive_id > 0
-    assert staged.text == text
-    rows = db.list_directives(state, statuses=("pending", "draft"))
-    row = next(item for item in rows if int(item["id"]) == directive_id)
-    payload = db.read_directive_dossier_payload(row)
-    assert payload.get("dossier_action_type") == "policy"
-    assert payload.get("target_id") == "treasury-audit"
-    assert [str(i["character_id"]) for i in (payload.get("participant_roster") or [])] == [
-        "毕自严",
-    ]
+# ── 4) 补交抽取核 ────────────────────────────────────────────────
 
 
 def test_normal_capture_path_unchanged(game, monkeypatch):

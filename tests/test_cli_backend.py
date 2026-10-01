@@ -818,9 +818,15 @@ def test_clichat_invoke_error_traced_and_reraised(monkeypatch):
     monkeypatch.setattr(cc, "_call_cli", lambda p: (_ for _ in ()).throw(RuntimeError("cli down")))
     traced = {}
     monkeypatch.setattr(cb, "_trace", lambda rec: traced.update(rec))
+    prose = "你扮演被皇帝召见的大臣。请整理旧账并拟诏书。"
     with pytest.raises(LLMUnavailable) as ei:
-        cc.invoke([SimpleNamespace(role="user", content="x")], Message(role="assistant"))
+        cc.invoke(
+            [SimpleNamespace(role="system", content=prose)],
+            Message(role="assistant"),
+            run_response=SimpleNamespace(agent_name="诏书润色官"),
+        )
     assert traced.get("error") == "cli down"
+    assert traced.get("tag") == "诏书润色官"
     assert "cli down" in (ei.value.provider_message or "")
     assert "cli down" not in ei.value.message
 
@@ -948,34 +954,6 @@ def test_run_runner_empty_output_is_retryable_typed(monkeypatch):
 
 # ── trace throat ──
 
-@pytest.mark.parametrize(
-    "prompt,expect_tag",
-    [
-        ("你扮演被皇帝召见的大臣，回话……", "minister"),
-        ("本月结算抽取，输出 delta……", "extractor"),
-        ("simulator_payload: 当前盘面 TSV……", "simulator"),
-        ("请拟一道诏书，颁行天下", "decree"),
-        ("只输出合法 JSON，无多余字", "sanitizer"),
-        ("今日天气如何", "other"),
-        # 优先级：minister 先于 decree。
-        ("你扮演被皇帝召见的大臣，臣请拟诏书一道……", "minister"),
-    ],
-    ids=[
-        "minister", "extractor", "simulator",
-        "decree", "sanitizer", "other",
-        "minister_over_decree",
-    ],
-)
-def test_run_backend_infers_trace_tag_from_prompt(monkeypatch, prompt, expect_tag):
-    """公共咽喉 _run_backend_for_config：tag 空时从 prompt 推断 trace.tag（不直测 helper）。"""
-    recs = []
-    monkeypatch.setattr(cb, "_trace", lambda rec: recs.append(rec))
-    _patch_runner(monkeypatch, "codex", lambda prompt, model=None, **kwargs: ("ok", 1))
-    cb._run_backend_for_config(prompt, _cli_codex_cfg())  # no explicit tag
-    assert len(recs) == 1
-    assert recs[0]["tag"] == expect_tag
-
-
 def test_run_backend_for_config_traces_every_call(monkeypatch):
     recs = []
     monkeypatch.setattr(cb, "_trace", lambda rec: recs.append(rec))
@@ -987,6 +965,11 @@ def test_run_backend_for_config_traces_every_call(monkeypatch):
     assert r["tag"] == "office_infer"
     assert "后金汗" in r["prompt"] and r["response"] == "外臣"
     assert r["backend"] == "codex" and r["error"] is None
+    # 未传 tag 时不从提示词散文猜类别：旧标记词同时出现，记录仍是空 tag。
+    prose = "你扮演被皇帝召见的大臣。请整理旧账并拟诏书。只输出合法 JSON。simulator_payload"
+    cb._run_backend_for_config(prose, _cli_codex_cfg())
+    assert recs[-1]["tag"] == ""
+    assert recs[-1]["response"] == "外臣"
 
 
 def test_run_backend_for_config_passes_reasoning_strength_to_codex(monkeypatch):
