@@ -193,11 +193,12 @@ def test_shared_consumers_still_surface_status(read_game):
     db, state, content = read_game
     seed_status = _guanning_db_status(db)
 
-    # 2) 兵部人物投影只见兵籍在册额，不携全表 status。
+    # 2) 兵部账键 military 仍在，且不携全表 status。标题措辞不是供料身份。
     war = next(c for c in content.characters.values() if c.office_type == "兵部")
     knowledge = build_character_knowledge(db, state, war.name)
-    military = (knowledge.get("world") or {}).get("military") or ""
-    assert "兵籍在册" in military
+    world = knowledge.get("world") or {}
+    assert "military" in world
+    military = str(world["military"] or "")
     assert seed_status not in military
 
     # 3) state_payload.army_warning → 真实 WebGame.state_payload 键
@@ -225,11 +226,11 @@ def test_shared_consumers_still_surface_status(read_game):
     _assert_text_keeps_statuses(roster, all_statuses, "army_roster")
     assert seed_status in roster
     prepared = prepare_character_materials(db, state, war)
-    blob = "\n".join(
-        read_material(prepared.root, path)
-        for path in list_materials(prepared.root) if path != "INDEX.txt"
-    )
-    assert "兵籍在册" in blob
+    paths = [
+        path for path in list_materials(prepared.root) if path != "INDEX.txt"
+    ]
+    assert any(path.endswith("/公事档案.txt") for path in paths)
+    blob = "\n".join(read_material(prepared.root, path) for path in paths)
     assert seed_status not in blob
 
     # DB 字段零改写
