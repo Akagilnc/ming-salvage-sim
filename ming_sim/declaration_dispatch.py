@@ -322,6 +322,7 @@ def _dispatch_declaration_sections(
         rushes=_dispatch_rushes(
             db, state, declaration.get("rushes"),
             minister_name=minister_name, source=source,
+            night_id=int(night_id),
         ),
         travel_tones=_dispatch_travel_tones(
             db, declaration.get("travel_tones"), night_id=night_id, source=source,
@@ -1284,6 +1285,7 @@ def _dispatch_commissions(
                 applied.append(
                     _stage_prohibit_covert_levy(
                         db, state, item, minister_name=minister_name,
+                        night_id=int(night_id),
                     )
                 )
             except KeyError as exc:
@@ -1332,6 +1334,7 @@ def _dispatch_commissions(
             }
             row_id = db.stage_pending_action(
                 int(state.turn), "directive", "拟旨", actor, payload,
+                night_id=int(night_id),
             )
             applied.append({"id": row_id, "payload": payload, "kind": "directive"})
             continue
@@ -1362,6 +1365,7 @@ def _dispatch_commissions(
             row_id = db.stage_pending_action(
                 int(state.turn), kind="secret_order", action="记进展",
                 minister_name=actor, target_id=order_id, payload={"note": note},
+                night_id=int(night_id),
             )
             applied.append({"id": row_id, "kind": "secret_order"})
             continue
@@ -1403,7 +1407,7 @@ def _dispatch_commissions(
             }
             row_id = db.stage_pending_action(
                 int(state.turn), "secret_order", "更新", actor, payload,
-                target_id=order_id,
+                target_id=order_id, night_id=int(night_id),
             )
             applied.append({"id": row_id, "kind": "secret_order"})
             continue
@@ -1447,7 +1451,7 @@ def _dispatch_commissions(
             row_id = db.stage_pending_action(
                 int(state.turn), "secret_order", "新建", actor,
                 staged_secret,
-                target_id=None,
+                target_id=None, night_id=int(night_id),
             )
             applied.append({"id": row_id, "kind": "secret_order"})
             continue
@@ -1488,6 +1492,7 @@ def _dispatch_commissions(
                     target_candidate=assignment.get("target_candidate"),
                     transaction_category=assignment.get("transaction_category", ""),
                     source_chat_turn_id=source_chat_turn_id,
+                    night_id=int(night_id),
                 )
             except (DecreeMaterializationValidationError, TypeError, ValueError) as exc:
                 _reject(rejected, item, str(exc), "invalid_shape", source)
@@ -1520,6 +1525,7 @@ def _dispatch_commissions(
                 backing_dossier_id=punishment.get("backing_dossier_id"),
                 issue_id=punishment.get("issue_id"),
                 issue_disposition=punishment.get("issue_disposition"),
+                night_id=int(night_id),
             )
             if row_id:
                 applied.append({"id": row_id, "kind": "directive"})
@@ -1553,6 +1559,7 @@ def _dispatch_commissions(
             row_id = stage_pacification_candidate(
                 db, int(state.turn), actor, text=body,
                 target_id=canonical, extracted_mode=pacification.get("mode"),
+                night_id=int(night_id),
             )
             applied.append({"id": row_id, "kind": "directive"})
             continue
@@ -1692,6 +1699,7 @@ def _dispatch_commissions(
                         for key in ("reason", "recommendation", "faction")
                         if payload.get("recommendation") and key in payload
                     },
+                    night_id=int(night_id),
                 )
                 return {"id": oid, "kind": "office"}
             if appointment_fields["appoint_action"] == "任命":
@@ -1716,6 +1724,7 @@ def _dispatch_commissions(
                 str(office_payload["appoint_action"]),
                 minister_name,
                 office_payload,
+                night_id=int(night_id),
             )
             return {"id": oid, "payload": office_payload, "kind": "office"}
 
@@ -1736,6 +1745,7 @@ def _dispatch_commissions(
             payload["actor"] = actor
         row_id = db.stage_pending_action(
             int(state.turn), "directive", "拟旨", actor, payload,
+            night_id=int(night_id),
         )
         applied.append({"id": row_id, "payload": payload, "kind": "directive"})
     return SectionResult(applied=applied, rejected=rejected)
@@ -2053,6 +2063,7 @@ def _is_prohibit_covert_levy_item(item: Mapping[str, object]) -> bool:
 
 def _stage_prohibit_covert_levy(
     db: Any, state: Any, item: Mapping[str, object], *, minister_name: str,
+    night_id: int = 0,
 ) -> Dict[str, Any]:
     """禁摊派交办：绑定当前暴露案卷 → 既有 directive 暂存并标夜应允。"""
     from ming_sim.audience_night import mark_actions_night_approved
@@ -2084,8 +2095,13 @@ def _stage_prohibit_covert_levy(
     }
     row_id = db.stage_pending_action(
         int(state.turn), "directive", "拟旨", actor, payload,
+        night_id=int(night_id),
     )
-    mark_actions_night_approved(db, [row_id])
+    # 源夜已封时按源夜应允；过月 night_id<=0 仍由开放夜接应允，与盖章回退一致。
+    if int(night_id) > 0:
+        mark_actions_night_approved(db, [row_id], night_id=int(night_id))
+    else:
+        mark_actions_night_approved(db, [row_id])
     return {"id": row_id, "payload": payload, "kind": "directive"}
 
 
@@ -2209,6 +2225,7 @@ def _dispatch_rushes(
     *,
     minister_name: str,
     source: Provenance,
+    night_id: int = 0,
 ) -> SectionResult:
     """催办声明 → 既有 pending 催办写口（密令 / 分段承诺，ADR 0078）。"""
     items, rejected = _section_items(raw, label="催办声明", source=source)
@@ -2265,7 +2282,7 @@ def _dispatch_rushes(
             }
             row_id = db.stage_pending_action(
                 int(state.turn), "commitment", "催办", actor, payload,
-                target_id=target_id,
+                target_id=target_id, night_id=int(night_id),
             )
             applied.append({
                 "id": row_id, "kind": "commitment", "target_id": target_id,
@@ -2287,7 +2304,7 @@ def _dispatch_rushes(
         payload = {"deadline_months": deadline, "reason": reason}
         row_id = db.stage_pending_action(
             int(state.turn), "secret_order", "催办", actor, payload,
-            target_id=target_id,
+            target_id=target_id, night_id=int(night_id),
         )
         applied.append({
             "id": row_id, "kind": "secret_order", "target_id": target_id,

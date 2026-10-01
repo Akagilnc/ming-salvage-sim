@@ -1035,6 +1035,131 @@ def test_covert_escort_rejects_non_grant_pending_target(game):
     assert db.escort_source_dossiers_of(cased_dossier) == []
 
 
+def test_late_covert_escort_keeps_source_night_after_next_night_opens(game):
+    """源夜已封、下一夜已开时，迟到暗护仍按源夜承接。
+
+    同批域外暂存逐项拒收；同声明里晚到的拨银与密令都盖源夜，不改挂当下开放夜。
+    """
+    from ming_sim.audience_night import close_night
+    from ming_sim.audience_translation import run_turn_translation_job
+    from ming_sim.session_write_queue import ClassifiedWriteGate
+
+    db, state, content = game
+    actor = _actor(db)
+    night1, chat_grant = _night_turn(db, state, actor, "今夜先下一道拨银。")
+    earlier = _declare(
+        db, state, {"commissions": [_grant_commission(db, state, actor)]},
+        night_id=night1, chat_turn_id=chat_grant,
+    )
+    assert earlier.commissions.rejected == []
+    pending_a = int(earlier.commissions.applied[0]["id"])
+
+    same_night, chat_late = _night_turn(db, state, actor, "另有密令，待补。")
+    assert same_night == night1
+    db.mark_story_extraction_pending(chat_late)
+    close_night(db, state, night_id=night1, content=content)
+
+    night2, chat2 = _night_turn(db, state, actor, "次夜先下一道查勘。")
+    assert night2 != night1
+    plain = _declare(db, state, {"commissions": [{
+        "text": "着大臣查勘陕西屯田。",
+        "assignment": {
+            "title": "查勘屯田", "target_id": "policy", "assignee": actor,
+        },
+    }]}, night_id=night2, chat_turn_id=chat2)
+    assert plain.commissions.rejected == []
+    not_grant = int(plain.commissions.applied[0]["id"])
+    pending_b = int(db.conn.execute(
+        "SELECT COALESCE(MAX(id), 0) + 1 FROM pending_actions",
+    ).fetchone()[0])
+
+    reply = "臣另有密令，沿途暗护。该轮待补。"
+
+    def translate_fn(_prompt, _llm_config):
+        return {
+            "scene_facts": [{
+                "role": "minister",
+                "person_names": [actor],
+                "body": reply,
+            }],
+            "commissions": [
+                _grant_commission(db, state, actor, target_id="liaodong"),
+                _covert_escort_commission(
+                    db, state, staged_id=pending_a, actor=actor, title="迟到暗护",
+                    targets=[
+                        {"pending_action_id": not_grant, "relation_type": "护卫",
+                         "note": "指向次夜查勘"},
+                        {"pending_action_id": pending_a, "relation_type": "护卫",
+                         "note": "暗中加派护送该笔赈银"},
+                        {"pending_action_id": pending_b, "relation_type": "护卫",
+                         "note": "暗中加派护送后到的赈银"},
+                    ],
+                ),
+            ],
+        }
+
+    result = run_turn_translation_job(
+        db, state,
+        emperor_message="另有密令，待补。",
+        reply=reply,
+        night_id=night1,
+        chat_turn_id=chat_late,
+        minister_name=actor,
+        translate_fn=translate_fn,
+        write_gate=ClassifiedWriteGate(),
+    )
+    assert [item.category for item in result.commissions.rejected] == ["invalid_state"]
+    assert [item["kind"] for item in result.commissions.applied] == [
+        "directive", "secret_order",
+    ]
+    assert int(result.commissions.applied[0]["id"]) == pending_b
+    secret_id = int(result.commissions.applied[1]["id"])
+    assert db.get_story_extract_status(chat_late) == "done"
+
+    def _staged_night(action_id):
+        row = db.conn.execute(
+            "SELECT night_id, status FROM pending_actions WHERE id=?",
+            (int(action_id),),
+        ).fetchone()
+        assert row["status"] == "pending"
+        return int(row["night_id"])
+
+    assert _staged_night(pending_a) == night1
+    assert _staged_night(pending_b) == night1
+    assert _staged_night(secret_id) == night1
+    assert _staged_night(not_grant) == night2
+
+    db.commit_pending_actions(state, action_ids=[secret_id])
+    order = db.list_secret_orders()[0]
+    escort = db.get_dossier_for_secret_order(int(order["id"]))
+    escort_dossier = int(escort["id"])
+    assert escort["payload"].get("escort_pending_targets") == [
+        {"pending_action_id": pending_a, "relation_type": "护卫",
+         "note": "暗中加派护送该笔赈银"},
+        {"pending_action_id": pending_b, "relation_type": "护卫",
+         "note": "暗中加派护送后到的赈银"},
+    ]
+
+    dossier_a = _dossier_for_pending(db, state, pending_a)
+    dossier_b = _dossier_for_pending(db, state, pending_b)
+    for dossier_id, note in (
+        (dossier_a, "暗中加派护送该笔赈银"),
+        (dossier_b, "暗中加派护送后到的赈银"),
+    ):
+        assert db.escort_source_dossiers_of(dossier_id) == [{
+            "secret_order_dossier_id": escort_dossier,
+            "relation_type": "护卫",
+            "note": note,
+        }]
+    lived = _declare(db, state, {"escort_results": [{
+        "dossier_id": dossier_a,
+        "escort_source_dossier_id": escort_dossier,
+        "escorted": True,
+        "note": "迟到暗护同到",
+    }]})
+    assert lived.escort_results.rejected == []
+
+
 def test_escort_routes_reach_supply_and_world_materials(game):
     """读取闭环：整月密报供料与世界段材料按各路实况给料，不按整体状态推断。"""
     db, state, _content = game
