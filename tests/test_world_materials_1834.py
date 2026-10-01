@@ -133,6 +133,7 @@ def test_prepare_rebuilds_from_world_record_after_restore(game, tmp_path):
         name="宣府欠饷", origin="宣府镇奏报欠饷",
         year=state.year, period=state.period, turn=state.turn,
     )
+    db.affairs.declare_closed(affair.id, turn=state.turn)
     path = str(db.path)
     db.close()
 

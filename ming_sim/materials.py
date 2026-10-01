@@ -1395,29 +1395,37 @@ def _knowledge_for_experience(knowledge: dict, include_event: Any) -> dict:
     return projected
 
 
-def _world_affair_lines(db: Any, include_fact: Any = None) -> list[tuple[str, str, str, str]]:
-    """全部开着的事务及其当前情况（不按人物过滤——推演者看全量，非某人经手）。
+def _world_affair_lines(db: Any, include_fact: Any = None) -> tuple[
+    list[tuple[str, str, str, str]], list[tuple[str, str, str, str]],
+]:
+    """Project all durable matters once; only open matters enter the opening.
 
-    Each line is (dir_key, title, directory_text, opening_text): directory_text
-    carries every dated textual fact (ADR 0156 全部提供), opening_text is only
-    the latest one-liner (0155 开场最小集只放一句)."""
+    Each line is (dir_key, title, directory_text, opening_text). The directory
+    retains origin and every dated fact; the opening uses the latest fact only.
+    """
     store = getattr(db, "affairs", None)
-    if store is None or not hasattr(store, "list_open"):
-        return []
+    if store is None:
+        return [], []
     textual_facts = getattr(db, "textual_facts", None)
     lines: list[tuple[str, str, str, str]] = []
-    for affair in store.list_open():
+    opening_lines: list[tuple[str, str, str, str]] = []
+    for affair in store.list_all():
         facts = (
             store.current_situation(textual_facts, affair.id)
             if textual_facts is not None else ()
         )
         facts = tuple(fact for fact in facts if _keep_fact(fact, include_fact))
         fact_lines = [f"{fact.occurred_month}：{fact.body}" for fact in facts]
-        directory_text = "\n".join(fact_lines) if fact_lines else "见目录。"
+        directory_text = "\n".join([
+            f"起因：{affair.origin}", f"状态：{affair.status}", *fact_lines,
+        ])
         # #1812 P6：raw body 是文字事实自由正文，不得 strip。
         opening_text = str(facts[-1].body or "") if facts else "见目录。"
-        lines.append((f"affair-{affair.id}", str(affair.name or ""), directory_text, opening_text))
-    return lines
+        line = (f"affair-{affair.id}", str(affair.name or ""), directory_text, opening_text)
+        lines.append(line)
+        if affair.status == "open":
+            opening_lines.append(line)
+    return lines, opening_lines
 
 
 def _world_roster_names(db: Any) -> list[str]:
@@ -2287,7 +2295,7 @@ def prepare_world_materials(
     # 不另建一套「世界公开说法」查询。排除边界按调用职责落，不按有无姓名落。
     knowledge = build_character_knowledge(db, state, "", public_feed=public_feed)
     public_events = knowledge.get("public_events") or []
-    affair_lines = _world_affair_lines(db, include_fact)
+    affair_lines, opening_affair_lines = _world_affair_lines(db, include_fact)
     dossier_facts = continuing_dossier_facts(db, int(state.turn))
     # #1834 大理寺 bounce 3：与人物经历同一纪律——本次 prepare 只算一次盘面全量
     # 投影，目录写入与 opening 共用同一份冻结结果，不重复查两遍账本。
@@ -2325,7 +2333,7 @@ def prepare_world_materials(
     )
 
     opening = _world_opening_text(
-        state, board_text, affair_lines, dossier_facts,
+        state, board_text, opening_affair_lines, dossier_facts,
         events=len(candidates["events"]),
         surges=len(candidates["impeachment_surge"]),
     )

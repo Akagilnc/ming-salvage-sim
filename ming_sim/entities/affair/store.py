@@ -130,6 +130,11 @@ class AffairStore:
             raise KeyError(f"事务不存在：{affair_id}")
         return _row_to_affair(row)
 
+    def list_all(self) -> tuple[Affair, ...]:
+        """Durable matters remain readable after closure."""
+        rows = self._conn.execute("SELECT * FROM affairs ORDER BY id").fetchall()
+        return tuple(_row_to_affair(row) for row in rows)
+
     def list_open(self) -> tuple[Affair, ...]:
         rows = self._conn.execute(
             "SELECT id, name, origin, status, birth_key, created_turn, "
