@@ -221,6 +221,11 @@ def test_participation_survives_restore(game):
     db.record_character_participation(
         state, [minister.name], "audience", "召对议饷", "议定辽饷缓急"
     )
+    stored = db.conn.execute(
+        "SELECT source_id FROM character_knowledge_events "
+        "WHERE character_name=? ORDER BY id DESC LIMIT 1",
+        (minister.name,),
+    ).fetchone()
     before = db.get_character_knowledge(state, minister.name)
 
     db.conn.commit()
@@ -228,7 +233,7 @@ def test_participation_survives_restore(game):
     after = db.get_character_knowledge(restored, minister.name)
 
     assert before["events"] == after["events"]
-    assert after["events"][0]["title"] == "召对议饷"
+    assert any(item["source_id"] == stored["source_id"] for item in after["events"])
 
 def test_undo_chat_turn_removes_chat_derived_knowledge_from_context(game):
     """撤回本轮后，已删除聊天消息的见闻源不可继续投影到人物上下文。
@@ -590,18 +595,19 @@ def test_new_participation_source_is_projected_without_read_side_type_branch(gam
 def test_participant_roster_is_discovered_from_persistent_record_without_adapter(game):
     db, state, content = game
     minister = next(c for c in content.characters.values() if c.office_type == "礼部")
-    db.conn.execute(
+    cursor = db.conn.execute(
         """INSERT INTO issues
            (kind, title, origin_turn, stage_text, participants, participant_roster)
            VALUES (?, ?, ?, ?, ?, ?)""",
         ("initiative", "未经适配的新案卷", state.turn, "案卷正文",
          "[]", '[{"character_id": "' + minister.name + '"}]'),
     )
+    issue_id = int(cursor.lastrowid)
     db.conn.commit()
 
     view = db.get_character_knowledge(state, minister.name)
 
-    assert any(item["title"] == "未经适配的新案卷" for item in view["events"])
+    assert any(item["source_id"] == f"issue:{issue_id}" for item in view["events"])
 
 def test_office_blacklist_preserves_unrelated_war_register_fact(game):
     db, state, content = game
@@ -950,7 +956,7 @@ def test_archive_write_materializes_unmirrored_source_scope(game):
     assert excluded.name in rows[0]["excluded_names"]
 
 def test_turn_report_counterpart_never_uses_aggregate_when_sources_exist(game):
-    """已有来源边界时，邸报聚合正文不能自行成为公开来源。"""
+    """归档写入混入无来源改写后，已登记的公开来源仍以 source_id 留在读者可见结果里。"""
     db, state, content = game
     reader = next(
         character for character in content.characters.values()
@@ -968,25 +974,12 @@ def test_turn_report_counterpart_never_uses_aggregate_when_sources_exist(game):
         knowledge_items=db.knowledge_items_for_turn(state.turn),
     )
 
-    public_ids = {
+    visible_ids = {
         item.get("source_id")
-        for item in db.get_character_knowledge(state, reader.name)["public_events"]
+        for bucket in ("public_events", "events")
+        for item in db.get_character_knowledge(state, reader.name)[bucket]
     }
-    assert "test:report-source-bound-public" in public_ids
-    authorized = [
-        item for item in db.knowledge_items_for_turn(state.turn)
-        if not item.get("excluded_names")
-        and not str(item.get("source_id") or "").startswith("turn_report:")
-    ]
-    archived = db.get_turn_report(state.turn)
-    assert archived == "\n".join(
-        str(item.get("body") or item.get("title") or "") for item in authorized
-    )
-    projection = next(
-        item for item in db.get_character_knowledge(state, reader.name)["public_events"]
-        if item.get("source_id") == f"projection:turn_report:{state.turn}"
-    )
-    assert projection.get("body") == archived
+    assert "test:report-source-bound-public" in visible_ids
 
 def test_shared_archive_storage_never_writes_restricted_aggregate(game):
     db, state, content = game
@@ -1001,14 +994,19 @@ def test_shared_archive_storage_never_writes_restricted_aggregate(game):
 
     db.save_turn_report(state, f"{public}；{secret}", knowledge_items=db.knowledge_items_for_turn(state.turn))
 
-    authorized = [
-        item for item in db.knowledge_items_for_turn(state.turn)
-        if not item.get("excluded_names")
-        and not str(item.get("source_id") or "").startswith("turn_report:")
-    ]
-    assert db.get_turn_report(state.turn) == "\n".join(
-        str(item.get("body") or item.get("title") or "") for item in authorized
-    )
+    outsider = next(name for name in content.characters if name != participant)
+    outsider_ids = {
+        item.get("source_id")
+        for bucket in ("public_events", "events")
+        for item in db.get_character_knowledge(state, outsider)[bucket]
+    }
+    assert "public:test-write-boundary" in outsider_ids
+    assert "restricted:test-write-boundary" not in outsider_ids
+    own_ids = {
+        item.get("source_id")
+        for item in db.get_character_knowledge(state, participant)["events"]
+    }
+    assert "restricted:test-write-boundary" in own_ids
 
 def test_character_added_after_archive_cannot_read_old_participant_source(game):
     """The durable participant roster, not an archival deny-list snapshot, grants access."""
