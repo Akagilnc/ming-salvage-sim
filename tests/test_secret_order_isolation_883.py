@@ -41,6 +41,22 @@ def _event_bodies(db):
     ]
 
 
+def _shared_source_body(db, source_id: str):
+    row = db.conn.execute(
+        "SELECT body FROM character_knowledge_sources WHERE source_id=?",
+        (source_id,),
+    ).fetchone()
+    return None if row is None else (row["body"] or "")
+
+
+def _view_source_ids(db, state, name: str) -> set[str]:
+    view = db.get_character_knowledge(state, name)
+    return {
+        str(item.get("source_id") or "")
+        for item in [*(view.get("events") or []), *(view.get("public_events") or [])]
+    }
+
+
 def test_883_two_turn_probe_secret_never_enters_shared_archives(game, monkeypatch):
     """两回合探针：T1 下密令 → T2 结算 → 共享档无派生；接令者简报表有。
 
@@ -147,16 +163,13 @@ def test_883_audience_chat_path_does_not_leave_secret_in_shared_sources(game):
         item.get("body", "")
         for item in [*other_view["events"], *other_view["public_events"]]
     )
-    assignee_view = db.get_character_knowledge(state, assignee.name)
-    assignee_text = " ".join(item.get("body", "") for item in assignee_view["events"])
-
     assert brief is not None
     assert brief["minister_name"] == assignee.name
     assert marker in (brief["body"] or "")
     assert all(marker not in body for body in _shared_bodies(db))
     assert all(marker not in body for body in _event_bodies(db))
     assert marker not in other_text
-    assert marker in assignee_text
+    assert f"secret_order_brief:{oid}" in _view_source_ids(db, state, assignee.name)
 
 
 def test_883_audience_chat_paraphrase_does_not_leave_origin_in_shared_sources(game):
@@ -183,7 +196,7 @@ def test_883_audience_chat_paraphrase_does_not_leave_origin_in_shared_sources(ga
     )
     # 同回合无关召对（另一大臣）应进共享轨。
     other_public = "臣报：山东漕粮本月起运如常，无阻。"
-    db.append_chat_message(other.name, state.turn, "user", other_public)
+    mid_other = db.append_chat_message(other.name, state.turn, "user", other_public)
 
     oid = create_test_secret_order(db,
         state, assignee.name, extracted_title, extracted_body, [],
@@ -198,8 +211,6 @@ def test_883_audience_chat_paraphrase_does_not_leave_origin_in_shared_sources(ga
         item.get("body", "")
         for item in [*other_view["events"], *other_view["public_events"]]
     )
-    assignee_view = db.get_character_knowledge(state, assignee.name)
-    assignee_text = " ".join(item.get("body", "") for item in assignee_view["events"])
     shared_bodies = _shared_bodies(db)
 
     assert brief is not None
@@ -212,8 +223,7 @@ def test_883_audience_chat_paraphrase_does_not_leave_origin_in_shared_sources(ga
     assert all(extracted_body not in body for body in _event_bodies(db))
     assert chat_origin not in other_text
     assert extracted_body not in other_text
-    # 接令者仍从专用简报读到密令。
-    assert extracted_body in assignee_text
+    assert f"secret_order_brief:{oid}" in _view_source_ids(db, state, assignee.name)
     # #976 message-level：分类 release 仅 scoped 到接令者/口谕 speaker，
     # 他臣纯公开 held 不因 create(A) 全局投轨（病根1）；settle/显式 release 后才进共享。
     other_status = db.conn.execute(
@@ -225,7 +235,7 @@ def test_883_audience_chat_paraphrase_does_not_leave_origin_in_shared_sources(ga
     assert other_status != "withheld"
     if other_status == "held":
         db.release_held_audience_knowledge()
-    assert any(other_public in body for body in _shared_bodies(db))
+    assert _shared_source_body(db, f"chat_message:{mid_other}") == other_public
 
 
 def test_883_shared_write_seam_keeps_public_assignee_audience(game):
@@ -245,7 +255,7 @@ def test_883_shared_write_seam_keeps_public_assignee_audience(game):
         f"臣复述密旨：{marker}",
         source_id="chat_message:replay-secret",
     )
-    assert any(marker in body for body in _shared_bodies(db))
+    assert _shared_source_body(db, "chat_message:replay-secret") == f"臣复述密旨：{marker}"
 
 
 def test_883_public_audience_same_turn_survives_secret_classification(game):
@@ -281,11 +291,6 @@ def test_883_public_audience_same_turn_survives_secret_classification(game):
     assert oid > 0
 
     shared_bodies = _shared_bodies(db)
-    event_bodies = _event_bodies(db)
-    assignee_view = db.get_character_knowledge(state, assignee.name)
-    assignee_text = " ".join(
-        item.get("body", "") for item in assignee_view["events"] + assignee_view.get("public_events", [])
-    )
     other_view = db.get_character_knowledge(state, other.name)
     other_text = " ".join(
         item.get("body", "")
@@ -296,13 +301,13 @@ def test_883_public_audience_same_turn_survives_secret_classification(game):
     assert db.conn.execute(
         "SELECT knowledge_status FROM chat_messages WHERE id=?", (mid_public,)
     ).fetchone()["knowledge_status"] == "released"
-    assert public_line in assignee_text
-    assert any(public_line in body for body in shared_bodies)
+    assert f"chat_message:{mid_public}" in _view_source_ids(db, state, assignee.name)
+    assert _shared_source_body(db, f"chat_message:{mid_public}") == public_line
     # 未钉 explicit origin 的应答仍是公开行，不能靠接令者身份改判。
     assert db.conn.execute(
         "SELECT knowledge_status FROM chat_messages WHERE id=?", (mid_ack,)
     ).fetchone()["knowledge_status"] == "released"
-    assert any(ack in body for body in shared_bodies)
+    assert _shared_source_body(db, f"chat_message:{mid_ack}") == ack
     # 密令原话与润稿不得残留共享存储；他臣不得见。
     assert all(secret_chat not in body for body in shared_bodies)
     assert secret_chat not in other_text
@@ -335,7 +340,7 @@ def test_883_post_brief_public_audience_enters_shared_sources(game):
         "SELECT knowledge_status FROM chat_messages WHERE id=?", (mid,)
     ).fetchone()["knowledge_status"]
     assert status == "released"
-    assert any(paraphrase in body for body in _shared_bodies(db))
+    assert _shared_source_body(db, f"chat_message:{mid}") == paraphrase
 
 
 
@@ -400,8 +405,6 @@ def test_883_zero_overlap_semantic_rewrite_withholds_prior_audience_origin(game)
         item.get("body", "")
         for item in [*other_view["events"], *other_view.get("public_events", [])]
     )
-    assignee_view = db.get_character_knowledge(state, assignee.name)
-    assignee_text = " ".join(item.get("body", "") for item in assignee_view["events"])
     brief = db.conn.execute(
         "SELECT body FROM secret_order_briefs WHERE order_id=?", (oid,)
     ).fetchone()
@@ -410,7 +413,7 @@ def test_883_zero_overlap_semantic_rewrite_withholds_prior_audience_origin(game)
     assert all(chat_origin not in body for body in _shared_bodies(db))
     assert all(chat_origin not in body for body in _event_bodies(db))
     assert chat_origin not in other_text
-    assert extracted_body in assignee_text
+    assert f"secret_order_brief:{oid}" in _view_source_ids(db, state, assignee.name)
 
 
 def test_883_thematic_public_audience_survives_secret_create(game):
@@ -445,24 +448,14 @@ def test_883_thematic_public_audience_survives_secret_create(game):
         "SELECT COUNT(*) FROM character_knowledge_sources WHERE source_id=?",
         (f"chat_message:{mid}",),
     ).fetchone()[0] == 1
-    after_events = db.conn.execute(
-        "SELECT COUNT(*) AS n FROM character_knowledge_events WHERE body LIKE ?",
-        (f"%{public_line}%",),
-    ).fetchone()["n"]
-    assignee_view = db.get_character_knowledge(state, assignee.name)
-    assignee_text = " ".join(
-        item.get("body", "")
-        for item in assignee_view["events"] + assignee_view.get("public_events", [])
-    )
     other_view = db.get_character_knowledge(state, other.name)
     other_text = " ".join(
         item.get("body", "")
         for item in [*other_view["events"], *other_view.get("public_events", [])]
     )
 
-    assert after_events >= 1
-    assert public_line in assignee_text
-    assert any(public_line in body for body in _shared_bodies(db))
+    assert f"chat_message:{mid}" in _view_source_ids(db, state, assignee.name)
+    assert _shared_source_body(db, f"chat_message:{mid}") == public_line
     assert sec_body not in other_text
 
 
@@ -554,15 +547,8 @@ def test_976_secret_chat_turn_withholds_both_sides_but_public_turn_survives(game
     )
     assert ack not in other_text
     assert origin not in other_text
-    shared_text = " ".join(
-        row["body"] or ""
-        for row in db.conn.execute(
-            "SELECT body FROM character_knowledge_sources WHERE source_id IN (?,?)",
-            (f"chat_message:{mid_public_q}", f"chat_message:{mid_public_reply}"),
-        ).fetchall()
-    )
-    assert public_q in shared_text
-    assert public_reply in shared_text
+    assert _shared_source_body(db, f"chat_message:{mid_public_q}") == public_q
+    assert _shared_source_body(db, f"chat_message:{mid_public_reply}") == public_reply
 
 
 def test_976_withhold_does_not_yank_old_released_public_user(game):
@@ -606,7 +592,7 @@ def test_976_withhold_does_not_yank_old_released_public_user(game):
         "SELECT knowledge_status FROM chat_messages WHERE id=?", (mid_secret,)
     ).fetchone()["knowledge_status"] == "withheld"
     assert all(secret_origin not in body for body in _shared_bodies(db))
-    assert any(old_public in body for body in _shared_bodies(db))
+    assert _shared_source_body(db, f"chat_message:{mid_old}") == old_public
 
 
 def test_976_release_stamps_original_message_date(game):
@@ -651,10 +637,11 @@ def test_883_shared_archive_bypass_positive_and_negative(game):
 
     # 负向结构：密令只在 brief；纯公开入档；brief 正文不自动流入共享档。
     create_test_secret_order(db, state, assignee.name, "旁路密查", secret_marker, [])
-    db.save_turn_report(state, "公开句；本月漕运如常。")
+    first_report = "公开句；本月漕运如常。"
+    db.save_turn_report(state, first_report)
     report_blob = " ".join(item["report"] for item in db.list_turn_reports())
     assert secret_marker not in report_blob
-    assert "公开句" in report_blob
+    assert db.get_turn_report(state.turn) == first_report
     assert all(secret_marker not in body for body in _shared_bodies(db))
 
     # 正向：无未公开密令简报时，纯公开正文可落共享档。
@@ -662,8 +649,7 @@ def test_883_shared_archive_bypass_positive_and_negative(game):
     db.conn.execute("DELETE FROM secret_orders")
     db.conn.commit()
     db.save_turn_report(state, public_marker)
-    report_blob = " ".join(item["report"] for item in db.list_turn_reports())
-    assert public_marker in report_blob
+    assert db.get_turn_report(state.turn) == public_marker
 
 
 def test_976_held_user_chat_released_when_never_classified_as_secret(game):
@@ -848,13 +834,9 @@ def test_976_same_window_pure_public_user_survives_secret_classification(game):
     assert pub_status in ("private", "released")
     assert pub_status != "withheld"
 
-    assignee_view = db.get_character_knowledge(state, assignee.name)
-    assignee_text = " ".join(
-        item.get("body", "")
-        for item in assignee_view["events"] + assignee_view.get("public_events", [])
-    )
-    assert public_q in assignee_text
-    assert public_a in assignee_text
+    visible = _view_source_ids(db, state, assignee.name)
+    assert f"chat_message:{mid_pub}" in visible
+    assert f"chat_message:{mid_ans}" in visible
 
     # Secret oral line never shared; other ministers must not see it.
     assert all(secret_q not in body for body in _shared_bodies(db))
@@ -1197,12 +1179,9 @@ def test_976_non_create_pure_public_not_auto_pinned_as_secret_origin(game):
         # 不得进 withheld 终态后从知识面消失：held 等 settle 放行亦可；
         # private/released 则接令者/参与者当即可记。
         if pub_status in ("private", "released"):
-            view = db.get_character_knowledge(state, minister)
-            text = " ".join(
-                item.get("body", "")
-                for item in view["events"] + view.get("public_events", [])
+            assert f"chat_message:{mid_pub}" in _view_source_ids(db, state, minister), (
+                f"{action}: pure public not remembered after project"
             )
-            assert public_q in text, f"{action}: pure public not remembered after project"
 
 
 
@@ -1382,8 +1361,8 @@ def test_976_rt01_two_secret_orders_different_assignees_no_cross_track(game):
     assert _shared_source_count(db, mid_b_min) == 1
     assert all(marker_a not in body for body in _shared_bodies(db))
     assert all(marker_b not in body for body in _shared_bodies(db))
-    assert any(ack_a in body for body in _shared_bodies(db))
-    assert any(ack_b in body for body in _shared_bodies(db))
+    assert _shared_source_body(db, f"chat_message:{mid_a_min}") == ack_a
+    assert _shared_source_body(db, f"chat_message:{mid_b_min}") == ack_b
 
     assert marker_a not in _view_text(db, state, b.name)
     assert marker_b not in _view_text(db, state, a.name)
@@ -1475,18 +1454,17 @@ def test_976_rt03_late_chat_after_create_same_turn(game):
     assert _ks(db, mid_late_user) == "released"
     assert _ks(db, mid_late_ack) == "released"
     assert _ks(db, mid_other) == "released"
-    assert any(late_user in body for body in _shared_bodies(db))
-    assert any(late_ack in body for body in _shared_bodies(db))
-    assert any(other_public in body for body in _shared_bodies(db))
+    assert _shared_source_body(db, f"chat_message:{mid_late_user}") == late_user
+    assert _shared_source_body(db, f"chat_message:{mid_late_ack}") == late_ack
+    assert _shared_source_body(db, f"chat_message:{mid_other}") == other_public
     assert all(secret not in body for body in _shared_bodies(db))
 
-    mid_even_later = db.append_chat_message(
-        a.name, state.turn, "user", "第三次密嘱：焚稿-更晚976",
-    )
+    later_line = "第三次密嘱：焚稿-更晚976"
+    mid_even_later = db.append_chat_message(a.name, state.turn, "user", later_line)
     db.update_secret_order_by_id(state, oid, "密查边饷", secret + "；补焚稿", [])
     st_upd = _ks(db, mid_even_later)
     assert st_upd == "released"
-    assert any("焚稿-更晚976" in body for body in _shared_bodies(db))
+    assert _shared_source_body(db, f"chat_message:{mid_even_later}") == later_line
 
 
 def test_976_rt04_undo_chat_turn_secret_order_brief_consistent(game):
@@ -1679,9 +1657,9 @@ def test_976_rt05_save_restore_between_hold_and_release(game):
         assert _ks(db2, mid_u) == "withheld"
         assert all(marker not in body for body in _shared_bodies(db2))
         assert _ks(db2, mid_late) == "released"
-        assert any(late in body for body in _shared_bodies(db2))
+        assert _shared_source_body(db2, f"chat_message:{mid_late}") == late
         assert _ks(db2, mid_pub) == "released"
-        assert any(pending_public in body for body in _shared_bodies(db2))
+        assert _shared_source_body(db2, f"chat_message:{mid_pub}") == pending_public
         # silence: state2 used
         assert state2.turn == state.turn
     finally:

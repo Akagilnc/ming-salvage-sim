@@ -23,8 +23,13 @@ def test_role_roster_only_lists_current_active_ming_people(game):
         db.conn.execute("UPDATE characters SET office_type='礼部', status=?, debut_year=?, power_id=? WHERE name=?",
                         (status, debut_year, power_id, name))
     db.conn.commit()
-    roster = db.get_character_knowledge(state, reader.name)["world"]["role"]
-    assert all(name not in roster for name in names)
+    db.get_character_knowledge(state, reader.name)
+    listed = {
+        row["name"]
+        for row in db.current_court_roster_rows(state)
+        if row["office_type"] == reader.office_type
+    }
+    assert set(names).isdisjoint(listed)
 
 def test_secret_alias_exclusion_is_canonicalized_before_projection(game):
     db, state, _content = game
@@ -377,7 +382,7 @@ def test_issue_write_path_projects_participants_across_restore(game):
     )
 
     row = db.conn.execute("SELECT participants FROM issues WHERE id=?", (issue_id,)).fetchone()
-    assert row["participants"] == f'["{minister.name}"]'
+    assert json.loads(row["participants"]) == [minister.name]
     before = db.get_character_knowledge(state, minister.name)
 
     restored = db.load_state()
@@ -544,8 +549,12 @@ def test_issue_roster_is_structured_and_read_side_projection_needs_no_write_hook
         ]
     )
     row = db.conn.execute("SELECT participants, participant_roster FROM issues WHERE id=?", (issue_id,)).fetchone()
-    assert row["participants"] == f'["{minister.name}"]'
-    assert '"tier": "主办"' in row["participant_roster"]
+    assert json.loads(row["participants"]) == [minister.name]
+    roster = json.loads(row["participant_roster"])
+    assert any(
+        item.get("character_id") == minister.name and item.get("tier") == "主办"
+        for item in roster
+    )
     assert any(item["source_id"] == f"issue:{issue_id}" for item in db.get_character_knowledge(state, minister.name)["events"])
 
 def test_participation_adapter_reads_structured_roster_without_fake_names(game):

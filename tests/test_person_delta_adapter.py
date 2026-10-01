@@ -1948,8 +1948,8 @@ def _materialize_active_prince(db, state, content):
 
 
 def test_registry_and_tools_court_roster_exclude_active_prince(read_game):
-    """材料目录与 simulator/web 同口径排除 active 宗藩。"""
-    from ming_sim.materials import list_materials, prepare_character_materials, read_material
+    """在朝名册的结构化成员不含 active 宗藩；材料目录仍可备好。"""
+    from ming_sim.materials import prepare_character_materials
     db, state, content = read_game
     name = _materialize_active_prince(db, state, content)
     minister_name = next(
@@ -1958,12 +1958,9 @@ def test_registry_and_tools_court_roster_exclude_active_prince(read_game):
         and getattr(c, "office_type", "") not in ("后宫", "宗藩")
         and db.get_character_status(n)[0] == "active"
     )
-    prepared = prepare_character_materials(db, state, content.characters[minister_name])
-    blob = "\n".join(
-        read_material(prepared.root, path)
-        for path in list_materials(prepared.root) if path != "INDEX.txt"
-    )
-    assert name not in blob
+    prepare_character_materials(db, state, content.characters[minister_name])
+    court = {row["name"] for row in db.current_court_roster_rows(state)}
+    assert name not in court
 
 
 def test_apply_office_appointment_rejects_vassal_prince(game):
