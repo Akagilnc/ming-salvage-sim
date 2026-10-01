@@ -23,7 +23,9 @@ import web_app
 from ming_sim.exceptions import LLMUnavailable
 from ming_sim.llm_model import CLI_RUNNER_PLAYER_MESSAGE
 from ming_sim.llm_transport import default_transport_policy
-from tests.web_audience_test_doubles import install_hall_admission, minister_double
+from tests.web_audience_test_doubles import (
+    install_hall_admission, minister_double, open_audience_night_conn,
+)
 from tests.conftest import stub_audience_translate, stub_scene_agent
 from tests.sse_helpers import parse_sse_event_pairs
 
@@ -62,6 +64,7 @@ def _assert_write_path_free(runtime) -> None:
 
 class _FailingPrologueDB:
     def __init__(self):
+        self.conn = open_audience_night_conn()
         self.failed_turns: list[int] = []
         self.created_turns: list[int] = []
 
@@ -230,6 +233,9 @@ class _DoubleFailDB:
     """prologue fails AND cleanup (fail_chat_turn) also fails — tests that
     write path + pending ownership are still released (R3 self-check)."""
 
+    def __init__(self):
+        self.conn = open_audience_night_conn()
+
     def create_chat_turn(self, *a, **k):
         return 7
 
@@ -282,6 +288,9 @@ class _StreamCrashAgent:
 class _WorkerPathDB:
     """Prologue succeeds (append_chat_message OK) but worker scene payload crashes
     AND fail_chat_turn also crashes → worker double-failure path."""
+
+    def __init__(self):
+        self.conn = open_audience_night_conn()
 
     def create_chat_turn(self, *a, **k):
         return 7

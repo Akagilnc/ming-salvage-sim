@@ -515,36 +515,6 @@ def _offline_scene_beat_generator():
     mp.undo()
 
 
-@pytest.fixture
-def _atomic_connless_test_shell_compat():
-    """#542：无 conn 轻壳测试显式 opt-in 的 atomic 兼容（非 autouse）。
-
-    生产 chat/retry/stream 落回话无条件 `with atomic(self.db)`；真实 DB 测试默认
-    走生产 atomic。仅轻壳（故意无 conn，以保持 stub 缝）请求本 fixture：
-    missing conn → no-op CM；真 _SuspendableConnection 仍走真实 atomic。
-    """
-    import contextlib
-
-    import ming_sim.applier as applier
-    import web_app
-
-    real_atomic = applier.atomic
-
-    @contextlib.contextmanager
-    def atomic_for_tests(db):
-        if getattr(db, "conn", None) is None:
-            yield
-            return
-        with real_atomic(db):
-            yield
-
-    mp = pytest.MonkeyPatch()
-    mp.setattr(applier, "atomic", atomic_for_tests)
-    mp.setattr(web_app, "atomic", atomic_for_tests)
-    yield
-    mp.undo()
-
-
 @pytest.fixture(autouse=True)
 def _isolate_cli_bin_resolution():
     """全套测试隔离 runner 可执行定位：清 _BIN_CACHE，并把登录 shell 探测短路成

@@ -72,12 +72,10 @@ describe.sequential("medium: shared Electron geometry", () => {
       startReachable: boolean;
       endReachable: boolean;
       alertFooterDisjoint: boolean;
-      alertTaDisjoint: boolean;
-      taFooterDisjoint: boolean;
-      taButtonDisjoint: boolean;
+      alertColsDisjoint: boolean;
+      colsFooterDisjoint: boolean;
       buttonEnabled: boolean;
       buttonHit: boolean;
-      textareaHit: boolean;
     }>(page, css("base", "court", "modals", "chat", "edict", "modal-theme", "situation"), [
       { width: 1280, height: 720 },
       { width: 1100, height: 720 },
@@ -86,40 +84,26 @@ describe.sequential("medium: shared Electron geometry", () => {
       const modal = document.querySelector('.fullscreen-modal');
       const alert = document.querySelector('[role="alert"]');
       const cols = document.querySelector('.desk-columns');
-      const textarea = document.querySelector('.desk-compose textarea');
       const footer = document.querySelector('.desk-footer');
       const button = document.querySelector('.desk-footer button');
-      if (!modal || !alert || !cols || !textarea || !footer || !button) {
+      if (!modal || !alert || !cols || !footer || !button) {
         return { error: 'missing edict fixture element' };
       }
       const overlaps = (a, b) => a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
       const containsRect = (outer, inner) =>
         inner.left >= outer.left && inner.right <= outer.right
         && inner.top >= outer.top && inner.bottom <= outer.bottom;
-      const clipVisibleRect = (el, container) => {
-        const er = el.getBoundingClientRect();
-        const cr = container.getBoundingClientRect();
-        return {
-          left: Math.max(er.left, cr.left),
-          right: Math.min(er.right, cr.right),
-          top: Math.max(er.top, cr.top),
-          bottom: Math.min(er.bottom, cr.bottom),
-        };
-      };
-
       const modalRect = modal.getBoundingClientRect();
       const footerRect = footer.getBoundingClientRect();
       const buttonRect = button.getBoundingClientRect();
 
       // Resting geometry first — before any scrollIntoView / scrollTop mutation.
       const alertRect0 = alert.getBoundingClientRect();
-      const taRect0 = textarea.getBoundingClientRect();
-      const taVis = clipVisibleRect(textarea, cols);
-      const taVisH = Math.max(0, taVis.bottom - taVis.top);
-      const hitEl = taVisH > 0
-        ? document.elementFromPoint((taVis.left + taVis.right) / 2, (taVis.top + taVis.bottom) / 2)
-        : null;
-      const textareaHit = !!hitEl && (hitEl === textarea || textarea.contains(hitEl));
+      const colsRect = cols.getBoundingClientRect();
+      // #1902 J5：御笔自拟 textarea 已退役，桌面不再有它可量的矩形；此处改量
+      // 现役的草案列本身（告警不得压住它、它不得压住页脚）。
+      const alertColsDisjoint = !overlaps(alertRect0, colsRect);
+      const colsFooterDisjoint = !overlaps(colsRect, footerRect);
 
       const buttonHit = document.elementFromPoint(
         buttonRect.left + buttonRect.width / 2,
@@ -145,12 +129,10 @@ describe.sequential("medium: shared Electron geometry", () => {
         startReachable,
         endReachable,
         alertFooterDisjoint: !overlaps(alertRect0, footerRect),
-        alertTaDisjoint: !overlaps(alertRect0, taVis),
-        taFooterDisjoint: !overlaps(taRect0, footerRect),
-        taButtonDisjoint: !overlaps(taRect0, buttonRect),
+        alertColsDisjoint,
+        colsFooterDisjoint,
         buttonEnabled: !button.disabled,
         buttonHit,
-        textareaHit,
       };
     })()`);
 
@@ -167,12 +149,10 @@ describe.sequential("medium: shared Electron geometry", () => {
       expect(result.startReachable, `${result.viewportWidth}x${result.viewportHeight} startReachable`).toBe(true);
       expect(result.endReachable, `${result.viewportWidth}x${result.viewportHeight} endReachable`).toBe(true);
       expect(result.alertFooterDisjoint, `${result.viewportWidth}x${result.viewportHeight} alertFooterDisjoint`).toBe(true);
-      expect(result.alertTaDisjoint, `${result.viewportWidth}x${result.viewportHeight} alertTaDisjoint`).toBe(true);
-      expect(result.taFooterDisjoint, `${result.viewportWidth}x${result.viewportHeight} taFooterDisjoint`).toBe(true);
-      expect(result.taButtonDisjoint, `${result.viewportWidth}x${result.viewportHeight} taButtonDisjoint`).toBe(true);
+      expect(result.alertColsDisjoint, `${result.viewportWidth}x${result.viewportHeight} alertColsDisjoint`).toBe(true);
+      expect(result.colsFooterDisjoint, `${result.viewportWidth}x${result.viewportHeight} colsFooterDisjoint`).toBe(true);
       expect(result.buttonEnabled, `${result.viewportWidth}x${result.viewportHeight} buttonEnabled`).toBe(true);
       expect(result.buttonHit, `${result.viewportWidth}x${result.viewportHeight} buttonHit`).toBe(true);
-      expect(result.textareaHit, `${result.viewportWidth}x${result.viewportHeight} textareaHit`).toBe(true);
     }
   });
 });

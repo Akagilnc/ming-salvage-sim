@@ -28,11 +28,9 @@ export function useEdictActions({
   }, []);
 
   const beginCardRequest = (item: LocalDirectiveItem) => {
+    // 每张草案卡至多一条进行态请求：同卡旧行（失败行亦然）被新请求顶掉。
     setLocalDirectives((prev) => [
-      ...prev.filter((row) => {
-        if (item.directiveId != null) return row.directiveId !== item.directiveId;
-        return row.phase !== "failed" || row.directiveId != null;
-      }),
+      ...prev.filter((row) => row.directiveId !== item.directiveId),
       item,
     ]);
   };
@@ -56,7 +54,6 @@ export function useEdictActions({
     const localKey = `del-${directiveId}-${++localSeq.current}`;
     beginCardRequest({
       localKey,
-      text: "",
       phase: "inflight",
       directiveId,
       op: "delete",

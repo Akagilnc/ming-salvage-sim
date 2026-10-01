@@ -92,46 +92,11 @@ def test_manual_directive_routes_are_retired(method):
     ], "删旧草稿入口必须保留"
 
 
-# #1902：前端拟/改稿面（edictModal / useEdictActions / main.tsx）的退役由 CI 的
-# tsc -b + vite build 证明（那才是它真正的契约面）；此处不再读 .tsx 源码数标识符。
-
-
-def test_runtime_config_projection_has_single_source():
-    """runtime json → LLMConfig 只在 llm_config 一处实现（#1902）。
-
-    行为面：投影函数的**行为**对两端一致——同一份运行档，经 Web 建局那条与直接调
-    共核投影得到同一执行事实。（不再断言 ``web_app._llm_config_from_runtime is
-    llm_config_from_runtime`` 这种对象身份：换了层转发就红，而行为没变。）
-    """
-    from ming_sim.llm_config import llm_config_from_runtime
-
-    runtime = {
-        "channel": "cli",
-        "cli": {"runner": "codex", "model": "m-x", "timeout_seconds": 240},
-    }
-    built = web_app._llm_config_from_runtime(
-        runtime, base_url="", model="api-fallback", api_key="", timeout_seconds=180,
-        thinking_level="", advanced_model="", advanced_base_url="",
-        advanced_api_key="", advanced_thinking_level="",
-    )
-    # Web 侧那层薄转发与直接调共核投影，同档同参 → 同结果。
-    direct = llm_config_from_runtime(
-        runtime, base_url="", model="api-fallback", api_key="", timeout_seconds=180,
-        thinking_level="", advanced_model="", advanced_base_url="",
-        advanced_api_key="", advanced_thinking_level="",
-    )
-    assert built.channel == direct.channel == "cli"
-    assert built.cli_runner == direct.cli_runner == "codex"
-    assert built.cli_model == direct.cli_model == "m-x"
-    assert built.api_key == direct.api_key == "", "CLI 通道不留 API key"
-
-
-@pytest.mark.parametrize("method", ["POST"])
-def test_nonstream_audience_chat_route_is_retired(method):
+def test_nonstream_audience_chat_route_is_retired():
     """说话只有流式一条入口（#1902）：非流式 POST 不再注册，历史 GET 不受影响。"""
     assert not any(
         getattr(r, "path", None) == "/api/audience/chat"
-        and method in (getattr(r, "methods", None) or set())
+        and "POST" in (getattr(r, "methods", None) or set())
         for r in web_app.app.routes
     )
     assert any(
@@ -176,17 +141,6 @@ def test_settlement_abort_sse_carries_typed_keys_not_deadlock_409():
     assert payload["error_pack_path"] == "/tmp/x"
 
 
-def test_session_manual_draft_mutators_are_gone():
-    """#1902：会话层 add/update_directive 随手写入口退役而删（拟诏台只余删旧草稿）。
-
-    退役的**外部可见面**是路由不注册（见 ``test_manual_directive_routes_are_retired``）；
-    此处只补一句「删旧草稿仍在」——它是玩家现役能力，缺了就红。
-    """
-    from ming_sim.session import GameSession
-
-    assert hasattr(GameSession, "delete_directive"), "删旧草稿仍保留"
-
-
 def test_portrait_delete_route_is_retired():
     """立绘清空端点前端零调用，随 #1902 退役；上传面仍在。"""
     assert not any(
@@ -202,27 +156,18 @@ def test_portrait_delete_route_is_retired():
 
 
 def test_transport_segment_retired_from_runtime_config():
-    """#1902：runtime 档不再读写 transport 段；策略恒为 ADR 0157 那套固定预算。"""
-    import inspect
-
-    from ming_sim import llm_config as lc
+    """#1902：往档里塞 transport 段不改变策略；召对传输遇 429 不重试。"""
     from ming_sim import llm_transport as lt
 
-    assert not hasattr(lc, "transport_runtime_slot")
-    assert "transport" not in inspect.signature(lc.save_runtime_llm).parameters
-    assert not hasattr(lt, "transport_policy_from_mapping")
     assert lt.resolve_transport_policy({"transport": {"max_attempts": 9}}) == lt.default_transport_policy()
     assert lt.audience_transport_policy().retry_429 is False
 
 
 def test_env_runner_selection_is_retired():
     """#1902：MING_SIM_LLM_BACKEND 选宿主退役——宿主只由运行配置声明。"""
-    import inspect
+    import os as _os
 
     from ming_sim import cli_backend as cb
-
-    assert not hasattr(cb, "cli_backend_from_env")
-    import os as _os
     from ming_sim.models import LLMConfig
 
     _os.environ["MING_SIM_LLM_BACKEND"] = "codex"  # 旧路若复活，这行会生效

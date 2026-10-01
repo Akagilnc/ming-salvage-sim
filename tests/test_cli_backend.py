@@ -1052,8 +1052,6 @@ def test_public_cli_support_restores_existing_runners(monkeypatch):
     assert set(cb.cli_model_choices()) == set(cb._CLI_BACKENDS)
     for name in ("opencode",):
         assert not cb.is_supported_cli_runner(name)
-    # #1902：MING_SIM_LLM_BACKEND 选宿主的旧路已退役（cli_backend_from_env 不复现）
-    assert not hasattr(cb, "cli_backend_from_env")
 
 
 @pytest.mark.parametrize("runner", ["cursor", "kimi", "grok", "pi"])

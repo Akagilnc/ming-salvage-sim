@@ -156,49 +156,6 @@ def choose_minister(session: GameSession) -> Optional[Character]:
         return candidate
 
 
-def _fail_cli_chat_turn_scene(
-    session: GameSession,
-    chat_turn_id: int,
-    *,
-    before_snapshot=None,
-    scaffold_owned: bool = False,
-    entry_id: int = 0,
-) -> None:
-    """CLI chat-turn scene 失败清理——与 minister_chat 中断同族（abandon + fail/回滚）。
-
-    cleanup 自身失败由调用方链到原 scene 异常（不得 `except: pass` 吞掉）。
-    """
-    if scaffold_owned:
-        if before_snapshot is not None and hasattr(
-            session.db, "record_chat_turn_rollback_diffs",
-        ):
-            session.db.record_chat_turn_rollback_diffs(
-                int(chat_turn_id),
-                before_snapshot,
-                session.db.capture_chat_rollback_snapshot(),
-            )
-        # Delete scaffold exit placeholder in the same cleanup path before fail.
-        # fail_chat_turn also drops origin-bound rows; explicit entry_id covers
-        # doubles whose fail path is thinner than production GameDB.
-        if entry_id and hasattr(session.db, "conn") and getattr(session.db, "conn", None):
-            session.db.conn.execute(
-                "DELETE FROM story_ledger_entries WHERE id = ?",
-                (int(entry_id),),
-            )
-            session.db.conn.commit()
-        restored_ids = session.db.fail_chat_turn(int(chat_turn_id))
-        from ming_sim.decree_forecast import schedule_restored_decree_forecasts
-        schedule_restored_decree_forecasts(session, restored_ids)
-        return
-    if entry_id:
-        # Prior Q&A turn must stay intact; only drop the failed exit placeholder.
-        session.db.conn.execute(
-            "DELETE FROM story_ledger_entries WHERE id = ?",
-            (int(entry_id),),
-        )
-        session.db.conn.commit()
-
-
 def _record_audience_exit(session: GameSession, name: str) -> None:
     """CLI「退下」控制口令：落空正文告退账（#1838 reopen：无旁白调用）。"""
     if not hasattr(session.db, "conn"):
@@ -444,60 +401,36 @@ def minister_chat(session: GameSession, character: Character, *, selected: bool 
             return cmd
         # 非控制指令 → 场景对话，并持久记录对话轮。
         # #1902：建轮/快照/问话落库/回滚终态全走会话层同一生命周期（与 Web 共核），
-        # 入口只留输入采集与呈现。
+        # 入口只留输入采集与呈现。薄替身分支已删：真 GameDB 恒有这套生命周期，
+        # 为只替 LLM 缝的壳另留一条无轮路径，等于给测试维护第二套生产生命周期。
+        chat_turn = GameSession.begin_audience_chat_turn(
+            session, question,
+            # 建轮归「殿上」（与 Web 同、殿上历史读得到）；问话/回话挂大臣名
+            # （与修前 CLI 语义同）。
+            message_speaker=character.name,
+            agno_session_id="cli:殿上",
+            ensure_summon=(
+                character.name if question == f"宣{character.name}" else ""
+            ),
+        )
         result = None
-        chat_turn = None
-        thin_user_message_id = 0
-        lifecycle_supported = all(hasattr(session.db, name) for name in (
-            "capture_chat_rollback_snapshot", "create_chat_turn",
-            "update_chat_turn_messages", "record_chat_turn_rollback_diffs", "fail_chat_turn",
-        ))
         try:
-            # #1849 reopen：CLI 也不再分密令/场外 route；前缀原文随问话进 scene 转译。
-            if lifecycle_supported:
-                # 走 GameSession 真方法（未绑定）：召对话轮生命周期是共核，测试壳
-                # 只替 LLM 缝即可，不必各自再抄一份建轮（#13）。
-                chat_turn = GameSession.begin_audience_chat_turn(
-                    session, question,
-                    # 建轮归「殿上」（与 Web 同、殿上历史读得到）；问话/回话挂大臣名
-                    # （与修前 CLI 语义同）。
-                    message_speaker=character.name,
-                    agno_session_id="cli:殿上",
-                    ensure_summon=(
-                        character.name if question == f"宣{character.name}" else ""
-                    ),
-                )
-            else:
-                # 极薄替身（无 durable chat_turn 生命周期）只落消息，不建轮。
-                thin_user_message_id = int(session.db.append_chat_message(
-                    character.name, int(session.state.turn), "user", question,
-                ) or 0)
             # #1842：殿上走 scene_chat；显式密令仍走 session.chat（与 Web 同核）。
             # 殿上不派旧判官/尾随抽取——转译一次承接。
             result = session.scene_chat(
                 question,
-                chat_turn_id=int(chat_turn.chat_turn_id) if chat_turn else 0,
+                chat_turn_id=int(chat_turn.chat_turn_id),
                 minister_name="殿上",
             )
-            if chat_turn is not None:
-                GameSession.complete_audience_chat_turn(
-                    session, chat_turn, character.name, result.answer, result,
-                )
-            else:
-                session.db.append_chat_message(
-                    character.name, int(session.state.turn), "minister", result.answer,
-                )
-                session.schedule_pending_scene_translation(result)
+            GameSession.complete_audience_chat_turn(
+                session, chat_turn, character.name, result.answer, result,
+            )
         except BaseException as original_error:
             try:
-                if chat_turn is not None:
-                    GameSession.fail_audience_chat_turn(
-                        session, chat_turn,
-                        replied=result is not None, error=original_error,
-                    )
-                elif result is None and thin_user_message_id:
-                    # 极薄替身无 durable 轮可终态化：按旧语义只回滚本轮 user-only 半轮。
-                    session.db.delete_chat_messages([thin_user_message_id])
+                GameSession.fail_audience_chat_turn(
+                    session, chat_turn,
+                    replied=result is not None, error=original_error,
+                )
             except BaseException as cleanup_error:
                 raise original_error from cleanup_error
             raise
@@ -594,49 +527,68 @@ class _CliSaveSlotHost:
         except Exception:
             logger.exception("CLI dispose rebuild residual close failed")
             return False
+        if getattr(runtime, "_rebuild_residual_runtime", None) is residual:
+            runtime._rebuild_residual_runtime = None
         return True
 
     def busy_detail(self) -> str:
         return "本夜收夜/过月进行中，暂不能换档。"
 
 
+def _cli_reconcile_crashed_turns(session: GameSession) -> None:
+    """重开对账：崩溃遗留的在飞回话轮终态化（问话保留 + 可重试，ADR 0036）。
+
+    两处调用形状与 Web 建局同一句（``web_app`` 的 ``WebGame.__init__`` 与
+    ``_rebuild_session``）：起手建局一次、读档重建一次。缺这条，孤儿 generating 轮
+    会被当成本夜「上一轮仍在进行」，玩家续问与收夜都被永久挡死。
+    """
+    session.db.reconcile_interrupted_chat_turns()
+    session.db.reconcile_post_reply_recovery()
+
+
 def _cli_rebuild_session(runtime: "_CliRuntime", llm_config) -> GameSession:
     """换库后重建活会话（与 Web ``_rebuild_session`` 同一形状，只不做网页呈现态）。
 
-    候选完整初始化后才发布；失败即关候选并照原错上抛。返回新会话交还持有方。
+    候选**完整初始化后才发布**（#1902 J1）：建会话 → begin_turn → 挂写闸 → 召对
+    崩溃遗留对账；任一步失败即关候选并照原错上抛，活槽 ``runtime.session`` 在此
+    期间仍指着旧会话（已由共享核关闭），绝不半初始化候选蒙上活会话名。
+    共享核的失败恢复随后会用还原后的库再重建一次并把新会话发到 ``runtime.session``。
 
     注意：共享核已在同一独占区里 ``old_session.close(write_gate_already_held=True)``
     关过旧会话，**此处不得再 close 一次**——那会在已 seal 的队列上再进 barrier，
     与正持有的 gate 自锁（实测挂死在 ``wait_prior``）。
     """
     from ming_sim.content import GameContent
-    from ming_sim.session_write_queue import get_session_write_queue
 
     candidate = None
     try:
         candidate = GameSession(runtime.db_path, llm_config, content=GameContent.load())
-    except Exception:
-        if candidate is not None:
+        candidate.begin_turn()
+        _cli_write_gate(candidate)
+        _cli_reconcile_crashed_turns(candidate)
+    except Exception as exc:
+        # 构造半途失败时对象还没赋给 candidate，活连接在异常的 residual_session 上。
+        residual = candidate or getattr(exc, "residual_session", None)
+        if residual is not None:
             try:
-                candidate.close()
+                residual.close()
             except Exception:
                 logger.exception("CLI rebuild candidate close failed")
+                runtime._rebuild_residual_runtime = residual
         raise
     runtime.session = candidate
-    try:
-        candidate.begin_turn()
-    except Exception:
-        logger.exception("CLI rebuild: begin_turn on new session failed")
-        raise
-    _cli_write_gate(candidate)
     return candidate
 
 
 def _cli_load(session: GameSession, name: str) -> Optional[GameSession]:
     """CLI 读档：热替换主库（共享核 ``save_slots.replace_database``，与 Web 同一条）。
 
-    返回**读档后的新会话**（调用方须换掉自己持有的那个），失败返回 None——
-    此时共享核已还原替换前的库与 runtime，玩家留在原菜单。成功时旧会话已关闭。
+    返回**调用方必须改持有的会话**：换库成功时是读档后的新会话；换库失败且共享核
+    已关闭旧会话、用还原后的库重建出新会话时，也返回那份新会话（``#1902 J1``：
+    玩家若继续持已关闭的旧菜单会话，下一次写库就是
+    ``Cannot operate on a closed database``）。
+    返回 None 只在活会话根本没被换掉时：空名、非法名、无此档，或换库在关闭旧会话
+    之前失败。读档成败由本函数自己打印，入口只管换引用。
     """
     from ming_sim.paths import UnsafeSaveNameError, save_slot_path
     from ming_sim.save_slots import copy_sqlite_file, replace_database
@@ -666,8 +618,20 @@ def _cli_load(session: GameSession, name: str) -> Optional[GameSession]:
             lambda: copy_sqlite_file(source, runtime.db_path),
         )
     except Exception as err:
+        # 失败诚实宪法：旧会话一旦被共享核关闭，就必须把还原后重建的新会话交还
+        # 持有方（也不假装读档成功）。还原重建本身失败、没有活局可交时如实退出。
+        # 换库在关闭旧会话之前失败时，runtime.session 仍是原来那个活会话——
+        # 留在菜单里，不把它报成「已换档」。
+        restored = runtime.session
+        from ming_sim.save_slots import runtime_restorable
+
+        if not runtime_restorable(restored):
+            raise SystemExit(f"读档失败且原局无法恢复，请重启游戏：{err}") from err
+        if restored is session:
+            print(f"\n读档失败：{err}\n")
+            return None
         print(f"\n读档失败，已恢复原局：{err}\n")
-        return None
+        return restored
     loaded = runtime.session
     print(f"\n已读档：{label}（第 {int(loaded.state.turn)}{TURN_UNIT}）\n")
     return loaded
@@ -996,6 +960,8 @@ def run_cli(
         session = GameSession(db_path, llm_config, start_ym=start_ym)
         # #1353 fold-in r8：建 session 即挂唯一 write_gate，trail/收夜/颁诏同穿。
         _cli_write_gate(session)
+        # #1902 J2：重开对账（起手一次；读档重建走 _cli_rebuild_session 同一句）。
+        _cli_reconcile_crashed_turns(session)
         print("《明末力挽狂澜》文字 MVP")
         print(f"你是刚刚登基的崇祯。每回合一个{TURN_UNIT}：看奏报、召见大臣、下圣旨、听回奏。")
         print(f"手动玩法：quit/退朝 = 结束本{TURN_UNIT}进入下一{TURN_UNIT}；exit/退出游戏 = 退出程序。")
@@ -1045,9 +1011,11 @@ def run_cli(
     except KeyboardInterrupt:
         print("\n退出游戏。")
     finally:
-        if session is not None:
+        if session is not None and int(getattr(session, "_close_epoch", 0) or 0) == 0:
             # #1842：正常 CLI 退出走共享 drain 核心——转译 worker 终态后才关原库；
             # 禁直接 session.close；禁伪装 Web runtime / 反向耦合 web_app。
+            # 读档失败且共享核已经关掉旧会话时 epoch 已增，再 drain 会在已关闭的
+            # 连接上二次 close。
             from ming_sim.session_write_queue import (
                 drain_and_close_session,
                 get_session_write_queue,

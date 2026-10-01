@@ -10,7 +10,9 @@ import time
 from types import SimpleNamespace
 
 import web_app
-from tests.web_audience_test_doubles import HallAdmissionSessionMixin, minister_double
+from tests.web_audience_test_doubles import (
+    HallAdmissionSessionMixin, minister_double, open_audience_night_conn,
+)
 from tests.wait_utils import reset_menu_path_leases, wait_until
 from ming_sim.session_write_queue import SessionWriteQueue
 
@@ -481,7 +483,7 @@ class _GapBDB:
         self.messages: list[dict] = []
         self._next_id = 1
         self._inflight: list[dict] = []
-        # 故意不设 conn：生产路径 hasattr(db,"conn") 为假时走轻壳分支
+        self.conn = open_audience_night_conn()
 
     def agno_runs_length(self, _session_id):
         return 0
@@ -542,7 +544,10 @@ class _GapBDB:
     def list_secret_orders(self):
         return []
 
-    def build_chat_projection(self, minister_name: str):
+    def list_hall_chat_turns(self, _night_id):
+        return []
+
+    def build_chat_projection(self, minister_name: str, _night_id: int = 0):
         return [
             {"role": m["role"], "content": m["content"], "chat_turn_id": 0}
             for m in self.messages
@@ -563,7 +568,6 @@ class _GapBDB:
         return result
 
 
-@pytest.mark.usefixtures("_atomic_connless_test_shell_compat")
 def test_drain_waits_for_queued_chat_stream_not_just_gate_holder():
     """#396 Gap B: drain 不能只等当前持锁 worker——已排队（阻塞在 gate.acquire()）的旧召对请求
     也须先跑完写库，drain 才关 session。否则 drain 抢到下一轮 acquire 直接关连接，排队请求要么
@@ -595,6 +599,8 @@ def test_drain_waits_for_queued_chat_stream_not_just_gate_holder():
 
     # #1849 reopen：召对只剩殿上；同入口并发第二流被拒，drain 仍须等在飞 A 写完。
     stream_a = runtime.chat_stream("殿上", "请奏A")
+    accepted_a = next(stream_a)
+    assert accepted_a.get("type") == "accepted"
     first_a = next(stream_a)
     assert first_a.get("type") == "delta"
     assert "content" in first_a

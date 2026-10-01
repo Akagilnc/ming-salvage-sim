@@ -745,8 +745,10 @@ class WebGame:
         advanced_model = os.environ.get("OPENAI_ADVANCED_MODEL", "")
         advanced_base_url = os.environ.get("OPENAI_ADVANCED_BASE_URL", "")
         advanced_api_key = os.environ.get("OPENAI_ADVANCED_API_KEY", "")
-        thinking_level = os.environ.get("OPENAI_THINKING_LEVEL", "")
-        advanced_thinking_level = os.environ.get("OPENAI_ADVANCED_THINKING_LEVEL", "")
+        # #1902 J3：思考档的 env 回落不再由本入口自读（落差已在
+        # llm_config.llm_config_from_runtime 一处决定，CLI 入口同样传空串）。
+        thinking_level = ""
+        advanced_thinking_level = ""
         timeout_seconds = float(os.environ.get("OPENAI_TIMEOUT_SECONDS") or API_DEFAULT_TIMEOUT_SECONDS)
         # #1902 F1：「运行档优先、env/入参回落」的落差只在 llm_config_from_runtime
         # 一处决定——两端入口不再各自把运行档拼一遍（此前只有 Web 做，CLI 直接把

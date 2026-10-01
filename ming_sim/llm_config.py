@@ -364,7 +364,18 @@ def llm_config_from_runtime(
         runtime.get("timeout_seconds"),
         _runtime_float(timeout_seconds, API_DEFAULT_TIMEOUT_SECONDS),
     )
-    thinking_level = _api_runtime_value(runtime, "thinking_level", thinking_level)
+    # 思考档的 env 回落也归本函数一处（#1902 J3）：此前只有 Web 入口自己读
+    # OPENAI_THINKING_LEVEL，CLI 入口传空串 → 同一份空运行档 + 同一个环境值经两端
+    # 建局得到不同执行事实（CLI thinking_level/reasoning_strength 空，Web high）。
+    # 与 ``load_llm_config`` 同一口径：入参空才回落 env。
+    thinking_level = (
+        _api_runtime_value(runtime, "thinking_level", thinking_level)
+        or os.environ.get("OPENAI_THINKING_LEVEL", "")
+    )
+    advanced_thinking_level = (
+        _api_runtime_value(runtime, "advanced_thinking_level", advanced_thinking_level)
+        or os.environ.get("OPENAI_ADVANCED_THINKING_LEVEL", "")
+    )
     advanced_model = _api_runtime_value(runtime, "advanced_model", advanced_model)
     advanced_base_url = _api_runtime_value(runtime, "advanced_base_url", advanced_base_url)
     advanced_api_key = _api_runtime_value(runtime, "advanced_api_key", advanced_api_key)

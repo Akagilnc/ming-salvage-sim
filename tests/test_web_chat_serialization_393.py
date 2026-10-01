@@ -8,7 +8,9 @@ import threading
 from types import SimpleNamespace
 
 import web_app
-from tests.web_audience_test_doubles import HallAdmissionSessionMixin
+from tests.web_audience_test_doubles import (
+    HallAdmissionSessionMixin, open_audience_night_conn,
+)
 from tests.dossier_test_helpers import TYPED_COVERT_TASK, create_test_secret_order
 from tests.wait_utils import wait_until
 from ming_sim.session_write_queue import SessionWriteQueue
@@ -98,6 +100,7 @@ class _RecordingDB:
         self.messages = []
         self.overlapped_minister_commit = False
         self._next_id = 1
+        self.conn = open_audience_night_conn()
 
     def agno_runs_length(self, session_id: str) -> int:
         return 0
@@ -105,7 +108,7 @@ class _RecordingDB:
     def capture_chat_rollback_snapshot(self):
         return {}
 
-    def create_chat_turn(self, state, minister_name, agno_session_id, agno_runs_before):
+    def create_chat_turn(self, *_a, **_k):
         return 7
 
     def append_chat_message(self, minister_name: str, turn: int, role: str, content: str) -> int:
@@ -138,7 +141,10 @@ class _RecordingDB:
     def list_in_flight_chat_turns(self, *, night_id=None, minister_name=None, turn=None):
         return []
 
-    def build_chat_projection(self, minister_name: str):
+    def list_hall_chat_turns(self, _night_id):
+        return []
+
+    def build_chat_projection(self, minister_name: str, _night_id: int = 0):
         # #499 单一投影出口（无读心记录的最小实现，供 done payload 装配）
         return [
             {"role": m["role"], "content": m["content"], "chat_turn_id": 0}
@@ -208,11 +214,12 @@ def _runtime_for_stream_race():
     return runtime, character.name, allow_finish, settlement_attempting, settlement
 
 
-@pytest.mark.usefixtures("_atomic_connless_test_shell_compat")
 def test_background_stream_completion_waits_for_settlement_gate_and_keeps_acceptance_turn():
     runtime, minister_name, allow_finish, settlement_attempting, settlement = _runtime_for_stream_race()
 
     stream = runtime.chat_stream("殿上", "请奏")
+    accepted = next(stream)
+    assert accepted["type"] == "accepted"
     first = next(stream)
     assert first == {"type": "delta", "content": "臣已知悉。"}
 
@@ -267,10 +274,10 @@ def test_identity_setup_failure_preserves_question_and_releases_pending_owner():
     assert completed == [True]
 
 
-@pytest.mark.usefixtures("_atomic_connless_test_shell_compat")
 def test_lightweight_stream_seam_reaches_done_without_durable_identity_or_night_signature():
     runtime, minister_name, allow_finish, _settlement_attempting, _settlement = _runtime_for_stream_race()
     stream = runtime.chat_stream("殿上", "请奏")
+    assert next(stream)["type"] == "accepted"
     assert next(stream)["type"] == "delta"
     allow_finish.set()
     assert next(stream)["type"] == "done"

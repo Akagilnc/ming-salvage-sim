@@ -1159,8 +1159,8 @@ class GameSession:
         ``ensure_summon`` 非空时按「宣 X」同入口补入殿账。问话原文在此落库，
         入口不再自行 append。
 
-        无 conn 的极薄替身（只替 LLM 缝的测试壳）走不带夜表的建轮分支——与旧
-        入口同形，禁在此 fail-open 改语义。
+        无 conn 的极薄替身分支已删（#1902 J4）：真 GameDB 恒有 conn 与夜表，
+        留一条不带夜表的建轮路径等于给测试壳维护第二套召对生命周期。
         """
         from ming_sim.applier import atomic
         from ming_sim.audience_night import (
@@ -1178,34 +1178,27 @@ class GameSession:
         speaker = str(message_speaker or "").strip() or owner
         accepted_turn = int(self.state.turn)
         before_snapshot = self.db.capture_chat_rollback_snapshot()
-        night_id = 0
-        if not hasattr(self.db, "conn"):
+        night_was_open = get_open_night(self.db) is not None
+        night = get_open_night(self.db) or ensure_open_night_for_audience(
+            self.db, self.state,
+        )
+        if not night_was_open:
+            schedule_held_decree_forecasts(self)
+        night_id = int(night["id"])
+        with atomic(self.db):
             chat_turn_id = self.db.create_chat_turn(
-                self.state, owner, agno_session_id or owner,
+                self.state,
+                owner,
+                agno_session_id or owner,
                 int(runs_before or 0),
+                night_id=night_id,
+                status="generating",
             )
-        else:
-            night_was_open = get_open_night(self.db) is not None
-            night = get_open_night(self.db) or ensure_open_night_for_audience(
-                self.db, self.state,
-            )
-            if not night_was_open:
-                schedule_held_decree_forecasts(self)
-            night_id = int(night["id"])
-            with atomic(self.db):
-                chat_turn_id = self.db.create_chat_turn(
-                    self.state,
-                    owner,
-                    agno_session_id or owner,
-                    int(runs_before or 0),
-                    night_id=night_id,
-                    status="generating",
+            if ensure_summon:
+                ensure_summon_enter(
+                    self.db, night_id, ensure_summon,
+                    origin_chat_turn_id=chat_turn_id, commit=False,
                 )
-                if ensure_summon:
-                    ensure_summon_enter(
-                        self.db, night_id, ensure_summon,
-                        origin_chat_turn_id=chat_turn_id, commit=False,
-                    )
         user_message_id = 0
         try:
             user_message_id = self.db.append_chat_message(

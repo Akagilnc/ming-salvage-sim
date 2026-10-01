@@ -6,10 +6,54 @@
 
 from __future__ import annotations
 
+import sqlite3
 from types import SimpleNamespace
 from typing import Any, Optional
 
+from ming_sim.applier import _SuspendableConnection
 from ming_sim.session import AudienceAdmission, AudienceAdmissionDecision
+
+
+def open_audience_night_conn() -> _SuspendableConnection:
+    """方法替身库上的一条已开夜，建轮与 ``atomic`` 走生产唯一路径。"""
+    conn = sqlite3.connect(
+        ":memory:", factory=_SuspendableConnection, check_same_thread=False,
+    )
+    conn.row_factory = sqlite3.Row
+    conn.execute(
+        """
+        CREATE TABLE audience_nights (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            turn INTEGER NOT NULL,
+            year INTEGER NOT NULL,
+            period INTEGER NOT NULL,
+            time_of_day TEXT NOT NULL DEFAULT '',
+            location TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'open',
+            close_commit_cursor INTEGER NOT NULL DEFAULT 0,
+            next_event_seq INTEGER NOT NULL DEFAULT 0,
+            protagonist_name TEXT NOT NULL DEFAULT '',
+            opened_at TEXT NOT NULL DEFAULT '',
+            closed_at TEXT
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE chat_turns (
+            id INTEGER PRIMARY KEY,
+            status TEXT,
+            minister_message_id INTEGER,
+            extract_status TEXT,
+            user_message_id INTEGER
+        )
+        """
+    )
+    conn.execute(
+        "INSERT INTO audience_nights (turn, year, period, status) VALUES (1, 1628, 1, 'open')"
+    )
+    conn.commit()
+    return conn
 
 
 def allow_hall_admission(

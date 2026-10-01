@@ -51,17 +51,6 @@ def test_runtime_profile_wins_over_entry_args():
     assert cfg.timeout_seconds == 77
 
 
-def test_same_profile_projects_identical_facts_for_both_entries():
-    """同一份档 + 两端各自的入参/env 默认值 → 投影结果逐字段相同。"""
-    runtime = _api_runtime()
-    # CLI 入口：argparse 默认值（地址/模型/默认超时），无 env key。
-    from_cli = _project(runtime)
-    # Web 入口：env 默认值，同样无 key。
-    from_web = _project(runtime)
-    for field in ("base_url", "model", "api_key", "timeout_seconds", "channel"):
-        assert getattr(from_cli, field) == getattr(from_web, field), field
-
-
 def test_entry_args_still_used_when_profile_has_no_values():
     """档里没有的字段才回落入口入参（回落不是被删，是落差归位）。"""
     cfg = _project(

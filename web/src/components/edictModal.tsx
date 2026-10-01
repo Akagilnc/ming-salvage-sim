@@ -86,15 +86,12 @@ export function EdictModal({
   // Historical `pending` labels are therefore ordinary drafts here, never a second review gate.
   const draftDirectives = state.directives;
   const casedDirectives: CasedDirective[] = state.cased_directives ?? [];
-  // save/delete 绑在既有草案卡，不另占席；仅 create 会话卡计入桌面条数。
-  const createLocals = localDirectives.filter((item) => item.directiveId == null);
+  // save/delete 绑在既有草案卡，不另占席（#1902 J4：无 directiveId 的会话卡已删）。
   const requestByDirectiveId = new Map(
-    localDirectives
-      .filter((item) => item.directiveId != null)
-      .map((item) => [item.directiveId as number, item]),
+    localDirectives.map((item) => [item.directiveId, item]),
   );
-  // deskCount 仅呈现条数（含本地 create 卡）；动作/恢复门控不得依赖它（#1764）。
-  const deskCount = draftDirectives.length + casedDirectives.length + createLocals.length;
+  // deskCount 仅呈现条数；动作/恢复门控不得依赖它（#1764）。
+  const deskCount = draftDirectives.length + casedDirectives.length;
   const hasDrafts = draftDirectives.length > 0;
   const hasCased = casedDirectives.length > 0;
   const hasPendingConversationalDraft = (state.pending_directive_count ?? 0) > 0;
@@ -132,9 +129,8 @@ export function EdictModal({
       <small id={errorId} className="local-fail-note" data-role="local-error" role="alert">{message}</small>
     ) : null;
 
-  // 御案两区：草稿（可改删 + 本地 create）/ 已发的旨意（成案只读，0048 无准驳）。
-  const showDraftZone =
-    draftDirectives.length > 0 || createLocals.length > 0;
+  // 御案两区：草稿（可删）/ 已发的旨意（成案只读，0048 无准驳）。
+  const showDraftZone = draftDirectives.length > 0;
   const showIssuedZone = casedDirectives.length > 0;
   const draftHeadingId = "edict-zone-draft-title";
   const issuedHeadingId = "edict-zone-issued-title";
@@ -174,40 +170,17 @@ export function EdictModal({
                         {req ? <PhaseChip phase={req.phase} /> : null}
                       </div>
                       {renderBody(directive.text, bodyId, directive.notes)}
-                  {renderFailNote(failMsg, errorId)}
-                  {!inflight ? (
-                    <div className="directive-tools">
-                      <button onClick={() => onDeleteDirective(directive.id)} disabled={requestLocked}>
-                        <Trash2 size={14} />删
-                      </button>
-                    </div>
-                  ) : null}
-                    </div>
-                  );
-                })}
-
-                {createLocals.map((local) => {
-                  const bodyId = `edict-body-local-${local.localKey}`;
-                  const errorId = `edict-err-local-${local.localKey}`;
-                  const failMsg = local.phase === "failed" ? local.error : undefined;
-                  return (
-                    <div
-                      className={cardClassName({ phase: local.phase })}
-                      key={local.localKey}
-                      data-directive-phase={local.phase}
-                      data-local-key={local.localKey}
-                      {...cardStateA11y(local.phase, bodyId, { id: errorId, message: failMsg })}
-                    >
-                      <div className="directive-head">
-                        <b data-role="local-mark" />
-                        <PhaseChip phase={local.phase} />
-                      </div>
-                      {renderBody(local.text, bodyId)}
                       {renderFailNote(failMsg, errorId)}
+                      {!inflight ? (
+                        <div className="directive-tools">
+                          <button onClick={() => onDeleteDirective(directive.id)} disabled={requestLocked}>
+                            <Trash2 size={14} />删
+                          </button>
+                        </div>
+                      ) : null}
                     </div>
                   );
                 })}
-
               </section>
             ) : null}
 

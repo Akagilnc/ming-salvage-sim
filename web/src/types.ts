@@ -171,16 +171,15 @@ export type CasedDirective = {
 };
 
 /** #1764：本地在飞/失败项（仅会话态，非持久真源）。
- * create：无 directiveId，自渲染为会话卡。
- * save/delete：directiveId 绑定所属草案卡的进行态/失败真因。
+ * #1902 J4：拟诏台手写新建/改稿入口已退役，前端不再有无 directiveId 的会话卡，
+ * 故此项恒绑定所属草案卡（现役唯一消费者是删除进行态与失败真因）。
  */
 export type LocalDirectiveItem = {
   localKey: string;
-  text: string;
   phase: "inflight" | "failed";
   error?: string;
-  directiveId?: number;
-  op?: "create" | "save" | "delete";
+  directiveId: number;
+  op: "delete";
 };
 
 export type Issue = {

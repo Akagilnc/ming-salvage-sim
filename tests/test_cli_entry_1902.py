@@ -481,8 +481,6 @@ def test_save_load_round_trip_through_shared_core(game, monkeypatch, capsys):
 
     db, state, content = game
     session = make_light_session(db, state, content)
-    # 存档写到本轮私有 user data 目录（不碰开发者真实存档）。
-    tmp_user_data(monkeypatch)
 
     term._cli_save(session, "cli-slot")
     slot = save_slot_path("cli-slot")
@@ -505,13 +503,12 @@ def test_save_load_round_trip_through_shared_core(game, monkeypatch, capsys):
         loaded.close()
 
 
-def test_load_missing_slot_keeps_current_game(game, monkeypatch, capsys):
+def test_load_missing_slot_keeps_current_game(game, capsys):
     """读不存在的档：留在原局，不动活会话。"""
     from tests.month_chain_helpers import make_light_session
 
     db, state, content = game
     session = make_light_session(db, state, content)
-    tmp_user_data(monkeypatch)
     marker_before = session.db.conn.execute("SELECT 1").fetchone()[0]
 
     assert term._cli_load(session, "no-such-slot") is None
@@ -519,7 +516,7 @@ def test_load_missing_slot_keeps_current_game(game, monkeypatch, capsys):
     assert session.db.conn.execute("SELECT 1").fetchone()[0] == marker_before == 1
 
 
-def test_save_name_guard_rejects_traversal_in_both_entries(game, monkeypatch):
+def test_save_name_guard_rejects_traversal_in_both_entries(game):
     """存档名清洗真源一份：穿越名在 CLI 与 Web 两端都拒（#1902 F2）。"""
     import pytest as _pytest
     from fastapi import HTTPException
@@ -530,7 +527,6 @@ def test_save_name_guard_rejects_traversal_in_both_entries(game, monkeypatch):
 
     db, state, content = game
     session = make_light_session(db, state, content)
-    tmp_user_data(monkeypatch)
 
     for bad in ("../../etc/passwd", ".hidden", "   "):
         with _pytest.raises(UnsafeSaveNameError):
@@ -540,24 +536,10 @@ def test_save_name_guard_rejects_traversal_in_both_entries(game, monkeypatch):
         assert exc.value.status_code == 400
 
 
-def tmp_user_data(monkeypatch) -> str:
-    """把 user data 指向本轮私有目录（存档落这里，不碰真实 data/）。"""
-    import tempfile
-
-    path = tempfile.mkdtemp(prefix="ming-cli-saves-")
-    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", path)
-    return path
-
-
-def test_cli_runner_forwarders_are_gone_single_dispatch():
-    """#1902：七条一行转发退役，分派点唯一落在 _run_cli_runner。"""
+def test_cli_runner_roster_is_the_single_dispatch_admission_list():
+    """#1902：七个现役宿主都放行，未登记宿主拒收。分派行为由 test_cli_backend 钉。"""
     from ming_sim import cli_backend as cb
 
-    for runner in ("agy", "codex", "claude", "cursor", "kimi", "grok", "pi"):
-        assert not hasattr(cb, f"_run_{runner}"), f"_run_{runner} 转发应已退役"
-    assert hasattr(cb, "_run_cli_runner") and hasattr(cb, "_dispatch_cli_runner")
-    # 准入名单只此一份：分派点认的谓词就是 _CLI_BACKENDS 那个真源（#1902 同形第二份已删）。
-    assert not hasattr(cb, "_CLI_RUNNER_NAMES"), "准入名单副本应已删"
     assert all(
         cb.is_supported_cli_runner(runner)
         for runner in ("agy", "codex", "claude", "cursor", "kimi", "grok", "pi")
