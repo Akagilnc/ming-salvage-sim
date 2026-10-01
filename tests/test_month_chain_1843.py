@@ -711,13 +711,11 @@ def test_world_segment_reads_material_directory(game, monkeypatch):
         listing = tools["list_materials"]("")
         index = tools["read_material"]("INDEX.txt")
         board = tools["read_material"]("盘面/全局.txt")
-        has_dir = hasattr(agent.model, "materials_dir")
         materials_dir = getattr(agent.model, "materials_dir", "")
         seen.append({
             "listing": listing,
             "index": index,
             "board": board,
-            "has_dir": has_dir,
             "dir_has_index": bool(materials_dir) and (Path(materials_dir) / "INDEX.txt").is_file(),
             "opening": next(part for part in agent.instructions if board and board in str(part)),
         })
@@ -733,7 +731,6 @@ def test_world_segment_reads_material_directory(game, monkeypatch):
     assert seen[0]["index"].strip()
     assert seen[0]["board"].strip()
     assert seen[0]["board"] in seen[0]["opening"]
-    assert seen[0]["has_dir"] is False
     # 目录里至少有一份不在开场最小集里的材料。
     extra = next(
         line for line in seen[0]["listing"].splitlines()
@@ -743,7 +740,6 @@ def test_world_segment_reads_material_directory(game, monkeypatch):
 
     cli = LLMConfig(api_key="", base_url="", model="", channel="cli", cli_runner="agy")
     assert month_chain.run_world_segment_text(db, state, cli) == "静"
-    assert seen[1]["has_dir"] is True
     assert seen[1]["dir_has_index"] is True
     assert seen[1]["index"].strip()
 

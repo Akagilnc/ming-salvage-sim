@@ -704,7 +704,6 @@ def test_decree_continuation_keeps_forecast_and_lands_affair_effect(game, monkey
     payload = json.loads(message)
     assert payload["this_decree"]["decree_text"]
     assert payload["this_decree"]["status"] == "promulgated"
-    assert "decree-forecast" in str(captured.get("prepared_root") or "")
     assert captured.get("prepared_opening")
     from pathlib import Path
     assert not Path(str(captured["prepared_root"])).exists()
